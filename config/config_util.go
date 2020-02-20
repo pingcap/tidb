@@ -16,8 +16,6 @@ package config
 import (
 	"encoding/json"
 	"reflect"
-
-	"github.com/pingcap/tidb/util/set"
 )
 
 // CloneConf deeply clones this config.
@@ -35,21 +33,25 @@ func CloneConf(conf *Config) (*Config, error) {
 
 var (
 	// dynamicConfigItems contains all config items that can be changed during runtime.
-	dynamicConfigItems = []string{
-		"Performance.MaxProcs", "Performance.MaxMemory",
-		"Performance.CrossJoin", "Performance.FeedbackProbability",
-		"Performance.QueryFeedbackLimit", "Performance.PseudoEstimateRatio",
-		"OOMAction", "MemQuotaQuery", "TiKVClient.StoreLimit",
+	dynamicConfigItems = map[string]struct{}{
+		"Performance.MaxProcs":            {},
+		"Performance.MaxMemory":           {},
+		"Performance.CrossJoin":           {},
+		"Performance.FeedbackProbability": {},
+		"Performance.QueryFeedbackLimit":  {},
+		"Performance.PseudoEstimateRatio": {},
+		"OOMAction":                       {},
+		"MemQuotaQuery":                   {},
+		"TiKVClient.StoreLimit":           {},
 	}
 )
 
 // MergeConfigItems overwrites the dynamic config items and leaves the other items unchanged.
 func MergeConfigItems(dstConf, newConf *Config) (acceptedItems, rejectedItems []string) {
-	dynamicConfigItemsSet := set.NewStringSet(dynamicConfigItems...)
-	return mergeConfigItems(reflect.ValueOf(dstConf), reflect.ValueOf(newConf), "", dynamicConfigItemsSet)
+	return mergeConfigItems(reflect.ValueOf(dstConf), reflect.ValueOf(newConf), "")
 }
 
-func mergeConfigItems(dstConf, newConf reflect.Value, fieldPath string, dynamicConfigItemsSet set.StringSet) (acceptedItems, rejectedItems []string) {
+func mergeConfigItems(dstConf, newConf reflect.Value, fieldPath string) (acceptedItems, rejectedItems []string) {
 	t := dstConf.Type()
 	if t.Kind() == reflect.Ptr {
 		t = t.Elem()
@@ -60,7 +62,7 @@ func mergeConfigItems(dstConf, newConf reflect.Value, fieldPath string, dynamicC
 		if reflect.DeepEqual(dstConf.Interface(), newConf.Interface()) {
 			return
 		}
-		if dynamicConfigItemsSet.Exist(fieldPath) {
+		if _, ok := dynamicConfigItems[fieldPath]; ok {
 			dstConf.Set(newConf)
 			return []string{fieldPath}, nil
 		}
@@ -72,7 +74,7 @@ func mergeConfigItems(dstConf, newConf reflect.Value, fieldPath string, dynamicC
 		if fieldPath != "" {
 			fieldName = fieldPath + "." + fieldName
 		}
-		as, rs := mergeConfigItems(dstConf.Field(i), newConf.Field(i), fieldName, dynamicConfigItemsSet)
+		as, rs := mergeConfigItems(dstConf.Field(i), newConf.Field(i), fieldName)
 		acceptedItems = append(acceptedItems, as...)
 		rejectedItems = append(rejectedItems, rs...)
 	}
