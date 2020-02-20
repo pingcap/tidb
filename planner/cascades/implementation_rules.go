@@ -14,10 +14,10 @@
 package cascades
 
 import (
-	"github.com/pingcap/tidb/expression/aggregation"
 	"math"
 
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/expression/aggregation"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	impl "github.com/pingcap/tidb/planner/implementation"
 	"github.com/pingcap/tidb/planner/memo"
@@ -378,10 +378,10 @@ func (r *ImplStreamAgg) Match(expr *memo.GroupExpr, prop *property.PhysicalPrope
 func (r *ImplStreamAgg) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
 	switch expr.Group.EngineType {
 	case memo.EngineTiDB:
-		var newStreamAggImpl = func(agg *plannercore.PhysicalStreamAgg) memo.Implementation {return impl.NewTiDBStreamAggImpl(agg)}
+		var newStreamAggImpl = func(agg *plannercore.PhysicalStreamAgg) memo.Implementation { return impl.NewTiDBStreamAggImpl(agg) }
 		return r.getStreamAggImpls(expr, reqProp, newStreamAggImpl), nil
 	case memo.EngineTiKV:
-		var newStreamAggImpl = func(agg *plannercore.PhysicalStreamAgg) memo.Implementation {return impl.NewTiKVStreamAggImpl(agg)}
+		var newStreamAggImpl = func(agg *plannercore.PhysicalStreamAgg) memo.Implementation { return impl.NewTiKVStreamAggImpl(agg) }
 		return r.getStreamAggImpls(expr, reqProp, newStreamAggImpl), nil
 	default:
 		return nil, plannercore.ErrInternal.GenWithStack("Unsupported EngineType '%s' for StreamAggregation.", expr.Group.EngineType.String())
