@@ -22,6 +22,7 @@ import (
 	"io/ioutil"
 	"net/url"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
@@ -488,7 +489,7 @@ var defaultConf = Config{
 	Lease:                        "45s",
 	TokenLimit:                   1000,
 	OOMUseTmpStorage:             true,
-	TempStoragePath:              "/tmp/tidb/tmp-storage",
+	TempStoragePath:              filepath.Join(os.TempDir(), "tidb", "tmp-storage"),
 	OOMAction:                    "log",
 	MemQuotaQuery:                32 << 30,
 	EnableStreaming:              false,

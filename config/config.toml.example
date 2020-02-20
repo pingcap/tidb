@@ -38,7 +38,7 @@ mem-quota-query = 34359738368
 oom-use-tmp-storage = true
 
 # The location of temporary disk storage using by some executors when mem-quota-query is exceeded.
-tmp-storage-path = "/tmp/tidb/tmp-storage"
+tmp-storage-path = ""
 
 # What to do when mem-quota-query is exceeded and can not be spilled over to disk any more.
 # Valid options: ["log", "cancel"]
