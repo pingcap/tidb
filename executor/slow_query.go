@@ -515,7 +515,7 @@ type logFile struct {
 	start, end time.Time // The start/end time of the log file
 }
 
-// getAllFiles is used to get all slow-log need to parse, it is export for test.
+// getAllFiles is used to get all slow-log needed to parse, it is exported for test.
 func (e *slowQueryRetriever) getAllFiles(sctx sessionctx.Context, logFilePath string) ([]logFile, error) {
 	if e.extractor == nil || !e.extractor.Enable {
 		file, err := os.Open(logFilePath)
