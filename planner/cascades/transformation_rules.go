@@ -92,6 +92,9 @@ var defaultTransformationMap = map[memo.Operand][]Transformation{
 		NewRulePushTopNDownTiKVSingleGather(),
 		NewRuleMergeAdjacentTopN(),
 	},
+	memo.OperandUnionAll: {
+		NewRuleEliminateTableDualBelowUnionAll(),
+	},
 }
 
 type baseRule struct {
@@ -963,33 +966,32 @@ type EliminateProjection struct {
 // The pattern of this rule is `Projection -> Any`.
 func NewRuleEliminateProjection() Transformation {
 	rule := &EliminateProjection{}
-	rule.pattern = memo.BuildPattern(
-		memo.OperandProjection,
-		memo.EngineTiDBOnly,
-		memo.NewPattern(memo.OperandAny, memo.EngineTiDBOnly),
-	)
+	rule.pattern = memo.NewPattern(memo.OperandProjection, memo.EngineTiDBOnly)
 	return rule
 }
 
 // OnTransform implements Transformation interface.
 // This rule tries to eliminate the projection whose output columns are the same with its child.
 func (r *EliminateProjection) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
-	child := old.Children[0]
-	if child.Group.Prop.Schema.Len() != old.GetExpr().Group.Prop.Schema.Len() {
+	child := old.GetExpr().Children[0]
+	if child.Prop.Schema.Len() != old.GetExpr().Group.Prop.Schema.Len() {
 		return nil, false, false, nil
 	}
 
 	oldCols := old.GetExpr().Group.Prop.Schema.Columns
-	for i, col := range child.Group.Prop.Schema.Columns {
+	for i, col := range child.Prop.Schema.Columns {
 		if !col.Equal(nil, oldCols[i]) {
 			return nil, false, false, nil
 		}
 	}
 
 	// Promote the children group's expression.
-	finalGroupExprs := make([]*memo.GroupExpr, 0, child.Group.Equivalents.Len())
-	for elem := child.Group.Equivalents.Front(); elem != nil; elem = elem.Next() {
-		finalGroupExprs = append(finalGroupExprs, elem.Value.(*memo.GroupExpr))
+	finalGroupExprs := make([]*memo.GroupExpr, 0, child.Equivalents.Len())
+	for elem := child.Equivalents.Front(); elem != nil; elem = elem.Next() {
+		oldExpr := elem.Value.(*memo.GroupExpr)
+		newExpr := memo.NewGroupExpr(oldExpr.ExprNode)
+		newExpr.SetChildren(oldExpr.Children...)
+		finalGroupExprs = append(finalGroupExprs, newExpr)
 	}
 	return finalGroupExprs, true, false, nil
 }
@@ -1951,4 +1953,73 @@ func (r *TransformAggregateCaseToSelection) isTwoOrThreeArgCase(expr expression.
 		return false
 	}
 	return scalarFunc.FuncName.L == ast.Case && (len(scalarFunc.GetArgs()) == 2 || len(scalarFunc.GetArgs()) == 3)
+}
+
+// EliminateTableDualBelowUnionAll will eliminate LogicalTableDual below LogicalUnionAll.
+// This rule might be useful for pruning partitions of partitioned table.
+type EliminateTableDualBelowUnionAll struct {
+	baseRule
+}
+
+// NewRuleEliminateTableDualBelowUnionAll creates a new Transformation EliminateTableDualBelowUnionAll.
+func NewRuleEliminateTableDualBelowUnionAll() Transformation {
+	rule := &EliminateTableDualBelowUnionAll{}
+	rule.pattern = memo.NewPattern(memo.OperandUnionAll, memo.EngineTiDBOnly)
+	return rule
+}
+
+// OnTransform implements Transformation interface.
+// This rule tries to remove TableDual below UnionAll.
+func (r *EliminateTableDualBelowUnionAll) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	expr := old.GetExpr()
+	newChildren := make([]*memo.Group, 0, len(expr.Children))
+	for _, childGroup := range expr.Children {
+		if !r.groupContainsTableDual(childGroup) {
+			newChildren = append(newChildren, childGroup)
+		}
+	}
+	if len(newChildren) == len(expr.Children) {
+		// There is TableDual below UnionAll.
+		return nil, false, false, nil
+	}
+	if len(newChildren) == 1 {
+		// We don't need a UnionAll here, just return its non-dual child exprs.
+		child := newChildren[0]
+		newExprs := make([]*memo.GroupExpr, 0, child.Equivalents.Len())
+		for iter := child.Equivalents.Front(); iter != nil; iter = iter.Next() {
+			oldExpr := iter.Value.(*memo.GroupExpr)
+			newExpr := memo.NewGroupExpr(oldExpr.ExprNode)
+			newExpr.SetChildren(oldExpr.Children...)
+			newExprs = append(newExprs, newExpr)
+		}
+		return newExprs, true, false, nil
+	}
+	if len(newChildren) == 0 {
+		// All of its children are TableDual. So we can just return a TableDual here.
+		newExpr := memo.NewGroupExpr(plannercore.LogicalTableDual{RowCount: 0}.Init(expr.ExprNode.SCtx(), expr.ExprNode.SelectBlockOffset()))
+		return []*memo.GroupExpr{newExpr}, true, true, nil
+	}
+	// Because UnionAll has no other attributes, we can reuse the old LogicalPlan.
+	newExpr := memo.NewGroupExpr(expr.ExprNode)
+	newExpr.SetChildren(newChildren...)
+	return []*memo.GroupExpr{newExpr}, true, false, nil
+}
+
+func (r *EliminateTableDualBelowUnionAll) groupContainsTableDual(group *memo.Group) bool {
+	for iter := group.Equivalents.Front(); iter != nil; iter = iter.Next() {
+		expr := iter.Value.(*memo.GroupExpr)
+		switch p := expr.ExprNode.(type) {
+		case *plannercore.LogicalTableDual:
+			if p.RowCount == 0 {
+				return true
+			}
+		case *plannercore.LogicalProjection:
+			// Usually, we build Projections below UnionAll to make sure
+			// that the children of the UnionAll have the same schema.
+			if r.groupContainsTableDual(expr.Children[0]) {
+				return true
+			}
+		}
+	}
+	return false
 }

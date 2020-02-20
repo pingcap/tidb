@@ -171,5 +171,13 @@
       "select count(case when a > 10 and d < 5 then b end) from t",
       "select count(case when a > 10 and d < 5 then null else b end) from t"
     ]
+  },
+  {
+    "name": "TestEliminateTableDualBelowUnionAll",
+    "cases": [
+      "(select a from t) union all (select a from t limit 0) union all (select b from t)",
+      "(select a from t) union all (select a from t limit 0)",
+      "(select a from t limit 0) union all (select b from t limit 0)"
+    ]
   }
 ]

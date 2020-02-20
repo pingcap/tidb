@@ -2100,5 +2100,41 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestEliminateTableDualBelowUnionAll",
+    "Cases": [
+      {
+        "SQL": "(select a from t) union all (select a from t limit 0) union all (select b from t)",
+        "Result": [
+          "Group#0 Schema:[Column#37]",
+          "    Union_8 input:[Group#1,Group#2]",
+          "Group#1 Schema:[Column#37]",
+          "    Projection_9 input:[Group#3], test.t.a",
+          "Group#3 Schema:[test.t.a]",
+          "    TableScan_6 table:t",
+          "Group#2 Schema:[Column#37]",
+          "    Projection_11 input:[Group#4], test.t.b",
+          "Group#4 Schema:[test.t.b]",
+          "    TableScan_1 table:t"
+        ]
+      },
+      {
+        "SQL": "(select a from t) union all (select a from t limit 0)",
+        "Result": [
+          "Group#0 Schema:[Column#25]",
+          "    Projection_7 input:[Group#1], test.t.a",
+          "Group#1 Schema:[test.t.a]",
+          "    TableScan_4 table:t"
+        ]
+      },
+      {
+        "SQL": "(select a from t limit 0) union all (select b from t limit 0)",
+        "Result": [
+          "Group#0 Schema:[Column#25]",
+          "    TableDual_10 rowcount:0"
+        ]
+      }
+    ]
   }
 ]

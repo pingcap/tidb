@@ -344,3 +344,28 @@ func (s *testTransformationRuleSuite) TestTransformAggregateCaseToSelection(c *C
 	s.testData.GetTestCases(c, &input, &output)
 	testGroupToString(input, output, s, c)
 }
+
+func (s *testTransformationRuleSuite) TestEliminateTableDualBelowUnionAll(c *C) {
+	s.optimizer.ResetTransformationRules(map[memo.Operand][]Transformation{
+		memo.OperandUnionAll: {
+			NewRuleEliminateTableDualBelowUnionAll(),
+		},
+		memo.OperandLimit: {
+			NewRuleTransformLimitToTableDual(),
+		},
+		memo.OperandProjection: {
+			NewRuleEliminateProjection(),
+			NewRuleMergeAdjacentProjection(),
+		},
+	})
+	defer func() {
+		s.optimizer.ResetTransformationRules(defaultTransformationMap)
+	}()
+	var input []string
+	var output []struct {
+		SQL    string
+		Result []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	testGroupToString(input, output, s, c)
+}
