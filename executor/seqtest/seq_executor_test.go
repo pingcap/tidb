@@ -37,8 +37,11 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl"
+	ddltestutil "github.com/pingcap/tidb/ddl/testutil"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
@@ -51,6 +54,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
@@ -287,17 +291,19 @@ func (s *seqTestSuite) TestShow(c *C) {
 	tk.MustExec(`create index idx5 using hash on show_index (id) using btree comment 'idx';`)
 	tk.MustExec(`create index idx6 using hash on show_index (id);`)
 	tk.MustExec(`create index idx7 on show_index (id);`)
+	tk.MustExec(`create index expr_idx on show_index ((id*2+1))`)
 	testSQL = "SHOW index from show_index;"
 	tk.MustQuery(testSQL).Check(testutil.RowsWithSep("|",
-		"show_index|0|PRIMARY|1|id|A|0|<nil>|<nil>||BTREE||",
-		"show_index|1|cIdx|1|c|A|0|<nil>|<nil>|YES|HASH||index_comment_for_cIdx",
-		"show_index|1|idx1|1|id|A|0|<nil>|<nil>|YES|HASH||",
-		"show_index|1|idx2|1|id|A|0|<nil>|<nil>|YES|BTREE||idx",
-		"show_index|1|idx3|1|id|A|0|<nil>|<nil>|YES|HASH||idx",
-		"show_index|1|idx4|1|id|A|0|<nil>|<nil>|YES|BTREE||idx",
-		"show_index|1|idx5|1|id|A|0|<nil>|<nil>|YES|BTREE||idx",
-		"show_index|1|idx6|1|id|A|0|<nil>|<nil>|YES|HASH||",
-		"show_index|1|idx7|1|id|A|0|<nil>|<nil>|YES|BTREE||",
+		"show_index|0|PRIMARY|1|id|A|0|<nil>|<nil>||BTREE| |NULL",
+		"show_index|1|cIdx|1|c|A|0|<nil>|<nil>|YES|HASH||index_comment_for_cIdx|NULL",
+		"show_index|1|idx1|1|id|A|0|<nil>|<nil>|YES|HASH| |NULL",
+		"show_index|1|idx2|1|id|A|0|<nil>|<nil>|YES|BTREE||idx|NULL",
+		"show_index|1|idx3|1|id|A|0|<nil>|<nil>|YES|HASH||idx|NULL",
+		"show_index|1|idx4|1|id|A|0|<nil>|<nil>|YES|BTREE||idx|NULL",
+		"show_index|1|idx5|1|id|A|0|<nil>|<nil>|YES|BTREE||idx|NULL",
+		"show_index|1|idx6|1|id|A|0|<nil>|<nil>|YES|HASH| |NULL",
+		"show_index|1|idx7|1|id|A|0|<nil>|<nil>|YES|BTREE| |NULL",
+		"show_index|1|expr_idx|1|NULL|A|0|<nil>|<nil>|YES|BTREE| |(`id` * 2 + 1)",
 	))
 
 	// For show like with escape
@@ -1151,7 +1157,7 @@ func (s *seqTestSuite1) TestCoprocessorPriority(c *C) {
 	cli.mu.Unlock()
 }
 
-func (s *seqTestSuite) TestAutoIDInRetry(c *C) {
+func (s *seqTestSuite) TestAutoIncIDInRetry(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (id int not null auto_increment primary key)")
@@ -1162,12 +1168,108 @@ func (s *seqTestSuite) TestAutoIDInRetry(c *C) {
 	tk.MustExec("insert into t values (),()")
 	tk.MustExec("insert into t values ()")
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/mockCommitRetryForAutoID", `return(true)`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/mockCommitRetryForAutoIncID", `return(true)`), IsNil)
 	tk.MustExec("commit")
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/mockCommitRetryForAutoID"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/mockCommitRetryForAutoIncID"), IsNil)
 
 	tk.MustExec("insert into t values ()")
 	tk.MustQuery(`select * from t`).Check(testkit.Rows("1", "2", "3", "4", "5"))
+}
+
+func (s *seqTestSuite) TestAutoRandIDRetry(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
+	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
+	tk.MustExec("create database if not exists auto_random_retry")
+	tk.MustExec("use auto_random_retry")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int auto_random(3) primary key)")
+
+	extractMaskedOrderedHandles := func() []int64 {
+		handles, err := ddltestutil.ExtractAllTableHandles(tk.Se, "auto_random_retry", "t")
+		c.Assert(err, IsNil)
+		return testutil.ConfigTestUtils.MaskSortHandles(handles, 3, mysql.TypeLong)
+	}
+
+	tk.MustExec("set @@tidb_disable_txn_auto_retry = 0")
+	tk.MustExec("set @@tidb_retry_limit = 10")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values ()")
+	tk.MustExec("insert into t values (),()")
+	tk.MustExec("insert into t values ()")
+
+	session.ResetMockAutoRandIDRetryCount(5)
+	fpName := "github.com/pingcap/tidb/session/mockCommitRetryForAutoRandID"
+	c.Assert(failpoint.Enable(fpName, `return(true)`), IsNil)
+	tk.MustExec("commit")
+	c.Assert(failpoint.Disable(fpName), IsNil)
+	tk.MustExec("insert into t values ()")
+	maskedHandles := extractMaskedOrderedHandles()
+	c.Assert(maskedHandles, DeepEquals, []int64{1, 2, 3, 4, 5})
+
+	session.ResetMockAutoRandIDRetryCount(11)
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values ()")
+	c.Assert(failpoint.Enable(fpName, `return(true)`), IsNil)
+	// Insertion failure will skip the 6 in retryInfo.
+	tk.MustGetErrCode("commit", mysql.ErrTxnRetryable)
+	c.Assert(failpoint.Disable(fpName), IsNil)
+
+	tk.MustExec("insert into t values ()")
+	maskedHandles = extractMaskedOrderedHandles()
+	c.Assert(maskedHandles, DeepEquals, []int64{1, 2, 3, 4, 5, 7})
+}
+
+func (s *seqTestSuite) TestAutoRandRecoverTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
+	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
+	tk.MustExec("create database if not exists test_recover")
+	tk.MustExec("use test_recover")
+	tk.MustExec("drop table if exists t_recover_auto_rand")
+	defer func(originGC bool) {
+		if originGC {
+			ddl.EmulatorGCEnable()
+		} else {
+			ddl.EmulatorGCDisable()
+		}
+	}(ddl.IsEmulatorGCEnable())
+
+	// Disable emulator GC.
+	// Otherwise emulator GC will delete table record as soon as possible after execute drop table ddl.
+	ddl.EmulatorGCDisable()
+	gcTimeFormat := "20060102-15:04:05 -0700 MST"
+	timeBeforeDrop := time.Now().Add(0 - time.Duration(48*60*60*time.Second)).Format(gcTimeFormat)
+	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
+			       ON DUPLICATE KEY
+			       UPDATE variable_value = '%[1]s'`
+
+	// Set GC safe point.
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+	err := gcutil.EnableGC(tk.Se)
+	c.Assert(err, IsNil)
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"), IsNil)
+	}()
+	const autoRandIDStep = 5000
+	stp := autoid.GetStep()
+	autoid.SetStep(autoRandIDStep)
+	defer autoid.SetStep(stp)
+
+	// Check rebase auto_random id.
+	tk.MustExec("create table t_recover_auto_rand (a int auto_random(5) primary key);")
+	tk.MustExec("insert into t_recover_auto_rand values (),(),()")
+	tk.MustExec("drop table t_recover_auto_rand")
+	tk.MustExec("recover table t_recover_auto_rand")
+	tk.MustExec("insert into t_recover_auto_rand values (),(),()")
+	hs, err := ddltestutil.ExtractAllTableHandles(tk.Se, "test_recover", "t_recover_auto_rand")
+	c.Assert(err, IsNil)
+	ordered := testutil.ConfigTestUtils.MaskSortHandles(hs, 5, mysql.TypeLong)
+
+	c.Assert(ordered, DeepEquals, []int64{1, 2, 3, autoRandIDStep + 1, autoRandIDStep + 2, autoRandIDStep + 3})
 }
 
 func (s *seqTestSuite) TestMaxDeltaSchemaCount(c *C) {

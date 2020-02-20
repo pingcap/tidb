@@ -314,12 +314,14 @@ func bootstrap(s Session) {
 }
 
 const (
+	// varTrue is the true value in mysql.TiDB table for boolean columns.
+	varTrue = "True"
+	// varFalse is the false value in mysql.TiDB table for boolean columns.
+	varFalse = "False"
 	// The variable name in mysql.TiDB table.
 	// It is used for checking if the store is bootstrapped by any TiDB server.
+	// If the value is `True`, the store is already bootstrapped by a TiDB server.
 	bootstrappedVar = "bootstrapped"
-	// The variable value in mysql.TiDB table for bootstrappedVar.
-	// If the value true, the store is already bootstrapped by a TiDB server.
-	bootstrappedVarTrue = "True"
 	// The variable name in mysql.TiDB table.
 	// It is used for getting the version of the TiDB server which bootstrapped the store.
 	tidbServerVersionVar = "tidb_server_version"
@@ -388,7 +390,7 @@ func checkBootstrapped(s Session) (bool, error) {
 		}
 		return false, errors.Trace(err)
 	}
-	isBootstrapped := sVal == bootstrappedVarTrue
+	isBootstrapped := sVal == varTrue
 	if isBootstrapped {
 		// Make sure that doesn't affect the following operations.
 		if err = s.CommitTxn(context.Background()); err != nil {
@@ -949,8 +951,12 @@ func upgradeToVer39(s Session) {
 
 func writeNewCollationParameter(s Session, flag bool) {
 	comment := "If the new collations are enabled. Do not edit it."
-	sql := fmt.Sprintf(`INSERT HIGH_PRIORITY INTO %s.%s VALUES ("%s", %v, '%s') ON DUPLICATE KEY UPDATE VARIABLE_VALUE=%v`,
-		mysql.SystemDB, mysql.TiDBTable, tidbNewCollationEnabled, flag, comment, flag)
+	b := varFalse
+	if flag {
+		b = varTrue
+	}
+	sql := fmt.Sprintf(`INSERT HIGH_PRIORITY INTO %s.%s VALUES ("%s", '%s', '%s') ON DUPLICATE KEY UPDATE VARIABLE_VALUE='%s'`,
+		mysql.SystemDB, mysql.TiDBTable, tidbNewCollationEnabled, b, comment, b)
 	mustExecute(s, sql)
 }
 
@@ -1059,7 +1065,7 @@ func doDMLWorks(s Session) {
 
 	sql = fmt.Sprintf(`INSERT HIGH_PRIORITY INTO %s.%s VALUES("%s", "%s", "Bootstrap flag. Do not delete.")
 		ON DUPLICATE KEY UPDATE VARIABLE_VALUE="%s"`,
-		mysql.SystemDB, mysql.TiDBTable, bootstrappedVar, bootstrappedVarTrue, bootstrappedVarTrue)
+		mysql.SystemDB, mysql.TiDBTable, bootstrappedVar, varTrue, varTrue)
 	mustExecute(s, sql)
 
 	sql = fmt.Sprintf(`INSERT HIGH_PRIORITY INTO %s.%s VALUES("%s", "%d", "Bootstrap version. Do not delete.")`,

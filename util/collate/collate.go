@@ -37,6 +37,11 @@ type CollatorOption struct {
 	PadLen int
 }
 
+// NewCollatorOption creates a new CollatorOption with the specified arguments.
+func NewCollatorOption(padLen int) CollatorOption {
+	return CollatorOption{padLen}
+}
+
 // Collator provides functionality for comparing strings for a given
 // collation order.
 type Collator interface {
@@ -150,6 +155,9 @@ func (bpc *binPaddingCollator) Compare(a, b string, opt CollatorOption) int {
 }
 
 func (bpc *binPaddingCollator) Key(str string, opt CollatorOption) []byte {
+	if opt.PadLen <= len(str) {
+		return []byte(str)
+	}
 	return []byte(str + strings.Repeat(" ", opt.PadLen-len(str)))
 }
 
