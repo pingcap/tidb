@@ -89,7 +89,7 @@
       },
       {
         "SQL": "select /*+ IGNORE_INDEX(t, c_d_e) */ c from t order by c",
-        "Best": "TableReader(Table(t))->Sort",
+        "Best": "TableReader(Table(t))->Shuffle(execution info: concurrency:1, fan out:4, splitter:random, merger:none)->Sort->Shuffle(execution info: concurrency:4, fan out:1, child:Shuffle_12, splitter:none, merger:merge-sort(test.t.c))",
         "HasWarn": false,
         "Hints": "USE_INDEX(@`sel_1` `test`.`t` )"
       },
@@ -707,7 +707,7 @@
       },
       {
         "SQL": "select * from t union all (select * from t) order by a ",
-        "Best": "UnionAll{TableReader(Table(t))->TableReader(Table(t))}->Sort"
+        "Best": "UnionAll{TableReader(Table(t))->TableReader(Table(t))}->Shuffle(execution info: concurrency:1, fan out:4, splitter:random, merger:none)->Sort->Shuffle(execution info: concurrency:4, fan out:1, child:Shuffle_20, splitter:none, merger:merge-sort(Column#25))"
       },
       {
         "SQL": "select * from t union all (select * from t) limit 1",
@@ -1425,7 +1425,7 @@
       },
       {
         "SQL": "select lead(a, 1) over (partition by b) as c from t",
-        "Best": "TableReader(Table(t))->Shuffle(execution info: concurrency:0, splitter:hash, merger:serial)->Sort->Window(lead(test.t.a, 1)->Column#14 over(partition by test.t.b))->Shuffle(execution info: concurrency:4, child:Shuffle_12, splitter:serial, merger:simple)->Projection"
+        "Best": "TableReader(Table(t))->Shuffle(execution info: concurrency:1, fan out:4, splitter:hash(test.t.b), merger:none)->Sort->Window(lead(test.t.a, 1)->Column#14 over(partition by test.t.b))->Shuffle(execution info: concurrency:4, fan out:1, child:Shuffle_15, splitter:none, merger:random)->Projection"
       }
     ]
   }
