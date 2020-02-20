@@ -97,4 +97,22 @@ func (s *testInfoschemaTableSuite) TestDDLJobs(c *C) {
 
 	tk.MustQuery("select job_type from information_schema.DDL_JOBS group by job_type having job_type = 'create table'").Check(
 		testkit.Rows("create table"))
+
+	//test the privilege of new user for information_schema.DDL_JOBS
+	tk.MustExec("create user DDL_JOBS_tester")
+	DDLJobsTester := testkit.NewTestKit(c, s.store)
+	DDLJobsTester.MustExec("use information_schema")
+	c.Assert(DDLJobsTester.Se.Auth(&auth.UserIdentity{
+		Username: "DDL_JOBS_tester",
+		Hostname: "127.0.0.1",
+	}, nil, nil), IsTrue)
+	DDLJobsTester.MustQuery("select DB_NAME from information_schema.DDL_JOBS;").Check(
+		[][]interface{}{})
+
+	//test the privilege of user with privilege of mysql for information_schema.ddl_jobs
+	tk.MustExec("CREATE ROLE r_mysql_priv;")
+	tk.MustExec("GRANT ALL PRIVILEGES ON mysql.* TO r_mysql_priv;")
+	tk.MustExec("GRANT r_mysql_priv TO DDL_JOBS_tester;")
+	DDLJobsTester.MustExec("set role r_mysql_priv")
+	DDLJobsTester.MustQuery("select DISTINCT DB_NAME from information_schema.DDL_JOBS where DB_NAME = 'mysql';").Check(testkit.Rows("mysql"))
 }

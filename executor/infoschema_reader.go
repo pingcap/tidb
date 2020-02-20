@@ -15,8 +15,6 @@ package executor
 
 import (
 	"context"
-	"sort"
-
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -25,6 +23,8 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"sort"
+	"strings"
 )
 
 type memtableRetriever struct {
@@ -184,13 +184,14 @@ func (e *DDLJobsReaderExec) Open(ctx context.Context) error {
 // Next implements the Executor Next interface.
 func (e *DDLJobsReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.GrowAndReset(e.maxChunkSize)
+	checker := privilege.GetPrivilegeManager(e.ctx)
 	count := 0
 
 	// Append running ddl jobs.
 	if e.cursor < len(e.runningJobs) {
 		num := mathutil.Min(req.Capacity(), len(e.runningJobs)-e.cursor)
 		for i := e.cursor; i < e.cursor+num; i++ {
-			e.appendJobToChunk(req, e.runningJobs[i])
+			e.appendJobToChunk(req, e.runningJobs[i], checker)
 		}
 		e.cursor += num
 		count += num
@@ -204,15 +205,14 @@ func (e *DDLJobsReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			return err
 		}
 		for _, job := range e.cacheJobs {
-			e.appendJobToChunk(req, job)
+			e.appendJobToChunk(req, job, checker)
 		}
 		e.cursor += len(e.cacheJobs)
 	}
 	return nil
 }
 
-func (e *DDLJobsReaderExec) appendJobToChunk(req *chunk.Chunk, job *model.Job) {
-	req.AppendInt64(0, job.ID)
+func (e *DDLJobsReaderExec) appendJobToChunk(req *chunk.Chunk, job *model.Job, checker privilege.Manager) {
 	schemaName := job.SchemaName
 	tableName := ""
 	finishTS := uint64(0)
@@ -232,6 +232,13 @@ func (e *DDLJobsReaderExec) appendJobToChunk(req *chunk.Chunk, job *model.Job) {
 	if len(tableName) == 0 {
 		tableName = getTableName(e.is, job.TableID)
 	}
+
+	//check the privilege
+	if checker != nil && !checker.RequestVerification(e.ctx.GetSessionVars().ActiveRoles, strings.ToLower(schemaName), strings.ToLower(tableName), "", mysql.AllPrivMask) {
+		return
+	}
+
+	req.AppendInt64(0, job.ID)
 	req.AppendString(1, schemaName)
 	req.AppendString(2, tableName)
 	req.AppendString(3, job.Type.String())
