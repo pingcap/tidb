@@ -13,7 +13,12 @@
 
 package kv
 
-import "context"
+import (
+	"fmt"
+	"context"
+
+	"sync/atomic"
+)
 
 // UnionStore is a store that wraps a snapshot for read and a BufferStore for buffered write.
 // Also, it provides some transaction related utilities.
@@ -123,6 +128,9 @@ func (it invalidIterator) Close() {}
 type lazyMemBuffer struct {
 	mb  MemBuffer
 	cap int
+
+	// fileBased is true if MemBuffer is upgraded.
+	fileBased bool
 }
 
 func (lmb *lazyMemBuffer) Get(ctx context.Context, k Key) ([]byte, error) {
@@ -133,12 +141,46 @@ func (lmb *lazyMemBuffer) Get(ctx context.Context, k Key) ([]byte, error) {
 	return lmb.mb.Get(ctx, k)
 }
 
+const saveToFile = 20 *1024*1024
+
 func (lmb *lazyMemBuffer) Set(key Key, value []byte) error {
 	if lmb.mb == nil {
 		lmb.mb = NewMemDbBuffer(lmb.cap)
 	}
 
+	// If the membuffer is large, such as the large txn case,
+	// use file based membuffer to reduce memory usage.
+	if lmb.fileBased == false && lmb.mb.Size() > saveToFile {
+		mb, err := upgradeToFileDBBuffer(lmb.mb)
+		if err != nil {
+			return err
+		}
+		// Release the old memDbBuffer memory.
+		lmb.mb.Reset()
+		lmb.mb = mb
+		lmb.fileBased = true
+	}
+
 	return lmb.mb.Set(key, value)
+}
+
+
+var fileNameIdx uint64 = 1000
+
+func upgradeToFileDBBuffer(old MemBuffer) (MemBuffer, error) {
+	idx := atomic.AddUint64(&fileNameIdx , 1)
+	path := fmt.Sprintf("/tmp/tidb/file_db/%d", idx)
+	res, err := NewFileDBBuffer(path)
+	if err != nil {
+		return nil, err
+	}
+	err = WalkMemBuffer(old, func(k Key, v []byte) error{
+		return res.Set(k, v)
+	})
+	if err != nil {
+		res.Reset()
+	}
+	return res, err
 }
 
 func (lmb *lazyMemBuffer) Delete(k Key) error {
