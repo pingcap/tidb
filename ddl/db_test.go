@@ -2641,6 +2641,14 @@ func (s *testDBSuite3) TestTruncateTable(c *C) {
 	c.Assert(t2.Meta().TiFlashReplica.LocationLabels, DeepEquals, t1.Meta().TiFlashReplica.LocationLabels)
 	c.Assert(t2.Meta().TiFlashReplica.Available, IsFalse)
 	c.Assert(t2.Meta().TiFlashReplica.AvailablePartitionIDs, DeepEquals, []int64{partition.Definitions[1].ID})
+	// Test for truncate twice.
+	tk.MustExec("alter table t1 truncate partition p0")
+	t2 = testGetTableByName(c, s.s, "test", "t1")
+	c.Assert(t2.Meta().TiFlashReplica.Count, Equals, t1.Meta().TiFlashReplica.Count)
+	c.Assert(t2.Meta().TiFlashReplica.LocationLabels, DeepEquals, t1.Meta().TiFlashReplica.LocationLabels)
+	c.Assert(t2.Meta().TiFlashReplica.Available, IsFalse)
+	c.Assert(t2.Meta().TiFlashReplica.AvailablePartitionIDs, DeepEquals, []int64{partition.Definitions[1].ID})
+
 }
 
 func (s *testDBSuite4) TestRenameTable(c *C) {
