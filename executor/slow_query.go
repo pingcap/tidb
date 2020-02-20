@@ -512,7 +512,7 @@ func ParseTime(s string) (time.Time, error) {
 
 type logFile struct {
 	file       *os.File  // The opened file handle
-	begin, end time.Time // The start/end time of the log file
+	start, end time.Time // The start/end time of the log file
 }
 
 // getAllFiles is used to get all slow-log need to parse, it is export for test.
@@ -557,11 +557,11 @@ func (e *slowQueryRetriever) getAllFiles(sctx sessionctx.Context, logFilePath st
 			}
 		}()
 		// Get the file start time.
-		fileBeginTime, err := e.getFileStartTime(file)
+		fileStartTime, err := e.getFileStartTime(file)
 		if err != nil {
 			return handleErr(err)
 		}
-		if fileBeginTime.After(e.extractor.EndTime) {
+		if fileStartTime.After(e.extractor.EndTime) {
 			return nil
 		}
 
@@ -579,7 +579,7 @@ func (e *slowQueryRetriever) getAllFiles(sctx sessionctx.Context, logFilePath st
 		}
 		logFiles = append(logFiles, logFile{
 			file:  file,
-			begin: fileBeginTime,
+			start: fileStartTime,
 			end:   fileEndTime,
 		})
 		skip = true
@@ -587,7 +587,7 @@ func (e *slowQueryRetriever) getAllFiles(sctx sessionctx.Context, logFilePath st
 	})
 	// Sort by start time
 	sort.Slice(logFiles, func(i, j int) bool {
-		return logFiles[i].begin.Before(logFiles[j].begin)
+		return logFiles[i].start.Before(logFiles[j].start)
 	})
 	return logFiles, err
 }
