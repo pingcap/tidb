@@ -16,6 +16,8 @@ package config
 import (
 	"encoding/json"
 	"reflect"
+
+	"github.com/pingcap/tidb/util/set"
 )
 
 // CloneConf deeply clones this config.
@@ -41,16 +43,13 @@ var (
 	}
 )
 
-// MergeConfigItems is used to overwrite some config items that can't be changed during runtime.
+// MergeConfigItems overwrites the dynamic config items and leaves the other items unchanged.
 func MergeConfigItems(dstConf, newConf *Config) (acceptedItems, rejectedItems []string) {
-	dynamicConfigItemsMap := make(map[string]struct{}, len(dynamicConfigItems))
-	for _, c := range dynamicConfigItems {
-		dynamicConfigItemsMap[c] = struct{}{}
-	}
-	return mergeConfigItems(reflect.ValueOf(dstConf), reflect.ValueOf(newConf), "", dynamicConfigItemsMap)
+	dynamicConfigItemsSet := set.NewStringSet(dynamicConfigItems...)
+	return mergeConfigItems(reflect.ValueOf(dstConf), reflect.ValueOf(newConf), "", dynamicConfigItemsSet)
 }
 
-func mergeConfigItems(dstConf, newConf reflect.Value, fieldPath string, dynamicConfigItemsMap map[string]struct{}) (acceptedItems, rejectedItems []string) {
+func mergeConfigItems(dstConf, newConf reflect.Value, fieldPath string, dynamicConfigItemsSet set.StringSet) (acceptedItems, rejectedItems []string) {
 	t := dstConf.Type()
 	if t.Kind() == reflect.Ptr {
 		t = t.Elem()
@@ -61,7 +60,7 @@ func mergeConfigItems(dstConf, newConf reflect.Value, fieldPath string, dynamicC
 		if reflect.DeepEqual(dstConf.Interface(), newConf.Interface()) {
 			return
 		}
-		if _, ok := dynamicConfigItemsMap[fieldPath]; ok {
+		if dynamicConfigItemsSet.Exist(fieldPath) {
 			dstConf.Set(newConf)
 			return []string{fieldPath}, nil
 		}
@@ -73,7 +72,7 @@ func mergeConfigItems(dstConf, newConf reflect.Value, fieldPath string, dynamicC
 		if fieldPath != "" {
 			fieldName = fieldPath + "." + fieldName
 		}
-		as, rs := mergeConfigItems(dstConf.Field(i), newConf.Field(i), fieldName, dynamicConfigItemsMap)
+		as, rs := mergeConfigItems(dstConf.Field(i), newConf.Field(i), fieldName, dynamicConfigItemsSet)
 		acceptedItems = append(acceptedItems, as...)
 		rejectedItems = append(rejectedItems, rs...)
 	}

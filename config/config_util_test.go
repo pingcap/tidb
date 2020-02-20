@@ -18,6 +18,7 @@ import (
 	"reflect"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/util/set"
 )
 
 func (s *testConfigSuite) TestCloneConf(c *C) {
@@ -59,21 +60,16 @@ func (s *testConfigSuite) TestMergeConfigItems(c *C) {
 	newConf.AdvertiseAddress = "1.2.3.4"
 	newConf.Log.SlowThreshold = 2345
 
-	allowedMap := make(map[string]struct{}, len(dynamicConfigItems))
-	for _, c := range dynamicConfigItems {
-		allowedMap[c] = struct{}{}
-	}
+	allowedSet := set.NewStringSet(dynamicConfigItems...)
 
 	as, rs := MergeConfigItems(oldConf, newConf)
 	c.Assert(len(as), Equals, 9)
 	c.Assert(len(rs), Equals, 4)
 	for _, a := range as {
-		_, ok := allowedMap[a]
-		c.Assert(ok, IsTrue)
+		c.Assert(allowedSet.Exist(a), IsTrue)
 	}
 	for _, a := range rs {
-		_, ok := allowedMap[a]
-		c.Assert(ok, IsFalse)
+		c.Assert(allowedSet.Exist(a), IsFalse)
 	}
 
 	c.Assert(oldConf.Performance.MaxProcs, Equals, newConf.Performance.MaxProcs)
