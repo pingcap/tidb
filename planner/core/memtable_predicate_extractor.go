@@ -368,6 +368,20 @@ func (helper extractHelper) extractTimeRange(
 	return
 }
 
+func (helper extractHelper) parseQuantiles(quantileSet set.StringSet) []float64 {
+	quantiles := make([]float64, 0, len(quantileSet))
+	for k := range quantileSet {
+		v, err := strconv.ParseFloat(k, 64)
+		if err != nil {
+			// ignore the parse error won't affect result.
+			continue
+		}
+		quantiles = append(quantiles, v)
+	}
+	sort.Float64s(quantiles)
+	return quantiles
+}
+
 // ClusterTableExtractor is used to extract some predicates of cluster table.
 type ClusterTableExtractor struct {
 	extractHelper
@@ -559,20 +573,6 @@ func (e *MetricTableExtractor) getTimeRange(start, end int64) (time.Time, time.T
 	return startTime, endTime
 }
 
-func (e *MetricTableExtractor) parseQuantiles(quantileSet set.StringSet) []float64 {
-	quantiles := make([]float64, 0, len(quantileSet))
-	for k := range quantileSet {
-		v, err := strconv.ParseFloat(k, 64)
-		if err != nil {
-			// ignore the parse error won't affect result.
-			continue
-		}
-		quantiles = append(quantiles, v)
-	}
-	sort.Float64s(quantiles)
-	return quantiles
-}
-
 func (e *MetricTableExtractor) convertToTime(t int64) time.Time {
 	if t == 0 || t == math.MaxInt64 {
 		return time.Now()
@@ -595,16 +595,48 @@ type InspectionResultTableExtractor struct {
 
 // Extract implements the MemTablePredicateExtractor Extract interface
 func (e *InspectionResultTableExtractor) Extract(
-	ctx sessionctx.Context,
+	_ sessionctx.Context,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
 ) (remained []expression.Expression) {
-	// Extract the `type/instance` columns
+	// Extract the `rule/item` columns
 	remained, ruleSkip, rules := e.extractCol(schema, names, predicates, "rule", true)
 	remained, itemSkip, items := e.extractCol(schema, names, remained, "item", true)
 	e.SkipInspection = ruleSkip || itemSkip
 	e.Rules = rules
 	e.Items = items
+	return remained
+}
+
+// InspectionSummaryTableExtractor is used to extract some predicates of `inspection_summary`
+type InspectionSummaryTableExtractor struct {
+	extractHelper
+	// SkipInspection means the where clause always false, we don't need to request any component
+	SkipInspection bool
+	// Rules represents rules applied to, and we should apply all inspection rules if there is no rules specified
+	// e.g: SELECT * FROM inspection_summary WHERE rule in ('ddl', 'config')
+	Rules       set.StringSet
+	MetricNames set.StringSet
+	Quantiles   []float64
+}
+
+// Extract implements the MemTablePredicateExtractor Extract interface
+func (e *InspectionSummaryTableExtractor) Extract(
+	_ sessionctx.Context,
+	schema *expression.Schema,
+	names []*types.FieldName,
+	predicates []expression.Expression,
+) (remained []expression.Expression) {
+	// Extract the `rule` columns
+	remained, ruleSkip, rules := e.extractCol(schema, names, predicates, "rule", true)
+	// Extract the `metric_name` columns
+	remained, metricNameSkip, metricNames := e.extractCol(schema, names, predicates, "metric_name", true)
+	// Extract the `quantile` columns
+	remained, quantileSkip, quantileSet := e.extractCol(schema, names, predicates, "quantile", false)
+	e.SkipInspection = ruleSkip || quantileSkip || metricNameSkip
+	e.Rules = rules
+	e.Quantiles = e.parseQuantiles(quantileSet)
+	e.MetricNames = metricNames
 	return remained
 }
