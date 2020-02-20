@@ -1897,6 +1897,7 @@ func (s *mergeLockScanner) physicalScanLocksForStore(ctx context.Context, safePo
 		}
 
 		nextKey = resp.Locks[len(resp.Locks)-1].Key
+		nextKey = append(nextKey, 0)
 
 		for _, lockInfo := range resp.Locks {
 			lockCh <- scanLockResult{Lock: tikv.NewLock(lockInfo)}
