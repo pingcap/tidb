@@ -2955,7 +2955,7 @@ func adjustOverlongViewColname(plan LogicalPlan) {
 	outputNames := plan.OutputNames()
 	for i := range outputNames {
 		if outputName := outputNames[i].ColName.L; len(outputName) > mysql.MaxColumnNameLength {
-			outputNames[i].ColName = model.NewCIStr(fmt.Sprintf("new_exp_%d", i+1))
+			outputNames[i].ColName = model.NewCIStr(fmt.Sprintf("name_exp_%d", i+1))
 		}
 	}
 }
