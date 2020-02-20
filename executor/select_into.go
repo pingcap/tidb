@@ -17,6 +17,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"github.com/pingcap/tidb/expression"
 	"math"
 	"os"
 	"strconv"
@@ -50,7 +51,7 @@ func (s *SelectIntoExec) Open(ctx context.Context) error {
 
 	f, err := os.Create(s.intoOpt.FileName)
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
 	s.started = true
 	s.dstFile = f
@@ -76,7 +77,7 @@ func (s *SelectIntoExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
-var (
+const (
 	expFormatBig   = 1e15
 	expFormatSmall = 1e-15
 )
@@ -134,23 +135,7 @@ func (s *SelectIntoExec) dumpToOutfile() error {
 					s.lineBuf = strconv.AppendInt(s.lineBuf, row.GetInt64(j), 10)
 				}
 			case types.ETReal:
-				prec := types.UnspecifiedLength
-				if col.RetType.Decimal > 0 && int(col.RetType.Decimal) != mysql.NotFixedDec {
-					prec = int(col.RetType.Decimal)
-				}
-				v := row.GetFloat64(j)
-				absV := math.Abs(v)
-				if prec == types.UnspecifiedLength && (absV >= expFormatBig || (absV != 0 && absV < expFormatSmall)) {
-					s.realBuf = strconv.AppendFloat(s.realBuf[:0], v, 'e', prec, 64)
-					if idx := bytes.IndexByte(s.realBuf, '+'); idx != -1 {
-						s.lineBuf = append(s.lineBuf, s.realBuf[:idx]...)
-						s.lineBuf = append(s.lineBuf, s.realBuf[idx+1:]...)
-					} else {
-						s.lineBuf = append(s.lineBuf, s.realBuf...)
-					}
-				} else {
-					s.lineBuf = strconv.AppendFloat(s.lineBuf, v, 'f', prec, 64)
-				}
+				s.dumpReal(row, col, j)
 			case types.ETDecimal:
 				s.lineBuf = append(s.lineBuf, row.GetMyDecimal(j).String()...)
 			case types.ETString:
@@ -171,10 +156,30 @@ func (s *SelectIntoExec) dumpToOutfile() error {
 		}
 		s.lineBuf = append(s.lineBuf, lineTerm...)
 		if _, err := s.writer.Write(s.lineBuf); err != nil {
-			return err
+			return errors.Trace(err)
 		}
 	}
 	return nil
+}
+
+func (s *SelectIntoExec) dumpReal(row chunk.Row, col *expression.Column, colIdx int) {
+	prec := types.UnspecifiedLength
+	if col.RetType.Decimal > 0 && int(col.RetType.Decimal) != mysql.NotFixedDec {
+		prec = int(col.RetType.Decimal)
+	}
+	v := row.GetFloat64(colIdx)
+	absV := math.Abs(v)
+	if prec == types.UnspecifiedLength && (absV >= expFormatBig || (absV != 0 && absV < expFormatSmall)) {
+		s.realBuf = strconv.AppendFloat(s.realBuf[:0], v, 'e', prec, 64)
+		if idx := bytes.IndexByte(s.realBuf, '+'); idx != -1 {
+			s.lineBuf = append(s.lineBuf, s.realBuf[:idx]...)
+			s.lineBuf = append(s.lineBuf, s.realBuf[idx+1:]...)
+		} else {
+			s.lineBuf = append(s.lineBuf, s.realBuf...)
+		}
+	} else {
+		s.lineBuf = strconv.AppendFloat(s.lineBuf, v, 'f', prec, 64)
+	}
 }
 
 // Close implements the Executor Close interface.
@@ -186,9 +191,9 @@ func (s *SelectIntoExec) Close() error {
 	err2 := s.dstFile.Close()
 	err3 := s.baseExecutor.Close()
 	if err1 != nil {
-		return err1
+		return errors.Trace(err1)
 	} else if err2 != nil {
-		return err2
+		return errors.Trace(err2)
 	}
 	return err3
 }
