@@ -17,7 +17,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 )
 
-const MaxColumnNameSize  = 256
+const MaxColumnNameSize = 256
 
 // ColumnInfo contains information of a column
 type ColumnInfo struct {
