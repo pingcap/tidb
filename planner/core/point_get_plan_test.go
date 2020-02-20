@@ -353,7 +353,7 @@ func (s *testPointGetSuite) TestBatchPointGetPlanCache(c *C) {
 	tk.MustExec("create table t(a int primary key, b int)")
 	tk.MustExec("insert into t values(1, 1), (2, 2), (3, 3), (4, 4)")
 	tk.MustQuery("explain select * from t where a in (1, 2)").Check(testkit.Rows(
-		"Batch_Point_Get_1 2.00 root table:t",
+		"Batch_Point_Get_1 2.00 root table:t, handle:[1 2], keep order:false, desc:false",
 	))
 	tk.MustExec("prepare stmt from 'select * from t where a in (?,?)'")
 	tk.MustExec("set @p1 = 1, @p2 = 2")
