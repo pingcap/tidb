@@ -205,11 +205,11 @@ type Log struct {
 	// File log config.
 	File logutil.FileLogConfig `toml:"file" json:"file"`
 
+	EnableSlowLog       bool   `toml:"enable-slow-log" json:"enable-slow-log"`
 	SlowQueryFile       string `toml:"slow-query-file" json:"slow-query-file"`
 	SlowThreshold       uint64 `toml:"slow-threshold" json:"slow-threshold"`
 	ExpensiveThreshold  uint   `toml:"expensive-threshold" json:"expensive-threshold"`
 	QueryLogMaxLen      uint64 `toml:"query-log-max-len" json:"query-log-max-len"`
-	EnableSlowLog       uint32 `toml:"enable-slow-log" json:"enable-slow-log"`
 	RecordPlanInSlowLog uint32 `toml:"record-plan-in-slow-log" json:"record-plan-in-slow-log"`
 }
 
@@ -258,38 +258,47 @@ func (e *ErrConfigValidationFailed) Error() string {
 }
 
 // ToTLSConfig generates tls's config based on security section of the config.
-func (s *Security) ToTLSConfig() (*tls.Config, error) {
-	var tlsConfig *tls.Config
+func (s *Security) ToTLSConfig() (tlsConfig *tls.Config, err error) {
 	if len(s.ClusterSSLCA) != 0 {
-		var certificates = make([]tls.Certificate, 0)
-		if len(s.ClusterSSLCert) != 0 && len(s.ClusterSSLKey) != 0 {
-			// Load the client certificates from disk
-			certificate, err := tls.LoadX509KeyPair(s.ClusterSSLCert, s.ClusterSSLKey)
-			if err != nil {
-				return nil, errors.Errorf("could not load client key pair: %s", err)
-			}
-			certificates = append(certificates, certificate)
-		}
-
-		// Create a certificate pool from the certificate authority
 		certPool := x509.NewCertPool()
-		ca, err := ioutil.ReadFile(s.ClusterSSLCA)
+		// Create a certificate pool from the certificate authority
+		var ca []byte
+		ca, err = ioutil.ReadFile(s.ClusterSSLCA)
 		if err != nil {
-			return nil, errors.Errorf("could not read ca certificate: %s", err)
+			err = errors.Errorf("could not read ca certificate: %s", err)
+			return
 		}
-
 		// Append the certificates from the CA
 		if !certPool.AppendCertsFromPEM(ca) {
-			return nil, errors.New("failed to append ca certs")
+			err = errors.New("failed to append ca certs")
+			return
+		}
+		tlsConfig = &tls.Config{
+			RootCAs: certPool,
 		}
 
-		tlsConfig = &tls.Config{
-			Certificates: certificates,
-			RootCAs:      certPool,
+		if len(s.ClusterSSLCert) != 0 && len(s.ClusterSSLKey) != 0 {
+			getCert := func() (*tls.Certificate, error) {
+				// Load the client certificates from disk
+				cert, err := tls.LoadX509KeyPair(s.ClusterSSLCert, s.ClusterSSLKey)
+				if err != nil {
+					return nil, errors.Errorf("could not load client key pair: %s", err)
+				}
+				return &cert, nil
+			}
+			// pre-test cert's loading.
+			if _, err = getCert(); err != nil {
+				return
+			}
+			tlsConfig.GetClientCertificate = func(info *tls.CertificateRequestInfo) (certificate *tls.Certificate, err error) {
+				return getCert()
+			}
+			tlsConfig.GetCertificate = func(info *tls.ClientHelloInfo) (certificate *tls.Certificate, err error) {
+				return getCert()
+			}
 		}
 	}
-
-	return tlsConfig, nil
+	return
 }
 
 // Status is the status section of the config.
