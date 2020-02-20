@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/util/logutil"
 	"strings"
 	"sync/atomic"
 
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tipb/go-binlog"
 	"go.uber.org/zap"
@@ -139,11 +139,8 @@ func (st *TxnState) ChangeInvalidToPending(future *TxnFuture) {
 
 // ChangePendingToValid changes state from pending to valid.
 func (st *TxnState) ChangePendingToValid(txnCap int) error {
-	if !st.ValidOrPending() {
-		panic("ChangePendingToValid must be called when pending or valid")
-	} else if st.Valid() {
-		// Do nothing if the transaction is already valid.
-		return nil
+	if !st.Pending() {
+		return errors.New("transaction future is not set")
 	}
 
 	future := st.txnFuture
@@ -151,6 +148,7 @@ func (st *TxnState) ChangePendingToValid(txnCap int) error {
 
 	txn, err := future.wait()
 	if err != nil {
+		st.Transaction = nil
 		return err
 	}
 	txn.SetCap(txnCap)
@@ -164,38 +162,38 @@ func (st *TxnState) ChangeToInvalid() {
 	st.txnFuture = nil
 }
 
-func (st *TxnState) reset() {
-	st.DoNotCommit = nil
-	st.Cleanup()
-	st.ChangeToInvalid()
+// dirtyTableOperation represents an operation to dirtyTable, we log the operation
+// first and apply the operation log when statement commit.
+type dirtyTableOperation struct {
+	kind   int
+	tid    int64
+	handle int64
 }
 
-// Cleanup clears the internal buf and dirtyTableOP.
-func (st *TxnState) Cleanup() {
-	const sz4M = 4 << 20
-	if st.buf.Size() > sz4M {
-		// The memory footprint for the large transaction could be huge here.
-		// Each active session has its own buffer, we should free the buffer to
-		// avoid memory leak.
-		st.buf = kv.NewMemDbBuffer(kv.DefaultTxnMembufCap)
-	} else {
-		st.buf.Reset()
-	}
-	for key := range st.mutations {
-		delete(st.mutations, key)
-	}
-	if st.dirtyTableOP != nil {
-		empty := dirtyTableOperation{}
-		for i := 0; i < len(st.dirtyTableOP); i++ {
-			st.dirtyTableOP[i] = empty
-		}
-		if len(st.dirtyTableOP) > 256 {
-			// Reduce memory footprint for the large transaction.
-			st.dirtyTableOP = nil
-		} else {
-			st.dirtyTableOP = st.dirtyTableOP[:0]
-		}
-	}
+var hasMockAutoIncIDRetry = int64(0)
+
+func enableMockAutoIncIDRetry() {
+	atomic.StoreInt64(&hasMockAutoIncIDRetry, 1)
+}
+
+func mockAutoIncIDRetry() bool {
+	return atomic.LoadInt64(&hasMockAutoIncIDRetry) == 1
+}
+
+var mockAutoRandIDRetryCount = int64(0)
+
+func needMockAutoRandIDRetry() bool {
+	return atomic.LoadInt64(&mockAutoRandIDRetryCount) > 0
+}
+
+func decreaseMockAutoRandIDRetryCount() {
+	atomic.AddInt64(&mockAutoRandIDRetryCount, -1)
+}
+
+// ResetMockAutoRandIDRetryCount set the number of occurrences of
+// `kv.ErrTxnRetryable` when calling TxnState.Commit().
+func ResetMockAutoRandIDRetryCount(failTimes int64) {
+	atomic.StoreInt64(&mockAutoRandIDRetryCount, failTimes)
 }
 
 // Commit overrides the Transaction interface.
@@ -243,6 +241,12 @@ func (st *TxnState) Commit(ctx context.Context) error {
 func (st *TxnState) Rollback() error {
 	defer st.reset()
 	return st.Transaction.Rollback()
+}
+
+func (st *TxnState) reset() {
+	st.DoNotCommit = nil
+	st.Cleanup()
+	st.ChangeToInvalid()
 }
 
 // Get overrides the Transaction interface.
@@ -329,6 +333,34 @@ func (st *TxnState) IterReverse(k kv.Key) (kv.Iterator, error) {
 	return kv.NewUnionIter(bufferIt, retrieverIt, true)
 }
 
+// Cleanup clears the internal buf and dirtyTableOP.
+func (st *TxnState) Cleanup() {
+	const sz4M = 4 << 20
+	if st.buf.Size() > sz4M {
+		// The memory footprint for the large transaction could be huge here.
+		// Each active session has its own buffer, we should free the buffer to
+		// avoid memory leak.
+		st.buf = kv.NewMemDbBuffer(kv.DefaultTxnMembufCap)
+	} else {
+		st.buf.Reset()
+	}
+	for key := range st.mutations {
+		delete(st.mutations, key)
+	}
+	if st.dirtyTableOP != nil {
+		empty := dirtyTableOperation{}
+		for i := 0; i < len(st.dirtyTableOP); i++ {
+			st.dirtyTableOP[i] = empty
+		}
+		if len(st.dirtyTableOP) > 256 {
+			// Reduce memory footprint for the large transaction.
+			st.dirtyTableOP = nil
+		} else {
+			st.dirtyTableOP = st.dirtyTableOP[:0]
+		}
+	}
+}
+
 // KeysNeedToLock returns the keys need to be locked.
 func (st *TxnState) KeysNeedToLock() ([]kv.Key, error) {
 	keys := make([]kv.Key, 0, st.buf.Len())
@@ -363,6 +395,90 @@ func keyNeedToLock(k, v []byte) bool {
 	isNonUniqueIndex := tablecodec.IsIndexKey(k) && len(v) == 1
 	// Put row key and unique index need to lock.
 	return !isNonUniqueIndex
+}
+
+func getBinlogMutation(ctx sessionctx.Context, tableID int64) *binlog.TableMutation {
+	bin := binloginfo.GetPrewriteValue(ctx, true)
+	for i := range bin.Mutations {
+		if bin.Mutations[i].TableId == tableID {
+			return &bin.Mutations[i]
+		}
+	}
+	idx := len(bin.Mutations)
+	bin.Mutations = append(bin.Mutations, binlog.TableMutation{TableId: tableID})
+	return &bin.Mutations[idx]
+}
+
+func mergeToMutation(m1, m2 *binlog.TableMutation) {
+	m1.InsertedRows = append(m1.InsertedRows, m2.InsertedRows...)
+	m1.UpdatedRows = append(m1.UpdatedRows, m2.UpdatedRows...)
+	m1.DeletedIds = append(m1.DeletedIds, m2.DeletedIds...)
+	m1.DeletedPks = append(m1.DeletedPks, m2.DeletedPks...)
+	m1.DeletedRows = append(m1.DeletedRows, m2.DeletedRows...)
+	m1.Sequence = append(m1.Sequence, m2.Sequence...)
+}
+
+func mergeToDirtyDB(dirtyDB *executor.DirtyDB, op dirtyTableOperation) {
+	dt := dirtyDB.GetDirtyTable(op.tid)
+	switch op.kind {
+	case table.DirtyTableAddRow:
+		dt.AddRow(op.handle)
+	case table.DirtyTableDeleteRow:
+		dt.DeleteRow(op.handle)
+	}
+}
+
+type txnFailFuture struct{}
+
+func (txnFailFuture) Wait() (uint64, error) {
+	return 0, errors.New("mock get timestamp fail")
+}
+
+// TxnFuture is a promise, which promises to return a txn in future.
+type TxnFuture struct {
+	future oracle.Future
+	store  kv.Storage
+}
+
+// TODO: is it possible to move all get timestamp operation into `TxnFuture` from `Transaction`?
+// So that `kv.Transaction` must have a resolved start ts, maybe it's helpful to simplify code.
+func (tf *TxnFuture) wait() (kv.Transaction, error) {
+	startTS, err := tf.future.Wait()
+	if err == nil {
+		return tf.store.BeginWithStartTS(startTS)
+	} else if _, ok := tf.future.(txnFailFuture); ok {
+		return nil, err
+	}
+
+	// It would retry get timestamp.
+	return tf.store.Begin()
+}
+
+// NewTxnFuture creates a new TxnFuture.
+func NewTxnFuture(ctx context.Context, store kv.Storage, lowResolution bool) *TxnFuture {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("session.getTxnFuture", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
+	}
+
+	oracleStore := store.GetOracle()
+	var tsFuture oracle.Future
+	if lowResolution {
+		tsFuture = oracleStore.GetLowResolutionTimestampAsync(ctx)
+	} else {
+		tsFuture = oracleStore.GetTimestampAsync(ctx)
+	}
+	ret := &TxnFuture{future: tsFuture, store: store}
+	failpoint.InjectContext(ctx, "mockGetTSFail", func() {
+		ret.future = txnFailFuture{}
+	})
+	return ret
+}
+
+// GetFuture returns the internal future of st.
+func (tf *TxnFuture) GetFuture() oracle.Future {
+	return tf.future
 }
 
 // StmtCommit commmits the current statement.
@@ -430,123 +546,4 @@ func (st *TxnState) StmtGetMutation(tableID int64) *binlog.TableMutation {
 // StmtAddDirtyTableOP adds op into st.
 func (st *TxnState) StmtAddDirtyTableOP(op int, tid int64, handle int64) {
 	st.dirtyTableOP = append(st.dirtyTableOP, dirtyTableOperation{op, tid, handle})
-}
-
-// TxnFuture is a promise, which promises to return a txn in future.
-type TxnFuture struct {
-	future oracle.Future
-	store  kv.Storage
-}
-
-// NewTxnFuture creates a new TxnFuture.
-func NewTxnFuture(ctx context.Context, store kv.Storage, lowResolution bool) *TxnFuture {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("session.getTxnFuture", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-		ctx = opentracing.ContextWithSpan(ctx, span1)
-	}
-
-	oracleStore := store.GetOracle()
-	var tsFuture oracle.Future
-	if lowResolution {
-		tsFuture = oracleStore.GetLowResolutionTimestampAsync(ctx)
-	} else {
-		tsFuture = oracleStore.GetTimestampAsync(ctx)
-	}
-	ret := &TxnFuture{future: tsFuture, store: store}
-	failpoint.InjectContext(ctx, "mockGetTSFail", func() {
-		ret.future = txnFailFuture{}
-	})
-	return ret
-}
-
-// GetFuture returns the internal future of st.
-func (tf *TxnFuture) GetFuture() oracle.Future {
-	return tf.future
-}
-
-// TODO: is it possible to move all get timestamp operation into `TxnFuture` from `Transaction`?
-// So that `kv.Transaction` must have a resolved start ts, maybe it's helpful to simplify code.
-func (tf *TxnFuture) wait() (kv.Transaction, error) {
-	startTS, err := tf.future.Wait()
-	if err == nil {
-		return tf.store.BeginWithStartTS(startTS)
-	} else if _, ok := tf.future.(txnFailFuture); ok {
-		return nil, err
-	}
-
-	// It would retry get timestamp.
-	return tf.store.Begin()
-}
-
-// dirtyTableOperation represents an operation to dirtyTable, we log the operation
-// first and apply the operation log when statement commit.
-type dirtyTableOperation struct {
-	kind   int
-	tid    int64
-	handle int64
-}
-
-func getBinlogMutation(ctx sessionctx.Context, tableID int64) *binlog.TableMutation {
-	bin := binloginfo.GetPrewriteValue(ctx, true)
-	for i := range bin.Mutations {
-		if bin.Mutations[i].TableId == tableID {
-			return &bin.Mutations[i]
-		}
-	}
-	idx := len(bin.Mutations)
-	bin.Mutations = append(bin.Mutations, binlog.TableMutation{TableId: tableID})
-	return &bin.Mutations[idx]
-}
-
-func mergeToMutation(m1, m2 *binlog.TableMutation) {
-	m1.InsertedRows = append(m1.InsertedRows, m2.InsertedRows...)
-	m1.UpdatedRows = append(m1.UpdatedRows, m2.UpdatedRows...)
-	m1.DeletedIds = append(m1.DeletedIds, m2.DeletedIds...)
-	m1.DeletedPks = append(m1.DeletedPks, m2.DeletedPks...)
-	m1.DeletedRows = append(m1.DeletedRows, m2.DeletedRows...)
-	m1.Sequence = append(m1.Sequence, m2.Sequence...)
-}
-
-func mergeToDirtyDB(dirtyDB *executor.DirtyDB, op dirtyTableOperation) {
-	dt := dirtyDB.GetDirtyTable(op.tid)
-	switch op.kind {
-	case table.DirtyTableAddRow:
-		dt.AddRow(op.handle)
-	case table.DirtyTableDeleteRow:
-		dt.DeleteRow(op.handle)
-	}
-}
-
-var hasMockAutoIncIDRetry = int64(0)
-
-func enableMockAutoIncIDRetry() {
-	atomic.StoreInt64(&hasMockAutoIncIDRetry, 1)
-}
-
-func mockAutoIncIDRetry() bool {
-	return atomic.LoadInt64(&hasMockAutoIncIDRetry) == 1
-}
-
-var mockAutoRandIDRetryCount = int64(0)
-
-func needMockAutoRandIDRetry() bool {
-	return atomic.LoadInt64(&mockAutoRandIDRetryCount) > 0
-}
-
-func decreaseMockAutoRandIDRetryCount() {
-	atomic.AddInt64(&mockAutoRandIDRetryCount, -1)
-}
-
-// ResetMockAutoRandIDRetryCount set the number of occurrences of
-// `kv.ErrTxnRetryable` when calling TxnState.Commit().
-func ResetMockAutoRandIDRetryCount(failTimes int64) {
-	atomic.StoreInt64(&mockAutoRandIDRetryCount, failTimes)
-}
-
-// txnFailFuture is for tests.
-type txnFailFuture struct{}
-
-func (txnFailFuture) Wait() (uint64, error) {
-	return 0, errors.New("mock get timestamp fail")
 }

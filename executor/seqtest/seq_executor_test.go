@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/session/txnstate"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle"
@@ -1166,9 +1167,9 @@ func (s *seqTestSuite) TestAutoIncIDInRetry(c *C) {
 	tk.MustExec("insert into t values (),()")
 	tk.MustExec("insert into t values ()")
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/mockCommitRetryForAutoIncID", `return(true)`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/txnstate/mockCommitRetryForAutoIncID", `return(true)`), IsNil)
 	tk.MustExec("commit")
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/mockCommitRetryForAutoIncID"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/txnstate/mockCommitRetryForAutoIncID"), IsNil)
 
 	tk.MustExec("insert into t values ()")
 	tk.MustQuery(`select * from t`).Check(testkit.Rows("1", "2", "3", "4", "5"))
@@ -1198,7 +1199,7 @@ func (s *seqTestSuite) TestAutoRandIDRetry(c *C) {
 	tk.MustExec("insert into t values ()")
 
 	txnstate.ResetMockAutoRandIDRetryCount(5)
-	fpName := "github.com/pingcap/tidb/session/mockCommitRetryForAutoRandID"
+	fpName := "github.com/pingcap/tidb/session/txnstate/mockCommitRetryForAutoRandID"
 	c.Assert(failpoint.Enable(fpName, `return(true)`), IsNil)
 	tk.MustExec("commit")
 	c.Assert(failpoint.Disable(fpName), IsNil)

@@ -3762,13 +3762,13 @@ func (s *testSuite3) TestTSOFail(c *C) {
 	tk.MustExec(`drop table if exists t`)
 	tk.MustExec(`create table t(a int)`)
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/mockGetTSFail", "return"), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/txnstate/mockGetTSFail", "return"), IsNil)
 	ctx := failpoint.WithHook(context.Background(), func(ctx context.Context, fpname string) bool {
-		return fpname == "github.com/pingcap/tidb/session/mockGetTSFail"
+		return fpname == "github.com/pingcap/tidb/session/txnstate/mockGetTSFail"
 	})
 	_, err := tk.Se.Execute(ctx, `select * from t`)
 	c.Assert(err, NotNil)
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/mockGetTSFail"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/txnstate/mockGetTSFail"), IsNil)
 }
 
 func (s *testSuite3) TestSelectHashPartitionTable(c *C) {

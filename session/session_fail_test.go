@@ -30,11 +30,11 @@ func (s *testSessionSerialSuite) TestFailStatementCommit(c *C) {
 	tk.MustExec("begin")
 	tk.MustExec("insert into t values (1)")
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/mockStmtCommitError", `return(true)`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/txnstate/mockStmtCommitError", `return(true)`), IsNil)
 	_, err := tk.Exec("insert into t values (2),(3),(4),(5)")
 	c.Assert(err, NotNil)
 
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/mockStmtCommitError"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/txnstate/mockStmtCommitError"), IsNil)
 
 	_, err = tk.Exec("select * from t")
 	c.Assert(err, NotNil)
@@ -69,12 +69,12 @@ func (s *testSessionSerialSuite) TestFailStatementCommitInRetry(c *C) {
 	tk.MustExec("insert into t values (2),(3),(4),(5)")
 	tk.MustExec("insert into t values (6)")
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/mockCommitError8942", `return(true)`), IsNil)
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/mockStmtCommitError", `return(true)`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/txnstate/mockCommitError8942", `return(true)`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/txnstate/mockStmtCommitError", `return(true)`), IsNil)
 	_, err := tk.Exec("commit")
 	c.Assert(err, NotNil)
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/mockCommitError8942"), IsNil)
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/mockStmtCommitError"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/txnstate/mockCommitError8942"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/txnstate/mockStmtCommitError"), IsNil)
 
 	tk.MustExec("insert into t values (6)")
 	tk.MustQuery(`select * from t`).Check(testkit.Rows("6"))
@@ -84,9 +84,9 @@ func (s *testSessionSerialSuite) TestGetTSFailDirtyState(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table t (id int)")
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/mockGetTSFail", "return"), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/txnstate/mockGetTSFail", "return"), IsNil)
 	ctx := failpoint.WithHook(context.Background(), func(ctx context.Context, fpname string) bool {
-		return fpname == "github.com/pingcap/tidb/session/mockGetTSFail"
+		return fpname == "github.com/pingcap/tidb/session/txnstate/mockGetTSFail"
 	})
 	_, err := tk.Se.Execute(ctx, "select * from t")
 	c.Assert(err, NotNil)
@@ -95,7 +95,7 @@ func (s *testSessionSerialSuite) TestGetTSFailDirtyState(c *C) {
 	// affected by this fail flag.
 	tk.MustExec("insert into t values (1)")
 	tk.MustQuery(`select * from t`).Check(testkit.Rows("1"))
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/mockGetTSFail"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/txnstate/mockGetTSFail"), IsNil)
 }
 
 func (s *testSessionSerialSuite) TestGetTSFailDirtyStateInretry(c *C) {
