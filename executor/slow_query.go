@@ -144,10 +144,7 @@ type slowLogChecker struct {
 }
 
 func (sc *slowLogChecker) hasPrivilege(userName string) bool {
-	if !sc.hasProcessPriv && sc.user != nil && userName != sc.user.Username {
-		return false
-	}
-	return true
+	return sc.hasProcessPriv || sc.user == nil || userName == sc.user.Username
 }
 
 func (sc *slowLogChecker) isTimeValid(t time.Time) bool {
