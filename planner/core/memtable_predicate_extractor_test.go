@@ -684,7 +684,7 @@ func (s *extractorSuite) TestMetricsSummaryTableExtractor(c *C) {
 			quantiles: []float64{0.999, 0.95, 0.99},
 		},
 		{
-			sql:       "select * from information_schema.metrics_summary where (quantile='0.95' or quantile='0.99') and (metric_name='metric_name3' or metric_name='metric_name1')",
+			sql:       "select * from information_schema.metrics_summary where (quantile='0.95' or quantile='0.99') and (metrics_name='metric_name3' or metrics_name='metric_name1')",
 			quantiles: []float64{0.95, 0.99},
 			names:     set.NewStringSet("metric_name3", "metric_name1"),
 		},
@@ -693,22 +693,22 @@ func (s *extractorSuite) TestMetricsSummaryTableExtractor(c *C) {
 			quantiles: []float64{0.999, 0.99},
 		},
 		{
-			sql:       "select * from information_schema.metrics_summary where quantile in ('0.999', '0.99') and metric_name='metric_name1'",
+			sql:       "select * from information_schema.metrics_summary where quantile in ('0.999', '0.99') and metrics_name='metric_name1'",
 			quantiles: []float64{0.999, 0.99},
 			names:     set.NewStringSet("metric_name1"),
 		},
 		{
-			sql:       "select * from information_schema.metrics_summary where quantile in ('0.999', '0.99') and metric_name in ('metric_name1', 'metric_name2')",
+			sql:       "select * from information_schema.metrics_summary where quantile in ('0.999', '0.99') and metrics_name in ('metric_name1', 'metric_name2')",
 			quantiles: []float64{0.999, 0.99},
 			names:     set.NewStringSet("metric_name1", "metric_name2"),
 		},
 		{
-			sql:       "select * from information_schema.metrics_summary where quantile='0.999' and metric_name in ('metric_name1', 'metric_name2')",
+			sql:       "select * from information_schema.metrics_summary where quantile='0.999' and metrics_name in ('metric_name1', 'metric_name2')",
 			quantiles: []float64{0.999},
 			names:     set.NewStringSet("metric_name1", "metric_name2"),
 		},
 		{
-			sql:       "select * from information_schema.metrics_summary where quantile='0.999' and metric_name='metric_NAME3'",
+			sql:       "select * from information_schema.metrics_summary where quantile='0.999' and metrics_name='metric_NAME3'",
 			quantiles: []float64{0.999},
 			names:     set.NewStringSet("metric_name3"),
 		},
@@ -722,8 +722,8 @@ func (s *extractorSuite) TestMetricsSummaryTableExtractor(c *C) {
 		},
 		{
 			sql: `select * from information_schema.metrics_summary
-				where metric_name in ('metric_name1', 'metric_name4')
-				  and metric_name in ('metric_name5', 'metric_name4')
+				where metrics_name in ('metric_name1', 'metric_name4')
+				  and metrics_name in ('metric_name5', 'metric_name4')
 				  and quantile in ('0.999', '0.95')
 				  and quantile in ('0.99', '0.95')
 				  and quantile in (0.80, 0.90)`,
@@ -731,10 +731,10 @@ func (s *extractorSuite) TestMetricsSummaryTableExtractor(c *C) {
 		},
 		{
 			sql: `select * from information_schema.metrics_summary
-				where metric_name in ('metric_name1', 'metric_name4')
-				  and metric_name in ('metric_name5', 'metric_name4')
-				  and metric_name in ('metric_name5', 'metric_name1')
-				  and metric_name in ('metric_name1', 'metric_name3')`,
+				where metrics_name in ('metric_name1', 'metric_name4')
+				  and metrics_name in ('metric_name5', 'metric_name4')
+				  and metrics_name in ('metric_name5', 'metric_name1')
+				  and metrics_name in ('metric_name1', 'metric_name3')`,
 			skipRequest: true,
 		},
 	}
@@ -922,7 +922,7 @@ func (s *extractorSuite) TestInspectionSummaryTableExtractor(c *C) {
 			rules: set.NewStringSet("ddl", "config", "slow_query"),
 		},
 		{
-			sql:   "select * from information_schema.inspection_summary where (rule='config' or rule='slow_query') and (metric_name='metric_name3' or metric_name='metric_name1')",
+			sql:   "select * from information_schema.inspection_summary where (rule='config' or rule='slow_query') and (metrics_name='metric_name3' or metrics_name='metric_name1')",
 			rules: set.NewStringSet("config", "slow_query"),
 			names: set.NewStringSet("metric_name3", "metric_name1"),
 		},
@@ -931,22 +931,22 @@ func (s *extractorSuite) TestInspectionSummaryTableExtractor(c *C) {
 			rules: set.NewStringSet("ddl", "slow_query"),
 		},
 		{
-			sql:   "select * from information_schema.inspection_summary where rule in ('ddl', 'slow_query') and metric_name='metric_name1'",
+			sql:   "select * from information_schema.inspection_summary where rule in ('ddl', 'slow_query') and metrics_name='metric_name1'",
 			rules: set.NewStringSet("ddl", "slow_query"),
 			names: set.NewStringSet("metric_name1"),
 		},
 		{
-			sql:   "select * from information_schema.inspection_summary where rule in ('ddl', 'slow_query') and metric_name in ('metric_name1', 'metric_name2')",
+			sql:   "select * from information_schema.inspection_summary where rule in ('ddl', 'slow_query') and metrics_name in ('metric_name1', 'metric_name2')",
 			rules: set.NewStringSet("ddl", "slow_query"),
 			names: set.NewStringSet("metric_name1", "metric_name2"),
 		},
 		{
-			sql:   "select * from information_schema.inspection_summary where rule='ddl' and metric_name in ('metric_name1', 'metric_name2')",
+			sql:   "select * from information_schema.inspection_summary where rule='ddl' and metrics_name in ('metric_name1', 'metric_name2')",
 			rules: set.NewStringSet("ddl"),
 			names: set.NewStringSet("metric_name1", "metric_name2"),
 		},
 		{
-			sql:   "select * from information_schema.inspection_summary where rule='ddl' and metric_name='metric_NAME3'",
+			sql:   "select * from information_schema.inspection_summary where rule='ddl' and metrics_name='metric_NAME3'",
 			rules: set.NewStringSet("ddl"),
 			names: set.NewStringSet("metric_name3"),
 		},
@@ -960,8 +960,8 @@ func (s *extractorSuite) TestInspectionSummaryTableExtractor(c *C) {
 		},
 		{
 			sql: `select * from information_schema.inspection_summary
-				where metric_name in ('metric_name1', 'metric_name4')
-				  and metric_name in ('metric_name5', 'metric_name4')
+				where metrics_name in ('metric_name1', 'metric_name4')
+				  and metrics_name in ('metric_name5', 'metric_name4')
 				  and rule in ('ddl', 'config')
 				  and rule in ('slow_query', 'config')
 				  and quantile in (0.80, 0.90)`,
@@ -971,10 +971,10 @@ func (s *extractorSuite) TestInspectionSummaryTableExtractor(c *C) {
 		},
 		{
 			sql: `select * from information_schema.inspection_summary
-				where metric_name in ('metric_name1', 'metric_name4')
-				  and metric_name in ('metric_name5', 'metric_name4')
-				  and metric_name in ('metric_name5', 'metric_name1')
-				  and metric_name in ('metric_name1', 'metric_name3')`,
+				where metrics_name in ('metric_name1', 'metric_name4')
+				  and metrics_name in ('metric_name5', 'metric_name4')
+				  and metrics_name in ('metric_name5', 'metric_name1')
+				  and metrics_name in ('metric_name1', 'metric_name3')`,
 			skipInspection: true,
 		},
 	}

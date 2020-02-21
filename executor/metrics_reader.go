@@ -206,8 +206,8 @@ func (c *queryClient) URL(ep string, args map[string]string) *url.URL {
 	return c.Client.URL(ep, args)
 }
 
-// MetricSummaryRetriever uses to read metric data.
-type MetricSummaryRetriever struct {
+// MetricsSummaryRetriever uses to read metric data.
+type MetricsSummaryRetriever struct {
 	dummyCloser
 	table     *model.TableInfo
 	extractor *plannercore.MetricSummaryTableExtractor
@@ -215,7 +215,7 @@ type MetricSummaryRetriever struct {
 	retrieved bool
 }
 
-func (e *MetricSummaryRetriever) retrieve(_ context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
+func (e *MetricsSummaryRetriever) retrieve(_ context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
 	if e.retrieved || e.extractor.SkipRequest {
 		return nil, nil
 	}
@@ -278,8 +278,8 @@ func (e *MetricSummaryRetriever) retrieve(_ context.Context, sctx sessionctx.Con
 	return totalRows, nil
 }
 
-// MetricSummaryByLabelRetriever uses to read metric detail data.
-type MetricSummaryByLabelRetriever struct {
+// MetricsSummaryByLabelRetriever uses to read metric detail data.
+type MetricsSummaryByLabelRetriever struct {
 	dummyCloser
 	table     *model.TableInfo
 	extractor *plannercore.MetricSummaryTableExtractor
@@ -287,7 +287,7 @@ type MetricSummaryByLabelRetriever struct {
 	retrieved bool
 }
 
-func (e *MetricSummaryByLabelRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
+func (e *MetricsSummaryByLabelRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
 	if e.retrieved || e.extractor.SkipRequest {
 		return nil, nil
 	}
