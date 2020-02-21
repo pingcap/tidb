@@ -264,6 +264,16 @@ func (crs *CopRuntimeStats) RecordOneCopTask(address string, summary *tipb.Execu
 			rows:    int64(*summary.NumProducedRows)})
 }
 
+func (crs *CopRuntimeStats) GetRowsAndLoops()(totalRows int64, totalLoops int32) {
+	for _, instanceStats := range crs.stats {
+		for _, stat := range instanceStats {
+			totalRows += stat.rows
+			totalLoops += stat.loop
+		}
+	}
+	return totalRows, totalLoops
+}
+
 func (crs *CopRuntimeStats) String() string {
 	if len(crs.stats) == 0 {
 		return ""
@@ -461,6 +471,10 @@ func (e *RuntimeStats) SetAdditionalInfo(info string) {
 	e.mu.Lock()
 	e.additionalInfo = info
 	e.mu.Unlock()
+}
+
+func (e *RuntimeStats) GetRowsAndLoops() (int64, int32) {
+	return e.rows, e.loop
 }
 
 func (e *RuntimeStats) String() string {

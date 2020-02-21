@@ -686,7 +686,7 @@ func (e *Explain) prepareSchema() error {
 	case format == ast.ExplainFormatROW && !e.Analyze:
 		fieldNames = []string{"id", "EstRows", "task", "operator info"}
 	case format == ast.ExplainFormatROW && e.Analyze:
-		fieldNames = []string{"id", "EstRows", "task", "operator info", "execution info", "memory", "disk"}
+		fieldNames = []string{"id", "EstRows", "ActRows", "task", "operator info", "execution info", "memory", "disk"}
 	case format == ast.ExplainFormatDOT:
 		fieldNames = []string{"dot contents"}
 	case format == ast.ExplainFormatHint:
@@ -848,10 +848,15 @@ func (e *Explain) prepareOperatorInfo(p Plan, taskType, driverSide, indent strin
 		// There maybe some mock information for cop task to let runtimeStatsColl.Exists(p.ExplainID()) is true.
 		// So check copTaskExecDetail first and print the real cop task information if it's not empty.
 		var analyzeInfo string
+
+		var totalRows int64
+		var totalLoops int32
 		if runtimeStatsColl.ExistsCopStats(explainID) {
 			analyzeInfo = runtimeStatsColl.GetCopStats(explainID).String()
+			totalRows, totalLoops = runtimeStatsColl.GetCopStats(explainID).GetRowsAndLoops()
 		} else if runtimeStatsColl.ExistsRootStats(explainID) {
 			analyzeInfo = runtimeStatsColl.GetRootStats(explainID).String()
+			totalRows, totalLoops = runtimeStatsColl.GetRootStats(explainID).GetRowsAndLoops()
 		} else {
 			analyzeInfo = "time:0ns, loops:0, rows:0"
 		}
@@ -876,6 +881,18 @@ func (e *Explain) prepareOperatorInfo(p Plan, taskType, driverSide, indent strin
 		} else {
 			row = append(row, "N/A")
 		}
+
+		// Calculate 'ActRows'(actual rows) and put it next by 'EstRows'(estimate rows).
+		var ActRows string
+		if totalLoops == 0 {
+			ActRows = "N/A"
+		} else {
+			ActRows = fmt.Sprint(float64(totalRows)/float64(totalLoops))
+		}
+		tmp := append([]string{}, row[2:]...) 
+		row = append(row[:2], ActRows)
+		row = append(row, tmp...)
+
 	}
 	e.Rows = append(e.Rows, row)
 }
