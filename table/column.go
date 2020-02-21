@@ -92,7 +92,7 @@ func FindCols(cols []*Column, names []string, pkIsHandle bool) ([]*Column, strin
 	for i, name := range names {
 		col := FindCol(cols, name)
 		if col != nil {
-			rcols = append(rcols, col)
+			rcols[i] = col
 		} else if name == model.ExtraHandleName.L && !pkIsHandle {
 			col := &Column{}
 			col.ColumnInfo = model.NewExtraHandleColInfo()
