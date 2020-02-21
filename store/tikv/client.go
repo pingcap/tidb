@@ -322,11 +322,6 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 
 	client := tikvpb.NewTikvClient(clientConn)
 
-	// Do not set timeout and cancel for physical scan lock, which is a streaming request.
-	if req.Type == tikvrpc.CmdPhysicalScanLock {
-		return tikvrpc.CallRPC(ctx, client, req)
-	}
-
 	if req.Type != tikvrpc.CmdCopStream {
 		ctx1, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
