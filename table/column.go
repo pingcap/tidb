@@ -91,9 +91,10 @@ func FindCols(cols []*Column, names []string, pkIsHandle bool) ([]*Column, strin
 	var rcols = make([]*Column, len(names))
 	for i, name := range names {
 		// TODO:
-		//   This will be slow when len(cols) is big.
+		//   This will be slow when len(cols) is large.
 		//   And it's hard to change the type of cols (eg, to a map) because it's from Table.XXCols(),
-		//   Changing Table's interface is huge. So the compromised solution maybe create a map inplace.
+		//   Changing Table's interface is huge.
+		//   So the compromised solution maybe create a map inplace when len(cols) is large.
 		//   I will address this after this innocent PR is merged.
 		col := FindCol(cols, name)
 		if col != nil {
