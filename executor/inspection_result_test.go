@@ -248,17 +248,17 @@ func (s *inspectionResultSuite) TestThresholdCheckInspection(c *C) {
 	result := tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute inspect SQL failed"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0), Commentf("unexpected warnings: %+v", tk.Se.GetSessionVars().StmtCtx.GetWarnings()))
 	result.Check(testkit.Rows(
-		"apply_cpu tikv tikv-0 10.00 < 1.60, config: raftstore.apply-pool-size=2 select instance, sum(value) as cpu from metrics_schema.tikv_thread_cpu where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and name like 'apply_%' group by instance",
-		"coprocessor_high_cpu tikv tikv-0 10.00 < 3.60, config: readpool.coprocessor.high-concurrency=4 select instance, sum(value) as cpu from metrics_schema.tikv_thread_cpu where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and name like 'cop_high%' group by instance",
-		"coprocessor_low_cpu tikv tikv-0 10.00 < 3.60, config: readpool.coprocessor.low-concurrency=4 select instance, sum(value) as cpu from metrics_schema.tikv_thread_cpu where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and name like 'cop_low%' group by instance",
-		"coprocessor_normal_cpu tikv tikv-0 20.00 < 3.60, config: readpool.coprocessor.normal-concurrency=4 select instance, sum(value) as cpu from metrics_schema.tikv_thread_cpu where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and name like 'cop_normal%' group by instance",
-		"grpc_cpu tikv tikv-0 10.00 < 7.20, config: server.grpc-concurrency=8 select instance, sum(value) as cpu from metrics_schema.tikv_thread_cpu where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and name like 'grpc%' group by instance",
-		"raftstore_cpu tikv tikv-0 10.00 < 1.60, config: raftstore.store-pool-size=2 select instance, sum(value) as cpu from metrics_schema.tikv_thread_cpu where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and name like 'raftstore_%' group by instance",
-		"scheduler_worker_cpu tikv tikv-0 10.00 < 5.10, config: storage.scheduler-worker-pool-size=6 select instance, sum(value) as cpu from metrics_schema.tikv_thread_cpu where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and name like 'sched_%' group by instance",
-		"split_check_cpu tikv tikv-0 10.00 < 0.00 select instance, sum(value) as cpu from metrics_schema.tikv_thread_cpu where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and name like 'split_check' group by instance",
-		"storage_readpool_high_cpu tikv tikv-0 10.00 < 3.60, config: readpool.storage.high-concurrency=4 select instance, sum(value) as cpu from metrics_schema.tikv_thread_cpu where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and name like 'store_read_high%' group by instance",
-		"storage_readpool_low_cpu tikv tikv-0 10.00 < 3.60, config: readpool.storage.low-concurrency=4 select instance, sum(value) as cpu from metrics_schema.tikv_thread_cpu where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and name like 'store_read_low%' group by instance",
-		"storage_readpool_normal_cpu tikv tikv-0 10.00 < 3.60, config: readpool.storage.normal-concurrency=4 select instance, sum(value) as cpu from metrics_schema.tikv_thread_cpu where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and name like 'store_read_norm%' group by instance",
+		"apply-cpu tikv tikv-0 10.00 < 1.60, config: raftstore.apply-pool-size=2 select instance, sum(value) as cpu from metrics_schema.tikv_thread_cpu where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and name like 'apply_%' group by instance",
+		"coprocessor-high-cpu tikv tikv-0 10.00 < 3.60, config: readpool.coprocessor.high-concurrency=4 select instance, sum(value) as cpu from metrics_schema.tikv_thread_cpu where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and name like 'cop_high%' group by instance",
+		"coprocessor-low-cpu tikv tikv-0 10.00 < 3.60, config: readpool.coprocessor.low-concurrency=4 select instance, sum(value) as cpu from metrics_schema.tikv_thread_cpu where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and name like 'cop_low%' group by instance",
+		"coprocessor-normal-cpu tikv tikv-0 20.00 < 3.60, config: readpool.coprocessor.normal-concurrency=4 select instance, sum(value) as cpu from metrics_schema.tikv_thread_cpu where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and name like 'cop_normal%' group by instance",
+		"grpc-cpu tikv tikv-0 10.00 < 7.20, config: server.grpc-concurrency=8 select instance, sum(value) as cpu from metrics_schema.tikv_thread_cpu where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and name like 'grpc%' group by instance",
+		"raftstore-cpu tikv tikv-0 10.00 < 1.60, config: raftstore.store-pool-size=2 select instance, sum(value) as cpu from metrics_schema.tikv_thread_cpu where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and name like 'raftstore_%' group by instance",
+		"scheduler-worker-cpu tikv tikv-0 10.00 < 5.10, config: storage.scheduler-worker-pool-size=6 select instance, sum(value) as cpu from metrics_schema.tikv_thread_cpu where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and name like 'sched_%' group by instance",
+		"split-check-cpu tikv tikv-0 10.00 < 0.00 select instance, sum(value) as cpu from metrics_schema.tikv_thread_cpu where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and name like 'split_check' group by instance",
+		"storage-readpool-high-cpu tikv tikv-0 10.00 < 3.60, config: readpool.storage.high-concurrency=4 select instance, sum(value) as cpu from metrics_schema.tikv_thread_cpu where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and name like 'store_read_high%' group by instance",
+		"storage-readpool-low-cpu tikv tikv-0 10.00 < 3.60, config: readpool.storage.low-concurrency=4 select instance, sum(value) as cpu from metrics_schema.tikv_thread_cpu where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and name like 'store_read_low%' group by instance",
+		"storage-readpool-normal-cpu tikv tikv-0 10.00 < 3.60, config: readpool.storage.normal-concurrency=4 select instance, sum(value) as cpu from metrics_schema.tikv_thread_cpu where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and name like 'store_read_norm%' group by instance",
 	))
 
 	// construct some mock normal data
@@ -287,7 +287,7 @@ func (s *inspectionResultSuite) TestThresholdCheckInspection(c *C) {
 	c.Assert(err, IsNil)
 	result = tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute inspect SQL failed"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0), Commentf("unexpected warnings: %+v", tk.Se.GetSessionVars().StmtCtx.GetWarnings()))
-	result.Check(testkit.Rows("grpc_cpu tikv tikv-0 7.21 < 7.20, config: server.grpc-concurrency=8"))
+	result.Check(testkit.Rows("grpc-cpu tikv tikv-0 7.21 < 7.20, config: server.grpc-concurrency=8"))
 }
 
 func (s *inspectionResultSuite) TestThresholdCheckInspection2(c *C) {
@@ -417,16 +417,16 @@ func (s *inspectionResultSuite) TestThresholdCheckInspection3(c *C) {
 
 	rs, err := tk.Se.Execute(ctx, `select /*+ time_range('2020-02-14 04:20:00','2020-02-14 05:20:00') */
 		item, type, instance, value, reference, details from information_schema.inspection_result
-		where rule='threshold-check' and item in ('leader-score-balance','region-score-balance','region_count','region_health','store-available-balance')
+		where rule='threshold-check' and item in ('leader-score-balance','region-score-balance','region-count','region-health','store-available-balance')
 		order by item`)
 	c.Assert(err, IsNil)
 	result := tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute inspect SQL failed"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0), Commentf("unexpected warnings: %+v", tk.Se.GetSessionVars().StmtCtx.GetWarnings()))
 	result.Check(testkit.Rows(
 		"leader-score-balance tikv tikv-1 50.00% < 5.00% tikv-0 leader_score is 100, much more than tikv-1 leader_score 50",
+		"region-count tikv tikv-0 20001.00 <= 20000 select address,value from metrics_schema.pd_scheduler_store_status where time>='2020-02-14 04:20:00' and time<='2020-02-14 05:20:00' and type='region_count' and value > 20000;",
+		"region-health pd pd-0 110.00 < 100 the count of extra-perr and learner-peer and pending-peer is 110, it means the scheduling is too frequent or too slow",
 		"region-score-balance tikv tikv-1 10.00% < 5.00% tikv-0 region_score is 100, much more than tikv-1 region_score 90",
-		"region_count tikv tikv-0 20001.00 <= 20000 select address,value from metrics_schema.pd_scheduler_store_status where time>='2020-02-14 04:20:00' and time<='2020-02-14 05:20:00' and type='region_count' and value > 20000;",
-		"region_health pd pd-0 110.00 < 100 the count of extra-perr and learner-peer and pending-peer is 110, it means the scheduling is too frequent or too slow",
 		"store-available-balance tikv tikv-1 30.00% < 20.00% tikv-0 store_available is 100, much more than tikv-1 store_available 70"))
 }
 

@@ -398,66 +398,66 @@ func (thresholdCheckInspection) inspectThreshold1(ctx context.Context, sctx sess
 		threshold float64
 	}{
 		{
-			item:      "coprocessor_normal_cpu",
+			item:      "coprocessor-normal-cpu",
 			component: "cop_normal%",
 			configKey: "readpool.coprocessor.normal-concurrency",
 			threshold: 0.9},
 		{
-			item:      "coprocessor_high_cpu",
+			item:      "coprocessor-high-cpu",
 			component: "cop_high%",
 			configKey: "readpool.coprocessor.high-concurrency",
 			threshold: 0.9,
 		},
 		{
-			item:      "coprocessor_low_cpu",
+			item:      "coprocessor-low-cpu",
 			component: "cop_low%",
 			configKey: "readpool.coprocessor.low-concurrency",
 			threshold: 0.9,
 		},
 		{
-			item:      "grpc_cpu",
+			item:      "grpc-cpu",
 			component: "grpc%",
 			configKey: "server.grpc-concurrency",
 			threshold: 0.9,
 		},
 		{
-			item:      "raftstore_cpu",
+			item:      "raftstore-cpu",
 			component: "raftstore_%",
 			configKey: "raftstore.store-pool-size",
 			threshold: 0.8,
 		},
 		{
-			item:      "apply_cpu",
+			item:      "apply-cpu",
 			component: "apply_%",
 			configKey: "raftstore.apply-pool-size",
 			threshold: 0.8,
 		},
 		{
-			item:      "storage_readpool_normal_cpu",
+			item:      "storage-readpool-normal-cpu",
 			component: "store_read_norm%",
 			configKey: "readpool.storage.normal-concurrency",
 			threshold: 0.9,
 		},
 		{
-			item:      "storage_readpool_high_cpu",
+			item:      "storage-readpool-high-cpu",
 			component: "store_read_high%",
 			configKey: "readpool.storage.high-concurrency",
 			threshold: 0.9,
 		},
 		{
-			item:      "storage_readpool_low_cpu",
+			item:      "storage-readpool-low-cpu",
 			component: "store_read_low%",
 			configKey: "readpool.storage.low-concurrency",
 			threshold: 0.9,
 		},
 		{
-			item:      "scheduler_worker_cpu",
+			item:      "scheduler-worker-cpu",
 			component: "sched_%",
 			configKey: "storage.scheduler-worker-pool-size",
 			threshold: 0.85,
 		},
 		{
-			item:      "split_check_cpu",
+			item:      "split-check-cpu",
 			component: "split_check",
 			threshold: 0.9,
 		},
@@ -725,7 +725,7 @@ func (c checkRegionHealth) genResult(_ string, row chunk.Row) inspectionResult {
 	return inspectionResult{
 		tp:       "pd",
 		instance: row.GetString(0),
-		item:     "region_health",
+		item:     c.getItem(),
 		actual:   actual,
 		expected: "< 100",
 		severity: "warning",
@@ -734,7 +734,7 @@ func (c checkRegionHealth) genResult(_ string, row chunk.Row) inspectionResult {
 }
 
 func (c checkRegionHealth) getItem() string {
-	return "region_health"
+	return "region-health"
 }
 
 type checkStoreRegionTooMuch struct{}
@@ -749,7 +749,7 @@ func (c checkStoreRegionTooMuch) genResult(sql string, row chunk.Row) inspection
 	return inspectionResult{
 		tp:       "tikv",
 		instance: row.GetString(0),
-		item:     "region_count",
+		item:     c.getItem(),
 		actual:   actual,
 		expected: "<= 20000",
 		severity: "warning",
@@ -758,7 +758,7 @@ func (c checkStoreRegionTooMuch) genResult(sql string, row chunk.Row) inspection
 }
 
 func (c checkStoreRegionTooMuch) getItem() string {
-	return "region_count"
+	return "region-count"
 }
 
 func (thresholdCheckInspection) inspectThreshold3(ctx context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
