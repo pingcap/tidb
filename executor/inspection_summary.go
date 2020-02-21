@@ -444,7 +444,7 @@ func (e *inspectionSummaryRetriever) retrieve(ctx context.Context, sctx sessionc
 			}
 			def, found := infoschema.MetricTableMap[name]
 			if !found {
-				sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("metrics table: %s not found34", name))
+				sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("metrics table: %s not found", name))
 				continue
 			}
 			cols := def.Labels
