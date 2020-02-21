@@ -88,7 +88,7 @@ func ToColumn(col *model.ColumnInfo) *Column {
 // If pkIsHandle is false and name is ExtraHandleName, the extra handle column will be added.
 // If any columns don't match, return nil and the first missing column's name
 func FindCols(cols []*Column, names []string, pkIsHandle bool) ([]*Column, string) {
-	var rcols = make([]*Column, 0, len(names))
+	var rcols = make([]*Column, len(names))
 	for i, name := range names {
 		col := FindCol(cols, name)
 		if col != nil {
