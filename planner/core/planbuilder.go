@@ -19,6 +19,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
@@ -73,6 +74,7 @@ type tableHintInfo struct {
 	tikvTables          []hintTableInfo
 	aggHints            aggHintInfo
 	indexMergeHintList  []indexHintInfo
+	timeRangeHint       ast.HintTimeRange
 }
 
 type hintTableInfo struct {
@@ -91,6 +93,17 @@ type indexHintInfo struct {
 type aggHintInfo struct {
 	preferAggType  uint
 	preferAggToCop bool
+}
+
+// QueryTimeRange represents a time range specified by TIME_RANGE hint
+type QueryTimeRange struct {
+	From time.Time
+	To   time.Time
+}
+
+// Condition returns a WHERE clause base on it's value
+func (tr *QueryTimeRange) Condition() string {
+	return fmt.Sprintf("where time>='%s' and time<='%s'", tr.From.Format(MetricTableTimeFormat), tr.To.Format(MetricTableTimeFormat))
 }
 
 func tableNames2HintTableInfo(ctx sessionctx.Context, hintTables []ast.HintTable, p *BlockHintProcessor, nodeType nodeType, currentOffset int) []hintTableInfo {
@@ -248,6 +261,7 @@ type PlanBuilder struct {
 
 	windowSpecs  map[string]*ast.WindowSpec
 	inUpdateStmt bool
+	inDeleteStmt bool
 	// inStraightJoin represents whether the current "SELECT" statement has
 	// "STRAIGHT_JOIN" option.
 	inStraightJoin bool
@@ -374,6 +388,11 @@ func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, processor
 // Build builds the ast node to a Plan.
 func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
 	b.optFlag = flagPrunColumns
+	defer func() {
+		if b.optFlag&flagPredicatePushDown > 0 {
+			b.optFlag |= flagPrunColumnsAgain
+		}
+	}()
 	switch x := node.(type) {
 	case *ast.AdminStmt:
 		return b.buildAdmin(ctx, x)
@@ -730,6 +749,10 @@ func (b *PlanBuilder) filterPathByIsolationRead(paths []*util.AccessPath, dbName
 	if dbName.L == mysql.SystemDB {
 		return paths, nil
 	}
+	cfgIsolationEngines := set.StringSet{}
+	for _, engine := range config.GetGlobalConfig().IsolationRead.Engines {
+		cfgIsolationEngines.Insert(engine)
+	}
 	isolationReadEngines := b.ctx.GetSessionVars().GetIsolationReadEngines()
 	availableEngine := map[kv.StoreType]struct{}{}
 	var availableEngineStr string
@@ -743,13 +766,16 @@ func (b *PlanBuilder) filterPathByIsolationRead(paths []*util.AccessPath, dbName
 		}
 		if _, ok := isolationReadEngines[paths[i].StoreType]; !ok {
 			paths = append(paths[:i], paths[i+1:]...)
+		} else if _, ok := cfgIsolationEngines[paths[i].StoreType.Name()]; !ok {
+			paths = append(paths[:i], paths[i+1:]...)
 		}
 	}
 	var err error
 	if len(paths) == 0 {
 		engineVals, _ := b.ctx.GetSessionVars().GetSystemVar(variable.TiDBIsolationReadEngines)
-		err = ErrInternal.GenWithStackByArgs(fmt.Sprintf("Can not find access path matching '%v'(value: '%v'). Available values are '%v'.",
-			variable.TiDBIsolationReadEngines, engineVals, availableEngineStr))
+		err = ErrInternal.GenWithStackByArgs(fmt.Sprintf("Can not find access path matching '%v'(value: '%v') "+
+			"and tidb-server config isolation-read(engines: '%v'). Available values are '%v'.",
+			variable.TiDBIsolationReadEngines, engineVals, config.GetGlobalConfig().IsolationRead.Engines, availableEngineStr))
 	}
 	return paths, err
 }
@@ -1585,7 +1611,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 		if p.DBName == "" {
 			return nil, ErrNoDB
 		}
-	case ast.ShowCreateTable:
+	case ast.ShowCreateTable, ast.ShowCreateSequence:
 		user := b.ctx.GetSessionVars().User
 		var err error
 		if user != nil {
@@ -1637,9 +1663,18 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 		proj.SetSchema(schema)
 		proj.SetChildren(np)
 		proj.SetOutputNames(np.OutputNames())
-		return proj, nil
+		np = proj
 	}
-	return p, nil
+	if show.Tp == ast.ShowVariables || show.Tp == ast.ShowStatus {
+		b.curClause = orderByClause
+		orderByCol := np.Schema().Columns[0].Clone().(*expression.Column)
+		sort := LogicalSort{
+			ByItems: []*ByItems{{Expr: orderByCol}},
+		}.Init(b.ctx, b.getSelectOffset())
+		sort.SetChildren(np)
+		np = sort
+	}
+	return np, nil
 }
 
 func (b *PlanBuilder) buildSimple(node ast.StmtNode) (Plan, error) {
@@ -2508,6 +2543,7 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 		schema := plan.Schema()
 		names := plan.OutputNames()
 		if v.Cols == nil {
+			adjustOverlongViewColname(plan.(LogicalPlan))
 			v.Cols = make([]model.CIStr, len(schema.Columns))
 			for i, name := range names {
 				v.Cols[i] = name.ColName
@@ -2516,14 +2552,12 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 		if len(v.Cols) != schema.Len() {
 			return nil, ddl.ErrViewWrongList
 		}
-		if _, ok := plan.(LogicalPlan); ok {
-			if b.ctx.GetSessionVars().User != nil {
-				authErr = ErrTableaccessDenied.GenWithStackByArgs("CREATE VIEW", b.ctx.GetSessionVars().User.Hostname,
-					b.ctx.GetSessionVars().User.Username, v.ViewName.Name.L)
-			}
-			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateViewPriv, v.ViewName.Schema.L,
-				v.ViewName.Name.L, "", authErr)
+		if b.ctx.GetSessionVars().User != nil {
+			authErr = ErrTableaccessDenied.GenWithStackByArgs("CREATE VIEW", b.ctx.GetSessionVars().User.Hostname,
+				b.ctx.GetSessionVars().User.Username, v.ViewName.Name.L)
 		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateViewPriv, v.ViewName.Schema.L,
+			v.ViewName.Name.L, "", authErr)
 		if v.Definer.CurrentUser && b.ctx.GetSessionVars().User != nil {
 			v.Definer = b.ctx.GetSessionVars().User
 		}
@@ -2561,6 +2595,15 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 			}
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DropPriv, tableVal.Schema.L,
 				tableVal.Name.L, "", authErr)
+		}
+	case *ast.DropSequenceStmt:
+		for _, sequence := range v.Sequences {
+			if b.ctx.GetSessionVars().User != nil {
+				authErr = ErrTableaccessDenied.GenWithStackByArgs("DROP", b.ctx.GetSessionVars().User.Hostname,
+					b.ctx.GetSessionVars().User.Username, sequence.Name.L)
+			}
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DropPriv, sequence.Schema.L,
+				sequence.Name.L, "", authErr)
 		}
 	case *ast.TruncateTableStmt:
 		if b.ctx.GetSessionVars().User != nil {
@@ -2811,7 +2854,7 @@ func buildShowSchema(s *ast.ShowStmt, isView bool) (schema *expression.Schema, o
 		names = []string{"Collation", "Charset", "Id", "Default", "Compiled", "Sortlen"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong,
 			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong}
-	case ast.ShowCreateTable:
+	case ast.ShowCreateTable, ast.ShowCreateSequence:
 		if !isView {
 			names = []string{"Table", "Create Table"}
 		} else {
@@ -2838,10 +2881,10 @@ func buildShowSchema(s *ast.ShowStmt, isView bool) (schema *expression.Schema, o
 	case ast.ShowIndex:
 		names = []string{"Table", "Non_unique", "Key_name", "Seq_in_index",
 			"Column_name", "Collation", "Cardinality", "Sub_part", "Packed",
-			"Null", "Index_type", "Comment", "Index_comment"}
+			"Null", "Index_type", "Comment", "Index_comment", "Expression"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeLonglong,
 			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeLonglong,
-			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar}
+			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar}
 	case ast.ShowPlugins:
 		names = []string{"Name", "Status", "Type", "Library", "License", "Version"}
 		ftypes = []byte{
@@ -2916,4 +2959,16 @@ func buildChecksumTableSchema() (*expression.Schema, []*types.FieldName) {
 	schema.Append(buildColumnWithName("", "Total_kvs", mysql.TypeLonglong, 22))
 	schema.Append(buildColumnWithName("", "Total_bytes", mysql.TypeLonglong, 22))
 	return schema.col2Schema(), schema.names
+}
+
+// adjustOverlongViewColname adjusts the overlong outputNames of a view to
+// `new_exp_$off` where `$off` is the offset of the output column, $off starts from 1.
+// There is still some MySQL compatible problems.
+func adjustOverlongViewColname(plan LogicalPlan) {
+	outputNames := plan.OutputNames()
+	for i := range outputNames {
+		if outputName := outputNames[i].ColName.L; len(outputName) > mysql.MaxColumnNameLength {
+			outputNames[i].ColName = model.NewCIStr(fmt.Sprintf("name_exp_%d", i+1))
+		}
+	}
 }

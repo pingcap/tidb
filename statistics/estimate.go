@@ -16,7 +16,7 @@ package statistics
 import (
 	"math"
 
-	"github.com/pingcap/tidb/util/mathutil"
+	"github.com/cznic/mathutil"
 )
 
 // calculateEstimateNDV calculates the estimate ndv of a sampled data from a multisize with size total.

@@ -89,9 +89,6 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) *coprocessor.
 	if err == nil {
 		err = h.fillUpData4SelectResponse(selResp, dagReq, dagCtx, rows)
 	}
-	// FIXME: some err such as (overflow) will be include in Response.OtherError with calling this buildResp.
-	//  Such err should only be marshal in the data but not in OtherError.
-	//  However, we can not distinguish such err now.
 	return buildResp(selResp, execDetails, err)
 }
 
@@ -453,10 +450,11 @@ func flagsToStatementContext(flags uint64) *stmtctx.StatementContext {
 	sc.TruncateAsWarning = (flags & model.FlagTruncateAsWarning) > 0
 	sc.InInsertStmt = (flags & model.FlagInInsertStmt) > 0
 	sc.InSelectStmt = (flags & model.FlagInSelectStmt) > 0
+	sc.InDeleteStmt = (flags & model.FlagInUpdateOrDeleteStmt) > 0
 	sc.OverflowAsWarning = (flags & model.FlagOverflowAsWarning) > 0
 	sc.IgnoreZeroInDate = (flags & model.FlagIgnoreZeroInDate) > 0
 	sc.DividedByZeroAsWarning = (flags & model.FlagDividedByZeroAsWarning) > 0
-	// TODO set FlagInUpdateOrDeleteStmt, FlagInUnionStmt,
+	// TODO set FlagInUnionStmt,
 	return sc
 }
 
@@ -468,12 +466,23 @@ func MockGRPCClientStream() grpc.ClientStream {
 // mockClientStream implements grpc ClientStream interface, its methods are never called.
 type mockClientStream struct{}
 
+// Header implements grpc.ClientStream interface
 func (mockClientStream) Header() (metadata.MD, error) { return nil, nil }
-func (mockClientStream) Trailer() metadata.MD         { return nil }
-func (mockClientStream) CloseSend() error             { return nil }
-func (mockClientStream) Context() context.Context     { return nil }
-func (mockClientStream) SendMsg(m interface{}) error  { return nil }
-func (mockClientStream) RecvMsg(m interface{}) error  { return nil }
+
+// Trailer implements grpc.ClientStream interface
+func (mockClientStream) Trailer() metadata.MD { return nil }
+
+// CloseSend implements grpc.ClientStream interface
+func (mockClientStream) CloseSend() error { return nil }
+
+// Context implements grpc.ClientStream interface
+func (mockClientStream) Context() context.Context { return nil }
+
+// SendMsg implements grpc.ClientStream interface
+func (mockClientStream) SendMsg(m interface{}) error { return nil }
+
+// RecvMsg implements grpc.ClientStream interface
+func (mockClientStream) RecvMsg(m interface{}) error { return nil }
 
 type mockCopStreamClient struct {
 	mockClientStream
@@ -708,16 +717,13 @@ func buildResp(selResp *tipb.SelectResponse, execDetails []*execDetail, err erro
 		selResp.ExecutionSummaries = execSummary
 	}
 
-	if err != nil {
-		if locked, ok := errors.Cause(err).(*ErrLocked); ok {
-			resp.Locked = &kvrpcpb.LockInfo{
-				Key:         locked.Key,
-				PrimaryLock: locked.Primary,
-				LockVersion: locked.StartTS,
-				LockTtl:     locked.TTL,
-			}
-		} else {
-			resp.OtherError = err.Error()
+	// Select errors have been contained in `SelectResponse.Error`
+	if locked, ok := errors.Cause(err).(*ErrLocked); ok {
+		resp.Locked = &kvrpcpb.LockInfo{
+			Key:         locked.Key,
+			PrimaryLock: locked.Primary,
+			LockVersion: locked.StartTS,
+			LockTtl:     locked.TTL,
 		}
 	}
 	data, err := proto.Marshal(selResp)

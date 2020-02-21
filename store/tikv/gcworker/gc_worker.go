@@ -18,8 +18,6 @@ import (
 	"container/heap"
 	"context"
 	"fmt"
-	"io"
-	"math"
 	"os"
 	"sort"
 	"strconv"
@@ -32,7 +30,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/parser/terror"
 	pd "github.com/pingcap/pd/client"
 	"github.com/pingcap/tidb/ddl/util"
@@ -1717,6 +1714,7 @@ type mergeLockScanner struct {
 	stores         map[uint64]*metapb.Store
 	receivers      mergeReceiver
 	currentLockKey []byte
+	scanLockLimit  uint32
 }
 
 type receiver struct {
@@ -1790,9 +1788,10 @@ type scanLockResult struct {
 
 func newMergeLockScanner(safePoint uint64, client tikv.Client, stores map[uint64]*metapb.Store) *mergeLockScanner {
 	return &mergeLockScanner{
-		safePoint: safePoint,
-		client:    client,
-		stores:    stores,
+		safePoint:     safePoint,
+		client:        client,
+		stores:        stores,
+		scanLockLimit: gcScanLockLimit,
 	}
 }
 
@@ -1802,12 +1801,15 @@ func (s *mergeLockScanner) Start(ctx context.Context) error {
 
 	for storeID, store := range s.stores {
 		ch := make(chan scanLockResult, scanLockResultBufferSize)
+		store1 := store
 		go func() {
-			err := s.physicalScanLocksForStore(ctx, s.safePoint, store, ch)
+			defer close(ch)
+
+			err := s.physicalScanLocksForStore(ctx, s.safePoint, store1, ch)
 			if err != nil {
 				logutil.Logger(ctx).Error("physical scan lock for store encountered error",
 					zap.Uint64("safePoint", s.safePoint),
-					zap.Any("store", store),
+					zap.Any("store", store1),
 					zap.Error(err))
 				ch <- scanLockResult{Err: err}
 			}
@@ -1865,43 +1867,44 @@ func (s *mergeLockScanner) GetSucceededStores() map[uint64]interface{} {
 }
 
 func (s *mergeLockScanner) physicalScanLocksForStore(ctx context.Context, safePoint uint64, store *metapb.Store, lockCh chan<- scanLockResult) error {
-	defer close(lockCh)
-
 	address := store.Address
 	req := tikvrpc.NewRequest(tikvrpc.CmdPhysicalScanLock, &kvrpcpb.PhysicalScanLockRequest{
 		MaxTs: safePoint,
+		Limit: s.scanLockLimit,
 	})
 
-	const Unlimited = time.Duration(math.MaxInt64)
-
-	ctx1, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	response, err := s.client.SendRequest(ctx1, address, req, Unlimited)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	respStream := response.Resp.(tikvpb.Tikv_PhysicalScanLockClient)
-	if respStream == nil {
-		return errors.Errorf("cannot get stream from physical scan lock response")
-	}
+	nextKey := make([]byte, 0)
 
 	for {
-		resp, err := respStream.Recv()
-		if err == io.EOF {
-			break
-		}
+		req.PhysicalScanLock().StartKey = nextKey
+
+		response, err := s.client.SendRequest(ctx, address, req, tikv.ReadTimeoutMedium)
 		if err != nil {
 			return errors.Trace(err)
+		}
+
+		resp := response.Resp.(*kvrpcpb.PhysicalScanLockResponse)
+		if resp == nil {
+			return errors.Errorf("physical scan lock response is nil")
 		}
 
 		if len(resp.Error) > 0 {
 			return errors.Errorf("physical scan lock received error from store: %v", resp.Error)
 		}
 
+		if len(resp.Locks) == 0 {
+			break
+		}
+
+		nextKey = resp.Locks[len(resp.Locks)-1].Key
+		nextKey = append(nextKey, 0)
+
 		for _, lockInfo := range resp.Locks {
 			lockCh <- scanLockResult{Lock: tikv.NewLock(lockInfo)}
+		}
+
+		if len(resp.Locks) < int(s.scanLockLimit) {
+			break
 		}
 	}
 

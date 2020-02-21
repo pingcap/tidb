@@ -66,7 +66,7 @@ type testIntegrationSuite struct {
 func setupIntegrationSuite(s *testIntegrationSuite, c *C) {
 	var err error
 	s.lease = 50 * time.Millisecond
-	ddl.WaitTimeWhenErrorOccured = 0
+	ddl.SetWaitTimeWhenErrorOccurred(0)
 
 	s.cluster = mocktikv.NewCluster()
 	mocktikv.BootstrapWithSingleStore(s.cluster)
@@ -426,14 +426,20 @@ func (s *testIntegrationSuite5) TestMySQLErrorCode(c *C) {
 	tk.MustGetErrCode(sql, mysql.ErrPrimaryCantHaveNull)
 	sql = "create table t2 (id int auto_increment);"
 	tk.MustGetErrCode(sql, mysql.ErrWrongAutoKey)
-	sql = "create table t2 (a datetime(2) default current_timestamp(3))"
+	sql = "create table t2 (id int auto_increment, a int key);"
+	tk.MustGetErrCode(sql, mysql.ErrWrongAutoKey)
+	sql = "create table t2 (a datetime(2) default current_timestamp(3));"
 	tk.MustGetErrCode(sql, mysql.ErrInvalidDefault)
-	sql = "create table t2 (a datetime(2) default current_timestamp(2) on update current_timestamp)"
+	sql = "create table t2 (a datetime(2) default current_timestamp(2) on update current_timestamp);"
 	tk.MustGetErrCode(sql, mysql.ErrInvalidOnUpdate)
-	sql = "create table t2 (a datetime default current_timestamp on update current_timestamp(2))"
+	sql = "create table t2 (a datetime default current_timestamp on update current_timestamp(2));"
 	tk.MustGetErrCode(sql, mysql.ErrInvalidOnUpdate)
-	sql = "create table t2 (a datetime(2) default current_timestamp(2) on update current_timestamp(3))"
+	sql = "create table t2 (a datetime(2) default current_timestamp(2) on update current_timestamp(3));"
 	tk.MustGetErrCode(sql, mysql.ErrInvalidOnUpdate)
+	sql = "create table t(a blob(10), index(a(0)));"
+	tk.MustGetErrCode(sql, mysql.ErrKeyPart0)
+	sql = "create table t(a char(10), index(a(0)));"
+	tk.MustGetErrCode(sql, mysql.ErrKeyPart0)
 
 	sql = "create table t2 (id int primary key , age int);"
 	tk.MustExec(sql)
@@ -1882,8 +1888,8 @@ func (s *testIntegrationSuite3) TestSqlFunctionsInGeneratedColumns(c *C) {
 	tk.MustGetErrCode("create table t (a int, b int as (@x))", mysql.ErrGeneratedColumnFunctionIsNotAllowed)
 	tk.MustGetErrCode("create table t (a int, b int as (@@max_connections))", mysql.ErrGeneratedColumnFunctionIsNotAllowed)
 	tk.MustGetErrCode("create table t (a int, b int as (@y:=1))", mysql.ErrGeneratedColumnFunctionIsNotAllowed)
-	tk.MustGetErrCode(`create table t (a int, b int as (getval("x")))`, mysql.ErrGeneratedColumnFunctionIsNotAllowed)
-	tk.MustGetErrCode(`create table t (a int, b int as (setval("y", 1)))`, mysql.ErrGeneratedColumnFunctionIsNotAllowed)
+	tk.MustGetErrCode(`create table t (a int, b int as (getvalue("x")))`, mysql.ErrGeneratedColumnFunctionIsNotAllowed)
+	tk.MustGetErrCode(`create table t (a int, b int as (setvalue("y", 1)))`, mysql.ErrGeneratedColumnFunctionIsNotAllowed)
 	// 6. Aggregate function
 	tk.MustGetErrCode("create table t1 (a int, b int as (avg(a)));", mysql.ErrInvalidGroupFuncUse)
 
@@ -1954,6 +1960,14 @@ func (s *testIntegrationSuite6) TestAddExpressionIndex(c *C) {
 	c.Assert(len(columns), Equals, 2)
 
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2.1"))
+}
+
+func (s *testIntegrationSuite6) TestCreateExpressionIndexError(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int, b real);")
+	tk.MustGetErrCode("alter table t add primary key ((a+b));", mysql.ErrFunctionalIndexPrimaryKey)
 
 	// Test for error
 	tk.MustExec("drop table if exists t;")
