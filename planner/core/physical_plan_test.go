@@ -1212,7 +1212,7 @@ func (s *testPlanSuite) TestNominalSort(c *C) {
 	tk.MustExec("use test")
 	var input []string
 	var output []struct {
-		SQL  string
+		SQL    string
 		RESULT []string
 	}
 	tk.MustExec("create table t (a int, b int, index idx_a(a), index idx_b(b))")
