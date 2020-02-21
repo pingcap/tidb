@@ -1319,6 +1319,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 				retriever: &inspectionResultRetriever{
 					extractor: v.Extractor.(*plannercore.InspectionResultTableExtractor),
+					timeRange: v.QueryTimeRange,
 				},
 			}
 		case strings.ToLower(infoschema.TableInspectionSummary):
@@ -1327,22 +1328,25 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 				retriever: &inspectionSummaryRetriever{
 					table:     v.Table,
 					extractor: v.Extractor.(*plannercore.InspectionSummaryTableExtractor),
+					timeRange: v.QueryTimeRange,
 				},
 			}
 		case strings.ToLower(infoschema.TableMetricSummary):
 			return &MemTableReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
-				retriever: &MetricSummaryRetriever{
+				retriever: &MetricsSummaryRetriever{
 					table:     v.Table,
-					extractor: v.Extractor.(*plannercore.MetricTableExtractor),
+					extractor: v.Extractor.(*plannercore.MetricSummaryTableExtractor),
+					timeRange: v.QueryTimeRange,
 				},
 			}
 		case strings.ToLower(infoschema.TableMetricSummaryByLabel):
 			return &MemTableReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
-				retriever: &MetricSummaryByLabelRetriever{
+				retriever: &MetricsSummaryByLabelRetriever{
 					table:     v.Table,
-					extractor: v.Extractor.(*plannercore.MetricTableExtractor),
+					extractor: v.Extractor.(*plannercore.MetricSummaryTableExtractor),
+					timeRange: v.QueryTimeRange,
 				},
 			}
 		case strings.ToLower(infoschema.TableSchemata), strings.ToLower(infoschema.TableViews):
@@ -1356,9 +1360,10 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 		case strings.ToLower(infoschema.TableSlowQuery), strings.ToLower(infoschema.ClusterTableSlowLog):
 			return &MemTableReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
-				retriever: &SlowQueryRetriever{
+				retriever: &slowQueryRetriever{
 					table:      v.Table,
 					outputCols: v.Columns,
+					extractor:  v.Extractor.(*plannercore.SlowQueryExtractor),
 				},
 			}
 		}
