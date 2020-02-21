@@ -382,6 +382,40 @@ func (helper extractHelper) parseQuantiles(quantileSet set.StringSet) []float64 
 	return quantiles
 }
 
+func (helper extractHelper) extractCols(
+	schema *expression.Schema,
+	names []*types.FieldName,
+	predicates []expression.Expression,
+	excludeCols set.StringSet,
+	valueToLower bool) ([]expression.Expression, bool, map[string]set.StringSet) {
+	cols := map[string]set.StringSet{}
+	remained := predicates
+	skipRequest := false
+	// Extract the label columns.
+	for _, name := range names {
+		if excludeCols.Exist(name.ColName.L) {
+			continue
+		}
+		var values set.StringSet
+		remained, skipRequest, values = helper.extractCol(schema, names, remained, name.ColName.L, valueToLower)
+		if skipRequest {
+			return nil, true, nil
+		}
+		if len(values) == 0 {
+			continue
+		}
+		cols[name.ColName.L] = values
+	}
+	return remained, skipRequest, cols
+}
+
+func (helper extractHelper) convertToTime(t int64) time.Time {
+	if t == 0 || t == math.MaxInt64 {
+		return time.Now()
+	}
+	return time.Unix(t/1000, (t%1000)*int64(time.Millisecond))
+}
+
 // ClusterTableExtractor is used to extract some predicates of cluster table.
 type ClusterTableExtractor struct {
 	extractHelper
@@ -485,7 +519,7 @@ func (e *ClusterLogTableExtractor) Extract(
 	return remained
 }
 
-// MetricTableExtractor is used to extract some predicates of metric_schema tables.
+// MetricTableExtractor is used to extract some predicates of metrics_schema tables.
 type MetricTableExtractor struct {
 	extractHelper
 	// SkipRequest means the where clause always false, we don't need to request any component
@@ -528,26 +562,13 @@ func (e *MetricTableExtractor) Extract(
 		return nil
 	}
 
-	// Extract the label columns.
-	for _, name := range names {
-		switch name.ColName.L {
-		case "quantile", "time", "value":
-			continue
-		}
-		var values set.StringSet
-		remained, skipRequest, values = e.extractCol(schema, names, remained, name.ColName.L, false)
-		if skipRequest {
-			e.SkipRequest = skipRequest
-			return nil
-		}
-		if len(values) == 0 {
-			continue
-		}
-		if e.LabelConditions == nil {
-			e.LabelConditions = make(map[string]set.StringSet)
-		}
-		e.LabelConditions[name.ColName.L] = values
+	excludeCols := set.NewStringSet("quantile", "time", "value")
+	remained, skipRequest, extractCols := e.extractCols(schema, names, remained, excludeCols, false)
+	e.SkipRequest = skipRequest
+	if e.SkipRequest {
+		return nil
 	}
+	e.LabelConditions = extractCols
 	return remained
 }
 
@@ -573,11 +594,28 @@ func (e *MetricTableExtractor) getTimeRange(start, end int64) (time.Time, time.T
 	return startTime, endTime
 }
 
-func (e *MetricTableExtractor) convertToTime(t int64) time.Time {
-	if t == 0 || t == math.MaxInt64 {
-		return time.Now()
-	}
-	return time.Unix(t/1000, (t%1000)*int64(time.Millisecond))
+// MetricSummaryTableExtractor is used to extract some predicates of metrics_schema tables.
+type MetricSummaryTableExtractor struct {
+	extractHelper
+	// SkipRequest means the where clause always false, we don't need to request any component
+	SkipRequest  bool
+	MetricsNames set.StringSet
+	Quantiles    []float64
+}
+
+// Extract implements the MemTablePredicateExtractor Extract interface
+func (e *MetricSummaryTableExtractor) Extract(
+	_ sessionctx.Context,
+	schema *expression.Schema,
+	names []*types.FieldName,
+	predicates []expression.Expression,
+) (remained []expression.Expression) {
+	remained, quantileSkip, quantiles := e.extractCol(schema, names, predicates, "quantile", false)
+	remained, metricsNameSkip, metricsNames := e.extractCol(schema, names, predicates, "metrics_name", true)
+	e.SkipRequest = quantileSkip || metricsNameSkip
+	e.Quantiles = e.parseQuantiles(quantiles)
+	e.MetricsNames = metricsNames
+	return remained
 }
 
 // InspectionResultTableExtractor is used to extract some predicates of `inspection_result`
@@ -631,7 +669,7 @@ func (e *InspectionSummaryTableExtractor) Extract(
 	// Extract the `rule` columns
 	remained, ruleSkip, rules := e.extractCol(schema, names, predicates, "rule", true)
 	// Extract the `metric_name` columns
-	remained, metricNameSkip, metricNames := e.extractCol(schema, names, predicates, "metric_name", true)
+	remained, metricNameSkip, metricNames := e.extractCol(schema, names, predicates, "metrics_name", true)
 	// Extract the `quantile` columns
 	remained, quantileSkip, quantileSet := e.extractCol(schema, names, predicates, "quantile", false)
 	e.SkipInspection = ruleSkip || quantileSkip || metricNameSkip
@@ -639,4 +677,55 @@ func (e *InspectionSummaryTableExtractor) Extract(
 	e.Quantiles = e.parseQuantiles(quantileSet)
 	e.MetricNames = metricNames
 	return remained
+}
+
+// SlowQueryExtractor is used to extract some predicates of `slow_query`
+type SlowQueryExtractor struct {
+	extractHelper
+
+	SkipRequest bool
+	StartTime   time.Time
+	EndTime     time.Time
+	// Enable is true means the executor should use the time range to locate the slow-log file that need to be parsed.
+	// Enable is false, means the executor should keep the behavior compatible with before, which is only parse the
+	// current slow-log file.
+	Enable bool
+}
+
+// Extract implements the MemTablePredicateExtractor Extract interface
+func (e *SlowQueryExtractor) Extract(
+	ctx sessionctx.Context,
+	schema *expression.Schema,
+	names []*types.FieldName,
+	predicates []expression.Expression,
+) []expression.Expression {
+	remained, startTime, endTime := e.extractTimeRange(ctx, schema, names, predicates, "time", ctx.GetSessionVars().StmtCtx.TimeZone)
+	e.setTimeRange(startTime, endTime)
+	e.SkipRequest = e.Enable && e.StartTime.After(e.EndTime)
+	if e.SkipRequest {
+		return nil
+	}
+	return remained
+}
+
+func (e *SlowQueryExtractor) setTimeRange(start, end int64) {
+	const defaultSlowQueryDuration = 24 * time.Hour
+	var startTime, endTime time.Time
+	if start == 0 && end == 0 {
+		return
+	}
+	if start != 0 {
+		startTime = e.convertToTime(start)
+	}
+	if end != 0 {
+		endTime = e.convertToTime(end)
+	}
+	if start == 0 {
+		startTime = endTime.Add(-defaultSlowQueryDuration)
+	}
+	if end == 0 {
+		endTime = startTime.Add(defaultSlowQueryDuration)
+	}
+	e.StartTime, e.EndTime = startTime, endTime
+	e.Enable = true
 }

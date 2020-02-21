@@ -1226,8 +1226,8 @@ func (e *vecGroupChecker) evalGroupItemsAndResolveGroups(item expression.Express
 			previousIsNull = isNull
 		}
 		// don't use col.GetString since it will cause DATA RACE
-		firstRowDatum.SetString(string(col.GetBytes(0)))
-		lastRowDatum.SetString(string(col.GetBytes(numRows - 1)))
+		firstRowDatum.SetString(string(col.GetBytes(0)), tp.Collate, tp.Flen)
+		lastRowDatum.SetString(string(col.GetBytes(numRows-1)), tp.Collate, tp.Flen)
 	default:
 		err = errors.New(fmt.Sprintf("invalid eval type %v", eType))
 	}
