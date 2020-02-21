@@ -73,6 +73,7 @@ type InfoSyncer struct {
 	manager         util2.SessionManager
 	session         *concurrency.Session
 	topologySession *concurrency.Session
+	watchChan       clientv3.WatchChan
 }
 
 // ServerInfo is server static information.
@@ -129,7 +130,11 @@ func GlobalInfoSyncerInit(ctx context.Context, id string, etcdCli *clientv3.Clie
 
 // Init creates a new etcd session and stores server info to etcd.
 func (is *InfoSyncer) init(ctx context.Context) error {
-	return is.newSessionAndStoreServerInfo(ctx, owner.NewSessionDefaultRetryCnt)
+	err := is.newSessionAndStoreServerInfo(ctx, owner.NewSessionDefaultRetryCnt)
+	if err != nil {
+		return err
+	}
+	return is.newTopologySessionAndStoreServerInfo(ctx, owner.NewSessionDefaultRetryCnt)
 }
 
 // SetSessionManager set the session manager for InfoSyncer.
@@ -281,8 +286,8 @@ func (is *InfoSyncer) RemoveServerInfo() {
 
 type topologyInfo struct {
 	ServerVersionInfo
-	StatusPort uint
-	BinaryPath string
+	StatusPort uint   `json:"status_port"`
+	BinaryPath string `json:"binary_path"`
 }
 
 // RemoveServerInfo stores the topology of tidb to etcd.
@@ -291,10 +296,9 @@ func (is *InfoSyncer) storeTopologyInfo(ctx context.Context) error {
 	if is.etcdCli == nil {
 		return nil
 	}
-	// maybe it's not proper here.
 	s, err := os.Executable()
 	if err != nil {
-		return err
+		s = ""
 	}
 	topologyInfo := topologyInfo{
 		ServerVersionInfo: is.info.ServerVersionInfo,
@@ -313,6 +317,7 @@ func (is *InfoSyncer) storeTopologyInfo(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	is.watchChan = is.etcdCli.Watch(ctx, key)
 	// Initialize ttl.
 	return is.RefreshTopology(ctx)
 }
@@ -383,9 +388,30 @@ func (is *InfoSyncer) Done() <-chan struct{} {
 	return is.session.Done()
 }
 
+// TopologyDone returns a channel that closes when the topology syncer is no longer being refreshed.
+func (is *InfoSyncer) TopologyDone() <-chan struct{} {
+	if is.etcdCli == nil {
+		return make(chan struct{}, 1)
+	}
+	return is.topologySession.Done()
+}
+
+// TopologyDone returns a watcher channel for watching `/topology/tidb/ip:port/tidb`.
+func (is *InfoSyncer) TopologyUpdateChan() clientv3.WatchChan {
+	if is.etcdCli == nil || is.watchChan == nil {
+		return make(clientv3.WatchChan, 1)
+	}
+	return is.watchChan
+}
+
 // Restart restart the info syncer with new session leaseID and store server info to etcd again.
 func (is *InfoSyncer) Restart(ctx context.Context) error {
 	return is.newSessionAndStoreServerInfo(ctx, owner.NewSessionDefaultRetryCnt)
+}
+
+// RestartTopology restart the topology syncer with new session leaseID and store server info to etcd again.
+func (is *InfoSyncer) RestartTopology(ctx context.Context) error {
+	return is.newTopologySessionAndStoreServerInfo(ctx, owner.NewSessionDefaultRetryCnt)
 }
 
 // newSessionAndStoreServerInfo creates a new etcd session and stores server info to etcd.
@@ -404,19 +430,23 @@ func (is *InfoSyncer) newSessionAndStoreServerInfo(ctx context.Context, retryCnt
 		err := is.storeServerInfo(ctx)
 		return errors.Trace(err)
 	})
-	err = is.storeServerInfo(ctx)
+	return is.storeServerInfo(ctx)
+}
+
+// newTopologySessionAndStoreServerInfo creates a new etcd session and stores server info to etcd.
+func (is *InfoSyncer) newTopologySessionAndStoreServerInfo(ctx context.Context, retryCnt int) error {
+	if is.etcdCli == nil {
+		return nil
+	}
+	logPrefix := fmt.Sprintf("[topology-syncer] %s", is.serverInfoPath)
+	logPrefix = fmt.Sprintf("[topology-syncer] %s", is.serverInfoPath)
+	session, err := owner.NewSession(ctx, logPrefix, is.etcdCli, retryCnt, TopologySessionTTL)
 	if err != nil {
 		return err
 	}
 
-	logPrefix = fmt.Sprintf("[topology-syncer] %s", is.serverInfoPath)
-	session, err = owner.NewSession(ctx, logPrefix, is.etcdCli, retryCnt, TopologySessionTTL)
-	if err != nil {
-		return err
-	}
 	is.topologySession = session
-	err = is.storeTopologyInfo(ctx)
-	return err
+	return is.storeTopologyInfo(ctx)
 }
 
 // RefreshTopology refreshes etcd topology with ttl stored in "/topology/tidb/ip:port/ttl".
