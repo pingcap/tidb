@@ -1153,10 +1153,10 @@ Sort_28	20000.00	root	tpch.supplier.s_name:asc
     │ │   └─TableScan_48	25.00	cop[tikv]	table:nation, range:[-inf,+inf], keep order:false
     │ └─TableReader_47	500000.00	root	data:TableScan_46
     │   └─TableScan_46	500000.00	cop[tikv]	table:supplier, range:[-inf,+inf], keep order:false
-    └─HashAgg_53	64006.34	root	group by:tpch.partsupp.ps_suppkey, funcs:firstrow(tpch.partsupp.ps_suppkey)->tpch.partsupp.ps_suppkey
-      └─Projection_54	64006.34	root	tpch.partsupp.ps_suppkey
-        └─Selection_55	64006.34	root	gt(cast(tpch.partsupp.ps_availqty), mul(0.5, Column#44))
-          └─HashAgg_58	80007.93	root	group by:tpch.partsupp.ps_partkey, tpch.partsupp.ps_suppkey, funcs:firstrow(tpch.partsupp.ps_suppkey)->tpch.partsupp.ps_suppkey, funcs:firstrow(tpch.partsupp.ps_availqty)->tpch.partsupp.ps_availqty, funcs:sum(tpch.lineitem.l_quantity)->Column#44
+    └─HashAgg_53	257492.04	root	group by:tpch.partsupp.ps_suppkey, funcs:firstrow(tpch.partsupp.ps_suppkey)->tpch.partsupp.ps_suppkey
+      └─Projection_54	257492.04	root	tpch.partsupp.ps_suppkey
+        └─Selection_55	257492.04	root	gt(cast(tpch.partsupp.ps_availqty), mul(0.5, Column#44))
+          └─HashAgg_58	321865.05	root	group by:tpch.partsupp.ps_partkey, tpch.partsupp.ps_suppkey, funcs:firstrow(tpch.partsupp.ps_suppkey)->tpch.partsupp.ps_suppkey, funcs:firstrow(tpch.partsupp.ps_availqty)->tpch.partsupp.ps_availqty, funcs:sum(tpch.lineitem.l_quantity)->Column#44
             └─HashLeftJoin_62	9711455.06	root	left outer join, inner:IndexHashJoin_75 (REVERSED), equal:[eq(tpch.partsupp.ps_partkey, tpch.lineitem.l_partkey) eq(tpch.partsupp.ps_suppkey, tpch.lineitem.l_suppkey)]
               ├─IndexHashJoin_75	321865.05	root	inner join, inner:IndexLookUp_66, outer key:tpch.part.p_partkey, inner key:tpch.partsupp.ps_partkey
               │ ├─TableReader_98	80007.93	root	data:Selection_97
