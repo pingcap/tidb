@@ -61,13 +61,20 @@ func (p *baseLogicalPlan) PredicatePushDown(predicates []expression.Expression) 
 func canSwitch2Constant(expr expression.Expression) bool {
 	scalarFunc, ok := expr.(*expression.ScalarFunction)
 	if !ok {
-		_, res := expr.(*expression.Column)
-		return !res
+		switch expr.(type) {
+		case *expression.Column:
+			return false
+		case *expression.CorrelatedColumn:
+			return false
+		default:
+			return true
+		}
 	}
+	ret := true
 	for _, arg := range scalarFunc.GetArgs() {
-		return canSwitch2Constant(arg)
+		ret = ret && canSwitch2Constant(arg)
 	}
-	return true
+	return ret
 }
 
 // switch2Const will switch expr to Constant if it can.
