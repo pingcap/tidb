@@ -394,20 +394,6 @@ func (s *inspectionResultSuite) TestThresholdCheckInspection3(c *C) {
 
 	// construct some mock abnormal data
 	mockData := map[string][][]types.Datum{
-		"tikv_thread_cpu":                     {},
-		"pd_tso_wait_duration":                {},
-		"tidb_get_token_duration":             {},
-		"tidb_load_schema_duration":           {},
-		"tikv_scheduler_command_duration":     {},
-		"tikv_handle_snapshot_duration":       {},
-		"tikv_storage_async_request_duration": {},
-		"tikv_engine_write_duration":          {},
-		"tikv_engine_max_get_duration":        {},
-		"tikv_engine_max_seek_duration":       {},
-		"tikv_scheduler_pending_commands":     {},
-		"tikv_block_index_cache_hit":          {},
-		"tikv_block_data_cache_hit":           {},
-		"tikv_block_filter_cache_hit":         {},
 		"pd_scheduler_store_status": {
 			types.MakeDatums(datetime("2020-02-14 05:20:00"), "pd-0", "tikv-0", "0", "leader_score", 100.0),
 			types.MakeDatums(datetime("2020-02-14 05:20:00"), "pd-0", "tikv-1", "1", "leader_score", 50.0),
@@ -429,7 +415,10 @@ func (s *inspectionResultSuite) TestThresholdCheckInspection3(c *C) {
 		return fpname == fpName
 	})
 
-	rs, err := tk.Se.Execute(ctx, "select /*+ time_range('2020-02-14 04:20:00','2020-02-14 05:20:00') */ item, type, instance, value, reference, details from information_schema.inspection_result where rule='threshold-check' order by item")
+	rs, err := tk.Se.Execute(ctx, `select /*+ time_range('2020-02-14 04:20:00','2020-02-14 05:20:00') */
+		item, type, instance, value, reference, details from information_schema.inspection_result
+		where rule='threshold-check' and item in ('leader-score-balance','region-score-balance','region_count','region_health','store-available-balance')
+		order by item`)
 	c.Assert(err, IsNil)
 	result := tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute inspect SQL failed"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0), Commentf("unexpected warnings: %+v", tk.Se.GetSessionVars().StmtCtx.GetWarnings()))
