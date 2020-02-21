@@ -115,7 +115,8 @@
   {
     "name": "TestMergeAdjacentWindow",
     "cases": [
-      "select sum(a) over(partition by b order by c), max(b) over(partition by b order by c) from t"
+      "select sum(a) over(partition by b order by c), max(b) over(partition by b order by c) from t",
+      "select min(a) over(partition by b order by c rows between 1 preceding and 1 following), max(a) over(partition by b order by c rows between 1 preceding and 1 following) from t"
     ]
   },
   {

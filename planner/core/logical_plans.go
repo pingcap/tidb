@@ -908,6 +908,9 @@ func (bound *FrameBound) Equal(ctx sessionctx.Context, other *FrameBound) bool {
 	if len(bound.CalcFuncs) != len(other.CalcFuncs) || len(bound.CmpFuncs) != len(other.CmpFuncs) {
 		return false
 	}
+	if bound.Type != other.Type || bound.UnBounded != other.UnBounded || bound.Num != other.Num {
+		return false
+	}
 	for i := range bound.CalcFuncs {
 		if !bound.CalcFuncs[i].Equal(ctx, other.CalcFuncs[i]) {
 			return false
@@ -920,8 +923,7 @@ func (bound *FrameBound) Equal(ctx sessionctx.Context, other *FrameBound) bool {
 			return false
 		}
 	}
-	return bound.Type == other.Type && bound.UnBounded == other.UnBounded &&
-		bound.Num == other.Num
+	return true
 }
 
 // LogicalWindow represents a logical window function plan.
