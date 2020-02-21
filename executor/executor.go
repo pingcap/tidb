@@ -468,7 +468,7 @@ func (e *ShowDDLJobsExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		num := req.Capacity() - count
 		remainNum := e.jobNumber - (e.cursor - len(e.runningJobs))
 		num = mathutil.Min(num, remainNum)
-		e.cacheJobs, err = e.historyJobIter.GetNextJobs(num, e.cacheJobs)
+		e.cacheJobs, err = e.historyJobIter.GetLastJobs(num, e.cacheJobs)
 		if err != nil {
 			return err
 		}
