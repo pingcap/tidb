@@ -347,7 +347,7 @@ type ShowDDLJobsExec struct {
 	done      bool
 }
 
-// DDLJobExecInitializer initials the DDLJobsExec
+// DDLJobExecInitializer initials the DDLJobsExec.
 type DDLJobExecInitializer struct {
 	runningJobs    []*model.Job
 	historyJobIter *meta.LastJobIterator

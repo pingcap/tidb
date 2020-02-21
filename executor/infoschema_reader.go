@@ -157,7 +157,7 @@ func dataForViews(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Da
 	return rows, nil
 }
 
-// DDLJobsReaderExec executes DDLJobs information retrieving
+// DDLJobsReaderExec executes DDLJobs information retrieving.
 type DDLJobsReaderExec struct {
 	baseExecutor
 	DDLJobExecInitializer
@@ -188,7 +188,7 @@ func (e *DDLJobsReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	checker := privilege.GetPrivilegeManager(e.ctx)
 	count := 0
 
-	// Append running ddl jobs.
+	// Append running DDL jobs.
 	if e.cursor < len(e.runningJobs) {
 		num := mathutil.Min(req.Capacity(), len(e.runningJobs)-e.cursor)
 		for i := e.cursor; i < e.cursor+num; i++ {
@@ -199,7 +199,7 @@ func (e *DDLJobsReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	var err error
 
-	// Append history ddl jobs.
+	// Append history DDL jobs.
 	if count < req.Capacity() {
 		e.cacheJobs, err = e.historyJobIter.GetNextJobs(req.Capacity()-count, e.cacheJobs)
 		if err != nil {
@@ -234,7 +234,7 @@ func (e *DDLJobsReaderExec) appendJobToChunk(req *chunk.Chunk, job *model.Job, c
 		tableName = getTableName(e.is, job.TableID)
 	}
 
-	//check the privilege
+	// Check the privilege.
 	if checker != nil && !checker.RequestVerification(e.ctx.GetSessionVars().ActiveRoles, strings.ToLower(schemaName), strings.ToLower(tableName), "", mysql.AllPrivMask) {
 		return
 	}

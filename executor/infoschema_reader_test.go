@@ -45,7 +45,7 @@ func (s *testInfoschemaTableSuite) TestSchemataTables(c *C) {
 	tk.MustQuery("select * from information_schema.SCHEMATA where schema_name='mysql';").Check(
 		testkit.Rows("def mysql utf8mb4 utf8mb4_bin <nil>"))
 
-	//test the privilege of new user for information_schema.schemata
+	// Test the privilege of new user for information_schema.schemata.
 	tk.MustExec("create user schemata_tester")
 	schemataTester := testkit.NewTestKit(c, s.store)
 	schemataTester.MustExec("use information_schema")
@@ -59,7 +59,7 @@ func (s *testInfoschemaTableSuite) TestSchemataTables(c *C) {
 	schemataTester.MustQuery("select * from information_schema.SCHEMATA where schema_name='INFORMATION_SCHEMA';").Check(
 		testkit.Rows("def INFORMATION_SCHEMA utf8mb4 utf8mb4_bin <nil>"))
 
-	//test the privilege of user with privilege of mysql for information_schema.schemata
+	// Test the privilege of user with privilege of mysql for information_schema.schemata.
 	tk.MustExec("CREATE ROLE r_mysql_priv;")
 	tk.MustExec("GRANT ALL PRIVILEGES ON mysql.* TO r_mysql_priv;")
 	tk.MustExec("GRANT r_mysql_priv TO schemata_tester;")
@@ -98,7 +98,7 @@ func (s *testInfoschemaTableSuite) TestDDLJobs(c *C) {
 	tk.MustQuery("select job_type from information_schema.DDL_JOBS group by job_type having job_type = 'create table'").Check(
 		testkit.Rows("create table"))
 
-	//test the privilege of new user for information_schema.DDL_JOBS
+	// Test the privilege of new user for information_schema.DDL_JOBS.
 	tk.MustExec("create user DDL_JOBS_tester")
 	DDLJobsTester := testkit.NewTestKit(c, s.store)
 	DDLJobsTester.MustExec("use information_schema")
@@ -109,7 +109,7 @@ func (s *testInfoschemaTableSuite) TestDDLJobs(c *C) {
 	DDLJobsTester.MustQuery("select DB_NAME from information_schema.DDL_JOBS;").Check(
 		[][]interface{}{})
 
-	//test the privilege of user with privilege of mysql for information_schema.ddl_jobs
+	// Test the privilege of user with privilege of mysql for information_schema.ddl_jobs.
 	tk.MustExec("CREATE ROLE mysql_priv;")
 	tk.MustExec("GRANT ALL PRIVILEGES ON mysql.* TO mysql_priv;")
 	tk.MustExec("GRANT mysql_priv TO DDL_JOBS_tester;")
