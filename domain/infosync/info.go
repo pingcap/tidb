@@ -279,7 +279,7 @@ func (is *InfoSyncer) RemoveServerInfo() {
 	}
 }
 
-type TopologyInfo struct {
+type topologyInfo struct {
 	ServerVersionInfo
 	StatusPort uint
 	BinaryPath string
@@ -296,7 +296,7 @@ func (is *InfoSyncer) storeTopologyInfo(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	topologyInfo := TopologyInfo{
+	topologyInfo := topologyInfo{
 		ServerVersionInfo: is.info.ServerVersionInfo,
 		StatusPort:        is.info.StatusPort,
 		BinaryPath:        s,
@@ -419,6 +419,7 @@ func (is *InfoSyncer) newSessionAndStoreServerInfo(ctx context.Context, retryCnt
 	return err
 }
 
+// RefreshTopology refreshes etcd topology with ttl stored in "/topology/tidb/ip:port/ttl".
 func (is *InfoSyncer) RefreshTopology(ctx context.Context) error {
 	if is.etcdCli == nil {
 		return nil
