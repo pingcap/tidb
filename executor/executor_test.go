@@ -18,6 +18,7 @@ import (
 	"flag"
 	"fmt"
 	"math"
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -47,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -73,6 +75,7 @@ import (
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
+	"google.golang.org/grpc"
 )
 
 func TestT(t *testing.T) {
@@ -117,6 +120,7 @@ var _ = Suite(&testRecoverTable{})
 var _ = Suite(&testMemTableReaderSuite{})
 var _ = SerialSuites(&testFlushSuite{})
 var _ = SerialSuites(&testAutoRandomSuite{&baseTestSuite{}})
+var _ = SerialSuites(&testClusterTableSuite{testSuite1: &testSuite1{}})
 
 type testSuite struct{ *baseTestSuite }
 type testSuiteP1 struct{ *baseTestSuite }
@@ -5149,4 +5153,134 @@ func (s *testSuite1) TestAlterDefaultValue(c *C) {
 	tk.MustExec("alter table t add column b int default 1")
 	tk.MustExec("alter table t alter b set default 2")
 	tk.MustQuery("select b from t where a = 1").Check(testkit.Rows("1"))
+}
+
+type testClusterTableSuite struct {
+	*testSuite1
+	rpcserver  *grpc.Server
+	listenAddr string
+}
+
+func (s *testClusterTableSuite) SetUpSuite(c *C) {
+	s.testSuite1.SetUpSuite(c)
+	s.rpcserver, s.listenAddr = s.setUpRPCService(c, ":0")
+}
+
+func (s *testClusterTableSuite) setUpRPCService(c *C, addr string) (*grpc.Server, string) {
+	sm := &mockSessionManager1{}
+	sm.PS = append(sm.PS, &util.ProcessInfo{
+		ID:      1,
+		User:    "root",
+		Host:    "127.0.0.1",
+		Command: mysql.ComQuery,
+	})
+	lis, err := net.Listen("tcp", addr)
+	c.Assert(err, IsNil)
+	srv := server.NewRPCServer(config.GetGlobalConfig(), s.dom, sm)
+	port := lis.Addr().(*net.TCPAddr).Port
+	addr = fmt.Sprintf("127.0.0.1:%d", port)
+	go func() {
+		err = srv.Serve(lis)
+		c.Assert(err, IsNil)
+	}()
+	cfg := config.GetGlobalConfig()
+	cfg.Status.StatusPort = uint(port)
+	config.StoreGlobalConfig(cfg)
+	return srv, addr
+}
+func (s *testClusterTableSuite) TearDownSuite(c *C) {
+	if s.rpcserver != nil {
+		s.rpcserver.Stop()
+		s.rpcserver = nil
+	}
+	s.testSuite1.TearDownSuite(c)
+}
+
+func (s *testClusterTableSuite) TestSlowQuery(c *C) {
+	writeFile := func(file string, data string) {
+		f, err := os.OpenFile(file, os.O_CREATE|os.O_WRONLY, 0644)
+		c.Assert(err, IsNil)
+		_, err = f.Write([]byte(data))
+		c.Assert(f.Close(), IsNil)
+		c.Assert(err, IsNil)
+	}
+
+	logData0 := ""
+	logData1 := `
+# Time: 2020-02-15T18:00:01.000000+08:00
+select 1;
+# Time: 2020-02-15T19:00:05.000000+08:00
+select 2;`
+	logData2 := `
+# Time: 2020-02-16T18:00:01.000000+08:00
+select 3;
+# Time: 2020-02-16T18:00:05.000000+08:00
+select 4;`
+	logData3 := `
+# Time: 2020-02-16T19:00:00.000000+08:00
+select 5;
+# Time: 2020-02-17T18:00:05.000000+08:00
+select 6;`
+	fileName0 := "tidb-slow-2020-02-14T19-04-05.01.log"
+	fileName1 := "tidb-slow-2020-02-15T19-04-05.01.log"
+	fileName2 := "tidb-slow-2020-02-16T19-04-05.01.log"
+	fileName3 := "tidb-slow.log"
+	writeFile(fileName0, logData0)
+	writeFile(fileName1, logData1)
+	writeFile(fileName2, logData2)
+	writeFile(fileName3, logData3)
+	defer func() {
+		os.Remove(fileName0)
+		os.Remove(fileName1)
+		os.Remove(fileName2)
+		os.Remove(fileName3)
+	}()
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	loc, err := time.LoadLocation("Asia/Shanghai")
+	c.Assert(err, IsNil)
+	tk.Se.GetSessionVars().TimeZone = loc
+	tk.MustExec("use information_schema")
+	cases := []struct {
+		sql    string
+		result []string
+	}{
+		{
+			sql:    "select count(*),min(time),max(time) from %s where time > '2019-01-26 21:51:00' and time < now()",
+			result: []string{"6|2020-02-15 18:00:01.000000|2020-02-17 18:00:05.000000"},
+		},
+		{
+			sql:    "select count(*),min(time),max(time) from %s where time > '2020-02-15 19:00:00' and time < '2020-02-16 18:00:02'",
+			result: []string{"2|2020-02-15 19:00:05.000000|2020-02-16 18:00:01.000000"},
+		},
+		{
+			sql:    "select count(*),min(time),max(time) from %s where time > '2020-02-16 18:00:02' and time < '2020-02-17 17:00:00'",
+			result: []string{"2|2020-02-16 18:00:05.000000|2020-02-16 19:00:00.000000"},
+		},
+		{
+			sql:    "select count(*),min(time),max(time) from %s where time > '2020-02-16 18:00:02' and time < '2020-02-17 20:00:00'",
+			result: []string{"3|2020-02-16 18:00:05.000000|2020-02-17 18:00:05.000000"},
+		},
+		{
+			sql:    "select count(*),min(time),max(time) from %s",
+			result: []string{"2|2020-02-16 19:00:00.000000|2020-02-17 18:00:05.000000"},
+		},
+		{
+			sql:    "select count(*),min(time) from %s where time > '2020-02-16 20:00:00'",
+			result: []string{"1|2020-02-17 18:00:05.000000"},
+		},
+		{
+			sql:    "select count(*) from %s where time > '2020-02-17 20:00:00'",
+			result: []string{"0"},
+		},
+		{
+			sql:    "select query from %s where time > '2019-01-26 21:51:00' and time < now()",
+			result: []string{"select 1;", "select 2;", "select 3;", "select 4;", "select 5;", "select 6;"},
+		},
+	}
+	for _, cas := range cases {
+		sql := fmt.Sprintf(cas.sql, "slow_query")
+		tk.MustQuery(sql).Check(testutil.RowsWithSep("|", cas.result...))
+		sql = fmt.Sprintf(cas.sql, "cluster_slow_query")
+		tk.MustQuery(sql).Check(testutil.RowsWithSep("|", cas.result...))
+	}
 }
