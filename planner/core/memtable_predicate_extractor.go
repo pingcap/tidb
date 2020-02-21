@@ -279,6 +279,27 @@ func (helper extractHelper) findColumn(schema *expression.Schema, names []*types
 	return extractCols
 }
 
+// getTimeFunctionName is used to get the (time) function name.
+// For the expression that push down to the coprocessor, the function name is different with normal compare function,
+// Then getTimeFunctionName will do a sample function name convert.
+// Currently, this is used to support query `CLUSTER_SLOW_QUERY` at any time.
+func (helper extractHelper) getTimeFunctionName(fn *expression.ScalarFunction) string {
+	switch fn.Function.PbCode() {
+	case tipb.ScalarFuncSig_GTTime:
+		return ast.GT
+	case tipb.ScalarFuncSig_GETime:
+		return ast.GE
+	case tipb.ScalarFuncSig_LTTime:
+		return ast.LT
+	case tipb.ScalarFuncSig_LETime:
+		return ast.LE
+	case tipb.ScalarFuncSig_EQTime:
+		return ast.EQ
+	default:
+		return fn.FuncName.L
+	}
+}
+
 // extracts the time range column, e.g:
 // SELECT * FROM t WHERE time='2019-10-10 10:10:10'
 // SELECT * FROM t WHERE time>'2019-10-10 10:10:10' AND time<'2019-10-11 10:10:10'
@@ -310,9 +331,9 @@ func (helper extractHelper) extractTimeRange(
 
 		var colName string
 		var datums []types.Datum
-		switch fn.Function.PbCode() {
-		case tipb.ScalarFuncSig_LTTime, tipb.ScalarFuncSig_GTTime, tipb.ScalarFuncSig_GETime, tipb.ScalarFuncSig_LETime,
-			tipb.ScalarFuncSig_EQTime:
+		fnName := helper.getTimeFunctionName(fn)
+		switch fnName {
+		case ast.GT, ast.GE, ast.LT, ast.LE, ast.EQ:
 			colName, datums = helper.extractColBinaryOpConsExpr(extractCols, fn)
 		}
 
@@ -336,25 +357,25 @@ func (helper extractHelper) extractTimeRange(
 				timezone,
 			).UnixNano() / int64(time.Millisecond)
 
-			switch fn.Function.PbCode() {
-			case tipb.ScalarFuncSig_EQTime:
+			switch fnName {
+			case ast.EQ:
 				startTime = mathutil.MaxInt64(startTime, timestamp)
 				if endTime == 0 {
 					endTime = timestamp
 				} else {
 					endTime = mathutil.MinInt64(endTime, timestamp)
 				}
-			case tipb.ScalarFuncSig_GTTime:
+			case ast.GT:
 				startTime = mathutil.MaxInt64(startTime, timestamp+1)
-			case tipb.ScalarFuncSig_GETime:
+			case ast.GE:
 				startTime = mathutil.MaxInt64(startTime, timestamp)
-			case tipb.ScalarFuncSig_LTTime:
+			case ast.LT:
 				if endTime == 0 {
 					endTime = timestamp - 1
 				} else {
 					endTime = mathutil.MinInt64(endTime, timestamp-1)
 				}
-			case tipb.ScalarFuncSig_LETime:
+			case ast.LE:
 				if endTime == 0 {
 					endTime = timestamp
 				} else {
