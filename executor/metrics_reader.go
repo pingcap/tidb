@@ -240,15 +240,15 @@ func (e *MetricsSummaryRetriever) retrieve(_ context.Context, sctx sessionctx.Co
 		}
 		var sql string
 		if def.Quantile > 0 {
-			quantiles := e.extractor.Quantiles
-			if len(quantiles) == 0 {
-				quantiles = []float64{0.99}
+			var qs []string
+			if len(e.extractor.Quantiles) > 0 {
+				for _, q := range e.extractor.Quantiles {
+					qs = append(qs, fmt.Sprintf("%f", q))
+				}
+			} else {
+				qs = []string{"0.99"}
 			}
-			qs := make([]string, len(quantiles))
-			for i, q := range e.extractor.Quantiles {
-				qs[i] = fmt.Sprintf("%f", q)
-			}
-			sql = fmt.Sprintf("select sum(value),avg(value),min(value),max(value),quantile from `%[2]s`.`%[1]s` %[3]s and quntile in (%[4]s) group by quantile order by quantile",
+			sql = fmt.Sprintf("select sum(value),avg(value),min(value),max(value),quantile from `%[2]s`.`%[1]s` %[3]s and quantile in (%[4]s) group by quantile order by quantile",
 				name, util.MetricSchemaName.L, condition, strings.Join(qs, ","))
 		} else {
 			sql = fmt.Sprintf("select sum(value),avg(value),min(value),max(value) from `%[2]s`.`%[1]s` %[3]s",
@@ -257,7 +257,7 @@ func (e *MetricsSummaryRetriever) retrieve(_ context.Context, sctx sessionctx.Co
 
 		rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.Errorf("execute '%s' failed: %v", sql, err)
 		}
 		for _, row := range rows {
 			var quantile float64
@@ -267,10 +267,10 @@ func (e *MetricsSummaryRetriever) retrieve(_ context.Context, sctx sessionctx.Co
 			totalRows = append(totalRows, types.MakeDatums(
 				name,
 				quantile,
+				row.GetFloat64(0),
 				row.GetFloat64(1),
 				row.GetFloat64(2),
 				row.GetFloat64(3),
-				row.GetFloat64(4),
 				def.Comment,
 			))
 		}
