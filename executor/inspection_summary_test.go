@@ -96,7 +96,7 @@ func (s *inspectionSummarySuite) TestInspectionSummary(c *C) {
 		return fpName == fpname
 	})
 
-	rs, err := tk.Se.Execute(ctx, "select * from information_schema.inspection_summary where rule='query-summary' and metric_name in ('tidb_qps', 'tidb_query_duration')")
+	rs, err := tk.Se.Execute(ctx, "select * from information_schema.inspection_summary where rule='query-summary' and metrics_name in ('tidb_qps', 'tidb_query_duration')")
 	c.Assert(err, IsNil)
 	result := tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute inspect SQL failed"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0), Commentf("unexpected warnings: %+v", tk.Se.GetSessionVars().StmtCtx.GetWarnings()))
