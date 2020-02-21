@@ -1434,7 +1434,7 @@
     "Cases": [
       {
         "SQL": "explain select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by t1.a",
-        "Plan": [
+        "RESULT": [
           "Projection_20 12487.50 root test.t.a",
           "└─MergeJoin_21 12487.50 root inner join, left key:test.t.a, right key:test.t.b",
           "  ├─IndexReader_13 9990.00 root index:IndexScan_12",
@@ -1445,7 +1445,7 @@
       },
       {
         "SQL": "explain select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by t1.a+1",
-        "Plan": [
+        "RESULT": [
           "Projection_24 12487.50 root test.t.a",
           "└─Projection_23 12487.50 root test.t.a, plus(test.t.a, 1)->Column#7",
           "  └─Projection_20 12487.50 root test.t.a",
@@ -1458,7 +1458,7 @@
       },
       {
         "SQL": "explain select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by t1.a-1",
-        "Plan": [
+        "RESULT": [
           "Projection_24 12487.50 root test.t.a",
           "└─Projection_23 12487.50 root test.t.a, minus(test.t.a, 1)->Column#7",
           "  └─Projection_20 12487.50 root test.t.a",
@@ -1471,7 +1471,7 @@
       },
       {
         "SQL": "explain select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by -t1.a",
-        "Plan": [
+        "RESULT": [
           "Projection_32 12487.50 root test.t.a",
           "└─Projection_31 12487.50 root test.t.a, unaryminus(test.t.a)->Column#7",
           "  └─Projection_20 12487.50 root test.t.a",
@@ -1484,7 +1484,7 @@
       },
       {
         "SQL": "explain select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by -t1.a+3",
-        "Plan": [
+        "RESULT": [
           "Projection_32 12487.50 root test.t.a",
           "└─Projection_31 12487.50 root test.t.a, plus(unaryminus(test.t.a), 3)->Column#7",
           "  └─Projection_20 12487.50 root test.t.a",
@@ -1497,7 +1497,7 @@
       },
       {
         "SQL": "explain select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by 1+t1.a",
-        "Plan": [
+        "RESULT": [
           "Projection_24 12487.50 root test.t.a",
           "└─Projection_23 12487.50 root test.t.a, plus(1, test.t.a)->Column#7",
           "  └─Projection_20 12487.50 root test.t.a",
@@ -1510,7 +1510,7 @@
       },
       {
         "SQL": "explain select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by 1-t1.a",
-        "Plan": [
+        "RESULT": [
           "Projection_32 12487.50 root test.t.a",
           "└─Projection_31 12487.50 root test.t.a, minus(1, test.t.a)->Column#7",
           "  └─Projection_20 12487.50 root test.t.a",
@@ -1523,7 +1523,7 @@
       },
       {
         "SQL": "explain select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by 1-t1.a+3",
-        "Plan": [
+        "RESULT": [
           "Projection_32 12487.50 root test.t.a",
           "└─Projection_31 12487.50 root test.t.a, plus(minus(1, test.t.a), 3)->Column#7",
           "  └─Projection_20 12487.50 root test.t.a",
@@ -1536,7 +1536,7 @@
       },
       {
         "SQL": "explain select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by 1+t1.a+3",
-        "Plan": [
+        "RESULT": [
           "Projection_24 12487.50 root test.t.a",
           "└─Projection_23 12487.50 root test.t.a, plus(plus(1, test.t.a), 3)->Column#7",
           "  └─Projection_20 12487.50 root test.t.a",
@@ -1549,7 +1549,7 @@
       },
       {
         "SQL": "explain select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by 3*t1.a",
-        "Plan": [
+        "RESULT": [
           "Projection_19 12487.50 root test.t.a",
           "└─Sort_7 12487.50 root Column#7:asc",
           "  └─Projection_20 12487.50 root test.t.a, mul(3, test.t.a)->Column#7",
@@ -1559,6 +1559,86 @@
           "        │ └─IndexScan_11 9990.00 cop[tikv] table:t1, index:a, range:[-inf,+inf], keep order:true, stats:pseudo",
           "        └─IndexReader_14 9990.00 root index:IndexScan_13",
           "          └─IndexScan_13 9990.00 cop[tikv] table:t2, index:b, range:[-inf,+inf], keep order:true, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by t1.a",
+        "RESULT": [
+          "1",
+          "1",
+          "2"
+        ]
+      },
+      {
+        "SQL": "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by t1.a+1",
+        "RESULT": [
+          "1",
+          "1",
+          "2"
+        ]
+      },
+      {
+        "SQL": "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by t1.a-1",
+        "RESULT": [
+          "1",
+          "1",
+          "2"
+        ]
+      },
+      {
+        "SQL": "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by -t1.a",
+        "RESULT": [
+          "2",
+          "1",
+          "1"
+        ]
+      },
+      {
+        "SQL": "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by -t1.a+3",
+        "RESULT": [
+          "2",
+          "1",
+          "1"
+        ]
+      },
+      {
+        "SQL": "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by 1+t1.a",
+        "RESULT": [
+          "1",
+          "1",
+          "2"
+        ]
+      },
+      {
+        "SQL": "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by 1-t1.a",
+        "RESULT": [
+          "2",
+          "1",
+          "1"
+        ]
+      },
+      {
+        "SQL": "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by 1-t1.a+3",
+        "RESULT": [
+          "2",
+          "1",
+          "1"
+        ]
+      },
+      {
+        "SQL": "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by 1+t1.a+3",
+        "RESULT": [
+          "1",
+          "1",
+          "2"
+        ]
+      },
+      {
+        "SQL": "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by 3*t1.a",
+        "RESULT": [
+          "1",
+          "1",
+          "2"
         ]
       }
     ]

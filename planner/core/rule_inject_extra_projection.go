@@ -238,7 +238,6 @@ func TurnNominalSortIntoProj(p PhysicalPlan, onlyColumn bool, orderByItems []*By
 			Index:    len(bottomProjSchemaCols),
 		}
 		bottomProjSchemaCols = append(bottomProjSchemaCols, newArg)
-		item.Expr = newArg
 	}
 
 	childProp := p.GetChildReqProps(0).Clone()
