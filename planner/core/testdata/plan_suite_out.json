@@ -623,7 +623,7 @@
     "Cases": [
       {
         "SQL": "select * from t order by b limit 1 for update",
-        "Best": "TableReader(Table(t))->Lock->TopN([test.t.b],0,1)",
+        "Best": "TableReader(Table(t)->TopN([test.t.b],0,1))->TopN([test.t.b],0,1)->Lock",
         "Hints": "USE_INDEX(@`sel_1` `test`.`t` )"
       },
       {
