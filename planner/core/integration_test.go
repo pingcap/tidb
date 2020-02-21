@@ -285,3 +285,11 @@ func (s *testIntegrationSuite) TestMaxMinEliminate(c *C) {
 		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
 	}
 }
+
+func (s *testIntegrationSuite) TestTopNByConstFunc(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustQuery("select max(t.col) from (select 'a' as col union all select '' as col) as t").Check(testkit.Rows(
+		"a",
+	))
+}
