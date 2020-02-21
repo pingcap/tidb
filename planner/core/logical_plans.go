@@ -905,10 +905,10 @@ type FrameBound struct {
 
 // Equal checks whether two FrameBounds are equal.
 func (bound *FrameBound) Equal(ctx sessionctx.Context, other *FrameBound) bool {
-	if len(bound.CalcFuncs) != len(other.CalcFuncs) || len(bound.CmpFuncs) != len(other.CmpFuncs) {
+	if bound.Type != other.Type || bound.UnBounded != other.UnBounded || bound.Num != other.Num {
 		return false
 	}
-	if bound.Type != other.Type || bound.UnBounded != other.UnBounded || bound.Num != other.Num {
+	if len(bound.CalcFuncs) != len(other.CalcFuncs) || len(bound.CmpFuncs) != len(other.CmpFuncs) {
 		return false
 	}
 	for i := range bound.CalcFuncs {
