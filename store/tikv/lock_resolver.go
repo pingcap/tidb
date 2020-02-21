@@ -308,7 +308,11 @@ func (lr *LockResolver) ResolveLocks(bo *Backoffer, callerStartTS uint64, locks 
 				cleanTxns[l.TxnID] = cleanRegions
 			}
 
-			err = lr.resolveLock(bo, l, status, cleanRegions)
+			if l.LockType == kvrpcpb.Op_PessimisticLock {
+				err = lr.resolvePessimisticLock(bo, l, cleanRegions)
+			} else {
+				err = lr.resolveLock(bo, l, status, cleanRegions)
+			}
 			if err != nil {
 				msBeforeTxnExpired.update(0)
 				err = errors.Trace(err)
@@ -410,10 +414,6 @@ func (lr *LockResolver) getTxnStatusFromLock(bo *Backoffer, l *Lock, callerStart
 			return TxnStatus{}, err
 		}
 
-		if l.LockType == kvrpcpb.Op_PessimisticLock {
-			return TxnStatus{ttl: l.TTL}, nil
-		}
-
 		// Handle txnNotFound error.
 		// getTxnStatus() returns it when the secondary locks exist while the primary lock doesn't.
 		// This is likely to happen in the concurrently prewrite when secondary regions
@@ -421,11 +421,14 @@ func (lr *LockResolver) getTxnStatusFromLock(bo *Backoffer, l *Lock, callerStart
 		if err := bo.Backoff(boTxnNotFound, err); err != nil {
 			logutil.Logger(bo.ctx).Warn("getTxnStatusFromLock backoff fail", zap.Error(err))
 		}
-		logutil.Logger(bo.ctx).Warn("resolve lock txn not found",
-			zap.Uint64("CallerStartTs", callerStartTS),
-			zap.Stringer("lock str", l))
 
 		if lr.store.GetOracle().UntilExpired(l.TxnID, l.TTL) <= 0 {
+			logutil.Logger(bo.ctx).Warn("lock txn not found, lock has expired",
+				zap.Uint64("CallerStartTs", callerStartTS),
+				zap.Stringer("lock str", l))
+			if l.LockType == kvrpcpb.Op_PessimisticLock {
+				return TxnStatus{}, nil
+			}
 			rollbackIfNotExist = true
 		}
 	}
@@ -569,6 +572,50 @@ func (lr *LockResolver) resolveLock(bo *Backoffer, l *Lock, status TxnStatus, cl
 		}
 		if cleanWholeRegion {
 			cleanRegions[loc.Region] = struct{}{}
+		}
+		return nil
+	}
+}
+
+func (lr *LockResolver) resolvePessimisticLock(bo *Backoffer, l *Lock, cleanRegions map[RegionVerID]struct{}) error {
+	tikvLockResolverCountWithResolveLocks.Inc()
+	for {
+		loc, err := lr.store.GetRegionCache().LocateKey(bo, l.Key)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if _, ok := cleanRegions[loc.Region]; ok {
+			return nil
+		}
+		pessimisticRollbackReq := &kvrpcpb.PessimisticRollbackRequest{
+			StartVersion: l.TxnID,
+			ForUpdateTs:  math.MaxUint64,
+			Keys:         [][]byte{l.Key},
+		}
+		req := tikvrpc.NewRequest(tikvrpc.CmdPessimisticRollback, pessimisticRollbackReq)
+		resp, err := lr.store.SendReq(bo, req, loc.Region, readTimeoutShort)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		regionErr, err := resp.GetRegionError()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if regionErr != nil {
+			err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
+			if err != nil {
+				return errors.Trace(err)
+			}
+			continue
+		}
+		if resp.Resp == nil {
+			return errors.Trace(ErrBodyMissing)
+		}
+		cmdResp := resp.Resp.(*kvrpcpb.PessimisticRollbackResponse)
+		if keyErr := cmdResp.GetErrors(); len(keyErr) > 0 {
+			err = errors.Errorf("unexpected resolve pessimistic lock err: %s, lock: %v", keyErr[0], l)
+			logutil.Logger(bo.ctx).Error("resolveLock error", zap.Error(err))
+			return err
 		}
 		return nil
 	}

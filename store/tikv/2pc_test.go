@@ -710,3 +710,37 @@ func (s *testCommitterSuite) getLockInfo(c *C, key []byte) *kvrpcpb.LockInfo {
 	c.Assert(locked, NotNil)
 	return locked
 }
+
+func (s *testCommitterSuite) TestPkNotFound(c *C) {
+	atomic.StoreUint64(&ManagedLockTTL, 100)        // 100ms
+	defer atomic.StoreUint64(&ManagedLockTTL, 3000) // restore default value
+	// k1 is the primary lock of txn1
+	k1 := kv.Key("k1")
+	// k2 is a secondary lock of txn1 and a key txn2 wants to lock
+	k2 := kv.Key("k2")
+
+	txn1 := s.begin(c)
+	txn1.SetOption(kv.Pessimistic, true)
+	// lock the primary key
+	lockCtx := &kv.LockCtx{ForUpdateTS: txn1.startTS, WaitStartTime: time.Now()}
+	err := txn1.LockKeys(context.Background(), lockCtx, k1)
+	c.Assert(err, IsNil)
+	// lock the secondary key
+	lockCtx = &kv.LockCtx{ForUpdateTS: txn1.startTS, WaitStartTime: time.Now()}
+	err = txn1.LockKeys(context.Background(), lockCtx, k2)
+	c.Assert(err, IsNil)
+
+	// Stop txn ttl manager and remove primary key, like tidb server crashes and the priamry key lock does not exists actually,
+	// while the secondary lock operation succeeded
+	bo := NewBackoffer(context.Background(), pessimisticLockMaxBackoff)
+	txn1.committer.ttlManager.close()
+	err = txn1.committer.pessimisticRollbackKeys(bo, [][]byte{k1})
+	c.Assert(err, IsNil)
+
+	// Txn2 tries to lock the secondary key k2, dead loop if the left secondary lock by txn1 not resolved
+	txn2 := s.begin(c)
+	txn2.SetOption(kv.Pessimistic, true)
+	lockCtx = &kv.LockCtx{ForUpdateTS: txn2.startTS, WaitStartTime: time.Now()}
+	err = txn2.LockKeys(context.Background(), lockCtx, k2)
+	c.Assert(err, IsNil)
+}
