@@ -95,7 +95,7 @@
       },
       {
         "SQL": "select /*+ IGNORE_INDEX(test.t, c_d_e) */ c from t order by c",
-        "Best": "TableReader(Table(t))->Sort",
+        "Best": "TableReader(Table(t))->Shuffle(execution info: concurrency:1, fan out:4, splitter:random, merger:none)->Sort->Shuffle(execution info: concurrency:4, fan out:1, child:Shuffle_12, splitter:none, merger:merge-sort(test.t.c))",
         "HasWarn": false,
         "Hints": "USE_INDEX(@`sel_1` `test`.`t` )"
       },
@@ -119,7 +119,7 @@
       },
       {
         "SQL": "select /*+ IGNORE_INDEX(t1, c_d_e) */ t1.c from t t1 order by t1.c",
-        "Best": "TableReader(Table(t))->Sort",
+        "Best": "TableReader(Table(t))->Shuffle(execution info: concurrency:1, fan out:4, splitter:random, merger:none)->Sort->Shuffle(execution info: concurrency:4, fan out:1, child:Shuffle_12, splitter:none, merger:merge-sort(test.t.c))",
         "HasWarn": false,
         "Hints": "USE_INDEX(@`sel_1` `test`.`t1` )"
       },
@@ -167,19 +167,19 @@
       },
       {
         "SQL": "select /*+ USE_INDEX(t, f), IGNORE_INDEX(t, f) */ c from t order by c",
-        "Best": "TableReader(Table(t))->Sort",
+        "Best": "TableReader(Table(t))->Shuffle(execution info: concurrency:1, fan out:4, splitter:random, merger:none)->Sort->Shuffle(execution info: concurrency:4, fan out:1, child:Shuffle_12, splitter:none, merger:merge-sort(test.t.c))",
         "HasWarn": false,
         "Hints": "USE_INDEX(@`sel_1` `test`.`t` )"
       },
       {
         "SQL": "select /*+ USE_INDEX(t, c_d_e), IGNORE_INDEX(t, c_d_e) */ c from t order by c",
-        "Best": "TableReader(Table(t))->Sort",
+        "Best": "TableReader(Table(t))->Shuffle(execution info: concurrency:1, fan out:4, splitter:random, merger:none)->Sort->Shuffle(execution info: concurrency:4, fan out:1, child:Shuffle_12, splitter:none, merger:merge-sort(test.t.c))",
         "HasWarn": false,
         "Hints": "USE_INDEX(@`sel_1` `test`.`t` )"
       },
       {
         "SQL": "select /*+ USE_INDEX(t, c_d_e, f), IGNORE_INDEX(t, c_d_e) */ c from t order by c",
-        "Best": "IndexLookUp(Index(t.f)[[NULL,+inf]], Table(t))->Sort",
+        "Best": "IndexLookUp(Index(t.f)[[NULL,+inf]], Table(t))->Shuffle(execution info: concurrency:1, fan out:4, splitter:random, merger:none)->Sort->Shuffle(execution info: concurrency:4, fan out:1, child:Shuffle_13, splitter:none, merger:merge-sort(test.t.c))",
         "HasWarn": false,
         "Hints": "USE_INDEX(@`sel_1` `test`.`t` `f`)"
       }
@@ -428,11 +428,11 @@
       },
       {
         "SQL": "select /*+ TIDB_SMJ(t1,t2)*/ * from t t1, t t2 where t1.b = t2.b order by t2.a",
-        "Best": "MergeInnerJoin{TableReader(Table(t))->Sort->TableReader(Table(t))->Sort}(test.t.b,test.t.b)->Sort"
+        "Best": "MergeInnerJoin{TableReader(Table(t))->Sort->TableReader(Table(t))->Sort}(test.t.b,test.t.b)->Shuffle(execution info: concurrency:1, fan out:4, splitter:random, merger:none)->Sort->Shuffle(execution info: concurrency:4, fan out:1, child:Shuffle_20, splitter:none, merger:merge-sort(test.t.a))"
       },
       {
         "SQL": "select /*+ TIDB_SMJ(t1,t2)*/ * from t t1, t t2 where t1.a = t2.a order by t2.a desc",
-        "Best": "MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)"
+        "Best": "MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->Shuffle(execution info: concurrency:1, fan out:4, splitter:random, merger:none)->Sort->Shuffle(execution info: concurrency:4, fan out:1, child:Shuffle_33, splitter:none, merger:merge-sort(test.t.a desc))"
       },
       {
         "SQL": "select /*+ TIDB_SMJ(t1,t2)*/ * from t t1, t t2 where t1.b = t2.b order by t2.b desc",
@@ -557,7 +557,7 @@
       },
       {
         "SQL": "select * from t where exists (select s.a from t s having sum(s.a) = t.a ) order by t.a",
-        "Best": "LeftHashJoin{TableReader(Table(t))->Projection->IndexReader(Index(t.f)[[NULL,+inf]]->StreamAgg)->StreamAgg}(Column#27,Column#25)->Projection->Sort"
+        "Best": "LeftHashJoin{TableReader(Table(t))->Projection->IndexReader(Index(t.f)[[NULL,+inf]]->StreamAgg)->StreamAgg}(Column#27,Column#25)->Projection->Shuffle(execution info: concurrency:1, fan out:4, splitter:random, merger:none)->Sort->Shuffle(execution info: concurrency:4, fan out:1, child:Shuffle_73, splitter:none, merger:merge-sort(test.t.a))"
       },
       {
         "SQL": "select * from t where a in (select s.a from t s) order by t.a",
@@ -569,7 +569,7 @@
       },
       {
         "SQL": "select * from t where a in (select a from t) order by b",
-        "Best": "LeftHashJoin{TableReader(Table(t))->IndexReader(Index(t.f)[[NULL,+inf]])}(test.t.a,test.t.a)->Projection->Sort"
+        "Best": "LeftHashJoin{TableReader(Table(t))->IndexReader(Index(t.f)[[NULL,+inf]])}(test.t.a,test.t.a)->Projection->Shuffle(execution info: concurrency:1, fan out:4, splitter:random, merger:none)->Sort->Shuffle(execution info: concurrency:4, fan out:1, child:Shuffle_67, splitter:none, merger:merge-sort(test.t.b))"
       },
       {
         "SQL": "select t.c in (select count(*) from t s, t t1 where s.a = t.a and s.a = t1.a) from t",
@@ -581,7 +581,7 @@
       },
       {
         "SQL": "select (select count(*) from t s, t t1 where s.a = t.a and s.a = t1.a) from t order by t.a",
-        "Best": "MergeLeftOuterJoin{TableReader(Table(t))->MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->StreamAgg}(test.t.a,test.t.a)->Projection->Projection"
+        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.f)[[NULL,+inf]])}(test.t.a,test.t.a)->HashAgg}(test.t.a,test.t.a)->Projection->Shuffle(execution info: concurrency:1, fan out:4, splitter:random, merger:none)->Sort->Shuffle(execution info: concurrency:4, fan out:1, child:Shuffle_112, splitter:none, merger:merge-sort(test.t.a))->Projection"
       }
     ]
   },
@@ -732,11 +732,11 @@
       },
       {
         "SQL": "select count(*) from (select * from t order by b) t group by b",
-        "Best": "TableReader(Table(t))->Sort->StreamAgg"
+        "Best": "TableReader(Table(t))->Shuffle(execution info: concurrency:1, fan out:4, splitter:random, merger:none)->Sort->Shuffle(execution info: concurrency:4, fan out:1, child:Shuffle_19, splitter:none, merger:merge-sort(test.t.b))->StreamAgg"
       },
       {
         "SQL": "select count(*), x from (select b as bbb, a + 1 as x from (select * from t order by b) t) t group by bbb",
-        "Best": "TableReader(Table(t))->Sort->Projection->StreamAgg"
+        "Best": "TableReader(Table(t))->Shuffle(execution info: concurrency:1, fan out:4, splitter:random, merger:none)->Sort->Shuffle(execution info: concurrency:4, fan out:1, child:Shuffle_21, splitter:none, merger:merge-sort(test.t.b))->Projection->StreamAgg"
       },
       {
         "SQL": "select sum(a), avg(b + c) from t group by d",
@@ -792,11 +792,11 @@
       },
       {
         "SQL": "select sum(to_base64(e)) from t group by e,d,c order by c,e",
-        "Best": "IndexReader(Index(t.c_d_e)[[NULL,+inf]])->Projection->StreamAgg->Sort->Projection"
+        "Best": "IndexReader(Index(t.c_d_e)[[NULL,+inf]])->Projection->StreamAgg->Shuffle(execution info: concurrency:1, fan out:4, splitter:random, merger:none)->Sort->Shuffle(execution info: concurrency:4, fan out:1, child:Shuffle_35, splitter:none, merger:merge-sort(test.t.c,test.t.e))->Projection"
       },
       {
         "SQL": "select sum(e+1) from t group by e,d,c order by c,e",
-        "Best": "IndexReader(Index(t.c_d_e)[[NULL,+inf]]->StreamAgg)->StreamAgg->Sort->Projection"
+        "Best": "IndexReader(Index(t.c_d_e)[[NULL,+inf]]->StreamAgg)->StreamAgg->Shuffle(execution info: concurrency:1, fan out:4, splitter:random, merger:none)->Sort->Shuffle(execution info: concurrency:4, fan out:1, child:Shuffle_39, splitter:none, merger:merge-sort(test.t.c,test.t.e))->Projection"
       },
       {
         "SQL": "select count(*) from t group by g order by g limit 10",
@@ -820,7 +820,7 @@
       },
       {
         "SQL": "select count(*) from t group by b order by b",
-        "Best": "TableReader(Table(t)->HashAgg)->HashAgg->Sort->Projection"
+        "Best": "TableReader(Table(t)->HashAgg)->HashAgg->Shuffle(execution info: concurrency:1, fan out:4, splitter:random, merger:none)->Sort->Shuffle(execution info: concurrency:4, fan out:1, child:Shuffle_23, splitter:none, merger:merge-sort(test.t.b))->Projection"
       },
       {
         "SQL": "select count(*) from t group by b limit 10",

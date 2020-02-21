@@ -248,7 +248,7 @@ func enforceFullMerge(pp PhysicalPlan, requiredProperty *property.PhysicalProper
 	_, isPhysicalSort := pp.(*PhysicalSort)
 	shuffle := newPhysicalShuffle(pp, requiredProperty, ctx)
 	setShuffleNoneSplit(shuffle)
-	if len(requiredProperty.Items) > 0 || isPhysicalSort {
+	if (len(requiredProperty.Items) > 0 && !requiredProperty.Enforced) || isPhysicalSort {
 		// local property(i.e. requiredProperty.IsPrefix(deliveringProperty)) is ensured in `exhaustPhysicalPlans`.
 		setShuffleMergeByMergeSort(shuffle, concurrency, deliveringProperty.ItemExprs)
 	} else {
