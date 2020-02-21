@@ -275,6 +275,9 @@ func (s *testTransformationRuleSuite) TestMergeAdjacentLimit(c *C) {
 
 func (s *testTransformationRuleSuite) TestMergeAdjacentWindow(c *C) {
 	s.optimizer.ResetTransformationRules(map[memo.Operand][]Transformation{
+		memo.OperandProjection: {
+			NewRuleEliminateProjection(),
+		},
 		memo.OperandWindow: {
 			NewRuleMergeAdjacentWindow(),
 		},
