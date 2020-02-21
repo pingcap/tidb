@@ -584,6 +584,18 @@ func (s *testSequenceSuite) TestSequenceFunction(c *C) {
 	c.Assert(end, Equals, int64(4))
 	c.Assert(round, Equals, int64(1))
 	s.tk.MustQuery("select lastval(seq)").Check(testkit.Rows("10"))
+
+	s.tk.MustExec("drop sequence if exists seq")
+	s.tk.MustExec("create sequence seq increment -1 start 1 maxvalue 10 minvalue -10 cache 3 cycle")
+	s.tk.MustQuery("select nextval(seq)").Check(testkit.Rows("1"))
+	s.tk.MustQuery("select setval(seq, -8)").Check(testkit.Rows("-8"))
+	s.tk.MustQuery("select nextval(seq)").Check(testkit.Rows("-9"))
+	sequenceTable = testGetTableByName(c, s.tk.Se, "test", "seq")
+	tc, ok = sequenceTable.(*tables.TableCommon)
+	c.Assert(ok, Equals, true)
+	_, end, round = tc.GetSequenceCommon().GetSequenceBaseEndRound()
+	c.Assert(end, Equals, int64(-10))
+	c.Assert(round, Equals, int64(0))
 }
 
 func (s *testSequenceSuite) TestInsertSequence(c *C) {

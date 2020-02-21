@@ -466,7 +466,7 @@ func CalcSequenceBatchSize(base, size, increment, offset, MIN, MAX int64) (int64
 		return (nr - base) + (size-1)*increment, nil
 	}
 	// The sequence is negative growth.
-	if increment == 1 {
+	if increment == -1 {
 		if base <= MIN {
 			return 0, ErrAutoincReadFailed
 		}
@@ -754,7 +754,6 @@ func (alloc *allocator) alloc4Sequence(tableID int64) (int64, int64, int64, erro
 			delta = -seqStep
 		}
 		newEnd, err1 = generateAutoIDByAllocType(m, alloc.dbID, tableID, delta, alloc.allocType)
-
 		return err1
 	})
 
@@ -765,9 +764,9 @@ func (alloc *allocator) alloc4Sequence(tableID int64) (int64, int64, int64, erro
 	}
 
 	alloc.base, alloc.end = newBase, newEnd
-	logutil.Logger(context.TODO()).Debug("alloc unsigned ID",
-		zap.Uint64(" from ID", uint64(alloc.base)),
-		zap.Uint64("to ID", uint64(alloc.end)),
+	logutil.Logger(context.TODO()).Debug("alloc sequence value",
+		zap.Uint64(" from value", uint64(alloc.base)),
+		zap.Uint64("to value", uint64(alloc.end)),
 		zap.Int64("table ID", tableID),
 		zap.Int64("database ID", alloc.dbID))
 	min := alloc.base
