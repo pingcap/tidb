@@ -667,26 +667,30 @@ func (thresholdCheckInspection) inspectThreshold2(ctx context.Context, sctx sess
 }
 
 type thresholdCheckRule interface {
-	genSQL() string
-	genResult(chunk.Row) inspectionResult
+	genSQL(timeRange plannercore.QueryTimeRange) string
+	genResult(sql string, row chunk.Row) inspectionResult
+	getItem() string
 }
 
 type compareStoreStatus struct {
 	item      string
-	condition string
+	tp        string
 	threshold float64
 }
 
-func (c compareStoreStatus) genSQL() string {
+func (c compareStoreStatus) genSQL(timeRange plannercore.QueryTimeRange) string {
+	condition := fmt.Sprintf(`where t1.time>='%[1]s' and t1.time<='%[2]s' and
+		 t2.time>='%[1]s' and t2.time<='%[2]s'`, timeRange.From.Format(plannercore.MetricTableTimeFormat),
+		timeRange.To.Format(plannercore.MetricTableTimeFormat))
 	return fmt.Sprintf(`select t1.address,t1.value,t2.address,t2.value,
 				(t1.value-t2.value)/greatest(t1.value,t2.value) as ratio
 				from metrics_schema.pd_scheduler_store_status t1 join metrics_schema.pd_scheduler_store_status t2
-				where t1.type='%s' and t1.time=now() and
-				t1.type=t2.type and t2.time=t1.time and t1.address != t2.address and
-				(t1.value-t2.value)/t1.value>%v;`, c.condition, c.threshold)
+				%s and t1.type='%s' and
+				t1.type=t2.type and t1.address != t2.address and
+				(t1.value-t2.value)/t1.value>%v;`, condition, c.tp, c.threshold)
 }
 
-func (c compareStoreStatus) genResult(row chunk.Row) inspectionResult {
+func (c compareStoreStatus) genResult(_ string, row chunk.Row) inspectionResult {
 	addr1 := row.GetString(0)
 	value1 := row.GetFloat64(1)
 	addr2 := row.GetString(2)
@@ -705,13 +709,19 @@ func (c compareStoreStatus) genResult(row chunk.Row) inspectionResult {
 	}
 }
 
-type checkRegionHealth struct{}
-
-func (c checkRegionHealth) genSQL() string {
-	return `select instance, sum(value) as sum_value from metrics_schema.pd_region_health where type in ('extra-peer-region-count','learner-peer-region-count','pending-peer-region-count') and time=now() having sum_value>100`
+func (c compareStoreStatus) getItem() string {
+	return c.item
 }
 
-func (c checkRegionHealth) genResult(row chunk.Row) inspectionResult {
+type checkRegionHealth struct{}
+
+func (c checkRegionHealth) genSQL(timeRange plannercore.QueryTimeRange) string {
+	condition := timeRange.Condition()
+	return fmt.Sprintf(`select instance, sum(value) as sum_value from metrics_schema.pd_region_health %s and
+		type in ('extra-peer-region-count','learner-peer-region-count','pending-peer-region-count') having sum_value>100`, condition)
+}
+
+func (c checkRegionHealth) genResult(_ string, row chunk.Row) inspectionResult {
 	detail := fmt.Sprintf("the count of extra-perr and learner-peer and pending-peer is %v, it means the scheduling is too frequent or too slow", row.GetFloat64(1))
 	actual := fmt.Sprintf("%.2f", row.GetFloat64(1))
 	return inspectionResult{
@@ -725,13 +735,18 @@ func (c checkRegionHealth) genResult(row chunk.Row) inspectionResult {
 	}
 }
 
-type checkStoreRegionTooMuch struct{}
-
-func (c checkStoreRegionTooMuch) genSQL() string {
-	return `select address,value from metrics_schema.pd_scheduler_store_status where type='region_count' and time=now() and value > 20000;`
+func (c checkRegionHealth) getItem() string {
+	return "region_health"
 }
 
-func (c checkStoreRegionTooMuch) genResult(row chunk.Row) inspectionResult {
+type checkStoreRegionTooMuch struct{}
+
+func (c checkStoreRegionTooMuch) genSQL(timeRange plannercore.QueryTimeRange) string {
+	condition := timeRange.Condition()
+	return fmt.Sprintf(`select address,value from metrics_schema.pd_scheduler_store_status %s and type='region_count' and value > 20000;`, condition)
+}
+
+func (c checkStoreRegionTooMuch) genResult(sql string, row chunk.Row) inspectionResult {
 	actual := fmt.Sprintf("%.2f", row.GetFloat64(1))
 	return inspectionResult{
 		tp:       "tikv",
@@ -740,25 +755,29 @@ func (c checkStoreRegionTooMuch) genResult(row chunk.Row) inspectionResult {
 		actual:   actual,
 		expected: "<= 20000",
 		severity: "warning",
-		detail:   c.genSQL(),
+		detail:   sql,
 	}
+}
+
+func (c checkStoreRegionTooMuch) getItem() string {
+	return "region_count"
 }
 
 func (thresholdCheckInspection) inspectThreshold3(ctx context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
 	var rules = []thresholdCheckRule{
 		compareStoreStatus{
 			item:      "leader_score",
-			condition: "leader_score",
+			tp:        "leader_score",
 			threshold: 0.05,
 		},
 		compareStoreStatus{
 			item:      "region_score",
-			condition: "region_score",
+			tp:        "region_score",
 			threshold: 0.05,
 		},
 		compareStoreStatus{
 			item:      "store_available",
-			condition: "store_available",
+			tp:        "store_available",
 			threshold: 0.2,
 		},
 		checkRegionHealth{},
@@ -767,14 +786,17 @@ func (thresholdCheckInspection) inspectThreshold3(ctx context.Context, sctx sess
 
 	var results []inspectionResult
 	for _, rule := range rules {
-		sql := rule.genSQL()
+		if !filter.enable(rule.getItem()) {
+			continue
+		}
+		sql := rule.genSQL(filter.timeRange)
 		rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithContext(ctx, sql)
 		if err != nil {
 			sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("execute '%s' failed: %v", sql, err))
 			continue
 		}
 		for _, row := range rows {
-			results = append(results, rule.genResult(row))
+			results = append(results, rule.genResult(sql, row))
 		}
 	}
 	return results
