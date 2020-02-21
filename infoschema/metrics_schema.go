@@ -94,7 +94,6 @@ func (def *MetricTableDef) genColumnInfos() []columnInfo {
 		cols = append(cols, columnInfo{"quantile", mysql.TypeDouble, 22, 0, defaultValue, nil})
 	}
 	cols = append(cols, columnInfo{"value", mysql.TypeDouble, 22, 0, nil, nil})
-	cols = append(cols, columnInfo{"comment", mysql.TypeVarchar, 256, 0, nil, nil})
 	return cols
 }
 

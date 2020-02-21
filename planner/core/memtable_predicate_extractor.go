@@ -382,6 +382,33 @@ func (helper extractHelper) parseQuantiles(quantileSet set.StringSet) []float64 
 	return quantiles
 }
 
+func (helper extractHelper) extractCols(
+	schema *expression.Schema,
+	names []*types.FieldName,
+	predicates []expression.Expression,
+	excludeCols set.StringSet,
+	valueToLower bool) ([]expression.Expression, bool, map[string]set.StringSet) {
+	cols := map[string]set.StringSet{}
+	remained := predicates
+	skipRequest := false
+	// Extract the label columns.
+	for _, name := range names {
+		if excludeCols.Exist(name.ColName.L) {
+			continue
+		}
+		var values set.StringSet
+		remained, skipRequest, values = helper.extractCol(schema, names, remained, name.ColName.L, valueToLower)
+		if skipRequest {
+			return nil, true, nil
+		}
+		if len(values) == 0 {
+			continue
+		}
+		cols[name.ColName.L] = values
+	}
+	return remained, skipRequest, cols
+}
+
 func (helper extractHelper) convertToTime(t int64) time.Time {
 	if t == 0 || t == math.MaxInt64 {
 		return time.Now()
@@ -492,7 +519,7 @@ func (e *ClusterLogTableExtractor) Extract(
 	return remained
 }
 
-// MetricTableExtractor is used to extract some predicates of metric_schema tables.
+// MetricTableExtractor is used to extract some predicates of metrics_schema tables.
 type MetricTableExtractor struct {
 	extractHelper
 	// SkipRequest means the where clause always false, we don't need to request any component
@@ -535,26 +562,13 @@ func (e *MetricTableExtractor) Extract(
 		return nil
 	}
 
-	// Extract the label columns.
-	for _, name := range names {
-		switch name.ColName.L {
-		case "quantile", "time", "value":
-			continue
-		}
-		var values set.StringSet
-		remained, skipRequest, values = e.extractCol(schema, names, remained, name.ColName.L, false)
-		if skipRequest {
-			e.SkipRequest = skipRequest
-			return nil
-		}
-		if len(values) == 0 {
-			continue
-		}
-		if e.LabelConditions == nil {
-			e.LabelConditions = make(map[string]set.StringSet)
-		}
-		e.LabelConditions[name.ColName.L] = values
+	excludeCols := set.NewStringSet("quantile", "time", "value")
+	remained, skipRequest, extractCols := e.extractCols(schema, names, remained, excludeCols, false)
+	e.SkipRequest = skipRequest
+	if e.SkipRequest {
+		return nil
 	}
+	e.LabelConditions = extractCols
 	return remained
 }
 
@@ -578,6 +592,30 @@ func (e *MetricTableExtractor) getTimeRange(start, end int64) (time.Time, time.T
 		endTime = startTime.Add(defaultMetricQueryDuration)
 	}
 	return startTime, endTime
+}
+
+// MetricSummaryTableExtractor is used to extract some predicates of metrics_schema tables.
+type MetricSummaryTableExtractor struct {
+	extractHelper
+	// SkipRequest means the where clause always false, we don't need to request any component
+	SkipRequest  bool
+	MetricsNames set.StringSet
+	Quantiles    []float64
+}
+
+// Extract implements the MemTablePredicateExtractor Extract interface
+func (e *MetricSummaryTableExtractor) Extract(
+	_ sessionctx.Context,
+	schema *expression.Schema,
+	names []*types.FieldName,
+	predicates []expression.Expression,
+) (remained []expression.Expression) {
+	remained, quantileSkip, quantiles := e.extractCol(schema, names, predicates, "quantile", false)
+	remained, metricsNameSkip, metricsNames := e.extractCol(schema, names, predicates, "metrics_name", true)
+	e.SkipRequest = quantileSkip || metricsNameSkip
+	e.Quantiles = e.parseQuantiles(quantiles)
+	e.MetricsNames = metricsNames
+	return remained
 }
 
 // InspectionResultTableExtractor is used to extract some predicates of `inspection_result`
@@ -631,7 +669,7 @@ func (e *InspectionSummaryTableExtractor) Extract(
 	// Extract the `rule` columns
 	remained, ruleSkip, rules := e.extractCol(schema, names, predicates, "rule", true)
 	// Extract the `metric_name` columns
-	remained, metricNameSkip, metricNames := e.extractCol(schema, names, predicates, "metric_name", true)
+	remained, metricNameSkip, metricNames := e.extractCol(schema, names, predicates, "metrics_name", true)
 	// Extract the `quantile` columns
 	remained, quantileSkip, quantileSet := e.extractCol(schema, names, predicates, "quantile", false)
 	e.SkipInspection = ruleSkip || quantileSkip || metricNameSkip
