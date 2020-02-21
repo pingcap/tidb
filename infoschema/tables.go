@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	binaryJson "github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/set"
@@ -310,6 +311,7 @@ var statisticsCols = []columnInfo{
 	{"NULLABLE", mysql.TypeVarchar, 3, 0, nil, nil},
 	{"INDEX_TYPE", mysql.TypeVarchar, 16, 0, nil, nil},
 	{"COMMENT", mysql.TypeVarchar, 16, 0, nil, nil},
+	{"Expression", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"INDEX_COMMENT", mysql.TypeVarchar, 1024, 0, nil, nil},
 }
 
@@ -661,6 +663,7 @@ var tableTiDBIndexesCols = []columnInfo{
 	{"COLUMN_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"SUB_PART", mysql.TypeLonglong, 21, 0, nil, nil},
 	{"INDEX_COMMENT", mysql.TypeVarchar, 2048, 0, nil, nil},
+	{"Expression", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"INDEX_ID", mysql.TypeLonglong, 21, 0, nil, nil},
 }
 
@@ -870,16 +873,16 @@ func dataForTiKVRegionStatus(ctx sessionctx.Context) (records [][]types.Datum, e
 func newTiKVRegionStatusCol(region *helper.RegionInfo, table *helper.TableInfo) []types.Datum {
 	row := make([]types.Datum, len(tableTiKVRegionStatusCols))
 	row[0].SetInt64(region.ID)
-	row[1].SetString(region.StartKey)
-	row[2].SetString(region.EndKey)
+	row[1].SetString(region.StartKey, mysql.DefaultCollationName, collate.DefaultLen)
+	row[2].SetString(region.EndKey, mysql.DefaultCollationName, collate.DefaultLen)
 	if table != nil {
 		row[3].SetInt64(table.Table.ID)
-		row[4].SetString(table.DB.Name.O)
-		row[5].SetString(table.Table.Name.O)
+		row[4].SetString(table.DB.Name.O, mysql.DefaultCollationName, collate.DefaultLen)
+		row[5].SetString(table.Table.Name.O, mysql.DefaultCollationName, collate.DefaultLen)
 		if table.IsIndex {
 			row[6].SetInt64(1)
 			row[7].SetInt64(table.Index.ID)
-			row[8].SetString(table.Index.Name.O)
+			row[8].SetString(table.Index.Name.O, mysql.DefaultCollationName, collate.DefaultLen)
 		} else {
 			row[6].SetInt64(0)
 		}
@@ -945,12 +948,12 @@ func newTiKVRegionPeersCols(region *helper.RegionInfo) [][]types.Datum {
 			row[4].SetInt64(0)
 		}
 		if pendingPeerIDSet.Exist(peer.ID) {
-			row[5].SetString(pendingPeer)
+			row[5].SetString(pendingPeer, mysql.DefaultCollationName, collate.DefaultLen)
 		} else if downSec, ok := downPeerMap[peer.ID]; ok {
-			row[5].SetString(downPeer)
+			row[5].SetString(downPeer, mysql.DefaultCollationName, collate.DefaultLen)
 			row[6].SetInt64(downSec)
 		} else {
-			row[5].SetString(normalPeer)
+			row[5].SetString(normalPeer, mysql.DefaultCollationName, collate.DefaultLen)
 		}
 		records = append(records, row)
 	}
@@ -973,9 +976,9 @@ func dataForTiKVStoreStatus(ctx sessionctx.Context) (records [][]types.Datum, er
 	for _, storeStat := range storesStat.Stores {
 		row := make([]types.Datum, len(tableTiKVStoreStatusCols))
 		row[0].SetInt64(storeStat.Store.ID)
-		row[1].SetString(storeStat.Store.Address)
+		row[1].SetString(storeStat.Store.Address, mysql.DefaultCollationName, collate.DefaultLen)
 		row[2].SetInt64(storeStat.Store.State)
-		row[3].SetString(storeStat.Store.StateName)
+		row[3].SetString(storeStat.Store.StateName, mysql.DefaultCollationName, collate.DefaultLen)
 		data, err := json.Marshal(storeStat.Store.Labels)
 		if err != nil {
 			return nil, err
@@ -985,9 +988,9 @@ func dataForTiKVStoreStatus(ctx sessionctx.Context) (records [][]types.Datum, er
 			return nil, err
 		}
 		row[4].SetMysqlJSON(bj)
-		row[5].SetString(storeStat.Store.Version)
-		row[6].SetString(storeStat.Status.Capacity)
-		row[7].SetString(storeStat.Status.Available)
+		row[5].SetString(storeStat.Store.Version, mysql.DefaultCollationName, collate.DefaultLen)
+		row[6].SetString(storeStat.Status.Capacity, mysql.DefaultCollationName, collate.DefaultLen)
+		row[7].SetString(storeStat.Status.Available, mysql.DefaultCollationName, collate.DefaultLen)
 		row[8].SetInt64(storeStat.Status.LeaderCount)
 		row[9].SetFloat64(storeStat.Status.LeaderWeight)
 		row[10].SetFloat64(storeStat.Status.LeaderScore)
@@ -1000,7 +1003,7 @@ func dataForTiKVStoreStatus(ctx sessionctx.Context) (records [][]types.Datum, er
 		row[16].SetMysqlTime(startTs)
 		lastHeartbeatTs := types.NewTime(types.FromGoTime(storeStat.Status.LastHeartbeatTs), mysql.TypeDatetime, types.DefaultFsp)
 		row[17].SetMysqlTime(lastHeartbeatTs)
-		row[18].SetString(storeStat.Status.Uptime)
+		row[18].SetString(storeStat.Status.Uptime, mysql.DefaultCollationName, collate.DefaultLen)
 		records = append(records, row)
 	}
 	return records, nil
@@ -1527,6 +1530,7 @@ func dataForIndexes(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.
 					pkCol.Name.O,  // COLUMN_NAME
 					nil,           // SUB_PART
 					"",            // INDEX_COMMENT
+					"NULL",        // Expression
 					0,             // INDEX_ID
 				)
 				rows = append(rows, record)
@@ -1544,15 +1548,23 @@ func dataForIndexes(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.
 					if col.Length != types.UnspecifiedLength {
 						subPart = col.Length
 					}
+					colName := col.Name.O
+					expression := "NULL"
+					tblCol := tb.Columns[col.Offset]
+					if tblCol.Hidden {
+						colName = "NULL"
+						expression = fmt.Sprintf("(%s)", tblCol.GeneratedExprString)
+					}
 					record := types.MakeDatums(
 						schema.Name.O,   // TABLE_SCHEMA
 						tb.Name.O,       // TABLE_NAME
 						nonUniq,         // NON_UNIQUE
 						idxInfo.Name.O,  // KEY_NAME
 						i+1,             // SEQ_IN_INDEX
-						col.Name.O,      // COLUMN_NAME
+						colName,         // COLUMN_NAME
 						subPart,         // SUB_PART
 						idxInfo.Comment, // INDEX_COMMENT
+						expression,      // Expression
 						idxInfo.ID,      // INDEX_ID
 					)
 					rows = append(rows, record)
@@ -1697,12 +1709,13 @@ func dataForStatisticsInTable(schema *model.DBInfo, table *model.TableInfo) [][]
 					1,             // SEQ_IN_INDEX
 					col.Name.O,    // COLUMN_NAME
 					"A",           // COLLATION
-					nil,           // CARDINALITY
+					0,             // CARDINALITY
 					nil,           // SUB_PART
 					nil,           // PACKED
 					"",            // NULLABLE
 					"BTREE",       // INDEX_TYPE
 					"",            // COMMENT
+					"NULL",        // Expression
 					"",            // INDEX_COMMENT
 				)
 				rows = append(rows, record)
@@ -1724,6 +1737,13 @@ func dataForStatisticsInTable(schema *model.DBInfo, table *model.TableInfo) [][]
 			if mysql.HasNotNullFlag(col.Flag) {
 				nullable = ""
 			}
+			colName := col.Name.O
+			expression := "NULL"
+			tblCol := table.Columns[col.Offset]
+			if tblCol.Hidden {
+				colName = "NULL"
+				expression = fmt.Sprintf("(%s)", tblCol.GeneratedExprString)
+			}
 			record := types.MakeDatums(
 				CatalogVal,    // TABLE_CATALOG
 				schema.Name.O, // TABLE_SCHEMA
@@ -1732,14 +1752,15 @@ func dataForStatisticsInTable(schema *model.DBInfo, table *model.TableInfo) [][]
 				schema.Name.O, // INDEX_SCHEMA
 				index.Name.O,  // INDEX_NAME
 				i+1,           // SEQ_IN_INDEX
-				key.Name.O,    // COLUMN_NAME
+				colName,       // COLUMN_NAME
 				"A",           // COLLATION
-				nil,           // CARDINALITY
+				0,             // CARDINALITY
 				nil,           // SUB_PART
 				nil,           // PACKED
 				nullable,      // NULLABLE
 				"BTREE",       // INDEX_TYPE
 				"",            // COMMENT
+				expression,    // Expression
 				"",            // INDEX_COMMENT
 			)
 			rows = append(rows, record)
@@ -2059,16 +2080,16 @@ func dataForHotRegionByMetrics(metrics []helper.HotTableIndex, tp string) [][]ty
 		row := make([]types.Datum, len(tableTiDBHotRegionsCols))
 		if tblIndex.IndexName != "" {
 			row[1].SetInt64(tblIndex.IndexID)
-			row[4].SetString(tblIndex.IndexName)
+			row[4].SetString(tblIndex.IndexName, mysql.DefaultCollationName, collate.DefaultLen)
 		} else {
 			row[1].SetNull()
 			row[4].SetNull()
 		}
 		row[0].SetInt64(tblIndex.TableID)
-		row[2].SetString(tblIndex.DbName)
-		row[3].SetString(tblIndex.TableName)
+		row[2].SetString(tblIndex.DbName, mysql.DefaultCollationName, collate.DefaultLen)
+		row[3].SetString(tblIndex.TableName, mysql.DefaultCollationName, collate.DefaultLen)
 		row[5].SetUint64(tblIndex.RegionID)
-		row[6].SetString(tp)
+		row[6].SetString(tp, mysql.DefaultCollationName, collate.DefaultLen)
 		if tblIndex.RegionMetric == nil {
 			row[7].SetNull()
 			row[8].SetNull()
