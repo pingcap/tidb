@@ -17,7 +17,6 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/pingcap/failpoint"
@@ -696,14 +695,13 @@ func (c compareStoreStatus) genResult(_ string, row chunk.Row) inspectionResult 
 	addr2 := row.GetString(2)
 	value2 := row.GetFloat64(3)
 	ratio := row.GetFloat64(4)
-	expected := fmt.Sprintf("The difference between %v and %v should less than %v%%, actual is %v%%", addr1, addr2, c.threshold*100, ratio*100)
-	detail := fmt.Sprintf("%v value is %v, much more than %v value %v", addr1, value1, addr2, value2)
+	detail := fmt.Sprintf("%v %s is %v, much more than %v %s %v", addr1, c.tp, value1, addr2, c.tp, value2)
 	return inspectionResult{
 		tp:       "tikv",
 		instance: addr2,
 		item:     c.item,
-		actual:   strconv.FormatFloat(value2, 'f', -1, 64),
-		expected: expected,
+		actual:   fmt.Sprintf("%.2f%%", ratio*100),
+		expected: fmt.Sprintf("< %.2f%%", c.threshold*100),
 		severity: "warning",
 		detail:   detail,
 	}
@@ -766,17 +764,17 @@ func (c checkStoreRegionTooMuch) getItem() string {
 func (thresholdCheckInspection) inspectThreshold3(ctx context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
 	var rules = []thresholdCheckRule{
 		compareStoreStatus{
-			item:      "leader_score",
+			item:      "leader-score-balance",
 			tp:        "leader_score",
 			threshold: 0.05,
 		},
 		compareStoreStatus{
-			item:      "region_score",
+			item:      "region-score-balance",
 			tp:        "region_score",
 			threshold: 0.05,
 		},
 		compareStoreStatus{
-			item:      "store_available",
+			item:      "store-available-balance",
 			tp:        "store_available",
 			threshold: 0.2,
 		},

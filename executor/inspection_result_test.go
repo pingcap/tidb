@@ -434,11 +434,11 @@ func (s *inspectionResultSuite) TestThresholdCheckInspection3(c *C) {
 	result := tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute inspect SQL failed"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0), Commentf("unexpected warnings: %+v", tk.Se.GetSessionVars().StmtCtx.GetWarnings()))
 	result.Check(testkit.Rows(
-		"leader_score tikv tikv-1 50 The difference between tikv-0 and tikv-1 should less than 5%, actual is 50% tikv-0 value is 100, much more than tikv-1 value 50",
+		"leader-score-balance tikv tikv-1 50.00% < 5.00% tikv-0 leader_score is 100, much more than tikv-1 leader_score 50",
+		"region-score-balance tikv tikv-1 10.00% < 5.00% tikv-0 region_score is 100, much more than tikv-1 region_score 90",
 		"region_count tikv tikv-0 20001.00 <= 20000 select address,value from metrics_schema.pd_scheduler_store_status where time>='2020-02-14 04:20:00' and time<='2020-02-14 05:20:00' and type='region_count' and value > 20000;",
 		"region_health pd pd-0 110.00 < 100 the count of extra-perr and learner-peer and pending-peer is 110, it means the scheduling is too frequent or too slow",
-		"region_score tikv tikv-1 90 The difference between tikv-0 and tikv-1 should less than 5%, actual is 10% tikv-0 value is 100, much more than tikv-1 value 90",
-		"store_available tikv tikv-1 70 The difference between tikv-0 and tikv-1 should less than 20%, actual is 30% tikv-0 value is 100, much more than tikv-1 value 70"))
+		"store-available-balance tikv tikv-1 30.00% < 20.00% tikv-0 store_available is 100, much more than tikv-1 store_available 70"))
 }
 
 func (s *inspectionResultSuite) TestCriticalErrorInspection(c *C) {
