@@ -1199,7 +1199,7 @@ var tableInspectionResultCols = []columnInfo{
 var tableInspectionSummaryCols = []columnInfo{
 	{"RULE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"INSTANCE", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"METRIC_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"METRICS_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"LABEL", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"QUANTILE", mysql.TypeDouble, 22, 0, nil, nil},
 	{"AVG_VALUE", mysql.TypeDouble, 22, 0, nil, nil},
@@ -1216,7 +1216,7 @@ var tableMetricTablesCols = []columnInfo{
 }
 
 var tableMetricSummaryCols = []columnInfo{
-	{"METRIC_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"METRICS_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"QUANTILE", mysql.TypeDouble, 22, 0, nil, nil},
 	{"SUM_VALUE", mysql.TypeDouble, 22, 0, nil, nil},
 	{"AVG_VALUE", mysql.TypeDouble, 22, 0, nil, nil},
@@ -1227,7 +1227,7 @@ var tableMetricSummaryCols = []columnInfo{
 
 var tableMetricSummaryByLabelCols = []columnInfo{
 	{"INSTANCE", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"METRIC_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"METRICS_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"LABEL", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"QUANTILE", mysql.TypeDouble, 22, 0, nil, nil},
 	{"SUM_VALUE", mysql.TypeDouble, 22, 0, nil, nil},
@@ -2386,7 +2386,7 @@ func dataForMetricTables(ctx sessionctx.Context) [][]types.Datum {
 	for _, name := range tables {
 		schema := MetricTableMap[name]
 		record := types.MakeDatums(
-			name,                             // METRIC_NAME
+			name,                             // METRICS_NAME
 			schema.PromQL,                    // PROMQL
 			strings.Join(schema.Labels, ","), // LABELS
 			schema.Quantile,                  // QUANTILE

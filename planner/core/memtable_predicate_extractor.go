@@ -598,9 +598,9 @@ func (e *MetricTableExtractor) getTimeRange(start, end int64) (time.Time, time.T
 type MetricSummaryTableExtractor struct {
 	extractHelper
 	// SkipRequest means the where clause always false, we don't need to request any component
-	SkipRequest bool
-	MetricNames set.StringSet
-	Quantiles   []float64
+	SkipRequest  bool
+	MetricsNames set.StringSet
+	Quantiles    []float64
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
@@ -611,10 +611,10 @@ func (e *MetricSummaryTableExtractor) Extract(
 	predicates []expression.Expression,
 ) (remained []expression.Expression) {
 	remained, quantileSkip, quantiles := e.extractCol(schema, names, predicates, "quantile", false)
-	remained, metricNameSkip, metricNames := e.extractCol(schema, names, predicates, "metric_name", true)
-	e.SkipRequest = quantileSkip || metricNameSkip
+	remained, metricsNameSkip, metricsNames := e.extractCol(schema, names, predicates, "metrics_name", true)
+	e.SkipRequest = quantileSkip || metricsNameSkip
 	e.Quantiles = e.parseQuantiles(quantiles)
-	e.MetricNames = metricNames
+	e.MetricsNames = metricsNames
 	return remained
 }
 
@@ -669,7 +669,7 @@ func (e *InspectionSummaryTableExtractor) Extract(
 	// Extract the `rule` columns
 	remained, ruleSkip, rules := e.extractCol(schema, names, predicates, "rule", true)
 	// Extract the `metric_name` columns
-	remained, metricNameSkip, metricNames := e.extractCol(schema, names, predicates, "metric_name", true)
+	remained, metricNameSkip, metricNames := e.extractCol(schema, names, predicates, "metrics_name", true)
 	// Extract the `quantile` columns
 	remained, quantileSkip, quantileSet := e.extractCol(schema, names, predicates, "quantile", false)
 	e.SkipInspection = ruleSkip || quantileSkip || metricNameSkip

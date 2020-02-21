@@ -750,7 +750,7 @@ func (s *extractorSuite) TestMetricsSummaryTableExtractor(c *C) {
 			c.Assert(extractor.Quantiles, DeepEquals, ca.quantiles, Commentf("SQL: %v", ca.sql))
 		}
 		if len(ca.names) > 0 {
-			c.Assert(extractor.MetricNames, DeepEquals, ca.names, Commentf("SQL: %v", ca.sql))
+			c.Assert(extractor.MetricsNames, DeepEquals, ca.names, Commentf("SQL: %v", ca.sql))
 		}
 		c.Assert(extractor.SkipRequest, Equals, ca.skipRequest, Commentf("SQL: %v", ca.sql))
 	}

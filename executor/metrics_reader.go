@@ -227,8 +227,12 @@ func (e *MetricSummaryRetriever) retrieve(_ context.Context, sctx sessionctx.Con
 	}
 	sort.Strings(tables)
 
+	filter := inspectionFilter{set: e.extractor.MetricsNames}
 	condition := e.timeRange.Condition()
 	for _, name := range tables {
+		if !filter.enable(name) {
+			continue
+		}
 		def, found := infoschema.MetricTableMap[name]
 		if !found {
 			sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("metrics table: %s not found", name))
@@ -295,8 +299,12 @@ func (e *MetricSummaryByLabelRetriever) retrieve(ctx context.Context, sctx sessi
 	}
 	sort.Strings(tables)
 
+	filter := inspectionFilter{set: e.extractor.MetricsNames}
 	condition := e.timeRange.Condition()
 	for _, name := range tables {
+		if !filter.enable(name) {
+			continue
+		}
 		def, found := infoschema.MetricTableMap[name]
 		if !found {
 			sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("metrics table: %s not found", name))
