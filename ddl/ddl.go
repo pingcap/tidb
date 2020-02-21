@@ -416,7 +416,8 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 	ddlCtx.mu.hook = opt.Hook
 	ddlCtx.mu.interceptor = &BaseInterceptor{}
 	d := &ddl{
-		ddlCtx: ddlCtx,
+		ddlCtx:     ddlCtx,
+		limitJobCh: make(chan *limitJobTask, batchAddingJobs),
 	}
 
 	d.start(ctx, opt.ResourcePool)
@@ -454,7 +455,6 @@ func (d *ddl) newDeleteRangeManager(mock bool) delRangeManager {
 func (d *ddl) start(ctx context.Context, ctxPool *pools.ResourcePool) {
 	logutil.BgLogger().Info("[ddl] start DDL", zap.String("ID", d.uuid), zap.Bool("runWorker", RunWorker))
 	d.quitCh = make(chan struct{})
-	d.limitJobCh = make(chan *limitJobTask, batchAddingJobs)
 
 	go tidbutil.WithRecovery(
 		func() { d.limitDDLJobs() },
