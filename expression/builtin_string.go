@@ -3777,6 +3777,7 @@ type builtinWeightStringSig struct {
 func (b *builtinWeightStringSig) Clone() builtinFunc {
 	newSig := &builtinWeightStringSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.padding = b.padding
 	newSig.length = b.length
 	return newSig
 }
