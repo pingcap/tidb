@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta"
@@ -334,6 +335,16 @@ func (e *DDLExec) dropTableObject(objects []*ast.TableName, obt objectType, ifEx
 		}
 		return infoschema.ErrTableDropExists.GenWithStackByArgs(strings.Join(notExistTables, ","))
 	}
+	// We need add warning when use if exists.
+	if len(notExistTables) > 0 && ifExists {
+		for _, table := range notExistTables {
+			if obt == sequenceObject {
+				e.ctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrSequenceDropExists.GenWithStackByArgs(table))
+			} else {
+				e.ctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrTableDropExists.GenWithStackByArgs(table))
+			}
+		}
+	}
 	return nil
 }
 
@@ -367,32 +378,45 @@ func (e *DDLExec) executeRecoverTable(s *ast.RecoverTableStmt) error {
 	if s.JobID != 0 {
 		job, tblInfo, err = e.getRecoverTableByJobID(s, t, dom)
 	} else {
-		job, tblInfo, err = e.getRecoverTableByTableName(s.Table, "")
+		job, tblInfo, err = e.getRecoverTableByTableName(s.Table)
 	}
 	if err != nil {
 		return err
 	}
-	autoID, err := e.getTableAutoIDFromSnapshot(job)
+	autoIncID, autoRandID, err := e.getTableAutoIDsFromSnapshot(job)
 	if err != nil {
 		return err
+	}
+
+	recoverInfo := &ddl.RecoverInfo{
+		SchemaID:      job.SchemaID,
+		TableInfo:     tblInfo,
+		DropJobID:     job.ID,
+		SnapshotTS:    job.StartTS,
+		CurAutoIncID:  autoIncID,
+		CurAutoRandID: autoRandID,
 	}
 	// Call DDL RecoverTable.
-	err = domain.GetDomain(e.ctx).DDL().RecoverTable(e.ctx, tblInfo, job.SchemaID, autoID, job.ID, job.StartTS)
+	err = domain.GetDomain(e.ctx).DDL().RecoverTable(e.ctx, recoverInfo)
 	return err
 }
 
-func (e *DDLExec) getTableAutoIDFromSnapshot(job *model.Job) (int64, error) {
-	// Get table original autoID before table drop.
+func (e *DDLExec) getTableAutoIDsFromSnapshot(job *model.Job) (autoIncID, autoRandID int64, err error) {
+	// Get table original autoIDs before table drop.
 	dom := domain.GetDomain(e.ctx)
 	m, err := dom.GetSnapshotMeta(job.StartTS)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
-	autoID, err := m.GetAutoTableID(job.SchemaID, job.TableID)
+	autoIncID, err = m.GetAutoTableID(job.SchemaID, job.TableID)
 	if err != nil {
-		return 0, errors.Errorf("recover table_id: %d, get original autoID from snapshot meta err: %s", job.TableID, err.Error())
+		return 0, 0, errors.Errorf("recover table_id: %d, get original autoIncID from snapshot meta err: %s", job.TableID, err.Error())
 	}
-	return autoID, nil
+	autoRandID, err = m.GetAutoRandomID(job.SchemaID, job.TableID)
+	if err != nil {
+		return 0, 0, errors.Errorf("recover table_id: %d, get original autoRandID from snapshot meta err: %s", job.TableID, err.Error())
+	}
+	return autoIncID, autoRandID, nil
 }
 
 func (e *DDLExec) getRecoverTableByJobID(s *ast.RecoverTableStmt, t *meta.Meta, dom *domain.Domain) (*model.Job, *model.TableInfo, error) {
@@ -429,7 +453,7 @@ func (e *DDLExec) getRecoverTableByJobID(s *ast.RecoverTableStmt, t *meta.Meta, 
 	return job, table.Meta(), nil
 }
 
-func (e *DDLExec) getRecoverTableByTableName(tableName *ast.TableName, ts string) (*model.Job, *model.TableInfo, error) {
+func (e *DDLExec) getRecoverTableByTableName(tableName *ast.TableName) (*model.Job, *model.TableInfo, error) {
 	txn, err := e.ctx.Txn(true)
 	if err != nil {
 		return nil, nil, err
@@ -464,9 +488,6 @@ func (e *DDLExec) getRecoverTableByTableName(tableName *ast.TableName, ts string
 		if err != nil {
 			return nil, nil, err
 		}
-		if len(ts) != 0 && ts != model.TSConvert2Time(job.StartTS).String() {
-			continue
-		}
 		// Get the snapshot infoSchema before drop table.
 		snapInfo, err := dom.GetSnapshotInfoSchema(job.StartTS)
 		if err != nil {
@@ -500,11 +521,7 @@ func (e *DDLExec) getRecoverTableByTableName(tableName *ast.TableName, ts string
 }
 
 func (e *DDLExec) executeFlashbackTable(s *ast.FlashBackTableStmt) error {
-	ts := s.Timestamp.GetString()
-	if len(ts) == 0 {
-		return errors.Errorf("The timestamp in flashback statement should be consistent with the drop/truncate DDL start time")
-	}
-	job, tblInfo, err := e.getRecoverTableByTableName(s.Table, ts)
+	job, tblInfo, err := e.getRecoverTableByTableName(s.Table)
 	if err != nil {
 		return err
 	}
@@ -518,12 +535,20 @@ func (e *DDLExec) executeFlashbackTable(s *ast.FlashBackTableStmt) error {
 		return infoschema.ErrTableExists.GenWithStackByArgs("tableID:" + strconv.FormatInt(tblInfo.ID, 10))
 	}
 
-	autoID, err := e.getTableAutoIDFromSnapshot(job)
+	autoIncID, autoRandID, err := e.getTableAutoIDsFromSnapshot(job)
 	if err != nil {
 		return err
 	}
+	recoverInfo := &ddl.RecoverInfo{
+		SchemaID:      job.SchemaID,
+		TableInfo:     tblInfo,
+		DropJobID:     job.ID,
+		SnapshotTS:    job.StartTS,
+		CurAutoIncID:  autoIncID,
+		CurAutoRandID: autoRandID,
+	}
 	// Call DDL RecoverTable.
-	err = domain.GetDomain(e.ctx).DDL().RecoverTable(e.ctx, tblInfo, job.SchemaID, autoID, job.ID, job.StartTS)
+	err = domain.GetDomain(e.ctx).DDL().RecoverTable(e.ctx, recoverInfo)
 	return err
 }
 

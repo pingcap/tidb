@@ -65,21 +65,23 @@ type configOverrider func(*mysql.Config)
 // testServerClient config server connect parameters and provider several
 // method to communicate with server and run tests
 type testServerClient struct {
-	port       uint
-	statusPort uint
+	port         uint
+	statusPort   uint
+	statusScheme string
 }
 
 // newTestServerClient return a testServerClient with unique address
 func newTestServerClient() *testServerClient {
 	return &testServerClient{
-		port:       genPort(),
-		statusPort: genStatusPort(),
+		port:         genPort(),
+		statusPort:   genStatusPort(),
+		statusScheme: "http",
 	}
 }
 
 // statusURL return the full URL of a status path
 func (cli *testServerClient) statusURL(path string) string {
-	return fmt.Sprintf("http://localhost:%d%s", cli.statusPort, path)
+	return fmt.Sprintf("%s://localhost:%d%s", cli.statusScheme, cli.statusPort, path)
 }
 
 // fetchStatus exec http.Get to server status port
@@ -789,7 +791,9 @@ func (cli *testServerClient) runTestLoadData(c *C, server *Server) {
 
 func (cli *testServerClient) runTestConcurrentUpdate(c *C) {
 	dbName := "Concurrent"
-	cli.runTestsOnNewDB(c, nil, dbName, func(dbt *DBTest) {
+	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
+		config.Strict = false
+	}, dbName, func(dbt *DBTest) {
 		dbt.mustExec("drop table if exists test2")
 		dbt.mustExec("create table test2 (a int, b int)")
 		dbt.mustExec("insert test2 values (1, 1)")
@@ -1012,7 +1016,9 @@ func (cli *testServerClient) runTestDBNameEscape(c *C) {
 }
 
 func (cli *testServerClient) runTestResultFieldTableIsNull(c *C) {
-	cli.runTestsOnNewDB(c, nil, "ResultFieldTableIsNull", func(dbt *DBTest) {
+	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
+		config.Strict = false
+	}, "ResultFieldTableIsNull", func(dbt *DBTest) {
 		dbt.mustExec("drop table if exists test;")
 		dbt.mustExec("create table test (c int);")
 		dbt.mustExec("explain select * from test;")

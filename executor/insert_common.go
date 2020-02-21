@@ -507,15 +507,14 @@ func (e *InsertValues) getRowInPlace(ctx context.Context, vals []types.Datum, ro
 
 // getColDefaultValue gets the column default value.
 func (e *InsertValues) getColDefaultValue(idx int, col *table.Column) (d types.Datum, err error) {
-	if e.colDefaultVals != nil && e.colDefaultVals[idx].valid {
+	if !col.DefaultIsExpr && e.colDefaultVals != nil && e.colDefaultVals[idx].valid {
 		return e.colDefaultVals[idx].val, nil
 	}
-
 	defaultVal, err := table.GetColDefaultValue(e.ctx, col.ToInfo())
 	if err != nil {
 		return types.Datum{}, err
 	}
-	if initialized := e.lazilyInitColDefaultValBuf(); initialized {
+	if initialized := e.lazilyInitColDefaultValBuf(); initialized && !col.DefaultIsExpr {
 		e.colDefaultVals[idx].val = defaultVal
 		e.colDefaultVals[idx].valid = true
 	}
@@ -838,6 +837,16 @@ func getAutoRecordID(d types.Datum, target *types.FieldType, isInsert bool) (int
 }
 
 func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum, hasValue bool, c *table.Column) (types.Datum, error) {
+	retryInfo := e.ctx.GetSessionVars().RetryInfo
+	if retryInfo.Retrying {
+		autoRandomID, err := retryInfo.GetCurrAutoRandomID()
+		if err != nil {
+			return types.Datum{}, err
+		}
+		d.SetAutoID(autoRandomID, c.Flag)
+		return d, nil
+	}
+
 	if !hasValue || d.IsNull() {
 		_, err := e.ctx.Txn(true)
 		if err != nil {
@@ -848,6 +857,7 @@ func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum,
 			return types.Datum{}, err
 		}
 		d.SetAutoID(autoRandomID, c.Flag)
+		retryInfo.AddAutoRandomID(autoRandomID)
 	} else {
 		recordID, err := getAutoRecordID(d, &c.FieldType, true)
 		if err != nil {
@@ -858,6 +868,7 @@ func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum,
 			return types.Datum{}, err
 		}
 		d.SetAutoID(recordID, c.Flag)
+		retryInfo.AddAutoRandomID(recordID)
 	}
 
 	casted, err := table.CastValue(e.ctx, d, c.ToInfo())

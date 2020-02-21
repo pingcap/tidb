@@ -248,6 +248,7 @@ type PlanBuilder struct {
 
 	windowSpecs  map[string]*ast.WindowSpec
 	inUpdateStmt bool
+	inDeleteStmt bool
 	// inStraightJoin represents whether the current "SELECT" statement has
 	// "STRAIGHT_JOIN" option.
 	inStraightJoin bool
@@ -374,6 +375,11 @@ func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, processor
 // Build builds the ast node to a Plan.
 func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
 	b.optFlag = flagPrunColumns
+	defer func() {
+		if b.optFlag&flagPredicatePushDown > 0 {
+			b.optFlag |= flagPrunColumnsAgain
+		}
+	}()
 	switch x := node.(type) {
 	case *ast.AdminStmt:
 		return b.buildAdmin(ctx, x)
@@ -756,7 +762,7 @@ func (b *PlanBuilder) filterPathByIsolationRead(paths []*util.AccessPath, dbName
 		engineVals, _ := b.ctx.GetSessionVars().GetSystemVar(variable.TiDBIsolationReadEngines)
 		err = ErrInternal.GenWithStackByArgs(fmt.Sprintf("Can not find access path matching '%v'(value: '%v') "+
 			"and tidb-server config isolation-read(engines: '%v'). Available values are '%v'.",
-			variable.TiDBIsolationReadEngines, config.GetGlobalConfig().IsolationRead.Engines, engineVals, availableEngineStr))
+			variable.TiDBIsolationReadEngines, engineVals, config.GetGlobalConfig().IsolationRead.Engines, availableEngineStr))
 	}
 	return paths, err
 }
@@ -1592,7 +1598,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 		if p.DBName == "" {
 			return nil, ErrNoDB
 		}
-	case ast.ShowCreateTable:
+	case ast.ShowCreateTable, ast.ShowCreateSequence:
 		user := b.ctx.GetSessionVars().User
 		var err error
 		if user != nil {
@@ -1644,9 +1650,18 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 		proj.SetSchema(schema)
 		proj.SetChildren(np)
 		proj.SetOutputNames(np.OutputNames())
-		return proj, nil
+		np = proj
 	}
-	return p, nil
+	if show.Tp == ast.ShowVariables || show.Tp == ast.ShowStatus {
+		b.curClause = orderByClause
+		orderByCol := np.Schema().Columns[0].Clone().(*expression.Column)
+		sort := LogicalSort{
+			ByItems: []*ByItems{{Expr: orderByCol}},
+		}.Init(b.ctx, b.getSelectOffset())
+		sort.SetChildren(np)
+		np = sort
+	}
+	return np, nil
 }
 
 func (b *PlanBuilder) buildSimple(node ast.StmtNode) (Plan, error) {
@@ -2515,6 +2530,7 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 		schema := plan.Schema()
 		names := plan.OutputNames()
 		if v.Cols == nil {
+			adjustOverlongViewColname(plan.(LogicalPlan))
 			v.Cols = make([]model.CIStr, len(schema.Columns))
 			for i, name := range names {
 				v.Cols[i] = name.ColName
@@ -2523,14 +2539,12 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 		if len(v.Cols) != schema.Len() {
 			return nil, ddl.ErrViewWrongList
 		}
-		if _, ok := plan.(LogicalPlan); ok {
-			if b.ctx.GetSessionVars().User != nil {
-				authErr = ErrTableaccessDenied.GenWithStackByArgs("CREATE VIEW", b.ctx.GetSessionVars().User.Hostname,
-					b.ctx.GetSessionVars().User.Username, v.ViewName.Name.L)
-			}
-			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateViewPriv, v.ViewName.Schema.L,
-				v.ViewName.Name.L, "", authErr)
+		if b.ctx.GetSessionVars().User != nil {
+			authErr = ErrTableaccessDenied.GenWithStackByArgs("CREATE VIEW", b.ctx.GetSessionVars().User.Hostname,
+				b.ctx.GetSessionVars().User.Username, v.ViewName.Name.L)
 		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateViewPriv, v.ViewName.Schema.L,
+			v.ViewName.Name.L, "", authErr)
 		if v.Definer.CurrentUser && b.ctx.GetSessionVars().User != nil {
 			v.Definer = b.ctx.GetSessionVars().User
 		}
@@ -2827,7 +2841,7 @@ func buildShowSchema(s *ast.ShowStmt, isView bool) (schema *expression.Schema, o
 		names = []string{"Collation", "Charset", "Id", "Default", "Compiled", "Sortlen"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong,
 			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong}
-	case ast.ShowCreateTable:
+	case ast.ShowCreateTable, ast.ShowCreateSequence:
 		if !isView {
 			names = []string{"Table", "Create Table"}
 		} else {
@@ -2854,10 +2868,10 @@ func buildShowSchema(s *ast.ShowStmt, isView bool) (schema *expression.Schema, o
 	case ast.ShowIndex:
 		names = []string{"Table", "Non_unique", "Key_name", "Seq_in_index",
 			"Column_name", "Collation", "Cardinality", "Sub_part", "Packed",
-			"Null", "Index_type", "Comment", "Index_comment"}
+			"Null", "Index_type", "Comment", "Index_comment", "Expression"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeLonglong,
 			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeLonglong,
-			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar}
+			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar}
 	case ast.ShowPlugins:
 		names = []string{"Name", "Status", "Type", "Library", "License", "Version"}
 		ftypes = []byte{
@@ -2932,4 +2946,16 @@ func buildChecksumTableSchema() (*expression.Schema, []*types.FieldName) {
 	schema.Append(buildColumnWithName("", "Total_kvs", mysql.TypeLonglong, 22))
 	schema.Append(buildColumnWithName("", "Total_bytes", mysql.TypeLonglong, 22))
 	return schema.col2Schema(), schema.names
+}
+
+// adjustOverlongViewColname adjusts the overlong outputNames of a view to
+// `new_exp_$off` where `$off` is the offset of the output column, $off starts from 1.
+// There is still some MySQL compatible problems.
+func adjustOverlongViewColname(plan LogicalPlan) {
+	outputNames := plan.OutputNames()
+	for i := range outputNames {
+		if outputName := outputNames[i].ColName.L; len(outputName) > mysql.MaxColumnNameLength {
+			outputNames[i].ColName = model.NewCIStr(fmt.Sprintf("name_exp_%d", i+1))
+		}
+	}
 }

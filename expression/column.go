@@ -199,6 +199,8 @@ type Column struct {
 	// InOperand indicates whether this column is the inner operand of column equal condition converted
 	// from `[not] in (subq)`.
 	InOperand bool
+
+	coercibility
 }
 
 // Equal implements Expression interface.
@@ -587,4 +589,13 @@ func (col *Column) SupportReverseEval() bool {
 // ReverseEval evaluates the only one column value with given function result.
 func (col *Column) ReverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error) {
 	return types.ChangeReverseResultByUpperLowerBound(sc, col.RetType, res, rType)
+}
+
+// Coercibility returns the coercibility value which is used to check collations.
+func (col *Column) Coercibility() Coercibility {
+	if col.hasCoercibility() {
+		return col.coercibility.value()
+	}
+	col.SetCoercibility(deriveCoercibilityForColumn(col))
+	return col.coercibility.value()
 }
