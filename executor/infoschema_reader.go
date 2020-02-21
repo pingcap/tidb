@@ -15,6 +15,9 @@ package executor
 
 import (
 	"context"
+	"sort"
+	"strings"
+
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -23,8 +26,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"sort"
-	"strings"
 )
 
 type memtableRetriever struct {
