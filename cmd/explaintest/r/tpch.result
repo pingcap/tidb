@@ -926,9 +926,9 @@ p_brand,
 p_type,
 p_size;
 id	count	task	operator info
-Sort_13	3863988.24	root	Column#23:desc, tpch.part.p_brand:asc, tpch.part.p_type:asc, tpch.part.p_size:asc
-└─Projection_15	3863988.24	root	tpch.part.p_brand, tpch.part.p_type, tpch.part.p_size, Column#23
-  └─HashAgg_18	3863988.24	root	group by:tpch.part.p_brand, tpch.part.p_size, tpch.part.p_type, funcs:count(distinct tpch.partsupp.ps_suppkey)->Column#23, funcs:firstrow(tpch.part.p_brand)->tpch.part.p_brand, funcs:firstrow(tpch.part.p_type)->tpch.part.p_type, funcs:firstrow(tpch.part.p_size)->tpch.part.p_size
+Sort_13	14.41	root	Column#23:desc, tpch.part.p_brand:asc, tpch.part.p_type:asc, tpch.part.p_size:asc
+└─Projection_15	14.41	root	tpch.part.p_brand, tpch.part.p_type, tpch.part.p_size, Column#23
+  └─HashAgg_18	14.41	root	group by:tpch.part.p_brand, tpch.part.p_size, tpch.part.p_type, funcs:count(distinct tpch.partsupp.ps_suppkey)->Column#23, funcs:firstrow(tpch.part.p_brand)->tpch.part.p_brand, funcs:firstrow(tpch.part.p_type)->tpch.part.p_type, funcs:firstrow(tpch.part.p_size)->tpch.part.p_size
     └─HashLeftJoin_30	3863988.24	root	anti semi join, inner:TableReader_68, equal:[eq(tpch.partsupp.ps_suppkey, tpch.supplier.s_suppkey)]
       ├─IndexMergeJoin_38	4829985.30	root	inner join, inner:IndexReader_36, outer key:tpch.part.p_partkey, inner key:tpch.partsupp.ps_partkey
       │ ├─TableReader_61	1200618.43	root	data:Selection_60
@@ -1153,10 +1153,10 @@ Sort_28	20000.00	root	tpch.supplier.s_name:asc
     │ │   └─TableScan_48	25.00	cop[tikv]	table:nation, range:[-inf,+inf], keep order:false
     │ └─TableReader_47	500000.00	root	data:TableScan_46
     │   └─TableScan_46	500000.00	cop[tikv]	table:supplier, range:[-inf,+inf], keep order:false
-    └─HashAgg_53	64006.34	root	group by:tpch.partsupp.ps_suppkey, funcs:firstrow(tpch.partsupp.ps_suppkey)->tpch.partsupp.ps_suppkey
-      └─Projection_54	64006.34	root	tpch.partsupp.ps_suppkey
-        └─Selection_55	64006.34	root	gt(cast(tpch.partsupp.ps_availqty), mul(0.5, Column#44))
-          └─HashAgg_58	80007.93	root	group by:tpch.partsupp.ps_partkey, tpch.partsupp.ps_suppkey, funcs:firstrow(tpch.partsupp.ps_suppkey)->tpch.partsupp.ps_suppkey, funcs:firstrow(tpch.partsupp.ps_availqty)->tpch.partsupp.ps_availqty, funcs:sum(tpch.lineitem.l_quantity)->Column#44
+    └─HashAgg_53	257492.04	root	group by:tpch.partsupp.ps_suppkey, funcs:firstrow(tpch.partsupp.ps_suppkey)->tpch.partsupp.ps_suppkey
+      └─Projection_54	257492.04	root	tpch.partsupp.ps_suppkey
+        └─Selection_55	257492.04	root	gt(cast(tpch.partsupp.ps_availqty), mul(0.5, Column#44))
+          └─HashAgg_58	321865.05	root	group by:tpch.partsupp.ps_partkey, tpch.partsupp.ps_suppkey, funcs:firstrow(tpch.partsupp.ps_suppkey)->tpch.partsupp.ps_suppkey, funcs:firstrow(tpch.partsupp.ps_availqty)->tpch.partsupp.ps_availqty, funcs:sum(tpch.lineitem.l_quantity)->Column#44
             └─HashLeftJoin_62	9711455.06	root	left outer join, inner:IndexHashJoin_75 (REVERSED), equal:[eq(tpch.partsupp.ps_partkey, tpch.lineitem.l_partkey) eq(tpch.partsupp.ps_suppkey, tpch.lineitem.l_suppkey)]
               ├─IndexHashJoin_75	321865.05	root	inner join, inner:IndexLookUp_66, outer key:tpch.part.p_partkey, inner key:tpch.partsupp.ps_partkey
               │ ├─TableReader_98	80007.93	root	data:Selection_97
@@ -1217,9 +1217,9 @@ numwait desc,
 s_name
 limit 100;
 id	count	task	operator info
-Projection_25	1.00	root	tpch.supplier.s_name, Column#72
-└─TopN_28	1.00	root	Column#72:desc, tpch.supplier.s_name:asc, offset:0, count:100
-  └─HashAgg_34	1.00	root	group by:tpch.supplier.s_name, funcs:count(1)->Column#72, funcs:firstrow(tpch.supplier.s_name)->tpch.supplier.s_name
+Projection_25	100.00	root	tpch.supplier.s_name, Column#72
+└─TopN_28	100.00	root	Column#72:desc, tpch.supplier.s_name:asc, offset:0, count:100
+  └─HashAgg_34	12800.00	root	group by:tpch.supplier.s_name, funcs:count(1)->Column#72, funcs:firstrow(tpch.supplier.s_name)->tpch.supplier.s_name
     └─IndexHashJoin_49	7828961.66	root	anti semi join, inner:IndexLookUp_39, outer key:tpch.lineitem.l_orderkey, inner key:tpch.lineitem.l_orderkey, other cond:ne(tpch.lineitem.l_suppkey, tpch.lineitem.l_suppkey)
       ├─IndexHashJoin_88	9786202.08	root	semi join, inner:IndexLookUp_79, outer key:tpch.lineitem.l_orderkey, inner key:tpch.lineitem.l_orderkey, other cond:ne(tpch.lineitem.l_suppkey, tpch.lineitem.l_suppkey), ne(tpch.lineitem.l_suppkey, tpch.supplier.s_suppkey)
       │ ├─IndexMergeJoin_99	12232752.60	root	inner join, inner:TableReader_97, outer key:tpch.lineitem.l_orderkey, inner key:tpch.orders.o_orderkey
