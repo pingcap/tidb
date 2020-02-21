@@ -1139,7 +1139,7 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 			cost = pointGetPlan.GetCost(ds.TblCols)
 		}
 		// Add index condition to table plan now.
-		if len(candidate.path.IndexFilters) + len(candidate.path.TableFilters) > 0 {
+		if len(candidate.path.IndexFilters)+len(candidate.path.TableFilters) > 0 {
 			sessVars := ds.ctx.GetSessionVars()
 			cost += pointGetPlan.stats.RowCount * sessVars.CPUFactor
 			sel := PhysicalSelection{
@@ -1207,7 +1207,7 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 			cost = batchPointGetPlan.GetCost(ds.TblCols)
 		}
 		// Add index condition to table plan now.
-		if len(candidate.path.IndexFilters) + len(candidate.path.TableFilters) > 0 {
+		if len(candidate.path.IndexFilters)+len(candidate.path.TableFilters) > 0 {
 			sessVars := ds.ctx.GetSessionVars()
 			cost += batchPointGetPlan.stats.RowCount * sessVars.CPUFactor
 			sel := PhysicalSelection{
