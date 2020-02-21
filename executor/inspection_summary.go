@@ -493,7 +493,7 @@ func (e *inspectionSummaryRetriever) retrieve(ctx context.Context, sctx sessionc
 					}
 					labels = append(labels, val)
 				}
-				var quantile float64
+				var quantile interface{}
 				if def.Quantile > 0 {
 					quantile = row.GetFloat64(row.Len() - 1) // quantile will be the last column
 				}
