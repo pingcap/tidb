@@ -15,6 +15,7 @@ package expression
 
 import (
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -107,4 +108,10 @@ func deriveCoercibilityForColumn(c *Column) Coercibility {
 		return CoercibilityNumeric
 	}
 	return CoercibilityImplicit
+}
+
+// DeriveCollationFromExprs derives collation information from these expressions.
+func DeriveCollationFromExprs(ctx sessionctx.Context, exprs ...Expression) (dstCharset, dstCollation string, dstFlen int) {
+	// implemented by PR/14905, it is created here to make this PR easier to review
+	return "", "", 0
 }
