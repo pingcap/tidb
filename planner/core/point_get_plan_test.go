@@ -311,7 +311,7 @@ func (s *testPointGetSuite) TestCBOPointGet(c *C) {
 	tk.MustExec("insert into t values('1',1,1,1), ('2',2,2,2), ('3',3,3,3), ('4',4,4,4)")
 
 	var input []string
-	var output[]struct {
+	var output []struct {
 		SQL  string
 		Plan []string
 		Res  []string
