@@ -278,6 +278,7 @@ func (p *LogicalProjection) extractCorrelatedCols() []*expression.CorrelatedColu
 // LogicalAggregation represents an aggregate plan.
 type LogicalAggregation struct {
 	logicalSchemaProducer
+	parallelHelper parallelLogicalPlanHelper
 
 	AggFuncs     []*aggregation.AggFuncDesc
 	GroupByItems []expression.Expression

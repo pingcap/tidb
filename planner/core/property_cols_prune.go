@@ -229,3 +229,11 @@ func (la *LogicalAggregation) PreparePossibleProperties(schema *expression.Schem
 	la.possibleProperties = resultProperties
 	return la.possibleProperties
 }
+
+// PreparePossiblePartitionProperties implements LogicalPlan interface.
+func (la *LogicalAggregation) PreparePossiblePartitionProperties(childrenPartitionProperties ...[]*property.PhysicalProperty) []*property.PhysicalProperty {
+	if len(la.groupByCols) == 0 {
+		return nil
+	}
+	return la.parallelHelper.preparePossiblePartitionProperties(la, la.groupByCols, childrenPartitionProperties...)
+}

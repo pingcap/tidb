@@ -1148,6 +1148,10 @@ func (b *executorBuilder) buildHashAgg(v *plannercore.PhysicalHashAgg) Executor 
 	if finalCon, partialCon := sessionVars.HashAggFinalConcurrency, sessionVars.HashAggPartialConcurrency; finalCon <= 0 || partialCon <= 0 || finalCon == 1 && partialCon == 1 {
 		e.isUnparallelExec = true
 	}
+	// Prefer executor concurrency.
+	if v.GetConcurrency() > 1 {
+		e.isUnparallelExec = true
+	}
 	partialOrdinal := 0
 	for i, aggDesc := range v.AggFuncs {
 		if e.isUnparallelExec {
@@ -2724,6 +2728,11 @@ func (b *executorBuilder) buildShuffle(v *plannercore.PhysicalShuffle) *ShuffleE
 	}
 
 	if v.ChildShuffle != nil {
+		// Re-locate tail plan, as `Projection` would be injected in `postOptimize`.
+		for len(v.Tail.Children()) > 0 && v.Tail.Children()[0] != v.ChildShuffle {
+			v.Tail = v.Tail.Children()[0]
+		}
+
 		shuffle.childShuffle = b.build(v.ChildShuffle).(*ShuffleExec)
 		if b.err != nil {
 			return nil

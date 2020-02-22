@@ -1672,13 +1672,15 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 
 // ResetHintIfConflicted resets the aggHints.preferAggType if they are conflicted,
 // and returns the two preferAggType hints.
-func (la *LogicalAggregation) ResetHintIfConflicted() (preferHash bool, preferStream bool) {
+func (la *LogicalAggregation) ResetHintIfConflicted(setWarning bool) (preferHash bool, preferStream bool) {
 	preferHash = (la.aggHints.preferAggType & preferHashAgg) > 0
 	preferStream = (la.aggHints.preferAggType & preferStreamAgg) > 0
 	if preferHash && preferStream {
-		errMsg := "Optimizer aggregation hints are conflicted"
-		warning := ErrInternal.GenWithStack(errMsg)
-		la.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+		if setWarning {
+			errMsg := "Optimizer aggregation hints are conflicted"
+			warning := ErrInternal.GenWithStack(errMsg)
+			la.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+		}
 		la.aggHints.preferAggType = 0
 		preferHash, preferStream = false, false
 	}
@@ -1695,7 +1697,7 @@ func (la *LogicalAggregation) exhaustPhysicalPlans(prop *property.PhysicalProper
 		}
 	}
 
-	preferHash, preferStream := la.ResetHintIfConflicted()
+	preferHash, preferStream := la.ResetHintIfConflicted(true)
 
 	hashAggs := la.getHashAggs(prop)
 	if hashAggs != nil && preferHash {
@@ -1717,6 +1719,26 @@ func (la *LogicalAggregation) exhaustPhysicalPlans(prop *property.PhysicalProper
 	aggs = append(aggs, hashAggs...)
 	aggs = append(aggs, streamAggs...)
 	return aggs
+}
+
+func (la *LogicalAggregation) exhaustParallelPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
+	// Support hash aggregation ONLY.
+	// Future: support streaming aggregation.
+	_, preferStream := la.ResetHintIfConflicted(false)
+	if preferStream {
+		return nil
+	}
+
+	exhaustor := func(prop *property.PhysicalProperty) []PhysicalPlan {
+		if !prop.IsEmpty() {
+			return nil
+		}
+		// Shuffle cannot be pushed to cop.
+		agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, TaskTp: property.RootTaskType})
+		agg.SetSchema(la.schema.Clone())
+		return []PhysicalPlan{agg}
+	}
+	return la.parallelHelper.exhaustParallelPhysicalPlans4SingleChild(la.basePlan.ctx, la, prop, exhaustor, nil, nil)
 }
 
 func (p *LogicalSelection) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
