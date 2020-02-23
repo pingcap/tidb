@@ -1439,7 +1439,6 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
 	}
 
-	var tbInfo *model.TableInfo
 	var referTbl table.Table
 	if s.ReferTable != nil {
 		referIdent := ast.Ident{Schema: s.ReferTable.Schema, Name: s.ReferTable.Name}
@@ -1462,6 +1461,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	}
 
 	// build tableInfo
+	var tbInfo *model.TableInfo
 	if s.ReferTable != nil {
 		tbInfo = buildTableInfoWithLike(ident, referTbl.Meta())
 	} else {
