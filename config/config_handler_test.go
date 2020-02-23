@@ -115,20 +115,21 @@ func (s *testConfigSuite) TestPDConfHandler(c *C) {
 	wg := sync.WaitGroup{}
 	wg.Add(1)
 	mockReloadFunc := func(oldConf, newConf *Config) {
-		c.Assert(oldConf.Log.Level, Equals, "info")
-		c.Assert(newConf.Log.Level, Equals, "debug")
+		c.Assert(oldConf.Performance.MaxMemory, Equals, uint64(233))
+		c.Assert(newConf.Performance.MaxMemory, Equals, uint64(123))
 		wg.Done()
 	}
+	conf.Performance.MaxMemory = 233
 	ch, err = newPDConfHandler(&conf, mockReloadFunc, newMockPDConfigClient)
 	c.Assert(err, IsNil)
 	ch.interval = time.Second
 	newConf := conf
-	newConf.Log.Level = "debug"
+	newConf.Performance.MaxMemory = 123
 	newContent, _ := encodeConfig(&newConf)
 	mockPDConfigClient0.confContent.Store(newContent)
 	ch.Start()
 	wg.Wait()
-	c.Assert(ch.GetConfig().Log.Level, Equals, "debug")
+	c.Assert(ch.GetConfig().Performance.MaxMemory, Equals, uint64(123))
 	ch.Close()
 }
 

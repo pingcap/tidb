@@ -136,7 +136,7 @@ func (p *PhysicalTableScan) ExplainID() fmt.Stringer {
 	return stringutil.MemoizeStr(func() string {
 		if p.isChildOfIndexLookUp {
 			return "TableRowIDScan_" + strconv.Itoa(p.id)
-		} else if len(p.Ranges) > 0 && p.isFullScan() {
+		} else if p.isFullScan() {
 			return "TableFullScan_" + strconv.Itoa(p.id)
 		}
 		return "TableRangeScan_" + strconv.Itoa(p.id)

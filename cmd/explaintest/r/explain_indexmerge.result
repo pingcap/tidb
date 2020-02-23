@@ -25,14 +25,14 @@ id	count	task	operator info
 IndexMerge_11	98.00	root	
 ├─TableRangeScan_8	49.00	cop[tikv]	table:t, range:[-inf,50), keep order:false
 ├─IndexRangeScan_9	49.00	cop[tikv]	table:t, index:b, range:[-inf,50), keep order:false
-└─TableRangeScan_10	98.00	cop[tikv]	table:t, keep order:false
+└─TableRowIDScan_10	98.00	cop[tikv]	table:t, keep order:false
 explain select * from t where (a < 50 or b < 50) and f > 100;
 id	count	task	operator info
 IndexMerge_12	98.00	root	
 ├─TableRangeScan_8	49.00	cop[tikv]	table:t, range:[-inf,50), keep order:false
 ├─IndexRangeScan_9	49.00	cop[tikv]	table:t, index:b, range:[-inf,50), keep order:false
 └─Selection_11	98.00	cop[tikv]	gt(test.t.f, 100)
-  └─TableRangeScan_10	98.00	cop[tikv]	table:t, keep order:false
+  └─TableRowIDScan_10	98.00	cop[tikv]	table:t, keep order:false
 explain select * from t where a < 50 or b < 5000000;
 id	count	task	operator info
 TableReader_7	4000000.00	root	data:Selection_6
@@ -43,7 +43,7 @@ id	count	task	operator info
 IndexMerge_11	98.00	root	
 ├─IndexRangeScan_8	49.00	cop[tikv]	table:t, index:b, range:[-inf,50), keep order:false
 ├─IndexRangeScan_9	49.00	cop[tikv]	table:t, index:c, range:[-inf,50), keep order:false
-└─TableRangeScan_10	98.00	cop[tikv]	table:t, keep order:false
+└─TableRowIDScan_10	98.00	cop[tikv]	table:t, keep order:false
 explain select * from t where b < 50 or c < 5000000;
 id	count	task	operator info
 TableReader_7	4000000.00	root	data:Selection_6
@@ -55,14 +55,14 @@ IndexMerge_12	147.00	root
 ├─TableRangeScan_8	49.00	cop[tikv]	table:t, range:[-inf,50), keep order:false
 ├─IndexRangeScan_9	49.00	cop[tikv]	table:t, index:b, range:[-inf,50), keep order:false
 ├─IndexRangeScan_10	49.00	cop[tikv]	table:t, index:c, range:[-inf,50), keep order:false
-└─TableRangeScan_11	147.00	cop[tikv]	table:t, keep order:false
+└─TableRowIDScan_11	147.00	cop[tikv]	table:t, keep order:false
 explain select * from t where (b < 10000 or c < 10000) and (a < 10 or d < 10) and f < 10;
 id	count	task	operator info
 IndexMerge_17	0.00	root	
 ├─TableRangeScan_13	9.00	cop[tikv]	table:t, range:[-inf,10), keep order:false
 ├─IndexRangeScan_14	9.00	cop[tikv]	table:t, index:d, range:[-inf,10), keep order:false
 └─Selection_16	0.00	cop[tikv]	lt(test.t.f, 10), or(lt(test.t.b, 10000), lt(test.t.c, 10000))
-  └─TableRangeScan_15	18.00	cop[tikv]	table:t, keep order:false
+  └─TableRowIDScan_15	18.00	cop[tikv]	table:t, keep order:false
 explain format="dot" select * from t where (a < 50 or b < 50) and f > 100;
 dot contents
 
@@ -89,7 +89,7 @@ subgraph cluster11{
 node [style=filled, color=lightgrey]
 color=black
 label = "cop"
-"Selection_11" -> "TableRangeScan_10"
+"Selection_11" -> "TableRowIDScan_10"
 }
 "IndexMerge_12" -> "TableRangeScan_8"
 "IndexMerge_12" -> "IndexRangeScan_9"
@@ -102,14 +102,14 @@ id	count	task	operator info
 IndexMerge_8	5000000.00	root	
 ├─IndexRangeScan_5	49.00	cop[tikv]	table:t, index:b, range:[-inf,50), keep order:false
 ├─IndexRangeScan_6	4999999.00	cop[tikv]	table:t, index:c, range:[-inf,5000000), keep order:false
-└─TableRangeScan_7	5000000.00	cop[tikv]	table:t, keep order:false
+└─TableRowIDScan_7	5000000.00	cop[tikv]	table:t, keep order:false
 explain select /*+ use_index_merge(t, tb, tc) */ * from t where (b < 10000 or c < 10000) and (a < 10 or d < 10) and f < 10;
 id	count	task	operator info
 IndexMerge_9	0.00	root	
 ├─IndexRangeScan_5	9999.00	cop[tikv]	table:t, index:b, range:[-inf,10000), keep order:false
 ├─IndexRangeScan_6	9999.00	cop[tikv]	table:t, index:c, range:[-inf,10000), keep order:false
 └─Selection_8	0.00	cop[tikv]	lt(test.t.f, 10), or(lt(test.t.a, 10), lt(test.t.d, 10))
-  └─TableRangeScan_7	19998.00	cop[tikv]	table:t, keep order:false
+  └─TableRowIDScan_7	19998.00	cop[tikv]	table:t, keep order:false
 explain select /*+ use_index_merge(t, tb) */ * from t where b < 50 or c < 5000000;
 id	count	task	operator info
 TableReader_7	4000000.00	root	data:Selection_6
@@ -125,4 +125,4 @@ id	count	task	operator info
 IndexMerge_8	5000000.00	root	
 ├─TableRangeScan_5	49.00	cop[tikv]	table:t, range:[-inf,50), keep order:false
 ├─IndexRangeScan_6	4999999.00	cop[tikv]	table:t, index:b, range:[-inf,5000000), keep order:false
-└─TableRangeScan_7	5000000.00	cop[tikv]	table:t, keep order:false
+└─TableRowIDScan_7	5000000.00	cop[tikv]	table:t, keep order:false

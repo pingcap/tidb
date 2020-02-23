@@ -201,7 +201,7 @@
           "IndexMerge_8 2.00 root ",
           "├─IndexRangeScan_5 1.00 cop[tikv] table:t, index:a, range:[1,1], keep order:false, stats:pseudo",
           "├─IndexRangeScan_6 1.00 cop[tikv] table:t, index:b, range:[2,2], keep order:false, stats:pseudo",
-          "└─TableRangeScan_7 2.00 cop[tikv] table:t, keep order:false, stats:pseudo"
+          "└─TableRowIDScan_7 2.00 cop[tikv] table:t, keep order:false, stats:pseudo"
         ]
       }
     ]
