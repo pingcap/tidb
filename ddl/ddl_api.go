@@ -1438,6 +1438,20 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
 	}
+
+	var tbInfo *model.TableInfo
+	var referTbl table.Table
+	if s.ReferTable != nil {
+		referIdent := ast.Ident{Schema: s.ReferTable.Schema, Name: s.ReferTable.Name}
+		_, ok := is.SchemaByName(referIdent.Schema)
+		if !ok {
+			return infoschema.ErrTableNotExists.GenWithStackByArgs(referIdent.Schema, referIdent.Name)
+		}
+		referTbl, err = is.TableByName(referIdent.Schema, referIdent.Name)
+		if err != nil {
+			return infoschema.ErrTableNotExists.GenWithStackByArgs(referIdent.Schema, referIdent.Name)
+		}
+	}
 	if is.TableExists(ident.Schema, ident.Name) {
 		err = infoschema.ErrTableExists.GenWithStackByArgs(ident)
 		if s.IfNotExists {
@@ -1447,18 +1461,8 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 		return err
 	}
 
-	// build tableInfo.
-	var tbInfo *model.TableInfo
+	// build tableInfo
 	if s.ReferTable != nil {
-		referIdent := ast.Ident{Schema: s.ReferTable.Schema, Name: s.ReferTable.Name}
-		_, ok := is.SchemaByName(referIdent.Schema)
-		if !ok {
-			return infoschema.ErrTableNotExists.GenWithStackByArgs(referIdent.Schema, referIdent.Name)
-		}
-		referTbl, err := is.TableByName(referIdent.Schema, referIdent.Name)
-		if err != nil {
-			return infoschema.ErrTableNotExists.GenWithStackByArgs(referIdent.Schema, referIdent.Name)
-		}
 		tbInfo = buildTableInfoWithLike(ident, referTbl.Meta())
 	} else {
 		tbInfo, err = buildTableInfoWithCheck(ctx, s, schema.Charset, schema.Collate)
