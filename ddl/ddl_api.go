@@ -1275,7 +1275,7 @@ func checkTableInfoValid(tblInfo *model.TableInfo) error {
 }
 
 func buildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo) *model.TableInfo {
-	tblInfo := referTblInfo
+	tblInfo := *referTblInfo
 	// Check non-public column and adjust column offset.
 	newColumns := referTblInfo.Cols()
 	newIndices := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
@@ -1300,7 +1300,7 @@ func buildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo) *mod
 		copy(pi.Definitions, referTblInfo.Partition.Definitions)
 		tblInfo.Partition = &pi
 	}
-	return tblInfo
+	return &tblInfo
 }
 
 // BuildTableInfoFromAST builds model.TableInfo from a SQL statement.
