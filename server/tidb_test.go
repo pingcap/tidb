@@ -177,6 +177,43 @@ func (ts *tidbTestSuite) TestStatusAPI(c *C) {
 	ts.runTestStatusAPI(c)
 }
 
+func (ts *tidbTestSuite) TestStatusAPIWithTLS(c *C) {
+	caCert, caKey, err := generateCert(0, "TiDB CA 2", nil, nil, "/tmp/ca-key-2.pem", "/tmp/ca-cert-2.pem")
+	c.Assert(err, IsNil)
+	_, _, err = generateCert(1, "tidb-server-2", caCert, caKey, "/tmp/server-key-2.pem", "/tmp/server-cert-2.pem")
+	c.Assert(err, IsNil)
+
+	defer func() {
+		os.Remove("/tmp/ca-key-2.pem")
+		os.Remove("/tmp/ca-cert-2.pem")
+		os.Remove("/tmp/server-key-2.pem")
+		os.Remove("/tmp/server-cert-2.pem")
+	}()
+
+	cli := newTestServerClient()
+	cli.statusScheme = "https"
+	cfg := config.NewConfig()
+	cfg.Port = cli.port
+	cfg.Status.StatusPort = cli.statusPort
+	cfg.Security.ClusterSSLCA = "/tmp/ca-cert-2.pem"
+	cfg.Security.ClusterSSLCert = "/tmp/server-cert-2.pem"
+	cfg.Security.ClusterSSLKey = "/tmp/server-key-2.pem"
+	server, err := NewServer(cfg, ts.tidbdrv)
+	c.Assert(err, IsNil)
+	go server.Run()
+	time.Sleep(time.Millisecond * 100)
+
+	// https connection should work.
+	ts.runTestStatusAPI(c)
+
+	// but plain http connection should fail.
+	cli.statusScheme = "http"
+	_, err = cli.fetchStatus("/status")
+	c.Assert(err, NotNil)
+
+	server.Close()
+}
+
 func (ts *tidbTestSuite) TestMultiStatements(c *C) {
 	c.Parallel()
 	ts.runTestMultiStatements(c)
