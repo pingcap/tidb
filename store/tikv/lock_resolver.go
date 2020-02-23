@@ -594,9 +594,13 @@ func (lr *LockResolver) resolvePessimisticLock(bo *Backoffer, l *Lock, cleanRegi
 		if _, ok := cleanRegions[loc.Region]; ok {
 			return nil
 		}
+		forUpdateTS := l.LockForUpdateTS
+		if forUpdateTS == 0 {
+			forUpdateTS = math.MaxUint64
+		}
 		pessimisticRollbackReq := &kvrpcpb.PessimisticRollbackRequest{
 			StartVersion: l.TxnID,
-			ForUpdateTs:  l.LockForUpdateTS,
+			ForUpdateTs:  forUpdateTS,
 			Keys:         [][]byte{l.Key},
 		}
 		req := tikvrpc.NewRequest(tikvrpc.CmdPessimisticRollback, pessimisticRollbackReq)
