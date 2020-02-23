@@ -90,8 +90,8 @@ func ToColumn(col *model.ColumnInfo) *Column {
 func FindCols(cols []*Column, names []string, pkIsHandle bool) ([]*Column, string) {
 	// Comparing strings more than (32 * 32 / 2) times cost a lot, So we use a map to do the finding
 	var colsMap map[string]*Column
-	if len(names) >= 32 {
-		colsMap = make(map[string]*Column)
+	if len(names) >= 48 {
+		colsMap = make(map[string]*Column, len(names))
 		for _, col := range cols {
 			colsMap[col.Name.O] = col
 		}
