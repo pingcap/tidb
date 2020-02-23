@@ -586,12 +586,13 @@ func (e *MetricTableExtractor) Extract(
 	}
 
 	excludeCols := set.NewStringSet("quantile", "time", "value")
-	remained, skipRequest, extractCols := e.extractCols(schema, names, remained, excludeCols, false)
+	_, skipRequest, extractCols := e.extractCols(schema, names, remained, excludeCols, false)
 	e.SkipRequest = skipRequest
 	if e.SkipRequest {
 		return nil
 	}
 	e.LabelConditions = extractCols
+	// For some metric, the metric reader can't use the predicate, so keep all label conditions remained.
 	return remained
 }
 
