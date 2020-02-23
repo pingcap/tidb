@@ -139,6 +139,11 @@ var MetricTableMap = map[string]MetricTableDef{
 		PromQL:  "tidb_server_critical_error_total{$LABEL_CONDITIONS}",
 		Labels:  []string{"instance"},
 	},
+	"tidb_binlog_error_total_count": {
+		PromQL:  "sum(increase(tidb_server_critical_error_total{$LABEL_CONDITIONS}[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total count of TiDB write binlog error and skip binlog count",
+	},
 	"tidb_get_token_duration": {
 		PromQL:   "histogram_quantile($QUANTILE, sum(rate(tidb_server_get_token_duration_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,instance))",
 		Labels:   []string{"instance"},
@@ -146,10 +151,16 @@ var MetricTableMap = map[string]MetricTableDef{
 		Comment:  " The quantile of Duration (us) for getting token, it should be small until concurrency limit is reached(second)",
 	},
 	"tidb_handshake_error_ops": {
-		PromQL:  "sum(increase(tidb_server_handshake_error_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance)",
+		PromQL:  "sum(rate(tidb_server_handshake_error_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance)",
 		Labels:  []string{"instance"},
 		Comment: "TiDB processing handshake error count",
 	},
+	"tidb_handshake_error_total_count": {
+		PromQL:  "sum(increase(tidb_server_handshake_error_total{$LABEL_CONDITIONS}[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total count of TiDB processing handshake error",
+	},
+
 	"tidb_transaction_ops": {
 		PromQL:  "sum(rate(tidb_session_transaction_duration_seconds_count{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type,sql_type,instance)",
 		Labels:  []string{"instance", "type", "sql_type"},
@@ -177,6 +188,11 @@ var MetricTableMap = map[string]MetricTableDef{
 		PromQL:  "sum(rate(tidb_session_retry_error_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type,sql_type,instance)",
 		Labels:  []string{"instance", "type", "sql_type"},
 		Comment: "Error numbers of transaction retry",
+	},
+	"tidb_transaction_retry_error_total_count": {
+		PromQL:  "sum(increase(tidb_session_retry_error_total{$LABEL_CONDITIONS}[60s])) by (type,sql_type,instance)",
+		Labels:  []string{"instance", "type", "sql_type"},
+		Comment: "The total count of transaction retry",
 	},
 	"tidb_transaction_local_latch_wait_duration": {
 		PromQL:   "histogram_quantile($QUANTILE, sum(rate(tidb_tikvclient_local_latch_wait_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,instance))",
@@ -267,6 +283,11 @@ var MetricTableMap = map[string]MetricTableDef{
 		PromQL:  "sum(rate(tidb_tikvclient_region_err_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type,instance)",
 		Labels:  []string{"instance", "type"},
 		Comment: "kv region error times",
+	},
+	"tidb_kv_region_error_total_count": {
+		PromQL:  "sum(increase(tidb_tikvclient_region_err_total{$LABEL_CONDITIONS}[60s])) by (type,instance)",
+		Labels:  []string{"instance", "type"},
+		Comment: "the total count of kv region error",
 	},
 	"tidb_lock_resolver_ops": {
 		PromQL:  "sum(rate(tidb_tikvclient_lock_resolver_actions_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type,instance)",
@@ -386,6 +407,11 @@ var MetricTableMap = map[string]MetricTableDef{
 	"tidb_schema_lease_error_opm": {
 		Comment: "TiDB schema lease error counts",
 		PromQL:  "sum(increase(tidb_session_schema_lease_error_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance)",
+		Labels:  []string{"instance"},
+	},
+	"tidb_schema_lease_error_total_count": {
+		Comment: "The total count of TiDB schema lease error",
+		PromQL:  "sum(increase(tidb_session_schema_lease_error_total{$LABEL_CONDITIONS}[60s])) by (instance)",
 		Labels:  []string{"instance"},
 	},
 	"tidb_load_privilege_ops": {
@@ -826,10 +852,20 @@ var MetricTableMap = map[string]MetricTableDef{
 	"tikv_grpc_errors": {
 		PromQL:  `sum(rate(tikv_grpc_msg_fail_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance,type)`,
 		Labels:  []string{"instance", "type"},
-		Comment: "The total number of the gRPC message failures",
+		Comment: "The OPS of the gRPC message failures",
+	},
+	"tikv_grpc_error_total_count": {
+		PromQL:  `sum(increase(tikv_grpc_msg_fail_total{$LABEL_CONDITIONS}[60s])) by (instance,type)`,
+		Labels:  []string{"instance", "type"},
+		Comment: "The total count of the gRPC message failures",
 	},
 	"tikv_critical_error": {
 		PromQL:  `sum(rate(tikv_critical_error_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance, type)`,
+		Labels:  []string{"instance", "type"},
+		Comment: "The OPS of the TiKV critical error",
+	},
+	"tikv_critical_error_total_count": {
+		PromQL:  `sum(rate(tikv_critical_error_total{$LABEL_CONDITIONS}[60s])) by (instance, type)`,
 		Labels:  []string{"instance", "type"},
 		Comment: "The total number of the TiKV critical error",
 	},
@@ -848,15 +884,30 @@ var MetricTableMap = map[string]MetricTableDef{
 		Labels:  []string{"instance", "db", "type", "stage"},
 		Comment: "Indicates occurrences of Scheduler Busy events that make the TiKV instance unavailable temporarily",
 	},
-	"tikv_channel_full_total": {
+	"tikv_scheduler_is_busy_total_count": {
+		PromQL:  `sum(increase(tikv_scheduler_too_busy_total{$LABEL_CONDITIONS}[60s])) by (instance,db,type,stage)`,
+		Labels:  []string{"instance", "db", "type", "stage"},
+		Comment: "The total count of Scheduler Busy events that make the TiKV instance unavailable temporarily",
+	},
+	"tikv_channel_full": {
 		PromQL:  `sum(rate(tikv_channel_full_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance,type,db)`,
+		Labels:  []string{"instance", "db", "type"},
+		Comment: "The ops of channel full errors on each TiKV instance, it will make the TiKV instance unavailable temporarily",
+	},
+	"tikv_channel_full_total_count": {
+		PromQL:  `sum(increase(tikv_channel_full_total{$LABEL_CONDITIONS}[60s])) by (instance,type,db)`,
 		Labels:  []string{"instance", "db", "type"},
 		Comment: "The total number of channel full errors on each TiKV instance, it will make the TiKV instance unavailable temporarily",
 	},
 	"tikv_coprocessor_is_busy": {
 		PromQL:  `sum(rate(tikv_coprocessor_request_error{type='full'}[$RANGE_DURATION])) by (instance,db,type)`,
 		Labels:  []string{"instance", "db"},
-		Comment: "Indicates occurrences of Coprocessor Full events that make the TiKV instance unavailable temporarily",
+		Comment: "The ops of Coprocessor Full events that make the TiKV instance unavailable temporarily",
+	},
+	"tikv_coprocessor_is_busy_total_count": {
+		PromQL:  `sum(increase(tikv_coprocessor_request_error{type='full'}[60s])) by (instance,db,type)`,
+		Labels:  []string{"instance", "db"},
+		Comment: "The total count of Coprocessor Full events that make the TiKV instance unavailable temporarily",
 	},
 	"tikv_engine_write_stall": {
 		PromQL:  `avg(tikv_engine_write_stall{type="write_stall_percentile99"}) by (instance, db)`,
@@ -865,6 +916,11 @@ var MetricTableMap = map[string]MetricTableDef{
 	},
 	"tikv_server_report_failures": {
 		PromQL:  `sum(rate(tikv_server_report_failure_msg_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type,instance,store_id)`,
+		Labels:  []string{"instance", "store_id", "type"},
+		Comment: "The total number of reported failure messages",
+	},
+	"tikv_server_report_failures_total_count": {
+		PromQL:  `sum(increase(tikv_server_report_failure_msg_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type,instance,store_id)`,
 		Labels:  []string{"instance", "store_id", "type"},
 		Comment: "The total number of reported failure messages",
 	},
@@ -880,6 +936,11 @@ var MetricTableMap = map[string]MetricTableDef{
 	},
 	"tikv_coprocessor_request_error": {
 		PromQL:  `sum(rate(tikv_coprocessor_request_error{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance, reason)`,
+		Labels:  []string{"instance", "reason"},
+		Comment: "The number of different coprocessor errors on each TiKV instance",
+	},
+	"tikv_coprocessor_request_error_total_count": {
+		PromQL:  `sum(increase(tikv_coprocessor_request_error{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance, reason)`,
 		Labels:  []string{"instance", "reason"},
 		Comment: "The number of different coprocessor errors on each TiKV instance",
 	},
@@ -1370,10 +1431,6 @@ var MetricTableMap = map[string]MetricTableDef{
 		PromQL: `sum(rate(tikv_coprocessor_request_duration_seconds_count{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (req,instance)`,
 		Labels: []string{"instance", "req"},
 	},
-	"tikv_cop_total_request_errors": {
-		PromQL: `sum(rate(tikv_coprocessor_request_error{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (reason,instance)`,
-		Labels: []string{"instance", "reason"},
-	},
 	"tikv_cop_total_kv_cursor_operations": {
 		PromQL: `sum(rate(tikv_coprocessor_scan_keys_sum{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (req,instance)`,
 		Labels: []string{"instance", "req"},
@@ -1777,6 +1834,10 @@ var MetricTableMap = map[string]MetricTableDef{
 		PromQL: `sum(rate(tikv_lock_manager_error_counter{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type,instance)`,
 		Labels: []string{"instance", "type"},
 	},
+	"tikv_lock_manager_detect_error_total_count": {
+		PromQL: `sum(increase(tikv_lock_manager_error_counter{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type,instance)`,
+		Labels: []string{"instance", "type"},
+	},
 	"tikv_lock_manager_deadlock_detector_leader": {
 		PromQL: `sum(max_over_time(tikv_lock_manager_detector_leader_heartbeat{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance)`,
 		Labels: []string{"instance"},
@@ -1823,6 +1884,10 @@ var MetricTableMap = map[string]MetricTableDef{
 	},
 	"tikv_backup_errors": {
 		PromQL: `rate(tikv_backup_error_counter{$LABEL_CONDITIONS}[$RANGE_DURATION])`,
+		Labels: []string{"instance", "error"},
+	},
+	"tikv_backup_errors_total_count": {
+		PromQL: `sum(increase(tikv_backup_error_counter{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance,error)`,
 		Labels: []string{"instance", "error"},
 	},
 	"node_virtual_cpus": {
@@ -1976,8 +2041,16 @@ var MetricTableMap = map[string]MetricTableDef{
 		PromQL: `rate(node_network_receive_errs_total{$LABEL_CONDITIONS}[$RANGE_DURATION])`,
 		Labels: []string{"instance", "device"},
 	},
+	"node_network_in_errors_total_count": {
+		PromQL: `sum(increase(node_network_receive_errs_total{$LABEL_CONDITIONS}[60s])) by(instance, device)`,
+		Labels: []string{"instance", "device"},
+	},
 	"node_network_out_errors": {
 		PromQL: `rate(node_network_transmit_errs_total{$LABEL_CONDITIONS}[$RANGE_DURATION])`,
+		Labels: []string{"instance", "device"},
+	},
+	"node_network_out_errors_total_count": {
+		PromQL: `sum(increase(node_network_transmit_errs_total{$LABEL_CONDITIONS}[60s])) by (instance, device)`,
 		Labels: []string{"instance", "device"},
 	},
 	"node_network_in_traffic": {
