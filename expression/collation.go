@@ -14,7 +14,10 @@
 package expression
 
 import (
+	"strings"
+
 	"github.com/pingcap/parser/ast"
+	charset2 "github.com/pingcap/parser/charset"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -107,4 +110,42 @@ func deriveCoercibilityForColumn(c *Column) Coercibility {
 		return CoercibilityNumeric
 	}
 	return CoercibilityImplicit
+}
+
+// DeriveCollationFromExprs derives collation information from these expressions.
+func DeriveCollationFromExprs(exprs ...Expression) (string, string, int) {
+	if len(exprs) == 0 {
+		charset, collation := charset2.GetDefaultCharsetAndCollate()
+		return charset, collation, types.UnspecifiedLength
+	}
+	// see https://dev.mysql.com/doc/refman/8.0/en/charset-collation-coercibility.html
+	e := exprs[0]
+	for i := 1; i < len(exprs); i++ {
+		if exprs[i].Coercibility() != e.Coercibility() {
+			if exprs[i].Coercibility() < e.Coercibility() {
+				e = exprs[i]
+			}
+			continue
+		}
+		isUnicode1 := isUnicodeCharset(e.GetType().Collate)
+		isUnicode2 := isUnicodeCharset(exprs[i].GetType().Collate)
+		if isUnicode1 && !isUnicode2 {
+			continue
+		} else if !isUnicode1 && isUnicode2 { // use the unicode charset
+			e = exprs[i]
+		} else if isBinCollation(exprs[i].GetType().Collate) { // use the _bin collation
+			e = exprs[i]
+		}
+	}
+	tp := e.GetType()
+	return tp.Charset, tp.Collate, tp.Flen
+}
+
+func isUnicodeCharset(charset string) bool {
+	charset = strings.ToLower(charset)
+	return charset == "utf8" || charset == "utf8mb4"
+}
+
+func isBinCollation(collation string) bool {
+	return strings.HasSuffix(strings.ToLower(collation), "_bin")
 }
