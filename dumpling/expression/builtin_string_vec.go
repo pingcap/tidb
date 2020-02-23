@@ -135,18 +135,23 @@ func (b *builtinStringIsNullSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinUpperSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinUpperUTF8Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	if err := b.args[0].VecEvalString(b.ctx, input, result); err != nil {
 		return err
-	}
-	if types.IsBinaryStr(b.args[0].GetType()) {
-		return nil
 	}
 
 	for i := 0; i < input.NumRows(); i++ {
 		result.SetRaw(i, []byte(strings.ToUpper(result.GetString(i))))
 	}
 	return nil
+}
+
+func (b *builtinUpperUTF8Sig) vectorized() bool {
+	return true
+}
+
+func (b *builtinUpperSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+	return b.args[0].VecEvalString(b.ctx, input, result)
 }
 
 func (b *builtinUpperSig) vectorized() bool {
