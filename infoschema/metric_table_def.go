@@ -40,17 +40,17 @@ var MetricTableMap = map[string]MetricTableDef{
 		Labels:  []string{"instance", "type"},
 		Comment: "TiDB failed query opm",
 	},
-	"tidb_slow_query_time": {
+	"tidb_slow_query_duration": {
 		PromQL:   "histogram_quantile($QUANTILE, sum(rate(tidb_server_slow_query_process_duration_seconds_bucket[$RANGE_DURATION])) by (le))",
 		Quantile: 0.90,
 		Comment:  "The quantile of TiDB slow query statistics with slow query time(second)",
 	},
-	"tidb_slow_query_cop_process_time": {
+	"tidb_slow_query_cop_process_duration": {
 		PromQL:   "histogram_quantile($QUANTILE, sum(rate(tidb_server_slow_query_cop_duration_seconds_bucket[$RANGE_DURATION])) by (le))",
 		Quantile: 0.90,
 		Comment:  "The quantile of TiDB slow query statistics with slow query total cop process time(second)",
 	},
-	"tidb_slow_query_cop_wait_time": {
+	"tidb_slow_query_cop_wait_duration": {
 		PromQL:   "histogram_quantile($QUANTILE, sum(rate(tidb_server_slow_query_wait_duration_seconds_bucket[$RANGE_DURATION])) by (le))",
 		Quantile: 0.90,
 		Comment:  "The quantile of TiDB slow query statistics with slow query total cop wait time(second)",
@@ -749,7 +749,7 @@ var MetricTableMap = map[string]MetricTableDef{
 		Quantile: 0.99,
 		Comment:  "The quantile time consumed of writing WAL into the persistent storage",
 	},
-	"pd_peer_round_trip_time_seconds": {
+	"pd_peer_round_trip_duration": {
 		PromQL:   `histogram_quantile($QUANTILE, sum(rate(etcd_network_peer_round_trip_time_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,instance,To))`,
 		Labels:   []string{"instance", "To"},
 		Quantile: 0.99,
@@ -774,7 +774,7 @@ var MetricTableMap = map[string]MetricTableDef{
 		PromQL: `avg(rate(pd_client_request_handle_requests_duration_seconds_sum{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type) /  avg(rate(pd_client_request_handle_requests_duration_seconds_count{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type)`,
 		Labels: []string{"type"},
 	},
-	"pd_region_heartbeat_latency": {
+	"pd_region_heartbeat_duration": {
 		PromQL:   `round(histogram_quantile($QUANTILE, sum(rate(pd_scheduler_region_heartbeat_latency_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,address, store)), 1000)`,
 		Labels:   []string{"address", "store"},
 		Quantile: 0.99,
@@ -1019,12 +1019,6 @@ var MetricTableMap = map[string]MetricTableDef{
 		Quantile: 0.99,
 		Comment:  "The quantile time consumed when Raft applies log",
 	},
-	"tikv_apply_log_duration_per_server": {
-		PromQL:   `histogram_quantile($QUANTILE, sum(rate(tikv_raftstore_apply_log_duration_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le, instance))`,
-		Labels:   []string{"instance"},
-		Quantile: 0.99,
-		Comment:  "The quantile time consumed for Raft to apply logs per TiKV instance",
-	},
 	"tikv_append_log_avg_duration": {
 		PromQL:  `sum(rate(tikv_raftstore_append_log_duration_seconds_sum{$LABEL_CONDITIONS}[$RANGE_DURATION])) / sum(rate(tikv_raftstore_append_log_duration_seconds_count{$LABEL_CONDITIONS}[$RANGE_DURATION]))`,
 		Labels:  []string{"instance"},
@@ -1036,12 +1030,6 @@ var MetricTableMap = map[string]MetricTableDef{
 		Quantile: 0.99,
 		Comment:  "The quantile time consumed when Raft appends log",
 	},
-	"tikv_append_log_duration_per_server": {
-		PromQL:   `histogram_quantile($QUANTILE, sum(rate(tikv_raftstore_append_log_duration_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le, instance))`,
-		Labels:   []string{"instance"},
-		Quantile: 0.99,
-		Comment:  "The quantile time consumed when Raft appends log on each TiKV instance",
-	},
 	"tikv_commit_log_avg_duration": {
 		PromQL:  `sum(rate(tikv_raftstore_commit_log_duration_seconds_sum[$RANGE_DURATION])) / sum(rate(tikv_raftstore_commit_log_duration_seconds_count[$RANGE_DURATION]))`,
 		Comment: "The time consumed when Raft commits log",
@@ -1051,12 +1039,6 @@ var MetricTableMap = map[string]MetricTableDef{
 		Labels:   []string{"instance"},
 		Quantile: 0.99,
 		Comment:  "The quantile time consumed when Raft commits log",
-	},
-	"tikv_commit_log_duration_per_server": {
-		PromQL:   `histogram_quantile($QUANTILE, sum(rate(tikv_raftstore_commit_log_duration_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le, instance))`,
-		Labels:   []string{"instance"},
-		Quantile: 0.99,
-		Comment:  "The quantile time consumed when Raft commits log on each TiKV instance",
 	},
 	"tikv_ready_handled": {
 		PromQL:  `sum(rate(tikv_raftstore_raft_ready_handled_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type,instance)`,
@@ -1068,29 +1050,29 @@ var MetricTableMap = map[string]MetricTableDef{
 		Labels:  []string{"instance", "type"},
 		Comment: "The count of different process type of Raft",
 	},
-	"tikv_process_duration_per_server": {
+	"tikv_process_duration": {
 		PromQL:   `histogram_quantile($QUANTILE, sum(rate(tikv_raftstore_raft_process_duration_secs_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,instance,type))`,
 		Labels:   []string{"instance", "type"},
 		Quantile: 0.99,
 		Comment:  "The quantile time consumed for peer processes in Raft",
 	},
-	"tikv_duration_of_raft_store_events": {
+	"tikv_raft_store_events_duration": {
 		PromQL:   `histogram_quantile($QUANTILE, sum(rate(tikv_raftstore_event_duration_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,type,instance))`,
 		Labels:   []string{"instance", "type"},
 		Quantile: 0.99,
 		Comment:  "The quantile time consumed by raftstore events (P99).99",
 	},
-	"tikv_raft_sent_messages_per_server": {
+	"tikv_raft_sent_messages": {
 		PromQL:  `sum(rate(tikv_raftstore_raft_sent_message_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance,type)`,
 		Labels:  []string{"instance", "type"},
 		Comment: "The number of Raft messages sent by each TiKV instance",
 	},
-	"tikv_flush_messages_per_server": {
+	"tikv_flush_messages": {
 		PromQL:  `sum(rate(tikv_server_raft_message_flush_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance)`,
 		Labels:  []string{"instance"},
 		Comment: "The number of Raft messages flushed by each TiKV instance",
 	},
-	"tikv_receive_messages_per_server": {
+	"tikv_receive_messages": {
 		PromQL:  `sum(rate(tikv_server_raft_message_recv_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance)`,
 		Labels:  []string{"instance"},
 		Comment: "The number of Raft messages received by each TiKV instance",
@@ -2046,5 +2028,650 @@ var MetricTableMap = map[string]MetricTableDef{
 	"node_processes_blocked": {
 		PromQL: `node_procs_blocked{$LABEL_CONDITIONS}`,
 		Labels: []string{"instance"},
+	},
+
+	"etcd_wal_fsync_total_count": {
+		PromQL:  "sum(increase(etcd_disk_wal_fsync_duration_seconds_count[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total count of writing WAL into the persistent storage",
+	},
+	"etcd_wal_fsync_total_time": {
+		PromQL:  "sum(increase(etcd_disk_wal_fsync_duration_seconds_sum[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total time of writing WAL into the persistent storage",
+	},
+	"pd_client_cmd_total_count": {
+		PromQL:  "sum(increase(pd_client_cmd_handle_cmds_duration_seconds_count[60s])) by (instance,type)",
+		Labels:  []string{"instance", "type"},
+		Comment: "The total count of  pd client command durations",
+	},
+	"pd_client_cmd_total_time": {
+		PromQL:  "sum(increase(pd_client_cmd_handle_cmds_duration_seconds_sum[60s])) by (instance,type)",
+		Labels:  []string{"instance", "type"},
+		Comment: "The total time of  pd client command durations",
+	},
+	"pd_grpc_completed_commands_total_count": {
+		PromQL:  "sum(increase(grpc_server_handling_seconds_count[60s])) by (instance,grpc_method)",
+		Labels:  []string{"instance", "grpc_method"},
+		Comment: "The total count of completing each kind of gRPC commands",
+	},
+	"pd_grpc_completed_commands_total_time": {
+		PromQL:  "sum(increase(grpc_server_handling_seconds_sum[60s])) by (instance,grpc_method)",
+		Labels:  []string{"instance", "grpc_method"},
+		Comment: "The total time of completing each kind of gRPC commands",
+	},
+	"pd_handle_request_total_count": {
+		PromQL:  "sum(increase(pd_client_request_handle_requests_duration_seconds_count[60s])) by (instance,type)",
+		Labels:  []string{"instance", "type"},
+		Comment: "The total count of  pd handle request duration(second)",
+	},
+	"pd_handle_request_total_time": {
+		PromQL:  "sum(increase(pd_client_request_handle_requests_duration_seconds_sum[60s])) by (instance,type)",
+		Labels:  []string{"instance", "type"},
+		Comment: "The total time of  pd handle request duration(second)",
+	},
+	"pd_handle_requests_total_count": {
+		PromQL:  "sum(increase(pd_client_request_handle_requests_duration_seconds_count[60s])) by (type)",
+		Labels:  []string{"type"},
+		Comment: "The total count of ",
+	},
+	"pd_handle_requests_total_time": {
+		PromQL:  "sum(increase(pd_client_request_handle_requests_duration_seconds_sum[60s])) by (type)",
+		Labels:  []string{"type"},
+		Comment: "The total time of ",
+	},
+	"pd_handle_transactions_total_count": {
+		PromQL:  "sum(increase(pd_txn_handle_txns_duration_seconds_count[60s])) by (instance,result)",
+		Labels:  []string{"instance", "result"},
+		Comment: "The total count of handling etcd transactions",
+	},
+	"pd_handle_transactions_total_time": {
+		PromQL:  "sum(increase(pd_txn_handle_txns_duration_seconds_sum[60s])) by (instance,result)",
+		Labels:  []string{"instance", "result"},
+		Comment: "The total time of handling etcd transactions",
+	},
+	"pd_operator_finish_total_count": {
+		PromQL:  "sum(increase(pd_schedule_finish_operators_duration_seconds_count[60s])) by (type)",
+		Labels:  []string{"type"},
+		Comment: "The total count of The quantile time consumed when the operator is finished",
+	},
+	"pd_operator_finish_total_time": {
+		PromQL:  "sum(increase(pd_schedule_finish_operators_duration_seconds_sum[60s])) by (type)",
+		Labels:  []string{"type"},
+		Comment: "The total time of The quantile time consumed when the operator is finished",
+	},
+	"pd_operator_step_finish_total_count": {
+		PromQL:  "sum(increase(pd_schedule_finish_operator_steps_duration_seconds_count[60s])) by (type)",
+		Labels:  []string{"type"},
+		Comment: "The total count of The quantile time consumed when the operator step is finished",
+	},
+	"pd_operator_step_finish_total_time": {
+		PromQL:  "sum(increase(pd_schedule_finish_operator_steps_duration_seconds_sum[60s])) by (type)",
+		Labels:  []string{"type"},
+		Comment: "The total time of The quantile time consumed when the operator step is finished",
+	},
+	"pd_peer_round_trip_total_count": {
+		PromQL:  "sum(increase(etcd_network_peer_round_trip_time_seconds_count[60s])) by (instance,To)",
+		Labels:  []string{"instance", "To"},
+		Comment: "The total count of The quantile latency of the network in .99",
+	},
+	"pd_peer_round_trip_total_time": {
+		PromQL:  "sum(increase(etcd_network_peer_round_trip_time_seconds_sum[60s])) by (instance,To)",
+		Labels:  []string{"instance", "To"},
+		Comment: "The total time of The quantile latency of the network in .99",
+	},
+	"pd_region_heartbeat_total_count": {
+		PromQL:  "sum(increase(pd_scheduler_region_heartbeat_latency_seconds_count[60s])) by (address,store)",
+		Labels:  []string{"address", "store"},
+		Comment: "The total count of  heartbeat latency of each TiKV instance in",
+	},
+	"pd_region_heartbeat_total_time": {
+		PromQL:  "sum(increase(pd_scheduler_region_heartbeat_latency_seconds_sum[60s])) by (address,store)",
+		Labels:  []string{"address", "store"},
+		Comment: "The total time of  heartbeat latency of each TiKV instance in",
+	},
+	"pd_start_tso_wait_total_count": {
+		PromQL:  "sum(increase(tidb_pdclient_ts_future_wait_seconds_count[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total count of The quantile duration of the waiting time for getting the start timestamp oracle",
+	},
+	"pd_start_tso_wait_total_time": {
+		PromQL:  "sum(increase(tidb_pdclient_ts_future_wait_seconds_sum[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total time of The quantile duration of the waiting time for getting the start timestamp oracle",
+	},
+	"pd_tso_rpc_total_count": {
+		PromQL:  "sum(increase(pd_client_request_handle_requests_duration_seconds_count[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total count of The quantile duration of a client sending TSO request until received the response.",
+	},
+	"pd_tso_rpc_total_time": {
+		PromQL:  "sum(increase(pd_client_request_handle_requests_duration_seconds_sum[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total time of The quantile duration of a client sending TSO request until received the response.",
+	},
+	"pd_tso_wait_total_count": {
+		PromQL:  "sum(increase(pd_client_cmd_handle_cmds_duration_seconds_count[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total count of The quantile duration of a client starting to wait for the TS until received the TS result.",
+	},
+	"pd_tso_wait_total_time": {
+		PromQL:  "sum(increase(pd_client_cmd_handle_cmds_duration_seconds_sum[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total time of The quantile duration of a client starting to wait for the TS until received the TS result.",
+	},
+	"tidb_auto_id_request_total_count": {
+		PromQL:  "sum(increase(tidb_autoid_operation_duration_seconds_count[60s])) by (instance,type)",
+		Labels:  []string{"instance", "type"},
+		Comment: "The total count of  TiDB auto id requests durations",
+	},
+	"tidb_auto_id_request_total_time": {
+		PromQL:  "sum(increase(tidb_autoid_operation_duration_seconds_sum[60s])) by (instance,type)",
+		Labels:  []string{"instance", "type"},
+		Comment: "The total time of  TiDB auto id requests durations",
+	},
+	"tidb_batch_client_unavailable_total_count": {
+		PromQL:  "sum(increase(tidb_tikvclient_batch_client_unavailable_seconds_count[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total count of  kv storage batch processing unvailable durations",
+	},
+	"tidb_batch_client_unavailable_total_time": {
+		PromQL:  "sum(increase(tidb_tikvclient_batch_client_unavailable_seconds_sum[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total time of  kv storage batch processing unvailable durations",
+	},
+	"tidb_batch_client_wait_total_count": {
+		PromQL:  "sum(increase(tidb_tikvclient_batch_wait_duration_count[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total count of  kv storage batch processing durations",
+	},
+	"tidb_batch_client_wait_total_time": {
+		PromQL:  "sum(increase(tidb_tikvclient_batch_wait_duration_sum[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total time of  kv storage batch processing durations",
+	},
+	"tidb_compile_total_count": {
+		PromQL:  "sum(increase(tidb_session_compile_duration_seconds_count[60s])) by (instance,sql_type)",
+		Labels:  []string{"instance", "sql_type"},
+		Comment: "The total count of The quantile time cost of building the query plan(second)",
+	},
+	"tidb_compile_total_time": {
+		PromQL:  "sum(increase(tidb_session_compile_duration_seconds_sum[60s])) by (instance,sql_type)",
+		Labels:  []string{"instance", "sql_type"},
+		Comment: "The total time of The quantile time cost of building the query plan(second)",
+	},
+	"tidb_cop_total_count": {
+		PromQL:  "sum(increase(tidb_tikvclient_cop_duration_seconds_count[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total count of  kv storage coprocessor processing durations",
+	},
+	"tidb_cop_total_time": {
+		PromQL:  "sum(increase(tidb_tikvclient_cop_duration_seconds_sum[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total time of  kv storage coprocessor processing durations",
+	},
+	"tidb_ddl_batch_add_index_total_count": {
+		PromQL:  "sum(increase(tidb_ddl_batch_add_idx_duration_seconds_count[60s])) by (instance,type)",
+		Labels:  []string{"instance", "type"},
+		Comment: "The total count of  TiDB batch add index durations by histogram buckets",
+	},
+	"tidb_ddl_batch_add_index_total_time": {
+		PromQL:  "sum(increase(tidb_ddl_batch_add_idx_duration_seconds_sum[60s])) by (instance,type)",
+		Labels:  []string{"instance", "type"},
+		Comment: "The total time of  TiDB batch add index durations by histogram buckets",
+	},
+	"tidb_ddl_deploy_syncer_total_count": {
+		PromQL:  "sum(increase(tidb_ddl_deploy_syncer_duration_seconds_count[60s])) by (instance,type,result)",
+		Labels:  []string{"instance", "type", "result"},
+		Comment: "The total count of  TiDB ddl schema syncer statistics, including init, start, watch, clear function call time cost",
+	},
+	"tidb_ddl_deploy_syncer_total_time": {
+		PromQL:  "sum(increase(tidb_ddl_deploy_syncer_duration_seconds_sum[60s])) by (instance,type,result)",
+		Labels:  []string{"instance", "type", "result"},
+		Comment: "The total time of  TiDB ddl schema syncer statistics, including init, start, watch, clear function call time cost",
+	},
+	"tidb_ddl_total_count": {
+		PromQL:  "sum(increase(tidb_ddl_handle_job_duration_seconds_count[60s])) by (instance,type)",
+		Labels:  []string{"instance", "type"},
+		Comment: "The total count of  TiDB DDL duration statistics",
+	},
+	"tidb_ddl_total_time": {
+		PromQL:  "sum(increase(tidb_ddl_handle_job_duration_seconds_sum[60s])) by (instance,type)",
+		Labels:  []string{"instance", "type"},
+		Comment: "The total time of  TiDB DDL duration statistics",
+	},
+	"tidb_ddl_update_self_version_total_count": {
+		PromQL:  "sum(increase(tidb_ddl_update_self_ver_duration_seconds_count[60s])) by (instance,result)",
+		Labels:  []string{"instance", "result"},
+		Comment: "The total count of  TiDB schema syncer version update time duration",
+	},
+	"tidb_ddl_update_self_version_total_time": {
+		PromQL:  "sum(increase(tidb_ddl_update_self_ver_duration_seconds_sum[60s])) by (instance,result)",
+		Labels:  []string{"instance", "result"},
+		Comment: "The total time of  TiDB schema syncer version update time duration",
+	},
+	"tidb_ddl_worker_total_count": {
+		PromQL:  "sum(increase(tidb_ddl_worker_operation_duration_seconds_count[60s])) by (instance,type,result,action)",
+		Labels:  []string{"instance", "type", "result", "action"},
+		Comment: "The total count of  TiDB ddl worker duration",
+	},
+	"tidb_ddl_worker_total_time": {
+		PromQL:  "sum(increase(tidb_ddl_worker_operation_duration_seconds_sum[60s])) by (instance,type,result,action)",
+		Labels:  []string{"instance", "type", "result", "action"},
+		Comment: "The total time of  TiDB ddl worker duration",
+	},
+	"tidb_distsql_execution_total_count": {
+		PromQL:  "sum(increase(tidb_distsql_handle_query_duration_seconds_count[60s])) by (instance,type)",
+		Labels:  []string{"instance", "type"},
+		Comment: "The total count of The quantile durations of distsql execution(second)",
+	},
+	"tidb_distsql_execution_total_time": {
+		PromQL:  "sum(increase(tidb_distsql_handle_query_duration_seconds_sum[60s])) by (instance,type)",
+		Labels:  []string{"instance", "type"},
+		Comment: "The total time of The quantile durations of distsql execution(second)",
+	},
+	"tidb_execute_total_count": {
+		PromQL:  "sum(increase(tidb_session_execute_duration_seconds_count[60s])) by (instance,sql_type)",
+		Labels:  []string{"instance", "sql_type"},
+		Comment: "The total count of The quantile time cost of executing the SQL which does not include the time to get the results of the query(second)",
+	},
+	"tidb_execute_total_time": {
+		PromQL:  "sum(increase(tidb_session_execute_duration_seconds_sum[60s])) by (instance,sql_type)",
+		Labels:  []string{"instance", "sql_type"},
+		Comment: "The total time of The quantile time cost of executing the SQL which does not include the time to get the results of the query(second)",
+	},
+	"tidb_gc_push_task_total_count": {
+		PromQL:  "sum(increase(tidb_tikvclient_range_task_push_duration_count[60s])) by (instance,type)",
+		Labels:  []string{"instance", "type"},
+		Comment: "The total count of  kv storage range worker processing one task duration",
+	},
+	"tidb_gc_push_task_total_time": {
+		PromQL:  "sum(increase(tidb_tikvclient_range_task_push_duration_sum[60s])) by (instance,type)",
+		Labels:  []string{"instance", "type"},
+		Comment: "The total time of  kv storage range worker processing one task duration",
+	},
+	"tidb_gc_total_count": {
+		PromQL:  "sum(increase(tidb_tikvclient_gc_seconds_count[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total count of  kv storage garbage collection time durations",
+	},
+	"tidb_gc_total_time": {
+		PromQL:  "sum(increase(tidb_tikvclient_gc_seconds_sum[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total time of  kv storage garbage collection time durations",
+	},
+	"tidb_get_token_total_count": {
+		PromQL:  "sum(increase(tidb_server_get_token_duration_seconds_count[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total count of   Duration (us) for getting token, it should be small until concurrency limit is reached(second)",
+	},
+	"tidb_get_token_total_time": {
+		PromQL:  "sum(increase(tidb_server_get_token_duration_seconds_sum[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total time of   Duration (us) for getting token, it should be small until concurrency limit is reached(second)",
+	},
+	"tidb_kv_backoff_total_count": {
+		PromQL:  "sum(increase(tidb_tikvclient_backoff_seconds_count[60s])) by (instance,type)",
+		Labels:  []string{"instance", "type"},
+		Comment: "The total count of  kv backoff time durations(second)",
+	},
+	"tidb_kv_backoff_total_time": {
+		PromQL:  "sum(increase(tidb_tikvclient_backoff_seconds_sum[60s])) by (instance,type)",
+		Labels:  []string{"instance", "type"},
+		Comment: "The total time of  kv backoff time durations(second)",
+	},
+	"tidb_kv_request_total_count": {
+		PromQL:  "sum(increase(tidb_tikvclient_request_seconds_count[60s])) by (instance,type,store)",
+		Labels:  []string{"instance", "type", "store"},
+		Comment: "The total count of  kv requests durations by store",
+	},
+	"tidb_kv_request_total_time": {
+		PromQL:  "sum(increase(tidb_tikvclient_request_seconds_sum[60s])) by (instance,type,store)",
+		Labels:  []string{"instance", "type", "store"},
+		Comment: "The total time of  kv requests durations by store",
+	},
+	"tidb_load_schema_total_count": {
+		PromQL:  "sum(increase(tidb_domain_load_schema_duration_seconds_count[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total count of  TiDB loading schema time durations by instance",
+	},
+	"tidb_load_schema_total_time": {
+		PromQL:  "sum(increase(tidb_domain_load_schema_duration_seconds_sum[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total time of  TiDB loading schema time durations by instance",
+	},
+	"tidb_meta_operation_total_count": {
+		PromQL:  "sum(increase(tidb_meta_operation_duration_seconds_count[60s])) by (instance,type,result)",
+		Labels:  []string{"instance", "type", "result"},
+		Comment: "The total count of  TiDB meta operation durations including get/set schema and ddl jobs",
+	},
+	"tidb_meta_operation_total_time": {
+		PromQL:  "sum(increase(tidb_meta_operation_duration_seconds_sum[60s])) by (instance,type,result)",
+		Labels:  []string{"instance", "type", "result"},
+		Comment: "The total time of  TiDB meta operation durations including get/set schema and ddl jobs",
+	},
+	"tidb_new_etcd_session_total_count": {
+		PromQL:  "sum(increase(tidb_owner_new_session_duration_seconds_count[60s])) by (instance,type,result)",
+		Labels:  []string{"instance", "type", "result"},
+		Comment: "The total count of  TiDB new session durations for new etcd sessions",
+	},
+	"tidb_new_etcd_session_total_time": {
+		PromQL:  "sum(increase(tidb_owner_new_session_duration_seconds_sum[60s])) by (instance,type,result)",
+		Labels:  []string{"instance", "type", "result"},
+		Comment: "The total time of  TiDB new session durations for new etcd sessions",
+	},
+	"tidb_owner_handle_syncer_total_count": {
+		PromQL:  "sum(increase(tidb_ddl_owner_handle_syncer_duration_seconds_count[60s])) by (instance,type,result)",
+		Labels:  []string{"instance", "type", "result"},
+		Comment: "The total count of  TiDB ddl owner time operations on etcd duration statistics ",
+	},
+	"tidb_owner_handle_syncer_total_time": {
+		PromQL:  "sum(increase(tidb_ddl_owner_handle_syncer_duration_seconds_sum[60s])) by (instance,type,result)",
+		Labels:  []string{"instance", "type", "result"},
+		Comment: "The total time of  TiDB ddl owner time operations on etcd duration statistics ",
+	},
+	"tidb_parse_total_count": {
+		PromQL:  "sum(increase(tidb_session_parse_duration_seconds_count[60s])) by (instance,sql_type)",
+		Labels:  []string{"instance", "sql_type"},
+		Comment: "The total count of The quantile time cost of parsing SQL to AST(second)",
+	},
+	"tidb_parse_total_time": {
+		PromQL:  "sum(increase(tidb_session_parse_duration_seconds_sum[60s])) by (instance,sql_type)",
+		Labels:  []string{"instance", "sql_type"},
+		Comment: "The total time of The quantile time cost of parsing SQL to AST(second)",
+	},
+	"tidb_query_total_count": {
+		PromQL:  "sum(increase(tidb_server_handle_query_duration_seconds_count[60s])) by (instance,sql_type)",
+		Labels:  []string{"instance", "sql_type"},
+		Comment: "The total count of  TiDB query durations(second)",
+	},
+	"tidb_query_total_time": {
+		PromQL:  "sum(increase(tidb_server_handle_query_duration_seconds_sum[60s])) by (instance,sql_type)",
+		Labels:  []string{"instance", "sql_type"},
+		Comment: "The total time of  TiDB query durations(second)",
+	},
+	"tidb_slow_query_cop_process_total_count": {
+		PromQL:  "sum(increase(tidb_server_slow_query_cop_duration_seconds_count[60s]))",
+		Comment: "The total count of  TiDB slow query statistics with slow query total cop process time(second)",
+	},
+	"tidb_slow_query_cop_process_total_time": {
+		PromQL:  "sum(increase(tidb_server_slow_query_cop_duration_seconds_sum[60s]))",
+		Comment: "The total time of  TiDB slow query statistics with slow query total cop process time(second)",
+	},
+	"tidb_slow_query_cop_wait_total_count": {
+		PromQL:  "sum(increase(tidb_server_slow_query_wait_duration_seconds_count[60s]))",
+		Comment: "The total count of  TiDB slow query statistics with slow query total cop wait time(second)",
+	},
+	"tidb_slow_query_cop_wait_total_time": {
+		PromQL:  "sum(increase(tidb_server_slow_query_wait_duration_seconds_sum[60s]))",
+		Comment: "The total time of  TiDB slow query statistics with slow query total cop wait time(second)",
+	},
+	"tidb_slow_query_total_count": {
+		PromQL:  "sum(increase(tidb_server_slow_query_process_duration_seconds_count[60s]))",
+		Comment: "The total count of  TiDB slow query statistics with slow query time(second)",
+	},
+	"tidb_slow_query_total_time": {
+		PromQL:  "sum(increase(tidb_server_slow_query_process_duration_seconds_sum[60s]))",
+		Comment: "The total time of  TiDB slow query statistics with slow query time(second)",
+	},
+	"tidb_statistics_auto_analyze_total_count": {
+		PromQL:  "sum(increase(tidb_statistics_auto_analyze_duration_seconds_count[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total count of  TiDB auto analyze time durations within 95 percent histogram buckets",
+	},
+	"tidb_statistics_auto_analyze_total_time": {
+		PromQL:  "sum(increase(tidb_statistics_auto_analyze_duration_seconds_sum[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total time of  TiDB auto analyze time durations within 95 percent histogram buckets",
+	},
+	"tidb_transaction_local_latch_wait_total_count": {
+		PromQL:  "sum(increase(tidb_tikvclient_local_latch_wait_seconds_count[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total count of  TiDB transaction latch wait time on key value storage(second)",
+	},
+	"tidb_transaction_local_latch_wait_total_time": {
+		PromQL:  "sum(increase(tidb_tikvclient_local_latch_wait_seconds_sum[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total time of  TiDB transaction latch wait time on key value storage(second)",
+	},
+	"tidb_transaction_total_count": {
+		PromQL:  "sum(increase(tidb_session_transaction_duration_seconds_count[60s])) by (instance,type,sql_type)",
+		Labels:  []string{"instance", "type", "sql_type"},
+		Comment: "The total count of  transaction execution durations, including retry(second)",
+	},
+	"tidb_transaction_total_time": {
+		PromQL:  "sum(increase(tidb_session_transaction_duration_seconds_sum[60s])) by (instance,type,sql_type)",
+		Labels:  []string{"instance", "type", "sql_type"},
+		Comment: "The total time of  transaction execution durations, including retry(second)",
+	},
+	"tikv_append_log_total_count": {
+		PromQL:  "sum(increase(tikv_raftstore_append_log_duration_seconds_count[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total count of The quantile time consumed when Raft appends log",
+	},
+	"tikv_append_log_total_time": {
+		PromQL:  "sum(increase(tikv_raftstore_append_log_duration_seconds_sum[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total time of The quantile time consumed when Raft appends log",
+	},
+	"tikv_apply_log_total_count": {
+		PromQL:  "sum(increase(tikv_raftstore_apply_log_duration_seconds_count[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total count of The quantile time consumed when Raft applies log",
+	},
+	"tikv_apply_log_total_time": {
+		PromQL:  "sum(increase(tikv_raftstore_apply_log_duration_seconds_sum[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total time of The quantile time consumed when Raft applies log",
+	},
+	"tikv_apply_wait_total_count": {
+		PromQL:  "sum(increase(tikv_raftstore_apply_wait_time_duration_secs_count[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total count of ",
+	},
+	"tikv_apply_wait_total_time": {
+		PromQL:  "sum(increase(tikv_raftstore_apply_wait_time_duration_secs_sum[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total time of ",
+	},
+	"tikv_backup_range_total_count": {
+		PromQL:  "sum(increase(tikv_backup_range_duration_seconds_count[60s])) by (instance,type)",
+		Labels:  []string{"instance", "type"},
+		Comment: "The total count of ",
+	},
+	"tikv_backup_range_total_time": {
+		PromQL:  "sum(increase(tikv_backup_range_duration_seconds_sum[60s])) by (instance,type)",
+		Labels:  []string{"instance", "type"},
+		Comment: "The total time of ",
+	},
+	"tikv_backup_total_count": {
+		PromQL:  "sum(increase(tikv_backup_request_duration_seconds_count[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total count of ",
+	},
+	"tikv_backup_total_time": {
+		PromQL:  "sum(increase(tikv_backup_request_duration_seconds_sum[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total time of ",
+	},
+	"tikv_check_split_total_count": {
+		PromQL:  "sum(increase(tikv_raftstore_check_split_duration_seconds_count[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total count of  time consumed when running split check in .9999",
+	},
+	"tikv_check_split_total_time": {
+		PromQL:  "sum(increase(tikv_raftstore_check_split_duration_seconds_sum[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total time of  time consumed when running split check in .9999",
+	},
+	"tikv_commit_log_total_count": {
+		PromQL:  "sum(increase(tikv_raftstore_commit_log_duration_seconds_count[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total count of The quantile time consumed when Raft commits log",
+	},
+	"tikv_commit_log_total_time": {
+		PromQL:  "sum(increase(tikv_raftstore_commit_log_duration_seconds_sum[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total time of The quantile time consumed when Raft commits log",
+	},
+	"tikv_cop_handle_total_count": {
+		PromQL:  "sum(increase(tikv_coprocessor_request_handle_seconds_count[60s])) by (instance,req)",
+		Labels:  []string{"instance", "req"},
+		Comment: "The total count of  time consumed when handling coprocessor requests",
+	},
+	"tikv_cop_handle_total_time": {
+		PromQL:  "sum(increase(tikv_coprocessor_request_handle_seconds_sum[60s])) by (instance,req)",
+		Labels:  []string{"instance", "req"},
+		Comment: "The total time of  time consumed when handling coprocessor requests",
+	},
+	"tikv_cop_request_total_count": {
+		PromQL:  "sum(increase(tikv_coprocessor_request_duration_seconds_count[60s])) by (instance,req)",
+		Labels:  []string{"instance", "req"},
+		Comment: "The total count of  time consumed to handle coprocessor read requests",
+	},
+	"tikv_cop_request_total_time": {
+		PromQL:  "sum(increase(tikv_coprocessor_request_duration_seconds_sum[60s])) by (instance,req)",
+		Labels:  []string{"instance", "req"},
+		Comment: "The total time of  time consumed to handle coprocessor read requests",
+	},
+	"tikv_cop_wait_total_count": {
+		PromQL:  "sum(increase(tikv_coprocessor_request_wait_seconds_count[60s])) by (instance,req)",
+		Labels:  []string{"instance", "req"},
+		Comment: "The total count of  time consumed when coprocessor requests are wait for being handled",
+	},
+	"tikv_cop_wait_total_time": {
+		PromQL:  "sum(increase(tikv_coprocessor_request_wait_seconds_sum[60s])) by (instance,req)",
+		Labels:  []string{"instance", "req"},
+		Comment: "The total time of  time consumed when coprocessor requests are wait for being handled",
+	},
+	"tikv_raft_store_events_total_count": {
+		PromQL:  "sum(increase(tikv_raftstore_event_duration_count[60s])) by (instance,type)",
+		Labels:  []string{"instance", "type"},
+		Comment: "The total count of The quantile time consumed by raftstore events (P99).99",
+	},
+	"tikv_raft_store_events_total_time": {
+		PromQL:  "sum(increase(tikv_raftstore_event_duration_sum[60s])) by (instance,type)",
+		Labels:  []string{"instance", "type"},
+		Comment: "The total time of The quantile time consumed by raftstore events (P99).99",
+	},
+	"tikv_gc_tasks_total_count": {
+		PromQL:  "sum(increase(tikv_gcworker_gc_task_duration_vec_count[60s])) by (instance,task)",
+		Labels:  []string{"instance", "task"},
+		Comment: "The total count of  time consumed when executing GC tasks",
+	},
+	"tikv_gc_tasks_total_time": {
+		PromQL:  "sum(increase(tikv_gcworker_gc_task_duration_vec_sum[60s])) by (instance,task)",
+		Labels:  []string{"instance", "task"},
+		Comment: "The total time of  time consumed when executing GC tasks",
+	},
+	"tikv_grpc_messge_total_count": {
+		PromQL:  "sum(increase(tikv_grpc_msg_duration_seconds_count[60s])) by (instance,type)",
+		Labels:  []string{"instance", "type"},
+		Comment: "The total count of The quantile execution time of gRPC message",
+	},
+	"tikv_grpc_messge_total_time": {
+		PromQL:  "sum(increase(tikv_grpc_msg_duration_seconds_sum[60s])) by (instance,type)",
+		Labels:  []string{"instance", "type"},
+		Comment: "The total time of The quantile execution time of gRPC message",
+	},
+	"tikv_handle_snapshot_total_count": {
+		PromQL:  "sum(increase(tikv_raftstore_snapshot_duration_seconds_count[60s])) by (instance,type)",
+		Labels:  []string{"instance", "type"},
+		Comment: "The total count of  time consumed when handling snapshots",
+	},
+	"tikv_handle_snapshot_total_time": {
+		PromQL:  "sum(increase(tikv_raftstore_snapshot_duration_seconds_sum[60s])) by (instance,type)",
+		Labels:  []string{"instance", "type"},
+		Comment: "The total time of  time consumed when handling snapshots",
+	},
+	"tikv_ingest_sst_total_count": {
+		PromQL:  "sum(increase(tikv_snapshot_ingest_sst_duration_seconds_count[60s])) by (instance,db)",
+		Labels:  []string{"instance", "db"},
+		Comment: "The total count of  time consumed when ingesting SST files",
+	},
+	"tikv_ingest_sst_total_time": {
+		PromQL:  "sum(increase(tikv_snapshot_ingest_sst_duration_seconds_sum[60s])) by (instance,db)",
+		Labels:  []string{"instance", "db"},
+		Comment: "The total time of  time consumed when ingesting SST files",
+	},
+	"tikv_lock_manager_deadlock_detect_total_count": {
+		PromQL:  "sum(increase(tikv_lock_manager_detect_duration_count[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total count of ",
+	},
+	"tikv_lock_manager_deadlock_detect_total_time": {
+		PromQL:  "sum(increase(tikv_lock_manager_detect_duration_sum[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total time of ",
+	},
+	"tikv_lock_manager_waiter_lifetime_total_count": {
+		PromQL:  "sum(increase(tikv_lock_manager_waiter_lifetime_duration_count[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total count of ",
+	},
+	"tikv_lock_manager_waiter_lifetime_total_time": {
+		PromQL:  "sum(increase(tikv_lock_manager_waiter_lifetime_duration_sum[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total time of ",
+	},
+	"tikv_process_total_count": {
+		PromQL:  "sum(increase(tikv_raftstore_raft_process_duration_secs_count[60s])) by (instance,type)",
+		Labels:  []string{"instance", "type"},
+		Comment: "The total count of The quantile time consumed for peer processes in Raft",
+	},
+	"tikv_process_total_time": {
+		PromQL:  "sum(increase(tikv_raftstore_raft_process_duration_secs_sum[60s])) by (instance,type)",
+		Labels:  []string{"instance", "type"},
+		Comment: "The total time of The quantile time consumed for peer processes in Raft",
+	},
+	"tikv_propose_wait_total_count": {
+		PromQL:  "sum(increase(tikv_raftstore_request_wait_time_duration_secs_count[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total count of The quantile wait time of each proposal",
+	},
+	"tikv_propose_wait_total_time": {
+		PromQL:  "sum(increase(tikv_raftstore_request_wait_time_duration_secs_sum[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total time of The quantile wait time of each proposal",
+	},
+	"tikv_scheduler_command_total_count": {
+		PromQL:  "sum(increase(tikv_scheduler_command_duration_seconds_count[60s])) by (instance,type)",
+		Labels:  []string{"instance", "type"},
+		Comment: "The total count of  time consumed when executing commit command",
+	},
+	"tikv_scheduler_command_total_time": {
+		PromQL:  "sum(increase(tikv_scheduler_command_duration_seconds_sum[60s])) by (instance,type)",
+		Labels:  []string{"instance", "type"},
+		Comment: "The total time of  time consumed when executing commit command",
+	},
+	"tikv_scheduler_latch_wait_total_count": {
+		PromQL:  "sum(increase(tikv_scheduler_latch_wait_duration_seconds_count[60s])) by (instance,type)",
+		Labels:  []string{"instance", "type"},
+		Comment: "The total count of The quantile time which is caused by latch wait in commit command",
+	},
+	"tikv_scheduler_latch_wait_total_time": {
+		PromQL:  "sum(increase(tikv_scheduler_latch_wait_duration_seconds_sum[60s])) by (instance,type)",
+		Labels:  []string{"instance", "type"},
+		Comment: "The total time of The quantile time which is caused by latch wait in commit command",
+	},
+	"tikv_send_snapshot_total_count": {
+		PromQL:  "sum(increase(tikv_server_send_snapshot_duration_seconds_count[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total count of  time consumed when sending snapshots",
+	},
+	"tikv_send_snapshot_total_time": {
+		PromQL:  "sum(increase(tikv_server_send_snapshot_duration_seconds_sum[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total time of  time consumed when sending snapshots",
+	},
+	"tikv_storage_async_request_total_count": {
+		PromQL:  "sum(increase(tikv_storage_engine_async_request_duration_seconds_count[60s])) by (instance,type)",
+		Labels:  []string{"instance", "type"},
+		Comment: "The total count of  time consumed by processing asynchronous snapshot requests",
+	},
+	"tikv_storage_async_request_total_time": {
+		PromQL:  "sum(increase(tikv_storage_engine_async_request_duration_seconds_sum[60s])) by (instance,type)",
+		Labels:  []string{"instance", "type"},
+		Comment: "The total time of  time consumed by processing asynchronous snapshot requests",
 	},
 }
