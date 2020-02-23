@@ -1446,6 +1446,8 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 		}
 		return err
 	}
+
+	// build tableInfo.
 	var tbInfo *model.TableInfo
 	if s.ReferTable != nil {
 		referIdent := ast.Ident{Schema: s.ReferTable.Schema, Name: s.ReferTable.Name}
@@ -1458,10 +1460,10 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 			return infoschema.ErrTableNotExists.GenWithStackByArgs(referIdent.Schema, referIdent.Name)
 		}
 		tbInfo = buildTableInfoWithLike(ident, referTbl.Meta())
-		//return d.CreateTableWithLike(ctx, ident, referIdent, s.IfNotExists)
 	} else {
 		tbInfo, err = buildTableInfoWithCheck(ctx, s, schema.Charset, schema.Collate)
 	}
+
 	if err != nil {
 		return errors.Trace(err)
 	}
