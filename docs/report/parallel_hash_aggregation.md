@@ -1,8 +1,10 @@
 # Parallel HashAgg: Local-Global vs. Shuffle
 
-_备注_
+_备注：_
+
 _Local-Global模式：即先将数据随机分片、并行局部聚合，再将多个局部结果按照 group by条件重新分片，进行全局聚合。当前主干代码的模式。_
-_Shuffle模式：即先将数据按照group by条件分片，并行计算聚合结果，最后随机合并。通过新的Shuffle框架执行。_
+
+Shuffle模式：即先将数据按照group by条件分片，并行计算聚合结果，最后随机合并。通过新的Shuffle框架执行。_
 
 ## 主要结论
 
@@ -12,6 +14,7 @@ _Shuffle模式：即先将数据按照group by条件分片，并行计算聚合�
 
 ## 优化建议
 __将HashAgg拆成local和global两个算子，在Shuffle框架下实现并行计算。__
+
 在统一的框架下，通过预估不同NDV下的开销，选择最优执行计划。具体来说：
 
 * 对于NDV较小、不含distinct表达式的SQL，生成如下执行计划：
@@ -34,14 +37,13 @@ __将HashAgg拆成local和global两个算子，在Shuffle框架下实现并行�
 造成这个结果的主要原因包括：
 
 1. Local-Global保存聚合结果的开销相对较大
+  
+   NDV直接决定了聚合结果的大小，而读写聚合结果的map相关操作是工作线程的最主要开销。_（详见附录2的火焰图。测试用例中聚合函数只有一个`avg`）_
+    在Local-Global中，每个partial worker都可能拥有所有的key，同时每个final worker拥有`NDV / N`个key。所以总数据量为 `(N+1) x NDV`。
 
-  NDV直接决定了聚合结果的大小，而读写聚合结果的map相关操作是工作线程的最主要开销。_（详见附录2的火焰图。测试用例中聚合函数只有一个`avg`）_
-  在Local-Global中，每个partial worker都可能拥有所有的key，同时每个final worker拥有`NDV / N`个key。所以总数据量为 `(N+1) x NDV`。
-
-  在Shuffle中，只有`N`个`NDV / N`大小的map，总数据量为`NDV`。从实际测试数据看，4线程、10,000 NDV情况下，Local-Global的总内存消耗是Shuffle的2.3倍（见附录1）。
+   在Shuffle中，只有`N`个`NDV / N`大小的map，总数据量为`NDV`。从实际测试数据看，4线程、10,000 NDV情况下，Local-Global的总内存消耗是Shuffle的2.3倍（见附录1）。
 
 2. Shuffle的分片开销相对较大
-
    Shuffle的分片规模等于RowCount，而且需要按行复制整个tuple。Local-Global的分片规模等于NDV，而且只复制key。
 
    从火焰图（见附录2，4线程、100,000 rows、10,000 NDV、每个tuple 16B）中估算，Shuffle的分片开销在工作线程中占比大约12%，而Local-Global约为6%；即Shuffle的开销约为Local-Global的2倍。
