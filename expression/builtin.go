@@ -104,7 +104,7 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, args []Expression, retType
 	if retType == types.ETString {
 		// derive collation information for string function, and we must do it
 		// before doing implicit cast.
-		derivedCharset, derivedCollate, derivedFlen = DeriveCollationFromExprs(args...)
+		derivedCharset, derivedCollate, derivedFlen = DeriveCollationFromExprs(ctx, args...)
 	}
 	for i := range args {
 		switch argTps[i] {

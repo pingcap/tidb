@@ -14,10 +14,10 @@
 package expression
 
 import (
+	"github.com/pingcap/tidb/sessionctx"
 	"strings"
 
 	"github.com/pingcap/parser/ast"
-	charset2 "github.com/pingcap/parser/charset"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -113,32 +113,32 @@ func deriveCoercibilityForColumn(c *Column) Coercibility {
 }
 
 // DeriveCollationFromExprs derives collation information from these expressions.
-func DeriveCollationFromExprs(exprs ...Expression) (string, string, int) {
-	if len(exprs) == 0 {
-		charset, collation := charset2.GetDefaultCharsetAndCollate()
-		return charset, collation, types.UnspecifiedLength
-	}
+func DeriveCollationFromExprs(ctx sessionctx.Context, exprs ...Expression) (dstCharset, dstCollation string, dstFlen int) {
+	curCoer := CoercibilityCoercible
+	dstCharset, dstCollation = ctx.GetSessionVars().GetCharsetInfo()
+	dstFlen = types.UnspecifiedLength
 	// see https://dev.mysql.com/doc/refman/8.0/en/charset-collation-coercibility.html
-	e := exprs[0]
-	for i := 1; i < len(exprs); i++ {
-		if exprs[i].Coercibility() != e.Coercibility() {
-			if exprs[i].Coercibility() < e.Coercibility() {
-				e = exprs[i]
+	for _, e := range exprs {
+		coer := e.Coercibility()
+		ft := e.GetType()
+		if coer != curCoer {
+			if coer < curCoer {
+				curCoer, dstCharset, dstCollation, dstFlen = coer, ft.Charset, ft.Collate, ft.Flen
 			}
 			continue
 		}
-		isUnicode1 := isUnicodeCharset(e.GetType().Collate)
-		isUnicode2 := isUnicodeCharset(exprs[i].GetType().Collate)
+
+		isUnicode1 := isUnicodeCharset(ft.Charset)
+		isUnicode2 := isUnicodeCharset(dstCharset)
 		if isUnicode1 && !isUnicode2 {
 			continue
-		} else if !isUnicode1 && isUnicode2 { // use the unicode charset
-			e = exprs[i]
-		} else if isBinCollation(exprs[i].GetType().Collate) { // use the _bin collation
-			e = exprs[i]
+		}
+		if (!isUnicode1 && isUnicode2) || // use the unicode charset
+			isBinCollation(ft.Collate) { // use the _bin collation
+			curCoer, dstCharset, dstCollation, dstFlen = coer, ft.Charset, ft.Collate, ft.Flen
 		}
 	}
-	tp := e.GetType()
-	return tp.Charset, tp.Collate, tp.Flen
+	return
 }
 
 func isUnicodeCharset(charset string) bool {
