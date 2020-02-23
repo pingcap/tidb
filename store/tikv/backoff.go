@@ -218,8 +218,8 @@ const (
 	scatterRegionBackoff           = 20000
 	waitScatterRegionFinishBackoff = 120000
 	locateRegionMaxBackoff         = 20000
-	pessimisticLockMaxBackoff      = 10000
-	pessimisticRollbackMaxBackoff  = 10000
+	pessimisticLockMaxBackoff      = 20000
+	pessimisticRollbackMaxBackoff  = 20000
 )
 
 var (

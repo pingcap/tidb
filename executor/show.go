@@ -546,6 +546,7 @@ func (e *ShowExec) fetchShowIndex() error {
 			"BTREE",          // Index_type
 			"",               // Comment
 			"",               // Index_comment
+			"NULL",           // Expression
 		})
 	}
 	for _, idx := range tb.Indices() {
@@ -566,12 +567,19 @@ func (e *ShowExec) fetchShowIndex() error {
 			if idx.Meta().Name.O == mysql.PrimaryKeyName {
 				nullVal = ""
 			}
+			colName := col.Name.O
+			expression := "NULL"
+			tblCol := tb.Meta().Columns[col.Offset]
+			if tblCol.Hidden {
+				colName = "NULL"
+				expression = fmt.Sprintf("(%s)", tblCol.GeneratedExprString)
+			}
 			e.appendRow([]interface{}{
 				tb.Meta().Name.O,       // Table
 				nonUniq,                // Non_unique
 				idx.Meta().Name.O,      // Key_name
 				i + 1,                  // Seq_in_index
-				col.Name.O,             // Column_name
+				colName,                // Column_name
 				"A",                    // Collation
 				0,                      // Cardinality
 				subPart,                // Sub_part
@@ -580,6 +588,7 @@ func (e *ShowExec) fetchShowIndex() error {
 				idx.Meta().Tp.String(), // Index_type
 				"",                     // Comment
 				idx.Meta().Comment,     // Index_comment
+				expression,             // Expression
 			})
 		}
 	}

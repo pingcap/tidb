@@ -47,7 +47,10 @@ type (
 
 	inspectionName string
 
-	inspectionFilter struct{ set.StringSet }
+	inspectionFilter struct {
+		set       set.StringSet
+		timeRange plannercore.QueryTimeRange
+	}
 
 	inspectionRule interface {
 		name() string
@@ -60,7 +63,11 @@ func (n inspectionName) name() string {
 }
 
 func (f inspectionFilter) enable(name string) bool {
-	return len(f.StringSet) == 0 || f.Exist(name)
+	return len(f.set) == 0 || f.set.Exist(name)
+}
+
+func (f inspectionFilter) exist(name string) bool {
+	return len(f.set) > 0 && f.set.Exist(name)
 }
 
 type (
@@ -96,6 +103,7 @@ type inspectionResultRetriever struct {
 	dummyCloser
 	retrieved bool
 	extractor *plannercore.InspectionResultTableExtractor
+	timeRange plannercore.QueryTimeRange
 }
 
 func (e *inspectionResultRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
@@ -126,8 +134,8 @@ func (e *inspectionResultRetriever) retrieve(ctx context.Context, sctx sessionct
 		}
 	})
 
-	rules := inspectionFilter{e.extractor.Rules}
-	items := inspectionFilter{e.extractor.Items}
+	rules := inspectionFilter{set: e.extractor.Rules}
+	items := inspectionFilter{set: e.extractor.Items, timeRange: e.timeRange}
 	var finalRows [][]types.Datum
 	for _, r := range inspectionRules {
 		name := r.name()
@@ -297,7 +305,6 @@ func (currentLoadInspection) inspect(_ context.Context, sctx sessionctx.Context,
 }
 
 func (criticalErrorInspection) inspect(ctx context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
-	// TODO: specify the `begin` and `end` time of metric query
 	var rules = []struct {
 		tp   string
 		item string
@@ -319,16 +326,17 @@ func (criticalErrorInspection) inspect(ctx context.Context, sctx sessionctx.Cont
 		{tp: "tikv", item: "grpc-errors", tbl: "tikv_grpc_errors"},
 	}
 
+	condition := filter.timeRange.Condition()
 	var results []inspectionResult
 	for _, rule := range rules {
 		if filter.enable(rule.item) {
-			def, ok := infoschema.MetricTableMap[rule.tbl]
-			if !ok {
-				sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("metrics table: %s not fouund", rule.tbl))
+			def, found := infoschema.MetricTableMap[rule.tbl]
+			if !found {
+				sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("metrics table: %s not found", rule.tbl))
 				continue
 			}
-			sql := fmt.Sprintf("select `%[1]s`, max(value) as max_value from `%[2]s`.`%[3]s` group by `%[1]s` having max_value > 0.0",
-				strings.Join(def.Labels, "`,`"), util.MetricSchemaName.L, rule.tbl)
+			sql := fmt.Sprintf("select `%[1]s`,max(value) as max from `%[2]s`.`%[3]s` %[4]s group by `%[1]s` having max>0.0",
+				strings.Join(def.Labels, "`,`"), util.MetricSchemaName.L, rule.tbl, condition)
 			rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithContext(ctx, sql)
 			if err != nil {
 				sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("execute '%s' failed: %v", sql, err))
@@ -337,19 +345,19 @@ func (criticalErrorInspection) inspect(ctx context.Context, sctx sessionctx.Cont
 			for _, row := range rows {
 				var actual, detail string
 				if rest := def.Labels[1:]; len(rest) > 0 {
-					pairs := make([]string, 0, len(rest))
+					values := make([]string, 0, len(rest))
 					// `i+1` and `1+len(rest)` means skip the first field `instance`
-					for i, label := range rest {
-						pairs = append(pairs, fmt.Sprintf("`%s`='%s'", label, row.GetString(i+1)))
+					for i := range rest {
+						values = append(values, row.GetString(i+1))
 					}
 					// TODO: find a better way to construct the `actual` field
-					actual = fmt.Sprintf("{%s}=%.2f", strings.Join(pairs, ","), row.GetFloat64(1+len(rest)))
-					detail = fmt.Sprintf("select * from `%s`.`%s` where `instance`='%s' and %s",
-						util.MetricSchemaName.L, rule.tbl, row.GetString(0), strings.Join(pairs, " and "))
+					actual = fmt.Sprintf("%.2f(%s)", row.GetFloat64(1+len(rest)), strings.Join(values, ", "))
+					detail = fmt.Sprintf("select * from `%s`.`%s` %s and (`instance`,`%s`)=('%s','%s')",
+						util.MetricSchemaName.L, rule.tbl, condition, strings.Join(rest, "`,`"), row.GetString(0), strings.Join(values, "','"))
 				} else {
 					actual = fmt.Sprintf("%.2f", row.GetFloat64(1))
-					detail = fmt.Sprintf("select * from `%s`.`%s` where `instance`='%s'",
-						util.MetricSchemaName.L, rule.tbl, row.GetString(0))
+					detail = fmt.Sprintf("select * from `%s`.`%s` %s and `instance`='%s'",
+						util.MetricSchemaName.L, rule.tbl, condition, row.GetString(0))
 				}
 				result := inspectionResult{
 					tp: rule.tp,
@@ -368,7 +376,21 @@ func (criticalErrorInspection) inspect(ctx context.Context, sctx sessionctx.Cont
 	return results
 }
 
-func (thresholdCheckInspection) inspect(ctx context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
+func (c thresholdCheckInspection) inspect(ctx context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
+	inspects := []func(context.Context, sessionctx.Context, inspectionFilter) []inspectionResult{
+		c.inspectThreshold1,
+		c.inspectThreshold2,
+		c.inspectThreshold3,
+	}
+	var results []inspectionResult
+	for _, inspect := range inspects {
+		re := inspect(ctx, sctx, filter)
+		results = append(results, re...)
+	}
+	return results
+}
+
+func (thresholdCheckInspection) inspectThreshold1(ctx context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
 	var rules = []struct {
 		item      string
 		component string
@@ -376,82 +398,88 @@ func (thresholdCheckInspection) inspect(ctx context.Context, sctx sessionctx.Con
 		threshold float64
 	}{
 		{
-			item:      "coprocessor_normal_cpu",
+			item:      "coprocessor-normal-cpu",
 			component: "cop_normal%",
 			configKey: "readpool.coprocessor.normal-concurrency",
 			threshold: 0.9},
 		{
-			item:      "coprocessor_high_cpu",
+			item:      "coprocessor-high-cpu",
 			component: "cop_high%",
 			configKey: "readpool.coprocessor.high-concurrency",
 			threshold: 0.9,
 		},
 		{
-			item:      "coprocessor_low_cpu",
+			item:      "coprocessor-low-cpu",
 			component: "cop_low%",
 			configKey: "readpool.coprocessor.low-concurrency",
 			threshold: 0.9,
 		},
 		{
-			item:      "grpc_cpu",
+			item:      "grpc-cpu",
 			component: "grpc%",
 			configKey: "server.grpc-concurrency",
 			threshold: 0.9,
 		},
 		{
-			item:      "raftstore_cpu",
+			item:      "raftstore-cpu",
 			component: "raftstore_%",
 			configKey: "raftstore.store-pool-size",
 			threshold: 0.8,
 		},
 		{
-			item:      "apply_cpu",
+			item:      "apply-cpu",
 			component: "apply_%",
 			configKey: "raftstore.apply-pool-size",
 			threshold: 0.8,
 		},
 		{
-			item:      "storage_readpool_normal_cpu",
+			item:      "storage-readpool-normal-cpu",
 			component: "store_read_norm%",
 			configKey: "readpool.storage.normal-concurrency",
 			threshold: 0.9,
 		},
 		{
-			item:      "storage_readpool_high_cpu",
+			item:      "storage-readpool-high-cpu",
 			component: "store_read_high%",
 			configKey: "readpool.storage.high-concurrency",
 			threshold: 0.9,
 		},
 		{
-			item:      "storage_readpool_low_cpu",
+			item:      "storage-readpool-low-cpu",
 			component: "store_read_low%",
 			configKey: "readpool.storage.low-concurrency",
 			threshold: 0.9,
 		},
 		{
-			item:      "scheduler_worker_cpu",
+			item:      "scheduler-worker-cpu",
 			component: "sched_%",
 			configKey: "storage.scheduler-worker-pool-size",
 			threshold: 0.85,
 		},
 		{
-			item:      "split_check_cpu",
+			item:      "split-check-cpu",
 			component: "split_check",
 			threshold: 0.9,
 		},
 	}
+
+	condition := filter.timeRange.Condition()
 	var results []inspectionResult
 	for _, rule := range rules {
+		if !filter.enable(rule.item) {
+			continue
+		}
+
 		var sql string
 		if len(rule.configKey) > 0 {
 			sql = fmt.Sprintf("select t1.instance, t1.cpu, t2.threshold, t2.value from "+
-				"(select instance, sum(value) as cpu from metric_schema.tikv_thread_cpu where name like '%[1]s' and time=now() group by instance) as t1,"+
+				"(select instance, sum(value) as cpu from metrics_schema.tikv_thread_cpu %[4]s and name like '%[1]s' group by instance) as t1,"+
 				"(select value * %[2]f as threshold, value from inspection_schema.cluster_config where type='tikv' and `key` = '%[3]s' limit 1) as t2 "+
-				"where t1.cpu > t2.threshold;", rule.component, rule.threshold, rule.configKey)
+				"where t1.cpu > t2.threshold;", rule.component, rule.threshold, rule.configKey, condition)
 		} else {
 			sql = fmt.Sprintf("select t1.instance, t1.cpu, %[2]f from "+
-				"(select instance, sum(value) as cpu from metric_schema.tikv_thread_cpu where name like '%[1]s' and time=now() group by instance) as t1 "+
-				"where t1.cpu > %[2]f;", rule.component, rule.threshold)
+				"(select instance, sum(value) as cpu from metrics_schema.tikv_thread_cpu %[3]s and name like '%[1]s' group by instance) as t1 "+
+				"where t1.cpu > %[2]f;", rule.component, rule.threshold, condition)
 		}
 		rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithContext(ctx, sql)
 		if err != nil {
@@ -466,7 +494,8 @@ func (thresholdCheckInspection) inspect(ctx context.Context, sctx sessionctx.Con
 			} else {
 				expected = fmt.Sprintf("< %.2f", row.GetFloat64(2))
 			}
-			detail := fmt.Sprintf("select instance, sum(value) as cpu from metric_schema.tikv_thread_cpu where name like '%[1]s' and time=now() group by instance", rule.component)
+			detail := fmt.Sprintf("select instance, sum(value) as cpu from metrics_schema.tikv_thread_cpu %s and name like '%s' group by instance",
+				condition, rule.component)
 			result := inspectionResult{
 				tp:       "tikv",
 				instance: row.GetString(0),
@@ -477,6 +506,295 @@ func (thresholdCheckInspection) inspect(ctx context.Context, sctx sessionctx.Con
 				detail:   detail,
 			}
 			results = append(results, result)
+		}
+	}
+	return results
+}
+
+func (thresholdCheckInspection) inspectThreshold2(ctx context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
+	var rules = []struct {
+		tp        string
+		item      string
+		tbl       string
+		condition string
+		threshold float64
+		isMin     bool
+	}{
+		{
+			tp:        "tidb",
+			item:      "tso-duration",
+			tbl:       "pd_tso_wait_duration",
+			condition: "quantile=0.999",
+			threshold: 0.05,
+		},
+		{
+			tp:        "tidb",
+			item:      "get-token-duration",
+			tbl:       "tidb_get_token_duration",
+			condition: "quantile=0.999",
+			threshold: 0.001 * 10e5, // the unit is microsecond
+		},
+		{
+			tp:        "tidb",
+			item:      "load-schema-duration",
+			tbl:       "tidb_load_schema_duration",
+			condition: "quantile=0.99",
+			threshold: 1,
+		},
+		{
+			tp:        "tikv",
+			item:      "scheduler-cmd-duration",
+			tbl:       "tikv_scheduler_command_duration",
+			condition: "quantile=0.99",
+			threshold: 0.1,
+		},
+		{
+			tp:        "tikv",
+			item:      "handle-snapshot-duration",
+			tbl:       "tikv_handle_snapshot_duration",
+			threshold: 30,
+		},
+		{
+			tp:        "tikv",
+			item:      "storage-write-duration",
+			tbl:       "tikv_storage_async_request_duration",
+			condition: "type='write'",
+			threshold: 0.1,
+		},
+		{
+			tp:        "tikv",
+			item:      "storage-snapshot-duration",
+			tbl:       "tikv_storage_async_request_duration",
+			condition: "type='snapshot'",
+			threshold: 0.05,
+		},
+		{
+			tp:        "tikv",
+			item:      "rocksdb-write-duration",
+			tbl:       "tikv_engine_write_duration",
+			condition: "type='write_max'",
+			threshold: 0.1 * 10e5, // the unit is microsecond
+		},
+		{
+			tp:        "tikv",
+			item:      "rocksdb-get-duration",
+			tbl:       "tikv_engine_max_get_duration",
+			condition: "type='get_max'",
+			threshold: 0.05 * 10e5, // the unit is microsecond
+		},
+		{
+			tp:        "tikv",
+			item:      "rocksdb-seek-duration",
+			tbl:       "tikv_engine_max_seek_duration",
+			condition: "type='seek_max'",
+			threshold: 0.05 * 10e5, // the unit is microsecond
+		},
+		{
+			tp:        "tikv",
+			item:      "scheduler-pending-cmd-count",
+			tbl:       "tikv_scheduler_pending_commands",
+			threshold: 1000,
+		},
+		{
+			tp:        "tikv",
+			item:      "index-block-cache-hit",
+			tbl:       "tikv_block_index_cache_hit",
+			condition: "value > 0",
+			threshold: 0.95,
+			isMin:     true,
+		},
+		{
+			tp:        "tikv",
+			item:      "filter-block-cache-hit",
+			tbl:       "tikv_block_filter_cache_hit",
+			condition: "value > 0",
+			threshold: 0.95,
+			isMin:     true,
+		},
+		{
+			tp:        "tikv",
+			item:      "data-block-cache-hit",
+			tbl:       "tikv_block_data_cache_hit",
+			condition: "value > 0",
+			threshold: 0.80,
+			isMin:     true,
+		},
+	}
+
+	condition := filter.timeRange.Condition()
+	var results []inspectionResult
+	for _, rule := range rules {
+		if !filter.enable(rule.item) {
+			continue
+		}
+		var sql string
+		cond := condition
+		if len(rule.condition) > 0 {
+			cond = fmt.Sprintf("%s and %s", cond, rule.condition)
+		}
+		if rule.isMin {
+			sql = fmt.Sprintf("select instance, min(value) as min_value from metrics_schema.%s %s group by instance having min_value < %f;", rule.tbl, cond, rule.threshold)
+		} else {
+			sql = fmt.Sprintf("select instance, max(value) as max_value from metrics_schema.%s %s group by instance having max_value > %f;", rule.tbl, cond, rule.threshold)
+		}
+		rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithContext(ctx, sql)
+		if err != nil {
+			sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("execute '%s' failed: %v", sql, err))
+			continue
+		}
+		for _, row := range rows {
+			actual := fmt.Sprintf("%.2f", row.GetFloat64(1))
+			expected := ""
+			if rule.isMin {
+				expected = fmt.Sprintf("> %.2f", rule.threshold)
+			} else {
+				expected = fmt.Sprintf("< %.2f", rule.threshold)
+			}
+			result := inspectionResult{
+				tp:       rule.tp,
+				instance: row.GetString(0),
+				item:     rule.item,
+				actual:   actual,
+				expected: expected,
+				severity: "warning",
+				detail:   sql,
+			}
+			results = append(results, result)
+		}
+	}
+	return results
+}
+
+type thresholdCheckRule interface {
+	genSQL(timeRange plannercore.QueryTimeRange) string
+	genResult(sql string, row chunk.Row) inspectionResult
+	getItem() string
+}
+
+type compareStoreStatus struct {
+	item      string
+	tp        string
+	threshold float64
+}
+
+func (c compareStoreStatus) genSQL(timeRange plannercore.QueryTimeRange) string {
+	condition := fmt.Sprintf(`where t1.time>='%[1]s' and t1.time<='%[2]s' and
+		 t2.time>='%[1]s' and t2.time<='%[2]s'`, timeRange.From.Format(plannercore.MetricTableTimeFormat),
+		timeRange.To.Format(plannercore.MetricTableTimeFormat))
+	return fmt.Sprintf(`select t1.address,t1.value,t2.address,t2.value,
+				(t1.value-t2.value)/greatest(t1.value,t2.value) as ratio
+				from metrics_schema.pd_scheduler_store_status t1 join metrics_schema.pd_scheduler_store_status t2
+				%s and t1.type='%s' and
+				t1.type=t2.type and t1.address != t2.address and
+				(t1.value-t2.value)/t1.value>%v;`, condition, c.tp, c.threshold)
+}
+
+func (c compareStoreStatus) genResult(_ string, row chunk.Row) inspectionResult {
+	addr1 := row.GetString(0)
+	value1 := row.GetFloat64(1)
+	addr2 := row.GetString(2)
+	value2 := row.GetFloat64(3)
+	ratio := row.GetFloat64(4)
+	detail := fmt.Sprintf("%v %s is %v, much more than %v %s %v", addr1, c.tp, value1, addr2, c.tp, value2)
+	return inspectionResult{
+		tp:       "tikv",
+		instance: addr2,
+		item:     c.item,
+		actual:   fmt.Sprintf("%.2f%%", ratio*100),
+		expected: fmt.Sprintf("< %.2f%%", c.threshold*100),
+		severity: "warning",
+		detail:   detail,
+	}
+}
+
+func (c compareStoreStatus) getItem() string {
+	return c.item
+}
+
+type checkRegionHealth struct{}
+
+func (c checkRegionHealth) genSQL(timeRange plannercore.QueryTimeRange) string {
+	condition := timeRange.Condition()
+	return fmt.Sprintf(`select instance, sum(value) as sum_value from metrics_schema.pd_region_health %s and
+		type in ('extra-peer-region-count','learner-peer-region-count','pending-peer-region-count') having sum_value>100`, condition)
+}
+
+func (c checkRegionHealth) genResult(_ string, row chunk.Row) inspectionResult {
+	detail := fmt.Sprintf("the count of extra-perr and learner-peer and pending-peer is %v, it means the scheduling is too frequent or too slow", row.GetFloat64(1))
+	actual := fmt.Sprintf("%.2f", row.GetFloat64(1))
+	return inspectionResult{
+		tp:       "pd",
+		instance: row.GetString(0),
+		item:     c.getItem(),
+		actual:   actual,
+		expected: "< 100",
+		severity: "warning",
+		detail:   detail,
+	}
+}
+
+func (c checkRegionHealth) getItem() string {
+	return "region-health"
+}
+
+type checkStoreRegionTooMuch struct{}
+
+func (c checkStoreRegionTooMuch) genSQL(timeRange plannercore.QueryTimeRange) string {
+	condition := timeRange.Condition()
+	return fmt.Sprintf(`select address,value from metrics_schema.pd_scheduler_store_status %s and type='region_count' and value > 20000;`, condition)
+}
+
+func (c checkStoreRegionTooMuch) genResult(sql string, row chunk.Row) inspectionResult {
+	actual := fmt.Sprintf("%.2f", row.GetFloat64(1))
+	return inspectionResult{
+		tp:       "tikv",
+		instance: row.GetString(0),
+		item:     c.getItem(),
+		actual:   actual,
+		expected: "<= 20000",
+		severity: "warning",
+		detail:   sql,
+	}
+}
+
+func (c checkStoreRegionTooMuch) getItem() string {
+	return "region-count"
+}
+
+func (thresholdCheckInspection) inspectThreshold3(ctx context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
+	var rules = []thresholdCheckRule{
+		compareStoreStatus{
+			item:      "leader-score-balance",
+			tp:        "leader_score",
+			threshold: 0.05,
+		},
+		compareStoreStatus{
+			item:      "region-score-balance",
+			tp:        "region_score",
+			threshold: 0.05,
+		},
+		compareStoreStatus{
+			item:      "store-available-balance",
+			tp:        "store_available",
+			threshold: 0.2,
+		},
+		checkRegionHealth{},
+		checkStoreRegionTooMuch{},
+	}
+
+	var results []inspectionResult
+	for _, rule := range rules {
+		if !filter.enable(rule.getItem()) {
+			continue
+		}
+		sql := rule.genSQL(filter.timeRange)
+		rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithContext(ctx, sql)
+		if err != nil {
+			sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("execute '%s' failed: %v", sql, err))
+			continue
+		}
+		for _, row := range rows {
+			results = append(results, rule.genResult(sql, row))
 		}
 	}
 	return results
