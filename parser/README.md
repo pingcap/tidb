@@ -1,9 +1,19 @@
-# Parser
+# Parser - A MySQL Compatible SQL Parser
 
-[![Go Report Card](https://goreportcard.com/badge/github.com/pingcap/parser)](https://goreportcard.com/report/github.com/pingcap/parser) [![CircleCI Status](https://circleci.com/gh/pingcap/parser.svg?style=shield)](https://circleci.com/gh/pingcap/parser) [![GoDoc](https://godoc.org/github.com/pingcap/parser?status.svg)](https://godoc.org/github.com/pingcap/parser)
+[![Go Report Card](https://goreportcard.com/badge/github.com/pingcap/parser)](https://goreportcard.com/report/github.com/pingcap/parser)
+[![CircleCI Status](https://circleci.com/gh/pingcap/parser.svg?style=shield)](https://circleci.com/gh/pingcap/parser)
+[![GoDoc](https://godoc.org/github.com/pingcap/parser?status.svg)](https://godoc.org/github.com/pingcap/parser)
 [![codecov](https://codecov.io/gh/pingcap/parser/branch/master/graph/badge.svg)](https://codecov.io/gh/pingcap/parser)
 
-TiDB SQL Parser
+## Users
+
+These projects use this parser. Please feel free to extend this list if you
+found you are one of the users but not listed here:
+
+- [pingcap/tidb](https://github.com/pingcap/tidb)
+- [XiaoMi/soar](https://github.com/XiaoMi/soar)
+- [XiaoMi/Gaea](https://github.com/XiaoMi/Gaea)
+- [sql-machine-learning/sqlflow](https://github.com/sql-machine-learning/sqlflow)
 
 ## How to use it
 
