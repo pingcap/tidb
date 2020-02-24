@@ -95,7 +95,7 @@ func (p *UserPrivileges) GetEncodedPassword(user, host string) string {
 			zap.String("user", user), zap.String("host", host))
 		return ""
 	}
-	pwd := record.Password
+	pwd := record.AuthenticationString
 	if len(pwd) != 0 && len(pwd) != mysql.PWDHashLen+1 {
 		logutil.BgLogger().Error("user password from system DB not like sha1sum", zap.String("user", user))
 		return ""
@@ -167,7 +167,7 @@ func (p *UserPrivileges) ConnectionVerification(user, host string, authenticatio
 		return
 	}
 
-	pwd := record.Password
+	pwd := record.AuthenticationString
 	if len(pwd) != 0 && len(pwd) != mysql.PWDHashLen+1 {
 		logutil.BgLogger().Error("user password from system DB not like sha1sum", zap.String("user", user))
 		return
