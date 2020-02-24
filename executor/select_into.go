@@ -17,7 +17,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"github.com/pingcap/tidb/expression"
+	"fmt"
 	"math"
 	"os"
 	"strconv"
@@ -49,6 +49,11 @@ func (s *SelectIntoExec) Open(ctx context.Context) error {
 		return errors.New("unsupported SelectInto type")
 	}
 
+	_, err := os.Stat(s.intoOpt.FileName)
+	if !os.IsNotExist(err) {
+		return errors.New(fmt.Sprintf("File '%v' already exists", s.intoOpt.FileName))
+	}
+
 	f, err := os.Create(s.intoOpt.FileName)
 	if err != nil {
 		return errors.Trace(err)
@@ -76,11 +81,6 @@ func (s *SelectIntoExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	return nil
 }
-
-const (
-	expFormatBig   = 1e15
-	expFormatSmall = 1e-15
-)
 
 func (s *SelectIntoExec) considerEncloseOpt(et types.EvalType) bool {
 	return et == types.ETString || et == types.ETDuration ||
@@ -135,7 +135,7 @@ func (s *SelectIntoExec) dumpToOutfile() error {
 					s.lineBuf = strconv.AppendInt(s.lineBuf, row.GetInt64(j), 10)
 				}
 			case types.ETReal:
-				s.dumpReal(row, col, j)
+				s.realBuf, s.lineBuf = DumpRealOutfile(s.realBuf, s.lineBuf, row.GetFloat64(j), col.RetType)
 			case types.ETDecimal:
 				s.lineBuf = append(s.lineBuf, row.GetMyDecimal(j).String()...)
 			case types.ETString:
@@ -162,26 +162,6 @@ func (s *SelectIntoExec) dumpToOutfile() error {
 	return nil
 }
 
-func (s *SelectIntoExec) dumpReal(row chunk.Row, col *expression.Column, colIdx int) {
-	prec := types.UnspecifiedLength
-	if col.RetType.Decimal > 0 && int(col.RetType.Decimal) != mysql.NotFixedDec {
-		prec = int(col.RetType.Decimal)
-	}
-	v := row.GetFloat64(colIdx)
-	absV := math.Abs(v)
-	if prec == types.UnspecifiedLength && (absV >= expFormatBig || (absV != 0 && absV < expFormatSmall)) {
-		s.realBuf = strconv.AppendFloat(s.realBuf[:0], v, 'e', prec, 64)
-		if idx := bytes.IndexByte(s.realBuf, '+'); idx != -1 {
-			s.lineBuf = append(s.lineBuf, s.realBuf[:idx]...)
-			s.lineBuf = append(s.lineBuf, s.realBuf[idx+1:]...)
-		} else {
-			s.lineBuf = append(s.lineBuf, s.realBuf...)
-		}
-	} else {
-		s.lineBuf = strconv.AppendFloat(s.lineBuf, v, 'f', prec, 64)
-	}
-}
-
 // Close implements the Executor Close interface.
 func (s *SelectIntoExec) Close() error {
 	if !s.started {
@@ -196,4 +176,30 @@ func (s *SelectIntoExec) Close() error {
 		return errors.Trace(err2)
 	}
 	return err3
+}
+
+const (
+	expFormatBig   = 1e15
+	expFormatSmall = 1e-15
+)
+
+// DumpRealOutfile dumps a real number to lineBuf.
+func DumpRealOutfile(realBuf, lineBuf []byte, v float64, tp *types.FieldType) ([]byte, []byte) {
+	prec := types.UnspecifiedLength
+	if tp.Decimal > 0 && tp.Decimal != mysql.NotFixedDec {
+		prec = tp.Decimal
+	}
+	absV := math.Abs(v)
+	if prec == types.UnspecifiedLength && (absV >= expFormatBig || (absV != 0 && absV < expFormatSmall)) {
+		realBuf = strconv.AppendFloat(realBuf[:0], v, 'e', prec, 64)
+		if idx := bytes.IndexByte(realBuf, '+'); idx != -1 {
+			lineBuf = append(lineBuf, realBuf[:idx]...)
+			lineBuf = append(lineBuf, realBuf[idx+1:]...)
+		} else {
+			lineBuf = append(lineBuf, realBuf...)
+		}
+	} else {
+		lineBuf = strconv.AppendFloat(lineBuf, v, 'f', prec, 64)
+	}
+	return realBuf, lineBuf
 }
