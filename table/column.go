@@ -88,15 +88,22 @@ func ToColumn(col *model.ColumnInfo) *Column {
 // If pkIsHandle is false and name is ExtraHandleName, the extra handle column will be added.
 // If any columns don't match, return nil and the first missing column's name
 func FindCols(cols []*Column, names []string, pkIsHandle bool) ([]*Column, string) {
+	// Comparing strings more than (32 * 32 / 2) times cost a lot, So we use a map to do the finding
+	var colsMap map[string]*Column
+	if len(names) >= 48 {
+		colsMap = make(map[string]*Column, len(names))
+		for _, col := range cols {
+			colsMap[col.Name.O] = col
+		}
+	}
 	var rcols = make([]*Column, len(names))
 	for i, name := range names {
-		// TODO:
-		//   This will be slow when len(cols) is large.
-		//   And it's hard to change the type of cols (eg, to a map) because it's from Table.XXCols(),
-		//   Changing Table's interface is huge.
-		//   So the compromised solution maybe create a map inplace when len(cols) is large.
-		//   I will address this after this innocent PR is merged.
-		col := FindCol(cols, name)
+		var col *Column
+		if colsMap != nil {
+			col = colsMap[name]
+		} else {
+			col = FindCol(cols, name)
+		}
 		if col != nil {
 			rcols[i] = col
 		} else if name == model.ExtraHandleName.L && !pkIsHandle {
