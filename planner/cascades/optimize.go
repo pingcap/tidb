@@ -253,7 +253,10 @@ func (opt *Optimizer) onPhaseImplementation(sctx sessionctx.Context, g *memo.Gro
 	prop := &property.PhysicalProperty{
 		ExpectedCnt: math.MaxFloat64,
 	}
-	opt.fillGroupStats(g)
+	err := opt.fillGroupStats(g)
+	if err != nil {
+		return nil, 0, err
+	}
 	preparePossibleProperties(g, make(map[*memo.Group][][]*expression.Column))
 	// TODO replace MaxFloat64 costLimit by variable from sctx, or other sources.
 	impl, err := opt.implGroup(g, prop, math.MaxFloat64)
