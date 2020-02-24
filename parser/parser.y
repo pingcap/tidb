@@ -5413,10 +5413,9 @@ SimpleExpr:
 |	FunctionCallKeyword
 |	FunctionCallNonKeyword
 |	FunctionCallGeneric
-|	SimpleExpr "COLLATE" StringName %prec neg
+|	SimpleExpr "COLLATE" CollationName
 	{
-		// TODO: Create a builtin function hold expr and collation. When do evaluation, convert expr result using the collation.
-		$$ = $1
+		$$ = &ast.SetCollationExpr{Expr: $1, Collate: $3.(string)}
 	}
 |	WindowFuncCall
 	{
