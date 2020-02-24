@@ -220,7 +220,7 @@ func (s *testSnapshotSuite) TestSkipLargeTxnLock(c *C) {
 	bo := NewBackoffer(ctx, PrewriteMaxBackoff)
 	committer, err := newTwoPhaseCommitterWithInit(txn, 0)
 	c.Assert(err, IsNil)
-	committer.lockTTL = txnLockTTL(txn.startTime, 10<<20)
+	committer.lockTTL = 3000
 	c.Assert(committer.prewriteKeys(bo, committer.keys), IsNil)
 
 	txn1 := s.beginTxn(c)
