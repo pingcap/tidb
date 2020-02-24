@@ -88,7 +88,7 @@ func mergeConfigItems(dstConf, newConf reflect.Value, fieldPath string) (accepte
 	return
 }
 
-func atomicWriteConfig(c *Config, confPath string) error {
+func atomicWriteConfig(c *Config, confPath string) (err error) {
 	content, err := encodeConfig(c)
 	if err != nil {
 		return err
@@ -97,6 +97,12 @@ func atomicWriteConfig(c *Config, confPath string) error {
 	if err := ioutil.WriteFile(tmpConfPath, []byte(content), 0666); err != nil {
 		return errors.Trace(err)
 	}
-	defer os.Remove(tmpConfPath)
+	defer func() {
+		rmErr := errors.Trace(os.Remove(tmpConfPath))
+		if err != nil {
+			return
+		}
+		err = rmErr
+	}()
 	return errors.Trace(os.Rename(tmpConfPath, confPath))
 }
