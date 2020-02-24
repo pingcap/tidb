@@ -389,7 +389,8 @@ func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, processor
 func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
 	b.optFlag = flagPrunColumns
 	defer func() {
-		if b.optFlag&flagPredicatePushDown > 0 {
+		// if there is something after flagPrunColumns, do flagPrunColumnsAgain
+		if b.optFlag&flagPrunColumns > 0 && b.optFlag-flagPrunColumns > flagPrunColumns {
 			b.optFlag |= flagPrunColumnsAgain
 		}
 	}()
