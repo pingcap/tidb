@@ -3666,13 +3666,13 @@ type weightStringPadding byte
 
 const (
 	// weightStringPaddingNone is used for WEIGHT_STRING(expr) if the expr is non-numeric.
-	weightStringPaddingNone weightStringPadding = 0xFF
+	weightStringPaddingNone weightStringPadding = iota
 	// weightStringPaddingAsChar is used for WEIGHT_STRING(expr AS CHAR(x)) and the expr is non-numeric.
-	weightStringPaddingAsChar = 0x20
+	weightStringPaddingAsChar
 	// weightStringPaddingAsBinary is used for WEIGHT_STRING(expr as BINARY(x)) and the expr is not null.
-	weightStringPaddingAsBinary = 0x00
+	weightStringPaddingAsBinary
 	// weightStringPaddingNull is used for WEIGHT_STRING(expr [AS (CHAR|BINARY)]) for all other cases, it returns null always.
-	weightStringPaddingNull = 0xFE
+	weightStringPaddingNull
 )
 
 type weightStringFunctionClass struct {
