@@ -15,6 +15,7 @@ package executor_test
 
 import (
 	"context"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/mysql"
@@ -223,6 +224,8 @@ func (s *inspectionResultSuite) TestThresholdCheckInspection(c *C) {
 		"tikv_block_index_cache_hit":          {},
 		"tikv_block_data_cache_hit":           {},
 		"tikv_block_filter_cache_hit":         {},
+		"pd_scheduler_store_status":           {},
+		"pd_region_health":                    {},
 	}
 
 	fpName := "github.com/pingcap/tidb/executor/mockMergeMockInspectionTables"
@@ -245,17 +248,17 @@ func (s *inspectionResultSuite) TestThresholdCheckInspection(c *C) {
 	result := tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute inspect SQL failed"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0), Commentf("unexpected warnings: %+v", tk.Se.GetSessionVars().StmtCtx.GetWarnings()))
 	result.Check(testkit.Rows(
-		"apply_cpu tikv tikv-0 10.00 < 1.60, config: raftstore.apply-pool-size=2 select instance, sum(value) as cpu from metrics_schema.tikv_thread_cpu where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and name like 'apply_%' group by instance",
-		"coprocessor_high_cpu tikv tikv-0 10.00 < 3.60, config: readpool.coprocessor.high-concurrency=4 select instance, sum(value) as cpu from metrics_schema.tikv_thread_cpu where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and name like 'cop_high%' group by instance",
-		"coprocessor_low_cpu tikv tikv-0 10.00 < 3.60, config: readpool.coprocessor.low-concurrency=4 select instance, sum(value) as cpu from metrics_schema.tikv_thread_cpu where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and name like 'cop_low%' group by instance",
-		"coprocessor_normal_cpu tikv tikv-0 20.00 < 3.60, config: readpool.coprocessor.normal-concurrency=4 select instance, sum(value) as cpu from metrics_schema.tikv_thread_cpu where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and name like 'cop_normal%' group by instance",
-		"grpc_cpu tikv tikv-0 10.00 < 7.20, config: server.grpc-concurrency=8 select instance, sum(value) as cpu from metrics_schema.tikv_thread_cpu where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and name like 'grpc%' group by instance",
-		"raftstore_cpu tikv tikv-0 10.00 < 1.60, config: raftstore.store-pool-size=2 select instance, sum(value) as cpu from metrics_schema.tikv_thread_cpu where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and name like 'raftstore_%' group by instance",
-		"scheduler_worker_cpu tikv tikv-0 10.00 < 5.10, config: storage.scheduler-worker-pool-size=6 select instance, sum(value) as cpu from metrics_schema.tikv_thread_cpu where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and name like 'sched_%' group by instance",
-		"split_check_cpu tikv tikv-0 10.00 < 0.00 select instance, sum(value) as cpu from metrics_schema.tikv_thread_cpu where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and name like 'split_check' group by instance",
-		"storage_readpool_high_cpu tikv tikv-0 10.00 < 3.60, config: readpool.storage.high-concurrency=4 select instance, sum(value) as cpu from metrics_schema.tikv_thread_cpu where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and name like 'store_read_high%' group by instance",
-		"storage_readpool_low_cpu tikv tikv-0 10.00 < 3.60, config: readpool.storage.low-concurrency=4 select instance, sum(value) as cpu from metrics_schema.tikv_thread_cpu where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and name like 'store_read_low%' group by instance",
-		"storage_readpool_normal_cpu tikv tikv-0 10.00 < 3.60, config: readpool.storage.normal-concurrency=4 select instance, sum(value) as cpu from metrics_schema.tikv_thread_cpu where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and name like 'store_read_norm%' group by instance",
+		"apply-cpu tikv tikv-0 10.00 < 1.60, config: raftstore.apply-pool-size=2 select instance, sum(value) as cpu from metrics_schema.tikv_thread_cpu where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and name like 'apply_%' group by instance",
+		"coprocessor-high-cpu tikv tikv-0 10.00 < 3.60, config: readpool.coprocessor.high-concurrency=4 select instance, sum(value) as cpu from metrics_schema.tikv_thread_cpu where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and name like 'cop_high%' group by instance",
+		"coprocessor-low-cpu tikv tikv-0 10.00 < 3.60, config: readpool.coprocessor.low-concurrency=4 select instance, sum(value) as cpu from metrics_schema.tikv_thread_cpu where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and name like 'cop_low%' group by instance",
+		"coprocessor-normal-cpu tikv tikv-0 20.00 < 3.60, config: readpool.coprocessor.normal-concurrency=4 select instance, sum(value) as cpu from metrics_schema.tikv_thread_cpu where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and name like 'cop_normal%' group by instance",
+		"grpc-cpu tikv tikv-0 10.00 < 7.20, config: server.grpc-concurrency=8 select instance, sum(value) as cpu from metrics_schema.tikv_thread_cpu where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and name like 'grpc%' group by instance",
+		"raftstore-cpu tikv tikv-0 10.00 < 1.60, config: raftstore.store-pool-size=2 select instance, sum(value) as cpu from metrics_schema.tikv_thread_cpu where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and name like 'raftstore_%' group by instance",
+		"scheduler-worker-cpu tikv tikv-0 10.00 < 5.10, config: storage.scheduler-worker-pool-size=6 select instance, sum(value) as cpu from metrics_schema.tikv_thread_cpu where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and name like 'sched_%' group by instance",
+		"split-check-cpu tikv tikv-0 10.00 < 0.00 select instance, sum(value) as cpu from metrics_schema.tikv_thread_cpu where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and name like 'split_check' group by instance",
+		"storage-readpool-high-cpu tikv tikv-0 10.00 < 3.60, config: readpool.storage.high-concurrency=4 select instance, sum(value) as cpu from metrics_schema.tikv_thread_cpu where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and name like 'store_read_high%' group by instance",
+		"storage-readpool-low-cpu tikv tikv-0 10.00 < 3.60, config: readpool.storage.low-concurrency=4 select instance, sum(value) as cpu from metrics_schema.tikv_thread_cpu where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and name like 'store_read_low%' group by instance",
+		"storage-readpool-normal-cpu tikv tikv-0 10.00 < 3.60, config: readpool.storage.normal-concurrency=4 select instance, sum(value) as cpu from metrics_schema.tikv_thread_cpu where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and name like 'store_read_norm%' group by instance",
 	))
 
 	// construct some mock normal data
@@ -284,7 +287,7 @@ func (s *inspectionResultSuite) TestThresholdCheckInspection(c *C) {
 	c.Assert(err, IsNil)
 	result = tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute inspect SQL failed"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0), Commentf("unexpected warnings: %+v", tk.Se.GetSessionVars().StmtCtx.GetWarnings()))
-	result.Check(testkit.Rows("grpc_cpu tikv tikv-0 7.21 < 7.20, config: server.grpc-concurrency=8"))
+	result.Check(testkit.Rows("grpc-cpu tikv tikv-0 7.21 < 7.20, config: server.grpc-concurrency=8"))
 }
 
 func (s *inspectionResultSuite) TestThresholdCheckInspection2(c *C) {
@@ -344,7 +347,9 @@ func (s *inspectionResultSuite) TestThresholdCheckInspection2(c *C) {
 		"tikv_block_filter_cache_hit": {
 			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "kv", 0.93),
 		},
-		"tikv_thread_cpu": {},
+		"tikv_thread_cpu":           {},
+		"pd_scheduler_store_status": {},
+		"pd_region_health":          {},
 	}
 
 	ctx := context.WithValue(context.Background(), "__mockMetricsTableData", mockData)
@@ -368,10 +373,61 @@ func (s *inspectionResultSuite) TestThresholdCheckInspection2(c *C) {
 		"rocksdb-write-duration tikv tikv-0 200000.00 < 100000.00 select instance, max(value) as max_value from metrics_schema.tikv_engine_write_duration where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and type='write_max' group by instance having max_value > 100000.000000;",
 		"scheduler-cmd-duration tikv tikv-0 5.00 < 0.10 select instance, max(value) as max_value from metrics_schema.tikv_scheduler_command_duration where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and quantile=0.99 group by instance having max_value > 0.100000;",
 		"scheduler-pending-cmd-count tikv tikv-0 1001.00 < 1000.00 select instance, max(value) as max_value from metrics_schema.tikv_scheduler_pending_commands where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' group by instance having max_value > 1000.000000;",
-		"storage-snapshot-duration tikv tikv-0 0.20 < 0.05 select instance, max(value) as max_value from metrics_schema.tikv_storage_async_request_duration where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and type='snapshot' group by instance having max_value > 0.050000;",
+		"storage-snapshot-duration tikv tikv-0 0.06 < 0.05 select instance, max(value) as max_value from metrics_schema.tikv_storage_async_request_duration where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and type='snapshot' group by instance having max_value > 0.050000;",
 		"storage-write-duration tikv tikv-0 0.20 < 0.10 select instance, max(value) as max_value from metrics_schema.tikv_storage_async_request_duration where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and type='write' group by instance having max_value > 0.100000;",
 		"tso-duration tidb pd-0 0.06 < 0.05 select instance, max(value) as max_value from metrics_schema.pd_tso_wait_duration where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and quantile=0.999 group by instance having max_value > 0.050000;",
 	))
+}
+
+func (s *inspectionResultSuite) TestThresholdCheckInspection3(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	// Mock for metric table data.
+	fpName := "github.com/pingcap/tidb/executor/mockMetricsTableData"
+	c.Assert(failpoint.Enable(fpName, "return"), IsNil)
+	defer func() { c.Assert(failpoint.Disable(fpName), IsNil) }()
+
+	datetime := func(s string) types.Time {
+		t, err := types.ParseTime(tk.Se.GetSessionVars().StmtCtx, s, mysql.TypeDatetime, types.MaxFsp)
+		c.Assert(err, IsNil)
+		return t
+	}
+
+	// construct some mock abnormal data
+	mockData := map[string][][]types.Datum{
+		"pd_scheduler_store_status": {
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "pd-0", "tikv-0", "0", "leader_score", 100.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "pd-0", "tikv-1", "1", "leader_score", 50.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "pd-0", "tikv-0", "0", "region_score", 100.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "pd-0", "tikv-1", "1", "region_score", 90.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "pd-0", "tikv-0", "0", "store_available", 100.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "pd-0", "tikv-1", "1", "store_available", 70.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "pd-0", "tikv-0", "0", "region_count", 20001.0),
+		},
+		"pd_region_health": {
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "pd-0", "extra-peer-region-count", 40.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "pd-0", "learner-peer-region-count", 40.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "pd-0", "pending-peer-region-count", 30.0),
+		},
+	}
+
+	ctx := context.WithValue(context.Background(), "__mockMetricsTableData", mockData)
+	ctx = failpoint.WithHook(ctx, func(_ context.Context, fpname string) bool {
+		return fpname == fpName
+	})
+
+	rs, err := tk.Se.Execute(ctx, `select /*+ time_range('2020-02-14 04:20:00','2020-02-14 05:20:00') */
+		item, type, instance, value, reference, details from information_schema.inspection_result
+		where rule='threshold-check' and item in ('leader-score-balance','region-score-balance','region-count','region-health','store-available-balance')
+		order by item`)
+	c.Assert(err, IsNil)
+	result := tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute inspect SQL failed"))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0), Commentf("unexpected warnings: %+v", tk.Se.GetSessionVars().StmtCtx.GetWarnings()))
+	result.Check(testkit.Rows(
+		"leader-score-balance tikv tikv-1 50.00% < 5.00% tikv-0 leader_score is 100, much more than tikv-1 leader_score 50",
+		"region-count tikv tikv-0 20001.00 <= 20000 select address,value from metrics_schema.pd_scheduler_store_status where time>='2020-02-14 04:20:00' and time<='2020-02-14 05:20:00' and type='region_count' and value > 20000;",
+		"region-health pd pd-0 110.00 < 100 the count of extra-perr and learner-peer and pending-peer is 110, it means the scheduling is too frequent or too slow",
+		"region-score-balance tikv tikv-1 10.00% < 5.00% tikv-0 region_score is 100, much more than tikv-1 region_score 90",
+		"store-available-balance tikv tikv-1 30.00% < 20.00% tikv-0 store_available is 100, much more than tikv-1 store_available 70"))
 }
 
 func (s *inspectionResultSuite) TestCriticalErrorInspection(c *C) {
