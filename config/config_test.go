@@ -281,7 +281,7 @@ c933WW1E0hCtvuGxWFIFtoJMQoyH0Pl4ACmY/6CokCCZKDInrPdhhf3MGRjkkw==
 -----END CERTIFICATE-----
 `)
 	c.Assert(err, IsNil)
-	c.Assert(f.Sync(), IsNil)
+	c.Assert(f.Close(), IsNil)
 
 	keyFile := "key.pem"
 	keyFile = filepath.Join(filepath.Dir(localFile), keyFile)
@@ -316,7 +316,7 @@ xkNuJ2BlEGkwWLiRbKy1lNBBFUXKuhh3L/EIY10WTnr3TQzeL6H1
 -----END RSA PRIVATE KEY-----
 `)
 	c.Assert(err, IsNil)
-	c.Assert(f.Sync(), IsNil)
+	c.Assert(f.Close(), IsNil)
 
 	conf.Security.ClusterSSLCA = certFile
 	conf.Security.ClusterSSLCert = certFile
@@ -324,6 +324,11 @@ xkNuJ2BlEGkwWLiRbKy1lNBBFUXKuhh3L/EIY10WTnr3TQzeL6H1
 	tlsConfig, err := conf.Security.ToTLSConfig()
 	c.Assert(err, IsNil)
 	c.Assert(tlsConfig, NotNil)
+
+	// Note that on windows, we can't Remove a file if the file is not closed.
+	// The behavior is different on linux, we can always Remove a file even
+	// if it's open. The OS maintains a reference count for open/close, the file
+	// is recycled when the reference count drops to 0.
 	c.Assert(os.Remove(certFile), IsNil)
 	c.Assert(os.Remove(keyFile), IsNil)
 }

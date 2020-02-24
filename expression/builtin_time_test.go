@@ -29,10 +29,19 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/timeutil"
 )
+
+func init() {
+	// Some test depends on the values of timeutil.SystemLocation()
+	// If we don't SetSystemTZ() here, the value would change unpredictable.
+	// Affectd by the order whether a testsuite runs before or after integration test.
+	// Note, SetSystemTZ() is a sync.Once operation.
+	timeutil.SetSystemTZ("system")
+}
 
 func (s *testEvaluatorSuite) TestDate(c *C) {
 	tblDate := []struct {
@@ -787,7 +796,7 @@ func (s *testEvaluatorSuite) TestNowAndUTCTimestamp(c *C) {
 		c.Assert(err, IsNil)
 		t = v.GetMysqlTime()
 		c.Assert(strings.Contains(t.String(), "."), IsTrue)
-		c.Assert(ts.Sub(gotime(t, ts.Location())), LessEqual, time.Millisecond)
+		c.Assert(ts.Sub(gotime(t, ts.Location())), LessEqual, 3*time.Millisecond)
 
 		resetStmtContext(s.ctx)
 		f, err = x.fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(8)))
@@ -1142,7 +1151,7 @@ func builtinDateFormat(ctx sessionctx.Context, args []types.Datum) (d types.Datu
 	if err != nil {
 		return d, err
 	}
-	d.SetString(str)
+	d.SetString(str, mysql.DefaultCollationName, collate.DefaultLen)
 	return
 }
 
