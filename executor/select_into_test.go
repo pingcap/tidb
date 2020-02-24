@@ -15,7 +15,6 @@ package executor_test
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/executor"
 	"io/ioutil"
 	"os"
 	"path"
@@ -24,6 +23,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testkit"
 )
