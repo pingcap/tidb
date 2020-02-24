@@ -651,14 +651,6 @@ func (r *ImplIndexJoin) OnImplement(expr *memo.GroupExpr, reqProp *property.Phys
 		supportLeftOuter, supportRightOuter = true, true
 	}
 
-	// Because Stats are lazily calculated, its children's Stats may have not been derived.
-	// So we try to derive them at first.
-	for _, childGroup := range expr.Children {
-		if err := FillGroupStats(childGroup); err != nil {
-			return nil, err
-		}
-	}
-
 	impls := make([]memo.Implementation, 0)
 	if supportLeftOuter {
 		impls = append(impls, r.getIndexJoinByOuterIdx(expr, reqProp, 0)...)
