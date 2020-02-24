@@ -13,7 +13,7 @@ import (
 	"go.etcd.io/etcd/integration"
 )
 
-func (is *InfoSyncer) getTopology(ctx context.Context) (topologyInfo, error) {
+func (is *InfoSyncer) getTopologyFromEtcd(ctx context.Context) (topologyInfo, error) {
 	key := fmt.Sprintf("%s/%s:%v/info", TopologyInformationPath, is.info.IP, is.info.Port)
 	resp, err := is.etcdCli.Get(ctx, key)
 	if err != nil {
@@ -31,6 +31,18 @@ func (is *InfoSyncer) getTopology(ctx context.Context) (topologyInfo, error) {
 		return topologyInfo{}, err
 	}
 	return ret, nil
+}
+
+func (is *InfoSyncer) ttlKeyExists(ctx context.Context) (bool, error) {
+	key := fmt.Sprintf("%s/%s:%v/ttl", TopologyInformationPath, is.info.IP, is.info.Port)
+	resp, err := is.etcdCli.Get(ctx, key)
+	if err != nil {
+		return false, err
+	}
+	if len(resp.Kvs) >= 2 {
+		return false, errors.New("too many arguments in resp.Kvs")
+	}
+	return len(resp.Kvs) == 1, nil
 }
 
 func TestTopology(t *testing.T) {
@@ -54,7 +66,7 @@ func TestTopology(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	topo, err := info.getTopology(ctx)
+	topo, err := info.getTopologyFromEtcd(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,6 +76,8 @@ func TestTopology(t *testing.T) {
 	}
 
 	nonTTLKey := fmt.Sprintf("%s/%s:%v/info", TopologyInformationPath, info.info.IP, info.info.Port)
+	ttlKey := fmt.Sprintf("%s/%s:%v/ttl", TopologyInformationPath, info.info.IP, info.info.Port)
+
 	err = util.DeleteKeyFromEtcd(nonTTLKey, cli, owner.NewSessionDefaultRetryCnt, time.Second)
 	if err != nil {
 		t.Fatal(err)
@@ -74,9 +88,50 @@ func TestTopology(t *testing.T) {
 	select {
 	case <-info.TopologyUpdateChan():
 		chanRecv = true
-	case <-time.After(time.Second):
+	case <-time.After(time.Second * 1):
 	}
-	if chanRecv == false {
-		t.Fatal("Receive Error")
+	if !chanRecv {
+		t.Fatal("Didn't Received watched change")
+	}
+
+	// Refresh and re-test if the key exists
+	err = info.RestartTopology(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	topo, err = info.getTopologyFromEtcd(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if topo != info.getTopologyInfo() {
+		t.Fatal("the info in etcd is not match with info.")
+	}
+
+	// check ttl key
+	ttlExists, err := info.ttlKeyExists(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ttlExists {
+		t.Fatal("ttl non-exists")
+	}
+
+	err = util.DeleteKeyFromEtcd(ttlKey, cli, owner.NewSessionDefaultRetryCnt, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = info.RefreshTopology(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ttlExists, err = info.ttlKeyExists(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ttlExists {
+		t.Fatal("ttl non-exists")
 	}
 }
