@@ -1358,16 +1358,13 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 				},
 			}
 		case strings.ToLower(infoschema.TableSlowQuery), strings.ToLower(infoschema.ClusterTableSlowLog):
-			retriever := &slowQueryRetriever{
-				table:      v.Table,
-				outputCols: v.Columns,
-			}
-			if v.Extractor != nil {
-				retriever.extractor = v.Extractor.(*plannercore.SlowQueryExtractor)
-			}
 			return &MemTableReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
-				retriever:    retriever,
+				retriever: &slowQueryRetriever{
+					table:      v.Table,
+					outputCols: v.Columns,
+					extractor:  v.Extractor.(*plannercore.SlowQueryExtractor),
+				},
 			}
 		}
 	}
