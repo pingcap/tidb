@@ -17,7 +17,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"fmt"
 	"math"
 	"os"
 	"strconv"
@@ -49,12 +48,7 @@ func (s *SelectIntoExec) Open(ctx context.Context) error {
 		return errors.New("unsupported SelectInto type")
 	}
 
-	_, err := os.Stat(s.intoOpt.FileName)
-	if !os.IsNotExist(err) {
-		return errors.New(fmt.Sprintf("File '%v' already exists", s.intoOpt.FileName))
-	}
-
-	f, err := os.Create(s.intoOpt.FileName)
+	f, err := os.OpenFile(s.intoOpt.FileName, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0666)
 	if err != nil {
 		return errors.Trace(err)
 	}
