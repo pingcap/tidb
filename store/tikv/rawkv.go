@@ -63,12 +63,12 @@ type RawKVClient struct {
 }
 
 // NewRawKVClient creates a client with PD cluster addrs.
-func NewRawKVClient(pdAddrs []string, security config.Security) (*RawKVClient, error) {
+func NewRawKVClient(pdAddrs []string, security config.Security, opts ...pd.ClientOption) (*RawKVClient, error) {
 	pdCli, err := pd.NewClient(pdAddrs, pd.SecurityOption{
 		CAPath:   security.ClusterSSLCA,
 		CertPath: security.ClusterSSLCert,
 		KeyPath:  security.ClusterSSLKey,
-	})
+	}, opts...)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

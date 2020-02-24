@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -450,39 +451,38 @@ func (s *testPlanSuite) TestIndexJoinUnionScan(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
 	defer func() {
 		dom.Close()
 		store.Close()
 	}()
-	se, err := session.CreateSession4Test(store)
-	c.Assert(err, IsNil)
-	_, err = se.Execute(context.Background(), "use test")
-	c.Assert(err, IsNil)
 
-	var input []string
+	tk.MustExec("use test")
+	var input [][]string
 	var output []struct {
-		SQL  string
-		Best string
+		SQL  []string
+		Plan []string
 	}
+	tk.MustExec("create table t (a int primary key, b int, index idx(a))")
+	tk.MustExec("create table tt (a int primary key) partition by range (a) (partition p0 values less than (100), partition p1 values less than (200))")
 	s.testData.GetTestCases(c, &input, &output)
-	for i, tt := range input {
-		comment := Commentf("case:%v sql:%s", i, tt)
-		stmt, err := s.ParseOneStmt(tt, "", "")
-		c.Assert(err, IsNil, comment)
-		err = se.NewTxn(context.Background())
-		c.Assert(err, IsNil)
-		// Make txn not read only.
-		txn, err := se.Txn(true)
-		c.Assert(err, IsNil)
-		txn.Set(kv.Key("AAA"), []byte("BBB"))
-		c.Assert(se.StmtCommit(), IsNil)
-		p, err := planner.Optimize(context.TODO(), se, stmt, s.is)
-		c.Assert(err, IsNil, comment)
-		s.testData.OnRecord(func() {
-			output[i].SQL = tt
-			output[i].Best = core.ToString(p)
-		})
-		c.Assert(core.ToString(p), Equals, output[i].Best, Commentf("for %s", tt))
+	for i, ts := range input {
+		tk.MustExec("begin")
+		for j, tt := range ts {
+			if j != len(ts)-1 {
+				tk.MustExec(tt)
+			}
+			s.testData.OnRecord(func() {
+				output[i].SQL = ts
+				if j == len(ts)-1 {
+					output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+				}
+			})
+			if j == len(ts)-1 {
+				tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+			}
+		}
+		tk.MustExec("rollback")
 	}
 }
 

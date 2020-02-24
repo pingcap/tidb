@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/pingcap/tidb/util/stringutil"
@@ -135,12 +136,13 @@ func (a *recordSet) NewChunk() *chunk.Chunk {
 
 func (a *recordSet) Close() error {
 	err := a.executor.Close()
+	// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
 	a.stmt.LogSlowQuery(a.txnStartTS, a.lastErr == nil, false)
+	a.stmt.SummaryStmt()
 	sessVars := a.stmt.Ctx.GetSessionVars()
 	pps := types.CloneRow(sessVars.PreparedParams)
 	sessVars.PrevStmt = FormatSQL(a.stmt.OriginText(), pps)
 	a.stmt.logAudit()
-	a.stmt.SummaryStmt()
 	return err
 }
 
@@ -218,6 +220,13 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	defer func() {
 		r := recover()
 		if r == nil {
+			if a.retryCount > 0 {
+				metrics.StatementPessimisticRetryCount.Observe(float64(a.retryCount))
+			}
+			lockKeysCnt := a.Ctx.GetSessionVars().StmtCtx.LockKeysCount
+			if lockKeysCnt > 0 {
+				metrics.StatementLockKeysCount.Add(float64(lockKeysCnt))
+			}
 			return
 		}
 		if str, ok := r.(string); !ok || !strings.HasPrefix(str, memory.PanicMemoryExceed) {
@@ -432,17 +441,27 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, e Executor) (sqlex
 
 func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 	sctx := a.Ctx
-	txn, err := sctx.Txn(true)
+	// Do not active the transaction here.
+	// When autocommit = 0 and transaction in pessimistic mode,
+	// statements like set xxx = xxx; should not active the transaction.
+	txn, err := sctx.Txn(false)
 	if err != nil {
 		return err
 	}
 	txnCtx := sctx.GetSessionVars().TxnCtx
 	for {
+		startPointGetLocking := time.Now()
 		_, err = a.handleNoDelayExecutor(ctx, e)
+		if !txn.Valid() {
+			return err
+		}
 		if err != nil {
 			// It is possible the DML has point get plan that locks the key.
 			e, err = a.handlePessimisticLockError(ctx, err)
 			if err != nil {
+				if ErrDeadlock.Equal(err) {
+					metrics.StatementDeadlockDetectDuration.Observe(time.Since(startPointGetLocking).Seconds())
+				}
 				return err
 			}
 			continue
@@ -455,14 +474,18 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 		if len(keys) == 0 {
 			return nil
 		}
-		forUpdateTS := txnCtx.GetForUpdateTS()
-		err = txn.LockKeys(ctx, &sctx.GetSessionVars().Killed, forUpdateTS, sctx.GetSessionVars().LockWaitTimeout,
-			sctx.GetSessionVars().StmtCtx.GetLockWaitStartTime(), keys...)
+		seVars := sctx.GetSessionVars()
+		lockCtx := newLockCtx(seVars, seVars.LockWaitTimeout)
+		startLocking := time.Now()
+		err = txn.LockKeys(ctx, lockCtx, keys...)
 		if err == nil {
 			return nil
 		}
 		e, err = a.handlePessimisticLockError(ctx, err)
 		if err != nil {
+			if ErrDeadlock.Equal(err) {
+				metrics.StatementDeadlockDetectDuration.Observe(time.Since(startLocking).Seconds())
+			}
 			return err
 		}
 	}
@@ -688,6 +711,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	statsInfos := plannercore.GetStatsInfo(a.Plan)
 	memMax := sessVars.StmtCtx.MemTracker.MaxConsumed()
 	_, digest := sessVars.StmtCtx.SQLDigest()
+	_, planDigest := getPlanDigest(a.Ctx, a.Plan)
 	slowItems := &variable.SlowQueryLogItems{
 		TxnTS:          txnTS,
 		SQL:            sql.String(),
@@ -702,6 +726,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		MemMax:         memMax,
 		Succ:           succ,
 		Plan:           getPlanTree(a.Plan),
+		PlanDigest:     planDigest,
 		Prepared:       a.isPreparedStmt,
 		HasMoreResults: hasMoreResults,
 	}
@@ -743,47 +768,92 @@ func getPlanTree(p plannercore.Plan) string {
 	if atomic.LoadUint32(&cfg.Log.RecordPlanInSlowLog) == 0 {
 		return ""
 	}
-	var selectPlan plannercore.PhysicalPlan
-	if physicalPlan, ok := p.(plannercore.PhysicalPlan); ok {
-		selectPlan = physicalPlan
-	} else {
-		switch x := p.(type) {
-		case *plannercore.Delete:
-			selectPlan = x.SelectPlan
-		case *plannercore.Update:
-			selectPlan = x.SelectPlan
-		case *plannercore.Insert:
-			selectPlan = x.SelectPlan
-		}
-	}
-	if selectPlan == nil {
-		return ""
-	}
-	planTree := plannercore.EncodePlan(selectPlan)
+	planTree := plannercore.EncodePlan(p)
 	if len(planTree) == 0 {
 		return planTree
 	}
 	return variable.SlowLogPlanPrefix + planTree + variable.SlowLogPlanSuffix
 }
 
+// getPlanDigest will try to get the select plan tree if the plan is select or the select plan of delete/update/insert statement.
+func getPlanDigest(sctx sessionctx.Context, p plannercore.Plan) (normalized, planDigest string) {
+	normalized, planDigest = sctx.GetSessionVars().StmtCtx.GetPlanDigest()
+	if len(normalized) > 0 {
+		return
+	}
+	normalized, planDigest = plannercore.NormalizePlan(p)
+	sctx.GetSessionVars().StmtCtx.SetPlanDigest(normalized, planDigest)
+	return
+}
+
 // SummaryStmt collects statements for performance_schema.events_statements_summary_by_digest
 func (a *ExecStmt) SummaryStmt() {
 	sessVars := a.Ctx.GetSessionVars()
-	if sessVars.InRestrictedSQL || !stmtsummary.StmtSummaryByDigestMap.Enabled() {
+	// Internal SQLs must also be recorded to keep the consistency of `PrevStmt` and `PrevStmtDigest`.
+	if !stmtsummary.StmtSummaryByDigestMap.Enabled() {
+		sessVars.SetPrevStmtDigest("")
 		return
 	}
 	stmtCtx := sessVars.StmtCtx
 	normalizedSQL, digest := stmtCtx.SQLDigest()
 	costTime := time.Since(sessVars.StartTime)
+
+	var prevSQL, prevSQLDigest string
+	if _, ok := a.StmtNode.(*ast.CommitStmt); ok {
+		// If prevSQLDigest is not recorded, it means this `commit` is the first SQL once stmt summary is enabled,
+		// so it's OK just to ignore it.
+		if prevSQLDigest = sessVars.GetPrevStmtDigest(); len(prevSQLDigest) == 0 {
+			return
+		}
+		prevSQL = sessVars.PrevStmt.String()
+	}
+	sessVars.SetPrevStmtDigest(digest)
+
+	// No need to encode every time, so encode lazily.
+	planGenerator := func() string {
+		return plannercore.EncodePlan(a.Plan)
+	}
+	// Generating plan digest is slow, only generate it once if it's 'Point_Get'.
+	// If it's a point get, different SQLs leads to different plans, so SQL digest
+	// is enough to distinguish different plans in this case.
+	var planDigest string
+	var planDigestGen func() string
+	if a.Plan.TP() == plancodec.TypePointGet {
+		planDigestGen = func() string {
+			_, planDigest := getPlanDigest(a.Ctx, a.Plan)
+			return planDigest
+		}
+	} else {
+		_, planDigest = getPlanDigest(a.Ctx, a.Plan)
+	}
+
+	execDetail := stmtCtx.GetExecDetails()
+	copTaskInfo := stmtCtx.CopTasksDetails()
+	memMax := stmtCtx.MemTracker.MaxConsumed()
+	var userString string
+	if sessVars.User != nil {
+		userString = sessVars.User.Username
+	}
+
 	stmtsummary.StmtSummaryByDigestMap.AddStatement(&stmtsummary.StmtExecInfo{
-		SchemaName:    sessVars.CurrentDB,
-		OriginalSQL:   a.Text,
-		NormalizedSQL: normalizedSQL,
-		Digest:        digest,
-		TotalLatency:  uint64(costTime.Nanoseconds()),
-		AffectedRows:  stmtCtx.AffectedRows(),
-		SentRows:      0,
-		StartTime:     sessVars.StartTime,
+		SchemaName:     strings.ToLower(sessVars.CurrentDB),
+		OriginalSQL:    a.Text,
+		NormalizedSQL:  normalizedSQL,
+		Digest:         digest,
+		PrevSQL:        prevSQL,
+		PrevSQLDigest:  prevSQLDigest,
+		PlanGenerator:  planGenerator,
+		PlanDigest:     planDigest,
+		PlanDigestGen:  planDigestGen,
+		User:           userString,
+		TotalLatency:   costTime,
+		ParseLatency:   sessVars.DurationParse,
+		CompileLatency: sessVars.DurationCompile,
+		StmtCtx:        stmtCtx,
+		CopTasks:       copTaskInfo,
+		ExecDetail:     &execDetail,
+		MemMax:         memMax,
+		StartTime:      sessVars.StartTime,
 	})
 }
 

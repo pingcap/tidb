@@ -15,6 +15,7 @@ package util
 
 import (
 	"bytes"
+	"crypto/x509/pkix"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -119,6 +120,23 @@ func (s *testMiscSuite) TestCompatibleParseGCTime(c *C) {
 		_, err := CompatibleParseGCTime(value)
 		c.Assert(err, NotNil)
 	}
+}
+
+func (s *testMiscSuite) TestX509NameParseMatch(c *C) {
+	check := pkix.Name{
+		Names: []pkix.AttributeTypeAndValue{
+			MockPkixAttribute(Country, "SE"),
+			MockPkixAttribute(Province, "Stockholm2"),
+			MockPkixAttribute(Locality, "Stockholm"),
+			MockPkixAttribute(Organization, "MySQL demo client certificate"),
+			MockPkixAttribute(OrganizationalUnit, "testUnit"),
+			MockPkixAttribute(CommonName, "client"),
+			MockPkixAttribute(Email, "client@example.com"),
+		},
+	}
+	c.Assert(X509NameOnline(check), Equals, "/C=SE/ST=Stockholm2/L=Stockholm/O=MySQL demo client certificate/OU=testUnit/CN=client/emailAddress=client@example.com")
+	check = pkix.Name{}
+	c.Assert(X509NameOnline(check), Equals, "")
 }
 
 func (s *testMiscSuite) TestBasicFunc(c *C) {

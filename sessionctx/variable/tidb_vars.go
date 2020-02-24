@@ -17,6 +17,7 @@ import (
 	"os"
 
 	"github.com/pingcap/parser/mysql"
+	"github.com/uber-go/atomic"
 )
 
 /*
@@ -104,6 +105,9 @@ const (
 
 	// tidb_general_log is used to log every query in the server in info level.
 	TiDBGeneralLog = "tidb_general_log"
+
+	// tidb_pprof_sql_cpu is used to add label sql label to pprof result.
+	TiDBPProfSQLCPU = "tidb_pprof_sql_cpu"
 
 	// tidb_slow_log_threshold is used to set the slow log threshold in the server.
 	TiDBSlowLogThreshold = "tidb_slow_log_threshold"
@@ -295,6 +299,12 @@ const (
 	// TiDBEnableStmtSummary indicates whether the statement summary is enabled.
 	TiDBEnableStmtSummary = "tidb_enable_stmt_summary"
 
+	// TiDBStmtSummaryRefreshInterval indicates the refresh interval in seconds for each statement summary.
+	TiDBStmtSummaryRefreshInterval = "tidb_stmt_summary_refresh_interval"
+
+	// TiDBStmtSummaryHistorySize indicates the history size of each statement summary.
+	TiDBStmtSummaryHistorySize = "tidb_stmt_summary_history_size"
+
 	// TiDBStoreLimit indicates the limit of sending request to a store, 0 means without limit.
 	TiDBStoreLimit = "tidb_store_limit"
 )
@@ -312,6 +322,8 @@ const (
 	DefAutoAnalyzeRatio                = 0.5
 	DefAutoAnalyzeStartTime            = "00:00 +0000"
 	DefAutoAnalyzeEndTime              = "23:59 +0000"
+	DefAutoIncrementIncrement          = 1
+	DefAutoIncrementOffset             = 1
 	DefChecksumTableConcurrency        = 4
 	DefSkipUTF8Check                   = false
 	DefOptAggPushDown                  = false
@@ -337,6 +349,7 @@ const (
 	DefTiDBMemQuotaNestedLoopApply     = 32 << 30 // 32GB.
 	DefTiDBMemQuotaDistSQL             = 32 << 30 // 32GB.
 	DefTiDBGeneralLog                  = 0
+	DefTiDBPProfSQLCPU                 = 0
 	DefTiDBRetryLimit                  = 10
 	DefTiDBDisableTxnAutoRetry         = true
 	DefTiDBConstraintCheckInPlace      = false
@@ -369,6 +382,7 @@ const (
 // Process global variables.
 var (
 	ProcessGeneralLog      uint32
+	EnablePProfSQLCPU            = atomic.NewBool(false)
 	ddlReorgWorkerCounter  int32 = DefTiDBDDLReorgWorkerCount
 	maxDDLReorgWorkerCount int32 = 128
 	ddlReorgBatchSize      int32 = DefTiDBDDLReorgBatchSize

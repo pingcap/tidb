@@ -85,10 +85,17 @@ func (s *testSessionSuite) TearDownSuite(c *C) {
 
 func (s *testSessionSuite) TearDownTest(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	r := tk.MustQuery("show tables")
+	r := tk.MustQuery("show full tables")
 	for _, tb := range r.Rows() {
 		tableName := tb[0]
-		tk.MustExec(fmt.Sprintf("drop table %v", tableName))
+		tableType := tb[1]
+		if tableType == "VIEW" {
+			tk.MustExec(fmt.Sprintf("drop view %v", tableName))
+		} else if tableType == "BASE TABLE" {
+			tk.MustExec(fmt.Sprintf("drop table %v", tableName))
+		} else {
+			panic(fmt.Sprintf("Unexpected table '%s' with type '%s'.", tableName, tableType))
+		}
 	}
 }
 
@@ -370,9 +377,17 @@ func (s *testSessionSuite) TestAutocommit(c *C) {
 // TestTxnLazyInitialize tests that when autocommit = 0, not all statement starts
 // a new transaction.
 func (s *testSessionSuite) TestTxnLazyInitialize(c *C) {
+	testTxnLazyInitialize(s, c, false)
+	testTxnLazyInitialize(s, c, true)
+}
+
+func testTxnLazyInitialize(s *testSessionSuite, c *C, isPessimistic bool) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int)")
+	if isPessimistic {
+		tk.MustExec("set tidb_txn_mode = 'pessimistic'")
+	}
 
 	tk.MustExec("set @@autocommit = 0")
 	txn, err := tk.Se.Txn(true)
@@ -1809,9 +1824,9 @@ func (s *testSchemaSuite) TestSchemaCheckerSQL(c *C) {
 	tk.MustExec(`commit;`)
 
 	// The schema version is out of date in the first transaction, and the SQL can't be retried.
-	session.SchemaChangedWithoutRetry = true
+	atomic.StoreUint32(&session.SchemaChangedWithoutRetry, 1)
 	defer func() {
-		session.SchemaChangedWithoutRetry = false
+		atomic.StoreUint32(&session.SchemaChangedWithoutRetry, 0)
 	}()
 	tk.MustExec(`begin;`)
 	tk1.MustExec(`alter table t modify column c bigint;`)
@@ -2420,6 +2435,22 @@ func (s *testSessionSuite) TestCommitRetryCount(c *C) {
 	c.Assert(err, NotNil)
 }
 
+func (s *testSessionSuite) TestEnablePartition(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set tidb_enable_table_partition=off")
+	tk.MustQuery("show variables like 'tidb_enable_table_partition'").Check(testkit.Rows("tidb_enable_table_partition off"))
+
+	tk.MustExec("set global tidb_enable_table_partition = on")
+
+	tk.MustQuery("show variables like 'tidb_enable_table_partition'").Check(testkit.Rows("tidb_enable_table_partition off"))
+	tk.MustQuery("show global variables like 'tidb_enable_table_partition'").Check(testkit.Rows("tidb_enable_table_partition on"))
+
+	// Disable global variable cache, so load global session variable take effect immediate.
+	s.dom.GetGlobalVarsCache().Disable()
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk1.MustQuery("show variables like 'tidb_enable_table_partition'").Check(testkit.Rows("tidb_enable_table_partition on"))
+}
+
 func (s *testSessionSuite) TestTxnRetryErrMsg(c *C) {
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
@@ -2719,8 +2750,10 @@ func (s *testSessionSuite) TestGrantViewRelated(c *C) {
 	err = tkUser.ExecToErr("create view v_version29_c as select * from v_version29;")
 	c.Assert(err, NotNil)
 
-	tkRoot.MustExec(`grant create view on v_version29_c to 'u_version29'@'%'`)
+	tkRoot.MustExec("create view v_version29_c as select * from v_version29;")
+	tkRoot.MustExec(`grant create view on v_version29_c to 'u_version29'@'%'`) // Can't grant privilege on a non-exist table/view.
 	tkRoot.MustQuery("select table_priv from mysql.tables_priv where host='%' and db='test' and user='u_version29' and table_name='v_version29_c'").Check(testkit.Rows("Create View"))
+	tkRoot.MustExec("drop view v_version29_c")
 
 	tkRoot.MustExec(`grant select on v_version29 to 'u_version29'@'%'`)
 	tkUser.MustQuery("select current_user();").Check(testkit.Rows("u_version29@%"))

@@ -14,7 +14,6 @@
 package executor_test
 
 import (
-	"bytes"
 	"fmt"
 	"strings"
 
@@ -22,6 +21,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -193,6 +193,8 @@ func (s *testSuite3) TestColumnScope(c *C) {
 func (s *testSuite3) TestIssue2456(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("CREATE USER 'dduser'@'%' IDENTIFIED by '123456';")
+	tk.MustExec("CREATE DATABASE `dddb_%`;")
+	tk.MustExec("CREATE table `dddb_%`.`te%` (id int);")
 	tk.MustExec("GRANT ALL PRIVILEGES ON `dddb_%`.* TO 'dduser'@'%';")
 	tk.MustExec("GRANT ALL PRIVILEGES ON `dddb_%`.`te%` to 'dduser'@'%';")
 }
@@ -239,27 +241,95 @@ func (s *testSuite3) TestGrantUnderANSIQuotes(c *C) {
 	tk.MustExec(`DROP USER IF EXISTS 'web'@'%'`)
 }
 
-func (s *testSuite3) TestUserTableConsistency(c *C) {
+func (s *testSuite3) TestMaintainRequire(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("create user superadmin")
-	tk.MustExec("grant all privileges on *.* to 'superadmin'")
 
-	// GrantPriv is not in AllGlobalPrivs any more, see pingcap/parser#581
-	c.Assert(len(mysql.Priv2UserCol), Equals, len(mysql.AllGlobalPrivs)+1)
+	// test create with require
+	tk.MustExec(`CREATE USER 'ssl_auser'@'%' require issuer '/CN=TiDB admin/OU=TiDB/O=PingCAP/L=San Francisco/ST=California/C=US' subject '/CN=tester1/OU=TiDB/O=PingCAP.Inc/L=Haidian/ST=Beijing/C=ZH' cipher 'AES128-GCM-SHA256'`)
+	tk.MustExec(`CREATE USER 'ssl_buser'@'%' require subject '/CN=tester1/OU=TiDB/O=PingCAP.Inc/L=Haidian/ST=Beijing/C=ZH' cipher 'AES128-GCM-SHA256'`)
+	tk.MustExec(`CREATE USER 'ssl_cuser'@'%' require cipher 'AES128-GCM-SHA256'`)
+	tk.MustExec(`CREATE USER 'ssl_duser'@'%'`)
+	tk.MustExec(`CREATE USER 'ssl_euser'@'%' require none`)
+	tk.MustExec(`CREATE USER 'ssl_fuser'@'%' require ssl`)
+	tk.MustExec(`CREATE USER 'ssl_guser'@'%' require x509`)
+	tk.MustQuery("select * from mysql.global_priv where `user` like 'ssl_%'").Check(testkit.Rows(
+		"% ssl_auser {\"ssl_type\":3,\"ssl_cipher\":\"AES128-GCM-SHA256\",\"x509_issuer\":\"/CN=TiDB admin/OU=TiDB/O=PingCAP/L=San Francisco/ST=California/C=US\",\"x509_subject\":\"/CN=tester1/OU=TiDB/O=PingCAP.Inc/L=Haidian/ST=Beijing/C=ZH\"}",
+		"% ssl_buser {\"ssl_type\":3,\"ssl_cipher\":\"AES128-GCM-SHA256\",\"x509_subject\":\"/CN=tester1/OU=TiDB/O=PingCAP.Inc/L=Haidian/ST=Beijing/C=ZH\"}",
+		"% ssl_cuser {\"ssl_type\":3,\"ssl_cipher\":\"AES128-GCM-SHA256\"}",
+		"% ssl_duser {}",
+		"% ssl_euser {}",
+		"% ssl_fuser {\"ssl_type\":1}",
+		"% ssl_guser {\"ssl_type\":2}",
+	))
 
-	var buf bytes.Buffer
-	var res bytes.Buffer
-	buf.WriteString("select ")
-	i := 0
-	for _, priv := range mysql.AllGlobalPrivs {
-		if i != 0 {
-			buf.WriteString(", ")
-			res.WriteString(" ")
-		}
-		buf.WriteString(mysql.Priv2UserCol[priv])
-		res.WriteString("Y")
-		i++
-	}
-	buf.WriteString(" from mysql.user where user = 'superadmin'")
-	tk.MustQuery(buf.String()).Check(testkit.Rows(res.String()))
+	// test grant with require
+	tk.MustExec("CREATE USER 'u1'@'%'")
+	tk.MustExec("GRANT ALL ON *.* TO 'u1'@'%' require issuer '/CN=TiDB admin/OU=TiDB/O=PingCAP/L=San Francisco/ST=California/C=US' and subject '/CN=tester1/OU=TiDB/O=PingCAP.Inc/L=Haidian/ST=Beijing/C=ZH'") // add new require.
+	tk.MustQuery("select priv from mysql.global_priv where `Host` = '%' and `User` = 'u1'").Check(testkit.Rows("{\"ssl_type\":3,\"x509_issuer\":\"/CN=TiDB admin/OU=TiDB/O=PingCAP/L=San Francisco/ST=California/C=US\",\"x509_subject\":\"/CN=tester1/OU=TiDB/O=PingCAP.Inc/L=Haidian/ST=Beijing/C=ZH\"}"))
+	tk.MustExec("GRANT ALL ON *.* TO 'u1'@'%' require cipher 'AES128-GCM-SHA256'") // modify always overwrite.
+	tk.MustQuery("select priv from mysql.global_priv where `Host` = '%' and `User` = 'u1'").Check(testkit.Rows("{\"ssl_type\":3,\"ssl_cipher\":\"AES128-GCM-SHA256\"}"))
+	tk.MustExec("GRANT select ON *.* TO 'u1'@'%'") // modify without require should not modify old require.
+	tk.MustQuery("select priv from mysql.global_priv where `Host` = '%' and `User` = 'u1'").Check(testkit.Rows("{\"ssl_type\":3,\"ssl_cipher\":\"AES128-GCM-SHA256\"}"))
+	tk.MustExec("GRANT ALL ON *.* TO 'u1'@'%' require none") // use require none to clean up require.
+	tk.MustQuery("select priv from mysql.global_priv where `Host` = '%' and `User` = 'u1'").Check(testkit.Rows("{}"))
+
+	// test alter with require
+	tk.MustExec("CREATE USER 'u2'@'%'")
+	tk.MustExec("alter user 'u2'@'%' require ssl")
+	tk.MustQuery("select priv from mysql.global_priv where `Host` = '%' and `User` = 'u2'").Check(testkit.Rows("{\"ssl_type\":1}"))
+	tk.MustExec("alter user 'u2'@'%' require x509")
+	tk.MustQuery("select priv from mysql.global_priv where `Host` = '%' and `User` = 'u2'").Check(testkit.Rows("{\"ssl_type\":2}"))
+	tk.MustExec("alter user 'u2'@'%' require issuer '/CN=TiDB admin/OU=TiDB/O=PingCAP/L=San Francisco/ST=California/C=US' subject '/CN=tester1/OU=TiDB/O=PingCAP.Inc/L=Haidian/ST=Beijing/C=ZH' cipher 'AES128-GCM-SHA256'")
+	tk.MustQuery("select priv from mysql.global_priv where `Host` = '%' and `User` = 'u2'").Check(testkit.Rows("{\"ssl_type\":3,\"ssl_cipher\":\"AES128-GCM-SHA256\",\"x509_issuer\":\"/CN=TiDB admin/OU=TiDB/O=PingCAP/L=San Francisco/ST=California/C=US\",\"x509_subject\":\"/CN=tester1/OU=TiDB/O=PingCAP.Inc/L=Haidian/ST=Beijing/C=ZH\"}"))
+	tk.MustExec("alter user 'u2'@'%' require none")
+	tk.MustQuery("select priv from mysql.global_priv where `Host` = '%' and `User` = 'u2'").Check(testkit.Rows("{}"))
+
+	// test show create user
+	tk.MustExec(`CREATE USER 'u3'@'%' require issuer '/CN=TiDB admin/OU=TiDB/O=PingCAP/L=San Francisco/ST=California/C=US' subject '/CN=tester1/OU=TiDB/O=PingCAP.Inc/L=Haidian/ST=Beijing/C=ZH' cipher 'AES128-GCM-SHA256'`)
+	tk.MustQuery("show create user 'u3'").Check(testkit.Rows("CREATE USER 'u3'@'%' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE CIPHER 'AES128-GCM-SHA256' ISSUER '/CN=TiDB admin/OU=TiDB/O=PingCAP/L=San Francisco/ST=California/C=US' SUBJECT '/CN=tester1/OU=TiDB/O=PingCAP.Inc/L=Haidian/ST=Beijing/C=ZH' PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK"))
+
+	// check issuer/subject/cipher value
+	_, err := tk.Exec(`CREATE USER 'u4'@'%' require issuer 'CN=TiDB,OU=PingCAP'`)
+	c.Assert(err, NotNil)
+	_, err = tk.Exec(`CREATE USER 'u5'@'%' require subject '/CN=TiDB\OU=PingCAP'`)
+	c.Assert(err, NotNil)
+	_, err = tk.Exec(`CREATE USER 'u6'@'%' require subject '/CN=TiDB\NC=PingCAP'`)
+	c.Assert(err, NotNil)
+	_, err = tk.Exec(`CREATE USER 'u7'@'%' require cipher 'AES128-GCM-SHA1'`)
+	c.Assert(err, NotNil)
+	_, err = tk.Exec(`CREATE USER 'u8'@'%' require subject '/CN'`)
+	c.Assert(err, NotNil)
+	_, err = tk.Exec(`CREATE USER 'u9'@'%' require cipher 'TLS_AES_256_GCM_SHA384' cipher 'RC4-SHA'`)
+	c.Assert(err.Error(), Equals, "Duplicate require CIPHER clause")
+	_, err = tk.Exec(`CREATE USER 'u9'@'%' require issuer 'CN=TiDB,OU=PingCAP' issuer 'CN=TiDB,OU=PingCAP2'`)
+	c.Assert(err.Error(), Equals, "Duplicate require ISSUER clause")
+	_, err = tk.Exec(`CREATE USER 'u9'@'%' require subject '/CN=TiDB\OU=PingCAP' subject '/CN=TiDB\OU=PingCAP2'`)
+	c.Assert(err.Error(), Equals, "Duplicate require SUBJECT clause")
+	_, err = tk.Exec(`CREATE USER 'u9'@'%' require ssl ssl`)
+	c.Assert(err, NotNil)
+	_, err = tk.Exec(`CREATE USER 'u9'@'%' require x509 x509`)
+	c.Assert(err, NotNil)
+}
+
+func (s *testSuite3) TestGrantOnNonExistTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create user genius")
+	tk.MustExec("use test")
+	_, err := tk.Exec("select * from nonexist")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableNotExists), IsTrue)
+	_, err = tk.Exec("grant Select,Insert on nonexist to 'genius'")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableNotExists), IsTrue)
+
+	tk.MustExec("create table if not exists xx (id int)")
+	// Case sensitive
+	_, err = tk.Exec("grant Select,Insert on XX to 'genius'")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableNotExists), IsTrue)
+	// The database name should also case sensitive match.
+	_, err = tk.Exec("grant Select,Insert on Test.xx to 'genius'")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableNotExists), IsTrue)
+
+	_, err = tk.Exec("grant Select,Insert on xx to 'genius'")
+	c.Assert(err, IsNil)
+	_, err = tk.Exec("grant Select,Update on test.xx to 'genius'")
+	c.Assert(err, IsNil)
 }

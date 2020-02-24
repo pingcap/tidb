@@ -100,6 +100,9 @@ type Expression interface {
 	// ExplainInfo returns operator information to be explained.
 	ExplainInfo() string
 
+	// ExplainNormalizedInfo returns operator normalized information for generating digest.
+	ExplainNormalizedInfo() string
+
 	// HashCode creates the hashcode for expression which can be used to identify itself from other expression.
 	// It generated as the following:
 	// Constant: ConstantFlag+encoded value
@@ -395,7 +398,7 @@ func wrapWithIsTrue(ctx sessionctx.Context, keepNull bool, arg Expression) (Expr
 		return nil, err
 	}
 	sf := &ScalarFunction{
-		FuncName: model.NewCIStr(fmt.Sprintf("sig_%T", f)),
+		FuncName: model.NewCIStr(ast.IsTruth),
 		Function: f,
 		RetType:  f.getRetTp(),
 	}

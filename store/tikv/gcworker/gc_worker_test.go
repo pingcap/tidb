@@ -328,6 +328,17 @@ func (s *testGCWorkerSuite) TestCheckGCMode(c *C) {
 	c.Assert(useDistributedGC, Equals, true)
 }
 
+func (s *testGCWorkerSuite) TestResolveLockRangeInfine(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/invalidCacheAndRetry", "return(true)"), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/gcworker/setGcResolveMaxBackoff", "return(1)"), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/invalidCacheAndRetry"), IsNil)
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/gcworker/setGcResolveMaxBackoff"), IsNil)
+	}()
+	_, err := s.gcWorker.resolveLocksForRange(context.Background(), 1, []byte{0}, []byte{1})
+	c.Assert(err, NotNil)
+}
+
 func (s *testGCWorkerSuite) TestRunGCJob(c *C) {
 	gcSafePointCacheInterval = 0
 	err := RunGCJob(context.Background(), s.store, 0, "mock", 1)

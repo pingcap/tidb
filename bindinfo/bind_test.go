@@ -22,6 +22,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
+	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
@@ -137,9 +138,9 @@ func (s *testSuite) TestBindParse(c *C) {
 	c.Check(bindData.UpdateTime, NotNil)
 
 	// Test fields with quotes or slashes.
-	sql = `CREATE GLOBAL BINDING FOR  select * from t where a BETWEEN "a" and "b" USING select * from t use index(idx) where a BETWEEN "a\nb\rc\td\0e" and 'x'`
+	sql = `CREATE GLOBAL BINDING FOR  select * from t where i BETWEEN "a" and "b" USING select * from t use index(index_t) where i BETWEEN "a\nb\rc\td\0e" and 'x'`
 	tk.MustExec(sql)
-	tk.MustExec(`DROP global binding for select * from t use index(idx) where a BETWEEN "a\nb\rc\td\0e" and "x"`)
+	tk.MustExec(`DROP global binding for select * from t use index(index_t) where i BETWEEN "a\nb\rc\td\0e" and "x"`)
 }
 
 func (s *testSuite) TestGlobalBinding(c *C) {
@@ -378,6 +379,15 @@ func (s *testSuite) TestGlobalAndSessionBindingBothExist(c *C) {
 		"  └─Selection_14 9990.00 cop not(isnull(test.t2.id))",
 		"    └─TableScan_13 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, index idx(a))")
+	tk.MustExec("create global binding for select * from t where a > 10 using select * from t ignore index(idx) where a > 10")
+	// Should not panic for `-1`.
+	tk.MustContains("select * from t where a > -1", "TableReader")
+	// Session bindings should be able to cover the global bindings.
+	tk.MustExec("drop session binding for select * from t where a > 10")
+	tk.MustIndexLookup("select * from t where a > -1")
 }
 
 func (s *testSuite) TestExplain(c *C) {
@@ -389,7 +399,7 @@ func (s *testSuite) TestExplain(c *C) {
 	tk.MustExec("create table t1(id int)")
 	tk.MustExec("create table t2(id int)")
 
-	tk.MustQuery("explain SELECT * from t1,t2 where t1.id = t2.id").Check(testkit.Rows(
+	tk.MustQuery("explain SELECT * from t1,t2 where t1.id = t2.id;").Check(testkit.Rows(
 		"HashLeftJoin_8 12487.50 root inner join, inner:TableReader_15, equal:[eq(test.t1.id, test.t2.id)]",
 		"├─TableReader_12 9990.00 root data:Selection_11",
 		"│ └─Selection_11 9990.00 cop not(isnull(test.t1.id))",
@@ -399,7 +409,7 @@ func (s *testSuite) TestExplain(c *C) {
 		"    └─TableScan_13 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
 
-	tk.MustQuery("explain SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id").Check(testkit.Rows(
+	tk.MustQuery("explain SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id;").Check(testkit.Rows(
 		"MergeJoin_7 12487.50 root inner join, left key:test.t1.id, right key:test.t2.id",
 		"├─Sort_11 9990.00 root test.t1.id:asc",
 		"│ └─TableReader_10 9990.00 root data:Selection_9",
@@ -413,7 +423,7 @@ func (s *testSuite) TestExplain(c *C) {
 
 	tk.MustExec("create global binding for SELECT * from t1,t2 where t1.id = t2.id using SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id")
 
-	tk.MustQuery("explain SELECT * from t1,t2 where t1.id = t2.id").Check(testkit.Rows(
+	tk.MustQuery("explain SELECT * from t1,t2 where t1.id = t2.id;").Check(testkit.Rows(
 		"MergeJoin_7 12487.50 root inner join, left key:test.t1.id, right key:test.t2.id",
 		"├─Sort_11 9990.00 root test.t1.id:asc",
 		"│ └─TableReader_10 9990.00 root data:Selection_9",
@@ -445,7 +455,7 @@ func (s *testSuite) TestBindingSymbolList(c *C) {
 	tk.MustExec(`create global binding for select a, b from t where a = 1 limit 0, 1 using select a, b from t use index (ib) where a = 1 limit 0, 1`)
 
 	// after binding
-	tk.MustQuery("select a, b from t where a = 3 limit 1, 100")
+	tk.MustQuery("select a, b from t where a = 3 limit 1, 100;")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:ib")
 	c.Assert(tk.MustUseIndex("select a, b from t where a = 3 limit 1, 100", "b"), IsTrue)
 
@@ -509,14 +519,66 @@ func (s *testSuite) TestBindingCache(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, index idx(a))")
-	tk.MustExec("create global binding for select * from t using select * from t use index(idx)")
+	tk.MustExec("create global binding for select * from t using select * from t use index(idx);")
 	tk.MustExec("create database tmp")
 	tk.MustExec("use tmp")
 	tk.MustExec("create table t(a int, b int, index idx(a))")
-	tk.MustExec("create global binding for select * from t using select * from t use index(idx)")
+	tk.MustExec("create global binding for select * from t using select * from t use index(idx);")
 
 	c.Assert(s.domain.BindHandle().Update(false), IsNil)
 	c.Assert(s.domain.BindHandle().Update(false), IsNil)
 	res := tk.MustQuery("show global bindings")
 	c.Assert(len(res.Rows()), Equals, 2)
+}
+
+func (s *testSuite) TestDefaultDB(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, index idx(a))")
+	tk.MustExec("create global binding for select * from test.t using select * from test.t use index(idx)")
+	tk.MustExec("use mysql")
+	tk.MustQuery("select * from test.t")
+	// Even in another database, we could still use the bindings.
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idx")
+	tk.MustExec("drop global binding for select * from test.t")
+	tk.MustQuery("show global bindings").Check(testkit.Rows())
+
+	tk.MustExec("use test")
+	tk.MustExec("create session binding for select * from test.t using select * from test.t use index(idx)")
+	tk.MustExec("use mysql")
+	tk.MustQuery("select * from test.t")
+	// Even in another database, we could still use the bindings.
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idx")
+}
+
+func (s *testSuite) TestPrivileges(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, index idx(a))")
+	tk.MustExec("create global binding for select * from t using select * from t use index(idx)")
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
+	rows := tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 1)
+	tk.MustExec("create user test@'%'")
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "test", Hostname: "%"}, nil, nil), IsTrue)
+	rows = tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 0)
+}
+
+func (s *testSuite) TestErrorParse(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, index idx(a))")
+	_, err := tk.Exec("create global binding for select * from t where a = '1' using select * from t where a = '")
+	c.Assert(err, NotNil)
+	tk.MustExec("create global binding for select * from t where a = '1' using select * from t where a = '1'")
+	tk.MustExec("update mysql.bind_info set bind_sql = 'select'")
+	h := s.domain.BindHandle()
+	// Do not panic.
+	h.Update(true)
 }

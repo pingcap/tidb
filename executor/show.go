@@ -16,6 +16,7 @@ package executor
 import (
 	"bytes"
 	"context"
+	gjson "encoding/json"
 	"fmt"
 	"sort"
 	"strconv"
@@ -24,6 +25,7 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/charset"
@@ -41,6 +43,8 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/privilege"
+	"github.com/pingcap/tidb/privilege/privileges"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
@@ -49,6 +53,7 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/format"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
@@ -187,6 +192,38 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 	return nil
 }
 
+// visibleChecker checks if a stmt is visible for a certain user.
+type visibleChecker struct {
+	defaultDB string
+	ctx       sessionctx.Context
+	is        infoschema.InfoSchema
+	manager   privilege.Manager
+	ok        bool
+}
+
+func (v *visibleChecker) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+	switch x := in.(type) {
+	case *ast.TableName:
+		schema := x.Schema.L
+		if schema == "" {
+			schema = v.defaultDB
+		}
+		if !v.is.TableExists(model.NewCIStr(schema), x.Name) {
+			return in, true
+		}
+		activeRoles := v.ctx.GetSessionVars().ActiveRoles
+		if v.manager != nil && !v.manager.RequestVerification(activeRoles, schema, x.Name.L, "", mysql.SelectPriv) {
+			v.ok = false
+		}
+		return in, true
+	}
+	return in, false
+}
+
+func (v *visibleChecker) Leave(in ast.Node) (out ast.Node, ok bool) {
+	return in, true
+}
+
 func (e *ShowExec) fetchShowBind() error {
 	var bindRecords []*bindinfo.BindMeta
 	if !e.GlobalScope {
@@ -195,7 +232,23 @@ func (e *ShowExec) fetchShowBind() error {
 	} else {
 		bindRecords = domain.GetDomain(e.ctx).BindHandle().GetAllBindRecord()
 	}
+	parser := parser.New()
 	for _, bindData := range bindRecords {
+		stmt, err := parser.ParseOneStmt(bindData.BindSQL, bindData.Charset, bindData.Collation)
+		if err != nil {
+			return err
+		}
+		checker := visibleChecker{
+			defaultDB: bindData.Db,
+			ctx:       e.ctx,
+			is:        e.is,
+			manager:   privilege.GetPrivilegeManager(e.ctx),
+			ok:        true,
+		}
+		stmt.Accept(&checker)
+		if !checker.ok {
+			continue
+		}
 		e.appendRow([]interface{}{
 			bindData.OriginalSQL,
 			bindData.BindSQL,
@@ -343,7 +396,7 @@ func (e *ShowExec) fetchShowTableStatus() error {
                FROM information_schema.tables
 	       WHERE table_schema='%s' ORDER BY table_name`, e.DBName)
 
-	rows, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
+	rows, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithSnapshot(e.ctx, sql)
 
 	if err != nil {
 		return errors.Trace(err)
@@ -984,8 +1037,24 @@ func (e *ShowExec) fetchShowCreateUser() error {
 		return ErrCannotUser.GenWithStackByArgs("SHOW CREATE USER",
 			fmt.Sprintf("'%s'@'%s'", e.User.Username, e.User.Hostname))
 	}
-	showStr := fmt.Sprintf("CREATE USER '%s'@'%s' IDENTIFIED WITH 'mysql_native_password' AS '%s' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK",
-		e.User.Username, e.User.Hostname, checker.GetEncodedPassword(e.User.Username, e.User.Hostname))
+	sql = fmt.Sprintf(`SELECT PRIV FROM %s.%s WHERE User='%s' AND Host='%s'`,
+		mysql.SystemDB, mysql.GlobalPrivTable, userName, hostName)
+	rows, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	require := "NONE"
+	if len(rows) == 1 {
+		privData := rows[0].GetString(0)
+		var privValue privileges.GlobalPrivValue
+		err = gjson.Unmarshal(hack.Slice(privData), &privValue)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		require = privValue.RequireStr()
+	}
+	showStr := fmt.Sprintf("CREATE USER '%s'@'%s' IDENTIFIED WITH 'mysql_native_password' AS '%s' REQUIRE %s PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK",
+		e.User.Username, e.User.Hostname, checker.GetEncodedPassword(e.User.Username, e.User.Hostname), require)
 	e.appendRow([]interface{}{showStr})
 	return nil
 }

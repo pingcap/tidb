@@ -532,7 +532,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	case model.ActionDropTablePartition:
 		ver, err = onDropTablePartition(t, job)
 	case model.ActionTruncateTablePartition:
-		ver, err = onTruncateTablePartition(t, job)
+		ver, err = onTruncateTablePartition(d, t, job)
 	case model.ActionAddColumn:
 		ver, err = onAddColumn(d, t, job)
 	case model.ActionDropColumn:
@@ -564,7 +564,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	case model.ActionModifyTableComment:
 		ver, err = onModifyTableComment(t, job)
 	case model.ActionAddTablePartition:
-		ver, err = onAddTablePartition(t, job)
+		ver, err = onAddTablePartition(d, t, job)
 	case model.ActionModifyTableCharsetAndCollate:
 		ver, err = onModifyTableCharsetAndCollate(t, job)
 	case model.ActionRecoverTable:
@@ -711,20 +711,34 @@ func updateSchemaVersion(t *meta.Meta, job *model.Job) (int64, error) {
 		Type:     job.Type,
 		SchemaID: job.SchemaID,
 	}
-	if job.Type == model.ActionTruncateTable {
+	switch job.Type {
+	case model.ActionTruncateTable:
 		// Truncate table has two table ID, should be handled differently.
 		err = job.DecodeArgs(&diff.TableID)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
 		diff.OldTableID = job.TableID
-	} else if job.Type == model.ActionRenameTable {
+	case model.ActionCreateView:
+		tbInfo := &model.TableInfo{}
+		var orReplace bool
+		var oldTbInfoID int64
+		if err := job.DecodeArgs(tbInfo, &orReplace, &oldTbInfoID); err != nil {
+			return 0, errors.Trace(err)
+		}
+		// When the statement is "create or replace view " and we need to drop the old view,
+		// it has two table IDs and should be handled differently.
+		if oldTbInfoID > 0 && orReplace {
+			diff.OldTableID = oldTbInfoID
+		}
+		diff.TableID = tbInfo.ID
+	case model.ActionRenameTable:
 		err = job.DecodeArgs(&diff.OldSchemaID)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
 		diff.TableID = job.TableID
-	} else {
+	default:
 		diff.TableID = job.TableID
 	}
 	err = t.SetSchemaDiff(diff)

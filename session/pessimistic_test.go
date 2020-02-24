@@ -177,24 +177,31 @@ func (s *testPessimisticSuite) TestDeadlock(c *C) {
 	tk.MustExec("create table deadlock (k int primary key, v int)")
 	tk.MustExec("insert into deadlock values (1, 1), (2, 1)")
 
-	syncCh := make(chan struct{})
+	syncCh := make(chan error)
 	go func() {
 		tk1 := testkit.NewTestKitWithInit(c, s.store)
 		tk1.MustExec("begin pessimistic")
 		tk1.MustExec("update deadlock set v = v + 1 where k = 2")
-		<-syncCh
-		tk1.MustExec("update deadlock set v = v + 1 where k = 1")
-		<-syncCh
+		syncCh <- nil
+		_, err := tk1.Exec("update deadlock set v = v + 1 where k = 1")
+		syncCh <- err
 	}()
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("update deadlock set v = v + 1 where k = 1")
-	syncCh <- struct{}{}
-	time.Sleep(time.Millisecond * 10)
-	_, err := tk.Exec("update deadlock set v = v + 1 where k = 2")
+	<-syncCh
+	_, err1 := tk.Exec("update deadlock set v = v + 1 where k = 2")
+	err2 := <-syncCh
+	// Either err1 or err2 is deadlock error.
+	var err error
+	if err1 != nil {
+		c.Assert(err2, IsNil)
+		err = err1
+	} else {
+		err = err2
+	}
 	e, ok := errors.Cause(err).(*terror.Error)
 	c.Assert(ok, IsTrue)
 	c.Assert(int(e.Code()), Equals, mysql.ErrLockDeadlock)
-	syncCh <- struct{}{}
 }
 
 func (s *testPessimisticSuite) TestSingleStatementRollback(c *C) {
@@ -407,6 +414,7 @@ func (s *testPessimisticSuite) TestOptimisticConflicts(c *C) {
 	// TODO: ResolveLock block until timeout, takes about 40s, makes CI slow!
 	_, err := tk2.Exec("commit")
 	c.Check(err, NotNil)
+	tk.MustExec("rollback")
 
 	// Update snapshotTS after a conflict, invalidate snapshot cache.
 	tk.MustExec("truncate table conflict")
@@ -595,6 +603,22 @@ func (s *testPessimisticSuite) TestInnodbLockWaitTimeout(c *C) {
 	tk.MustExec("drop table if exists tk")
 }
 
+func (s *testPessimisticSuite) TestPushConditionCheckForPessimisticTxn(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	defer tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (i int key)")
+	tk.MustExec("insert into t values (1)")
+
+	tk.MustExec("set tidb_txn_mode = 'pessimistic'")
+	tk.MustExec("begin")
+	tk1.MustExec("delete from t where i = 1")
+	tk.MustExec("insert into t values (1) on duplicate key update i = values(i)")
+	tk.MustExec("commit")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1"))
+}
+
 func (s *testPessimisticSuite) TestInnodbLockWaitTimeoutWaitStart(c *C) {
 	// prepare work
 	tk := testkit.NewTestKitWithInit(c, s.store)
@@ -633,4 +657,34 @@ func (s *testPessimisticSuite) TestInnodbLockWaitTimeoutWaitStart(c *C) {
 	c.Check(waitErr.Error(), Equals, tikv.ErrLockWaitTimeout.Error())
 	c.Check(time.Since(start), GreaterEqual, time.Duration(1000*time.Millisecond))
 	c.Check(time.Since(start), LessEqual, time.Duration(1100*time.Millisecond))
+}
+
+func (s *testPessimisticSuite) TestPessimisticReadCommitted(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test")
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk1.MustExec("use test")
+
+	tk.MustExec("set tidb_txn_mode = 'pessimistic'")
+	tk1.MustExec("set tidb_txn_mode = 'pessimistic'")
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(i int key);")
+	tk.MustExec("insert into t values (1);")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1"))
+
+	tk.MustExec("begin;")
+	tk1.MustExec("begin;")
+	tk.MustExec("update t set i = -i;")
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		tk1.MustExec("update t set i = -i;")
+		wg.Done()
+	}()
+	tk.MustExec("commit;")
+	wg.Wait()
+
+	tk1.MustExec("commit;")
 }

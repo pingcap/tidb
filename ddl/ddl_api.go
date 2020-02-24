@@ -1891,7 +1891,7 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 		case ast.AlterTableDropIndex:
 			err = d.DropIndex(ctx, ident, model.NewCIStr(spec.Name))
 		case ast.AlterTableDropPrimaryKey:
-			err = d.dropIndex(ctx, ident, true, model.NewCIStr(mysql.PrimaryKeyName))
+			err = d.DropIndex(ctx, ident, model.NewCIStr(mysql.PrimaryKeyName))
 		case ast.AlterTableRenameIndex:
 			err = d.RenameIndex(ctx, ident, spec)
 		case ast.AlterTableDropPartition:
@@ -2571,6 +2571,10 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 			return nil, infoschema.ErrColumnExists.GenWithStackByArgs(newColName)
 		}
 	}
+	// Check the column with foreign key.
+	if fkInfo := getColumnForeignKeyInfo(originalColName.L, t.Meta().ForeignKeys); fkInfo != nil {
+		return nil, errFKIncompatibleColumns.GenWithStackByArgs(originalColName, fkInfo.Name)
+	}
 
 	// Constraints in the new column means adding new constraints. Errors should thrown,
 	// which will be done by `processColumnOptions` later.
@@ -2987,6 +2991,10 @@ func (d *ddl) DropTable(ctx sessionctx.Context, ti ast.Ident) (err error) {
 		return errors.Trace(err)
 	}
 
+	if tb.Meta().IsView() {
+		return infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name)
+	}
+
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    tb.Meta().ID,
@@ -3098,6 +3106,10 @@ func getAnonymousIndex(t table.Table, colName model.CIStr) model.CIStr {
 	id := 2
 	l := len(t.Indices())
 	indexName := colName
+	if strings.EqualFold(indexName.L, mysql.PrimaryKeyName) {
+		indexName = model.NewCIStr(fmt.Sprintf("%s_%d", colName.O, id))
+		id = 3
+	}
 	for i := 0; i < l; i++ {
 		if t.Indices()[i].Meta().Name.L == indexName.L {
 			indexName = model.NewCIStr(fmt.Sprintf("%s_%d", colName.O, id))
@@ -3305,10 +3317,6 @@ func (d *ddl) DropForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName model.
 }
 
 func (d *ddl) DropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CIStr) error {
-	return d.dropIndex(ctx, ti, false, indexName)
-}
-
-func (d *ddl) dropIndex(ctx sessionctx.Context, ti ast.Ident, isPK bool, indexName model.CIStr) error {
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
@@ -3320,6 +3328,12 @@ func (d *ddl) dropIndex(ctx sessionctx.Context, ti ast.Ident, isPK bool, indexNa
 	}
 
 	indexInfo := t.Meta().FindIndexByName(indexName.L)
+	var isPK bool
+	if indexName.L == strings.ToLower(mysql.PrimaryKeyName) &&
+		// Before we fixed #14243, there might be a general index named `primary` but not a primary key.
+		(indexInfo == nil || indexInfo.Primary) {
+		isPK = true
+	}
 	if isPK {
 		if !config.GetGlobalConfig().AlterPrimaryKey {
 			return ErrUnsupportedModifyPrimaryKey.GenWithStack("Unsupported drop primary key when alter-primary-key is false")
@@ -3378,6 +3392,10 @@ func isDroppableColumn(tblInfo *model.TableInfo, colName model.CIStr) error {
 	// We must drop the index first, then drop the column.
 	if isColumnWithIndex(colName.L, tblInfo.Indices) {
 		return errCantDropColWithIndex.GenWithStack("can't drop column %s with index covered now", colName)
+	}
+	// Check the column with foreign key.
+	if fkInfo := getColumnForeignKeyInfo(colName.L, tblInfo.ForeignKeys); fkInfo != nil {
+		return errFkColumnCannotDrop.GenWithStackByArgs(colName, fkInfo.Name)
 	}
 	return nil
 }

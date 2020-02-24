@@ -19,6 +19,7 @@ import (
 	"math"
 	"math/rand"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -81,7 +82,7 @@ func (s *testIntegrationSuite9) TestCreateTableWithPartition(c *C) {
 		partition p2 values less than (1996),
 		partition p2 values less than (2001)
 	);`
-	assertErrorCode(c, tk, sql1, tmysql.ErrSameNamePartition)
+	tk.MustGetErrCode(sql1, tmysql.ErrSameNamePartition)
 
 	sql2 := `create table employees (
 	id int not null,
@@ -92,7 +93,7 @@ func (s *testIntegrationSuite9) TestCreateTableWithPartition(c *C) {
 		partition p2 values less than (1996),
 		partition p3 values less than (2001)
 	);`
-	assertErrorCode(c, tk, sql2, tmysql.ErrRangeNotIncreasing)
+	tk.MustGetErrCode(sql2, tmysql.ErrRangeNotIncreasing)
 
 	sql3 := `create table employees (
 	id int not null,
@@ -103,7 +104,7 @@ func (s *testIntegrationSuite9) TestCreateTableWithPartition(c *C) {
 		partition p2 values less than maxvalue,
 		partition p3 values less than (2001)
 	);`
-	assertErrorCode(c, tk, sql3, tmysql.ErrPartitionMaxvalue)
+	tk.MustGetErrCode(sql3, tmysql.ErrPartitionMaxvalue)
 
 	sql4 := `create table t4 (
 	a int not null,
@@ -114,7 +115,7 @@ func (s *testIntegrationSuite9) TestCreateTableWithPartition(c *C) {
 		partition p2 values less than (1991),
 		partition p3 values less than (1995)
 	);`
-	assertErrorCode(c, tk, sql4, tmysql.ErrPartitionMaxvalue)
+	tk.MustGetErrCode(sql4, tmysql.ErrPartitionMaxvalue)
 
 	_, err = tk.Exec(`CREATE TABLE rc (
 		a INT NOT NULL,
@@ -136,7 +137,7 @@ func (s *testIntegrationSuite9) TestCreateTableWithPartition(c *C) {
 	partition by range( hired ) (
 		 partition p0 values less than (6 , 10)
 	);`
-	assertErrorCode(c, tk, sql6, tmysql.ErrTooManyValues)
+	tk.MustGetErrCode(sql6, tmysql.ErrTooManyValues)
 
 	sql7 := `create table t7 (
 	a int not null,
@@ -149,7 +150,7 @@ func (s *testIntegrationSuite9) TestCreateTableWithPartition(c *C) {
 		partition p4 values less than (1995),
 		partition p5 values less than maxvalue
 	);`
-	assertErrorCode(c, tk, sql7, tmysql.ErrPartitionMaxvalue)
+	tk.MustGetErrCode(sql7, tmysql.ErrPartitionMaxvalue)
 
 	_, err = tk.Exec(`create table t8 (
 	a int not null,
@@ -168,9 +169,9 @@ func (s *testIntegrationSuite9) TestCreateTableWithPartition(c *C) {
 		partition p0 values less than (2),
 		partition p1 values less than (6)
 	);`
-	assertErrorCode(c, tk, sql9, tmysql.ErrPartitionFunctionIsNotAllowed)
+	tk.MustGetErrCode(sql9, tmysql.ErrPartitionFunctionIsNotAllowed)
 
-	assertErrorCode(c, tk, `create TABLE t10 (c1 int,c2 int) partition by range(c1 / c2 ) (partition p0 values less than (2));`, tmysql.ErrPartitionFunctionIsNotAllowed)
+	tk.MustGetErrCode(`create TABLE t10 (c1 int,c2 int) partition by range(c1 / c2 ) (partition p0 values less than (2));`, tmysql.ErrPartitionFunctionIsNotAllowed)
 	_, err = tk.Exec(`CREATE TABLE t9 (
 		a INT NOT NULL,
 		b INT NOT NULL,
@@ -183,7 +184,7 @@ func (s *testIntegrationSuite9) TestCreateTableWithPartition(c *C) {
 	);`)
 	c.Assert(ddl.ErrRangeNotIncreasing.Equal(err), IsTrue)
 
-	assertErrorCode(c, tk, `create TABLE t10 (c1 int,c2 int) partition by range(c1 / c2 ) (partition p0 values less than (2));`, tmysql.ErrPartitionFunctionIsNotAllowed)
+	tk.MustGetErrCode(`create TABLE t10 (c1 int,c2 int) partition by range(c1 / c2 ) (partition p0 values less than (2));`, tmysql.ErrPartitionFunctionIsNotAllowed)
 
 	tk.MustExec(`create TABLE t11 (c1 int,c2 int) partition by range(c1 div c2 ) (partition p0 values less than (2));`)
 	tk.MustExec(`create TABLE t12 (c1 int,c2 int) partition by range(c1 + c2 ) (partition p0 values less than (2));`)
@@ -192,17 +193,17 @@ func (s *testIntegrationSuite9) TestCreateTableWithPartition(c *C) {
 	tk.MustExec(`create TABLE t15 (c1 int,c2 int) partition by range( abs(c1) ) (partition p0 values less than (2));`)
 	tk.MustExec(`create TABLE t16 (c1 int) partition by range( c1) (partition p0 values less than (10));`)
 
-	assertErrorCode(c, tk, `create TABLE t17 (c1 int,c2 float) partition by range(c1 + c2 ) (partition p0 values less than (2));`, tmysql.ErrPartitionFuncNotAllowed)
-	assertErrorCode(c, tk, `create TABLE t18 (c1 int,c2 float) partition by range( floor(c2) ) (partition p0 values less than (2));`, tmysql.ErrPartitionFuncNotAllowed)
+	tk.MustGetErrCode(`create TABLE t17 (c1 int,c2 float) partition by range(c1 + c2 ) (partition p0 values less than (2));`, tmysql.ErrPartitionFuncNotAllowed)
+	tk.MustGetErrCode(`create TABLE t18 (c1 int,c2 float) partition by range( floor(c2) ) (partition p0 values less than (2));`, tmysql.ErrPartitionFuncNotAllowed)
 	tk.MustExec(`create TABLE t19 (c1 int,c2 float) partition by range( floor(c1) ) (partition p0 values less than (2));`)
 
 	tk.MustExec(`create TABLE t20 (c1 int,c2 bit(10)) partition by range(c2) (partition p0 values less than (10));`)
 	tk.MustExec(`create TABLE t21 (c1 int,c2 year) partition by range( c2 ) (partition p0 values less than (2000));`)
 
-	assertErrorCode(c, tk, `create TABLE t24 (c1 float) partition by range( c1 ) (partition p0 values less than (2000));`, tmysql.ErrFieldTypeNotAllowedAsPartitionField)
+	tk.MustGetErrCode(`create TABLE t24 (c1 float) partition by range( c1 ) (partition p0 values less than (2000));`, tmysql.ErrFieldTypeNotAllowedAsPartitionField)
 
 	// test check order. The sql below have 2 problem: 1. ErrFieldTypeNotAllowedAsPartitionField  2. ErrPartitionMaxvalue , mysql will return ErrPartitionMaxvalue.
-	assertErrorCode(c, tk, `create TABLE t25 (c1 float) partition by range( c1 ) (partition p1 values less than maxvalue,partition p0 values less than (2000));`, tmysql.ErrPartitionMaxvalue)
+	tk.MustGetErrCode(`create TABLE t25 (c1 float) partition by range( c1 ) (partition p1 values less than maxvalue,partition p0 values less than (2000));`, tmysql.ErrPartitionMaxvalue)
 
 	// Fix issue 7362.
 	tk.MustExec("create table test_partition(id bigint, name varchar(255), primary key(id)) ENGINE=InnoDB DEFAULT CHARSET=utf8 PARTITION BY RANGE  COLUMNS(id) (PARTITION p1 VALUES LESS THAN (10) ENGINE = InnoDB);")
@@ -241,15 +242,15 @@ func (s *testIntegrationSuite9) TestCreateTableWithPartition(c *C) {
 		  (partition p0 values less than (10, 10.0))`)
 	c.Assert(ddl.ErrNotAllowedTypeInPartition.Equal(err), IsTrue)
 
-	assertErrorCode(c, tk, `create table t31 (a int not null) partition by range( a );`, tmysql.ErrPartitionsMustBeDefined)
-	assertErrorCode(c, tk, `create table t32 (a int not null) partition by range columns( a );`, tmysql.ErrPartitionsMustBeDefined)
-	assertErrorCode(c, tk, `create table t33 (a int, b int) partition by hash(a) partitions 0;`, tmysql.ErrNoParts)
-	assertErrorCode(c, tk, `create table t33 (a timestamp, b int) partition by hash(a) partitions 30;`, tmysql.ErrFieldTypeNotAllowedAsPartitionField)
+	tk.MustGetErrCode(`create table t31 (a int not null) partition by range( a );`, tmysql.ErrPartitionsMustBeDefined)
+	tk.MustGetErrCode(`create table t32 (a int not null) partition by range columns( a );`, tmysql.ErrPartitionsMustBeDefined)
+	tk.MustGetErrCode(`create table t33 (a int, b int) partition by hash(a) partitions 0;`, tmysql.ErrNoParts)
+	tk.MustGetErrCode(`create table t33 (a timestamp, b int) partition by hash(a) partitions 30;`, tmysql.ErrFieldTypeNotAllowedAsPartitionField)
 	// TODO: fix this one
-	// assertErrorCode(c, tk, `create table t33 (a timestamp, b int) partition by hash(unix_timestamp(a)) partitions 30;`, tmysql.ErrPartitionFuncNotAllowed)
+	// tk.MustGetErrCode(`create table t33 (a timestamp, b int) partition by hash(unix_timestamp(a)) partitions 30;`, tmysql.ErrPartitionFuncNotAllowed)
 
 	// Fix issue 8647
-	assertErrorCode(c, tk, `CREATE TABLE trb8 (
+	tk.MustGetErrCode(`CREATE TABLE trb8 (
 		id int(11) DEFAULT NULL,
 		name varchar(50) DEFAULT NULL,
 		purchased date DEFAULT NULL
@@ -463,7 +464,7 @@ func (s *testIntegrationSuite5) TestAlterTableAddPartition(c *C) {
 		partition p1 values less than (2010),
 		partition p2 values less than maxvalue
 	);`
-	assertErrorCode(c, tk, sql1, tmysql.ErrPartitionMgmtOnNonpartitioned)
+	tk.MustGetErrCode(sql1, tmysql.ErrPartitionMgmtOnNonpartitioned)
 	tk.MustExec(`create table table_MustBeDefined (
 	id int not null,
 	hired date not null
@@ -474,7 +475,7 @@ func (s *testIntegrationSuite5) TestAlterTableAddPartition(c *C) {
 		partition p3 values less than (2001)
 	);`)
 	sql2 := "alter table table_MustBeDefined add partition"
-	assertErrorCode(c, tk, sql2, tmysql.ErrPartitionsMustBeDefined)
+	tk.MustGetErrCode(sql2, tmysql.ErrPartitionsMustBeDefined)
 	tk.MustExec("drop table if exists table2;")
 	tk.MustExec(`create table table2 (
 
@@ -489,7 +490,7 @@ func (s *testIntegrationSuite5) TestAlterTableAddPartition(c *C) {
 	sql3 := `alter table table2 add partition (
 		partition p3 values less than (2010)
 	);`
-	assertErrorCode(c, tk, sql3, tmysql.ErrPartitionMaxvalue)
+	tk.MustGetErrCode(sql3, tmysql.ErrPartitionMaxvalue)
 
 	tk.MustExec("drop table if exists table3;")
 	tk.MustExec(`create table table3 (
@@ -504,34 +505,34 @@ func (s *testIntegrationSuite5) TestAlterTableAddPartition(c *C) {
 	sql4 := `alter table table3 add partition (
 		partition p3 values less than (1993)
 	);`
-	assertErrorCode(c, tk, sql4, tmysql.ErrRangeNotIncreasing)
+	tk.MustGetErrCode(sql4, tmysql.ErrRangeNotIncreasing)
 
 	sql5 := `alter table table3 add partition (
 		partition p1 values less than (1993)
 	);`
-	assertErrorCode(c, tk, sql5, tmysql.ErrSameNamePartition)
+	tk.MustGetErrCode(sql5, tmysql.ErrSameNamePartition)
 
 	sql6 := `alter table table3 add partition (
 		partition p1 values less than (1993),
 		partition p1 values less than (1995)
 	);`
-	assertErrorCode(c, tk, sql6, tmysql.ErrSameNamePartition)
+	tk.MustGetErrCode(sql6, tmysql.ErrSameNamePartition)
 
 	sql7 := `alter table table3 add partition (
 		partition p4 values less than (1993),
 		partition p1 values less than (1995),
 		partition p5 values less than maxvalue
 	);`
-	assertErrorCode(c, tk, sql7, tmysql.ErrSameNamePartition)
+	tk.MustGetErrCode(sql7, tmysql.ErrSameNamePartition)
 
 	sql8 := "alter table table3 add partition (partition p6);"
-	assertErrorCode(c, tk, sql8, tmysql.ErrPartitionRequiresValues)
+	tk.MustGetErrCode(sql8, tmysql.ErrPartitionRequiresValues)
 
 	sql9 := "alter table table3 add partition (partition p7 values in (2018));"
-	assertErrorCode(c, tk, sql9, tmysql.ErrPartitionWrongValues)
+	tk.MustGetErrCode(sql9, tmysql.ErrPartitionWrongValues)
 
 	sql10 := "alter table table3 add partition partitions 4;"
-	assertErrorCode(c, tk, sql10, tmysql.ErrPartitionsMustBeDefined)
+	tk.MustGetErrCode(sql10, tmysql.ErrPartitionsMustBeDefined)
 
 	tk.MustExec("alter table table3 add partition (partition p3 values less than (2001 + 10))")
 
@@ -550,7 +551,7 @@ func (s *testIntegrationSuite5) TestAlterTableAddPartition(c *C) {
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a datetime) partition by range columns (a) (partition p1 values less than ('2019-06-01'), partition p2 values less than ('2019-07-01'));")
 	sql := "alter table t add partition ( partition p3 values less than ('2019-07-01'));"
-	assertErrorCode(c, tk, sql, tmysql.ErrRangeNotIncreasing)
+	tk.MustGetErrCode(sql, tmysql.ErrRangeNotIncreasing)
 	tk.MustExec("alter table t add partition ( partition p3 values less than ('2019-08-01'));")
 
 	// Add partition value's type should be the same with the column's type.
@@ -561,7 +562,7 @@ func (s *testIntegrationSuite5) TestAlterTableAddPartition(c *C) {
 		PARTITION p0 VALUES LESS THAN ('20190905'),
 		PARTITION p1 VALUES LESS THAN ('20190906'));`)
 	sql = "alter table t add partition (partition p2 values less than (20190907));"
-	assertErrorCode(c, tk, sql, tmysql.ErrWrongTypeColumnValue)
+	tk.MustGetErrCode(sql, tmysql.ErrWrongTypeColumnValue)
 }
 
 func (s *testIntegrationSuite6) TestAlterTableDropPartition(c *C) {
@@ -596,7 +597,7 @@ func (s *testIntegrationSuite6) TestAlterTableDropPartition(c *C) {
 	tk.MustExec("drop table if exists table1;")
 	tk.MustExec("create table table1 (a int);")
 	sql1 := "alter table table1 drop partition p10;"
-	assertErrorCode(c, tk, sql1, tmysql.ErrPartitionMgmtOnNonpartitioned)
+	tk.MustGetErrCode(sql1, tmysql.ErrPartitionMgmtOnNonpartitioned)
 
 	tk.MustExec("drop table if exists table2;")
 	tk.MustExec(`create table table2 (
@@ -609,7 +610,7 @@ func (s *testIntegrationSuite6) TestAlterTableDropPartition(c *C) {
 		partition p3 values less than (2001)
 	);`)
 	sql2 := "alter table table2 drop partition p10;"
-	assertErrorCode(c, tk, sql2, tmysql.ErrDropPartitionNonExistent)
+	tk.MustGetErrCode(sql2, tmysql.ErrDropPartitionNonExistent)
 
 	tk.MustExec("drop table if exists table3;")
 	tk.MustExec(`create table table3 (
@@ -619,7 +620,7 @@ func (s *testIntegrationSuite6) TestAlterTableDropPartition(c *C) {
 		partition p1 values less than (1991)
 	);`)
 	sql3 := "alter table table3 drop partition p1;"
-	assertErrorCode(c, tk, sql3, tmysql.ErrDropLastPartition)
+	tk.MustGetErrCode(sql3, tmysql.ErrDropLastPartition)
 
 	tk.MustExec("drop table if exists table4;")
 	tk.MustExec(`create table table4 (
@@ -698,10 +699,10 @@ func (s *testIntegrationSuite6) TestAlterTableDropPartition(c *C) {
 	tk.MustExec("alter table table4 drop partition Par2;")
 	tk.MustExec("alter table table4 drop partition PAR5;")
 	sql4 := "alter table table4 drop partition PAR0;"
-	assertErrorCode(c, tk, sql4, tmysql.ErrDropPartitionNonExistent)
+	tk.MustGetErrCode(sql4, tmysql.ErrDropPartitionNonExistent)
 
 	tk.MustExec("CREATE TABLE t1 (a int(11), b varchar(64)) PARTITION BY HASH(a) PARTITIONS 3")
-	assertErrorCode(c, tk, "alter table t1 drop partition p2", tmysql.ErrOnlyOnRangeListPartition)
+	tk.MustGetErrCode("alter table t1 drop partition p2", tmysql.ErrOnlyOnRangeListPartition)
 }
 
 func (s *testIntegrationSuite11) TestAddPartitionTooManyPartitions(c *C) {
@@ -717,7 +718,7 @@ func (s *testIntegrationSuite11) TestAddPartitionTooManyPartitions(c *C) {
 		sql1 += fmt.Sprintf("partition p%d values less than (%d),", i, i)
 	}
 	sql1 += "partition p1025 values less than (1025) );"
-	assertErrorCode(c, tk, sql1, tmysql.ErrTooManyPartitions)
+	tk.MustGetErrCode(sql1, tmysql.ErrTooManyPartitions)
 
 	tk.MustExec("drop table if exists p2;")
 	sql2 := `create table p2 (
@@ -733,7 +734,7 @@ func (s *testIntegrationSuite11) TestAddPartitionTooManyPartitions(c *C) {
 	sql3 := `alter table p2 add partition (
 	partition p1025 values less than (1025)
 	);`
-	assertErrorCode(c, tk, sql3, tmysql.ErrTooManyPartitions)
+	tk.MustGetErrCode(sql3, tmysql.ErrTooManyPartitions)
 }
 
 func checkPartitionDelRangeDone(c *C, s *testIntegrationSuite, partitionPrefix kv.Key) bool {
@@ -785,7 +786,7 @@ func (s *testIntegrationSuite6) TestTruncatePartitionAndDropTable(c *C) {
 	result = tk.MustQuery("select count(*) from t2;")
 	result.Check(testkit.Rows("100"))
 	tk.MustExec("drop table t2;")
-	assertErrorCode(c, tk, "select * from t2;", tmysql.ErrNoSuchTable)
+	tk.MustGetErrCode("select * from t2;", tmysql.ErrNoSuchTable)
 
 	// Test truncate table partition.
 	tk.MustExec("drop table if exists t3;")
@@ -861,7 +862,7 @@ func (s *testIntegrationSuite6) TestTruncatePartitionAndDropTable(c *C) {
 	partitionPrefix = tablecodec.EncodeTablePrefix(oldPID)
 	hasOldPartitionData = checkPartitionDelRangeDone(c, s.testIntegrationSuite, partitionPrefix)
 	c.Assert(hasOldPartitionData, IsFalse)
-	assertErrorCode(c, tk, "select * from t4;", tmysql.ErrNoSuchTable)
+	tk.MustGetErrCode("select * from t4;", tmysql.ErrNoSuchTable)
 
 	// Test truncate table partition reassigns new partitionIDs.
 	tk.MustExec("drop table if exists t5;")
@@ -999,7 +1000,7 @@ func (s *testIntegrationSuite5) TestPartitionUniqueKeyNeedAllFieldsInPf(c *C) {
 	partition p1 values less than (11),
 	partition p2 values less than (15)
 	);`
-	assertErrorCode(c, tk, sql1, tmysql.ErrUniqueKeyNeedAllFieldsInPf)
+	tk.MustGetErrCode(sql1, tmysql.ErrUniqueKeyNeedAllFieldsInPf)
 
 	tk.MustExec("drop table if exists Part1;")
 	sql2 := `create table Part1 (
@@ -1014,7 +1015,7 @@ func (s *testIntegrationSuite5) TestPartitionUniqueKeyNeedAllFieldsInPf(c *C) {
 	partition p1 values less than (11),
 	partition p2 values less than (15)
 	);`
-	assertErrorCode(c, tk, sql2, tmysql.ErrUniqueKeyNeedAllFieldsInPf)
+	tk.MustGetErrCode(sql2, tmysql.ErrUniqueKeyNeedAllFieldsInPf)
 
 	tk.MustExec("drop table if exists Part1;")
 	sql3 := `create table Part1 (
@@ -1029,7 +1030,7 @@ func (s *testIntegrationSuite5) TestPartitionUniqueKeyNeedAllFieldsInPf(c *C) {
 	partition p1 values less than (11),
 	partition p2 values less than (15)
 	);`
-	assertErrorCode(c, tk, sql3, tmysql.ErrUniqueKeyNeedAllFieldsInPf)
+	tk.MustGetErrCode(sql3, tmysql.ErrUniqueKeyNeedAllFieldsInPf)
 
 	tk.MustExec("drop table if exists Part1;")
 	sql4 := `create table Part1 (
@@ -1044,7 +1045,7 @@ func (s *testIntegrationSuite5) TestPartitionUniqueKeyNeedAllFieldsInPf(c *C) {
 	partition p1 values less than (11),
 	partition p2 values less than (15)
 	);`
-	assertErrorCode(c, tk, sql4, tmysql.ErrUniqueKeyNeedAllFieldsInPf)
+	tk.MustGetErrCode(sql4, tmysql.ErrUniqueKeyNeedAllFieldsInPf)
 
 	tk.MustExec("drop table if exists Part1;")
 	sql5 := `create table Part1 (
@@ -1058,7 +1059,7 @@ func (s *testIntegrationSuite5) TestPartitionUniqueKeyNeedAllFieldsInPf(c *C) {
 	partition p1 values less than (11),
 	partition p2 values less than (15)
 	);`
-	assertErrorCode(c, tk, sql5, tmysql.ErrUniqueKeyNeedAllFieldsInPf)
+	tk.MustGetErrCode(sql5, tmysql.ErrUniqueKeyNeedAllFieldsInPf)
 
 	tk.MustExec("drop table if exists Part1;")
 	sql6 := `create table Part1 (
@@ -1073,7 +1074,7 @@ func (s *testIntegrationSuite5) TestPartitionUniqueKeyNeedAllFieldsInPf(c *C) {
 	partition p1 values less than (11),
 	partition p2 values less than (15)
 	);`
-	assertErrorCode(c, tk, sql6, tmysql.ErrUniqueKeyNeedAllFieldsInPf)
+	tk.MustGetErrCode(sql6, tmysql.ErrUniqueKeyNeedAllFieldsInPf)
 
 	tk.MustExec("drop table if exists Part1;")
 	sql7 := `create table Part1 (
@@ -1088,7 +1089,7 @@ func (s *testIntegrationSuite5) TestPartitionUniqueKeyNeedAllFieldsInPf(c *C) {
 	partition p1 values less than (11),
 	partition p2 values less than (15)
 	);`
-	assertErrorCode(c, tk, sql7, tmysql.ErrUniqueKeyNeedAllFieldsInPf)
+	tk.MustGetErrCode(sql7, tmysql.ErrUniqueKeyNeedAllFieldsInPf)
 
 	tk.MustExec("drop table if exists part6;")
 	sql8 := `create table part6 (
@@ -1104,7 +1105,7 @@ func (s *testIntegrationSuite5) TestPartitionUniqueKeyNeedAllFieldsInPf(c *C) {
 	partition p1 values less than (11),
 	partition p2 values less than (15)
 	);`
-	assertErrorCode(c, tk, sql8, tmysql.ErrUniqueKeyNeedAllFieldsInPf)
+	tk.MustGetErrCode(sql8, tmysql.ErrUniqueKeyNeedAllFieldsInPf)
 
 	sql9 := `create table part7 (
 		col1 int not null,
@@ -1116,7 +1117,7 @@ func (s *testIntegrationSuite5) TestPartitionUniqueKeyNeedAllFieldsInPf(c *C) {
 	partition p1 values less than (11),
 	partition p2 values less than (15)
 	)`
-	assertErrorCode(c, tk, sql9, tmysql.ErrUniqueKeyNeedAllFieldsInPf)
+	tk.MustGetErrCode(sql9, tmysql.ErrUniqueKeyNeedAllFieldsInPf)
 
 	sql10 := `create table part8 (
                  a int not null,
@@ -1132,7 +1133,7 @@ func (s *testIntegrationSuite5) TestPartitionUniqueKeyNeedAllFieldsInPf(c *C) {
                partition p1 values less than (7),
                partition p2 values less than (11)
         )`
-	assertErrorCode(c, tk, sql10, tmysql.ErrUniqueKeyNeedAllFieldsInPf)
+	tk.MustGetErrCode(sql10, tmysql.ErrUniqueKeyNeedAllFieldsInPf)
 
 	sql11 := `create table part9 (
                  a int not null,
@@ -1148,7 +1149,7 @@ func (s *testIntegrationSuite5) TestPartitionUniqueKeyNeedAllFieldsInPf(c *C) {
                partition p1 values less than (7, 9),
                partition p2 values less than (11, 22)
         )`
-	assertErrorCode(c, tk, sql11, tmysql.ErrUniqueKeyNeedAllFieldsInPf)
+	tk.MustGetErrCode(sql11, tmysql.ErrUniqueKeyNeedAllFieldsInPf)
 }
 
 func (s *testIntegrationSuite2) TestPartitionDropPrimaryKey(c *C) {
@@ -1633,4 +1634,36 @@ func (s *testIntegrationSuite8) TestTruncateTableWithPartition(c *C) {
 	tk.MustExec("create table test_4414(a int, b int) partition by hash(a) partitions 10;")
 	tk.MustExec("truncate table test_4414;")
 	tk.MustQuery("select * from test_4414 partition (p0)").Check(testkit.Rows())
+}
+
+func (s *testIntegrationSuite3) TestCommitWhenSchemaChange(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table schema_change (a int, b timestamp)
+			partition by range(a) (
+			    partition p0 values less than (4),
+			    partition p1 values less than (7),
+			    partition p2 values less than (11)
+			)`)
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk2.MustExec("use test")
+
+	tk.MustExec("begin")
+	tk.MustExec("insert into schema_change values (1, '2019-12-25 13:27:42')")
+	tk.MustExec("insert into schema_change values (3, '2019-12-25 13:27:43')")
+
+	tk2.MustExec("alter table schema_change add index idx(b)")
+
+	tk.MustExec("insert into schema_change values (5, '2019-12-25 13:27:43')")
+	tk.MustExec("insert into schema_change values (9, '2019-12-25 13:27:44')")
+	atomic.StoreUint32(&session.SchemaChangedWithoutRetry, 1)
+	_, err := tk.Se.Execute(context.Background(), "commit")
+	atomic.StoreUint32(&session.SchemaChangedWithoutRetry, 0)
+	c.Assert(domain.ErrInfoSchemaChanged.Equal(err), IsTrue)
+
+	// Cover a bug that schema validator does not prevent transaction commit when
+	// the schema has changeed on the partitioned table.
+	// That bug will cause data and index inconsistency!
+	tk.MustExec("admin check table schema_change")
+	tk.MustQuery("select * from schema_change").Check(testkit.Rows())
 }

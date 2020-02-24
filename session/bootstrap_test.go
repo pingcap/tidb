@@ -56,11 +56,12 @@ func (s *testBootstrapSuite) TestBootstrap(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(req.NumRows() == 0, IsFalse)
 	datums := statistics.RowToDatums(req.GetRow(0), r.Fields())
-	match(c, datums, []byte(`%`), []byte("root"), []byte(""), "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N")
+	match(c, datums, []byte(`%`), []byte("root"), []byte(""), "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y")
 
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "anyhost"}, []byte(""), []byte("")), IsTrue)
 	mustExecSQL(c, se, "USE test;")
 	// Check privilege tables.
+	mustExecSQL(c, se, "SELECT * from mysql.global_priv;")
 	mustExecSQL(c, se, "SELECT * from mysql.db;")
 	mustExecSQL(c, se, "SELECT * from mysql.tables_priv;")
 	mustExecSQL(c, se, "SELECT * from mysql.columns_priv;")
@@ -160,11 +161,12 @@ func (s *testBootstrapSuite) TestBootstrapWithError(c *C) {
 	c.Assert(req.NumRows() == 0, IsFalse)
 	row := req.GetRow(0)
 	datums := statistics.RowToDatums(row, r.Fields())
-	match(c, datums, []byte(`%`), []byte("root"), []byte(""), "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N")
+	match(c, datums, []byte(`%`), []byte("root"), []byte(""), "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y")
 	c.Assert(r.Close(), IsNil)
 
 	mustExecSQL(c, se, "USE test;")
 	// Check privilege tables.
+	mustExecSQL(c, se, "SELECT * from mysql.global_priv;")
 	mustExecSQL(c, se, "SELECT * from mysql.db;")
 	mustExecSQL(c, se, "SELECT * from mysql.tables_priv;")
 	mustExecSQL(c, se, "SELECT * from mysql.columns_priv;")
