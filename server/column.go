@@ -38,11 +38,11 @@ type ColumnInfo struct {
 // Dump dumps ColumnInfo to bytes.
 func (column *ColumnInfo) Dump(buffer []byte) []byte {
 	nameDump, orgnameDump := []byte(column.Name), []byte(column.OrgName)
-	if len(nameDump) > MaxColumnNameSize {
-		nameDump = nameDump[0:MaxColumnNameSize]
+	if len(nameDump) > maxColumnNameSize {
+		nameDump = nameDump[0:maxColumnNameSize]
 	}
-	if len(orgnameDump) > MaxColumnNameSize {
-		orgnameDump = orgnameDump[0:MaxColumnNameSize]
+	if len(orgnameDump) > maxColumnNameSize {
+		orgnameDump = orgnameDump[0:maxColumnNameSize]
 	}
 	buffer = dumpLengthEncodedString(buffer, []byte("def"))
 	buffer = dumpLengthEncodedString(buffer, []byte(column.Schema))
