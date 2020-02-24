@@ -207,7 +207,7 @@ Apply_17	9990.00	root	semi join, inner:Selection_21, equal:[eq(test.t1.a, test.t
 │ └─Selection_19	9990.00	cop[tikv]	not(isnull(test.t1.a))
 │   └─TableFullScan_18	10000.00	cop[tikv]	table:t1, keep order:false, stats:pseudo
 └─Selection_21	0.80	root	not(isnull(test.t2.a))
-  └─Projection_22	1.00	root	test.t2.a, test.t1.b
+  └─Projection_22	1.00	root	test.t2.a
     └─Limit_23	1.00	root	offset:0, count:1
       └─TableReader_29	1.00	root	data:Limit_28
         └─Limit_28	1.00	cop[tikv]	offset:0, count:1
