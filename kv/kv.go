@@ -93,13 +93,14 @@ const (
 	ReplicaReadLeader ReplicaReadType = 1 << iota
 	// ReplicaReadFollower stands for 'read from follower'.
 	ReplicaReadFollower
-	// ReplicaReadLearner stands for 'read from learner'.
-	ReplicaReadLearner
+	// ReplicaReadMixed stands for 'read from leader and follower and learner'.
+	ReplicaReadMixed
 )
 
 // IsFollowerRead checks if leader is going to be used to read data.
 func (r ReplicaReadType) IsFollowerRead() bool {
-	return r == ReplicaReadFollower
+	// In some cases the default value is 0, which should be treated as `ReplicaReadLeader`.
+	return r != ReplicaReadLeader && r != 0
 }
 
 // Those limits is enforced to make sure the transaction can be well handled by TiKV.
@@ -200,6 +201,7 @@ type LockCtx struct {
 	WaitStartTime         time.Time
 	PessimisticLockWaited *int32
 	LockKeysDuration      *time.Duration
+	LockKeysCount         *int32
 }
 
 // Client is used to send request to KV layer.
@@ -285,6 +287,8 @@ type Request struct {
 	StoreType StoreType
 	// Cacheable is true if the request can be cached. Currently only deterministic DAG requests can be cached.
 	Cacheable bool
+	// SchemaVer is for any schema-ful storage to validate schema correctness if necessary.
+	SchemaVar int64
 }
 
 // ResultSubset represents a result subset from a single storage unit.

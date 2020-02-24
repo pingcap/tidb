@@ -142,12 +142,14 @@ type StatementContext struct {
 	lockWaitStartTime     *time.Time // LockWaitStartTime stores the pessimistic lock wait start time
 	PessimisticLockWaited int32
 	LockKeysDuration      time.Duration
+	LockKeysCount         int32
 }
 
 // StmtHints are SessionVars related sql hints.
 type StmtHints struct {
 	// Hint Information
 	MemQuotaQuery           int64
+	MaxExecutionTime        uint64
 	ReplicaRead             byte
 	AllowInSubqToJoinAndAgg bool
 	NoIndexMergeHint        bool
@@ -156,6 +158,7 @@ type StmtHints struct {
 	HasAllowInSubqToJoinAndAggHint bool
 	HasMemQuotaHint                bool
 	HasReplicaReadHint             bool
+	HasMaxExecutionTime            bool
 }
 
 // GetNowTsCached getter for nowTs, if not set get now time and cache it

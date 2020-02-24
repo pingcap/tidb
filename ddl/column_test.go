@@ -630,7 +630,7 @@ func (s *testColumnSuite) checkReorganizationColumn(ctx sessionctx.Context, d *d
 	return nil
 }
 
-func (s *testColumnSuite) checkPublicColumn(ctx sessionctx.Context, d *ddl, tblInfo *model.TableInfo, handle int64, newCol *table.Column, oldRow []types.Datum, columnValue interface{}) error {
+func (s *testColumnSuite) checkPublicColumn(ctx sessionctx.Context, d *ddl, tblInfo *model.TableInfo, _ int64, newCol *table.Column, oldRow []types.Datum, columnValue interface{}) error {
 	t, err := testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
 	if err != nil {
 		return errors.Trace(err)
@@ -663,7 +663,7 @@ func (s *testColumnSuite) checkPublicColumn(ctx sessionctx.Context, d *ddl, tblI
 	}
 
 	newRow := types.MakeDatums(int64(11), int64(22), int64(33), int64(44))
-	handle, err = t.AddRecord(ctx, newRow)
+	handle, err := t.AddRecord(ctx, newRow)
 	if err != nil {
 		return errors.Trace(err)
 	}

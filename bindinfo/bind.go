@@ -21,6 +21,14 @@ type HintsSet struct {
 	indexHints [][]*ast.IndexHint          // Slice offset is the traversal order of `TableName` in the ast.
 }
 
+// GetFirstTableHints gets the first table hints.
+func (hs *HintsSet) GetFirstTableHints() []*ast.TableOptimizerHint {
+	if len(hs.tableHints) > 0 {
+		return hs.tableHints[0]
+	}
+	return nil
+}
+
 type hintProcessor struct {
 	*HintsSet
 	// bindHint2Ast indicates the behavior of the processor, `true` for bind hint to ast, `false` for extract hint from ast.

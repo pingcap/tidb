@@ -18,6 +18,7 @@ import (
 	"math"
 	"strings"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
@@ -25,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/mathutil"
 )
 
 // baseFuncDesc describes an function signature, only used in planner.
@@ -107,6 +107,10 @@ func (a *baseFuncDesc) typeInfer(ctx sessionctx.Context) error {
 		a.typeInfer4PercentRank()
 	case ast.WindowFuncLead, ast.WindowFuncLag:
 		a.typeInfer4LeadLag(ctx)
+	case ast.AggFuncVarPop:
+		a.typeInfer4VarPop(ctx)
+	case ast.AggFuncJsonObjectAgg:
+		a.typeInfer4JsonFuncs(ctx)
 	default:
 		return errors.Errorf("unsupported agg function: %s", a.Name)
 	}
@@ -188,7 +192,8 @@ func (a *baseFuncDesc) typeInfer4MaxMin(ctx sessionctx.Context) {
 		a.RetTp = a.Args[0].GetType().Clone()
 		a.RetTp.Flag &^= mysql.NotNullFlag
 	}
-	if a.RetTp.Tp == mysql.TypeEnum || a.RetTp.Tp == mysql.TypeSet {
+	// TODO: fix other aggFuncs for TypeEnum & TypeSet
+	if (a.RetTp.Tp == mysql.TypeEnum || a.RetTp.Tp == mysql.TypeSet) && a.Name != ast.AggFuncFirstRow {
 		a.RetTp = &types.FieldType{Tp: mysql.TypeString, Flen: mysql.MaxFieldCharLength}
 	}
 }
@@ -199,6 +204,11 @@ func (a *baseFuncDesc) typeInfer4BitFuncs(ctx sessionctx.Context) {
 	types.SetBinChsClnFlag(a.RetTp)
 	a.RetTp.Flag |= mysql.UnsignedFlag | mysql.NotNullFlag
 	// TODO: a.Args[0] = expression.WrapWithCastAsInt(ctx, a.Args[0])
+}
+
+func (a *baseFuncDesc) typeInfer4JsonFuncs(ctx sessionctx.Context) {
+	a.RetTp = types.NewFieldType(mysql.TypeJSON)
+	types.SetBinChsClnFlag(a.RetTp)
 }
 
 func (a *baseFuncDesc) typeInfer4NumberFuncs() {
@@ -233,6 +243,12 @@ func (a *baseFuncDesc) typeInfer4LeadLag(ctx sessionctx.Context) {
 	}
 }
 
+func (a *baseFuncDesc) typeInfer4VarPop(ctx sessionctx.Context) {
+	//var_pop's return value type is double
+	a.RetTp = types.NewFieldType(mysql.TypeDouble)
+	a.RetTp.Flen, a.RetTp.Decimal = mysql.MaxRealWidth, types.UnspecifiedLength
+}
+
 // GetDefaultValue gets the default value when the function's input is null.
 // According to MySQL, default values of the function are listed as follows:
 // e.g.
@@ -265,11 +281,12 @@ func (a *baseFuncDesc) GetDefaultValue() (v types.Datum) {
 // We do not need to wrap cast upon these functions,
 // since the EvalXXX method called by the arg is determined by the corresponding arg type.
 var noNeedCastAggFuncs = map[string]struct{}{
-	ast.AggFuncCount:    {},
-	ast.AggFuncMax:      {},
-	ast.AggFuncMin:      {},
-	ast.AggFuncFirstRow: {},
-	ast.WindowFuncNtile: {},
+	ast.AggFuncCount:         {},
+	ast.AggFuncMax:           {},
+	ast.AggFuncMin:           {},
+	ast.AggFuncFirstRow:      {},
+	ast.WindowFuncNtile:      {},
+	ast.AggFuncJsonObjectAgg: {},
 }
 
 // WrapCastForAggArgs wraps the args of an aggregate function with a cast function.

@@ -16,6 +16,7 @@ package tikv
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"math"
 	"sync"
 	"sync/atomic"
@@ -613,7 +614,7 @@ func (tm *ttlManager) close() {
 
 func (tm *ttlManager) keepAlive(c *twoPhaseCommitter) {
 	// Ticker is set to 1/2 of the ManagedLockTTL.
-	ticker := time.NewTicker(time.Duration(ManagedLockTTL) * time.Millisecond / 2)
+	ticker := time.NewTicker(time.Duration(atomic.LoadUint64(&ManagedLockTTL)) * time.Millisecond / 2)
 	defer ticker.Stop()
 	for {
 		select {
@@ -624,12 +625,12 @@ func (tm *ttlManager) keepAlive(c *twoPhaseCommitter) {
 			if tm.killed != nil && atomic.LoadUint32(tm.killed) != 0 {
 				return
 			}
-			bo := NewBackoffer(context.Background(), pessimisticLockMaxBackoff)
+			bo := NewBackoffer(context.Background(), pessimisticLockMaxBackoff).WithVars(c.txn.vars)
 			now, err := c.store.GetOracle().GetTimestamp(bo.ctx)
 			if err != nil {
 				err1 := bo.Backoff(BoPDRPC, err)
 				if err1 != nil {
-					logutil.BgLogger().Warn("keepAlive get tso fail",
+					logutil.Logger(bo.ctx).Warn("keepAlive get tso fail",
 						zap.Error(err))
 					return
 				}
@@ -641,20 +642,20 @@ func (tm *ttlManager) keepAlive(c *twoPhaseCommitter) {
 			if uptime > c10min {
 				// Set a 10min maximum lifetime for the ttlManager, so when something goes wrong
 				// the key will not be locked forever.
-				logutil.BgLogger().Info("ttlManager live up to its lifetime",
+				logutil.Logger(bo.ctx).Info("ttlManager live up to its lifetime",
 					zap.Uint64("txnStartTS", c.startTS))
 				metrics.TiKVTTLLifeTimeReachCounter.Inc()
 				return
 			}
 
-			newTTL := uptime + ManagedLockTTL
-			logutil.BgLogger().Info("send TxnHeartBeat",
+			newTTL := uptime + atomic.LoadUint64(&ManagedLockTTL)
+			logutil.Logger(bo.ctx).Info("send TxnHeartBeat",
 				zap.Uint64("startTS", c.startTS), zap.Uint64("newTTL", newTTL))
 			startTime := time.Now()
 			_, err = sendTxnHeartBeat(bo, c.store, c.primary(), c.startTS, newTTL)
 			if err != nil {
 				tiKVTxnHeartBeatHistogramError.Observe(time.Since(startTime).Seconds())
-				logutil.BgLogger().Warn("send TxnHeartBeat failed",
+				logutil.Logger(bo.ctx).Warn("send TxnHeartBeat failed",
 					zap.Error(err),
 					zap.Uint64("txnStartTS", c.startTS))
 				return
@@ -683,7 +684,7 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 		PrimaryLock:  c.primary(),
 		StartVersion: c.startTS,
 		ForUpdateTs:  c.forUpdateTS,
-		LockTtl:      elapsed + ManagedLockTTL,
+		LockTtl:      elapsed + atomic.LoadUint64(&ManagedLockTTL),
 		IsFirstLock:  c.isFirstLock,
 		WaitTimeout:  action.LockWaitTime,
 	}, pb.Context{Priority: c.priority, SyncLog: c.syncLog})
@@ -929,13 +930,22 @@ func (actionCommit) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch
 		if c.mu.committed {
 			// No secondary key could be rolled back after it's primary key is committed.
 			// There must be a serious bug somewhere.
-			logutil.BgLogger().Error("2PC failed commit key after primary key committed",
+			hexBatchKeys := func(keys [][]byte) []string {
+				var res []string
+				for _, k := range keys {
+					res = append(res, hex.EncodeToString(k))
+				}
+				return res
+			}
+			logutil.Logger(bo.ctx).Error("2PC failed commit key after primary key committed",
 				zap.Error(err),
-				zap.Uint64("txnStartTS", c.startTS))
+				zap.Uint64("txnStartTS", c.startTS),
+				zap.Uint64("commitTS", c.commitTS),
+				zap.Strings("keys", hexBatchKeys(batch.keys)))
 			return errors.Trace(err)
 		}
 		// The transaction maybe rolled back by concurrent transactions.
-		logutil.BgLogger().Debug("2PC failed commit primary key",
+		logutil.Logger(bo.ctx).Debug("2PC failed commit primary key",
 			zap.Error(err),
 			zap.Uint64("txnStartTS", c.startTS))
 		return err

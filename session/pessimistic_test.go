@@ -41,7 +41,7 @@ type testPessimisticSuite struct {
 func (s *testPessimisticSuite) SetUpSuite(c *C) {
 	s.testSessionSuiteBase.SetUpSuite(c)
 	// Set it to 300ms for testing lock resolve.
-	tikv.ManagedLockTTL = 300
+	atomic.StoreUint64(&tikv.ManagedLockTTL, 300)
 	tikv.PrewriteMaxBackoff = 500
 }
 
@@ -156,24 +156,31 @@ func (s *testPessimisticSuite) TestDeadlock(c *C) {
 	tk.MustExec("create table deadlock (k int primary key, v int)")
 	tk.MustExec("insert into deadlock values (1, 1), (2, 1)")
 
-	syncCh := make(chan struct{})
+	syncCh := make(chan error)
 	go func() {
 		tk1 := testkit.NewTestKitWithInit(c, s.store)
 		tk1.MustExec("begin pessimistic")
 		tk1.MustExec("update deadlock set v = v + 1 where k = 2")
-		<-syncCh
-		tk1.MustExec("update deadlock set v = v + 1 where k = 1")
-		<-syncCh
+		syncCh <- nil
+		_, err := tk1.Exec("update deadlock set v = v + 1 where k = 1")
+		syncCh <- err
 	}()
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("update deadlock set v = v + 1 where k = 1")
-	syncCh <- struct{}{}
-	time.Sleep(time.Millisecond * 10)
-	_, err := tk.Exec("update deadlock set v = v + 1 where k = 2")
+	<-syncCh
+	_, err1 := tk.Exec("update deadlock set v = v + 1 where k = 2")
+	err2 := <-syncCh
+	// Either err1 or err2 is deadlock error.
+	var err error
+	if err1 != nil {
+		c.Assert(err2, IsNil)
+		err = err1
+	} else {
+		err = err2
+	}
 	e, ok := errors.Cause(err).(*terror.Error)
 	c.Assert(ok, IsTrue)
 	c.Assert(int(e.Code()), Equals, mysql.ErrLockDeadlock)
-	syncCh <- struct{}{}
 }
 
 func (s *testPessimisticSuite) TestSingleStatementRollback(c *C) {
@@ -196,9 +203,12 @@ func (s *testPessimisticSuite) TestSingleStatementRollback(c *C) {
 	region2ID := region2.Id
 
 	syncCh := make(chan bool)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/SingleStmtDeadLockRetrySleep", "return"), IsNil)
 	go func() {
 		tk2.MustExec("begin pessimistic")
 		<-syncCh
+		// tk2 will go first, so tk will meet deadlock and retry, tk2 will resolve pessimistic rollback
+		// lock on key 3 after lock ttl
 		s.cluster.ScheduleDelay(tk2.Se.GetSessionVars().TxnCtx.StartTS, region2ID, time.Millisecond*3)
 		tk2.MustExec("update single_statement set v = v + 1")
 		tk2.MustExec("commit")
@@ -206,9 +216,10 @@ func (s *testPessimisticSuite) TestSingleStatementRollback(c *C) {
 	}()
 	tk.MustExec("begin pessimistic")
 	syncCh <- true
-	s.cluster.ScheduleDelay(tk.Se.GetSessionVars().TxnCtx.StartTS, region1ID, time.Millisecond*3)
+	s.cluster.ScheduleDelay(tk.Se.GetSessionVars().TxnCtx.StartTS, region1ID, time.Millisecond*10)
 	tk.MustExec("update single_statement set v = v + 1")
 	tk.MustExec("commit")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/SingleStmtDeadLockRetrySleep"), IsNil)
 	syncCh <- true
 }
 
@@ -387,6 +398,7 @@ func (s *testPessimisticSuite) TestOptimisticConflicts(c *C) {
 	tk2.MustExec("update conflict set c = 5 where id = 1")
 	_, err := tk2.Exec("commit")
 	c.Check(err, NotNil)
+	tk.MustExec("rollback")
 
 	// Update snapshotTS after a conflict, invalidate snapshot cache.
 	tk.MustExec("truncate table conflict")

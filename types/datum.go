@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -61,7 +62,7 @@ const (
 // It has better performance and is easier to use than `interface{}`.
 type Datum struct {
 	k         byte        // datum kind.
-	collation uint8       // collation can hold uint8 values.
+	collation string      // collation hold the collation information for string value.
 	decimal   uint16      // decimal can hold uint16 values.
 	length    uint32      // length can hold uint32 values.
 	i         int64       // i can hold int64 uint64 float64 values.
@@ -92,13 +93,8 @@ func (d *Datum) Kind() byte {
 }
 
 // Collation gets the collation of the datum.
-func (d *Datum) Collation() byte {
+func (d *Datum) Collation() string {
 	return d.collation
-}
-
-// SetCollation sets the collation of the datum.
-func (d *Datum) SetCollation(collation byte) {
-	d.collation = collation
 }
 
 // Frac gets the frac of the datum.
@@ -176,10 +172,12 @@ func (d *Datum) GetString() string {
 }
 
 // SetString sets string value.
-func (d *Datum) SetString(s string) {
+func (d *Datum) SetString(s string, collation string, length int) {
 	d.k = KindString
 	sink(s)
 	d.b = hack.Slice(s)
+	d.length = uint32(length)
+	d.collation = collation
 }
 
 // sink prevents s from being allocated on the stack.
@@ -198,9 +196,11 @@ func (d *Datum) SetBytes(b []byte) {
 }
 
 // SetBytesAsString sets bytes value to datum as string type.
-func (d *Datum) SetBytesAsString(b []byte) {
+func (d *Datum) SetBytesAsString(b []byte, collation string, length uint32) {
 	d.k = KindString
 	d.b = b
+	d.length = length
+	d.collation = collation
 }
 
 // GetInterface gets interface value.
@@ -442,7 +442,7 @@ func (d *Datum) SetValue(val interface{}) {
 	case float64:
 		d.SetFloat64(x)
 	case string:
-		d.SetString(x)
+		d.SetString(x, mysql.DefaultCollationName, collate.DefaultLen)
 	case []byte:
 		d.SetBytes(x)
 	case *MyDecimal:
@@ -723,6 +723,7 @@ func (d *Datum) compareMysqlTime(sc *stmtctx.StatementContext, time Time) (int, 
 }
 
 // ConvertTo converts a datum to the target field type.
+// change this method need sync modification to type2Kind in rowcodec/types.go
 func (d *Datum) ConvertTo(sc *stmtctx.StatementContext, target *FieldType) (Datum, error) {
 	if d.k == KindNull {
 		return Datum{}, nil
@@ -860,7 +861,7 @@ func (d *Datum) convertToString(sc *stmtctx.StatementContext, target *FieldType)
 		return invalidConv(d, target.Tp)
 	}
 	s, err := ProduceStrWithSpecifiedTp(s, target, sc, true)
-	ret.SetString(s)
+	ret.SetString(s, target.Collate, target.Flen)
 	if target.Charset == charset.CharsetBin {
 		ret.k = KindBytes
 	}
@@ -1691,7 +1692,13 @@ func NewBytesDatum(b []byte) (d Datum) {
 
 // NewStringDatum creates a new Datum from a string.
 func NewStringDatum(s string) (d Datum) {
-	d.SetString(s)
+	d.SetString(s, mysql.DefaultCollationName, collate.DefaultLen)
+	return d
+}
+
+// NewCollationStringDatum creates a new Datum from a string with collation and length info.
+func NewCollationStringDatum(s string, collation string, length int) (d Datum) {
+	d.SetString(s, collation, length)
 	return d
 }
 
@@ -1719,9 +1726,15 @@ func NewTimeDatum(t Time) (d Datum) {
 	return d
 }
 
-// NewDecimalDatum creates a new Datum form a MyDecimal value.
+// NewDecimalDatum creates a new Datum from a MyDecimal value.
 func NewDecimalDatum(dec *MyDecimal) (d Datum) {
 	d.SetMysqlDecimal(dec)
+	return d
+}
+
+// NewJSONDatum creates a new Datum from a BinaryJSON value
+func NewJSONDatum(j json.BinaryJSON) (d Datum) {
+	d.SetMysqlJSON(j)
 	return d
 }
 
@@ -1740,6 +1753,12 @@ func NewMysqlBitDatum(b BinaryLiteral) (d Datum) {
 // NewMysqlEnumDatum creates a new MysqlEnum Datum for a Enum value.
 func NewMysqlEnumDatum(e Enum) (d Datum) {
 	d.SetMysqlEnum(e)
+	return d
+}
+
+// NewMysqlSetDatum creates a new MysqlSet Datum for a Enum value.
+func NewMysqlSetDatum(e Set) (d Datum) {
+	d.SetMysqlSet(e)
 	return d
 }
 

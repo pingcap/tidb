@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/stringutil"
@@ -241,7 +242,7 @@ func (e *LoadDataInfo) CommitWork(ctx context.Context) error {
 		case <-e.QuitCh:
 			err = errors.New("commit forced to quit")
 			logutil.Logger(ctx).Error("commit forced to quit, possible preparation failed")
-			break
+			return err
 		case commitTask, ok := <-e.commitTaskQueue:
 			if ok {
 				start := time.Now()
@@ -257,7 +258,6 @@ func (e *LoadDataInfo) CommitWork(ctx context.Context) error {
 					zap.Int("tasks in queue", len(e.commitTaskQueue)))
 			} else {
 				end = true
-				break
 			}
 		}
 		if err != nil {
@@ -474,7 +474,7 @@ func (e *LoadDataInfo) colsToRow(ctx context.Context, cols []field) []types.Datu
 		if cols[i].maybeNull && string(cols[i].str) == "N" {
 			e.row[i].SetNull()
 		} else {
-			e.row[i].SetString(string(cols[i].str))
+			e.row[i].SetString(string(cols[i].str), mysql.DefaultCollationName, collate.DefaultLen)
 		}
 	}
 	row, err := e.getRowInPlace(ctx, e.row, e.rows[e.curBatchCnt])

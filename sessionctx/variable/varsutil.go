@@ -116,6 +116,12 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 		return fmt.Sprintf("%d", s.TxnCtx.StartTS), true, nil
 	case TiDBGeneralLog:
 		return fmt.Sprintf("%d", atomic.LoadUint32(&ProcessGeneralLog)), true, nil
+	case TiDBPProfSQLCPU:
+		val := "0"
+		if EnablePProfSQLCPU.Load() {
+			val = "1"
+		}
+		return val, true, nil
 	case TiDBExpensiveQueryTimeThreshold:
 		return fmt.Sprintf("%d", atomic.LoadUint64(&ExpensiveQueryTimeThreshold)), true, nil
 	case TiDBConfig:
@@ -127,22 +133,12 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 		return string(j), true, nil
 	case TiDBForcePriority:
 		return mysql.Priority2Str[mysql.PriorityEnum(atomic.LoadInt32(&ForcePriority))], true, nil
-	case TiDBSlowLogThreshold:
-		return strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().Log.SlowThreshold), 10), true, nil
-	case TiDBRecordPlanInSlowLog:
-		return strconv.FormatUint(uint64(atomic.LoadUint32(&config.GetGlobalConfig().Log.RecordPlanInSlowLog)), 10), true, nil
-	case TiDBEnableSlowLog:
-		return strconv.FormatUint(uint64(atomic.LoadUint32(&config.GetGlobalConfig().Log.EnableSlowLog)), 10), true, nil
 	case TiDBDDLSlowOprThreshold:
 		return strconv.FormatUint(uint64(atomic.LoadUint32(&DDLSlowOprThreshold)), 10), true, nil
-	case TiDBQueryLogMaxLen:
-		return strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().Log.QueryLogMaxLen), 10), true, nil
 	case PluginDir:
 		return config.GetGlobalConfig().Plugin.Dir, true, nil
 	case PluginLoad:
 		return config.GetGlobalConfig().Plugin.Load, true, nil
-	case TiDBCheckMb4ValueInUTF8:
-		return BoolToIntStr(config.GetGlobalConfig().CheckMb4ValueInUTF8), true, nil
 	}
 	sVal, ok := s.GetSystemVar(key)
 	if ok {
@@ -398,9 +394,9 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 	case TiDBSkipUTF8Check, TiDBOptAggPushDown,
 		TiDBOptInSubqToJoinAndAgg, TiDBEnableFastAnalyze,
 		TiDBBatchInsert, TiDBDisableTxnAutoRetry, TiDBEnableStreaming, TiDBEnableChunkRPC,
-		TiDBBatchDelete, TiDBBatchCommit, TiDBEnableCascadesPlanner, TiDBEnableWindowFunction,
-		TiDBCheckMb4ValueInUTF8, TiDBLowResolutionTSO, TiDBEnableIndexMerge, TiDBEnableNoopFuncs, TiDBEnableSlowLog,
-		TiDBScatterRegion, TiDBGeneralLog, TiDBConstraintCheckInPlace, TiDBEnableVectorizedExpression, TiDBRecordPlanInSlowLog:
+		TiDBBatchDelete, TiDBBatchCommit, TiDBEnableCascadesPlanner, TiDBEnableWindowFunction, TiDBPProfSQLCPU,
+		TiDBLowResolutionTSO, TiDBEnableIndexMerge, TiDBEnableNoopFuncs,
+		TiDBScatterRegion, TiDBGeneralLog, TiDBConstraintCheckInPlace, TiDBEnableVectorizedExpression:
 		fallthrough
 	case GeneralLog, AvoidTemporalUpgrade, BigTables, CheckProxyUsers, LogBin,
 		CoreFile, EndMakersInJSON, SQLLogBin, OfflineMode, PseudoSlaveMode, LowPriorityUpdates,
@@ -468,6 +464,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		TiDBHashJoinConcurrency,
 		TiDBHashAggPartialConcurrency,
 		TiDBHashAggFinalConcurrency,
+		TiDBWindowConcurrency,
 		TiDBDistSQLScanConcurrency,
 		TiDBIndexSerialScanConcurrency, TiDBDDLReorgWorkerCount,
 		TiDBBackoffLockFast, TiDBBackOffWeight,
@@ -525,8 +522,6 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		TIDBMemQuotaIndexLookupJoin,
 		TIDBMemQuotaNestedLoopApply,
 		TiDBRetryLimit,
-		TiDBSlowLogThreshold,
-		TiDBQueryLogMaxLen,
 		TiDBEvolvePlanTaskMaxTime:
 		_, err := strconv.ParseInt(value, 10, 64)
 		if err != nil {
@@ -610,6 +605,8 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 	case TiDBReplicaRead:
 		if strings.EqualFold(value, "follower") {
 			return "follower", nil
+		} else if strings.EqualFold(value, "leader-and-follower") {
+			return "leader-and-follower", nil
 		} else if strings.EqualFold(value, "leader") || len(value) == 0 {
 			return "leader", nil
 		}
@@ -619,6 +616,14 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		case ast.Pessimistic, ast.Optimistic, "":
 		default:
 			return value, ErrWrongValueForVar.GenWithStackByArgs(TiDBTxnMode, value)
+		}
+	case TiDBRowFormatVersion:
+		v, err := strconv.Atoi(value)
+		if err != nil {
+			return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
+		}
+		if v != DefTiDBRowFormatV1 && v != DefTiDBRowFormatV2 {
+			return value, errors.Errorf("Unsupported row format version %d", v)
 		}
 	case TiDBAllowRemoveAutoInc, TiDBUsePlanBaselines, TiDBEvolvePlanBaselines:
 		switch {

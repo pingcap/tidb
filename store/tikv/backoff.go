@@ -19,12 +19,11 @@ import (
 	"math"
 	"math/rand"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/util/logutil"
@@ -198,7 +197,7 @@ func (t backoffType) TError() error {
 	case boServerBusy:
 		return ErrTiKVServerBusy
 	}
-	return terror.ClassTiKV.New(mysql.ErrUnknown, mysql.MySQLErrName[mysql.ErrUnknown])
+	return ErrUnknown
 }
 
 // Maximum total sleep time(in ms) for kv/cop commands.
@@ -219,8 +218,8 @@ const (
 	scatterRegionBackoff           = 20000
 	waitScatterRegionFinishBackoff = 120000
 	locateRegionMaxBackoff         = 20000
-	pessimisticLockMaxBackoff      = 10000
-	pessimisticRollbackMaxBackoff  = 10000
+	pessimisticLockMaxBackoff      = 20000
+	pessimisticRollbackMaxBackoff  = 20000
 )
 
 var (
@@ -334,11 +333,17 @@ func (b *Backoffer) BackoffWithMaxSleep(typ backoffType, maxSleepMs int, err err
 	}
 	b.backoffTimes[typ]++
 
+	if b.vars != nil && b.vars.Killed != nil {
+		if atomic.CompareAndSwapUint32(b.vars.Killed, 1, 0) {
+			return ErrQueryInterrupted
+		}
+	}
+
 	var startTs interface{}
 	if ts := b.ctx.Value(txnStartKey); ts != nil {
 		startTs = ts
 	}
-	logutil.BgLogger().Debug("retry later",
+	logutil.Logger(b.ctx).Debug("retry later",
 		zap.Error(err),
 		zap.Int("totalSleep", b.totalSleep),
 		zap.Int("maxSleep", b.maxSleep),

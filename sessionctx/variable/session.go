@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"crypto/tls"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -40,7 +41,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/storeutil"
 	"github.com/pingcap/tidb/util/timeutil"
 )
@@ -58,39 +59,68 @@ var (
 type RetryInfo struct {
 	Retrying               bool
 	DroppedPreparedStmtIDs []uint32
-	currRetryOff           int
-	autoIncrementIDs       []int64
+	autoIncrementIDs       retryInfoAutoIDs
+	autoRandomIDs          retryInfoAutoIDs
 }
 
 // Clean does some clean work.
 func (r *RetryInfo) Clean() {
-	r.currRetryOff = 0
-	if len(r.autoIncrementIDs) > 0 {
-		r.autoIncrementIDs = r.autoIncrementIDs[:0]
-	}
+	r.autoIncrementIDs.clean()
+	r.autoRandomIDs.clean()
+
 	if len(r.DroppedPreparedStmtIDs) > 0 {
 		r.DroppedPreparedStmtIDs = r.DroppedPreparedStmtIDs[:0]
 	}
 }
 
-// AddAutoIncrementID adds id to AutoIncrementIDs.
-func (r *RetryInfo) AddAutoIncrementID(id int64) {
-	r.autoIncrementIDs = append(r.autoIncrementIDs, id)
-}
-
 // ResetOffset resets the current retry offset.
 func (r *RetryInfo) ResetOffset() {
-	r.currRetryOff = 0
+	r.autoIncrementIDs.resetOffset()
+	r.autoRandomIDs.resetOffset()
 }
 
-// GetCurrAutoIncrementID gets current AutoIncrementID.
+// AddAutoIncrementID adds id to autoIncrementIDs.
+func (r *RetryInfo) AddAutoIncrementID(id int64) {
+	r.autoIncrementIDs.autoIDs = append(r.autoIncrementIDs.autoIDs, id)
+}
+
+// GetCurrAutoIncrementID gets current autoIncrementID.
 func (r *RetryInfo) GetCurrAutoIncrementID() (int64, error) {
-	if r.currRetryOff >= len(r.autoIncrementIDs) {
+	return r.autoIncrementIDs.getCurrent()
+}
+
+// AddAutoRandomID adds id to autoRandomIDs.
+func (r *RetryInfo) AddAutoRandomID(id int64) {
+	r.autoRandomIDs.autoIDs = append(r.autoRandomIDs.autoIDs, id)
+}
+
+// GetCurrAutoRandomID gets current AutoRandomID.
+func (r *RetryInfo) GetCurrAutoRandomID() (int64, error) {
+	return r.autoRandomIDs.getCurrent()
+}
+
+type retryInfoAutoIDs struct {
+	currentOffset int
+	autoIDs       []int64
+}
+
+func (r *retryInfoAutoIDs) resetOffset() {
+	r.currentOffset = 0
+}
+
+func (r *retryInfoAutoIDs) clean() {
+	r.currentOffset = 0
+	if len(r.autoIDs) > 0 {
+		r.autoIDs = r.autoIDs[:0]
+	}
+}
+
+func (r *retryInfoAutoIDs) getCurrent() (int64, error) {
+	if r.currentOffset >= len(r.autoIDs) {
 		return 0, errCantGetValidID
 	}
-	id := r.autoIncrementIDs[r.currRetryOff]
-	r.currRetryOff++
-
+	id := r.autoIDs[r.currentOffset]
+	r.currentOffset++
 	return id, nil
 }
 
@@ -383,6 +413,11 @@ type SessionVars struct {
 
 	SQLMode mysql.SQLMode
 
+	// AutoIncrementIncrement and AutoIncrementOffset indicates the autoID's start value and increment.
+	AutoIncrementIncrement int
+
+	AutoIncrementOffset int
+
 	/* TiDB system variables */
 
 	// SkipUTF8Check check on input value.
@@ -531,6 +566,13 @@ type SessionVars struct {
 	// and obtain them lazily, and provide a consistent view of inspection tables for each inspection rules.
 	// All cached snapshots will be released at the end of retrieving
 	InspectionTableCache map[string]TableSnapshot
+
+	// RowEncoder is reused in session for encode row data.
+	RowEncoder rowcodec.Encoder
+
+	// SequenceState cache all sequence's latest value accessed by lastval() builtins. It's a session scoped
+	// variable, and all public methods of SequenceState are currently-safe.
+	SequenceState *SequenceState
 }
 
 // PreparedParams contains the parameters of the current prepared statement when executing it.
@@ -572,10 +614,11 @@ func NewSessionVars() *SessionVars {
 		PreparedStmtNameToID:        make(map[string]uint32),
 		PreparedParams:              make([]types.Datum, 0, 10),
 		TxnCtx:                      &TransactionContext{},
-		KVVars:                      kv.NewVariables(),
 		RetryInfo:                   &RetryInfo{},
 		ActiveRoles:                 make([]*auth.RoleIdentity, 0, 10),
 		StrictSQLMode:               true,
+		AutoIncrementIncrement:      DefAutoIncrementIncrement,
+		AutoIncrementOffset:         DefAutoIncrementOffset,
 		Status:                      mysql.ServerStatusAutocommit,
 		StmtCtx:                     new(stmtctx.StatementContext),
 		AllowAggPushDown:            false,
@@ -613,7 +656,9 @@ func NewSessionVars() *SessionVars {
 		LockWaitTimeout:             DefInnodbLockWaitTimeout * 1000,
 		MetricSchemaStep:            DefTiDBMetricSchemaStep,
 		MetricSchemaRangeDuration:   DefTiDBMetricSchemaRangeDuration,
+		SequenceState:               NewSequenceState(),
 	}
+	vars.KVVars = kv.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
 		IndexSerialScanConcurrency: DefIndexSerialScanConcurrency,
@@ -623,6 +668,7 @@ func NewSessionVars() *SessionVars {
 		DistSQLScanConcurrency:     DefDistSQLScanConcurrency,
 		HashAggPartialConcurrency:  DefTiDBHashAggPartialConcurrency,
 		HashAggFinalConcurrency:    DefTiDBHashAggFinalConcurrency,
+		WindowConcurrency:          DefTiDBWindowConcurrency,
 	}
 	vars.MemQuota = MemQuota{
 		MemQuotaQuery:             config.GetGlobalConfig().MemQuotaQuery,
@@ -932,6 +978,14 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		if isAutocommit {
 			s.SetStatusFlag(mysql.ServerStatusInTrans, false)
 		}
+	case AutoIncrementIncrement:
+		// AutoIncrementIncrement is valid in [1, 65535].
+		temp := tidbOptPositiveInt32(val, DefAutoIncrementIncrement)
+		s.AutoIncrementIncrement = adjustAutoIncrementParameter(temp)
+	case AutoIncrementOffset:
+		// AutoIncrementOffset is valid in [1, 65535].
+		temp := tidbOptPositiveInt32(val, DefAutoIncrementOffset)
+		s.AutoIncrementOffset = adjustAutoIncrementParameter(temp)
 	case MaxExecutionTime:
 		timeoutMS := tidbOptPositiveInt32(val, 0)
 		s.MaxExecutionTime = uint64(timeoutMS)
@@ -984,6 +1038,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.HashAggPartialConcurrency = tidbOptPositiveInt32(val, DefTiDBHashAggPartialConcurrency)
 	case TiDBHashAggFinalConcurrency:
 		s.HashAggFinalConcurrency = tidbOptPositiveInt32(val, DefTiDBHashAggFinalConcurrency)
+	case TiDBWindowConcurrency:
+		s.WindowConcurrency = tidbOptPositiveInt32(val, DefTiDBWindowConcurrency)
 	case TiDBDistSQLScanConcurrency:
 		s.DistSQLScanConcurrency = tidbOptPositiveInt32(val, DefDistSQLScanConcurrency)
 	case TiDBIndexSerialScanConcurrency:
@@ -1026,16 +1082,10 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.MemQuotaNestedLoopApply = tidbOptInt64(val, DefTiDBMemQuotaNestedLoopApply)
 	case TiDBGeneralLog:
 		atomic.StoreUint32(&ProcessGeneralLog, uint32(tidbOptPositiveInt32(val, DefTiDBGeneralLog)))
-	case TiDBSlowLogThreshold:
-		atomic.StoreUint64(&config.GetGlobalConfig().Log.SlowThreshold, uint64(tidbOptInt64(val, logutil.DefaultSlowThreshold)))
-	case TiDBRecordPlanInSlowLog:
-		atomic.StoreUint32(&config.GetGlobalConfig().Log.RecordPlanInSlowLog, uint32(tidbOptInt64(val, logutil.DefaultRecordPlanInSlowLog)))
-	case TiDBEnableSlowLog:
-		atomic.StoreUint32(&config.GetGlobalConfig().Log.EnableSlowLog, uint32(tidbOptInt64(val, logutil.DefaultTiDBEnableSlowLog)))
+	case TiDBPProfSQLCPU:
+		EnablePProfSQLCPU.Store(uint32(tidbOptPositiveInt32(val, DefTiDBPProfSQLCPU)) > 0)
 	case TiDBDDLSlowOprThreshold:
 		atomic.StoreUint32(&DDLSlowOprThreshold, uint32(tidbOptPositiveInt32(val, DefTiDBDDLSlowOprThreshold)))
-	case TiDBQueryLogMaxLen:
-		atomic.StoreUint64(&config.GetGlobalConfig().Log.QueryLogMaxLen, uint64(tidbOptInt64(val, logutil.DefaultQueryLogMaxLen)))
 	case TiDBRetryLimit:
 		s.RetryLimit = tidbOptInt64(val, DefTiDBRetryLimit)
 	case TiDBDisableTxnAutoRetry:
@@ -1062,8 +1112,6 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.EnableVectorizedExpression = TiDBOptOn(val)
 	case TiDBOptJoinReorderThreshold:
 		s.TiDBOptJoinReorderThreshold = tidbOptPositiveInt32(val, DefTiDBOptJoinReorderThreshold)
-	case TiDBCheckMb4ValueInUTF8:
-		config.GetGlobalConfig().CheckMb4ValueInUTF8 = TiDBOptOn(val)
 	case TiDBSlowQueryFile:
 		s.SlowQueryFile = val
 	case TiDBEnableFastAnalyze:
@@ -1076,6 +1124,11 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		atomic.StoreUint64(&ExpensiveQueryTimeThreshold, uint64(tidbOptPositiveInt32(val, DefTiDBExpensiveQueryTimeThreshold)))
 	case TiDBTxnMode:
 		s.TxnMode = strings.ToUpper(val)
+	case TiDBRowFormatVersion:
+		formatVersion := int(tidbOptInt64(val, DefTiDBRowFormatV1))
+		if formatVersion == DefTiDBRowFormatV2 {
+			s.RowEncoder.Enable = true
+		}
 	case TiDBLowResolutionTSO:
 		s.LowResolutionTSO = TiDBOptOn(val)
 	case TiDBEnableIndexMerge:
@@ -1085,6 +1138,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBReplicaRead:
 		if strings.EqualFold(val, "follower") {
 			s.SetReplicaRead(kv.ReplicaReadFollower)
+		} else if strings.EqualFold(val, "leader-and-follower") {
+			s.SetReplicaRead(kv.ReplicaReadMixed)
 		} else if strings.EqualFold(val, "leader") || len(val) == 0 {
 			s.SetReplicaRead(kv.ReplicaReadLeader)
 		}
@@ -1118,6 +1173,15 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	}
 	s.systems[name] = val
 	return nil
+}
+
+// GetReadableTxnMode returns the session variable TxnMode but rewrites it to "OPTIMISTIC" when it's empty.
+func (s *SessionVars) GetReadableTxnMode() string {
+	txnMode := s.TxnMode
+	if txnMode == "" {
+		txnMode = ast.Optimistic
+	}
+	return txnMode
 }
 
 func (s *SessionVars) setTxnMode(val string) error {
@@ -1216,6 +1280,9 @@ type Concurrency struct {
 
 	// HashAggFinalConcurrency is the number of concurrent hash aggregation final worker.
 	HashAggFinalConcurrency int
+
+	// WindowConcurrency is the number of concurrent window worker.
+	WindowConcurrency int
 
 	// IndexSerialScanConcurrency is the number of concurrent index serial scan worker.
 	IndexSerialScanConcurrency int
@@ -1511,4 +1578,16 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 // writeSlowLogItem writes a slow log item in the form of: "# ${key}:${value}"
 func writeSlowLogItem(buf *bytes.Buffer, key, value string) {
 	buf.WriteString(SlowLogRowPrefixStr + key + SlowLogSpaceMarkStr + value + "\n")
+}
+
+// adjustAutoIncrementParameter adjust the increment and offset of AutoIncrement.
+// AutoIncrementIncrement / AutoIncrementOffset is valid in [1, 65535].
+func adjustAutoIncrementParameter(temp int) int {
+	if temp <= 0 {
+		return 1
+	} else if temp > math.MaxUint16 {
+		return math.MaxUint16
+	} else {
+		return temp
+	}
 }

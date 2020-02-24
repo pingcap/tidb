@@ -210,7 +210,7 @@ func (c *coalesceFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	return sig, nil
 }
 
-// builtinCoalesceIntSig is buitin function coalesce signature which return type int
+// builtinCoalesceIntSig is builtin function coalesce signature which return type int
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
 type builtinCoalesceIntSig struct {
 	baseBuiltinFunc
@@ -232,7 +232,7 @@ func (b *builtinCoalesceIntSig) evalInt(row chunk.Row) (res int64, isNull bool, 
 	return res, isNull, err
 }
 
-// builtinCoalesceRealSig is buitin function coalesce signature which return type real
+// builtinCoalesceRealSig is builtin function coalesce signature which return type real
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
 type builtinCoalesceRealSig struct {
 	baseBuiltinFunc
@@ -254,7 +254,7 @@ func (b *builtinCoalesceRealSig) evalReal(row chunk.Row) (res float64, isNull bo
 	return res, isNull, err
 }
 
-// builtinCoalesceDecimalSig is buitin function coalesce signature which return type Decimal
+// builtinCoalesceDecimalSig is builtin function coalesce signature which return type Decimal
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
 type builtinCoalesceDecimalSig struct {
 	baseBuiltinFunc
@@ -276,7 +276,7 @@ func (b *builtinCoalesceDecimalSig) evalDecimal(row chunk.Row) (res *types.MyDec
 	return res, isNull, err
 }
 
-// builtinCoalesceStringSig is buitin function coalesce signature which return type string
+// builtinCoalesceStringSig is builtin function coalesce signature which return type string
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
 type builtinCoalesceStringSig struct {
 	baseBuiltinFunc
@@ -298,7 +298,7 @@ func (b *builtinCoalesceStringSig) evalString(row chunk.Row) (res string, isNull
 	return res, isNull, err
 }
 
-// builtinCoalesceTimeSig is buitin function coalesce signature which return type time
+// builtinCoalesceTimeSig is builtin function coalesce signature which return type time
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
 type builtinCoalesceTimeSig struct {
 	baseBuiltinFunc
@@ -320,7 +320,7 @@ func (b *builtinCoalesceTimeSig) evalTime(row chunk.Row) (res types.Time, isNull
 	return res, isNull, err
 }
 
-// builtinCoalesceDurationSig is buitin function coalesce signature which return type duration
+// builtinCoalesceDurationSig is builtin function coalesce signature which return type duration
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
 type builtinCoalesceDurationSig struct {
 	baseBuiltinFunc
@@ -342,7 +342,7 @@ func (b *builtinCoalesceDurationSig) evalDuration(row chunk.Row) (res types.Dura
 	return res, isNull, err
 }
 
-// builtinCoalesceJSONSig is buitin function coalesce signature which return type json.
+// builtinCoalesceJSONSig is builtin function coalesce signature which return type json.
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
 type builtinCoalesceJSONSig struct {
 	baseBuiltinFunc
@@ -1098,8 +1098,10 @@ func tryToConvertConstantInt(ctx sessionctx.Context, targetFieldType *types.Fiel
 	if err != nil {
 		if terror.ErrorEqual(err, types.ErrOverflow) {
 			return &Constant{
-				Value:   dt,
-				RetType: targetFieldType,
+				Value:        dt,
+				RetType:      targetFieldType,
+				DeferredExpr: con.DeferredExpr,
+				ParamMarker:  con.ParamMarker,
 			}, true
 		}
 		return con, false
@@ -1134,8 +1136,10 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldT
 	if err != nil {
 		if terror.ErrorEqual(err, types.ErrOverflow) {
 			return &Constant{
-				Value:   intDatum,
-				RetType: &targetFieldType,
+				Value:        intDatum,
+				RetType:      &targetFieldType,
+				DeferredExpr: con.DeferredExpr,
+				ParamMarker:  con.ParamMarker,
 			}, true
 		}
 		return con, false
@@ -1201,6 +1205,9 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldT
 // refineArgs will rewrite the arguments if the compare expression is `int column <cmp> non-int constant` or
 // `non-int constant <cmp> int column`. E.g., `a < 1.1` will be rewritten to `a < 2`.
 func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Expression) []Expression {
+	if ctx.GetSessionVars().StmtCtx.UseCache && ContainLazyConst(args) {
+		return args
+	}
 	arg0Type, arg1Type := args[0].GetType(), args[1].GetType()
 	arg0IsInt := arg0Type.EvalType() == types.ETInt
 	arg1IsInt := arg1Type.EvalType() == types.ETInt
@@ -1239,24 +1246,23 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 			}
 		}
 	}
-
 	if isExceptional && (c.op == opcode.EQ || c.op == opcode.NullEQ) {
 		// This will always be false.
-		return []Expression{Zero.Clone(), One.Clone()}
+		return []Expression{Zero, One}
 	}
 	if isPositiveInfinite {
 		// If the op is opcode.LT, opcode.LE
 		// This will always be true.
 		// If the op is opcode.GT, opcode.GE
 		// This will always be false.
-		return []Expression{Zero.Clone(), One.Clone()}
+		return []Expression{Zero, One}
 	}
 	if isNegativeInfinite {
 		// If the op is opcode.GT, opcode.GE
 		// This will always be true.
 		// If the op is opcode.LT, opcode.LE
 		// This will always be false.
-		return []Expression{One.Clone(), Zero.Clone()}
+		return []Expression{One, Zero}
 	}
 
 	return []Expression{finalArg0, finalArg1}
@@ -1464,6 +1470,10 @@ func (b *builtinLTIntSig) Clone() builtinFunc {
 	newSig := &builtinLTIntSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
+}
+
+func (b *builtinLTIntSig) evalIntWithCtx(ctx sessionctx.Context, row chunk.Row) (val int64, isNull bool, err error) {
+	return resOfLT(CompareInt(ctx, b.args[0], b.args[1], row, row))
 }
 
 func (b *builtinLTIntSig) evalInt(row chunk.Row) (val int64, isNull bool, err error) {

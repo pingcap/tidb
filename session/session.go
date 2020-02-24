@@ -63,6 +63,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/logutil"
@@ -117,7 +118,7 @@ type Session interface {
 	Close()
 	Auth(user *auth.UserIdentity, auth []byte, salt []byte) bool
 	ShowProcess() *util.ProcessInfo
-	// PrePareTxnCtx is exported for test.
+	// PrepareTxnCtx is exported for test.
 	PrepareTxnCtx(context.Context)
 	// FieldList returns fields list of a table.
 	FieldList(tableName string) (fields []*ast.ResultField, err error)
@@ -178,7 +179,7 @@ type session struct {
 	// lockedTables use to record the table locks hold by the session.
 	lockedTables map[int64]model.TableLockTpInfo
 
-	// shared coprocessor client per session
+	// client shared coprocessor client per session
 	client kv.Client
 }
 
@@ -532,7 +533,9 @@ func (s *session) RollbackTxn(ctx context.Context) {
 	if s.txn.Valid() {
 		terror.Log(s.txn.Rollback())
 	}
-	s.cleanRetryInfo()
+	if ctx.Value(inCloseSession{}) == nil {
+		s.cleanRetryInfo()
+	}
 	s.txn.changeToInvalid()
 	s.sessionVars.TxnCtx.Cleanup()
 	s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
@@ -693,7 +696,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 				zap.String("label", label),
 				zap.Stringer("session", s),
 				zap.Error(err))
-			metrics.SessionRetryErrorCounter.WithLabelValues(label, metrics.LblUnretryable)
+			metrics.SessionRetryErrorCounter.WithLabelValues(label, metrics.LblUnretryable).Inc()
 			return err
 		}
 		retryCnt++
@@ -701,7 +704,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 			logutil.Logger(ctx).Warn("sql",
 				zap.String("label", label),
 				zap.Uint("retry reached max count", retryCnt))
-			metrics.SessionRetryErrorCounter.WithLabelValues(label, metrics.LblReachMax)
+			metrics.SessionRetryErrorCounter.WithLabelValues(label, metrics.LblReachMax).Inc()
 			return err
 		}
 		logutil.Logger(ctx).Warn("sql",
@@ -736,8 +739,11 @@ func (s *session) sysSessionPool() sessionPool {
 // Unlike normal Exec, it doesn't reset statement status, doesn't commit or rollback the current transaction
 // and doesn't write binlog.
 func (s *session) ExecRestrictedSQL(sql string) ([]chunk.Row, []*ast.ResultField, error) {
-	ctx := context.TODO()
+	return s.ExecRestrictedSQLWithContext(context.TODO(), sql)
+}
 
+// ExecRestrictedSQLWithContext implements RestrictedSQLExecutor interface.
+func (s *session) ExecRestrictedSQLWithContext(ctx context.Context, sql string) ([]chunk.Row, []*ast.ResultField, error) {
 	// Use special session to execute the sql.
 	tmp, err := s.sysSessionPool().Get()
 	if err != nil {
@@ -848,6 +854,10 @@ func createSessionFunc(store kv.Storage) pools.Factory {
 			return nil, err
 		}
 		err = variable.SetSessionSystemVar(se.sessionVars, variable.MaxExecutionTime, types.NewUintDatum(0))
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		err = variable.SetSessionSystemVar(se.sessionVars, variable.MaxAllowedPacket, types.NewStringDatum("67108864"))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1425,6 +1435,8 @@ func (s *session) ClearValue(key fmt.Stringer) {
 	s.mu.Unlock()
 }
 
+type inCloseSession struct{}
+
 // Close function does some clean work when session end.
 // Close should release the table locks which hold by the session.
 func (s *session) Close() {
@@ -1447,7 +1459,7 @@ func (s *session) Close() {
 	if bindValue != nil {
 		bindValue.(*bindinfo.SessionHandle).Close()
 	}
-	ctx := context.TODO()
+	ctx := context.WithValue(context.TODO(), inCloseSession{}, struct{}{})
 	s.RollbackTxn(ctx)
 	if s.sessionVars != nil {
 		s.sessionVars.WithdrawAllPreparedStmt()
@@ -1548,12 +1560,34 @@ func CreateSession(store kv.Storage) (Session, error) {
 
 // loadSystemTZ loads systemTZ from mysql.tidb
 func loadSystemTZ(se *session) (string, error) {
-	sql := `select variable_value from mysql.tidb where variable_name = 'system_tz'`
+	return loadParameter(se, "system_tz")
+}
+
+// loadCollationParameter loads collation parameter from mysql.tidb
+func loadCollationParameter(se *session) (bool, error) {
+	para, err := loadParameter(se, tidbNewCollationEnabled)
+	if err != nil {
+		return false, err
+	}
+	if para == varTrue {
+		return true, nil
+	} else if para == varFalse {
+		return false, nil
+	}
+	logutil.BgLogger().Warn(
+		"Unexpected value of 'new_collation_enabled' in 'mysql.tidb', use 'False' instead",
+		zap.String("value", para))
+	return false, nil
+}
+
+// loadParameter loads read-only parameter from mysql.tidb
+func loadParameter(se *session, name string) (string, error) {
+	sql := "select variable_value from mysql.tidb where variable_name = '" + name + "'"
 	rss, errLoad := se.Execute(context.Background(), sql)
 	if errLoad != nil {
 		return "", errLoad
 	}
-	// the record of mysql.tidb under where condition: variable_name = "system_tz" should shall only be one.
+	// the record of mysql.tidb under where condition: variable_name = $name should shall only be one.
 	defer func() {
 		if err := rss[0].Close(); err != nil {
 			logutil.BgLogger().Error("close result set error", zap.Error(err))
@@ -1599,8 +1633,15 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	if err != nil {
 		return nil, err
 	}
-
 	timeutil.SetSystemTZ(tz)
+
+	// get the flag from `mysql`.`tidb` which indicating if new collations are enabled.
+	newCollationEnabled, err := loadCollationParameter(se)
+	if err != nil {
+		return nil, err
+	}
+	collate.SetNewCollationEnabled(newCollationEnabled)
+
 	dom := domain.GetDomain(se)
 	dom.InitExpensiveQueryHandle()
 
@@ -1736,7 +1777,7 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = version38
+	currentBootstrapVersion = version41
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
@@ -1805,6 +1846,7 @@ var builtinGlobalVariable = []string{
 	variable.QueryCacheSize,
 	variable.CharacterSetServer,
 	variable.AutoIncrementIncrement,
+	variable.AutoIncrementOffset,
 	variable.CollationServer,
 	variable.NetWriteTimeout,
 	variable.MaxExecutionTime,
@@ -1821,6 +1863,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBProjectionConcurrency,
 	variable.TiDBHashAggPartialConcurrency,
 	variable.TiDBHashAggFinalConcurrency,
+	variable.TiDBWindowConcurrency,
 	variable.TiDBBackoffLockFast,
 	variable.TiDBBackOffWeight,
 	variable.TiDBConstraintCheckInPlace,
@@ -1852,6 +1895,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBEnableNoopFuncs,
 	variable.TiDBEnableIndexMerge,
 	variable.TiDBTxnMode,
+	variable.TiDBRowFormatVersion,
 	variable.TiDBEnableStmtSummary,
 	variable.TiDBStmtSummaryRefreshInterval,
 	variable.TiDBStmtSummaryHistorySize,
@@ -2045,6 +2089,7 @@ func logQuery(query string, vars *variable.SessionVars) {
 			zap.Int64("schemaVersion", vars.TxnCtx.SchemaVersion),
 			zap.Uint64("txnStartTS", vars.TxnCtx.StartTS),
 			zap.String("current_db", vars.CurrentDB),
+			zap.String("txn_mode", vars.GetReadableTxnMode()),
 			zap.String("sql", query+vars.PreparedParams.String()))
 	}
 }

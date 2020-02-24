@@ -507,15 +507,14 @@ func (e *InsertValues) getRowInPlace(ctx context.Context, vals []types.Datum, ro
 
 // getColDefaultValue gets the column default value.
 func (e *InsertValues) getColDefaultValue(idx int, col *table.Column) (d types.Datum, err error) {
-	if e.colDefaultVals != nil && e.colDefaultVals[idx].valid {
+	if !col.DefaultIsExpr && e.colDefaultVals != nil && e.colDefaultVals[idx].valid {
 		return e.colDefaultVals[idx].val, nil
 	}
-
 	defaultVal, err := table.GetColDefaultValue(e.ctx, col.ToInfo())
 	if err != nil {
 		return types.Datum{}, err
 	}
-	if initialized := e.lazilyInitColDefaultValBuf(); initialized {
+	if initialized := e.lazilyInitColDefaultValBuf(); initialized && !col.DefaultIsExpr {
 		e.colDefaultVals[idx].val = defaultVal
 		e.colDefaultVals[idx].valid = true
 	}
@@ -716,23 +715,23 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 				i++
 				cnt++
 			}
-			// Alloc batch N consecutive (min, max] autoIDs.
-			// max value can be derived from adding one for cnt times.
-			min, _, err := table.AllocBatchAutoIncrementValue(ctx, e.Table, e.ctx, cnt)
+			// AllocBatchAutoIncrementValue allocates batch N consecutive autoIDs.
+			// The max value can be derived from adding the increment value to min for cnt-1 times.
+			min, increment, err := table.AllocBatchAutoIncrementValue(ctx, e.Table, e.ctx, cnt)
 			if e.handleErr(col, &autoDatum, cnt, err) != nil {
 				return nil, err
 			}
 			// It's compatible with mysql setting the first allocated autoID to lastInsertID.
 			// Cause autoID may be specified by user, judge only the first row is not suitable.
 			if e.lastInsertID == 0 {
-				e.lastInsertID = uint64(min) + 1
+				e.lastInsertID = uint64(min)
 			}
 			// Assign autoIDs to rows.
 			for j := 0; j < cnt; j++ {
 				offset := j + start
 				d := rows[offset][colIdx]
 
-				id := int64(uint64(min) + uint64(j) + 1)
+				id := int64(uint64(min) + uint64(j)*uint64(increment))
 				d.SetAutoID(id, col.Flag)
 				retryInfo.AddAutoIncrementID(id)
 
@@ -838,6 +837,16 @@ func getAutoRecordID(d types.Datum, target *types.FieldType, isInsert bool) (int
 }
 
 func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum, hasValue bool, c *table.Column) (types.Datum, error) {
+	retryInfo := e.ctx.GetSessionVars().RetryInfo
+	if retryInfo.Retrying {
+		autoRandomID, err := retryInfo.GetCurrAutoRandomID()
+		if err != nil {
+			return types.Datum{}, err
+		}
+		d.SetAutoID(autoRandomID, c.Flag)
+		return d, nil
+	}
+
 	if !hasValue || d.IsNull() {
 		_, err := e.ctx.Txn(true)
 		if err != nil {
@@ -848,6 +857,7 @@ func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum,
 			return types.Datum{}, err
 		}
 		d.SetAutoID(autoRandomID, c.Flag)
+		retryInfo.AddAutoRandomID(autoRandomID)
 	} else {
 		recordID, err := getAutoRecordID(d, &c.FieldType, true)
 		if err != nil {
@@ -858,6 +868,7 @@ func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum,
 			return types.Datum{}, err
 		}
 		d.SetAutoID(recordID, c.Flag)
+		retryInfo.AddAutoRandomID(recordID)
 	}
 
 	casted, err := table.CastValue(e.ctx, d, c.ToInfo())
@@ -871,7 +882,7 @@ func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum,
 func (e *InsertValues) allocAutoRandomID(fieldType *types.FieldType) (int64, error) {
 	alloc := e.Table.Allocator(e.ctx, autoid.AutoRandomType)
 	tableInfo := e.Table.Meta()
-	_, autoRandomID, err := alloc.Alloc(tableInfo.ID, 1)
+	_, autoRandomID, err := alloc.Alloc(tableInfo.ID, 1, 1, 1)
 	if err != nil {
 		return 0, err
 	}

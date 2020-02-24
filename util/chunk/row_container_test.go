@@ -78,6 +78,8 @@ func (r *rowContainerTestSuite) TestSel(c *check.C) {
 	checkByIter(NewMultiIterator(NewIterator4RowContainer(rc), NewIterator4Chunk(chk)))
 	err = rc.Close()
 	c.Assert(err, check.IsNil)
+	c.Assert(rc.memTracker.BytesConsumed(), check.Equals, int64(0))
+	c.Assert(rc.memTracker.MaxConsumed(), check.Greater, int64(0))
 }
 
 func (r *rowContainerTestSuite) TestSpillAction(c *check.C) {

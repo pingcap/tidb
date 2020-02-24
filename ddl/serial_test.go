@@ -49,10 +49,8 @@ import (
 var _ = SerialSuites(&testSerialSuite{})
 
 type testSerialSuite struct {
-	store     kv.Storage
-	cluster   *mocktikv.Cluster
-	mvccStore mocktikv.MVCCStore
-	dom       *domain.Domain
+	store kv.Storage
+	dom   *domain.Domain
 }
 
 func (s *testSerialSuite) SetUpSuite(c *C) {
@@ -65,10 +63,7 @@ func (s *testSerialSuite) SetUpSuite(c *C) {
 	newCfg.AlterPrimaryKey = false
 	config.StoreGlobalConfig(&newCfg)
 
-	s.cluster = mocktikv.NewCluster()
-	s.mvccStore = mocktikv.MustNewMVCCStore()
-
-	ddl.WaitTimeWhenErrorOccured = 1 * time.Microsecond
+	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
 	var err error
 	s.store, err = mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
@@ -91,9 +86,15 @@ func (s *testSerialSuite) TestPrimaryKey(c *C) {
 	tk.MustExec("use test")
 
 	tk.MustExec("create table primary_key_test (a int, b varchar(10))")
+	tk.MustExec("create table primary_key_test_1 (a int, b varchar(10), primary key(a))")
 	_, err := tk.Exec("alter table primary_key_test add primary key(a)")
 	c.Assert(ddl.ErrUnsupportedModifyPrimaryKey.Equal(err), IsTrue)
 	_, err = tk.Exec("alter table primary_key_test drop primary key")
+	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported drop primary key when alter-primary-key is false")
+	// for "drop index `primary` on ..." syntax
+	_, err = tk.Exec("drop index `primary` on primary_key_test")
+	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported drop primary key when alter-primary-key is false")
+	_, err = tk.Exec("drop index `primary` on primary_key_test_1")
 	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported drop primary key when alter-primary-key is false")
 
 	// Change the value of AlterPrimaryKey.
@@ -115,6 +116,18 @@ func (s *testSerialSuite) TestPrimaryKey(c *C) {
 	tk.MustExec("alter table primary_key_test2 drop primary key")
 	_, err = tk.Exec("alter table primary_key_test3 drop primary key")
 	c.Assert(err.Error(), Equals, "[ddl:1091]Can't DROP 'PRIMARY'; check that column/key exists")
+
+	// for "drop index `primary` on ..." syntax
+	tk.MustExec("create table primary_key_test4 (a int, b varchar(10), primary key(a))")
+	newCfg.AlterPrimaryKey = false
+	config.StoreGlobalConfig(&newCfg)
+	_, err = tk.Exec("drop index `primary` on primary_key_test4")
+	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported drop primary key when alter-primary-key is false")
+	// for the index name is `primary`
+	tk.MustExec("create table tt(`primary` int);")
+	tk.MustExec("alter table tt add index (`primary`);")
+	_, err = tk.Exec("drop index `primary` on tt")
+	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported drop primary key when alter-primary-key is false")
 }
 
 func (s *testSerialSuite) TestMultiRegionGetTableEndHandle(c *C) {
@@ -139,7 +152,10 @@ func (s *testSerialSuite) TestMultiRegionGetTableEndHandle(c *C) {
 	testCtx := newTestMaxTableRowIDContext(c, d, tbl)
 
 	// Split the table.
-	s.cluster.SplitTable(s.mvccStore, tblID, 100)
+	cluster := mocktikv.NewCluster()
+	mvccStore := mocktikv.MustNewMVCCStore()
+	defer mvccStore.Close()
+	cluster.SplitTable(mvccStore, tblID, 100)
 
 	maxID, emptyTable := getMaxTableRowID(testCtx, s.store)
 	c.Assert(emptyTable, IsFalse)
@@ -647,13 +663,13 @@ func (s *testSerialSuite) TestCanceledJobTakeTime(c *C) {
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
 	defer s.dom.DDL().(ddl.DDLForTest).SetHook(origHook)
 
-	originalWT := ddl.WaitTimeWhenErrorOccured
-	ddl.WaitTimeWhenErrorOccured = 1 * time.Second
-	defer func() { ddl.WaitTimeWhenErrorOccured = originalWT }()
+	originalWT := ddl.GetWaitTimeWhenErrorOccurred()
+	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Second)
+	defer func() { ddl.SetWaitTimeWhenErrorOccurred(originalWT) }()
 	startTime := time.Now()
 	tk.MustGetErrCode("alter table t_cjtt add column b int", mysql.ErrNoSuchTable)
 	sub := time.Since(startTime)
-	c.Assert(sub, Less, ddl.WaitTimeWhenErrorOccured)
+	c.Assert(sub, Less, ddl.GetWaitTimeWhenErrorOccurred())
 }
 
 func (s *testSerialSuite) TestTableLocksEnable(c *C) {

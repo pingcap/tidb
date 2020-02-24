@@ -44,6 +44,8 @@ const (
 	ServerInformationPath = "/tidb/server/info"
 	// ServerMinStartTSPath store the server min start timestamp.
 	ServerMinStartTSPath = "/tidb/server/minstartts"
+	// TiFlashTableSyncProgressPath store the tiflash table replica sync progress.
+	TiFlashTableSyncProgressPath = "/tiflash/table/sync"
 	// keyOpDefaultRetryCnt is the default retry count for etcd store.
 	keyOpDefaultRetryCnt = 5
 	// keyOpDefaultTimeout is the default time out for etcd store.
@@ -69,12 +71,13 @@ type InfoSyncer struct {
 // It will not be updated when tidb-server running. So please only put static information in ServerInfo struct.
 type ServerInfo struct {
 	ServerVersionInfo
-	ID           string `json:"ddl_id"`
-	IP           string `json:"ip"`
-	Port         uint   `json:"listening_port"`
-	StatusPort   uint   `json:"status_port"`
-	Lease        string `json:"lease"`
-	BinlogStatus string `json:"binlog_status"`
+	ID             string `json:"ddl_id"`
+	IP             string `json:"ip"`
+	Port           uint   `json:"listening_port"`
+	StatusPort     uint   `json:"status_port"`
+	Lease          string `json:"lease"`
+	BinlogStatus   string `json:"binlog_status"`
+	StartTimestamp int64  `json:"start_timestamp"`
 }
 
 // ServerVersionInfo is the server version and git_hash.
@@ -169,10 +172,71 @@ func GetAllServerInfo(ctx context.Context) (map[string]*ServerInfo, error) {
 	return is.getAllServerInfo(ctx)
 }
 
+// UpdateTiFlashTableSyncProgress is used to update the tiflash table replica sync progress.
+func UpdateTiFlashTableSyncProgress(ctx context.Context, tid int64, progress float64) error {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return err
+	}
+	if is.etcdCli == nil {
+		return nil
+	}
+	key := fmt.Sprintf("%s/%v", TiFlashTableSyncProgressPath, tid)
+	return util.PutKVToEtcd(ctx, is.etcdCli, keyOpDefaultRetryCnt, key, strconv.FormatFloat(progress, 'f', 2, 64))
+}
+
+// DeleteTiFlashTableSyncProgress is used to delete the tiflash table replica sync progress.
+func DeleteTiFlashTableSyncProgress(tid int64) error {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return err
+	}
+	if is.etcdCli == nil {
+		return nil
+	}
+	key := fmt.Sprintf("%s/%v", TiFlashTableSyncProgressPath, tid)
+	return util.DeleteKeyFromEtcd(key, is.etcdCli, keyOpDefaultRetryCnt, keyOpDefaultTimeout)
+}
+
+// GetTiFlashTableSyncProgress uses to get all the tiflash table replica sync progress.
+func GetTiFlashTableSyncProgress(ctx context.Context) (map[int64]float64, error) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return nil, err
+	}
+	progressMap := make(map[int64]float64)
+	if is.etcdCli == nil {
+		return progressMap, nil
+	}
+	for i := 0; i < keyOpDefaultRetryCnt; i++ {
+		resp, err := is.etcdCli.Get(ctx, TiFlashTableSyncProgressPath+"/", clientv3.WithPrefix())
+		if err != nil {
+			logutil.BgLogger().Info("get tiflash table replica sync progress failed, continue checking.", zap.Error(err))
+			continue
+		}
+		for _, kv := range resp.Kvs {
+			tid, err := strconv.ParseInt(string(kv.Key[len(TiFlashTableSyncProgressPath)+1:]), 10, 64)
+			if err != nil {
+				logutil.BgLogger().Info("invalid tiflash table replica sync progress key.", zap.String("key", string(kv.Key)))
+				continue
+			}
+			progress, err := strconv.ParseFloat(string(kv.Value), 64)
+			if err != nil {
+				logutil.BgLogger().Info("invalid tiflash table replica sync progress value.",
+					zap.String("key", string(kv.Key)), zap.String("value", string(kv.Value)))
+				continue
+			}
+			progressMap[tid] = progress
+		}
+		break
+	}
+	return progressMap, nil
+}
+
 func (is *InfoSyncer) getAllServerInfo(ctx context.Context) (map[string]*ServerInfo, error) {
 	allInfo := make(map[string]*ServerInfo)
 	if is.etcdCli == nil {
-		allInfo[is.info.ID] = is.info
+		allInfo[is.info.ID] = getServerInfo(is.info.ID)
 		return allInfo, nil
 	}
 	allInfo, err := getInfo(ctx, is.etcdCli, ServerInformationPath, keyOpDefaultRetryCnt, keyOpDefaultTimeout, clientv3.WithPrefix())
@@ -339,12 +403,13 @@ func getInfo(ctx context.Context, etcdCli *clientv3.Client, key string, retryCnt
 func getServerInfo(id string) *ServerInfo {
 	cfg := config.GetGlobalConfig()
 	info := &ServerInfo{
-		ID:           id,
-		IP:           cfg.AdvertiseAddress,
-		Port:         cfg.Port,
-		StatusPort:   cfg.Status.StatusPort,
-		Lease:        cfg.Lease,
-		BinlogStatus: binloginfo.GetStatus().String(),
+		ID:             id,
+		IP:             cfg.AdvertiseAddress,
+		Port:           cfg.Port,
+		StatusPort:     cfg.Status.StatusPort,
+		Lease:          cfg.Lease,
+		BinlogStatus:   binloginfo.GetStatus().String(),
+		StartTimestamp: time.Now().Unix(),
 	}
 	info.Version = mysql.ServerVersion
 	info.GitHash = printer.TiDBGitHash

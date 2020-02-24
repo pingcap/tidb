@@ -140,6 +140,12 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		// The RepairTable should consist of the logic for creating tables and renaming tables.
 		p.flag |= inRepairTable
 		p.checkRepairTableGrammar(node)
+	case *ast.CreateSequenceStmt:
+		p.flag |= inCreateOrDropTable
+		p.resolveCreateSequenceStmt(node)
+	case *ast.DropSequenceStmt:
+		p.flag |= inCreateOrDropTable
+		p.checkDropSequenceGrammar(node)
 	default:
 		p.flag &= ^parentIsJoin
 	}
@@ -227,20 +233,22 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 		}
 	case *ast.RepairTableStmt:
 		p.flag &= ^inRepairTable
+	case *ast.CreateSequenceStmt:
+		p.flag &= ^inCreateOrDropTable
 	}
 
 	return in, p.err == nil
 }
 
-func checkAutoIncrementOp(colDef *ast.ColumnDef, num int) (bool, error) {
+func checkAutoIncrementOp(colDef *ast.ColumnDef, index int) (bool, error) {
 	var hasAutoIncrement bool
 
-	if colDef.Options[num].Tp == ast.ColumnOptionAutoIncrement {
+	if colDef.Options[index].Tp == ast.ColumnOptionAutoIncrement {
 		hasAutoIncrement = true
-		if len(colDef.Options) == num+1 {
+		if len(colDef.Options) == index+1 {
 			return hasAutoIncrement, nil
 		}
-		for _, op := range colDef.Options[num+1:] {
+		for _, op := range colDef.Options[index+1:] {
 			if op.Tp == ast.ColumnOptionDefaultValue {
 				if tmp, ok := op.Expr.(*driver.ValueExpr); ok {
 					if !tmp.Datum.IsNull() {
@@ -250,13 +258,13 @@ func checkAutoIncrementOp(colDef *ast.ColumnDef, num int) (bool, error) {
 			}
 		}
 	}
-	if colDef.Options[num].Tp == ast.ColumnOptionDefaultValue && len(colDef.Options) != num+1 {
-		if tmp, ok := colDef.Options[num].Expr.(*driver.ValueExpr); ok {
+	if colDef.Options[index].Tp == ast.ColumnOptionDefaultValue && len(colDef.Options) != index+1 {
+		if tmp, ok := colDef.Options[index].Expr.(*driver.ValueExpr); ok {
 			if tmp.Datum.IsNull() {
 				return hasAutoIncrement, nil
 			}
 		}
-		for _, op := range colDef.Options[num+1:] {
+		for _, op := range colDef.Options[index+1:] {
 			if op.Tp == ast.ColumnOptionAutoIncrement {
 				return hasAutoIncrement, errors.Errorf("Invalid default value for '%s'", colDef.Name.Name.O)
 			}
@@ -284,14 +292,11 @@ func isConstraintKeyTp(constraints []*ast.Constraint, colDef *ast.ColumnDef) boo
 }
 
 func (p *preprocessor) checkAutoIncrement(stmt *ast.CreateTableStmt) {
-	var (
-		isKey            bool
-		count            int
-		autoIncrementCol *ast.ColumnDef
-	)
+	autoIncrementCols := make(map[*ast.ColumnDef]bool)
 
 	for _, colDef := range stmt.Cols {
 		var hasAutoIncrement bool
+		var isKey bool
 		for i, op := range colDef.Options {
 			ok, err := checkAutoIncrementOp(colDef, i)
 			if err != nil {
@@ -307,33 +312,39 @@ func (p *preprocessor) checkAutoIncrement(stmt *ast.CreateTableStmt) {
 			}
 		}
 		if hasAutoIncrement {
-			count++
-			autoIncrementCol = colDef
+			autoIncrementCols[colDef] = isKey
 		}
 	}
 
-	if count < 1 {
+	if len(autoIncrementCols) < 1 {
 		return
 	}
-	if !isKey {
-		isKey = isConstraintKeyTp(stmt.Constraints, autoIncrementCol)
+	if len(autoIncrementCols) > 1 {
+		p.err = autoid.ErrWrongAutoKey.GenWithStackByArgs()
+		return
 	}
-	autoIncrementMustBeKey := true
-	for _, opt := range stmt.Options {
-		if opt.Tp == ast.TableOptionEngine && strings.EqualFold(opt.StrValue, "MyISAM") {
-			autoIncrementMustBeKey = false
+	// Only have one auto_increment col.
+	for col, isKey := range autoIncrementCols {
+		if !isKey {
+			isKey = isConstraintKeyTp(stmt.Constraints, col)
+		}
+		autoIncrementMustBeKey := true
+		for _, opt := range stmt.Options {
+			if opt.Tp == ast.TableOptionEngine && strings.EqualFold(opt.StrValue, "MyISAM") {
+				autoIncrementMustBeKey = false
+			}
+		}
+		if autoIncrementMustBeKey && !isKey {
+			p.err = autoid.ErrWrongAutoKey.GenWithStackByArgs()
+		}
+		switch col.Tp.Tp {
+		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeLong,
+			mysql.TypeFloat, mysql.TypeDouble, mysql.TypeLonglong, mysql.TypeInt24:
+		default:
+			p.err = errors.Errorf("Incorrect column specifier for column '%s'", col.Name.Name.O)
 		}
 	}
-	if (autoIncrementMustBeKey && !isKey) || count > 1 {
-		p.err = autoid.ErrWrongAutoKey.GenWithStackByArgs()
-	}
 
-	switch autoIncrementCol.Tp.Tp {
-	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeLong,
-		mysql.TypeFloat, mysql.TypeDouble, mysql.TypeLonglong, mysql.TypeInt24:
-	default:
-		p.err = errors.Errorf("Incorrect column specifier for column '%s'", autoIncrementCol.Name.Name.O)
-	}
 }
 
 // checkUnionSelectList checks union's selectList.
@@ -398,6 +409,12 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 		}
 	}
 	for _, constraint := range stmt.Constraints {
+		for _, spec := range constraint.Keys {
+			if spec.Expr != nil {
+				p.err = ErrNotSupportedYet.GenWithStackByArgs("create table with expression index")
+				return
+			}
+		}
 		switch tp := constraint.Tp; tp {
 		case ast.ConstraintKey, ast.ConstraintIndex, ast.ConstraintUniq, ast.ConstraintUniqKey, ast.ConstraintUniqIndex:
 			err := checkIndexInfo(constraint.Name, constraint.Keys)
@@ -442,8 +459,16 @@ func (p *preprocessor) checkCreateViewGrammar(stmt *ast.CreateViewStmt) {
 	}
 }
 
+func (p *preprocessor) checkDropSequenceGrammar(stmt *ast.DropSequenceStmt) {
+	p.checkDropTableNames(stmt.Sequences)
+}
+
 func (p *preprocessor) checkDropTableGrammar(stmt *ast.DropTableStmt) {
-	for _, t := range stmt.Tables {
+	p.checkDropTableNames(stmt.Tables)
+}
+
+func (p *preprocessor) checkDropTableNames(tables []*ast.TableName) {
+	for _, t := range tables {
 		if isIncorrectName(t.Name.String()) {
 			p.err = ddl.ErrWrongTableName.GenWithStackByArgs(t.Name.String())
 			return
@@ -595,11 +620,13 @@ func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 func checkDuplicateColumnName(IndexPartSpecifications []*ast.IndexPartSpecification) error {
 	colNames := make(map[string]struct{}, len(IndexPartSpecifications))
 	for _, IndexColNameWithExpr := range IndexPartSpecifications {
-		name := IndexColNameWithExpr.Column.Name
-		if _, ok := colNames[name.L]; ok {
-			return infoschema.ErrColumnExists.GenWithStackByArgs(name)
+		if IndexColNameWithExpr.Column != nil {
+			name := IndexColNameWithExpr.Column.Name
+			if _, ok := colNames[name.L]; ok {
+				return infoschema.ErrColumnExists.GenWithStackByArgs(name)
+			}
+			colNames[name.L] = struct{}{}
 		}
-		colNames[name.L] = struct{}{}
 	}
 	return nil
 }
@@ -853,5 +880,13 @@ func (p *preprocessor) resolveAlterTableStmt(node *ast.AlterTableStmt) {
 			p.flag |= inCreateOrDropTable
 			break
 		}
+	}
+}
+
+func (p *preprocessor) resolveCreateSequenceStmt(stmt *ast.CreateSequenceStmt) {
+	sName := stmt.Name.Name.String()
+	if isIncorrectName(sName) {
+		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(sName)
+		return
 	}
 }

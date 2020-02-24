@@ -10,6 +10,7 @@
 // distributed under the License is distributed on an "AS IS" BASIS,
 // See the License for the specific language governing permissions and
 // limitations under the License.
+// +build !windows
 
 package util_test
 
@@ -32,8 +33,8 @@ import (
 	"go.etcd.io/etcd/integration"
 	"go.etcd.io/etcd/mvcc/mvccpb"
 	goctx "golang.org/x/net/context"
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func TestT(t *testing.T) {
@@ -230,7 +231,7 @@ func TestSyncerSimple(t *testing.T) {
 }
 
 func isTimeoutError(err error) bool {
-	if terror.ErrorEqual(err, goctx.DeadlineExceeded) || grpc.Code(errors.Cause(err)) == codes.DeadlineExceeded ||
+	if terror.ErrorEqual(err, goctx.DeadlineExceeded) || status.Code(errors.Cause(err)) == codes.DeadlineExceeded ||
 		terror.ErrorEqual(err, etcdserver.ErrTimeout) {
 		return true
 	}
@@ -250,7 +251,7 @@ func checkRespKV(t *testing.T, kvCount int, key, val string,
 	if string(kv.Key) != key {
 		t.Fatalf("key resp %s, exported %s", kv.Key, key)
 	}
-	if val != val {
+	if string(kv.Value) != val {
 		t.Fatalf("val resp %s, exported %s", kv.Value, val)
 	}
 }

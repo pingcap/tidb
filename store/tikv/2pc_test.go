@@ -19,6 +19,7 @@ import (
 	"math"
 	"math/rand"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -36,10 +37,10 @@ type testCommitterSuite struct {
 	store   *tikvStore
 }
 
-var _ = Suite(&testCommitterSuite{})
+var _ = SerialSuites(&testCommitterSuite{})
 
 func (s *testCommitterSuite) SetUpSuite(c *C) {
-	ManagedLockTTL = 3000 // 3s
+	atomic.StoreUint64(&ManagedLockTTL, 3000) // 3s
 	s.OneByOneSuite.SetUpSuite(c)
 }
 
@@ -55,7 +56,7 @@ func (s *testCommitterSuite) SetUpTest(c *C) {
 	c.Assert(err, IsNil)
 	store.EnableTxnLocalLatches(1024000)
 	s.store = store
-	CommitMaxBackoff = 2000
+	CommitMaxBackoff = 1000
 }
 
 func (s *testCommitterSuite) TearDownSuite(c *C) {
@@ -616,7 +617,7 @@ func (s *testCommitterSuite) TestPessimisticTTL(c *C) {
 			expire := oracle.ExtractPhysical(txn.startTS) + int64(lockInfoNew.LockTtl)
 			now := oracle.ExtractPhysical(currentTS)
 			c.Assert(expire > now, IsTrue)
-			c.Assert(uint64(expire-now) <= ManagedLockTTL, IsTrue)
+			c.Assert(uint64(expire-now) <= atomic.LoadUint64(&ManagedLockTTL), IsTrue)
 			return
 		}
 		time.Sleep(100 * time.Millisecond)
@@ -638,8 +639,8 @@ func (s *testCommitterSuite) TestElapsedTTL(c *C) {
 	err := txn.LockKeys(context.Background(), lockCtx, key)
 	c.Assert(err, IsNil)
 	lockInfo := s.getLockInfo(c, key)
-	c.Assert(lockInfo.LockTtl-ManagedLockTTL, GreaterEqual, uint64(100))
-	c.Assert(lockInfo.LockTtl-ManagedLockTTL, Less, uint64(150))
+	c.Assert(lockInfo.LockTtl-atomic.LoadUint64(&ManagedLockTTL), GreaterEqual, uint64(100))
+	c.Assert(lockInfo.LockTtl-atomic.LoadUint64(&ManagedLockTTL), Less, uint64(150))
 }
 
 // TestAcquireFalseTimeoutLock tests acquiring a key which is a secondary key of another transaction.
@@ -664,7 +665,7 @@ func (s *testCommitterSuite) TestAcquireFalseTimeoutLock(c *C) {
 	// Heartbeats will increase the TTL of the primary key
 
 	// wait until secondary key exceeds its own TTL
-	time.Sleep(time.Duration(ManagedLockTTL) * time.Millisecond)
+	time.Sleep(time.Duration(atomic.LoadUint64(&ManagedLockTTL)) * time.Millisecond)
 	txn2 := s.begin(c)
 	txn2.SetOption(kv.Pessimistic, true)
 
@@ -672,7 +673,7 @@ func (s *testCommitterSuite) TestAcquireFalseTimeoutLock(c *C) {
 	lockCtx = &kv.LockCtx{ForUpdateTS: txn2.startTS, LockWaitTime: kv.LockNoWait, WaitStartTime: time.Now()}
 	startTime := time.Now()
 	err = txn2.LockKeys(context.Background(), lockCtx, k2)
-	elapsed := time.Now().Sub(startTime)
+	elapsed := time.Since(startTime)
 	// cannot acquire lock immediately thus error
 	c.Assert(err.Error(), Equals, ErrLockAcquireFailAndNoWaitSet.Error())
 	// it should return immediately
@@ -682,7 +683,7 @@ func (s *testCommitterSuite) TestAcquireFalseTimeoutLock(c *C) {
 	lockCtx = &kv.LockCtx{ForUpdateTS: txn2.startTS, LockWaitTime: 300, WaitStartTime: time.Now()}
 	startTime = time.Now()
 	err = txn2.LockKeys(context.Background(), lockCtx, k2)
-	elapsed = time.Now().Sub(startTime)
+	elapsed = time.Since(startTime)
 	// cannot acquire lock in time thus error
 	c.Assert(err.Error(), Equals, ErrLockWaitTimeout.Error())
 	// it should return after about 300ms
@@ -708,4 +709,38 @@ func (s *testCommitterSuite) getLockInfo(c *C, key []byte) *kvrpcpb.LockInfo {
 	locked := keyErrs[0].Locked
 	c.Assert(locked, NotNil)
 	return locked
+}
+
+func (s *testCommitterSuite) TestPkNotFound(c *C) {
+	atomic.StoreUint64(&ManagedLockTTL, 100)        // 100ms
+	defer atomic.StoreUint64(&ManagedLockTTL, 3000) // restore default value
+	// k1 is the primary lock of txn1
+	k1 := kv.Key("k1")
+	// k2 is a secondary lock of txn1 and a key txn2 wants to lock
+	k2 := kv.Key("k2")
+
+	txn1 := s.begin(c)
+	txn1.SetOption(kv.Pessimistic, true)
+	// lock the primary key
+	lockCtx := &kv.LockCtx{ForUpdateTS: txn1.startTS, WaitStartTime: time.Now()}
+	err := txn1.LockKeys(context.Background(), lockCtx, k1)
+	c.Assert(err, IsNil)
+	// lock the secondary key
+	lockCtx = &kv.LockCtx{ForUpdateTS: txn1.startTS, WaitStartTime: time.Now()}
+	err = txn1.LockKeys(context.Background(), lockCtx, k2)
+	c.Assert(err, IsNil)
+
+	// Stop txn ttl manager and remove primary key, like tidb server crashes and the priamry key lock does not exists actually,
+	// while the secondary lock operation succeeded
+	bo := NewBackoffer(context.Background(), pessimisticLockMaxBackoff)
+	txn1.committer.ttlManager.close()
+	err = txn1.committer.pessimisticRollbackKeys(bo, [][]byte{k1})
+	c.Assert(err, IsNil)
+
+	// Txn2 tries to lock the secondary key k2, dead loop if the left secondary lock by txn1 not resolved
+	txn2 := s.begin(c)
+	txn2.SetOption(kv.Pessimistic, true)
+	lockCtx = &kv.LockCtx{ForUpdateTS: txn2.startTS, WaitStartTime: time.Now()}
+	err = txn2.LockKeys(context.Background(), lockCtx, k2)
+	c.Assert(err, IsNil)
 }

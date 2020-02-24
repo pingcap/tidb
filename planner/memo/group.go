@@ -79,13 +79,13 @@ type Group struct {
 	FirstExpr    map[Operand]*list.Element
 	Fingerprints map[string]*list.Element
 
-	Explored        bool
-	SelfFingerprint string
-
 	ImplMap map[string]Implementation
 	Prop    *property.LogicalProperty
 
 	EngineType EngineType
+
+	SelfFingerprint string
+	Explored        bool
 
 	//hasBuiltKeyInfo indicates whether this group has called `BuildKeyInfo`.
 	// BuildKeyInfo is lazily called when a rule needs information of

@@ -38,14 +38,15 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
-	binlog "github.com/pingcap/tipb/go-binlog"
+	"github.com/pingcap/tipb/go-binlog"
 	"github.com/spaolacci/murmur3"
 	"go.uber.org/zap"
 )
 
 // TableCommon is shared by both Table and partition.
 type TableCommon struct {
-	tableID int64
+	sequence int64
+	tableID  int64
 	// physicalTableID is a unique int64 to identify a physical table.
 	physicalTableID int64
 	Columns         []*table.Column
@@ -266,6 +267,11 @@ func (t *TableCommon) WritableCols() []*table.Column {
 	return writableColumns
 }
 
+// DeletableCols implements table DeletableCols interface.
+func (t *TableCommon) DeletableCols() []*table.Column {
+	return t.Columns
+}
+
 // RecordPrefix implements table.Table interface.
 func (t *TableCommon) RecordPrefix() kv.Key {
 	return t.recordPrefix
@@ -338,8 +344,8 @@ func (t *TableCommon) UpdateRecord(ctx sessionctx.Context, h int64, oldData, new
 
 	key := t.RecordKey(h)
 	sessVars := ctx.GetSessionVars()
-	sc := sessVars.StmtCtx
-	value, err := tablecodec.EncodeRow(sc, row, colIDs, nil, nil)
+	sc, rd := sessVars.StmtCtx, &sessVars.RowEncoder
+	value, err := tablecodec.EncodeRow(sc, row, colIDs, nil, nil, rd)
 	if err != nil {
 		return err
 	}
@@ -552,8 +558,8 @@ func (t *TableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 	writeBufs := sessVars.GetWriteStmtBufs()
 	adjustRowValuesBuf(writeBufs, len(row))
 	key := t.RecordKey(recordID)
-	sc := sessVars.StmtCtx
-	writeBufs.RowValBuf, err = tablecodec.EncodeRow(sc, row, colIDs, writeBufs.RowValBuf, writeBufs.AddRowValues)
+	sc, rd := sessVars.StmtCtx, &sessVars.RowEncoder
+	writeBufs.RowValBuf, err = tablecodec.EncodeRow(sc, row, colIDs, writeBufs.RowValBuf, writeBufs.AddRowValues, rd)
 	if err != nil {
 		return 0, err
 	}
@@ -779,7 +785,7 @@ func (t *TableCommon) addInsertBinlog(ctx sessionctx.Context, h int64, row []typ
 	if err != nil {
 		return err
 	}
-	value, err := tablecodec.EncodeRow(ctx.GetSessionVars().StmtCtx, row, colIDs, nil, nil)
+	value, err := tablecodec.EncodeOldRow(ctx.GetSessionVars().StmtCtx, row, colIDs, nil, nil)
 	if err != nil {
 		return err
 	}
@@ -790,11 +796,11 @@ func (t *TableCommon) addInsertBinlog(ctx sessionctx.Context, h int64, row []typ
 }
 
 func (t *TableCommon) addUpdateBinlog(ctx sessionctx.Context, oldRow, newRow []types.Datum, colIDs []int64) error {
-	old, err := tablecodec.EncodeRow(ctx.GetSessionVars().StmtCtx, oldRow, colIDs, nil, nil)
+	old, err := tablecodec.EncodeOldRow(ctx.GetSessionVars().StmtCtx, oldRow, colIDs, nil, nil)
 	if err != nil {
 		return err
 	}
-	newVal, err := tablecodec.EncodeRow(ctx.GetSessionVars().StmtCtx, newRow, colIDs, nil, nil)
+	newVal, err := tablecodec.EncodeOldRow(ctx.GetSessionVars().StmtCtx, newRow, colIDs, nil, nil)
 	if err != nil {
 		return err
 	}
@@ -806,7 +812,7 @@ func (t *TableCommon) addUpdateBinlog(ctx sessionctx.Context, oldRow, newRow []t
 }
 
 func (t *TableCommon) addDeleteBinlog(ctx sessionctx.Context, r []types.Datum, colIDs []int64) error {
-	data, err := tablecodec.EncodeRow(ctx.GetSessionVars().StmtCtx, r, colIDs, nil, nil)
+	data, err := tablecodec.EncodeOldRow(ctx.GetSessionVars().StmtCtx, r, colIDs, nil, nil)
 	if err != nil {
 		return err
 	}
@@ -986,7 +992,7 @@ func (t *TableCommon) AllocHandle(ctx sessionctx.Context) (int64, error) {
 
 // AllocHandleIDs implements table.Table AllocHandleIDs interface.
 func (t *TableCommon) AllocHandleIDs(ctx sessionctx.Context, n uint64) (int64, int64, error) {
-	base, maxID, err := t.Allocator(ctx, autoid.RowIDAllocType).Alloc(t.tableID, n)
+	base, maxID, err := t.Allocator(ctx, autoid.RowIDAllocType).Alloc(t.tableID, n, 1, 1)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -1182,4 +1188,25 @@ func CheckHandleExists(ctx context.Context, sctx sessionctx.Context, t table.Tab
 func init() {
 	table.TableFromMeta = TableFromMeta
 	table.MockTableFromMeta = MockTableFromMeta
+}
+
+// GetSequenceNextVal implements util.SequenceTable GetSequenceNextVal interface.
+func (t *TableCommon) GetSequenceNextVal(dbName, seqName string) (int64, error) {
+	t.sequence++
+	// TODO: implements it with sequence allocation logic.
+	return t.sequence, nil
+}
+
+// SetSequenceVal implements util.SequenceTable SetSequenceVal interface.
+func (t *TableCommon) SetSequenceVal(newVal int64) (int64, bool, error) {
+	if t.sequence < newVal {
+		t.sequence = newVal
+	}
+	// TODO: implement it with sequence rebase logic.
+	return newVal, false, nil
+}
+
+// GetSequenceID implements util.SequenceTable GetSequenceID interface.
+func (t *TableCommon) GetSequenceID() int64 {
+	return t.tableID
 }

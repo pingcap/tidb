@@ -108,7 +108,7 @@ func (s *testUtilSuite) TestClone(c *check.C) {
 		&builtinRoundWithFracRealSig{}, &builtinRoundWithFracIntSig{}, &builtinRoundWithFracDecSig{}, &builtinCeilRealSig{}, &builtinCeilIntToDecSig{},
 		&builtinCeilIntToIntSig{}, &builtinCeilDecToIntSig{}, &builtinCeilDecToDecSig{}, &builtinFloorRealSig{}, &builtinFloorIntToDecSig{},
 		&builtinFloorIntToIntSig{}, &builtinFloorDecToIntSig{}, &builtinFloorDecToDecSig{}, &builtinLog1ArgSig{}, &builtinLog2ArgsSig{},
-		&builtinLog2Sig{}, &builtinLog10Sig{}, &builtinRandSig{}, &builtinRandWithSeedSig{}, &builtinPowSig{},
+		&builtinLog2Sig{}, &builtinLog10Sig{}, &builtinRandSig{}, &builtinRandWithSeedFirstGenSig{}, &builtinPowSig{},
 		&builtinConvSig{}, &builtinCRC32Sig{}, &builtinSignSig{}, &builtinSqrtSig{}, &builtinAcosSig{},
 		&builtinAsinSig{}, &builtinAtan1ArgSig{}, &builtinAtan2ArgsSig{}, &builtinCosSig{}, &builtinCotSig{},
 		&builtinDegreesSig{}, &builtinExpSig{}, &builtinPISig{}, &builtinRadiansSig{}, &builtinSinSig{},
@@ -508,7 +508,7 @@ func (m *MockExpr) GetType() *types.FieldType                         { return m
 func (m *MockExpr) Clone() Expression                                 { return nil }
 func (m *MockExpr) Equal(ctx sessionctx.Context, e Expression) bool   { return false }
 func (m *MockExpr) IsCorrelated() bool                                { return false }
-func (m *MockExpr) ConstItem() bool                                   { return false }
+func (m *MockExpr) ConstItem(_ *stmtctx.StatementContext) bool        { return false }
 func (m *MockExpr) Decorrelate(schema *Schema) Expression             { return m }
 func (m *MockExpr) ResolveIndices(schema *Schema) (Expression, error) { return m, nil }
 func (m *MockExpr) resolveIndices(schema *Schema) error               { return nil }
@@ -517,3 +517,5 @@ func (m *MockExpr) ExplainNormalizedInfo() string                     { return "
 func (m *MockExpr) HashCode(sc *stmtctx.StatementContext) []byte      { return nil }
 func (m *MockExpr) Vectorized() bool                                  { return false }
 func (m *MockExpr) SupportReverseEval() bool                          { return false }
+func (m *MockExpr) Coercibility() Coercibility                        { return 0 }
+func (m *MockExpr) SetCoercibility(Coercibility)                      {}
