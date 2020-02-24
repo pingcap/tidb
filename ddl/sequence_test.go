@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/testkit"
+	"strconv"
 )
 
 var _ = Suite(&testSequenceSuite{&testDBSuite{}})
@@ -644,4 +645,24 @@ func (s *testSequenceSuite) TestInsertSequence(c *C) {
 	s.tk.MustExec("select setval(seq, 100)")
 	s.tk.MustExec("insert into t values(lastval(seq)),(-1),(nextval(seq))")
 	s.tk.MustQuery("select * from t").Check(testkit.Rows("14", "-1", "101"))
+
+	// test insert with generated column.
+	s.tk.MustExec("drop sequence if exists seq")
+	s.tk.MustExec("create sequence seq")
+	s.tk.MustExec("drop table if exists t")
+	s.tk.MustExec("create table t (id int default next value for seq, col1 int generated always as (id + 1))")
+
+	s.tk.MustExec("insert into t values()")
+	s.tk.MustQuery("select * from t").Check(testkit.Rows("1 2"))
+	s.tk.MustExec("insert into t values(),()")
+	s.tk.MustQuery("select * from t").Check(testkit.Rows("1 2", "2 3", "3 4"))
+	s.tk.MustExec("delete from t")
+	s.tk.MustExec("insert into t (id) values(-1),(default)")
+	s.tk.MustQuery("select * from t").Check(testkit.Rows("-1 0", "4 5"))
+
+	// test sequence run out (overflow MaxInt64).
+	setSQL := "select setval(seq," + strconv.FormatInt(model.DefaultPositiveSequenceMaxValue+1, 10) + ")"
+	s.tk.MustExec(setSQL)
+	err := s.tk.QueryToErr("select nextval(seq)")
+	c.Assert(err.Error(), Equals, "[table:4135]Sequence 'test.seq' has run out")
 }

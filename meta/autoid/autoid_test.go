@@ -611,7 +611,7 @@ func (*testSuite) TestSequenceAutoid(c *C) {
 	offset := seq.Start
 	size, err := autoid.CalcSequenceBatchSize(sequenceBase, seq.CacheValue, seq.Increment, offset, seq.MinValue, seq.MaxValue)
 	c.Assert(err, IsNil)
-	c.Assert(end-base, Equals, size)
+	c.Assert(size, Equals, end-base)
 
 	// simulate the next value allocation.
 	nextVal, ok := autoid.SeekToFirstSequenceValue(base, seq.Increment, offset, base, end)
@@ -637,7 +637,7 @@ func (*testSuite) TestSequenceAutoid(c *C) {
 	// test the sequence batch size.
 	size, err = autoid.CalcSequenceBatchSize(sequenceBase, seq.CacheValue, seq.Increment, offset, seq.MinValue, seq.MaxValue)
 	c.Assert(err, IsNil)
-	c.Assert(end-base, Equals, size)
+	c.Assert(size, Equals, end-base)
 
 	nextVal, ok = autoid.SeekToFirstSequenceValue(base, seq.Increment, offset, base, end)
 	c.Assert(ok, Equals, true)
@@ -657,13 +657,13 @@ func (*testSuite) TestSequenceAutoid(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(base, Equals, int64(-11))
 	c.Assert(end, Equals, int64(-6))
-	// the round already in cycle.
+	// the round is already in cycle.
 	c.Assert(round, Equals, int64(1))
 
 	// test the sequence batch size.
 	size, err = autoid.CalcSequenceBatchSize(sequenceBase, seq.CacheValue, seq.Increment, offset, seq.MinValue, seq.MaxValue)
 	c.Assert(err, IsNil)
-	c.Assert(end-base, Equals, size)
+	c.Assert(size, Equals, end-base)
 
 	offset = seq.MinValue
 	nextVal, ok = autoid.SeekToFirstSequenceValue(base, seq.Increment, offset, base, end)
@@ -758,9 +758,9 @@ func (*testSuite) TestConcurrentAllocSequence(c *C) {
 	for i := 0; i < count; i++ {
 		wg.Add(1)
 		go func(num int) {
-			defer wg.Done()
 			time.Sleep(time.Duration(num%10) * time.Microsecond)
 			allocSequence()
+			wg.Done()
 		}(i)
 	}
 	wg.Wait()

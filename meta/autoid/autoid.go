@@ -674,7 +674,7 @@ func (alloc *allocator) alloc4Unsigned(tableID int64, n uint64, increment, offse
 // 3: sequence allocation may have negative growth.
 // 4: sequence allocation batch length can be dissatisfied.
 // 5: sequence batch allocation will be consumed immediately.
-func (alloc *allocator) alloc4Sequence(tableID int64) (int64, int64, int64, error) {
+func (alloc *allocator) alloc4Sequence(tableID int64) (min int64, max int64, round int64, err error) {
 	increment := alloc.sequence.Increment
 	offset := alloc.sequence.Start
 	minValue := alloc.sequence.MinValue
@@ -684,9 +684,9 @@ func (alloc *allocator) alloc4Sequence(tableID int64) (int64, int64, int64, erro
 		cacheSize = 1
 	}
 
-	var newBase, newEnd, round int64
+	var newBase, newEnd int64
 	startTime := time.Now()
-	err := kv.RunInNewTxn(alloc.store, true, func(txn kv.Transaction) error {
+	err = kv.RunInNewTxn(alloc.store, true, func(txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		var (
 			err1    error
@@ -769,9 +769,10 @@ func (alloc *allocator) alloc4Sequence(tableID int64) (int64, int64, int64, erro
 		zap.Uint64("to value", uint64(alloc.end)),
 		zap.Int64("table ID", tableID),
 		zap.Int64("database ID", alloc.dbID))
-	min := alloc.base
+	min = alloc.base
+	max = alloc.end
 	alloc.base = alloc.end
-	return min, alloc.end, round, nil
+	return min, max, round, nil
 }
 
 func getAutoIDByAllocType(m *meta.Meta, dbID, tableID int64, allocType AllocatorType) (int64, error) {

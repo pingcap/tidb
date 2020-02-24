@@ -1227,7 +1227,6 @@ func (t *TableCommon) GetSequenceNextVal(dbName, seqName string) (nextVal int64,
 
 	var updateCache bool
 	err = func() error {
-		var err1 error
 		// Check if need to update the cache batch from storage.
 		// Because seq.base is not always the last allocated value (may be set by setval()).
 		// So we should try to seek the next value in cache (not just add increment to seq.base).
@@ -1236,14 +1235,7 @@ func (t *TableCommon) GetSequenceNextVal(dbName, seqName string) (nextVal int64,
 			updateCache = true
 		} else {
 			// Seek the first valid value in cache.
-			offset := seq.meta.Start
-			if seq.meta.Cycle && seq.round > 0 {
-				if seq.meta.Increment > 0 {
-					offset = seq.meta.MinValue
-				} else {
-					offset = seq.meta.MaxValue
-				}
-			}
+			offset := seq.getOffset()
 			var ok bool
 			if seq.meta.Increment > 0 {
 				nextVal, ok = autoid.SeekToFirstSequenceValue(seq.base, seq.meta.Increment, offset, seq.base, seq.end)
@@ -1258,15 +1250,9 @@ func (t *TableCommon) GetSequenceNextVal(dbName, seqName string) (nextVal int64,
 			return nil
 		}
 		// Update batch alloc from kv storage.
-		var sequenceAlloc autoid.Allocator
-		for _, alloc := range t.allocs {
-			if alloc.GetType() == autoid.SequenceType {
-				sequenceAlloc = alloc
-			}
-		}
-		if sequenceAlloc == nil {
-			// TODO: refine the error.
-			return errors.New("sequenceAlloc is nil")
+		sequenceAlloc, err1 := getSequenceAllocator(t.allocs)
+		if err1 != nil {
+			return err1
 		}
 		seq.base, seq.end, seq.round, err1 = sequenceAlloc.AllocSeqCache(t.tableID)
 		return err1
@@ -1282,14 +1268,7 @@ func (t *TableCommon) GetSequenceNextVal(dbName, seqName string) (nextVal int64,
 	if updateCache {
 		// SeekToFirstAutoIDUnSigned seeks to next sequence value.
 		var ok bool
-		offset := seq.meta.Start
-		if seq.meta.Cycle && seq.round > 0 {
-			if seq.meta.Increment > 0 {
-				offset = seq.meta.MinValue
-			} else {
-				offset = seq.meta.MaxValue
-			}
-		}
+		offset := seq.getOffset()
 		nextVal, ok = autoid.SeekToFirstSequenceValue(seq.base, seq.meta.Increment, offset, seq.meta.MinValue, seq.meta.MaxValue)
 		if !ok {
 			return 0, errors.New("can't find the first value in sequence cache")
@@ -1332,21 +1311,27 @@ func (t *TableCommon) SetSequenceVal(newVal int64) (int64, bool, error) {
 	t.sequence.base = t.sequence.end
 
 	// Rebase from kv storage.
-	var sequenceAlloc autoid.Allocator
-	for _, alloc := range t.allocs {
-		if alloc.GetType() == autoid.SequenceType {
-			sequenceAlloc = alloc
-		}
+	sequenceAlloc, err := getSequenceAllocator(t.allocs)
+	if err != nil {
+		return 0, false, err
 	}
-	if sequenceAlloc == nil {
-		// TODO: refine the error.
-		return 0, false, errors.New("sequenceAlloc is nil")
-	}
-	err := sequenceAlloc.Rebase(t.tableID, newVal, false)
+	err = sequenceAlloc.Rebase(t.tableID, newVal, false)
 	if err != nil {
 		return 0, false, err
 	}
 	return newVal, false, nil
+}
+
+func (s *sequenceCommon) getOffset() int64 {
+	offset := s.meta.Start
+	if s.meta.Cycle && s.round > 0 {
+		if s.meta.Increment > 0 {
+			offset = s.meta.MinValue
+		} else {
+			offset = s.meta.MaxValue
+		}
+	}
+	return offset
 }
 
 // GetSequenceID implements util.SequenceTable GetSequenceID interface.
@@ -1357,4 +1342,14 @@ func (t *TableCommon) GetSequenceID() int64 {
 // GetSequenceCommon is used in test to get sequenceCommon.
 func (t *TableCommon) GetSequenceCommon() *sequenceCommon {
 	return t.sequence
+}
+
+func getSequenceAllocator(allocs autoid.Allocators) (autoid.Allocator, error) {
+	for _, alloc := range allocs {
+		if alloc.GetType() == autoid.SequenceType {
+			return alloc, nil
+		}
+	}
+	// TODO: refine the error.
+	return nil, errors.New("sequence allocator is nil")
 }
