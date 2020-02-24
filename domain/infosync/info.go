@@ -65,16 +65,15 @@ const (
 
 // InfoSyncer stores server info to etcd when the tidb-server starts and delete when tidb-server shuts down.
 type InfoSyncer struct {
-	etcdCli          *clientv3.Client
-	info             *ServerInfo
-	serverInfoPath   string
-	topologyInfoPath string
-	minStartTS       uint64
-	minStartTSPath   string
-	manager          util2.SessionManager
-	session          *concurrency.Session
-	topologySession  *concurrency.Session
-	watchChan        clientv3.WatchChan
+	etcdCli         *clientv3.Client
+	info            *ServerInfo
+	serverInfoPath  string
+	minStartTS      uint64
+	minStartTSPath  string
+	manager         util2.SessionManager
+	session         *concurrency.Session
+	topologySession *concurrency.Session
+	watchChan       clientv3.WatchChan
 }
 
 // ServerInfo is server static information.
@@ -116,11 +115,10 @@ func setGlobalInfoSyncer(is *InfoSyncer) {
 // GlobalInfoSyncerInit return a new InfoSyncer. It is exported for testing.
 func GlobalInfoSyncerInit(ctx context.Context, id string, etcdCli *clientv3.Client) (*InfoSyncer, error) {
 	is := &InfoSyncer{
-		etcdCli:          etcdCli,
-		info:             getServerInfo(id),
-		serverInfoPath:   fmt.Sprintf("%s/%s", ServerInformationPath, id),
-		topologyInfoPath: fmt.Sprintf("%s/%s", TopologyInformationPath, id),
-		minStartTSPath:   fmt.Sprintf("%s/%s", ServerMinStartTSPath, id),
+		etcdCli:        etcdCli,
+		info:           getServerInfo(id),
+		serverInfoPath: fmt.Sprintf("%s/%s", ServerInformationPath, id),
+		minStartTSPath: fmt.Sprintf("%s/%s", ServerMinStartTSPath, id),
 	}
 	err := is.init(ctx)
 	if err != nil {
@@ -440,7 +438,7 @@ func (is *InfoSyncer) newTopologySessionAndStoreServerInfo(ctx context.Context, 
 	if is.etcdCli == nil {
 		return nil
 	}
-	logPrefix := fmt.Sprintf("[topology-syncer] %s", is.topologyInfoPath)
+	logPrefix := fmt.Sprintf("[topology-syncer] %s/%s:%d", TopologyInformationPath, is.info.IP, is.info.Port)
 	session, err := owner.NewSession(ctx, logPrefix, is.etcdCli, retryCnt, TopologySessionTTL)
 	if err != nil {
 		return err
