@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tipb/go-tipb"
@@ -72,7 +73,7 @@ func AggFuncToPBExpr(sc *stmtctx.StatementContext, client kv.Client, aggFunc *Ag
 }
 
 // PBExprToAggFuncDesc converts pb to aggregate function.
-func PBExprToAggFuncDesc(sc *stmtctx.StatementContext, aggFunc *tipb.Expr, fieldTps []*types.FieldType) (*AggFuncDesc, error) {
+func PBExprToAggFuncDesc(ctx sessionctx.Context, aggFunc *tipb.Expr, fieldTps []*types.FieldType) (*AggFuncDesc, error) {
 	var name string
 	switch aggFunc.Tp {
 	case tipb.ExprType_Count:
@@ -99,14 +100,19 @@ func PBExprToAggFuncDesc(sc *stmtctx.StatementContext, aggFunc *tipb.Expr, field
 		return nil, errors.Errorf("unknown aggregation function type: %v", aggFunc.Tp)
 	}
 
-	args, err := expression.PBToExprs(aggFunc.Children, fieldTps, sc)
+	aggFieldType := expression.FieldTypeFromPB(aggFunc.FieldType)
+	args, err := expression.PBToExprs(aggFunc.Children, fieldTps, ctx.GetSessionVars().StmtCtx)
+	if len(args) == 1 && args[0].GetType().Tp != aggFieldType.Tp {
+		args[0] = expression.BuildCastFunction(ctx, args[0], aggFieldType)
+
+	}
 	if err != nil {
 		return nil, err
 	}
 	base := baseFuncDesc{
 		Name:  name,
 		Args:  args,
-		RetTp: expression.FieldTypeFromPB(aggFunc.FieldType),
+		RetTp: aggFieldType,
 	}
 	return &AggFuncDesc{
 		baseFuncDesc: base,
