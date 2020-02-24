@@ -16,7 +16,7 @@ package collate
 import "unicode/utf8"
 
 var (
-	sortKeySpace = []byte{byte(convertRune(0x20) >> 8), byte(convertRune(0x20) >> 8)}
+	sortKeySpace = []byte{byte(convertRune(0x20) >> 8), byte(convertRune(0x20))}
 )
 
 type generalCICollator struct {
