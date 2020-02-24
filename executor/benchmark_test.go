@@ -472,8 +472,8 @@ func BenchmarkAggGroupByNDV(b *testing.B) {
 }
 
 func BenchmarkAggConcurrency(b *testing.B) {
-	concs := []int{1, 2, 4}
-	NDVs := []int{1000, 10000, 50000}
+	concs := []int{1, 2, 3, 4}
+	NDVs := []int{2000, 10000, 50000}
 	rows := 100000
 	for _, hasDistinct := range []bool{false, true} {
 		for _, NDV := range NDVs {
@@ -498,6 +498,34 @@ func BenchmarkAggConcurrency(b *testing.B) {
 			}
 		}
 	}
+}
+
+// TODOO: Delete this one.
+func BenchmarkHashAggDefaultConcurrency(b *testing.B) {
+	cas := defaultAggTestCase("hash")
+	cas.concurrency = 4
+	cas.rows = 100000
+	cas.groupByNDV = 10000
+	cas.hasDistinct = false
+	cas.aggFunc = ast.AggFuncAvg
+	cas.isPartitioning = false
+	b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+		benchmarkAggExecWithCase(b, cas)
+	})
+}
+
+// TODOO: Delete this one.
+func BenchmarkHashAggPartitioningConcurrency(b *testing.B) {
+	cas := defaultAggTestCase("hash")
+	cas.concurrency = 4
+	cas.rows = 100000
+	cas.groupByNDV = 10000
+	cas.hasDistinct = false
+	cas.aggFunc = ast.AggFuncAvg
+	cas.isPartitioning = true
+	b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+		benchmarkAggExecWithCase(b, cas)
+	})
 }
 
 func BenchmarkAggDistinct(b *testing.B) {
