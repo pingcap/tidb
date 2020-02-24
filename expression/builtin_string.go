@@ -3679,12 +3679,6 @@ type weightStringFunctionClass struct {
 	baseFunctionClass
 }
 
-func newWeightStringFunctionClass() *weightStringFunctionClass {
-	return &weightStringFunctionClass{
-		baseFunctionClass{ast.WeightString, 0, 0},
-	}
-}
-
 func (c *weightStringFunctionClass) verifyArgs(args []Expression) (weightStringPadding, int, error) {
 	padding := weightStringPaddingNone
 	l := len(args)
@@ -3787,7 +3781,7 @@ func (b *builtinWeightStringSig) Clone() builtinFunc {
 func (b *builtinWeightStringSig) evalString(row chunk.Row) (string, bool, error) {
 	str, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if err != nil {
-		return "", true, err
+		return "", false, err
 	}
 	if isNull {
 		return "", true, nil
