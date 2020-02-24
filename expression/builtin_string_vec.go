@@ -1409,11 +1409,64 @@ func (b *builtinRpadSig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 }
 
 func (b *builtinFormatWithLocaleSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinFormatWithLocaleSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+
+	dBuf, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(dBuf)
+	if err := b.args[1].VecEvalInt(b.ctx, input, dBuf); err != nil {
+		return err
+	}
+	dInt64s := dBuf.Int64s()
+
+	localeBuf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(localeBuf)
+	if err := b.args[2].VecEvalString(b.ctx, input, localeBuf); err != nil {
+		return err
+	}
+
+	// decimal x
+	if b.args[0].GetType().EvalType() == types.ETDecimal {
+		xBuf, err := b.bufAllocator.get(types.ETDecimal, n)
+		if err != nil {
+			return err
+		}
+		defer b.bufAllocator.put(xBuf)
+		if err := b.args[0].VecEvalDecimal(b.ctx, input, xBuf); err != nil {
+			return err
+		}
+
+		result.ReserveString(n)
+		xBuf.MergeNulls(dBuf)
+		xDecimals := xBuf.Decimals()
+
+		return formatDecimalWithLocale(xBuf, xDecimals, dInt64s, result, localeBuf)
+	}
+
+	// real x
+	xBuf, err := b.bufAllocator.get(types.ETReal, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(xBuf)
+	if err := b.args[0].VecEvalReal(b.ctx, input, xBuf); err != nil {
+		return err
+	}
+
+	result.ReserveString(n)
+	xBuf.MergeNulls(dBuf)
+	xFloat64s := xBuf.Float64s()
+
+	return formatRealWithLocale(xBuf, xFloat64s, dInt64s, result, localeBuf)
 }
 
 func (b *builtinSubstring2ArgsSig) vectorized() bool {
@@ -2579,7 +2632,7 @@ func (b *builtinFormatSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 		xBuf.MergeNulls(dBuf)
 		xDecimals := xBuf.Decimals()
 
-		return b.formatDecimal(xBuf, xDecimals, dInt64s, result)
+		return formatDecimal(xBuf, xDecimals, dInt64s, result)
 	}
 
 	// real x
@@ -2596,63 +2649,7 @@ func (b *builtinFormatSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 	xBuf.MergeNulls(dBuf)
 	xFloat64s := xBuf.Float64s()
 
-	return b.formatReal(xBuf, xFloat64s, dInt64s, result)
-}
-
-func (b *builtinFormatSig) formatDecimal(xBuf *chunk.Column, xDecimals []types.MyDecimal, dInt64s []int64, result *chunk.Column) error {
-	localeFormatFunction := mysql.GetLocaleFormatFunction("en_US")
-	for i := range xDecimals {
-		if xBuf.IsNull(i) {
-			result.AppendNull()
-			continue
-		}
-
-		x, d := xDecimals[i], dInt64s[i]
-
-		if d < 0 {
-			d = 0
-		} else if d > formatMaxDecimals {
-			d = formatMaxDecimals
-		}
-
-		xStr := roundFormatArgs(x.String(), int(d))
-		dStr := strconv.FormatInt(d, 10)
-
-		formatString, err := localeFormatFunction(xStr, dStr)
-		if err != nil {
-			return err
-		}
-		result.AppendString(formatString)
-	}
-	return nil
-}
-
-func (b *builtinFormatSig) formatReal(xBuf *chunk.Column, xFloat64s []float64, dInt64s []int64, result *chunk.Column) error {
-	localeFormatFunction := mysql.GetLocaleFormatFunction("en_US")
-	for i := range xFloat64s {
-		if xBuf.IsNull(i) {
-			result.AppendNull()
-			continue
-		}
-
-		x, d := xFloat64s[i], dInt64s[i]
-
-		if d < 0 {
-			d = 0
-		} else if d > formatMaxDecimals {
-			d = formatMaxDecimals
-		}
-
-		xStr := roundFormatArgs(strconv.FormatFloat(x, 'f', -1, 64), int(d))
-		dStr := strconv.FormatInt(d, 10)
-
-		formatString, err := localeFormatFunction(xStr, dStr)
-		if err != nil {
-			return err
-		}
-		result.AppendString(formatString)
-	}
-	return nil
+	return formatReal(xBuf, xFloat64s, dInt64s, result)
 }
 
 func (b *builtinRightSig) vectorized() bool {
@@ -2864,6 +2861,84 @@ func (b *builtinCharLengthUTF8Sig) vecEvalInt(input *chunk.Chunk, result *chunk.
 		}
 		str := buf.GetString(i)
 		i64s[i] = int64(len([]rune(str)))
+	}
+	return nil
+}
+
+func formatDecimal(xBuf *chunk.Column, xDecimals []types.MyDecimal, dInt64s []int64, result *chunk.Column) error {
+	return formatDecimalWithLocale(xBuf, xDecimals, dInt64s, result, nil)
+}
+
+func formatDecimalWithLocale(xBuf *chunk.Column, xDecimals []types.MyDecimal, dInt64s []int64, result *chunk.Column, localeBuf *chunk.Column) error {
+	for i := range xDecimals {
+		if xBuf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+
+		x, d := xDecimals[i], dInt64s[i]
+
+		if d < 0 {
+			d = 0
+		} else if d > formatMaxDecimals {
+			d = formatMaxDecimals
+		}
+
+		var locale string
+		if localeBuf == nil {
+			locale = "en_US"
+		} else {
+			locale = localeBuf.GetString(i)
+		}
+
+		xStr := roundFormatArgs(x.String(), int(d))
+		dStr := strconv.FormatInt(d, 10)
+		localeFormatFunction := mysql.GetLocaleFormatFunction(locale)
+
+		formatString, err := localeFormatFunction(xStr, dStr)
+		if err != nil {
+			return err
+		}
+		result.AppendString(formatString)
+	}
+	return nil
+}
+
+func formatReal(xBuf *chunk.Column, xFloat64s []float64, dInt64s []int64, result *chunk.Column) error {
+	return formatRealWithLocale(xBuf, xFloat64s, dInt64s, result, nil)
+}
+
+func formatRealWithLocale(xBuf *chunk.Column, xFloat64s []float64, dInt64s []int64, result *chunk.Column, localeBuf *chunk.Column) error {
+	for i := range xFloat64s {
+		if xBuf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+
+		x, d := xFloat64s[i], dInt64s[i]
+
+		if d < 0 {
+			d = 0
+		} else if d > formatMaxDecimals {
+			d = formatMaxDecimals
+		}
+
+		var locale string
+		if localeBuf == nil {
+			locale = "en_US"
+		} else {
+			locale = localeBuf.GetString(i)
+		}
+
+		xStr := roundFormatArgs(strconv.FormatFloat(x, 'f', -1, 64), int(d))
+		dStr := strconv.FormatInt(d, 10)
+		localeFormatFunction := mysql.GetLocaleFormatFunction(locale)
+
+		formatString, err := localeFormatFunction(xStr, dStr)
+		if err != nil {
+			return err
+		}
+		result.AppendString(formatString)
 	}
 	return nil
 }
