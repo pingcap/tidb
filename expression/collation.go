@@ -14,6 +14,7 @@
 package expression
 
 import (
+	"github.com/pingcap/parser/charset"
 	"strings"
 
 	"github.com/pingcap/parser/ast"
@@ -115,7 +116,10 @@ func deriveCoercibilityForColumn(c *Column) Coercibility {
 // DeriveCollationFromExprs derives collation information from these expressions.
 func DeriveCollationFromExprs(ctx sessionctx.Context, exprs ...Expression) (dstCharset, dstCollation string, dstFlen int) {
 	curCoer := CoercibilityCoercible
-	dstCharset, dstCollation = ctx.GetSessionVars().GetCharsetInfo()
+	dstCharset, dstCollation = charset.GetDefaultCharsetAndCollate()
+	if ctx != nil && ctx.GetSessionVars() != nil {
+		dstCharset, dstCollation = ctx.GetSessionVars().GetCharsetInfo()
+	}
 	dstFlen = types.UnspecifiedLength
 	// see https://dev.mysql.com/doc/refman/8.0/en/charset-collation-coercibility.html
 	for _, e := range exprs {
