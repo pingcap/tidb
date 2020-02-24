@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/meta"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
@@ -34,6 +33,7 @@ type inspectionSummaryRetriever struct {
 	retrieved bool
 	table     *model.TableInfo
 	extractor *plannercore.InspectionSummaryTableExtractor
+	timeRange plannercore.QueryTimeRange
 }
 
 // inspectionSummaryRules is used to maintain
@@ -429,24 +429,26 @@ func (e *inspectionSummaryRetriever) retrieve(ctx context.Context, sctx sessionc
 	}
 	e.retrieved = true
 
-	rules := inspectionFilter{e.extractor.Rules}
-	names := inspectionFilter{e.extractor.MetricNames}
+	rules := inspectionFilter{set: e.extractor.Rules}
+	names := inspectionFilter{set: e.extractor.MetricNames}
+
+	condition := e.timeRange.Condition()
 	var finalRows [][]types.Datum
-	// TODO: support specify time range via SQL hint
 	for rule, tables := range inspectionSummaryRules {
-		if !rules.Exist(rule) {
+		if !rules.exist(rule) {
 			continue
 		}
 		for _, name := range tables {
 			if !names.enable(name) {
 				continue
 			}
-			def, ok := infoschema.MetricTableMap[name]
-			if !ok {
-				return nil, meta.ErrTableNotExists
+			def, found := infoschema.MetricTableMap[name]
+			if !found {
+				sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("metrics table: %s not found", name))
+				continue
 			}
 			cols := def.Labels
-			cond := ""
+			cond := condition
 			if def.Quantile > 0 {
 				cols = append(cols, "quantile")
 				if len(e.extractor.Quantiles) > 0 {
@@ -454,14 +456,14 @@ func (e *inspectionSummaryRetriever) retrieve(ctx context.Context, sctx sessionc
 					for i, q := range e.extractor.Quantiles {
 						qs[i] = fmt.Sprintf("%f", q)
 					}
-					cond = "where quantile in (" + strings.Join(qs, ",") + ")"
+					cond += " and quantile in (" + strings.Join(qs, ",") + ")"
 				} else {
-					cond = "where quantile=0.99"
+					cond += " and quantile=0.99"
 				}
 			}
 			var sql string
 			if len(cols) > 0 {
-				sql = fmt.Sprintf("select avg(value),min(value),max(value), `%s` from `%s`.`%s` %s group by `%[1]s` order by `%[1]s`",
+				sql = fmt.Sprintf("select avg(value),min(value),max(value),`%s` from `%s`.`%s` %s group by `%[1]s` order by `%[1]s`",
 					strings.Join(cols, "`,`"), util.MetricSchemaName.L, name, cond)
 			} else {
 				sql = fmt.Sprintf("select avg(value),min(value),max(value) from `%s`.`%s` %s",
@@ -491,7 +493,7 @@ func (e *inspectionSummaryRetriever) retrieve(ctx context.Context, sctx sessionc
 					}
 					labels = append(labels, val)
 				}
-				var quantile float64
+				var quantile interface{}
 				if def.Quantile > 0 {
 					quantile = row.GetFloat64(row.Len() - 1) // quantile will be the last column
 				}

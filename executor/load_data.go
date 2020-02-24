@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/stringutil"
@@ -473,7 +474,7 @@ func (e *LoadDataInfo) colsToRow(ctx context.Context, cols []field) []types.Datu
 		if cols[i].maybeNull && string(cols[i].str) == "N" {
 			e.row[i].SetNull()
 		} else {
-			e.row[i].SetString(string(cols[i].str))
+			e.row[i].SetString(string(cols[i].str), mysql.DefaultCollationName, collate.DefaultLen)
 		}
 	}
 	row, err := e.getRowInPlace(ctx, e.row, e.rows[e.curBatchCnt])

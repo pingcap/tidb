@@ -614,6 +614,20 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 		return ver, table.ErrUnknownPartition.GenWithStackByArgs("drop?", tblInfo.Name.O)
 	}
 
+	// Clear the tiflash replica available status.
+	if tblInfo.TiFlashReplica != nil {
+		tblInfo.TiFlashReplica.Available = false
+		// Set partition replica become unavailable.
+		for i, id := range tblInfo.TiFlashReplica.AvailablePartitionIDs {
+			if id == oldID {
+				newIDs := tblInfo.TiFlashReplica.AvailablePartitionIDs[:i]
+				newIDs = append(newIDs, tblInfo.TiFlashReplica.AvailablePartitionIDs[i+1:]...)
+				tblInfo.TiFlashReplica.AvailablePartitionIDs = newIDs
+				break
+			}
+		}
+	}
+
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)
