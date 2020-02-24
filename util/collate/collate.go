@@ -134,31 +134,29 @@ func CollationID2Name(id int32) string {
 type binPaddingCollator struct {
 }
 
-func (bpc *binPaddingCollator) Compare(a, b string, opt CollatorOption) int {
-	aLen := len(a)
-	bLen := len(b)
-	noPaddingResult := 0
-	if aLen > bLen {
-		noPaddingResult = strings.Compare(a[:bLen], b)
-		if noPaddingResult != 0 {
-			return noPaddingResult
+func truncateTailingSpaceTwo(a, b string) (string, string) {
+	return truncateTailingSpaceOne(a), truncateTailingSpaceOne(b)
+}
+
+func truncateTailingSpaceOne(str string) string {
+	byteLen := len(str)
+	i := byteLen - 1
+	for ; i >= 0; i-- {
+		if str[i] != ' ' {
+			break
 		}
-		return strings.Compare(a[bLen:], strings.Repeat(" ", aLen-bLen))
-	} else if aLen < bLen {
-		noPaddingResult = strings.Compare(a, b[:aLen])
-		if noPaddingResult != 0 {
-			return noPaddingResult
-		}
-		return strings.Compare(strings.Repeat(" ", bLen-aLen), b[aLen:])
 	}
+	str = str[:i+1]
+	return str
+}
+
+func (bpc *binPaddingCollator) Compare(a, b string, opt CollatorOption) int {
+	a, b = truncateTailingSpaceTwo(a, b)
 	return strings.Compare(a, b)
 }
 
 func (bpc *binPaddingCollator) Key(str string, opt CollatorOption) []byte {
-	if opt.PadLen <= len(str) {
-		return []byte(str)
-	}
-	return []byte(str + strings.Repeat(" ", opt.PadLen-len(str)))
+	return []byte(truncateTailingSpaceOne(str))
 }
 
 func init() {
