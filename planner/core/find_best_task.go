@@ -196,10 +196,11 @@ func (p *LogicalMemTable) findBestTask(prop *property.PhysicalProperty) (t task,
 		return invalidTask, nil
 	}
 	memTable := PhysicalMemTable{
-		DBName:    p.DBName,
-		Table:     p.TableInfo,
-		Columns:   p.TableInfo.Columns,
-		Extractor: p.Extractor,
+		DBName:         p.DBName,
+		Table:          p.TableInfo,
+		Columns:        p.TableInfo.Columns,
+		Extractor:      p.Extractor,
+		QueryTimeRange: p.QueryTimeRange,
 	}.Init(p.ctx, p.stats, p.blockOffset)
 	memTable.SetSchema(p.schema)
 	return &rootTask{p: memTable}, nil

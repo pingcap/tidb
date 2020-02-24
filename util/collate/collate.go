@@ -16,6 +16,8 @@ package collate
 import (
 	"strings"
 	"sync"
+
+	"github.com/pingcap/parser/mysql"
 )
 
 var (
@@ -25,9 +27,19 @@ var (
 	setCollationOnce    sync.Once
 )
 
+// DefaultLen is set for datum if the string datum don't know its length.
+const (
+	DefaultLen = 0
+)
+
 // CollatorOption is the option of collator.
 type CollatorOption struct {
 	PadLen int
+}
+
+// NewCollatorOption creates a new CollatorOption with the specified arguments.
+func NewCollatorOption(padLen int) CollatorOption {
+	return CollatorOption{padLen}
 }
 
 // Collator provides functionality for comparing strings for a given
@@ -109,6 +121,16 @@ func (bc *binCollator) Key(str string, opt CollatorOption) []byte {
 	return []byte(str)
 }
 
+// CollationID2Name return the collation name by the given id.
+// If the id is not found in the map, we reutrn the default one directly.
+func CollationID2Name(id int32) string {
+	name, ok := mysql.Collations[uint8(id)]
+	if !ok {
+		return mysql.DefaultCollationName
+	}
+	return name
+}
+
 type binPaddingCollator struct {
 }
 
@@ -133,6 +155,9 @@ func (bpc *binPaddingCollator) Compare(a, b string, opt CollatorOption) int {
 }
 
 func (bpc *binPaddingCollator) Key(str string, opt CollatorOption) []byte {
+	if opt.PadLen <= len(str) {
+		return []byte(str)
+	}
 	return []byte(str + strings.Repeat(" ", opt.PadLen-len(str)))
 }
 

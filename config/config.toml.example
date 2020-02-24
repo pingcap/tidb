@@ -110,6 +110,9 @@ format = "text"
 # Enable annotating logs with the full stack error message, if not set, it will be defaulted to false.
 # enable-error-stack = false
 
+# Whether to enable slow query log.
+enable-slow-log = true
+
 # Stores slow query log into separated files.
 slow-query-file = "tidb-slow.log"
 

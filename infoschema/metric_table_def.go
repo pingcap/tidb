@@ -1471,12 +1471,12 @@ var MetricTableMap = map[string]MetricTableDef{
 	"tikv_engine_max_get_duration": {
 		PromQL:  `max(tikv_engine_get_micro_seconds{$LABEL_CONDITIONS}) by (db,type,instance)`,
 		Labels:  []string{"instance", "type", "db"},
-		Comment: "The max time consumed when executing get operations",
+		Comment: "The max time consumed when executing get operations, the unit is microsecond",
 	},
 	"tikv_engine_avg_get_duration": {
 		PromQL:  `avg(tikv_engine_get_micro_seconds{$LABEL_CONDITIONS}) by (db,type,instance)`,
 		Labels:  []string{"instance", "type", "db"},
-		Comment: "The average time consumed when executing get operations",
+		Comment: "The average time consumed when executing get operations, the unit is microsecond",
 	},
 	"tikv_engine_seek_operations": {
 		PromQL:  `sum(rate(tikv_engine_locate{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (db,type,instance)`,
@@ -1486,12 +1486,12 @@ var MetricTableMap = map[string]MetricTableDef{
 	"tikv_engine_max_seek_duration": {
 		PromQL:  `max(tikv_engine_seek_micro_seconds{$LABEL_CONDITIONS}) by (db,type,instance)`,
 		Labels:  []string{"instance", "type", "db"},
-		Comment: "The time consumed when executing seek operation",
+		Comment: "The time consumed when executing seek operation, the unit is microsecond",
 	},
 	"tikv_engine_avg_seek_duration": {
 		PromQL:  `avg(tikv_engine_seek_micro_seconds{$LABEL_CONDITIONS}) by (db,type,instance)`,
 		Labels:  []string{"instance", "type", "db"},
-		Comment: "The time consumed when executing seek operation",
+		Comment: "The time consumed when executing seek operation, the unit is microsecond",
 	},
 	"tikv_engine_write_operations": {
 		PromQL:  `sum(rate(tikv_engine_write_served{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (db,type,instance)`,
@@ -1501,7 +1501,7 @@ var MetricTableMap = map[string]MetricTableDef{
 	"tikv_engine_write_duration": {
 		PromQL:  `max(tikv_engine_write_micro_seconds{$LABEL_CONDITIONS}) by (db,type,instance)`,
 		Labels:  []string{"instance", "type", "db"},
-		Comment: "The time consumed when executing write operation",
+		Comment: "The time consumed when executing write operation, the unit is microsecond",
 	},
 	"tikv_engine_wal_sync_operations": {
 		PromQL:  `sum(rate(tikv_engine_wal_file_synced{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (db,instance)`,
@@ -1512,12 +1512,12 @@ var MetricTableMap = map[string]MetricTableDef{
 	"tikv_wal_sync_max_duration": {
 		PromQL:  `max(tikv_engine_wal_file_sync_micro_seconds{$LABEL_CONDITIONS}) by (db,type,instance)`,
 		Labels:  []string{"instance", "type", "db"},
-		Comment: "The max time consumed when executing WAL sync operation",
+		Comment: "The max time consumed when executing WAL sync operation, the unit is microsecond",
 	},
 	"tikv_wal_sync_duration": {
 		PromQL:  `avg(tikv_engine_wal_file_sync_micro_seconds{$LABEL_CONDITIONS}) by (db,type,instance)`,
 		Labels:  []string{"instance", "type"},
-		Comment: "The time consumed when executing WAL sync operation",
+		Comment: "The time consumed when executing WAL sync operation, the unit is microsecond",
 	},
 	"tikv_compaction_operations": {
 		PromQL:  `sum(rate(tikv_engine_event_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type,instance,db)`,
@@ -1570,28 +1570,28 @@ var MetricTableMap = map[string]MetricTableDef{
 		Comment: "The block cache size. Broken down by column family if shared block cache is disabled.",
 	},
 	"tikv_block_all_cache_hit": {
-		PromQL:  `sum(rate(tikv_engine_cache_efficiency{type="block_cache_hit"}[$RANGE_DURATION])) by (db) / (sum(rate(tikv_engine_cache_efficiency{type="block_cache_hit"}[$RANGE_DURATION])) by (db) + sum(rate(tikv_engine_cache_efficiency{type="block_cache_miss"}[$RANGE_DURATION])) by (db))`,
-		Labels:  []string{"db"},
+		PromQL:  `sum(rate(tikv_engine_cache_efficiency{type="block_cache_hit"}[$RANGE_DURATION])) by (db,instance) / (sum(rate(tikv_engine_cache_efficiency{type="block_cache_hit"}[$RANGE_DURATION])) by (db,instance) + sum(rate(tikv_engine_cache_efficiency{type="block_cache_miss"}[$RANGE_DURATION])) by (db,instance))`,
+		Labels:  []string{"instance", "db"},
 		Comment: "The hit rate of all block cache",
 	},
 	"tikv_block_data_cache_hit": {
-		PromQL:  `sum(rate(tikv_engine_cache_efficiency{type="block_cache_data_hit"}[$RANGE_DURATION])) by (db) / (sum(rate(tikv_engine_cache_efficiency{type="block_cache_data_hit"}[$RANGE_DURATION])) by (db) + sum(rate(tikv_engine_cache_efficiency{type="block_cache_data_miss"}[$RANGE_DURATION])) by (db))`,
-		Labels:  []string{"db"},
+		PromQL:  `sum(rate(tikv_engine_cache_efficiency{type="block_cache_data_hit"}[$RANGE_DURATION])) by (db,instance) / (sum(rate(tikv_engine_cache_efficiency{type="block_cache_data_hit"}[$RANGE_DURATION])) by (db,instance) + sum(rate(tikv_engine_cache_efficiency{type="block_cache_data_miss"}[$RANGE_DURATION])) by (db,instance))`,
+		Labels:  []string{"instance", "db"},
 		Comment: "The hit rate of data block cache",
 	},
 	"tikv_block_filter_cache_hit": {
-		PromQL:  `sum(rate(tikv_engine_cache_efficiency{type="block_cache_filter_hit"}[$RANGE_DURATION])) by (db) / (sum(rate(tikv_engine_cache_efficiency{type="block_cache_filter_hit"}[$RANGE_DURATION])) by (db) + sum(rate(tikv_engine_cache_efficiency{type="block_cache_filter_miss"}[$RANGE_DURATION])) by (db))`,
-		Labels:  []string{"db"},
+		PromQL:  `sum(rate(tikv_engine_cache_efficiency{type="block_cache_filter_hit"}[$RANGE_DURATION])) by (db,instance) / (sum(rate(tikv_engine_cache_efficiency{type="block_cache_filter_hit"}[$RANGE_DURATION])) by (db,instance) + sum(rate(tikv_engine_cache_efficiency{type="block_cache_filter_miss"}[$RANGE_DURATION])) by (db,instance))`,
+		Labels:  []string{"instance", "db"},
 		Comment: "The hit rate of data block cache",
 	},
 	"tikv_block_index_cache_hit": {
-		PromQL:  `sum(rate(tikv_engine_cache_efficiency{type="block_cache_index_hit"}[$RANGE_DURATION])) by (db) / (sum(rate(tikv_engine_cache_efficiency{type="block_cache_index_hit"}[$RANGE_DURATION])) by (db) + sum(rate(tikv_engine_cache_efficiency{type="block_cache_index_miss"}[$RANGE_DURATION])) by (db))`,
-		Labels:  []string{"db"},
+		PromQL:  `sum(rate(tikv_engine_cache_efficiency{type="block_cache_index_hit"}[$RANGE_DURATION])) by (db,instance) / (sum(rate(tikv_engine_cache_efficiency{type="block_cache_index_hit"}[$RANGE_DURATION])) by (db,instance) + sum(rate(tikv_engine_cache_efficiency{type="block_cache_index_miss"}[$RANGE_DURATION])) by (db,instance))`,
+		Labels:  []string{"instance", "db"},
 		Comment: "The hit rate of data block cache",
 	},
 	"tikv_block_bloom_prefix_cache_hit": {
-		PromQL:  `sum(rate(tikv_engine_bloom_efficiency{type="bloom_prefix_useful"}[$RANGE_DURATION])) by (db) / sum(rate(tikv_engine_bloom_efficiency{type="bloom_prefix_checked"}[$RANGE_DURATION])) by (db)`,
-		Labels:  []string{"db"},
+		PromQL:  `sum(rate(tikv_engine_bloom_efficiency{type="bloom_prefix_useful"}[$RANGE_DURATION])) by (db,instance) / sum(rate(tikv_engine_bloom_efficiency{type="bloom_prefix_checked"}[$RANGE_DURATION])) by (db,instance)`,
+		Labels:  []string{"instance", "db"},
 		Comment: "The hit rate of data block cache",
 	},
 	"tikv_corrrput_keys_flow": {
@@ -1700,36 +1700,41 @@ var MetricTableMap = map[string]MetricTableDef{
 		Labels: []string{"instance", "type", "db"},
 	},
 	"tikv_engine_blob_seek_duration": {
-		PromQL: `avg(tikv_engine_blob_seek_micros_seconds{$LABEL_CONDITIONS}) by (db,type,instance)`,
-		Labels: []string{"instance", "type", "db"},
+		PromQL:  `avg(tikv_engine_blob_seek_micros_seconds{$LABEL_CONDITIONS}) by (db,type,instance)`,
+		Labels:  []string{"instance", "type", "db"},
+		Comment: "the unit is microsecond",
 	},
 	"tikv_engine_blob_seek_operations": {
 		PromQL: `sum(rate(tikv_engine_blob_locate{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (db,type,instance)`,
 		Labels: []string{"instance", "type", "db"},
 	},
 	"tikv_engine_blob_get_duration": {
-		PromQL: `avg(tikv_engine_blob_get_micros_seconds{$LABEL_CONDITIONS}) by (type,db,instance)`,
-		Labels: []string{"instance", "type", "db"},
+		PromQL:  `avg(tikv_engine_blob_get_micros_seconds{$LABEL_CONDITIONS}) by (type,db,instance)`,
+		Labels:  []string{"instance", "type", "db"},
+		Comment: "the unit is microsecond",
 	},
 	"tikv_engine_blob_bytes_flow": {
 		PromQL: `sum(rate(tikv_engine_blob_flow_bytes{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type,instance,db)`,
 		Labels: []string{"instance", "type", "db"},
 	},
 	"tikv_engine_blob_file_read_duration": {
-		PromQL: `avg(tikv_engine_blob_file_read_micros_seconds{$LABEL_CONDITIONS}) by (type,instance,db)`,
-		Labels: []string{"instance", "type", "db"},
+		PromQL:  `avg(tikv_engine_blob_file_read_micros_seconds{$LABEL_CONDITIONS}) by (type,instance,db)`,
+		Labels:  []string{"instance", "type", "db"},
+		Comment: "the unit is microsecond",
 	},
 	"tikv_engine_blob_file_write_duration": {
-		PromQL: `avg(tikv_engine_blob_file_write_micros_seconds{$LABEL_CONDITIONS}) by (type,instance,db)`,
-		Labels: []string{"instance", "type", "db"},
+		PromQL:  `avg(tikv_engine_blob_file_write_micros_seconds{$LABEL_CONDITIONS}) by (type,instance,db)`,
+		Labels:  []string{"instance", "type", "db"},
+		Comment: "the unit is microsecond",
 	},
 	"tikv_engine_blob_file_sync_operations": {
 		PromQL: `sum(rate(tikv_engine_blob_file_synced{$LABEL_CONDITIONS}[$RANGE_DURATION]))`,
 		Labels: []string{"instance"},
 	},
 	"tikv_engine_blob_file_sync_duration": {
-		PromQL: `avg(tikv_engine_blob_file_sync_micros_seconds{$LABEL_CONDITIONS}) by (instance,type,db)`,
-		Labels: []string{"instance", "type", "db"},
+		PromQL:  `avg(tikv_engine_blob_file_sync_micros_seconds{$LABEL_CONDITIONS}) by (instance,type,db)`,
+		Labels:  []string{"instance", "type", "db"},
+		Comment: "the unit is microsecond",
 	},
 	"tikv_engine_blob_file_count": {
 		PromQL: `avg(tikv_engine_titandb_num_obsolete_blob_file{$LABEL_CONDITIONS}) by (instance,db)`,
