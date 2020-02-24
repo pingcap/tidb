@@ -24,6 +24,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
@@ -718,6 +719,7 @@ func (s *testCommitterSuite) TestPkNotFound(c *C) {
 	k1 := kv.Key("k1")
 	// k2 is a secondary lock of txn1 and a key txn2 wants to lock
 	k2 := kv.Key("k2")
+	k3 := kv.Key("k3")
 
 	txn1 := s.begin(c)
 	txn1.SetOption(kv.Pessimistic, true)
@@ -743,4 +745,29 @@ func (s *testCommitterSuite) TestPkNotFound(c *C) {
 	lockCtx = &kv.LockCtx{ForUpdateTS: txn2.startTS, WaitStartTime: time.Now()}
 	err = txn2.LockKeys(context.Background(), lockCtx, k2)
 	c.Assert(err, IsNil)
+
+	// Using smaller forUpdateTS cannot rollback this lock, other lock will fail
+	lockKey3 := &Lock{
+		Key:             k3,
+		Primary:         k1,
+		TxnID:           txn1.startTS,
+		TTL:             ManagedLockTTL,
+		TxnSize:         txnCommitBatchSize,
+		LockType:        kvrpcpb.Op_PessimisticLock,
+		LockForUpdateTS: txn1.startTS - 1,
+	}
+	cleanTxns := make(map[RegionVerID]struct{})
+	err = s.store.lockResolver.resolvePessimisticLock(bo, lockKey3, cleanTxns)
+	c.Assert(err, IsNil)
+
+	lockCtx = &kv.LockCtx{ForUpdateTS: txn1.startTS, WaitStartTime: time.Now()}
+	err = txn1.LockKeys(context.Background(), lockCtx, k3)
+	c.Assert(err, IsNil)
+	txn3 := s.begin(c)
+	txn3.SetOption(kv.Pessimistic, true)
+	lockCtx = &kv.LockCtx{ForUpdateTS: txn1.startTS - 1, WaitStartTime: time.Now(), LockWaitTime: kv.LockNoWait}
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/txnNotFoundRetTTL", "return"), IsNil)
+	err = txn3.LockKeys(context.Background(), lockCtx, k3)
+	c.Assert(err.Error(), Equals, ErrLockAcquireFailAndNoWaitSet.Error())
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/txnNotFoundRetTTL"), IsNil)
 }
