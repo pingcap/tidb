@@ -664,7 +664,7 @@ func NewRuleMergeAdjacentWindow() Transformation {
 	rule.pattern = memo.BuildPattern(
 		memo.OperandWindow,
 		memo.EngineTiDBOnly,
-		memo.NewPattern(memo.OperandWindow, memo.EngineAll),
+		memo.NewPattern(memo.OperandWindow, memo.EngineTiDBOnly),
 	)
 	return rule
 }
