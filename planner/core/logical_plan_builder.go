@@ -21,6 +21,7 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/cznic/mathutil"
@@ -85,6 +86,8 @@ const (
 	HintTiKV = "tikv"
 	// HintIndexMerge is a hint to enforce using some indexes at the same time.
 	HintIndexMerge = "use_index_merge"
+	// HintTimeRange is a hint to specify the time range for metrics summary tables
+	HintTimeRange = "time_range"
 )
 
 const (
@@ -2188,6 +2191,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 		indexHintList, indexMergeHintList                                     []indexHintInfo
 		tiflashTables, tikvTables                                             []hintTableInfo
 		aggHints                                                              aggHintInfo
+		timeRangeHint                                                         ast.HintTimeRange
 	)
 	for _, hint := range hints {
 		switch hint.HintName.L {
@@ -2257,6 +2261,8 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 					},
 				})
 			}
+		case HintTimeRange:
+			timeRangeHint = hint.HintData.(ast.HintTimeRange)
 		default:
 			// ignore hints that not implemented
 		}
@@ -2270,6 +2276,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 		tikvTables:                tikvTables,
 		aggHints:                  aggHints,
 		indexMergeHintList:        indexMergeHintList,
+		timeRangeHint:             timeRangeHint,
 	})
 }
 
@@ -2739,7 +2746,40 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	return result, nil
 }
 
-func (b *PlanBuilder) buildMemTable(ctx context.Context, dbName model.CIStr, tableInfo *model.TableInfo) (LogicalPlan, error) {
+func (b *PlanBuilder) timeRangeForSummaryTable() QueryTimeRange {
+	const defaultSummaryDuration = 30 * time.Minute
+	hints := b.TableHints()
+	// User doesn't use TIME_RANGE hint
+	if hints == nil || (hints.timeRangeHint.From == "" && hints.timeRangeHint.To == "") {
+		to := time.Now()
+		from := to.Add(-defaultSummaryDuration)
+		return QueryTimeRange{From: from, To: to}
+	}
+
+	// Parse time specified by user via TIM_RANGE hint
+	parse := func(s string) (time.Time, bool) {
+		t, err := time.ParseInLocation(MetricTableTimeFormat, s, time.Local)
+		if err != nil {
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+		}
+		return t, err == nil
+	}
+	from, fromValid := parse(hints.timeRangeHint.From)
+	to, toValid := parse(hints.timeRangeHint.To)
+	switch {
+	case !fromValid && !toValid:
+		to = time.Now()
+		from = to.Add(-defaultSummaryDuration)
+	case fromValid && !toValid:
+		to = from.Add(defaultSummaryDuration)
+	case !fromValid && toValid:
+		from = to.Add(-defaultSummaryDuration)
+	}
+
+	return QueryTimeRange{From: from, To: to}
+}
+
+func (b *PlanBuilder) buildMemTable(_ context.Context, dbName model.CIStr, tableInfo *model.TableInfo) (LogicalPlan, error) {
 	// We can use the `tableInfo.Columns` directly because the memory table has
 	// a stable schema and there is no online DDL on the memory table.
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(tableInfo.Columns))...)
@@ -2793,10 +2833,15 @@ func (b *PlanBuilder) buildMemTable(ctx context.Context, dbName model.CIStr, tab
 			p.Extractor = &ClusterLogTableExtractor{}
 		case infoschema.TableInspectionResult:
 			p.Extractor = &InspectionResultTableExtractor{}
+			p.QueryTimeRange = b.timeRangeForSummaryTable()
 		case infoschema.TableInspectionSummary:
 			p.Extractor = &InspectionSummaryTableExtractor{}
+			p.QueryTimeRange = b.timeRangeForSummaryTable()
 		case infoschema.TableMetricSummary, infoschema.TableMetricSummaryByLabel:
-			p.Extractor = newMetricTableExtractor()
+			p.Extractor = &MetricSummaryTableExtractor{}
+			p.QueryTimeRange = b.timeRangeForSummaryTable()
+		case infoschema.TableSlowQuery:
+			p.Extractor = &SlowQueryExtractor{}
 		}
 	}
 	return p, nil
