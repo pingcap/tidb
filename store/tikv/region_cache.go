@@ -115,6 +115,25 @@ func (r *RegionStore) follower(seed uint32) int32 {
 	return r.workTiKVIdx
 }
 
+// return next leader or follower store's index
+func (r *RegionStore) peer(seed uint32) int32 {
+	candidates := make([]int32, 0, len(r.stores))
+	for i := 0; i < len(r.stores); i++ {
+		if r.stores[i].storeType != kv.TiKV {
+			continue
+		}
+		if r.storeFails[i] != atomic.LoadUint32(&r.stores[i].fail) {
+			continue
+		}
+		candidates = append(candidates, int32(i))
+	}
+
+	if len(candidates) == 0 {
+		return r.workTiKVIdx
+	}
+	return candidates[int32(seed)%int32(len(candidates))]
+}
+
 // init initializes region after constructed.
 func (r *Region) init(c *RegionCache) {
 	// region store pull used store from global store map
@@ -199,6 +218,7 @@ type RegionCache struct {
 		sync.RWMutex
 		stores map[uint64]*Store
 	}
+	notifyDieCh   chan []string
 	notifyCheckCh chan struct{}
 	closeCh       chan struct{}
 }
@@ -212,6 +232,7 @@ func NewRegionCache(pdClient pd.Client) *RegionCache {
 	c.mu.sorted = btree.New(btreeDegree)
 	c.storeMu.stores = make(map[uint64]*Store)
 	c.notifyCheckCh = make(chan struct{}, 1)
+	c.notifyDieCh = make(chan []string, 1)
 	c.closeCh = make(chan struct{})
 	go c.asyncCheckAndResolveLoop()
 	return c
@@ -232,6 +253,8 @@ func (c *RegionCache) asyncCheckAndResolveLoop() {
 		case <-c.notifyCheckCh:
 			needCheckStores = needCheckStores[:0]
 			c.checkAndResolve(needCheckStores)
+		case addrs := <-c.notifyDieCh:
+			c.invalidStore(addrs)
 		}
 	}
 }
@@ -260,6 +283,19 @@ func (c *RegionCache) checkAndResolve(needCheckStores []*Store) {
 	for _, store := range needCheckStores {
 		store.reResolve(c)
 	}
+}
+
+func (c *RegionCache) invalidStore(sAddrs []string) {
+	c.storeMu.RLock()
+	for _, store := range c.storeMu.stores {
+		for _, sAddr := range sAddrs {
+			if store.addr == sAddr {
+				atomic.AddUint32(&store.fail, 1)
+			}
+		}
+
+	}
+	c.storeMu.RUnlock()
 }
 
 // RPCContext contains data that is needed to send RPC to a region.
@@ -306,6 +342,8 @@ func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRe
 	switch replicaRead {
 	case kv.ReplicaReadFollower:
 		store, peer, storeIdx = cachedRegion.FollowerStorePeer(regionStore, followerStoreSeed)
+	case kv.ReplicaReadMixed:
+		store, peer, storeIdx = cachedRegion.AnyStorePeer(regionStore, followerStoreSeed)
 	default:
 		store, peer, storeIdx = cachedRegion.WorkStorePeer(regionStore)
 	}
@@ -1055,6 +1093,11 @@ func (r *Region) FollowerStorePeer(rs *RegionStore, followerStoreSeed uint32) (*
 	return r.getStorePeer(rs, rs.follower(followerStoreSeed))
 }
 
+// AnyStorePeer returns a leader or follower store with the associated peer.
+func (r *Region) AnyStorePeer(rs *RegionStore, followerStoreSeed uint32) (*Store, *metapb.Peer, int) {
+	return r.getStorePeer(rs, rs.peer(followerStoreSeed))
+}
+
 // RegionVerID is a unique ID that can identify a Region at a specific version.
 type RegionVerID struct {
 	id      uint64
@@ -1111,6 +1154,14 @@ func (c *RegionCache) switchNextFlashPeer(r *Region, currentPeerIdx int, err err
 	newRegionStore := rs.clone()
 	newRegionStore.workTiFlashIdx = int32(nextIdx)
 	r.compareAndSwapStore(rs, newRegionStore)
+}
+
+// NotifyNodeDie is used for TiClient notify RegionCache a die node.
+func (c *RegionCache) NotifyNodeDie(addrs []string) {
+	select {
+	case c.notifyDieCh <- addrs:
+	default:
+	}
 }
 
 func (c *RegionCache) switchNextPeer(r *Region, currentPeerIdx int, err error) {

@@ -329,9 +329,9 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 
 func finishRecoverTable(w *worker, t *meta.Meta, job *model.Job) error {
 	tbInfo := &model.TableInfo{}
-	var autoID, dropJobID, recoverTableCheckFlag int64
+	var autoIncID, autoRandID, dropJobID, recoverTableCheckFlag int64
 	var snapshotTS uint64
-	err := job.DecodeArgs(tbInfo, &autoID, &dropJobID, &snapshotTS, &recoverTableCheckFlag)
+	err := job.DecodeArgs(tbInfo, &autoIncID, &dropJobID, &snapshotTS, &recoverTableCheckFlag, &autoRandID)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -735,20 +735,34 @@ func updateSchemaVersion(t *meta.Meta, job *model.Job) (int64, error) {
 		Type:     job.Type,
 		SchemaID: job.SchemaID,
 	}
-	if job.Type == model.ActionTruncateTable {
+	switch job.Type {
+	case model.ActionTruncateTable:
 		// Truncate table has two table ID, should be handled differently.
 		err = job.DecodeArgs(&diff.TableID)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
 		diff.OldTableID = job.TableID
-	} else if job.Type == model.ActionRenameTable {
+	case model.ActionCreateView:
+		tbInfo := &model.TableInfo{}
+		var orReplace bool
+		var oldTbInfoID int64
+		if err := job.DecodeArgs(tbInfo, &orReplace, &oldTbInfoID); err != nil {
+			return 0, errors.Trace(err)
+		}
+		// When the statement is "create or replace view " and we need to drop the old view,
+		// it has two table IDs and should be handled differently.
+		if oldTbInfoID > 0 && orReplace {
+			diff.OldTableID = oldTbInfoID
+		}
+		diff.TableID = tbInfo.ID
+	case model.ActionRenameTable:
 		err = job.DecodeArgs(&diff.OldSchemaID)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
 		diff.TableID = job.TableID
-	} else {
+	default:
 		diff.TableID = job.TableID
 	}
 	err = t.SetSchemaDiff(diff)
