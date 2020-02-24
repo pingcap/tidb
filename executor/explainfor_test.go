@@ -66,8 +66,8 @@ func (s *testSuite) TestExplainFor(c *C) {
 	tkRoot.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 	tkUser.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 	tkRoot.MustQuery(fmt.Sprintf("explain for connection %d", tkRootProcess.ID)).Check(testkit.Rows(
-		"TableReader_5 10000.00 root data:TableScan_4",
-		"└─TableScan_4 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"TableReader_5 10000.00 root data:TableFullScan_4",
+		"└─TableFullScan_4 10000.00 cop[tikv] table:t1, keep order:false, stats:pseudo",
 	))
 	err := tkUser.ExecToErr(fmt.Sprintf("explain for connection %d", tkRootProcess.ID))
 	c.Check(core.ErrAccessDenied.Equal(err), IsTrue)
