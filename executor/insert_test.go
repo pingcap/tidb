@@ -198,7 +198,7 @@ func (s *testSuite8) TestInsertOnDuplicateKey(c *C) {
 	tk.MustQuery(`select * from t1 use index(primary)`).Check(testkit.Rows(`1.0000`))
 }
 
-func (s *testSuite3) TestInsertReorgDelete(c *C) {
+func (s *testSuite2) TestInsertReorgDelete(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
