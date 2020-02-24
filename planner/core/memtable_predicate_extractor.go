@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/stringutil"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 // MemTablePredicateExtractor is used to extract some predicates from `WHERE` clause
@@ -278,6 +279,27 @@ func (helper extractHelper) findColumn(schema *expression.Schema, names []*types
 	return extractCols
 }
 
+// getTimeFunctionName is used to get the (time) function name.
+// For the expression that push down to the coprocessor, the function name is different with normal compare function,
+// Then getTimeFunctionName will do a sample function name convert.
+// Currently, this is used to support query `CLUSTER_SLOW_QUERY` at any time.
+func (helper extractHelper) getTimeFunctionName(fn *expression.ScalarFunction) string {
+	switch fn.Function.PbCode() {
+	case tipb.ScalarFuncSig_GTTime:
+		return ast.GT
+	case tipb.ScalarFuncSig_GETime:
+		return ast.GE
+	case tipb.ScalarFuncSig_LTTime:
+		return ast.LT
+	case tipb.ScalarFuncSig_LETime:
+		return ast.LE
+	case tipb.ScalarFuncSig_EQTime:
+		return ast.EQ
+	default:
+		return fn.FuncName.L
+	}
+}
+
 // extracts the time range column, e.g:
 // SELECT * FROM t WHERE time='2019-10-10 10:10:10'
 // SELECT * FROM t WHERE time>'2019-10-10 10:10:10' AND time<'2019-10-11 10:10:10'
@@ -309,7 +331,8 @@ func (helper extractHelper) extractTimeRange(
 
 		var colName string
 		var datums []types.Datum
-		switch fn.FuncName.L {
+		fnName := helper.getTimeFunctionName(fn)
+		switch fnName {
 		case ast.GT, ast.GE, ast.LT, ast.LE, ast.EQ:
 			colName, datums = helper.extractColBinaryOpConsExpr(extractCols, fn)
 		}
@@ -334,7 +357,7 @@ func (helper extractHelper) extractTimeRange(
 				timezone,
 			).UnixNano() / int64(time.Millisecond)
 
-			switch fn.FuncName.L {
+			switch fnName {
 			case ast.EQ:
 				startTime = mathutil.MaxInt64(startTime, timestamp)
 				if endTime == 0 {
@@ -380,6 +403,40 @@ func (helper extractHelper) parseQuantiles(quantileSet set.StringSet) []float64 
 	}
 	sort.Float64s(quantiles)
 	return quantiles
+}
+
+func (helper extractHelper) extractCols(
+	schema *expression.Schema,
+	names []*types.FieldName,
+	predicates []expression.Expression,
+	excludeCols set.StringSet,
+	valueToLower bool) ([]expression.Expression, bool, map[string]set.StringSet) {
+	cols := map[string]set.StringSet{}
+	remained := predicates
+	skipRequest := false
+	// Extract the label columns.
+	for _, name := range names {
+		if excludeCols.Exist(name.ColName.L) {
+			continue
+		}
+		var values set.StringSet
+		remained, skipRequest, values = helper.extractCol(schema, names, remained, name.ColName.L, valueToLower)
+		if skipRequest {
+			return nil, true, nil
+		}
+		if len(values) == 0 {
+			continue
+		}
+		cols[name.ColName.L] = values
+	}
+	return remained, skipRequest, cols
+}
+
+func (helper extractHelper) convertToTime(t int64) time.Time {
+	if t == 0 || t == math.MaxInt64 {
+		return time.Now()
+	}
+	return time.Unix(t/1000, (t%1000)*int64(time.Millisecond))
 }
 
 // ClusterTableExtractor is used to extract some predicates of cluster table.
@@ -485,7 +542,7 @@ func (e *ClusterLogTableExtractor) Extract(
 	return remained
 }
 
-// MetricTableExtractor is used to extract some predicates of metric_schema tables.
+// MetricTableExtractor is used to extract some predicates of metrics_schema tables.
 type MetricTableExtractor struct {
 	extractHelper
 	// SkipRequest means the where clause always false, we don't need to request any component
@@ -528,26 +585,14 @@ func (e *MetricTableExtractor) Extract(
 		return nil
 	}
 
-	// Extract the label columns.
-	for _, name := range names {
-		switch name.ColName.L {
-		case "quantile", "time", "value":
-			continue
-		}
-		var values set.StringSet
-		remained, skipRequest, values = e.extractCol(schema, names, remained, name.ColName.L, false)
-		if skipRequest {
-			e.SkipRequest = skipRequest
-			return nil
-		}
-		if len(values) == 0 {
-			continue
-		}
-		if e.LabelConditions == nil {
-			e.LabelConditions = make(map[string]set.StringSet)
-		}
-		e.LabelConditions[name.ColName.L] = values
+	excludeCols := set.NewStringSet("quantile", "time", "value")
+	_, skipRequest, extractCols := e.extractCols(schema, names, remained, excludeCols, false)
+	e.SkipRequest = skipRequest
+	if e.SkipRequest {
+		return nil
 	}
+	e.LabelConditions = extractCols
+	// For some metric, the metric reader can't use the predicate, so keep all label conditions remained.
 	return remained
 }
 
@@ -573,11 +618,28 @@ func (e *MetricTableExtractor) getTimeRange(start, end int64) (time.Time, time.T
 	return startTime, endTime
 }
 
-func (e *MetricTableExtractor) convertToTime(t int64) time.Time {
-	if t == 0 || t == math.MaxInt64 {
-		return time.Now()
-	}
-	return time.Unix(t/1000, (t%1000)*int64(time.Millisecond))
+// MetricSummaryTableExtractor is used to extract some predicates of metrics_schema tables.
+type MetricSummaryTableExtractor struct {
+	extractHelper
+	// SkipRequest means the where clause always false, we don't need to request any component
+	SkipRequest  bool
+	MetricsNames set.StringSet
+	Quantiles    []float64
+}
+
+// Extract implements the MemTablePredicateExtractor Extract interface
+func (e *MetricSummaryTableExtractor) Extract(
+	_ sessionctx.Context,
+	schema *expression.Schema,
+	names []*types.FieldName,
+	predicates []expression.Expression,
+) (remained []expression.Expression) {
+	remained, quantileSkip, quantiles := e.extractCol(schema, names, predicates, "quantile", false)
+	remained, metricsNameSkip, metricsNames := e.extractCol(schema, names, predicates, "metrics_name", true)
+	e.SkipRequest = quantileSkip || metricsNameSkip
+	e.Quantiles = e.parseQuantiles(quantiles)
+	e.MetricsNames = metricsNames
+	return remained
 }
 
 // InspectionResultTableExtractor is used to extract some predicates of `inspection_result`
@@ -631,7 +693,7 @@ func (e *InspectionSummaryTableExtractor) Extract(
 	// Extract the `rule` columns
 	remained, ruleSkip, rules := e.extractCol(schema, names, predicates, "rule", true)
 	// Extract the `metric_name` columns
-	remained, metricNameSkip, metricNames := e.extractCol(schema, names, predicates, "metric_name", true)
+	remained, metricNameSkip, metricNames := e.extractCol(schema, names, predicates, "metrics_name", true)
 	// Extract the `quantile` columns
 	remained, quantileSkip, quantileSet := e.extractCol(schema, names, predicates, "quantile", false)
 	e.SkipInspection = ruleSkip || quantileSkip || metricNameSkip
@@ -639,4 +701,55 @@ func (e *InspectionSummaryTableExtractor) Extract(
 	e.Quantiles = e.parseQuantiles(quantileSet)
 	e.MetricNames = metricNames
 	return remained
+}
+
+// SlowQueryExtractor is used to extract some predicates of `slow_query`
+type SlowQueryExtractor struct {
+	extractHelper
+
+	SkipRequest bool
+	StartTime   time.Time
+	EndTime     time.Time
+	// Enable is true means the executor should use the time range to locate the slow-log file that need to be parsed.
+	// Enable is false, means the executor should keep the behavior compatible with before, which is only parse the
+	// current slow-log file.
+	Enable bool
+}
+
+// Extract implements the MemTablePredicateExtractor Extract interface
+func (e *SlowQueryExtractor) Extract(
+	ctx sessionctx.Context,
+	schema *expression.Schema,
+	names []*types.FieldName,
+	predicates []expression.Expression,
+) []expression.Expression {
+	remained, startTime, endTime := e.extractTimeRange(ctx, schema, names, predicates, "time", ctx.GetSessionVars().StmtCtx.TimeZone)
+	e.setTimeRange(startTime, endTime)
+	e.SkipRequest = e.Enable && e.StartTime.After(e.EndTime)
+	if e.SkipRequest {
+		return nil
+	}
+	return remained
+}
+
+func (e *SlowQueryExtractor) setTimeRange(start, end int64) {
+	const defaultSlowQueryDuration = 24 * time.Hour
+	var startTime, endTime time.Time
+	if start == 0 && end == 0 {
+		return
+	}
+	if start != 0 {
+		startTime = e.convertToTime(start)
+	}
+	if end != 0 {
+		endTime = e.convertToTime(end)
+	}
+	if start == 0 {
+		startTime = endTime.Add(-defaultSlowQueryDuration)
+	}
+	if end == 0 {
+		endTime = startTime.Add(defaultSlowQueryDuration)
+	}
+	e.StartTime, e.EndTime = startTime, endTime
+	e.Enable = true
 }

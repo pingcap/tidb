@@ -208,7 +208,7 @@ func encodeIndexKey(e *baseExecutor, tblInfo *model.TableInfo, idxInfo *model.In
 		if colInfo.Tp == mysql.TypeString || colInfo.Tp == mysql.TypeVarString || colInfo.Tp == mysql.TypeVarchar {
 			var str string
 			str, err = idxVals[i].ToString()
-			idxVals[i].SetString(str)
+			idxVals[i].SetString(str, colInfo.FieldType.Collate, colInfo.Flen)
 		} else {
 			idxVals[i], err = table.CastValue(e.ctx, idxVals[i], colInfo)
 		}
