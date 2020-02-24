@@ -100,6 +100,7 @@ var (
 	_ builtinFunc = &builtinReverseUTF8Sig{}
 	_ builtinFunc = &builtinReverseSig{}
 	_ builtinFunc = &builtinSpaceSig{}
+	_ builtinFunc = &builtinUpperUTF8Sig{}
 	_ builtinFunc = &builtinUpperSig{}
 	_ builtinFunc = &builtinStrcmpSig{}
 	_ builtinFunc = &builtinReplaceSig{}
@@ -826,9 +827,36 @@ func (c *upperFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	argTp := args[0].GetType()
 	bf.tp.Flen = argTp.Flen
 	SetBinFlagOrBinStr(argTp, bf.tp)
-	sig := &builtinUpperSig{bf}
-	sig.setPbCode(tipb.ScalarFuncSig_Upper)
+	var sig builtinFunc
+	if types.IsBinaryStr(argTp) {
+		sig = &builtinUpperSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_Upper)
+	} else {
+		sig = &builtinUpperUTF8Sig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_UpperUTF8)
+	}
 	return sig, nil
+}
+
+type builtinUpperUTF8Sig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinUpperUTF8Sig) Clone() builtinFunc {
+	newSig := &builtinUpperUTF8Sig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalString evals a builtinUpperUTF8Sig.
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_upper
+func (b *builtinUpperUTF8Sig) evalString(row chunk.Row) (d string, isNull bool, err error) {
+	d, isNull, err = b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return d, isNull, err
+	}
+
+	return strings.ToUpper(d), false, nil
 }
 
 type builtinUpperSig struct {
@@ -849,11 +877,7 @@ func (b *builtinUpperSig) evalString(row chunk.Row) (d string, isNull bool, err 
 		return d, isNull, err
 	}
 
-	if types.IsBinaryStr(b.args[0].GetType()) {
-		return d, false, nil
-	}
-
-	return strings.ToUpper(d), false, nil
+	return d, false, nil
 }
 
 type strcmpFunctionClass struct {
