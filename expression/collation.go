@@ -14,10 +14,10 @@
 package expression
 
 import (
-	"github.com/pingcap/tidb/sessionctx"
 	"strings"
 
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 )
 
