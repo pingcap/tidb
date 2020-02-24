@@ -294,6 +294,11 @@ var MetricTableMap = map[string]MetricTableDef{
 		Labels:  []string{"instance", "type"},
 		Comment: "lock resolve times",
 	},
+	"tidb_lock_resolver_total_num": {
+		PromQL:  "sum(increase(tidb_tikvclient_lock_resolver_actions_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type,instance)",
+		Labels:  []string{"instance", "type"},
+		Comment: "lock resolve times",
+	},
 	"tidb_lock_cleanup_fail_ops": {
 		PromQL:  "sum(rate(tidb_tikvclient_lock_cleanup_task_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type,instance)",
 		Labels:  []string{"instance", "type"},
@@ -339,9 +344,14 @@ var MetricTableMap = map[string]MetricTableDef{
 		Quantile: 0.95,
 	},
 	"tidb_load_safepoint_ops": {
-		PromQL:  "sum(rate(tidb_tikvclient_load_safepoint_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance)",
-		Labels:  []string{"instance"},
-		Comment: "safe point loading times",
+		PromQL:  "sum(rate(tidb_tikvclient_load_safepoint_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance,type)",
+		Labels:  []string{"instance", "type"},
+		Comment: "The ops of load safe point loading",
+	},
+	"tidb_load_safepoint_total_num": {
+		PromQL:  "sum(increase(tidb_tikvclient_load_safepoint_total{$LABEL_CONDITIONS}[60s])) by (instance,type)",
+		Labels:  []string{"instance", "type"},
+		Comment: "The total count of safe point loading",
 	},
 	"tidb_kv_snapshot_ops": {
 		Comment: "using snapshots total",
@@ -2746,5 +2756,236 @@ var MetricTableMap = map[string]MetricTableDef{
 		PromQL:  "sum(increase(tikv_storage_engine_async_request_duration_seconds_sum[60s])) by (instance,type)",
 		Labels:  []string{"instance", "type"},
 		Comment: "The total time of  time consumed by processing asynchronous snapshot requests",
+	},
+
+	"tidb_distsql_partial_num_total_count": {
+		PromQL:  "sum(increase(tidb_distsql_partial_num_count[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total count of  distsql partial numbers per query",
+	},
+	"tidb_distsql_partial_scan_key_num_total_count": {
+		PromQL:  "sum(increase(tidb_distsql_scan_keys_partial_num_count[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total count of The quantile numebr of distsql partial scan key numbers",
+	},
+	"tidb_distsql_partial_scan_key_total_num": {
+		PromQL:  "sum(increase(tidb_distsql_scan_keys_partial_num_sum[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total time of The quantile numebr of distsql partial scan key numbers",
+	},
+	"tidb_distsql_partial_total_num": {
+		PromQL:  "sum(increase(tidb_distsql_partial_num_sum[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total time of  distsql partial numbers per query",
+	},
+	"tidb_distsql_scan_key_num_total_count": {
+		PromQL:  "sum(increase(tidb_distsql_scan_keys_num_count[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total count of The quantile numebr of distsql scan numbers",
+	},
+	"tidb_distsql_scan_key_total_num": {
+		PromQL:  "sum(increase(tidb_distsql_scan_keys_num_sum[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total time of The quantile numebr of distsql scan numbers",
+	},
+	"tidb_kv_write_num_total_count": {
+		PromQL:  "sum(increase(tidb_tikvclient_txn_write_kv_num_count[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total count of  kv write times per transaction execution",
+	},
+	"tidb_kv_write_size_total_count": {
+		PromQL:  "sum(increase(tidb_tikvclient_txn_write_size_bytes_count[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total count of  kv write size per transaction execution",
+	},
+	"tidb_kv_write_total_num": {
+		PromQL:  "sum(increase(tidb_tikvclient_txn_write_kv_num_sum[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total time of  kv write times per transaction execution",
+	},
+	"tidb_kv_write_total_size": {
+		PromQL:  "sum(increase(tidb_tikvclient_txn_write_size_bytes_sum[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total time of  kv write size per transaction execution",
+	},
+	"tidb_statistics_fast_analyze_status_total_count": {
+		PromQL:  "sum(increase(tidb_statistics_fast_analyze_status_count[60s])) by (instance,type)",
+		Labels:  []string{"instance", "type"},
+		Comment: "The total count of  TiDB fast analyze statistics ",
+	},
+	"tidb_statistics_fast_analyze_total_status": {
+		PromQL:  "sum(increase(tidb_statistics_fast_analyze_status_sum[60s])) by (instance,type)",
+		Labels:  []string{"instance", "type"},
+		Comment: "The total time of  TiDB fast analyze statistics ",
+	},
+	"tidb_statistics_stats_inaccuracy_rate_total_count": {
+		PromQL:  "sum(increase(tidb_statistics_stats_inaccuracy_rate_count[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total count of  TiDB statistics inaccurate rate",
+	},
+	"tidb_statistics_stats_inaccuracy_total_rate": {
+		PromQL:  "sum(increase(tidb_statistics_stats_inaccuracy_rate_sum[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total time of  TiDB statistics inaccurate rate",
+	},
+	"tidb_transaction_retry_num_total_count": {
+		PromQL:  "sum(increase(tidb_session_retry_num_count[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total count of  TiDB transaction retry num",
+	},
+	"tidb_transaction_retry_total_num": {
+		PromQL:  "sum(increase(tidb_session_retry_num_sum[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total time of  TiDB transaction retry num",
+	},
+	"tidb_transaction_statement_num_total_count": {
+		PromQL:  "sum(increase(tidb_session_transaction_statement_num_count[60s])) by (instance,sql_type)",
+		Labels:  []string{"instance", "sql_type"},
+		Comment: "The total count of  TiDB statements numbers within one transaction. Internal means TiDB inner transaction",
+	},
+	"tidb_transaction_statement_total_num": {
+		PromQL:  "sum(increase(tidb_session_transaction_statement_num_sum[60s])) by (instance,sql_type)",
+		Labels:  []string{"instance", "sql_type"},
+		Comment: "The total time of  TiDB statements numbers within one transaction. Internal means TiDB inner transaction",
+	},
+	"tidb_txn_region_num_total_count": {
+		PromQL:  "sum(increase(tidb_tikvclient_txn_regions_num_count[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total count of  regions transaction operates on count",
+	},
+	"tidb_txn_region_total_num": {
+		PromQL:  "sum(increase(tidb_tikvclient_txn_regions_num_sum[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total time of  regions transaction operates on count",
+	},
+	"tikv_approximate_region_size_total_count": {
+		PromQL:  "sum(increase(tikv_raftstore_region_size_count[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total count of  approximate Region size, the default value is P99",
+	},
+	"tikv_approximate_region_total_size": {
+		PromQL:  "sum(increase(tikv_raftstore_region_size_sum[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total time of  approximate Region size, the default value is P99",
+	},
+	"tikv_backup_range_size_total_count": {
+		PromQL:  "sum(increase(tikv_backup_range_size_bytes_count[60s])) by (instance,cf)",
+		Labels:  []string{"instance", "cf"},
+		Comment: "The total count of ",
+	},
+	"tikv_backup_range_total_size": {
+		PromQL:  "sum(increase(tikv_backup_range_size_bytes_sum[60s])) by (instance,cf)",
+		Labels:  []string{"instance", "cf"},
+		Comment: "The total time of ",
+	},
+	"tikv_cop_kv_cursor_operations_total_count": {
+		PromQL:  "sum(increase(tikv_coprocessor_scan_keys_count[60s])) by (instance,req)",
+		Labels:  []string{"instance", "req"},
+		Comment: "The total count of ",
+	},
+	"tikv_cop_kv_cursor_total_operations": {
+		PromQL:  "sum(increase(tikv_coprocessor_scan_keys_sum[60s])) by (instance,req)",
+		Labels:  []string{"instance", "req"},
+		Comment: "The total time of ",
+	},
+	"tikv_grpc_req_batch_size_total_count": {
+		PromQL:  "sum(increase(tikv_server_grpc_req_batch_size_count[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total count of ",
+	},
+	"tikv_grpc_req_batch_total_size": {
+		PromQL:  "sum(increase(tikv_server_grpc_req_batch_size_sum[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total time of ",
+	},
+	"tikv_grpc_resp_batch_size_total_count": {
+		PromQL:  "sum(increase(tikv_server_grpc_resp_batch_size_count[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total count of ",
+	},
+	"tikv_grpc_resp_batch_total_size": {
+		PromQL:  "sum(increase(tikv_server_grpc_resp_batch_size_sum[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total time of ",
+	},
+	"tikv_raft_message_batch_size_total_count": {
+		PromQL:  "sum(increase(tikv_server_raft_message_batch_size_count[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total count of ",
+	},
+	"tikv_raft_message_batch_total_size": {
+		PromQL:  "sum(increase(tikv_server_raft_message_batch_size_sum[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total time of ",
+	},
+	"tikv_raft_proposals_per_ready_total_count": {
+		PromQL:  "sum(increase(tikv_raftstore_apply_proposal_count[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total count of The quantile proposal count of all Regions in a mio tick",
+	},
+	"tikv_raft_proposals_per_total_ready": {
+		PromQL:  "sum(increase(tikv_raftstore_apply_proposal_sum[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total time of The quantile proposal count of all Regions in a mio tick",
+	},
+	"tikv_request_batch_ratio_total_count": {
+		PromQL:  "sum(increase(tikv_server_request_batch_ratio_count[60s])) by (instance,type)",
+		Labels:  []string{"instance", "type"},
+		Comment: "The total count of The quantile ratio of request batch output to input per TiKV instance",
+	},
+	"tikv_request_batch_size_total_count": {
+		PromQL:  "sum(increase(tikv_server_request_batch_size_count[60s])) by (instance,type)",
+		Labels:  []string{"instance", "type"},
+		Comment: "The total count of The quantile size of requests into request batch per TiKV instance",
+	},
+	"tikv_request_batch_total_ratio": {
+		PromQL:  "sum(increase(tikv_server_request_batch_ratio_sum[60s])) by (instance,type)",
+		Labels:  []string{"instance", "type"},
+		Comment: "The total time of The quantile ratio of request batch output to input per TiKV instance",
+	},
+	"tikv_request_batch_total_size": {
+		PromQL:  "sum(increase(tikv_server_request_batch_size_sum[60s])) by (instance,type)",
+		Labels:  []string{"instance", "type"},
+		Comment: "The total time of The quantile size of requests into request batch per TiKV instance",
+	},
+	"tikv_scheduler_keys_read_total_count": {
+		PromQL:  "sum(increase(tikv_scheduler_kv_command_key_read_count[60s])) by (instance,type)",
+		Labels:  []string{"instance", "type"},
+		Comment: "The total count of The quantile count of keys read by a commit command",
+	},
+	"tikv_scheduler_keys_total_read": {
+		PromQL:  "sum(increase(tikv_scheduler_kv_command_key_read_sum[60s])) by (instance,type)",
+		Labels:  []string{"instance", "type"},
+		Comment: "The total time of The quantile count of keys read by a commit command",
+	},
+	"tikv_scheduler_keys_total_written": {
+		PromQL:  "sum(increase(tikv_scheduler_kv_command_key_write_sum[60s])) by (instance,type)",
+		Labels:  []string{"instance", "type"},
+		Comment: "The total time of  count of keys written by a commit command",
+	},
+	"tikv_scheduler_keys_written_total_count": {
+		PromQL:  "sum(increase(tikv_scheduler_kv_command_key_write_count[60s])) by (instance,type)",
+		Labels:  []string{"instance", "type"},
+		Comment: "The total count of  count of keys written by a commit command",
+	},
+	"tikv_snapshot_kv_count_total_count": {
+		PromQL:  "sum(increase(tikv_snapshot_kv_count_count[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total count of  number of KV within a snapshot",
+	},
+	"tikv_snapshot_kv_total_count": {
+		PromQL:  "sum(increase(tikv_snapshot_kv_count_sum[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total time of  number of KV within a snapshot",
+	},
+	"tikv_snapshot_size_total_count": {
+		PromQL:  "sum(increase(tikv_snapshot_size_count[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total count of  snapshot size",
+	},
+	"tikv_snapshot_total_size": {
+		PromQL:  "sum(increase(tikv_snapshot_size_sum[60s])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total of  snapshot size",
 	},
 }
