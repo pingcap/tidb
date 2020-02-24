@@ -15,7 +15,14 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
+	"io/ioutil"
+	"os"
+	"path"
 	"reflect"
+	"time"
+
+	"github.com/pingcap/errors"
 )
 
 // CloneConf deeply clones this config.
@@ -79,4 +86,17 @@ func mergeConfigItems(dstConf, newConf reflect.Value, fieldPath string) (accepte
 		rejectedItems = append(rejectedItems, rs...)
 	}
 	return
+}
+
+func atomicWriteConfig(c *Config, confPath string) error {
+	content, err := encodeConfig(c)
+	if err != nil {
+		return err
+	}
+	tmpConfPath := path.Join(os.TempDir(), fmt.Sprintf("tmp_conf_%v.toml", time.Now()))
+	if err := ioutil.WriteFile(tmpConfPath, []byte(content), 0666); err != nil {
+		return errors.Trace(err)
+	}
+	defer os.Remove(tmpConfPath)
+	return errors.Trace(os.Rename(tmpConfPath, confPath))
 }
