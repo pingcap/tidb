@@ -561,6 +561,10 @@ func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 		return nil
 	}
 	joins = make([]PhysicalPlan, 0, 3)
+	// There is only one EqualCondition for IndexJoin to construct Range. For issue #14822.
+	if len(outerJoinKeys) > 0 {
+		outerJoinKeys = outerJoinKeys[:1]
+	}
 	innerTask := p.constructInnerTableScanTask(ds, pkCol, outerJoinKeys, us, false, false, avgInnerRowCnt)
 	joins = append(joins, p.constructIndexJoin(prop, outerIdx, innerTask, nil, keyOff2IdxOff, nil, nil)...)
 	// The index merge join's inner plan is different from index join, so we
