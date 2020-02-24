@@ -82,7 +82,7 @@ func (s *testMemTableReaderSuite) TestMetricTableData(c *C) {
 	})
 
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use metric_schema")
+	tk.MustExec("use metrics_schema")
 
 	cases := []struct {
 		sql string

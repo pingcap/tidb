@@ -460,7 +460,7 @@ func CutDatumByPrefixLen(v *types.Datum, length int, tp *types.FieldType) bool {
 				rs := bytes.Runes(colValue)
 				truncateStr := string(rs[:length])
 				// truncate value and limit its length
-				v.SetString(truncateStr)
+				v.SetString(truncateStr, tp.Collate, tp.Flen)
 				return true
 			}
 		} else if length != types.UnspecifiedLength && len(colValue) > length {

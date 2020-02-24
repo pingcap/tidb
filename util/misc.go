@@ -142,8 +142,8 @@ var (
 	InformationSchemaName = model.NewCIStr("INFORMATION_SCHEMA")
 	// PerformanceSchemaName is the `PERFORMANCE_SCHEMA` database name.
 	PerformanceSchemaName = model.NewCIStr("PERFORMANCE_SCHEMA")
-	// MetricSchemaName is the `METRIC_SCHEMA` database name.
-	MetricSchemaName = model.NewCIStr("METRIC_SCHEMA")
+	// MetricSchemaName is the `METRICS_SCHEMA` database name.
+	MetricSchemaName = model.NewCIStr("METRICS_SCHEMA")
 	// InspectionSchemaName is the `INSPECTION_SCHEMA` database name
 	InspectionSchemaName = model.NewCIStr("INSPECTION_SCHEMA")
 )
