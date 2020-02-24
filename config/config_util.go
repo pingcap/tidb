@@ -97,12 +97,5 @@ func atomicWriteConfig(c *Config, confPath string) (err error) {
 	if err := ioutil.WriteFile(tmpConfPath, []byte(content), 0666); err != nil {
 		return errors.Trace(err)
 	}
-	defer func() {
-		rmErr := errors.Trace(os.Remove(tmpConfPath))
-		if err != nil {
-			return
-		}
-		err = rmErr
-	}()
 	return errors.Trace(os.Rename(tmpConfPath, confPath))
 }
