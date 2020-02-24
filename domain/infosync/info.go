@@ -290,22 +290,25 @@ type topologyInfo struct {
 	BinaryPath string `json:"binary_path"`
 }
 
+func (is *InfoSyncer) getTopologyInfo() topologyInfo {
+	s, err := os.Executable()
+	if err != nil {
+		s = ""
+	}
+	return topologyInfo{
+		ServerVersionInfo: is.info.ServerVersionInfo,
+		StatusPort:        is.info.StatusPort,
+		BinaryPath:        s,
+	}
+}
+
 // RemoveServerInfo stores the topology of tidb to etcd.
 // Note: this part no ttl exists.
 func (is *InfoSyncer) storeTopologyInfo(ctx context.Context) error {
 	if is.etcdCli == nil {
 		return nil
 	}
-	s, err := os.Executable()
-	if err != nil {
-		s = ""
-	}
-	topologyInfo := topologyInfo{
-		ServerVersionInfo: is.info.ServerVersionInfo,
-		StatusPort:        is.info.StatusPort,
-		BinaryPath:        s,
-	}
-
+	topologyInfo := is.getTopologyInfo()
 	infoBuf, err := json.Marshal(topologyInfo)
 	if err != nil {
 		return errors.Trace(err)
