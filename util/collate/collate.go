@@ -151,8 +151,7 @@ func truncateTailingSpaceOne(str string) string {
 }
 
 func (bpc *binPaddingCollator) Compare(a, b string, opt CollatorOption) int {
-	a, b = truncateTailingSpaceTwo(a, b)
-	return strings.Compare(a, b)
+	return strings.Compare(truncateTailingSpaceTwo(a, b))
 }
 
 func (bpc *binPaddingCollator) Key(str string, opt CollatorOption) []byte {
