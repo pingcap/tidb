@@ -554,7 +554,6 @@ func formatPhysicalWindowFuncDescs(buffer *bytes.Buffer, descs []*aggregation.Wi
 }
 
 func formatLogicalWindowFuncDescs(buffer *bytes.Buffer, descs []*aggregation.WindowFuncDesc, schema *expression.Schema) *bytes.Buffer {
-	winFuncStartIdx := len(schema.Columns) - len(descs)
 	for i, desc := range descs {
 		if i != 0 {
 			buffer.WriteString(", ")
