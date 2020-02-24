@@ -812,6 +812,7 @@ func datumExpr(c *C, d types.Datum) *tipb.Expr {
 		expr.Val = codec.EncodeUint(nil, d.GetUint64())
 	case types.KindString:
 		expr.Tp = tipb.ExprType_String
+		expr.FieldType = toPBFieldType(types.NewFieldType(mysql.TypeString))
 		expr.Val = d.GetBytes()
 	case types.KindBytes:
 		expr.Tp = tipb.ExprType_Bytes

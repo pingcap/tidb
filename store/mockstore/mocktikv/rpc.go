@@ -54,12 +54,13 @@ func convertToKeyError(err error) *kvrpcpb.KeyError {
 	if locked, ok := errors.Cause(err).(*ErrLocked); ok {
 		return &kvrpcpb.KeyError{
 			Locked: &kvrpcpb.LockInfo{
-				Key:         locked.Key.Raw(),
-				PrimaryLock: locked.Primary,
-				LockVersion: locked.StartTS,
-				LockTtl:     locked.TTL,
-				TxnSize:     locked.TxnSize,
-				LockType:    locked.LockType,
+				Key:             locked.Key.Raw(),
+				PrimaryLock:     locked.Primary,
+				LockVersion:     locked.StartTS,
+				LockTtl:         locked.TTL,
+				TxnSize:         locked.TxnSize,
+				LockType:        locked.LockType,
+				LockForUpdateTs: locked.ForUpdateTS,
 			},
 		}
 	}
