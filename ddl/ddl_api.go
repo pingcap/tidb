@@ -1354,7 +1354,7 @@ func buildTableInfoWithCheck(ctx sessionctx.Context, s *ast.CreateTableStmt, dbC
 		return nil, errors.Trace(err)
 	}
 
-	tableCharset, tableCollate, _, err := getCharsetAndCollateInTableOption(0, s.Options)
+	tableCharset, tableCollate, err := getCharsetAndCollateInTableOption(0, s.Options)
 	if err != nil {
 		return nil, err
 	}
@@ -1886,7 +1886,7 @@ func isIgnorableSpec(tp ast.AlterTableType) bool {
 // getCharsetAndCollateInTableOption will iterate the charset and collate in the options,
 // and returns the last charset and collate in options. If there is no charset in the options,
 // the returns charset will be "", the same as collate.
-func getCharsetAndCollateInTableOption(startIdx int, options []*ast.TableOption) (chs, coll string, needOverwriteCols bool, err error) {
+func getCharsetAndCollateInTableOption(startIdx int, options []*ast.TableOption) (chs, coll string, err error) {
 	for i := startIdx; i < len(options); i++ {
 		opt := options[i]
 		// we set the charset to the last option. example: alter table t charset latin1 charset utf8 collate utf8_bin;
@@ -1895,13 +1895,12 @@ func getCharsetAndCollateInTableOption(startIdx int, options []*ast.TableOption)
 		case ast.TableOptionCharset:
 			info, err := charset.GetCharsetDesc(opt.StrValue)
 			if err != nil {
-				return "", "", false, err
+				return "", "", err
 			}
 			if len(chs) == 0 {
 				chs = info.Name
-				needOverwriteCols = opt.UintValue == ast.TableOptionCharsetWithConvertTo
 			} else if chs != info.Name {
-				return "", "", false, ErrConflictingDeclarations.GenWithStackByArgs(chs, info.Name)
+				return "", "", ErrConflictingDeclarations.GenWithStackByArgs(chs, info.Name)
 			}
 			if len(coll) == 0 {
 				coll = info.DefaultCollation
@@ -1909,17 +1908,29 @@ func getCharsetAndCollateInTableOption(startIdx int, options []*ast.TableOption)
 		case ast.TableOptionCollate:
 			info, err := charset.GetCollationByName(opt.StrValue)
 			if err != nil {
-				return "", "", false, err
+				return "", "", err
 			}
 			if len(chs) == 0 {
 				chs = info.CharsetName
 			} else if chs != info.CharsetName {
-				return "", "", false, ErrCollationCharsetMismatch.GenWithStackByArgs(info.Name, chs)
+				return "", "", ErrCollationCharsetMismatch.GenWithStackByArgs(info.Name, chs)
 			}
 			coll = info.Name
 		}
 	}
 	return
+}
+
+func needToOverwriteColCharset(options []*ast.TableOption) bool {
+	for i := len(options) - 1; i >= 0; i-- {
+		opt := options[i]
+		switch opt.Tp {
+		case ast.TableOptionCharset:
+			// Only overwrite columns charset if the option contains `CONVERT TO`.
+			return opt.UintValue == ast.TableOptionCharsetWithConvertTo
+		}
+	}
+	return false
 }
 
 // resolveAlterTableSpec resolves alter table algorithm and removes ignore table spec in specs.
@@ -2053,11 +2064,11 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 						continue
 					}
 					var toCharset, toCollate string
-					var needsOverwriteCols bool
-					toCharset, toCollate, needsOverwriteCols, err = getCharsetAndCollateInTableOption(i, spec.Options)
+					toCharset, toCollate, err = getCharsetAndCollateInTableOption(i, spec.Options)
 					if err != nil {
 						return err
 					}
+					needsOverwriteCols := needToOverwriteColCharset(spec.Options)
 					err = d.AlterTableCharsetAndCollate(ctx, ident, toCharset, toCollate, needsOverwriteCols)
 					handledCharsetOrCollate = true
 				}
