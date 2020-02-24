@@ -2565,6 +2565,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 
 	if tableInfo.GetPartitionInfo() != nil {
 		b.optFlag = b.optFlag | flagPartitionProcessor
+		b.partitionedTable = append(b.partitionedTable, tbl.(table.PartitionedTable))
 		// check partition by name.
 		for _, name := range tn.PartitionNames {
 			_, err = tables.FindPartitionByName(tableInfo, name.L)
