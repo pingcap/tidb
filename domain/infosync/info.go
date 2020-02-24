@@ -65,15 +65,16 @@ const (
 
 // InfoSyncer stores server info to etcd when the tidb-server starts and delete when tidb-server shuts down.
 type InfoSyncer struct {
-	etcdCli         *clientv3.Client
-	info            *ServerInfo
-	serverInfoPath  string
-	minStartTS      uint64
-	minStartTSPath  string
-	manager         util2.SessionManager
-	session         *concurrency.Session
-	topologySession *concurrency.Session
-	watchChan       clientv3.WatchChan
+	etcdCli          *clientv3.Client
+	info             *ServerInfo
+	serverInfoPath   string
+	topologyInfoPath string
+	minStartTS       uint64
+	minStartTSPath   string
+	manager          util2.SessionManager
+	session          *concurrency.Session
+	topologySession  *concurrency.Session
+	watchChan        clientv3.WatchChan
 }
 
 // ServerInfo is server static information.
@@ -115,10 +116,11 @@ func setGlobalInfoSyncer(is *InfoSyncer) {
 // GlobalInfoSyncerInit return a new InfoSyncer. It is exported for testing.
 func GlobalInfoSyncerInit(ctx context.Context, id string, etcdCli *clientv3.Client) (*InfoSyncer, error) {
 	is := &InfoSyncer{
-		etcdCli:        etcdCli,
-		info:           getServerInfo(id),
-		serverInfoPath: fmt.Sprintf("%s/%s", ServerInformationPath, id),
-		minStartTSPath: fmt.Sprintf("%s/%s", ServerMinStartTSPath, id),
+		etcdCli:          etcdCli,
+		info:             getServerInfo(id),
+		serverInfoPath:   fmt.Sprintf("%s/%s", ServerInformationPath, id),
+		topologyInfoPath: fmt.Sprintf("%s:%s", TopologyInformationPath, id),
+		minStartTSPath:   fmt.Sprintf("%s/%s", ServerMinStartTSPath, id),
 	}
 	err := is.init(ctx)
 	if err != nil {
@@ -396,7 +398,7 @@ func (is *InfoSyncer) TopologyDone() <-chan struct{} {
 	return is.topologySession.Done()
 }
 
-// TopologyDone returns a watcher channel for watching `/topology/tidb/ip:port/tidb`.
+// TopologyUpdateChan returns a watcher channel for watching "/topology/tidb/ip:port/tidb".
 func (is *InfoSyncer) TopologyUpdateChan() clientv3.WatchChan {
 	if is.etcdCli == nil || is.watchChan == nil {
 		return make(clientv3.WatchChan, 1)
@@ -438,8 +440,7 @@ func (is *InfoSyncer) newTopologySessionAndStoreServerInfo(ctx context.Context, 
 	if is.etcdCli == nil {
 		return nil
 	}
-	logPrefix := fmt.Sprintf("[topology-syncer] %s", is.serverInfoPath)
-	logPrefix = fmt.Sprintf("[topology-syncer] %s", is.serverInfoPath)
+	logPrefix := fmt.Sprintf("[topology-syncer] %s", is.topologyInfoPath)
 	session, err := owner.NewSession(ctx, logPrefix, is.etcdCli, retryCnt, TopologySessionTTL)
 	if err != nil {
 		return err
