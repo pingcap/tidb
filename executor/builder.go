@@ -1148,10 +1148,6 @@ func (b *executorBuilder) buildHashAgg(v *plannercore.PhysicalHashAgg) Executor 
 	if finalCon, partialCon := sessionVars.HashAggFinalConcurrency, sessionVars.HashAggPartialConcurrency; finalCon <= 0 || partialCon <= 0 || finalCon == 1 && partialCon == 1 {
 		e.isUnparallelExec = true
 	}
-	// Prefer executor concurrency.
-	if v.GetConcurrency() > 1 {
-		e.isUnparallelExec = true
-	}
 	partialOrdinal := 0
 	for i, aggDesc := range v.AggFuncs {
 		if e.isUnparallelExec {

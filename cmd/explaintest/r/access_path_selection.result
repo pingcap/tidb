@@ -26,9 +26,9 @@ IndexReader_11	1104.45	root	index:Selection_10
 explain select a, b from access_path_selection where a > 10 order by _tidb_rowid;
 id	count	task	operator info
 Projection_6	3333.33	root	test.access_path_selection.a, test.access_path_selection.b
-└─TableReader_13	3333.33	root	data:Selection_12
-  └─Selection_12	3333.33	cop[tikv]	gt(test.access_path_selection.a, 10)
-    └─TableFullScan_11	10000.00	cop[tikv]	table:access_path_selection, keep order:true, stats:pseudo
+└─TableReader_14	3333.33	root	data:Selection_13
+  └─Selection_13	3333.33	cop[tikv]	gt(test.access_path_selection.a, 10)
+    └─TableFullScan_12	10000.00	cop[tikv]	table:access_path_selection, keep order:true, stats:pseudo
 explain select max(_tidb_rowid) from access_path_selection;
 id	count	task	operator info
 StreamAgg_13	1.00	root	funcs:max(test.access_path_selection._tidb_rowid)->Column#4

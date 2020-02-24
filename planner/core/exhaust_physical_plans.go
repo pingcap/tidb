@@ -1722,6 +1722,11 @@ func (la *LogicalAggregation) exhaustPhysicalPlans(prop *property.PhysicalProper
 }
 
 func (la *LogicalAggregation) exhaustParallelPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
+	sessionVars := la.ctx.GetSessionVars()
+	if finalCon, partialCon := sessionVars.HashAggFinalConcurrency, sessionVars.HashAggPartialConcurrency; finalCon*partialCon > 1 {
+		return nil
+	}
+
 	// Support hash aggregation ONLY.
 	// Future: support streaming aggregation.
 	_, preferStream := la.ResetHintIfConflicted(false)
