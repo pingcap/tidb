@@ -119,7 +119,7 @@ func GlobalInfoSyncerInit(ctx context.Context, id string, etcdCli *clientv3.Clie
 		etcdCli:          etcdCli,
 		info:             getServerInfo(id),
 		serverInfoPath:   fmt.Sprintf("%s/%s", ServerInformationPath, id),
-		topologyInfoPath: fmt.Sprintf("%s:%s", TopologyInformationPath, id),
+		topologyInfoPath: fmt.Sprintf("%s/%s", TopologyInformationPath, id),
 		minStartTSPath:   fmt.Sprintf("%s/%s", ServerMinStartTSPath, id),
 	}
 	err := is.init(ctx)
