@@ -461,24 +461,19 @@ func (do *Domain) topologySyncerKeeper() {
 	ticker := time.NewTicker(infosync.TopologyTimeToRefresh)
 	defer ticker.Stop()
 
-	reload := func() {
-		logutil.BgLogger().Info("server topology syncer need to restart")
-		if err := do.info.RestartTopology(context.Background()); err != nil {
-			logutil.BgLogger().Error("server restart failed", zap.Error(err))
-		}
-		logutil.BgLogger().Info("server topology syncer restarted")
-	}
 	for {
 		select {
 		case <-ticker.C:
-			err := do.info.RefreshTopology(context.Background())
+			err := do.info.StoreTopologyInfo(context.Background())
 			if err != nil {
 				logutil.BgLogger().Error("refresh topology in loop failed", zap.Error(err))
 			}
 		case <-do.info.TopologyDone():
-			reload()
-		case <-do.info.TopologyUpdateChan():
-			reload()
+			logutil.BgLogger().Info("server topology syncer need to restart")
+			if err := do.info.RestartTopology(context.Background()); err != nil {
+				logutil.BgLogger().Error("server restart failed", zap.Error(err))
+			}
+			logutil.BgLogger().Info("server topology syncer restarted")
 		case <-do.exit:
 			return
 		}

@@ -73,7 +73,6 @@ type InfoSyncer struct {
 	manager         util2.SessionManager
 	session         *concurrency.Session
 	topologySession *concurrency.Session
-	watchChan       clientv3.WatchChan
 }
 
 // ServerInfo is server static information.
@@ -303,8 +302,7 @@ func (is *InfoSyncer) getTopologyInfo() topologyInfo {
 }
 
 // RemoveServerInfo stores the topology of tidb to etcd.
-// Note: this part no ttl exists.
-func (is *InfoSyncer) storeTopologyInfo(ctx context.Context) error {
+func (is *InfoSyncer) StoreTopologyInfo(ctx context.Context) error {
 	if is.etcdCli == nil {
 		return nil
 	}
@@ -320,9 +318,8 @@ func (is *InfoSyncer) storeTopologyInfo(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	is.watchChan = is.etcdCli.Watch(ctx, key)
 	// Initialize ttl.
-	return is.RefreshTopology(ctx)
+	return is.refreshTopology(ctx)
 }
 
 // GetMinStartTS get min start timestamp.
@@ -399,14 +396,6 @@ func (is *InfoSyncer) TopologyDone() <-chan struct{} {
 	return is.topologySession.Done()
 }
 
-// TopologyUpdateChan returns a watcher channel for watching "/topology/tidb/ip:port/info".
-func (is *InfoSyncer) TopologyUpdateChan() clientv3.WatchChan {
-	if is.etcdCli == nil || is.watchChan == nil {
-		return make(clientv3.WatchChan, 1)
-	}
-	return is.watchChan
-}
-
 // Restart restart the info syncer with new session leaseID and store server info to etcd again.
 func (is *InfoSyncer) Restart(ctx context.Context) error {
 	return is.newSessionAndStoreServerInfo(ctx, owner.NewSessionDefaultRetryCnt)
@@ -448,11 +437,11 @@ func (is *InfoSyncer) newTopologySessionAndStoreServerInfo(ctx context.Context, 
 	}
 
 	is.topologySession = session
-	return is.storeTopologyInfo(ctx)
+	return is.StoreTopologyInfo(ctx)
 }
 
-// RefreshTopology refreshes etcd topology with ttl stored in "/topology/tidb/ip:port/ttl".
-func (is *InfoSyncer) RefreshTopology(ctx context.Context) error {
+// refreshTopology refreshes etcd topology with ttl stored in "/topology/tidb/ip:port/ttl".
+func (is *InfoSyncer) refreshTopology(ctx context.Context) error {
 	if is.etcdCli == nil {
 		return nil
 	}

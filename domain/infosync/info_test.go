@@ -107,17 +107,6 @@ func TestTopology(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// check watchChan
-	chanRecv := false
-	select {
-	case <-info.TopologyUpdateChan():
-		chanRecv = true
-	case <-time.After(time.Second * 1):
-	}
-	if !chanRecv {
-		t.Fatal("Didn't Received watched change")
-	}
-
 	// Refresh and re-test if the key exists
 	err = info.RestartTopology(ctx)
 	if err != nil {
@@ -146,7 +135,7 @@ func TestTopology(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = info.RefreshTopology(ctx)
+	err = info.refreshTopology(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
