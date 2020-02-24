@@ -14,7 +14,7 @@ import (
 )
 
 func (is *InfoSyncer) getTopology(ctx context.Context) (topologyInfo, error) {
-	key := fmt.Sprintf("%s/%s:%v/tidb", TopologyInformationPath, is.info.IP, is.info.Port)
+	key := fmt.Sprintf("%s/%s:%v/info", TopologyInformationPath, is.info.IP, is.info.Port)
 	resp, err := is.etcdCli.Get(ctx, key)
 	if err != nil {
 		return topologyInfo{}, err
@@ -36,14 +36,14 @@ func (is *InfoSyncer) getTopology(ctx context.Context) (topologyInfo, error) {
 func TestTopology(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	currentId := "test"
+	currentID := "test"
 
 	clus := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
 	defer clus.Terminate(t)
 
 	cli := clus.RandClient()
 
-	info, err := GlobalInfoSyncerInit(ctx, currentId, cli)
+	info, err := GlobalInfoSyncerInit(ctx, currentID, cli)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +63,7 @@ func TestTopology(t *testing.T) {
 		t.Fatal("the info in etcd is not match with info.")
 	}
 
-	nonTTLKey := fmt.Sprintf("%s/%s:%v/tidb", TopologyInformationPath, info.info.IP, info.info.Port)
+	nonTTLKey := fmt.Sprintf("%s/%s:%v/info", TopologyInformationPath, info.info.IP, info.info.Port)
 	err = util.DeleteKeyFromEtcd(nonTTLKey, cli, owner.NewSessionDefaultRetryCnt, time.Second)
 	if err != nil {
 		t.Fatal(err)

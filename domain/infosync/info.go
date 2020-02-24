@@ -399,7 +399,7 @@ func (is *InfoSyncer) TopologyDone() <-chan struct{} {
 	return is.topologySession.Done()
 }
 
-// TopologyUpdateChan returns a watcher channel for watching "/topology/tidb/ip:port/tidb".
+// TopologyUpdateChan returns a watcher channel for watching "/topology/tidb/ip:port/info".
 func (is *InfoSyncer) TopologyUpdateChan() clientv3.WatchChan {
 	if is.etcdCli == nil || is.watchChan == nil {
 		return make(clientv3.WatchChan, 1)
