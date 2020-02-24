@@ -1215,7 +1215,9 @@ func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 	_, err = tk.Exec(`update t set a = year("aa")`)
 	c.Assert(terror.ErrorEqual(err, types.ErrWrongValue), IsTrue, Commentf("err %v", err))
 	_, err = tk.Exec(`delete from t where a = year("aa")`)
-	c.Assert(terror.ErrorEqual(err, types.ErrWrongValue), IsTrue, Commentf("err %v", err))
+	// Only `code` can be used to compare because the error `class` information
+	// will be lost after expression push-down
+	c.Assert(errors.Cause(err).(*terror.Error).Code(), Equals, types.ErrWrongValue.Code(), Commentf("err %v", err))
 
 	// for month
 	result = tk.MustQuery(`select month("2013-01-09"), month("2013-00-09"), month("000-01-09"), month("1-01-09"), month("20131-01-09"), month(null);`)
@@ -1245,7 +1247,7 @@ func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 	_, err = tk.Exec(`update t set a = month("aa")`)
 	c.Assert(terror.ErrorEqual(err, types.ErrWrongValue), IsTrue)
 	_, err = tk.Exec(`delete from t where a = month("aa")`)
-	c.Assert(terror.ErrorEqual(err, types.ErrWrongValue), IsTrue)
+	c.Assert(errors.Cause(err).(*terror.Error).Code(), Equals, types.ErrWrongValue.Code(), Commentf("err %v", err))
 
 	// for week
 	result = tk.MustQuery(`select week("2012-12-22"), week("2012-12-22", -2), week("2012-12-22", 0), week("2012-12-22", 1), week("2012-12-22", 2), week("2012-12-22", 200);`)
@@ -3134,7 +3136,7 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	tk.MustExec(`insert into tb5 (a) values (10);`)
 	e := tk.QueryToErr(`select * from tb5 where a - -9223372036854775808;`)
 	c.Assert(e, NotNil)
-	c.Assert(e.Error(), Equals, `other error: [types:1690]BIGINT value is out of range in '(Column#0 - -9223372036854775808)'`)
+	c.Assert(strings.HasSuffix(e.Error(), `BIGINT value is out of range in '(Column#0 - -9223372036854775808)'`), IsTrue, Commentf("err: %v", err))
 	tk.MustExec(`drop table tb5`)
 
 	// for multiply
@@ -5375,6 +5377,42 @@ func (s *testIntegrationSuite) TestCacheRefineArgs(c *C) {
 	tk.MustExec("prepare stmt from 'SELECT col_int < ? FROM t'")
 	tk.MustExec("set @p0='-184467440737095516167.1'")
 	tk.MustQuery("execute stmt using @p0").Check(testkit.Rows("0"))
+}
+
+func (s *testIntegrationSuite) TestCoercibility(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	type testCase struct {
+		expr   string
+		result int
+	}
+	testFunc := func(cases []testCase, suffix string) {
+		for _, tc := range cases {
+			tk.MustQuery(fmt.Sprintf("select coercibility(%v) %v", tc.expr, suffix)).Check(testkit.Rows(fmt.Sprintf("%v", tc.result)))
+		}
+	}
+	testFunc([]testCase{
+		// constants
+		{"1", 5}, {"null", 6}, {"'abc'", 4},
+		// sys-constants
+		{"version()", 3}, {"user()", 3}, {"database()", 3},
+		{"current_role()", 3}, {"current_user()", 3},
+		// scalar functions after constant folding
+		{"1+null", 5}, {"null+'abcde'", 5}, {"concat(null, 'abcde')", 4},
+		// non-deterministic functions
+		{"rand()", 5}, {"now()", 5}, {"sysdate()", 5},
+	}, "")
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (i int, r real, d datetime, t timestamp, c char(10), vc varchar(10), b binary(10), vb binary(10))")
+	tk.MustExec("insert into t values (null, null, null, null, null, null, null, null)")
+	testFunc([]testCase{
+		{"i", 5}, {"r", 5}, {"d", 5}, {"t", 5},
+		{"c", 2}, {"b", 2}, {"vb", 2}, {"vc", 2},
+		{"i+r", 5}, {"i*r", 5}, {"cos(r)+sin(i)", 5}, {"d+2", 5},
+		{"t*10", 5}, {"concat(c, vc)", 2}, {"replace(c, 'x', 'y')", 2},
+	}, "from t")
 }
 
 func (s *testIntegrationSuite) TestCacheConstEval(c *C) {

@@ -15,6 +15,7 @@ package mocktikv
 
 import (
 	"bytes"
+	"fmt"
 	"math"
 	"sync"
 
@@ -559,7 +560,9 @@ func (mvcc *MVCCLevelDB) pessimisticLockMutation(batch *leveldb.Batch, mutation 
 		}
 		return nil
 	}
-	valDec, err := checkConflictValue(iter, mutation, forUpdateTS)
+	// For pessimisticLockMutation, check the correspond rollback record, there may be rollbackLock
+	// operation between startTS and forUpdateTS
+	valDec, err := checkConflictValue(iter, mutation, forUpdateTS, startTS)
 	if err != nil {
 		return err
 	}
@@ -685,7 +688,7 @@ func (mvcc *MVCCLevelDB) Prewrite(req *kvrpcpb.PrewriteRequest) []error {
 	return errs
 }
 
-func checkConflictValue(iter *Iterator, m *kvrpcpb.Mutation, startTS uint64) (dec *valueDecoder, err error) {
+func checkConflictValue(iter *Iterator, m *kvrpcpb.Mutation, forUpdateTS uint64, startTS uint64) (dec *valueDecoder, err error) {
 	dec = &valueDecoder{
 		expectKey: m.Key,
 	}
@@ -695,9 +698,9 @@ func checkConflictValue(iter *Iterator, m *kvrpcpb.Mutation, startTS uint64) (de
 	}
 
 	// Note that it's a write conflict here, even if the value is a rollback one.
-	if dec.value.commitTS >= startTS {
+	if dec.value.commitTS >= forUpdateTS {
 		return nil, &ErrConflict{
-			StartTS:          startTS,
+			StartTS:          forUpdateTS,
 			ConflictTS:       dec.value.startTS,
 			ConflictCommitTS: dec.value.commitTS,
 			Key:              m.Key,
@@ -721,6 +724,28 @@ func checkConflictValue(iter *Iterator, m *kvrpcpb.Mutation, startTS uint64) (de
 				}
 				break
 			}
+		}
+	}
+	if startTS > 0 {
+		// Check if rollback write record(startTS, startTS, typeRollback) exists on key
+		info, ok, err1 := getTxnCommitInfo(iter, m.Key, startTS)
+		if err1 != nil {
+			err = errors.Trace(err1)
+			return nil, err
+		}
+		if ok && info.commitTS == startTS {
+			logutil.BgLogger().Warn("rollback value found",
+				zap.Uint64("txnID", startTS),
+				zap.Int32("rollbacked.valueType", int32(info.valueType)),
+				zap.Uint64("rollbacked.startTS", info.startTS),
+				zap.Uint64("rollbacked.commitTS", info.commitTS))
+			if info.valueType == typeRollback {
+				return nil, &ErrAlreadyRollbacked{
+					startTS: startTS,
+					key:     m.Key,
+				}
+			}
+			panic(fmt.Sprintf("invalid value type %v not rollback", info.valueType))
 		}
 	}
 	return dec, nil
@@ -765,7 +790,7 @@ func prewriteMutation(db *leveldb.DB, batch *leveldb.Batch,
 		if isPessimisticLock {
 			return ErrAbort("pessimistic lock not found")
 		}
-		_, err = checkConflictValue(iter, mutation, startTS)
+		_, err = checkConflictValue(iter, mutation, startTS, 0)
 		if err != nil {
 			return err
 		}
@@ -957,7 +982,7 @@ func rollbackKey(db *leveldb.DB, batch *leveldb.Batch, key []byte, startTS uint6
 	return nil
 }
 
-func rollbackLock(batch *leveldb.Batch, key []byte, startTS uint64) error {
+func writeRollback(batch *leveldb.Batch, key []byte, startTS uint64) error {
 	tomb := mvccValue{
 		valueType: typeRollback,
 		startTS:   startTS,
@@ -969,6 +994,14 @@ func rollbackLock(batch *leveldb.Batch, key []byte, startTS uint64) error {
 		return errors.Trace(err)
 	}
 	batch.Put(writeKey, writeValue)
+	return nil
+}
+
+func rollbackLock(batch *leveldb.Batch, key []byte, startTS uint64) error {
+	err := writeRollback(batch, key, startTS)
+	if err != nil {
+		return err
+	}
 	batch.Delete(mvccEncode(key, lockVer))
 	return nil
 }
@@ -1168,8 +1201,12 @@ func (mvcc *MVCCLevelDB) CheckTxnStatus(primaryKey []byte, lockTS, callerStartTS
 	// written before the primary lock.
 
 	if rollbackIfNotExist {
+		// Write rollback record, but not delete the lock on the primary key. There may exist lock which has
+		// different lock.startTS with input lockTS, for example the primary key could be already
+		// locked by the caller transaction, deleting this key will mistakenly delete the lock on
+		// primary key, see case TestSingleStatementRollback in session_test suite for example
 		batch := &leveldb.Batch{}
-		if err1 := rollbackLock(batch, primaryKey, lockTS); err1 != nil {
+		if err1 := writeRollback(batch, primaryKey, lockTS); err1 != nil {
 			err = errors.Trace(err1)
 			return
 		}

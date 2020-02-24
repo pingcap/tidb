@@ -66,8 +66,9 @@ const (
 
 var (
 	// ErrColumnCantNull is used for inserting null to a not null column.
-	ErrColumnCantNull  = terror.ClassTable.New(mysql.ErrBadNull, mysql.MySQLErrName[mysql.ErrBadNull])
-	errUnknownColumn   = terror.ClassTable.New(mysql.ErrBadField, mysql.MySQLErrName[mysql.ErrBadField])
+	ErrColumnCantNull = terror.ClassTable.New(mysql.ErrBadNull, mysql.MySQLErrName[mysql.ErrBadNull])
+	// ErrUnknownColumn is returned when accessing an unknown column.
+	ErrUnknownColumn   = terror.ClassTable.New(mysql.ErrBadField, mysql.MySQLErrName[mysql.ErrBadField])
 	errDuplicateColumn = terror.ClassTable.New(mysql.ErrFieldSpecifiedTwice, mysql.MySQLErrName[mysql.ErrFieldSpecifiedTwice])
 
 	errGetDefaultFailed = terror.ClassTable.New(mysql.ErrFieldGetDefaultFailed, mysql.MySQLErrName[mysql.ErrFieldGetDefaultFailed])
@@ -153,6 +154,10 @@ type Table interface {
 	// WritableCols returns columns of the table in writable states.
 	// Writable states includes Public, WriteOnly, WriteOnlyReorganization.
 	WritableCols() []*Column
+
+	// DeletableCols returns columns of the table in deletable states.
+	// Writable states includes Public, WriteOnly, WriteOnlyReorganization, DeleteOnly.
+	DeletableCols() []*Column
 
 	// Indices returns the indices of the table.
 	Indices() []Index

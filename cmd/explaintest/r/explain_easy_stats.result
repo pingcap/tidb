@@ -166,15 +166,11 @@ TableDual_5	0.00	root	rows:0
 explain select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 LIMIT 1, 1;
 id	count	task	operator info
 Limit_9	1.00	root	offset:1, count:1
-└─IndexLookUp_13	1.00	root	
-  ├─Point_Get_11	1.00	root	table:index_prune, index:a b
-  └─TableScan_12	1.00	cop[tikv]	table:index_prune, keep order:false
+└─Point_Get_11	1.00	root	table:index_prune, index:a b
 explain select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 LIMIT 1, 0;
 id	count	task	operator info
 Limit_9	0.00	root	offset:1, count:0
-└─IndexLookUp_13	1.00	root	
-  ├─Point_Get_11	1.00	root	table:index_prune, index:a b
-  └─TableScan_12	1.00	cop[tikv]	table:index_prune, keep order:false
+└─Point_Get_11	1.00	root	table:index_prune, index:a b
 explain select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 LIMIT 0, 1;
 id	count	task	operator info
 Point_Get_1	1.00	root	table:index_prune, index:a b

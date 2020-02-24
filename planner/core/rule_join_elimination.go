@@ -48,12 +48,12 @@ func (o *outerJoinEliminator) tryToEliminateOuterJoin(p *LogicalJoin, aggCols []
 	for _, outerCol := range outerPlan.Schema().Columns {
 		outerUniqueIDs.Insert(outerCol.UniqueID)
 	}
-	matched := o.isColsAllFromOuterTable(parentCols, outerUniqueIDs)
+	matched := IsColsAllFromOuterTable(parentCols, outerUniqueIDs)
 	if !matched {
 		return p, false, nil
 	}
 	// outer join elimination with duplicate agnostic aggregate functions
-	matched = o.isColsAllFromOuterTable(aggCols, outerUniqueIDs)
+	matched = IsColsAllFromOuterTable(aggCols, outerUniqueIDs)
 	if matched {
 		return outerPlan, true, nil
 	}
@@ -86,8 +86,8 @@ func (o *outerJoinEliminator) extractInnerJoinKeys(join *LogicalJoin, innerChild
 	return expression.NewSchema(joinKeys...)
 }
 
-// check whether the cols all from outer plan
-func (o *outerJoinEliminator) isColsAllFromOuterTable(cols []*expression.Column, outerUniqueIDs set.Int64Set) bool {
+// IsColsAllFromOuterTable check whether the cols all from outer plan
+func IsColsAllFromOuterTable(cols []*expression.Column, outerUniqueIDs set.Int64Set) bool {
 	// There are two cases "return false" here:
 	// 1. If cols represents aggCols, then "len(cols) == 0" means not all aggregate functions are duplicate agnostic before.
 	// 2. If cols represents parentCols, then "len(cols) == 0" means no parent logical plan of this join plan.
@@ -146,7 +146,7 @@ func (o *outerJoinEliminator) isInnerJoinKeysContainIndex(innerPlan LogicalPlan,
 	return false, nil
 }
 
-// getDupAgnosticAggCols checks whether a LogicalPlan is LogicalAggregation.
+// GetDupAgnosticAggCols checks whether a LogicalPlan is LogicalAggregation.
 // It extracts all the columns from the duplicate agnostic aggregate functions.
 // The returned column set is nil if not all the aggregate functions are duplicate agnostic.
 // Only the following functions are considered to be duplicate agnostic:
@@ -154,7 +154,7 @@ func (o *outerJoinEliminator) isInnerJoinKeysContainIndex(innerPlan LogicalPlan,
 //   2. MIN(arg)
 //   3. FIRST_ROW(arg)
 //   4. Other agg functions with DISTINCT flag, like SUM(DISTINCT arg)
-func (o *outerJoinEliminator) getDupAgnosticAggCols(
+func GetDupAgnosticAggCols(
 	p LogicalPlan,
 	oldAggCols []*expression.Column, // Reuse the original buffer.
 ) (isAgg bool, newAggCols []*expression.Column) {
@@ -212,7 +212,7 @@ func (o *outerJoinEliminator) doOptimize(p LogicalPlan, aggCols []*expression.Co
 		parentCols = append(parentCols[:0], p.Schema().Columns...)
 	}
 
-	if ok, newCols := o.getDupAgnosticAggCols(p, aggCols); ok {
+	if ok, newCols := GetDupAgnosticAggCols(p, aggCols); ok {
 		aggCols = newCols
 	}
 

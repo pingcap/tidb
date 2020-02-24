@@ -66,7 +66,7 @@ type testStateChangeSuiteBase struct {
 
 func (s *testStateChangeSuiteBase) SetUpSuite(c *C) {
 	s.lease = 200 * time.Millisecond
-	ddl.WaitTimeWhenErrorOccured = 1 * time.Microsecond
+	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
 	var err error
 	s.store, err = mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
@@ -654,7 +654,7 @@ func (s *testStateChangeSuite) TestShowIndex(c *C) {
 				checkErr = err1
 				break
 			}
-			checkErr = checkResult(result, testkit.Rows("t 0 PRIMARY 1 c1 A 0 <nil> <nil>  BTREE  "))
+			checkErr = checkResult(result, testkit.Rows("t 0 PRIMARY 1 c1 A 0 <nil> <nil>  BTREE   NULL"))
 		}
 	}
 
@@ -668,7 +668,7 @@ func (s *testStateChangeSuite) TestShowIndex(c *C) {
 
 	result, err := s.execQuery(tk, showIndexSQL)
 	c.Assert(err, IsNil)
-	err = checkResult(result, testkit.Rows("t 0 PRIMARY 1 c1 A 0 <nil> <nil>  BTREE  ", "t 1 c2 1 c2 A 0 <nil> <nil> YES BTREE  "))
+	err = checkResult(result, testkit.Rows("t 0 PRIMARY 1 c1 A 0 <nil> <nil>  BTREE   NULL", "t 1 c2 1 c2 A 0 <nil> <nil> YES BTREE   NULL"))
 	c.Assert(err, IsNil)
 	d.(ddl.DDLForTest).SetHook(originalCallback)
 
@@ -692,7 +692,7 @@ func (s *testStateChangeSuite) TestShowIndex(c *C) {
 	c.Assert(err, IsNil)
 	result, err = s.execQuery(tk, "show index from tr;")
 	c.Assert(err, IsNil)
-	err = checkResult(result, testkit.Rows("tr 1 idx1 1 purchased A 0 <nil> <nil> YES BTREE  "))
+	err = checkResult(result, testkit.Rows("tr 1 idx1 1 purchased A 0 <nil> <nil> YES BTREE   NULL"))
 	c.Assert(err, IsNil)
 }
 
@@ -1193,8 +1193,7 @@ func (s *serialTestStateChangeSuite) TestParallelFlashbackTable(c *C) {
 	tk.MustExec("create table t (a int);")
 	tk.MustExec("drop table if exists t")
 	// Test parallel flashback table.
-	ts := getDDLJobStartTime(tk, "test_db_state", "t")
-	sql1 := fmt.Sprintf("flashback table t until timestamp '%v' to t_flashback", ts)
+	sql1 := "flashback table t to t_flashback"
 	f := func(c *C, err1, err2 error) {
 		c.Assert(err1, IsNil)
 		c.Assert(err2, NotNil)
@@ -1202,15 +1201,4 @@ func (s *serialTestStateChangeSuite) TestParallelFlashbackTable(c *C) {
 
 	}
 	s.testControlParallelExecSQL(c, sql1, sql1, f)
-}
-
-func getDDLJobStartTime(tk *testkit.TestKit, dbName, tblName string) string {
-	re := tk.MustQuery("admin show ddl jobs 100")
-	rows := re.Rows()
-	for _, row := range rows {
-		if row[1] == dbName && row[2] == tblName && (row[3] == "drop table" || row[3] == "truncate table") {
-			return row[8].(string)
-		}
-	}
-	return ""
 }
