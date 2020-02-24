@@ -887,9 +887,9 @@ func (e *Explain) prepareOperatorInfo(p Plan, taskType, driverSide, indent strin
 		if totalLoops == 0 {
 			ActRows = "N/A"
 		} else {
-			ActRows = fmt.Sprint(float64(totalRows)/float64(totalLoops))
+			ActRows = fmt.Sprint(float64(totalRows) / float64(totalLoops))
 		}
-		tmp := append([]string{}, row[2:]...) 
+		tmp := append([]string{}, row[2:]...)
 		row = append(row[:2], ActRows)
 		row = append(row, tmp...)
 
