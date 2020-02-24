@@ -1503,7 +1503,7 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`select from_unixtime(1447430881.1234567, "%Y %D %M %h:%i:%s %x")`, true, "SELECT FROM_UNIXTIME(1447430881.1234567, '%Y %D %M %h:%i:%s %x')"},
 
 		// for issue 224
-		{`SELECT CAST('test collated returns' AS CHAR CHARACTER SET utf8) COLLATE utf8_bin;`, true, "SELECT CAST('test collated returns' AS CHAR CHARSET UTF8)"},
+		{`SELECT CAST('test collated returns' AS CHAR CHARACTER SET utf8) COLLATE utf8_bin;`, true, "SELECT CAST('test collated returns' AS CHAR CHARSET UTF8) COLLATE utf8_bin"},
 
 		// for string functions
 		// trim
@@ -3010,6 +3010,9 @@ func (s *testParserSuite) TestErrorMsg(c *C) {
 
 	_, _, err = parser.Parse("create table t (a text unicode, b mediumtext ascii, c int)", "", "")
 	c.Assert(err.Error(), Equals, "[parser:1115]Unknown character set: 'ucs2'")
+
+	_, _, err = parser.Parse("select 1 collate some_unknown_collation", "", "")
+	c.Assert(err.Error(), Equals, "[ddl:1273]Unknown collation: 'some_unknown_collation'")
 }
 
 func (s *testParserSuite) TestOptimizerHints(c *C) {

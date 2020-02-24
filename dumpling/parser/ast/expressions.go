@@ -47,6 +47,7 @@ var (
 	_ ExprNode = &ValuesExpr{}
 	_ ExprNode = &VariableExpr{}
 	_ ExprNode = &MatchAgainst{}
+	_ ExprNode = &SetCollationExpr{}
 
 	_ Node = &ColumnName{}
 	_ Node = &WhenClause{}
@@ -1394,5 +1395,45 @@ func (n *MatchAgainst) Accept(v Visitor) (Node, bool) {
 		return n, false
 	}
 	n.Against = newAgainst.(ExprNode)
+	return v.Leave(n)
+}
+
+// SetCollationExpr is the expression for the `COLLATE collation_name` clause.
+type SetCollationExpr struct {
+	exprNode
+	// Expr is the expression to be set.
+	Expr ExprNode
+	// Collate is the name of collation to set.
+	Collate string
+}
+
+// Restore implements Node interface.
+func (n *SetCollationExpr) Restore(ctx *format.RestoreCtx) error {
+	if err := n.Expr.Restore(ctx); err != nil {
+		return errors.Trace(err)
+	}
+	ctx.WriteKeyWord(" COLLATE ")
+	ctx.WritePlain(n.Collate)
+	return nil
+}
+
+// Format the ExprNode into a Writer.
+func (n *SetCollationExpr) Format(w io.Writer) {
+	n.Expr.Format(w)
+	fmt.Fprintf(w, " COLLATE %s", n.Collate)
+}
+
+// Accept implements Node Accept interface.
+func (n *SetCollationExpr) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*SetCollationExpr)
+	node, ok := n.Expr.Accept(v)
+	if !ok {
+		return n, false
+	}
+	n.Expr = node.(ExprNode)
 	return v.Leave(n)
 }
