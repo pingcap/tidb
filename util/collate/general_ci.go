@@ -29,20 +29,10 @@ func sign(i int) int {
 	return 0
 }
 
-// truncateTrailingSpaces truncates trailing spaces.
-func truncateTrailingSpaces(str string) string {
-	b := []byte(str)
-	length := len(b)
-	for length > 0 && b[length-1] == ' ' {
-		length--
-	}
-	b = b[:length]
-	return string(b)
-}
-
 // Compare implement Collator interface.
 func (gc *generalCICollator) Compare(a, b string, opt CollatorOption) int {
-	a, b = truncateTailingSpaceTwo(a, b)
+	a = truncateTailingSpaceOne(a)
+	b = truncateTailingSpaceOne(b)
 	for len(a) > 0 && len(b) > 0 {
 		r1, r1size := utf8.DecodeRuneInString(a)
 		r2, r2size := utf8.DecodeRuneInString(b)

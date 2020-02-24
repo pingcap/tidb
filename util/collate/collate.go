@@ -134,10 +134,6 @@ func CollationID2Name(id int32) string {
 type binPaddingCollator struct {
 }
 
-func truncateTailingSpaceTwo(a, b string) (string, string) {
-	return truncateTailingSpaceOne(a), truncateTailingSpaceOne(b)
-}
-
 func truncateTailingSpaceOne(str string) string {
 	byteLen := len(str)
 	i := byteLen - 1
@@ -151,7 +147,7 @@ func truncateTailingSpaceOne(str string) string {
 }
 
 func (bpc *binPaddingCollator) Compare(a, b string, opt CollatorOption) int {
-	return strings.Compare(truncateTailingSpaceTwo(a, b))
+	return strings.Compare(truncateTailingSpaceOne(a), truncateTailingSpaceOne(b))
 }
 
 func (bpc *binPaddingCollator) Key(str string, opt CollatorOption) []byte {
