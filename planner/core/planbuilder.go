@@ -304,7 +304,11 @@ func (hch *handleColHelper) pushMap(m map[int64][]*expression.Column) {
 }
 
 func (hch *handleColHelper) mergeAndPush(m1, m2 map[int64][]*expression.Column) {
-	newMap := make(map[int64][]*expression.Column)
+	mapMinSize := len(m1)
+	if len(m2) > len(m1) {
+		mapMinSize = len(m2)
+	}
+	newMap := make(map[int64][]*expression.Column, mapMinSize)
 	for k, v := range m1 {
 		newMap[k] = make([]*expression.Column, len(v))
 		copy(newMap[k], v)
