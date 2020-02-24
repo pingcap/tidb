@@ -859,6 +859,10 @@ func (s *testSuiteJoin3) TestSubquery(c *C) {
 	result = tk.MustQuery("select (select /*+ INL_MERGE_JOIN(x2) */ x2.a from t1 x1, t1 x2 where x1.a = t1.a and x1.a = x2.a) from t1")
 	result.Check(testkit.Rows("1", "2", "3", "4", "5"))
 
+	// test left outer semi join & anti left outer semi join
+	tk.MustQuery("select 1 from (select t1.a in (select t1.a from t1) from t1) x;").Check(testkit.Rows("1", "1", "1", "1", "1"))
+	tk.MustQuery("select 1 from (select t1.a not in (select t1.a from t1) from t1) x;").Check(testkit.Rows("1", "1", "1", "1", "1"))
+
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1(a int)")
 	tk.MustExec("create table t2(b int)")
