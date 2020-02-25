@@ -407,7 +407,7 @@ func (p *LogicalJoin) constructIndexMergeJoin(
 		keyOff2KeyOffOrderByIdx := make([]int, len(join.OuterJoinKeys))
 		keyOffMapList := make([]int, len(join.KeyOff2IdxOff))
 		copy(keyOffMapList, join.KeyOff2IdxOff)
-		keyOffMap := make(map[int]int)
+		keyOffMap := make(map[int]int, len(keyOffMapList))
 		for i, idxOff := range keyOffMapList {
 			keyOffMap[idxOff] = i
 		}
