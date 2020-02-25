@@ -1225,18 +1225,21 @@ func (t *TableCommon) GetSequenceNextVal(dbName, seqName string) (nextVal int64,
 	seq.mu.Lock()
 	defer seq.mu.Unlock()
 
-	var updateCache bool
 	err = func() error {
 		// Check if need to update the cache batch from storage.
 		// Because seq.base is not always the last allocated value (may be set by setval()).
 		// So we should try to seek the next value in cache (not just add increment to seq.base).
+		var (
+			updateCache bool
+			offset      int64
+			ok          bool
+		)
 		if seq.base == seq.end {
 			// There is no cache yet.
 			updateCache = true
 		} else {
 			// Seek the first valid value in cache.
-			offset := seq.getOffset()
-			var ok bool
+			offset = seq.getOffset()
 			if seq.meta.Increment > 0 {
 				nextVal, ok = autoid.SeekToFirstSequenceValue(seq.base, seq.meta.Increment, offset, seq.base, seq.end)
 			} else {
@@ -1255,7 +1258,21 @@ func (t *TableCommon) GetSequenceNextVal(dbName, seqName string) (nextVal int64,
 			return err1
 		}
 		seq.base, seq.end, seq.round, err1 = sequenceAlloc.AllocSeqCache(t.tableID)
-		return err1
+		if err1 != nil {
+			return err1
+		}
+		// Seek the first valid value in new cache.
+		// Offset may have changed cause the round is updated.
+		offset = seq.getOffset()
+		if seq.meta.Increment > 0 {
+			nextVal, ok = autoid.SeekToFirstSequenceValue(seq.base, seq.meta.Increment, offset, seq.base, seq.end)
+		} else {
+			nextVal, ok = autoid.SeekToFirstSequenceValue(seq.base, seq.meta.Increment, offset, seq.end, seq.base)
+		}
+		if !ok {
+			return errors.New("can't find the first value in sequence cache")
+		}
+		return nil
 	}()
 	// Sequence alloc in kv store error.
 	if err != nil {
@@ -1263,16 +1280,6 @@ func (t *TableCommon) GetSequenceNextVal(dbName, seqName string) (nextVal int64,
 			return 0, table.ErrSequenceHasRunOut.GenWithStackByArgs(dbName, seqName)
 		}
 		return 0, err
-	}
-	// Sequence cache updated.
-	if updateCache {
-		// SeekToFirstAutoIDUnSigned seeks to next sequence value.
-		var ok bool
-		offset := seq.getOffset()
-		nextVal, ok = autoid.SeekToFirstSequenceValue(seq.base, seq.meta.Increment, offset, seq.meta.MinValue, seq.meta.MaxValue)
-		if !ok {
-			return 0, errors.New("can't find the first value in sequence cache")
-		}
 	}
 	seq.base = nextVal
 	return nextVal, nil
