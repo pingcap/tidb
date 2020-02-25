@@ -100,20 +100,16 @@ func PBExprToAggFuncDesc(ctx sessionctx.Context, aggFunc *tipb.Expr, fieldTps []
 		return nil, errors.Errorf("unknown aggregation function type: %v", aggFunc.Tp)
 	}
 
-	aggFieldType := expression.FieldTypeFromPB(aggFunc.FieldType)
 	args, err := expression.PBToExprs(aggFunc.Children, fieldTps, ctx.GetSessionVars().StmtCtx)
-	if len(args) == 1 && args[0].GetType().Tp != aggFieldType.Tp {
-		args[0] = expression.BuildCastFunction(ctx, args[0], aggFieldType)
-
-	}
 	if err != nil {
 		return nil, err
 	}
 	base := baseFuncDesc{
 		Name:  name,
 		Args:  args,
-		RetTp: aggFieldType,
+		RetTp: expression.FieldTypeFromPB(aggFunc.FieldType),
 	}
+	base.WrapCastForAggArgs(ctx)
 	return &AggFuncDesc{
 		baseFuncDesc: base,
 		Mode:         Partial1Mode,
