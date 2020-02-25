@@ -2642,6 +2642,16 @@ func (s *testIntegrationSuite2) TestBuiltin(c *C) {
 	result = tk.MustQuery("select from_unixtime(1451606400)")
 	unixTime := time.Unix(1451606400, 0).String()[:19]
 	result.Check(testkit.Rows(unixTime))
+	result = tk.MustQuery("select from_unixtime(14516064000/10)")
+	result.Check(testkit.Rows("2016-01-01 08:00:00.0000"))
+	result = tk.MustQuery("select from_unixtime('14516064000'/10)")
+	result.Check(testkit.Rows("2016-01-01 08:00:00.000000"))
+	result = tk.MustQuery("select from_unixtime(cast(1451606400 as double))")
+	result.Check(testkit.Rows("2016-01-01 08:00:00.000000"))
+	result = tk.MustQuery("select from_unixtime(cast(cast(1451606400 as double) as DECIMAL))")
+	result.Check(testkit.Rows("2016-01-01 08:00:00"))
+	result = tk.MustQuery("select from_unixtime(cast(cast(1451606400 as double) as DECIMAL(65,1)))")
+	result.Check(testkit.Rows("2016-01-01 08:00:00.0"))
 	result = tk.MustQuery("select from_unixtime(1451606400.123456)")
 	unixTime = time.Unix(1451606400, 123456000).String()[:26]
 	result.Check(testkit.Rows(unixTime))
@@ -2653,6 +2663,12 @@ func (s *testIntegrationSuite2) TestBuiltin(c *C) {
 	result.Check(testkit.Rows(unixTime))
 	result = tk.MustQuery("select from_unixtime(1511247196661)")
 	result.Check(testkit.Rows("<nil>"))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("insert into t value(1451606400);")
+	result = tk.MustQuery("select from_unixtime(a) from t;")
+	result.Check(testkit.Rows("2016-01-01 08:00:00"))
 
 	// test strcmp
 	result = tk.MustQuery("select strcmp('abc', 'def')")
