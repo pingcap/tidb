@@ -1307,19 +1307,19 @@ func (s *testSuiteJoin1) TestHashJoin(c *C) {
 	tk.MustQuery("select count(*) from t2").Check(testkit.Rows("0"))
 	tk.MustExec("set @@tidb_init_chunk_size=1;")
 	result := tk.MustQuery("explain analyze select /*+ TIDB_HJ(t1, t2) */ * from t1 where exists (select a from t2 where t1.a = t2.a);")
-	// HashLeftJoin_9 7992.00 root semi join, inner:TableReader_15, equal:[eq(test.t1.a, test.t2.a)] time:219.863µs, loops:1, rows:0
-	// ├─TableReader_15(Build) 9990.00 root data:Selection_14 time:12.983µs, loops:1, rows:0
-	// │ └─Selection_14 9990.00 cop[tikv] not(isnull(test.t2.a))
-	// │     └─TableScan_13 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo time:0s, loops:0, rows:0
-	// └─TableReader_12(Probe) 9990.00 root data:Selection_11 time:9.129µs, loops:1, rows:1
-	//   └─Selection_11 9990.00 cop[tikv] not(isnull(test.t1.a))
-	//     └─TableScan_10 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo time:0s, loops:0, rows:5
+	// | HashLeftJoin_9              | 7992.00  | 0                  | root      | semi join, inner:TableReader_15, equal:[eq(test.t1.a, test.t2.a)] | time:990.306µs, loops:1, rows:0, Concurrency:5, probe collision:0, build:0s    | 0 Bytes   | 0 Bytes |
+	// | ├─TableReader_15(Build)     | 9990.00  | 0                  | root      | data:Selection_14                                                 | time:352.583µs, loops:1, rows:0, rpc num: 1, rpc time:421.238µs, proc keys:0   | 141 Bytes | N/A     |
+	// | │ └─Selection_14            | 9990.00  | 0                  | cop[tikv] | not(isnull(test.t2.a))                                            | time:44.714µs, loops:1, rows:0                                                 | N/A       | N/A     |
+	// | │   └─TableScan_13          | 10000.00 | 0                  | cop[tikv] | table:t2, range:[-inf,+inf], keep order:false, stats:pseudo       | time:43.095µs, loops:1, rows:0                                                 | N/A       | N/A     |
+	// | └─TableReader_12(Probe)     | 9990.00  | 5                  | root      | data:Selection_11                                                 | time:817.211µs, loops:1, rows:5, rpc num: 1, rpc time:809.131µs, proc keys:0   | 241 Bytes | N/A     |
+	// |   └─Selection_11            | 9990.00  | 0.8333333333333334 | cop[tikv] | not(isnull(test.t1.a))                                            | time:316.878µs, loops:6, rows:5                                                | N/A       | N/A     |
+	// |     └─TableScan_10          | 10000.00 | 0.8333333333333334 | cop[tikv] | table:t1, range:[-inf,+inf], keep order:false, stats:pseudo       | time:273.185µs, loops:6, rows:5                                                | N/A       | N/A     |
 	row := result.Rows()
 	c.Assert(len(row), Equals, 7)
-	outerExecInfo := row[4][4].(string)
+	outerExecInfo := row[4][5].(string)
 	// FIXME: revert this result to 1 after TableReaderExecutor can handle initChunkSize.
 	c.Assert(outerExecInfo[strings.Index(outerExecInfo, "rows")+5:strings.Index(outerExecInfo, "rows")+6], Equals, "5")
-	innerExecInfo := row[1][4].(string)
+	innerExecInfo := row[1][5].(string)
 	c.Assert(innerExecInfo[strings.Index(innerExecInfo, "rows")+5:strings.Index(innerExecInfo, "rows")+6], Equals, "0")
 }
 
