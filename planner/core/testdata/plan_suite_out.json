@@ -1292,7 +1292,7 @@
           "IndexJoin_12 12500.00 root inner join, inner:UnionScan_11, outer key:test.t.a, inner key:test.t.a",
           "├─UnionScan_15(Build) 10000.00 root ",
           "│ └─TableReader_17 10000.00 root data:TableFullScan_16",
-          "│   └─TableFullScan_16 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "│   └─TableFullScan_16 10000.00 cop[tikv] table:t1, keep order:false, stats:pseudo",
           "└─UnionScan_11(Probe) 1.00 root ",
           "  └─TableReader_10 1.00 root data:TableRangeScan_9",
           "    └─TableRangeScan_9 1.00 cop[tikv] table:t2, range: decided by [test.t.a], keep order:false, stats:pseudo"
@@ -1308,10 +1308,10 @@
           "├─UnionScan_17(Build) 9990.00 root not(isnull(test.t.b))",
           "│ └─TableReader_20 9990.00 root data:Selection_19",
           "│   └─Selection_19 9990.00 cop[tikv] not(isnull(test.t.b))",
-          "│     └─TableFullScan_18 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "│     └─TableFullScan_18 10000.00 cop[tikv] table:t2, keep order:false, stats:pseudo",
           "└─UnionScan_21(Probe) 10000.00 root ",
           "  └─TableReader_23 10000.00 root data:TableFullScan_22",
-          "    └─TableFullScan_22 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo"
+          "    └─TableFullScan_22 10000.00 cop[tikv] table:t1, keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1325,10 +1325,10 @@
           "  ├─UnionScan_17(Build) 9990.00 root not(isnull(test.t.b))",
           "  │ └─TableReader_20 9990.00 root data:Selection_19",
           "  │   └─Selection_19 9990.00 cop[tikv] not(isnull(test.t.b))",
-          "  │     └─TableFullScan_18 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "  │     └─TableFullScan_18 10000.00 cop[tikv] table:t2, keep order:false, stats:pseudo",
           "  └─UnionScan_21(Probe) 10000.00 root ",
           "    └─TableReader_23 10000.00 root data:TableFullScan_22",
-          "      └─TableFullScan_22 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo"
+          "      └─TableFullScan_22 10000.00 cop[tikv] table:t1, keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1341,17 +1341,17 @@
           "├─Union_28(Build) 20000.00 root ",
           "│ ├─UnionScan_29 10000.00 root ",
           "│ │ └─TableReader_31 10000.00 root data:TableFullScan_30",
-          "│ │   └─TableFullScan_30 10000.00 cop[tikv] table:t2, partition:p0, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "│ │   └─TableFullScan_30 10000.00 cop[tikv] table:t2, partition:p0, keep order:false, stats:pseudo",
           "│ └─UnionScan_32 10000.00 root ",
           "│   └─TableReader_34 10000.00 root data:TableFullScan_33",
-          "│     └─TableFullScan_33 10000.00 cop[tikv] table:t2, partition:p1, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "│     └─TableFullScan_33 10000.00 cop[tikv] table:t2, partition:p1, keep order:false, stats:pseudo",
           "└─Union_21(Probe) 20000.00 root ",
           "  ├─UnionScan_22 10000.00 root ",
           "  │ └─TableReader_24 10000.00 root data:TableFullScan_23",
-          "  │   └─TableFullScan_23 10000.00 cop[tikv] table:t1, partition:p0, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "  │   └─TableFullScan_23 10000.00 cop[tikv] table:t1, partition:p0, keep order:false, stats:pseudo",
           "  └─UnionScan_25 10000.00 root ",
           "    └─TableReader_27 10000.00 root data:TableFullScan_26",
-          "      └─TableFullScan_26 10000.00 cop[tikv] table:t1, partition:p1, range:[-inf,+inf], keep order:false, stats:pseudo"
+          "      └─TableFullScan_26 10000.00 cop[tikv] table:t1, partition:p1, keep order:false, stats:pseudo"
         ]
       }
     ]

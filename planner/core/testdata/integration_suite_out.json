@@ -54,10 +54,10 @@
           "├─Selection_13(Build) 7992.00 root from_unixtime(cast(test.t.b))",
           "│ └─TableReader_16 9990.00 root data:Selection_15",
           "│   └─Selection_15 9990.00 cop[tikv] not(isnull(test.t.a))",
-          "│     └─TableFullScan_14 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "│     └─TableFullScan_14 10000.00 cop[tikv] table:t2, keep order:false, stats:pseudo",
           "└─TableReader_12(Probe) 9990.00 root data:Selection_11",
           "  └─Selection_11 9990.00 cop[tikv] not(isnull(test.t.a))",
-          "    └─TableFullScan_10 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo"
+          "    └─TableFullScan_10 10000.00 cop[tikv] table:t1, keep order:false, stats:pseudo"
         ]
       }
     ]
@@ -71,9 +71,9 @@
           "HashLeftJoin_8 10000.00 root left outer join, inner:TableReader_11 (REVERSED), equal:[eq(test.t.a, test.t.a)]",
           "├─TableReader_11(Build) 8000.00 root data:Selection_10",
           "│ └─Selection_10 8000.00 cop[tikv] ge(cast(test.t.b), 2019-01-01 00:00:00.000000)",
-          "│   └─TableFullScan_9 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
-          "└─TableReader_13(Probe) 10000.00 root data:TableScan_12",
-          "  └─TableFullScan_12 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo"
+          "│   └─TableFullScan_9 10000.00 cop[tikv] table:t1, keep order:false, stats:pseudo",
+          "└─TableReader_13(Probe) 10000.00 root data:TableFullScan_12",
+          "  └─TableFullScan_12 10000.00 cop[tikv] table:t2, keep order:false, stats:pseudo"
         ]
       }
     ]
@@ -108,7 +108,7 @@
         "Plan": [
           "IndexJoin_9 2.00 root inner join, inner:IndexLookUp_8, outer key:test.t1.a, inner key:test.t2.a, other cond:eq(test.t1.c, test.t2.c)",
           "├─TableReader_19(Build) 1.00 root data:TableFullScan_18",
-          "│ └─TableFullScan_18 1.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false",
+          "│ └─TableFullScan_18 1.00 cop[tikv] table:t1, keep order:false",
           "└─IndexLookUp_8(Probe) 2.00 root ",
           "  ├─IndexRangeScan_6(Build) 2.00 cop[tikv] table:t2, index:a, b, range: decided by [eq(test.t2.a, test.t1.a)], keep order:false",
           "  └─TableRowIDScan_7(Probe) 2.00 cop[tikv] table:t2, keep order:false"
@@ -119,7 +119,7 @@
         "Plan": [
           "IndexJoin_9 2.00 root inner join, inner:IndexLookUp_8, outer key:test.t1.a, inner key:test.t2.a, other cond:le(test.t1.c, test.t2.b)",
           "├─TableReader_19(Build) 1.00 root data:TableFullScan_18",
-          "│ └─TableFullScan_18 1.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false",
+          "│ └─TableFullScan_18 1.00 cop[tikv] table:t1, keep order:false",
           "└─IndexLookUp_8(Probe) 2.00 root ",
           "  ├─IndexRangeScan_6(Build) 2.00 cop[tikv] table:t2, index:a, b, range: decided by [eq(test.t2.a, test.t1.a) le(test.t1.c, test.t2.b)], keep order:false",
           "  └─TableRowIDScan_7(Probe) 2.00 cop[tikv] table:t2, keep order:false"
@@ -130,7 +130,7 @@
         "Plan": [
           "IndexJoin_9 1.00 root inner join, inner:IndexLookUp_8, outer key:test.t1.a, inner key:test.t2.a",
           "├─TableReader_19(Build) 1.00 root data:TableFullScan_18",
-          "│ └─TableFullScan_18 1.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false",
+          "│ └─TableFullScan_18 1.00 cop[tikv] table:t1, keep order:false",
           "└─IndexLookUp_8(Probe) 1.00 root ",
           "  ├─IndexRangeScan_6(Build) 1.00 cop[tikv] table:t2, index:a, b, range: decided by [eq(test.t2.a, test.t1.a) eq(test.t2.b, 1)], keep order:false",
           "  └─TableRowIDScan_7(Probe) 1.00 cop[tikv] table:t2, keep order:false"

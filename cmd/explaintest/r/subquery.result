@@ -8,9 +8,9 @@ explain select * from t1 where t1.a in (select t1.b + t2.b from t2);
 id	count	task	operator info
 HashLeftJoin_8	8000.00	root	CARTESIAN semi join, inner:TableReader_12, other cond:eq(test.t1.a, plus(test.t1.b, test.t2.b))
 ├─TableReader_12(Build)	10000.00	root	data:TableFullScan_11
-│ └─TableFullScan_11	10000.00	cop[tikv]	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
+│ └─TableFullScan_11	10000.00	cop[tikv]	table:t2, keep order:false, stats:pseudo
 └─TableReader_10(Probe)	10000.00	root	data:TableFullScan_9
-  └─TableFullScan_9	10000.00	cop[tikv]	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
+  └─TableFullScan_9	10000.00	cop[tikv]	table:t1, keep order:false, stats:pseudo
 drop table if exists t;
 create table t(a int primary key, b int, c int, d int, index idx(b,c,d));
 insert into t values(1,1,1,1),(2,2,2,2),(3,2,2,2),(4,2,2,2),(5,2,2,2);
@@ -20,7 +20,7 @@ id	count	task	operator info
 Projection_11	5.00	root	Column#14
 └─Apply_13	5.00	root	CARTESIAN left outer semi join, inner:StreamAgg_22, other cond:eq(test.t.c, Column#13)
   ├─TableReader_15(Build)	5.00	root	data:TableFullScan_14
-  │ └─TableFullScan_14	5.00	cop[tikv]	table:t, range:[-inf,+inf], keep order:false
+  │ └─TableFullScan_14	5.00	cop[tikv]	table:t, keep order:false
   └─StreamAgg_22(Probe)	1.00	root	funcs:count(1)->Column#13
     └─IndexMergeJoin_29	0.50	root	inner join, inner:TableReader_27, outer key:test.t.a, inner key:test.t.a
       ├─IndexReader_35(Build)	1.00	root	index:IndexRangeScan_34
@@ -38,7 +38,7 @@ Projection_11	7992.00	root	test.t.a
   │   └─TableReader_24	7992.00	root	data:HashAgg_18
   │     └─HashAgg_18	7992.00	cop[tikv]	group by:test.t.b, funcs:max(test.t.a)->Column#10
   │       └─Selection_22	9990.00	cop[tikv]	not(isnull(test.t.b))
-  │         └─TableFullScan_21	10000.00	cop[tikv]	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
+  │         └─TableFullScan_21	10000.00	cop[tikv]	table:t2, keep order:false, stats:pseudo
   └─TableReader_16(Probe)	9970.03	root	data:Selection_15
     └─Selection_15	9970.03	cop[tikv]	not(isnull(test.t.a)), not(isnull(test.t.b)), not(isnull(test.t.c))
-      └─TableFullScan_14	10000.00	cop[tikv]	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
+      └─TableFullScan_14	10000.00	cop[tikv]	table:t1, keep order:false, stats:pseudo

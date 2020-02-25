@@ -8,7 +8,7 @@
           "Projection_11 2.00 root Column#17",
           "└─Apply_13 2.00 root CARTESIAN left outer semi join, inner:StreamAgg_20, other cond:eq(test.t.e, Column#16)",
           "  ├─TableReader_15(Build) 2.00 root data:TableFullScan_14",
-          "  │ └─TableFullScan_14 2.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false",
+          "  │ └─TableFullScan_14 2.00 cop[tikv] table:t, keep order:false",
           "  └─StreamAgg_20(Probe) 1.00 root funcs:count(1)->Column#16",
           "    └─IndexMergeJoin_44 2.00 root inner join, inner:TableReader_42, outer key:test.t.a, inner key:test.t.a",
           "      ├─IndexReader_33(Build) 2.00 root index:IndexRangeScan_32",
