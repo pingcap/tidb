@@ -264,7 +264,6 @@ func (alloc *allocator) rebase4Signed(tableID, requiredBase int64, allocIDs bool
 
 // rebase4Sequence won't alloc batch immediately, cause it won't cache value in allocator.
 func (alloc *allocator) rebase4Sequence(tableID, requiredBase int64) error {
-	var newBase, newEnd int64
 	startTime := time.Now()
 	err := kv.RunInNewTxn(alloc.store, true, func(txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
@@ -274,15 +273,11 @@ func (alloc *allocator) rebase4Sequence(tableID, requiredBase int64) error {
 		}
 		if alloc.sequence.Increment > 0 {
 			if currentEnd >= requiredBase {
-				newBase = currentEnd
-				newEnd = currentEnd
 				// Required base satisfied, we don't need to update KV.
 				return nil
 			}
 		} else {
 			if currentEnd <= requiredBase {
-				newBase = currentEnd
-				newEnd = currentEnd
 				// Required base satisfied, we don't need to update KV.
 				return nil
 			}
@@ -291,9 +286,7 @@ func (alloc *allocator) rebase4Sequence(tableID, requiredBase int64) error {
 		// If we don't want to allocate IDs, for example when creating a table with a given base value,
 		// We need to make sure when other TiDB server allocates ID for the first time, requiredBase + 1
 		// will be allocated, so we need to increase the end to exactly the requiredBase.
-		newBase = requiredBase
-		newEnd = requiredBase
-		_, err = generateAutoIDByAllocType(m, alloc.dbID, tableID, newEnd-currentEnd, alloc.allocType)
+		_, err = generateAutoIDByAllocType(m, alloc.dbID, tableID, requiredBase-currentEnd, alloc.allocType)
 		return err
 	})
 	// TODO: sequence metrics
@@ -301,7 +294,6 @@ func (alloc *allocator) rebase4Sequence(tableID, requiredBase int64) error {
 	if err != nil {
 		return err
 	}
-	alloc.base, alloc.end = newBase, newEnd
 	return nil
 }
 
@@ -793,17 +785,12 @@ func (alloc *allocator) alloc4Sequence(tableID int64) (min int64, max int64, rou
 	if err != nil {
 		return 0, 0, 0, err
 	}
-
-	alloc.base, alloc.end = newBase, newEnd
 	logutil.Logger(context.TODO()).Debug("alloc sequence value",
-		zap.Uint64(" from value", uint64(alloc.base)),
-		zap.Uint64("to value", uint64(alloc.end)),
+		zap.Uint64(" from value", uint64(newBase)),
+		zap.Uint64("to value", uint64(newEnd)),
 		zap.Int64("table ID", tableID),
 		zap.Int64("database ID", alloc.dbID))
-	min = alloc.base
-	max = alloc.end
-	alloc.base = alloc.end
-	return min, max, round, nil
+	return newBase, newEnd, round, nil
 }
 
 func getAutoIDByAllocType(m *meta.Meta, dbID, tableID int64, allocType AllocatorType) (int64, error) {
