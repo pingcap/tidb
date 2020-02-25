@@ -25,7 +25,7 @@ type CommentCodeVersion int
 
 const (
 	CommentCodeNoVersion  CommentCodeVersion = iota
-	CommentCodeAutoRandom CommentCodeVersion = 40000
+	CommentCodeAutoRandom CommentCodeVersion = 30100
 
 	CommentCodeCurrentVersion
 )
