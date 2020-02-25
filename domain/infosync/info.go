@@ -301,7 +301,7 @@ func (is *InfoSyncer) getTopologyInfo() topologyInfo {
 	}
 }
 
-// RemoveServerInfo stores the topology of tidb to etcd.
+// StoreTopologyInfo  stores the topology of tidb to etcd.
 func (is *InfoSyncer) StoreTopologyInfo(ctx context.Context) error {
 	if is.etcdCli == nil {
 		return nil
