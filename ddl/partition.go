@@ -152,8 +152,8 @@ func buildRangePartitionDefinitions(ctx sessionctx.Context, s *ast.CreateTableSt
 }
 
 func checkPartitionNameUnique(pi *model.PartitionInfo) error {
-	partNames := make(map[string]struct{})
 	newPars := pi.Definitions
+	partNames := make(map[string]struct{}, len(newPars))
 	for _, newPar := range newPars {
 		if _, ok := partNames[newPar.Name.L]; ok {
 			return ErrSameNamePartition.GenWithStackByArgs(newPar.Name)
