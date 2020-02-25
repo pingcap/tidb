@@ -1433,19 +1433,24 @@
     "Name": "TestNominalSort",
     "Cases": [
       {
-        "SQL": "explain select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by t1.a",
-        "RESULT": [
+        "SQL": "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by t1.a",
+        "Plan": [
           "Projection_20 12487.50 root test.t.a",
           "└─MergeJoin_21 12487.50 root inner join, left key:test.t.a, right key:test.t.b",
           "  ├─IndexReader_13 9990.00 root index:IndexFullScan_12",
           "  │ └─IndexFullScan_12 9990.00 cop[tikv] table:t1, index:a, keep order:true, stats:pseudo",
           "  └─IndexReader_15 9990.00 root index:IndexFullScan_14",
           "    └─IndexFullScan_14 9990.00 cop[tikv] table:t2, index:b, keep order:true, stats:pseudo"
+        ],
+        "Result": [
+          "1",
+          "1",
+          "2"
         ]
       },
       {
-        "SQL": "explain select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by t1.a+1",
-        "RESULT": [
+        "SQL": "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by t1.a+1",
+        "Plan": [
           "Projection_24 12487.50 root test.t.a",
           "└─Projection_23 12487.50 root test.t.a, plus(test.t.a, 1)->Column#7",
           "  └─Projection_20 12487.50 root test.t.a",
@@ -1454,11 +1459,16 @@
           "      │ └─IndexFullScan_12 9990.00 cop[tikv] table:t1, index:a, keep order:true, stats:pseudo",
           "      └─IndexReader_15 9990.00 root index:IndexFullScan_14",
           "        └─IndexFullScan_14 9990.00 cop[tikv] table:t2, index:b, keep order:true, stats:pseudo"
+        ],
+        "Result": [
+          "1",
+          "1",
+          "2"
         ]
       },
       {
-        "SQL": "explain select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by t1.a-1",
-        "RESULT": [
+        "SQL": "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by t1.a-1",
+        "Plan": [
           "Projection_24 12487.50 root test.t.a",
           "└─Projection_23 12487.50 root test.t.a, minus(test.t.a, 1)->Column#7",
           "  └─Projection_20 12487.50 root test.t.a",
@@ -1467,11 +1477,16 @@
           "      │ └─IndexFullScan_12 9990.00 cop[tikv] table:t1, index:a, keep order:true, stats:pseudo",
           "      └─IndexReader_15 9990.00 root index:IndexFullScan_14",
           "        └─IndexFullScan_14 9990.00 cop[tikv] table:t2, index:b, keep order:true, stats:pseudo"
+        ],
+        "Result": [
+          "1",
+          "1",
+          "2"
         ]
       },
       {
-        "SQL": "explain select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by -t1.a",
-        "RESULT": [
+        "SQL": "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by -t1.a",
+        "Plan": [
           "Projection_32 12487.50 root test.t.a",
           "└─Projection_31 12487.50 root test.t.a, unaryminus(test.t.a)->Column#7",
           "  └─Projection_20 12487.50 root test.t.a",
@@ -1480,11 +1495,16 @@
           "      │ └─IndexFullScan_23 9990.00 cop[tikv] table:t1, index:a, keep order:true, desc, stats:pseudo",
           "      └─IndexReader_26 9990.00 root index:IndexFullScan_25",
           "        └─IndexFullScan_25 9990.00 cop[tikv] table:t2, index:b, keep order:true, desc, stats:pseudo"
+        ],
+        "Result": [
+          "2",
+          "1",
+          "1"
         ]
       },
       {
-        "SQL": "explain select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by -t1.a+3",
-        "RESULT": [
+        "SQL": "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by -t1.a+3",
+        "Plan": [
           "Projection_32 12487.50 root test.t.a",
           "└─Projection_31 12487.50 root test.t.a, plus(unaryminus(test.t.a), 3)->Column#7",
           "  └─Projection_20 12487.50 root test.t.a",
@@ -1493,11 +1513,16 @@
           "      │ └─IndexFullScan_23 9990.00 cop[tikv] table:t1, index:a, keep order:true, desc, stats:pseudo",
           "      └─IndexReader_26 9990.00 root index:IndexFullScan_25",
           "        └─IndexFullScan_25 9990.00 cop[tikv] table:t2, index:b, keep order:true, desc, stats:pseudo"
+        ],
+        "Result": [
+          "2",
+          "1",
+          "1"
         ]
       },
       {
-        "SQL": "explain select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by 1+t1.a",
-        "RESULT": [
+        "SQL": "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by 1+t1.a",
+        "Plan": [
           "Projection_24 12487.50 root test.t.a",
           "└─Projection_23 12487.50 root test.t.a, plus(1, test.t.a)->Column#7",
           "  └─Projection_20 12487.50 root test.t.a",
@@ -1506,11 +1531,16 @@
           "      │ └─IndexFullScan_12 9990.00 cop[tikv] table:t1, index:a, keep order:true, stats:pseudo",
           "      └─IndexReader_15 9990.00 root index:IndexFullScan_14",
           "        └─IndexFullScan_14 9990.00 cop[tikv] table:t2, index:b, keep order:true, stats:pseudo"
+        ],
+        "Result": [
+          "1",
+          "1",
+          "2"
         ]
       },
       {
-        "SQL": "explain select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by 1-t1.a",
-        "RESULT": [
+        "SQL": "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by 1-t1.a",
+        "Plan": [
           "Projection_32 12487.50 root test.t.a",
           "└─Projection_31 12487.50 root test.t.a, minus(1, test.t.a)->Column#7",
           "  └─Projection_20 12487.50 root test.t.a",
@@ -1519,11 +1549,16 @@
           "      │ └─IndexFullScan_23 9990.00 cop[tikv] table:t1, index:a, keep order:true, desc, stats:pseudo",
           "      └─IndexReader_26 9990.00 root index:IndexFullScan_25",
           "        └─IndexFullScan_25 9990.00 cop[tikv] table:t2, index:b, keep order:true, desc, stats:pseudo"
+        ],
+        "Result": [
+          "2",
+          "1",
+          "1"
         ]
       },
       {
-        "SQL": "explain select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by 1-t1.a+3",
-        "RESULT": [
+        "SQL": "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by 1-t1.a+3",
+        "Plan": [
           "Projection_32 12487.50 root test.t.a",
           "└─Projection_31 12487.50 root test.t.a, plus(minus(1, test.t.a), 3)->Column#7",
           "  └─Projection_20 12487.50 root test.t.a",
@@ -1532,11 +1567,16 @@
           "      │ └─IndexFullScan_23 9990.00 cop[tikv] table:t1, index:a, keep order:true, desc, stats:pseudo",
           "      └─IndexReader_26 9990.00 root index:IndexFullScan_25",
           "        └─IndexFullScan_25 9990.00 cop[tikv] table:t2, index:b, keep order:true, desc, stats:pseudo"
+        ],
+        "Result": [
+          "2",
+          "1",
+          "1"
         ]
       },
       {
-        "SQL": "explain select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by 1+t1.a+3",
-        "RESULT": [
+        "SQL": "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by 1+t1.a+3",
+        "Plan": [
           "Projection_24 12487.50 root test.t.a",
           "└─Projection_23 12487.50 root test.t.a, plus(plus(1, test.t.a), 3)->Column#7",
           "  └─Projection_20 12487.50 root test.t.a",
@@ -1545,11 +1585,16 @@
           "      │ └─IndexFullScan_12 9990.00 cop[tikv] table:t1, index:a, keep order:true, stats:pseudo",
           "      └─IndexReader_15 9990.00 root index:IndexFullScan_14",
           "        └─IndexFullScan_14 9990.00 cop[tikv] table:t2, index:b, keep order:true, stats:pseudo"
+        ],
+        "Result": [
+          "1",
+          "1",
+          "2"
         ]
       },
       {
-        "SQL": "explain select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by 3*t1.a",
-        "RESULT": [
+        "SQL": "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by 3*t1.a",
+        "Plan": [
           "Projection_19 12487.50 root test.t.a",
           "└─Sort_7 12487.50 root Column#7:asc",
           "  └─Projection_20 12487.50 root test.t.a, mul(3, test.t.a)->Column#7",
@@ -1559,83 +1604,8 @@
           "        │ └─IndexFullScan_11 9990.00 cop[tikv] table:t1, index:a, keep order:true, stats:pseudo",
           "        └─IndexReader_14 9990.00 root index:IndexFullScan_13",
           "          └─IndexFullScan_13 9990.00 cop[tikv] table:t2, index:b, keep order:true, stats:pseudo"
-        ]
-      },
-      {
-        "SQL": "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by t1.a",
-        "RESULT": [
-          "1",
-          "1",
-          "2"
-        ]
-      },
-      {
-        "SQL": "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by t1.a+1",
-        "RESULT": [
-          "1",
-          "1",
-          "2"
-        ]
-      },
-      {
-        "SQL": "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by t1.a-1",
-        "RESULT": [
-          "1",
-          "1",
-          "2"
-        ]
-      },
-      {
-        "SQL": "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by -t1.a",
-        "RESULT": [
-          "2",
-          "1",
-          "1"
-        ]
-      },
-      {
-        "SQL": "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by -t1.a+3",
-        "RESULT": [
-          "2",
-          "1",
-          "1"
-        ]
-      },
-      {
-        "SQL": "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by 1+t1.a",
-        "RESULT": [
-          "1",
-          "1",
-          "2"
-        ]
-      },
-      {
-        "SQL": "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by 1-t1.a",
-        "RESULT": [
-          "2",
-          "1",
-          "1"
-        ]
-      },
-      {
-        "SQL": "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by 1-t1.a+3",
-        "RESULT": [
-          "2",
-          "1",
-          "1"
-        ]
-      },
-      {
-        "SQL": "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by 1+t1.a+3",
-        "RESULT": [
-          "1",
-          "1",
-          "2"
-        ]
-      },
-      {
-        "SQL": "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by 3*t1.a",
-        "RESULT": [
+        ],
+        "Result": [
           "1",
           "1",
           "2"
