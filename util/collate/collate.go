@@ -18,6 +18,8 @@ import (
 	"sync"
 
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 var (
@@ -96,16 +98,24 @@ func NewCollationEnabled() bool {
 // the protocol definition.
 // When new collations are not enabled, collation id remains the same.
 func RewriteNewCollationIDIfNeeded(id int32) int32 {
-	if newCollationEnabled && id > 0 {
-		return -id
+	if newCollationEnabled {
+		if id < 0 {
+			logutil.BgLogger().Warn("Unexpected negative collation ID for rewrite.", zap.Int32("ID", id))
+		} else {
+			return -id
+		}
 	}
 	return id
 }
 
 // RestoreCollationIDIfNeeded restores a collation id if the new collations are enabled.
 func RestoreCollationIDIfNeeded(id int32) int32 {
-	if newCollationEnabled && id < 0 {
-		return -id
+	if newCollationEnabled {
+		if id > 0 {
+			logutil.BgLogger().Warn("Unexpected positive collation ID for restore.", zap.Int32("ID", id))
+		} else {
+			return -id
+		}
 	}
 	return id
 }
