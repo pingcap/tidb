@@ -358,6 +358,7 @@ func NewAllocator(store kv.Storage, dbID int64, isUnsigned bool, allocType Alloc
 	}
 }
 
+// NewSequenceAllocator returns a new sequence value generator on the store.
 func NewSequenceAllocator(store kv.Storage, dbID int64, info *model.SequenceInfo) Allocator {
 	return &allocator{
 		store: store,
