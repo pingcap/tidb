@@ -430,6 +430,7 @@ func (s *testSuiteJoin2) TestJoinCast(c *C) {
 	tk.MustExec("insert into t value(-1);")
 	tk.MustExec("insert into t1 value(18446744073709551615);")
 	result = tk.MustQuery("select * from t, t1 where t.c1 = t1.c1;")
+	// TODO: MySQL will return one row, because c1 in t1 is 0xffffffff, which equals to -1.
 	c.Check(len(result.Rows()), Equals, 0)
 
 	tk.MustExec("drop table if exists t")
