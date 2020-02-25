@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
@@ -1449,7 +1450,7 @@ func (b *builtinFormatWithLocaleSig) vecEvalString(input *chunk.Chunk, result *c
 		xBuf.MergeNulls(dBuf)
 		xDecimals := xBuf.Decimals()
 
-		return formatDecimalWithLocale(xBuf, xDecimals, dInt64s, result, localeBuf)
+		return formatDecimalWithLocale(b.ctx, xBuf, xDecimals, dInt64s, result, localeBuf)
 	}
 
 	// real x
@@ -1466,7 +1467,7 @@ func (b *builtinFormatWithLocaleSig) vecEvalString(input *chunk.Chunk, result *c
 	xBuf.MergeNulls(dBuf)
 	xFloat64s := xBuf.Float64s()
 
-	return formatRealWithLocale(xBuf, xFloat64s, dInt64s, result, localeBuf)
+	return formatRealWithLocale(b.ctx, xBuf, xFloat64s, dInt64s, result, localeBuf)
 }
 
 func (b *builtinSubstring2ArgsSig) vectorized() bool {
@@ -2866,10 +2867,10 @@ func (b *builtinCharLengthUTF8Sig) vecEvalInt(input *chunk.Chunk, result *chunk.
 }
 
 func formatDecimal(xBuf *chunk.Column, xDecimals []types.MyDecimal, dInt64s []int64, result *chunk.Column) error {
-	return formatDecimalWithLocale(xBuf, xDecimals, dInt64s, result, nil)
+	return formatDecimalWithLocale(nil, xBuf, xDecimals, dInt64s, result, nil)
 }
 
-func formatDecimalWithLocale(xBuf *chunk.Column, xDecimals []types.MyDecimal, dInt64s []int64, result *chunk.Column, localeBuf *chunk.Column) error {
+func formatDecimalWithLocale(ctx sessionctx.Context, xBuf *chunk.Column, xDecimals []types.MyDecimal, dInt64s []int64, result *chunk.Column, localeBuf *chunk.Column) error {
 	for i := range xDecimals {
 		if xBuf.IsNull(i) {
 			result.AppendNull()
@@ -2885,7 +2886,12 @@ func formatDecimalWithLocale(xBuf *chunk.Column, xDecimals []types.MyDecimal, dI
 		}
 
 		var locale string
-		if localeBuf == nil || localeBuf.IsNull(i) {
+		if localeBuf == nil {
+			// FORMAT(x, d)
+			locale = "en_US"
+		} else if localeBuf.IsNull(i) {
+			// FORMAT(x, d, NULL)
+			ctx.GetSessionVars().StmtCtx.AppendWarning(errUnknownLocale.GenWithStackByArgs("NULL"))
 			locale = "en_US"
 		} else {
 			locale = localeBuf.GetString(i)
@@ -2905,10 +2911,10 @@ func formatDecimalWithLocale(xBuf *chunk.Column, xDecimals []types.MyDecimal, dI
 }
 
 func formatReal(xBuf *chunk.Column, xFloat64s []float64, dInt64s []int64, result *chunk.Column) error {
-	return formatRealWithLocale(xBuf, xFloat64s, dInt64s, result, nil)
+	return formatRealWithLocale(nil, xBuf, xFloat64s, dInt64s, result, nil)
 }
 
-func formatRealWithLocale(xBuf *chunk.Column, xFloat64s []float64, dInt64s []int64, result *chunk.Column, localeBuf *chunk.Column) error {
+func formatRealWithLocale(ctx sessionctx.Context, xBuf *chunk.Column, xFloat64s []float64, dInt64s []int64, result *chunk.Column, localeBuf *chunk.Column) error {
 	for i := range xFloat64s {
 		if xBuf.IsNull(i) {
 			result.AppendNull()
@@ -2924,7 +2930,12 @@ func formatRealWithLocale(xBuf *chunk.Column, xFloat64s []float64, dInt64s []int
 		}
 
 		var locale string
-		if localeBuf == nil || localeBuf.IsNull(i) {
+		if localeBuf == nil {
+			// FORMAT(x, d)
+			locale = "en_US"
+		} else if localeBuf.IsNull(i) {
+			// FORMAT(x, d, NULL)
+			ctx.GetSessionVars().StmtCtx.AppendWarning(errUnknownLocale.GenWithStackByArgs("NULL"))
 			locale = "en_US"
 		} else {
 			locale = localeBuf.GetString(i)
