@@ -411,6 +411,12 @@ type LogicalMemTable struct {
 	Extractor MemTablePredicateExtractor
 	DBName    model.CIStr
 	TableInfo *model.TableInfo
+	// QueryTimeRange is used to specify the time range for metrics summary tables and inspection tables
+	// e.g: select /*+ time_range('2020-02-02 12:10:00', '2020-02-02 13:00:00') */ from metrics_summary;
+	//      select /*+ time_range('2020-02-02 12:10:00', '2020-02-02 13:00:00') */ from metrics_summary_by_label;
+	//      select /*+ time_range('2020-02-02 12:10:00', '2020-02-02 13:00:00') */ from inspection_summary;
+	//      select /*+ time_range('2020-02-02 12:10:00', '2020-02-02 13:00:00') */ from inspection_result;
+	QueryTimeRange QueryTimeRange
 }
 
 // LogicalUnionScan is only used in non read-only txn.

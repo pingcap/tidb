@@ -84,17 +84,16 @@ func GetMetricTableDef(lowerTableName string) (*MetricTableDef, error) {
 
 func (def *MetricTableDef) genColumnInfos() []columnInfo {
 	cols := []columnInfo{
-		{"time", mysql.TypeDatetime, 19, 0, "CURRENT_TIMESTAMP", nil},
+		{name: "time", tp: mysql.TypeDatetime, size: 19, deflt: "CURRENT_TIMESTAMP"},
 	}
 	for _, label := range def.Labels {
-		cols = append(cols, columnInfo{label, mysql.TypeVarchar, 512, 0, nil, nil})
+		cols = append(cols, columnInfo{name: label, tp: mysql.TypeVarchar, size: 512})
 	}
 	if def.Quantile > 0 {
 		defaultValue := strconv.FormatFloat(def.Quantile, 'f', -1, 64)
-		cols = append(cols, columnInfo{"quantile", mysql.TypeDouble, 22, 0, defaultValue, nil})
+		cols = append(cols, columnInfo{name: "quantile", tp: mysql.TypeDouble, size: 22, deflt: defaultValue})
 	}
-	cols = append(cols, columnInfo{"value", mysql.TypeDouble, 22, 0, nil, nil})
-	cols = append(cols, columnInfo{"comment", mysql.TypeVarchar, 256, 0, nil, nil})
+	cols = append(cols, columnInfo{name: "value", tp: mysql.TypeDouble, size: 22})
 	return cols
 }
 

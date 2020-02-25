@@ -40,7 +40,7 @@ var memTableToClusterTables = map[string]string{
 }
 
 func init() {
-	var addrCol = columnInfo{"INSTANCE", mysql.TypeVarchar, 64, 0, nil, nil}
+	var addrCol = columnInfo{name: "INSTANCE", tp: mysql.TypeVarchar, size: 64}
 	for memTableName, clusterMemTableName := range memTableToClusterTables {
 		memTableCols := tableNameToColumns[memTableName]
 		if len(memTableCols) == 0 {

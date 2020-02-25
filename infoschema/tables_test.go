@@ -447,7 +447,9 @@ type mockSessionManager struct {
 	processInfoMap map[uint64]*util.ProcessInfo
 }
 
-func (sm *mockSessionManager) ShowProcessList() map[uint64]*util.ProcessInfo { return sm.processInfoMap }
+func (sm *mockSessionManager) ShowProcessList() map[uint64]*util.ProcessInfo {
+	return sm.processInfoMap
+}
 
 func (sm *mockSessionManager) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
 	rs, ok := sm.processInfoMap[id]
@@ -1032,7 +1034,7 @@ func (s *testTableSuite) TestSystemSchemaID(c *C) {
 	uniqueIDMap := make(map[int64]string)
 	s.checkSystemSchemaTableID(c, "information_schema", autoid.InformationSchemaDBID, 1, 10000, uniqueIDMap)
 	s.checkSystemSchemaTableID(c, "performance_schema", autoid.PerformanceSchemaDBID, 10000, 20000, uniqueIDMap)
-	s.checkSystemSchemaTableID(c, "metric_schema", autoid.MetricSchemaDBID, 20000, 30000, uniqueIDMap)
+	s.checkSystemSchemaTableID(c, "metrics_schema", autoid.MetricSchemaDBID, 20000, 30000, uniqueIDMap)
 	s.checkSystemSchemaTableID(c, "inspection_schema", autoid.InspectionSchemaDBID, 30000, 40000, uniqueIDMap)
 }
 
