@@ -273,7 +273,7 @@ func (s *testLexerSuite) TestSpecialComment(c *C) {
 }
 
 func (s *testLexerSuite) TestSpecialCodeComment(c *C) {
-	l := NewScanner("/*T!40000 auto_random(5) */")
+	l := NewScanner("/*T!30100 auto_random(5) */")
 	tok, pos, lit := l.scan()
 	c.Assert(tok, Equals, identifier)
 	c.Assert(lit, Equals, "auto_random")
