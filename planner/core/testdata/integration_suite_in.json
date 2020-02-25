@@ -80,5 +80,11 @@
       "desc select /*+ read_from_storage(tikv[t]) */ avg(a) from t",
       "desc select /*+ read_from_storage(tiflash[t]) */ avg(a) from t"
     ]
+  },
+  {
+    "name": "TestSubqueryWithTopN",
+    "cases": [
+      "desc select t1.b from t t1 where t1.b in (select t2.a from t t2 order by t1.a+t2.a limit 1)"
+    ]
   }
 ]
