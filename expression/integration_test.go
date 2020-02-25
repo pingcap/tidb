@@ -2663,6 +2663,8 @@ func (s *testIntegrationSuite2) TestBuiltin(c *C) {
 	result.Check(testkit.Rows(unixTime))
 	result = tk.MustQuery("select from_unixtime(1511247196661)")
 	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select from_unixtime('1451606400.123');")
+	result.Check(testkit.Rows("2016-01-01 08:00:00.123000"))
 
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a int);")
