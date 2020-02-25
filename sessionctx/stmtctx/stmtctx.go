@@ -548,11 +548,7 @@ func (sc *StatementContext) CopTasksDetails() *CopTasksDetails {
 		sleepTime time.Duration
 		times     int
 	}
-	backoffNum := 0
-	for _, ed := range sc.mu.allExecDetails {
-		backoffNum += len(ed.BackoffTimes)
-	}
-	backoffInfo := make(map[string][]backoffItem, backoffNum)
+	backoffInfo := make(map[string][]backoffItem)
 	for _, ed := range sc.mu.allExecDetails {
 		for backoff := range ed.BackoffTimes {
 			backoffInfo[backoff] = append(backoffInfo[backoff], backoffItem{
