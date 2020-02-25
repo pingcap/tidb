@@ -1732,11 +1732,84 @@ func (b *builtinToDaysSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 }
 
 func (b *builtinDateFormatSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinDateFormatSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+
+	dateBuf, err := b.bufAllocator.get(types.ETDatetime, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(dateBuf)
+	if err := b.args[0].VecEvalTime(b.ctx, input, dateBuf); err != nil {
+		return err
+	}
+	times := dateBuf.Times()
+
+	formatBuf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(formatBuf)
+	if err := b.args[1].VecEvalString(b.ctx, input, formatBuf); err != nil {
+		return err
+	}
+
+	var dateAsIntBuf *chunk.Column
+	result.ReserveString(n)
+
+	for i := range times {
+		t := times[i]
+		if dateBuf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+
+		if formatBuf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		formatMask := formatBuf.GetString(i)
+		// MySQL compatibility, #11203
+		// If format mask is 0 then return 0 without warnings
+		if formatMask == "0" {
+			result.AppendString("0")
+			continue
+		}
+
+		if t.InvalidZero() {
+			// MySQL compatibility, #11203
+			// 0 | 0.0 should be converted to null without warnings
+			if dateAsIntBuf == nil {
+				if dateAsIntBuf, err = b.bufAllocator.get(types.ETInt, n); err != nil {
+					return err
+				}
+				if err := b.args[0].VecEvalInt(b.ctx, input, dateAsIntBuf); err != nil {
+					return err
+				}
+			}
+			isOriginalIntOrDecimalZero := dateAsIntBuf.Int64s()[i] == 0 && !dateAsIntBuf.IsNull(i)
+			// Args like "0000-00-00", "0000-00-00 00:00:00" set Fsp to 6
+			isOriginalStringZero := t.Fsp() > 0
+
+			result.AppendNull()
+
+			if isOriginalIntOrDecimalZero && !isOriginalStringZero {
+				continue
+			}
+			if errHandled := handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, t.String())); errHandled != nil {
+				return errHandled
+			}
+		}
+		res, err := t.DateFormat(formatMask)
+		if err != nil {
+			return err
+		}
+		result.AppendString(res)
+	}
+	return nil
 }
 
 func (b *builtinHourSig) vectorized() bool {
