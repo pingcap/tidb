@@ -126,10 +126,10 @@ func (s *testAnalyzeSuite) TestCBOWithoutAnalyze(c *C) {
 		"HashLeftJoin_8 7.49 root inner join, inner:TableReader_15, equal:[eq(test.t1.a, test.t2.a)]",
 		"├─TableReader_12 5.99 root data:Selection_11",
 		"│ └─Selection_11 5.99 cop[tikv] not(isnull(test.t1.a))",
-		"│   └─TableScan_10 6.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"│   └─TableFullScan_10 6.00 cop[tikv] table:t1, keep order:false, stats:pseudo",
 		"└─TableReader_15 5.99 root data:Selection_14",
 		"  └─Selection_14 5.99 cop[tikv] not(isnull(test.t2.a))",
-		"    └─TableScan_13 6.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"    └─TableFullScan_13 6.00 cop[tikv] table:t2, keep order:false, stats:pseudo",
 	))
 	testKit.MustQuery("explain format = 'hint' select * from t1, t2 where t1.a = t2.a").Check(testkit.Rows(
 		"USE_INDEX(@`sel_1` `test`.`t1` ), USE_INDEX(@`sel_1` `test`.`t2` ), HASH_JOIN(@`sel_1` `test`.`t1`)"))
@@ -218,7 +218,7 @@ func (s *testAnalyzeSuite) TestEstimation(c *C) {
 		"HashAgg_9 2.00 root group by:test.t.a, funcs:count(Column#4)->Column#3",
 		"└─TableReader_10 2.00 root data:HashAgg_5",
 		"  └─HashAgg_5 2.00 cop[tikv] group by:test.t.a, funcs:count(1)->Column#4",
-		"    └─TableScan_8 8.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false",
+		"    └─TableFullScan_8 8.00 cop[tikv] table:t, keep order:false",
 	))
 }
 
@@ -408,13 +408,13 @@ func (s *testAnalyzeSuite) TestOutdatedAnalyze(c *C) {
 	testKit.MustQuery("explain select * from t where a <= 5 and b <= 5").Check(testkit.Rows(
 		"TableReader_7 35.91 root data:Selection_6",
 		"└─Selection_6 35.91 cop[tikv] le(test.t.a, 5), le(test.t.b, 5)",
-		"  └─TableScan_5 80.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false",
+		"  └─TableFullScan_5 80.00 cop[tikv] table:t, keep order:false",
 	))
 	statistics.RatioOfPseudoEstimate.Store(0.7)
 	testKit.MustQuery("explain select * from t where a <= 5 and b <= 5").Check(testkit.Rows(
 		"TableReader_7 8.84 root data:Selection_6",
 		"└─Selection_6 8.84 cop[tikv] le(test.t.a, 5), le(test.t.b, 5)",
-		"  └─TableScan_5 80.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"  └─TableFullScan_5 80.00 cop[tikv] table:t, keep order:false, stats:pseudo",
 	))
 }
 
@@ -547,9 +547,9 @@ func (s *testAnalyzeSuite) TestInconsistentEstimation(c *C) {
 	tk.MustQuery("explain select * from t use index(ab) where a = 5 and c = 5").
 		Check(testkit.Rows(
 			"IndexLookUp_8 10.00 root ",
-			"├─IndexScan_5 12.50 cop[tikv] table:t, index:a, b, range:[5,5], keep order:false",
+			"├─IndexRangeScan_5 12.50 cop[tikv] table:t, index:a, b, range:[5,5], keep order:false",
 			"└─Selection_7 10.00 cop[tikv] eq(test.t.c, 5)",
-			"  └─TableScan_6 12.50 cop[tikv] table:t, keep order:false",
+			"  └─TableRowIDScan_6 12.50 cop[tikv] table:t, keep order:false",
 		))
 }
 
