@@ -90,6 +90,9 @@ type pdConfHandler struct {
 	pdConfCli  pd.ConfigClient
 	reloadFunc func(oldConf, newConf *Config)
 	registered bool
+
+	// attributes for test
+	timeAfter func(d time.Duration) <-chan time.Time
 }
 
 func newPDConfHandler(localConf *Config, reloadFunc ConfReloadFunc,
@@ -210,9 +213,12 @@ func (ch *pdConfHandler) run() {
 	}()
 
 	ch.register() // the first time to register
+	if ch.timeAfter == nil {
+		ch.timeAfter = time.After
+	}
 	for {
 		select {
-		case <-time.After(ch.interval):
+		case <-ch.timeAfter(ch.interval):
 			if !ch.registered {
 				ch.register()
 				continue
