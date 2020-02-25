@@ -120,7 +120,6 @@ func (e *GrantExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 
 	// Check which user is not exist.
-	inexistentUsers := make([]*ast.UserSpec, 0, len(e.Users))
 	for _, user := range e.Users {
 		exists, err := userExists(e.ctx, user.User.Username, user.User.Hostname)
 		if err != nil {
@@ -135,25 +134,10 @@ func (e *GrantExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			}
 			user := fmt.Sprintf(`('%s', '%s', '%s')`, user.User.Hostname, user.User.Username, pwd)
 			sql := fmt.Sprintf(`INSERT INTO %s.%s (Host, User, authentication_string) VALUES %s;`, mysql.SystemDB, mysql.UserTable, user)
-			_, err := e.ctx.(sqlexec.SQLExecutor).Execute(ctx, sql)
+			_, err := internalSession.(sqlexec.SQLExecutor).Execute(ctx, sql)
 			if err != nil {
 				return err
 			}
-			inexistentUsers = append(inexistentUsers, user)
-		}
-	}
-
-	// Create inexistent users.
-	for _, user := range inexistentUsers {
-		pwd, ok := user.EncodedPassword()
-		if !ok {
-			return errors.Trace(ErrPasswordFormat)
-		}
-		u := fmt.Sprintf(`('%s', '%s', '%s')`, user.User.Hostname, user.User.Username, pwd)
-		sql := fmt.Sprintf(`INSERT INTO %s.%s (Host, User, Password) VALUES %s;`, mysql.SystemDB, mysql.UserTable, u)
-		_, err := internalSession.(sqlexec.SQLExecutor).Execute(context.Background(), sql)
-		if err != nil {
-			return err
 		}
 	}
 
