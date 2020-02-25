@@ -31,8 +31,8 @@ func sign(i int) int {
 
 // Compare implement Collator interface.
 func (gc *generalCICollator) Compare(a, b string, opt CollatorOption) int {
-	a = truncateTailingSpaceOne(a)
-	b = truncateTailingSpaceOne(b)
+	a = truncateTailingSpace(a)
+	b = truncateTailingSpace(b)
 	for len(a) > 0 && len(b) > 0 {
 		r1, r1size := utf8.DecodeRuneInString(a)
 		r2, r2size := utf8.DecodeRuneInString(b)
@@ -49,7 +49,7 @@ func (gc *generalCICollator) Compare(a, b string, opt CollatorOption) int {
 
 // Key implement Collator interface.
 func (gc *generalCICollator) Key(str string, opt CollatorOption) []byte {
-	str = truncateTailingSpaceOne(str)
+	str = truncateTailingSpace(str)
 	buf := make([]byte, 0, len(str))
 	i := 0
 	for _, r := range []rune(str) {
