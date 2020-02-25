@@ -120,7 +120,7 @@ var _ = Suite(&testRecoverTable{})
 var _ = Suite(&testMemTableReaderSuite{})
 var _ = SerialSuites(&testFlushSuite{})
 var _ = SerialSuites(&testAutoRandomSuite{&baseTestSuite{}})
-var _ = SerialSuites(&testClusterTableSuite{testSuite1: &testSuite1{}})
+var _ = SerialSuites(&testClusterTableSuite{})
 
 type testSuite struct{ *baseTestSuite }
 type testSuiteP1 struct{ *baseTestSuite }
@@ -2813,13 +2813,17 @@ func (c *checkRequestClient) SendRequest(ctx context.Context, addr string, req *
 	return resp, err
 }
 
-type testSuite1 struct {
+type testSuiteWithCliBase struct {
 	store kv.Storage
 	dom   *domain.Domain
 	cli   *checkRequestClient
 }
 
-func (s *testSuite1) SetUpSuite(c *C) {
+type testSuite1 struct {
+	testSuiteWithCliBase
+}
+
+func (s *testSuiteWithCliBase) SetUpSuite(c *C) {
 	cli := &checkRequestClient{}
 	hijackClient := func(c tikv.Client) tikv.Client {
 		cli.Client = c
@@ -2838,12 +2842,12 @@ func (s *testSuite1) SetUpSuite(c *C) {
 	s.dom.SetStatsUpdating(true)
 }
 
-func (s *testSuite1) TearDownSuite(c *C) {
+func (s *testSuiteWithCliBase) TearDownSuite(c *C) {
 	s.dom.Close()
 	s.store.Close()
 }
 
-func (s *testSuite1) TearDownTest(c *C) {
+func (s *testSuiteWithCliBase) TearDownTest(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	r := tk.MustQuery("show tables")
@@ -5156,13 +5160,13 @@ func (s *testSuite1) TestAlterDefaultValue(c *C) {
 }
 
 type testClusterTableSuite struct {
-	*testSuite1
+	testSuiteWithCliBase
 	rpcserver  *grpc.Server
 	listenAddr string
 }
 
 func (s *testClusterTableSuite) SetUpSuite(c *C) {
-	s.testSuite1.SetUpSuite(c)
+	s.testSuiteWithCliBase.SetUpSuite(c)
 	s.rpcserver, s.listenAddr = s.setUpRPCService(c, ":0")
 }
 
@@ -5193,7 +5197,7 @@ func (s *testClusterTableSuite) TearDownSuite(c *C) {
 		s.rpcserver.Stop()
 		s.rpcserver = nil
 	}
-	s.testSuite1.TearDownSuite(c)
+	s.testSuiteWithCliBase.TearDownSuite(c)
 }
 
 func (s *testClusterTableSuite) TestSlowQuery(c *C) {

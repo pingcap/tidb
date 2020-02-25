@@ -641,6 +641,7 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 	}
 	if t.idxMergePartPlans != nil {
 		p := PhysicalIndexMergeReader{partialPlans: t.idxMergePartPlans, tablePlan: t.tablePlan}.Init(ctx, t.idxMergePartPlans[0].SelectBlockOffset())
+		setTableScanToTableRowIDScan(p.tablePlan)
 		newTask.p = p
 		return newTask
 	}
@@ -650,6 +651,7 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 			indexPlan:      t.indexPlan,
 			ExtraHandleCol: t.extraHandleCol,
 		}.Init(ctx, t.tablePlan.SelectBlockOffset())
+		setTableScanToTableRowIDScan(p.tablePlan)
 		p.stats = t.tablePlan.statsInfo()
 		// Add cost of building table reader executors. Handles are extracted in batch style,
 		// each handle is a range, the CPU cost of building copTasks should be:
@@ -715,6 +717,17 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 	}
 
 	return newTask
+}
+
+// setTableScanToTableRowIDScan is to update the isChildOfIndexLookUp attribute of PhysicalTableScan child
+func setTableScanToTableRowIDScan(p PhysicalPlan) {
+	if ts, ok := p.(*PhysicalTableScan); ok {
+		ts.SetIsChildOfIndexLookUp(true)
+	} else {
+		for _, child := range p.Children() {
+			setTableScanToTableRowIDScan(child)
+		}
+	}
 }
 
 // rootTask is the final sink node of a plan graph. It should be a single goroutine on tidb.
