@@ -838,7 +838,7 @@ func (e *SelectLockExec) Open(ctx context.Context) error {
 
 	if len(e.tblID2Handle) > 0 && len(e.partitionedTable) > 0 {
 		e.tblID2Table = make(map[int64]table.PartitionedTable, len(e.partitionedTable))
-		for id, _ := range e.tblID2Handle {
+		for id := range e.tblID2Handle {
 			for _, p := range e.partitionedTable {
 				if id == p.Meta().ID {
 					e.tblID2Table[id] = p
