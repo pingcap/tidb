@@ -453,6 +453,12 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 		}
 	}
 
+	// Clear the tiflash replica available status.
+	if tblInfo.TiFlashReplica != nil {
+		tblInfo.TiFlashReplica.AvailablePartitionIDs = nil
+		tblInfo.TiFlashReplica.Available = false
+	}
+
 	tblInfo.ID = newTableID
 	err = t.CreateTableOrView(schemaID, tblInfo)
 	if err != nil {
