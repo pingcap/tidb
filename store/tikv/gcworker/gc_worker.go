@@ -1857,7 +1857,7 @@ func (s *mergeLockScanner) NextBatch(batchSize int) []*tikv.Lock {
 
 // GetSucceededStores gets a set of successfully scanned stores. Only call this after finishing scanning all locks.
 func (s *mergeLockScanner) GetSucceededStores() map[uint64]interface{} {
-	stores := make(map[uint64]interface{})
+	stores := make(map[uint64]interface{}, len(s.receivers))
 	for _, receiver := range s.receivers {
 		if receiver.Err == nil {
 			stores[receiver.StoreID] = nil
