@@ -36,6 +36,9 @@ var defaultImplementationMap = map[memo.Operand][]ImplementationRule{
 	memo.OperandTableDual: {
 		&ImplTableDual{},
 	},
+	memo.OperandMemTableScan: {
+		&ImplMemTableScan{},
+	},
 	memo.OperandProjection: {
 		&ImplProjection{},
 	},
@@ -105,6 +108,35 @@ func (r *ImplTableDual) OnImplement(expr *memo.GroupExpr, reqProp *property.Phys
 	dual := plannercore.PhysicalTableDual{RowCount: logicDual.RowCount}.Init(logicDual.SCtx(), logicProp.Stats, logicDual.SelectBlockOffset())
 	dual.SetSchema(logicProp.Schema)
 	return []memo.Implementation{impl.NewTableDualImpl(dual)}, nil
+}
+
+// ImplMemTableScan implements LogicalMemTable as PhysicalMemTable.
+type ImplMemTableScan struct {
+}
+
+// Match implements ImplementationRule Match interface.
+func (r *ImplMemTableScan) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
+	if !prop.IsEmpty() {
+		return false
+	}
+	return true
+}
+
+// OnImplement implements ImplementationRule OnImplement interface.
+func (r *ImplMemTableScan) OnImplement(
+	expr *memo.GroupExpr,
+	reqProp *property.PhysicalProperty,
+) ([]memo.Implementation, error) {
+	logic := expr.ExprNode.(*plannercore.LogicalMemTable)
+	logicProp := expr.Group.Prop
+	physical := plannercore.PhysicalMemTable{
+		DBName:    logic.DBName,
+		Table:     logic.TableInfo,
+		Columns:   logic.TableInfo.Columns,
+		Extractor: logic.Extractor,
+	}.Init(logic.SCtx(), logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), logic.SelectBlockOffset())
+	physical.SetSchema(logicProp.Schema)
+	return []memo.Implementation{impl.NewMemTableScanImpl(physical)}, nil
 }
 
 // ImplProjection implements LogicalProjection as PhysicalProjection.
@@ -475,7 +507,7 @@ func (r *ImplMergeJoin) Match(expr *memo.GroupExpr, prop *property.PhysicalPrope
 // OnImplement implements ImplementationRule OnImplement interface.
 func (r *ImplMergeJoin) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
 	join := expr.ExprNode.(*plannercore.LogicalJoin)
-	physicalMergeJoins := join.GetMergeJoin(reqProp, expr.Schema())
+	physicalMergeJoins := join.GetMergeJoin(reqProp, expr.Schema(), expr.Group.Prop.Stats, expr.Children[0].Prop.Stats, expr.Children[1].Prop.Stats)
 	mergeJoinImpls := make([]memo.Implementation, 0, len(physicalMergeJoins))
 	for _, physicalPlan := range physicalMergeJoins {
 		physicalMergeJoin := physicalPlan.(*plannercore.PhysicalMergeJoin)

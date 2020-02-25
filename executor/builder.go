@@ -24,6 +24,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/cznic/mathutil"
 	"github.com/cznic/sortutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
@@ -47,7 +48,6 @@ import (
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
-	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/stringutil"
@@ -221,6 +221,8 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildSplitRegion(v)
 	case *plannercore.PhysicalIndexMergeReader:
 		return b.buildIndexMergeReader(v)
+	case *plannercore.SelectInto:
+		return b.buildSelectInto(v)
 	default:
 		if mp, ok := p.(MockPhysicalPlan); ok {
 			return mp.GetExecutor()
@@ -299,7 +301,7 @@ func (b *executorBuilder) buildShowDDL(v *plannercore.ShowDDL) Executor {
 
 func (b *executorBuilder) buildShowDDLJobs(v *plannercore.PhysicalShowDDLJobs) Executor {
 	e := &ShowDDLJobsExec{
-		jobNumber:    v.JobNumber,
+		jobNumber:    int(v.JobNumber),
 		is:           b.is,
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 	}
@@ -879,6 +881,17 @@ func (b *executorBuilder) buildExplain(v *plannercore.Explain) Executor {
 	return explainExec
 }
 
+func (b *executorBuilder) buildSelectInto(v *plannercore.SelectInto) Executor {
+	child := b.build(v.TargetPlan)
+	if b.err != nil {
+		return nil
+	}
+	return &SelectIntoExec{
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), child),
+		intoOpt:      v.IntoOpt,
+	}
+}
+
 func (b *executorBuilder) buildUnionScanExec(v *plannercore.PhysicalUnionScan) Executor {
 	reader := b.build(v.Children()[0])
 	if b.err != nil {
@@ -980,42 +993,35 @@ func (b *executorBuilder) buildMergeJoin(v *plannercore.PhysicalMergeJoin) Execu
 			v.OtherConditions,
 			retTypes(leftExec),
 			retTypes(rightExec),
+			nil,
 		),
 		isOuterJoin: v.JoinType.IsOuterJoin(),
 		desc:        v.Desc,
 	}
 
-	leftKeys := v.LeftJoinKeys
-	rightKeys := v.RightJoinKeys
-
-	e.outerIdx = 0
-	innerFilter := v.RightConditions
-
-	e.innerTable = &mergeJoinInnerTable{
-		reader:   rightExec,
-		joinKeys: rightKeys,
+	leftTable := &mergeJoinTable{
+		childIndex: 0,
+		joinKeys:   v.LeftJoinKeys,
+		filters:    v.LeftConditions,
 	}
-
-	e.outerTable = &mergeJoinOuterTable{
-		reader: leftExec,
-		filter: v.LeftConditions,
-		keys:   leftKeys,
+	rightTable := &mergeJoinTable{
+		childIndex: 1,
+		joinKeys:   v.RightJoinKeys,
+		filters:    v.RightConditions,
 	}
 
 	if v.JoinType == plannercore.RightOuterJoin {
-		e.outerIdx = 1
-		e.outerTable.reader = rightExec
-		e.outerTable.filter = v.RightConditions
-		e.outerTable.keys = rightKeys
-
-		innerFilter = v.LeftConditions
-		e.innerTable.reader = leftExec
-		e.innerTable.joinKeys = leftKeys
+		e.innerTable = leftTable
+		e.outerTable = rightTable
+	} else {
+		e.innerTable = rightTable
+		e.outerTable = leftTable
 	}
+	e.innerTable.isInner = true
 
 	// optimizer should guarantee that filters on inner table are pushed down
 	// to tikv or extracted to a Selection.
-	if len(innerFilter) != 0 {
+	if len(e.innerTable.filters) != 0 {
 		b.err = errors.Annotate(ErrBuildExecutor, "merge join's inner filter should be empty.")
 		return nil
 	}
@@ -1085,10 +1091,11 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 			defaultValues = make([]types.Datum, e.buildSideExec.Schema().Len())
 		}
 	}
+	childrenUsedSchema := e.baseExecutor.markChildrenUsedCols()
 	e.joiners = make([]joiner, e.concurrency)
 	for i := uint(0); i < e.concurrency; i++ {
 		e.joiners[i] = newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0, defaultValues,
-			v.OtherConditions, lhsTypes, rhsTypes)
+			v.OtherConditions, lhsTypes, rhsTypes, childrenUsedSchema)
 	}
 	executorCountHashJoinExec.Inc()
 	return e
@@ -1273,7 +1280,7 @@ func (b *executorBuilder) getStartTS() (uint64, error) {
 func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executor {
 	switch v.DBName.L {
 	case util.MetricSchemaName.L:
-		return &ClusterReaderExec{
+		return &MemTableReaderExec{
 			baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 			retriever: &MetricRetriever{
 				table:     v.Table,
@@ -1283,14 +1290,14 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 	case util.InformationSchemaName.L:
 		switch v.Table.Name.L {
 		case strings.ToLower(infoschema.TableClusterConfig):
-			return &ClusterReaderExec{
+			return &MemTableReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 				retriever: &clusterConfigRetriever{
 					extractor: v.Extractor.(*plannercore.ClusterTableExtractor),
 				},
 			}
 		case strings.ToLower(infoschema.TableClusterLoad):
-			return &ClusterReaderExec{
+			return &MemTableReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 				retriever: &clusterServerInfoRetriever{
 					extractor:      v.Extractor.(*plannercore.ClusterTableExtractor),
@@ -1298,7 +1305,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 				},
 			}
 		case strings.ToLower(infoschema.TableClusterHardware):
-			return &ClusterReaderExec{
+			return &MemTableReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 				retriever: &clusterServerInfoRetriever{
 					extractor:      v.Extractor.(*plannercore.ClusterTableExtractor),
@@ -1306,7 +1313,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 				},
 			}
 		case strings.ToLower(infoschema.TableClusterSystemInfo):
-			return &ClusterReaderExec{
+			return &MemTableReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 				retriever: &clusterServerInfoRetriever{
 					extractor:      v.Extractor.(*plannercore.ClusterTableExtractor),
@@ -1314,17 +1321,62 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 				},
 			}
 		case strings.ToLower(infoschema.TableClusterLog):
-			return &ClusterReaderExec{
+			return &MemTableReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 				retriever: &clusterLogRetriever{
 					extractor: v.Extractor.(*plannercore.ClusterLogTableExtractor),
 				},
 			}
 		case strings.ToLower(infoschema.TableInspectionResult):
-			return &ClusterReaderExec{
+			return &MemTableReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
-				retriever: &inspectionRetriever{
+				retriever: &inspectionResultRetriever{
 					extractor: v.Extractor.(*plannercore.InspectionResultTableExtractor),
+					timeRange: v.QueryTimeRange,
+				},
+			}
+		case strings.ToLower(infoschema.TableInspectionSummary):
+			return &MemTableReaderExec{
+				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+				retriever: &inspectionSummaryRetriever{
+					table:     v.Table,
+					extractor: v.Extractor.(*plannercore.InspectionSummaryTableExtractor),
+					timeRange: v.QueryTimeRange,
+				},
+			}
+		case strings.ToLower(infoschema.TableMetricSummary):
+			return &MemTableReaderExec{
+				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+				retriever: &MetricsSummaryRetriever{
+					table:     v.Table,
+					extractor: v.Extractor.(*plannercore.MetricSummaryTableExtractor),
+					timeRange: v.QueryTimeRange,
+				},
+			}
+		case strings.ToLower(infoschema.TableMetricSummaryByLabel):
+			return &MemTableReaderExec{
+				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+				retriever: &MetricsSummaryByLabelRetriever{
+					table:     v.Table,
+					extractor: v.Extractor.(*plannercore.MetricSummaryTableExtractor),
+					timeRange: v.QueryTimeRange,
+				},
+			}
+		case strings.ToLower(infoschema.TableSchemata), strings.ToLower(infoschema.TableViews):
+			return &MemTableReaderExec{
+				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+				retriever: &memtableRetriever{
+					table:   v.Table,
+					columns: v.Columns,
+				},
+			}
+		case strings.ToLower(infoschema.TableSlowQuery), strings.ToLower(infoschema.ClusterTableSlowLog):
+			return &MemTableReaderExec{
+				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+				retriever: &slowQueryRetriever{
+					table:      v.Table,
+					outputCols: v.Columns,
+					extractor:  v.Extractor.(*plannercore.SlowQueryExtractor),
 				},
 			}
 		}
@@ -1384,14 +1436,14 @@ func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) *NestedLoopAp
 	if defaultValues == nil {
 		defaultValues = make([]types.Datum, v.Children()[v.InnerChildIdx].Schema().Len())
 	}
-	tupleJoiner := newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0,
-		defaultValues, otherConditions, retTypes(leftChild), retTypes(rightChild))
 	outerExec, innerExec := leftChild, rightChild
 	outerFilter, innerFilter := v.LeftConditions, v.RightConditions
 	if v.InnerChildIdx == 0 {
 		outerExec, innerExec = rightChild, leftChild
 		outerFilter, innerFilter = v.RightConditions, v.LeftConditions
 	}
+	tupleJoiner := newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0,
+		defaultValues, otherConditions, retTypes(leftChild), retTypes(rightChild), nil)
 	e := &NestedLoopApplyExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), outerExec, innerExec),
 		innerExec:    innerExec,
@@ -1907,7 +1959,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 			hasPrefixCol:  hasPrefixCol,
 		},
 		workerWg:      new(sync.WaitGroup),
-		joiner:        newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0, defaultValues, v.OtherConditions, leftTypes, rightTypes),
+		joiner:        newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0, defaultValues, v.OtherConditions, leftTypes, rightTypes, nil),
 		isOuterJoin:   v.JoinType.IsOuterJoin(),
 		indexRanges:   v.Ranges,
 		keyOff2IdxOff: v.KeyOff2IdxOff,
@@ -2000,7 +2052,7 @@ func (b *executorBuilder) buildIndexLookUpMergeJoin(v *plannercore.PhysicalIndex
 	}
 	joiners := make([]joiner, e.ctx.GetSessionVars().IndexLookupJoinConcurrency)
 	for i := 0; i < e.ctx.GetSessionVars().IndexLookupJoinConcurrency; i++ {
-		joiners[i] = newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0, defaultValues, v.OtherConditions, leftTypes, rightTypes)
+		joiners[i] = newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0, defaultValues, v.OtherConditions, leftTypes, rightTypes, nil)
 	}
 	e.joiners = joiners
 	return e
@@ -2072,6 +2124,13 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		e.feedback.Invalidate()
 	}
 	e.dagPB.CollectRangeCounts = &collect
+	if v.StoreType == kv.TiDB && b.ctx.GetSessionVars().User != nil {
+		// User info is used to do privilege check. It is only used in TiDB cluster memory table.
+		e.dagPB.User = &tipb.UserIdentity{
+			UserName: b.ctx.GetSessionVars().User.Username,
+			UserHost: b.ctx.GetSessionVars().User.Hostname,
+		}
+	}
 
 	for i := range v.Schema().Columns {
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))

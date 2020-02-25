@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/mysql"
@@ -31,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/spaolacci/murmur3"
@@ -1035,6 +1035,7 @@ func (e *vecGroupChecker) splitIntoGroups(chk *chunk.Chunk) (isFirstGroupSameAsP
 	e.nextGroupID = 0
 	if len(e.GroupByItems) == 0 {
 		e.groupOffset = append(e.groupOffset, numRows)
+		e.groupCount = 1
 		return true, nil
 	}
 
@@ -1212,9 +1213,9 @@ func (e *vecGroupChecker) evalGroupItemsAndResolveGroups(item expression.Express
 		firstRowDatum.SetMysqlJSON(col.GetJSON(0).Copy())
 		lastRowDatum.SetMysqlJSON(col.GetJSON(numRows - 1).Copy())
 	case types.ETString:
-		previousKey := col.GetString(0)
+		previousKey := codec.ConvertByCollationStr(col.GetString(0), tp)
 		for i := 1; i < numRows; i++ {
-			key := col.GetString(i)
+			key := codec.ConvertByCollationStr(col.GetString(i), tp)
 			isNull := col.IsNull(i)
 			if e.sameGroup[i] {
 				if isNull != previousIsNull || previousKey != key {
@@ -1225,8 +1226,8 @@ func (e *vecGroupChecker) evalGroupItemsAndResolveGroups(item expression.Express
 			previousIsNull = isNull
 		}
 		// don't use col.GetString since it will cause DATA RACE
-		firstRowDatum.SetString(string(col.GetBytes(0)))
-		lastRowDatum.SetString(string(col.GetBytes(numRows - 1)))
+		firstRowDatum.SetString(string(col.GetBytes(0)), tp.Collate, tp.Flen)
+		lastRowDatum.SetString(string(col.GetBytes(numRows-1)), tp.Collate, tp.Flen)
 	default:
 		err = errors.New(fmt.Sprintf("invalid eval type %v", eType))
 	}
