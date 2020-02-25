@@ -548,17 +548,19 @@ func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 		return nil
 	}
 	keyOff2IdxOff := make([]int, len(innerJoinKeys))
+	newOuterJoinKeys := make([]*expression.Column, 0)
 	pkMatched := false
 	for i, key := range innerJoinKeys {
-		if !key.Equal(nil, pkCol) {
+		if !key.Equal(nil, pkCol) && !outerJoinKeys[i].Equal(nil, pkCol) {
 			keyOff2IdxOff[i] = -1
 			continue
 		}
 		pkMatched = true
 		keyOff2IdxOff[i] = 0
-		// There is only one EqualCondition for IndexJoin to construct Range when it is a primary key. For issue #14822.
-		outerJoinKeys = outerJoinKeys[i : i+1]
+		// Add to newOuterJoinKeys only if conditions contain inner primary key. For issue #14822.
+		newOuterJoinKeys = append(newOuterJoinKeys, outerJoinKeys[i])
 	}
+	outerJoinKeys = newOuterJoinKeys
 	if !pkMatched {
 		return nil
 	}
