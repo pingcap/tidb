@@ -910,7 +910,7 @@ func (t *TableCommon) IterRecords(ctx sessionctx.Context, startKey kv.Key, cols 
 
 	logutil.BgLogger().Debug("iterate records", zap.ByteString("startKey", startKey), zap.ByteString("key", it.Key()), zap.ByteString("value", it.Value()))
 
-	colMap := make(map[int64]*types.FieldType)
+	colMap := make(map[int64]*types.FieldType, len(cols))
 	for _, col := range cols {
 		colMap[col.ID] = &col.FieldType
 	}
