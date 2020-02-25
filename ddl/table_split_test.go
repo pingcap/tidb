@@ -64,6 +64,22 @@ func (s *testDDLTableSplitSuite) TestTableSplit(c *C) {
 	for _, def := range pi.Definitions {
 		checkRegionStartWithTableID(c, def.ID, store.(kvStore))
 	}
+
+	// test split region when create table like
+	tk.MustExec("create table t1(i int)")
+	tk.MustExec("create table t2 like t1")
+	t2, err := infoSchema.TableByName(model.NewCIStr("mysql"), model.NewCIStr("tidb"))
+	c.Assert(err, IsNil)
+	checkRegionStartWithTableID(c, t2.Meta().ID, store.(kvStore))
+
+	tk.MustExec("create table t3 like t_part")
+	t3, err := infoSchema.TableByName(model.NewCIStr("test"), model.NewCIStr("t_part"))
+	c.Assert(err, IsNil)
+	pi = t3.Meta().GetPartitionInfo()
+	c.Assert(pi, NotNil)
+	for _, def := range pi.Definitions {
+		checkRegionStartWithTableID(c, def.ID, store.(kvStore))
+	}
 }
 
 type kvStore interface {
