@@ -458,6 +458,7 @@ func (do *Domain) infoSyncerKeeper() {
 
 func (do *Domain) topologySyncerKeeper() {
 	defer do.wg.Done()
+	defer recoverInDomain("topologySyncerKeeper", false)
 	ticker := time.NewTicker(infosync.TopologyTimeToRefresh)
 	defer ticker.Stop()
 
