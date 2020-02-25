@@ -621,6 +621,6 @@ func (s *partitionProcessor) makeUnionAllChildren(ds *DataSource, pi *model.Part
 	}
 	unionAll := LogicalUnionAll{}.Init(ds.SCtx(), ds.blockOffset)
 	unionAll.SetChildren(children...)
-	unionAll.SetSchema(ds.schema)
+	unionAll.SetSchema(ds.schema.Clone())
 	return unionAll, nil
 }

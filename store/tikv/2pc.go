@@ -625,7 +625,7 @@ func (tm *ttlManager) keepAlive(c *twoPhaseCommitter) {
 			if tm.killed != nil && atomic.LoadUint32(tm.killed) != 0 {
 				return
 			}
-			bo := NewBackoffer(context.Background(), pessimisticLockMaxBackoff)
+			bo := NewBackoffer(context.Background(), pessimisticLockMaxBackoff).WithVars(c.txn.vars)
 			now, err := c.store.GetOracle().GetTimestamp(bo.ctx)
 			if err != nil {
 				err1 := bo.Backoff(BoPDRPC, err)
