@@ -551,7 +551,7 @@ func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 	newOuterJoinKeys := make([]*expression.Column, 0)
 	pkMatched := false
 	for i, key := range innerJoinKeys {
-		if !key.Equal(nil, pkCol) && !outerJoinKeys[i].Equal(nil, pkCol) {
+		if !key.Equal(nil, pkCol) {
 			keyOff2IdxOff[i] = -1
 			continue
 		}
