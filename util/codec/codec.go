@@ -308,7 +308,7 @@ func encodeHashChunkRowIdx(sc *stmtctx.StatementContext, row chunk.Row, tp *type
 	case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		flag = compactBytesFlag
 		b = row.GetBytes(idx)
-		b = convertByCollation(b, tp)
+		b = ConvertByCollation(b, tp)
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		flag = uintFlag
 		t := row.GetTime(idx)
@@ -446,7 +446,7 @@ func HashChunkSelected(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk
 			} else {
 				buf[0] = compactBytesFlag
 				b = column.GetBytes(i)
-				b = convertByCollation(b, tp)
+				b = ConvertByCollation(b, tp)
 			}
 
 			// As the golang doc described, `Hash.Write` never returns an error.
@@ -1166,7 +1166,7 @@ func HashGroupKey(sc *stmtctx.StatementContext, n int, col *chunk.Column, buf []
 			if col.IsNull(i) {
 				buf[i] = append(buf[i], NilFlag)
 			} else {
-				buf[i] = encodeBytes(buf[i], convertByCollation(col.GetBytes(i), ft), false)
+				buf[i] = encodeBytes(buf[i], ConvertByCollation(col.GetBytes(i), ft), false)
 			}
 		}
 	default:
@@ -1175,7 +1175,14 @@ func HashGroupKey(sc *stmtctx.StatementContext, n int, col *chunk.Column, buf []
 	return buf, nil
 }
 
-func convertByCollation(raw []byte, tp *types.FieldType) []byte {
+// ConvertByCollation converts these bytes according to its collation.
+func ConvertByCollation(raw []byte, tp *types.FieldType) []byte {
 	collator := collate.GetCollator(tp.Collate)
 	return collator.Key(string(hack.String(raw)), collate.NewCollatorOption(tp.Flen))
+}
+
+// ConvertByCollationStr converts this string according to its collation.
+func ConvertByCollationStr(str string, tp *types.FieldType) string {
+	collator := collate.GetCollator(tp.Collate)
+	return string(hack.String(collator.Key(str, collate.NewCollatorOption(tp.Flen))))
 }

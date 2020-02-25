@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/prometheus/client_golang/api"
 	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
@@ -45,6 +46,7 @@ type MetricRetriever struct {
 	table     *model.TableInfo
 	tblDef    *infoschema.MetricTableDef
 	extractor *plannercore.MetricTableExtractor
+	timeRange plannercore.QueryTimeRange
 	retrieved bool
 }
 
@@ -177,7 +179,6 @@ func (e *MetricRetriever) genRecord(metric pmodel.Metric, pair pmodel.SamplePair
 	} else {
 		record = append(record, types.NewFloat64Datum(float64(pair.Value)))
 	}
-	record = append(record, types.NewStringDatum(e.tblDef.Comment))
 	return record
 }
 
@@ -205,127 +206,172 @@ func (c *queryClient) URL(ep string, args map[string]string) *url.URL {
 	return c.Client.URL(ep, args)
 }
 
-// MetricSummaryRetriever uses to read metric data.
-type MetricSummaryRetriever struct {
+// MetricsSummaryRetriever uses to read metric data.
+type MetricsSummaryRetriever struct {
 	dummyCloser
 	table     *model.TableInfo
-	extractor *plannercore.MetricTableExtractor
+	extractor *plannercore.MetricSummaryTableExtractor
+	timeRange plannercore.QueryTimeRange
 	retrieved bool
 }
 
-func (e *MetricSummaryRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
+func (e *MetricsSummaryRetriever) retrieve(_ context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
 	if e.retrieved || e.extractor.SkipRequest {
 		return nil, nil
 	}
 	e.retrieved = true
 	totalRows := make([][]types.Datum, 0, len(infoschema.MetricTableMap))
-	quantiles := []float64{1, 0.999, 0.99, 0.90, 0.80}
-	tps := make([]*types.FieldType, 0, len(e.table.Columns))
-	for _, col := range e.table.Columns {
-		tps = append(tps, &col.FieldType)
-	}
-	startTime := e.extractor.StartTime.Format(plannercore.MetricTableTimeFormat)
-	endTime := e.extractor.EndTime.Format(plannercore.MetricTableTimeFormat)
 	tables := make([]string, 0, len(infoschema.MetricTableMap))
 	for name := range infoschema.MetricTableMap {
 		tables = append(tables, name)
 	}
 	sort.Strings(tables)
+
+	filter := inspectionFilter{set: e.extractor.MetricsNames}
+	condition := e.timeRange.Condition()
 	for _, name := range tables {
-		def := infoschema.MetricTableMap[name]
-		sqls := e.genMetricQuerySQLS(name, startTime, endTime, def.Quantile, quantiles)
-		for _, sql := range sqls {
-			rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			for _, row := range rows {
-				totalRows = append(totalRows, row.GetDatumRow(tps))
-			}
+		if !filter.enable(name) {
+			continue
 		}
-	}
-	return totalRows, nil
-}
-
-func (e *MetricSummaryRetriever) genMetricQuerySQLS(name, startTime, endTime string, quantile float64, quantiles []float64) []string {
-	if quantile == 0 {
-		sql := fmt.Sprintf(`select "%s",min(time),sum(value),avg(value),min(value),max(value),comment from metric_schema.%s where time > '%s' and time < '%s'`, name, name, startTime, endTime)
-		return []string{sql}
-	}
-	sqls := []string{}
-	for _, quantile := range quantiles {
-		sql := fmt.Sprintf(`select "%s_%v",min(time),sum(value),avg(value),min(value),max(value),comment from metric_schema.%s where time > '%s' and time < '%s' and quantile=%v`, name, quantile, name, startTime, endTime, quantile)
-		sqls = append(sqls, sql)
-	}
-	return sqls
-}
-
-// MetricSummaryByLabelRetriever uses to read metric detail data.
-type MetricSummaryByLabelRetriever struct {
-	dummyCloser
-	table     *model.TableInfo
-	extractor *plannercore.MetricTableExtractor
-	retrieved bool
-}
-
-func (e *MetricSummaryByLabelRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
-	if e.retrieved || e.extractor.SkipRequest {
-		return nil, nil
-	}
-	e.retrieved = true
-	totalRows := make([][]types.Datum, 0, len(infoschema.MetricTableMap))
-	quantiles := []float64{1, 0.999, 0.99, 0.90, 0.80}
-	tps := make([]*types.FieldType, 0, len(e.table.Columns))
-	for _, col := range e.table.Columns {
-		tps = append(tps, &col.FieldType)
-	}
-	startTime := e.extractor.StartTime.Format(plannercore.MetricTableTimeFormat)
-	endTime := e.extractor.EndTime.Format(plannercore.MetricTableTimeFormat)
-	tables := make([]string, 0, len(infoschema.MetricTableMap))
-	for name := range infoschema.MetricTableMap {
-		tables = append(tables, name)
-	}
-	sort.Strings(tables)
-	for _, name := range tables {
-		def := infoschema.MetricTableMap[name]
-		sqls := e.genMetricQuerySQLS(name, startTime, endTime, quantiles, def)
-		for _, sql := range sqls {
-			rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			for _, row := range rows {
-				totalRows = append(totalRows, row.GetDatumRow(tps))
-			}
+		def, found := infoschema.MetricTableMap[name]
+		if !found {
+			sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("metrics table: %s not found", name))
+			continue
 		}
-	}
-	return totalRows, nil
-}
-
-func (e *MetricSummaryByLabelRetriever) genMetricQuerySQLS(name, startTime, endTime string, quantiles []float64, def infoschema.MetricTableDef) []string {
-	labels := ""
-	labelsColumn := `""`
-	if len(def.Labels) > 0 {
-		labels = "`" + strings.Join(def.Labels, "`, `") + "`"
-		labelsColumn = fmt.Sprintf("concat_ws(' = ', '%s', concat_ws(', ', %s))", strings.Join(def.Labels, ", "), labels)
-	}
-	if def.Quantile == 0 {
-		quantiles = []float64{0}
-	}
-	sqls := []string{}
-	for _, quantile := range quantiles {
 		var sql string
-		if quantile == 0 {
-			sql = fmt.Sprintf(`select "%[1]s", %[2]s as label,min(time),sum(value),avg(value),min(value),max(value),comment from metric_schema.%[1]s where time > '%[3]s' and time < '%[4]s'`,
-				name, labelsColumn, startTime, endTime)
+		if def.Quantile > 0 {
+			var qs []string
+			if len(e.extractor.Quantiles) > 0 {
+				for _, q := range e.extractor.Quantiles {
+					qs = append(qs, fmt.Sprintf("%f", q))
+				}
+			} else {
+				qs = []string{"0.99"}
+			}
+			sql = fmt.Sprintf("select sum(value),avg(value),min(value),max(value),quantile from `%[2]s`.`%[1]s` %[3]s and quantile in (%[4]s) group by quantile order by quantile",
+				name, util.MetricSchemaName.L, condition, strings.Join(qs, ","))
 		} else {
-			sql = fmt.Sprintf(`select "%[1]s_%[5]v", %[2]s as label,min(time),sum(value),avg(value),min(value),max(value),comment from metric_schema.%[1]s where time > '%[3]s' and time < '%[4]s' and quantile=%[5]v`,
-				name, labelsColumn, startTime, endTime, quantile)
+			sql = fmt.Sprintf("select sum(value),avg(value),min(value),max(value) from `%[2]s`.`%[1]s` %[3]s",
+				name, util.MetricSchemaName.L, condition)
 		}
-		if len(def.Labels) > 0 {
-			sql += " group by " + labels
+
+		rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+		if err != nil {
+			return nil, errors.Errorf("execute '%s' failed: %v", sql, err)
 		}
-		sqls = append(sqls, sql)
+		for _, row := range rows {
+			var quantile interface{}
+			if def.Quantile > 0 {
+				quantile = row.GetFloat64(row.Len() - 1)
+			}
+			totalRows = append(totalRows, types.MakeDatums(
+				name,
+				quantile,
+				row.GetFloat64(0),
+				row.GetFloat64(1),
+				row.GetFloat64(2),
+				row.GetFloat64(3),
+				def.Comment,
+			))
+		}
 	}
-	return sqls
+	return totalRows, nil
+}
+
+// MetricsSummaryByLabelRetriever uses to read metric detail data.
+type MetricsSummaryByLabelRetriever struct {
+	dummyCloser
+	table     *model.TableInfo
+	extractor *plannercore.MetricSummaryTableExtractor
+	timeRange plannercore.QueryTimeRange
+	retrieved bool
+}
+
+func (e *MetricsSummaryByLabelRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
+	if e.retrieved || e.extractor.SkipRequest {
+		return nil, nil
+	}
+	e.retrieved = true
+	totalRows := make([][]types.Datum, 0, len(infoschema.MetricTableMap))
+	tables := make([]string, 0, len(infoschema.MetricTableMap))
+	for name := range infoschema.MetricTableMap {
+		tables = append(tables, name)
+	}
+	sort.Strings(tables)
+
+	filter := inspectionFilter{set: e.extractor.MetricsNames}
+	condition := e.timeRange.Condition()
+	for _, name := range tables {
+		if !filter.enable(name) {
+			continue
+		}
+		def, found := infoschema.MetricTableMap[name]
+		if !found {
+			sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("metrics table: %s not found", name))
+			continue
+		}
+		cols := def.Labels
+		cond := condition
+		if def.Quantile > 0 {
+			cols = append(cols, "quantile")
+			if len(e.extractor.Quantiles) > 0 {
+				qs := make([]string, len(e.extractor.Quantiles))
+				for i, q := range e.extractor.Quantiles {
+					qs[i] = fmt.Sprintf("%f", q)
+				}
+				cond += " and quantile in (" + strings.Join(qs, ",") + ")"
+			} else {
+				cond += " and quantile=0.99"
+			}
+		}
+		var sql string
+		if len(cols) > 0 {
+			sql = fmt.Sprintf("select sum(value),avg(value),min(value),max(value),`%s` from `%s`.`%s` %s group by `%[1]s` order by `%[1]s`",
+				strings.Join(cols, "`,`"), util.MetricSchemaName.L, name, cond)
+		} else {
+			sql = fmt.Sprintf("select sum(value),avg(value),min(value),max(value) from `%s`.`%s` %s",
+				util.MetricSchemaName.L, name, cond)
+		}
+		rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithContext(ctx, sql)
+		if err != nil {
+			return nil, errors.Errorf("execute '%s' failed: %v", sql, err)
+		}
+		nonInstanceLabelIndex := 0
+		if len(def.Labels) > 0 && def.Labels[0] == "instance" {
+			nonInstanceLabelIndex = 1
+		}
+		// skip sum/avg/min/max
+		const skipCols = 4
+		for _, row := range rows {
+			instance := ""
+			if nonInstanceLabelIndex > 0 {
+				instance = row.GetString(skipCols) // sum/avg/min/max
+			}
+			var labels []string
+			for i, label := range def.Labels[nonInstanceLabelIndex:] {
+				// skip min/max/avg/instance
+				val := row.GetString(skipCols + nonInstanceLabelIndex + i)
+				if label == "store" || label == "store_id" {
+					val = fmt.Sprintf("store_id:%s", val)
+				}
+				labels = append(labels, val)
+			}
+			var quantile interface{}
+			if def.Quantile > 0 {
+				quantile = row.GetFloat64(row.Len() - 1) // quantile will be the last column
+			}
+			totalRows = append(totalRows, types.MakeDatums(
+				instance,
+				name,
+				strings.Join(labels, ", "),
+				quantile,
+				row.GetFloat64(0), // sum
+				row.GetFloat64(1), // avg
+				row.GetFloat64(2), // min
+				row.GetFloat64(3), // max
+				def.Comment,
+			))
+		}
+	}
+	return totalRows, nil
 }
