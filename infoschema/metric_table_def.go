@@ -801,12 +801,7 @@ var MetricTableMap = map[string]MetricTableDef{
 		Labels:  []string{"instance", "type"},
 		Comment: "The current term of Raft",
 	},
-	"pd_handle_requests_duration": {
-		PromQL:   `histogram_quantile($QUANTILE, sum(rate(pd_client_request_handle_requests_duration_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type, le))`,
-		Labels:   []string{"type"},
-		Quantile: 0.98,
-	},
-	"pd_handle_requests_duration_avg": {
+	"pd_handle_request_duration_avg": {
 		PromQL: `avg(rate(pd_client_request_handle_requests_duration_seconds_sum{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type) /  avg(rate(pd_client_request_handle_requests_duration_seconds_count{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type)`,
 		Labels: []string{"type"},
 	},
@@ -2152,16 +2147,6 @@ var MetricTableMap = map[string]MetricTableDef{
 		PromQL:  "sum(increase(pd_client_request_handle_requests_duration_seconds_sum[60s])) by (instance,type)",
 		Labels:  []string{"instance", "type"},
 		Comment: "The total time of  pd handle request duration(second)",
-	},
-	"pd_handle_requests_total_count": {
-		PromQL:  "sum(increase(pd_client_request_handle_requests_duration_seconds_count[60s])) by (type)",
-		Labels:  []string{"type"},
-		Comment: "The total count of ",
-	},
-	"pd_handle_requests_total_time": {
-		PromQL:  "sum(increase(pd_client_request_handle_requests_duration_seconds_sum[60s])) by (type)",
-		Labels:  []string{"type"},
-		Comment: "The total time of ",
 	},
 	"pd_handle_transactions_total_count": {
 		PromQL:  "sum(increase(pd_txn_handle_txns_duration_seconds_count[60s])) by (instance,result)",
