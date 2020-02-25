@@ -100,6 +100,7 @@ var (
 	_ builtinFunc = &builtinReverseUTF8Sig{}
 	_ builtinFunc = &builtinReverseSig{}
 	_ builtinFunc = &builtinSpaceSig{}
+	_ builtinFunc = &builtinUpperUTF8Sig{}
 	_ builtinFunc = &builtinUpperSig{}
 	_ builtinFunc = &builtinStrcmpSig{}
 	_ builtinFunc = &builtinReplaceSig{}
@@ -262,6 +263,7 @@ func (c *concatFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 		argTps = append(argTps, types.ETString)
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, argTps...)
+	bf.tp.Flen = 0
 	for i := range args {
 		argType := args[i].GetType()
 		SetBinFlagOrBinStr(argType, bf.tp)
@@ -331,6 +333,7 @@ func (c *concatWSFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	}
 
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, argTps...)
+	bf.tp.Flen = 0
 
 	for i := range args {
 		argType := args[i].GetType()
@@ -826,9 +829,36 @@ func (c *upperFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	argTp := args[0].GetType()
 	bf.tp.Flen = argTp.Flen
 	SetBinFlagOrBinStr(argTp, bf.tp)
-	sig := &builtinUpperSig{bf}
-	sig.setPbCode(tipb.ScalarFuncSig_Upper)
+	var sig builtinFunc
+	if types.IsBinaryStr(argTp) {
+		sig = &builtinUpperSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_Upper)
+	} else {
+		sig = &builtinUpperUTF8Sig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_UpperUTF8)
+	}
 	return sig, nil
+}
+
+type builtinUpperUTF8Sig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinUpperUTF8Sig) Clone() builtinFunc {
+	newSig := &builtinUpperUTF8Sig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalString evals a builtinUpperUTF8Sig.
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_upper
+func (b *builtinUpperUTF8Sig) evalString(row chunk.Row) (d string, isNull bool, err error) {
+	d, isNull, err = b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return d, isNull, err
+	}
+
+	return strings.ToUpper(d), false, nil
 }
 
 type builtinUpperSig struct {
@@ -849,11 +879,7 @@ func (b *builtinUpperSig) evalString(row chunk.Row) (d string, isNull bool, err 
 		return d, isNull, err
 	}
 
-	if types.IsBinaryStr(b.args[0].GetType()) {
-		return d, false, nil
-	}
-
-	return strings.ToUpper(d), false, nil
+	return d, false, nil
 }
 
 type strcmpFunctionClass struct {
@@ -2594,11 +2620,13 @@ func (c *octFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 	var sig builtinFunc
 	if IsBinaryLiteral(args[0]) || args[0].GetType().EvalType() == types.ETInt {
 		bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETInt)
+		bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 		bf.tp.Flen, bf.tp.Decimal = 64, types.UnspecifiedLength
 		sig = &builtinOctIntSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_OctInt)
 	} else {
 		bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
+		bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 		bf.tp.Flen, bf.tp.Decimal = 64, types.UnspecifiedLength
 		sig = &builtinOctStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_OctString)
@@ -2823,6 +2851,7 @@ func (c *binFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 		return nil, err
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETInt)
+	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	bf.tp.Flen = 64
 	sig := &builtinBinSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Bin)
@@ -3084,6 +3113,7 @@ func (c *formatFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 		argTps = append(argTps, types.ETString)
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, argTps...)
+	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	bf.tp.Flen = mysql.MaxBlobWidth
 	var sig builtinFunc
 	if len(args) == 3 {
@@ -3319,6 +3349,7 @@ func (c *toBase64FunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		return nil, err
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
+	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	bf.tp.Flen = base64NeededEncodedLength(bf.args[0].GetType().Flen)
 
 	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
