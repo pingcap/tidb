@@ -2067,6 +2067,11 @@ func (s *testDBSuite4) TestCreateTableWithLike2(c *C) {
 	c.Assert(t2.Meta().TiFlashReplica.LocationLabels, DeepEquals, t1.Meta().TiFlashReplica.LocationLabels)
 	c.Assert(t2.Meta().TiFlashReplica.Available, IsFalse)
 	c.Assert(t2.Meta().TiFlashReplica.AvailablePartitionIDs, HasLen, 0)
+	// Test for not affecting the original table.
+	t1 = testGetTableByName(c, s.s, "test_db", "t1")
+	c.Assert(t1.Meta().TiFlashReplica, NotNil)
+	c.Assert(t1.Meta().TiFlashReplica.Available, IsTrue)
+	c.Assert(t1.Meta().TiFlashReplica.AvailablePartitionIDs, DeepEquals, []int64{partition.Definitions[0].ID, partition.Definitions[1].ID})
 }
 
 func (s *testDBSuite1) TestCreateTable(c *C) {

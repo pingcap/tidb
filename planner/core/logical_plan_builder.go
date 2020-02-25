@@ -1597,7 +1597,7 @@ func (b *PlanBuilder) extractAggFuncs(fields []*ast.SelectField) ([]*ast.Aggrega
 		f.Expr = n.(ast.ExprNode)
 	}
 	aggList := extractor.AggFuncs
-	totalAggMapper := make(map[*ast.AggregateFuncExpr]int)
+	totalAggMapper := make(map[*ast.AggregateFuncExpr]int, len(aggList))
 
 	for i, agg := range aggList {
 		totalAggMapper[agg] = i
@@ -3210,7 +3210,7 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 	if err != nil {
 		return nil, err
 	}
-	tblID2table := make(map[int64]table.Table)
+	tblID2table := make(map[int64]table.Table, len(tblID2Handle))
 	for id := range tblID2Handle {
 		tblID2table[id], _ = b.is.TableByID(id)
 	}
@@ -3497,7 +3497,7 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 		}
 		tblID2Handle = del.cleanTblID2HandleMap(tblID2TableName, tblID2Handle, del.names)
 	}
-	tblID2table := make(map[int64]table.Table)
+	tblID2table := make(map[int64]table.Table, len(tblID2Handle))
 	for id := range tblID2Handle {
 		tblID2table[id], _ = b.is.TableByID(id)
 	}
@@ -3711,7 +3711,7 @@ func (b *PlanBuilder) buildWindowFunctionFrameBound(ctx context.Context, spec *a
 		for i, item := range orderByItems {
 			col := item.Col
 			bound.CalcFuncs[i] = col
-			bound.CmpFuncs[i] = expression.GetCmpFunction(col, col)
+			bound.CmpFuncs[i] = expression.GetCmpFunction(b.ctx, col, col)
 		}
 		return bound, nil
 	}
@@ -3759,7 +3759,7 @@ func (b *PlanBuilder) buildWindowFunctionFrameBound(ctx context.Context, spec *a
 		if err != nil {
 			return nil, err
 		}
-		bound.CmpFuncs[0] = expression.GetCmpFunction(orderByItems[0].Col, bound.CalcFuncs[0])
+		bound.CmpFuncs[0] = expression.GetCmpFunction(b.ctx, orderByItems[0].Col, bound.CalcFuncs[0])
 		return bound, nil
 	}
 	// When the order is asc:
@@ -3773,7 +3773,7 @@ func (b *PlanBuilder) buildWindowFunctionFrameBound(ctx context.Context, spec *a
 	if err != nil {
 		return nil, err
 	}
-	bound.CmpFuncs[0] = expression.GetCmpFunction(orderByItems[0].Col, bound.CalcFuncs[0])
+	bound.CmpFuncs[0] = expression.GetCmpFunction(b.ctx, orderByItems[0].Col, bound.CalcFuncs[0])
 	return bound, nil
 }
 
