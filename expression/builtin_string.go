@@ -263,6 +263,7 @@ func (c *concatFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 		argTps = append(argTps, types.ETString)
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, argTps...)
+	bf.tp.Flen = 0
 	for i := range args {
 		argType := args[i].GetType()
 		SetBinFlagOrBinStr(argType, bf.tp)
@@ -332,6 +333,7 @@ func (c *concatWSFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	}
 
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, argTps...)
+	bf.tp.Flen = 0
 
 	for i := range args {
 		argType := args[i].GetType()
@@ -2618,11 +2620,13 @@ func (c *octFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 	var sig builtinFunc
 	if IsBinaryLiteral(args[0]) || args[0].GetType().EvalType() == types.ETInt {
 		bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETInt)
+		bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 		bf.tp.Flen, bf.tp.Decimal = 64, types.UnspecifiedLength
 		sig = &builtinOctIntSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_OctInt)
 	} else {
 		bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
+		bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 		bf.tp.Flen, bf.tp.Decimal = 64, types.UnspecifiedLength
 		sig = &builtinOctStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_OctString)
@@ -2847,6 +2851,7 @@ func (c *binFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 		return nil, err
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETInt)
+	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	bf.tp.Flen = 64
 	sig := &builtinBinSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Bin)
@@ -3108,6 +3113,7 @@ func (c *formatFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 		argTps = append(argTps, types.ETString)
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, argTps...)
+	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	bf.tp.Flen = mysql.MaxBlobWidth
 	var sig builtinFunc
 	if len(args) == 3 {
@@ -3343,6 +3349,7 @@ func (c *toBase64FunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		return nil, err
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
+	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	bf.tp.Flen = base64NeededEncodedLength(bf.args[0].GetType().Flen)
 
 	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
