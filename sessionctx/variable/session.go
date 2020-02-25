@@ -182,7 +182,7 @@ func (tc *TransactionContext) UpdateDeltaForTable(physicalTableID int64, delta i
 	}
 	item := tc.TableDeltaMap[physicalTableID]
 	if item.ColSize == nil && colSize != nil {
-		item.ColSize = make(map[int64]int64)
+		item.ColSize = make(map[int64]int64, len(colSize))
 	}
 	item.Delta += delta
 	item.Count += count
