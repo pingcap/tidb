@@ -70,7 +70,7 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(err, IsNil)
 
 	// Since the test here is applicable to any type of allocators, autoid.RowIDAllocType is chosen.
-	alloc := autoid.NewAllocator(store, 1, false, autoid.RowIDAllocType, nil)
+	alloc := autoid.NewAllocator(store, 1, false, autoid.RowIDAllocType)
 	c.Assert(alloc, NotNil)
 
 	globalAutoID, err := alloc.NextGlobalAutoID(1)
@@ -110,13 +110,13 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(id, Equals, int64(3011))
 
-	alloc = autoid.NewAllocator(store, 1, false, autoid.RowIDAllocType, nil)
+	alloc = autoid.NewAllocator(store, 1, false, autoid.RowIDAllocType)
 	c.Assert(alloc, NotNil)
 	_, id, err = alloc.Alloc(1, 1, 1, 1)
 	c.Assert(err, IsNil)
 	c.Assert(id, Equals, int64(autoid.GetStep()+1))
 
-	alloc = autoid.NewAllocator(store, 1, false, autoid.RowIDAllocType, nil)
+	alloc = autoid.NewAllocator(store, 1, false, autoid.RowIDAllocType)
 	c.Assert(alloc, NotNil)
 	err = alloc.Rebase(2, int64(1), false)
 	c.Assert(err, IsNil)
@@ -124,11 +124,11 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(id, Equals, int64(2))
 
-	alloc = autoid.NewAllocator(store, 1, false, autoid.RowIDAllocType, nil)
+	alloc = autoid.NewAllocator(store, 1, false, autoid.RowIDAllocType)
 	c.Assert(alloc, NotNil)
 	err = alloc.Rebase(3, int64(3210), false)
 	c.Assert(err, IsNil)
-	alloc = autoid.NewAllocator(store, 1, false, autoid.RowIDAllocType, nil)
+	alloc = autoid.NewAllocator(store, 1, false, autoid.RowIDAllocType)
 	c.Assert(alloc, NotNil)
 	err = alloc.Rebase(3, int64(3000), false)
 	c.Assert(err, IsNil)
@@ -150,7 +150,7 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(err, IsNil)
 
 	// alloc N for signed
-	alloc = autoid.NewAllocator(store, 1, false, autoid.RowIDAllocType, nil)
+	alloc = autoid.NewAllocator(store, 1, false, autoid.RowIDAllocType)
 	c.Assert(alloc, NotNil)
 	globalAutoID, err = alloc.NextGlobalAutoID(4)
 	c.Assert(err, IsNil)
@@ -193,7 +193,7 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(min+1, Greater, lastRemainOne)
 
 	// Test for increment & offset for signed.
-	alloc = autoid.NewAllocator(store, 1, false, autoid.RowIDAllocType, nil)
+	alloc = autoid.NewAllocator(store, 1, false, autoid.RowIDAllocType)
 	c.Assert(alloc, NotNil)
 
 	increment := int64(2)
@@ -272,7 +272,7 @@ func (*testSuite) TestUnsignedAutoid(c *C) {
 	})
 	c.Assert(err, IsNil)
 
-	alloc := autoid.NewAllocator(store, 1, true, autoid.RowIDAllocType, nil)
+	alloc := autoid.NewAllocator(store, 1, true, autoid.RowIDAllocType)
 	c.Assert(alloc, NotNil)
 
 	globalAutoID, err := alloc.NextGlobalAutoID(1)
@@ -312,13 +312,13 @@ func (*testSuite) TestUnsignedAutoid(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(id, Equals, int64(3011))
 
-	alloc = autoid.NewAllocator(store, 1, true, autoid.RowIDAllocType, nil)
+	alloc = autoid.NewAllocator(store, 1, true, autoid.RowIDAllocType)
 	c.Assert(alloc, NotNil)
 	_, id, err = alloc.Alloc(1, 1, 1, 1)
 	c.Assert(err, IsNil)
 	c.Assert(id, Equals, int64(autoid.GetStep()+1))
 
-	alloc = autoid.NewAllocator(store, 1, true, autoid.RowIDAllocType, nil)
+	alloc = autoid.NewAllocator(store, 1, true, autoid.RowIDAllocType)
 	c.Assert(alloc, NotNil)
 	err = alloc.Rebase(2, int64(1), false)
 	c.Assert(err, IsNil)
@@ -326,11 +326,11 @@ func (*testSuite) TestUnsignedAutoid(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(id, Equals, int64(2))
 
-	alloc = autoid.NewAllocator(store, 1, true, autoid.RowIDAllocType, nil)
+	alloc = autoid.NewAllocator(store, 1, true, autoid.RowIDAllocType)
 	c.Assert(alloc, NotNil)
 	err = alloc.Rebase(3, int64(3210), false)
 	c.Assert(err, IsNil)
-	alloc = autoid.NewAllocator(store, 1, true, autoid.RowIDAllocType, nil)
+	alloc = autoid.NewAllocator(store, 1, true, autoid.RowIDAllocType)
 	c.Assert(alloc, NotNil)
 	err = alloc.Rebase(3, int64(3000), false)
 	c.Assert(err, IsNil)
@@ -355,7 +355,7 @@ func (*testSuite) TestUnsignedAutoid(c *C) {
 	c.Assert(err, IsNil)
 
 	// alloc N for unsigned
-	alloc = autoid.NewAllocator(store, 1, true, autoid.RowIDAllocType, nil)
+	alloc = autoid.NewAllocator(store, 1, true, autoid.RowIDAllocType)
 	c.Assert(alloc, NotNil)
 	globalAutoID, err = alloc.NextGlobalAutoID(4)
 	c.Assert(err, IsNil)
@@ -384,7 +384,7 @@ func (*testSuite) TestUnsignedAutoid(c *C) {
 	c.Assert(min+1, Greater, lastRemainOne)
 
 	// Test increment & offset for unsigned. Using AutoRandomType to avoid valid range check for increment and offset.
-	alloc = autoid.NewAllocator(store, 1, true, autoid.AutoRandomType, nil)
+	alloc = autoid.NewAllocator(store, 1, true, autoid.AutoRandomType)
 	c.Assert(alloc, NotNil)
 	c.Assert(err, IsNil)
 	c.Assert(globalAutoID, Equals, int64(1))
@@ -434,7 +434,7 @@ func (*testSuite) TestConcurrentAlloc(c *C) {
 	errCh := make(chan error, count)
 
 	allocIDs := func() {
-		alloc := autoid.NewAllocator(store, dbID, false, autoid.RowIDAllocType, nil)
+		alloc := autoid.NewAllocator(store, dbID, false, autoid.RowIDAllocType)
 		for j := 0; j < int(autoid.GetStep())+5; j++ {
 			_, id, err1 := alloc.Alloc(tblID, 1, 1, 1)
 			if err1 != nil {
@@ -512,7 +512,7 @@ func (*testSuite) TestRollbackAlloc(c *C) {
 	injectConf := new(kv.InjectionConfig)
 	injectConf.SetCommitError(errors.New("injected"))
 	injectedStore := kv.NewInjectedStore(store, injectConf)
-	alloc := autoid.NewAllocator(injectedStore, 1, false, autoid.RowIDAllocType, nil)
+	alloc := autoid.NewAllocator(injectedStore, 1, false, autoid.RowIDAllocType)
 	_, _, err = alloc.Alloc(2, 1, 1, 1)
 	c.Assert(err, NotNil)
 	c.Assert(alloc.Base(), Equals, int64(0))
@@ -558,7 +558,7 @@ func BenchmarkAllocator_Alloc(b *testing.B) {
 	if err != nil {
 		return
 	}
-	alloc := autoid.NewAllocator(store, 1, false, autoid.RowIDAllocType, nil)
+	alloc := autoid.NewAllocator(store, 1, false, autoid.RowIDAllocType)
 	b.StartTimer()
 	for i := 0; i < b.N; i++ {
 		alloc.Alloc(2, 1, 1, 1)
@@ -597,7 +597,7 @@ func (*testSuite) TestSequenceAutoid(c *C) {
 	})
 	c.Assert(err, IsNil)
 
-	alloc := autoid.NewAllocator(store, 1, false, autoid.SequenceType, seq)
+	alloc := autoid.NewSequenceAllocator(store, 1, seq)
 	c.Assert(alloc, NotNil)
 
 	// allocate sequence cache.
@@ -729,7 +729,7 @@ func (*testSuite) TestConcurrentAllocSequence(c *C) {
 	errCh := make(chan error, count)
 
 	allocSequence := func() {
-		alloc := autoid.NewAllocator(store, 2, false, autoid.SequenceType, seq)
+		alloc := autoid.NewSequenceAllocator(store, 2, seq)
 		for j := 0; j < 3; j++ {
 			base, end, _, err1 := alloc.AllocSeqCache(2)
 			if err1 != nil {

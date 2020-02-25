@@ -347,7 +347,7 @@ func NextStep(curStep int64, consumeDur time.Duration) int64 {
 }
 
 // NewAllocator returns a new auto increment id generator on the store.
-func NewAllocator(store kv.Storage, dbID int64, isUnsigned bool, allocType AllocatorType, info *model.SequenceInfo) Allocator {
+func NewAllocator(store kv.Storage, dbID int64, isUnsigned bool, allocType AllocatorType) Allocator {
 	return &allocator{
 		store:         store,
 		dbID:          dbID,
@@ -355,6 +355,17 @@ func NewAllocator(store kv.Storage, dbID int64, isUnsigned bool, allocType Alloc
 		step:          step,
 		lastAllocTime: time.Now(),
 		allocType:     allocType,
+	}
+}
+
+func NewSequenceAllocator(store kv.Storage, dbID int64, info *model.SequenceInfo) Allocator {
+	return &allocator{
+		store: store,
+		dbID:  dbID,
+		// Sequence allocator is always signed.
+		isUnsigned:    false,
+		lastAllocTime: time.Now(),
+		allocType:     SequenceType,
 		sequence:      info,
 	}
 }
@@ -363,12 +374,12 @@ func NewAllocator(store kv.Storage, dbID int64, isUnsigned bool, allocType Alloc
 func NewAllocatorsFromTblInfo(store kv.Storage, schemaID int64, tblInfo *model.TableInfo) Allocators {
 	var allocs []Allocator
 	dbID := tblInfo.GetDBID(schemaID)
-	allocs = append(allocs, NewAllocator(store, dbID, tblInfo.IsAutoIncColUnsigned(), RowIDAllocType, nil))
+	allocs = append(allocs, NewAllocator(store, dbID, tblInfo.IsAutoIncColUnsigned(), RowIDAllocType))
 	if tblInfo.ContainsAutoRandomBits() {
-		allocs = append(allocs, NewAllocator(store, dbID, tblInfo.IsAutoRandomBitColUnsigned(), AutoRandomType, nil))
+		allocs = append(allocs, NewAllocator(store, dbID, tblInfo.IsAutoRandomBitColUnsigned(), AutoRandomType))
 	}
 	if tblInfo.IsSequence() {
-		allocs = append(allocs, NewAllocator(store, dbID, false, SequenceType, tblInfo.Sequence))
+		allocs = append(allocs, NewSequenceAllocator(store, dbID, tblInfo.Sequence))
 	}
 	return NewAllocators(allocs...)
 }
@@ -695,7 +706,8 @@ func (alloc *allocator) alloc4Sequence(tableID int64) (min int64, max int64, rou
 		// Get the real offset if the sequence is in cycle.
 		// round is used to count cycle times in sequence with cycle option.
 		if alloc.sequence.Cycle {
-			round, err1 = getSequenceCycleRound(m, alloc.dbID, tableID)
+			// GetSequenceCycle is used to get the flag `round`, which indicates whether the sequence is already in cycle.
+			round, err1 = m.GetSequenceCycle(alloc.dbID, tableID)
 			if err1 != nil {
 				return err1
 			}
@@ -729,14 +741,17 @@ func (alloc *allocator) alloc4Sequence(tableID int64) (min int64, max int64, rou
 				newBase = alloc.sequence.MaxValue + 1
 				offset = alloc.sequence.MaxValue
 			}
-			err1 = setSequenceBaseValue(m, alloc.dbID, tableID, newBase)
+			err1 = m.SetSequenceValue(alloc.dbID, tableID, newBase)
 			if err1 != nil {
 				return err1
 			}
 
 			// Reset sequence round state value.
 			round++
-			err1 = setSequenceCycleRound(m, alloc.dbID, tableID, round)
+			// SetSequenceCycle is used to store the flag `round` which indicates whether the sequence is already in cycle.
+			// round > 0 means the sequence is already in cycle, so the offset should be minvalue / maxvalue rather than sequence.start.
+			// TiDB is a stateless node, it should know whether the sequence is already in cycle when restart.
+			err1 = m.SetSequenceCycle(alloc.dbID, tableID, round)
 			if err1 != nil {
 				return err1
 			}
@@ -800,20 +815,4 @@ func generateAutoIDByAllocType(m *meta.Meta, dbID, tableID, step int64, allocTyp
 	default:
 		return 0, errInvalidAllocatorType.GenWithStackByArgs()
 	}
-}
-
-func setSequenceBaseValue(m *meta.Meta, dbID, tableID, cycleValue int64) error {
-	return m.SetSequenceValue(dbID, tableID, cycleValue)
-}
-
-// setSequenceCycleRound is used to store the flag `round` which indicates whether the sequence is already in cycle.
-// round > 0 means the sequence is already in cycle, so the offset should be minvalue / maxvalue rather than sequence.start.
-// TiDB is a stateless node, it should know whether the sequence is already in cycle when restart.
-func setSequenceCycleRound(m *meta.Meta, dbID, tableID, round int64) error {
-	return m.SetSequenceCycle(dbID, tableID, round)
-}
-
-// getSequenceCycleRound is used to get the flag `round`, which indicates whether the sequence is already in cycle.
-func getSequenceCycleRound(m *meta.Meta, dbID, tableID int64) (int64, error) {
-	return m.GetSequenceCycle(dbID, tableID)
 }
