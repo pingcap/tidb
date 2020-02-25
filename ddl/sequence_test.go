@@ -598,6 +598,19 @@ func (s *testSequenceSuite) TestSequenceFunction(c *C) {
 	_, end, round = tc.GetSequenceCommon().GetSequenceBaseEndRound()
 	c.Assert(end, Equals, int64(-10))
 	c.Assert(round, Equals, int64(0))
+
+	// Test the sequence seek formula will overflow Int64.
+	s.tk.MustExec("drop sequence if exists seq")
+	s.tk.MustExec("create sequence seq increment 2 start -9223372036854775807 maxvalue 9223372036854775806 minvalue -9223372036854775807 cache 2 cycle")
+	s.tk.MustQuery("select nextval(seq)").Check(testkit.Rows("-9223372036854775807"))
+	s.tk.MustQuery("select setval(seq, 9223372036854775800)").Check(testkit.Rows("9223372036854775800"))
+	s.tk.MustQuery("select nextval(seq)").Check(testkit.Rows("9223372036854775801"))
+
+	s.tk.MustExec("drop sequence if exists seq")
+	s.tk.MustExec("create sequence seq increment -2 start 9223372036854775806 maxvalue 9223372036854775806 minvalue -9223372036854775807 cache 2 cycle")
+	s.tk.MustQuery("select nextval(seq)").Check(testkit.Rows("9223372036854775806"))
+	s.tk.MustQuery("select setval(seq, -9223372036854775800)").Check(testkit.Rows("-9223372036854775800"))
+	s.tk.MustQuery("select nextval(seq)").Check(testkit.Rows("-9223372036854775802"))
 }
 
 func (s *testSequenceSuite) TestInsertSequence(c *C) {

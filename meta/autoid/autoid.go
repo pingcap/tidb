@@ -16,6 +16,7 @@ package autoid
 import (
 	"context"
 	"math"
+	"math/big"
 	"sync"
 	"time"
 
@@ -500,45 +501,59 @@ func CalcSequenceBatchSize(base, size, increment, offset, MIN, MAX int64) (int64
 
 // SeekToFirstSequenceValue seeks to the next valid value (must be in range of [MIN, MAX]),
 // the bool indicates whether the first value is got.
+// The seeking formula is describe as below:
+//  nr  := (base + increment - offset) / increment
+// first := nr*increment + offset
 func SeekToFirstSequenceValue(base, increment, offset, MIN, MAX int64) (int64, bool) {
 	if increment > 0 {
 		// Sequence is already allocated to the end.
 		if base >= MAX {
 			return 0, false
 		}
-		// The formula will overflow cause (base + increment) > MAX (May be MaxInt64).
-		if MAX-base < increment {
-			// Enum the possible first value.
-			for i := base + 1; i <= MAX; i++ {
-				if (i-offset)%increment == 0 {
-					return i, true
-				}
-			}
+		bigBase := big.NewInt(base)
+		bigOffset := big.NewInt(offset)
+		bigIncrement := big.NewInt(increment)
+		bigBase.Add(bigBase, bigIncrement)
+		bigBase.Sub(bigBase, bigOffset)
+		// The divide is differ from the go divide, -1/2 is equals to 0 but here got -1 instead.
+		// Should transfer numerator to be positive before divide.
+		bigBase.Abs(bigBase)
+		bigBase.Div(bigBase, bigIncrement)
+		bigBase.Mul(bigBase, bigIncrement)
+		bigBase.Add(bigBase, bigOffset)
+		if !bigBase.IsInt64() {
 			return 0, false
 		}
-		// Get the first value with formula.
-		nr := (base + increment - offset) / increment
-		nr = nr*increment + offset
-		return nr, true
+		first := bigBase.Int64()
+		if first > MAX {
+			return 0, false
+		}
+		return first, true
 	}
 	// Sequence is already allocated to the end.
 	if base <= MIN {
 		return 0, false
 	}
-	// The formula will overflow cause (base + increment) < MIN (May be MinInt64).
-	if base-MIN < (-increment) {
-		// Enum the possible first value.
-		for i := base - 1; i >= MIN; i-- {
-			if (offset-i)%(-increment) == 0 {
-				return i, true
-			}
-		}
+	bigBase := big.NewInt(base)
+	bigOffset := big.NewInt(offset)
+	bigIncrement := big.NewInt(increment)
+	bigAbsIncrement := big.NewInt(-increment)
+	bigBase.Add(bigBase, bigIncrement)
+	bigBase.Sub(bigBase, bigOffset)
+	// The divide is differ from the go divide, -1/-2 is equals to 0 but here got -1 instead.
+	// Should transfer numerator and denominator to be positive before divide.
+	bigBase.Abs(bigBase)
+	bigBase.Div(bigBase, bigAbsIncrement)
+	bigBase.Mul(bigBase, bigIncrement)
+	bigBase.Add(bigBase, bigOffset)
+	if !bigBase.IsInt64() {
 		return 0, false
 	}
-	// Get the first value with formula.
-	nr := (base + increment - offset) / increment
-	nr = nr*increment + offset
-	return nr, true
+	first := bigBase.Int64()
+	if first < MIN {
+		return 0, false
+	}
+	return first, true
 }
 
 // SeekToFirstAutoIDSigned seeks to the next valid signed position.

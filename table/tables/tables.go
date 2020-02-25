@@ -1205,11 +1205,13 @@ type sequenceCommon struct {
 	base int64
 	// round is used to count the cycle times.
 	round int64
-	mu    sync.Mutex
+	mu    sync.RWMutex
 }
 
 // GetSequenceBaseEndRound is used in test.
 func (s *sequenceCommon) GetSequenceBaseEndRound() (int64, int64, int64) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.base, s.end, s.round
 }
 
