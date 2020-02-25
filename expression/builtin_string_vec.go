@@ -2885,7 +2885,7 @@ func formatDecimalWithLocale(xBuf *chunk.Column, xDecimals []types.MyDecimal, dI
 		}
 
 		var locale string
-		if localeBuf == nil {
+		if localeBuf == nil || localeBuf.IsNull(i) {
 			locale = "en_US"
 		} else {
 			locale = localeBuf.GetString(i)
@@ -2924,7 +2924,7 @@ func formatRealWithLocale(xBuf *chunk.Column, xFloat64s []float64, dInt64s []int
 		}
 
 		var locale string
-		if localeBuf == nil {
+		if localeBuf == nil || localeBuf.IsNull(i) {
 			locale = "en_US"
 		} else {
 			locale = localeBuf.GetString(i)
