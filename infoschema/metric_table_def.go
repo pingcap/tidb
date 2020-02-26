@@ -1070,8 +1070,23 @@ var MetricTableMap = map[string]MetricTableDef{
 	"tikv_raft_message_avg_batch_size": {
 		PromQL: `sum(rate(tikv_server_raft_message_batch_size_sum[$RANGE_DURATION])) / sum(rate(tikv_server_raft_message_batch_size_count[$RANGE_DURATION]))`,
 	},
-	"tikv_pd_requests": {
+	"tikv_pd_request_ops": {
 		PromQL:  `sum(rate(tikv_pd_request_duration_seconds_count{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type,instance)`,
+		Labels:  []string{"instance", "type"},
+		Comment: "The OPS of requests that TiKV sends to PD",
+	},
+	"tikv_pd_request_duration": {
+		PromQL:   `histogram_quantile($QUANTILE, sum(rate(tikv_pd_request_duration_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,instance,type))`,
+		Labels:   []string{"instance", "type"},
+		Quantile: 0.99,
+	},
+	"tikv_pd_request_total_count": {
+		PromQL:  `sum(increase(tikv_pd_request_duration_seconds_count{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type,instance)`,
+		Labels:  []string{"instance", "type"},
+		Comment: "The count of requests that TiKV sends to PD",
+	},
+	"tikv_pd_request_total_time": {
+		PromQL:  `sum(increase(tikv_pd_request_duration_seconds_sum{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type,instance)`,
 		Labels:  []string{"instance", "type"},
 		Comment: "The count of requests that TiKV sends to PD",
 	},
@@ -1150,7 +1165,7 @@ var MetricTableMap = map[string]MetricTableDef{
 		Comment: "The number of Raft messages sent by each TiKV instance",
 	},
 	"tikv_raft_sent_messages_total_num": {
-		PromQL:  `sum(increase(tikv_raftstore_raft_sent_message_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance,type)`,
+		PromQL:  `sum(increase(tikv_raftstore_raft_sent_message_total{$LABEL_CONDITIONS}[60s])) by (instance,type)`,
 		Labels:  []string{"instance", "type"},
 		Comment: "The total number of Raft messages sent by each TiKV instance",
 	},
@@ -1159,13 +1174,29 @@ var MetricTableMap = map[string]MetricTableDef{
 		Labels:  []string{"instance"},
 		Comment: "The number of Raft messages flushed by each TiKV instance",
 	},
+	"tikv_flush_messages_total_num": {
+		PromQL:  `sum(increase(tikv_server_raft_message_flush_total{$LABEL_CONDITIONS}[60s])) by (instance)`,
+		Labels:  []string{"instance"},
+		Comment: "The total number of Raft messages flushed by each TiKV instance",
+	},
+
 	"tikv_receive_messages": {
 		PromQL:  `sum(rate(tikv_server_raft_message_recv_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance)`,
 		Labels:  []string{"instance"},
 		Comment: "The number of Raft messages received by each TiKV instance",
 	},
+	"tikv_receive_messages_total_num": {
+		PromQL:  `sum(increase(tikv_server_raft_message_recv_total{$LABEL_CONDITIONS}[60s])) by (instance)`,
+		Labels:  []string{"instance"},
+		Comment: "The number of Raft messages received by each TiKV instance",
+	},
 	"tikv_raft_dropped_messages": {
 		PromQL:  `sum(rate(tikv_raftstore_raft_dropped_message_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type,instance)`,
+		Labels:  []string{"instance", "type"},
+		Comment: "The number of dropped Raft messages per type",
+	},
+	"tikv_raft_dropped_messages_total": {
+		PromQL:  `sum(increase(tikv_raftstore_raft_dropped_message_total{$LABEL_CONDITIONS}[60s])) by (type,instance)`,
 		Labels:  []string{"instance", "type"},
 		Comment: "The number of dropped Raft messages per type",
 	},
@@ -1178,7 +1209,12 @@ var MetricTableMap = map[string]MetricTableDef{
 	"tikv_raft_proposals": {
 		PromQL:  `sum(rate(tikv_raftstore_proposal_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type,instance)`,
 		Labels:  []string{"instance", "type"},
-		Comment: "The number of proposals per type",
+		Comment: "The number of proposals per type in raft",
+	},
+	"tikv_raft_proposals_total_num": {
+		PromQL:  `sum(increase(tikv_raftstore_proposal_total{$LABEL_CONDITIONS}[60s])) by (type,instance)`,
+		Labels:  []string{"instance", "type"},
+		Comment: "The total number of proposals per type in raft",
 	},
 	"tikv_propose_wait_duration": {
 		PromQL:   `histogram_quantile($QUANTILE, sum(rate(tikv_raftstore_request_wait_time_duration_secs_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,instance))`,
