@@ -412,7 +412,6 @@ func (e *Execute) rebuildRange(p Plan) error {
 				if err != nil {
 					return err
 				}
-				return nil
 			}
 		}
 		for i, params := range x.IndexValueParams {
@@ -663,6 +662,14 @@ type DDL struct {
 	baseSchemaProducer
 
 	Statement ast.DDLNode
+}
+
+// SelectInto represents a select-into plan.
+type SelectInto struct {
+	baseSchemaProducer
+
+	TargetPlan Plan
+	IntoOpt    *ast.SelectIntoOption
 }
 
 // Explain represents a explain plan.

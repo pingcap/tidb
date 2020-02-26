@@ -13,7 +13,9 @@
 
 package collate
 
-import "unicode/utf8"
+import (
+	"unicode/utf8"
+)
 
 type generalCICollator struct {
 }
@@ -29,6 +31,8 @@ func sign(i int) int {
 
 // Compare implement Collator interface.
 func (gc *generalCICollator) Compare(a, b string, opt CollatorOption) int {
+	a = truncateTailingSpace(a)
+	b = truncateTailingSpace(b)
 	for len(a) > 0 && len(b) > 0 {
 		r1, r1size := utf8.DecodeRuneInString(a)
 		r2, r2size := utf8.DecodeRuneInString(b)
@@ -45,10 +49,13 @@ func (gc *generalCICollator) Compare(a, b string, opt CollatorOption) int {
 
 // Key implement Collator interface.
 func (gc *generalCICollator) Key(str string, opt CollatorOption) []byte {
+	str = truncateTailingSpace(str)
 	buf := make([]byte, 0, len(str))
+	i := 0
 	for _, r := range []rune(str) {
 		u16 := convertRune(r)
 		buf = append(buf, byte(u16>>8), byte(u16))
+		i++
 	}
 	return buf
 }

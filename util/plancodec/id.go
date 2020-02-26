@@ -102,6 +102,8 @@ const (
 	TypeBatchPointGet = "Batch_Point_Get"
 	// TypeClusterMemTableReader is the type of TableReader.
 	TypeClusterMemTableReader = "ClusterMemTableReader"
+	// TypeDataSource is the type of DataSource.
+	TypeDataSource = "DataSource"
 )
 
 // plan id.
@@ -147,6 +149,7 @@ const (
 	typeShowDDLJobs
 	typeBatchPointGet
 	typeClusterMemTableReader
+	typeDataSourceID
 )
 
 // TypeStringToPhysicalID converts the plan type string to plan id.
@@ -234,6 +237,8 @@ func TypeStringToPhysicalID(tp string) int {
 		return typeBatchPointGet
 	case TypeClusterMemTableReader:
 		return typeClusterMemTableReader
+	case TypeDataSource:
+		return typeDataSourceID
 	}
 	// Should never reach here.
 	return 0
