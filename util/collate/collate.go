@@ -18,6 +18,8 @@ import (
 	"sync"
 
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 var (
@@ -88,6 +90,34 @@ func SetNewCollationEnabledForTest(flag bool) {
 // NewCollationEnabled returns if the new collations are enabled.
 func NewCollationEnabled() bool {
 	return newCollationEnabled
+}
+
+// RewriteNewCollationIDIfNeeded rewrites a collation id if the new collations are enabled.
+// When new collations are enabled, we turn the collation id to negative so that other the
+// components of the cluster(for example, TiKV) is able to aware of it without any change to
+// the protocol definition.
+// When new collations are not enabled, collation id remains the same.
+func RewriteNewCollationIDIfNeeded(id int32) int32 {
+	if newCollationEnabled {
+		if id < 0 {
+			logutil.BgLogger().Warn("Unexpected negative collation ID for rewrite.", zap.Int32("ID", id))
+		} else {
+			return -id
+		}
+	}
+	return id
+}
+
+// RestoreCollationIDIfNeeded restores a collation id if the new collations are enabled.
+func RestoreCollationIDIfNeeded(id int32) int32 {
+	if newCollationEnabled {
+		if id > 0 {
+			logutil.BgLogger().Warn("Unexpected positive collation ID for restore.", zap.Int32("ID", id))
+		} else {
+			return -id
+		}
+	}
+	return id
 }
 
 // GetCollator get the collator according to collate, it will return the binary collator if the corresponding collator doesn't exist.
