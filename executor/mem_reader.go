@@ -150,7 +150,7 @@ type allocBuf struct {
 }
 
 func buildMemTableReader(us *UnionScanExec, tblReader *TableReaderExecutor) *memTableReader {
-	colIDs := make(map[int64]int)
+	colIDs := make(map[int64]int, len(us.columns))
 	for i, col := range us.columns {
 		colIDs[col.ID] = i
 	}
