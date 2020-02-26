@@ -36,6 +36,9 @@ func (s *testSequenceSuite) TestCreateSequence(c *C) {
 	s.tk.MustExec("use test")
 	s.tk.MustGetErrCode("create sequence `seq  `", mysql.ErrWrongTableName)
 
+	// increment should not be set as 0.
+	s.tk.MustGetErrCode("create sequence seq increment 0", mysql.ErrSequenceInvalidData)
+
 	// maxvalue should be larger than minvalue.
 	s.tk.MustGetErrCode("create sequence seq maxvalue 1 minvalue 2", mysql.ErrSequenceInvalidData)
 

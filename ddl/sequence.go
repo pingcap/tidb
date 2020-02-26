@@ -140,11 +140,12 @@ func handleSequenceOptions(SeqOptions []*ast.SequenceOption, sequenceInfo *model
 func validateSequenceOptions(seqInfo *model.SequenceInfo) bool {
 	// To ensure that cache * increment will never overflows.
 	var maxIncrement int64
-	if seqInfo.Increment != 0 {
-		maxIncrement = math2.Abs(seqInfo.Increment)
-	} else {
-		maxIncrement = math.MaxInt16
+	if seqInfo.Increment == 0 {
+		// Increment shouldn't be set as 0.
+		return false
 	}
+	maxIncrement = math2.Abs(seqInfo.Increment)
+
 	return seqInfo.MaxValue >= seqInfo.Start &&
 		seqInfo.MaxValue > seqInfo.MinValue &&
 		seqInfo.Start >= seqInfo.MinValue &&
