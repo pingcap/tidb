@@ -114,6 +114,12 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 			return err
 		}
 	}
+	if e.bloomFilter != nil {
+		bl := &tipb.BloomFilter{BitSet: e.bloomFilter.BitSet, ColIdx: e.joinKeyIdx}
+		exec := &tipb.Executor{Bloom: bl}
+		temp := append([]*tipb.Executor{exec}, e.dagPB.Executors[1:]...)
+		e.dagPB.Executors = append(e.dagPB.Executors[:1], temp...)
+	}
 	if e.runtimeStats != nil {
 		collExec := true
 		e.dagPB.CollectExecutionSummaries = &collExec

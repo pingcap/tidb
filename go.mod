@@ -78,4 +78,4 @@ require (
 
 go 1.13
 
-replace github.com/pingcap/tipb => github.com/wshwsh12/tipb v0.0.0-20200226065640-6fa320720e3a
+replace github.com/pingcap/tipb => github.com/wshwsh12/tipb v0.0.0-20200226140455-5ce1bd8df8c2
