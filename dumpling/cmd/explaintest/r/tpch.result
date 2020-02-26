@@ -715,7 +715,7 @@ Projection_57	1304801.67	root	tpch.partsupp.ps_partkey, Column#18
 └─Sort_58	1304801.67	root	Column#18:desc
   └─Selection_60	1304801.67	root	gt(Column#18, NULL)
     └─HashAgg_63	1631002.09	root	group by:Column#44, funcs:sum(Column#42)->Column#18, funcs:firstrow(Column#43)->tpch.partsupp.ps_partkey
-      └─Projection_89	1631002.09	root	mul(tpch.partsupp.ps_supplycost, cast(tpch.partsupp.ps_availqty))->Column#42, tpch.partsupp.ps_partkey, tpch.partsupp.ps_partkey
+      └─Projection_89	1631002.09	root	mul(tpch.partsupp.ps_supplycost, cast(tpch.partsupp.ps_availqty, decimal(20,0) BINARY))->Column#42, tpch.partsupp.ps_partkey, tpch.partsupp.ps_partkey
         └─HashRightJoin_67	1631002.09	root	inner join, inner:HashRightJoin_80, equal:[eq(tpch.supplier.s_suppkey, tpch.partsupp.ps_suppkey)]
           ├─HashRightJoin_80	20000.00	root	inner join, inner:TableReader_85, equal:[eq(tpch.nation.n_nationkey, tpch.supplier.s_nationkey)]
           │ ├─TableReader_85	1.00	root	data:Selection_84
@@ -768,7 +768,7 @@ id	count	task	operator info
 Sort_9	1.00	root	tpch.lineitem.l_shipmode:asc
 └─Projection_11	1.00	root	tpch.lineitem.l_shipmode, Column#27, Column#28
   └─HashAgg_14	1.00	root	group by:Column#40, funcs:sum(Column#37)->Column#27, funcs:sum(Column#38)->Column#28, funcs:firstrow(Column#39)->tpch.lineitem.l_shipmode
-    └─Projection_54	10023369.01	root	cast(case(or(eq(tpch.orders.o_orderpriority, 1-URGENT), eq(tpch.orders.o_orderpriority, 2-HIGH)), 1, 0))->Column#37, cast(case(and(ne(tpch.orders.o_orderpriority, 1-URGENT), ne(tpch.orders.o_orderpriority, 2-HIGH)), 1, 0))->Column#38, tpch.lineitem.l_shipmode, tpch.lineitem.l_shipmode
+    └─Projection_54	10023369.01	root	cast(case(or(eq(tpch.orders.o_orderpriority, 1-URGENT), eq(tpch.orders.o_orderpriority, 2-HIGH)), 1, 0), decimal(65,0) BINARY)->Column#37, cast(case(and(ne(tpch.orders.o_orderpriority, 1-URGENT), ne(tpch.orders.o_orderpriority, 2-HIGH)), 1, 0), decimal(65,0) BINARY)->Column#38, tpch.lineitem.l_shipmode, tpch.lineitem.l_shipmode
       └─IndexMergeJoin_22	10023369.01	root	inner join, inner:TableReader_20, outer key:tpch.lineitem.l_orderkey, inner key:tpch.orders.o_orderkey
         ├─TableReader_50	10023369.01	root	data:Selection_49
         │ └─Selection_49	10023369.01	cop[tikv]	ge(tpch.lineitem.l_receiptdate, 1997-01-01 00:00:00.000000), in(tpch.lineitem.l_shipmode, "RAIL", "FOB"), lt(tpch.lineitem.l_commitdate, tpch.lineitem.l_receiptdate), lt(tpch.lineitem.l_receiptdate, 1998-01-01), lt(tpch.lineitem.l_shipdate, tpch.lineitem.l_commitdate)
