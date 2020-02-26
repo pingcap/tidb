@@ -43,11 +43,11 @@ type ConfHandler interface {
 type ConfReloadFunc func(oldConf, newConf *Config)
 
 // NewConfHandler creates a new ConfHandler according to the local config.
-func NewConfHandler(localConf *Config, reloadFunc ConfReloadFunc,
+func NewConfHandler(confPath string, localConf *Config, reloadFunc ConfReloadFunc,
 	newPDCliFunc func([]string, pd.SecurityOption) (pd.ConfigClient, error), // for test
 ) (ConfHandler, error) {
 	if strings.ToLower(localConf.Store) == "tikv" && localConf.EnableDynamicConfig {
-		return newPDConfHandler(localConf, reloadFunc, newPDCliFunc)
+		return newPDConfHandler(confPath, localConf, reloadFunc, newPDCliFunc)
 	}
 	cch := new(constantConfHandler)
 	cch.curConf.Store(localConf)
@@ -90,9 +90,10 @@ type pdConfHandler struct {
 	pdConfCli  pd.ConfigClient
 	reloadFunc func(oldConf, newConf *Config)
 	registered bool
+	confPath   string
 }
 
-func newPDConfHandler(localConf *Config, reloadFunc ConfReloadFunc,
+func newPDConfHandler(confPath string, localConf *Config, reloadFunc ConfReloadFunc,
 	newPDCliFunc func([]string, pd.SecurityOption) (pd.ConfigClient, error), // for test
 ) (*pdConfHandler, error) {
 	fullPath := fmt.Sprintf("%s://%s", localConf.Store, localConf.Path)
@@ -125,6 +126,7 @@ func newPDConfHandler(localConf *Config, reloadFunc ConfReloadFunc,
 		pdConfCli:  pdCli,
 		reloadFunc: reloadFunc,
 		registered: false,
+		confPath:   confPath,
 	}
 	ch.curConf.Store(localConf) // use the local config at first
 	return ch, nil
@@ -171,6 +173,14 @@ func (ch *pdConfHandler) register() {
 	if ch.updateConfig(conf, version) {
 		ch.registered = true
 		logutil.Logger(context.Background()).Info("PDConfHandler register successfully")
+		ch.writeConfig()
+	}
+}
+
+func (ch *pdConfHandler) writeConfig() {
+	conf := ch.curConf.Load().(*Config)
+	if err := atomicWriteConfig(conf, ch.confPath); err != nil {
+		logutil.Logger(context.Background()).Warn("write config to disk error", zap.Error(err))
 	}
 }
 
@@ -235,6 +245,7 @@ func (ch *pdConfHandler) run() {
 			}
 
 			ch.updateConfig(newConfContent, version)
+			ch.writeConfig()
 		case <-ch.exit:
 			return
 		}
