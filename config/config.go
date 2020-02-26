@@ -202,7 +202,6 @@ type Performance struct {
 	BindInfoLease       string  `toml:"bind-info-lease" json:"bind-info-lease"`
 	TxnEntryCountLimit  uint64  `toml:"txn-entry-count-limit" json:"txn-entry-count-limit"`
 	TxnTotalSizeLimit   uint64  `toml:"txn-total-size-limit" json:"txn-total-size-limit"`
-	PProfSQLCPU         bool    `toml:"pprof-sql-cpu" json:"pprof-sql-cpu"`
 }
 
 // PlanCache is the PlanCache section of the config.

@@ -405,14 +405,15 @@ func addHint(ctx sessionctx.Context, stmtNode ast.StmtNode) ast.StmtNode {
 func addHintForSelect(hash, normdOrigSQL string, ctx sessionctx.Context, stmt ast.StmtNode) ast.StmtNode {
 	sessionHandle := ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
 	bindRecord := sessionHandle.GetBindRecord(normdOrigSQL, ctx.GetSessionVars().CurrentDB)
+	if bindRecord == nil {
+		bindRecord = sessionHandle.GetBindRecord(normdOrigSQL, "")
+	}
 	if bindRecord != nil {
-		if bindRecord.Status == bindinfo.Invalid {
-			return stmt
-		}
 		if bindRecord.Status == bindinfo.Using {
 			metrics.BindUsageCounter.WithLabelValues(metrics.ScopeSession).Inc()
-			return bindinfo.BindHint(stmt, bindRecord.Ast)
+			return bindinfo.BindHint(stmt, bindRecord.Hint)
 		}
+		return stmt
 	}
 	globalHandle := domain.GetDomain(ctx).BindHandle()
 	bindRecord = globalHandle.GetBindRecord(hash, normdOrigSQL, ctx.GetSessionVars().CurrentDB)
@@ -421,7 +422,7 @@ func addHintForSelect(hash, normdOrigSQL string, ctx sessionctx.Context, stmt as
 	}
 	if bindRecord != nil {
 		metrics.BindUsageCounter.WithLabelValues(metrics.ScopeGlobal).Inc()
-		return bindinfo.BindHint(stmt, bindRecord.Ast)
+		return bindinfo.BindHint(stmt, bindRecord.Hint)
 	}
 	return stmt
 }

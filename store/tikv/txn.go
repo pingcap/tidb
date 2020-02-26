@@ -140,11 +140,6 @@ func (txn *tikvTxn) Get(k kv.Key) ([]byte, error) {
 		return nil, errors.Trace(err)
 	}
 
-	err = txn.store.CheckVisibility(txn.startTS)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
 	return ret, nil
 }
 
@@ -357,6 +352,7 @@ func (txn *tikvTxn) rollbackPessimisticLocks() error {
 func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput ...kv.Key) error {
 	// Exclude keys that are already locked.
 	var err error
+	keys := make([][]byte, 0, len(keysInput))
 	defer func() {
 		if err == nil {
 			if lockCtx.PessimisticLockWaited != nil {
@@ -367,8 +363,10 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 				}
 			}
 		}
+		if lockCtx.LockKeysCount != nil {
+			*lockCtx.LockKeysCount += int32(len(keys))
+		}
 	}()
-	keys := make([][]byte, 0, len(keysInput))
 	txn.mu.Lock()
 	for _, key := range keysInput {
 		if _, ok := txn.lockedMap[string(key)]; !ok {

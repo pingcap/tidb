@@ -1179,7 +1179,7 @@ func (b *builtinJSONKeysSig) evalJSON(row chunk.Row) (res json.BinaryJSON, isNul
 		return res, isNull, err
 	}
 	if res.TypeCode != json.TypeCodeObject {
-		return res, true, json.ErrInvalidJSONData
+		return res, true, nil
 	}
 	return res.GetKeys(), false, nil
 }
@@ -1198,9 +1198,6 @@ func (b *builtinJSONKeys2ArgsSig) evalJSON(row chunk.Row) (res json.BinaryJSON, 
 	res, isNull, err = b.args[0].EvalJSON(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, err
-	}
-	if res.TypeCode != json.TypeCodeObject {
-		return res, true, json.ErrInvalidJSONData
 	}
 
 	path, isNull, err := b.args[1].EvalString(b.ctx, row)

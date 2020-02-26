@@ -503,7 +503,9 @@ func (s *session) RollbackTxn(ctx context.Context) {
 			transactionRollbackCounterGeneral.Inc()
 		}
 	}
-	s.cleanRetryInfo()
+	if ctx.Value(inCloseSession{}) == nil {
+		s.cleanRetryInfo()
+	}
 	s.txn.changeToInvalid()
 	s.sessionVars.TxnCtx.Cleanup()
 	s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
@@ -1343,6 +1345,8 @@ func (s *session) ClearValue(key fmt.Stringer) {
 	s.mu.Unlock()
 }
 
+type inCloseSession struct{}
+
 // Close function does some clean work when session end.
 func (s *session) Close() {
 	if s.statsCollector != nil {
@@ -1352,7 +1356,7 @@ func (s *session) Close() {
 	if bindValue != nil {
 		bindValue.(*bindinfo.SessionHandle).Close()
 	}
-	ctx := context.TODO()
+	ctx := context.WithValue(context.TODO(), inCloseSession{}, struct{}{})
 	s.RollbackTxn(ctx)
 	if s.sessionVars != nil {
 		s.sessionVars.WithdrawAllPreparedStmt()

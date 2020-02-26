@@ -271,6 +271,8 @@ type PhysicalMergeJoin struct {
 
 	LeftKeys  []*expression.Column
 	RightKeys []*expression.Column
+	// Desc means whether inner child keep desc order.
+	Desc bool
 }
 
 // PhysicalLock is the physical operator of lock, which is used for `select ... for update` clause.
