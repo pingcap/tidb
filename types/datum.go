@@ -77,6 +77,7 @@ func (d *Datum) Copy() *Datum {
 	return ret
 }
 
+// CopyInto deep copies Datum into destination.
 func (d *Datum) CopyInto(dst *Datum) {
 	*dst = *d
 	if d.b != nil {
