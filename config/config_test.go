@@ -184,6 +184,7 @@ enable-batch-dml = true
 server-version = "test_version"
 repair-mode = true
 max-server-connections = 200
+mem-quota-query = 10000
 [performance]
 txn-total-size-limit=2000
 [tikv-client]
@@ -234,6 +235,7 @@ engines = ["tiflash"]
 	c.Assert(conf.EnableBatchDML, Equals, true)
 	c.Assert(conf.RepairMode, Equals, true)
 	c.Assert(conf.MaxServerConnections, Equals, uint32(200))
+	c.Assert(conf.MemQuotaQuery, Equals, int64(10000))
 	c.Assert(conf.Experimental.AllowAutoRandom, IsTrue)
 	c.Assert(conf.IsolationRead.Engines, DeepEquals, []string{"tiflash"})
 
