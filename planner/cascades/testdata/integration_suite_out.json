@@ -278,9 +278,9 @@
         "SQL": "select max(a.a) from t a left join t b on a.a = b.a",
         "Plan": [
           "HashAgg_53 1.00 root funcs:max(test.t.a)->Column#5",
-          "└─Limit_55 1.00 root offset:0, count:1",
+          "└─Limit_55 1.00 root offset:0, EstRows:1",
           "  └─TableReader_59 1.00 root data:Limit_60",
-          "    └─Limit_60 1.00 cop[tikv] offset:0, count:1",
+          "    └─Limit_60 1.00 cop[tikv] offset:0, EstRows:1",
           "      └─TableFullScan_31 1.00 cop[tikv] table:a, keep order:true, desc, stats:pseudo"
         ],
         "Result": [
@@ -354,9 +354,9 @@
         "SQL": "select max(a) from t",
         "Plan": [
           "HashAgg_16 1.00 root funcs:max(test.t.a)->Column#3",
-          "└─Limit_18 1.00 root offset:0, count:1",
+          "└─Limit_18 1.00 root offset:0, EstRows:1",
           "  └─TableReader_23 1.00 root data:Limit_24",
-          "    └─Limit_24 1.00 cop[tikv] offset:0, count:1",
+          "    └─Limit_24 1.00 cop[tikv] offset:0, EstRows:1",
           "      └─TableFullScan_22 1.00 cop[tikv] table:t, keep order:true, desc, stats:pseudo"
         ],
         "Result": [
@@ -442,9 +442,9 @@
       {
         "SQL": "select a from t limit 2",
         "Plan": [
-          "Limit_7 2.00 root offset:0, count:2",
+          "Limit_7 2.00 root offset:0, EstRows:2",
           "└─TableReader_8 2.00 root data:Limit_9",
-          "  └─Limit_9 2.00 cop[tikv] offset:0, count:2",
+          "  └─Limit_9 2.00 cop[tikv] offset:0, EstRows:2",
           "    └─TableFullScan_10 2.00 cop[tikv] table:t, keep order:false, stats:pseudo"
         ],
         "Result": [
@@ -455,9 +455,9 @@
       {
         "SQL": "select a from t limit 1 offset 2",
         "Plan": [
-          "Limit_7 1.00 root offset:2, count:1",
+          "Limit_7 1.00 root offset:2, EstRows:1",
           "└─TableReader_8 3.00 root data:Limit_9",
-          "  └─Limit_9 3.00 cop[tikv] offset:0, count:3",
+          "  └─Limit_9 3.00 cop[tikv] offset:0, EstRows:3",
           "    └─TableFullScan_10 3.00 cop[tikv] table:t, keep order:false, stats:pseudo"
         ],
         "Result": [
@@ -467,9 +467,9 @@
       {
         "SQL": "select b from t order by b limit 3",
         "Plan": [
-          "TopN_9 3.00 root test.t.b:asc, offset:0, count:3",
+          "TopN_9 3.00 root test.t.b:asc, offset:0, EstRows:3",
           "└─TableReader_11 3.00 root data:TopN_12",
-          "  └─TopN_12 3.00 cop[tikv] test.t.b:asc, offset:0, count:3",
+          "  └─TopN_12 3.00 cop[tikv] test.t.b:asc, offset:0, EstRows:3",
           "    └─TableFullScan_14 10000.00 cop[tikv] table:t, keep order:false, stats:pseudo"
         ],
         "Result": [
@@ -481,9 +481,9 @@
       {
         "SQL": "select a from t order by a limit 1 offset 2",
         "Plan": [
-          "Limit_10 1.00 root offset:2, count:1",
+          "Limit_10 1.00 root offset:2, EstRows:1",
           "└─TableReader_16 3.00 root data:Limit_17",
-          "  └─Limit_17 3.00 cop[tikv] offset:0, count:3",
+          "  └─Limit_17 3.00 cop[tikv] offset:0, EstRows:3",
           "    └─TableFullScan_15 3.00 cop[tikv] table:t, keep order:true, stats:pseudo"
         ],
         "Result": [
@@ -729,9 +729,9 @@
           "  │ └─TableFullScan_22 10000.00 cop[tikv] table:t1, keep order:false, stats:pseudo",
           "  └─MaxOneRow_23(Probe) 1.00 root ",
           "    └─Projection_24 1.00 root test.t2.a",
-          "      └─Limit_26 1.00 root offset:0, count:1",
+          "      └─Limit_26 1.00 root offset:0, EstRows:1",
           "        └─TableReader_34 1.00 root data:Limit_35",
-          "          └─Limit_35 1.00 cop[tikv] offset:0, count:1",
+          "          └─Limit_35 1.00 cop[tikv] offset:0, EstRows:1",
           "            └─Selection_32 1.00 cop[tikv] eq(test.t1.b, test.t2.b)",
           "              └─TableFullScan_33 1.00 cop[tikv] table:t2, keep order:true, stats:pseudo"
         ],
@@ -753,15 +753,15 @@
           "  │ │   └─HashAgg_39 1.00 cop[tikv] funcs:sum(test.t2.a)->Column#8, funcs:firstrow(test.t2.a)->Column#9, funcs:firstrow(test.t2.b)->Column#10",
           "  │ │     └─TableFullScan_35 10000.00 cop[tikv] table:t2, keep order:false, stats:pseudo",
           "  │ └─MaxOneRow_40(Probe) 1.00 root ",
-          "  │   └─Limit_41 1.00 root offset:0, count:1",
+          "  │   └─Limit_41 1.00 root offset:0, EstRows:1",
           "  │     └─TableReader_42 1.00 root data:Limit_43",
-          "  │       └─Limit_43 1.00 cop[tikv] offset:0, count:1",
+          "  │       └─Limit_43 1.00 cop[tikv] offset:0, EstRows:1",
           "  │         └─Selection_44 1.00 cop[tikv] eq(test.t1.a, test.t2.a)",
           "  │           └─TableFullScan_45 1.00 cop[tikv] table:t1, keep order:false, stats:pseudo",
           "  └─MaxOneRow_46(Probe) 1.00 root ",
-          "    └─Limit_47 1.00 root offset:0, count:1",
+          "    └─Limit_47 1.00 root offset:0, EstRows:1",
           "      └─TableReader_48 1.00 root data:Limit_49",
-          "        └─Limit_49 1.00 cop[tikv] offset:0, count:1",
+          "        └─Limit_49 1.00 cop[tikv] offset:0, EstRows:1",
           "          └─Selection_50 1.00 cop[tikv] eq(test.t1.b, test.t2.b)",
           "            └─TableFullScan_51 1.00 cop[tikv] table:t1, keep order:false, stats:pseudo"
         ],
@@ -790,9 +790,9 @@
         "SQL": "select a from (select a from t where b > 2 order by a limit 3 offset 1) as t1 order by a limit 2 offset 1",
         "Plan": [
           "Projection_25 2.00 root test.t.a",
-          "└─Limit_27 2.00 root offset:2, count:2",
+          "└─Limit_27 2.00 root offset:2, EstRows:2",
           "  └─TableReader_35 4.00 root data:Limit_36",
-          "    └─Limit_36 4.00 cop[tikv] offset:0, count:4",
+          "    └─Limit_36 4.00 cop[tikv] offset:0, EstRows:4",
           "      └─Selection_33 4.00 cop[tikv] gt(test.t.b, 2)",
           "        └─TableFullScan_34 4.00 cop[tikv] table:t, keep order:true, stats:pseudo"
         ],
@@ -804,9 +804,9 @@
       {
         "SQL": "select * from (select * from t order by a limit 3) as t1 order by a limit 5",
         "Plan": [
-          "Limit_17 3.00 root offset:0, count:3",
+          "Limit_17 3.00 root offset:0, EstRows:3",
           "└─TableReader_23 3.00 root data:Limit_24",
-          "  └─Limit_24 3.00 cop[tikv] offset:0, count:3",
+          "  └─Limit_24 3.00 cop[tikv] offset:0, EstRows:3",
           "    └─TableFullScan_22 3.00 cop[tikv] table:t, keep order:true, stats:pseudo"
         ],
         "Result": [
@@ -818,9 +818,9 @@
       {
         "SQL": "select b from (select b from t order by b limit 10 offset 10) as t1 order by b limit 10 offset 5",
         "Plan": [
-          "TopN_16 5.00 root test.t.b:asc, offset:15, count:5",
+          "TopN_16 5.00 root test.t.b:asc, offset:15, EstRows:5",
           "└─TableReader_18 20.00 root data:TopN_19",
-          "  └─TopN_19 20.00 cop[tikv] test.t.b:asc, offset:0, count:20",
+          "  └─TopN_19 20.00 cop[tikv] test.t.b:asc, offset:0, EstRows:20",
           "    └─TableFullScan_21 10000.00 cop[tikv] table:t, keep order:false, stats:pseudo"
         ],
         "Result": null
@@ -828,9 +828,9 @@
       {
         "SQL": "select b from (select b from t order by b limit 10 offset 2) as t1 order by b limit 3 offset 5",
         "Plan": [
-          "TopN_16 3.00 root test.t.b:asc, offset:7, count:3",
+          "TopN_16 3.00 root test.t.b:asc, offset:7, EstRows:3",
           "└─TableReader_18 10.00 root data:TopN_19",
-          "  └─TopN_19 10.00 cop[tikv] test.t.b:asc, offset:0, count:10",
+          "  └─TopN_19 10.00 cop[tikv] test.t.b:asc, offset:0, EstRows:10",
           "    └─TableFullScan_21 10000.00 cop[tikv] table:t, keep order:false, stats:pseudo"
         ],
         "Result": null
@@ -846,9 +846,9 @@
         "SQL": "select a from (select a from t where b > 2 order by a, b limit 3 offset 1) as t1 order by a limit 2 offset 1",
         "Plan": [
           "Projection_25 2.00 root test.t.a",
-          "└─TopN_26 2.00 root test.t.a:asc, test.t.b:asc, offset:2, count:2",
+          "└─TopN_26 2.00 root test.t.a:asc, test.t.b:asc, offset:2, EstRows:2",
           "  └─TableReader_28 4.00 root data:TopN_29",
-          "    └─TopN_29 4.00 cop[tikv] test.t.a:asc, test.t.b:asc, offset:0, count:4",
+          "    └─TopN_29 4.00 cop[tikv] test.t.a:asc, test.t.b:asc, offset:0, EstRows:4",
           "      └─Selection_31 8000.00 cop[tikv] gt(test.t.b, 2)",
           "        └─TableFullScan_32 10000.00 cop[tikv] table:t, keep order:false, stats:pseudo"
         ],
@@ -860,11 +860,11 @@
       {
         "SQL": "select * from (select * from t order by a limit 3) as t1 order by a, b limit 5",
         "Plan": [
-          "Limit_14 3.00 root offset:0, count:5",
+          "Limit_14 3.00 root offset:0, EstRows:5",
           "└─Sort_26 3.00 root test.t.a:asc, test.t.b:asc",
-          "  └─Limit_16 3.00 root offset:0, count:3",
+          "  └─Limit_16 3.00 root offset:0, EstRows:3",
           "    └─TableReader_22 3.00 root data:Limit_23",
-          "      └─Limit_23 3.00 cop[tikv] offset:0, count:3",
+          "      └─Limit_23 3.00 cop[tikv] offset:0, EstRows:3",
           "        └─TableFullScan_21 3.00 cop[tikv] table:t, keep order:true, stats:pseudo"
         ],
         "Result": [

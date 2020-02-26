@@ -241,9 +241,9 @@ insert into t1 values(7, 8, 9);
 insert into t1 values(9, 10, 11);
 explain select a, c from t1 use index(idx) order by a limit 5;
 id	EstRows	task	operator info
-TopN_7	5.00	root	test.t1.a:asc, offset:0, count:5
+TopN_7	5.00	root	test.t1.a:asc, offset:0, EstRows:5
 └─IndexReader_15	5.00	root	index:TopN_14
-  └─TopN_14	5.00	cop[tikv]	test.t1.a:asc, offset:0, count:5
+  └─TopN_14	5.00	cop[tikv]	test.t1.a:asc, offset:0, EstRows:5
     └─IndexFullScan_13	10000.00	cop[tikv]	table:t1, index:b, c, keep order:false, stats:pseudo
 select c, a from t1 use index(idx) order by a limit 5;
 c	a
@@ -314,7 +314,7 @@ count(a)
 explain select count(a) from t where b>0 group by a, b order by a limit 1;
 id	EstRows	task	operator info
 Projection_9	1.00	root	Column#5
-└─Limit_15	1.00	root	offset:0, count:1
+└─Limit_15	1.00	root	offset:0, EstRows:1
   └─StreamAgg_44	1.00	root	group by:test.t.a, test.t.b, funcs:count(Column#16)->Column#5, funcs:firstrow(test.t.a)->test.t.a
     └─IndexReader_45	1.00	root	index:StreamAgg_40
       └─StreamAgg_40	1.00	cop[tikv]	group by:test.t.a, test.t.b, funcs:count(test.t.a)->Column#16

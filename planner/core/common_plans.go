@@ -842,15 +842,16 @@ func (e *Explain) explainPlanInRowFormat(p Plan, taskType, driverSide, indent st
 }
 
 // prepareOperatorInfo generates the following information for every plan:
-// operator id, task type, operator info, and the estemated row count.
+// operator id, task type, operator info, and the estemated rows.
+// `EstRows` used to be called `count`, see issue/14603.
 func (e *Explain) prepareOperatorInfo(p Plan, taskType, driverSide, indent string, isLastChild bool) {
 	operatorInfo := p.ExplainInfo()
-	count := "N/A"
+	EstRows := "N/A"
 	if si := p.statsInfo(); si != nil {
-		count = strconv.FormatFloat(si.RowCount, 'f', 2, 64)
+		EstRows = strconv.FormatFloat(si.RowCount, 'f', 2, 64)
 	}
 	explainID := p.ExplainID().String()
-	row := []string{texttree.PrettyIdentifier(explainID+driverSide, indent, isLastChild), count, taskType, operatorInfo}
+	row := []string{texttree.PrettyIdentifier(explainID+driverSide, indent, isLastChild), EstRows, taskType, operatorInfo}
 	if e.Analyze {
 		runtimeStatsColl := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl
 		// There maybe some mock information for cop task to let runtimeStatsColl.Exists(p.ExplainID()) is true.

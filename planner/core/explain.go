@@ -245,7 +245,7 @@ func (p *PhysicalIndexReader) ExplainNormalizedInfo() string {
 func (p *PhysicalIndexLookUpReader) ExplainInfo() string {
 	// The children can be inferred by the relation symbol.
 	if p.PushedLimit != nil {
-		return fmt.Sprintf("limit embedded(offset:%v, count:%v)", p.PushedLimit.Offset, p.PushedLimit.Count)
+		return fmt.Sprintf("limit embedded(offset:%v, EstRows:%v)", p.PushedLimit.Offset, p.PushedLimit.Count)
 	}
 	return ""
 }
@@ -293,7 +293,7 @@ func (p *PhysicalSort) ExplainInfo() string {
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalLimit) ExplainInfo() string {
-	return fmt.Sprintf("offset:%v, count:%v", p.Offset, p.Count)
+	return fmt.Sprintf("offset:%v, EstRows:%v", p.Offset, p.Count)
 }
 
 // ExplainInfo implements Plan interface.
@@ -472,7 +472,7 @@ func (p *PhysicalMergeJoin) ExplainNormalizedInfo() string {
 func (p *PhysicalTopN) ExplainInfo() string {
 	buffer := bytes.NewBufferString("")
 	buffer = explainByItems(buffer, p.ByItems)
-	fmt.Fprintf(buffer, ", offset:%v, count:%v", p.Offset, p.Count)
+	fmt.Fprintf(buffer, ", offset:%v, EstRows:%v", p.Offset, p.Count)
 	return buffer.String()
 }
 
@@ -703,13 +703,13 @@ func (p *LogicalSort) ExplainInfo() string {
 func (p *LogicalTopN) ExplainInfo() string {
 	buffer := bytes.NewBufferString("")
 	buffer = explainByItems(buffer, p.ByItems)
-	fmt.Fprintf(buffer, ", offset:%v, count:%v", p.Offset, p.Count)
+	fmt.Fprintf(buffer, ", offset:%v, EstRows:%v", p.Offset, p.Count)
 	return buffer.String()
 }
 
 // ExplainInfo implements Plan interface.
 func (p *LogicalLimit) ExplainInfo() string {
-	return fmt.Sprintf("offset:%v, count:%v", p.Offset, p.Count)
+	return fmt.Sprintf("offset:%v, EstRows:%v", p.Offset, p.Count)
 }
 
 // ExplainInfo implements Plan interface.
