@@ -236,6 +236,15 @@ engines = ["tiflash"]
 	c.Assert(conf.MaxServerConnections, Equals, uint32(200))
 	c.Assert(conf.Experimental.AllowAutoRandom, IsTrue)
 	c.Assert(conf.IsolationRead.Engines, DeepEquals, []string{"tiflash"})
+
+	_, err = f.WriteString(`
+[log.file]
+log-rotate = true`)
+	c.Assert(err, IsNil)
+	err = conf.Load(configFile)
+	tmp := err.(*ErrConfigValidationFailed)
+	c.Assert(isAllDeprecatedConfigItems(tmp.UndecodedItems), IsTrue)
+
 	c.Assert(f.Close(), IsNil)
 	c.Assert(os.Remove(configFile), IsNil)
 

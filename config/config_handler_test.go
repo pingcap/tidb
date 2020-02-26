@@ -16,6 +16,8 @@ package config
 import (
 	"context"
 	"fmt"
+	"os"
+	"path"
 	"reflect"
 	"sync"
 	"sync/atomic"
@@ -65,7 +67,8 @@ func (mc *mockPDConfigClient) Close() {}
 func (s *testConfigSuite) TestConstantConfHandler(c *C) {
 	conf := defaultConf
 	conf.Store = "mock"
-	ch, err := NewConfHandler(&conf, nil, nil)
+	confPath := path.Join(os.TempDir(), "test-conf-path.toml")
+	ch, err := NewConfHandler(confPath, &conf, nil, nil)
 	c.Assert(err, IsNil)
 	_, ok := ch.(*constantConfHandler)
 	c.Assert(ok, IsTrue)
@@ -76,30 +79,31 @@ func (s *testConfigSuite) TestPDConfHandler(c *C) {
 	conf := defaultConf
 
 	// wrong path
+	confPath := path.Join(os.TempDir(), "test-conf-path.toml")
 	conf.Store = "WRONGPATH"
 	conf.Path = "WRONGPATH"
-	_, err := newPDConfHandler(&conf, nil, newMockPDConfigClient)
+	_, err := newPDConfHandler(confPath, &conf, nil, newMockPDConfigClient)
 	c.Assert(err, NotNil)
 
 	// error when creating PD config client
 	conf.Store = "tikv"
 	conf.Path = "node1:2379"
 	newMockPDConfigClientErr = fmt.Errorf("")
-	_, err = newPDConfHandler(&conf, nil, newMockPDConfigClient)
+	_, err = newPDConfHandler(confPath, &conf, nil, newMockPDConfigClient)
 	c.Assert(err, NotNil)
 
 	// error when registering
 	newMockPDConfigClientErr = nil
 	mockPDConfigClient0.err = fmt.Errorf("")
 	mockPDConfigClient0.confContent.Store("")
-	ch, err := newPDConfHandler(&conf, nil, newMockPDConfigClient)
+	ch, err := newPDConfHandler(confPath, &conf, nil, newMockPDConfigClient)
 	c.Assert(err, IsNil) // the local config will be used
 	ch.Close()
 
 	// wrong response when registering
 	mockPDConfigClient0.err = nil
 	mockPDConfigClient0.status = &configpb.Status{Code: configpb.StatusCode_UNKNOWN}
-	ch, err = newPDConfHandler(&conf, nil, newMockPDConfigClient)
+	ch, err = newPDConfHandler(confPath, &conf, nil, newMockPDConfigClient)
 	c.Assert(err, IsNil)
 	ch.Close()
 
@@ -107,7 +111,7 @@ func (s *testConfigSuite) TestPDConfHandler(c *C) {
 	mockPDConfigClient0.status.Code = configpb.StatusCode_WRONG_VERSION
 	content, _ := encodeConfig(&conf)
 	mockPDConfigClient0.confContent.Store(content)
-	ch, err = newPDConfHandler(&conf, nil, newMockPDConfigClient)
+	ch, err = newPDConfHandler(confPath, &conf, nil, newMockPDConfigClient)
 	c.Assert(err, IsNil)
 	ch.Close()
 
@@ -120,7 +124,7 @@ func (s *testConfigSuite) TestPDConfHandler(c *C) {
 		wg.Done()
 	}
 	conf.Performance.MaxMemory = 233
-	ch, err = newPDConfHandler(&conf, mockReloadFunc, newMockPDConfigClient)
+	ch, err = newPDConfHandler(confPath, &conf, mockReloadFunc, newMockPDConfigClient)
 	c.Assert(err, IsNil)
 	ch.interval = time.Second
 	newConf := conf
@@ -135,11 +139,12 @@ func (s *testConfigSuite) TestPDConfHandler(c *C) {
 
 func (s *testConfigSuite) TestEnableDynamicConfig(c *C) {
 	conf := &defaultConf
+	confPath := path.Join(os.TempDir(), "test-conf-path.toml")
 	for _, store := range []string{"tikv", "mocktikv"} {
 		for _, enable := range []bool{true, false} {
 			conf.Store = store
 			conf.EnableDynamicConfig = enable
-			ch, err := NewConfHandler(conf, nil, newMockPDConfigClient)
+			ch, err := NewConfHandler(confPath, conf, nil, newMockPDConfigClient)
 			c.Assert(err, IsNil)
 			if store == "tikv" && enable == true {
 				c.Assert(fmt.Sprintf("%v", reflect.TypeOf(ch)), Equals, "*config.pdConfHandler")
