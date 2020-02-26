@@ -356,6 +356,9 @@ func reloadConfig(nc, c *config.Config) {
 	if nc.Performance.PseudoEstimateRatio != c.Performance.PseudoEstimateRatio {
 		statistics.RatioOfPseudoEstimate.Store(nc.Performance.PseudoEstimateRatio)
 	}
+	if nc.Performance.MaxProcs != c.Performance.MaxProcs {
+		runtime.GOMAXPROCS(int(nc.Performance.MaxProcs))
+	}
 	if nc.TiKVClient.StoreLimit != c.TiKVClient.StoreLimit {
 		storeutil.StoreLimit.Store(nc.TiKVClient.StoreLimit)
 	}
