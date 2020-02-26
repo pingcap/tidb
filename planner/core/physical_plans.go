@@ -490,9 +490,15 @@ type PhysicalSort struct {
 }
 
 // NominalSort asks sort properties for its child. It is a fake operator that will not
-// appear in final physical operator tree.
+// appear in final physical operator tree. It will be eliminated or converted to Projection.
 type NominalSort struct {
 	basePhysicalPlan
+
+	// These two fields are used to switch ScalarFunctions to Constants. For these
+	// NominalSorts, we need to converted to Projections check if the ScalarFunctions
+	// are out of bounds. (issue #11653)
+	ByItems    []*ByItems
+	OnlyColumn bool
 }
 
 // PhysicalUnionScan represents a union scan operator.
