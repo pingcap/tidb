@@ -1331,6 +1331,7 @@ func (t *TableCommon) SetSequenceVal(newVal int64) (int64, bool, error) {
 	return newVal, false, nil
 }
 
+// getOffset is used in under GetSequenceNextVal & SetSequenceVal, which mu is locked.
 func (s *sequenceCommon) getOffset() int64 {
 	offset := s.meta.Start
 	if s.meta.Cycle && s.round > 0 {
