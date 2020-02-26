@@ -52,6 +52,7 @@ var (
 		"OOMAction":                       {},
 		"MemQuotaQuery":                   {},
 		"TiKVClient.StoreLimit":           {},
+		"Log.Level":                       {},
 		"Log.SlowThreshold":               {},
 		"Log.QueryLogMaxLen":              {},
 		"Log.ExpensiveThreshold":          {},

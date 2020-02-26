@@ -366,6 +366,11 @@ func reloadConfig(nc, c *config.Config) {
 	if nc.PreparedPlanCache.Enabled != c.PreparedPlanCache.Enabled {
 		plannercore.SetPreparedPlanCache(nc.PreparedPlanCache.Enabled)
 	}
+	if nc.Log.Level != c.Log.Level {
+		if err := logutil.SetLevel(nc.Log.Level); err != nil {
+			logutil.BgLogger().Error("update log level error", zap.Error(err))
+		}
+	}
 }
 
 // overrideConfig considers command arguments and overrides some config items in the Config.

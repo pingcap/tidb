@@ -803,6 +803,12 @@ func (c *Config) Valid() error {
 			return fmt.Errorf("type of [isolation-read]engines can't be %v should be one of tidb or tikv or tiflash", engine)
 		}
 	}
+
+	// test log level
+	l := zap.NewAtomicLevel()
+	if err := l.UnmarshalText([]byte(c.Log.Level)); err != nil {
+		return err
+	}
 	return nil
 }
 

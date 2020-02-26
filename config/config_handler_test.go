@@ -193,6 +193,7 @@ func (s *testConfigSuite) TestDynamicConfigItems(c *C) {
 			c.Assert(newConf.OOMAction, Equals, "cancel")
 			c.Assert(newConf.MemQuotaQuery, Equals, int64(2333))
 			c.Assert(newConf.TiKVClient.StoreLimit, Equals, int64(2333))
+			c.Assert(newConf.Log.Level, Equals, "error")
 			c.Assert(newConf.Log.SlowThreshold, Equals, uint64(2333))
 			c.Assert(newConf.Log.QueryLogMaxLen, Equals, uint64(2333))
 			c.Assert(newConf.Log.ExpensiveThreshold, Equals, uint(2333))
@@ -228,6 +229,7 @@ func (s *testConfigSuite) TestDynamicConfigItems(c *C) {
 	newConf.OOMAction = "cancel"
 	newConf.MemQuotaQuery = 2333
 	newConf.TiKVClient.StoreLimit = 2333
+	newConf.Log.Level = "error"
 	newConf.Log.SlowThreshold = 2333
 	newConf.Log.QueryLogMaxLen = 2333
 	newConf.Log.ExpensiveThreshold = 2333
