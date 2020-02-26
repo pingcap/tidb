@@ -43,11 +43,11 @@ type ConfHandler interface {
 type ConfReloadFunc func(oldConf, newConf *Config)
 
 // NewConfHandler creates a new ConfHandler according to the local config.
-func NewConfHandler(localConf *Config, reloadFunc ConfReloadFunc,
+func NewConfHandler(confPath string, localConf *Config, reloadFunc ConfReloadFunc,
 	newPDCliFunc func([]string, pd.SecurityOption) (pd.ConfigClient, error), // for test
 ) (ConfHandler, error) {
 	if strings.ToLower(localConf.Store) == "tikv" && localConf.EnableDynamicConfig {
-		return newPDConfHandler(localConf, reloadFunc, newPDCliFunc)
+		return newPDConfHandler(confPath, localConf, reloadFunc, newPDCliFunc)
 	}
 	cch := new(constantConfHandler)
 	cch.curConf.Store(localConf)
@@ -90,9 +90,10 @@ type pdConfHandler struct {
 	pdConfCli  pd.ConfigClient
 	reloadFunc func(oldConf, newConf *Config)
 	registered bool
+	confPath   string
 }
 
-func newPDConfHandler(localConf *Config, reloadFunc ConfReloadFunc,
+func newPDConfHandler(confPath string, localConf *Config, reloadFunc ConfReloadFunc,
 	newPDCliFunc func([]string, pd.SecurityOption) (pd.ConfigClient, error), // for test
 ) (*pdConfHandler, error) {
 	fullPath := fmt.Sprintf("%s://%s", localConf.Store, localConf.Path)
@@ -125,6 +126,7 @@ func newPDConfHandler(localConf *Config, reloadFunc ConfReloadFunc,
 		pdConfCli:  pdCli,
 		reloadFunc: reloadFunc,
 		registered: false,
+		confPath:   confPath,
 	}
 	ch.curConf.Store(localConf) // use the local config at first
 	return ch, nil
@@ -168,22 +170,43 @@ func (ch *pdConfHandler) register() {
 		return
 	}
 
-	newConf, err := decodeConfig(conf)
-	if err != nil {
-		logutil.Logger(context.Background()).Warn("decode config error when registering", zap.Error(err))
-		return
-	} else if err := newConf.Valid(); err != nil {
-		logutil.Logger(context.Background()).Warn("invalid remote config when registering", zap.Error(err))
-		return
+	if ch.updateConfig(conf, version) {
+		ch.registered = true
+		logutil.Logger(context.Background()).Info("PDConfHandler register successfully")
+		ch.writeConfig()
 	}
+}
 
-	ch.registered = true
-	ch.reloadFunc(ch.curConf.Load().(*Config), newConf)
-	ch.curConf.Store(newConf)
-	ch.version = version
-	logutil.Logger(context.Background()).Info("PDConfHandler register config successfully",
-		zap.String("version", version.String()),
-		zap.Any("new_config", newConf))
+func (ch *pdConfHandler) writeConfig() {
+	conf := ch.curConf.Load().(*Config)
+	if err := atomicWriteConfig(conf, ch.confPath); err != nil {
+		logutil.Logger(context.Background()).Warn("write config to disk error", zap.Error(err))
+	}
+}
+
+func (ch *pdConfHandler) updateConfig(newConfContent string, newVersion *configpb.Version) (ok bool) {
+	newConf, err := decodeConfig(newConfContent)
+	if err != nil {
+		logutil.Logger(context.Background()).Warn("decode config error", zap.Error(err))
+		return false
+	} else if err := newConf.Valid(); err != nil {
+		logutil.Logger(context.Background()).Warn("invalid remote config", zap.Error(err))
+		return false
+	}
+	oldConf := ch.curConf.Load().(*Config)
+	mergedConf, err := CloneConf(oldConf)
+	if err != nil {
+		logutil.Logger(context.Background()).Warn("clone config error", zap.Error(err))
+		return false
+	}
+	as, rs := MergeConfigItems(mergedConf, newConf)
+	ch.reloadFunc(oldConf, mergedConf)
+	ch.curConf.Store(mergedConf)
+	ch.version = newVersion
+	logutil.Logger(context.Background()).Info("PDConfHandler updates config successfully",
+		zap.String("new_version", newVersion.String()),
+		zap.Any("accepted_conf_items", as), zap.Any("rejected_conf_items", rs))
+	return true
 }
 
 func (ch *pdConfHandler) run() {
@@ -220,22 +243,9 @@ func (ch *pdConfHandler) run() {
 					zap.Int("code", int(status.Code)), zap.String("message", status.Message))
 				continue
 			}
-			newConf, err := decodeConfig(newConfContent)
-			if err != nil {
-				logutil.Logger(context.Background()).Error("PDConfHandler decode config error", zap.Error(err))
-				continue
-			}
-			if err := newConf.Valid(); err != nil {
-				logutil.Logger(context.Background()).Error("PDConfHandler invalid config", zap.Error(err))
-				continue
-			}
 
-			ch.reloadFunc(ch.curConf.Load().(*Config), newConf)
-			ch.curConf.Store(newConf)
-			logutil.Logger(context.Background()).Info("PDConfHandler update config successfully",
-				zap.String("fromVersion", ch.version.String()), zap.String("toVersion", version.String()),
-				zap.Any("new_config", newConf))
-			ch.version = version
+			ch.updateConfig(newConfContent, version)
+			ch.writeConfig()
 		case <-ch.exit:
 			return
 		}

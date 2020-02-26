@@ -205,11 +205,11 @@ type Log struct {
 	// File log config.
 	File logutil.FileLogConfig `toml:"file" json:"file"`
 
+	EnableSlowLog       bool   `toml:"enable-slow-log" json:"enable-slow-log"`
 	SlowQueryFile       string `toml:"slow-query-file" json:"slow-query-file"`
 	SlowThreshold       uint64 `toml:"slow-threshold" json:"slow-threshold"`
 	ExpensiveThreshold  uint   `toml:"expensive-threshold" json:"expensive-threshold"`
 	QueryLogMaxLen      uint64 `toml:"query-log-max-len" json:"query-log-max-len"`
-	EnableSlowLog       uint32 `toml:"enable-slow-log" json:"enable-slow-log"`
 	RecordPlanInSlowLog uint32 `toml:"record-plan-in-slow-log" json:"record-plan-in-slow-log"`
 }
 
@@ -651,7 +651,7 @@ func StoreGlobalConfig(config *Config) {
 
 var deprecatedConfig = map[string]struct{}{
 	"pessimistic-txn.ttl": {},
-	"log.rotate":          {},
+	"log.file.log-rotate": {},
 }
 
 func isAllDeprecatedConfigItems(items []string) bool {
@@ -698,7 +698,7 @@ func InitializeConfig(confPath string, configCheck, configStrict bool, reloadFun
 		}
 	}
 	enforceCmdArgs(cfg)
-	globalConfHandler, err = NewConfHandler(cfg, reloadFunc, nil)
+	globalConfHandler, err = NewConfHandler(confPath, cfg, reloadFunc, nil)
 	terror.MustNil(err)
 	globalConfHandler.Start()
 }

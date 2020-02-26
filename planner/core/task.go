@@ -617,7 +617,7 @@ func splitCopAvg2CountAndSum(p PhysicalPlan) {
 	}
 }
 
-func buildIndexLookUpTask(ctx sessionctx.Context, t *copTask, dataSourceSchema *expression.Schema) *rootTask {
+func buildIndexLookUpTask(ctx sessionctx.Context, t *copTask) *rootTask {
 	newTask := &rootTask{cst: t.cst}
 	sessVars := ctx.GetSessionVars()
 	p := PhysicalIndexLookUpReader{
@@ -625,6 +625,7 @@ func buildIndexLookUpTask(ctx sessionctx.Context, t *copTask, dataSourceSchema *
 		indexPlan:      t.indexPlan,
 		ExtraHandleCol: t.extraHandleCol,
 	}.Init(ctx, t.tablePlan.SelectBlockOffset())
+	setTableScanToTableRowIDScan(p.tablePlan)
 	p.stats = t.tablePlan.statsInfo()
 	// Add cost of building table reader executors. Handles are extracted in batch style,
 	// each handle is a range, the CPU cost of building copTasks should be:
@@ -655,10 +656,7 @@ func buildIndexLookUpTask(ctx sessionctx.Context, t *copTask, dataSourceSchema *
 		newTask.cst += sortCPUCost
 	}
 	if t.doubleReadNeedProj {
-		schema := dataSourceSchema
-		if schema == nil {
-			schema = p.IndexPlans[0].(*PhysicalIndexScan).dataSourceSchema
-		}
+		schema := p.IndexPlans[0].(*PhysicalIndexScan).dataSourceSchema
 		proj := PhysicalProjection{Exprs: expression.Column2Exprs(schema.Columns)}.Init(ctx, p.stats, t.tablePlan.SelectBlockOffset(), nil)
 		proj.SetSchema(schema)
 		proj.SetChildren(p)
@@ -692,11 +690,12 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 	}
 	if t.idxMergePartPlans != nil {
 		p := PhysicalIndexMergeReader{partialPlans: t.idxMergePartPlans, tablePlan: t.tablePlan}.Init(ctx, t.idxMergePartPlans[0].SelectBlockOffset())
+		setTableScanToTableRowIDScan(p.tablePlan)
 		newTask.p = p
 		return newTask
 	}
 	if t.indexPlan != nil && t.tablePlan != nil {
-		newTask = buildIndexLookUpTask(ctx, t, nil)
+		newTask = buildIndexLookUpTask(ctx, t)
 	} else if t.indexPlan != nil {
 		p := PhysicalIndexReader{indexPlan: t.indexPlan}.Init(ctx, t.indexPlan.SelectBlockOffset())
 		p.stats = t.indexPlan.statsInfo()
@@ -724,6 +723,17 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 	}
 
 	return newTask
+}
+
+// setTableScanToTableRowIDScan is to update the isChildOfIndexLookUp attribute of PhysicalTableScan child
+func setTableScanToTableRowIDScan(p PhysicalPlan) {
+	if ts, ok := p.(*PhysicalTableScan); ok {
+		ts.SetIsChildOfIndexLookUp(true)
+	} else {
+		for _, child := range p.Children() {
+			setTableScanToTableRowIDScan(child)
+		}
+	}
 }
 
 // rootTask is the final sink node of a plan graph. It should be a single goroutine on tidb.

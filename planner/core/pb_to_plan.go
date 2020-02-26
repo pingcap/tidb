@@ -14,6 +14,8 @@
 package core
 
 import (
+	"strings"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
@@ -47,6 +49,7 @@ func (b *PBPlanBuilder) Build(executors []*tipb.Executor) (p PhysicalPlan, err e
 		curr.SetChildren(src)
 		src = curr
 	}
+	_, src = b.predicatePushDown(src, nil)
 	return src, nil
 }
 
@@ -96,6 +99,9 @@ func (b *PBPlanBuilder) pbToTableScan(e *tipb.Executor) (PhysicalPlan, error) {
 		Columns: columns,
 	}.Init(b.sctx, nil, 0)
 	p.SetSchema(schema)
+	if strings.ToUpper(p.Table.Name.O) == infoschema.ClusterTableSlowLog {
+		p.Extractor = &SlowQueryExtractor{}
+	}
 	return p, nil
 }
 
@@ -222,4 +228,50 @@ func (b *PBPlanBuilder) convertColumnInfo(tblInfo *model.TableInfo, pbColumns []
 	}
 	b.tps = tps
 	return columns, nil
+}
+
+func (b *PBPlanBuilder) predicatePushDown(p PhysicalPlan, predicates []expression.Expression) ([]expression.Expression, PhysicalPlan) {
+	if p == nil {
+		return predicates, p
+	}
+	switch p.(type) {
+	case *PhysicalMemTable:
+		memTable := p.(*PhysicalMemTable)
+		if memTable.Extractor == nil {
+			return predicates, p
+		}
+		names := make([]*types.FieldName, 0, len(memTable.Columns))
+		for _, col := range memTable.Columns {
+			names = append(names, &types.FieldName{
+				TblName:     memTable.Table.Name,
+				ColName:     col.Name,
+				OrigTblName: memTable.Table.Name,
+				OrigColName: col.Name,
+			})
+		}
+		// Set the expression column unique ID.
+		// Since the expression is build from PB, It has not set the expression column ID yet.
+		schemaCols := memTable.schema.Columns
+		cols := expression.ExtractColumnsFromExpressions([]*expression.Column{}, predicates, nil)
+		for i := range cols {
+			cols[i].UniqueID = schemaCols[cols[i].Index].UniqueID
+		}
+		predicates = memTable.Extractor.Extract(b.sctx, memTable.schema, names, predicates)
+		return predicates, memTable
+	case *PhysicalSelection:
+		selection := p.(*PhysicalSelection)
+		conditions, child := b.predicatePushDown(p.Children()[0], selection.Conditions)
+		if len(conditions) > 0 {
+			selection.Conditions = conditions
+			selection.SetChildren(child)
+			return predicates, selection
+		}
+		return predicates, child
+	default:
+		if children := p.Children(); len(children) > 0 {
+			_, child := b.predicatePushDown(children[0], nil)
+			p.SetChildren(child)
+		}
+		return predicates, p
+	}
 }
