@@ -380,6 +380,7 @@ func (c thresholdCheckInspection) inspect(ctx context.Context, sctx sessionctx.C
 	inspects := []func(context.Context, sessionctx.Context, inspectionFilter) []inspectionResult{
 		c.inspectThreshold1,
 		c.inspectThreshold2,
+		c.inspectThreshold3,
 	}
 	var results []inspectionResult
 	for _, inspect := range inspects {
@@ -397,66 +398,66 @@ func (thresholdCheckInspection) inspectThreshold1(ctx context.Context, sctx sess
 		threshold float64
 	}{
 		{
-			item:      "coprocessor_normal_cpu",
+			item:      "coprocessor-normal-cpu",
 			component: "cop_normal%",
 			configKey: "readpool.coprocessor.normal-concurrency",
 			threshold: 0.9},
 		{
-			item:      "coprocessor_high_cpu",
+			item:      "coprocessor-high-cpu",
 			component: "cop_high%",
 			configKey: "readpool.coprocessor.high-concurrency",
 			threshold: 0.9,
 		},
 		{
-			item:      "coprocessor_low_cpu",
+			item:      "coprocessor-low-cpu",
 			component: "cop_low%",
 			configKey: "readpool.coprocessor.low-concurrency",
 			threshold: 0.9,
 		},
 		{
-			item:      "grpc_cpu",
+			item:      "grpc-cpu",
 			component: "grpc%",
 			configKey: "server.grpc-concurrency",
 			threshold: 0.9,
 		},
 		{
-			item:      "raftstore_cpu",
+			item:      "raftstore-cpu",
 			component: "raftstore_%",
 			configKey: "raftstore.store-pool-size",
 			threshold: 0.8,
 		},
 		{
-			item:      "apply_cpu",
+			item:      "apply-cpu",
 			component: "apply_%",
 			configKey: "raftstore.apply-pool-size",
 			threshold: 0.8,
 		},
 		{
-			item:      "storage_readpool_normal_cpu",
+			item:      "storage-readpool-normal-cpu",
 			component: "store_read_norm%",
 			configKey: "readpool.storage.normal-concurrency",
 			threshold: 0.9,
 		},
 		{
-			item:      "storage_readpool_high_cpu",
+			item:      "storage-readpool-high-cpu",
 			component: "store_read_high%",
 			configKey: "readpool.storage.high-concurrency",
 			threshold: 0.9,
 		},
 		{
-			item:      "storage_readpool_low_cpu",
+			item:      "storage-readpool-low-cpu",
 			component: "store_read_low%",
 			configKey: "readpool.storage.low-concurrency",
 			threshold: 0.9,
 		},
 		{
-			item:      "scheduler_worker_cpu",
+			item:      "scheduler-worker-cpu",
 			component: "sched_%",
 			configKey: "storage.scheduler-worker-pool-size",
 			threshold: 0.85,
 		},
 		{
-			item:      "split_check_cpu",
+			item:      "split-check-cpu",
 			component: "split_check",
 			threshold: 0.9,
 		},
@@ -659,6 +660,141 @@ func (thresholdCheckInspection) inspectThreshold2(ctx context.Context, sctx sess
 				detail:   sql,
 			}
 			results = append(results, result)
+		}
+	}
+	return results
+}
+
+type thresholdCheckRule interface {
+	genSQL(timeRange plannercore.QueryTimeRange) string
+	genResult(sql string, row chunk.Row) inspectionResult
+	getItem() string
+}
+
+type compareStoreStatus struct {
+	item      string
+	tp        string
+	threshold float64
+}
+
+func (c compareStoreStatus) genSQL(timeRange plannercore.QueryTimeRange) string {
+	condition := fmt.Sprintf(`where t1.time>='%[1]s' and t1.time<='%[2]s' and
+		 t2.time>='%[1]s' and t2.time<='%[2]s'`, timeRange.From.Format(plannercore.MetricTableTimeFormat),
+		timeRange.To.Format(plannercore.MetricTableTimeFormat))
+	return fmt.Sprintf(`select t1.address,t1.value,t2.address,t2.value,
+				(t1.value-t2.value)/greatest(t1.value,t2.value) as ratio
+				from metrics_schema.pd_scheduler_store_status t1 join metrics_schema.pd_scheduler_store_status t2
+				%s and t1.type='%s' and
+				t1.type=t2.type and t1.address != t2.address and
+				(t1.value-t2.value)/t1.value>%v;`, condition, c.tp, c.threshold)
+}
+
+func (c compareStoreStatus) genResult(_ string, row chunk.Row) inspectionResult {
+	addr1 := row.GetString(0)
+	value1 := row.GetFloat64(1)
+	addr2 := row.GetString(2)
+	value2 := row.GetFloat64(3)
+	ratio := row.GetFloat64(4)
+	detail := fmt.Sprintf("%v %s is %v, much more than %v %s %v", addr1, c.tp, value1, addr2, c.tp, value2)
+	return inspectionResult{
+		tp:       "tikv",
+		instance: addr2,
+		item:     c.item,
+		actual:   fmt.Sprintf("%.2f%%", ratio*100),
+		expected: fmt.Sprintf("< %.2f%%", c.threshold*100),
+		severity: "warning",
+		detail:   detail,
+	}
+}
+
+func (c compareStoreStatus) getItem() string {
+	return c.item
+}
+
+type checkRegionHealth struct{}
+
+func (c checkRegionHealth) genSQL(timeRange plannercore.QueryTimeRange) string {
+	condition := timeRange.Condition()
+	return fmt.Sprintf(`select instance, sum(value) as sum_value from metrics_schema.pd_region_health %s and
+		type in ('extra-peer-region-count','learner-peer-region-count','pending-peer-region-count') having sum_value>100`, condition)
+}
+
+func (c checkRegionHealth) genResult(_ string, row chunk.Row) inspectionResult {
+	detail := fmt.Sprintf("the count of extra-perr and learner-peer and pending-peer is %v, it means the scheduling is too frequent or too slow", row.GetFloat64(1))
+	actual := fmt.Sprintf("%.2f", row.GetFloat64(1))
+	return inspectionResult{
+		tp:       "pd",
+		instance: row.GetString(0),
+		item:     c.getItem(),
+		actual:   actual,
+		expected: "< 100",
+		severity: "warning",
+		detail:   detail,
+	}
+}
+
+func (c checkRegionHealth) getItem() string {
+	return "region-health"
+}
+
+type checkStoreRegionTooMuch struct{}
+
+func (c checkStoreRegionTooMuch) genSQL(timeRange plannercore.QueryTimeRange) string {
+	condition := timeRange.Condition()
+	return fmt.Sprintf(`select address,value from metrics_schema.pd_scheduler_store_status %s and type='region_count' and value > 20000;`, condition)
+}
+
+func (c checkStoreRegionTooMuch) genResult(sql string, row chunk.Row) inspectionResult {
+	actual := fmt.Sprintf("%.2f", row.GetFloat64(1))
+	return inspectionResult{
+		tp:       "tikv",
+		instance: row.GetString(0),
+		item:     c.getItem(),
+		actual:   actual,
+		expected: "<= 20000",
+		severity: "warning",
+		detail:   sql,
+	}
+}
+
+func (c checkStoreRegionTooMuch) getItem() string {
+	return "region-count"
+}
+
+func (thresholdCheckInspection) inspectThreshold3(ctx context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
+	var rules = []thresholdCheckRule{
+		compareStoreStatus{
+			item:      "leader-score-balance",
+			tp:        "leader_score",
+			threshold: 0.05,
+		},
+		compareStoreStatus{
+			item:      "region-score-balance",
+			tp:        "region_score",
+			threshold: 0.05,
+		},
+		compareStoreStatus{
+			item:      "store-available-balance",
+			tp:        "store_available",
+			threshold: 0.2,
+		},
+		checkRegionHealth{},
+		checkStoreRegionTooMuch{},
+	}
+
+	var results []inspectionResult
+	for _, rule := range rules {
+		if !filter.enable(rule.getItem()) {
+			continue
+		}
+		sql := rule.genSQL(filter.timeRange)
+		rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithContext(ctx, sql)
+		if err != nil {
+			sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("execute '%s' failed: %v", sql, err))
+			continue
+		}
+		for _, row := range rows {
+			results = append(results, rule.genResult(sql, row))
 		}
 	}
 	return results
