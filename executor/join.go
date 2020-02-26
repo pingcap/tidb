@@ -16,6 +16,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/util/bloom"
 	"sync"
 	"sync/atomic"
 
@@ -84,6 +85,8 @@ type HashJoinExec struct {
 	// joinWorkerWaitGroup is for sync multiple join workers.
 	joinWorkerWaitGroup sync.WaitGroup
 	finished            atomic.Value
+
+	bloomFilter *bloom.Filter
 }
 
 // probeChkResource stores the result of the join probe side fetch worker,

@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/util/bloom"
 	"math"
 	"sort"
 	"strings"
@@ -1130,6 +1131,17 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 		}
 		if defaultValues == nil {
 			defaultValues = make([]types.Datum, e.buildSideExec.Schema().Len())
+		}
+	}
+	if e.joinType == plannercore.InnerJoin {
+		if probeExec, ok := e.probeSideExec.(*TableReaderExecutor); ok {
+			bl, _ := bloom.NewFilter(100000000 / 64)
+			probeExec.bloomFilter = bl
+			e.bloomFilter = bl
+			probeExec.joinKeyIdx = make([]int64, len(e.probeKeys))
+			for i := range e.probeKeys {
+				probeExec.joinKeyIdx[i] = int64(e.probeKeys[i].Index)
+			}
 		}
 	}
 	e.buildSideEstCount = b.buildSideEstCount(v)

@@ -16,6 +16,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/util/bloom"
 	"sort"
 
 	"github.com/opentracing/opentracing-go"
@@ -90,6 +91,9 @@ type TableReaderExecutor struct {
 	virtualColumnRetFieldTypes []*types.FieldType
 	// batchCop indicates whether use super batch coprocessor request, only works for TiFlash engine.
 	batchCop bool
+
+	bloomFilter *bloom.Filter
+	joinKeyIdx  []int64
 }
 
 // Open initialzes necessary variables for using this executor.
