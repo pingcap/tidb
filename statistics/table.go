@@ -86,8 +86,8 @@ func (t *Table) Copy() *Table {
 		PhysicalID:     t.PhysicalID,
 		HavePhysicalID: t.HavePhysicalID,
 		Count:          t.Count,
-		Columns:        make(map[int64]*Column),
-		Indices:        make(map[int64]*Index),
+		Columns:        make(map[int64]*Column, len(t.Columns)),
+		Indices:        make(map[int64]*Index, len(t.Indices)),
 		Pseudo:         t.Pseudo,
 		ModifyCount:    t.ModifyCount,
 	}
@@ -327,7 +327,7 @@ func (coll *HistColl) ID2UniqueID(columns []*expression.Column) *HistColl {
 // GenerateHistCollFromColumnInfo generates a new HistColl whose ColID2IdxID and IdxID2ColIDs is built from the given parameter.
 func (coll *HistColl) GenerateHistCollFromColumnInfo(infos []*model.ColumnInfo, columns []*expression.Column) *HistColl {
 	newColHistMap := make(map[int64]*Column)
-	colInfoID2UniqueID := make(map[int64]int64)
+	colInfoID2UniqueID := make(map[int64]int64, len(columns))
 	colNames2UniqueID := make(map[string]int64)
 	for _, col := range columns {
 		colInfoID2UniqueID[col.ID] = col.UniqueID

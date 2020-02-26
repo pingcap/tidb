@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"regexp"
 	"strconv"
 	"sync/atomic"
@@ -394,6 +395,49 @@ func (cli *testServerClient) runTestPreparedTimestamp(t *C) {
 		t.Assert(err, IsNil)
 		t.Assert(outA, Equals, "1970-01-01 00:00:01")
 		t.Assert(outB, Equals, "23:59:59")
+	})
+}
+
+func (cli *testServerClient) runTestLoadDataWithSelectIntoOutfile(c *C, server *Server) {
+	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
+		config.AllowAllFiles = true
+		config.Strict = false
+	}, "SelectIntoOutfile", func(dbt *DBTest) {
+		dbt.mustExec("create table t (i int, r real, d decimal(10, 5), s varchar(100), dt datetime, ts timestamp, j json)")
+		dbt.mustExec("insert into t values (1, 1.1, 0.1, 'a', '2000-01-01', '01:01:01', '[1]')")
+		dbt.mustExec("insert into t values (2, 2.2, 0.2, 'b', '2000-02-02', '02:02:02', '[1,2]')")
+		dbt.mustExec("insert into t values (null, null, null, null, '2000-03-03', '03:03:03', '[1,2,3]')")
+		dbt.mustExec("insert into t values (4, 4.4, 0.4, 'd', null, null, null)")
+		outfile := path.Join(os.TempDir(), fmt.Sprintf("select_into_outfile_%v.csv", time.Now().UnixNano()))
+		dbt.mustExec(fmt.Sprintf("select * from t into outfile '%v'", outfile))
+		defer func() {
+			c.Assert(os.Remove(outfile), IsNil)
+		}()
+
+		dbt.mustExec("create table t1 (i int, r real, d decimal(10, 5), s varchar(100), dt datetime, ts timestamp, j json)")
+		dbt.mustExec(fmt.Sprintf("load data local infile '%v' into table t1", outfile))
+
+		fetchResults := func(table string) [][]interface{} {
+			var res [][]interface{}
+			row := dbt.mustQuery("select * from " + table + " order by i")
+			for row.Next() {
+				r := make([]interface{}, 7)
+				c.Assert(row.Scan(&r[0], &r[1], &r[2], &r[3], &r[4], &r[5], &r[6]), IsNil)
+				res = append(res, r)
+			}
+			c.Assert(row.Close(), IsNil)
+			return res
+		}
+
+		res := fetchResults("t")
+		res1 := fetchResults("t1")
+		c.Assert(len(res), Equals, len(res1))
+		for i := range res {
+			for j := range res[i] {
+				// using Sprintf to avoid some uncomparable types
+				c.Assert(fmt.Sprintf("%v", res[i][j]), Equals, fmt.Sprintf("%v", res1[i][j]))
+			}
+		}
 	})
 }
 

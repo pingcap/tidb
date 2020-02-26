@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -37,7 +36,7 @@ func PbTypeToFieldType(tp *tipb.FieldType) *types.FieldType {
 		Flen:    int(tp.Flen),
 		Decimal: int(tp.Decimal),
 		Charset: tp.Charset,
-		Collate: mysql.Collations[uint8(tp.Collate)],
+		Collate: protoToCollation(tp.Collate),
 	}
 }
 
@@ -1172,7 +1171,7 @@ func convertUint(val []byte) (*Constant, error) {
 
 func convertString(val []byte, tp *tipb.FieldType) (*Constant, error) {
 	var d types.Datum
-	d.SetBytesAsString(val, collate.CollationID2Name(tp.Collate), uint32(tp.Flen))
+	d.SetBytesAsString(val, protoToCollation(tp.Collate), uint32(tp.Flen))
 	return &Constant{Value: d, RetType: types.NewFieldType(mysql.TypeVarString)}, nil
 }
 
