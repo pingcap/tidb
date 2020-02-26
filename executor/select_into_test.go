@@ -17,7 +17,8 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
-	"path"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -37,7 +38,7 @@ func cmpAndRm(expected, outfile string, c *C) {
 
 func (s *testSuite1) TestSelectIntoFileExists(c *C) {
 	tmpDir := os.TempDir()
-	outfile := path.Join(tmpDir, fmt.Sprintf("TestSelectIntoFileExists-%v.data", time.Now().Nanosecond()))
+	outfile := filepath.Join(tmpDir, fmt.Sprintf("TestSelectIntoFileExists-%v.data", time.Now().Nanosecond()))
 	tk := testkit.NewTestKit(c, s.store)
 	sql := fmt.Sprintf("select 1 into outfile '%v'", outfile)
 	tk.MustExec(sql)
@@ -49,7 +50,7 @@ func (s *testSuite1) TestSelectIntoFileExists(c *C) {
 
 func (s *testSuite1) TestSelectIntoOutfileFromTable(c *C) {
 	tmpDir := os.TempDir()
-	outfile := path.Join(tmpDir, "select-into-outfile.data")
+	outfile := filepath.Join(tmpDir, "select-into-outfile.data")
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -60,28 +61,28 @@ func (s *testSuite1) TestSelectIntoOutfileFromTable(c *C) {
 	tk.MustExec("insert into t values (null, null, null, null, '2000-03-03', '03:03:03', '03:03:03', '[1,2,3]')")
 	tk.MustExec("insert into t values (4, 4.4, 0.4, 'd', null, null, null, null)")
 
-	tk.MustExec(fmt.Sprintf("select * from t into outfile '%v'", outfile))
+	tk.MustExec(fmt.Sprintf("select * from t into outfile %s", strconv.Quote(outfile)))
 	cmpAndRm(`1	1.1	0.10000	a	2000-01-01 00:00:00	2001-01-01 00:00:00	01:01:01	[1]
 2	2.2	0.20000	b	2000-02-02 00:00:00	2002-02-02 00:00:00	02:02:02	[1, 2]
 \N	\N	\N	\N	2000-03-03 00:00:00	2003-03-03 00:00:00	03:03:03	[1, 2, 3]
 4	4.4	0.40000	d	\N	\N	\N	\N
 `, outfile, c)
 
-	tk.MustExec(fmt.Sprintf("select * from t into outfile '%v' fields terminated by ',' enclosed by '\"' escaped by '#'", outfile))
+	tk.MustExec(fmt.Sprintf("select * from t into outfile %s fields terminated by ',' enclosed by '\"' escaped by '#'", strconv.Quote(outfile)))
 	cmpAndRm(`"1","1.1","0.10000","a","2000-01-01 00:00:00","2001-01-01 00:00:00","01:01:01","[1]"
 "2","2.2","0.20000","b","2000-02-02 00:00:00","2002-02-02 00:00:00","02:02:02","[1, 2]"
 #N,#N,#N,#N,"2000-03-03 00:00:00","2003-03-03 00:00:00","03:03:03","[1, 2, 3]"
 "4","4.4","0.40000","d",#N,#N,#N,#N
 `, outfile, c)
 
-	tk.MustExec(fmt.Sprintf("select * from t into outfile '%v' fields terminated by ',' optionally enclosed by '\"' escaped by '#'", outfile))
+	tk.MustExec(fmt.Sprintf("select * from t into outfile %s fields terminated by ',' optionally enclosed by '\"' escaped by '#'", strconv.Quote(outfile)))
 	cmpAndRm(`1,1.1,0.10000,"a","2000-01-01 00:00:00","2001-01-01 00:00:00","01:01:01","[1]"
 2,2.2,0.20000,"b","2000-02-02 00:00:00","2002-02-02 00:00:00","02:02:02","[1, 2]"
 #N,#N,#N,#N,"2000-03-03 00:00:00","2003-03-03 00:00:00","03:03:03","[1, 2, 3]"
 4,4.4,0.40000,"d",#N,#N,#N,#N
 `, outfile, c)
 
-	tk.MustExec(fmt.Sprintf("select * from t into outfile '%v' fields terminated by ',' optionally enclosed by '\"' escaped by '#' lines terminated by '<<<\n'", outfile))
+	tk.MustExec(fmt.Sprintf("select * from t into outfile %s fields terminated by ',' optionally enclosed by '\"' escaped by '#' lines terminated by '<<<\n'", strconv.Quote(outfile)))
 	cmpAndRm(`1,1.1,0.10000,"a","2000-01-01 00:00:00","2001-01-01 00:00:00","01:01:01","[1]"<<<
 2,2.2,0.20000,"b","2000-02-02 00:00:00","2002-02-02 00:00:00","02:02:02","[1, 2]"<<<
 #N,#N,#N,#N,"2000-03-03 00:00:00","2003-03-03 00:00:00","03:03:03","[1, 2, 3]"<<<
@@ -91,13 +92,16 @@ func (s *testSuite1) TestSelectIntoOutfileFromTable(c *C) {
 
 func (s *testSuite1) TestSelectIntoOutfileConstant(c *C) {
 	tmpDir := os.TempDir()
-	outfile := path.Join(tmpDir, "select-into-outfile.data")
+	outfile := filepath.Join(tmpDir, "select-into-outfile.data")
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec(fmt.Sprintf("select 1, 2, 3, '4', '5', '6', 7.7, 8.8, 9.9, null into outfile '%v'", outfile)) // test constants
+	// On windows the outfile name looks like "C:\Users\genius\AppData\Local\Temp\select-into-outfile.data",
+	// strconv.Quote(outfile) is necessary because when parsed as SQL, the string become
+	// "C:UsersgeniusAppDataLocalTempselect-into-outfile.data" and this is not what we want.
+	tk.MustExec(fmt.Sprintf("select 1, 2, 3, '4', '5', '6', 7.7, 8.8, 9.9, null into outfile %s", strconv.Quote(outfile))) // test constants
 	cmpAndRm(`1	2	3	4	5	6	7.7	8.8	9.9	\N
 `, outfile, c)
 
-	tk.MustExec(fmt.Sprintf("select 1e10, 1e20, 1.234567e8, 0.000123e3, 1.01234567890123456789, 123456789e-10 into outfile '%v'", outfile))
+	tk.MustExec(fmt.Sprintf("select 1e10, 1e20, 1.234567e8, 0.000123e3, 1.01234567890123456789, 123456789e-10 into outfile %s", strconv.Quote(outfile)))
 	cmpAndRm(`10000000000	1e20	123456700	0.123	1.01234567890123456789	0.0123456789
 `, outfile, c)
 }
