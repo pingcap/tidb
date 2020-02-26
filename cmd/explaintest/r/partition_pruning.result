@@ -3633,92 +3633,92 @@ explain select * from t2 where b = 4;
 id	count	task	operator info
 Union_11	50.00	root	
 ├─IndexLookUp_17	10.00	root	
-│ ├─IndexRangeScan_15	10.00	cop[tikv]	table:t2, partition:p0, index:b, range:[4,4], keep order:false, stats:pseudo
-│ └─TableRowIDScan_16	10.00	cop[tikv]	table:t2, partition:p0, keep order:false, stats:pseudo
+│ ├─IndexRangeScan_15(Build)	10.00	cop[tikv]	table:t2, partition:p0, index:b, range:[4,4], keep order:false, stats:pseudo
+│ └─TableRowIDScan_16(Probe)	10.00	cop[tikv]	table:t2, partition:p0, keep order:false, stats:pseudo
 ├─IndexLookUp_23	10.00	root	
-│ ├─IndexRangeScan_21	10.00	cop[tikv]	table:t2, partition:p1, index:b, range:[4,4], keep order:false, stats:pseudo
-│ └─TableRowIDScan_22	10.00	cop[tikv]	table:t2, partition:p1, keep order:false, stats:pseudo
+│ ├─IndexRangeScan_21(Build)	10.00	cop[tikv]	table:t2, partition:p1, index:b, range:[4,4], keep order:false, stats:pseudo
+│ └─TableRowIDScan_22(Probe)	10.00	cop[tikv]	table:t2, partition:p1, keep order:false, stats:pseudo
 ├─IndexLookUp_29	10.00	root	
-│ ├─IndexRangeScan_27	10.00	cop[tikv]	table:t2, partition:p2, index:b, range:[4,4], keep order:false, stats:pseudo
-│ └─TableRowIDScan_28	10.00	cop[tikv]	table:t2, partition:p2, keep order:false, stats:pseudo
+│ ├─IndexRangeScan_27(Build)	10.00	cop[tikv]	table:t2, partition:p2, index:b, range:[4,4], keep order:false, stats:pseudo
+│ └─TableRowIDScan_28(Probe)	10.00	cop[tikv]	table:t2, partition:p2, keep order:false, stats:pseudo
 ├─IndexLookUp_35	10.00	root	
-│ ├─IndexRangeScan_33	10.00	cop[tikv]	table:t2, partition:p3, index:b, range:[4,4], keep order:false, stats:pseudo
-│ └─TableRowIDScan_34	10.00	cop[tikv]	table:t2, partition:p3, keep order:false, stats:pseudo
+│ ├─IndexRangeScan_33(Build)	10.00	cop[tikv]	table:t2, partition:p3, index:b, range:[4,4], keep order:false, stats:pseudo
+│ └─TableRowIDScan_34(Probe)	10.00	cop[tikv]	table:t2, partition:p3, keep order:false, stats:pseudo
 └─IndexLookUp_41	10.00	root	
-  ├─IndexRangeScan_39	10.00	cop[tikv]	table:t2, partition:p4, index:b, range:[4,4], keep order:false, stats:pseudo
-  └─TableRowIDScan_40	10.00	cop[tikv]	table:t2, partition:p4, keep order:false, stats:pseudo
+  ├─IndexRangeScan_39(Build)	10.00	cop[tikv]	table:t2, partition:p4, index:b, range:[4,4], keep order:false, stats:pseudo
+  └─TableRowIDScan_40(Probe)	10.00	cop[tikv]	table:t2, partition:p4, keep order:false, stats:pseudo
 explain select * from t2 where b = 6;
 id	count	task	operator info
 Union_11	50.00	root	
 ├─IndexLookUp_17	10.00	root	
-│ ├─IndexRangeScan_15	10.00	cop[tikv]	table:t2, partition:p0, index:b, range:[6,6], keep order:false, stats:pseudo
-│ └─TableRowIDScan_16	10.00	cop[tikv]	table:t2, partition:p0, keep order:false, stats:pseudo
+│ ├─IndexRangeScan_15(Build)	10.00	cop[tikv]	table:t2, partition:p0, index:b, range:[6,6], keep order:false, stats:pseudo
+│ └─TableRowIDScan_16(Probe)	10.00	cop[tikv]	table:t2, partition:p0, keep order:false, stats:pseudo
 ├─IndexLookUp_23	10.00	root	
-│ ├─IndexRangeScan_21	10.00	cop[tikv]	table:t2, partition:p1, index:b, range:[6,6], keep order:false, stats:pseudo
-│ └─TableRowIDScan_22	10.00	cop[tikv]	table:t2, partition:p1, keep order:false, stats:pseudo
+│ ├─IndexRangeScan_21(Build)	10.00	cop[tikv]	table:t2, partition:p1, index:b, range:[6,6], keep order:false, stats:pseudo
+│ └─TableRowIDScan_22(Probe)	10.00	cop[tikv]	table:t2, partition:p1, keep order:false, stats:pseudo
 ├─IndexLookUp_29	10.00	root	
-│ ├─IndexRangeScan_27	10.00	cop[tikv]	table:t2, partition:p2, index:b, range:[6,6], keep order:false, stats:pseudo
-│ └─TableRowIDScan_28	10.00	cop[tikv]	table:t2, partition:p2, keep order:false, stats:pseudo
+│ ├─IndexRangeScan_27(Build)	10.00	cop[tikv]	table:t2, partition:p2, index:b, range:[6,6], keep order:false, stats:pseudo
+│ └─TableRowIDScan_28(Probe)	10.00	cop[tikv]	table:t2, partition:p2, keep order:false, stats:pseudo
 ├─IndexLookUp_35	10.00	root	
-│ ├─IndexRangeScan_33	10.00	cop[tikv]	table:t2, partition:p3, index:b, range:[6,6], keep order:false, stats:pseudo
-│ └─TableRowIDScan_34	10.00	cop[tikv]	table:t2, partition:p3, keep order:false, stats:pseudo
+│ ├─IndexRangeScan_33(Build)	10.00	cop[tikv]	table:t2, partition:p3, index:b, range:[6,6], keep order:false, stats:pseudo
+│ └─TableRowIDScan_34(Probe)	10.00	cop[tikv]	table:t2, partition:p3, keep order:false, stats:pseudo
 └─IndexLookUp_41	10.00	root	
-  ├─IndexRangeScan_39	10.00	cop[tikv]	table:t2, partition:p4, index:b, range:[6,6], keep order:false, stats:pseudo
-  └─TableRowIDScan_40	10.00	cop[tikv]	table:t2, partition:p4, keep order:false, stats:pseudo
+  ├─IndexRangeScan_39(Build)	10.00	cop[tikv]	table:t2, partition:p4, index:b, range:[6,6], keep order:false, stats:pseudo
+  └─TableRowIDScan_40(Probe)	10.00	cop[tikv]	table:t2, partition:p4, keep order:false, stats:pseudo
 explain select * from t2 where b in (1,3,5);
 id	count	task	operator info
 Union_11	150.00	root	
 ├─IndexLookUp_17	30.00	root	
-│ ├─IndexRangeScan_15	30.00	cop[tikv]	table:t2, partition:p0, index:b, range:[1,1], [3,3], [5,5], keep order:false, stats:pseudo
-│ └─TableRowIDScan_16	30.00	cop[tikv]	table:t2, partition:p0, keep order:false, stats:pseudo
+│ ├─IndexRangeScan_15(Build)	30.00	cop[tikv]	table:t2, partition:p0, index:b, range:[1,1], [3,3], [5,5], keep order:false, stats:pseudo
+│ └─TableRowIDScan_16(Probe)	30.00	cop[tikv]	table:t2, partition:p0, keep order:false, stats:pseudo
 ├─IndexLookUp_23	30.00	root	
-│ ├─IndexRangeScan_21	30.00	cop[tikv]	table:t2, partition:p1, index:b, range:[1,1], [3,3], [5,5], keep order:false, stats:pseudo
-│ └─TableRowIDScan_22	30.00	cop[tikv]	table:t2, partition:p1, keep order:false, stats:pseudo
+│ ├─IndexRangeScan_21(Build)	30.00	cop[tikv]	table:t2, partition:p1, index:b, range:[1,1], [3,3], [5,5], keep order:false, stats:pseudo
+│ └─TableRowIDScan_22(Probe)	30.00	cop[tikv]	table:t2, partition:p1, keep order:false, stats:pseudo
 ├─IndexLookUp_29	30.00	root	
-│ ├─IndexRangeScan_27	30.00	cop[tikv]	table:t2, partition:p2, index:b, range:[1,1], [3,3], [5,5], keep order:false, stats:pseudo
-│ └─TableRowIDScan_28	30.00	cop[tikv]	table:t2, partition:p2, keep order:false, stats:pseudo
+│ ├─IndexRangeScan_27(Build)	30.00	cop[tikv]	table:t2, partition:p2, index:b, range:[1,1], [3,3], [5,5], keep order:false, stats:pseudo
+│ └─TableRowIDScan_28(Probe)	30.00	cop[tikv]	table:t2, partition:p2, keep order:false, stats:pseudo
 ├─IndexLookUp_35	30.00	root	
-│ ├─IndexRangeScan_33	30.00	cop[tikv]	table:t2, partition:p3, index:b, range:[1,1], [3,3], [5,5], keep order:false, stats:pseudo
-│ └─TableRowIDScan_34	30.00	cop[tikv]	table:t2, partition:p3, keep order:false, stats:pseudo
+│ ├─IndexRangeScan_33(Build)	30.00	cop[tikv]	table:t2, partition:p3, index:b, range:[1,1], [3,3], [5,5], keep order:false, stats:pseudo
+│ └─TableRowIDScan_34(Probe)	30.00	cop[tikv]	table:t2, partition:p3, keep order:false, stats:pseudo
 └─IndexLookUp_41	30.00	root	
-  ├─IndexRangeScan_39	30.00	cop[tikv]	table:t2, partition:p4, index:b, range:[1,1], [3,3], [5,5], keep order:false, stats:pseudo
-  └─TableRowIDScan_40	30.00	cop[tikv]	table:t2, partition:p4, keep order:false, stats:pseudo
+  ├─IndexRangeScan_39(Build)	30.00	cop[tikv]	table:t2, partition:p4, index:b, range:[1,1], [3,3], [5,5], keep order:false, stats:pseudo
+  └─TableRowIDScan_40(Probe)	30.00	cop[tikv]	table:t2, partition:p4, keep order:false, stats:pseudo
 explain select * from t2 where b in (2,4,6);
 id	count	task	operator info
 Union_11	150.00	root	
 ├─IndexLookUp_17	30.00	root	
-│ ├─IndexRangeScan_15	30.00	cop[tikv]	table:t2, partition:p0, index:b, range:[2,2], [4,4], [6,6], keep order:false, stats:pseudo
-│ └─TableRowIDScan_16	30.00	cop[tikv]	table:t2, partition:p0, keep order:false, stats:pseudo
+│ ├─IndexRangeScan_15(Build)	30.00	cop[tikv]	table:t2, partition:p0, index:b, range:[2,2], [4,4], [6,6], keep order:false, stats:pseudo
+│ └─TableRowIDScan_16(Probe)	30.00	cop[tikv]	table:t2, partition:p0, keep order:false, stats:pseudo
 ├─IndexLookUp_23	30.00	root	
-│ ├─IndexRangeScan_21	30.00	cop[tikv]	table:t2, partition:p1, index:b, range:[2,2], [4,4], [6,6], keep order:false, stats:pseudo
-│ └─TableRowIDScan_22	30.00	cop[tikv]	table:t2, partition:p1, keep order:false, stats:pseudo
+│ ├─IndexRangeScan_21(Build)	30.00	cop[tikv]	table:t2, partition:p1, index:b, range:[2,2], [4,4], [6,6], keep order:false, stats:pseudo
+│ └─TableRowIDScan_22(Probe)	30.00	cop[tikv]	table:t2, partition:p1, keep order:false, stats:pseudo
 ├─IndexLookUp_29	30.00	root	
-│ ├─IndexRangeScan_27	30.00	cop[tikv]	table:t2, partition:p2, index:b, range:[2,2], [4,4], [6,6], keep order:false, stats:pseudo
-│ └─TableRowIDScan_28	30.00	cop[tikv]	table:t2, partition:p2, keep order:false, stats:pseudo
+│ ├─IndexRangeScan_27(Build)	30.00	cop[tikv]	table:t2, partition:p2, index:b, range:[2,2], [4,4], [6,6], keep order:false, stats:pseudo
+│ └─TableRowIDScan_28(Probe)	30.00	cop[tikv]	table:t2, partition:p2, keep order:false, stats:pseudo
 ├─IndexLookUp_35	30.00	root	
-│ ├─IndexRangeScan_33	30.00	cop[tikv]	table:t2, partition:p3, index:b, range:[2,2], [4,4], [6,6], keep order:false, stats:pseudo
-│ └─TableRowIDScan_34	30.00	cop[tikv]	table:t2, partition:p3, keep order:false, stats:pseudo
+│ ├─IndexRangeScan_33(Build)	30.00	cop[tikv]	table:t2, partition:p3, index:b, range:[2,2], [4,4], [6,6], keep order:false, stats:pseudo
+│ └─TableRowIDScan_34(Probe)	30.00	cop[tikv]	table:t2, partition:p3, keep order:false, stats:pseudo
 └─IndexLookUp_41	30.00	root	
-  ├─IndexRangeScan_39	30.00	cop[tikv]	table:t2, partition:p4, index:b, range:[2,2], [4,4], [6,6], keep order:false, stats:pseudo
-  └─TableRowIDScan_40	30.00	cop[tikv]	table:t2, partition:p4, keep order:false, stats:pseudo
+  ├─IndexRangeScan_39(Build)	30.00	cop[tikv]	table:t2, partition:p4, index:b, range:[2,2], [4,4], [6,6], keep order:false, stats:pseudo
+  └─TableRowIDScan_40(Probe)	30.00	cop[tikv]	table:t2, partition:p4, keep order:false, stats:pseudo
 explain select * from t2 where b in (7,8,9);
 id	count	task	operator info
 Union_11	150.00	root	
 ├─IndexLookUp_17	30.00	root	
-│ ├─IndexRangeScan_15	30.00	cop[tikv]	table:t2, partition:p0, index:b, range:[7,7], [8,8], [9,9], keep order:false, stats:pseudo
-│ └─TableRowIDScan_16	30.00	cop[tikv]	table:t2, partition:p0, keep order:false, stats:pseudo
+│ ├─IndexRangeScan_15(Build)	30.00	cop[tikv]	table:t2, partition:p0, index:b, range:[7,7], [8,8], [9,9], keep order:false, stats:pseudo
+│ └─TableRowIDScan_16(Probe)	30.00	cop[tikv]	table:t2, partition:p0, keep order:false, stats:pseudo
 ├─IndexLookUp_23	30.00	root	
-│ ├─IndexRangeScan_21	30.00	cop[tikv]	table:t2, partition:p1, index:b, range:[7,7], [8,8], [9,9], keep order:false, stats:pseudo
-│ └─TableRowIDScan_22	30.00	cop[tikv]	table:t2, partition:p1, keep order:false, stats:pseudo
+│ ├─IndexRangeScan_21(Build)	30.00	cop[tikv]	table:t2, partition:p1, index:b, range:[7,7], [8,8], [9,9], keep order:false, stats:pseudo
+│ └─TableRowIDScan_22(Probe)	30.00	cop[tikv]	table:t2, partition:p1, keep order:false, stats:pseudo
 ├─IndexLookUp_29	30.00	root	
-│ ├─IndexRangeScan_27	30.00	cop[tikv]	table:t2, partition:p2, index:b, range:[7,7], [8,8], [9,9], keep order:false, stats:pseudo
-│ └─TableRowIDScan_28	30.00	cop[tikv]	table:t2, partition:p2, keep order:false, stats:pseudo
+│ ├─IndexRangeScan_27(Build)	30.00	cop[tikv]	table:t2, partition:p2, index:b, range:[7,7], [8,8], [9,9], keep order:false, stats:pseudo
+│ └─TableRowIDScan_28(Probe)	30.00	cop[tikv]	table:t2, partition:p2, keep order:false, stats:pseudo
 ├─IndexLookUp_35	30.00	root	
-│ ├─IndexRangeScan_33	30.00	cop[tikv]	table:t2, partition:p3, index:b, range:[7,7], [8,8], [9,9], keep order:false, stats:pseudo
-│ └─TableRowIDScan_34	30.00	cop[tikv]	table:t2, partition:p3, keep order:false, stats:pseudo
+│ ├─IndexRangeScan_33(Build)	30.00	cop[tikv]	table:t2, partition:p3, index:b, range:[7,7], [8,8], [9,9], keep order:false, stats:pseudo
+│ └─TableRowIDScan_34(Probe)	30.00	cop[tikv]	table:t2, partition:p3, keep order:false, stats:pseudo
 └─IndexLookUp_41	30.00	root	
-  ├─IndexRangeScan_39	30.00	cop[tikv]	table:t2, partition:p4, index:b, range:[7,7], [8,8], [9,9], keep order:false, stats:pseudo
-  └─TableRowIDScan_40	30.00	cop[tikv]	table:t2, partition:p4, keep order:false, stats:pseudo
+  ├─IndexRangeScan_39(Build)	30.00	cop[tikv]	table:t2, partition:p4, index:b, range:[7,7], [8,8], [9,9], keep order:false, stats:pseudo
+  └─TableRowIDScan_40(Probe)	30.00	cop[tikv]	table:t2, partition:p4, keep order:false, stats:pseudo
 explain select * from t2 where b > 5;
 id	count	task	operator info
 Union_11	16666.67	root	
@@ -3741,56 +3741,56 @@ explain select * from t2 where b > 5 and b < 8;
 id	count	task	operator info
 Union_11	1250.00	root	
 ├─IndexLookUp_17	250.00	root	
-│ ├─IndexRangeScan_15	250.00	cop[tikv]	table:t2, partition:p0, index:b, range:(5,8), keep order:false, stats:pseudo
-│ └─TableRowIDScan_16	250.00	cop[tikv]	table:t2, partition:p0, keep order:false, stats:pseudo
+│ ├─IndexRangeScan_15(Build)	250.00	cop[tikv]	table:t2, partition:p0, index:b, range:(5,8), keep order:false, stats:pseudo
+│ └─TableRowIDScan_16(Probe)	250.00	cop[tikv]	table:t2, partition:p0, keep order:false, stats:pseudo
 ├─IndexLookUp_23	250.00	root	
-│ ├─IndexRangeScan_21	250.00	cop[tikv]	table:t2, partition:p1, index:b, range:(5,8), keep order:false, stats:pseudo
-│ └─TableRowIDScan_22	250.00	cop[tikv]	table:t2, partition:p1, keep order:false, stats:pseudo
+│ ├─IndexRangeScan_21(Build)	250.00	cop[tikv]	table:t2, partition:p1, index:b, range:(5,8), keep order:false, stats:pseudo
+│ └─TableRowIDScan_22(Probe)	250.00	cop[tikv]	table:t2, partition:p1, keep order:false, stats:pseudo
 ├─IndexLookUp_29	250.00	root	
-│ ├─IndexRangeScan_27	250.00	cop[tikv]	table:t2, partition:p2, index:b, range:(5,8), keep order:false, stats:pseudo
-│ └─TableRowIDScan_28	250.00	cop[tikv]	table:t2, partition:p2, keep order:false, stats:pseudo
+│ ├─IndexRangeScan_27(Build)	250.00	cop[tikv]	table:t2, partition:p2, index:b, range:(5,8), keep order:false, stats:pseudo
+│ └─TableRowIDScan_28(Probe)	250.00	cop[tikv]	table:t2, partition:p2, keep order:false, stats:pseudo
 ├─IndexLookUp_35	250.00	root	
-│ ├─IndexRangeScan_33	250.00	cop[tikv]	table:t2, partition:p3, index:b, range:(5,8), keep order:false, stats:pseudo
-│ └─TableRowIDScan_34	250.00	cop[tikv]	table:t2, partition:p3, keep order:false, stats:pseudo
+│ ├─IndexRangeScan_33(Build)	250.00	cop[tikv]	table:t2, partition:p3, index:b, range:(5,8), keep order:false, stats:pseudo
+│ └─TableRowIDScan_34(Probe)	250.00	cop[tikv]	table:t2, partition:p3, keep order:false, stats:pseudo
 └─IndexLookUp_41	250.00	root	
-  ├─IndexRangeScan_39	250.00	cop[tikv]	table:t2, partition:p4, index:b, range:(5,8), keep order:false, stats:pseudo
-  └─TableRowIDScan_40	250.00	cop[tikv]	table:t2, partition:p4, keep order:false, stats:pseudo
+  ├─IndexRangeScan_39(Build)	250.00	cop[tikv]	table:t2, partition:p4, index:b, range:(5,8), keep order:false, stats:pseudo
+  └─TableRowIDScan_40(Probe)	250.00	cop[tikv]	table:t2, partition:p4, keep order:false, stats:pseudo
 explain select * from t2 where b > 5 and b < 7;
 id	count	task	operator info
 Union_11	1250.00	root	
 ├─IndexLookUp_17	250.00	root	
-│ ├─IndexRangeScan_15	250.00	cop[tikv]	table:t2, partition:p0, index:b, range:(5,7), keep order:false, stats:pseudo
-│ └─TableRowIDScan_16	250.00	cop[tikv]	table:t2, partition:p0, keep order:false, stats:pseudo
+│ ├─IndexRangeScan_15(Build)	250.00	cop[tikv]	table:t2, partition:p0, index:b, range:(5,7), keep order:false, stats:pseudo
+│ └─TableRowIDScan_16(Probe)	250.00	cop[tikv]	table:t2, partition:p0, keep order:false, stats:pseudo
 ├─IndexLookUp_23	250.00	root	
-│ ├─IndexRangeScan_21	250.00	cop[tikv]	table:t2, partition:p1, index:b, range:(5,7), keep order:false, stats:pseudo
-│ └─TableRowIDScan_22	250.00	cop[tikv]	table:t2, partition:p1, keep order:false, stats:pseudo
+│ ├─IndexRangeScan_21(Build)	250.00	cop[tikv]	table:t2, partition:p1, index:b, range:(5,7), keep order:false, stats:pseudo
+│ └─TableRowIDScan_22(Probe)	250.00	cop[tikv]	table:t2, partition:p1, keep order:false, stats:pseudo
 ├─IndexLookUp_29	250.00	root	
-│ ├─IndexRangeScan_27	250.00	cop[tikv]	table:t2, partition:p2, index:b, range:(5,7), keep order:false, stats:pseudo
-│ └─TableRowIDScan_28	250.00	cop[tikv]	table:t2, partition:p2, keep order:false, stats:pseudo
+│ ├─IndexRangeScan_27(Build)	250.00	cop[tikv]	table:t2, partition:p2, index:b, range:(5,7), keep order:false, stats:pseudo
+│ └─TableRowIDScan_28(Probe)	250.00	cop[tikv]	table:t2, partition:p2, keep order:false, stats:pseudo
 ├─IndexLookUp_35	250.00	root	
-│ ├─IndexRangeScan_33	250.00	cop[tikv]	table:t2, partition:p3, index:b, range:(5,7), keep order:false, stats:pseudo
-│ └─TableRowIDScan_34	250.00	cop[tikv]	table:t2, partition:p3, keep order:false, stats:pseudo
+│ ├─IndexRangeScan_33(Build)	250.00	cop[tikv]	table:t2, partition:p3, index:b, range:(5,7), keep order:false, stats:pseudo
+│ └─TableRowIDScan_34(Probe)	250.00	cop[tikv]	table:t2, partition:p3, keep order:false, stats:pseudo
 └─IndexLookUp_41	250.00	root	
-  ├─IndexRangeScan_39	250.00	cop[tikv]	table:t2, partition:p4, index:b, range:(5,7), keep order:false, stats:pseudo
-  └─TableRowIDScan_40	250.00	cop[tikv]	table:t2, partition:p4, keep order:false, stats:pseudo
+  ├─IndexRangeScan_39(Build)	250.00	cop[tikv]	table:t2, partition:p4, index:b, range:(5,7), keep order:false, stats:pseudo
+  └─TableRowIDScan_40(Probe)	250.00	cop[tikv]	table:t2, partition:p4, keep order:false, stats:pseudo
 explain select * from t2 where b > 0 and b < 5;
 id	count	task	operator info
 Union_11	1250.00	root	
 ├─IndexLookUp_17	250.00	root	
-│ ├─IndexRangeScan_15	250.00	cop[tikv]	table:t2, partition:p0, index:b, range:(0,5), keep order:false, stats:pseudo
-│ └─TableRowIDScan_16	250.00	cop[tikv]	table:t2, partition:p0, keep order:false, stats:pseudo
+│ ├─IndexRangeScan_15(Build)	250.00	cop[tikv]	table:t2, partition:p0, index:b, range:(0,5), keep order:false, stats:pseudo
+│ └─TableRowIDScan_16(Probe)	250.00	cop[tikv]	table:t2, partition:p0, keep order:false, stats:pseudo
 ├─IndexLookUp_23	250.00	root	
-│ ├─IndexRangeScan_21	250.00	cop[tikv]	table:t2, partition:p1, index:b, range:(0,5), keep order:false, stats:pseudo
-│ └─TableRowIDScan_22	250.00	cop[tikv]	table:t2, partition:p1, keep order:false, stats:pseudo
+│ ├─IndexRangeScan_21(Build)	250.00	cop[tikv]	table:t2, partition:p1, index:b, range:(0,5), keep order:false, stats:pseudo
+│ └─TableRowIDScan_22(Probe)	250.00	cop[tikv]	table:t2, partition:p1, keep order:false, stats:pseudo
 ├─IndexLookUp_29	250.00	root	
-│ ├─IndexRangeScan_27	250.00	cop[tikv]	table:t2, partition:p2, index:b, range:(0,5), keep order:false, stats:pseudo
-│ └─TableRowIDScan_28	250.00	cop[tikv]	table:t2, partition:p2, keep order:false, stats:pseudo
+│ ├─IndexRangeScan_27(Build)	250.00	cop[tikv]	table:t2, partition:p2, index:b, range:(0,5), keep order:false, stats:pseudo
+│ └─TableRowIDScan_28(Probe)	250.00	cop[tikv]	table:t2, partition:p2, keep order:false, stats:pseudo
 ├─IndexLookUp_35	250.00	root	
-│ ├─IndexRangeScan_33	250.00	cop[tikv]	table:t2, partition:p3, index:b, range:(0,5), keep order:false, stats:pseudo
-│ └─TableRowIDScan_34	250.00	cop[tikv]	table:t2, partition:p3, keep order:false, stats:pseudo
+│ ├─IndexRangeScan_33(Build)	250.00	cop[tikv]	table:t2, partition:p3, index:b, range:(0,5), keep order:false, stats:pseudo
+│ └─TableRowIDScan_34(Probe)	250.00	cop[tikv]	table:t2, partition:p3, keep order:false, stats:pseudo
 └─IndexLookUp_41	250.00	root	
-  ├─IndexRangeScan_39	250.00	cop[tikv]	table:t2, partition:p4, index:b, range:(0,5), keep order:false, stats:pseudo
-  └─TableRowIDScan_40	250.00	cop[tikv]	table:t2, partition:p4, keep order:false, stats:pseudo
+  ├─IndexRangeScan_39(Build)	250.00	cop[tikv]	table:t2, partition:p4, index:b, range:(0,5), keep order:false, stats:pseudo
+  └─TableRowIDScan_40(Probe)	250.00	cop[tikv]	table:t2, partition:p4, keep order:false, stats:pseudo
 flush status;
 update t2 set a = 111 where b = 10;
 show status like 'Handler_read_rnd_next';
