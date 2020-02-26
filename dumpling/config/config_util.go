@@ -50,6 +50,10 @@ var (
 		"OOMAction":                       {},
 		"MemQuotaQuery":                   {},
 		"TiKVClient.StoreLimit":           {},
+		"Log.SlowThreshold":               {},
+		"Log.QueryLogMaxLen":              {},
+		"Log.ExpensiveThreshold":          {},
+		"CheckMb4ValueInUTF8":             {},
 	}
 )
 

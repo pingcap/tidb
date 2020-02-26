@@ -91,6 +91,9 @@ type pdConfHandler struct {
 	reloadFunc func(oldConf, newConf *Config)
 	registered bool
 	confPath   string
+
+	// attributes for test
+	timeAfter func(d time.Duration) <-chan time.Time
 }
 
 func newPDConfHandler(confPath string, localConf *Config, reloadFunc ConfReloadFunc,
@@ -178,6 +181,9 @@ func (ch *pdConfHandler) register() {
 }
 
 func (ch *pdConfHandler) writeConfig() {
+	if ch.confPath == "" { // for test
+		return
+	}
 	conf := ch.curConf.Load().(*Config)
 	if err := atomicWriteConfig(conf, ch.confPath); err != nil {
 		logutil.Logger(context.Background()).Warn("write config to disk error", zap.Error(err))
@@ -220,9 +226,12 @@ func (ch *pdConfHandler) run() {
 	}()
 
 	ch.register() // the first time to register
+	if ch.timeAfter == nil {
+		ch.timeAfter = time.After
+	}
 	for {
 		select {
-		case <-time.After(ch.interval):
+		case <-ch.timeAfter(ch.interval):
 			if !ch.registered {
 				ch.register()
 				continue
