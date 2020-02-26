@@ -925,7 +925,7 @@ supplier_cnt desc,
 p_brand,
 p_type,
 p_size;
-id	count	task	operator info
+id	EstRows	task	operator info
 Sort_13	14.41	root	Column#23:desc, tpch.part.p_brand:asc, tpch.part.p_type:asc, tpch.part.p_size:asc
 └─Projection_15	14.41	root	tpch.part.p_brand, tpch.part.p_type, tpch.part.p_size, Column#23
   └─HashAgg_18	14.41	root	group by:tpch.part.p_brand, tpch.part.p_size, tpch.part.p_type, funcs:count(distinct tpch.partsupp.ps_suppkey)->Column#23, funcs:firstrow(tpch.part.p_brand)->tpch.part.p_brand, funcs:firstrow(tpch.part.p_type)->tpch.part.p_type, funcs:firstrow(tpch.part.p_size)->tpch.part.p_size
@@ -1216,7 +1216,7 @@ order by
 numwait desc,
 s_name
 limit 100;
-id	count	task	operator info
+id	EstRows	task	operator info
 Projection_25	100.00	root	tpch.supplier.s_name, Column#72
 └─TopN_28	100.00	root	Column#72:desc, tpch.supplier.s_name:asc, offset:0, count:100
   └─HashAgg_34	12800.00	root	group by:tpch.supplier.s_name, funcs:count(1)->Column#72, funcs:firstrow(tpch.supplier.s_name)->tpch.supplier.s_name

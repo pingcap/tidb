@@ -64,7 +64,7 @@ a
 -1
 0
 EXPLAIN SELECT * FROM t1 WHERE a < 1;
-id	count	task	operator info
+id	EstRows	task	operator info
 TableReader_7	3333.33	root	data:TableRangeScan_6
 └─TableRangeScan_6	3333.33	cop[tikv]	table:t1, partition:p0, range:[-inf,1), keep order:false, stats:pseudo
 SELECT * FROM t1 WHERE a < 2 order by a;
@@ -333,49 +333,49 @@ SELECT * FROM t1 WHERE a = 1 order by a;
 a
 1
 EXPLAIN SELECT * FROM t1 WHERE a = 1;
-id	count	task	operator info
+id	EstRows	task	operator info
 TableReader_7	1.00	root	data:TableRangeScan_6
 └─TableRangeScan_6	1.00	cop[tikv]	table:t1, partition:p1, range:[1,1], keep order:false, stats:pseudo
 SELECT * FROM t1 WHERE a = 2 order by a;
 a
 2
 EXPLAIN SELECT * FROM t1 WHERE a = 2;
-id	count	task	operator info
+id	EstRows	task	operator info
 TableReader_7	1.00	root	data:TableRangeScan_6
 └─TableRangeScan_6	1.00	cop[tikv]	table:t1, partition:p2, range:[2,2], keep order:false, stats:pseudo
 SELECT * FROM t1 WHERE a = 3 order by a;
 a
 3
 EXPLAIN SELECT * FROM t1 WHERE a = 3;
-id	count	task	operator info
+id	EstRows	task	operator info
 TableReader_7	1.00	root	data:TableRangeScan_6
 └─TableRangeScan_6	1.00	cop[tikv]	table:t1, partition:p3, range:[3,3], keep order:false, stats:pseudo
 SELECT * FROM t1 WHERE a = 4 order by a;
 a
 4
 EXPLAIN SELECT * FROM t1 WHERE a = 4;
-id	count	task	operator info
+id	EstRows	task	operator info
 TableReader_7	1.00	root	data:TableRangeScan_6
 └─TableRangeScan_6	1.00	cop[tikv]	table:t1, partition:p4, range:[4,4], keep order:false, stats:pseudo
 SELECT * FROM t1 WHERE a = 5 order by a;
 a
 5
 EXPLAIN SELECT * FROM t1 WHERE a = 5;
-id	count	task	operator info
+id	EstRows	task	operator info
 TableReader_7	1.00	root	data:TableRangeScan_6
 └─TableRangeScan_6	1.00	cop[tikv]	table:t1, partition:p5, range:[5,5], keep order:false, stats:pseudo
 SELECT * FROM t1 WHERE a = 6 order by a;
 a
 6
 EXPLAIN SELECT * FROM t1 WHERE a = 6;
-id	count	task	operator info
+id	EstRows	task	operator info
 TableReader_7	1.00	root	data:TableRangeScan_6
 └─TableRangeScan_6	1.00	cop[tikv]	table:t1, partition:max, range:[6,6], keep order:false, stats:pseudo
 SELECT * FROM t1 WHERE a = 7 order by a;
 a
 7
 EXPLAIN SELECT * FROM t1 WHERE a = 7;
-id	count	task	operator info
+id	EstRows	task	operator info
 TableReader_7	1.00	root	data:TableRangeScan_6
 └─TableRangeScan_6	1.00	cop[tikv]	table:t1, partition:max, range:[7,7], keep order:false, stats:pseudo
 SELECT * FROM t1 WHERE a >= 1 order by a;
@@ -479,7 +479,7 @@ a
 7
 8
 EXPLAIN SELECT * FROM t1 WHERE a >= 6;
-id	count	task	operator info
+id	EstRows	task	operator info
 TableReader_7	3333.33	root	data:TableRangeScan_6
 └─TableRangeScan_6	3333.33	cop[tikv]	table:t1, partition:max, range:[6,+inf], keep order:false, stats:pseudo
 SELECT * FROM t1 WHERE a >= 7 order by a;
@@ -487,7 +487,7 @@ a
 7
 8
 EXPLAIN SELECT * FROM t1 WHERE a >= 7;
-id	count	task	operator info
+id	EstRows	task	operator info
 TableReader_7	3333.33	root	data:TableRangeScan_6
 └─TableRangeScan_6	3333.33	cop[tikv]	table:t1, partition:max, range:[7,+inf], keep order:false, stats:pseudo
 SELECT * FROM t1 WHERE a > 1 order by a;
@@ -566,7 +566,7 @@ a
 7
 8
 EXPLAIN SELECT * FROM t1 WHERE a > 5;
-id	count	task	operator info
+id	EstRows	task	operator info
 TableReader_7	3333.33	root	data:TableRangeScan_6
 └─TableRangeScan_6	3333.33	cop[tikv]	table:t1, partition:max, range:(5,+inf], keep order:false, stats:pseudo
 SELECT * FROM t1 WHERE a > 6 order by a;
@@ -574,14 +574,14 @@ a
 7
 8
 EXPLAIN SELECT * FROM t1 WHERE a > 6;
-id	count	task	operator info
+id	EstRows	task	operator info
 TableReader_7	3333.33	root	data:TableRangeScan_6
 └─TableRangeScan_6	3333.33	cop[tikv]	table:t1, partition:max, range:(6,+inf], keep order:false, stats:pseudo
 SELECT * FROM t1 WHERE a > 7 order by a;
 a
 8
 EXPLAIN SELECT * FROM t1 WHERE a > 7;
-id	count	task	operator info
+id	EstRows	task	operator info
 TableReader_7	3333.33	root	data:TableRangeScan_6
 └─TableRangeScan_6	3333.33	cop[tikv]	table:t1, partition:max, range:(7,+inf], keep order:false, stats:pseudo
 DROP TABLE t1;
@@ -599,7 +599,7 @@ a
 -1
 0
 EXPLAIN SELECT * FROM t1 WHERE a < 1;
-id	count	task	operator info
+id	EstRows	task	operator info
 TableReader_7	3333.33	root	data:TableRangeScan_6
 └─TableRangeScan_6	3333.33	cop[tikv]	table:t1, partition:p0, range:[-inf,1), keep order:false, stats:pseudo
 SELECT * FROM t1 WHERE a < 2 order by a;
@@ -811,42 +811,42 @@ SELECT * FROM t1 WHERE a = 1;
 a
 1
 EXPLAIN SELECT * FROM t1 WHERE a = 1;
-id	count	task	operator info
+id	EstRows	task	operator info
 TableReader_7	1.00	root	data:TableRangeScan_6
 └─TableRangeScan_6	1.00	cop[tikv]	table:t1, partition:p1, range:[1,1], keep order:false, stats:pseudo
 SELECT * FROM t1 WHERE a = 2;
 a
 2
 EXPLAIN SELECT * FROM t1 WHERE a = 2;
-id	count	task	operator info
+id	EstRows	task	operator info
 TableReader_7	1.00	root	data:TableRangeScan_6
 └─TableRangeScan_6	1.00	cop[tikv]	table:t1, partition:p2, range:[2,2], keep order:false, stats:pseudo
 SELECT * FROM t1 WHERE a = 3;
 a
 3
 EXPLAIN SELECT * FROM t1 WHERE a = 3;
-id	count	task	operator info
+id	EstRows	task	operator info
 TableReader_7	1.00	root	data:TableRangeScan_6
 └─TableRangeScan_6	1.00	cop[tikv]	table:t1, partition:p3, range:[3,3], keep order:false, stats:pseudo
 SELECT * FROM t1 WHERE a = 4;
 a
 4
 EXPLAIN SELECT * FROM t1 WHERE a = 4;
-id	count	task	operator info
+id	EstRows	task	operator info
 TableReader_7	1.00	root	data:TableRangeScan_6
 └─TableRangeScan_6	1.00	cop[tikv]	table:t1, partition:p4, range:[4,4], keep order:false, stats:pseudo
 SELECT * FROM t1 WHERE a = 5;
 a
 5
 EXPLAIN SELECT * FROM t1 WHERE a = 5;
-id	count	task	operator info
+id	EstRows	task	operator info
 TableReader_7	1.00	root	data:TableRangeScan_6
 └─TableRangeScan_6	1.00	cop[tikv]	table:t1, partition:max, range:[5,5], keep order:false, stats:pseudo
 SELECT * FROM t1 WHERE a = 6;
 a
 6
 EXPLAIN SELECT * FROM t1 WHERE a = 6;
-id	count	task	operator info
+id	EstRows	task	operator info
 TableReader_7	1.00	root	data:TableRangeScan_6
 └─TableRangeScan_6	1.00	cop[tikv]	table:t1, partition:max, range:[6,6], keep order:false, stats:pseudo
 SELECT * FROM t1 WHERE a >= 1 order by a;
@@ -925,7 +925,7 @@ a
 6
 7
 EXPLAIN SELECT * FROM t1 WHERE a >= 5;
-id	count	task	operator info
+id	EstRows	task	operator info
 TableReader_7	3333.33	root	data:TableRangeScan_6
 └─TableRangeScan_6	3333.33	cop[tikv]	table:t1, partition:max, range:[5,+inf], keep order:false, stats:pseudo
 SELECT * FROM t1 WHERE a >= 6 order by a;
@@ -933,7 +933,7 @@ a
 6
 7
 EXPLAIN SELECT * FROM t1 WHERE a >= 6;
-id	count	task	operator info
+id	EstRows	task	operator info
 TableReader_7	3333.33	root	data:TableRangeScan_6
 └─TableRangeScan_6	3333.33	cop[tikv]	table:t1, partition:max, range:[6,+inf], keep order:false, stats:pseudo
 SELECT * FROM t1 WHERE a > 1 order by a;
@@ -990,7 +990,7 @@ a
 6
 7
 EXPLAIN SELECT * FROM t1 WHERE a > 4;
-id	count	task	operator info
+id	EstRows	task	operator info
 TableReader_7	3333.33	root	data:TableRangeScan_6
 └─TableRangeScan_6	3333.33	cop[tikv]	table:t1, partition:max, range:(4,+inf], keep order:false, stats:pseudo
 SELECT * FROM t1 WHERE a > 5 order by a;
@@ -998,14 +998,14 @@ a
 6
 7
 EXPLAIN SELECT * FROM t1 WHERE a > 5;
-id	count	task	operator info
+id	EstRows	task	operator info
 TableReader_7	3333.33	root	data:TableRangeScan_6
 └─TableRangeScan_6	3333.33	cop[tikv]	table:t1, partition:max, range:(5,+inf], keep order:false, stats:pseudo
 SELECT * FROM t1 WHERE a > 6 order by a;
 a
 7
 EXPLAIN SELECT * FROM t1 WHERE a > 6;
-id	count	task	operator info
+id	EstRows	task	operator info
 TableReader_7	3333.33	root	data:TableRangeScan_6
 └─TableRangeScan_6	3333.33	cop[tikv]	table:t1, partition:max, range:(6,+inf], keep order:false, stats:pseudo
 DROP TABLE t1;

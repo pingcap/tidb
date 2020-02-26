@@ -23,11 +23,11 @@ KEY `idx_b` (`b`),
 KEY `idx_a_b` (`a`,`b`)
 );
 EXPLAIN SELECT a FROM sgc where a < 3;
-id	count	task	operator info
+id	EstRows	task	operator info
 IndexReader_6	3323.33	root	index:IndexRangeScan_5
 └─IndexRangeScan_5	3323.33	cop[tikv]	table:sgc, index:a, range:[-inf,3), keep order:false, stats:pseudo
 EXPLAIN SELECT a, b FROM sgc where a < 3;
-id	count	task	operator info
+id	EstRows	task	operator info
 IndexReader_6	3323.33	root	index:IndexRangeScan_5
 └─IndexRangeScan_5	3323.33	cop[tikv]	table:sgc, index:a, b, range:[-inf,3), keep order:false, stats:pseudo
 EXPLAIN SELECT a, b from sgc where b < 3;
@@ -139,7 +139,7 @@ DROP TABLE IF EXISTS t1;
 CREATE TABLE t1(a INT, b INT AS (a+1) VIRTUAL, c INT AS (b+1) VIRTUAL, d INT AS (c+1) VIRTUAL, KEY(b), INDEX IDX(c, d));
 INSERT INTO t1 (a) VALUES (0);
 EXPLAIN SELECT b FROM t1 WHERE b=1;
-id	count	task	operator info
+id	EstRows	task	operator info
 IndexReader_6	10.00	root	index:IndexRangeScan_5
 └─IndexRangeScan_5	10.00	cop[tikv]	table:t1, index:b, range:[1,1], keep order:false, stats:pseudo
 EXPLAIN SELECT b, c, d FROM t1 WHERE b=1;

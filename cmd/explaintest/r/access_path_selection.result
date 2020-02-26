@@ -6,11 +6,11 @@ KEY `IDX_b` (`b`),
 KEY `IDX_ab` (`a`, `b`)
 );
 explain select a from access_path_selection where a < 3;
-id	count	task	operator info
+id	EstRows	task	operator info
 IndexReader_6	3323.33	root	index:IndexRangeScan_5
 └─IndexRangeScan_5	3323.33	cop[tikv]	table:access_path_selection, index:a, range:[-inf,3), keep order:false, stats:pseudo
 explain select a, b from access_path_selection where a < 3;
-id	count	task	operator info
+id	EstRows	task	operator info
 IndexReader_6	3323.33	root	index:IndexRangeScan_5
 └─IndexRangeScan_5	3323.33	cop[tikv]	table:access_path_selection, index:a, b, range:[-inf,3), keep order:false, stats:pseudo
 explain select a, b from access_path_selection where b < 3;

@@ -447,7 +447,7 @@ Projection_8	10000.00	root	test.t.a
     └─TableReader_7	10000.00	root	data:TableFullScan_6
       └─TableFullScan_6	10000.00	cop[tikv]	table:t, keep order:false, stats:pseudo
 explain select a, b from t order by abs(2);
-id	count	task	operator info
+id	EstRows	task	operator info
 TableReader_8	10000.00	root	data:TableFullScan_7
 └─TableFullScan_7	10000.00	cop[tikv]	table:t, keep order:false, stats:pseudo
 explain select a from t order by abs(rand())+1;

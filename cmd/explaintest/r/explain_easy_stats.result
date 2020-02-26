@@ -24,7 +24,7 @@ Projection_11	1600.00	root	test.t3.a, test.t3.b, test.t3.c, test.t3.d
     └─TableReader_15	2000.00	root	data:TableFullScan_14
       └─TableFullScan_14	2000.00	cop[tikv]	table:t3, keep order:false
 explain select * from t1;
-id	count	task	operator info
+id	EstRows	task	operator info
 TableReader_5	1999.00	root	data:TableFullScan_4
 └─TableFullScan_4	1999.00	cop[tikv]	table:t1, keep order:false
 explain select * from t1 order by c2;
@@ -38,11 +38,11 @@ Sort_4	1985.00	root	test.t2.c2:asc
 └─TableReader_8	1985.00	root	data:TableFullScan_7
   └─TableFullScan_7	1985.00	cop[tikv]	table:t2, keep order:false
 explain select * from t1 where t1.c1 > 0;
-id	count	task	operator info
+id	EstRows	task	operator info
 TableReader_6	1999.00	root	data:TableRangeScan_5
 └─TableRangeScan_5	1999.00	cop[tikv]	table:t1, range:(0,+inf], keep order:false
 explain select t1.c1, t1.c2 from t1 where t1.c2 = 1;
-id	count	task	operator info
+id	EstRows	task	operator info
 IndexReader_6	0.00	root	index:IndexRangeScan_5
 └─IndexRangeScan_5	0.00	cop[tikv]	table:t1, index:c2, range:[1,1], keep order:false
 explain select * from t1 left join t2 on t1.c2 = t2.c1 where t1.c1 > 1;
@@ -64,7 +64,7 @@ Delete_4	N/A	root	N/A
   ├─IndexRangeScan_9(Build)	0.00	cop[tikv]	table:t1, index:c2, range:[1,1], keep order:false
   └─TableRowIDScan_10(Probe)	0.00	cop[tikv]	table:t1, keep order:false
 explain select count(b.c2) from t1 a, t2 b where a.c1 = b.c2 group by a.c1;
-id	count	task	operator info
+id	EstRows	task	operator info
 Projection_11	1985.00	root	cast(Column#8, bigint(21) BINARY)->Column#7
 └─HashLeftJoin_21	1985.00	root	inner join, inner:HashAgg_25, equal:[eq(test.t1.c1, test.t2.c2)]
   ├─HashAgg_25(Build)	1985.00	root	group by:test.t2.c2, funcs:count(test.t2.c2)->Column#8, funcs:firstrow(test.t2.c2)->test.t2.c2
@@ -194,6 +194,6 @@ drop table if exists tbl;
 create table tbl(column1 int, column2 int, index idx(column1, column2));
 load stats 's/explain_easy_stats_tbl_dnf.json';
 explain select * from tbl where (column1=0 and column2=1) or (column1=1 and column2=3) or (column1=2 and column2=5);
-id	count	task	operator info
+id	EstRows	task	operator info
 IndexReader_6	3.00	root	index:IndexRangeScan_5
 └─IndexRangeScan_5	3.00	cop[tikv]	table:tbl, index:column1, column2, range:[0 1,0 1], [1 3,1 3], [2 5,2 5], keep order:false
