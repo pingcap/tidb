@@ -24,6 +24,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
@@ -34,6 +35,8 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
@@ -482,4 +485,124 @@ func (s *testBinlogSuite) TestAddSpecialComment(c *C) {
 		re := binloginfo.AddSpecialComment(ca.input)
 		c.Assert(re, Equals, ca.result)
 	}
+}
+
+func (s *testBinlogSuite) TestSequenceBinlog(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.Se.GetSessionVars().BinlogClient = s.client
+
+	tk.MustExec("drop sequence if exists seq")
+	// the default start = 1, increment = 1.
+	tk.MustExec("create sequence seq cache 3")
+	// trigger the sequence cache allocation.
+	tk.MustExec("select nextval(seq)")
+	sequenceTable := testGetTableByName(c, tk.Se, "test", "seq")
+	tc, ok := sequenceTable.(*tables.TableCommon)
+	c.Assert(ok, Equals, true)
+	_, end, round := tc.GetSequenceCommon().GetSequenceBaseEndRound()
+	c.Assert(end, Equals, int64(3))
+	c.Assert(round, Equals, int64(0))
+
+	// Check the sequence binlog.
+	// Got matched pre DDL and commit DDL.
+	var matched bool
+	for i := 0; i < 10; i++ {
+		preDDL, commitDDL := getLatestDDLBinlog(c, s.pump, "select setval(test.seq, 3)")
+		if preDDL != nil && commitDDL != nil {
+			if preDDL.DdlJobId == commitDDL.DdlJobId {
+				c.Assert(commitDDL.StartTs, Equals, preDDL.StartTs)
+				c.Assert(commitDDL.CommitTs, Greater, commitDDL.StartTs)
+				matched = true
+				break
+			}
+		}
+		time.Sleep(time.Millisecond * 10)
+	}
+	c.Assert(matched, IsTrue)
+
+	// Invalidate the current sequence cache.
+	tk.MustExec("select setval(seq, 5)")
+	// trigger the next sequence cache allocation.
+	tk.MustExec("select nextval(seq)")
+	sequenceTable = testGetTableByName(c, tk.Se, "test", "seq")
+	tc, ok = sequenceTable.(*tables.TableCommon)
+	c.Assert(ok, Equals, true)
+	_, end, round = tc.GetSequenceCommon().GetSequenceBaseEndRound()
+	c.Assert(end, Equals, int64(8))
+	c.Assert(round, Equals, int64(0))
+
+	for i := 0; i < 10; i++ {
+		preDDL, commitDDL := getLatestDDLBinlog(c, s.pump, "select setval(test.seq, 8)")
+		if preDDL != nil && commitDDL != nil {
+			if preDDL.DdlJobId == commitDDL.DdlJobId {
+				c.Assert(commitDDL.StartTs, Equals, preDDL.StartTs)
+				c.Assert(commitDDL.CommitTs, Greater, commitDDL.StartTs)
+				matched = true
+				break
+			}
+		}
+		time.Sleep(time.Millisecond * 10)
+	}
+	c.Assert(matched, IsTrue)
+
+	tk.MustExec("create database test2")
+	tk.MustExec("use test2")
+	tk.MustExec("drop sequence if exists seq2")
+	tk.MustExec("create sequence seq2 start 1 increment -2 cache 3 minvalue -10 maxvalue 10 cycle")
+	// trigger the sequence cache allocation.
+	tk.MustExec("select nextval(seq2)")
+	sequenceTable = testGetTableByName(c, tk.Se, "test2", "seq2")
+	tc, ok = sequenceTable.(*tables.TableCommon)
+	c.Assert(ok, Equals, true)
+	_, end, round = tc.GetSequenceCommon().GetSequenceBaseEndRound()
+	c.Assert(end, Equals, int64(-3))
+	c.Assert(round, Equals, int64(0))
+
+	for i := 0; i < 10; i++ {
+		preDDL, commitDDL := getLatestDDLBinlog(c, s.pump, "select setval(test2.seq2, -3)")
+		if preDDL != nil && commitDDL != nil {
+			if preDDL.DdlJobId == commitDDL.DdlJobId {
+				c.Assert(commitDDL.StartTs, Equals, preDDL.StartTs)
+				c.Assert(commitDDL.CommitTs, Greater, commitDDL.StartTs)
+				matched = true
+				break
+			}
+		}
+		time.Sleep(time.Millisecond * 10)
+	}
+	c.Assert(matched, IsTrue)
+
+	tk.MustExec("select setval(seq2, -100)")
+	// trigger the sequence cache allocation.
+	tk.MustExec("select nextval(seq2)")
+	sequenceTable = testGetTableByName(c, tk.Se, "test2", "seq2")
+	tc, ok = sequenceTable.(*tables.TableCommon)
+	c.Assert(ok, Equals, true)
+	_, end, round = tc.GetSequenceCommon().GetSequenceBaseEndRound()
+	c.Assert(end, Equals, int64(6))
+	c.Assert(round, Equals, int64(1))
+	for i := 0; i < 10; i++ {
+		preDDL, commitDDL := getLatestDDLBinlog(c, s.pump, "select setval(test2.seq2, 6)")
+		if preDDL != nil && commitDDL != nil {
+			if preDDL.DdlJobId == commitDDL.DdlJobId {
+				c.Assert(commitDDL.StartTs, Equals, preDDL.StartTs)
+				c.Assert(commitDDL.CommitTs, Greater, commitDDL.StartTs)
+				matched = true
+				break
+			}
+		}
+		time.Sleep(time.Millisecond * 10)
+	}
+	c.Assert(matched, IsTrue)
+}
+
+func testGetTableByName(c *C, ctx sessionctx.Context, db, table string) table.Table {
+	dom := domain.GetDomain(ctx)
+	// Make sure the table schema is the new schema.
+	err := dom.Reload()
+	c.Assert(err, IsNil)
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(db), model.NewCIStr(table))
+	c.Assert(err, IsNil)
+	return tbl
 }

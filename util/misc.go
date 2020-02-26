@@ -316,6 +316,6 @@ type SequenceSchema interface {
 // Otherwise calling table will cause import cycle problem.
 type SequenceTable interface {
 	GetSequenceID() int64
-	GetSequenceNextVal(dbName, seqName string) (int64, error)
-	SetSequenceVal(newVal int64) (int64, bool, error)
+	GetSequenceNextVal(ctx interface{}, dbName, seqName string) (int64, error)
+	SetSequenceVal(ctx interface{}, newVal int64, dbName, seqName string) (int64, bool, error)
 }
