@@ -565,6 +565,62 @@ func BenchmarkAllocator_Alloc(b *testing.B) {
 	}
 }
 
+func BenchmarkAllocator_SequenceAlloc(b *testing.B) {
+	b.StopTimer()
+	store, err := mockstore.NewMockTikvStore()
+	if err != nil {
+		return
+	}
+	defer store.Close()
+	var seq *model.SequenceInfo
+	var sequenceBase int64
+	err = kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		err = m.CreateDatabase(&model.DBInfo{ID: 1, Name: model.NewCIStr("a")})
+		if err != nil {
+			return err
+		}
+		seq = &model.SequenceInfo{
+			Start:      1,
+			Cycle:      true,
+			Cache:      false,
+			MinValue:   -10,
+			MaxValue:   math.MaxInt64,
+			Increment:  2,
+			CacheValue: 2000000,
+		}
+		seqTable := &model.TableInfo{
+			ID:       1,
+			Name:     model.NewCIStr("seq"),
+			Sequence: seq,
+		}
+		sequenceBase = seq.Start - 1
+		err = m.CreateSequenceAndSetSeqValue(1, seqTable, sequenceBase)
+		return err
+	})
+	if err != nil {
+		return
+	}
+	alloc := autoid.NewSequenceAllocator(store, 1, seq)
+	b.StartTimer()
+	for i := 0; i < b.N; i++ {
+		_, _, _, err := alloc.AllocSeqCache(1)
+		if err != nil {
+			fmt.Println("err")
+		}
+	}
+}
+
+func BenchmarkAllocator_Seek(b *testing.B) {
+	base := int64(21421948021)
+	offset := int64(-351354365326)
+	increment := int64(3)
+	b.StartTimer()
+	for i := 0; i < b.N; i++ {
+		autoid.CalcSequenceBatchSize(base, 3, increment, offset, math.MinInt64, math.MaxInt64)
+	}
+}
+
 func (*testSuite) TestSequenceAutoid(c *C) {
 	store, err := mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)

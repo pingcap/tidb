@@ -16,7 +16,6 @@ package autoid
 import (
 	"context"
 	"math"
-	"math/big"
 	"sync"
 	"time"
 
@@ -496,55 +495,51 @@ func CalcSequenceBatchSize(base, size, increment, offset, MIN, MAX int64) (int64
 // The seeking formula is describe as below:
 //  nr  := (base + increment - offset) / increment
 // first := nr*increment + offset
+// Because formula computation will overflow Int64, so we transfer it to uint64 for distance computation.
 func SeekToFirstSequenceValue(base, increment, offset, MIN, MAX int64) (int64, bool) {
 	if increment > 0 {
 		// Sequence is already allocated to the end.
 		if base >= MAX {
 			return 0, false
 		}
-		bigBase := big.NewInt(base)
-		bigOffset := big.NewInt(offset)
-		bigIncrement := big.NewInt(increment)
-		bigBase.Add(bigBase, bigIncrement)
-		bigBase.Sub(bigBase, bigOffset)
-		// The divide is differ from the go divide, -1/2 is equals to 0 but here got -1 instead.
-		// Should transfer numerator to be positive before divide.
-		bigBase.Abs(bigBase)
-		bigBase.Div(bigBase, bigIncrement)
-		bigBase.Mul(bigBase, bigIncrement)
-		bigBase.Add(bigBase, bigOffset)
-		if !bigBase.IsInt64() {
+		uMax := EncodeIntToCmpUint(MAX)
+		uBase := EncodeIntToCmpUint(base)
+		uOffset := EncodeIntToCmpUint(offset)
+		uIncrement := uint64(increment)
+		if uMax-uBase < uIncrement {
+			// Enum the possible first value.
+			for i := uBase + 1; i <= uMax; i++ {
+				if (i-uOffset)%uIncrement == 0 {
+					return DecodeCmpUintToInt(i), true
+				}
+			}
 			return 0, false
 		}
-		first := bigBase.Int64()
-		if first > MAX {
-			return 0, false
-		}
+		nr := (uBase + uIncrement - uOffset) / uIncrement
+		nr = nr*uIncrement + uOffset
+		first := DecodeCmpUintToInt(nr)
 		return first, true
 	}
 	// Sequence is already allocated to the end.
 	if base <= MIN {
 		return 0, false
 	}
-	bigBase := big.NewInt(base)
-	bigOffset := big.NewInt(offset)
-	bigIncrement := big.NewInt(increment)
-	bigAbsIncrement := big.NewInt(-increment)
-	bigBase.Add(bigBase, bigIncrement)
-	bigBase.Sub(bigBase, bigOffset)
-	// The divide is differ from the go divide, -1/-2 is equals to 0 but here got -1 instead.
-	// Should transfer numerator and denominator to be positive before divide.
-	bigBase.Abs(bigBase)
-	bigBase.Div(bigBase, bigAbsIncrement)
-	bigBase.Mul(bigBase, bigIncrement)
-	bigBase.Add(bigBase, bigOffset)
-	if !bigBase.IsInt64() {
+	uMin := EncodeIntToCmpUint(MIN)
+	uBase := EncodeIntToCmpUint(base)
+	uOffset := EncodeIntToCmpUint(offset)
+	uIncrement := uint64(-increment)
+	if uBase-uMin < uIncrement {
+		// Enum the possible first value.
+		for i := uBase - 1; i >= uMin; i-- {
+			if (uOffset-i)%uIncrement == 0 {
+				return DecodeCmpUintToInt(i), true
+			}
+		}
 		return 0, false
 	}
-	first := bigBase.Int64()
-	if first < MIN {
-		return 0, false
-	}
+	nr := (uOffset - uBase + uIncrement) / uIncrement
+	nr = uOffset - nr*uIncrement
+	first := DecodeCmpUintToInt(nr)
 	return first, true
 }
 
@@ -818,4 +813,16 @@ func generateAutoIDByAllocType(m *meta.Meta, dbID, tableID, step int64, allocTyp
 	default:
 		return 0, errInvalidAllocatorType.GenWithStackByArgs()
 	}
+}
+
+const signMask uint64 = 0x8000000000000000
+
+// EncodeIntToCmpUint make int v to comparable uint type
+func EncodeIntToCmpUint(v int64) uint64 {
+	return uint64(v) ^ signMask
+}
+
+// DecodeCmpUintToInt decodes the u that encoded by EncodeIntToCmpUint
+func DecodeCmpUintToInt(u uint64) int64 {
+	return int64(u ^ signMask)
 }
