@@ -447,7 +447,7 @@ func (is *InfoSyncer) refreshTopology(ctx context.Context) error {
 	}
 	key := fmt.Sprintf("%s/%s:%v/ttl", TopologyInformationPath, is.info.IP, is.info.Port)
 	return util.PutKVToEtcd(ctx, is.etcdCli, keyOpDefaultRetryCnt, key,
-		time.Now().String(),
+		fmt.Sprintf("%v", time.Now().UnixNano()),
 		clientv3.WithLease(is.topologySession.Lease()))
 }
 
