@@ -47,3 +47,4 @@ Writing a design document can promote us to think deliberately and gather knowle
 - [Proposal: Support Skyline Pruning](./2019-01-25-skyline-pruning.md)
 - [Proposal: Support Index Merge](./2019-04-11-indexmerge.md)
 - [Proposal: Support Automatically Index Recommendation](./2019-11-05-index-advisor.md)
+- [Proposal: Chunk RPC](./2020-02-25-chunk-rpc.md)
