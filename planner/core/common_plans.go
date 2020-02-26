@@ -692,9 +692,9 @@ func (e *Explain) prepareSchema() error {
 
 	switch {
 	case format == ast.ExplainFormatROW && !e.Analyze:
-		fieldNames = []string{"id", "EstRows", "task", "operator info"}
+		fieldNames = []string{"id", "estRows", "task", "operator info"}
 	case format == ast.ExplainFormatROW && e.Analyze:
-		fieldNames = []string{"id", "EstRows", "ActRows", "task", "operator info", "execution info", "memory", "disk"}
+		fieldNames = []string{"id", "estRows", "actRows", "task", "operator info", "execution info", "memory", "disk"}
 	case format == ast.ExplainFormatDOT:
 		fieldNames = []string{"dot contents"}
 	case format == ast.ExplainFormatHint:
@@ -843,15 +843,15 @@ func (e *Explain) explainPlanInRowFormat(p Plan, taskType, driverSide, indent st
 
 // prepareOperatorInfo generates the following information for every plan:
 // operator id, task type, operator info, and the estemated rows.
-// `EstRows` used to be called `count`, see issue/14603.
+// `estRows` used to be called `count`, see issue/14603.
 func (e *Explain) prepareOperatorInfo(p Plan, taskType, driverSide, indent string, isLastChild bool) {
 	operatorInfo := p.ExplainInfo()
-	EstRows := "N/A"
+	estRows := "N/A"
 	if si := p.statsInfo(); si != nil {
-		EstRows = strconv.FormatFloat(si.RowCount, 'f', 2, 64)
+		estRows = strconv.FormatFloat(si.RowCount, 'f', 2, 64)
 	}
 	explainID := p.ExplainID().String()
-	row := []string{texttree.PrettyIdentifier(explainID+driverSide, indent, isLastChild), EstRows, taskType, operatorInfo}
+	row := []string{texttree.PrettyIdentifier(explainID+driverSide, indent, isLastChild), estRows, taskType, operatorInfo}
 	if e.Analyze {
 		runtimeStatsColl := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl
 		// There maybe some mock information for cop task to let runtimeStatsColl.Exists(p.ExplainID()) is true.
@@ -891,15 +891,15 @@ func (e *Explain) prepareOperatorInfo(p Plan, taskType, driverSide, indent strin
 			row = append(row, "N/A")
 		}
 
-		// Calculate 'ActRows'(actual rows) and put it next by 'EstRows'(estimate rows).
-		var ActRows string
+		// Calculate 'actRows'(actual rows) and put it next by 'estRows'(estimate rows).
+		var actRows string
 		if totalLoops == 0 {
-			ActRows = "N/A"
+			actRows = "N/A"
 		} else {
-			ActRows = fmt.Sprint(float64(totalRows) / float64(totalLoops))
+			actRows = fmt.Sprint(float64(totalRows) / float64(totalLoops))
 		}
 		tmp := append([]string{}, row[2:]...)
-		row = append(row[:2], ActRows)
+		row = append(row[:2], actRows)
 		row = append(row, tmp...)
 
 	}

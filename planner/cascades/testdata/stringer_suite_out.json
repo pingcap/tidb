@@ -185,7 +185,7 @@
         "SQL": "select a from t where a > 10 limit 3",
         "Result": [
           "Group#0 Schema:[test.t.a], UniqueKey:[test.t.a]",
-          "    Limit_4 input:[Group#1], offset:0, EstRows:3",
+          "    Limit_4 input:[Group#1], offset:0, estRows:3",
           "Group#1 Schema:[test.t.a], UniqueKey:[test.t.a]",
           "    Projection_3 input:[Group#2], test.t.a",
           "Group#2 Schema:[test.t.a], UniqueKey:[test.t.a]",
@@ -300,7 +300,7 @@
           "Group#3 Schema:[test.t.a], UniqueKey:[test.t.a]",
           "    MaxOneRow_8 input:[Group#5]",
           "Group#5 Schema:[test.t.a], UniqueKey:[test.t.a]",
-          "    Limit_7 input:[Group#6], offset:0, EstRows:1",
+          "    Limit_7 input:[Group#6], offset:0, estRows:1",
           "Group#6 Schema:[test.t.a], UniqueKey:[test.t.a]",
           "    Sort_6 input:[Group#7], test.t.a:asc",
           "Group#7 Schema:[test.t.a], UniqueKey:[test.t.a]",
