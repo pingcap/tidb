@@ -116,10 +116,19 @@ func (sf *ScalarFunction) GetCtx() sessionctx.Context {
 func (sf *ScalarFunction) String() string {
 	var buffer bytes.Buffer
 	fmt.Fprintf(&buffer, "%s(", sf.FuncName.L)
-	for i, arg := range sf.GetArgs() {
-		buffer.WriteString(arg.String())
-		if i+1 != len(sf.GetArgs()) {
+	switch sf.FuncName.L {
+	case ast.Cast:
+		for _, arg := range sf.GetArgs() {
+			buffer.WriteString(arg.String())
 			buffer.WriteString(", ")
+			buffer.WriteString(sf.RetType.String())
+		}
+	default:
+		for i, arg := range sf.GetArgs() {
+			buffer.WriteString(arg.String())
+			if i+1 != len(sf.GetArgs()) {
+				buffer.WriteString(", ")
+			}
 		}
 	}
 	buffer.WriteString(")")
