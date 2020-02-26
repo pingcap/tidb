@@ -806,10 +806,7 @@ func (c *Config) Valid() error {
 
 	// test log level
 	l := zap.NewAtomicLevel()
-	if err := l.UnmarshalText([]byte(c.Log.Level)); err != nil {
-		return err
-	}
-	return nil
+	return l.UnmarshalText([]byte(c.Log.Level))
 }
 
 func hasRootPrivilege() bool {
