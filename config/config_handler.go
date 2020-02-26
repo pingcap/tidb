@@ -181,6 +181,9 @@ func (ch *pdConfHandler) register() {
 }
 
 func (ch *pdConfHandler) writeConfig() {
+	if ch.confPath == "" { // for test
+		return
+	}
 	conf := ch.curConf.Load().(*Config)
 	if err := atomicWriteConfig(conf, ch.confPath); err != nil {
 		logutil.Logger(context.Background()).Warn("write config to disk error", zap.Error(err))

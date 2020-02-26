@@ -199,7 +199,7 @@ func (s *testConfigSuite) TestDynamicConfigItems(c *C) {
 		}
 		cnt++
 	}
-	ch, err := newPDConfHandler(initConf, mockReloadFunc, newMockPDConfigClient)
+	ch, err := newPDConfHandler("", initConf, mockReloadFunc, newMockPDConfigClient)
 	c.Assert(err, IsNil)
 	ch.timeAfter = tmAfter
 
