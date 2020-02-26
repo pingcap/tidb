@@ -578,7 +578,7 @@ var MetricTableMap = map[string]MetricTableDef{
 	},
 	"tidb_gc_config": {
 		Comment: "kv storage garbage collection config including gc_life_time and gc_run_interval",
-		PromQL:  "max(tidb_tikvclient_gc_config{$LABEL_CONDITIONS}) by (type,instance)",
+		PromQL:  "tidb_tikvclient_gc_config{$LABEL_CONDITIONS}",
 		Labels:  []string{"instance", "type"},
 	},
 	"tidb_gc_fail_opm": {
@@ -682,6 +682,11 @@ var MetricTableMap = map[string]MetricTableDef{
 		Labels:  []string{"instance", "type", "event"},
 		Comment: "The number of different operators",
 	},
+	"pd_schedule_operator_total_num": {
+		PromQL:  `sum(increase(pd_schedule_operators_count{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type,event,instance)`,
+		Labels:  []string{"instance", "type", "event"},
+		Comment: "The number of different operators",
+	},
 	"pd_operator_finish_duration": {
 		PromQL:   `histogram_quantile($QUANTILE, sum(rate(pd_schedule_finish_operators_duration_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,type))`,
 		Labels:   []string{"type"},
@@ -729,7 +734,7 @@ var MetricTableMap = map[string]MetricTableDef{
 		Labels:  []string{"instance", "address", "store", "type"},
 		Comment: "The leader movement details among TiKV instances",
 	},
-	"pd_balance_region_movement": {
+	"pd_scheduler_balance_region": {
 		PromQL:  `sum(delta(pd_scheduler_balance_region{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (address,store,instance,type)`,
 		Labels:  []string{"instance", "address", "store", "type"},
 		Comment: "The Region movement details among TiKV instances",
@@ -931,6 +936,11 @@ var MetricTableMap = map[string]MetricTableDef{
 	},
 	"tikv_storage_async_requests": {
 		PromQL:  `sum(rate(tikv_storage_engine_async_request_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance, status, type)`,
+		Labels:  []string{"instance", "status", "type"},
+		Comment: "The number of different raftstore errors on each TiKV instance",
+	},
+	"tikv_storage_async_requests_total_count": {
+		PromQL:  `sum(increase(tikv_storage_engine_async_request_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance, status, type)`,
 		Labels:  []string{"instance", "status", "type"},
 		Comment: "The number of different raftstore errors on each TiKV instance",
 	},
@@ -1361,16 +1371,6 @@ var MetricTableMap = map[string]MetricTableDef{
 		PromQL:  `max(tikv_gcworker_autogc_safe_point{$LABEL_CONDITIONS}) by (instance) / (2^18)`,
 		Labels:  []string{"instance"},
 		Comment: "SafePoint used for TiKV's Auto GC",
-	},
-	"tidb_gc_lifetime": {
-		PromQL:  `max(tidb_tikvclient_gc_config{type="tikv_gc_life_time"}) by (instance)`,
-		Labels:  []string{"instance"},
-		Comment: " The lifetime of TiDB GC",
-	},
-	"tidb_gc_interval": {
-		PromQL:  `max(tidb_tikvclient_gc_config{type="tikv_gc_run_interval"}) by (instance)`,
-		Labels:  []string{"instance"},
-		Comment: "The interval of TiDB GC",
 	},
 	"tikv_send_snapshot_duration": {
 		PromQL:   `histogram_quantile($QUANTILE, sum(rate(tikv_server_send_snapshot_duration_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,instance))`,
@@ -2894,14 +2894,12 @@ var MetricTableMap = map[string]MetricTableDef{
 		Comment: "The total time of ",
 	},
 	"tikv_raft_message_batch_size_total_count": {
-		PromQL:  "sum(increase(tikv_server_raft_message_batch_size_count[60s])) by (instance)",
-		Labels:  []string{"instance"},
-		Comment: "The total count of ",
+		PromQL: "sum(increase(tikv_server_raft_message_batch_size_count[60s])) by (instance)",
+		Labels: []string{"instance"},
 	},
 	"tikv_raft_message_batch_total_size": {
-		PromQL:  "sum(increase(tikv_server_raft_message_batch_size_sum[60s])) by (instance)",
-		Labels:  []string{"instance"},
-		Comment: "The total time of ",
+		PromQL: "sum(increase(tikv_server_raft_message_batch_size_sum[60s])) by (instance)",
+		Labels: []string{"instance"},
 	},
 	"tikv_raft_proposals_per_ready_total_count": {
 		PromQL:  "sum(increase(tikv_raftstore_apply_proposal_count[60s])) by (instance)",

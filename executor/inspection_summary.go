@@ -284,8 +284,6 @@ var inspectionSummaryRules = map[string][]string{
 		"tidb_gc_delete_range_task_status",
 		"tidb_gc_duration",
 		"tidb_gc_fail_opm",
-		"tidb_gc_interval",
-		"tidb_gc_lifetime",
 		"tidb_gc_push_task_duration",
 		"tidb_gc_too_many_locks_opm",
 		"tidb_gc_worker_action_opm",
@@ -348,7 +346,7 @@ var inspectionSummaryRules = map[string][]string{
 		"tikv_engine_write_stall",
 	},
 	"pd": {
-		"pd_balance_region_movement",
+		"pd_scheduler_balance_region",
 		"pd_balance_scheduler_status",
 		"pd_checker_event_count",
 		"pd_client_cmd_duration",
