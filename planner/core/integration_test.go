@@ -529,8 +529,8 @@ func (s *testIntegrationSuite) TestIndexJoinTableRange(c *C) {
 		})
 		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
 	}
-}  
-  
+}
+
 func (s *testIntegrationSuite) TestTopNByConstFunc(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
