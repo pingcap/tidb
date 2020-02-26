@@ -15,6 +15,9 @@ package config
 
 import (
 	"fmt"
+	"io/ioutil"
+	"os"
+	"path"
 	"reflect"
 
 	. "github.com/pingcap/check"
@@ -85,4 +88,34 @@ func (s *testConfigSuite) TestMergeConfigItems(c *C) {
 	c.Assert(oldConf.Port, Equals, oriConf.Port)
 	c.Assert(oldConf.AdvertiseAddress, Equals, oriConf.AdvertiseAddress)
 	c.Assert(oldConf.Log.SlowThreshold, Equals, oriConf.Log.SlowThreshold)
+}
+
+func (s *testConfigSuite) TestAtomicWriteConfig(c *C) {
+	conf, _ := CloneConf(&defaultConf)
+	confPath := path.Join(os.TempDir(), "test-write-config.toml")
+	conf.Performance.MaxMemory = 123
+	conf.Performance.MaxProcs = 234
+	conf.Performance.PseudoEstimateRatio = 3.45
+	c.Assert(atomicWriteConfig(conf, confPath), IsNil)
+
+	content, err := ioutil.ReadFile(confPath)
+	c.Assert(err, IsNil)
+	dconf, err := decodeConfig(string(content))
+	c.Assert(err, IsNil)
+	c.Assert(dconf.Performance.MaxMemory, Equals, uint64(123))
+	c.Assert(dconf.Performance.MaxProcs, Equals, uint(234))
+	c.Assert(dconf.Performance.PseudoEstimateRatio, Equals, 3.45)
+
+	conf.Performance.MaxMemory = 321
+	conf.Performance.MaxProcs = 432
+	conf.Performance.PseudoEstimateRatio = 54.3
+	c.Assert(atomicWriteConfig(conf, confPath), IsNil)
+
+	content, err = ioutil.ReadFile(confPath)
+	c.Assert(err, IsNil)
+	dconf, err = decodeConfig(string(content))
+	c.Assert(err, IsNil)
+	c.Assert(dconf.Performance.MaxMemory, Equals, uint64(321))
+	c.Assert(dconf.Performance.MaxProcs, Equals, uint(432))
+	c.Assert(dconf.Performance.PseudoEstimateRatio, Equals, 54.3)
 }
