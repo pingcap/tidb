@@ -143,6 +143,20 @@ func (s *testCollateSuite) TestSetNewCollateEnabled(c *C) {
 	c.Assert(NewCollationEnabled(), Equals, true)
 }
 
+func (s *testCollateSuite) TestRewriteAndRestoreCollationID(c *C) {
+	SetNewCollationEnabledForTest(true)
+	c.Assert(RewriteNewCollationIDIfNeeded(5), Equals, int32(-5))
+	c.Assert(RewriteNewCollationIDIfNeeded(-5), Equals, int32(-5))
+	c.Assert(RestoreCollationIDIfNeeded(-5), Equals, int32(5))
+	c.Assert(RestoreCollationIDIfNeeded(5), Equals, int32(5))
+
+	SetNewCollationEnabledForTest(false)
+	c.Assert(RewriteNewCollationIDIfNeeded(5), Equals, int32(5))
+	c.Assert(RewriteNewCollationIDIfNeeded(-5), Equals, int32(-5))
+	c.Assert(RestoreCollationIDIfNeeded(5), Equals, int32(5))
+	c.Assert(RestoreCollationIDIfNeeded(-5), Equals, int32(-5))
+}
+
 func (s *testCollateSuite) TestGetCollator(c *C) {
 	defer testleak.AfterTest(c)()
 	SetNewCollationEnabledForTest(true)

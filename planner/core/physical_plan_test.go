@@ -1199,3 +1199,36 @@ func (s *testPlanSuite) doTestDAGPlanBuilderWindow(c *C, vars, input []string, o
 		c.Assert(core.ToString(p), Equals, output[i].Best, comment)
 	}
 }
+
+func (s *testPlanSuite) TestNominalSort(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk.MustExec("use test")
+	var input []string
+	var output []struct {
+		SQL    string
+		Plan   []string
+		Result []string
+	}
+	tk.MustExec("create table t (a int, b int, index idx_a(a), index idx_b(b))")
+	tk.MustExec("insert into t values(1, 1)")
+	tk.MustExec("insert into t values(1, 2)")
+	tk.MustExec("insert into t values(2, 4)")
+	tk.MustExec("insert into t values(3, 5)")
+	s.testData.GetTestCases(c, &input, &output)
+	for i, ts := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = ts
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + ts).Rows())
+			output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(ts).Rows())
+		})
+		tk.MustQuery("explain " + ts).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery(ts).Check(testkit.Rows(output[i].Result...))
+	}
+}

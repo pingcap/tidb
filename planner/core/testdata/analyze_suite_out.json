@@ -284,7 +284,7 @@
         "  ├─TableReader_12 10.00 root data:TableFullScan_11",
         "  │ └─TableFullScan_11 10.00 cop[tikv] table:t, keep order:false",
         "  └─MaxOneRow_15 1.00 root ",
-        "    └─Projection_16 0.10 root concat(cast(test.t.a), ,, cast(test.t.b))->Column#9",
+        "    └─Projection_16 0.10 root concat(cast(test.t.a, var_string(20)), ,, cast(test.t.b, var_string(20)))->Column#9",
         "      └─IndexReader_19 0.10 root index:Selection_18",
         "        └─Selection_18 0.10 cop[tikv] eq(test.t.a, test.t.a)",
         "          └─IndexRangeScan_17 1.00 cop[tikv] table:t1, index:c, b, a, range: decided by [eq(test.t.c, test.t.c)], keep order:false"

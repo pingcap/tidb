@@ -16,6 +16,8 @@ package config
 import (
 	"context"
 	"fmt"
+	"os"
+	"path"
 	"reflect"
 	"sync"
 	"sync/atomic"
@@ -65,7 +67,8 @@ func (mc *mockPDConfigClient) Close() {}
 func (s *testConfigSuite) TestConstantConfHandler(c *C) {
 	conf := defaultConf
 	conf.Store = "mock"
-	ch, err := NewConfHandler(&conf, nil, nil)
+	confPath := path.Join(os.TempDir(), "test-conf-path.toml")
+	ch, err := NewConfHandler(confPath, &conf, nil, nil)
 	c.Assert(err, IsNil)
 	_, ok := ch.(*constantConfHandler)
 	c.Assert(ok, IsTrue)
@@ -76,30 +79,31 @@ func (s *testConfigSuite) TestPDConfHandler(c *C) {
 	conf := defaultConf
 
 	// wrong path
+	confPath := path.Join(os.TempDir(), "test-conf-path.toml")
 	conf.Store = "WRONGPATH"
 	conf.Path = "WRONGPATH"
-	_, err := newPDConfHandler(&conf, nil, newMockPDConfigClient)
+	_, err := newPDConfHandler(confPath, &conf, nil, newMockPDConfigClient)
 	c.Assert(err, NotNil)
 
 	// error when creating PD config client
 	conf.Store = "tikv"
 	conf.Path = "node1:2379"
 	newMockPDConfigClientErr = fmt.Errorf("")
-	_, err = newPDConfHandler(&conf, nil, newMockPDConfigClient)
+	_, err = newPDConfHandler(confPath, &conf, nil, newMockPDConfigClient)
 	c.Assert(err, NotNil)
 
 	// error when registering
 	newMockPDConfigClientErr = nil
 	mockPDConfigClient0.err = fmt.Errorf("")
 	mockPDConfigClient0.confContent.Store("")
-	ch, err := newPDConfHandler(&conf, nil, newMockPDConfigClient)
+	ch, err := newPDConfHandler(confPath, &conf, nil, newMockPDConfigClient)
 	c.Assert(err, IsNil) // the local config will be used
 	ch.Close()
 
 	// wrong response when registering
 	mockPDConfigClient0.err = nil
 	mockPDConfigClient0.status = &configpb.Status{Code: configpb.StatusCode_UNKNOWN}
-	ch, err = newPDConfHandler(&conf, nil, newMockPDConfigClient)
+	ch, err = newPDConfHandler(confPath, &conf, nil, newMockPDConfigClient)
 	c.Assert(err, IsNil)
 	ch.Close()
 
@@ -107,7 +111,7 @@ func (s *testConfigSuite) TestPDConfHandler(c *C) {
 	mockPDConfigClient0.status.Code = configpb.StatusCode_WRONG_VERSION
 	content, _ := encodeConfig(&conf)
 	mockPDConfigClient0.confContent.Store(content)
-	ch, err = newPDConfHandler(&conf, nil, newMockPDConfigClient)
+	ch, err = newPDConfHandler(confPath, &conf, nil, newMockPDConfigClient)
 	c.Assert(err, IsNil)
 	ch.Close()
 
@@ -120,7 +124,7 @@ func (s *testConfigSuite) TestPDConfHandler(c *C) {
 		wg.Done()
 	}
 	conf.Performance.MaxMemory = 233
-	ch, err = newPDConfHandler(&conf, mockReloadFunc, newMockPDConfigClient)
+	ch, err = newPDConfHandler(confPath, &conf, mockReloadFunc, newMockPDConfigClient)
 	c.Assert(err, IsNil)
 	ch.interval = time.Second
 	newConf := conf
@@ -135,11 +139,12 @@ func (s *testConfigSuite) TestPDConfHandler(c *C) {
 
 func (s *testConfigSuite) TestEnableDynamicConfig(c *C) {
 	conf := &defaultConf
+	confPath := path.Join(os.TempDir(), "test-conf-path.toml")
 	for _, store := range []string{"tikv", "mocktikv"} {
 		for _, enable := range []bool{true, false} {
 			conf.Store = store
 			conf.EnableDynamicConfig = enable
-			ch, err := NewConfHandler(conf, nil, newMockPDConfigClient)
+			ch, err := NewConfHandler(confPath, conf, nil, newMockPDConfigClient)
 			c.Assert(err, IsNil)
 			if store == "tikv" && enable == true {
 				c.Assert(fmt.Sprintf("%v", reflect.TypeOf(ch)), Equals, "*config.pdConfHandler")
@@ -148,4 +153,79 @@ func (s *testConfigSuite) TestEnableDynamicConfig(c *C) {
 			}
 		}
 	}
+}
+
+func (s *testConfigSuite) TestDynamicConfigItems(c *C) {
+	tmCh := make(chan time.Time)
+	tmAfter := func(d time.Duration) <-chan time.Time {
+		return tmCh
+	}
+	initConf, err := CloneConf(&defaultConf)
+	c.Assert(err, IsNil)
+	initConf.Store = "tikv"
+	initConf.Path = "node1:2379"
+	newMockPDConfigClientErr = nil
+	initContent, err := encodeConfig(initConf)
+	c.Assert(err, IsNil)
+	mockPDConfigClient0.err = nil
+	mockPDConfigClient0.confContent.Store(initContent)
+	mockPDConfigClient0.status = &configpb.Status{Code: configpb.StatusCode_WRONG_VERSION}
+
+	cnt := 0
+	var registerWg, reloadWg sync.WaitGroup
+	registerWg.Add(1)
+	reloadWg.Add(1)
+	mockReloadFunc := func(oldConf, newConf *Config) {
+		if cnt == 0 { // register
+			newContent, err := encodeConfig(newConf)
+			c.Assert(err, IsNil)
+			c.Assert(newContent, Equals, initContent) // no change now
+			registerWg.Done()
+		} else if cnt == 1 {
+			c.Assert(newConf.Performance.MaxProcs, Equals, uint(2333))
+			c.Assert(newConf.Performance.MaxMemory, Equals, uint64(2333))
+			c.Assert(newConf.Performance.CrossJoin, Equals, false)
+			c.Assert(newConf.Performance.FeedbackProbability, Equals, 0.2333)
+			c.Assert(newConf.Performance.QueryFeedbackLimit, Equals, uint(2333))
+			c.Assert(newConf.Performance.PseudoEstimateRatio, Equals, 0.2333)
+			c.Assert(newConf.OOMAction, Equals, "cancel")
+			c.Assert(newConf.MemQuotaQuery, Equals, int64(2333))
+			c.Assert(newConf.TiKVClient.StoreLimit, Equals, int64(2333))
+			c.Assert(newConf.Log.SlowThreshold, Equals, uint64(2333))
+			c.Assert(newConf.Log.QueryLogMaxLen, Equals, uint64(2333))
+			c.Assert(newConf.Log.ExpensiveThreshold, Equals, uint(2333))
+			c.Assert(newConf.CheckMb4ValueInUTF8, Equals, false)
+			reloadWg.Done()
+		}
+		cnt++
+	}
+	ch, err := newPDConfHandler("", initConf, mockReloadFunc, newMockPDConfigClient)
+	c.Assert(err, IsNil)
+	ch.timeAfter = tmAfter
+
+	ch.Start()
+	registerWg.Wait() // wait for register
+
+	// test all dynamic config items
+	newConf, err := CloneConf(&defaultConf)
+	c.Assert(err, IsNil)
+	newConf.Performance.MaxProcs = 2333
+	newConf.Performance.MaxMemory = 2333
+	newConf.Performance.CrossJoin = false
+	newConf.Performance.FeedbackProbability = 0.2333
+	newConf.Performance.QueryFeedbackLimit = 2333
+	newConf.Performance.PseudoEstimateRatio = 0.2333
+	newConf.OOMAction = "cancel"
+	newConf.MemQuotaQuery = 2333
+	newConf.TiKVClient.StoreLimit = 2333
+	newConf.Log.SlowThreshold = 2333
+	newConf.Log.QueryLogMaxLen = 2333
+	newConf.Log.ExpensiveThreshold = 2333
+	newConf.CheckMb4ValueInUTF8 = false
+	newContent, err := encodeConfig(newConf)
+	c.Assert(err, IsNil)
+	mockPDConfigClient0.confContent.Store(newContent)
+	tmCh <- time.Now()
+	reloadWg.Wait()
+	ch.Close()
 }
