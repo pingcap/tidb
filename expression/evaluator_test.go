@@ -137,7 +137,6 @@ func (s *testEvaluatorSuiteBase) datumsToConstants(datums []types.Datum) []Expre
 		ft := s.kindToFieldType(d.Kind())
 		if types.IsNonBinaryStr(&ft) {
 			ft.Collate = d.Collation()
-			ft.Flen = d.Length()
 		}
 		ft.Flen, ft.Decimal = types.UnspecifiedLength, types.UnspecifiedLength
 		constants = append(constants, &Constant{Value: d, RetType: &ft})

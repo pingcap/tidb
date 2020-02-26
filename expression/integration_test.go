@@ -48,7 +48,7 @@ import (
 
 var _ = Suite(&testIntegrationSuite{})
 var _ = Suite(&testIntegrationSuite2{})
-var _ = SerialSuites(&testIntegrationSuite3{})
+var _ = SerialSuites(&testIntegrationSerialSuite{})
 
 type testIntegrationSuiteBase struct {
 	store kv.Storage
@@ -64,11 +64,7 @@ type testIntegrationSuite2 struct {
 	testIntegrationSuiteBase
 }
 
-<<<<<<< HEAD
-type testIntegrationSuite3 struct {
-=======
 type testIntegrationSerialSuite struct {
->>>>>>> address comments
 	testIntegrationSuiteBase
 }
 
@@ -5495,7 +5491,7 @@ func (s *testIntegrationSuite) TestCacheConstEval(c *C) {
 	tk.MustExec("admin reload expr_pushdown_blacklist")
 }
 
-func (s *testIntegrationSuite3) TestCollationBasic(c *C) {
+func (s *testIntegrationSerialSuite) TestCollationBasic(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
@@ -5508,9 +5504,9 @@ func (s *testIntegrationSuite3) TestCollationBasic(c *C) {
 	tk.MustQuery("select * from t_ci where a='A'").Check(testkit.Rows("a"))
 	tk.MustQuery("select * from t_ci where a='a   '").Check(testkit.Rows("a"))
 	tk.MustQuery("select * from t_ci where a='a                    '").Check(testkit.Rows("a"))
-	}
+}
 
-	func (s *testIntegrationSerialSuite) TestWeightString(c *C) {
+func (s *testIntegrationSerialSuite) TestWeightString(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
