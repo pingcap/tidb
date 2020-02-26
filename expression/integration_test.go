@@ -2259,12 +2259,23 @@ func (s *testIntegrationSuite2) TestBuiltin(c *C) {
 	tk.MustQuery(`select convert(t.a1, signed int) from (select convert(a, json) as a1 from tb5) as t`)
 	tk.MustExec(`drop table tb5;`)
 
-	tk.MustExec(`create table tb5(a double(64));`)
+	// test builtinCastIntAsIntSig
+	// Cast MaxUint64 to unsigned should be -1
+	tk.MustQuery("select cast(0xffffffffffffffff as signed);").Check(testkit.Rows("-1"))
+	tk.MustQuery("select cast(0x9999999999999999999999999999999999999999999 as signed);").Check(testkit.Rows("-1"))
+	tk.MustExec("create table tb5(a bigint);")
+	tk.MustExec("set sql_mode=''")
+	tk.MustExec("insert into tb5(a) values (0xfffffffffffffffffffffffff);")
+	tk.MustQuery("select * from tb5;").Check(testkit.Rows("9223372036854775807"))
+	tk.MustExec("drop table tb5;")
+
+	tk.MustExec(`create table tb5(a double);`)
 	tk.MustExec(`insert into test.tb5 (a) values (18446744073709551616);`)
 	tk.MustExec(`insert into test.tb5 (a) values (184467440737095516160);`)
 	result = tk.MustQuery(`select cast(a as unsigned) from test.tb5;`)
-	result.Check(testkit.Rows("9223372036854775807", "9223372036854775807"))
-	tk.MustExec(`drop table tb5`)
+	// Note: MySQL will return 9223372036854775807, and it should be a bug.
+	result.Check(testkit.Rows("18446744073709551615", "18446744073709551615"))
+	tk.MustExec(`drop table tb5;`)
 
 	// test builtinCastIntAsDecimalSig
 	tk.MustExec(`create table tb5(a bigint(64) unsigned, b decimal(64, 10));`)
@@ -3188,9 +3199,9 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	result = tk.MustQuery("SELECT 1.175494351E-37 div 1.7976931348623157E+308, 1.7976931348623157E+308 div -1.7976931348623157E+307, 1 div 1e-82;")
 	result.Check(testkit.Rows("0 -1 <nil>"))
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
-		"Warning|1292|Truncated incorrect DECIMAL value: 'cast(1.7976931348623157e+308)'",
-		"Warning|1292|Truncated incorrect DECIMAL value: 'cast(1.7976931348623157e+308)'",
-		"Warning|1292|Truncated incorrect DECIMAL value: 'cast(-1.7976931348623158e+307)'",
+		"Warning|1292|Truncated incorrect DECIMAL value: 'cast(1.7976931348623157e+308, decimal(309,0) BINARY)'",
+		"Warning|1292|Truncated incorrect DECIMAL value: 'cast(1.7976931348623157e+308, decimal(309,0) BINARY)'",
+		"Warning|1292|Truncated incorrect DECIMAL value: 'cast(-1.7976931348623158e+307, decimal(309,0) BINARY)'",
 		"Warning|1365|Division by 0"))
 	rs, err = tk.Exec("select 1e300 DIV 1.5")
 	c.Assert(err, IsNil)

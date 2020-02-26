@@ -932,7 +932,7 @@ func (s *session) GetAllSysVars() (map[string]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	ret := make(map[string]string)
+	ret := make(map[string]string, len(rows))
 	for _, r := range rows {
 		k, v := r.GetString(0), r.GetString(1)
 		ret[k] = v
