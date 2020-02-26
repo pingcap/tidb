@@ -3,11 +3,11 @@
     "Name": "TestInjectProjBelowTopN",
     "Cases": [
       [
-        "Projection_8 10000.00 root test.t.i",
+        "Projection_10 10000.00 root test.t.i",
         "└─Sort_4 10000.00 root Column#3:asc",
-        "  └─Projection_9 10000.00 root test.t.i, plus(test.t.i, 1)->Column#3",
-        "    └─TableReader_7 10000.00 root data:TableFullScan_6",
-        "      └─TableFullScan_6 10000.00 cop[tikv] table:t, keep order:false, stats:pseudo"
+        "  └─Projection_11 10000.00 root test.t.i, plus(test.t.i, 1)->Column#3",
+        "    └─TableReader_8 10000.00 root data:TableFullScan_7",
+        "      └─TableFullScan_7 10000.00 cop[tikv] table:t, keep order:false, stats:pseudo"
       ],
       [
         "1",
