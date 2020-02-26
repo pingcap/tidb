@@ -48,6 +48,8 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/set"
+
+	"github.com/cznic/mathutil"
 	"go.uber.org/zap"
 )
 
@@ -304,7 +306,7 @@ func (hch *handleColHelper) pushMap(m map[int64][]*expression.Column) {
 }
 
 func (hch *handleColHelper) mergeAndPush(m1, m2 map[int64][]*expression.Column) {
-	newMap := make(map[int64][]*expression.Column)
+	newMap := make(map[int64][]*expression.Column, mathutil.Max(len(m1), len(m2)))
 	for k, v := range m1 {
 		newMap[k] = make([]*expression.Column, len(v))
 		copy(newMap[k], v)

@@ -540,7 +540,7 @@ func (c *RawKVClient) sendDeleteRangeReq(startKey []byte, endKey []byte) (*tikvr
 }
 
 func (c *RawKVClient) sendBatchPut(bo *Backoffer, keys, values [][]byte) error {
-	keyToValue := make(map[string][]byte)
+	keyToValue := make(map[string][]byte, len(keys))
 	for i, key := range keys {
 		keyToValue[string(key)] = values[i]
 	}
