@@ -7,13 +7,13 @@
         "Result": [
           "Projection_11 2.00 root Column#17",
           "└─Apply_13 2.00 root CARTESIAN left outer semi join, inner:StreamAgg_20, other cond:eq(test.t.e, Column#16)",
-          "  ├─TableReader_15 2.00 root data:TableFullScan_14",
+          "  ├─TableReader_15(Build) 2.00 root data:TableFullScan_14",
           "  │ └─TableFullScan_14 2.00 cop[tikv] table:t, keep order:false",
-          "  └─StreamAgg_20 1.00 root funcs:count(1)->Column#16",
+          "  └─StreamAgg_20(Probe) 1.00 root funcs:count(1)->Column#16",
           "    └─IndexMergeJoin_44 2.00 root inner join, inner:TableReader_42, outer key:test.t.a, inner key:test.t.a",
-          "      ├─IndexReader_33 2.00 root index:IndexRangeScan_32",
+          "      ├─IndexReader_33(Build) 2.00 root index:IndexRangeScan_32",
           "      │ └─IndexRangeScan_32 2.00 cop[tikv] table:s, index:b, c, d, range: decided by [eq(test.t.b, 1) in(test.t.c, 1, 2) eq(test.t.d, test.t.a)], keep order:false",
-          "      └─TableReader_42 1.00 root data:TableRangeScan_41",
+          "      └─TableReader_42(Probe) 1.00 root data:TableRangeScan_41",
           "        └─TableRangeScan_41 1.00 cop[tikv] table:t1, range: decided by [test.t.a], keep order:true"
         ]
       },

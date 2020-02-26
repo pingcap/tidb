@@ -627,10 +627,10 @@
         "Plan": [
           "Projection_16 4166.67 root test.t1.a, test.t1.b",
           "└─MergeJoin_19 4166.67 root inner join, left key:test.t1.a, right key:test.t2.a",
-          "  ├─TableReader_24 3333.33 root data:TableRangeScan_25",
-          "  │ └─TableRangeScan_25 3333.33 cop[tikv] table:t1, range:(2,+inf], keep order:true, stats:pseudo",
-          "  └─TableReader_27 3333.33 root data:TableRangeScan_28",
-          "    └─TableRangeScan_28 3333.33 cop[tikv] table:t2, range:(2,+inf], keep order:true, stats:pseudo"
+          "  ├─TableReader_27(Build) 3333.33 root data:TableRangeScan_28",
+          "  │ └─TableRangeScan_28 3333.33 cop[tikv] table:t2, range:(2,+inf], keep order:true, stats:pseudo",
+          "  └─TableReader_24(Probe) 3333.33 root data:TableRangeScan_25",
+          "    └─TableRangeScan_25 3333.33 cop[tikv] table:t1, range:(2,+inf], keep order:true, stats:pseudo"
         ],
         "Result": [
           "3 33"
@@ -641,11 +641,11 @@
         "Plan": [
           "Projection_12 80000000.00 root test.t1.a, test.t1.b",
           "└─HashLeftJoin_14 80000000.00 root CARTESIAN inner join, inner:TableReader_17, other cond:gt(test.t1.a, test.t2.a)",
-          "  ├─TableReader_15 10000.00 root data:TableFullScan_16",
-          "  │ └─TableFullScan_16 10000.00 cop[tikv] table:t1, keep order:false, stats:pseudo",
-          "  └─TableReader_17 8000.00 root data:Selection_18",
-          "    └─Selection_18 8000.00 cop[tikv] gt(test.t2.b, 200)",
-          "      └─TableFullScan_19 10000.00 cop[tikv] table:t2, keep order:false, stats:pseudo"
+          "  ├─TableReader_17(Build) 8000.00 root data:Selection_18",
+          "  │ └─Selection_18 8000.00 cop[tikv] gt(test.t2.b, 200)",
+          "  │   └─TableFullScan_19 10000.00 cop[tikv] table:t2, keep order:false, stats:pseudo",
+          "  └─TableReader_15(Probe) 10000.00 root data:TableFullScan_16",
+          "    └─TableFullScan_16 10000.00 cop[tikv] table:t1, keep order:false, stats:pseudo"
         ],
         "Result": [
           "3 33",
@@ -659,10 +659,10 @@
           "Projection_17 3333.33 root test.t1.a, test.t1.b",
           "└─Selection_18 3333.33 root gt(test.t2.b, 200)",
           "  └─MergeJoin_21 4166.67 root left outer join, left key:test.t1.a, right key:test.t2.a",
-          "    ├─TableReader_26 3333.33 root data:TableRangeScan_27",
-          "    │ └─TableRangeScan_27 3333.33 cop[tikv] table:t1, range:(2,+inf], keep order:true, stats:pseudo",
-          "    └─TableReader_29 3333.33 root data:TableRangeScan_30",
-          "      └─TableRangeScan_30 3333.33 cop[tikv] table:t2, range:(2,+inf], keep order:true, stats:pseudo"
+          "    ├─TableReader_29(Build) 3333.33 root data:TableRangeScan_30",
+          "    │ └─TableRangeScan_30 3333.33 cop[tikv] table:t2, range:(2,+inf], keep order:true, stats:pseudo",
+          "    └─TableReader_26(Probe) 3333.33 root data:TableRangeScan_27",
+          "      └─TableRangeScan_27 3333.33 cop[tikv] table:t1, range:(2,+inf], keep order:true, stats:pseudo"
         ],
         "Result": [
           "3 33"
@@ -674,9 +674,9 @@
           "Projection_13 8000.00 root test.t2.a, test.t2.b",
           "└─Selection_14 8000.00 root gt(test.t1.a, 2)",
           "  └─MergeJoin_17 10000.00 root right outer join, left key:test.t1.a, right key:test.t2.a",
-          "    ├─TableReader_23 10000.00 root data:TableFullScan_24",
+          "    ├─TableReader_23(Build) 10000.00 root data:TableFullScan_24",
           "    │ └─TableFullScan_24 10000.00 cop[tikv] table:t1, keep order:true, stats:pseudo",
-          "    └─TableReader_26 8000.00 root data:Selection_27",
+          "    └─TableReader_26(Probe) 8000.00 root data:Selection_27",
           "      └─Selection_27 8000.00 cop[tikv] gt(test.t2.b, 200)",
           "        └─TableFullScan_28 10000.00 cop[tikv] table:t2, keep order:true, stats:pseudo"
         ],
@@ -689,10 +689,10 @@
         "Plan": [
           "Projection_12 12500.00 root test.t1.a, test.t1.b",
           "└─MergeJoin_13 12500.00 root inner join, left key:test.t1.a, right key:test.t2.a",
-          "  ├─TableReader_14 10000.00 root data:TableFullScan_15",
-          "  │ └─TableFullScan_15 10000.00 cop[tikv] table:t1, keep order:true, stats:pseudo",
-          "  └─TableReader_19 10000.00 root data:TableFullScan_20",
-          "    └─TableFullScan_20 10000.00 cop[tikv] table:t2, keep order:true, stats:pseudo"
+          "  ├─TableReader_19(Build) 10000.00 root data:TableFullScan_20",
+          "  │ └─TableFullScan_20 10000.00 cop[tikv] table:t2, keep order:true, stats:pseudo",
+          "  └─TableReader_14(Probe) 10000.00 root data:TableFullScan_15",
+          "    └─TableFullScan_15 10000.00 cop[tikv] table:t1, keep order:true, stats:pseudo"
         ],
         "Result": [
           "1 11",
@@ -704,10 +704,10 @@
         "SQL": "select * from t1 join t2 on t1.a = t2.a",
         "Plan": [
           "MergeJoin_11 12500.00 root inner join, left key:test.t1.a, right key:test.t2.a",
-          "├─TableReader_16 10000.00 root data:TableFullScan_17",
-          "│ └─TableFullScan_17 10000.00 cop[tikv] table:t1, keep order:true, stats:pseudo",
-          "└─TableReader_19 10000.00 root data:TableFullScan_20",
-          "  └─TableFullScan_20 10000.00 cop[tikv] table:t2, keep order:true, stats:pseudo"
+          "├─TableReader_19(Build) 10000.00 root data:TableFullScan_20",
+          "│ └─TableFullScan_20 10000.00 cop[tikv] table:t2, keep order:true, stats:pseudo",
+          "└─TableReader_16(Probe) 10000.00 root data:TableFullScan_17",
+          "  └─TableFullScan_17 10000.00 cop[tikv] table:t1, keep order:true, stats:pseudo"
         ],
         "Result": [
           "1 11 1 111",
@@ -725,9 +725,9 @@
         "Plan": [
           "Projection_18 10000.00 root eq(test.t1.a, test.t2.a)->Column#5",
           "└─Apply_20 10000.00 root CARTESIAN left outer join, inner:MaxOneRow_23",
-          "  ├─TableReader_21 10000.00 root data:TableFullScan_22",
+          "  ├─TableReader_21(Build) 10000.00 root data:TableFullScan_22",
           "  │ └─TableFullScan_22 10000.00 cop[tikv] table:t1, keep order:false, stats:pseudo",
-          "  └─MaxOneRow_23 1.00 root ",
+          "  └─MaxOneRow_23(Probe) 1.00 root ",
           "    └─Projection_24 1.00 root test.t2.a",
           "      └─Limit_26 1.00 root offset:0, count:1",
           "        └─TableReader_34 1.00 root data:Limit_35",
@@ -747,18 +747,18 @@
         "Plan": [
           "Projection_28 1.00 root Column#3, test.t1.a, test.t1.b",
           "└─Apply_30 1.00 root CARTESIAN left outer join, inner:MaxOneRow_46",
-          "  ├─Apply_32 1.00 root CARTESIAN left outer join, inner:MaxOneRow_40",
-          "  │ ├─HashAgg_37 1.00 root funcs:sum(Column#8)->Column#3, funcs:firstrow(Column#9)->test.t2.a, funcs:firstrow(Column#10)->test.t2.b",
+          "  ├─Apply_32(Build) 1.00 root CARTESIAN left outer join, inner:MaxOneRow_40",
+          "  │ ├─HashAgg_37(Build) 1.00 root funcs:sum(Column#8)->Column#3, funcs:firstrow(Column#9)->test.t2.a, funcs:firstrow(Column#10)->test.t2.b",
           "  │ │ └─TableReader_38 1.00 root data:HashAgg_39",
           "  │ │   └─HashAgg_39 1.00 cop[tikv] funcs:sum(test.t2.a)->Column#8, funcs:firstrow(test.t2.a)->Column#9, funcs:firstrow(test.t2.b)->Column#10",
           "  │ │     └─TableFullScan_35 10000.00 cop[tikv] table:t2, keep order:false, stats:pseudo",
-          "  │ └─MaxOneRow_40 1.00 root ",
+          "  │ └─MaxOneRow_40(Probe) 1.00 root ",
           "  │   └─Limit_41 1.00 root offset:0, count:1",
           "  │     └─TableReader_42 1.00 root data:Limit_43",
           "  │       └─Limit_43 1.00 cop[tikv] offset:0, count:1",
           "  │         └─Selection_44 1.00 cop[tikv] eq(test.t1.a, test.t2.a)",
           "  │           └─TableFullScan_45 1.00 cop[tikv] table:t1, keep order:false, stats:pseudo",
-          "  └─MaxOneRow_46 1.00 root ",
+          "  └─MaxOneRow_46(Probe) 1.00 root ",
           "    └─Limit_47 1.00 root offset:0, count:1",
           "      └─TableReader_48 1.00 root data:Limit_49",
           "        └─Limit_49 1.00 cop[tikv] offset:0, count:1",
