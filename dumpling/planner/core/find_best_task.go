@@ -80,6 +80,29 @@ func GetPropByOrderByItems(items []*ByItems) (*property.PhysicalProperty, bool) 
 	return &property.PhysicalProperty{Items: propItems}, true
 }
 
+// GetPropByOrderByItemsContainScalarFunc will check if this sort property can be pushed or not. In order to simplify the
+// problem, we only consider the case that all expression are columns or some special scalar functions.
+func GetPropByOrderByItemsContainScalarFunc(items []*ByItems) (*property.PhysicalProperty, bool, bool) {
+	propItems := make([]property.Item, 0, len(items))
+	onlyColumn := true
+	for _, item := range items {
+		switch expr := item.Expr.(type) {
+		case *expression.Column:
+			propItems = append(propItems, property.Item{Col: expr, Desc: item.Desc})
+		case *expression.ScalarFunction:
+			col, desc := expr.GetSingleColumn(item.Desc)
+			if col == nil {
+				return nil, false, false
+			}
+			propItems = append(propItems, property.Item{Col: col, Desc: desc})
+			onlyColumn = false
+		default:
+			return nil, false, false
+		}
+	}
+	return &property.PhysicalProperty{Items: propItems}, true, onlyColumn
+}
+
 func (p *LogicalTableDual) findBestTask(prop *property.PhysicalProperty) (task, error) {
 	if !prop.IsEmpty() {
 		return invalidTask, nil
