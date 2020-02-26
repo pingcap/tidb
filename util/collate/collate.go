@@ -89,6 +89,8 @@ func SetNewCollationEnabledForTest(flag bool) {
 
 // NewCollationEnabled returns if the new collations are enabled.
 func NewCollationEnabled() bool {
+	mu.Lock()
+	defer mu.Unlock()
 	return newCollationEnabled
 }
 
@@ -98,6 +100,8 @@ func NewCollationEnabled() bool {
 // the protocol definition.
 // When new collations are not enabled, collation id remains the same.
 func RewriteNewCollationIDIfNeeded(id int32) int32 {
+	mu.Lock()
+	defer mu.Unlock()
 	if newCollationEnabled {
 		if id < 0 {
 			logutil.BgLogger().Warn("Unexpected negative collation ID for rewrite.", zap.Int32("ID", id))
@@ -110,6 +114,8 @@ func RewriteNewCollationIDIfNeeded(id int32) int32 {
 
 // RestoreCollationIDIfNeeded restores a collation id if the new collations are enabled.
 func RestoreCollationIDIfNeeded(id int32) int32 {
+	mu.Lock()
+	defer mu.Unlock()
 	if newCollationEnabled {
 		if id > 0 {
 			logutil.BgLogger().Warn("Unexpected positive collation ID for restore.", zap.Int32("ID", id))
