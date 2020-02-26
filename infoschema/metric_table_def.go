@@ -944,11 +944,17 @@ var MetricTableMap = map[string]MetricTableDef{
 		Labels:  []string{"instance", "status", "type"},
 		Comment: "The number of different raftstore errors on each TiKV instance",
 	},
-	"tikv_scheduler_stage_total": {
+	"tikv_scheduler_stage": {
 		PromQL:  `sum(rate(tikv_scheduler_stage_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance, stage,type)`,
 		Labels:  []string{"instance", "stage", "type"},
 		Comment: "The number of scheduler state on each TiKV instance",
 	},
+	"tikv_scheduler_stage_total_num": {
+		PromQL:  `sum(rate(tikv_scheduler_stage_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance, stage,type)`,
+		Labels:  []string{"instance", "stage", "type"},
+		Comment: "The number of scheduler state on each TiKV instance",
+	},
+
 	"tikv_coprocessor_request_error": {
 		PromQL:  `sum(rate(tikv_coprocessor_request_error{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance, reason)`,
 		Labels:  []string{"instance", "reason"},
@@ -1143,6 +1149,11 @@ var MetricTableMap = map[string]MetricTableDef{
 		Labels:  []string{"instance", "type"},
 		Comment: "The number of Raft messages sent by each TiKV instance",
 	},
+	"tikv_raft_sent_messages_total_num": {
+		PromQL:  `sum(increase(tikv_raftstore_raft_sent_message_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance,type)`,
+		Labels:  []string{"instance", "type"},
+		Comment: "The total number of Raft messages sent by each TiKV instance",
+	},
 	"tikv_flush_messages": {
 		PromQL:  `sum(rate(tikv_server_raft_message_flush_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance)`,
 		Labels:  []string{"instance"},
@@ -1302,6 +1313,10 @@ var MetricTableMap = map[string]MetricTableDef{
 		Labels:  []string{"instance", "tag", "req", "cf"},
 		Comment: "The keys scan details of each CF when executing commit command",
 	},
+	"tikv_scheduler_scan_details_total_num": {
+		PromQL: `sum(increase(tikv_scheduler_kv_scan_details{$LABEL_CONDITIONS}[60s])) by (tag,instance,req,cf)`,
+		Labels: []string{"instance", "tag", "req", "cf"},
+	},
 	"tikv_mvcc_versions": {
 		PromQL:  `sum(rate(tikv_storage_mvcc_versions_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION]))`,
 		Labels:  []string{"instance"},
@@ -1343,9 +1358,13 @@ var MetricTableMap = map[string]MetricTableDef{
 		Labels:  []string{"instance", "task"},
 		Comment: "The time consumed when executing GC tasks",
 	},
-
 	"tikv_gc_keys": {
 		PromQL:  `sum(rate(tikv_gcworker_gc_keys{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (tag,cf,instance)`,
+		Labels:  []string{"instance", "tag", "cf"},
+		Comment: "The count of keys in write CF affected during GC",
+	},
+	"tikv_gc_keys_total_num": {
+		PromQL:  `sum(increase(tikv_gcworker_gc_keys{$LABEL_CONDITIONS}[60s])) by (tag,cf,instance)`,
 		Labels:  []string{"instance", "tag", "cf"},
 		Comment: "The count of keys in write CF affected during GC",
 	},
@@ -1388,6 +1407,11 @@ var MetricTableMap = map[string]MetricTableDef{
 		PromQL:  `sum(tikv_raftstore_snapshot_traffic_total{$LABEL_CONDITIONS}) by (type,instance)`,
 		Labels:  []string{"instance", "type"},
 		Comment: "The number of snapshots in different states",
+	},
+	"tikv_snapshot_state_total_count": {
+		PromQL:  `sum(delta(tikv_raftstore_snapshot_traffic_total{$LABEL_CONDITIONS}[60s])) by (type,instance)`,
+		Labels:  []string{"instance", "type"},
+		Comment: "The total number of snapshots in different states",
 	},
 	"tikv_snapshot_size": {
 		PromQL:   `histogram_quantile($QUANTILE, sum(rate(tikv_snapshot_size_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,instance))`,
@@ -1453,7 +1477,6 @@ var MetricTableMap = map[string]MetricTableDef{
 		PromQL: `sum(rate(tikv_coprocessor_response_bytes{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance)`,
 		Labels: []string{"instance"},
 	},
-
 	"tikv_cop_handle_duration": {
 		PromQL:   `histogram_quantile($QUANTILE, sum(rate(tikv_coprocessor_request_handle_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,req,instance))`,
 		Labels:   []string{"instance", "req"},
@@ -1477,6 +1500,10 @@ var MetricTableMap = map[string]MetricTableDef{
 	},
 	"tikv_cop_scan_details": {
 		PromQL: `sum(rate(tikv_coprocessor_scan_details{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (tag,req,cf,instance)`,
+		Labels: []string{"instance", "tag", "req", "cf"},
+	},
+	"tikv_cop_scan_details_total": {
+		PromQL: `sum(increase(tikv_coprocessor_scan_details{$LABEL_CONDITIONS}[60s])) by (tag,req,cf,instance)`,
 		Labels: []string{"instance", "tag", "req", "cf"},
 	},
 
@@ -2864,14 +2891,16 @@ var MetricTableMap = map[string]MetricTableDef{
 		Comment: "The total time of ",
 	},
 	"tikv_cop_kv_cursor_operations_total_count": {
-		PromQL:  "sum(increase(tikv_coprocessor_scan_keys_count[60s])) by (instance,req)",
-		Labels:  []string{"instance", "req"},
-		Comment: "The total count of ",
+		PromQL: "sum(increase(tikv_coprocessor_scan_keys_count[60s])) by (instance,req)",
+		Labels: []string{"instance", "req"},
 	},
 	"tikv_cop_kv_cursor_total_operations": {
-		PromQL:  "sum(increase(tikv_coprocessor_scan_keys_sum[60s])) by (instance,req)",
-		Labels:  []string{"instance", "req"},
-		Comment: "The total time of ",
+		PromQL: "sum(increase(tikv_coprocessor_scan_keys_sum[60s])) by (instance,req)",
+		Labels: []string{"instance", "req"},
+	},
+	"tikv_cop_total_response_total_size": {
+		PromQL: `sum(increase(tikv_coprocessor_response_bytes{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance)`,
+		Labels: []string{"instance"},
 	},
 	"tikv_grpc_req_batch_size_total_count": {
 		PromQL:  "sum(increase(tikv_server_grpc_req_batch_size_count[60s])) by (instance)",

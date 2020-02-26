@@ -235,7 +235,7 @@ var inspectionSummaryRules = map[string][]string{
 		"tikv_scheduler_pending_commands",
 		"tikv_scheduler_priority_commands",
 		"tikv_scheduler_scan_details",
-		"tikv_scheduler_stage_total",
+		"tikv_scheduler_stage",
 		"tikv_scheduler_writing_bytes",
 		"tikv_propose_avg_wait_duration",
 		"tikv_propose_wait_duration",
