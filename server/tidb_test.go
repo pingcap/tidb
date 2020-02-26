@@ -134,6 +134,7 @@ func (ts *tidbTestSuite) TestPreparedTimestamp(c *C) {
 // so we must make it running in serial.
 func (ts *tidbTestSerialSuite) TestLoadData(c *C) {
 	ts.runTestLoadData(c, ts.server)
+	ts.runTestLoadDataWithSelectIntoOutfile(c, ts.server)
 }
 
 func (ts *tidbTestSerialSuite) TestStmtCount(c *C) {

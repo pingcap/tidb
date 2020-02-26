@@ -16,6 +16,10 @@ package collate
 import (
 	"strings"
 	"sync"
+
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 var (
@@ -23,6 +27,11 @@ var (
 	collatorIDMap       map[int]Collator
 	newCollationEnabled bool
 	setCollationOnce    sync.Once
+)
+
+// DefaultLen is set for datum if the string datum don't know its length.
+const (
+	DefaultLen = 0
 )
 
 // CollatorOption is the option of collator.
@@ -83,6 +92,34 @@ func NewCollationEnabled() bool {
 	return newCollationEnabled
 }
 
+// RewriteNewCollationIDIfNeeded rewrites a collation id if the new collations are enabled.
+// When new collations are enabled, we turn the collation id to negative so that other the
+// components of the cluster(for example, TiKV) is able to aware of it without any change to
+// the protocol definition.
+// When new collations are not enabled, collation id remains the same.
+func RewriteNewCollationIDIfNeeded(id int32) int32 {
+	if newCollationEnabled {
+		if id < 0 {
+			logutil.BgLogger().Warn("Unexpected negative collation ID for rewrite.", zap.Int32("ID", id))
+		} else {
+			return -id
+		}
+	}
+	return id
+}
+
+// RestoreCollationIDIfNeeded restores a collation id if the new collations are enabled.
+func RestoreCollationIDIfNeeded(id int32) int32 {
+	if newCollationEnabled {
+		if id > 0 {
+			logutil.BgLogger().Warn("Unexpected positive collation ID for restore.", zap.Int32("ID", id))
+		} else {
+			return -id
+		}
+	}
+	return id
+}
+
 // GetCollator get the collator according to collate, it will return the binary collator if the corresponding collator doesn't exist.
 func GetCollator(collate string) Collator {
 	ctor, ok := collatorMap[collate]
@@ -114,34 +151,37 @@ func (bc *binCollator) Key(str string, opt CollatorOption) []byte {
 	return []byte(str)
 }
 
+// CollationID2Name return the collation name by the given id.
+// If the id is not found in the map, we reutrn the default one directly.
+func CollationID2Name(id int32) string {
+	name, ok := mysql.Collations[uint8(id)]
+	if !ok {
+		return mysql.DefaultCollationName
+	}
+	return name
+}
+
 type binPaddingCollator struct {
 }
 
-func (bpc *binPaddingCollator) Compare(a, b string, opt CollatorOption) int {
-	aLen := len(a)
-	bLen := len(b)
-	noPaddingResult := 0
-	if aLen > bLen {
-		noPaddingResult = strings.Compare(a[:bLen], b)
-		if noPaddingResult != 0 {
-			return noPaddingResult
+func truncateTailingSpace(str string) string {
+	byteLen := len(str)
+	i := byteLen - 1
+	for ; i >= 0; i-- {
+		if str[i] != ' ' {
+			break
 		}
-		return strings.Compare(a[bLen:], strings.Repeat(" ", aLen-bLen))
-	} else if aLen < bLen {
-		noPaddingResult = strings.Compare(a, b[:aLen])
-		if noPaddingResult != 0 {
-			return noPaddingResult
-		}
-		return strings.Compare(strings.Repeat(" ", bLen-aLen), b[aLen:])
 	}
-	return strings.Compare(a, b)
+	str = str[:i+1]
+	return str
+}
+
+func (bpc *binPaddingCollator) Compare(a, b string, opt CollatorOption) int {
+	return strings.Compare(truncateTailingSpace(a), truncateTailingSpace(b))
 }
 
 func (bpc *binPaddingCollator) Key(str string, opt CollatorOption) []byte {
-	if opt.PadLen <= len(str) {
-		return []byte(str)
-	}
-	return []byte(str + strings.Repeat(" ", opt.PadLen-len(str)))
+	return []byte(truncateTailingSpace(str))
 }
 
 func init() {
