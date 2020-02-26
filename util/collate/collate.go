@@ -15,7 +15,7 @@ package collate
 
 import (
 	"strings"
-	"sync"
+	"sync/atomic"
 
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/util/logutil"
@@ -25,8 +25,7 @@ import (
 var (
 	collatorMap         map[string]Collator
 	collatorIDMap       map[int]Collator
-	newCollationEnabled bool
-	mu                  sync.Mutex
+	newCollationEnabled int32
 )
 
 // DefaultLen is set for datum if the string datum don't know its length.
@@ -61,10 +60,8 @@ func EnableNewCollations() {
 // SetNewCollationEnabledForTest sets if the new collation are enabled in test.
 // Note: Be careful to use this function, if this functions is used in tests, make sure the tests are serial.
 func SetNewCollationEnabledForTest(flag bool) {
-	mu.Lock()
-	defer mu.Unlock()
-	newCollationEnabled = flag
-	if newCollationEnabled {
+	if flag {
+		atomic.StoreInt32(&newCollationEnabled, 1)
 		collatorMap["utf8mb4_bin"] = &binPaddingCollator{}
 		collatorMap["utf8_bin"] = &binPaddingCollator{}
 		collatorMap["utf8mb4_general_ci"] = &generalCICollator{}
@@ -75,6 +72,7 @@ func SetNewCollationEnabledForTest(flag bool) {
 		collatorIDMap[45] = &generalCICollator{}
 		collatorIDMap[33] = &generalCICollator{}
 	} else {
+		atomic.StoreInt32(&newCollationEnabled, 0)
 		collatorMap["utf8mb4_bin"] = &binCollator{}
 		collatorMap["utf8_bin"] = &binCollator{}
 		collatorMap["utf8mb4_general_ci"] = &binCollator{}
@@ -89,9 +87,7 @@ func SetNewCollationEnabledForTest(flag bool) {
 
 // NewCollationEnabled returns if the new collations are enabled.
 func NewCollationEnabled() bool {
-	mu.Lock()
-	defer mu.Unlock()
-	return newCollationEnabled
+	return atomic.LoadInt32(&newCollationEnabled) == 1
 }
 
 // RewriteNewCollationIDIfNeeded rewrites a collation id if the new collations are enabled.
@@ -100,9 +96,7 @@ func NewCollationEnabled() bool {
 // the protocol definition.
 // When new collations are not enabled, collation id remains the same.
 func RewriteNewCollationIDIfNeeded(id int32) int32 {
-	mu.Lock()
-	defer mu.Unlock()
-	if newCollationEnabled {
+	if atomic.LoadInt32(&newCollationEnabled) == 1 {
 		if id < 0 {
 			logutil.BgLogger().Warn("Unexpected negative collation ID for rewrite.", zap.Int32("ID", id))
 		} else {
@@ -114,9 +108,7 @@ func RewriteNewCollationIDIfNeeded(id int32) int32 {
 
 // RestoreCollationIDIfNeeded restores a collation id if the new collations are enabled.
 func RestoreCollationIDIfNeeded(id int32) int32 {
-	mu.Lock()
-	defer mu.Unlock()
-	if newCollationEnabled {
+	if atomic.LoadInt32(&newCollationEnabled) == 1 {
 		if id > 0 {
 			logutil.BgLogger().Warn("Unexpected positive collation ID for restore.", zap.Int32("ID", id))
 		} else {
