@@ -359,6 +359,10 @@ func reloadConfig(nc, c *config.Config) {
 	if nc.TiKVClient.StoreLimit != c.TiKVClient.StoreLimit {
 		storeutil.StoreLimit.Store(nc.TiKVClient.StoreLimit)
 	}
+
+	if nc.PreparedPlanCache.Enabled != c.PreparedPlanCache.Enabled {
+		plannercore.SetPreparedPlanCache(nc.PreparedPlanCache.Enabled)
+	}
 }
 
 // overrideConfig considers command arguments and overrides some config items in the Config.

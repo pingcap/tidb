@@ -47,6 +47,8 @@ var (
 		"Performance.FeedbackProbability": {},
 		"Performance.QueryFeedbackLimit":  {},
 		"Performance.PseudoEstimateRatio": {},
+		"Performance.StmtCountLimit":      {},
+		"Performance.TCPKeepAlive":        {},
 		"OOMAction":                       {},
 		"MemQuotaQuery":                   {},
 		"TiKVClient.StoreLimit":           {},
@@ -54,6 +56,12 @@ var (
 		"Log.QueryLogMaxLen":              {},
 		"Log.ExpensiveThreshold":          {},
 		"CheckMb4ValueInUTF8":             {},
+		"EnableStreaming":                 {},
+		"TxnLocalLatches.Capacity":        {},
+		"CompatibleKillQuery":             {},
+		"TreatOldVersionUTF8AsUTF8MB4":    {},
+		"OpenTracing.Enable":              {},
+		"PreparedPlanCache.Enabled":       {},
 	}
 )
 

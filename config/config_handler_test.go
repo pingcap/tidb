@@ -188,6 +188,8 @@ func (s *testConfigSuite) TestDynamicConfigItems(c *C) {
 			c.Assert(newConf.Performance.FeedbackProbability, Equals, 0.2333)
 			c.Assert(newConf.Performance.QueryFeedbackLimit, Equals, uint(2333))
 			c.Assert(newConf.Performance.PseudoEstimateRatio, Equals, 0.2333)
+			c.Assert(newConf.Performance.StmtCountLimit, Equals, uint(2333))
+			c.Assert(newConf.Performance.TCPKeepAlive, Equals, true)
 			c.Assert(newConf.OOMAction, Equals, "cancel")
 			c.Assert(newConf.MemQuotaQuery, Equals, int64(2333))
 			c.Assert(newConf.TiKVClient.StoreLimit, Equals, int64(2333))
@@ -195,6 +197,12 @@ func (s *testConfigSuite) TestDynamicConfigItems(c *C) {
 			c.Assert(newConf.Log.QueryLogMaxLen, Equals, uint64(2333))
 			c.Assert(newConf.Log.ExpensiveThreshold, Equals, uint(2333))
 			c.Assert(newConf.CheckMb4ValueInUTF8, Equals, false)
+			c.Assert(newConf.EnableStreaming, Equals, true)
+			c.Assert(newConf.TxnLocalLatches.Capacity, Equals, uint(2333))
+			c.Assert(newConf.PreparedPlanCache.Enabled, Equals, true)
+			c.Assert(newConf.CompatibleKillQuery, Equals, true)
+			c.Assert(newConf.TreatOldVersionUTF8AsUTF8MB4, Equals, true)
+			c.Assert(newConf.OpenTracing.Enable, Equals, true)
 			reloadWg.Done()
 		}
 		cnt++
@@ -215,6 +223,8 @@ func (s *testConfigSuite) TestDynamicConfigItems(c *C) {
 	newConf.Performance.FeedbackProbability = 0.2333
 	newConf.Performance.QueryFeedbackLimit = 2333
 	newConf.Performance.PseudoEstimateRatio = 0.2333
+	newConf.Performance.StmtCountLimit = 2333
+	newConf.Performance.TCPKeepAlive = true
 	newConf.OOMAction = "cancel"
 	newConf.MemQuotaQuery = 2333
 	newConf.TiKVClient.StoreLimit = 2333
@@ -222,6 +232,12 @@ func (s *testConfigSuite) TestDynamicConfigItems(c *C) {
 	newConf.Log.QueryLogMaxLen = 2333
 	newConf.Log.ExpensiveThreshold = 2333
 	newConf.CheckMb4ValueInUTF8 = false
+	newConf.EnableStreaming = true
+	newConf.TxnLocalLatches.Capacity = 2333
+	newConf.PreparedPlanCache.Enabled = true
+	newConf.CompatibleKillQuery = true
+	newConf.TreatOldVersionUTF8AsUTF8MB4 = true
+	newConf.OpenTracing.Enable = true
 	newContent, err := encodeConfig(newConf)
 	c.Assert(err, IsNil)
 	mockPDConfigClient0.confContent.Store(newContent)
