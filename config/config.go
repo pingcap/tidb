@@ -651,7 +651,7 @@ func StoreGlobalConfig(config *Config) {
 
 var deprecatedConfig = map[string]struct{}{
 	"pessimistic-txn.ttl": {},
-	"log.rotate":          {},
+	"log.file.log-rotate": {},
 }
 
 func isAllDeprecatedConfigItems(items []string) bool {
