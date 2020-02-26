@@ -163,7 +163,7 @@
           "Projection_10 8000.00 root test.t.b, Column#3",
           "└─Sort_19 8000.00 root test.t.b:asc",
           "  └─HashAgg_12 8000.00 root group by:Column#9, funcs:avg(Column#7)->Column#3, funcs:firstrow(Column#8)->test.t.b",
-          "    └─Projection_15 10000.00 root cast(test.t.a)->Column#7, test.t.b, test.t.b",
+          "    └─Projection_15 10000.00 root cast(test.t.a, decimal(65,4) BINARY)->Column#7, test.t.b, test.t.b",
           "      └─TableReader_13 10000.00 root data:TableFullScan_14",
           "        └─TableFullScan_14 10000.00 cop[tikv] table:t, keep order:false, stats:pseudo"
         ],
@@ -199,7 +199,7 @@
           "  └─Sort_27 6400.00 root test.t.b:asc",
           "    └─Selection_26 6400.00 root gt(Column#4, 1)",
           "      └─HashAgg_17 8000.00 root group by:Column#14, funcs:avg(Column#11)->Column#3, funcs:sum(Column#12)->Column#4, funcs:firstrow(Column#13)->test.t.b",
-          "        └─Projection_20 10000.00 root cast(test.t.a)->Column#11, cast(test.t.a)->Column#12, test.t.b, test.t.b",
+          "        └─Projection_20 10000.00 root cast(test.t.a, decimal(65,4) BINARY)->Column#11, cast(test.t.a, decimal(65,0) BINARY)->Column#12, test.t.b, test.t.b",
           "          └─TableReader_18 10000.00 root data:TableFullScan_19",
           "            └─TableFullScan_19 10000.00 cop[tikv] table:t, keep order:false, stats:pseudo"
         ],
@@ -227,7 +227,7 @@
           "Projection_10 8000.00 root Column#3",
           "└─Sort_20 8000.00 root test.t.a:asc",
           "  └─HashAgg_13 8000.00 root group by:Column#10, Column#11, funcs:sum(Column#8)->Column#3, funcs:firstrow(Column#9)->test.t.a",
-          "    └─Projection_16 10000.00 root cast(test.t.a)->Column#8, test.t.a, test.t.a, plus(test.t.a, test.t.b)->Column#11",
+          "    └─Projection_16 10000.00 root cast(test.t.a, decimal(65,0) BINARY)->Column#8, test.t.a, test.t.a, plus(test.t.a, test.t.b)->Column#11",
           "      └─TableReader_14 10000.00 root data:TableFullScan_15",
           "        └─TableFullScan_15 10000.00 cop[tikv] table:t, keep order:false, stats:pseudo"
         ],
@@ -322,7 +322,7 @@
           "Projection_13 8000.00 root test.t.a, Column#5",
           "└─Sort_19 8000.00 root test.t.a:asc",
           "  └─HashAgg_15 8000.00 root group by:Column#8, funcs:sum(distinct Column#6)->Column#5, funcs:firstrow(Column#7)->test.t.a",
-          "    └─Projection_18 10000.00 root cast(test.t.b)->Column#6, test.t.a, test.t.a",
+          "    └─Projection_18 10000.00 root cast(test.t.b, decimal(65,0) BINARY)->Column#6, test.t.a, test.t.a",
           "      └─TableReader_16 10000.00 root data:TableFullScan_17",
           "        └─TableFullScan_17 10000.00 cop[tikv] table:t1, keep order:false, stats:pseudo"
         ],

@@ -19,7 +19,7 @@ Projection_11	8000.00	root	test.t3.a, test.t3.b, test.t3.c, test.t3.d
   │ └─TableReader_28	1.00	root	data:StreamAgg_19
   │   └─StreamAgg_19	1.00	cop[tikv]	funcs:sum(test.t3.a)->Column#16
   │     └─TableFullScan_26	10000.00	cop[tikv]	table:s, keep order:false, stats:pseudo
-  └─Projection_13(Probe)	10000.00	root	test.t3.a, test.t3.b, test.t3.c, test.t3.d, cast(test.t3.a)->Column#13
+  └─Projection_13(Probe)	10000.00	root	test.t3.a, test.t3.b, test.t3.c, test.t3.d, cast(test.t3.a, decimal(20,0) BINARY)->Column#13
     └─TableReader_15	10000.00	root	data:TableFullScan_14
       └─TableFullScan_14	10000.00	cop[tikv]	table:t3, keep order:false, stats:pseudo
 explain select * from t1;
@@ -64,7 +64,7 @@ Delete_4	N/A	root	N/A
   └─TableRowIDScan_10(Probe)	10.00	cop[tikv]	table:t1, keep order:false, stats:pseudo
 explain select count(b.c2) from t1 a, t2 b where a.c1 = b.c2 group by a.c1;
 id	count	task	operator info
-Projection_11	9990.00	root	cast(Column#8)->Column#7
+Projection_11	9990.00	root	cast(Column#8, bigint(21) BINARY)->Column#7
 └─HashLeftJoin_21	9990.00	root	inner join, inner:HashAgg_28, equal:[eq(test.t1.c1, test.t2.c2)]
   ├─HashAgg_28(Build)	7992.00	root	group by:test.t2.c2, funcs:count(Column#9)->Column#8, funcs:firstrow(test.t2.c2)->test.t2.c2
   │ └─TableReader_29	7992.00	root	data:HashAgg_23
@@ -93,7 +93,7 @@ TableReader_7	0.33	root	data:Selection_6
 explain select sum(t1.c1 in (select c1 from t2)) from t1;
 id	count	task	operator info
 StreamAgg_12	1.00	root	funcs:sum(Column#10)->Column#8
-└─Projection_23	10000.00	root	cast(Column#7)->Column#10
+└─Projection_23	10000.00	root	cast(Column#7, decimal(65,0) BINARY)->Column#10
   └─HashLeftJoin_22	10000.00	root	CARTESIAN left outer semi join, inner:IndexReader_21, other cond:eq(test.t1.c1, test.t2.c1)
     ├─IndexReader_21(Build)	10000.00	root	index:IndexFullScan_20
     │ └─IndexFullScan_20	10000.00	cop[tikv]	table:t2, index:c1, keep order:false, stats:pseudo
@@ -226,7 +226,7 @@ set @@session.tidb_opt_insubq_to_join_and_agg=0;
 explain select sum(t1.c1 in (select c1 from t2)) from t1;
 id	count	task	operator info
 StreamAgg_12	1.00	root	funcs:sum(Column#10)->Column#8
-└─Projection_23	10000.00	root	cast(Column#7)->Column#10
+└─Projection_23	10000.00	root	cast(Column#7, decimal(65,0) BINARY)->Column#10
   └─HashLeftJoin_22	10000.00	root	CARTESIAN left outer semi join, inner:IndexReader_21, other cond:eq(test.t1.c1, test.t2.c1)
     ├─IndexReader_21(Build)	10000.00	root	index:IndexFullScan_20
     │ └─IndexFullScan_20	10000.00	cop[tikv]	table:t2, index:c1, keep order:false, stats:pseudo
@@ -244,7 +244,7 @@ Projection_6	10000.00	root	Column#7
 explain select sum(6 in (select c2 from t2)) from t1;
 id	count	task	operator info
 StreamAgg_12	1.00	root	funcs:sum(Column#10)->Column#8
-└─Projection_22	10000.00	root	cast(Column#7)->Column#10
+└─Projection_22	10000.00	root	cast(Column#7, decimal(65,0) BINARY)->Column#10
   └─HashLeftJoin_21	10000.00	root	CARTESIAN left outer semi join, inner:TableReader_20
     ├─TableReader_20(Build)	10.00	root	data:Selection_19
     │ └─Selection_19	10.00	cop[tikv]	eq(6, test.t2.c2)
@@ -751,7 +751,7 @@ explain select a, b from (select a, b, avg(b) over (partition by a)as avg_b from
 id	count	task	operator info
 Projection_8	2666.67	root	test.t.a, test.t.b
 └─Selection_9	2666.67	root	gt(cast(test.t.a), Column#5), lt(test.t.b, 10)
-  └─Window_10	3333.33	root	avg(cast(test.t.b))->Column#5 over(partition by test.t.a)
+  └─Window_10	3333.33	root	avg(cast(test.t.b, decimal(65,4) BINARY))->Column#5 over(partition by test.t.a)
     └─Sort_14	3333.33	root	test.t.a:asc
       └─TableReader_13	3333.33	root	data:Selection_12
         └─Selection_12	3333.33	cop[tikv]	gt(test.t.a, 10)

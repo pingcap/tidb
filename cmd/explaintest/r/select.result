@@ -385,7 +385,7 @@ id	count	task	operator info
 Projection_8	10000.00	root	and(or(or(gt(Column#8, 1), ne(test.t.a, Column#7)), if(ne(Column#9, 0), <nil>, 0)), and(ne(Column#10, 0), if(isnull(test.t.a), <nil>, 1)))->Column#11
 └─HashLeftJoin_9	10000.00	root	CARTESIAN inner join, inner:StreamAgg_16
   ├─StreamAgg_16(Build)	1.00	root	funcs:firstrow(Column#13)->Column#7, funcs:count(distinct Column#14)->Column#8, funcs:sum(Column#15)->Column#9, funcs:count(1)->Column#10
-  │ └─Projection_26	10000.00	root	test.t.a, test.t.a, cast(isnull(test.t.a))->Column#15
+  │ └─Projection_26	10000.00	root	test.t.a, test.t.a, cast(isnull(test.t.a), decimal(65,0) BINARY)->Column#15
   │   └─TableReader_23	10000.00	root	data:TableFullScan_22
   │     └─TableFullScan_22	10000.00	cop[tikv]	table:t2, keep order:false, stats:pseudo
   └─TableReader_12(Probe)	10000.00	root	data:TableFullScan_11
@@ -395,7 +395,7 @@ id	count	task	operator info
 Projection_8	10000.00	root	or(and(and(le(Column#8, 1), eq(test.t.a, Column#7)), if(ne(Column#9, 0), <nil>, 1)), or(eq(Column#10, 0), if(isnull(test.t.a), <nil>, 0)))->Column#11
 └─HashLeftJoin_9	10000.00	root	CARTESIAN inner join, inner:StreamAgg_16
   ├─StreamAgg_16(Build)	1.00	root	funcs:firstrow(Column#13)->Column#7, funcs:count(distinct Column#14)->Column#8, funcs:sum(Column#15)->Column#9, funcs:count(1)->Column#10
-  │ └─Projection_26	10000.00	root	test.t.a, test.t.a, cast(isnull(test.t.a))->Column#15
+  │ └─Projection_26	10000.00	root	test.t.a, test.t.a, cast(isnull(test.t.a), decimal(65,0) BINARY)->Column#15
   │   └─TableReader_23	10000.00	root	data:TableFullScan_22
   │     └─TableFullScan_22	10000.00	cop[tikv]	table:t2, keep order:false, stats:pseudo
   └─TableReader_12(Probe)	10000.00	root	data:TableFullScan_11
@@ -408,10 +408,10 @@ explain select a in (select a from s where s.b = t.b) from t;
 id	count	task	operator info
 Projection_9	10000.00	root	Column#7
 └─HashLeftJoin_10	10000.00	root	left outer semi join, inner:Projection_14, equal:[eq(Column#8, Column#9)], other cond:eq(cast(test.t.a), cast(test.s.a))
-  ├─Projection_14(Build)	10000.00	root	test.s.a, cast(test.s.b)->Column#9
+  ├─Projection_14(Build)	10000.00	root	test.s.a, cast(test.s.b, double BINARY)->Column#9
   │ └─TableReader_16	10000.00	root	data:TableFullScan_15
   │   └─TableFullScan_15	10000.00	cop[tikv]	table:s, keep order:false, stats:pseudo
-  └─Projection_11(Probe)	10000.00	root	test.t.a, cast(test.t.b)->Column#8
+  └─Projection_11(Probe)	10000.00	root	test.t.a, cast(test.t.b, double BINARY)->Column#8
     └─TableReader_13	10000.00	root	data:TableFullScan_12
       └─TableFullScan_12	10000.00	cop[tikv]	table:t, keep order:false, stats:pseudo
 explain select a in (select a+b from t t2 where t2.b = t1.b) from t t1;

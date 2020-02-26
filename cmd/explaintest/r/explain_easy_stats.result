@@ -20,7 +20,7 @@ Projection_11	1600.00	root	test.t3.a, test.t3.b, test.t3.c, test.t3.d
   │ └─TableReader_28	1.00	root	data:StreamAgg_19
   │   └─StreamAgg_19	1.00	cop[tikv]	funcs:sum(test.t3.a)->Column#16
   │     └─TableFullScan_26	2000.00	cop[tikv]	table:s, keep order:false
-  └─Projection_13(Probe)	2000.00	root	test.t3.a, test.t3.b, test.t3.c, test.t3.d, cast(test.t3.a)->Column#13
+  └─Projection_13(Probe)	2000.00	root	test.t3.a, test.t3.b, test.t3.c, test.t3.d, cast(test.t3.a, decimal(20,0) BINARY)->Column#13
     └─TableReader_15	2000.00	root	data:TableFullScan_14
       └─TableFullScan_14	2000.00	cop[tikv]	table:t3, keep order:false
 explain select * from t1;
@@ -65,7 +65,7 @@ Delete_4	N/A	root	N/A
   └─TableRowIDScan_10(Probe)	0.00	cop[tikv]	table:t1, keep order:false
 explain select count(b.c2) from t1 a, t2 b where a.c1 = b.c2 group by a.c1;
 id	count	task	operator info
-Projection_11	1985.00	root	cast(Column#8)->Column#7
+Projection_11	1985.00	root	cast(Column#8, bigint(21) BINARY)->Column#7
 └─HashLeftJoin_21	1985.00	root	inner join, inner:HashAgg_25, equal:[eq(test.t1.c1, test.t2.c2)]
   ├─HashAgg_25(Build)	1985.00	root	group by:test.t2.c2, funcs:count(test.t2.c2)->Column#8, funcs:firstrow(test.t2.c2)->test.t2.c2
   │ └─TableReader_32	1985.00	root	data:Selection_31
