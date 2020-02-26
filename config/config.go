@@ -651,7 +651,7 @@ func StoreGlobalConfig(config *Config) {
 
 var deprecatedConfig = map[string]struct{}{
 	"pessimistic-txn.ttl": {},
-	"log.rotate":          {},
+	"log.file.log-rotate": {},
 }
 
 func isAllDeprecatedConfigItems(items []string) bool {
@@ -698,7 +698,7 @@ func InitializeConfig(confPath string, configCheck, configStrict bool, reloadFun
 		}
 	}
 	enforceCmdArgs(cfg)
-	globalConfHandler, err = NewConfHandler(cfg, reloadFunc, nil)
+	globalConfHandler, err = NewConfHandler(confPath, cfg, reloadFunc, nil)
 	terror.MustNil(err)
 	globalConfHandler.Start()
 }

@@ -690,6 +690,10 @@ func IsBinaryLiteral(expr Expression) bool {
 // CheckExprPushFlash checks a expr list whether each expr can be pushed to flash storage.
 func CheckExprPushFlash(exprs []Expression) (exprPush, remain []Expression) {
 	for _, expr := range exprs {
+		if expr.GetType().Tp == mysql.TypeDuration || expr.GetType().Tp == mysql.TypeJSON {
+			remain = append(remain, expr)
+			continue
+		}
 		switch x := expr.(type) {
 		case *Constant, *CorrelatedColumn, *Column:
 			exprPush = append(exprPush, expr)

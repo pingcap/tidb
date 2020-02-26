@@ -565,7 +565,7 @@ func EncodeIndexSeekKey(tableID int64, idxID int64, encodedValue []byte) kv.Key 
 // if it is non-unique index.
 func CutIndexKey(key kv.Key, colIDs []int64) (values map[int64][]byte, b []byte, err error) {
 	b = key[prefixLen+idLen:]
-	values = make(map[int64][]byte)
+	values = make(map[int64][]byte, len(colIDs))
 	for _, id := range colIDs {
 		var val []byte
 		val, b, err = codec.CutOne(b)
