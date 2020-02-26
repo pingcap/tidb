@@ -556,9 +556,11 @@ func (t *TableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 		}
 	}
 	writeBufs := sessVars.GetWriteStmtBufs()
-	adjustRowValuesBuf(writeBufs, len(row))
 	key := t.RecordKey(recordID)
 	sc, rd := sessVars.StmtCtx, &sessVars.RowEncoder
+	if !rd.Enable {
+		adjustRowValuesBuf(writeBufs, len(row))
+	}
 	writeBufs.RowValBuf, err = tablecodec.EncodeRow(sc, row, colIDs, writeBufs.RowValBuf, writeBufs.AddRowValues, rd)
 	if err != nil {
 		return 0, err

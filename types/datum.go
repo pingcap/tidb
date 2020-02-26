@@ -72,19 +72,24 @@ type Datum struct {
 
 // Copy deep copies a Datum.
 func (d *Datum) Copy() *Datum {
-	ret := *d
+	ret := new(Datum)
+	d.CopyInto(ret)
+	return ret
+}
+
+func (d *Datum) CopyInto(dst *Datum) {
+	*dst = *d
 	if d.b != nil {
-		ret.b = make([]byte, len(d.b))
-		copy(ret.b, d.b)
+		dst.b = make([]byte, len(d.b))
+		copy(dst.b, d.b)
 	}
-	switch ret.Kind() {
+	switch dst.Kind() {
 	case KindMysqlDecimal:
 		d := *d.GetMysqlDecimal()
-		ret.SetMysqlDecimal(&d)
+		dst.SetMysqlDecimal(&d)
 	case KindMysqlTime:
-		ret.SetMysqlTime(d.GetMysqlTime())
+		dst.SetMysqlTime(d.GetMysqlTime())
 	}
-	return &ret
 }
 
 // Kind gets the kind of the datum.
@@ -1894,7 +1899,7 @@ func CloneDatum(datum Datum) Datum {
 func CloneRow(dr []Datum) []Datum {
 	c := make([]Datum, len(dr))
 	for i, d := range dr {
-		c[i] = *d.Copy()
+		d.CopyInto(&c[i])
 	}
 	return c
 }
