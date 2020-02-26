@@ -63,8 +63,8 @@ func (s *testConfigSuite) TestMergeConfigItems(c *C) {
 	newConf.Log.SlowThreshold = 2345
 
 	as, rs := MergeConfigItems(oldConf, newConf)
-	c.Assert(len(as), Equals, 9)
-	c.Assert(len(rs), Equals, 4)
+	c.Assert(len(as), Equals, 10)
+	c.Assert(len(rs), Equals, 3)
 	for _, a := range as {
 		_, ok := dynamicConfigItems[a]
 		c.Assert(ok, IsTrue)
@@ -83,11 +83,11 @@ func (s *testConfigSuite) TestMergeConfigItems(c *C) {
 	c.Assert(oldConf.OOMAction, Equals, newConf.OOMAction)
 	c.Assert(oldConf.MemQuotaQuery, Equals, newConf.MemQuotaQuery)
 	c.Assert(oldConf.TiKVClient.StoreLimit, Equals, newConf.TiKVClient.StoreLimit)
+	c.Assert(oldConf.Log.SlowThreshold, Equals, newConf.Log.SlowThreshold)
 
 	c.Assert(oldConf.Store, Equals, oriConf.Store)
 	c.Assert(oldConf.Port, Equals, oriConf.Port)
 	c.Assert(oldConf.AdvertiseAddress, Equals, oriConf.AdvertiseAddress)
-	c.Assert(oldConf.Log.SlowThreshold, Equals, oriConf.Log.SlowThreshold)
 }
 
 func (s *testConfigSuite) TestAtomicWriteConfig(c *C) {
