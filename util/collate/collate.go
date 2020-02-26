@@ -15,6 +15,7 @@ package collate
 
 import (
 	"strings"
+	"sync"
 
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/util/logutil"
@@ -25,6 +26,7 @@ var (
 	collatorMap         map[string]Collator
 	collatorIDMap       map[int]Collator
 	newCollationEnabled bool
+	mu                  sync.Mutex
 )
 
 // DefaultLen is set for datum if the string datum don't know its length.
@@ -59,6 +61,8 @@ func EnableNewCollations() {
 // SetNewCollationEnabledForTest sets if the new collation are enabled in test.
 // Note: Be careful to use this function, if this functions is used in tests, make sure the tests are serial.
 func SetNewCollationEnabledForTest(flag bool) {
+	mu.Lock()
+	defer mu.Unlock()
 	newCollationEnabled = flag
 	if newCollationEnabled {
 		collatorMap["utf8mb4_bin"] = &binPaddingCollator{}
