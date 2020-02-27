@@ -135,7 +135,7 @@ func TestTopology(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = info.refreshTopology(ctx)
+	err = info.updateTopologyAliveness(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
