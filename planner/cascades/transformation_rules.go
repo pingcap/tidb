@@ -69,6 +69,7 @@ var defaultTransformationMap = map[memo.Operand][]Transformation{
 		NewRulePushAggDownGather(),
 		NewRuleMergeAggregationProjection(),
 		NewRuleEliminateSingleMaxMin(),
+		NewRuleEliminateMultiMaxMin(),
 		NewRuleEliminateOuterJoinBelowAggregation(),
 		NewRuleTransformAggregateCaseToSelection(),
 	},
@@ -1407,32 +1408,17 @@ func (r *MergeAggregationProjection) OnTransform(old *memo.ExprIter) (newExprs [
 	return []*memo.GroupExpr{newAggExpr}, false, false, nil
 }
 
-// EliminateSingleMaxMin tries to convert a single max/min to Limit+Sort operators.
-type EliminateSingleMaxMin struct {
-	baseRule
+type eliminateMaxMin struct {
 }
 
-// NewRuleEliminateSingleMaxMin creates a new Transformation EliminateSingleMaxMin.
-// The pattern of this rule is `max/min->X`.
-func NewRuleEliminateSingleMaxMin() Transformation {
-	rule := &EliminateSingleMaxMin{}
-	rule.pattern = memo.BuildPattern(
-		memo.OperandAggregation,
-		memo.EngineTiDBOnly,
-		memo.NewPattern(memo.OperandAny, memo.EngineTiDBOnly),
-	)
-	return rule
-}
-
-// Match implements Transformation interface.
-func (r *EliminateSingleMaxMin) Match(expr *memo.ExprIter) bool {
+func (r *eliminateMaxMin) preMatch(expr *memo.ExprIter) bool {
 	// Use appliedRuleSet in GroupExpr to avoid re-apply rules.
 	if expr.GetExpr().HasAppliedRule(r) {
 		return false
 	}
 
 	agg := expr.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
-	// EliminateSingleMaxMin only works on the complete mode.
+	// eliminateMaxMin only works on the complete mode.
 	if !agg.IsCompleteModeAgg() {
 		return false
 	}
@@ -1440,24 +1426,12 @@ func (r *EliminateSingleMaxMin) Match(expr *memo.ExprIter) bool {
 		return false
 	}
 
-	// If there is only one aggFunc, we don't need to guarantee that the child of it is a data
-	// source, or whether the sort can be eliminated. This transformation won't be worse than previous.
-	// Make sure that the aggFunc are Max or Min.
-	// TODO: If there have only one Max or Min aggFunc and the other aggFuncs are FirstRow() can also use this rule. Waiting for the not null prop is maintained.
-	if len(agg.AggFuncs) != 1 {
-		return false
-	}
-	if agg.AggFuncs[0].Name != ast.AggFuncMax && agg.AggFuncs[0].Name != ast.AggFuncMin {
-		return false
-	}
 	return true
 }
 
-// OnTransform implements Transformation interface.
-// It will transform `max/min->X` to `max/min->top1->sel->X`.
-func (r *EliminateSingleMaxMin) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
-	agg := old.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
-	childGroup := old.GetExpr().Children[0]
+func (r *eliminateMaxMin) eliminateSingleMaxMin(expr *memo.GroupExpr) *memo.GroupExpr {
+	agg := expr.ExprNode.(*plannercore.LogicalAggregation)
+	childGroup := expr.Children[0]
 	ctx := agg.SCtx()
 	f := agg.AggFuncs[0]
 
@@ -1505,7 +1479,162 @@ func (r *EliminateSingleMaxMin) OnTransform(old *memo.ExprIter) (newExprs []*mem
 	// Since now there would be at most one row returned, the remained agg operator is not expensive anymore.
 	newAggExpr.SetChildren(childGroup)
 	newAggExpr.AddAppliedRule(r)
-	return []*memo.GroupExpr{newAggExpr}, false, false, nil
+	return newAggExpr
+}
+
+// EliminateSingleMaxMin tries to convert a single max/min to Limit+Sort operators.
+type EliminateSingleMaxMin struct {
+	baseRule
+	eliminateMaxMin
+}
+
+// NewRuleEliminateSingleMaxMin creates a new Transformation EliminateSingleMaxMin.
+// The pattern of this rule is `max/min->X`.
+func NewRuleEliminateSingleMaxMin() Transformation {
+	rule := &EliminateSingleMaxMin{}
+	rule.pattern = memo.BuildPattern(
+		memo.OperandAggregation,
+		memo.EngineTiDBOnly,
+		memo.NewPattern(memo.OperandAny, memo.EngineTiDBOnly),
+	)
+	return rule
+}
+
+// Match implements Transformation interface.
+func (r *EliminateSingleMaxMin) Match(expr *memo.ExprIter) bool {
+	if !r.preMatch(expr) {
+		return false
+	}
+
+	// If there is only one aggFunc, we don't need to guarantee that the child of it is a data
+	// source, or whether the sort can be eliminated. This transformation won't be worse than previous.
+	// Make sure that the aggFunc are Max or Min.
+	// TODO: If there have only one Max or Min aggFunc and the other aggFuncs are FirstRow() can also use this rule. Waiting for the not null prop is maintained.
+	agg := expr.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
+	if len(agg.AggFuncs) != 1 {
+		return false
+	}
+	if agg.AggFuncs[0].Name != ast.AggFuncMax && agg.AggFuncs[0].Name != ast.AggFuncMin {
+		return false
+	}
+	return true
+}
+
+// OnTransform implements Transformation interface.
+// It will transform `max/min->X` to `max/min->top1->sel->X`.
+func (r *EliminateSingleMaxMin) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	return []*memo.GroupExpr{r.eliminateSingleMaxMin(old.GetExpr())}, false, false, nil
+}
+
+// NewRuleEliminateMultiMaxMin tries to convert multi max/min to Limit+Sort operators.
+type EliminateMultiMaxMin struct {
+	baseRule
+	eliminateMaxMin
+}
+
+// NewRuleEliminateSingleMaxMin creates a new Transformation EliminateMultiMaxMin.
+// The pattern of this rule is `agg(multi max/min)->gather`.
+func NewRuleEliminateMultiMaxMin() Transformation {
+	// ToDo if other gathers be implemented, we should support
+	rule := &EliminateMultiMaxMin{}
+	rule.pattern = memo.BuildPattern(
+		memo.OperandAggregation,
+		memo.EngineTiDBOnly,
+		memo.NewPattern(memo.OperandTiKVSingleGather, memo.EngineTiDBOnly),
+	)
+	return rule
+}
+
+// Match implements Transformation interface.
+func (r *EliminateMultiMaxMin) Match(expr *memo.ExprIter) bool {
+	if !r.preMatch(expr) {
+		return false
+	}
+
+	agg := expr.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
+	if len(agg.AggFuncs) <= 1 {
+		return false
+	}
+	// Make sure that all of the aggFuncs are Max or Min.
+	for _, aggFunc := range agg.AggFuncs {
+		if aggFunc.Name != ast.AggFuncMax && aggFunc.Name != ast.AggFuncMin {
+			return false
+		}
+	}
+
+	childExpr := expr.Children[0].GetExpr()
+	for _, f := range agg.AggFuncs {
+		// We must make sure the args of max/min is a simple single column.
+		col, ok := f.Args[0].(*expression.Column)
+		if !ok {
+			return false
+		}
+		if !r.checkColCanUseIndex(childExpr.Children[0], col) {
+			return false
+		}
+	}
+	return true
+}
+
+// if there are selections which between scan and agg and can be pushed down, they will be pushed down by pushSelDownGather, pushSelDownXXScan.
+func (r *EliminateMultiMaxMin) checkColCanUseIndex(group *memo.Group, col *expression.Column) bool {
+	if iter := group.Equivalents.Front(); iter != nil {
+		expr := iter.Value.(*memo.GroupExpr)
+		switch p := expr.ExprNode.(type) {
+		case *plannercore.LogicalTableScan:
+			// check if `col` is the handle column
+			return p.Handle != nil && col.Equal(nil, p.Handle)
+		case *plannercore.LogicalIndexScan:
+			// whether the LogicalIndexScan can satisfy the order property of `col` with these accessConds
+			for i := 0; i <= p.EqCondCount; i++ {
+				if i < len(p.FullIdxCols) && p.FullIdxCols[i] != nil && col.Equal(nil, p.FullIdxCols[i]) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// OnTransform implements Transformation interface.
+func (r *EliminateMultiMaxMin) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	agg := old.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
+
+	aggGroups := make([]*memo.Group, 0, len(agg.AggFuncs))
+	// we can split the aggregation only if all of the aggFuncs pass the check.
+	cols := old.GetExpr().Group.Prop.Schema.Columns
+	for i, f := range agg.AggFuncs {
+		newAgg := plannercore.LogicalAggregation{AggFuncs: []*aggregation.AggFuncDesc{f}}.Init(agg.SCtx(), agg.SelectBlockOffset())
+		schema := expression.NewSchema(cols[i])
+		newAgg.SetSchema(schema)
+		newAggExpr := memo.NewGroupExpr(newAgg)
+		// is ok to share child, child is immutable
+		newAggExpr.SetChildren(old.GetExpr().Children...)
+		newAggExpr = r.eliminateSingleMaxMin(newAggExpr)
+		aggGroups = append(aggGroups, memo.NewGroupWithSchema(newAggExpr, schema))
+	}
+	return []*memo.GroupExpr{r.composeAggGroupsByInnerJoin(aggGroups, agg.SCtx(), agg.SelectBlockOffset())}, false, false, nil
+}
+
+func (r *EliminateMultiMaxMin) composeAggGroupsByInnerJoin(aggGroups []*memo.Group, sctx sessionctx.Context, blockOffset int) (expr *memo.GroupExpr) {
+	group := aggGroups[0]
+	lastIndex := len(aggGroups)-1
+	for i := 1; i <= lastIndex; i++ {
+		join := plannercore.LogicalJoin{JoinType: plannercore.InnerJoin}.Init(sctx, blockOffset)
+		schema := expression.MergeSchema(group.Prop.Schema, aggGroups[i].Prop.Schema)
+		join.SetSchema(schema)
+		join.CartesianJoin = true
+		newJoinExpr := memo.NewGroupExpr(join)
+		newJoinExpr.SetChildren(group, aggGroups[i])
+
+		if i != lastIndex {
+			group = memo.NewGroupWithSchema(newJoinExpr, schema)
+		} else {
+			expr = newJoinExpr
+			return
+		}
+	}
+	return
 }
 
 // MergeAdjacentSelection merge adjacent selection.

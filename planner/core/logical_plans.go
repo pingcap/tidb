@@ -121,7 +121,7 @@ type LogicalJoin struct {
 
 	JoinType      JoinType
 	reordered     bool
-	cartesianJoin bool
+	CartesianJoin bool
 	StraightJoin  bool
 
 	// hintInfo stores the join algorithm hint information specified by client.

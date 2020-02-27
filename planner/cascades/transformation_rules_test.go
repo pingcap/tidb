@@ -197,6 +197,23 @@ func (s *testTransformationRuleSuite) TestEliminateMaxMin(c *C) {
 	s.optimizer.ResetTransformationRules(map[memo.Operand][]Transformation{
 		memo.OperandAggregation: {
 			NewRuleEliminateSingleMaxMin(),
+			NewRuleEliminateMultiMaxMin(),
+		},
+		memo.OperandDataSource: {
+			NewRuleEnumeratePaths(),
+		},
+		memo.OperandProjection: {
+			NewRuleEliminateProjection(),
+			NewRuleMergeAdjacentProjection(),
+		},
+		memo.OperandSelection: {
+			NewRulePushSelDownTableScan(),
+			NewRulePushSelDownTiKVSingleGather(),
+			NewRulePushSelDownIndexScan(),
+			NewRuleMergeAdjacentSelection(),
+		},
+		memo.OperandTopN: {
+			NewRuleMergeAdjacentTopN(),
 		},
 	})
 	defer func() {

@@ -44,7 +44,7 @@ func (a *maxMinEliminator) composeAggsByInnerJoin(aggs []*LogicalAggregation) (p
 		join := LogicalJoin{JoinType: InnerJoin}.Init(sctx, plan.SelectBlockOffset())
 		join.SetChildren(plan, aggs[i])
 		join.schema = buildLogicalJoinSchema(InnerJoin, join)
-		join.cartesianJoin = true
+		join.CartesianJoin = true
 		plan = join
 	}
 	return

@@ -72,7 +72,8 @@
     "name": "TestEliminateMaxMin",
     "cases": [
       "select max(a) from t;",
-      "select min(a) from t;"
+      "select min(a) from t;",
+      "select max(a), min(a) from t"
     ]
   },
   {
