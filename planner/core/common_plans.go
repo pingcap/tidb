@@ -724,7 +724,7 @@ func (e *Explain) RenderResult() error {
 	switch strings.ToLower(e.Format) {
 	case ast.ExplainFormatROW:
 		e.explainedPlans = map[int]bool{}
-		err := e.explainPlanInRowFormat(e.TargetPlan, "root", "", true)
+		err := e.explainPlanInRowFormat(e.TargetPlan, "root", "", "", true)
 		if err != nil {
 			return err
 		}
@@ -739,19 +739,55 @@ func (e *Explain) RenderResult() error {
 }
 
 // explainPlanInRowFormat generates explain information for root-tasks.
-func (e *Explain) explainPlanInRowFormat(p Plan, taskType, indent string, isLastChild bool) (err error) {
-	e.prepareOperatorInfo(p, taskType, indent, isLastChild)
+func (e *Explain) explainPlanInRowFormat(p Plan, taskType, driverSide, indent string, isLastChild bool) (err error) {
+	e.prepareOperatorInfo(p, taskType, driverSide, indent, isLastChild)
 	e.explainedPlans[p.ID()] = true
 
 	// For every child we create a new sub-tree rooted by it.
 	childIndent := texttree.Indent4Child(indent, isLastChild)
 
 	if physPlan, ok := p.(PhysicalPlan); ok {
-		for i, child := range physPlan.Children() {
-			if e.explainedPlans[child.ID()] {
+		// indicate driven side and driving side of 'join' and 'apply'
+		// See issue https://github.com/pingcap/tidb/issues/14602.
+		driverSideInfo := make([]string, len(physPlan.Children()))
+		buildSide := -1
+
+		switch plan := physPlan.(type) {
+		case *PhysicalApply:
+			buildSide = plan.InnerChildIdx ^ 1
+		case *PhysicalHashJoin:
+			if plan.UseOuterToBuild {
+				buildSide = plan.InnerChildIdx ^ 1
+			} else {
+				buildSide = plan.InnerChildIdx
+			}
+		case *PhysicalMergeJoin:
+			if plan.JoinType == RightOuterJoin {
+				buildSide = 0
+			} else {
+				buildSide = 1
+			}
+		case *PhysicalIndexJoin:
+			buildSide = plan.InnerChildIdx ^ 1
+		case *PhysicalIndexMergeJoin:
+			buildSide = plan.InnerChildIdx ^ 1
+		case *PhysicalIndexHashJoin:
+			buildSide = plan.InnerChildIdx ^ 1
+		}
+
+		if buildSide != -1 {
+			driverSideInfo[0], driverSideInfo[1] = "(Build)", "(Probe)"
+		} else {
+			buildSide = 0
+		}
+
+		// Always put the Build above the Probe.
+		for i := range physPlan.Children() {
+			pchild := &physPlan.Children()[i^buildSide]
+			if e.explainedPlans[(*pchild).ID()] {
 				continue
 			}
-			err = e.explainPlanInRowFormat(child, taskType, childIndent, i == len(physPlan.Children())-1)
+			err = e.explainPlanInRowFormat(*pchild, taskType, driverSideInfo[i], childIndent, i == len(physPlan.Children())-1)
 			if err != nil {
 				return
 			}
@@ -768,38 +804,38 @@ func (e *Explain) explainPlanInRowFormat(p Plan, taskType, indent string, isLast
 			return errors.Errorf("the store type %v is unknown", x.StoreType)
 		}
 		storeType = x.StoreType.Name()
-		err = e.explainPlanInRowFormat(x.tablePlan, "cop["+storeType+"]", childIndent, true)
+		err = e.explainPlanInRowFormat(x.tablePlan, "cop["+storeType+"]", "", childIndent, true)
 	case *PhysicalIndexReader:
-		err = e.explainPlanInRowFormat(x.indexPlan, "cop[tikv]", childIndent, true)
+		err = e.explainPlanInRowFormat(x.indexPlan, "cop[tikv]", "", childIndent, true)
 	case *PhysicalIndexLookUpReader:
-		err = e.explainPlanInRowFormat(x.indexPlan, "cop[tikv]", childIndent, false)
-		err = e.explainPlanInRowFormat(x.tablePlan, "cop[tikv]", childIndent, true)
+		err = e.explainPlanInRowFormat(x.indexPlan, "cop[tikv]", "(Build)", childIndent, false)
+		err = e.explainPlanInRowFormat(x.tablePlan, "cop[tikv]", "(Probe)", childIndent, true)
 	case *PhysicalIndexMergeReader:
 		for i := 0; i < len(x.partialPlans); i++ {
 			if x.tablePlan == nil && i == len(x.partialPlans)-1 {
-				err = e.explainPlanInRowFormat(x.partialPlans[i], "cop[tikv]", childIndent, true)
+				err = e.explainPlanInRowFormat(x.partialPlans[i], "cop[tikv]", "", childIndent, true)
 			} else {
-				err = e.explainPlanInRowFormat(x.partialPlans[i], "cop[tikv]", childIndent, false)
+				err = e.explainPlanInRowFormat(x.partialPlans[i], "cop[tikv]", "", childIndent, false)
 			}
 		}
 		if x.tablePlan != nil {
-			err = e.explainPlanInRowFormat(x.tablePlan, "cop[tikv]", childIndent, true)
+			err = e.explainPlanInRowFormat(x.tablePlan, "cop[tikv]", "", childIndent, true)
 		}
 	case *Insert:
 		if x.SelectPlan != nil {
-			err = e.explainPlanInRowFormat(x.SelectPlan, "root", childIndent, true)
+			err = e.explainPlanInRowFormat(x.SelectPlan, "root", "", childIndent, true)
 		}
 	case *Update:
 		if x.SelectPlan != nil {
-			err = e.explainPlanInRowFormat(x.SelectPlan, "root", childIndent, true)
+			err = e.explainPlanInRowFormat(x.SelectPlan, "root", "", childIndent, true)
 		}
 	case *Delete:
 		if x.SelectPlan != nil {
-			err = e.explainPlanInRowFormat(x.SelectPlan, "root", childIndent, true)
+			err = e.explainPlanInRowFormat(x.SelectPlan, "root", "", childIndent, true)
 		}
 	case *Execute:
 		if x.Plan != nil {
-			err = e.explainPlanInRowFormat(x.Plan, "root", childIndent, true)
+			err = e.explainPlanInRowFormat(x.Plan, "root", "", childIndent, true)
 		}
 	}
 	return
@@ -807,14 +843,14 @@ func (e *Explain) explainPlanInRowFormat(p Plan, taskType, indent string, isLast
 
 // prepareOperatorInfo generates the following information for every plan:
 // operator id, task type, operator info, and the estemated row count.
-func (e *Explain) prepareOperatorInfo(p Plan, taskType string, indent string, isLastChild bool) {
+func (e *Explain) prepareOperatorInfo(p Plan, taskType, driverSide, indent string, isLastChild bool) {
 	operatorInfo := p.ExplainInfo()
 	count := "N/A"
 	if si := p.statsInfo(); si != nil {
 		count = strconv.FormatFloat(si.RowCount, 'f', 2, 64)
 	}
 	explainID := p.ExplainID().String()
-	row := []string{texttree.PrettyIdentifier(explainID, indent, isLastChild), count, taskType, operatorInfo}
+	row := []string{texttree.PrettyIdentifier(explainID+driverSide, indent, isLastChild), count, taskType, operatorInfo}
 	if e.Analyze {
 		runtimeStatsColl := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl
 		// There maybe some mock information for cop task to let runtimeStatsColl.Exists(p.ExplainID()) is true.
