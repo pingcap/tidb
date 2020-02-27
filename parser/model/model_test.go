@@ -321,3 +321,44 @@ func (testModelSuite) TestUnmarshalCIStr(c *C) {
 	c.Assert(ci.O, Equals, str)
 	c.Assert(ci.L, Equals, "aabb")
 }
+
+func (*testModelSuite) TestToPB(c *C) {
+	column := &ColumnInfo{
+		ID:           1,
+		Name:         NewCIStr("c"),
+		Offset:       0,
+		DefaultValue: 0,
+		FieldType:    *types.NewFieldType(0),
+		Hidden:       true,
+	}
+	column.Collate = "utf8mb4_general_ci"
+	index := &IndexInfo{
+		Name:  NewCIStr("key"),
+		Table: NewCIStr("t"),
+		Columns: []*IndexColumn{
+			{
+				Name:   NewCIStr("c"),
+				Offset: 0,
+				Length: 10,
+			}},
+		Unique:  true,
+		Primary: true,
+	}
+	fk := &FKInfo{
+		RefCols: []CIStr{NewCIStr("a")},
+		Cols:    []CIStr{NewCIStr("a")},
+	}
+	table := &TableInfo{
+		ID:          1,
+		Name:        NewCIStr("t"),
+		Charset:     "utf8",
+		Collate:     "utf8_bin",
+		Columns:     []*ColumnInfo{column},
+		Indices:     []*IndexInfo{index},
+		ForeignKeys: []*FKInfo{fk},
+		PKIsHandle:  true,
+	}
+	c.Assert(ColumnToProto(column).String(), Equals, "column_id:1 collation:45 columnLen:-1 decimal:-1 ")
+	c.Assert(ColumnsToProto([]*ColumnInfo{column}, false)[0].String(), Equals, "column_id:1 collation:45 columnLen:-1 decimal:-1 ")
+	c.Assert(IndexToProto(table, index).String(), Equals, "table_id:1 columns:<column_id:1 collation:45 columnLen:-1 decimal:-1 > unique:true ")
+}
