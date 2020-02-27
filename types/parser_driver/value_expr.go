@@ -69,8 +69,9 @@ type ValueExpr struct {
 	projectionOffset int
 }
 
-func (v *ValueExpr) SetValue(res interface{}) {
-	v.Datum.SetValueForTest(res)
+// SetValue implements interface of ast.ValueExpr.
+func (n *ValueExpr) SetValue(res interface{}) {
+	n.Datum.SetValueForTest(res)
 }
 
 // Restore implements Node interface.
