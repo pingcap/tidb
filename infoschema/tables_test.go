@@ -1079,6 +1079,10 @@ func (s *testClusterTableSuite) TestSelectClusterTable(c *C) {
 		re := tk.MustQuery("select * from `CLUSTER_events_statements_summary_by_digest`")
 		c.Assert(re, NotNil)
 		c.Assert(len(re.Rows()) > 0, IsTrue)
+		// Test for TiDB issue 14915.
+		re = tk.MustQuery("select sum(exec_count*avg_mem) from cluster_events_statements_summary_by_digest_history group by schema_name,digest,digest_text;")
+		c.Assert(re, NotNil)
+		c.Assert(len(re.Rows()) > 0, IsTrue)
 		tk.MustQuery("select * from `CLUSTER_events_statements_summary_by_digest_history`")
 		c.Assert(re, NotNil)
 		c.Assert(len(re.Rows()) > 0, IsTrue)

@@ -1640,7 +1640,10 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	if err != nil {
 		return nil, err
 	}
-	collate.SetNewCollationEnabled(newCollationEnabled)
+
+	if newCollationEnabled {
+		collate.EnableNewCollations()
+	}
 
 	dom := domain.GetDomain(se)
 	dom.InitExpensiveQueryHandle()
