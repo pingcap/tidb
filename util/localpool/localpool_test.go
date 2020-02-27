@@ -57,7 +57,6 @@ func (s *testPoolSuite) TestPool(c *C) {
 	wg.Wait()
 	var getHit, getMiss, putHit, putMiss int
 	for _, slot := range pool.slots {
-		fmt.Println(slot.getHit, slot.getMiss, slot.putHit, slot.putMiss)
 		getHit += slot.getHit
 		getMiss += slot.getMiss
 		putHit += slot.putHit

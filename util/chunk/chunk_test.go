@@ -936,7 +936,6 @@ func BenchmarkAccess(b *testing.B) {
 			sum += rowChk.GetRow(j).GetInt64(0)
 		}
 	}
-	fmt.Println(sum)
 }
 
 func BenchmarkChunkMemoryUsage(b *testing.B) {
