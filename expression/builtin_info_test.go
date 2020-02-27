@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/printer"
+	"github.com/pingcap/tidb/util/testutil"
 )
 
 func (s *testEvaluatorSuite) TestDatabase(c *C) {
@@ -275,4 +276,50 @@ func (s *testEvaluatorSuite) TestLastInsertID(c *C) {
 
 	_, err := funcs[ast.LastInsertId].getFunction(s.ctx, []Expression{Zero})
 	c.Assert(err, IsNil)
+}
+
+func (s *testEvaluatorSuite) TestFormatBytes(c *C) {
+	tbl := []struct {
+		Arg interface{}
+		Ret interface{}
+	}{
+		{nil, nil},
+		{float64(0), "0 bytes"},
+		{float64(2048), "2.00 KiB"},
+		{float64(18446644073709551615), "16.00 EiB"},
+		{float64(-18446644073709551615), "-16.00 EiB"},
+	}
+	Dtbl := tblToDtbl(tbl)
+
+	for _, t := range Dtbl {
+		fc := funcs[ast.FormatBytes]
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t["Arg"]))
+		c.Assert(err, IsNil)
+		v, err := evalBuiltinFunc(f, chunk.Row{})
+		c.Assert(err, IsNil)
+		c.Assert(v, testutil.DatumEquals, t["Ret"][0])
+	}
+}
+
+func (s *testEvaluatorSuite) TestFormatNanoTime(c *C) {
+	tbl := []struct {
+		Arg interface{}
+		Ret interface{}
+	}{
+		{nil, nil},
+		{float64(0), "0 ns"},
+		{float64(2000), "2.00 us"},
+		{float64(9999999991), "10.00 s"},
+		{float64(-9999999991), "-10.00 s"},
+	}
+	Dtbl := tblToDtbl(tbl)
+
+	for _, t := range Dtbl {
+		fc := funcs[ast.FormatNanoTime]
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t["Arg"]))
+		c.Assert(err, IsNil)
+		v, err := evalBuiltinFunc(f, chunk.Row{})
+		c.Assert(err, IsNil)
+		c.Assert(v, testutil.DatumEquals, t["Ret"][0])
+	}
 }
