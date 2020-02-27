@@ -499,7 +499,7 @@ var defaultConf = Config{
 	TokenLimit:                   1000,
 	OOMUseTmpStorage:             true,
 	OOMAction:                    "log",
-	MemQuotaQuery:                32 << 30,
+	MemQuotaQuery:                1 << 30,
 	EnableStreaming:              false,
 	EnableBatchDML:               false,
 	CheckMb4ValueInUTF8:          true,
@@ -803,7 +803,10 @@ func (c *Config) Valid() error {
 			return fmt.Errorf("type of [isolation-read]engines can't be %v should be one of tidb or tikv or tiflash", engine)
 		}
 	}
-	return nil
+
+	// test log level
+	l := zap.NewAtomicLevel()
+	return l.UnmarshalText([]byte(c.Log.Level))
 }
 
 func hasRootPrivilege() bool {
