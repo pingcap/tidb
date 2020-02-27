@@ -319,7 +319,7 @@ func (is *InfoSyncer) StoreTopologyInfo(ctx context.Context) error {
 		return err
 	}
 	// Initialize ttl.
-	return is.refreshTopology(ctx)
+	return is.updateTopologyAliveness(ctx)
 }
 
 // GetMinStartTS get min start timestamp.
@@ -441,7 +441,7 @@ func (is *InfoSyncer) newTopologySessionAndStoreServerInfo(ctx context.Context, 
 }
 
 // refreshTopology refreshes etcd topology with ttl stored in "/topology/tidb/ip:port/ttl".
-func (is *InfoSyncer) refreshTopology(ctx context.Context) error {
+func (is *InfoSyncer) updateTopologyAliveness(ctx context.Context) error {
 	if is.etcdCli == nil {
 		return nil
 	}
