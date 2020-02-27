@@ -900,7 +900,7 @@ func IndexToProto(t *TableInfo, idx *IndexInfo) *tipb.IndexInfo {
 func ColumnToProto(c *ColumnInfo) *tipb.ColumnInfo {
 	pc := &tipb.ColumnInfo{
 		ColumnId:  c.ID,
-		Collation: collationToProto(c.FieldType.Collate),
+		Collation: int32(mysql.CollationNames[c.FieldType.Collate]),
 		ColumnLen: int32(c.FieldType.Flen),
 		Decimal:   int32(c.FieldType.Decimal),
 		Flag:      int32(c.Flag),
@@ -908,18 +908,6 @@ func ColumnToProto(c *ColumnInfo) *tipb.ColumnInfo {
 	}
 	pc.Tp = int32(c.FieldType.Tp)
 	return pc
-}
-
-// TODO: update it when more collate is supported.
-func collationToProto(c string) int32 {
-	v := mysql.CollationNames[c]
-	if v == mysql.BinaryDefaultCollationID {
-		return int32(mysql.BinaryDefaultCollationID)
-	}
-	// We only support binary and utf8_bin collation.
-	// Setting other collations to utf8_bin for old data compatibility.
-	// For the data created when we didn't enforce utf8_bin collation in create table.
-	return int32(mysql.DefaultCollationID)
 }
 
 // TableColumnID is composed by table ID and column ID.
