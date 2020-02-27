@@ -857,15 +857,17 @@ func (e *Explain) prepareOperatorInfo(p Plan, taskType, driverSide, indent strin
 		// There maybe some mock information for cop task to let runtimeStatsColl.Exists(p.ExplainID()) is true.
 		// So check copTaskExecDetail first and print the real cop task information if it's not empty.
 		var analyzeInfo string
-
+		
 		var totalRows int64
 		var totalLoops int32
 		if runtimeStatsColl.ExistsCopStats(explainID) {
-			analyzeInfo = runtimeStatsColl.GetCopStats(explainID).String()
-			totalRows, totalLoops = runtimeStatsColl.GetCopStats(explainID).GetRowsAndLoops()
+			copstats := runtimeStatsColl.GetCopStats(explainID);
+			analyzeInfo = copstats.String()
+			totalRows, totalLoops = copstats.GetRowsAndLoops()
 		} else if runtimeStatsColl.ExistsRootStats(explainID) {
-			analyzeInfo = runtimeStatsColl.GetRootStats(explainID).String()
-			totalRows, totalLoops = runtimeStatsColl.GetRootStats(explainID).GetRowsAndLoops()
+			rootstats := runtimeStatsColl.GetRootStats(explainID);
+			analyzeInfo = rootstats.String()
+			totalRows, totalLoops = rootstats.GetRowsAndLoops()
 		} else {
 			analyzeInfo = "time:0ns, loops:0, rows:0"
 		}
