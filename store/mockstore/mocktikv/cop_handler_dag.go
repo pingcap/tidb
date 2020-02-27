@@ -16,6 +16,7 @@ package mocktikv
 import (
 	"bytes"
 	"context"
+	"github.com/pingcap/tidb/util/bloom"
 	"io"
 	"time"
 
@@ -309,12 +310,24 @@ func (h *rpcHandler) buildSelection(ctx *dagContext, executor *tipb.Executor) (*
 		return nil, errors.Trace(err)
 	}
 
+	var bl *bloom.Filter = nil
+	var jkIdx []int64
+	if executor.Selection.Bloom != nil {
+		bl, err = bloom.NewFilterBySlice(executor.Selection.Bloom.BitSet)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		jkIdx = executor.Selection.Bloom.ColIdx
+	}
+
 	return &selectionExec{
 		evalCtx:           ctx.evalCtx,
 		relatedColOffsets: relatedColOffsets,
 		conditions:        conds,
 		row:               make([]types.Datum, len(ctx.evalCtx.columnInfos)),
 		execDetail:        new(execDetail),
+		bloomFilter:       bl,
+		joinKeyIdx:        jkIdx,
 	}, nil
 }
 

@@ -16,6 +16,9 @@ package mocktikv
 import (
 	"bytes"
 	"context"
+	"github.com/pingcap/tidb/util/bloom"
+	hash2 "hash"
+	"hash/fnv"
 	"sort"
 	"time"
 
@@ -420,6 +423,9 @@ type selectionExec struct {
 	evalCtx           *evalContext
 	src               executor
 	execDetail        *execDetail
+
+	bloomFilter *bloom.Filter
+	joinKeyIdx  []int64
 }
 
 func (e *selectionExec) ExecDetails() []*execDetail {
@@ -491,6 +497,9 @@ func (e *selectionExec) Next(ctx context.Context) (value [][]byte, err error) {
 			return nil, errors.Trace(err)
 		}
 		match, err := evalBool(e.conditions, e.row, e.evalCtx.sc)
+		if e.bloomFilter != nil {
+			match = evalBoolForBloom(e.evalCtx.sc, e.bloomFilter, e.joinKeyIdx, e.row)
+		}
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -500,6 +509,46 @@ func (e *selectionExec) Next(ctx context.Context) (value [][]byte, err error) {
 	}
 }
 
+func evalBoolForBloom(ctx *stmtctx.StatementContext, bloom *bloom.Filter, joinKeyIdx []int64, row []types.Datum) bool {
+	hash := make([]hash2.Hash64, 0, 1)
+	hash = append(hash, fnv.New64())
+	b := make([]byte, 1)
+	isnull := make([]bool, 100)
+	r := chunk.MutRowFromDatums(row).ToRow()
+	for _, idx := range joinKeyIdx {
+		var tp *types.FieldType
+		if row[idx].Kind() == types.KindInt64 {
+			tp = types.NewFieldType(mysql.TypeLonglong)
+		} else {
+			return true
+		}
+		_ = codec.HashChunkSelected(ctx, hash, r.Chunk(), tp, int(idx), b, isnull, nil)
+	}
+
+	if bloom.ProbeU64(hash[0].Sum64()) {
+		return true
+	}
+	return false
+}
+
+//for _, expr := range exprs {
+//data, err := expr.Eval(chunk.MutRowFromDatums(row).ToRow())
+//if err != nil {
+//return false, errors.Trace(err)
+//}
+//if data.IsNull() {
+//return false, nil
+//}
+//
+//isBool, err := data.ToBool(ctx)
+//isBool, err = expression.HandleOverflowOnSelection(ctx, isBool, err)
+//if err != nil {
+//return false, errors.Trace(err)
+//}
+//if isBool == 0 {
+//return false, nil
+//}
+//}
 type topNExec struct {
 	heap              *topNHeap
 	evalCtx           *evalContext

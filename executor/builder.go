@@ -1135,7 +1135,7 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 	}
 	if e.joinType == plannercore.InnerJoin {
 		if probeExec, ok := e.probeSideExec.(*TableReaderExecutor); ok {
-			bl, _ := bloom.NewFilter(100000000 / 64)
+			bl, _ := bloom.NewFilter(10)
 			probeExec.bloomFilter = bl
 			e.bloomFilter = bl
 			probeExec.joinKeyIdx = make([]int64, len(e.probeKeys))
