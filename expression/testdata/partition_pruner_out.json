@@ -89,18 +89,6 @@
         "Result": [
           "TableDual_8 0.00 root rows:0"
         ]
-      },
-      {
-        "SQL": "explain select * from t1 where t1.a > 7 and t1.a < 3",
-        "Result": [
-          "TableDual_6 0.00 root rows:0"
-        ]
-      },
-      {
-        "SQL": "explain select * from t1 where t1.a between 7 and 3",
-        "Result": [
-          "TableDual_6 0.00 root rows:0"
-        ]
       }
     ]
   }
