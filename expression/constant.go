@@ -81,14 +81,14 @@ func (d *ParamMarker) GetUserVar() types.Datum {
 func (c *Constant) String() string {
 	if c.ParamMarker != nil {
 		dt := c.ParamMarker.GetUserVar()
-		c.Value.SetValue(dt.GetValue())
+		c.Value.SetValue(dt.GetValue(), c.RetType)
 	} else if c.DeferredExpr != nil {
 		dt, err := c.Eval(chunk.Row{})
 		if err != nil {
 			logutil.BgLogger().Error("eval constant failed", zap.Error(err))
 			return ""
 		}
-		c.Value.SetValue(dt.GetValue())
+		c.Value.SetValue(dt.GetValue(), c.RetType)
 	}
 	return fmt.Sprintf("%v", c.Value.GetValue())
 }

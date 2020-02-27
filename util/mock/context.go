@@ -71,7 +71,7 @@ func (c *Context) DDLOwnerChecker() owner.DDLOwnerChecker {
 	return &mockDDLOwnerChecker{}
 }
 
-// SetValue implements sessionctx.Context SetValue interface.
+// SetValueForTest implements sessionctx.Context SetValueForTest interface.
 func (c *Context) SetValue(key fmt.Stringer, value interface{}) {
 	c.values[key] = value
 }

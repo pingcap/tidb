@@ -168,6 +168,7 @@ func cmpJSON(l Row, lCol int, r Row, rCol int) int {
 }
 
 // Compare compares the value with ad.
+// We assume that the collation information of the column is the same with the datum.
 func Compare(row Row, colIdx int, ad *types.Datum) int {
 	switch ad.Kind() {
 	case types.KindNull:

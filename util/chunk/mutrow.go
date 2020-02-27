@@ -223,7 +223,7 @@ func (mr MutRow) SetValues(vals ...interface{}) {
 	}
 }
 
-// SetValue sets the MutRow with colIdx and value.
+// SetValueForTest sets the MutRow with colIdx and value.
 func (mr MutRow) SetValue(colIdx int, val interface{}) {
 	col := mr.c.columns[colIdx]
 	if val == nil {

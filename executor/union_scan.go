@@ -27,7 +27,7 @@ import (
 )
 
 // DirtyDB stores uncommitted write operations for a transaction.
-// It is stored and retrieved by context.Value and context.SetValue method.
+// It is stored and retrieved by context.Value and context.SetValueForTest method.
 type DirtyDB struct {
 	sync.Mutex
 

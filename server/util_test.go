@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -208,7 +209,7 @@ func (s *testUtilSuite) TestDumpTextValue(c *C) {
 	c.Assert(mustDecodeStr(c, bs), Equals, "ename")
 
 	set := types.Datum{}
-	set.SetMysqlSet(types.Set{Name: "sname", Value: 0})
+	set.SetMysqlSet(types.Set{Name: "sname", Value: 0}, mysql.DefaultCollationName, collate.DefaultLen)
 	columns[0].Type = mysql.TypeSet
 	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{set}).ToRow())
 	c.Assert(err, IsNil)

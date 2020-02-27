@@ -69,6 +69,10 @@ type ValueExpr struct {
 	projectionOffset int
 }
 
+func (v *ValueExpr) SetValue(res interface{}) {
+	v.Datum.SetValueForTest(res)
+}
+
 // Restore implements Node interface.
 func (n *ValueExpr) Restore(ctx *format.RestoreCtx) error {
 	switch n.Kind() {
@@ -171,7 +175,7 @@ func newValueExpr(value interface{}) ast.ValueExpr {
 		return ve
 	}
 	ve := &ValueExpr{}
-	ve.SetValue(value)
+	ve.Datum.SetValue(value, &ve.Type)
 	types.DefaultTypeForValue(value, &ve.Type)
 	ve.projectionOffset = -1
 	return ve
