@@ -234,6 +234,15 @@ func (p *LogicalJoin) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	return corCols
 }
 
+// ExtractJoinKeys extract join keys as a schema for child with childIdx.
+func (p *LogicalJoin) ExtractJoinKeys(childIdx int) *expression.Schema {
+	joinKeys := make([]*expression.Column, 0, len(p.EqualConditions))
+	for _, eqCond := range p.EqualConditions {
+		joinKeys = append(joinKeys, eqCond.GetArgs()[childIdx].(*expression.Column))
+	}
+	return expression.NewSchema(joinKeys...)
+}
+
 // LogicalProjection represents a select fields plan.
 type LogicalProjection struct {
 	logicalSchemaProducer
@@ -327,6 +336,19 @@ func (la *LogicalAggregation) extractCorrelatedCols() []*expression.CorrelatedCo
 	return corCols
 }
 
+// GetUsedCols extracts all of the Columns used by agg including GroupByItems and AggFuncs.
+func (la *LogicalAggregation) GetUsedCols() (usedCols []*expression.Column) {
+	for _, groupByItem := range la.GroupByItems {
+		usedCols = append(usedCols, expression.ExtractColumns(groupByItem)...)
+	}
+	for _, aggDesc := range la.AggFuncs {
+		for _, expr := range aggDesc.Args {
+			usedCols = append(usedCols, expression.ExtractColumns(expr)...)
+		}
+	}
+	return usedCols
+}
+
 // LogicalSelection represents a where or having predicate.
 type LogicalSelection struct {
 	baseLogicalPlan
@@ -389,6 +411,12 @@ type LogicalMemTable struct {
 	Extractor MemTablePredicateExtractor
 	DBName    model.CIStr
 	TableInfo *model.TableInfo
+	// QueryTimeRange is used to specify the time range for metrics summary tables and inspection tables
+	// e.g: select /*+ time_range('2020-02-02 12:10:00', '2020-02-02 13:00:00') */ from metrics_summary;
+	//      select /*+ time_range('2020-02-02 12:10:00', '2020-02-02 13:00:00') */ from metrics_summary_by_label;
+	//      select /*+ time_range('2020-02-02 12:10:00', '2020-02-02 13:00:00') */ from inspection_summary;
+	//      select /*+ time_range('2020-02-02 12:10:00', '2020-02-02 13:00:00') */ from inspection_result;
+	QueryTimeRange QueryTimeRange
 }
 
 // LogicalUnionScan is only used in non read-only txn.

@@ -184,6 +184,7 @@ enable-batch-dml = true
 server-version = "test_version"
 repair-mode = true
 max-server-connections = 200
+mem-quota-query = 10000
 [performance]
 txn-total-size-limit=2000
 [tikv-client]
@@ -234,8 +235,18 @@ engines = ["tiflash"]
 	c.Assert(conf.EnableBatchDML, Equals, true)
 	c.Assert(conf.RepairMode, Equals, true)
 	c.Assert(conf.MaxServerConnections, Equals, uint32(200))
+	c.Assert(conf.MemQuotaQuery, Equals, int64(10000))
 	c.Assert(conf.Experimental.AllowAutoRandom, IsTrue)
 	c.Assert(conf.IsolationRead.Engines, DeepEquals, []string{"tiflash"})
+
+	_, err = f.WriteString(`
+[log.file]
+log-rotate = true`)
+	c.Assert(err, IsNil)
+	err = conf.Load(configFile)
+	tmp := err.(*ErrConfigValidationFailed)
+	c.Assert(isAllDeprecatedConfigItems(tmp.UndecodedItems), IsTrue)
+
 	c.Assert(f.Close(), IsNil)
 	c.Assert(os.Remove(configFile), IsNil)
 
@@ -281,7 +292,7 @@ c933WW1E0hCtvuGxWFIFtoJMQoyH0Pl4ACmY/6CokCCZKDInrPdhhf3MGRjkkw==
 -----END CERTIFICATE-----
 `)
 	c.Assert(err, IsNil)
-	c.Assert(f.Sync(), IsNil)
+	c.Assert(f.Close(), IsNil)
 
 	keyFile := "key.pem"
 	keyFile = filepath.Join(filepath.Dir(localFile), keyFile)
@@ -316,7 +327,7 @@ xkNuJ2BlEGkwWLiRbKy1lNBBFUXKuhh3L/EIY10WTnr3TQzeL6H1
 -----END RSA PRIVATE KEY-----
 `)
 	c.Assert(err, IsNil)
-	c.Assert(f.Sync(), IsNil)
+	c.Assert(f.Close(), IsNil)
 
 	conf.Security.ClusterSSLCA = certFile
 	conf.Security.ClusterSSLCert = certFile
@@ -324,33 +335,13 @@ xkNuJ2BlEGkwWLiRbKy1lNBBFUXKuhh3L/EIY10WTnr3TQzeL6H1
 	tlsConfig, err := conf.Security.ToTLSConfig()
 	c.Assert(err, IsNil)
 	c.Assert(tlsConfig, NotNil)
+
+	// Note that on windows, we can't Remove a file if the file is not closed.
+	// The behavior is different on linux, we can always Remove a file even
+	// if it's open. The OS maintains a reference count for open/close, the file
+	// is recycled when the reference count drops to 0.
 	c.Assert(os.Remove(certFile), IsNil)
 	c.Assert(os.Remove(keyFile), IsNil)
-}
-
-func (s *testConfigSuite) TestConfigDiff(c *C) {
-	c1 := NewConfig()
-	c2 := &Config{}
-	*c2 = *c1
-	c1.OOMAction = "c1"
-	c2.OOMAction = "c2"
-	c1.MemQuotaQuery = 2333
-	c2.MemQuotaQuery = 3222
-	c1.Performance.CrossJoin = true
-	c2.Performance.CrossJoin = false
-	c1.Performance.FeedbackProbability = 2333
-	c2.Performance.FeedbackProbability = 23.33
-
-	diffs := collectsDiff(*c1, *c2, "")
-	c.Assert(len(diffs), Equals, 4)
-	c.Assert(diffs["OOMAction"][0], Equals, "c1")
-	c.Assert(diffs["OOMAction"][1], Equals, "c2")
-	c.Assert(diffs["MemQuotaQuery"][0], Equals, int64(2333))
-	c.Assert(diffs["MemQuotaQuery"][1], Equals, int64(3222))
-	c.Assert(diffs["Performance.CrossJoin"][0], Equals, true)
-	c.Assert(diffs["Performance.CrossJoin"][1], Equals, false)
-	c.Assert(diffs["Performance.FeedbackProbability"][0], Equals, float64(2333))
-	c.Assert(diffs["Performance.FeedbackProbability"][1], Equals, float64(23.33))
 }
 
 func (s *testConfigSuite) TestOOMActionValid(c *C) {

@@ -25,6 +25,16 @@ func CopySelectedJoinRowsDirect(src *Chunk, selected []bool, dst *Chunk) (bool, 
 	if src.sel != nil || dst.sel != nil {
 		return false, errors.New(msgErrSelNotNil)
 	}
+	if len(src.columns) == 0 {
+		numSelected := 0
+		for _, s := range selected {
+			if s {
+				numSelected++
+			}
+		}
+		dst.numVirtualRows += numSelected
+		return numSelected > 0, nil
+	}
 
 	oldLen := dst.columns[0].length
 	for j, srcCol := range src.columns {
@@ -83,13 +93,22 @@ func CopySelectedJoinRowsWithSameOuterRows(src *Chunk, innerColOffset, outerColO
 // to the destination Chunk.
 // return the number of rows which is selected.
 func copySelectedInnerRows(innerColOffset, outerColOffset int, src *Chunk, selected []bool, dst *Chunk) int {
-	oldLen := dst.columns[innerColOffset].length
 	var srcCols []*Column
 	if innerColOffset == 0 {
 		srcCols = src.columns[:outerColOffset]
 	} else {
 		srcCols = src.columns[innerColOffset:]
 	}
+	if len(srcCols) == 0 {
+		numSelected := 0
+		for _, s := range selected {
+			if s {
+				numSelected++
+			}
+		}
+		return numSelected
+	}
+	oldLen := dst.columns[innerColOffset].length
 	for j, srcCol := range srcCols {
 		dstCol := dst.columns[innerColOffset+j]
 		if srcCol.isFixed() {

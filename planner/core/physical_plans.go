@@ -208,10 +208,11 @@ type PhysicalIndexScan struct {
 type PhysicalMemTable struct {
 	physicalSchemaProducer
 
-	DBName    model.CIStr
-	Table     *model.TableInfo
-	Columns   []*model.ColumnInfo
-	Extractor MemTablePredicateExtractor
+	DBName         model.CIStr
+	Table          *model.TableInfo
+	Columns        []*model.ColumnInfo
+	Extractor      MemTablePredicateExtractor
+	QueryTimeRange QueryTimeRange
 }
 
 // PhysicalTableScan represents a table scan plan.
@@ -248,6 +249,8 @@ type PhysicalTableScan struct {
 	// KeepOrder is true, if sort data by scanning pkcol,
 	KeepOrder bool
 	Desc      bool
+
+	isChildOfIndexLookUp bool
 }
 
 // IsPartition returns true and partition ID if it's actually a partition.
@@ -270,6 +273,11 @@ func (ts *PhysicalTableScan) ExpandVirtualColumn() {
 			}
 		}
 	}
+}
+
+//SetIsChildOfIndexLookUp is to set the bool if is a child of IndexLookUpReader
+func (ts *PhysicalTableScan) SetIsChildOfIndexLookUp(isIsChildOfIndexLookUp bool) {
+	ts.isChildOfIndexLookUp = isIsChildOfIndexLookUp
 }
 
 // PhysicalProjection is the physical operator of projection.
@@ -482,9 +490,15 @@ type PhysicalSort struct {
 }
 
 // NominalSort asks sort properties for its child. It is a fake operator that will not
-// appear in final physical operator tree.
+// appear in final physical operator tree. It will be eliminated or converted to Projection.
 type NominalSort struct {
 	basePhysicalPlan
+
+	// These two fields are used to switch ScalarFunctions to Constants. For these
+	// NominalSorts, we need to converted to Projections check if the ScalarFunctions
+	// are out of bounds. (issue #11653)
+	ByItems    []*ByItems
+	OnlyColumn bool
 }
 
 // PhysicalUnionScan represents a union scan operator.

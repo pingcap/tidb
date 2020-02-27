@@ -36,6 +36,9 @@ import (
 var _ = Suite(&testExecSuite{})
 var _ = SerialSuites(&testExecSerialSuite{})
 
+// Note: it's a tricky way to export the `inspectionSummaryRules` for unit test but invisible for normal code
+var InspectionSummaryRules = inspectionSummaryRules
+
 type testExecSuite struct {
 }
 
