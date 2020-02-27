@@ -48,11 +48,13 @@ import (
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
+	"go.uber.org/zap"
 )
 
 var (
@@ -1599,6 +1601,7 @@ func (b *executorBuilder) refreshForUpdateTS() error {
 			newForUpdateTS = newTS
 			b.ctx.GetSessionVars().TxnCtx.SetStmtFuture(nil, newTS)
 		} else {
+			logutil.BgLogger().Warn("wait tso failed", zap.Error(waitErr))
 			b.ctx.GetSessionVars().TxnCtx.SetStmtFuture(nil, 0)
 		}
 	}

@@ -434,6 +434,7 @@ func (tf *txnFuture) wait() (kv.Transaction, error) {
 		return nil, err
 	}
 
+	logutil.BgLogger().Warn("wait tso failed", zap.Error(err))
 	// It would retry get timestamp.
 	return tf.store.Begin()
 }
