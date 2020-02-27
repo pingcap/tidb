@@ -137,9 +137,13 @@ func (s *testSerialSuite) TestMultiRegionGetTableEndHandle(c *C) {
 	tk.MustExec("use test_get_endhandle")
 
 	tk.MustExec("create table t(a bigint PRIMARY KEY, b int)")
+	var builder strings.Builder
+	fmt.Fprintf(&builder, "insert into t values ")
 	for i := 0; i < 1000; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t values(%v, %v)", i, i))
+		fmt.Fprintf(&builder, "(%v, %v),", i, i)
 	}
+	sql := builder.String()
+	tk.MustExec(sql[:len(sql)-1])
 
 	// Get table ID for split.
 	dom := domain.GetDomain(tk.Se)
@@ -205,9 +209,14 @@ func (s *testSerialSuite) TestGetTableEndHandle(c *C) {
 
 	tk.MustExec("create table t1(a bigint PRIMARY KEY, b int)")
 
+	var builder strings.Builder
+	fmt.Fprintf(&builder, "insert into t1 values ")
 	for i := 0; i < 1000; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t1 values(%v, %v)", i, i))
+		fmt.Fprintf(&builder, "(%v, %v),", i, i)
 	}
+	sql := builder.String()
+	tk.MustExec(sql[:len(sql)-1])
+
 	is = s.dom.InfoSchema()
 	testCtx.tbl, err = is.TableByName(model.NewCIStr("test_get_endhandle"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
@@ -221,9 +230,13 @@ func (s *testSerialSuite) TestGetTableEndHandle(c *C) {
 	c.Assert(err, IsNil)
 	checkGetMaxTableRowID(testCtx, s.store, true, int64(math.MaxInt64))
 
+	builder.Reset()
+	fmt.Fprintf(&builder, "insert into t2 values ")
 	for i := 0; i < 1000; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t2 values(%v)", i))
+		fmt.Fprintf(&builder, "(%v),", i)
 	}
+	sql = builder.String()
+	tk.MustExec(sql[:len(sql)-1])
 
 	result := tk.MustQuery("select MAX(_tidb_rowid) from t2")
 	maxID, emptyTable := getMaxTableRowID(testCtx, s.store)
