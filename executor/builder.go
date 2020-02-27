@@ -2773,6 +2773,11 @@ func (b *executorBuilder) buildShuffle(v *plannercore.PhysicalShuffle) *ShuffleE
 		shuffle.workers[i] = w
 	}
 
+	// recovery original plan for cached prepared statement.
+	if v.ChildShuffle != nil {
+		v.Tail.SetChildren(v.ChildShuffle)
+	}
+
 	///// mergers /////
 	switch v.MergerType {
 	case plannercore.ShuffleNoneMergerType, plannercore.ShuffleRandomMergerType:
