@@ -1466,20 +1466,40 @@ var MetricTableMap = map[string]MetricTableDef{
 		Labels:  []string{"instance", "name"},
 		Comment: "The number of tasks handled by worker",
 	},
+	"tikv_worker_handled_tasks_total_num": {
+		PromQL:  `sum(increase(tikv_worker_handled_task_total{$LABEL_CONDITIONS}[60s])) by (name,instance)`,
+		Labels:  []string{"instance", "name"},
+		Comment: "Total number of tasks handled by worker",
+	},
 	"tikv_worker_pending_tasks": {
 		PromQL:  `sum(rate(tikv_worker_pending_task_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (name,instance)`,
 		Labels:  []string{"instance", "name"},
 		Comment: "Current pending and running tasks of worker",
+	},
+	"tikv_worker_pending_tasks_total_num": {
+		PromQL:  `sum(increase(tikv_worker_pending_task_total{$LABEL_CONDITIONS}[60s])) by (name,instance)`,
+		Labels:  []string{"instance", "name"},
+		Comment: "Total pending and running tasks of worker",
 	},
 	"tikv_futurepool_handled_tasks": {
 		PromQL:  `sum(rate(tikv_futurepool_handled_task_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (name,instance)`,
 		Labels:  []string{"instance", "name"},
 		Comment: "The number of tasks handled by future_pool",
 	},
+	"tikv_futurepool_handled_tasks_total_num": {
+		PromQL:  `sum(increase(tikv_futurepool_handled_task_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (name,instance)`,
+		Labels:  []string{"instance", "name"},
+		Comment: "Total number of tasks handled by future_pool",
+	},
 	"tikv_futurepool_pending_tasks": {
 		PromQL:  `sum(rate(tikv_futurepool_pending_task_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (name,instance)`,
 		Labels:  []string{"instance", "name"},
 		Comment: "Current pending and running tasks of future_pool",
+	},
+	"tikv_futurepool_pending_tasks_total_num": {
+		PromQL:  `sum(increase(tikv_futurepool_pending_task_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (name,instance)`,
+		Labels:  []string{"instance", "name"},
+		Comment: "Total pending and running tasks of future_pool",
 	},
 	"tikv_cop_request_durations": {
 		PromQL:  `sum(rate(tikv_coprocessor_request_duration_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,instance,req)`,
