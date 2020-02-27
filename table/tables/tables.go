@@ -20,6 +20,7 @@ package tables
 import (
 	"context"
 	"encoding/binary"
+	"github.com/pingcap/tidb/util/stringutil"
 	"math"
 	"strconv"
 	"strings"
@@ -836,13 +837,7 @@ func writeSequenceUpdateValueBinlog(ctx sessionctx.Context, db, sequence string,
 	// Sequence sends `select setval(seq, num)` sql string to downstream via `setDDLBinlog`, which is mocked as a DDL binlog.
 	binlogCli := ctx.GetSessionVars().BinlogClient
 	sqlMode := ctx.GetSessionVars().SQLMode
-	var quote string
-	if sqlMode&mysql.ModeANSIQuotes != 0 {
-		quote = `"`
-	} else {
-		quote = "`"
-	}
-	sequenceFullName := quote + db + quote + "." + quote + sequence + quote
+	sequenceFullName := stringutil.Escape(model.NewCIStr(db), sqlMode) + "." + stringutil.Escape(model.NewCIStr(sequence), sqlMode)
 	sql := "select setval(" + sequenceFullName + ", " + strconv.FormatInt(end, 10) + ")"
 
 	err := kv.RunInNewTxn(ctx.GetStore(), true, func(txn kv.Transaction) error {

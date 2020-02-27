@@ -20,6 +20,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/util/hack"
 )
 
@@ -309,4 +311,18 @@ type StringerStr string
 // String implements fmt.Stringer
 func (i StringerStr) String() string {
 	return string(i)
+}
+
+// Escape the identifier for pretty-printing.
+// For instance, the identifier "foo `bar`" will become "`foo ``bar```".
+// The sqlMode controls whether to escape with backquotes (`) or double quotes
+// (`"`) depending on whether mysql.ModeANSIQuotes is enabled.
+func Escape(cis model.CIStr, sqlMode mysql.SQLMode) string {
+	var quote string
+	if sqlMode&mysql.ModeANSIQuotes != 0 {
+		quote = `"`
+	} else {
+		quote = "`"
+	}
+	return quote + strings.Replace(cis.O, quote, quote+quote, -1) + quote
 }
