@@ -616,7 +616,8 @@ func (mvcc *MVCCLevelDB) Prewrite(req *kvrpcpb.PrewriteRequest) []error {
 		// If the operation is Insert, check if key is exists at first.
 		var err error
 		// no need to check insert values for pessimistic transaction.
-		if m.GetOp() == kvrpcpb.Op_Insert && forUpdateTS == 0 {
+		op := m.GetOp()
+		if (op == kvrpcpb.Op_Insert || op == kvrpcpb.Op_CheckExists) && forUpdateTS == 0 {
 			v, err := mvcc.getValue(m.Key, startTS, kvrpcpb.IsolationLevel_SI, req.Context.ResolvedLocks)
 			if err != nil {
 				errs = append(errs, err)
@@ -629,6 +630,9 @@ func (mvcc *MVCCLevelDB) Prewrite(req *kvrpcpb.PrewriteRequest) []error {
 				}
 				errs = append(errs, err)
 				anyError = true
+				continue
+			}
+			if op == kvrpcpb.Op_CheckExists {
 				continue
 			}
 		}

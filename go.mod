@@ -77,3 +77,5 @@ require (
 )
 
 go 1.13
+
+replace github.com/pingcap/kvproto => github.com/lysu/kvproto v0.0.0-20200227071326-6bab20007090

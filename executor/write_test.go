@@ -2599,6 +2599,32 @@ func (s *testSuite7) TestRebaseIfNeeded(c *C) {
 	tk.MustQuery(`select a from t where b = 6;`).Check(testkit.Rows("30003"))
 }
 
+func (s *testSuite7) TestDeferConstraintCheckForDelete(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set tidb_constraint_check_in_place = 0")
+	tk.MustExec("set @@tidb_txn_mode = 'optimistic'")
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(i int primary key, j int)")
+	tk.MustExec("insert into t1 values(1, 2)")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t1 values(1, 3)")
+	tk.MustExec("delete from t1 where j = 3")
+	_, err := tk.Exec("commit")
+	c.Assert(err.Error(), Equals, "previous statement: delete from t1 where j = 3: [kv:1062]Duplicate entry '1' for key 'PRIMARY'")
+	tk.MustExec("rollback")
+
+	tk.MustExec("create table t2(i int, j int,  unique index idx(i))")
+	tk.MustExec("insert into t2 values(1, 2)")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t2 values(1, 3)")
+	tk.MustExec("delete from t2 where j = 3")
+	_, err = tk.Exec("commit")
+	c.Assert(err.Error(), Equals, "previous statement: delete from t2 where j = 3: [kv:1062]Duplicate entry '1' for key 'idx'")
+	tk.MustExec("admin check table t2")
+}
+
 func (s *testSuite7) TestDeferConstraintCheckForInsert(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
