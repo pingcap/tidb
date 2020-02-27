@@ -617,7 +617,7 @@ func (mvcc *MVCCLevelDB) Prewrite(req *kvrpcpb.PrewriteRequest) []error {
 		var err error
 		// no need to check insert values for pessimistic transaction.
 		op := m.GetOp()
-		if (op == kvrpcpb.Op_Insert || op == kvrpcpb.Op_CheckExists) && forUpdateTS == 0 {
+		if (op == kvrpcpb.Op_Insert || op == kvrpcpb.Op_DelExists) && forUpdateTS == 0 {
 			v, err := mvcc.getValue(m.Key, startTS, kvrpcpb.IsolationLevel_SI, req.Context.ResolvedLocks)
 			if err != nil {
 				errs = append(errs, err)
@@ -630,9 +630,6 @@ func (mvcc *MVCCLevelDB) Prewrite(req *kvrpcpb.PrewriteRequest) []error {
 				}
 				errs = append(errs, err)
 				anyError = true
-				continue
-			}
-			if op == kvrpcpb.Op_CheckExists {
 				continue
 			}
 		}
@@ -762,8 +759,11 @@ func prewriteMutation(db *leveldb.DB, batch *leveldb.Batch,
 	}
 
 	op := mutation.GetOp()
-	if op == kvrpcpb.Op_Insert {
+	switch op {
+	case kvrpcpb.Op_Insert:
 		op = kvrpcpb.Op_Put
+	case kvrpcpb.Op_DelExists:
+		op = kvrpcpb.Op_Del
 	}
 	lock := mvccLock{
 		startTS: startTS,
