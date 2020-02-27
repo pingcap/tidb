@@ -1435,12 +1435,12 @@
       {
         "SQL": "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by t1.a",
         "Plan": [
-          "Projection_20 12487.50 root test.t.a",
-          "└─MergeJoin_21 12487.50 root inner join, left key:test.t.a, right key:test.t.b",
-          "  ├─IndexReader_15(Build) 9990.00 root index:IndexFullScan_14",
-          "  │ └─IndexFullScan_14 9990.00 cop[tikv] table:t2, index:b, keep order:true, stats:pseudo",
-          "  └─IndexReader_13(Probe) 9990.00 root index:IndexFullScan_12",
-          "    └─IndexFullScan_12 9990.00 cop[tikv] table:t1, index:a, keep order:true, stats:pseudo"
+          "Projection_21 12487.50 root test.t.a",
+          "└─MergeJoin_22 12487.50 root inner join, left key:test.t.a, right key:test.t.b",
+          "  ├─IndexReader_16(Build) 9990.00 root index:IndexFullScan_15",
+          "  │ └─IndexFullScan_15 9990.00 cop[tikv] table:t2, index:b, keep order:true, stats:pseudo",
+          "  └─IndexReader_14(Probe) 9990.00 root index:IndexFullScan_13",
+          "    └─IndexFullScan_13 9990.00 cop[tikv] table:t1, index:a, keep order:true, stats:pseudo"
         ],
         "Result": [
           "1",
