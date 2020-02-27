@@ -1598,6 +1598,8 @@ func (b *executorBuilder) refreshForUpdateTS() error {
 		if waitErr == nil {
 			newForUpdateTS = newTS
 			b.ctx.GetSessionVars().TxnCtx.SetStmtFuture(nil, newTS)
+		} else {
+			b.ctx.GetSessionVars().TxnCtx.SetStmtFuture(nil, 0)
 		}
 	}
 	// If cachedTS is 0 or Wait() return an error, newForUpdateTS should be 0, it will force to get a new for-update-ts from PD.
