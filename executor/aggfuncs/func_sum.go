@@ -22,13 +22,15 @@ import (
 )
 
 type partialResult4SumFloat64 struct {
-	val    float64
-	isNull bool
+	val            float64
+	isNull         bool
+	isNullRowCount int64
 }
 
 type partialResult4SumDecimal struct {
-	val    types.MyDecimal
-	isNull bool
+	val            types.MyDecimal
+	isNull         bool
+	isNullRowCount int64
 }
 
 type partialResult4SumDistinctFloat64 struct {
@@ -59,6 +61,7 @@ func (e *sum4Float64) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4SumFloat64)(pr)
 	p.val = 0
 	p.isNull = true
+	p.isNullRowCount = 0
 }
 
 func (e *sum4Float64) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
@@ -84,9 +87,11 @@ func (e *sum4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 		if p.isNull {
 			p.val = input
 			p.isNull = false
+			p.isNullRowCount = 1
 			continue
 		}
 		p.val += input
+		p.isNullRowCount++
 	}
 	return nil
 }
@@ -114,6 +119,7 @@ func (e *sum4Decimal) AllocPartialResult() PartialResult {
 func (e *sum4Decimal) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4SumDecimal)(pr)
 	p.isNull = true
+	p.isNullRowCount = 0
 }
 
 func (e *sum4Decimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
@@ -139,6 +145,7 @@ func (e *sum4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 		if p.isNull {
 			p.val = *input
 			p.isNull = false
+			p.isNullRowCount = 1
 			continue
 		}
 
@@ -148,6 +155,7 @@ func (e *sum4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 			return err
 		}
 		p.val = *newSum
+		p.isNullRowCount++
 	}
 	return nil
 }
