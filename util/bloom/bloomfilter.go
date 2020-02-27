@@ -53,11 +53,18 @@ func (bf *Filter) Probe(key []byte) bool {
 	return bf.BitSet[idx]&(1<<shift) != 0
 }
 
-func (bf *Filter) HackInsert(key uint64) {
+func (bf *Filter) InsertU64(key uint64) {
 	hash := key % uint64(bf.length)
 	idx := hash / bf.unitSize
 	shift := hash % bf.unitSize
 	bf.BitSet[idx] |= 1 << shift
+}
+
+func (bf *Filter) ProbeU64(key uint64) bool {
+	hash := key % uint64(bf.length)
+	idx := hash / bf.unitSize
+	shift := hash % bf.unitSize
+	return bf.BitSet[idx]&(1<<shift) != 0
 }
 
 func (bf *Filter) hash(key []byte) (uint64, uint64) {

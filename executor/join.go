@@ -152,7 +152,7 @@ func (e *HashJoinExec) Close() error {
 
 // Open implements the Executor Open interface.
 func (e *HashJoinExec) Open(ctx context.Context) error {
-	if err := e.baseExecutor.Open(ctx); err != nil {
+	if err := e.buildSideExec.Open(ctx); err != nil {
 		return err
 	}
 
@@ -200,18 +200,12 @@ func (e *HashJoinExec) fetchProbeSideChunks(ctx context.Context) {
 			required := int(atomic.LoadInt64(&e.requiredRows))
 			probeSideResult.SetRequiredRows(required, e.maxChunkSize)
 		}
-		err := Next(ctx, e.probeSideExec, probeSideResult)
-		if err != nil {
-			e.joinResultCh <- &hashjoinWorkerResult{
-				err: err,
-			}
-			return
-		}
+
 		if !hasWaitedForBuild {
-			if probeSideResult.NumRows() == 0 && !e.useOuterToBuild {
-				e.finished.Store(true)
-				return
-			}
+			//if probeSideResult.NumRows() == 0 && !e.useOuterToBuild {
+			//	e.finished.Store(true)
+			//	return
+			//}
 			emptyBuild, buildErr := e.wait4BuildSide()
 			if buildErr != nil {
 				e.joinResultCh <- &hashjoinWorkerResult{
@@ -222,6 +216,14 @@ func (e *HashJoinExec) fetchProbeSideChunks(ctx context.Context) {
 				return
 			}
 			hasWaitedForBuild = true
+		}
+
+		err := Next(ctx, e.probeSideExec, probeSideResult)
+		if err != nil {
+			e.joinResultCh <- &hashjoinWorkerResult{
+				err: err,
+			}
+			return
 		}
 
 		if probeSideResult.NumRows() == 0 {
@@ -703,6 +705,11 @@ func (e *HashJoinExec) fetchAndBuildHashTable(ctx context.Context) {
 			e.buildFinished <- err
 		}
 	}
+
+	if err := e.probeSideExec.Open(ctx); err != nil {
+		e.buildFinished <- errors.Trace(err)
+		close(doneCh)
+	}
 }
 
 // buildHashTableForList builds hash table from `list`.
@@ -732,6 +739,7 @@ func (e *HashJoinExec) buildHashTableForList(buildSideResultCh <-chan *chunk.Chu
 		}
 		if !e.useOuterToBuild {
 			err = e.rowContainer.PutChunk(chk)
+			e.PutChunkToBloom(hCtx)
 		} else {
 			var bitMap = bitmap.NewConcurrentBitmap(chk.NumRows())
 			e.outerMatchedStatus = append(e.outerMatchedStatus, bitMap)
@@ -751,6 +759,12 @@ func (e *HashJoinExec) buildHashTableForList(buildSideResultCh <-chan *chunk.Chu
 		}
 	}
 	return nil
+}
+
+func (e *HashJoinExec) PutChunkToBloom(hctx *hashContext) {
+	for _, hash := range hctx.hashVals {
+		e.bloomFilter.InsertU64(hash.Sum64())
+	}
 }
 
 // NestedLoopApplyExec is the executor for apply.
