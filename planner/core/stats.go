@@ -91,6 +91,9 @@ func (ds *DataSource) getColumnNDV(colID int64) (ndv float64) {
 }
 
 func (ds *DataSource) deriveStatsByFilter(conds expression.CNFExprs) {
+	if ds.statisticTable == nil {
+		ds.statisticTable = getStatsTable(ds.ctx, ds.tableInfo, ds.table.Meta().ID)
+	}
 	tableStats := &property.StatsInfo{
 		RowCount:     float64(ds.statisticTable.Count),
 		Cardinality:  make([]float64, len(ds.Columns)),
