@@ -5431,7 +5431,8 @@ func (s *testIntegrationSuite) TestCoercibility(c *C) {
 	}
 	testFunc([]testCase{
 		// constants
-		{"1", 5}, {"null", 6}, {"'abc'", 4},
+		{"1", 5}, {"'abc'", 4},
+		//{"null", 6},
 		// sys-constants
 		{"version()", 3}, {"user()", 3}, {"database()", 3},
 		{"current_role()", 3}, {"current_user()", 3},

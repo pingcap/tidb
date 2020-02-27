@@ -772,6 +772,7 @@ func (c *spaceFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 		return nil, err
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETInt)
+	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	bf.tp.Flen = mysql.MaxBlobWidth
 	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
 	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
@@ -2785,7 +2786,11 @@ func (c *quoteFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
 	SetBinFlagOrBinStr(args[0].GetType(), bf.tp)
-	bf.tp.Flen = 2*args[0].GetType().Flen + 2
+	if args[0].GetType().Flen != types.UnspecifiedLength {
+		bf.tp.Flen = 2*args[0].GetType().Flen + 2
+	} else {
+		bf.tp.Flen = types.UnspecifiedLength
+	}
 	if bf.tp.Flen > mysql.MaxBlobWidth {
 		bf.tp.Flen = mysql.MaxBlobWidth
 	}

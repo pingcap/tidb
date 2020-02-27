@@ -99,9 +99,6 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, args []Expression, retType
 	if ctx == nil {
 		panic("ctx should not be nil")
 	}
-	// derive collation information for string function, and we must do it
-	// before doing implicit cast.
-	derivedCharset, derivedCollate, derivedFlen := DeriveCollationFromExprs(ctx, args...)
 	for i := range args {
 		switch argTps[i] {
 		case types.ETInt:
@@ -111,8 +108,7 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, args []Expression, retType
 		case types.ETDecimal:
 			args[i] = WrapWithCastAsDecimal(ctx, args[i])
 		case types.ETString:
-			//  if the charset of args[i] is not derivedCharset, convert it
-			args[i] = WrapWithCastAsSpecifiedString(ctx, args[i], types.NewStringType(derivedCharset, derivedCollate, derivedFlen))
+			args[i] = WrapWithCastAsString(ctx, args[i])
 		case types.ETDatetime:
 			args[i] = WrapWithCastAsTime(ctx, args[i], types.NewFieldType(mysql.TypeDatetime))
 		case types.ETTimestamp:
@@ -123,6 +119,15 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, args []Expression, retType
 			args[i] = WrapWithCastAsJSON(ctx, args[i])
 		}
 	}
+
+	// derive collation information for string function.
+	derivedCharset, derivedCollate, derivedFlen := DeriveCollationFromExprs(ctx, args...)
+	for i := range args {
+		if argTps[i] == types.ETString {
+			args[i] = WrapWithCastAsSpecifiedString(ctx, args[i], types.NewStringType(derivedCharset, derivedCollate, derivedFlen))
+		}
+	}
+
 	var fieldType *types.FieldType
 	switch retType {
 	case types.ETInt:

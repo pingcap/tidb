@@ -779,7 +779,11 @@ func (c *dateFormatFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETDatetime, types.ETString)
 	// worst case: formatMask=%r%r%r...%r, each %r takes 11 characters
-	bf.tp.Flen = (args[1].GetType().Flen + 1) / 2 * 11
+	if args[1].GetType().Flen != types.UnspecifiedLength {
+		bf.tp.Flen = (args[1].GetType().Flen + 1) / 2 * 11
+	} else {
+		bf.tp.Flen = types.UnspecifiedLength
+	}
 	sig := &builtinDateFormatSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_DateFormatSig)
 	return sig, nil
@@ -6425,7 +6429,11 @@ func (c *timeFormatFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETDuration, types.ETString)
 	// worst case: formatMask=%r%r%r...%r, each %r takes 11 characters
-	bf.tp.Flen = (args[1].GetType().Flen + 1) / 2 * 11
+	if args[1].GetType().Flen != types.UnspecifiedLength {
+		bf.tp.Flen = (args[1].GetType().Flen + 1) / 2 * 11
+	} else {
+		bf.tp.Flen = types.UnspecifiedLength
+	}
 	sig := &builtinTimeFormatSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_TimeFormat)
 	return sig, nil

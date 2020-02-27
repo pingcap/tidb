@@ -679,7 +679,7 @@ func (s *testEvaluatorSuite) TestReplace(c *C) {
 		{[]interface{}{"", "a", "b"}, false, false, "", 0},
 		{[]interface{}{"abc", "", "d"}, false, false, "abc", 3},
 		{[]interface{}{"aaa", "a", ""}, false, false, "", 3},
-		{[]interface{}{nil, "a", "b"}, true, false, "", 0},
+		{[]interface{}{nil, "a", "b"}, true, false, "", 1},
 		{[]interface{}{"a", nil, "b"}, true, false, "", 1},
 		{[]interface{}{"a", "b", nil}, true, false, "", 1},
 		{[]interface{}{errors.New("must err"), "a", "b"}, false, true, "", -1},

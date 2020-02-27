@@ -1854,6 +1854,12 @@ func WrapWithCastAsSpecifiedString(ctx sessionctx.Context, expr Expression, ft *
 	if etp.EvalType() == types.ETString && etp.Charset == ft.Charset && etp.Collate == ft.Collate {
 		return expr
 	}
+	if etp.EvalType() == types.ETString {
+		if etp.Charset == ft.Charset && etp.Collate == ft.Collate {
+			return expr
+		}
+		ft.Tp = etp.Tp
+	}
 	return BuildCastFunction(ctx, expr, ft)
 }
 
