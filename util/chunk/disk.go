@@ -68,6 +68,7 @@ type ListInDisk struct {
 
 	disk          *os.File
 	bufWriter     *bufio.Writer
+	bufFlushMutex sync.Mutex
 	diskTracker   *disk.Tracker // track disk usage.
 	numRowsInDisk int
 }
@@ -91,6 +92,7 @@ func (l *ListInDisk) initDiskFile() (err error) {
 	}
 	l.bufWriter = bufWriterPool.Get().(*bufio.Writer)
 	l.bufWriter.Reset(l.disk)
+	l.bufFlushMutex = sync.Mutex{}
 	return
 }
 
@@ -105,15 +107,18 @@ func (l *ListInDisk) GetDiskTracker() *disk.Tracker {
 }
 
 // flush empties the write buffer, please call flush before read!
-func (l *ListInDisk) flush() error {
+func (l *ListInDisk) flush() (err error) {
+	l.bufFlushMutex.Lock()
 	if l.bufWriter.Buffered() != 0 {
-		return l.bufWriter.Flush()
+		err = l.bufWriter.Flush()
 	}
-	return nil
+	l.bufFlushMutex.Unlock()
+	return err
 }
 
 // Add adds a chunk to the ListInDisk. Caller must make sure the input chk
 // is not empty and not used any more and has the same field types.
+// Warning: do not mix Add and GetRow (always use GetRow after you have added all the chunks), and do not use Add concurrently.
 func (l *ListInDisk) Add(chk *Chunk) (err error) {
 	if chk.NumRows() == 0 {
 		return errors.New("chunk appended to List should have at least 1 row")
