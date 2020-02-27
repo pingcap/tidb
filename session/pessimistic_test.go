@@ -779,21 +779,23 @@ func (s *testPessimisticSuite) TestInnodbLockWaitTimeoutWaitStart(c *C) {
 	tk2.MustExec("begin pessimistic")
 	done := make(chan error)
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/PessimisticLockErrWriteConflict", "return"), IsNil)
-	start := time.Now()
+	var duration time.Duration
 	go func() {
 		var err error
+		start := time.Now()
 		defer func() {
+			duration = time.Since(start)
 			done <- err
 		}()
 		_, err = tk2.Exec("select * from tk where c1 = 1 for update")
 	}()
-	time.Sleep(time.Millisecond * 30)
+	time.Sleep(time.Millisecond * 100)
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/PessimisticLockErrWriteConflict"), IsNil)
 	waitErr := <-done
 	c.Assert(waitErr, NotNil)
 	c.Check(waitErr.Error(), Equals, tikv.ErrLockWaitTimeout.Error())
-	c.Check(time.Since(start), GreaterEqual, time.Duration(1000*time.Millisecond))
-	c.Check(time.Since(start), LessEqual, time.Duration(1100*time.Millisecond))
+	c.Check(duration, GreaterEqual, time.Duration(1000*time.Millisecond))
+	c.Check(duration, LessEqual, time.Duration(1100*time.Millisecond))
 	tk2.MustExec("rollback")
 	tk3.MustExec("commit")
 }

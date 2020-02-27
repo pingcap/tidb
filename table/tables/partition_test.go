@@ -272,20 +272,11 @@ func (ts *testSuite) TestGeneratePartitionExpr(c *C) {
 	columns, names := expression.ColumnInfos2ColumnsAndNames(ctx, model.NewCIStr("test"), tbl.Meta().Name, tbl.Meta().Columns)
 	pe, err := tbl.(partitionExpr).PartitionExpr(ctx, columns, names)
 	c.Assert(err, IsNil)
-	c.Assert(pe.Column.ID, Equals, int64(1))
 
-	ranges := []string{
-		"or(lt(test.t1.id, 4), isnull(test.t1.id))",
-		"and(lt(test.t1.id, 7), ge(test.t1.id, 4))",
-		"and(1, ge(test.t1.id, 7))",
-	}
 	upperBounds := []string{
 		"lt(test.t1.id, 4)",
 		"lt(test.t1.id, 7)",
 		"1",
-	}
-	for i, expr := range pe.Ranges {
-		c.Assert(expr.String(), Equals, ranges[i])
 	}
 	for i, expr := range pe.UpperBounds {
 		c.Assert(expr.String(), Equals, upperBounds[i])

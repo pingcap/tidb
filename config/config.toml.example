@@ -31,8 +31,8 @@ split-table = true
 # The limit of concurrent executed sessions.
 token-limit = 1000
 
-# Set the memory quota for a query in bytes. Default: 32GB
-mem-quota-query = 34359738368
+# Set the memory quota for a query in bytes. Default: 1GB
+mem-quota-query = 1073741824
 
 # Set to true to enable use of temporary disk for some executors when mem-quota-query is exceeded.
 oom-use-tmp-storage = true
