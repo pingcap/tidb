@@ -264,9 +264,13 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 			}
 			putCnt++
 		} else {
+			op := pb.Op_Del
+			if c := txn.us.GetKeyExistErrInfo(k); c != nil {
+				op = pb.Op_CheckExists
+			}
 			mutations[string(k)] = &mutationEx{
 				Mutation: pb.Mutation{
-					Op:  pb.Op_Del,
+					Op:  op,
 					Key: k,
 				},
 			}
