@@ -16,7 +16,6 @@
 package localpool
 
 import (
-	"fmt"
 	"math/rand"
 	"runtime"
 	"sync"
