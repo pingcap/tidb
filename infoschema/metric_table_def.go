@@ -539,12 +539,12 @@ var MetricTableMap = map[string]MetricTableDef{
 		Quantile: 0.95,
 	},
 	"tidb_owner_watcher_ops": {
-		Comment: "TiDB owner  watcher counts",
+		Comment: "TiDB owner watcher counts",
 		PromQL:  "sum(rate(tidb_owner_watch_owner_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type, result, instance)",
 		Labels:  []string{"instance", "type", "result"},
 	},
 	"tidb_auto_id_qps": {
-		Comment: "TiDB auto id requests per second including  single table/global auto id processing and single table auto id rebase processing",
+		Comment: "TiDB auto id requests per second including single table/global auto id processing and single table auto id rebase processing",
 		PromQL:  "sum(rate(tidb_autoid_operation_duration_seconds_count{$LABEL_CONDITIONS}[$RANGE_DURATION]))",
 		Labels:  []string{"instance"},
 	},
@@ -807,7 +807,7 @@ var MetricTableMap = map[string]MetricTableDef{
 		Comment: "The current term of Raft",
 	},
 	"pd_handle_request_duration_avg": {
-		PromQL: `avg(rate(pd_client_request_handle_requests_duration_seconds_sum{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type) /  avg(rate(pd_client_request_handle_requests_duration_seconds_count{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type)`,
+		PromQL: `avg(rate(pd_client_request_handle_requests_duration_seconds_sum{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type) / avg(rate(pd_client_request_handle_requests_duration_seconds_count{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type)`,
 		Labels: []string{"type"},
 	},
 	"pd_region_heartbeat_duration": {
@@ -1242,7 +1242,7 @@ var MetricTableMap = map[string]MetricTableDef{
 		Comment: "The rate at which peers propose logs",
 	},
 	"tikv_admin_apply": {
-		PromQL:  `sum(rate(tikv_raftstore_admin_cmd_total{$LABEL_CONDITIONS}[$RANGE_DURATION]))  by (type,status,instance)`,
+		PromQL:  `sum(rate(tikv_raftstore_admin_cmd_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type,status,instance)`,
 		Labels:  []string{"instance", "type", "status"},
 		Comment: "The number of the processed apply command",
 	},
@@ -1521,7 +1521,7 @@ var MetricTableMap = map[string]MetricTableDef{
 		Labels: []string{"instance", "req"},
 	},
 	"tikv_cop_kv_cursor_operations": {
-		PromQL:   `histogram_quantile($QUANTILE, avg(rate(tikv_coprocessor_scan_keys_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,req,instance))  `,
+		PromQL:   `histogram_quantile($QUANTILE, avg(rate(tikv_coprocessor_scan_keys_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,req,instance)) `,
 		Labels:   []string{"instance", "req"},
 		Quantile: 1,
 	},
@@ -1652,7 +1652,7 @@ var MetricTableMap = map[string]MetricTableDef{
 		Comment: "The count of compaction and flush operations",
 	},
 	"tikv_compaction_max_duration": {
-		PromQL:  `max(tikv_engine_compaction_time{$LABEL_CONDITIONS})  by (type,instance,db)`,
+		PromQL:  `max(tikv_engine_compaction_time{$LABEL_CONDITIONS}) by (type,instance,db)`,
 		Labels:  []string{"instance", "type", "db"},
 		Comment: "The time consumed when executing the compaction and flush operations",
 	},
@@ -1954,7 +1954,7 @@ var MetricTableMap = map[string]MetricTableDef{
 		Labels: []string{"instance"},
 	},
 	"tikv_disk_read_bytes": {
-		PromQL: `sum(irate(node_disk_read_bytes_total{$LABEL_CONDITIONS}[$RANGE_DURATION]))  by (instance,device)`,
+		PromQL: `sum(irate(node_disk_read_bytes_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance,device)`,
 		Labels: []string{"instance", "device"},
 	},
 	"tikv_disk_write_bytes": {
@@ -2419,7 +2419,7 @@ var MetricTableMap = map[string]MetricTableDef{
 	"tidb_distsql_execution_total_time": {
 		PromQL:  "sum(increase(tidb_distsql_handle_query_duration_seconds_sum[60s])) by (instance,type)",
 		Labels:  []string{"instance", "type"},
-		Comment: "The total time  of distsql execution(second)",
+		Comment: "The total time of distsql execution(second)",
 	},
 	"tidb_execute_total_count": {
 		PromQL:  "sum(increase(tidb_session_execute_duration_seconds_count[60s])) by (instance,sql_type)",
@@ -2454,12 +2454,12 @@ var MetricTableMap = map[string]MetricTableDef{
 	"tidb_get_token_total_count": {
 		PromQL:  "sum(increase(tidb_server_get_token_duration_seconds_count[60s])) by (instance)",
 		Labels:  []string{"instance"},
-		Comment: "The total count of  Duration (us) for getting token, it should be small until concurrency limit is reached(second)",
+		Comment: "The total count of Duration (us) for getting token, it should be small until concurrency limit is reached(second)",
 	},
 	"tidb_get_token_total_time": {
 		PromQL:  "sum(increase(tidb_server_get_token_duration_seconds_sum[60s])) by (instance)",
 		Labels:  []string{"instance"},
-		Comment: "The total time of  Duration (us) for getting token, it should be small until concurrency limit is reached(second)",
+		Comment: "The total time of Duration (us) for getting token, it should be small until concurrency limit is reached(second)",
 	},
 	"tidb_kv_backoff_total_count": {
 		PromQL:  "sum(increase(tidb_tikvclient_backoff_seconds_count[60s])) by (instance,type)",
@@ -3054,6 +3054,6 @@ var MetricTableMap = map[string]MetricTableDef{
 	"tikv_snapshot_total_size": {
 		PromQL:  "sum(increase(tikv_snapshot_size_sum[60s])) by (instance)",
 		Labels:  []string{"instance"},
-		Comment: "The total of  snapshot size",
+		Comment: "The total size of snapshot size",
 	},
 }
