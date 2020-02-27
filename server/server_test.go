@@ -25,7 +25,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -410,17 +409,17 @@ func (cli *testServerClient) runTestLoadDataWithSelectIntoOutfile(c *C, server *
 		dbt.mustExec("insert into t values (null, null, null, null, '2000-03-03', '03:03:03', '[1,2,3]')")
 		dbt.mustExec("insert into t values (4, 4.4, 0.4, 'd', null, null, null)")
 		outfile := filepath.Join(os.TempDir(), fmt.Sprintf("select_into_outfile_%v_%d.csv", time.Now().UnixNano(), rand.Int()))
-		// On windows use strconv.Quote to escape \ for SQL,
+		// On windows use fmt.Sprintf("%q") to escape \ for SQL,
 		// outfile may be 'C:\Users\genius\AppData\Local\Temp\select_into_outfile_1582732846769492000_8074605509026837941.csv'
 		// Without quote, after SQL escape it would become:
 		// 'C:UsersgeniusAppDataLocalTempselect_into_outfile_1582732846769492000_8074605509026837941.csv'
-		dbt.mustExec(fmt.Sprintf("select * from t into outfile %s", strconv.Quote(outfile)))
+		dbt.mustExec(fmt.Sprintf("select * from t into outfile %q", outfile))
 		defer func() {
 			c.Assert(os.Remove(outfile), IsNil)
 		}()
 
 		dbt.mustExec("create table t1 (i int, r real, d decimal(10, 5), s varchar(100), dt datetime, ts timestamp, j json)")
-		dbt.mustExec(fmt.Sprintf("load data local infile '%v' into table t1", strconv.Quote(outfile)))
+		dbt.mustExec(fmt.Sprintf("load data local infile %q into table t1", outfile))
 
 		fetchResults := func(table string) [][]interface{} {
 			var res [][]interface{}
