@@ -932,7 +932,7 @@ func (s *session) GetAllSysVars() (map[string]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	ret := make(map[string]string)
+	ret := make(map[string]string, len(rows))
 	for _, r := range rows {
 		k, v := r.GetString(0), r.GetString(1)
 		ret[k] = v
@@ -1569,13 +1569,13 @@ func loadCollationParameter(se *session) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if para == "true" {
+	if para == varTrue {
 		return true, nil
-	} else if para == "false" {
+	} else if para == varFalse {
 		return false, nil
 	}
-	logutil.BgLogger().Error(
-		"Unexpected value of 'new_collation_enabled' in 'mysql.tidb', use 'false' instead",
+	logutil.BgLogger().Warn(
+		"Unexpected value of 'new_collation_enabled' in 'mysql.tidb', use 'False' instead",
 		zap.String("value", para))
 	return false, nil
 }
@@ -1640,7 +1640,10 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	if err != nil {
 		return nil, err
 	}
-	collate.SetNewCollationEnabled(newCollationEnabled)
+
+	if newCollationEnabled {
+		collate.EnableNewCollations()
+	}
 
 	dom := domain.GetDomain(se)
 	dom.InitExpensiveQueryHandle()
@@ -1777,7 +1780,7 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = version40
+	currentBootstrapVersion = version41
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {

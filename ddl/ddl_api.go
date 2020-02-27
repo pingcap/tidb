@@ -1349,9 +1349,11 @@ func buildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo) mode
 	tblInfo.AutoIncID = 0
 	tblInfo.ForeignKeys = nil
 	if tblInfo.TiFlashReplica != nil {
+		replica := *tblInfo.TiFlashReplica
 		// Keep the tiflash replica setting, remove the replica available status.
-		tblInfo.TiFlashReplica.AvailablePartitionIDs = nil
-		tblInfo.TiFlashReplica.Available = false
+		replica.AvailablePartitionIDs = nil
+		replica.Available = false
+		tblInfo.TiFlashReplica = &replica
 	}
 	if referTblInfo.Partition != nil {
 		pi := *referTblInfo.Partition
@@ -1581,8 +1583,9 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	return errors.Trace(err)
 }
 
-func (d *ddl) RecoverTable(ctx sessionctx.Context, tbInfo *model.TableInfo, schemaID, autoID, dropJobID int64, snapshotTS uint64) (err error) {
+func (d *ddl) RecoverTable(ctx sessionctx.Context, recoverInfo *RecoverInfo) (err error) {
 	is := d.GetInfoSchemaWithInterceptor(ctx)
+	schemaID, tbInfo := recoverInfo.SchemaID, recoverInfo.TableInfo
 	// Check schema exist.
 	schema, ok := is.SchemaByID(schemaID)
 	if !ok {
@@ -1602,7 +1605,8 @@ func (d *ddl) RecoverTable(ctx sessionctx.Context, tbInfo *model.TableInfo, sche
 		SchemaName: schema.Name.L,
 		Type:       model.ActionRecoverTable,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{tbInfo, autoID, dropJobID, snapshotTS, recoverTableCheckFlagNone},
+		Args: []interface{}{tbInfo, recoverInfo.CurAutoIncID, recoverInfo.DropJobID,
+			recoverInfo.SnapshotTS, recoverTableCheckFlagNone, recoverInfo.CurAutoRandID},
 	}
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
