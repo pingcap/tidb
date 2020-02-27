@@ -75,9 +75,9 @@ Projection_11	1985.00	root	cast(Column#8, bigint(21) BINARY)->Column#7
     └─TableFullScan_33	1999.00	cop[tikv]	table:a, keep order:false
 explain select * from t2 order by t2.c2 limit 0, 1;
 id	estRows	task	operator info
-TopN_7	1.00	root	test.t2.c2:asc, offset:0, estRows:1
+TopN_7	1.00	root	test.t2.c2:asc, offset:0, count:1
 └─TableReader_15	1.00	root	data:TopN_14
-  └─TopN_14	1.00	cop[tikv]	test.t2.c2:asc, offset:0, estRows:1
+  └─TopN_14	1.00	cop[tikv]	test.t2.c2:asc, offset:0, count:1
     └─TableFullScan_13	1985.00	cop[tikv]	table:t2, keep order:false
 explain select * from t1 where c1 > 1 and c2 = 1 and c3 < 1;
 id	estRows	task	operator info
@@ -110,15 +110,15 @@ Projection_12	1999.00	root	eq(test.t1.c2, test.t2.c2)->Column#8
   ├─TableReader_16(Build)	1999.00	root	data:TableFullScan_15
   │ └─TableFullScan_15	1999.00	cop[tikv]	table:t1, keep order:false
   └─Projection_43(Probe)	1.00	root	test.t2.c1, test.t2.c2
-    └─IndexLookUp_42	1.00	root	limit embedded(offset:0, estRows:1)
-      ├─Limit_41(Build)	1.00	cop[tikv]	offset:0, estRows:1
+    └─IndexLookUp_42	1.00	root	limit embedded(offset:0, count:1)
+      ├─Limit_41(Build)	1.00	cop[tikv]	offset:0, count:1
       │ └─IndexRangeScan_39	1.25	cop[tikv]	table:t2, index:c1, range: decided by [eq(test.t1.c1, test.t2.c1)], keep order:true
       └─TableRowIDScan_40(Probe)	1.00	cop[tikv]	table:t2, keep order:false, stats:pseudo
 explain select * from t1 order by c1 desc limit 1;
 id	estRows	task	operator info
-Limit_10	1.00	root	offset:0, estRows:1
+Limit_10	1.00	root	offset:0, count:1
 └─TableReader_20	1.00	root	data:Limit_19
-  └─Limit_19	1.00	cop[tikv]	offset:0, estRows:1
+  └─Limit_19	1.00	cop[tikv]	offset:0, count:1
     └─TableFullScan_18	1.00	cop[tikv]	table:t1, keep order:true, desc
 set @@session.tidb_opt_insubq_to_join_and_agg=0;
 explain select 1 in (select c2 from t2) from t1;
@@ -166,14 +166,14 @@ id	estRows	task	operator info
 TableDual_5	0.00	root	rows:0
 explain select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 LIMIT 1, 1;
 id	estRows	task	operator info
-IndexLookUp_14	1.00	root	limit embedded(offset:1, estRows:1)
-├─Limit_13(Build)	1.00	cop[tikv]	offset:0, estRows:2
+IndexLookUp_14	1.00	root	limit embedded(offset:1, count:1)
+├─Limit_13(Build)	1.00	cop[tikv]	offset:0, count:2
 │ └─IndexRangeScan_11	1.00	cop[tikv]	table:index_prune, index:a, b, range:[1010010404050976781 26467085526790,1010010404050976781 26467085526790], keep order:false
 └─TableRowIDScan_12(Probe)	1.00	cop[tikv]	table:index_prune, keep order:false, stats:pseudo
 explain select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 LIMIT 1, 0;
 id	estRows	task	operator info
-IndexLookUp_14	0.00	root	limit embedded(offset:1, estRows:0)
-├─Limit_13(Build)	1.00	cop[tikv]	offset:0, estRows:1
+IndexLookUp_14	0.00	root	limit embedded(offset:1, count:0)
+├─Limit_13(Build)	1.00	cop[tikv]	offset:0, count:1
 │ └─IndexRangeScan_11	1.00	cop[tikv]	table:index_prune, index:a, b, range:[1010010404050976781 26467085526790,1010010404050976781 26467085526790], keep order:false
 └─TableRowIDScan_12(Probe)	0.00	cop[tikv]	table:index_prune, keep order:false, stats:pseudo
 explain select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 LIMIT 0, 1;

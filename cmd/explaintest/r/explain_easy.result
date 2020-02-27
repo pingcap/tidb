@@ -75,9 +75,9 @@ Projection_11	9990.00	root	cast(Column#8, bigint(21) BINARY)->Column#7
     └─TableFullScan_33	10000.00	cop[tikv]	table:a, keep order:false, stats:pseudo
 explain select * from t2 order by t2.c2 limit 0, 1;
 id	estRows	task	operator info
-TopN_7	1.00	root	test.t2.c2:asc, offset:0, estRows:1
+TopN_7	1.00	root	test.t2.c2:asc, offset:0, count:1
 └─TableReader_15	1.00	root	data:TopN_14
-  └─TopN_14	1.00	cop[tikv]	test.t2.c2:asc, offset:0, estRows:1
+  └─TopN_14	1.00	cop[tikv]	test.t2.c2:asc, offset:0, count:1
     └─TableFullScan_13	10000.00	cop[tikv]	table:t2, keep order:false, stats:pseudo
 explain select * from t1 where c1 > 1 and c2 = 1 and c3 < 1;
 id	estRows	task	operator info
@@ -128,30 +128,30 @@ Projection_12	10000.00	root	eq(test.t1.c2, test.t2.c2)->Column#8
   ├─TableReader_16(Build)	10000.00	root	data:TableFullScan_15
   │ └─TableFullScan_15	10000.00	cop[tikv]	table:t1, keep order:false, stats:pseudo
   └─Projection_43(Probe)	1.00	root	test.t2.c1, test.t2.c2
-    └─IndexLookUp_42	1.00	root	limit embedded(offset:0, estRows:1)
-      ├─Limit_41(Build)	1.00	cop[tikv]	offset:0, estRows:1
+    └─IndexLookUp_42	1.00	root	limit embedded(offset:0, count:1)
+      ├─Limit_41(Build)	1.00	cop[tikv]	offset:0, count:1
       │ └─IndexRangeScan_39	1.00	cop[tikv]	table:t2, index:c1, range: decided by [eq(test.t1.c1, test.t2.c1)], keep order:true, stats:pseudo
       └─TableRowIDScan_40(Probe)	1.00	cop[tikv]	table:t2, keep order:false, stats:pseudo
 explain select * from t1 order by c1 desc limit 1;
 id	estRows	task	operator info
-Limit_10	1.00	root	offset:0, estRows:1
+Limit_10	1.00	root	offset:0, count:1
 └─TableReader_20	1.00	root	data:Limit_19
-  └─Limit_19	1.00	cop[tikv]	offset:0, estRows:1
+  └─Limit_19	1.00	cop[tikv]	offset:0, count:1
     └─TableFullScan_18	1.00	cop[tikv]	table:t1, keep order:true, desc, stats:pseudo
 explain select * from t4 use index(idx) where a > 1 and b > 1 and c > 1 limit 1;
 id	estRows	task	operator info
-Limit_9	1.00	root	offset:0, estRows:1
+Limit_9	1.00	root	offset:0, count:1
 └─IndexLookUp_16	1.00	root	
   ├─Selection_13(Build)	3.00	cop[tikv]	gt(test.t4.b, 1)
   │ └─IndexRangeScan_11	9.00	cop[tikv]	table:t4, index:a, b, range:(1,+inf], keep order:false, stats:pseudo
-  └─Limit_15(Probe)	1.00	cop[tikv]	offset:0, estRows:1
+  └─Limit_15(Probe)	1.00	cop[tikv]	offset:0, count:1
     └─Selection_14	1.00	cop[tikv]	gt(test.t4.c, 1)
       └─TableRowIDScan_12	3.00	cop[tikv]	table:t4, keep order:false, stats:pseudo
 explain select * from t4 where a > 1 and c > 1 limit 1;
 id	estRows	task	operator info
-Limit_8	1.00	root	offset:0, estRows:1
+Limit_8	1.00	root	offset:0, count:1
 └─TableReader_14	1.00	root	data:Limit_13
-  └─Limit_13	1.00	cop[tikv]	offset:0, estRows:1
+  └─Limit_13	1.00	cop[tikv]	offset:0, count:1
     └─Selection_12	1.00	cop[tikv]	gt(test.t4.c, 1)
       └─TableRangeScan_11	3.00	cop[tikv]	table:t4, range:(1,+inf], keep order:false, stats:pseudo
 explain select ifnull(null, t1.c1) from t1;
