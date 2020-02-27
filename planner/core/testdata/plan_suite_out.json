@@ -1290,10 +1290,10 @@
         ],
         "Plan": [
           "IndexJoin_12 12500.00 root inner join, inner:UnionScan_11, outer key:test.t.a, inner key:test.t.a",
-          "├─UnionScan_15 10000.00 root ",
+          "├─UnionScan_15(Build) 10000.00 root ",
           "│ └─TableReader_17 10000.00 root data:TableFullScan_16",
           "│   └─TableFullScan_16 10000.00 cop[tikv] table:t1, keep order:false, stats:pseudo",
-          "└─UnionScan_11 1.00 root ",
+          "└─UnionScan_11(Probe) 1.00 root ",
           "  └─TableReader_10 1.00 root data:TableRangeScan_9",
           "    └─TableRangeScan_9 1.00 cop[tikv] table:t2, range: decided by [test.t.a], keep order:false, stats:pseudo"
         ]
@@ -1305,13 +1305,13 @@
         ],
         "Plan": [
           "HashLeftJoin_15 12487.50 root inner join, inner:UnionScan_17, equal:[eq(test.t.a, test.t.b)]",
-          "├─UnionScan_21 10000.00 root ",
-          "│ └─TableReader_23 10000.00 root data:TableFullScan_22",
-          "│   └─TableFullScan_22 10000.00 cop[tikv] table:t1, keep order:false, stats:pseudo",
-          "└─UnionScan_17 9990.00 root not(isnull(test.t.b))",
-          "  └─TableReader_20 9990.00 root data:Selection_19",
-          "    └─Selection_19 9990.00 cop[tikv] not(isnull(test.t.b))",
-          "      └─TableFullScan_18 10000.00 cop[tikv] table:t2, keep order:false, stats:pseudo"
+          "├─UnionScan_17(Build) 9990.00 root not(isnull(test.t.b))",
+          "│ └─TableReader_20 9990.00 root data:Selection_19",
+          "│   └─Selection_19 9990.00 cop[tikv] not(isnull(test.t.b))",
+          "│     └─TableFullScan_18 10000.00 cop[tikv] table:t2, keep order:false, stats:pseudo",
+          "└─UnionScan_21(Probe) 10000.00 root ",
+          "  └─TableReader_23 10000.00 root data:TableFullScan_22",
+          "    └─TableFullScan_22 10000.00 cop[tikv] table:t1, keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1322,13 +1322,13 @@
         "Plan": [
           "Projection_8 12487.50 root test.t.a, test.t.b",
           "└─HashLeftJoin_15 12487.50 root inner join, inner:UnionScan_17, equal:[eq(test.t.a, test.t.b)]",
-          "  ├─UnionScan_21 10000.00 root ",
-          "  │ └─TableReader_23 10000.00 root data:TableFullScan_22",
-          "  │   └─TableFullScan_22 10000.00 cop[tikv] table:t1, keep order:false, stats:pseudo",
-          "  └─UnionScan_17 9990.00 root not(isnull(test.t.b))",
-          "    └─TableReader_20 9990.00 root data:Selection_19",
-          "      └─Selection_19 9990.00 cop[tikv] not(isnull(test.t.b))",
-          "        └─TableFullScan_18 10000.00 cop[tikv] table:t2, keep order:false, stats:pseudo"
+          "  ├─UnionScan_17(Build) 9990.00 root not(isnull(test.t.b))",
+          "  │ └─TableReader_20 9990.00 root data:Selection_19",
+          "  │   └─Selection_19 9990.00 cop[tikv] not(isnull(test.t.b))",
+          "  │     └─TableFullScan_18 10000.00 cop[tikv] table:t2, keep order:false, stats:pseudo",
+          "  └─UnionScan_21(Probe) 10000.00 root ",
+          "    └─TableReader_23 10000.00 root data:TableFullScan_22",
+          "      └─TableFullScan_22 10000.00 cop[tikv] table:t1, keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1338,20 +1338,20 @@
         ],
         "Plan": [
           "HashLeftJoin_19 25000.00 root inner join, inner:Union_28, equal:[eq(test.tt.a, test.tt.a)]",
-          "├─Union_21 20000.00 root ",
-          "│ ├─UnionScan_22 10000.00 root ",
-          "│ │ └─TableReader_24 10000.00 root data:TableFullScan_23",
-          "│ │   └─TableFullScan_23 10000.00 cop[tikv] table:t1, partition:p0, keep order:false, stats:pseudo",
-          "│ └─UnionScan_25 10000.00 root ",
-          "│   └─TableReader_27 10000.00 root data:TableFullScan_26",
-          "│     └─TableFullScan_26 10000.00 cop[tikv] table:t1, partition:p1, keep order:false, stats:pseudo",
-          "└─Union_28 20000.00 root ",
-          "  ├─UnionScan_29 10000.00 root ",
-          "  │ └─TableReader_31 10000.00 root data:TableFullScan_30",
-          "  │   └─TableFullScan_30 10000.00 cop[tikv] table:t2, partition:p0, keep order:false, stats:pseudo",
-          "  └─UnionScan_32 10000.00 root ",
-          "    └─TableReader_34 10000.00 root data:TableFullScan_33",
-          "      └─TableFullScan_33 10000.00 cop[tikv] table:t2, partition:p1, keep order:false, stats:pseudo"
+          "├─Union_28(Build) 20000.00 root ",
+          "│ ├─UnionScan_29 10000.00 root ",
+          "│ │ └─TableReader_31 10000.00 root data:TableFullScan_30",
+          "│ │   └─TableFullScan_30 10000.00 cop[tikv] table:t2, partition:p0, keep order:false, stats:pseudo",
+          "│ └─UnionScan_32 10000.00 root ",
+          "│   └─TableReader_34 10000.00 root data:TableFullScan_33",
+          "│     └─TableFullScan_33 10000.00 cop[tikv] table:t2, partition:p1, keep order:false, stats:pseudo",
+          "└─Union_21(Probe) 20000.00 root ",
+          "  ├─UnionScan_22 10000.00 root ",
+          "  │ └─TableReader_24 10000.00 root data:TableFullScan_23",
+          "  │   └─TableFullScan_23 10000.00 cop[tikv] table:t1, partition:p0, keep order:false, stats:pseudo",
+          "  └─UnionScan_25 10000.00 root ",
+          "    └─TableReader_27 10000.00 root data:TableFullScan_26",
+          "      └─TableFullScan_26 10000.00 cop[tikv] table:t1, partition:p1, keep order:false, stats:pseudo"
         ]
       }
     ]
@@ -1437,10 +1437,10 @@
         "Plan": [
           "Projection_20 12487.50 root test.t.a",
           "└─MergeJoin_21 12487.50 root inner join, left key:test.t.a, right key:test.t.b",
-          "  ├─IndexReader_13 9990.00 root index:IndexFullScan_12",
-          "  │ └─IndexFullScan_12 9990.00 cop[tikv] table:t1, index:a, keep order:true, stats:pseudo",
-          "  └─IndexReader_15 9990.00 root index:IndexFullScan_14",
-          "    └─IndexFullScan_14 9990.00 cop[tikv] table:t2, index:b, keep order:true, stats:pseudo"
+          "  ├─IndexReader_15(Build) 9990.00 root index:IndexFullScan_14",
+          "  │ └─IndexFullScan_14 9990.00 cop[tikv] table:t2, index:b, keep order:true, stats:pseudo",
+          "  └─IndexReader_13(Probe) 9990.00 root index:IndexFullScan_12",
+          "    └─IndexFullScan_12 9990.00 cop[tikv] table:t1, index:a, keep order:true, stats:pseudo"
         ],
         "Result": [
           "1",
@@ -1455,10 +1455,10 @@
           "└─Projection_23 12487.50 root test.t.a, plus(test.t.a, 1)->Column#7",
           "  └─Projection_20 12487.50 root test.t.a",
           "    └─MergeJoin_21 12487.50 root inner join, left key:test.t.a, right key:test.t.b",
-          "      ├─IndexReader_13 9990.00 root index:IndexFullScan_12",
-          "      │ └─IndexFullScan_12 9990.00 cop[tikv] table:t1, index:a, keep order:true, stats:pseudo",
-          "      └─IndexReader_15 9990.00 root index:IndexFullScan_14",
-          "        └─IndexFullScan_14 9990.00 cop[tikv] table:t2, index:b, keep order:true, stats:pseudo"
+          "      ├─IndexReader_15(Build) 9990.00 root index:IndexFullScan_14",
+          "      │ └─IndexFullScan_14 9990.00 cop[tikv] table:t2, index:b, keep order:true, stats:pseudo",
+          "      └─IndexReader_13(Probe) 9990.00 root index:IndexFullScan_12",
+          "        └─IndexFullScan_12 9990.00 cop[tikv] table:t1, index:a, keep order:true, stats:pseudo"
         ],
         "Result": [
           "1",
@@ -1473,10 +1473,10 @@
           "└─Projection_23 12487.50 root test.t.a, minus(test.t.a, 1)->Column#7",
           "  └─Projection_20 12487.50 root test.t.a",
           "    └─MergeJoin_21 12487.50 root inner join, left key:test.t.a, right key:test.t.b",
-          "      ├─IndexReader_13 9990.00 root index:IndexFullScan_12",
-          "      │ └─IndexFullScan_12 9990.00 cop[tikv] table:t1, index:a, keep order:true, stats:pseudo",
-          "      └─IndexReader_15 9990.00 root index:IndexFullScan_14",
-          "        └─IndexFullScan_14 9990.00 cop[tikv] table:t2, index:b, keep order:true, stats:pseudo"
+          "      ├─IndexReader_15(Build) 9990.00 root index:IndexFullScan_14",
+          "      │ └─IndexFullScan_14 9990.00 cop[tikv] table:t2, index:b, keep order:true, stats:pseudo",
+          "      └─IndexReader_13(Probe) 9990.00 root index:IndexFullScan_12",
+          "        └─IndexFullScan_12 9990.00 cop[tikv] table:t1, index:a, keep order:true, stats:pseudo"
         ],
         "Result": [
           "1",
@@ -1491,10 +1491,10 @@
           "└─Projection_31 12487.50 root test.t.a, unaryminus(test.t.a)->Column#7",
           "  └─Projection_20 12487.50 root test.t.a",
           "    └─MergeJoin_21 12487.50 root inner join, left key:test.t.a, right key:test.t.b",
-          "      ├─IndexReader_24 9990.00 root index:IndexFullScan_23",
-          "      │ └─IndexFullScan_23 9990.00 cop[tikv] table:t1, index:a, keep order:true, desc, stats:pseudo",
-          "      └─IndexReader_26 9990.00 root index:IndexFullScan_25",
-          "        └─IndexFullScan_25 9990.00 cop[tikv] table:t2, index:b, keep order:true, desc, stats:pseudo"
+          "      ├─IndexReader_26(Build) 9990.00 root index:IndexFullScan_25",
+          "      │ └─IndexFullScan_25 9990.00 cop[tikv] table:t2, index:b, keep order:true, desc, stats:pseudo",
+          "      └─IndexReader_24(Probe) 9990.00 root index:IndexFullScan_23",
+          "        └─IndexFullScan_23 9990.00 cop[tikv] table:t1, index:a, keep order:true, desc, stats:pseudo"
         ],
         "Result": [
           "2",
@@ -1509,10 +1509,10 @@
           "└─Projection_31 12487.50 root test.t.a, plus(unaryminus(test.t.a), 3)->Column#7",
           "  └─Projection_20 12487.50 root test.t.a",
           "    └─MergeJoin_21 12487.50 root inner join, left key:test.t.a, right key:test.t.b",
-          "      ├─IndexReader_24 9990.00 root index:IndexFullScan_23",
-          "      │ └─IndexFullScan_23 9990.00 cop[tikv] table:t1, index:a, keep order:true, desc, stats:pseudo",
-          "      └─IndexReader_26 9990.00 root index:IndexFullScan_25",
-          "        └─IndexFullScan_25 9990.00 cop[tikv] table:t2, index:b, keep order:true, desc, stats:pseudo"
+          "      ├─IndexReader_26(Build) 9990.00 root index:IndexFullScan_25",
+          "      │ └─IndexFullScan_25 9990.00 cop[tikv] table:t2, index:b, keep order:true, desc, stats:pseudo",
+          "      └─IndexReader_24(Probe) 9990.00 root index:IndexFullScan_23",
+          "        └─IndexFullScan_23 9990.00 cop[tikv] table:t1, index:a, keep order:true, desc, stats:pseudo"
         ],
         "Result": [
           "2",
@@ -1527,10 +1527,10 @@
           "└─Projection_23 12487.50 root test.t.a, plus(1, test.t.a)->Column#7",
           "  └─Projection_20 12487.50 root test.t.a",
           "    └─MergeJoin_21 12487.50 root inner join, left key:test.t.a, right key:test.t.b",
-          "      ├─IndexReader_13 9990.00 root index:IndexFullScan_12",
-          "      │ └─IndexFullScan_12 9990.00 cop[tikv] table:t1, index:a, keep order:true, stats:pseudo",
-          "      └─IndexReader_15 9990.00 root index:IndexFullScan_14",
-          "        └─IndexFullScan_14 9990.00 cop[tikv] table:t2, index:b, keep order:true, stats:pseudo"
+          "      ├─IndexReader_15(Build) 9990.00 root index:IndexFullScan_14",
+          "      │ └─IndexFullScan_14 9990.00 cop[tikv] table:t2, index:b, keep order:true, stats:pseudo",
+          "      └─IndexReader_13(Probe) 9990.00 root index:IndexFullScan_12",
+          "        └─IndexFullScan_12 9990.00 cop[tikv] table:t1, index:a, keep order:true, stats:pseudo"
         ],
         "Result": [
           "1",
@@ -1545,10 +1545,10 @@
           "└─Projection_31 12487.50 root test.t.a, minus(1, test.t.a)->Column#7",
           "  └─Projection_20 12487.50 root test.t.a",
           "    └─MergeJoin_21 12487.50 root inner join, left key:test.t.a, right key:test.t.b",
-          "      ├─IndexReader_24 9990.00 root index:IndexFullScan_23",
-          "      │ └─IndexFullScan_23 9990.00 cop[tikv] table:t1, index:a, keep order:true, desc, stats:pseudo",
-          "      └─IndexReader_26 9990.00 root index:IndexFullScan_25",
-          "        └─IndexFullScan_25 9990.00 cop[tikv] table:t2, index:b, keep order:true, desc, stats:pseudo"
+          "      ├─IndexReader_26(Build) 9990.00 root index:IndexFullScan_25",
+          "      │ └─IndexFullScan_25 9990.00 cop[tikv] table:t2, index:b, keep order:true, desc, stats:pseudo",
+          "      └─IndexReader_24(Probe) 9990.00 root index:IndexFullScan_23",
+          "        └─IndexFullScan_23 9990.00 cop[tikv] table:t1, index:a, keep order:true, desc, stats:pseudo"
         ],
         "Result": [
           "2",
@@ -1563,10 +1563,10 @@
           "└─Projection_31 12487.50 root test.t.a, plus(minus(1, test.t.a), 3)->Column#7",
           "  └─Projection_20 12487.50 root test.t.a",
           "    └─MergeJoin_21 12487.50 root inner join, left key:test.t.a, right key:test.t.b",
-          "      ├─IndexReader_24 9990.00 root index:IndexFullScan_23",
-          "      │ └─IndexFullScan_23 9990.00 cop[tikv] table:t1, index:a, keep order:true, desc, stats:pseudo",
-          "      └─IndexReader_26 9990.00 root index:IndexFullScan_25",
-          "        └─IndexFullScan_25 9990.00 cop[tikv] table:t2, index:b, keep order:true, desc, stats:pseudo"
+          "      ├─IndexReader_26(Build) 9990.00 root index:IndexFullScan_25",
+          "      │ └─IndexFullScan_25 9990.00 cop[tikv] table:t2, index:b, keep order:true, desc, stats:pseudo",
+          "      └─IndexReader_24(Probe) 9990.00 root index:IndexFullScan_23",
+          "        └─IndexFullScan_23 9990.00 cop[tikv] table:t1, index:a, keep order:true, desc, stats:pseudo"
         ],
         "Result": [
           "2",
@@ -1581,10 +1581,10 @@
           "└─Projection_23 12487.50 root test.t.a, plus(plus(1, test.t.a), 3)->Column#7",
           "  └─Projection_20 12487.50 root test.t.a",
           "    └─MergeJoin_21 12487.50 root inner join, left key:test.t.a, right key:test.t.b",
-          "      ├─IndexReader_13 9990.00 root index:IndexFullScan_12",
-          "      │ └─IndexFullScan_12 9990.00 cop[tikv] table:t1, index:a, keep order:true, stats:pseudo",
-          "      └─IndexReader_15 9990.00 root index:IndexFullScan_14",
-          "        └─IndexFullScan_14 9990.00 cop[tikv] table:t2, index:b, keep order:true, stats:pseudo"
+          "      ├─IndexReader_15(Build) 9990.00 root index:IndexFullScan_14",
+          "      │ └─IndexFullScan_14 9990.00 cop[tikv] table:t2, index:b, keep order:true, stats:pseudo",
+          "      └─IndexReader_13(Probe) 9990.00 root index:IndexFullScan_12",
+          "        └─IndexFullScan_12 9990.00 cop[tikv] table:t1, index:a, keep order:true, stats:pseudo"
         ],
         "Result": [
           "1",
@@ -1600,10 +1600,10 @@
           "  └─Projection_20 12487.50 root test.t.a, mul(3, test.t.a)->Column#7",
           "    └─Projection_8 12487.50 root test.t.a",
           "      └─MergeJoin_9 12487.50 root inner join, left key:test.t.a, right key:test.t.b",
-          "        ├─IndexReader_12 9990.00 root index:IndexFullScan_11",
-          "        │ └─IndexFullScan_11 9990.00 cop[tikv] table:t1, index:a, keep order:true, stats:pseudo",
-          "        └─IndexReader_14 9990.00 root index:IndexFullScan_13",
-          "          └─IndexFullScan_13 9990.00 cop[tikv] table:t2, index:b, keep order:true, stats:pseudo"
+          "        ├─IndexReader_14(Build) 9990.00 root index:IndexFullScan_13",
+          "        │ └─IndexFullScan_13 9990.00 cop[tikv] table:t2, index:b, keep order:true, stats:pseudo",
+          "        └─IndexReader_12(Probe) 9990.00 root index:IndexFullScan_11",
+          "          └─IndexFullScan_11 9990.00 cop[tikv] table:t1, index:a, keep order:true, stats:pseudo"
         ],
         "Result": [
           "1",
