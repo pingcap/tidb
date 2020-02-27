@@ -1821,6 +1821,7 @@ func NewMysqlEnumDatum(e Enum) (d Datum) {
 	return d
 }
 
+// NewCollateMysqlEnumDatum create a new MysqlEnum Datum for a Enum value with collation information.
 func NewCollateMysqlEnumDatum(e Enum, collation string, length int) (d Datum) {
 	d.SetMysqlEnum(e, collation, length)
 	return d
