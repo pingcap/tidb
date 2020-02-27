@@ -49,7 +49,7 @@ type QueryCtx interface {
 	// Value returns the value associated with this context for key.
 	Value(key fmt.Stringer) interface{}
 
-	// SetValue saves a value associated with this context for key.
+	// SetValueForTest saves a value associated with this context for key.
 	SetValue(key fmt.Stringer, value interface{})
 
 	SetProcessInfo(sql string, t time.Time, command byte, maxExecutionTime uint64)

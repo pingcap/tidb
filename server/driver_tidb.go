@@ -203,7 +203,7 @@ func (tc *TiDBContext) Value(key fmt.Stringer) interface{} {
 	return tc.session.Value(key)
 }
 
-// SetValue implements QueryCtx SetValue method.
+// SetValueForTest implements QueryCtx SetValueForTest method.
 func (tc *TiDBContext) SetValue(key fmt.Stringer, value interface{}) {
 	tc.session.SetValue(key, value)
 }

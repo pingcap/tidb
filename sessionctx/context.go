@@ -43,7 +43,7 @@ type Context interface {
 	// GetClient gets a kv.Client.
 	GetClient() kv.Client
 
-	// SetValue saves a value associated with this context for key.
+	// SetValueForTest saves a value associated with this context for key.
 	SetValue(key fmt.Stringer, value interface{})
 
 	// Value returns the value associated with this context for key.

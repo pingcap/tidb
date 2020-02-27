@@ -334,10 +334,10 @@ func (sf *ScalarFunction) Eval(row chunk.Row) (d types.Datum, err error) {
 	}
 
 	if isNull || err != nil {
-		d.SetValue(nil)
+		d.SetNull()
 		return d, err
 	}
-	d.SetValue(res)
+	d.SetValue(res, sf.RetType)
 	return
 }
 

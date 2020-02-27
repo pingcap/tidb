@@ -50,9 +50,10 @@ type ColInfo struct {
 	Flag       int32
 	IsPKHandle bool
 
-	Flen    int
-	Decimal int
-	Elems   []string
+	Flen      int
+	Decimal   int
+	Elems     []string
+	Collation string
 }
 
 // DatumMapDecoder decodes the row to datum map.
@@ -168,13 +169,13 @@ func (decoder *DatumMapDecoder) decodeColDatum(col *ColInfo, colData []byte) (ty
 		if err != nil {
 			enum = types.Enum{}
 		}
-		d.SetMysqlEnum(enum)
+		d.SetMysqlEnum(enum, col.Collation, col.Flen)
 	case mysql.TypeSet:
 		set, err := types.ParseSetValue(col.Elems, decodeUint(colData))
 		if err != nil {
 			return d, err
 		}
-		d.SetMysqlSet(set)
+		d.SetMysqlSet(set, col.Collation, col.Flen)
 	case mysql.TypeBit:
 		byteSize := (col.Flen + 7) >> 3
 		d.SetMysqlBit(types.NewBinaryLiteralFromUint(decodeUint(colData), byteSize))

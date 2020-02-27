@@ -206,6 +206,8 @@ func (h *rpcHandler) buildTableScan(ctx *dagContext, executor *tipb.Executor) (*
 			Tp:         col.Tp,
 			Flag:       col.Flag,
 			IsPKHandle: col.GetPkHandle(),
+			Collation:  collate.CollationID2Name(col.Collation),
+			Flen:       int(col.ColumnLen),
 		}
 	}
 	defVal := func(i int) ([]byte, error) {

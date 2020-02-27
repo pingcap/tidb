@@ -46,7 +46,7 @@ func (ts *testDatumSuite) TestDatum(c *C) {
 	for _, val := range values {
 		var d Datum
 		d.SetMinNotNull()
-		d.SetValue(val)
+		d.SetValueForTest(val)
 		x := d.GetValue()
 		c.Assert(x, DeepEquals, val)
 		c.Assert(d.Length(), Equals, int(d.length))

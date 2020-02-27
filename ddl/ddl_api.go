@@ -765,7 +765,7 @@ func setSetDefaultValue(v types.Datum, col *table.Column) (string, error) {
 		if err != nil {
 			return "", errors.Trace(err)
 		}
-		v.SetMysqlSet(setVal)
+		v.SetMysqlSet(setVal, col.Collate, col.Flen)
 		return v.ToString()
 	}
 
@@ -799,7 +799,7 @@ func setSetDefaultValue(v types.Datum, col *table.Column) (string, error) {
 	if err != nil {
 		return "", ErrInvalidDefaultValue.GenWithStackByArgs(col.Name.O)
 	}
-	v.SetMysqlSet(setVal)
+	v.SetMysqlSet(setVal, col.Collate, col.Flen)
 
 	return v.ToString()
 }
