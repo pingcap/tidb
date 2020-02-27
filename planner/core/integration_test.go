@@ -507,6 +507,30 @@ func (s *testIntegrationSuite) TestIndexMerge(c *C) {
 	}
 }
 
+// for issue #14822
+func (s *testIntegrationSuite) TestIndexJoinTableRange(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int, b int, primary key (a), key idx_t1_b (b))")
+	tk.MustExec("create table t2(a int, b int, primary key (a), key idx_t1_b (b))")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
 func (s *testIntegrationSuite) TestTopNByConstFunc(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
