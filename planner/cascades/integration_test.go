@@ -329,7 +329,7 @@ func (s *testIntegrationSuite) TestInlineProjection(c *C) {
 	tk.MustExec("create table t1(a bigint, b bigint, index idx_a(a), index idx_b(b));")
 	tk.MustExec("create table t2(a bigint, b bigint, index idx_a(a), index idx_b(b));")
 	tk.MustExec("insert into t1 values (1, 1), (2, 2);")
-	tk.MustExec("insert into t2 values (1, 1), (2, 2);")
+	tk.MustExec("insert into t2 values (1, 1), (3, 3);")
 	tk.MustExec("set session tidb_enable_cascades_planner = 1;")
 	var input []string
 	var output []struct {
