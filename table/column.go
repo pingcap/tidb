@@ -391,7 +391,7 @@ func getColDefaultExprValue(ctx sessionctx.Context, col *model.ColumnInfo, defau
 		return types.Datum{}, err
 	}
 	// Check the evaluated data type by cast.
-	value, err := CastValue(ctx, types.NewDatum(d), col)
+	value, err := CastValue(ctx, d, col)
 	if err != nil {
 		return types.Datum{}, err
 	}

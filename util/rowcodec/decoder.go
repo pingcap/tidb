@@ -353,8 +353,7 @@ func NewByteDecoder(columns []ColInfo, handleColID int64, defBytes func(i int) (
 	}
 }
 
-// DecodeToBytes decodes raw byte slice to row data.
-func (decoder *BytesDecoder) DecodeToBytes(outputOffset map[int64]int, handle int64, value []byte, cacheBytes []byte) ([][]byte, error) {
+func (decoder *BytesDecoder) decodeToBytesInternal(outputOffset map[int64]int, handle int64, value []byte, cacheBytes []byte, useHandle bool) ([][]byte, error) {
 	var r row
 	err := r.fromBytes(value)
 	if err != nil {
@@ -365,7 +364,7 @@ func (decoder *BytesDecoder) DecodeToBytes(outputOffset map[int64]int, handle in
 		tp := fieldType2Flag(byte(col.Tp), uint(col.Flag)&mysql.UnsignedFlag == 0)
 		colID := col.ID
 		offset := outputOffset[colID]
-		if col.IsPKHandle || colID == model.ExtraHandleID {
+		if useHandle && (col.IsPKHandle || colID == model.ExtraHandleID) {
 			handleData := cacheBytes
 			if mysql.HasUnsignedFlag(uint(col.Flag)) {
 				handleData = append(handleData, UintFlag)
@@ -404,6 +403,16 @@ func (decoder *BytesDecoder) DecodeToBytes(outputOffset map[int64]int, handle in
 		values[offset] = []byte{NilFlag}
 	}
 	return values, nil
+}
+
+// DecodeToBytesNoHandle decodes raw byte slice to row dat without handle.
+func (decoder *BytesDecoder) DecodeToBytesNoHandle(outputOffset map[int64]int, value []byte) ([][]byte, error) {
+	return decoder.decodeToBytesInternal(outputOffset, 0, value, nil, false)
+}
+
+// DecodeToBytes decodes raw byte slice to row data.
+func (decoder *BytesDecoder) DecodeToBytes(outputOffset map[int64]int, handle int64, value []byte, cacheBytes []byte) ([][]byte, error) {
+	return decoder.decodeToBytesInternal(outputOffset, handle, value, cacheBytes, true)
 }
 
 func (decoder *BytesDecoder) encodeOldDatum(tp byte, val []byte) []byte {
