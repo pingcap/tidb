@@ -508,7 +508,7 @@ func (s *testBinlogSuite) TestSequenceBinlog(c *C) {
 	// Got matched pre DDL and commit DDL.
 	var matched bool
 	for i := 0; i < 10; i++ {
-		preDDL, commitDDL := getLatestDDLBinlog(c, s.pump, "select setval(test.seq, 3)")
+		preDDL, commitDDL := getLatestDDLBinlog(c, s.pump, "select setval(`test`.`seq`, 3)")
 		if preDDL != nil && commitDDL != nil {
 			if preDDL.DdlJobId == commitDDL.DdlJobId {
 				c.Assert(commitDDL.StartTs, Equals, preDDL.StartTs)
@@ -533,7 +533,7 @@ func (s *testBinlogSuite) TestSequenceBinlog(c *C) {
 	c.Assert(round, Equals, int64(0))
 
 	for i := 0; i < 10; i++ {
-		preDDL, commitDDL := getLatestDDLBinlog(c, s.pump, "select setval(test.seq, 8)")
+		preDDL, commitDDL := getLatestDDLBinlog(c, s.pump, "select setval(`test`.`seq`, 8)")
 		if preDDL != nil && commitDDL != nil {
 			if preDDL.DdlJobId == commitDDL.DdlJobId {
 				c.Assert(commitDDL.StartTs, Equals, preDDL.StartTs)
@@ -560,7 +560,7 @@ func (s *testBinlogSuite) TestSequenceBinlog(c *C) {
 	c.Assert(round, Equals, int64(0))
 
 	for i := 0; i < 10; i++ {
-		preDDL, commitDDL := getLatestDDLBinlog(c, s.pump, "select setval(test2.seq2, -3)")
+		preDDL, commitDDL := getLatestDDLBinlog(c, s.pump, "select setval(`test2`.`seq2`, -3)")
 		if preDDL != nil && commitDDL != nil {
 			if preDDL.DdlJobId == commitDDL.DdlJobId {
 				c.Assert(commitDDL.StartTs, Equals, preDDL.StartTs)
@@ -583,7 +583,7 @@ func (s *testBinlogSuite) TestSequenceBinlog(c *C) {
 	c.Assert(end, Equals, int64(6))
 	c.Assert(round, Equals, int64(1))
 	for i := 0; i < 10; i++ {
-		preDDL, commitDDL := getLatestDDLBinlog(c, s.pump, "select setval(test2.seq2, 6)")
+		preDDL, commitDDL := getLatestDDLBinlog(c, s.pump, "select setval(`test2`.`seq2`, 6)")
 		if preDDL != nil && commitDDL != nil {
 			if preDDL.DdlJobId == commitDDL.DdlJobId {
 				c.Assert(commitDDL.StartTs, Equals, preDDL.StartTs)
