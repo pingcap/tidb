@@ -27,7 +27,9 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
 
@@ -295,6 +297,37 @@ func TLSCipher2String(n uint16) string {
 		return ""
 	}
 	return s
+}
+
+// ColumnsToProto converts a slice of model.ColumnInfo to a slice of tipb.ColumnInfo.
+func ColumnsToProto(columns []*model.ColumnInfo, pkIsHandle bool) []*tipb.ColumnInfo {
+	cols := make([]*tipb.ColumnInfo, 0, len(columns))
+	for _, c := range columns {
+		col := ColumnToProto(c)
+		// TODO: Here `PkHandle`'s meaning is changed, we will change it to `IsHandle` when tikv's old select logic
+		// is abandoned.
+		if (pkIsHandle && mysql.HasPriKeyFlag(c.Flag)) || c.ID == model.ExtraHandleID {
+			col.PkHandle = true
+		} else {
+			col.PkHandle = false
+		}
+		cols = append(cols, col)
+	}
+	return cols
+}
+
+// ColumnToProto converts model.ColumnInfo to tipb.ColumnInfo.
+func ColumnToProto(c *model.ColumnInfo) *tipb.ColumnInfo {
+	pc := &tipb.ColumnInfo{
+		ColumnId:  c.ID,
+		Collation: collate.RewriteNewCollationIDIfNeeded(int32(mysql.CollationNames[c.FieldType.Collate])),
+		ColumnLen: int32(c.FieldType.Flen),
+		Decimal:   int32(c.FieldType.Decimal),
+		Flag:      int32(c.Flag),
+		Elems:     c.Elems,
+	}
+	pc.Tp = int32(c.FieldType.Tp)
+	return pc
 }
 
 func init() {
