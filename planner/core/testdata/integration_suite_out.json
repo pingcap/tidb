@@ -340,5 +340,32 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestIndexJoinTableRange",
+    "Cases": [
+      {
+        "SQL": "desc select /*+ TIDB_INLJ(t2)*/ * from t1, t2 where t1.a = t2.a and t1.b = t2.b",
+        "Plan": [
+          "IndexJoin_12 12487.50 root inner join, inner:TableReader_11, outer key:test.t1.a, inner key:test.t2.a, other cond:eq(test.t1.b, test.t2.b)",
+          "├─IndexReader_21(Build) 9990.00 root index:IndexFullScan_20",
+          "│ └─IndexFullScan_20 9990.00 cop[tikv] table:t1, index:b, keep order:false, stats:pseudo",
+          "└─TableReader_11(Probe) 1.00 root data:Selection_10",
+          "  └─Selection_10 1.00 cop[tikv] not(isnull(test.t2.b))",
+          "    └─TableRangeScan_9 1.00 cop[tikv] table:t2, range: decided by [test.t1.a], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc select /*+ TIDB_INLJ(t2)*/ * from t1, t2 where t1.a = t2.a and t1.b = t2.a and t1.b = t2.b",
+        "Plan": [
+          "IndexJoin_12 12487.50 root inner join, inner:TableReader_11, outer key:test.t1.a, test.t1.b, inner key:test.t2.a, test.t2.a, other cond:eq(test.t1.b, test.t2.b)",
+          "├─IndexReader_21(Build) 9990.00 root index:IndexFullScan_20",
+          "│ └─IndexFullScan_20 9990.00 cop[tikv] table:t1, index:b, keep order:false, stats:pseudo",
+          "└─TableReader_11(Probe) 1.00 root data:Selection_10",
+          "  └─Selection_10 1.00 cop[tikv] not(isnull(test.t2.b))",
+          "    └─TableRangeScan_9 1.00 cop[tikv] table:t2, range: decided by [test.t1.a test.t1.b], keep order:false, stats:pseudo"
+        ]
+      }
+    ]
   }
 ]

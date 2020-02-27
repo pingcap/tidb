@@ -803,7 +803,10 @@ func (c *Config) Valid() error {
 			return fmt.Errorf("type of [isolation-read]engines can't be %v should be one of tidb or tikv or tiflash", engine)
 		}
 	}
-	return nil
+
+	// test log level
+	l := zap.NewAtomicLevel()
+	return l.UnmarshalText([]byte(c.Log.Level))
 }
 
 func hasRootPrivilege() bool {
