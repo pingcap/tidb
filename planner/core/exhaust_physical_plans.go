@@ -548,6 +548,7 @@ func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 		return nil
 	}
 	keyOff2IdxOff := make([]int, len(innerJoinKeys))
+	newOuterJoinKeys := make([]*expression.Column, 0)
 	pkMatched := false
 	for i, key := range innerJoinKeys {
 		if !key.Equal(nil, pkCol) {
@@ -556,7 +557,10 @@ func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 		}
 		pkMatched = true
 		keyOff2IdxOff[i] = 0
+		// Add to newOuterJoinKeys only if conditions contain inner primary key. For issue #14822.
+		newOuterJoinKeys = append(newOuterJoinKeys, outerJoinKeys[i])
 	}
+	outerJoinKeys = newOuterJoinKeys
 	if !pkMatched {
 		return nil
 	}

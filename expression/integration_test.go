@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
@@ -47,6 +48,7 @@ import (
 
 var _ = Suite(&testIntegrationSuite{})
 var _ = Suite(&testIntegrationSuite2{})
+var _ = SerialSuites(&testIntegrationSuite3{})
 
 type testIntegrationSuiteBase struct {
 	store kv.Storage
@@ -59,6 +61,10 @@ type testIntegrationSuite struct {
 }
 
 type testIntegrationSuite2 struct {
+	testIntegrationSuiteBase
+}
+
+type testIntegrationSuite3 struct {
 	testIntegrationSuiteBase
 }
 
@@ -5483,4 +5489,19 @@ func (s *testIntegrationSuite) TestCacheConstEval(c *C) {
 	tk.Se.GetSessionVars().EnableVectorizedExpression = true
 	tk.MustExec("delete from mysql.expr_pushdown_blacklist")
 	tk.MustExec("admin reload expr_pushdown_blacklist")
+}
+
+func (s *testIntegrationSuite3) TestCollationBasic(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_ci(a varchar(10) collate utf8mb4_general_ci, unique key(a))")
+	tk.MustExec("insert into t_ci values ('a')")
+	tk.MustQuery("select * from t_ci").Check(testkit.Rows("a"))
+	tk.MustQuery("select * from t_ci").Check(testkit.Rows("a"))
+	tk.MustQuery("select * from t_ci where a='a'").Check(testkit.Rows("a"))
+	tk.MustQuery("select * from t_ci where a='A'").Check(testkit.Rows("a"))
+	tk.MustQuery("select * from t_ci where a='a   '").Check(testkit.Rows("a"))
+	tk.MustQuery("select * from t_ci where a='a                    '").Check(testkit.Rows("a"))
 }
