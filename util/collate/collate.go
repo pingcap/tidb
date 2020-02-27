@@ -25,6 +25,8 @@ import (
 var (
 	collatorMap         map[string]Collator
 	collatorIDMap       map[int]Collator
+	newCollatorMap      map[string]Collator
+	newCollatorIDMap    map[int]Collator
 	newCollationEnabled int32
 )
 
@@ -62,27 +64,9 @@ func EnableNewCollations() {
 func SetNewCollationEnabledForTest(flag bool) {
 	if flag {
 		atomic.StoreInt32(&newCollationEnabled, 1)
-		collatorMap["utf8mb4_bin"] = &binPaddingCollator{}
-		collatorMap["utf8_bin"] = &binPaddingCollator{}
-		collatorMap["utf8mb4_general_ci"] = &generalCICollator{}
-		collatorMap["utf8_general_ci"] = &generalCICollator{}
-
-		collatorIDMap[46] = &binPaddingCollator{}
-		collatorIDMap[83] = &binPaddingCollator{}
-		collatorIDMap[45] = &generalCICollator{}
-		collatorIDMap[33] = &generalCICollator{}
-	} else {
-		atomic.StoreInt32(&newCollationEnabled, 0)
-		collatorMap["utf8mb4_bin"] = &binCollator{}
-		collatorMap["utf8_bin"] = &binCollator{}
-		collatorMap["utf8mb4_general_ci"] = &binCollator{}
-		collatorMap["utf8_general_ci"] = &binCollator{}
-
-		collatorIDMap[46] = &binCollator{}
-		collatorIDMap[83] = &binCollator{}
-		collatorIDMap[45] = &binCollator{}
-		collatorIDMap[33] = &binCollator{}
+		return
 	}
+	atomic.StoreInt32(&newCollationEnabled, 0)
 }
 
 // NewCollationEnabled returns if the new collations are enabled.
@@ -120,6 +104,13 @@ func RestoreCollationIDIfNeeded(id int32) int32 {
 
 // GetCollator get the collator according to collate, it will return the binary collator if the corresponding collator doesn't exist.
 func GetCollator(collate string) Collator {
+	if atomic.LoadInt32(&newCollationEnabled) == 1 {
+		ctor, ok := newCollatorMap[collate]
+		if !ok {
+			return newCollatorMap["utf8mb4_bin"]
+		}
+		return ctor
+	}
 	ctor, ok := collatorMap[collate]
 	if !ok {
 		return collatorMap["utf8mb4_bin"]
@@ -129,6 +120,13 @@ func GetCollator(collate string) Collator {
 
 // GetCollatorByID get the collator according to id, it will return the binary collator if the corresponding collator doesn't exist.
 func GetCollatorByID(id int) Collator {
+	if atomic.LoadInt32(&newCollationEnabled) == 1 {
+		ctor, ok := newCollatorIDMap[id]
+		if !ok {
+			return newCollatorMap["utf8mb4_bin"]
+		}
+		return ctor
+	}
 	ctor, ok := collatorIDMap[id]
 	if !ok {
 		return collatorMap["utf8mb4_bin"]
@@ -185,6 +183,8 @@ func (bpc *binPaddingCollator) Key(str string, opt CollatorOption) []byte {
 func init() {
 	collatorMap = make(map[string]Collator)
 	collatorIDMap = make(map[int]Collator)
+	newCollatorMap = make(map[string]Collator)
+	newCollatorIDMap = make(map[int]Collator)
 
 	collatorMap["binary"] = &binCollator{}
 	collatorMap["utf8mb4_bin"] = &binCollator{}
@@ -198,4 +198,16 @@ func init() {
 	collatorIDMap[83] = &binCollator{}
 	collatorIDMap[45] = &binCollator{}
 	collatorIDMap[33] = &binCollator{}
+
+	newCollatorMap["binary"] = &binCollator{}
+	newCollatorMap["utf8mb4_bin"] = &binPaddingCollator{}
+	newCollatorMap["utf8_bin"] = &binPaddingCollator{}
+	newCollatorMap["utf8mb4_general_ci"] = &generalCICollator{}
+	newCollatorMap["utf8_general_ci"] = &generalCICollator{}
+
+	newCollatorIDMap[63] = &binCollator{}
+	newCollatorIDMap[46] = &binPaddingCollator{}
+	newCollatorIDMap[83] = &binPaddingCollator{}
+	newCollatorIDMap[45] = &generalCICollator{}
+	newCollatorIDMap[33] = &generalCICollator{}
 }
