@@ -3068,4 +3068,25 @@ func (s *testSessionSuite2) TestPessimisticLockOnPartition(c *C) {
 	// tk1 should be blocked until tk commit, check the order.
 	c.Assert(<-ch, Equals, int32(1))
 	c.Assert(<-ch, Equals, int32(0))
+
+	// Once again...
+	// This time, test for the update-update conflict.
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("update forupdate_on_partition set first_name='sw' where age=25")
+	tk1.MustExec("begin pessimistic")
+
+	go func() {
+		tk1.MustExec("update forupdate_on_partition set first_name = 'xxx' where age=25")
+		ch <- 0
+		tk1.MustExec("commit")
+	}()
+
+	// Leave 50ms for tk1 to run, tk1 should be blocked at the update operation.
+	time.Sleep(50 * time.Millisecond)
+	ch <- 1
+
+	tk.MustExec("commit")
+	// tk1 should be blocked until tk commit, check the order.
+	c.Assert(<-ch, Equals, int32(1))
+	c.Assert(<-ch, Equals, int32(0))
 }
