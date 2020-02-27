@@ -862,7 +862,7 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return nil
 	}
 
-	if req.NumRows() != 0 && len(e.tblID2Handle) > 0 {
+	if req.NumRows() >= 0 {
 		iter := chunk.NewIterator4Chunk(req)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			for id, cols := range e.tblID2Handle {

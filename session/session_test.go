@@ -3053,20 +3053,19 @@ func (s *testSessionSuite2) TestPessimisticLockOnPartition(c *C) {
 	tk.MustQuery("select * from forupdate_on_partition where age=25 for update").Check(testkit.Rows("25 cosven 0    "))
 	tk1.MustExec("begin pessimistic")
 
-	val := int32(0)
 	ch := make(chan int32, 5)
 	go func() {
 		tk1.MustExec("update forupdate_on_partition set first_name='sw' where age=25")
-		ch <- val
+		ch <- 0
 		tk1.MustExec("commit")
 	}()
 
-	// Leave 50ms for tk1 to run, if it finish within the duration,
-	// the channel value should be 0, otherwise the value would be 1.
+	// Leave 50ms for tk1 to run, tk1 should be blocked at the update operation.
 	time.Sleep(50 * time.Millisecond)
-	val = 1
+	ch <- 1
 
 	tk.MustExec("commit")
-	// tk1 should be blocked until tk commit, so the channel value should be 1.
+	// tk1 should be blocked until tk commit, check the order.
 	c.Assert(<-ch, Equals, int32(1))
+	c.Assert(<-ch, Equals, int32(0))
 }
