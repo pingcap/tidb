@@ -1178,12 +1178,13 @@ func (b *builtinStrcmpSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 	result.ResizeInt64(n, false)
 	result.MergeNulls(leftBuf, rightBuf)
 	i64s := result.Int64s()
+	ft := b.args[0].GetType()
 	for i := 0; i < n; i++ {
 		// if left or right is null, then set to null and return 0(which is the default value)
 		if result.IsNull(i) {
 			continue
 		}
-		i64s[i] = int64(types.CompareString(leftBuf.GetString(i), rightBuf.GetString(i), b.tp.Collate, b.tp.Flen))
+		i64s[i] = int64(types.CompareString(leftBuf.GetString(i), rightBuf.GetString(i), ft.Collate, ft.Flen))
 	}
 	return nil
 }

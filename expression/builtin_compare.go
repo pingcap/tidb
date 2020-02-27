@@ -561,13 +561,14 @@ func (b *builtinGreatestStringSig) evalString(row chunk.Row) (max string, isNull
 	if isNull || err != nil {
 		return max, isNull, err
 	}
+	ft := b.args[0].GetType()
 	for i := 1; i < len(b.args); i++ {
 		var v string
 		v, isNull, err = b.args[i].EvalString(b.ctx, row)
 		if isNull || err != nil {
 			return max, isNull, err
 		}
-		if types.CompareString(v, max, b.tp.Collate, b.tp.Flen) > 0 {
+		if types.CompareString(v, max, ft.Collate, ft.Flen) > 0 {
 			max = v
 		}
 	}
@@ -760,13 +761,14 @@ func (b *builtinLeastStringSig) evalString(row chunk.Row) (min string, isNull bo
 	if isNull || err != nil {
 		return min, isNull, err
 	}
+	ft := b.args[0].GetType()
 	for i := 1; i < len(b.args); i++ {
 		var v string
 		v, isNull, err = b.args[i].EvalString(b.ctx, row)
 		if isNull || err != nil {
 			return min, isNull, err
 		}
-		if types.CompareString(v, min, b.tp.Collate, b.tp.Flen) < 0 {
+		if types.CompareString(v, min, ft.Collate, ft.Flen) < 0 {
 			min = v
 		}
 	}
@@ -2185,12 +2187,13 @@ func (b *builtinNullEQStringSig) evalInt(row chunk.Row) (val int64, isNull bool,
 		return 0, true, err
 	}
 	var res int64
+	ft := b.args[0].GetType()
 	switch {
 	case isNull0 && isNull1:
 		res = 1
 	case isNull0 != isNull1:
 		break
-	case types.CompareString(arg0, arg1, b.tp.Collate, b.tp.Flen) == 0:
+	case types.CompareString(arg0, arg1, ft.Collate, ft.Flen) == 0:
 		res = 1
 	}
 	return res, false, nil

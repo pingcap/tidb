@@ -1848,6 +1848,15 @@ func WrapWithCastAsString(ctx sessionctx.Context, expr Expression) Expression {
 	return BuildCastFunction(ctx, expr, tp)
 }
 
+// WrapWithCastAsSpecifiedString wraps `expr` with `cast` if the type of expr is not ft.
+func WrapWithCastAsSpecifiedString(ctx sessionctx.Context, expr Expression, ft *types.FieldType) Expression {
+	etp := expr.GetType()
+	if etp.EvalType() == types.ETString && etp.Charset == ft.Charset && etp.Collate == ft.Collate {
+		return expr
+	}
+	return BuildCastFunction(ctx, expr, ft)
+}
+
 // WrapWithCastAsTime wraps `expr` with `cast` if the return type of expr is not
 // same as type of the specified `tp` , otherwise, returns `expr` directly.
 func WrapWithCastAsTime(ctx sessionctx.Context, expr Expression, tp *types.FieldType) Expression {

@@ -42,6 +42,17 @@ func NewFieldType(tp byte) *FieldType {
 	}
 }
 
+
+// NewStringType creates a string type with the specified charset and collation.
+func NewStringType(charset, collation string, flen int) *FieldType {
+	return &FieldType{
+		Tp:      mysql.TypeVarString,
+		Charset: charset,
+		Collate: collation,
+		Flen:    flen,
+	}
+}
+
 // AggFieldType aggregates field types for a multi-argument function like `IF`, `IFNULL`, `COALESCE`
 // whose return type is determined by the arguments' FieldTypes.
 // Aggregation is performed by MergeFieldType function.

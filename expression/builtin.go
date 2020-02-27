@@ -99,13 +99,9 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, args []Expression, retType
 	if ctx == nil {
 		panic("ctx should not be nil")
 	}
-	var derivedCharset, derivedCollate string
-	var derivedFlen int
-	if retType == types.ETString {
-		// derive collation information for string function, and we must do it
-		// before doing implicit cast.
-		derivedCharset, derivedCollate, derivedFlen = DeriveCollationFromExprs(ctx, args...)
-	}
+	// derive collation information for string function, and we must do it
+	// before doing implicit cast.
+	derivedCharset, derivedCollate, derivedFlen := DeriveCollationFromExprs(ctx, args...)
 	for i := range args {
 		switch argTps[i] {
 		case types.ETInt:
@@ -115,8 +111,8 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, args []Expression, retType
 		case types.ETDecimal:
 			args[i] = WrapWithCastAsDecimal(ctx, args[i])
 		case types.ETString:
-			// TODO: if the charset of args[i] is not derivedCharset, convert it
-			args[i] = WrapWithCastAsString(ctx, args[i])
+			//  if the charset of args[i] is not derivedCharset, convert it
+			args[i] = WrapWithCastAsSpecifiedString(ctx, args[i], types.NewStringType(derivedCharset, derivedCollate, derivedFlen))
 		case types.ETDatetime:
 			args[i] = WrapWithCastAsTime(ctx, args[i], types.NewFieldType(mysql.TypeDatetime))
 		case types.ETTimestamp:
