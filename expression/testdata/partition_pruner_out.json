@@ -20,8 +20,8 @@
         "SQL": "explain select * from t2 where id = 9 and a = -110",
         "Result": [
           "IndexLookUp_8 1.00 root ",
-          "├─IndexRangeScan_6 1.00 cop[tikv] table:t2, partition:p1, index:id, a, range:[9 -110,9 -110], keep order:false, stats:pseudo",
-          "└─TableRowIDScan_7 1.00 cop[tikv] table:t2, partition:p1, keep order:false, stats:pseudo"
+          "├─IndexRangeScan_6(Build) 1.00 cop[tikv] table:t2, partition:p1, index:id, a, range:[9 -110,9 -110], keep order:false, stats:pseudo",
+          "└─TableRowIDScan_7(Probe) 1.00 cop[tikv] table:t2, partition:p1, keep order:false, stats:pseudo"
         ]
       },
       {
@@ -43,33 +43,33 @@
         "SQL": "explain select * from t1 join t2 on (t1.id = t2.id) where t1.id = 5 and t2.a = 7",
         "Result": [
           "HashLeftJoin_10 1.00 root CARTESIAN inner join, inner:IndexLookUp_16",
-          "├─TableReader_13 1.00 root data:TableRangeScan_12",
-          "│ └─TableRangeScan_12 1.00 cop[tikv] table:t1, partition:p5, range:[5,5], keep order:false, stats:pseudo",
-          "└─IndexLookUp_16 1.00 root ",
-          "  ├─IndexRangeScan_14 1.00 cop[tikv] table:t2, partition:p2, index:id, a, range:[5 7,5 7], keep order:false, stats:pseudo",
-          "  └─TableRowIDScan_15 1.00 cop[tikv] table:t2, partition:p2, keep order:false, stats:pseudo"
+          "├─IndexLookUp_16(Build) 1.00 root ",
+          "│ ├─IndexRangeScan_14(Build) 1.00 cop[tikv] table:t2, partition:p2, index:id, a, range:[5 7,5 7], keep order:false, stats:pseudo",
+          "│ └─TableRowIDScan_15(Probe) 1.00 cop[tikv] table:t2, partition:p2, keep order:false, stats:pseudo",
+          "└─TableReader_13(Probe) 1.00 root data:TableRangeScan_12",
+          "  └─TableRangeScan_12 1.00 cop[tikv] table:t1, partition:p5, range:[5,5], keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "explain select * from t1 left join t2 on t1.id = 1 and t2.a = 2 where t2.id = 7",
         "Result": [
           "HashLeftJoin_9 1.00 root CARTESIAN inner join, inner:IndexLookUp_15",
-          "├─TableReader_12 1.00 root data:TableRangeScan_11",
-          "│ └─TableRangeScan_11 1.00 cop[tikv] table:t1, partition:p1, range:[1,1], keep order:false, stats:pseudo",
-          "└─IndexLookUp_15 1.00 root ",
-          "  ├─IndexRangeScan_13 1.00 cop[tikv] table:t2, partition:p9, index:id, a, range:[7 2,7 2], keep order:false, stats:pseudo",
-          "  └─TableRowIDScan_14 1.00 cop[tikv] table:t2, partition:p9, keep order:false, stats:pseudo"
+          "├─IndexLookUp_15(Build) 1.00 root ",
+          "│ ├─IndexRangeScan_13(Build) 1.00 cop[tikv] table:t2, partition:p9, index:id, a, range:[7 2,7 2], keep order:false, stats:pseudo",
+          "│ └─TableRowIDScan_14(Probe) 1.00 cop[tikv] table:t2, partition:p9, keep order:false, stats:pseudo",
+          "└─TableReader_12(Probe) 1.00 root data:TableRangeScan_11",
+          "  └─TableRangeScan_11 1.00 cop[tikv] table:t1, partition:p1, range:[1,1], keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "explain select * from t2 join t1 on t1.id = t2.id and t2.a = t1.id and t2.id = 12",
         "Result": [
           "HashLeftJoin_9 1.00 root CARTESIAN inner join, inner:TableReader_15",
-          "├─IndexLookUp_13 1.00 root ",
-          "│ ├─IndexRangeScan_11 1.00 cop[tikv] table:t2, partition:p4, index:id, a, range:[12 12,12 12], keep order:false, stats:pseudo",
-          "│ └─TableRowIDScan_12 1.00 cop[tikv] table:t2, partition:p4, keep order:false, stats:pseudo",
-          "└─TableReader_15 1.00 root data:TableRangeScan_14",
-          "  └─TableRangeScan_14 1.00 cop[tikv] table:t1, partition:p2, range:[12,12], keep order:false, stats:pseudo"
+          "├─TableReader_15(Build) 1.00 root data:TableRangeScan_14",
+          "│ └─TableRangeScan_14 1.00 cop[tikv] table:t1, partition:p2, range:[12,12], keep order:false, stats:pseudo",
+          "└─IndexLookUp_13(Probe) 1.00 root ",
+          "  ├─IndexRangeScan_11(Build) 1.00 cop[tikv] table:t2, partition:p4, index:id, a, range:[12 12,12 12], keep order:false, stats:pseudo",
+          "  └─TableRowIDScan_12(Probe) 1.00 cop[tikv] table:t2, partition:p4, keep order:false, stats:pseudo"
         ]
       },
       {
@@ -88,18 +88,6 @@
         "SQL": "explain select * from t1 left join t2 on true where t1.a = null",
         "Result": [
           "TableDual_8 0.00 root rows:0"
-        ]
-      },
-      {
-        "SQL": "explain select * from t1 where t1.a > 7 and t1.a < 3",
-        "Result": [
-          "TableDual_6 0.00 root rows:0"
-        ]
-      },
-      {
-        "SQL": "explain select * from t1 where t1.a between 7 and 3",
-        "Result": [
-          "TableDual_6 0.00 root rows:0"
         ]
       }
     ]

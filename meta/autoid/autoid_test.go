@@ -564,3 +564,264 @@ func BenchmarkAllocator_Alloc(b *testing.B) {
 		alloc.Alloc(2, 1, 1, 1)
 	}
 }
+
+func BenchmarkAllocator_SequenceAlloc(b *testing.B) {
+	b.StopTimer()
+	store, err := mockstore.NewMockTikvStore()
+	if err != nil {
+		return
+	}
+	defer store.Close()
+	var seq *model.SequenceInfo
+	var sequenceBase int64
+	err = kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		err = m.CreateDatabase(&model.DBInfo{ID: 1, Name: model.NewCIStr("a")})
+		if err != nil {
+			return err
+		}
+		seq = &model.SequenceInfo{
+			Start:      1,
+			Cycle:      true,
+			Cache:      false,
+			MinValue:   -10,
+			MaxValue:   math.MaxInt64,
+			Increment:  2,
+			CacheValue: 2000000,
+		}
+		seqTable := &model.TableInfo{
+			ID:       1,
+			Name:     model.NewCIStr("seq"),
+			Sequence: seq,
+		}
+		sequenceBase = seq.Start - 1
+		err = m.CreateSequenceAndSetSeqValue(1, seqTable, sequenceBase)
+		return err
+	})
+	if err != nil {
+		return
+	}
+	alloc := autoid.NewSequenceAllocator(store, 1, seq)
+	b.StartTimer()
+	for i := 0; i < b.N; i++ {
+		_, _, _, err := alloc.AllocSeqCache(1)
+		if err != nil {
+			fmt.Println("err")
+		}
+	}
+}
+
+func BenchmarkAllocator_Seek(b *testing.B) {
+	base := int64(21421948021)
+	offset := int64(-351354365326)
+	increment := int64(3)
+	b.StartTimer()
+	for i := 0; i < b.N; i++ {
+		autoid.CalcSequenceBatchSize(base, 3, increment, offset, math.MinInt64, math.MaxInt64)
+	}
+}
+
+func (*testSuite) TestSequenceAutoid(c *C) {
+	store, err := mockstore.NewMockTikvStore()
+	c.Assert(err, IsNil)
+	defer store.Close()
+
+	var seq *model.SequenceInfo
+	var sequenceBase int64
+	err = kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		err = m.CreateDatabase(&model.DBInfo{ID: 1, Name: model.NewCIStr("a")})
+		c.Assert(err, IsNil)
+		seq = &model.SequenceInfo{
+			Start:      1,
+			Cycle:      true,
+			Cache:      true,
+			MinValue:   -10,
+			MaxValue:   10,
+			Increment:  2,
+			CacheValue: 3,
+		}
+		seqTable := &model.TableInfo{
+			ID:       1,
+			Name:     model.NewCIStr("seq"),
+			Sequence: seq,
+		}
+		sequenceBase = seq.Start - 1
+		err = m.CreateSequenceAndSetSeqValue(1, seqTable, sequenceBase)
+		c.Assert(err, IsNil)
+		return nil
+	})
+	c.Assert(err, IsNil)
+
+	alloc := autoid.NewSequenceAllocator(store, 1, seq)
+	c.Assert(alloc, NotNil)
+
+	// allocate sequence cache.
+	base, end, round, err := alloc.AllocSeqCache(1)
+	c.Assert(err, IsNil)
+	c.Assert(base, Equals, int64(0))
+	c.Assert(end, Equals, int64(5))
+	c.Assert(round, Equals, int64(0))
+
+	// test the sequence batch size.
+	offset := seq.Start
+	size, err := autoid.CalcSequenceBatchSize(sequenceBase, seq.CacheValue, seq.Increment, offset, seq.MinValue, seq.MaxValue)
+	c.Assert(err, IsNil)
+	c.Assert(size, Equals, end-base)
+
+	// simulate the next value allocation.
+	nextVal, ok := autoid.SeekToFirstSequenceValue(base, seq.Increment, offset, base, end)
+	c.Assert(ok, Equals, true)
+	c.Assert(nextVal, Equals, int64(1))
+	base = nextVal
+
+	nextVal, ok = autoid.SeekToFirstSequenceValue(base, seq.Increment, offset, base, end)
+	c.Assert(ok, Equals, true)
+	c.Assert(nextVal, Equals, int64(3))
+	base = nextVal
+
+	nextVal, ok = autoid.SeekToFirstSequenceValue(base, seq.Increment, offset, base, end)
+	c.Assert(ok, Equals, true)
+	c.Assert(nextVal, Equals, int64(5))
+
+	base, end, round, err = alloc.AllocSeqCache(1)
+	c.Assert(err, IsNil)
+	c.Assert(base, Equals, int64(5))
+	c.Assert(end, Equals, int64(10))
+	c.Assert(round, Equals, int64(0))
+
+	// test the sequence batch size.
+	size, err = autoid.CalcSequenceBatchSize(sequenceBase, seq.CacheValue, seq.Increment, offset, seq.MinValue, seq.MaxValue)
+	c.Assert(err, IsNil)
+	c.Assert(size, Equals, end-base)
+
+	nextVal, ok = autoid.SeekToFirstSequenceValue(base, seq.Increment, offset, base, end)
+	c.Assert(ok, Equals, true)
+	c.Assert(nextVal, Equals, int64(7))
+	base = nextVal
+
+	nextVal, ok = autoid.SeekToFirstSequenceValue(base, seq.Increment, offset, base, end)
+	c.Assert(ok, Equals, true)
+	c.Assert(nextVal, Equals, int64(9))
+	base = nextVal
+
+	_, ok = autoid.SeekToFirstSequenceValue(base, seq.Increment, offset, base, end)
+	// the rest in cache in not enough for next value.
+	c.Assert(ok, Equals, false)
+
+	base, end, round, err = alloc.AllocSeqCache(1)
+	c.Assert(err, IsNil)
+	c.Assert(base, Equals, int64(-11))
+	c.Assert(end, Equals, int64(-6))
+	// the round is already in cycle.
+	c.Assert(round, Equals, int64(1))
+
+	// test the sequence batch size.
+	size, err = autoid.CalcSequenceBatchSize(sequenceBase, seq.CacheValue, seq.Increment, offset, seq.MinValue, seq.MaxValue)
+	c.Assert(err, IsNil)
+	c.Assert(size, Equals, end-base)
+
+	offset = seq.MinValue
+	nextVal, ok = autoid.SeekToFirstSequenceValue(base, seq.Increment, offset, base, end)
+	c.Assert(ok, Equals, true)
+	c.Assert(nextVal, Equals, int64(-10))
+	base = nextVal
+
+	nextVal, ok = autoid.SeekToFirstSequenceValue(base, seq.Increment, offset, base, end)
+	c.Assert(ok, Equals, true)
+	c.Assert(nextVal, Equals, int64(-8))
+	base = nextVal
+
+	nextVal, ok = autoid.SeekToFirstSequenceValue(base, seq.Increment, offset, base, end)
+	c.Assert(ok, Equals, true)
+	c.Assert(nextVal, Equals, int64(-6))
+	base = nextVal
+
+	_, ok = autoid.SeekToFirstSequenceValue(base, seq.Increment, offset, base, end)
+	// the cache is already empty.
+	c.Assert(ok, Equals, false)
+}
+
+func (*testSuite) TestConcurrentAllocSequence(c *C) {
+	store, err := mockstore.NewMockTikvStore()
+	c.Assert(err, IsNil)
+	defer store.Close()
+
+	var seq *model.SequenceInfo
+	var sequenceBase int64
+	err = kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		err1 := m.CreateDatabase(&model.DBInfo{ID: 2, Name: model.NewCIStr("a")})
+		c.Assert(err1, IsNil)
+		seq = &model.SequenceInfo{
+			Start:      100,
+			Cycle:      false,
+			Cache:      true,
+			MinValue:   -100,
+			MaxValue:   100,
+			Increment:  -2,
+			CacheValue: 3,
+		}
+		seqTable := &model.TableInfo{
+			ID:       2,
+			Name:     model.NewCIStr("seq"),
+			Sequence: seq,
+		}
+		if seq.Increment >= 0 {
+			sequenceBase = seq.Start - 1
+		} else {
+			sequenceBase = seq.Start + 1
+		}
+		err1 = m.CreateSequenceAndSetSeqValue(2, seqTable, sequenceBase)
+		c.Assert(err1, IsNil)
+		return nil
+	})
+	c.Assert(err, IsNil)
+
+	var mu sync.Mutex
+	wg := sync.WaitGroup{}
+	m := map[int64]struct{}{}
+	count := 10
+	errCh := make(chan error, count)
+
+	allocSequence := func() {
+		alloc := autoid.NewSequenceAllocator(store, 2, seq)
+		for j := 0; j < 3; j++ {
+			base, end, _, err1 := alloc.AllocSeqCache(2)
+			if err1 != nil {
+				errCh <- err1
+				break
+			}
+
+			errFlag := false
+			mu.Lock()
+			// sequence is negative-growth here.
+			for i := base - 1; i >= end; i-- {
+				if _, ok := m[i]; ok {
+					errCh <- fmt.Errorf("duplicate id:%v", i)
+					errFlag = true
+					mu.Unlock()
+					break
+				}
+				m[i] = struct{}{}
+			}
+			if errFlag {
+				break
+			}
+			mu.Unlock()
+		}
+	}
+	for i := 0; i < count; i++ {
+		wg.Add(1)
+		go func(num int) {
+			time.Sleep(time.Duration(num%10) * time.Microsecond)
+			allocSequence()
+			wg.Done()
+		}(i)
+	}
+	wg.Wait()
+
+	close(errCh)
+	err = <-errCh
+	c.Assert(err, IsNil)
+}

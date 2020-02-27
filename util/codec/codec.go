@@ -90,7 +90,9 @@ func encode(sc *stmtctx.StatementContext, b []byte, vals []types.Datum, comparab
 		case types.KindFloat32, types.KindFloat64:
 			b = append(b, floatFlag)
 			b = EncodeFloat(b, vals[i].GetFloat64())
-		case types.KindString, types.KindBytes:
+		case types.KindString:
+			b = encodeString(b, vals[i], comparable)
+		case types.KindBytes:
 			b = encodeBytes(b, vals[i].GetBytes(), comparable)
 		case types.KindMysqlTime:
 			b = append(b, uintFlag)
@@ -191,6 +193,13 @@ func EncodeMySQLTime(sc *stmtctx.StatementContext, t types.Time, tp byte, b []by
 	}
 	b = EncodeUint(b, v)
 	return b, nil
+}
+
+func encodeString(b []byte, val types.Datum, comparable bool) []byte {
+	if collate.NewCollationEnabled() && comparable {
+		return encodeBytes(b, collate.GetCollator(val.Collation()).Key(val.GetString(), collate.CollatorOption{PadLen: val.Length()}), true)
+	}
+	return encodeBytes(b, val.GetBytes(), comparable)
 }
 
 func encodeBytes(b []byte, v []byte, comparable bool) []byte {
