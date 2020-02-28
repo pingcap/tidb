@@ -170,13 +170,13 @@ func (decoder *DatumMapDecoder) decodeColDatum(col *ColInfo, colData []byte) (ty
 		if err != nil {
 			enum = types.Enum{}
 		}
-		d.SetMysqlEnum(enum, col.Collation, col.Flen)
+		d.SetMysqlEnum(enum, col.Collate, col.Flen)
 	case mysql.TypeSet:
 		set, err := types.ParseSetValue(col.Elems, decodeUint(colData))
 		if err != nil {
 			return d, err
 		}
-		d.SetMysqlSet(set, col.Collation, col.Flen)
+		d.SetMysqlSet(set, col.Collate, col.Flen)
 	case mysql.TypeBit:
 		byteSize := (col.Flen + 7) >> 3
 		d.SetMysqlBit(types.NewBinaryLiteralFromUint(decodeUint(colData), byteSize))
