@@ -1582,10 +1582,10 @@ func (r *EliminateMultiMaxMin) checkColCanUseIndex(group *memo.Group, col *expre
 		expr := iter.Value.(*memo.GroupExpr)
 		switch p := expr.ExprNode.(type) {
 		case *plannercore.LogicalTableScan:
-			// check if `col` is the handle column
+			// check whether `col` is the handle column
 			return p.Handle != nil && col.Equal(nil, p.Handle)
 		case *plannercore.LogicalIndexScan:
-			// whether the LogicalIndexScan can satisfy the order property of `col` with these accessConds
+			// check whether the LogicalIndexScan can satisfy the order property of `col` with these accessConds
 			for i := 0; i <= p.EqCondCount; i++ {
 				if i < len(p.FullIdxCols) && p.FullIdxCols[i] != nil && col.Equal(nil, p.FullIdxCols[i]) {
 					return true
