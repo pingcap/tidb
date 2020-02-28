@@ -4480,4 +4480,5 @@ func (s *testDBSuite6) TestAlterOrderBy(c *C) {
 func init() {
 	// Make sure it will only be executed once.
 	domain.SchemaOutOfDateRetryInterval = int64(50 * time.Millisecond)
+	domain.SchemaOutOfDateRetryTimes = int32(50)
 }
