@@ -50,7 +50,7 @@ func (c *collationInfo) SetCharsetAndCollation(chs, coll string, flen int) {
 }
 
 func (c *collationInfo) CharsetAndCollation(ctx sessionctx.Context) (string, string, int) {
-	if c.charset != "" && c.collation != "" {
+	if c.charset != "" || c.collation != "" {
 		return c.charset, c.collation, c.flen
 	}
 
