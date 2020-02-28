@@ -576,6 +576,15 @@ func (s *testSuite1) TestIssue13652(c *C) {
 	c.Assert(err.Error(), Equals, "[planner:1055]Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'test.t.a' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by")
 }
 
+func (s *testSuite1) TestIssue14947(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set sql_mode = 'ONLY_FULL_GROUP_BY'")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	tk.MustQuery("select ((+a+1)) as tmp from t group by tmp")
+}
+
 func (s *testSuite1) TestHaving(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
