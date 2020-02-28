@@ -103,5 +103,11 @@
       "select a from (select a from t where b > 2 order by a, b limit 3 offset 1) as t1 order by a limit 2 offset 1",
       "select * from (select * from t order by a limit 3) as t1 order by a, b limit 5"
     ]
+  },
+  {
+    "name": "TestCascadePlannerHashedPartTable",
+    "cases": [
+      "select * from pt1"
+    ]
   }
 ]
