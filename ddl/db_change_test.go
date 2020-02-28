@@ -950,7 +950,7 @@ func (s *testStateChangeSuiteBase) testControlParallelExecSQL(c *C, sql1, sql2 s
 	f(c, err1, err2)
 }
 
-func (s *testStateChangeSuiteBase) TestParallelUpdateTableReplica(c *C) {
+func (s *testStateChangeSuite) TestParallelUpdateTableReplica(c *C) {
 	ctx := context.Background()
 	_, err := s.se.Execute(context.Background(), "use test_db_state")
 	c.Assert(err, IsNil)
