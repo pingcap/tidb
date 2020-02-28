@@ -377,7 +377,7 @@ func mutationRowsToRows(c *C, mutationRows [][]byte, columnValueOffsets ...int) 
 	return rows
 }
 
-func (s *testBinlogSuite) TestSequenceBinlog(c *C) {
+func (s *testBinlogSuite) TestBinlogForSequence(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.Se.GetSessionVars().BinlogClient = s.client
