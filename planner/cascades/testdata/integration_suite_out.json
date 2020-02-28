@@ -887,5 +887,97 @@
         "Result": null
       }
     ]
+  },
+  {
+    "Name": "TestInlineProjection",
+    "Cases": [
+      {
+        "SQL": "select /*+ HASH_JOIN(t1) */ t1.b, t2.b from t1, t2 where t1.a = t2.a;",
+        "Plan": [
+          "Projection_14 10000.00 root test.t1.b, test.t2.b",
+          "└─HashRightJoin_15 10000.00 root inner join, inner:TableReader_17, equal:[eq(test.t1.a, test.t2.a)]",
+          "  ├─TableReader_17(Build) 8000.00 root data:Selection_18",
+          "  │ └─Selection_18 8000.00 cop[tikv] not(isnull(test.t1.a))",
+          "  │   └─TableFullScan_19 10000.00 cop[tikv] table:t1, keep order:false, stats:pseudo",
+          "  └─TableReader_20(Probe) 8000.00 root data:Selection_21",
+          "    └─Selection_21 8000.00 cop[tikv] not(isnull(test.t2.a))",
+          "      └─TableFullScan_22 10000.00 cop[tikv] table:t2, keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ]
+      },
+      {
+        "SQL": "select /*+ HASH_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;",
+        "Plan": [
+          "HashRightJoin_9 12500.00 root inner join, inner:TableReader_11, equal:[eq(test.t1.a, test.t2.a)]",
+          "├─TableReader_11(Build) 10000.00 root data:TableFullScan_12",
+          "│ └─TableFullScan_12 10000.00 cop[tikv] table:t1, keep order:false, stats:pseudo",
+          "└─TableReader_13(Probe) 10000.00 root data:TableFullScan_14",
+          "  └─TableFullScan_14 10000.00 cop[tikv] table:t2, keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ]
+      },
+      {
+        "SQL": "select /*+ HASH_JOIN(t1) */ t1.b, t2.b from t1 left outer join t2 on t1.a = t2.a;",
+        "Plan": [
+          "HashLeftJoin_10 12500.00 root left outer join, inner:TableReader_13, equal:[eq(test.t1.a, test.t2.a)]",
+          "├─TableReader_13(Build) 10000.00 root data:TableFullScan_14",
+          "│ └─TableFullScan_14 10000.00 cop[tikv] table:t2, keep order:false, stats:pseudo",
+          "└─TableReader_11(Probe) 10000.00 root data:TableFullScan_12",
+          "  └─TableFullScan_12 10000.00 cop[tikv] table:t1, keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1",
+          "2 <nil>"
+        ]
+      },
+      {
+        "SQL": "select /*+ HASH_JOIN(t1) */ t1.b, t2.b from t1 right outer join t2 on t1.a = t2.a;",
+        "Plan": [
+          "HashRightJoin_9 12500.00 root right outer join, inner:TableReader_11, equal:[eq(test.t1.a, test.t2.a)]",
+          "├─TableReader_11(Build) 10000.00 root data:TableFullScan_12",
+          "│ └─TableFullScan_12 10000.00 cop[tikv] table:t1, keep order:false, stats:pseudo",
+          "└─TableReader_13(Probe) 10000.00 root data:TableFullScan_14",
+          "  └─TableFullScan_14 10000.00 cop[tikv] table:t2, keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1",
+          "<nil> 3"
+        ]
+      },
+      {
+        "SQL": "select 1 from (select /*+ HASH_JOIN(t1) */ t1.a in (select t2.a from t2) from t1) x;",
+        "Plan": [
+          "Projection_16 10000.00 root 1->Column#8",
+          "└─Apply_18 10000.00 root CARTESIAN left outer semi join, inner:IndexReader_25, other cond:eq(test.t1.a, test.t2.a)",
+          "  ├─IndexReader_21(Build) 10000.00 root index:IndexFullScan_22",
+          "  │ └─IndexFullScan_22 10000.00 cop[tikv] table:t1, index:a, keep order:false, stats:pseudo",
+          "  └─IndexReader_25(Probe) 10000.00 root index:IndexFullScan_26",
+          "    └─IndexFullScan_26 10000.00 cop[tikv] table:t2, index:a, keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1",
+          "1"
+        ]
+      },
+      {
+        "SQL": "select 1 from (select /*+ HASH_JOIN(t1) */ t1.a not in (select t2.a from t2) from t1) x;",
+        "Plan": [
+          "Projection_16 10000.00 root 1->Column#8",
+          "└─Apply_18 10000.00 root CARTESIAN anti left outer semi join, inner:IndexReader_25, other cond:eq(test.t1.a, test.t2.a)",
+          "  ├─IndexReader_21(Build) 10000.00 root index:IndexFullScan_22",
+          "  │ └─IndexFullScan_22 10000.00 cop[tikv] table:t1, index:a, keep order:false, stats:pseudo",
+          "  └─IndexReader_25(Probe) 10000.00 root index:IndexFullScan_26",
+          "    └─IndexFullScan_26 10000.00 cop[tikv] table:t2, index:a, keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1",
+          "1"
+        ]
+      }
+    ]
   }
 ]
