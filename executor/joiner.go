@@ -162,9 +162,10 @@ func newJoiner(ctx sessionctx.Context, joinType plannercore.JoinType,
 		base.shallowRow = chunk.MutRowFromTypes(shallowRowType)
 		return &antiLeftOuterSemiJoiner{base}
 	case plannercore.LeftOuterJoin, plannercore.RightOuterJoin, plannercore.InnerJoin:
-		base.chk = chunk.NewChunkWithCapacity(shallowRowType, ctx.GetSessionVars().MaxChunkSize)
-		// if conditions is not empty, we must do pruning after filtering.
 		if len(base.conditions) > 0 {
+			base.chk = chunk.NewChunkWithCapacity(shallowRowType, ctx.GetSessionVars().MaxChunkSize)
+
+			// if conditions is not empty, we must do pruning after filtering.
 			base.lUsedForFilter, base.rUsedForFilter = base.lUsed, base.rUsed
 			base.lUsed, base.rUsed = nil, nil
 		}
@@ -640,10 +641,10 @@ func (j *leftOuterJoiner) tryToMatchInners(outer chunk.Row, inners chunk.Iterato
 	if inners.Len() == 0 {
 		return false, false, nil
 	}
-	j.chk.Reset()
-	chkForJoin := j.chk
-	if len(j.conditions) == 0 {
-		chkForJoin = chk
+	chkForJoin := chk
+	if len(j.conditions) > 0 {
+		j.chk.Reset()
+		chkForJoin = j.chk
 	}
 
 	numToAppend := chk.RequiredRows() - chk.NumRows()
@@ -668,10 +669,10 @@ func (j *leftOuterJoiner) tryToMatchInners(outer chunk.Row, inners chunk.Iterato
 }
 
 func (j *leftOuterJoiner) tryToMatchOuters(outers chunk.Iterator, inner chunk.Row, chk *chunk.Chunk, outerRowStatus []outerRowStatusFlag) (_ []outerRowStatusFlag, err error) {
-	j.chk.Reset()
-	chkForJoin := j.chk
-	if len(j.conditions) == 0 {
-		chkForJoin = chk
+	chkForJoin := chk
+	if len(j.conditions) > 0 {
+		j.chk.Reset()
+		chkForJoin = j.chk
 	}
 
 	outer, numToAppend, cursor := outers.Current(), chk.RequiredRows()-chk.NumRows(), 0
@@ -711,11 +712,10 @@ func (j *rightOuterJoiner) tryToMatchInners(outer chunk.Row, inners chunk.Iterat
 	if inners.Len() == 0 {
 		return false, false, nil
 	}
-
-	j.chk.Reset()
-	chkForJoin := j.chk
-	if len(j.conditions) == 0 {
-		chkForJoin = chk
+	chkForJoin := chk
+	if len(j.conditions) > 0 {
+		j.chk.Reset()
+		chkForJoin = j.chk
 	}
 
 	numToAppend := chk.RequiredRows() - chk.NumRows()
@@ -739,10 +739,10 @@ func (j *rightOuterJoiner) tryToMatchInners(outer chunk.Row, inners chunk.Iterat
 }
 
 func (j *rightOuterJoiner) tryToMatchOuters(outers chunk.Iterator, inner chunk.Row, chk *chunk.Chunk, outerRowStatus []outerRowStatusFlag) (_ []outerRowStatusFlag, err error) {
-	j.chk.Reset()
-	chkForJoin := j.chk
-	if len(j.conditions) == 0 {
-		chkForJoin = chk
+	chkForJoin := chk
+	if len(j.conditions) > 0 {
+		j.chk.Reset()
+		chkForJoin = j.chk
 	}
 
 	outer, numToAppend, cursor := outers.Current(), chk.RequiredRows()-chk.NumRows(), 0
@@ -779,11 +779,12 @@ func (j *innerJoiner) tryToMatchInners(outer chunk.Row, inners chunk.Iterator, c
 	if inners.Len() == 0 {
 		return false, false, nil
 	}
-	j.chk.Reset()
-	chkForJoin := j.chk
-	if len(j.conditions) == 0 {
-		chkForJoin = chk
+	chkForJoin := chk
+	if len(j.conditions) > 0 {
+		j.chk.Reset()
+		chkForJoin = j.chk
 	}
+
 	inner, numToAppend := inners.Current(), chk.RequiredRows()-chk.NumRows()
 	for ; inner != inners.End() && numToAppend > 0; inner, numToAppend = inners.Next(), numToAppend-1 {
 		if j.outerIsRight {
@@ -809,11 +810,12 @@ func (j *innerJoiner) tryToMatchInners(outer chunk.Row, inners chunk.Iterator, c
 }
 
 func (j *innerJoiner) tryToMatchOuters(outers chunk.Iterator, inner chunk.Row, chk *chunk.Chunk, outerRowStatus []outerRowStatusFlag) (_ []outerRowStatusFlag, err error) {
-	j.chk.Reset()
-	chkForJoin := j.chk
-	if len(j.conditions) == 0 {
-		chkForJoin = chk
+	chkForJoin := chk
+	if len(j.conditions) > 0 {
+		j.chk.Reset()
+		chkForJoin = j.chk
 	}
+
 	outer, numToAppend, cursor := outers.Current(), chk.RequiredRows()-chk.NumRows(), 0
 	for ; outer != outers.End() && cursor < numToAppend; outer, cursor = outers.Next(), cursor+1 {
 		if j.outerIsRight {
