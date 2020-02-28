@@ -34,8 +34,15 @@ import (
 )
 
 var _ = Suite(&testExecSuite{})
+var _ = SerialSuites(&testExecSerialSuite{})
+
+// Note: it's a tricky way to export the `inspectionSummaryRules` for unit test but invisible for normal code
+var InspectionSummaryRules = inspectionSummaryRules
 
 type testExecSuite struct {
+}
+
+type testExecSerialSuite struct {
 }
 
 // mockSessionManager is a mocked session manager which is used for test.
@@ -240,7 +247,7 @@ func assertEqualStrings(c *C, got []field, expect []string) {
 	}
 }
 
-func (s *testExecSuite) TestSortSpillDisk(c *C) {
+func (s *testExecSerialSuite) TestSortSpillDisk(c *C) {
 	originCfg := config.GetGlobalConfig()
 	newConf := *originCfg
 	newConf.OOMUseTmpStorage = true

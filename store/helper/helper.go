@@ -146,7 +146,11 @@ func (h *Helper) FetchHotRegion(rw string) (map[uint64]RegionMetric, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	metric := make(map[uint64]RegionMetric)
+	metricCnt := 0
+	for _, hotRegions := range regionResp.AsLeader {
+		metricCnt += len(hotRegions.RegionsStat)
+	}
+	metric := make(map[uint64]RegionMetric, metricCnt)
 	for _, hotRegions := range regionResp.AsLeader {
 		for _, region := range hotRegions.RegionsStat {
 			metric[region.RegionID] = RegionMetric{FlowBytes: uint64(region.FlowBytes), MaxHotDegree: region.HotDegree}
@@ -541,9 +545,9 @@ func newIndexWithKeyRange(db *model.DBInfo, table *model.TableInfo, index *model
 // Assuming tables or indices key ranges never intersect.
 // Regions key ranges can intersect.
 func (h *Helper) GetRegionsTableInfo(regionsInfo *RegionsInfo, schemas []*model.DBInfo) map[int64][]TableInfo {
-	tableInfos := make(map[int64][]TableInfo)
+	tableInfos := make(map[int64][]TableInfo, len(regionsInfo.Regions))
 
-	regions := []*RegionInfo{}
+	regions := make([]*RegionInfo, 0, len(regionsInfo.Regions))
 	for i := 0; i < len(regionsInfo.Regions); i++ {
 		tableInfos[regionsInfo.Regions[i].ID] = []TableInfo{}
 		regions = append(regions, &regionsInfo.Regions[i])
@@ -652,14 +656,15 @@ type StoreStat struct {
 
 // StoreBaseStat stores the basic information of one store.
 type StoreBaseStat struct {
-	ID            int64        `json:"id"`
-	Address       string       `json:"address"`
-	State         int64        `json:"state"`
-	StateName     string       `json:"state_name"`
-	Version       string       `json:"version"`
-	Labels        []StoreLabel `json:"labels"`
-	StatusAddress string       `json:"status_address"`
-	GitHash       string       `json:"git_hash"`
+	ID             int64        `json:"id"`
+	Address        string       `json:"address"`
+	State          int64        `json:"state"`
+	StateName      string       `json:"state_name"`
+	Version        string       `json:"version"`
+	Labels         []StoreLabel `json:"labels"`
+	StatusAddress  string       `json:"status_address"`
+	GitHash        string       `json:"git_hash"`
+	StartTimestamp int64        `json:"start_timestamp"`
 }
 
 // StoreLabel stores the information of one store label.

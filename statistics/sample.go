@@ -270,7 +270,7 @@ func (c *SampleCollector) ExtractTopN(numTop uint32) {
 	}
 	helper := newTopNHelper(values, numTop)
 	cms := c.CMSketch
-	cms.topN = make(map[uint64][]*TopNMeta)
+	cms.topN = make(map[uint64][]*TopNMeta, helper.actualNumTop)
 	// Process them decreasingly so we can handle most frequent values first and reduce the probability of hash collision
 	// by small values.
 	for i := uint32(0); i < helper.actualNumTop; i++ {

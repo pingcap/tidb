@@ -177,9 +177,7 @@ type ExecStmt struct {
 	Ctx sessionctx.Context
 
 	// LowerPriority represents whether to lower the execution priority of a query.
-	LowerPriority bool
-	// Cacheable represents whether the physical plan can be cached.
-	Cacheable         bool
+	LowerPriority     bool
 	isPreparedStmt    bool
 	isSelectForUpdate bool
 	retryCount        uint
@@ -778,8 +776,8 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	level := log.GetLevel()
 	cfg := config.GetGlobalConfig()
 	costTime := time.Since(sessVars.StartTime) + sessVars.DurationParse
-	threshold := time.Duration(atomic.LoadUint64(&cfg.Log.SlowThreshold)) * time.Millisecond
-	enable := atomic.LoadUint32(&cfg.Log.EnableSlowLog) > 0
+	threshold := time.Duration(cfg.Log.SlowThreshold) * time.Millisecond
+	enable := cfg.Log.EnableSlowLog
 	// if the level is Debug, print slow logs anyway
 	if (!enable || costTime < threshold) && level > zapcore.DebugLevel {
 		return

@@ -95,12 +95,37 @@ func (p *UserPrivileges) GetEncodedPassword(user, host string) string {
 			zap.String("user", user), zap.String("host", host))
 		return ""
 	}
-	pwd := record.Password
+	pwd := record.AuthenticationString
 	if len(pwd) != 0 && len(pwd) != mysql.PWDHashLen+1 {
 		logutil.BgLogger().Error("user password from system DB not like sha1sum", zap.String("user", user))
 		return ""
 	}
 	return pwd
+}
+
+// GetAuthWithoutVerification implements the Manager interface.
+func (p *UserPrivileges) GetAuthWithoutVerification(user, host string) (u string, h string, success bool) {
+	if SkipWithGrant {
+		p.user = user
+		p.host = host
+		success = true
+		return
+	}
+
+	mysqlPriv := p.Handle.Get()
+	record := mysqlPriv.connectionVerification(user, host)
+	if record == nil {
+		logutil.BgLogger().Error("get user privilege record fail",
+			zap.String("user", user), zap.String("host", host))
+		return
+	}
+
+	u = record.User
+	h = record.Host
+	p.user = user
+	p.host = h
+	success = true
+	return
 }
 
 // ConnectionVerification implements the Manager interface.
@@ -142,7 +167,7 @@ func (p *UserPrivileges) ConnectionVerification(user, host string, authenticatio
 		return
 	}
 
-	pwd := record.Password
+	pwd := record.AuthenticationString
 	if len(pwd) != 0 && len(pwd) != mysql.PWDHashLen+1 {
 		logutil.BgLogger().Error("user password from system DB not like sha1sum", zap.String("user", user))
 		return

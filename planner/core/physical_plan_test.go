@@ -789,18 +789,15 @@ func (s *testPlanSuite) TestAggToCopHint(c *C) {
 		dom.Close()
 		store.Close()
 	}()
-	se, err := session.CreateSession4Test(store)
-	c.Assert(err, IsNil)
-	_, err = se.Execute(context.Background(), "use test")
-	c.Assert(err, IsNil)
-	_, err = se.Execute(context.Background(), "insert into mysql.opt_rule_blacklist values(\"aggregation_eliminate\")")
-	c.Assert(err, IsNil)
-	_, err = se.Execute(context.Background(), "admin reload opt_rule_blacklist")
-	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists ta")
+	tk.MustExec("create table ta(a int, b int, index(a))")
 
 	var (
 		input  []string
 		output []struct {
+			SQL     string
 			Best    string
 			Warning string
 		}
@@ -808,14 +805,20 @@ func (s *testPlanSuite) TestAggToCopHint(c *C) {
 	s.testData.GetTestCases(c, &input, &output)
 
 	ctx := context.Background()
+	is := domain.GetDomain(tk.Se).InfoSchema()
 	for i, test := range input {
 		comment := Commentf("case:%v sql:%s", i, test)
-		se.GetSessionVars().StmtCtx.SetWarnings(nil)
+		s.testData.OnRecord(func() {
+			output[i].SQL = test
+		})
+		c.Assert(test, Equals, output[i].SQL, comment)
+
+		tk.Se.GetSessionVars().StmtCtx.SetWarnings(nil)
 
 		stmt, err := s.ParseOneStmt(test, "", "")
 		c.Assert(err, IsNil, comment)
 
-		p, _, err := planner.Optimize(ctx, se, stmt, s.is)
+		p, _, err := planner.Optimize(ctx, tk.Se, stmt, is)
 		c.Assert(err, IsNil)
 		planString := core.ToString(p)
 		s.testData.OnRecord(func() {
@@ -823,7 +826,7 @@ func (s *testPlanSuite) TestAggToCopHint(c *C) {
 		})
 		c.Assert(planString, Equals, output[i].Best, comment)
 
-		warnings := se.GetSessionVars().StmtCtx.GetWarnings()
+		warnings := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
 		s.testData.OnRecord(func() {
 			if len(warnings) > 0 {
 				output[i].Warning = warnings[0].Err.Error()
@@ -1194,5 +1197,38 @@ func (s *testPlanSuite) doTestDAGPlanBuilderWindow(c *C, vars, input []string, o
 			output[i].Best = core.ToString(p)
 		})
 		c.Assert(core.ToString(p), Equals, output[i].Best, comment)
+	}
+}
+
+func (s *testPlanSuite) TestNominalSort(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk.MustExec("use test")
+	var input []string
+	var output []struct {
+		SQL    string
+		Plan   []string
+		Result []string
+	}
+	tk.MustExec("create table t (a int, b int, index idx_a(a), index idx_b(b))")
+	tk.MustExec("insert into t values(1, 1)")
+	tk.MustExec("insert into t values(1, 2)")
+	tk.MustExec("insert into t values(2, 4)")
+	tk.MustExec("insert into t values(3, 5)")
+	s.testData.GetTestCases(c, &input, &output)
+	for i, ts := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = ts
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + ts).Rows())
+			output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(ts).Rows())
+		})
+		tk.MustQuery("explain " + ts).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery(ts).Check(testkit.Rows(output[i].Result...))
 	}
 }

@@ -89,9 +89,6 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) *coprocessor.
 	if err == nil {
 		err = h.fillUpData4SelectResponse(selResp, dagReq, dagCtx, rows)
 	}
-	// FIXME: some err such as (overflow) will be include in Response.OtherError with calling this buildResp.
-	//  Such err should only be marshal in the data but not in OtherError.
-	//  However, we can not distinguish such err now.
 	return buildResp(selResp, execDetails, err)
 }
 
@@ -245,17 +242,17 @@ func (h *rpcHandler) buildIndexScan(ctx *dagContext, executor *tipb.Executor) (*
 	columns := executor.IdxScan.Columns
 	ctx.evalCtx.setColumnInfo(columns)
 	length := len(columns)
-	pkStatus := tablecodec.PrimaryKeyNotExists
+	pkStatus := tablecodec.HandleNotExists
 	// The PKHandle column info has been collected in ctx.
 	if columns[length-1].GetPkHandle() {
 		if mysql.HasUnsignedFlag(uint(columns[length-1].GetFlag())) {
-			pkStatus = tablecodec.PrimaryKeyIsUnsigned
+			pkStatus = tablecodec.HandleIsUnsigned
 		} else {
-			pkStatus = tablecodec.PrimaryKeyIsSigned
+			pkStatus = tablecodec.HandleIsSigned
 		}
 		columns = columns[:length-1]
 	} else if columns[length-1].ColumnId == model.ExtraHandleID {
-		pkStatus = tablecodec.PrimaryKeyIsSigned
+		pkStatus = tablecodec.HandleIsSigned
 		columns = columns[:length-1]
 	}
 	ranges, err := h.extractKVRanges(ctx.keyRanges, executor.IdxScan.Desc)
@@ -267,6 +264,16 @@ func (h *rpcHandler) buildIndexScan(ctx *dagContext, executor *tipb.Executor) (*
 	if startTS == 0 {
 		startTS = ctx.dagReq.GetStartTsFallback()
 	}
+	colInfos := make([]rowcodec.ColInfo, 0, len(columns))
+	for i := range columns {
+		col := columns[i]
+		colInfos = append(colInfos, rowcodec.ColInfo{
+			ID:         col.ColumnId,
+			Tp:         col.Tp,
+			Flag:       col.Flag,
+			IsPKHandle: col.GetPkHandle(),
+		})
+	}
 	e := &indexScanExec{
 		IndexScan:      executor.IdxScan,
 		kvRanges:       ranges,
@@ -275,8 +282,9 @@ func (h *rpcHandler) buildIndexScan(ctx *dagContext, executor *tipb.Executor) (*
 		isolationLevel: h.isolationLevel,
 		resolvedLocks:  h.resolvedLocks,
 		mvccStore:      h.mvccStore,
-		pkStatus:       pkStatus,
+		hdStatus:       pkStatus,
 		execDetail:     new(execDetail),
+		colInfos:       colInfos,
 	}
 	if ctx.dagReq.CollectRangeCounts != nil && *ctx.dagReq.CollectRangeCounts {
 		e.counts = make([]int64, len(ranges))
@@ -425,7 +433,7 @@ func (e *evalContext) setColumnInfo(cols []*tipb.ColumnInfo) {
 	e.columnInfos = make([]*tipb.ColumnInfo, len(cols))
 	copy(e.columnInfos, cols)
 
-	e.colIDs = make(map[int64]int)
+	e.colIDs = make(map[int64]int, len(e.columnInfos))
 	e.fieldTps = make([]*types.FieldType, 0, len(e.columnInfos))
 	for i, col := range e.columnInfos {
 		ft := fieldTypeFromPBColumn(col)
@@ -453,41 +461,42 @@ func flagsToStatementContext(flags uint64) *stmtctx.StatementContext {
 	sc.TruncateAsWarning = (flags & model.FlagTruncateAsWarning) > 0
 	sc.InInsertStmt = (flags & model.FlagInInsertStmt) > 0
 	sc.InSelectStmt = (flags & model.FlagInSelectStmt) > 0
+	sc.InDeleteStmt = (flags & model.FlagInUpdateOrDeleteStmt) > 0
 	sc.OverflowAsWarning = (flags & model.FlagOverflowAsWarning) > 0
 	sc.IgnoreZeroInDate = (flags & model.FlagIgnoreZeroInDate) > 0
 	sc.DividedByZeroAsWarning = (flags & model.FlagDividedByZeroAsWarning) > 0
-	// TODO set FlagInUpdateOrDeleteStmt, FlagInUnionStmt,
+	// TODO set FlagInUnionStmt,
 	return sc
 }
 
 // MockGRPCClientStream is exported for testing purpose.
 func MockGRPCClientStream() grpc.ClientStream {
-	return MockClientStream{}
+	return mockClientStream{}
 }
 
-// MockClientStream implements grpc ClientStream interface, its methods are never called.
-type MockClientStream struct{}
+// mockClientStream implements grpc ClientStream interface, its methods are never called.
+type mockClientStream struct{}
 
 // Header implements grpc.ClientStream interface
-func (MockClientStream) Header() (metadata.MD, error) { return nil, nil }
+func (mockClientStream) Header() (metadata.MD, error) { return nil, nil }
 
 // Trailer implements grpc.ClientStream interface
-func (MockClientStream) Trailer() metadata.MD { return nil }
+func (mockClientStream) Trailer() metadata.MD { return nil }
 
 // CloseSend implements grpc.ClientStream interface
-func (MockClientStream) CloseSend() error { return nil }
+func (mockClientStream) CloseSend() error { return nil }
 
 // Context implements grpc.ClientStream interface
-func (MockClientStream) Context() context.Context { return nil }
+func (mockClientStream) Context() context.Context { return nil }
 
 // SendMsg implements grpc.ClientStream interface
-func (MockClientStream) SendMsg(m interface{}) error { return nil }
+func (mockClientStream) SendMsg(m interface{}) error { return nil }
 
 // RecvMsg implements grpc.ClientStream interface
-func (MockClientStream) RecvMsg(m interface{}) error { return nil }
+func (mockClientStream) RecvMsg(m interface{}) error { return nil }
 
 type mockCopStreamClient struct {
-	MockClientStream
+	mockClientStream
 
 	req      *tipb.DAGRequest
 	exec     executor
@@ -497,7 +506,7 @@ type mockCopStreamClient struct {
 }
 
 type mockCopStreamErrClient struct {
-	MockClientStream
+	mockClientStream
 
 	*errorpb.Error
 }
@@ -719,16 +728,13 @@ func buildResp(selResp *tipb.SelectResponse, execDetails []*execDetail, err erro
 		selResp.ExecutionSummaries = execSummary
 	}
 
-	if err != nil {
-		if locked, ok := errors.Cause(err).(*ErrLocked); ok {
-			resp.Locked = &kvrpcpb.LockInfo{
-				Key:         locked.Key,
-				PrimaryLock: locked.Primary,
-				LockVersion: locked.StartTS,
-				LockTtl:     locked.TTL,
-			}
-		} else {
-			resp.OtherError = err.Error()
+	// Select errors have been contained in `SelectResponse.Error`
+	if locked, ok := errors.Cause(err).(*ErrLocked); ok {
+		resp.Locked = &kvrpcpb.LockInfo{
+			Key:         locked.Key,
+			PrimaryLock: locked.Primary,
+			LockVersion: locked.StartTS,
+			LockTtl:     locked.TTL,
 		}
 	}
 	data, err := proto.Marshal(selResp)

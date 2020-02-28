@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
@@ -200,18 +201,30 @@ func FieldTypeFromPB(ft *tipb.FieldType) *types.FieldType {
 }
 
 func collationToProto(c string) int32 {
-	v, ok := mysql.CollationNames[c]
-	if ok {
-		return int32(v)
+	if v, ok := mysql.CollationNames[c]; ok {
+		return collate.RewriteNewCollationIDIfNeeded(int32(v))
 	}
-	return int32(mysql.DefaultCollationID)
+	v := collate.RewriteNewCollationIDIfNeeded(int32(mysql.DefaultCollationID))
+	logutil.BgLogger().Warn(
+		"Unable to get collation ID by name, use ID of the default collation instead",
+		zap.String("name", c),
+		zap.Int32("default collation ID", v),
+		zap.String("default collation", mysql.DefaultCollationName),
+	)
+	return v
 }
 
 func protoToCollation(c int32) string {
-	v, ok := mysql.Collations[uint8(c)]
+	v, ok := mysql.Collations[uint8(collate.RestoreCollationIDIfNeeded(c))]
 	if ok {
 		return v
 	}
+	logutil.BgLogger().Warn(
+		"Unable to get collation name from ID, use name of the default collation instead",
+		zap.Int32("id", c),
+		zap.Int("default collation ID", mysql.DefaultCollationID),
+		zap.String("default collation", mysql.DefaultCollationName),
+	)
 	return mysql.DefaultCollationName
 }
 
@@ -373,14 +386,16 @@ func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
 		ast.Log10,
 		ast.Exp,
 		ast.Pow,
-		ast.Sin,
-		ast.Asin,
-		ast.Cos,
-		ast.Acos,
-		ast.Tan,
-		ast.Atan,
-		ast.Atan2,
-		ast.Cot,
+		// Rust use the llvm math functions, which have different precision with Golang/MySQL(cmath)
+		// open the following switchers if we implement them in coprocessor via `cmath`
+		// ast.Sin,
+		// ast.Asin,
+		// ast.Cos,
+		// ast.Acos,
+		// ast.Tan,
+		// ast.Atan,
+		// ast.Atan2,
+		// ast.Cot,
 		ast.Radians,
 		ast.Degrees,
 		ast.Conv,
@@ -397,14 +412,14 @@ func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
 		ast.BitLength,
 		ast.Concat,
 		ast.ConcatWS,
-		ast.Locate,
+		// ast.Locate,
 		ast.Replace,
 		ast.ASCII,
 		ast.Hex,
 		ast.Reverse,
 		ast.LTrim,
 		ast.RTrim,
-		ast.Left,
+		// ast.Left,
 		ast.Strcmp,
 		ast.Space,
 		ast.Elt,
@@ -420,22 +435,23 @@ func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
 		ast.JSONMerge,
 		ast.JSONSet,
 		ast.JSONInsert,
-		ast.JSONReplace,
+		// ast.JSONReplace,
 		ast.JSONRemove,
 		ast.JSONLength,
 
 		// date functions.
 		ast.DateFormat,
 		ast.FromDays,
-		ast.ToDays,
+		// ast.ToDays,
 		ast.DayOfYear,
 		ast.DayOfMonth,
 		ast.Year,
 		ast.Month,
-		ast.Hour,
-		ast.Minute,
-		ast.Second,
-		ast.MicroSecond,
+		// FIXME: the coprocessor cannot keep the same behavior with TiDB in current compute framework
+		// ast.Hour,
+		// ast.Minute,
+		// ast.Second,
+		// ast.MicroSecond,
 		ast.PeriodAdd,
 		ast.PeriodDiff,
 		ast.DayName,
@@ -444,6 +460,8 @@ func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
 		ast.MD5,
 		ast.SHA1,
 		ast.UncompressedLength,
+
+		ast.Cast,
 
 		// misc functions.
 		ast.InetNtoa,
@@ -463,15 +481,6 @@ func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
 			tipb.ScalarFuncSig_RoundReal,
 			tipb.ScalarFuncSig_RoundInt,
 			tipb.ScalarFuncSig_RoundDec:
-			return isPushdownEnabled(sf.FuncName.L)
-		}
-	case ast.Cast:
-		switch sf.Function.PbCode() {
-		case tipb.ScalarFuncSig_CastStringAsInt,
-			tipb.ScalarFuncSig_CastStringAsTime,
-			tipb.ScalarFuncSig_CastTimeAsInt:
-			return false
-		default:
 			return isPushdownEnabled(sf.FuncName.L)
 		}
 	case ast.Rand:
