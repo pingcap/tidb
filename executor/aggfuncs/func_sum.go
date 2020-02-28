@@ -132,6 +132,10 @@ func (e *sum4Float64) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart
 		p.val -= input
 		p.notNullRowCount--
 	}
+	if p.notNullRowCount == 0 {
+		p.isNull = true
+		p.val = 0
+	}
 	return nil
 }
 
@@ -244,6 +248,9 @@ func (e *sum4Decimal) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart
 		}
 		p.val = *newSum
 		p.notNullRowCount--
+	}
+	if p.notNullRowCount == 0 {
+		p.isNull = true
 	}
 	return nil
 }
