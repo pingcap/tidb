@@ -320,6 +320,11 @@ func (p *LogicalJoin) PruneColumns(parentUsedCols []*expression.Column) error {
 	}
 
 	p.mergeSchema()
+	if p.JoinType == LeftOuterSemiJoin || p.JoinType == AntiLeftOuterSemiJoin {
+		joinCol := p.schema.Columns[len(p.schema.Columns)-1]
+		parentUsedCols = append(parentUsedCols, joinCol)
+	}
+	p.inlineProjection(parentUsedCols)
 	return nil
 }
 
