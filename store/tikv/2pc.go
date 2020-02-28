@@ -1197,6 +1197,9 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 }
 
 func (c *twoPhaseCommitter) stripCheckKeys() {
+	if len(c.checkKeys) == 0 {
+		return
+	}
 	var i int
 	for _, k := range c.keys {
 		if _, ck := c.checkKeys[string(k)]; ck {
