@@ -858,16 +858,15 @@ func (e *Explain) prepareOperatorInfo(p Plan, taskType, driverSide, indent strin
 		// So check copTaskExecDetail first and print the real cop task information if it's not empty.
 		var analyzeInfo string
 
-		var totalRows int64
-		var totalLoops int32
+		var actRows int64
 		if runtimeStatsColl.ExistsCopStats(explainID) {
 			copstats := runtimeStatsColl.GetCopStats(explainID)
 			analyzeInfo = copstats.String()
-			totalRows, totalLoops = copstats.GetRowsAndLoops()
+			actRows = copstats.GetActRows()
 		} else if runtimeStatsColl.ExistsRootStats(explainID) {
 			rootstats := runtimeStatsColl.GetRootStats(explainID)
 			analyzeInfo = rootstats.String()
-			totalRows, totalLoops = rootstats.GetRowsAndLoops()
+			actRows = rootstats.GetActRows()
 		} else {
 			analyzeInfo = "time:0ns, loops:0, rows:0"
 		}
@@ -893,17 +892,10 @@ func (e *Explain) prepareOperatorInfo(p Plan, taskType, driverSide, indent strin
 			row = append(row, "N/A")
 		}
 
-		// Calculate 'actRows'(actual rows) and put it next by 'estRows'(estimate rows).
-		var actRows string
-		if totalLoops == 0 {
-			actRows = "N/A"
-		} else {
-			actRows = fmt.Sprint(float64(totalRows) / float64(totalLoops))
-		}
+		// Put 'actRows'(actual rows) next by 'estRows'(estimate rows).
 		tmp := append([]string{}, row[2:]...)
-		row = append(row[:2], actRows)
+		row = append(row[:2], fmt.Sprint(actRows))
 		row = append(row, tmp...)
-
 	}
 	e.Rows = append(e.Rows, row)
 }

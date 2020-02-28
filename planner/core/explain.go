@@ -703,13 +703,13 @@ func (p *LogicalSort) ExplainInfo() string {
 func (p *LogicalTopN) ExplainInfo() string {
 	buffer := bytes.NewBufferString("")
 	buffer = explainByItems(buffer, p.ByItems)
-	fmt.Fprintf(buffer, ", offset:%v, estRows:%v", p.Offset, p.Count)
+	fmt.Fprintf(buffer, ", offset:%v, count:%v", p.Offset, p.Count)
 	return buffer.String()
 }
 
 // ExplainInfo implements Plan interface.
 func (p *LogicalLimit) ExplainInfo() string {
-	return fmt.Sprintf("offset:%v, estRows:%v", p.Offset, p.Count)
+	return fmt.Sprintf("offset:%v, count:%v", p.Offset, p.Count)
 }
 
 // ExplainInfo implements Plan interface.

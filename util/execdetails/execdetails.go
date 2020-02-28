@@ -264,15 +264,14 @@ func (crs *CopRuntimeStats) RecordOneCopTask(address string, summary *tipb.Execu
 			rows:    int64(*summary.NumProducedRows)})
 }
 
-// GetRowsAndLoops return totalRows and totalLoops of CopRuntimeStats.
-func (crs *CopRuntimeStats) GetRowsAndLoops() (totalRows int64, totalLoops int32) {
+// GetActRows return total rows of CopRuntimeStats.
+func (crs *CopRuntimeStats) GetActRows() (totalRows int64) {
 	for _, instanceStats := range crs.stats {
 		for _, stat := range instanceStats {
 			totalRows += stat.rows
-			totalLoops += stat.loop
 		}
 	}
-	return totalRows, totalLoops
+	return totalRows
 }
 
 func (crs *CopRuntimeStats) String() string {
@@ -474,9 +473,9 @@ func (e *RuntimeStats) SetAdditionalInfo(info string) {
 	e.mu.Unlock()
 }
 
-// GetRowsAndLoops return rows and loops of CopRuntimeStats.
-func (e *RuntimeStats) GetRowsAndLoops() (int64, int32) {
-	return e.rows, e.loop
+// GetActRows return rows of CopRuntimeStats.
+func (e *RuntimeStats) GetActRows() int64 {
+	return e.rows
 }
 
 func (e *RuntimeStats) String() string {
