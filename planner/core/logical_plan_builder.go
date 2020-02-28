@@ -1552,7 +1552,7 @@ func (b *planBuilder) checkOnlyFullGroupByWithGroupClause(p LogicalPlan, sel *as
 		if field.Auxiliary {
 			continue
 		}
-		checkExprInGroupBy(p, field.Expr, offset, ErrExprInSelect, gbyCols, gbyExprs, notInGbyCols)
+		checkExprInGroupBy(p, getInnerFromParenthesesAndUnaryPlus(field.Expr), offset, ErrExprInSelect, gbyCols, gbyExprs, notInGbyCols)
 	}
 
 	if sel.OrderBy != nil {
