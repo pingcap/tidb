@@ -406,32 +406,29 @@ drop table if exists s;
 create table s(a varchar(20), b varchar(20));
 explain select a in (select a from s where s.b = t.b) from t;
 id	count	task	operator info
-Projection_9	10000.00	root	Column#7
-└─HashLeftJoin_10	10000.00	root	left outer semi join, inner:Projection_14, equal:[eq(Column#8, Column#9)], other cond:eq(cast(test.t.a), cast(test.s.a))
-  ├─Projection_14(Build)	10000.00	root	test.s.a, cast(test.s.b, double BINARY)->Column#9
-  │ └─TableReader_16	10000.00	root	data:TableFullScan_15
-  │   └─TableFullScan_15	10000.00	cop[tikv]	table:s, keep order:false, stats:pseudo
-  └─Projection_11(Probe)	10000.00	root	test.t.a, cast(test.t.b, double BINARY)->Column#8
-    └─TableReader_13	10000.00	root	data:TableFullScan_12
-      └─TableFullScan_12	10000.00	cop[tikv]	table:t, keep order:false, stats:pseudo
+HashLeftJoin_10	10000.00	root	left outer semi join, inner:Projection_14, equal:[eq(Column#8, Column#9)], other cond:eq(cast(test.t.a), cast(test.s.a))
+├─Projection_14(Build)	10000.00	root	test.s.a, cast(test.s.b, double BINARY)->Column#9
+│ └─TableReader_16	10000.00	root	data:TableFullScan_15
+│   └─TableFullScan_15	10000.00	cop[tikv]	table:s, keep order:false, stats:pseudo
+└─Projection_11(Probe)	10000.00	root	test.t.a, cast(test.t.b, double BINARY)->Column#8
+  └─TableReader_13	10000.00	root	data:TableFullScan_12
+    └─TableFullScan_12	10000.00	cop[tikv]	table:t, keep order:false, stats:pseudo
 explain select a in (select a+b from t t2 where t2.b = t1.b) from t t1;
 id	count	task	operator info
-Projection_7	10000.00	root	Column#8
-└─HashLeftJoin_8	10000.00	root	left outer semi join, inner:TableReader_12, equal:[eq(test.t.b, test.t.b)], other cond:eq(test.t.a, plus(test.t.a, test.t.b))
-  ├─TableReader_12(Build)	10000.00	root	data:TableFullScan_11
-  │ └─TableFullScan_11	10000.00	cop[tikv]	table:t2, keep order:false, stats:pseudo
-  └─TableReader_10(Probe)	10000.00	root	data:TableFullScan_9
-    └─TableFullScan_9	10000.00	cop[tikv]	table:t1, keep order:false, stats:pseudo
+HashLeftJoin_8	10000.00	root	left outer semi join, inner:TableReader_12, equal:[eq(test.t.b, test.t.b)], other cond:eq(test.t.a, plus(test.t.a, test.t.b))
+├─TableReader_12(Build)	10000.00	root	data:TableFullScan_11
+│ └─TableFullScan_11	10000.00	cop[tikv]	table:t2, keep order:false, stats:pseudo
+└─TableReader_10(Probe)	10000.00	root	data:TableFullScan_9
+  └─TableFullScan_9	10000.00	cop[tikv]	table:t1, keep order:false, stats:pseudo
 drop table t;
 create table t(a int not null, b int);
 explain select a in (select a from t t2 where t2.b = t1.b) from t t1;
 id	count	task	operator info
-Projection_7	10000.00	root	Column#7
-└─HashLeftJoin_8	10000.00	root	left outer semi join, inner:TableReader_12, equal:[eq(test.t.b, test.t.b) eq(test.t.a, test.t.a)]
-  ├─TableReader_12(Build)	10000.00	root	data:TableFullScan_11
-  │ └─TableFullScan_11	10000.00	cop[tikv]	table:t2, keep order:false, stats:pseudo
-  └─TableReader_10(Probe)	10000.00	root	data:TableFullScan_9
-    └─TableFullScan_9	10000.00	cop[tikv]	table:t1, keep order:false, stats:pseudo
+HashLeftJoin_8	10000.00	root	left outer semi join, inner:TableReader_12, equal:[eq(test.t.b, test.t.b) eq(test.t.a, test.t.a)]
+├─TableReader_12(Build)	10000.00	root	data:TableFullScan_11
+│ └─TableFullScan_11	10000.00	cop[tikv]	table:t2, keep order:false, stats:pseudo
+└─TableReader_10(Probe)	10000.00	root	data:TableFullScan_9
+  └─TableFullScan_9	10000.00	cop[tikv]	table:t1, keep order:false, stats:pseudo
 explain select 1 from (select sleep(1)) t;
 id	count	task	operator info
 Projection_4	1.00	root	1->Column#2
