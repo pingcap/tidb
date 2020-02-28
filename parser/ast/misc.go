@@ -459,15 +459,42 @@ func (n *BinlogStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+// CompletionType defines completion_type used in COMMIT and ROLLBACK statements
+type CompletionType int8
+
+const (
+	// CompletionTypeDefault refers to NO_CHAIN
+	CompletionTypeDefault CompletionType = iota
+	CompletionTypeChain
+	CompletionTypeRelease
+)
+
+func (n CompletionType) Restore(ctx *format.RestoreCtx) error {
+	switch n {
+	case CompletionTypeDefault:
+		break
+	case CompletionTypeChain:
+		ctx.WriteKeyWord(" AND CHAIN")
+	case CompletionTypeRelease:
+		ctx.WriteKeyWord(" RELEASE")
+	}
+	return nil
+}
+
 // CommitStmt is a statement to commit the current transaction.
 // See https://dev.mysql.com/doc/refman/5.7/en/commit.html
 type CommitStmt struct {
 	stmtNode
+	// CompletionType overwrites system variable `completion_type` within transaction
+	CompletionType CompletionType
 }
 
 // Restore implements Node interface.
 func (n *CommitStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("COMMIT")
+	if err := n.CompletionType.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore CommitStmt.CompletionType")
+	}
 	return nil
 }
 
@@ -485,11 +512,16 @@ func (n *CommitStmt) Accept(v Visitor) (Node, bool) {
 // See https://dev.mysql.com/doc/refman/5.7/en/commit.html
 type RollbackStmt struct {
 	stmtNode
+	// CompletionType overwrites system variable `completion_type` within transaction
+	CompletionType CompletionType
 }
 
 // Restore implements Node interface.
 func (n *RollbackStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("ROLLBACK")
+	if err := n.CompletionType.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore RollbackStmt.CompletionType")
+	}
 	return nil
 }
 
