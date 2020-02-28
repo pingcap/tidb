@@ -151,6 +151,9 @@ func DeriveCollationFromExprs(ctx sessionctx.Context, exprs ...Expression) (dstC
 	dstCharset, dstCollation = charset.GetDefaultCharsetAndCollate()
 	if ctx != nil && ctx.GetSessionVars() != nil {
 		dstCharset, dstCollation = ctx.GetSessionVars().GetCharsetInfo()
+		if dstCharset == "" || dstCollation == "" {
+			dstCharset, dstCollation = charset.GetDefaultCharsetAndCollate()
+		}
 	}
 	dstFlen = types.UnspecifiedLength
 	// see https://dev.mysql.com/doc/refman/8.0/en/charset-collation-coercibility.html
