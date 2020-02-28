@@ -1274,10 +1274,7 @@ func (s *testEvaluatorSuite) TestChar(c *C) {
 			c.Assert(err, IsNil)
 			c.Assert(f, NotNil)
 			r, err := evalBuiltinFunc(f, chunk.Row{})
-			if err != nil {
-				fmt.Printf("%s\n", err.Error())
-			}
-			c.Assert(err, IsNil)
+			c.Assert(err, IsNil, Commentf("err: %v", err))
 			c.Assert(r, testutil.DatumEquals, types.NewDatum(v.result))
 		}
 	}
