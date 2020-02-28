@@ -363,6 +363,7 @@ func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, processor
 	} else {
 		sctx.GetSessionVars().PlannerSelectBlockAsName = make([]ast.HintTable, processor.MaxSelectStmtOffset()+1)
 	}
+	sctx.GetSessionVars().StmtCtx.SetVarMap = make(map[string]bool)
 	return &PlanBuilder{
 		ctx:           sctx,
 		is:            is,

@@ -57,70 +57,99 @@ func (p *baseLogicalPlan) PredicatePushDown(predicates []expression.Expression) 
 	return nil, p.self
 }
 
-// canSwitch2Constant will return true if expr doesn't contain Column.
-func canSwitch2Constant(expr expression.Expression) bool {
+// eliminateGetVarImpl eliminates the non-conflicting expr. And it will execute the scalarFunc
+// if it can switch to constant and has constant converted by GetVar. This function will return
+// (the result expression, can switch to constant, have constant converted by GetVar)
+func eliminateGetVarImpl(expr expression.Expression) (expression.Expression, bool, bool) {
 	scalarFunc, ok := expr.(*expression.ScalarFunction)
 	if !ok {
+		var canSwitch2Constant bool
 		switch expr.(type) {
 		case *expression.Column:
-			return false
+			canSwitch2Constant = false
 		case *expression.CorrelatedColumn:
-			return false
+			canSwitch2Constant = false
 		default:
-			return true
+			canSwitch2Constant = true
 		}
+		return expr, canSwitch2Constant, false
 	}
-	ret := true
-	for _, arg := range scalarFunc.GetArgs() {
-		ret = ret && canSwitch2Constant(arg)
-	}
-	return ret
-}
 
-// switch2Const will switch expr to Constant if it can.
-func switch2Const(expr expression.Expression) expression.Expression {
-	scalarFunc, ok := expr.(*expression.ScalarFunction)
-	if !ok {
-		return expr
-	}
-	if !canSwitch2Constant(expr) {
+	switch scalarFunc.FuncName.L {
+	case ast.SetVar:
+		return expr, false, false
+	case ast.Rand:
+		// ast.Rand should not be executed here.
+		return expr, false, false
+	case ast.GetVar:
+		conflict := scalarFunc.GetCtx().GetSessionVars().StmtCtx.CheckSetVarMap(scalarFunc.GetArgs()[0].String())
+		if conflict {
+			return expr, false, false
+		}
+		val, err := scalarFunc.Eval(chunk.Row{})
+		if err != nil {
+			return expr, false, false
+		}
+		return &expression.Constant{Value: val, RetType: scalarFunc.RetType}, true, true
+	default:
 		args := scalarFunc.GetArgs()
 		newArgs := make([]expression.Expression, 0, len(args))
+		canSwitch2Constant := true
+		haveConstantbyGetVar := false
 		for _, arg := range args {
-			newArgs = append(newArgs, switch2Const(arg))
+			newArg, can, have := eliminateGetVarImpl(arg)
+			newArgs = append(newArgs, newArg)
+			canSwitch2Constant = canSwitch2Constant && can
+			haveConstantbyGetVar = haveConstantbyGetVar || have
+		}
+		if !haveConstantbyGetVar {
+			return scalarFunc, false, false
 		}
 		newFunc, err := expression.NewFunction(
 			scalarFunc.GetCtx(),
-			scalarFunc.FuncName.String(),
+			scalarFunc.FuncName.L,
 			scalarFunc.RetType,
 			newArgs...)
 		if err != nil {
-			return expr
+			return expr, false, false
 		}
-		return newFunc
+		if !canSwitch2Constant {
+			return newFunc, false, haveConstantbyGetVar
+		}
+		val, err := scalarFunc.Eval(chunk.Row{})
+		if err != nil {
+			return newFunc, false, haveConstantbyGetVar
+		}
+		return &expression.Constant{Value: val, RetType: scalarFunc.RetType}, true, true
 	}
-	val, err := scalarFunc.Eval(chunk.Row{})
-	if err != nil {
-		return expr
-	}
-	return &expression.Constant{Value: val, RetType: scalarFunc.RetType}
 }
 
 func splitSetGetVarFunc(filters []expression.Expression) ([]expression.Expression, []expression.Expression) {
 	canBePushDown := make([]expression.Expression, 0, len(filters))
 	canNotBePushDown := make([]expression.Expression, 0, len(filters))
 	for _, expr := range filters {
-		if expression.HasAssignSetVarFunc(expr) {
+		if expression.HasGetSetVarFunc(expr) {
 			canNotBePushDown = append(canNotBePushDown, expr)
 		} else {
-			canBePushDown = append(canBePushDown, switch2Const(expr))
+			canBePushDown = append(canBePushDown, expr)
 		}
 	}
 	return canBePushDown, canNotBePushDown
 }
 
+// eliminateGetVar eliminates GetVar functions if they don't conflict.
+func eliminateGetVar(exprs []expression.Expression) []expression.Expression {
+	newExprs := make([]expression.Expression, 0, len(exprs))
+	for _, expr := range exprs {
+		newExpr, _, _ := eliminateGetVarImpl(expr)
+		newExprs = append(newExprs, newExpr)
+	}
+	return newExprs
+}
+
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan) {
+	p.Conditions = eliminateGetVar(p.Conditions)
 	canBePushDown, canNotBePushDown := splitSetGetVarFunc(p.Conditions)
 	retConditions, child := p.children[0].PredicatePushDown(append(canBePushDown, predicates...))
 	retConditions = append(retConditions, canNotBePushDown...)
@@ -159,6 +188,9 @@ func (p *LogicalTableDual) PredicatePushDown(predicates []expression.Expression)
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan LogicalPlan) {
+	p.LeftConditions = eliminateGetVar(p.LeftConditions)
+	p.RightConditions = eliminateGetVar(p.RightConditions)
+	p.OtherConditions = eliminateGetVar(p.OtherConditions)
 	simplifyOuterJoin(p, predicates)
 	var equalCond []*expression.ScalarFunction
 	var leftPushCond, rightPushCond, otherCond, leftCond, rightCond []expression.Expression
@@ -400,6 +432,7 @@ func isNullRejected(ctx sessionctx.Context, schema *expression.Schema, expr expr
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *LogicalProjection) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan LogicalPlan) {
+	p.Exprs = eliminateGetVar(p.Exprs)
 	canBePushed := make([]expression.Expression, 0, len(predicates))
 	canNotBePushed := make([]expression.Expression, 0, len(predicates))
 	for _, expr := range p.Exprs {

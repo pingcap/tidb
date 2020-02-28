@@ -1215,11 +1215,17 @@ func (s *testPlanSuite) TestChangeGetvar2Constant(c *C) {
 		SQL  string
 		Plan []string
 	}
-	tk.MustExec("create table t (id int, day date)")
+	tk.MustExec("create table t (id int, day date, name char)")
 	tk.MustExec("create index idx_day on t(day)")
-	tk.MustExec("create table b (id int, day date, last date)")
+	tk.MustExec("create index idx_name on t(name)")
+	tk.MustExec("create index idx_id on t(id)")
+	tk.MustExec("create table b (id int, day date, last date, name char)")
 	tk.MustExec("create index idx_day on b(day)")
+	tk.MustExec("create index idx_name on b(name)")
+	tk.MustExec("create index idx_id on b(id)")
 	tk.MustExec("set @befor_day = DATE_SUB('2020-02-20', INTERVAL 1 DAY)")
+	tk.MustExec("set @a = 1")
+	tk.MustExec("set @b = 1")
 	s.testData.GetTestCases(c, &input, &output)
 	for i, ts := range input {
 		s.testData.OnRecord(func() {

@@ -995,6 +995,9 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 
 // newFunction chooses which expression.NewFunctionImpl() will be used.
 func (er *expressionRewriter) newFunction(funcName string, retType *types.FieldType, args ...expression.Expression) (expression.Expression, error) {
+	if funcName == ast.SetVar {
+		er.sctx.GetSessionVars().StmtCtx.SetSetVarMap(args[0].String())
+	}
 	if er.disableFoldCounter > 0 {
 		return expression.NewFunctionBase(er.sctx, funcName, retType, args...)
 	}

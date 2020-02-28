@@ -1436,15 +1436,202 @@
         "SQL": "explain select t.id, b.id from t, b where t.id = b.id and t.day = b.day and t.day = @befor_day",
         "Plan": [
           "Projection_7 12.49 root test.t.id, test.b.id",
-          "└─HashLeftJoin_8 12.49 root inner join, inner:IndexLookUp_23, equal:[eq(test.t.id, test.b.id)]",
-          "  ├─IndexLookUp_16 9.99 root ",
-          "  │ ├─IndexScan_13 10.00 cop[tikv] table:t, index:day, range:[2020-02-19,2020-02-19], keep order:false, stats:pseudo",
-          "  │ └─Selection_15 9.99 cop[tikv] not(isnull(test.t.id))",
-          "  │   └─TableScan_14 10.00 cop[tikv] table:t, keep order:false, stats:pseudo",
-          "  └─IndexLookUp_23 9.99 root ",
-          "    ├─IndexScan_20 10.00 cop[tikv] table:b, index:day, range:[2020-02-19,2020-02-19], keep order:false, stats:pseudo",
-          "    └─Selection_22 9.99 cop[tikv] not(isnull(test.b.id))",
-          "      └─TableScan_21 10.00 cop[tikv] table:b, keep order:false, stats:pseudo"
+          "└─HashLeftJoin_41 12.49 root inner join, inner:IndexLookUp_70, equal:[eq(test.t.id, test.b.id)]",
+          "  ├─IndexLookUp_59 9.99 root ",
+          "  │ ├─IndexScan_56 10.00 cop[tikv] table:t, index:day, range:[2020-02-19,2020-02-19], keep order:false, stats:pseudo",
+          "  │ └─Selection_58 9.99 cop[tikv] not(isnull(test.t.id))",
+          "  │   └─TableScan_57 10.00 cop[tikv] table:t, keep order:false, stats:pseudo",
+          "  └─IndexLookUp_70 9.99 root ",
+          "    ├─IndexScan_67 10.00 cop[tikv] table:b, index:day, range:[2020-02-19,2020-02-19], keep order:false, stats:pseudo",
+          "    └─Selection_69 9.99 cop[tikv] not(isnull(test.b.id))",
+          "      └─TableScan_68 10.00 cop[tikv] table:b, keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select @b := t.id from t, b where t.id = b.id and t.id = @a",
+        "Plan": [
+          "Projection_7 9990.00 root setvar(b, cast(test.t.id))->Column#10",
+          "└─MergeJoin_8 9990.00 root inner join, left key:test.t.id, right key:test.b.id",
+          "  ├─IndexReader_35 7992.00 root index:Selection_34",
+          "  │ └─Selection_34 7992.00 cop[tikv] eq(cast(test.t.id), 1)",
+          "  │   └─IndexScan_33 9990.00 cop[tikv] table:t, index:id, range:[-inf,+inf], keep order:true, stats:pseudo",
+          "  └─IndexReader_38 7992.00 root index:Selection_37",
+          "    └─Selection_37 7992.00 cop[tikv] eq(cast(test.b.id), 1)",
+          "      └─IndexScan_36 9990.00 cop[tikv] table:b, index:id, range:[-inf,+inf], keep order:true, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select @a := t.id from t, b where t.id = b.id and t.id = @a",
+        "Plan": [
+          "Projection_7 9990.00 root setvar(a, cast(test.t.id))->Column#10",
+          "└─Selection_8 9990.00 root eq(cast(test.t.id), cast(getvar(\"a\")))",
+          "  └─MergeJoin_9 12487.50 root inner join, left key:test.t.id, right key:test.b.id",
+          "    ├─IndexReader_35 9990.00 root index:IndexScan_34",
+          "    │ └─IndexScan_34 9990.00 cop[tikv] table:t, index:id, range:[-inf,+inf], keep order:true, stats:pseudo",
+          "    └─IndexReader_37 9990.00 root index:IndexScan_36",
+          "      └─IndexScan_36 9990.00 cop[tikv] table:b, index:id, range:[-inf,+inf], keep order:true, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select @b := t.id + @a from t, b where t.id = b.id and t.id = @a",
+        "Plan": [
+          "Projection_7 9990.00 root setvar(b, cast(plus(cast(test.t.id), cast(getvar(a)))))->Column#10",
+          "└─MergeJoin_8 9990.00 root inner join, left key:test.t.id, right key:test.b.id",
+          "  ├─IndexReader_35 7992.00 root index:Selection_34",
+          "  │ └─Selection_34 7992.00 cop[tikv] eq(cast(test.t.id), 1)",
+          "  │   └─IndexScan_33 9990.00 cop[tikv] table:t, index:id, range:[-inf,+inf], keep order:true, stats:pseudo",
+          "  └─IndexReader_38 7992.00 root index:Selection_37",
+          "    └─Selection_37 7992.00 cop[tikv] eq(cast(test.b.id), 1)",
+          "      └─IndexScan_36 9990.00 cop[tikv] table:b, index:id, range:[-inf,+inf], keep order:true, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select @a := t.id + @a from t, b where t.id = b.id and t.id = @a",
+        "Plan": [
+          "Projection_7 9990.00 root setvar(a, cast(plus(cast(test.t.id), cast(getvar(a)))))->Column#10",
+          "└─Selection_8 9990.00 root eq(cast(test.t.id), cast(getvar(\"a\")))",
+          "  └─MergeJoin_9 12487.50 root inner join, left key:test.t.id, right key:test.b.id",
+          "    ├─IndexReader_35 9990.00 root index:IndexScan_34",
+          "    │ └─IndexScan_34 9990.00 cop[tikv] table:t, index:id, range:[-inf,+inf], keep order:true, stats:pseudo",
+          "    └─IndexReader_37 9990.00 root index:IndexScan_36",
+          "      └─IndexScan_36 9990.00 cop[tikv] table:b, index:id, range:[-inf,+inf], keep order:true, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select t.id + @a from t, b where 1=if(@a=1, t.id, 1)",
+        "Plan": [
+          "Projection_7 100000.00 root plus(cast(test.t.id), 1)->Column#10",
+          "└─HashRightJoin_9 100000.00 root CARTESIAN inner join, inner:IndexReader_11",
+          "  ├─IndexReader_11 10.00 root index:IndexScan_10",
+          "  │ └─IndexScan_10 10.00 cop[tikv] table:t, index:id, range:[1,1], keep order:false, stats:pseudo",
+          "  └─IndexReader_15 10000.00 root index:IndexScan_14",
+          "    └─IndexScan_14 10000.00 cop[tikv] table:b, index:day, range:[NULL,+inf], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select t.id + @a from t, b where 1=if(@a=2, t.id, 1)",
+        "Plan": [
+          "Projection_7 64000000.00 root plus(cast(test.t.id), 1)->Column#10",
+          "└─HashLeftJoin_8 64000000.00 root CARTESIAN inner join, inner:IndexReader_19",
+          "  ├─IndexReader_14 10000.00 root index:IndexScan_13",
+          "  │ └─IndexScan_13 10000.00 cop[tikv] table:t, index:id, range:[NULL,+inf], keep order:false, stats:pseudo",
+          "  └─IndexReader_19 8000.00 root index:Selection_18",
+          "    └─Selection_18 8000.00 cop[tikv] 1",
+          "      └─IndexScan_17 10000.00 cop[tikv] table:b, index:day, range:[NULL,+inf], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select l.id, r.id from t l left join b r on l.id = @a and r.id = @a where l.id > 1",
+        "Plan": [
+          "HashLeftJoin_8 26666666.67 root CARTESIAN left outer join, inner:IndexReader_10 (REVERSED), left cond:[eq(cast(test.t.id), 1)]",
+          "├─IndexReader_10 3333.33 root index:IndexScan_9",
+          "│ └─IndexScan_9 3333.33 cop[tikv] table:l, index:id, range:(1,+inf], keep order:false, stats:pseudo",
+          "└─IndexReader_16 8000.00 root index:Selection_15",
+          "  └─Selection_15 8000.00 cop[tikv] eq(cast(test.b.id), 1)",
+          "    └─IndexScan_14 10000.00 cop[tikv] table:r, index:id, range:[NULL,+inf], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select l.id, r.id from t l left join b r on r.id = @a where l.id > @a",
+        "Plan": [
+          "HashLeftJoin_7 64000000.00 root CARTESIAN left outer join, inner:IndexReader_20",
+          "├─IndexReader_14 8000.00 root index:Selection_13",
+          "│ └─Selection_13 8000.00 cop[tikv] gt(cast(test.t.id), 1)",
+          "│   └─IndexScan_12 10000.00 cop[tikv] table:l, index:id, range:[NULL,+inf], keep order:false, stats:pseudo",
+          "└─IndexReader_20 8000.00 root index:Selection_19",
+          "  └─Selection_19 8000.00 cop[tikv] eq(cast(test.b.id), 1)",
+          "    └─IndexScan_18 10000.00 cop[tikv] table:r, index:id, range:[NULL,+inf], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select @b := t.name from t, b where t.name = b.name and t.name = @a",
+        "Plan": [
+          "Projection_7 100.00 root setvar(b, test.t.name)->Column#10",
+          "└─HashLeftJoin_8 100.00 root CARTESIAN inner join, inner:IndexReader_13",
+          "  ├─IndexReader_11 10.00 root index:IndexScan_10",
+          "  │ └─IndexScan_10 10.00 cop[tikv] table:t, index:name, range:[\"1\",\"1\"], keep order:false, stats:pseudo",
+          "  └─IndexReader_13 10.00 root index:IndexScan_12",
+          "    └─IndexScan_12 10.00 cop[tikv] table:b, index:name, range:[\"1\",\"1\"], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select @a := t.name from t, b where t.name = b.name and t.name = @a",
+        "Plan": [
+          "Projection_7 9990.00 root setvar(a, test.t.name)->Column#10",
+          "└─Selection_8 9990.00 root eq(test.t.name, getvar(\"a\"))",
+          "  └─MergeJoin_9 12487.50 root inner join, left key:test.t.name, right key:test.b.name",
+          "    ├─IndexReader_35 9990.00 root index:IndexScan_34",
+          "    │ └─IndexScan_34 9990.00 cop[tikv] table:t, index:name, range:[-inf,+inf], keep order:true, stats:pseudo",
+          "    └─IndexReader_37 9990.00 root index:IndexScan_36",
+          "      └─IndexScan_36 9990.00 cop[tikv] table:b, index:name, range:[-inf,+inf], keep order:true, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select @b := t.name + @a from t, b where t.name = b.name and t.name = @a",
+        "Plan": [
+          "Projection_7 100.00 root setvar(b, cast(plus(cast(test.t.name), cast(getvar(a)))))->Column#10",
+          "└─HashLeftJoin_8 100.00 root CARTESIAN inner join, inner:IndexReader_13",
+          "  ├─IndexReader_11 10.00 root index:IndexScan_10",
+          "  │ └─IndexScan_10 10.00 cop[tikv] table:t, index:name, range:[\"1\",\"1\"], keep order:false, stats:pseudo",
+          "  └─IndexReader_13 10.00 root index:IndexScan_12",
+          "    └─IndexScan_12 10.00 cop[tikv] table:b, index:name, range:[\"1\",\"1\"], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select @a := t.name + @a from t, b where t.name = b.name and t.name = @a",
+        "Plan": [
+          "Projection_7 9990.00 root setvar(a, cast(plus(cast(test.t.name), cast(getvar(a)))))->Column#10",
+          "└─Selection_8 9990.00 root eq(test.t.name, getvar(\"a\"))",
+          "  └─MergeJoin_9 12487.50 root inner join, left key:test.t.name, right key:test.b.name",
+          "    ├─IndexReader_35 9990.00 root index:IndexScan_34",
+          "    │ └─IndexScan_34 9990.00 cop[tikv] table:t, index:name, range:[-inf,+inf], keep order:true, stats:pseudo",
+          "    └─IndexReader_37 9990.00 root index:IndexScan_36",
+          "      └─IndexScan_36 9990.00 cop[tikv] table:b, index:name, range:[-inf,+inf], keep order:true, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select t.name + @a from t, b where 1=if(@a=1, t.name, 1)",
+        "Plan": [
+          "Projection_7 80000000.00 root plus(cast(test.t.name), 1)->Column#10",
+          "└─HashRightJoin_9 80000000.00 root CARTESIAN inner join, inner:IndexReader_15",
+          "  ├─IndexReader_15 8000.00 root index:Selection_14",
+          "  │ └─Selection_14 8000.00 cop[tikv] eq(1, cast(test.t.name))",
+          "  │   └─IndexScan_13 10000.00 cop[tikv] table:t, index:name, range:[NULL,+inf], keep order:false, stats:pseudo",
+          "  └─IndexReader_19 10000.00 root index:IndexScan_18",
+          "    └─IndexScan_18 10000.00 cop[tikv] table:b, index:day, range:[NULL,+inf], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select t.name + @a from t, b where 1=if(@a=2, t.name, 1)",
+        "Plan": [
+          "Projection_7 64000000.00 root plus(cast(test.t.name), 1)->Column#10",
+          "└─HashLeftJoin_8 64000000.00 root CARTESIAN inner join, inner:IndexReader_19",
+          "  ├─IndexReader_14 10000.00 root index:IndexScan_13",
+          "  │ └─IndexScan_13 10000.00 cop[tikv] table:t, index:name, range:[NULL,+inf], keep order:false, stats:pseudo",
+          "  └─IndexReader_19 8000.00 root index:Selection_18",
+          "    └─Selection_18 8000.00 cop[tikv] 1",
+          "      └─IndexScan_17 10000.00 cop[tikv] table:b, index:day, range:[NULL,+inf], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select l.name, r.name from t l left join b r on l.name = @a and r.name = @a where l.name > 1",
+        "Plan": [
+          "HashLeftJoin_7 80000.00 root CARTESIAN left outer join, inner:IndexReader_16, left cond:[eq(test.t.name, 1)]",
+          "├─IndexReader_14 8000.00 root index:Selection_13",
+          "│ └─Selection_13 8000.00 cop[tikv] gt(cast(test.t.name), 1)",
+          "│   └─IndexScan_12 10000.00 cop[tikv] table:l, index:name, range:[NULL,+inf], keep order:false, stats:pseudo",
+          "└─IndexReader_16 10.00 root index:IndexScan_15",
+          "  └─IndexScan_15 10.00 cop[tikv] table:r, index:name, range:[\"1\",\"1\"], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select l.name, r.name from t l left join b r on r.name = @a where l.name > @a",
+        "Plan": [
+          "HashLeftJoin_7 33333.33 root CARTESIAN left outer join, inner:IndexReader_12",
+          "├─IndexReader_10 3333.33 root index:IndexScan_9",
+          "│ └─IndexScan_9 3333.33 cop[tikv] table:l, index:name, range:(\"1\",+inf], keep order:false, stats:pseudo",
+          "└─IndexReader_12 10.00 root index:IndexScan_11",
+          "  └─IndexScan_11 10.00 cop[tikv] table:r, index:name, range:[\"1\",\"1\"], keep order:false, stats:pseudo"
         ]
       }
     ]

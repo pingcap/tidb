@@ -544,7 +544,23 @@
   {
     "name": "TestChangeGetvar2Constant",
     "cases": [
-      "explain select t.id, b.id from t, b where t.id = b.id and t.day = b.day and t.day = @befor_day"
+      "explain select t.id, b.id from t, b where t.id = b.id and t.day = b.day and t.day = @befor_day",
+      "explain select @b := t.id from t, b where t.id = b.id and t.id = @a",
+      "explain select @a := t.id from t, b where t.id = b.id and t.id = @a",
+      "explain select @b := t.id + @a from t, b where t.id = b.id and t.id = @a",
+      "explain select @a := t.id + @a from t, b where t.id = b.id and t.id = @a",
+      "explain select t.id + @a from t, b where 1=if(@a=1, t.id, 1)",
+      "explain select t.id + @a from t, b where 1=if(@a=2, t.id, 1)",
+      "explain select l.id, r.id from t l left join b r on l.id = @a and r.id = @a where l.id > 1",
+      "explain select l.id, r.id from t l left join b r on r.id = @a where l.id > @a",
+      "explain select @b := t.name from t, b where t.name = b.name and t.name = @a",
+      "explain select @a := t.name from t, b where t.name = b.name and t.name = @a",
+      "explain select @b := t.name + @a from t, b where t.name = b.name and t.name = @a",
+      "explain select @a := t.name + @a from t, b where t.name = b.name and t.name = @a",
+      "explain select t.name + @a from t, b where 1=if(@a=1, t.name, 1)",
+      "explain select t.name + @a from t, b where 1=if(@a=2, t.name, 1)",
+      "explain select l.name, r.name from t l left join b r on l.name = @a and r.name = @a where l.name > 1",
+      "explain select l.name, r.name from t l left join b r on r.name = @a where l.name > @a"
     ]
   }
 ]

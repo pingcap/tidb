@@ -143,6 +143,9 @@ type StatementContext struct {
 	PessimisticLockWaited int32
 	LockKeysDuration      time.Duration
 	LockKeysCount         int32
+
+	// SetVarMap is used to eliminate GetVar, checks if GetVar conflicts with SetVar.
+	SetVarMap map[string]bool
 }
 
 // StmtHints are SessionVars related sql hints.
@@ -601,6 +604,17 @@ func (sc *StatementContext) GetLockWaitStartTime() time.Time {
 		sc.lockWaitStartTime = &curTime
 	}
 	return *sc.lockWaitStartTime
+}
+
+// SetSetVarMap sets the SetVarMap.
+func (sc *StatementContext) SetSetVarMap(name string) {
+	sc.SetVarMap[name] = true
+}
+
+// CheckSetVarMap checks if it exists in SetVarMap.
+func (sc *StatementContext) CheckSetVarMap(name string) bool {
+	res, ok := sc.SetVarMap[name]
+	return ok && res
 }
 
 //CopTasksDetails collects some useful information of cop-tasks during execution.
