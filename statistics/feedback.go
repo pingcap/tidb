@@ -898,6 +898,7 @@ func SplitFeedbackByQueryType(feedbacks []Feedback) ([]Feedback, []Feedback) {
 func setNextValue(d *types.Datum) {
 	switch d.Kind() {
 	case types.KindBytes, types.KindString:
+		// SetBytes is enough.
 		d.SetBytes(kv.Key(d.GetBytes()).PrefixNext())
 	case types.KindInt64:
 		d.SetInt64(d.GetInt64() + 1)

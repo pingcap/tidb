@@ -133,7 +133,7 @@ func (decoder *DatumMapDecoder) decodeColDatum(col *ColInfo, colData []byte) (ty
 		}
 		d.SetFloat64(fVal)
 	case mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeString:
-		d.SetString(string(colData), col.Collate, col.Flen)
+		d.SetString(string(colData), col.Collate)
 	case mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		d.SetBytes(colData)
 	case mysql.TypeNewDecimal:
