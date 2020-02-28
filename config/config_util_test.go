@@ -17,7 +17,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
-	"path"
+	"path/filepath"
 	"reflect"
 
 	. "github.com/pingcap/check"
@@ -92,7 +92,7 @@ func (s *testConfigSuite) TestMergeConfigItems(c *C) {
 
 func (s *testConfigSuite) TestAtomicWriteConfig(c *C) {
 	conf, _ := CloneConf(&defaultConf)
-	confPath := path.Join(os.TempDir(), "test-write-config.toml")
+	confPath := filepath.Join(os.TempDir(), "test-write-config.toml")
 	conf.Performance.MaxMemory = 123
 	conf.Performance.MaxProcs = 234
 	conf.Performance.PseudoEstimateRatio = 3.45
