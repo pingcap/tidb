@@ -1618,7 +1618,7 @@ func (r *EliminateMultiMaxMin) OnTransform(old *memo.ExprIter) (newExprs []*memo
 
 func (r *EliminateMultiMaxMin) composeAggGroupsByInnerJoin(aggGroups []*memo.Group, sctx sessionctx.Context, blockOffset int) (expr *memo.GroupExpr) {
 	group := aggGroups[0]
-	lastIndex := len(aggGroups)-1
+	lastIndex := len(aggGroups) - 1
 	for i := 1; i <= lastIndex; i++ {
 		join := plannercore.LogicalJoin{JoinType: plannercore.InnerJoin}.Init(sctx, blockOffset)
 		schema := expression.MergeSchema(group.Prop.Schema, aggGroups[i].Prop.Schema)
