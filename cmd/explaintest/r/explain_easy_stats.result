@@ -14,15 +14,14 @@ set @@session.tidb_hashagg_partial_concurrency = 1;
 set @@session.tidb_hashagg_final_concurrency = 1;
 explain select * from t3 where exists (select s.a from t3 s having sum(s.a) = t3.a );
 id	count	task	operator info
-Projection_11	1600.00	root	test.t3.a, test.t3.b, test.t3.c, test.t3.d
-└─HashLeftJoin_12	1600.00	root	semi join, inner:StreamAgg_27, equal:[eq(Column#13, Column#11)]
-  ├─StreamAgg_27(Build)	1.00	root	funcs:sum(Column#16)->Column#11
-  │ └─TableReader_28	1.00	root	data:StreamAgg_19
-  │   └─StreamAgg_19	1.00	cop[tikv]	funcs:sum(test.t3.a)->Column#16
-  │     └─TableFullScan_26	2000.00	cop[tikv]	table:s, keep order:false
-  └─Projection_13(Probe)	2000.00	root	test.t3.a, test.t3.b, test.t3.c, test.t3.d, cast(test.t3.a, decimal(20,0) BINARY)->Column#13
-    └─TableReader_15	2000.00	root	data:TableFullScan_14
-      └─TableFullScan_14	2000.00	cop[tikv]	table:t3, keep order:false
+HashLeftJoin_12	1600.00	root	semi join, inner:StreamAgg_27, equal:[eq(Column#13, Column#11)]
+├─StreamAgg_27(Build)	1.00	root	funcs:sum(Column#16)->Column#11
+│ └─TableReader_28	1.00	root	data:StreamAgg_19
+│   └─StreamAgg_19	1.00	cop[tikv]	funcs:sum(test.t3.a)->Column#16
+│     └─TableFullScan_26	2000.00	cop[tikv]	table:s, keep order:false
+└─Projection_13(Probe)	2000.00	root	test.t3.a, test.t3.b, test.t3.c, test.t3.d, cast(test.t3.a, decimal(20,0) BINARY)->Column#13
+  └─TableReader_15	2000.00	root	data:TableFullScan_14
+    └─TableFullScan_14	2000.00	cop[tikv]	table:t3, keep order:false
 explain select * from t1;
 id	count	task	operator info
 TableReader_5	1999.00	root	data:TableFullScan_4
@@ -92,14 +91,13 @@ TableReader_7	0.50	root	data:Selection_6
   └─TableRangeScan_5	1.00	cop[tikv]	table:t1, range:[1,1], keep order:false
 explain select c1 from t1 where c1 in (select c2 from t2);
 id	count	task	operator info
-Projection_9	1985.00	root	test.t1.c1
-└─HashLeftJoin_19	1985.00	root	inner join, inner:HashAgg_23, equal:[eq(test.t1.c1, test.t2.c2)]
-  ├─HashAgg_23(Build)	1985.00	root	group by:test.t2.c2, funcs:firstrow(test.t2.c2)->test.t2.c2
-  │ └─TableReader_30	1985.00	root	data:Selection_29
-  │   └─Selection_29	1985.00	cop[tikv]	not(isnull(test.t2.c2))
-  │     └─TableFullScan_28	1985.00	cop[tikv]	table:t2, keep order:false
-  └─TableReader_32(Probe)	1999.00	root	data:TableFullScan_31
-    └─TableFullScan_31	1999.00	cop[tikv]	table:t1, keep order:false
+HashLeftJoin_19	1985.00	root	inner join, inner:HashAgg_23, equal:[eq(test.t1.c1, test.t2.c2)]
+├─HashAgg_23(Build)	1985.00	root	group by:test.t2.c2, funcs:firstrow(test.t2.c2)->test.t2.c2
+│ └─TableReader_30	1985.00	root	data:Selection_29
+│   └─Selection_29	1985.00	cop[tikv]	not(isnull(test.t2.c2))
+│     └─TableFullScan_28	1985.00	cop[tikv]	table:t2, keep order:false
+└─TableReader_32(Probe)	1999.00	root	data:TableFullScan_31
+  └─TableFullScan_31	1999.00	cop[tikv]	table:t1, keep order:false
 explain select * from information_schema.columns;
 id	count	task	operator info
 MemTableScan_4	10000.00	root	
@@ -123,22 +121,20 @@ Limit_10	1.00	root	offset:0, count:1
 set @@session.tidb_opt_insubq_to_join_and_agg=0;
 explain select 1 in (select c2 from t2) from t1;
 id	count	task	operator info
-Projection_6	1999.00	root	Column#7
-└─HashLeftJoin_7	1999.00	root	CARTESIAN left outer semi join, inner:TableReader_14
-  ├─TableReader_14(Build)	0.00	root	data:Selection_13
-  │ └─Selection_13	0.00	cop[tikv]	eq(1, test.t2.c2)
-  │   └─TableFullScan_12	1985.00	cop[tikv]	table:t2, keep order:false
-  └─TableReader_9(Probe)	1999.00	root	data:TableFullScan_8
-    └─TableFullScan_8	1999.00	cop[tikv]	table:t1, keep order:false
+HashLeftJoin_7	1999.00	root	CARTESIAN left outer semi join, inner:TableReader_14
+├─TableReader_14(Build)	0.00	root	data:Selection_13
+│ └─Selection_13	0.00	cop[tikv]	eq(1, test.t2.c2)
+│   └─TableFullScan_12	1985.00	cop[tikv]	table:t2, keep order:false
+└─TableReader_9(Probe)	1999.00	root	data:TableFullScan_8
+  └─TableFullScan_8	1999.00	cop[tikv]	table:t1, keep order:false
 explain format="dot" select 1 in (select c2 from t2) from t1;
 dot contents
 
-digraph Projection_6 {
-subgraph cluster6{
+digraph HashLeftJoin_7 {
+subgraph cluster7{
 node [style=filled, color=lightgrey]
 color=black
 label = "root"
-"Projection_6" -> "HashLeftJoin_7"
 "HashLeftJoin_7" -> "TableReader_9"
 "HashLeftJoin_7" -> "TableReader_14"
 }
