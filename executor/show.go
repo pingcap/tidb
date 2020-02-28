@@ -712,7 +712,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 	}
 
 	sqlMode := ctx.GetSessionVars().SQLMode
-	fmt.Fprintf(buf, "CREATE TABLE %s (\n", stringutil.Escape(tableInfo.Name, sqlMode))
+	fmt.Fprintf(buf, "CREATE TABLE %s (\n", stringutil.Escape(tableInfo.Name.O, sqlMode))
 	var pkCol *model.ColumnInfo
 	var hasAutoIncID bool
 	needAddComma := false
@@ -723,7 +723,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 		if needAddComma {
 			buf.WriteString(",\n")
 		}
-		fmt.Fprintf(buf, "  %s %s", stringutil.Escape(col.Name, sqlMode), col.GetTypeDesc())
+		fmt.Fprintf(buf, "  %s %s", stringutil.Escape(col.Name.O, sqlMode), col.GetTypeDesc())
 		if col.Charset != "binary" {
 			if col.Charset != tblCharset {
 				fmt.Fprintf(buf, " CHARACTER SET %s", col.Charset)
@@ -810,7 +810,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 	if pkCol != nil {
 		// If PKIsHanle, pk info is not in tb.Indices(). We should handle it here.
 		buf.WriteString(",\n")
-		fmt.Fprintf(buf, "  PRIMARY KEY (%s)", stringutil.Escape(pkCol.Name, sqlMode))
+		fmt.Fprintf(buf, "  PRIMARY KEY (%s)", stringutil.Escape(pkCol.Name.O, sqlMode))
 	}
 
 	publicIndices := make([]*model.IndexInfo, 0, len(tableInfo.Indices))
@@ -827,9 +827,9 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 		if idxInfo.Primary {
 			buf.WriteString("  PRIMARY KEY ")
 		} else if idxInfo.Unique {
-			fmt.Fprintf(buf, "  UNIQUE KEY %s ", stringutil.Escape(idxInfo.Name, sqlMode))
+			fmt.Fprintf(buf, "  UNIQUE KEY %s ", stringutil.Escape(idxInfo.Name.O, sqlMode))
 		} else {
-			fmt.Fprintf(buf, "  KEY %s ", stringutil.Escape(idxInfo.Name, sqlMode))
+			fmt.Fprintf(buf, "  KEY %s ", stringutil.Escape(idxInfo.Name.O, sqlMode))
 		}
 
 		cols := make([]string, 0, len(idxInfo.Columns))
@@ -838,7 +838,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 			if tableInfo.Columns[c.Offset].Hidden {
 				colInfo = fmt.Sprintf("(%s)", tableInfo.Columns[c.Offset].GeneratedExprString)
 			} else {
-				colInfo = stringutil.Escape(c.Name, sqlMode)
+				colInfo = stringutil.Escape(c.Name.O, sqlMode)
 				if c.Length != types.UnspecifiedLength {
 					colInfo = fmt.Sprintf("%s(%s)", colInfo, strconv.Itoa(c.Length))
 				}
@@ -899,7 +899,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 // ConstructResultOfShowCreateSequence constructs the result for show create sequence.
 func ConstructResultOfShowCreateSequence(ctx sessionctx.Context, tableInfo *model.TableInfo, buf *bytes.Buffer) {
 	sqlMode := ctx.GetSessionVars().SQLMode
-	fmt.Fprintf(buf, "CREATE SEQUENCE %s ", stringutil.Escape(tableInfo.Name, sqlMode))
+	fmt.Fprintf(buf, "CREATE SEQUENCE %s ", stringutil.Escape(tableInfo.Name.O, sqlMode))
 	sequenceInfo := tableInfo.Sequence
 	fmt.Fprintf(buf, "start with %d ", sequenceInfo.Start)
 	fmt.Fprintf(buf, "minvalue %d ", sequenceInfo.MinValue)
@@ -983,11 +983,11 @@ func fetchShowCreateTable4View(ctx sessionctx.Context, tb *model.TableInfo, buf 
 	sqlMode := ctx.GetSessionVars().SQLMode
 
 	fmt.Fprintf(buf, "CREATE ALGORITHM=%s ", tb.View.Algorithm.String())
-	fmt.Fprintf(buf, "DEFINER=%s@%s ", stringutil.Escape(model.NewCIStr(tb.View.Definer.Username), sqlMode), stringutil.Escape(model.NewCIStr(tb.View.Definer.Hostname), sqlMode))
+	fmt.Fprintf(buf, "DEFINER=%s@%s ", stringutil.Escape(tb.View.Definer.Username, sqlMode), stringutil.Escape(tb.View.Definer.Hostname, sqlMode))
 	fmt.Fprintf(buf, "SQL SECURITY %s ", tb.View.Security.String())
-	fmt.Fprintf(buf, "VIEW %s (", stringutil.Escape(tb.Name, sqlMode))
+	fmt.Fprintf(buf, "VIEW %s (", stringutil.Escape(tb.Name.O, sqlMode))
 	for i, col := range tb.Columns {
-		fmt.Fprintf(buf, "%s", stringutil.Escape(col.Name, sqlMode))
+		fmt.Fprintf(buf, "%s", stringutil.Escape(col.Name.O, sqlMode))
 		if i < len(tb.Columns)-1 {
 			fmt.Fprintf(buf, ", ")
 		}
@@ -1036,7 +1036,7 @@ func ConstructResultOfShowCreateDatabase(ctx sessionctx.Context, dbInfo *model.D
 	if ifNotExists {
 		ifNotExistsStr = "/*!32312 IF NOT EXISTS*/ "
 	}
-	fmt.Fprintf(buf, "CREATE DATABASE %s%s", ifNotExistsStr, stringutil.Escape(dbInfo.Name, sqlMode))
+	fmt.Fprintf(buf, "CREATE DATABASE %s%s", ifNotExistsStr, stringutil.Escape(dbInfo.Name.O, sqlMode))
 	if s := dbInfo.Charset; len(s) > 0 {
 		fmt.Fprintf(buf, " /*!40100 DEFAULT CHARACTER SET %s */", s)
 	}

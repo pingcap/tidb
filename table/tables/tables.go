@@ -837,7 +837,7 @@ func writeSequenceUpdateValueBinlog(ctx sessionctx.Context, db, sequence string,
 	// Sequence sends `select setval(seq, num)` sql string to downstream via `setDDLBinlog`, which is mocked as a DDL binlog.
 	binlogCli := ctx.GetSessionVars().BinlogClient
 	sqlMode := ctx.GetSessionVars().SQLMode
-	sequenceFullName := stringutil.Escape(model.NewCIStr(db), sqlMode) + "." + stringutil.Escape(model.NewCIStr(sequence), sqlMode)
+	sequenceFullName := stringutil.Escape(db, sqlMode) + "." + stringutil.Escape(sequence, sqlMode)
 	sql := "select setval(" + sequenceFullName + ", " + strconv.FormatInt(end, 10) + ")"
 
 	err := kv.RunInNewTxn(ctx.GetStore(), true, func(txn kv.Transaction) error {
