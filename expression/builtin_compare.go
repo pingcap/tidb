@@ -1522,7 +1522,8 @@ func (b *builtinLTStringSig) Clone() builtinFunc {
 }
 
 func (b *builtinLTStringSig) evalInt(row chunk.Row) (val int64, isNull bool, err error) {
-	return resOfLT(CompareStringWithCollationInfo(b.ctx, b.args[0], b.args[1], row, row, b.tp.Collate, b.tp.Flen))
+	_, collation, flen := b.CharsetAndCollation(b.ctx)
+	return resOfLT(CompareStringWithCollationInfo(b.ctx, b.args[0], b.args[1], row, row, collation, flen))
 }
 
 type builtinLTDurationSig struct {
@@ -1620,7 +1621,8 @@ func (b *builtinLEStringSig) Clone() builtinFunc {
 }
 
 func (b *builtinLEStringSig) evalInt(row chunk.Row) (val int64, isNull bool, err error) {
-	return resOfLE(CompareStringWithCollationInfo(b.ctx, b.args[0], b.args[1], row, row, b.tp.Collate, b.tp.Flen))
+	_, collation, flen := b.CharsetAndCollation(b.ctx)
+	return resOfLE(CompareStringWithCollationInfo(b.ctx, b.args[0], b.args[1], row, row, collation, flen))
 }
 
 type builtinLEDurationSig struct {
@@ -1718,7 +1720,8 @@ func (b *builtinGTStringSig) Clone() builtinFunc {
 }
 
 func (b *builtinGTStringSig) evalInt(row chunk.Row) (val int64, isNull bool, err error) {
-	return resOfGT(CompareStringWithCollationInfo(b.ctx, b.args[0], b.args[1], row, row, b.tp.Collate, b.tp.Flen))
+	_, collation, flen := b.CharsetAndCollation(b.ctx)
+	return resOfGT(CompareStringWithCollationInfo(b.ctx, b.args[0], b.args[1], row, row, collation, flen))
 }
 
 type builtinGTDurationSig struct {
@@ -1816,7 +1819,8 @@ func (b *builtinGEStringSig) Clone() builtinFunc {
 }
 
 func (b *builtinGEStringSig) evalInt(row chunk.Row) (val int64, isNull bool, err error) {
-	return resOfGE(CompareStringWithCollationInfo(b.ctx, b.args[0], b.args[1], row, row, b.tp.Collate, b.tp.Flen))
+	_, collation, flen := b.CharsetAndCollation(b.ctx)
+	return resOfGE(CompareStringWithCollationInfo(b.ctx, b.args[0], b.args[1], row, row, collation, flen))
 }
 
 type builtinGEDurationSig struct {
@@ -1914,7 +1918,8 @@ func (b *builtinEQStringSig) Clone() builtinFunc {
 }
 
 func (b *builtinEQStringSig) evalInt(row chunk.Row) (val int64, isNull bool, err error) {
-	return resOfEQ(CompareStringWithCollationInfo(b.ctx, b.args[0], b.args[1], row, row, b.tp.Collate, b.tp.Flen))
+	_, collation, flen := b.CharsetAndCollation(b.ctx)
+	return resOfEQ(CompareStringWithCollationInfo(b.ctx, b.args[0], b.args[1], row, row, collation, flen))
 }
 
 type builtinEQDurationSig struct {
@@ -2012,7 +2017,8 @@ func (b *builtinNEStringSig) Clone() builtinFunc {
 }
 
 func (b *builtinNEStringSig) evalInt(row chunk.Row) (val int64, isNull bool, err error) {
-	return resOfNE(CompareStringWithCollationInfo(b.ctx, b.args[0], b.args[1], row, row, b.tp.Collate, b.tp.Flen))
+	_, collation, flen := b.CharsetAndCollation(b.ctx)
+	return resOfNE(CompareStringWithCollationInfo(b.ctx, b.args[0], b.args[1], row, row, collation, flen))
 }
 
 type builtinNEDurationSig struct {
