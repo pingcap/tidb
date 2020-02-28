@@ -230,6 +230,7 @@ StreamAgg_12	1.00	root	funcs:sum(Column#10)->Column#8
     │ └─IndexFullScan_20	10000.00	cop[tikv]	table:t2, index:c1, keep order:false, stats:pseudo
     └─TableReader_15(Probe)	10000.00	root	data:TableFullScan_14
       └─TableFullScan_14	10000.00	cop[tikv]	table:t1, keep order:false, stats:pseudo
+explain select 1 in (select c2 from t2) from t1;
 id	estRows	task	operator info
 HashLeftJoin_7	10000.00	root	CARTESIAN left outer semi join, inner:TableReader_14
 ├─TableReader_14(Build)	10.00	root	data:Selection_13
