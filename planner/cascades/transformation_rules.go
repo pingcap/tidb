@@ -1526,13 +1526,13 @@ func (r *EliminateSingleMaxMin) OnTransform(old *memo.ExprIter) (newExprs []*mem
 	return []*memo.GroupExpr{r.eliminateSingleMaxMin(old.GetExpr())}, false, false, nil
 }
 
-// NewRuleEliminateMultiMaxMin tries to convert multi max/min to Limit+Sort operators.
+// EliminateMultiMaxMin tries to convert Agg(max, min) to join, Agg and TopN/limit.
 type EliminateMultiMaxMin struct {
 	baseRule
 	eliminateMaxMin
 }
 
-// NewRuleEliminateSingleMaxMin creates a new Transformation EliminateMultiMaxMin.
+// NewRuleEliminateMultiMaxMin creates a new Transformation EliminateMultiMaxMin.
 // The pattern of this rule is `agg(multi max/min)->gather`.
 func NewRuleEliminateMultiMaxMin() Transformation {
 	// ToDo if other gathers be implemented, we should support
@@ -1597,6 +1597,8 @@ func (r *EliminateMultiMaxMin) checkColCanUseIndex(group *memo.Group, col *expre
 }
 
 // OnTransform implements Transformation interface.
+// It will transform `Agg(max, min)-X` to join->Agg(max)->Top1/limit->X.
+//							                 |->Agg(min)->Top1/limit->X.
 func (r *EliminateMultiMaxMin) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	agg := old.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
 
