@@ -15,7 +15,6 @@ package binloginfo_test
 
 import (
 	"context"
-	"github.com/pingcap/tidb/table/tables"
 	"net"
 	"os"
 	"strconv"
@@ -37,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
