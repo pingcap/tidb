@@ -140,6 +140,7 @@ type twoPhaseCommitter struct {
 	cleanWg   sync.WaitGroup
 	detail    unsafe.Pointer
 	txnSize   int
+	checkKeys map[string]struct{}
 
 	primaryKey  []byte
 	forUpdateTS uint64
@@ -153,7 +154,6 @@ type twoPhaseCommitter struct {
 	// For pessimistic transaction
 	isPessimistic bool
 	isFirstLock   bool
-	isOnlyChecks  bool
 	// regionTxnSize stores the number of keys involved in each region
 	regionTxnSize map[uint64]int
 	// Used by pessimistic transaction and large transaction.
@@ -228,12 +228,12 @@ func sendTxnHeartBeat(bo *Backoffer, store *tikvStore, primary []byte, startTS, 
 
 func (c *twoPhaseCommitter) initKeysAndMutations() error {
 	var (
-		keys     [][]byte
-		size     int
-		putCnt   int
-		delCnt   int
-		lockCnt  int
-		checkCnt int
+		keys      [][]byte
+		size      int
+		putCnt    int
+		delCnt    int
+		lockCnt   int
+		checkKeys = make(map[string]struct{})
 	)
 	mutations := make(map[string]*mutationEx)
 	txn := c.txn
@@ -269,7 +269,7 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 			var op pb.Op
 			if c := txn.us.GetKeyExistErrInfo(k); c != nil {
 				op = pb.Op_CheckNotExists
-				checkCnt++
+				checkKeys[string(k)] = struct{}{}
 			} else {
 				op = pb.Op_Del
 				delCnt++
@@ -335,7 +335,7 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 			zap.Int("puts", putCnt),
 			zap.Int("dels", delCnt),
 			zap.Int("locks", lockCnt),
-			zap.Int("checks", checkCnt),
+			zap.Int("checks", len(checkKeys)),
 			zap.Uint64("txnStartTS", txn.startTS))
 	}
 
@@ -352,7 +352,7 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 	metrics.TiKVTxnWriteKVCountHistogram.Observe(float64(commitDetail.WriteKeys))
 	metrics.TiKVTxnWriteSizeHistogram.Observe(float64(commitDetail.WriteSize))
 	c.keys = keys
-	c.isOnlyChecks = len(c.keys) == checkCnt
+	c.checkKeys = checkKeys
 	c.mutations = mutations
 	c.lockTTL = txnLockTTL(txn.startTime, size)
 	c.priority = getTxnPriority(txn)
@@ -1131,10 +1131,8 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 		return errors.Trace(err)
 	}
 
-	// no need to do commit phase if all mutation are checkNotExists.
-	if c.isOnlyChecks {
-		return
-	}
+	// strip check_not_exists keys that no need to commit.
+	c.stripCheckKeys()
 
 	start = time.Now()
 	logutil.Event(ctx, "start get commit ts")
@@ -1196,6 +1194,18 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 			zap.Uint64("txnStartTS", c.startTS))
 	}
 	return nil
+}
+
+func (c *twoPhaseCommitter) stripCheckKeys() {
+	var i int
+	for _, k := range c.keys {
+		if _, ck := c.checkKeys[string(k)]; ck {
+			continue
+		}
+		c.keys[i] = k
+		i++
+	}
+	c.keys = c.keys[:i]
 }
 
 type schemaLeaseChecker interface {

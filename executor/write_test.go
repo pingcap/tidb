@@ -2605,7 +2605,7 @@ func (s *testSuite7) TestDeferConstraintCheckForDelete(c *C) {
 	tk.MustExec("set @@tidb_txn_mode = 'optimistic'")
 	tk.MustExec("use test")
 
-	tk.MustExec("drop table if exists t1, t2, t3")
+	tk.MustExec("drop table if exists t1, t2, t3, t4, t5")
 	tk.MustExec("create table t1(i int primary key, j int)")
 	tk.MustExec("insert into t1 values(1, 2)")
 	tk.MustExec("begin")
@@ -2629,6 +2629,24 @@ func (s *testSuite7) TestDeferConstraintCheckForDelete(c *C) {
 	tk.MustExec("insert into t3 values(1, 3)")
 	tk.MustExec("delete from t3 where j = 3")
 	tk.MustExec("commit")
+
+	tk.MustExec("create table t4(i int, j int, primary key(i))")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t4 values(1, 3)")
+	tk.MustExec("delete from t4 where j = 3")
+	tk.MustExec("insert into t4 values(2, 3)")
+	tk.MustExec("commit")
+	tk.MustExec("admin check table t4")
+	tk.MustQuery("select * from t4").Check(testkit.Rows("2 3"))
+
+	tk.MustExec("create table t5(i int, j int, primary key(i))")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t5 values(1, 3)")
+	tk.MustExec("delete from t5 where j = 3")
+	tk.MustExec("insert into t5 values(1, 4)")
+	tk.MustExec("commit")
+	tk.MustExec("admin check table t5")
+	tk.MustQuery("select * from t5").Check(testkit.Rows("1 4"))
 }
 
 func (s *testSuite7) TestDeferConstraintCheckForInsert(c *C) {
