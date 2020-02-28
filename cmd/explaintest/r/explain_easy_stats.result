@@ -121,6 +121,7 @@ Limit_10	1.00	root	offset:0, count:1
   └─Limit_19	1.00	cop[tikv]	offset:0, count:1
     └─TableFullScan_18	1.00	cop[tikv]	table:t1, keep order:true, desc
 set @@session.tidb_opt_insubq_to_join_and_agg=0;
+
 explain select 1 in (select c2 from t2) from t1;
 id	estRows	task	operator info
 Projection_6	1999.00	root	Column#7
@@ -130,6 +131,7 @@ Projection_6	1999.00	root	Column#7
   │   └─TableFullScan_12	1985.00	cop[tikv]	table:t2, keep order:false
   └─TableReader_9(Probe)	1999.00	root	data:TableFullScan_8
     └─TableFullScan_8	1999.00	cop[tikv]	table:t1, keep order:false
+
 explain format="dot" select 1 in (select c2 from t2) from t1;
 dot contents
 
