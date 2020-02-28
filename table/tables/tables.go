@@ -20,7 +20,6 @@ package tables
 import (
 	"context"
 	"encoding/binary"
-	"github.com/pingcap/tidb/util/stringutil"
 	"math"
 	"strconv"
 	"strings"
@@ -42,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-binlog"
 	"github.com/spaolacci/murmur3"
 	"go.uber.org/zap"
