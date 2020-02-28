@@ -20,11 +20,11 @@ import (
 	"io"
 	"io/ioutil"
 	"os"
-	"path/filepath"
 	"sync"
 
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/stringutil"
@@ -44,17 +44,21 @@ var bufReaderPool = sync.Pool{
 	New: func() interface{} { return bufio.NewReaderSize(nil, readBufSize) },
 }
 
-var tmpDir = filepath.Join(os.TempDir(), "tidb-server-"+filepath.Base(os.Args[0]))
+// initTempDirOnce is used for cleaning the temporary disk storage directory once and only once.
+var initTempDirOnce = &sync.Once{}
 
-func init() {
-	err := os.RemoveAll(tmpDir) // clean the uncleared temp file during the last run.
-	if err != nil {
-		log.Warn("Remove temporary file error", zap.String("tmpDir", tmpDir), zap.Error(err))
-	}
-	err = os.Mkdir(tmpDir, 0755)
-	if err != nil {
-		log.Warn("Mkdir temporary file error", zap.String("tmpDir", tmpDir), zap.Error(err))
-	}
+func initializeTempDir() {
+	initTempDirOnce.Do(func() {
+		tmpDir := config.GetGlobalConfig().TempStoragePath
+		err := os.RemoveAll(tmpDir) // clean the uncleared temp file during the last run.
+		if err != nil {
+			log.Warn("Remove temporary file error", zap.String("tmpDir", tmpDir), zap.Error(err))
+		}
+		err = os.MkdirAll(tmpDir, 0755)
+		if err != nil {
+			log.Warn("Mkdir temporary file error", zap.String("tmpDir", tmpDir), zap.Error(err))
+		}
+	})
 }
 
 // ListInDisk represents a slice of chunks storing in temporary disk.
@@ -85,7 +89,8 @@ func NewListInDisk(fieldTypes []*types.FieldType) *ListInDisk {
 }
 
 func (l *ListInDisk) initDiskFile() (err error) {
-	l.disk, err = ioutil.TempFile(tmpDir, l.diskTracker.Label().String())
+	initializeTempDir()
+	l.disk, err = ioutil.TempFile(config.GetGlobalConfig().TempStoragePath, l.diskTracker.Label().String())
 	if err != nil {
 		return
 	}
