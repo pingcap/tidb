@@ -139,7 +139,7 @@ func (s *testBinlogSuite) TestBinlog(c *C) {
 	tk.MustExec(ddlQuery)
 	var matched bool // got matched pre DDL and commit DDL
 	for i := 0; i < 10; i++ {
-		preDDL, commitDDL := getLatestDDLBinlog(c, pump, binlogDDLQuery)
+		preDDL, commitDDL, _ := getLatestDDLBinlog(c, pump, binlogDDLQuery)
 		if preDDL != nil && commitDDL != nil {
 			if preDDL.DdlJobId == commitDDL.DdlJobId {
 				c.Assert(commitDDL.StartTs, Equals, preDDL.StartTs)
@@ -299,7 +299,7 @@ func getLatestBinlogPrewriteValue(c *C, pump *mockBinlogPump) *binlog.PrewriteVa
 	return preVal
 }
 
-func getLatestDDLBinlog(c *C, pump *mockBinlogPump, ddlQuery string) (preDDL, commitDDL *binlog.Binlog) {
+func getLatestDDLBinlog(c *C, pump *mockBinlogPump, ddlQuery string) (preDDL, commitDDL *binlog.Binlog, offset int) {
 	pump.mu.Lock()
 	for i := len(pump.mu.payloads) - 1; i >= 0; i-- {
 		payload := pump.mu.payloads[i]
@@ -312,6 +312,7 @@ func getLatestDDLBinlog(c *C, pump *mockBinlogPump, ddlQuery string) (preDDL, co
 			preDDL = bin
 		}
 		if preDDL != nil && commitDDL != nil {
+			offset = i
 			break
 		}
 	}
@@ -506,20 +507,7 @@ func (s *testBinlogSuite) TestSequenceBinlog(c *C) {
 
 	// Check the sequence binlog.
 	// Got matched pre DDL and commit DDL.
-	var matched bool
-	for i := 0; i < 10; i++ {
-		preDDL, commitDDL := getLatestDDLBinlog(c, s.pump, "select setval(`test`.`seq`, 3)")
-		if preDDL != nil && commitDDL != nil {
-			if preDDL.DdlJobId == commitDDL.DdlJobId {
-				c.Assert(commitDDL.StartTs, Equals, preDDL.StartTs)
-				c.Assert(commitDDL.CommitTs, Greater, commitDDL.StartTs)
-				matched = true
-				break
-			}
-		}
-		time.Sleep(time.Millisecond * 10)
-	}
-	c.Assert(matched, IsTrue)
+	c.Assert(mustGetDDLBinlog(s, "select setval(`test`.`seq`, 3)", c), IsTrue)
 
 	// Invalidate the current sequence cache.
 	tk.MustExec("select setval(seq, 5)")
@@ -531,20 +519,7 @@ func (s *testBinlogSuite) TestSequenceBinlog(c *C) {
 	_, end, round = tc.GetSequenceCommon().GetSequenceBaseEndRound()
 	c.Assert(end, Equals, int64(8))
 	c.Assert(round, Equals, int64(0))
-
-	for i := 0; i < 10; i++ {
-		preDDL, commitDDL := getLatestDDLBinlog(c, s.pump, "select setval(`test`.`seq`, 8)")
-		if preDDL != nil && commitDDL != nil {
-			if preDDL.DdlJobId == commitDDL.DdlJobId {
-				c.Assert(commitDDL.StartTs, Equals, preDDL.StartTs)
-				c.Assert(commitDDL.CommitTs, Greater, commitDDL.StartTs)
-				matched = true
-				break
-			}
-		}
-		time.Sleep(time.Millisecond * 10)
-	}
-	c.Assert(matched, IsTrue)
+	c.Assert(mustGetDDLBinlog(s, "select setval(`test`.`seq`, 8)", c), IsTrue)
 
 	tk.MustExec("create database test2")
 	tk.MustExec("use test2")
@@ -558,20 +533,7 @@ func (s *testBinlogSuite) TestSequenceBinlog(c *C) {
 	_, end, round = tc.GetSequenceCommon().GetSequenceBaseEndRound()
 	c.Assert(end, Equals, int64(-3))
 	c.Assert(round, Equals, int64(0))
-
-	for i := 0; i < 10; i++ {
-		preDDL, commitDDL := getLatestDDLBinlog(c, s.pump, "select setval(`test2`.`seq2`, -3)")
-		if preDDL != nil && commitDDL != nil {
-			if preDDL.DdlJobId == commitDDL.DdlJobId {
-				c.Assert(commitDDL.StartTs, Equals, preDDL.StartTs)
-				c.Assert(commitDDL.CommitTs, Greater, commitDDL.StartTs)
-				matched = true
-				break
-			}
-		}
-		time.Sleep(time.Millisecond * 10)
-	}
-	c.Assert(matched, IsTrue)
+	c.Assert(mustGetDDLBinlog(s, "select setval(`test2`.`seq2`, -3)", c), IsTrue)
 
 	tk.MustExec("select setval(seq2, -100)")
 	// trigger the sequence cache allocation.
@@ -582,8 +544,25 @@ func (s *testBinlogSuite) TestSequenceBinlog(c *C) {
 	_, end, round = tc.GetSequenceCommon().GetSequenceBaseEndRound()
 	c.Assert(end, Equals, int64(6))
 	c.Assert(round, Equals, int64(1))
+	c.Assert(mustGetDDLBinlog(s, "select setval(`test2`.`seq2`, 6)", c), IsTrue)
+
+	// Test dml txn is independent from sequence txn.
+	tk.MustExec("drop sequence if exists seq")
+	tk.MustExec("create sequence seq cache 3")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int default next value for seq)")
+	// sequence txn commit first then the dml txn.
+	tk.MustExec("insert into t values(-1),(default),(-1),(default)")
+	// binlog list like [... ddl prewrite(offset), ddl commit, dml prewrite]
+	_, _, offset := getLatestDDLBinlog(c, s.pump, "select setval(`test2`.`seq`, 3)")
+	s.pump.mu.Lock()
+	c.Assert(offset+2, Equals, len(s.pump.mu.payloads)-1)
+	s.pump.mu.Unlock()
+}
+
+func mustGetDDLBinlog(s *testBinlogSuite, ddlQuery string, c *C) (matched bool) {
 	for i := 0; i < 10; i++ {
-		preDDL, commitDDL := getLatestDDLBinlog(c, s.pump, "select setval(`test2`.`seq2`, 6)")
+		preDDL, commitDDL, _ := getLatestDDLBinlog(c, s.pump, ddlQuery)
 		if preDDL != nil && commitDDL != nil {
 			if preDDL.DdlJobId == commitDDL.DdlJobId {
 				c.Assert(commitDDL.StartTs, Equals, preDDL.StartTs)
@@ -594,7 +573,7 @@ func (s *testBinlogSuite) TestSequenceBinlog(c *C) {
 		}
 		time.Sleep(time.Millisecond * 10)
 	}
-	c.Assert(matched, IsTrue)
+	return
 }
 
 func testGetTableByName(c *C, ctx sessionctx.Context, db, table string) table.Table {
