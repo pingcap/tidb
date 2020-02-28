@@ -155,6 +155,8 @@ github.com/lysu/kvproto v0.0.0-20200227071326-6bab20007090 h1:MjgH4BpDf++xfoNPxQ
 github.com/lysu/kvproto v0.0.0-20200227071326-6bab20007090/go.mod h1:IOdRDPLyda8GX2hE/jO7gqaCV/PNFh8BZQCQZXfIOqI=
 github.com/lysu/kvproto v0.0.0-20200227162413-dbef24b9cead h1:wwRtKG/6/tHlKgsoIls3xouAQT+Ch+WHxNdS+tLWfC4=
 github.com/lysu/kvproto v0.0.0-20200227162413-dbef24b9cead/go.mod h1:IOdRDPLyda8GX2hE/jO7gqaCV/PNFh8BZQCQZXfIOqI=
+github.com/lysu/kvproto v0.0.0-20200228065256-8626498f22b6 h1:Gang/fMWoVLiBfcfgJUIGSim+FozYGBtIkJqFME0c3k=
+github.com/lysu/kvproto v0.0.0-20200228065256-8626498f22b6/go.mod h1:IOdRDPLyda8GX2hE/jO7gqaCV/PNFh8BZQCQZXfIOqI=
 github.com/mattn/go-colorable v0.0.9/go.mod h1:9vuHe8Xs5qXnSaW/c/ABM9alt+Vo+STaOChaDxuIBZU=
 github.com/mattn/go-isatty v0.0.4/go.mod h1:M+lRXTBqGeGNdLjl/ufCoiOlB5xdOkqRJdNxMWT7Zi4=
 github.com/mattn/go-runewidth v0.0.2/go.mod h1:LwmH8dsx7+W8Uxz3IHJYH5QSwggIsqBzpuz5H//U1FU=

@@ -153,6 +153,7 @@ type twoPhaseCommitter struct {
 	// For pessimistic transaction
 	isPessimistic bool
 	isFirstLock   bool
+	isOnlyChecks  bool
 	// regionTxnSize stores the number of keys involved in each region
 	regionTxnSize map[uint64]int
 	// Used by pessimistic transaction and large transaction.
@@ -227,11 +228,12 @@ func sendTxnHeartBeat(bo *Backoffer, store *tikvStore, primary []byte, startTS, 
 
 func (c *twoPhaseCommitter) initKeysAndMutations() error {
 	var (
-		keys    [][]byte
-		size    int
-		putCnt  int
-		delCnt  int
-		lockCnt int
+		keys     [][]byte
+		size     int
+		putCnt   int
+		delCnt   int
+		lockCnt  int
+		checkCnt int
 	)
 	mutations := make(map[string]*mutationEx)
 	txn := c.txn
@@ -264,9 +266,13 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 			}
 			putCnt++
 		} else {
-			op := pb.Op_Del
+			var op pb.Op
 			if c := txn.us.GetKeyExistErrInfo(k); c != nil {
-				op = pb.Op_DelExists
+				op = pb.Op_CheckNotExists
+				checkCnt++
+			} else {
+				op = pb.Op_Del
+				delCnt++
 			}
 			mutations[string(k)] = &mutationEx{
 				Mutation: pb.Mutation{
@@ -274,7 +280,6 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 					Key: k,
 				},
 			}
-			delCnt++
 		}
 		if c.isPessimistic {
 			if !bytes.Equal(k, c.primaryKey) {
@@ -330,6 +335,7 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 			zap.Int("puts", putCnt),
 			zap.Int("dels", delCnt),
 			zap.Int("locks", lockCnt),
+			zap.Int("checks", checkCnt),
 			zap.Uint64("txnStartTS", txn.startTS))
 	}
 
@@ -346,6 +352,7 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 	metrics.TiKVTxnWriteKVCountHistogram.Observe(float64(commitDetail.WriteKeys))
 	metrics.TiKVTxnWriteSizeHistogram.Observe(float64(commitDetail.WriteSize))
 	c.keys = keys
+	c.isOnlyChecks = len(c.keys) == checkCnt
 	c.mutations = mutations
 	c.lockTTL = txnLockTTL(txn.startTime, size)
 	c.priority = getTxnPriority(txn)
@@ -1122,6 +1129,11 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 			zap.Error(err),
 			zap.Uint64("txnStartTS", c.startTS))
 		return errors.Trace(err)
+	}
+
+	// no need to do commit phase if all mutation are checkNotExists.
+	if c.isOnlyChecks {
+		return
 	}
 
 	start = time.Now()

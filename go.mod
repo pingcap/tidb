@@ -78,4 +78,4 @@ require (
 
 go 1.13
 
-replace github.com/pingcap/kvproto => github.com/lysu/kvproto v0.0.0-20200227162413-dbef24b9cead
+replace github.com/pingcap/kvproto => github.com/lysu/kvproto v0.0.0-20200228065256-8626498f22b6
