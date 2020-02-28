@@ -85,6 +85,7 @@ import (
 	by                "BY"
 	cascade           "CASCADE"
 	caseKwd           "CASE"
+	chain             "CHAIN"
 	change            "CHANGE"
 	character         "CHARACTER"
 	charType          "CHAR"
@@ -221,6 +222,7 @@ import (
 	realType          "REAL"
 	references        "REFERENCES"
 	regexpKwd         "REGEXP"
+	release           "RELEASE"
 	rename            "RENAME"
 	repeat            "REPEAT"
 	replace           "REPLACE"
@@ -836,6 +838,7 @@ import (
 	ColumnOptionList                       "column definition option list"
 	VirtualOrStored                        "indicate generated column is stored or not"
 	ColumnOptionListOpt                    "optional column definition option list"
+	CompletionTypeWithinTransaction        "overwrite system variable completion_type within current transaction"
 	ConnectionOption                       "single connection options"
 	ConnectionOptionList                   "connection options for CREATE USER statement"
 	ConnectionOptions                      "optional connection options for CREATE USER statement"
@@ -2458,6 +2461,10 @@ CommitStmt:
 	"COMMIT"
 	{
 		$$ = &ast.CommitStmt{}
+	}
+|	"COMMIT" CompletionTypeWithinTransaction
+	{
+		$$ = &ast.CommitStmt{CompletionType: $2.(ast.CompletionType)}
 	}
 
 PrimaryOpt:
@@ -6602,6 +6609,40 @@ RollbackStmt:
 	"ROLLBACK"
 	{
 		$$ = &ast.RollbackStmt{}
+	}
+|	"ROLLBACK" CompletionTypeWithinTransaction
+	{
+		$$ = &ast.RollbackStmt{CompletionType: $2.(ast.CompletionType)}
+	}
+
+CompletionTypeWithinTransaction:
+	"AND" "CHAIN" "NO" "RELEASE"
+	{
+		$$ = ast.CompletionTypeChain
+	}
+|	"AND" "NO" "CHAIN" "RELEASE"
+	{
+		$$ = ast.CompletionTypeRelease
+	}
+|	"AND" "NO" "CHAIN" "NO" "RELEASE"
+	{
+		$$ = ast.CompletionTypeDefault
+	}
+|	"AND" "CHAIN"
+	{
+		$$ = ast.CompletionTypeChain
+	}
+|	"AND" "NO" "CHAIN"
+	{
+		$$ = ast.CompletionTypeDefault
+	}
+|	"RELEASE"
+	{
+		$$ = ast.CompletionTypeRelease
+	}
+|	"NO" "RELEASE"
+	{
+		$$ = ast.CompletionTypeDefault
 	}
 
 ShutdownStmt:
