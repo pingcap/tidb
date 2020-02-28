@@ -1696,7 +1696,7 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 		BucketSize:    int64(opts[ast.AnalyzeOptNumBuckets]),
 		SampleSize:    maxRegionSampleSize,
 		SketchSize:    maxSketchSize,
-		ColumnsInfo:   model.ColumnsToProto(cols, task.PKInfo != nil),
+		ColumnsInfo:   util.ColumnsToProto(cols, task.PKInfo != nil),
 		CmsketchDepth: &depth,
 		CmsketchWidth: &width,
 	}
