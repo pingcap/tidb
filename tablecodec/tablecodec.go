@@ -370,6 +370,7 @@ func DecodeRowWithMapNew(b []byte, cols map[int64]*types.FieldType, loc *time.Lo
 			Flen:    tp.Flen,
 			Decimal: tp.Decimal,
 			Elems:   tp.Elems,
+			Collate: tp.Collate,
 		}
 		idx++
 	}

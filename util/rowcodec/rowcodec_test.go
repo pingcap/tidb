@@ -118,6 +118,7 @@ func (s *testSuite) TestDecodeRowWithHandle(c *C) {
 				Flen:       t.ft.Flen,
 				Decimal:    t.ft.Decimal,
 				Elems:      t.ft.Elems,
+				Collate:    t.ft.Collate,
 			})
 		}
 
@@ -255,6 +256,7 @@ func (s *testSuite) TestTypesNewRowCodec(c *C) {
 				Flen:       t.ft.Flen,
 				Decimal:    t.ft.Decimal,
 				Elems:      t.ft.Elems,
+				Collate:    t.ft.Collate,
 			})
 		}
 
@@ -486,6 +488,7 @@ func (s *testSuite) TestNilAndDefault(c *C) {
 				Flen:       t.ft.Flen,
 				Decimal:    t.ft.Decimal,
 				Elems:      t.ft.Elems,
+				Collate:    t.ft.Collate,
 			})
 		}
 		ddf := func(i int, chk *chunk.Chunk) error {
@@ -602,6 +605,7 @@ func (s *testSuite) TestVarintCompatibility(c *C) {
 				Flen:       t.ft.Flen,
 				Decimal:    t.ft.Decimal,
 				Elems:      t.ft.Elems,
+				Collate:    t.ft.Collate,
 			})
 		}
 
@@ -677,6 +681,7 @@ func (s *testSuite) TestCodecUtil(c *C) {
 			Flen:       ft.Flen,
 			Decimal:    ft.Decimal,
 			Elems:      ft.Elems,
+			Collate:    ft.Collate,
 		})
 	}
 	d := rowcodec.NewDecoder(cols, -1, nil)
@@ -726,6 +731,7 @@ func (s *testSuite) TestOldRowCodec(c *C) {
 			Flen:    tp.Flen,
 			Decimal: tp.Decimal,
 			Elems:   tp.Elems,
+			Collate: tp.Collate,
 		}
 	}
 	rd := rowcodec.NewChunkDecoder(cols, 0, nil, time.Local)

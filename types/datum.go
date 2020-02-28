@@ -1919,7 +1919,11 @@ func GetMaxValue(ft *FieldType) (max Datum) {
 		max.SetFloat32(float32(GetMaxFloat(ft.Flen, ft.Decimal)))
 	case mysql.TypeDouble:
 		max.SetFloat64(GetMaxFloat(ft.Flen, ft.Decimal))
-	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar:
+		// codec.Encode KindMaxValue, to avoid import circle
+		bytes := []byte{250}
+		max.SetString(string(bytes), ft.Collate, ft.Flen)
+	case mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		// codec.Encode KindMaxValue, to avoid import circle
 		bytes := []byte{250}
 		max.SetBytes(bytes)
@@ -1950,7 +1954,11 @@ func GetMinValue(ft *FieldType) (min Datum) {
 		min.SetFloat32(float32(-GetMaxFloat(ft.Flen, ft.Decimal)))
 	case mysql.TypeDouble:
 		min.SetFloat64(-GetMaxFloat(ft.Flen, ft.Decimal))
-	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar:
+		// codec.Encode KindMinNotNull, to avoid import circle
+		bytes := []byte{1}
+		min.SetString(string(bytes), ft.Collate, ft.Flen)
+	case mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		// codec.Encode KindMinNotNull, to avoid import circle
 		bytes := []byte{1}
 		min.SetBytes(bytes)
