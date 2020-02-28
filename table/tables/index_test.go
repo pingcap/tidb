@@ -15,6 +15,7 @@ package tables_test
 
 import (
 	"context"
+	"github.com/pingcap/parser/mysql"
 	"io"
 	"time"
 
@@ -63,10 +64,14 @@ func (s *testIndexSuite) TestIndex(c *C) {
 				ID:   2,
 				Name: model.NewCIStr("test"),
 				Columns: []*model.IndexColumn{
-					{},
-					{},
+					{Offset: 0},
+					{Offset: 1},
 				},
 			},
+		},
+		Columns: []*model.ColumnInfo{
+			{ID: 1, Name: model.NewCIStr("c2"), State: model.StatePublic, Offset: 0, FieldType: *types.NewFieldType(mysql.TypeVarchar)},
+			{ID: 2, Name: model.NewCIStr("c2"), State: model.StatePublic, Offset: 1, FieldType: *types.NewFieldType(mysql.TypeString)},
 		},
 	}
 	index := tables.NewIndex(tblInfo.ID, tblInfo, tblInfo.Indices[0])
@@ -148,10 +153,14 @@ func (s *testIndexSuite) TestIndex(c *C) {
 				Name:   model.NewCIStr("test"),
 				Unique: true,
 				Columns: []*model.IndexColumn{
-					{},
-					{},
+					{Offset: 0},
+					{Offset: 1},
 				},
 			},
+		},
+		Columns: []*model.ColumnInfo{
+			{ID: 1, Name: model.NewCIStr("c2"), State: model.StatePublic, Offset: 0, FieldType: *types.NewFieldType(mysql.TypeVarchar)},
+			{ID: 2, Name: model.NewCIStr("c2"), State: model.StatePublic, Offset: 1, FieldType: *types.NewFieldType(mysql.TypeString)},
 		},
 	}
 	index = tables.NewIndex(tblInfo.ID, tblInfo, tblInfo.Indices[0])
