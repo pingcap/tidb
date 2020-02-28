@@ -73,7 +73,11 @@
     "cases": [
       "select max(a) from t;",
       "select min(a) from t;",
-      "select max(a), min(a) from t"
+      "select max(a), min(a) from t",
+      "select max(a), min(a) from t where a >= 5",
+      "select max(a), min(a), a from t where a >= 5",
+      "select max(a), min(a) from t where b >= 5 and a >= 5",
+      "select max(a), min(a) from t where (a+b) > 5"
     ]
   },
   {

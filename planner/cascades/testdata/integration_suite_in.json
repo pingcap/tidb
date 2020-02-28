@@ -42,7 +42,9 @@
       "select sum(case when a <= 0 or a > 1000 then 0.0 else b end) from t",
       "select count(case when a > 0 and a <= 1000 then b end) from t",
       "select count(case when a <= 0 or a > 1000 then null else b end) from t",
-      "select count(distinct case when a > 0 and a <= 1000 then b end) from t"
+      "select count(distinct case when a > 0 and a <= 1000 then b end) from t",
+      "select max(a), min(a) from t",
+      "select max(a), min(a) from t where a >= -1"
     ]
   },
   {

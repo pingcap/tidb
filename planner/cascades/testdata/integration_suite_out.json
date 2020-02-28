@@ -433,6 +433,44 @@
         "Result": [
           "4"
         ]
+      },
+      {
+        "SQL": "select max(a), min(a) from t",
+        "Plan": [
+          "HashRightJoin_29 1.00 root CARTESIAN inner join, inner:HashAgg_31",
+          "├─HashAgg_31(Build) 1.00 root funcs:max(test.t.a)->Column#3",
+          "│ └─Limit_33 1.00 root offset:0, count:1",
+          "│   └─TableReader_38 1.00 root data:Limit_39",
+          "│     └─Limit_39 1.00 cop[tikv] offset:0, count:1",
+          "│       └─TableFullScan_37 1.00 cop[tikv] table:t, keep order:true, desc, stats:pseudo",
+          "└─HashAgg_50(Probe) 1.00 root funcs:min(test.t.a)->Column#4",
+          "  └─Limit_52 1.00 root offset:0, count:1",
+          "    └─TableReader_57 1.00 root data:Limit_58",
+          "      └─Limit_58 1.00 cop[tikv] offset:0, count:1",
+          "        └─TableFullScan_56 1.00 cop[tikv] table:t, keep order:true, stats:pseudo"
+        ],
+        "Result": [
+          "4 1"
+        ]
+      },
+      {
+        "SQL": "select max(a), min(a) from t where a >= -1",
+        "Plan": [
+          "HashRightJoin_32 1.00 root CARTESIAN inner join, inner:HashAgg_34",
+          "├─HashAgg_34(Build) 1.00 root funcs:max(test.t.a)->Column#3",
+          "│ └─Limit_36 1.00 root offset:0, count:1",
+          "│   └─TableReader_41 1.00 root data:Limit_42",
+          "│     └─Limit_42 1.00 cop[tikv] offset:0, count:1",
+          "│       └─TableRangeScan_40 1.00 cop[tikv] table:t, range:[-1,+inf], keep order:true, desc, stats:pseudo",
+          "└─HashAgg_53(Probe) 1.00 root funcs:min(test.t.a)->Column#4",
+          "  └─Limit_55 1.00 root offset:0, count:1",
+          "    └─TableReader_60 1.00 root data:Limit_61",
+          "      └─Limit_61 1.00 cop[tikv] offset:0, count:1",
+          "        └─TableRangeScan_59 1.00 cop[tikv] table:t, range:[-1,+inf], keep order:true, stats:pseudo"
+        ],
+        "Result": [
+          "4 1"
+        ]
       }
     ]
   },
