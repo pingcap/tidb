@@ -203,9 +203,12 @@ func (s *testPessimisticSuite) TestSingleStatementRollback(c *C) {
 	region2ID := region2.Id
 
 	syncCh := make(chan bool)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/SingleStmtDeadLockRetrySleep", "return"), IsNil)
 	go func() {
 		tk2.MustExec("begin pessimistic")
 		<-syncCh
+		// tk2 will go first, so tk will meet deadlock and retry, tk2 will resolve pessimistic rollback
+		// lock on key 3 after lock ttl
 		s.cluster.ScheduleDelay(tk2.Se.GetSessionVars().TxnCtx.StartTS, region2ID, time.Millisecond*3)
 		tk2.MustExec("update single_statement set v = v + 1")
 		tk2.MustExec("commit")
@@ -213,9 +216,10 @@ func (s *testPessimisticSuite) TestSingleStatementRollback(c *C) {
 	}()
 	tk.MustExec("begin pessimistic")
 	syncCh <- true
-	s.cluster.ScheduleDelay(tk.Se.GetSessionVars().TxnCtx.StartTS, region1ID, time.Millisecond*3)
+	s.cluster.ScheduleDelay(tk.Se.GetSessionVars().TxnCtx.StartTS, region1ID, time.Millisecond*10)
 	tk.MustExec("update single_statement set v = v + 1")
 	tk.MustExec("commit")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/SingleStmtDeadLockRetrySleep"), IsNil)
 	syncCh <- true
 }
 
@@ -775,21 +779,23 @@ func (s *testPessimisticSuite) TestInnodbLockWaitTimeoutWaitStart(c *C) {
 	tk2.MustExec("begin pessimistic")
 	done := make(chan error)
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/PessimisticLockErrWriteConflict", "return"), IsNil)
-	start := time.Now()
+	var duration time.Duration
 	go func() {
 		var err error
+		start := time.Now()
 		defer func() {
+			duration = time.Since(start)
 			done <- err
 		}()
 		_, err = tk2.Exec("select * from tk where c1 = 1 for update")
 	}()
-	time.Sleep(time.Millisecond * 30)
+	time.Sleep(time.Millisecond * 100)
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/PessimisticLockErrWriteConflict"), IsNil)
 	waitErr := <-done
 	c.Assert(waitErr, NotNil)
 	c.Check(waitErr.Error(), Equals, tikv.ErrLockWaitTimeout.Error())
-	c.Check(time.Since(start), GreaterEqual, time.Duration(1000*time.Millisecond))
-	c.Check(time.Since(start), LessEqual, time.Duration(1100*time.Millisecond))
+	c.Check(duration, GreaterEqual, time.Duration(1000*time.Millisecond))
+	c.Check(duration, LessEqual, time.Duration(1100*time.Millisecond))
 	tk2.MustExec("rollback")
 	tk3.MustExec("commit")
 }

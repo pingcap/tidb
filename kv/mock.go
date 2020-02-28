@@ -205,7 +205,7 @@ func (s *mockSnapshot) SetPriority(priority int) {
 }
 
 func (s *mockSnapshot) BatchGet(ctx context.Context, keys []Key) (map[string][]byte, error) {
-	m := make(map[string][]byte)
+	m := make(map[string][]byte, len(keys))
 	for _, k := range keys {
 		v, err := s.store.Get(ctx, k)
 		if IsErrNotFound(err) {

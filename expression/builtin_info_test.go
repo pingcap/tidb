@@ -191,8 +191,8 @@ func (s *testEvaluatorSuite) TestCoercibility(c *C) {
 func (s *testEvaluatorSuite) TestCollation(c *C) {
 	fc := funcs[ast.Collation]
 	f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(nil)))
-	c.Assert(f, IsNil)
-	c.Assert(err, ErrorMatches, "*FUNCTION COLLATION does not exist")
+	c.Assert(f, NotNil)
+	c.Assert(err, IsNil)
 }
 
 func (s *testEvaluatorSuite) TestRowCount(c *C) {

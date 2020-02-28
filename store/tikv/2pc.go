@@ -37,11 +37,13 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-binlog"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
 
 type twoPhaseCommitAction interface {
 	handleSingleBatch(*twoPhaseCommitter, *Backoffer, batchKeys) error
+	tiKVTxnRegionsNumHistogram() prometheus.Observer
 	String() string
 }
 
@@ -66,6 +68,12 @@ var (
 	tikvSecondaryLockCleanupFailureCounterRollback = metrics.TiKVSecondaryLockCleanupFailureCounter.WithLabelValues("rollback")
 	tiKVTxnHeartBeatHistogramOK                    = metrics.TiKVTxnHeartBeatHistogram.WithLabelValues("ok")
 	tiKVTxnHeartBeatHistogramError                 = metrics.TiKVTxnHeartBeatHistogram.WithLabelValues("err")
+
+	tiKVTxnRegionsNumHistogramPrewrite            = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues(metricsTag("prewrite"))
+	tiKVTxnRegionsNumHistogramCommit              = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues(metricsTag("commit"))
+	tiKVTxnRegionsNumHistogramCleanup             = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues(metricsTag("cleanup"))
+	tiKVTxnRegionsNumHistogramPessimisticLock     = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues(metricsTag("pessimistic_lock"))
+	tiKVTxnRegionsNumHistogramPessimisticRollback = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues(metricsTag("pessimistic_rollback"))
 )
 
 // Global variable set by config file.
@@ -77,25 +85,45 @@ func (actionPrewrite) String() string {
 	return "prewrite"
 }
 
+func (actionPrewrite) tiKVTxnRegionsNumHistogram() prometheus.Observer {
+	return tiKVTxnRegionsNumHistogramPrewrite
+}
+
 func (actionCommit) String() string {
 	return "commit"
+}
+
+func (actionCommit) tiKVTxnRegionsNumHistogram() prometheus.Observer {
+	return tiKVTxnRegionsNumHistogramCommit
 }
 
 func (actionCleanup) String() string {
 	return "cleanup"
 }
 
+func (actionCleanup) tiKVTxnRegionsNumHistogram() prometheus.Observer {
+	return tiKVTxnRegionsNumHistogramCleanup
+}
+
 func (actionPessimisticLock) String() string {
 	return "pessimistic_lock"
+}
+
+func (actionPessimisticLock) tiKVTxnRegionsNumHistogram() prometheus.Observer {
+	return tiKVTxnRegionsNumHistogramPessimisticLock
 }
 
 func (actionPessimisticRollback) String() string {
 	return "pessimistic_rollback"
 }
 
+func (actionPessimisticRollback) tiKVTxnRegionsNumHistogram() prometheus.Observer {
+	return tiKVTxnRegionsNumHistogramPessimisticRollback
+}
+
 // metricsTag returns detail tag for metrics.
-func metricsTag(ca twoPhaseCommitAction) string {
-	return "2pc_" + ca.String()
+func metricsTag(action string) string {
+	return "2pc_" + action
 }
 
 // twoPhaseCommitter executes a two-phase commit protocol.
@@ -367,7 +395,7 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 		return errors.Trace(err)
 	}
 
-	metrics.TiKVTxnRegionsNumHistogram.WithLabelValues(metricsTag(action)).Observe(float64(len(groups)))
+	action.tiKVTxnRegionsNumHistogram().Observe(float64(len(groups)))
 
 	var batches []batchKeys
 	var sizeFunc = c.keySize
@@ -391,8 +419,9 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 	firstIsPrimary := bytes.Equal(keys[0], c.primary())
 	_, actionIsCommit := action.(actionCommit)
 	_, actionIsCleanup := action.(actionCleanup)
-	if firstIsPrimary && (actionIsCommit || actionIsCleanup) {
-		// primary should be committed/cleanup first
+	_, actionIsPessimiticLock := action.(actionPessimisticLock)
+	if firstIsPrimary && (actionIsCommit || actionIsCleanup || actionIsPessimiticLock) {
+		// primary should be committed/cleanup/pessimistically locked first
 		err = c.doActionOnBatches(bo, action, batches[:1])
 		if err != nil {
 			return errors.Trace(err)
@@ -625,7 +654,7 @@ func (tm *ttlManager) keepAlive(c *twoPhaseCommitter) {
 			if tm.killed != nil && atomic.LoadUint32(tm.killed) != 0 {
 				return
 			}
-			bo := NewBackoffer(context.Background(), pessimisticLockMaxBackoff)
+			bo := NewBackoffer(context.Background(), pessimisticLockMaxBackoff).WithVars(c.txn.vars)
 			now, err := c.store.GetOracle().GetTimestamp(bo.ctx)
 			if err != nil {
 				err1 := bo.Backoff(BoPDRPC, err)

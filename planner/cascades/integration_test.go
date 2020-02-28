@@ -292,3 +292,34 @@ func (s *testIntegrationSuite) TestTopN(c *C) {
 		tk.MustQuery(sql).Check(testkit.Rows(output[i].Result...))
 	}
 }
+
+func (s *testIntegrationSuite) TestCascadePlannerHashedPartTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists pt1")
+	tk.MustExec("create table pt1(a bigint, b bigint) partition by hash(a) partitions 4")
+	tk.MustExec(`insert into pt1 values(1,10)`)
+	tk.MustExec(`insert into pt1 values(2,20)`)
+	tk.MustExec(`insert into pt1 values(3,30)`)
+	tk.MustExec(`insert into pt1 values(4,40)`)
+	tk.MustExec(`insert into pt1 values(5,50)`)
+
+	tk.MustExec("set @@tidb_enable_cascades_planner = 1")
+
+	var input []string
+	var output []struct {
+		SQL    string
+		Plan   []string
+		Result []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, sql := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = sql
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + sql).Rows())
+			output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(sql).Rows())
+		})
+		tk.MustQuery("explain " + sql).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery(sql).Check(testkit.Rows(output[i].Result...))
+	}
+}

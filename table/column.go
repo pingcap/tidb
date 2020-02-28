@@ -132,7 +132,7 @@ func truncateTrailingSpaces(v *types.Datum) {
 	}
 	b = b[:length]
 	str := string(hack.String(b))
-	v.SetString(str)
+	v.SetString(str, v.Collation(), v.Length())
 }
 
 // CastValues casts values based on columns type.
@@ -391,7 +391,7 @@ func getColDefaultExprValue(ctx sessionctx.Context, col *model.ColumnInfo, defau
 		return types.Datum{}, err
 	}
 	// Check the evaluated data type by cast.
-	value, err := CastValue(ctx, types.NewDatum(d), col)
+	value, err := CastValue(ctx, d, col)
 	if err != nil {
 		return types.Datum{}, err
 	}
@@ -493,10 +493,10 @@ func GetZeroValue(col *model.ColumnInfo) types.Datum {
 		if col.Flen > 0 && col.Charset == charset.CharsetBin {
 			d.SetBytes(make([]byte, col.Flen))
 		} else {
-			d.SetString("")
+			d.SetString("", col.Collate, col.Flen)
 		}
 	case mysql.TypeVarString, mysql.TypeVarchar:
-		d.SetString("")
+		d.SetString("", col.Collate, col.Flen)
 	case mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		d.SetBytes([]byte{})
 	case mysql.TypeDuration:
