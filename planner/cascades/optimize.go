@@ -38,11 +38,8 @@ type Optimizer struct {
 // rules and implementation rules.
 func NewOptimizer() *Optimizer {
 	return &Optimizer{
-		transformationRuleBatches: []TransformationRuleBatch{
-			mainTransformationBatch,
-			postTransformationBatch,
-		},
-		implementationRuleMap: defaultImplementationMap,
+		transformationRuleBatches: DefaultRuleBatches,
+		implementationRuleMap:     defaultImplementationMap,
 	}
 }
 

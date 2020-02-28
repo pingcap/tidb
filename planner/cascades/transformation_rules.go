@@ -52,24 +52,26 @@ type Transformation interface {
 // TransformationRuleBatch is a batch of transformation rules.
 type TransformationRuleBatch map[memo.Operand][]Transformation
 
-var mainTransformationBatch = TransformationRuleBatch{
+// DefaultRuleBatches contain all the transformation rules.
+// Each batch will be applied to the memo independently.
+var DefaultRuleBatches = []TransformationRuleBatch{
+	TiDBLayerOptimizationBatch,
+	TiKVLayerOptimizationBatch,
+	PostTransformationBatch,
+}
+
+// TiDBLayerOptimizationBatch does the optimization in the TiDB layer.
+var TiDBLayerOptimizationBatch = TransformationRuleBatch{
 	memo.OperandSelection: {
-		NewRulePushSelDownTableScan(),
-		NewRulePushSelDownTiKVSingleGather(),
 		NewRulePushSelDownSort(),
 		NewRulePushSelDownProjection(),
 		NewRulePushSelDownAggregation(),
 		NewRulePushSelDownJoin(),
-		NewRulePushSelDownIndexScan(),
 		NewRulePushSelDownUnionAll(),
 		NewRulePushSelDownWindow(),
 		NewRuleMergeAdjacentSelection(),
 	},
-	memo.OperandDataSource: {
-		NewRuleEnumeratePaths(),
-	},
 	memo.OperandAggregation: {
-		NewRulePushAggDownGather(),
 		NewRuleMergeAggregationProjection(),
 		NewRuleEliminateSingleMaxMin(),
 		NewRuleEliminateOuterJoinBelowAggregation(),
@@ -82,7 +84,6 @@ var mainTransformationBatch = TransformationRuleBatch{
 		NewRulePushLimitDownOuterJoin(),
 		NewRuleMergeAdjacentLimit(),
 		NewRuleTransformLimitToTableDual(),
-		NewRulePushLimitDownTiKVSingleGather(),
 	},
 	memo.OperandProjection: {
 		NewRuleEliminateProjection(),
@@ -92,12 +93,40 @@ var mainTransformationBatch = TransformationRuleBatch{
 		NewRulePushTopNDownProjection(),
 		NewRulePushTopNDownOuterJoin(),
 		NewRulePushTopNDownUnionAll(),
-		NewRulePushTopNDownTiKVSingleGather(),
 		NewRuleMergeAdjacentTopN(),
 	},
 }
 
-var postTransformationBatch = TransformationRuleBatch{
+// TiKVLayerOptimizationBatch does the optimization related to TiKV layer.
+// For example, rules about pushing down Operators like Selection, Limit,
+// Aggregation into TiKV layer should be inside this batch.
+var TiKVLayerOptimizationBatch = TransformationRuleBatch{
+	memo.OperandDataSource: {
+		NewRuleEnumeratePaths(),
+	},
+	memo.OperandSelection: {
+		NewRulePushSelDownTiKVSingleGather(),
+		NewRulePushSelDownTableScan(),
+		NewRulePushSelDownIndexScan(),
+		NewRuleMergeAdjacentSelection(),
+	},
+	memo.OperandAggregation: {
+		NewRulePushAggDownGather(),
+	},
+	memo.OperandLimit: {
+		NewRulePushLimitDownTiKVSingleGather(),
+	},
+	memo.OperandTopN: {
+		NewRulePushTopNDownTiKVSingleGather(),
+	},
+}
+
+// PostTransformationBatch does the transformation which is related to
+// the constraints of the execution engine of TiDB.
+// For example, TopN/Sort only support `order by` columns in TiDB layer,
+// as for scalar functions, we need to inject a Projection for them
+// below the TopN/Sort.
+var PostTransformationBatch = TransformationRuleBatch{
 	memo.OperandProjection: {
 		NewRuleEliminateProjection(),
 		NewRuleMergeAdjacentProjection(),

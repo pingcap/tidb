@@ -85,7 +85,7 @@ func (s *testTransformationRuleSuite) TestAggPushDownGather(c *C) {
 		},
 	})
 	defer func() {
-		s.optimizer.ResetTransformationRules(mainTransformationBatch, postTransformationBatch)
+		s.optimizer.ResetTransformationRules(DefaultRuleBatches...)
 	}()
 	var input []string
 	var output []struct {
@@ -116,25 +116,31 @@ func (s *testTransformationRuleSuite) TestAggPushDownGather(c *C) {
 }
 
 func (s *testTransformationRuleSuite) TestPredicatePushDown(c *C) {
-	s.optimizer.ResetTransformationRules(TransformationRuleBatch{
-		memo.OperandSelection: {
-			NewRulePushSelDownTableScan(),
-			NewRulePushSelDownTiKVSingleGather(),
-			NewRulePushSelDownSort(),
-			NewRulePushSelDownProjection(),
-			NewRulePushSelDownAggregation(),
-			NewRulePushSelDownJoin(),
-			NewRulePushSelDownIndexScan(),
-			NewRulePushSelDownUnionAll(),
-			NewRulePushSelDownWindow(),
-			NewRuleMergeAdjacentSelection(),
+	s.optimizer.ResetTransformationRules(
+		TransformationRuleBatch{ // TiDB layer
+			memo.OperandSelection: {
+				NewRulePushSelDownSort(),
+				NewRulePushSelDownProjection(),
+				NewRulePushSelDownAggregation(),
+				NewRulePushSelDownJoin(),
+				NewRulePushSelDownUnionAll(),
+				NewRulePushSelDownWindow(),
+				NewRuleMergeAdjacentSelection(),
+			},
 		},
-		memo.OperandDataSource: {
-			NewRuleEnumeratePaths(),
+		TransformationRuleBatch{ // TiKV layer
+			memo.OperandSelection: {
+				NewRulePushSelDownTableScan(),
+				NewRulePushSelDownTiKVSingleGather(),
+				NewRulePushSelDownIndexScan(),
+			},
+			memo.OperandDataSource: {
+				NewRuleEnumeratePaths(),
+			},
 		},
-	})
+	)
 	defer func() {
-		s.optimizer.ResetTransformationRules(mainTransformationBatch, postTransformationBatch)
+		s.optimizer.ResetTransformationRules(DefaultRuleBatches...)
 	}()
 	var input []string
 	var output []struct {
@@ -146,25 +152,33 @@ func (s *testTransformationRuleSuite) TestPredicatePushDown(c *C) {
 }
 
 func (s *testTransformationRuleSuite) TestTopNRules(c *C) {
-	s.optimizer.ResetTransformationRules(TransformationRuleBatch{
-		memo.OperandLimit: {
-			NewRuleTransformLimitToTopN(),
-			NewRulePushLimitDownProjection(),
-			NewRulePushLimitDownUnionAll(),
-			NewRulePushLimitDownOuterJoin(),
-			NewRuleMergeAdjacentLimit(),
-			NewRulePushLimitDownTiKVSingleGather(),
+	s.optimizer.ResetTransformationRules(
+		TransformationRuleBatch{ // TiDB layer
+			memo.OperandLimit: {
+				NewRuleTransformLimitToTopN(),
+				NewRulePushLimitDownProjection(),
+				NewRulePushLimitDownUnionAll(),
+				NewRulePushLimitDownOuterJoin(),
+				NewRuleMergeAdjacentLimit(),
+			},
+			memo.OperandTopN: {
+				NewRulePushTopNDownProjection(),
+				NewRulePushTopNDownOuterJoin(),
+				NewRulePushTopNDownUnionAll(),
+			},
 		},
-		memo.OperandDataSource: {
-			NewRuleEnumeratePaths(),
+		TransformationRuleBatch{ // TiKV layer
+			memo.OperandLimit: {
+				NewRulePushLimitDownTiKVSingleGather(),
+			},
+			memo.OperandTopN: {
+				NewRulePushTopNDownTiKVSingleGather(),
+			},
+			memo.OperandDataSource: {
+				NewRuleEnumeratePaths(),
+			},
 		},
-		memo.OperandTopN: {
-			NewRulePushTopNDownProjection(),
-			NewRulePushTopNDownOuterJoin(),
-			NewRulePushTopNDownUnionAll(),
-			NewRulePushTopNDownTiKVSingleGather(),
-		},
-	})
+	)
 	var input []string
 	var output []struct {
 		SQL    string
@@ -182,7 +196,7 @@ func (s *testTransformationRuleSuite) TestProjectionElimination(c *C) {
 		},
 	})
 	defer func() {
-		s.optimizer.ResetTransformationRules(mainTransformationBatch, postTransformationBatch)
+		s.optimizer.ResetTransformationRules(DefaultRuleBatches...)
 	}()
 	var input []string
 	var output []struct {
@@ -200,7 +214,7 @@ func (s *testTransformationRuleSuite) TestEliminateMaxMin(c *C) {
 		},
 	})
 	defer func() {
-		s.optimizer.ResetTransformationRules(mainTransformationBatch, postTransformationBatch)
+		s.optimizer.ResetTransformationRules(DefaultRuleBatches...)
 	}()
 	var input []string
 	var output []struct {
@@ -218,7 +232,7 @@ func (s *testTransformationRuleSuite) TestMergeAggregationProjection(c *C) {
 		},
 	})
 	defer func() {
-		s.optimizer.ResetTransformationRules(mainTransformationBatch, postTransformationBatch)
+		s.optimizer.ResetTransformationRules(DefaultRuleBatches...)
 	}()
 	var input []string
 	var output []struct {
@@ -243,7 +257,7 @@ func (s *testTransformationRuleSuite) TestMergeAdjacentTopN(c *C) {
 		},
 	})
 	defer func() {
-		s.optimizer.ResetTransformationRules(mainTransformationBatch, postTransformationBatch)
+		s.optimizer.ResetTransformationRules(DefaultRuleBatches...)
 	}()
 	var input []string
 	var output []struct {
@@ -262,7 +276,7 @@ func (s *testTransformationRuleSuite) TestMergeAdjacentLimit(c *C) {
 		},
 	})
 	defer func() {
-		s.optimizer.ResetTransformationRules(mainTransformationBatch, postTransformationBatch)
+		s.optimizer.ResetTransformationRules(DefaultRuleBatches...)
 	}()
 	var input []string
 	var output []struct {
@@ -280,7 +294,7 @@ func (s *testTransformationRuleSuite) TestTransformLimitToTableDual(c *C) {
 		},
 	})
 	defer func() {
-		s.optimizer.ResetTransformationRules(mainTransformationBatch, postTransformationBatch)
+		s.optimizer.ResetTransformationRules(DefaultRuleBatches...)
 	}()
 	var input []string
 	var output []struct {
@@ -296,9 +310,9 @@ func (s *testTransformationRuleSuite) TestPostTransformationRules(c *C) {
 		memo.OperandLimit: {
 			NewRuleTransformLimitToTopN(),
 		},
-	}, postTransformationBatch)
+	}, PostTransformationBatch)
 	defer func() {
-		s.optimizer.ResetTransformationRules(mainTransformationBatch, postTransformationBatch)
+		s.optimizer.ResetTransformationRules(DefaultRuleBatches...)
 	}()
 	var input []string
 	var output []struct {
@@ -314,9 +328,15 @@ func (s *testTransformationRuleSuite) TestPushLimitDownTiKVSingleGather(c *C) {
 		memo.OperandLimit: {
 			NewRulePushLimitDownTiKVSingleGather(),
 		},
+		memo.OperandProjection: {
+			NewRuleEliminateProjection(),
+		},
+		memo.OperandDataSource: {
+			NewRuleEnumeratePaths(),
+		},
 	})
 	defer func() {
-		s.optimizer.ResetTransformationRules(defaultTransformationMap)
+		s.optimizer.ResetTransformationRules(DefaultRuleBatches...)
 	}()
 	var input []string
 	var output []struct {
@@ -334,7 +354,7 @@ func (s *testTransformationRuleSuite) TestEliminateOuterJoinBelowAggregation(c *
 		},
 	})
 	defer func() {
-		s.optimizer.ResetTransformationRules(defaultTransformationMap)
+		s.optimizer.ResetTransformationRules(DefaultRuleBatches...)
 	}()
 	var input []string
 	var output []struct {
@@ -352,7 +372,7 @@ func (s *testTransformationRuleSuite) TestTransformAggregateCaseToSelection(c *C
 		},
 	})
 	defer func() {
-		s.optimizer.ResetTransformationRules(defaultTransformationMap)
+		s.optimizer.ResetTransformationRules(DefaultRuleBatches...)
 	}()
 	var input []string
 	var output []struct {
