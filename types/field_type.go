@@ -42,7 +42,6 @@ func NewFieldType(tp byte) *FieldType {
 	}
 }
 
-
 // NewStringType creates a string type with the specified charset and collation.
 func NewStringType(charset, collation string, flen int) *FieldType {
 	return &FieldType{
