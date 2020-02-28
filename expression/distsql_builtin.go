@@ -1109,7 +1109,13 @@ func PBToExpr(expr *tipb.Expr, tps []*types.FieldType, sc *stmtctx.StatementCont
 		}
 		args = append(args, arg)
 	}
-	return newDistSQLFunctionBySig(sc, expr.Sig, expr.FieldType, args)
+	sf, err := newDistSQLFunctionBySig(sc, expr.Sig, expr.FieldType, args)
+	if err != nil {
+		return nil, err
+	}
+	chs, coll, flen := DeriveCollationFromExprs(nil, args...)
+	sf.SetCharsetAndCollation(chs, coll, flen)
+	return sf, nil
 }
 
 func convertTime(data []byte, ftPB *tipb.FieldType, tz *time.Location) (*Constant, error) {
