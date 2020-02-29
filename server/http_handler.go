@@ -102,7 +102,10 @@ func writeData(w http.ResponseWriter, data interface{}) {
 		writeError(w, err)
 		return
 	}
+<<<<<<< HEAD
 	logutil.Logger(context.Background()).Info(string(js))
+=======
+>>>>>>> 3166ff4... server: Mute HTTP handler logs (#15015)
 	// write response
 	w.Header().Set(headerContentType, contentTypeJSON)
 	w.WriteHeader(http.StatusOK)
