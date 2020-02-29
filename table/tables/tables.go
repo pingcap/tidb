@@ -29,8 +29,10 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
@@ -39,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-binlog"
 	"github.com/spaolacci/murmur3"
 	"go.uber.org/zap"
@@ -826,6 +829,29 @@ func (t *TableCommon) addDeleteBinlog(ctx sessionctx.Context, r []types.Datum, c
 	return nil
 }
 
+func writeSequenceUpdateValueBinlog(ctx sessionctx.Context, db, sequence string, end int64) error {
+	// 1: when sequenceCommon update the local cache passively.
+	// 2: When sequenceCommon setval to the allocator actively.
+	// Both of this two case means the upper bound the sequence has changed in meta, which need to write the binlog
+	// to the downstream.
+	// Sequence sends `select setval(seq, num)` sql string to downstream via `setDDLBinlog`, which is mocked as a DDL binlog.
+	binlogCli := ctx.GetSessionVars().BinlogClient
+	sqlMode := ctx.GetSessionVars().SQLMode
+	sequenceFullName := stringutil.Escape(db, sqlMode) + "." + stringutil.Escape(sequence, sqlMode)
+	sql := "select setval(" + sequenceFullName + ", " + strconv.FormatInt(end, 10) + ")"
+
+	err := kv.RunInNewTxn(ctx.GetStore(), true, func(txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		mockJobID, err := m.GenGlobalID()
+		if err != nil {
+			return err
+		}
+		binloginfo.SetDDLBinlog(binlogCli, txn, mockJobID, int32(model.StatePublic), sql)
+		return nil
+	})
+	return err
+}
+
 func (t *TableCommon) removeRowData(ctx sessionctx.Context, h int64) error {
 	// Remove row data.
 	txn, err := ctx.Txn(true)
@@ -1218,7 +1244,7 @@ func (s *sequenceCommon) GetSequenceBaseEndRound() (int64, int64, int64) {
 // GetSequenceNextVal implements util.SequenceTable GetSequenceNextVal interface.
 // Caching the sequence value in table, we can easily be notified with the cache empty,
 // and write the binlogInfo in table level rather than in allocator.
-func (t *TableCommon) GetSequenceNextVal(dbName, seqName string) (nextVal int64, err error) {
+func (t *TableCommon) GetSequenceNextVal(ctx interface{}, dbName, seqName string) (nextVal int64, err error) {
 	seq := t.sequence
 	if seq == nil {
 		// TODO: refine the error.
@@ -1263,6 +1289,13 @@ func (t *TableCommon) GetSequenceNextVal(dbName, seqName string) (nextVal int64,
 		if err1 != nil {
 			return err1
 		}
+		// write sequence binlog to the pumpClient.
+		if ctx.(sessionctx.Context).GetSessionVars().BinlogClient != nil {
+			err = writeSequenceUpdateValueBinlog(ctx.(sessionctx.Context), dbName, seqName, seq.end)
+			if err != nil {
+				return err
+			}
+		}
 		// Seek the first valid value in new cache.
 		// Offset may have changed cause the round is updated.
 		offset = seq.getOffset()
@@ -1289,7 +1322,7 @@ func (t *TableCommon) GetSequenceNextVal(dbName, seqName string) (nextVal int64,
 
 // SetSequenceVal implements util.SequenceTable SetSequenceVal interface.
 // The returned bool indicates the newVal is already under the base.
-func (t *TableCommon) SetSequenceVal(newVal int64) (int64, bool, error) {
+func (t *TableCommon) SetSequenceVal(ctx interface{}, newVal int64, dbName, seqName string) (int64, bool, error) {
 	seq := t.sequence
 	if seq == nil {
 		// TODO: refine the error.
@@ -1327,6 +1360,13 @@ func (t *TableCommon) SetSequenceVal(newVal int64) (int64, bool, error) {
 	err = sequenceAlloc.Rebase(t.tableID, newVal, false)
 	if err != nil {
 		return 0, false, err
+	}
+	// write sequence binlog to the pumpClient.
+	if ctx.(sessionctx.Context).GetSessionVars().BinlogClient != nil {
+		err = writeSequenceUpdateValueBinlog(ctx.(sessionctx.Context), dbName, seqName, seq.end)
+		if err != nil {
+			return 0, false, err
+		}
 	}
 	return newVal, false, nil
 }
