@@ -16,7 +16,7 @@ i=0; while [ $i -lt 100 ]; do
 done
 
 # dumping with file size = 200 bytes
-run_dumpling -filesize 200
+run_dumpling -F 200
 
 # the dumping result is expected to be:
 # 10 files for insertion(each conatins 10 records / 200 bytes)
