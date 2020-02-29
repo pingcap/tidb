@@ -53,7 +53,8 @@
       "select b from t order by b limit 3",
       "select a from t order by a limit 1 offset 2",
       "select * from ((select a as aa from t t1) union all (select b as aa from t t2)) as t3 order by aa",
-      "select a, b, lag(a,1) over (order by b) from t order by b"
+      "select a, b, lag(a,1) over (order by b) from t order by b",
+      "select * from (select a+1 as c, a+b as d from t) as t1 order by c+d limit 10"
     ]
   },
   {
