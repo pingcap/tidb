@@ -21,6 +21,7 @@ import (
 	"io/ioutil"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -67,6 +68,7 @@ type Config struct {
 	SplitTable       bool            `toml:"split-table" json:"split-table"`
 	TokenLimit       uint            `toml:"token-limit" json:"token-limit"`
 	OOMUseTmpStorage bool            `toml:"oom-use-tmp-storage" json:"oom-use-tmp-storage"`
+	TempStoragePath  string          `toml:"tmp-storage-path" json:"tmp-storage-path"`
 	OOMAction        string          `toml:"oom-action" json:"oom-action"`
 	MemQuotaQuery    int64           `toml:"mem-quota-query" json:"mem-quota-query"`
 	EnableStreaming  bool            `toml:"enable-streaming" json:"enable-streaming"`
@@ -498,8 +500,9 @@ var defaultConf = Config{
 	Lease:                        "45s",
 	TokenLimit:                   1000,
 	OOMUseTmpStorage:             true,
+	TempStoragePath:              filepath.Join(os.TempDir(), "tidb", "tmp-storage"),
 	OOMAction:                    "log",
-	MemQuotaQuery:                32 << 30,
+	MemQuotaQuery:                1 << 30,
 	EnableStreaming:              false,
 	EnableBatchDML:               false,
 	CheckMb4ValueInUTF8:          true,
@@ -651,7 +654,7 @@ func StoreGlobalConfig(config *Config) {
 
 var deprecatedConfig = map[string]struct{}{
 	"pessimistic-txn.ttl": {},
-	"log.rotate":          {},
+	"log.file.log-rotate": {},
 }
 
 func isAllDeprecatedConfigItems(items []string) bool {
@@ -698,7 +701,7 @@ func InitializeConfig(confPath string, configCheck, configStrict bool, reloadFun
 		}
 	}
 	enforceCmdArgs(cfg)
-	globalConfHandler, err = NewConfHandler(cfg, reloadFunc, nil)
+	globalConfHandler, err = NewConfHandler(confPath, cfg, reloadFunc, nil)
 	terror.MustNil(err)
 	globalConfHandler.Start()
 }
@@ -803,7 +806,10 @@ func (c *Config) Valid() error {
 			return fmt.Errorf("type of [isolation-read]engines can't be %v should be one of tidb or tikv or tiflash", engine)
 		}
 	}
-	return nil
+
+	// test log level
+	l := zap.NewAtomicLevel()
+	return l.UnmarshalText([]byte(c.Log.Level))
 }
 
 func hasRootPrivilege() bool {

@@ -80,5 +80,12 @@
       "desc select /*+ read_from_storage(tikv[t]) */ avg(a) from t",
       "desc select /*+ read_from_storage(tiflash[t]) */ avg(a) from t"
     ]
+  },
+  {
+    "name": "TestIndexJoinTableRange",
+    "cases": [
+      "desc select /*+ TIDB_INLJ(t2)*/ * from t1, t2 where t1.a = t2.a and t1.b = t2.b",
+      "desc select /*+ TIDB_INLJ(t2)*/ * from t1, t2 where t1.a = t2.a and t1.b = t2.a and t1.b = t2.b"
+    ]
   }
 ]

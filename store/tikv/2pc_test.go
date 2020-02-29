@@ -771,3 +771,40 @@ func (s *testCommitterSuite) TestPkNotFound(c *C) {
 	c.Assert(err.Error(), Equals, ErrLockAcquireFailAndNoWaitSet.Error())
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/txnNotFoundRetTTL"), IsNil)
 }
+
+func (s *testCommitterSuite) TestPessimisticLockPrimary(c *C) {
+	// a is the primary lock of txn1
+	k1 := kv.Key("a")
+	// b is a secondary lock of txn1 and a key txn2 wants to lock, b is on another region
+	k2 := kv.Key("b")
+
+	txn1 := s.begin(c)
+	txn1.SetOption(kv.Pessimistic, true)
+	// txn1 lock k1
+	lockCtx := &kv.LockCtx{ForUpdateTS: txn1.startTS, WaitStartTime: time.Now()}
+	err := txn1.LockKeys(context.Background(), lockCtx, k1)
+	c.Assert(err, IsNil)
+
+	// txn2 wants to lock k1, k2, k1(pk) is blocked by txn1, pessimisticLockKeys has been changed to
+	// lock primary key first and then secondary keys concurrently, k2 should not be locked by txn2
+	doneCh := make(chan error)
+	go func() {
+		txn2 := s.begin(c)
+		txn2.SetOption(kv.Pessimistic, true)
+		lockCtx2 := &kv.LockCtx{ForUpdateTS: txn2.startTS, WaitStartTime: time.Now(), LockWaitTime: 200}
+		waitErr := txn2.LockKeys(context.Background(), lockCtx2, k1, k2)
+		doneCh <- waitErr
+	}()
+	time.Sleep(50 * time.Millisecond)
+
+	// txn3 should locks k2 successfully using no wait
+	txn3 := s.begin(c)
+	txn3.SetOption(kv.Pessimistic, true)
+	lockCtx3 := &kv.LockCtx{ForUpdateTS: txn3.startTS, WaitStartTime: time.Now(), LockWaitTime: kv.LockNoWait}
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/txnNotFoundRetTTL", "return"), IsNil)
+	err = txn3.LockKeys(context.Background(), lockCtx3, k2)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/txnNotFoundRetTTL"), IsNil)
+	c.Assert(err, IsNil)
+	waitErr := <-doneCh
+	c.Assert(ErrLockWaitTimeout.Equal(waitErr), IsTrue)
+}
