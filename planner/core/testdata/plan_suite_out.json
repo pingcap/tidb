@@ -557,11 +557,7 @@
       },
       {
         "SQL": "select * from t where exists (select s.a from t s having sum(s.a) = t.a ) order by t.a",
-<<<<<<< HEAD
-        "Best": "LeftHashJoin{TableReader(Table(t))->Projection->IndexReader(Index(t.f)[[NULL,+inf]]->StreamAgg)->StreamAgg}(Column#27,Column#25)->Projection->Shuffle(execution info: concurrency:1, fan out:4, splitter:random, merger:none)->Sort->Shuffle(execution info: concurrency:4, fan out:1, child:Shuffle_73, splitter:none, merger:merge-sort(test.t.a))"
-=======
-        "Best": "LeftHashJoin{TableReader(Table(t))->Projection->IndexReader(Index(t.f)[[NULL,+inf]]->StreamAgg)->StreamAgg}(Column#27,Column#25)->Sort"
->>>>>>> upstream/master
+        "Best": "LeftHashJoin{TableReader(Table(t))->Projection->IndexReader(Index(t.f)[[NULL,+inf]]->StreamAgg)->StreamAgg}(Column#27,Column#25)->Shuffle(execution info: concurrency:1, fan out:4, splitter:random, merger:none)->Sort->Shuffle(execution info: concurrency:4, fan out:1, child:Shuffle_73, splitter:none, merger:merge-sort(test.t.a))"
       },
       {
         "SQL": "select * from t where a in (select s.a from t s) order by t.a",
@@ -573,7 +569,7 @@
       },
       {
         "SQL": "select * from t where a in (select a from t) order by b",
-        "Best": "LeftHashJoin{TableReader(Table(t))->IndexReader(Index(t.f)[[NULL,+inf]])}(test.t.a,test.t.a)->Sort"
+        "Best": "LeftHashJoin{TableReader(Table(t))->IndexReader(Index(t.f)[[NULL,+inf]])}(test.t.a,test.t.a)->Shuffle(execution info: concurrency:1, fan out:4, splitter:random, merger:none)->Sort->Shuffle(execution info: concurrency:4, fan out:1, child:Shuffle_67, splitter:none, merger:merge-sort(test.t.b))"
       },
       {
         "SQL": "select t.c in (select count(*) from t s, t t1 where s.a = t.a and s.a = t1.a) from t",
