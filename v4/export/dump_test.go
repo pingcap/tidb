@@ -41,6 +41,35 @@ func (m *mockWriter) WriteTableData(ctx context.Context, ir TableDataIR) error {
 	return nil
 }
 
+func (s *testDumpSuite) TestDumpDatabase(c *C) {
+	mockConfig := DefaultConfig()
+	mockConfig.SortByPk = false
+	mockConfig.Database = "test"
+	mockConfig.Tables = map[string][]tableName{"test": {"t"}}
+	db, mock, err := sqlmock.New()
+	c.Assert(err, IsNil)
+
+	showCreateDatabase := "CREATE DATABASE `test`"
+	rows := mock.NewRows([]string{"Database", "Create Database"}).AddRow("test", showCreateDatabase)
+	mock.ExpectQuery("SHOW CREATE DATABASE test").WillReturnRows(rows)
+	showCreateTableResult := "CREATE TABLE t (a INT)"
+	rows = mock.NewRows([]string{"Table", "Create Table"}).AddRow("t", showCreateTableResult)
+	mock.ExpectQuery("SHOW CREATE TABLE test.t").WillReturnRows(rows)
+	rows = mock.NewRows([]string{"a"}).AddRow(1)
+	mock.ExpectQuery("SELECT (.) FROM test.t LIMIT 1").WillReturnRows(rows)
+	rows = mock.NewRows([]string{"a"}).AddRow(1).AddRow(2)
+	mock.ExpectQuery("SELECT (.) FROM test.t").WillReturnRows(rows)
+
+	mockWriter := newMockWriter()
+	err = dumpDatabases(context.Background(), mockConfig, db, mockWriter)
+	c.Assert(err, IsNil)
+
+	c.Assert(len(mockWriter.databaseMeta), Equals, 1)
+	c.Assert(mockWriter.databaseMeta["test"], Equals, "CREATE DATABASE `test`")
+	c.Assert(mockWriter.tableMeta["test.t"], Equals, showCreateTableResult)
+	c.Assert(mock.ExpectationsWereMet(), IsNil)
+}
+
 func (s *testDumpSuite) TestDumpTable(c *C) {
 	mockConfig := DefaultConfig()
 	mockConfig.SortByPk = false
@@ -50,21 +79,25 @@ func (s *testDumpSuite) TestDumpTable(c *C) {
 	showCreateTableResult := "CREATE TABLE t (a INT)"
 	rows := mock.NewRows([]string{"Table", "Create Table"}).AddRow("t", showCreateTableResult)
 	mock.ExpectQuery("SHOW CREATE TABLE test.t").WillReturnRows(rows)
-	rows = mock.NewRows([]string{"id"}).AddRow(1)
+	rows = mock.NewRows([]string{"a"}).AddRow(1)
 	mock.ExpectQuery("SELECT (.) FROM test.t LIMIT 1").WillReturnRows(rows)
-	rows = mock.NewRows([]string{"id"}).AddRow(1).AddRow(2)
+	rows = mock.NewRows([]string{"a"}).AddRow(1).AddRow(2)
 	mock.ExpectQuery("SELECT (.) FROM test.t").WillReturnRows(rows)
 
 	mockWriter := newMockWriter()
 	err = dumpTable(context.Background(), mockConfig, db, "test", "t", mockWriter)
 	c.Assert(err, IsNil)
 
-	c.Assert(len(mockWriter.databaseMeta), Equals, 0)
 	c.Assert(mockWriter.tableMeta["test.t"], Equals, showCreateTableResult)
 	c.Assert(len(mockWriter.tableData), Equals, 1)
 	tbDataRes := mockWriter.tableData[0]
 	c.Assert(tbDataRes.DatabaseName(), Equals, "test")
 	c.Assert(tbDataRes.TableName(), Equals, "t")
 	c.Assert(tbDataRes.ColumnCount(), Equals, uint(1))
+	c.Assert(tbDataRes.SpecialComments().HasNext(), Equals, false)
+	c.Assert(tbDataRes.Rows().HasNext(), Equals, true)
+	receiver := newSimpleRowReceiver(1)
+	c.Assert(tbDataRes.Rows().Next(receiver), IsNil)
+	c.Assert(receiver.data[0], Equals, "2")
 	c.Assert(mock.ExpectationsWereMet(), IsNil)
 }
