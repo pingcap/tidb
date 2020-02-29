@@ -472,7 +472,7 @@ func (c *ifFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 	}
 	retTp := InferType4ControlFuncs(args[1].GetType(), args[2].GetType())
 	evalTps := retTp.EvalType()
-	bf := newBaseBuiltinFuncWithTp(ctx, args, evalTps, types.ETInt, evalTps, evalTps)
+	bf := newBaseBuiltinFuncWithTp(ctx, args, evalTps, types.ETReal, evalTps, evalTps)
 	retTp.Flag |= bf.tp.Flag
 	bf.tp = retTp
 	switch evalTps {
@@ -512,7 +512,7 @@ func (b *builtinIfIntSig) Clone() builtinFunc {
 }
 
 func (b *builtinIfIntSig) evalInt(row chunk.Row) (ret int64, isNull bool, err error) {
-	arg0, isNull0, err := b.args[0].EvalInt(b.ctx, row)
+	arg0, isNull0, err := b.args[0].EvalReal(b.ctx, row)
 	if err != nil {
 		return 0, true, err
 	}
@@ -535,7 +535,7 @@ func (b *builtinIfRealSig) Clone() builtinFunc {
 }
 
 func (b *builtinIfRealSig) evalReal(row chunk.Row) (ret float64, isNull bool, err error) {
-	arg0, isNull0, err := b.args[0].EvalInt(b.ctx, row)
+	arg0, isNull0, err := b.args[0].EvalReal(b.ctx, row)
 	if err != nil {
 		return 0, true, err
 	}
@@ -558,7 +558,7 @@ func (b *builtinIfDecimalSig) Clone() builtinFunc {
 }
 
 func (b *builtinIfDecimalSig) evalDecimal(row chunk.Row) (ret *types.MyDecimal, isNull bool, err error) {
-	arg0, isNull0, err := b.args[0].EvalInt(b.ctx, row)
+	arg0, isNull0, err := b.args[0].EvalReal(b.ctx, row)
 	if err != nil {
 		return nil, true, err
 	}
@@ -581,7 +581,7 @@ func (b *builtinIfStringSig) Clone() builtinFunc {
 }
 
 func (b *builtinIfStringSig) evalString(row chunk.Row) (ret string, isNull bool, err error) {
-	arg0, isNull0, err := b.args[0].EvalInt(b.ctx, row)
+	arg0, isNull0, err := b.args[0].EvalReal(b.ctx, row)
 	if err != nil {
 		return "", true, err
 	}
@@ -604,7 +604,7 @@ func (b *builtinIfTimeSig) Clone() builtinFunc {
 }
 
 func (b *builtinIfTimeSig) evalTime(row chunk.Row) (ret types.Time, isNull bool, err error) {
-	arg0, isNull0, err := b.args[0].EvalInt(b.ctx, row)
+	arg0, isNull0, err := b.args[0].EvalReal(b.ctx, row)
 	if err != nil {
 		return ret, true, err
 	}
@@ -627,7 +627,7 @@ func (b *builtinIfDurationSig) Clone() builtinFunc {
 }
 
 func (b *builtinIfDurationSig) evalDuration(row chunk.Row) (ret types.Duration, isNull bool, err error) {
-	arg0, isNull0, err := b.args[0].EvalInt(b.ctx, row)
+	arg0, isNull0, err := b.args[0].EvalReal(b.ctx, row)
 	if err != nil {
 		return ret, true, err
 	}
@@ -650,7 +650,7 @@ func (b *builtinIfJSONSig) Clone() builtinFunc {
 }
 
 func (b *builtinIfJSONSig) evalJSON(row chunk.Row) (ret json.BinaryJSON, isNull bool, err error) {
-	arg0, isNull0, err := b.args[0].EvalInt(b.ctx, row)
+	arg0, isNull0, err := b.args[0].EvalReal(b.ctx, row)
 	if err != nil {
 		return ret, true, err
 	}
