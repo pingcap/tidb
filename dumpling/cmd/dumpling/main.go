@@ -14,7 +14,6 @@
 package main
 
 import (
-	"flag"
 	"fmt"
 	_ "net/http/pprof"
 	"os"
@@ -23,6 +22,7 @@ import (
 	"github.com/pingcap/dumpling/v4/cli"
 	"github.com/pingcap/dumpling/v4/export"
 	"github.com/pingcap/dumpling/v4/log"
+	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 )
 
@@ -38,39 +38,16 @@ var (
 	logLevel    string
 	consistency string
 	snapshot    string
+
+	rootCmd = &cobra.Command{
+		Use:   "dumpling",
+		Short: "A tool to dump MySQL/TiDB data",
+		Long:  `Dumpling is a CLI tool that helps you dump MySQL/TiDB data`,
+		Run: func(cmd *cobra.Command, args []string) {
+			run()
+		},
+	}
 )
-
-func init() {
-	flag.StringVar(&database, "database", "", "Database to dump")
-	flag.StringVar(&database, "B", "", "Database to dump")
-
-	flag.StringVar(&host, "h", "127.0.0.1", "The host to connect to")
-	flag.StringVar(&host, "host", "127.0.0.1", "The host to connect to")
-
-	flag.StringVar(&user, "user", "root", "Username with privileges to run the dump")
-	flag.StringVar(&user, "u", "root", "Username with privileges to run the dump")
-
-	flag.IntVar(&port, "port", 4000, "TCP/IP port to connect to")
-	flag.IntVar(&port, "P", 4000, "TCP/IP port to connect to")
-
-	flag.StringVar(&password, "password", "", "User password")
-	flag.StringVar(&password, "p", "", "User password")
-
-	flag.IntVar(&threads, "threads", 4, "Number of goroutines to use, default 4")
-	flag.IntVar(&threads, "t", 4, "Number of goroutines to use, default 4")
-
-	flag.Uint64Var(&fileSize, "F", export.UnspecifiedSize, "The approximate size of output file")
-	flag.Uint64Var(&fileSize, "filesize", export.UnspecifiedSize, "The approximate size of output file")
-
-	flag.StringVar(&outputDir, "output", defaultOutputDir, "Output directory")
-	flag.StringVar(&outputDir, "o", defaultOutputDir, "Output directory")
-
-	flag.StringVar(&logLevel, "loglevel", "info", "Log level: {debug|info|warn|error|dpanic|panic|fatal}")
-
-	flag.StringVar(&consistency, "consistency", "auto", "Consistency level during dumping: {auto|none|flush|lock|snapshot}")
-
-	flag.StringVar(&snapshot, "snapshot", "", "Snapshot position. Valid only when consistency=snapshot")
-}
 
 var defaultOutputDir = timestampDirName()
 
@@ -78,8 +55,21 @@ func timestampDirName() string {
 	return fmt.Sprintf("./export-%s", time.Now().Format(time.RFC3339))
 }
 
-func main() {
-	flag.Parse()
+func init() {
+	rootCmd.PersistentFlags().StringVarP(&database, "database", "B", "", "Database to dump")
+	rootCmd.PersistentFlags().StringVarP(&host, "host", "H", "127.0.0.1", "The host to connect to")
+	rootCmd.PersistentFlags().StringVarP(&user, "user", "u", "root", "Username with privileges to run the dump")
+	rootCmd.PersistentFlags().IntVarP(&port, "port", "P", 4000, "TCP/IP port to connect to")
+	rootCmd.PersistentFlags().StringVarP(&password, "password", "p", "", "User password")
+	rootCmd.PersistentFlags().IntVarP(&threads, "threads", "t", 4, "Number of goroutines to use, default 4")
+	rootCmd.PersistentFlags().Uint64VarP(&fileSize, "filesize", "F", export.UnspecifiedSize, "The approximate size of output file")
+	rootCmd.PersistentFlags().StringVarP(&outputDir, "output", "o", defaultOutputDir, "Output directory")
+	rootCmd.PersistentFlags().StringVar(&logLevel, "loglevel", "info", "Log level: {debug|info|warn|error|dpanic|panic|fatal}")
+	rootCmd.PersistentFlags().StringVar(&consistency, "consistency", "auto", "Consistency level during dumping: {auto|none|flush|lock|snapshot}")
+	rootCmd.PersistentFlags().StringVar(&snapshot, "snapshot", "", "Snapshot position. Valid only when consistency=snapshot")
+}
+
+func run() {
 	println(cli.LongVersion())
 
 	err := log.InitAppLogger(&log.Config{Level: logLevel})
@@ -104,4 +94,8 @@ func main() {
 		os.Exit(1)
 	}
 	return
+}
+
+func main() {
+	rootCmd.Execute()
 }
