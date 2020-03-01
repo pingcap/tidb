@@ -15,6 +15,7 @@ package expression
 
 import (
 	"math"
+	"math/rand"
 	"testing"
 
 	. "github.com/pingcap/check"
