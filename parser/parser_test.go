@@ -1264,6 +1264,8 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"SELECT ROW_COUNT();", true, "SELECT ROW_COUNT()"},
 		{"SELECT SESSION_USER();", true, "SELECT SESSION_USER()"},
 		{"SELECT SYSTEM_USER();", true, "SELECT SYSTEM_USER()"},
+		{"SELECT FORMAT_BYTES(512);", true, "SELECT FORMAT_BYTES(512)"},
+		{"SELECT FORMAT_NANO_TIME(3501);", true, "SELECT FORMAT_NANO_TIME(3501)"},
 
 		{"SELECT SUBSTRING_INDEX('www.mysql.com', '.', 2);", true, "SELECT SUBSTRING_INDEX('www.mysql.com', '.', 2)"},
 		{"SELECT SUBSTRING_INDEX('www.mysql.com', '.', -2);", true, "SELECT SUBSTRING_INDEX('www.mysql.com', '.', -2)"},
