@@ -4413,53 +4413,6 @@ func (s *testSuiteP2) TestUnsignedFeedback(c *C) {
 	result := tk.MustQuery("explain analyze select count(distinct b) from t")
 	c.Assert(result.Rows()[2][3], Equals, "table:t, range:[0,+inf], keep order:false")
 }
-
-func (s *testSuiteP2) TestShowTableNextID(c *C) {
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`), IsNil)
-	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"), IsNil)
-	}()
-	step := int64(10)
-	autoIDStep := autoid.GetStep()
-	autoid.SetStep(step)
-	defer autoid.SetStep(autoIDStep)
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t(id int, c int)")
-	// Start handle is 1.
-	r := tk.MustQuery("show table t next_row_id")
-	r.Check(testkit.Rows("test t _tidb_rowid 1"))
-	// Row ID is step + 1.
-	tk.MustExec("insert into t values(1, 1)")
-	r = tk.MustQuery("show table t next_row_id")
-	r.Check(testkit.Rows("test t _tidb_rowid 11"))
-	// Row ID is original + step.
-	for i := 0; i < int(step); i++ {
-		tk.MustExec("insert into t values(10000, 1)")
-	}
-	r = tk.MustQuery("show table t next_row_id")
-	r.Check(testkit.Rows("test t _tidb_rowid 21"))
-
-	// test for a table with the primary key
-	tk.MustExec("create table tt(id int primary key auto_increment, c int)")
-	// Start handle is 1.
-	r = tk.MustQuery("show table tt next_row_id")
-	r.Check(testkit.Rows("test tt id 1"))
-	// After rebasing auto ID, row ID is 20 + step + 1.
-	tk.MustExec("insert into tt values(20, 1)")
-	r = tk.MustQuery("show table tt next_row_id")
-	r.Check(testkit.Rows("test tt id 31"))
-	// test for renaming the table
-	tk.MustExec("create database test1")
-	tk.MustExec("rename table test.tt to test1.tt")
-	tk.MustExec("use test1")
-	r = tk.MustQuery("show table tt next_row_id")
-	r.Check(testkit.Rows("test1 tt id 31"))
-	tk.MustExec("insert test1.tt values ()")
-	r = tk.MustQuery("show table tt next_row_id")
-	r.Check(testkit.Rows("test1 tt id 41"))
-}
-
 func (s *testSuite) TestOOMPanicAction(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
