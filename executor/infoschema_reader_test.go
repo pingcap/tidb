@@ -89,22 +89,17 @@ func (s *testInfoschemaTableSuite) TestDiskUsage(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	// use both schema and table in where
-	tk.MustQuery("select table_schema,table_name FROM information_schema.DISK_USAGE WHERE table_schema = 'information_schema' and table_name = 'schemata'").Check(
+	tk.MustQuery("SELECT table_schema,table_name FROM information_schema.disk_usage WHERE table_schema='information_schema' AND table_name='schemata'").Check(
 		testkit.Rows("information_schema schemata"))
-	//tk.MustQuery("select disk_usage FROM information_schema.DISK_USAGE WHERE table_schema = 'information_schema' and table_name = 'schemata'").Check(
-	//	testkit.Rows(""))
 	diskUsage, err := strconv.Atoi(tk.MustQuery("select disk_usage FROM information_schema.DISK_USAGE WHERE table_schema = 'information_schema' and table_name = 'schemata'").Rows()[0][0].(string))
 	c.Assert(err, IsNil)
 	c.Assert(diskUsage, Greater, 0)
 
 	//use only table in where
-	tk.MustQuery("select table_schema,table_name FROM information_schema.DISK_USAGE WHERE table_name = 'schemata'").Check(
-		testkit.Rows("information_schema schemata"))
-	diskUsage, err = strconv.Atoi(tk.MustQuery("select disk_usage FROM information_schema.DISK_USAGE WHERE table_name = 'schemata'").Rows()[0][0].(string))
-	c.Assert(err, IsNil)
-	c.Assert(diskUsage, Greater, 0)
+	err = tk.QueryToErr("select * FROM information_schema.DISK_USAGE WHERE table_name = 'schemata'")
+	c.Assert(err, NotNil)
 
 	//use not exist table in where
-	err = tk.QueryToErr("select table_schema,table_name FROM information_schema.DISK_USAGE WHERE table_name = 'notExit'")
+	err = tk.QueryToErr("select table_schema,table_name FROM information_schema.DISK_USAGE WHERE table_schema = 'test' and table_name = 'notExit'")
 	c.Assert(err, NotNil)
 }

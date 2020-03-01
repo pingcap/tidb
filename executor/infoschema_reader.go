@@ -219,25 +219,42 @@ func (e *diskUsageRetriever) initialize(sctx sessionctx.Context) error {
 	sort.Sort(infoschema.SchemasSorter(dbs))
 	schemas := e.extractor.TableSchema
 	tables := e.extractor.TableName
-	var initialTables []initialTable
-	if schemas != nil || tables != nil {
+	//var initialTables []initialTable
+	if len(schemas) != 0 {
 		for _, schema := range dbs {
 			if schemas.Exist(schema.Name.L) {
-				for _, table := range schema.Tables {
-					if tables.Exist(table.Name.L) {
-						initialTable := initialTable{db: schema.Name.L, tb: table}
-						initialTables = append(initialTables, initialTable)
+				if len(tables) != 0 {
+					for _, table := range schema.Tables {
+						if tables.Exist(table.Name.L) {
+							e.initialTables = append(e.initialTables, &initialTable{db: schema.Name.L, tb: table})
+						}
+					}
+				} else {
+					for _, table := range schema.Tables {
+						e.initialTables = append(e.initialTables, &initialTable{db: schema.Name.L, tb: table})
 					}
 				}
 			}
+
 		}
-		if len(initialTables) == 0 && tables == nil {
+		if len(e.initialTables) == 0 && tables == nil {
 			return errors.Errorf("schema or table not exist, please check the schema and table")
 		}
-	}
-	for _, schema := range dbs {
-		for _, table := range schema.Tables {
-			e.initialTables = append(e.initialTables, &initialTable{schema.Name.O, table})
+	} else {
+		if len(tables) != 0 {
+			for _, schema := range dbs {
+				for _, table := range schema.Tables {
+					if tables.Exist(table.Name.L) {
+						e.initialTables = append(e.initialTables, &initialTable{db: schema.Name.L, tb: table})
+					}
+				}
+			}
+		} else {
+			for _, schema := range dbs {
+				for _, table := range schema.Tables {
+					e.initialTables = append(e.initialTables, &initialTable{schema.Name.O, table})
+				}
+			}
 		}
 	}
 	e.initialized = true
@@ -271,7 +288,7 @@ func (e *diskUsageRetriever) dataForDiskUsage(ctx sessionctx.Context) ([][]types
 		return nil, errors.New("pd unavailable")
 	}
 	count := 0
-	for i := e.curTable; e.curTable <= len(e.initialTables) && count < 1024; i++ {
+	for i := e.curTable; e.curTable < len(e.initialTables) && count < 1024; i++ {
 		table := (e.initialTables)[e.curTable]
 		tableID := table.tb.ID
 		// Include table and index data, because their range located in tableID_i tableID_r
