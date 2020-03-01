@@ -291,13 +291,18 @@ func (pc PbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
 	}
 
 	// Construct expression ProtoBuf.
-	return &tipb.Expr{
+	pb := &tipb.Expr{
 		Tp:        tipb.ExprType_ScalarFunc,
 		Val:       encoded,
 		Sig:       pbCode,
 		Children:  children,
 		FieldType: ToPBFieldType(expr.RetType),
 	}
+	chs, coll, flen := expr.CharsetAndCollation(expr.GetCtx())
+	pb.FieldType.Collate = collate.RewriteNewCollationIDIfNeeded(int32(mysql.CollationNames[coll]))
+	pb.FieldType.Charset = chs
+	pb.FieldType.Flen = int32(flen)
+	return pb
 }
 
 // GroupByItemToPB converts group by items to pb.
