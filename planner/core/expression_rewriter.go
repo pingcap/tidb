@@ -385,6 +385,8 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 		if _, ok := expression.DisableFoldFunctions[v.FnName.L]; ok {
 			er.disableFoldCounter++
 		}
+	case *ast.SetCollationExpr:
+		// Do nothing
 	default:
 		er.asScalar = true
 	}
@@ -982,6 +984,19 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 			Value:   types.NewStringDatum(v.Selector.String()),
 			RetType: types.NewFieldType(mysql.TypeVarchar),
 		}, types.EmptyName)
+	case *ast.SetCollationExpr:
+		arg := er.ctxStack[len(er.ctxStack)-1]
+		// SetCollationExpr sets the collation explicitly, even when the evaluation type of the expression is non-string.
+		if _, ok := arg.(*expression.Column); ok {
+			// Wrap a cast here to avoid changing the original FieldType of the column expression.
+			casted := expression.WrapWithCastAsString(er.sctx, arg)
+			casted.GetType().Collate = v.Collate
+			er.ctxStackAppend(casted, types.EmptyName)
+		} else {
+			// For constant and scalar function, we can set its collate directly.
+			arg.GetType().Collate = v.Collate
+		}
+		er.ctxStack[len(er.ctxStack)-1].SetCoercibility(expression.CoercibilityExplicit)
 	default:
 		er.err = errors.Errorf("UnknownType: %T", v)
 		return retNode, false
