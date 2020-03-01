@@ -40,6 +40,7 @@ var (
 	tablePrefix     = []byte{'t'}
 	recordPrefixSep = []byte("_r")
 	indexPrefixSep  = []byte("_i")
+	metaPrefix      = []byte{'m'}
 )
 
 const (
@@ -49,6 +50,7 @@ const (
 	RecordRowKeyLen       = prefixLen + idLen /*handle*/
 	tablePrefixLength     = 1
 	recordPrefixSepLength = 2
+	metaPrefixLength      = 1
 	// MaxOldEncodeValueLen is the maximum len of the old encoding of index value.
 	MaxOldEncodeValueLen = 9
 )
@@ -156,11 +158,10 @@ func DecodeIndexKey(key kv.Key) (tableID int64, indexID int64, indexValues []str
 // DecodeMetaKey decodes the key and get the meta key and meta field.
 func DecodeMetaKey(ek kv.Key) (key []byte, field []byte, err error) {
 	var tp uint64
-	prefix := []byte("m")
-	if !bytes.HasPrefix(ek, prefix) {
+	if !bytes.HasPrefix(ek, metaPrefix) {
 		return nil, nil, errors.New("invalid encoded hash data key prefix")
 	}
-	ek = ek[len(prefix):]
+	ek = ek[metaPrefixLength:]
 	ek, key, err = codec.DecodeBytes(ek, nil)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
