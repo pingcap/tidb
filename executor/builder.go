@@ -1591,20 +1591,15 @@ func (b *executorBuilder) updateForUpdateTSIfNeeded(selectPlan plannercore.Physi
 // refreshForUpdateTS is used to refresh the for-update-ts for reading data at read consistency level in pessimistic transaction.
 // It could use the cached tso from the statement future to avoid get tso many times.
 func (b *executorBuilder) refreshForUpdateTS() error {
-	var newForUpdateTS uint64
-	future, cachedTS := b.ctx.GetSessionVars().TxnCtx.GetStmtFuture()
-	if cachedTS != 0 {
-		newForUpdateTS = cachedTS
-	} else if future != nil {
-		newTS, waitErr := future.Wait()
-		if waitErr == nil {
-			newForUpdateTS = newTS
-			b.ctx.GetSessionVars().TxnCtx.SetStmtFuture(nil, newTS)
-		} else {
-			logutil.BgLogger().Warn("wait tso failed", zap.Error(waitErr))
-			b.ctx.GetSessionVars().TxnCtx.SetStmtFuture(nil, 0)
-		}
+	future := b.ctx.GetSessionVars().TxnCtx.GetStmtFuture()
+	if future == nil {
+		return nil
 	}
+	newForUpdateTS, waitErr := future.Wait()
+	if waitErr != nil {
+		logutil.BgLogger().Warn("wait tso failed", zap.Error(waitErr))
+	}
+	b.ctx.GetSessionVars().TxnCtx.SetStmtFuture(nil)
 	// If cachedTS is 0 or Wait() return an error, newForUpdateTS should be 0, it will force to get a new for-update-ts from PD.
 	if err := UpdateForUpdateTS(b.ctx, newForUpdateTS); err != nil {
 		return err
