@@ -204,7 +204,7 @@ func toHex(d types.Datum) (h types.Datum) {
 		return
 	}
 	x, _ := d.ToString()
-	h.SetString(strings.ToUpper(hex.EncodeToString(hack.Slice(x))), mysql.DefaultCollationName, collate.DefaultLen)
+	h.SetString(strings.ToUpper(hex.EncodeToString(hack.Slice(x))), mysql.DefaultCollationName)
 	return
 }
 

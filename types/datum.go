@@ -174,7 +174,7 @@ func (d *Datum) GetString() string {
 }
 
 // SetString sets string value.
-func (d *Datum) SetString(s string, collation string, length int) {
+func (d *Datum) SetString(s string, collation string) {
 	d.k = KindString
 	sink(s)
 	d.b = hack.Slice(s)
@@ -447,7 +447,7 @@ func (d *Datum) SetValueForTest(val interface{}) {
 	case float64:
 		d.SetFloat64(x)
 	case string:
-		d.SetString(x, mysql.DefaultCollationName, collate.DefaultLen)
+		d.SetString(x, mysql.DefaultCollationName)
 	case []byte:
 		d.SetBytes(x)
 	case *MyDecimal:
@@ -495,7 +495,7 @@ func (d *Datum) SetValue(val interface{}, tp *types.FieldType) {
 	case float64:
 		d.SetFloat64(x)
 	case string:
-		d.SetString(x, tp.Collate, tp.Flen)
+		d.SetString(x, tp.Collate)
 	case []byte:
 		d.SetBytes(x)
 	case *MyDecimal:
@@ -922,7 +922,7 @@ func (d *Datum) convertToString(sc *stmtctx.StatementContext, target *FieldType)
 	log.Warn("ppppp", zap.String("before xxx", s))
 	s, err := ProduceStrWithSpecifiedTp(s, target, sc, true)
 	log.Warn("ppppp", zap.String("after xxx", s))
-	ret.SetString(s, target.Collate, target.Flen)
+	ret.SetString(s, target.Collate)
 	if target.Charset == charset.CharsetBin {
 		ret.k = KindBytes
 	}
@@ -1760,13 +1760,13 @@ func NewBytesDatum(b []byte) (d Datum) {
 
 // NewStringDatum creates a new Datum from a string.
 func NewStringDatum(s string) (d Datum) {
-	d.SetString(s, mysql.DefaultCollationName, collate.DefaultLen)
+	d.SetString(s, mysql.DefaultCollationName)
 	return d
 }
 
 // NewCollationStringDatum creates a new Datum from a string with collation and length info.
 func NewCollationStringDatum(s string, collation string, length int) (d Datum) {
-	d.SetString(s, collation, length)
+	d.SetString(s, collation)
 	return d
 }
 
