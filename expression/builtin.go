@@ -99,6 +99,13 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, args []Expression, retType
 	if ctx == nil {
 		panic("ctx should not be nil")
 	}
+	var derivedCharset, derivedCollate string
+	var derivedFlen int
+	if retType == types.ETString {
+		// derive collation information for string function, and we must do it
+		// before doing implicit cast.
+		derivedCharset, derivedCollate, derivedFlen = DeriveCollationFromExprs(ctx, args...)
+	}
 	for i := range args {
 		switch argTps[i] {
 		case types.ETInt:
@@ -108,6 +115,7 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, args []Expression, retType
 		case types.ETDecimal:
 			args[i] = WrapWithCastAsDecimal(ctx, args[i])
 		case types.ETString:
+			// TODO: if the charset of args[i] is not derivedCharset, convert it
 			args[i] = WrapWithCastAsString(ctx, args[i])
 		case types.ETDatetime:
 			args[i] = WrapWithCastAsTime(ctx, args[i], types.NewFieldType(mysql.TypeDatetime))
@@ -145,8 +153,10 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, args []Expression, retType
 	case types.ETString:
 		fieldType = &types.FieldType{
 			Tp:      mysql.TypeVarString,
-			Flen:    0,
 			Decimal: types.UnspecifiedLength,
+			Charset: derivedCharset,
+			Collate: derivedCollate,
+			Flen:    derivedFlen,
 		}
 	case types.ETDatetime:
 		fieldType = &types.FieldType{
@@ -181,8 +191,6 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, args []Expression, retType
 	}
 	if mysql.HasBinaryFlag(fieldType.Flag) && fieldType.Tp != mysql.TypeJSON {
 		fieldType.Charset, fieldType.Collate = charset.CharsetBin, charset.CollationBin
-	} else {
-		fieldType.Charset, fieldType.Collate = charset.GetDefaultCharsetAndCollate()
 	}
 	return baseBuiltinFunc{
 		bufAllocator:           newLocalSliceBuffer(len(args)),
@@ -401,7 +409,7 @@ type vecBuiltinFunc interface {
 }
 
 // reverseBuiltinFunc evaluates the exactly one column value in the function when given a result for expression.
-// For example, the buitinFunc is builtinArithmeticPlusRealSig(2.3, builtinArithmeticMinusRealSig(Column, 3.4))
+// For example, the builtinFunc is builtinArithmeticPlusRealSig(2.3, builtinArithmeticMinusRealSig(Column, 3.4))
 // when given the result like 1.0, then the ReverseEval should evaluate the column value 1.0 - 2.3 + 3.4 = 2.1
 type reverseBuiltinFunc interface {
 	// supportReverseEval checks whether the builtinFunc support reverse evaluation.
@@ -633,6 +641,7 @@ var funcs = map[string]functionClass{
 	ast.CharLength:      &charLengthFunctionClass{baseFunctionClass{ast.CharLength, 1, 1}},
 	ast.CharacterLength: &charLengthFunctionClass{baseFunctionClass{ast.CharacterLength, 1, 1}},
 	ast.FindInSet:       &findInSetFunctionClass{baseFunctionClass{ast.FindInSet, 2, 2}},
+	ast.WeightString:    &weightStringFunctionClass{baseFunctionClass{ast.WeightString, 1, 3}},
 
 	// information functions
 	ast.ConnectionID: &connectionIDFunctionClass{baseFunctionClass{ast.ConnectionID, 0, 0}},
@@ -772,6 +781,11 @@ var funcs = map[string]functionClass{
 	ast.TiDBIsDDLOwner: &tidbIsDDLOwnerFunctionClass{baseFunctionClass{ast.TiDBIsDDLOwner, 0, 0}},
 	ast.TiDBParseTso:   &tidbParseTsoFunctionClass{baseFunctionClass{ast.TiDBParseTso, 1, 1}},
 	ast.TiDBDecodePlan: &tidbDecodePlanFunctionClass{baseFunctionClass{ast.TiDBDecodePlan, 1, 1}},
+
+	// TiDB Sequence function.
+	ast.NextVal: &nextValFunctionClass{baseFunctionClass{ast.NextVal, 1, 1}},
+	ast.LastVal: &lastValFunctionClass{baseFunctionClass{ast.LastVal, 1, 1}},
+	ast.SetVal:  &setValFunctionClass{baseFunctionClass{ast.SetVal, 2, 2}},
 }
 
 // IsFunctionSupported check if given function name is a builtin sql function.

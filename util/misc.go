@@ -27,7 +27,9 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
 
@@ -142,8 +144,8 @@ var (
 	InformationSchemaName = model.NewCIStr("INFORMATION_SCHEMA")
 	// PerformanceSchemaName is the `PERFORMANCE_SCHEMA` database name.
 	PerformanceSchemaName = model.NewCIStr("PERFORMANCE_SCHEMA")
-	// MetricSchemaName is the `METRIC_SCHEMA` database name.
-	MetricSchemaName = model.NewCIStr("METRIC_SCHEMA")
+	// MetricSchemaName is the `METRICS_SCHEMA` database name.
+	MetricSchemaName = model.NewCIStr("METRICS_SCHEMA")
 	// InspectionSchemaName is the `INSPECTION_SCHEMA` database name
 	InspectionSchemaName = model.NewCIStr("INSPECTION_SCHEMA")
 )
@@ -297,6 +299,37 @@ func TLSCipher2String(n uint16) string {
 	return s
 }
 
+// ColumnsToProto converts a slice of model.ColumnInfo to a slice of tipb.ColumnInfo.
+func ColumnsToProto(columns []*model.ColumnInfo, pkIsHandle bool) []*tipb.ColumnInfo {
+	cols := make([]*tipb.ColumnInfo, 0, len(columns))
+	for _, c := range columns {
+		col := ColumnToProto(c)
+		// TODO: Here `PkHandle`'s meaning is changed, we will change it to `IsHandle` when tikv's old select logic
+		// is abandoned.
+		if (pkIsHandle && mysql.HasPriKeyFlag(c.Flag)) || c.ID == model.ExtraHandleID {
+			col.PkHandle = true
+		} else {
+			col.PkHandle = false
+		}
+		cols = append(cols, col)
+	}
+	return cols
+}
+
+// ColumnToProto converts model.ColumnInfo to tipb.ColumnInfo.
+func ColumnToProto(c *model.ColumnInfo) *tipb.ColumnInfo {
+	pc := &tipb.ColumnInfo{
+		ColumnId:  c.ID,
+		Collation: collate.RewriteNewCollationIDIfNeeded(int32(mysql.CollationNames[c.FieldType.Collate])),
+		ColumnLen: int32(c.FieldType.Flen),
+		Decimal:   int32(c.FieldType.Decimal),
+		Flag:      int32(c.Flag),
+		Elems:     c.Elems,
+	}
+	pc.Tp = int32(c.FieldType.Tp)
+	return pc
+}
+
 func init() {
 	for _, value := range tlsCipherString {
 		SupportCipher[value] = struct{}{}
@@ -304,4 +337,18 @@ func init() {
 	for key, value := range pkixAttributeTypeNames {
 		pkixTypeNameAttributes[value] = key
 	}
+}
+
+// SequenceSchema is implemented by infoSchema and used by sequence function in expression package.
+// Otherwise calling information schema will cause import cycle problem.
+type SequenceSchema interface {
+	SequenceByName(schema, sequence model.CIStr) (SequenceTable, error)
+}
+
+// SequenceTable is implemented by tableCommon, and it is specialised in handling sequence operation.
+// Otherwise calling table will cause import cycle problem.
+type SequenceTable interface {
+	GetSequenceID() int64
+	GetSequenceNextVal(ctx interface{}, dbName, seqName string) (int64, error)
+	SetSequenceVal(ctx interface{}, newVal int64, dbName, seqName string) (int64, bool, error)
 }

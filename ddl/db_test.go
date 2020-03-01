@@ -22,7 +22,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -986,10 +985,7 @@ func testAddIndex(c *C, store kv.Storage, lease time.Duration, testPartition boo
 	start := -10
 	num := defaultBatchSize
 	// first add some rows
-	for i := start; i < num; i++ {
-		sql := fmt.Sprintf("insert into test_add_index values (%d, %d, %d)", i, i, i)
-		tk.MustExec(sql)
-	}
+	batchInsert(tk, "test_add_index", start, num)
 
 	// Add some discrete rows.
 	maxBatch := 20
@@ -1008,8 +1004,7 @@ func testAddIndex(c *C, store kv.Storage, lease time.Duration, testPartition boo
 	}
 	// Encounter the value of math.MaxInt64 in middle of
 	v := math.MaxInt64 - defaultBatchSize/2
-	sql := fmt.Sprintf("insert into test_add_index values (%d, %d, %d)", v, v, v)
-	tk.MustExec(sql)
+	tk.MustExec(fmt.Sprintf("insert into test_add_index values (%d, %d, %d)", v, v, v))
 	otherKeys = append(otherKeys, v)
 
 	addIdxSQL := fmt.Sprintf("alter table test_add_index add %s key c3_index(c3)", idxTp)
@@ -1569,21 +1564,6 @@ func (s *testDBSuite1) TestColumn(c *C) {
 	s.tk.MustExec("drop table t2")
 }
 
-func (s *testDBSuite1) TestAddColumnTooMany(c *C) {
-	s.tk = testkit.NewTestKit(c, s.store)
-	s.tk.MustExec("use test")
-	count := int(atomic.LoadUint32(&ddl.TableColumnCountLimit) - 1)
-	var cols []string
-	for i := 0; i < count; i++ {
-		cols = append(cols, fmt.Sprintf("a%d int", i))
-	}
-	createSQL := fmt.Sprintf("create table t_column_too_many (%s)", strings.Join(cols, ","))
-	s.tk.MustExec(createSQL)
-	s.tk.MustExec("alter table t_column_too_many add column a_512 int")
-	alterSQL := "alter table t_column_too_many add column a_513 int"
-	s.tk.MustGetErrCode(alterSQL, mysql.ErrTooManyFields)
-}
-
 func sessionExec(c *C, s kv.Storage, sql string) {
 	se, err := session.CreateSession4Test(s)
 	c.Assert(err, IsNil)
@@ -1783,7 +1763,7 @@ LOOP:
 // TestDropColumn is for inserting value with a to-be-dropped column when do drop column.
 // Column info from schema in build-insert-plan should be public only,
 // otherwise they will not be consist with Table.Col(), then the server will panic.
-func (s *testDBSuite2) TestDropColumn(c *C) {
+func (s *testDBSuite6) TestDropColumn(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("create database drop_col_db")
 	s.tk.MustExec("use drop_col_db")
@@ -2043,6 +2023,35 @@ func (s *testDBSuite4) TestCreateTableWithLike2(c *C) {
 	s.tk.MustExec("alter table t1 drop index idx2;")
 	checkTbl2()
 
+	// Test for table has tiflash  replica.
+	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+	s.tk.MustExec("drop table if exists t1,t2;")
+	s.tk.MustExec("create table t1 (a int) partition by hash(a) partitions 2;")
+	s.tk.MustExec("alter table t1 set tiflash replica 3 location labels 'a','b';")
+	t1 := testGetTableByName(c, s.s, "test_db", "t1")
+	// Mock for all partitions replica was available.
+	partition := t1.Meta().Partition
+	c.Assert(len(partition.Definitions), Equals, 2)
+	err := domain.GetDomain(s.tk.Se).DDL().UpdateTableReplicaInfo(s.tk.Se, partition.Definitions[0].ID, true)
+	c.Assert(err, IsNil)
+	err = domain.GetDomain(s.tk.Se).DDL().UpdateTableReplicaInfo(s.tk.Se, partition.Definitions[1].ID, true)
+	c.Assert(err, IsNil)
+	t1 = testGetTableByName(c, s.s, "test_db", "t1")
+	c.Assert(t1.Meta().TiFlashReplica, NotNil)
+	c.Assert(t1.Meta().TiFlashReplica.Available, IsTrue)
+	c.Assert(t1.Meta().TiFlashReplica.AvailablePartitionIDs, DeepEquals, []int64{partition.Definitions[0].ID, partition.Definitions[1].ID})
+
+	s.tk.MustExec("create table t2 like t1")
+	t2 := testGetTableByName(c, s.s, "test_db", "t2")
+	c.Assert(t2.Meta().TiFlashReplica.Count, Equals, t1.Meta().TiFlashReplica.Count)
+	c.Assert(t2.Meta().TiFlashReplica.LocationLabels, DeepEquals, t1.Meta().TiFlashReplica.LocationLabels)
+	c.Assert(t2.Meta().TiFlashReplica.Available, IsFalse)
+	c.Assert(t2.Meta().TiFlashReplica.AvailablePartitionIDs, HasLen, 0)
+	// Test for not affecting the original table.
+	t1 = testGetTableByName(c, s.s, "test_db", "t1")
+	c.Assert(t1.Meta().TiFlashReplica, NotNil)
+	c.Assert(t1.Meta().TiFlashReplica.Available, IsTrue)
+	c.Assert(t1.Meta().TiFlashReplica.AvailablePartitionIDs, DeepEquals, []int64{partition.Definitions[0].ID, partition.Definitions[1].ID})
 }
 
 func (s *testDBSuite1) TestCreateTable(c *C) {
@@ -2188,7 +2197,7 @@ func (s *testDBSuite5) TestRepairTable(c *C) {
 	turnRepairModeAndInit(true)
 	defer turnRepairModeAndInit(false)
 	// Domain reload the tableInfo and add it into repairInfo.
-	s.tk.MustExec("CREATE TABLE origin (a int primary key, b varchar(10), c int auto_increment);")
+	s.tk.MustExec("CREATE TABLE origin (a int primary key auto_increment, b varchar(10), c int);")
 	// Repaired tableInfo has been filtered by `domain.InfoSchema()`, so get it in repairInfo.
 	originTableInfo, _ := domainutil.RepairInfo.GetRepairedTableInfoByTableName("test", "origin")
 
@@ -2219,7 +2228,7 @@ func (s *testDBSuite5) TestRepairTable(c *C) {
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
 
 	// Exec the repair statement to override the tableInfo.
-	s.tk.MustExec("admin repair table origin CREATE TABLE origin (a int primary key, b varchar(5), c int auto_increment);")
+	s.tk.MustExec("admin repair table origin CREATE TABLE origin (a int primary key auto_increment, b varchar(5), c int);")
 	c.Assert(repairErr, IsNil)
 
 	// Check the repaired tableInfo is exactly the same with old one in tableID, indexID, colID.
@@ -2241,7 +2250,7 @@ func (s *testDBSuite5) TestRepairTable(c *C) {
 
 	// Exec the show create table statement to make sure new tableInfo has been set.
 	result := s.tk.MustQuery("show create table origin")
-	c.Assert(result.Rows()[0][1], Equals, "CREATE TABLE `origin` (\n  `a` int(11) NOT NULL,\n  `b` varchar(5) DEFAULT NULL,\n  `c` int(11) NOT NULL AUTO_INCREMENT,\n  PRIMARY KEY (`a`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
+	c.Assert(result.Rows()[0][1], Equals, "CREATE TABLE `origin` (\n  `a` int(11) NOT NULL AUTO_INCREMENT,\n  `b` varchar(5) DEFAULT NULL,\n  `c` int(11) DEFAULT NULL,\n  PRIMARY KEY (`a`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
 
 }
 
@@ -2574,6 +2583,57 @@ func (s *testDBSuite3) TestTruncateTable(c *C) {
 		time.Sleep(waitForCleanDataInterval)
 	}
 	c.Assert(hasOldTableData, IsFalse)
+
+	// Test for truncate table should clear the tiflash available status.
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1 (a int);")
+	tk.MustExec("alter table t1 set tiflash replica 3 location labels 'a','b';")
+	t1 := testGetTableByName(c, s.s, "test", "t1")
+	// Mock for table tiflash replica was available.
+	err = domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, t1.Meta().ID, true)
+	c.Assert(err, IsNil)
+	t1 = testGetTableByName(c, s.s, "test", "t1")
+	c.Assert(t1.Meta().TiFlashReplica, NotNil)
+	c.Assert(t1.Meta().TiFlashReplica.Available, IsTrue)
+
+	tk.MustExec("truncate table t1")
+	t2 := testGetTableByName(c, s.s, "test", "t1")
+	c.Assert(t2.Meta().TiFlashReplica.Count, Equals, t1.Meta().TiFlashReplica.Count)
+	c.Assert(t2.Meta().TiFlashReplica.LocationLabels, DeepEquals, t1.Meta().TiFlashReplica.LocationLabels)
+	c.Assert(t2.Meta().TiFlashReplica.Available, IsFalse)
+	c.Assert(t2.Meta().TiFlashReplica.AvailablePartitionIDs, HasLen, 0)
+
+	// Test for truncate partition should clear the tiflash available status.
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1 (a int) partition by hash(a) partitions 2;")
+	tk.MustExec("alter table t1 set tiflash replica 3 location labels 'a','b';")
+	t1 = testGetTableByName(c, s.s, "test", "t1")
+	// Mock for all partitions replica was available.
+	partition := t1.Meta().Partition
+	c.Assert(len(partition.Definitions), Equals, 2)
+	err = domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, partition.Definitions[0].ID, true)
+	c.Assert(err, IsNil)
+	err = domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, partition.Definitions[1].ID, true)
+	c.Assert(err, IsNil)
+	t1 = testGetTableByName(c, s.s, "test", "t1")
+	c.Assert(t1.Meta().TiFlashReplica, NotNil)
+	c.Assert(t1.Meta().TiFlashReplica.Available, IsTrue)
+	c.Assert(t1.Meta().TiFlashReplica.AvailablePartitionIDs, DeepEquals, []int64{partition.Definitions[0].ID, partition.Definitions[1].ID})
+
+	tk.MustExec("alter table t1 truncate partition p0")
+	t2 = testGetTableByName(c, s.s, "test", "t1")
+	c.Assert(t2.Meta().TiFlashReplica.Count, Equals, t1.Meta().TiFlashReplica.Count)
+	c.Assert(t2.Meta().TiFlashReplica.LocationLabels, DeepEquals, t1.Meta().TiFlashReplica.LocationLabels)
+	c.Assert(t2.Meta().TiFlashReplica.Available, IsFalse)
+	c.Assert(t2.Meta().TiFlashReplica.AvailablePartitionIDs, DeepEquals, []int64{partition.Definitions[1].ID})
+	// Test for truncate twice.
+	tk.MustExec("alter table t1 truncate partition p0")
+	t2 = testGetTableByName(c, s.s, "test", "t1")
+	c.Assert(t2.Meta().TiFlashReplica.Count, Equals, t1.Meta().TiFlashReplica.Count)
+	c.Assert(t2.Meta().TiFlashReplica.LocationLabels, DeepEquals, t1.Meta().TiFlashReplica.LocationLabels)
+	c.Assert(t2.Meta().TiFlashReplica.Available, IsFalse)
+	c.Assert(t2.Meta().TiFlashReplica.AvailablePartitionIDs, DeepEquals, []int64{partition.Definitions[1].ID})
+
 }
 
 func (s *testDBSuite4) TestRenameTable(c *C) {
@@ -3755,7 +3815,16 @@ func (s *testDBSuite1) TestSetTableFlashReplica(c *C) {
 	c.Assert(t.Meta().TiFlashReplica.Available, Equals, false)
 	c.Assert(t.Meta().TiFlashReplica.AvailablePartitionIDs, DeepEquals, []int64{partition.Definitions[0].ID})
 
-	// Mock for partition 1,2 replica was available.
+	// Mock for partition 0 replica become unavailable.
+	err = domain.GetDomain(s.tk.Se).DDL().UpdateTableReplicaInfo(s.tk.Se, partition.Definitions[0].ID, false)
+	c.Assert(err, IsNil)
+	t = s.testGetTable(c, "t_flash")
+	c.Assert(t.Meta().TiFlashReplica.Available, Equals, false)
+	c.Assert(t.Meta().TiFlashReplica.AvailablePartitionIDs, HasLen, 0)
+
+	// Mock for partition 0, 1,2 replica was available.
+	err = domain.GetDomain(s.tk.Se).DDL().UpdateTableReplicaInfo(s.tk.Se, partition.Definitions[0].ID, true)
+	c.Assert(err, IsNil)
 	err = domain.GetDomain(s.tk.Se).DDL().UpdateTableReplicaInfo(s.tk.Se, partition.Definitions[1].ID, true)
 	c.Assert(err, IsNil)
 	err = domain.GetDomain(s.tk.Se).DDL().UpdateTableReplicaInfo(s.tk.Se, partition.Definitions[2].ID, true)
@@ -4390,7 +4459,7 @@ func (s *testDBSuite2) TestDDLWithInvalidTableInfo(c *C) {
 	c.Assert(err.Error(), Equals, "[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 94 near \"then (b / a) end));\" ")
 }
 
-func (s *testDBSuite1) TestAlterOrderBy(c *C) {
+func (s *testDBSuite6) TestAlterOrderBy(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
 	s.tk.MustExec("create table ob (pk int primary key, c int default 1, c1 int default 1, KEY cl(c1))")
@@ -4411,4 +4480,5 @@ func (s *testDBSuite1) TestAlterOrderBy(c *C) {
 func init() {
 	// Make sure it will only be executed once.
 	domain.SchemaOutOfDateRetryInterval = int64(50 * time.Millisecond)
+	domain.SchemaOutOfDateRetryTimes = int32(50)
 }

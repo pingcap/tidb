@@ -44,6 +44,7 @@ type ScalarFunction struct {
 	RetType  *types.FieldType
 	Function builtinFunc
 	hashcode []byte
+	coercibility
 }
 
 // VecEvalInt evaluates this expression in a vectorized manner.
@@ -115,10 +116,19 @@ func (sf *ScalarFunction) GetCtx() sessionctx.Context {
 func (sf *ScalarFunction) String() string {
 	var buffer bytes.Buffer
 	fmt.Fprintf(&buffer, "%s(", sf.FuncName.L)
-	for i, arg := range sf.GetArgs() {
-		buffer.WriteString(arg.String())
-		if i+1 != len(sf.GetArgs()) {
+	switch sf.FuncName.L {
+	case ast.Cast:
+		for _, arg := range sf.GetArgs() {
+			buffer.WriteString(arg.String())
 			buffer.WriteString(", ")
+			buffer.WriteString(sf.RetType.String())
+		}
+	default:
+		for i, arg := range sf.GetArgs() {
+			buffer.WriteString(arg.String())
+			if i+1 != len(sf.GetArgs()) {
+				buffer.WriteString(", ")
+			}
 		}
 	}
 	buffer.WriteString(")")
@@ -240,6 +250,8 @@ func (sf *ScalarFunction) Clone() Expression {
 		RetType:  sf.RetType,
 		Function: sf.Function.Clone(),
 		hashcode: sf.hashcode,
+
+		coercibility: sf.coercibility,
 	}
 }
 
@@ -418,4 +430,79 @@ func (sf *ScalarFunction) resolveIndices(schema *Schema) error {
 		}
 	}
 	return nil
+}
+
+// GetSingleColumn returns (Col, Desc) when the ScalarFunction is equivalent to (Col, Desc)
+// when used as a sort key, otherwise returns (nil, false).
+//
+// Can only handle:
+// - ast.Plus
+// - ast.Minus
+// - ast.UnaryMinus
+func (sf *ScalarFunction) GetSingleColumn(reverse bool) (*Column, bool) {
+	switch sf.FuncName.String() {
+	case ast.Plus:
+		args := sf.GetArgs()
+		switch tp := args[0].(type) {
+		case *Column:
+			if _, ok := args[1].(*Constant); !ok {
+				return nil, false
+			}
+			return tp, reverse
+		case *ScalarFunction:
+			if _, ok := args[1].(*Constant); !ok {
+				return nil, false
+			}
+			return tp.GetSingleColumn(reverse)
+		case *Constant:
+			switch rtp := args[1].(type) {
+			case *Column:
+				return rtp, reverse
+			case *ScalarFunction:
+				return rtp.GetSingleColumn(reverse)
+			}
+		}
+		return nil, false
+	case ast.Minus:
+		args := sf.GetArgs()
+		switch tp := args[0].(type) {
+		case *Column:
+			if _, ok := args[1].(*Constant); !ok {
+				return nil, false
+			}
+			return tp, reverse
+		case *ScalarFunction:
+			if _, ok := args[1].(*Constant); !ok {
+				return nil, false
+			}
+			return tp.GetSingleColumn(reverse)
+		case *Constant:
+			switch rtp := args[1].(type) {
+			case *Column:
+				return rtp, !reverse
+			case *ScalarFunction:
+				return rtp.GetSingleColumn(!reverse)
+			}
+		}
+		return nil, false
+	case ast.UnaryMinus:
+		args := sf.GetArgs()
+		switch tp := args[0].(type) {
+		case *Column:
+			return tp, !reverse
+		case *ScalarFunction:
+			return tp.GetSingleColumn(!reverse)
+		}
+		return nil, false
+	}
+	return nil, false
+}
+
+// Coercibility returns the coercibility value which is used to check collations.
+func (sf *ScalarFunction) Coercibility() Coercibility {
+	if sf.hasCoercibility() {
+		return sf.coercibility.value()
+	}
+	sf.SetCoercibility(deriveCoercibilityForScarlarFunc(sf))
+	return sf.coercibility.value()
 }

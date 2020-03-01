@@ -14,7 +14,6 @@
 package config
 
 import (
-	"bytes"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
@@ -22,18 +21,17 @@ import (
 	"io/ioutil"
 	"net/url"
 	"os"
-	"reflect"
+	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
 	zaplog "github.com/pingcap/log"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/util/logutil"
 	tracing "github.com/uber/jaeger-client-go/config"
-	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -70,6 +68,7 @@ type Config struct {
 	SplitTable       bool            `toml:"split-table" json:"split-table"`
 	TokenLimit       uint            `toml:"token-limit" json:"token-limit"`
 	OOMUseTmpStorage bool            `toml:"oom-use-tmp-storage" json:"oom-use-tmp-storage"`
+	TempStoragePath  string          `toml:"tmp-storage-path" json:"tmp-storage-path"`
 	OOMAction        string          `toml:"oom-action" json:"oom-action"`
 	MemQuotaQuery    int64           `toml:"mem-quota-query" json:"mem-quota-query"`
 	EnableStreaming  bool            `toml:"enable-streaming" json:"enable-streaming"`
@@ -110,8 +109,13 @@ type Config struct {
 	IsolationRead IsolationRead `toml:"isolation-read" json:"isolation-read"`
 	// MaxServerConnections is the maximum permitted number of simultaneous client connections.
 	MaxServerConnections uint32 `toml:"max-server-connections" json:"max-server-connections"`
-
+	// NewCollationsEnabledOnFirstBootstrap indicates if the new collations are enabled, it effects only when a TiDB cluster bootstrapped on the first time.
+	NewCollationsEnabledOnFirstBootstrap bool `toml:"new_collations_enabled_on_first_bootstrap" json:"new_collations_enabled_on_first_bootstrap"`
+	// Experimental contains parameters for experimental features.
 	Experimental Experimental `toml:"experimental" json:"experimental"`
+	// EnableDynamicConfig enables the TiDB to fetch configs from PD and update itself during runtime.
+	// see https://github.com/pingcap/tidb/pull/13660 for more details.
+	EnableDynamicConfig bool `toml:"enable-dynamic-config" json:"enable-dynamic-config"`
 }
 
 // nullableBool defaults unset bool options to unset instead of false, which enables us to know if the user has set 2
@@ -203,11 +207,11 @@ type Log struct {
 	// File log config.
 	File logutil.FileLogConfig `toml:"file" json:"file"`
 
+	EnableSlowLog       bool   `toml:"enable-slow-log" json:"enable-slow-log"`
 	SlowQueryFile       string `toml:"slow-query-file" json:"slow-query-file"`
 	SlowThreshold       uint64 `toml:"slow-threshold" json:"slow-threshold"`
 	ExpensiveThreshold  uint   `toml:"expensive-threshold" json:"expensive-threshold"`
 	QueryLogMaxLen      uint64 `toml:"query-log-max-len" json:"query-log-max-len"`
-	EnableSlowLog       uint32 `toml:"enable-slow-log" json:"enable-slow-log"`
 	RecordPlanInSlowLog uint32 `toml:"record-plan-in-slow-log" json:"record-plan-in-slow-log"`
 }
 
@@ -256,38 +260,47 @@ func (e *ErrConfigValidationFailed) Error() string {
 }
 
 // ToTLSConfig generates tls's config based on security section of the config.
-func (s *Security) ToTLSConfig() (*tls.Config, error) {
-	var tlsConfig *tls.Config
+func (s *Security) ToTLSConfig() (tlsConfig *tls.Config, err error) {
 	if len(s.ClusterSSLCA) != 0 {
-		var certificates = make([]tls.Certificate, 0)
-		if len(s.ClusterSSLCert) != 0 && len(s.ClusterSSLKey) != 0 {
-			// Load the client certificates from disk
-			certificate, err := tls.LoadX509KeyPair(s.ClusterSSLCert, s.ClusterSSLKey)
-			if err != nil {
-				return nil, errors.Errorf("could not load client key pair: %s", err)
-			}
-			certificates = append(certificates, certificate)
-		}
-
-		// Create a certificate pool from the certificate authority
 		certPool := x509.NewCertPool()
-		ca, err := ioutil.ReadFile(s.ClusterSSLCA)
+		// Create a certificate pool from the certificate authority
+		var ca []byte
+		ca, err = ioutil.ReadFile(s.ClusterSSLCA)
 		if err != nil {
-			return nil, errors.Errorf("could not read ca certificate: %s", err)
+			err = errors.Errorf("could not read ca certificate: %s", err)
+			return
 		}
-
 		// Append the certificates from the CA
 		if !certPool.AppendCertsFromPEM(ca) {
-			return nil, errors.New("failed to append ca certs")
+			err = errors.New("failed to append ca certs")
+			return
+		}
+		tlsConfig = &tls.Config{
+			RootCAs: certPool,
 		}
 
-		tlsConfig = &tls.Config{
-			Certificates: certificates,
-			RootCAs:      certPool,
+		if len(s.ClusterSSLCert) != 0 && len(s.ClusterSSLKey) != 0 {
+			getCert := func() (*tls.Certificate, error) {
+				// Load the client certificates from disk
+				cert, err := tls.LoadX509KeyPair(s.ClusterSSLCert, s.ClusterSSLKey)
+				if err != nil {
+					return nil, errors.Errorf("could not load client key pair: %s", err)
+				}
+				return &cert, nil
+			}
+			// pre-test cert's loading.
+			if _, err = getCert(); err != nil {
+				return
+			}
+			tlsConfig.GetClientCertificate = func(info *tls.CertificateRequestInfo) (certificate *tls.Certificate, err error) {
+				return getCert()
+			}
+			tlsConfig.GetCertificate = func(info *tls.ClientHelloInfo) (certificate *tls.Certificate, err error) {
+				return getCert()
+			}
 		}
 	}
-
-	return tlsConfig, nil
+	return
 }
 
 // Status is the status section of the config.
@@ -487,8 +500,9 @@ var defaultConf = Config{
 	Lease:                        "45s",
 	TokenLimit:                   1000,
 	OOMUseTmpStorage:             true,
+	TempStoragePath:              filepath.Join(os.TempDir(), "tidb", "tmp-storage"),
 	OOMAction:                    "log",
-	MemQuotaQuery:                32 << 30,
+	MemQuotaQuery:                1 << 30,
 	EnableStreaming:              false,
 	EnableBatchDML:               false,
 	CheckMb4ValueInUTF8:          true,
@@ -611,15 +625,11 @@ var defaultConf = Config{
 	Experimental: Experimental{
 		AllowAutoRandom: false,
 	},
+	EnableDynamicConfig: false,
 }
 
 var (
-	globalConf              = atomic.Value{}
-	reloadConfPath          = ""
-	confReloader            func(nc, c *Config)
-	confReloadLock          sync.Mutex
-	supportedReloadConfigs  = make(map[string]struct{}, 32)
-	supportedReloadConfList = make([]string, 0, 32)
+	globalConfHandler ConfHandler
 )
 
 // NewConfig creates a new config instance with default value.
@@ -628,94 +638,72 @@ func NewConfig() *Config {
 	return &conf
 }
 
-// SetConfReloader sets reload config path and a reloader.
-// It should be called only once at start time.
-func SetConfReloader(cpath string, reloader func(nc, c *Config), confItems ...string) {
-	reloadConfPath = cpath
-	confReloader = reloader
-	for _, item := range confItems {
-		supportedReloadConfigs[item] = struct{}{}
-		supportedReloadConfList = append(supportedReloadConfList, item)
-	}
-}
-
 // GetGlobalConfig returns the global configuration for this server.
 // It should store configuration from command line and configuration file.
 // Other parts of the system can read the global configuration use this function.
 func GetGlobalConfig() *Config {
-	return globalConf.Load().(*Config)
+	return globalConfHandler.GetConfig()
 }
 
 // StoreGlobalConfig stores a new config to the globalConf. It mostly uses in the test to avoid some data races.
 func StoreGlobalConfig(config *Config) {
-	globalConf.Store(config)
+	if err := globalConfHandler.SetConfig(config); err != nil {
+		logutil.BgLogger().Error("update the global config error", zap.Error(err))
+	}
 }
 
-// ReloadGlobalConfig reloads global configuration for this server.
-func ReloadGlobalConfig() error {
-	confReloadLock.Lock()
-	defer confReloadLock.Unlock()
-
-	nc := NewConfig()
-	if err := nc.Load(reloadConfPath); err != nil {
-		return err
-	}
-	if err := nc.Valid(); err != nil {
-		return err
-	}
-	c := GetGlobalConfig()
-
-	diffs := collectsDiff(*nc, *c, "")
-	if len(diffs) == 0 {
-		return nil
-	}
-	var formattedDiff bytes.Buffer
-	for k, vs := range diffs {
-		formattedDiff.WriteString(fmt.Sprintf(", %v:%v->%v", k, vs[1], vs[0]))
-	}
-	unsupported := make([]string, 0, 2)
-	for k := range diffs {
-		if _, ok := supportedReloadConfigs[k]; !ok {
-			unsupported = append(unsupported, k)
-		}
-	}
-	if len(unsupported) > 0 {
-		return fmt.Errorf("reloading config %v is not supported, only %v are supported now, "+
-			"your changes%s", unsupported, supportedReloadConfList, formattedDiff.String())
-	}
-
-	confReloader(nc, c)
-	globalConf.Store(nc)
-	logutil.BgLogger().Info("reload config changes" + formattedDiff.String())
-	return nil
+var deprecatedConfig = map[string]struct{}{
+	"pessimistic-txn.ttl": {},
+	"log.file.log-rotate": {},
 }
 
-// collectsDiff collects different config items.
-// map[string][]string -> map[field path][]{new value, old value}
-func collectsDiff(i1, i2 interface{}, fieldPath string) map[string][]interface{} {
-	diff := make(map[string][]interface{})
-	t := reflect.TypeOf(i1)
-	if t.Kind() != reflect.Struct {
-		if reflect.DeepEqual(i1, i2) {
-			return diff
+func isAllDeprecatedConfigItems(items []string) bool {
+	for _, item := range items {
+		if _, ok := deprecatedConfig[item]; !ok {
+			return false
 		}
-		diff[fieldPath] = []interface{}{i1, i2}
-		return diff
 	}
+	return true
+}
 
-	v1 := reflect.ValueOf(i1)
-	v2 := reflect.ValueOf(i2)
-	for i := 0; i < v1.NumField(); i++ {
-		p := t.Field(i).Name
-		if fieldPath != "" {
-			p = fieldPath + "." + p
+// InitializeConfig initialize the global config handler.
+// The function enforceCmdArgs is used to merge the config file with command arguments:
+// For example, if you start TiDB by the command "./tidb-server --port=3000", the port number should be
+// overwritten to 3000 and ignore the port number in the config file.
+func InitializeConfig(confPath string, configCheck, configStrict bool, reloadFunc ConfReloadFunc, enforceCmdArgs func(*Config)) {
+	cfg := GetGlobalConfig()
+	var err error
+	if confPath != "" {
+		if err = cfg.Load(confPath); err != nil {
+			// Unused config item error turns to warnings.
+			if tmp, ok := err.(*ErrConfigValidationFailed); ok {
+				if isAllDeprecatedConfigItems(tmp.UndecodedItems) {
+					fmt.Fprintln(os.Stderr, err.Error())
+					err = nil
+				}
+				// This block is to accommodate an interim situation where strict config checking
+				// is not the default behavior of TiDB. The warning message must be deferred until
+				// logging has been set up. After strict config checking is the default behavior,
+				// This should all be removed.
+				if !configCheck && !configStrict {
+					fmt.Fprintln(os.Stderr, err.Error())
+					err = nil
+				}
+			}
 		}
-		m := collectsDiff(v1.Field(i).Interface(), v2.Field(i).Interface(), p)
-		for k, v := range m {
-			diff[k] = v
+
+		terror.MustNil(err)
+	} else {
+		// configCheck should have the config file specified.
+		if configCheck {
+			fmt.Fprintln(os.Stderr, "config check failed", errors.New("no config file specified for config-check"))
+			os.Exit(1)
 		}
 	}
-	return diff
+	enforceCmdArgs(cfg)
+	globalConfHandler, err = NewConfHandler(confPath, cfg, reloadFunc, nil)
+	terror.MustNil(err)
+	globalConfHandler.Start()
 }
 
 // Load loads config options from a toml file.
@@ -739,14 +727,6 @@ func (c *Config) Load(confFile string) error {
 	}
 
 	return err
-}
-
-// MinDDLLease returns the minimum valid value of the DDL lease.
-func (c *Config) MinDDLLease() time.Duration {
-	if c.Store == "tikv" {
-		return time.Second
-	}
-	return time.Duration(0)
 }
 
 // Valid checks if this config is valid.
@@ -826,7 +806,10 @@ func (c *Config) Valid() error {
 			return fmt.Errorf("type of [isolation-read]engines can't be %v should be one of tidb or tikv or tiflash", engine)
 		}
 	}
-	return nil
+
+	// test log level
+	l := zap.NewAtomicLevel()
+	return l.UnmarshalText([]byte(c.Log.Level))
 }
 
 func hasRootPrivilege() bool {
@@ -870,7 +853,10 @@ func (t *OpenTracing) ToTracingConfig() *tracing.Configuration {
 }
 
 func init() {
-	globalConf.Store(&defaultConf)
+	conf := defaultConf
+	cch := new(constantConfHandler)
+	cch.curConf.Store(&conf)
+	globalConfHandler = cch
 	if checkBeforeDropLDFlag == "1" {
 		CheckTableBeforeDrop = true
 	}
