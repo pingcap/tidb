@@ -1600,7 +1600,7 @@ func (b *executorBuilder) refreshForUpdateTS() error {
 		logutil.BgLogger().Warn("wait tso failed", zap.Error(waitErr))
 	}
 	b.ctx.GetSessionVars().TxnCtx.SetStmtFuture(nil)
-	// If cachedTS is 0 or Wait() return an error, newForUpdateTS should be 0, it will force to get a new for-update-ts from PD.
+	// If newForUpdateTS is 0, it will force to get a new for-update-ts from PD.
 	if err := UpdateForUpdateTS(b.ctx, newForUpdateTS); err != nil {
 		return err
 	}
