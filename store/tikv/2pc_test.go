@@ -145,7 +145,7 @@ func (s *testCommitterSuite) TestPrewriteRollback(c *C) {
 	c.Assert(err, IsNil)
 	committer, err := newTwoPhaseCommitterWithInit(txn1, 0)
 	c.Assert(err, IsNil)
-	err = committer.prewriteKeys(NewBackoffer(ctx, PrewriteMaxBackoff), committer.keys)
+	err = committer.prewriteMutations(NewBackoffer(ctx, PrewriteMaxBackoff), committer.mutations)
 	c.Assert(err, IsNil)
 
 	txn2 := s.begin(c)
@@ -153,7 +153,7 @@ func (s *testCommitterSuite) TestPrewriteRollback(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(v, BytesEquals, []byte("a0"))
 
-	err = committer.prewriteKeys(NewBackoffer(ctx, PrewriteMaxBackoff), committer.keys)
+	err = committer.prewriteMutations(NewBackoffer(ctx, PrewriteMaxBackoff), committer.mutations)
 	if err != nil {
 		// Retry.
 		txn1 = s.begin(c)
@@ -163,7 +163,7 @@ func (s *testCommitterSuite) TestPrewriteRollback(c *C) {
 		c.Assert(err, IsNil)
 		committer, err = newTwoPhaseCommitterWithInit(txn1, 0)
 		c.Assert(err, IsNil)
-		err = committer.prewriteKeys(NewBackoffer(ctx, PrewriteMaxBackoff), committer.keys)
+		err = committer.prewriteMutations(NewBackoffer(ctx, PrewriteMaxBackoff), committer.mutations)
 		c.Assert(err, IsNil)
 	}
 	committer.commitTS, err = s.store.oracle.GetTimestamp(ctx)
@@ -189,7 +189,7 @@ func (s *testCommitterSuite) TestContextCancel(c *C) {
 	bo := NewBackoffer(context.Background(), PrewriteMaxBackoff)
 	backoffer, cancel := bo.Fork()
 	cancel() // cancel the context
-	err = committer.prewriteKeys(backoffer, committer.keys)
+	err = committer.prewriteMutations(backoffer, committer.mutations)
 	c.Assert(errors.Cause(err), Equals, context.Canceled)
 }
 
@@ -215,7 +215,7 @@ func (s *testCommitterSuite) TestContextCancelRetryable(c *C) {
 	c.Assert(err, IsNil)
 	committer, err := newTwoPhaseCommitterWithInit(txn1, 0)
 	c.Assert(err, IsNil)
-	err = committer.prewriteKeys(NewBackoffer(context.Background(), PrewriteMaxBackoff), committer.keys)
+	err = committer.prewriteMutations(NewBackoffer(context.Background(), PrewriteMaxBackoff), committer.mutations)
 	c.Assert(err, IsNil)
 	// txn3 writes "c"
 	err = txn3.Set([]byte("c"), []byte("c3"))
@@ -353,7 +353,7 @@ func (s *testCommitterSuite) TestCommitBeforePrewrite(c *C) {
 	ctx := context.Background()
 	err = committer.cleanupKeys(NewBackoffer(ctx, cleanupMaxBackoff), committer.keys)
 	c.Assert(err, IsNil)
-	err = committer.prewriteKeys(NewBackoffer(ctx, PrewriteMaxBackoff), committer.keys)
+	err = committer.prewriteMutations(NewBackoffer(ctx, PrewriteMaxBackoff), committer.mutations)
 	c.Assert(err, NotNil)
 	errMsgMustContain(c, err, "conflictCommitTS")
 }
@@ -466,7 +466,7 @@ func (s *testCommitterSuite) TestPrewriteTxnSize(c *C) {
 	c.Assert(err, IsNil)
 
 	ctx := context.Background()
-	err = committer.prewriteKeys(NewBackoffer(ctx, PrewriteMaxBackoff), committer.keys)
+	err = committer.prewriteMutations(NewBackoffer(ctx, PrewriteMaxBackoff), committer.mutations)
 	c.Assert(err, IsNil)
 
 	// Check the written locks in the first region (50 keys)
@@ -491,12 +491,7 @@ func (s *testCommitterSuite) TestRejectCommitTS(c *C) {
 	bo := NewBackoffer(context.Background(), getMaxBackoff)
 	loc, err := s.store.regionCache.LocateKey(bo, []byte("x"))
 	c.Assert(err, IsNil)
-	batch := batchKeys{region: loc.Region, keys: [][]byte{[]byte("x")}}
-	mutations := make([]*kvrpcpb.Mutation, len(batch.keys))
-	for i, k := range batch.keys {
-		tmp := committer.mutations[string(k)]
-		mutations[i] = &tmp.Mutation
-	}
+	mutations := []*kvrpcpb.Mutation{&committer.mutations[0].Mutation}
 	prewrite := &kvrpcpb.PrewriteRequest{
 		Mutations:    mutations,
 		PrimaryLock:  committer.primary(),
@@ -540,8 +535,8 @@ func (s *testCommitterSuite) TestPessimisticPrewriteRequest(c *C) {
 	committer, err := newTwoPhaseCommitterWithInit(txn, 0)
 	c.Assert(err, IsNil)
 	committer.forUpdateTS = 100
-	var batch batchKeys
-	batch.keys = append(batch.keys, []byte("t1"))
+	var batch batchMutations
+	batch.mutations = append(batch.mutations, committer.mutations[0])
 	batch.region = RegionVerID{1, 1, 1}
 	req := committer.buildPrewriteRequest(batch, 1)
 	c.Assert(len(req.Prewrite().IsPessimisticLock), Greater, 0)
@@ -700,7 +695,7 @@ func (s *testCommitterSuite) getLockInfo(c *C, key []byte) *kvrpcpb.LockInfo {
 	bo := NewBackoffer(context.Background(), getMaxBackoff)
 	loc, err := s.store.regionCache.LocateKey(bo, key)
 	c.Assert(err, IsNil)
-	batch := batchKeys{region: loc.Region, keys: [][]byte{key}}
+	batch := batchMutations{region: loc.Region, mutations: []*mutationEx{committer.mutations[0]}}
 	req := committer.buildPrewriteRequest(batch, 1)
 	resp, err := s.store.SendReq(bo, req, loc.Region, readTimeoutShort)
 	c.Assert(err, IsNil)
@@ -807,4 +802,17 @@ func (s *testCommitterSuite) TestPessimisticLockPrimary(c *C) {
 	c.Assert(err, IsNil)
 	waitErr := <-doneCh
 	c.Assert(ErrLockWaitTimeout.Equal(waitErr), IsTrue)
+}
+
+func (c *twoPhaseCommitter) mutationsOfKeys(keys [][]byte) []*mutationEx {
+	var res []*mutationEx
+	for _, mutation := range c.mutations {
+		for _, key := range keys {
+			if bytes.Equal(mutation.Key, key) {
+				res = append(res, mutation)
+				break
+			}
+		}
+	}
+	return res
 }

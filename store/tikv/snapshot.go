@@ -161,7 +161,7 @@ func (s *tikvSnapshot) batchGetKeysByRegions(bo *Backoffer, keys [][]byte, colle
 
 	var batches []batchKeys
 	for id, g := range groups {
-		batches = appendBatchBySize(batches, id, g, func([]byte) int { return 1 }, batchGetSize)
+		batches = appendBatchKeysBySize(batches, id, g, func([]byte) int { return 1 }, batchGetSize)
 	}
 
 	if len(batches) == 0 {

@@ -613,6 +613,43 @@ func (c *RegionCache) GroupKeysByRegion(bo *Backoffer, keys [][]byte, filter fun
 	return groups, first, nil
 }
 
+type groupedMutations struct {
+	region    RegionVerID
+	mutations []*mutationEx
+}
+
+// GroupMutationsByRegion separates mutations into groups by their belonging Regions.
+func (c *RegionCache) GroupMutationsByRegion(bo *Backoffer, mutations []*mutationEx) ([]groupedMutations, error) {
+	var (
+		groups   []groupedMutations
+		lastLoc  *KeyLocation
+		beginIdx int
+	)
+	for i, m := range mutations {
+		if lastLoc == nil || !lastLoc.Contains(m.Key) {
+			if lastLoc != nil {
+				groups = append(groups, groupedMutations{
+					lastLoc.Region,
+					mutations[beginIdx:i],
+				})
+			}
+			beginIdx = i
+			var err error
+			lastLoc, err = c.LocateKey(bo, m.Key)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+	}
+	if lastLoc != nil && beginIdx < len(mutations) {
+		groups = append(groups, groupedMutations{
+			lastLoc.Region,
+			mutations[beginIdx:],
+		})
+	}
+	return groups, nil
+}
+
 // ListRegionIDsInKeyRange lists ids of regions in [start_key,end_key].
 func (c *RegionCache) ListRegionIDsInKeyRange(bo *Backoffer, startKey, endKey []byte) (regionIDs []uint64, err error) {
 	for {
