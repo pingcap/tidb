@@ -17,6 +17,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
@@ -107,6 +108,10 @@ func (s *rpcServer) CoprocessorStream(in *coprocessor.Request, stream tikvpb.Tik
 
 	h := executor.NewCoprocessorDAGHandler(se)
 	return h.HandleStreamRequest(context.Background(), in, stream)
+}
+
+func (s *rpcServer) BatchCommands(tikvpb.Tikv_BatchCommandsServer) error {
+	return errors.New("TiDB RPC Server not support BatchCommands")
 }
 
 // handleCopRequest handles the cop dag request.
