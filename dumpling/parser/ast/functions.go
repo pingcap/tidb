@@ -248,6 +248,8 @@ const (
 	TiDBVersion    = "tidb_version"
 	TiDBIsDDLOwner = "tidb_is_ddl_owner"
 	TiDBDecodePlan = "tidb_decode_plan"
+	FormatBytes    = "format_bytes"
+	FormatNanoTime = "format_nano_time"
 
 	// control functions
 	If     = "if"
