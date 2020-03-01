@@ -183,7 +183,6 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo) (
 		return casted, err
 	}
 
-	// TODO: we may need to handle non-binary collation.
 	if col.Tp == mysql.TypeString && !types.IsBinaryStr(&col.FieldType) {
 		truncateTrailingSpaces(&casted)
 	}

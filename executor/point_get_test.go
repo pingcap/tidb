@@ -221,11 +221,11 @@ func (s *testPointGetSuite) TestIndexLookupChar(c *C) {
 
 	tk.MustExec(`set @@sql_mode="";`)
 	tk.MustIndexLookup(`select * from t where a = "aa";`).Check(testkit.Rows(`aa bb`))
-	tk.MustIndexLookup(`select * from t where a = "aab";`).Check(testkit.Rows())
+	tk.MustTableDual(`select * from t where a = "aab";`).Check(testkit.Rows())
 
 	// Test query with table alias
 	tk.MustIndexLookup(`select * from t tmp where a = "aa";`).Check(testkit.Rows(`aa bb`))
-	tk.MustIndexLookup(`select * from t tmp where a = "aab";`).Check(testkit.Rows())
+	tk.MustTableDual(`select * from t tmp where a = "aab";`).Check(testkit.Rows())
 
 	tk.MustExec(`truncate table t;`)
 	tk.MustExec(`insert into t values("a ", "b ");`)
@@ -233,7 +233,7 @@ func (s *testPointGetSuite) TestIndexLookupChar(c *C) {
 	tk.MustExec(`set @@sql_mode="";`)
 	tk.MustIndexLookup(`select * from t where a = "a";`).Check(testkit.Rows(`a b`))
 	tk.MustIndexLookup(`select * from t where a = "a ";`).Check(testkit.Rows())
-	tk.MustIndexLookup(`select * from t where a = "a  ";`).Check(testkit.Rows())
+	tk.MustTableDual(`select * from t where a = "a  ";`).Check(testkit.Rows())
 
 	// Test CHAR BINARY.
 	tk.MustExec(`drop table if exists t;`)
@@ -244,11 +244,11 @@ func (s *testPointGetSuite) TestIndexLookupChar(c *C) {
 	tk.MustExec(`set @@sql_mode="";`)
 	tk.MustIndexLookup(`select * from t where a = "a";`).Check(testkit.Rows(`a b`))
 	tk.MustIndexLookup(`select * from t where a = "a ";`).Check(testkit.Rows())
-	tk.MustIndexLookup(`select * from t where a = "a  ";`).Check(testkit.Rows())
+	tk.MustTableDual(`select * from t where a = "a  ";`).Check(testkit.Rows())
 	tk.MustIndexLookup(`select * from t where a = "";`).Check(testkit.Rows(` `))
 	tk.MustIndexLookup(`select * from t where a = " ";`).Check(testkit.Rows())
 	tk.MustIndexLookup(`select * from t where a = "  ";`).Check(testkit.Rows())
-	tk.MustIndexLookup(`select * from t where a = "   ";`).Check(testkit.Rows())
+	tk.MustTableDual(`select * from t where a = "   ";`).Check(testkit.Rows())
 
 }
 
@@ -341,26 +341,26 @@ func (s *testPointGetSuite) TestIndexLookupBinary(c *C) {
 	tk.MustExec(`insert into t values("a", "b");`)
 
 	tk.MustExec(`set @@sql_mode="";`)
-	tk.MustIndexLookup(`select * from t where a = "a";`).Check(testkit.Rows())
+	tk.MustTableDual(`select * from t where a = "a";`).Check(testkit.Rows())
 	tk.MustIndexLookup(`select * from t where a = "a ";`).Check(testkit.Rows())
-	tk.MustIndexLookup(`select * from t where a = "a  ";`).Check(testkit.Rows())
+	tk.MustTableDual(`select * from t where a = "a  ";`).Check(testkit.Rows())
 	tk.MustIndexLookup(`select * from t where a = "a\0";`).Check(testkit.Rows("a\x00 b\x00"))
 
 	// Test query with table alias
 	tk.MustExec(`set @@sql_mode="";`)
-	tk.MustIndexLookup(`select * from t tmp where a = "a";`).Check(testkit.Rows())
+	tk.MustTableDual(`select * from t tmp where a = "a";`).Check(testkit.Rows())
 	tk.MustIndexLookup(`select * from t tmp where a = "a ";`).Check(testkit.Rows())
-	tk.MustIndexLookup(`select * from t tmp where a = "a  ";`).Check(testkit.Rows())
+	tk.MustTableDual(`select * from t tmp where a = "a  ";`).Check(testkit.Rows())
 	tk.MustIndexLookup(`select * from t tmp where a = "a\0";`).Check(testkit.Rows("a\x00 b\x00"))
 
 	tk.MustExec(`insert into t values("a ", "b ");`)
-	tk.MustIndexLookup(`select * from t where a = "a";`).Check(testkit.Rows())
+	tk.MustTableDual(`select * from t where a = "a";`).Check(testkit.Rows())
 	tk.MustIndexLookup(`select * from t where a = "a ";`).Check(testkit.Rows(`a  b `))
-	tk.MustIndexLookup(`select * from t where a = "a  ";`).Check(testkit.Rows())
+	tk.MustTableDual(`select * from t where a = "a  ";`).Check(testkit.Rows())
 
-	tk.MustIndexLookup(`select * from t where a = "a";`).Check(testkit.Rows())
+	tk.MustTableDual(`select * from t where a = "a";`).Check(testkit.Rows())
 	tk.MustIndexLookup(`select * from t where a = "a ";`).Check(testkit.Rows(`a  b `))
-	tk.MustIndexLookup(`select * from t where a = "a  ";`).Check(testkit.Rows())
+	tk.MustTableDual(`select * from t where a = "a  ";`).Check(testkit.Rows())
 
 }
 

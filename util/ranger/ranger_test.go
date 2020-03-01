@@ -554,6 +554,13 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 			exprStr:     `e = "你好啊"`,
 			accessConds: "[eq(test.t.e, 你好啊)]",
 			filterConds: "[eq(test.t.e, 你好啊)]",
+			resultStr:   "[]",
+		},
+		{
+			indexPos:    3,
+			exprStr:     `e = "你好啊\0"`,
+			accessConds: "[eq(test.t.e, 你好啊\x00)]",
+			filterConds: "[eq(test.t.e, 你好啊\x00)]",
 			resultStr:   "[[\"[228 189]\",\"[228 189]\"]]",
 		},
 		{
@@ -1000,7 +1007,39 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 			exprStr:     `d > 'aaaaaaaaaaaaaa'`,
 			accessConds: "[gt(test.t.d, aaaaaaaaaaaaaa)]",
 			filterConds: "[]",
-			resultStr:   "[(\"aaaaaaaaaaaaaa\",+inf]]",
+			resultStr:   "[(\"aaa\",+inf]]",
+			length:      types.UnspecifiedLength,
+		},
+		{
+			colPos:      3,
+			exprStr:     `d >= 'aaaaaaaaaaaaaa'`,
+			accessConds: "[ge(test.t.d, aaaaaaaaaaaaaa)]",
+			filterConds: "[]",
+			resultStr:   "[(\"aaa\",+inf]]",
+			length:      types.UnspecifiedLength,
+		},
+		{
+			colPos:      3,
+			exprStr:     `d < 'aaaaaaaaaaaaaa'`,
+			accessConds: "[lt(test.t.d, aaaaaaaaaaaaaa)]",
+			filterConds: "[]",
+			resultStr:   "[[-inf,\"aaa\"]]",
+			length:      types.UnspecifiedLength,
+		},
+		{
+			colPos:      3,
+			exprStr:     `d <= 'aaaaaaaaaaaaaa'`,
+			accessConds: "[le(test.t.d, aaaaaaaaaaaaaa)]",
+			filterConds: "[]",
+			resultStr:   "[[-inf,\"aaa\"]]",
+			length:      types.UnspecifiedLength,
+		},
+		{
+			colPos:      3,
+			exprStr:     `d = 'aaaaaaaaaaaaaa'`,
+			accessConds: "[eq(test.t.d, aaaaaaaaaaaaaa)]",
+			filterConds: "[]",
+			resultStr:   "[]",
 			length:      types.UnspecifiedLength,
 		},
 		{
@@ -1062,7 +1101,7 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 		conds = ranger.ExtractAccessConditionsForColumn(conds, col.UniqueID)
 		c.Assert(fmt.Sprintf("%s", conds), Equals, tt.accessConds, Commentf("wrong access conditions for expr: %s", tt.exprStr))
 		result, err := ranger.BuildColumnRange(conds, new(stmtctx.StatementContext), col.RetType, tt.length)
-		c.Assert(err, IsNil)
+		c.Assert(err, IsNil, Commentf(sql+"\n"+fmt.Sprintf("%+v", err)))
 		got := fmt.Sprintf("%v", result)
 		c.Assert(got, Equals, tt.resultStr, Commentf("different for expr %s, col: %v", tt.exprStr, col))
 	}

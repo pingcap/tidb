@@ -24,6 +24,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -918,7 +919,9 @@ func (d *Datum) convertToString(sc *stmtctx.StatementContext, target *FieldType)
 	default:
 		return invalidConv(d, target.Tp)
 	}
+	log.Warn("ppppp", zap.String("before xxx", s))
 	s, err := ProduceStrWithSpecifiedTp(s, target, sc, true)
+	log.Warn("ppppp", zap.String("after xxx", s))
 	ret.SetString(s, target.Collate, target.Flen)
 	if target.Charset == charset.CharsetBin {
 		ret.k = KindBytes

@@ -91,7 +91,7 @@ func convertPoint(sc *stmtctx.StatementContext, point point, tp *types.FieldType
 		return point, nil
 	}
 	casted, err := point.value.ConvertTo(sc, tp)
-	if err != nil {
+	if err != nil && !types.ErrDataTooLong.Equal(err) {
 		return point, errors.Trace(err)
 	}
 	valCmpCasted, err := point.value.CompareDatum(sc, &casted)
