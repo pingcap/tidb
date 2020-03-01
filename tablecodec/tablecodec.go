@@ -349,7 +349,7 @@ func DecodeColumnValue(data []byte, ft *types.FieldType, loc *time.Location) (ty
 	return colDatum, nil
 }
 
-// DecodeRowWithMapNew decode a row top datum map.
+// DecodeRowWithMapNew decode a row to datum map.
 func DecodeRowWithMapNew(b []byte, cols map[int64]*types.FieldType, loc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
 	if row == nil {
 		row = make(map[int64]types.Datum, len(cols))
