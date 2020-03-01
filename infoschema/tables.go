@@ -120,6 +120,8 @@ const (
 	TableMetricSummaryByLabel = "METRICS_SUMMARY_BY_LABEL"
 	// TableInspectionSummary is the string constant of inspection summary table
 	TableInspectionSummary = "INSPECTION_SUMMARY"
+	// TableDiskUsage is a table that contains all tables disk usage
+	TableDiskUsage = "DISK_USAGE"
 )
 
 var tableIDMap = map[string]int64{
@@ -178,6 +180,7 @@ var tableIDMap = map[string]int64{
 	TableMetricSummaryByLabel:               autoid.InformationSchemaDBID + 53,
 	TableMetricTables:                       autoid.InformationSchemaDBID + 54,
 	TableInspectionSummary:                  autoid.InformationSchemaDBID + 55,
+	TableDiskUsage:                          autoid.InformationSchemaDBID + 56,
 }
 
 type columnInfo struct {
@@ -954,6 +957,13 @@ var tableMetricSummaryByLabelCols = []columnInfo{
 	{name: "MIN_VALUE", tp: mysql.TypeDouble, size: 22, decimal: 6},
 	{name: "MAX_VALUE", tp: mysql.TypeDouble, size: 22, decimal: 6},
 	{name: "COMMENT", tp: mysql.TypeVarchar, size: 256},
+}
+
+var TableDiskUsageCols = []columnInfo{
+	{name: "TABLE_SCHEMA", tp: mysql.TypeVarchar, size: 64},
+	{name: "TABLE_NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "TABLE_ID", tp: mysql.TypeLonglong, size: 21},
+	{name: "DISK_USAGE", tp: mysql.TypeLonglong, size: 64},
 }
 
 func dataForTiKVRegionStatus(ctx sessionctx.Context) (records [][]types.Datum, err error) {
@@ -2452,6 +2462,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableMetricSummaryByLabel:               tableMetricSummaryByLabelCols,
 	TableMetricTables:                       tableMetricTablesCols,
 	TableInspectionSummary:                  tableInspectionSummaryCols,
+	TableDiskUsage:                          TableDiskUsageCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {

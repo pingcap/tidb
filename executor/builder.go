@@ -1366,6 +1366,15 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 					extractor:  v.Extractor.(*plannercore.SlowQueryExtractor),
 				},
 			}
+		case strings.ToLower(infoschema.TableDiskUsage):
+			return &MemTableReaderExec{
+				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+				retriever: &diskUsageRetriever{
+					table:      v.Table,
+					outputCols: v.Columns,
+					extractor:  v.Extractor.(*plannercore.DiskUsageExtractor),
+				},
+			}
 		}
 	}
 	tb, _ := b.is.TableByID(v.Table.ID)
