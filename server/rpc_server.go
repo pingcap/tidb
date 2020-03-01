@@ -147,6 +147,7 @@ func (s *rpcServer) BatchCommands(ss tikvpb.Tikv_BatchCommandsServer) error {
 					},
 				}
 			default:
+				logutil.BgLogger().Info("RPC server batch commands receive unknown request", zap.Any("req", request))
 				response = &tikvpb.BatchCommandsResponse_Response{
 					Cmd: &tikvpb.BatchCommandsResponse_Response_Empty{
 						Empty: &tikvpb.BatchCommandsEmptyResponse{},
