@@ -2521,31 +2521,23 @@ func (b *builtinConvertTzSig) vecEvalTime(input *chunk.Chunk, result *chunk.Colu
 				continue
 			}
 
-			t, err := times[i].Time.GoTime(fromTz)
+			t, err := times[i].GoTime(fromTz)
 			if err != nil {
 				result.SetNull(i, true)
 				continue
 			}
 
-			times[i] = types.Time{
-				Time: types.FromGoTime(t.In(toTz)),
-				Type: mysql.TypeDatetime,
-				Fsp:  fsp,
-			}
+			times[i] = types.NewTime(types.FromGoTime(t.In(toTz)), mysql.TypeDatetime, fsp)
 			continue
 		}
 		if fromTzMatched && toTzMatched {
-			t, err := times[i].Time.GoTime(time.Local)
+			t, err := times[i].GoTime(time.Local)
 			if err != nil {
 				result.SetNull(i, true)
 				continue
 			}
 
-			times[i] = types.Time{
-				Time: types.FromGoTime(t.Add(timeZone2Duration(toTzStr) - timeZone2Duration(fromTzStr))),
-				Type: mysql.TypeDatetime,
-				Fsp:  fsp,
-			}
+			times[i] = types.NewTime(types.FromGoTime(t.Add(timeZone2Duration(toTzStr)-timeZone2Duration(fromTzStr))), mysql.TypeDatetime, fsp)
 			continue
 		}
 		result.SetNull(i, true)
