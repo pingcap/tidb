@@ -1417,6 +1417,23 @@ func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) []Ph
 	return joins
 }
 
+func (p *LogicalJoin) exhaustParallelPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
+	if p.ctx.GetSessionVars().HashJoinConcurrency > 1 {
+		return nil
+	}
+
+	// Support hash join ONLY.
+	// Future: support other joins.
+	options := exhaustParallelPhysicalPlansOptions{
+		exhaustor: p.getHashJoins,
+		deliveringPartitionGroupingColsFunctor: func(pp PhysicalPlan, possibleProp []*property.PhysicalProperty) []*expression.Column {
+			hashJoin := pp.(*PhysicalHashJoin)
+			return possibleProp[hashJoin.InnerChildIdx].PartitionGroupingCols
+		},
+	}
+	return p.parallelHelper.exhaustParallelPhysicalPlans(p.basePlan.ctx, p, prop, options)
+}
+
 // TryToGetChildProp will check if this sort property can be pushed or not.
 // When a sort column will be replaced by scalar function, we refuse it.
 // When a sort column will be replaced by a constant, we just remove it.
@@ -1553,7 +1570,11 @@ func (p *LogicalWindow) exhaustParallelPhysicalPlans(prop *property.PhysicalProp
 	byItems = append(byItems, p.OrderBy...)
 	itemExprs := getItemExprsFromItems(byItems)
 
-	return p.parallelHelper.exhaustParallelPhysicalPlans4SingleChild(p.basePlan.ctx, p, prop, nil, byItems, itemExprs)
+	options := exhaustParallelPhysicalPlansOptions{
+		deliveringLocalItems:     byItems,
+		deliveringLocalItemExprs: itemExprs,
+	}
+	return p.parallelHelper.exhaustParallelPhysicalPlans(p.basePlan.ctx, p, prop, options)
 }
 
 // exhaustPhysicalPlans is only for implementing interface. DataSource and Dual generate task in `findBestTask` directly.
@@ -1738,16 +1759,18 @@ func (la *LogicalAggregation) exhaustParallelPhysicalPlans(prop *property.Physic
 		return nil
 	}
 
-	exhaustor := func(prop *property.PhysicalProperty) []PhysicalPlan {
-		if !prop.IsEmpty() {
-			return nil
-		}
-		// Shuffle cannot be pushed to cop.
-		agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, TaskTp: property.RootTaskType})
-		agg.SetSchema(la.schema.Clone())
-		return []PhysicalPlan{agg}
+	options := exhaustParallelPhysicalPlansOptions{
+		exhaustor: func(prop *property.PhysicalProperty) []PhysicalPlan {
+			if !prop.IsEmpty() {
+				return nil
+			}
+			// Shuffle cannot be pushed to cop.
+			agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, TaskTp: property.RootTaskType})
+			agg.SetSchema(la.schema.Clone())
+			return []PhysicalPlan{agg}
+		},
 	}
-	return la.parallelHelper.exhaustParallelPhysicalPlans4SingleChild(la.basePlan.ctx, la, prop, exhaustor, nil, nil)
+	return la.parallelHelper.exhaustParallelPhysicalPlans(la.basePlan.ctx, la, prop, options)
 }
 
 func (p *LogicalSelection) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
@@ -1840,7 +1863,13 @@ func (ls *LogicalSort) exhaustParallelPhysicalPlans(prop *property.PhysicalPrope
 			return nil
 		}
 		itemExprs := GetItemExprsFromByItems(ls.ByItems)
-		return ls.parallelHelper.exhaustParallelPhysicalPlans4SingleChild(ls.basePlan.ctx, ls, prop, exhaustor, propByItems.Items, itemExprs)
+
+		options := exhaustParallelPhysicalPlansOptions{
+			exhaustor:                exhaustor,
+			deliveringLocalItems:     propByItems.Items,
+			deliveringLocalItemExprs: itemExprs,
+		}
+		return ls.parallelHelper.exhaustParallelPhysicalPlans(ls.basePlan.ctx, ls, prop, options)
 	}
 	return nil
 }

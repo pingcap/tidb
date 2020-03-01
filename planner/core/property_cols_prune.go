@@ -108,7 +108,7 @@ func (p *LogicalWindow) PreparePossiblePartitionProperties(childrenPartitionProp
 		return nil
 	}
 	partitionByCols := property.ColsFromItems(p.PartitionBy)
-	return p.parallelHelper.preparePossiblePartitionProperties(p, partitionByCols, childrenPartitionProperties...)
+	return p.parallelHelper.preparePossiblePartitionProperties(p, [][]*expression.Column{partitionByCols}, childrenPartitionProperties...)
 }
 
 // PreparePossibleProperties implements LogicalPlan PreparePossibleProperties interface.
@@ -122,7 +122,7 @@ func (p *LogicalSort) PreparePossibleProperties(schema *expression.Schema, child
 
 // PreparePossiblePartitionProperties implements LogicalPlan PreparePossiblePartitionProperties interface.
 func (p *LogicalSort) PreparePossiblePartitionProperties(childrenPartitionProperties ...[]*property.PhysicalProperty) []*property.PhysicalProperty {
-	return p.parallelHelper.preparePossiblePartitionProperties(p, nil, childrenPartitionProperties...)
+	return p.parallelHelper.preparePossiblePartitionProperties(p, [][]*expression.Column{nil}, childrenPartitionProperties...)
 }
 
 // PreparePossibleProperties implements LogicalPlan PreparePossibleProperties interface.
@@ -210,6 +210,20 @@ func (p *LogicalJoin) PreparePossibleProperties(schema *expression.Schema, child
 	return resultProperties
 }
 
+// PreparePossiblePartitionProperties implements LogicalPlan interface.
+func (p *LogicalJoin) PreparePossiblePartitionProperties(childrenPartitionProperties ...[]*property.PhysicalProperty) []*property.PhysicalProperty {
+	leftJoinKeys, rightJoinKeys := p.GetJoinKeys()
+	globalGroupings := [][]*expression.Column{leftJoinKeys, rightJoinKeys}
+	_ = p.parallelHelper.preparePossiblePartitionProperties(p, globalGroupings, childrenPartitionProperties...)
+
+	// Global properties are the same as inner, which is not determined by now.
+	// So return both.
+	properties := make([]*property.PhysicalProperty, len(p.parallelHelper.possibleChildrenProperties[0])+len(p.parallelHelper.possibleChildrenProperties[1]))
+	properties = append(properties, p.parallelHelper.possibleChildrenProperties[0]...)
+	properties = append(properties, p.parallelHelper.possibleChildrenProperties[1]...)
+	return properties
+}
+
 // PreparePossibleProperties implements LogicalPlan PreparePossibleProperties interface.
 func (la *LogicalAggregation) PreparePossibleProperties(schema *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
 	childProps := childrenProperties[0]
@@ -235,5 +249,5 @@ func (la *LogicalAggregation) PreparePossiblePartitionProperties(childrenPartiti
 	if len(la.groupByCols) == 0 {
 		return nil
 	}
-	return la.parallelHelper.preparePossiblePartitionProperties(la, la.groupByCols, childrenPartitionProperties...)
+	return la.parallelHelper.preparePossiblePartitionProperties(la, [][]*expression.Column{la.groupByCols}, childrenPartitionProperties...)
 }

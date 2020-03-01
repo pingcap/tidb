@@ -118,6 +118,7 @@ const (
 // LogicalJoin is the logical join plan.
 type LogicalJoin struct {
 	logicalSchemaProducer
+	parallelHelper parallelLogicalPlanHelper
 
 	JoinType      JoinType
 	reordered     bool

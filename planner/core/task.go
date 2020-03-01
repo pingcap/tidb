@@ -1329,7 +1329,7 @@ func (p *PhysicalShuffle) attach2Task(tasks ...task) task {
 
 // GetCost computes the cost of in memory sort.
 func (p *PhysicalShuffle) GetCost(count float64) float64 {
-	if count < 2.0 {
+	/*if count < 2.0 {
 		count = 2.0
 	}
 	sessVars := p.ctx.GetSessionVars()
@@ -1348,5 +1348,7 @@ func (p *PhysicalShuffle) GetCost(count float64) float64 {
 	cpuCost := cpuCount * sessVars.CPUFactor
 	memoryCost := memoryCount * sessVars.MemoryFactor
 	concurrencyCost := (float64)(p.Concurrency) * sessVars.ConcurrencyFactor
-	return cpuCost + memoryCost + concurrencyCost
+	return cpuCost + memoryCost + concurrencyCost*/
+	// DEBUG //
+	return 0
 }

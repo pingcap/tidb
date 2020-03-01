@@ -24,18 +24,19 @@ func isExecutorsParallelEnable(ctx sessionctx.Context) bool {
 }
 
 type parallelLogicalPlanHelper struct {
+	// "Number of children" x "Possible Properties of each child".
 	possibleChildrenProperties [][]*property.PhysicalProperty
 }
 
 func (p *parallelLogicalPlanHelper) preparePossiblePartitionProperties(
-	lp LogicalPlan, globalGrouping []*expression.Column,
+	lp LogicalPlan, globalGroupings [][]*expression.Column,
 	childrenPartitionProperties ...[]*property.PhysicalProperty,
 ) []*property.PhysicalProperty {
 	p.possibleChildrenProperties = make([][]*property.PhysicalProperty, len(lp.Children()))
 	for i := range lp.Children() {
-		p.possibleChildrenProperties[i] = p.preparePossiblePartitionProperties4OneChild(lp, globalGrouping, childrenPartitionProperties[i])
+		p.possibleChildrenProperties[i] = p.preparePossiblePartitionProperties4OneChild(lp, globalGroupings[i], childrenPartitionProperties[i])
 	}
-	return p.possibleChildrenProperties[0] // Future: support multiple children.
+	return p.possibleChildrenProperties[0] // Return the first one, as most plan has only one child.
 }
 
 func (p *parallelLogicalPlanHelper) preparePossiblePartitionProperties4OneChild(
@@ -84,9 +85,59 @@ func (p *parallelLogicalPlanHelper) preparePossiblePartitionProperties4OneChild(
 	return possibleProperties
 }
 
-func (p *parallelLogicalPlanHelper) exhaustParallelPhysicalPlans4SingleChild(
-	ctx sessionctx.Context, lp LogicalPlan, prop *property.PhysicalProperty, exhaustor func(*property.PhysicalProperty) []PhysicalPlan,
-	deliveringLocalItems []property.Item, deliveringLocalItemExprs []property.ItemExpression,
+// exhaustCombinationOfPossibleChildrenProperties exhausts combination of possible children properties.
+// Input: `Number of Children` x `Possible properties`.
+// Output: `Number of possible properties` x `Number of Children`.
+func (p *parallelLogicalPlanHelper) exhaustCombinationOfPossibleChildrenProperties() [][]*property.PhysicalProperty {
+	childrenCount := len(p.possibleChildrenProperties)
+
+	possibleCount := 1
+	for _, possibleProps := range p.possibleChildrenProperties {
+		possibleCount *= len(possibleProps)
+	}
+	if possibleCount == 0 {
+		return nil
+	}
+	possibleProperties := make([][]*property.PhysicalProperty, 0, possibleCount)
+
+	indices := make([]int, childrenCount)
+	for {
+		props := make([]*property.PhysicalProperty, childrenCount)
+		for childIdx := range indices {
+			props[childIdx] = p.possibleChildrenProperties[childIdx][indices[childIdx]]
+		}
+		possibleProperties = append(possibleProperties, props)
+
+		for childIdx := range indices {
+			indices[childIdx]++
+			if indices[childIdx] >= len(p.possibleChildrenProperties[childIdx]) {
+				if childIdx == childrenCount-1 {
+					return possibleProperties
+				}
+				indices[childIdx+1], indices[childIdx] = indices[childIdx+1]+1, 0
+			}
+		}
+	}
+}
+
+type exhaustParallelPhysicalPlansOptions struct {
+	// exhaustor exhausts physical plans.
+	// When nil, call `lp.exhaustPhysicalPlans(prop)`.
+	exhaustor func(*property.PhysicalProperty) []PhysicalPlan
+
+	// deliveringLocalItems is the delivering local items.
+	deliveringLocalItems []property.Item
+	// deliveringLocalItemExprs is the delivering local property expression, used by merge-sort merger.
+	deliveringLocalItemExprs []property.ItemExpression
+
+	// deliveringPartitionGroupingColsFunctor gets delivering `PartitionGroupingCols`.
+	// When nil, gets `PartitionGroupingCols` from first child.
+	deliveringPartitionGroupingColsFunctor func(pp PhysicalPlan, possibleProp []*property.PhysicalProperty) []*expression.Column
+}
+
+func (p *parallelLogicalPlanHelper) exhaustParallelPhysicalPlans(
+	ctx sessionctx.Context, lp LogicalPlan, prop *property.PhysicalProperty,
+	options exhaustParallelPhysicalPlansOptions,
 ) []PhysicalPlan {
 	concurrency := ctx.GetSessionVars().ExecutorsConcurrency
 	if concurrency <= 1 {
@@ -96,11 +147,28 @@ func (p *parallelLogicalPlanHelper) exhaustParallelPhysicalPlans4SingleChild(
 		return nil
 	}
 
-	plans := make([]PhysicalPlan, 0, len(p.possibleChildrenProperties[0]))
-	for _, possibleProp := range p.possibleChildrenProperties[0] {
+	possibleProperties := p.exhaustCombinationOfPossibleChildrenProperties()
+	plans := make([]PhysicalPlan, 0, len(possibleProperties))
+OUTER:
+	for _, possibleProp := range possibleProperties {
+		for _, childProp := range possibleProp {
+			if len(childProp.PartitionGroupingCols) > 0 {
+				NDV := int(getCardinality(childProp.PartitionGroupingCols, lp.Schema(), lp.statsInfo()))
+				if NDV <= 1 {
+					continue OUTER
+				}
+			} else {
+				// Should not be parallel when less or equal to ONE chunk.
+				numberOfChunks := (float64)(lp.statsInfo().RowCount) / (float64)(ctx.GetSessionVars().MaxChunkSize)
+				if numberOfChunks <= 1.0 {
+					continue OUTER
+				}
+			}
+		}
+
 		var physicals []PhysicalPlan
-		if exhaustor != nil {
-			physicals = exhaustor(prop)
+		if options.exhaustor != nil {
+			physicals = options.exhaustor(prop)
 		} else {
 			physicals = lp.exhaustPhysicalPlans(prop)
 		}
@@ -108,29 +176,24 @@ func (p *parallelLogicalPlanHelper) exhaustParallelPhysicalPlans4SingleChild(
 			return nil
 		}
 
-		if len(possibleProp.PartitionGroupingCols) > 0 {
-			NDV := int(getCardinality(possibleProp.PartitionGroupingCols, lp.Schema(), lp.statsInfo()))
-			if NDV <= 1 {
-				continue
-			}
-		} else {
-			// Should not be parallel when less or equal to ONE chunk.
-			numberOfChunks := (float64)(lp.statsInfo().RowCount) / (float64)(ctx.GetSessionVars().MaxChunkSize)
-			if numberOfChunks <= 1.0 {
-				continue
-			}
-		}
-
 		for _, physical := range physicals {
-			childProp := physical.GetChildReqProps(0)
-			childProp.IsPartitioning = true
-			childProp.PartitionGroupingCols = possibleProp.PartitionGroupingCols
+			for i := range lp.Children() {
+				childProp := physical.GetChildReqProps(i)
+				childProp.IsPartitioning = true
+				childProp.PartitionGroupingCols = possibleProp[i].PartitionGroupingCols
+			}
+
+			partitionGroupingCols := possibleProp[0].PartitionGroupingCols
+			if options.deliveringPartitionGroupingColsFunctor != nil {
+				partitionGroupingCols = options.deliveringPartitionGroupingColsFunctor(physical, possibleProp)
+			}
+
 			physical.SetConcurrency(concurrency)
 			physical.SetPartitionDeliveringProperty(&property.PhysicalProperty{
 				IsPartitioning:        true,
-				Items:                 deliveringLocalItems,
-				ItemExprs:             deliveringLocalItemExprs,
-				PartitionGroupingCols: possibleProp.PartitionGroupingCols,
+				Items:                 options.deliveringLocalItems,
+				ItemExprs:             options.deliveringLocalItemExprs,
+				PartitionGroupingCols: partitionGroupingCols,
 			})
 			plans = append(plans, physical)
 		}

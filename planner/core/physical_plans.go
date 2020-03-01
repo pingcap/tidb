@@ -307,7 +307,6 @@ type PhysicalApply struct {
 
 type basePhysicalJoin struct {
 	physicalSchemaProducer
-	serialPhysicalPlanProducer
 
 	JoinType JoinType
 
