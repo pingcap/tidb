@@ -522,7 +522,6 @@ func (p *PhysicalHashJoin) attach2Task(tasks ...task) task {
 	lTask := finishCopTask(p.ctx, tasks[0].copy())
 	rTask := finishCopTask(p.ctx, tasks[1].copy())
 	p.SetChildren(lTask.plan(), rTask.plan())
-	p.schema = BuildPhysicalJoinSchema(p.JoinType, p)
 	return &rootTask{
 		p:   p,
 		cst: lTask.cost() + rTask.cost() + p.GetCost(lTask.count(), rTask.count()),

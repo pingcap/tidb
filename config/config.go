@@ -21,6 +21,7 @@ import (
 	"io/ioutil"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -67,6 +68,7 @@ type Config struct {
 	SplitTable       bool            `toml:"split-table" json:"split-table"`
 	TokenLimit       uint            `toml:"token-limit" json:"token-limit"`
 	OOMUseTmpStorage bool            `toml:"oom-use-tmp-storage" json:"oom-use-tmp-storage"`
+	TempStoragePath  string          `toml:"tmp-storage-path" json:"tmp-storage-path"`
 	OOMAction        string          `toml:"oom-action" json:"oom-action"`
 	MemQuotaQuery    int64           `toml:"mem-quota-query" json:"mem-quota-query"`
 	EnableStreaming  bool            `toml:"enable-streaming" json:"enable-streaming"`
@@ -498,6 +500,7 @@ var defaultConf = Config{
 	Lease:                        "45s",
 	TokenLimit:                   1000,
 	OOMUseTmpStorage:             true,
+	TempStoragePath:              filepath.Join(os.TempDir(), "tidb", "tmp-storage"),
 	OOMAction:                    "log",
 	MemQuotaQuery:                1 << 30,
 	EnableStreaming:              false,
