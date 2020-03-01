@@ -1854,6 +1854,7 @@ var builtinGlobalVariable = []string{
 	variable.NetWriteTimeout,
 	variable.MaxExecutionTime,
 	variable.InnodbLockWaitTimeout,
+	variable.WindowingUseHighPrecision,
 
 	/* TiDB specific global variables: */
 	variable.TiDBSkipUTF8Check,

@@ -97,6 +97,11 @@ func (e *sum4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 }
 
 func (e *sum4Float64) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
+	if sctx.GetSessionVars().WindowingUseHighPrecision {
+		e.ResetPartialResult(pr)
+		return e.UpdatePartialResult(sctx, rows[lastStart+shiftStart:lastEnd+shiftEnd], pr)
+	}
+
 	p := (*partialResult4SumFloat64)(pr)
 	for i := uint64(0); i < shiftEnd; i++ {
 		input, isNull, err := e.args[0].EvalReal(sctx, rows[lastEnd+i])

@@ -14,6 +14,7 @@
 package executor_test
 
 import (
+	"fmt"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/testkit"
 )
@@ -220,11 +221,22 @@ func (s *testSuite7) TestWindowFunctionsDataReference(c *C) {
 }
 
 func (s *testSuite7) TestSlidingWindowFunctions(c *C) {
-	var result *testkit.Result
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("CREATE TABLE t (id INTEGER, sex CHAR(1));")
+	idTypes := []string{"INTEGER", "FLOAT", "DOUBLE"}
+	useHighPrecisions := []string{"ON", "OFF"}
+	for _, idType := range idTypes {
+		for _, useHighPrecision := range useHighPrecisions {
+			tk.MustExec("drop table if exists t;")
+			tk.MustExec(fmt.Sprintf("CREATE TABLE t (id %s, sex CHAR(1));", idType))
+			tk.MustExec(fmt.Sprintf("SET SESSION windowing_use_high_precision = %s;", useHighPrecision))
+			baseTestSlidingWindowFunctions(tk)
+		}
+	}
+}
+
+func baseTestSlidingWindowFunctions(tk *testkit.TestKit) {
+	var result *testkit.Result
 	tk.MustExec("insert into t values (1,'M')")
 	tk.MustExec("insert into t values (2,'F')")
 	tk.MustExec("insert into t values (3,'F')")
@@ -232,7 +244,6 @@ func (s *testSuite7) TestSlidingWindowFunctions(c *C) {
 	tk.MustExec("insert into t values (5,'M')")
 	tk.MustExec("insert into t values (10,null)")
 	tk.MustExec("insert into t values (11,null)")
-
 	tk.MustExec("PREPARE p FROM 'SELECT sex, COUNT(id) OVER (ORDER BY id ROWS BETWEEN ? PRECEDING and ? PRECEDING) FROM t';")
 	tk.MustExec("SET @p1= 1;")
 	tk.MustExec("SET @p2= 2;")
@@ -300,5 +311,4 @@ func (s *testSuite7) TestSlidingWindowFunctions(c *C) {
 	tk.MustExec("insert into t values (null,null),(1,20190201),(2,20190202),(3,20190203),(5,20190205)")
 	result = tk.MustQuery("select a, sum(a) over(order by a desc range between 1 preceding and 2 following) from t")
 	result.Check(testkit.Rows("5 8", "3 6", "2 6", "1 3", "<nil> <nil>"))
-
 }
