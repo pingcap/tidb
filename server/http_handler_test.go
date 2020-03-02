@@ -440,7 +440,7 @@ func (ts *HTTPHandlerTestSuite) TestGetTableMVCC(c *C) {
 	info := data.Value.Info
 	c.Assert(info, NotNil)
 	c.Assert(len(info.Writes), Greater, 0)
-	startTs := info.Writes[0].StartTs
+	startTs := info.Writes[2].StartTs
 
 	resp, err = ts.fetchStatus(fmt.Sprintf("/mvcc/txn/%d/tidb/test", startTs))
 	c.Assert(err, IsNil)
