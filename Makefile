@@ -145,8 +145,13 @@ ifeq ("$(TRAVIS_COVERAGE)", "1")
 			|| { $(FAILPOINT_DISABLE); exit 1; }
 else
 	@echo "Running in native mode."
+<<<<<<< HEAD
 	@export log_level=error; \
 	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' -cover $(PACKAGES) || { $(FAILPOINT_DISABLE); exit 1; }
+=======
+	@export log_level=fatal; export TZ='Asia/Shanghai'; \
+	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' -cover $(PACKAGES) -check.p true -check.timeout 4s || { $(FAILPOINT_DISABLE); exit 1; }
+>>>>>>> d39aeea... Makefile: make native gotest running in log_level=fatal (#14980)
 endif
 	@$(FAILPOINT_DISABLE)
 
