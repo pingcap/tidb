@@ -39,10 +39,10 @@ const (
 	MaxLogFileSize = 4096 // MB
 	// DefTxnTotalSizeLimit is the default value of TxnTxnTotalSizeLimit.
 	DefTxnTotalSizeLimit = 100 * 1024 * 1024
-	// DefMaxIndexLength is the maximum index length. This value is consistent with MySQL.
+	// DefMaxIndexLength is the maximum index length(in bytes). This value is consistent with MySQL.
 	DefMaxIndexLength = 3072
-	// DefTiDBMaxIndexLength is the maximum index length for TiDB v3.0.7 and previous version.
-	DefTiDBMaxIndexLength = 3072 * 4
+	// DefMaxOfMaxIndexLength is the maximum index length(in bytes) for TiDB v3.0.7 and previous version.
+	DefMaxOfMaxIndexLength = 3072 * 4
 )
 
 // Valid config maps
@@ -759,8 +759,8 @@ func (c *Config) Valid() error {
 	if c.Store == "mocktikv" && !c.RunDDL {
 		return fmt.Errorf("can't disable DDL on mocktikv")
 	}
-	if c.MaxIndexLength < DefMaxIndexLength || c.MaxIndexLength > DefTiDBMaxIndexLength {
-		return fmt.Errorf("max-index-length should be [%d, %d]", DefMaxIndexLength, DefTiDBMaxIndexLength)
+	if c.MaxIndexLength < DefMaxIndexLength || c.MaxIndexLength > DefMaxOfMaxIndexLength {
+		return fmt.Errorf("max-index-length should be [%d, %d]", DefMaxIndexLength, DefMaxOfMaxIndexLength)
 	}
 	if c.Log.File.MaxSize > MaxLogFileSize {
 		return fmt.Errorf("invalid max log file size=%v which is larger than max=%v", c.Log.File.MaxSize, MaxLogFileSize)
