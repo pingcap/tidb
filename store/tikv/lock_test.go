@@ -492,9 +492,6 @@ func (s *testLockSuite) TestNewLockZeroTTL(c *C) {
 
 func init() {
 	// Speed up tests.
-	defaultLockTTL = 3
-	maxLockTTL = 120
-	ttlFactor = 6
 	oracleUpdateInterval = 2
 }
 
