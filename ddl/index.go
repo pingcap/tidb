@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/config"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -49,7 +50,6 @@ import (
 )
 
 const (
-	maxPrefixLength = 3072
 	// MaxCommentLength is exported for testing.
 	MaxCommentLength = 1024
 )
@@ -77,7 +77,7 @@ func buildIndexColumns(columns []*model.ColumnInfo, idxColNames []*ast.IndexColN
 		sumLength += indexColumnLength
 
 		// The sum of all lengths must be shorter than the max length for prefix.
-		if sumLength > maxPrefixLength {
+		if sumLength > config.GetGlobalConfig().MaxIndexLength {
 			return nil, errors.Trace(errTooLongKey)
 		}
 
@@ -122,7 +122,7 @@ func checkIndexPrefixLength(columns []*model.ColumnInfo, idxColumns []*model.Ind
 		}
 		sumLength += indexColumnLength
 		// The sum of all lengths must be shorter than the max length for prefix.
-		if sumLength > maxPrefixLength {
+		if sumLength > config.GetGlobalConfig().MaxIndexLength {
 			return errors.Trace(errTooLongKey)
 		}
 	}
@@ -156,7 +156,7 @@ func checkIndexColumn(col *model.ColumnInfo, ic *ast.IndexColName) error {
 	}
 
 	// Specified length must be shorter than the max length for prefix.
-	if ic.Length > maxPrefixLength {
+	if ic.Length > config.GetGlobalConfig().MaxIndexLength {
 		return errors.Trace(errTooLongKey)
 	}
 	return nil
