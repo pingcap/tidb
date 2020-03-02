@@ -27,12 +27,17 @@ import (
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 )
 
 func TestT(t *testing.T) {
+	cfg := config.GetGlobalConfig()
+	conf := *cfg
+	conf.TempStoragePath = "/tmp/tidb/test-temp-storage"
+	config.StoreGlobalConfig(&conf)
 	check.TestingT(t)
 }
 
