@@ -53,7 +53,8 @@
       "select b from t order by b limit 3",
       "select a from t order by a limit 1 offset 2",
       "select * from ((select a as aa from t t1) union all (select b as aa from t t2)) as t3 order by aa",
-      "select a, b, lag(a,1) over (order by b) from t order by b"
+      "select a, b, lag(a,1) over (order by b) from t order by b",
+      "select * from (select a+1 as c, a+b as d from t) as t1 order by c+d limit 10"
     ]
   },
   {
@@ -108,6 +109,17 @@
     "name": "TestCascadePlannerHashedPartTable",
     "cases": [
       "select * from pt1"
+    ]
+  },
+  {
+    "name": "TestInlineProjection",
+    "cases": [
+      "select /*+ HASH_JOIN(t1) */ t1.b, t2.b from t1, t2 where t1.a = t2.a;", // TODO: need column pruning again.
+      "select /*+ HASH_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;",
+      "select /*+ HASH_JOIN(t1) */ t1.b, t2.b from t1 left outer join t2 on t1.a = t2.a;",
+      "select /*+ HASH_JOIN(t1) */ t1.b, t2.b from t1 right outer join t2 on t1.a = t2.a;",
+      "select 1 from (select /*+ HASH_JOIN(t1) */ t1.a in (select t2.a from t2) from t1) x;", // TODO: should use hash join
+      "select 1 from (select /*+ HASH_JOIN(t1) */ t1.a not in (select t2.a from t2) from t1) x;" // TODO: should use hash join
     ]
   }
 ]
