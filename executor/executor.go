@@ -129,16 +129,6 @@ func (e *baseExecutor) Schema() *expression.Schema {
 	return e.schema
 }
 
-// markChildrenUsedCols compares each child with the output schema, and mark
-// each column of the child is used by output or not.
-func (e *baseExecutor) markChildrenUsedCols() (childrenUsed [][]bool) {
-	for _, child := range e.children {
-		used := expression.GetUsedList(e.schema.Columns, child.Schema())
-		childrenUsed = append(childrenUsed, used)
-	}
-	return
-}
-
 // newFirstChunk creates a new chunk to buffer current executor's result.
 func newFirstChunk(e Executor) *chunk.Chunk {
 	base := e.base()

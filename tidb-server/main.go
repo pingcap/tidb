@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -74,6 +75,7 @@ const (
 	nmConfigStrict     = "config-strict"
 	nmStore            = "store"
 	nmStorePath        = "path"
+	nmTempStoragePath  = "tmp-storage-path"
 	nmHost             = "host"
 	nmAdvertiseAddress = "advertise-address"
 	nmPort             = "P"
@@ -110,6 +112,7 @@ var (
 	// Base
 	store            = flag.String(nmStore, "mocktikv", "registered store name, [tikv, mocktikv]")
 	storePath        = flag.String(nmStorePath, "/tmp/tidb", "tidb storage path")
+	tempStoragePath  = flag.String(nmTempStoragePath, filepath.Join(os.TempDir(), "tidb", "tmp-storage"), "tidb temporary storage path")
 	host             = flag.String(nmHost, "0.0.0.0", "tidb server host")
 	advertiseAddress = flag.String(nmAdvertiseAddress, "", "tidb server advertise IP")
 	port             = flag.String(nmPort, "4000", "tidb server port")
@@ -406,6 +409,9 @@ func overrideConfig(cfg *config.Config) {
 	}
 	if actualFlags[nmStorePath] {
 		cfg.Path = *storePath
+	}
+	if actualFlags[nmTempStoragePath] {
+		cfg.TempStoragePath = *tempStoragePath
 	}
 	if actualFlags[nmSocket] {
 		cfg.Socket = *socket
