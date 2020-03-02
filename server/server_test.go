@@ -17,7 +17,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"github.com/pingcap/errors"
 	"io"
 	"io/ioutil"
 	"math/rand"
@@ -33,6 +32,7 @@ import (
 
 	"github.com/go-sql-driver/mysql"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	tmysql "github.com/pingcap/parser/mysql"
