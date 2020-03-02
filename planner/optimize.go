@@ -40,7 +40,7 @@ import (
 func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (plannercore.Plan, types.NameSlice, error) {
 	fp := plannercore.TryFastPlan(sctx, node)
 	if fp != nil {
-		if !isPointGetWithoutDoubleRead(sctx, fp) {
+		if !useMaxTS(sctx, fp) {
 			sctx.PrepareTSFuture(ctx)
 		}
 		return fp, fp.OutputNames(), nil
@@ -246,10 +246,10 @@ func handleEvolveTasks(ctx context.Context, sctx sessionctx.Context, br *bindinf
 	globalHandle.AddEvolvePlanTask(br.OriginalSQL, br.Db, binding, planHint)
 }
 
-// isPointGetWithoutDoubleRead returns true when meets following conditions:
+// useMaxTS returns true when meets following conditions:
 //  1. ctx is auto commit tagged.
 //  2. plan is point get by pk.
-func isPointGetWithoutDoubleRead(ctx sessionctx.Context, p plannercore.Plan) bool {
+func useMaxTS(ctx sessionctx.Context, p plannercore.Plan) bool {
 	if !plannercore.IsAutoCommitTxn(ctx) {
 		return false
 	}
