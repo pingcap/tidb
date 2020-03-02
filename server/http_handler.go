@@ -102,7 +102,6 @@ func writeData(w http.ResponseWriter, data interface{}) {
 		writeError(w, err)
 		return
 	}
-	logutil.BgLogger().Info(string(js))
 	// write response
 	w.Header().Set(headerContentType, contentTypeJSON)
 	w.WriteHeader(http.StatusOK)

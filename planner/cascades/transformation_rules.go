@@ -49,24 +49,29 @@ type Transformation interface {
 	OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error)
 }
 
-var defaultTransformationMap = map[memo.Operand][]Transformation{
+// TransformationRuleBatch is a batch of transformation rules.
+type TransformationRuleBatch map[memo.Operand][]Transformation
+
+// DefaultRuleBatches contain all the transformation rules.
+// Each batch will be applied to the memo independently.
+var DefaultRuleBatches = []TransformationRuleBatch{
+	TiDBLayerOptimizationBatch,
+	TiKVLayerOptimizationBatch,
+	PostTransformationBatch,
+}
+
+// TiDBLayerOptimizationBatch does the optimization in the TiDB layer.
+var TiDBLayerOptimizationBatch = TransformationRuleBatch{
 	memo.OperandSelection: {
-		NewRulePushSelDownTableScan(),
-		NewRulePushSelDownTiKVSingleGather(),
 		NewRulePushSelDownSort(),
 		NewRulePushSelDownProjection(),
 		NewRulePushSelDownAggregation(),
 		NewRulePushSelDownJoin(),
-		NewRulePushSelDownIndexScan(),
 		NewRulePushSelDownUnionAll(),
 		NewRulePushSelDownWindow(),
 		NewRuleMergeAdjacentSelection(),
 	},
-	memo.OperandDataSource: {
-		NewRuleEnumeratePaths(),
-	},
 	memo.OperandAggregation: {
-		NewRulePushAggDownGather(),
 		NewRuleMergeAggregationProjection(),
 		NewRuleEliminateSingleMaxMin(),
 		NewRuleEliminateOuterJoinBelowAggregation(),
@@ -79,7 +84,6 @@ var defaultTransformationMap = map[memo.Operand][]Transformation{
 		NewRulePushLimitDownOuterJoin(),
 		NewRuleMergeAdjacentLimit(),
 		NewRuleTransformLimitToTableDual(),
-		NewRulePushLimitDownTiKVSingleGather(),
 	},
 	memo.OperandProjection: {
 		NewRuleEliminateProjection(),
@@ -89,8 +93,46 @@ var defaultTransformationMap = map[memo.Operand][]Transformation{
 		NewRulePushTopNDownProjection(),
 		NewRulePushTopNDownOuterJoin(),
 		NewRulePushTopNDownUnionAll(),
-		NewRulePushTopNDownTiKVSingleGather(),
 		NewRuleMergeAdjacentTopN(),
+	},
+}
+
+// TiKVLayerOptimizationBatch does the optimization related to TiKV layer.
+// For example, rules about pushing down Operators like Selection, Limit,
+// Aggregation into TiKV layer should be inside this batch.
+var TiKVLayerOptimizationBatch = TransformationRuleBatch{
+	memo.OperandDataSource: {
+		NewRuleEnumeratePaths(),
+	},
+	memo.OperandSelection: {
+		NewRulePushSelDownTiKVSingleGather(),
+		NewRulePushSelDownTableScan(),
+		NewRulePushSelDownIndexScan(),
+		NewRuleMergeAdjacentSelection(),
+	},
+	memo.OperandAggregation: {
+		NewRulePushAggDownGather(),
+	},
+	memo.OperandLimit: {
+		NewRulePushLimitDownTiKVSingleGather(),
+	},
+	memo.OperandTopN: {
+		NewRulePushTopNDownTiKVSingleGather(),
+	},
+}
+
+// PostTransformationBatch does the transformation which is related to
+// the constraints of the execution engine of TiDB.
+// For example, TopN/Sort only support `order by` columns in TiDB layer,
+// as for scalar functions, we need to inject a Projection for them
+// below the TopN/Sort.
+var PostTransformationBatch = TransformationRuleBatch{
+	memo.OperandProjection: {
+		NewRuleEliminateProjection(),
+		NewRuleMergeAdjacentProjection(),
+	},
+	memo.OperandTopN: {
+		NewRuleInjectProjectionBelowTopN(),
 	},
 }
 
@@ -1951,4 +1993,101 @@ func (r *TransformAggregateCaseToSelection) isTwoOrThreeArgCase(expr expression.
 		return false
 	}
 	return scalarFunc.FuncName.L == ast.Case && (len(scalarFunc.GetArgs()) == 2 || len(scalarFunc.GetArgs()) == 3)
+}
+
+// InjectProjectionBelowTopN injects two Projections below and upon TopN if TopN's ByItems
+// contain ScalarFunctions.
+type InjectProjectionBelowTopN struct {
+	baseRule
+}
+
+// NewRuleInjectProjectionBelowTopN creates a new Transformation InjectProjectionBelowTopN.
+// It will extract the ScalarFunctions of `ByItems` into a Projection and injects it below TopN.
+// When a Projection is injected as the child of TopN, we need to add another Projection upon
+// TopN to prune the extra Columns.
+// The reason why we need this rule is that, TopNExecutor in TiDB does not support ScalarFunction
+// as `ByItem`. So we have to use a Projection to calculate the ScalarFunctions in advance.
+// The pattern of this rule is: a single TopN
+func NewRuleInjectProjectionBelowTopN() Transformation {
+	rule := &InjectProjectionBelowTopN{}
+	rule.pattern = memo.BuildPattern(
+		memo.OperandTopN,
+		memo.EngineTiDBOnly,
+	)
+	return rule
+}
+
+// Match implements Transformation interface.
+func (r *InjectProjectionBelowTopN) Match(expr *memo.ExprIter) bool {
+	topN := expr.GetExpr().ExprNode.(*plannercore.LogicalTopN)
+	for _, item := range topN.ByItems {
+		if _, ok := item.Expr.(*expression.ScalarFunction); ok {
+			return true
+		}
+	}
+	return false
+}
+
+// OnTransform implements Transformation interface.
+// It will convert `TopN -> X` to `Projection -> TopN -> Projection -> X`.
+func (r *InjectProjectionBelowTopN) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	topN := old.GetExpr().ExprNode.(*plannercore.LogicalTopN)
+	oldTopNSchema := old.GetExpr().Schema()
+
+	// Construct top Projection.
+	topProjExprs := make([]expression.Expression, oldTopNSchema.Len())
+	for i := range oldTopNSchema.Columns {
+		topProjExprs[i] = oldTopNSchema.Columns[i]
+	}
+	topProj := plannercore.LogicalProjection{
+		Exprs: topProjExprs,
+	}.Init(topN.SCtx(), topN.SelectBlockOffset())
+	topProj.SetSchema(oldTopNSchema)
+
+	// Construct bottom Projection.
+	bottomProjExprs := make([]expression.Expression, 0, oldTopNSchema.Len()+len(topN.ByItems))
+	bottomProjSchema := make([]*expression.Column, 0, oldTopNSchema.Len()+len(topN.ByItems))
+	for _, col := range oldTopNSchema.Columns {
+		bottomProjExprs = append(bottomProjExprs, col)
+		bottomProjSchema = append(bottomProjSchema, col)
+	}
+	newByItems := make([]*plannercore.ByItems, 0, len(topN.ByItems))
+	for _, item := range topN.ByItems {
+		itemExpr := item.Expr
+		if _, isScalarFunc := itemExpr.(*expression.ScalarFunction); !isScalarFunc {
+			newByItems = append(newByItems, item)
+			continue
+		}
+		bottomProjExprs = append(bottomProjExprs, itemExpr)
+		newCol := &expression.Column{
+			UniqueID: topN.SCtx().GetSessionVars().AllocPlanColumnID(),
+			RetType:  itemExpr.GetType(),
+		}
+		bottomProjSchema = append(bottomProjSchema, newCol)
+		newByItems = append(newByItems, &plannercore.ByItems{Expr: newCol, Desc: item.Desc})
+	}
+	bottomProj := plannercore.LogicalProjection{
+		Exprs: bottomProjExprs,
+	}.Init(topN.SCtx(), topN.SelectBlockOffset())
+	newSchema := expression.NewSchema(bottomProjSchema...)
+	bottomProj.SetSchema(newSchema)
+
+	newTopN := plannercore.LogicalTopN{
+		ByItems: newByItems,
+		Offset:  topN.Offset,
+		Count:   topN.Count,
+	}.Init(topN.SCtx(), topN.SelectBlockOffset())
+
+	// Construct GroupExpr, Group (TopProj -> TopN -> BottomProj -> Child)
+	bottomProjGroupExpr := memo.NewGroupExpr(bottomProj)
+	bottomProjGroupExpr.SetChildren(old.GetExpr().Children[0])
+	bottomProjGroup := memo.NewGroupWithSchema(bottomProjGroupExpr, newSchema)
+
+	topNGroupExpr := memo.NewGroupExpr(newTopN)
+	topNGroupExpr.SetChildren(bottomProjGroup)
+	topNGroup := memo.NewGroupWithSchema(topNGroupExpr, newSchema)
+
+	topProjGroupExpr := memo.NewGroupExpr(topProj)
+	topProjGroupExpr.SetChildren(topNGroup)
+	return []*memo.GroupExpr{topProjGroupExpr}, true, false, nil
 }
