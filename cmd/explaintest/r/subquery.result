@@ -5,7 +5,7 @@ create table t2(a bigint, b bigint);
 set session tidb_hashagg_partial_concurrency = 1;
 set session tidb_hashagg_final_concurrency = 1;
 explain select * from t1 where t1.a in (select t1.b + t2.b from t2);
-id	count	task	operator info
+id	estRows	task	operator info
 HashLeftJoin_8	8000.00	root	CARTESIAN semi join, inner:TableReader_12, other cond:eq(test.t1.a, plus(test.t1.b, test.t2.b))
 ├─TableReader_12(Build)	10000.00	root	data:TableFullScan_11
 │ └─TableFullScan_11	10000.00	cop[tikv]	table:t2, keep order:false, stats:pseudo
@@ -16,7 +16,7 @@ create table t(a int primary key, b int, c int, d int, index idx(b,c,d));
 insert into t values(1,1,1,1),(2,2,2,2),(3,2,2,2),(4,2,2,2),(5,2,2,2);
 analyze table t;
 explain select t.c in (select count(*) from t s use index(idx), t t1 where s.b = 1 and s.c = 1 and s.d = t.a and s.a = t1.a) from t;
-id	count	task	operator info
+id	estRows	task	operator info
 Projection_11	5.00	root	Column#14
 └─Apply_13	5.00	root	CARTESIAN left outer semi join, inner:StreamAgg_22, other cond:eq(test.t.c, Column#13)
   ├─TableReader_15(Build)	5.00	root	data:TableFullScan_14
@@ -30,7 +30,7 @@ Projection_11	5.00	root	Column#14
 drop table if exists t;
 create table t(a int, b int, c int);
 explain select a from t t1 where t1.a = (select max(t2.a) from t t2 where t1.b=t2.b and t1.c=t2.b);
-id	count	task	operator info
+id	estRows	task	operator info
 HashLeftJoin_12	7992.00	root	inner join, inner:Selection_17, equal:[eq(test.t.b, test.t.b) eq(test.t.c, test.t.b) eq(test.t.a, Column#9)]
 ├─Selection_17(Build)	6393.60	root	not(isnull(Column#9))
 │ └─HashAgg_23	7992.00	root	group by:test.t.b, funcs:max(Column#10)->Column#9, funcs:firstrow(test.t.b)->test.t.b
