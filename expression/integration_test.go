@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
@@ -47,6 +48,7 @@ import (
 
 var _ = Suite(&testIntegrationSuite{})
 var _ = Suite(&testIntegrationSuite2{})
+var _ = SerialSuites(&testIntegrationSerialSuite{})
 
 type testIntegrationSuiteBase struct {
 	store kv.Storage
@@ -59,6 +61,10 @@ type testIntegrationSuite struct {
 }
 
 type testIntegrationSuite2 struct {
+	testIntegrationSuiteBase
+}
+
+type testIntegrationSerialSuite struct {
 	testIntegrationSuiteBase
 }
 
@@ -5483,4 +5489,93 @@ func (s *testIntegrationSuite) TestCacheConstEval(c *C) {
 	tk.Se.GetSessionVars().EnableVectorizedExpression = true
 	tk.MustExec("delete from mysql.expr_pushdown_blacklist")
 	tk.MustExec("admin reload expr_pushdown_blacklist")
+}
+
+func (s *testIntegrationSerialSuite) TestCollationBasic(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_ci(a varchar(10) collate utf8mb4_general_ci, unique key(a))")
+	tk.MustExec("insert into t_ci values ('a')")
+	tk.MustQuery("select * from t_ci").Check(testkit.Rows("a"))
+	tk.MustQuery("select * from t_ci").Check(testkit.Rows("a"))
+	tk.MustQuery("select * from t_ci where a='a'").Check(testkit.Rows("a"))
+	tk.MustQuery("select * from t_ci where a='A'").Check(testkit.Rows("a"))
+	tk.MustQuery("select * from t_ci where a='a   '").Check(testkit.Rows("a"))
+	tk.MustQuery("select * from t_ci where a='a                    '").Check(testkit.Rows("a"))
+}
+
+func (s *testIntegrationSerialSuite) TestWeightString(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	type testCase struct {
+		input           []string
+		result          []string
+		resultAsChar1   []string
+		resultAsChar3   []string
+		resultAsBinary1 []string
+		resultAsBinary5 []string
+	}
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int, a varchar(20) collate utf8mb4_general_ci)")
+	cases := testCase{
+		input:           []string{"aAÁàãăâ", "a", "a  ", "中", "中 "},
+		result:          []string{"\x00A\x00A\x00A\x00A\x00A\x00A\x00A", "\x00A", "\x00A", "\x4E\x2D", "\x4E\x2D"},
+		resultAsChar1:   []string{"\x00A", "\x00A", "\x00A", "\x4E\x2D", "\x4E\x2D"},
+		resultAsChar3:   []string{"\x00A\x00A\x00A", "\x00A", "\x00A", "\x4E\x2D", "\x4E\x2D"},
+		resultAsBinary1: []string{"a", "a", "a", "\xE4", "\xE4"},
+		resultAsBinary5: []string{"aA\xc3\x81\xc3", "a\x00\x00\x00\x00", "a  \x00\x00", "中\x00\x00", "中 \x00"},
+	}
+	values := make([]string, len(cases.input))
+	for i, input := range cases.input {
+		values[i] = fmt.Sprintf("(%d, '%s')", i, input)
+	}
+	tk.MustExec("insert into t values " + strings.Join(values, ","))
+	rows := tk.MustQuery("select weight_string(a) from t order by id").Rows()
+	for i, out := range cases.result {
+		c.Assert(rows[i][0].(string), Equals, out)
+	}
+	rows = tk.MustQuery("select weight_string(a as char(1)) from t order by id").Rows()
+	for i, out := range cases.resultAsChar1 {
+		c.Assert(rows[i][0].(string), Equals, out)
+	}
+	rows = tk.MustQuery("select weight_string(a as char(3)) from t order by id").Rows()
+	for i, out := range cases.resultAsChar3 {
+		c.Assert(rows[i][0].(string), Equals, out)
+	}
+	rows = tk.MustQuery("select weight_string(a as binary(1)) from t order by id").Rows()
+	for i, out := range cases.resultAsBinary1 {
+		c.Assert(rows[i][0].(string), Equals, out)
+	}
+	rows = tk.MustQuery("select weight_string(a as binary(5)) from t order by id").Rows()
+	for i, out := range cases.resultAsBinary5 {
+		c.Assert(rows[i][0].(string), Equals, out)
+	}
+	c.Assert(tk.MustQuery("select weight_string(NULL);").Rows()[0][0], Equals, "<nil>")
+	c.Assert(tk.MustQuery("select weight_string(7);").Rows()[0][0], Equals, "<nil>")
+	c.Assert(tk.MustQuery("select weight_string(cast(7 as decimal(5)));").Rows()[0][0], Equals, "<nil>")
+	c.Assert(tk.MustQuery("select weight_string(cast(20190821 as date));").Rows()[0][0], Equals, "2019-08-21")
+	c.Assert(tk.MustQuery("select weight_string(cast(20190821 as date) as binary(5));").Rows()[0][0], Equals, "2019-")
+	c.Assert(tk.MustQuery("select weight_string(7.0);").Rows()[0][0], Equals, "<nil>")
+	c.Assert(tk.MustQuery("select weight_string(7 AS BINARY(2));").Rows()[0][0], Equals, "7\x00")
+}
+
+func (s *testIntegrationSerialSuite) TestCollationCreateIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a varchar(10) collate utf8mb4_general_ci);")
+	tk.MustExec("insert into t values ('a');")
+	tk.MustExec("insert into t values ('A');")
+	tk.MustExec("insert into t values ('b');")
+	tk.MustExec("insert into t values ('B');")
+	tk.MustExec("insert into t values ('a');")
+	tk.MustExec("insert into t values ('A');")
+	tk.MustExec("create index idx on t(a);")
+	tk.MustQuery("select * from t order by a").Check(testkit.Rows("a", "A", "a", "A", "b", "B"))
 }
