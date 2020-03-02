@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -102,7 +103,7 @@ var (
 	errBlobKeyWithoutLength      = terror.ClassDDL.New(codeBlobKeyWithoutLength, "BLOB/TEXT column '%-.192s' used in key specification without a key length")
 	errIncorrectPrefixKey        = terror.ClassDDL.New(codeIncorrectPrefixKey, "Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys")
 	errTooLongKey                = terror.ClassDDL.New(codeTooLongKey,
-		fmt.Sprintf("Specified key was too long; max key length is %d bytes", maxPrefixLength))
+		fmt.Sprintf("Specified key was too long; max key length is %d bytes", config.GetGlobalConfig().MaxIndexLength))
 	errKeyColumnDoesNotExits    = terror.ClassDDL.New(codeKeyColumnDoesNotExits, mysql.MySQLErrName[mysql.ErrKeyColumnDoesNotExits])
 	errUnknownTypeLength        = terror.ClassDDL.New(codeUnknownTypeLength, "Unknown length for type tp %d")
 	errUnknownFractionLength    = terror.ClassDDL.New(codeUnknownFractionLength, "Unknown Length for type tp %d and fraction %d")
