@@ -736,10 +736,8 @@ func queryStrForLog(query string) string {
 }
 
 func errStrForLog(err error) string {
-	if kv.ErrKeyExists.Equal(err) {
+	if kv.ErrKeyExists.Equal(err) || parser.ErrParse.Equal(err) {
 		// Do not log stack for duplicated entry error.
-		return err.Error()
-	} else if parser.ErrParse.Equal(err) {
 		return err.Error()
 	}
 	return errors.ErrorStack(err)
