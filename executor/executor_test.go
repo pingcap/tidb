@@ -5201,6 +5201,7 @@ func (s *testClusterTableSuite) TearDownSuite(c *C) {
 }
 
 func (s *testClusterTableSuite) TestSlowQuery(c *C) {
+	defer testleak.AfterTest(c)()
 	writeFile := func(file string, data string) {
 		f, err := os.OpenFile(file, os.O_CREATE|os.O_WRONLY, 0644)
 		c.Assert(err, IsNil)
