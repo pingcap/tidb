@@ -319,7 +319,7 @@ func (criticalErrorInspection) inspect(ctx context.Context, sctx sessionctx.Cont
 		{tp: "tidb", item: "lock-resolve", tbl: "tidb_lock_resolver_ops"},
 		{tp: "tikv", item: "scheduler-is-busy", tbl: "tikv_scheduler_is_busy"},
 		{tp: "tikv", item: "coprocessor-is-busy", tbl: "tikv_coprocessor_is_busy"},
-		{tp: "tikv", item: "channel-is-full", tbl: "tikv_channel_full_total"},
+		{tp: "tikv", item: "channel-is-full", tbl: "tikv_channel_full"},
 		{tp: "tikv", item: "coprocessor-error", tbl: "tikv_coprocessor_request_error"},
 		{tp: "tidb", item: "schema-lease-error", tbl: "tidb_schema_lease_error_opm"},
 		{tp: "tidb", item: "txn-retry-error", tbl: "tidb_transaction_retry_error_ops"},
