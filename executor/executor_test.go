@@ -5161,16 +5161,9 @@ func (s *testSuite1) TestAlterDefaultValue(c *C) {
 
 type testClusterTableSuite struct {
 	testSuiteWithCliBase
-	rpcserver  *grpc.Server
-	listenAddr string
 }
 
-func (s *testClusterTableSuite) SetUpSuite(c *C) {
-	s.testSuiteWithCliBase.SetUpSuite(c)
-	s.rpcserver, s.listenAddr = s.setUpRPCService(c, ":0")
-}
-
-func (s *testClusterTableSuite) setUpRPCService(c *C, addr string) (*grpc.Server, string) {
+func (s *testClusterTableSuite) setUpRPCService(c *C, addr string) *grpc.Server {
 	sm := &mockSessionManager1{}
 	sm.PS = append(sm.PS, &util.ProcessInfo{
 		ID:      1,
@@ -5190,17 +5183,13 @@ func (s *testClusterTableSuite) setUpRPCService(c *C, addr string) (*grpc.Server
 	cfg := config.GetGlobalConfig()
 	cfg.Status.StatusPort = uint(port)
 	config.StoreGlobalConfig(cfg)
-	return srv, addr
-}
-func (s *testClusterTableSuite) TearDownSuite(c *C) {
-	if s.rpcserver != nil {
-		s.rpcserver.Stop()
-		s.rpcserver = nil
-	}
-	s.testSuiteWithCliBase.TearDownSuite(c)
+	return srv
 }
 
 func (s *testClusterTableSuite) TestSlowQuery(c *C) {
+	rpcserver := s.setUpRPCService(c, ":0")
+	defer rpcserver.Stop()
+
 	writeFile := func(file string, data string) {
 		f, err := os.OpenFile(file, os.O_CREATE|os.O_WRONLY, 0644)
 		c.Assert(err, IsNil)
