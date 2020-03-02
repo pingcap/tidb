@@ -970,18 +970,17 @@ l_partkey = p_partkey
 id	count	task	operator info
 Projection_16	1.00	root	div(Column#46, 7.0)->Column#47
 └─StreamAgg_21	1.00	root	funcs:sum(tpch.lineitem.l_extendedprice)->Column#46
-  └─Projection_51	293773.83	root	tpch.lineitem.l_extendedprice
-    └─HashRightJoin_53	293773.83	root	inner join, inner:HashRightJoin_37, equal:[eq(tpch.part.p_partkey, tpch.lineitem.l_partkey)], other cond:lt(tpch.lineitem.l_quantity, mul(0.2, Column#44))
-      ├─HashRightJoin_37(Build)	293773.83	root	inner join, inner:TableReader_42, equal:[eq(tpch.part.p_partkey, tpch.lineitem.l_partkey)]
-      │ ├─TableReader_42(Build)	9736.49	root	data:Selection_41
-      │ │ └─Selection_41	9736.49	cop[tikv]	eq(tpch.part.p_brand, "Brand#44"), eq(tpch.part.p_container, "WRAP PKG")
-      │ │   └─TableFullScan_40	10000000.00	cop[tikv]	table:part, keep order:false
-      │ └─TableReader_39(Probe)	300005811.00	root	data:TableFullScan_38
-      │   └─TableFullScan_38	300005811.00	cop[tikv]	table:lineitem, keep order:false
-      └─HashAgg_47(Probe)	9943040.00	root	group by:tpch.lineitem.l_partkey, funcs:avg(Column#50, Column#51)->Column#44, funcs:firstrow(tpch.lineitem.l_partkey)->tpch.lineitem.l_partkey
-        └─TableReader_48	9943040.00	root	data:HashAgg_43
-          └─HashAgg_43	9943040.00	cop[tikv]	group by:tpch.lineitem.l_partkey, funcs:count(tpch.lineitem.l_quantity)->Column#50, funcs:sum(tpch.lineitem.l_quantity)->Column#51
-            └─TableFullScan_46	300005811.00	cop[tikv]	table:lineitem, keep order:false
+  └─HashRightJoin_53	293773.83	root	inner join, inner:HashRightJoin_37, equal:[eq(tpch.part.p_partkey, tpch.lineitem.l_partkey)], other cond:lt(tpch.lineitem.l_quantity, mul(0.2, Column#44))
+    ├─HashRightJoin_37(Build)	293773.83	root	inner join, inner:TableReader_42, equal:[eq(tpch.part.p_partkey, tpch.lineitem.l_partkey)]
+    │ ├─TableReader_42(Build)	9736.49	root	data:Selection_41
+    │ │ └─Selection_41	9736.49	cop[tikv]	eq(tpch.part.p_brand, "Brand#44"), eq(tpch.part.p_container, "WRAP PKG")
+    │ │   └─TableFullScan_40	10000000.00	cop[tikv]	table:part, keep order:false
+    │ └─TableReader_39(Probe)	300005811.00	root	data:TableFullScan_38
+    │   └─TableFullScan_38	300005811.00	cop[tikv]	table:lineitem, keep order:false
+    └─HashAgg_47(Probe)	9943040.00	root	group by:tpch.lineitem.l_partkey, funcs:avg(Column#50, Column#51)->Column#44, funcs:firstrow(tpch.lineitem.l_partkey)->tpch.lineitem.l_partkey
+      └─TableReader_48	9943040.00	root	data:HashAgg_43
+        └─HashAgg_43	9943040.00	cop[tikv]	group by:tpch.lineitem.l_partkey, funcs:count(tpch.lineitem.l_quantity)->Column#50, funcs:sum(tpch.lineitem.l_quantity)->Column#51
+          └─TableFullScan_46	300005811.00	cop[tikv]	table:lineitem, keep order:false
 /*
 Q18 Large Volume Customer Query
 The Large Volume Customer Query ranks customers based on their having placed a large quantity order. Large
@@ -1145,29 +1144,28 @@ order by
 s_name;
 id	count	task	operator info
 Sort_28	20000.00	root	tpch.supplier.s_name:asc
-└─Projection_30	20000.00	root	tpch.supplier.s_name, tpch.supplier.s_address
-  └─HashRightJoin_32	20000.00	root	inner join, inner:HashRightJoin_45, equal:[eq(tpch.supplier.s_suppkey, tpch.partsupp.ps_suppkey)]
-    ├─HashRightJoin_45(Build)	20000.00	root	inner join, inner:TableReader_50, equal:[eq(tpch.nation.n_nationkey, tpch.supplier.s_nationkey)]
-    │ ├─TableReader_50(Build)	1.00	root	data:Selection_49
-    │ │ └─Selection_49	1.00	cop[tikv]	eq(tpch.nation.n_name, "ALGERIA")
-    │ │   └─TableFullScan_48	25.00	cop[tikv]	table:nation, keep order:false
-    │ └─TableReader_47(Probe)	500000.00	root	data:TableFullScan_46
-    │   └─TableFullScan_46	500000.00	cop[tikv]	table:supplier, keep order:false
-    └─HashAgg_53(Probe)	257492.04	root	group by:tpch.partsupp.ps_suppkey, funcs:firstrow(tpch.partsupp.ps_suppkey)->tpch.partsupp.ps_suppkey
-      └─Projection_54	257492.04	root	tpch.partsupp.ps_suppkey
-        └─Selection_55	257492.04	root	gt(cast(tpch.partsupp.ps_availqty), mul(0.5, Column#44))
-          └─HashAgg_58	321865.05	root	group by:tpch.partsupp.ps_partkey, tpch.partsupp.ps_suppkey, funcs:firstrow(tpch.partsupp.ps_suppkey)->tpch.partsupp.ps_suppkey, funcs:firstrow(tpch.partsupp.ps_availqty)->tpch.partsupp.ps_availqty, funcs:sum(tpch.lineitem.l_quantity)->Column#44
-            └─HashLeftJoin_62	9711455.06	root	left outer join, inner:IndexHashJoin_75 (REVERSED), equal:[eq(tpch.partsupp.ps_partkey, tpch.lineitem.l_partkey) eq(tpch.partsupp.ps_suppkey, tpch.lineitem.l_suppkey)]
-              ├─IndexHashJoin_75(Build)	321865.05	root	inner join, inner:IndexLookUp_66, outer key:tpch.part.p_partkey, inner key:tpch.partsupp.ps_partkey
-              │ ├─TableReader_98(Build)	80007.93	root	data:Selection_97
-              │ │ └─Selection_97	80007.93	cop[tikv]	like(tpch.part.p_name, "green%", 92)
-              │ │   └─TableFullScan_96	10000000.00	cop[tikv]	table:part, keep order:false
-              │ └─IndexLookUp_66(Probe)	4.02	root	
-              │   ├─IndexRangeScan_64(Build)	4.02	cop[tikv]	table:partsupp, index:PS_PARTKEY, PS_SUPPKEY, range: decided by [eq(tpch.partsupp.ps_partkey, tpch.part.p_partkey)], keep order:false
-              │   └─TableRowIDScan_65(Probe)	4.02	cop[tikv]	table:partsupp, keep order:false
-              └─TableReader_103(Probe)	44189356.65	root	data:Selection_102
-                └─Selection_102	44189356.65	cop[tikv]	ge(tpch.lineitem.l_shipdate, 1993-01-01 00:00:00.000000), lt(tpch.lineitem.l_shipdate, 1994-01-01)
-                  └─TableFullScan_101	300005811.00	cop[tikv]	table:lineitem, keep order:false
+└─HashRightJoin_32	20000.00	root	inner join, inner:HashRightJoin_45, equal:[eq(tpch.supplier.s_suppkey, tpch.partsupp.ps_suppkey)]
+  ├─HashRightJoin_45(Build)	20000.00	root	inner join, inner:TableReader_50, equal:[eq(tpch.nation.n_nationkey, tpch.supplier.s_nationkey)]
+  │ ├─TableReader_50(Build)	1.00	root	data:Selection_49
+  │ │ └─Selection_49	1.00	cop[tikv]	eq(tpch.nation.n_name, "ALGERIA")
+  │ │   └─TableFullScan_48	25.00	cop[tikv]	table:nation, keep order:false
+  │ └─TableReader_47(Probe)	500000.00	root	data:TableFullScan_46
+  │   └─TableFullScan_46	500000.00	cop[tikv]	table:supplier, keep order:false
+  └─HashAgg_53(Probe)	257492.04	root	group by:tpch.partsupp.ps_suppkey, funcs:firstrow(tpch.partsupp.ps_suppkey)->tpch.partsupp.ps_suppkey
+    └─Projection_54	257492.04	root	tpch.partsupp.ps_suppkey
+      └─Selection_55	257492.04	root	gt(cast(tpch.partsupp.ps_availqty), mul(0.5, Column#44))
+        └─HashAgg_58	321865.05	root	group by:tpch.partsupp.ps_partkey, tpch.partsupp.ps_suppkey, funcs:firstrow(tpch.partsupp.ps_suppkey)->tpch.partsupp.ps_suppkey, funcs:firstrow(tpch.partsupp.ps_availqty)->tpch.partsupp.ps_availqty, funcs:sum(tpch.lineitem.l_quantity)->Column#44
+          └─HashLeftJoin_62	9711455.06	root	left outer join, inner:IndexHashJoin_75 (REVERSED), equal:[eq(tpch.partsupp.ps_partkey, tpch.lineitem.l_partkey) eq(tpch.partsupp.ps_suppkey, tpch.lineitem.l_suppkey)]
+            ├─IndexHashJoin_75(Build)	321865.05	root	inner join, inner:IndexLookUp_66, outer key:tpch.part.p_partkey, inner key:tpch.partsupp.ps_partkey
+            │ ├─TableReader_98(Build)	80007.93	root	data:Selection_97
+            │ │ └─Selection_97	80007.93	cop[tikv]	like(tpch.part.p_name, "green%", 92)
+            │ │   └─TableFullScan_96	10000000.00	cop[tikv]	table:part, keep order:false
+            │ └─IndexLookUp_66(Probe)	4.02	root	
+            │   ├─IndexRangeScan_64(Build)	4.02	cop[tikv]	table:partsupp, index:PS_PARTKEY, PS_SUPPKEY, range: decided by [eq(tpch.partsupp.ps_partkey, tpch.part.p_partkey)], keep order:false
+            │   └─TableRowIDScan_65(Probe)	4.02	cop[tikv]	table:partsupp, keep order:false
+            └─TableReader_103(Probe)	44189356.65	root	data:Selection_102
+              └─Selection_102	44189356.65	cop[tikv]	ge(tpch.lineitem.l_shipdate, 1993-01-01 00:00:00.000000), lt(tpch.lineitem.l_shipdate, 1994-01-01)
+                └─TableFullScan_101	300005811.00	cop[tikv]	table:lineitem, keep order:false
 /*
 Q21 Suppliers Who Kept Orders Waiting Query
 This query identifies certain suppliers who were not able to ship required parts in a timely manner.

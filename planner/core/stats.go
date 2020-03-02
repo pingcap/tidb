@@ -142,6 +142,9 @@ func (ds *DataSource) initStats() {
 	if ds.tableStats != nil {
 		return
 	}
+	if ds.statisticTable == nil {
+		ds.statisticTable = getStatsTable(ds.ctx, ds.tableInfo, ds.table.Meta().ID)
+	}
 	tableStats := &property.StatsInfo{
 		RowCount:     float64(ds.statisticTable.Count),
 		Cardinality:  make(map[int64]float64, ds.schema.Len()),
