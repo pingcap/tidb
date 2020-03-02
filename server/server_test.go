@@ -1167,12 +1167,16 @@ func (cli *testServerClient) runTestTLSConnection(t *C, overrider configOverride
 	return err
 }
 
-func (cli *testServerClient) runReloadTLS(t *C, overrider configOverrider) {
+func (cli *testServerClient) runReloadTLS(t *C, overrider configOverrider, errorNoRollback bool) error {
 	db, err := sql.Open("mysql", cli.getDSN(overrider))
 	t.Assert(err, IsNil)
 	defer db.Close()
-	_, err = db.Exec("alter instance reload tls")
-	t.Assert(err, IsNil)
+	sql := "alter instance reload tls"
+	if errorNoRollback {
+		sql += " no rollback on error"
+	}
+	_, err = db.Exec(sql)
+	return err
 }
 
 func (cli *testServerClient) runTestSumAvg(c *C) {
