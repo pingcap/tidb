@@ -498,7 +498,7 @@ func (s *inspectionResultSuite) TestCriticalErrorInspection(c *C) {
 			types.MakeDatums(datetime("2020-02-12 10:40:00"), "tikv-1", "db1", 6.0),
 		},
 		// columns: time, instance, db, type, value
-		"tikv_channel_full_total": {
+		"tikv_channel_full": {
 			types.MakeDatums(datetime("2020-02-12 10:35:00"), "tikv-0", "db1", "type1", 1.0),
 			types.MakeDatums(datetime("2020-02-12 10:36:00"), "tikv-0", "db2", "type1", 2.0),
 			types.MakeDatums(datetime("2020-02-12 10:37:00"), "tikv-1", "db1", "type2", 3.0),
@@ -550,9 +550,9 @@ func (s *inspectionResultSuite) TestCriticalErrorInspection(c *C) {
 	result.Check(testkit.Rows(
 		"binlog-error tidb-3 1.00 select * from `metrics_schema`.`tidb_binlog_error_count` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and `instance`='tidb-3'",
 		"binlog-error tidb-1 4.00 select * from `metrics_schema`.`tidb_binlog_error_count` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and `instance`='tidb-1'",
-		"channel-is-full tikv-0 4.00(db1, type1) select * from `metrics_schema`.`tikv_channel_full_total` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`db`,`type`)=('tikv-0','db1','type1')",
-		"channel-is-full tikv-0 5.00(db2, type1) select * from `metrics_schema`.`tikv_channel_full_total` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`db`,`type`)=('tikv-0','db2','type1')",
-		"channel-is-full tikv-1 6.00(db1, type2) select * from `metrics_schema`.`tikv_channel_full_total` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`db`,`type`)=('tikv-1','db1','type2')",
+		"channel-is-full tikv-0 4.00(db1, type1) select * from `metrics_schema`.`tikv_channel_full` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`db`,`type`)=('tikv-0','db1','type1')",
+		"channel-is-full tikv-0 5.00(db2, type1) select * from `metrics_schema`.`tikv_channel_full` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`db`,`type`)=('tikv-0','db2','type1')",
+		"channel-is-full tikv-1 6.00(db1, type2) select * from `metrics_schema`.`tikv_channel_full` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`db`,`type`)=('tikv-1','db1','type2')",
 		"coprocessor-error tikv-0 1.00(reason1) select * from `metrics_schema`.`tikv_coprocessor_request_error` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`reason`)=('tikv-0','reason1')",
 		"coprocessor-error tikv-0 2.00(reason2) select * from `metrics_schema`.`tikv_coprocessor_request_error` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`reason`)=('tikv-0','reason2')",
 		"coprocessor-error tikv-1 3.00(reason3) select * from `metrics_schema`.`tikv_coprocessor_request_error` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`reason`)=('tikv-1','reason3')",
