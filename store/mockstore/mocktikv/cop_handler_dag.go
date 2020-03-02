@@ -206,6 +206,7 @@ func (h *rpcHandler) buildTableScan(ctx *dagContext, executor *tipb.Executor) (*
 			Tp:         col.Tp,
 			Flag:       col.Flag,
 			IsPKHandle: col.GetPkHandle(),
+			Collate:    collate.CollationID2Name(col.Collation),
 		}
 	}
 	defVal := func(i int) ([]byte, error) {
@@ -273,6 +274,7 @@ func (h *rpcHandler) buildIndexScan(ctx *dagContext, executor *tipb.Executor) (*
 			Tp:         col.Tp,
 			Flag:       col.Flag,
 			IsPKHandle: col.GetPkHandle(),
+			Collate:    collate.CollationID2Name(col.Collation),
 		})
 	}
 	e := &indexScanExec{
