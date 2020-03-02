@@ -775,16 +775,15 @@ func (e *DiskUsageExtractor) Extract(
 	names []*types.FieldName,
 	predicates []expression.Expression,
 ) []expression.Expression {
-	// Extract the `rule` columns
+	// Extract the `table_schema` columns
 	remained, schemaSkip, tableSchema := e.extractCol(schema, names, predicates, "table_schema", true)
-	remained, tableSkip, tableName := e.extractCol(schema, names, predicates, "table_name", true)
-	//remained, usageSkip, diskUsage := e.extractCol(schema, names, predicates, "table_schema", true)
+	// Extract the `table_name` columns
+	remained, tableSkip, tableName := e.extractCol(schema, names, remained, "table_name", true)
 	e.SkipRequest = schemaSkip || tableSkip
 	if e.SkipRequest {
 		return nil
 	}
 	e.TableSchema = tableSchema
 	e.TableName = tableName
-	//e.usage = diskUsage
 	return remained
 }
