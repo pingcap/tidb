@@ -198,7 +198,7 @@ func (s *testSuite8) TestInsertOnDuplicateKey(c *C) {
 	tk.MustQuery(`select * from t1 use index(primary)`).Check(testkit.Rows(`1.0000`))
 }
 
-func (s *testSuite3) TestInsertReorgDelete(c *C) {
+func (s *testSuite2) TestInsertReorgDelete(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -842,7 +842,6 @@ func (s *testSuiteP1) TestAllocateContinuousRowID(c *C) {
 				}
 				tk.MustExec(sql)
 				q := "select _tidb_rowid from t1 where a=" + k
-				fmt.Printf("query: %v\n", q)
 				rows := tk.MustQuery(q).Rows()
 				c.Assert(len(rows), Equals, 21)
 				last := 0

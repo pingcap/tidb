@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	pd "github.com/pingcap/pd/client"
 	"github.com/pingcap/tidb/config"
@@ -131,12 +132,13 @@ var ttlFactor = 6000
 
 // Lock represents a lock from tikv server.
 type Lock struct {
-	Key      []byte
-	Primary  []byte
-	TxnID    uint64
-	TTL      uint64
-	TxnSize  uint64
-	LockType kvrpcpb.Op
+	Key             []byte
+	Primary         []byte
+	TxnID           uint64
+	TTL             uint64
+	TxnSize         uint64
+	LockType        kvrpcpb.Op
+	LockForUpdateTS uint64
 }
 
 func (l *Lock) String() string {
@@ -145,18 +147,19 @@ func (l *Lock) String() string {
 	prettyWriteKey(buf, l.Key)
 	buf.WriteString(", primary: ")
 	prettyWriteKey(buf, l.Primary)
-	return fmt.Sprintf("%s, txnStartTS: %d, ttl: %d, type: %s", buf.String(), l.TxnID, l.TTL, l.LockType)
+	return fmt.Sprintf("%s, txnStartTS: %d, lockForUpdateTS:%d, ttl: %d, type: %s", buf.String(), l.TxnID, l.LockForUpdateTS, l.TTL, l.LockType)
 }
 
 // NewLock creates a new *Lock.
 func NewLock(l *kvrpcpb.LockInfo) *Lock {
 	return &Lock{
-		Key:      l.GetKey(),
-		Primary:  l.GetPrimaryLock(),
-		TxnID:    l.GetLockVersion(),
-		TTL:      l.GetLockTtl(),
-		TxnSize:  l.GetTxnSize(),
-		LockType: l.LockType,
+		Key:             l.GetKey(),
+		Primary:         l.GetPrimaryLock(),
+		TxnID:           l.GetLockVersion(),
+		TTL:             l.GetLockTtl(),
+		TxnSize:         l.GetTxnSize(),
+		LockType:        l.LockType,
+		LockForUpdateTS: l.LockForUpdateTs,
 	}
 }
 
@@ -414,6 +417,10 @@ func (lr *LockResolver) getTxnStatusFromLock(bo *Backoffer, l *Lock, callerStart
 			return TxnStatus{}, err
 		}
 
+		failpoint.Inject("txnNotFoundRetTTL", func() {
+			failpoint.Return(TxnStatus{l.TTL, 0, kvrpcpb.Action_NoAction}, nil)
+		})
+
 		// Handle txnNotFound error.
 		// getTxnStatus() returns it when the secondary locks exist while the primary lock doesn't.
 		// This is likely to happen in the concurrently prewrite when secondary regions
@@ -587,9 +594,13 @@ func (lr *LockResolver) resolvePessimisticLock(bo *Backoffer, l *Lock, cleanRegi
 		if _, ok := cleanRegions[loc.Region]; ok {
 			return nil
 		}
+		forUpdateTS := l.LockForUpdateTS
+		if forUpdateTS == 0 {
+			forUpdateTS = math.MaxUint64
+		}
 		pessimisticRollbackReq := &kvrpcpb.PessimisticRollbackRequest{
 			StartVersion: l.TxnID,
-			ForUpdateTs:  math.MaxUint64,
+			ForUpdateTs:  forUpdateTS,
 			Keys:         [][]byte{l.Key},
 		}
 		req := tikvrpc.NewRequest(tikvrpc.CmdPessimisticRollback, pessimisticRollbackReq)
