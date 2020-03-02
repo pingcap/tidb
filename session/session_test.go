@@ -722,7 +722,7 @@ func (s *testSessionSuite) TestRetryUnion(c *C) {
 	tk1.MustExec("update history set a = a + 1")
 
 	_, err := tk.Exec("commit")
-	c.Assert(err, ErrorMatches, "can not retry select for update statement")
+	c.Assert(err, ErrorMatches, ".*can not retry select for update statement")
 }
 
 func (s *testSessionSuite) TestRetryShow(c *C) {
@@ -731,8 +731,7 @@ func (s *testSessionSuite) TestRetryShow(c *C) {
 	tk.MustExec("set tidb_disable_txn_auto_retry = 0")
 	// UNION should't be in retry history.
 	tk.MustQuery("show variables")
-	tk.MustQuery("show grants")
-	tk.MustQuery("admin show ddl jobs")
+	tk.MustQuery("show databases")
 	history := session.GetHistory(tk.Se)
 	c.Assert(history.Count(), Equals, 0)
 }
