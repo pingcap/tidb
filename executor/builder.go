@@ -1065,17 +1065,6 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 		}
 	}
 
-	// consider collations
-	leftTypes := make([]*types.FieldType, 0, len(retTypes(leftExec)))
-	for _, tp := range retTypes(leftExec) {
-		leftTypes = append(leftTypes, tp.Clone())
-	}
-	rightTypes := make([]*types.FieldType, 0, len(retTypes(rightExec)))
-	for _, tp := range retTypes(rightExec) {
-		rightTypes = append(rightTypes, tp.Clone())
-	}
-	leftIsBuildSide := true
-
 	if v.UseOuterToBuild {
 		// update the buildSideEstCount due to changing the build side
 		e.buildSideEstCount = v.Children()[1-v.InnerChildIdx].StatsCount()
@@ -1087,7 +1076,6 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 			e.buildSideExec, e.buildKeys = rightExec, v.RightJoinKeys
 			e.probeSideExec, e.probeKeys = leftExec, v.LeftJoinKeys
 			e.outerFilter = v.RightConditions
-			leftIsBuildSide = false
 		}
 		if defaultValues == nil {
 			defaultValues = make([]types.Datum, e.probeSideExec.Schema().Len())
@@ -1101,7 +1089,6 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 			e.buildSideExec, e.buildKeys = rightExec, v.RightJoinKeys
 			e.probeSideExec, e.probeKeys = leftExec, v.LeftJoinKeys
 			e.outerFilter = v.LeftConditions
-			leftIsBuildSide = false
 		}
 		if defaultValues == nil {
 			defaultValues = make([]types.Datum, e.buildSideExec.Schema().Len())
@@ -1112,20 +1099,6 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 	for i := uint(0); i < e.concurrency; i++ {
 		e.joiners[i] = newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0, defaultValues,
 			v.OtherConditions, lhsTypes, rhsTypes, childrenUsedSchema)
-	}
-
-	// left is the build side
-	for i := range v.EqualConditions {
-		chs, coll, flen := v.EqualConditions[i].CharsetAndCollation(e.ctx)
-		bt := leftTypes[v.LeftJoinKeys[i].Index]
-		bt.Charset, bt.Collate, bt.Flen = chs, coll, flen
-		pt := rightTypes[v.RightJoinKeys[i].Index]
-		pt.Charset, pt.Collate, pt.Flen = chs, coll, flen
-	}
-	if leftIsBuildSide {
-		e.buildTypes, e.probeTypes = leftTypes, rightTypes
-	} else {
-		e.buildTypes, e.probeTypes = rightTypes, leftTypes
 	}
 
 	executorCountHashJoinExec.Inc()
