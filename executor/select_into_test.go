@@ -36,15 +36,18 @@ func cmpAndRm(expected, outfile string, c *C) {
 }
 
 func (s *testSuite1) TestSelectIntoFileExists(c *C) {
-	tmpDir := os.TempDir()
-	outfile := filepath.Join(tmpDir, fmt.Sprintf("TestSelectIntoFileExists-%v.data", time.Now().Nanosecond()))
+	outfile := filepath.Join(os.TempDir(), fmt.Sprintf("TestSelectIntoFileExists-%v.data", time.Now().Nanosecond()))
+	defer func() {
+		c.Assert(os.Remove(outfile), IsNil)
+	}()
 	tk := testkit.NewTestKit(c, s.store)
-	sql := fmt.Sprintf("select 1 into outfile '%v'", outfile)
+	sql := fmt.Sprintf("select 1 into outfile %q", outfile)
 	tk.MustExec(sql)
 	err := tk.ExecToErr(sql)
 	c.Assert(err, NotNil)
-	strings.Contains(err.Error(), "already exists")
-	strings.Contains(err.Error(), outfile)
+	c.Assert(strings.Contains(err.Error(), "already exists") ||
+		strings.Contains(err.Error(), "file exists"), IsTrue, Commentf("err: %v", err))
+	c.Assert(strings.Contains(err.Error(), outfile), IsTrue)
 }
 
 func (s *testSuite1) TestSelectIntoOutfileFromTable(c *C) {
