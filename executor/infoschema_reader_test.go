@@ -19,7 +19,6 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/testkit"
-	"strconv"
 )
 
 var _ = Suite(&testInfoschemaTableSuite{})
@@ -83,23 +82,4 @@ func (s *testInfoschemaTableSuite) TestViews(c *C) {
 	tk.MustExec("CREATE DEFINER='root'@'localhost' VIEW test.v1 AS SELECT 1")
 	tk.MustQuery("SELECT * FROM information_schema.views WHERE table_schema='test' AND table_name='v1'").Check(testkit.Rows("def test v1 SELECT 1 CASCADED NO root@localhost DEFINER utf8mb4 utf8mb4_bin"))
 	tk.MustQuery("SELECT table_catalog, table_schema, table_name, table_type, engine, version, row_format, table_rows, avg_row_length, data_length, max_data_length, index_length, data_free, auto_increment, update_time, check_time, table_collation, checksum, create_options, table_comment FROM information_schema.tables WHERE table_schema='test' AND table_name='v1'").Check(testkit.Rows("def test v1 VIEW <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> VIEW"))
-}
-
-func (s *testInfoschemaTableSuite) TestDiskUsage(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-
-	// use both schema and table in where
-	tk.MustQuery("SELECT table_schema,table_name FROM information_schema.disk_usage WHERE table_schema='information_schema' AND table_name='schemata'").Check(
-		testkit.Rows("information_schema schemata"))
-	diskUsage, err := strconv.Atoi(tk.MustQuery("select disk_usage FROM information_schema.DISK_USAGE WHERE table_schema = 'information_schema' and table_name = 'schemata'").Rows()[0][0].(string))
-	c.Assert(err, IsNil)
-	c.Assert(diskUsage, Greater, 0)
-
-	//use only table in where
-	err = tk.QueryToErr("select * FROM information_schema.DISK_USAGE WHERE table_name = 'schemata'")
-	c.Assert(err, NotNil)
-
-	//use not exist table in where
-	err = tk.QueryToErr("select table_schema,table_name FROM information_schema.DISK_USAGE WHERE table_schema = 'test' and table_name = 'notExit'")
-	c.Assert(err, NotNil)
 }
