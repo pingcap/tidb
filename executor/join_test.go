@@ -1323,10 +1323,10 @@ func (s *testSuiteJoin1) TestHashJoin(c *C) {
 	//     └─TableFullScan_10 10000.00 cop[tikv] table:t1, keep order:false, stats:pseudo time:0s, loops:0, rows:5
 	row := result.Rows()
 	c.Assert(len(row), Equals, 7)
-	outerExecInfo := row[4][4].(string)
+	outerExecInfo := row[4][5].(string)
 	// FIXME: revert this result to 1 after TableReaderExecutor can handle initChunkSize.
 	c.Assert(outerExecInfo[strings.Index(outerExecInfo, "rows")+5:strings.Index(outerExecInfo, "rows")+6], Equals, "5")
-	innerExecInfo := row[1][4].(string)
+	innerExecInfo := row[1][5].(string)
 	c.Assert(innerExecInfo[strings.Index(innerExecInfo, "rows")+5:strings.Index(innerExecInfo, "rows")+6], Equals, "0")
 }
 
