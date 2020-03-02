@@ -406,8 +406,8 @@ func (s *testConfigSuite) TestMaxIndexLength(c *C) {
 	}
 	checkValid(DefMaxIndexLength, true)
 	checkValid(DefMaxIndexLength-1, false)
-	checkValid(DefTiDBMaxIndexLength, true)
-	checkValid(DefTiDBMaxIndexLength+1, false)
+	checkValid(DefMaxOfMaxIndexLength, true)
+	checkValid(DefMaxOfMaxIndexLength+1, false)
 }
 
 func (s *testConfigSuite) TestParsePath(c *C) {

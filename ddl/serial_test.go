@@ -86,7 +86,7 @@ func (s *testSerialSuite) TestChangeMaxIndexLength(c *C) {
 	cfg := config.GetGlobalConfig()
 	newCfg := *cfg
 	originalMaxIndexLen := cfg.MaxIndexLength
-	newCfg.MaxIndexLength = config.DefTiDBMaxIndexLength
+	newCfg.MaxIndexLength = config.DefMaxOfMaxIndexLength
 	config.StoreGlobalConfig(&newCfg)
 	defer func() {
 		newCfg.MaxIndexLength = originalMaxIndexLen
@@ -94,8 +94,8 @@ func (s *testSerialSuite) TestChangeMaxIndexLength(c *C) {
 	}()
 
 	tk.MustExec("create table t (c1 varchar(3073), index(c1)) charset = ascii;")
-	tk.MustExec(fmt.Sprintf("create table t1 (c1 varchar(%d), index(c1)) charset = ascii;", config.DefTiDBMaxIndexLength))
-	tk.MustGetErrCode(fmt.Sprintf("create table t2 (c1 varchar(%d), index(c1)) charset = ascii;", config.DefTiDBMaxIndexLength+1), mysql.ErrTooLongKey)
+	tk.MustExec(fmt.Sprintf("create table t1 (c1 varchar(%d), index(c1)) charset = ascii;", config.DefMaxOfMaxIndexLength))
+	tk.MustGetErrCode(fmt.Sprintf("create table t2 (c1 varchar(%d), index(c1)) charset = ascii;", config.DefMaxOfMaxIndexLength+1), mysql.ErrTooLongKey)
 	tk.MustExec("drop table t, t1")
 }
 
