@@ -67,13 +67,7 @@ token-limit = 0
 alter-primary-key = true
 split-region-max-num=10000
 server-version = "test_version"
-<<<<<<< HEAD
-=======
-repair-mode = true
-max-server-connections = 200
-mem-quota-query = 10000
 max-index-length = 3080
->>>>>>> 1771cf8... ddl, config: add a variable to control the max index length (#15012)
 [performance]
 txn-entry-count-limit=2000
 txn-total-size-limit=2000
@@ -119,25 +113,7 @@ history-size=100
 	c.Assert(conf.StmtSummary.MaxSQLLength, Equals, uint(1024))
 	c.Assert(conf.StmtSummary.RefreshInterval, Equals, 100)
 	c.Assert(conf.StmtSummary.HistorySize, Equals, 100)
-<<<<<<< HEAD
-=======
-	c.Assert(conf.EnableBatchDML, Equals, true)
-	c.Assert(conf.RepairMode, Equals, true)
-	c.Assert(conf.MaxServerConnections, Equals, uint32(200))
-	c.Assert(conf.MemQuotaQuery, Equals, int64(10000))
-	c.Assert(conf.Experimental.AllowAutoRandom, IsTrue)
-	c.Assert(conf.IsolationRead.Engines, DeepEquals, []string{"tiflash"})
 	c.Assert(conf.MaxIndexLength, Equals, 3080)
-
-	_, err = f.WriteString(`
-[log.file]
-log-rotate = true`)
-	c.Assert(err, IsNil)
-	err = conf.Load(configFile)
-	tmp := err.(*ErrConfigValidationFailed)
-	c.Assert(isAllDeprecatedConfigItems(tmp.UndecodedItems), IsTrue)
-
->>>>>>> 1771cf8... ddl, config: add a variable to control the max index length (#15012)
 	c.Assert(f.Close(), IsNil)
 	c.Assert(os.Remove(configFile), IsNil)
 
@@ -272,42 +248,6 @@ func (s *testConfigSuite) TestOOMActionValid(c *C) {
 		c.Assert(c1.Valid() == nil, Equals, tt.valid)
 	}
 }
-<<<<<<< HEAD
-=======
-
-func (s *testConfigSuite) TestTxnTotalSizeLimitValid(c *C) {
-	conf := NewConfig()
-	tests := []struct {
-		limit uint64
-		valid bool
-	}{
-		{4 << 10, true},
-		{10 << 30, true},
-		{10<<30 + 1, false},
-	}
-
-	for _, tt := range tests {
-		conf.Performance.TxnTotalSizeLimit = tt.limit
-		c.Assert(conf.Valid() == nil, Equals, tt.valid)
-	}
-
-	conf.Binlog.Enable = true
-	conf.Performance.TxnTotalSizeLimit = 100<<20 + 1
-	c.Assert(conf.Valid(), NotNil)
-}
-
-func (s *testConfigSuite) TestAllowAutoRandomValid(c *C) {
-	conf := NewConfig()
-	checkValid := func(allowAlterPK, allowAutoRand, shouldBeValid bool) {
-		conf.AlterPrimaryKey = allowAlterPK
-		conf.Experimental.AllowAutoRandom = allowAutoRand
-		c.Assert(conf.Valid() == nil, Equals, shouldBeValid)
-	}
-	checkValid(true, true, false)
-	checkValid(true, false, true)
-	checkValid(false, true, true)
-	checkValid(false, false, true)
-}
 
 func (s *testConfigSuite) TestMaxIndexLength(c *C) {
 	conf := NewConfig()
@@ -320,17 +260,3 @@ func (s *testConfigSuite) TestMaxIndexLength(c *C) {
 	checkValid(DefMaxOfMaxIndexLength, true)
 	checkValid(DefMaxOfMaxIndexLength+1, false)
 }
-
-func (s *testConfigSuite) TestParsePath(c *C) {
-	etcdAddrs, disableGC, err := ParsePath("tikv://node1:2379,node2:2379")
-	c.Assert(err, IsNil)
-	c.Assert(etcdAddrs, DeepEquals, []string{"node1:2379", "node2:2379"})
-	c.Assert(disableGC, IsFalse)
-
-	_, _, err = ParsePath("tikv://node1:2379")
-	c.Assert(err, IsNil)
-	_, disableGC, err = ParsePath("tikv://node1:2379?disableGC=true")
-	c.Assert(err, IsNil)
-	c.Assert(disableGC, IsTrue)
-}
->>>>>>> 1771cf8... ddl, config: add a variable to control the max index length (#15012)
