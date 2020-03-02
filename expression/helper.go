@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
-	"github.com/pingcap/tidb/util/collate"
 )
 
 func boolToInt64(v bool) int64 {
@@ -103,7 +102,7 @@ func GetTimeValue(ctx sessionctx.Context, v interface{}, tp byte, fsp int8) (d t
 		}
 	case *ast.FuncCallExpr:
 		if x.FnName.L == ast.CurrentTimestamp {
-			d.SetString(strings.ToUpper(ast.CurrentTimestamp), mysql.DefaultCollationName, collate.DefaultLen)
+			d.SetString(strings.ToUpper(ast.CurrentTimestamp), mysql.DefaultCollationName)
 			return d, nil
 		}
 		return d, errDefaultValue

@@ -80,6 +80,7 @@ func BenchmarkDecode(b *testing.B) {
 			Flen:    tp.Flen,
 			Decimal: tp.Decimal,
 			Elems:   tp.Elems,
+			Collate: tp.Collate,
 		}
 	}
 	decoder := rowcodec.NewChunkDecoder(cols, -1, nil, time.Local)
