@@ -5563,3 +5563,15 @@ func (s *testIntegrationSerialSuite) TestWeightString(c *C) {
 	c.Assert(tk.MustQuery("select weight_string(7.0);").Rows()[0][0], Equals, "<nil>")
 	c.Assert(tk.MustQuery("select weight_string(7 AS BINARY(2));").Rows()[0][0], Equals, "7\x00")
 }
+
+func (s *testIntegrationSerialSuite) TestCollateConstantPropagation(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a char(10) collate utf8mb4_bin, b char(10) collate utf8mb4_general_ci);")
+	tk.MustExec("insert into t values ('a', 'A');")
+	tk.MustQuery("select * from t t1, t t2 where t1.a=t2.b and t2.b='a';").Check(nil)
+}

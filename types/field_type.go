@@ -35,11 +35,15 @@ type FieldType = ast.FieldType
 // NewFieldType returns a FieldType,
 // with a type and other information about field type.
 func NewFieldType(tp byte) *FieldType {
-	return &FieldType{
+	ft := &FieldType{
 		Tp:      tp,
 		Flen:    UnspecifiedLength,
 		Decimal: UnspecifiedLength,
 	}
+	if tp != mysql.TypeVarchar && tp != mysql.TypeVarString && tp != mysql.TypeString {
+		ft.Collate = charset.CollationBin
+	}
+	return ft
 }
 
 // AggFieldType aggregates field types for a multi-argument function like `IF`, `IFNULL`, `COALESCE`

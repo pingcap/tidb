@@ -214,6 +214,9 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 		if v.InOperand {
 			newExpr = setExprColumnInOperand(newExpr)
 		}
+		if v.GetType().Collate != newExpr.GetType().Collate {
+			return false, v
+		}
 		return true, newExpr
 	case *ScalarFunction:
 		if v.FuncName.L == ast.Cast {
