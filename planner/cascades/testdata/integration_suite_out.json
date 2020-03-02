@@ -396,7 +396,7 @@
           "    └─TableRangeScan_14 250.00 cop[tikv] table:t, range:(0,1000], keep order:false, stats:pseudo"
         ],
         "Result": [
-          "110"
+          "110.0"
         ]
       },
       {
