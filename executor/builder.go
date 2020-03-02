@@ -2821,6 +2821,7 @@ func newRowDecoder(ctx sessionctx.Context, schema *expression.Schema, tbl *model
 			Flen:    col.RetType.Flen,
 			Decimal: col.RetType.Decimal,
 			Elems:   col.RetType.Elems,
+			Collate: col.GetType().Collate,
 		}
 	}
 	defVal := func(i int, chk *chunk.Chunk) error {
