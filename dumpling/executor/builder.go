@@ -48,11 +48,13 @@ import (
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
+	"go.uber.org/zap"
 )
 
 var (
@@ -1581,26 +1583,26 @@ func (b *executorBuilder) updateForUpdateTSIfNeeded(selectPlan plannercore.Physi
 	// The Repeatable Read transaction use Read Committed level to read data for writing (insert, update, delete, select for update),
 	// We should always update/refresh the for-update-ts no matter the isolation level is RR or RC.
 	if b.ctx.GetSessionVars().IsPessimisticReadConsistency() {
-		return b.refreshForUpdateTS()
+		return b.refreshForUpdateTSForRC()
 	}
 	return UpdateForUpdateTS(b.ctx, 0)
 }
 
-// refreshForUpdateTS is used to refresh the for-update-ts for reading data at read consistency level in pessimistic transaction.
+// refreshForUpdateTSForRC is used to refresh the for-update-ts for reading data at read consistency level in pessimistic transaction.
 // It could use the cached tso from the statement future to avoid get tso many times.
-func (b *executorBuilder) refreshForUpdateTS() error {
-	var newForUpdateTS uint64
-	future, cachedTS := b.ctx.GetSessionVars().TxnCtx.GetStmtFuture()
-	if cachedTS != 0 {
-		newForUpdateTS = cachedTS
-	} else if future != nil {
-		newTS, waitErr := future.Wait()
-		if waitErr == nil {
-			newForUpdateTS = newTS
-			b.ctx.GetSessionVars().TxnCtx.SetStmtFuture(nil, newTS)
-		}
+func (b *executorBuilder) refreshForUpdateTSForRC() error {
+	future := b.ctx.GetSessionVars().TxnCtx.GetStmtFuture()
+	if future == nil {
+		return nil
 	}
-	// If cachedTS is 0 or Wait() return an error, newForUpdateTS should be 0, it will force to get a new for-update-ts from PD.
+	newForUpdateTS, waitErr := future.Wait()
+	if waitErr != nil {
+		logutil.BgLogger().Warn("wait tso failed",
+			zap.Uint64("startTS", b.ctx.GetSessionVars().TxnCtx.StartTS),
+			zap.Error(waitErr))
+	}
+	b.ctx.GetSessionVars().TxnCtx.SetStmtFuture(nil)
+	// If newForUpdateTS is 0, it will force to get a new for-update-ts from PD.
 	if err := UpdateForUpdateTS(b.ctx, newForUpdateTS); err != nil {
 		return err
 	}
@@ -2155,7 +2157,7 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 // and then update it ranges from table scan plan.
 func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) *TableReaderExecutor {
 	if b.ctx.GetSessionVars().IsPessimisticReadConsistency() {
-		if err := b.refreshForUpdateTS(); err != nil {
+		if err := b.refreshForUpdateTSForRC(); err != nil {
 			b.err = err
 			return nil
 		}
@@ -2229,7 +2231,7 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 
 func (b *executorBuilder) buildIndexReader(v *plannercore.PhysicalIndexReader) *IndexReaderExecutor {
 	if b.ctx.GetSessionVars().IsPessimisticReadConsistency() {
-		if err := b.refreshForUpdateTS(); err != nil {
+		if err := b.refreshForUpdateTSForRC(); err != nil {
 			b.err = err
 			return nil
 		}
@@ -2332,7 +2334,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 
 func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLookUpReader) *IndexLookUpExecutor {
 	if b.ctx.GetSessionVars().IsPessimisticReadConsistency() {
-		if err := b.refreshForUpdateTS(); err != nil {
+		if err := b.refreshForUpdateTSForRC(); err != nil {
 			b.err = err
 			return nil
 		}
@@ -2835,7 +2837,7 @@ func newRowDecoder(ctx sessionctx.Context, schema *expression.Schema, tbl *model
 
 func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan) Executor {
 	if b.ctx.GetSessionVars().IsPessimisticReadConsistency() {
-		if err := b.refreshForUpdateTS(); err != nil {
+		if err := b.refreshForUpdateTSForRC(); err != nil {
 			b.err = err
 			return nil
 		}

@@ -133,7 +133,7 @@ type stmtFuture struct {
 // TransactionContext is used to store variables that has transaction scope.
 type TransactionContext struct {
 	forUpdateTS   uint64
-	stmtFuture    *stmtFuture
+	stmtFuture    oracle.Future
 	DirtyDB       interface{}
 	Binlog        interface{}
 	InfoSchema    interface{}
@@ -222,18 +222,13 @@ func (tc *TransactionContext) SetForUpdateTS(forUpdateTS uint64) {
 }
 
 // SetStmtFuture sets the stmtFuture .
-func (tc *TransactionContext) SetStmtFuture(future oracle.Future, cachedTS uint64) {
-	tc.stmtFuture = &stmtFuture{future: future, cachedTS: cachedTS}
+func (tc *TransactionContext) SetStmtFuture(future oracle.Future) {
+	tc.stmtFuture = future
 }
 
 // GetStmtFuture gets the stmtFuture.
-func (tc *TransactionContext) GetStmtFuture() (oracle.Future, uint64) {
-	if tc.stmtFuture == nil {
-		panic("The statement future is nil, it should not happen." +
-			" The statement future should be set at the beginning of the transaction or" +
-			" at the beginning of each statement in the pessimistic read-committed transaction in PrepareTSFuture.")
-	}
-	return tc.stmtFuture.future, tc.stmtFuture.cachedTS
+func (tc *TransactionContext) GetStmtFuture() oracle.Future {
+	return tc.stmtFuture
 }
 
 // WriteStmtBufs can be used by insert/replace/delete/update statement.
