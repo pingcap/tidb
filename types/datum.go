@@ -24,14 +24,12 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/parser/types"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types/json"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -279,12 +277,11 @@ func (d *Datum) GetMysqlEnum() Enum {
 }
 
 // SetMysqlEnum sets Enum value
-func (d *Datum) SetMysqlEnum(b Enum, collation string, length int) {
+func (d *Datum) SetMysqlEnum(b Enum, collation string) {
 	d.k = KindMysqlEnum
 	d.i = int64(b.Value)
 	sink(b.Name)
 	d.collation = collation
-	d.length = uint32(length)
 	d.b = hack.Slice(b.Name)
 }
 
@@ -295,12 +292,11 @@ func (d *Datum) GetMysqlSet() Set {
 }
 
 // SetMysqlSet sets Set value
-func (d *Datum) SetMysqlSet(b Set, collation string, length int) {
+func (d *Datum) SetMysqlSet(b Set, collation string) {
 	d.k = KindMysqlSet
 	d.i = int64(b.Value)
 	sink(b.Name)
 	d.collation = collation
-	d.length = uint32(length)
 	d.b = hack.Slice(b.Name)
 }
 
@@ -455,7 +451,7 @@ func (d *Datum) SetValueForTest(val interface{}) {
 	case Duration:
 		d.SetMysqlDuration(x)
 	case Enum:
-		d.SetMysqlEnum(x, mysql.DefaultCollationName, collate.DefaultLen)
+		d.SetMysqlEnum(x, mysql.DefaultCollationName)
 	case BinaryLiteral:
 		d.SetBinaryLiteral(x)
 	case BitLiteral: // Store as BinaryLiteral for Bit and Hex literals
@@ -463,7 +459,7 @@ func (d *Datum) SetValueForTest(val interface{}) {
 	case HexLiteral:
 		d.SetBinaryLiteral(BinaryLiteral(x))
 	case Set:
-		d.SetMysqlSet(x, mysql.DefaultCollationName, collate.DefaultLen)
+		d.SetMysqlSet(x, mysql.DefaultCollationName)
 	case json.BinaryJSON:
 		d.SetMysqlJSON(x)
 	case Time:
@@ -503,7 +499,7 @@ func (d *Datum) SetValue(val interface{}, tp *types.FieldType) {
 	case Duration:
 		d.SetMysqlDuration(x)
 	case Enum:
-		d.SetMysqlEnum(x, tp.Collate, tp.Flen)
+		d.SetMysqlEnum(x, tp.Collate)
 	case BinaryLiteral:
 		d.SetBinaryLiteral(x)
 	case BitLiteral: // Store as BinaryLiteral for Bit and Hex literals
@@ -511,7 +507,7 @@ func (d *Datum) SetValue(val interface{}, tp *types.FieldType) {
 	case HexLiteral:
 		d.SetBinaryLiteral(BinaryLiteral(x))
 	case Set:
-		d.SetMysqlSet(x, tp.Collate, tp.Flen)
+		d.SetMysqlSet(x, tp.Collate)
 	case json.BinaryJSON:
 		d.SetMysqlJSON(x)
 	case Time:
@@ -919,9 +915,7 @@ func (d *Datum) convertToString(sc *stmtctx.StatementContext, target *FieldType)
 	default:
 		return invalidConv(d, target.Tp)
 	}
-	log.Warn("ppppp", zap.String("before xxx", s))
 	s, err := ProduceStrWithSpecifiedTp(s, target, sc, true)
-	log.Warn("ppppp", zap.String("after xxx", s))
 	ret.SetString(s, target.Collate)
 	if target.Charset == charset.CharsetBin {
 		ret.k = KindBytes
@@ -1364,7 +1358,7 @@ func (d *Datum) convertToMysqlEnum(sc *stmtctx.StatementContext, target *FieldTy
 		logutil.BgLogger().Error("convert to MySQL enum failed", zap.Error(err))
 		err = errors.Trace(ErrTruncated)
 	}
-	ret.SetMysqlEnum(e, target.Collate, target.Flen)
+	ret.SetMysqlEnum(e, target.Collate)
 	return ret, err
 }
 
@@ -1389,7 +1383,7 @@ func (d *Datum) convertToMysqlSet(sc *stmtctx.StatementContext, target *FieldTyp
 	if err != nil {
 		return invalidConv(d, target.Tp)
 	}
-	ret.SetMysqlSet(s, target.Collate, target.Flen)
+	ret.SetMysqlSet(s, target.Collate)
 	return ret, nil
 }
 
@@ -1820,19 +1814,19 @@ func NewMysqlBitDatum(b BinaryLiteral) (d Datum) {
 
 // NewMysqlEnumDatum creates a new MysqlEnum Datum for a Enum value.
 func NewMysqlEnumDatum(e Enum) (d Datum) {
-	d.SetMysqlEnum(e, mysql.DefaultCollationName, collate.DefaultLen)
+	d.SetMysqlEnum(e, mysql.DefaultCollationName)
 	return d
 }
 
 // NewCollateMysqlEnumDatum create a new MysqlEnum Datum for a Enum value with collation information.
-func NewCollateMysqlEnumDatum(e Enum, collation string, length int) (d Datum) {
-	d.SetMysqlEnum(e, collation, length)
+func NewCollateMysqlEnumDatum(e Enum, collation string) (d Datum) {
+	d.SetMysqlEnum(e, collation)
 	return d
 }
 
 // NewMysqlSetDatum creates a new MysqlSet Datum for a Enum value.
-func NewMysqlSetDatum(e Set, collation string, length int) (d Datum) {
-	d.SetMysqlSet(e, collation, length)
+func NewMysqlSetDatum(e Set, collation string) (d Datum) {
+	d.SetMysqlSet(e, collation)
 	return d
 }
 
@@ -1986,7 +1980,11 @@ func GetMaxValue(ft *FieldType) (max Datum) {
 		max.SetFloat32(float32(GetMaxFloat(ft.Flen, ft.Decimal)))
 	case mysql.TypeDouble:
 		max.SetFloat64(GetMaxFloat(ft.Flen, ft.Decimal))
-	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar:
+		// codec.Encode KindMaxValue, to avoid import circle
+		bytes := []byte{250}
+		max.SetString(string(bytes), ft.Collate)
+	case mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		// codec.Encode KindMaxValue, to avoid import circle
 		bytes := []byte{250}
 		max.SetBytes(bytes)
@@ -2017,7 +2015,11 @@ func GetMinValue(ft *FieldType) (min Datum) {
 		min.SetFloat32(float32(-GetMaxFloat(ft.Flen, ft.Decimal)))
 	case mysql.TypeDouble:
 		min.SetFloat64(-GetMaxFloat(ft.Flen, ft.Decimal))
-	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar:
+		// codec.Encode KindMinNotNull, to avoid import circle
+		bytes := []byte{1}
+		min.SetString(string(bytes), ft.Collate)
+	case mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		// codec.Encode KindMinNotNull, to avoid import circle
 		bytes := []byte{1}
 		min.SetBytes(bytes)

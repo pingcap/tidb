@@ -365,13 +365,13 @@ func DecodeRowWithMapNew(b []byte, cols map[int64]*types.FieldType, loc *time.Lo
 	var idx int
 	for id, tp := range cols {
 		reqCols[idx] = rowcodec.ColInfo{
-			ID:        id,
-			Tp:        int32(tp.Tp),
-			Flag:      int32(tp.Flag),
-			Flen:      tp.Flen,
-			Decimal:   tp.Decimal,
-			Elems:     tp.Elems,
-			Collation: tp.Collate,
+			ID:      id,
+			Tp:      int32(tp.Tp),
+			Flag:    int32(tp.Flag),
+			Flen:    tp.Flen,
+			Decimal: tp.Decimal,
+			Elems:   tp.Elems,
+			Collate: tp.Collate,
 		}
 		idx++
 	}
@@ -506,10 +506,11 @@ func unflatten(datum types.Datum, ft *types.FieldType, loc *time.Location) (type
 	case mysql.TypeFloat:
 		datum.SetFloat32(float32(datum.GetFloat64()))
 		return datum, nil
+	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString:
+		datum.SetString(datum.GetString(), ft.Collate)
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeYear, mysql.TypeInt24,
 		mysql.TypeLong, mysql.TypeLonglong, mysql.TypeDouble, mysql.TypeTinyBlob,
-		mysql.TypeMediumBlob, mysql.TypeBlob, mysql.TypeLongBlob, mysql.TypeVarchar,
-		mysql.TypeString:
+		mysql.TypeMediumBlob, mysql.TypeBlob, mysql.TypeLongBlob:
 		return datum, nil
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		t := types.NewTime(types.ZeroCoreTime, ft.Tp, int8(ft.Decimal))
@@ -537,14 +538,14 @@ func unflatten(datum types.Datum, ft *types.FieldType, loc *time.Location) (type
 		if err != nil {
 			enum = types.Enum{}
 		}
-		datum.SetMysqlEnum(enum, ft.Collate, ft.Flen)
+		datum.SetMysqlEnum(enum, ft.Collate)
 		return datum, nil
 	case mysql.TypeSet:
 		set, err := types.ParseSetValue(ft.Elems, datum.GetUint64())
 		if err != nil {
 			return datum, errors.Trace(err)
 		}
-		datum.SetMysqlSet(set, ft.Collate, ft.Flen)
+		datum.SetMysqlSet(set, ft.Collate)
 		return datum, nil
 	case mysql.TypeBit:
 		val := datum.GetUint64()

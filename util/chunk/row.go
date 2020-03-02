@@ -156,8 +156,11 @@ func (r Row) GetDatum(colIdx int, tp *types.FieldType) types.Datum {
 		if !r.IsNull(colIdx) {
 			d.SetFloat64(r.GetFloat64(colIdx))
 		}
-	case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString,
-		mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+	case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString:
+		if !r.IsNull(colIdx) {
+			d.SetString(r.GetString(colIdx), tp.Collate)
+		}
+	case mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		if !r.IsNull(colIdx) {
 			d.SetBytes(r.GetBytes(colIdx))
 		}
@@ -186,11 +189,11 @@ func (r Row) GetDatum(colIdx int, tp *types.FieldType) types.Datum {
 		}
 	case mysql.TypeEnum:
 		if !r.IsNull(colIdx) {
-			d.SetMysqlEnum(r.GetEnum(colIdx), tp.Collate, tp.Flen)
+			d.SetMysqlEnum(r.GetEnum(colIdx), tp.Collate)
 		}
 	case mysql.TypeSet:
 		if !r.IsNull(colIdx) {
-			d.SetMysqlSet(r.GetSet(colIdx), tp.Collate, tp.Flen)
+			d.SetMysqlSet(r.GetSet(colIdx), tp.Collate)
 		}
 	case mysql.TypeBit:
 		if !r.IsNull(colIdx) {
