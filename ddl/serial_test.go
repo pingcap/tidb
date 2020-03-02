@@ -81,6 +81,24 @@ func (s *testSerialSuite) TearDownSuite(c *C) {
 	}
 }
 
+func (s *testSerialSuite) TestChangeMaxIndexLength(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	cfg := config.GetGlobalConfig()
+	newCfg := *cfg
+	originalMaxIndexLen := cfg.MaxIndexLength
+	newCfg.MaxIndexLength = config.DefMaxOfMaxIndexLength
+	config.StoreGlobalConfig(&newCfg)
+	defer func() {
+		newCfg.MaxIndexLength = originalMaxIndexLen
+		config.StoreGlobalConfig(&newCfg)
+	}()
+
+	tk.MustExec("create table t (c1 varchar(3073), index(c1)) charset = ascii;")
+	tk.MustExec(fmt.Sprintf("create table t1 (c1 varchar(%d), index(c1)) charset = ascii;", config.DefMaxOfMaxIndexLength))
+	tk.MustGetErrCode(fmt.Sprintf("create table t2 (c1 varchar(%d), index(c1)) charset = ascii;", config.DefMaxOfMaxIndexLength+1), mysql.ErrTooLongKey)
+	tk.MustExec("drop table t, t1")
+}
+
 func (s *testSerialSuite) TestPrimaryKey(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
