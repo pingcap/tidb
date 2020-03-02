@@ -561,13 +561,14 @@ func (b *builtinGreatestStringSig) evalString(row chunk.Row) (max string, isNull
 	if isNull || err != nil {
 		return max, isNull, err
 	}
+	_, collation, flen := b.CharsetAndCollation(b.ctx)
 	for i := 1; i < len(b.args); i++ {
 		var v string
 		v, isNull, err = b.args[i].EvalString(b.ctx, row)
 		if isNull || err != nil {
 			return max, isNull, err
 		}
-		if types.CompareString(v, max, b.tp.Collate, b.tp.Flen) > 0 {
+		if types.CompareString(v, max, collation, flen) > 0 {
 			max = v
 		}
 	}
@@ -760,13 +761,14 @@ func (b *builtinLeastStringSig) evalString(row chunk.Row) (min string, isNull bo
 	if isNull || err != nil {
 		return min, isNull, err
 	}
+	_, collation, flen := b.CharsetAndCollation(b.ctx)
 	for i := 1; i < len(b.args); i++ {
 		var v string
 		v, isNull, err = b.args[i].EvalString(b.ctx, row)
 		if isNull || err != nil {
 			return min, isNull, err
 		}
-		if types.CompareString(v, min, b.tp.Collate, b.tp.Flen) < 0 {
+		if types.CompareString(v, min, collation, flen) < 0 {
 			min = v
 		}
 	}
@@ -1520,7 +1522,8 @@ func (b *builtinLTStringSig) Clone() builtinFunc {
 }
 
 func (b *builtinLTStringSig) evalInt(row chunk.Row) (val int64, isNull bool, err error) {
-	return resOfLT(CompareStringWithCollationInfo(b.ctx, b.args[0], b.args[1], row, row, b.tp.Collate, b.tp.Flen))
+	_, collation, flen := b.CharsetAndCollation(b.ctx)
+	return resOfLT(CompareStringWithCollationInfo(b.ctx, b.args[0], b.args[1], row, row, collation, flen))
 }
 
 type builtinLTDurationSig struct {
@@ -1618,7 +1621,8 @@ func (b *builtinLEStringSig) Clone() builtinFunc {
 }
 
 func (b *builtinLEStringSig) evalInt(row chunk.Row) (val int64, isNull bool, err error) {
-	return resOfLE(CompareStringWithCollationInfo(b.ctx, b.args[0], b.args[1], row, row, b.tp.Collate, b.tp.Flen))
+	_, collation, flen := b.CharsetAndCollation(b.ctx)
+	return resOfLE(CompareStringWithCollationInfo(b.ctx, b.args[0], b.args[1], row, row, collation, flen))
 }
 
 type builtinLEDurationSig struct {
@@ -1716,7 +1720,8 @@ func (b *builtinGTStringSig) Clone() builtinFunc {
 }
 
 func (b *builtinGTStringSig) evalInt(row chunk.Row) (val int64, isNull bool, err error) {
-	return resOfGT(CompareStringWithCollationInfo(b.ctx, b.args[0], b.args[1], row, row, b.tp.Collate, b.tp.Flen))
+	_, collation, flen := b.CharsetAndCollation(b.ctx)
+	return resOfGT(CompareStringWithCollationInfo(b.ctx, b.args[0], b.args[1], row, row, collation, flen))
 }
 
 type builtinGTDurationSig struct {
@@ -1814,7 +1819,8 @@ func (b *builtinGEStringSig) Clone() builtinFunc {
 }
 
 func (b *builtinGEStringSig) evalInt(row chunk.Row) (val int64, isNull bool, err error) {
-	return resOfGE(CompareStringWithCollationInfo(b.ctx, b.args[0], b.args[1], row, row, b.tp.Collate, b.tp.Flen))
+	_, collation, flen := b.CharsetAndCollation(b.ctx)
+	return resOfGE(CompareStringWithCollationInfo(b.ctx, b.args[0], b.args[1], row, row, collation, flen))
 }
 
 type builtinGEDurationSig struct {
@@ -1912,7 +1918,8 @@ func (b *builtinEQStringSig) Clone() builtinFunc {
 }
 
 func (b *builtinEQStringSig) evalInt(row chunk.Row) (val int64, isNull bool, err error) {
-	return resOfEQ(CompareStringWithCollationInfo(b.ctx, b.args[0], b.args[1], row, row, b.tp.Collate, b.tp.Flen))
+	_, collation, flen := b.CharsetAndCollation(b.ctx)
+	return resOfEQ(CompareStringWithCollationInfo(b.ctx, b.args[0], b.args[1], row, row, collation, flen))
 }
 
 type builtinEQDurationSig struct {
@@ -2010,7 +2017,8 @@ func (b *builtinNEStringSig) Clone() builtinFunc {
 }
 
 func (b *builtinNEStringSig) evalInt(row chunk.Row) (val int64, isNull bool, err error) {
-	return resOfNE(CompareStringWithCollationInfo(b.ctx, b.args[0], b.args[1], row, row, b.tp.Collate, b.tp.Flen))
+	_, collation, flen := b.CharsetAndCollation(b.ctx)
+	return resOfNE(CompareStringWithCollationInfo(b.ctx, b.args[0], b.args[1], row, row, collation, flen))
 }
 
 type builtinNEDurationSig struct {
@@ -2185,12 +2193,13 @@ func (b *builtinNullEQStringSig) evalInt(row chunk.Row) (val int64, isNull bool,
 		return 0, true, err
 	}
 	var res int64
+	_, collation, flen := b.CharsetAndCollation(b.ctx)
 	switch {
 	case isNull0 && isNull1:
 		res = 1
 	case isNull0 != isNull1:
 		break
-	case types.CompareString(arg0, arg1, b.tp.Collate, b.tp.Flen) == 0:
+	case types.CompareString(arg0, arg1, collation, flen) == 0:
 		res = 1
 	}
 	return res, false, nil
