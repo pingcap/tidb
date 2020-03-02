@@ -17,6 +17,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/errors"
 	"io"
 	"io/ioutil"
 	"math/rand"
@@ -1155,10 +1156,14 @@ func (cli *testServerClient) runTestStmtCount(t *C) {
 }
 
 func (cli *testServerClient) runTestTLSConnection(t *C, overrider configOverrider) error {
-	db, err := sql.Open("mysql", cli.getDSN(overrider))
+	dsn := cli.getDSN(overrider)
+	db, err := sql.Open("mysql", dsn)
 	t.Assert(err, IsNil)
 	defer db.Close()
 	_, err = db.Exec("USE test")
+	if err != nil {
+		return errors.Annotate(err, "dsn:"+dsn)
+	}
 	return err
 }
 

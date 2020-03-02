@@ -211,12 +211,12 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 
 	tlsConfig, err := util.LoadTLSCertificates(s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert)
 	if err != nil {
-		logutil.BgLogger().Warn("secure connection is not enabled")
-	} else {
-		logutil.BgLogger().Info("secure connection is enabled", zap.Bool("client verification enabled", len(variable.SysVars["ssl_ca"].Value) > 0))
-		setSSLVariable(s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert)
-		atomic.StorePointer(&s.tlsConfig, unsafe.Pointer(tlsConfig))
+		logutil.BgLogger().Error("secure connection cert/key/ca load fail", zap.Error(err))
+		return nil, err
 	}
+	logutil.BgLogger().Info("secure connection is enabled", zap.Bool("client verification enabled", len(variable.SysVars["ssl_ca"].Value) > 0))
+	setSSLVariable(s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert)
+	atomic.StorePointer(&s.tlsConfig, unsafe.Pointer(tlsConfig))
 
 	setSystemTimeZoneVariable()
 

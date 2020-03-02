@@ -373,7 +373,7 @@ func (ts *tidbTestSuite) TestSystemTimeZone(c *C) {
 	tk.MustQuery("select @@system_time_zone").Check(tz1)
 }
 
-func (ts *tidbTestSuite) TestTLS(c *C) {
+func (ts *tidbTestSerialSuite) TestTLS(c *C) {
 	// Generate valid TLS certificates.
 	caCert, caKey, err := generateCert(0, "TiDB CA", nil, nil, "/tmp/ca-key.pem", "/tmp/ca-cert.pem")
 	c.Assert(err, IsNil)
@@ -407,7 +407,7 @@ func (ts *tidbTestSuite) TestTLS(c *C) {
 	time.Sleep(time.Millisecond * 100)
 	err = cli.runTestTLSConnection(c, connOverrider) // We should get ErrNoTLS.
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, mysql.ErrNoTLS.Error())
+	c.Assert(errors.Cause(err).Error(), Equals, mysql.ErrNoTLS.Error())
 	server.Close()
 
 	// Start the server with TLS but without CA, in this case the server will not verify client's certificate.
@@ -466,7 +466,7 @@ func (ts *tidbTestSuite) TestTLS(c *C) {
 	server.Close()
 }
 
-func (ts *tidbTestSuite) TestReloadTLS(c *C) {
+func (ts *tidbTestSerialSuite) TestReloadTLS(c *C) {
 	// Generate valid TLS certificates.
 	caCert, caKey, err := generateCert(0, "TiDB CA", nil, nil, "/tmp/ca-key2.pem", "/tmp/ca-cert2.pem")
 	c.Assert(err, IsNil)
@@ -474,7 +474,7 @@ func (ts *tidbTestSuite) TestReloadTLS(c *C) {
 	c.Assert(err, IsNil)
 	_, _, err = generateCert(2, "SQL Client Certificate", caCert, caKey, "/tmp/client-key2.pem", "/tmp/client-cert2.pem")
 	c.Assert(err, IsNil)
-	err = registerTLSConfig("client-certificate", "/tmp/ca-cert2.pem", "/tmp/client-cert2.pem", "/tmp/client-key2.pem", "tidb-server", true)
+	err = registerTLSConfig("client-certificate-reload", "/tmp/ca-cert2.pem", "/tmp/client-cert2.pem", "/tmp/client-key2.pem", "tidb-server", true)
 	c.Assert(err, IsNil)
 
 	defer func() {
@@ -503,7 +503,7 @@ func (ts *tidbTestSuite) TestReloadTLS(c *C) {
 	time.Sleep(time.Millisecond * 100)
 	// The client provides a valid certificate.
 	connOverrider := func(config *mysql.Config) {
-		config.TLSConfig = "client-certificate"
+		config.TLSConfig = "client-certificate-reload"
 	}
 	err = cli.runTestTLSConnection(c, connOverrider)
 	c.Assert(err, IsNil)
@@ -520,7 +520,13 @@ func (ts *tidbTestSuite) TestReloadTLS(c *C) {
 	c.Assert(err, IsNil)
 	os.Rename("/tmp/server-key3.pem", "/tmp/server-key2.pem")
 	os.Rename("/tmp/server-cert3.pem", "/tmp/server-cert2.pem")
+	connOverrider = func(config *mysql.Config) {
+		config.TLSConfig = "skip-verify"
+	}
 	cli.runReloadTLS(c, connOverrider)
+	connOverrider = func(config *mysql.Config) {
+		config.TLSConfig = "client-certificate-reload"
+	}
 	err = cli.runTestTLSConnection(c, connOverrider)
 	c.Assert(err, IsNil)
 
@@ -538,10 +544,16 @@ func (ts *tidbTestSuite) TestReloadTLS(c *C) {
 	c.Assert(err, IsNil)
 	os.Rename("/tmp/server-key3.pem", "/tmp/server-key2.pem")
 	os.Rename("/tmp/server-cert3.pem", "/tmp/server-cert2.pem")
+	connOverrider = func(config *mysql.Config) {
+		config.TLSConfig = "skip-verify"
+	}
 	cli.runReloadTLS(c, connOverrider)
+	connOverrider = func(config *mysql.Config) {
+		config.TLSConfig = "client-certificate-reload"
+	}
 	err = cli.runTestTLSConnection(c, connOverrider)
 	c.Assert(err, NotNil)
-	c.Assert(util.IsTLSExpiredError(err), IsTrue)
+	c.Assert(util.IsTLSExpiredError(err), IsTrue, Commentf("real error is %+v", err))
 
 	server.Close()
 }

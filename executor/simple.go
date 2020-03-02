@@ -1103,7 +1103,7 @@ func (e *SimpleExec) executeFlush(s *ast.FlushStmt) error {
 
 func (e *SimpleExec) executeAlterInstance(s *ast.AlterInstanceStmt) error {
 	if s.ReloadTLS {
-		logutil.BgLogger().Info("execute reload tls")
+		logutil.BgLogger().Info("execute reload tls", zap.Bool("NoRollbackOnError", s.NoRollbackOnError))
 		sm := e.ctx.GetSessionManager()
 		tlsCfg, err := util.LoadTLSCertificates(
 			variable.SysVars["ssl_ca"].Value,
@@ -1114,7 +1114,7 @@ func (e *SimpleExec) executeAlterInstance(s *ast.AlterInstanceStmt) error {
 			if !s.NoRollbackOnError {
 				return err
 			}
-			logutil.BgLogger().Warn("reload tls fail but keep work without TLS due to 'no rollback on error'")
+			logutil.BgLogger().Warn("reload TLS fail but keep working without TLS due to 'no rollback on error'")
 		}
 		sm.UpdateTLSConfig(tlsCfg)
 	}
