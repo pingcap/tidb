@@ -928,7 +928,8 @@ func (b *builtinStrcmpSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
-	res := types.CompareString(left, right, b.tp.Collate, b.tp.Flen)
+	_, collation, flen := b.CharsetAndCollation(b.ctx)
+	res := types.CompareString(left, right, collation, flen)
 	return int64(res), false, nil
 }
 

@@ -994,6 +994,45 @@
           "1",
           "1"
         ]
+      },
+      {
+        "SQL": "select /*+ INL_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;",
+        "Plan": [
+          "HashRightJoin_9 12500.00 root inner join, inner:TableReader_11, equal:[eq(test.t1.a, test.t2.a)]",
+          "├─TableReader_11(Build) 10000.00 root data:TableFullScan_12",
+          "│ └─TableFullScan_12 10000.00 cop[tikv] table:t1, keep order:false, stats:pseudo",
+          "└─TableReader_13(Probe) 10000.00 root data:TableFullScan_14",
+          "  └─TableFullScan_14 10000.00 cop[tikv] table:t2, keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ]
+      },
+      {
+        "SQL": "select /*+ INL_HASH_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;",
+        "Plan": [
+          "HashRightJoin_9 12500.00 root inner join, inner:TableReader_11, equal:[eq(test.t1.a, test.t2.a)]",
+          "├─TableReader_11(Build) 10000.00 root data:TableFullScan_12",
+          "│ └─TableFullScan_12 10000.00 cop[tikv] table:t1, keep order:false, stats:pseudo",
+          "└─TableReader_13(Probe) 10000.00 root data:TableFullScan_14",
+          "  └─TableFullScan_14 10000.00 cop[tikv] table:t2, keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ]
+      },
+      {
+        "SQL": "select /*+ INL_MERGE_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;",
+        "Plan": [
+          "HashRightJoin_9 12500.00 root inner join, inner:TableReader_11, equal:[eq(test.t1.a, test.t2.a)]",
+          "├─TableReader_11(Build) 10000.00 root data:TableFullScan_12",
+          "│ └─TableFullScan_12 10000.00 cop[tikv] table:t1, keep order:false, stats:pseudo",
+          "└─TableReader_13(Probe) 10000.00 root data:TableFullScan_14",
+          "  └─TableFullScan_14 10000.00 cop[tikv] table:t2, keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ]
       }
     ]
   }
