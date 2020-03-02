@@ -86,7 +86,7 @@ func (e *MetricRetriever) retrieve(ctx context.Context, sctx sessionctx.Context)
 		}
 		if err != nil {
 			if err1, ok := err.(*promv1.Error); ok {
-				return nil, errors.Errorf("query metric error, msg: %v, detai: %v", err1.Msg, err1.Detail)
+				return nil, errors.Errorf("query metric error, msg: %v, detail: %v", err1.Msg, err1.Detail)
 			}
 			return nil, errors.Errorf("query metric error: %v", err.Error())
 		}
