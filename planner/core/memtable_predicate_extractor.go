@@ -754,7 +754,7 @@ func (e *SlowQueryExtractor) setTimeRange(start, end int64) {
 	e.Enable = true
 }
 
-// SlowQueryExtractor is used to extract some predicates of `slow_query`
+// DiskUsageExtractor is used to extract some predicates of `disk_usage`
 type DiskUsageExtractor struct {
 	extractHelper
 	// SkipRequest means the where clause always false, we don't need to request any component
