@@ -120,6 +120,9 @@ func (pc PbConverter) conOrCorColToPBExpr(expr Expression) *tipb.Expr {
 		logutil.BgLogger().Error("eval constant or correlated column", zap.String("expression", expr.ExplainInfo()), zap.Error(err))
 		return nil
 	}
+	if !d.IsNull() {
+		ft.Flag |= mysql.NotNullFlag
+	}
 	tp, val, ok := pc.encodeDatum(ft, d)
 	if !ok {
 		return nil
@@ -470,6 +473,8 @@ func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
 		ast.PeriodAdd,
 		ast.PeriodDiff,
 		ast.DayName,
+		ast.DateAdd,
+		ast.TimestampDiff,
 
 		// encryption functions.
 		ast.MD5,
@@ -496,6 +501,15 @@ func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
 			tipb.ScalarFuncSig_RoundReal,
 			tipb.ScalarFuncSig_RoundInt,
 			tipb.ScalarFuncSig_RoundDec:
+			return isPushdownEnabled(sf.FuncName.L)
+		}
+	case
+		ast.Substring,
+		ast.Substr:
+		switch sf.Function.PbCode() {
+		case
+			tipb.ScalarFuncSig_Substring2ArgsUTF8,
+			tipb.ScalarFuncSig_Substring3ArgsUTF8:
 			return isPushdownEnabled(sf.FuncName.L)
 		}
 	case ast.Rand:

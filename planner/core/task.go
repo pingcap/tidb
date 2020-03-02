@@ -997,6 +997,10 @@ func CheckAggCanPushCop(sctx sessionctx.Context, aggFuncs []*aggregation.AggFunc
 			if _, remain := expression.CheckExprPushFlash(append(aggFunc.Args, groupByItems...)); len(remain) > 0 {
 				return false
 			}
+		} else {
+			if _, remain := expression.CheckExprPushTiKV(append(aggFunc.Args, groupByItems...)); len(remain) > 0 {
+				return false
+			}
 		}
 		pb := aggregation.AggFuncToPBExpr(sc, client, aggFunc)
 		if pb == nil {
