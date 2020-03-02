@@ -44,7 +44,6 @@ type ScalarFunction struct {
 	RetType  *types.FieldType
 	Function builtinFunc
 	hashcode []byte
-	coercibility
 }
 
 // VecEvalInt evaluates this expression in a vectorized manner.
@@ -245,14 +244,15 @@ func ScalarFuncs2Exprs(funcs []*ScalarFunction) []Expression {
 
 // Clone implements Expression interface.
 func (sf *ScalarFunction) Clone() Expression {
-	return &ScalarFunction{
+	c := &ScalarFunction{
 		FuncName: sf.FuncName,
 		RetType:  sf.RetType,
 		Function: sf.Function.Clone(),
 		hashcode: sf.hashcode,
-
-		coercibility: sf.coercibility,
 	}
+	c.SetCharsetAndCollation(sf.CharsetAndCollation(sf.GetCtx()))
+	c.SetCoercibility(sf.Coercibility())
+	return c
 }
 
 // GetType implements Expression interface.
@@ -500,9 +500,28 @@ func (sf *ScalarFunction) GetSingleColumn(reverse bool) (*Column, bool) {
 
 // Coercibility returns the coercibility value which is used to check collations.
 func (sf *ScalarFunction) Coercibility() Coercibility {
-	if sf.hasCoercibility() {
-		return sf.coercibility.value()
+	if !sf.Function.HasCoercibility() {
+		sf.SetCoercibility(deriveCoercibilityForScarlarFunc(sf))
 	}
-	sf.SetCoercibility(deriveCoercibilityForScarlarFunc(sf))
-	return sf.coercibility.value()
+	return sf.Function.Coercibility()
+}
+
+// HasCoercibility ...
+func (sf *ScalarFunction) HasCoercibility() bool {
+	return sf.Function.HasCoercibility()
+}
+
+// SetCoercibility sets a specified coercibility for this expression.
+func (sf *ScalarFunction) SetCoercibility(val Coercibility) {
+	sf.Function.SetCoercibility(val)
+}
+
+// CharsetAndCollation ...
+func (sf *ScalarFunction) CharsetAndCollation(ctx sessionctx.Context) (string, string, int) {
+	return sf.Function.CharsetAndCollation(ctx)
+}
+
+// SetCharsetAndCollation ...
+func (sf *ScalarFunction) SetCharsetAndCollation(chs, coll string, flen int) {
+	sf.Function.SetCharsetAndCollation(chs, coll, flen)
 }

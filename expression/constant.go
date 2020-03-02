@@ -61,7 +61,7 @@ type Constant struct {
 	ParamMarker *ParamMarker
 	hashcode    []byte
 
-	coercibility
+	collationInfo
 }
 
 // ParamMarker indicates param provided by COM_STMT_EXECUTE.
@@ -414,10 +414,10 @@ func (c *Constant) ReverseEval(sc *stmtctx.StatementContext, res types.Datum, rT
 
 // Coercibility returns the coercibility value which is used to check collations.
 func (c *Constant) Coercibility() Coercibility {
-	if c.hasCoercibility() {
-		return c.coercibility.value()
+	if c.HasCoercibility() {
+		return c.collationInfo.Coercibility()
 	}
 
-	c.coercibility.SetCoercibility(deriveCoercibilityForConstant(c))
-	return c.coercibility.value()
+	c.SetCoercibility(deriveCoercibilityForConstant(c))
+	return c.collationInfo.Coercibility()
 }

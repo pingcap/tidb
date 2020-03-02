@@ -692,9 +692,9 @@ func (e *Explain) prepareSchema() error {
 
 	switch {
 	case format == ast.ExplainFormatROW && !e.Analyze:
-		fieldNames = []string{"id", "count", "task", "operator info"}
+		fieldNames = []string{"id", "estRows", "task", "operator info"}
 	case format == ast.ExplainFormatROW && e.Analyze:
-		fieldNames = []string{"id", "count", "task", "operator info", "execution info", "memory", "disk"}
+		fieldNames = []string{"id", "estRows", "actRows", "task", "operator info", "execution info", "memory", "disk"}
 	case format == ast.ExplainFormatDOT:
 		fieldNames = []string{"dot contents"}
 	case format == ast.ExplainFormatHint:
@@ -842,24 +842,31 @@ func (e *Explain) explainPlanInRowFormat(p Plan, taskType, driverSide, indent st
 }
 
 // prepareOperatorInfo generates the following information for every plan:
-// operator id, task type, operator info, and the estemated row count.
+// operator id, task type, operator info, and the estemated rows.
+// `estRows` used to be called `count`, see issue/14603.
 func (e *Explain) prepareOperatorInfo(p Plan, taskType, driverSide, indent string, isLastChild bool) {
 	operatorInfo := p.ExplainInfo()
-	count := "N/A"
+	estRows := "N/A"
 	if si := p.statsInfo(); si != nil {
-		count = strconv.FormatFloat(si.RowCount, 'f', 2, 64)
+		estRows = strconv.FormatFloat(si.RowCount, 'f', 2, 64)
 	}
 	explainID := p.ExplainID().String()
-	row := []string{texttree.PrettyIdentifier(explainID+driverSide, indent, isLastChild), count, taskType, operatorInfo}
+	row := []string{texttree.PrettyIdentifier(explainID+driverSide, indent, isLastChild), estRows, taskType, operatorInfo}
 	if e.Analyze {
 		runtimeStatsColl := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl
 		// There maybe some mock information for cop task to let runtimeStatsColl.Exists(p.ExplainID()) is true.
 		// So check copTaskExecDetail first and print the real cop task information if it's not empty.
 		var analyzeInfo string
+
+		var actRows int64
 		if runtimeStatsColl.ExistsCopStats(explainID) {
-			analyzeInfo = runtimeStatsColl.GetCopStats(explainID).String()
+			copstats := runtimeStatsColl.GetCopStats(explainID)
+			analyzeInfo = copstats.String()
+			actRows = copstats.GetActRows()
 		} else if runtimeStatsColl.ExistsRootStats(explainID) {
-			analyzeInfo = runtimeStatsColl.GetRootStats(explainID).String()
+			rootstats := runtimeStatsColl.GetRootStats(explainID)
+			analyzeInfo = rootstats.String()
+			actRows = rootstats.GetActRows()
 		} else {
 			analyzeInfo = "time:0ns, loops:0, rows:0"
 		}
@@ -884,6 +891,11 @@ func (e *Explain) prepareOperatorInfo(p Plan, taskType, driverSide, indent strin
 		} else {
 			row = append(row, "N/A")
 		}
+
+		// Put 'actRows'(actual rows) next by 'estRows'(estimate rows).
+		tmp := append([]string{}, row[2:]...)
+		row = append(row[:2], fmt.Sprint(actRows))
+		row = append(row, tmp...)
 	}
 	e.Rows = append(e.Rows, row)
 }
