@@ -579,9 +579,10 @@ func (b *executorBuilder) buildSelectLock(v *plannercore.PhysicalLock) Executor 
 		return src
 	}
 	e := &SelectLockExec{
-		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), src),
-		Lock:         v.Lock,
-		tblID2Handle: v.TblID2Handle,
+		baseExecutor:     newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), src),
+		Lock:             v.Lock,
+		tblID2Handle:     v.TblID2Handle,
+		partitionedTable: v.PartitionedTable,
 	}
 	return e
 }
@@ -910,6 +911,12 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 	// Get the handle column index of the below Plan.
 	us.belowHandleIndex = v.HandleCol.Index
 	us.mutableRow = chunk.MutRowFromTypes(retTypes(us))
+
+	// If the push-downed condition contains virtual column, we may build a selection upon reader
+	if sel, ok := reader.(*SelectionExec); ok {
+		reader = sel.children[0]
+	}
+
 	switch x := reader.(type) {
 	case *TableReaderExecutor:
 		us.desc = x.desc
@@ -922,9 +929,10 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 		// So we lock it when getting dirty table.
 		physicalTableID := getPhysicalTableID(x.table)
 		us.dirty = GetDirtyDB(b.ctx).GetDirtyTable(physicalTableID)
-		us.conditions = v.Conditions
+		us.conditions, us.conditionsWithVirCol = plannercore.SplitSelCondsWithVirtualColumn(v.Conditions)
 		us.columns = x.columns
 		us.table = x.table
+		us.virtualColumnIndex = x.virtualColumnIndex
 	case *IndexReaderExecutor:
 		us.desc = x.desc
 		for _, ic := range x.index.Columns {
@@ -937,7 +945,7 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 		}
 		physicalTableID := getPhysicalTableID(x.table)
 		us.dirty = GetDirtyDB(b.ctx).GetDirtyTable(physicalTableID)
-		us.conditions = v.Conditions
+		us.conditions, us.conditionsWithVirCol = plannercore.SplitSelCondsWithVirtualColumn(v.Conditions)
 		us.columns = x.columns
 		us.table = x.table
 	case *IndexLookUpExecutor:
@@ -952,9 +960,10 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 		}
 		physicalTableID := getPhysicalTableID(x.table)
 		us.dirty = GetDirtyDB(b.ctx).GetDirtyTable(physicalTableID)
-		us.conditions = v.Conditions
+		us.conditions, us.conditionsWithVirCol = plannercore.SplitSelCondsWithVirtualColumn(v.Conditions)
 		us.columns = x.columns
 		us.table = x.table
+		us.virtualColumnIndex = buildVirtualColumnIndex(us.Schema(), us.columns)
 	default:
 		// The mem table will not be written by sql directly, so we can omit the union scan to avoid err reporting.
 		return reader
@@ -1064,6 +1073,18 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 			return nil
 		}
 	}
+
+	// consider collations
+	leftTypes := make([]*types.FieldType, 0, len(retTypes(leftExec)))
+	for _, tp := range retTypes(leftExec) {
+		leftTypes = append(leftTypes, tp.Clone())
+	}
+	rightTypes := make([]*types.FieldType, 0, len(retTypes(rightExec)))
+	for _, tp := range retTypes(rightExec) {
+		rightTypes = append(rightTypes, tp.Clone())
+	}
+	leftIsBuildSide := true
+
 	if v.UseOuterToBuild {
 		// update the buildSideEstCount due to changing the build side
 		e.buildSideEstCount = v.Children()[1-v.InnerChildIdx].StatsCount()
@@ -1075,6 +1096,7 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 			e.buildSideExec, e.buildKeys = rightExec, v.RightJoinKeys
 			e.probeSideExec, e.probeKeys = leftExec, v.LeftJoinKeys
 			e.outerFilter = v.RightConditions
+			leftIsBuildSide = false
 		}
 		if defaultValues == nil {
 			defaultValues = make([]types.Datum, e.probeSideExec.Schema().Len())
@@ -1088,6 +1110,7 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 			e.buildSideExec, e.buildKeys = rightExec, v.RightJoinKeys
 			e.probeSideExec, e.probeKeys = leftExec, v.LeftJoinKeys
 			e.outerFilter = v.LeftConditions
+			leftIsBuildSide = false
 		}
 		if defaultValues == nil {
 			defaultValues = make([]types.Datum, e.buildSideExec.Schema().Len())
@@ -1100,6 +1123,19 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 			v.OtherConditions, lhsTypes, rhsTypes, childrenUsedSchema)
 	}
 	executorCountHashJoinExec.Inc()
+
+	for i := range v.EqualConditions {
+		chs, coll, flen := v.EqualConditions[i].CharsetAndCollation(e.ctx)
+		bt := leftTypes[v.LeftJoinKeys[i].Index]
+		bt.Charset, bt.Collate, bt.Flen = chs, coll, flen
+		pt := rightTypes[v.RightJoinKeys[i].Index]
+		pt.Charset, pt.Collate, pt.Flen = chs, coll, flen
+	}
+	if leftIsBuildSide {
+		e.buildTypes, e.probeTypes = leftTypes, rightTypes
+	} else {
+		e.buildTypes, e.probeTypes = rightTypes, leftTypes
+	}
 	return e
 }
 
@@ -1364,7 +1400,11 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 					timeRange: v.QueryTimeRange,
 				},
 			}
-		case strings.ToLower(infoschema.TableSchemata), strings.ToLower(infoschema.TableViews):
+		case strings.ToLower(infoschema.TableSchemata),
+			strings.ToLower(infoschema.TableViews),
+			strings.ToLower(infoschema.TableEngines),
+			strings.ToLower(infoschema.TableCollations),
+			strings.ToLower(infoschema.TableCharacterSets):
 			return &MemTableReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 				retriever: &memtableRetriever{
