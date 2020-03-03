@@ -44,7 +44,6 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 )
 
@@ -81,7 +80,6 @@ func (s *testIntegrationSuiteBase) cleanEnv(c *C) {
 }
 
 func (s *testIntegrationSuiteBase) SetUpSuite(c *C) {
-	testleak.BeforeTest()
 	var err error
 	s.store, s.dom, err = newStoreWithBootstrap()
 	c.Assert(err, IsNil)
@@ -91,7 +89,6 @@ func (s *testIntegrationSuiteBase) SetUpSuite(c *C) {
 func (s *testIntegrationSuiteBase) TearDownSuite(c *C) {
 	s.dom.Close()
 	s.store.Close()
-	testleak.AfterTest(c)()
 }
 
 func (s *testIntegrationSuite) TestFuncREPEAT(c *C) {
