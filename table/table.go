@@ -265,7 +265,7 @@ type PhysicalTable interface {
 type PartitionedTable interface {
 	Table
 	GetPartition(physicalID int64) PhysicalTable
-	GetPartitionByRow(sessionctx.Context, []types.Datum) (Table, error)
+	GetPartitionByRow(sessionctx.Context, []types.Datum) (PhysicalTable, error)
 }
 
 // TableFromMeta builds a table.Table from *model.TableInfo.
