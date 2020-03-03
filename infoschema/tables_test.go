@@ -559,3 +559,49 @@ func (s *testTableSuite) TestReloadDropDatabase(c *C) {
 	_, ok := is.TableByID(t2.Meta().ID)
 	c.Assert(ok, IsFalse)
 }
+
+func (s *testTableSuite) TestPartitionsTable(c *C) {
+	oldExpiryTime := infoschema.TableStatsCacheExpiry
+	infoschema.TableStatsCacheExpiry = 0
+	defer func() { infoschema.TableStatsCacheExpiry = oldExpiryTime }()
+
+	do := s.dom
+	h := do.StatsHandle()
+	h.Clear()
+
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("USE test;")
+	tk.MustExec("DROP TABLE IF EXISTS `test_partitions`;")
+	tk.MustExec(`CREATE TABLE test_partitions (a int, b int, c varchar(5), primary key(a), index idx(c)) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6), PARTITION p1 VALUES LESS THAN (11), PARTITION p2 VALUES LESS THAN (16));`)
+	tk.MustExec(`insert into test_partitions(a, b, c) values(1, 2, "c"), (7, 3, "d"), (12, 4, "e");`)
+
+	tk.MustQuery("select PARTITION_NAME, PARTITION_DESCRIPTION from information_schema.PARTITIONS where table_name='test_partitions';").Check(
+		testkit.Rows("" +
+			"p0 6]\n" +
+			"[p1 11]\n" +
+			"[p2 16"))
+
+	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.PARTITIONS where table_name='test_partitions';").Check(
+		testkit.Rows("" +
+			"0 0 0 0]\n" +
+			"[0 0 0 0]\n" +
+			"[0 0 0 0"))
+
+	tk.MustExec("analyze table test_partitions;")
+	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.PARTITIONS where table_name='test_partitions';").Check(
+		testkit.Rows("" +
+			"1 18 18 2]\n" +
+			"[1 18 18 2]\n" +
+			"[1 18 18 2"))
+
+	// Test for table has no partitions.
+	tk.MustExec("DROP TABLE IF EXISTS `test_partitions_1`;")
+	tk.MustExec(`CREATE TABLE test_partitions_1 (a int, b int, c varchar(5), primary key(a), index idx(c));`)
+	tk.MustExec(`insert into test_partitions_1(a, b, c) values(1, 2, "c"), (7, 3, "d"), (12, 4, "e");`)
+	tk.MustExec("analyze table test_partitions_1;")
+	tk.MustQuery("select PARTITION_NAME, TABLE_ROWS, AVG_ROW_LENGTH, DATA_LENGTH, INDEX_LENGTH from information_schema.PARTITIONS where table_name='test_partitions_1';").Check(
+		testkit.Rows("<nil> 3 18 54 6"))
+
+	tk.MustExec("DROP TABLE `test_partitions`;")
+}
