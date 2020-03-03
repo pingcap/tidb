@@ -15,7 +15,6 @@ package perfschema_test
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/infoschema/perfschema"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -30,6 +29,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/infoschema/perfschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
