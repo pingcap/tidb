@@ -408,7 +408,7 @@ func (criticalErrorInspection) inspect(ctx context.Context, sctx sessionctx.Cont
 				sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("metrics table: %s not found", rule.tbl))
 				continue
 			}
-			sql := fmt.Sprintf("select `%[1]s`,max(value) as max from `%[2]s`.`%[3]s` %[4]s group by `%[1]s` having max>0.0",
+			sql := fmt.Sprintf("select `%[1]s`,max(value) as max from `%[2]s`.`%[3]s` %[4]s group by `%[1]s` having max>=1.0",
 				strings.Join(def.Labels, "`,`"), util.MetricSchemaName.L, rule.tbl, condition)
 			rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithContext(ctx, sql)
 			if err != nil {
