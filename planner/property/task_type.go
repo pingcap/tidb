@@ -27,6 +27,8 @@ const (
 	// CopDoubleReadTaskType stands for the a IndexLookup tasks executed in the
 	// coprocessor layer.
 	CopDoubleReadTaskType
+
+	CopTiflashTaskType
 )
 
 // String implements fmt.Stringer interface.
@@ -38,6 +40,8 @@ func (t TaskType) String() string {
 		return "copSingleReadTask"
 	case CopDoubleReadTaskType:
 		return "copDoubleReadTask"
+	case CopTiflashTaskType:
+		return "copTiflashTaskType"
 	}
 	return "UnknownTaskType"
 }

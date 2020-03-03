@@ -362,6 +362,9 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 		if len(path.Ranges) == 0 && !ds.ctx.GetSessionVars().StmtCtx.UseCache {
 			return []*candidatePath{{path: path}}
 		}
+		if path.StoreType != kv.TiFlash && prop.TaskTp == property.CopTiflashTaskType {
+			continue
+		}
 		var currentCandidate *candidatePath
 		if path.IsTablePath {
 			currentCandidate = ds.getTableCandidate(path, prop)
@@ -448,6 +451,8 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err
 
 	t = invalidTask
 	candidates := ds.skylinePruning(prop)
+
+	logutil.BgLogger().Debug("candidates size", zap.Int("candidates", len(candidates)))
 
 	for _, candidate := range candidates {
 		path := candidate.path
@@ -1098,6 +1103,12 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		indexPlanFinished: true,
 		tblColHists:       ds.TblColHists,
 		cst:               cost,
+	}
+	if ts.StoreType == kv.TiFlash {
+		if prop.TaskTp != property.CopTiflashTaskType && prop.TaskTp != property.RootTaskType {
+			logutil.BgLogger().Error("invalid task:", zap.String("type", prop.TaskTp.String()))
+			return invalidTask, nil
+		}
 	}
 	task = copTask
 	if candidate.isMatchProp {

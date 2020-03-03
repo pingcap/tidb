@@ -1407,7 +1407,55 @@ func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) []Ph
 		return hashJoins
 	}
 	joins = append(joins, hashJoins...)
+
+	broadCastJoins := p.tryToGetBroadCastJoin(prop)
+	joins = append(joins, broadCastJoins...)
 	return joins
+}
+
+func (p *LogicalJoin) tryToGetBroadCastJoin(prop * property.PhysicalProperty) []PhysicalPlan {
+	child0, ok0 := p.children[0].(*DataSource)
+	if (!ok0) {
+		return nil;
+	}
+	child1, ok1 := p.children[1].(*DataSource)
+	if (!ok1) {
+		return nil;
+	}
+	if !prop.IsEmpty() {
+		return nil;
+	}
+	if (prop.TaskTp != property.RootTaskType && prop.TaskTp != property.CopTiflashTaskType) {
+		return nil
+	}
+
+	if (p.JoinType != InnerJoin || len(p.LeftConditions) != 0 || len(p.RightConditions) != 0) {
+		return nil
+	}
+
+	lkeys, rkeys := p.GetJoinKeys()
+	baseJoin := basePhysicalJoin{
+		JoinType:        p.JoinType,
+		LeftConditions:  p.LeftConditions,
+		RightConditions: p.RightConditions,
+		DefaultValues:   p.DefaultValues,
+		LeftJoinKeys: lkeys,
+		RightJoinKeys: rkeys,
+	}
+	if child0.stats.Count() < child1.stats.Count() {
+		baseJoin.InnerChildIdx = 0;
+	} else {
+		baseJoin.InnerChildIdx = 1;
+	}
+	childrenReqProps := make([]*property.PhysicalProperty, 2)
+	childrenReqProps[baseJoin.InnerChildIdx] = &property.PhysicalProperty{TaskTp: property.CopSingleReadTaskType}
+	childrenReqProps[1-baseJoin.InnerChildIdx] = &property.PhysicalProperty{TaskTp: property.CopTiflashTaskType}
+	join := PhysicalBroadCastJoin {
+		basePhysicalJoin: baseJoin,
+	}.Init(p.ctx, p.stats, p.blockOffset, childrenReqProps...)
+	results := make([]PhysicalPlan, 0, 1);
+	results = append(results, join)
+	return results
 }
 
 // TryToGetChildProp will check if this sort property can be pushed or not.
@@ -1636,7 +1684,7 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 		return nil
 	}
 	hashAggs := make([]PhysicalPlan, 0, len(wholeTaskTypes))
-	taskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopDoubleReadTaskType}
+	taskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopDoubleReadTaskType, property.CopTiflashTaskType}
 	if !la.aggHints.preferAggToCop {
 		taskTypes = append(taskTypes, property.RootTaskType)
 	}

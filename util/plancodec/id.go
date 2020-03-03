@@ -52,6 +52,8 @@ const (
 	TypeHashLeftJoin = "HashLeftJoin"
 	// TypeHashRightJoin is the type of right hash join.
 	TypeHashRightJoin = "HashRightJoin"
+	// TypeHashRightJoin is the type of right hash join.
+	TypeBroadcastJoin = "TypeBroadcastJoin"
 	// TypeMergeJoin is the type of merge join.
 	TypeMergeJoin = "MergeJoin"
 	// TypeIndexJoin is the type of index look up join.

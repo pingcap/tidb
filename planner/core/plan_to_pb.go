@@ -152,6 +152,56 @@ func (p *PhysicalIndexScan) ToPB(ctx sessionctx.Context) (*tipb.Executor, error)
 	return &tipb.Executor{Tp: tipb.ExecType_TypeIndexScan, IdxScan: idxExec}, nil
 }
 
+func getChildrenList(ctx sessionctx.Context, p PhysicalPlan, inner_side bool) (results []*tipb.Executor, err error) {
+	for {
+		planPB, err := p.ToPB(ctx)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if planPB.Tp == tipb.ExecType_TypeTableScan {
+			if inner_side {
+				planPB.TblScan.NextReadEngine = tipb.EngineType_TiKV
+			}
+		}
+		results = append(results, planPB)
+		if len(p.Children()) == 0 {
+			return results ,nil
+		} else if len(p.Children()) == 1 {
+			p = p.Children()[0]
+		} else {
+			return nil, errors.New("plan error:" + p.TP())
+		}
+	}
+	return results, nil
+}
+
+func (p *PhysicalBroadCastJoin) ToPB(ctx sessionctx.Context) (*tipb.Executor, error) {
+	sc := ctx.GetSessionVars().StmtCtx
+	client := ctx.GetClient()
+	leftJoinKeys := make([]expression.Expression, 0, len(p.LeftJoinKeys))
+	rightJoinKeys := make([]expression.Expression, 0, len(p.RightJoinKeys))
+	lChildren, err := getChildrenList(ctx, p.children[0], 0 == p.InnerChildIdx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	rChildren, err := getChildrenList(ctx, p.children[1], 1 == p.InnerChildIdx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	join := &tipb.Join {
+		JoinType: tipb.JoinType_TypeInnerJoin,
+		JoinExecType: tipb.JoinExecType_TypeHashJoin,
+		InnerIdx: int64(p.InnerChildIdx),
+		LeftJoinKeys: expression.ExpressionsToPBList(sc, leftJoinKeys, client),
+		RightJoinKeys: expression.ExpressionsToPBList(sc, rightJoinKeys, client),
+		LeftChildren: lChildren,
+		RightChildren: rChildren,
+	}
+
+	return &tipb.Executor{Tp: tipb.ExecType_TypeJoin, Join: join}, nil
+}
+
 // SetPBColumnsDefaultValue sets the default values of tipb.ColumnInfos.
 func SetPBColumnsDefaultValue(ctx sessionctx.Context, pbColumns []*tipb.ColumnInfo, columns []*model.ColumnInfo) error {
 	for i, c := range columns {

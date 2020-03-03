@@ -51,6 +51,7 @@ var (
 	_ PhysicalPlan = &PhysicalStreamAgg{}
 	_ PhysicalPlan = &PhysicalApply{}
 	_ PhysicalPlan = &PhysicalIndexJoin{}
+	_ PhysicalPlan = &PhysicalBroadCastJoin{}
 	_ PhysicalPlan = &PhysicalHashJoin{}
 	_ PhysicalPlan = &PhysicalMergeJoin{}
 	_ PhysicalPlan = &PhysicalUnionScan{}
@@ -409,6 +410,10 @@ type PhysicalMergeJoin struct {
 	CompareFuncs []expression.CompareFunc
 	// Desc means whether inner child keep desc order.
 	Desc bool
+}
+
+type PhysicalBroadCastJoin struct {
+	basePhysicalJoin
 }
 
 // PhysicalLock is the physical operator of lock, which is used for `select ... for update` clause.

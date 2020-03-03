@@ -14,6 +14,8 @@
 package core
 
 import (
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 	"math"
 
 	"github.com/pingcap/parser/ast"
@@ -98,6 +100,7 @@ func (t *copTask) copy() task {
 }
 
 func (t *copTask) plan() PhysicalPlan {
+	logutil.BgLogger().Info("index finish", zap.Bool("index finish", t.indexPlanFinished), zap.Bool("table is nil?", t.tablePlan == nil))
 	if t.indexPlanFinished {
 		return t.tablePlan
 	}
@@ -518,10 +521,37 @@ func (p *PhysicalHashJoin) attach2Task(tasks ...task) task {
 	lTask := finishCopTask(p.ctx, tasks[0].copy())
 	rTask := finishCopTask(p.ctx, tasks[1].copy())
 	p.SetChildren(lTask.plan(), rTask.plan())
-	return &rootTask{
+	p.schema = BuildPhysicalJoinSchema(p.JoinType, p)
+	task := &rootTask{
 		p:   p,
 		cst: lTask.cost() + rTask.cost() + p.GetCost(lTask.count(), rTask.count()),
 	}
+	logutil.BgLogger().Info("hash join cost", zap.Float64("hj cost", task.cst))
+	return task
+}
+
+func (p *PhysicalBroadCastJoin) attach2Task(tasks ...task) task {
+	lTask, lok := tasks[0].(*copTask)
+	rTask, rok := tasks[1].(*copTask)
+	if !lok || !rok || (lTask.getStoreType() != kv.TiFlash && rTask.getStoreType() != kv.TiFlash) {
+		return invalidTask
+	}
+	p.SetChildren(lTask.plan(), rTask.plan())
+	p.schema = BuildPhysicalJoinSchema(p.JoinType, p)
+	if !lTask.indexPlanFinished {
+		lTask.finishIndexPlan()
+	}
+	if !rTask.indexPlanFinished {
+		rTask.finishIndexPlan()
+	}
+	task := & copTask {
+		tblColHists: rTask.tblColHists,
+		indexPlanFinished: true,
+		tablePlan: p,
+		cst: lTask.cost() + rTask.cost(),
+	}
+	logutil.BgLogger().Info("bc join cost", zap.Float64("bc cost", task.cst))
+	return task
 }
 
 // GetCost computes cost of merge join operator itself.
