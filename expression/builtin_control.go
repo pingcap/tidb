@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tipb/go-tipb"
-	"math"
 )
 
 var (
@@ -519,13 +518,12 @@ func (b *builtinIfIntSig) Clone() builtinFunc {
 }
 
 func (b *builtinIfIntSig) evalInt(row chunk.Row) (ret int64, isNull bool, err error) {
-	arg0, isNull0, err := b.args[0].EvalReal(b.ctx, row)
+	arg0, isNull0, err := b.args[0].EvalInt(b.ctx, row)
 	if err != nil {
 		return 0, true, err
 	}
-	isPositiveZero := arg0 == 0 && !math.Signbit(arg0)
 	arg1, isNull1, err := b.args[1].EvalInt(b.ctx, row)
-	if (!isNull0 && !isPositiveZero) || err != nil {
+	if (!isNull0 && arg0 != 0) || err != nil {
 		return arg1, isNull1, err
 	}
 	arg2, isNull2, err := b.args[2].EvalInt(b.ctx, row)
@@ -543,13 +541,12 @@ func (b *builtinIfRealSig) Clone() builtinFunc {
 }
 
 func (b *builtinIfRealSig) evalReal(row chunk.Row) (ret float64, isNull bool, err error) {
-	arg0, isNull0, err := b.args[0].EvalReal(b.ctx, row)
+	arg0, isNull0, err := b.args[0].EvalInt(b.ctx, row)
 	if err != nil {
 		return 0, true, err
 	}
-	isPositiveZero := arg0 == 0 && !math.Signbit(arg0)
 	arg1, isNull1, err := b.args[1].EvalReal(b.ctx, row)
-	if (!isNull0 && !isPositiveZero) || err != nil {
+	if (!isNull0 && arg0 != 0) || err != nil {
 		return arg1, isNull1, err
 	}
 	arg2, isNull2, err := b.args[2].EvalReal(b.ctx, row)
@@ -567,13 +564,12 @@ func (b *builtinIfDecimalSig) Clone() builtinFunc {
 }
 
 func (b *builtinIfDecimalSig) evalDecimal(row chunk.Row) (ret *types.MyDecimal, isNull bool, err error) {
-	arg0, isNull0, err := b.args[0].EvalReal(b.ctx, row)
+	arg0, isNull0, err := b.args[0].EvalInt(b.ctx, row)
 	if err != nil {
 		return nil, true, err
 	}
-	isPositiveZero := arg0 == 0 && !math.Signbit(arg0)
 	arg1, isNull1, err := b.args[1].EvalDecimal(b.ctx, row)
-	if (!isNull0 && !isPositiveZero) || err != nil {
+	if (!isNull0 && arg0 != 0) || err != nil {
 		return arg1, isNull1, err
 	}
 	arg2, isNull2, err := b.args[2].EvalDecimal(b.ctx, row)
@@ -591,13 +587,12 @@ func (b *builtinIfStringSig) Clone() builtinFunc {
 }
 
 func (b *builtinIfStringSig) evalString(row chunk.Row) (ret string, isNull bool, err error) {
-	arg0, isNull0, err := b.args[0].EvalReal(b.ctx, row)
+	arg0, isNull0, err := b.args[0].EvalInt(b.ctx, row)
 	if err != nil {
 		return "", true, err
 	}
-	isPositiveZero := arg0 == 0 && !math.Signbit(arg0)
 	arg1, isNull1, err := b.args[1].EvalString(b.ctx, row)
-	if (!isNull0 && !isPositiveZero) || err != nil {
+	if (!isNull0 && arg0 != 0) || err != nil {
 		return arg1, isNull1, err
 	}
 	arg2, isNull2, err := b.args[2].EvalString(b.ctx, row)
@@ -615,13 +610,12 @@ func (b *builtinIfTimeSig) Clone() builtinFunc {
 }
 
 func (b *builtinIfTimeSig) evalTime(row chunk.Row) (ret types.Time, isNull bool, err error) {
-	arg0, isNull0, err := b.args[0].EvalReal(b.ctx, row)
+	arg0, isNull0, err := b.args[0].EvalInt(b.ctx, row)
 	if err != nil {
 		return ret, true, err
 	}
-	isPositiveZero := arg0 == 0 && !math.Signbit(arg0)
 	arg1, isNull1, err := b.args[1].EvalTime(b.ctx, row)
-	if (!isNull0 && !isPositiveZero) || err != nil {
+	if (!isNull0 && arg0 != 0) || err != nil {
 		return arg1, isNull1, err
 	}
 	arg2, isNull2, err := b.args[2].EvalTime(b.ctx, row)
@@ -639,13 +633,12 @@ func (b *builtinIfDurationSig) Clone() builtinFunc {
 }
 
 func (b *builtinIfDurationSig) evalDuration(row chunk.Row) (ret types.Duration, isNull bool, err error) {
-	arg0, isNull0, err := b.args[0].EvalReal(b.ctx, row)
+	arg0, isNull0, err := b.args[0].EvalInt(b.ctx, row)
 	if err != nil {
 		return ret, true, err
 	}
-	isPositiveZero := arg0 == 0 && !math.Signbit(arg0)
 	arg1, isNull1, err := b.args[1].EvalDuration(b.ctx, row)
-	if (!isNull0 && !isPositiveZero) || err != nil {
+	if (!isNull0 && arg0 != 0) || err != nil {
 		return arg1, isNull1, err
 	}
 	arg2, isNull2, err := b.args[2].EvalDuration(b.ctx, row)
@@ -663,11 +656,10 @@ func (b *builtinIfJSONSig) Clone() builtinFunc {
 }
 
 func (b *builtinIfJSONSig) evalJSON(row chunk.Row) (ret json.BinaryJSON, isNull bool, err error) {
-	arg0, isNull0, err := b.args[0].EvalReal(b.ctx, row)
+	arg0, isNull0, err := b.args[0].EvalInt(b.ctx, row)
 	if err != nil {
 		return ret, true, err
 	}
-	isPositiveZero := arg0 == 0 && !math.Signbit(arg0)
 	arg1, isNull1, err := b.args[1].EvalJSON(b.ctx, row)
 	if err != nil {
 		return ret, true, err
@@ -677,9 +669,9 @@ func (b *builtinIfJSONSig) evalJSON(row chunk.Row) (ret json.BinaryJSON, isNull 
 		return ret, true, err
 	}
 	switch {
-	case isNull0 || isPositiveZero:
+	case isNull0 || arg0 == 0:
 		ret, isNull = arg2, isNull2
-	case !isPositiveZero:
+	case arg0 != 0:
 		ret, isNull = arg1, isNull1
 	}
 	return
