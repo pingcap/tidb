@@ -55,6 +55,8 @@ type baseBuiltinFunc struct {
 
 	childrenVectorizedOnce *sync.Once
 	childrenReversedOnce   *sync.Once
+
+	collationInfo
 }
 
 func (b *baseBuiltinFunc) PbCode() tipb.ScalarFuncSig {
@@ -99,13 +101,7 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, args []Expression, retType
 	if ctx == nil {
 		panic("ctx should not be nil")
 	}
-	var derivedCharset, derivedCollate string
-	var derivedFlen int
-	if retType == types.ETString {
-		// derive collation information for string function, and we must do it
-		// before doing implicit cast.
-		derivedCharset, derivedCollate, derivedFlen = DeriveCollationFromExprs(ctx, args...)
-	}
+
 	for i := range args {
 		switch argTps[i] {
 		case types.ETInt:
@@ -115,7 +111,6 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, args []Expression, retType
 		case types.ETDecimal:
 			args[i] = WrapWithCastAsDecimal(ctx, args[i])
 		case types.ETString:
-			// TODO: if the charset of args[i] is not derivedCharset, convert it
 			args[i] = WrapWithCastAsString(ctx, args[i])
 		case types.ETDatetime:
 			args[i] = WrapWithCastAsTime(ctx, args[i], types.NewFieldType(mysql.TypeDatetime))
@@ -127,6 +122,10 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, args []Expression, retType
 			args[i] = WrapWithCastAsJSON(ctx, args[i])
 		}
 	}
+
+	// derive collation information for string function, and we must do it
+	// before doing implicit cast.
+	derivedCharset, derivedCollate, derivedFlen := DeriveCollationFromExprs(ctx, args...)
 	var fieldType *types.FieldType
 	switch retType {
 	case types.ETInt:
@@ -192,7 +191,7 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, args []Expression, retType
 	if mysql.HasBinaryFlag(fieldType.Flag) && fieldType.Tp != mysql.TypeJSON {
 		fieldType.Charset, fieldType.Collate = charset.CharsetBin, charset.CollationBin
 	}
-	return baseBuiltinFunc{
+	bf = baseBuiltinFunc{
 		bufAllocator:           newLocalSliceBuffer(len(args)),
 		childrenVectorizedOnce: new(sync.Once),
 		childrenReversedOnce:   new(sync.Once),
@@ -201,6 +200,8 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, args []Expression, retType
 		ctx:  ctx,
 		tp:   fieldType,
 	}
+	bf.SetCharsetAndCollation(derivedCharset, derivedCollate, derivedFlen)
+	return bf
 }
 
 func (b *baseBuiltinFunc) getArgs() []Expression {
@@ -457,6 +458,8 @@ type builtinFunc interface {
 	metadata() proto.Message
 	// Clone returns a copy of itself.
 	Clone() builtinFunc
+
+	CollationInfo
 }
 
 type builtinFuncNew interface {
