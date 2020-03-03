@@ -48,11 +48,13 @@ import (
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
+	"go.uber.org/zap"
 )
 
 var (
@@ -221,6 +223,8 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildSplitRegion(v)
 	case *plannercore.PhysicalIndexMergeReader:
 		return b.buildIndexMergeReader(v)
+	case *plannercore.SelectInto:
+		return b.buildSelectInto(v)
 	default:
 		if mp, ok := p.(MockPhysicalPlan); ok {
 			return mp.GetExecutor()
@@ -879,6 +883,17 @@ func (b *executorBuilder) buildExplain(v *plannercore.Explain) Executor {
 	return explainExec
 }
 
+func (b *executorBuilder) buildSelectInto(v *plannercore.SelectInto) Executor {
+	child := b.build(v.TargetPlan)
+	if b.err != nil {
+		return nil
+	}
+	return &SelectIntoExec{
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), child),
+		intoOpt:      v.IntoOpt,
+	}
+}
+
 func (b *executorBuilder) buildUnionScanExec(v *plannercore.PhysicalUnionScan) Executor {
 	reader := b.build(v.Children()[0])
 	if b.err != nil {
@@ -1078,7 +1093,7 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 			defaultValues = make([]types.Datum, e.buildSideExec.Schema().Len())
 		}
 	}
-	childrenUsedSchema := e.baseExecutor.markChildrenUsedCols()
+	childrenUsedSchema := markChildrenUsedCols(v.Schema(), v.Children()[0].Schema(), v.Children()[1].Schema())
 	e.joiners = make([]joiner, e.concurrency)
 	for i := uint(0); i < e.concurrency; i++ {
 		e.joiners[i] = newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0, defaultValues,
@@ -1506,7 +1521,7 @@ func (b *executorBuilder) buildSplitRegion(v *plannercore.SplitRegion) Executor 
 }
 
 func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
-	tblID2table := make(map[int64]table.Table)
+	tblID2table := make(map[int64]table.Table, len(v.TblColPosInfos))
 	for _, info := range v.TblColPosInfos {
 		tblID2table[info.TblID], _ = b.is.TableByID(info.TblID)
 	}
@@ -1531,7 +1546,7 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
 }
 
 func (b *executorBuilder) buildDelete(v *plannercore.Delete) Executor {
-	tblID2table := make(map[int64]table.Table)
+	tblID2table := make(map[int64]table.Table, len(v.TblColPosInfos))
 	for _, info := range v.TblColPosInfos {
 		tblID2table[info.TblID], _ = b.is.TableByID(info.TblID)
 	}
@@ -1568,26 +1583,26 @@ func (b *executorBuilder) updateForUpdateTSIfNeeded(selectPlan plannercore.Physi
 	// The Repeatable Read transaction use Read Committed level to read data for writing (insert, update, delete, select for update),
 	// We should always update/refresh the for-update-ts no matter the isolation level is RR or RC.
 	if b.ctx.GetSessionVars().IsPessimisticReadConsistency() {
-		return b.refreshForUpdateTS()
+		return b.refreshForUpdateTSForRC()
 	}
 	return UpdateForUpdateTS(b.ctx, 0)
 }
 
-// refreshForUpdateTS is used to refresh the for-update-ts for reading data at read consistency level in pessimistic transaction.
+// refreshForUpdateTSForRC is used to refresh the for-update-ts for reading data at read consistency level in pessimistic transaction.
 // It could use the cached tso from the statement future to avoid get tso many times.
-func (b *executorBuilder) refreshForUpdateTS() error {
-	var newForUpdateTS uint64
-	future, cachedTS := b.ctx.GetSessionVars().TxnCtx.GetStmtFuture()
-	if cachedTS != 0 {
-		newForUpdateTS = cachedTS
-	} else if future != nil {
-		newTS, waitErr := future.Wait()
-		if waitErr == nil {
-			newForUpdateTS = newTS
-			b.ctx.GetSessionVars().TxnCtx.SetStmtFuture(nil, newTS)
-		}
+func (b *executorBuilder) refreshForUpdateTSForRC() error {
+	future := b.ctx.GetSessionVars().TxnCtx.GetStmtFuture()
+	if future == nil {
+		return nil
 	}
-	// If cachedTS is 0 or Wait() return an error, newForUpdateTS should be 0, it will force to get a new for-update-ts from PD.
+	newForUpdateTS, waitErr := future.Wait()
+	if waitErr != nil {
+		logutil.BgLogger().Warn("wait tso failed",
+			zap.Uint64("startTS", b.ctx.GetSessionVars().TxnCtx.StartTS),
+			zap.Error(waitErr))
+	}
+	b.ctx.GetSessionVars().TxnCtx.SetStmtFuture(nil)
+	// If newForUpdateTS is 0, it will force to get a new for-update-ts from PD.
 	if err := UpdateForUpdateTS(b.ctx, newForUpdateTS); err != nil {
 		return err
 	}
@@ -1683,7 +1698,7 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 		BucketSize:    int64(opts[ast.AnalyzeOptNumBuckets]),
 		SampleSize:    maxRegionSampleSize,
 		SketchSize:    maxSketchSize,
-		ColumnsInfo:   model.ColumnsToProto(cols, task.PKInfo != nil),
+		ColumnsInfo:   util.ColumnsToProto(cols, task.PKInfo != nil),
 		CmsketchDepth: &depth,
 		CmsketchWidth: &width,
 	}
@@ -1847,6 +1862,16 @@ func constructDistExec(sctx sessionctx.Context, plans []plannercore.PhysicalPlan
 	return executors, streaming, nil
 }
 
+// markChildrenUsedCols compares each child with the output schema, and mark
+// each column of the child is used by output or not.
+func markChildrenUsedCols(outputSchema *expression.Schema, childSchema ...*expression.Schema) (childrenUsed [][]bool) {
+	for _, child := range childSchema {
+		used := expression.GetUsedList(outputSchema.Columns, child)
+		childrenUsed = append(childrenUsed, used)
+	}
+	return
+}
+
 func (b *executorBuilder) constructDAGReq(plans []plannercore.PhysicalPlan) (dagReq *tipb.DAGRequest, streaming bool, err error) {
 	dagReq = &tipb.DAGRequest{}
 	dagReq.TimeZoneName, dagReq.TimeZoneOffset = timeutil.Zone(b.ctx.GetSessionVars().Location())
@@ -1946,12 +1971,13 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 			hasPrefixCol:  hasPrefixCol,
 		},
 		workerWg:      new(sync.WaitGroup),
-		joiner:        newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0, defaultValues, v.OtherConditions, leftTypes, rightTypes, nil),
 		isOuterJoin:   v.JoinType.IsOuterJoin(),
 		indexRanges:   v.Ranges,
 		keyOff2IdxOff: v.KeyOff2IdxOff,
 		lastColHelper: v.CompareFilters,
 	}
+	childrenUsedSchema := markChildrenUsedCols(v.Schema(), v.Children()[0].Schema(), v.Children()[1].Schema())
+	e.joiner = newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0, defaultValues, v.OtherConditions, leftTypes, rightTypes, childrenUsedSchema)
 	outerKeyCols := make([]int, len(v.OuterJoinKeys))
 	for i := 0; i < len(v.OuterJoinKeys); i++ {
 		outerKeyCols[i] = v.OuterJoinKeys[i].Index
@@ -2037,9 +2063,10 @@ func (b *executorBuilder) buildIndexLookUpMergeJoin(v *plannercore.PhysicalIndex
 		keyOff2IdxOff: v.KeyOff2IdxOff,
 		lastColHelper: v.CompareFilters,
 	}
+	childrenUsedSchema := markChildrenUsedCols(v.Schema(), v.Children()[0].Schema(), v.Children()[1].Schema())
 	joiners := make([]joiner, e.ctx.GetSessionVars().IndexLookupJoinConcurrency)
 	for i := 0; i < e.ctx.GetSessionVars().IndexLookupJoinConcurrency; i++ {
-		joiners[i] = newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0, defaultValues, v.OtherConditions, leftTypes, rightTypes, nil)
+		joiners[i] = newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0, defaultValues, v.OtherConditions, leftTypes, rightTypes, childrenUsedSchema)
 	}
 	e.joiners = joiners
 	return e
@@ -2130,7 +2157,7 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 // and then update it ranges from table scan plan.
 func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) *TableReaderExecutor {
 	if b.ctx.GetSessionVars().IsPessimisticReadConsistency() {
-		if err := b.refreshForUpdateTS(); err != nil {
+		if err := b.refreshForUpdateTSForRC(); err != nil {
 			b.err = err
 			return nil
 		}
@@ -2204,7 +2231,7 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 
 func (b *executorBuilder) buildIndexReader(v *plannercore.PhysicalIndexReader) *IndexReaderExecutor {
 	if b.ctx.GetSessionVars().IsPessimisticReadConsistency() {
-		if err := b.refreshForUpdateTS(); err != nil {
+		if err := b.refreshForUpdateTSForRC(); err != nil {
 			b.err = err
 			return nil
 		}
@@ -2307,7 +2334,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 
 func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLookUpReader) *IndexLookUpExecutor {
 	if b.ctx.GetSessionVars().IsPessimisticReadConsistency() {
-		if err := b.refreshForUpdateTS(); err != nil {
+		if err := b.refreshForUpdateTSForRC(); err != nil {
 			b.err = err
 			return nil
 		}
@@ -2794,6 +2821,7 @@ func newRowDecoder(ctx sessionctx.Context, schema *expression.Schema, tbl *model
 			Flen:    col.RetType.Flen,
 			Decimal: col.RetType.Decimal,
 			Elems:   col.RetType.Elems,
+			Collate: col.GetType().Collate,
 		}
 	}
 	defVal := func(i int, chk *chunk.Chunk) error {
@@ -2810,7 +2838,7 @@ func newRowDecoder(ctx sessionctx.Context, schema *expression.Schema, tbl *model
 
 func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan) Executor {
 	if b.ctx.GetSessionVars().IsPessimisticReadConsistency() {
-		if err := b.refreshForUpdateTS(); err != nil {
+		if err := b.refreshForUpdateTSForRC(); err != nil {
 			b.err = err
 			return nil
 		}

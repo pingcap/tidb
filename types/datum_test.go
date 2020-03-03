@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types/json"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hack"
 )
 
@@ -172,10 +171,6 @@ func (ts *testTypeConvertSuite) TestToInt64(c *C) {
 	v, err := Convert(3.1415926, ft)
 	c.Assert(err, IsNil)
 	testDatumToInt64(c, v, int64(3))
-
-	binLit, err := ParseHexStr("0x9999999999999999999999999999999999999999999")
-	c.Assert(err, IsNil)
-	testDatumToInt64(c, binLit, -1)
 }
 
 func (ts *testTypeConvertSuite) TestToFloat32(c *C) {
@@ -188,7 +183,7 @@ func (ts *testTypeConvertSuite) TestToFloat32(c *C) {
 	c.Assert(converted.Kind(), Equals, KindFloat32)
 	c.Assert(converted.GetFloat32(), Equals, float32(281.37))
 
-	datum.SetString("281.37", mysql.DefaultCollationName, collate.DefaultLen)
+	datum.SetString("281.37", mysql.DefaultCollationName)
 	converted, err = datum.ConvertTo(sc, ft)
 	c.Assert(err, IsNil)
 	c.Assert(converted.Kind(), Equals, KindFloat32)

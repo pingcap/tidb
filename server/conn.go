@@ -500,23 +500,26 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 		return err
 	}
 
-	if (resp.Capability&mysql.ClientSSL > 0) && cc.server.tlsConfig != nil {
-		// The packet is a SSLRequest, let's switch to TLS.
-		if err = cc.upgradeToTLS(cc.server.tlsConfig); err != nil {
-			return err
-		}
-		// Read the following HandshakeResponse packet.
-		data, err = cc.readPacket()
-		if err != nil {
-			return err
-		}
-		if isOldVersion {
-			pos, err = parseOldHandshakeResponseHeader(ctx, &resp, data)
-		} else {
-			pos, err = parseHandshakeResponseHeader(ctx, &resp, data)
-		}
-		if err != nil {
-			return err
+	if resp.Capability&mysql.ClientSSL > 0 {
+		tlsConfig := (*tls.Config)(atomic.LoadPointer(&cc.server.tlsConfig))
+		if tlsConfig != nil {
+			// The packet is a SSLRequest, let's switch to TLS.
+			if err = cc.upgradeToTLS(tlsConfig); err != nil {
+				return err
+			}
+			// Read the following HandshakeResponse packet.
+			data, err = cc.readPacket()
+			if err != nil {
+				return err
+			}
+			if isOldVersion {
+				pos, err = parseOldHandshakeResponseHeader(ctx, &resp, data)
+			} else {
+				pos, err = parseHandshakeResponseHeader(ctx, &resp, data)
+			}
+			if err != nil {
+				return err
+			}
 		}
 	}
 
@@ -736,7 +739,7 @@ func queryStrForLog(query string) string {
 }
 
 func errStrForLog(err error) string {
-	if kv.ErrKeyExists.Equal(err) {
+	if kv.ErrKeyExists.Equal(err) || parser.ErrParse.Equal(err) {
 		// Do not log stack for duplicated entry error.
 		return err.Error()
 	}

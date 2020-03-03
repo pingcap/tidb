@@ -31,6 +31,7 @@ const (
 	typePut mvccValueType = iota
 	typeDelete
 	typeRollback
+	typeLock
 )
 
 type mvccValue struct {
@@ -192,12 +193,13 @@ func (mh *marshalHelper) ReadSlice(r *bytes.Buffer, slice *[]byte) {
 // Note that parameter key is raw key, while key in ErrLocked is mvcc key.
 func (l *mvccLock) lockErr(key []byte) error {
 	return &ErrLocked{
-		Key:      mvccEncode(key, lockVer),
-		Primary:  l.primary,
-		StartTS:  l.startTS,
-		TTL:      l.ttl,
-		TxnSize:  l.txnSize,
-		LockType: l.op,
+		Key:         mvccEncode(key, lockVer),
+		Primary:     l.primary,
+		StartTS:     l.startTS,
+		ForUpdateTS: l.forUpdateTS,
+		TTL:         l.ttl,
+		TxnSize:     l.txnSize,
+		LockType:    l.op,
 	}
 }
 
@@ -233,7 +235,7 @@ func (e *mvccEntry) Get(ts uint64, isoLevel kvrpcpb.IsolationLevel, resolvedLock
 		}
 	}
 	for _, v := range e.values {
-		if v.commitTS <= ts && v.valueType != typeRollback {
+		if v.commitTS <= ts && v.valueType != typeRollback && v.valueType != typeLock {
 			return v.value, nil
 		}
 	}
