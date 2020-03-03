@@ -472,13 +472,11 @@ func (c *ifFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 	}
 	retTp := InferType4ControlFuncs(args[1].GetType(), args[2].GetType())
 	evalTps := retTp.EvalType()
-	var arg0Tp types.EvalType
-	if args[0].GetType().EvalType() == types.ETInt {
-		arg0Tp = types.ETInt
-	} else {
-		arg0Tp = types.ETReal
+	args[0], err = wrapWithIsTrue(ctx, true, args[0])
+	if err != nil {
+		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, evalTps, arg0Tp, evalTps, evalTps)
+	bf := newBaseBuiltinFuncWithTp(ctx, args, evalTps, types.ETInt, evalTps, evalTps)
 	retTp.Flag |= bf.tp.Flag
 	bf.tp = retTp
 	switch evalTps {
