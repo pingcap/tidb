@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
@@ -108,6 +109,8 @@ func (e *SimpleExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		err = e.executeUse(x)
 	case *ast.FlushStmt:
 		err = e.executeFlush(x)
+	case *ast.AlterInstanceStmt:
+		err = e.executeAlterInstance(x)
 	case *ast.BeginStmt:
 		err = e.executeBegin(ctx, x)
 	case *ast.CommitStmt:
@@ -1094,6 +1097,26 @@ func (e *SimpleExec) executeFlush(s *ast.FlushStmt) error {
 				return err
 			}
 		}
+	}
+	return nil
+}
+
+func (e *SimpleExec) executeAlterInstance(s *ast.AlterInstanceStmt) error {
+	if s.ReloadTLS {
+		logutil.BgLogger().Info("execute reload tls", zap.Bool("NoRollbackOnError", s.NoRollbackOnError))
+		sm := e.ctx.GetSessionManager()
+		tlsCfg, err := util.LoadTLSCertificates(
+			variable.SysVars["ssl_ca"].Value,
+			variable.SysVars["ssl_key"].Value,
+			variable.SysVars["ssl_cert"].Value,
+		)
+		if err != nil {
+			if !s.NoRollbackOnError {
+				return err
+			}
+			logutil.BgLogger().Warn("reload TLS fail but keep working without TLS due to 'no rollback on error'")
+		}
+		sm.UpdateTLSConfig(tlsCfg)
 	}
 	return nil
 }
