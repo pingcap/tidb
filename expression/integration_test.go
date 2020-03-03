@@ -5548,6 +5548,9 @@ func (s *testIntegrationSerialSuite) TestWeightString(c *C) {
 	c.Assert(tk.MustQuery("select weight_string(cast(20190821 as date) as binary(5));").Rows()[0][0], Equals, "2019-")
 	c.Assert(tk.MustQuery("select weight_string(7.0);").Rows()[0][0], Equals, "<nil>")
 	c.Assert(tk.MustQuery("select weight_string(7 AS BINARY(2));").Rows()[0][0], Equals, "7\x00")
+	// test explicit collation
+	c.Assert(tk.MustQuery("select weight_string('中 ' collate utf8mb4_general_ci);").Rows()[0][0], Equals, "\x4E\x2D")
+	c.Assert(tk.MustQuery("select weight_string('中 ' collate utf8_bin);").Rows()[0][0], Equals, "中")
 }
 
 func (s *testIntegrationSerialSuite) TestCollationCreateIndex(c *C) {
