@@ -71,13 +71,18 @@ func (d *ddl) generalWorker() *worker {
 // It only starts the original workers.
 func (d *ddl) restartWorkers(ctx context.Context) {
 	d.quitCh = make(chan struct{})
-	go util.WithRecovery(
-		func() { d.limitDDLJobs() },
-		func(r interface{}) {
-			logutil.BgLogger().Error("[ddl] DDL add batch DDL jobs meet panic",
-				zap.String("ID", d.uuid), zap.Reflect("r", r), zap.Stack("stack trace"))
-			metrics.PanicCounter.WithLabelValues(metrics.LabelDDL).Inc()
-		})
+
+	d.wg.Add(1)
+	go func() {
+		defer d.wg.Done()
+		util.WithRecovery(
+			func() { d.limitDDLJobs() },
+			func(r interface{}) {
+				logutil.BgLogger().Error("[ddl] DDL add batch DDL jobs meet panic",
+					zap.String("ID", d.uuid), zap.Reflect("r", r), zap.Stack("stack trace"))
+				metrics.PanicCounter.WithLabelValues(metrics.LabelDDL).Inc()
+			})
+	}()
 	if !RunWorker {
 		return
 	}

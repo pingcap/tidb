@@ -1340,7 +1340,7 @@ func (s *testOOMSuite) TearDownSuite(c *C) {
 func (s *testOOMSuite) registerHook() {
 	conf := &log.Config{Level: os.Getenv("log_level"), File: log.FileLogConfig{}}
 	_, r, _ := log.InitLogger(conf)
-	s.oom = &oomCapturer{r.Core, ""}
+	s.oom = &oomCapturer{r.Core, "", sync.Mutex{}}
 	lg := zap.New(s.oom)
 	log.ReplaceGlobals(lg, r)
 }
@@ -1483,6 +1483,7 @@ func (s *testOOMSuite) TestMemTracker4DeleteExec(c *C) {
 type oomCapturer struct {
 	zapcore.Core
 	tracker string
+	mu      sync.Mutex
 }
 
 func (h *oomCapturer) Write(entry zapcore.Entry, fields []zapcore.Field) error {
@@ -1500,7 +1501,10 @@ func (h *oomCapturer) Write(entry zapcore.Entry, fields []zapcore.Field) error {
 		h.tracker = str[begin+len("8001]") : end]
 		return nil
 	}
+
+	h.mu.Lock()
 	h.tracker = entry.Message
+	h.mu.Unlock()
 	return nil
 }
 

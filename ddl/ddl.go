@@ -310,6 +310,7 @@ type limitJobTask struct {
 type ddl struct {
 	m          sync.RWMutex
 	quitCh     chan struct{}
+	wg         sync.WaitGroup // It's only used to deal with data race in state_test and schema_test.
 	limitJobCh chan *limitJobTask
 
 	*ddlCtx
@@ -456,13 +457,17 @@ func (d *ddl) start(ctx context.Context, ctxPool *pools.ResourcePool) {
 	logutil.BgLogger().Info("[ddl] start DDL", zap.String("ID", d.uuid), zap.Bool("runWorker", RunWorker))
 	d.quitCh = make(chan struct{})
 
-	go tidbutil.WithRecovery(
-		func() { d.limitDDLJobs() },
-		func(r interface{}) {
-			logutil.BgLogger().Error("[ddl] limit DDL jobs meet panic",
-				zap.String("ID", d.uuid), zap.Reflect("r", r), zap.Stack("stack trace"))
-			metrics.PanicCounter.WithLabelValues(metrics.LabelDDL).Inc()
-		})
+	d.wg.Add(1)
+	go func() {
+		defer d.wg.Done()
+		tidbutil.WithRecovery(
+			func() { d.limitDDLJobs() },
+			func(r interface{}) {
+				logutil.BgLogger().Error("[ddl] limit DDL jobs meet panic",
+					zap.String("ID", d.uuid), zap.Reflect("r", r), zap.Stack("stack trace"))
+				metrics.PanicCounter.WithLabelValues(metrics.LabelDDL).Inc()
+			})
+	}()
 
 	// If RunWorker is true, we need campaign owner and do DDL job.
 	// Otherwise, we needn't do that.
@@ -513,6 +518,7 @@ func (d *ddl) close() {
 
 	startTime := time.Now()
 	close(d.quitCh)
+	d.wg.Wait()
 	d.ownerManager.Cancel()
 	d.schemaSyncer.CloseCleanWork()
 	err := d.schemaSyncer.RemoveSelfVersionPath()
