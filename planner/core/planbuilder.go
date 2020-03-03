@@ -281,6 +281,9 @@ type PlanBuilder struct {
 	hintProcessor *BlockHintProcessor
 	// selectOffset is the offsets of current processing select stmts.
 	selectOffset []int
+
+	// SelectLock need this information to locate the lock on partitions.
+	partitionedTable []table.PartitionedTable
 }
 
 type handleColHelper struct {
@@ -801,8 +804,9 @@ func removeIgnoredPaths(paths, ignoredPaths []*util.AccessPath, tblInfo *model.T
 
 func (b *PlanBuilder) buildSelectLock(src LogicalPlan, lock ast.SelectLockType) *LogicalLock {
 	selectLock := LogicalLock{
-		Lock:         lock,
-		tblID2Handle: b.handleHelper.tailMap(),
+		Lock:             lock,
+		tblID2Handle:     b.handleHelper.tailMap(),
+		partitionedTable: b.partitionedTable,
 	}.Init(b.ctx)
 	selectLock.SetChildren(src)
 	return selectLock

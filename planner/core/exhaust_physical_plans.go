@@ -1703,8 +1703,9 @@ func (p *LogicalLimit) exhaustPhysicalPlans(prop *property.PhysicalProperty) []P
 func (p *LogicalLock) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
 	childProp := prop.Clone()
 	lock := PhysicalLock{
-		Lock:         p.Lock,
-		TblID2Handle: p.tblID2Handle,
+		Lock:             p.Lock,
+		TblID2Handle:     p.tblID2Handle,
+		PartitionedTable: p.partitionedTable,
 	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
 	return []PhysicalPlan{lock}
 }
