@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
@@ -56,6 +57,7 @@ import (
 // processinfoSetter is the interface use to set current running process info.
 type processinfoSetter interface {
 	SetProcessInfo(string, time.Time, byte, uint64)
+	TryUpdateProcessor(f func(info *util.ProcessInfo)) bool
 }
 
 // recordSet wraps an executor, implements sqlexec.RecordSet interface
@@ -355,6 +357,10 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 
 	isPessimistic := sctx.GetSessionVars().TxnCtx.IsPessimistic
 
+	if isPessimistic && pi != nil {
+		ctx = context.WithValue(ctx, util.ProcessInfoUpdaterCtxKey{}, util.ProcessInfoUpdater(pi.TryUpdateProcessor))
+	}
+
 	// Special handle for "select for update statement" in pessimistic transaction.
 	if isPessimistic && a.isSelectForUpdate {
 		return a.handlePessimisticSelectForUpdate(ctx, e)
@@ -556,6 +562,7 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 			return nil
 		}
 		seVars := sctx.GetSessionVars()
+
 		lockCtx := newLockCtx(seVars, seVars.LockWaitTimeout)
 		startLocking := time.Now()
 		err = txn.LockKeys(ctx, lockCtx, keys...)

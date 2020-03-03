@@ -296,13 +296,13 @@ func (s *testLockSuite) TestCheckTxnStatus(c *C) {
 
 	// Test the ResolveLocks API
 	lock := s.mustGetLock(c, []byte("second"))
-	timeBeforeExpire, _, err := resolver.ResolveLocks(bo, currentTS, []*Lock{lock})
+	timeBeforeExpire, _, _, err := resolver.ResolveLocks(bo, currentTS, []*Lock{lock})
 	c.Assert(err, IsNil)
 	c.Assert(timeBeforeExpire > int64(0), IsTrue)
 
 	// Force rollback the lock using lock.TTL = 0.
 	lock.TTL = uint64(0)
-	timeBeforeExpire, _, err = resolver.ResolveLocks(bo, currentTS, []*Lock{lock})
+	timeBeforeExpire, _, _, err = resolver.ResolveLocks(bo, currentTS, []*Lock{lock})
 	c.Assert(err, IsNil)
 	c.Assert(timeBeforeExpire, Equals, int64(0))
 
@@ -510,19 +510,19 @@ func (s *testLockSuite) TestZeroMinCommitTS(c *C) {
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/mockZeroCommitTS"), IsNil)
 
 	lock := s.mustGetLock(c, []byte("key"))
-	expire, pushed, err := newLockResolver(s.store).ResolveLocks(bo, 0, []*Lock{lock})
+	expire, pushed, _, err := newLockResolver(s.store).ResolveLocks(bo, 0, []*Lock{lock})
 	c.Assert(err, IsNil)
 	c.Assert(pushed, HasLen, 0)
 	c.Assert(expire, Greater, int64(0))
 
-	expire, pushed, err = newLockResolver(s.store).ResolveLocks(bo, math.MaxUint64, []*Lock{lock})
+	expire, pushed, _, err = newLockResolver(s.store).ResolveLocks(bo, math.MaxUint64, []*Lock{lock})
 	c.Assert(err, IsNil)
 	c.Assert(pushed, HasLen, 0)
 	c.Assert(expire, Greater, int64(0))
 
 	// Clean up this test.
 	lock.TTL = uint64(0)
-	expire, _, err = newLockResolver(s.store).ResolveLocks(bo, 0, []*Lock{lock})
+	expire, _, _, err = newLockResolver(s.store).ResolveLocks(bo, 0, []*Lock{lock})
 	c.Assert(err, IsNil)
 	c.Assert(expire, Equals, int64(0))
 }

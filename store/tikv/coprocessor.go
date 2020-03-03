@@ -785,7 +785,7 @@ type clientHelper struct {
 
 // ResolveLocks wraps the ResolveLocks function and store the resolved result.
 func (ch *clientHelper) ResolveLocks(bo *Backoffer, callerStartTS uint64, locks []*Lock) (int64, error) {
-	msBeforeTxnExpired, resolvedLocks, err := ch.LockResolver.ResolveLocks(bo, callerStartTS, locks)
+	msBeforeTxnExpired, resolvedLocks, _, err := ch.LockResolver.ResolveLocks(bo, callerStartTS, locks)
 	if err != nil {
 		return msBeforeTxnExpired, err
 	}
