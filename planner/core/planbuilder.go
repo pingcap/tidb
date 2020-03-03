@@ -48,6 +48,8 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/set"
+
+	"github.com/cznic/mathutil"
 	"go.uber.org/zap"
 )
 
@@ -279,6 +281,9 @@ type PlanBuilder struct {
 	hintProcessor *BlockHintProcessor
 	// selectOffset is the offsets of current processing select stmts.
 	selectOffset []int
+
+	// SelectLock need this information to locate the lock on partitions.
+	partitionedTable []table.PartitionedTable
 }
 
 type handleColHelper struct {
@@ -304,7 +309,7 @@ func (hch *handleColHelper) pushMap(m map[int64][]*expression.Column) {
 }
 
 func (hch *handleColHelper) mergeAndPush(m1, m2 map[int64][]*expression.Column) {
-	newMap := make(map[int64][]*expression.Column)
+	newMap := make(map[int64][]*expression.Column, mathutil.Max(len(m1), len(m2)))
 	for k, v := range m1 {
 		newMap[k] = make([]*expression.Column, len(v))
 		copy(newMap[k], v)
@@ -437,7 +442,7 @@ func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
 	case *ast.AnalyzeTableStmt:
 		return b.buildAnalyze(x)
 	case *ast.BinlogStmt, *ast.FlushStmt, *ast.UseStmt,
-		*ast.BeginStmt, *ast.CommitStmt, *ast.RollbackStmt, *ast.CreateUserStmt, *ast.SetPwdStmt,
+		*ast.BeginStmt, *ast.CommitStmt, *ast.RollbackStmt, *ast.CreateUserStmt, *ast.SetPwdStmt, *ast.AlterInstanceStmt,
 		*ast.GrantStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.RevokeStmt, *ast.KillStmt, *ast.DropStatsStmt,
 		*ast.GrantRoleStmt, *ast.RevokeRoleStmt, *ast.SetRoleStmt, *ast.SetDefaultRoleStmt, *ast.ShutdownStmt:
 		return b.buildSimple(node.(ast.StmtNode))
@@ -799,8 +804,9 @@ func removeIgnoredPaths(paths, ignoredPaths []*util.AccessPath, tblInfo *model.T
 
 func (b *PlanBuilder) buildSelectLock(src LogicalPlan, lock ast.SelectLockType) *LogicalLock {
 	selectLock := LogicalLock{
-		Lock:         lock,
-		tblID2Handle: b.handleHelper.tailMap(),
+		Lock:             lock,
+		tblID2Handle:     b.handleHelper.tailMap(),
+		partitionedTable: b.partitionedTable,
 	}.Init(b.ctx)
 	selectLock.SetChildren(src)
 	return selectLock
@@ -1688,6 +1694,9 @@ func (b *PlanBuilder) buildSimple(node ast.StmtNode) (Plan, error) {
 	case *ast.FlushStmt:
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("RELOAD")
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ReloadPriv, "", "", "", err)
+	case *ast.AlterInstanceStmt:
+		err := ErrSpecificAccessDenied.GenWithStack("ALTER INSTANCE")
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", err)
 	case *ast.AlterUserStmt:
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateUserPriv, "", "", "", err)

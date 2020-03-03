@@ -129,16 +129,6 @@ func (e *baseExecutor) Schema() *expression.Schema {
 	return e.schema
 }
 
-// markChildrenUsedCols compares each child with the output schema, and mark
-// each column of the child is used by output or not.
-func (e *baseExecutor) markChildrenUsedCols() (childrenUsed [][]bool) {
-	for _, child := range e.children {
-		used := expression.GetUsedList(e.schema.Columns, child.Schema())
-		childrenUsed = append(childrenUsed, used)
-	}
-	return
-}
-
 // newFirstChunk creates a new chunk to buffer current executor's result.
 func newFirstChunk(e Executor) *chunk.Chunk {
 	base := e.base()
@@ -817,7 +807,11 @@ type SelectLockExec struct {
 	Lock ast.SelectLockType
 	keys []kv.Key
 
-	tblID2Handle map[int64][]*expression.Column
+	tblID2Handle     map[int64][]*expression.Column
+	partitionedTable []table.PartitionedTable
+
+	// tblID2Table is cached to reduce cost.
+	tblID2Table map[int64]table.PartitionedTable
 }
 
 // Open implements the Executor Open interface.
@@ -831,6 +825,18 @@ func (e *SelectLockExec) Open(ctx context.Context) error {
 		// This operation is only for schema validator check.
 		txnCtx.UpdateDeltaForTable(id, 0, 0, map[int64]int64{})
 	}
+
+	if len(e.tblID2Handle) > 0 && len(e.partitionedTable) > 0 {
+		e.tblID2Table = make(map[int64]table.PartitionedTable, len(e.partitionedTable))
+		for id := range e.tblID2Handle {
+			for _, p := range e.partitionedTable {
+				if id == p.Meta().ID {
+					e.tblID2Table[id] = p
+				}
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -845,12 +851,23 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if len(e.tblID2Handle) == 0 || (e.Lock != ast.SelectLockForUpdate && e.Lock != ast.SelectLockForUpdateNoWait) {
 		return nil
 	}
-	if req.NumRows() != 0 {
+
+	if req.NumRows() > 0 {
 		iter := chunk.NewIterator4Chunk(req)
-		for id, cols := range e.tblID2Handle {
-			for _, col := range cols {
-				for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-					e.keys = append(e.keys, tablecodec.EncodeRowKeyWithHandle(id, row.GetInt64(col.Index)))
+		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+			for id, cols := range e.tblID2Handle {
+				physicalID := id
+				if pt, ok := e.tblID2Table[id]; ok {
+					// On a partitioned table, we have to use physical ID to encode the lock key!
+					p, err := pt.GetPartitionByRow(e.ctx, row.GetDatumRow(e.base().retFieldTypes))
+					if err != nil {
+						return err
+					}
+					physicalID = p.GetPhysicalID()
+				}
+
+				for _, col := range cols {
+					e.keys = append(e.keys, tablecodec.EncodeRowKeyWithHandle(physicalID, row.GetInt64(col.Index)))
 				}
 			}
 		}
