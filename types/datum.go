@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types/json"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -172,11 +171,10 @@ func (d *Datum) GetString() string {
 }
 
 // SetString sets string value.
-func (d *Datum) SetString(s string, collation string, length int) {
+func (d *Datum) SetString(s string, collation string) {
 	d.k = KindString
 	sink(s)
 	d.b = hack.Slice(s)
-	d.length = uint32(length)
 	d.collation = collation
 }
 
@@ -442,7 +440,7 @@ func (d *Datum) SetValue(val interface{}) {
 	case float64:
 		d.SetFloat64(x)
 	case string:
-		d.SetString(x, mysql.DefaultCollationName, collate.DefaultLen)
+		d.SetString(x, mysql.DefaultCollationName)
 	case []byte:
 		d.SetBytes(x)
 	case *MyDecimal:
@@ -600,7 +598,7 @@ func (d *Datum) compareString(sc *stmtctx.StatementContext, s string) (int, erro
 	case KindMaxValue:
 		return 1, nil
 	case KindString, KindBytes:
-		return CompareString(d.GetString(), s), nil
+		return CompareString(d.GetString(), s, d.collation, int(d.length)), nil
 	case KindMysqlDecimal:
 		dec := new(MyDecimal)
 		err := sc.HandleTruncate(dec.FromString(hack.Slice(s)))
@@ -612,11 +610,11 @@ func (d *Datum) compareString(sc *stmtctx.StatementContext, s string) (int, erro
 		dur, err := ParseDuration(sc, s, MaxFsp)
 		return d.GetMysqlDuration().Compare(dur), errors.Trace(err)
 	case KindMysqlSet:
-		return CompareString(d.GetMysqlSet().String(), s), nil
+		return CompareString(d.GetMysqlSet().String(), s, d.collation, int(d.length)), nil
 	case KindMysqlEnum:
-		return CompareString(d.GetMysqlEnum().String(), s), nil
+		return CompareString(d.GetMysqlEnum().String(), s, d.collation, int(d.length)), nil
 	case KindBinaryLiteral, KindMysqlBit:
-		return CompareString(d.GetBinaryLiteral().ToString(), s), nil
+		return CompareString(d.GetBinaryLiteral().ToString(), s, d.collation, int(d.length)), nil
 	default:
 		fVal, err := StrToFloat(sc, s)
 		if err != nil {
@@ -667,7 +665,7 @@ func (d *Datum) compareMysqlDuration(sc *stmtctx.StatementContext, dur Duration)
 func (d *Datum) compareMysqlEnum(sc *stmtctx.StatementContext, enum Enum) (int, error) {
 	switch d.k {
 	case KindString, KindBytes:
-		return CompareString(d.GetString(), enum.String()), nil
+		return CompareString(d.GetString(), enum.String(), d.collation, int(d.length)), nil
 	default:
 		return d.compareFloat64(sc, enum.ToNumber())
 	}
@@ -676,9 +674,9 @@ func (d *Datum) compareMysqlEnum(sc *stmtctx.StatementContext, enum Enum) (int, 
 func (d *Datum) compareBinaryLiteral(sc *stmtctx.StatementContext, b BinaryLiteral) (int, error) {
 	switch d.k {
 	case KindString, KindBytes:
-		return CompareString(d.GetString(), b.ToString()), nil
+		return CompareString(d.GetString(), b.ToString(), d.collation, int(d.length)), nil
 	case KindBinaryLiteral, KindMysqlBit:
-		return CompareString(d.GetBinaryLiteral().ToString(), b.ToString()), nil
+		return CompareString(d.GetBinaryLiteral().ToString(), b.ToString(), d.collation, int(d.length)), nil
 	default:
 		val, err := b.ToInt(sc)
 		if err != nil {
@@ -692,7 +690,7 @@ func (d *Datum) compareBinaryLiteral(sc *stmtctx.StatementContext, b BinaryLiter
 func (d *Datum) compareMysqlSet(sc *stmtctx.StatementContext, set Set) (int, error) {
 	switch d.k {
 	case KindString, KindBytes:
-		return CompareString(d.GetString(), set.String()), nil
+		return CompareString(d.GetString(), set.String(), d.collation, int(d.length)), nil
 	default:
 		return d.compareFloat64(sc, set.ToNumber())
 	}
@@ -861,7 +859,7 @@ func (d *Datum) convertToString(sc *stmtctx.StatementContext, target *FieldType)
 		return invalidConv(d, target.Tp)
 	}
 	s, err := ProduceStrWithSpecifiedTp(s, target, sc, true)
-	ret.SetString(s, target.Collate, target.Flen)
+	ret.SetString(s, target.Collate)
 	if target.Charset == charset.CharsetBin {
 		ret.k = KindBytes
 	}
@@ -963,6 +961,9 @@ func (d *Datum) convertToUint(sc *stmtctx.StatementContext, target *FieldType) (
 		val, err = ConvertFloatToUint(sc, d.GetMysqlSet().ToNumber(), upperBound, tp)
 	case KindBinaryLiteral, KindMysqlBit:
 		val, err = d.GetBinaryLiteral().ToInt(sc)
+		if err == nil {
+			val, err = ConvertUintToUint(val, upperBound, tp)
+		}
 	case KindMysqlJSON:
 		var i64 int64
 		i64, err = ConvertJSONToInt(sc, d.GetMysqlJSON(), true)
@@ -1531,7 +1532,11 @@ func (d *Datum) toSignedInteger(sc *stmtctx.StatementContext, tp byte) (int64, e
 		return ConvertJSONToInt(sc, d.GetMysqlJSON(), false)
 	case KindBinaryLiteral, KindMysqlBit:
 		val, err := d.GetBinaryLiteral().ToInt(sc)
-		return int64(val), errors.Trace(err)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		ival, err := ConvertUintToInt(val, upperBound, tp)
+		return ival, errors.Trace(err)
 	default:
 		return 0, errors.Errorf("cannot convert %v(type %T) to int64", d.GetValue(), d.GetValue())
 	}
@@ -1692,13 +1697,13 @@ func NewBytesDatum(b []byte) (d Datum) {
 
 // NewStringDatum creates a new Datum from a string.
 func NewStringDatum(s string) (d Datum) {
-	d.SetString(s, mysql.DefaultCollationName, collate.DefaultLen)
+	d.SetString(s, mysql.DefaultCollationName)
 	return d
 }
 
 // NewCollationStringDatum creates a new Datum from a string with collation and length info.
 func NewCollationStringDatum(s string, collation string, length int) (d Datum) {
-	d.SetString(s, collation, length)
+	d.SetString(s, collation)
 	return d
 }
 
@@ -1912,7 +1917,11 @@ func GetMaxValue(ft *FieldType) (max Datum) {
 		max.SetFloat32(float32(GetMaxFloat(ft.Flen, ft.Decimal)))
 	case mysql.TypeDouble:
 		max.SetFloat64(GetMaxFloat(ft.Flen, ft.Decimal))
-	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar:
+		// codec.Encode KindMaxValue, to avoid import circle
+		bytes := []byte{250}
+		max.SetString(string(bytes), ft.Collate)
+	case mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		// codec.Encode KindMaxValue, to avoid import circle
 		bytes := []byte{250}
 		max.SetBytes(bytes)
@@ -1943,7 +1952,11 @@ func GetMinValue(ft *FieldType) (min Datum) {
 		min.SetFloat32(float32(-GetMaxFloat(ft.Flen, ft.Decimal)))
 	case mysql.TypeDouble:
 		min.SetFloat64(-GetMaxFloat(ft.Flen, ft.Decimal))
-	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar:
+		// codec.Encode KindMinNotNull, to avoid import circle
+		bytes := []byte{1}
+		min.SetString(string(bytes), ft.Collate)
+	case mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		// codec.Encode KindMinNotNull, to avoid import circle
 		bytes := []byte{1}
 		min.SetBytes(bytes)

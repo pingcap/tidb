@@ -39,6 +39,8 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
@@ -47,6 +49,7 @@ import (
 
 var _ = Suite(&testIntegrationSuite{})
 var _ = Suite(&testIntegrationSuite2{})
+var _ = SerialSuites(&testIntegrationSerialSuite{})
 
 type testIntegrationSuiteBase struct {
 	store kv.Storage
@@ -59,6 +62,10 @@ type testIntegrationSuite struct {
 }
 
 type testIntegrationSuite2 struct {
+	testIntegrationSuiteBase
+}
+
+type testIntegrationSerialSuite struct {
 	testIntegrationSuiteBase
 }
 
@@ -2259,12 +2266,23 @@ func (s *testIntegrationSuite2) TestBuiltin(c *C) {
 	tk.MustQuery(`select convert(t.a1, signed int) from (select convert(a, json) as a1 from tb5) as t`)
 	tk.MustExec(`drop table tb5;`)
 
-	tk.MustExec(`create table tb5(a double(64));`)
+	// test builtinCastIntAsIntSig
+	// Cast MaxUint64 to unsigned should be -1
+	tk.MustQuery("select cast(0xffffffffffffffff as signed);").Check(testkit.Rows("-1"))
+	tk.MustQuery("select cast(0x9999999999999999999999999999999999999999999 as signed);").Check(testkit.Rows("-1"))
+	tk.MustExec("create table tb5(a bigint);")
+	tk.MustExec("set sql_mode=''")
+	tk.MustExec("insert into tb5(a) values (0xfffffffffffffffffffffffff);")
+	tk.MustQuery("select * from tb5;").Check(testkit.Rows("9223372036854775807"))
+	tk.MustExec("drop table tb5;")
+
+	tk.MustExec(`create table tb5(a double);`)
 	tk.MustExec(`insert into test.tb5 (a) values (18446744073709551616);`)
 	tk.MustExec(`insert into test.tb5 (a) values (184467440737095516160);`)
 	result = tk.MustQuery(`select cast(a as unsigned) from test.tb5;`)
-	result.Check(testkit.Rows("9223372036854775807", "9223372036854775807"))
-	tk.MustExec(`drop table tb5`)
+	// Note: MySQL will return 9223372036854775807, and it should be a bug.
+	result.Check(testkit.Rows("18446744073709551615", "18446744073709551615"))
+	tk.MustExec(`drop table tb5;`)
 
 	// test builtinCastIntAsDecimalSig
 	tk.MustExec(`create table tb5(a bigint(64) unsigned, b decimal(64, 10));`)
@@ -3188,9 +3206,9 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	result = tk.MustQuery("SELECT 1.175494351E-37 div 1.7976931348623157E+308, 1.7976931348623157E+308 div -1.7976931348623157E+307, 1 div 1e-82;")
 	result.Check(testkit.Rows("0 -1 <nil>"))
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
-		"Warning|1292|Truncated incorrect DECIMAL value: 'cast(1.7976931348623157e+308)'",
-		"Warning|1292|Truncated incorrect DECIMAL value: 'cast(1.7976931348623157e+308)'",
-		"Warning|1292|Truncated incorrect DECIMAL value: 'cast(-1.7976931348623158e+307)'",
+		"Warning|1292|Truncated incorrect DECIMAL value: 'cast(1.7976931348623157e+308, decimal(309,0) BINARY)'",
+		"Warning|1292|Truncated incorrect DECIMAL value: 'cast(1.7976931348623157e+308, decimal(309,0) BINARY)'",
+		"Warning|1292|Truncated incorrect DECIMAL value: 'cast(-1.7976931348623158e+307, decimal(309,0) BINARY)'",
 		"Warning|1365|Division by 0"))
 	rs, err = tk.Exec("select 1e300 DIV 1.5")
 	c.Assert(err, IsNil)
@@ -5318,21 +5336,16 @@ func (s *testIntegrationSuite) TestIssue14146(c *C) {
 func (s *testIntegrationSuite) TestCacheRegexpr(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
-	orgCapacity := plannercore.PreparedPlanCacheCapacity
-	orgMemGuardRatio := plannercore.PreparedPlanCacheMemoryGuardRatio
-	orgMaxMemory := plannercore.PreparedPlanCacheMaxMemory
 	defer func() {
 		plannercore.SetPreparedPlanCache(orgEnable)
-		plannercore.PreparedPlanCacheCapacity = orgCapacity
-		plannercore.PreparedPlanCacheMemoryGuardRatio = orgMemGuardRatio
-		plannercore.PreparedPlanCacheMaxMemory = orgMaxMemory
 	}()
 	plannercore.SetPreparedPlanCache(true)
-	plannercore.PreparedPlanCacheCapacity = 100
-	plannercore.PreparedPlanCacheMemoryGuardRatio = 0.1
-	// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
-	// behavior would not be effected by the uncertain memory utilization.
-	plannercore.PreparedPlanCacheMaxMemory.Store(math.MaxUint64)
+	var err error
+	tk.Se, err = session.CreateSession4TestWithOpt(s.store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (a varchar(40))")
@@ -5347,21 +5360,16 @@ func (s *testIntegrationSuite) TestCacheRegexpr(c *C) {
 func (s *testIntegrationSuite) TestCacheRefineArgs(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
-	orgCapacity := plannercore.PreparedPlanCacheCapacity
-	orgMemGuardRatio := plannercore.PreparedPlanCacheMemoryGuardRatio
-	orgMaxMemory := plannercore.PreparedPlanCacheMaxMemory
 	defer func() {
 		plannercore.SetPreparedPlanCache(orgEnable)
-		plannercore.PreparedPlanCacheCapacity = orgCapacity
-		plannercore.PreparedPlanCacheMemoryGuardRatio = orgMemGuardRatio
-		plannercore.PreparedPlanCacheMaxMemory = orgMaxMemory
 	}()
 	plannercore.SetPreparedPlanCache(true)
-	plannercore.PreparedPlanCacheCapacity = 100
-	plannercore.PreparedPlanCacheMemoryGuardRatio = 0.1
-	// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
-	// behavior would not be effected by the uncertain memory utilization.
-	plannercore.PreparedPlanCacheMaxMemory.Store(math.MaxUint64)
+	var err error
+	tk.Se, err = session.CreateSession4TestWithOpt(s.store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(col_int int)")
@@ -5377,6 +5385,27 @@ func (s *testIntegrationSuite) TestCacheRefineArgs(c *C) {
 	tk.MustExec("prepare stmt from 'SELECT col_int < ? FROM t'")
 	tk.MustExec("set @p0='-184467440737095516167.1'")
 	tk.MustQuery("execute stmt using @p0").Check(testkit.Rows("0"))
+}
+
+func (s *testIntegrationSuite) TestCollation(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (utf8_bin_c varchar(10) charset utf8 collate utf8_bin, utf8_gen_c varchar(10) charset utf8 collate utf8_general_ci, bin_c binary, num_c int)")
+	tk.MustExec("insert into t values ('a', 'b', 'c', 4)")
+	tk.MustQuery("select collation(null)").Check(testkit.Rows("binary"))
+	tk.MustQuery("select collation(2)").Check(testkit.Rows("binary"))
+	tk.MustQuery("select collation(2 + 'a')").Check(testkit.Rows("binary"))
+	tk.MustQuery("select collation(2 + utf8_gen_c) from t").Check(testkit.Rows("binary"))
+	tk.MustQuery("select collation(2 + utf8_bin_c) from t").Check(testkit.Rows("binary"))
+	tk.MustQuery("select collation(concat(utf8_bin_c, 2)) from t").Check(testkit.Rows("utf8_bin"))
+	tk.MustQuery("select collation(concat(utf8_gen_c, 'abc')) from t").Check(testkit.Rows("utf8_general_ci"))
+	tk.MustQuery("select collation(concat(utf8_gen_c, null)) from t").Check(testkit.Rows("utf8_general_ci"))
+	tk.MustQuery("select collation(concat(utf8_gen_c, num_c)) from t").Check(testkit.Rows("utf8_general_ci"))
+	tk.MustQuery("select collation(concat(utf8_bin_c, utf8_gen_c)) from t").Check(testkit.Rows("utf8_bin"))
+	tk.MustQuery("select collation(upper(utf8_bin_c)) from t").Check(testkit.Rows("utf8_bin"))
+	tk.MustQuery("select collation(upper(utf8_gen_c)) from t").Check(testkit.Rows("utf8_general_ci"))
+	tk.MustQuery("select collation(upper(bin_c)) from t").Check(testkit.Rows("binary"))
 }
 
 func (s *testIntegrationSuite) TestCoercibility(c *C) {
@@ -5418,21 +5447,16 @@ func (s *testIntegrationSuite) TestCoercibility(c *C) {
 func (s *testIntegrationSuite) TestCacheConstEval(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
-	orgCapacity := plannercore.PreparedPlanCacheCapacity
-	orgMemGuardRatio := plannercore.PreparedPlanCacheMemoryGuardRatio
-	orgMaxMemory := plannercore.PreparedPlanCacheMaxMemory
 	defer func() {
 		plannercore.SetPreparedPlanCache(orgEnable)
-		plannercore.PreparedPlanCacheCapacity = orgCapacity
-		plannercore.PreparedPlanCacheMemoryGuardRatio = orgMemGuardRatio
-		plannercore.PreparedPlanCacheMaxMemory = orgMaxMemory
 	}()
 	plannercore.SetPreparedPlanCache(true)
-	plannercore.PreparedPlanCacheCapacity = 100
-	plannercore.PreparedPlanCacheMemoryGuardRatio = 0.1
-	// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
-	// behavior would not be effected by the uncertain memory utilization.
-	plannercore.PreparedPlanCacheMaxMemory.Store(math.MaxUint64)
+	var err error
+	tk.Se, err = session.CreateSession4TestWithOpt(s.store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(col_double double)")
@@ -5451,4 +5475,93 @@ func (s *testIntegrationSuite) TestCacheConstEval(c *C) {
 	tk.Se.GetSessionVars().EnableVectorizedExpression = true
 	tk.MustExec("delete from mysql.expr_pushdown_blacklist")
 	tk.MustExec("admin reload expr_pushdown_blacklist")
+}
+
+func (s *testIntegrationSerialSuite) TestCollationBasic(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_ci(a varchar(10) collate utf8mb4_general_ci, unique key(a))")
+	tk.MustExec("insert into t_ci values ('a')")
+	tk.MustQuery("select * from t_ci").Check(testkit.Rows("a"))
+	tk.MustQuery("select * from t_ci").Check(testkit.Rows("a"))
+	tk.MustQuery("select * from t_ci where a='a'").Check(testkit.Rows("a"))
+	tk.MustQuery("select * from t_ci where a='A'").Check(testkit.Rows("a"))
+	tk.MustQuery("select * from t_ci where a='a   '").Check(testkit.Rows("a"))
+	tk.MustQuery("select * from t_ci where a='a                    '").Check(testkit.Rows("a"))
+}
+
+func (s *testIntegrationSerialSuite) TestWeightString(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	type testCase struct {
+		input           []string
+		result          []string
+		resultAsChar1   []string
+		resultAsChar3   []string
+		resultAsBinary1 []string
+		resultAsBinary5 []string
+	}
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int, a varchar(20) collate utf8mb4_general_ci)")
+	cases := testCase{
+		input:           []string{"aAÁàãăâ", "a", "a  ", "中", "中 "},
+		result:          []string{"\x00A\x00A\x00A\x00A\x00A\x00A\x00A", "\x00A", "\x00A", "\x4E\x2D", "\x4E\x2D"},
+		resultAsChar1:   []string{"\x00A", "\x00A", "\x00A", "\x4E\x2D", "\x4E\x2D"},
+		resultAsChar3:   []string{"\x00A\x00A\x00A", "\x00A", "\x00A", "\x4E\x2D", "\x4E\x2D"},
+		resultAsBinary1: []string{"a", "a", "a", "\xE4", "\xE4"},
+		resultAsBinary5: []string{"aA\xc3\x81\xc3", "a\x00\x00\x00\x00", "a  \x00\x00", "中\x00\x00", "中 \x00"},
+	}
+	values := make([]string, len(cases.input))
+	for i, input := range cases.input {
+		values[i] = fmt.Sprintf("(%d, '%s')", i, input)
+	}
+	tk.MustExec("insert into t values " + strings.Join(values, ","))
+	rows := tk.MustQuery("select weight_string(a) from t order by id").Rows()
+	for i, out := range cases.result {
+		c.Assert(rows[i][0].(string), Equals, out)
+	}
+	rows = tk.MustQuery("select weight_string(a as char(1)) from t order by id").Rows()
+	for i, out := range cases.resultAsChar1 {
+		c.Assert(rows[i][0].(string), Equals, out)
+	}
+	rows = tk.MustQuery("select weight_string(a as char(3)) from t order by id").Rows()
+	for i, out := range cases.resultAsChar3 {
+		c.Assert(rows[i][0].(string), Equals, out)
+	}
+	rows = tk.MustQuery("select weight_string(a as binary(1)) from t order by id").Rows()
+	for i, out := range cases.resultAsBinary1 {
+		c.Assert(rows[i][0].(string), Equals, out)
+	}
+	rows = tk.MustQuery("select weight_string(a as binary(5)) from t order by id").Rows()
+	for i, out := range cases.resultAsBinary5 {
+		c.Assert(rows[i][0].(string), Equals, out)
+	}
+	c.Assert(tk.MustQuery("select weight_string(NULL);").Rows()[0][0], Equals, "<nil>")
+	c.Assert(tk.MustQuery("select weight_string(7);").Rows()[0][0], Equals, "<nil>")
+	c.Assert(tk.MustQuery("select weight_string(cast(7 as decimal(5)));").Rows()[0][0], Equals, "<nil>")
+	c.Assert(tk.MustQuery("select weight_string(cast(20190821 as date));").Rows()[0][0], Equals, "2019-08-21")
+	c.Assert(tk.MustQuery("select weight_string(cast(20190821 as date) as binary(5));").Rows()[0][0], Equals, "2019-")
+	c.Assert(tk.MustQuery("select weight_string(7.0);").Rows()[0][0], Equals, "<nil>")
+	c.Assert(tk.MustQuery("select weight_string(7 AS BINARY(2));").Rows()[0][0], Equals, "7\x00")
+}
+
+func (s *testIntegrationSerialSuite) TestCollationCreateIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a varchar(10) collate utf8mb4_general_ci);")
+	tk.MustExec("insert into t values ('a');")
+	tk.MustExec("insert into t values ('A');")
+	tk.MustExec("insert into t values ('b');")
+	tk.MustExec("insert into t values ('B');")
+	tk.MustExec("insert into t values ('a');")
+	tk.MustExec("insert into t values ('A');")
+	tk.MustExec("create index idx on t(a);")
+	tk.MustQuery("select * from t order by a").Check(testkit.Rows("a", "A", "a", "A", "b", "B"))
 }

@@ -779,21 +779,23 @@ func (s *testPessimisticSuite) TestInnodbLockWaitTimeoutWaitStart(c *C) {
 	tk2.MustExec("begin pessimistic")
 	done := make(chan error)
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/PessimisticLockErrWriteConflict", "return"), IsNil)
-	start := time.Now()
+	var duration time.Duration
 	go func() {
 		var err error
+		start := time.Now()
 		defer func() {
+			duration = time.Since(start)
 			done <- err
 		}()
 		_, err = tk2.Exec("select * from tk where c1 = 1 for update")
 	}()
-	time.Sleep(time.Millisecond * 30)
+	time.Sleep(time.Millisecond * 100)
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/PessimisticLockErrWriteConflict"), IsNil)
 	waitErr := <-done
 	c.Assert(waitErr, NotNil)
 	c.Check(waitErr.Error(), Equals, tikv.ErrLockWaitTimeout.Error())
-	c.Check(time.Since(start), GreaterEqual, time.Duration(1000*time.Millisecond))
-	c.Check(time.Since(start), LessEqual, time.Duration(1100*time.Millisecond))
+	c.Check(duration, GreaterEqual, time.Duration(1000*time.Millisecond))
+	c.Check(duration, LessEqual, time.Duration(1100*time.Millisecond))
 	tk2.MustExec("rollback")
 	tk3.MustExec("commit")
 }
@@ -908,4 +910,43 @@ func (s *testPessimisticSuite) TestPessimisticReadCommitted(c *C) {
 	tk.MustExec("begin pessimistic;")
 	tk.MustQuery("select m from t where j in (1, 2)").Check(testkit.Rows("7", "4"))
 	tk.MustExec("commit;")
+}
+
+func (s *testPessimisticSuite) TestPessimisticCommitReadLock(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test")
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk1.MustExec("use test")
+
+	tk.MustExec("set tidb_txn_mode = 'pessimistic'")
+	tk1.MustExec("set tidb_txn_mode = 'pessimistic'")
+	tk1.MustExec("set innodb_lock_wait_timeout = 1")
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(i int key primary key, j int);")
+	tk.MustExec("insert into t values (1, 2);")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2"))
+
+	// tk lock one row
+	tk.MustExec("begin;")
+	tk.MustQuery("select * from t for update").Check(testkit.Rows("1 2"))
+	done := make(chan error)
+	start := time.Now()
+	go func() {
+		var err error
+		defer func() {
+			done <- err
+		}()
+		tk1.MustExec("begin;")
+		_, err = tk1.Exec("update t set j = j + 1 where i = 1")
+		if err != nil {
+			return
+		}
+		_, err = tk1.Exec("commit")
+	}()
+	time.Sleep(time.Millisecond * 30)
+	tk.MustExec("commit")
+	waitErr := <-done
+	c.Assert(waitErr, IsNil)
+	c.Assert(time.Since(start), Less, 1*time.Second)
 }
