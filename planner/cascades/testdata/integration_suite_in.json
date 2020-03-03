@@ -121,5 +121,15 @@
       "select 1 from (select /*+ HASH_JOIN(t1) */ t1.a in (select t2.a from t2) from t1) x;", // TODO: should use hash join
       "select 1 from (select /*+ HASH_JOIN(t1) */ t1.a not in (select t2.a from t2) from t1) x;" // TODO: should use hash join
     ]
+  },
+  {
+    "name": "TestTiKVSelectionStats",
+    "cases": [
+      "select * from t where pk > 2 and b < 5",
+      "select * from t where pk > 2 and b < 5 limit 1",
+      "select a, b from t where a = 0 and b < 2",
+      "select a, b from t where a < 1 and b < 2",
+      "select a, b from t where a < 1 and b < 2 limit 1"
+    ]
   }
 ]
