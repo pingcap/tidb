@@ -364,6 +364,12 @@ func (p *LogicalLock) PruneColumns(parentUsedCols []*expression.Column) error {
 		return p.baseLogicalPlan.PruneColumns(parentUsedCols)
 	}
 
+	if len(p.partitionedTable) > 0 {
+		// If the children include partitioned tables, do not prune columns.
+		// Because the executor needs the partitioned columns to calculate the lock key.
+		return p.children[0].PruneColumns(p.Schema().Columns)
+	}
+
 	for _, cols := range p.tblID2Handle {
 		parentUsedCols = append(parentUsedCols, cols...)
 	}
