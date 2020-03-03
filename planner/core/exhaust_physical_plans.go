@@ -130,6 +130,7 @@ func (p *LogicalJoin) checkJoinKeyCollation(leftKeys, rightKeys []*expression.Co
 		if (lt.EvalType() == types.ETString && rt.EvalType() == types.ETString) &&
 			(leftKeys[i].RetType.Charset != rightKeys[i].RetType.Charset ||
 				leftKeys[i].RetType.Collate != rightKeys[i].RetType.Collate) {
+			fmt.Println("????????????????????????????")
 			return false
 		}
 	}
@@ -1390,7 +1391,7 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 // If the hint is not figured, we will pick all candidates.
 func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
 	mergeJoins := p.GetMergeJoin(prop, p.schema, p.Stats(), p.children[0].statsInfo(), p.children[1].statsInfo())
-	if (p.preferJoinType&preferMergeJoin) > 0 && len(mergeJoins) > 0 {
+	if (p.preferJoinType & preferMergeJoin) > 0 {
 		return mergeJoins
 	}
 	joins := make([]PhysicalPlan, 0, 5)

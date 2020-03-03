@@ -5659,14 +5659,6 @@ func (s *testIntegrationSerialSuite) TestCollateMergeJoin(c *C) {
 		testkit.Rows())
 }
 
-func (s *testIntegrationSerialSuite) TestCollateMergeJoin2(c *C) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-	tk := s.prepare4Join2(c)
-	tk.MustQuery("select /*+ TIDB_SMJ(t1, t2) */ * from t1, t2 where t1.v=t2.v order by t1.id").Check(
-		testkit.Rows("1 a a", "2 À À", "3 á á", "4 à à", "5 b b", "6 c c", "7    "))
-}
-
 func (s *testIntegrationSerialSuite) TestCollateSelection(c *C) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
