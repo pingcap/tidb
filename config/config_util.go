@@ -18,7 +18,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
-	"path"
+	"path/filepath"
 	"reflect"
 	"time"
 
@@ -106,7 +106,7 @@ func atomicWriteConfig(c *Config, confPath string) (err error) {
 	if err != nil {
 		return err
 	}
-	tmpConfPath := path.Join(os.TempDir(), fmt.Sprintf("tmp_conf_%v.toml", time.Now()))
+	tmpConfPath := filepath.Join(os.TempDir(), fmt.Sprintf("tmp_conf_%v.toml", time.Now().Format("20060102150405")))
 	if err := ioutil.WriteFile(tmpConfPath, []byte(content), 0666); err != nil {
 		return errors.Trace(err)
 	}
