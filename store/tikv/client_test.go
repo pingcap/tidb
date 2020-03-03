@@ -58,15 +58,15 @@ func (s *testClientSerialSuite) TestConn(c *C) {
 	client := newRPCClient(config.Security{})
 
 	addr := "127.0.0.1:6379"
-	conn1, err := client.getConnArray(addr)
+	conn1, err := client.getConnArray(addr, true)
 	c.Assert(err, IsNil)
 
-	conn2, err := client.getConnArray(addr)
+	conn2, err := client.getConnArray(addr, true)
 	c.Assert(err, IsNil)
 	c.Assert(conn2.Get(), Not(Equals), conn1.Get())
 
 	client.Close()
-	conn3, err := client.getConnArray(addr)
+	conn3, err := client.getConnArray(addr, true)
 	c.Assert(err, NotNil)
 	c.Assert(conn3, IsNil)
 	setMaxBatchSize(maxBatchSize)
@@ -115,7 +115,7 @@ func (s *testClientSuite) TestSendWhenReconnect(c *C) {
 
 	rpcClient := newRPCClient(config.Security{})
 	addr := fmt.Sprintf("%s:%d", "127.0.0.1", port)
-	conn, err := rpcClient.getConnArray(addr)
+	conn, err := rpcClient.getConnArray(addr, true)
 	c.Assert(err, IsNil)
 
 	// Suppose all connections are re-establishing.
@@ -137,7 +137,7 @@ func (s *testClientSuite) TestIdleHeartbeat(c *C) {
 
 	rpcClient := newRPCClient(config.Security{})
 	addr := fmt.Sprintf("%s:%d", "127.0.0.1", port)
-	conn, err := rpcClient.getConnArray(addr)
+	conn, err := rpcClient.getConnArray(addr, true)
 	c.Assert(err, IsNil)
 
 	sendIdleReq := "github.com/pingcap/tidb/store/tikv/sendIdleHeartbeatReq"
@@ -187,7 +187,7 @@ func (s *testClientSuite) TestIdleHeartbeat(c *C) {
 	c.Assert(dieNode[0], Equals, addr)
 
 	// 3. test trigger idle heartbeat and send fail before send.
-	conn, err = rpcClient.getConnArray(addr)
+	conn, err = rpcClient.getConnArray(addr, true)
 	c.Assert(err, IsNil)
 	ctx = failpoint.WithHook(context.TODO(), func(ctx context.Context, fpname string) bool {
 		if fpname == sendIdleReq || fpname == noStripResp || fpname == failBeforeSend {
