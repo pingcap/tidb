@@ -60,6 +60,8 @@ type Constant struct {
 	// It's only used to reference a user variable provided in the `EXECUTE` statement or `COM_EXECUTE` binary protocol.
 	ParamMarker *ParamMarker
 	hashcode    []byte
+
+	collationInfo
 }
 
 // ParamMarker indicates param provided by COM_STMT_EXECUTE.
@@ -224,8 +226,10 @@ func (c *Constant) EvalInt(ctx sessionctx.Context, _ chunk.Row) (int64, bool, er
 	}
 	if c.GetType().Tp == mysql.TypeNull || dt.IsNull() {
 		return 0, true, nil
-	}
-	if c.GetType().Hybrid() || dt.Kind() == types.KindBinaryLiteral || dt.Kind() == types.KindString {
+	} else if dt.Kind() == types.KindBinaryLiteral {
+		val, err := dt.GetBinaryLiteral().ToInt(ctx.GetSessionVars().StmtCtx)
+		return int64(val), err != nil, err
+	} else if c.GetType().Hybrid() || dt.Kind() == types.KindString {
 		res, err := dt.ToInt64(ctx.GetSessionVars().StmtCtx)
 		return res, false, err
 	}
@@ -406,4 +410,14 @@ func (c *Constant) SupportReverseEval() bool {
 // ReverseEval evaluates the only one column value with given function result.
 func (c *Constant) ReverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error) {
 	return c.Value, nil
+}
+
+// Coercibility returns the coercibility value which is used to check collations.
+func (c *Constant) Coercibility() Coercibility {
+	if c.HasCoercibility() {
+		return c.collationInfo.Coercibility()
+	}
+
+	c.SetCoercibility(deriveCoercibilityForConstant(c))
+	return c.collationInfo.Coercibility()
 }

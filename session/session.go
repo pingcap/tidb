@@ -63,6 +63,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/logutil"
@@ -738,8 +739,11 @@ func (s *session) sysSessionPool() sessionPool {
 // Unlike normal Exec, it doesn't reset statement status, doesn't commit or rollback the current transaction
 // and doesn't write binlog.
 func (s *session) ExecRestrictedSQL(sql string) ([]chunk.Row, []*ast.ResultField, error) {
-	ctx := context.TODO()
+	return s.ExecRestrictedSQLWithContext(context.TODO(), sql)
+}
 
+// ExecRestrictedSQLWithContext implements RestrictedSQLExecutor interface.
+func (s *session) ExecRestrictedSQLWithContext(ctx context.Context, sql string) ([]chunk.Row, []*ast.ResultField, error) {
 	// Use special session to execute the sql.
 	tmp, err := s.sysSessionPool().Get()
 	if err != nil {
@@ -928,7 +932,7 @@ func (s *session) GetAllSysVars() (map[string]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	ret := make(map[string]string)
+	ret := make(map[string]string, len(rows))
 	for _, r := range rows {
 		k, v := r.GetString(0), r.GetString(1)
 		ret[k] = v
@@ -1517,7 +1521,17 @@ func getHostByIP(ip string) []string {
 
 // CreateSession4Test creates a new session environment for test.
 func CreateSession4Test(store kv.Storage) (Session, error) {
-	s, err := CreateSession(store)
+	return CreateSession4TestWithOpt(store, nil)
+}
+
+// Opt describes the option for creating session
+type Opt struct {
+	PreparedPlanCache *kvcache.SimpleLRUCache
+}
+
+// CreateSession4TestWithOpt creates a new session environment for test.
+func CreateSession4TestWithOpt(store kv.Storage, opt *Opt) (Session, error) {
+	s, err := CreateSessionWithOpt(store, opt)
 	if err == nil {
 		// initialize session variables for test.
 		s.GetSessionVars().InitChunkSize = 2
@@ -1528,7 +1542,13 @@ func CreateSession4Test(store kv.Storage) (Session, error) {
 
 // CreateSession creates a new session environment.
 func CreateSession(store kv.Storage) (Session, error) {
-	s, err := createSession(store)
+	return CreateSessionWithOpt(store, nil)
+}
+
+// CreateSessionWithOpt creates a new session environment with option.
+// Use default option if opt is nil.
+func CreateSessionWithOpt(store kv.Storage, opt *Opt) (Session, error) {
+	s, err := createSessionWithOpt(store, opt)
 	if err != nil {
 		return nil, err
 	}
@@ -1556,12 +1576,34 @@ func CreateSession(store kv.Storage) (Session, error) {
 
 // loadSystemTZ loads systemTZ from mysql.tidb
 func loadSystemTZ(se *session) (string, error) {
-	sql := `select variable_value from mysql.tidb where variable_name = 'system_tz'`
+	return loadParameter(se, "system_tz")
+}
+
+// loadCollationParameter loads collation parameter from mysql.tidb
+func loadCollationParameter(se *session) (bool, error) {
+	para, err := loadParameter(se, tidbNewCollationEnabled)
+	if err != nil {
+		return false, err
+	}
+	if para == varTrue {
+		return true, nil
+	} else if para == varFalse {
+		return false, nil
+	}
+	logutil.BgLogger().Warn(
+		"Unexpected value of 'new_collation_enabled' in 'mysql.tidb', use 'False' instead",
+		zap.String("value", para))
+	return false, nil
+}
+
+// loadParameter loads read-only parameter from mysql.tidb
+func loadParameter(se *session, name string) (string, error) {
+	sql := "select variable_value from mysql.tidb where variable_name = '" + name + "'"
 	rss, errLoad := se.Execute(context.Background(), sql)
 	if errLoad != nil {
 		return "", errLoad
 	}
-	// the record of mysql.tidb under where condition: variable_name = "system_tz" should shall only be one.
+	// the record of mysql.tidb under where condition: variable_name = $name should shall only be one.
 	defer func() {
 		if err := rss[0].Close(); err != nil {
 			logutil.BgLogger().Error("close result set error", zap.Error(err))
@@ -1607,8 +1649,18 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	if err != nil {
 		return nil, err
 	}
-
 	timeutil.SetSystemTZ(tz)
+
+	// get the flag from `mysql`.`tidb` which indicating if new collations are enabled.
+	newCollationEnabled, err := loadCollationParameter(se)
+	if err != nil {
+		return nil, err
+	}
+
+	if newCollationEnabled {
+		collate.EnableNewCollations()
+	}
+
 	dom := domain.GetDomain(se)
 	dom.InitExpensiveQueryHandle()
 
@@ -1693,6 +1745,10 @@ func runInBootstrapSession(store kv.Storage, bootstrap func(Session)) {
 }
 
 func createSession(store kv.Storage) (*session, error) {
+	return createSessionWithOpt(store, nil)
+}
+
+func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 	dom, err := domap.Get(store)
 	if err != nil {
 		return nil, err
@@ -1705,8 +1761,12 @@ func createSession(store kv.Storage) (*session, error) {
 		client:          store.GetClient(),
 	}
 	if plannercore.PreparedPlanCacheEnabled() {
-		s.preparedPlanCache = kvcache.NewSimpleLRUCache(plannercore.PreparedPlanCacheCapacity,
-			plannercore.PreparedPlanCacheMemoryGuardRatio, plannercore.PreparedPlanCacheMaxMemory.Load())
+		if opt != nil && opt.PreparedPlanCache != nil {
+			s.preparedPlanCache = opt.PreparedPlanCache
+		} else {
+			s.preparedPlanCache = kvcache.NewSimpleLRUCache(plannercore.PreparedPlanCacheCapacity,
+				plannercore.PreparedPlanCacheMemoryGuardRatio, plannercore.PreparedPlanCacheMaxMemory.Load())
+		}
 	}
 	s.mu.values = make(map[fmt.Stringer]interface{})
 	s.lockedTables = make(map[int64]model.TableLockTpInfo)
@@ -1744,7 +1804,7 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = version39
+	currentBootstrapVersion = version41
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
@@ -1970,9 +2030,11 @@ func (s *session) PrepareTSFuture(ctx context.Context) {
 	if !s.txn.validOrPending() {
 		txnFuture := s.getTxnFuture(ctx)
 		s.txn.changeInvalidToPending(txnFuture)
-		s.GetSessionVars().TxnCtx.SetStmtFuture(txnFuture.future, 0)
-	} else if s.GetSessionVars().IsPessimisticReadConsistency() {
-		s.GetSessionVars().TxnCtx.SetStmtFuture(s.getTxnFuture(ctx).future, 0)
+		s.GetSessionVars().TxnCtx.SetStmtFuture(txnFuture.future)
+		return
+	}
+	if s.txn.Valid() && s.GetSessionVars().IsPessimisticReadConsistency() {
+		s.GetSessionVars().TxnCtx.SetStmtFuture(s.getTxnFuture(ctx).future)
 	}
 }
 

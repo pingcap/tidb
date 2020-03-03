@@ -42,8 +42,9 @@ import (
 )
 
 var (
-	_ Executor          = &mockDataSource{}
-	_ core.PhysicalPlan = &mockDataPhysicalPlan{}
+	_          Executor          = &mockDataSource{}
+	_          core.PhysicalPlan = &mockDataPhysicalPlan{}
+	wideString                   = strings.Repeat("x", 5*1024)
 )
 
 type mockDataSourceParameters struct {
@@ -704,21 +705,22 @@ func BenchmarkWindowFunctionsWithSlidingWindow(b *testing.B) {
 }
 
 type hashJoinTestCase struct {
-	rows            int
-	cols            []*types.FieldType
-	concurrency     int
-	ctx             sessionctx.Context
-	keyIdx          []int
-	joinType        core.JoinType
-	disk            bool
-	useOuterToBuild bool
-	rawData         string
+	rows               int
+	cols               []*types.FieldType
+	concurrency        int
+	ctx                sessionctx.Context
+	keyIdx             []int
+	joinType           core.JoinType
+	disk               bool
+	useOuterToBuild    bool
+	rawData            string
+	childrenUsedSchema [][]bool
 }
 
 func (tc hashJoinTestCase) columns() []*expression.Column {
 	ret := make([]*expression.Column, 0)
 	for i, t := range tc.cols {
-		column := &expression.Column{Index: i, RetType: t}
+		column := &expression.Column{Index: i, RetType: t, UniqueID: tc.ctx.GetSessionVars().AllocPlanColumnID()}
 		ret = append(ret, column)
 	}
 	return ret
@@ -736,7 +738,7 @@ func defaultHashJoinTestCase(cols []*types.FieldType, joinType core.JoinType, us
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(nil, -1)
 	ctx.GetSessionVars().StmtCtx.DiskTracker = disk.NewTracker(nil, -1)
 	ctx.GetSessionVars().IndexLookupJoinConcurrency = 4
-	tc := &hashJoinTestCase{rows: 100000, concurrency: 4, ctx: ctx, keyIdx: []int{0, 1}, rawData: strings.Repeat("x", 5*1024)}
+	tc := &hashJoinTestCase{rows: 100000, concurrency: 4, ctx: ctx, keyIdx: []int{0, 1}, rawData: wideString}
 	tc.cols = cols
 	tc.useOuterToBuild = useOuterToBuild
 	tc.joinType = joinType
@@ -747,13 +749,33 @@ func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec Executor)
 	if testCase.useOuterToBuild {
 		innerExec, outerExec = outerExec, innerExec
 	}
-	cols0 := testCase.columns()
-	cols1 := testCase.columns()
-	joinSchema := expression.NewSchema(cols0...)
-	joinSchema.Append(cols1...)
+	cols0 := innerExec.Schema().Columns
+	cols1 := outerExec.Schema().Columns
+
+	joinSchema := expression.NewSchema()
+	if testCase.childrenUsedSchema != nil {
+		for i, used := range testCase.childrenUsedSchema[0] {
+			if used {
+				joinSchema.Append(cols0[i])
+			}
+		}
+		for i, used := range testCase.childrenUsedSchema[1] {
+			if used {
+				joinSchema.Append(cols1[i])
+			}
+		}
+	} else {
+		joinSchema.Append(cols0...)
+		joinSchema.Append(cols1...)
+	}
+
 	joinKeys := make([]*expression.Column, 0, len(testCase.keyIdx))
 	for _, keyIdx := range testCase.keyIdx {
 		joinKeys = append(joinKeys, cols0[keyIdx])
+	}
+	probeKeys := make([]*expression.Column, 0, len(testCase.keyIdx))
+	for _, keyIdx := range testCase.keyIdx {
+		probeKeys = append(probeKeys, cols1[keyIdx])
 	}
 	e := &HashJoinExec{
 		baseExecutor:      newBaseExecutor(testCase.ctx, joinSchema, stringutil.StringerStr("HashJoin"), innerExec, outerExec),
@@ -761,18 +783,20 @@ func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec Executor)
 		joinType:          testCase.joinType, // 0 for InnerJoin, 1 for LeftOutersJoin, 2 for RightOuterJoin
 		isOuterJoin:       false,
 		buildKeys:         joinKeys,
-		probeKeys:         joinKeys,
+		probeKeys:         probeKeys,
 		buildSideExec:     innerExec,
 		probeSideExec:     outerExec,
 		buildSideEstCount: float64(testCase.rows),
 		useOuterToBuild:   testCase.useOuterToBuild,
 	}
+
+	childrenUsedSchema := markChildrenUsedCols(e.Schema(), e.children[0].Schema(), e.children[1].Schema())
 	defaultValues := make([]types.Datum, e.buildSideExec.Schema().Len())
 	lhsTypes, rhsTypes := retTypes(innerExec), retTypes(outerExec)
 	e.joiners = make([]joiner, e.concurrency)
 	for i := uint(0); i < e.concurrency; i++ {
 		e.joiners[i] = newJoiner(testCase.ctx, e.joinType, true, defaultValues,
-			nil, lhsTypes, rhsTypes)
+			nil, lhsTypes, rhsTypes, childrenUsedSchema)
 	}
 	memLimit := int64(-1)
 	if testCase.disk {
@@ -787,10 +811,9 @@ func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec Executor)
 }
 
 func benchmarkHashJoinExecWithCase(b *testing.B, casTest *hashJoinTestCase) {
-	opt := mockDataSourceParameters{
-		schema: expression.NewSchema(casTest.columns()...),
-		rows:   casTest.rows,
-		ctx:    casTest.ctx,
+	opt1 := mockDataSourceParameters{
+		rows: casTest.rows,
+		ctx:  casTest.ctx,
 		genDataFunc: func(row int, typ *types.FieldType) interface{} {
 			switch typ.Tp {
 			case mysql.TypeLong, mysql.TypeLonglong:
@@ -804,8 +827,11 @@ func benchmarkHashJoinExecWithCase(b *testing.B, casTest *hashJoinTestCase) {
 			}
 		},
 	}
-	dataSource1 := buildMockDataSource(opt)
-	dataSource2 := buildMockDataSource(opt)
+	opt2 := opt1
+	opt1.schema = expression.NewSchema(casTest.columns()...)
+	opt2.schema = expression.NewSchema(casTest.columns()...)
+	dataSource1 := buildMockDataSource(opt1)
+	dataSource2 := buildMockDataSource(opt2)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -816,6 +842,7 @@ func benchmarkHashJoinExecWithCase(b *testing.B, casTest *hashJoinTestCase) {
 		dataSource1.prepareChunks()
 		dataSource2.prepareChunks()
 
+		totalRow := 0
 		b.StartTimer()
 		if err := exec.Open(tmpCtx); err != nil {
 			b.Fatal(err)
@@ -827,15 +854,48 @@ func benchmarkHashJoinExecWithCase(b *testing.B, casTest *hashJoinTestCase) {
 			if chk.NumRows() == 0 {
 				break
 			}
+			totalRow += chk.NumRows()
 		}
 
+		if spilled := exec.rowContainer.alreadySpilled(); spilled != casTest.disk {
+			b.Fatal("wrong usage with disk:", spilled, casTest.disk)
+		}
 		if err := exec.Close(); err != nil {
 			b.Fatal(err)
 		}
 		b.StopTimer()
-		if exec.rowContainer.alreadySpilled() != casTest.disk {
-			b.Fatal("wrong usage with disk")
+		if totalRow == 0 {
+			b.Fatal("totalRow == 0")
 		}
+	}
+}
+
+func BenchmarkHashJoinInlineProjection(b *testing.B) {
+	cols := []*types.FieldType{
+		types.NewFieldType(mysql.TypeLonglong),
+		types.NewFieldType(mysql.TypeVarString),
+	}
+
+	b.ReportAllocs()
+
+	{
+		cas := defaultHashJoinTestCase(cols, 0, false)
+		cas.keyIdx = []int{0}
+		cas.childrenUsedSchema = [][]bool{
+			{false, true},
+			{false, false},
+		}
+		b.Run("InlineProjection:ON", func(b *testing.B) {
+			benchmarkHashJoinExecWithCase(b, cas)
+		})
+	}
+
+	{
+		cas := defaultHashJoinTestCase(cols, 0, false)
+		cas.keyIdx = []int{0}
+		b.Run("InlineProjection:OFF", func(b *testing.B) {
+			benchmarkHashJoinExecWithCase(b, cas)
+		})
 	}
 }
 
@@ -866,18 +926,19 @@ func BenchmarkHashJoinExec(b *testing.B) {
 		benchmarkHashJoinExecWithCase(b, cas)
 	})
 
-	cas.keyIdx = []int{0}
-	cas.disk = true
-	cas.rows = 1000
-	b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
-		benchmarkHashJoinExecWithCase(b, cas)
-	})
-
 	// Replace the wide string column with double column
 	cols = []*types.FieldType{
 		types.NewFieldType(mysql.TypeLonglong),
 		types.NewFieldType(mysql.TypeDouble),
 	}
+
+	cas = defaultHashJoinTestCase(cols, 0, false)
+	cas.keyIdx = []int{0}
+	cas.rows = 5
+	b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+		benchmarkHashJoinExecWithCase(b, cas)
+	})
+
 	cas = defaultHashJoinTestCase(cols, 0, false)
 	b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
 		benchmarkHashJoinExecWithCase(b, cas)
@@ -916,18 +977,19 @@ func BenchmarkOuterHashJoinExec(b *testing.B) {
 		benchmarkHashJoinExecWithCase(b, cas)
 	})
 
-	cas.keyIdx = []int{0}
-	cas.disk = true
-	cas.rows = 1000
-	b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
-		benchmarkHashJoinExecWithCase(b, cas)
-	})
-
 	// Replace the wide string column with double column
 	cols = []*types.FieldType{
 		types.NewFieldType(mysql.TypeLonglong),
 		types.NewFieldType(mysql.TypeDouble),
 	}
+
+	cas = defaultHashJoinTestCase(cols, 2, true)
+	cas.keyIdx = []int{0}
+	cas.rows = 5
+	b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+		benchmarkHashJoinExecWithCase(b, cas)
+	})
+
 	cas = defaultHashJoinTestCase(cols, 2, true)
 	b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
 		benchmarkHashJoinExecWithCase(b, cas)
@@ -1054,7 +1116,7 @@ func defaultIndexJoinTestCase() *indexJoinTestCase {
 		outerJoinKeyIdx: []int{0, 1},
 		innerJoinKeyIdx: []int{0, 1},
 		innerIdx:        []int{0, 1},
-		rawData:         strings.Repeat("x", 5*1024),
+		rawData:         wideString,
 	}
 	return tc
 }
@@ -1110,7 +1172,7 @@ func prepare4IndexInnerHashJoin(tc *indexJoinTestCase, outerDS *mockDataSource, 
 			keyCols:       tc.innerJoinKeyIdx,
 		},
 		workerWg:      new(sync.WaitGroup),
-		joiner:        newJoiner(tc.ctx, 0, false, defaultValues, nil, leftTypes, rightTypes),
+		joiner:        newJoiner(tc.ctx, 0, false, defaultValues, nil, leftTypes, rightTypes, nil),
 		isOuterJoin:   false,
 		keyOff2IdxOff: keyOff2IdxOff,
 		lastColHelper: nil,
@@ -1156,8 +1218,8 @@ func prepare4IndexMergeJoin(tc *indexJoinTestCase, outerDS *mockDataSource, inne
 	compareFuncs := make([]expression.CompareFunc, 0, len(outerJoinKeys))
 	outerCompareFuncs := make([]expression.CompareFunc, 0, len(outerJoinKeys))
 	for i := range outerJoinKeys {
-		compareFuncs = append(compareFuncs, expression.GetCmpFunction(outerJoinKeys[i], innerJoinKeys[i]))
-		outerCompareFuncs = append(outerCompareFuncs, expression.GetCmpFunction(outerJoinKeys[i], outerJoinKeys[i]))
+		compareFuncs = append(compareFuncs, expression.GetCmpFunction(nil, outerJoinKeys[i], innerJoinKeys[i]))
+		outerCompareFuncs = append(outerCompareFuncs, expression.GetCmpFunction(nil, outerJoinKeys[i], outerJoinKeys[i]))
 	}
 	e := &IndexLookUpMergeJoin{
 		baseExecutor: newBaseExecutor(tc.ctx, joinSchema, stringutil.StringerStr("IndexMergeJoin"), outerDS),
@@ -1183,7 +1245,7 @@ func prepare4IndexMergeJoin(tc *indexJoinTestCase, outerDS *mockDataSource, inne
 	}
 	joiners := make([]joiner, e.ctx.GetSessionVars().IndexLookupJoinConcurrency)
 	for i := 0; i < e.ctx.GetSessionVars().IndexLookupJoinConcurrency; i++ {
-		joiners[i] = newJoiner(tc.ctx, 0, false, defaultValues, nil, leftTypes, rightTypes)
+		joiners[i] = newJoiner(tc.ctx, 0, false, defaultValues, nil, leftTypes, rightTypes, nil)
 	}
 	e.joiners = joiners
 	return e
@@ -1293,8 +1355,8 @@ func prepare4MergeJoin(tc *mergeJoinTestCase, leftExec, rightExec *mockDataSourc
 	compareFuncs := make([]expression.CompareFunc, 0, len(outerJoinKeys))
 	outerCompareFuncs := make([]expression.CompareFunc, 0, len(outerJoinKeys))
 	for i := range outerJoinKeys {
-		compareFuncs = append(compareFuncs, expression.GetCmpFunction(outerJoinKeys[i], innerJoinKeys[i]))
-		outerCompareFuncs = append(outerCompareFuncs, expression.GetCmpFunction(outerJoinKeys[i], outerJoinKeys[i]))
+		compareFuncs = append(compareFuncs, expression.GetCmpFunction(nil, outerJoinKeys[i], innerJoinKeys[i]))
+		outerCompareFuncs = append(outerCompareFuncs, expression.GetCmpFunction(nil, outerJoinKeys[i], outerJoinKeys[i]))
 	}
 
 	defaultValues := make([]types.Datum, len(innerCols))
@@ -1312,6 +1374,7 @@ func prepare4MergeJoin(tc *mergeJoinTestCase, leftExec, rightExec *mockDataSourc
 			nil,
 			retTypes(leftExec),
 			retTypes(rightExec),
+			nil,
 		),
 		isOuterJoin: false,
 	}
@@ -1352,7 +1415,7 @@ func newMergeJoinBenchmark(numOuterRows, numInnerDup, numInnerRedundant int) (tc
 		outerJoinKeyIdx: []int{0, 1},
 		innerJoinKeyIdx: []int{0, 1},
 		innerIdx:        []int{0, 1},
-		rawData:         strings.Repeat("x", 5*1024),
+		rawData:         wideString,
 	}
 	tc = &mergeJoinTestCase{*itc}
 	outerOpt := mockDataSourceParameters{

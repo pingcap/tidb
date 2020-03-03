@@ -66,7 +66,7 @@ type testIntegrationSuite struct {
 func setupIntegrationSuite(s *testIntegrationSuite, c *C) {
 	var err error
 	s.lease = 50 * time.Millisecond
-	ddl.WaitTimeWhenErrorOccured = 0
+	ddl.SetWaitTimeWhenErrorOccurred(0)
 
 	s.cluster = mocktikv.NewCluster()
 	mocktikv.BootstrapWithSingleStore(s.cluster)
@@ -426,14 +426,20 @@ func (s *testIntegrationSuite5) TestMySQLErrorCode(c *C) {
 	tk.MustGetErrCode(sql, mysql.ErrPrimaryCantHaveNull)
 	sql = "create table t2 (id int auto_increment);"
 	tk.MustGetErrCode(sql, mysql.ErrWrongAutoKey)
-	sql = "create table t2 (a datetime(2) default current_timestamp(3))"
+	sql = "create table t2 (id int auto_increment, a int key);"
+	tk.MustGetErrCode(sql, mysql.ErrWrongAutoKey)
+	sql = "create table t2 (a datetime(2) default current_timestamp(3));"
 	tk.MustGetErrCode(sql, mysql.ErrInvalidDefault)
-	sql = "create table t2 (a datetime(2) default current_timestamp(2) on update current_timestamp)"
+	sql = "create table t2 (a datetime(2) default current_timestamp(2) on update current_timestamp);"
 	tk.MustGetErrCode(sql, mysql.ErrInvalidOnUpdate)
-	sql = "create table t2 (a datetime default current_timestamp on update current_timestamp(2))"
+	sql = "create table t2 (a datetime default current_timestamp on update current_timestamp(2));"
 	tk.MustGetErrCode(sql, mysql.ErrInvalidOnUpdate)
-	sql = "create table t2 (a datetime(2) default current_timestamp(2) on update current_timestamp(3))"
+	sql = "create table t2 (a datetime(2) default current_timestamp(2) on update current_timestamp(3));"
 	tk.MustGetErrCode(sql, mysql.ErrInvalidOnUpdate)
+	sql = "create table t(a blob(10), index(a(0)));"
+	tk.MustGetErrCode(sql, mysql.ErrKeyPart0)
+	sql = "create table t(a char(10), index(a(0)));"
+	tk.MustGetErrCode(sql, mysql.ErrKeyPart0)
 
 	sql = "create table t2 (id int primary key , age int);"
 	tk.MustExec(sql)
@@ -1154,7 +1160,7 @@ func (s *testIntegrationSuite) getHistoryDDLJob(id int64) (*model.Job, error) {
 	return job, errors.Trace(err)
 }
 
-func (s *testIntegrationSuite1) TestCreateTableTooLarge(c *C) {
+func (s *testIntegrationSuite6) TestCreateTableTooLarge(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test")
 
@@ -1270,7 +1276,7 @@ func (s *testIntegrationSuite3) TestResolveCharset(c *C) {
 	c.Assert(tbl.Meta().Charset, Equals, "binary")
 }
 
-func (s *testIntegrationSuite1) TestAddColumnTooMany(c *C) {
+func (s *testIntegrationSuite6) TestAddColumnTooMany(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test")
 	count := int(atomic.LoadUint32(&ddl.TableColumnCountLimit) - 1)

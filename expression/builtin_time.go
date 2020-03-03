@@ -25,6 +25,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -35,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
@@ -1063,6 +1063,7 @@ func (c *monthNameFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 		return nil, err
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETDatetime)
+	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	bf.tp.Flen = 10
 	sig := &builtinMonthNameSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_MonthName)
@@ -1102,6 +1103,7 @@ func (c *dayNameFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 		return nil, err
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETDatetime)
+	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	bf.tp.Flen = 10
 	sig := &builtinDayNameSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_DayName)

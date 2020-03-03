@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
@@ -93,7 +94,16 @@ func NewPBConverter(client kv.Client, sc *stmtctx.StatementContext) PbConverter 
 // ExprToPB converts Expression to TiPB.
 func (pc PbConverter) ExprToPB(expr Expression) *tipb.Expr {
 	switch x := expr.(type) {
-	case *Constant, *CorrelatedColumn:
+	case *Constant:
+		pbExpr := pc.conOrCorColToPBExpr(expr)
+		if pbExpr == nil {
+			return nil
+		}
+		if !x.Value.IsNull() {
+			pbExpr.FieldType.Flag |= uint32(mysql.NotNullFlag)
+		}
+		return pbExpr
+	case *CorrelatedColumn:
 		return pc.conOrCorColToPBExpr(expr)
 	case *Column:
 		return pc.columnToPBExpr(x)
@@ -200,18 +210,30 @@ func FieldTypeFromPB(ft *tipb.FieldType) *types.FieldType {
 }
 
 func collationToProto(c string) int32 {
-	v, ok := mysql.CollationNames[c]
-	if ok {
-		return int32(v)
+	if v, ok := mysql.CollationNames[c]; ok {
+		return collate.RewriteNewCollationIDIfNeeded(int32(v))
 	}
-	return int32(mysql.DefaultCollationID)
+	v := collate.RewriteNewCollationIDIfNeeded(int32(mysql.DefaultCollationID))
+	logutil.BgLogger().Warn(
+		"Unable to get collation ID by name, use ID of the default collation instead",
+		zap.String("name", c),
+		zap.Int32("default collation ID", v),
+		zap.String("default collation", mysql.DefaultCollationName),
+	)
+	return v
 }
 
 func protoToCollation(c int32) string {
-	v, ok := mysql.Collations[uint8(c)]
+	v, ok := mysql.Collations[uint8(collate.RestoreCollationIDIfNeeded(c))]
 	if ok {
 		return v
 	}
+	logutil.BgLogger().Warn(
+		"Unable to get collation name from ID, use name of the default collation instead",
+		zap.Int32("id", c),
+		zap.Int("default collation ID", mysql.DefaultCollationID),
+		zap.String("default collation", mysql.DefaultCollationName),
+	)
 	return mysql.DefaultCollationName
 }
 

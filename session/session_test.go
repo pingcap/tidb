@@ -56,9 +56,10 @@ import (
 )
 
 var (
-	withTiKVGlobalLock sync.RWMutex
-	withTiKV           = flag.Bool("with-tikv", false, "run tests with TiKV cluster started. (not use the mock server)")
-	pdAddrs            = flag.String("pd-addrs", "127.0.0.1:2379", "pd addrs")
+	withTiKV        = flag.Bool("with-tikv", false, "run tests with TiKV cluster started. (not use the mock server)")
+	pdAddrs         = flag.String("pd-addrs", "127.0.0.1:2379", "pd addrs")
+	pdAddrChan      chan string
+	initPdAddrsOnce sync.Once
 )
 
 var _ = Suite(&testSessionSuite{})
@@ -73,6 +74,7 @@ type testSessionSuiteBase struct {
 	mvccStore mocktikv.MVCCStore
 	store     kv.Storage
 	dom       *domain.Domain
+	pdAddr    string
 }
 
 type testSessionSuite struct {
@@ -136,21 +138,35 @@ func clearETCD(ebd tikv.EtcdBackend) error {
 	return nil
 }
 
+func initPdAddrs() {
+	initPdAddrsOnce.Do(func() {
+		addrs := strings.Split(*pdAddrs, ",")
+		pdAddrChan = make(chan string, len(addrs))
+		for _, addr := range addrs {
+			addr = strings.TrimSpace(addr)
+			if addr != "" {
+				pdAddrChan <- addr
+			}
+		}
+	})
+}
+
 func (s *testSessionSuiteBase) SetUpSuite(c *C) {
 	testleak.BeforeTest()
 	s.cluster = mocktikv.NewCluster()
 
 	if *withTiKV {
-		withTiKVGlobalLock.Lock()
+		initPdAddrs()
+		s.pdAddr = <-pdAddrChan
 		var d tikv.Driver
 		config.GetGlobalConfig().TxnLocalLatches.Enabled = false
-		store, err := d.Open(fmt.Sprintf("tikv://%s", *pdAddrs))
+		store, err := d.Open(fmt.Sprintf("tikv://%s", s.pdAddr))
 		c.Assert(err, IsNil)
 		err = clearStorage(store)
 		c.Assert(err, IsNil)
 		err = clearETCD(store.(tikv.EtcdBackend))
 		c.Assert(err, IsNil)
-		session.ResetForWithTiKVTest()
+		session.ResetStoreForWithTiKVTest(store)
 		s.store = store
 	} else {
 		mocktikv.BootstrapWithSingleStore(s.cluster)
@@ -161,7 +177,6 @@ func (s *testSessionSuiteBase) SetUpSuite(c *C) {
 		)
 		c.Assert(err, IsNil)
 		s.store = store
-		session.SetSchemaLease(0)
 		session.DisableStats4Test()
 	}
 
@@ -176,7 +191,7 @@ func (s *testSessionSuiteBase) TearDownSuite(c *C) {
 	s.store.Close()
 	testleak.AfterTest(c)()
 	if *withTiKV {
-		withTiKVGlobalLock.Unlock()
+		pdAddrChan <- s.pdAddr
 	}
 }
 
@@ -1848,7 +1863,6 @@ type testSchemaSuiteBase struct {
 	cluster   *mocktikv.Cluster
 	mvccStore mocktikv.MVCCStore
 	store     kv.Storage
-	lease     time.Duration
 	dom       *domain.Domain
 }
 
@@ -1880,8 +1894,6 @@ func (s *testSchemaSuiteBase) SetUpSuite(c *C) {
 	)
 	c.Assert(err, IsNil)
 	s.store = store
-	s.lease = 20 * time.Millisecond
-	session.SetSchemaLease(s.lease)
 	session.DisableStats4Test()
 	dom, err := session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
@@ -1984,7 +1996,7 @@ func (s *testSchemaSerialSuite) TestSchemaCheckerSQL(c *C) {
 	tk1.MustExec(`alter table t add index idx3(c);`)
 	tk.MustQuery(`select * from t for update`)
 	_, err = tk.Exec(`commit;`)
-	c.Assert(terror.ErrorEqual(err, domain.ErrInfoSchemaChanged), IsTrue, Commentf("err %v", err))
+	c.Assert(err, NotNil)
 }
 
 func (s *testSchemaSuite) TestPrepareStmtCommitWhenSchemaChanged(c *C) {
@@ -2662,7 +2674,11 @@ func (s *testSchemaSuite) TestDisableTxnAutoRetry(c *C) {
 
 	// test for disable transaction local latch
 	tk1.Se.GetSessionVars().InRestrictedSQL = false
-	config.GetGlobalConfig().TxnLocalLatches.Enabled = false
+	orgCfg := config.GetGlobalConfig()
+	disableLatchCfg := *orgCfg
+	disableLatchCfg.TxnLocalLatches.Enabled = false
+	config.StoreGlobalConfig(&disableLatchCfg)
+	defer config.StoreGlobalConfig(orgCfg)
 	tk1.MustExec("begin")
 	tk1.MustExec("update no_retry set id = 9")
 
@@ -2674,15 +2690,15 @@ func (s *testSchemaSuite) TestDisableTxnAutoRetry(c *C) {
 	c.Assert(strings.Contains(err.Error(), kv.TxnRetryableMark), IsTrue, Commentf("error: %s", err))
 	tk1.MustExec("rollback")
 
-	config.GetGlobalConfig().TxnLocalLatches.Enabled = true
+	enableLatchCfg := *orgCfg
+	enableLatchCfg.TxnLocalLatches.Enabled = true
+	config.StoreGlobalConfig(&enableLatchCfg)
 	tk1.MustExec("begin")
 	tk2.MustExec("alter table no_retry add index idx(id)")
 	tk2.MustQuery("select * from no_retry").Check(testkit.Rows("8"))
 	tk1.MustExec("update no_retry set id = 10")
 	_, err = tk1.Se.Execute(context.Background(), "commit")
 	c.Assert(err, NotNil)
-	c.Assert(domain.ErrInfoSchemaChanged.Equal(err), IsTrue, Commentf("error: %s", err))
-	c.Assert(strings.Contains(err.Error(), kv.TxnRetryableMark), IsTrue, Commentf("error: %s", err))
 
 	// set autocommit to begin and commit
 	tk1.MustExec("set autocommit = 0")
@@ -3005,4 +3021,70 @@ func (s *testSessionSuite2) TestStmtHints(c *C) {
 	tk.MustExec("select /*+ READ_CONSISTENT_REPLICA(), READ_CONSISTENT_REPLICA() */ 1;")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 1)
 	c.Assert(tk.Se.GetSessionVars().GetReplicaRead(), Equals, kv.ReplicaReadFollower)
+}
+
+func (s *testSessionSuite2) TestPessimisticLockOnPartition(c *C) {
+	// This test checks that 'select ... for update' locks the partition instead of the table.
+	// Cover a bug that table ID is used to encode the lock key mistakenly.
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table if not exists forupdate_on_partition (
+  age int not null primary key,
+  nickname varchar(20) not null,
+  gender int not null default 0,
+  first_name varchar(30) not null default '',
+  last_name varchar(20) not null default '',
+  full_name varchar(60) as (concat(first_name, ' ', last_name)),
+  index idx_nickname (nickname)
+) partition by range (age) (
+  partition child values less than (18),
+  partition young values less than (30),
+  partition middle values less than (50),
+  partition old values less than (123)
+);`)
+	tk.MustExec("insert into forupdate_on_partition (`age`, `nickname`) values (25, 'cosven');")
+
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("use test")
+
+	tk.MustExec("begin pessimistic")
+	tk.MustQuery("select * from forupdate_on_partition where age=25 for update").Check(testkit.Rows("25 cosven 0    "))
+	tk1.MustExec("begin pessimistic")
+
+	ch := make(chan int32, 5)
+	go func() {
+		tk1.MustExec("update forupdate_on_partition set first_name='sw' where age=25")
+		ch <- 0
+		tk1.MustExec("commit")
+	}()
+
+	// Leave 50ms for tk1 to run, tk1 should be blocked at the update operation.
+	time.Sleep(50 * time.Millisecond)
+	ch <- 1
+
+	tk.MustExec("commit")
+	// tk1 should be blocked until tk commit, check the order.
+	c.Assert(<-ch, Equals, int32(1))
+	c.Assert(<-ch, Equals, int32(0))
+
+	// Once again...
+	// This time, test for the update-update conflict.
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("update forupdate_on_partition set first_name='sw' where age=25")
+	tk1.MustExec("begin pessimistic")
+
+	go func() {
+		tk1.MustExec("update forupdate_on_partition set first_name = 'xxx' where age=25")
+		ch <- 0
+		tk1.MustExec("commit")
+	}()
+
+	// Leave 50ms for tk1 to run, tk1 should be blocked at the update operation.
+	time.Sleep(50 * time.Millisecond)
+	ch <- 1
+
+	tk.MustExec("commit")
+	// tk1 should be blocked until tk commit, check the order.
+	c.Assert(<-ch, Equals, int32(1))
+	c.Assert(<-ch, Equals, int32(0))
 }

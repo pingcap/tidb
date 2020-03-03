@@ -125,7 +125,7 @@ func (s defaultStatusStat) GetScope(status string) ScopeFlag {
 }
 
 func (s defaultStatusStat) Stats(vars *SessionVars) (map[string]interface{}, error) {
-	statusVars := make(map[string]interface{})
+	statusVars := make(map[string]interface{}, len(defaultStatus))
 
 	for name, v := range defaultStatus {
 		statusVars[name] = v.Value

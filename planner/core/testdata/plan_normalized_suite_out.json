@@ -5,21 +5,21 @@
       {
         "SQL": "select * from t1;",
         "Plan": [
-          " TableReader_5 root data:TableScan_4",
+          " TableReader_5 root data:TableFullScan_4",
           " └─TableScan_4 cop  table:t1, range:[?,?], keep order:false"
         ]
       },
       {
         "SQL": "select * from t1 where a<1;",
         "Plan": [
-          " TableReader_6 root data:TableScan_5",
+          " TableReader_6 root data:TableRangeScan_5",
           " └─TableScan_5 cop  table:t1, range:[?,?], keep order:false"
         ]
       },
       {
         "SQL": "select * from t1 where a>1",
         "Plan": [
-          " TableReader_6 root data:TableScan_5",
+          " TableReader_6 root data:TableRangeScan_5",
           " └─TableScan_5 cop  table:t1, range:[?,?], keep order:false"
         ]
       },
@@ -47,7 +47,7 @@
         "SQL": "select a+1,b+2 from t1 use index(b) where b=3",
         "Plan": [
           " Projection_4    root plus(test.t1.a, ?), plus(test.t1.b, ?)",
-          " └─IndexReader_6 root index:IndexScan_5",
+          " └─IndexReader_6 root index:IndexRangeScan_5",
           "   └─IndexScan_5 cop  table:t1, index:b, range:[?,?], keep order:false"
         ]
       },
@@ -83,7 +83,7 @@
           " ├─TableReader_11  root data:Selection_10",
           " │ └─Selection_10  cop  gt(test.t1.c, ?)",
           " │   └─TableScan_9 cop  table:t1, range:[?,?], keep order:true",
-          " └─TableReader_13  root data:TableScan_12",
+          " └─TableReader_13  root data:TableFullScan_12",
           "   └─TableScan_12  cop  table:t2, range:[?,?], keep order:true"
         ]
       },
@@ -94,7 +94,7 @@
           " ├─TableReader_30   root data:Selection_29",
           " │ └─Selection_29   cop  gt(test.t1.c, ?)",
           " │   └─TableScan_28 cop  table:t1, range:[?,?], keep order:false",
-          " └─TableReader_9    root data:TableScan_8",
+          " └─TableReader_9    root data:TableRangeScan_8",
           "   └─TableScan_8    cop  table:t2, range: decided by [test.t1.a], keep order:false"
         ]
       },
@@ -105,7 +105,7 @@
           " ├─TableReader_32   root data:Selection_31",
           " │ └─Selection_31   cop  gt(test.t1.c, ?)",
           " │   └─TableScan_30 cop  table:t1, range:[?,?], keep order:false",
-          " └─TableReader_34   root data:TableScan_33",
+          " └─TableReader_34   root data:TableFullScan_33",
           "   └─TableScan_33   cop  table:t2, range:[?,?], keep order:false"
         ]
       },
@@ -116,7 +116,7 @@
           " ├─TableReader_32   root data:Selection_31",
           " │ └─Selection_31   cop  gt(test.t1.c, ?)",
           " │   └─TableScan_30 cop  table:t1, range:[?,?], keep order:false",
-          " └─TableReader_34   root data:TableScan_33",
+          " └─TableReader_34   root data:TableFullScan_33",
           "   └─TableScan_33   cop  table:t2, range:[?,?], keep order:false"
         ]
       },
@@ -127,7 +127,7 @@
           " ├─TableReader_30   root data:Selection_29",
           " │ └─Selection_29   cop  gt(test.t1.c, ?)",
           " │   └─TableScan_28 cop  table:t1, range:[?,?], keep order:false",
-          " └─TableReader_9    root data:TableScan_8",
+          " └─TableReader_9    root data:TableRangeScan_8",
           "   └─TableScan_8    cop  table:t2, range: decided by [test.t1.a], keep order:false"
         ]
       },
@@ -148,21 +148,21 @@
       {
         "SQL": "update t1 set a=a+1",
         "Plan": [
-          " TableReader_6 root data:TableScan_5",
+          " TableReader_6 root data:TableFullScan_5",
           " └─TableScan_5 cop  table:t1, range:[?,?], keep order:false"
         ]
       },
       {
         "SQL": "update t1 set a=a+1 where a>0",
         "Plan": [
-          " TableReader_7 root data:TableScan_6",
+          " TableReader_7 root data:TableRangeScan_6",
           " └─TableScan_6 cop  table:t1, range:[?,?], keep order:false"
         ]
       },
       {
         "SQL": "delete from t1",
         "Plan": [
-          " TableReader_6 root data:TableScan_5",
+          " TableReader_6 root data:TableFullScan_5",
           " └─TableScan_5 cop  table:t1, range:[?,?], keep order:false"
         ]
       },
