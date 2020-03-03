@@ -52,6 +52,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			e.rows = dataForSchemata(sctx, dbs)
 		case infoschema.TableViews:
 			e.rows, err = dataForViews(sctx, dbs)
+		case infoschema.TableEngines:
+			e.rows = dataForEngines()
 		}
 		if err != nil {
 			return nil, err
@@ -152,4 +154,18 @@ func dataForViews(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Da
 		}
 	}
 	return rows, nil
+}
+
+func dataForEngines() (rows [][]types.Datum) {
+	rows = append(rows,
+		types.MakeDatums(
+			"InnoDB",  // Engine
+			"DEFAULT", // Support
+			"Supports transactions, row-level locking, and foreign keys", // Comment
+			"YES", // Transactions
+			"YES", // XA
+			"YES", // Savepoints
+		),
+	)
+	return rows
 }
