@@ -15,14 +15,14 @@ PARTITION p5 VALUES LESS THAN (6),
 PARTITION max VALUES LESS THAN MAXVALUE);
 INSERT INTO t1 VALUES (-1),(0),(1),(2),(3),(4),(5),(6),(7),(8);
 EXPLAIN SELECT * FROM t1 WHERE a <= 1;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_8	2.00	root	
 ├─TableReader_10	3333.33	root	data:TableRangeScan_9
 │ └─TableRangeScan_9	3333.33	cop[tikv]	table:t1, partition:p0, range:[-inf,1], keep order:false, stats:pseudo
 └─TableReader_12	3333.33	root	data:TableRangeScan_11
   └─TableRangeScan_11	3333.33	cop[tikv]	table:t1, partition:p1, range:[-inf,1], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE a < 7;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_13	49.00	root	
 ├─TableReader_15	3333.33	root	data:TableRangeScan_14
 │ └─TableRangeScan_14	3333.33	cop[tikv]	table:t1, partition:p0, range:[-inf,7), keep order:false, stats:pseudo
@@ -39,7 +39,7 @@ Union_13	49.00	root
 └─TableReader_27	3333.33	root	data:TableRangeScan_26
   └─TableRangeScan_26	3333.33	cop[tikv]	table:t1, partition:max, range:[-inf,7), keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE a <= 1;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_8	2.00	root	
 ├─TableReader_10	3333.33	root	data:TableRangeScan_9
 │ └─TableRangeScan_9	3333.33	cop[tikv]	table:t1, partition:p0, range:[-inf,1], keep order:false, stats:pseudo
@@ -64,7 +64,7 @@ a
 -1
 0
 EXPLAIN SELECT * FROM t1 WHERE a < 1;
-id	count	task	operator info
+id	estRows	task	operator info
 TableReader_7	3333.33	root	data:TableRangeScan_6
 └─TableRangeScan_6	3333.33	cop[tikv]	table:t1, partition:p0, range:[-inf,1), keep order:false, stats:pseudo
 SELECT * FROM t1 WHERE a < 2 order by a;
@@ -73,7 +73,7 @@ a
 0
 1
 EXPLAIN SELECT * FROM t1 WHERE a < 2;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_8	4.00	root	
 ├─TableReader_10	3333.33	root	data:TableRangeScan_9
 │ └─TableRangeScan_9	3333.33	cop[tikv]	table:t1, partition:p0, range:[-inf,2), keep order:false, stats:pseudo
@@ -86,7 +86,7 @@ a
 1
 2
 EXPLAIN SELECT * FROM t1 WHERE a < 3;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	9.00	root	
 ├─TableReader_11	3333.33	root	data:TableRangeScan_10
 │ └─TableRangeScan_10	3333.33	cop[tikv]	table:t1, partition:p0, range:[-inf,3), keep order:false, stats:pseudo
@@ -102,7 +102,7 @@ a
 2
 3
 EXPLAIN SELECT * FROM t1 WHERE a < 4;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_10	16.00	root	
 ├─TableReader_12	3333.33	root	data:TableRangeScan_11
 │ └─TableRangeScan_11	3333.33	cop[tikv]	table:t1, partition:p0, range:[-inf,4), keep order:false, stats:pseudo
@@ -121,7 +121,7 @@ a
 3
 4
 EXPLAIN SELECT * FROM t1 WHERE a < 5;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_11	25.00	root	
 ├─TableReader_13	3333.33	root	data:TableRangeScan_12
 │ └─TableRangeScan_12	3333.33	cop[tikv]	table:t1, partition:p0, range:[-inf,5), keep order:false, stats:pseudo
@@ -143,7 +143,7 @@ a
 4
 5
 EXPLAIN SELECT * FROM t1 WHERE a < 6;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_12	36.00	root	
 ├─TableReader_14	3333.33	root	data:TableRangeScan_13
 │ └─TableRangeScan_13	3333.33	cop[tikv]	table:t1, partition:p0, range:[-inf,6), keep order:false, stats:pseudo
@@ -168,7 +168,7 @@ a
 5
 6
 EXPLAIN SELECT * FROM t1 WHERE a < 7;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_13	49.00	root	
 ├─TableReader_15	3333.33	root	data:TableRangeScan_14
 │ └─TableRangeScan_14	3333.33	cop[tikv]	table:t1, partition:p0, range:[-inf,7), keep order:false, stats:pseudo
@@ -190,7 +190,7 @@ a
 0
 1
 EXPLAIN SELECT * FROM t1 WHERE a <= 1;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_8	2.00	root	
 ├─TableReader_10	3333.33	root	data:TableRangeScan_9
 │ └─TableRangeScan_9	3333.33	cop[tikv]	table:t1, partition:p0, range:[-inf,1], keep order:false, stats:pseudo
@@ -203,7 +203,7 @@ a
 1
 2
 EXPLAIN SELECT * FROM t1 WHERE a <= 2;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	6.00	root	
 ├─TableReader_11	3333.33	root	data:TableRangeScan_10
 │ └─TableRangeScan_10	3333.33	cop[tikv]	table:t1, partition:p0, range:[-inf,2], keep order:false, stats:pseudo
@@ -219,7 +219,7 @@ a
 2
 3
 EXPLAIN SELECT * FROM t1 WHERE a <= 3;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_10	12.00	root	
 ├─TableReader_12	3333.33	root	data:TableRangeScan_11
 │ └─TableRangeScan_11	3333.33	cop[tikv]	table:t1, partition:p0, range:[-inf,3], keep order:false, stats:pseudo
@@ -238,7 +238,7 @@ a
 3
 4
 EXPLAIN SELECT * FROM t1 WHERE a <= 4;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_11	20.00	root	
 ├─TableReader_13	3333.33	root	data:TableRangeScan_12
 │ └─TableRangeScan_12	3333.33	cop[tikv]	table:t1, partition:p0, range:[-inf,4], keep order:false, stats:pseudo
@@ -260,7 +260,7 @@ a
 4
 5
 EXPLAIN SELECT * FROM t1 WHERE a <= 5;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_12	30.00	root	
 ├─TableReader_14	3333.33	root	data:TableRangeScan_13
 │ └─TableRangeScan_13	3333.33	cop[tikv]	table:t1, partition:p0, range:[-inf,5], keep order:false, stats:pseudo
@@ -285,7 +285,7 @@ a
 5
 6
 EXPLAIN SELECT * FROM t1 WHERE a <= 6;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_13	42.00	root	
 ├─TableReader_15	3333.33	root	data:TableRangeScan_14
 │ └─TableRangeScan_14	3333.33	cop[tikv]	table:t1, partition:p0, range:[-inf,6], keep order:false, stats:pseudo
@@ -313,7 +313,7 @@ a
 6
 7
 EXPLAIN SELECT * FROM t1 WHERE a <= 7;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_13	49.00	root	
 ├─TableReader_15	3333.33	root	data:TableRangeScan_14
 │ └─TableRangeScan_14	3333.33	cop[tikv]	table:t1, partition:p0, range:[-inf,7], keep order:false, stats:pseudo
@@ -333,49 +333,49 @@ SELECT * FROM t1 WHERE a = 1 order by a;
 a
 1
 EXPLAIN SELECT * FROM t1 WHERE a = 1;
-id	count	task	operator info
+id	estRows	task	operator info
 TableReader_7	1.00	root	data:TableRangeScan_6
 └─TableRangeScan_6	1.00	cop[tikv]	table:t1, partition:p1, range:[1,1], keep order:false, stats:pseudo
 SELECT * FROM t1 WHERE a = 2 order by a;
 a
 2
 EXPLAIN SELECT * FROM t1 WHERE a = 2;
-id	count	task	operator info
+id	estRows	task	operator info
 TableReader_7	1.00	root	data:TableRangeScan_6
 └─TableRangeScan_6	1.00	cop[tikv]	table:t1, partition:p2, range:[2,2], keep order:false, stats:pseudo
 SELECT * FROM t1 WHERE a = 3 order by a;
 a
 3
 EXPLAIN SELECT * FROM t1 WHERE a = 3;
-id	count	task	operator info
+id	estRows	task	operator info
 TableReader_7	1.00	root	data:TableRangeScan_6
 └─TableRangeScan_6	1.00	cop[tikv]	table:t1, partition:p3, range:[3,3], keep order:false, stats:pseudo
 SELECT * FROM t1 WHERE a = 4 order by a;
 a
 4
 EXPLAIN SELECT * FROM t1 WHERE a = 4;
-id	count	task	operator info
+id	estRows	task	operator info
 TableReader_7	1.00	root	data:TableRangeScan_6
 └─TableRangeScan_6	1.00	cop[tikv]	table:t1, partition:p4, range:[4,4], keep order:false, stats:pseudo
 SELECT * FROM t1 WHERE a = 5 order by a;
 a
 5
 EXPLAIN SELECT * FROM t1 WHERE a = 5;
-id	count	task	operator info
+id	estRows	task	operator info
 TableReader_7	1.00	root	data:TableRangeScan_6
 └─TableRangeScan_6	1.00	cop[tikv]	table:t1, partition:p5, range:[5,5], keep order:false, stats:pseudo
 SELECT * FROM t1 WHERE a = 6 order by a;
 a
 6
 EXPLAIN SELECT * FROM t1 WHERE a = 6;
-id	count	task	operator info
+id	estRows	task	operator info
 TableReader_7	1.00	root	data:TableRangeScan_6
 └─TableRangeScan_6	1.00	cop[tikv]	table:t1, partition:max, range:[6,6], keep order:false, stats:pseudo
 SELECT * FROM t1 WHERE a = 7 order by a;
 a
 7
 EXPLAIN SELECT * FROM t1 WHERE a = 7;
-id	count	task	operator info
+id	estRows	task	operator info
 TableReader_7	1.00	root	data:TableRangeScan_6
 └─TableRangeScan_6	1.00	cop[tikv]	table:t1, partition:max, range:[7,7], keep order:false, stats:pseudo
 SELECT * FROM t1 WHERE a >= 1 order by a;
@@ -389,7 +389,7 @@ a
 7
 8
 EXPLAIN SELECT * FROM t1 WHERE a >= 1;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_12	20000.00	root	
 ├─TableReader_14	3333.33	root	data:TableRangeScan_13
 │ └─TableRangeScan_13	3333.33	cop[tikv]	table:t1, partition:p1, range:[1,+inf], keep order:false, stats:pseudo
@@ -413,7 +413,7 @@ a
 7
 8
 EXPLAIN SELECT * FROM t1 WHERE a >= 2;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_11	16666.67	root	
 ├─TableReader_13	3333.33	root	data:TableRangeScan_12
 │ └─TableRangeScan_12	3333.33	cop[tikv]	table:t1, partition:p2, range:[2,+inf], keep order:false, stats:pseudo
@@ -434,7 +434,7 @@ a
 7
 8
 EXPLAIN SELECT * FROM t1 WHERE a >= 3;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_10	13333.33	root	
 ├─TableReader_12	3333.33	root	data:TableRangeScan_11
 │ └─TableRangeScan_11	3333.33	cop[tikv]	table:t1, partition:p3, range:[3,+inf], keep order:false, stats:pseudo
@@ -452,7 +452,7 @@ a
 7
 8
 EXPLAIN SELECT * FROM t1 WHERE a >= 4;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	10000.00	root	
 ├─TableReader_11	3333.33	root	data:TableRangeScan_10
 │ └─TableRangeScan_10	3333.33	cop[tikv]	table:t1, partition:p4, range:[4,+inf], keep order:false, stats:pseudo
@@ -467,7 +467,7 @@ a
 7
 8
 EXPLAIN SELECT * FROM t1 WHERE a >= 5;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_8	6666.67	root	
 ├─TableReader_10	3333.33	root	data:TableRangeScan_9
 │ └─TableRangeScan_9	3333.33	cop[tikv]	table:t1, partition:p5, range:[5,+inf], keep order:false, stats:pseudo
@@ -479,7 +479,7 @@ a
 7
 8
 EXPLAIN SELECT * FROM t1 WHERE a >= 6;
-id	count	task	operator info
+id	estRows	task	operator info
 TableReader_7	3333.33	root	data:TableRangeScan_6
 └─TableRangeScan_6	3333.33	cop[tikv]	table:t1, partition:max, range:[6,+inf], keep order:false, stats:pseudo
 SELECT * FROM t1 WHERE a >= 7 order by a;
@@ -487,7 +487,7 @@ a
 7
 8
 EXPLAIN SELECT * FROM t1 WHERE a >= 7;
-id	count	task	operator info
+id	estRows	task	operator info
 TableReader_7	3333.33	root	data:TableRangeScan_6
 └─TableRangeScan_6	3333.33	cop[tikv]	table:t1, partition:max, range:[7,+inf], keep order:false, stats:pseudo
 SELECT * FROM t1 WHERE a > 1 order by a;
@@ -500,7 +500,7 @@ a
 7
 8
 EXPLAIN SELECT * FROM t1 WHERE a > 1;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_11	16666.67	root	
 ├─TableReader_13	3333.33	root	data:TableRangeScan_12
 │ └─TableRangeScan_12	3333.33	cop[tikv]	table:t1, partition:p2, range:(1,+inf], keep order:false, stats:pseudo
@@ -521,7 +521,7 @@ a
 7
 8
 EXPLAIN SELECT * FROM t1 WHERE a > 2;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_10	13333.33	root	
 ├─TableReader_12	3333.33	root	data:TableRangeScan_11
 │ └─TableRangeScan_11	3333.33	cop[tikv]	table:t1, partition:p3, range:(2,+inf], keep order:false, stats:pseudo
@@ -539,7 +539,7 @@ a
 7
 8
 EXPLAIN SELECT * FROM t1 WHERE a > 3;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	10000.00	root	
 ├─TableReader_11	3333.33	root	data:TableRangeScan_10
 │ └─TableRangeScan_10	3333.33	cop[tikv]	table:t1, partition:p4, range:(3,+inf], keep order:false, stats:pseudo
@@ -554,7 +554,7 @@ a
 7
 8
 EXPLAIN SELECT * FROM t1 WHERE a > 4;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_8	6666.67	root	
 ├─TableReader_10	3333.33	root	data:TableRangeScan_9
 │ └─TableRangeScan_9	3333.33	cop[tikv]	table:t1, partition:p5, range:(4,+inf], keep order:false, stats:pseudo
@@ -566,7 +566,7 @@ a
 7
 8
 EXPLAIN SELECT * FROM t1 WHERE a > 5;
-id	count	task	operator info
+id	estRows	task	operator info
 TableReader_7	3333.33	root	data:TableRangeScan_6
 └─TableRangeScan_6	3333.33	cop[tikv]	table:t1, partition:max, range:(5,+inf], keep order:false, stats:pseudo
 SELECT * FROM t1 WHERE a > 6 order by a;
@@ -574,14 +574,14 @@ a
 7
 8
 EXPLAIN SELECT * FROM t1 WHERE a > 6;
-id	count	task	operator info
+id	estRows	task	operator info
 TableReader_7	3333.33	root	data:TableRangeScan_6
 └─TableRangeScan_6	3333.33	cop[tikv]	table:t1, partition:max, range:(6,+inf], keep order:false, stats:pseudo
 SELECT * FROM t1 WHERE a > 7 order by a;
 a
 8
 EXPLAIN SELECT * FROM t1 WHERE a > 7;
-id	count	task	operator info
+id	estRows	task	operator info
 TableReader_7	3333.33	root	data:TableRangeScan_6
 └─TableRangeScan_6	3333.33	cop[tikv]	table:t1, partition:max, range:(7,+inf], keep order:false, stats:pseudo
 DROP TABLE t1;
@@ -599,7 +599,7 @@ a
 -1
 0
 EXPLAIN SELECT * FROM t1 WHERE a < 1;
-id	count	task	operator info
+id	estRows	task	operator info
 TableReader_7	3333.33	root	data:TableRangeScan_6
 └─TableRangeScan_6	3333.33	cop[tikv]	table:t1, partition:p0, range:[-inf,1), keep order:false, stats:pseudo
 SELECT * FROM t1 WHERE a < 2 order by a;
@@ -608,7 +608,7 @@ a
 0
 1
 EXPLAIN SELECT * FROM t1 WHERE a < 2;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_8	4.00	root	
 ├─TableReader_10	3333.33	root	data:TableRangeScan_9
 │ └─TableRangeScan_9	3333.33	cop[tikv]	table:t1, partition:p0, range:[-inf,2), keep order:false, stats:pseudo
@@ -621,7 +621,7 @@ a
 1
 2
 EXPLAIN SELECT * FROM t1 WHERE a < 3;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	9.00	root	
 ├─TableReader_11	3333.33	root	data:TableRangeScan_10
 │ └─TableRangeScan_10	3333.33	cop[tikv]	table:t1, partition:p0, range:[-inf,3), keep order:false, stats:pseudo
@@ -637,7 +637,7 @@ a
 2
 3
 EXPLAIN SELECT * FROM t1 WHERE a < 4;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_10	16.00	root	
 ├─TableReader_12	3333.33	root	data:TableRangeScan_11
 │ └─TableRangeScan_11	3333.33	cop[tikv]	table:t1, partition:p0, range:[-inf,4), keep order:false, stats:pseudo
@@ -656,7 +656,7 @@ a
 3
 4
 EXPLAIN SELECT * FROM t1 WHERE a < 5;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_11	25.00	root	
 ├─TableReader_13	3333.33	root	data:TableRangeScan_12
 │ └─TableRangeScan_12	3333.33	cop[tikv]	table:t1, partition:p0, range:[-inf,5), keep order:false, stats:pseudo
@@ -678,7 +678,7 @@ a
 4
 5
 EXPLAIN SELECT * FROM t1 WHERE a < 6;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_12	36.00	root	
 ├─TableReader_14	3333.33	root	data:TableRangeScan_13
 │ └─TableRangeScan_13	3333.33	cop[tikv]	table:t1, partition:p0, range:[-inf,6), keep order:false, stats:pseudo
@@ -698,7 +698,7 @@ a
 0
 1
 EXPLAIN SELECT * FROM t1 WHERE a <= 1;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_8	2.00	root	
 ├─TableReader_10	3333.33	root	data:TableRangeScan_9
 │ └─TableRangeScan_9	3333.33	cop[tikv]	table:t1, partition:p0, range:[-inf,1], keep order:false, stats:pseudo
@@ -711,7 +711,7 @@ a
 1
 2
 EXPLAIN SELECT * FROM t1 WHERE a <= 2;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	6.00	root	
 ├─TableReader_11	3333.33	root	data:TableRangeScan_10
 │ └─TableRangeScan_10	3333.33	cop[tikv]	table:t1, partition:p0, range:[-inf,2], keep order:false, stats:pseudo
@@ -727,7 +727,7 @@ a
 2
 3
 EXPLAIN SELECT * FROM t1 WHERE a <= 3;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_10	12.00	root	
 ├─TableReader_12	3333.33	root	data:TableRangeScan_11
 │ └─TableRangeScan_11	3333.33	cop[tikv]	table:t1, partition:p0, range:[-inf,3], keep order:false, stats:pseudo
@@ -746,7 +746,7 @@ a
 3
 4
 EXPLAIN SELECT * FROM t1 WHERE a <= 4;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_11	20.00	root	
 ├─TableReader_13	3333.33	root	data:TableRangeScan_12
 │ └─TableRangeScan_12	3333.33	cop[tikv]	table:t1, partition:p0, range:[-inf,4], keep order:false, stats:pseudo
@@ -768,7 +768,7 @@ a
 4
 5
 EXPLAIN SELECT * FROM t1 WHERE a <= 5;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_12	30.00	root	
 ├─TableReader_14	3333.33	root	data:TableRangeScan_13
 │ └─TableRangeScan_13	3333.33	cop[tikv]	table:t1, partition:p0, range:[-inf,5], keep order:false, stats:pseudo
@@ -793,7 +793,7 @@ a
 5
 6
 EXPLAIN SELECT * FROM t1 WHERE a <= 6;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_12	36.00	root	
 ├─TableReader_14	3333.33	root	data:TableRangeScan_13
 │ └─TableRangeScan_13	3333.33	cop[tikv]	table:t1, partition:p0, range:[-inf,6], keep order:false, stats:pseudo
@@ -811,42 +811,42 @@ SELECT * FROM t1 WHERE a = 1;
 a
 1
 EXPLAIN SELECT * FROM t1 WHERE a = 1;
-id	count	task	operator info
+id	estRows	task	operator info
 TableReader_7	1.00	root	data:TableRangeScan_6
 └─TableRangeScan_6	1.00	cop[tikv]	table:t1, partition:p1, range:[1,1], keep order:false, stats:pseudo
 SELECT * FROM t1 WHERE a = 2;
 a
 2
 EXPLAIN SELECT * FROM t1 WHERE a = 2;
-id	count	task	operator info
+id	estRows	task	operator info
 TableReader_7	1.00	root	data:TableRangeScan_6
 └─TableRangeScan_6	1.00	cop[tikv]	table:t1, partition:p2, range:[2,2], keep order:false, stats:pseudo
 SELECT * FROM t1 WHERE a = 3;
 a
 3
 EXPLAIN SELECT * FROM t1 WHERE a = 3;
-id	count	task	operator info
+id	estRows	task	operator info
 TableReader_7	1.00	root	data:TableRangeScan_6
 └─TableRangeScan_6	1.00	cop[tikv]	table:t1, partition:p3, range:[3,3], keep order:false, stats:pseudo
 SELECT * FROM t1 WHERE a = 4;
 a
 4
 EXPLAIN SELECT * FROM t1 WHERE a = 4;
-id	count	task	operator info
+id	estRows	task	operator info
 TableReader_7	1.00	root	data:TableRangeScan_6
 └─TableRangeScan_6	1.00	cop[tikv]	table:t1, partition:p4, range:[4,4], keep order:false, stats:pseudo
 SELECT * FROM t1 WHERE a = 5;
 a
 5
 EXPLAIN SELECT * FROM t1 WHERE a = 5;
-id	count	task	operator info
+id	estRows	task	operator info
 TableReader_7	1.00	root	data:TableRangeScan_6
 └─TableRangeScan_6	1.00	cop[tikv]	table:t1, partition:max, range:[5,5], keep order:false, stats:pseudo
 SELECT * FROM t1 WHERE a = 6;
 a
 6
 EXPLAIN SELECT * FROM t1 WHERE a = 6;
-id	count	task	operator info
+id	estRows	task	operator info
 TableReader_7	1.00	root	data:TableRangeScan_6
 └─TableRangeScan_6	1.00	cop[tikv]	table:t1, partition:max, range:[6,6], keep order:false, stats:pseudo
 SELECT * FROM t1 WHERE a >= 1 order by a;
@@ -859,7 +859,7 @@ a
 6
 7
 EXPLAIN SELECT * FROM t1 WHERE a >= 1;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_11	16666.67	root	
 ├─TableReader_13	3333.33	root	data:TableRangeScan_12
 │ └─TableRangeScan_12	3333.33	cop[tikv]	table:t1, partition:p1, range:[1,+inf], keep order:false, stats:pseudo
@@ -880,7 +880,7 @@ a
 6
 7
 EXPLAIN SELECT * FROM t1 WHERE a >= 2;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_10	13333.33	root	
 ├─TableReader_12	3333.33	root	data:TableRangeScan_11
 │ └─TableRangeScan_11	3333.33	cop[tikv]	table:t1, partition:p2, range:[2,+inf], keep order:false, stats:pseudo
@@ -898,7 +898,7 @@ a
 6
 7
 EXPLAIN SELECT * FROM t1 WHERE a >= 3;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	10000.00	root	
 ├─TableReader_11	3333.33	root	data:TableRangeScan_10
 │ └─TableRangeScan_10	3333.33	cop[tikv]	table:t1, partition:p3, range:[3,+inf], keep order:false, stats:pseudo
@@ -913,7 +913,7 @@ a
 6
 7
 EXPLAIN SELECT * FROM t1 WHERE a >= 4;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_8	6666.67	root	
 ├─TableReader_10	3333.33	root	data:TableRangeScan_9
 │ └─TableRangeScan_9	3333.33	cop[tikv]	table:t1, partition:p4, range:[4,+inf], keep order:false, stats:pseudo
@@ -925,7 +925,7 @@ a
 6
 7
 EXPLAIN SELECT * FROM t1 WHERE a >= 5;
-id	count	task	operator info
+id	estRows	task	operator info
 TableReader_7	3333.33	root	data:TableRangeScan_6
 └─TableRangeScan_6	3333.33	cop[tikv]	table:t1, partition:max, range:[5,+inf], keep order:false, stats:pseudo
 SELECT * FROM t1 WHERE a >= 6 order by a;
@@ -933,7 +933,7 @@ a
 6
 7
 EXPLAIN SELECT * FROM t1 WHERE a >= 6;
-id	count	task	operator info
+id	estRows	task	operator info
 TableReader_7	3333.33	root	data:TableRangeScan_6
 └─TableRangeScan_6	3333.33	cop[tikv]	table:t1, partition:max, range:[6,+inf], keep order:false, stats:pseudo
 SELECT * FROM t1 WHERE a > 1 order by a;
@@ -945,7 +945,7 @@ a
 6
 7
 EXPLAIN SELECT * FROM t1 WHERE a > 1;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_10	13333.33	root	
 ├─TableReader_12	3333.33	root	data:TableRangeScan_11
 │ └─TableRangeScan_11	3333.33	cop[tikv]	table:t1, partition:p2, range:(1,+inf], keep order:false, stats:pseudo
@@ -963,7 +963,7 @@ a
 6
 7
 EXPLAIN SELECT * FROM t1 WHERE a > 2;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	10000.00	root	
 ├─TableReader_11	3333.33	root	data:TableRangeScan_10
 │ └─TableRangeScan_10	3333.33	cop[tikv]	table:t1, partition:p3, range:(2,+inf], keep order:false, stats:pseudo
@@ -978,7 +978,7 @@ a
 6
 7
 EXPLAIN SELECT * FROM t1 WHERE a > 3;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_8	6666.67	root	
 ├─TableReader_10	3333.33	root	data:TableRangeScan_9
 │ └─TableRangeScan_9	3333.33	cop[tikv]	table:t1, partition:p4, range:(3,+inf], keep order:false, stats:pseudo
@@ -990,7 +990,7 @@ a
 6
 7
 EXPLAIN SELECT * FROM t1 WHERE a > 4;
-id	count	task	operator info
+id	estRows	task	operator info
 TableReader_7	3333.33	root	data:TableRangeScan_6
 └─TableRangeScan_6	3333.33	cop[tikv]	table:t1, partition:max, range:(4,+inf], keep order:false, stats:pseudo
 SELECT * FROM t1 WHERE a > 5 order by a;
@@ -998,14 +998,14 @@ a
 6
 7
 EXPLAIN SELECT * FROM t1 WHERE a > 5;
-id	count	task	operator info
+id	estRows	task	operator info
 TableReader_7	3333.33	root	data:TableRangeScan_6
 └─TableRangeScan_6	3333.33	cop[tikv]	table:t1, partition:max, range:(5,+inf], keep order:false, stats:pseudo
 SELECT * FROM t1 WHERE a > 6 order by a;
 a
 7
 EXPLAIN SELECT * FROM t1 WHERE a > 6;
-id	count	task	operator info
+id	estRows	task	operator info
 TableReader_7	3333.33	root	data:TableRangeScan_6
 └─TableRangeScan_6	3333.33	cop[tikv]	table:t1, partition:max, range:(6,+inf], keep order:false, stats:pseudo
 DROP TABLE t1;
@@ -1038,7 +1038,7 @@ INSERT INTO t1 VALUES (1, '2009-01-01'), (1, '2009-04-01'), (2, '2009-04-01'),
 (1, '2009-04-03'), (2, '2009-04-03'), (1, '2009-04-04'), (2, '2009-04-04'),
 (1, '2009-04-05'), (1, '2009-04-06'), (1, '2009-04-07');
 EXPLAIN SELECT * FROM t1 WHERE b < CAST('2009-04-03' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	9970.00	root	
 ├─IndexReader_15	3323.33	root	index:Selection_14
 │ └─Selection_14	3323.33	cop[tikv]	lt(test.t1.b, 2009-04-03 00:00:00)
@@ -1050,7 +1050,7 @@ Union_9	9970.00	root
   └─Selection_26	3323.33	cop[tikv]	lt(test.t1.b, 2009-04-03 00:00:00)
     └─IndexFullScan_25	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b <= CAST('2009-04-03' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	9970.00	root	
 ├─IndexReader_15	3323.33	root	index:Selection_14
 │ └─Selection_14	3323.33	cop[tikv]	le(test.t1.b, 2009-04-03 00:00:00)
@@ -1062,12 +1062,12 @@ Union_9	9970.00	root
   └─Selection_26	3323.33	cop[tikv]	le(test.t1.b, 2009-04-03 00:00:00)
     └─IndexFullScan_25	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b = CAST('2009-04-03' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 IndexReader_11	10.00	root	index:Selection_10
 └─Selection_10	10.00	cop[tikv]	eq(test.t1.b, 2009-04-03 00:00:00)
   └─IndexFullScan_9	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b >= CAST('2009-04-03' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	10000.00	root	
 ├─IndexReader_15	3333.33	root	index:Selection_14
 │ └─Selection_14	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00)
@@ -1079,7 +1079,7 @@ Union_9	10000.00	root
   └─Selection_26	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00)
     └─IndexFullScan_25	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b > CAST('2009-04-03' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	10000.00	root	
 ├─IndexReader_15	3333.33	root	index:Selection_14
 │ └─Selection_14	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00)
@@ -1092,7 +1092,7 @@ Union_9	10000.00	root
     └─IndexFullScan_25	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b < CAST('2009-04-02 23:59:59' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_8	6646.67	root	
 ├─IndexReader_14	3323.33	root	index:Selection_13
 │ └─Selection_13	3323.33	cop[tikv]	lt(test.t1.b, 2009-04-02 23:59:59)
@@ -1102,7 +1102,7 @@ Union_8	6646.67	root
     └─IndexFullScan_18	10000.00	cop[tikv]	table:t1, partition:p20090402, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b <= CAST('2009-04-02 23:59:59' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_8	6646.67	root	
 ├─IndexReader_14	3323.33	root	index:Selection_13
 │ └─Selection_13	3323.33	cop[tikv]	le(test.t1.b, 2009-04-02 23:59:59)
@@ -1112,13 +1112,13 @@ Union_8	6646.67	root
     └─IndexFullScan_18	10000.00	cop[tikv]	table:t1, partition:p20090402, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b = CAST('2009-04-02 23:59:59' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 IndexReader_11	10.00	root	index:Selection_10
 └─Selection_10	10.00	cop[tikv]	eq(test.t1.b, 2009-04-02 23:59:59)
   └─IndexFullScan_9	10000.00	cop[tikv]	table:t1, partition:p20090402, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b >= CAST('2009-04-02 23:59:59' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_10	13333.33	root	
 ├─IndexReader_16	3333.33	root	index:Selection_15
 │ └─Selection_15	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59)
@@ -1134,7 +1134,7 @@ Union_10	13333.33	root
     └─IndexFullScan_32	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b > CAST('2009-04-02 23:59:59' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_10	13333.33	root	
 ├─IndexReader_16	3333.33	root	index:Selection_15
 │ └─Selection_15	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59)
@@ -1149,7 +1149,7 @@ Union_10	13333.33	root
   └─Selection_33	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59)
     └─IndexFullScan_32	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b < CAST('2009-04-03' AS DATE);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	9970.00	root	
 ├─IndexReader_15	3323.33	root	index:Selection_14
 │ └─Selection_14	3323.33	cop[tikv]	lt(test.t1.b, 2009-04-03)
@@ -1161,7 +1161,7 @@ Union_9	9970.00	root
   └─Selection_26	3323.33	cop[tikv]	lt(test.t1.b, 2009-04-03)
     └─IndexFullScan_25	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b <= CAST('2009-04-03' AS DATE);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	9970.00	root	
 ├─IndexReader_15	3323.33	root	index:Selection_14
 │ └─Selection_14	3323.33	cop[tikv]	le(test.t1.b, 2009-04-03)
@@ -1173,12 +1173,12 @@ Union_9	9970.00	root
   └─Selection_26	3323.33	cop[tikv]	le(test.t1.b, 2009-04-03)
     └─IndexFullScan_25	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b = CAST('2009-04-03' AS DATE);
-id	count	task	operator info
+id	estRows	task	operator info
 IndexReader_11	10.00	root	index:Selection_10
 └─Selection_10	10.00	cop[tikv]	eq(test.t1.b, 2009-04-03)
   └─IndexFullScan_9	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b >= CAST('2009-04-03' AS DATE);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	10000.00	root	
 ├─IndexReader_15	3333.33	root	index:Selection_14
 │ └─Selection_14	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03)
@@ -1190,7 +1190,7 @@ Union_9	10000.00	root
   └─Selection_26	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03)
     └─IndexFullScan_25	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b > CAST('2009-04-03' AS DATE);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	10000.00	root	
 ├─IndexReader_15	3333.33	root	index:Selection_14
 │ └─Selection_14	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03)
@@ -1202,7 +1202,7 @@ Union_9	10000.00	root
   └─Selection_26	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03)
     └─IndexFullScan_25	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b < '2009-04-03 00:00:00';
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	9970.00	root	
 ├─IndexReader_15	3323.33	root	index:Selection_14
 │ └─Selection_14	3323.33	cop[tikv]	lt(test.t1.b, 2009-04-03 00:00:00.000000)
@@ -1214,7 +1214,7 @@ Union_9	9970.00	root
   └─Selection_26	3323.33	cop[tikv]	lt(test.t1.b, 2009-04-03 00:00:00.000000)
     └─IndexFullScan_25	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b <= '2009-04-03 00:00:00';
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	9970.00	root	
 ├─IndexReader_15	3323.33	root	index:Selection_14
 │ └─Selection_14	3323.33	cop[tikv]	le(test.t1.b, 2009-04-03 00:00:00.000000)
@@ -1226,12 +1226,12 @@ Union_9	9970.00	root
   └─Selection_26	3323.33	cop[tikv]	le(test.t1.b, 2009-04-03 00:00:00.000000)
     └─IndexFullScan_25	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b = '2009-04-03 00:00:00';
-id	count	task	operator info
+id	estRows	task	operator info
 IndexReader_11	10.00	root	index:Selection_10
 └─Selection_10	10.00	cop[tikv]	eq(test.t1.b, 2009-04-03 00:00:00.000000)
   └─IndexFullScan_9	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b >= '2009-04-03 00:00:00';
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	10000.00	root	
 ├─IndexReader_15	3333.33	root	index:Selection_14
 │ └─Selection_14	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00.000000)
@@ -1243,7 +1243,7 @@ Union_9	10000.00	root
   └─Selection_26	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00.000000)
     └─IndexFullScan_25	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b > '2009-04-03 00:00:00';
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	10000.00	root	
 ├─IndexReader_15	3333.33	root	index:Selection_14
 │ └─Selection_14	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00.000000)
@@ -1255,7 +1255,7 @@ Union_9	10000.00	root
   └─Selection_26	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00.000000)
     └─IndexFullScan_25	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b < '2009-04-02 23:59:59';
-id	count	task	operator info
+id	estRows	task	operator info
 Union_8	6646.67	root	
 ├─IndexReader_14	3323.33	root	index:Selection_13
 │ └─Selection_13	3323.33	cop[tikv]	lt(test.t1.b, 2009-04-02 23:59:59.000000)
@@ -1264,7 +1264,7 @@ Union_8	6646.67	root
   └─Selection_19	3323.33	cop[tikv]	lt(test.t1.b, 2009-04-02 23:59:59.000000)
     └─IndexFullScan_18	10000.00	cop[tikv]	table:t1, partition:p20090402, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b <= '2009-04-02 23:59:59';
-id	count	task	operator info
+id	estRows	task	operator info
 Union_8	6646.67	root	
 ├─IndexReader_14	3323.33	root	index:Selection_13
 │ └─Selection_13	3323.33	cop[tikv]	le(test.t1.b, 2009-04-02 23:59:59.000000)
@@ -1273,12 +1273,12 @@ Union_8	6646.67	root
   └─Selection_19	3323.33	cop[tikv]	le(test.t1.b, 2009-04-02 23:59:59.000000)
     └─IndexFullScan_18	10000.00	cop[tikv]	table:t1, partition:p20090402, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b = '2009-04-02 23:59:59';
-id	count	task	operator info
+id	estRows	task	operator info
 IndexReader_11	10.00	root	index:Selection_10
 └─Selection_10	10.00	cop[tikv]	eq(test.t1.b, 2009-04-02 23:59:59.000000)
   └─IndexFullScan_9	10000.00	cop[tikv]	table:t1, partition:p20090402, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b >= '2009-04-02 23:59:59';
-id	count	task	operator info
+id	estRows	task	operator info
 Union_10	13333.33	root	
 ├─IndexReader_16	3333.33	root	index:Selection_15
 │ └─Selection_15	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59.000000)
@@ -1293,7 +1293,7 @@ Union_10	13333.33	root
   └─Selection_33	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59.000000)
     └─IndexFullScan_32	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b > '2009-04-02 23:59:59';
-id	count	task	operator info
+id	estRows	task	operator info
 Union_10	13333.33	root	
 ├─IndexReader_16	3333.33	root	index:Selection_15
 │ └─Selection_15	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59.000000)
@@ -1308,7 +1308,7 @@ Union_10	13333.33	root
   └─Selection_33	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59.000000)
     └─IndexFullScan_32	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b < '2009-04-03';
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	9970.00	root	
 ├─IndexReader_15	3323.33	root	index:Selection_14
 │ └─Selection_14	3323.33	cop[tikv]	lt(test.t1.b, 2009-04-03 00:00:00.000000)
@@ -1320,7 +1320,7 @@ Union_9	9970.00	root
   └─Selection_26	3323.33	cop[tikv]	lt(test.t1.b, 2009-04-03 00:00:00.000000)
     └─IndexFullScan_25	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b <= '2009-04-03';
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	9970.00	root	
 ├─IndexReader_15	3323.33	root	index:Selection_14
 │ └─Selection_14	3323.33	cop[tikv]	le(test.t1.b, 2009-04-03 00:00:00.000000)
@@ -1332,12 +1332,12 @@ Union_9	9970.00	root
   └─Selection_26	3323.33	cop[tikv]	le(test.t1.b, 2009-04-03 00:00:00.000000)
     └─IndexFullScan_25	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b = '2009-04-03';
-id	count	task	operator info
+id	estRows	task	operator info
 IndexReader_11	10.00	root	index:Selection_10
 └─Selection_10	10.00	cop[tikv]	eq(test.t1.b, 2009-04-03 00:00:00.000000)
   └─IndexFullScan_9	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b >= '2009-04-03';
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	10000.00	root	
 ├─IndexReader_15	3333.33	root	index:Selection_14
 │ └─Selection_14	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00.000000)
@@ -1349,7 +1349,7 @@ Union_9	10000.00	root
   └─Selection_26	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00.000000)
     └─IndexFullScan_25	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b > '2009-04-03';
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	10000.00	root	
 ├─IndexReader_15	3333.33	root	index:Selection_14
 │ └─Selection_14	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00.000000)
@@ -1362,7 +1362,7 @@ Union_9	10000.00	root
     └─IndexFullScan_25	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b < CAST('2009-04-03 00:00:01' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	9970.00	root	
 ├─IndexReader_15	3323.33	root	index:Selection_14
 │ └─Selection_14	3323.33	cop[tikv]	lt(test.t1.b, 2009-04-03 00:00:01)
@@ -1375,7 +1375,7 @@ Union_9	9970.00	root
     └─IndexFullScan_25	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b <= CAST('2009-04-03 00:00:01' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	9970.00	root	
 ├─IndexReader_15	3323.33	root	index:Selection_14
 │ └─Selection_14	3323.33	cop[tikv]	le(test.t1.b, 2009-04-03 00:00:01)
@@ -1388,13 +1388,13 @@ Union_9	9970.00	root
     └─IndexFullScan_25	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b = CAST('2009-04-03 00:00:01' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 IndexReader_11	10.00	root	index:Selection_10
 └─Selection_10	10.00	cop[tikv]	eq(test.t1.b, 2009-04-03 00:00:01)
   └─IndexFullScan_9	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b >= CAST('2009-04-03 00:00:01' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	10000.00	root	
 ├─IndexReader_15	3333.33	root	index:Selection_14
 │ └─Selection_14	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:01)
@@ -1407,7 +1407,7 @@ Union_9	10000.00	root
     └─IndexFullScan_25	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b > CAST('2009-04-03 00:00:01' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	10000.00	root	
 ├─IndexReader_15	3333.33	root	index:Selection_14
 │ └─Selection_14	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:01)
@@ -1420,7 +1420,7 @@ Union_9	10000.00	root
     └─IndexFullScan_25	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b < CAST('2009-04-02 23:59:58' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_8	6646.67	root	
 ├─IndexReader_14	3323.33	root	index:Selection_13
 │ └─Selection_13	3323.33	cop[tikv]	lt(test.t1.b, 2009-04-02 23:59:58)
@@ -1430,7 +1430,7 @@ Union_8	6646.67	root
     └─IndexFullScan_18	10000.00	cop[tikv]	table:t1, partition:p20090402, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b <= CAST('2009-04-02 23:59:58' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_8	6646.67	root	
 ├─IndexReader_14	3323.33	root	index:Selection_13
 │ └─Selection_13	3323.33	cop[tikv]	le(test.t1.b, 2009-04-02 23:59:58)
@@ -1440,13 +1440,13 @@ Union_8	6646.67	root
     └─IndexFullScan_18	10000.00	cop[tikv]	table:t1, partition:p20090402, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b = CAST('2009-04-02 23:59:58' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 IndexReader_11	10.00	root	index:Selection_10
 └─Selection_10	10.00	cop[tikv]	eq(test.t1.b, 2009-04-02 23:59:58)
   └─IndexFullScan_9	10000.00	cop[tikv]	table:t1, partition:p20090402, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b >= CAST('2009-04-02 23:59:58' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_10	13333.33	root	
 ├─IndexReader_16	3333.33	root	index:Selection_15
 │ └─Selection_15	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:58)
@@ -1462,7 +1462,7 @@ Union_10	13333.33	root
     └─IndexFullScan_32	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b > CAST('2009-04-02 23:59:58' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_10	13333.33	root	
 ├─IndexReader_16	3333.33	root	index:Selection_15
 │ └─Selection_15	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:58)
@@ -1493,7 +1493,7 @@ INSERT INTO t1 VALUES (1, '2009-01-01'), (1, '2009-04-01'), (2, '2009-04-01'),
 (1, '2009-04-04'), (2, '2009-04-04'), (1, '2009-04-05'), (1, '2009-04-06'),
 (1, '2009-04-07');
 EXPLAIN SELECT * FROM t1 WHERE b < CAST('2009-04-03' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	9970.00	root	
 ├─IndexReader_15	3323.33	root	index:Selection_14
 │ └─Selection_14	3323.33	cop[tikv]	lt(test.t1.b, 2009-04-03 00:00:00)
@@ -1505,7 +1505,7 @@ Union_9	9970.00	root
   └─Selection_26	3323.33	cop[tikv]	lt(test.t1.b, 2009-04-03 00:00:00)
     └─IndexFullScan_25	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b <= CAST('2009-04-03' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	9970.00	root	
 ├─IndexReader_15	3323.33	root	index:Selection_14
 │ └─Selection_14	3323.33	cop[tikv]	le(test.t1.b, 2009-04-03 00:00:00)
@@ -1517,12 +1517,12 @@ Union_9	9970.00	root
   └─Selection_26	3323.33	cop[tikv]	le(test.t1.b, 2009-04-03 00:00:00)
     └─IndexFullScan_25	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b = CAST('2009-04-03' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 IndexReader_11	10.00	root	index:Selection_10
 └─Selection_10	10.00	cop[tikv]	eq(test.t1.b, 2009-04-03 00:00:00)
   └─IndexFullScan_9	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b >= CAST('2009-04-03' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	10000.00	root	
 ├─IndexReader_15	3333.33	root	index:Selection_14
 │ └─Selection_14	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00)
@@ -1534,7 +1534,7 @@ Union_9	10000.00	root
   └─Selection_26	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00)
     └─IndexFullScan_25	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b > CAST('2009-04-03' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	10000.00	root	
 ├─IndexReader_15	3333.33	root	index:Selection_14
 │ └─Selection_14	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00)
@@ -1547,7 +1547,7 @@ Union_9	10000.00	root
     └─IndexFullScan_25	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b < CAST('2009-04-02 23:59:59' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_8	6646.67	root	
 ├─IndexReader_14	3323.33	root	index:Selection_13
 │ └─Selection_13	3323.33	cop[tikv]	lt(test.t1.b, 2009-04-02 23:59:59)
@@ -1557,7 +1557,7 @@ Union_8	6646.67	root
     └─IndexFullScan_18	10000.00	cop[tikv]	table:t1, partition:p20090402, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b <= CAST('2009-04-02 23:59:59' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_8	6646.67	root	
 ├─IndexReader_14	3323.33	root	index:Selection_13
 │ └─Selection_13	3323.33	cop[tikv]	le(test.t1.b, 2009-04-02 23:59:59)
@@ -1567,13 +1567,13 @@ Union_8	6646.67	root
     └─IndexFullScan_18	10000.00	cop[tikv]	table:t1, partition:p20090402, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b = CAST('2009-04-02 23:59:59' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 IndexReader_11	0.00	root	index:Selection_10
 └─Selection_10	0.00	cop[tikv]	eq(test.t1.b, 2009-04-02 23:59:59)
   └─IndexFullScan_9	10000.00	cop[tikv]	table:t1, partition:p20090402, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b >= CAST('2009-04-02 23:59:59' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_10	13333.33	root	
 ├─IndexReader_16	3333.33	root	index:Selection_15
 │ └─Selection_15	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59)
@@ -1589,7 +1589,7 @@ Union_10	13333.33	root
     └─IndexFullScan_32	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b > CAST('2009-04-02 23:59:59' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_10	13333.33	root	
 ├─IndexReader_16	3333.33	root	index:Selection_15
 │ └─Selection_15	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59)
@@ -1604,7 +1604,7 @@ Union_10	13333.33	root
   └─Selection_33	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59)
     └─IndexFullScan_32	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b < CAST('2009-04-03' AS DATE);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	9970.00	root	
 ├─IndexReader_15	3323.33	root	index:Selection_14
 │ └─Selection_14	3323.33	cop[tikv]	lt(test.t1.b, 2009-04-03)
@@ -1616,7 +1616,7 @@ Union_9	9970.00	root
   └─Selection_26	3323.33	cop[tikv]	lt(test.t1.b, 2009-04-03)
     └─IndexFullScan_25	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b <= CAST('2009-04-03' AS DATE);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	9970.00	root	
 ├─IndexReader_15	3323.33	root	index:Selection_14
 │ └─Selection_14	3323.33	cop[tikv]	le(test.t1.b, 2009-04-03)
@@ -1628,12 +1628,12 @@ Union_9	9970.00	root
   └─Selection_26	3323.33	cop[tikv]	le(test.t1.b, 2009-04-03)
     └─IndexFullScan_25	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b = CAST('2009-04-03' AS DATE);
-id	count	task	operator info
+id	estRows	task	operator info
 IndexReader_11	10.00	root	index:Selection_10
 └─Selection_10	10.00	cop[tikv]	eq(test.t1.b, 2009-04-03)
   └─IndexFullScan_9	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b >= CAST('2009-04-03' AS DATE);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	10000.00	root	
 ├─IndexReader_15	3333.33	root	index:Selection_14
 │ └─Selection_14	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03)
@@ -1645,7 +1645,7 @@ Union_9	10000.00	root
   └─Selection_26	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03)
     └─IndexFullScan_25	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b > CAST('2009-04-03' AS DATE);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	10000.00	root	
 ├─IndexReader_15	3333.33	root	index:Selection_14
 │ └─Selection_14	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03)
@@ -1657,7 +1657,7 @@ Union_9	10000.00	root
   └─Selection_26	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03)
     └─IndexFullScan_25	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b < '2009-04-03 00:00:00';
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	9970.00	root	
 ├─IndexReader_15	3323.33	root	index:Selection_14
 │ └─Selection_14	3323.33	cop[tikv]	lt(test.t1.b, 2009-04-03 00:00:00.000000)
@@ -1669,7 +1669,7 @@ Union_9	9970.00	root
   └─Selection_26	3323.33	cop[tikv]	lt(test.t1.b, 2009-04-03 00:00:00.000000)
     └─IndexFullScan_25	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b <= '2009-04-03 00:00:00';
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	9970.00	root	
 ├─IndexReader_15	3323.33	root	index:Selection_14
 │ └─Selection_14	3323.33	cop[tikv]	le(test.t1.b, 2009-04-03 00:00:00.000000)
@@ -1681,12 +1681,12 @@ Union_9	9970.00	root
   └─Selection_26	3323.33	cop[tikv]	le(test.t1.b, 2009-04-03 00:00:00.000000)
     └─IndexFullScan_25	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b = '2009-04-03 00:00:00';
-id	count	task	operator info
+id	estRows	task	operator info
 IndexReader_11	10.00	root	index:Selection_10
 └─Selection_10	10.00	cop[tikv]	eq(test.t1.b, 2009-04-03 00:00:00.000000)
   └─IndexFullScan_9	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b >= '2009-04-03 00:00:00';
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	10000.00	root	
 ├─IndexReader_15	3333.33	root	index:Selection_14
 │ └─Selection_14	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00.000000)
@@ -1698,7 +1698,7 @@ Union_9	10000.00	root
   └─Selection_26	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00.000000)
     └─IndexFullScan_25	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b > '2009-04-03 00:00:00';
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	10000.00	root	
 ├─IndexReader_15	3333.33	root	index:Selection_14
 │ └─Selection_14	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00.000000)
@@ -1710,7 +1710,7 @@ Union_9	10000.00	root
   └─Selection_26	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00.000000)
     └─IndexFullScan_25	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b < '2009-04-02 23:59:59';
-id	count	task	operator info
+id	estRows	task	operator info
 Union_8	6646.67	root	
 ├─IndexReader_14	3323.33	root	index:Selection_13
 │ └─Selection_13	3323.33	cop[tikv]	lt(test.t1.b, 2009-04-02 23:59:59.000000)
@@ -1719,7 +1719,7 @@ Union_8	6646.67	root
   └─Selection_19	3323.33	cop[tikv]	lt(test.t1.b, 2009-04-02 23:59:59.000000)
     └─IndexFullScan_18	10000.00	cop[tikv]	table:t1, partition:p20090402, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b <= '2009-04-02 23:59:59';
-id	count	task	operator info
+id	estRows	task	operator info
 Union_8	6646.67	root	
 ├─IndexReader_14	3323.33	root	index:Selection_13
 │ └─Selection_13	3323.33	cop[tikv]	le(test.t1.b, 2009-04-02 23:59:59.000000)
@@ -1728,12 +1728,12 @@ Union_8	6646.67	root
   └─Selection_19	3323.33	cop[tikv]	le(test.t1.b, 2009-04-02 23:59:59.000000)
     └─IndexFullScan_18	10000.00	cop[tikv]	table:t1, partition:p20090402, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b = '2009-04-02 23:59:59';
-id	count	task	operator info
+id	estRows	task	operator info
 IndexReader_11	0.00	root	index:Selection_10
 └─Selection_10	0.00	cop[tikv]	eq(test.t1.b, 2009-04-02 23:59:59.000000)
   └─IndexFullScan_9	10000.00	cop[tikv]	table:t1, partition:p20090402, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b >= '2009-04-02 23:59:59';
-id	count	task	operator info
+id	estRows	task	operator info
 Union_10	13333.33	root	
 ├─IndexReader_16	3333.33	root	index:Selection_15
 │ └─Selection_15	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59.000000)
@@ -1748,7 +1748,7 @@ Union_10	13333.33	root
   └─Selection_33	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59.000000)
     └─IndexFullScan_32	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b > '2009-04-02 23:59:59';
-id	count	task	operator info
+id	estRows	task	operator info
 Union_10	13333.33	root	
 ├─IndexReader_16	3333.33	root	index:Selection_15
 │ └─Selection_15	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59.000000)
@@ -1763,7 +1763,7 @@ Union_10	13333.33	root
   └─Selection_33	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59.000000)
     └─IndexFullScan_32	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b < '2009-04-03';
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	9970.00	root	
 ├─IndexReader_15	3323.33	root	index:Selection_14
 │ └─Selection_14	3323.33	cop[tikv]	lt(test.t1.b, 2009-04-03 00:00:00.000000)
@@ -1775,7 +1775,7 @@ Union_9	9970.00	root
   └─Selection_26	3323.33	cop[tikv]	lt(test.t1.b, 2009-04-03 00:00:00.000000)
     └─IndexFullScan_25	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b <= '2009-04-03';
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	9970.00	root	
 ├─IndexReader_15	3323.33	root	index:Selection_14
 │ └─Selection_14	3323.33	cop[tikv]	le(test.t1.b, 2009-04-03 00:00:00.000000)
@@ -1787,12 +1787,12 @@ Union_9	9970.00	root
   └─Selection_26	3323.33	cop[tikv]	le(test.t1.b, 2009-04-03 00:00:00.000000)
     └─IndexFullScan_25	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b = '2009-04-03';
-id	count	task	operator info
+id	estRows	task	operator info
 IndexReader_11	10.00	root	index:Selection_10
 └─Selection_10	10.00	cop[tikv]	eq(test.t1.b, 2009-04-03 00:00:00.000000)
   └─IndexFullScan_9	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b >= '2009-04-03';
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	10000.00	root	
 ├─IndexReader_15	3333.33	root	index:Selection_14
 │ └─Selection_14	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00.000000)
@@ -1804,7 +1804,7 @@ Union_9	10000.00	root
   └─Selection_26	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00.000000)
     └─IndexFullScan_25	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b > '2009-04-03';
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	10000.00	root	
 ├─IndexReader_15	3333.33	root	index:Selection_14
 │ └─Selection_14	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00.000000)
@@ -1817,7 +1817,7 @@ Union_9	10000.00	root
     └─IndexFullScan_25	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b < CAST('2009-04-03 00:00:01' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	9970.00	root	
 ├─IndexReader_15	3323.33	root	index:Selection_14
 │ └─Selection_14	3323.33	cop[tikv]	lt(test.t1.b, 2009-04-03 00:00:01)
@@ -1830,7 +1830,7 @@ Union_9	9970.00	root
     └─IndexFullScan_25	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b <= CAST('2009-04-03 00:00:01' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	9970.00	root	
 ├─IndexReader_15	3323.33	root	index:Selection_14
 │ └─Selection_14	3323.33	cop[tikv]	le(test.t1.b, 2009-04-03 00:00:01)
@@ -1843,13 +1843,13 @@ Union_9	9970.00	root
     └─IndexFullScan_25	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b = CAST('2009-04-03 00:00:01' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 IndexReader_11	0.00	root	index:Selection_10
 └─Selection_10	0.00	cop[tikv]	eq(test.t1.b, 2009-04-03 00:00:01)
   └─IndexFullScan_9	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b >= CAST('2009-04-03 00:00:01' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	10000.00	root	
 ├─IndexReader_15	3333.33	root	index:Selection_14
 │ └─Selection_14	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:01)
@@ -1862,7 +1862,7 @@ Union_9	10000.00	root
     └─IndexFullScan_25	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b > CAST('2009-04-03 00:00:01' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	10000.00	root	
 ├─IndexReader_15	3333.33	root	index:Selection_14
 │ └─Selection_14	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:01)
@@ -1875,7 +1875,7 @@ Union_9	10000.00	root
     └─IndexFullScan_25	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b < CAST('2009-04-02 23:59:58' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_8	6646.67	root	
 ├─IndexReader_14	3323.33	root	index:Selection_13
 │ └─Selection_13	3323.33	cop[tikv]	lt(test.t1.b, 2009-04-02 23:59:58)
@@ -1885,7 +1885,7 @@ Union_8	6646.67	root
     └─IndexFullScan_18	10000.00	cop[tikv]	table:t1, partition:p20090402, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b <= CAST('2009-04-02 23:59:58' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_8	6646.67	root	
 ├─IndexReader_14	3323.33	root	index:Selection_13
 │ └─Selection_13	3323.33	cop[tikv]	le(test.t1.b, 2009-04-02 23:59:58)
@@ -1895,13 +1895,13 @@ Union_8	6646.67	root
     └─IndexFullScan_18	10000.00	cop[tikv]	table:t1, partition:p20090402, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b = CAST('2009-04-02 23:59:58' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 IndexReader_11	0.00	root	index:Selection_10
 └─Selection_10	0.00	cop[tikv]	eq(test.t1.b, 2009-04-02 23:59:58)
   └─IndexFullScan_9	10000.00	cop[tikv]	table:t1, partition:p20090402, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b >= CAST('2009-04-02 23:59:58' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_10	13333.33	root	
 ├─IndexReader_16	3333.33	root	index:Selection_15
 │ └─Selection_15	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:58)
@@ -1917,7 +1917,7 @@ Union_10	13333.33	root
     └─IndexFullScan_32	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b > CAST('2009-04-02 23:59:58' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_10	13333.33	root	
 ├─IndexReader_16	3333.33	root	index:Selection_15
 │ └─Selection_15	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:58)
@@ -1947,7 +1947,7 @@ INSERT INTO t1 VALUES (1, '2009-01-01'), (1, '2009-04-01'), (2, '2009-04-01'),
 (1, '2009-04-03'), (2, '2009-04-03'), (1, '2009-04-04'), (2, '2009-04-04'),
 (1, '2009-04-05'), (1, '2009-04-06'), (1, '2009-04-07');
 EXPLAIN SELECT * FROM t1 WHERE b < CAST('2009-04-03' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	9970.00	root	
 ├─TableReader_12	3323.33	root	data:Selection_11
 │ └─Selection_11	3323.33	cop[tikv]	lt(test.t1.b, 2009-04-03 00:00:00)
@@ -1959,7 +1959,7 @@ Union_9	9970.00	root
   └─Selection_17	3323.33	cop[tikv]	lt(test.t1.b, 2009-04-03 00:00:00)
     └─TableFullScan_16	10000.00	cop[tikv]	table:t1, partition:p20090403, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b <= CAST('2009-04-03' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	9970.00	root	
 ├─TableReader_12	3323.33	root	data:Selection_11
 │ └─Selection_11	3323.33	cop[tikv]	le(test.t1.b, 2009-04-03 00:00:00)
@@ -1971,12 +1971,12 @@ Union_9	9970.00	root
   └─Selection_17	3323.33	cop[tikv]	le(test.t1.b, 2009-04-03 00:00:00)
     └─TableFullScan_16	10000.00	cop[tikv]	table:t1, partition:p20090403, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b = CAST('2009-04-03' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 TableReader_8	10.00	root	data:Selection_7
 └─Selection_7	10.00	cop[tikv]	eq(test.t1.b, 2009-04-03 00:00:00)
   └─TableFullScan_6	10000.00	cop[tikv]	table:t1, partition:p20090403, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b >= CAST('2009-04-03' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	10000.00	root	
 ├─TableReader_12	3333.33	root	data:Selection_11
 │ └─Selection_11	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00)
@@ -1988,7 +1988,7 @@ Union_9	10000.00	root
   └─Selection_17	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00)
     └─TableFullScan_16	10000.00	cop[tikv]	table:t1, partition:p20090405, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b > CAST('2009-04-03' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	10000.00	root	
 ├─TableReader_12	3333.33	root	data:Selection_11
 │ └─Selection_11	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00)
@@ -2001,7 +2001,7 @@ Union_9	10000.00	root
     └─TableFullScan_16	10000.00	cop[tikv]	table:t1, partition:p20090405, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b < CAST('2009-04-02 23:59:59' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_8	6646.67	root	
 ├─TableReader_11	3323.33	root	data:Selection_10
 │ └─Selection_10	3323.33	cop[tikv]	lt(test.t1.b, 2009-04-02 23:59:59)
@@ -2011,7 +2011,7 @@ Union_8	6646.67	root
     └─TableFullScan_12	10000.00	cop[tikv]	table:t1, partition:p20090402, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b <= CAST('2009-04-02 23:59:59' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_8	6646.67	root	
 ├─TableReader_11	3323.33	root	data:Selection_10
 │ └─Selection_10	3323.33	cop[tikv]	le(test.t1.b, 2009-04-02 23:59:59)
@@ -2021,13 +2021,13 @@ Union_8	6646.67	root
     └─TableFullScan_12	10000.00	cop[tikv]	table:t1, partition:p20090402, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b = CAST('2009-04-02 23:59:59' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 TableReader_8	10.00	root	data:Selection_7
 └─Selection_7	10.00	cop[tikv]	eq(test.t1.b, 2009-04-02 23:59:59)
   └─TableFullScan_6	10000.00	cop[tikv]	table:t1, partition:p20090402, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b >= CAST('2009-04-02 23:59:59' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_10	13333.33	root	
 ├─TableReader_13	3333.33	root	data:Selection_12
 │ └─Selection_12	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59)
@@ -2043,7 +2043,7 @@ Union_10	13333.33	root
     └─TableFullScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b > CAST('2009-04-02 23:59:59' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_10	13333.33	root	
 ├─TableReader_13	3333.33	root	data:Selection_12
 │ └─Selection_12	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59)
@@ -2058,7 +2058,7 @@ Union_10	13333.33	root
   └─Selection_21	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59)
     └─TableFullScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b < CAST('2009-04-03' AS DATE);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	9970.00	root	
 ├─TableReader_12	3323.33	root	data:Selection_11
 │ └─Selection_11	3323.33	cop[tikv]	lt(test.t1.b, 2009-04-03)
@@ -2070,7 +2070,7 @@ Union_9	9970.00	root
   └─Selection_17	3323.33	cop[tikv]	lt(test.t1.b, 2009-04-03)
     └─TableFullScan_16	10000.00	cop[tikv]	table:t1, partition:p20090403, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b <= CAST('2009-04-03' AS DATE);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	9970.00	root	
 ├─TableReader_12	3323.33	root	data:Selection_11
 │ └─Selection_11	3323.33	cop[tikv]	le(test.t1.b, 2009-04-03)
@@ -2082,12 +2082,12 @@ Union_9	9970.00	root
   └─Selection_17	3323.33	cop[tikv]	le(test.t1.b, 2009-04-03)
     └─TableFullScan_16	10000.00	cop[tikv]	table:t1, partition:p20090403, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b = CAST('2009-04-03' AS DATE);
-id	count	task	operator info
+id	estRows	task	operator info
 TableReader_8	10.00	root	data:Selection_7
 └─Selection_7	10.00	cop[tikv]	eq(test.t1.b, 2009-04-03)
   └─TableFullScan_6	10000.00	cop[tikv]	table:t1, partition:p20090403, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b >= CAST('2009-04-03' AS DATE);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	10000.00	root	
 ├─TableReader_12	3333.33	root	data:Selection_11
 │ └─Selection_11	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03)
@@ -2099,7 +2099,7 @@ Union_9	10000.00	root
   └─Selection_17	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03)
     └─TableFullScan_16	10000.00	cop[tikv]	table:t1, partition:p20090405, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b > CAST('2009-04-03' AS DATE);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	10000.00	root	
 ├─TableReader_12	3333.33	root	data:Selection_11
 │ └─Selection_11	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03)
@@ -2111,7 +2111,7 @@ Union_9	10000.00	root
   └─Selection_17	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03)
     └─TableFullScan_16	10000.00	cop[tikv]	table:t1, partition:p20090405, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b < '2009-04-03 00:00:00';
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	9970.00	root	
 ├─TableReader_12	3323.33	root	data:Selection_11
 │ └─Selection_11	3323.33	cop[tikv]	lt(test.t1.b, 2009-04-03 00:00:00.000000)
@@ -2123,7 +2123,7 @@ Union_9	9970.00	root
   └─Selection_17	3323.33	cop[tikv]	lt(test.t1.b, 2009-04-03 00:00:00.000000)
     └─TableFullScan_16	10000.00	cop[tikv]	table:t1, partition:p20090403, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b <= '2009-04-03 00:00:00';
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	9970.00	root	
 ├─TableReader_12	3323.33	root	data:Selection_11
 │ └─Selection_11	3323.33	cop[tikv]	le(test.t1.b, 2009-04-03 00:00:00.000000)
@@ -2135,12 +2135,12 @@ Union_9	9970.00	root
   └─Selection_17	3323.33	cop[tikv]	le(test.t1.b, 2009-04-03 00:00:00.000000)
     └─TableFullScan_16	10000.00	cop[tikv]	table:t1, partition:p20090403, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b = '2009-04-03 00:00:00';
-id	count	task	operator info
+id	estRows	task	operator info
 TableReader_8	10.00	root	data:Selection_7
 └─Selection_7	10.00	cop[tikv]	eq(test.t1.b, 2009-04-03 00:00:00.000000)
   └─TableFullScan_6	10000.00	cop[tikv]	table:t1, partition:p20090403, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b >= '2009-04-03 00:00:00';
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	10000.00	root	
 ├─TableReader_12	3333.33	root	data:Selection_11
 │ └─Selection_11	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00.000000)
@@ -2152,7 +2152,7 @@ Union_9	10000.00	root
   └─Selection_17	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00.000000)
     └─TableFullScan_16	10000.00	cop[tikv]	table:t1, partition:p20090405, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b > '2009-04-03 00:00:00';
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	10000.00	root	
 ├─TableReader_12	3333.33	root	data:Selection_11
 │ └─Selection_11	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00.000000)
@@ -2164,7 +2164,7 @@ Union_9	10000.00	root
   └─Selection_17	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00.000000)
     └─TableFullScan_16	10000.00	cop[tikv]	table:t1, partition:p20090405, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b < '2009-04-02 23:59:59';
-id	count	task	operator info
+id	estRows	task	operator info
 Union_8	6646.67	root	
 ├─TableReader_11	3323.33	root	data:Selection_10
 │ └─Selection_10	3323.33	cop[tikv]	lt(test.t1.b, 2009-04-02 23:59:59.000000)
@@ -2173,7 +2173,7 @@ Union_8	6646.67	root
   └─Selection_13	3323.33	cop[tikv]	lt(test.t1.b, 2009-04-02 23:59:59.000000)
     └─TableFullScan_12	10000.00	cop[tikv]	table:t1, partition:p20090402, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b <= '2009-04-02 23:59:59';
-id	count	task	operator info
+id	estRows	task	operator info
 Union_8	6646.67	root	
 ├─TableReader_11	3323.33	root	data:Selection_10
 │ └─Selection_10	3323.33	cop[tikv]	le(test.t1.b, 2009-04-02 23:59:59.000000)
@@ -2182,12 +2182,12 @@ Union_8	6646.67	root
   └─Selection_13	3323.33	cop[tikv]	le(test.t1.b, 2009-04-02 23:59:59.000000)
     └─TableFullScan_12	10000.00	cop[tikv]	table:t1, partition:p20090402, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b = '2009-04-02 23:59:59';
-id	count	task	operator info
+id	estRows	task	operator info
 TableReader_8	10.00	root	data:Selection_7
 └─Selection_7	10.00	cop[tikv]	eq(test.t1.b, 2009-04-02 23:59:59.000000)
   └─TableFullScan_6	10000.00	cop[tikv]	table:t1, partition:p20090402, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b >= '2009-04-02 23:59:59';
-id	count	task	operator info
+id	estRows	task	operator info
 Union_10	13333.33	root	
 ├─TableReader_13	3333.33	root	data:Selection_12
 │ └─Selection_12	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59.000000)
@@ -2202,7 +2202,7 @@ Union_10	13333.33	root
   └─Selection_21	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59.000000)
     └─TableFullScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b > '2009-04-02 23:59:59';
-id	count	task	operator info
+id	estRows	task	operator info
 Union_10	13333.33	root	
 ├─TableReader_13	3333.33	root	data:Selection_12
 │ └─Selection_12	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59.000000)
@@ -2217,7 +2217,7 @@ Union_10	13333.33	root
   └─Selection_21	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59.000000)
     └─TableFullScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b < '2009-04-03';
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	9970.00	root	
 ├─TableReader_12	3323.33	root	data:Selection_11
 │ └─Selection_11	3323.33	cop[tikv]	lt(test.t1.b, 2009-04-03 00:00:00.000000)
@@ -2229,7 +2229,7 @@ Union_9	9970.00	root
   └─Selection_17	3323.33	cop[tikv]	lt(test.t1.b, 2009-04-03 00:00:00.000000)
     └─TableFullScan_16	10000.00	cop[tikv]	table:t1, partition:p20090403, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b <= '2009-04-03';
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	9970.00	root	
 ├─TableReader_12	3323.33	root	data:Selection_11
 │ └─Selection_11	3323.33	cop[tikv]	le(test.t1.b, 2009-04-03 00:00:00.000000)
@@ -2241,12 +2241,12 @@ Union_9	9970.00	root
   └─Selection_17	3323.33	cop[tikv]	le(test.t1.b, 2009-04-03 00:00:00.000000)
     └─TableFullScan_16	10000.00	cop[tikv]	table:t1, partition:p20090403, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b = '2009-04-03';
-id	count	task	operator info
+id	estRows	task	operator info
 TableReader_8	10.00	root	data:Selection_7
 └─Selection_7	10.00	cop[tikv]	eq(test.t1.b, 2009-04-03 00:00:00.000000)
   └─TableFullScan_6	10000.00	cop[tikv]	table:t1, partition:p20090403, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b >= '2009-04-03';
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	10000.00	root	
 ├─TableReader_12	3333.33	root	data:Selection_11
 │ └─Selection_11	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00.000000)
@@ -2258,7 +2258,7 @@ Union_9	10000.00	root
   └─Selection_17	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00.000000)
     └─TableFullScan_16	10000.00	cop[tikv]	table:t1, partition:p20090405, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b > '2009-04-03';
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	10000.00	root	
 ├─TableReader_12	3333.33	root	data:Selection_11
 │ └─Selection_11	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00.000000)
@@ -2271,7 +2271,7 @@ Union_9	10000.00	root
     └─TableFullScan_16	10000.00	cop[tikv]	table:t1, partition:p20090405, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b < CAST('2009-04-03 00:00:01' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	9970.00	root	
 ├─TableReader_12	3323.33	root	data:Selection_11
 │ └─Selection_11	3323.33	cop[tikv]	lt(test.t1.b, 2009-04-03 00:00:01)
@@ -2284,7 +2284,7 @@ Union_9	9970.00	root
     └─TableFullScan_16	10000.00	cop[tikv]	table:t1, partition:p20090403, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b <= CAST('2009-04-03 00:00:01' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	9970.00	root	
 ├─TableReader_12	3323.33	root	data:Selection_11
 │ └─Selection_11	3323.33	cop[tikv]	le(test.t1.b, 2009-04-03 00:00:01)
@@ -2297,13 +2297,13 @@ Union_9	9970.00	root
     └─TableFullScan_16	10000.00	cop[tikv]	table:t1, partition:p20090403, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b = CAST('2009-04-03 00:00:01' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 TableReader_8	10.00	root	data:Selection_7
 └─Selection_7	10.00	cop[tikv]	eq(test.t1.b, 2009-04-03 00:00:01)
   └─TableFullScan_6	10000.00	cop[tikv]	table:t1, partition:p20090403, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b >= CAST('2009-04-03 00:00:01' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	10000.00	root	
 ├─TableReader_12	3333.33	root	data:Selection_11
 │ └─Selection_11	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:01)
@@ -2316,7 +2316,7 @@ Union_9	10000.00	root
     └─TableFullScan_16	10000.00	cop[tikv]	table:t1, partition:p20090405, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b > CAST('2009-04-03 00:00:01' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	10000.00	root	
 ├─TableReader_12	3333.33	root	data:Selection_11
 │ └─Selection_11	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:01)
@@ -2329,7 +2329,7 @@ Union_9	10000.00	root
     └─TableFullScan_16	10000.00	cop[tikv]	table:t1, partition:p20090405, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b < CAST('2009-04-02 23:59:58' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_8	6646.67	root	
 ├─TableReader_11	3323.33	root	data:Selection_10
 │ └─Selection_10	3323.33	cop[tikv]	lt(test.t1.b, 2009-04-02 23:59:58)
@@ -2339,7 +2339,7 @@ Union_8	6646.67	root
     └─TableFullScan_12	10000.00	cop[tikv]	table:t1, partition:p20090402, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b <= CAST('2009-04-02 23:59:58' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_8	6646.67	root	
 ├─TableReader_11	3323.33	root	data:Selection_10
 │ └─Selection_10	3323.33	cop[tikv]	le(test.t1.b, 2009-04-02 23:59:58)
@@ -2349,13 +2349,13 @@ Union_8	6646.67	root
     └─TableFullScan_12	10000.00	cop[tikv]	table:t1, partition:p20090402, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b = CAST('2009-04-02 23:59:58' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 TableReader_8	10.00	root	data:Selection_7
 └─Selection_7	10.00	cop[tikv]	eq(test.t1.b, 2009-04-02 23:59:58)
   └─TableFullScan_6	10000.00	cop[tikv]	table:t1, partition:p20090402, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b >= CAST('2009-04-02 23:59:58' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_10	13333.33	root	
 ├─TableReader_13	3333.33	root	data:Selection_12
 │ └─Selection_12	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:58)
@@ -2371,7 +2371,7 @@ Union_10	13333.33	root
     └─TableFullScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b > CAST('2009-04-02 23:59:58' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_10	13333.33	root	
 ├─TableReader_13	3333.33	root	data:Selection_12
 │ └─Selection_12	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:58)
@@ -2401,7 +2401,7 @@ INSERT INTO t1 VALUES (1, '2009-01-01'), (1, '2009-04-01'), (2, '2009-04-01'),
 (1, '2009-04-04'), (2, '2009-04-04'), (1, '2009-04-05'), (1, '2009-04-06'),
 (1, '2009-04-07');
 EXPLAIN SELECT * FROM t1 WHERE b < CAST('2009-04-03' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	9970.00	root	
 ├─TableReader_12	3323.33	root	data:Selection_11
 │ └─Selection_11	3323.33	cop[tikv]	lt(test.t1.b, 2009-04-03 00:00:00)
@@ -2413,7 +2413,7 @@ Union_9	9970.00	root
   └─Selection_17	3323.33	cop[tikv]	lt(test.t1.b, 2009-04-03 00:00:00)
     └─TableFullScan_16	10000.00	cop[tikv]	table:t1, partition:p20090403, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b <= CAST('2009-04-03' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	9970.00	root	
 ├─TableReader_12	3323.33	root	data:Selection_11
 │ └─Selection_11	3323.33	cop[tikv]	le(test.t1.b, 2009-04-03 00:00:00)
@@ -2425,12 +2425,12 @@ Union_9	9970.00	root
   └─Selection_17	3323.33	cop[tikv]	le(test.t1.b, 2009-04-03 00:00:00)
     └─TableFullScan_16	10000.00	cop[tikv]	table:t1, partition:p20090403, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b = CAST('2009-04-03' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 TableReader_8	10.00	root	data:Selection_7
 └─Selection_7	10.00	cop[tikv]	eq(test.t1.b, 2009-04-03 00:00:00)
   └─TableFullScan_6	10000.00	cop[tikv]	table:t1, partition:p20090403, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b >= CAST('2009-04-03' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	10000.00	root	
 ├─TableReader_12	3333.33	root	data:Selection_11
 │ └─Selection_11	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00)
@@ -2442,7 +2442,7 @@ Union_9	10000.00	root
   └─Selection_17	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00)
     └─TableFullScan_16	10000.00	cop[tikv]	table:t1, partition:p20090405, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b > CAST('2009-04-03' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	10000.00	root	
 ├─TableReader_12	3333.33	root	data:Selection_11
 │ └─Selection_11	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00)
@@ -2455,7 +2455,7 @@ Union_9	10000.00	root
     └─TableFullScan_16	10000.00	cop[tikv]	table:t1, partition:p20090405, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b < CAST('2009-04-02 23:59:59' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_8	6646.67	root	
 ├─TableReader_11	3323.33	root	data:Selection_10
 │ └─Selection_10	3323.33	cop[tikv]	lt(test.t1.b, 2009-04-02 23:59:59)
@@ -2465,7 +2465,7 @@ Union_8	6646.67	root
     └─TableFullScan_12	10000.00	cop[tikv]	table:t1, partition:p20090402, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b <= CAST('2009-04-02 23:59:59' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_8	6646.67	root	
 ├─TableReader_11	3323.33	root	data:Selection_10
 │ └─Selection_10	3323.33	cop[tikv]	le(test.t1.b, 2009-04-02 23:59:59)
@@ -2475,13 +2475,13 @@ Union_8	6646.67	root
     └─TableFullScan_12	10000.00	cop[tikv]	table:t1, partition:p20090402, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b = CAST('2009-04-02 23:59:59' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 TableReader_8	0.00	root	data:Selection_7
 └─Selection_7	0.00	cop[tikv]	eq(test.t1.b, 2009-04-02 23:59:59)
   └─TableFullScan_6	10000.00	cop[tikv]	table:t1, partition:p20090402, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b >= CAST('2009-04-02 23:59:59' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_10	13333.33	root	
 ├─TableReader_13	3333.33	root	data:Selection_12
 │ └─Selection_12	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59)
@@ -2497,7 +2497,7 @@ Union_10	13333.33	root
     └─TableFullScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b > CAST('2009-04-02 23:59:59' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_10	13333.33	root	
 ├─TableReader_13	3333.33	root	data:Selection_12
 │ └─Selection_12	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59)
@@ -2512,7 +2512,7 @@ Union_10	13333.33	root
   └─Selection_21	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59)
     └─TableFullScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b < CAST('2009-04-03' AS DATE);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	9970.00	root	
 ├─TableReader_12	3323.33	root	data:Selection_11
 │ └─Selection_11	3323.33	cop[tikv]	lt(test.t1.b, 2009-04-03)
@@ -2524,7 +2524,7 @@ Union_9	9970.00	root
   └─Selection_17	3323.33	cop[tikv]	lt(test.t1.b, 2009-04-03)
     └─TableFullScan_16	10000.00	cop[tikv]	table:t1, partition:p20090403, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b <= CAST('2009-04-03' AS DATE);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	9970.00	root	
 ├─TableReader_12	3323.33	root	data:Selection_11
 │ └─Selection_11	3323.33	cop[tikv]	le(test.t1.b, 2009-04-03)
@@ -2536,12 +2536,12 @@ Union_9	9970.00	root
   └─Selection_17	3323.33	cop[tikv]	le(test.t1.b, 2009-04-03)
     └─TableFullScan_16	10000.00	cop[tikv]	table:t1, partition:p20090403, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b = CAST('2009-04-03' AS DATE);
-id	count	task	operator info
+id	estRows	task	operator info
 TableReader_8	10.00	root	data:Selection_7
 └─Selection_7	10.00	cop[tikv]	eq(test.t1.b, 2009-04-03)
   └─TableFullScan_6	10000.00	cop[tikv]	table:t1, partition:p20090403, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b >= CAST('2009-04-03' AS DATE);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	10000.00	root	
 ├─TableReader_12	3333.33	root	data:Selection_11
 │ └─Selection_11	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03)
@@ -2553,7 +2553,7 @@ Union_9	10000.00	root
   └─Selection_17	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03)
     └─TableFullScan_16	10000.00	cop[tikv]	table:t1, partition:p20090405, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b > CAST('2009-04-03' AS DATE);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	10000.00	root	
 ├─TableReader_12	3333.33	root	data:Selection_11
 │ └─Selection_11	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03)
@@ -2565,7 +2565,7 @@ Union_9	10000.00	root
   └─Selection_17	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03)
     └─TableFullScan_16	10000.00	cop[tikv]	table:t1, partition:p20090405, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b < '2009-04-03 00:00:00';
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	9970.00	root	
 ├─TableReader_12	3323.33	root	data:Selection_11
 │ └─Selection_11	3323.33	cop[tikv]	lt(test.t1.b, 2009-04-03 00:00:00.000000)
@@ -2577,7 +2577,7 @@ Union_9	9970.00	root
   └─Selection_17	3323.33	cop[tikv]	lt(test.t1.b, 2009-04-03 00:00:00.000000)
     └─TableFullScan_16	10000.00	cop[tikv]	table:t1, partition:p20090403, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b <= '2009-04-03 00:00:00';
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	9970.00	root	
 ├─TableReader_12	3323.33	root	data:Selection_11
 │ └─Selection_11	3323.33	cop[tikv]	le(test.t1.b, 2009-04-03 00:00:00.000000)
@@ -2589,12 +2589,12 @@ Union_9	9970.00	root
   └─Selection_17	3323.33	cop[tikv]	le(test.t1.b, 2009-04-03 00:00:00.000000)
     └─TableFullScan_16	10000.00	cop[tikv]	table:t1, partition:p20090403, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b = '2009-04-03 00:00:00';
-id	count	task	operator info
+id	estRows	task	operator info
 TableReader_8	10.00	root	data:Selection_7
 └─Selection_7	10.00	cop[tikv]	eq(test.t1.b, 2009-04-03 00:00:00.000000)
   └─TableFullScan_6	10000.00	cop[tikv]	table:t1, partition:p20090403, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b >= '2009-04-03 00:00:00';
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	10000.00	root	
 ├─TableReader_12	3333.33	root	data:Selection_11
 │ └─Selection_11	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00.000000)
@@ -2606,7 +2606,7 @@ Union_9	10000.00	root
   └─Selection_17	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00.000000)
     └─TableFullScan_16	10000.00	cop[tikv]	table:t1, partition:p20090405, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b > '2009-04-03 00:00:00';
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	10000.00	root	
 ├─TableReader_12	3333.33	root	data:Selection_11
 │ └─Selection_11	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00.000000)
@@ -2618,7 +2618,7 @@ Union_9	10000.00	root
   └─Selection_17	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00.000000)
     └─TableFullScan_16	10000.00	cop[tikv]	table:t1, partition:p20090405, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b < '2009-04-02 23:59:59';
-id	count	task	operator info
+id	estRows	task	operator info
 Union_8	6646.67	root	
 ├─TableReader_11	3323.33	root	data:Selection_10
 │ └─Selection_10	3323.33	cop[tikv]	lt(test.t1.b, 2009-04-02 23:59:59.000000)
@@ -2627,7 +2627,7 @@ Union_8	6646.67	root
   └─Selection_13	3323.33	cop[tikv]	lt(test.t1.b, 2009-04-02 23:59:59.000000)
     └─TableFullScan_12	10000.00	cop[tikv]	table:t1, partition:p20090402, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b <= '2009-04-02 23:59:59';
-id	count	task	operator info
+id	estRows	task	operator info
 Union_8	6646.67	root	
 ├─TableReader_11	3323.33	root	data:Selection_10
 │ └─Selection_10	3323.33	cop[tikv]	le(test.t1.b, 2009-04-02 23:59:59.000000)
@@ -2636,12 +2636,12 @@ Union_8	6646.67	root
   └─Selection_13	3323.33	cop[tikv]	le(test.t1.b, 2009-04-02 23:59:59.000000)
     └─TableFullScan_12	10000.00	cop[tikv]	table:t1, partition:p20090402, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b = '2009-04-02 23:59:59';
-id	count	task	operator info
+id	estRows	task	operator info
 TableReader_8	0.00	root	data:Selection_7
 └─Selection_7	0.00	cop[tikv]	eq(test.t1.b, 2009-04-02 23:59:59.000000)
   └─TableFullScan_6	10000.00	cop[tikv]	table:t1, partition:p20090402, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b >= '2009-04-02 23:59:59';
-id	count	task	operator info
+id	estRows	task	operator info
 Union_10	13333.33	root	
 ├─TableReader_13	3333.33	root	data:Selection_12
 │ └─Selection_12	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59.000000)
@@ -2656,7 +2656,7 @@ Union_10	13333.33	root
   └─Selection_21	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59.000000)
     └─TableFullScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b > '2009-04-02 23:59:59';
-id	count	task	operator info
+id	estRows	task	operator info
 Union_10	13333.33	root	
 ├─TableReader_13	3333.33	root	data:Selection_12
 │ └─Selection_12	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59.000000)
@@ -2671,7 +2671,7 @@ Union_10	13333.33	root
   └─Selection_21	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59.000000)
     └─TableFullScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b < '2009-04-03';
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	9970.00	root	
 ├─TableReader_12	3323.33	root	data:Selection_11
 │ └─Selection_11	3323.33	cop[tikv]	lt(test.t1.b, 2009-04-03 00:00:00.000000)
@@ -2683,7 +2683,7 @@ Union_9	9970.00	root
   └─Selection_17	3323.33	cop[tikv]	lt(test.t1.b, 2009-04-03 00:00:00.000000)
     └─TableFullScan_16	10000.00	cop[tikv]	table:t1, partition:p20090403, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b <= '2009-04-03';
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	9970.00	root	
 ├─TableReader_12	3323.33	root	data:Selection_11
 │ └─Selection_11	3323.33	cop[tikv]	le(test.t1.b, 2009-04-03 00:00:00.000000)
@@ -2695,12 +2695,12 @@ Union_9	9970.00	root
   └─Selection_17	3323.33	cop[tikv]	le(test.t1.b, 2009-04-03 00:00:00.000000)
     └─TableFullScan_16	10000.00	cop[tikv]	table:t1, partition:p20090403, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b = '2009-04-03';
-id	count	task	operator info
+id	estRows	task	operator info
 TableReader_8	10.00	root	data:Selection_7
 └─Selection_7	10.00	cop[tikv]	eq(test.t1.b, 2009-04-03 00:00:00.000000)
   └─TableFullScan_6	10000.00	cop[tikv]	table:t1, partition:p20090403, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b >= '2009-04-03';
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	10000.00	root	
 ├─TableReader_12	3333.33	root	data:Selection_11
 │ └─Selection_11	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00.000000)
@@ -2712,7 +2712,7 @@ Union_9	10000.00	root
   └─Selection_17	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00.000000)
     └─TableFullScan_16	10000.00	cop[tikv]	table:t1, partition:p20090405, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b > '2009-04-03';
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	10000.00	root	
 ├─TableReader_12	3333.33	root	data:Selection_11
 │ └─Selection_11	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00.000000)
@@ -2725,7 +2725,7 @@ Union_9	10000.00	root
     └─TableFullScan_16	10000.00	cop[tikv]	table:t1, partition:p20090405, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b < CAST('2009-04-03 00:00:01' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	9970.00	root	
 ├─TableReader_12	3323.33	root	data:Selection_11
 │ └─Selection_11	3323.33	cop[tikv]	lt(test.t1.b, 2009-04-03 00:00:01)
@@ -2738,7 +2738,7 @@ Union_9	9970.00	root
     └─TableFullScan_16	10000.00	cop[tikv]	table:t1, partition:p20090403, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b <= CAST('2009-04-03 00:00:01' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	9970.00	root	
 ├─TableReader_12	3323.33	root	data:Selection_11
 │ └─Selection_11	3323.33	cop[tikv]	le(test.t1.b, 2009-04-03 00:00:01)
@@ -2751,13 +2751,13 @@ Union_9	9970.00	root
     └─TableFullScan_16	10000.00	cop[tikv]	table:t1, partition:p20090403, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b = CAST('2009-04-03 00:00:01' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 TableReader_8	0.00	root	data:Selection_7
 └─Selection_7	0.00	cop[tikv]	eq(test.t1.b, 2009-04-03 00:00:01)
   └─TableFullScan_6	10000.00	cop[tikv]	table:t1, partition:p20090403, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b >= CAST('2009-04-03 00:00:01' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	10000.00	root	
 ├─TableReader_12	3333.33	root	data:Selection_11
 │ └─Selection_11	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:01)
@@ -2770,7 +2770,7 @@ Union_9	10000.00	root
     └─TableFullScan_16	10000.00	cop[tikv]	table:t1, partition:p20090405, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b > CAST('2009-04-03 00:00:01' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	10000.00	root	
 ├─TableReader_12	3333.33	root	data:Selection_11
 │ └─Selection_11	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:01)
@@ -2783,7 +2783,7 @@ Union_9	10000.00	root
     └─TableFullScan_16	10000.00	cop[tikv]	table:t1, partition:p20090405, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b < CAST('2009-04-02 23:59:58' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_8	6646.67	root	
 ├─TableReader_11	3323.33	root	data:Selection_10
 │ └─Selection_10	3323.33	cop[tikv]	lt(test.t1.b, 2009-04-02 23:59:58)
@@ -2793,7 +2793,7 @@ Union_8	6646.67	root
     └─TableFullScan_12	10000.00	cop[tikv]	table:t1, partition:p20090402, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b <= CAST('2009-04-02 23:59:58' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_8	6646.67	root	
 ├─TableReader_11	3323.33	root	data:Selection_10
 │ └─Selection_10	3323.33	cop[tikv]	le(test.t1.b, 2009-04-02 23:59:58)
@@ -2803,13 +2803,13 @@ Union_8	6646.67	root
     └─TableFullScan_12	10000.00	cop[tikv]	table:t1, partition:p20090402, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b = CAST('2009-04-02 23:59:58' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 TableReader_8	0.00	root	data:Selection_7
 └─Selection_7	0.00	cop[tikv]	eq(test.t1.b, 2009-04-02 23:59:58)
   └─TableFullScan_6	10000.00	cop[tikv]	table:t1, partition:p20090402, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b >= CAST('2009-04-02 23:59:58' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_10	13333.33	root	
 ├─TableReader_13	3333.33	root	data:Selection_12
 │ └─Selection_12	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:58)
@@ -2825,7 +2825,7 @@ Union_10	13333.33	root
     └─TableFullScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b > CAST('2009-04-02 23:59:58' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_10	13333.33	root	
 ├─TableReader_13	3333.33	root	data:Selection_12
 │ └─Selection_12	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:58)
@@ -2853,7 +2853,7 @@ PARTITION p20090405 VALUES LESS THAN MAXVALUE);
 INSERT INTO t1 VALUES (1, '2009-01-01'), (2, NULL);
 # test with an invalid date, which lead to item->null_value is set.
 EXPLAIN SELECT * FROM t1 WHERE b < CAST('2009-04-99' AS DATETIME);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_11	0.00	root	
 ├─TableReader_14	0.00	root	data:Selection_13
 │ └─Selection_13	0.00	cop[tikv]	lt(test.t1.b, NULL)
@@ -2892,7 +2892,7 @@ partition p1 values less than (20)
 );
 insert into t3 values (5),(15);
 explain select * from t3 where a=11;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_8	20.00	root	
 ├─TableReader_11	10.00	root	data:Selection_10
 │ └─Selection_10	10.00	cop[tikv]	eq(test.t3.a, 11)
@@ -2901,7 +2901,7 @@ Union_8	20.00	root
   └─Selection_13	10.00	cop[tikv]	eq(test.t3.a, 11)
     └─TableFullScan_12	10000.00	cop[tikv]	table:t3, partition:p1, keep order:false, stats:pseudo
 explain select * from t3 where a=10;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_8	20.00	root	
 ├─TableReader_11	10.00	root	data:Selection_10
 │ └─Selection_10	10.00	cop[tikv]	eq(test.t3.a, 10)
@@ -2910,7 +2910,7 @@ Union_8	20.00	root
   └─Selection_13	10.00	cop[tikv]	eq(test.t3.a, 10)
     └─TableFullScan_12	10000.00	cop[tikv]	table:t3, partition:p1, keep order:false, stats:pseudo
 explain select * from t3 where a=20;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_8	20.00	root	
 ├─TableReader_11	10.00	root	data:Selection_10
 │ └─Selection_10	10.00	cop[tikv]	eq(test.t3.a, 20)
@@ -2919,7 +2919,7 @@ Union_8	20.00	root
   └─Selection_13	10.00	cop[tikv]	eq(test.t3.a, 20)
     └─TableFullScan_12	10000.00	cop[tikv]	table:t3, partition:p1, keep order:false, stats:pseudo
 explain select * from t3 where a=30;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_8	20.00	root	
 ├─TableReader_11	10.00	root	data:Selection_10
 │ └─Selection_10	10.00	cop[tikv]	eq(test.t3.a, 30)
@@ -2936,27 +2936,27 @@ partition p90 values less than (90)
 );
 insert into t7 values (10),(30),(50);
 explain select * from t7 where a < 5;
-id	count	task	operator info
+id	estRows	task	operator info
 TableReader_8	3323.33	root	data:Selection_7
 └─Selection_7	3323.33	cop[tikv]	lt(test.t7.a, 5)
   └─TableFullScan_6	10000.00	cop[tikv]	table:t7, partition:p10, keep order:false, stats:pseudo
 explain select * from t7 where a < 9;
-id	count	task	operator info
+id	estRows	task	operator info
 TableReader_8	3323.33	root	data:Selection_7
 └─Selection_7	3323.33	cop[tikv]	lt(test.t7.a, 9)
   └─TableFullScan_6	10000.00	cop[tikv]	table:t7, partition:p10, keep order:false, stats:pseudo
 explain select * from t7 where a <= 9;
-id	count	task	operator info
+id	estRows	task	operator info
 TableReader_8	3323.33	root	data:Selection_7
 └─Selection_7	3323.33	cop[tikv]	le(test.t7.a, 9)
   └─TableFullScan_6	10000.00	cop[tikv]	table:t7, partition:p10, keep order:false, stats:pseudo
 explain select * from t7 where a = 9;
-id	count	task	operator info
+id	estRows	task	operator info
 TableReader_8	10.00	root	data:Selection_7
 └─Selection_7	10.00	cop[tikv]	eq(test.t7.a, 9)
   └─TableFullScan_6	10000.00	cop[tikv]	table:t7, partition:p10, keep order:false, stats:pseudo
 explain select * from t7 where a >= 9;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_11	16666.67	root	
 ├─TableReader_14	3333.33	root	data:Selection_13
 │ └─Selection_13	3333.33	cop[tikv]	ge(test.t7.a, 9)
@@ -2974,7 +2974,7 @@ Union_11	16666.67	root
   └─Selection_25	3333.33	cop[tikv]	ge(test.t7.a, 9)
     └─TableFullScan_24	10000.00	cop[tikv]	table:t7, partition:p90, keep order:false, stats:pseudo
 explain select * from t7 where a > 9;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_10	13333.33	root	
 ├─TableReader_13	3333.33	root	data:Selection_12
 │ └─Selection_12	3333.33	cop[tikv]	gt(test.t7.a, 9)
@@ -2989,12 +2989,12 @@ Union_10	13333.33	root
   └─Selection_21	3333.33	cop[tikv]	gt(test.t7.a, 9)
     └─TableFullScan_20	10000.00	cop[tikv]	table:t7, partition:p90, keep order:false, stats:pseudo
 explain select * from t7 where a < 10;
-id	count	task	operator info
+id	estRows	task	operator info
 TableReader_8	3323.33	root	data:Selection_7
 └─Selection_7	3323.33	cop[tikv]	lt(test.t7.a, 10)
   └─TableFullScan_6	10000.00	cop[tikv]	table:t7, partition:p10, keep order:false, stats:pseudo
 explain select * from t7 where a <= 10;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_8	6646.67	root	
 ├─TableReader_11	3323.33	root	data:Selection_10
 │ └─Selection_10	3323.33	cop[tikv]	le(test.t7.a, 10)
@@ -3003,12 +3003,12 @@ Union_8	6646.67	root
   └─Selection_13	3323.33	cop[tikv]	le(test.t7.a, 10)
     └─TableFullScan_12	10000.00	cop[tikv]	table:t7, partition:p30, keep order:false, stats:pseudo
 explain select * from t7 where a = 10;
-id	count	task	operator info
+id	estRows	task	operator info
 TableReader_8	10.00	root	data:Selection_7
 └─Selection_7	10.00	cop[tikv]	eq(test.t7.a, 10)
   └─TableFullScan_6	10000.00	cop[tikv]	table:t7, partition:p30, keep order:false, stats:pseudo
 explain select * from t7 where a >= 10;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_10	13333.33	root	
 ├─TableReader_13	3333.33	root	data:Selection_12
 │ └─Selection_12	3333.33	cop[tikv]	ge(test.t7.a, 10)
@@ -3023,7 +3023,7 @@ Union_10	13333.33	root
   └─Selection_21	3333.33	cop[tikv]	ge(test.t7.a, 10)
     └─TableFullScan_20	10000.00	cop[tikv]	table:t7, partition:p90, keep order:false, stats:pseudo
 explain select * from t7 where a > 10;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_10	13333.33	root	
 ├─TableReader_13	3333.33	root	data:Selection_12
 │ └─Selection_12	3333.33	cop[tikv]	gt(test.t7.a, 10)
@@ -3038,7 +3038,7 @@ Union_10	13333.33	root
   └─Selection_21	3333.33	cop[tikv]	gt(test.t7.a, 10)
     └─TableFullScan_20	10000.00	cop[tikv]	table:t7, partition:p90, keep order:false, stats:pseudo
 explain select * from t7 where a < 89;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_11	16616.67	root	
 ├─TableReader_14	3323.33	root	data:Selection_13
 │ └─Selection_13	3323.33	cop[tikv]	lt(test.t7.a, 89)
@@ -3056,7 +3056,7 @@ Union_11	16616.67	root
   └─Selection_25	3323.33	cop[tikv]	lt(test.t7.a, 89)
     └─TableFullScan_24	10000.00	cop[tikv]	table:t7, partition:p90, keep order:false, stats:pseudo
 explain select * from t7 where a <= 89;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_11	16616.67	root	
 ├─TableReader_14	3323.33	root	data:Selection_13
 │ └─Selection_13	3323.33	cop[tikv]	le(test.t7.a, 89)
@@ -3074,20 +3074,20 @@ Union_11	16616.67	root
   └─Selection_25	3323.33	cop[tikv]	le(test.t7.a, 89)
     └─TableFullScan_24	10000.00	cop[tikv]	table:t7, partition:p90, keep order:false, stats:pseudo
 explain select * from t7 where a = 89;
-id	count	task	operator info
+id	estRows	task	operator info
 TableReader_8	10.00	root	data:Selection_7
 └─Selection_7	10.00	cop[tikv]	eq(test.t7.a, 89)
   └─TableFullScan_6	10000.00	cop[tikv]	table:t7, partition:p90, keep order:false, stats:pseudo
 explain select * from t7 where a > 89;
-id	count	task	operator info
+id	estRows	task	operator info
 TableDual_6	0.00	root	rows:0
 explain select * from t7 where a >= 89;
-id	count	task	operator info
+id	estRows	task	operator info
 TableReader_8	3333.33	root	data:Selection_7
 └─Selection_7	3333.33	cop[tikv]	ge(test.t7.a, 89)
   └─TableFullScan_6	10000.00	cop[tikv]	table:t7, partition:p90, keep order:false, stats:pseudo
 explain select * from t7 where a < 90;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_11	16616.67	root	
 ├─TableReader_14	3323.33	root	data:Selection_13
 │ └─Selection_13	3323.33	cop[tikv]	lt(test.t7.a, 90)
@@ -3105,7 +3105,7 @@ Union_11	16616.67	root
   └─Selection_25	3323.33	cop[tikv]	lt(test.t7.a, 90)
     └─TableFullScan_24	10000.00	cop[tikv]	table:t7, partition:p90, keep order:false, stats:pseudo
 explain select * from t7 where a <= 90;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_11	16616.67	root	
 ├─TableReader_14	3323.33	root	data:Selection_13
 │ └─Selection_13	3323.33	cop[tikv]	le(test.t7.a, 90)
@@ -3123,19 +3123,19 @@ Union_11	16616.67	root
   └─Selection_25	3323.33	cop[tikv]	le(test.t7.a, 90)
     └─TableFullScan_24	10000.00	cop[tikv]	table:t7, partition:p90, keep order:false, stats:pseudo
 explain select * from t7 where a = 90;
-id	count	task	operator info
+id	estRows	task	operator info
 TableDual_6	0.00	root	rows:0
 explain select * from t7 where a > 90;
-id	count	task	operator info
+id	estRows	task	operator info
 TableDual_6	0.00	root	rows:0
 explain select * from t7 where a >= 90;
-id	count	task	operator info
+id	estRows	task	operator info
 TableDual_6	0.00	root	rows:0
 explain select * from t7 where a > 91;
-id	count	task	operator info
+id	estRows	task	operator info
 TableDual_6	0.00	root	rows:0
 explain select * from t7 where a > 11 and a < 29;
-id	count	task	operator info
+id	estRows	task	operator info
 TableReader_8	250.00	root	data:Selection_7
 └─Selection_7	250.00	cop[tikv]	gt(test.t7.a, 11), lt(test.t7.a, 29)
   └─TableFullScan_6	10000.00	cop[tikv]	table:t7, partition:p30, keep order:false, stats:pseudo
@@ -3149,27 +3149,27 @@ partition p90 values less than (90)
 );
 insert into t7 values (10),(30),(50);
 explain select * from t7 where a < 5;
-id	count	task	operator info
+id	estRows	task	operator info
 TableReader_8	3323.33	root	data:Selection_7
 └─Selection_7	3323.33	cop[tikv]	lt(test.t7.a, 5)
   └─TableFullScan_6	10000.00	cop[tikv]	table:t7, partition:p10, keep order:false, stats:pseudo
 explain select * from t7 where a < 9;
-id	count	task	operator info
+id	estRows	task	operator info
 TableReader_8	3323.33	root	data:Selection_7
 └─Selection_7	3323.33	cop[tikv]	lt(test.t7.a, 9)
   └─TableFullScan_6	10000.00	cop[tikv]	table:t7, partition:p10, keep order:false, stats:pseudo
 explain select * from t7 where a <= 9;
-id	count	task	operator info
+id	estRows	task	operator info
 TableReader_8	3323.33	root	data:Selection_7
 └─Selection_7	3323.33	cop[tikv]	le(test.t7.a, 9)
   └─TableFullScan_6	10000.00	cop[tikv]	table:t7, partition:p10, keep order:false, stats:pseudo
 explain select * from t7 where a = 9;
-id	count	task	operator info
+id	estRows	task	operator info
 TableReader_8	10.00	root	data:Selection_7
 └─Selection_7	10.00	cop[tikv]	eq(test.t7.a, 9)
   └─TableFullScan_6	10000.00	cop[tikv]	table:t7, partition:p10, keep order:false, stats:pseudo
 explain select * from t7 where a >= 9;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_11	16666.67	root	
 ├─TableReader_14	3333.33	root	data:Selection_13
 │ └─Selection_13	3333.33	cop[tikv]	ge(test.t7.a, 9)
@@ -3187,7 +3187,7 @@ Union_11	16666.67	root
   └─Selection_25	3333.33	cop[tikv]	ge(test.t7.a, 9)
     └─TableFullScan_24	10000.00	cop[tikv]	table:t7, partition:p90, keep order:false, stats:pseudo
 explain select * from t7 where a > 9;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_10	13333.33	root	
 ├─TableReader_13	3333.33	root	data:Selection_12
 │ └─Selection_12	3333.33	cop[tikv]	gt(test.t7.a, 9)
@@ -3202,12 +3202,12 @@ Union_10	13333.33	root
   └─Selection_21	3333.33	cop[tikv]	gt(test.t7.a, 9)
     └─TableFullScan_20	10000.00	cop[tikv]	table:t7, partition:p90, keep order:false, stats:pseudo
 explain select * from t7 where a < 10;
-id	count	task	operator info
+id	estRows	task	operator info
 TableReader_8	3323.33	root	data:Selection_7
 └─Selection_7	3323.33	cop[tikv]	lt(test.t7.a, 10)
   └─TableFullScan_6	10000.00	cop[tikv]	table:t7, partition:p10, keep order:false, stats:pseudo
 explain select * from t7 where a <= 10;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_8	6646.67	root	
 ├─TableReader_11	3323.33	root	data:Selection_10
 │ └─Selection_10	3323.33	cop[tikv]	le(test.t7.a, 10)
@@ -3216,12 +3216,12 @@ Union_8	6646.67	root
   └─Selection_13	3323.33	cop[tikv]	le(test.t7.a, 10)
     └─TableFullScan_12	10000.00	cop[tikv]	table:t7, partition:p30, keep order:false, stats:pseudo
 explain select * from t7 where a = 10;
-id	count	task	operator info
+id	estRows	task	operator info
 TableReader_8	10.00	root	data:Selection_7
 └─Selection_7	10.00	cop[tikv]	eq(test.t7.a, 10)
   └─TableFullScan_6	10000.00	cop[tikv]	table:t7, partition:p30, keep order:false, stats:pseudo
 explain select * from t7 where a >= 10;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_10	13333.33	root	
 ├─TableReader_13	3333.33	root	data:Selection_12
 │ └─Selection_12	3333.33	cop[tikv]	ge(test.t7.a, 10)
@@ -3236,7 +3236,7 @@ Union_10	13333.33	root
   └─Selection_21	3333.33	cop[tikv]	ge(test.t7.a, 10)
     └─TableFullScan_20	10000.00	cop[tikv]	table:t7, partition:p90, keep order:false, stats:pseudo
 explain select * from t7 where a > 10;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_10	13333.33	root	
 ├─TableReader_13	3333.33	root	data:Selection_12
 │ └─Selection_12	3333.33	cop[tikv]	gt(test.t7.a, 10)
@@ -3251,7 +3251,7 @@ Union_10	13333.33	root
   └─Selection_21	3333.33	cop[tikv]	gt(test.t7.a, 10)
     └─TableFullScan_20	10000.00	cop[tikv]	table:t7, partition:p90, keep order:false, stats:pseudo
 explain select * from t7 where a < 89;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_11	16616.67	root	
 ├─TableReader_14	3323.33	root	data:Selection_13
 │ └─Selection_13	3323.33	cop[tikv]	lt(test.t7.a, 89)
@@ -3269,7 +3269,7 @@ Union_11	16616.67	root
   └─Selection_25	3323.33	cop[tikv]	lt(test.t7.a, 89)
     └─TableFullScan_24	10000.00	cop[tikv]	table:t7, partition:p90, keep order:false, stats:pseudo
 explain select * from t7 where a <= 89;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_11	16616.67	root	
 ├─TableReader_14	3323.33	root	data:Selection_13
 │ └─Selection_13	3323.33	cop[tikv]	le(test.t7.a, 89)
@@ -3287,20 +3287,20 @@ Union_11	16616.67	root
   └─Selection_25	3323.33	cop[tikv]	le(test.t7.a, 89)
     └─TableFullScan_24	10000.00	cop[tikv]	table:t7, partition:p90, keep order:false, stats:pseudo
 explain select * from t7 where a = 89;
-id	count	task	operator info
+id	estRows	task	operator info
 TableReader_8	10.00	root	data:Selection_7
 └─Selection_7	10.00	cop[tikv]	eq(test.t7.a, 89)
   └─TableFullScan_6	10000.00	cop[tikv]	table:t7, partition:p90, keep order:false, stats:pseudo
 explain select * from t7 where a > 89;
-id	count	task	operator info
+id	estRows	task	operator info
 TableDual_6	0.00	root	rows:0
 explain select * from t7 where a >= 89;
-id	count	task	operator info
+id	estRows	task	operator info
 TableReader_8	3333.33	root	data:Selection_7
 └─Selection_7	3333.33	cop[tikv]	ge(test.t7.a, 89)
   └─TableFullScan_6	10000.00	cop[tikv]	table:t7, partition:p90, keep order:false, stats:pseudo
 explain select * from t7 where a < 90;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_11	16616.67	root	
 ├─TableReader_14	3323.33	root	data:Selection_13
 │ └─Selection_13	3323.33	cop[tikv]	lt(test.t7.a, 90)
@@ -3318,7 +3318,7 @@ Union_11	16616.67	root
   └─Selection_25	3323.33	cop[tikv]	lt(test.t7.a, 90)
     └─TableFullScan_24	10000.00	cop[tikv]	table:t7, partition:p90, keep order:false, stats:pseudo
 explain select * from t7 where a <= 90;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_11	16616.67	root	
 ├─TableReader_14	3323.33	root	data:Selection_13
 │ └─Selection_13	3323.33	cop[tikv]	le(test.t7.a, 90)
@@ -3336,19 +3336,19 @@ Union_11	16616.67	root
   └─Selection_25	3323.33	cop[tikv]	le(test.t7.a, 90)
     └─TableFullScan_24	10000.00	cop[tikv]	table:t7, partition:p90, keep order:false, stats:pseudo
 explain select * from t7 where a = 90;
-id	count	task	operator info
+id	estRows	task	operator info
 TableDual_6	0.00	root	rows:0
 explain select * from t7 where a > 90;
-id	count	task	operator info
+id	estRows	task	operator info
 TableDual_6	0.00	root	rows:0
 explain select * from t7 where a >= 90;
-id	count	task	operator info
+id	estRows	task	operator info
 TableDual_6	0.00	root	rows:0
 explain select * from t7 where a > 91;
-id	count	task	operator info
+id	estRows	task	operator info
 TableDual_6	0.00	root	rows:0
 explain select * from t7 where a > 11 and a < 29;
-id	count	task	operator info
+id	estRows	task	operator info
 TableReader_8	250.00	root	data:Selection_7
 └─Selection_7	250.00	cop[tikv]	gt(test.t7.a, 11), lt(test.t7.a, 29)
   └─TableFullScan_6	10000.00	cop[tikv]	table:t7, partition:p30, keep order:false, stats:pseudo
@@ -3359,7 +3359,7 @@ partition p2 values less than (2000)
 );
 insert into t8 values ('1985-05-05'),('1995-05-05');
 explain select * from t8 where a < '1980-02-02';
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	9970.00	root	
 ├─TableReader_12	3323.33	root	data:Selection_11
 │ └─Selection_11	3323.33	cop[tikv]	lt(test.t8.a, 1980-02-02 00:00:00.000000)
@@ -3377,7 +3377,7 @@ partition p2 values less than (732664)  -- 2005-12-19
 );
 insert into t9 values ('2005-05-05'), ('2005-04-04');
 explain select * from t9 where a <  '2004-12-19';
-id	count	task	operator info
+id	estRows	task	operator info
 Union_8	6646.67	root	
 ├─TableReader_11	3323.33	root	data:Selection_10
 │ └─Selection_10	3323.33	cop[tikv]	lt(test.t9.a, 2004-12-19 00:00:00.000000)
@@ -3386,7 +3386,7 @@ Union_8	6646.67	root
   └─Selection_13	3323.33	cop[tikv]	lt(test.t9.a, 2004-12-19 00:00:00.000000)
     └─TableFullScan_12	10000.00	cop[tikv]	table:t9, partition:p1, keep order:false, stats:pseudo
 explain select * from t9 where a <= '2004-12-19';
-id	count	task	operator info
+id	estRows	task	operator info
 Union_8	6646.67	root	
 ├─TableReader_11	3323.33	root	data:Selection_10
 │ └─Selection_10	3323.33	cop[tikv]	le(test.t9.a, 2004-12-19 00:00:00.000000)
@@ -3405,7 +3405,7 @@ partition p2 values less than (9)
 );
 insert into t1 values (1),(2),(3);
 explain select * from t1 where a1 > 3;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_8	6666.67	root	
 ├─TableReader_11	3333.33	root	data:Selection_10
 │ └─Selection_10	3333.33	cop[tikv]	gt(test.t1.a1, 3)
@@ -3414,7 +3414,7 @@ Union_8	6666.67	root
   └─Selection_13	3333.33	cop[tikv]	gt(test.t1.a1, 3)
     └─TableFullScan_12	10000.00	cop[tikv]	table:t1, partition:p2, keep order:false, stats:pseudo
 explain select * from t1 where a1 >= 3;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_8	6666.67	root	
 ├─TableReader_11	3333.33	root	data:Selection_10
 │ └─Selection_10	3333.33	cop[tikv]	ge(test.t1.a1, 3)
@@ -3423,7 +3423,7 @@ Union_8	6666.67	root
   └─Selection_13	3333.33	cop[tikv]	ge(test.t1.a1, 3)
     └─TableFullScan_12	10000.00	cop[tikv]	table:t1, partition:p2, keep order:false, stats:pseudo
 explain select * from t1 where a1 < 3 and a1 > 3;
-id	count	task	operator info
+id	estRows	task	operator info
 TableDual_6	0.00	root	rows:0
 drop table t1;
 CREATE TABLE `t1` (
@@ -3453,7 +3453,7 @@ insert into t2 select a,3 from t1 where a >= 400 and a < 600;
 insert into t2 select a,4 from t1 where a >= 600 and a < 800;
 insert into t2 select a,5 from t1 where a >= 800 and a < 1001;
 explain select * from t2;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_10	50000.00	root	
 ├─TableReader_12	10000.00	root	data:TableFullScan_11
 │ └─TableFullScan_11	10000.00	cop[tikv]	table:t2, partition:p0, keep order:false, stats:pseudo
@@ -3466,7 +3466,7 @@ Union_10	50000.00	root
 └─TableReader_20	10000.00	root	data:TableFullScan_19
   └─TableFullScan_19	10000.00	cop[tikv]	table:t2, partition:p4, keep order:false, stats:pseudo
 explain select * from t2 where a < 801 and a > 200;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_10	1000.00	root	
 ├─TableReader_13	250.00	root	data:Selection_12
 │ └─Selection_12	250.00	cop[tikv]	gt(test.t2.a, 200), lt(test.t2.a, 801)
@@ -3481,12 +3481,12 @@ Union_10	1000.00	root
   └─Selection_21	250.00	cop[tikv]	gt(test.t2.a, 200), lt(test.t2.a, 801)
     └─TableFullScan_20	10000.00	cop[tikv]	table:t2, partition:p4, keep order:false, stats:pseudo
 explain select * from t2 where a < 801 and a > 800;
-id	count	task	operator info
+id	estRows	task	operator info
 TableReader_8	0.00	root	data:Selection_7
 └─Selection_7	0.00	cop[tikv]	gt(test.t2.a, 800), lt(test.t2.a, 801)
   └─TableFullScan_6	10000.00	cop[tikv]	table:t2, partition:p4, keep order:false, stats:pseudo
 explain select * from t2 where a > 600;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_8	6666.67	root	
 ├─TableReader_11	3333.33	root	data:Selection_10
 │ └─Selection_10	3333.33	cop[tikv]	gt(test.t2.a, 600)
@@ -3495,7 +3495,7 @@ Union_8	6666.67	root
   └─Selection_13	3333.33	cop[tikv]	gt(test.t2.a, 600)
     └─TableFullScan_12	10000.00	cop[tikv]	table:t2, partition:p4, keep order:false, stats:pseudo
 explain select * from t2 where a > 600 and b = 1;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_8	6.67	root	
 ├─TableReader_11	3.33	root	data:Selection_10
 │ └─Selection_10	3.33	cop[tikv]	eq(test.t2.b, 1), gt(test.t2.a, 600)
@@ -3504,7 +3504,7 @@ Union_8	6.67	root
   └─Selection_13	3.33	cop[tikv]	eq(test.t2.b, 1), gt(test.t2.a, 600)
     └─TableFullScan_12	10000.00	cop[tikv]	table:t2, partition:p4, keep order:false, stats:pseudo
 explain select * from t2 where a > 600 and b = 4;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_8	6.67	root	
 ├─TableReader_11	3.33	root	data:Selection_10
 │ └─Selection_10	3.33	cop[tikv]	eq(test.t2.b, 4), gt(test.t2.a, 600)
@@ -3513,7 +3513,7 @@ Union_8	6.67	root
   └─Selection_13	3.33	cop[tikv]	eq(test.t2.b, 4), gt(test.t2.a, 600)
     └─TableFullScan_12	10000.00	cop[tikv]	table:t2, partition:p4, keep order:false, stats:pseudo
 explain select * from t2 where a > 600 and b = 5;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_8	6.67	root	
 ├─TableReader_11	3.33	root	data:Selection_10
 │ └─Selection_10	3.33	cop[tikv]	eq(test.t2.b, 5), gt(test.t2.a, 600)
@@ -3522,7 +3522,7 @@ Union_8	6.67	root
   └─Selection_13	3.33	cop[tikv]	eq(test.t2.b, 5), gt(test.t2.a, 600)
     └─TableFullScan_12	10000.00	cop[tikv]	table:t2, partition:p4, keep order:false, stats:pseudo
 explain select * from t2 where b = 5;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_11	50.00	root	
 ├─TableReader_14	10.00	root	data:Selection_13
 │ └─Selection_13	10.00	cop[tikv]	eq(test.t2.b, 5)
@@ -3581,7 +3581,7 @@ insert into t2 select a,7 from t1 where a >= 700 and a < 800;
 insert into t2 select a,8 from t1 where a >= 800 and a < 900;
 insert into t2 select a,9 from t1 where a >= 900 and a < 1001;
 explain select * from t2;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_10	50000.00	root	
 ├─TableReader_12	10000.00	root	data:TableFullScan_11
 │ └─TableFullScan_11	10000.00	cop[tikv]	table:t2, partition:p0, keep order:false, stats:pseudo
@@ -3594,22 +3594,22 @@ Union_10	50000.00	root
 └─TableReader_20	10000.00	root	data:TableFullScan_19
   └─TableFullScan_19	10000.00	cop[tikv]	table:t2, partition:p4, keep order:false, stats:pseudo
 explain select * from t2 where a = 101;
-id	count	task	operator info
+id	estRows	task	operator info
 TableReader_8	10.00	root	data:Selection_7
 └─Selection_7	10.00	cop[tikv]	eq(test.t2.a, 101)
   └─TableFullScan_6	10000.00	cop[tikv]	table:t2, partition:p0, keep order:false, stats:pseudo
 explain select * from t2 where a = 550;
-id	count	task	operator info
+id	estRows	task	operator info
 TableReader_8	10.00	root	data:Selection_7
 └─Selection_7	10.00	cop[tikv]	eq(test.t2.a, 550)
   └─TableFullScan_6	10000.00	cop[tikv]	table:t2, partition:p2, keep order:false, stats:pseudo
 explain select * from t2 where a = 833;
-id	count	task	operator info
+id	estRows	task	operator info
 TableReader_8	10.00	root	data:Selection_7
 └─Selection_7	10.00	cop[tikv]	eq(test.t2.a, 833)
   └─TableFullScan_6	10000.00	cop[tikv]	table:t2, partition:p4, keep order:false, stats:pseudo
 explain select * from t2 where (a = 100 OR a = 900);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_8	40.00	root	
 ├─TableReader_11	20.00	root	data:Selection_10
 │ └─Selection_10	20.00	cop[tikv]	or(eq(test.t2.a, 100), eq(test.t2.a, 900))
@@ -3618,7 +3618,7 @@ Union_8	40.00	root
   └─Selection_13	20.00	cop[tikv]	or(eq(test.t2.a, 100), eq(test.t2.a, 900))
     └─TableFullScan_12	10000.00	cop[tikv]	table:t2, partition:p4, keep order:false, stats:pseudo
 explain select * from t2 where (a > 100 AND a < 600);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	750.00	root	
 ├─TableReader_12	250.00	root	data:Selection_11
 │ └─Selection_11	250.00	cop[tikv]	gt(test.t2.a, 100), lt(test.t2.a, 600)
@@ -3630,97 +3630,97 @@ Union_9	750.00	root
   └─Selection_17	250.00	cop[tikv]	gt(test.t2.a, 100), lt(test.t2.a, 600)
     └─TableFullScan_16	10000.00	cop[tikv]	table:t2, partition:p2, keep order:false, stats:pseudo
 explain select * from t2 where b = 4;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_11	50.00	root	
 ├─IndexLookUp_17	10.00	root	
-│ ├─IndexRangeScan_15	10.00	cop[tikv]	table:t2, partition:p0, index:b, range:[4,4], keep order:false, stats:pseudo
-│ └─TableRowIDScan_16	10.00	cop[tikv]	table:t2, partition:p0, keep order:false, stats:pseudo
+│ ├─IndexRangeScan_15(Build)	10.00	cop[tikv]	table:t2, partition:p0, index:b, range:[4,4], keep order:false, stats:pseudo
+│ └─TableRowIDScan_16(Probe)	10.00	cop[tikv]	table:t2, partition:p0, keep order:false, stats:pseudo
 ├─IndexLookUp_23	10.00	root	
-│ ├─IndexRangeScan_21	10.00	cop[tikv]	table:t2, partition:p1, index:b, range:[4,4], keep order:false, stats:pseudo
-│ └─TableRowIDScan_22	10.00	cop[tikv]	table:t2, partition:p1, keep order:false, stats:pseudo
+│ ├─IndexRangeScan_21(Build)	10.00	cop[tikv]	table:t2, partition:p1, index:b, range:[4,4], keep order:false, stats:pseudo
+│ └─TableRowIDScan_22(Probe)	10.00	cop[tikv]	table:t2, partition:p1, keep order:false, stats:pseudo
 ├─IndexLookUp_29	10.00	root	
-│ ├─IndexRangeScan_27	10.00	cop[tikv]	table:t2, partition:p2, index:b, range:[4,4], keep order:false, stats:pseudo
-│ └─TableRowIDScan_28	10.00	cop[tikv]	table:t2, partition:p2, keep order:false, stats:pseudo
+│ ├─IndexRangeScan_27(Build)	10.00	cop[tikv]	table:t2, partition:p2, index:b, range:[4,4], keep order:false, stats:pseudo
+│ └─TableRowIDScan_28(Probe)	10.00	cop[tikv]	table:t2, partition:p2, keep order:false, stats:pseudo
 ├─IndexLookUp_35	10.00	root	
-│ ├─IndexRangeScan_33	10.00	cop[tikv]	table:t2, partition:p3, index:b, range:[4,4], keep order:false, stats:pseudo
-│ └─TableRowIDScan_34	10.00	cop[tikv]	table:t2, partition:p3, keep order:false, stats:pseudo
+│ ├─IndexRangeScan_33(Build)	10.00	cop[tikv]	table:t2, partition:p3, index:b, range:[4,4], keep order:false, stats:pseudo
+│ └─TableRowIDScan_34(Probe)	10.00	cop[tikv]	table:t2, partition:p3, keep order:false, stats:pseudo
 └─IndexLookUp_41	10.00	root	
-  ├─IndexRangeScan_39	10.00	cop[tikv]	table:t2, partition:p4, index:b, range:[4,4], keep order:false, stats:pseudo
-  └─TableRowIDScan_40	10.00	cop[tikv]	table:t2, partition:p4, keep order:false, stats:pseudo
+  ├─IndexRangeScan_39(Build)	10.00	cop[tikv]	table:t2, partition:p4, index:b, range:[4,4], keep order:false, stats:pseudo
+  └─TableRowIDScan_40(Probe)	10.00	cop[tikv]	table:t2, partition:p4, keep order:false, stats:pseudo
 explain select * from t2 where b = 6;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_11	50.00	root	
 ├─IndexLookUp_17	10.00	root	
-│ ├─IndexRangeScan_15	10.00	cop[tikv]	table:t2, partition:p0, index:b, range:[6,6], keep order:false, stats:pseudo
-│ └─TableRowIDScan_16	10.00	cop[tikv]	table:t2, partition:p0, keep order:false, stats:pseudo
+│ ├─IndexRangeScan_15(Build)	10.00	cop[tikv]	table:t2, partition:p0, index:b, range:[6,6], keep order:false, stats:pseudo
+│ └─TableRowIDScan_16(Probe)	10.00	cop[tikv]	table:t2, partition:p0, keep order:false, stats:pseudo
 ├─IndexLookUp_23	10.00	root	
-│ ├─IndexRangeScan_21	10.00	cop[tikv]	table:t2, partition:p1, index:b, range:[6,6], keep order:false, stats:pseudo
-│ └─TableRowIDScan_22	10.00	cop[tikv]	table:t2, partition:p1, keep order:false, stats:pseudo
+│ ├─IndexRangeScan_21(Build)	10.00	cop[tikv]	table:t2, partition:p1, index:b, range:[6,6], keep order:false, stats:pseudo
+│ └─TableRowIDScan_22(Probe)	10.00	cop[tikv]	table:t2, partition:p1, keep order:false, stats:pseudo
 ├─IndexLookUp_29	10.00	root	
-│ ├─IndexRangeScan_27	10.00	cop[tikv]	table:t2, partition:p2, index:b, range:[6,6], keep order:false, stats:pseudo
-│ └─TableRowIDScan_28	10.00	cop[tikv]	table:t2, partition:p2, keep order:false, stats:pseudo
+│ ├─IndexRangeScan_27(Build)	10.00	cop[tikv]	table:t2, partition:p2, index:b, range:[6,6], keep order:false, stats:pseudo
+│ └─TableRowIDScan_28(Probe)	10.00	cop[tikv]	table:t2, partition:p2, keep order:false, stats:pseudo
 ├─IndexLookUp_35	10.00	root	
-│ ├─IndexRangeScan_33	10.00	cop[tikv]	table:t2, partition:p3, index:b, range:[6,6], keep order:false, stats:pseudo
-│ └─TableRowIDScan_34	10.00	cop[tikv]	table:t2, partition:p3, keep order:false, stats:pseudo
+│ ├─IndexRangeScan_33(Build)	10.00	cop[tikv]	table:t2, partition:p3, index:b, range:[6,6], keep order:false, stats:pseudo
+│ └─TableRowIDScan_34(Probe)	10.00	cop[tikv]	table:t2, partition:p3, keep order:false, stats:pseudo
 └─IndexLookUp_41	10.00	root	
-  ├─IndexRangeScan_39	10.00	cop[tikv]	table:t2, partition:p4, index:b, range:[6,6], keep order:false, stats:pseudo
-  └─TableRowIDScan_40	10.00	cop[tikv]	table:t2, partition:p4, keep order:false, stats:pseudo
+  ├─IndexRangeScan_39(Build)	10.00	cop[tikv]	table:t2, partition:p4, index:b, range:[6,6], keep order:false, stats:pseudo
+  └─TableRowIDScan_40(Probe)	10.00	cop[tikv]	table:t2, partition:p4, keep order:false, stats:pseudo
 explain select * from t2 where b in (1,3,5);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_11	150.00	root	
 ├─IndexLookUp_17	30.00	root	
-│ ├─IndexRangeScan_15	30.00	cop[tikv]	table:t2, partition:p0, index:b, range:[1,1], [3,3], [5,5], keep order:false, stats:pseudo
-│ └─TableRowIDScan_16	30.00	cop[tikv]	table:t2, partition:p0, keep order:false, stats:pseudo
+│ ├─IndexRangeScan_15(Build)	30.00	cop[tikv]	table:t2, partition:p0, index:b, range:[1,1], [3,3], [5,5], keep order:false, stats:pseudo
+│ └─TableRowIDScan_16(Probe)	30.00	cop[tikv]	table:t2, partition:p0, keep order:false, stats:pseudo
 ├─IndexLookUp_23	30.00	root	
-│ ├─IndexRangeScan_21	30.00	cop[tikv]	table:t2, partition:p1, index:b, range:[1,1], [3,3], [5,5], keep order:false, stats:pseudo
-│ └─TableRowIDScan_22	30.00	cop[tikv]	table:t2, partition:p1, keep order:false, stats:pseudo
+│ ├─IndexRangeScan_21(Build)	30.00	cop[tikv]	table:t2, partition:p1, index:b, range:[1,1], [3,3], [5,5], keep order:false, stats:pseudo
+│ └─TableRowIDScan_22(Probe)	30.00	cop[tikv]	table:t2, partition:p1, keep order:false, stats:pseudo
 ├─IndexLookUp_29	30.00	root	
-│ ├─IndexRangeScan_27	30.00	cop[tikv]	table:t2, partition:p2, index:b, range:[1,1], [3,3], [5,5], keep order:false, stats:pseudo
-│ └─TableRowIDScan_28	30.00	cop[tikv]	table:t2, partition:p2, keep order:false, stats:pseudo
+│ ├─IndexRangeScan_27(Build)	30.00	cop[tikv]	table:t2, partition:p2, index:b, range:[1,1], [3,3], [5,5], keep order:false, stats:pseudo
+│ └─TableRowIDScan_28(Probe)	30.00	cop[tikv]	table:t2, partition:p2, keep order:false, stats:pseudo
 ├─IndexLookUp_35	30.00	root	
-│ ├─IndexRangeScan_33	30.00	cop[tikv]	table:t2, partition:p3, index:b, range:[1,1], [3,3], [5,5], keep order:false, stats:pseudo
-│ └─TableRowIDScan_34	30.00	cop[tikv]	table:t2, partition:p3, keep order:false, stats:pseudo
+│ ├─IndexRangeScan_33(Build)	30.00	cop[tikv]	table:t2, partition:p3, index:b, range:[1,1], [3,3], [5,5], keep order:false, stats:pseudo
+│ └─TableRowIDScan_34(Probe)	30.00	cop[tikv]	table:t2, partition:p3, keep order:false, stats:pseudo
 └─IndexLookUp_41	30.00	root	
-  ├─IndexRangeScan_39	30.00	cop[tikv]	table:t2, partition:p4, index:b, range:[1,1], [3,3], [5,5], keep order:false, stats:pseudo
-  └─TableRowIDScan_40	30.00	cop[tikv]	table:t2, partition:p4, keep order:false, stats:pseudo
+  ├─IndexRangeScan_39(Build)	30.00	cop[tikv]	table:t2, partition:p4, index:b, range:[1,1], [3,3], [5,5], keep order:false, stats:pseudo
+  └─TableRowIDScan_40(Probe)	30.00	cop[tikv]	table:t2, partition:p4, keep order:false, stats:pseudo
 explain select * from t2 where b in (2,4,6);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_11	150.00	root	
 ├─IndexLookUp_17	30.00	root	
-│ ├─IndexRangeScan_15	30.00	cop[tikv]	table:t2, partition:p0, index:b, range:[2,2], [4,4], [6,6], keep order:false, stats:pseudo
-│ └─TableRowIDScan_16	30.00	cop[tikv]	table:t2, partition:p0, keep order:false, stats:pseudo
+│ ├─IndexRangeScan_15(Build)	30.00	cop[tikv]	table:t2, partition:p0, index:b, range:[2,2], [4,4], [6,6], keep order:false, stats:pseudo
+│ └─TableRowIDScan_16(Probe)	30.00	cop[tikv]	table:t2, partition:p0, keep order:false, stats:pseudo
 ├─IndexLookUp_23	30.00	root	
-│ ├─IndexRangeScan_21	30.00	cop[tikv]	table:t2, partition:p1, index:b, range:[2,2], [4,4], [6,6], keep order:false, stats:pseudo
-│ └─TableRowIDScan_22	30.00	cop[tikv]	table:t2, partition:p1, keep order:false, stats:pseudo
+│ ├─IndexRangeScan_21(Build)	30.00	cop[tikv]	table:t2, partition:p1, index:b, range:[2,2], [4,4], [6,6], keep order:false, stats:pseudo
+│ └─TableRowIDScan_22(Probe)	30.00	cop[tikv]	table:t2, partition:p1, keep order:false, stats:pseudo
 ├─IndexLookUp_29	30.00	root	
-│ ├─IndexRangeScan_27	30.00	cop[tikv]	table:t2, partition:p2, index:b, range:[2,2], [4,4], [6,6], keep order:false, stats:pseudo
-│ └─TableRowIDScan_28	30.00	cop[tikv]	table:t2, partition:p2, keep order:false, stats:pseudo
+│ ├─IndexRangeScan_27(Build)	30.00	cop[tikv]	table:t2, partition:p2, index:b, range:[2,2], [4,4], [6,6], keep order:false, stats:pseudo
+│ └─TableRowIDScan_28(Probe)	30.00	cop[tikv]	table:t2, partition:p2, keep order:false, stats:pseudo
 ├─IndexLookUp_35	30.00	root	
-│ ├─IndexRangeScan_33	30.00	cop[tikv]	table:t2, partition:p3, index:b, range:[2,2], [4,4], [6,6], keep order:false, stats:pseudo
-│ └─TableRowIDScan_34	30.00	cop[tikv]	table:t2, partition:p3, keep order:false, stats:pseudo
+│ ├─IndexRangeScan_33(Build)	30.00	cop[tikv]	table:t2, partition:p3, index:b, range:[2,2], [4,4], [6,6], keep order:false, stats:pseudo
+│ └─TableRowIDScan_34(Probe)	30.00	cop[tikv]	table:t2, partition:p3, keep order:false, stats:pseudo
 └─IndexLookUp_41	30.00	root	
-  ├─IndexRangeScan_39	30.00	cop[tikv]	table:t2, partition:p4, index:b, range:[2,2], [4,4], [6,6], keep order:false, stats:pseudo
-  └─TableRowIDScan_40	30.00	cop[tikv]	table:t2, partition:p4, keep order:false, stats:pseudo
+  ├─IndexRangeScan_39(Build)	30.00	cop[tikv]	table:t2, partition:p4, index:b, range:[2,2], [4,4], [6,6], keep order:false, stats:pseudo
+  └─TableRowIDScan_40(Probe)	30.00	cop[tikv]	table:t2, partition:p4, keep order:false, stats:pseudo
 explain select * from t2 where b in (7,8,9);
-id	count	task	operator info
+id	estRows	task	operator info
 Union_11	150.00	root	
 ├─IndexLookUp_17	30.00	root	
-│ ├─IndexRangeScan_15	30.00	cop[tikv]	table:t2, partition:p0, index:b, range:[7,7], [8,8], [9,9], keep order:false, stats:pseudo
-│ └─TableRowIDScan_16	30.00	cop[tikv]	table:t2, partition:p0, keep order:false, stats:pseudo
+│ ├─IndexRangeScan_15(Build)	30.00	cop[tikv]	table:t2, partition:p0, index:b, range:[7,7], [8,8], [9,9], keep order:false, stats:pseudo
+│ └─TableRowIDScan_16(Probe)	30.00	cop[tikv]	table:t2, partition:p0, keep order:false, stats:pseudo
 ├─IndexLookUp_23	30.00	root	
-│ ├─IndexRangeScan_21	30.00	cop[tikv]	table:t2, partition:p1, index:b, range:[7,7], [8,8], [9,9], keep order:false, stats:pseudo
-│ └─TableRowIDScan_22	30.00	cop[tikv]	table:t2, partition:p1, keep order:false, stats:pseudo
+│ ├─IndexRangeScan_21(Build)	30.00	cop[tikv]	table:t2, partition:p1, index:b, range:[7,7], [8,8], [9,9], keep order:false, stats:pseudo
+│ └─TableRowIDScan_22(Probe)	30.00	cop[tikv]	table:t2, partition:p1, keep order:false, stats:pseudo
 ├─IndexLookUp_29	30.00	root	
-│ ├─IndexRangeScan_27	30.00	cop[tikv]	table:t2, partition:p2, index:b, range:[7,7], [8,8], [9,9], keep order:false, stats:pseudo
-│ └─TableRowIDScan_28	30.00	cop[tikv]	table:t2, partition:p2, keep order:false, stats:pseudo
+│ ├─IndexRangeScan_27(Build)	30.00	cop[tikv]	table:t2, partition:p2, index:b, range:[7,7], [8,8], [9,9], keep order:false, stats:pseudo
+│ └─TableRowIDScan_28(Probe)	30.00	cop[tikv]	table:t2, partition:p2, keep order:false, stats:pseudo
 ├─IndexLookUp_35	30.00	root	
-│ ├─IndexRangeScan_33	30.00	cop[tikv]	table:t2, partition:p3, index:b, range:[7,7], [8,8], [9,9], keep order:false, stats:pseudo
-│ └─TableRowIDScan_34	30.00	cop[tikv]	table:t2, partition:p3, keep order:false, stats:pseudo
+│ ├─IndexRangeScan_33(Build)	30.00	cop[tikv]	table:t2, partition:p3, index:b, range:[7,7], [8,8], [9,9], keep order:false, stats:pseudo
+│ └─TableRowIDScan_34(Probe)	30.00	cop[tikv]	table:t2, partition:p3, keep order:false, stats:pseudo
 └─IndexLookUp_41	30.00	root	
-  ├─IndexRangeScan_39	30.00	cop[tikv]	table:t2, partition:p4, index:b, range:[7,7], [8,8], [9,9], keep order:false, stats:pseudo
-  └─TableRowIDScan_40	30.00	cop[tikv]	table:t2, partition:p4, keep order:false, stats:pseudo
+  ├─IndexRangeScan_39(Build)	30.00	cop[tikv]	table:t2, partition:p4, index:b, range:[7,7], [8,8], [9,9], keep order:false, stats:pseudo
+  └─TableRowIDScan_40(Probe)	30.00	cop[tikv]	table:t2, partition:p4, keep order:false, stats:pseudo
 explain select * from t2 where b > 5;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_11	16666.67	root	
 ├─TableReader_14	3333.33	root	data:Selection_13
 │ └─Selection_13	3333.33	cop[tikv]	gt(test.t2.b, 5)
@@ -3738,59 +3738,59 @@ Union_11	16666.67	root
   └─Selection_37	3333.33	cop[tikv]	gt(test.t2.b, 5)
     └─TableFullScan_36	10000.00	cop[tikv]	table:t2, partition:p4, keep order:false, stats:pseudo
 explain select * from t2 where b > 5 and b < 8;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_11	1250.00	root	
 ├─IndexLookUp_17	250.00	root	
-│ ├─IndexRangeScan_15	250.00	cop[tikv]	table:t2, partition:p0, index:b, range:(5,8), keep order:false, stats:pseudo
-│ └─TableRowIDScan_16	250.00	cop[tikv]	table:t2, partition:p0, keep order:false, stats:pseudo
+│ ├─IndexRangeScan_15(Build)	250.00	cop[tikv]	table:t2, partition:p0, index:b, range:(5,8), keep order:false, stats:pseudo
+│ └─TableRowIDScan_16(Probe)	250.00	cop[tikv]	table:t2, partition:p0, keep order:false, stats:pseudo
 ├─IndexLookUp_23	250.00	root	
-│ ├─IndexRangeScan_21	250.00	cop[tikv]	table:t2, partition:p1, index:b, range:(5,8), keep order:false, stats:pseudo
-│ └─TableRowIDScan_22	250.00	cop[tikv]	table:t2, partition:p1, keep order:false, stats:pseudo
+│ ├─IndexRangeScan_21(Build)	250.00	cop[tikv]	table:t2, partition:p1, index:b, range:(5,8), keep order:false, stats:pseudo
+│ └─TableRowIDScan_22(Probe)	250.00	cop[tikv]	table:t2, partition:p1, keep order:false, stats:pseudo
 ├─IndexLookUp_29	250.00	root	
-│ ├─IndexRangeScan_27	250.00	cop[tikv]	table:t2, partition:p2, index:b, range:(5,8), keep order:false, stats:pseudo
-│ └─TableRowIDScan_28	250.00	cop[tikv]	table:t2, partition:p2, keep order:false, stats:pseudo
+│ ├─IndexRangeScan_27(Build)	250.00	cop[tikv]	table:t2, partition:p2, index:b, range:(5,8), keep order:false, stats:pseudo
+│ └─TableRowIDScan_28(Probe)	250.00	cop[tikv]	table:t2, partition:p2, keep order:false, stats:pseudo
 ├─IndexLookUp_35	250.00	root	
-│ ├─IndexRangeScan_33	250.00	cop[tikv]	table:t2, partition:p3, index:b, range:(5,8), keep order:false, stats:pseudo
-│ └─TableRowIDScan_34	250.00	cop[tikv]	table:t2, partition:p3, keep order:false, stats:pseudo
+│ ├─IndexRangeScan_33(Build)	250.00	cop[tikv]	table:t2, partition:p3, index:b, range:(5,8), keep order:false, stats:pseudo
+│ └─TableRowIDScan_34(Probe)	250.00	cop[tikv]	table:t2, partition:p3, keep order:false, stats:pseudo
 └─IndexLookUp_41	250.00	root	
-  ├─IndexRangeScan_39	250.00	cop[tikv]	table:t2, partition:p4, index:b, range:(5,8), keep order:false, stats:pseudo
-  └─TableRowIDScan_40	250.00	cop[tikv]	table:t2, partition:p4, keep order:false, stats:pseudo
+  ├─IndexRangeScan_39(Build)	250.00	cop[tikv]	table:t2, partition:p4, index:b, range:(5,8), keep order:false, stats:pseudo
+  └─TableRowIDScan_40(Probe)	250.00	cop[tikv]	table:t2, partition:p4, keep order:false, stats:pseudo
 explain select * from t2 where b > 5 and b < 7;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_11	1250.00	root	
 ├─IndexLookUp_17	250.00	root	
-│ ├─IndexRangeScan_15	250.00	cop[tikv]	table:t2, partition:p0, index:b, range:(5,7), keep order:false, stats:pseudo
-│ └─TableRowIDScan_16	250.00	cop[tikv]	table:t2, partition:p0, keep order:false, stats:pseudo
+│ ├─IndexRangeScan_15(Build)	250.00	cop[tikv]	table:t2, partition:p0, index:b, range:(5,7), keep order:false, stats:pseudo
+│ └─TableRowIDScan_16(Probe)	250.00	cop[tikv]	table:t2, partition:p0, keep order:false, stats:pseudo
 ├─IndexLookUp_23	250.00	root	
-│ ├─IndexRangeScan_21	250.00	cop[tikv]	table:t2, partition:p1, index:b, range:(5,7), keep order:false, stats:pseudo
-│ └─TableRowIDScan_22	250.00	cop[tikv]	table:t2, partition:p1, keep order:false, stats:pseudo
+│ ├─IndexRangeScan_21(Build)	250.00	cop[tikv]	table:t2, partition:p1, index:b, range:(5,7), keep order:false, stats:pseudo
+│ └─TableRowIDScan_22(Probe)	250.00	cop[tikv]	table:t2, partition:p1, keep order:false, stats:pseudo
 ├─IndexLookUp_29	250.00	root	
-│ ├─IndexRangeScan_27	250.00	cop[tikv]	table:t2, partition:p2, index:b, range:(5,7), keep order:false, stats:pseudo
-│ └─TableRowIDScan_28	250.00	cop[tikv]	table:t2, partition:p2, keep order:false, stats:pseudo
+│ ├─IndexRangeScan_27(Build)	250.00	cop[tikv]	table:t2, partition:p2, index:b, range:(5,7), keep order:false, stats:pseudo
+│ └─TableRowIDScan_28(Probe)	250.00	cop[tikv]	table:t2, partition:p2, keep order:false, stats:pseudo
 ├─IndexLookUp_35	250.00	root	
-│ ├─IndexRangeScan_33	250.00	cop[tikv]	table:t2, partition:p3, index:b, range:(5,7), keep order:false, stats:pseudo
-│ └─TableRowIDScan_34	250.00	cop[tikv]	table:t2, partition:p3, keep order:false, stats:pseudo
+│ ├─IndexRangeScan_33(Build)	250.00	cop[tikv]	table:t2, partition:p3, index:b, range:(5,7), keep order:false, stats:pseudo
+│ └─TableRowIDScan_34(Probe)	250.00	cop[tikv]	table:t2, partition:p3, keep order:false, stats:pseudo
 └─IndexLookUp_41	250.00	root	
-  ├─IndexRangeScan_39	250.00	cop[tikv]	table:t2, partition:p4, index:b, range:(5,7), keep order:false, stats:pseudo
-  └─TableRowIDScan_40	250.00	cop[tikv]	table:t2, partition:p4, keep order:false, stats:pseudo
+  ├─IndexRangeScan_39(Build)	250.00	cop[tikv]	table:t2, partition:p4, index:b, range:(5,7), keep order:false, stats:pseudo
+  └─TableRowIDScan_40(Probe)	250.00	cop[tikv]	table:t2, partition:p4, keep order:false, stats:pseudo
 explain select * from t2 where b > 0 and b < 5;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_11	1250.00	root	
 ├─IndexLookUp_17	250.00	root	
-│ ├─IndexRangeScan_15	250.00	cop[tikv]	table:t2, partition:p0, index:b, range:(0,5), keep order:false, stats:pseudo
-│ └─TableRowIDScan_16	250.00	cop[tikv]	table:t2, partition:p0, keep order:false, stats:pseudo
+│ ├─IndexRangeScan_15(Build)	250.00	cop[tikv]	table:t2, partition:p0, index:b, range:(0,5), keep order:false, stats:pseudo
+│ └─TableRowIDScan_16(Probe)	250.00	cop[tikv]	table:t2, partition:p0, keep order:false, stats:pseudo
 ├─IndexLookUp_23	250.00	root	
-│ ├─IndexRangeScan_21	250.00	cop[tikv]	table:t2, partition:p1, index:b, range:(0,5), keep order:false, stats:pseudo
-│ └─TableRowIDScan_22	250.00	cop[tikv]	table:t2, partition:p1, keep order:false, stats:pseudo
+│ ├─IndexRangeScan_21(Build)	250.00	cop[tikv]	table:t2, partition:p1, index:b, range:(0,5), keep order:false, stats:pseudo
+│ └─TableRowIDScan_22(Probe)	250.00	cop[tikv]	table:t2, partition:p1, keep order:false, stats:pseudo
 ├─IndexLookUp_29	250.00	root	
-│ ├─IndexRangeScan_27	250.00	cop[tikv]	table:t2, partition:p2, index:b, range:(0,5), keep order:false, stats:pseudo
-│ └─TableRowIDScan_28	250.00	cop[tikv]	table:t2, partition:p2, keep order:false, stats:pseudo
+│ ├─IndexRangeScan_27(Build)	250.00	cop[tikv]	table:t2, partition:p2, index:b, range:(0,5), keep order:false, stats:pseudo
+│ └─TableRowIDScan_28(Probe)	250.00	cop[tikv]	table:t2, partition:p2, keep order:false, stats:pseudo
 ├─IndexLookUp_35	250.00	root	
-│ ├─IndexRangeScan_33	250.00	cop[tikv]	table:t2, partition:p3, index:b, range:(0,5), keep order:false, stats:pseudo
-│ └─TableRowIDScan_34	250.00	cop[tikv]	table:t2, partition:p3, keep order:false, stats:pseudo
+│ ├─IndexRangeScan_33(Build)	250.00	cop[tikv]	table:t2, partition:p3, index:b, range:(0,5), keep order:false, stats:pseudo
+│ └─TableRowIDScan_34(Probe)	250.00	cop[tikv]	table:t2, partition:p3, keep order:false, stats:pseudo
 └─IndexLookUp_41	250.00	root	
-  ├─IndexRangeScan_39	250.00	cop[tikv]	table:t2, partition:p4, index:b, range:(0,5), keep order:false, stats:pseudo
-  └─TableRowIDScan_40	250.00	cop[tikv]	table:t2, partition:p4, keep order:false, stats:pseudo
+  ├─IndexRangeScan_39(Build)	250.00	cop[tikv]	table:t2, partition:p4, index:b, range:(0,5), keep order:false, stats:pseudo
+  └─TableRowIDScan_40(Probe)	250.00	cop[tikv]	table:t2, partition:p4, keep order:false, stats:pseudo
 flush status;
 update t2 set a = 111 where b = 10;
 show status like 'Handler_read_rnd_next';
@@ -3838,7 +3838,7 @@ Variable_name	Value
 drop table t1, t2;
 create table t1 (s1 int);
 explain select 1 from t1 union all select 2;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_8	10001.00	root	
 ├─Projection_9	10000.00	root	1->Column#5
 │ └─TableReader_11	10000.00	root	data:TableFullScan_10
@@ -3861,12 +3861,12 @@ partition p2 values less than (255)
 insert into t1 values (0x20), (0x20), (0x41), (0x41), (0xFE), (0xFE);
 insert into t2 values (0x20), (0x20), (0x41), (0x41), (0xFE), (0xFE);
 explain select * from t1 where a=0;
-id	count	task	operator info
+id	estRows	task	operator info
 TableReader_8	10.00	root	data:Selection_7
 └─Selection_7	10.00	cop[tikv]	eq(test.t1.a, 0)
   └─TableFullScan_6	10000.00	cop[tikv]	table:t1, partition:p0, keep order:false, stats:pseudo
 explain select * from t2 where a=0;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	30.00	root	
 ├─TableReader_12	10.00	root	data:Selection_11
 │ └─Selection_11	10.00	cop[tikv]	eq(test.t2.a, 0)
@@ -3878,12 +3878,12 @@ Union_9	30.00	root
   └─Selection_17	10.00	cop[tikv]	eq(test.t2.a, 0)
     └─TableFullScan_16	10000.00	cop[tikv]	table:t2, partition:p2, keep order:false, stats:pseudo
 explain select * from t1 where a=0xFE;
-id	count	task	operator info
+id	estRows	task	operator info
 TableReader_8	10.00	root	data:Selection_7
 └─Selection_7	10.00	cop[tikv]	eq(test.t1.a, 254)
   └─TableFullScan_6	10000.00	cop[tikv]	table:t1, partition:p2, keep order:false, stats:pseudo
 explain select * from t2 where a=0xFE;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	30.00	root	
 ├─TableReader_12	10.00	root	data:Selection_11
 │ └─Selection_11	10.00	cop[tikv]	eq(test.t2.a, 254)
@@ -3895,10 +3895,10 @@ Union_9	30.00	root
   └─Selection_17	10.00	cop[tikv]	eq(test.t2.a, 254)
     └─TableFullScan_16	10000.00	cop[tikv]	table:t2, partition:p2, keep order:false, stats:pseudo
 explain select * from t1 where a > 0xFE AND a <= 0xFF;
-id	count	task	operator info
+id	estRows	task	operator info
 TableDual_6	0.00	root	rows:0
 explain select * from t2 where a > 0xFE AND a <= 0xFF;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	750.00	root	
 ├─TableReader_12	250.00	root	data:Selection_11
 │ └─Selection_11	250.00	cop[tikv]	gt(test.t2.a, 254), le(test.t2.a, 255)
@@ -3910,12 +3910,12 @@ Union_9	750.00	root
   └─Selection_17	250.00	cop[tikv]	gt(test.t2.a, 254), le(test.t2.a, 255)
     └─TableFullScan_16	10000.00	cop[tikv]	table:t2, partition:p2, keep order:false, stats:pseudo
 explain select * from t1 where a >= 0xFE AND a <= 0xFF;
-id	count	task	operator info
+id	estRows	task	operator info
 TableReader_8	250.00	root	data:Selection_7
 └─Selection_7	250.00	cop[tikv]	ge(test.t1.a, 254), le(test.t1.a, 255)
   └─TableFullScan_6	10000.00	cop[tikv]	table:t1, partition:p2, keep order:false, stats:pseudo
 explain select * from t2 where a >= 0xFE AND a <= 0xFF;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	750.00	root	
 ├─TableReader_12	250.00	root	data:Selection_11
 │ └─Selection_11	250.00	cop[tikv]	ge(test.t2.a, 254), le(test.t2.a, 255)
@@ -3927,12 +3927,12 @@ Union_9	750.00	root
   └─Selection_17	250.00	cop[tikv]	ge(test.t2.a, 254), le(test.t2.a, 255)
     └─TableFullScan_16	10000.00	cop[tikv]	table:t2, partition:p2, keep order:false, stats:pseudo
 explain select * from t1 where a < 64 AND a >= 63;
-id	count	task	operator info
+id	estRows	task	operator info
 TableReader_8	250.00	root	data:Selection_7
 └─Selection_7	250.00	cop[tikv]	ge(test.t1.a, 63), lt(test.t1.a, 64)
   └─TableFullScan_6	10000.00	cop[tikv]	table:t1, partition:p0, keep order:false, stats:pseudo
 explain select * from t2 where a < 64 AND a >= 63;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	750.00	root	
 ├─TableReader_12	250.00	root	data:Selection_11
 │ └─Selection_11	250.00	cop[tikv]	ge(test.t2.a, 63), lt(test.t2.a, 64)
@@ -3944,7 +3944,7 @@ Union_9	750.00	root
   └─Selection_17	250.00	cop[tikv]	ge(test.t2.a, 63), lt(test.t2.a, 64)
     └─TableFullScan_16	10000.00	cop[tikv]	table:t2, partition:p2, keep order:false, stats:pseudo
 explain select * from t1 where a <= 64 AND a >= 63;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_8	500.00	root	
 ├─TableReader_11	250.00	root	data:Selection_10
 │ └─Selection_10	250.00	cop[tikv]	ge(test.t1.a, 63), le(test.t1.a, 64)
@@ -3953,7 +3953,7 @@ Union_8	500.00	root
   └─Selection_13	250.00	cop[tikv]	ge(test.t1.a, 63), le(test.t1.a, 64)
     └─TableFullScan_12	10000.00	cop[tikv]	table:t1, partition:p1, keep order:false, stats:pseudo
 explain select * from t2 where a <= 64 AND a >= 63;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	750.00	root	
 ├─TableReader_12	250.00	root	data:Selection_11
 │ └─Selection_11	250.00	cop[tikv]	ge(test.t2.a, 63), le(test.t2.a, 64)
@@ -3976,7 +3976,7 @@ insert into t1 values (9),(19),(0xFFFF0000FFFF000-1), (0xFFFF0000FFFFFFF-1);
 insert into t1 values (9),(19),(0xFFFF0000FFFF000-1), (0xFFFF0000FFFFFFF-1);
 explain select * from t1 where
 a >= 2305561538531885056-10 and a <= 2305561538531885056-8;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_10	1000.00	root	
 ├─TableReader_13	250.00	root	data:Selection_12
 │ └─Selection_12	250.00	cop[tikv]	ge(test.t1.a, 2305561538531885046), le(test.t1.a, 2305561538531885048)
@@ -3992,7 +3992,7 @@ Union_10	1000.00	root
     └─TableFullScan_20	10000.00	cop[tikv]	table:t1, partition:p4, keep order:false, stats:pseudo
 explain select * from t1 where
 a > 0xFFFFFFFFFFFFFFEC and a < 0xFFFFFFFFFFFFFFEE;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_10	1000.00	root	
 ├─TableReader_13	250.00	root	data:Selection_12
 │ └─Selection_12	250.00	cop[tikv]	gt(test.t1.a, 18446744073709551596), lt(test.t1.a, 18446744073709551598)
@@ -4007,7 +4007,7 @@ Union_10	1000.00	root
   └─Selection_21	250.00	cop[tikv]	gt(test.t1.a, 18446744073709551596), lt(test.t1.a, 18446744073709551598)
     └─TableFullScan_20	10000.00	cop[tikv]	table:t1, partition:p4, keep order:false, stats:pseudo
 explain select * from t1 where a>=0 and a <= 0xFFFFFFFFFFFFFFFF;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_10	1000.00	root	
 ├─TableReader_13	250.00	root	data:Selection_12
 │ └─Selection_12	250.00	cop[tikv]	ge(test.t1.a, 0), le(test.t1.a, 18446744073709551615)
@@ -4030,7 +4030,7 @@ partition p4 values less than (1000)
 );
 insert into t1 values (-15),(-5),(5),(15),(-15),(-5),(5),(15);
 explain select * from t1 where a>-2 and a <=0;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_10	1000.00	root	
 ├─TableReader_13	250.00	root	data:Selection_12
 │ └─Selection_12	250.00	cop[tikv]	gt(test.t1.a, -2), le(test.t1.a, 0)
@@ -4055,7 +4055,7 @@ INSERT INTO t1 VALUES ('2007-03-07 12:00:00');
 INSERT INTO t1 VALUES ('2007-03-08 12:00:00');
 INSERT INTO t1 VALUES ('2007-03-15 12:00:00');
 explain select * from t1 where recdate < '2007-03-08 00:00:00';
-id	count	task	operator info
+id	estRows	task	operator info
 Union_8	6646.67	root	
 ├─TableReader_11	3323.33	root	data:Selection_10
 │ └─Selection_10	3323.33	cop[tikv]	lt(test.t1.recdate, 2007-03-08 00:00:00.000000)
@@ -4074,7 +4074,7 @@ INSERT INTO t1 VALUES ('2005-03-01 12:00:00');
 INSERT INTO t1 VALUES ('2006-03-01 12:00:00');
 INSERT INTO t1 VALUES ('2006-03-01 12:00:00');
 explain select * from t1 where recdate < '2006-01-01 00:00:00';
-id	count	task	operator info
+id	estRows	task	operator info
 Union_8	6646.67	root	
 ├─TableReader_11	3323.33	root	data:Selection_10
 │ └─Selection_10	3323.33	cop[tikv]	lt(test.t1.recdate, 2006-01-01 00:00:00.000000)
@@ -4093,7 +4093,7 @@ partition p2 values less than (255)
 );
 insert into t1 select A.a + 10*B.a from t0 A, t0 B;
 explain select * from t1 where a between 10 and 13;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	750.00	root	
 ├─TableReader_12	250.00	root	data:Selection_11
 │ └─Selection_11	250.00	cop[tikv]	ge(test.t1.a, 10), le(test.t1.a, 13)
@@ -4105,7 +4105,7 @@ Union_9	750.00	root
   └─Selection_17	250.00	cop[tikv]	ge(test.t1.a, 10), le(test.t1.a, 13)
     └─TableFullScan_16	10000.00	cop[tikv]	table:t1, partition:p2, keep order:false, stats:pseudo
 explain select * from t1 where a between 10 and 10+33;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_9	750.00	root	
 ├─TableReader_12	250.00	root	data:Selection_11
 │ └─Selection_11	250.00	cop[tikv]	ge(test.t1.a, 10), le(test.t1.a, 43)
@@ -4120,7 +4120,7 @@ drop table t0, t1;
 drop table if exists t;
 create table t(a timestamp) partition by range(unix_timestamp(a)) (partition p0 values less than(unix_timestamp('2019-02-16 14:20:00')), partition p1 values less than (maxvalue));
 explain select * from t where a between timestamp'2019-02-16 14:19:00' and timestamp'2019-02-16 14:21:00';
-id	count	task	operator info
+id	estRows	task	operator info
 Union_8	500.00	root	
 ├─TableReader_11	250.00	root	data:Selection_10
 │ └─Selection_10	250.00	cop[tikv]	ge(test.t.a, 2019-02-16 14:19:00), le(test.t.a, 2019-02-16 14:21:00)
@@ -4132,7 +4132,7 @@ drop table if exists t;
 create table t(a int) partition by range(a) (partition p0 values less than (100), partition p1 values less than (200), partition p2 values less than (300));
 begin;
 explain select * from t;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_8	30000.00	root	
 ├─TableReader_10	10000.00	root	data:TableFullScan_9
 │ └─TableFullScan_9	10000.00	cop[tikv]	table:t, partition:p0, keep order:false, stats:pseudo
@@ -4142,7 +4142,7 @@ Union_8	30000.00	root
   └─TableFullScan_13	10000.00	cop[tikv]	table:t, partition:p2, keep order:false, stats:pseudo
 insert into t values(1);
 explain select * from t;
-id	count	task	operator info
+id	estRows	task	operator info
 Projection_11	30000.00	root	test.t.a
 └─Union_12	30000.00	root	
   ├─UnionScan_13	10000.00	root	
@@ -4158,7 +4158,7 @@ rollback;
 begin;
 insert into t values(101);
 explain select * from t;
-id	count	task	operator info
+id	estRows	task	operator info
 Projection_11	30000.00	root	test.t.a
 └─Union_12	30000.00	root	
   ├─UnionScan_13	10000.00	root	
@@ -4174,7 +4174,7 @@ rollback;
 begin;
 insert into t values(201);
 explain select * from t;
-id	count	task	operator info
+id	estRows	task	operator info
 Projection_11	30000.00	root	test.t.a
 └─Union_12	30000.00	root	
   ├─UnionScan_13	10000.00	root	
@@ -4188,7 +4188,7 @@ Projection_11	30000.00	root	test.t.a
       └─TableFullScan_20	10000.00	cop[tikv]	table:t, partition:p2, keep order:false, stats:pseudo
 rollback;
 explain select * from t;
-id	count	task	operator info
+id	estRows	task	operator info
 Union_8	30000.00	root	
 ├─TableReader_10	10000.00	root	data:TableFullScan_9
 │ └─TableFullScan_9	10000.00	cop[tikv]	table:t, partition:p0, keep order:false, stats:pseudo
@@ -4207,7 +4207,7 @@ PARTITION p1 VALUES LESS THAN (10),
 PARTITION p2 VALUES LESS THAN (100)
 );
 desc select * from t where a = 11 and b = 1 or a = 12 and b = 1;
-id	count	task	operator info
+id	estRows	task	operator info
 TableReader_8	8000.00	root	data:Selection_7
 └─Selection_7	8000.00	cop[tikv]	or(and(eq(test.t.a, 11), eq(test.t.b, 1)), and(eq(test.t.a, 12), eq(test.t.b, 1)))
   └─TableFullScan_6	10000.00	cop[tikv]	table:t, partition:p2, keep order:false, stats:pseudo

@@ -18,7 +18,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
-	"path"
+	"path/filepath"
 	"reflect"
 	"time"
 
@@ -47,13 +47,22 @@ var (
 		"Performance.FeedbackProbability": {},
 		"Performance.QueryFeedbackLimit":  {},
 		"Performance.PseudoEstimateRatio": {},
+		"Performance.StmtCountLimit":      {},
+		"Performance.TCPKeepAlive":        {},
 		"OOMAction":                       {},
 		"MemQuotaQuery":                   {},
 		"TiKVClient.StoreLimit":           {},
+		"Log.Level":                       {},
 		"Log.SlowThreshold":               {},
 		"Log.QueryLogMaxLen":              {},
 		"Log.ExpensiveThreshold":          {},
 		"CheckMb4ValueInUTF8":             {},
+		"EnableStreaming":                 {},
+		"TxnLocalLatches.Capacity":        {},
+		"CompatibleKillQuery":             {},
+		"TreatOldVersionUTF8AsUTF8MB4":    {},
+		"OpenTracing.Enable":              {},
+		"PreparedPlanCache.Enabled":       {},
 	}
 )
 
@@ -97,7 +106,7 @@ func atomicWriteConfig(c *Config, confPath string) (err error) {
 	if err != nil {
 		return err
 	}
-	tmpConfPath := path.Join(os.TempDir(), fmt.Sprintf("tmp_conf_%v.toml", time.Now()))
+	tmpConfPath := filepath.Join(os.TempDir(), fmt.Sprintf("tmp_conf_%v.toml", time.Now().Format("20060102150405")))
 	if err := ioutil.WriteFile(tmpConfPath, []byte(content), 0666); err != nil {
 		return errors.Trace(err)
 	}

@@ -1,5 +1,6 @@
 port = 4001
 lease = "0"
+mem-quota-query = 34359738368
 
 [log]
 level = "error"

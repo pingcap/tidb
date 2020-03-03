@@ -1,5 +1,5 @@
 explain select * from ((select 4 as a) union all (select 33 as a)) tmp order by a desc limit 1;
-id	count	task	operator info
+id	estRows	task	operator info
 TopN_17	1.00	root	Column#3:desc, offset:0, count:1
 └─Union_21	2.00	root	
   ├─Projection_22	1.00	root	4->Column#3

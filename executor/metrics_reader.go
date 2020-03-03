@@ -85,7 +85,10 @@ func (e *MetricRetriever) retrieve(ctx context.Context, sctx sessionctx.Context)
 			time.Sleep(100 * time.Millisecond)
 		}
 		if err != nil {
-			return nil, err
+			if err1, ok := err.(*promv1.Error); ok {
+				return nil, errors.Errorf("query metric error, msg: %v, detail: %v", err1.Msg, err1.Detail)
+			}
+			return nil, errors.Errorf("query metric error: %v", err.Error())
 		}
 		partRows := e.genRows(queryValue, quantile)
 		totalRows = append(totalRows, partRows...)

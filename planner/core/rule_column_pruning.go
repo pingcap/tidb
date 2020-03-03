@@ -320,6 +320,11 @@ func (p *LogicalJoin) PruneColumns(parentUsedCols []*expression.Column) error {
 	}
 
 	p.mergeSchema()
+	if p.JoinType == LeftOuterSemiJoin || p.JoinType == AntiLeftOuterSemiJoin {
+		joinCol := p.schema.Columns[len(p.schema.Columns)-1]
+		parentUsedCols = append(parentUsedCols, joinCol)
+	}
+	p.inlineProjection(parentUsedCols)
 	return nil
 }
 
@@ -357,6 +362,12 @@ func (la *LogicalApply) PruneColumns(parentUsedCols []*expression.Column) error 
 func (p *LogicalLock) PruneColumns(parentUsedCols []*expression.Column) error {
 	if p.Lock != ast.SelectLockForUpdate && p.Lock != ast.SelectLockForUpdateNoWait {
 		return p.baseLogicalPlan.PruneColumns(parentUsedCols)
+	}
+
+	if len(p.partitionedTable) > 0 {
+		// If the children include partitioned tables, do not prune columns.
+		// Because the executor needs the partitioned columns to calculate the lock key.
+		return p.children[0].PruneColumns(p.Schema().Columns)
 	}
 
 	for _, cols := range p.tblID2Handle {

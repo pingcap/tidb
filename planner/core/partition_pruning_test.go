@@ -44,16 +44,14 @@ func (s *testPartitionPruningSuite) TestCanBePrune(c *C) {
 		"create table t (d datetime not null)",
 		"to_days(d)",
 	)
-	partitionExpr := tc.expr("to_days(d) < to_days('2007-03-08') and to_days(d) >= to_days('2007-03-07')")
+	lessThan := lessThanData{data: []int64{733108, 733132}, maxvalue: false}
 	queryExpr := tc.expr("d < '2000-03-08 00:00:00'")
-	succ, err := s.canBePruned(tc.sctx, nil, partitionExpr[0], queryExpr)
-	c.Assert(err, IsNil)
-	c.Assert(succ, IsTrue)
+	result := partitionRangeForCNFExpr(tc.sctx, queryExpr, lessThan, tc.col, tc.fn, fullRange(len(lessThan.data)))
+	c.Assert(equalPartitionRangeOR(result, partitionRangeOR{{0, 1}}), IsTrue)
 
 	queryExpr = tc.expr("d > '2018-03-08 00:00:00'")
-	succ, err = s.canBePruned(tc.sctx, nil, partitionExpr[0], queryExpr)
-	c.Assert(err, IsNil)
-	c.Assert(succ, IsTrue)
+	result = partitionRangeForCNFExpr(tc.sctx, queryExpr, lessThan, tc.col, tc.fn, fullRange(len(lessThan.data)))
+	c.Assert(equalPartitionRangeOR(result, partitionRangeOR{}), IsTrue)
 
 	// For the following case:
 	// CREATE TABLE quarterly_report_status (
@@ -70,19 +68,15 @@ func (s *testPartitionPruningSuite) TestCanBePrune(c *C) {
 		"create table t (report_updated timestamp)",
 		"unix_timestamp(report_updated)",
 	)
-
-	partitionExpr = tc.expr("unix_timestamp(report_updated) < unix_timestamp('2008-04-01') and unix_timestamp(report_updated) >= unix_timestamp('2008-01-01')")
+	lessThan = lessThanData{data: []int64{1199145600, 1207008000, 1262304000, 0}, maxvalue: true}
 	queryExpr = tc.expr("report_updated > '2008-05-01 00:00:00'")
-	succ, err = s.canBePruned(tc.sctx, nil, partitionExpr[0], queryExpr)
-	c.Assert(err, IsNil)
-	c.Assert(succ, IsTrue)
+	result = partitionRangeForCNFExpr(tc.sctx, queryExpr, lessThan, tc.col, tc.fn, fullRange(len(lessThan.data)))
+	c.Assert(equalPartitionRangeOR(result, partitionRangeOR{{2, 4}}), IsTrue)
 
 	queryExpr = tc.expr("report_updated > unix_timestamp('2008-05-01 00:00:00')")
-	succ, err = s.canBePruned(tc.sctx, nil, partitionExpr[0], queryExpr)
-	c.Assert(err, IsNil)
-	_ = succ
-	// c.Assert(succ, IsTrue)
+	partitionRangeForCNFExpr(tc.sctx, queryExpr, lessThan, tc.col, tc.fn, fullRange(len(lessThan.data)))
 	// TODO: Uncomment the check after fixing issue https://github.com/pingcap/tidb/issues/12028
+	// c.Assert(equalPartitionRangeOR(result, partitionRangeOR{{2, 4}}), IsTrue)
 	// report_updated > unix_timestamp('2008-05-01 00:00:00') is converted to gt(t.t.report_updated, <nil>)
 	// Because unix_timestamp('2008-05-01 00:00:00') is fold to constant int 1564761600, and compare it with timestamp (report_updated)
 	// need to convert 1564761600 to a timestamp, during that step, an error happen and the result is set to <nil>
@@ -133,6 +127,8 @@ type testCtx struct {
 	columns  []*expression.Column
 	names    types.NameSlice
 	lessThan lessThanData
+	col      *expression.Column
+	fn       *expression.ScalarFunction
 }
 
 func prepareTestCtx(c *C, createTable string, partitionExpr string) *testCtx {
@@ -144,12 +140,17 @@ func prepareTestCtx(c *C, createTable string, partitionExpr string) *testCtx {
 	c.Assert(err, IsNil)
 	columns, names := expression.ColumnInfos2ColumnsAndNames(sctx, model.NewCIStr("t"), tblInfo.Name, tblInfo.Columns)
 	schema := expression.NewSchema(columns...)
+
+	col, fn, err := makePartitionByFnCol(sctx, columns, names, partitionExpr)
+	c.Assert(err, IsNil)
 	return &testCtx{
 		c:       c,
 		sctx:    sctx,
 		schema:  schema,
 		columns: columns,
 		names:   names,
+		col:     col,
+		fn:      fn,
 	}
 }
 

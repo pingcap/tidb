@@ -95,14 +95,10 @@ func newPartitionExpr(tblInfo *model.TableInfo) (*PartitionExpr, error) {
 	ctx := mock.NewContext()
 	dbName := model.NewCIStr(ctx.GetSessionVars().CurrentDB)
 	columns, names := expression.ColumnInfos2ColumnsAndNames(ctx, dbName, tblInfo.Name, tblInfo.Columns)
-	return newPartitionExprBySchema(ctx, tblInfo, columns, names)
-}
-
-func newPartitionExprBySchema(ctx sessionctx.Context, tblInfo *model.TableInfo, columns []*expression.Column, names types.NameSlice) (*PartitionExpr, error) {
 	pi := tblInfo.GetPartitionInfo()
 	switch pi.Type {
 	case model.PartitionTypeRange:
-		return generatePartitionExpr(ctx, pi, columns, names)
+		return generateRangePartitionExpr(ctx, pi, columns, names)
 	case model.PartitionTypeHash:
 		return generateHashPartitionExpr(ctx, pi, columns, names)
 	}
@@ -110,22 +106,10 @@ func newPartitionExprBySchema(ctx sessionctx.Context, tblInfo *model.TableInfo, 
 }
 
 // PartitionExpr is the partition definition expressions.
-// There are two expressions exist, because Locate use binary search, which requires:
-// Given a compare function, for any partition range i, if cmp[i] > 0, then cmp[i+1] > 0.
-// While partition prune must use the accurate range to do prunning.
-// partition by range (x)
-//   (partition
-//      p1 values less than (y1)
-//      p2 values less than (y2)
-//      p3 values less than (y3))
-// Ranges: (x < y1 or x is null); (y1 <= x < y2); (y2 <= x < y3)
-// UpperBounds: (x < y1); (x < y2); (x < y3)
 type PartitionExpr struct {
-	// Column is the column appeared in the by range expression, partition pruning need this to work.
-	Column      *expression.Column
-	Ranges      []expression.Expression
+	// UpperBounds: (x < y1); (x < y2); (x < y3), used by locatePartition.
 	UpperBounds []expression.Expression
-	// OrigExpr is the partition expression ast.
+	// OrigExpr is the partition expression ast used in point get.
 	OrigExpr ast.ExprNode
 	// Expr is the hash partition expression.
 	Expr expression.Expression
@@ -147,9 +131,8 @@ func rangePartitionString(pi *model.PartitionInfo) string {
 	panic("create table assert len(columns) = 1")
 }
 
-func generatePartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
+func generateRangePartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 	columns []*expression.Column, names types.NameSlice) (*PartitionExpr, error) {
-	var column *expression.Column
 	// The caller should assure partition info is not nil.
 	partitionPruneExprs := make([]expression.Expression, 0, len(pi.Definitions))
 	locateExprs := make([]expression.Expression, 0, len(pi.Definitions))
@@ -178,16 +161,6 @@ func generatePartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 		} else {
 			// NULL will locate in the first partition, so its expression is (expr < value or expr is null).
 			fmt.Fprintf(&buf, " or ((%s) is null)", partStr)
-
-			// Extracts the column of the partition expression, it will be used by partition prunning.
-			if tmps, err1 := expression.ParseSimpleExprsWithNames(ctx, partStr, schema, names); err1 == nil {
-				if col, ok := tmps[0].(*expression.Column); ok {
-					column = col
-				}
-			}
-			if column == nil {
-				logutil.BgLogger().Warn("partition pruning not applicable", zap.String("expression", partStr))
-			}
 		}
 
 		exprs, err = expression.ParseSimpleExprsWithNames(ctx, buf.String(), schema, names)
@@ -202,15 +175,12 @@ func generatePartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 		buf.Reset()
 	}
 	return &PartitionExpr{
-		Column:      column,
-		Ranges:      partitionPruneExprs,
 		UpperBounds: locateExprs,
 	}, nil
 }
 
 func generateHashPartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 	columns []*expression.Column, names types.NameSlice) (*PartitionExpr, error) {
-	var column *expression.Column
 	// The caller should assure partition info is not nil.
 	schema := expression.NewSchema(columns...)
 	origExpr, err := parsePartitionExpr(ctx, pi.Expr, schema, names)
@@ -224,11 +194,7 @@ func generateHashPartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 		return nil, errors.Trace(err)
 	}
 	exprs.HashCode(ctx.GetSessionVars().StmtCtx)
-	if col, ok := exprs.(*expression.Column); ok {
-		column = col
-	}
 	return &PartitionExpr{
-		Column:   column,
 		Expr:     exprs,
 		OrigExpr: origExpr,
 	}, nil
@@ -236,15 +202,12 @@ func generateHashPartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 
 // PartitionExpr returns the partition expression.
 func (t *partitionedTable) PartitionExpr(ctx sessionctx.Context, columns []*expression.Column, names types.NameSlice) (*PartitionExpr, error) {
-	// TODO: a better performance implementation for range partition:
-	// traverse the Expression, find all columns and rewrite them.
-	// return newPartitionExprBySchema(ctx, t.meta, columns, names)
 	pi := t.meta.GetPartitionInfo()
 	switch pi.Type {
 	case model.PartitionTypeHash:
 		return t.partitionExpr, nil
 	case model.PartitionTypeRange:
-		return generatePartitionExpr(ctx, pi, columns, names)
+		return generateRangePartitionExpr(ctx, pi, columns, names)
 	}
 	panic("cannot reach here")
 }
@@ -340,7 +303,7 @@ func (t *partitionedTable) GetPartition(pid int64) table.PhysicalTable {
 }
 
 // GetPartitionByRow returns a Table, which is actually a Partition.
-func (t *partitionedTable) GetPartitionByRow(ctx sessionctx.Context, r []types.Datum) (table.Table, error) {
+func (t *partitionedTable) GetPartitionByRow(ctx sessionctx.Context, r []types.Datum) (table.PhysicalTable, error) {
 	pid, err := t.locatePartition(ctx, t.Meta().GetPartitionInfo(), r)
 	if err != nil {
 		return nil, errors.Trace(err)
