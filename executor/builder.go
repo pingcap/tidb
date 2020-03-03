@@ -1402,7 +1402,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			}
 		case strings.ToLower(infoschema.TableSchemata),
 			strings.ToLower(infoschema.TableViews),
-      strings.ToLower(infoschema.TableEngines),
+			strings.ToLower(infoschema.TableEngines),
 			strings.ToLower(infoschema.TableCollations),
 			strings.ToLower(infoschema.TableCharacterSets):
 			return &MemTableReaderExec{

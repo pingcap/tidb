@@ -101,4 +101,3 @@ func (s *testInfoschemaTableSuite) TestCharacterSetCollations(c *C) {
 	tk.MustQuery("SELECT character_set_name, id, sortlen FROM information_schema.collations ORDER BY collation_name").Check(
 		testkit.Rows("ascii 65 1", "binary 63 1", "latin1 47 1", "utf8 83 1", "utf8mb4 46 1"))
 }
-

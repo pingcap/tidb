@@ -15,9 +15,9 @@ package executor
 
 import (
 	"context"
-	"github.com/pingcap/parser/charset"
 	"sort"
 
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/infoschema"
@@ -53,7 +53,7 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			e.rows = dataForSchemata(sctx, dbs)
 		case infoschema.TableViews:
 			e.rows, err = dataForViews(sctx, dbs)
-    case infoschema.TableEngines:
+		case infoschema.TableEngines:
 			e.rows = dataForEngines()
 		case infoschema.TableCharacterSets:
 			e.rows = dataForCharacterSets()
@@ -198,4 +198,3 @@ func dataForCollations() (records [][]types.Datum) {
 	}
 	return records
 }
-
