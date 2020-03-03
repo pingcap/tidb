@@ -465,7 +465,7 @@ type builtinFunc interface {
 	PbCode() tipb.ScalarFuncSig
 	// setCollator sets collator for signature.
 	setCollator(ctor collate.Collator)
-	// Collator returns collator of this signature.
+	// collator returns collator of this signature.
 	collator() collate.Collator
 	// metadata returns the metadata of a function.
 	// metadata means some functions contain extra inner fields which will not
