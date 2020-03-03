@@ -125,8 +125,11 @@ func (p *LogicalJoin) checkJoinKeyCollation(leftKeys, rightKeys []*expression.Co
 	// if a left key and its corresponding right key have different collation, don't use MergeJoin since
 	// the their children may sort their records in different ways
 	for i := range leftKeys {
-		if leftKeys[i].RetType.Charset != rightKeys[i].RetType.Charset ||
-			leftKeys[i].RetType.Collate != rightKeys[i].RetType.Collate {
+		lt := leftKeys[i].RetType
+		rt := rightKeys[i].RetType
+		if (lt.EvalType() == types.ETString && rt.EvalType() == types.ETString) &&
+			(leftKeys[i].RetType.Charset != rightKeys[i].RetType.Charset ||
+				leftKeys[i].RetType.Collate != rightKeys[i].RetType.Collate) {
 			return false
 		}
 	}
