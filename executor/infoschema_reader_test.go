@@ -84,6 +84,11 @@ func (s *testInfoschemaTableSuite) TestViews(c *C) {
 	tk.MustQuery("SELECT table_catalog, table_schema, table_name, table_type, engine, version, row_format, table_rows, avg_row_length, data_length, max_data_length, index_length, data_free, auto_increment, update_time, check_time, table_collation, checksum, create_options, table_comment FROM information_schema.tables WHERE table_schema='test' AND table_name='v1'").Check(testkit.Rows("def test v1 VIEW <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> VIEW"))
 }
 
+func (s *testInfoschemaTableSuite) TestEngines(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustQuery("select * from information_schema.ENGINES;").Check(testkit.Rows("InnoDB DEFAULT Supports transactions, row-level locking, and foreign keys YES YES YES"))
+}
+
 func (s *testInfoschemaTableSuite) TestCharacterSetCollations(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
@@ -96,3 +101,4 @@ func (s *testInfoschemaTableSuite) TestCharacterSetCollations(c *C) {
 	tk.MustQuery("SELECT character_set_name, id, sortlen FROM information_schema.collations ORDER BY collation_name").Check(
 		testkit.Rows("ascii 65 1", "binary 63 1", "latin1 47 1", "utf8 83 1", "utf8mb4 46 1"))
 }
+

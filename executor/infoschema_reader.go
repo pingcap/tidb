@@ -53,6 +53,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			e.rows = dataForSchemata(sctx, dbs)
 		case infoschema.TableViews:
 			e.rows, err = dataForViews(sctx, dbs)
+    case infoschema.TableEngines:
+			e.rows = dataForEngines()
 		case infoschema.TableCharacterSets:
 			e.rows = dataForCharacterSets()
 		case infoschema.TableCollations:
@@ -159,6 +161,20 @@ func dataForViews(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Da
 	return rows, nil
 }
 
+func dataForEngines() (rows [][]types.Datum) {
+	rows = append(rows,
+		types.MakeDatums(
+			"InnoDB",  // Engine
+			"DEFAULT", // Support
+			"Supports transactions, row-level locking, and foreign keys", // Comment
+			"YES", // Transactions
+			"YES", // XA
+			"YES", // Savepoints
+		),
+	)
+	return rows
+}
+
 func dataForCharacterSets() (records [][]types.Datum) {
 	charsets := charset.GetSupportedCharsets()
 	for _, charset := range charsets {
@@ -182,3 +198,4 @@ func dataForCollations() (records [][]types.Datum) {
 	}
 	return records
 }
+
