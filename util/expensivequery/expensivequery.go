@@ -146,6 +146,7 @@ func genLogFields(costTime time.Duration, info *util.ProcessInfo) []zap.Field {
 		logFields = append(logFields, zap.String("index_names", indexNames))
 	}
 	logFields = append(logFields, zap.Uint64("txn_start_ts", info.CurTxnStartTS))
+	logFields = append(logFields, zap.Uint64("wait_txn_ts", info.BlockTxnTs))
 	if memTracker := info.StmtCtx.MemTracker; memTracker != nil {
 		logFields = append(logFields, zap.String("mem_max", fmt.Sprintf("%d Bytes (%v)", memTracker.MaxConsumed(), memTracker.BytesToString(memTracker.MaxConsumed()))))
 	}

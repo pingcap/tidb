@@ -16,6 +16,7 @@ package util
 import (
 	"crypto/tls"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/pingcap/parser/mysql"
@@ -33,6 +34,7 @@ type ProcessInfo struct {
 	Time          time.Time
 	Info          string
 	CurTxnStartTS uint64
+	BlockTxnTs    uint64
 	StmtCtx       *stmtctx.StatementContext
 	StatsInfo     func(interface{}) map[string]uint64
 	// MaxExecutionTime is the timeout for select statement, in milliseconds.
@@ -43,6 +45,13 @@ type ProcessInfo struct {
 	Command                   byte
 	ExceedExpensiveTimeThresh bool
 }
+
+type (
+	// ProcessInfoUpdater is the hook use to update current running process info in low level method.
+	ProcessInfoUpdater func(f func(info *ProcessInfo)) bool
+	// ProcessInfoUpdaterCtxKey used to pass ProcessInfoUpdater in context.Context.
+	ProcessInfoUpdaterCtxKey struct{}
+)
 
 // ToRowForShow returns []interface{} for the row data of "SHOW [FULL] PROCESSLIST".
 func (pi *ProcessInfo) ToRowForShow(full bool) []interface{} {
@@ -86,7 +95,7 @@ func (pi *ProcessInfo) ToRow(tz *time.Location) []interface{} {
 	if pi.StmtCtx != nil && pi.StmtCtx.MemTracker != nil {
 		bytesConsumed = pi.StmtCtx.MemTracker.BytesConsumed()
 	}
-	return append(pi.ToRowForShow(true), bytesConsumed, pi.txnStartTs(tz))
+	return append(pi.ToRowForShow(true), bytesConsumed, pi.txnStartTs(tz), strconv.FormatUint(pi.BlockTxnTs, 10))
 }
 
 // SessionManager is an interface for session manage. Show processlist and

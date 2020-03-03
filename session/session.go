@@ -28,6 +28,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/ngaut/pools"
 	"github.com/opentracing/opentracing-go"
@@ -112,6 +113,7 @@ type Session interface {
 	SetConnectionID(uint64)
 	SetCommandValue(byte)
 	SetProcessInfo(string, time.Time, byte, uint64)
+	TryUpdateProcessor(f func(info *util.ProcessInfo)) bool
 	SetTLSState(*tls.ConnectionState)
 	SetCollation(coID int) error
 	SetSessionManager(util.SessionManager)
@@ -154,7 +156,7 @@ func (h *StmtHistory) Count() int {
 
 type session struct {
 	// processInfo is used by ShowProcess(), and should be modified atomically.
-	processInfo atomic.Value
+	processInfo unsafe.Pointer
 	txn         TxnState
 
 	mu struct {
@@ -1020,7 +1022,17 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		pi.User = s.sessionVars.User.Username
 		pi.Host = s.sessionVars.User.Hostname
 	}
-	s.processInfo.Store(&pi)
+	atomic.StorePointer(&s.processInfo, (unsafe.Pointer)(&pi))
+}
+
+func (s *session) TryUpdateProcessor(f func(info *util.ProcessInfo)) bool {
+	pi := (*util.ProcessInfo)(atomic.LoadPointer(&s.processInfo))
+	if pi == nil {
+		return true
+	}
+	cpi := *pi
+	f(&cpi)
+	return atomic.CompareAndSwapPointer(&s.processInfo, unsafe.Pointer(pi), unsafe.Pointer(&cpi))
 }
 
 func (s *session) executeStatement(ctx context.Context, connID uint64, stmtNode ast.StmtNode, stmt sqlexec.Statement, recordSets []sqlexec.RecordSet, inMulitQuery bool) ([]sqlexec.RecordSet, error) {
@@ -2073,12 +2085,7 @@ func (s *session) GetStore() kv.Storage {
 }
 
 func (s *session) ShowProcess() *util.ProcessInfo {
-	var pi *util.ProcessInfo
-	tmp := s.processInfo.Load()
-	if tmp != nil {
-		pi = tmp.(*util.ProcessInfo)
-	}
-	return pi
+	return (*util.ProcessInfo)(atomic.LoadPointer(&s.processInfo))
 }
 
 // logStmt logs some crucial SQL including: CREATE USER/GRANT PRIVILEGE/CHANGE PASSWORD/DDL etc and normal SQL

@@ -281,10 +281,10 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 //    commit status.
 // 3) Send `ResolveLock` cmd to the lock's region to resolve all locks belong to
 //    the same transaction.
-func (lr *LockResolver) ResolveLocks(bo *Backoffer, callerStartTS uint64, locks []*Lock) (int64, []uint64 /*pushed*/, error) {
+func (lr *LockResolver) ResolveLocks(bo *Backoffer, callerStartTS uint64, locks []*Lock) (int64, []uint64 /*pushed*/, uint64 /*waitTxn*/, error) {
 	var msBeforeTxnExpired txnExpireTime
 	if len(locks) == 0 {
-		return msBeforeTxnExpired.value(), nil, nil
+		return msBeforeTxnExpired.value(), nil, 0, nil
 	}
 
 	tikvLockResolverCountWithResolve.Inc()
@@ -294,12 +294,13 @@ func (lr *LockResolver) ResolveLocks(bo *Backoffer, callerStartTS uint64, locks 
 	// TODO: Maybe put it in LockResolver and share by all txns.
 	cleanTxns := make(map[uint64]map[RegionVerID]struct{})
 	pushed := make([]uint64, 0, len(locks))
+	var waitTxn uint64
 	for _, l := range locks {
 		status, err := lr.getTxnStatusFromLock(bo, l, callerStartTS)
 		if err != nil {
 			msBeforeTxnExpired.update(0)
 			err = errors.Trace(err)
-			return msBeforeTxnExpired.value(), nil, err
+			return msBeforeTxnExpired.value(), nil, 0, err
 		}
 
 		if status.ttl == 0 {
@@ -319,14 +320,16 @@ func (lr *LockResolver) ResolveLocks(bo *Backoffer, callerStartTS uint64, locks 
 			if err != nil {
 				msBeforeTxnExpired.update(0)
 				err = errors.Trace(err)
-				return msBeforeTxnExpired.value(), nil, err
+				return msBeforeTxnExpired.value(), nil, 0, err
 			}
 		} else {
 			tikvLockResolverCountWithNotExpired.Inc()
 			// If the lock is valid, the txn may be a pessimistic transaction.
 			// Update the txn expire time.
 			msBeforeLockExpired := lr.store.GetOracle().UntilExpired(l.TxnID, status.ttl)
-			msBeforeTxnExpired.update(msBeforeLockExpired)
+			if msBeforeTxnExpired.update(msBeforeLockExpired) {
+				waitTxn = l.TxnID
+			}
 			// In the write conflict scenes, callerStartTS is set to 0 to avoid unnecessary push minCommitTS operation.
 			if callerStartTS > 0 {
 				if status.action != kvrpcpb.Action_MinCommitTSPushed {
@@ -345,7 +348,7 @@ func (lr *LockResolver) ResolveLocks(bo *Backoffer, callerStartTS uint64, locks 
 	if msBeforeTxnExpired.value() > 0 {
 		tikvLockResolverCountWithWaitExpired.Inc()
 	}
-	return msBeforeTxnExpired.value(), pushed, nil
+	return msBeforeTxnExpired.value(), pushed, waitTxn, nil
 }
 
 type txnExpireTime struct {
@@ -353,18 +356,20 @@ type txnExpireTime struct {
 	txnExpire   int64
 }
 
-func (t *txnExpireTime) update(lockExpire int64) {
+func (t *txnExpireTime) update(lockExpire int64) bool {
 	if lockExpire <= 0 {
 		lockExpire = 0
 	}
 	if !t.initialized {
 		t.txnExpire = lockExpire
 		t.initialized = true
-		return
+		return true
 	}
 	if lockExpire < t.txnExpire {
 		t.txnExpire = lockExpire
+		return true
 	}
+	return false
 }
 
 func (t *txnExpireTime) value() int64 {
