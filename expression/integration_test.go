@@ -5498,23 +5498,25 @@ func (s *testIntegrationSerialSuite) TestWeightString(c *C) {
 	defer collate.SetNewCollationEnabledForTest(false)
 
 	type testCase struct {
-		input           []string
-		result          []string
-		resultAsChar1   []string
-		resultAsChar3   []string
-		resultAsBinary1 []string
-		resultAsBinary5 []string
+		input                    []string
+		result                   []string
+		resultAsChar1            []string
+		resultAsChar3            []string
+		resultAsBinary1          []string
+		resultAsBinary5          []string
+		resultExplicitCollateBin []string
 	}
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int, a varchar(20) collate utf8mb4_general_ci)")
 	cases := testCase{
-		input:           []string{"aAÁàãăâ", "a", "a  ", "中", "中 "},
-		result:          []string{"\x00A\x00A\x00A\x00A\x00A\x00A\x00A", "\x00A", "\x00A", "\x4E\x2D", "\x4E\x2D"},
-		resultAsChar1:   []string{"\x00A", "\x00A", "\x00A", "\x4E\x2D", "\x4E\x2D"},
-		resultAsChar3:   []string{"\x00A\x00A\x00A", "\x00A", "\x00A", "\x4E\x2D", "\x4E\x2D"},
-		resultAsBinary1: []string{"a", "a", "a", "\xE4", "\xE4"},
-		resultAsBinary5: []string{"aA\xc3\x81\xc3", "a\x00\x00\x00\x00", "a  \x00\x00", "中\x00\x00", "中 \x00"},
+		input:                    []string{"aAÁàãăâ", "a", "a  ", "中", "中 "},
+		result:                   []string{"\x00A\x00A\x00A\x00A\x00A\x00A\x00A", "\x00A", "\x00A", "\x4E\x2D", "\x4E\x2D"},
+		resultAsChar1:            []string{"\x00A", "\x00A", "\x00A", "\x4E\x2D", "\x4E\x2D"},
+		resultAsChar3:            []string{"\x00A\x00A\x00A", "\x00A", "\x00A", "\x4E\x2D", "\x4E\x2D"},
+		resultAsBinary1:          []string{"a", "a", "a", "\xE4", "\xE4"},
+		resultAsBinary5:          []string{"aA\xc3\x81\xc3", "a\x00\x00\x00\x00", "a  \x00\x00", "中\x00\x00", "中 \x00"},
+		resultExplicitCollateBin: []string{"aAÁàãăâ", "a", "a", "中", "中"},
 	}
 	values := make([]string, len(cases.input))
 	for i, input := range cases.input {
@@ -5551,6 +5553,10 @@ func (s *testIntegrationSerialSuite) TestWeightString(c *C) {
 	// test explicit collation
 	c.Assert(tk.MustQuery("select weight_string('中 ' collate utf8mb4_general_ci);").Rows()[0][0], Equals, "\x4E\x2D")
 	c.Assert(tk.MustQuery("select weight_string('中 ' collate utf8_bin);").Rows()[0][0], Equals, "中")
+	rows = tk.MustQuery("select weight_string(a collate utf8mb4_bin) from t order by id").Rows()
+	for i, out := range cases.resultExplicitCollateBin {
+		c.Assert(rows[i][0].(string), Equals, out)
+	}
 }
 
 func (s *testIntegrationSerialSuite) TestCollationCreateIndex(c *C) {

@@ -991,6 +991,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 			// Wrap a cast here to avoid changing the original FieldType of the column expression.
 			casted := expression.WrapWithCastAsString(er.sctx, arg)
 			casted.GetType().Collate = v.Collate
+			er.ctxStackPop(1)
 			er.ctxStackAppend(casted, types.EmptyName)
 		} else {
 			// For constant and scalar function, we can set its collate directly.
