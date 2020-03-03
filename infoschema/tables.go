@@ -74,7 +74,8 @@ const (
 	tableSchemaPrivileges = "SCHEMA_PRIVILEGES"
 	tableTablePrivileges  = "TABLE_PRIVILEGES"
 	tableColumnPrivileges = "COLUMN_PRIVILEGES"
-	TableEngines          = "ENGINES"
+	// TableEngines is the string constant of infoschema table
+	TableEngines = "ENGINES"
 	// TableViews is the string constant of infoschema table
 	TableViews                              = "VIEWS"
 	tableRoutines                           = "ROUTINES"
