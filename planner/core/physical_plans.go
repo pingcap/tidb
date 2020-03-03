@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
 )
@@ -416,7 +417,8 @@ type PhysicalLock struct {
 
 	Lock ast.SelectLockType
 
-	TblID2Handle map[int64][]*expression.Column
+	TblID2Handle     map[int64][]*expression.Column
+	PartitionedTable []table.PartitionedTable
 }
 
 // PhysicalLimit is the physical operator of Limit.

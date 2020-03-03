@@ -3022,3 +3022,69 @@ func (s *testSessionSuite2) TestStmtHints(c *C) {
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 1)
 	c.Assert(tk.Se.GetSessionVars().GetReplicaRead(), Equals, kv.ReplicaReadFollower)
 }
+
+func (s *testSessionSuite2) TestPessimisticLockOnPartition(c *C) {
+	// This test checks that 'select ... for update' locks the partition instead of the table.
+	// Cover a bug that table ID is used to encode the lock key mistakenly.
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table if not exists forupdate_on_partition (
+  age int not null primary key,
+  nickname varchar(20) not null,
+  gender int not null default 0,
+  first_name varchar(30) not null default '',
+  last_name varchar(20) not null default '',
+  full_name varchar(60) as (concat(first_name, ' ', last_name)),
+  index idx_nickname (nickname)
+) partition by range (age) (
+  partition child values less than (18),
+  partition young values less than (30),
+  partition middle values less than (50),
+  partition old values less than (123)
+);`)
+	tk.MustExec("insert into forupdate_on_partition (`age`, `nickname`) values (25, 'cosven');")
+
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("use test")
+
+	tk.MustExec("begin pessimistic")
+	tk.MustQuery("select * from forupdate_on_partition where age=25 for update").Check(testkit.Rows("25 cosven 0    "))
+	tk1.MustExec("begin pessimistic")
+
+	ch := make(chan int32, 5)
+	go func() {
+		tk1.MustExec("update forupdate_on_partition set first_name='sw' where age=25")
+		ch <- 0
+		tk1.MustExec("commit")
+	}()
+
+	// Leave 50ms for tk1 to run, tk1 should be blocked at the update operation.
+	time.Sleep(50 * time.Millisecond)
+	ch <- 1
+
+	tk.MustExec("commit")
+	// tk1 should be blocked until tk commit, check the order.
+	c.Assert(<-ch, Equals, int32(1))
+	c.Assert(<-ch, Equals, int32(0))
+
+	// Once again...
+	// This time, test for the update-update conflict.
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("update forupdate_on_partition set first_name='sw' where age=25")
+	tk1.MustExec("begin pessimistic")
+
+	go func() {
+		tk1.MustExec("update forupdate_on_partition set first_name = 'xxx' where age=25")
+		ch <- 0
+		tk1.MustExec("commit")
+	}()
+
+	// Leave 50ms for tk1 to run, tk1 should be blocked at the update operation.
+	time.Sleep(50 * time.Millisecond)
+	ch <- 1
+
+	tk.MustExec("commit")
+	// tk1 should be blocked until tk commit, check the order.
+	c.Assert(<-ch, Equals, int32(1))
+	c.Assert(<-ch, Equals, int32(0))
+}
