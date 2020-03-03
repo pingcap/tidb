@@ -161,6 +161,13 @@ func (e *HashJoinExec) Open(ctx context.Context) error {
 	e.closeCh = make(chan struct{})
 	e.finished.Store(false)
 	e.joinWorkerWaitGroup = sync.WaitGroup{}
+
+	if e.probeTypes == nil {
+		e.probeTypes = retTypes(e.probeSideExec)
+	}
+	if e.buildTypes == nil {
+		e.buildTypes = retTypes(e.buildSideExec)
+	}
 	return nil
 }
 

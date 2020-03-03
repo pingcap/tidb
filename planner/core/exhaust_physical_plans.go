@@ -130,7 +130,6 @@ func (p *LogicalJoin) checkJoinKeyCollation(leftKeys, rightKeys []*expression.Co
 		if (lt.EvalType() == types.ETString && rt.EvalType() == types.ETString) &&
 			(leftKeys[i].RetType.Charset != rightKeys[i].RetType.Charset ||
 				leftKeys[i].RetType.Collate != rightKeys[i].RetType.Collate) {
-			fmt.Println("????????????????????????????")
 			return false
 		}
 	}
