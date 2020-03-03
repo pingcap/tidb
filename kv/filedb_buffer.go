@@ -66,18 +66,23 @@ func (mb *fileDBBuffer) Get(ctx context.Context, k Key) ([]byte, error) {
 
 type fileDBBufferIter struct {
 	iterator.Iterator
+	valid bool
 }
 
-func (iter fileDBBufferIter) Key() Key {
-	return iter.Iterator.Key()
+func (i *fileDBBufferIter) Valid() bool {
+	return i.valid
 }
 
-func (iter fileDBBufferIter) Next() error {
-	iter.Iterator.Next()
+func (i *fileDBBufferIter) Key() Key {
+	return i.Iterator.Key()
+}
+
+func (i *fileDBBufferIter) Next() error {
+	i.valid = i.Iterator.Next()
 	return nil
 }
 
-func (iter fileDBBufferIter) Close() {
+func (iter *fileDBBufferIter) Close() {
 	iter.Iterator.Release()
 }
 
@@ -87,7 +92,9 @@ func (mb *fileDBBuffer) Iter(k Key, upperBound Key) (Iterator, error) {
 		Limit: upperBound,
 	}
 	iter := mb.db.NewIterator(&slice, nil)
-	return fileDBBufferIter{iter}, nil
+	i := &fileDBBufferIter{Iterator:iter, valid: true}
+	i.Next()
+	return i, nil
 }
 
 func (mb *fileDBBuffer) IterReverse(k Key) (Iterator, error) {

@@ -14,6 +14,9 @@
 package kv
 
 import (
+	"fmt"
+	"time"
+	"math/rand"
 	"context"
 
 	. "github.com/pingcap/check"
@@ -22,10 +25,22 @@ import (
 )
 
 var _ = Suite(&testUnionStoreSuite{})
+var _ = Suite(&testUnionStoreSuite1{})
 
 type testUnionStoreSuite struct {
 	store MemBuffer
 	us    UnionStore
+}
+
+type testUnionStoreSuite1 struct {
+	testUnionStoreSuite
+}
+
+func (s *testUnionStoreSuite1) SetUpTest(c *C) {
+	tmp, err := NewFileDBBuffer(fmt.Sprintf("/tmp/file_unionstore_test_%s_%d", time.Now().Format("20060102150405"), rand.Int()))
+	c.Assert(err, IsNil)
+	s.store = tmp
+	s.us = NewUnionStore(&mockSnapshot{s.store})
 }
 
 func (s *testUnionStoreSuite) SetUpTest(c *C) {
@@ -93,6 +108,10 @@ func (s *testUnionStoreSuite) TestSeek(c *C) {
 	iter, err = s.us.Iter([]byte("2"), nil)
 	c.Assert(err, IsNil)
 	checkIterator(c, iter, [][]byte{[]byte("2"), []byte("4")}, [][]byte{[]byte("2"), []byte("4")})
+}
+
+func (s *testUnionStoreSuite1) TestIterReverse(c *C) {
+	// Skip as the fileDBBuffer doesn't support reverse now.
 }
 
 func (s *testUnionStoreSuite) TestIterReverse(c *C) {

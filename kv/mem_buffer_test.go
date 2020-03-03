@@ -18,6 +18,7 @@ package kv
 import (
 	"context"
 	"fmt"
+	"time"
 	"math/rand"
 	"testing"
 
@@ -36,19 +37,22 @@ func TestT(t *testing.T) {
 	TestingT(t)
 }
 
-var _ = Suite(&testKVSuite{})
+var _ = SerialSuites(&testKVSuite{})
 
 type testKVSuite struct {
 	bs []MemBuffer
 }
 
 func (s *testKVSuite) SetUpSuite(c *C) {
-	s.bs = make([]MemBuffer, 1)
-	s.bs[0] = NewMemDbBuffer(DefaultTxnMembufCap)
+	s.bs = make([]MemBuffer, 2)
+	s.ResetMembuffers(c)
 }
 
-func (s *testKVSuite) ResetMembuffers() {
+func (s *testKVSuite) ResetMembuffers(c *C) {
 	s.bs[0] = NewMemDbBuffer(DefaultTxnMembufCap)
+	tmp, err := NewFileDBBuffer(fmt.Sprintf("/tmp/file_db_test_%s_%d", time.Now().Format("20060102150405"), rand.Int()))
+	c.Assert(err, IsNil)
+	s.bs[1] = tmp
 }
 
 func insertData(c *C, buffer MemBuffer) {
@@ -134,7 +138,7 @@ func (s *testKVSuite) TestGetSet(c *C) {
 		insertData(c, buffer)
 		mustGet(c, buffer)
 	}
-	s.ResetMembuffers()
+	s.ResetMembuffers(c)
 }
 
 func (s *testKVSuite) TestNewIterator(c *C) {
@@ -143,12 +147,13 @@ func (s *testKVSuite) TestNewIterator(c *C) {
 		// should be invalid
 		iter, err := buffer.Iter(nil, nil)
 		c.Assert(err, IsNil)
+		defer iter.Close()
 		c.Assert(iter.Valid(), IsFalse)
 
 		insertData(c, buffer)
 		checkNewIterator(c, buffer)
 	}
-	s.ResetMembuffers()
+	s.ResetMembuffers(c)
 }
 
 func (s *testKVSuite) TestIterNextUntil(c *C) {
@@ -197,6 +202,7 @@ func (s *testKVSuite) TestNewIteratorMin(c *C) {
 		cnt := 0
 		it, err := buffer.Iter(nil, nil)
 		c.Assert(err, IsNil)
+		defer it.Close()
 		for it.Valid() {
 			cnt++
 			err := it.Next()
@@ -208,7 +214,7 @@ func (s *testKVSuite) TestNewIteratorMin(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(string(it.Key()), Equals, "DATA_test_main_db_tbl_tbl_test_record__00000000000000000001")
 	}
-	s.ResetMembuffers()
+	s.ResetMembuffers(c)
 }
 
 func (s *testKVSuite) TestBufferLimit(c *C) {
