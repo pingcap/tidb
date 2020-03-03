@@ -36,7 +36,7 @@ func PbTypeToFieldType(tp *tipb.FieldType) *types.FieldType {
 		Flen:    int(tp.Flen),
 		Decimal: int(tp.Decimal),
 		Charset: tp.Charset,
-		Collate: mysql.Collations[uint8(tp.Collate)],
+		Collate: protoToCollation(tp.Collate),
 	}
 }
 
@@ -1070,7 +1070,7 @@ func PBToExpr(expr *tipb.Expr, tps []*types.FieldType, sc *stmtctx.StatementCont
 	case tipb.ExprType_Uint64:
 		return convertUint(expr.Val)
 	case tipb.ExprType_String:
-		return convertString(expr.Val)
+		return convertString(expr.Val, expr.FieldType)
 	case tipb.ExprType_Bytes:
 		return &Constant{Value: types.NewBytesDatum(expr.Val), RetType: types.NewFieldType(mysql.TypeString)}, nil
 	case tipb.ExprType_Float32:
@@ -1109,7 +1109,12 @@ func PBToExpr(expr *tipb.Expr, tps []*types.FieldType, sc *stmtctx.StatementCont
 		}
 		args = append(args, arg)
 	}
-	return newDistSQLFunctionBySig(sc, expr.Sig, expr.FieldType, args)
+	sf, err := newDistSQLFunctionBySig(sc, expr.Sig, expr.FieldType, args)
+	if err != nil {
+		return nil, err
+	}
+	sf.SetCharsetAndCollation(DeriveCollationFromExprs(nil, args...))
+	return sf, nil
 }
 
 func convertTime(data []byte, ftPB *tipb.FieldType, tz *time.Location) (*Constant, error) {
@@ -1169,9 +1174,9 @@ func convertUint(val []byte) (*Constant, error) {
 	return &Constant{Value: d, RetType: &types.FieldType{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag}}, nil
 }
 
-func convertString(val []byte) (*Constant, error) {
+func convertString(val []byte, tp *tipb.FieldType) (*Constant, error) {
 	var d types.Datum
-	d.SetBytesAsString(val)
+	d.SetBytesAsString(val, protoToCollation(tp.Collate), uint32(tp.Flen))
 	return &Constant{Value: d, RetType: types.NewFieldType(mysql.TypeVarString)}, nil
 }
 

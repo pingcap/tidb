@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-tipb"
@@ -84,6 +85,7 @@ var (
 	_ functionClass = &insertFunctionClass{}
 	_ functionClass = &instrFunctionClass{}
 	_ functionClass = &loadFileFunctionClass{}
+	_ functionClass = &weightStringFunctionClass{}
 )
 
 var (
@@ -100,6 +102,7 @@ var (
 	_ builtinFunc = &builtinReverseUTF8Sig{}
 	_ builtinFunc = &builtinReverseSig{}
 	_ builtinFunc = &builtinSpaceSig{}
+	_ builtinFunc = &builtinUpperUTF8Sig{}
 	_ builtinFunc = &builtinUpperSig{}
 	_ builtinFunc = &builtinStrcmpSig{}
 	_ builtinFunc = &builtinReplaceSig{}
@@ -150,6 +153,7 @@ var (
 	_ builtinFunc = &builtinFieldRealSig{}
 	_ builtinFunc = &builtinFieldIntSig{}
 	_ builtinFunc = &builtinFieldStringSig{}
+	_ builtinFunc = &builtinWeightStringSig{}
 )
 
 func reverseBytes(origin []byte) []byte {
@@ -262,6 +266,7 @@ func (c *concatFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 		argTps = append(argTps, types.ETString)
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, argTps...)
+	bf.tp.Flen = 0
 	for i := range args {
 		argType := args[i].GetType()
 		SetBinFlagOrBinStr(argType, bf.tp)
@@ -331,6 +336,7 @@ func (c *concatWSFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	}
 
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, argTps...)
+	bf.tp.Flen = 0
 
 	for i := range args {
 		argType := args[i].GetType()
@@ -826,9 +832,36 @@ func (c *upperFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	argTp := args[0].GetType()
 	bf.tp.Flen = argTp.Flen
 	SetBinFlagOrBinStr(argTp, bf.tp)
-	sig := &builtinUpperSig{bf}
-	sig.setPbCode(tipb.ScalarFuncSig_Upper)
+	var sig builtinFunc
+	if types.IsBinaryStr(argTp) {
+		sig = &builtinUpperSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_Upper)
+	} else {
+		sig = &builtinUpperUTF8Sig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_UpperUTF8)
+	}
 	return sig, nil
+}
+
+type builtinUpperUTF8Sig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinUpperUTF8Sig) Clone() builtinFunc {
+	newSig := &builtinUpperUTF8Sig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalString evals a builtinUpperUTF8Sig.
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_upper
+func (b *builtinUpperUTF8Sig) evalString(row chunk.Row) (d string, isNull bool, err error) {
+	d, isNull, err = b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return d, isNull, err
+	}
+
+	return strings.ToUpper(d), false, nil
 }
 
 type builtinUpperSig struct {
@@ -849,11 +882,7 @@ func (b *builtinUpperSig) evalString(row chunk.Row) (d string, isNull bool, err 
 		return d, isNull, err
 	}
 
-	if types.IsBinaryStr(b.args[0].GetType()) {
-		return d, false, nil
-	}
-
-	return strings.ToUpper(d), false, nil
+	return d, false, nil
 }
 
 type strcmpFunctionClass struct {
@@ -899,7 +928,8 @@ func (b *builtinStrcmpSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
-	res := types.CompareString(left, right)
+	_, collation, flen := b.CharsetAndCollation(b.ctx)
+	res := types.CompareString(left, right, collation, flen)
 	return int64(res), false, nil
 }
 
@@ -2594,11 +2624,13 @@ func (c *octFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 	var sig builtinFunc
 	if IsBinaryLiteral(args[0]) || args[0].GetType().EvalType() == types.ETInt {
 		bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETInt)
+		bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 		bf.tp.Flen, bf.tp.Decimal = 64, types.UnspecifiedLength
 		sig = &builtinOctIntSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_OctInt)
 	} else {
 		bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
+		bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 		bf.tp.Flen, bf.tp.Decimal = 64, types.UnspecifiedLength
 		sig = &builtinOctStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_OctString)
@@ -2823,6 +2855,7 @@ func (c *binFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 		return nil, err
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETInt)
+	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	bf.tp.Flen = 64
 	sig := &builtinBinSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Bin)
@@ -3084,6 +3117,7 @@ func (c *formatFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 		argTps = append(argTps, types.ETString)
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, argTps...)
+	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	bf.tp.Flen = mysql.MaxBlobWidth
 	var sig builtinFunc
 	if len(args) == 3 {
@@ -3319,6 +3353,7 @@ func (c *toBase64FunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		return nil, err
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
+	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	bf.tp.Flen = base64NeededEncodedLength(bf.args[0].GetType().Flen)
 
 	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
@@ -3626,4 +3661,159 @@ type loadFileFunctionClass struct {
 
 func (c *loadFileFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "load_file")
+}
+
+type weightStringPadding byte
+
+const (
+	// weightStringPaddingNone is used for WEIGHT_STRING(expr) if the expr is non-numeric.
+	weightStringPaddingNone weightStringPadding = iota
+	// weightStringPaddingAsChar is used for WEIGHT_STRING(expr AS CHAR(x)) and the expr is non-numeric.
+	weightStringPaddingAsChar
+	// weightStringPaddingAsBinary is used for WEIGHT_STRING(expr as BINARY(x)) and the expr is not null.
+	weightStringPaddingAsBinary
+	// weightStringPaddingNull is used for WEIGHT_STRING(expr [AS (CHAR|BINARY)]) for all other cases, it returns null always.
+	weightStringPaddingNull
+)
+
+type weightStringFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *weightStringFunctionClass) verifyArgs(args []Expression) (weightStringPadding, int, error) {
+	padding := weightStringPaddingNone
+	l := len(args)
+	if l != 1 && l != 3 {
+		return weightStringPaddingNone, 0, ErrIncorrectParameterCount.GenWithStackByArgs(c.funcName)
+	}
+	if types.IsTypeNumeric(args[0].GetType().Tp) {
+		padding = weightStringPaddingNull
+	}
+	length := 0
+	if l == 3 {
+		if args[1].GetType().EvalType() != types.ETString {
+			return weightStringPaddingNone, 0, ErrIncorrectType.GenWithStackByArgs(args[1].String(), c.funcName)
+		}
+		c1, ok := args[1].(*Constant)
+		if !ok {
+			return weightStringPaddingNone, 0, ErrIncorrectType.GenWithStackByArgs(args[1].String(), c.funcName)
+		}
+		switch x := c1.Value.GetString(); x {
+		case "CHAR":
+			if padding == weightStringPaddingNone {
+				padding = weightStringPaddingAsChar
+			}
+		case "BINARY":
+			padding = weightStringPaddingAsBinary
+		default:
+			return weightStringPaddingNone, 0, ErrIncorrectType.GenWithStackByArgs(x, c.funcName)
+		}
+		if args[2].GetType().EvalType() != types.ETInt {
+			return weightStringPaddingNone, 0, ErrIncorrectType.GenWithStackByArgs(args[2].String(), c.funcName)
+		}
+		c2, ok := args[2].(*Constant)
+		if !ok {
+			return weightStringPaddingNone, 0, ErrIncorrectType.GenWithStackByArgs(args[1].String(), c.funcName)
+		}
+		length = int(c2.Value.GetInt64())
+		if length == 0 {
+			return weightStringPaddingNone, 0, ErrIncorrectType.GenWithStackByArgs(args[2].String(), c.funcName)
+		}
+	}
+	return padding, length, nil
+}
+
+func (c *weightStringFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	padding, length, err := c.verifyArgs(args)
+	if err != nil {
+		return nil, err
+	}
+	argTps := make([]types.EvalType, len(args))
+	argTps[0] = types.ETString
+
+	if len(args) == 3 {
+		argTps[1] = types.ETString
+		argTps[2] = types.ETInt
+	}
+
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, argTps...)
+	var sig builtinFunc
+	if padding == weightStringPaddingNull {
+		sig = &builtinWeightStringNullSig{bf}
+	} else {
+		sig = &builtinWeightStringSig{bf, padding, length}
+	}
+	return sig, nil
+}
+
+type builtinWeightStringNullSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinWeightStringNullSig) Clone() builtinFunc {
+	newSig := &builtinWeightStringNullSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalString evals a WEIGHT_STRING(expr [AS CHAR|BINARY]) when the expr is numeric types, it always returns null.
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_weight-string
+func (b *builtinWeightStringNullSig) evalString(row chunk.Row) (string, bool, error) {
+	return "", true, nil
+}
+
+type builtinWeightStringSig struct {
+	baseBuiltinFunc
+
+	padding weightStringPadding
+	length  int
+}
+
+func (b *builtinWeightStringSig) Clone() builtinFunc {
+	newSig := &builtinWeightStringSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.padding = b.padding
+	newSig.length = b.length
+	return newSig
+}
+
+// evalString evals a WEIGHT_STRING(expr [AS (CHAR|BINARY)]) when the expr is non-numeric types.
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_weight-string
+func (b *builtinWeightStringSig) evalString(row chunk.Row) (string, bool, error) {
+	str, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if err != nil {
+		return "", false, err
+	}
+	if isNull {
+		return "", true, nil
+	}
+
+	var ctor collate.Collator
+	// TODO: refactor padding codes after padding is implemented by all collators.
+	switch b.padding {
+	case weightStringPaddingAsChar:
+		runes := []rune(str)
+		lenRunes := len(runes)
+		if b.length < lenRunes {
+			str = string(runes[:b.length])
+		} else if b.length > lenRunes {
+			str += strings.Repeat(" ", b.length-lenRunes)
+		}
+		ctor = collate.GetCollator(b.args[0].GetType().Collate)
+	case weightStringPaddingAsBinary:
+		lenStr := len(str)
+		if b.length < lenStr {
+			tpInfo := fmt.Sprintf("BINARY(%d)", b.length)
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errTruncatedWrongValue.GenWithStackByArgs(tpInfo, str))
+			str = str[:b.length]
+		} else if b.length > lenStr {
+			str += strings.Repeat("\x00", b.length-lenStr)
+		}
+		ctor = collate.GetCollator(charset.CollationBin)
+	case weightStringPaddingNone:
+		ctor = collate.GetCollator(b.args[0].GetType().Collate)
+	default:
+		return "", false, ErrIncorrectType.GenWithStackByArgs(ast.WeightString, string(b.padding))
+	}
+	return string(ctor.Key(str, collate.CollatorOption{PadLen: b.length})), false, nil
 }

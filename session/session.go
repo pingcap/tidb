@@ -932,7 +932,7 @@ func (s *session) GetAllSysVars() (map[string]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	ret := make(map[string]string)
+	ret := make(map[string]string, len(rows))
 	for _, r := range rows {
 		k, v := r.GetString(0), r.GetString(1)
 		ret[k] = v
@@ -1640,7 +1640,10 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	if err != nil {
 		return nil, err
 	}
-	collate.SetNewCollationEnabled(newCollationEnabled)
+
+	if newCollationEnabled {
+		collate.EnableNewCollations()
+	}
 
 	dom := domain.GetDomain(se)
 	dom.InitExpensiveQueryHandle()
@@ -2003,9 +2006,11 @@ func (s *session) PrepareTSFuture(ctx context.Context) {
 	if !s.txn.validOrPending() {
 		txnFuture := s.getTxnFuture(ctx)
 		s.txn.changeInvalidToPending(txnFuture)
-		s.GetSessionVars().TxnCtx.SetStmtFuture(txnFuture.future, 0)
-	} else if s.GetSessionVars().IsPessimisticReadConsistency() {
-		s.GetSessionVars().TxnCtx.SetStmtFuture(s.getTxnFuture(ctx).future, 0)
+		s.GetSessionVars().TxnCtx.SetStmtFuture(txnFuture.future)
+		return
+	}
+	if s.txn.Valid() && s.GetSessionVars().IsPessimisticReadConsistency() {
+		s.GetSessionVars().TxnCtx.SetStmtFuture(s.getTxnFuture(ctx).future)
 	}
 }
 
