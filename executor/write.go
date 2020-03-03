@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -117,8 +118,23 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 		if ctx.GetSessionVars().ClientCapability&mysql.ClientFoundRows > 0 {
 			sc.AddAffectedRows(1)
 		}
+<<<<<<< HEAD
 		unchangedRowKey := tablecodec.EncodeRowKeyWithHandle(t.Meta().ID, h)
 		txnCtx := ctx.GetSessionVars().TxnCtx
+=======
+
+		physicalID := t.Meta().ID
+		if pt, ok := t.(table.PartitionedTable); ok {
+			p, err := pt.GetPartitionByRow(sctx, oldData)
+			if err != nil {
+				return false, false, 0, err
+			}
+			physicalID = p.GetPhysicalID()
+		}
+
+		unchangedRowKey := tablecodec.EncodeRowKeyWithHandle(physicalID, h)
+		txnCtx := sctx.GetSessionVars().TxnCtx
+>>>>>>> b3469e7... *: fix a bug that the pessimistic lock doesn't work on a partition (#14921)
 		if txnCtx.IsPessimistic {
 			txnCtx.AddUnchangedRowKey(unchangedRowKey)
 		}

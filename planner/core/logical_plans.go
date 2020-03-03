@@ -684,7 +684,13 @@ type LogicalLimit struct {
 type LogicalLock struct {
 	baseLogicalPlan
 
+<<<<<<< HEAD
 	Lock ast.SelectLockType
+=======
+	Lock             ast.SelectLockType
+	tblID2Handle     map[int64][]*expression.Column
+	partitionedTable []table.PartitionedTable
+>>>>>>> b3469e7... *: fix a bug that the pessimistic lock doesn't work on a partition (#14921)
 }
 
 // WindowFrame represents a window function frame.

@@ -557,8 +557,15 @@ func (b *executorBuilder) buildSelectLock(v *plannercore.PhysicalLock) Executor 
 		return src
 	}
 	e := &SelectLockExec{
+<<<<<<< HEAD
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), src),
 		Lock:         v.Lock,
+=======
+		baseExecutor:     newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), src),
+		Lock:             v.Lock,
+		tblID2Handle:     v.TblID2Handle,
+		partitionedTable: v.PartitionedTable,
+>>>>>>> b3469e7... *: fix a bug that the pessimistic lock doesn't work on a partition (#14921)
 	}
 	return e
 }

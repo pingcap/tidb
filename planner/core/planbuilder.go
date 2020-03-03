@@ -199,7 +199,69 @@ type PlanBuilder struct {
 	// "STRAIGHT_JOIN" option.
 	inStraightJoin bool
 
+<<<<<<< HEAD
 	windowSpecs map[string]*ast.WindowSpec
+=======
+	// handleHelper records the handle column position for tables. Delete/Update/SelectLock/UnionScan may need this information.
+	// It collects the information by the following procedure:
+	//   Since we build the plan tree from bottom to top, we maintain a stack to record the current handle information.
+	//   If it's a dataSource/tableDual node, we create a new map.
+	//   If it's a aggregation, we pop the map and push a nil map since no handle information left.
+	//   If it's a union, we pop all children's and push a nil map.
+	//   If it's a join, we pop its children's out then merge them and push the new map to stack.
+	//   If we meet a subquery, it's clearly that it's a independent problem so we just pop one map out when we finish building the subquery.
+	handleHelper *handleColHelper
+
+	hintProcessor *BlockHintProcessor
+	// selectOffset is the offsets of current processing select stmts.
+	selectOffset []int
+
+	// SelectLock need this information to locate the lock on partitions.
+	partitionedTable []table.PartitionedTable
+}
+
+type handleColHelper struct {
+	id2HandleMapStack []map[int64][]*expression.Column
+	stackTail         int
+}
+
+func (hch *handleColHelper) appendColToLastMap(tblID int64, col *expression.Column) {
+	tailMap := hch.id2HandleMapStack[hch.stackTail-1]
+	tailMap[tblID] = append(tailMap[tblID], col)
+}
+
+func (hch *handleColHelper) popMap() map[int64][]*expression.Column {
+	ret := hch.id2HandleMapStack[hch.stackTail-1]
+	hch.stackTail--
+	hch.id2HandleMapStack = hch.id2HandleMapStack[:hch.stackTail]
+	return ret
+}
+
+func (hch *handleColHelper) pushMap(m map[int64][]*expression.Column) {
+	hch.id2HandleMapStack = append(hch.id2HandleMapStack, m)
+	hch.stackTail++
+}
+
+func (hch *handleColHelper) mergeAndPush(m1, m2 map[int64][]*expression.Column) {
+	newMap := make(map[int64][]*expression.Column, mathutil.Max(len(m1), len(m2)))
+	for k, v := range m1 {
+		newMap[k] = make([]*expression.Column, len(v))
+		copy(newMap[k], v)
+	}
+	for k, v := range m2 {
+		if _, ok := newMap[k]; ok {
+			newMap[k] = append(newMap[k], v...)
+		} else {
+			newMap[k] = make([]*expression.Column, len(v))
+			copy(newMap[k], v)
+		}
+	}
+	hch.pushMap(newMap)
+}
+
+func (hch *handleColHelper) tailMap() map[int64][]*expression.Column {
+	return hch.id2HandleMapStack[hch.stackTail-1]
+>>>>>>> b3469e7... *: fix a bug that the pessimistic lock doesn't work on a partition (#14921)
 }
 
 // GetVisitInfo gets the visitInfo of the PlanBuilder.
@@ -575,7 +637,15 @@ func removeIgnoredPaths(paths, ignoredPaths []*accessPath, tblInfo *model.TableI
 }
 
 func (b *PlanBuilder) buildSelectLock(src LogicalPlan, lock ast.SelectLockType) *LogicalLock {
+<<<<<<< HEAD
 	selectLock := LogicalLock{Lock: lock}.Init(b.ctx)
+=======
+	selectLock := LogicalLock{
+		Lock:             lock,
+		tblID2Handle:     b.handleHelper.tailMap(),
+		partitionedTable: b.partitionedTable,
+	}.Init(b.ctx)
+>>>>>>> b3469e7... *: fix a bug that the pessimistic lock doesn't work on a partition (#14921)
 	selectLock.SetChildren(src)
 	return selectLock
 }

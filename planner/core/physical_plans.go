@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
 )
@@ -280,6 +281,12 @@ type PhysicalLock struct {
 	basePhysicalPlan
 
 	Lock ast.SelectLockType
+<<<<<<< HEAD
+=======
+
+	TblID2Handle     map[int64][]*expression.Column
+	PartitionedTable []table.PartitionedTable
+>>>>>>> b3469e7... *: fix a bug that the pessimistic lock doesn't work on a partition (#14921)
 }
 
 // PhysicalLimit is the physical operator of Limit.

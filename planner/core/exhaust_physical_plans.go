@@ -1280,7 +1280,13 @@ func (p *LogicalLimit) exhaustPhysicalPlans(prop *property.PhysicalProperty) []P
 func (p *LogicalLock) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
 	childProp := prop.Clone()
 	lock := PhysicalLock{
+<<<<<<< HEAD
 		Lock: p.Lock,
+=======
+		Lock:             p.Lock,
+		TblID2Handle:     p.tblID2Handle,
+		PartitionedTable: p.partitionedTable,
+>>>>>>> b3469e7... *: fix a bug that the pessimistic lock doesn't work on a partition (#14921)
 	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
 	return []PhysicalPlan{lock}
 }

@@ -368,7 +368,17 @@ func (p *LogicalLock) PruneColumns(parentUsedCols []*expression.Column) error {
 		return p.baseLogicalPlan.PruneColumns(parentUsedCols)
 	}
 
+<<<<<<< HEAD
 	for _, cols := range p.children[0].Schema().TblID2Handle {
+=======
+	if len(p.partitionedTable) > 0 {
+		// If the children include partitioned tables, do not prune columns.
+		// Because the executor needs the partitioned columns to calculate the lock key.
+		return p.children[0].PruneColumns(p.Schema().Columns)
+	}
+
+	for _, cols := range p.tblID2Handle {
+>>>>>>> b3469e7... *: fix a bug that the pessimistic lock doesn't work on a partition (#14921)
 		parentUsedCols = append(parentUsedCols, cols...)
 	}
 	return p.children[0].PruneColumns(parentUsedCols)

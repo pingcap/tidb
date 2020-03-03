@@ -2793,3 +2793,163 @@ func (s *testSessionSuite) TestGrantViewRelated(c *C) {
 	tkUser.MustQuery("select current_user();").Check(testkit.Rows("u_version29@%"))
 	tkUser.MustExec("create view v_version29_c as select * from v_version29;")
 }
+<<<<<<< HEAD
+=======
+
+func (s *testSessionSuite2) TestLoadClientInteractive(c *C) {
+	var (
+		err          error
+		connectionID uint64
+	)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.Se, err = session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	id := atomic.AddUint64(&connectionID, 1)
+	tk.Se.SetConnectionID(id)
+	tk.Se.GetSessionVars().ClientCapability = tk.Se.GetSessionVars().ClientCapability | mysql.ClientInteractive
+	tk.MustQuery("select @@wait_timeout").Check(testkit.Rows("28800"))
+}
+
+func (s *testSessionSuite2) TestReplicaRead(c *C) {
+	var err error
+	tk := testkit.NewTestKit(c, s.store)
+	tk.Se, err = session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	c.Assert(tk.Se.GetSessionVars().GetReplicaRead(), Equals, kv.ReplicaReadLeader)
+	tk.MustExec("set @@tidb_replica_read = 'follower';")
+	c.Assert(tk.Se.GetSessionVars().GetReplicaRead(), Equals, kv.ReplicaReadFollower)
+	tk.MustExec("set @@tidb_replica_read = 'leader';")
+	c.Assert(tk.Se.GetSessionVars().GetReplicaRead(), Equals, kv.ReplicaReadLeader)
+}
+
+func (s *testSessionSuite2) TestIsolationRead(c *C) {
+	var err error
+	tk := testkit.NewTestKit(c, s.store)
+	tk.Se, err = session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	c.Assert(len(tk.Se.GetSessionVars().GetIsolationReadEngines()), Equals, 3)
+	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash';")
+	engines := tk.Se.GetSessionVars().GetIsolationReadEngines()
+	c.Assert(len(engines), Equals, 1)
+	_, hasTiFlash := engines[kv.TiFlash]
+	_, hasTiKV := engines[kv.TiKV]
+	c.Assert(hasTiFlash, Equals, true)
+	c.Assert(hasTiKV, Equals, false)
+}
+
+func (s *testSessionSuite2) TestStmtHints(c *C) {
+	var err error
+	tk := testkit.NewTestKit(c, s.store)
+	tk.Se, err = session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+
+	// Test MEMORY_QUOTA hint
+	tk.MustExec("select /*+ MEMORY_QUOTA(1 MB) */ 1;")
+	val := int64(1) * 1024 * 1024
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.MemTracker.CheckBytesLimit(val), IsTrue)
+	tk.MustExec("select /*+ MEMORY_QUOTA(1 GB) */ 1;")
+	val = int64(1) * 1024 * 1024 * 1024
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.MemTracker.CheckBytesLimit(val), IsTrue)
+	tk.MustExec("select /*+ MEMORY_QUOTA(1 GB), MEMORY_QUOTA(1 MB) */ 1;")
+	val = int64(1) * 1024 * 1024
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 1)
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.MemTracker.CheckBytesLimit(val), IsTrue)
+	tk.MustExec("select /*+ MEMORY_QUOTA(0 GB) */ 1;")
+	val = int64(0)
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 1)
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.MemTracker.CheckBytesLimit(val), IsTrue)
+
+	// Test NO_INDEX_MERGE hint
+	tk.Se.GetSessionVars().SetEnableIndexMerge(true)
+	tk.MustExec("select /*+ NO_INDEX_MERGE() */ 1;")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.NoIndexMergeHint, IsTrue)
+	tk.MustExec("select /*+ NO_INDEX_MERGE(), NO_INDEX_MERGE() */ 1;")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 1)
+	c.Assert(tk.Se.GetSessionVars().GetEnableIndexMerge(), IsTrue)
+
+	// Test USE_TOJA hint
+	tk.Se.GetSessionVars().SetAllowInSubqToJoinAndAgg(true)
+	tk.MustExec("select /*+ USE_TOJA(false) */ 1;")
+	c.Assert(tk.Se.GetSessionVars().GetAllowInSubqToJoinAndAgg(), IsFalse)
+	tk.Se.GetSessionVars().SetAllowInSubqToJoinAndAgg(false)
+	tk.MustExec("select /*+ USE_TOJA(true) */ 1;")
+	c.Assert(tk.Se.GetSessionVars().GetAllowInSubqToJoinAndAgg(), IsTrue)
+	tk.MustExec("select /*+ USE_TOJA(false), USE_TOJA(true) */ 1;")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 1)
+	c.Assert(tk.Se.GetSessionVars().GetAllowInSubqToJoinAndAgg(), IsTrue)
+
+	// Test READ_CONSISTENT_REPLICA hint
+	tk.Se.GetSessionVars().SetReplicaRead(kv.ReplicaReadLeader)
+	tk.MustExec("select /*+ READ_CONSISTENT_REPLICA() */ 1;")
+	c.Assert(tk.Se.GetSessionVars().GetReplicaRead(), Equals, kv.ReplicaReadFollower)
+	tk.MustExec("select /*+ READ_CONSISTENT_REPLICA(), READ_CONSISTENT_REPLICA() */ 1;")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 1)
+	c.Assert(tk.Se.GetSessionVars().GetReplicaRead(), Equals, kv.ReplicaReadFollower)
+}
+
+func (s *testSessionSuite2) TestPessimisticLockOnPartition(c *C) {
+	// This test checks that 'select ... for update' locks the partition instead of the table.
+	// Cover a bug that table ID is used to encode the lock key mistakenly.
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table if not exists forupdate_on_partition (
+  age int not null primary key,
+  nickname varchar(20) not null,
+  gender int not null default 0,
+  first_name varchar(30) not null default '',
+  last_name varchar(20) not null default '',
+  full_name varchar(60) as (concat(first_name, ' ', last_name)),
+  index idx_nickname (nickname)
+) partition by range (age) (
+  partition child values less than (18),
+  partition young values less than (30),
+  partition middle values less than (50),
+  partition old values less than (123)
+);`)
+	tk.MustExec("insert into forupdate_on_partition (`age`, `nickname`) values (25, 'cosven');")
+
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("use test")
+
+	tk.MustExec("begin pessimistic")
+	tk.MustQuery("select * from forupdate_on_partition where age=25 for update").Check(testkit.Rows("25 cosven 0    "))
+	tk1.MustExec("begin pessimistic")
+
+	ch := make(chan int32, 5)
+	go func() {
+		tk1.MustExec("update forupdate_on_partition set first_name='sw' where age=25")
+		ch <- 0
+		tk1.MustExec("commit")
+	}()
+
+	// Leave 50ms for tk1 to run, tk1 should be blocked at the update operation.
+	time.Sleep(50 * time.Millisecond)
+	ch <- 1
+
+	tk.MustExec("commit")
+	// tk1 should be blocked until tk commit, check the order.
+	c.Assert(<-ch, Equals, int32(1))
+	c.Assert(<-ch, Equals, int32(0))
+
+	// Once again...
+	// This time, test for the update-update conflict.
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("update forupdate_on_partition set first_name='sw' where age=25")
+	tk1.MustExec("begin pessimistic")
+
+	go func() {
+		tk1.MustExec("update forupdate_on_partition set first_name = 'xxx' where age=25")
+		ch <- 0
+		tk1.MustExec("commit")
+	}()
+
+	// Leave 50ms for tk1 to run, tk1 should be blocked at the update operation.
+	time.Sleep(50 * time.Millisecond)
+	ch <- 1
+
+	tk.MustExec("commit")
+	// tk1 should be blocked until tk commit, check the order.
+	c.Assert(<-ch, Equals, int32(1))
+	c.Assert(<-ch, Equals, int32(0))
+}
+>>>>>>> b3469e7... *: fix a bug that the pessimistic lock doesn't work on a partition (#14921)
