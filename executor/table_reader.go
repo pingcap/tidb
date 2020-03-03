@@ -16,12 +16,12 @@ package executor
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/expression"
 	"sort"
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/distsql"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
