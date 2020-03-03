@@ -53,6 +53,7 @@ type ColInfo struct {
 	Flen    int
 	Decimal int
 	Elems   []string
+	Collate string
 }
 
 // DatumMapDecoder decodes the row to datum map.
@@ -131,8 +132,9 @@ func (decoder *DatumMapDecoder) decodeColDatum(col *ColInfo, colData []byte) (ty
 			return d, err
 		}
 		d.SetFloat64(fVal)
-	case mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeString,
-		mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+	case mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeString:
+		d.SetString(string(colData), col.Collate)
+	case mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		d.SetBytes(colData)
 	case mysql.TypeNewDecimal:
 		_, dec, precision, frac, err := codec.DecodeDecimal(colData)
