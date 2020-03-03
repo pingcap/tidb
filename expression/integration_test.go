@@ -5558,6 +5558,7 @@ func (s *testIntegrationSerialSuite) TestCollationCreateIndex(c *C) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
 	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a varchar(10) collate utf8mb4_general_ci);")
 	tk.MustExec("insert into t values ('a');")
 	tk.MustExec("insert into t values ('A');")
