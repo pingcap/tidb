@@ -71,7 +71,7 @@ CREATE TABLE IF NOT EXISTS mysql.bind_info_parameter_bucket (
 )
 ```
 
-- Add two columns to `mysql.bind_info`
+- Add three columns to `mysql.bind_info`
     1. bind type (options are "SQL bind" and "Parameter bind")
     2. bucket_id (used to Parameter bind, which bucket belong to)
     3. execute_time (only updated by SPM plan evolution)
