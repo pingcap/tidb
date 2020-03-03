@@ -590,6 +590,9 @@ func (t *TableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 		}
 	}
 	sc.AddAffectedRows(1)
+	if sessVars.TxnCtx == nil {
+		return recordID, nil
+	}
 	colSize := make(map[int64]int64, len(r))
 	for id, col := range t.Cols() {
 		size, err := codec.EstimateValueSize(sc, r[id])
