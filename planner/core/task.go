@@ -215,7 +215,6 @@ func (p *PhysicalIndexMergeJoin) attach2Task(tasks ...task) task {
 	} else {
 		p.SetChildren(innerTask.plan(), outerTask.plan())
 	}
-	p.schema = BuildPhysicalJoinSchema(p.JoinType, p)
 	return &rootTask{
 		p:   p,
 		cst: p.GetCost(outerTask, innerTask),
@@ -293,7 +292,6 @@ func (p *PhysicalIndexHashJoin) attach2Task(tasks ...task) task {
 	} else {
 		p.SetChildren(innerTask.plan(), outerTask.plan())
 	}
-	p.schema = BuildPhysicalJoinSchema(p.JoinType, p)
 	return &rootTask{
 		p:   p,
 		cst: p.GetCost(outerTask, innerTask),
@@ -369,7 +367,6 @@ func (p *PhysicalIndexJoin) attach2Task(tasks ...task) task {
 	} else {
 		p.SetChildren(innerTask.plan(), outerTask.plan())
 	}
-	p.schema = BuildPhysicalJoinSchema(p.JoinType, p)
 	return &rootTask{
 		p:   p,
 		cst: p.GetCost(outerTask, innerTask),
@@ -522,7 +519,6 @@ func (p *PhysicalHashJoin) attach2Task(tasks ...task) task {
 	lTask := finishCopTask(p.ctx, tasks[0].copy())
 	rTask := finishCopTask(p.ctx, tasks[1].copy())
 	p.SetChildren(lTask.plan(), rTask.plan())
-	p.schema = BuildPhysicalJoinSchema(p.JoinType, p)
 	return &rootTask{
 		p:   p,
 		cst: lTask.cost() + rTask.cost() + p.GetCost(lTask.count(), rTask.count()),
@@ -641,6 +637,7 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 	}
 	if t.idxMergePartPlans != nil {
 		p := PhysicalIndexMergeReader{partialPlans: t.idxMergePartPlans, tablePlan: t.tablePlan}.Init(ctx, t.idxMergePartPlans[0].SelectBlockOffset())
+		setTableScanToTableRowIDScan(p.tablePlan)
 		newTask.p = p
 		return newTask
 	}
@@ -650,6 +647,7 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 			indexPlan:      t.indexPlan,
 			ExtraHandleCol: t.extraHandleCol,
 		}.Init(ctx, t.tablePlan.SelectBlockOffset())
+		setTableScanToTableRowIDScan(p.tablePlan)
 		p.stats = t.tablePlan.statsInfo()
 		// Add cost of building table reader executors. Handles are extracted in batch style,
 		// each handle is a range, the CPU cost of building copTasks should be:
@@ -715,6 +713,17 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 	}
 
 	return newTask
+}
+
+// setTableScanToTableRowIDScan is to update the isChildOfIndexLookUp attribute of PhysicalTableScan child
+func setTableScanToTableRowIDScan(p PhysicalPlan) {
+	if ts, ok := p.(*PhysicalTableScan); ok {
+		ts.SetIsChildOfIndexLookUp(true)
+	} else {
+		for _, child := range p.Children() {
+			setTableScanToTableRowIDScan(child)
+		}
+	}
 }
 
 // rootTask is the final sink node of a plan graph. It should be a single goroutine on tidb.
@@ -872,7 +881,12 @@ func (p *PhysicalSort) attach2Task(tasks ...task) task {
 }
 
 func (p *NominalSort) attach2Task(tasks ...task) task {
-	return tasks[0]
+	if p.OnlyColumn {
+		return tasks[0]
+	}
+	t := tasks[0].copy()
+	t = attachPlan2Task(p, t)
+	return t
 }
 
 func (p *PhysicalTopN) getPushedDownTopN(childPlan PhysicalPlan) *PhysicalTopN {

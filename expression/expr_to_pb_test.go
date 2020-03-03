@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -672,4 +673,50 @@ func (s *testEvaluatorSerialSuites) TestMetadata(c *C) {
 	err = proto.Unmarshal(expr.Val, metadata)
 	c.Assert(err, IsNil)
 	c.Assert(metadata.InUnion, Equals, true)
+}
+
+func columnCollation(c *Column, coll string) *Column {
+	c.RetType.Collate = coll
+	return c
+}
+
+func (s *testEvaluatorSerialSuites) TestNewCollationsEnabled(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	var colExprs []Expression
+	sc := new(stmtctx.StatementContext)
+	client := new(mock.Client)
+	dg := new(dataGen4Expr2PbTest)
+
+	colExprs = colExprs[:0]
+	colExprs = append(colExprs, dg.genColumn(mysql.TypeVarchar, 1))
+	colExprs = append(colExprs, columnCollation(dg.genColumn(mysql.TypeVarchar, 2), "some_invalid_collation"))
+	colExprs = append(colExprs, columnCollation(dg.genColumn(mysql.TypeVarString, 3), "utf8mb4_general_ci"))
+	colExprs = append(colExprs, columnCollation(dg.genColumn(mysql.TypeString, 4), "utf8mb4_0900_ai_ci"))
+	colExprs = append(colExprs, columnCollation(dg.genColumn(mysql.TypeVarchar, 5), "utf8_bin"))
+	pbExpr, pushed, _ := ExpressionsToPB(sc, colExprs, client)
+	c.Assert(len(pushed), Equals, len(colExprs))
+	js, err := json.Marshal(pbExpr)
+	c.Assert(err, IsNil)
+	c.Assert(string(js), Equals, "{\"tp\":10000,\"children\":[{\"tp\":10000,\"children\":[{\"tp\":10000,\"children\":[{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":15,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-46,\"charset\":\"\"}},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":15,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-46,\"charset\":\"\"}}],\"sig\":3101,\"field_type\":{\"tp\":8,\"flag\":128,\"flen\":1,\"decimal\":0,\"collate\":-63,\"charset\":\"binary\"}},{\"tp\":201,\"val\":\"gAAAAAAAAAM=\",\"sig\":0,\"field_type\":{\"tp\":253,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-45,\"charset\":\"\"}}],\"sig\":3101,\"field_type\":{\"tp\":8,\"flag\":128,\"flen\":1,\"decimal\":0,\"collate\":-63,\"charset\":\"binary\"}},{\"tp\":201,\"val\":\"gAAAAAAAAAQ=\",\"sig\":0,\"field_type\":{\"tp\":254,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-255,\"charset\":\"\"}}],\"sig\":3101,\"field_type\":{\"tp\":8,\"flag\":128,\"flen\":1,\"decimal\":0,\"collate\":-63,\"charset\":\"binary\"}},{\"tp\":201,\"val\":\"gAAAAAAAAAU=\",\"sig\":0,\"field_type\":{\"tp\":15,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-83,\"charset\":\"\"}}],\"sig\":3101,\"field_type\":{\"tp\":8,\"flag\":128,\"flen\":1,\"decimal\":0,\"collate\":-63,\"charset\":\"binary\"}}")
+	pbExprs := ExpressionsToPBList(sc, colExprs, client)
+	jsons := []string{
+		"{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":15,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-46,\"charset\":\"\"}}",
+		"{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":15,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-46,\"charset\":\"\"}}",
+		"{\"tp\":201,\"val\":\"gAAAAAAAAAM=\",\"sig\":0,\"field_type\":{\"tp\":253,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-45,\"charset\":\"\"}}",
+		"{\"tp\":201,\"val\":\"gAAAAAAAAAQ=\",\"sig\":0,\"field_type\":{\"tp\":254,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-255,\"charset\":\"\"}}",
+		"{\"tp\":201,\"val\":\"gAAAAAAAAAU=\",\"sig\":0,\"field_type\":{\"tp\":15,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-83,\"charset\":\"\"}}",
+	}
+	for i, pbExpr := range pbExprs {
+		c.Assert(pbExprs, NotNil)
+		js, err = json.Marshal(pbExpr)
+		c.Assert(err, IsNil)
+		c.Assert(string(js), Equals, jsons[i], Commentf("%v\n", i))
+	}
+
+	item := columnCollation(dg.genColumn(mysql.TypeDouble, 0), "utf8mb4_0900_ai_ci")
+	pbByItem := GroupByItemToPB(sc, client, item)
+	js, err = json.Marshal(pbByItem)
+	c.Assert(err, IsNil)
+	c.Assert(string(js), Equals, "{\"expr\":{\"tp\":201,\"val\":\"gAAAAAAAAAA=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-255,\"charset\":\"\"}},\"desc\":false}")
 }

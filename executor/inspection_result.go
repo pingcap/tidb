@@ -319,7 +319,7 @@ func (criticalErrorInspection) inspect(ctx context.Context, sctx sessionctx.Cont
 		{tp: "tidb", item: "lock-resolve", tbl: "tidb_lock_resolver_ops"},
 		{tp: "tikv", item: "scheduler-is-busy", tbl: "tikv_scheduler_is_busy"},
 		{tp: "tikv", item: "coprocessor-is-busy", tbl: "tikv_coprocessor_is_busy"},
-		{tp: "tikv", item: "channel-is-full", tbl: "tikv_channel_full_total"},
+		{tp: "tikv", item: "channel-is-full", tbl: "tikv_channel_full"},
 		{tp: "tikv", item: "coprocessor-error", tbl: "tikv_coprocessor_request_error"},
 		{tp: "tidb", item: "schema-lease-error", tbl: "tidb_schema_lease_error_opm"},
 		{tp: "tidb", item: "txn-retry-error", tbl: "tidb_transaction_retry_error_ops"},
@@ -682,11 +682,12 @@ func (c compareStoreStatus) genSQL(timeRange plannercore.QueryTimeRange) string 
 		 t2.time>='%[1]s' and t2.time<='%[2]s'`, timeRange.From.Format(plannercore.MetricTableTimeFormat),
 		timeRange.To.Format(plannercore.MetricTableTimeFormat))
 	return fmt.Sprintf(`select t1.address,t1.value,t2.address,t2.value,
-				(t1.value-t2.value)/greatest(t1.value,t2.value) as ratio
+				(t1.value-t2.value)/t1.value as ratio
 				from metrics_schema.pd_scheduler_store_status t1 join metrics_schema.pd_scheduler_store_status t2
-				%s and t1.type='%s' and
+				%s and t1.type='%s' and t1.time = t2.time and
 				t1.type=t2.type and t1.address != t2.address and
-				(t1.value-t2.value)/t1.value>%v;`, condition, c.tp, c.threshold)
+				(t1.value-t2.value)/t1.value>%v group by t1.address,t1.value,t2.address,t2.value order by ratio desc`,
+		condition, c.tp, c.threshold)
 }
 
 func (c compareStoreStatus) genResult(_ string, row chunk.Row) inspectionResult {
