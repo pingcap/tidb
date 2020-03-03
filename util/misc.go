@@ -16,8 +16,10 @@ package util
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"crypto/x509/pkix"
 	"fmt"
+	"io/ioutil"
 	"runtime"
 	"strconv"
 	"strings"
@@ -300,3 +302,67 @@ func init() {
 		pkixTypeNameAttributes[value] = key
 	}
 }
+<<<<<<< HEAD
+=======
+
+// SequenceSchema is implemented by infoSchema and used by sequence function in expression package.
+// Otherwise calling information schema will cause import cycle problem.
+type SequenceSchema interface {
+	SequenceByName(schema, sequence model.CIStr) (SequenceTable, error)
+}
+
+// SequenceTable is implemented by tableCommon, and it is specialised in handling sequence operation.
+// Otherwise calling table will cause import cycle problem.
+type SequenceTable interface {
+	GetSequenceID() int64
+	GetSequenceNextVal(ctx interface{}, dbName, seqName string) (int64, error)
+	SetSequenceVal(ctx interface{}, newVal int64, dbName, seqName string) (int64, bool, error)
+}
+
+// LoadTLSCertificates loads CA/KEY/CERT for special paths.
+func LoadTLSCertificates(ca, key, cert string) (tlsConfig *tls.Config, err error) {
+	if len(cert) == 0 || len(key) == 0 {
+		return
+	}
+
+	var tlsCert tls.Certificate
+	tlsCert, err = tls.LoadX509KeyPair(cert, key)
+	if err != nil {
+		logutil.BgLogger().Warn("load x509 failed", zap.Error(err))
+		err = errors.Trace(err)
+		return
+	}
+
+	// Try loading CA cert.
+	clientAuthPolicy := tls.NoClientCert
+	var certPool *x509.CertPool
+	if len(ca) > 0 {
+		var caCert []byte
+		caCert, err = ioutil.ReadFile(ca)
+		if err != nil {
+			logutil.BgLogger().Warn("read file failed", zap.Error(err))
+			err = errors.Trace(err)
+			return
+		}
+		certPool = x509.NewCertPool()
+		if certPool.AppendCertsFromPEM(caCert) {
+			clientAuthPolicy = tls.VerifyClientCertIfGiven
+		}
+	}
+	tlsConfig = &tls.Config{
+		Certificates: []tls.Certificate{tlsCert},
+		ClientCAs:    certPool,
+		ClientAuth:   clientAuthPolicy,
+	}
+	return
+}
+
+// IsTLSExpiredError checks error is caused by TLS expired.
+func IsTLSExpiredError(err error) bool {
+	err = errors.Cause(err)
+	if inval, ok := err.(x509.CertificateInvalidError); !ok || inval.Reason != x509.Expired {
+		return false
+	}
+	return true
+}
+>>>>>>> 5c68d53... *: support reload tls used by mysql protocol in place (#14749)

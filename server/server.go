@@ -31,13 +31,17 @@ package server
 import (
 	"context"
 	"crypto/tls"
-	"crypto/x509"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"math/rand"
 	"net"
 	"net/http"
+<<<<<<< HEAD
+=======
+	"unsafe"
+	// For pprof
+	_ "net/http/pprof"
+>>>>>>> 5c68d53... *: support reload tls used by mysql protocol in place (#14749)
 	"os"
 	"os/user"
 	"sync"
@@ -104,7 +108,7 @@ const defaultCapability = mysql.ClientLongPassword | mysql.ClientLongFlag |
 // Server is the MySQL protocol server
 type Server struct {
 	cfg               *config.Config
-	tlsConfig         *tls.Config
+	tlsConfig         unsafe.Pointer // *tls.Config
 	driver            IDriver
 	listener          net.Listener
 	socket            net.Listener
@@ -203,15 +207,22 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		clients:           make(map[uint32]*clientConn),
 		stopListenerCh:    make(chan struct{}, 1),
 	}
-	s.loadTLSCertificates()
+
+	tlsConfig, err := util.LoadTLSCertificates(s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert)
+	if err != nil {
+		logutil.BgLogger().Error("secure connection cert/key/ca load fail", zap.Error(err))
+		return nil, err
+	}
+	logutil.BgLogger().Info("secure connection is enabled", zap.Bool("client verification enabled", len(variable.SysVars["ssl_ca"].Value) > 0))
+	setSSLVariable(s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert)
+	atomic.StorePointer(&s.tlsConfig, unsafe.Pointer(tlsConfig))
+
 	setSystemTimeZoneVariable()
 
 	s.capability = defaultCapability
 	if s.tlsConfig != nil {
 		s.capability |= mysql.ClientSSL
 	}
-
-	var err error
 
 	if s.cfg.Host != "" && s.cfg.Port != 0 {
 		addr := fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port)
@@ -252,6 +263,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	return s, nil
 }
 
+<<<<<<< HEAD
 func (s *Server) loadTLSCertificates() {
 	defer func() {
 		if s.tlsConfig != nil {
@@ -298,6 +310,14 @@ func (s *Server) loadTLSCertificates() {
 		ClientAuth:   clientAuthPolicy,
 		MinVersion:   0,
 	}
+=======
+func setSSLVariable(ca, key, cert string) {
+	variable.SysVars["have_openssl"].Value = "YES"
+	variable.SysVars["have_ssl"].Value = "YES"
+	variable.SysVars["ssl_cert"].Value = cert
+	variable.SysVars["ssl_key"].Value = key
+	variable.SysVars["ssl_ca"].Value = ca
+>>>>>>> 5c68d53... *: support reload tls used by mysql protocol in place (#14749)
 }
 
 // Run runs the server.
@@ -543,6 +563,15 @@ func (s *Server) Kill(connectionID uint64, query bool) {
 		atomic.StoreInt32(&conn.status, connStatusWaitShutdown)
 	}
 	killConn(conn)
+}
+
+// UpdateTLSConfig implements the SessionManager interface.
+func (s *Server) UpdateTLSConfig(cfg *tls.Config) {
+	atomic.StorePointer(&s.tlsConfig, unsafe.Pointer(cfg))
+}
+
+func (s *Server) getTLSConfig() *tls.Config {
+	return (*tls.Config)(atomic.LoadPointer(&s.tlsConfig))
 }
 
 func killConn(conn *clientConn) {

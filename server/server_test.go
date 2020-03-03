@@ -27,6 +27,11 @@ import (
 
 	"github.com/go-sql-driver/mysql"
 	. "github.com/pingcap/check"
+<<<<<<< HEAD
+=======
+	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
+>>>>>>> 5c68d53... *: support reload tls used by mysql protocol in place (#14749)
 	"github.com/pingcap/log"
 	tmysql "github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
@@ -1011,11 +1016,32 @@ func runTestStmtCount(t *C) {
 	})
 }
 
+<<<<<<< HEAD
 func runTestTLSConnection(t *C, overrider configOverrider) error {
 	db, err := sql.Open("mysql", getDSN(overrider))
+=======
+func (cli *testServerClient) runTestTLSConnection(t *C, overrider configOverrider) error {
+	dsn := cli.getDSN(overrider)
+	db, err := sql.Open("mysql", dsn)
+>>>>>>> 5c68d53... *: support reload tls used by mysql protocol in place (#14749)
 	t.Assert(err, IsNil)
 	defer db.Close()
 	_, err = db.Exec("USE test")
+	if err != nil {
+		return errors.Annotate(err, "dsn:"+dsn)
+	}
+	return err
+}
+
+func (cli *testServerClient) runReloadTLS(t *C, overrider configOverrider, errorNoRollback bool) error {
+	db, err := sql.Open("mysql", cli.getDSN(overrider))
+	t.Assert(err, IsNil)
+	defer db.Close()
+	sql := "alter instance reload tls"
+	if errorNoRollback {
+		sql += " no rollback on error"
+	}
+	_, err = db.Exec(sql)
 	return err
 }
 
