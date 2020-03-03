@@ -312,11 +312,7 @@ func (ts *TidbTestSuite) TestSystemTimeZone(c *C) {
 	tk.MustQuery("select @@system_time_zone").Check(tz1)
 }
 
-<<<<<<< HEAD
 func (ts *TidbTestSuite) TestTLS(c *C) {
-=======
-func (ts *tidbTestSerialSuite) TestTLS(c *C) {
->>>>>>> 5c68d53... *: support reload tls used by mysql protocol in place (#14749)
 	// Generate valid TLS certificates.
 	caCert, caKey, err := generateCert(0, "TiDB CA", nil, nil, "/tmp/ca-key.pem", "/tmp/ca-cert.pem")
 	c.Assert(err, IsNil)
@@ -422,7 +418,7 @@ func (ts *tidbTestSerialSuite) TestTLS(c *C) {
 	c.Assert(err, NotNil)
 }
 
-func (ts *tidbTestSerialSuite) TestReloadTLS(c *C) {
+func (ts *TidbTestSuite) TestReloadTLS(c *C) {
 	// Generate valid TLS certificates.
 	caCert, caKey, err := generateCert(0, "TiDB CA", nil, nil, "/tmp/ca-key-reload.pem", "/tmp/ca-cert-reload.pem")
 	c.Assert(err, IsNil)
@@ -444,9 +440,8 @@ func (ts *tidbTestSerialSuite) TestReloadTLS(c *C) {
 	}()
 
 	// try old cert used in startup configuration.
-	cli := newTestServerClient()
 	cfg := config.NewConfig()
-	cfg.Port = cli.port
+	cfg.Port = 4005
 	cfg.Status.ReportStatus = false
 	cfg.Security = config.Security{
 		SSLCA:   "/tmp/ca-cert-reload.pem",
@@ -460,8 +455,9 @@ func (ts *tidbTestSerialSuite) TestReloadTLS(c *C) {
 	// The client provides a valid certificate.
 	connOverrider := func(config *mysql.Config) {
 		config.TLSConfig = "client-certificate-reload"
+		config.Addr = "localhost:4005"
 	}
-	err = cli.runTestTLSConnection(c, connOverrider)
+	err = runTestTLSConnection(c, connOverrider)
 	c.Assert(err, IsNil)
 
 	// try reload a valid cert.
@@ -478,13 +474,15 @@ func (ts *tidbTestSerialSuite) TestReloadTLS(c *C) {
 	os.Rename("/tmp/server-cert-reload2.pem", "/tmp/server-cert-reload.pem")
 	connOverrider = func(config *mysql.Config) {
 		config.TLSConfig = "skip-verify"
+		config.Addr = "localhost:4005"
 	}
-	err = cli.runReloadTLS(c, connOverrider, false)
+	err = runReloadTLS(c, connOverrider, false)
 	c.Assert(err, IsNil)
 	connOverrider = func(config *mysql.Config) {
 		config.TLSConfig = "client-certificate-reload"
+		config.Addr = "localhost:4005"
 	}
-	err = cli.runTestTLSConnection(c, connOverrider)
+	err = runTestTLSConnection(c, connOverrider)
 	c.Assert(err, IsNil)
 
 	tlsCfg = server.getTLSConfig()
@@ -503,19 +501,21 @@ func (ts *tidbTestSerialSuite) TestReloadTLS(c *C) {
 	os.Rename("/tmp/server-cert-reload3.pem", "/tmp/server-cert-reload.pem")
 	connOverrider = func(config *mysql.Config) {
 		config.TLSConfig = "skip-verify"
+		config.Addr = "localhost:4005"
 	}
-	err = cli.runReloadTLS(c, connOverrider, false)
+	err = runReloadTLS(c, connOverrider, false)
 	c.Assert(err, IsNil)
 	connOverrider = func(config *mysql.Config) {
 		config.TLSConfig = "client-certificate-reload"
+		config.Addr = "localhost:4005"
 	}
-	err = cli.runTestTLSConnection(c, connOverrider)
+	err = runTestTLSConnection(c, connOverrider)
 	c.Assert(err, NotNil)
 	c.Assert(util.IsTLSExpiredError(err), IsTrue, Commentf("real error is %+v", err))
 	server.Close()
 }
 
-func (ts *tidbTestSerialSuite) TestErrorNoRollback(c *C) {
+func (ts *TidbTestSuite) TestErrorNoRollback(c *C) {
 	// Generate valid TLS certificates.
 	caCert, caKey, err := generateCert(0, "TiDB CA", nil, nil, "/tmp/ca-key-rollback.pem", "/tmp/ca-cert-rollback.pem")
 	c.Assert(err, IsNil)
@@ -536,19 +536,9 @@ func (ts *tidbTestSerialSuite) TestErrorNoRollback(c *C) {
 		os.Remove("/tmp/client-cert-rollback.pem")
 	}()
 
-	cli := newTestServerClient()
 	cfg := config.NewConfig()
-	cfg.Port = cli.port
+	cfg.Port = 4006
 	cfg.Status.ReportStatus = false
-
-	// test cannot startup with wrong tls config
-	cfg.Security = config.Security{
-		SSLCA:   "wrong path",
-		SSLCert: "wrong path",
-		SSLKey:  "wrong path",
-	}
-	_, err = NewServer(cfg, ts.tidbdrv)
-	c.Assert(err, NotNil)
 
 	// test reload tls fail with/without "error no rollback option"
 	cfg.Security = config.Security{
@@ -562,15 +552,16 @@ func (ts *tidbTestSerialSuite) TestErrorNoRollback(c *C) {
 	time.Sleep(time.Millisecond * 100)
 	connOverrider := func(config *mysql.Config) {
 		config.TLSConfig = "client-cert-rollback-test"
+		config.Addr = "localhost:4006"
 	}
-	err = cli.runTestTLSConnection(c, connOverrider)
+	err = runTestTLSConnection(c, connOverrider)
 	c.Assert(err, IsNil)
 	os.Remove("/tmp/server-key-rollback.pem")
-	err = cli.runReloadTLS(c, connOverrider, false)
+	err = runReloadTLS(c, connOverrider, false)
 	c.Assert(err, NotNil)
 	tlsCfg := server.getTLSConfig()
 	c.Assert(tlsCfg, NotNil)
-	err = cli.runReloadTLS(c, connOverrider, true)
+	err = runReloadTLS(c, connOverrider, true)
 	c.Assert(err, IsNil)
 	tlsCfg = server.getTLSConfig()
 	c.Assert(tlsCfg, IsNil)

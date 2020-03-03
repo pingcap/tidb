@@ -36,17 +36,12 @@ import (
 	"math/rand"
 	"net"
 	"net/http"
-<<<<<<< HEAD
-=======
-	"unsafe"
-	// For pprof
-	_ "net/http/pprof"
->>>>>>> 5c68d53... *: support reload tls used by mysql protocol in place (#14749)
 	"os"
 	"os/user"
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	// For pprof
 	_ "net/http/pprof"
@@ -210,10 +205,9 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 
 	tlsConfig, err := util.LoadTLSCertificates(s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert)
 	if err != nil {
-		logutil.BgLogger().Error("secure connection cert/key/ca load fail", zap.Error(err))
-		return nil, err
+		logutil.Logger(context.Background()).Error("secure connection cert/key/ca load fail", zap.Error(err))
 	}
-	logutil.BgLogger().Info("secure connection is enabled", zap.Bool("client verification enabled", len(variable.SysVars["ssl_ca"].Value) > 0))
+	logutil.Logger(context.Background()).Info("secure connection is enabled", zap.Bool("client verification enabled", len(variable.SysVars["ssl_ca"].Value) > 0))
 	setSSLVariable(s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert)
 	atomic.StorePointer(&s.tlsConfig, unsafe.Pointer(tlsConfig))
 
@@ -263,61 +257,12 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	return s, nil
 }
 
-<<<<<<< HEAD
-func (s *Server) loadTLSCertificates() {
-	defer func() {
-		if s.tlsConfig != nil {
-			logutil.Logger(context.Background()).Info("secure connection is enabled", zap.Bool("client verification enabled", len(variable.SysVars["ssl_ca"].Value) > 0))
-			variable.SysVars["have_openssl"].Value = "YES"
-			variable.SysVars["have_ssl"].Value = "YES"
-			variable.SysVars["ssl_cert"].Value = s.cfg.Security.SSLCert
-			variable.SysVars["ssl_key"].Value = s.cfg.Security.SSLKey
-		} else {
-			logutil.Logger(context.Background()).Warn("secure connection is not enabled")
-		}
-	}()
-
-	if len(s.cfg.Security.SSLCert) == 0 || len(s.cfg.Security.SSLKey) == 0 {
-		s.tlsConfig = nil
-		return
-	}
-
-	tlsCert, err := tls.LoadX509KeyPair(s.cfg.Security.SSLCert, s.cfg.Security.SSLKey)
-	if err != nil {
-		logutil.Logger(context.Background()).Warn("load x509 failed", zap.Error(err))
-		s.tlsConfig = nil
-		return
-	}
-
-	// Try loading CA cert.
-	clientAuthPolicy := tls.NoClientCert
-	var certPool *x509.CertPool
-	if len(s.cfg.Security.SSLCA) > 0 {
-		caCert, err := ioutil.ReadFile(s.cfg.Security.SSLCA)
-		if err != nil {
-			logutil.Logger(context.Background()).Warn("read file failed", zap.Error(err))
-		} else {
-			certPool = x509.NewCertPool()
-			if certPool.AppendCertsFromPEM(caCert) {
-				clientAuthPolicy = tls.VerifyClientCertIfGiven
-			}
-			variable.SysVars["ssl_ca"].Value = s.cfg.Security.SSLCA
-		}
-	}
-	s.tlsConfig = &tls.Config{
-		Certificates: []tls.Certificate{tlsCert},
-		ClientCAs:    certPool,
-		ClientAuth:   clientAuthPolicy,
-		MinVersion:   0,
-	}
-=======
 func setSSLVariable(ca, key, cert string) {
 	variable.SysVars["have_openssl"].Value = "YES"
 	variable.SysVars["have_ssl"].Value = "YES"
 	variable.SysVars["ssl_cert"].Value = cert
 	variable.SysVars["ssl_key"].Value = key
 	variable.SysVars["ssl_ca"].Value = ca
->>>>>>> 5c68d53... *: support reload tls used by mysql protocol in place (#14749)
 }
 
 // Run runs the server.
