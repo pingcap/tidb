@@ -58,6 +58,8 @@ func (s *inspectionResultSuite) TestInspectionResult(c *C) {
 			types.MakeDatums("tidb", "192.168.3.23:4000", "ddl.lease", "2"),
 			types.MakeDatums("tidb", "192.168.3.24:4000", "ddl.lease", "1"),
 			types.MakeDatums("tidb", "192.168.3.25:4000", "ddl.lease", "1"),
+			types.MakeDatums("tidb", "192.168.3.24:4000", "log.slow-threshold", "0"),
+			types.MakeDatums("tidb", "192.168.3.25:4000", "log.slow-threshold", "1"),
 			types.MakeDatums("tikv", "192.168.3.32:26600", "coprocessor.high", "8"),
 			types.MakeDatums("tikv", "192.168.3.33:26600", "coprocessor.high", "8"),
 			types.MakeDatums("tikv", "192.168.3.34:26600", "coprocessor.high", "7"),
@@ -119,6 +121,8 @@ func (s *inspectionResultSuite) TestInspectionResult(c *C) {
 			rows: []string{
 				"config coprocessor.high tikv inconsistent consistent warning select * from information_schema.cluster_config where type='tikv' and `key`='coprocessor.high'",
 				"config ddl.lease tidb inconsistent consistent warning select * from information_schema.cluster_config where type='tidb' and `key`='ddl.lease'",
+				"config log.slow-threshold tidb 0 not 0 warning slow-threshold = 0 will record every query to slow log, it may affect performance",
+				"config log.slow-threshold tidb inconsistent consistent warning select * from information_schema.cluster_config where type='tidb' and `key`='log.slow-threshold'",
 				"version git_hash tidb inconsistent consistent critical select * from information_schema.cluster_info where type='tidb'",
 				"version git_hash tikv inconsistent consistent critical select * from information_schema.cluster_info where type='tikv'",
 				"version git_hash pd inconsistent consistent critical select * from information_schema.cluster_info where type='pd'",
@@ -136,6 +140,8 @@ func (s *inspectionResultSuite) TestInspectionResult(c *C) {
 			rows: []string{
 				"config coprocessor.high tikv inconsistent consistent warning select * from information_schema.cluster_config where type='tikv' and `key`='coprocessor.high'",
 				"config ddl.lease tidb inconsistent consistent warning select * from information_schema.cluster_config where type='tidb' and `key`='ddl.lease'",
+				"config log.slow-threshold tidb 0 not 0 warning slow-threshold = 0 will record every query to slow log, it may affect performance",
+				"config log.slow-threshold tidb inconsistent consistent warning select * from information_schema.cluster_config where type='tidb' and `key`='log.slow-threshold'",
 			},
 		},
 		{
