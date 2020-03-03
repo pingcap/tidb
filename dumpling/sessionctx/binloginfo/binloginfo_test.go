@@ -571,7 +571,7 @@ func mustGetDDLBinlog(s *testBinlogSuite, ddlQuery string, c *C) (matched bool) 
 				break
 			}
 		}
-		time.Sleep(time.Millisecond * 10)
+		time.Sleep(time.Millisecond * 30)
 	}
 	return
 }
