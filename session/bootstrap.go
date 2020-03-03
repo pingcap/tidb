@@ -131,11 +131,11 @@ const (
 		Timestamp	Timestamp DEFAULT CURRENT_TIMESTAMP,
 		Column_priv	SET('Select','Insert','Update'),
 		PRIMARY KEY (Host, DB, User, Table_name, Column_name));`
-	// CreateGloablVariablesTable is the SQL statement creates global variable table in system db.
+	// CreateGlobalVariablesTable is the SQL statement creates global variable table in system db.
 	// TODO: MySQL puts GLOBAL_VARIABLES table in INFORMATION_SCHEMA db.
 	// INFORMATION_SCHEMA is a virtual db in TiDB. So we put this table in system db.
 	// Maybe we will put it back to INFORMATION_SCHEMA.
-	CreateGloablVariablesTable = `CREATE TABLE if not exists mysql.GLOBAL_VARIABLES(
+	CreateGlobalVariablesTable = `CREATE TABLE if not exists mysql.GLOBAL_VARIABLES(
 		VARIABLE_NAME  VARCHAR(64) Not Null PRIMARY KEY,
 		VARIABLE_VALUE VARCHAR(1024) DEFAULT Null);`
 	// CreateTiDBTable is the SQL statement creates a table in system db.
@@ -1003,7 +1003,7 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateTablePrivTable)
 	mustExecute(s, CreateColumnPrivTable)
 	// Create global system variable table.
-	mustExecute(s, CreateGloablVariablesTable)
+	mustExecute(s, CreateGlobalVariablesTable)
 	// Create TiDB table.
 	mustExecute(s, CreateTiDBTable)
 	// Create help table.
