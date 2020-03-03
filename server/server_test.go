@@ -32,6 +32,7 @@ import (
 
 	"github.com/go-sql-driver/mysql"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	tmysql "github.com/pingcap/parser/mysql"
@@ -1155,10 +1156,26 @@ func (cli *testServerClient) runTestStmtCount(t *C) {
 }
 
 func (cli *testServerClient) runTestTLSConnection(t *C, overrider configOverrider) error {
-	db, err := sql.Open("mysql", cli.getDSN(overrider))
+	dsn := cli.getDSN(overrider)
+	db, err := sql.Open("mysql", dsn)
 	t.Assert(err, IsNil)
 	defer db.Close()
 	_, err = db.Exec("USE test")
+	if err != nil {
+		return errors.Annotate(err, "dsn:"+dsn)
+	}
+	return err
+}
+
+func (cli *testServerClient) runReloadTLS(t *C, overrider configOverrider, errorNoRollback bool) error {
+	db, err := sql.Open("mysql", cli.getDSN(overrider))
+	t.Assert(err, IsNil)
+	defer db.Close()
+	sql := "alter instance reload tls"
+	if errorNoRollback {
+		sql += " no rollback on error"
+	}
+	_, err = db.Exec(sql)
 	return err
 }
 
