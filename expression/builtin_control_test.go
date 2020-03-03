@@ -60,6 +60,10 @@ func (s *testEvaluatorSuite) TestIf(c *C) {
 	defer func() {
 		stmtCtx.IgnoreTruncate = origin
 	}()
+
+	var notZeroIntValue uint64
+	// EvalReal will handle it as float64 -0, this particular input should be same with any non-zero int as expected.
+	notZeroIntValue = 0x8000000000000000
 	tbl := []struct {
 		Arg1 interface{}
 		Arg2 interface{}
@@ -78,6 +82,11 @@ func (s *testEvaluatorSuite) TestIf(c *C) {
 		{jsonInt.GetMysqlJSON(), 1, 2, 1},
 		{0.1, 1, 2, 1},
 		{0.0, 1, 2, 2},
+		{types.NewDecFromStringForTest("0.1"), 1, 2, 1},
+		{types.NewDecFromStringForTest("0.0"), 1, 2, 2},
+		{"0.1", 1, 2, 1},
+		{"0.0", 1, 2, 2},
+		{notZeroIntValue, 1, 2, 1},
 	}
 
 	fc := funcs[ast.If]
