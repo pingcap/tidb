@@ -131,6 +131,8 @@ func (s *testSuiteJoin2) TestJoin(c *C) {
 	result.Check(testkit.Rows())
 	result = tk.MustQuery("select * from t left outer join t1 on t.c1 = t1.c1 and t.c1 != 1 order by t1.c1")
 	result.Check(testkit.Rows("1 1 <nil> <nil>", "2 2 2 3"))
+	result = tk.MustQuery("select t.c1, t1.c1 from t left outer join t1 on t.c1 = t1.c1 and t.c2 + t1.c2 <= 5")
+	result.Check(testkit.Rows("1 <nil>", "2 2"))
 
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("drop table if exists t2")
@@ -859,6 +861,10 @@ func (s *testSuiteJoin3) TestSubquery(c *C) {
 	result = tk.MustQuery("select (select /*+ INL_MERGE_JOIN(x2) */ x2.a from t1 x1, t1 x2 where x1.a = t1.a and x1.a = x2.a) from t1")
 	result.Check(testkit.Rows("1", "2", "3", "4", "5"))
 
+	// test left outer semi join & anti left outer semi join
+	tk.MustQuery("select 1 from (select t1.a in (select t1.a from t1) from t1) x;").Check(testkit.Rows("1", "1", "1", "1", "1"))
+	tk.MustQuery("select 1 from (select t1.a not in (select t1.a from t1) from t1) x;").Check(testkit.Rows("1", "1", "1", "1", "1"))
+
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1(a int)")
 	tk.MustExec("create table t2(b int)")
@@ -1317,10 +1323,10 @@ func (s *testSuiteJoin1) TestHashJoin(c *C) {
 	//     └─TableFullScan_10 10000.00 cop[tikv] table:t1, keep order:false, stats:pseudo time:0s, loops:0, rows:5
 	row := result.Rows()
 	c.Assert(len(row), Equals, 7)
-	outerExecInfo := row[4][4].(string)
+	outerExecInfo := row[4][5].(string)
 	// FIXME: revert this result to 1 after TableReaderExecutor can handle initChunkSize.
 	c.Assert(outerExecInfo[strings.Index(outerExecInfo, "rows")+5:strings.Index(outerExecInfo, "rows")+6], Equals, "5")
-	innerExecInfo := row[1][4].(string)
+	innerExecInfo := row[1][5].(string)
 	c.Assert(innerExecInfo[strings.Index(innerExecInfo, "rows")+5:strings.Index(innerExecInfo, "rows")+6], Equals, "0")
 }
 
