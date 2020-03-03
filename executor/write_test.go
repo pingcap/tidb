@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
@@ -2693,6 +2694,32 @@ func (s *testSuite7) TestDeferConstraintCheckForInsert(c *C) {
 	tk.MustExec("insert into t values (1, 3)")
 	_, err = tk.Exec("commit")
 	c.Assert(err, NotNil)
+}
+
+func (s *testSuite7) TestPessimisticDeleteYourWrites(c *C) {
+	session1 := testkit.NewTestKitWithInit(c, s.store)
+	session2 := testkit.NewTestKitWithInit(c, s.store)
+
+	session1.MustExec("drop table if exists x;")
+	session1.MustExec("create table x (id int primary key, c int);")
+
+	session1.MustExec("set tidb_txn_mode = 'pessimistic'")
+	session2.MustExec("set tidb_txn_mode = 'pessimistic'")
+
+	session1.MustExec("begin;")
+	session1.MustExec("insert into x select 1, 1")
+	session1.MustExec("delete from x where id = 1")
+	session2.MustExec("begin;")
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		session2.MustExec("insert into x select 1, 2")
+		wg.Done()
+	}()
+	session1.MustExec("commit;")
+	wg.Wait()
+	session2.MustExec("commit;")
+	session2.MustQuery("select * from x").Check(testkit.Rows("1 2"))
 }
 
 func (s *testSuite7) TestDefEnumInsert(c *C) {

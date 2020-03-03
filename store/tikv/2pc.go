@@ -267,10 +267,14 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 			putCnt++
 		} else {
 			var op pb.Op
-			if c := txn.us.GetKeyExistErrInfo(k); c != nil {
+			if !txn.IsPessimistic() && txn.us.GetKeyExistErrInfo(k) != nil {
+				// delete-your-writes keys in optimistic txn need check not exists in prewrite-phase
+				// and mark those keys should not be used in commit-phase.
 				op = pb.Op_CheckNotExists
 				checkKeys[string(k)] = struct{}{}
 			} else {
+				// normal delete keys in optimistic txn can be delete without exists check
+				// delete-your-writes keys in pessimistic txn can ensure must be no exists so can directly delete them
 				op = pb.Op_Del
 				delCnt++
 			}
