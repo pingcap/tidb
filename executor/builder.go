@@ -559,6 +559,7 @@ func (b *executorBuilder) buildSelectLock(v *plannercore.PhysicalLock) Executor 
 	e := &SelectLockExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), src),
 		Lock:         v.Lock,
+		partitionedTable: v.PartitionedTable,
 	}
 	return e
 }
