@@ -5552,11 +5552,15 @@ func (s *testIntegrationSerialSuite) TestWeightString(c *C) {
 	c.Assert(tk.MustQuery("select weight_string(7 AS BINARY(2));").Rows()[0][0], Equals, "7\x00")
 	// test explicit collation
 	c.Assert(tk.MustQuery("select weight_string('中 ' collate utf8mb4_general_ci);").Rows()[0][0], Equals, "\x4E\x2D")
-	c.Assert(tk.MustQuery("select weight_string('中 ' collate utf8_bin);").Rows()[0][0], Equals, "中")
+	c.Assert(tk.MustQuery("select weight_string('中 ' collate utf8mb4_bin);").Rows()[0][0], Equals, "中")
+	c.Assert(tk.MustQuery("select collation(a collate utf8mb4_general_ci) from t order by id").Rows()[0][0], Equals, "utf8mb4_general_ci")
+	c.Assert(tk.MustQuery("select collation('中 ' collate utf8mb4_general_ci);").Rows()[0][0], Equals, "utf8mb4_general_ci")
 	rows = tk.MustQuery("select weight_string(a collate utf8mb4_bin) from t order by id").Rows()
 	for i, out := range cases.resultExplicitCollateBin {
 		c.Assert(rows[i][0].(string), Equals, out)
 	}
+	tk.MustGetErrMsg("select weight_string(a collate utf8_general_ci) from t order by id", "[ddl:1253]COLLATION 'utf8_general_ci' is not valid for CHARACTER SET 'utf8mb4'")
+	tk.MustGetErrMsg("select weight_string('中' collate utf8_bin)", "[ddl:1253]COLLATION 'utf8_bin' is not valid for CHARACTER SET 'utf8mb4'")
 }
 
 func (s *testIntegrationSerialSuite) TestCollationCreateIndex(c *C) {

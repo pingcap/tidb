@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/opcode"
@@ -32,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/stringutil"
 )
 
@@ -986,6 +988,19 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		}, types.EmptyName)
 	case *ast.SetCollationExpr:
 		arg := er.ctxStack[len(er.ctxStack)-1]
+		if collate.NewCollationEnabled() {
+			var collInfo *charset.Collation
+			// TODO(bb7133): use charset.ValidCharsetAndCollation when its bug is fixed.
+			if collInfo, er.err = charset.GetCollationByName(v.Collate); er.err != nil {
+				er.err = charset.ErrUnknownCollation.GenWithStackByArgs(v.Collate)
+				break
+			}
+			chs := arg.GetType().Charset
+			if chs != "" && collInfo.CharsetName != chs {
+				er.err = charset.ErrCollationCharsetMismatch.GenWithStackByArgs(collInfo.Name, chs)
+				break
+			}
+		}
 		// SetCollationExpr sets the collation explicitly, even when the evaluation type of the expression is non-string.
 		if _, ok := arg.(*expression.Column); ok {
 			// Wrap a cast here to avoid changing the original FieldType of the column expression.
