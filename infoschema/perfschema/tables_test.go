@@ -15,6 +15,7 @@ package perfschema_test
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/infoschema/perfschema"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -63,6 +64,11 @@ func (s *testTableSuite) TearDownSuite(c *C) {
 	defer testleak.AfterTest(c)()
 	s.dom.Close()
 	s.store.Close()
+}
+
+func (s *testTableSuite) TestPredefinedTables(c *C) {
+	c.Assert(perfschema.IsPredefinedTable("EVENTS_statements_summary_by_digest"), IsTrue)
+	c.Assert(perfschema.IsPredefinedTable("statements"), IsFalse)
 }
 
 func (s *testTableSuite) TestPerfSchemaTables(c *C) {
