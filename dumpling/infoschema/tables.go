@@ -74,7 +74,8 @@ const (
 	tableSchemaPrivileges = "SCHEMA_PRIVILEGES"
 	tableTablePrivileges  = "TABLE_PRIVILEGES"
 	tableColumnPrivileges = "COLUMN_PRIVILEGES"
-	tableEngines          = "ENGINES"
+	// TableEngines is the string constant of infoschema table
+	TableEngines = "ENGINES"
 	// TableViews is the string constant of infoschema table
 	TableViews                              = "VIEWS"
 	tableRoutines                           = "ROUTINES"
@@ -143,7 +144,7 @@ var tableIDMap = map[string]int64{
 	tableSchemaPrivileges:                   autoid.InformationSchemaDBID + 19,
 	tableTablePrivileges:                    autoid.InformationSchemaDBID + 20,
 	tableColumnPrivileges:                   autoid.InformationSchemaDBID + 21,
-	tableEngines:                            autoid.InformationSchemaDBID + 22,
+	TableEngines:                            autoid.InformationSchemaDBID + 22,
 	TableViews:                              autoid.InformationSchemaDBID + 23,
 	tableRoutines:                           autoid.InformationSchemaDBID + 24,
 	tableParameters:                         autoid.InformationSchemaDBID + 25,
@@ -1221,20 +1222,6 @@ func dataForProcesslist(ctx sessionctx.Context) [][]types.Datum {
 		record := types.MakeDatums(rows...)
 		records = append(records, record)
 	}
-	return records
-}
-
-func dataForEngines() (records [][]types.Datum) {
-	records = append(records,
-		types.MakeDatums(
-			"InnoDB",  // Engine
-			"DEFAULT", // Support
-			"Supports transactions, row-level locking, and foreign keys", // Comment
-			"YES", // Transactions
-			"YES", // XA
-			"YES", // Savepoints
-		),
-	)
 	return records
 }
 
@@ -2419,7 +2406,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	tableSchemaPrivileges:                   tableSchemaPrivilegesCols,
 	tableTablePrivileges:                    tableTablePrivilegesCols,
 	tableColumnPrivileges:                   tableColumnPrivilegesCols,
-	tableEngines:                            tableEnginesCols,
+	TableEngines:                            tableEnginesCols,
 	TableViews:                              tableViewsCols,
 	tableRoutines:                           tableRoutinesCols,
 	tableParameters:                         tableParametersCols,
@@ -2520,8 +2507,6 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 	case tablePlugins, tableTriggers:
 	case tableUserPrivileges:
 		fullRows = dataForUserPrivileges(ctx)
-	case tableEngines:
-		fullRows = dataForEngines()
 	case tableRoutines:
 	// TODO: Fill the following tables.
 	case tableSchemaPrivileges:
