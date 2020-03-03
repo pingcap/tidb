@@ -14,7 +14,6 @@
 package core
 
 import (
-	"github.com/pingcap/tidb/types"
 	"math"
 
 	"github.com/pingcap/errors"
@@ -24,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/zap"
