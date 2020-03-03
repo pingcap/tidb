@@ -302,7 +302,7 @@ func getValue(iter *Iterator, key []byte, startTS uint64, isoLevel kvrpcpb.Isola
 		}
 
 		value := &dec2.value
-		if value.valueType == typeRollback {
+		if value.valueType == typeRollback || value.valueType == typeLock {
 			continue
 		}
 		// Read the first committed value that can be seen at startTS.
@@ -847,26 +847,26 @@ func commitKey(db *leveldb.DB, batch *leveldb.Batch, key []byte, startTS, commit
 }
 
 func commitLock(batch *leveldb.Batch, lock mvccLock, key []byte, startTS, commitTS uint64) error {
-	if lock.op != kvrpcpb.Op_Lock {
-		var valueType mvccValueType
-		if lock.op == kvrpcpb.Op_Put {
-			valueType = typePut
-		} else {
-			valueType = typeDelete
-		}
-		value := mvccValue{
-			valueType: valueType,
-			startTS:   startTS,
-			commitTS:  commitTS,
-			value:     lock.value,
-		}
-		writeKey := mvccEncode(key, commitTS)
-		writeValue, err := value.MarshalBinary()
-		if err != nil {
-			return errors.Trace(err)
-		}
-		batch.Put(writeKey, writeValue)
+	var valueType mvccValueType
+	if lock.op == kvrpcpb.Op_Put {
+		valueType = typePut
+	} else if lock.op == kvrpcpb.Op_Lock {
+		valueType = typeLock
+	} else {
+		valueType = typeDelete
 	}
+	value := mvccValue{
+		valueType: valueType,
+		startTS:   startTS,
+		commitTS:  commitTS,
+		value:     lock.value,
+	}
+	writeKey := mvccEncode(key, commitTS)
+	writeValue, err := value.MarshalBinary()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	batch.Put(writeKey, writeValue)
 	batch.Delete(mvccEncode(key, lockVer))
 	return nil
 }
@@ -1601,6 +1601,7 @@ var valueTypeOpMap = [...]kvrpcpb.Op{
 	typePut:      kvrpcpb.Op_Put,
 	typeDelete:   kvrpcpb.Op_Del,
 	typeRollback: kvrpcpb.Op_Rollback,
+	typeLock:     kvrpcpb.Op_Lock,
 }
 
 // MvccGetByKey implements the MVCCDebugger interface.

@@ -40,6 +40,10 @@ const (
 	MaxLogFileSize = 4096 // MB
 	// DefTxnTotalSizeLimit is the default value of TxnTxnTotalSizeLimit.
 	DefTxnTotalSizeLimit = 100 * 1024 * 1024
+	// DefMaxIndexLength is the maximum index length(in bytes). This value is consistent with MySQL.
+	DefMaxIndexLength = 3072
+	// DefMaxOfMaxIndexLength is the maximum index length(in bytes) for TiDB v3.0.7 and previous version.
+	DefMaxOfMaxIndexLength = 3072 * 4
 )
 
 // Valid config maps
@@ -91,6 +95,7 @@ type Config struct {
 	Plugin              Plugin            `toml:"plugin" json:"plugin"`
 	PessimisticTxn      PessimisticTxn    `toml:"pessimistic-txn" json:"pessimistic-txn"`
 	CheckMb4ValueInUTF8 bool              `toml:"check-mb4-value-in-utf8" json:"check-mb4-value-in-utf8"`
+	MaxIndexLength      int               `toml:"max-index-length" json:"max-index-length"`
 	// AlterPrimaryKey is used to control alter primary key feature.
 	AlterPrimaryKey bool `toml:"alter-primary-key" json:"alter-primary-key"`
 	// TreatOldVersionUTF8AsUTF8MB4 is use to treat old version table/column UTF8 charset as UTF8MB4. This is for compatibility.
@@ -506,6 +511,7 @@ var defaultConf = Config{
 	EnableStreaming:              false,
 	EnableBatchDML:               false,
 	CheckMb4ValueInUTF8:          true,
+	MaxIndexLength:               3072,
 	AlterPrimaryKey:              false,
 	TreatOldVersionUTF8AsUTF8MB4: true,
 	EnableTableLock:              false,
@@ -755,6 +761,9 @@ func (c *Config) Valid() error {
 	}
 	if c.Store == "mocktikv" && !c.RunDDL {
 		return fmt.Errorf("can't disable DDL on mocktikv")
+	}
+	if c.MaxIndexLength < DefMaxIndexLength || c.MaxIndexLength > DefMaxOfMaxIndexLength {
+		return fmt.Errorf("max-index-length should be [%d, %d]", DefMaxIndexLength, DefMaxOfMaxIndexLength)
 	}
 	if c.Log.File.MaxSize > MaxLogFileSize {
 		return fmt.Errorf("invalid max log file size=%v which is larger than max=%v", c.Log.File.MaxSize, MaxLogFileSize)
