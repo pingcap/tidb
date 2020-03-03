@@ -666,7 +666,10 @@ func NewSessionVars() *SessionVars {
 		WindowConcurrency:          DefTiDBWindowConcurrency,
 	}
 	vars.MemQuota = MemQuota{
-		MemQuotaQuery:             config.GetGlobalConfig().MemQuotaQuery,
+		MemQuotaQuery: config.GetGlobalConfig().MemQuotaQuery,
+
+		// The variables below do not take any effect anymore, it's remaining for compatibility.
+		// TODO: remove them in v4.1
 		MemQuotaHashJoin:          DefTiDBMemQuotaHashJoin,
 		MemQuotaMergeJoin:         DefTiDBMemQuotaMergeJoin,
 		MemQuotaSort:              DefTiDBMemQuotaSort,
@@ -1288,7 +1291,8 @@ type MemQuota struct {
 	// MemQuotaQuery defines the memory quota for a query.
 	MemQuotaQuery int64
 
-	// TODO: remove them below sometime, it should have only one Quota(MemQuotaQuery).
+	// The variables below do not take any effect anymore, it's remaining for compatibility.
+	// TODO: remove them in v4.1
 	// MemQuotaHashJoin defines the memory quota for a hash join executor.
 	MemQuotaHashJoin int64
 	// MemQuotaMergeJoin defines the memory quota for a merge join executor.
