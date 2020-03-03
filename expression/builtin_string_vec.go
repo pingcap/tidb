@@ -1057,7 +1057,7 @@ func (b *builtinFindInSetSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 			continue
 		}
 		for j, strInSet := range strings.Split(strlistI, ",") {
-			if collate.GetCollator(b.collation).Compare(str.GetString(i), strInSet, collate.NewCollatorOption(0)) == 0 {
+			if b.ctor.Compare(str.GetString(i), strInSet, collate.NewCollatorOption(0)) == 0 {
 				res[i] = int64(j + 1)
 			}
 		}

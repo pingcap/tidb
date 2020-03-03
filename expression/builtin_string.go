@@ -2360,6 +2360,8 @@ func (c *findInSetFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	bf.tp.Flen = 3
 	sig := &builtinFindInSetSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_FindInSet)
+	_, col, _ := sig.CharsetAndCollation(ctx)
+	sig.setCollator(collate.GetCollator(col))
 	return sig, nil
 }
 
@@ -2393,7 +2395,7 @@ func (b *builtinFindInSetSig) evalInt(row chunk.Row) (int64, bool, error) {
 	}
 
 	for i, strInSet := range strings.Split(strlist, ",") {
-		if collate.GetCollator(b.collation).Compare(str, strInSet, collate.NewCollatorOption(0)) == 0 {
+		if b.ctor.Compare(str, strInSet, collate.NewCollatorOption(0)) == 0 {
 			return int64(i + 1), false, nil
 		}
 	}
@@ -2438,6 +2440,8 @@ func (c *fieldFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	case types.ETString:
 		sig = &builtinFieldStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_FieldString)
+		_, col, _ := sig.CharsetAndCollation(ctx)
+		sig.setCollator(collate.GetCollator(col))
 	}
 	return sig, nil
 }
@@ -2522,7 +2526,7 @@ func (b *builtinFieldStringSig) evalInt(row chunk.Row) (int64, bool, error) {
 		if err != nil {
 			return 0, true, err
 		}
-		if !isNull && collate.GetCollator(b.collation).Compare(str, stri, collate.NewCollatorOption(0)) == 0 {
+		if !isNull && b.ctor.Compare(str, stri, collate.NewCollatorOption(0)) == 0 {
 			return int64(i), false, nil
 		}
 	}
