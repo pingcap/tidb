@@ -57,9 +57,11 @@ const (
 	tableColumns          = "COLUMNS"
 	tableColumnStatistics = "COLUMN_STATISTICS"
 	tableStatistics       = "STATISTICS"
-	tableCharacterSets    = "CHARACTER_SETS"
-	tableCollations       = "COLLATIONS"
-	tableFiles            = "FILES"
+	// TableCharacterSets is the string constant of infoschema charactersets memory table
+	TableCharacterSets = "CHARACTER_SETS"
+	// TableCollations is the string constant of infoschema collations memory table
+	TableCollations = "COLLATIONS"
+	tableFiles      = "FILES"
 	// CatalogVal is the string constant of TABLE_CATALOG
 	CatalogVal            = "def"
 	tableProfiling        = "PROFILING"
@@ -128,8 +130,8 @@ var tableIDMap = map[string]int64{
 	tableColumns:                            autoid.InformationSchemaDBID + 3,
 	tableColumnStatistics:                   autoid.InformationSchemaDBID + 4,
 	tableStatistics:                         autoid.InformationSchemaDBID + 5,
-	tableCharacterSets:                      autoid.InformationSchemaDBID + 6,
-	tableCollations:                         autoid.InformationSchemaDBID + 7,
+	TableCharacterSets:                      autoid.InformationSchemaDBID + 6,
+	TableCollations:                         autoid.InformationSchemaDBID + 7,
 	tableFiles:                              autoid.InformationSchemaDBID + 8,
 	CatalogVal:                              autoid.InformationSchemaDBID + 9,
 	tableProfiling:                          autoid.InformationSchemaDBID + 10,
@@ -1121,43 +1123,6 @@ func dataForTiKVStoreStatus(ctx sessionctx.Context) (records [][]types.Datum, er
 		records = append(records, row)
 	}
 	return records, nil
-}
-
-func dataForCharacterSets() (records [][]types.Datum) {
-
-	charsets := charset.GetSupportedCharsets()
-
-	for _, charset := range charsets {
-
-		records = append(records,
-			types.MakeDatums(charset.Name, charset.DefaultCollation, charset.Desc, charset.Maxlen),
-		)
-
-	}
-
-	return records
-
-}
-
-func dataForCollations() (records [][]types.Datum) {
-
-	collations := charset.GetSupportedCollations()
-
-	for _, collation := range collations {
-
-		isDefault := ""
-		if collation.IsDefault {
-			isDefault = "Yes"
-		}
-
-		records = append(records,
-			types.MakeDatums(collation.Name, collation.CharsetName, collation.ID, isDefault, "Yes", 1),
-		)
-
-	}
-
-	return records
-
 }
 
 func dataForCollationCharacterSetApplicability() (records [][]types.Datum) {
@@ -2391,8 +2356,8 @@ var tableNameToColumns = map[string][]columnInfo{
 	tableColumns:                            columnsCols,
 	tableColumnStatistics:                   columnStatisticsCols,
 	tableStatistics:                         statisticsCols,
-	tableCharacterSets:                      charsetCols,
-	tableCollations:                         collationsCols,
+	TableCharacterSets:                      charsetCols,
+	TableCollations:                         collationsCols,
 	tableFiles:                              filesCols,
 	tableProfiling:                          profilingCols,
 	tablePartitions:                         partitionsCols,
@@ -2486,10 +2451,6 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		fullRows = dataForColumns(ctx, dbs)
 	case tableStatistics:
 		fullRows = dataForStatistics(ctx, dbs)
-	case tableCharacterSets:
-		fullRows = dataForCharacterSets()
-	case tableCollations:
-		fullRows = dataForCollations()
 	case tableSessionVar:
 		fullRows, err = dataForSessionVar(ctx)
 	case tableConstraints:

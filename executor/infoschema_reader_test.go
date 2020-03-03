@@ -88,3 +88,16 @@ func (s *testInfoschemaTableSuite) TestEngines(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustQuery("select * from information_schema.ENGINES;").Check(testkit.Rows("InnoDB DEFAULT Supports transactions, row-level locking, and foreign keys YES YES YES"))
 }
+
+func (s *testInfoschemaTableSuite) TestCharacterSetCollations(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	// The description column is not important
+	tk.MustQuery("SELECT default_collate_name, maxlen FROM information_schema.character_sets ORDER BY character_set_name").Check(
+		testkit.Rows("ascii_bin 1", "binary 1", "latin1_bin 1", "utf8_bin 3", "utf8mb4_bin 4"))
+
+	// The is_default column is not important
+	// but the id's are used by client libraries and must be stable
+	tk.MustQuery("SELECT character_set_name, id, sortlen FROM information_schema.collations ORDER BY collation_name").Check(
+		testkit.Rows("ascii 65 1", "binary 63 1", "latin1 47 1", "utf8 83 1", "utf8mb4 46 1"))
+}

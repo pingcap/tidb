@@ -17,6 +17,7 @@ import (
 	"context"
 	"sort"
 
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/infoschema"
@@ -54,6 +55,10 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			e.rows, err = dataForViews(sctx, dbs)
 		case infoschema.TableEngines:
 			e.rows = dataForEngines()
+		case infoschema.TableCharacterSets:
+			e.rows = dataForCharacterSets()
+		case infoschema.TableCollations:
+			e.rows = dataForCollations()
 		}
 		if err != nil {
 			return nil, err
@@ -168,4 +173,28 @@ func dataForEngines() (rows [][]types.Datum) {
 		),
 	)
 	return rows
+}
+
+func dataForCharacterSets() (records [][]types.Datum) {
+	charsets := charset.GetSupportedCharsets()
+	for _, charset := range charsets {
+		records = append(records,
+			types.MakeDatums(charset.Name, charset.DefaultCollation, charset.Desc, charset.Maxlen),
+		)
+	}
+	return records
+}
+
+func dataForCollations() (records [][]types.Datum) {
+	collations := charset.GetSupportedCollations()
+	for _, collation := range collations {
+		isDefault := ""
+		if collation.IsDefault {
+			isDefault = "Yes"
+		}
+		records = append(records,
+			types.MakeDatums(collation.Name, collation.CharsetName, collation.ID, isDefault, "Yes", 1),
+		)
+	}
+	return records
 }
