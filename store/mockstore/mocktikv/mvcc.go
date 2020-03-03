@@ -31,6 +31,7 @@ const (
 	typePut mvccValueType = iota
 	typeDelete
 	typeRollback
+	typeLock
 )
 
 type mvccValue struct {
@@ -234,7 +235,7 @@ func (e *mvccEntry) Get(ts uint64, isoLevel kvrpcpb.IsolationLevel, resolvedLock
 		}
 	}
 	for _, v := range e.values {
-		if v.commitTS <= ts && v.valueType != typeRollback {
+		if v.commitTS <= ts && v.valueType != typeRollback && v.valueType != typeLock {
 			return v.value, nil
 		}
 	}
