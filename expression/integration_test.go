@@ -5592,7 +5592,19 @@ func (s *testIntegrationSerialSuite) prepare4Join(c *C) *testkit.TestKit {
 	return tk
 }
 
-func (s *testIntegrationSerialSuite) TestHashJoin(c *C) {
+func (s *testIntegrationSerialSuite) prepare4Join2(c *C) *testkit.TestKit {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("USE test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t1 (id int, v varchar(5) character set binary, key(v))")
+	tk.MustExec("create table t2 (v varchar(5) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci, key(v))")
+	tk.MustExec("insert into t1 values (1, 'a'), (2, 'À'), (3, 'á'), (4, 'à'), (5, 'b'), (6, 'c'), (7, ' ')")
+	tk.MustExec("insert into t2 values ('a'), ('À'), ('á'), ('à'), ('b'), ('c'), (' ')")
+	return tk
+}
+
+func (s *testIntegrationSerialSuite) TestCollateHashJoin(c *C) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
 	tk := s.prepare4Join(c)
@@ -5614,22 +5626,15 @@ func (s *testIntegrationSerialSuite) TestHashJoin(c *C) {
 		testkit.Rows())
 }
 
-func (s *testIntegrationSerialSuite) TestHashJoin2(c *C) {
+func (s *testIntegrationSerialSuite) TestCollateHashJoin2(c *C) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("USE test")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("drop table if exists t2")
-	tk.MustExec("create table t1 (id int, v varchar(5) character set binary)")
-	tk.MustExec("create table t2 (v varchar(5) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci)")
-	tk.MustExec("insert into t1 values (1, 'a'), (2, 'À'), (3, 'á'), (4, 'à'), (5, 'b'), (6, 'c'), (7, ' ')")
-	tk.MustExec("insert into t2 values ('a'), ('À'), ('á'), ('à'), ('b'), ('c'), (' ')")
+	tk := s.prepare4Join2(c)
 	tk.MustQuery("select /*+ TIDB_HJ(t1, t2) */ * from t1, t2 where t1.v=t2.v order by t1.id").Check(
 		testkit.Rows("1 a a", "2 À À", "3 á á", "4 à à", "5 b b", "6 c c", "7    "))
 }
 
-func (s *testIntegrationSerialSuite) TestMergeJoin(c *C) {
+func (s *testIntegrationSerialSuite) TestCollateMergeJoin(c *C) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
 	tk := s.prepare4Join(c)
@@ -5651,7 +5656,15 @@ func (s *testIntegrationSerialSuite) TestMergeJoin(c *C) {
 		testkit.Rows())
 }
 
-func (s *testIntegrationSerialSuite) TestSelection(c *C) {
+func (s *testIntegrationSerialSuite) TestCollateMergeJoin2(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	tk := s.prepare4Join2(c)
+	tk.MustQuery("select /*+ TIDB_SMJ(t1, t2) */ * from t1, t2 where t1.v=t2.v order by t1.id").Check(
+		testkit.Rows("1 a a", "2 À À", "3 á á", "4 à à", "5 b b", "6 c c", "7    "))
+}
+
+func (s *testIntegrationSerialSuite) TestCollateSelection(c *C) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
 	tk := testkit.NewTestKit(c, s.store)
@@ -5666,4 +5679,19 @@ func (s *testIntegrationSerialSuite) TestSelection(c *C) {
 	tk.MustQuery("select v from t_bin where v='a' order by id").Check(testkit.Rows("a"))
 	tk.MustQuery("select v from t where v<'b' and id<=3").Check(testkit.Rows("a", "À", "á"))
 	tk.MustQuery("select v from t_bin where v<'b' and id<=3").Check(testkit.Rows("a"))
+}
+
+func (s *testIntegrationSerialSuite) TestCollateSort(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("USE test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t_bin")
+	tk.MustExec("create table t (id int, v varchar(5) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL)")
+	tk.MustExec("create table t_bin (id int, v varchar(5) CHARACTER SET binary);")
+	tk.MustExec("insert into t values (1, 'a'), (2, 'À'), (3, 'á'), (4, 'à'), (5, 'b'), (6, 'c'), (7, ' ')")
+	tk.MustExec("insert into t_bin values (1, 'a'), (2, 'À'), (3, 'á'), (4, 'à'), (5, 'b'), (6, 'c'), (7, ' ')")
+	tk.MustQuery("select id from t order by v, id").Check(testkit.Rows("7", "1", "2", "3", "4", "5", "6"))
+	tk.MustQuery("select id from t_bin order by v, id").Check(testkit.Rows("7", "1", "5", "6", "2", "4", "3"))
 }

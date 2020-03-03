@@ -1115,7 +1115,6 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 	}
 	executorCountHashJoinExec.Inc()
 
-	// left is the build side
 	for i := range v.EqualConditions {
 		chs, coll, flen := v.EqualConditions[i].CharsetAndCollation(e.ctx)
 		bt := leftTypes[v.LeftJoinKeys[i].Index]
