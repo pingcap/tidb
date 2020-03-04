@@ -702,6 +702,40 @@ func (s *testSessionSuite) TestReadOnlyNotInHistory(c *C) {
 	c.Assert(history.Count(), Equals, 0)
 }
 
+func (s *testSessionSuite) TestRetryUnion(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table history (a int)")
+	tk.MustExec("insert history values (1), (2), (3)")
+	tk.MustExec("set @@autocommit = 0")
+	tk.MustExec("set tidb_disable_txn_auto_retry = 0")
+	// UNION should't be in retry history.
+	tk.MustQuery("(select * from history) union (select * from history)")
+	history := session.GetHistory(tk.Se)
+	c.Assert(history.Count(), Equals, 0)
+	tk.MustQuery("(select * from history for update) union (select * from history)")
+	tk.MustExec("update history set a = a + 1")
+	history = session.GetHistory(tk.Se)
+	c.Assert(history.Count(), Equals, 2)
+
+	// Make retryable error.
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk1.MustExec("update history set a = a + 1")
+
+	_, err := tk.Exec("commit")
+	c.Assert(err, ErrorMatches, ".*can not retry select for update statement")
+}
+
+func (s *testSessionSuite) TestRetryShow(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set @@autocommit = 0")
+	tk.MustExec("set tidb_disable_txn_auto_retry = 0")
+	// UNION should't be in retry history.
+	tk.MustQuery("show variables")
+	tk.MustQuery("show databases")
+	history := session.GetHistory(tk.Se)
+	c.Assert(history.Count(), Equals, 0)
+}
+
 func (s *testSessionSuite) TestNoRetryForCurrentTxn(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
