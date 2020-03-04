@@ -568,7 +568,7 @@ func (s *testBinlogSuite) TestAddSpecialComment(c *C) {
 }
 
 func mustGetDDLBinlog(s *testBinlogSuite, ddlQuery string, c *C) (matched bool) {
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 100; i++ {
 		preDDL, commitDDL, _ := getLatestDDLBinlog(c, s.pump, ddlQuery)
 		if preDDL != nil && commitDDL != nil {
 			if preDDL.DdlJobId == commitDDL.DdlJobId {
@@ -578,7 +578,7 @@ func mustGetDDLBinlog(s *testBinlogSuite, ddlQuery string, c *C) (matched bool) 
 				break
 			}
 		}
-		time.Sleep(time.Millisecond * 100)
+		time.Sleep(time.Millisecond * 30)
 	}
 	return
 }
