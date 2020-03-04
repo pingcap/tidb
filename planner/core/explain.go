@@ -565,9 +565,6 @@ func (p *PhysicalWindow) ExplainInfo() string {
 func (p *PhysicalShuffle) ExplainInfo() string {
 	buffer := bytes.NewBufferString("")
 	fmt.Fprintf(buffer, "execution info: concurrency:%v, fan out:%v", p.Concurrency, p.FanOut)
-	if p.ChildShuffle != nil {
-		fmt.Fprintf(buffer, ", child:%v", p.ChildShuffle.ExplainID())
-	}
 	fmt.Fprintf(buffer, ", splitter:%v", getShuffleSplitterName4Explain(p.SplitterType))
 	if len(p.SplitByItems) > 0 {
 		buffer.WriteString("(")

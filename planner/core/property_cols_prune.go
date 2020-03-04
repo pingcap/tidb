@@ -218,7 +218,7 @@ func (p *LogicalJoin) PreparePossiblePartitionProperties(childrenPartitionProper
 
 	// Global properties are the same as inner, which is not determined by now.
 	// So return both.
-	properties := make([]*property.PhysicalProperty, len(p.parallelHelper.possibleChildrenProperties[0])+len(p.parallelHelper.possibleChildrenProperties[1]))
+	properties := make([]*property.PhysicalProperty, 0, len(p.parallelHelper.possibleChildrenProperties[0])+len(p.parallelHelper.possibleChildrenProperties[1]))
 	properties = append(properties, p.parallelHelper.possibleChildrenProperties[0]...)
 	properties = append(properties, p.parallelHelper.possibleChildrenProperties[1]...)
 	return properties

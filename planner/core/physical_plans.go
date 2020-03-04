@@ -579,8 +579,6 @@ type PhysicalShuffle struct {
 	basePhysicalPlan
 
 	Concurrency  int
-	Tail         PhysicalPlan
-	ChildShuffle *PhysicalShuffle
 	MergerType   ShuffleMergerType
 	MergeByItems []property.ItemExpression
 
@@ -646,8 +644,10 @@ func getShuffleMergerName4Explain(tp ShuffleMergerType) string {
 type PhysicalShuffleDataSourceStub struct {
 	physicalSchemaProducer
 
-	// Worker points to `executor.shuffleWorker`.
-	Worker unsafe.Pointer
+	// WorkerIdx represents worker index.
+	WorkerIdx int
+	// ChildShuffleExec points to `executor.ShuffleExec`.
+	ChildShuffleExec unsafe.Pointer
 }
 
 // CollectPlanStatsVersion uses to collect the statistics version of the plan.

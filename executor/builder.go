@@ -2714,6 +2714,27 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) *WindowExec
 	}
 }
 
+func locateChildShuffles(parent plannercore.PhysicalPlan, childIdx int, childShuffles []*childShuffle) []*childShuffle {
+	current := parent.Children()[childIdx]
+	for {
+		if shuffle, ok := current.(*plannercore.PhysicalShuffle); ok {
+			return append(childShuffles, &childShuffle{parent, childIdx, shuffle, nil})
+		}
+		parent = current
+		switch len(parent.Children()) {
+		case 0:
+			panic("Child shuffle is NOT FOUND for concurrent shuffle.")
+		case 1:
+			current = parent.Children()[0]
+		default:
+			for i := range parent.Children() {
+				childShuffles = locateChildShuffles(parent, i, childShuffles)
+			}
+			return childShuffles
+		}
+	}
+}
+
 func (b *executorBuilder) buildShuffle(v *plannercore.PhysicalShuffle) *ShuffleExec {
 	shuffle := &ShuffleExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
@@ -2723,15 +2744,13 @@ func (b *executorBuilder) buildShuffle(v *plannercore.PhysicalShuffle) *ShuffleE
 		mergers:      make([]shuffleMerger, v.FanOut),
 	}
 
-	if v.ChildShuffle != nil {
-		// Re-locate tail plan, as `Projection` would be injected in `postOptimize`.
-		for len(v.Tail.Children()) > 0 && v.Tail.Children()[0] != v.ChildShuffle {
-			v.Tail = v.Tail.Children()[0]
-		}
-
-		shuffle.childShuffle = b.build(v.ChildShuffle).(*ShuffleExec)
-		if b.err != nil {
-			return nil
+	if v.Concurrency > 1 {
+		shuffle.childShuffles = locateChildShuffles(v, 0, shuffle.childShuffles)
+		for i := range shuffle.childShuffles {
+			shuffle.childShuffles[i].exec = b.build(shuffle.childShuffles[i].plan).(*ShuffleExec)
+			if b.err != nil {
+				return nil
+			}
 		}
 	}
 
@@ -2741,16 +2760,17 @@ func (b *executorBuilder) buildShuffle(v *plannercore.PhysicalShuffle) *ShuffleE
 			workerIdx: i,
 			shuffle:   shuffle,
 		}
-		if v.ChildShuffle != nil { // full-merge & repartition scheme.
-			w.childShuffle = shuffle.childShuffle
-
-			// e.g. Project -> Shuffle -> Window -> Sort(v.Tail) -> Shuffle(child) -> DataSource
-			//        ==> Project -> Shuffle -> [Window -> Sort(v.Tail) -> stub(worker)] x N <-ch-> Shuffle(child) -> DataSource
-			stub := plannercore.PhysicalShuffleDataSourceStub{
-				Worker: (unsafe.Pointer)(w),
-			}.Init(b.ctx, v.ChildShuffle.Stats(), v.ChildShuffle.SelectBlockOffset(), nil)
-			stub.SetSchema(v.ChildShuffle.Schema())
-			v.Tail.SetChildren(stub)
+		if v.Concurrency > 1 { // full-merge & repartition scheme.
+			// e.g. Project -> Shuffle -> Window -> Sort -> Shuffle(child) -> DataSource
+			//        ==> Project -> Shuffle <-ch-> [Window -> Sort -> stub] x N <-ch-> Shuffle(child) -> DataSource
+			for _, childShuffle := range shuffle.childShuffles {
+				stub := plannercore.PhysicalShuffleDataSourceStub{
+					WorkerIdx:        i,
+					ChildShuffleExec: (unsafe.Pointer)(childShuffle.exec),
+				}.Init(b.ctx, childShuffle.plan.Stats(), childShuffle.plan.SelectBlockOffset(), nil)
+				stub.SetSchema(childShuffle.plan.Schema())
+				childShuffle.parent.Children()[childShuffle.childIdx] = stub
+			}
 		} else { // initial-partition scheme.
 			// e.g. xxx -> Shuffle(parent) -> xxx -> Shuffle -> DataSource
 			//        ==> Project -> Shuffle(parent) -> xxx -> Shuffle(mergers <-ch-> splitters(workers)) -> DataSource
@@ -2773,9 +2793,9 @@ func (b *executorBuilder) buildShuffle(v *plannercore.PhysicalShuffle) *ShuffleE
 		shuffle.workers[i] = w
 	}
 
-	// recovery original plan for cached prepared statement.
-	if v.ChildShuffle != nil {
-		v.Tail.SetChildren(v.ChildShuffle)
+	// restore original plan for cached prepared statement.
+	for _, child := range shuffle.childShuffles {
+		child.parent.Children()[child.childIdx] = child.plan
 	}
 
 	///// mergers /////
@@ -2799,7 +2819,8 @@ func (b *executorBuilder) buildShuffle(v *plannercore.PhysicalShuffle) *ShuffleE
 func (b *executorBuilder) buildShuffleDataSourceStub(v *plannercore.PhysicalShuffleDataSourceStub) *shuffleDataSourceStub {
 	return &shuffleDataSourceStub{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
-		worker:       (*shuffleWorker)(v.Worker),
+		workerIdx:    v.WorkerIdx,
+		childExec:    (*ShuffleExec)(v.ChildShuffleExec),
 	}
 }
 

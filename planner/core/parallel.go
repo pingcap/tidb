@@ -279,21 +279,6 @@ func setShuffleMergeByRandom(shuffle *PhysicalShuffle, concurrency int) {
 	shuffle.MergerType = ShuffleRandomMergerType
 }
 
-func locateChildShuffle(pp PhysicalPlan) (tail PhysicalPlan, child *PhysicalShuffle) {
-	var ok bool
-	child, ok = pp.(*PhysicalShuffle)
-	for !ok {
-		if len(pp.Children()) > 0 {
-			tail = pp
-			pp = pp.Children()[0] //Future: support multi-children.
-			child, ok = pp.(*PhysicalShuffle)
-		} else {
-			return nil, nil
-		}
-	}
-	return tail, child
-}
-
 func enforceInitialPartition(pp PhysicalPlan, requiredProperty *property.PhysicalProperty, ctx sessionctx.Context) *PhysicalShuffle {
 	concurrency := ctx.GetSessionVars().ExecutorsConcurrency
 	shuffle := newPhysicalShuffle(pp, requiredProperty, ctx)
@@ -317,7 +302,6 @@ func enforceFullMerge(pp PhysicalPlan, requiredProperty *property.PhysicalProper
 	} else {
 		setShuffleMergeByRandom(shuffle, concurrency)
 	}
-	shuffle.Tail, shuffle.ChildShuffle = locateChildShuffle(pp)
 	return shuffle
 }
 
@@ -340,6 +324,5 @@ func enforceRepartition(pp PhysicalPlan, requiredProperty *property.PhysicalProp
 	} else {
 		setShuffleMergeByRandom(shuffle, concurrency)
 	}
-	shuffle.Tail, shuffle.ChildShuffle = locateChildShuffle(pp)
 	return shuffle
 }

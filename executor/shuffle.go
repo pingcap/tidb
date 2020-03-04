@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -84,15 +85,22 @@ import (
 type ShuffleExec struct {
 	baseExecutor
 
-	concurrency  int
-	workers      []*shuffleWorker
-	childShuffle *ShuffleExec
+	concurrency   int
+	workers       []*shuffleWorker
+	childShuffles []*childShuffle
 
 	fanOut  int
 	mergers []shuffleMerger
 
 	prepared bool
 	finishCh chan struct{}
+}
+
+type childShuffle struct {
+	parent   plannercore.PhysicalPlan
+	childIdx int
+	plan     *plannercore.PhysicalShuffle
+	exec     *ShuffleExec
 }
 
 type shuffleData struct {
@@ -106,8 +114,8 @@ func (e *ShuffleExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return err
 	}
-	if e.childShuffle != nil {
-		if err := e.childShuffle.Open(ctx); err != nil {
+	for _, child := range e.childShuffles {
+		if err := child.exec.Open(ctx); err != nil {
 			return err
 		}
 	}
@@ -148,8 +156,8 @@ func (e *ShuffleExec) Close() error {
 	for _, worker := range e.workers {
 		errs = append(errs, worker.Close())
 	}
-	if e.childShuffle != nil {
-		errs = append(errs, e.childShuffle.Close())
+	for _, child := range e.childShuffles {
+		errs = append(errs, child.exec.Close())
 	}
 	errs = append(errs, e.baseExecutor.Close())
 
@@ -167,9 +175,9 @@ func (e *ShuffleExec) Prepare(ctx context.Context) {
 		return
 	}
 
-	if e.childShuffle != nil {
+	for _, child := range e.childShuffles {
 		// full-merge Shuffle prepares in `Next`.
-		e.childShuffle.Prepare(ctx)
+		child.exec.Prepare(ctx)
 	}
 
 	// prepare mergers before workers, to get channels ready.
@@ -234,11 +242,10 @@ func (e *ShuffleExec) WorkerFinished(workerIdx int) {
 
 // shuffleWorker is the multi-thread worker executing child executors within Shuffle.
 type shuffleWorker struct {
-	workerIdx    int
-	shuffle      *ShuffleExec
-	childShuffle *ShuffleExec
-	splitter     shuffleSplitter
-	childExec    Executor
+	workerIdx int
+	shuffle   *ShuffleExec
+	splitter  shuffleSplitter
+	childExec Executor
 
 	executed bool
 }
@@ -320,7 +327,8 @@ var _ Executor = (*shuffleDataSourceStub)(nil)
 // shuffleDataSourceStub is the stub for executors within Shuffle to read data source.
 type shuffleDataSourceStub struct {
 	baseExecutor
-	worker *shuffleWorker
+	workerIdx int
+	childExec *ShuffleExec
 }
 
 // Open implements the Executor Open interface.
@@ -337,5 +345,5 @@ func (s *shuffleDataSourceStub) Close() error {
 // It is called by `Tail` executor within Shuffle, to fetch data from child Shuffle.
 // Initial-partition scheme will not reach here.
 func (s *shuffleDataSourceStub) Next(ctx context.Context, req *chunk.Chunk) error {
-	return s.worker.childShuffle.WorkerNext(ctx, s.worker.workerIdx, req)
+	return s.childExec.WorkerNext(ctx, s.workerIdx, req)
 }

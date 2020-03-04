@@ -242,8 +242,6 @@ func buildExecutorWithShuffle(ctx sessionctx.Context, plan core.PhysicalPlan,
 
 	shuffleMerger := core.PhysicalShuffle{
 		Concurrency:  concurrency,
-		Tail:         plan,
-		ChildShuffle: shuffleSplitter,
 		MergerType:   mergerType,
 		MergeByItems: mergeByItems,
 		FanOut:       1,
@@ -618,11 +616,9 @@ func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, funcs int, f
 		child.SetChildren(src)
 
 		plan = core.PhysicalShuffle{
-			Concurrency:  concurrency,
-			Tail:         tail,
-			ChildShuffle: child,
-			MergerType:   core.ShuffleRandomMergerType,
-			FanOut:       1,
+			Concurrency: concurrency,
+			MergerType:  core.ShuffleRandomMergerType,
+			FanOut:      1,
 		}.Init(ctx, nil, 0)
 		plan.SetChildren(win)
 	} else {
@@ -1700,33 +1696,12 @@ func defaultSortTestCase() *sortCase {
 }
 
 func buildParallelSortExec(ctx sessionctx.Context, dataSource *mockDataSource, byItems []*core.ByItems, concurrency int) Executor {
-	src := &mockDataPhysicalPlan{
-		schema: dataSource.Schema(),
-		exec:   dataSource,
-	}
-
-	shuffleSplitter := core.PhysicalShuffle{
-		Concurrency:  1,
-		FanOut:       concurrency,
-		SplitterType: core.ShuffleRandomSplitterType,
-	}.Init(ctx, nil, 0)
-	shuffleSplitter.SetChildren(src)
-
 	sort := &core.PhysicalSort{ByItems: byItems}
-	sort.SetChildren(shuffleSplitter)
-
-	shuffleMerger := core.PhysicalShuffle{
-		Concurrency:  concurrency,
-		Tail:         sort,
-		ChildShuffle: shuffleSplitter,
-		MergerType:   core.ShuffleMergeSortMergerType,
-		MergeByItems: core.GetItemExprsFromByItems(byItems),
-		FanOut:       1,
-	}.Init(ctx, nil, 0)
-	shuffleMerger.SetChildren(sort)
-
-	builder := newExecutorBuilder(ctx, nil)
-	return builder.build(shuffleMerger)
+	return buildExecutorWithShuffle(
+		ctx, sort, dataSource, concurrency,
+		core.ShuffleRandomSplitterType, nil,
+		core.ShuffleMergeSortMergerType, core.GetItemExprsFromByItems(byItems),
+	)
 }
 
 func benchmarkSortExec(b *testing.B, cas *sortCase) {
