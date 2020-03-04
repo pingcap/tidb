@@ -92,14 +92,17 @@ func (s *inspectionResultSuite) TestInspectionResult(c *C) {
 			types.MakeDatums("tidb", "192.168.1.13:1234", "memory", "swap", "used-percent", "0"),
 			types.MakeDatums("tikv", "192.168.1.21:1234", "memory", "swap", "used-percent", "0.6"),
 			types.MakeDatums("pd", "192.168.1.31:1234", "cpu", "cpu", "load1", "1.0"),
-			types.MakeDatums("pd", "192.168.1.32:1234", "cpu", "cpu", "load5", "0.6"),
-			types.MakeDatums("pd", "192.168.1.33:1234", "cpu", "cpu", "load15", "2.0"),
+			types.MakeDatums("pd", "192.168.1.32:1234", "cpu", "cpu", "load5", "2.0"),
+			types.MakeDatums("pd", "192.168.1.33:1234", "cpu", "cpu", "load15", "8.0"),
 		},
 	}
 	mockData[infoschema.TableClusterHardware] = variable.TableSnapshot{
 		Rows: [][]types.Datum{
 			types.MakeDatums("tikv", "192.168.1.22:1234", "disk", "sda", "used-percent", "80"),
 			types.MakeDatums("tikv", "192.168.1.23:1234", "disk", "sdb", "used-percent", "50"),
+			types.MakeDatums("pd", "192.168.1.31:1234", "cpu", "cpu", "cpu-logical-cores", "1"),
+			types.MakeDatums("pd", "192.168.1.32:1234", "cpu", "cpu", "cpu-logical-cores", "4"),
+			types.MakeDatums("pd", "192.168.1.33:1234", "cpu", "cpu", "cpu-logical-cores", "10"),
 		},
 	}
 
@@ -119,44 +122,44 @@ func (s *inspectionResultSuite) TestInspectionResult(c *C) {
 		{
 			sql: "select rule, item, type, value, reference, severity, details from information_schema.inspection_result where rule in ('config', 'version')",
 			rows: []string{
-				"config coprocessor.high tikv inconsistent consistent warning select * from information_schema.cluster_config where type='tikv' and `key`='coprocessor.high'",
-				"config ddl.lease tidb inconsistent consistent warning select * from information_schema.cluster_config where type='tidb' and `key`='ddl.lease'",
+				"config coprocessor.high tikv inconsistent consistent warning execute the sql to see more detail: select * from information_schema.cluster_config where type='tikv' and `key`='coprocessor.high'",
+				"config ddl.lease tidb inconsistent consistent warning execute the sql to see more detail: select * from information_schema.cluster_config where type='tidb' and `key`='ddl.lease'",
 				"config log.slow-threshold tidb 0 not 0 warning slow-threshold = 0 will record every query to slow log, it may affect performance",
-				"config log.slow-threshold tidb inconsistent consistent warning select * from information_schema.cluster_config where type='tidb' and `key`='log.slow-threshold'",
-				"version git_hash tidb inconsistent consistent critical select * from information_schema.cluster_info where type='tidb'",
-				"version git_hash tikv inconsistent consistent critical select * from information_schema.cluster_info where type='tikv'",
-				"version git_hash pd inconsistent consistent critical select * from information_schema.cluster_info where type='pd'",
+				"config log.slow-threshold tidb inconsistent consistent warning execute the sql to see more detail: select * from information_schema.cluster_config where type='tidb' and `key`='log.slow-threshold'",
+				"version git_hash tidb inconsistent consistent critical execute the sql to see more detail: select * from information_schema.cluster_info where type='tidb'",
+				"version git_hash tikv inconsistent consistent critical execute the sql to see more detail: select * from information_schema.cluster_info where type='tikv'",
+				"version git_hash pd inconsistent consistent critical execute the sql to see more detail: select * from information_schema.cluster_info where type='pd'",
 			},
 		},
 		{
 			sql: "select rule, item, type, value, reference, severity, details from information_schema.inspection_result where rule in ('config', 'version') and item in ('coprocessor.high', 'git_hash') and type='tikv'",
 			rows: []string{
-				"config coprocessor.high tikv inconsistent consistent warning select * from information_schema.cluster_config where type='tikv' and `key`='coprocessor.high'",
-				"version git_hash tikv inconsistent consistent critical select * from information_schema.cluster_info where type='tikv'",
+				"config coprocessor.high tikv inconsistent consistent warning execute the sql to see more detail: select * from information_schema.cluster_config where type='tikv' and `key`='coprocessor.high'",
+				"version git_hash tikv inconsistent consistent critical execute the sql to see more detail: select * from information_schema.cluster_info where type='tikv'",
 			},
 		},
 		{
 			sql: "select rule, item, type, value, reference, severity, details from information_schema.inspection_result where rule='config'",
 			rows: []string{
-				"config coprocessor.high tikv inconsistent consistent warning select * from information_schema.cluster_config where type='tikv' and `key`='coprocessor.high'",
-				"config ddl.lease tidb inconsistent consistent warning select * from information_schema.cluster_config where type='tidb' and `key`='ddl.lease'",
+				"config coprocessor.high tikv inconsistent consistent warning execute the sql to see more detail: select * from information_schema.cluster_config where type='tikv' and `key`='coprocessor.high'",
+				"config ddl.lease tidb inconsistent consistent warning execute the sql to see more detail: select * from information_schema.cluster_config where type='tidb' and `key`='ddl.lease'",
 				"config log.slow-threshold tidb 0 not 0 warning slow-threshold = 0 will record every query to slow log, it may affect performance",
-				"config log.slow-threshold tidb inconsistent consistent warning select * from information_schema.cluster_config where type='tidb' and `key`='log.slow-threshold'",
+				"config log.slow-threshold tidb inconsistent consistent warning execute the sql to see more detail: select * from information_schema.cluster_config where type='tidb' and `key`='log.slow-threshold'",
 			},
 		},
 		{
 			sql: "select rule, item, type, value, reference, severity, details from information_schema.inspection_result where rule='version' and item='git_hash' and type in ('pd', 'tidb')",
 			rows: []string{
-				"version git_hash tidb inconsistent consistent critical select * from information_schema.cluster_info where type='tidb'",
-				"version git_hash pd inconsistent consistent critical select * from information_schema.cluster_info where type='pd'",
+				"version git_hash tidb inconsistent consistent critical execute the sql to see more detail: select * from information_schema.cluster_info where type='tidb'",
+				"version git_hash pd inconsistent consistent critical execute the sql to see more detail: select * from information_schema.cluster_info where type='pd'",
 			},
 		},
 		{
 			sql: "select rule, item, type, instance, value, reference, severity, details from information_schema.inspection_result where rule='current-load'",
 			rows: []string{
-				"current-load cpu-load1 pd 192.168.1.31:1234 1.0 <0.7 warning ",
-				"current-load cpu-load15 pd 192.168.1.33:1234 2.0 <0.7 warning ",
-				"current-load disk-usage tikv 192.168.1.22:1234 80 <70 warning select * from information_schema.cluster_hardware where type='tikv' and instance='192.168.1.22:1234' and device_type='disk' and device_name='sda'",
+				"current-load cpu-load1 pd 192.168.1.31:1234 1.0 <0.7 warning cpu-load1 should less than (cpu_logical_cores * 0.7)",
+				"current-load cpu-load15 pd 192.168.1.33:1234 8.0 <7.0 warning cpu-load15 should less than (cpu_logical_cores * 0.7)",
+				"current-load disk-usage tikv 192.168.1.22:1234 80 <70 warning execute the sql to see more detail: select * from information_schema.cluster_hardware where type='tikv' and instance='192.168.1.22:1234' and device_type='disk' and device_name='sda'",
 				"current-load swap-memory-usage tikv 192.168.1.21:1234 0.6 0 warning ",
 				"current-load virtual-memory-usage tidb 192.168.1.11:1234 0.8 <0.7 warning ",
 			},

@@ -210,6 +210,8 @@ func (configInspection) inspectDiffConfig(_ context.Context, sctx sessionctx.Con
 	var results []inspectionResult
 	for _, row := range rows {
 		if filter.enable(row.GetString(1)) {
+			detail := fmt.Sprintf("execute the sql to see more detail: select * from information_schema.cluster_config where type='%s' and `key`='%s'",
+				row.GetString(0), row.GetString(1))
 			results = append(results, inspectionResult{
 				tp:       row.GetString(0),
 				instance: "",
@@ -217,8 +219,7 @@ func (configInspection) inspectDiffConfig(_ context.Context, sctx sessionctx.Con
 				actual:   "inconsistent",
 				expected: "consistent",
 				severity: "warning",
-				detail: fmt.Sprintf("select * from information_schema.cluster_config where type='%s' and `key`='%s'",
-					row.GetString(0), row.GetString(1)),
+				detail:   detail,
 			})
 		}
 	}
@@ -287,14 +288,14 @@ func (versionInspection) inspect(_ context.Context, sctx sessionctx.Context, fil
 				actual:   "inconsistent",
 				expected: "consistent",
 				severity: "critical",
-				detail:   fmt.Sprintf("select * from information_schema.cluster_info where type='%s'", row.GetString(0)),
+				detail:   fmt.Sprintf("execute the sql to see more detail: select * from information_schema.cluster_info where type='%s'", row.GetString(0)),
 			})
 		}
 	}
 	return results
 }
 
-func (currentLoadInspection) inspect(_ context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
+func (c currentLoadInspection) inspect(_ context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
 	var commonResult = func(item, expected string, row chunk.Row) inspectionResult {
 		return inspectionResult{
 			tp:       row.GetString(0),
@@ -313,7 +314,7 @@ func (currentLoadInspection) inspect(_ context.Context, sctx sessionctx.Context,
 			actual:   row.GetString(3),
 			expected: expected,
 			severity: "warning",
-			detail: fmt.Sprintf("select * from information_schema.cluster_hardware where type='%s' and instance='%s' and device_type='disk' and device_name='%s'",
+			detail: fmt.Sprintf("execute the sql to see more detail: select * from information_schema.cluster_hardware where type='%s' and instance='%s' and device_type='disk' and device_name='%s'",
 				row.GetString(0), row.GetString(1), row.GetString(2)),
 		}
 	}
@@ -341,24 +342,6 @@ func (currentLoadInspection) inspect(_ context.Context, sctx sessionctx.Context,
 			"<70",
 			diskResult,
 		},
-		{
-			"cpu-load1",
-			"select type, instance, value from inspection_schema.cluster_load where device_type='cpu' and device_name='cpu' and name='load1' and value>0.7;",
-			"<0.7",
-			commonResult,
-		},
-		{
-			"cpu-load5",
-			"select type, instance, value from inspection_schema.cluster_load where device_type='cpu' and device_name='cpu' and name='load5' and value>0.7;",
-			"<0.7",
-			commonResult,
-		},
-		{
-			"cpu-load15",
-			"select type, instance, value from inspection_schema.cluster_load where device_type='cpu' and device_name='cpu' and name='load15' and value>0.7;",
-			"<0.7",
-			commonResult,
-		},
 	}
 
 	var results []inspectionResult
@@ -372,6 +355,38 @@ func (currentLoadInspection) inspect(_ context.Context, sctx sessionctx.Context,
 			for _, row := range rows {
 				results = append(results, rule.result(rule.item, rule.expected, row))
 			}
+		}
+	}
+	results = append(results, c.inspectCpuLoad(sctx, filter)...)
+	return results
+}
+
+func (currentLoadInspection) inspectCpuLoad(sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
+	var results []inspectionResult
+	for _, item := range []string{"load1", "load5", "load15"} {
+		if !filter.enable(item) {
+			continue
+		}
+		sql := fmt.Sprintf(`select t1.*, 0.7 * t2.cpu_core from
+				(select type, instance, value from inspection_schema.cluster_load where device_type='cpu' and device_name='cpu' and name='%s') as t1 join
+				(select type,instance, max(value) as cpu_core from inspection_schema.CLUSTER_HARDWARE where DEVICE_TYPE='cpu' and name='cpu-logical-cores' group by type,instance) as t2
+				where t2.instance = t1.instance and t1.type=t2.type and t1.value > 0.7 * t2.cpu_core;`, item)
+		rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+		if err != nil {
+			sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("check load %s failed: %v", item, err))
+			continue
+		}
+		for _, row := range rows {
+			result := inspectionResult{
+				tp:       row.GetString(0),
+				instance: row.GetString(1),
+				item:     "cpu-" + item,
+				actual:   row.GetString(2),
+				expected: fmt.Sprintf("<%.1f", row.GetFloat64(3)),
+				severity: "warning",
+				detail:   "cpu-" + item + " should less than (cpu_logical_cores * 0.7)",
+			}
+			results = append(results, result)
 		}
 	}
 	return results
