@@ -325,15 +325,6 @@ func (s *testTableSuite) TestDataForTableStatsField(c *C) {
 func (s *testTableSuite) TestCharacterSetCollations(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
-	// The description column is not important
-	tk.MustQuery("SELECT default_collate_name, maxlen FROM information_schema.character_sets ORDER BY character_set_name").Check(
-		testkit.Rows("ascii_bin 1", "binary 1", "latin1_bin 1", "utf8_bin 3", "utf8mb4_bin 4"))
-
-	// The is_default column is not important
-	// but the id's are used by client libraries and must be stable
-	tk.MustQuery("SELECT character_set_name, id, sortlen FROM information_schema.collations ORDER BY collation_name").Check(
-		testkit.Rows("ascii 65 1", "binary 63 1", "latin1 47 1", "utf8 83 1", "utf8mb4 46 1"))
-
 	// Test charset/collation in information_schema.COLUMNS table.
 	tk.MustExec("DROP DATABASE IF EXISTS charset_collate_test")
 	tk.MustExec("CREATE DATABASE charset_collate_test; USE charset_collate_test")
@@ -447,7 +438,9 @@ type mockSessionManager struct {
 	processInfoMap map[uint64]*util.ProcessInfo
 }
 
-func (sm *mockSessionManager) ShowProcessList() map[uint64]*util.ProcessInfo { return sm.processInfoMap }
+func (sm *mockSessionManager) ShowProcessList() map[uint64]*util.ProcessInfo {
+	return sm.processInfoMap
+}
 
 func (sm *mockSessionManager) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
 	rs, ok := sm.processInfoMap[id]
@@ -456,13 +449,14 @@ func (sm *mockSessionManager) GetProcessInfo(id uint64) (*util.ProcessInfo, bool
 
 func (sm *mockSessionManager) Kill(connectionID uint64, query bool) {}
 
+func (sm *mockSessionManager) UpdateTLSConfig(cfg *tls.Config) {}
+
 func (s *testTableSuite) TestSomeTables(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustQuery("select * from information_schema.COLLATION_CHARACTER_SET_APPLICABILITY where COLLATION_NAME='utf8mb4_bin';").Check(
 		testkit.Rows("utf8mb4_bin utf8mb4"))
 	tk.MustQuery("select * from information_schema.SESSION_VARIABLES where VARIABLE_NAME='tidb_retry_limit';").Check(testkit.Rows("tidb_retry_limit 10"))
-	tk.MustQuery("select * from information_schema.ENGINES;").Check(testkit.Rows("InnoDB DEFAULT Supports transactions, row-level locking, and foreign keys YES YES YES"))
 	tk.MustQuery("select * from information_schema.TABLE_CONSTRAINTS where TABLE_NAME='gc_delete_range';").Check(testkit.Rows("def mysql delete_range_index mysql gc_delete_range UNIQUE"))
 
 	//test the privilege of new user for information_schema.table_constraints
@@ -1075,6 +1069,10 @@ func (s *testClusterTableSuite) TestSelectClusterTable(c *C) {
 		tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY` where time > now() group by digest").Check(testkit.Rows())
 		tk.MustExec("use performance_schema")
 		re := tk.MustQuery("select * from `CLUSTER_events_statements_summary_by_digest`")
+		c.Assert(re, NotNil)
+		c.Assert(len(re.Rows()) > 0, IsTrue)
+		// Test for TiDB issue 14915.
+		re = tk.MustQuery("select sum(exec_count*avg_mem) from cluster_events_statements_summary_by_digest_history group by schema_name,digest,digest_text;")
 		c.Assert(re, NotNil)
 		c.Assert(len(re.Rows()) > 0, IsTrue)
 		tk.MustQuery("select * from `CLUSTER_events_statements_summary_by_digest_history`")

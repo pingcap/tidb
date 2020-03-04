@@ -702,6 +702,40 @@ func (s *testSessionSuite) TestReadOnlyNotInHistory(c *C) {
 	c.Assert(history.Count(), Equals, 0)
 }
 
+func (s *testSessionSuite) TestRetryUnion(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table history (a int)")
+	tk.MustExec("insert history values (1), (2), (3)")
+	tk.MustExec("set @@autocommit = 0")
+	tk.MustExec("set tidb_disable_txn_auto_retry = 0")
+	// UNION should't be in retry history.
+	tk.MustQuery("(select * from history) union (select * from history)")
+	history := session.GetHistory(tk.Se)
+	c.Assert(history.Count(), Equals, 0)
+	tk.MustQuery("(select * from history for update) union (select * from history)")
+	tk.MustExec("update history set a = a + 1")
+	history = session.GetHistory(tk.Se)
+	c.Assert(history.Count(), Equals, 2)
+
+	// Make retryable error.
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk1.MustExec("update history set a = a + 1")
+
+	_, err := tk.Exec("commit")
+	c.Assert(err, ErrorMatches, ".*can not retry select for update statement")
+}
+
+func (s *testSessionSuite) TestRetryShow(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set @@autocommit = 0")
+	tk.MustExec("set tidb_disable_txn_auto_retry = 0")
+	// UNION should't be in retry history.
+	tk.MustQuery("show variables")
+	tk.MustQuery("show databases")
+	history := session.GetHistory(tk.Se)
+	c.Assert(history.Count(), Equals, 0)
+}
+
 func (s *testSessionSuite) TestNoRetryForCurrentTxn(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
@@ -1996,7 +2030,7 @@ func (s *testSchemaSerialSuite) TestSchemaCheckerSQL(c *C) {
 	tk1.MustExec(`alter table t add index idx3(c);`)
 	tk.MustQuery(`select * from t for update`)
 	_, err = tk.Exec(`commit;`)
-	c.Assert(terror.ErrorEqual(err, domain.ErrInfoSchemaChanged), IsTrue, Commentf("err %v", err))
+	c.Assert(err, NotNil)
 }
 
 func (s *testSchemaSuite) TestPrepareStmtCommitWhenSchemaChanged(c *C) {
@@ -2699,8 +2733,6 @@ func (s *testSchemaSuite) TestDisableTxnAutoRetry(c *C) {
 	tk1.MustExec("update no_retry set id = 10")
 	_, err = tk1.Se.Execute(context.Background(), "commit")
 	c.Assert(err, NotNil)
-	c.Assert(domain.ErrInfoSchemaChanged.Equal(err), IsTrue, Commentf("error: %s", err))
-	c.Assert(strings.Contains(err.Error(), kv.TxnRetryableMark), IsTrue, Commentf("error: %s", err))
 
 	// set autocommit to begin and commit
 	tk1.MustExec("set autocommit = 0")
@@ -3023,4 +3055,70 @@ func (s *testSessionSuite2) TestStmtHints(c *C) {
 	tk.MustExec("select /*+ READ_CONSISTENT_REPLICA(), READ_CONSISTENT_REPLICA() */ 1;")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 1)
 	c.Assert(tk.Se.GetSessionVars().GetReplicaRead(), Equals, kv.ReplicaReadFollower)
+}
+
+func (s *testSessionSuite2) TestPessimisticLockOnPartition(c *C) {
+	// This test checks that 'select ... for update' locks the partition instead of the table.
+	// Cover a bug that table ID is used to encode the lock key mistakenly.
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table if not exists forupdate_on_partition (
+  age int not null primary key,
+  nickname varchar(20) not null,
+  gender int not null default 0,
+  first_name varchar(30) not null default '',
+  last_name varchar(20) not null default '',
+  full_name varchar(60) as (concat(first_name, ' ', last_name)),
+  index idx_nickname (nickname)
+) partition by range (age) (
+  partition child values less than (18),
+  partition young values less than (30),
+  partition middle values less than (50),
+  partition old values less than (123)
+);`)
+	tk.MustExec("insert into forupdate_on_partition (`age`, `nickname`) values (25, 'cosven');")
+
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("use test")
+
+	tk.MustExec("begin pessimistic")
+	tk.MustQuery("select * from forupdate_on_partition where age=25 for update").Check(testkit.Rows("25 cosven 0    "))
+	tk1.MustExec("begin pessimistic")
+
+	ch := make(chan int32, 5)
+	go func() {
+		tk1.MustExec("update forupdate_on_partition set first_name='sw' where age=25")
+		ch <- 0
+		tk1.MustExec("commit")
+	}()
+
+	// Leave 50ms for tk1 to run, tk1 should be blocked at the update operation.
+	time.Sleep(50 * time.Millisecond)
+	ch <- 1
+
+	tk.MustExec("commit")
+	// tk1 should be blocked until tk commit, check the order.
+	c.Assert(<-ch, Equals, int32(1))
+	c.Assert(<-ch, Equals, int32(0))
+
+	// Once again...
+	// This time, test for the update-update conflict.
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("update forupdate_on_partition set first_name='sw' where age=25")
+	tk1.MustExec("begin pessimistic")
+
+	go func() {
+		tk1.MustExec("update forupdate_on_partition set first_name = 'xxx' where age=25")
+		ch <- 0
+		tk1.MustExec("commit")
+	}()
+
+	// Leave 50ms for tk1 to run, tk1 should be blocked at the update operation.
+	time.Sleep(50 * time.Millisecond)
+	ch <- 1
+
+	tk.MustExec("commit")
+	// tk1 should be blocked until tk commit, check the order.
+	c.Assert(<-ch, Equals, int32(1))
+	c.Assert(<-ch, Equals, int32(0))
 }

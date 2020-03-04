@@ -55,6 +55,8 @@ type baseBuiltinFunc struct {
 
 	childrenVectorizedOnce *sync.Once
 	childrenReversedOnce   *sync.Once
+
+	collationInfo
 }
 
 func (b *baseBuiltinFunc) PbCode() tipb.ScalarFuncSig {
@@ -99,6 +101,7 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, args []Expression, retType
 	if ctx == nil {
 		panic("ctx should not be nil")
 	}
+
 	for i := range args {
 		switch argTps[i] {
 		case types.ETInt:
@@ -119,6 +122,10 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, args []Expression, retType
 			args[i] = WrapWithCastAsJSON(ctx, args[i])
 		}
 	}
+
+	// derive collation information for string function, and we must do it
+	// before doing implicit cast.
+	derivedCharset, derivedCollate, derivedFlen := DeriveCollationFromExprs(ctx, args...)
 	var fieldType *types.FieldType
 	switch retType {
 	case types.ETInt:
@@ -145,8 +152,10 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, args []Expression, retType
 	case types.ETString:
 		fieldType = &types.FieldType{
 			Tp:      mysql.TypeVarString,
-			Flen:    0,
 			Decimal: types.UnspecifiedLength,
+			Charset: derivedCharset,
+			Collate: derivedCollate,
+			Flen:    derivedFlen,
 		}
 	case types.ETDatetime:
 		fieldType = &types.FieldType{
@@ -181,10 +190,8 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, args []Expression, retType
 	}
 	if mysql.HasBinaryFlag(fieldType.Flag) && fieldType.Tp != mysql.TypeJSON {
 		fieldType.Charset, fieldType.Collate = charset.CharsetBin, charset.CollationBin
-	} else {
-		fieldType.Charset, fieldType.Collate = charset.GetDefaultCharsetAndCollate()
 	}
-	return baseBuiltinFunc{
+	bf = baseBuiltinFunc{
 		bufAllocator:           newLocalSliceBuffer(len(args)),
 		childrenVectorizedOnce: new(sync.Once),
 		childrenReversedOnce:   new(sync.Once),
@@ -193,6 +200,8 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, args []Expression, retType
 		ctx:  ctx,
 		tp:   fieldType,
 	}
+	bf.SetCharsetAndCollation(derivedCharset, derivedCollate, derivedFlen)
+	return bf
 }
 
 func (b *baseBuiltinFunc) getArgs() []Expression {
@@ -449,6 +458,8 @@ type builtinFunc interface {
 	metadata() proto.Message
 	// Clone returns a copy of itself.
 	Clone() builtinFunc
+
+	CollationInfo
 }
 
 type builtinFuncNew interface {
@@ -633,6 +644,7 @@ var funcs = map[string]functionClass{
 	ast.CharLength:      &charLengthFunctionClass{baseFunctionClass{ast.CharLength, 1, 1}},
 	ast.CharacterLength: &charLengthFunctionClass{baseFunctionClass{ast.CharacterLength, 1, 1}},
 	ast.FindInSet:       &findInSetFunctionClass{baseFunctionClass{ast.FindInSet, 2, 2}},
+	ast.WeightString:    &weightStringFunctionClass{baseFunctionClass{ast.WeightString, 1, 3}},
 
 	// information functions
 	ast.ConnectionID: &connectionIDFunctionClass{baseFunctionClass{ast.ConnectionID, 0, 0}},

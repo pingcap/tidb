@@ -813,7 +813,7 @@ func buildMergeJoinExec(ctx sessionctx.Context, joinType plannercore.JoinType, i
 
 	j.CompareFuncs = make([]expression.CompareFunc, 0, len(j.LeftJoinKeys))
 	for i := range j.LeftJoinKeys {
-		j.CompareFuncs = append(j.CompareFuncs, expression.GetCmpFunction(j.LeftJoinKeys[i], j.RightJoinKeys[i]))
+		j.CompareFuncs = append(j.CompareFuncs, expression.GetCmpFunction(nil, j.LeftJoinKeys[i], j.RightJoinKeys[i]))
 	}
 
 	b := newExecutorBuilder(ctx, nil)

@@ -615,7 +615,30 @@ type collationFunctionClass struct {
 }
 
 func (c *collationFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "COLLATION")
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	argsTps := make([]types.EvalType, 0, len(args))
+	for _, arg := range args {
+		argsTps = append(argsTps, arg.GetType().EvalType())
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, argsTps...)
+	sig := &builtinCollationSig{bf}
+	return sig, nil
+}
+
+type builtinCollationSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinCollationSig) Clone() builtinFunc {
+	newSig := &builtinCollationSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinCollationSig) evalString(_ chunk.Row) (string, bool, error) {
+	return b.args[0].GetType().Collate, false, nil
 }
 
 type rowCountFunctionClass struct {
@@ -779,7 +802,7 @@ func (b *builtinNextValSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if err != nil {
 		return 0, false, err
 	}
-	nextVal, err := sequence.GetSequenceNextVal(db, seq)
+	nextVal, err := sequence.GetSequenceNextVal(b.ctx, db, seq)
 	if err != nil {
 		return 0, false, err
 	}
@@ -871,7 +894,7 @@ func (b *builtinSetValSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
-	return sequence.SetSequenceVal(setValue)
+	return sequence.SetSequenceVal(b.ctx, setValue, db, seq)
 }
 
 func getSchemaAndSequence(sequenceName string) (string, string) {
