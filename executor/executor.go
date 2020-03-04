@@ -795,7 +795,7 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if req.NumRows() > 0 {
 		iter := chunk.NewIterator4Chunk(req)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		      for id, cols := range e.Schema().TblID2Handle {
+			for id, cols := range e.Schema().TblID2Handle {
 				physicalID := id
 				if pt, ok := e.tblID2Table[id]; ok {
 					// On a partitioned table, we have to use physical ID to encode the lock key!
