@@ -14,7 +14,6 @@
 package expression
 
 import (
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"math"
 	"runtime"
 	"time"
@@ -548,15 +547,13 @@ func (s *testEvaluatorSuite) TestConv(c *C) {
 		{[]interface{}{"a6a", 1, 8}, "0", true, false},
 	}
 
-	c.Assert(s.ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, charset.CharsetBin), IsNil)
-	c.Assert(s.ctx.GetSessionVars().SetSystemVar(variable.CollationConnection, charset.CollationBin), IsNil)
 	for _, t := range cases {
 		f, err := newFunctionForTest(s.ctx, ast.Conv, s.primitiveValsToConstants(t.args)...)
 		c.Assert(err, IsNil)
 		tp := f.GetType()
 		c.Assert(tp.Tp, Equals, mysql.TypeVarString)
-		c.Assert(tp.Charset, Equals, charset.CharsetBin)
-		c.Assert(tp.Collate, Equals, charset.CollationBin)
+		c.Assert(tp.Charset, Equals, charset.CharsetUTF8MB4)
+		c.Assert(tp.Collate, Equals, charset.CollationUTF8MB4)
 		c.Assert(tp.Flag, Equals, uint(0))
 
 		d, err := f.Eval(chunk.Row{})
