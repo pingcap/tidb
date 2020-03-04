@@ -1382,6 +1382,13 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 					timeRange: v.QueryTimeRange,
 				},
 			}
+		case strings.ToLower(infoschema.TableInspectionRules):
+			return &MemTableReaderExec{
+				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+				retriever: &inspectionRuleRetriever{
+					extractor: v.Extractor.(*plannercore.InspectionRuleTableExtractor),
+				},
+			}
 		case strings.ToLower(infoschema.TableMetricSummary):
 			return &MemTableReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
@@ -1404,7 +1411,8 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			strings.ToLower(infoschema.TableViews),
 			strings.ToLower(infoschema.TableEngines),
 			strings.ToLower(infoschema.TableCollations),
-			strings.ToLower(infoschema.TableCharacterSets):
+			strings.ToLower(infoschema.TableCharacterSets),
+			strings.ToLower(infoschema.TableCollationCharacterSetApplicability):
 			return &MemTableReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 				retriever: &memtableRetriever{
