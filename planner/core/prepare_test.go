@@ -403,3 +403,102 @@ func mustExec(c *C, se session.Session, sql string) {
 	_, err := se.Execute(context.Background(), sql)
 	c.Assert(err, IsNil)
 }
+
+func (s *testPrepareSerialSuite) TestConstPropAndPPDWithCache(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	orgEnable := core.PreparedPlanCacheEnabled()
+	orgCapacity := core.PreparedPlanCacheCapacity
+	orgMemGuardRatio := core.PreparedPlanCacheMemoryGuardRatio
+	orgMaxMemory := core.PreparedPlanCacheMaxMemory
+	defer func() {
+		dom.Close()
+		store.Close()
+		core.SetPreparedPlanCache(orgEnable)
+		core.PreparedPlanCacheCapacity = orgCapacity
+		core.PreparedPlanCacheMemoryGuardRatio = orgMemGuardRatio
+		core.PreparedPlanCacheMaxMemory = orgMaxMemory
+	}()
+	core.SetPreparedPlanCache(true)
+	core.PreparedPlanCacheCapacity = 100
+	core.PreparedPlanCacheMemoryGuardRatio = 0.1
+	// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
+	// behavior would not be effected by the uncertain memory utilization.
+	core.PreparedPlanCacheMaxMemory.Store(math.MaxUint64)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a varchar(8) not null, b varchar(8) not null)")
+	tk.MustExec("insert into t values('1','1')")
+
+	tk.MustExec(`prepare stmt from "select count(1) from t t1, t t2 where t1.a = t2.a and t2.b = ? and t2.b = ?"`)
+	tk.MustExec("set @p0 = '1', @p1 = '2';")
+	tk.MustQuery("execute stmt using @p0, @p1").Check(testkit.Rows(
+		"0",
+	))
+	tk.MustExec("set @p0 = '1', @p1 = '1'")
+	tk.MustQuery("execute stmt using @p0, @p1").Check(testkit.Rows(
+		"1",
+	))
+
+	tk.MustExec(`prepare stmt from "select count(1) from t t1, t t2 where t1.a = t2.a and ?"`)
+	tk.MustExec("set @p0 = 0")
+	tk.MustQuery("execute stmt using @p0").Check(testkit.Rows(
+		"0",
+	))
+	tk.MustExec("set @p0 = 1")
+	tk.MustQuery("execute stmt using @p0").Check(testkit.Rows(
+		"1",
+	))
+
+	tk.MustExec(`prepare stmt from "select count(1) from t t1, t t2 where ?"`)
+	tk.MustExec("set @p0 = 0")
+	tk.MustQuery("execute stmt using @p0").Check(testkit.Rows(
+		"0",
+	))
+	tk.MustExec("set @p0 = 1")
+	tk.MustQuery("execute stmt using @p0").Check(testkit.Rows(
+		"1",
+	))
+
+	tk.MustExec(`prepare stmt from "select count(1) from t t1, t t2 where t1.a = t2.a and t2.b = '1' and t2.b = ?"`)
+	tk.MustExec("set @p0 = '1'")
+	tk.MustQuery("execute stmt using @p0").Check(testkit.Rows(
+		"1",
+	))
+	tk.MustExec("set @p0 = '2'")
+	tk.MustQuery("execute stmt using @p0").Check(testkit.Rows(
+		"0",
+	))
+
+	tk.MustExec(`prepare stmt from "select count(1) from t t1, t t2 where t1.a = t2.a and t1.a > ?"`)
+	tk.MustExec("set @p0 = '1'")
+	tk.MustQuery("execute stmt using @p0").Check(testkit.Rows(
+		"0",
+	))
+	tk.MustExec("set @p0 = '0'")
+	tk.MustQuery("execute stmt using @p0").Check(testkit.Rows(
+		"1",
+	))
+
+	tk.MustExec(`prepare stmt from "select count(1) from t t1, t t2 where t1.a = t2.a and t1.b > ? and t1.b > ?"`)
+	tk.MustExec("set @p0 = '0', @p1 = '0'")
+	tk.MustQuery("execute stmt using @p0,@p1").Check(testkit.Rows(
+		"1",
+	))
+	tk.MustExec("set @p0 = '0', @p1 = '1'")
+	tk.MustQuery("execute stmt using @p0,@p1").Check(testkit.Rows(
+		"0",
+	))
+
+	tk.MustExec(`prepare stmt from "select count(1) from t t1, t t2 where t1.a = t2.a and t1.b > ? and t1.b > '1'"`)
+	tk.MustExec("set @p0 = '1'")
+	tk.MustQuery("execute stmt using @p0").Check(testkit.Rows(
+		"0",
+	))
+	tk.MustExec("set @p0 = '0'")
+	tk.MustQuery("execute stmt using @p0").Check(testkit.Rows(
+		"0",
+	))
+}
