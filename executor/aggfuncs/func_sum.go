@@ -23,23 +23,23 @@ import (
 
 type partialResult4SumFloat64 struct {
 	val             float64
-	isNull          bool
 	notNullRowCount int64
 }
 
 type partialResult4SumDecimal struct {
 	val             types.MyDecimal
-	isNull          bool
 	notNullRowCount int64
 }
 
 type partialResult4SumDistinctFloat64 struct {
-	partialResult4SumFloat64
+	val    float64
+	isNull bool
 	valSet set.Float64Set
 }
 
 type partialResult4SumDistinctDecimal struct {
-	partialResult4SumDecimal
+	val    types.MyDecimal
+	isNull bool
 	valSet set.StringSet
 }
 
@@ -53,20 +53,18 @@ type sum4Float64 struct {
 
 func (e *sum4Float64) AllocPartialResult() PartialResult {
 	p := new(partialResult4SumFloat64)
-	p.isNull = true
 	return PartialResult(p)
 }
 
 func (e *sum4Float64) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4SumFloat64)(pr)
 	p.val = 0
-	p.isNull = true
 	p.notNullRowCount = 0
 }
 
 func (e *sum4Float64) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4SumFloat64)(pr)
-	if p.isNull {
+	if p.notNullRowCount == 0 {
 		chk.AppendNull(e.ordinal)
 		return nil
 	}
@@ -82,12 +80,6 @@ func (e *sum4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 			return err
 		}
 		if isNull {
-			continue
-		}
-		if p.isNull {
-			p.val = input
-			p.isNull = false
-			p.notNullRowCount = 1
 			continue
 		}
 		p.val += input
@@ -111,12 +103,6 @@ func (e *sum4Float64) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart
 		if isNull {
 			continue
 		}
-		if p.isNull {
-			p.val = input
-			p.isNull = false
-			p.notNullRowCount = 1
-			continue
-		}
 		p.val += input
 		p.notNullRowCount++
 	}
@@ -128,29 +114,19 @@ func (e *sum4Float64) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart
 		if isNull {
 			continue
 		}
-		if p.isNull {
-			p.val = input
-			p.isNull = false
-			p.notNullRowCount = 1
-			continue
-		}
 		p.val -= input
 		p.notNullRowCount--
-	}
-	if p.notNullRowCount == 0 {
-		p.isNull = true
-		p.val = 0
 	}
 	return nil
 }
 
 func (e *sum4Float64) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) error {
 	p1, p2 := (*partialResult4SumFloat64)(src), (*partialResult4SumFloat64)(dst)
-	if p1.isNull {
+	if p1.notNullRowCount == 0 {
 		return nil
 	}
 	p2.val += p1.val
-	p2.isNull = false
+	p2.notNullRowCount += p1.notNullRowCount
 	return nil
 }
 
@@ -160,19 +136,17 @@ type sum4Decimal struct {
 
 func (e *sum4Decimal) AllocPartialResult() PartialResult {
 	p := new(partialResult4SumDecimal)
-	p.isNull = true
 	return PartialResult(p)
 }
 
 func (e *sum4Decimal) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4SumDecimal)(pr)
-	p.isNull = true
 	p.notNullRowCount = 0
 }
 
 func (e *sum4Decimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4SumDecimal)(pr)
-	if p.isNull {
+	if p.notNullRowCount == 0 {
 		chk.AppendNull(e.ordinal)
 		return nil
 	}
@@ -190,9 +164,8 @@ func (e *sum4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 		if isNull {
 			continue
 		}
-		if p.isNull {
+		if p.notNullRowCount == 0 {
 			p.val = *input
-			p.isNull = false
 			p.notNullRowCount = 1
 			continue
 		}
@@ -218,9 +191,8 @@ func (e *sum4Decimal) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart
 		if isNull {
 			continue
 		}
-		if p.isNull {
+		if p.notNullRowCount == 0 {
 			p.val = *input
-			p.isNull = false
 			p.notNullRowCount = 1
 			continue
 		}
@@ -240,9 +212,8 @@ func (e *sum4Decimal) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart
 		if isNull {
 			continue
 		}
-		if p.isNull {
+		if p.notNullRowCount == 0 {
 			p.val = *input
-			p.isNull = false
 			p.notNullRowCount = 1
 			continue
 		}
@@ -254,15 +225,12 @@ func (e *sum4Decimal) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart
 		p.val = *newSum
 		p.notNullRowCount--
 	}
-	if p.notNullRowCount == 0 {
-		p.isNull = true
-	}
 	return nil
 }
 
 func (e *sum4Decimal) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) error {
 	p1, p2 := (*partialResult4SumDecimal)(src), (*partialResult4SumDecimal)(dst)
-	if p1.isNull {
+	if p1.notNullRowCount == 0 {
 		return nil
 	}
 	newSum := new(types.MyDecimal)
@@ -271,7 +239,7 @@ func (e *sum4Decimal) MergePartialResult(sctx sessionctx.Context, src, dst Parti
 		return err
 	}
 	p2.val = *newSum
-	p2.isNull = false
+	p2.notNullRowCount += p1.notNullRowCount
 	return nil
 }
 
