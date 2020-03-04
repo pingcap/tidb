@@ -29,11 +29,13 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/kvcache"
+	"github.com/pingcap/tidb/util/math"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/texttree"
 )
@@ -277,6 +279,15 @@ func (e *Execute) rebuildRange(p Plan) error {
 			if err != nil {
 				return err
 			}
+			if ts.Table.Partition != nil {
+				pID, err := rebuildNewTableIDFromTable(e.ctx, ts, sc, pkCol)
+				if err != nil {
+					return err
+				}
+				if pID != -1 {
+					ts.physicalTableID = pID
+				}
+			}
 		} else {
 			ts.Ranges = ranger.FullIntRange(false)
 		}
@@ -286,11 +297,31 @@ func (e *Execute) rebuildRange(p Plan) error {
 		if err != nil {
 			return err
 		}
+		if is.Table.Partition != nil {
+			pID, err := rebuildNewTableIDFromIndex(e.ctx, is, sc)
+			if err != nil {
+				return err
+			}
+			if pID != -1 {
+				is.physicalTableID = pID
+			}
+		}
 	case *PhysicalIndexLookUpReader:
 		is := x.IndexPlans[0].(*PhysicalIndexScan)
 		is.Ranges, err = e.buildRangeForIndexScan(sctx, is)
 		if err != nil {
 			return err
+		}
+		if is.Table.Partition != nil {
+			pID, err := rebuildNewTableIDFromIndex(e.ctx, is, sc)
+			if err != nil {
+				return err
+			}
+			if pID != -1 {
+				is.physicalTableID = pID
+				tblScan := x.TablePlans[0].(*PhysicalTableScan)
+				tblScan.physicalTableID = pID
+			}
 		}
 	case *PointGetPlan:
 		if x.HandleParam != nil {
@@ -298,12 +329,22 @@ func (e *Execute) rebuildRange(p Plan) error {
 			if err != nil {
 				return err
 			}
+			if x.PartitionInfo != nil {
+				num := x.TblInfo.Partition.Num
+				pos := math.Abs(x.Handle) % int64(num)
+				x.PartitionInfo = &x.TblInfo.Partition.Definitions[pos]
+			}
 			return nil
 		}
 		for i, param := range x.IndexValueParams {
 			if param != nil {
 				x.IndexValues[i] = param.Datum
 			}
+		}
+		if x.PartitionInfo != nil {
+			val := x.IndexValues[x.partitionColumnPos].GetInt64()
+			partitionID := val % int64(x.TblInfo.Partition.Num)
+			x.PartitionInfo = &x.TblInfo.Partition.Definitions[partitionID]
 		}
 		return nil
 	case PhysicalPlan:
@@ -702,3 +743,145 @@ func (e *Explain) prepareTaskDot(p PhysicalPlan, taskTp string, buffer *bytes.Bu
 		buffer.WriteString(pipelines[i])
 	}
 }
+<<<<<<< HEAD
+=======
+
+// IsPointGetWithPKOrUniqueKeyByAutoCommit returns true when meets following conditions:
+//  1. ctx is auto commit tagged
+//  2. session is not InTxn
+//  3. plan is point get by pk, or point get by unique index (no double read)
+func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p Plan) (bool, error) {
+	if !IsAutoCommitTxn(ctx) {
+		return false, nil
+	}
+
+	// check plan
+	if proj, ok := p.(*PhysicalProjection); ok {
+		p = proj.Children()[0]
+	}
+
+	switch v := p.(type) {
+	case *PhysicalIndexReader:
+		indexScan := v.IndexPlans[0].(*PhysicalIndexScan)
+		return indexScan.IsPointGetByUniqueKey(ctx.GetSessionVars().StmtCtx), nil
+	case *PhysicalTableReader:
+		tableScan := v.TablePlans[0].(*PhysicalTableScan)
+		return len(tableScan.Ranges) == 1 && tableScan.Ranges[0].IsPoint(ctx.GetSessionVars().StmtCtx), nil
+	case *PointGetPlan:
+		// If the PointGetPlan needs to read data using unique index (double read), we
+		// can't use max uint64, because using math.MaxUint64 can't guarantee repeatable-read
+		// and the data and index would be inconsistent!
+		return v.IndexInfo == nil, nil
+	default:
+		return false, nil
+	}
+}
+
+// IsAutoCommitTxn checks if session is in autocommit mode and not InTxn
+// used for fast plan like point get
+func IsAutoCommitTxn(ctx sessionctx.Context) bool {
+	return ctx.GetSessionVars().IsAutocommit() && !ctx.GetSessionVars().InTxn()
+}
+
+// IsPointUpdateByAutoCommit checks if plan p is point update and is in autocommit context
+func IsPointUpdateByAutoCommit(ctx sessionctx.Context, p Plan) (bool, error) {
+	if !IsAutoCommitTxn(ctx) {
+		return false, nil
+	}
+
+	// check plan
+	updPlan, ok := p.(*Update)
+	if !ok {
+		return false, nil
+	}
+	if _, isFastSel := updPlan.SelectPlan.(*PointGetPlan); isFastSel {
+		return true, nil
+	}
+	return false, nil
+}
+
+func buildSchemaAndNameFromIndex(cols []*expression.Column, dbName model.CIStr, tblInfo *model.TableInfo, idxInfo *model.IndexInfo) (*expression.Schema, types.NameSlice) {
+	schema := expression.NewSchema(cols...)
+	idxCols := idxInfo.Columns
+	names := make([]*types.FieldName, 0, len(idxCols))
+	tblName := tblInfo.Name
+	for _, col := range idxCols {
+		names = append(names, &types.FieldName{
+			OrigTblName: tblName,
+			OrigColName: col.Name,
+			DBName:      dbName,
+			TblName:     tblName,
+			ColName:     col.Name,
+		})
+	}
+	return schema, names
+}
+
+func buildSchemaAndNameFromPKCol(pkCol *expression.Column, dbName model.CIStr, tblInfo *model.TableInfo) (*expression.Schema, types.NameSlice) {
+	schema := expression.NewSchema([]*expression.Column{pkCol}...)
+	names := make([]*types.FieldName, 0, 1)
+	tblName := tblInfo.Name
+	col := tblInfo.GetPkColInfo()
+	names = append(names, &types.FieldName{
+		OrigTblName: tblName,
+		OrigColName: col.Name,
+		DBName:      dbName,
+		TblName:     tblName,
+		ColName:     col.Name,
+	})
+	return schema, names
+}
+
+func locateHashPartition(ctx sessionctx.Context, expr expression.Expression, pi *model.PartitionInfo, r []types.Datum) (int, error) {
+	ret, isNull, err := expr.EvalInt(ctx, chunk.MutRowFromDatums(r).ToRow())
+	if err != nil {
+		return 0, err
+	}
+	if isNull {
+		return 0, nil
+	}
+	if ret < 0 {
+		ret = 0 - ret
+	}
+	return int(ret % int64(pi.Num)), nil
+}
+
+func getPhysicalTableIDForPartition(ctx sessionctx.Context, pi *model.PartitionInfo, schema *expression.Schema, names types.NameSlice, val []types.Datum) (int64, error) {
+	expr, err := expression.ParseSimpleExprsWithNames(ctx, pi.Expr, schema, names)
+	if err != nil {
+		return 0, err
+	}
+	pos, err := locateHashPartition(ctx, expr[0], pi, val)
+	if err != nil {
+		return 0, err
+	}
+	pID := pi.Definitions[pos].ID
+	return pID, nil
+}
+
+func rebuildNewTableIDFromIndex(ctx sessionctx.Context, is *PhysicalIndexScan, sc *stmtctx.StatementContext) (int64, error) {
+	pi := is.Table.Partition
+	if pi.Type == model.PartitionTypeHash && len(is.Ranges) == 1 && is.Ranges[0].IsPoint(sc) {
+		schema, names := buildSchemaAndNameFromIndex(is.IdxCols, is.DBName, is.Table, is.Index)
+		pID, err := getPhysicalTableIDForPartition(ctx, pi, schema, names, is.Ranges[0].LowVal)
+		if err != nil {
+			return -1, err
+		}
+		return pID, nil
+	}
+	return -1, nil
+}
+
+func rebuildNewTableIDFromTable(ctx sessionctx.Context, ts *PhysicalTableScan, sc *stmtctx.StatementContext, pkCol *expression.Column) (int64, error) {
+	pi := ts.Table.Partition
+	if pi.Type == model.PartitionTypeHash && len(ts.Ranges) == 1 && ts.Ranges[0].IsPoint(sc) {
+		schema, names := buildSchemaAndNameFromPKCol(pkCol, ts.DBName, ts.Table)
+		pID, err := getPhysicalTableIDForPartition(ctx, pi, schema, names, ts.Ranges[0].LowVal)
+		if err != nil {
+			return -1, err
+		}
+		return pID, nil
+	}
+	return -1, nil
+}
+>>>>>>> 94a89e6... plan: support caching prepare plan for query on hash partition tables (#14473)

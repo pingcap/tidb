@@ -39,6 +39,7 @@ import (
 // This plan is much faster to build and to execute because it avoid the optimization and coprocessor cost.
 type PointGetPlan struct {
 	basePlan
+<<<<<<< HEAD
 	dbName           string
 	schema           *expression.Schema
 	TblInfo          *model.TableInfo
@@ -54,6 +55,26 @@ type PointGetPlan struct {
 	Lock             bool
 	IsForUpdate      bool
 	LockWaitTime     int64
+=======
+	dbName             string
+	schema             *expression.Schema
+	TblInfo            *model.TableInfo
+	IndexInfo          *model.IndexInfo
+	PartitionInfo      *model.PartitionDefinition
+	Handle             int64
+	HandleParam        *driver.ParamMarkerExpr
+	IndexValues        []types.Datum
+	IndexValueParams   []*driver.ParamMarkerExpr
+	expr               expression.Expression
+	ctx                sessionctx.Context
+	UnsignedHandle     bool
+	IsTableDual        bool
+	Lock               bool
+	IsForUpdate        bool
+	outputNames        []*types.FieldName
+	LockWaitTime       int64
+	partitionColumnPos int
+>>>>>>> 94a89e6... plan: support caching prepare plan for query on hash partition tables (#14473)
 }
 
 type nameValuePair struct {
@@ -237,6 +258,21 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 	if pairs == nil {
 		return nil
 	}
+<<<<<<< HEAD
+=======
+
+	var partitionInfo *model.PartitionDefinition
+	var pos int
+	if pi != nil {
+		if pi.Type != model.PartitionTypeHash {
+			return nil
+		}
+		partitionInfo, pos = getPartitionInfo(ctx, tbl, pairs)
+		if partitionInfo == nil {
+			return nil
+		}
+	}
+>>>>>>> 94a89e6... plan: support caching prepare plan for query on hash partition tables (#14473)
 	handlePair, fieldType := findPKHandle(tbl, pairs)
 	if handlePair.value.Kind() != types.KindNull && len(pairs) == 1 {
 		schema := buildSchemaFromFields(ctx, tblName.Schema, tbl, tblAlias, selStmt.Fields.Fields)
@@ -295,6 +331,13 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 		p.IndexInfo = idxInfo
 		p.IndexValues = idxValues
 		p.IndexValueParams = idxValueParams
+<<<<<<< HEAD
+=======
+		p.PartitionInfo = partitionInfo
+		if p.PartitionInfo != nil {
+			p.partitionColumnPos = findPartitionIdx(idxInfo, pos, pairs)
+		}
+>>>>>>> 94a89e6... plan: support caching prepare plan for query on hash partition tables (#14473)
 		return p
 	}
 	return nil
@@ -615,4 +658,44 @@ func colInfoToColumn(db model.CIStr, origTblName model.CIStr, tblName model.CISt
 		UniqueID:    int64(col.Offset),
 		Index:       idx,
 	}
+<<<<<<< HEAD
+=======
+	return handleCol
+}
+
+func getPartitionInfo(ctx sessionctx.Context, tbl *model.TableInfo, pairs []nameValuePair) (*model.PartitionDefinition, int) {
+	is := infoschema.GetInfoSchema(ctx)
+	table, ok := is.TableByID(tbl.ID)
+	if !ok {
+		return nil, 0
+	}
+	pi := tbl.Partition
+	if partitionTable, ok := table.(partitionTable); ok {
+		// PartitionExpr don't need columns and names for hash partition.
+		partitionExpr, err := partitionTable.PartitionExpr(ctx, nil, nil)
+		if err != nil {
+			return nil, 0
+		}
+		expr := partitionExpr.OrigExpr
+		if col, ok := expr.(*ast.ColumnNameExpr); ok {
+			for i, pair := range pairs {
+				if col.Name.Name.L == pair.colName {
+					val := pair.value.GetInt64()
+					pos := math.Abs(val) % int64(pi.Num)
+					return &pi.Definitions[pos], i
+				}
+			}
+		}
+	}
+	return nil, 0
+}
+
+func findPartitionIdx(idxInfo *model.IndexInfo, pos int, pairs []nameValuePair) int {
+	for i, idxCol := range idxInfo.Columns {
+		if idxCol.Name.L == pairs[pos].colName {
+			return i
+		}
+	}
+	return 0
+>>>>>>> 94a89e6... plan: support caching prepare plan for query on hash partition tables (#14473)
 }
