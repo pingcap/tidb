@@ -63,7 +63,7 @@ type SimpleExec struct {
 	is        infoschema.InfoSchema
 }
 
-func (e *SimpleExec) getSysSession() (sessionctx.Context, error) {
+func (e *baseExecutor) getSysSession() (sessionctx.Context, error) {
 	dom := domain.GetDomain(e.ctx)
 	sysSessionPool := dom.SysSessionPool()
 	ctx, err := sysSessionPool.Get()
@@ -75,7 +75,7 @@ func (e *SimpleExec) getSysSession() (sessionctx.Context, error) {
 	return restrictedCtx, nil
 }
 
-func (e *SimpleExec) releaseSysSession(ctx sessionctx.Context) {
+func (e *baseExecutor) releaseSysSession(ctx sessionctx.Context) {
 	if ctx == nil {
 		return
 	}
