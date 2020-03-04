@@ -14,7 +14,9 @@
 package session_test
 
 import (
+	"crypto/tls"
 	"fmt"
+	"github.com/pingcap/tidb/util"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -267,6 +269,90 @@ func (s *testPessimisticSuite) TestInsertOnDup(c *C) {
 	tk.MustExec("insert dup values (1, 1) on duplicate key update c = c + 1")
 	tk.MustExec("commit")
 	tk.MustQuery("select * from dup").Check(testkit.Rows("1 2"))
+}
+
+type mockSessionManager struct {
+	ss []session.Session
+}
+
+func (sm mockSessionManager) Kill(connectionID uint64, query bool) {
+	panic("implement me")
+}
+
+func (sm mockSessionManager) UpdateTLSConfig(cfg *tls.Config) {
+	panic("implement me")
+}
+
+func (sm mockSessionManager) ShowProcessList() map[uint64]*util.ProcessInfo {
+	m := make(map[uint64]*util.ProcessInfo)
+	for _, s := range sm.ss {
+		p := s.ShowProcess()
+		if p != nil {
+			m[p.ID] = p
+		}
+	}
+	return m
+}
+
+func (sm mockSessionManager) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
+	for _, s := range sm.ss {
+		p := s.ShowProcess()
+		if p != nil {
+			if p.ID == id {
+				return p, true
+			}
+		}
+	}
+	return nil, false
+}
+
+func (s *testPessimisticSuite) TestProcesslistLastWait(c *C) {
+	session1 := testkit.NewTestKitWithInit(c, s.store)
+	session2 := testkit.NewTestKitWithInit(c, s.store)
+	session3 := testkit.NewTestKitWithInit(c, s.store)
+	sm := mockSessionManager{ss: []session.Session{session1.Se, session2.Se, session3.Se}}
+	session1.Se.SetSessionManager(sm)
+	session2.Se.SetSessionManager(sm)
+	session3.Se.SetSessionManager(sm)
+
+	session1.MustExec("drop table if exists x;")
+	session1.MustExec("create table x (id int primary key, c int);")
+
+	session1.MustExec("set tidb_txn_mode = 'pessimistic'")
+	session2.MustExec("set tidb_txn_mode = 'pessimistic'")
+
+	session1.MustExec("begin")
+	session2.MustExec("begin")
+	session1.MustExec("insert into x select 1, 1")
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		session2.MustQuery("select * from x where id = 1 for update").Check(testkit.Rows("1 1"))
+		wg.Done()
+	}()
+	time.Sleep(2 * time.Second)
+	ps := session3.Se.GetSessionManager().ShowProcessList()
+	var waitTs uint64
+	for _, p := range ps {
+		if p.LastWaitTxn > 0 {
+			waitTs = p.LastWaitTxn
+		}
+	}
+	c.Assert(waitTs, Greater, uint64(0))
+	var foundBlocker bool
+	for _, p := range ps {
+		if p.CurTxnStartTS == waitTs {
+			foundBlocker = true
+		}
+	}
+	c.Assert(foundBlocker, IsTrue)
+	session1.MustExec("commit")
+	wg.Wait()
+	session2.MustExec("commit")
+	ps = session3.Se.GetSessionManager().ShowProcessList()
+	for _, p := range ps {
+		c.Assert(p.LastWaitTxn, Equals, uint64(0))
+	}
 }
 
 func (s *testPessimisticSuite) TestPointGetKeyLock(c *C) {

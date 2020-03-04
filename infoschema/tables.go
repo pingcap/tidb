@@ -655,7 +655,7 @@ var tableProcesslistCols = []columnInfo{
 	{name: "INFO", tp: mysql.TypeString, size: 512},
 	{name: "MEM", tp: mysql.TypeLonglong, size: 21},
 	{name: "TxnStart", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag, deflt: ""},
-	{name: "WaitTxnTs", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag, deflt: ""},
+	{name: "LastWaitTxn", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag, deflt: ""},
 }
 
 var tableTiDBIndexesCols = []columnInfo{
