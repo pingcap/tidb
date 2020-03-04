@@ -1371,13 +1371,21 @@ func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.D
 				if rowCount != 0 {
 					avgRowLength = dataLength / rowCount
 				}
+				var tableType string
+				switch schema.Name.L {
+				case util.InformationSchemaName.L, util.PerformanceSchemaName.L,
+					util.MetricSchemaName.L, util.InspectionSchemaName.L:
+					tableType = "SYSTEM VIEW"
+				default:
+					tableType = "BASE TABLE"
+				}
 
 				shardingInfo := GetShardingInfo(schema, table)
 				record := types.MakeDatums(
 					CatalogVal,    // TABLE_CATALOG
 					schema.Name.O, // TABLE_SCHEMA
 					table.Name.O,  // TABLE_NAME
-					"BASE TABLE",  // TABLE_TYPE
+					tableType,     // TABLE_TYPE
 					"InnoDB",      // ENGINE
 					uint64(10),    // VERSION
 					"Compact",     // ROW_FORMAT

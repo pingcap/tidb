@@ -270,6 +270,11 @@ func (s *testTableSuite) TestInfoschemaFieldValue(c *C) {
 	}
 	tk.Se.SetSessionManager(sm)
 	tk.MustQuery("SELECT user,host,command FROM information_schema.processlist;").Check(testkit.Rows("root 127.0.0.1 Query"))
+
+	// Test for issue 15123
+	rows1 := tk.MustQuery("select count(*) from information_schema.tables where table_schema in ('INFORMATION_SCHEMA','PERFORMANCE_SCHEMA','METRICS_SCHEMA','INSPECTION_SCHEMA');").Rows()
+	rows2 := tk.MustQuery("select count(*) from information_schema.tables where table_schema in ('INFORMATION_SCHEMA','PERFORMANCE_SCHEMA','METRICS_SCHEMA','INSPECTION_SCHEMA') and  table_type = 'SYSTEM VIEW';").Rows()
+	c.Assert(rows1, DeepEquals, rows2)
 }
 
 func (s *testTableSuite) TestDataForTableStatsField(c *C) {
