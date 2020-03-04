@@ -47,22 +47,22 @@ type baseSumAggFunc struct {
 	baseAggFunc
 }
 
-type sum4Float64 struct {
+type baseSum4Float64 struct {
 	baseSumAggFunc
 }
 
-func (e *sum4Float64) AllocPartialResult() PartialResult {
+func (e *baseSum4Float64) AllocPartialResult() PartialResult {
 	p := new(partialResult4SumFloat64)
 	return PartialResult(p)
 }
 
-func (e *sum4Float64) ResetPartialResult(pr PartialResult) {
+func (e *baseSum4Float64) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4SumFloat64)(pr)
 	p.val = 0
 	p.notNullRowCount = 0
 }
 
-func (e *sum4Float64) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (e *baseSum4Float64) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4SumFloat64)(pr)
 	if p.notNullRowCount == 0 {
 		chk.AppendNull(e.ordinal)
@@ -72,7 +72,7 @@ func (e *sum4Float64) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Partia
 	return nil
 }
 
-func (e *sum4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
+func (e *baseSum4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
 	p := (*partialResult4SumFloat64)(pr)
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalReal(sctx, row)
@@ -88,12 +88,21 @@ func (e *sum4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 	return nil
 }
 
-func (e *sum4Float64) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
-	if sctx.GetSessionVars().WindowingUseHighPrecision {
-		e.ResetPartialResult(pr)
-		return e.UpdatePartialResult(sctx, rows[lastStart+shiftStart:lastEnd+shiftEnd], pr)
+func (e *baseSum4Float64) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) error {
+	p1, p2 := (*partialResult4SumFloat64)(src), (*partialResult4SumFloat64)(dst)
+	if p1.notNullRowCount == 0 {
+		return nil
 	}
+	p2.val += p1.val
+	p2.notNullRowCount += p1.notNullRowCount
+	return nil
+}
 
+type sum4Float64 struct {
+	baseSum4Float64
+}
+
+func (e *sum4Float64) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
 	p := (*partialResult4SumFloat64)(pr)
 	for i := uint64(0); i < shiftEnd; i++ {
 		input, isNull, err := e.args[0].EvalReal(sctx, rows[lastEnd+i])
@@ -120,14 +129,8 @@ func (e *sum4Float64) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart
 	return nil
 }
 
-func (e *sum4Float64) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) error {
-	p1, p2 := (*partialResult4SumFloat64)(src), (*partialResult4SumFloat64)(dst)
-	if p1.notNullRowCount == 0 {
-		return nil
-	}
-	p2.val += p1.val
-	p2.notNullRowCount += p1.notNullRowCount
-	return nil
+type sum4Float64HighPrecision struct {
+	baseSum4Float64
 }
 
 type sum4Decimal struct {
