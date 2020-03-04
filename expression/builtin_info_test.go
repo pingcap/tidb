@@ -286,6 +286,7 @@ func (s *testEvaluatorSuite) TestFormatBytes(c *C) {
 		{nil, nil},
 		{float64(0), "0 bytes"},
 		{float64(2048), "2.00 KiB"},
+		{float64(75295729), "71.81 MiB"},
 		{float64(18446644073709551615), "16.00 EiB"},
 		{float64(-18446644073709551615), "-16.00 EiB"},
 	}
@@ -310,6 +311,8 @@ func (s *testEvaluatorSuite) TestFormatNanoTime(c *C) {
 		{float64(0), "0 ns"},
 		{float64(2000), "2.00 us"},
 		{float64(9999999991), "10.00 s"},
+		{float64(898787877424), "14.98 min"},
+		{float64(42566623663736353), "492.67 d"},
 		{float64(-9999999991), "-10.00 s"},
 	}
 	Dtbl := tblToDtbl(tbl)
