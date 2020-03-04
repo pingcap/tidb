@@ -151,7 +151,7 @@ func (e *inspectionResultRetriever) retrieve(ctx context.Context, sctx sessionct
 		}
 		// make result stable
 		sort.Slice(results, func(i, j int) bool {
-			if results[i].degree > 0 || results[j].degree > 0 {
+			if (results[i].degree > 0 || results[j].degree > 0) && results[i].degree != results[j].degree {
 				return results[i].degree > results[j].degree
 			}
 			if lhs, rhs := results[i].item, results[j].item; lhs != rhs {
@@ -445,7 +445,7 @@ func (criticalErrorInspection) inspect(ctx context.Context, sctx sessionctx.Cont
 					actual = fmt.Sprintf("%.2f", row.GetFloat64(1))
 					degree = row.GetFloat64(1)
 				}
-				detail = fmt.Sprintf("The total number of errors about '%s' is too many.", rule.item)
+				detail = fmt.Sprintf("the total number of errors about '%s' is too many", rule.item)
 				result := inspectionResult{
 					tp: rule.tp,
 					// NOTE: all tables which can be inspected here whose first label must be `instance`

@@ -453,43 +453,25 @@ func (s *inspectionResultSuite) TestCriticalErrorInspection(c *C) {
 	// construct some mock data
 	mockData := map[string][][]types.Datum{
 		// columns: time, instance, type, value
-		"tidb_failed_query_opm": {
-			types.MakeDatums(datetime("2020-02-12 10:35:00"), "tidb-0", "type1", 0.0),
-			types.MakeDatums(datetime("2020-02-12 10:36:00"), "tidb-0", "type2", 1.0),
-			types.MakeDatums(datetime("2020-02-12 10:37:00"), "tidb-1", "type3", 5.0),
-		},
-		// columns: time, instance, type, value
-		"tikv_critical_error": {
+		"tikv_critical_error_total_count": {
 			types.MakeDatums(datetime("2020-02-12 10:35:00"), "tikv-0", "type1", 0.0),
 			types.MakeDatums(datetime("2020-02-12 10:36:00"), "tikv-1", "type1", 1.0),
 			types.MakeDatums(datetime("2020-02-12 10:37:00"), "tikv-2", "type2", 5.0),
 		},
 		// columns: time, instance, value
-		"tidb_panic_count": {
+		"tidb_panic_count_total_count": {
 			types.MakeDatums(datetime("2020-02-12 10:35:00"), "tidb-0", 4.0),
 			types.MakeDatums(datetime("2020-02-12 10:36:00"), "tidb-0", 0.0),
 			types.MakeDatums(datetime("2020-02-12 10:37:00"), "tidb-1", 1.0),
 		},
 		// columns: time, instance, value
-		"tidb_binlog_error_count": {
+		"tidb_binlog_error_total_count": {
 			types.MakeDatums(datetime("2020-02-12 10:35:00"), "tidb-1", 4.0),
 			types.MakeDatums(datetime("2020-02-12 10:36:00"), "tidb-2", 0.0),
 			types.MakeDatums(datetime("2020-02-12 10:37:00"), "tidb-3", 1.0),
 		},
-		// columns: time, instance, type, value
-		"pd_cmd_fail_ops": {
-			types.MakeDatums(datetime("2020-02-12 10:35:00"), "tidb-0", "type1", 0.0),
-			types.MakeDatums(datetime("2020-02-12 10:36:00"), "tidb-0", "type1", 1.0),
-			types.MakeDatums(datetime("2020-02-12 10:37:00"), "tidb-1", "type2", 5.0),
-		},
-		// columns: time, instance, type, value
-		"tidb_lock_resolver_ops": {
-			types.MakeDatums(datetime("2020-02-12 10:35:00"), "tidb-0", "type1", 0.0),
-			types.MakeDatums(datetime("2020-02-12 10:36:00"), "tidb-0", "type1", 1.0),
-			types.MakeDatums(datetime("2020-02-12 10:37:00"), "tidb-1", "type2", 5.0),
-		},
 		// columns: time, instance, db, type, stage, value
-		"tikv_scheduler_is_busy": {
+		"tikv_scheduler_is_busy_total_count": {
 			types.MakeDatums(datetime("2020-02-12 10:35:00"), "tikv-0", "db1", "type1", "stage1", 1.0),
 			types.MakeDatums(datetime("2020-02-12 10:36:00"), "tikv-0", "db2", "type1", "stage2", 2.0),
 			types.MakeDatums(datetime("2020-02-12 10:37:00"), "tikv-1", "db1", "type2", "stage1", 3.0),
@@ -498,7 +480,7 @@ func (s *inspectionResultSuite) TestCriticalErrorInspection(c *C) {
 			types.MakeDatums(datetime("2020-02-12 10:40:00"), "tikv-1", "db1", "type2", "stage2", 6.0),
 		},
 		// columns: time, instance, db, value
-		"tikv_coprocessor_is_busy": {
+		"tikv_coprocessor_is_busy_total_count": {
 			types.MakeDatums(datetime("2020-02-12 10:35:00"), "tikv-0", "db1", 1.0),
 			types.MakeDatums(datetime("2020-02-12 10:36:00"), "tikv-0", "db2", 2.0),
 			types.MakeDatums(datetime("2020-02-12 10:37:00"), "tikv-1", "db1", 3.0),
@@ -507,7 +489,7 @@ func (s *inspectionResultSuite) TestCriticalErrorInspection(c *C) {
 			types.MakeDatums(datetime("2020-02-12 10:40:00"), "tikv-1", "db1", 6.0),
 		},
 		// columns: time, instance, db, type, value
-		"tikv_channel_full": {
+		"tikv_channel_full_total_count": {
 			types.MakeDatums(datetime("2020-02-12 10:35:00"), "tikv-0", "db1", "type1", 1.0),
 			types.MakeDatums(datetime("2020-02-12 10:36:00"), "tikv-0", "db2", "type1", 2.0),
 			types.MakeDatums(datetime("2020-02-12 10:37:00"), "tikv-1", "db1", "type2", 3.0),
@@ -515,35 +497,11 @@ func (s *inspectionResultSuite) TestCriticalErrorInspection(c *C) {
 			types.MakeDatums(datetime("2020-02-12 10:39:00"), "tikv-0", "db2", "type1", 5.0),
 			types.MakeDatums(datetime("2020-02-12 10:40:00"), "tikv-1", "db1", "type2", 6.0),
 		},
-		// columns: time, "instance", "reason", value
-		"tikv_coprocessor_request_error": {
-			types.MakeDatums(datetime("2020-02-12 10:35:00"), "tikv-0", "reason1", 1.0),
-			types.MakeDatums(datetime("2020-02-12 10:36:00"), "tikv-0", "reason2", 2.0),
+		// columns: time, instance, db, value
+		"tikv_engine_write_stall": {
+			types.MakeDatums(datetime("2020-02-12 10:35:00"), "tikv-0", "kv", 1.0),
+			types.MakeDatums(datetime("2020-02-12 10:36:00"), "tikv-0", "raft", 2.0),
 			types.MakeDatums(datetime("2020-02-12 10:37:00"), "tikv-1", "reason3", 3.0),
-		},
-		// columns: time, instance, value
-		"tidb_schema_lease_error_opm": {
-			types.MakeDatums(datetime("2020-02-12 10:35:00"), "tidb-1", 4.0),
-			types.MakeDatums(datetime("2020-02-12 10:36:00"), "tidb-2", 0.0),
-			types.MakeDatums(datetime("2020-02-12 10:37:00"), "tidb-3", 1.0),
-		},
-		// columns: time, instance, type, sql_type, value
-		"tidb_transaction_retry_error_ops": {
-			types.MakeDatums(datetime("2020-02-12 10:35:00"), "tidb-0", "db1", "sql_type1", 1.0),
-			types.MakeDatums(datetime("2020-02-12 10:36:00"), "tidb-0", "db2", "sql_type1", 2.0),
-			types.MakeDatums(datetime("2020-02-12 10:37:00"), "tidb-1", "db1", "sql_type2", 3.0),
-		},
-		// columns: time, instance, type, value
-		"tikv_grpc_errors": {
-			types.MakeDatums(datetime("2020-02-12 10:35:00"), "tikv-0", "type1", 1.0),
-			types.MakeDatums(datetime("2020-02-12 10:36:00"), "tikv-0", "type2", 2.0),
-			types.MakeDatums(datetime("2020-02-12 10:37:00"), "tikv-1", "type3", 3.0),
-		},
-		// columns: time, instance, type, value
-		"tidb_kv_region_error_ops": {
-			types.MakeDatums(datetime("2020-02-12 10:35:00"), "tikv-0", "type1", 1.0),
-			types.MakeDatums(datetime("2020-02-12 10:36:00"), "tikv-0", "type2", 2.0),
-			types.MakeDatums(datetime("2020-02-12 10:37:00"), "tikv-1", "type3", 3.0),
 		},
 	}
 
@@ -557,43 +515,26 @@ func (s *inspectionResultSuite) TestCriticalErrorInspection(c *C) {
 	result := tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute inspect SQL failed"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0), Commentf("unexpected warnings: %+v", tk.Se.GetSessionVars().StmtCtx.GetWarnings()))
 	result.Check(testkit.Rows(
-		"binlog-error tidb-3 1.00 select * from `metrics_schema`.`tidb_binlog_error_count` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and `instance`='tidb-3'",
-		"binlog-error tidb-1 4.00 select * from `metrics_schema`.`tidb_binlog_error_count` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and `instance`='tidb-1'",
-		"channel-is-full tikv-0 4.00(db1, type1) select * from `metrics_schema`.`tikv_channel_full` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`db`,`type`)=('tikv-0','db1','type1')",
-		"channel-is-full tikv-0 5.00(db2, type1) select * from `metrics_schema`.`tikv_channel_full` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`db`,`type`)=('tikv-0','db2','type1')",
-		"channel-is-full tikv-1 6.00(db1, type2) select * from `metrics_schema`.`tikv_channel_full` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`db`,`type`)=('tikv-1','db1','type2')",
-		"coprocessor-error tikv-0 1.00(reason1) select * from `metrics_schema`.`tikv_coprocessor_request_error` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`reason`)=('tikv-0','reason1')",
-		"coprocessor-error tikv-0 2.00(reason2) select * from `metrics_schema`.`tikv_coprocessor_request_error` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`reason`)=('tikv-0','reason2')",
-		"coprocessor-error tikv-1 3.00(reason3) select * from `metrics_schema`.`tikv_coprocessor_request_error` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`reason`)=('tikv-1','reason3')",
-		"coprocessor-is-busy tikv-0 4.00(db1) select * from `metrics_schema`.`tikv_coprocessor_is_busy` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`db`)=('tikv-0','db1')",
-		"coprocessor-is-busy tikv-0 5.00(db2) select * from `metrics_schema`.`tikv_coprocessor_is_busy` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`db`)=('tikv-0','db2')",
-		"coprocessor-is-busy tikv-1 6.00(db1) select * from `metrics_schema`.`tikv_coprocessor_is_busy` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`db`)=('tikv-1','db1')",
-		"critical-error tikv-1 1.00(type1) select * from `metrics_schema`.`tikv_critical_error` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`type`)=('tikv-1','type1')",
-		"critical-error tikv-2 5.00(type2) select * from `metrics_schema`.`tikv_critical_error` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`type`)=('tikv-2','type2')",
-		"failed-query-opm tidb-0 1.00(type2) select * from `metrics_schema`.`tidb_failed_query_opm` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`type`)=('tidb-0','type2')",
-		"failed-query-opm tidb-1 5.00(type3) select * from `metrics_schema`.`tidb_failed_query_opm` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`type`)=('tidb-1','type3')",
-		"grpc-errors tikv-0 1.00(type1) select * from `metrics_schema`.`tikv_grpc_errors` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`type`)=('tikv-0','type1')",
-		"grpc-errors tikv-0 2.00(type2) select * from `metrics_schema`.`tikv_grpc_errors` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`type`)=('tikv-0','type2')",
-		"grpc-errors tikv-1 3.00(type3) select * from `metrics_schema`.`tikv_grpc_errors` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`type`)=('tikv-1','type3')",
-		"lock-resolve tidb-0 1.00(type1) select * from `metrics_schema`.`tidb_lock_resolver_ops` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`type`)=('tidb-0','type1')",
-		"lock-resolve tidb-1 5.00(type2) select * from `metrics_schema`.`tidb_lock_resolver_ops` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`type`)=('tidb-1','type2')",
-		"panic-count tidb-1 1.00 select * from `metrics_schema`.`tidb_panic_count` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and `instance`='tidb-1'",
-		"panic-count tidb-0 4.00 select * from `metrics_schema`.`tidb_panic_count` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and `instance`='tidb-0'",
-		"pd-cmd-failed tidb-0 1.00(type1) select * from `metrics_schema`.`pd_cmd_fail_ops` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`type`)=('tidb-0','type1')",
-		"pd-cmd-failed tidb-1 5.00(type2) select * from `metrics_schema`.`pd_cmd_fail_ops` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`type`)=('tidb-1','type2')",
-		"scheduler-is-busy tikv-0 1.00(db1, type1, stage1) select * from `metrics_schema`.`tikv_scheduler_is_busy` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`db`,`type`,`stage`)=('tikv-0','db1','type1','stage1')",
-		"scheduler-is-busy tikv-0 2.00(db2, type1, stage2) select * from `metrics_schema`.`tikv_scheduler_is_busy` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`db`,`type`,`stage`)=('tikv-0','db2','type1','stage2')",
-		"scheduler-is-busy tikv-1 3.00(db1, type2, stage1) select * from `metrics_schema`.`tikv_scheduler_is_busy` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`db`,`type`,`stage`)=('tikv-1','db1','type2','stage1')",
-		"scheduler-is-busy tikv-0 4.00(db1, type1, stage2) select * from `metrics_schema`.`tikv_scheduler_is_busy` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`db`,`type`,`stage`)=('tikv-0','db1','type1','stage2')",
-		"scheduler-is-busy tikv-0 5.00(db2, type1, stage1) select * from `metrics_schema`.`tikv_scheduler_is_busy` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`db`,`type`,`stage`)=('tikv-0','db2','type1','stage1')",
-		"scheduler-is-busy tikv-1 6.00(db1, type2, stage2) select * from `metrics_schema`.`tikv_scheduler_is_busy` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`db`,`type`,`stage`)=('tikv-1','db1','type2','stage2')",
-		"schema-lease-error tidb-3 1.00 select * from `metrics_schema`.`tidb_schema_lease_error_opm` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and `instance`='tidb-3'",
-		"schema-lease-error tidb-1 4.00 select * from `metrics_schema`.`tidb_schema_lease_error_opm` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and `instance`='tidb-1'",
-		"ticlient-region-error tikv-0 1.00(type1) select * from `metrics_schema`.`tidb_kv_region_error_ops` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`type`)=('tikv-0','type1')",
-		"ticlient-region-error tikv-0 2.00(type2) select * from `metrics_schema`.`tidb_kv_region_error_ops` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`type`)=('tikv-0','type2')",
-		"ticlient-region-error tikv-1 3.00(type3) select * from `metrics_schema`.`tidb_kv_region_error_ops` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`type`)=('tikv-1','type3')",
-		"txn-retry-error tidb-0 1.00(db1, sql_type1) select * from `metrics_schema`.`tidb_transaction_retry_error_ops` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`type`,`sql_type`)=('tidb-0','db1','sql_type1')",
-		"txn-retry-error tidb-0 2.00(db2, sql_type1) select * from `metrics_schema`.`tidb_transaction_retry_error_ops` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`type`,`sql_type`)=('tidb-0','db2','sql_type1')",
-		"txn-retry-error tidb-1 3.00(db1, sql_type2) select * from `metrics_schema`.`tidb_transaction_retry_error_ops` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`type`,`sql_type`)=('tidb-1','db1','sql_type2')",
+		"channel-is-full tikv-1 9.00(db1, type2) the total number of errors about 'channel-is-full' is too many",
+		"coprocessor-is-busy tikv-1 9.00(db1) the total number of errors about 'coprocessor-is-busy' is too many",
+		"channel-is-full tikv-0 7.00(db2, type1) the total number of errors about 'channel-is-full' is too many",
+		"coprocessor-is-busy tikv-0 7.00(db2) the total number of errors about 'coprocessor-is-busy' is too many",
+		"scheduler-is-busy tikv-1 6.00(db1, type2, stage2) the total number of errors about 'scheduler-is-busy' is too many",
+		"channel-is-full tikv-0 5.00(db1, type1) the total number of errors about 'channel-is-full' is too many",
+		"coprocessor-is-busy tikv-0 5.00(db1) the total number of errors about 'coprocessor-is-busy' is too many",
+		"critical-error tikv-2 5.00(type2) the total number of errors about 'critical-error' is too many",
+		"scheduler-is-busy tikv-0 5.00(db2, type1, stage1) the total number of errors about 'scheduler-is-busy' is too many",
+		"binlog-error tidb-1 4.00 the total number of errors about 'binlog-error' is too many",
+		"panic-count tidb-0 4.00 the total number of errors about 'panic-count' is too many",
+		"scheduler-is-busy tikv-0 4.00(db1, type1, stage2) the total number of errors about 'scheduler-is-busy' is too many",
+		"scheduler-is-busy tikv-1 3.00(db1, type2, stage1) the total number of errors about 'scheduler-is-busy' is too many",
+		"tikv_engine_write_stall tikv-1 3.00(reason3) the total number of errors about 'tikv_engine_write_stall' is too many",
+		"scheduler-is-busy tikv-0 2.00(db2, type1, stage2) the total number of errors about 'scheduler-is-busy' is too many",
+		"tikv_engine_write_stall tikv-0 2.00(raft) the total number of errors about 'tikv_engine_write_stall' is too many",
+		"binlog-error tidb-3 1.00 the total number of errors about 'binlog-error' is too many",
+		"critical-error tikv-1 1.00(type1) the total number of errors about 'critical-error' is too many",
+		"panic-count tidb-1 1.00 the total number of errors about 'panic-count' is too many",
+		"scheduler-is-busy tikv-0 1.00(db1, type1, stage1) the total number of errors about 'scheduler-is-busy' is too many",
+		"tikv_engine_write_stall tikv-0 1.00(kv) the total number of errors about 'tikv_engine_write_stall' is too many",
 	))
 }
