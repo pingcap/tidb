@@ -25,6 +25,7 @@ type Config struct {
 	Tables        DatabaseTables
 	Snapshot      string
 	Consistency   string
+	NoViews       bool
 }
 
 func DefaultConfig() *Config {
@@ -42,6 +43,7 @@ func DefaultConfig() *Config {
 		Tables:        nil,
 		Snapshot:      "",
 		Consistency:   "auto",
+		NoViews:       true,
 	}
 }
 
@@ -128,9 +130,3 @@ func init() {
 	serverTypeString[ServerTypeMariaDB] = "MariaDB"
 	serverTypeString[ServerTypeTiDB] = "TiDB"
 }
-
-type databaseName = string
-
-type tableName = string
-
-type DatabaseTables map[databaseName][]tableName

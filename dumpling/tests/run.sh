@@ -1,5 +1,7 @@
 #!/bin/sh
 
+# To avoid permission denied error, please run `chmod +x tests/_utils/*`.
+
 set -e
 
 DUMPLING_TEST_DIR=${DUMPLING_TEST_DIR:-"/tmp/dumpling_test_result"}
@@ -40,6 +42,9 @@ for script in tests/*/run.sh; do
     TEST_NAME="$(basename "$(dirname "$script")")"
     DUMPLING_OUTPUT_DIR="$DUMPLING_TEST_DIR"/sql_res."$TEST_NAME"
     export DUMPLING_OUTPUT_DIR
+
+    echo "Cleaning up test output dir: $DUMPLING_OUTPUT_DIR"
+    rm "$DUMPLING_OUTPUT_DIR" -rf
 
     PATH="tests/_utils:$PATH" \
     sh "$script"

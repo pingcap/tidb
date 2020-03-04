@@ -42,21 +42,24 @@ func (s *testPrepareSuite) TestListAllTables(c *C) {
 	c.Assert(err, IsNil)
 	defer db.Close()
 
-	resultOk := sqlmock.NewResult(0, 0)
-	data := map[databaseName][]tableName{
-		"db1": {"t1", "t2"},
-		"db2": {"t3", "t4", "t5"},
-	}
+	data := NewDatabaseTables().
+		AppendTables("db1", "t1", "t2").
+		AppendTables("db2", "t3", "t4", "t5").
+		AppendViews("db3", "t6", "t7", "t8")
 
 	var dbNames []databaseName
-	for dbName, tbNames := range data {
+	for dbName, tableInfos := range data {
 		dbNames = append(dbNames, dbName)
-		mock.ExpectExec("USE .").WillReturnResult(resultOk)
-		rows := sqlmock.NewRows([]string{"Tables_in_xx"})
-		for _, name := range tbNames {
-			rows.AddRow(name)
+
+		rows := sqlmock.NewRows([]string{"Table_name"})
+		for _, tbInfo := range tableInfos {
+			if tbInfo.Type == TableTypeView {
+				continue
+			}
+			rows.AddRow(tbInfo.Name)
 		}
-		mock.ExpectQuery("SHOW TABLES").WillReturnRows(rows)
+		query := "SELECT table_name FROM information_schema.tables WHERE table_schema = (.*) and table_type = (.*)"
+		mock.ExpectQuery(query).WillReturnRows(rows)
 	}
 
 	tables, err := listAllTables(db, dbNames)
@@ -65,7 +68,23 @@ func (s *testPrepareSuite) TestListAllTables(c *C) {
 	for d, t := range tables {
 		expectedTbs, ok := data[d]
 		c.Assert(ok, IsTrue)
-		c.Assert(t, DeepEquals, expectedTbs)
+		for i := 0; i < len(t); i++ {
+			cmt := Commentf("%v mismatch: %v", t[i], expectedTbs[i])
+			c.Assert(t[i].Equals(expectedTbs[i]), IsTrue, cmt)
+		}
 	}
+
+	// Test list all tables and not skipping views.
+	data = NewDatabaseTables().
+		AppendTables("db", "t1").
+		AppendViews("db", "t2")
+	query := "SELECT table_name FROM information_schema.tables WHERE table_schema = (.*) and table_type = (.*)"
+	mock.ExpectQuery(query).WillReturnRows(sqlmock.NewRows([]string{"Table_name"}).AddRow("t2"))
+	tables, err = listAllViews(db, []string{"db"})
+	c.Assert(err, IsNil)
+	c.Assert(len(tables), Equals, 1)
+	c.Assert(len(tables["db"]), Equals, 1)
+	c.Assert(tables["db"][0].Equals(data["db"][1]), IsTrue, Commentf("%v mismatch %v", tables["db"][0], data["db"][1]))
+
 	c.Assert(mock.ExpectationsWereMet(), IsNil)
 }
