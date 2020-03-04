@@ -928,8 +928,7 @@ func (b *builtinStrcmpSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
-	_, collation, flen := b.CharsetAndCollation(b.ctx)
-	res := types.CompareString(left, right, collation, flen)
+	res := types.CompareString(left, right, b.collation)
 	return int64(res), false, nil
 }
 
@@ -2360,8 +2359,6 @@ func (c *findInSetFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	bf.tp.Flen = 3
 	sig := &builtinFindInSetSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_FindInSet)
-	_, col, _ := sig.CharsetAndCollation(ctx)
-	sig.setCollator(collate.GetCollator(col))
 	return sig, nil
 }
 
@@ -2440,8 +2437,6 @@ func (c *fieldFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	case types.ETString:
 		sig = &builtinFieldStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_FieldString)
-		_, col, _ := sig.CharsetAndCollation(ctx)
-		sig.setCollator(collate.GetCollator(col))
 	}
 	return sig, nil
 }
