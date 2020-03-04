@@ -2033,7 +2033,7 @@ func (s *session) PrepareTSFuture(ctx context.Context) {
 		s.txn.changeInvalidToPending(txnFuture)
 	} else if s.txn.Valid() && s.GetSessionVars().IsPessimisticReadConsistency() {
 		// Prepare the statement future if the transaction is valid in RC transactions.
-		s.GetSessionVars().TxnCtx.SetStmtFuture(s.getTxnFuture(ctx).future)
+		s.GetSessionVars().TxnCtx.SetStmtFutureForRC(s.getTxnFuture(ctx).future)
 	}
 }
 
