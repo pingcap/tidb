@@ -950,3 +950,14 @@ func (s *testPessimisticSuite) TestPessimisticCommitReadLock(c *C) {
 	c.Assert(waitErr, IsNil)
 	c.Assert(time.Since(start), Less, 1*time.Second)
 }
+
+func (s *testPessimisticSuite) TestRCWaitTSOTwice(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (i int key)")
+	tk.MustExec("insert into t values (1)")
+	tk.MustExec("set tidb_txn_mode = 'pessimistic'")
+	tk.MustExec("set tx_isolation = 'read-committed'")
+	tk.MustExec("set autocommit = 0")
+	tk.MustQuery("select * from t where i = 1").Check(testkit.Rows("1"))
+}

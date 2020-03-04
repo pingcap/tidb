@@ -432,6 +432,8 @@ func (tf *txnFuture) wait() (kv.Transaction, error) {
 		return tf.store.BeginWithStartTS(startTS)
 	} else if _, ok := tf.future.(txnFailFuture); ok {
 		return nil, err
+	} else if !tf.store.SupportDeleteRange() {
+		return nil, err
 	}
 
 	logutil.BgLogger().Warn("wait tso failed", zap.Error(err))
