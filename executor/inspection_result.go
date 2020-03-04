@@ -357,11 +357,11 @@ func (c currentLoadInspection) inspect(_ context.Context, sctx sessionctx.Contex
 			}
 		}
 	}
-	results = append(results, c.inspectCpuLoad(sctx, filter)...)
+	results = append(results, c.inspectCPULoad(sctx, filter)...)
 	return results
 }
 
-func (currentLoadInspection) inspectCpuLoad(sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
+func (currentLoadInspection) inspectCPULoad(sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
 	var results []inspectionResult
 	for _, item := range []string{"load1", "load5", "load15"} {
 		if !filter.enable(item) {
