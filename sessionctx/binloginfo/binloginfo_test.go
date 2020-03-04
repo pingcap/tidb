@@ -386,7 +386,9 @@ func (s *testBinlogSuite) TestBinlogForSequence(c *C) {
 	// the default start = 1, increment = 1.
 	tk.MustExec("create sequence seq cache 3")
 	// trigger the sequence cache allocation.
-	tk.MustExec("select nextval(seq)")
+	err := tk.QueryToErr("select nextval(seq)")
+	c.Assert(err, IsNil)
+
 	sequenceTable := testGetTableByName(c, tk.Se, "test", "seq")
 	tc, ok := sequenceTable.(*tables.TableCommon)
 	c.Assert(ok, Equals, true)
@@ -401,10 +403,9 @@ func (s *testBinlogSuite) TestBinlogForSequence(c *C) {
 	// Invalidate the current sequence cache.
 	tk.MustExec("select setval(seq, 5)")
 	// trigger the next sequence cache allocation.
-	tk.MustExec("select nextval(seq)")
-	sequenceTable = testGetTableByName(c, tk.Se, "test", "seq")
-	tc, ok = sequenceTable.(*tables.TableCommon)
-	c.Assert(ok, Equals, true)
+	err = tk.QueryToErr("select nextval(seq)")
+	c.Assert(err, IsNil)
+
 	_, end, round = tc.GetSequenceCommon().GetSequenceBaseEndRound()
 	c.Assert(end, Equals, int64(8))
 	c.Assert(round, Equals, int64(0))
@@ -415,7 +416,8 @@ func (s *testBinlogSuite) TestBinlogForSequence(c *C) {
 	tk.MustExec("drop sequence if exists seq2")
 	tk.MustExec("create sequence seq2 start 1 increment -2 cache 3 minvalue -10 maxvalue 10 cycle")
 	// trigger the sequence cache allocation.
-	tk.MustExec("select nextval(seq2)")
+	err = tk.QueryToErr("select nextval(seq2)")
+	c.Assert(err, IsNil)
 	sequenceTable = testGetTableByName(c, tk.Se, "test2", "seq2")
 	tc, ok = sequenceTable.(*tables.TableCommon)
 	c.Assert(ok, Equals, true)
@@ -426,10 +428,8 @@ func (s *testBinlogSuite) TestBinlogForSequence(c *C) {
 
 	tk.MustExec("select setval(seq2, -100)")
 	// trigger the sequence cache allocation.
-	tk.MustExec("select nextval(seq2)")
-	sequenceTable = testGetTableByName(c, tk.Se, "test2", "seq2")
-	tc, ok = sequenceTable.(*tables.TableCommon)
-	c.Assert(ok, Equals, true)
+	err = tk.QueryToErr("select nextval(seq2)")
+	c.Assert(err, IsNil)
 	_, end, round = tc.GetSequenceCommon().GetSequenceBaseEndRound()
 	c.Assert(end, Equals, int64(6))
 	c.Assert(round, Equals, int64(1))
@@ -561,7 +561,7 @@ func (s *testBinlogSuite) TestAddSpecialComment(c *C) {
 }
 
 func mustGetDDLBinlog(s *testBinlogSuite, ddlQuery string, c *C) (matched bool) {
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 15; i++ {
 		preDDL, commitDDL, _ := getLatestDDLBinlog(c, s.pump, ddlQuery)
 		if preDDL != nil && commitDDL != nil {
 			if preDDL.DdlJobId == commitDDL.DdlJobId {
