@@ -2027,14 +2027,12 @@ func (s *session) PrepareTxnCtx(ctx context.Context) {
 
 // PrepareTSFuture uses to try to get ts future.
 func (s *session) PrepareTSFuture(ctx context.Context) {
-	// Prepare the transaction future if the transaction is invalid (at the beginning of the transaction).
 	if !s.txn.validOrPending() {
+		// Prepare the transaction future if the transaction is invalid (at the beginning of the transaction).
 		txnFuture := s.getTxnFuture(ctx)
 		s.txn.changeInvalidToPending(txnFuture)
-		return
-	}
-	// Prepare the statement future if the transaction is valid in RC transactions.
-	if s.txn.Valid() && s.GetSessionVars().IsPessimisticReadConsistency() {
+	} else if s.txn.Valid() && s.GetSessionVars().IsPessimisticReadConsistency() {
+		// Prepare the statement future if the transaction is valid in RC transactions.
 		s.GetSessionVars().TxnCtx.SetStmtFuture(s.getTxnFuture(ctx).future)
 	}
 }
