@@ -913,7 +913,7 @@ func (s *testPessimisticSuite) TestPessimisticReadCommitted(c *C) {
 }
 
 func (s *testPessimisticSuite) TestPessimisticCommitReadLock(c *C) {
-	// set lock ttl to 3s, tk2 lock wait timeout is 2s
+	// set lock ttl to 3s, tk1 lock wait timeout is 2s
 	atomic.StoreUint64(&tikv.ManagedLockTTL, 3000)
 	defer atomic.StoreUint64(&tikv.ManagedLockTTL, 300)
 	tk := testkit.NewTestKitWithInit(c, s.store)
