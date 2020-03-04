@@ -47,6 +47,7 @@ func (s *testSuite) TestLogFormat(c *C) {
 		DB:            "Database",
 		Info:          "select * from table where a > 1",
 		CurTxnStartTS: 23333,
+		LastWaitTxn:   24444,
 		StatsInfo: func(interface{}) map[string]uint64 {
 			return nil
 		},
@@ -56,7 +57,7 @@ func (s *testSuite) TestLogFormat(c *C) {
 	}
 	costTime := time.Second * 233
 	logFields := genLogFields(costTime, info)
-	c.Assert(len(logFields), Equals, 7)
+	c.Assert(len(logFields), Equals, 8)
 	c.Assert(logFields[0].Key, Equals, "cost_time")
 	c.Assert(logFields[0].String, Equals, "233s")
 	c.Assert(logFields[1].Key, Equals, "conn_id")
@@ -67,8 +68,10 @@ func (s *testSuite) TestLogFormat(c *C) {
 	c.Assert(logFields[3].String, Equals, "Database")
 	c.Assert(logFields[4].Key, Equals, "txn_start_ts")
 	c.Assert(logFields[4].Integer, Equals, int64(23333))
-	c.Assert(logFields[5].Key, Equals, "mem_max")
-	c.Assert(logFields[5].String, Equals, "2013265920 Bytes (1.875 GB)")
-	c.Assert(logFields[6].Key, Equals, "sql")
-	c.Assert(logFields[6].String, Equals, "select * from table where a > 1")
+	c.Assert(logFields[5].Key, Equals, "last_wait_txn")
+	c.Assert(logFields[5].Integer, Equals, int64(24444))
+	c.Assert(logFields[6].Key, Equals, "mem_max")
+	c.Assert(logFields[6].String, Equals, "2013265920 Bytes (1.875 GB)")
+	c.Assert(logFields[7].Key, Equals, "sql")
+	c.Assert(logFields[7].String, Equals, "select * from table where a > 1")
 }

@@ -218,6 +218,7 @@ func (tc *TiDBContext) SetProcessInfo(sql string, t time.Time, command byte, max
 	tc.session.SetProcessInfo(sql, t, command, maxExecutionTime)
 }
 
+// TryUpdateProcessor implements QueryCtx TryUpdateProcessor method.
 func (tc *TiDBContext) TryUpdateProcessor(f func(info *util.ProcessInfo)) bool {
 	return tc.session.TryUpdateProcessor(f)
 }

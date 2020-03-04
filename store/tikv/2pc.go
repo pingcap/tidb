@@ -813,7 +813,7 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 			updater := bo.ctx.Value(util.ProcessInfoUpdaterCtxKey{})
 			if updater != nil {
 				updater.(util.ProcessInfoUpdater)(func(p *util.ProcessInfo) {
-					p.BlockTxnTs = waitTxn
+					p.LastWaitTxn = waitTxn
 				})
 			}
 		}

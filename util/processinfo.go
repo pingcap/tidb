@@ -34,7 +34,7 @@ type ProcessInfo struct {
 	Time          time.Time
 	Info          string
 	CurTxnStartTS uint64
-	BlockTxnTs    uint64
+	LastWaitTxn   uint64
 	StmtCtx       *stmtctx.StatementContext
 	StatsInfo     func(interface{}) map[string]uint64
 	// MaxExecutionTime is the timeout for select statement, in milliseconds.
@@ -95,7 +95,7 @@ func (pi *ProcessInfo) ToRow(tz *time.Location) []interface{} {
 	if pi.StmtCtx != nil && pi.StmtCtx.MemTracker != nil {
 		bytesConsumed = pi.StmtCtx.MemTracker.BytesConsumed()
 	}
-	return append(pi.ToRowForShow(true), bytesConsumed, pi.txnStartTs(tz), strconv.FormatUint(pi.BlockTxnTs, 10))
+	return append(pi.ToRowForShow(true), bytesConsumed, pi.txnStartTs(tz), strconv.FormatUint(pi.LastWaitTxn, 10))
 }
 
 // SessionManager is an interface for session manage. Show processlist and
