@@ -75,14 +75,13 @@ func (o *pdOracle) GetTimestamp(ctx context.Context) (uint64, error) {
 	return ts, nil
 }
 
-// TSFuture implements the oracle.Future interface.
-type TSFuture struct {
+type tsFuture struct {
 	pd.TSFuture
 	o *pdOracle
 }
 
 // Wait implements the oracle.Future interface.
-func (f *TSFuture) Wait() (uint64, error) {
+func (f *tsFuture) Wait() (uint64, error) {
 	now := time.Now()
 	physical, logical, err := f.TSFuture.Wait()
 	metrics.TSFutureWaitDuration.Observe(time.Since(now).Seconds())
@@ -96,7 +95,7 @@ func (f *TSFuture) Wait() (uint64, error) {
 
 func (o *pdOracle) GetTimestampAsync(ctx context.Context) oracle.Future {
 	ts := o.c.GetTSAsync(ctx)
-	return &TSFuture{ts, o}
+	return &tsFuture{ts, o}
 }
 
 func (o *pdOracle) getTimestamp(ctx context.Context) (uint64, error) {

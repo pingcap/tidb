@@ -69,18 +69,16 @@ func (c *pdClient) GetTS(context.Context) (int64, int64, error) {
 }
 
 func (c *pdClient) GetTSAsync(ctx context.Context) pd.TSFuture {
-	return &MockTSFuture{c, ctx, false}
+	return &mockTSFuture{c, ctx, false}
 }
 
-// MockTSFuture implements TSFuture interface in PD.
-type MockTSFuture struct {
+type mockTSFuture struct {
 	pdc  *pdClient
 	ctx  context.Context
 	used bool
 }
 
-// Wait implements TSFuture interface in PD.
-func (m *MockTSFuture) Wait() (int64, int64, error) {
+func (m *mockTSFuture) Wait() (int64, int64, error) {
 	if m.used {
 		return 0, 0, errors.New("cannot wait tso twice")
 	}

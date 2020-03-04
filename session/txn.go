@@ -27,9 +27,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
-	"github.com/pingcap/tidb/store/tikv/oracle/oracles"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/logutil"
@@ -434,10 +432,8 @@ func (tf *txnFuture) wait() (kv.Transaction, error) {
 		return tf.store.BeginWithStartTS(startTS)
 	} else if _, ok := tf.future.(txnFailFuture); ok {
 		return nil, err
-	} else if of, ok := tf.future.(*oracles.TSFuture); ok {
-		if _, ok := of.TSFuture.(*mocktikv.MockTSFuture); ok {
-			return nil, err
-		}
+	} else if !tf.store.SupportDeleteRange() {
+		return nil, err
 	}
 
 	logutil.BgLogger().Warn("wait tso failed", zap.Error(err))
