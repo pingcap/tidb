@@ -274,28 +274,7 @@ func (s *Server) setupStatusServerAndRPCServer(addr string, serverMux *http.Serv
 		logutil.BgLogger().Error("invalid TLS config", zap.Error(err))
 		return
 	}
-
-	if tlsConfig != nil && len(s.cfg.Security.ClusterAllowCN) > 0 {
-		cns := strings.Split(s.cfg.Security.ClusterAllowCN, ",")
-		if len(cns) != 0 {
-			checkCN := make(map[string]struct{})
-			for _, cn := range cns {
-				cn = strings.TrimSpace(cn)
-				checkCN[cn] = struct{}{}
-			}
-			tlsConfig.VerifyPeerCertificate = func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
-				for _, chain := range verifiedChains {
-					if len(chain) != 0 {
-						if _, match := checkCN[chain[0].Subject.CommonName]; match {
-							return nil
-						}
-					}
-				}
-				return errors.New("client certificate authentication failed due to CN not match")
-			}
-			tlsConfig.ClientAuth = tls.VerifyClientCertIfGiven
-		}
-	}
+	tlsConfig = s.setCNChecker(tlsConfig)
 
 	var l net.Listener
 	if tlsConfig != nil {
@@ -331,6 +310,31 @@ func (s *Server) setupStatusServerAndRPCServer(addr string, serverMux *http.Serv
 	if err != nil {
 		logutil.BgLogger().Error("start status/rpc server error", zap.Error(err))
 	}
+}
+
+func (s *Server) setCNChecker(tlsConfig *tls.Config) *tls.Config {
+	if tlsConfig != nil && len(s.cfg.Security.ClusterAllowCN) > 0 {
+		cns := strings.Split(s.cfg.Security.ClusterAllowCN, ",")
+		if len(cns) != 0 {
+			checkCN := make(map[string]struct{})
+			for _, cn := range cns {
+				cn = strings.TrimSpace(cn)
+				checkCN[cn] = struct{}{}
+			}
+			tlsConfig.VerifyPeerCertificate = func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
+				for _, chain := range verifiedChains {
+					if len(chain) != 0 {
+						if _, match := checkCN[chain[0].Subject.CommonName]; match {
+							return nil
+						}
+					}
+				}
+				return errors.New("client certificate authentication failed due to CN not match")
+			}
+			tlsConfig.ClientAuth = tls.VerifyClientCertIfGiven
+		}
+	}
+	return tlsConfig
 }
 
 // status of TiDB.
