@@ -950,3 +950,26 @@ func (s *testPessimisticSuite) TestPessimisticCommitReadLock(c *C) {
 	c.Assert(waitErr, IsNil)
 	c.Assert(time.Since(start), Less, 1*time.Second)
 }
+
+func (s *testPessimisticSuite) TestPessimisticLockReadValue(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(i int, j int, k int, unique key uk(j));")
+	tk.MustExec("insert into t values (1, 1, 1);")
+
+	// tk1 will left op_lock record
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk1.MustExec("use test")
+	tk1.MustExec("begin optimistic")
+	tk1.MustQuery("select * from t where j = 1 for update").Check(testkit.Rows("1 1 1"))
+	tk1.MustQuery("select * from t where j = 1 for update").Check(testkit.Rows("1 1 1"))
+	tk1.MustExec("commit")
+
+	// tk2 pessimistic lock read value
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk2.MustExec("begin pessimistic")
+	tk2.MustQuery("select * from t where j = 1 for update").Check(testkit.Rows("1 1 1"))
+	tk2.MustQuery("select * from t where j = 1 for update").Check(testkit.Rows("1 1 1"))
+	tk2.MustExec("commit")
+}
