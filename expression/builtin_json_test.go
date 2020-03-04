@@ -840,7 +840,6 @@ func (s *testEvaluatorSuite) TestJSONSearch(c *C) {
 				c.Assert(err, IsNil)
 				j2 = d.GetMysqlJSON()
 				cmp := json.CompareBinary(j1, j2)
-				//fmt.Println(j1, j2)
 				c.Assert(cmp, Equals, 0)
 			case nil:
 				c.Assert(d.IsNull(), IsTrue)
