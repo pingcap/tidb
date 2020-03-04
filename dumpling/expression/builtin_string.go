@@ -928,8 +928,7 @@ func (b *builtinStrcmpSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
-	_, collation, flen := b.CharsetAndCollation(b.ctx)
-	res := types.CompareString(left, right, collation, flen)
+	res := types.CompareString(left, right, b.collation)
 	return int64(res), false, nil
 }
 
@@ -2393,7 +2392,7 @@ func (b *builtinFindInSetSig) evalInt(row chunk.Row) (int64, bool, error) {
 	}
 
 	for i, strInSet := range strings.Split(strlist, ",") {
-		if str == strInSet {
+		if b.ctor.Compare(str, strInSet, collate.NewCollatorOption(0)) == 0 {
 			return int64(i + 1), false, nil
 		}
 	}
@@ -2522,7 +2521,7 @@ func (b *builtinFieldStringSig) evalInt(row chunk.Row) (int64, bool, error) {
 		if err != nil {
 			return 0, true, err
 		}
-		if !isNull && str == stri {
+		if !isNull && b.ctor.Compare(str, stri, collate.NewCollatorOption(0)) == 0 {
 			return int64(i), false, nil
 		}
 	}
