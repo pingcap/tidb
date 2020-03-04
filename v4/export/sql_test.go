@@ -2,6 +2,7 @@ package export
 
 import (
 	"errors"
+
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/coreos/go-semver/semver"
 	. "github.com/pingcap/check"

@@ -49,6 +49,37 @@ func ShowCreateTable(db *sql.DB, database, table string) (string, error) {
 	return oneRow[1], nil
 }
 
+func ShowCreateView(db *sql.DB, database, view string) (string, error) {
+	var oneRow [4]string
+	handleOneRow := func(rows *sql.Rows) error {
+		return rows.Scan(&oneRow[0], &oneRow[1], &oneRow[2], &oneRow[3])
+	}
+	query := fmt.Sprintf("SHOW CREATE TABLE %s.%s", database, view)
+	err := simpleQuery(db, query, handleOneRow)
+	if err != nil {
+		return "", err
+	}
+	return oneRow[1], nil
+}
+
+func ListAllTables(db *sql.DB, database string) ([]string, error) {
+	var tables oneStrColumnTable
+	const query = "SELECT table_name FROM information_schema.tables WHERE table_schema = '%s' and table_type = 'BASE TABLE'"
+	if err := simpleQuery(db, fmt.Sprintf(query, database), tables.handleOneRow); err != nil {
+		return nil, err
+	}
+	return tables.data, nil
+}
+
+func ListAllViews(db *sql.DB, database string) ([]string, error) {
+	var views oneStrColumnTable
+	const query = "SELECT table_name FROM information_schema.tables WHERE table_schema = '%s' and table_type = 'VIEW'"
+	if err := simpleQuery(db, fmt.Sprintf(query, database), views.handleOneRow); err != nil {
+		return nil, err
+	}
+	return views.data, nil
+}
+
 func SelectVersion(db *sql.DB) (string, error) {
 	var versionInfo string
 	handleOneRow := func(rows *sql.Rows) error {

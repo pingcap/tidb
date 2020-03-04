@@ -3,10 +3,11 @@ package export
 import (
 	"context"
 	"database/sql/driver"
-	. "github.com/pingcap/check"
 	"io/ioutil"
 	"os"
 	"path"
+
+	. "github.com/pingcap/check"
 )
 
 var _ = Suite(&testWriterSuite{})
@@ -126,15 +127,13 @@ func (s *testDumpSuite) TestWriteTableDataWithFileSize(c *C) {
 	err = writer.WriteTableData(ctx, tableIR)
 	c.Assert(err, IsNil)
 
-	cases := map[string]string {
-		"test.employee.0.sql":
-			"/*!40101 SET NAMES binary*/;\n" +
+	cases := map[string]string{
+		"test.employee.0.sql": "/*!40101 SET NAMES binary*/;\n" +
 			"/*!40014 SET FOREIGN_KEY_CHECKS=0*/;\n" +
 			"INSERT INTO `employee` VALUES\n" +
 			"(1, 'male', 'bob@mail.com', '020-1234', NULL),\n" +
 			"(2, 'female', 'sarah@mail.com', '020-1253', 'healthy');\n",
-		"test.employee.1.sql":
-			"/*!40101 SET NAMES binary*/;\n" +
+		"test.employee.1.sql": "/*!40101 SET NAMES binary*/;\n" +
 			"/*!40014 SET FOREIGN_KEY_CHECKS=0*/;\n" +
 			"INSERT INTO `employee` VALUES\n" +
 			"(3, 'male', 'john@mail.com', '020-1256', 'healthy'),\n" +

@@ -75,7 +75,7 @@ type ConsistencyLockDumpingTables struct {
 func (c *ConsistencyLockDumpingTables) Setup() error {
 	for dbName, tables := range c.allTables {
 		for _, table := range tables {
-			err := LockTables(c.db, dbName, table)
+			err := LockTables(c.db, dbName, table.Name)
 			if err != nil {
 				return err
 			}
