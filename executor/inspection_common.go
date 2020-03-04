@@ -48,6 +48,8 @@ func (e *inspectionRuleRetriever) retrieve(ctx context.Context, sctx sessionctx.
 			finalRows = append(finalRows, types.MakeDatums(
 				r.name(),
 				inspectionRuleTypeInspection,
+				// TODO: add rule explanation
+				"",
 			))
 		}
 	}
@@ -64,6 +66,8 @@ func (e *inspectionRuleRetriever) retrieve(ctx context.Context, sctx sessionctx.
 			finalRows = append(finalRows, types.MakeDatums(
 				rule,
 				inspectionRuleTypeSummary,
+				// TODO: add rule explanation
+				"",
 			))
 		}
 	}

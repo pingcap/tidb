@@ -935,6 +935,7 @@ var tableInspectionSummaryCols = []columnInfo{
 var tableInspectionRulesCols = []columnInfo{
 	{name: "NAME", tp: mysql.TypeVarchar, size: 64},
 	{name: "TYPE", tp: mysql.TypeVarchar, size: 64},
+	{name: "COMMENT", tp: mysql.TypeVarchar, size: 256},
 }
 
 var tableMetricTablesCols = []columnInfo{
