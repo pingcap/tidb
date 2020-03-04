@@ -71,7 +71,7 @@ type ValueExpr struct {
 
 // SetValue implements interface of ast.ValueExpr.
 func (n *ValueExpr) SetValue(res interface{}) {
-	n.Datum.SetValueForTest(res)
+	n.Datum.SetValueWithDefaultCollation(res)
 }
 
 // Restore implements Node interface.

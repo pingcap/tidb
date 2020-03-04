@@ -421,8 +421,8 @@ func (d *Datum) GetValue() interface{} {
 	}
 }
 
-// SetValueForTest sets any kind of value.
-func (d *Datum) SetValueForTest(val interface{}) {
+// SetValueWithDefaultCollation sets any kind of value.
+func (d *Datum) SetValueWithDefaultCollation(val interface{}) {
 	switch x := val.(type) {
 	case nil:
 		d.SetNull()
@@ -1727,9 +1727,9 @@ func invalidConv(d *Datum, tp byte) (Datum, error) {
 func NewDatum(in interface{}) (d Datum) {
 	switch x := in.(type) {
 	case []interface{}:
-		d.SetValueForTest(MakeDatums(x...))
+		d.SetValueWithDefaultCollation(MakeDatums(x...))
 	default:
-		d.SetValueForTest(in)
+		d.SetValueWithDefaultCollation(in)
 	}
 	return d
 }
