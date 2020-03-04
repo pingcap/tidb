@@ -401,7 +401,8 @@ func (s *testBinlogSuite) TestBinlogForSequence(c *C) {
 
 	// Check the sequence binlog.
 	// Got matched pre DDL and commit DDL.
-	c.Assert(mustGetDDLBinlog(s, "select setval(`test`.`seq`, 3)", c), IsTrue)
+	ok = mustGetDDLBinlog(s, "select setval(`test`.`seq`, 3)", c)
+	c.Assert(ok, IsTrue)
 
 	// Invalidate the current sequence cache.
 	tk.MustExec("select setval(seq, 5)")
@@ -412,7 +413,8 @@ func (s *testBinlogSuite) TestBinlogForSequence(c *C) {
 	_, end, round = tc.GetSequenceCommon().GetSequenceBaseEndRound()
 	c.Assert(end, Equals, int64(8))
 	c.Assert(round, Equals, int64(0))
-	c.Assert(mustGetDDLBinlog(s, "select setval(`test`.`seq`, 8)", c), IsTrue)
+	ok = mustGetDDLBinlog(s, "select setval(`test`.`seq`, 8)", c)
+	c.Assert(ok, IsTrue)
 
 	tk.MustExec("create database test2")
 	tk.MustExec("use test2")
@@ -427,7 +429,8 @@ func (s *testBinlogSuite) TestBinlogForSequence(c *C) {
 	_, end, round = tc.GetSequenceCommon().GetSequenceBaseEndRound()
 	c.Assert(end, Equals, int64(-3))
 	c.Assert(round, Equals, int64(0))
-	c.Assert(mustGetDDLBinlog(s, "select setval(`test2`.`seq2`, -3)", c), IsTrue)
+	ok = mustGetDDLBinlog(s, "select setval(`test2`.`seq2`, -3)", c)
+	c.Assert(ok, IsTrue)
 
 	tk.MustExec("select setval(seq2, -100)")
 	// trigger the sequence cache allocation.
@@ -436,7 +439,8 @@ func (s *testBinlogSuite) TestBinlogForSequence(c *C) {
 	_, end, round = tc.GetSequenceCommon().GetSequenceBaseEndRound()
 	c.Assert(end, Equals, int64(6))
 	c.Assert(round, Equals, int64(1))
-	c.Assert(mustGetDDLBinlog(s, "select setval(`test2`.`seq2`, 6)", c), IsTrue)
+	ok = mustGetDDLBinlog(s, "select setval(`test2`.`seq2`, 6)", c)
+	c.Assert(ok, IsTrue)
 
 	// Test dml txn is independent from sequence txn.
 	tk.MustExec("drop sequence if exists seq")
@@ -564,7 +568,7 @@ func (s *testBinlogSuite) TestAddSpecialComment(c *C) {
 }
 
 func mustGetDDLBinlog(s *testBinlogSuite, ddlQuery string, c *C) (matched bool) {
-	for i := 0; i < 15; i++ {
+	for i := 0; i < 10; i++ {
 		preDDL, commitDDL, _ := getLatestDDLBinlog(c, s.pump, ddlQuery)
 		if preDDL != nil && commitDDL != nil {
 			if preDDL.DdlJobId == commitDDL.DdlJobId {
@@ -574,7 +578,7 @@ func mustGetDDLBinlog(s *testBinlogSuite, ddlQuery string, c *C) (matched bool) 
 				break
 			}
 		}
-		time.Sleep(time.Millisecond * 30)
+		time.Sleep(time.Millisecond * 100)
 	}
 	return
 }
