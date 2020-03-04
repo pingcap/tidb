@@ -561,14 +561,13 @@ func (b *builtinGreatestStringSig) evalString(row chunk.Row) (max string, isNull
 	if isNull || err != nil {
 		return max, isNull, err
 	}
-	_, collation, flen := b.CharsetAndCollation(b.ctx)
 	for i := 1; i < len(b.args); i++ {
 		var v string
 		v, isNull, err = b.args[i].EvalString(b.ctx, row)
 		if isNull || err != nil {
 			return max, isNull, err
 		}
-		if types.CompareString(v, max, collation, flen) > 0 {
+		if types.CompareString(v, max, b.collation) > 0 {
 			max = v
 		}
 	}
@@ -761,14 +760,13 @@ func (b *builtinLeastStringSig) evalString(row chunk.Row) (min string, isNull bo
 	if isNull || err != nil {
 		return min, isNull, err
 	}
-	_, collation, flen := b.CharsetAndCollation(b.ctx)
 	for i := 1; i < len(b.args); i++ {
 		var v string
 		v, isNull, err = b.args[i].EvalString(b.ctx, row)
 		if isNull || err != nil {
 			return min, isNull, err
 		}
-		if types.CompareString(v, min, collation, flen) < 0 {
+		if types.CompareString(v, min, b.collation) < 0 {
 			min = v
 		}
 	}
@@ -1208,7 +1206,7 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldT
 // refineArgs will rewrite the arguments if the compare expression is `int column <cmp> non-int constant` or
 // `non-int constant <cmp> int column`. E.g., `a < 1.1` will be rewritten to `a < 2`.
 func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Expression) []Expression {
-	if ctx.GetSessionVars().StmtCtx.UseCache && ContainLazyConst(args) {
+	if ContainMutableConst(ctx, args) {
 		return args
 	}
 	arg0Type, arg1Type := args[0].GetType(), args[1].GetType()
@@ -1522,8 +1520,7 @@ func (b *builtinLTStringSig) Clone() builtinFunc {
 }
 
 func (b *builtinLTStringSig) evalInt(row chunk.Row) (val int64, isNull bool, err error) {
-	_, collation, flen := b.CharsetAndCollation(b.ctx)
-	return resOfLT(CompareStringWithCollationInfo(b.ctx, b.args[0], b.args[1], row, row, collation, flen))
+	return resOfLT(CompareStringWithCollationInfo(b.ctx, b.args[0], b.args[1], row, row, b.collation))
 }
 
 type builtinLTDurationSig struct {
@@ -1621,8 +1618,7 @@ func (b *builtinLEStringSig) Clone() builtinFunc {
 }
 
 func (b *builtinLEStringSig) evalInt(row chunk.Row) (val int64, isNull bool, err error) {
-	_, collation, flen := b.CharsetAndCollation(b.ctx)
-	return resOfLE(CompareStringWithCollationInfo(b.ctx, b.args[0], b.args[1], row, row, collation, flen))
+	return resOfLE(CompareStringWithCollationInfo(b.ctx, b.args[0], b.args[1], row, row, b.collation))
 }
 
 type builtinLEDurationSig struct {
@@ -1720,8 +1716,7 @@ func (b *builtinGTStringSig) Clone() builtinFunc {
 }
 
 func (b *builtinGTStringSig) evalInt(row chunk.Row) (val int64, isNull bool, err error) {
-	_, collation, flen := b.CharsetAndCollation(b.ctx)
-	return resOfGT(CompareStringWithCollationInfo(b.ctx, b.args[0], b.args[1], row, row, collation, flen))
+	return resOfGT(CompareStringWithCollationInfo(b.ctx, b.args[0], b.args[1], row, row, b.collation))
 }
 
 type builtinGTDurationSig struct {
@@ -1819,8 +1814,7 @@ func (b *builtinGEStringSig) Clone() builtinFunc {
 }
 
 func (b *builtinGEStringSig) evalInt(row chunk.Row) (val int64, isNull bool, err error) {
-	_, collation, flen := b.CharsetAndCollation(b.ctx)
-	return resOfGE(CompareStringWithCollationInfo(b.ctx, b.args[0], b.args[1], row, row, collation, flen))
+	return resOfGE(CompareStringWithCollationInfo(b.ctx, b.args[0], b.args[1], row, row, b.collation))
 }
 
 type builtinGEDurationSig struct {
@@ -1918,8 +1912,7 @@ func (b *builtinEQStringSig) Clone() builtinFunc {
 }
 
 func (b *builtinEQStringSig) evalInt(row chunk.Row) (val int64, isNull bool, err error) {
-	_, collation, flen := b.CharsetAndCollation(b.ctx)
-	return resOfEQ(CompareStringWithCollationInfo(b.ctx, b.args[0], b.args[1], row, row, collation, flen))
+	return resOfEQ(CompareStringWithCollationInfo(b.ctx, b.args[0], b.args[1], row, row, b.collation))
 }
 
 type builtinEQDurationSig struct {
@@ -2017,8 +2010,7 @@ func (b *builtinNEStringSig) Clone() builtinFunc {
 }
 
 func (b *builtinNEStringSig) evalInt(row chunk.Row) (val int64, isNull bool, err error) {
-	_, collation, flen := b.CharsetAndCollation(b.ctx)
-	return resOfNE(CompareStringWithCollationInfo(b.ctx, b.args[0], b.args[1], row, row, collation, flen))
+	return resOfNE(CompareStringWithCollationInfo(b.ctx, b.args[0], b.args[1], row, row, b.collation))
 }
 
 type builtinNEDurationSig struct {
@@ -2193,13 +2185,12 @@ func (b *builtinNullEQStringSig) evalInt(row chunk.Row) (val int64, isNull bool,
 		return 0, true, err
 	}
 	var res int64
-	_, collation, flen := b.CharsetAndCollation(b.ctx)
 	switch {
 	case isNull0 && isNull1:
 		res = 1
 	case isNull0 != isNull1:
 		break
-	case types.CompareString(arg0, arg1, collation, flen) == 0:
+	case types.CompareString(arg0, arg1, b.collation) == 0:
 		res = 1
 	}
 	return res, false, nil
@@ -2432,13 +2423,12 @@ func CompareInt(sctx sessionctx.Context, lhsArg, rhsArg Expression, lhsRow, rhsR
 
 func genCompareString(collation string, flen int) func(sctx sessionctx.Context, lhsArg, rhsArg Expression, lhsRow, rhsRow chunk.Row) (int64, bool, error) {
 	return func(sctx sessionctx.Context, lhsArg, rhsArg Expression, lhsRow, rhsRow chunk.Row) (int64, bool, error) {
-		return CompareStringWithCollationInfo(sctx, lhsArg, rhsArg, lhsRow, rhsRow, collation, flen)
+		return CompareStringWithCollationInfo(sctx, lhsArg, rhsArg, lhsRow, rhsRow, collation)
 	}
 }
 
 // CompareStringWithCollationInfo compares two strings with the specified collation information.
-func CompareStringWithCollationInfo(sctx sessionctx.Context, lhsArg, rhsArg Expression, lhsRow, rhsRow chunk.Row,
-	collation string, flen int) (int64, bool, error) {
+func CompareStringWithCollationInfo(sctx sessionctx.Context, lhsArg, rhsArg Expression, lhsRow, rhsRow chunk.Row, collation string) (int64, bool, error) {
 	arg0, isNull0, err := lhsArg.EvalString(sctx, lhsRow)
 	if err != nil {
 		return 0, true, err
@@ -2452,7 +2442,7 @@ func CompareStringWithCollationInfo(sctx sessionctx.Context, lhsArg, rhsArg Expr
 	if isNull0 || isNull1 {
 		return compareNull(isNull0, isNull1), true, nil
 	}
-	return int64(types.CompareString(arg0, arg1, collation, flen)), false, nil
+	return int64(types.CompareString(arg0, arg1, collation)), false, nil
 }
 
 // CompareReal compares two float-point values.
