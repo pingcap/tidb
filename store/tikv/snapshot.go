@@ -159,7 +159,7 @@ func (s *tikvSnapshot) batchGetKeysByRegions(bo *Backoffer, keys [][]byte, colle
 
 	tikvTxnRegionsNumHistogramWithSnapshot.Observe(float64(len(groups)))
 
-	var batches []batchKeys
+	var batches []batchPayload
 	for id, g := range groups {
 		batches = appendBatchKeysBySize(batches, id, g, func([]byte) int { return 1 }, batchGetSize)
 	}
@@ -168,7 +168,7 @@ func (s *tikvSnapshot) batchGetKeysByRegions(bo *Backoffer, keys [][]byte, colle
 		return nil
 	}
 	if len(batches) == 1 {
-		return errors.Trace(s.batchGetSingleRegion(bo, batches[0], collectF))
+		return errors.Trace(s.batchGetSingleRegion(bo, batches[0].(batchKeys), collectF))
 	}
 	ch := make(chan error)
 	for _, batch1 := range batches {
@@ -176,7 +176,7 @@ func (s *tikvSnapshot) batchGetKeysByRegions(bo *Backoffer, keys [][]byte, colle
 		go func() {
 			backoffer, cancel := bo.Fork()
 			defer cancel()
-			ch <- s.batchGetSingleRegion(backoffer, batch, collectF)
+			ch <- s.batchGetSingleRegion(backoffer, batch.(batchKeys), collectF)
 		}()
 	}
 	for i := 0; i < len(batches); i++ {
