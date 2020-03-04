@@ -933,14 +933,13 @@ func (s *testPessimisticSuite) TestPessimisticCommitReadLock(c *C) {
 	// tk lock one row
 	tk.MustExec("begin;")
 	tk.MustQuery("select * from t for update").Check(testkit.Rows("1 2"))
+	tk1.MustExec("begin;")
 	done := make(chan error)
 	go func() {
 		var err error
 		defer func() {
 			done <- err
 		}()
-		time.Sleep(time.Millisecond * 30)
-		tk1.MustExec("begin;")
 		// let txn not found could be checked by lock wait timeout utility
 		err = failpoint.Enable("github.com/pingcap/tidb/store/tikv/txnNotFoundRetTTL", "return")
 		if err != nil {
@@ -956,7 +955,8 @@ func (s *testPessimisticSuite) TestPessimisticCommitReadLock(c *C) {
 		}
 		_, err = tk1.Exec("commit")
 	}()
-	time.Sleep(time.Millisecond * 30)
+	// let the lock be hold for a while
+	time.Sleep(time.Millisecond * 50)
 	tk.MustExec("commit")
 	waitErr := <-done
 	c.Assert(waitErr, IsNil)
