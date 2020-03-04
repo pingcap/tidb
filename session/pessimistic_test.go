@@ -327,10 +327,10 @@ func (s *testPessimisticSuite) TestProcesslistLastWait(c *C) {
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
-		session2.MustQuery("select * from x where id = 1 for update").Check(testkit.Rows("1 1"))
-		wg.Done()
+		defer wg.Done()
+		session2.Exec("select * from x where id = 1 for update")
 	}()
-	time.Sleep(2 * time.Second)
+	time.Sleep(50 * time.Millisecond)
 	ps := session3.Se.GetSessionManager().ShowProcessList()
 	var waitTs uint64
 	for _, p := range ps {
