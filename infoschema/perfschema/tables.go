@@ -118,6 +118,12 @@ type perfSchemaTable struct {
 
 var pluginTable = make(map[string]func(autoid.Allocators, *model.TableInfo) (table.Table, error))
 
+// IsPredefinedTable judges whether this table is predefined.
+func IsPredefinedTable(tableName string) bool {
+	_, ok := tableIDMap[strings.ToLower(tableName)]
+	return ok
+}
+
 // RegisterTable registers a new table into TiDB.
 func RegisterTable(tableName, sql string,
 	tableFromMeta func(autoid.Allocators, *model.TableInfo) (table.Table, error)) {
