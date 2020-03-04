@@ -45,7 +45,7 @@ func (s *testDumpSuite) TestDumpDatabase(c *C) {
 	mockConfig := DefaultConfig()
 	mockConfig.SortByPk = false
 	mockConfig.Database = "test"
-	mockConfig.Tables = map[string][]tableName{"test": {"t"}}
+	mockConfig.Tables = NewDatabaseTables().AppendTables("test", "t")
 	db, mock, err := sqlmock.New()
 	c.Assert(err, IsNil)
 
@@ -85,7 +85,7 @@ func (s *testDumpSuite) TestDumpTable(c *C) {
 	mock.ExpectQuery("SELECT (.) FROM test.t").WillReturnRows(rows)
 
 	mockWriter := newMockWriter()
-	err = dumpTable(context.Background(), mockConfig, db, "test", "t", mockWriter)
+	err = dumpTable(context.Background(), mockConfig, db, "test", &TableInfo{Name: "t"}, mockWriter)
 	c.Assert(err, IsNil)
 
 	c.Assert(mockWriter.tableMeta["test.t"], Equals, showCreateTableResult)
