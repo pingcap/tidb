@@ -1113,7 +1113,10 @@ func PBToExpr(expr *tipb.Expr, tps []*types.FieldType, sc *stmtctx.StatementCont
 	if err != nil {
 		return nil, err
 	}
-	sf.SetCharsetAndCollation(DeriveCollationFromExprs(nil, args...))
+
+	// recover collation information
+	tp := sf.GetType()
+	sf.SetCharsetAndCollation(tp.Charset, tp.Collate, types.UnspecifiedLength)
 	return sf, nil
 }
 
