@@ -380,6 +380,9 @@ func mutationRowsToRows(c *C, mutationRows [][]byte, columnValueOffsets ...int) 
 func (s *testBinlogSuite) TestBinlogForSequence(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	s.pump.mu.Lock()
+	s.pump.mu.payloads = s.pump.mu.payloads[:0]
+	s.pump.mu.Unlock()
 	tk.Se.GetSessionVars().BinlogClient = s.client
 
 	tk.MustExec("drop sequence if exists seq")
