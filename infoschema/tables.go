@@ -57,9 +57,11 @@ const (
 	tableColumns          = "COLUMNS"
 	tableColumnStatistics = "COLUMN_STATISTICS"
 	tableStatistics       = "STATISTICS"
-	tableCharacterSets    = "CHARACTER_SETS"
-	tableCollations       = "COLLATIONS"
-	tableFiles            = "FILES"
+	// TableCharacterSets is the string constant of infoschema charactersets memory table
+	TableCharacterSets = "CHARACTER_SETS"
+	// TableCollations is the string constant of infoschema collations memory table
+	TableCollations = "COLLATIONS"
+	tableFiles      = "FILES"
 	// CatalogVal is the string constant of TABLE_CATALOG
 	CatalogVal            = "def"
 	tableProfiling        = "PROFILING"
@@ -74,18 +76,20 @@ const (
 	tableSchemaPrivileges = "SCHEMA_PRIVILEGES"
 	tableTablePrivileges  = "TABLE_PRIVILEGES"
 	tableColumnPrivileges = "COLUMN_PRIVILEGES"
-	tableEngines          = "ENGINES"
+	// TableEngines is the string constant of infoschema table
+	TableEngines = "ENGINES"
 	// TableViews is the string constant of infoschema table
-	TableViews                              = "VIEWS"
-	tableRoutines                           = "ROUTINES"
-	tableParameters                         = "PARAMETERS"
-	tableEvents                             = "EVENTS"
-	tableGlobalStatus                       = "GLOBAL_STATUS"
-	tableGlobalVariables                    = "GLOBAL_VARIABLES"
-	tableSessionStatus                      = "SESSION_STATUS"
-	tableOptimizerTrace                     = "OPTIMIZER_TRACE"
-	tableTableSpaces                        = "TABLESPACES"
-	tableCollationCharacterSetApplicability = "COLLATION_CHARACTER_SET_APPLICABILITY"
+	TableViews           = "VIEWS"
+	tableRoutines        = "ROUTINES"
+	tableParameters      = "PARAMETERS"
+	tableEvents          = "EVENTS"
+	tableGlobalStatus    = "GLOBAL_STATUS"
+	tableGlobalVariables = "GLOBAL_VARIABLES"
+	tableSessionStatus   = "SESSION_STATUS"
+	tableOptimizerTrace  = "OPTIMIZER_TRACE"
+	tableTableSpaces     = "TABLESPACES"
+	// TableCollationCharacterSetApplicability is the string constant of infoschema memory table.
+	TableCollationCharacterSetApplicability = "COLLATION_CHARACTER_SET_APPLICABILITY"
 	tableProcesslist                        = "PROCESSLIST"
 	tableTiDBIndexes                        = "TIDB_INDEXES"
 	tableTiDBHotRegions                     = "TIDB_HOT_REGIONS"
@@ -127,8 +131,8 @@ var tableIDMap = map[string]int64{
 	tableColumns:                            autoid.InformationSchemaDBID + 3,
 	tableColumnStatistics:                   autoid.InformationSchemaDBID + 4,
 	tableStatistics:                         autoid.InformationSchemaDBID + 5,
-	tableCharacterSets:                      autoid.InformationSchemaDBID + 6,
-	tableCollations:                         autoid.InformationSchemaDBID + 7,
+	TableCharacterSets:                      autoid.InformationSchemaDBID + 6,
+	TableCollations:                         autoid.InformationSchemaDBID + 7,
 	tableFiles:                              autoid.InformationSchemaDBID + 8,
 	CatalogVal:                              autoid.InformationSchemaDBID + 9,
 	tableProfiling:                          autoid.InformationSchemaDBID + 10,
@@ -143,7 +147,7 @@ var tableIDMap = map[string]int64{
 	tableSchemaPrivileges:                   autoid.InformationSchemaDBID + 19,
 	tableTablePrivileges:                    autoid.InformationSchemaDBID + 20,
 	tableColumnPrivileges:                   autoid.InformationSchemaDBID + 21,
-	tableEngines:                            autoid.InformationSchemaDBID + 22,
+	TableEngines:                            autoid.InformationSchemaDBID + 22,
 	TableViews:                              autoid.InformationSchemaDBID + 23,
 	tableRoutines:                           autoid.InformationSchemaDBID + 24,
 	tableParameters:                         autoid.InformationSchemaDBID + 25,
@@ -153,7 +157,7 @@ var tableIDMap = map[string]int64{
 	tableSessionStatus:                      autoid.InformationSchemaDBID + 29,
 	tableOptimizerTrace:                     autoid.InformationSchemaDBID + 30,
 	tableTableSpaces:                        autoid.InformationSchemaDBID + 31,
-	tableCollationCharacterSetApplicability: autoid.InformationSchemaDBID + 32,
+	TableCollationCharacterSetApplicability: autoid.InformationSchemaDBID + 32,
 	tableProcesslist:                        autoid.InformationSchemaDBID + 33,
 	tableTiDBIndexes:                        autoid.InformationSchemaDBID + 34,
 	TableSlowQuery:                          autoid.InformationSchemaDBID + 35,
@@ -1122,59 +1126,6 @@ func dataForTiKVStoreStatus(ctx sessionctx.Context) (records [][]types.Datum, er
 	return records, nil
 }
 
-func dataForCharacterSets() (records [][]types.Datum) {
-
-	charsets := charset.GetSupportedCharsets()
-
-	for _, charset := range charsets {
-
-		records = append(records,
-			types.MakeDatums(charset.Name, charset.DefaultCollation, charset.Desc, charset.Maxlen),
-		)
-
-	}
-
-	return records
-
-}
-
-func dataForCollations() (records [][]types.Datum) {
-
-	collations := charset.GetSupportedCollations()
-
-	for _, collation := range collations {
-
-		isDefault := ""
-		if collation.IsDefault {
-			isDefault = "Yes"
-		}
-
-		records = append(records,
-			types.MakeDatums(collation.Name, collation.CharsetName, collation.ID, isDefault, "Yes", 1),
-		)
-
-	}
-
-	return records
-
-}
-
-func dataForCollationCharacterSetApplicability() (records [][]types.Datum) {
-
-	collations := charset.GetSupportedCollations()
-
-	for _, collation := range collations {
-
-		records = append(records,
-			types.MakeDatums(collation.Name, collation.CharsetName),
-		)
-
-	}
-
-	return records
-
-}
-
 func dataForSessionVar(ctx sessionctx.Context) (records [][]types.Datum, err error) {
 	sessionVars := ctx.GetSessionVars()
 	for _, v := range variable.SysVars {
@@ -1221,20 +1172,6 @@ func dataForProcesslist(ctx sessionctx.Context) [][]types.Datum {
 		record := types.MakeDatums(rows...)
 		records = append(records, record)
 	}
-	return records
-}
-
-func dataForEngines() (records [][]types.Datum) {
-	records = append(records,
-		types.MakeDatums(
-			"InnoDB",  // Engine
-			"DEFAULT", // Support
-			"Supports transactions, row-level locking, and foreign keys", // Comment
-			"YES", // Transactions
-			"YES", // XA
-			"YES", // Savepoints
-		),
-	)
 	return records
 }
 
@@ -2404,8 +2341,8 @@ var tableNameToColumns = map[string][]columnInfo{
 	tableColumns:                            columnsCols,
 	tableColumnStatistics:                   columnStatisticsCols,
 	tableStatistics:                         statisticsCols,
-	tableCharacterSets:                      charsetCols,
-	tableCollations:                         collationsCols,
+	TableCharacterSets:                      charsetCols,
+	TableCollations:                         collationsCols,
 	tableFiles:                              filesCols,
 	tableProfiling:                          profilingCols,
 	tablePartitions:                         partitionsCols,
@@ -2419,7 +2356,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	tableSchemaPrivileges:                   tableSchemaPrivilegesCols,
 	tableTablePrivileges:                    tableTablePrivilegesCols,
 	tableColumnPrivileges:                   tableColumnPrivilegesCols,
-	tableEngines:                            tableEnginesCols,
+	TableEngines:                            tableEnginesCols,
 	TableViews:                              tableViewsCols,
 	tableRoutines:                           tableRoutinesCols,
 	tableParameters:                         tableParametersCols,
@@ -2429,7 +2366,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	tableSessionStatus:                      tableSessionStatusCols,
 	tableOptimizerTrace:                     tableOptimizerTraceCols,
 	tableTableSpaces:                        tableTableSpacesCols,
-	tableCollationCharacterSetApplicability: tableCollationCharacterSetApplicabilityCols,
+	TableCollationCharacterSetApplicability: tableCollationCharacterSetApplicabilityCols,
 	tableProcesslist:                        tableProcesslistCols,
 	tableTiDBIndexes:                        tableTiDBIndexesCols,
 	TableSlowQuery:                          slowQueryCols,
@@ -2499,10 +2436,6 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		fullRows = dataForColumns(ctx, dbs)
 	case tableStatistics:
 		fullRows = dataForStatistics(ctx, dbs)
-	case tableCharacterSets:
-		fullRows = dataForCharacterSets()
-	case tableCollations:
-		fullRows = dataForCollations()
 	case tableSessionVar:
 		fullRows, err = dataForSessionVar(ctx)
 	case tableConstraints:
@@ -2520,8 +2453,6 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 	case tablePlugins, tableTriggers:
 	case tableUserPrivileges:
 		fullRows = dataForUserPrivileges(ctx)
-	case tableEngines:
-		fullRows = dataForEngines()
 	case tableRoutines:
 	// TODO: Fill the following tables.
 	case tableSchemaPrivileges:
@@ -2534,8 +2465,6 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 	case tableSessionStatus:
 	case tableOptimizerTrace:
 	case tableTableSpaces:
-	case tableCollationCharacterSetApplicability:
-		fullRows = dataForCollationCharacterSetApplicability()
 	case tableProcesslist:
 		fullRows = dataForProcesslist(ctx)
 	case tableTiDBHotRegions:
