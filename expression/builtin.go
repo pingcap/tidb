@@ -86,6 +86,7 @@ func (b *baseBuiltinFunc) collator() collate.Collator {
 	return b.ctor
 }
 
+<<<<<<< HEAD
 func newBaseBuiltinFunc(ctx sessionctx.Context, funcName string, args []Expression) (baseBuiltinFunc, error) {
 	if ctx == nil {
 		panic("ctx should not be nil")
@@ -93,6 +94,12 @@ func newBaseBuiltinFunc(ctx sessionctx.Context, funcName string, args []Expressi
 	if err := checkIllegalMixCollation(funcName, args); err != nil {
 		return baseBuiltinFunc{}, err
 	}
+=======
+func newBaseBuiltinFunc(ctx sessionctx.Context, args []Expression) baseBuiltinFunc {
+	if ctx == nil {
+		panic("ctx should not be nil")
+	}
+>>>>>>> 1771fff... expression: make `field` and `findInSet`  support collation (#15100)
 	derivedCharset, derivedCollate, derivedFlen := DeriveCollationFromExprs(ctx, args...)
 	bf := baseBuiltinFunc{
 		bufAllocator:           newLocalSliceBuffer(len(args)),
@@ -105,6 +112,7 @@ func newBaseBuiltinFunc(ctx sessionctx.Context, funcName string, args []Expressi
 	}
 	bf.SetCharsetAndCollation(derivedCharset, derivedCollate, derivedFlen)
 	bf.setCollator(collate.GetCollator(derivedCollate))
+<<<<<<< HEAD
 	return bf, nil
 }
 
@@ -123,6 +131,9 @@ func checkIllegalMixCollation(funcName string, args []Expression) error {
 		}
 	}
 	return nil
+=======
+	return bf
+>>>>>>> 1771fff... expression: make `field` and `findInSet`  support collation (#15100)
 }
 
 // newBaseBuiltinFuncWithTp creates a built-in function signature with specified types of arguments and the return type of the function.
@@ -240,7 +251,11 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 	}
 	bf.SetCharsetAndCollation(derivedCharset, derivedCollate, derivedFlen)
 	bf.setCollator(collate.GetCollator(derivedCollate))
+<<<<<<< HEAD
 	return bf, nil
+=======
+	return bf
+>>>>>>> 1771fff... expression: make `field` and `findInSet`  support collation (#15100)
 }
 
 func (b *baseBuiltinFunc) getArgs() []Expression {

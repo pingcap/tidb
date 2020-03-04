@@ -115,7 +115,11 @@ func CompareFloat64(x, y float64) int {
 
 // CompareString returns an integer comparing the string x to y with the specified collation and length.
 func CompareString(x, y, collation string) int {
+<<<<<<< HEAD
 	return collate.GetCollator(collation).Compare(x, y)
+=======
+	return collate.GetCollator(collation).Compare(x, y, collate.NewCollatorOption(0))
+>>>>>>> 1771fff... expression: make `field` and `findInSet`  support collation (#15100)
 }
 
 // CompareDuration returns an integer comparing the duration x to y.
