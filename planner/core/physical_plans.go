@@ -73,6 +73,10 @@ type PhysicalTableReader struct {
 	StoreType kv.StoreType
 }
 
+func (p *PhysicalTableReader) GetTablePlan() PhysicalPlan {
+	return p.tablePlan
+}
+
 // GetPhysicalTableReader returns PhysicalTableReader for logical TiKVSingleGather.
 func (sg *TiKVSingleGather) GetPhysicalTableReader(schema *expression.Schema, stats *property.StatsInfo, props ...*property.PhysicalProperty) *PhysicalTableReader {
 	reader := PhysicalTableReader{}.Init(sg.ctx, sg.blockOffset)
@@ -94,11 +98,7 @@ func (sg *TiKVSingleGather) GetPhysicalIndexReader(schema *expression.Schema, st
 // SetChildren overrides PhysicalPlan SetChildren interface.
 func (p *PhysicalTableReader) SetChildren(children ...PhysicalPlan) {
 	p.tablePlan = children[0]
-	if p.StoreType == kv.TiFlash {
-		p.TablePlans = append(p.TablePlans, p.tablePlan)
-	} else {
-		p.TablePlans = flattenPushDownPlan(p.tablePlan)
-	}
+	p.TablePlans = flattenPushDownPlan(p.tablePlan)
 }
 
 // PhysicalIndexReader is the index reader in tidb.
