@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types/json"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -172,11 +171,10 @@ func (d *Datum) GetString() string {
 }
 
 // SetString sets string value.
-func (d *Datum) SetString(s string, collation string, length int) {
+func (d *Datum) SetString(s string, collation string) {
 	d.k = KindString
 	sink(s)
 	d.b = hack.Slice(s)
-	d.length = uint32(length)
 	d.collation = collation
 }
 
@@ -442,7 +440,7 @@ func (d *Datum) SetValue(val interface{}) {
 	case float64:
 		d.SetFloat64(x)
 	case string:
-		d.SetString(x, mysql.DefaultCollationName, collate.DefaultLen)
+		d.SetString(x, mysql.DefaultCollationName)
 	case []byte:
 		d.SetBytes(x)
 	case *MyDecimal:
@@ -861,7 +859,7 @@ func (d *Datum) convertToString(sc *stmtctx.StatementContext, target *FieldType)
 		return invalidConv(d, target.Tp)
 	}
 	s, err := ProduceStrWithSpecifiedTp(s, target, sc, true)
-	ret.SetString(s, target.Collate, target.Flen)
+	ret.SetString(s, target.Collate)
 	if target.Charset == charset.CharsetBin {
 		ret.k = KindBytes
 	}
@@ -1699,13 +1697,13 @@ func NewBytesDatum(b []byte) (d Datum) {
 
 // NewStringDatum creates a new Datum from a string.
 func NewStringDatum(s string) (d Datum) {
-	d.SetString(s, mysql.DefaultCollationName, collate.DefaultLen)
+	d.SetString(s, mysql.DefaultCollationName)
 	return d
 }
 
 // NewCollationStringDatum creates a new Datum from a string with collation and length info.
 func NewCollationStringDatum(s string, collation string, length int) (d Datum) {
-	d.SetString(s, collation, length)
+	d.SetString(s, collation)
 	return d
 }
 
@@ -1919,7 +1917,11 @@ func GetMaxValue(ft *FieldType) (max Datum) {
 		max.SetFloat32(float32(GetMaxFloat(ft.Flen, ft.Decimal)))
 	case mysql.TypeDouble:
 		max.SetFloat64(GetMaxFloat(ft.Flen, ft.Decimal))
-	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar:
+		// codec.Encode KindMaxValue, to avoid import circle
+		bytes := []byte{250}
+		max.SetString(string(bytes), ft.Collate)
+	case mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		// codec.Encode KindMaxValue, to avoid import circle
 		bytes := []byte{250}
 		max.SetBytes(bytes)
@@ -1950,7 +1952,11 @@ func GetMinValue(ft *FieldType) (min Datum) {
 		min.SetFloat32(float32(-GetMaxFloat(ft.Flen, ft.Decimal)))
 	case mysql.TypeDouble:
 		min.SetFloat64(-GetMaxFloat(ft.Flen, ft.Decimal))
-	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar:
+		// codec.Encode KindMinNotNull, to avoid import circle
+		bytes := []byte{1}
+		min.SetString(string(bytes), ft.Collate)
+	case mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		// codec.Encode KindMinNotNull, to avoid import circle
 		bytes := []byte{1}
 		min.SetBytes(bytes)
