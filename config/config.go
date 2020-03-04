@@ -249,6 +249,7 @@ type Security struct {
 	ClusterSSLCA   string `toml:"cluster-ssl-ca" json:"cluster-ssl-ca"`
 	ClusterSSLCert string `toml:"cluster-ssl-cert" json:"cluster-ssl-cert"`
 	ClusterSSLKey  string `toml:"cluster-ssl-key" json:"cluster-ssl-key"`
+	ClusterAllowCN string `toml:"cluster-allow-cn" json:"cluster-allow-cn"`
 }
 
 // The ErrConfigValidationFailed error is used so that external callers can do a type assertion
