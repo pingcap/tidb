@@ -330,7 +330,7 @@ func (s *testPessimisticSuite) TestProcesslistLastWait(c *C) {
 		defer wg.Done()
 		session2.Exec("select * from x where id = 1 for update")
 	}()
-	time.Sleep(1 * time.Second)
+	time.Sleep(3 * time.Second)
 	ps := session3.Se.GetSessionManager().ShowProcessList()
 	var waitTs uint64
 	for _, p := range ps {
