@@ -90,7 +90,7 @@ func newBaseBuiltinFunc(ctx sessionctx.Context, args []Expression) baseBuiltinFu
 	if ctx == nil {
 		panic("ctx should not be nil")
 	}
-	b := baseBuiltinFunc{
+	return baseBuiltinFunc{
 		bufAllocator:           newLocalSliceBuffer(len(args)),
 		childrenVectorizedOnce: new(sync.Once),
 		childrenReversedOnce:   new(sync.Once),
@@ -99,10 +99,6 @@ func newBaseBuiltinFunc(ctx sessionctx.Context, args []Expression) baseBuiltinFu
 		ctx:  ctx,
 		tp:   types.NewFieldType(mysql.TypeUnspecified),
 	}
-	chr, col, len := b.CharsetAndCollation(ctx)
-	b.SetCharsetAndCollation(chr, col, len)
-	b.setCollator(collate.GetCollator(col))
-	return b
 }
 
 // newBaseBuiltinFuncWithTp creates a built-in function signature with specified types of arguments and the return type of the function.
