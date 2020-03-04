@@ -16,6 +16,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 
@@ -43,6 +44,8 @@ type (
 		expected string
 		severity string
 		detail   string
+		// degree only used for sort.
+		degree float64
 	}
 
 	inspectionName string
@@ -148,6 +151,9 @@ func (e *inspectionResultRetriever) retrieve(ctx context.Context, sctx sessionct
 		}
 		// make result stable
 		sort.Slice(results, func(i, j int) bool {
+			if results[i].degree > 0 || results[j].degree > 0 {
+				return results[i].degree > results[j].degree
+			}
 			if lhs, rhs := results[i].item, results[j].item; lhs != rhs {
 				return lhs < rhs
 			}
@@ -432,6 +438,7 @@ func (criticalErrorInspection) inspect(ctx context.Context, sctx sessionctx.Cont
 			}
 			for _, row := range rows {
 				var actual, detail string
+				var degree float64
 				if rest := def.Labels[1:]; len(rest) > 0 {
 					values := make([]string, 0, len(rest))
 					// `i+1` and `1+len(rest)` means skip the first field `instance`
@@ -440,10 +447,12 @@ func (criticalErrorInspection) inspect(ctx context.Context, sctx sessionctx.Cont
 					}
 					// TODO: find a better way to construct the `actual` field
 					actual = fmt.Sprintf("%.2f(%s)", row.GetFloat64(1+len(rest)), strings.Join(values, ", "))
+					degree = row.GetFloat64(1 + len(rest))
 					detail = fmt.Sprintf("select * from `%s`.`%s` %s and (`instance`,`%s`)=('%s','%s')",
 						util.MetricSchemaName.L, rule.tbl, condition, strings.Join(rest, "`,`"), row.GetString(0), strings.Join(values, "','"))
 				} else {
 					actual = fmt.Sprintf("%.2f", row.GetFloat64(1))
+					degree = row.GetFloat64(1)
 					detail = fmt.Sprintf("select * from `%s`.`%s` %s and `instance`='%s'",
 						util.MetricSchemaName.L, rule.tbl, condition, row.GetString(0))
 				}
@@ -456,6 +465,7 @@ func (criticalErrorInspection) inspect(ctx context.Context, sctx sessionctx.Cont
 					expected: "0",
 					severity: "warning",
 					detail:   detail,
+					degree:   degree,
 				}
 				results = append(results, result)
 			}
@@ -576,6 +586,7 @@ func (thresholdCheckInspection) inspectThreshold1(ctx context.Context, sctx sess
 		}
 		for _, row := range rows {
 			actual := fmt.Sprintf("%.2f", row.GetFloat64(1))
+			degree := math.Abs(row.GetFloat64(1)-row.GetFloat64(2)) / math.Max(row.GetFloat64(1), row.GetFloat64(2))
 			expected := ""
 			if len(rule.configKey) > 0 {
 				expected = fmt.Sprintf("< %.2f, config: %v=%v", row.GetFloat64(2), rule.configKey, row.GetString(3))
@@ -592,6 +603,7 @@ func (thresholdCheckInspection) inspectThreshold1(ctx context.Context, sctx sess
 				expected: expected,
 				severity: "warning",
 				detail:   detail,
+				degree:   degree,
 			}
 			results = append(results, result)
 		}
@@ -740,6 +752,7 @@ func (thresholdCheckInspection) inspectThreshold2(ctx context.Context, sctx sess
 		}
 		for _, row := range rows {
 			actual := fmt.Sprintf("%.3f", row.GetFloat64(1))
+			degree := math.Abs(row.GetFloat64(1)-rule.threshold) / math.Max(row.GetFloat64(1), rule.threshold)
 			expected := ""
 			if rule.isMin {
 				expected = fmt.Sprintf("> %.3f", rule.threshold)
@@ -754,6 +767,7 @@ func (thresholdCheckInspection) inspectThreshold2(ctx context.Context, sctx sess
 				expected: expected,
 				severity: "warning",
 				detail:   sql,
+				degree:   degree,
 			}
 			results = append(results, result)
 		}
@@ -792,7 +806,7 @@ func (c compareStoreStatus) genResult(_ string, row chunk.Row) inspectionResult 
 	addr2 := row.GetString(2)
 	value2 := row.GetFloat64(3)
 	ratio := row.GetFloat64(4)
-	detail := fmt.Sprintf("%v %s is %v, much more than %v %s %v", addr1, c.tp, value1, addr2, c.tp, value2)
+	detail := fmt.Sprintf("%v %s is %f, much more than %v %s %f", addr1, c.tp, value1, addr2, c.tp, value2)
 	return inspectionResult{
 		tp:       "tikv",
 		instance: addr2,
@@ -801,6 +815,7 @@ func (c compareStoreStatus) genResult(_ string, row chunk.Row) inspectionResult 
 		expected: fmt.Sprintf("< %.2f%%", c.threshold*100),
 		severity: "warning",
 		detail:   detail,
+		degree:   ratio,
 	}
 }
 
@@ -819,6 +834,7 @@ func (c checkRegionHealth) genSQL(timeRange plannercore.QueryTimeRange) string {
 func (c checkRegionHealth) genResult(_ string, row chunk.Row) inspectionResult {
 	detail := fmt.Sprintf("the count of extra-perr and learner-peer and pending-peer is %v, it means the scheduling is too frequent or too slow", row.GetFloat64(1))
 	actual := fmt.Sprintf("%.2f", row.GetFloat64(1))
+	degree := math.Abs(row.GetFloat64(1)-100) / math.Max(row.GetFloat64(1), 100)
 	return inspectionResult{
 		tp:       "pd",
 		instance: row.GetString(0),
@@ -827,6 +843,7 @@ func (c checkRegionHealth) genResult(_ string, row chunk.Row) inspectionResult {
 		expected: "< 100",
 		severity: "warning",
 		detail:   detail,
+		degree:   degree,
 	}
 }
 
@@ -843,6 +860,7 @@ func (c checkStoreRegionTooMuch) genSQL(timeRange plannercore.QueryTimeRange) st
 
 func (c checkStoreRegionTooMuch) genResult(sql string, row chunk.Row) inspectionResult {
 	actual := fmt.Sprintf("%.2f", row.GetFloat64(1))
+	degree := math.Abs(row.GetFloat64(1)-20000) / math.Max(row.GetFloat64(1), 20000)
 	return inspectionResult{
 		tp:       "tikv",
 		instance: row.GetString(0),
@@ -851,6 +869,7 @@ func (c checkStoreRegionTooMuch) genResult(sql string, row chunk.Row) inspection
 		expected: "<= 20000",
 		severity: "warning",
 		detail:   sql,
+		degree:   degree,
 	}
 }
 
