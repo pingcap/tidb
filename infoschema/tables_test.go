@@ -633,6 +633,15 @@ func (s *testTableSuite) TestProfiling(c *C) {
 	tk.MustQuery("select * from information_schema.profiling").Check(testkit.Rows("0 0  0 0 0 0 0 0 0 0 0 0 0 0   0"))
 }
 
+func (s *testTableSuite) TestTableIDAndIndexID(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("drop table if exists test.t")
+	tk.MustExec("create table test.t (a int, b int, primary key(a), key k1(b))")
+	tblID, err := strconv.Atoi(tk.MustQuery("select tidb_table_id from information_schema.tables where table_schema = 'test' and table_name = 't'").Rows()[0][0].(string))
+	c.Assert(err, IsNil)
+	c.Assert(tblID, Greater, 0)
+}
+
 func prepareSlowLogfile(c *C, slowLogFileName string) {
 	f, err := os.OpenFile(slowLogFileName, os.O_CREATE|os.O_WRONLY, 0644)
 	c.Assert(err, IsNil)
