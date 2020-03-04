@@ -59,6 +59,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			e.rows = dataForCharacterSets()
 		case infoschema.TableCollations:
 			e.rows = dataForCollations()
+		case infoschema.TableCollationCharacterSetApplicability:
+			e.rows = dataForCollationCharacterSetApplicability()
 		}
 		if err != nil {
 			return nil, err
@@ -194,6 +196,16 @@ func dataForCollations() (records [][]types.Datum) {
 		}
 		records = append(records,
 			types.MakeDatums(collation.Name, collation.CharsetName, collation.ID, isDefault, "Yes", 1),
+		)
+	}
+	return records
+}
+
+func dataForCollationCharacterSetApplicability() (records [][]types.Datum) {
+	collations := charset.GetSupportedCollations()
+	for _, collation := range collations {
+		records = append(records,
+			types.MakeDatums(collation.Name, collation.CharsetName),
 		)
 	}
 	return records
