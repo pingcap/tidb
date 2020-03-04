@@ -761,7 +761,7 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 	if cop, ok := t.(*copTask); ok {
 		// For double read which requires order being kept, the limit cannot be pushed down to the table side,
 		// because handles would be reordered before being sent to table scan.
-		if !cop.keepOrder || !cop.indexPlanFinished || cop.indexPlan == nil {
+		if (!cop.keepOrder || !cop.indexPlanFinished || cop.indexPlan == nil) && len(cop.rootTaskConds) == 0 {
 			// When limit is pushed down, we should remove its offset.
 			newCount := p.Offset + p.Count
 			childProfile := cop.plan().statsInfo()
@@ -910,7 +910,7 @@ func (p *PhysicalTopN) getPushedDownTopN(childPlan PhysicalPlan) *PhysicalTopN {
 func (p *PhysicalTopN) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	inputCount := t.count()
-	if copTask, ok := t.(*copTask); ok && p.canPushDown() {
+	if copTask, ok := t.(*copTask); ok && p.canPushDown() && len(copTask.rootTaskConds) == 0 {
 		// If all columns in topN are from index plan, we push it to index plan, otherwise we finish the index plan and
 		// push it to table plan.
 		var pushedDownTopN *PhysicalTopN
