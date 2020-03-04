@@ -216,7 +216,7 @@ func (configInspection) inspectDiffConfig(_ context.Context, sctx sessionctx.Con
 	var results []inspectionResult
 	for _, row := range rows {
 		if filter.enable(row.GetString(1)) {
-			detail := fmt.Sprintf("execute the sql to see more detail: select * from information_schema.cluster_config where type='%s' and `key`='%s'",
+			detail := fmt.Sprintf("the cluster has different config value of %[2]s, execute the sql to see more detail: select * from information_schema.cluster_config where type='%[1]s' and `key`='%[2]s'",
 				row.GetString(0), row.GetString(1))
 			results = append(results, inspectionResult{
 				tp:       row.GetString(0),
@@ -294,7 +294,7 @@ func (versionInspection) inspect(_ context.Context, sctx sessionctx.Context, fil
 				actual:   "inconsistent",
 				expected: "consistent",
 				severity: "critical",
-				detail:   fmt.Sprintf("execute the sql to see more detail: select * from information_schema.cluster_info where type='%s'", row.GetString(0)),
+				detail:   fmt.Sprintf("the cluster has %[1]v different %[2]s version, execute the sql to see more detail: select * from information_schema.cluster_info where type='%[2]s'", row.GetUint64(1), row.GetString(0)),
 			})
 		}
 	}
@@ -320,7 +320,7 @@ func (c currentLoadInspection) inspect(_ context.Context, sctx sessionctx.Contex
 			actual:   row.GetString(3),
 			expected: expected,
 			severity: "warning",
-			detail: fmt.Sprintf("execute the sql to see more detail: select * from information_schema.cluster_hardware where type='%s' and instance='%s' and device_type='disk' and device_name='%s'",
+			detail: fmt.Sprintf("current disk-usage is too high, execute the sql to see more detail: select * from information_schema.cluster_hardware where type='%s' and instance='%s' and device_type='disk' and device_name='%s'",
 				row.GetString(0), row.GetString(1), row.GetString(2)),
 		}
 	}
@@ -404,20 +404,13 @@ func (criticalErrorInspection) inspect(ctx context.Context, sctx sessionctx.Cont
 		item string
 		tbl  string
 	}{
-		{tp: "tidb", item: "failed-query-opm", tbl: "tidb_failed_query_opm"},
-		{tp: "tikv", item: "critical-error", tbl: "tikv_critical_error"},
-		{tp: "tidb", item: "panic-count", tbl: "tidb_panic_count"},
-		{tp: "tidb", item: "binlog-error", tbl: "tidb_binlog_error_count"},
-		{tp: "tidb", item: "pd-cmd-failed", tbl: "pd_cmd_fail_ops"},
-		{tp: "tidb", item: "ticlient-region-error", tbl: "tidb_kv_region_error_ops"},
-		{tp: "tidb", item: "lock-resolve", tbl: "tidb_lock_resolver_ops"},
-		{tp: "tikv", item: "scheduler-is-busy", tbl: "tikv_scheduler_is_busy"},
-		{tp: "tikv", item: "coprocessor-is-busy", tbl: "tikv_coprocessor_is_busy"},
-		{tp: "tikv", item: "channel-is-full", tbl: "tikv_channel_full"},
-		{tp: "tikv", item: "coprocessor-error", tbl: "tikv_coprocessor_request_error"},
-		{tp: "tidb", item: "schema-lease-error", tbl: "tidb_schema_lease_error_opm"},
-		{tp: "tidb", item: "txn-retry-error", tbl: "tidb_transaction_retry_error_ops"},
-		{tp: "tikv", item: "grpc-errors", tbl: "tikv_grpc_errors"},
+		{tp: "tikv", item: "critical-error", tbl: "tikv_critical_error_total_count"},
+		{tp: "tidb", item: "panic-count", tbl: "tidb_panic_count_total_count"},
+		{tp: "tidb", item: "binlog-error", tbl: "tidb_binlog_error_total_count"},
+		{tp: "tikv", item: "scheduler-is-busy", tbl: "tikv_scheduler_is_busy_total_count"},
+		{tp: "tikv", item: "coprocessor-is-busy", tbl: "tikv_coprocessor_is_busy_total_count"},
+		{tp: "tikv", item: "channel-is-full", tbl: "tikv_channel_full_total_count"},
+		{tp: "tikv", item: "tikv_engine_write_stall", tbl: "tikv_engine_write_stall"},
 	}
 
 	condition := filter.timeRange.Condition()
@@ -429,7 +422,7 @@ func (criticalErrorInspection) inspect(ctx context.Context, sctx sessionctx.Cont
 				sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("metrics table: %s not found", rule.tbl))
 				continue
 			}
-			sql := fmt.Sprintf("select `%[1]s`,max(value) as max from `%[2]s`.`%[3]s` %[4]s group by `%[1]s` having max>=1.0",
+			sql := fmt.Sprintf("select `%[1]s`,sum(value) as total from `%[2]s`.`%[3]s` %[4]s group by `%[1]s` having total>=1.0",
 				strings.Join(def.Labels, "`,`"), util.MetricSchemaName.L, rule.tbl, condition)
 			rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithContext(ctx, sql)
 			if err != nil {
@@ -448,14 +441,11 @@ func (criticalErrorInspection) inspect(ctx context.Context, sctx sessionctx.Cont
 					// TODO: find a better way to construct the `actual` field
 					actual = fmt.Sprintf("%.2f(%s)", row.GetFloat64(1+len(rest)), strings.Join(values, ", "))
 					degree = row.GetFloat64(1 + len(rest))
-					detail = fmt.Sprintf("select * from `%s`.`%s` %s and (`instance`,`%s`)=('%s','%s')",
-						util.MetricSchemaName.L, rule.tbl, condition, strings.Join(rest, "`,`"), row.GetString(0), strings.Join(values, "','"))
 				} else {
 					actual = fmt.Sprintf("%.2f", row.GetFloat64(1))
 					degree = row.GetFloat64(1)
-					detail = fmt.Sprintf("select * from `%s`.`%s` %s and `instance`='%s'",
-						util.MetricSchemaName.L, rule.tbl, condition, row.GetString(0))
 				}
+				detail = fmt.Sprintf("The total number of errors about '%s' is too many.", rule.item)
 				result := inspectionResult{
 					tp: rule.tp,
 					// NOTE: all tables which can be inspected here whose first label must be `instance`
@@ -463,7 +453,7 @@ func (criticalErrorInspection) inspect(ctx context.Context, sctx sessionctx.Cont
 					item:     rule.item,
 					actual:   actual,
 					expected: "0",
-					severity: "warning",
+					severity: "critical",
 					detail:   detail,
 					degree:   degree,
 				}
@@ -620,6 +610,7 @@ func (thresholdCheckInspection) inspectThreshold2(ctx context.Context, sctx sess
 		threshold float64
 		factor    float64
 		isMin     bool
+		detail    string
 	}{
 		{
 			tp:        "tidb",
@@ -699,6 +690,7 @@ func (thresholdCheckInspection) inspectThreshold2(ctx context.Context, sctx sess
 			item:      "scheduler-pending-cmd-count",
 			tbl:       "tikv_scheduler_pending_commands",
 			threshold: 1000,
+			detail:    " %s tikv scheduler has too many pending commands",
 		},
 		{
 			tp:        "tikv",
@@ -759,6 +751,16 @@ func (thresholdCheckInspection) inspectThreshold2(ctx context.Context, sctx sess
 			} else {
 				expected = fmt.Sprintf("< %.3f", rule.threshold)
 			}
+			detail := rule.detail
+			if len(detail) == 0 {
+				if strings.HasSuffix(rule.item, "duration") {
+					detail = fmt.Sprintf("max duration of %s %s %s was too slow", row.GetString(0), rule.tp, rule.item)
+				} else if strings.HasSuffix(rule.item, "hit") {
+					detail = fmt.Sprintf("min %s rate of %s %s was too low", rule.item, row.GetString(0), rule.tp)
+				}
+			} else {
+				detail = fmt.Sprintf(detail, row.GetString(0))
+			}
 			result := inspectionResult{
 				tp:       rule.tp,
 				instance: row.GetString(0),
@@ -766,7 +768,7 @@ func (thresholdCheckInspection) inspectThreshold2(ctx context.Context, sctx sess
 				actual:   actual,
 				expected: expected,
 				severity: "warning",
-				detail:   sql,
+				detail:   detail,
 				degree:   degree,
 			}
 			results = append(results, result)
@@ -806,7 +808,7 @@ func (c compareStoreStatus) genResult(_ string, row chunk.Row) inspectionResult 
 	addr2 := row.GetString(2)
 	value2 := row.GetFloat64(3)
 	ratio := row.GetFloat64(4)
-	detail := fmt.Sprintf("%v %s is %f, much more than %v %s %f", addr1, c.tp, value1, addr2, c.tp, value2)
+	detail := fmt.Sprintf("%v %s is %.2f, much more than %v %s %.2f", addr1, c.tp, value1, addr2, c.tp, value2)
 	return inspectionResult{
 		tp:       "tikv",
 		instance: addr2,
@@ -832,7 +834,7 @@ func (c checkRegionHealth) genSQL(timeRange plannercore.QueryTimeRange) string {
 }
 
 func (c checkRegionHealth) genResult(_ string, row chunk.Row) inspectionResult {
-	detail := fmt.Sprintf("the count of extra-perr and learner-peer and pending-peer is %v, it means the scheduling is too frequent or too slow", row.GetFloat64(1))
+	detail := fmt.Sprintf("the count of extra-perr and learner-peer and pending-peer are %v, it means the scheduling is too frequent or too slow", row.GetFloat64(1))
 	actual := fmt.Sprintf("%.2f", row.GetFloat64(1))
 	degree := math.Abs(row.GetFloat64(1)-100) / math.Max(row.GetFloat64(1), 100)
 	return inspectionResult{
@@ -868,7 +870,7 @@ func (c checkStoreRegionTooMuch) genResult(sql string, row chunk.Row) inspection
 		actual:   actual,
 		expected: "<= 20000",
 		severity: "warning",
-		detail:   sql,
+		detail:   fmt.Sprintf("%s tikv has too many region count", row.GetString(0)),
 		degree:   degree,
 	}
 }
