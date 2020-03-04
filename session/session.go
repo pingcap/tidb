@@ -1521,7 +1521,17 @@ func getHostByIP(ip string) []string {
 
 // CreateSession4Test creates a new session environment for test.
 func CreateSession4Test(store kv.Storage) (Session, error) {
-	s, err := CreateSession(store)
+	return CreateSession4TestWithOpt(store, nil)
+}
+
+// Opt describes the option for creating session
+type Opt struct {
+	PreparedPlanCache *kvcache.SimpleLRUCache
+}
+
+// CreateSession4TestWithOpt creates a new session environment for test.
+func CreateSession4TestWithOpt(store kv.Storage, opt *Opt) (Session, error) {
+	s, err := CreateSessionWithOpt(store, opt)
 	if err == nil {
 		// initialize session variables for test.
 		s.GetSessionVars().InitChunkSize = 2
@@ -1532,7 +1542,13 @@ func CreateSession4Test(store kv.Storage) (Session, error) {
 
 // CreateSession creates a new session environment.
 func CreateSession(store kv.Storage) (Session, error) {
-	s, err := createSession(store)
+	return CreateSessionWithOpt(store, nil)
+}
+
+// CreateSessionWithOpt creates a new session environment with option.
+// Use default option if opt is nil.
+func CreateSessionWithOpt(store kv.Storage, opt *Opt) (Session, error) {
+	s, err := createSessionWithOpt(store, opt)
 	if err != nil {
 		return nil, err
 	}
@@ -1729,6 +1745,10 @@ func runInBootstrapSession(store kv.Storage, bootstrap func(Session)) {
 }
 
 func createSession(store kv.Storage) (*session, error) {
+	return createSessionWithOpt(store, nil)
+}
+
+func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 	dom, err := domap.Get(store)
 	if err != nil {
 		return nil, err
@@ -1741,8 +1761,12 @@ func createSession(store kv.Storage) (*session, error) {
 		client:          store.GetClient(),
 	}
 	if plannercore.PreparedPlanCacheEnabled() {
-		s.preparedPlanCache = kvcache.NewSimpleLRUCache(plannercore.PreparedPlanCacheCapacity,
-			plannercore.PreparedPlanCacheMemoryGuardRatio, plannercore.PreparedPlanCacheMaxMemory.Load())
+		if opt != nil && opt.PreparedPlanCache != nil {
+			s.preparedPlanCache = opt.PreparedPlanCache
+		} else {
+			s.preparedPlanCache = kvcache.NewSimpleLRUCache(plannercore.PreparedPlanCacheCapacity,
+				plannercore.PreparedPlanCacheMemoryGuardRatio, plannercore.PreparedPlanCacheMaxMemory.Load())
+		}
 	}
 	s.mu.values = make(map[fmt.Stringer]interface{})
 	s.lockedTables = make(map[int64]model.TableLockTpInfo)
