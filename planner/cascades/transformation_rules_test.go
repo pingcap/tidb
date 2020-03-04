@@ -288,12 +288,12 @@ func (s *testTransformationRuleSuite) TestMergeAdjacentLimit(c *C) {
 }
 
 func (s *testTransformationRuleSuite) TestMergeAdjacentWindow(c *C) {
-	s.optimizer.ResetTransformationRules(map[memo.Operand][]Transformation{
-		memo.OperandProjection: {
-			NewRuleEliminateProjection(),
-		},
+	s.optimizer.ResetTransformationRules(TransformationRuleBatch{
 		memo.OperandWindow: {
 			NewRuleMergeAdjacentWindow(),
+		},
+		memo.OperandProjection: {
+			NewRuleEliminateProjection(),
 		},
 	})
 	defer func() {
