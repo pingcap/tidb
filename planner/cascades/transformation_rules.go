@@ -1031,8 +1031,7 @@ func (r *EliminateProjection) OnTransform(old *memo.ExprIter) (newExprs []*memo.
 	finalGroupExprs := make([]*memo.GroupExpr, 0, child.Equivalents.Len())
 	for elem := child.Equivalents.Front(); elem != nil; elem = elem.Next() {
 		oldExpr := elem.Value.(*memo.GroupExpr)
-		newExpr := memo.NewGroupExpr(oldExpr.ExprNode)
-		newExpr.SetChildren(oldExpr.Children...)
+		newExpr := oldExpr.Clone()
 		finalGroupExprs = append(finalGroupExprs, newExpr)
 	}
 	return finalGroupExprs, true, false, nil
@@ -2127,8 +2126,7 @@ func (r *EliminateTableDualBelowUnionAll) OnTransform(old *memo.ExprIter) (newEx
 		newExprs := make([]*memo.GroupExpr, 0, child.Equivalents.Len())
 		for iter := child.Equivalents.Front(); iter != nil; iter = iter.Next() {
 			oldExpr := iter.Value.(*memo.GroupExpr)
-			newExpr := memo.NewGroupExpr(oldExpr.ExprNode)
-			newExpr.SetChildren(oldExpr.Children...)
+			newExpr := oldExpr.Clone()
 			newExprs = append(newExprs, newExpr)
 		}
 		return newExprs, true, false, nil

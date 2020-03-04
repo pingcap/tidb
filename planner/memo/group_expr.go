@@ -90,3 +90,18 @@ func (e *GroupExpr) HasAppliedRule(rule interface{}) bool {
 	_, ok := e.appliedRuleSet[uint64(ruleID)]
 	return ok
 }
+
+// CopyAppliedRules copies the appliedRuleSet of one GroupExpr to another.
+func (e *GroupExpr) CopyAppliedRules(expr *GroupExpr) {
+	for ruleID := range expr.appliedRuleSet {
+		e.appliedRuleSet[ruleID] = struct{}{}
+	}
+}
+
+// Clone clones a GroupExpr.
+func (e *GroupExpr) Clone() *GroupExpr {
+	newExpr := NewGroupExpr(e.ExprNode)
+	newExpr.SetChildren(e.Children...)
+	newExpr.CopyAppliedRules(e)
+	return newExpr
+}
