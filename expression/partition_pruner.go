@@ -79,7 +79,7 @@ func (p *hashPartitionPruner) reduceColumnEQ() bool {
 
 func (p *hashPartitionPruner) reduceConstantEQ() bool {
 	for _, con := range p.conditions {
-		col, cond := validEqualCond(con)
+		col, cond := validEqualCond(p.ctx, con)
 		if col != nil {
 			id := p.getColID(col)
 			if p.constantMap[id] != nil {
