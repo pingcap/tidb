@@ -74,7 +74,7 @@ func (mebd *mockEtcdBackend) StartGCWorker() error {
 	panic("not implemented")
 }
 
-// ETCD use ip:port as unix socket address, however this addrss is invalid on windows.
+// ETCD use ip:port as unix socket address, however this address is invalid on windows.
 // We have to skip some of the test in such case.
 // https://github.com/etcd-io/etcd/blob/f0faa5501d936cd8c9f561bb9d1baca70eb67ab1/pkg/types/urls.go#L42
 func unixSocketAvailable() bool {
@@ -228,6 +228,8 @@ func (msm *mockSessionManager) GetProcessInfo(id uint64) (*util.ProcessInfo, boo
 }
 
 func (msm *mockSessionManager) Kill(cid uint64, query bool) {}
+
+func (msm *mockSessionManager) UpdateTLSConfig(cfg *tls.Config) {}
 
 func (*testSuite) TestT(c *C) {
 	defer testleak.AfterTest(c)()

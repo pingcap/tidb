@@ -214,7 +214,6 @@ func (p *PhysicalIndexMergeJoin) attach2Task(tasks ...task) task {
 	} else {
 		p.SetChildren(innerTask.plan(), outerTask.plan())
 	}
-	p.schema = BuildPhysicalJoinSchema(p.JoinType, p)
 	return &rootTask{
 		p:   p,
 		cst: p.GetCost(outerTask, innerTask),
@@ -292,7 +291,6 @@ func (p *PhysicalIndexHashJoin) attach2Task(tasks ...task) task {
 	} else {
 		p.SetChildren(innerTask.plan(), outerTask.plan())
 	}
-	p.schema = BuildPhysicalJoinSchema(p.JoinType, p)
 	return &rootTask{
 		p:   p,
 		cst: p.GetCost(outerTask, innerTask),
@@ -368,7 +366,6 @@ func (p *PhysicalIndexJoin) attach2Task(tasks ...task) task {
 	} else {
 		p.SetChildren(innerTask.plan(), outerTask.plan())
 	}
-	p.schema = BuildPhysicalJoinSchema(p.JoinType, p)
 	return &rootTask{
 		p:   p,
 		cst: p.GetCost(outerTask, innerTask),
@@ -521,7 +518,6 @@ func (p *PhysicalHashJoin) attach2Task(tasks ...task) task {
 	lTask := finishCopTask(p.ctx, tasks[0].copy())
 	rTask := finishCopTask(p.ctx, tasks[1].copy())
 	p.SetChildren(lTask.plan(), rTask.plan())
-	p.schema = BuildPhysicalJoinSchema(p.JoinType, p)
 	return &rootTask{
 		p:   p,
 		cst: lTask.cost() + rTask.cost() + p.GetCost(lTask.count(), rTask.count()),
@@ -891,7 +887,12 @@ func (p *PhysicalSort) attach2Task(tasks ...task) task {
 }
 
 func (p *NominalSort) attach2Task(tasks ...task) task {
-	return tasks[0]
+	if p.OnlyColumn {
+		return tasks[0]
+	}
+	t := tasks[0].copy()
+	t = attachPlan2Task(p, t)
+	return t
 }
 
 func (p *PhysicalTopN) getPushedDownTopN(childPlan PhysicalPlan) *PhysicalTopN {

@@ -878,8 +878,9 @@ type LogicalLimit struct {
 type LogicalLock struct {
 	baseLogicalPlan
 
-	Lock         ast.SelectLockType
-	tblID2Handle map[int64][]*expression.Column
+	Lock             ast.SelectLockType
+	tblID2Handle     map[int64][]*expression.Column
+	partitionedTable []table.PartitionedTable
 }
 
 // WindowFrame represents a window function frame.
