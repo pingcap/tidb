@@ -95,6 +95,9 @@ var TiDBLayerOptimizationBatch = TransformationRuleBatch{
 		NewRulePushTopNDownUnionAll(),
 		NewRuleMergeAdjacentTopN(),
 	},
+	memo.OperandUnionAll: {
+		NewRuleEliminateTableDualBelowUnionAll(),
+	},
 }
 
 // TiKVLayerOptimizationBatch does the optimization related to TiKV layer.

@@ -2165,11 +2165,11 @@
           "Group#1 Schema:[Column#37]",
           "    Projection_9 input:[Group#3], test.t.a",
           "Group#3 Schema:[test.t.a]",
-          "    TableScan_6 table:t",
+          "    DataSource_6 table:t",
           "Group#2 Schema:[Column#37]",
           "    Projection_11 input:[Group#4], test.t.b",
           "Group#4 Schema:[test.t.b]",
-          "    TableScan_1 table:t"
+          "    DataSource_1 table:t"
         ]
       },
       {
@@ -2178,7 +2178,7 @@
           "Group#0 Schema:[Column#25]",
           "    Projection_7 input:[Group#1], test.t.a",
           "Group#1 Schema:[test.t.a]",
-          "    TableScan_4 table:t"
+          "    DataSource_4 table:t"
         ]
       },
       {

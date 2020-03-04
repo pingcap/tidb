@@ -397,7 +397,7 @@ func (s *testTransformationRuleSuite) TestEliminateTableDualBelowUnionAll(c *C) 
 		},
 	})
 	defer func() {
-		s.optimizer.ResetTransformationRules(defaultTransformationMap)
+		s.optimizer.ResetTransformationRules(DefaultRuleBatches...)
 	}()
 	var input []string
 	var output []struct {
