@@ -730,7 +730,12 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 		tp := t.tablePlan
 		splitCopAvg2CountAndSum(tp)
 		for len(tp.Children()) > 0 {
-			tp = tp.Children()[0]
+			if len(tp.Children()) == 1 {
+				tp = tp.Children()[0]
+			} else {
+				join := tp.(*PhysicalBroadCastJoin)
+				tp = join.children[1 - join.InnerChildIdx]
+			}
 		}
 		ts := tp.(*PhysicalTableScan)
 		p := PhysicalTableReader{
