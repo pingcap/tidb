@@ -25,9 +25,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mock"
@@ -236,13 +234,6 @@ func (s *testEvaluatorSuite) TestColumn2Pb(c *C) {
 	c.Assert(len(remained), Equals, 0)
 }
 
-func newBinMockCtx(c *C) sessionctx.Context {
-	ctx := mock.NewContext()
-	c.Assert(ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, charset.CharsetBin), IsNil)
-	c.Assert(ctx.GetSessionVars().SetSystemVar(variable.CollationConnection, charset.CollationBin), IsNil)
-	return ctx
-}
-
 func (s *testEvaluatorSuite) TestCompareFunc2Pb(c *C) {
 	var compareExprs = make([]Expression, 0)
 	sc := new(stmtctx.StatementContext)
@@ -251,7 +242,7 @@ func (s *testEvaluatorSuite) TestCompareFunc2Pb(c *C) {
 
 	funcNames := []string{ast.LT, ast.LE, ast.GT, ast.GE, ast.EQ, ast.NE, ast.NullEQ}
 	for _, funcName := range funcNames {
-		fc, err := NewFunction(newBinMockCtx(c), funcName, types.NewFieldType(mysql.TypeUnspecified), dg.genColumn(mysql.TypeLonglong, 1), dg.genColumn(mysql.TypeLonglong, 2))
+		fc, err := NewFunction(mock.NewContext(), funcName, types.NewFieldType(mysql.TypeUnspecified), dg.genColumn(mysql.TypeLonglong, 1), dg.genColumn(mysql.TypeLonglong, 2))
 		c.Assert(err, IsNil)
 		compareExprs = append(compareExprs, fc)
 	}
@@ -297,7 +288,7 @@ func (s *testEvaluatorSuite) TestLikeFunc2Pb(c *C) {
 		&Constant{RetType: retTp, Value: types.NewDatum(`%abc%`)},
 		&Constant{RetType: retTp, Value: types.NewDatum("\\")},
 	}
-	ctx := newBinMockCtx(c)
+	ctx := mock.NewContext()
 	retTp = types.NewFieldType(mysql.TypeUnspecified)
 	fc, err := NewFunction(ctx, ast.Like, retTp, args[0], args[1], args[3])
 	c.Assert(err, IsNil)
@@ -328,7 +319,7 @@ func (s *testEvaluatorSuite) TestArithmeticalFunc2Pb(c *C) {
 	funcNames := []string{ast.Plus, ast.Minus, ast.Mul, ast.Div, ast.Mod, ast.IntDiv}
 	for _, funcName := range funcNames {
 		fc, err := NewFunction(
-			newBinMockCtx(c),
+			mock.NewContext(),
 			funcName,
 			types.NewFieldType(mysql.TypeUnspecified),
 			dg.genColumn(mysql.TypeDouble, 1),
@@ -362,7 +353,7 @@ func (s *testEvaluatorSuite) TestDateFunc2Pb(c *C) {
 	client := new(mock.Client)
 	dg := new(dataGen4Expr2PbTest)
 	fc, err := NewFunction(
-		newBinMockCtx(c),
+		mock.NewContext(),
 		ast.DateFormat,
 		types.NewFieldType(mysql.TypeUnspecified),
 		dg.genColumn(mysql.TypeDatetime, 1),
@@ -373,7 +364,7 @@ func (s *testEvaluatorSuite) TestDateFunc2Pb(c *C) {
 	c.Assert(pbExprs[0], NotNil)
 	js, err := json.Marshal(pbExprs[0])
 	c.Assert(err, IsNil)
-	c.Assert(string(js), Equals, "{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":12,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":46,\"charset\":\"\"}},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":254,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":46,\"charset\":\"\"}}],\"sig\":6001,\"field_type\":{\"tp\":253,\"flag\":0,\"flen\":0,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"}}")
+	c.Assert(string(js), Equals, "{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":12,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":46,\"charset\":\"\"}},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":254,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":46,\"charset\":\"\"}}],\"sig\":6001,\"field_type\":{\"tp\":253,\"flag\":0,\"flen\":0,\"decimal\":-1,\"collate\":46,\"charset\":\"utf8mb4\"}}")
 }
 
 func (s *testEvaluatorSuite) TestLogicalFunc2Pb(c *C) {
@@ -389,7 +380,7 @@ func (s *testEvaluatorSuite) TestLogicalFunc2Pb(c *C) {
 			args = append(args, dg.genColumn(mysql.TypeTiny, 2))
 		}
 		fc, err := NewFunction(
-			newBinMockCtx(c),
+			mock.NewContext(),
 			funcName,
 			types.NewFieldType(mysql.TypeUnspecified),
 			args...,
@@ -425,7 +416,7 @@ func (s *testEvaluatorSuite) TestBitwiseFunc2Pb(c *C) {
 			args = append(args, dg.genColumn(mysql.TypeLong, 2))
 		}
 		fc, err := NewFunction(
-			newBinMockCtx(c),
+			mock.NewContext(),
 			funcName,
 			types.NewFieldType(mysql.TypeUnspecified),
 			args...,
@@ -551,7 +542,7 @@ func (s *testEvaluatorSuite) TestControlFunc2Pb(c *C) {
 			args = append(args, dg.genColumn(mysql.TypeLong, 3))
 		}
 		fc, err := NewFunction(
-			newBinMockCtx(c),
+			mock.NewContext(),
 			funcName,
 			types.NewFieldType(mysql.TypeUnspecified),
 			args...,
@@ -562,7 +553,7 @@ func (s *testEvaluatorSuite) TestControlFunc2Pb(c *C) {
 
 	pbExprs := ExpressionsToPBList(sc, controlFuncs, client)
 	jsons := []string{
-		"{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":46,\"charset\":\"\"}},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":46,\"charset\":\"\"}},{\"tp\":201,\"val\":\"gAAAAAAAAAM=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":46,\"charset\":\"\"}}],\"sig\":4208,\"field_type\":{\"tp\":3,\"flag\":128,\"flen\":0,\"decimal\":0,\"collate\":63,\"charset\":\"binary\"}}",
+		"{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":46,\"charset\":\"\"}},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":46,\"charset\":\"\"}},{\"tp\":201,\"val\":\"gAAAAAAAAAM=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":46,\"charset\":\"\"}}],\"sig\":4208,\"field_type\":{\"tp\":3,\"flag\":128,\"flen\":0,\"decimal\":0,\"collate\":46,\"charset\":\"\"}}",
 		"{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":46,\"charset\":\"\"}},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":46,\"charset\":\"\"}},{\"tp\":201,\"val\":\"gAAAAAAAAAM=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":46,\"charset\":\"\"}}],\"sig\":4107,\"field_type\":{\"tp\":3,\"flag\":128,\"flen\":-1,\"decimal\":0,\"collate\":63,\"charset\":\"binary\"}}",
 		"{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":46,\"charset\":\"\"}},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":46,\"charset\":\"\"}}],\"sig\":4101,\"field_type\":{\"tp\":3,\"flag\":128,\"flen\":-1,\"decimal\":0,\"collate\":63,\"charset\":\"binary\"}}",
 		"null",
@@ -583,7 +574,7 @@ func (s *testEvaluatorSuite) TestOtherFunc2Pb(c *C) {
 	funcNames := []string{ast.Coalesce, ast.IsNull}
 	for _, funcName := range funcNames {
 		fc, err := NewFunction(
-			newBinMockCtx(c),
+			mock.NewContext(),
 			funcName,
 			types.NewFieldType(mysql.TypeUnspecified),
 			dg.genColumn(mysql.TypeLong, 1),
@@ -594,7 +585,7 @@ func (s *testEvaluatorSuite) TestOtherFunc2Pb(c *C) {
 
 	pbExprs := ExpressionsToPBList(sc, otherFuncs, client)
 	jsons := map[string]string{
-		ast.Coalesce: "{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":46,\"charset\":\"\"}}],\"sig\":4201,\"field_type\":{\"tp\":3,\"flag\":128,\"flen\":0,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"}}",
+		ast.Coalesce: "{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":46,\"charset\":\"\"}}],\"sig\":4201,\"field_type\":{\"tp\":3,\"flag\":128,\"flen\":0,\"decimal\":-1,\"collate\":46,\"charset\":\"\"}}",
 		ast.IsNull:   "{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":46,\"charset\":\"\"}}],\"sig\":3116,\"field_type\":{\"tp\":8,\"flag\":128,\"flen\":1,\"decimal\":0,\"collate\":63,\"charset\":\"binary\"}}",
 	}
 	for i, pbExpr := range pbExprs {
@@ -728,4 +719,25 @@ func (s *testEvaluatorSerialSuites) TestNewCollationsEnabled(c *C) {
 	js, err = json.Marshal(pbByItem)
 	c.Assert(err, IsNil)
 	c.Assert(string(js), Equals, "{\"expr\":{\"tp\":201,\"val\":\"gAAAAAAAAAA=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-255,\"charset\":\"\"}},\"desc\":false}")
+}
+
+func (s *testEvalSerialSuite) TestPushCollationDown(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	dg := new(dataGen4Expr2PbTest)
+	fc, err := NewFunction(mock.NewContext(), ast.EQ, types.NewFieldType(mysql.TypeUnspecified), dg.genColumn(mysql.TypeVarchar, 0), dg.genColumn(mysql.TypeVarchar, 1))
+	c.Assert(err, IsNil)
+	client := new(mock.Client)
+	sc := new(stmtctx.StatementContext)
+
+	tps := []*types.FieldType{types.NewFieldType(mysql.TypeVarchar), types.NewFieldType(mysql.TypeVarchar)}
+	for _, coll := range []string{charset.CollationBin, charset.CollationLatin1, charset.CollationUTF8, charset.CollationUTF8MB4} {
+		fc.SetCharsetAndCollation("binary", coll, types.UnspecifiedLength) // only collation matters
+		pbExpr, _, _ := ExpressionsToPB(sc, []Expression{fc}, client)
+		expr, err := PBToExpr(pbExpr, tps, sc)
+		c.Assert(err, IsNil)
+		_, eColl, _ := expr.CharsetAndCollation(nil)
+		c.Assert(eColl, Equals, coll)
+	}
 }
