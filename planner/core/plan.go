@@ -15,6 +15,7 @@ package core
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/kv"
 	"math"
 	"strconv"
 
@@ -203,7 +204,7 @@ type PhysicalPlan interface {
 	attach2Task(...task) task
 
 	// ToPB converts physical plan to tipb executor.
-	ToPB(ctx sessionctx.Context) (*tipb.Executor, error)
+	ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error)
 
 	// getChildReqProps gets the required property by child index.
 	GetChildReqProps(idx int) *property.PhysicalProperty

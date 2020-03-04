@@ -1,6 +1,6 @@
 module github.com/pingcap/tidb
 
-replace github.com/pingcap/tipb v0.0.0-20200212061130-c4d518eb1d60 => github.com/hanfei1991/tipb v0.0.0-20200303121836-bac275f41413
+replace github.com/pingcap/tipb v0.0.0-20200212061130-c4d518eb1d60 => github.com/hanfei1991/tipb v0.0.0-20200304091852-aa600db6e32e
 
 require (
 	github.com/BurntSushi/toml v0.3.1
