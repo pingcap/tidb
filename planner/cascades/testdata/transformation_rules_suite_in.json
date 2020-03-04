@@ -121,6 +121,14 @@
     ]
   },
   {
+    "name": "TestPostTransformationRules",
+    "cases": [
+      "select b from (select b+10 as b from t) as t1 order by b + 10 limit 10",
+      "select * from (select a+1 as c, a+b as d from t) as t1 order by c+d limit 10",
+      "select a from (select a, b from t order by b limit 10) as t1"
+    ]
+  },
+  {
     "name": "TestPushLimitDownTiKVSingleGather",
     "cases": [
       "select * from t limit 1",

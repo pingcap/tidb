@@ -48,8 +48,6 @@ func (ts *testDatumSuite) TestDatum(c *C) {
 		d.SetValue(val)
 		x := d.GetValue()
 		c.Assert(x, DeepEquals, val)
-		d.SetCollation(d.Collation())
-		c.Assert(d.Collation(), NotNil)
 		c.Assert(d.Length(), Equals, int(d.length))
 		c.Assert(fmt.Sprint(d), Equals, d.String())
 	}
@@ -173,10 +171,6 @@ func (ts *testTypeConvertSuite) TestToInt64(c *C) {
 	v, err := Convert(3.1415926, ft)
 	c.Assert(err, IsNil)
 	testDatumToInt64(c, v, int64(3))
-
-	binLit, err := ParseHexStr("0x9999999999999999999999999999999999999999999")
-	c.Assert(err, IsNil)
-	testDatumToInt64(c, binLit, -1)
 }
 
 func (ts *testTypeConvertSuite) TestToFloat32(c *C) {
@@ -189,7 +183,7 @@ func (ts *testTypeConvertSuite) TestToFloat32(c *C) {
 	c.Assert(converted.Kind(), Equals, KindFloat32)
 	c.Assert(converted.GetFloat32(), Equals, float32(281.37))
 
-	datum.SetString("281.37")
+	datum.SetString("281.37", mysql.DefaultCollationName)
 	converted, err = datum.ConvertTo(sc, ft)
 	c.Assert(err, IsNil)
 	c.Assert(converted.Kind(), Equals, KindFloat32)
