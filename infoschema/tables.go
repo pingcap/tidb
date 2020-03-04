@@ -79,16 +79,17 @@ const (
 	// TableEngines is the string constant of infoschema table
 	TableEngines = "ENGINES"
 	// TableViews is the string constant of infoschema table
-	TableViews                              = "VIEWS"
-	tableRoutines                           = "ROUTINES"
-	tableParameters                         = "PARAMETERS"
-	tableEvents                             = "EVENTS"
-	tableGlobalStatus                       = "GLOBAL_STATUS"
-	tableGlobalVariables                    = "GLOBAL_VARIABLES"
-	tableSessionStatus                      = "SESSION_STATUS"
-	tableOptimizerTrace                     = "OPTIMIZER_TRACE"
-	tableTableSpaces                        = "TABLESPACES"
-	tableCollationCharacterSetApplicability = "COLLATION_CHARACTER_SET_APPLICABILITY"
+	TableViews           = "VIEWS"
+	tableRoutines        = "ROUTINES"
+	tableParameters      = "PARAMETERS"
+	tableEvents          = "EVENTS"
+	tableGlobalStatus    = "GLOBAL_STATUS"
+	tableGlobalVariables = "GLOBAL_VARIABLES"
+	tableSessionStatus   = "SESSION_STATUS"
+	tableOptimizerTrace  = "OPTIMIZER_TRACE"
+	tableTableSpaces     = "TABLESPACES"
+	// TableCollationCharacterSetApplicability is the string constant of infoschema memory table.
+	TableCollationCharacterSetApplicability = "COLLATION_CHARACTER_SET_APPLICABILITY"
 	tableProcesslist                        = "PROCESSLIST"
 	tableTiDBIndexes                        = "TIDB_INDEXES"
 	tableTiDBHotRegions                     = "TIDB_HOT_REGIONS"
@@ -156,7 +157,7 @@ var tableIDMap = map[string]int64{
 	tableSessionStatus:                      autoid.InformationSchemaDBID + 29,
 	tableOptimizerTrace:                     autoid.InformationSchemaDBID + 30,
 	tableTableSpaces:                        autoid.InformationSchemaDBID + 31,
-	tableCollationCharacterSetApplicability: autoid.InformationSchemaDBID + 32,
+	TableCollationCharacterSetApplicability: autoid.InformationSchemaDBID + 32,
 	tableProcesslist:                        autoid.InformationSchemaDBID + 33,
 	tableTiDBIndexes:                        autoid.InformationSchemaDBID + 34,
 	TableSlowQuery:                          autoid.InformationSchemaDBID + 35,
@@ -1123,22 +1124,6 @@ func dataForTiKVStoreStatus(ctx sessionctx.Context) (records [][]types.Datum, er
 		records = append(records, row)
 	}
 	return records, nil
-}
-
-func dataForCollationCharacterSetApplicability() (records [][]types.Datum) {
-
-	collations := charset.GetSupportedCollations()
-
-	for _, collation := range collations {
-
-		records = append(records,
-			types.MakeDatums(collation.Name, collation.CharsetName),
-		)
-
-	}
-
-	return records
-
 }
 
 func dataForSessionVar(ctx sessionctx.Context) (records [][]types.Datum, err error) {
@@ -2381,7 +2366,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	tableSessionStatus:                      tableSessionStatusCols,
 	tableOptimizerTrace:                     tableOptimizerTraceCols,
 	tableTableSpaces:                        tableTableSpacesCols,
-	tableCollationCharacterSetApplicability: tableCollationCharacterSetApplicabilityCols,
+	TableCollationCharacterSetApplicability: tableCollationCharacterSetApplicabilityCols,
 	tableProcesslist:                        tableProcesslistCols,
 	tableTiDBIndexes:                        tableTiDBIndexesCols,
 	TableSlowQuery:                          slowQueryCols,
@@ -2480,8 +2465,6 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 	case tableSessionStatus:
 	case tableOptimizerTrace:
 	case tableTableSpaces:
-	case tableCollationCharacterSetApplicability:
-		fullRows = dataForCollationCharacterSetApplicability()
 	case tableProcesslist:
 		fullRows = dataForProcesslist(ctx)
 	case tableTiDBHotRegions:
