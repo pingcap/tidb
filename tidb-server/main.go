@@ -162,6 +162,13 @@ func main() {
 	registerMetrics()
 	config.InitializeConfig(*configPath, *configCheck, *configStrict, reloadConfig, overrideConfig)
 	if err := config.GetGlobalConfig().Valid(); err != nil {
+		absConfigPath := *configPath
+		if !filepath.IsAbs(absConfigPath) {
+			if tmp, err := filepath.Abs(absConfigPath); err == nil {
+				absConfigPath = tmp
+			}
+		}
+		fmt.Fprintln(os.Stderr, "load config file:", absConfigPath)
 		fmt.Fprintln(os.Stderr, "invalid config", err)
 		os.Exit(1)
 	}
