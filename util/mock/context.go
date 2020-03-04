@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/owner"
@@ -277,13 +276,6 @@ func NewContext() *Context {
 	sctx.sessionVars.StmtCtx.DiskTracker = disk.NewTracker(stringutil.StringerStr("mock.NewContext"), -1)
 	sctx.sessionVars.GlobalVarsAccessor = variable.NewMockGlobalAccessor()
 	if err := sctx.GetSessionVars().SetSystemVar(variable.MaxAllowedPacket, "67108864"); err != nil {
-		panic(err)
-	}
-	// use binary as charset and collation in test
-	if err := sctx.sessionVars.SetSystemVar(variable.CharacterSetConnection, charset.CharsetBin); err != nil {
-		panic(err)
-	}
-	if err := sctx.sessionVars.SetSystemVar(variable.CollationConnection, charset.CharsetBin); err != nil {
 		panic(err)
 	}
 	return sctx

@@ -16,6 +16,8 @@ package expression
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"strings"
 
 	"github.com/gogo/protobuf/proto"
@@ -234,6 +236,13 @@ func (s *testEvaluatorSuite) TestColumn2Pb(c *C) {
 	c.Assert(len(remained), Equals, 0)
 }
 
+func newBinMockCtx(c *C) sessionctx.Context {
+	ctx := mock.NewContext()
+	c.Assert(ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, charset.CharsetBin), IsNil)
+	c.Assert(ctx.GetSessionVars().SetSystemVar(variable.CollationConnection, charset.CollationBin), IsNil)
+	return ctx
+}
+
 func (s *testEvaluatorSuite) TestCompareFunc2Pb(c *C) {
 	var compareExprs = make([]Expression, 0)
 	sc := new(stmtctx.StatementContext)
@@ -242,7 +251,7 @@ func (s *testEvaluatorSuite) TestCompareFunc2Pb(c *C) {
 
 	funcNames := []string{ast.LT, ast.LE, ast.GT, ast.GE, ast.EQ, ast.NE, ast.NullEQ}
 	for _, funcName := range funcNames {
-		fc, err := NewFunction(mock.NewContext(), funcName, types.NewFieldType(mysql.TypeUnspecified), dg.genColumn(mysql.TypeLonglong, 1), dg.genColumn(mysql.TypeLonglong, 2))
+		fc, err := NewFunction(newBinMockCtx(c), funcName, types.NewFieldType(mysql.TypeUnspecified), dg.genColumn(mysql.TypeLonglong, 1), dg.genColumn(mysql.TypeLonglong, 2))
 		c.Assert(err, IsNil)
 		compareExprs = append(compareExprs, fc)
 	}
@@ -288,7 +297,7 @@ func (s *testEvaluatorSuite) TestLikeFunc2Pb(c *C) {
 		&Constant{RetType: retTp, Value: types.NewDatum(`%abc%`)},
 		&Constant{RetType: retTp, Value: types.NewDatum("\\")},
 	}
-	ctx := mock.NewContext()
+	ctx := newBinMockCtx(c)
 	retTp = types.NewFieldType(mysql.TypeUnspecified)
 	fc, err := NewFunction(ctx, ast.Like, retTp, args[0], args[1], args[3])
 	c.Assert(err, IsNil)
@@ -319,7 +328,7 @@ func (s *testEvaluatorSuite) TestArithmeticalFunc2Pb(c *C) {
 	funcNames := []string{ast.Plus, ast.Minus, ast.Mul, ast.Div, ast.Mod, ast.IntDiv}
 	for _, funcName := range funcNames {
 		fc, err := NewFunction(
-			mock.NewContext(),
+			newBinMockCtx(c),
 			funcName,
 			types.NewFieldType(mysql.TypeUnspecified),
 			dg.genColumn(mysql.TypeDouble, 1),
@@ -353,7 +362,7 @@ func (s *testEvaluatorSuite) TestDateFunc2Pb(c *C) {
 	client := new(mock.Client)
 	dg := new(dataGen4Expr2PbTest)
 	fc, err := NewFunction(
-		mock.NewContext(),
+		newBinMockCtx(c),
 		ast.DateFormat,
 		types.NewFieldType(mysql.TypeUnspecified),
 		dg.genColumn(mysql.TypeDatetime, 1),
@@ -380,7 +389,7 @@ func (s *testEvaluatorSuite) TestLogicalFunc2Pb(c *C) {
 			args = append(args, dg.genColumn(mysql.TypeTiny, 2))
 		}
 		fc, err := NewFunction(
-			mock.NewContext(),
+			newBinMockCtx(c),
 			funcName,
 			types.NewFieldType(mysql.TypeUnspecified),
 			args...,
@@ -416,7 +425,7 @@ func (s *testEvaluatorSuite) TestBitwiseFunc2Pb(c *C) {
 			args = append(args, dg.genColumn(mysql.TypeLong, 2))
 		}
 		fc, err := NewFunction(
-			mock.NewContext(),
+			newBinMockCtx(c),
 			funcName,
 			types.NewFieldType(mysql.TypeUnspecified),
 			args...,
@@ -542,7 +551,7 @@ func (s *testEvaluatorSuite) TestControlFunc2Pb(c *C) {
 			args = append(args, dg.genColumn(mysql.TypeLong, 3))
 		}
 		fc, err := NewFunction(
-			mock.NewContext(),
+			newBinMockCtx(c),
 			funcName,
 			types.NewFieldType(mysql.TypeUnspecified),
 			args...,
@@ -574,7 +583,7 @@ func (s *testEvaluatorSuite) TestOtherFunc2Pb(c *C) {
 	funcNames := []string{ast.Coalesce, ast.IsNull}
 	for _, funcName := range funcNames {
 		fc, err := NewFunction(
-			mock.NewContext(),
+			newBinMockCtx(c),
 			funcName,
 			types.NewFieldType(mysql.TypeUnspecified),
 			dg.genColumn(mysql.TypeLong, 1),
