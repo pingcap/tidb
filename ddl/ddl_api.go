@@ -26,6 +26,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
@@ -48,7 +49,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/domainutil"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/set"
 	"go.uber.org/zap"
@@ -461,6 +461,13 @@ func checkColumnDefaultValue(ctx sessionctx.Context, col *table.Column, value in
 	return hasDefaultValue, value, nil
 }
 
+func checkSequenceDefaultValue(col *table.Column) error {
+	if mysql.IsIntegerType(col.Tp) {
+		return nil
+	}
+	return ErrColumnTypeUnsupportedNextValue.GenWithStackByArgs(col.ColumnInfo.Name.O)
+}
+
 func convertTimestampDefaultValToUTC(ctx sessionctx.Context, defaultVal interface{}, col *table.Column) (interface{}, error) {
 	if defaultVal == nil || col.Tp != mysql.TypeTimestamp {
 		return defaultVal, nil
@@ -638,7 +645,10 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 	return col, constraints, nil
 }
 
-func getDefaultValue(ctx sessionctx.Context, col *table.Column, c *ast.ColumnOption) (interface{}, error) {
+// getDefault value will get the default value for column.
+// 1: get the expr restored string for the column which uses sequence next value as default value.
+// 2: get specific default value for the other column.
+func getDefaultValue(ctx sessionctx.Context, col *table.Column, c *ast.ColumnOption) (interface{}, bool, error) {
 	tp, fsp := col.FieldType.Tp, col.FieldType.Decimal
 	if tp == mysql.TypeTimestamp || tp == mysql.TypeDatetime {
 		switch x := c.Expr.(type) {
@@ -651,35 +661,45 @@ func getDefaultValue(ctx sessionctx.Context, col *table.Column, c *ast.ColumnOpt
 					}
 				}
 				if defaultFsp != fsp {
-					return nil, ErrInvalidDefaultValue.GenWithStackByArgs(col.Name.O)
+					return nil, false, ErrInvalidDefaultValue.GenWithStackByArgs(col.Name.O)
 				}
 			}
 		}
 		vd, err := expression.GetTimeValue(ctx, c.Expr, tp, int8(fsp))
 		value := vd.GetValue()
 		if err != nil {
-			return nil, ErrInvalidDefaultValue.GenWithStackByArgs(col.Name.O)
+			return nil, false, ErrInvalidDefaultValue.GenWithStackByArgs(col.Name.O)
 		}
 
 		// Value is nil means `default null`.
 		if value == nil {
-			return nil, nil
+			return nil, false, nil
 		}
 
 		// If value is types.Time, convert it to string.
 		if vv, ok := value.(types.Time); ok {
-			return vv.String(), nil
+			return vv.String(), false, nil
 		}
 
-		return value, nil
+		return value, false, nil
 	}
+	// handle default next value of sequence. (keep the expr string)
+	str, isSeqExpr, err := tryToGetSequenceDefaultValue(c)
+	if err != nil {
+		return nil, false, errors.Trace(err)
+	}
+	if isSeqExpr {
+		return str, true, nil
+	}
+
+	// evaluate the non-sequence expr to a certain value.
 	v, err := expression.EvalAstExpr(ctx, c.Expr)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, false, errors.Trace(err)
 	}
 
 	if v.IsNull() {
-		return nil, nil
+		return nil, false, nil
 	}
 
 	if v.Kind() == types.KindBinaryLiteral || v.Kind() == types.KindMysqlBit {
@@ -689,31 +709,47 @@ func getDefaultValue(ctx sessionctx.Context, col *table.Column, c *ast.ColumnOpt
 			tp == mysql.TypeJSON {
 			// For BinaryLiteral / string fields, when getting default value we cast the value into BinaryLiteral{}, thus we return
 			// its raw string content here.
-			return v.GetBinaryLiteral().ToString(), nil
+			return v.GetBinaryLiteral().ToString(), false, nil
 		}
 		// For other kind of fields (e.g. INT), we supply its integer as string value.
 		value, err := v.GetBinaryLiteral().ToInt(ctx.GetSessionVars().StmtCtx)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
-		return strconv.FormatUint(value, 10), nil
+		return strconv.FormatUint(value, 10), false, nil
 	}
 
 	switch tp {
 	case mysql.TypeSet:
-		return setSetDefaultValue(v, col)
+		val, err := setSetDefaultValue(v, col)
+		return val, false, err
 	case mysql.TypeDuration:
 		if v, err = v.ConvertTo(ctx.GetSessionVars().StmtCtx, &col.FieldType); err != nil {
-			return "", errors.Trace(err)
+			return "", false, errors.Trace(err)
 		}
 	case mysql.TypeBit:
 		if v.Kind() == types.KindInt64 || v.Kind() == types.KindUint64 {
 			// For BIT fields, convert int into BinaryLiteral.
-			return types.NewBinaryLiteralFromUint(v.GetUint64(), -1).ToString(), nil
+			return types.NewBinaryLiteralFromUint(v.GetUint64(), -1).ToString(), false, nil
 		}
 	}
 
-	return v.ToString()
+	val, err := v.ToString()
+	return val, false, err
+}
+
+func tryToGetSequenceDefaultValue(c *ast.ColumnOption) (expr string, isExpr bool, err error) {
+	if f, ok := c.Expr.(*ast.FuncCallExpr); ok && f.FnName.L == ast.NextVal {
+		var sb strings.Builder
+		restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes |
+			format.RestoreSpacesAroundBinaryOperation
+		restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
+		if err := c.Expr.Restore(restoreCtx); err != nil {
+			return "", true, err
+		}
+		return sb.String(), true, nil
+	}
+	return "", false, nil
 }
 
 // setSetDefaultValue sets the default value for the set type. See https://dev.mysql.com/doc/refman/5.7/en/set.html.
@@ -816,7 +852,7 @@ func checkDefaultValue(ctx sessionctx.Context, c *table.Column, hasDefaultValue 
 		return nil
 	}
 
-	if c.GetDefaultValue() != nil {
+	if c.GetDefaultValue() != nil && !c.DefaultIsExpr {
 		if _, err := table.GetColDefaultValue(ctx, c.ToInfo()); err != nil {
 			return types.ErrInvalidDefault.GenWithStackByArgs(c.Name)
 		}
@@ -1312,6 +1348,13 @@ func buildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo) mode
 	tblInfo.Name = ident.Name
 	tblInfo.AutoIncID = 0
 	tblInfo.ForeignKeys = nil
+	if tblInfo.TiFlashReplica != nil {
+		replica := *tblInfo.TiFlashReplica
+		// Keep the tiflash replica setting, remove the replica available status.
+		replica.AvailablePartitionIDs = nil
+		replica.Available = false
+		tblInfo.TiFlashReplica = &replica
+	}
 	if referTblInfo.Partition != nil {
 		pi := *referTblInfo.Partition
 		pi.Definitions = make([]model.PartitionDefinition, len(referTblInfo.Partition.Definitions))
@@ -1384,25 +1427,30 @@ func buildTableInfoWithCheck(ctx sessionctx.Context, s *ast.CreateTableStmt, dbC
 		return nil, errors.Trace(err)
 	}
 
-	pi, err := buildTablePartitionInfo(ctx, s)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	if pi != nil {
-		switch pi.Type {
-		case model.PartitionTypeRange:
-			err = checkPartitionByRange(ctx, tbInfo, pi, cols, s)
-		case model.PartitionTypeHash:
-			err = checkPartitionByHash(ctx, pi, s, cols, tbInfo)
-		}
+	if s.Partition != nil {
+		err := checkPartitionExprValid(ctx, tbInfo, s.Partition.Expr)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if err = checkRangePartitioningKeysConstraints(ctx, s, tbInfo, newConstraints); err != nil {
+		pi, err := buildTablePartitionInfo(ctx, s)
+		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		tbInfo.Partition = pi
+		if pi != nil {
+			switch pi.Type {
+			case model.PartitionTypeRange:
+				err = checkPartitionByRange(ctx, tbInfo, pi, cols, s)
+			case model.PartitionTypeHash:
+				err = checkPartitionByHash(ctx, pi, s, cols, tbInfo)
+			}
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if err = checkRangePartitioningKeysConstraints(ctx, s, tbInfo, newConstraints); err != nil {
+				return nil, errors.Trace(err)
+			}
+			tbInfo.Partition = pi
+		}
 	}
 
 	if err = handleTableOptions(s.Options, tbInfo); err != nil {
@@ -1535,8 +1583,9 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	return errors.Trace(err)
 }
 
-func (d *ddl) RecoverTable(ctx sessionctx.Context, tbInfo *model.TableInfo, schemaID, autoID, dropJobID int64, snapshotTS uint64) (err error) {
+func (d *ddl) RecoverTable(ctx sessionctx.Context, recoverInfo *RecoverInfo) (err error) {
 	is := d.GetInfoSchemaWithInterceptor(ctx)
+	schemaID, tbInfo := recoverInfo.SchemaID, recoverInfo.TableInfo
 	// Check schema exist.
 	schema, ok := is.SchemaByID(schemaID)
 	if !ok {
@@ -1556,7 +1605,8 @@ func (d *ddl) RecoverTable(ctx sessionctx.Context, tbInfo *model.TableInfo, sche
 		SchemaName: schema.Name.L,
 		Type:       model.ActionRecoverTable,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{tbInfo, autoID, dropJobID, snapshotTS, recoverTableCheckFlagNone},
+		Args: []interface{}{tbInfo, recoverInfo.CurAutoIncID, recoverInfo.DropJobID,
+			recoverInfo.SnapshotTS, recoverTableCheckFlagNone, recoverInfo.CurAutoRandID},
 	}
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
@@ -2592,9 +2642,15 @@ func modifiable(origin *types.FieldType, to *types.FieldType) error {
 
 func setDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.ColumnOption) (bool, error) {
 	hasDefaultValue := false
-	value, err := getDefaultValue(ctx, col, option)
+	value, isSeqExpr, err := getDefaultValue(ctx, col, option)
 	if err != nil {
 		return hasDefaultValue, errors.Trace(err)
+	}
+	if isSeqExpr {
+		if err := checkSequenceDefaultValue(col); err != nil {
+			return false, errors.Trace(err)
+		}
+		col.DefaultIsExpr = isSeqExpr
 	}
 
 	if hasDefaultValue, value, err = checkColumnDefaultValue(ctx, col, value); err != nil {
@@ -3196,18 +3252,22 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 }
 
 // UpdateTableReplicaInfo updates the table flash replica infos.
-func (d *ddl) UpdateTableReplicaInfo(ctx sessionctx.Context, tid int64, available bool) error {
+func (d *ddl) UpdateTableReplicaInfo(ctx sessionctx.Context, physicalID int64, available bool) error {
 	is := d.infoHandle.Get()
-	tb, ok := is.TableByID(tid)
+	tb, ok := is.TableByID(physicalID)
 	if !ok {
-		return infoschema.ErrTableNotExists.GenWithStack("Table which ID = %d does not exist.", tid)
+		tb, _ = is.FindTableByPartitionID(physicalID)
+		if tb == nil {
+			return infoschema.ErrTableNotExists.GenWithStack("Table which ID = %d does not exist.", physicalID)
+		}
 	}
-
-	if tb.Meta().TiFlashReplica == nil || (tb.Meta().TiFlashReplica.Available == available) {
+	tbInfo := tb.Meta()
+	if tbInfo.TiFlashReplica == nil || (tbInfo.ID == physicalID && tbInfo.TiFlashReplica.Available == available) ||
+		(tbInfo.ID != physicalID && available == tbInfo.TiFlashReplica.IsPartitionAvailable(physicalID)) {
 		return nil
 	}
 
-	db, ok := is.SchemaByTable(tb.Meta())
+	db, ok := is.SchemaByTable(tbInfo)
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStack("Database of table `%s` does not exist.", tb.Meta().Name)
 	}
@@ -3218,7 +3278,7 @@ func (d *ddl) UpdateTableReplicaInfo(ctx sessionctx.Context, tid int64, availabl
 		SchemaName: db.Name.L,
 		Type:       model.ActionUpdateTiFlashReplicaStatus,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{available},
+		Args:       []interface{}{available, physicalID},
 	}
 	err := d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
@@ -3327,6 +3387,9 @@ func (d *ddl) DropTable(ctx sessionctx.Context, ti ast.Ident) (err error) {
 	}
 
 	if tb.Meta().IsView() {
+		return infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name)
+	}
+	if tb.Meta().IsSequence() {
 		return infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name)
 	}
 
@@ -4306,4 +4369,84 @@ func (d *ddl) OrderByColumns(ctx sessionctx.Context, ident ast.Ident) error {
 		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("ORDER BY ignored as there is a user-defined clustered index in the table '%s'", ident.Name))
 	}
 	return nil
+}
+
+func (d *ddl) CreateSequence(ctx sessionctx.Context, stmt *ast.CreateSequenceStmt) error {
+	ident := ast.Ident{Name: stmt.Name.Name, Schema: stmt.Name.Schema}
+	is := d.GetInfoSchemaWithInterceptor(ctx)
+	schema, ok := is.SchemaByName(ident.Schema)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
+	}
+	ok = is.TableExists(ident.Schema, ident.Name)
+	if ok {
+		if stmt.IfNotExists {
+			ctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrTableExists.GenWithStackByArgs(ident))
+			return nil
+		}
+		// TODO: refine the error.
+		return infoschema.ErrTableExists.GenWithStackByArgs(ident)
+	}
+	if err := checkTooLongTable(ident.Name); err != nil {
+		return err
+	}
+	sequenceInfo, err := buildSequenceInfo(stmt, ident)
+	if err != nil {
+		return err
+	}
+	// TiDB describe the sequence within a tableInfo, as a same-level object of a table and view.
+	tbInfo, err := buildTableInfo(ctx, ident.Name, nil, nil)
+	if err != nil {
+		return err
+	}
+	if err := d.assignTableID(tbInfo); err != nil {
+		return err
+	}
+	tbInfo.Sequence = sequenceInfo
+
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    tbInfo.ID,
+		SchemaName: schema.Name.L,
+		Type:       model.ActionCreateSequence,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{tbInfo},
+	}
+
+	err = d.doDDLJob(ctx, job)
+	// If the same name sequence exists, but IfNotExists flag is true, then we should ignore the error.
+	if infoschema.ErrTableExists.Equal(err) && stmt.IfNotExists {
+		ctx.GetSessionVars().StmtCtx.AppendNote(err)
+		return nil
+	}
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+func (d *ddl) DropSequence(ctx sessionctx.Context, ti ast.Ident, ifExists bool) (err error) {
+	schema, tbl, err := d.getSchemaAndTableByIdent(ctx, ti)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if !tbl.Meta().IsSequence() {
+		err = ErrWrongObject.GenWithStackByArgs(ti.Schema, ti.Name, "SEQUENCE")
+		if ifExists {
+			ctx.GetSessionVars().StmtCtx.AppendNote(err)
+			return nil
+		}
+		return err
+	}
+
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    tbl.Meta().ID,
+		SchemaName: schema.Name.L,
+		Type:       model.ActionDropSequence,
+		BinlogInfo: &model.HistoryInfo{},
+	}
+
+	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
 }

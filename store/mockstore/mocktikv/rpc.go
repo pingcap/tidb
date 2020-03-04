@@ -17,9 +17,9 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"math"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/golang/protobuf/proto"
@@ -54,12 +54,13 @@ func convertToKeyError(err error) *kvrpcpb.KeyError {
 	if locked, ok := errors.Cause(err).(*ErrLocked); ok {
 		return &kvrpcpb.KeyError{
 			Locked: &kvrpcpb.LockInfo{
-				Key:         locked.Key.Raw(),
-				PrimaryLock: locked.Primary,
-				LockVersion: locked.StartTS,
-				LockTtl:     locked.TTL,
-				TxnSize:     locked.TxnSize,
-				LockType:    locked.LockType,
+				Key:             locked.Key.Raw(),
+				PrimaryLock:     locked.Primary,
+				LockVersion:     locked.StartTS,
+				LockTtl:         locked.TTL,
+				TxnSize:         locked.TxnSize,
+				LockType:        locked.LockType,
+				LockForUpdateTs: locked.ForUpdateTS,
 			},
 		}
 	}
@@ -323,18 +324,10 @@ func (h *rpcHandler) handleKvPessimisticLock(req *kvrpcpb.PessimisticLockRequest
 	startTS := req.StartVersion
 	regionID := req.Context.RegionId
 	h.cluster.handleDelay(startTS, regionID)
-	errs := h.mvccStore.PessimisticLock(req.Mutations, req.PrimaryLock, req.GetStartVersion(), req.GetForUpdateTs(),
-		req.GetLockTtl(), req.WaitTimeout)
-	if req.WaitTimeout == kv.LockAlwaysWait {
-		// TODO: remove this when implement sever side wait.
-		h.simulateServerSideWaitLock(errs)
-	}
-	return &kvrpcpb.PessimisticLockResponse{
-		Errors: convertToKeyErrors(errs),
-	}
+	return h.mvccStore.PessimisticLock(req)
 }
 
-func (h *rpcHandler) simulateServerSideWaitLock(errs []error) {
+func simulateServerSideWaitLock(errs []error) {
 	for _, err := range errs {
 		if _, ok := err.(*ErrLocked); ok {
 			time.Sleep(time.Millisecond * 5)
@@ -667,6 +660,15 @@ func (h *rpcHandler) handleSplitRegion(req *kvrpcpb.SplitRegionRequest) *kvrpcpb
 	return resp
 }
 
+// Client is a client that sends RPC.
+// This is same with tikv.Client, define again for avoid circle import.
+type Client interface {
+	// Close should release all data.
+	Close() error
+	// SendRequest sends Request.
+	SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error)
+}
+
 // RPCClient sends kv RPC calls to mock cluster. RPCClient mocks the behavior of
 // a rpc client at tikv's side.
 type RPCClient struct {
@@ -674,6 +676,11 @@ type RPCClient struct {
 	MvccStore     MVCCStore
 	streamTimeout chan *tikvrpc.Lease
 	done          chan struct{}
+	// rpcCli uses to redirects RPC request to TiDB rpc server, It is only use for test.
+	// Mock TiDB rpc service will have circle import problem, so just use a real RPC client to send this RPC  server.
+	// sync.Once uses to avoid concurrency initialize rpcCli.
+	sync.Once
+	rpcCli Client
 }
 
 // NewRPCClient creates an RPCClient.
@@ -723,9 +730,24 @@ func (c *RPCClient) checkArgs(ctx context.Context, addr string) (*rpcHandler, er
 	return handler, nil
 }
 
-// TiDBRPCServerCoprocessorHandler is the TiDB rpc server coprocessor handler.
+// GRPCClientFactory is the GRPC client factory.
+// Use global variable to avoid circle import.
 // TODO: remove this global variable.
-var TiDBRPCServerCoprocessorHandler func(context.Context, *coprocessor.Request) *coprocessor.Response
+var GRPCClientFactory func() Client
+
+// redirectRequestToRPCServer redirects RPC request to TiDB rpc server, It is only use for test.
+// Mock TiDB rpc service will have circle import problem, so just use a real RPC client to send this RPC  server.
+func (c *RPCClient) redirectRequestToRPCServer(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
+	c.Once.Do(func() {
+		if GRPCClientFactory != nil {
+			c.rpcCli = GRPCClientFactory()
+		}
+	})
+	if c.rpcCli == nil {
+		return nil, errors.Errorf("GRPCClientFactory is nil")
+	}
+	return c.rpcCli.SendRequest(ctx, addr, req, timeout)
+}
 
 // SendRequest sends a request to mock cluster.
 func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
@@ -744,9 +766,8 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	reqCtx := &req.Context
 	resp := &tikvrpc.Response{}
 	// When the store type is TiDB, the request should handle over to TiDB rpc server to handle.
-	if req.Type == tikvrpc.CmdCop && req.StoreTp == kv.TiDB && TiDBRPCServerCoprocessorHandler != nil {
-		resp.Resp = TiDBRPCServerCoprocessorHandler(context.Background(), req.Cop())
-		return resp, nil
+	if req.StoreTp == kv.TiDB {
+		return c.redirectRequestToRPCServer(ctx, addr, req, timeout)
 	}
 
 	handler, err := c.checkArgs(ctx, addr)
@@ -946,6 +967,14 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		resp.Resp = handler.handleKvRawScan(r)
 	case tikvrpc.CmdUnsafeDestroyRange:
 		panic("unimplemented")
+	case tikvrpc.CmdRegisterLockObserver:
+		panic("unimplemented")
+	case tikvrpc.CmdCheckLockObserver:
+		panic("unimplemented")
+	case tikvrpc.CmdRemoveLockObserver:
+		panic("unimplemented")
+	case tikvrpc.CmdPhysicalScanLock:
+		panic("unimplemented")
 	case tikvrpc.CmdCop:
 		r := req.Cop()
 		if err := handler.checkRequestContext(reqCtx); err != nil {
@@ -1045,8 +1074,20 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 // Close closes the client.
 func (c *RPCClient) Close() error {
 	close(c.done)
-	if raw, ok := c.MvccStore.(io.Closer); ok {
-		return raw.Close()
+
+	var err error
+	if c.MvccStore != nil {
+		err = c.MvccStore.Close()
+		if err != nil {
+			return err
+		}
+	}
+
+	if c.rpcCli != nil {
+		err = c.rpcCli.Close()
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }

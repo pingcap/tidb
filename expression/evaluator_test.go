@@ -34,6 +34,8 @@ import (
 
 var _ = SerialSuites(&testEvaluatorSerialSuites{})
 var _ = Suite(&testEvaluatorSuite{})
+var _ = Suite(&testVectorizeSuite1{})
+var _ = Suite(&testVectorizeSuite2{})
 
 func TestT(t *testing.T) {
 	testleak.BeforeTest()
@@ -44,35 +46,46 @@ func TestT(t *testing.T) {
 	TestingT(t)
 }
 
-type testEvaluatorSuite struct {
+type testEvaluatorSuiteBase struct {
 	*parser.Parser
 	ctx sessionctx.Context
+}
+
+type testEvaluatorSuite struct {
+	testEvaluatorSuiteBase
+}
+
+type testVectorizeSuite1 struct {
+	testEvaluatorSuiteBase
+}
+
+type testVectorizeSuite2 struct {
+	testEvaluatorSuiteBase
 }
 
 type testEvaluatorSerialSuites struct {
-	*parser.Parser
-	ctx sessionctx.Context
+	testEvaluatorSuiteBase
 }
 
-func (s *testEvaluatorSuite) SetUpSuite(c *C) {
+func (s *testEvaluatorSuiteBase) SetUpSuite(c *C) {
 	s.Parser = parser.New()
 	s.ctx = mock.NewContext()
 	s.ctx.GetSessionVars().StmtCtx.TimeZone = time.Local
 	s.ctx.GetSessionVars().SetSystemVar("max_allowed_packet", "67108864")
 }
 
-func (s *testEvaluatorSuite) TearDownSuite(c *C) {
+func (s *testEvaluatorSuiteBase) TearDownSuite(c *C) {
 }
 
-func (s *testEvaluatorSuite) SetUpTest(c *C) {
+func (s *testEvaluatorSuiteBase) SetUpTest(c *C) {
 	s.ctx.GetSessionVars().PlanColumnID = 0
 }
 
-func (s *testEvaluatorSuite) TearDownTest(c *C) {
+func (s *testEvaluatorSuiteBase) TearDownTest(c *C) {
 	s.ctx.GetSessionVars().StmtCtx.SetWarnings(nil)
 }
 
-func (s *testEvaluatorSuite) kindToFieldType(kind byte) types.FieldType {
+func (s *testEvaluatorSuiteBase) kindToFieldType(kind byte) types.FieldType {
 	ft := types.FieldType{}
 	switch kind {
 	case types.KindNull:
@@ -118,17 +131,20 @@ func (s *testEvaluatorSuite) kindToFieldType(kind byte) types.FieldType {
 	return ft
 }
 
-func (s *testEvaluatorSuite) datumsToConstants(datums []types.Datum) []Expression {
+func (s *testEvaluatorSuiteBase) datumsToConstants(datums []types.Datum) []Expression {
 	constants := make([]Expression, 0, len(datums))
 	for _, d := range datums {
 		ft := s.kindToFieldType(d.Kind())
+		if types.IsNonBinaryStr(&ft) {
+			ft.Collate = d.Collation()
+		}
 		ft.Flen, ft.Decimal = types.UnspecifiedLength, types.UnspecifiedLength
 		constants = append(constants, &Constant{Value: d, RetType: &ft})
 	}
 	return constants
 }
 
-func (s *testEvaluatorSuite) primitiveValsToConstants(args []interface{}) []Expression {
+func (s *testEvaluatorSuiteBase) primitiveValsToConstants(args []interface{}) []Expression {
 	cons := s.datumsToConstants(types.MakeDatums(args...))
 	for i, arg := range args {
 		types.DefaultTypeForValue(arg, cons[i].GetType())

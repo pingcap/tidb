@@ -14,6 +14,8 @@
 package core
 
 import (
+	"unsafe"
+
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
@@ -23,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
 )
@@ -52,6 +55,8 @@ var (
 	_ PhysicalPlan = &PhysicalMergeJoin{}
 	_ PhysicalPlan = &PhysicalUnionScan{}
 	_ PhysicalPlan = &PhysicalWindow{}
+	_ PhysicalPlan = &PhysicalShuffle{}
+	_ PhysicalPlan = &PhysicalShuffleDataSourceStub{}
 	_ PhysicalPlan = &BatchPointGetPlan{}
 )
 
@@ -204,10 +209,11 @@ type PhysicalIndexScan struct {
 type PhysicalMemTable struct {
 	physicalSchemaProducer
 
-	DBName    model.CIStr
-	Table     *model.TableInfo
-	Columns   []*model.ColumnInfo
-	Extractor MemTablePredicateExtractor
+	DBName         model.CIStr
+	Table          *model.TableInfo
+	Columns        []*model.ColumnInfo
+	Extractor      MemTablePredicateExtractor
+	QueryTimeRange QueryTimeRange
 }
 
 // PhysicalTableScan represents a table scan plan.
@@ -244,6 +250,8 @@ type PhysicalTableScan struct {
 	// KeepOrder is true, if sort data by scanning pkcol,
 	KeepOrder bool
 	Desc      bool
+
+	isChildOfIndexLookUp bool
 }
 
 // IsPartition returns true and partition ID if it's actually a partition.
@@ -266,6 +274,11 @@ func (ts *PhysicalTableScan) ExpandVirtualColumn() {
 			}
 		}
 	}
+}
+
+//SetIsChildOfIndexLookUp is to set the bool if is a child of IndexLookUpReader
+func (ts *PhysicalTableScan) SetIsChildOfIndexLookUp(isIsChildOfIndexLookUp bool) {
+	ts.isChildOfIndexLookUp = isIsChildOfIndexLookUp
 }
 
 // PhysicalProjection is the physical operator of projection.
@@ -323,12 +336,13 @@ type PhysicalHashJoin struct {
 
 // NewPhysicalHashJoin creates a new PhysicalHashJoin from LogicalJoin.
 func NewPhysicalHashJoin(p *LogicalJoin, innerIdx int, useOuterToBuild bool, newStats *property.StatsInfo, prop ...*property.PhysicalProperty) *PhysicalHashJoin {
+	leftJoinKeys, rightJoinKeys := p.GetJoinKeys()
 	baseJoin := basePhysicalJoin{
 		LeftConditions:  p.LeftConditions,
 		RightConditions: p.RightConditions,
 		OtherConditions: p.OtherConditions,
-		LeftJoinKeys:    p.LeftJoinKeys,
-		RightJoinKeys:   p.RightJoinKeys,
+		LeftJoinKeys:    leftJoinKeys,
+		RightJoinKeys:   rightJoinKeys,
 		JoinType:        p.JoinType,
 		DefaultValues:   p.DefaultValues,
 		InnerChildIdx:   innerIdx,
@@ -393,6 +407,8 @@ type PhysicalMergeJoin struct {
 	basePhysicalJoin
 
 	CompareFuncs []expression.CompareFunc
+	// Desc means whether inner child keep desc order.
+	Desc bool
 }
 
 // PhysicalLock is the physical operator of lock, which is used for `select ... for update` clause.
@@ -401,7 +417,8 @@ type PhysicalLock struct {
 
 	Lock ast.SelectLockType
 
-	TblID2Handle map[int64][]*expression.Column
+	TblID2Handle     map[int64][]*expression.Column
+	PartitionedTable []table.PartitionedTable
 }
 
 // PhysicalLimit is the physical operator of Limit.
@@ -475,9 +492,15 @@ type PhysicalSort struct {
 }
 
 // NominalSort asks sort properties for its child. It is a fake operator that will not
-// appear in final physical operator tree.
+// appear in final physical operator tree. It will be eliminated or converted to Projection.
 type NominalSort struct {
 	basePhysicalPlan
+
+	// These two fields are used to switch ScalarFunctions to Constants. For these
+	// NominalSorts, we need to converted to Projections check if the ScalarFunctions
+	// are out of bounds. (issue #11653)
+	ByItems    []*ByItems
+	OnlyColumn bool
 }
 
 // PhysicalUnionScan represents a union scan operator.
@@ -543,6 +566,42 @@ type PhysicalWindow struct {
 	PartitionBy     []property.Item
 	OrderBy         []property.Item
 	Frame           *WindowFrame
+}
+
+// PhysicalShuffle represents a shuffle plan.
+// `Tail` and `DataSource` are the last plan within and the first plan following the "shuffle", respectively,
+//  to build the child executors chain.
+// Take `Window` operator for example:
+//  Shuffle -> Window -> Sort -> DataSource, will be separated into:
+//    ==> Shuffle: for main thread
+//    ==> Window -> Sort(:Tail) -> shuffleWorker: for workers
+//    ==> DataSource: for `fetchDataAndSplit` thread
+type PhysicalShuffle struct {
+	basePhysicalPlan
+
+	Concurrency int
+	Tail        PhysicalPlan
+	DataSource  PhysicalPlan
+
+	SplitterType PartitionSplitterType
+	HashByItems  []expression.Expression
+}
+
+// PartitionSplitterType is the type of `Shuffle` executor splitter, which splits data source into partitions.
+type PartitionSplitterType int
+
+const (
+	// PartitionHashSplitterType is the splitter splits by hash.
+	PartitionHashSplitterType = iota
+)
+
+// PhysicalShuffleDataSourceStub represents a data source stub of `PhysicalShuffle`,
+// and actually, is executed by `executor.shuffleWorker`.
+type PhysicalShuffleDataSourceStub struct {
+	physicalSchemaProducer
+
+	// Worker points to `executor.shuffleWorker`.
+	Worker unsafe.Pointer
 }
 
 // CollectPlanStatsVersion uses to collect the statistics version of the plan.

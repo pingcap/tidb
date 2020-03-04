@@ -35,7 +35,7 @@ func (p LogicalJoin) Init(ctx sessionctx.Context, offset int) *LogicalJoin {
 
 // Init initializes DataSource.
 func (ds DataSource) Init(ctx sessionctx.Context, offset int) *DataSource {
-	ds.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeTableScan, &ds, offset)
+	ds.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeDataSource, &ds, offset)
 	return &ds
 }
 
@@ -196,6 +196,22 @@ func (p LogicalWindow) Init(ctx sessionctx.Context, offset int) *LogicalWindow {
 // Init initializes PhysicalWindow.
 func (p PhysicalWindow) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalWindow {
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeWindow, &p, offset)
+	p.childrenReqProps = props
+	p.stats = stats
+	return &p
+}
+
+// Init initializes PhysicalShuffle.
+func (p PhysicalShuffle) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalShuffle {
+	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeShuffle, &p, offset)
+	p.childrenReqProps = props
+	p.stats = stats
+	return &p
+}
+
+// Init initializes PhysicalShuffleDataSourceStub.
+func (p PhysicalShuffleDataSourceStub) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalShuffleDataSourceStub {
+	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeShuffleDataSourceStub, &p, offset)
 	p.childrenReqProps = props
 	p.stats = stats
 	return &p

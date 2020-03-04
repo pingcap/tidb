@@ -24,7 +24,7 @@ import (
 var vecBuiltinLikeCases = map[string][]vecExprBenchCase{
 	ast.Like: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETInt},
-			geners: []dataGenerator{nil, nil, &rangeInt64Gener{int('\\'), int('\\') + 1}},
+			geners: []dataGenerator{nil, nil, newRangeInt64Gener(int('\\'), int('\\')+1)},
 		},
 	},
 	ast.Regexp: {

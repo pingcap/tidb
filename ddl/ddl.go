@@ -96,19 +96,19 @@ var (
 	errUnsupportedCharset        = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation], "charset %s and collate %s"))
 	errUnsupportedShardRowIDBits = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation], "shard_row_id_bits for table with primary key as row id"))
 	errBlobKeyWithoutLength      = terror.ClassDDL.New(mysql.ErrBlobKeyWithoutLength, mysql.MySQLErrName[mysql.ErrBlobKeyWithoutLength])
+	errKeyPart0                  = terror.ClassDDL.New(mysql.ErrKeyPart0, mysql.MySQLErrName[mysql.ErrKeyPart0])
 	errIncorrectPrefixKey        = terror.ClassDDL.New(mysql.ErrWrongSubKey, mysql.MySQLErrName[mysql.ErrWrongSubKey])
-	errTooLongKey                = terror.ClassDDL.New(mysql.ErrTooLongKey,
-		fmt.Sprintf(mysql.MySQLErrName[mysql.ErrTooLongKey], maxPrefixLength))
-	errKeyColumnDoesNotExits    = terror.ClassDDL.New(mysql.ErrKeyColumnDoesNotExits, mysql.MySQLErrName[mysql.ErrKeyColumnDoesNotExits])
-	errUnknownTypeLength        = terror.ClassDDL.New(mysql.ErrUnknownTypeLength, mysql.MySQLErrName[mysql.ErrUnknownTypeLength])
-	errUnknownFractionLength    = terror.ClassDDL.New(mysql.ErrUnknownFractionLength, mysql.MySQLErrName[mysql.ErrUnknownFractionLength])
-	errInvalidDDLJobVersion     = terror.ClassDDL.New(mysql.ErrInvalidDDLJobVersion, mysql.MySQLErrName[mysql.ErrInvalidDDLJobVersion])
-	errInvalidUseOfNull         = terror.ClassDDL.New(mysql.ErrInvalidUseOfNull, mysql.MySQLErrName[mysql.ErrInvalidUseOfNull])
-	errTooManyFields            = terror.ClassDDL.New(mysql.ErrTooManyFields, mysql.MySQLErrName[mysql.ErrTooManyFields])
-	errInvalidSplitRegionRanges = terror.ClassDDL.New(mysql.ErrInvalidSplitRegionRanges, mysql.MySQLErrName[mysql.ErrInvalidSplitRegionRanges])
-	errReorgPanic               = terror.ClassDDL.New(mysql.ErrReorgPanic, mysql.MySQLErrName[mysql.ErrReorgPanic])
-	errFkColumnCannotDrop       = terror.ClassDDL.New(mysql.ErrFkColumnCannotDrop, mysql.MySQLErrName[mysql.ErrFkColumnCannotDrop])
-	errFKIncompatibleColumns    = terror.ClassDDL.New(mysql.ErrFKIncompatibleColumns, mysql.MySQLErrName[mysql.ErrFKIncompatibleColumns])
+	errTooLongKey                = terror.ClassDDL.New(mysql.ErrTooLongKey, mysql.MySQLErrName[mysql.ErrTooLongKey])
+	errKeyColumnDoesNotExits     = terror.ClassDDL.New(mysql.ErrKeyColumnDoesNotExits, mysql.MySQLErrName[mysql.ErrKeyColumnDoesNotExits])
+	errUnknownTypeLength         = terror.ClassDDL.New(mysql.ErrUnknownTypeLength, mysql.MySQLErrName[mysql.ErrUnknownTypeLength])
+	errUnknownFractionLength     = terror.ClassDDL.New(mysql.ErrUnknownFractionLength, mysql.MySQLErrName[mysql.ErrUnknownFractionLength])
+	errInvalidDDLJobVersion      = terror.ClassDDL.New(mysql.ErrInvalidDDLJobVersion, mysql.MySQLErrName[mysql.ErrInvalidDDLJobVersion])
+	errInvalidUseOfNull          = terror.ClassDDL.New(mysql.ErrInvalidUseOfNull, mysql.MySQLErrName[mysql.ErrInvalidUseOfNull])
+	errTooManyFields             = terror.ClassDDL.New(mysql.ErrTooManyFields, mysql.MySQLErrName[mysql.ErrTooManyFields])
+	errInvalidSplitRegionRanges  = terror.ClassDDL.New(mysql.ErrInvalidSplitRegionRanges, mysql.MySQLErrName[mysql.ErrInvalidSplitRegionRanges])
+	errReorgPanic                = terror.ClassDDL.New(mysql.ErrReorgPanic, mysql.MySQLErrName[mysql.ErrReorgPanic])
+	errFkColumnCannotDrop        = terror.ClassDDL.New(mysql.ErrFkColumnCannotDrop, mysql.MySQLErrName[mysql.ErrFkColumnCannotDrop])
+	errFKIncompatibleColumns     = terror.ClassDDL.New(mysql.ErrFKIncompatibleColumns, mysql.MySQLErrName[mysql.ErrFKIncompatibleColumns])
 
 	errOnlyOnRangeListPartition = terror.ClassDDL.New(mysql.ErrOnlyOnRangeListPartition, mysql.MySQLErrName[mysql.ErrOnlyOnRangeListPartition])
 	// errWrongKeyColumn is for table column cannot be indexed.
@@ -232,6 +232,21 @@ var (
 	ErrFunctionalIndexOnField = terror.ClassDDL.New(mysql.ErrFunctionalIndexOnField, mysql.MySQLErrName[mysql.ErrFunctionalIndexOnField])
 	// ErrInvalidAutoRandom returns when auto_random is used incorrectly.
 	ErrInvalidAutoRandom = terror.ClassDDL.New(mysql.ErrInvalidAutoRandom, mysql.MySQLErrName[mysql.ErrInvalidAutoRandom])
+
+	// ErrSequenceRunOut returns when the sequence has been run out.
+	ErrSequenceRunOut = terror.ClassDDL.New(mysql.ErrSequenceRunOut, mysql.MySQLErrName[mysql.ErrSequenceRunOut])
+	// ErrSequenceInvalidData returns when sequence values are conflicting.
+	ErrSequenceInvalidData = terror.ClassDDL.New(mysql.ErrSequenceInvalidData, mysql.MySQLErrName[mysql.ErrSequenceInvalidData])
+	// ErrSequenceAccessFail returns when sequences are not able to access.
+	ErrSequenceAccessFail = terror.ClassDDL.New(mysql.ErrSequenceAccessFail, mysql.MySQLErrName[mysql.ErrSequenceAccessFail])
+	// ErrNotSequence returns when object is not a sequence.
+	ErrNotSequence = terror.ClassDDL.New(mysql.ErrNotSequence, mysql.MySQLErrName[mysql.ErrNotSequence])
+	// ErrUnknownSequence returns when drop / alter unknown sequence.
+	ErrUnknownSequence = terror.ClassDDL.New(mysql.ErrUnknownSequence, mysql.MySQLErrName[mysql.ErrUnknownSequence])
+	// ErrSequenceUnsupportedTableOption returns when unsupported table option exists in sequence.
+	ErrSequenceUnsupportedTableOption = terror.ClassDDL.New(mysql.ErrSequenceUnsupportedTableOption, mysql.MySQLErrName[mysql.ErrSequenceUnsupportedTableOption])
+	// ErrColumnTypeUnsupportedNextValue is returned when sequence next value is assigned to unsupported column type.
+	ErrColumnTypeUnsupportedNextValue = terror.ClassDDL.New(mysql.ErrColumnTypeUnsupportedNextValue, mysql.MySQLErrName[mysql.ErrColumnTypeUnsupportedNextValue])
 )
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
@@ -243,7 +258,7 @@ type DDL interface {
 	CreateView(ctx sessionctx.Context, stmt *ast.CreateViewStmt) error
 	CreateTableWithLike(ctx sessionctx.Context, ident, referIdent ast.Ident, ifNotExists bool) error
 	DropTable(ctx sessionctx.Context, tableIdent ast.Ident) (err error)
-	RecoverTable(ctx sessionctx.Context, tbInfo *model.TableInfo, schemaID, autoID, dropJobID int64, snapshotTS uint64) (err error)
+	RecoverTable(ctx sessionctx.Context, recoverInfo *RecoverInfo) (err error)
 	DropView(ctx sessionctx.Context, tableIdent ast.Ident) (err error)
 	CreateIndex(ctx sessionctx.Context, tableIdent ast.Ident, keyType ast.IndexKeyType, indexName model.CIStr,
 		columnNames []*ast.IndexPartSpecification, indexOption *ast.IndexOption, ifNotExists bool) error
@@ -254,8 +269,10 @@ type DDL interface {
 	LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error
 	UnlockTables(ctx sessionctx.Context, lockedTables []model.TableLockTpInfo) error
 	CleanupTableLock(ctx sessionctx.Context, tables []*ast.TableName) error
-	UpdateTableReplicaInfo(ctx sessionctx.Context, tid int64, available bool) error
+	UpdateTableReplicaInfo(ctx sessionctx.Context, physicalID int64, available bool) error
 	RepairTable(ctx sessionctx.Context, table *ast.TableName, createStmt *ast.CreateTableStmt) error
+	CreateSequence(ctx sessionctx.Context, stmt *ast.CreateSequenceStmt) error
+	DropSequence(ctx sessionctx.Context, tableIdent ast.Ident, ifExists bool) (err error)
 
 	// GetLease returns current schema lease time.
 	GetLease() time.Duration
@@ -651,96 +668,12 @@ func (d *ddl) GetHook() Callback {
 	return d.mu.hook
 }
 
-func init() {
-	ddlMySQLErrCodes := map[terror.ErrCode]uint16{
-		mysql.ErrAlterOperationNotSupportedReason:     mysql.ErrAlterOperationNotSupportedReason,
-		mysql.ErrBadField:                             mysql.ErrBadField,
-		mysql.ErrBadNull:                              mysql.ErrBadNull,
-		mysql.ErrBlobCantHaveDefault:                  mysql.ErrBlobCantHaveDefault,
-		mysql.ErrBlobKeyWithoutLength:                 mysql.ErrBlobKeyWithoutLength,
-		mysql.ErrCancelledDDLJob:                      mysql.ErrCancelledDDLJob,
-		mysql.ErrCantDecodeIndex:                      mysql.ErrCantDecodeIndex,
-		mysql.ErrCantDropFieldOrKey:                   mysql.ErrCantDropFieldOrKey,
-		mysql.ErrCantRemoveAllFields:                  mysql.ErrCantRemoveAllFields,
-		mysql.ErrCoalesceOnlyOnHashPartition:          mysql.ErrCoalesceOnlyOnHashPartition,
-		mysql.ErrCollationCharsetMismatch:             mysql.ErrCollationCharsetMismatch,
-		mysql.ErrConflictingDeclarations:              mysql.ErrConflictingDeclarations,
-		mysql.ErrDependentByGeneratedColumn:           mysql.ErrDependentByGeneratedColumn,
-		mysql.ErrDropLastPartition:                    mysql.ErrDropLastPartition,
-		mysql.ErrDropPartitionNonExistent:             mysql.ErrDropPartitionNonExistent,
-		mysql.ErrDupKeyName:                           mysql.ErrDupKeyName,
-		mysql.ErrErrorOnRename:                        mysql.ErrErrorOnRename,
-		mysql.ErrFieldNotFoundPart:                    mysql.ErrFieldNotFoundPart,
-		mysql.ErrFieldTypeNotAllowedAsPartitionField:  mysql.ErrFieldTypeNotAllowedAsPartitionField,
-		mysql.ErrFileNotFound:                         mysql.ErrFileNotFound,
-		mysql.ErrFunctionalIndexPrimaryKey:            mysql.ErrFunctionalIndexPrimaryKey,
-		mysql.ErrGeneratedColumnFunctionIsNotAllowed:  mysql.ErrGeneratedColumnFunctionIsNotAllowed,
-		mysql.ErrGeneratedColumnNonPrior:              mysql.ErrGeneratedColumnNonPrior,
-		mysql.ErrGeneratedColumnRefAutoInc:            mysql.ErrGeneratedColumnRefAutoInc,
-		mysql.ErrInvalidAutoRandom:                    mysql.ErrInvalidAutoRandom,
-		mysql.ErrInvalidDDLJob:                        mysql.ErrInvalidDDLJob,
-		mysql.ErrInvalidDDLState:                      mysql.ErrInvalidDDLState,
-		mysql.ErrInvalidDDLWorker:                     mysql.ErrInvalidDDLWorker,
-		mysql.ErrInvalidDefault:                       mysql.ErrInvalidDefault,
-		mysql.ErrInvalidGroupFuncUse:                  mysql.ErrInvalidGroupFuncUse,
-		mysql.ErrInvalidDDLJobFlag:                    mysql.ErrInvalidDDLJobFlag,
-		mysql.ErrInvalidDDLJobVersion:                 mysql.ErrInvalidDDLJobVersion,
-		mysql.ErrInvalidOnUpdate:                      mysql.ErrInvalidOnUpdate,
-		mysql.ErrInvalidSplitRegionRanges:             mysql.ErrInvalidSplitRegionRanges,
-		mysql.ErrInvalidStoreVersion:                  mysql.ErrInvalidStoreVersion,
-		mysql.ErrInvalidUseOfNull:                     mysql.ErrInvalidUseOfNull,
-		mysql.ErrJSONUsedAsKey:                        mysql.ErrJSONUsedAsKey,
-		mysql.ErrKeyColumnDoesNotExits:                mysql.ErrKeyColumnDoesNotExits,
-		mysql.ErrLockWaitTimeout:                      mysql.ErrLockWaitTimeout,
-		mysql.ErrNoParts:                              mysql.ErrNoParts,
-		mysql.ErrNotOwner:                             mysql.ErrNotOwner,
-		mysql.ErrOnlyOnRangeListPartition:             mysql.ErrOnlyOnRangeListPartition,
-		mysql.ErrPartitionColumnList:                  mysql.ErrPartitionColumnList,
-		mysql.ErrPartitionFuncNotAllowed:              mysql.ErrPartitionFuncNotAllowed,
-		mysql.ErrPartitionFunctionIsNotAllowed:        mysql.ErrPartitionFunctionIsNotAllowed,
-		mysql.ErrPartitionMaxvalue:                    mysql.ErrPartitionMaxvalue,
-		mysql.ErrPartitionMgmtOnNonpartitioned:        mysql.ErrPartitionMgmtOnNonpartitioned,
-		mysql.ErrPartitionRequiresValues:              mysql.ErrPartitionRequiresValues,
-		mysql.ErrPartitionWrongNoPart:                 mysql.ErrPartitionWrongNoPart,
-		mysql.ErrPartitionWrongNoSubpart:              mysql.ErrPartitionWrongNoSubpart,
-		mysql.ErrPartitionWrongValues:                 mysql.ErrPartitionWrongValues,
-		mysql.ErrPartitionsMustBeDefined:              mysql.ErrPartitionsMustBeDefined,
-		mysql.ErrPrimaryCantHaveNull:                  mysql.ErrPrimaryCantHaveNull,
-		mysql.ErrRangeNotIncreasing:                   mysql.ErrRangeNotIncreasing,
-		mysql.ErrRowSinglePartitionField:              mysql.ErrRowSinglePartitionField,
-		mysql.ErrSameNamePartition:                    mysql.ErrSameNamePartition,
-		mysql.ErrSubpartition:                         mysql.ErrSubpartition,
-		mysql.ErrSystemVersioningWrongPartitions:      mysql.ErrSystemVersioningWrongPartitions,
-		mysql.ErrTableCantHandleFt:                    mysql.ErrTableCantHandleFt,
-		mysql.ErrTableMustHaveColumns:                 mysql.ErrTableMustHaveColumns,
-		mysql.ErrTooLongIdent:                         mysql.ErrTooLongIdent,
-		mysql.ErrTooLongIndexComment:                  mysql.ErrTooLongIndexComment,
-		mysql.ErrTooLongKey:                           mysql.ErrTooLongKey,
-		mysql.ErrTooManyFields:                        mysql.ErrTooManyFields,
-		mysql.ErrTooManyPartitions:                    mysql.ErrTooManyPartitions,
-		mysql.ErrTooManyValues:                        mysql.ErrTooManyValues,
-		mysql.ErrUniqueKeyNeedAllFieldsInPf:           mysql.ErrUniqueKeyNeedAllFieldsInPf,
-		mysql.ErrUnknownCharacterSet:                  mysql.ErrUnknownCharacterSet,
-		mysql.ErrUnknownCollation:                     mysql.ErrUnknownCollation,
-		mysql.ErrUnknownPartition:                     mysql.ErrUnknownPartition,
-		mysql.ErrUnsupportedDDLOperation:              mysql.ErrUnsupportedDDLOperation,
-		mysql.ErrUnsupportedOnGeneratedColumn:         mysql.ErrUnsupportedOnGeneratedColumn,
-		mysql.ErrViewWrongList:                        mysql.ErrViewWrongList,
-		mysql.ErrWrongColumnName:                      mysql.ErrWrongColumnName,
-		mysql.ErrWrongDBName:                          mysql.ErrWrongDBName,
-		mysql.ErrWrongExprInPartitionFunc:             mysql.ErrWrongExprInPartitionFunc,
-		mysql.ErrWrongFKOptionForGeneratedColumn:      mysql.ErrWrongFKOptionForGeneratedColumn,
-		mysql.ErrWrongKeyColumn:                       mysql.ErrWrongKeyColumn,
-		mysql.ErrWrongNameForIndex:                    mysql.ErrWrongNameForIndex,
-		mysql.ErrWrongObject:                          mysql.ErrWrongObject,
-		mysql.ErrWrongPartitionTypeExpectedSystemTime: mysql.ErrWrongPartitionTypeExpectedSystemTime,
-		mysql.ErrWrongSubKey:                          mysql.ErrWrongSubKey,
-		mysql.ErrWrongTableName:                       mysql.ErrWrongTableName,
-		mysql.ErrWrongTypeColumnValue:                 mysql.ErrWrongTypeColumnValue,
-		mysql.WarnDataTruncated:                       mysql.WarnDataTruncated,
-		mysql.ErrFunctionalIndexOnField:               mysql.ErrFunctionalIndexOnField,
-		mysql.ErrFkColumnCannotDrop:                   mysql.ErrFkColumnCannotDrop,
-		mysql.ErrFKIncompatibleColumns:                mysql.ErrFKIncompatibleColumns,
-	}
-	terror.ErrClassToMySQLCodes[terror.ClassDDL] = ddlMySQLErrCodes
+// RecoverInfo contains information needed by DDL.RecoverTable.
+type RecoverInfo struct {
+	SchemaID      int64
+	TableInfo     *model.TableInfo
+	DropJobID     int64
+	SnapshotTS    uint64
+	CurAutoIncID  int64
+	CurAutoRandID int64
 }

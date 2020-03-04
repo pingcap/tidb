@@ -16,6 +16,7 @@ package tikv
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"math"
 	"sync"
 	"sync/atomic"
@@ -36,11 +37,13 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-binlog"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
 
 type twoPhaseCommitAction interface {
 	handleSingleBatch(*twoPhaseCommitter, *Backoffer, batchKeys) error
+	tiKVTxnRegionsNumHistogram() prometheus.Observer
 	String() string
 }
 
@@ -65,6 +68,12 @@ var (
 	tikvSecondaryLockCleanupFailureCounterRollback = metrics.TiKVSecondaryLockCleanupFailureCounter.WithLabelValues("rollback")
 	tiKVTxnHeartBeatHistogramOK                    = metrics.TiKVTxnHeartBeatHistogram.WithLabelValues("ok")
 	tiKVTxnHeartBeatHistogramError                 = metrics.TiKVTxnHeartBeatHistogram.WithLabelValues("err")
+
+	tiKVTxnRegionsNumHistogramPrewrite            = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues(metricsTag("prewrite"))
+	tiKVTxnRegionsNumHistogramCommit              = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues(metricsTag("commit"))
+	tiKVTxnRegionsNumHistogramCleanup             = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues(metricsTag("cleanup"))
+	tiKVTxnRegionsNumHistogramPessimisticLock     = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues(metricsTag("pessimistic_lock"))
+	tiKVTxnRegionsNumHistogramPessimisticRollback = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues(metricsTag("pessimistic_rollback"))
 )
 
 // Global variable set by config file.
@@ -76,25 +85,45 @@ func (actionPrewrite) String() string {
 	return "prewrite"
 }
 
+func (actionPrewrite) tiKVTxnRegionsNumHistogram() prometheus.Observer {
+	return tiKVTxnRegionsNumHistogramPrewrite
+}
+
 func (actionCommit) String() string {
 	return "commit"
+}
+
+func (actionCommit) tiKVTxnRegionsNumHistogram() prometheus.Observer {
+	return tiKVTxnRegionsNumHistogramCommit
 }
 
 func (actionCleanup) String() string {
 	return "cleanup"
 }
 
+func (actionCleanup) tiKVTxnRegionsNumHistogram() prometheus.Observer {
+	return tiKVTxnRegionsNumHistogramCleanup
+}
+
 func (actionPessimisticLock) String() string {
 	return "pessimistic_lock"
+}
+
+func (actionPessimisticLock) tiKVTxnRegionsNumHistogram() prometheus.Observer {
+	return tiKVTxnRegionsNumHistogramPessimisticLock
 }
 
 func (actionPessimisticRollback) String() string {
 	return "pessimistic_rollback"
 }
 
+func (actionPessimisticRollback) tiKVTxnRegionsNumHistogram() prometheus.Observer {
+	return tiKVTxnRegionsNumHistogramPessimisticRollback
+}
+
 // metricsTag returns detail tag for metrics.
-func metricsTag(ca twoPhaseCommitAction) string {
-	return "2pc_" + ca.String()
+func metricsTag(action string) string {
+	return "2pc_" + action
 }
 
 // twoPhaseCommitter executes a two-phase commit protocol.
@@ -366,7 +395,7 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 		return errors.Trace(err)
 	}
 
-	metrics.TiKVTxnRegionsNumHistogram.WithLabelValues(metricsTag(action)).Observe(float64(len(groups)))
+	action.tiKVTxnRegionsNumHistogram().Observe(float64(len(groups)))
 
 	var batches []batchKeys
 	var sizeFunc = c.keySize
@@ -390,8 +419,9 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 	firstIsPrimary := bytes.Equal(keys[0], c.primary())
 	_, actionIsCommit := action.(actionCommit)
 	_, actionIsCleanup := action.(actionCleanup)
-	if firstIsPrimary && (actionIsCommit || actionIsCleanup) {
-		// primary should be committed/cleanup first
+	_, actionIsPessimiticLock := action.(actionPessimisticLock)
+	if firstIsPrimary && (actionIsCommit || actionIsCleanup || actionIsPessimiticLock) {
+		// primary should be committed/cleanup/pessimistically locked first
 		err = c.doActionOnBatches(bo, action, batches[:1])
 		if err != nil {
 			return errors.Trace(err)
@@ -613,7 +643,7 @@ func (tm *ttlManager) close() {
 
 func (tm *ttlManager) keepAlive(c *twoPhaseCommitter) {
 	// Ticker is set to 1/2 of the ManagedLockTTL.
-	ticker := time.NewTicker(time.Duration(ManagedLockTTL) * time.Millisecond / 2)
+	ticker := time.NewTicker(time.Duration(atomic.LoadUint64(&ManagedLockTTL)) * time.Millisecond / 2)
 	defer ticker.Stop()
 	for {
 		select {
@@ -624,12 +654,12 @@ func (tm *ttlManager) keepAlive(c *twoPhaseCommitter) {
 			if tm.killed != nil && atomic.LoadUint32(tm.killed) != 0 {
 				return
 			}
-			bo := NewBackoffer(context.Background(), pessimisticLockMaxBackoff)
+			bo := NewBackoffer(context.Background(), pessimisticLockMaxBackoff).WithVars(c.txn.vars)
 			now, err := c.store.GetOracle().GetTimestamp(bo.ctx)
 			if err != nil {
 				err1 := bo.Backoff(BoPDRPC, err)
 				if err1 != nil {
-					logutil.BgLogger().Warn("keepAlive get tso fail",
+					logutil.Logger(bo.ctx).Warn("keepAlive get tso fail",
 						zap.Error(err))
 					return
 				}
@@ -641,20 +671,20 @@ func (tm *ttlManager) keepAlive(c *twoPhaseCommitter) {
 			if uptime > c10min {
 				// Set a 10min maximum lifetime for the ttlManager, so when something goes wrong
 				// the key will not be locked forever.
-				logutil.BgLogger().Info("ttlManager live up to its lifetime",
+				logutil.Logger(bo.ctx).Info("ttlManager live up to its lifetime",
 					zap.Uint64("txnStartTS", c.startTS))
 				metrics.TiKVTTLLifeTimeReachCounter.Inc()
 				return
 			}
 
-			newTTL := uptime + ManagedLockTTL
-			logutil.BgLogger().Info("send TxnHeartBeat",
+			newTTL := uptime + atomic.LoadUint64(&ManagedLockTTL)
+			logutil.Logger(bo.ctx).Info("send TxnHeartBeat",
 				zap.Uint64("startTS", c.startTS), zap.Uint64("newTTL", newTTL))
 			startTime := time.Now()
 			_, err = sendTxnHeartBeat(bo, c.store, c.primary(), c.startTS, newTTL)
 			if err != nil {
 				tiKVTxnHeartBeatHistogramError.Observe(time.Since(startTime).Seconds())
-				logutil.BgLogger().Warn("send TxnHeartBeat failed",
+				logutil.Logger(bo.ctx).Warn("send TxnHeartBeat failed",
 					zap.Error(err),
 					zap.Uint64("txnStartTS", c.startTS))
 				return
@@ -683,9 +713,10 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 		PrimaryLock:  c.primary(),
 		StartVersion: c.startTS,
 		ForUpdateTs:  c.forUpdateTS,
-		LockTtl:      elapsed + ManagedLockTTL,
+		LockTtl:      elapsed + atomic.LoadUint64(&ManagedLockTTL),
 		IsFirstLock:  c.isFirstLock,
 		WaitTimeout:  action.LockWaitTime,
+		ReturnValues: action.ReturnValues,
 	}, pb.Context{Priority: c.priority, SyncLog: c.syncLog})
 	lockWaitStartTime := action.WaitStartTime
 	for {
@@ -724,6 +755,13 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 		lockResp := resp.Resp.(*pb.PessimisticLockResponse)
 		keyErrs := lockResp.GetErrors()
 		if len(keyErrs) == 0 {
+			if action.ReturnValues {
+				action.ValuesLock.Lock()
+				for i, mutation := range mutations {
+					action.Values[string(mutation.Key)] = lockResp.Values[i]
+				}
+				action.ValuesLock.Unlock()
+			}
 			return nil
 		}
 		var locks []*Lock
@@ -929,13 +967,22 @@ func (actionCommit) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch
 		if c.mu.committed {
 			// No secondary key could be rolled back after it's primary key is committed.
 			// There must be a serious bug somewhere.
-			logutil.BgLogger().Error("2PC failed commit key after primary key committed",
+			hexBatchKeys := func(keys [][]byte) []string {
+				var res []string
+				for _, k := range keys {
+					res = append(res, hex.EncodeToString(k))
+				}
+				return res
+			}
+			logutil.Logger(bo.ctx).Error("2PC failed commit key after primary key committed",
 				zap.Error(err),
-				zap.Uint64("txnStartTS", c.startTS))
+				zap.Uint64("txnStartTS", c.startTS),
+				zap.Uint64("commitTS", c.commitTS),
+				zap.Strings("keys", hexBatchKeys(batch.keys)))
 			return errors.Trace(err)
 		}
 		// The transaction maybe rolled back by concurrent transactions.
-		logutil.BgLogger().Debug("2PC failed commit primary key",
+		logutil.Logger(bo.ctx).Debug("2PC failed commit primary key",
 			zap.Error(err),
 			zap.Uint64("txnStartTS", c.startTS))
 		return err

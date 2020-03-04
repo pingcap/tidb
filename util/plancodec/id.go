@@ -84,6 +84,10 @@ const (
 	TypeIndexReader = "IndexReader"
 	// TypeWindow is the type of Window.
 	TypeWindow = "Window"
+	// TypeShuffle is the type of Shuffle.
+	TypeShuffle = "Shuffle"
+	// TypeShuffleDataSourceStub is the type of Shuffle.
+	TypeShuffleDataSourceStub = "ShuffleDataSourceStub"
 	// TypeTiKVSingleGather is the type of TiKVSingleGather.
 	TypeTiKVSingleGather = "TiKVSingleGather"
 	// TypeIndexMerge is the type of IndexMergeReader
@@ -96,6 +100,8 @@ const (
 	TypeBatchPointGet = "Batch_Point_Get"
 	// TypeClusterMemTableReader is the type of TableReader.
 	TypeClusterMemTableReader = "ClusterMemTableReader"
+	// TypeDataSource is the type of DataSource.
+	TypeDataSource = "DataSource"
 )
 
 // plan id.
@@ -140,6 +146,7 @@ const (
 	typeShowDDLJobs
 	typeBatchPointGet
 	typeClusterMemTableReader
+	typeDataSourceID
 )
 
 // TypeStringToPhysicalID converts the plan type string to plan id.
@@ -225,6 +232,8 @@ func TypeStringToPhysicalID(tp string) int {
 		return typeBatchPointGet
 	case TypeClusterMemTableReader:
 		return typeClusterMemTableReader
+	case TypeDataSource:
+		return typeDataSourceID
 	}
 	// Should never reach here.
 	return 0

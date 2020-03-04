@@ -133,8 +133,6 @@ type LogicalJoin struct {
 	RightConditions expression.CNFExprs
 	OtherConditions expression.CNFExprs
 
-	LeftJoinKeys    []*expression.Column
-	RightJoinKeys   []*expression.Column
 	leftProperties  [][]*expression.Column
 	rightProperties [][]*expression.Column
 
@@ -151,6 +149,15 @@ type LogicalJoin struct {
 
 	// equalCondOutCnt indicates the estimated count of joined rows after evaluating `EqualConditions`.
 	equalCondOutCnt float64
+}
+
+// GetJoinKeys extracts join keys(columns) from EqualConditions.
+func (p *LogicalJoin) GetJoinKeys() (leftKeys, rightKeys []*expression.Column) {
+	for _, expr := range p.EqualConditions {
+		leftKeys = append(leftKeys, expr.GetArgs()[0].(*expression.Column))
+		rightKeys = append(rightKeys, expr.GetArgs()[1].(*expression.Column))
+	}
+	return
 }
 
 func (p *LogicalJoin) columnSubstitute(schema *expression.Schema, exprs []expression.Expression) {
@@ -227,6 +234,15 @@ func (p *LogicalJoin) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	return corCols
 }
 
+// ExtractJoinKeys extract join keys as a schema for child with childIdx.
+func (p *LogicalJoin) ExtractJoinKeys(childIdx int) *expression.Schema {
+	joinKeys := make([]*expression.Column, 0, len(p.EqualConditions))
+	for _, eqCond := range p.EqualConditions {
+		joinKeys = append(joinKeys, eqCond.GetArgs()[childIdx].(*expression.Column))
+	}
+	return expression.NewSchema(joinKeys...)
+}
+
 // LogicalProjection represents a select fields plan.
 type LogicalProjection struct {
 	logicalSchemaProducer
@@ -291,6 +307,12 @@ func (la *LogicalAggregation) IsPartialModeAgg() bool {
 	return la.AggFuncs[0].Mode == aggregation.Partial1Mode
 }
 
+// IsCompleteModeAgg returns if all of the AggFuncs are CompleteMode.
+func (la *LogicalAggregation) IsCompleteModeAgg() bool {
+	// Since all of the AggFunc share the same AggMode, we only need to check the first one.
+	return la.AggFuncs[0].Mode == aggregation.CompleteMode
+}
+
 // GetGroupByCols returns the groupByCols. If the groupByCols haven't be collected,
 // this method would collect them at first. If the GroupByItems have been changed,
 // we should explicitly collect GroupByColumns before this method.
@@ -312,6 +334,19 @@ func (la *LogicalAggregation) extractCorrelatedCols() []*expression.CorrelatedCo
 		}
 	}
 	return corCols
+}
+
+// GetUsedCols extracts all of the Columns used by agg including GroupByItems and AggFuncs.
+func (la *LogicalAggregation) GetUsedCols() (usedCols []*expression.Column) {
+	for _, groupByItem := range la.GroupByItems {
+		usedCols = append(usedCols, expression.ExtractColumns(groupByItem)...)
+	}
+	for _, aggDesc := range la.AggFuncs {
+		for _, expr := range aggDesc.Args {
+			usedCols = append(usedCols, expression.ExtractColumns(expr)...)
+		}
+	}
+	return usedCols
 }
 
 // LogicalSelection represents a where or having predicate.
@@ -374,8 +409,14 @@ type LogicalMemTable struct {
 	logicalSchemaProducer
 
 	Extractor MemTablePredicateExtractor
-	dbName    model.CIStr
-	tableInfo *model.TableInfo
+	DBName    model.CIStr
+	TableInfo *model.TableInfo
+	// QueryTimeRange is used to specify the time range for metrics summary tables and inspection tables
+	// e.g: select /*+ time_range('2020-02-02 12:10:00', '2020-02-02 13:00:00') */ from metrics_summary;
+	//      select /*+ time_range('2020-02-02 12:10:00', '2020-02-02 13:00:00') */ from metrics_summary_by_label;
+	//      select /*+ time_range('2020-02-02 12:10:00', '2020-02-02 13:00:00') */ from inspection_summary;
+	//      select /*+ time_range('2020-02-02 12:10:00', '2020-02-02 13:00:00') */ from inspection_result;
+	QueryTimeRange QueryTimeRange
 }
 
 // LogicalUnionScan is only used in non read-only txn.
@@ -623,7 +664,7 @@ func (ds *DataSource) deriveTablePathStats(path *util.AccessPath, conds []expres
 	// If the `CountAfterAccess` is less than `stats.RowCount`, there must be some inconsistent stats info.
 	// We prefer the `stats.RowCount` because it could use more stats info to calculate the selectivity.
 	if path.CountAfterAccess < ds.stats.RowCount && !isIm {
-		path.CountAfterAccess = math.Min(ds.stats.RowCount/selectionFactor, float64(ds.statisticTable.Count))
+		path.CountAfterAccess = math.Min(ds.stats.RowCount/SelectionFactor, float64(ds.statisticTable.Count))
 	}
 	// Check whether the primary key is covered by point query.
 	noIntervalRange := true
@@ -700,13 +741,13 @@ func (ds *DataSource) deriveIndexPathStats(path *util.AccessPath, conds []expres
 	// If the `CountAfterAccess` is less than `stats.RowCount`, there must be some inconsistent stats info.
 	// We prefer the `stats.RowCount` because it could use more stats info to calculate the selectivity.
 	if path.CountAfterAccess < ds.stats.RowCount && !isIm {
-		path.CountAfterAccess = math.Min(ds.stats.RowCount/selectionFactor, float64(ds.statisticTable.Count))
+		path.CountAfterAccess = math.Min(ds.stats.RowCount/SelectionFactor, float64(ds.statisticTable.Count))
 	}
 	if path.IndexFilters != nil {
 		selectivity, _, err := ds.tableStats.HistColl.Selectivity(ds.ctx, path.IndexFilters, nil)
 		if err != nil {
 			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
-			selectivity = selectionFactor
+			selectivity = SelectionFactor
 		}
 		if isIm {
 			path.CountAfterIndex = path.CountAfterAccess * selectivity
@@ -837,8 +878,9 @@ type LogicalLimit struct {
 type LogicalLock struct {
 	baseLogicalPlan
 
-	Lock         ast.SelectLockType
-	tblID2Handle map[int64][]*expression.Column
+	Lock             ast.SelectLockType
+	tblID2Handle     map[int64][]*expression.Column
+	partitionedTable []table.PartitionedTable
 }
 
 // WindowFrame represents a window function frame.

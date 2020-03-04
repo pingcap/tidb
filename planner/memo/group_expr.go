@@ -14,7 +14,7 @@
 package memo
 
 import (
-	"fmt"
+	"encoding/binary"
 	"reflect"
 
 	"github.com/pingcap/tidb/expression"
@@ -29,8 +29,11 @@ import (
 type GroupExpr struct {
 	ExprNode plannercore.LogicalPlan
 	Children []*Group
-	Explored bool
 	Group    *Group
+
+	// ExploreMark is uses to mark whether this GroupExpr has been fully
+	// explored by a transformation rule batch in a certain round.
+	ExploreMark
 
 	selfFingerprint string
 	// appliedRuleSet saves transformation rules which have been applied to this
@@ -44,18 +47,23 @@ func NewGroupExpr(node plannercore.LogicalPlan) *GroupExpr {
 	return &GroupExpr{
 		ExprNode:       node,
 		Children:       nil,
-		Explored:       false,
 		appliedRuleSet: make(map[uint64]struct{}),
 	}
 }
 
 // FingerPrint gets the unique fingerprint of the Group expression.
 func (e *GroupExpr) FingerPrint() string {
-	if e.selfFingerprint == "" {
-		e.selfFingerprint = fmt.Sprintf("%v", e.ExprNode.ID())
-		for i := range e.Children {
-			e.selfFingerprint += e.Children[i].FingerPrint()
+	if len(e.selfFingerprint) == 0 {
+		planHash := e.ExprNode.HashCode()
+		buffer := make([]byte, 2, 2+len(e.Children)*8+len(planHash))
+		binary.BigEndian.PutUint16(buffer, uint16(len(e.Children)))
+		for _, child := range e.Children {
+			var buf [8]byte
+			binary.BigEndian.PutUint64(buf[:], uint64(reflect.ValueOf(child).Pointer()))
+			buffer = append(buffer, buf[:]...)
 		}
+		buffer = append(buffer, planHash...)
+		e.selfFingerprint = string(buffer)
 	}
 	return e.selfFingerprint
 }

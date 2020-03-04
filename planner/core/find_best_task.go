@@ -35,7 +35,10 @@ import (
 )
 
 const (
-	selectionFactor = 0.8
+	// SelectionFactor is the default factor of the selectivity.
+	// For example, If we have no idea how to estimate the selectivity
+	// of a Selection or a JoinCondition, we can use this default value.
+	SelectionFactor = 0.8
 	distinctFactor  = 0.8
 )
 
@@ -75,6 +78,29 @@ func GetPropByOrderByItems(items []*ByItems) (*property.PhysicalProperty, bool) 
 		propItems = append(propItems, property.Item{Col: col, Desc: item.Desc})
 	}
 	return &property.PhysicalProperty{Items: propItems}, true
+}
+
+// GetPropByOrderByItemsContainScalarFunc will check if this sort property can be pushed or not. In order to simplify the
+// problem, we only consider the case that all expression are columns or some special scalar functions.
+func GetPropByOrderByItemsContainScalarFunc(items []*ByItems) (*property.PhysicalProperty, bool, bool) {
+	propItems := make([]property.Item, 0, len(items))
+	onlyColumn := true
+	for _, item := range items {
+		switch expr := item.Expr.(type) {
+		case *expression.Column:
+			propItems = append(propItems, property.Item{Col: expr, Desc: item.Desc})
+		case *expression.ScalarFunction:
+			col, desc := expr.GetSingleColumn(item.Desc)
+			if col == nil {
+				return nil, false, false
+			}
+			propItems = append(propItems, property.Item{Col: col, Desc: desc})
+			onlyColumn = false
+		default:
+			return nil, false, false
+		}
+	}
+	return &property.PhysicalProperty{Items: propItems}, true, onlyColumn
 }
 
 func (p *LogicalTableDual) findBestTask(prop *property.PhysicalProperty) (task, error) {
@@ -173,6 +199,11 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty) (bestTas
 			curTask = enforceProperty(prop, curTask, p.basePlan.ctx)
 		}
 
+		// optimize by shuffle executor to running in parallel manner.
+		if prop.IsEmpty() {
+			curTask = optimizeByShuffle(pp, curTask, p.basePlan.ctx)
+		}
+
 		// get the most efficient one.
 		if curTask.cost() < bestTask.cost() {
 			bestTask = curTask
@@ -188,10 +219,11 @@ func (p *LogicalMemTable) findBestTask(prop *property.PhysicalProperty) (t task,
 		return invalidTask, nil
 	}
 	memTable := PhysicalMemTable{
-		DBName:    p.dbName,
-		Table:     p.tableInfo,
-		Columns:   p.tableInfo.Columns,
-		Extractor: p.Extractor,
+		DBName:         p.DBName,
+		Table:          p.TableInfo,
+		Columns:        p.TableInfo.Columns,
+		Extractor:      p.Extractor,
+		QueryTimeRange: p.QueryTimeRange,
 	}.Init(p.ctx, p.stats, p.blockOffset)
 	memTable.SetSchema(p.schema)
 	return &rootTask{p: memTable}, nil
@@ -249,7 +281,7 @@ func compareBool(l, r bool) int {
 	if l == r {
 		return 0
 	}
-	if l == false {
+	if !l {
 		return -1
 	}
 	return 1
@@ -552,7 +584,7 @@ func (ds *DataSource) convertToPartialTableScan(prop *property.PhysicalProperty,
 		selectivity, _, err := ds.tableStats.HistColl.Selectivity(ds.ctx, ts.filterCondition, nil)
 		if err != nil {
 			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
-			selectivity = selectionFactor
+			selectivity = SelectionFactor
 		}
 		tablePlan = PhysicalSelection{Conditions: ts.filterCondition}.Init(ts.ctx, ts.stats.ScaleByExpectCnt(selectivity*rowCount), ds.blockOffset)
 		tablePlan.SetChildren(ts)
@@ -595,7 +627,7 @@ func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, 
 		selectivity, _, err := ds.tableStats.HistColl.Selectivity(ds.ctx, tableFilters, nil)
 		if err != nil {
 			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
-			selectivity = selectionFactor
+			selectivity = SelectionFactor
 		}
 		sel := PhysicalSelection{Conditions: tableFilters}.Init(ts.ctx, ts.stats.ScaleByExpectCnt(selectivity*totalRowCount), ts.blockOffset)
 		sel.SetChildren(ts)
@@ -756,7 +788,7 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 	// Add filter condition to table plan now.
 	indexConds, tableConds := path.IndexFilters, path.TableFilters
 
-	tableConds, copTask.rootTaskConds = splitSelCondsWithVirtualColumn(tableConds)
+	tableConds, copTask.rootTaskConds = SplitSelCondsWithVirtualColumn(tableConds)
 
 	sessVars := is.ctx.GetSessionVars()
 	if indexConds != nil {
@@ -780,8 +812,8 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 	}
 }
 
-// splitSelCondsWithVirtualColumn filter the select conditions which contain virtual column
-func splitSelCondsWithVirtualColumn(conds []expression.Expression) ([]expression.Expression, []expression.Expression) {
+// SplitSelCondsWithVirtualColumn filter the select conditions which contain virtual column
+func SplitSelCondsWithVirtualColumn(conds []expression.Expression) ([]expression.Expression, []expression.Expression) {
 	var filterConds []expression.Expression
 	for i := len(conds) - 1; i >= 0; i-- {
 		if expression.ContainVirtualColumn(conds[i : i+1]) {
@@ -961,7 +993,7 @@ func (ds *DataSource) crossEstimateRowCount(path *util.AccessPath, expectedCnt f
 	}
 	scanCount := rangeCount + expectedCnt - count
 	if len(remained) > 0 {
-		scanCount = scanCount / selectionFactor
+		scanCount = scanCount / SelectionFactor
 	}
 	scanCount = math.Min(scanCount, path.CountAfterAccess)
 	return scanCount, true, 0
@@ -1044,7 +1076,12 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 }
 
 func (ts *PhysicalTableScan) addPushedDownSelection(copTask *copTask, stats *property.StatsInfo) {
-	ts.filterCondition, copTask.rootTaskConds = splitSelCondsWithVirtualColumn(ts.filterCondition)
+	ts.filterCondition, copTask.rootTaskConds = SplitSelCondsWithVirtualColumn(ts.filterCondition)
+	if ts.StoreType == kv.TiFlash {
+		var newRootConds []expression.Expression
+		ts.filterCondition, newRootConds = expression.CheckExprPushFlash(ts.filterCondition)
+		copTask.rootTaskConds = append(copTask.rootTaskConds, newRootConds...)
+	}
 
 	// Add filter condition to table plan now.
 	sessVars := ts.ctx.GetSessionVars()
@@ -1069,12 +1106,6 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 		filterCondition: path.TableFilters,
 		StoreType:       path.StoreType,
 	}.Init(ds.ctx, ds.blockOffset)
-	if ts.StoreType == kv.TiFlash {
-		// Append the AccessCondition to filterCondition because TiFlash only support full range scan for each
-		// region, do not reset ts.Ranges as it will help prune regions during `buildCopTasks`
-		ts.filterCondition = append(ts.filterCondition, ts.AccessCondition...)
-		ts.AccessCondition = nil
-	}
 	ts.SetSchema(ds.schema.Clone())
 	if ts.Table.PKIsHandle {
 		if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {

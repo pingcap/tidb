@@ -79,7 +79,7 @@ func (p *hashPartitionPruner) reduceColumnEQ() bool {
 
 func (p *hashPartitionPruner) reduceConstantEQ() bool {
 	for _, con := range p.conditions {
-		col, cond := validEqualCond(con)
+		col, cond := validEqualCond(p.ctx, con)
 		if col != nil {
 			id := p.getColID(col)
 			if p.constantMap[id] != nil {
@@ -163,7 +163,7 @@ func (p *hashPartitionPruner) solve(ctx sessionctx.Context, conds []Expression, 
 	for _, col := range ExtractColumns(piExpr) {
 		p.insertCol(col)
 	}
-	p.constantMap = make([]*Constant, p.numColumn, p.numColumn)
+	p.constantMap = make([]*Constant, p.numColumn)
 	conflict := p.reduceConstantEQ()
 	if conflict {
 		return 0, false, conflict

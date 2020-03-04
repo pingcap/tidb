@@ -19,10 +19,12 @@ import (
 	"math"
 	"math/rand"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
@@ -39,7 +41,7 @@ type testCommitterSuite struct {
 var _ = SerialSuites(&testCommitterSuite{})
 
 func (s *testCommitterSuite) SetUpSuite(c *C) {
-	ManagedLockTTL = 3000 // 3s
+	atomic.StoreUint64(&ManagedLockTTL, 3000) // 3s
 	s.OneByOneSuite.SetUpSuite(c)
 }
 
@@ -616,12 +618,30 @@ func (s *testCommitterSuite) TestPessimisticTTL(c *C) {
 			expire := oracle.ExtractPhysical(txn.startTS) + int64(lockInfoNew.LockTtl)
 			now := oracle.ExtractPhysical(currentTS)
 			c.Assert(expire > now, IsTrue)
-			c.Assert(uint64(expire-now) <= ManagedLockTTL, IsTrue)
+			c.Assert(uint64(expire-now) <= atomic.LoadUint64(&ManagedLockTTL), IsTrue)
 			return
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
 	c.Assert(false, IsTrue, Commentf("update pessimistic ttl fail"))
+}
+
+func (s *testCommitterSuite) TestPessimisticLockReturnValues(c *C) {
+	key := kv.Key("key")
+	key2 := kv.Key("key2")
+	txn := s.begin(c)
+	c.Assert(txn.Set(key, key), IsNil)
+	c.Assert(txn.Set(key2, key2), IsNil)
+	c.Assert(txn.Commit(context.Background()), IsNil)
+	txn = s.begin(c)
+	txn.SetOption(kv.Pessimistic, true)
+	lockCtx := &kv.LockCtx{ForUpdateTS: txn.startTS, WaitStartTime: time.Now()}
+	lockCtx.ReturnValues = true
+	lockCtx.Values = map[string][]byte{}
+	c.Assert(txn.LockKeys(context.Background(), lockCtx, key, key2), IsNil)
+	c.Assert(lockCtx.Values, HasLen, 2)
+	c.Assert(lockCtx.Values[string(key)], BytesEquals, []byte(key))
+	c.Assert(lockCtx.Values[string(key2)], BytesEquals, []byte(key2))
 }
 
 // TestElapsedTTL tests that elapsed time is correct even if ts physical time is greater than local time.
@@ -638,8 +658,8 @@ func (s *testCommitterSuite) TestElapsedTTL(c *C) {
 	err := txn.LockKeys(context.Background(), lockCtx, key)
 	c.Assert(err, IsNil)
 	lockInfo := s.getLockInfo(c, key)
-	c.Assert(lockInfo.LockTtl-ManagedLockTTL, GreaterEqual, uint64(100))
-	c.Assert(lockInfo.LockTtl-ManagedLockTTL, Less, uint64(150))
+	c.Assert(lockInfo.LockTtl-atomic.LoadUint64(&ManagedLockTTL), GreaterEqual, uint64(100))
+	c.Assert(lockInfo.LockTtl-atomic.LoadUint64(&ManagedLockTTL), Less, uint64(150))
 }
 
 // TestAcquireFalseTimeoutLock tests acquiring a key which is a secondary key of another transaction.
@@ -664,7 +684,7 @@ func (s *testCommitterSuite) TestAcquireFalseTimeoutLock(c *C) {
 	// Heartbeats will increase the TTL of the primary key
 
 	// wait until secondary key exceeds its own TTL
-	time.Sleep(time.Duration(ManagedLockTTL) * time.Millisecond)
+	time.Sleep(time.Duration(atomic.LoadUint64(&ManagedLockTTL)) * time.Millisecond)
 	txn2 := s.begin(c)
 	txn2.SetOption(kv.Pessimistic, true)
 
@@ -672,7 +692,7 @@ func (s *testCommitterSuite) TestAcquireFalseTimeoutLock(c *C) {
 	lockCtx = &kv.LockCtx{ForUpdateTS: txn2.startTS, LockWaitTime: kv.LockNoWait, WaitStartTime: time.Now()}
 	startTime := time.Now()
 	err = txn2.LockKeys(context.Background(), lockCtx, k2)
-	elapsed := time.Now().Sub(startTime)
+	elapsed := time.Since(startTime)
 	// cannot acquire lock immediately thus error
 	c.Assert(err.Error(), Equals, ErrLockAcquireFailAndNoWaitSet.Error())
 	// it should return immediately
@@ -682,7 +702,7 @@ func (s *testCommitterSuite) TestAcquireFalseTimeoutLock(c *C) {
 	lockCtx = &kv.LockCtx{ForUpdateTS: txn2.startTS, LockWaitTime: 300, WaitStartTime: time.Now()}
 	startTime = time.Now()
 	err = txn2.LockKeys(context.Background(), lockCtx, k2)
-	elapsed = time.Now().Sub(startTime)
+	elapsed = time.Since(startTime)
 	// cannot acquire lock in time thus error
 	c.Assert(err.Error(), Equals, ErrLockWaitTimeout.Error())
 	// it should return after about 300ms
@@ -708,4 +728,101 @@ func (s *testCommitterSuite) getLockInfo(c *C, key []byte) *kvrpcpb.LockInfo {
 	locked := keyErrs[0].Locked
 	c.Assert(locked, NotNil)
 	return locked
+}
+
+func (s *testCommitterSuite) TestPkNotFound(c *C) {
+	atomic.StoreUint64(&ManagedLockTTL, 100)        // 100ms
+	defer atomic.StoreUint64(&ManagedLockTTL, 3000) // restore default value
+	// k1 is the primary lock of txn1
+	k1 := kv.Key("k1")
+	// k2 is a secondary lock of txn1 and a key txn2 wants to lock
+	k2 := kv.Key("k2")
+	k3 := kv.Key("k3")
+
+	txn1 := s.begin(c)
+	txn1.SetOption(kv.Pessimistic, true)
+	// lock the primary key
+	lockCtx := &kv.LockCtx{ForUpdateTS: txn1.startTS, WaitStartTime: time.Now()}
+	err := txn1.LockKeys(context.Background(), lockCtx, k1)
+	c.Assert(err, IsNil)
+	// lock the secondary key
+	lockCtx = &kv.LockCtx{ForUpdateTS: txn1.startTS, WaitStartTime: time.Now()}
+	err = txn1.LockKeys(context.Background(), lockCtx, k2)
+	c.Assert(err, IsNil)
+
+	// Stop txn ttl manager and remove primary key, like tidb server crashes and the priamry key lock does not exists actually,
+	// while the secondary lock operation succeeded
+	bo := NewBackoffer(context.Background(), pessimisticLockMaxBackoff)
+	txn1.committer.ttlManager.close()
+	err = txn1.committer.pessimisticRollbackKeys(bo, [][]byte{k1})
+	c.Assert(err, IsNil)
+
+	// Txn2 tries to lock the secondary key k2, dead loop if the left secondary lock by txn1 not resolved
+	txn2 := s.begin(c)
+	txn2.SetOption(kv.Pessimistic, true)
+	lockCtx = &kv.LockCtx{ForUpdateTS: txn2.startTS, WaitStartTime: time.Now()}
+	err = txn2.LockKeys(context.Background(), lockCtx, k2)
+	c.Assert(err, IsNil)
+
+	// Using smaller forUpdateTS cannot rollback this lock, other lock will fail
+	lockKey3 := &Lock{
+		Key:             k3,
+		Primary:         k1,
+		TxnID:           txn1.startTS,
+		TTL:             ManagedLockTTL,
+		TxnSize:         txnCommitBatchSize,
+		LockType:        kvrpcpb.Op_PessimisticLock,
+		LockForUpdateTS: txn1.startTS - 1,
+	}
+	cleanTxns := make(map[RegionVerID]struct{})
+	err = s.store.lockResolver.resolvePessimisticLock(bo, lockKey3, cleanTxns)
+	c.Assert(err, IsNil)
+
+	lockCtx = &kv.LockCtx{ForUpdateTS: txn1.startTS, WaitStartTime: time.Now()}
+	err = txn1.LockKeys(context.Background(), lockCtx, k3)
+	c.Assert(err, IsNil)
+	txn3 := s.begin(c)
+	txn3.SetOption(kv.Pessimistic, true)
+	lockCtx = &kv.LockCtx{ForUpdateTS: txn1.startTS - 1, WaitStartTime: time.Now(), LockWaitTime: kv.LockNoWait}
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/txnNotFoundRetTTL", "return"), IsNil)
+	err = txn3.LockKeys(context.Background(), lockCtx, k3)
+	c.Assert(err.Error(), Equals, ErrLockAcquireFailAndNoWaitSet.Error())
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/txnNotFoundRetTTL"), IsNil)
+}
+
+func (s *testCommitterSuite) TestPessimisticLockPrimary(c *C) {
+	// a is the primary lock of txn1
+	k1 := kv.Key("a")
+	// b is a secondary lock of txn1 and a key txn2 wants to lock, b is on another region
+	k2 := kv.Key("b")
+
+	txn1 := s.begin(c)
+	txn1.SetOption(kv.Pessimistic, true)
+	// txn1 lock k1
+	lockCtx := &kv.LockCtx{ForUpdateTS: txn1.startTS, WaitStartTime: time.Now()}
+	err := txn1.LockKeys(context.Background(), lockCtx, k1)
+	c.Assert(err, IsNil)
+
+	// txn2 wants to lock k1, k2, k1(pk) is blocked by txn1, pessimisticLockKeys has been changed to
+	// lock primary key first and then secondary keys concurrently, k2 should not be locked by txn2
+	doneCh := make(chan error)
+	go func() {
+		txn2 := s.begin(c)
+		txn2.SetOption(kv.Pessimistic, true)
+		lockCtx2 := &kv.LockCtx{ForUpdateTS: txn2.startTS, WaitStartTime: time.Now(), LockWaitTime: 200}
+		waitErr := txn2.LockKeys(context.Background(), lockCtx2, k1, k2)
+		doneCh <- waitErr
+	}()
+	time.Sleep(50 * time.Millisecond)
+
+	// txn3 should locks k2 successfully using no wait
+	txn3 := s.begin(c)
+	txn3.SetOption(kv.Pessimistic, true)
+	lockCtx3 := &kv.LockCtx{ForUpdateTS: txn3.startTS, WaitStartTime: time.Now(), LockWaitTime: kv.LockNoWait}
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/txnNotFoundRetTTL", "return"), IsNil)
+	err = txn3.LockKeys(context.Background(), lockCtx3, k2)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/txnNotFoundRetTTL"), IsNil)
+	c.Assert(err, IsNil)
+	waitErr := <-doneCh
+	c.Assert(ErrLockWaitTimeout.Equal(waitErr), IsTrue)
 }

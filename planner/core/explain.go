@@ -16,6 +16,7 @@ package core
 import (
 	"bytes"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -23,17 +24,26 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/set"
+	"github.com/pingcap/tidb/util/stringutil"
 )
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalLock) ExplainInfo() string {
 	return p.Lock.String()
+}
+
+// ExplainID overrides the ExplainID in order to match different range.
+func (p *PhysicalIndexScan) ExplainID() fmt.Stringer {
+	return stringutil.MemoizeStr(func() string {
+		if p.isFullScan() {
+			return "IndexFullScan_" + strconv.Itoa(p.id)
+		}
+		return "IndexRangeScan_" + strconv.Itoa(p.id)
+	})
 }
 
 // ExplainInfo implements Plan interface.
@@ -63,16 +73,10 @@ func (p *PhysicalIndexScan) explainInfo(normalized bool) string {
 			}
 		}
 	}
-	haveCorCol := false
-	for _, cond := range p.AccessCondition {
-		if len(expression.ExtractCorColumns(cond)) > 0 {
-			haveCorCol = true
-			break
-		}
-	}
+
 	if len(p.rangeInfo) > 0 {
 		fmt.Fprintf(buffer, ", range: decided by %v", p.rangeInfo)
-	} else if haveCorCol {
+	} else if p.haveCorCol() {
 		if normalized {
 			fmt.Fprintf(buffer, ", range: decided by %s", expression.SortedExplainNormalizedExpressionList(p.AccessCondition))
 		} else {
@@ -81,7 +85,7 @@ func (p *PhysicalIndexScan) explainInfo(normalized bool) string {
 	} else if len(p.Ranges) > 0 {
 		if normalized {
 			fmt.Fprint(buffer, ", range:[?,?]")
-		} else {
+		} else if !p.isFullScan() {
 			fmt.Fprint(buffer, ", range:")
 			for i, idxRange := range p.Ranges {
 				fmt.Fprint(buffer, idxRange.String())
@@ -101,9 +105,42 @@ func (p *PhysicalIndexScan) explainInfo(normalized bool) string {
 	return buffer.String()
 }
 
+func (p *PhysicalIndexScan) haveCorCol() bool {
+	for _, cond := range p.AccessCondition {
+		if len(expression.ExtractCorColumns(cond)) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func (p *PhysicalIndexScan) isFullScan() bool {
+	if len(p.rangeInfo) > 0 || p.haveCorCol() {
+		return false
+	}
+	for _, ran := range p.Ranges {
+		if !ran.IsFullRange() {
+			return false
+		}
+	}
+	return true
+}
+
 // ExplainNormalizedInfo implements Plan interface.
 func (p *PhysicalIndexScan) ExplainNormalizedInfo() string {
 	return p.explainInfo(true)
+}
+
+// ExplainID overrides the ExplainID in order to match different range.
+func (p *PhysicalTableScan) ExplainID() fmt.Stringer {
+	return stringutil.MemoizeStr(func() string {
+		if p.isChildOfIndexLookUp {
+			return "TableRowIDScan_" + strconv.Itoa(p.id)
+		} else if p.isFullScan() {
+			return "TableFullScan_" + strconv.Itoa(p.id)
+		}
+		return "TableRangeScan_" + strconv.Itoa(p.id)
+	})
 }
 
 // ExplainInfo implements Plan interface.
@@ -132,16 +169,9 @@ func (p *PhysicalTableScan) explainInfo(normalized bool) string {
 	if p.pkCol != nil {
 		fmt.Fprintf(buffer, ", pk col:%s", p.pkCol.ExplainInfo())
 	}
-	haveCorCol := false
-	for _, cond := range p.AccessCondition {
-		if len(expression.ExtractCorColumns(cond)) > 0 {
-			haveCorCol = true
-			break
-		}
-	}
 	if len(p.rangeDecidedBy) > 0 {
 		fmt.Fprintf(buffer, ", range: decided by %v", p.rangeDecidedBy)
-	} else if haveCorCol {
+	} else if p.haveCorCol() {
 		if normalized {
 			fmt.Fprintf(buffer, ", range: decided by %s", expression.SortedExplainNormalizedExpressionList(p.AccessCondition))
 		} else {
@@ -150,11 +180,7 @@ func (p *PhysicalTableScan) explainInfo(normalized bool) string {
 	} else if len(p.Ranges) > 0 {
 		if normalized {
 			fmt.Fprint(buffer, ", range:[?,?]")
-		} else if p.StoreType == kv.TiFlash {
-			// TiFlash table always use full range scan for each region,
-			// the ranges in p.Ranges is used to prune cop task
-			fmt.Fprintf(buffer, ", range:"+ranger.FullIntRange(false)[0].String())
-		} else {
+		} else if !p.isFullScan() {
 			fmt.Fprint(buffer, ", range:")
 			for i, idxRange := range p.Ranges {
 				fmt.Fprint(buffer, idxRange.String())
@@ -172,6 +198,27 @@ func (p *PhysicalTableScan) explainInfo(normalized bool) string {
 		buffer.WriteString(", stats:pseudo")
 	}
 	return buffer.String()
+}
+
+func (p *PhysicalTableScan) haveCorCol() bool {
+	for _, cond := range p.AccessCondition {
+		if len(expression.ExtractCorColumns(cond)) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func (p *PhysicalTableScan) isFullScan() bool {
+	if len(p.rangeDecidedBy) > 0 || p.haveCorCol() {
+		return false
+	}
+	for _, ran := range p.Ranges {
+		if !ran.IsFullRange() {
+			return false
+		}
+	}
+	return true
 }
 
 // ExplainInfo implements Plan interface.
@@ -514,6 +561,13 @@ func (p *PhysicalWindow) ExplainInfo() string {
 	return buffer.String()
 }
 
+// ExplainInfo implements Plan interface.
+func (p *PhysicalShuffle) ExplainInfo() string {
+	buffer := bytes.NewBufferString("")
+	fmt.Fprintf(buffer, "execution info: concurrency:%v, data source:%v", p.Concurrency, p.DataSource.ExplainID())
+	return buffer.String()
+}
+
 func formatWindowFuncDescs(buffer *bytes.Buffer, descs []*aggregation.WindowFuncDesc, schema *expression.Schema) *bytes.Buffer {
 	winFuncStartIdx := len(schema.Columns) - len(descs)
 	for i, desc := range descs {
@@ -698,6 +752,9 @@ func (p *TiKVSingleGather) ExplainInfo() string {
 	return buffer.String()
 }
 
+// MetricTableTimeFormat is the time format for metric table explain and format.
+const MetricTableTimeFormat = "2006-01-02 15:04:05.999"
+
 // ExplainInfo implements Plan interface.
 func (p *PhysicalMemTable) ExplainInfo() string {
 	if p.DBName.L != util.MetricSchemaName.L || !infoschema.IsMetricTable(p.Table.Name.L) {
@@ -713,8 +770,8 @@ func (p *PhysicalMemTable) ExplainInfo() string {
 	step := time.Second * time.Duration(p.ctx.GetSessionVars().MetricSchemaStep)
 	return fmt.Sprintf("PromQL:%v, start_time:%v, end_time:%v, step:%v",
 		promQL,
-		startTime.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format("2006-01-02 15:04:05.999"),
-		endTime.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format("2006-01-02 15:04:05.999"),
+		startTime.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format(MetricTableTimeFormat),
+		endTime.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format(MetricTableTimeFormat),
 		step,
 	)
 }

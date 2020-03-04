@@ -56,11 +56,11 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	}
 	var oldTableID, newTableID int64
 	switch diff.Type {
-	case model.ActionCreateTable, model.ActionRecoverTable, model.ActionRepairTable:
+	case model.ActionCreateTable, model.ActionCreateSequence, model.ActionRecoverTable, model.ActionRepairTable:
 		newTableID = diff.TableID
-	case model.ActionDropTable, model.ActionDropView:
+	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence:
 		oldTableID = diff.TableID
-	case model.ActionTruncateTable:
+	case model.ActionTruncateTable, model.ActionCreateView:
 		oldTableID = diff.OldTableID
 		newTableID = diff.TableID
 	default:
@@ -170,7 +170,7 @@ func (b *Builder) applyDropSchema(schemaID int64) []int64 {
 
 	// Copy the sortedTables that contain the table we are going to drop.
 	tableIDs := make([]int64, 0, len(di.Tables))
-	bucketIdxMap := make(map[int]struct{})
+	bucketIdxMap := make(map[int]struct{}, len(di.Tables))
 	for _, tbl := range di.Tables {
 		bucketIdxMap[tableBucketIdx(tbl.ID)] = struct{}{}
 		// TODO: If the table ID doesn't exist.

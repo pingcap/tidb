@@ -83,6 +83,7 @@ type Expression interface {
 	goJSON.Marshaler
 	VecExpr
 	ReverseExpr
+	CollationInfo
 
 	// Eval evaluates an expression through a row.
 	Eval(row chunk.Row) (types.Datum, error)
@@ -689,6 +690,10 @@ func IsBinaryLiteral(expr Expression) bool {
 // CheckExprPushFlash checks a expr list whether each expr can be pushed to flash storage.
 func CheckExprPushFlash(exprs []Expression) (exprPush, remain []Expression) {
 	for _, expr := range exprs {
+		if expr.GetType().Tp == mysql.TypeDuration || expr.GetType().Tp == mysql.TypeJSON {
+			remain = append(remain, expr)
+			continue
+		}
 		switch x := expr.(type) {
 		case *Constant, *CorrelatedColumn, *Column:
 			exprPush = append(exprPush, expr)
@@ -728,7 +733,7 @@ func wrapWithIsTrue(ctx sessionctx.Context, keepNull bool, arg Expression) (Expr
 		return nil, err
 	}
 	sf := &ScalarFunction{
-		FuncName: model.NewCIStr(fmt.Sprintf("sig_%T", f)),
+		FuncName: model.NewCIStr(ast.IsTruth),
 		Function: f,
 		RetType:  f.getRetTp(),
 	}

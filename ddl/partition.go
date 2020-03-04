@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/opcode"
+	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta"
@@ -151,8 +152,8 @@ func buildRangePartitionDefinitions(ctx sessionctx.Context, s *ast.CreateTableSt
 }
 
 func checkPartitionNameUnique(pi *model.PartitionInfo) error {
-	partNames := make(map[string]struct{})
 	newPars := pi.Definitions
+	partNames := make(map[string]struct{}, len(newPars))
 	for _, newPar := range newPars {
 		if _, ok := partNames[newPar.Name.L]; ok {
 			return ErrSameNamePartition.GenWithStackByArgs(newPar.Name)
@@ -294,10 +295,10 @@ func defaultTimezoneDependent(ctx sessionctx.Context, tblInfo *model.TableInfo, 
 	return !v, nil
 }
 
-// checkPartitionFuncValid checks partition function validly.
-func checkPartitionFuncValid(ctx sessionctx.Context, tblInfo *model.TableInfo, expr ast.ExprNode) error {
+// checkPartitionExprValid checks partition expression validly.
+func checkPartitionExprValid(ctx sessionctx.Context, tblInfo *model.TableInfo, expr ast.ExprNode) error {
 	switch v := expr.(type) {
-	case *ast.FuncCastExpr, *ast.CaseExpr:
+	case *ast.FuncCastExpr, *ast.CaseExpr, *ast.SubqueryExpr, *ast.WindowFuncExpr, *ast.RowExpr, *ast.DefaultExpr, *ast.ValuesExpr:
 		return errors.Trace(ErrPartitionFunctionIsNotAllowed)
 	case *ast.FuncCallExpr:
 		// check function which allowed in partitioning expressions
@@ -326,17 +327,35 @@ func checkPartitionFuncValid(ctx sessionctx.Context, tblInfo *model.TableInfo, e
 		switch v.Op {
 		case opcode.Or, opcode.And, opcode.Xor, opcode.LeftShift, opcode.RightShift, opcode.BitNeg, opcode.Div:
 			return errors.Trace(ErrPartitionFunctionIsNotAllowed)
+		default:
+			if err := checkPartitionExprValid(ctx, tblInfo, v.L); err != nil {
+				return errors.Trace(err)
+			}
+			if err := checkPartitionExprValid(ctx, tblInfo, v.R); err != nil {
+				return errors.Trace(err)
+			}
 		}
 		return nil
 	case *ast.UnaryOperationExpr:
 		if v.Op == opcode.BitNeg {
 			return errors.Trace(ErrPartitionFunctionIsNotAllowed)
 		}
+		if err := checkPartitionExprValid(ctx, tblInfo, v.V); err != nil {
+			return errors.Trace(err)
+		}
 		return nil
 	}
+	return nil
+}
 
+// checkPartitionFuncValid checks partition function validly.
+func checkPartitionFuncValid(ctx sessionctx.Context, tblInfo *model.TableInfo, expr ast.ExprNode) error {
+	err := checkPartitionExprValid(ctx, tblInfo, expr)
+	if err != nil {
+		return err
+	}
 	// check constant.
-	_, err := checkPartitionColumns(tblInfo, expr)
+	_, err = checkPartitionColumns(tblInfo, expr)
 	return err
 }
 
@@ -562,7 +581,7 @@ func onDropTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 }
 
 // onDropTablePartition truncates old partition meta.
-func onTruncateTablePartition(t *meta.Meta, job *model.Job) (int64, error) {
+func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, error) {
 	var ver int64
 	var oldID int64
 	if err := job.DecodeArgs(&oldID); err != nil {
@@ -578,7 +597,7 @@ func onTruncateTablePartition(t *meta.Meta, job *model.Job) (int64, error) {
 		return ver, errors.Trace(ErrPartitionMgmtOnNonpartitioned)
 	}
 
-	var find bool
+	var newPartition *model.PartitionDefinition
 	for i := 0; i < len(pi.Definitions); i++ {
 		def := &pi.Definitions[i]
 		if def.ID == oldID {
@@ -587,12 +606,26 @@ func onTruncateTablePartition(t *meta.Meta, job *model.Job) (int64, error) {
 				return ver, errors.Trace(err1)
 			}
 			def.ID = pid
-			find = true
+			newPartition = def
 			break
 		}
 	}
-	if !find {
+	if newPartition == nil {
 		return ver, table.ErrUnknownPartition.GenWithStackByArgs("drop?", tblInfo.Name.O)
+	}
+
+	// Clear the tiflash replica available status.
+	if tblInfo.TiFlashReplica != nil {
+		tblInfo.TiFlashReplica.Available = false
+		// Set partition replica become unavailable.
+		for i, id := range tblInfo.TiFlashReplica.AvailablePartitionIDs {
+			if id == oldID {
+				newIDs := tblInfo.TiFlashReplica.AvailablePartitionIDs[:i]
+				newIDs = append(newIDs, tblInfo.TiFlashReplica.AvailablePartitionIDs[i+1:]...)
+				tblInfo.TiFlashReplica.AvailablePartitionIDs = newIDs
+				break
+			}
+		}
 	}
 
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
@@ -602,6 +635,7 @@ func onTruncateTablePartition(t *meta.Meta, job *model.Job) (int64, error) {
 
 	// Finish this job.
 	job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
+	asyncNotifyEvent(d, &util.Event{Tp: model.ActionTruncateTablePartition, TableInfo: tblInfo, PartInfo: &model.PartitionInfo{Definitions: []model.PartitionDefinition{*newPartition}}})
 	// A background job will be created to delete old partition data.
 	job.Args = []interface{}{oldID}
 	return ver, nil

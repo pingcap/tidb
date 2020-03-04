@@ -18,6 +18,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
@@ -128,7 +129,7 @@ PARTITION BY RANGE ( id ) (
 	_, err = tb.AddRecord(ts.se, types.MakeDatums(22))
 	c.Assert(err, IsNil) // Insert into maxvalue partition.
 
-	createTable3 := `create table test.t3 (id int) partition by range (id) 
+	createTable3 := `create table test.t3 (id int) partition by range (id)
 	(
        partition p0 values less than (10)
 	)`
@@ -271,20 +272,11 @@ func (ts *testSuite) TestGeneratePartitionExpr(c *C) {
 	columns, names := expression.ColumnInfos2ColumnsAndNames(ctx, model.NewCIStr("test"), tbl.Meta().Name, tbl.Meta().Columns)
 	pe, err := tbl.(partitionExpr).PartitionExpr(ctx, columns, names)
 	c.Assert(err, IsNil)
-	c.Assert(pe.Column.ID, Equals, int64(1))
 
-	ranges := []string{
-		"or(lt(test.t1.id, 4), isnull(test.t1.id))",
-		"and(lt(test.t1.id, 7), ge(test.t1.id, 4))",
-		"and(1, ge(test.t1.id, 7))",
-	}
 	upperBounds := []string{
 		"lt(test.t1.id, 4)",
 		"lt(test.t1.id, 7)",
 		"1",
-	}
-	for i, expr := range pe.Ranges {
-		c.Assert(expr.String(), Equals, ranges[i])
 	}
 	for i, expr := range pe.UpperBounds {
 		c.Assert(expr.String(), Equals, upperBounds[i])
@@ -305,4 +297,74 @@ func (ts *testSuite) TestLocateRangePartitionErr(c *C) {
 
 	_, err := tk.Exec("INSERT INTO t_month_data_monitor VALUES (4, '2019-04-04')")
 	c.Assert(table.ErrNoPartitionForGivenValue.Equal(err), IsTrue)
+}
+
+func (ts *testSuite) TestTimeZoneChange(c *C) {
+	tk := testkit.NewTestKitWithInit(c, ts.store)
+	tk.MustExec("use test")
+	createTable := `CREATE TABLE timezone_test (
+	id int(11) NOT NULL,
+	creation_dt timestamp DEFAULT CURRENT_TIMESTAMP ) PARTITION BY RANGE ( unix_timestamp(creation_dt) )
+( PARTITION p5 VALUES LESS THAN ( UNIX_TIMESTAMP('2020-01-03 15:10:00') ),
+	PARTITION p6 VALUES LESS THAN ( UNIX_TIMESTAMP('2020-01-03 15:15:00') ),
+	PARTITION p7 VALUES LESS THAN ( UNIX_TIMESTAMP('2020-01-03 15:20:00') ),
+	PARTITION p8 VALUES LESS THAN ( UNIX_TIMESTAMP('2020-01-03 15:25:00') ),
+	PARTITION p9 VALUES LESS THAN (MAXVALUE) )`
+	tk.MustExec("SET @@time_zone = 'Asia/Shanghai'")
+	tk.MustExec(createTable)
+	tk.MustQuery("SHOW CREATE TABLE timezone_test").Check(testkit.Rows("timezone_test CREATE TABLE `timezone_test` (\n" +
+		"  `id` int(11) NOT NULL,\n" +
+		"  `creation_dt` timestamp DEFAULT CURRENT_TIMESTAMP\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE ( unix_timestamp(`creation_dt`) ) (\n" +
+		"  PARTITION `p5` VALUES LESS THAN (1578035400),\n" +
+		"  PARTITION `p6` VALUES LESS THAN (1578035700),\n" +
+		"  PARTITION `p7` VALUES LESS THAN (1578036000),\n" +
+		"  PARTITION `p8` VALUES LESS THAN (1578036300),\n" +
+		"  PARTITION `p9` VALUES LESS THAN (MAXVALUE)\n)"))
+	tk.MustExec("DROP TABLE timezone_test")
+
+	// Note that the result of "show create table" varies with time_zone.
+	tk.MustExec("SET @@time_zone = 'UTC'")
+	tk.MustExec(createTable)
+	tk.MustQuery("SHOW CREATE TABLE timezone_test").Check(testkit.Rows("timezone_test CREATE TABLE `timezone_test` (\n" +
+		"  `id` int(11) NOT NULL,\n" +
+		"  `creation_dt` timestamp DEFAULT CURRENT_TIMESTAMP\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE ( unix_timestamp(`creation_dt`) ) (\n" +
+		"  PARTITION `p5` VALUES LESS THAN (1578064200),\n" +
+		"  PARTITION `p6` VALUES LESS THAN (1578064500),\n" +
+		"  PARTITION `p7` VALUES LESS THAN (1578064800),\n" +
+		"  PARTITION `p8` VALUES LESS THAN (1578065100),\n" +
+		"  PARTITION `p9` VALUES LESS THAN (MAXVALUE)\n)"))
+
+	// Change time zone and insert data, check the data locates in the correct partition.
+	tk.MustExec("SET @@time_zone = 'Asia/Shanghai'")
+	tk.MustExec("INSERT INTO timezone_test VALUES (1,'2020-01-03 15:16:59')")
+	tk.MustQuery("SELECT * FROM timezone_test PARTITION (p5)").Check(testkit.Rows("1 2020-01-03 15:16:59"))
+	tk.MustQuery("SELECT * FROM timezone_test PARTITION (p6)").Check(testkit.Rows())
+	tk.MustQuery("SELECT * FROM timezone_test PARTITION (p7)").Check(testkit.Rows())
+	tk.MustQuery("SELECT * FROM timezone_test PARTITION (p8)").Check(testkit.Rows())
+	tk.MustQuery("SELECT * FROM timezone_test PARTITION (p9)").Check(testkit.Rows())
+
+	tk.MustExec("SET @@time_zone = 'UTC'")
+	tk.MustExec("INSERT INTO timezone_test VALUES (1,'2020-01-03 15:16:59')")
+	tk.MustQuery("SELECT * FROM timezone_test PARTITION (p5)").Check(testkit.Rows("1 2020-01-03 07:16:59"))
+	tk.MustQuery("SELECT * FROM timezone_test PARTITION (p6)").Check(testkit.Rows())
+	tk.MustQuery("SELECT * FROM timezone_test PARTITION (p7)").Check(testkit.Rows("1 2020-01-03 15:16:59"))
+	tk.MustQuery("SELECT * FROM timezone_test PARTITION (p8)").Check(testkit.Rows())
+	tk.MustQuery("SELECT * FROM timezone_test PARTITION (p9)").Check(testkit.Rows())
+}
+
+func (ts *testSuite) TestCreatePartitionTableNotSupport(c *C) {
+	tk := testkit.NewTestKitWithInit(c, ts.store)
+	tk.MustExec("use test")
+	_, err := tk.Exec(`create table t7 (a int) partition by range (mod((select * from t), 5)) (partition p1 values less than (1));`)
+	c.Assert(ddl.ErrPartitionFunctionIsNotAllowed.Equal(err), IsTrue)
+	_, err = tk.Exec(`create table t7 (a int) partition by range (1 + (select * from t)) (partition p1 values less than (1));`)
+	c.Assert(ddl.ErrPartitionFunctionIsNotAllowed.Equal(err), IsTrue)
+	_, err = tk.Exec(`create table t7 (a int) partition by range (a + row(1, 2, 3)) (partition p1 values less than (1));`)
+	c.Assert(ddl.ErrPartitionFunctionIsNotAllowed.Equal(err), IsTrue)
+	_, err = tk.Exec(`create table t7 (a int) partition by range (-(select * from t)) (partition p1 values less than (1));`)
+	c.Assert(ddl.ErrPartitionFunctionIsNotAllowed.Equal(err), IsTrue)
 }

@@ -18,10 +18,10 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
@@ -93,8 +93,11 @@ func (p *PhysicalLimit) ToPB(ctx sessionctx.Context) (*tipb.Executor, error) {
 func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context) (*tipb.Executor, error) {
 	tsExec := &tipb.TableScan{
 		TableId: p.Table.ID,
-		Columns: model.ColumnsToProto(p.Columns, p.Table.PKIsHandle),
+		Columns: util.ColumnsToProto(p.Columns, p.Table.PKIsHandle),
 		Desc:    p.Desc,
+	}
+	if p.isPartition {
+		tsExec.TableId = p.physicalTableID
 	}
 	err := SetPBColumnsDefaultValue(ctx, tsExec.Columns, p.Columns)
 	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tsExec}, err
@@ -138,8 +141,11 @@ func (p *PhysicalIndexScan) ToPB(ctx sessionctx.Context) (*tipb.Executor, error)
 	idxExec := &tipb.IndexScan{
 		TableId: p.Table.ID,
 		IndexId: p.Index.ID,
-		Columns: model.ColumnsToProto(columns, p.Table.PKIsHandle),
+		Columns: util.ColumnsToProto(columns, p.Table.PKIsHandle),
 		Desc:    p.Desc,
+	}
+	if p.isPartition {
+		idxExec.TableId = p.physicalTableID
 	}
 	unique := checkCoverIndex(p.Index, p.Ranges)
 	idxExec.Unique = &unique
@@ -180,12 +186,9 @@ func SetPBColumnsDefaultValue(ctx sessionctx.Context, pbColumns []*tipb.ColumnIn
 // Some plans are difficult (if possible) to implement streaming, and some are pointless to do so.
 // TODO: Support more kinds of physical plan.
 func SupportStreaming(p PhysicalPlan) bool {
-	switch x := p.(type) {
-	case *PhysicalIndexScan, *PhysicalSelection:
+	switch p.(type) {
+	case *PhysicalIndexScan, *PhysicalSelection, *PhysicalTableScan:
 		return true
-	case *PhysicalTableScan:
-		// TODO: remove this after TiDB coprocessor support stream.
-		return x.StoreType != kv.TiDB
 	}
 	return false
 }

@@ -566,7 +566,9 @@ func getHintsForSQL(sctx sessionctx.Context, sql string) (string, error) {
 	sctx.GetSessionVars().UsePlanBaselines = false
 	recordSets, err := sctx.(sqlexec.SQLExecutor).Execute(context.TODO(), fmt.Sprintf("explain format='hint' %s", sql))
 	sctx.GetSessionVars().UsePlanBaselines = oriVals
-	defer terror.Log(recordSets[0].Close())
+	if len(recordSets) > 0 {
+		defer terror.Log(recordSets[0].Close())
+	}
 	if err != nil {
 		return "", err
 	}
@@ -744,7 +746,9 @@ func runSQL(ctx context.Context, sctx sessionctx.Context, sql string, resultChan
 	}()
 	recordSets, err := sctx.(sqlexec.SQLExecutor).Execute(ctx, sql)
 	if err != nil {
-		terror.Call(recordSets[0].Close)
+		if len(recordSets) > 0 {
+			terror.Call(recordSets[0].Close)
+		}
 		resultChan <- err
 		return
 	}

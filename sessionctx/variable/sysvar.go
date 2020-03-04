@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/util/logutil"
 )
 
 // ScopeFlag is for system variable whether can be changed in global/session dynamically or not.
@@ -81,24 +80,6 @@ func init() {
 		SysVars[v.Name] = v
 	}
 	initSynonymsSysVariables()
-
-	// Register terror to mysql error map.
-	mySQLErrCodes := map[terror.ErrCode]uint16{
-		mysql.ErrCantGetValidID:              mysql.ErrCantGetValidID,
-		mysql.ErrCantSetToNull:               mysql.ErrCantSetToNull,
-		mysql.ErrSnapshotTooOld:              mysql.ErrSnapshotTooOld,
-		mysql.ErrUnsupportedValueForVar:      mysql.ErrUnsupportedValueForVar,
-		mysql.ErrUnknownSystemVariable:       mysql.ErrUnknownSystemVariable,
-		mysql.ErrIncorrectGlobalLocalVar:     mysql.ErrIncorrectGlobalLocalVar,
-		mysql.ErrUnknownTimeZone:             mysql.ErrUnknownTimeZone,
-		mysql.ErrVariableIsReadonly:          mysql.ErrVariableIsReadonly,
-		mysql.ErrWrongValueForVar:            mysql.ErrWrongValueForVar,
-		mysql.ErrWrongTypeForVar:             mysql.ErrWrongTypeForVar,
-		mysql.ErrTruncatedWrongValue:         mysql.ErrTruncatedWrongValue,
-		mysql.ErrMaxPreparedStmtCountReached: mysql.ErrMaxPreparedStmtCountReached,
-		mysql.ErrUnsupportedIsolationLevel:   mysql.ErrUnsupportedIsolationLevel,
-	}
-	terror.ErrClassToMySQLCodes[terror.ClassVariable] = mySQLErrCodes
 }
 
 // BoolToIntStr converts bool to int string, for example "0" or "1".
@@ -692,6 +673,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, TiDBProjectionConcurrency, strconv.Itoa(DefTiDBProjectionConcurrency)},
 	{ScopeGlobal | ScopeSession, TiDBHashAggPartialConcurrency, strconv.Itoa(DefTiDBHashAggPartialConcurrency)},
 	{ScopeGlobal | ScopeSession, TiDBHashAggFinalConcurrency, strconv.Itoa(DefTiDBHashAggFinalConcurrency)},
+	{ScopeGlobal | ScopeSession, TiDBWindowConcurrency, strconv.Itoa(DefTiDBWindowConcurrency)},
 	{ScopeGlobal | ScopeSession, TiDBBackoffLockFast, strconv.Itoa(kv.DefBackoffLockFast)},
 	{ScopeGlobal | ScopeSession, TiDBBackOffWeight, strconv.Itoa(kv.DefBackOffWeight)},
 	{ScopeGlobal | ScopeSession, TiDBRetryLimit, strconv.Itoa(DefTiDBRetryLimit)},
@@ -707,11 +689,7 @@ var defaultSysVars = []*SysVar{
 	/* The following variable is defined as session scope but is actually server scope. */
 	{ScopeSession, TiDBGeneralLog, strconv.Itoa(DefTiDBGeneralLog)},
 	{ScopeSession, TiDBPProfSQLCPU, strconv.Itoa(DefTiDBPProfSQLCPU)},
-	{ScopeSession, TiDBSlowLogThreshold, strconv.Itoa(logutil.DefaultSlowThreshold)},
-	{ScopeSession, TiDBRecordPlanInSlowLog, strconv.Itoa(logutil.DefaultRecordPlanInSlowLog)},
-	{ScopeSession, TiDBEnableSlowLog, strconv.Itoa(logutil.DefaultTiDBEnableSlowLog)},
 	{ScopeSession, TiDBDDLSlowOprThreshold, strconv.Itoa(DefTiDBDDLSlowOprThreshold)},
-	{ScopeSession, TiDBQueryLogMaxLen, strconv.Itoa(logutil.DefaultQueryLogMaxLen)},
 	{ScopeSession, TiDBConfig, ""},
 	{ScopeGlobal, TiDBDDLReorgWorkerCount, strconv.Itoa(DefTiDBDDLReorgWorkerCount)},
 	{ScopeGlobal, TiDBDDLReorgBatchSize, strconv.Itoa(DefTiDBDDLReorgBatchSize)},
@@ -721,7 +699,6 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, TiDBForcePriority, mysql.Priority2Str[DefTiDBForcePriority]},
 	{ScopeSession, TiDBEnableRadixJoin, BoolToIntStr(DefTiDBUseRadixJoin)},
 	{ScopeGlobal | ScopeSession, TiDBOptJoinReorderThreshold, strconv.Itoa(DefTiDBOptJoinReorderThreshold)},
-	{ScopeSession, TiDBCheckMb4ValueInUTF8, BoolToIntStr(config.GetGlobalConfig().CheckMb4ValueInUTF8)},
 	{ScopeSession, TiDBSlowQueryFile, ""},
 	{ScopeGlobal, TiDBScatterRegion, BoolToIntStr(DefTiDBScatterRegion)},
 	{ScopeSession, TiDBWaitSplitRegionFinish, BoolToIntStr(DefTiDBWaitSplitRegionFinish)},

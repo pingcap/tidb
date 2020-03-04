@@ -739,12 +739,17 @@ func IsMutableEffectsExpr(expr Expression) bool {
 }
 
 // RemoveDupExprs removes identical exprs. Not that if expr contains functions which
-// are mutable or have side effects, we cannot remove it even if it has duplicates.
+// are mutable or have side effects, we cannot remove it even if it has duplicates;
+// if the plan is going to be cached, we cannot remove expressions containing `?` neither.
 func RemoveDupExprs(ctx sessionctx.Context, exprs []Expression) []Expression {
 	res := make([]Expression, 0, len(exprs))
 	exists := make(map[string]struct{}, len(exprs))
 	sc := ctx.GetSessionVars().StmtCtx
 	for _, expr := range exprs {
+		if ContainMutableConst(ctx, []Expression{expr}) {
+			res = append(res, expr)
+			continue
+		}
 		key := string(expr.HashCode(sc))
 		if _, ok := exists[key]; !ok || IsMutableEffectsExpr(expr) {
 			res = append(res, expr)
@@ -797,6 +802,27 @@ func ContainVirtualColumn(exprs []Expression) bool {
 			}
 		case *ScalarFunction:
 			if ContainVirtualColumn(v.GetArgs()) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// ContainMutableConst checks if the expressions contain a lazy constant.
+func ContainMutableConst(ctx sessionctx.Context, exprs []Expression) bool {
+	// Treat all constants immutable if plan cache is not enabled for this query.
+	if !ctx.GetSessionVars().StmtCtx.UseCache {
+		return false
+	}
+	for _, expr := range exprs {
+		switch v := expr.(type) {
+		case *Constant:
+			if v.ParamMarker != nil || v.DeferredExpr != nil {
+				return true
+			}
+		case *ScalarFunction:
+			if ContainMutableConst(ctx, v.GetArgs()) {
 				return true
 			}
 		}

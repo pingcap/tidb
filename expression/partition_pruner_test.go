@@ -66,6 +66,7 @@ func (s *testSuite2) TestHashPartitionPruner(c *C) {
 	tk.MustExec("drop table if exists t1, t2;")
 	tk.MustExec("create table t2(id int, a int, b int, primary key(id, a)) partition by hash(id + a) partitions 10;")
 	tk.MustExec("create table t1(id int primary key, a int, b int) partition by hash(id) partitions 10;")
+	tk.MustExec("create table t3(id int, a int, b int, primary key(id, a)) partition by hash(id) partitions 10;")
 
 	var input []string
 	var output []struct {

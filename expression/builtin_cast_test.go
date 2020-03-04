@@ -819,8 +819,8 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 			sig = &builtinCastTimeAsTimeSig{timeFunc}
 		}
 		res, isNull, err := sig.evalTime(t.row.ToRow())
-		c.Assert(isNull, Equals, false)
 		c.Assert(err, IsNil)
+		c.Assert(isNull, Equals, false)
 		c.Assert(res.String(), Equals, t.after.String())
 	}
 
