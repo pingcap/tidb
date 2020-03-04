@@ -432,7 +432,7 @@ func getTiDBVar(s Session, name string) (sVal string, isNull bool, e error) {
 func upgrade(s Session) {
 	ver, err := getBootstrapVersion(s)
 	terror.MustNil(err)
-	if ver >= currentBootstrapVersion {
+	if ver >= CurrentBootstrapVersion {
 		// It is already bootstrapped/upgraded by a higher version TiDB server.
 		return
 	}
@@ -610,13 +610,13 @@ func upgrade(s Session) {
 		if err1 != nil {
 			logutil.BgLogger().Fatal("upgrade failed", zap.Error(err1))
 		}
-		if v >= currentBootstrapVersion {
+		if v >= CurrentBootstrapVersion {
 			// It is already bootstrapped/upgraded by a higher version TiDB server.
 			return
 		}
 		logutil.BgLogger().Fatal("[Upgrade] upgrade failed",
 			zap.Int64("from", ver),
-			zap.Int("to", currentBootstrapVersion),
+			zap.Int("to", CurrentBootstrapVersion),
 			zap.Error(err))
 	}
 }
@@ -973,7 +973,7 @@ func upgradeToVer41(s Session) {
 func updateBootstrapVer(s Session) {
 	// Update bootstrap version.
 	sql := fmt.Sprintf(`INSERT HIGH_PRIORITY INTO %s.%s VALUES ("%s", "%d", "TiDB bootstrap version.") ON DUPLICATE KEY UPDATE VARIABLE_VALUE="%d"`,
-		mysql.SystemDB, mysql.TiDBTable, tidbServerVersionVar, currentBootstrapVersion, currentBootstrapVersion)
+		mysql.SystemDB, mysql.TiDBTable, tidbServerVersionVar, CurrentBootstrapVersion, CurrentBootstrapVersion)
 	mustExecute(s, sql)
 }
 
@@ -1069,7 +1069,7 @@ func doDMLWorks(s Session) {
 	mustExecute(s, sql)
 
 	sql = fmt.Sprintf(`INSERT HIGH_PRIORITY INTO %s.%s VALUES("%s", "%d", "Bootstrap version. Do not delete.")`,
-		mysql.SystemDB, mysql.TiDBTable, tidbServerVersionVar, currentBootstrapVersion)
+		mysql.SystemDB, mysql.TiDBTable, tidbServerVersionVar, CurrentBootstrapVersion)
 	mustExecute(s, sql)
 
 	writeSystemTZ(s)

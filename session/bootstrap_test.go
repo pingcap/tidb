@@ -200,7 +200,7 @@ func (s *testBootstrapSuite) TestUpgrade(c *C) {
 	se := newSession(c, store, s.dbName)
 	mustExecSQL(c, se, "USE mysql;")
 
-	// bootstrap with currentBootstrapVersion
+	// bootstrap with CurrentBootstrapVersion
 	r := mustExecSQL(c, se, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="tidb_server_version";`)
 	req := r.NewChunk()
 	err := r.Next(ctx, req)
@@ -208,13 +208,13 @@ func (s *testBootstrapSuite) TestUpgrade(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(req.NumRows() == 0, IsFalse)
 	c.Assert(row.Len(), Equals, 1)
-	c.Assert(row.GetBytes(0), BytesEquals, []byte(fmt.Sprintf("%d", currentBootstrapVersion)))
+	c.Assert(row.GetBytes(0), BytesEquals, []byte(fmt.Sprintf("%d", CurrentBootstrapVersion)))
 	c.Assert(r.Close(), IsNil)
 
 	se1 := newSession(c, store, s.dbName)
 	ver, err := getBootstrapVersion(se1)
 	c.Assert(err, IsNil)
-	c.Assert(ver, Equals, int64(currentBootstrapVersion))
+	c.Assert(ver, Equals, int64(CurrentBootstrapVersion))
 
 	// Do something to downgrade the store.
 	// downgrade meta bootstrap version
@@ -254,12 +254,12 @@ func (s *testBootstrapSuite) TestUpgrade(c *C) {
 	c.Assert(req.NumRows() == 0, IsFalse)
 	row = req.GetRow(0)
 	c.Assert(row.Len(), Equals, 1)
-	c.Assert(row.GetBytes(0), BytesEquals, []byte(fmt.Sprintf("%d", currentBootstrapVersion)))
+	c.Assert(row.GetBytes(0), BytesEquals, []byte(fmt.Sprintf("%d", CurrentBootstrapVersion)))
 	c.Assert(r.Close(), IsNil)
 
 	ver, err = getBootstrapVersion(se2)
 	c.Assert(err, IsNil)
-	c.Assert(ver, Equals, int64(currentBootstrapVersion))
+	c.Assert(ver, Equals, int64(CurrentBootstrapVersion))
 
 	// Verify that 'new_collation_enabled' is false.
 	r = mustExecSQL(c, se2, fmt.Sprintf(`SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME='%s';`, tidbNewCollationEnabled))

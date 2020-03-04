@@ -1636,7 +1636,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	ver := getStoreBootstrapVersion(store)
 	if ver == notBootstrapped {
 		runInBootstrapSession(store, bootstrap)
-	} else if ver < currentBootstrapVersion {
+	} else if ver < CurrentBootstrapVersion {
 		runInBootstrapSession(store, upgrade)
 	}
 
@@ -1803,8 +1803,9 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 }
 
 const (
+	// CurrentBootstrapVersion is exported because it is needed by some external tools.
+	CurrentBootstrapVersion = version41
 	notBootstrapped         = 0
-	currentBootstrapVersion = version41
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
@@ -1813,7 +1814,7 @@ func getStoreBootstrapVersion(store kv.Storage) int64 {
 	// check in memory
 	_, ok := storeBootstrapped[store.UUID()]
 	if ok {
-		return currentBootstrapVersion
+		return CurrentBootstrapVersion
 	}
 
 	var ver int64
@@ -1843,7 +1844,7 @@ func finishBootstrap(store kv.Storage) {
 
 	err := kv.RunInNewTxn(store, true, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
-		err := t.FinishBootstrap(currentBootstrapVersion)
+		err := t.FinishBootstrap(CurrentBootstrapVersion)
 		return err
 	})
 	if err != nil {
