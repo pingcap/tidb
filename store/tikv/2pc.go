@@ -178,24 +178,14 @@ func newCommiterMutations(sizeHint int) committerMutations {
 
 func (c *committerMutations) subRange(from, to int) committerMutations {
 	var res committerMutations
-	if to > len(c.ops) {
-		res.ops = c.ops[from:]
-	} else {
+	res.keys = c.keys[from:to]
+	if c.ops != nil {
 		res.ops = c.ops[from:to]
 	}
-	if to > len(c.keys) {
-		res.keys = c.keys[from:]
-	} else {
-		res.keys = c.keys[from:to]
-	}
-	if to > len(c.values) {
-		res.values = c.values[from:]
-	} else {
+	if c.values != nil {
 		res.values = c.values[from:to]
 	}
-	if to > len(c.isPessimisticLock) {
-		res.isPessimisticLock = c.isPessimisticLock[from:]
-	} else {
+	if c.isPessimisticLock != nil {
 		res.isPessimisticLock = c.isPessimisticLock[from:to]
 	}
 	return res
