@@ -116,18 +116,6 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	}
 	c.Assert(err, IsNil)
 
-	d.Stop()
-	err = d.generalWorker().runReorgJob(m, rInfo, nil, d.lease, func() error {
-		time.Sleep(4 * testLease)
-		return nil
-	})
-	c.Assert(err, NotNil)
-	txn, err = ctx.Txn(true)
-	c.Assert(err, IsNil)
-	err = txn.Commit(context.Background())
-	c.Assert(err, IsNil)
-
-	d.start(context.Background(), nil)
 	job = &model.Job{
 		ID:          2,
 		SchemaID:    1,
@@ -156,6 +144,17 @@ func (s *testDDLSuite) TestReorg(c *C) {
 		c.Assert(info.StartHandle, Greater, int64(0))
 		return nil
 	})
+	c.Assert(err, IsNil)
+
+	d.Stop()
+	err = d.generalWorker().runReorgJob(m, rInfo, nil, d.lease, func() error {
+		time.Sleep(4 * testLease)
+		return nil
+	})
+	c.Assert(err, NotNil)
+	txn, err = ctx.Txn(true)
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 }
 
