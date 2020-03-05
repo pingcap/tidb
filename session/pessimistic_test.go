@@ -960,4 +960,5 @@ func (s *testPessimisticSuite) TestRCWaitTSOTwice(c *C) {
 	tk.MustExec("set tx_isolation = 'read-committed'")
 	tk.MustExec("set autocommit = 0")
 	tk.MustQuery("select * from t where i = 1").Check(testkit.Rows("1"))
+	tk.MustExec("rollback")
 }
