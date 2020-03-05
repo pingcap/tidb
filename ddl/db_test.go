@@ -22,7 +22,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -986,10 +985,7 @@ func testAddIndex(c *C, store kv.Storage, lease time.Duration, testPartition boo
 	start := -10
 	num := defaultBatchSize
 	// first add some rows
-	for i := start; i < num; i++ {
-		sql := fmt.Sprintf("insert into test_add_index values (%d, %d, %d)", i, i, i)
-		tk.MustExec(sql)
-	}
+	batchInsert(tk, "test_add_index", start, num)
 
 	// Add some discrete rows.
 	maxBatch := 20
@@ -1008,8 +1004,7 @@ func testAddIndex(c *C, store kv.Storage, lease time.Duration, testPartition boo
 	}
 	// Encounter the value of math.MaxInt64 in middle of
 	v := math.MaxInt64 - defaultBatchSize/2
-	sql := fmt.Sprintf("insert into test_add_index values (%d, %d, %d)", v, v, v)
-	tk.MustExec(sql)
+	tk.MustExec(fmt.Sprintf("insert into test_add_index values (%d, %d, %d)", v, v, v))
 	otherKeys = append(otherKeys, v)
 
 	addIdxSQL := fmt.Sprintf("alter table test_add_index add %s key c3_index(c3)", idxTp)
@@ -1569,21 +1564,6 @@ func (s *testDBSuite1) TestColumn(c *C) {
 	s.tk.MustExec("drop table t2")
 }
 
-func (s *testDBSuite1) TestAddColumnTooMany(c *C) {
-	s.tk = testkit.NewTestKit(c, s.store)
-	s.tk.MustExec("use test")
-	count := int(atomic.LoadUint32(&ddl.TableColumnCountLimit) - 1)
-	var cols []string
-	for i := 0; i < count; i++ {
-		cols = append(cols, fmt.Sprintf("a%d int", i))
-	}
-	createSQL := fmt.Sprintf("create table t_column_too_many (%s)", strings.Join(cols, ","))
-	s.tk.MustExec(createSQL)
-	s.tk.MustExec("alter table t_column_too_many add column a_512 int")
-	alterSQL := "alter table t_column_too_many add column a_513 int"
-	s.tk.MustGetErrCode(alterSQL, mysql.ErrTooManyFields)
-}
-
 func sessionExec(c *C, s kv.Storage, sql string) {
 	se, err := session.CreateSession4Test(s)
 	c.Assert(err, IsNil)
@@ -1783,7 +1763,7 @@ LOOP:
 // TestDropColumn is for inserting value with a to-be-dropped column when do drop column.
 // Column info from schema in build-insert-plan should be public only,
 // otherwise they will not be consist with Table.Col(), then the server will panic.
-func (s *testDBSuite2) TestDropColumn(c *C) {
+func (s *testDBSuite6) TestDropColumn(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("create database drop_col_db")
 	s.tk.MustExec("use drop_col_db")
@@ -4479,7 +4459,7 @@ func (s *testDBSuite2) TestDDLWithInvalidTableInfo(c *C) {
 	c.Assert(err.Error(), Equals, "[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 94 near \"then (b / a) end));\" ")
 }
 
-func (s *testDBSuite1) TestAlterOrderBy(c *C) {
+func (s *testDBSuite6) TestAlterOrderBy(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
 	s.tk.MustExec("create table ob (pk int primary key, c int default 1, c1 int default 1, KEY cl(c1))")
@@ -4500,4 +4480,5 @@ func (s *testDBSuite1) TestAlterOrderBy(c *C) {
 func init() {
 	// Make sure it will only be executed once.
 	domain.SchemaOutOfDateRetryInterval = int64(50 * time.Millisecond)
+	domain.SchemaOutOfDateRetryTimes = int32(50)
 }

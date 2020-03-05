@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/util/testutil"
 )
 
+// Make it serial because config is modified in test cases.
 var _ = SerialSuites(&testSerialSuite{})
 
 type testSerialSuite struct {
@@ -79,6 +80,25 @@ func (s *testSerialSuite) TearDownSuite(c *C) {
 	if s.store != nil {
 		s.store.Close()
 	}
+}
+
+func (s *testSerialSuite) TestChangeMaxIndexLength(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	cfg := config.GetGlobalConfig()
+	newCfg := *cfg
+	originalMaxIndexLen := cfg.MaxIndexLength
+	newCfg.MaxIndexLength = config.DefMaxOfMaxIndexLength
+	config.StoreGlobalConfig(&newCfg)
+	defer func() {
+		newCfg.MaxIndexLength = originalMaxIndexLen
+		config.StoreGlobalConfig(&newCfg)
+	}()
+
+	tk.MustExec("create table t (c1 varchar(3073), index(c1)) charset = ascii;")
+	tk.MustExec(fmt.Sprintf("create table t1 (c1 varchar(%d), index(c1)) charset = ascii;", config.DefMaxOfMaxIndexLength))
+	_, err := tk.Exec(fmt.Sprintf("create table t2 (c1 varchar(%d), index(c1)) charset = ascii;", config.DefMaxOfMaxIndexLength+1))
+	c.Assert(err.Error(), Equals, "[ddl:1071]Specified key was too long; max key length is 12288 bytes")
+	tk.MustExec("drop table t, t1")
 }
 
 func (s *testSerialSuite) TestPrimaryKey(c *C) {
@@ -137,9 +157,13 @@ func (s *testSerialSuite) TestMultiRegionGetTableEndHandle(c *C) {
 	tk.MustExec("use test_get_endhandle")
 
 	tk.MustExec("create table t(a bigint PRIMARY KEY, b int)")
+	var builder strings.Builder
+	fmt.Fprintf(&builder, "insert into t values ")
 	for i := 0; i < 1000; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t values(%v, %v)", i, i))
+		fmt.Fprintf(&builder, "(%v, %v),", i, i)
 	}
+	sql := builder.String()
+	tk.MustExec(sql[:len(sql)-1])
 
 	// Get table ID for split.
 	dom := domain.GetDomain(tk.Se)
@@ -205,9 +229,14 @@ func (s *testSerialSuite) TestGetTableEndHandle(c *C) {
 
 	tk.MustExec("create table t1(a bigint PRIMARY KEY, b int)")
 
+	var builder strings.Builder
+	fmt.Fprintf(&builder, "insert into t1 values ")
 	for i := 0; i < 1000; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t1 values(%v, %v)", i, i))
+		fmt.Fprintf(&builder, "(%v, %v),", i, i)
 	}
+	sql := builder.String()
+	tk.MustExec(sql[:len(sql)-1])
+
 	is = s.dom.InfoSchema()
 	testCtx.tbl, err = is.TableByName(model.NewCIStr("test_get_endhandle"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
@@ -221,9 +250,13 @@ func (s *testSerialSuite) TestGetTableEndHandle(c *C) {
 	c.Assert(err, IsNil)
 	checkGetMaxTableRowID(testCtx, s.store, true, int64(math.MaxInt64))
 
+	builder.Reset()
+	fmt.Fprintf(&builder, "insert into t2 values ")
 	for i := 0; i < 1000; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t2 values(%v)", i))
+		fmt.Fprintf(&builder, "(%v),", i)
 	}
+	sql = builder.String()
+	tk.MustExec(sql[:len(sql)-1])
 
 	result := tk.MustQuery("select MAX(_tidb_rowid) from t2")
 	maxID, emptyTable := getMaxTableRowID(testCtx, s.store)
@@ -736,8 +769,8 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	assertWithAutoInc := func(sql string) {
 		assertInvalidAutoRandomErr(sql, autoid.AutoRandomIncompatibleWithAutoIncErrMsg)
 	}
-	assertOverflow := func(sql string, autoRandBits, maxFieldLength uint64) {
-		assertInvalidAutoRandomErr(sql, autoid.AutoRandomOverflowErrMsg, autoRandBits, maxFieldLength)
+	assertOverflow := func(sql, colType string, autoRandBits, maxFieldLength uint64) {
+		assertInvalidAutoRandomErr(sql, autoid.AutoRandomOverflowErrMsg, colType, maxFieldLength, autoRandBits, colType, maxFieldLength-1)
 	}
 	assertModifyColType := func(sql string) {
 		assertInvalidAutoRandomErr(sql, autoid.AutoRandomModifyColTypeErrMsg)
@@ -781,11 +814,11 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	assertWithAutoInc("create table t (a bigint auto_random(3) auto_increment, primary key (a))")
 
 	// Overflow data type max length.
-	assertOverflow("create table t (a bigint auto_random(65) primary key)", 65, 64)
-	assertOverflow("create table t (a int auto_random(33) primary key)", 33, 32)
-	assertOverflow("create table t (a mediumint auto_random(25) primary key)", 25, 24)
-	assertOverflow("create table t (a smallint auto_random(17) primary key)", 17, 16)
-	assertOverflow("create table t (a tinyint auto_random(9) primary key)", 9, 8)
+	assertOverflow("create table t (a bigint auto_random(65) primary key)", "a", 65, 64)
+	assertOverflow("create table t (a int auto_random(33) primary key)", "a", 33, 32)
+	assertOverflow("create table t (a mediumint auto_random(25) primary key)", "a", 25, 24)
+	assertOverflow("create table t (a smallint auto_random(17) primary key)", "a", 17, 16)
+	assertOverflow("create table t (a tinyint auto_random(9) primary key)", "a", 9, 8)
 
 	assertNonPositive("create table t (a bigint auto_random(0) primary key)")
 

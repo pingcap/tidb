@@ -94,8 +94,8 @@ func (s *testAnalyzeSuite) TestExplainAnalyze(c *C) {
 	rs := tk.MustQuery("explain analyze select t1.a, t1.b, sum(t1.c) from t1 join t2 on t1.a = t2.b where t1.a > 1")
 	c.Assert(len(rs.Rows()), Equals, 10)
 	for _, row := range rs.Rows() {
-		c.Assert(len(row), Equals, 7)
-		execInfo := row[4].(string)
+		c.Assert(len(row), Equals, 8)
+		execInfo := row[5].(string)
 		c.Assert(strings.Contains(execInfo, "time"), Equals, true)
 		c.Assert(strings.Contains(execInfo, "loops"), Equals, true)
 		c.Assert(strings.Contains(execInfo, "rows"), Equals, true)
@@ -124,12 +124,12 @@ func (s *testAnalyzeSuite) TestCBOWithoutAnalyze(c *C) {
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
 	testKit.MustQuery("explain select * from t1, t2 where t1.a = t2.a").Check(testkit.Rows(
 		"HashLeftJoin_8 7.49 root inner join, inner:TableReader_15, equal:[eq(test.t1.a, test.t2.a)]",
-		"├─TableReader_12 5.99 root data:Selection_11",
-		"│ └─Selection_11 5.99 cop[tikv] not(isnull(test.t1.a))",
-		"│   └─TableFullScan_10 6.00 cop[tikv] table:t1, keep order:false, stats:pseudo",
-		"└─TableReader_15 5.99 root data:Selection_14",
-		"  └─Selection_14 5.99 cop[tikv] not(isnull(test.t2.a))",
-		"    └─TableFullScan_13 6.00 cop[tikv] table:t2, keep order:false, stats:pseudo",
+		"├─TableReader_15(Build) 5.99 root data:Selection_14",
+		"│ └─Selection_14 5.99 cop[tikv] not(isnull(test.t2.a))",
+		"│   └─TableFullScan_13 6.00 cop[tikv] table:t2, keep order:false, stats:pseudo",
+		"└─TableReader_12(Probe) 5.99 root data:Selection_11",
+		"  └─Selection_11 5.99 cop[tikv] not(isnull(test.t1.a))",
+		"    └─TableFullScan_10 6.00 cop[tikv] table:t1, keep order:false, stats:pseudo",
 	))
 	testKit.MustQuery("explain format = 'hint' select * from t1, t2 where t1.a = t2.a").Check(testkit.Rows(
 		"USE_INDEX(@`sel_1` `test`.`t1` ), USE_INDEX(@`sel_1` `test`.`t2` ), HASH_JOIN(@`sel_1` `test`.`t1`)"))
@@ -547,8 +547,8 @@ func (s *testAnalyzeSuite) TestInconsistentEstimation(c *C) {
 	tk.MustQuery("explain select * from t use index(ab) where a = 5 and c = 5").
 		Check(testkit.Rows(
 			"IndexLookUp_8 10.00 root ",
-			"├─IndexRangeScan_5 12.50 cop[tikv] table:t, index:a, b, range:[5,5], keep order:false",
-			"└─Selection_7 10.00 cop[tikv] eq(test.t.c, 5)",
+			"├─IndexRangeScan_5(Build) 12.50 cop[tikv] table:t, index:a, b, range:[5,5], keep order:false",
+			"└─Selection_7(Probe) 10.00 cop[tikv] eq(test.t.c, 5)",
 			"  └─TableRowIDScan_6 12.50 cop[tikv] table:t, keep order:false",
 		))
 }
