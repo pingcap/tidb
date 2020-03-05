@@ -30,7 +30,8 @@ type testCodecSuite struct{}
 
 func (s *testCodecSuite) TestCodec(c *check.C) {
 	if runtime.Version() >= "go1.14" {
-		c.Skip("cannot pass checkptr")
+		// TODO: fix it
+		c.Skip("cannot pass checkptr, TODO to fix it")
 	}
 	numCols := 6
 	numRows := 10
