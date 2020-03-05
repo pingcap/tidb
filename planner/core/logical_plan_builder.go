@@ -49,8 +49,8 @@ import (
 	"github.com/pingcap/tidb/types/parser_driver"
 	util2 "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/plancodec"
 )
 
 const (

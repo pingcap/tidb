@@ -82,7 +82,7 @@ func (p *LogicalSort) HashCode() []byte {
 	// PlanType + SelectOffset + Encode(ByItems)
 	// ByItems are commonly (bool + Column) which hashcode has the length 10,
 	// so we pre-alloc 11 bytes for each ByItems's hashcode.
-	result := make([]byte, 12+len(p.ByItems)*15)
+	result := make([]byte, 8, 12+len(p.ByItems)*15)
 	binary.BigEndian.PutUint32(result, uint32(plancodec.TypeStringToPhysicalID(p.tp)))
 	binary.BigEndian.PutUint32(result[4:], uint32(p.SelectBlockOffset()))
 	byItemHashCode := func(i int) []byte { return p.ByItems[i].HashCode(p.ctx.GetSessionVars().StmtCtx) }
@@ -95,7 +95,7 @@ func (p *LogicalTopN) HashCode() []byte {
 	// PlanType + SelectOffset + Encode(ByItems)
 	// ByItems are commonly (bool + Column) which hashcode has the length 10,
 	// so we pre-alloc 11 bytes for each ByItems's hashcode.
-	result := make([]byte, 28+len(p.ByItems)*15)
+	result := make([]byte, 24, 28+len(p.ByItems)*15)
 	binary.BigEndian.PutUint32(result, uint32(plancodec.TypeStringToPhysicalID(p.tp)))
 	binary.BigEndian.PutUint32(result[4:], uint32(p.SelectBlockOffset()))
 	binary.BigEndian.PutUint64(result[8:], p.Offset)
@@ -167,7 +167,7 @@ func (p *LogicalMaxOneRow) HashCode() []byte {
 // HashCode implements LogicalPlan interface.
 func (p *LogicalShowDDLJobs) HashCode() []byte {
 	// PlanType + SelectOffset + JobNumber
-	result := make([]byte, 0, 16)
+	result := make([]byte, 16)
 	result = codec.EncodeIntAsUint32(result, plancodec.TypeStringToPhysicalID(p.tp))
 	result = codec.EncodeIntAsUint32(result, p.SelectBlockOffset())
 	binary.BigEndian.PutUint64(result[8:], uint64(p.JobNumber))
@@ -195,7 +195,7 @@ func (p *DataSource) HashCode() []byte {
 func (p *LogicalIndexScan) HashCode() []byte {
 	// PlanType + SelectOffset + IsDoubleRead + EqCondCount + Index.ID + Source.HashCode() +
 	// EncodeAndSort(AccessConds) + Encode(FullIdxCols) + Encode(FullIdxCols) + Encode(FullIdxColLens) + Encode(FullIdxCols)
-	result := make([]byte, 0, 58+len(p.AccessConds)*29+len(p.FullIdxCols)*9+len(p.FullIdxColLens)*4+len(p.IdxCols)*9+len(p.IdxColLens)*4)
+	result := make([]byte, 0, 58+len(p.AccessConds)*29+len(p.FullIdxCols)*13+len(p.FullIdxColLens)*4+len(p.IdxCols)*13+len(p.IdxColLens)*4)
 	result = codec.EncodeIntAsUint32(result, plancodec.TypeStringToPhysicalID(p.tp))
 	result = codec.EncodeIntAsUint32(result, p.SelectBlockOffset())
 	result = codec.EncodeBool(result, p.IsDoubleRead)
@@ -214,8 +214,11 @@ func (p *LogicalIndexScan) HashCode() []byte {
 	result = codec.EncodeAndSort(result, accessCondHashCode, len(p.AccessConds))
 
 	result = codec.EncodeIntAsUint32(result, len(p.FullIdxCols))
-	for _, col := range p.FullIdxCols {
-		result = append(result, col.HashCode(p.ctx.GetSessionVars().StmtCtx)...)
+	for i, col := range p.FullIdxCols {
+		result = codec.EncodeIntAsUint32(result, i)
+		if col != nil {
+			result = append(result, col.HashCode(p.ctx.GetSessionVars().StmtCtx)...)
+		}
 	}
 
 	result = codec.EncodeIntAsUint32(result, len(p.FullIdxColLens))
@@ -224,8 +227,11 @@ func (p *LogicalIndexScan) HashCode() []byte {
 	}
 
 	result = codec.EncodeIntAsUint32(result, len(p.IdxCols))
-	for _, col := range p.IdxCols {
-		result = append(result, col.HashCode(p.ctx.GetSessionVars().StmtCtx)...)
+	for i, col := range p.IdxCols {
+		result = codec.EncodeIntAsUint32(result, i)
+		if col != nil {
+			result = append(result, col.HashCode(p.ctx.GetSessionVars().StmtCtx)...)
+		}
 	}
 
 	result = codec.EncodeIntAsUint32(result, len(p.IdxColLens))
@@ -244,7 +250,9 @@ func (p *LogicalTableScan) HashCode() []byte {
 	result = codec.EncodeIntAsUint32(result, p.SelectBlockOffset())
 	result = append(result, p.Source.HashCode()...)
 
-	result = append(result, p.Handle.HashCode(p.ctx.GetSessionVars().StmtCtx)...)
+	if p.Handle != nil {
+		result = append(result, p.Handle.HashCode(p.ctx.GetSessionVars().StmtCtx)...)
+	}
 
 	accessCondHashCode := func(i int) []byte { return p.AccessConds[i].HashCode(p.ctx.GetSessionVars().StmtCtx) }
 	result = codec.EncodeAndSort(result, accessCondHashCode, len(p.AccessConds))
@@ -285,7 +293,9 @@ func (p *LogicalWindow) HashCode() []byte {
 	orderByHashCode := func(i int) []byte { return p.OrderBy[i].HashCode(p.ctx.GetSessionVars().StmtCtx) }
 	result = codec.Encode(result, orderByHashCode, len(p.OrderBy))
 
-	result = append(result, p.Frame.HashCode(p.ctx.GetSessionVars().StmtCtx)...)
+	if p.Frame != nil {
+		result = append(result, p.Frame.HashCode(p.ctx.GetSessionVars().StmtCtx)...)
+	}
 
 	return result
 }
@@ -296,12 +306,11 @@ func (p *LogicalMemTable) HashCode() []byte {
 	result = codec.EncodeIntAsUint32(result, plancodec.TypeStringToPhysicalID(p.tp))
 	result = codec.EncodeIntAsUint32(result, p.SelectBlockOffset())
 
-	binary.BigEndian.PutUint64(result[8:], uint64(p.TableInfo.ID))
+	result = codec.EncodeInt(result, p.TableInfo.ID)
 	result = codec.EncodeCompactBytes(result, hack.Slice(p.DBName.L))
-	RangeBytes := make([]byte, 0, 16)
-	binary.BigEndian.PutUint64(RangeBytes[:], uint64(p.QueryTimeRange.From.Unix()))
-	binary.BigEndian.PutUint64(RangeBytes[8:], uint64(p.QueryTimeRange.To.Unix()))
-	result = append(result, RangeBytes...)
+
+	result = codec.EncodeInt(result, p.QueryTimeRange.From.Unix())
+	result = codec.EncodeInt(result, p.QueryTimeRange.To.Unix())
 	return result
 }
 
