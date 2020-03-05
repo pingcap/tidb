@@ -960,7 +960,7 @@ func (s *testSuite3) TestAutoIDIncrementAndOffset(c *C) {
 	c.Assert(err.Error(), Equals, "[autoid:8060]Invalid auto_increment settings: auto_increment_increment: 65536, auto_increment_offset: 65536, both of them must be in range [1..65535]")
 }
 
-var _ = SerialSuites(&testSuite9{})
+var _ = SerialSuites(&testSuite9{&baseTestSuite{}})
 
 type testSuite9 struct {
 	*baseTestSuite
