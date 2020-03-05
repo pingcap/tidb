@@ -230,7 +230,7 @@ func (ts *tidbTestSuite) TestStatusAPIWithTLSCNCheck(c *C) {
 	cfg.Security.ClusterSSLCA = ca
 	cfg.Security.ClusterSSLCert = filepath.Join(root, "/tests/cncheckcert/server-cert.pem")
 	cfg.Security.ClusterSSLKey = filepath.Join(root, "/tests/cncheckcert/server-key.pem")
-	cfg.Security.ClusterAllowCN = "tidb-client-2"
+	cfg.Security.ClusterVerifyCN = "tidb-client-2"
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
 	go server.Run()

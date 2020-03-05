@@ -313,8 +313,8 @@ func (s *Server) setupStatusServerAndRPCServer(addr string, serverMux *http.Serv
 }
 
 func (s *Server) setCNChecker(tlsConfig *tls.Config) *tls.Config {
-	if tlsConfig != nil && len(s.cfg.Security.ClusterAllowCN) > 0 {
-		cns := strings.Split(s.cfg.Security.ClusterAllowCN, ",")
+	if tlsConfig != nil && len(s.cfg.Security.ClusterVerifyCN) > 0 {
+		cns := strings.Split(s.cfg.Security.ClusterVerifyCN, ",")
 		if len(cns) != 0 {
 			checkCN := make(map[string]struct{})
 			for _, cn := range cns {
@@ -329,9 +329,10 @@ func (s *Server) setCNChecker(tlsConfig *tls.Config) *tls.Config {
 						}
 					}
 				}
-				return errors.New("client certificate authentication failed due to CN not match")
+				return errors.Errorf("client certificate authentication failed. The Common Name from "+
+					"the client certificate was not found in the configuration cluster-verify-cn with value: %s", s.cfg.Security.ClusterVerifyCN)
 			}
-			tlsConfig.ClientAuth = tls.VerifyClientCertIfGiven
+			tlsConfig.ClientAuth = tls.RequireAndVerifyClientCert
 		}
 	}
 	return tlsConfig
