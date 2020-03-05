@@ -46,7 +46,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
-	driver "github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/types/parser_driver"
 	util2 "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
