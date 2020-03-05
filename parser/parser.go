@@ -10571,7 +10571,7 @@ yynewstate:
 		}
 	case 182:
 		{
-			parser.yyVAL.item = &ast.ColumnOption{Tp: ast.ColumnOptionComment, Expr: ast.NewValueExpr(yyS[yypt-0].ident)}
+			parser.yyVAL.item = &ast.ColumnOption{Tp: ast.ColumnOptionComment, Expr: ast.NewValueExpr(yyS[yypt-0].ident, parser.charset, parser.collation)}
 		}
 	case 183:
 		{
@@ -10864,7 +10864,7 @@ yynewstate:
 		}
 	case 234:
 		{
-			parser.yyVAL.expr = &ast.FuncCallExpr{FnName: model.NewCIStr("CURRENT_TIMESTAMP"), Args: []ast.ExprNode{ast.NewValueExpr(yyS[yypt-1].item)}}
+			parser.yyVAL.expr = &ast.FuncCallExpr{FnName: model.NewCIStr("CURRENT_TIMESTAMP"), Args: []ast.ExprNode{ast.NewValueExpr(yyS[yypt-1].item, parser.charset, parser.collation)}}
 		}
 	case 235:
 		{
@@ -10888,15 +10888,15 @@ yynewstate:
 		}
 	case 244:
 		{
-			parser.yyVAL.expr = ast.NewValueExpr(yyS[yypt-0].expr)
+			parser.yyVAL.expr = ast.NewValueExpr(yyS[yypt-0].expr, parser.charset, parser.collation)
 		}
 	case 245:
 		{
-			parser.yyVAL.expr = &ast.UnaryOperationExpr{Op: opcode.Plus, V: ast.NewValueExpr(yyS[yypt-0].item)}
+			parser.yyVAL.expr = &ast.UnaryOperationExpr{Op: opcode.Plus, V: ast.NewValueExpr(yyS[yypt-0].item, parser.charset, parser.collation)}
 		}
 	case 246:
 		{
-			parser.yyVAL.expr = &ast.UnaryOperationExpr{Op: opcode.Minus, V: ast.NewValueExpr(yyS[yypt-0].item)}
+			parser.yyVAL.expr = &ast.UnaryOperationExpr{Op: opcode.Minus, V: ast.NewValueExpr(yyS[yypt-0].item, parser.charset, parser.collation)}
 		}
 	case 250:
 		{
@@ -11856,7 +11856,7 @@ yynewstate:
 		}
 	case 439:
 		{
-			expr := ast.NewValueExpr(yyS[yypt-0].item)
+			expr := ast.NewValueExpr(yyS[yypt-0].item, parser.charset, parser.collation)
 			parser.yyVAL.item = []ast.ExprNode{expr}
 		}
 	case 440:
@@ -12369,27 +12369,27 @@ yynewstate:
 		}
 	case 907:
 		{
-			parser.yyVAL.expr = ast.NewValueExpr(false)
+			parser.yyVAL.expr = ast.NewValueExpr(false, parser.charset, parser.collation)
 		}
 	case 908:
 		{
-			parser.yyVAL.expr = ast.NewValueExpr(nil)
+			parser.yyVAL.expr = ast.NewValueExpr(nil, parser.charset, parser.collation)
 		}
 	case 909:
 		{
-			parser.yyVAL.expr = ast.NewValueExpr(true)
+			parser.yyVAL.expr = ast.NewValueExpr(true, parser.charset, parser.collation)
 		}
 	case 910:
 		{
-			parser.yyVAL.expr = ast.NewValueExpr(yyS[yypt-0].item)
+			parser.yyVAL.expr = ast.NewValueExpr(yyS[yypt-0].item, parser.charset, parser.collation)
 		}
 	case 911:
 		{
-			parser.yyVAL.expr = ast.NewValueExpr(yyS[yypt-0].item)
+			parser.yyVAL.expr = ast.NewValueExpr(yyS[yypt-0].item, parser.charset, parser.collation)
 		}
 	case 912:
 		{
-			parser.yyVAL.expr = ast.NewValueExpr(yyS[yypt-0].item)
+			parser.yyVAL.expr = ast.NewValueExpr(yyS[yypt-0].item, parser.charset, parser.collation)
 		}
 	case 913:
 		{
@@ -12403,7 +12403,7 @@ yynewstate:
 				yylex.AppendError(yylex.Errorf("Get collation error for charset: %s", yyS[yypt-1].ident))
 				return 1
 			}
-			expr := ast.NewValueExpr(yyS[yypt-0].ident)
+			expr := ast.NewValueExpr(yyS[yypt-0].ident, parser.charset, parser.collation)
 			tp := expr.GetType()
 			tp.Charset = yyS[yypt-1].ident
 			tp.Collate = co
@@ -12414,22 +12414,22 @@ yynewstate:
 		}
 	case 915:
 		{
-			parser.yyVAL.expr = ast.NewValueExpr(yyS[yypt-0].item)
+			parser.yyVAL.expr = ast.NewValueExpr(yyS[yypt-0].item, parser.charset, parser.collation)
 		}
 	case 916:
 		{
-			parser.yyVAL.expr = ast.NewValueExpr(yyS[yypt-0].item)
+			parser.yyVAL.expr = ast.NewValueExpr(yyS[yypt-0].item, parser.charset, parser.collation)
 		}
 	case 917:
 		{
-			expr := ast.NewValueExpr(yyS[yypt-0].ident)
+			expr := ast.NewValueExpr(yyS[yypt-0].ident, parser.charset, parser.collation)
 			parser.yyVAL.expr = expr
 		}
 	case 918:
 		{
 			valExpr := yyS[yypt-1].expr.(ast.ValueExpr)
 			strLit := valExpr.GetString()
-			expr := ast.NewValueExpr(strLit + yyS[yypt-0].ident)
+			expr := ast.NewValueExpr(strLit+yyS[yypt-0].ident, parser.charset, parser.collation)
 			// Fix #4239, use first string literal as projection name.
 			if valExpr.GetProjectionOffset() >= 0 {
 				expr.SetProjectionOffset(valExpr.GetProjectionOffset())
@@ -12712,7 +12712,7 @@ yynewstate:
 	case 975:
 		{
 			// See https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#function_convert
-			charset1 := ast.NewValueExpr(yyS[yypt-1].item)
+			charset1 := ast.NewValueExpr(yyS[yypt-1].item, parser.charset, parser.collation)
 			parser.yyVAL.expr = &ast.FuncCallExpr{
 				FnName: model.NewCIStr(yyS[yypt-5].ident),
 				Args:   []ast.ExprNode{yyS[yypt-3].expr, charset1},
@@ -12728,12 +12728,12 @@ yynewstate:
 		}
 	case 978:
 		{
-			expr := ast.NewValueExpr(yyS[yypt-0].ident)
+			expr := ast.NewValueExpr(yyS[yypt-0].ident, parser.charset, parser.collation)
 			parser.yyVAL.expr = &ast.FuncCallExpr{FnName: model.NewCIStr(ast.JSONExtract), Args: []ast.ExprNode{yyS[yypt-2].expr, expr}}
 		}
 	case 979:
 		{
-			expr := ast.NewValueExpr(yyS[yypt-0].ident)
+			expr := ast.NewValueExpr(yyS[yypt-0].ident, parser.charset, parser.collation)
 			extract := &ast.FuncCallExpr{FnName: model.NewCIStr(ast.JSONExtract), Args: []ast.ExprNode{yyS[yypt-2].expr, expr}}
 			parser.yyVAL.expr = &ast.FuncCallExpr{FnName: model.NewCIStr(ast.JSONUnquote), Args: []ast.ExprNode{extract}}
 		}
@@ -12783,7 +12783,7 @@ yynewstate:
 		}
 	case 1036:
 		{
-			nilVal := ast.NewValueExpr(nil)
+			nilVal := ast.NewValueExpr(nil, parser.charset, parser.collation)
 			args := yyS[yypt-1].item.([]ast.ExprNode)
 			parser.yyVAL.expr = &ast.FuncCallExpr{
 				FnName: model.NewCIStr(ast.CharFunc),
@@ -12792,7 +12792,7 @@ yynewstate:
 		}
 	case 1037:
 		{
-			charset1 := ast.NewValueExpr(yyS[yypt-1].item)
+			charset1 := ast.NewValueExpr(yyS[yypt-1].item, parser.charset, parser.collation)
 			args := yyS[yypt-3].item.([]ast.ExprNode)
 			parser.yyVAL.expr = &ast.FuncCallExpr{
 				FnName: model.NewCIStr(ast.CharFunc),
@@ -12801,17 +12801,17 @@ yynewstate:
 		}
 	case 1038:
 		{
-			expr := ast.NewValueExpr(yyS[yypt-0].ident)
+			expr := ast.NewValueExpr(yyS[yypt-0].ident, parser.charset, parser.collation)
 			parser.yyVAL.expr = &ast.FuncCallExpr{FnName: model.NewCIStr(ast.DateLiteral), Args: []ast.ExprNode{expr}}
 		}
 	case 1039:
 		{
-			expr := ast.NewValueExpr(yyS[yypt-0].ident)
+			expr := ast.NewValueExpr(yyS[yypt-0].ident, parser.charset, parser.collation)
 			parser.yyVAL.expr = &ast.FuncCallExpr{FnName: model.NewCIStr(ast.TimeLiteral), Args: []ast.ExprNode{expr}}
 		}
 	case 1040:
 		{
-			expr := ast.NewValueExpr(yyS[yypt-0].ident)
+			expr := ast.NewValueExpr(yyS[yypt-0].ident, parser.charset, parser.collation)
 			parser.yyVAL.expr = &ast.FuncCallExpr{FnName: model.NewCIStr(ast.TimestampLiteral), Args: []ast.ExprNode{expr}}
 		}
 	case 1041:
@@ -12830,7 +12830,7 @@ yynewstate:
 		{
 			// This is ODBC syntax for date and time literals.
 			// See: https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html
-			expr := ast.NewValueExpr(yyS[yypt-1].ident)
+			expr := ast.NewValueExpr(yyS[yypt-1].ident, parser.charset, parser.collation)
 			parser.yyVAL.expr = &ast.FuncCallExpr{FnName: model.NewCIStr(yyS[yypt-2].ident), Args: []ast.ExprNode{expr}}
 		}
 	case 1045:
@@ -12954,7 +12954,7 @@ yynewstate:
 		}
 	case 1061:
 		{
-			nilVal := ast.NewValueExpr(nil)
+			nilVal := ast.NewValueExpr(nil, parser.charset, parser.collation)
 			direction := &ast.TrimDirectionExpr{Direction: yyS[yypt-3].item.(ast.TrimDirectionType)}
 			parser.yyVAL.expr = &ast.FuncCallExpr{
 				FnName: model.NewCIStr(yyS[yypt-5].ident),
@@ -12980,14 +12980,14 @@ yynewstate:
 		{
 			parser.yyVAL.expr = &ast.FuncCallExpr{
 				FnName: model.NewCIStr(yyS[yypt-6].ident),
-				Args:   []ast.ExprNode{yyS[yypt-4].expr, ast.NewValueExpr("CHAR"), ast.NewValueExpr(yyS[yypt-1].item)},
+				Args:   []ast.ExprNode{yyS[yypt-4].expr, ast.NewValueExpr("CHAR", parser.charset, parser.collation), ast.NewValueExpr(yyS[yypt-1].item, parser.charset, parser.collation)},
 			}
 		}
 	case 1065:
 		{
 			parser.yyVAL.expr = &ast.FuncCallExpr{
 				FnName: model.NewCIStr(yyS[yypt-6].ident),
-				Args:   []ast.ExprNode{yyS[yypt-4].expr, ast.NewValueExpr("BINARY"), ast.NewValueExpr(yyS[yypt-1].item)},
+				Args:   []ast.ExprNode{yyS[yypt-4].expr, ast.NewValueExpr("BINARY", parser.charset, parser.collation), ast.NewValueExpr(yyS[yypt-1].item, parser.charset, parser.collation)},
 			}
 		}
 	case 1067:
@@ -13033,7 +13033,7 @@ yynewstate:
 			objNameExpr := &ast.TableNameExpr{
 				Name: yyS[yypt-3].item.(*ast.TableName),
 			}
-			valueExpr := ast.NewValueExpr(yyS[yypt-1].item)
+			valueExpr := ast.NewValueExpr(yyS[yypt-1].item, parser.charset, parser.collation)
 			parser.yyVAL.expr = &ast.FuncCallExpr{
 				FnName: model.NewCIStr(ast.SetVal),
 				Args:   []ast.ExprNode{objNameExpr, valueExpr},
@@ -13117,7 +13117,7 @@ yynewstate:
 		}
 	case 1091:
 		{
-			args := []ast.ExprNode{ast.NewValueExpr(1)}
+			args := []ast.ExprNode{ast.NewValueExpr(1, parser.charset, parser.collation)}
 			if yyS[yypt-0].item != nil {
 				parser.yyVAL.expr = &ast.WindowFuncExpr{F: yyS[yypt-4].ident, Args: args, Spec: *(yyS[yypt-0].item.(*ast.WindowSpec))}
 			} else {
@@ -13216,11 +13216,11 @@ yynewstate:
 		}
 	case 1104:
 		{
-			parser.yyVAL.item = ast.NewValueExpr(",")
+			parser.yyVAL.item = ast.NewValueExpr(",", parser.charset, parser.collation)
 		}
 	case 1105:
 		{
-			parser.yyVAL.item = ast.NewValueExpr(yyS[yypt-0].ident)
+			parser.yyVAL.item = ast.NewValueExpr(yyS[yypt-0].ident, parser.charset, parser.collation)
 		}
 	case 1106:
 		{
@@ -13236,7 +13236,7 @@ yynewstate:
 		}
 	case 1109:
 		{
-			expr := ast.NewValueExpr(yyS[yypt-1].item)
+			expr := ast.NewValueExpr(yyS[yypt-1].item, parser.charset, parser.collation)
 			parser.yyVAL.item = expr
 		}
 	case 1110:
@@ -13884,7 +13884,7 @@ yynewstate:
 		}
 	case 1223:
 		{
-			parser.yyVAL.item = ast.FrameBound{Type: ast.Preceding, Expr: ast.NewValueExpr(yyS[yypt-1].item)}
+			parser.yyVAL.item = ast.FrameBound{Type: ast.Preceding, Expr: ast.NewValueExpr(yyS[yypt-1].item, parser.charset, parser.collation)}
 		}
 	case 1224:
 		{
@@ -13912,7 +13912,7 @@ yynewstate:
 		}
 	case 1230:
 		{
-			parser.yyVAL.item = ast.FrameBound{Type: ast.Following, Expr: ast.NewValueExpr(yyS[yypt-1].item)}
+			parser.yyVAL.item = ast.FrameBound{Type: ast.Following, Expr: ast.NewValueExpr(yyS[yypt-1].item, parser.charset, parser.collation)}
 		}
 	case 1231:
 		{
@@ -14001,7 +14001,7 @@ yynewstate:
 		}
 	case 1250:
 		{
-			args := []ast.ExprNode{ast.NewValueExpr(yyS[yypt-1].item)}
+			args := []ast.ExprNode{ast.NewValueExpr(yyS[yypt-1].item, parser.charset, parser.collation)}
 			if yyS[yypt-0].item != nil {
 				args = append(args, yyS[yypt-0].item.(ast.ExprNode))
 			}
@@ -14009,7 +14009,7 @@ yynewstate:
 		}
 	case 1251:
 		{
-			args := []ast.ExprNode{ast.NewValueExpr(yyS[yypt-1].item)}
+			args := []ast.ExprNode{ast.NewValueExpr(yyS[yypt-1].item, parser.charset, parser.collation)}
 			if yyS[yypt-0].item != nil {
 				args = append(args, yyS[yypt-0].item.(ast.ExprNode))
 			}
@@ -14262,7 +14262,7 @@ yynewstate:
 		}
 	case 1312:
 		{
-			parser.yyVAL.item = ast.NewValueExpr(yyS[yypt-0].item)
+			parser.yyVAL.item = ast.NewValueExpr(yyS[yypt-0].item, parser.charset, parser.collation)
 		}
 	case 1313:
 		{
@@ -14661,21 +14661,21 @@ yynewstate:
 	case 1372:
 		{
 			varAssigns := []*ast.VariableAssignment{}
-			expr := ast.NewValueExpr(yyS[yypt-0].ident)
+			expr := ast.NewValueExpr(yyS[yypt-0].ident, parser.charset, parser.collation)
 			varAssigns = append(varAssigns, &ast.VariableAssignment{Name: "tx_isolation", Value: expr, IsSystem: true})
 			parser.yyVAL.item = varAssigns
 		}
 	case 1373:
 		{
 			varAssigns := []*ast.VariableAssignment{}
-			expr := ast.NewValueExpr("0")
+			expr := ast.NewValueExpr("0", parser.charset, parser.collation)
 			varAssigns = append(varAssigns, &ast.VariableAssignment{Name: "tx_read_only", Value: expr, IsSystem: true})
 			parser.yyVAL.item = varAssigns
 		}
 	case 1374:
 		{
 			varAssigns := []*ast.VariableAssignment{}
-			expr := ast.NewValueExpr("1")
+			expr := ast.NewValueExpr("1", parser.charset, parser.collation)
 			varAssigns = append(varAssigns, &ast.VariableAssignment{Name: "tx_read_only", Value: expr, IsSystem: true})
 			parser.yyVAL.item = varAssigns
 		}
@@ -14697,7 +14697,7 @@ yynewstate:
 		}
 	case 1379:
 		{
-			parser.yyVAL.expr = ast.NewValueExpr("ON")
+			parser.yyVAL.expr = ast.NewValueExpr("ON", parser.charset, parser.collation)
 		}
 	case 1384:
 		{
@@ -14745,22 +14745,22 @@ yynewstate:
 		{
 			parser.yyVAL.item = &ast.VariableAssignment{
 				Name:  ast.SetNames,
-				Value: ast.NewValueExpr(yyS[yypt-0].item.(string)),
+				Value: ast.NewValueExpr(yyS[yypt-0].item.(string), parser.charset, parser.collation),
 			}
 		}
 	case 1392:
 		{
 			parser.yyVAL.item = &ast.VariableAssignment{
 				Name:  ast.SetNames,
-				Value: ast.NewValueExpr(yyS[yypt-2].item.(string)),
+				Value: ast.NewValueExpr(yyS[yypt-2].item.(string), parser.charset, parser.collation),
 			}
 		}
 	case 1393:
 		{
 			parser.yyVAL.item = &ast.VariableAssignment{
 				Name:        ast.SetNames,
-				Value:       ast.NewValueExpr(yyS[yypt-2].item.(string)),
-				ExtendValue: ast.NewValueExpr(yyS[yypt-0].item.(string)),
+				Value:       ast.NewValueExpr(yyS[yypt-2].item.(string), parser.charset, parser.collation),
+				ExtendValue: ast.NewValueExpr(yyS[yypt-0].item.(string), parser.charset, parser.collation),
 			}
 		}
 	case 1394:
@@ -14774,7 +14774,7 @@ yynewstate:
 		}
 	case 1396:
 		{
-			parser.yyVAL.expr = ast.NewValueExpr(yyS[yypt-0].item.(string))
+			parser.yyVAL.expr = ast.NewValueExpr(yyS[yypt-0].item.(string), parser.charset, parser.collation)
 		}
 	case 1397:
 		{

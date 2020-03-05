@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/parser"
 	. "github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/parser/mysql"
 )
 
 var _ = Suite(&testMiscSuite{})
@@ -44,7 +45,7 @@ func (visitor1) Enter(in Node) (Node, bool) {
 }
 
 func (ts *testMiscSuite) TestMiscVisitorCover(c *C) {
-	valueExpr := NewValueExpr(42)
+	valueExpr := NewValueExpr(42, mysql.DefaultCharset, mysql.DefaultCollationName)
 	stmts := []Node{
 		&AdminStmt{},
 		&AlterUserStmt{},

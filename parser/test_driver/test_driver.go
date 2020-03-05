@@ -148,13 +148,13 @@ func (n *ValueExpr) Format(w io.Writer) {
 }
 
 // newValueExpr creates a ValueExpr with value, and sets default field type.
-func newValueExpr(value interface{}) ast.ValueExpr {
+func newValueExpr(value interface{}, charset string, collate string) ast.ValueExpr {
 	if ve, ok := value.(*ValueExpr); ok {
 		return ve
 	}
 	ve := &ValueExpr{}
 	ve.SetValue(value)
-	DefaultTypeForValue(value, &ve.Type)
+	DefaultTypeForValue(value, &ve.Type, charset, collate)
 	ve.projectionOffset = -1
 	return ve
 }
