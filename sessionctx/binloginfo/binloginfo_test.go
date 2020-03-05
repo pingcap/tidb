@@ -380,13 +380,18 @@ func mutationRowsToRows(c *C, mutationRows [][]byte, columnValueOffsets ...int) 
 func (s *testBinlogSuite) TestBinlogForSequence(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	s.pump.mu.Lock()
+	s.pump.mu.payloads = s.pump.mu.payloads[:0]
+	s.pump.mu.Unlock()
 	tk.Se.GetSessionVars().BinlogClient = s.client
 
 	tk.MustExec("drop sequence if exists seq")
 	// the default start = 1, increment = 1.
 	tk.MustExec("create sequence seq cache 3")
 	// trigger the sequence cache allocation.
-	tk.MustExec("select nextval(seq)")
+	err := tk.QueryToErr("select nextval(seq)")
+	c.Assert(err, IsNil)
+
 	sequenceTable := testGetTableByName(c, tk.Se, "test", "seq")
 	tc, ok := sequenceTable.(*tables.TableCommon)
 	c.Assert(ok, Equals, true)
@@ -396,44 +401,46 @@ func (s *testBinlogSuite) TestBinlogForSequence(c *C) {
 
 	// Check the sequence binlog.
 	// Got matched pre DDL and commit DDL.
-	c.Assert(mustGetDDLBinlog(s, "select setval(`test`.`seq`, 3)", c), IsTrue)
+	ok = mustGetDDLBinlog(s, "select setval(`test`.`seq`, 3)", c)
+	c.Assert(ok, IsTrue)
 
 	// Invalidate the current sequence cache.
 	tk.MustExec("select setval(seq, 5)")
 	// trigger the next sequence cache allocation.
-	tk.MustExec("select nextval(seq)")
-	sequenceTable = testGetTableByName(c, tk.Se, "test", "seq")
-	tc, ok = sequenceTable.(*tables.TableCommon)
-	c.Assert(ok, Equals, true)
+	err = tk.QueryToErr("select nextval(seq)")
+	c.Assert(err, IsNil)
+
 	_, end, round = tc.GetSequenceCommon().GetSequenceBaseEndRound()
 	c.Assert(end, Equals, int64(8))
 	c.Assert(round, Equals, int64(0))
-	c.Assert(mustGetDDLBinlog(s, "select setval(`test`.`seq`, 8)", c), IsTrue)
+	ok = mustGetDDLBinlog(s, "select setval(`test`.`seq`, 8)", c)
+	c.Assert(ok, IsTrue)
 
 	tk.MustExec("create database test2")
 	tk.MustExec("use test2")
 	tk.MustExec("drop sequence if exists seq2")
 	tk.MustExec("create sequence seq2 start 1 increment -2 cache 3 minvalue -10 maxvalue 10 cycle")
 	// trigger the sequence cache allocation.
-	tk.MustExec("select nextval(seq2)")
+	err = tk.QueryToErr("select nextval(seq2)")
+	c.Assert(err, IsNil)
 	sequenceTable = testGetTableByName(c, tk.Se, "test2", "seq2")
 	tc, ok = sequenceTable.(*tables.TableCommon)
 	c.Assert(ok, Equals, true)
 	_, end, round = tc.GetSequenceCommon().GetSequenceBaseEndRound()
 	c.Assert(end, Equals, int64(-3))
 	c.Assert(round, Equals, int64(0))
-	c.Assert(mustGetDDLBinlog(s, "select setval(`test2`.`seq2`, -3)", c), IsTrue)
+	ok = mustGetDDLBinlog(s, "select setval(`test2`.`seq2`, -3)", c)
+	c.Assert(ok, IsTrue)
 
 	tk.MustExec("select setval(seq2, -100)")
 	// trigger the sequence cache allocation.
-	tk.MustExec("select nextval(seq2)")
-	sequenceTable = testGetTableByName(c, tk.Se, "test2", "seq2")
-	tc, ok = sequenceTable.(*tables.TableCommon)
-	c.Assert(ok, Equals, true)
+	err = tk.QueryToErr("select nextval(seq2)")
+	c.Assert(err, IsNil)
 	_, end, round = tc.GetSequenceCommon().GetSequenceBaseEndRound()
 	c.Assert(end, Equals, int64(6))
 	c.Assert(round, Equals, int64(1))
-	c.Assert(mustGetDDLBinlog(s, "select setval(`test2`.`seq2`, 6)", c), IsTrue)
+	ok = mustGetDDLBinlog(s, "select setval(`test2`.`seq2`, 6)", c)
+	c.Assert(ok, IsTrue)
 
 	// Test dml txn is independent from sequence txn.
 	tk.MustExec("drop sequence if exists seq")
@@ -561,7 +568,7 @@ func (s *testBinlogSuite) TestAddSpecialComment(c *C) {
 }
 
 func mustGetDDLBinlog(s *testBinlogSuite, ddlQuery string, c *C) (matched bool) {
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 100; i++ {
 		preDDL, commitDDL, _ := getLatestDDLBinlog(c, s.pump, ddlQuery)
 		if preDDL != nil && commitDDL != nil {
 			if preDDL.DdlJobId == commitDDL.DdlJobId {
