@@ -1237,6 +1237,15 @@ func (c *twoPhaseCommitter) writeFinishBinlog(ctx context.Context, tp binlog.Bin
 	binInfo.Data.Tp = tp
 	binInfo.Data.CommitTs = commitTS
 	binInfo.Data.PrewriteValue = nil
+
+	wg := sync.WaitGroup{}
+	mock := false
+	failpoint.Inject("mockSyncBinlogCommit", func(val failpoint.Value) {
+		if val.(bool) {
+			wg.Add(1)
+			mock = true
+		}
+	})
 	go func() {
 		logutil.Eventf(ctx, "start write finish binlog")
 		binlogWriteResult := binInfo.WriteBinlog(c.store.clusterID)
@@ -1246,7 +1255,13 @@ func (c *twoPhaseCommitter) writeFinishBinlog(ctx context.Context, tp binlog.Bin
 				zap.Error(err))
 		}
 		logutil.Eventf(ctx, "finish write finish binlog")
+		if mock {
+			wg.Done()
+		}
 	}()
+	if mock {
+		wg.Wait()
+	}
 }
 
 func (c *twoPhaseCommitter) shouldWriteBinlog() bool {

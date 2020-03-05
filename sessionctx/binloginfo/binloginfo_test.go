@@ -24,6 +24,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -378,6 +379,10 @@ func mutationRowsToRows(c *C, mutationRows [][]byte, columnValueOffsets ...int) 
 }
 
 func (s *testBinlogSuite) TestBinlogForSequence(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/mockSyncBinlogCommit", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/mockSyncBinlogCommit"), IsNil)
+	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	s.pump.mu.Lock()
@@ -443,9 +448,6 @@ func (s *testBinlogSuite) TestBinlogForSequence(c *C) {
 	tk.MustExec("create table t (a int default next value for seq)")
 	// sequence txn commit first then the dml txn.
 	tk.MustExec("insert into t values(-1),(default),(-1),(default)")
-	// Wait for binlog write async rather than lock/unlock mu frequently.
-	// Otherwise there is a chance that binlog-write goroutine will be hungry.
-	time.Sleep(time.Millisecond * 1000)
 	// binlog list like [... ddl prewrite(offset), ddl commit, dml prewrite, dml commit]
 	_, _, offset := getLatestDDLBinlog(c, s.pump, "select setval(`test2`.`seq`, 3)")
 	s.pump.mu.Lock()
@@ -565,10 +567,7 @@ func (s *testBinlogSuite) TestAddSpecialComment(c *C) {
 }
 
 func mustGetDDLBinlog(s *testBinlogSuite, ddlQuery string, c *C) (matched bool) {
-	// Wait for binlog write async rather than lock/unlock mu frequently.
-	// Otherwise there is a chance that binlog-write goroutine will be hungry.
-	time.Sleep(time.Millisecond * 1000)
-	for i := 0; i < 100; i++ {
+	for i := 0; i < 10; i++ {
 		preDDL, commitDDL, _ := getLatestDDLBinlog(c, s.pump, ddlQuery)
 		if preDDL != nil && commitDDL != nil {
 			if preDDL.DdlJobId == commitDDL.DdlJobId {
