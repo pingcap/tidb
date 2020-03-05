@@ -66,6 +66,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			e.rows = dataForKeyColumnUsage(sctx, dbs)
 		case infoschema.TableCollationCharacterSetApplicability:
 			e.rows = dataForCollationCharacterSetApplicability()
+		case infoschema.TableUserPrivileges:
+			e.rows = dataForUserPrivileges(sctx)
 		}
 		if err != nil {
 			return nil, err
@@ -385,3 +387,9 @@ func keyColumnUsageInTable(schema *model.DBInfo, table *model.TableInfo) [][]typ
 	}
 	return rows
 }
+
+func dataForUserPrivileges(ctx sessionctx.Context) [][]types.Datum {
+	pm := privilege.GetPrivilegeManager(ctx)
+	return pm.UserPrivilegesTable()
+}
+
