@@ -157,11 +157,11 @@ func (s *inspectionResultSuite) TestInspectionResult(c *C) {
 		{
 			sql: "select rule, item, type, instance, value, reference, severity, details from information_schema.inspection_result where rule='current-load'",
 			rows: []string{
-				"current-load cpu-load1 pd 192.168.1.31:1234 1.0 <0.7 warning cpu-load1 should less than (cpu_logical_cores * 0.7)",
-				"current-load cpu-load15 pd 192.168.1.33:1234 8.0 <7.0 warning cpu-load15 should less than (cpu_logical_cores * 0.7)",
-				"current-load disk-usage tikv 192.168.1.22:1234 80 <70 warning current disk-usage is too high, execute the sql to see more detail: select * from information_schema.cluster_hardware where type='tikv' and instance='192.168.1.22:1234' and device_type='disk' and device_name='sda'",
+				"current-load cpu-load1 pd 192.168.1.31:1234 1.0 < 0.7 warning cpu-load1 should less than (cpu_logical_cores * 0.7)",
+				"current-load cpu-load15 pd 192.168.1.33:1234 8.0 < 7.0 warning cpu-load15 should less than (cpu_logical_cores * 0.7)",
+				"current-load disk-usage tikv 192.168.1.22:1234 80 < 70 warning current disk-usage is too high, execute the sql to see more detail: select * from information_schema.cluster_hardware where type='tikv' and instance='192.168.1.22:1234' and device_type='disk' and device_name='sda'",
 				"current-load swap-memory-usage tikv 192.168.1.21:1234 0.6 0 warning ",
-				"current-load virtual-memory-usage tidb 192.168.1.11:1234 0.8 <0.7 warning ",
+				"current-load virtual-memory-usage tidb 192.168.1.11:1234 0.8 < 0.7 warning ",
 			},
 		},
 	}

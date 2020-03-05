@@ -333,7 +333,7 @@ func (c currentLoadInspection) inspect(_ context.Context, sctx sessionctx.Contex
 		{
 			"virtual-memory-usage",
 			"select type, instance, value from inspection_schema.cluster_load where device_type='memory' and device_name='virtual' and name='used-percent' and value > 0.7",
-			"<0.7",
+			"< 0.7",
 			commonResult,
 		},
 		{
@@ -345,7 +345,7 @@ func (c currentLoadInspection) inspect(_ context.Context, sctx sessionctx.Contex
 		{
 			"disk-usage",
 			"select type, instance, device_name, value from inspection_schema.cluster_hardware where device_type='disk' and name='used-percent' and value > 70",
-			"<70",
+			"< 70",
 			diskResult,
 		},
 	}
@@ -388,7 +388,7 @@ func (currentLoadInspection) inspectCPULoad(sctx sessionctx.Context, filter insp
 				instance: row.GetString(1),
 				item:     "cpu-" + item,
 				actual:   row.GetString(2),
-				expected: fmt.Sprintf("<%.1f", row.GetFloat64(3)),
+				expected: fmt.Sprintf("< %.1f", row.GetFloat64(3)),
 				severity: "warning",
 				detail:   "cpu-" + item + " should less than (cpu_logical_cores * 0.7)",
 			}
