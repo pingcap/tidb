@@ -15,7 +15,6 @@ package executor_test
 
 import (
 	"fmt"
-	"go.etcd.io/etcd/proxy/grpcproxy/adapter"
 	"strconv"
 	"strings"
 	"sync"
@@ -981,8 +980,7 @@ func (s *testSuite3) TestAutoRandomID(c *C) {
 	firstValue, err := strconv.Atoi(rs.Rows()[0][0].(string))
 	c.Assert(err, IsNil)
 	c.Assert(firstValue, Greater, 0)
-	rs = tk.MustQuery(`select last_insert_id()`)
-	c.Assert(rs.Rows()[0][0].(string), Equals, fmt.Sprintf("%d", firstValue))
+	tk.MustQuery(`select last_insert_id()`).Check(testkit.Rows(fmt.Sprintf("%d", firstValue)))
 	tk.MustExec(`delete from ar`)
 
 	tk.MustExec(`insert into ar(id) values (0)`)
@@ -991,8 +989,7 @@ func (s *testSuite3) TestAutoRandomID(c *C) {
 	firstValue, err = strconv.Atoi(rs.Rows()[0][0].(string))
 	c.Assert(err, IsNil)
 	c.Assert(firstValue, Greater, 0)
-	rs = tk.MustQuery(`select last_insert_id()`)
-	c.Assert(rs.Rows()[0][0].(string), Equals, fmt.Sprintf("%d", firstValue))
+	tk.MustQuery(`select last_insert_id()`).Check(testkit.Rows(fmt.Sprintf("%d", firstValue)))
 	tk.MustExec(`delete from ar`)
 
 	tk.MustExec(`insert into ar(name) values ('a')`)
@@ -1001,8 +998,7 @@ func (s *testSuite3) TestAutoRandomID(c *C) {
 	firstValue, err = strconv.Atoi(rs.Rows()[0][0].(string))
 	c.Assert(err, IsNil)
 	c.Assert(firstValue, Greater, 0)
-	rs = tk.MustQuery(`select last_insert_id()`)
-	c.Assert(rs.Rows()[0][0].(string), Equals, fmt.Sprintf("%d", firstValue))
+	tk.MustQuery(`select last_insert_id()`).Check(testkit.Rows(fmt.Sprintf("%d", firstValue)))
 
 	tk.MustExec(`drop table ar`)
 }
@@ -1029,8 +1025,7 @@ func (s *testSuite3) TestMultiAutoRandomID(c *C) {
 	c.Assert(firstValue, Greater, 0)
 	c.Assert(rs.Rows()[1][0].(string), Equals, fmt.Sprintf("%d", firstValue+1))
 	c.Assert(rs.Rows()[2][0].(string), Equals, fmt.Sprintf("%d", firstValue+2))
-	rs = tk.MustQuery(`select last_insert_id()`)
-	c.Assert(rs.Rows()[0][0].(string), Equals, fmt.Sprintf("%d", firstValue))
+	tk.MustQuery(`select last_insert_id()`).Check(testkit.Rows(fmt.Sprintf("%d", firstValue)))
 	tk.MustExec(`delete from ar`)
 
 	tk.MustExec(`insert into ar(id) values (0),(0),(0)`)
@@ -1041,8 +1036,7 @@ func (s *testSuite3) TestMultiAutoRandomID(c *C) {
 	c.Assert(firstValue, Greater, 0)
 	c.Assert(rs.Rows()[1][0].(string), Equals, fmt.Sprintf("%d", firstValue+1))
 	c.Assert(rs.Rows()[2][0].(string), Equals, fmt.Sprintf("%d", firstValue+2))
-	rs = tk.MustQuery(`select last_insert_id()`)
-	c.Assert(rs.Rows()[0][0].(string), Equals, fmt.Sprintf("%d", firstValue))
+	tk.MustQuery(`select last_insert_id()`).Check(testkit.Rows(fmt.Sprintf("%d", firstValue)))
 	tk.MustExec(`delete from ar`)
 
 	tk.MustExec(`insert into ar(name) values ('a'),('a'),('a')`)
@@ -1053,8 +1047,7 @@ func (s *testSuite3) TestMultiAutoRandomID(c *C) {
 	c.Assert(firstValue, Greater, 0)
 	c.Assert(rs.Rows()[1][0].(string), Equals, fmt.Sprintf("%d", firstValue+1))
 	c.Assert(rs.Rows()[2][0].(string), Equals, fmt.Sprintf("%d", firstValue+2))
-	rs = tk.MustQuery(`select last_insert_id()`)
-	c.Assert(rs.Rows()[0][0].(string), Equals, fmt.Sprintf("%d", firstValue))
+	tk.MustQuery(`select last_insert_id()`).Check(testkit.Rows(fmt.Sprintf("%d", firstValue)))
 
 	tk.MustExec(`drop table ar`)
 }
@@ -1083,8 +1076,7 @@ func (s *testSuite3) TestAutoRandomIDAllowZero(c *C) {
 	firstValue, err := strconv.Atoi(rs.Rows()[0][0].(string))
 	c.Assert(err, IsNil)
 	c.Assert(firstValue, Equals, 0)
-	rs = tk.MustQuery(`select last_insert_id()`)
-	c.Assert(rs.Rows()[0][0].(string), Equals, fmt.Sprintf("%d", firstValue))
+	tk.MustQuery(`select last_insert_id()`).Check(testkit.Rows(fmt.Sprintf("%d", firstValue)))
 
 	tk.MustExec(`insert into ar(id) values (null)`)
 	rs = tk.MustQuery(`select id from ar`)
@@ -1092,8 +1084,7 @@ func (s *testSuite3) TestAutoRandomIDAllowZero(c *C) {
 	firstValue, err = strconv.Atoi(rs.Rows()[0][0].(string))
 	c.Assert(err, IsNil)
 	c.Assert(firstValue, Greater, 0)
-	rs = tk.MustQuery(`select last_insert_id()`)
-	c.Assert(rs.Rows()[0][0].(string), Equals, fmt.Sprintf("%d", firstValue))
+	tk.MustQuery(`select last_insert_id()`).Check(testkit.Rows(fmt.Sprintf("%d", firstValue)))
 
 	tk.MustExec(`drop table ar`)
 }

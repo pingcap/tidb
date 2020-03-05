@@ -813,8 +813,8 @@ func (s *testAutoRandomSuite) TestAutoRandomBitsData(c *C) {
 	tk.MustExec("drop table t")
 
 	tk.MustExec("create table t (a tinyint primary key auto_random(2), b int)")
-	tk.MustExec("insert into t values (0, 2)")
-	tk.MustExec("update t set a = 31 where a = 0")
+	tk.MustExec("insert into t values (1, 2)")
+	tk.MustExec("update t set a = 31 where a = 1")
 	_, err = tk.Exec("insert into t (b) values (0)")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, autoid.ErrAutoRandReadFailed.GenWithStackByArgs().Error())
