@@ -27,12 +27,17 @@ import (
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 )
 
 func TestT(t *testing.T) {
+	cfg := config.GetGlobalConfig()
+	conf := *cfg
+	conf.TempStoragePath = "/tmp/tidb/test-temp-storage"
+	config.StoreGlobalConfig(&conf)
 	check.TestingT(t)
 }
 
@@ -115,6 +120,21 @@ func (s *testChunkSuite) TestChunk(c *check.C) {
 	c.Assert(chk.GetRow(0).GetInt64(0), check.Equals, int64(1))
 	c.Assert(chk.GetRow(0).GetInt64(1), check.Equals, int64(1))
 	c.Assert(chk.NumRows(), check.Equals, 1)
+
+	// AppendRowByColIdxs and AppendPartialRowByColIdxs can do projection from row.
+	chk = newChunk(8, 8)
+	row = MutRowFromValues(0, 1, 2, 3).ToRow()
+	chk.AppendRowByColIdxs(row, []int{3})
+	chk.AppendRowByColIdxs(row, []int{1})
+	chk.AppendRowByColIdxs(row, []int{})
+	c.Assert(chk.Column(0).Int64s(), check.DeepEquals, []int64{3, 1})
+	c.Assert(chk.numVirtualRows, check.Equals, 3)
+	chk.AppendPartialRowByColIdxs(1, row, []int{2})
+	chk.AppendPartialRowByColIdxs(1, row, []int{0})
+	chk.AppendPartialRowByColIdxs(0, row, []int{1, 3})
+	c.Assert(chk.Column(0).Int64s(), check.DeepEquals, []int64{3, 1, 1})
+	c.Assert(chk.Column(1).Int64s(), check.DeepEquals, []int64{2, 0, 3})
+	c.Assert(chk.numVirtualRows, check.Equals, 3)
 
 	// Test Reset.
 	chk = newChunk(0)
@@ -553,7 +573,7 @@ func (s *testChunkSuite) TestChunkMemoryUsage(c *check.C) {
 
 	jsonObj, err := json.ParseBinaryFromString("1")
 	c.Assert(err, check.IsNil)
-	timeObj := types.Time{Time: types.FromGoTime(time.Now()), Fsp: 0, Type: mysql.TypeDatetime}
+	timeObj := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeDatetime, 0)
 	durationObj := types.Duration{Duration: math.MaxInt64, Fsp: 0}
 
 	chk.AppendFloat32(0, 12.4)
@@ -933,7 +953,7 @@ func BenchmarkChunkMemoryUsage(b *testing.B) {
 
 	initCap := 10
 	chk := NewChunkWithCapacity(fieldTypes, initCap)
-	timeObj := types.Time{Time: types.FromGoTime(time.Now()), Fsp: 0, Type: mysql.TypeDatetime}
+	timeObj := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeDatetime, 0)
 	durationObj := types.Duration{Duration: math.MaxInt64, Fsp: 0}
 
 	for i := 0; i < initCap; i++ {

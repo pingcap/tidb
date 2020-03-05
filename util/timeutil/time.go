@@ -22,14 +22,15 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/uber-go/atomic"
 	"go.uber.org/zap"
 )
 
 // init initializes `locCache`.
 func init() {
 	// We need set systemTZ when it is in testing process.
-	if systemTZ == "" {
-		systemTZ = "System"
+	if systemTZ.Load() == "" {
+		systemTZ.Store("System")
 	}
 	locCa = &locCache{}
 	locCa.locMap = make(map[string]*time.Location)
@@ -39,7 +40,7 @@ func init() {
 var locCa *locCache
 
 // systemTZ is current TiDB's system timezone name.
-var systemTZ string
+var systemTZ atomic.String
 
 // locCache is a simple map with lock. It stores all used timezone during the lifetime of tidb instance.
 // Talked with Golang team about whether they can have some forms of cache policy available for programmer,
@@ -101,7 +102,7 @@ func inferTZNameFromFileName(path string) (string, error) {
 
 // SystemLocation returns time.SystemLocation's IANA timezone location. It is TiDB's global timezone location.
 func SystemLocation() *time.Location {
-	loc, err := LoadLocation(systemTZ)
+	loc, err := LoadLocation(systemTZ.Load())
 	if err != nil {
 		return time.Local
 	}
@@ -113,8 +114,17 @@ var setSysTZOnce sync.Once
 // SetSystemTZ sets systemTZ by the value loaded from mysql.tidb.
 func SetSystemTZ(name string) {
 	setSysTZOnce.Do(func() {
-		systemTZ = name
+		systemTZ.Store(name)
 	})
+}
+
+// GetSystemTZ gets the value of systemTZ, an error is returned if systemTZ is not properly set.
+func GetSystemTZ() (string, error) {
+	systemTZ := systemTZ.Load()
+	if systemTZ == "System" || systemTZ == "" {
+		return "", fmt.Errorf("variable `systemTZ` is not properly set")
+	}
+	return systemTZ, nil
 }
 
 // getLoc first trying to load location from a cache map. If nothing found in such map, then call
@@ -159,6 +169,16 @@ func Zone(loc *time.Location) (string, int64) {
 	}
 
 	return name, int64(offset)
+}
+
+// ConstructTimeZone constructs timezone by name first. When the timezone name
+// is set, the daylight saving problem must be considered. Otherwise the
+// timezone offset in seconds east of UTC is used to constructed the timezone.
+func ConstructTimeZone(name string, offset int) (*time.Location, error) {
+	if name != "" {
+		return LoadLocation(name)
+	}
+	return time.FixedZone("", offset), nil
 }
 
 // WithinDayTimePeriod tests whether `now` is between `start` and `end`.

@@ -30,11 +30,13 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/kvcache"
+	"github.com/pingcap/tidb/util/math"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/texttree"
 )
@@ -376,6 +378,15 @@ func (e *Execute) rebuildRange(p Plan) error {
 			if err != nil {
 				return err
 			}
+			if ts.Table.Partition != nil {
+				pID, err := rebuildNewTableIDFromTable(e.ctx, ts, sc, pkCol)
+				if err != nil {
+					return err
+				}
+				if pID != -1 {
+					ts.physicalTableID = pID
+				}
+			}
 		} else {
 			ts.Ranges = ranger.FullIntRange(false)
 		}
@@ -385,11 +396,31 @@ func (e *Execute) rebuildRange(p Plan) error {
 		if err != nil {
 			return err
 		}
+		if is.Table.Partition != nil {
+			pID, err := rebuildNewTableIDFromIndex(e.ctx, is, sc)
+			if err != nil {
+				return err
+			}
+			if pID != -1 {
+				is.physicalTableID = pID
+			}
+		}
 	case *PhysicalIndexLookUpReader:
 		is := x.IndexPlans[0].(*PhysicalIndexScan)
 		is.Ranges, err = e.buildRangeForIndexScan(sctx, is)
 		if err != nil {
 			return err
+		}
+		if is.Table.Partition != nil {
+			pID, err := rebuildNewTableIDFromIndex(e.ctx, is, sc)
+			if err != nil {
+				return err
+			}
+			if pID != -1 {
+				is.physicalTableID = pID
+				tblScan := x.TablePlans[0].(*PhysicalTableScan)
+				tblScan.physicalTableID = pID
+			}
 		}
 	case *PointGetPlan:
 		if x.HandleParam != nil {
@@ -397,12 +428,22 @@ func (e *Execute) rebuildRange(p Plan) error {
 			if err != nil {
 				return err
 			}
+			if x.PartitionInfo != nil {
+				num := x.TblInfo.Partition.Num
+				pos := math.Abs(x.Handle) % int64(num)
+				x.PartitionInfo = &x.TblInfo.Partition.Definitions[pos]
+			}
 			return nil
 		}
 		for i, param := range x.IndexValueParams {
 			if param != nil {
 				x.IndexValues[i] = param.Datum
 			}
+		}
+		if x.PartitionInfo != nil {
+			val := x.IndexValues[x.partitionColumnPos].GetInt64()
+			partitionID := val % int64(x.TblInfo.Partition.Num)
+			x.PartitionInfo = &x.TblInfo.Partition.Definitions[partitionID]
 		}
 		return nil
 	case *BatchPointGetPlan:
@@ -412,7 +453,6 @@ func (e *Execute) rebuildRange(p Plan) error {
 				if err != nil {
 					return err
 				}
-				return nil
 			}
 		}
 		for i, params := range x.IndexValueParams {
@@ -498,6 +538,7 @@ type SQLBindPlan struct {
 	BindSQL      string
 	IsGlobal     bool
 	BindStmt     ast.StmtNode
+	Db           string
 	Charset      string
 	Collation    string
 }
@@ -532,14 +573,14 @@ type Insert struct {
 	Schema4OnDuplicate *expression.Schema
 	names4OnDuplicate  types.NameSlice
 
+	GenCols InsertGeneratedColumns
+
+	SelectPlan PhysicalPlan
+
 	IsReplace bool
 
 	// NeedFillDefaultValue is true when expr in value list reference other column.
 	NeedFillDefaultValue bool
-
-	GenCols InsertGeneratedColumns
-
-	SelectPlan PhysicalPlan
 
 	AllAssignmentsAreConstant bool
 }
@@ -625,6 +666,17 @@ type LoadStats struct {
 	Path string
 }
 
+// IndexAdvise represents a index advise plan.
+type IndexAdvise struct {
+	baseSchemaProducer
+
+	IsLocal     bool
+	Path        string
+	MaxMinutes  uint64
+	MaxIndexNum *ast.MaxIndexNumClause
+	LinesInfo   *ast.LinesClause
+}
+
 // SplitRegion represents a split regions plan.
 type SplitRegion struct {
 	baseSchemaProducer
@@ -653,6 +705,14 @@ type DDL struct {
 	Statement ast.DDLNode
 }
 
+// SelectInto represents a select-into plan.
+type SelectInto struct {
+	baseSchemaProducer
+
+	TargetPlan Plan
+	IntoOpt    *ast.SelectIntoOption
+}
+
 // Explain represents a explain plan.
 type Explain struct {
 	baseSchemaProducer
@@ -673,11 +733,13 @@ func (e *Explain) prepareSchema() error {
 
 	switch {
 	case format == ast.ExplainFormatROW && !e.Analyze:
-		fieldNames = []string{"id", "count", "task", "operator info"}
+		fieldNames = []string{"id", "estRows", "task", "operator info"}
 	case format == ast.ExplainFormatROW && e.Analyze:
-		fieldNames = []string{"id", "count", "task", "operator info", "execution info", "memory", "disk"}
+		fieldNames = []string{"id", "estRows", "actRows", "task", "operator info", "execution info", "memory", "disk"}
 	case format == ast.ExplainFormatDOT:
 		fieldNames = []string{"dot contents"}
+	case format == ast.ExplainFormatHint:
+		fieldNames = []string{"hint"}
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}
@@ -703,12 +765,14 @@ func (e *Explain) RenderResult() error {
 	switch strings.ToLower(e.Format) {
 	case ast.ExplainFormatROW:
 		e.explainedPlans = map[int]bool{}
-		err := e.explainPlanInRowFormat(e.TargetPlan, "root", "", true)
+		err := e.explainPlanInRowFormat(e.TargetPlan, "root", "", "", true)
 		if err != nil {
 			return err
 		}
 	case ast.ExplainFormatDOT:
 		e.prepareDotInfo(e.TargetPlan.(PhysicalPlan))
+	case ast.ExplainFormatHint:
+		e.Rows = append(e.Rows, []string{GenHintsFromPhysicalPlan(e.TargetPlan)})
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}
@@ -716,19 +780,55 @@ func (e *Explain) RenderResult() error {
 }
 
 // explainPlanInRowFormat generates explain information for root-tasks.
-func (e *Explain) explainPlanInRowFormat(p Plan, taskType, indent string, isLastChild bool) (err error) {
-	e.prepareOperatorInfo(p, taskType, indent, isLastChild)
+func (e *Explain) explainPlanInRowFormat(p Plan, taskType, driverSide, indent string, isLastChild bool) (err error) {
+	e.prepareOperatorInfo(p, taskType, driverSide, indent, isLastChild)
 	e.explainedPlans[p.ID()] = true
 
 	// For every child we create a new sub-tree rooted by it.
 	childIndent := texttree.Indent4Child(indent, isLastChild)
 
 	if physPlan, ok := p.(PhysicalPlan); ok {
-		for i, child := range physPlan.Children() {
-			if e.explainedPlans[child.ID()] {
+		// indicate driven side and driving side of 'join' and 'apply'
+		// See issue https://github.com/pingcap/tidb/issues/14602.
+		driverSideInfo := make([]string, len(physPlan.Children()))
+		buildSide := -1
+
+		switch plan := physPlan.(type) {
+		case *PhysicalApply:
+			buildSide = plan.InnerChildIdx ^ 1
+		case *PhysicalHashJoin:
+			if plan.UseOuterToBuild {
+				buildSide = plan.InnerChildIdx ^ 1
+			} else {
+				buildSide = plan.InnerChildIdx
+			}
+		case *PhysicalMergeJoin:
+			if plan.JoinType == RightOuterJoin {
+				buildSide = 0
+			} else {
+				buildSide = 1
+			}
+		case *PhysicalIndexJoin:
+			buildSide = plan.InnerChildIdx ^ 1
+		case *PhysicalIndexMergeJoin:
+			buildSide = plan.InnerChildIdx ^ 1
+		case *PhysicalIndexHashJoin:
+			buildSide = plan.InnerChildIdx ^ 1
+		}
+
+		if buildSide != -1 {
+			driverSideInfo[0], driverSideInfo[1] = "(Build)", "(Probe)"
+		} else {
+			buildSide = 0
+		}
+
+		// Always put the Build above the Probe.
+		for i := range physPlan.Children() {
+			pchild := &physPlan.Children()[i^buildSide]
+			if e.explainedPlans[(*pchild).ID()] {
 				continue
 			}
-			err = e.explainPlanInRowFormat(child, taskType, childIndent, i == len(physPlan.Children())-1)
+			err = e.explainPlanInRowFormat(*pchild, taskType, driverSideInfo[i], childIndent, i == len(physPlan.Children())-1)
 			if err != nil {
 				return
 			}
@@ -739,71 +839,75 @@ func (e *Explain) explainPlanInRowFormat(p Plan, taskType, indent string, isLast
 	case *PhysicalTableReader:
 		var storeType string
 		switch x.StoreType {
-		case kv.TiKV:
-			storeType = kv.TiKV.Name()
-		case kv.TiFlash:
-			storeType = kv.TiFlash.Name()
+		case kv.TiKV, kv.TiFlash, kv.TiDB:
+			// expected do nothing
 		default:
-			err = errors.Errorf("the store type %v is unknown", x.StoreType)
-			return
+			return errors.Errorf("the store type %v is unknown", x.StoreType)
 		}
-		err = e.explainPlanInRowFormat(x.tablePlan, "cop["+storeType+"]", childIndent, true)
+		storeType = x.StoreType.Name()
+		err = e.explainPlanInRowFormat(x.tablePlan, "cop["+storeType+"]", "", childIndent, true)
 	case *PhysicalIndexReader:
-		err = e.explainPlanInRowFormat(x.indexPlan, "cop[tikv]", childIndent, true)
+		err = e.explainPlanInRowFormat(x.indexPlan, "cop[tikv]", "", childIndent, true)
 	case *PhysicalIndexLookUpReader:
-		err = e.explainPlanInRowFormat(x.indexPlan, "cop[tikv]", childIndent, false)
-		err = e.explainPlanInRowFormat(x.tablePlan, "cop[tikv]", childIndent, true)
+		err = e.explainPlanInRowFormat(x.indexPlan, "cop[tikv]", "(Build)", childIndent, false)
+		err = e.explainPlanInRowFormat(x.tablePlan, "cop[tikv]", "(Probe)", childIndent, true)
 	case *PhysicalIndexMergeReader:
 		for i := 0; i < len(x.partialPlans); i++ {
 			if x.tablePlan == nil && i == len(x.partialPlans)-1 {
-				err = e.explainPlanInRowFormat(x.partialPlans[i], "cop[tikv]", childIndent, true)
+				err = e.explainPlanInRowFormat(x.partialPlans[i], "cop[tikv]", "", childIndent, true)
 			} else {
-				err = e.explainPlanInRowFormat(x.partialPlans[i], "cop[tikv]", childIndent, false)
+				err = e.explainPlanInRowFormat(x.partialPlans[i], "cop[tikv]", "", childIndent, false)
 			}
 		}
 		if x.tablePlan != nil {
-			err = e.explainPlanInRowFormat(x.tablePlan, "cop[tikv]", childIndent, true)
+			err = e.explainPlanInRowFormat(x.tablePlan, "cop[tikv]", "", childIndent, true)
 		}
 	case *Insert:
 		if x.SelectPlan != nil {
-			err = e.explainPlanInRowFormat(x.SelectPlan, "root", childIndent, true)
+			err = e.explainPlanInRowFormat(x.SelectPlan, "root", "", childIndent, true)
 		}
 	case *Update:
 		if x.SelectPlan != nil {
-			err = e.explainPlanInRowFormat(x.SelectPlan, "root", childIndent, true)
+			err = e.explainPlanInRowFormat(x.SelectPlan, "root", "", childIndent, true)
 		}
 	case *Delete:
 		if x.SelectPlan != nil {
-			err = e.explainPlanInRowFormat(x.SelectPlan, "root", childIndent, true)
+			err = e.explainPlanInRowFormat(x.SelectPlan, "root", "", childIndent, true)
 		}
 	case *Execute:
 		if x.Plan != nil {
-			err = e.explainPlanInRowFormat(x.Plan, "root", childIndent, true)
+			err = e.explainPlanInRowFormat(x.Plan, "root", "", childIndent, true)
 		}
 	}
 	return
 }
 
 // prepareOperatorInfo generates the following information for every plan:
-// operator id, task type, operator info, and the estemated row count.
-func (e *Explain) prepareOperatorInfo(p Plan, taskType string, indent string, isLastChild bool) {
+// operator id, task type, operator info, and the estemated rows.
+// `estRows` used to be called `count`, see issue/14603.
+func (e *Explain) prepareOperatorInfo(p Plan, taskType, driverSide, indent string, isLastChild bool) {
 	operatorInfo := p.ExplainInfo()
-
-	count := "N/A"
+	estRows := "N/A"
 	if si := p.statsInfo(); si != nil {
-		count = strconv.FormatFloat(si.RowCount, 'f', 2, 64)
+		estRows = strconv.FormatFloat(si.RowCount, 'f', 2, 64)
 	}
 	explainID := p.ExplainID().String()
-	row := []string{texttree.PrettyIdentifier(explainID, indent, isLastChild), count, taskType, operatorInfo}
+	row := []string{texttree.PrettyIdentifier(explainID+driverSide, indent, isLastChild), estRows, taskType, operatorInfo}
 	if e.Analyze {
 		runtimeStatsColl := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl
 		// There maybe some mock information for cop task to let runtimeStatsColl.Exists(p.ExplainID()) is true.
 		// So check copTaskExecDetail first and print the real cop task information if it's not empty.
 		var analyzeInfo string
+
+		var actRows int64
 		if runtimeStatsColl.ExistsCopStats(explainID) {
-			analyzeInfo = runtimeStatsColl.GetCopStats(explainID).String()
+			copstats := runtimeStatsColl.GetCopStats(explainID)
+			analyzeInfo = copstats.String()
+			actRows = copstats.GetActRows()
 		} else if runtimeStatsColl.ExistsRootStats(explainID) {
-			analyzeInfo = runtimeStatsColl.GetRootStats(explainID).String()
+			rootstats := runtimeStatsColl.GetRootStats(explainID)
+			analyzeInfo = rootstats.String()
+			actRows = rootstats.GetActRows()
 		} else {
 			analyzeInfo = "time:0ns, loops:0, rows:0"
 		}
@@ -828,6 +932,11 @@ func (e *Explain) prepareOperatorInfo(p Plan, taskType string, indent string, is
 		} else {
 			row = append(row, "N/A")
 		}
+
+		// Put 'actRows'(actual rows) next by 'estRows'(estimate rows).
+		tmp := append([]string{}, row[2:]...)
+		row = append(row[:2], fmt.Sprint(actRows))
+		row = append(row, tmp...)
 	}
 	e.Rows = append(e.Rows, row)
 }
@@ -900,14 +1009,10 @@ func (e *Explain) prepareTaskDot(p PhysicalPlan, taskTp string, buffer *bytes.Bu
 
 // IsPointGetWithPKOrUniqueKeyByAutoCommit returns true when meets following conditions:
 //  1. ctx is auto commit tagged
-//  2. txn is not valid
+//  2. session is not InTxn
 //  3. plan is point get by pk, or point get by unique index (no double read)
 func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p Plan) (bool, error) {
-	ok, err := IsAutoCommitNonValidTxn(ctx)
-	if err != nil {
-		return false, err
-	}
-	if !ok {
+	if !IsAutoCommitTxn(ctx) {
 		return false, nil
 	}
 
@@ -933,32 +1038,15 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p Plan) (bo
 	}
 }
 
-// IsAutoCommitNonValidTxn checks if session is in autocommit mode and txn not valid
+// IsAutoCommitTxn checks if session is in autocommit mode and not InTxn
 // used for fast plan like point get
-func IsAutoCommitNonValidTxn(ctx sessionctx.Context) (bool, error) {
-	// check auto commit
-	if !ctx.GetSessionVars().IsAutocommit() {
-		return false, nil
-	}
-
-	// check txn
-	txn, err := ctx.Txn(false)
-	if err != nil {
-		return false, err
-	}
-	if txn.Valid() {
-		return false, nil
-	}
-	return true, nil
+func IsAutoCommitTxn(ctx sessionctx.Context) bool {
+	return ctx.GetSessionVars().IsAutocommit() && !ctx.GetSessionVars().InTxn()
 }
 
 // IsPointUpdateByAutoCommit checks if plan p is point update and is in autocommit context
 func IsPointUpdateByAutoCommit(ctx sessionctx.Context, p Plan) (bool, error) {
-	ok, err := IsAutoCommitNonValidTxn(ctx)
-	if err != nil {
-		return false, err
-	}
-	if !ok {
+	if !IsAutoCommitTxn(ctx) {
 		return false, nil
 	}
 
@@ -971,4 +1059,89 @@ func IsPointUpdateByAutoCommit(ctx sessionctx.Context, p Plan) (bool, error) {
 		return true, nil
 	}
 	return false, nil
+}
+
+func buildSchemaAndNameFromIndex(cols []*expression.Column, dbName model.CIStr, tblInfo *model.TableInfo, idxInfo *model.IndexInfo) (*expression.Schema, types.NameSlice) {
+	schema := expression.NewSchema(cols...)
+	idxCols := idxInfo.Columns
+	names := make([]*types.FieldName, 0, len(idxCols))
+	tblName := tblInfo.Name
+	for _, col := range idxCols {
+		names = append(names, &types.FieldName{
+			OrigTblName: tblName,
+			OrigColName: col.Name,
+			DBName:      dbName,
+			TblName:     tblName,
+			ColName:     col.Name,
+		})
+	}
+	return schema, names
+}
+
+func buildSchemaAndNameFromPKCol(pkCol *expression.Column, dbName model.CIStr, tblInfo *model.TableInfo) (*expression.Schema, types.NameSlice) {
+	schema := expression.NewSchema([]*expression.Column{pkCol}...)
+	names := make([]*types.FieldName, 0, 1)
+	tblName := tblInfo.Name
+	col := tblInfo.GetPkColInfo()
+	names = append(names, &types.FieldName{
+		OrigTblName: tblName,
+		OrigColName: col.Name,
+		DBName:      dbName,
+		TblName:     tblName,
+		ColName:     col.Name,
+	})
+	return schema, names
+}
+
+func locateHashPartition(ctx sessionctx.Context, expr expression.Expression, pi *model.PartitionInfo, r []types.Datum) (int, error) {
+	ret, isNull, err := expr.EvalInt(ctx, chunk.MutRowFromDatums(r).ToRow())
+	if err != nil {
+		return 0, err
+	}
+	if isNull {
+		return 0, nil
+	}
+	if ret < 0 {
+		ret = 0 - ret
+	}
+	return int(ret % int64(pi.Num)), nil
+}
+
+func getPhysicalTableIDForPartition(ctx sessionctx.Context, pi *model.PartitionInfo, schema *expression.Schema, names types.NameSlice, val []types.Datum) (int64, error) {
+	expr, err := expression.ParseSimpleExprsWithNames(ctx, pi.Expr, schema, names)
+	if err != nil {
+		return 0, err
+	}
+	pos, err := locateHashPartition(ctx, expr[0], pi, val)
+	if err != nil {
+		return 0, err
+	}
+	pID := pi.Definitions[pos].ID
+	return pID, nil
+}
+
+func rebuildNewTableIDFromIndex(ctx sessionctx.Context, is *PhysicalIndexScan, sc *stmtctx.StatementContext) (int64, error) {
+	pi := is.Table.Partition
+	if pi.Type == model.PartitionTypeHash && len(is.Ranges) == 1 && is.Ranges[0].IsPoint(sc) {
+		schema, names := buildSchemaAndNameFromIndex(is.IdxCols, is.DBName, is.Table, is.Index)
+		pID, err := getPhysicalTableIDForPartition(ctx, pi, schema, names, is.Ranges[0].LowVal)
+		if err != nil {
+			return -1, err
+		}
+		return pID, nil
+	}
+	return -1, nil
+}
+
+func rebuildNewTableIDFromTable(ctx sessionctx.Context, ts *PhysicalTableScan, sc *stmtctx.StatementContext, pkCol *expression.Column) (int64, error) {
+	pi := ts.Table.Partition
+	if pi.Type == model.PartitionTypeHash && len(ts.Ranges) == 1 && ts.Ranges[0].IsPoint(sc) {
+		schema, names := buildSchemaAndNameFromPKCol(pkCol, ts.DBName, ts.Table)
+		pID, err := getPhysicalTableIDForPartition(ctx, pi, schema, names, ts.Ranges[0].LowVal)
+		if err != nil {
+			return -1, err
+		}
+		return pID, nil
+	}
+	return -1, nil
 }

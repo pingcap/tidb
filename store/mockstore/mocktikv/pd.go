@@ -45,6 +45,10 @@ func NewPDClient(cluster *Cluster) pd.Client {
 	}
 }
 
+func (c *pdClient) ConfigClient() pd.ConfigClient {
+	return nil
+}
+
 func (c *pdClient) GetClusterID(ctx context.Context) uint64 {
 	return 1
 }
@@ -130,3 +134,5 @@ func (c *pdClient) ScatterRegion(ctx context.Context, regionID uint64) error {
 func (c *pdClient) GetOperator(ctx context.Context, regionID uint64) (*pdpb.GetOperatorResponse, error) {
 	return &pdpb.GetOperatorResponse{Status: pdpb.OperatorStatus_SUCCESS}, nil
 }
+
+func (c *pdClient) GetLeaderAddr() string { return "mockpd" }

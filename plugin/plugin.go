@@ -59,9 +59,7 @@ func (p *plugins) clone() *plugins {
 	for key, value := range p.versions {
 		np.versions[key] = value
 	}
-	for key, value := range p.dyingPlugins {
-		np.dyingPlugins[key] = value
-	}
+	copy(np.dyingPlugins, p.dyingPlugins)
 	return np
 }
 
@@ -147,7 +145,7 @@ func (p *Plugin) validate(ctx context.Context, tiPlugins *plugins) error {
 func Load(ctx context.Context, cfg Config) (err error) {
 	tiPlugins := &plugins{
 		plugins:      make(map[Kind][]Plugin),
-		versions:     make(map[string]uint16),
+		versions:     make(map[string]uint16, len(cfg.EnvVersion)),
 		dyingPlugins: make([]Plugin, 0),
 	}
 

@@ -1,5 +1,11 @@
 [
   {
+    "name": "TestUniqCompEqualEst",
+    "cases": [
+      "explain select * from t where a = 1 and b = 5 and 1 = 1"
+    ]
+  },
+  {
     "name": "TestColumnIndexNullEstimation",
     "cases": [
       "explain select b from t where b is null",

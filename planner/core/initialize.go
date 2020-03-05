@@ -35,20 +35,26 @@ func (p LogicalJoin) Init(ctx sessionctx.Context, offset int) *LogicalJoin {
 
 // Init initializes DataSource.
 func (ds DataSource) Init(ctx sessionctx.Context, offset int) *DataSource {
-	ds.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeTableScan, &ds, offset)
+	ds.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeDataSource, &ds, offset)
 	return &ds
 }
 
-// Init initializes TableGather.
-func (tg TableGather) Init(ctx sessionctx.Context, offset int) *TableGather {
-	tg.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeTableGather, &tg, offset)
-	return &tg
+// Init initializes TiKVSingleGather.
+func (sg TiKVSingleGather) Init(ctx sessionctx.Context, offset int) *TiKVSingleGather {
+	sg.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeTiKVSingleGather, &sg, offset)
+	return &sg
 }
 
-// Init initializes TableScan.
-func (ts TableScan) Init(ctx sessionctx.Context, offset int) *TableScan {
+// Init initializes LogicalTableScan.
+func (ts LogicalTableScan) Init(ctx sessionctx.Context, offset int) *LogicalTableScan {
 	ts.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeTableScan, &ts, offset)
 	return &ts
+}
+
+// Init initializes LogicalIndexScan.
+func (is LogicalIndexScan) Init(ctx sessionctx.Context, offset int) *LogicalIndexScan {
+	is.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeIdxScan, &is, offset)
+	return &is
 }
 
 // Init initializes LogicalApply.
@@ -190,6 +196,22 @@ func (p LogicalWindow) Init(ctx sessionctx.Context, offset int) *LogicalWindow {
 // Init initializes PhysicalWindow.
 func (p PhysicalWindow) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalWindow {
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeWindow, &p, offset)
+	p.childrenReqProps = props
+	p.stats = stats
+	return &p
+}
+
+// Init initializes PhysicalShuffle.
+func (p PhysicalShuffle) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalShuffle {
+	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeShuffle, &p, offset)
+	p.childrenReqProps = props
+	p.stats = stats
+	return &p
+}
+
+// Init initializes PhysicalShuffleDataSourceStub.
+func (p PhysicalShuffleDataSourceStub) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalShuffleDataSourceStub {
+	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeShuffleDataSourceStub, &p, offset)
 	p.childrenReqProps = props
 	p.stats = stats
 	return &p
@@ -393,15 +415,7 @@ func (p PhysicalTableReader) Init(ctx sessionctx.Context, offset int) *PhysicalT
 // Init initializes PhysicalIndexReader.
 func (p PhysicalIndexReader) Init(ctx sessionctx.Context, offset int) *PhysicalIndexReader {
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeIndexReader, &p, offset)
-	p.IndexPlans = flattenPushDownPlan(p.indexPlan)
-	switch p.indexPlan.(type) {
-	case *PhysicalHashAgg, *PhysicalStreamAgg:
-		p.schema = p.indexPlan.Schema()
-	default:
-		is := p.IndexPlans[0].(*PhysicalIndexScan)
-		p.schema = is.dataSourceSchema
-	}
-	p.OutputColumns = p.schema.Clone().Columns
+	p.SetSchema(nil)
 	return &p
 }
 

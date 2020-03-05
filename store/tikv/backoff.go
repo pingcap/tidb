@@ -19,12 +19,11 @@ import (
 	"math"
 	"math/rand"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/util/logutil"
@@ -45,14 +44,6 @@ const (
 )
 
 var (
-	tikvBackoffCounterRPC            = metrics.TiKVBackoffCounter.WithLabelValues("tikvRPC")
-	tikvBackoffCounterLock           = metrics.TiKVBackoffCounter.WithLabelValues("txnLock")
-	tikvBackoffCounterLockFast       = metrics.TiKVBackoffCounter.WithLabelValues("tikvLockFast")
-	tikvBackoffCounterPD             = metrics.TiKVBackoffCounter.WithLabelValues("pdRPC")
-	tikvBackoffCounterRegionMiss     = metrics.TiKVBackoffCounter.WithLabelValues("regionMiss")
-	tikvBackoffCounterUpdateLeader   = metrics.TiKVBackoffCounter.WithLabelValues("updateLeader")
-	tikvBackoffCounterServerBusy     = metrics.TiKVBackoffCounter.WithLabelValues("serverBusy")
-	tikvBackoffCounterEmpty          = metrics.TiKVBackoffCounter.WithLabelValues("")
 	tikvBackoffHistogramRPC          = metrics.TiKVBackoffHistogram.WithLabelValues("tikvRPC")
 	tikvBackoffHistogramLock         = metrics.TiKVBackoffHistogram.WithLabelValues("txnLock")
 	tikvBackoffHistogramLockFast     = metrics.TiKVBackoffHistogram.WithLabelValues("tikvLockFast")
@@ -63,24 +54,24 @@ var (
 	tikvBackoffHistogramEmpty        = metrics.TiKVBackoffHistogram.WithLabelValues("")
 )
 
-func (t backoffType) metric() (prometheus.Counter, prometheus.Observer) {
+func (t backoffType) metric() prometheus.Observer {
 	switch t {
 	case boTiKVRPC:
-		return tikvBackoffCounterRPC, tikvBackoffHistogramRPC
+		return tikvBackoffHistogramRPC
 	case BoTxnLock:
-		return tikvBackoffCounterLock, tikvBackoffHistogramLock
+		return tikvBackoffHistogramLock
 	case boTxnLockFast:
-		return tikvBackoffCounterLockFast, tikvBackoffHistogramLockFast
+		return tikvBackoffHistogramLockFast
 	case BoPDRPC:
-		return tikvBackoffCounterPD, tikvBackoffHistogramPD
+		return tikvBackoffHistogramPD
 	case BoRegionMiss:
-		return tikvBackoffCounterRegionMiss, tikvBackoffHistogramRegionMiss
+		return tikvBackoffHistogramRegionMiss
 	case BoUpdateLeader:
-		return tikvBackoffCounterUpdateLeader, tikvBackoffHistogramUpdateLeader
+		return tikvBackoffHistogramUpdateLeader
 	case boServerBusy:
-		return tikvBackoffCounterServerBusy, tikvBackoffHistogramServerBusy
+		return tikvBackoffHistogramServerBusy
 	}
-	return tikvBackoffCounterEmpty, tikvBackoffHistogramEmpty
+	return tikvBackoffHistogramEmpty
 }
 
 // NewBackoffFn creates a backoff func which implements exponential backoff with
@@ -206,7 +197,7 @@ func (t backoffType) TError() error {
 	case boServerBusy:
 		return ErrTiKVServerBusy
 	}
-	return terror.ClassTiKV.New(mysql.ErrUnknown, mysql.MySQLErrName[mysql.ErrUnknown])
+	return ErrUnknown
 }
 
 // Maximum total sleep time(in ms) for kv/cop commands.
@@ -227,8 +218,8 @@ const (
 	scatterRegionBackoff           = 20000
 	waitScatterRegionFinishBackoff = 120000
 	locateRegionMaxBackoff         = 20000
-	pessimisticLockMaxBackoff      = 10000
-	pessimisticRollbackMaxBackoff  = 10000
+	pessimisticLockMaxBackoff      = 20000
+	pessimisticRollbackMaxBackoff  = 20000
 )
 
 var (
@@ -250,6 +241,9 @@ type Backoffer struct {
 	types      []fmt.Stringer
 	vars       *kv.Variables
 	noop       bool
+
+	backoffSleepMS map[backoffType]int
+	backoffTimes   map[backoffType]int
 }
 
 type txnStartCtxKeyType struct{}
@@ -317,8 +311,6 @@ func (b *Backoffer) BackoffWithMaxSleep(typ backoffType, maxSleepMs int, err err
 		return b.types[0].(backoffType).TError()
 	}
 
-	backoffCounter, backoffDuration := typ.metric()
-	backoffCounter.Inc()
 	// Lazy initialize.
 	if b.fn == nil {
 		b.fn = make(map[backoffType]func(context.Context, int) int)
@@ -330,14 +322,28 @@ func (b *Backoffer) BackoffWithMaxSleep(typ backoffType, maxSleepMs int, err err
 	}
 
 	realSleep := f(b.ctx, maxSleepMs)
-	backoffDuration.Observe(float64(realSleep) / 1000)
+	typ.metric().Observe(float64(realSleep) / 1000)
 	b.totalSleep += realSleep
+	if b.backoffSleepMS == nil {
+		b.backoffSleepMS = make(map[backoffType]int)
+	}
+	b.backoffSleepMS[typ] += realSleep
+	if b.backoffTimes == nil {
+		b.backoffTimes = make(map[backoffType]int)
+	}
+	b.backoffTimes[typ]++
+
+	if b.vars != nil && b.vars.Killed != nil {
+		if atomic.CompareAndSwapUint32(b.vars.Killed, 1, 0) {
+			return ErrQueryInterrupted
+		}
+	}
 
 	var startTs interface{}
 	if ts := b.ctx.Value(txnStartKey); ts != nil {
 		startTs = ts
 	}
-	logutil.BgLogger().Debug("retry later",
+	logutil.Logger(b.ctx).Debug("retry later",
 		zap.Error(err),
 		zap.Int("totalSleep", b.totalSleep),
 		zap.Int("maxSleep", b.maxSleep),

@@ -17,6 +17,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -80,7 +81,6 @@ func (s *Server) startHTTPServer() {
 	router.Handle("/stats/dump/{db}/{table}/{snapshot}", s.newStatsHistoryHandler()).Name("StatsHistoryDump")
 
 	router.Handle("/settings", settingsHandler{}).Name("Settings")
-	router.Handle("/reload-config", configReloadHandler{}).Name("ConfigReload")
 	router.Handle("/binlog/recover", binlogRecover{}).Name("BinlogRecover")
 
 	tikvHandlerTool := s.newTikvHandlerTool()
@@ -257,18 +257,30 @@ func (s *Server) startHTTPServer() {
 	httpRouterPage.WriteString("<tr><td><a href='/debug/pprof/'>Debug</a><td></tr>")
 	httpRouterPage.WriteString("</table></body></html>")
 	router.HandleFunc("/", func(responseWriter http.ResponseWriter, request *http.Request) {
-		_, err = responseWriter.Write([]byte(httpRouterPage.String()))
+		_, err = responseWriter.Write(httpRouterPage.Bytes())
 		if err != nil {
 			logutil.BgLogger().Error("write HTTP index page failed", zap.Error(err))
 		}
 	})
 
 	logutil.BgLogger().Info("for status and metrics report", zap.String("listening on addr", addr))
-	s.setupStatuServerAndRPCServer(addr, serverMux)
+	s.setupStatusServerAndRPCServer(addr, serverMux)
 }
 
-func (s *Server) setupStatuServerAndRPCServer(addr string, serverMux *http.ServeMux) {
-	l, err := net.Listen("tcp", addr)
+func (s *Server) setupStatusServerAndRPCServer(addr string, serverMux *http.ServeMux) {
+	tlsConfig, err := s.cfg.Security.ToTLSConfig()
+	if err != nil {
+		logutil.BgLogger().Error("invalid TLS config", zap.Error(err))
+		return
+	}
+
+	var l net.Listener
+	if tlsConfig != nil {
+		// we need to manage TLS here for cmux to distinguish between HTTP and gRPC.
+		l, err = tls.Listen("tcp", addr, tlsConfig)
+	} else {
+		l, err = net.Listen("tcp", addr)
+	}
 	if err != nil {
 		logutil.BgLogger().Info("listen failed", zap.Error(err))
 		return
@@ -280,24 +292,18 @@ func (s *Server) setupStatuServerAndRPCServer(addr string, serverMux *http.Serve
 	grpcL := m.Match(cmux.Any())
 
 	s.statusServer = &http.Server{Addr: addr, Handler: CorsHandler{handler: serverMux, cfg: s.cfg}}
-	s.grpcServer = NewRPCServer(s.cfg.Security)
+	s.grpcServer = NewRPCServer(s.cfg, s.dom, s)
 
 	go util.WithRecovery(func() {
 		err := s.grpcServer.Serve(grpcL)
 		logutil.BgLogger().Error("grpc server error", zap.Error(err))
 	}, nil)
 
-	if len(s.cfg.Security.ClusterSSLCA) != 0 {
-		go util.WithRecovery(func() {
-			err := s.statusServer.ServeTLS(httpL, s.cfg.Security.ClusterSSLCert, s.cfg.Security.ClusterSSLKey)
-			logutil.BgLogger().Error("http server error", zap.Error(err))
-		}, nil)
-	} else {
-		go util.WithRecovery(func() {
-			err := s.statusServer.Serve(httpL)
-			logutil.BgLogger().Error("http server error", zap.Error(err))
-		}, nil)
-	}
+	go util.WithRecovery(func() {
+		err := s.statusServer.Serve(httpL)
+		logutil.BgLogger().Error("http server error", zap.Error(err))
+	}, nil)
+
 	err = m.Serve()
 	if err != nil {
 		logutil.BgLogger().Error("start status/rpc server error", zap.Error(err))

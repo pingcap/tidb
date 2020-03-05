@@ -50,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
@@ -77,8 +78,12 @@ const (
 )
 
 // For query string
-const qTableID = "table_id"
-const qLimit = "limit"
+const (
+	qTableID   = "table_id"
+	qLimit     = "limit"
+	qOperation = "op"
+	qSeconds   = "seconds"
+)
 
 const (
 	headerContentType = "Content-Type"
@@ -97,7 +102,6 @@ func writeData(w http.ResponseWriter, data interface{}) {
 		writeError(w, err)
 		return
 	}
-	logutil.BgLogger().Info(string(js))
 	// write response
 	w.Header().Set(headerContentType, contentTypeJSON)
 	w.WriteHeader(http.StatusOK)
@@ -283,23 +287,38 @@ func (t *tikvHandlerTool) formValue2DatumRow(sc *stmtctx.StatementContext, value
 }
 
 func (t *tikvHandlerTool) getTableID(dbName, tableName string) (int64, error) {
-	tbInfo, err := t.getTable(dbName, tableName)
+	tbl, err := t.getTable(dbName, tableName)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	return tbInfo.ID, nil
+	return tbl.GetPhysicalID(), nil
 }
 
-func (t *tikvHandlerTool) getTable(dbName, tableName string) (*model.TableInfo, error) {
+func (t *tikvHandlerTool) getTable(dbName, tableName string) (table.PhysicalTable, error) {
 	schema, err := t.schema()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	tableName, partitionName := extractTableAndPartitionName(tableName)
 	tableVal, err := schema.TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return tableVal.Meta(), nil
+	if pt, ok := tableVal.(table.PartitionedTable); ok {
+		if partitionName == "" {
+			return nil, errors.New("work on partitioned table, please specify the table name like this: table(partition)")
+		}
+		tblInfo := pt.Meta()
+		pid, err := tables.FindPartitionByName(tblInfo, partitionName)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return pt.GetPartition(pid), nil
+	}
+	if partitionName != "" {
+		return nil, fmt.Errorf("%s is not a partitionted table", tableName)
+	}
+	return tableVal.(table.PhysicalTable), nil
 }
 
 func (t *tikvHandlerTool) schema() (infoschema.InfoSchema, error) {
@@ -654,22 +673,29 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 }
 
-// configReloadHandler is the handler for reloading config online.
-type configReloadHandler struct {
-}
-
-// ServeHTTP handles request of reloading config for this server.
-func (h configReloadHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	if err := config.ReloadGlobalConfig(); err != nil {
-		writeError(w, err)
-	} else {
-		writeData(w, "success!")
-	}
-}
-
 // ServeHTTP recovers binlog service.
 func (h binlogRecover) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	binloginfo.DisableSkipBinlogFlag()
+	op := req.FormValue(qOperation)
+	switch op {
+	case "reset":
+		binloginfo.ResetSkippedCommitterCounter()
+	case "nowait":
+		binloginfo.DisableSkipBinlogFlag()
+	case "status":
+	default:
+		sec, err := strconv.ParseInt(req.FormValue(qSeconds), 10, 64)
+		if sec <= 0 || err != nil {
+			sec = 1800
+		}
+		binloginfo.DisableSkipBinlogFlag()
+		timeout := time.Duration(sec) * time.Second
+		err = binloginfo.WaitBinlogRecover(timeout)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+	}
+	writeData(w, binloginfo.GetBinlogStatus())
 }
 
 type tableFlashReplicaInfo struct {
@@ -699,6 +725,17 @@ func (h flashReplicaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 			if tblInfo.TiFlashReplica == nil {
 				continue
 			}
+			if pi := tblInfo.GetPartitionInfo(); pi != nil {
+				for _, p := range pi.Definitions {
+					replicaInfos = append(replicaInfos, &tableFlashReplicaInfo{
+						ID:             p.ID,
+						ReplicaCount:   tblInfo.TiFlashReplica.Count,
+						LocationLabels: tblInfo.TiFlashReplica.LocationLabels,
+						Available:      tblInfo.TiFlashReplica.IsPartitionAvailable(p.ID),
+					})
+				}
+				continue
+			}
 			replicaInfos = append(replicaInfos, &tableFlashReplicaInfo{
 				ID:             tblInfo.ID,
 				ReplicaCount:   tblInfo.TiFlashReplica.Count,
@@ -712,8 +749,10 @@ func (h flashReplicaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 
 type tableFlashReplicaStatus struct {
 	// Modifying the field name needs to negotiate with TiFlash colleague.
-	ID               int64  `json:"id"`
-	RegionCount      uint64 `json:"region_count"`
+	ID int64 `json:"id"`
+	// RegionCount is the number of regions that need sync.
+	RegionCount uint64 `json:"region_count"`
+	// FlashRegionCount is the number of regions that already sync completed.
 	FlashRegionCount uint64 `json:"flash_region_count"`
 }
 
@@ -739,10 +778,20 @@ func (h flashReplicaHandler) handleStatusReport(w http.ResponseWriter, req *http
 		writeError(w, err)
 		return
 	}
-	err = do.DDL().UpdateTableReplicaInfo(s, status.ID, status.checkTableFlashReplicaAvailable())
+	available := status.checkTableFlashReplicaAvailable()
+	err = do.DDL().UpdateTableReplicaInfo(s, status.ID, available)
 	if err != nil {
 		writeError(w, err)
 	}
+	if available {
+		err = infosync.DeleteTiFlashTableSyncProgress(status.ID)
+	} else {
+		err = infosync.UpdateTiFlashTableSyncProgress(context.Background(), status.ID, float64(status.FlashRegionCount)/float64(status.RegionCount))
+	}
+	if err != nil {
+		writeError(w, err)
+	}
+
 	logutil.BgLogger().Info("handle flash replica report", zap.Int64("table ID", status.ID), zap.Uint64("region count",
 		status.RegionCount),
 		zap.Uint64("flash region count", status.FlashRegionCount),
@@ -1288,50 +1337,6 @@ func (h regionHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	writeData(w, regionDetail)
 }
 
-// NewFrameItemFromRegionKey creates a FrameItem with region's startKey or endKey,
-// returns err when key is illegal.
-func NewFrameItemFromRegionKey(key []byte) (frame *FrameItem, err error) {
-	frame = &FrameItem{}
-	frame.TableID, frame.IndexID, frame.IsRecord, err = tablecodec.DecodeKeyHead(key)
-	if err == nil {
-		if frame.IsRecord {
-			_, frame.RecordID, err = tablecodec.DecodeRecordKey(key)
-		} else {
-			_, _, frame.IndexValues, err = tablecodec.DecodeIndexKey(key)
-		}
-		log.Warnf("decode region key %q fail: %v", key, err)
-		// Ignore decode errors.
-		err = nil
-		return
-	}
-	if bytes.HasPrefix(key, tablecodec.TablePrefix()) {
-		// If SplitTable is enabled, the key may be `t{id}`.
-		if len(key) == tablecodec.TableSplitKeyLen {
-			frame.TableID = tablecodec.DecodeTableID(key)
-			return frame, nil
-		}
-		return nil, errors.Trace(err)
-	}
-
-	// key start with tablePrefix must be either record key or index key
-	// That's means table's record key and index key are always together
-	// in the continuous interval. And for key with prefix smaller than
-	// tablePrefix, is smaller than all tables. While for key with prefix
-	// bigger than tablePrefix, means is bigger than all tables.
-	err = nil
-	if bytes.Compare(key, tablecodec.TablePrefix()) < 0 {
-		frame.TableID = math.MinInt64
-		frame.IndexID = math.MinInt64
-		frame.IsRecord = false
-		return
-	}
-	// bigger than tablePrefix, means is bigger than all tables.
-	frame.TableID = math.MaxInt64
-	frame.IndexID = math.MaxInt64
-	frame.IsRecord = true
-	return
-}
-
 // parseQuery is used to parse query string in URL with shouldUnescape, due to golang http package can not distinguish
 // query like "?a=" and "?a". We rewrite it to separate these two queries. e.g.
 // "?a=" which means that a is an empty string "";
@@ -1412,20 +1417,31 @@ func (h mvccTxnHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 }
 
+func extractTableAndPartitionName(str string) (string, string) {
+	// extract table name and partition name from this "table(partition)":
+	// A sane person would not let the the table name or partition name contain '('.
+	start := strings.IndexByte(str, '(')
+	if start == -1 {
+		return str, ""
+	}
+	end := strings.IndexByte(str, ')')
+	if end == -1 {
+		return str, ""
+	}
+	return str[:start], str[start+1 : end]
+}
+
 // handleMvccGetByIdx gets MVCC info by an index key.
 func (h mvccTxnHandler) handleMvccGetByIdx(params map[string]string, values url.Values) (interface{}, error) {
 	dbName := params[pDBName]
 	tableName := params[pTableName]
 	handleStr := params[pHandle]
-	schema, err := h.schema()
+
+	t, err := h.getTable(dbName, tableName)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	// get table's schema.
-	t, err := schema.TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+
 	var idxCols []*model.ColumnInfo
 	var idx table.Index
 	for _, v := range t.Indices() {
@@ -1453,7 +1469,7 @@ func (h mvccTxnHandler) handleMvccGetByKey(params map[string]string, decodeData 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	resp, err := h.getMvccByHandle(tb.ID, handle)
+	resp, err := h.getMvccByHandle(tb.GetPhysicalID(), handle)
 	if err != nil {
 		return nil, err
 	}
@@ -1461,7 +1477,7 @@ func (h mvccTxnHandler) handleMvccGetByKey(params map[string]string, decodeData 
 		return resp, nil
 	}
 	colMap := make(map[int64]*types.FieldType, 3)
-	for _, col := range tb.Columns {
+	for _, col := range tb.Meta().Columns {
 		colMap[col.ID] = &col.FieldType
 	}
 
@@ -1471,13 +1487,13 @@ func (h mvccTxnHandler) handleMvccGetByKey(params map[string]string, decodeData 
 		datas := make(map[string][]map[string]string)
 		for _, w := range respValue.Info.Writes {
 			if len(w.ShortValue) > 0 {
-				datas[strconv.FormatUint(w.StartTs, 10)], err = h.decodeMvccData(w.ShortValue, colMap, tb)
+				datas[strconv.FormatUint(w.StartTs, 10)], err = h.decodeMvccData(w.ShortValue, colMap, tb.Meta())
 			}
 		}
 
 		for _, v := range respValue.Info.Values {
 			if len(v.Value) > 0 {
-				datas[strconv.FormatUint(v.StartTs, 10)], err = h.decodeMvccData(v.Value, colMap, tb)
+				datas[strconv.FormatUint(v.StartTs, 10)], err = h.decodeMvccData(v.Value, colMap, tb.Meta())
 			}
 		}
 
@@ -1541,7 +1557,12 @@ func (h serverInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	info := serverInfo{}
-	info.ServerInfo = infosync.GetServerInfo()
+	info.ServerInfo, err = infosync.GetServerInfo()
+	if err != nil {
+		writeError(w, err)
+		log.Error(err)
+		return
+	}
 	info.IsOwner = do.DDL().OwnerManager().IsOwner()
 	writeData(w, info)
 }
@@ -1641,34 +1662,12 @@ func (h dbTableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	// The physicalID maybe a partition ID of the partition-table.
-	dbTblInfo.TableInfo, dbTblInfo.DBInfo = findTableByPartitionID(schema, int64(physicalID))
-	if dbTblInfo.TableInfo == nil {
+	tbl, dbInfo := schema.FindTableByPartitionID(int64(physicalID))
+	if tbl == nil {
 		writeError(w, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %s does not exist.", tableID))
 		return
 	}
+	dbTblInfo.TableInfo = tbl.Meta()
+	dbTblInfo.DBInfo = dbInfo
 	writeData(w, dbTblInfo)
-}
-
-// findTableByPartitionID finds the partition-table info by the partitionID.
-// This function will traverse all the tables to find the partitionID partition in which partition-table.
-func findTableByPartitionID(schema infoschema.InfoSchema, partitionID int64) (*model.TableInfo, *model.DBInfo) {
-	allDBs := schema.AllSchemas()
-	for _, db := range allDBs {
-		allTables := schema.SchemaTables(db.Name)
-		for _, tbl := range allTables {
-			if tbl.Meta().ID > partitionID || tbl.Meta().GetPartitionInfo() == nil {
-				continue
-			}
-			info := tbl.Meta().GetPartitionInfo()
-			tb := tbl.(table.PartitionedTable)
-			for _, def := range info.Definitions {
-				pid := def.ID
-				partition := tb.GetPartition(pid)
-				if partition.GetPhysicalID() == partitionID {
-					return tbl.Meta(), db
-				}
-			}
-		}
-	}
-	return nil, nil
 }

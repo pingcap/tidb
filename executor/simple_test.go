@@ -59,6 +59,54 @@ func (s *testSuite3) TestDo(c *C) {
 	tk.MustQuery("select @a").Check(testkit.Rows("1"))
 }
 
+func (s *testSuite3) TestCreateRole(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create user testCreateRole;")
+	tk.MustExec("grant CREATE USER on *.* to testCreateRole;")
+	se, err := session.CreateSession4Test(s.store)
+	c.Check(err, IsNil)
+	defer se.Close()
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "testCreateRole", Hostname: "localhost"}, nil, nil), IsTrue)
+
+	ctx := context.Background()
+	_, err = se.Execute(ctx, `create role test_create_role;`)
+	c.Assert(err, IsNil)
+	tk.MustExec("revoke CREATE USER on *.* from testCreateRole;")
+	tk.MustExec("drop role test_create_role;")
+	tk.MustExec("grant CREATE ROLE on *.* to testCreateRole;")
+	_, err = se.Execute(ctx, `create role test_create_role;`)
+	c.Assert(err, IsNil)
+	tk.MustExec("drop role test_create_role;")
+	_, err = se.Execute(ctx, `create user test_create_role;`)
+	c.Assert(err, NotNil)
+	tk.MustExec("drop user testCreateRole;")
+}
+
+func (s *testSuite3) TestDropRole(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create user testCreateRole;")
+	tk.MustExec("create user test_create_role;")
+	tk.MustExec("grant CREATE USER on *.* to testCreateRole;")
+	se, err := session.CreateSession4Test(s.store)
+	c.Check(err, IsNil)
+	defer se.Close()
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "testCreateRole", Hostname: "localhost"}, nil, nil), IsTrue)
+
+	ctx := context.Background()
+	_, err = se.Execute(ctx, `drop role test_create_role;`)
+	c.Assert(err, IsNil)
+	tk.MustExec("revoke CREATE USER on *.* from testCreateRole;")
+	tk.MustExec("create role test_create_role;")
+	tk.MustExec("grant DROP ROLE on *.* to testCreateRole;")
+	_, err = se.Execute(ctx, `drop role test_create_role;`)
+	c.Assert(err, IsNil)
+	tk.MustExec("create user test_create_role;")
+	_, err = se.Execute(ctx, `drop user test_create_role;`)
+	c.Assert(err, NotNil)
+	tk.MustExec("drop user testCreateRole;")
+	tk.MustExec("drop user test_create_role;")
+}
+
 func (s *testSuite3) TestTransaction(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("begin")
@@ -92,17 +140,17 @@ func inTxn(ctx sessionctx.Context) bool {
 	return (ctx.GetSessionVars().Status & mysql.ServerStatusInTrans) > 0
 }
 
-func (s *testSuite3) TestRole(c *C) {
+func (s *testSuite6) TestRole(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	// Make sure user test not in mysql.User.
-	result := tk.MustQuery(`SELECT Password FROM mysql.User WHERE User="test" and Host="localhost"`)
+	result := tk.MustQuery(`SELECT authentication_string FROM mysql.User WHERE User="test" and Host="localhost"`)
 	result.Check(nil)
 
 	// Test for DROP ROLE.
 	createRoleSQL := `CREATE ROLE 'test'@'localhost';`
 	tk.MustExec(createRoleSQL)
 	// Make sure user test in mysql.User.
-	result = tk.MustQuery(`SELECT Password FROM mysql.User WHERE User="test" and Host="localhost"`)
+	result = tk.MustQuery(`SELECT authentication_string FROM mysql.User WHERE User="test" and Host="localhost"`)
 	result.Check(testkit.Rows(auth.EncodePassword("")))
 	// Insert relation into mysql.role_edges
 	tk.MustExec("insert into mysql.role_edges (FROM_HOST,FROM_USER,TO_HOST,TO_USER) values ('localhost','test','%','root')")
@@ -115,7 +163,7 @@ func (s *testSuite3) TestRole(c *C) {
 	_, err := tk.Exec(dropUserSQL)
 	c.Check(err, IsNil)
 
-	result = tk.MustQuery(`SELECT Password FROM mysql.User WHERE User="test" and Host="localhost"`)
+	result = tk.MustQuery(`SELECT authentication_string FROM mysql.User WHERE User="test" and Host="localhost"`)
 	result.Check(nil)
 	result = tk.MustQuery(`SELECT * FROM mysql.role_edges WHERE TO_USER="test" and TO_HOST="localhost"`)
 	result.Check(nil)
@@ -188,6 +236,31 @@ func (s *testSuite3) TestRole(c *C) {
 	tk.MustExec("SET ROLE NONE")
 }
 
+func (s *testSuite3) TestRoleAdmin(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("CREATE USER 'testRoleAdmin';")
+	tk.MustExec("CREATE ROLE 'targetRole';")
+
+	// Create a new session.
+	se, err := session.CreateSession4Test(s.store)
+	c.Check(err, IsNil)
+	defer se.Close()
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "testRoleAdmin", Hostname: "localhost"}, nil, nil), IsTrue)
+
+	ctx := context.Background()
+	_, err = se.Execute(ctx, "GRANT `targetRole` TO `testRoleAdmin`;")
+	c.Assert(err, NotNil)
+
+	tk.MustExec("GRANT SUPER ON *.* TO `testRoleAdmin`;")
+	_, err = se.Execute(ctx, "GRANT `targetRole` TO `testRoleAdmin`;")
+	c.Assert(err, IsNil)
+	_, err = se.Execute(ctx, "REVOKE `targetRole` FROM `testRoleAdmin`;")
+	c.Assert(err, IsNil)
+
+	tk.MustExec("DROP USER 'testRoleAdmin';")
+	tk.MustExec("DROP ROLE 'targetRole';")
+}
+
 func (s *testSuite3) TestDefaultRole(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
@@ -238,16 +311,16 @@ func (s *testSuite3) TestDefaultRole(c *C) {
 	tk.MustExec(dropRoleSQL)
 }
 
-func (s *testSuite3) TestUser(c *C) {
+func (s *testSuite7) TestUser(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	// Make sure user test not in mysql.User.
-	result := tk.MustQuery(`SELECT Password FROM mysql.User WHERE User="test" and Host="localhost"`)
+	result := tk.MustQuery(`SELECT authentication_string FROM mysql.User WHERE User="test" and Host="localhost"`)
 	result.Check(nil)
 	// Create user test.
 	createUserSQL := `CREATE USER 'test'@'localhost' IDENTIFIED BY '123';`
 	tk.MustExec(createUserSQL)
 	// Make sure user test in mysql.User.
-	result = tk.MustQuery(`SELECT Password FROM mysql.User WHERE User="test" and Host="localhost"`)
+	result = tk.MustQuery(`SELECT authentication_string FROM mysql.User WHERE User="test" and Host="localhost"`)
 	result.Check(testkit.Rows(auth.EncodePassword("123")))
 	// Create duplicate user with IfNotExists will be success.
 	createUserSQL = `CREATE USER IF NOT EXISTS 'test'@'localhost' IDENTIFIED BY '123';`
@@ -265,7 +338,7 @@ func (s *testSuite3) TestUser(c *C) {
 	createUserSQL = `CREATE USER 'test1'@'localhost';`
 	tk.MustExec(createUserSQL)
 	// Make sure user test in mysql.User.
-	result = tk.MustQuery(`SELECT Password FROM mysql.User WHERE User="test1" and Host="localhost"`)
+	result = tk.MustQuery(`SELECT authentication_string FROM mysql.User WHERE User="test1" and Host="localhost"`)
 	result.Check(testkit.Rows(auth.EncodePassword("")))
 	dropUserSQL = `DROP USER IF EXISTS 'test1'@'localhost' ;`
 	tk.MustExec(dropUserSQL)
@@ -275,24 +348,24 @@ func (s *testSuite3) TestUser(c *C) {
 	tk.MustExec(createUserSQL)
 	alterUserSQL := `ALTER USER 'test1'@'localhost' IDENTIFIED BY '111';`
 	tk.MustExec(alterUserSQL)
-	result = tk.MustQuery(`SELECT Password FROM mysql.User WHERE User="test1" and Host="localhost"`)
+	result = tk.MustQuery(`SELECT authentication_string FROM mysql.User WHERE User="test1" and Host="localhost"`)
 	result.Check(testkit.Rows(auth.EncodePassword("111")))
 	alterUserSQL = `ALTER USER 'test_not_exist'@'localhost' IDENTIFIED BY '111';`
 	tk.MustGetErrCode(alterUserSQL, mysql.ErrCannotUser)
 	alterUserSQL = `ALTER USER 'test1'@'localhost' IDENTIFIED BY '222', 'test_not_exist'@'localhost' IDENTIFIED BY '111';`
 	tk.MustGetErrCode(alterUserSQL, mysql.ErrCannotUser)
-	result = tk.MustQuery(`SELECT Password FROM mysql.User WHERE User="test1" and Host="localhost"`)
+	result = tk.MustQuery(`SELECT authentication_string FROM mysql.User WHERE User="test1" and Host="localhost"`)
 	result.Check(testkit.Rows(auth.EncodePassword("222")))
 
 	alterUserSQL = `ALTER USER IF EXISTS 'test2'@'localhost' IDENTIFIED BY '222', 'test_not_exist'@'localhost' IDENTIFIED BY '1';`
 	tk.MustExec(alterUserSQL)
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|3162|User 'test_not_exist'@'localhost' does not exist."))
-	result = tk.MustQuery(`SELECT Password FROM mysql.User WHERE User="test2" and Host="localhost"`)
+	result = tk.MustQuery(`SELECT authentication_string FROM mysql.User WHERE User="test2" and Host="localhost"`)
 	result.Check(testkit.Rows(auth.EncodePassword("222")))
 	alterUserSQL = `ALTER USER IF EXISTS'test_not_exist'@'localhost' IDENTIFIED BY '1', 'test3'@'localhost' IDENTIFIED BY '333';`
 	tk.MustExec(alterUserSQL)
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|3162|User 'test_not_exist'@'localhost' does not exist."))
-	result = tk.MustQuery(`SELECT Password FROM mysql.User WHERE User="test3" and Host="localhost"`)
+	result = tk.MustQuery(`SELECT authentication_string FROM mysql.User WHERE User="test3" and Host="localhost"`)
 	result.Check(testkit.Rows(auth.EncodePassword("333")))
 
 	// Test alter user user().
@@ -304,7 +377,7 @@ func (s *testSuite3) TestUser(c *C) {
 	ctx := tk.Se.(sessionctx.Context)
 	ctx.GetSessionVars().User = &auth.UserIdentity{Username: "test1", Hostname: "localhost"}
 	tk.MustExec(alterUserSQL)
-	result = tk.MustQuery(`SELECT Password FROM mysql.User WHERE User="test1" and Host="localhost"`)
+	result = tk.MustQuery(`SELECT authentication_string FROM mysql.User WHERE User="test1" and Host="localhost"`)
 	result.Check(testkit.Rows(auth.EncodePassword("1")))
 	dropUserSQL = `DROP USER 'test1'@'localhost', 'test2'@'localhost', 'test3'@'localhost';`
 	tk.MustExec(dropUserSQL)
@@ -322,9 +395,9 @@ func (s *testSuite3) TestUser(c *C) {
 	dropUserSQL = `DROP USER 'test1'@'localhost', 'test2'@'localhost', 'test3'@'localhost';`
 	tk.MustGetErrCode(dropUserSQL, mysql.ErrCannotUser)
 	dropUserSQL = `DROP USER 'test3'@'localhost';`
-	tk.MustGetErrCode(dropUserSQL, mysql.ErrCannotUser)
+	tk.MustExec(dropUserSQL)
 	dropUserSQL = `DROP USER 'test1'@'localhost';`
-	tk.MustGetErrCode(dropUserSQL, mysql.ErrCannotUser)
+	tk.MustExec(dropUserSQL)
 	// Test positive cases without IF EXISTS.
 	createUserSQL = `CREATE USER 'test1'@'localhost', 'test3'@'localhost';`
 	tk.MustExec(createUserSQL)
@@ -359,12 +432,12 @@ func (s *testSuite3) TestSetPwd(c *C) {
 
 	createUserSQL := `CREATE USER 'testpwd'@'localhost' IDENTIFIED BY '';`
 	tk.MustExec(createUserSQL)
-	result := tk.MustQuery(`SELECT Password FROM mysql.User WHERE User="testpwd" and Host="localhost"`)
+	result := tk.MustQuery(`SELECT authentication_string FROM mysql.User WHERE User="testpwd" and Host="localhost"`)
 	result.Check(testkit.Rows(""))
 
 	// set password for
 	tk.MustExec(`SET PASSWORD FOR 'testpwd'@'localhost' = 'password';`)
-	result = tk.MustQuery(`SELECT Password FROM mysql.User WHERE User="testpwd" and Host="localhost"`)
+	result = tk.MustQuery(`SELECT authentication_string FROM mysql.User WHERE User="testpwd" and Host="localhost"`)
 	result.Check(testkit.Rows(auth.EncodePassword("password")))
 
 	// set password
@@ -382,7 +455,7 @@ func (s *testSuite3) TestSetPwd(c *C) {
 	// normal
 	ctx.GetSessionVars().User = &auth.UserIdentity{Username: "testpwd", Hostname: "localhost", AuthUsername: "testpwd", AuthHostname: "localhost"}
 	tk.MustExec(setPwdSQL)
-	result = tk.MustQuery(`SELECT Password FROM mysql.User WHERE User="testpwd" and Host="localhost"`)
+	result = tk.MustQuery(`SELECT authentication_string FROM mysql.User WHERE User="testpwd" and Host="localhost"`)
 	result.Check(testkit.Rows(auth.EncodePassword("pwd")))
 
 }
@@ -411,13 +484,13 @@ func (s *testSuite3) TestFlushPrivileges(c *C) {
 
 	ctx := context.Background()
 	// Before flush.
-	_, err = se.Execute(ctx, `SELECT Password FROM mysql.User WHERE User="testflush" and Host="localhost"`)
+	_, err = se.Execute(ctx, `SELECT authentication_string FROM mysql.User WHERE User="testflush" and Host="localhost"`)
 	c.Check(err, NotNil)
 
 	tk.MustExec("FLUSH PRIVILEGES")
 
 	// After flush.
-	_, err = se.Execute(ctx, `SELECT Password FROM mysql.User WHERE User="testflush" and Host="localhost"`)
+	_, err = se.Execute(ctx, `SELECT authentication_string FROM mysql.User WHERE User="testflush" and Host="localhost"`)
 	c.Check(err, IsNil)
 
 }
@@ -552,10 +625,8 @@ func (s *testSuite3) TestIssue9111(c *C) {
 	c.Check(err, IsNil)
 
 	tk.MustExec("revoke create user on *.* from 'user_admin'@'localhost';")
-	tk.MustExec("grant insert, delete on mysql.User to 'user_admin'@'localhost';")
+	tk.MustExec("grant insert, delete on mysql.user to 'user_admin'@'localhost';")
 
-	_, err = se.Execute(ctx, `flush privileges`)
-	c.Check(err, IsNil)
 	_, err = se.Execute(ctx, `create user test_create_user`)
 	c.Check(err, IsNil)
 	_, err = se.Execute(ctx, `drop user test_create_user`)
@@ -567,4 +638,21 @@ func (s *testSuite3) TestIssue9111(c *C) {
 	c.Check(err, IsNil)
 
 	tk.MustExec("drop user 'user_admin'@'localhost';")
+}
+
+func (s *testSuite3) TestRoleAtomic(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("create role r2;")
+	_, err := tk.Exec("create role r1, r2, r3")
+	c.Check(err, NotNil)
+	// Check atomic create role.
+	result := tk.MustQuery(`SELECT user FROM mysql.User WHERE user in ('r1', 'r2', 'r3')`)
+	result.Check(testkit.Rows("r2"))
+	// Check atomic drop role.
+	_, err = tk.Exec("drop role r1, r2, r3")
+	c.Check(err, NotNil)
+	result = tk.MustQuery(`SELECT user FROM mysql.User WHERE user in ('r1', 'r2', 'r3')`)
+	result.Check(testkit.Rows("r2"))
+	tk.MustExec("drop role r2;")
 }

@@ -44,6 +44,7 @@ func (s *testTransformationRuleSuite) SetUpSuite(c *C) {
 	var err error
 	s.testData, err = testutil.LoadTestSuiteData("testdata", "transformation_rules_suite")
 	c.Assert(err, IsNil)
+	s.Parser.EnableWindowFunc(true)
 }
 
 func (s *testTransformationRuleSuite) TearDownSuite(c *C) {
@@ -63,7 +64,7 @@ func testGroupToString(input []string, output []struct {
 		c.Assert(ok, IsTrue)
 		logic, err = s.optimizer.onPhasePreprocessing(s.sctx, logic)
 		c.Assert(err, IsNil)
-		group := convert2Group(logic)
+		group := memo.Convert2Group(logic)
 		err = s.optimizer.onPhaseExploration(s.sctx, group)
 		c.Assert(err, IsNil)
 		s.testData.OnRecord(func() {
@@ -75,7 +76,7 @@ func testGroupToString(input []string, output []struct {
 }
 
 func (s *testTransformationRuleSuite) TestAggPushDownGather(c *C) {
-	s.optimizer.ResetTransformationRules(map[memo.Operand][]Transformation{
+	s.optimizer.ResetTransformationRules(TransformationRuleBatch{
 		memo.OperandAggregation: {
 			NewRulePushAggDownGather(),
 		},
@@ -84,7 +85,7 @@ func (s *testTransformationRuleSuite) TestAggPushDownGather(c *C) {
 		},
 	})
 	defer func() {
-		s.optimizer.ResetTransformationRules(defaultTransformationMap)
+		s.optimizer.ResetTransformationRules(DefaultRuleBatches...)
 	}()
 	var input []string
 	var output []struct {
@@ -92,25 +93,54 @@ func (s *testTransformationRuleSuite) TestAggPushDownGather(c *C) {
 		Result []string
 	}
 	s.testData.GetTestCases(c, &input, &output)
-	testGroupToString(input, output, s, c)
+	for i, sql := range input {
+		stmt, err := s.ParseOneStmt(sql, "", "")
+		c.Assert(err, IsNil)
+		p, _, err := plannercore.BuildLogicalPlan(context.Background(), s.sctx, stmt, s.is)
+		c.Assert(err, IsNil)
+		logic, ok := p.(plannercore.LogicalPlan)
+		c.Assert(ok, IsTrue)
+		logic, err = s.optimizer.onPhasePreprocessing(s.sctx, logic)
+		c.Assert(err, IsNil)
+		group := memo.Convert2Group(logic)
+		err = s.optimizer.onPhaseExploration(s.sctx, group)
+		c.Assert(err, IsNil)
+		// BuildKeyInfo here to test the KeyInfo for partialAgg.
+		group.BuildKeyInfo()
+		s.testData.OnRecord(func() {
+			output[i].SQL = sql
+			output[i].Result = ToString(group)
+		})
+		c.Assert(ToString(group), DeepEquals, output[i].Result)
+	}
 }
 
 func (s *testTransformationRuleSuite) TestPredicatePushDown(c *C) {
-	s.optimizer.ResetTransformationRules(map[memo.Operand][]Transformation{
-		memo.OperandSelection: {
-			NewRulePushSelDownTableScan(),
-			NewRulePushSelDownTableGather(),
-			NewRulePushSelDownSort(),
-			NewRulePushSelDownProjection(),
-			NewRulePushSelDownAggregation(),
-			NewRulePushSelDownJoin(),
+	s.optimizer.ResetTransformationRules(
+		TransformationRuleBatch{ // TiDB layer
+			memo.OperandSelection: {
+				NewRulePushSelDownSort(),
+				NewRulePushSelDownProjection(),
+				NewRulePushSelDownAggregation(),
+				NewRulePushSelDownJoin(),
+				NewRulePushSelDownUnionAll(),
+				NewRulePushSelDownWindow(),
+				NewRuleMergeAdjacentSelection(),
+			},
 		},
-		memo.OperandDataSource: {
-			NewRuleEnumeratePaths(),
+		TransformationRuleBatch{ // TiKV layer
+			memo.OperandSelection: {
+				NewRulePushSelDownTableScan(),
+				NewRulePushSelDownTiKVSingleGather(),
+				NewRulePushSelDownIndexScan(),
+			},
+			memo.OperandDataSource: {
+				NewRuleEnumeratePaths(),
+			},
 		},
-	})
+	)
 	defer func() {
-		s.optimizer.ResetTransformationRules(defaultTransformationMap)
+		s.optimizer.ResetTransformationRules(DefaultRuleBatches...)
 	}()
 	var input []string
 	var output []struct {
@@ -122,14 +152,228 @@ func (s *testTransformationRuleSuite) TestPredicatePushDown(c *C) {
 }
 
 func (s *testTransformationRuleSuite) TestTopNRules(c *C) {
+	s.optimizer.ResetTransformationRules(
+		TransformationRuleBatch{ // TiDB layer
+			memo.OperandLimit: {
+				NewRuleTransformLimitToTopN(),
+				NewRulePushLimitDownProjection(),
+				NewRulePushLimitDownUnionAll(),
+				NewRulePushLimitDownOuterJoin(),
+				NewRuleMergeAdjacentLimit(),
+			},
+			memo.OperandTopN: {
+				NewRulePushTopNDownProjection(),
+				NewRulePushTopNDownOuterJoin(),
+				NewRulePushTopNDownUnionAll(),
+			},
+		},
+		TransformationRuleBatch{ // TiKV layer
+			memo.OperandLimit: {
+				NewRulePushLimitDownTiKVSingleGather(),
+			},
+			memo.OperandTopN: {
+				NewRulePushTopNDownTiKVSingleGather(),
+			},
+			memo.OperandDataSource: {
+				NewRuleEnumeratePaths(),
+			},
+		},
+	)
+	var input []string
+	var output []struct {
+		SQL    string
+		Result []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	testGroupToString(input, output, s, c)
+}
+
+func (s *testTransformationRuleSuite) TestProjectionElimination(c *C) {
+	s.optimizer.ResetTransformationRules(TransformationRuleBatch{
+		memo.OperandProjection: {
+			NewRuleEliminateProjection(),
+			NewRuleMergeAdjacentProjection(),
+		},
+	})
+	defer func() {
+		s.optimizer.ResetTransformationRules(DefaultRuleBatches...)
+	}()
+	var input []string
+	var output []struct {
+		SQL    string
+		Result []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	testGroupToString(input, output, s, c)
+}
+
+func (s *testTransformationRuleSuite) TestEliminateMaxMin(c *C) {
+	s.optimizer.ResetTransformationRules(map[memo.Operand][]Transformation{
+		memo.OperandAggregation: {
+			NewRuleEliminateSingleMaxMin(),
+		},
+	})
+	defer func() {
+		s.optimizer.ResetTransformationRules(DefaultRuleBatches...)
+	}()
+	var input []string
+	var output []struct {
+		SQL    string
+		Result []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	testGroupToString(input, output, s, c)
+}
+
+func (s *testTransformationRuleSuite) TestMergeAggregationProjection(c *C) {
+	s.optimizer.ResetTransformationRules(TransformationRuleBatch{
+		memo.OperandAggregation: {
+			NewRuleMergeAggregationProjection(),
+		},
+	})
+	defer func() {
+		s.optimizer.ResetTransformationRules(DefaultRuleBatches...)
+	}()
+	var input []string
+	var output []struct {
+		SQL    string
+		Result []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	testGroupToString(input, output, s, c)
+}
+
+func (s *testTransformationRuleSuite) TestMergeAdjacentTopN(c *C) {
 	s.optimizer.ResetTransformationRules(map[memo.Operand][]Transformation{
 		memo.OperandLimit: {
 			NewRuleTransformLimitToTopN(),
+		},
+		memo.OperandTopN: {
+			NewRulePushTopNDownProjection(),
+			NewRuleMergeAdjacentTopN(),
+		},
+		memo.OperandProjection: {
+			NewRuleMergeAdjacentProjection(),
+		},
+	})
+	defer func() {
+		s.optimizer.ResetTransformationRules(DefaultRuleBatches...)
+	}()
+	var input []string
+	var output []struct {
+		SQL    string
+		Result []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	testGroupToString(input, output, s, c)
+}
+
+func (s *testTransformationRuleSuite) TestMergeAdjacentLimit(c *C) {
+	s.optimizer.ResetTransformationRules(TransformationRuleBatch{
+		memo.OperandLimit: {
+			NewRulePushLimitDownProjection(),
+			NewRuleMergeAdjacentLimit(),
+		},
+	})
+	defer func() {
+		s.optimizer.ResetTransformationRules(DefaultRuleBatches...)
+	}()
+	var input []string
+	var output []struct {
+		SQL    string
+		Result []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	testGroupToString(input, output, s, c)
+}
+
+func (s *testTransformationRuleSuite) TestTransformLimitToTableDual(c *C) {
+	s.optimizer.ResetTransformationRules(TransformationRuleBatch{
+		memo.OperandLimit: {
+			NewRuleTransformLimitToTableDual(),
+		},
+	})
+	defer func() {
+		s.optimizer.ResetTransformationRules(DefaultRuleBatches...)
+	}()
+	var input []string
+	var output []struct {
+		SQL    string
+		Result []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	testGroupToString(input, output, s, c)
+}
+
+func (s *testTransformationRuleSuite) TestPostTransformationRules(c *C) {
+	s.optimizer.ResetTransformationRules(TransformationRuleBatch{
+		memo.OperandLimit: {
+			NewRuleTransformLimitToTopN(),
+		},
+	}, PostTransformationBatch)
+	defer func() {
+		s.optimizer.ResetTransformationRules(DefaultRuleBatches...)
+	}()
+	var input []string
+	var output []struct {
+		SQL    string
+		Result []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	testGroupToString(input, output, s, c)
+}
+
+func (s *testTransformationRuleSuite) TestPushLimitDownTiKVSingleGather(c *C) {
+	s.optimizer.ResetTransformationRules(map[memo.Operand][]Transformation{
+		memo.OperandLimit: {
+			NewRulePushLimitDownTiKVSingleGather(),
+		},
+		memo.OperandProjection: {
+			NewRuleEliminateProjection(),
 		},
 		memo.OperandDataSource: {
 			NewRuleEnumeratePaths(),
 		},
 	})
+	defer func() {
+		s.optimizer.ResetTransformationRules(DefaultRuleBatches...)
+	}()
+	var input []string
+	var output []struct {
+		SQL    string
+		Result []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	testGroupToString(input, output, s, c)
+}
+
+func (s *testTransformationRuleSuite) TestEliminateOuterJoinBelowAggregation(c *C) {
+	s.optimizer.ResetTransformationRules(map[memo.Operand][]Transformation{
+		memo.OperandAggregation: {
+			NewRuleEliminateOuterJoinBelowAggregation(),
+		},
+	})
+	defer func() {
+		s.optimizer.ResetTransformationRules(DefaultRuleBatches...)
+	}()
+	var input []string
+	var output []struct {
+		SQL    string
+		Result []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	testGroupToString(input, output, s, c)
+}
+
+func (s *testTransformationRuleSuite) TestTransformAggregateCaseToSelection(c *C) {
+	s.optimizer.ResetTransformationRules(map[memo.Operand][]Transformation{
+		memo.OperandAggregation: {
+			NewRuleTransformAggregateCaseToSelection(),
+		},
+	})
+	defer func() {
+		s.optimizer.ResetTransformationRules(DefaultRuleBatches...)
+	}()
 	var input []string
 	var output []struct {
 		SQL    string

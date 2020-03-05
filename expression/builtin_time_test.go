@@ -14,7 +14,6 @@
 package expression
 
 import (
-	"fmt"
 	"math"
 	"strings"
 	"time"
@@ -34,6 +33,14 @@ import (
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/timeutil"
 )
+
+func init() {
+	// Some test depends on the values of timeutil.SystemLocation()
+	// If we don't SetSystemTZ() here, the value would change unpredictable.
+	// Affectd by the order whether a testsuite runs before or after integration test.
+	// Note, SetSystemTZ() is a sync.Once operation.
+	timeutil.SetSystemTZ("system")
+}
 
 func (s *testEvaluatorSuite) TestDate(c *C) {
 	tblDate := []struct {
@@ -673,7 +680,6 @@ func (s *testEvaluatorSuite) TestClock(c *C) {
 
 	// test error
 	errTbl := []string{
-		"2011-11-11T10:10:10.11",
 		"2011-11-11 10:10:10.11.12",
 	}
 
@@ -757,7 +763,7 @@ func resetStmtContext(ctx sessionctx.Context) {
 
 func (s *testEvaluatorSuite) TestNowAndUTCTimestamp(c *C) {
 	gotime := func(t types.Time, l *time.Location) time.Time {
-		tt, err := t.Time.GoTime(l)
+		tt, err := t.GoTime(l)
 		c.Assert(err, IsNil)
 		return tt
 	}
@@ -789,7 +795,7 @@ func (s *testEvaluatorSuite) TestNowAndUTCTimestamp(c *C) {
 		c.Assert(err, IsNil)
 		t = v.GetMysqlTime()
 		c.Assert(strings.Contains(t.String(), "."), IsTrue)
-		c.Assert(ts.Sub(gotime(t, ts.Location())), LessEqual, time.Millisecond)
+		c.Assert(ts.Sub(gotime(t, ts.Location())), LessEqual, time.Second)
 
 		resetStmtContext(s.ctx)
 		f, err = x.fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(8)))
@@ -876,7 +882,7 @@ func (s *testEvaluatorSuite) TestAddTimeSig(c *C) {
 	c.Assert(err, IsNil)
 	res, _, err := du.add(s.ctx, now, "1", "MICROSECOND")
 	c.Assert(err, IsNil)
-	c.Assert(res.Fsp, Equals, int8(6))
+	c.Assert(res.Fsp(), Equals, int8(6))
 
 	tbl = []struct {
 		Input         string
@@ -1074,7 +1080,7 @@ func (s *testEvaluatorSuite) TestSysDate(c *C) {
 			vecExprBenchCase{
 				retEvalType:   types.ETDatetime,
 				childrenTypes: []types.EvalType{types.ETInt},
-				geners:        []dataGenerator{&rangeInt64Gener{begin: 0, end: 7}},
+				geners:        []dataGenerator{newRangeInt64Gener(0, 7)},
 			})
 		resetStmtContext(s.ctx)
 		loc := ctx.GetSessionVars().Location()
@@ -1144,7 +1150,7 @@ func builtinDateFormat(ctx sessionctx.Context, args []types.Datum) (d types.Datu
 	if err != nil {
 		return d, err
 	}
-	d.SetString(str)
+	d.SetString(str, mysql.DefaultCollationName)
 	return
 }
 
@@ -1350,7 +1356,7 @@ func (s *testEvaluatorSuite) TestStrToDate(c *C) {
 		}
 		c.Assert(result.Kind(), Equals, types.KindMysqlTime)
 		value := result.GetMysqlTime()
-		t1, _ := value.Time.GoTime(time.Local)
+		t1, _ := value.GoTime(time.Local)
 		c.Assert(t1, Equals, test.Expect)
 	}
 }
@@ -1483,7 +1489,7 @@ func (s *testEvaluatorSuite) TestTimeDiff(c *C) {
 		{[]interface{}{"2016-12-00 12:00:00", "2016-12-01 12:00:00"}, "-24:00:00", false, 0, false},
 		{[]interface{}{"10:10:10", "10:9:0"}, "00:01:10", false, 0, false},
 		{[]interface{}{"2016-12-00 12:00:00", "10:9:0"}, "", true, 0, false},
-		{[]interface{}{"2016-12-00 12:00:00", ""}, "", true, 0, false},
+		{[]interface{}{"2016-12-00 12:00:00", ""}, "", true, 0, true},
 	}
 
 	for _, t := range tests {
@@ -1714,7 +1720,6 @@ func (s *testEvaluatorSuite) TestUnixTimestamp(c *C) {
 	}
 
 	for _, test := range tests {
-		fmt.Printf("Begin Test %v\n", test)
 		expr := s.datumsToConstants([]types.Datum{test.input})
 		expr[0].GetType().Decimal = test.inputDecimal
 		resetStmtContext(s.ctx)
@@ -2404,8 +2409,6 @@ func (s *testEvaluatorSuite) TestTimeFormat(c *C) {
 		Input  []string
 		Expect interface{}
 	}{
-		{[]string{"100:00:00", `%H %k %h %I %l`},
-			"100 100 04 04 4"},
 		{[]string{"23:00:00", `%H %k %h %I %l`},
 			"23 23 11 11 11"},
 		{[]string{"11:00:00", `%H %k %h %I %l`},
@@ -2692,12 +2695,12 @@ func (s *testEvaluatorSuite) TestWithTimeZone(c *C) {
 	}()
 
 	timeToGoTime := func(d types.Datum, loc *time.Location) time.Time {
-		result, _ := d.GetMysqlTime().Time.GoTime(loc)
+		result, _ := d.GetMysqlTime().GoTime(loc)
 		return result
 	}
 	durationToGoTime := func(d types.Datum, loc *time.Location) time.Time {
 		t, _ := d.GetMysqlDuration().ConvertToTime(sv.StmtCtx, mysql.TypeDatetime)
-		result, _ := t.Time.GoTime(sv.TimeZone)
+		result, _ := t.GoTime(sv.TimeZone)
 		return result
 	}
 

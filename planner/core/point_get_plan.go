@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/parser/opcode"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/privilege"
@@ -31,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/util/math"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -40,22 +42,24 @@ import (
 // This plan is much faster to build and to execute because it avoid the optimization and coprocessor cost.
 type PointGetPlan struct {
 	basePlan
-	dbName           string
-	schema           *expression.Schema
-	TblInfo          *model.TableInfo
-	IndexInfo        *model.IndexInfo
-	Handle           int64
-	HandleParam      *driver.ParamMarkerExpr
-	IndexValues      []types.Datum
-	IndexValueParams []*driver.ParamMarkerExpr
-	expr             expression.Expression
-	ctx              sessionctx.Context
-	UnsignedHandle   bool
-	IsTableDual      bool
-	Lock             bool
-	IsForUpdate      bool
-	outputNames      []*types.FieldName
-	LockWaitTime     int64
+	dbName             string
+	schema             *expression.Schema
+	TblInfo            *model.TableInfo
+	IndexInfo          *model.IndexInfo
+	PartitionInfo      *model.PartitionDefinition
+	Handle             int64
+	HandleParam        *driver.ParamMarkerExpr
+	IndexValues        []types.Datum
+	IndexValueParams   []*driver.ParamMarkerExpr
+	expr               expression.Expression
+	ctx                sessionctx.Context
+	UnsignedHandle     bool
+	IsTableDual        bool
+	Lock               bool
+	IsForUpdate        bool
+	outputNames        []*types.FieldName
+	LockWaitTime       int64
+	partitionColumnPos int
 }
 
 type nameValuePair struct {
@@ -82,6 +86,11 @@ func (p *PointGetPlan) ToPB(ctx sessionctx.Context) (*tipb.Executor, error) {
 
 // ExplainInfo returns operator information to be explained.
 func (p *PointGetPlan) ExplainInfo() string {
+	return p.explainInfo(false)
+}
+
+// ExplainInfo returns operator information to be explained.
+func (p *PointGetPlan) explainInfo(normalized bool) string {
 	buffer := bytes.NewBufferString("")
 	tblName := p.TblInfo.Name.O
 	fmt.Fprintf(buffer, "table:%s", tblName)
@@ -94,16 +103,28 @@ func (p *PointGetPlan) ExplainInfo() string {
 			}
 		}
 	} else {
-		if p.UnsignedHandle {
-			fmt.Fprintf(buffer, ", handle:%d", uint64(p.Handle))
+		if normalized {
+			fmt.Fprintf(buffer, ", handle:?")
 		} else {
-			fmt.Fprintf(buffer, ", handle:%d", p.Handle)
+			if p.UnsignedHandle {
+				fmt.Fprintf(buffer, ", handle:%d", uint64(p.Handle))
+			} else {
+				fmt.Fprintf(buffer, ", handle:%d", p.Handle)
+			}
 		}
 	}
 	if p.Lock {
 		fmt.Fprintf(buffer, ", lock")
 	}
+	if p.PartitionInfo != nil {
+		fmt.Fprintf(buffer, ", partition:%s", p.PartitionInfo.Name.L)
+	}
 	return buffer.String()
+}
+
+// ExplainNormalizedInfo returns normalized operator information to be explained.
+func (p *PointGetPlan) ExplainNormalizedInfo() string {
+	return p.explainInfo(true)
 }
 
 // GetChildReqProps gets the required property by child index.
@@ -192,6 +213,11 @@ func (p *BatchPointGetPlan) ExplainInfo() string {
 	return buffer.String()
 }
 
+// ExplainNormalizedInfo returns normalized operator information to be explained.
+func (p *BatchPointGetPlan) ExplainNormalizedInfo() string {
+	return p.ExplainInfo()
+}
+
 // GetChildReqProps gets the required property by child index.
 func (p *BatchPointGetPlan) GetChildReqProps(idx int) *property.PhysicalProperty {
 	return nil
@@ -235,6 +261,8 @@ func (p *BatchPointGetPlan) SetOutputNames(names types.NameSlice) {
 
 // TryFastPlan tries to use the PointGetPlan for the query.
 func TryFastPlan(ctx sessionctx.Context, node ast.Node) Plan {
+	ctx.GetSessionVars().PlanID = 0
+	ctx.GetSessionVars().PlanColumnID = 0
 	switch x := node.(type) {
 	case *ast.SelectStmt:
 		// Try to convert the `SELECT a, b, c FROM t WHERE (a, b, c) in ((1, 2, 4), (1, 3, 5))` to
@@ -533,9 +561,7 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 	// Table partition implementation translates LogicalPlan from `DataSource` to
 	// `Union -> DataSource` in the logical plan optimization pass, since PointGetPlan
 	// bypass the logical plan optimization, it can't support partitioned table.
-	if tbl.GetPartitionInfo() != nil {
-		return nil
-	}
+	pi := tbl.GetPartitionInfo()
 	for _, col := range tbl.Columns {
 		// Do not handle generated columns.
 		if col.IsGenerated() {
@@ -550,6 +576,18 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 	pairs = getNameValuePairs(pairs, tblAlias, selStmt.Where)
 	if pairs == nil {
 		return nil
+	}
+
+	var partitionInfo *model.PartitionDefinition
+	var pos int
+	if pi != nil {
+		if pi.Type != model.PartitionTypeHash {
+			return nil
+		}
+		partitionInfo, pos = getPartitionInfo(ctx, tbl, pairs)
+		if partitionInfo == nil {
+			return nil
+		}
 	}
 	handlePair, fieldType := findPKHandle(tbl, pairs)
 	if handlePair.value.Kind() != types.KindNull && len(pairs) == 1 {
@@ -583,6 +621,7 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 		p.Handle = intDatum.GetInt64()
 		p.UnsignedHandle = mysql.HasUnsignedFlag(fieldType.Flag)
 		p.HandleParam = handlePair.param
+		p.PartitionInfo = partitionInfo
 		return p
 	}
 
@@ -609,6 +648,10 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 		p.IndexInfo = idxInfo
 		p.IndexValues = idxValues
 		p.IndexValueParams = idxValueParams
+		p.PartitionInfo = partitionInfo
+		if p.PartitionInfo != nil {
+			p.partitionColumnPos = findPartitionIdx(idxInfo, pos, pairs)
+		}
 		return p
 	}
 	return nil
@@ -967,6 +1010,7 @@ func colInfoToColumn(col *model.ColumnInfo, idx int) *expression.Column {
 		ID:       col.ID,
 		UniqueID: int64(col.Offset),
 		Index:    idx,
+		OrigName: col.Name.L,
 	}
 }
 
@@ -986,4 +1030,40 @@ func (p *PointGetPlan) findHandleCol() *expression.Column {
 		p.schema.Append(handleCol)
 	}
 	return handleCol
+}
+
+func getPartitionInfo(ctx sessionctx.Context, tbl *model.TableInfo, pairs []nameValuePair) (*model.PartitionDefinition, int) {
+	is := infoschema.GetInfoSchema(ctx)
+	table, ok := is.TableByID(tbl.ID)
+	if !ok {
+		return nil, 0
+	}
+	pi := tbl.Partition
+	if partitionTable, ok := table.(partitionTable); ok {
+		// PartitionExpr don't need columns and names for hash partition.
+		partitionExpr, err := partitionTable.PartitionExpr(ctx, nil, nil)
+		if err != nil {
+			return nil, 0
+		}
+		expr := partitionExpr.OrigExpr
+		if col, ok := expr.(*ast.ColumnNameExpr); ok {
+			for i, pair := range pairs {
+				if col.Name.Name.L == pair.colName {
+					val := pair.value.GetInt64()
+					pos := math.Abs(val) % int64(pi.Num)
+					return &pi.Definitions[pos], i
+				}
+			}
+		}
+	}
+	return nil, 0
+}
+
+func findPartitionIdx(idxInfo *model.IndexInfo, pos int, pairs []nameValuePair) int {
+	for i, idxCol := range idxInfo.Columns {
+		if idxCol.Name.L == pairs[pos].colName {
+			return i
+		}
+	}
+	return 0
 }

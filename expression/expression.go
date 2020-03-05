@@ -68,11 +68,22 @@ type VecExpr interface {
 	VecEvalJSON(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
 }
 
+// ReverseExpr contains all resersed evaluation methods.
+type ReverseExpr interface {
+	// SupportReverseEval checks whether the builtinFunc support reverse evaluation.
+	SupportReverseEval() bool
+
+	// ReverseEval evaluates the only one column value with given function result.
+	ReverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error)
+}
+
 // Expression represents all scalar expression in SQL.
 type Expression interface {
 	fmt.Stringer
 	goJSON.Marshaler
 	VecExpr
+	ReverseExpr
+	CollationInfo
 
 	// Eval evaluates an expression through a row.
 	Eval(row chunk.Row) (types.Datum, error)
@@ -117,7 +128,8 @@ type Expression interface {
 	// refers no subqueries that refers any tables.
 	// refers no non-deterministic functions.
 	// refers no statement parameters.
-	ConstItem() bool
+	// refers no param markers when prepare plan cache is enabled.
+	ConstItem(sc *stmtctx.StatementContext) bool
 
 	// Decorrelate try to decorrelate the expression by schema.
 	Decorrelate(schema *Schema) Expression
@@ -130,6 +142,9 @@ type Expression interface {
 
 	// ExplainInfo returns operator information to be explained.
 	ExplainInfo() string
+
+	// ExplainNormalizedInfo returns operator normalized information for generating digest.
+	ExplainNormalizedInfo() string
 
 	// HashCode creates the hashcode for expression which can be used to identify itself from other expression.
 	// It generated as the following:
@@ -173,6 +188,17 @@ func IsEQCondFromIn(expr Expression) bool {
 	return len(cols) > 0
 }
 
+// HandleOverflowOnSelection handles Overflow errors when evaluating selection filters.
+// We should ignore overflow errors when evaluating selection conditions:
+//		INSERT INTO t VALUES ("999999999999999999");
+//		SELECT * FROM t WHERE v;
+func HandleOverflowOnSelection(sc *stmtctx.StatementContext, val int64, err error) (int64, error) {
+	if sc.InSelectStmt && err != nil && types.ErrOverflow.Equal(err) {
+		return -1, nil
+	}
+	return val, err
+}
+
 // EvalBool evaluates expression list to a boolean value. The first returned value
 // indicates bool result of the expression list, the second returned value indicates
 // whether the result of the expression list is null, it can only be true when the
@@ -199,7 +225,11 @@ func EvalBool(ctx sessionctx.Context, exprList CNFExprs, row chunk.Row) (bool, b
 
 		i, err := data.ToBool(ctx.GetSessionVars().StmtCtx)
 		if err != nil {
-			return false, false, err
+			i, err = HandleOverflowOnSelection(ctx.GetSessionVars().StmtCtx, i, err)
+			if err != nil {
+				return false, false, err
+
+			}
 		}
 		if i == 0 {
 			return false, false, nil
@@ -330,7 +360,6 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 }
 
 func toBool(sc *stmtctx.StatementContext, eType types.EvalType, buf *chunk.Column, sel []int, isZero []int8) error {
-	var err error
 	switch eType {
 	case types.ETInt:
 		i64s := buf.Int64s()
@@ -389,8 +418,13 @@ func toBool(sc *stmtctx.StatementContext, eType types.EvalType, buf *chunk.Colum
 			if buf.IsNull(i) {
 				isZero[i] = -1
 			} else {
-				iVal, err1 := types.StrToInt(sc, buf.GetString(i))
-				err = err1
+				iVal, err := types.StrToInt(sc, buf.GetString(i))
+				if err != nil {
+					iVal, err = HandleOverflowOnSelection(sc, iVal, err)
+					if err != nil {
+						return err
+					}
+				}
 				if iVal == 0 {
 					isZero[i] = 0
 				} else {
@@ -404,8 +438,10 @@ func toBool(sc *stmtctx.StatementContext, eType types.EvalType, buf *chunk.Colum
 			if buf.IsNull(i) {
 				isZero[i] = -1
 			} else {
-				v, err1 := d64s[i].ToFloat64()
-				err = err1
+				v, err := d64s[i].ToFloat64()
+				if err != nil {
+					return err
+				}
 				if types.RoundFloat(v) == 0 {
 					isZero[i] = 0
 				} else {
@@ -416,7 +452,7 @@ func toBool(sc *stmtctx.StatementContext, eType types.EvalType, buf *chunk.Colum
 	case types.ETJson:
 		return errors.Errorf("cannot convert type json.BinaryJSON to bool")
 	}
-	return errors.Trace(err)
+	return nil
 }
 
 // VecEval evaluates this expr according to its type.
@@ -626,6 +662,7 @@ func ColumnInfos2ColumnsAndNames(ctx sessionctx.Context, dbName, tblName model.C
 			UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
 			Index:    col.Offset,
 			OrigName: names[i].String(),
+			IsHidden: col.Hidden,
 		}
 		columns = append(columns, newCol)
 	}
@@ -653,6 +690,10 @@ func IsBinaryLiteral(expr Expression) bool {
 // CheckExprPushFlash checks a expr list whether each expr can be pushed to flash storage.
 func CheckExprPushFlash(exprs []Expression) (exprPush, remain []Expression) {
 	for _, expr := range exprs {
+		if expr.GetType().Tp == mysql.TypeDuration || expr.GetType().Tp == mysql.TypeJSON {
+			remain = append(remain, expr)
+			continue
+		}
 		switch x := expr.(type) {
 		case *Constant, *CorrelatedColumn, *Column:
 			exprPush = append(exprPush, expr)
@@ -692,7 +733,7 @@ func wrapWithIsTrue(ctx sessionctx.Context, keepNull bool, arg Expression) (Expr
 		return nil, err
 	}
 	sf := &ScalarFunction{
-		FuncName: model.NewCIStr(fmt.Sprintf("sig_%T", f)),
+		FuncName: model.NewCIStr(ast.IsTruth),
 		Function: f,
 		RetType:  f.getRetTp(),
 	}

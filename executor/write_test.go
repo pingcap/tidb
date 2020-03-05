@@ -38,7 +38,7 @@ type testBypassSuite struct{}
 func (s *testBypassSuite) SetUpSuite(c *C) {
 }
 
-func (s *testSuite4) TestInsert(c *C) {
+func (s *testSuite) TestInsert(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	testSQL := `drop table if exists insert_test;create table insert_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 int, c3 int default 1);`
@@ -261,8 +261,8 @@ func (s *testSuite4) TestInsert(c *C) {
 	// issue 6424
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a time(6))")
-	tk.MustExec("insert into t value('20070219173709.055870'), ('20070219173709.055'), ('-20070219173709.055870'), ('20070219173709.055870123')")
-	tk.MustQuery("select * from t").Check(testkit.Rows("17:37:09.055870", "17:37:09.055000", "17:37:09.055870", "17:37:09.055870"))
+	tk.MustExec("insert into t value('20070219173709.055870'), ('20070219173709.055'), ('20070219173709.055870123')")
+	tk.MustQuery("select * from t").Check(testkit.Rows("17:37:09.055870", "17:37:09.055000", "17:37:09.055870"))
 	tk.MustExec("truncate table t")
 	tk.MustExec("insert into t value(20070219173709.055870), (20070219173709.055), (20070219173709.055870123)")
 	tk.MustQuery("select * from t").Check(testkit.Rows("17:37:09.055870", "17:37:09.055000", "17:37:09.055870"))
@@ -560,7 +560,7 @@ commit;`
 	tk.MustQuery(testSQL).Check(testkit.Rows("0"))
 }
 
-func (s *testSuite4) TestInsertOnDup(c *C) {
+func (s *testSuite8) TestInsertOnDup(c *C) {
 	var cfg kv.InjectionConfig
 	tk := testkit.NewTestKit(c, kv.NewInjectedStore(s.store, &cfg))
 	tk.MustExec("use test")
@@ -1502,7 +1502,7 @@ func (s *testSuite8) TestUpdate(c *C) {
 	tk.MustExec("update t set a = ''")
 	tk.MustQuery("select * from t").Check(testkit.Rows("0000-00-00 00:00:00 1999-12-13 00:00:00"))
 	tk.MustExec("update t set b = ''")
-	tk.MustQuery("select * from t").Check(testkit.Rows("0000-00-00 00:00:00 <nil>"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("0000-00-00 00:00:00 0000-00-00 00:00:00"))
 	tk.MustExec("set @@sql_mode=@orig_sql_mode;")
 
 	tk.MustExec("create view v as select * from t")
@@ -1931,7 +1931,7 @@ func (s *testSuite4) TestQualifiedDelete(c *C) {
 	c.Assert(err, NotNil)
 }
 
-func (s *testSuite4) TestLoadDataMissingColumn(c *C) {
+func (s *testSuite8) TestLoadDataMissingColumn(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	createSQL := `create table load_data_missing (id int, t timestamp not null)`
@@ -2252,7 +2252,7 @@ func (s *testSuite4) TestLoadDataIntoPartitionedTable(c *C) {
 	c.Assert(err, IsNil)
 	ld.SetMaxRowsInBatch(20000)
 	ld.SetMessage()
-	err = ctx.StmtCommit()
+	err = ctx.StmtCommit(nil)
 	c.Assert(err, IsNil)
 	txn, err := ctx.Txn(true)
 	c.Assert(err, IsNil)

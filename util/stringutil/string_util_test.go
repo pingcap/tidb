@@ -125,6 +125,34 @@ func (s *testStringUtilSuite) TestPatternMatch(c *C) {
 	}
 }
 
+func (s *testStringUtilSuite) TestCompileLike2Regexp(c *C) {
+	defer testleak.AfterTest(c)()
+	tbl := []struct {
+		pattern string
+		regexp  string
+	}{
+		{``, ``},
+		{`a`, `a`},
+		{`aA`, `aA`},
+		{`_`, `.`},
+		{`__`, `..`},
+		{`%`, `.*`},
+		{`%b`, `.*b`},
+		{`%a%`, `.*a.*`},
+		{`a%`, `a.*`},
+		{`\%a`, `%a`},
+		{`\_a`, `_a`},
+		{`\\_a`, `\.a`},
+		{`\a\b`, `\a\b`},
+		{`%%_`, `.*`},
+		{`%_%_aA`, ".*aA"},
+	}
+	for _, v := range tbl {
+		result := CompileLike2Regexp(v.pattern)
+		c.Assert(result, Equals, v.regexp, Commentf("%v", v))
+	}
+}
+
 func (s *testStringUtilSuite) TestIsExactMatch(c *C) {
 	defer testleak.AfterTest(c)()
 	tbl := []struct {

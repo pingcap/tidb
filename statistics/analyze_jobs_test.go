@@ -17,7 +17,12 @@ import (
 	. "github.com/pingcap/check"
 )
 
-func (s *testStatisticsSuite) TestMoveToHistory(c *C) {
+var _ = SerialSuites(&testStatisticsSerialSuite{})
+
+type testStatisticsSerialSuite struct{}
+
+func (s *testStatisticsSerialSuite) TestMoveToHistory(c *C) {
+	ClearHistoryJobs()
 	numJobs := numMaxHistoryJobs*2 + 1
 	jobs := make([]*AnalyzeJob, 0, numJobs)
 	for i := 0; i < numJobs; i++ {

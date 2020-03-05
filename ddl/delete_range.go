@@ -49,7 +49,7 @@ type delRangeManager interface {
 	addDelRangeJob(job *model.Job) error
 	// removeFromGCDeleteRange removes the deleting table job from gc_delete_range table by jobID and tableID.
 	// It's use for recover the table that was mistakenly deleted.
-	removeFromGCDeleteRange(jobID, tableID int64) error
+	removeFromGCDeleteRange(jobID int64, tableID []int64) error
 	start()
 	clear()
 }
@@ -100,13 +100,13 @@ func (dr *delRange) addDelRangeJob(job *model.Job) error {
 }
 
 // removeFromGCDeleteRange implements delRangeManager interface.
-func (dr *delRange) removeFromGCDeleteRange(jobID, tableID int64) error {
+func (dr *delRange) removeFromGCDeleteRange(jobID int64, tableIDs []int64) error {
 	ctx, err := dr.sessPool.get()
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer dr.sessPool.put(ctx)
-	err = util.RemoveFromGCDeleteRange(ctx, jobID, tableID)
+	err = util.RemoveMultiFromGCDeleteRange(ctx, jobID, tableIDs)
 	return errors.Trace(err)
 }
 

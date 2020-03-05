@@ -5,11 +5,13 @@ create table t2 (c1 int unique, c2 int);
 insert into t2 values(1, 0), (2, 1);
 create table t3 (a bigint, b bigint, c bigint, d bigint);
 create table t4 (a int, b int, c int, index idx(a, b), primary key(a));
+create index expr_idx on t4((a+b+1));
 
 set @@session.tidb_opt_agg_push_down = 1;
 set @@session.tidb_opt_insubq_to_join_and_agg=1;
 set @@session.tidb_hashagg_partial_concurrency = 1;
 set @@session.tidb_hashagg_final_concurrency = 1;
+set @@session.tidb_window_concurrency = 1;
 
 explain select * from t3 where exists (select s.a from t3 s having sum(s.a) = t3.a );
 explain select * from t1;
@@ -36,6 +38,8 @@ explain select ifnull(null, t1.c1) from t1;
 explain select if(10, t1.c1, t1.c2) from t1;
 explain select c1 from t2 union select c1 from t2 union all select c1 from t2;
 explain select c1 from t2 union all select c1 from t2 union select c1 from t2;
+
+select * from information_schema.tidb_indexes where table_name='t4';
 
 # https://github.com/pingcap/tidb/issues/9125
 explain select count(1) from (select count(1) from (select * from t1 where c3 = 100) k) k2;
@@ -103,6 +107,24 @@ create table t1(a int, b int, c int, primary key(a, b));
 create table t2(a int, b int, c int, primary key(a));
 explain select t1.a, t1.b from t1 left outer join t2 on t1.a = t2.a;
 explain select distinct t1.a, t1.b from t1 left outer join t2 on t1.a = t2.a;
+
+CREATE TABLE `test01` (
+`id` bigint(20) NOT NULL AUTO_INCREMENT,
+`stat_date` int(11) NOT NULL DEFAULT '0',
+`show_date` varchar(20) NOT NULL DEFAULT '',
+`region_id` bigint(20) unsigned NOT NULL DEFAULT '0',
+`period` tinyint(3) unsigned NOT NULL DEFAULT '0',
+`registration_num` bigint(20) unsigned NOT NULL DEFAULT '0',
+PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+
+CREATE TABLE `test02` (
+`id` bigint(20) NOT NULL AUTO_INCREMENT,
+`region_name` varchar(128) DEFAULT NULL,
+PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+
+EXPLAIN SELECT COUNT(1) FROM (SELECT COALESCE(b.region_name, '不详') region_name, SUM(a.registration_num) registration_num FROM (SELECT stat_date, show_date, region_id, 0 registration_num FROM test01 WHERE period = 1 AND stat_date >= 20191202 AND stat_date <= 20191202 UNION ALL SELECT stat_date, show_date, region_id, registration_num registration_num FROM test01 WHERE period = 1 AND stat_date >= 20191202 AND stat_date <= 20191202) a LEFT JOIN test02 b ON a.region_id = b.id WHERE registration_num > 0 AND a.stat_date >= '20191202' AND a.stat_date <= '20191202' GROUP BY a.stat_date , a.show_date , COALESCE(b.region_name, '不详') ) JLS;
 
 # https://github.com/pingcap/tidb/issues/7918
 drop table if exists t;

@@ -294,10 +294,7 @@ func (t *testTableSuite) TestCastValue(c *C) {
 func (t *testTableSuite) TestGetDefaultValue(c *C) {
 	ctx := mock.NewContext()
 	zeroTimestamp := types.ZeroTimestamp
-	timestampValue := types.Time{
-		Time: types.FromDate(2019, 5, 6, 12, 48, 49, 0),
-		Type: mysql.TypeTimestamp,
-	}
+	timestampValue := types.NewTime(types.FromDate(2019, 5, 6, 12, 48, 49, 0), mysql.TypeTimestamp, types.DefaultFsp)
 	tests := []struct {
 		colInfo *model.ColumnInfo
 		strict  bool

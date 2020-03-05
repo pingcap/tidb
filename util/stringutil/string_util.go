@@ -14,11 +14,13 @@
 package stringutil
 
 import (
+	"bytes"
 	"fmt"
 	"strings"
 	"unicode/utf8"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/util/hack"
 )
 
@@ -163,9 +165,6 @@ func CompilePattern(pattern string, escape byte) (patChars, patTypes []byte) {
 			}
 		case '_':
 			if lastAny {
-				patChars[patLen-1], patTypes[patLen-1] = c, patOne
-				patChars[patLen], patTypes[patLen] = '%', patAny
-				patLen++
 				continue
 			}
 			tp = patOne
@@ -201,6 +200,35 @@ func matchByteCI(a, b byte) bool {
 		}
 		return a >= 'A' && a <= 'Z' && a+caseDiff == b
 	*/
+}
+
+// CompileLike2Regexp convert a like `lhs` to a regular expression
+func CompileLike2Regexp(str string) string {
+	patChars, patTypes := CompilePattern(str, '\\')
+	var result []byte
+	for i := 0; i < len(patChars); i++ {
+		switch patTypes[i] {
+		case patMatch:
+			result = append(result, patChars[i])
+		case patOne:
+			// .*. == .*
+			if !bytes.HasSuffix(result, []byte{'.', '*'}) {
+				result = append(result, '.')
+			}
+		case patAny:
+			// ..* == .*
+			if bytes.HasSuffix(result, []byte{'.'}) {
+				result = append(result, '*')
+				continue
+			}
+			// .*.* == .*
+			if !bytes.HasSuffix(result, []byte{'.', '*'}) {
+				result = append(result, '.')
+				result = append(result, '*')
+			}
+		}
+	}
+	return string(result)
 }
 
 // DoMatch matches the string with patChars and patTypes.
@@ -282,4 +310,18 @@ type StringerStr string
 // String implements fmt.Stringer
 func (i StringerStr) String() string {
 	return string(i)
+}
+
+// Escape the identifier for pretty-printing.
+// For instance, the identifier "foo `bar`" will become "`foo ``bar```".
+// The sqlMode controls whether to escape with backquotes (`) or double quotes
+// (`"`) depending on whether mysql.ModeANSIQuotes is enabled.
+func Escape(str string, sqlMode mysql.SQLMode) string {
+	var quote string
+	if sqlMode&mysql.ModeANSIQuotes != 0 {
+		quote = `"`
+	} else {
+		quote = "`"
+	}
+	return quote + strings.Replace(str, quote, quote+quote, -1) + quote
 }

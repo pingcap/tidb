@@ -30,9 +30,9 @@ import (
 type WindowExec struct {
 	baseExecutor
 
-	groupChecker *groupChecker
-	// inputIter is the iterator of child chunks
-	inputIter *chunk.Iterator4Chunk
+	groupChecker *vecGroupChecker
+	// childResult stores the child chunk
+	childResult *chunk.Chunk
 	// executed indicates the child executor is drained or something unexpected happened.
 	executed bool
 	// resultChunks stores the chunks to return
@@ -74,8 +74,8 @@ func (e *WindowExec) preparedChunkAvailable() bool {
 
 func (e *WindowExec) consumeOneGroup(ctx context.Context) error {
 	var groupRows []chunk.Row
-	for {
-		eof, err := e.fetchChildIfNecessary(ctx)
+	if e.groupChecker.isExhausted() {
+		eof, err := e.fetchChild(ctx)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -83,17 +83,41 @@ func (e *WindowExec) consumeOneGroup(ctx context.Context) error {
 			e.executed = true
 			return e.consumeGroupRows(groupRows)
 		}
-		for inputRow := e.inputIter.Current(); inputRow != e.inputIter.End(); inputRow = e.inputIter.Next() {
-			meetNewGroup, err := e.groupChecker.meetNewGroup(inputRow)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			if meetNewGroup {
-				return e.consumeGroupRows(groupRows)
-			}
-			groupRows = append(groupRows, inputRow)
+		_, err = e.groupChecker.splitIntoGroups(e.childResult)
+		if err != nil {
+			return errors.Trace(err)
 		}
 	}
+	begin, end := e.groupChecker.getNextGroup()
+	for i := begin; i < end; i++ {
+		groupRows = append(groupRows, e.childResult.GetRow(i))
+	}
+
+	for meetLastGroup := end == e.childResult.NumRows(); meetLastGroup; {
+		meetLastGroup = false
+		eof, err := e.fetchChild(ctx)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if eof {
+			e.executed = true
+			return e.consumeGroupRows(groupRows)
+		}
+
+		isFirstGroupSameAsPrev, err := e.groupChecker.splitIntoGroups(e.childResult)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		if isFirstGroupSameAsPrev {
+			begin, end = e.groupChecker.getNextGroup()
+			for i := begin; i < end; i++ {
+				groupRows = append(groupRows, e.childResult.GetRow(i))
+			}
+			meetLastGroup = end == e.childResult.NumRows()
+		}
+	}
+	return e.consumeGroupRows(groupRows)
 }
 
 func (e *WindowExec) consumeGroupRows(groupRows []chunk.Row) (err error) {
@@ -125,11 +149,7 @@ func (e *WindowExec) consumeGroupRows(groupRows []chunk.Row) (err error) {
 	return nil
 }
 
-func (e *WindowExec) fetchChildIfNecessary(ctx context.Context) (EOF bool, err error) {
-	if e.inputIter != nil && e.inputIter.Current() != e.inputIter.End() {
-		return false, nil
-	}
-
+func (e *WindowExec) fetchChild(ctx context.Context) (EOF bool, err error) {
 	childResult := newFirstChunk(e.children[0])
 	err = Next(ctx, e.children[0], childResult)
 	if err != nil {
@@ -149,8 +169,7 @@ func (e *WindowExec) fetchChildIfNecessary(ctx context.Context) (EOF bool, err e
 	e.resultChunks = append(e.resultChunks, resultChk)
 	e.remainingRowsInChunk = append(e.remainingRowsInChunk, numRows)
 
-	e.inputIter = chunk.NewIterator4Chunk(childResult)
-	e.inputIter.Begin()
+	e.childResult = childResult
 	return false, nil
 }
 
@@ -270,25 +289,55 @@ func (p *rowFrameWindowProcessor) consumeGroupRows(ctx sessionctx.Context, rows 
 	return rows, nil
 }
 
-// TODO: We can optimize it using sliding window algorithm.
 func (p *rowFrameWindowProcessor) appendResult2Chunk(ctx sessionctx.Context, rows []chunk.Row, chk *chunk.Chunk, remained int) ([]chunk.Row, error) {
 	numRows := uint64(len(rows))
-	for remained > 0 {
-		start := p.getStartOffset(numRows)
-		end := p.getEndOffset(numRows)
+	var (
+		err                      error
+		initializedSlidingWindow bool
+		start                    uint64
+		end                      uint64
+		lastStart                uint64
+		lastEnd                  uint64
+		shiftStart               uint64
+		shiftEnd                 uint64
+	)
+	slidingWindowAggFuncs := make([]aggfuncs.SlidingWindowAggFunc, len(p.windowFuncs))
+	for i, windowFunc := range p.windowFuncs {
+		if slidingWindowAggFunc, ok := windowFunc.(aggfuncs.SlidingWindowAggFunc); ok {
+			slidingWindowAggFuncs[i] = slidingWindowAggFunc
+		}
+	}
+	for ; remained > 0; lastStart, lastEnd = start, end {
+		start = p.getStartOffset(numRows)
+		end = p.getEndOffset(numRows)
 		p.curRowIdx++
 		remained--
+		shiftStart = start - lastStart
+		shiftEnd = end - lastEnd
 		if start >= end {
 			for i, windowFunc := range p.windowFuncs {
-				err := windowFunc.AppendFinalResult2Chunk(ctx, p.partialResults[i], chk)
+				slidingWindowAggFunc := slidingWindowAggFuncs[i]
+				if slidingWindowAggFunc != nil && initializedSlidingWindow {
+					err = slidingWindowAggFunc.Slide(ctx, rows, lastStart, lastEnd, shiftStart, shiftEnd, p.partialResults[i])
+					if err != nil {
+						return nil, err
+					}
+				}
+				err = windowFunc.AppendFinalResult2Chunk(ctx, p.partialResults[i], chk)
 				if err != nil {
 					return nil, err
 				}
 			}
 			continue
 		}
+
 		for i, windowFunc := range p.windowFuncs {
-			err := windowFunc.UpdatePartialResult(ctx, rows[start:end], p.partialResults[i])
+			slidingWindowAggFunc := slidingWindowAggFuncs[i]
+			if slidingWindowAggFunc != nil && initializedSlidingWindow {
+				err = slidingWindowAggFunc.Slide(ctx, rows, lastStart, lastEnd, shiftStart, shiftEnd, p.partialResults[i])
+			} else {
+				err = windowFunc.UpdatePartialResult(ctx, rows[start:end], p.partialResults[i])
+			}
 			if err != nil {
 				return nil, err
 			}
@@ -296,8 +345,16 @@ func (p *rowFrameWindowProcessor) appendResult2Chunk(ctx sessionctx.Context, row
 			if err != nil {
 				return nil, err
 			}
-			windowFunc.ResetPartialResult(p.partialResults[i])
+			if slidingWindowAggFunc == nil {
+				windowFunc.ResetPartialResult(p.partialResults[i])
+			}
 		}
+		if !initializedSlidingWindow {
+			initializedSlidingWindow = true
+		}
+	}
+	for i, windowFunc := range p.windowFuncs {
+		windowFunc.ResetPartialResult(p.partialResults[i])
 	}
 	return rows, nil
 }

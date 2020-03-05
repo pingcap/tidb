@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -49,6 +50,8 @@ type testPlanSuite struct {
 	ctx sessionctx.Context
 
 	testData testutil.TestData
+
+	optimizeVars map[string]string
 }
 
 func (s *testPlanSuite) SetUpSuite(c *C) {
@@ -78,7 +81,7 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		c.Assert(err, IsNil, comment)
 		p, _, err := BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
 		c.Assert(err, IsNil)
-		p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagDecorrelate|flagPrunColumns, p.(LogicalPlan))
+		p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagDecorrelate|flagPrunColumns|flagPrunColumnsAgain, p.(LogicalPlan))
 		c.Assert(err, IsNil)
 		s.testData.OnRecord(func() {
 			output[ith] = ToString(p)
@@ -105,7 +108,7 @@ func (s *testPlanSuite) TestJoinPredicatePushDown(c *C) {
 		c.Assert(err, IsNil, comment)
 		p, _, err := BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
 		c.Assert(err, IsNil, comment)
-		p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagDecorrelate|flagPrunColumns, p.(LogicalPlan))
+		p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagDecorrelate|flagPrunColumns|flagPrunColumnsAgain, p.(LogicalPlan))
 		c.Assert(err, IsNil, comment)
 		proj, ok := p.(*LogicalProjection)
 		c.Assert(ok, IsTrue, comment)
@@ -144,7 +147,7 @@ func (s *testPlanSuite) TestOuterWherePredicatePushDown(c *C) {
 		c.Assert(err, IsNil, comment)
 		p, _, err := BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
 		c.Assert(err, IsNil, comment)
-		p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagDecorrelate|flagPrunColumns, p.(LogicalPlan))
+		p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagDecorrelate|flagPrunColumns|flagPrunColumnsAgain, p.(LogicalPlan))
 		c.Assert(err, IsNil, comment)
 		proj, ok := p.(*LogicalProjection)
 		c.Assert(ok, IsTrue, comment)
@@ -189,7 +192,7 @@ func (s *testPlanSuite) TestSimplifyOuterJoin(c *C) {
 		c.Assert(err, IsNil, comment)
 		p, _, err := BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
 		c.Assert(err, IsNil, comment)
-		p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagPrunColumns, p.(LogicalPlan))
+		p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagPrunColumns|flagPrunColumnsAgain, p.(LogicalPlan))
 		c.Assert(err, IsNil, comment)
 		planString := ToString(p)
 		s.testData.OnRecord(func() {
@@ -229,7 +232,7 @@ func (s *testPlanSuite) TestAntiSemiJoinConstFalse(c *C) {
 		c.Assert(err, IsNil, comment)
 		p, _, err := BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
 		c.Assert(err, IsNil, comment)
-		p, err = logicalOptimize(context.TODO(), flagDecorrelate|flagPredicatePushDown|flagPrunColumns, p.(LogicalPlan))
+		p, err = logicalOptimize(context.TODO(), flagDecorrelate|flagPredicatePushDown|flagPrunColumns|flagPrunColumnsAgain, p.(LogicalPlan))
 		c.Assert(err, IsNil, comment)
 		c.Assert(ToString(p), Equals, ca.best, comment)
 		join, _ := p.(LogicalPlan).Children()[0].(*LogicalJoin)
@@ -256,7 +259,7 @@ func (s *testPlanSuite) TestDeriveNotNullConds(c *C) {
 		c.Assert(err, IsNil, comment)
 		p, _, err := BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
 		c.Assert(err, IsNil, comment)
-		p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagPrunColumns|flagDecorrelate, p.(LogicalPlan))
+		p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagPrunColumns|flagPrunColumnsAgain|flagDecorrelate, p.(LogicalPlan))
 		c.Assert(err, IsNil, comment)
 		s.testData.OnRecord(func() {
 			output[i].Plan = ToString(p)
@@ -358,7 +361,7 @@ func (s *testPlanSuite) TestDupRandJoinCondsPushDown(c *C) {
 	c.Assert(ok, IsTrue, comment)
 	leftCond := fmt.Sprintf("%s", leftPlan.Conditions)
 	// Condition with mutable function cannot be de-duplicated when push down join conds.
-	c.Assert(leftCond, Equals, "[gt(cast(test.t.a), rand()) gt(cast(test.t.a), rand())]", comment)
+	c.Assert(leftCond, Equals, "[gt(cast(test.t.a, double BINARY), rand()) gt(cast(test.t.a, double BINARY), rand())]", comment)
 }
 
 func (s *testPlanSuite) TestTablePartition(c *C) {
@@ -416,7 +419,7 @@ func (s *testPlanSuite) TestTablePartition(c *C) {
 		})
 		p, _, err := BuildLogicalPlan(ctx, s.ctx, stmt, isChoices[ca.IsIdx])
 		c.Assert(err, IsNil)
-		p, err = logicalOptimize(context.TODO(), flagDecorrelate|flagPrunColumns|flagPredicatePushDown|flagPartitionProcessor, p.(LogicalPlan))
+		p, err = logicalOptimize(context.TODO(), flagDecorrelate|flagPrunColumns|flagPrunColumnsAgain|flagPredicatePushDown|flagPartitionProcessor, p.(LogicalPlan))
 		c.Assert(err, IsNil)
 		planString := ToString(p)
 		s.testData.OnRecord(func() {
@@ -441,7 +444,7 @@ func (s *testPlanSuite) TestSubquery(c *C) {
 		p, _, err := BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
 		c.Assert(err, IsNil)
 		if lp, ok := p.(LogicalPlan); ok {
-			p, err = logicalOptimize(context.TODO(), flagBuildKeyInfo|flagDecorrelate|flagPrunColumns, lp)
+			p, err = logicalOptimize(context.TODO(), flagBuildKeyInfo|flagDecorrelate|flagPrunColumns|flagPrunColumnsAgain, lp)
 			c.Assert(err, IsNil)
 		}
 		s.testData.OnRecord(func() {
@@ -466,7 +469,7 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		p, _, err := BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
 		c.Assert(err, IsNil)
 		if lp, ok := p.(LogicalPlan); ok {
-			p, err = logicalOptimize(context.TODO(), flagPrunColumns, lp)
+			p, err = logicalOptimize(context.TODO(), flagPrunColumns|flagPrunColumnsAgain, lp)
 			c.Assert(err, IsNil)
 		}
 		s.testData.OnRecord(func() {
@@ -513,7 +516,7 @@ func (s *testPlanSuite) TestEagerAggregation(c *C) {
 
 		p, _, err := BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
 		c.Assert(err, IsNil)
-		p, err = logicalOptimize(context.TODO(), flagBuildKeyInfo|flagPredicatePushDown|flagPrunColumns|flagPushDownAgg, p.(LogicalPlan))
+		p, err = logicalOptimize(context.TODO(), flagBuildKeyInfo|flagPredicatePushDown|flagPrunColumns|flagPrunColumnsAgain|flagPushDownAgg, p.(LogicalPlan))
 		c.Assert(err, IsNil)
 		s.testData.OnRecord(func() {
 			output[ith] = ToString(p)
@@ -539,7 +542,7 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 
 		p, _, err := BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
 		c.Assert(err, IsNil)
-		lp, err := logicalOptimize(ctx, flagPredicatePushDown|flagPrunColumns, p.(LogicalPlan))
+		lp, err := logicalOptimize(ctx, flagPredicatePushDown|flagPrunColumns|flagPrunColumnsAgain, p.(LogicalPlan))
 		c.Assert(err, IsNil)
 		s.testData.OnRecord(func() {
 			output[i] = make(map[int][]string)
@@ -568,7 +571,7 @@ func (s *testPlanSuite) TestProjectionEliminator(c *C) {
 
 		p, _, err := BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
 		c.Assert(err, IsNil)
-		p, err = logicalOptimize(context.TODO(), flagBuildKeyInfo|flagPrunColumns|flagEliminateProjection, p.(LogicalPlan))
+		p, err = logicalOptimize(context.TODO(), flagBuildKeyInfo|flagPrunColumns|flagPrunColumnsAgain|flagEliminateProjection, p.(LogicalPlan))
 		c.Assert(err, IsNil)
 		c.Assert(ToString(p), Equals, tt.best, Commentf("for %s %d", tt.sql, ith))
 	}
@@ -850,7 +853,7 @@ func (s *testPlanSuite) TestAggPrune(c *C) {
 		p, _, err := BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
 		c.Assert(err, IsNil)
 
-		p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagPrunColumns|flagBuildKeyInfo|flagEliminateAgg|flagEliminateProjection, p.(LogicalPlan))
+		p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagPrunColumns|flagPrunColumnsAgain|flagBuildKeyInfo|flagEliminateAgg|flagEliminateProjection, p.(LogicalPlan))
 		c.Assert(err, IsNil)
 		planString := ToString(p)
 		s.testData.OnRecord(func() {
@@ -1049,6 +1052,12 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 			ans: []visitInfo{
 				{mysql.AlterPriv, "test", "t", "", nil},
 				{mysql.DropPriv, "test", "t", "", nil},
+			},
+		},
+		{
+			sql: "flush privileges",
+			ans: []visitInfo{
+				{mysql.ReloadPriv, "", "", "", ErrSpecificAccessDenied},
 			},
 		},
 	}
@@ -1266,6 +1275,10 @@ func (s *testPlanSuite) TestSelectView(c *C) {
 			sql:  "select * from v",
 			best: "DataScan(t)->Projection",
 		},
+		{
+			sql:  "select v.b, v.c, v.d from v",
+			best: "DataScan(t)->Projection",
+		},
 	}
 	ctx := context.TODO()
 	for i, tt := range tests {
@@ -1283,10 +1296,32 @@ func (s *testPlanSuite) TestSelectView(c *C) {
 }
 
 func (s *testPlanSuite) TestWindowFunction(c *C) {
-	defer testleak.AfterTest(c)()
+	s.optimizeVars = map[string]string{
+		variable.TiDBWindowConcurrency: "1",
+	}
+	defer func() {
+		s.optimizeVars = nil
+		testleak.AfterTest(c)()
+	}()
 	var input, output []string
 	s.testData.GetTestCases(c, &input, &output)
+	s.doTestWindowFunction(c, input, output)
+}
 
+func (s *testPlanSuite) TestWindowParallelFunction(c *C) {
+	s.optimizeVars = map[string]string{
+		variable.TiDBWindowConcurrency: "4",
+	}
+	defer func() {
+		s.optimizeVars = nil
+		testleak.AfterTest(c)()
+	}()
+	var input, output []string
+	s.testData.GetTestCases(c, &input, &output)
+	s.doTestWindowFunction(c, input, output)
+}
+
+func (s *testPlanSuite) doTestWindowFunction(c *C, input, output []string) {
 	ctx := context.TODO()
 	for i, tt := range input {
 		comment := Commentf("case:%v sql:%s", i, tt)
@@ -1325,7 +1360,14 @@ func (s *testPlanSuite) optimize(ctx context.Context, sql string) (PhysicalPlan,
 	if err != nil {
 		return nil, nil, err
 	}
-	builder := NewPlanBuilder(MockContext(), s.is, &BlockHintProcessor{})
+
+	sctx := MockContext()
+	for k, v := range s.optimizeVars {
+		if err = sctx.GetSessionVars().SetSystemVar(k, v); err != nil {
+			return nil, nil, err
+		}
+	}
+	builder := NewPlanBuilder(sctx, s.is, &BlockHintProcessor{})
 	p, err := builder.Build(ctx, stmt)
 	if err != nil {
 		return nil, nil, err
@@ -1349,10 +1391,10 @@ func byItemsToProperty(byItems []*ByItems) *property.PhysicalProperty {
 func pathsName(paths []*candidatePath) string {
 	var names []string
 	for _, path := range paths {
-		if path.path.isTablePath {
+		if path.path.IsTablePath {
 			names = append(names, "PRIMARY_KEY")
 		} else {
-			names = append(names, path.path.index.Name.O)
+			names = append(names, path.path.Index.Name.O)
 		}
 	}
 	return strings.Join(names, ",")

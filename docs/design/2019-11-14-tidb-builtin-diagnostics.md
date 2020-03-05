@@ -135,7 +135,7 @@ The following are the predicates that the log interface needs to process:
 
 - `start_time`: start time of the log retrieval (Unix timestamp, in milliseconds). If there is no such predicate, the default is 0.
 - `end_time:`: end time of the log retrieval (Unix timestamp, in milliseconds). If there is no such predicate, the default is `int64::MAX`.
-- `pattern`: filter pattern determined by the keyword. For example, `SELECT * FROM tidb_cluster_log` WHERE "%gc%" `%gc%` is the filtered keyword.
+- `pattern`: filter pattern determined by the keyword. For example, `SELECT * FROM cluster_log` WHERE "%gc%" `%gc%` is the filtered keyword.
 - `level`: log level; can be selected as DEBUG/INFO/WARN/WARNING/TRACE/CRITICAL/ERROR
 - `limit`: the maximum of logs items to return, preventing the log from being too large and occupying a large bandwidth of the network.. If not specified, the default limit is 64k.
 
@@ -306,7 +306,7 @@ The implementation of this proposal can query the following results through SQL:
 mysql> use information_schema;
 Database changed
 
-mysql> desc TIDB_CLUSTER_INFO;
+mysql> desc CLUSTER_INFO;
 +----------------+---------------------+------+------+---------+-------+
 | Field          | Type                | Null | Key  | Default | Extra |
 +----------------+---------------------+------+------+---------+-------+
@@ -318,7 +318,7 @@ mysql> desc TIDB_CLUSTER_INFO;
 +----------------+---------------------+------+------+---------+-------+
 5 rows in set (0.00 sec)
 
-mysql> select TYPE, ADDRESS, STATUS_ADDRESS,VERSION from TIDB_CLUSTER_INFO;
+mysql> select TYPE, ADDRESS, STATUS_ADDRESS,VERSION from CLUSTER_INFO;
 +------+-----------------+-----------------+-----------------------------------------------+
 | TYPE | ADDRESS         | STATUS_ADDRESS  | VERSION                                       |
 +------+-----------------+-----------------+-----------------------------------------------+
@@ -484,9 +484,9 @@ Current the `slow_query`/`events_statements_summary_by_digest`/`processlist` mem
 
 | Table Name | Description |
 |------|-----|
-| tidb_cluster_slow_query | slow_query table data for all TiDB nodes |
-| tidb_cluster_statements_summary | statements summary table Data for all TiDB nodes  |
-| tidb_cluster_processlist | processlist table data for all TiDB nodes |
+| cluster_slow_query | slow_query table data for all TiDB nodes |
+| cluster_statements_summary | statements summary table Data for all TiDB nodes  |
+| cluster_processlist | processlist table data for all TiDB nodes |
 
 #### Configuration information of all nodes
 
@@ -498,7 +498,7 @@ See the following example for some expected results of this proposal:
 mysql> use information_schema;
 Database changed
 
-mysql> select * from tidb_cluster_config where `key` like 'log%';
+mysql> select * from cluster_config where `key` like 'log%';
 +------+-----------------+-----------------------------+---------------+
 | TYPE | ADDRESS         | KEY                         | VALUE         |
 +------+-----------------+-----------------------------+---------------+
@@ -538,7 +538,7 @@ mysql> select * from tidb_cluster_config where `key` like 'log%';
 +------+-----------------+-----------------------------+---------------+
 33 rows in set (0.00 sec)
 
-mysql> select * from tidb_cluster_config where type='tikv' and `key` like 'raftdb.wal%';
+mysql> select * from cluster_config where type='tikv' and `key` like 'raftdb.wal%';
 +------+-----------------+---------------------------+--------+
 | TYPE | ADDRESS         | KEY                       | VALUE  |
 +------+-----------------+---------------------------+--------+
@@ -559,7 +559,7 @@ According to the definition of `gRPC Service` protocol, each `ServerInfoItem` co
 mysql> use information_schema;
 Database changed
 
-mysql> select * from tidb_cluster_hardware
+mysql> select * from cluster_hardware
 +------+-----------------+----------+----------+-------------+--------+
 | TYPE | ADDRESS         | HW_TYPE  | HW_NAME  | KEY         | VALUE  |
 +------+-----------------+----------+----------+-------------+--------+
@@ -576,7 +576,7 @@ mysql> select * from tidb_cluster_hardware
 +------+-----------------+----------+----------+-------------+--------+
 10 rows in set (0.01 sec)
 
-mysql> select * from tidb_cluster_systeminfo
+mysql> select * from cluster_systeminfo
 +------+-----------------+----------+--------------+--------+
 | TYPE | ADDRESS         | MODULE   | KEY          | VALUE  |
 +------+-----------------+----------+--------------+--------+
@@ -586,7 +586,7 @@ mysql> select * from tidb_cluster_systeminfo
 +------+-----------------+----------+--------------+--------+
 20 rows in set (0.01 sec)
 
-mysql> select * from tidb_cluster_load
+mysql> select * from cluster_load
 +------+-----------------+----------+-------------+--------+
 | TYPE | ADDRESS         | MODULE   | KEY         | VALUE  |
 +------+-----------------+----------+-------------+--------+
@@ -599,7 +599,7 @@ mysql> select * from tidb_cluster_load
 
 #### Full-chain log system table
 
-To search in the current log, users need to log in to multiple machines for retrieval respectively, and there is no easy way to sort the retrieval results of multiple machines by time. This proposal creates a new `tidb_cluster_log` system table to provide full-link logs, thereby simplifying the way to troubleshoot problems through logs and improving efficiency. This is achieved by pushing the log-filtering predicates down to the nodes through the `search_log` interface of the gRPC Diagnosis Service. The filtered logs will be eventually merged by time.
+To search in the current log, users need to log in to multiple machines for retrieval respectively, and there is no easy way to sort the retrieval results of multiple machines by time. This proposal creates a new `cluster_log` system table to provide full-link logs, thereby simplifying the way to troubleshoot problems through logs and improving efficiency. This is achieved by pushing the log-filtering predicates down to the nodes through the `search_log` interface of the gRPC Diagnosis Service. The filtered logs will be eventually merged by time.
 
 The following example shows the expected results of this proposal:
 
@@ -607,7 +607,7 @@ The following example shows the expected results of this proposal:
 mysql> use information_schema;
 Database changed
 
-mysql> desc tidb_cluster_log;
+mysql> desc cluster_log;
 +---------+-------------+------+------+---------+-------+
 | Field   | Type        | Null | Key  | Default | Extra |
 +---------+-------------+------+------+---------+-------+
@@ -619,7 +619,7 @@ mysql> desc tidb_cluster_log;
 +---------+-------------+------+------+---------+-------+
 5 rows in set (0.00 sec)
 
-mysql> select * from tidb_cluster_log where content like '%412134239937495042%'; -- Query the full link log related to TSO 412134239937495042
+mysql> select * from cluster_log where content like '%412134239937495042%'; -- Query the full link log related to TSO 412134239937495042
 +------+--------------------------------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
 | TYPE | ADDRESS                | LEVEL | CONTENT                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 +------+------------------------+-------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
@@ -658,9 +658,9 @@ mysql> select * from tidb_cluster_log where content like '%412134239937495042%';
 +------+--------------------------------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
 31 rows in set (0.01 sec)  
 
-mysql> select * from tidb_cluster_log where type='pd' and content like '%scheduler%'; -- Query scheduler logs of PD
+mysql> select * from cluster_log where type='pd' and content like '%scheduler%'; -- Query scheduler logs of PD
 
-mysql> select * from tidb_cluster_log where type='tidb' and content like '%ddl%'; -- Query DDL logs of TiDB
+mysql> select * from cluster_log where type='tidb' and content like '%ddl%'; -- Query DDL logs of TiDB
 ```
 
 ### Cluster diagnostics

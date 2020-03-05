@@ -21,7 +21,9 @@
       // Order by.
       "select a from t where b > 1 order by c",
       // Union ALL.
-      "select avg(a) from t union all select avg(b) from t"
+      "select avg(a) from t union all select avg(b) from t",
+      // Apply.
+      "select a = (select a from t t2 where t1.b = t2.b order by a limit 1) from t t1"
     ]
   }
 ]

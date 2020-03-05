@@ -74,7 +74,9 @@ type selectResult struct {
 	copPlanIDs []fmt.Stringer
 	rootPlanID fmt.Stringer
 
-	memTracker *memory.Tracker
+	fetchDuration    time.Duration
+	durationReported bool
+	memTracker       *memory.Tracker
 }
 
 func (r *selectResult) Fetch(ctx context.Context) {
@@ -83,7 +85,10 @@ func (r *selectResult) Fetch(ctx context.Context) {
 func (r *selectResult) fetchResp(ctx context.Context) error {
 	for {
 		r.respChkIdx = 0
+		startTime := time.Now()
 		resultSubset, err := r.resp.Next(ctx)
+		duration := time.Since(startTime)
+		r.fetchDuration += duration
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -92,6 +97,13 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 		}
 		if resultSubset == nil {
 			r.selectResp = nil
+			if !r.durationReported {
+				// final round of fetch
+				// TODO: Add a label to distinguish between success or failure.
+				// https://github.com/pingcap/tidb/issues/11397
+				metrics.DistSQLQueryHistgram.WithLabelValues(r.label, r.sqlType).Observe(r.fetchDuration.Seconds())
+				r.durationReported = true
+			}
 			return nil
 		}
 		r.selectResp = new(tipb.SelectResponse)
@@ -102,11 +114,11 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 		r.selectRespSize = r.selectResp.Size()
 		r.memConsume(int64(r.selectRespSize))
 		if err := r.selectResp.Error; err != nil {
-			return terror.ClassTiKV.New(terror.ErrCode(err.Code), err.Msg)
+			return terror.ClassTiKV.Synthesize(terror.ErrCode(err.Code), err.Msg)
 		}
 		sc := r.ctx.GetSessionVars().StmtCtx
 		for _, warning := range r.selectResp.Warnings {
-			sc.AppendWarning(terror.ClassTiKV.New(terror.ErrCode(warning.Code), warning.Msg))
+			sc.AppendWarning(terror.ClassTiKV.Synthesize(terror.ErrCode(warning.Code), warning.Msg))
 		}
 		r.updateCopRuntimeStats(resultSubset.GetExecDetails(), resultSubset.RespTime())
 		r.feedback.Update(resultSubset.GetStartKey(), r.selectResp.OutputCounts)

@@ -14,11 +14,10 @@
 package bindinfo
 
 import (
-	"context"
+	"time"
 	"unsafe"
 
 	"github.com/pingcap/parser"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
@@ -56,6 +55,23 @@ type Binding struct {
 	id string
 }
 
+func (b *Binding) isSame(rb *Binding) bool {
+	if b.id != "" && rb.id != "" {
+		return b.id == rb.id
+	}
+	// Sometimes we cannot construct `id` because of the changed schema, so we need to compare by bind sql.
+	return b.BindSQL == rb.BindSQL
+}
+
+// SinceUpdateTime returns the duration since last update time. Export for test.
+func (b *Binding) SinceUpdateTime() (time.Duration, error) {
+	updateTime, err := b.UpdateTime.GoTime(time.Local)
+	if err != nil {
+		return 0, err
+	}
+	return time.Since(updateTime), nil
+}
+
 // cache is a k-v map, key is original sql, value is a slice of BindRecord.
 type cache map[string][]*BindRecord
 
@@ -87,17 +103,17 @@ func (br *BindRecord) FindBinding(hint string) *Binding {
 	return nil
 }
 
-func (br *BindRecord) prepareHints(sctx sessionctx.Context, is infoschema.InfoSchema) error {
+func (br *BindRecord) prepareHints(sctx sessionctx.Context) error {
 	p := parser.New()
 	for i, bind := range br.Bindings {
-		if bind.Hint != nil || bind.id != "" {
+		if bind.Hint != nil || bind.id != "" || bind.Status == deleted {
 			continue
 		}
 		stmtNode, err := p.ParseOneStmt(bind.BindSQL, bind.Charset, bind.Collation)
 		if err != nil {
 			return err
 		}
-		hints, err := GenHintsFromSQL(context.TODO(), sctx, stmtNode, is)
+		hints, err := getHintsForSQL(sctx, bind.BindSQL)
 		if err != nil {
 			return err
 		}
@@ -119,7 +135,7 @@ func merge(lBindRecord, rBindRecord *BindRecord) *BindRecord {
 	for _, rbind := range rBindRecord.Bindings {
 		found := false
 		for j, lbind := range lBindRecord.Bindings {
-			if lbind.id == rbind.id {
+			if lbind.isSame(&rbind) {
 				found = true
 				if rbind.UpdateTime.Compare(lbind.UpdateTime) >= 0 {
 					result.Bindings[j] = rbind
@@ -142,7 +158,7 @@ func (br *BindRecord) remove(deleted *BindRecord) *BindRecord {
 	result := br.shallowCopy()
 	for _, deletedBind := range deleted.Bindings {
 		for i, bind := range result.Bindings {
-			if bind.id == deletedBind.id {
+			if bind.isSame(&deletedBind) {
 				result.Bindings = append(result.Bindings[:i], result.Bindings[i+1:]...)
 				break
 			}
@@ -199,14 +215,14 @@ func (br *BindRecord) metrics() ([]float64, []int) {
 	sizes[statusIndex[br.Bindings[0].Status]] = commonLength
 	for _, binding := range br.Bindings {
 		sizes[statusIndex[binding.Status]] += binding.size()
-		count[statusIndex[binding.Status]] += 1
+		count[statusIndex[binding.Status]]++
 	}
 	return sizes, count
 }
 
 // size calculates the memory size of a bind info.
-func (m *Binding) size() float64 {
-	res := len(m.BindSQL) + len(m.Status) + 2*int(unsafe.Sizeof(m.CreateTime)) + len(m.Charset) + len(m.Collation)
+func (b *Binding) size() float64 {
+	res := len(b.BindSQL) + len(b.Status) + 2*int(unsafe.Sizeof(b.CreateTime)) + len(b.Charset) + len(b.Collation)
 	return float64(res)
 }
 

@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/memory"
 	"go.uber.org/zap"
 )
 
@@ -45,6 +46,9 @@ func (e *ReplaceExec) Close() error {
 
 // Open implements the Executor Open interface.
 func (e *ReplaceExec) Open(ctx context.Context) error {
+	e.memTracker = memory.NewTracker(e.id, -1)
+	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+
 	if e.SelectExec != nil {
 		return e.SelectExec.Open(ctx)
 	}
@@ -202,6 +206,7 @@ func (e *ReplaceExec) exec(ctx context.Context, newRows [][]types.Datum) error {
 			return err
 		}
 	}
+	e.memTracker.Consume(int64(txn.Size()))
 	return nil
 }
 

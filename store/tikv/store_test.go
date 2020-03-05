@@ -32,31 +32,27 @@ import (
 var errStopped = errors.New("stopped")
 
 type testStoreSuite struct {
+	testStoreSuiteBase
+}
+
+type testStoreFailedSuite struct {
+	testStoreSuiteBase
+}
+
+type testStoreSuiteBase struct {
 	OneByOneSuite
 	store *tikvStore
 }
 
 var _ = Suite(&testStoreSuite{})
+var _ = SerialSuites(&testStoreFailedSuite{})
 
-func (s *testStoreSuite) SetUpTest(c *C) {
+func (s *testStoreSuiteBase) SetUpTest(c *C) {
 	s.store = NewTestStore(c).(*tikvStore)
 }
 
-func (s *testStoreSuite) TearDownTest(c *C) {
+func (s *testStoreSuiteBase) TearDownTest(c *C) {
 	c.Assert(s.store.Close(), IsNil)
-}
-
-func (s *testStoreSuite) TestParsePath(c *C) {
-	etcdAddrs, disableGC, err := parsePath("tikv://node1:2379,node2:2379")
-	c.Assert(err, IsNil)
-	c.Assert(etcdAddrs, DeepEquals, []string{"node1:2379", "node2:2379"})
-	c.Assert(disableGC, IsFalse)
-
-	_, _, err = parsePath("tikv://node1:2379")
-	c.Assert(err, IsNil)
-	_, disableGC, err = parsePath("tikv://node1:2379?disableGC=true")
-	c.Assert(err, IsNil)
-	c.Assert(disableGC, IsTrue)
 }
 
 func (s *testStoreSuite) TestOracle(c *C) {
@@ -106,6 +102,10 @@ type mockPDClient struct {
 	sync.RWMutex
 	client pd.Client
 	stop   bool
+}
+
+func (c *mockPDClient) ConfigClient() pd.ConfigClient {
+	return nil
 }
 
 func (c *mockPDClient) enable() {
@@ -211,6 +211,8 @@ func (c *mockPDClient) ScatterRegion(ctx context.Context, regionID uint64) error
 func (c *mockPDClient) GetOperator(ctx context.Context, regionID uint64) (*pdpb.GetOperatorResponse, error) {
 	return &pdpb.GetOperatorResponse{Status: pdpb.OperatorStatus_SUCCESS}, nil
 }
+
+func (c *mockPDClient) GetLeaderAddr() string { return "mockpd" }
 
 type checkRequestClient struct {
 	Client

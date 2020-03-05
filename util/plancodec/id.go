@@ -84,8 +84,12 @@ const (
 	TypeIndexReader = "IndexReader"
 	// TypeWindow is the type of Window.
 	TypeWindow = "Window"
-	// TypeTableGather is the type of TableGather.
-	TypeTableGather = "TableGather"
+	// TypeShuffle is the type of Shuffle.
+	TypeShuffle = "Shuffle"
+	// TypeShuffleDataSourceStub is the type of Shuffle.
+	TypeShuffleDataSourceStub = "ShuffleDataSourceStub"
+	// TypeTiKVSingleGather is the type of TiKVSingleGather.
+	TypeTiKVSingleGather = "TiKVSingleGather"
 	// TypeIndexMerge is the type of IndexMergeReader
 	TypeIndexMerge = "IndexMerge"
 	// TypePointGet is the type of PointGetPlan.
@@ -94,6 +98,10 @@ const (
 	TypeShowDDLJobs = "ShowDDLJobs"
 	// TypeBatchPointGet is the type of BatchPointGetPlan.
 	TypeBatchPointGet = "Batch_Point_Get"
+	// TypeClusterMemTableReader is the type of TableReader.
+	TypeClusterMemTableReader = "ClusterMemTableReader"
+	// TypeDataSource is the type of DataSource.
+	TypeDataSource = "DataSource"
 )
 
 // plan id.
@@ -132,11 +140,13 @@ const (
 	typeTableReaderID
 	typeIndexReaderID
 	typeWindowID
-	typeTableGatherID
+	typeTiKVSingleGatherID
 	typeIndexMergeID
 	typePointGet
 	typeShowDDLJobs
 	typeBatchPointGet
+	typeClusterMemTableReader
+	typeDataSourceID
 )
 
 // TypeStringToPhysicalID converts the plan type string to plan id.
@@ -210,8 +220,8 @@ func TypeStringToPhysicalID(tp string) int {
 		return typeIndexReaderID
 	case TypeWindow:
 		return typeWindowID
-	case TypeTableGather:
-		return typeTableGatherID
+	case TypeTiKVSingleGather:
+		return typeTiKVSingleGatherID
 	case TypeIndexMerge:
 		return typeIndexMergeID
 	case TypePointGet:
@@ -220,6 +230,10 @@ func TypeStringToPhysicalID(tp string) int {
 		return typeShowDDLJobs
 	case TypeBatchPointGet:
 		return typeBatchPointGet
+	case TypeClusterMemTableReader:
+		return typeClusterMemTableReader
+	case TypeDataSource:
+		return typeDataSourceID
 	}
 	// Should never reach here.
 	return 0
@@ -296,8 +310,8 @@ func PhysicalIDToTypeString(id int) string {
 		return TypeIndexReader
 	case typeWindowID:
 		return TypeWindow
-	case typeTableGatherID:
-		return TypeTableGather
+	case typeTiKVSingleGatherID:
+		return TypeTiKVSingleGather
 	case typeIndexMergeID:
 		return TypeIndexMerge
 	case typePointGet:
@@ -306,6 +320,8 @@ func PhysicalIDToTypeString(id int) string {
 		return TypeShowDDLJobs
 	case typeBatchPointGet:
 		return TypeBatchPointGet
+	case typeClusterMemTableReader:
+		return TypeClusterMemTableReader
 	}
 
 	// Should never reach here.

@@ -207,7 +207,7 @@ func (s *testSuite) TestMeta(c *C) {
 		ID:   3,
 		Name: model.NewCIStr("tbl3"),
 	}
-	err = t.CreateTableAndSetAutoID(1, tbInfo3, 123)
+	err = t.CreateTableAndSetAutoID(1, tbInfo3, 123, 0)
 	c.Assert(err, IsNil)
 	id, err := t.GetAutoTableID(1, tbInfo3.ID)
 	c.Assert(err, IsNil)
@@ -294,7 +294,7 @@ func (s *testSuite) TestSnapshot(c *C) {
 	c.Assert(n, Equals, int64(1))
 	_, err = snapMeta.GenGlobalID()
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[structure:5]write on snapshot")
+	c.Assert(err.Error(), Equals, "[structure:8220]write on snapshot")
 }
 
 func (s *testSuite) TestDDL(c *C) {
@@ -398,8 +398,8 @@ func (s *testSuite) TestDDL(c *C) {
 	historyJobs, err := t.GetLastNHistoryDDLJobs(2)
 	c.Assert(err, IsNil)
 	c.Assert(len(historyJobs), Equals, 2)
-	c.Assert(historyJobs[0].ID == 123, IsTrue)
-	c.Assert(historyJobs[1].ID == 1234, IsTrue)
+	c.Assert(historyJobs[0].ID == 1234, IsTrue)
+	c.Assert(historyJobs[1].ID == 123, IsTrue)
 
 	// Test GetAllDDLJobsInQueue.
 	err = t.EnQueueDDLJob(job)

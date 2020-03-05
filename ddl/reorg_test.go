@@ -89,13 +89,13 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	rInfo := &reorgInfo{
 		Job: job,
 	}
-	err = d.generalWorker().runReorgJob(m, rInfo, d.lease, f)
+	err = d.generalWorker().runReorgJob(m, rInfo, nil, d.lease, f)
 	c.Assert(err, NotNil)
 
 	// The longest to wait for 5 seconds to make sure the function of f is returned.
 	for i := 0; i < 1000; i++ {
 		time.Sleep(5 * time.Millisecond)
-		err = d.generalWorker().runReorgJob(m, rInfo, d.lease, f)
+		err = d.generalWorker().runReorgJob(m, rInfo, nil, d.lease, f)
 		if err == nil {
 			c.Assert(job.RowCount, Equals, rowCount)
 			c.Assert(d.generalWorker().reorgCtx.rowCount, Equals, int64(0))
@@ -116,18 +116,6 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	}
 	c.Assert(err, IsNil)
 
-	d.Stop()
-	err = d.generalWorker().runReorgJob(m, rInfo, d.lease, func() error {
-		time.Sleep(4 * testLease)
-		return nil
-	})
-	c.Assert(err, NotNil)
-	txn, err = ctx.Txn(true)
-	c.Assert(err, IsNil)
-	err = txn.Commit(context.Background())
-	c.Assert(err, IsNil)
-
-	d.start(context.Background(), nil)
 	job = &model.Job{
 		ID:          2,
 		SchemaID:    1,
@@ -156,6 +144,17 @@ func (s *testDDLSuite) TestReorg(c *C) {
 		c.Assert(info.StartHandle, Greater, int64(0))
 		return nil
 	})
+	c.Assert(err, IsNil)
+
+	d.Stop()
+	err = d.generalWorker().runReorgJob(m, rInfo, nil, d.lease, func() error {
+		time.Sleep(4 * testLease)
+		return nil
+	})
+	c.Assert(err, NotNil)
+	txn, err = ctx.Txn(true)
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 }
 

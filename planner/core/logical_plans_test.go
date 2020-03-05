@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testleak"
@@ -183,14 +184,14 @@ func (s *testUnitTestSuit) TestIndexPathSplitCorColCond(c *C) {
 			c.Assert(err, IsNil, comment)
 			trueFilters = append(trueFilters, trueFilter)
 		}
-		path := accessPath{
-			eqCondCount:  0,
-			tableFilters: trueFilters,
-			idxCols:      expression.FindPrefixOfIndex(totalSchema.Columns, tt.idxColIDs),
-			idxColLens:   tt.idxColLens,
+		path := util.AccessPath{
+			EqCondCount:  0,
+			TableFilters: trueFilters,
+			IdxCols:      expression.FindPrefixOfIndex(totalSchema.Columns, tt.idxColIDs),
+			IdxColLens:   tt.idxColLens,
 		}
 
-		access, remained := path.splitCorColAccessCondFromFilters(path.eqCondCount)
+		access, remained := path.SplitCorColAccessCondFromFilters(path.EqCondCount)
 		c.Assert(fmt.Sprintf("%s", access), Equals, tt.access, comment)
 		c.Assert(fmt.Sprintf("%s", remained), Equals, tt.remained, comment)
 	}

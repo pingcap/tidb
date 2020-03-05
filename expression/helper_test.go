@@ -14,7 +14,6 @@
 package expression
 
 import (
-	"github.com/pingcap/tidb/types/parser_driver"
 	"strings"
 	"time"
 
@@ -24,6 +23,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/mock"
 )
 
@@ -138,16 +138,16 @@ func (s *testExpressionSuite) TestCurrentTimestampTimeZone(c *C) {
 	variable.SetSessionSystemVar(sessionVars, "time_zone", types.NewStringDatum("+00:00"))
 	v, err := GetTimeValue(ctx, ast.CurrentTimestamp, mysql.TypeTimestamp, types.MinFsp)
 	c.Assert(err, IsNil)
-	c.Assert(v.GetMysqlTime(), DeepEquals, types.Time{
-		Time: types.FromDate(1970, 1, 1, 0, 20, 34, 0),
-		Type: mysql.TypeTimestamp})
+	c.Assert(v.GetMysqlTime(), DeepEquals, types.NewTime(
+		types.FromDate(1970, 1, 1, 0, 20, 34, 0),
+		mysql.TypeTimestamp, types.DefaultFsp))
 
 	// CurrentTimestamp from "timestamp" session variable is based on UTC, so change timezone
 	// would get different value.
 	variable.SetSessionSystemVar(sessionVars, "time_zone", types.NewStringDatum("+08:00"))
 	v, err = GetTimeValue(ctx, ast.CurrentTimestamp, mysql.TypeTimestamp, types.MinFsp)
 	c.Assert(err, IsNil)
-	c.Assert(v.GetMysqlTime(), DeepEquals, types.Time{
-		Time: types.FromDate(1970, 1, 1, 8, 20, 34, 0),
-		Type: mysql.TypeTimestamp})
+	c.Assert(v.GetMysqlTime(), DeepEquals, types.NewTime(
+		types.FromDate(1970, 1, 1, 8, 20, 34, 0),
+		mysql.TypeTimestamp, types.DefaultFsp))
 }

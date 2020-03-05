@@ -51,6 +51,10 @@ func Build(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal
 		return buildBitXor(aggFuncDesc, ordinal)
 	case ast.AggFuncBitAnd:
 		return buildBitAnd(aggFuncDesc, ordinal)
+	case ast.AggFuncVarPop:
+		return buildVarPop(aggFuncDesc, ordinal)
+	case ast.AggFuncJsonObjectAgg:
+		return buildJSONObjectAgg(aggFuncDesc, ordinal)
 	}
 	return nil
 }
@@ -211,6 +215,13 @@ func buildFirstRow(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	switch aggFuncDesc.Mode {
 	case aggregation.DedupMode:
 	default:
+		switch fieldType.Tp {
+		case mysql.TypeEnum:
+			return &firstRow4Enum{base}
+		case mysql.TypeSet:
+			return &firstRow4Set{base}
+		}
+
 		switch evalType {
 		case types.ETInt:
 			return &firstRow4Int{base}
@@ -341,6 +352,39 @@ func buildBitAnd(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 		ordinal: ordinal,
 	}
 	return &bitAndUint64{baseBitAggFunc{base}}
+}
+
+// buildVarPop builds the AggFunc implementation for function "VAR_POP".
+func buildVarPop(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	base := baseVarPopAggFunc{
+		baseAggFunc{
+			args:    aggFuncDesc.Args,
+			ordinal: ordinal,
+		},
+	}
+	switch aggFuncDesc.Mode {
+	case aggregation.DedupMode:
+		return nil
+	default:
+		if aggFuncDesc.HasDistinct {
+			return &varPop4DistinctFloat64{base}
+		}
+		return &varPop4Float64{base}
+	}
+}
+
+// buildJSONObjectAgg builds the AggFunc implementation for function "json_objectagg".
+func buildJSONObjectAgg(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	base := baseAggFunc{
+		args:    aggFuncDesc.Args,
+		ordinal: ordinal,
+	}
+	switch aggFuncDesc.Mode {
+	case aggregation.DedupMode:
+		return nil
+	default:
+		return &jsonObjectAgg{base}
+	}
 }
 
 // buildRowNumber builds the AggFunc implementation for function "ROW_NUMBER".

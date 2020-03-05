@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/ddl"
+	ddltestutil "github.com/pingcap/tidb/ddl/testutil"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
@@ -172,6 +173,13 @@ func (s *testSuite6) TestCreateTable(c *C) {
 	tk.MustExec("insert into create_auto_increment_test (name) values ('aa')")
 	r = tk.MustQuery("select * from create_auto_increment_test;")
 	r.Check(testkit.Rows("1000 aa"))
+
+	// Test for `drop table if exists`.
+	tk.MustExec("drop table if exists t_if_exists;")
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Note 1051 Unknown table 'test.t_if_exists'"))
+	tk.MustExec("create table if not exists t1_if_exists(c int)")
+	tk.MustExec("drop table if exists t1_if_exists,t2_if_exists,t3_if_exists")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1051|Unknown table 'test.t2_if_exists'", "Note|1051|Unknown table 'test.t3_if_exists'"))
 }
 
 func (s *testSuite6) TestCreateView(c *C) {
@@ -252,6 +260,54 @@ func (s *testSuite6) TestCreateView(c *C) {
 	tk.MustExec("drop view v")
 	tk.MustExec("create view v as (select * from t1 union select * from t2)")
 	tk.MustExec("drop view v")
+
+	// Test for `drop view if exists`.
+	tk.MustExec("drop view if exists v_if_exists;")
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Note 1051 Unknown table 'test.v_if_exists'"))
+	tk.MustExec("create view v1_if_exists as (select * from t1)")
+	tk.MustExec("drop view if exists v1_if_exists,v2_if_exists,v3_if_exists")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1051|Unknown table 'test.v2_if_exists'", "Note|1051|Unknown table 'test.v3_if_exists'"))
+}
+
+func (s *testSuite6) TestCreateViewWithOverlongColName(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+	defer tk.MustExec("drop table t")
+	tk.MustExec("create view v as select distinct'" + strings.Repeat("a", 65) + "', " +
+		"max('" + strings.Repeat("b", 65) + "'), " +
+		"'cccccccccc', '" + strings.Repeat("d", 65) + "';")
+	resultCreateStmt := "CREATE ALGORITHM=UNDEFINED DEFINER=``@`` SQL SECURITY DEFINER VIEW `v` (`name_exp_1`, `name_exp_2`, `cccccccccc`, `name_exp_4`) AS SELECT DISTINCT '" + strings.Repeat("a", 65) + "',MAX('" + strings.Repeat("b", 65) + "'),'cccccccccc','" + strings.Repeat("d", 65) + "'"
+	tk.MustQuery("select * from v")
+	tk.MustQuery("select name_exp_1, name_exp_2, cccccccccc, name_exp_4 from v")
+	tk.MustQuery("show create view v").Check(testkit.Rows("v " + resultCreateStmt + "  "))
+	tk.MustExec("drop view v;")
+	tk.MustExec(resultCreateStmt)
+
+	tk.MustExec("drop view v ")
+	tk.MustExec("create definer='root'@'localhost' view v as select 'a', '" + strings.Repeat("b", 65) + "' from t " +
+		"union select '" + strings.Repeat("c", 65) + "', " +
+		"count(distinct '" + strings.Repeat("b", 65) + "', " +
+		"'c');")
+	resultCreateStmt = "CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`localhost` SQL SECURITY DEFINER VIEW `v` (`a`, `name_exp_2`) AS SELECT 'a','" + strings.Repeat("b", 65) + "' FROM `test`.`t` UNION SELECT '" + strings.Repeat("c", 65) + "',COUNT(DISTINCT '" + strings.Repeat("b", 65) + "', 'c')"
+	tk.MustQuery("select * from v")
+	tk.MustQuery("select a, name_exp_2 from v")
+	tk.MustQuery("show create view v").Check(testkit.Rows("v " + resultCreateStmt + "  "))
+	tk.MustExec("drop view v;")
+	tk.MustExec(resultCreateStmt)
+
+	tk.MustExec("drop view v ")
+	tk.MustExec("create definer='root'@'localhost' view v as select 'a' as '" + strings.Repeat("b", 65) + "' from t;")
+	tk.MustQuery("select * from v")
+	tk.MustQuery("select name_exp_1 from v")
+	resultCreateStmt = "CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`localhost` SQL SECURITY DEFINER VIEW `v` (`name_exp_1`) AS SELECT 'a' AS `" + strings.Repeat("b", 65) + "` FROM `test`.`t`"
+	tk.MustQuery("show create view v").Check(testkit.Rows("v " + resultCreateStmt + "  "))
+	tk.MustExec("drop view v;")
+	tk.MustExec(resultCreateStmt)
+
+	tk.MustExec("drop view v ")
+	err := tk.ExecToErr("create view v(`" + strings.Repeat("b", 65) + "`) as select a from t;")
+	c.Assert(err.Error(), Equals, "[ddl:1059]Identifier name 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' is too long")
 }
 
 func (s *testSuite6) TestCreateDropDatabase(c *C) {
@@ -286,7 +342,11 @@ func (s *testSuite6) TestCreateDropView(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create or replace view drop_test as select 1,2")
-	_, err := tk.Exec("drop view if exists drop_test")
+
+	_, err := tk.Exec("drop table drop_test")
+	c.Assert(err.Error(), Equals, "[schema:1051]Unknown table 'test.drop_test'")
+
+	_, err = tk.Exec("drop view if exists drop_test")
 	c.Assert(err, IsNil)
 
 	_, err = tk.Exec("drop view mysql.gc_delete_range")
@@ -298,6 +358,13 @@ func (s *testSuite6) TestCreateDropView(c *C) {
 	tk.MustExec("create table t_v(a int)")
 	_, err = tk.Exec("drop view t_v")
 	c.Assert(err.Error(), Equals, "[ddl:1347]'test.t_v' is not VIEW")
+
+	tk.MustExec("create table t_v1(a int, b int);")
+	tk.MustExec("create table t_v2(a int, b int);")
+	tk.MustExec("create view v as select * from t_v1;")
+	tk.MustExec("create or replace view v  as select * from t_v2;")
+	tk.MustQuery("select * from information_schema.views where table_name ='v';").Check(
+		testkit.Rows("def test v SELECT `test`.`t_v2`.`a`,`test`.`t_v2`.`b` FROM `test`.`t_v2` CASCADED NO @ DEFINER utf8mb4 utf8mb4_bin"))
 }
 
 func (s *testSuite6) TestCreateDropIndex(c *C) {
@@ -569,8 +636,9 @@ func (s *testSuite8) TestShardRowIDBits(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int) shard_row_id_bits = 15")
 	for i := 0; i < 100; i++ {
-		tk.MustExec(fmt.Sprintf("insert t values (%d)", i))
+		tk.MustExec("insert into t values (?)", i)
 	}
+
 	dom := domain.GetDomain(tk.Se)
 	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
@@ -644,7 +712,7 @@ func (s *testSuite8) TestShardRowIDBits(c *C) {
 	// Test shard_row_id_bits with auto_increment column
 	tk.MustExec("create table auto (a int, b int auto_increment unique) shard_row_id_bits = 15")
 	for i := 0; i < 100; i++ {
-		tk.MustExec(fmt.Sprintf("insert auto(a) values (%d)", i))
+		tk.MustExec("insert into auto(a) values (?)", i)
 	}
 	tbl, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("auto"))
 	assertCountAndShard(tbl, 100)
@@ -674,6 +742,83 @@ func (s *testSuite8) TestShardRowIDBits(c *C) {
 	c.Assert(autoid.ErrAutoincReadFailed.Equal(err), IsTrue, Commentf("err:%v", err))
 	_, err = tk.Exec("insert into t1 values(3)")
 	c.Assert(autoid.ErrAutoincReadFailed.Equal(err), IsTrue, Commentf("err:%v", err))
+}
+
+type testAutoRandomSuite struct {
+	*baseTestSuite
+}
+
+func (s *testAutoRandomSuite) TestAutoRandomBitsData(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("create database if not exists test_auto_random_bits")
+	defer tk.MustExec("drop database if exists test_auto_random_bits")
+	tk.MustExec("use test_auto_random_bits")
+	tk.MustExec("drop table if exists t")
+
+	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
+	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
+
+	tk.MustExec("create table t (a bigint primary key auto_random(15), b int)")
+	for i := 0; i < 100; i++ {
+		tk.MustExec("insert into t(b) values (?)", i)
+	}
+	allHandles, err := ddltestutil.ExtractAllTableHandles(tk.Se, "test_auto_random_bits", "t")
+	c.Assert(err, IsNil)
+	tk.MustExec("drop table t")
+
+	// Test auto random id number.
+	c.Assert(len(allHandles), Equals, 100)
+	// Test the handles are not all zero.
+	allZero := true
+	for _, h := range allHandles {
+		allZero = allZero && (h>>(64-16)) == 0
+	}
+	c.Assert(allZero, IsFalse)
+	// Test non-shard-bits part of auto random id is monotonic increasing and continuous.
+	orderedHandles := testutil.ConfigTestUtils.MaskSortHandles(allHandles, 15, mysql.TypeLonglong)
+	size := int64(len(allHandles))
+	for i := int64(1); i <= size; i++ {
+		c.Assert(i, Equals, orderedHandles[i-1])
+	}
+
+	// Test explicit insert.
+	tk.MustExec("create table t (a tinyint primary key auto_random(2), b int)")
+	for i := 1; i <= 100; i++ {
+		tk.MustExec("insert into t values (?, ?)", i, i)
+	}
+	_, err = tk.Exec("insert into t (b) values (0)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, autoid.ErrAutoRandReadFailed.GenWithStackByArgs().Error())
+	tk.MustExec("drop table t")
+
+	// Test overflow.
+	tk.MustExec("create table t (a tinyint primary key auto_random(2), b int)")
+	fieldLength := uint64(mysql.DefaultLengthOfMysqlTypes[mysql.TypeTiny] * 8)
+	signBit := uint64(1)
+	for i := 0; i < (1<<(fieldLength-2-signBit))-1; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t (b) values (%d)", i))
+	}
+	_, err = tk.Exec("insert into t (b) values (0)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, autoid.ErrAutoRandReadFailed.GenWithStackByArgs().Error())
+	tk.MustExec("drop table t")
+
+	// Test rebase.
+	tk.MustExec("create table t (a tinyint primary key auto_random(2), b int)")
+	tk.MustExec("insert into t values (31, 2)")
+	_, err = tk.Exec("insert into t (b) values (0)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, autoid.ErrAutoRandReadFailed.GenWithStackByArgs().Error())
+	tk.MustExec("drop table t")
+
+	tk.MustExec("create table t (a tinyint primary key auto_random(2), b int)")
+	tk.MustExec("insert into t values (1, 2)")
+	tk.MustExec("update t set a = 31 where a = 1")
+	_, err = tk.Exec("insert into t (b) values (0)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, autoid.ErrAutoRandReadFailed.GenWithStackByArgs().Error())
+	tk.MustExec("drop table t")
 }
 
 func (s *testSuite6) TestMaxHandleAddIndex(c *C) {
@@ -951,7 +1096,8 @@ func (s *testSuite6) TestTimestampMinDefaultValue(c *C) {
 	tk.MustExec("ALTER TABLE tdv ADD COLUMN ts timestamp DEFAULT '1970-01-01 08:00:01';")
 }
 
-func (s *testSuite3) TestRenameTable(c *C) {
+// this test will change the fail-point `mockAutoIDChange`, so we move it to the `testRecoverTable` suite
+func (s *testRecoverTable) TestRenameTable(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`), IsNil)
 	defer func() {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"), IsNil)

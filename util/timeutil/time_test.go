@@ -33,7 +33,7 @@ func TestT(t *testing.T) {
 type testTimeSuite struct{}
 
 func (s *testTimeSuite) TestgetTZNameFromFileName(c *C) {
-	tz, err := inferTZNameFromFileName("/user/share/zoneinfo/Asia/Shanghai")
+	tz, err := inferTZNameFromFileName("/usr/share/zoneinfo/Asia/Shanghai")
 
 	c.Assert(err, IsNil)
 	c.Assert(tz, Equals, "Asia/Shanghai")
@@ -46,20 +46,20 @@ func (s *testTimeSuite) TestgetTZNameFromFileName(c *C) {
 
 func (s *testTimeSuite) TestLocal(c *C) {
 	os.Setenv("TZ", "Asia/Shanghai")
-	systemTZ = InferSystemTZ()
+	systemTZ.Store(InferSystemTZ())
 	loc := SystemLocation()
-	c.Assert(systemTZ, Equals, "Asia/Shanghai")
+	c.Assert(systemTZ.Load(), Equals, "Asia/Shanghai")
 	c.Assert(loc.String(), Equals, "Asia/Shanghai")
 
 	os.Setenv("TZ", "UTC")
 	// reset systemTZ
-	systemTZ = InferSystemTZ()
+	systemTZ.Store(InferSystemTZ())
 	loc = SystemLocation()
 	c.Assert(loc.String(), Equals, "UTC")
 
 	os.Setenv("TZ", "")
 	// reset systemTZ
-	systemTZ = InferSystemTZ()
+	systemTZ.Store(InferSystemTZ())
 	loc = SystemLocation()
 	c.Assert(loc.String(), Equals, "UTC")
 	os.Unsetenv("TZ")

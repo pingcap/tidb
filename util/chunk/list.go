@@ -71,6 +71,16 @@ func (l *List) NumChunks() int {
 	return len(l.chunks)
 }
 
+// FieldTypes returns the fieldTypes of the list
+func (l *List) FieldTypes() []*types.FieldType {
+	return l.fieldTypes
+}
+
+// NumRowsOfChunk returns the number of rows of a chunk in the ListInDisk.
+func (l *List) NumRowsOfChunk(chkID int) int {
+	return l.chunks[chkID].NumRows()
+}
+
 // GetChunk gets the Chunk by ChkIdx.
 func (l *List) GetChunk(chkIdx int) *Chunk {
 	return l.chunks[chkIdx]
@@ -141,6 +151,15 @@ func (l *List) Reset() {
 	}
 	l.freelist = append(l.freelist, l.chunks...)
 	l.chunks = l.chunks[:0]
+	l.length = 0
+	l.consumedIdx = -1
+}
+
+// Clear triggers GC for all the allocated chunks and reset the list
+func (l *List) Clear() {
+	l.memTracker.Consume(-l.memTracker.BytesConsumed())
+	l.freelist = nil
+	l.chunks = nil
 	l.length = 0
 	l.consumedIdx = -1
 }

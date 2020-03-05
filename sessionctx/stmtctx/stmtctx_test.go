@@ -33,11 +33,18 @@ var _ = Suite(&stmtctxSuit{})
 
 func (s *stmtctxSuit) TestCopTasksDetails(c *C) {
 	ctx := new(stmtctx.StatementContext)
+	backoffs := []string{"tikvRPC", "pdRPC", "regionMiss"}
 	for i := 0; i < 100; i++ {
 		d := &execdetails.ExecDetails{
 			CalleeAddress: fmt.Sprintf("%v", i+1),
 			ProcessTime:   time.Second * time.Duration(i+1),
 			WaitTime:      time.Millisecond * time.Duration(i+1),
+			BackoffSleep:  make(map[string]time.Duration),
+			BackoffTimes:  make(map[string]int),
+		}
+		for _, backoff := range backoffs {
+			d.BackoffSleep[backoff] = time.Millisecond * 100 * time.Duration(i+1)
+			d.BackoffTimes[backoff] = i + 1
 		}
 		ctx.MergeExecDetails(d, nil)
 	}
@@ -53,6 +60,14 @@ func (s *stmtctxSuit) TestCopTasksDetails(c *C) {
 	c.Assert(d.MaxWaitAddress, Equals, "100")
 	fields := d.ToZapFields()
 	c.Assert(len(fields), Equals, 9)
+	for _, backoff := range backoffs {
+		c.Assert(d.MaxBackoffAddress[backoff], Equals, "100")
+		c.Assert(d.MaxBackoffTime[backoff], Equals, 100*time.Millisecond*100)
+		c.Assert(d.P90BackoffTime[backoff], Equals, time.Millisecond*100*91)
+		c.Assert(d.AvgBackoffTime[backoff], Equals, time.Millisecond*100*101/2)
+		c.Assert(d.TotBackoffTimes[backoff], Equals, 101*50)
+		c.Assert(d.TotBackoffTime[backoff], Equals, 101*50*100*time.Millisecond)
+	}
 }
 
 func (s *stmtctxSuit) TestStatementContextPushDownFLags(c *C) {
@@ -69,7 +84,6 @@ func (s *stmtctxSuit) TestStatementContextPushDownFLags(c *C) {
 		{&stmtctx.StatementContext{OverflowAsWarning: true}, 64},
 		{&stmtctx.StatementContext{IgnoreZeroInDate: true}, 128},
 		{&stmtctx.StatementContext{DividedByZeroAsWarning: true}, 256},
-		{&stmtctx.StatementContext{PadCharToFullLength: true}, 4},
 		{&stmtctx.StatementContext{InLoadDataStmt: true}, 1024},
 		{&stmtctx.StatementContext{InSelectStmt: true, TruncateAsWarning: true}, 34},
 		{&stmtctx.StatementContext{DividedByZeroAsWarning: true, IgnoreTruncate: true}, 257},

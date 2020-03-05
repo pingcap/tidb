@@ -24,52 +24,29 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testleak"
 )
 
 var _ = SerialSuites(&testPessimisticSuite{})
 
 type testPessimisticSuite struct {
-	cluster   *mocktikv.Cluster
-	mvccStore mocktikv.MVCCStore
-	store     kv.Storage
-	dom       *domain.Domain
+	testSessionSuiteBase
 }
 
 func (s *testPessimisticSuite) SetUpSuite(c *C) {
-	testleak.BeforeTest()
+	s.testSessionSuiteBase.SetUpSuite(c)
 	// Set it to 300ms for testing lock resolve.
-	tikv.PessimisticLockTTL = 300
+	atomic.StoreUint64(&tikv.ManagedLockTTL, 300)
 	tikv.PrewriteMaxBackoff = 500
-	s.cluster = mocktikv.NewCluster()
-	mocktikv.BootstrapWithSingleStore(s.cluster)
-	s.mvccStore = mocktikv.MustNewMVCCStore()
-	store, err := mockstore.NewMockTikvStore(
-		mockstore.WithCluster(s.cluster),
-		mockstore.WithMVCCStore(s.mvccStore),
-	)
-	c.Assert(err, IsNil)
-	s.store = store
-	session.SetSchemaLease(0)
-	session.DisableStats4Test()
-	s.dom, err = session.BootstrapSession(s.store)
-	s.dom.GetGlobalVarsCache().Disable()
-	c.Assert(err, IsNil)
 }
 
 func (s *testPessimisticSuite) TearDownSuite(c *C) {
-	s.dom.Close()
-	s.store.Close()
-	testleak.AfterTest(c)()
+	s.testSessionSuiteBase.TearDownSuite(c)
 	tikv.PrewriteMaxBackoff = 20000
 }
 
@@ -179,27 +156,37 @@ func (s *testPessimisticSuite) TestDeadlock(c *C) {
 	tk.MustExec("create table deadlock (k int primary key, v int)")
 	tk.MustExec("insert into deadlock values (1, 1), (2, 1)")
 
-	syncCh := make(chan struct{})
+	syncCh := make(chan error)
 	go func() {
 		tk1 := testkit.NewTestKitWithInit(c, s.store)
 		tk1.MustExec("begin pessimistic")
 		tk1.MustExec("update deadlock set v = v + 1 where k = 2")
-		<-syncCh
-		tk1.MustExec("update deadlock set v = v + 1 where k = 1")
-		<-syncCh
+		syncCh <- nil
+		_, err := tk1.Exec("update deadlock set v = v + 1 where k = 1")
+		syncCh <- err
 	}()
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("update deadlock set v = v + 1 where k = 1")
-	syncCh <- struct{}{}
-	time.Sleep(time.Millisecond * 10)
-	_, err := tk.Exec("update deadlock set v = v + 1 where k = 2")
+	<-syncCh
+	_, err1 := tk.Exec("update deadlock set v = v + 1 where k = 2")
+	err2 := <-syncCh
+	// Either err1 or err2 is deadlock error.
+	var err error
+	if err1 != nil {
+		c.Assert(err2, IsNil)
+		err = err1
+	} else {
+		err = err2
+	}
 	e, ok := errors.Cause(err).(*terror.Error)
 	c.Assert(ok, IsTrue)
 	c.Assert(int(e.Code()), Equals, mysql.ErrLockDeadlock)
-	syncCh <- struct{}{}
 }
 
 func (s *testPessimisticSuite) TestSingleStatementRollback(c *C) {
+	if *withTiKV {
+		c.Skip("skip with tikv because cluster manipulate is not available")
+	}
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
 
@@ -216,9 +203,12 @@ func (s *testPessimisticSuite) TestSingleStatementRollback(c *C) {
 	region2ID := region2.Id
 
 	syncCh := make(chan bool)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/SingleStmtDeadLockRetrySleep", "return"), IsNil)
 	go func() {
 		tk2.MustExec("begin pessimistic")
 		<-syncCh
+		// tk2 will go first, so tk will meet deadlock and retry, tk2 will resolve pessimistic rollback
+		// lock on key 3 after lock ttl
 		s.cluster.ScheduleDelay(tk2.Se.GetSessionVars().TxnCtx.StartTS, region2ID, time.Millisecond*3)
 		tk2.MustExec("update single_statement set v = v + 1")
 		tk2.MustExec("commit")
@@ -226,9 +216,10 @@ func (s *testPessimisticSuite) TestSingleStatementRollback(c *C) {
 	}()
 	tk.MustExec("begin pessimistic")
 	syncCh <- true
-	s.cluster.ScheduleDelay(tk.Se.GetSessionVars().TxnCtx.StartTS, region1ID, time.Millisecond*3)
+	s.cluster.ScheduleDelay(tk.Se.GetSessionVars().TxnCtx.StartTS, region1ID, time.Millisecond*10)
 	tk.MustExec("update single_statement set v = v + 1")
 	tk.MustExec("commit")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/SingleStmtDeadLockRetrySleep"), IsNil)
 	syncCh <- true
 }
 
@@ -351,6 +342,36 @@ func (s *testPessimisticSuite) TestBankTransfer(c *C) {
 	tk.MustQuery("select sum(c) from accounts").Check(testkit.Rows("300"))
 }
 
+func (s *testPessimisticSuite) TestLockUnchangedRowKey(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists unchanged")
+	tk.MustExec("create table unchanged (id int primary key, c int)")
+	tk.MustExec("insert unchanged values (1, 1), (2, 2)")
+
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("update unchanged set c = 1 where id < 2")
+
+	tk2.MustExec("begin pessimistic")
+	err := tk2.ExecToErr("select * from unchanged where id = 1 for update nowait")
+	c.Assert(err, NotNil)
+
+	tk.MustExec("rollback")
+
+	tk2.MustQuery("select * from unchanged where id = 1 for update nowait")
+
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert unchanged values (2, 2) on duplicate key update c = values(c)")
+
+	err = tk2.ExecToErr("select * from unchanged where id = 2 for update nowait")
+	c.Assert(err, NotNil)
+
+	tk.MustExec("commit")
+
+	tk2.MustQuery("select * from unchanged where id = 1 for update nowait")
+	tk2.MustExec("rollback")
+}
+
 func (s *testPessimisticSuite) TestOptimisticConflicts(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
@@ -377,6 +398,7 @@ func (s *testPessimisticSuite) TestOptimisticConflicts(c *C) {
 	tk2.MustExec("update conflict set c = 5 where id = 1")
 	_, err := tk2.Exec("commit")
 	c.Check(err, NotNil)
+	tk.MustExec("rollback")
 
 	// Update snapshotTS after a conflict, invalidate snapshot cache.
 	tk.MustExec("truncate table conflict")
@@ -537,6 +559,7 @@ func (s *testPessimisticSuite) TestWaitLockKill(c *C) {
 	tk.MustExec("create table test_kill (id int primary key, c int)")
 	tk.MustExec("insert test_kill values (1, 1)")
 	tk.MustExec("begin pessimistic")
+	tk2.MustExec("set innodb_lock_wait_timeout = 50")
 	tk2.MustExec("begin pessimistic")
 	tk.MustQuery("select * from test_kill where id = 1 for update")
 
@@ -717,4 +740,247 @@ func (s *testPessimisticSuite) TestInnodbLockWaitTimeout(c *C) {
 	tk4.MustExec("commit")
 
 	wg.Wait()
+}
+
+func (s *testPessimisticSuite) TestPushConditionCheckForPessimisticTxn(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	defer tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (i int key)")
+	tk.MustExec("insert into t values (1)")
+
+	tk.MustExec("set tidb_txn_mode = 'pessimistic'")
+	tk.MustExec("begin")
+	tk1.MustExec("delete from t where i = 1")
+	tk.MustExec("insert into t values (1) on duplicate key update i = values(i)")
+	tk.MustExec("commit")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1"))
+}
+
+func (s *testPessimisticSuite) TestInnodbLockWaitTimeoutWaitStart(c *C) {
+	// prepare work
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	defer tk.MustExec("drop table if exists tk")
+	tk.MustExec("drop table if exists tk")
+	tk.MustExec("create table tk (c1 int primary key, c2 int)")
+	tk.MustExec("insert into tk values(1,1),(2,2),(3,3),(4,4),(5,5)")
+	tk.MustExec("set global innodb_lock_wait_timeout = 1")
+
+	// raise pessimistic transaction in tk2 and trigger failpoint returning ErrWriteConflict
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk3 := testkit.NewTestKitWithInit(c, s.store)
+	tk2.MustQuery(`show variables like "innodb_lock_wait_timeout"`).Check(testkit.Rows("innodb_lock_wait_timeout 1"))
+
+	// tk3 gets the pessimistic lock
+	tk3.MustExec("begin pessimistic")
+	tk3.MustQuery("select * from tk where c1 = 1 for update")
+
+	tk2.MustExec("begin pessimistic")
+	done := make(chan error)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/PessimisticLockErrWriteConflict", "return"), IsNil)
+	var duration time.Duration
+	go func() {
+		var err error
+		start := time.Now()
+		defer func() {
+			duration = time.Since(start)
+			done <- err
+		}()
+		_, err = tk2.Exec("select * from tk where c1 = 1 for update")
+	}()
+	time.Sleep(time.Millisecond * 100)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/PessimisticLockErrWriteConflict"), IsNil)
+	waitErr := <-done
+	c.Assert(waitErr, NotNil)
+	c.Check(waitErr.Error(), Equals, tikv.ErrLockWaitTimeout.Error())
+	c.Check(duration, GreaterEqual, time.Duration(1000*time.Millisecond))
+	c.Check(duration, LessEqual, time.Duration(1100*time.Millisecond))
+	tk2.MustExec("rollback")
+	tk3.MustExec("commit")
+}
+
+func (s *testPessimisticSuite) TestPessimisticReadCommitted(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test")
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk1.MustExec("use test")
+
+	tk.MustExec("set tidb_txn_mode = 'pessimistic'")
+	tk1.MustExec("set tidb_txn_mode = 'pessimistic'")
+
+	// test SI
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(i int key);")
+	tk.MustExec("insert into t values (1);")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1"))
+
+	tk.MustExec("begin;")
+	tk1.MustExec("begin;")
+	tk.MustExec("update t set i = -i;")
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		tk1.MustExec("update t set i = -i;")
+		wg.Done()
+	}()
+	tk.MustExec("commit;")
+	wg.Wait()
+
+	tk1.MustExec("commit;")
+
+	// test RC
+	tk.MustExec("set tx_isolation = 'READ-COMMITTED'")
+	tk1.MustExec("set tx_isolation = 'READ-COMMITTED'")
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(i int key);")
+	tk.MustExec("insert into t values (1);")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1"))
+
+	tk.MustExec("begin;")
+	tk1.MustExec("begin;")
+	tk.MustExec("update t set i = -i;")
+
+	wg.Add(1)
+	go func() {
+		tk1.MustExec("update t set i = -i;")
+		wg.Done()
+	}()
+	tk.MustExec("commit;")
+	wg.Wait()
+
+	tk1.MustExec("commit;")
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(i int key, j int unique key, k int, l int, m int, key (k));")
+	tk.MustExec("insert into t values (1, 1, 1, 1, 1);")
+
+	// Set it back to RR to test set transaction statement.
+	tk.MustExec("set tx_isolation = 'REPEATABLE-READ'")
+	tk1.MustExec("set tx_isolation = 'REPEATABLE-READ'")
+
+	// test one shot and some reads.
+	tk.MustExec("set transaction isolation level read committed")
+	tk.MustExec("begin;")
+
+	// test table reader
+	tk.MustQuery("select l from t where l = 1").Check(testkit.Rows("1"))
+	tk1.MustExec("update t set l = l + 1 where l = 1;")
+	tk.MustQuery("select l from t where l = 2").Check(testkit.Rows("2"))
+	tk1.MustExec("update t set l = l + 1 where l = 2;")
+	tk.MustQuery("select l from t where l = 3").Check(testkit.Rows("3"))
+
+	// test index reader
+	tk.MustQuery("select k from t where k = 1").Check(testkit.Rows("1"))
+	tk1.MustExec("update t set k = k + 1 where k = 1;")
+	tk.MustQuery("select k from t where k = 2").Check(testkit.Rows("2"))
+	tk1.MustExec("update t set k = k + 1 where k = 2;")
+	tk.MustQuery("select k from t where k = 3").Check(testkit.Rows("3"))
+
+	// test double read
+	tk.MustQuery("select m from t where k = 3").Check(testkit.Rows("1"))
+	tk1.MustExec("update t set m = m + 1 where k = 3;")
+	tk.MustQuery("select m from t where k = 3").Check(testkit.Rows("2"))
+	tk1.MustExec("update t set m = m + 1 where k = 3;")
+	tk.MustQuery("select m from t where k = 3").Check(testkit.Rows("3"))
+
+	// test point get plan
+	tk.MustQuery("select m from t where i = 1").Check(testkit.Rows("3"))
+	tk1.MustExec("update t set m = m + 1 where i = 1;")
+	tk.MustQuery("select m from t where i = 1").Check(testkit.Rows("4"))
+	tk1.MustExec("update t set m = m + 1 where j = 1;")
+	tk.MustQuery("select m from t where j = 1").Check(testkit.Rows("5"))
+
+	// test batch point get plan
+	tk1.MustExec("insert into t values (2, 2, 2, 2, 2);")
+	tk.MustQuery("select m from t where i in (1, 2)").Check(testkit.Rows("5", "2"))
+	tk1.MustExec("update t set m = m + 1 where i in (1, 2);")
+	tk.MustQuery("select m from t where i in (1, 2)").Check(testkit.Rows("6", "3"))
+	tk1.MustExec("update t set m = m + 1 where j in (1, 2);")
+	tk.MustQuery("select m from t where j in (1, 2)").Check(testkit.Rows("7", "4"))
+
+	tk.MustExec("commit;")
+
+	// test for NewTxn()
+	tk.MustExec("set tx_isolation = 'READ-COMMITTED'")
+	tk.MustExec("begin optimistic;")
+	tk.MustQuery("select m from t where j in (1, 2)").Check(testkit.Rows("7", "4"))
+	tk.MustExec("begin pessimistic;")
+	tk.MustQuery("select m from t where j in (1, 2)").Check(testkit.Rows("7", "4"))
+	tk.MustExec("commit;")
+}
+
+func (s *testPessimisticSuite) TestPessimisticCommitReadLock(c *C) {
+	// set lock ttl to 3s, tk1 lock wait timeout is 2s
+	atomic.StoreUint64(&tikv.ManagedLockTTL, 3000)
+	defer atomic.StoreUint64(&tikv.ManagedLockTTL, 300)
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test")
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk1.MustExec("use test")
+
+	tk.MustExec("set tidb_txn_mode = 'pessimistic'")
+	tk1.MustExec("set tidb_txn_mode = 'pessimistic'")
+	tk1.MustExec("set innodb_lock_wait_timeout = 2")
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(i int key primary key, j int);")
+	tk.MustExec("insert into t values (1, 2);")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2"))
+
+	// tk lock one row
+	tk.MustExec("begin;")
+	tk.MustQuery("select * from t for update").Check(testkit.Rows("1 2"))
+	tk1.MustExec("begin;")
+	done := make(chan error)
+	go func() {
+		var err error
+		defer func() {
+			done <- err
+		}()
+		// let txn not found could be checked by lock wait timeout utility
+		err = failpoint.Enable("github.com/pingcap/tidb/store/tikv/txnNotFoundRetTTL", "return")
+		if err != nil {
+			return
+		}
+		_, err = tk1.Exec("update t set j = j + 1 where i = 1")
+		if err != nil {
+			return
+		}
+		err = failpoint.Disable("github.com/pingcap/tidb/store/tikv/txnNotFoundRetTTL")
+		if err != nil {
+			return
+		}
+		_, err = tk1.Exec("commit")
+	}()
+	// let the lock be hold for a while
+	time.Sleep(time.Millisecond * 50)
+	tk.MustExec("commit")
+	waitErr := <-done
+	c.Assert(waitErr, IsNil)
+}
+
+func (s *testPessimisticSuite) TestPessimisticLockReadValue(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(i int, j int, k int, unique key uk(j));")
+	tk.MustExec("insert into t values (1, 1, 1);")
+
+	// tk1 will left op_lock record
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk1.MustExec("use test")
+	tk1.MustExec("begin optimistic")
+	tk1.MustQuery("select * from t where j = 1 for update").Check(testkit.Rows("1 1 1"))
+	tk1.MustQuery("select * from t where j = 1 for update").Check(testkit.Rows("1 1 1"))
+	tk1.MustExec("commit")
+
+	// tk2 pessimistic lock read value
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk2.MustExec("begin pessimistic")
+	tk2.MustQuery("select * from t where j = 1 for update").Check(testkit.Rows("1 1 1"))
+	tk2.MustQuery("select * from t where j = 1 for update").Check(testkit.Rows("1 1 1"))
+	tk2.MustExec("commit")
 }

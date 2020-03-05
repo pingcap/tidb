@@ -34,10 +34,14 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl"
+	ddltestutil "github.com/pingcap/tidb/ddl/testutil"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
@@ -50,10 +54,14 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 func TestT(t *testing.T) {
@@ -63,8 +71,9 @@ func TestT(t *testing.T) {
 	TestingT(t)
 }
 
-var _ = Suite(&seqTestSuite{})
-var _ = Suite(&seqTestSuite1{})
+var _ = SerialSuites(&seqTestSuite{})
+var _ = SerialSuites(&seqTestSuite1{})
+var _ = SerialSuites(&testOOMSuite{})
 
 type seqTestSuite struct {
 	cluster   *mocktikv.Cluster
@@ -282,17 +291,19 @@ func (s *seqTestSuite) TestShow(c *C) {
 	tk.MustExec(`create index idx5 using hash on show_index (id) using btree comment 'idx';`)
 	tk.MustExec(`create index idx6 using hash on show_index (id);`)
 	tk.MustExec(`create index idx7 on show_index (id);`)
+	tk.MustExec(`create index expr_idx on show_index ((id*2+1))`)
 	testSQL = "SHOW index from show_index;"
 	tk.MustQuery(testSQL).Check(testutil.RowsWithSep("|",
-		"show_index|0|PRIMARY|1|id|A|0|<nil>|<nil>||BTREE||",
-		"show_index|1|cIdx|1|c|A|0|<nil>|<nil>|YES|HASH||index_comment_for_cIdx",
-		"show_index|1|idx1|1|id|A|0|<nil>|<nil>|YES|HASH||",
-		"show_index|1|idx2|1|id|A|0|<nil>|<nil>|YES|BTREE||idx",
-		"show_index|1|idx3|1|id|A|0|<nil>|<nil>|YES|HASH||idx",
-		"show_index|1|idx4|1|id|A|0|<nil>|<nil>|YES|BTREE||idx",
-		"show_index|1|idx5|1|id|A|0|<nil>|<nil>|YES|BTREE||idx",
-		"show_index|1|idx6|1|id|A|0|<nil>|<nil>|YES|HASH||",
-		"show_index|1|idx7|1|id|A|0|<nil>|<nil>|YES|BTREE||",
+		"show_index|0|PRIMARY|1|id|A|0|<nil>|<nil>||BTREE| |NULL",
+		"show_index|1|cIdx|1|c|A|0|<nil>|<nil>|YES|HASH||index_comment_for_cIdx|NULL",
+		"show_index|1|idx1|1|id|A|0|<nil>|<nil>|YES|HASH| |NULL",
+		"show_index|1|idx2|1|id|A|0|<nil>|<nil>|YES|BTREE||idx|NULL",
+		"show_index|1|idx3|1|id|A|0|<nil>|<nil>|YES|HASH||idx|NULL",
+		"show_index|1|idx4|1|id|A|0|<nil>|<nil>|YES|BTREE||idx|NULL",
+		"show_index|1|idx5|1|id|A|0|<nil>|<nil>|YES|BTREE||idx|NULL",
+		"show_index|1|idx6|1|id|A|0|<nil>|<nil>|YES|HASH| |NULL",
+		"show_index|1|idx7|1|id|A|0|<nil>|<nil>|YES|BTREE| |NULL",
+		"show_index|1|expr_idx|1|NULL|A|0|<nil>|<nil>|YES|BTREE| |(`id` * 2 + 1)",
 	))
 
 	// For show like with escape
@@ -503,7 +514,7 @@ func (s *seqTestSuite) TestShow(c *C) {
 	tk.MustQuery("show create table t").Check(testutil.RowsWithSep("|",
 		"t CREATE TABLE `t` (\n"+
 			"  `a` int(11) DEFAULT NULL\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"+"\nPARTITION BY RANGE ( `a` ) (\n  PARTITION p0 VALUES LESS THAN (10),\n  PARTITION p1 VALUES LESS THAN (20),\n  PARTITION p2 VALUES LESS THAN (MAXVALUE)\n)",
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"+"\nPARTITION BY RANGE ( `a` ) (\n  PARTITION `p0` VALUES LESS THAN (10),\n  PARTITION `p1` VALUES LESS THAN (20),\n  PARTITION `p2` VALUES LESS THAN (MAXVALUE)\n)",
 	))
 
 	tk.MustExec(`drop table if exists t`)
@@ -526,7 +537,7 @@ func (s *seqTestSuite) TestShow(c *C) {
 			"  `b` int(11) DEFAULT NULL,\n"+
 			"  `c` char(1) DEFAULT NULL,\n"+
 			"  `d` int(11) DEFAULT NULL\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"+"\nPARTITION BY RANGE COLUMNS(a,d,c) (\n  PARTITION p0 VALUES LESS THAN (5,10,\"ggg\"),\n  PARTITION p1 VALUES LESS THAN (10,20,\"mmm\"),\n  PARTITION p2 VALUES LESS THAN (15,30,\"sss\"),\n  PARTITION p3 VALUES LESS THAN (50,MAXVALUE,MAXVALUE)\n)",
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"+"\nPARTITION BY RANGE COLUMNS(a,d,c) (\n  PARTITION `p0` VALUES LESS THAN (5,10,\"ggg\"),\n  PARTITION `p1` VALUES LESS THAN (10,20,\"mmm\"),\n  PARTITION `p2` VALUES LESS THAN (15,30,\"sss\"),\n  PARTITION `p3` VALUES LESS THAN (50,MAXVALUE,MAXVALUE)\n)",
 	))
 
 	// Test hash partition
@@ -593,6 +604,21 @@ func (s *seqTestSuite) TestShow(c *C) {
 		"c8|datetime|YES||CURRENT_TIMESTAMP|DEFAULT_GENERATED on update CURRENT_TIMESTAMP",
 		"c9|year(4)|YES||2014|",
 	))
+
+	// Test if 'show [status|variables]' is sorted by Variable_name (#14542)
+	sqls := []string{
+		"show global status;",
+		"show session status;",
+		"show global variables",
+		"show session variables"}
+
+	for _, sql := range sqls {
+		res := tk.MustQuery(sql)
+		c.Assert(res, NotNil)
+		sorted := tk.MustQuery(sql).Sort()
+		c.Assert(sorted, NotNil)
+		c.Check(res, DeepEquals, sorted)
+	}
 }
 
 func (s *seqTestSuite) TestShowStatsHealthy(c *C) {
@@ -654,6 +680,24 @@ func (s *seqTestSuite) TestIndexDoubleReadClose(c *C) {
 	atomic.StoreInt32(&executor.LookupTableTaskChannelSize, originSize)
 }
 
+// TestIndexMergeReaderClose checks that when a partial index worker failed to start, the goroutine doesn't
+// leak.
+func (s *seqTestSuite) TestIndexMergeReaderClose(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int)")
+	tk.MustExec("create index idx1 on t(a)")
+	tk.MustExec("create index idx2 on t(b)")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/startPartialIndexWorkerErr", "return"), IsNil)
+	err := tk.QueryToErr("select /*+ USE_INDEX_MERGE(t, idx1, idx2) */ * from t where a > 10 or b < 100")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/startPartialIndexWorkerErr"), IsNil)
+	c.Assert(err, NotNil)
+	c.Check(checkGoroutineExists("fetchLoop"), IsFalse)
+	c.Check(checkGoroutineExists("fetchHandles"), IsFalse)
+	c.Check(checkGoroutineExists("waitPartialWorkersAndCloseFetchChan"), IsFalse)
+}
+
 func (s *seqTestSuite) TestParallelHashAggClose(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec(`use test;`)
@@ -661,10 +705,10 @@ func (s *seqTestSuite) TestParallelHashAggClose(c *C) {
 	tk.MustExec("create table t(a int, b int)")
 	tk.MustExec("insert into t values(1,1),(2,2)")
 	// desc select sum(a) from (select cast(t.a as signed) as a, b from t) t group by b
-	// HashAgg_8              | 2.40  | root | group by:t.b, funcs:sum(t.a)
-	// └─Projection_9         | 3.00  | root | cast(test.t.a), test.t.b
-	//   └─TableReader_11     | 3.00  | root | data:TableScan_10
-	//     └─TableScan_10     | 3.00  | cop[tikv]  | table:t, range:[-inf,+inf], keep order:fa$se, stats:pseudo |
+	// HashAgg_8                | 2.40  | root       | group by:t.b, funcs:sum(t.a)
+	// └─Projection_9           | 3.00  | root       | cast(test.t.a), test.t.b
+	//   └─TableReader_11       | 3.00  | root       | data:TableFullScan_10
+	//     └─TableFullScan_10   | 3.00  | cop[tikv]  | table:t, keep order:fa$se, stats:pseudo |
 
 	// Goroutine should not leak when error happen.
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/parallelHashAggError", `return(true)`), IsNil)
@@ -753,6 +797,43 @@ func (s *seqTestSuite) TestAdminShowNextID(c *C) {
 	tk.MustExec("insert test1.tt values ()")
 	r = tk.MustQuery("admin show tt next_row_id")
 	r.Check(testkit.Rows("test1 tt id 41"))
+}
+
+func (s *seqTestSuite) TestNoHistoryWhenDisableRetry(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists history")
+	tk.MustExec("create table history (a int)")
+	tk.MustExec("set @@autocommit = 0")
+
+	// retry_limit = 0 will not add history.
+	tk.MustExec("set @@tidb_retry_limit = 0")
+	tk.MustExec("insert history values (1)")
+	c.Assert(session.GetHistory(tk.Se).Count(), Equals, 0)
+
+	// Disable auto_retry will add history for auto committed only
+	tk.MustExec("set @@autocommit = 1")
+	tk.MustExec("set @@tidb_retry_limit = 10")
+	tk.MustExec("set @@tidb_disable_txn_auto_retry = 1")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/keepHistory", `return(true)`), IsNil)
+	tk.MustExec("insert history values (1)")
+	c.Assert(session.GetHistory(tk.Se).Count(), Equals, 1)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/keepHistory"), IsNil)
+	tk.MustExec("begin")
+	tk.MustExec("insert history values (1)")
+	c.Assert(session.GetHistory(tk.Se).Count(), Equals, 0)
+	tk.MustExec("commit")
+
+	// Enable auto_retry will add history for both.
+	tk.MustExec("set @@tidb_disable_txn_auto_retry = 0")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/keepHistory", `return(true)`), IsNil)
+	tk.MustExec("insert history values (1)")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/keepHistory"), IsNil)
+	c.Assert(session.GetHistory(tk.Se).Count(), Equals, 1)
+	tk.MustExec("begin")
+	tk.MustExec("insert history values (1)")
+	c.Assert(session.GetHistory(tk.Se).Count(), Equals, 2)
+	tk.MustExec("commit")
 }
 
 func (s *seqTestSuite) TestPrepareMaxParamCountCheck(c *C) {
@@ -1076,7 +1157,7 @@ func (s *seqTestSuite1) TestCoprocessorPriority(c *C) {
 	cli.mu.Unlock()
 }
 
-func (s *seqTestSuite) TestAutoIDInRetry(c *C) {
+func (s *seqTestSuite) TestAutoIncIDInRetry(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (id int not null auto_increment primary key)")
@@ -1087,12 +1168,108 @@ func (s *seqTestSuite) TestAutoIDInRetry(c *C) {
 	tk.MustExec("insert into t values (),()")
 	tk.MustExec("insert into t values ()")
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/mockCommitRetryForAutoID", `return(true)`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/mockCommitRetryForAutoIncID", `return(true)`), IsNil)
 	tk.MustExec("commit")
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/mockCommitRetryForAutoID"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/mockCommitRetryForAutoIncID"), IsNil)
 
 	tk.MustExec("insert into t values ()")
 	tk.MustQuery(`select * from t`).Check(testkit.Rows("1", "2", "3", "4", "5"))
+}
+
+func (s *seqTestSuite) TestAutoRandIDRetry(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
+	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
+	tk.MustExec("create database if not exists auto_random_retry")
+	tk.MustExec("use auto_random_retry")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int auto_random(3) primary key)")
+
+	extractMaskedOrderedHandles := func() []int64 {
+		handles, err := ddltestutil.ExtractAllTableHandles(tk.Se, "auto_random_retry", "t")
+		c.Assert(err, IsNil)
+		return testutil.ConfigTestUtils.MaskSortHandles(handles, 3, mysql.TypeLong)
+	}
+
+	tk.MustExec("set @@tidb_disable_txn_auto_retry = 0")
+	tk.MustExec("set @@tidb_retry_limit = 10")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values ()")
+	tk.MustExec("insert into t values (),()")
+	tk.MustExec("insert into t values ()")
+
+	session.ResetMockAutoRandIDRetryCount(5)
+	fpName := "github.com/pingcap/tidb/session/mockCommitRetryForAutoRandID"
+	c.Assert(failpoint.Enable(fpName, `return(true)`), IsNil)
+	tk.MustExec("commit")
+	c.Assert(failpoint.Disable(fpName), IsNil)
+	tk.MustExec("insert into t values ()")
+	maskedHandles := extractMaskedOrderedHandles()
+	c.Assert(maskedHandles, DeepEquals, []int64{1, 2, 3, 4, 5})
+
+	session.ResetMockAutoRandIDRetryCount(11)
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values ()")
+	c.Assert(failpoint.Enable(fpName, `return(true)`), IsNil)
+	// Insertion failure will skip the 6 in retryInfo.
+	tk.MustGetErrCode("commit", mysql.ErrTxnRetryable)
+	c.Assert(failpoint.Disable(fpName), IsNil)
+
+	tk.MustExec("insert into t values ()")
+	maskedHandles = extractMaskedOrderedHandles()
+	c.Assert(maskedHandles, DeepEquals, []int64{1, 2, 3, 4, 5, 7})
+}
+
+func (s *seqTestSuite) TestAutoRandRecoverTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
+	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
+	tk.MustExec("create database if not exists test_recover")
+	tk.MustExec("use test_recover")
+	tk.MustExec("drop table if exists t_recover_auto_rand")
+	defer func(originGC bool) {
+		if originGC {
+			ddl.EmulatorGCEnable()
+		} else {
+			ddl.EmulatorGCDisable()
+		}
+	}(ddl.IsEmulatorGCEnable())
+
+	// Disable emulator GC.
+	// Otherwise emulator GC will delete table record as soon as possible after execute drop table ddl.
+	ddl.EmulatorGCDisable()
+	gcTimeFormat := "20060102-15:04:05 -0700 MST"
+	timeBeforeDrop := time.Now().Add(0 - time.Duration(48*60*60*time.Second)).Format(gcTimeFormat)
+	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
+			       ON DUPLICATE KEY
+			       UPDATE variable_value = '%[1]s'`
+
+	// Set GC safe point.
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+	err := gcutil.EnableGC(tk.Se)
+	c.Assert(err, IsNil)
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"), IsNil)
+	}()
+	const autoRandIDStep = 5000
+	stp := autoid.GetStep()
+	autoid.SetStep(autoRandIDStep)
+	defer autoid.SetStep(stp)
+
+	// Check rebase auto_random id.
+	tk.MustExec("create table t_recover_auto_rand (a int auto_random(5) primary key);")
+	tk.MustExec("insert into t_recover_auto_rand values (),(),()")
+	tk.MustExec("drop table t_recover_auto_rand")
+	tk.MustExec("recover table t_recover_auto_rand")
+	tk.MustExec("insert into t_recover_auto_rand values (),(),()")
+	hs, err := ddltestutil.ExtractAllTableHandles(tk.Se, "test_recover", "t_recover_auto_rand")
+	c.Assert(err, IsNil)
+	ordered := testutil.ConfigTestUtils.MaskSortHandles(hs, 5, mysql.TypeLong)
+
+	c.Assert(ordered, DeepEquals, []int64{1, 2, 3, autoRandIDStep + 1, autoRandIDStep + 2, autoRandIDStep + 3})
 }
 
 func (s *seqTestSuite) TestMaxDeltaSchemaCount(c *C) {
@@ -1121,4 +1298,219 @@ func (s *seqTestSuite) TestMaxDeltaSchemaCount(c *C) {
 	tk.MustExec("use test")
 	c.Assert(variable.GetMaxDeltaSchemaCount(), Equals, int64(2048))
 	tk.MustQuery("select @@global.tidb_max_delta_schema_count").Check(testkit.Rows("2048"))
+}
+
+func (s *seqTestSuite) TestOOMPanicInHashJoinWhenFetchBuildRows(c *C) {
+	fpName := "github.com/pingcap/tidb/executor/errorFetchBuildSideRowsMockOOMPanic"
+	c.Assert(failpoint.Enable(fpName, `panic("ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable(fpName), IsNil)
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(c1 int, c2 int)")
+	tk.MustExec("insert into t values(1,1),(2,2)")
+	err := tk.QueryToErr("select * from t as t2  join t as t1 where t1.c1=t2.c1")
+	c.Assert(err.Error(), Equals, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")
+}
+
+type testOOMSuite struct {
+	store kv.Storage
+	do    *domain.Domain
+	oom   *oomCapturer
+}
+
+func (s *testOOMSuite) SetUpSuite(c *C) {
+	testleak.BeforeTest()
+	s.registerHook()
+	var err error
+	s.store, err = mockstore.NewMockTikvStore()
+	c.Assert(err, IsNil)
+	domain.RunAutoAnalyze = false
+	s.do, err = session.BootstrapSession(s.store)
+	c.Assert(err, IsNil)
+}
+
+func (s *testOOMSuite) TearDownSuite(c *C) {
+	s.do.Close()
+	s.store.Close()
+}
+
+func (s *testOOMSuite) registerHook() {
+	conf := &log.Config{Level: os.Getenv("log_level"), File: log.FileLogConfig{}}
+	_, r, _ := log.InitLogger(conf)
+	s.oom = &oomCapturer{r.Core, "", sync.Mutex{}}
+	lg := zap.New(s.oom)
+	log.ReplaceGlobals(lg, r)
+}
+
+func (s *testOOMSuite) TestDistSQLMemoryControl(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int, a int, b int, index idx_a(`a`))")
+	tk.MustExec("insert into t values (1,1,1), (2,2,2), (3,3,3)")
+
+	log.SetLevel(zap.WarnLevel)
+	s.oom.tracker = ""
+	tk.MustQuery("select * from t")
+	c.Assert(s.oom.tracker, Equals, "")
+	tk.Se.GetSessionVars().MemQuotaDistSQL = 1
+	tk.MustQuery("select * from t")
+	c.Assert(s.oom.tracker, Equals, "TableReader_5")
+	tk.Se.GetSessionVars().MemQuotaDistSQL = -1
+
+	s.oom.tracker = ""
+	tk.MustQuery("select a from t")
+	c.Assert(s.oom.tracker, Equals, "")
+	tk.Se.GetSessionVars().MemQuotaDistSQL = 1
+	tk.MustQuery("select a from t use index(idx_a)")
+	c.Assert(s.oom.tracker, Equals, "IndexReader_5")
+	tk.Se.GetSessionVars().MemQuotaDistSQL = -1
+
+	s.oom.tracker = ""
+	tk.MustQuery("select * from t")
+	c.Assert(s.oom.tracker, Equals, "")
+	tk.Se.GetSessionVars().MemQuotaIndexLookupReader = 1
+	tk.MustQuery("select * from t use index(idx_a)")
+	c.Assert(s.oom.tracker, Equals, "IndexLookUp_6")
+	tk.Se.GetSessionVars().MemQuotaIndexLookupReader = -1
+}
+
+func (s *testOOMSuite) TestMemTracker4UpdateExec(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_MemTracker4UpdateExec (id int, a int, b int, index idx_a(`a`))")
+
+	log.SetLevel(zap.InfoLevel)
+	s.oom.tracker = ""
+	tk.MustExec("insert into t_MemTracker4UpdateExec values (1,1,1), (2,2,2), (3,3,3)")
+	c.Assert(s.oom.tracker, Equals, "")
+	tk.Se.GetSessionVars().MemQuotaQuery = 244
+	tk.MustExec("update t_MemTracker4UpdateExec set a = 4")
+	c.Assert(s.oom.tracker, Matches, "expensive_query during bootstrap phase")
+}
+
+func (s *testOOMSuite) TestMemTracker4InsertAndReplaceExec(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_MemTracker4InsertAndReplaceExec (id int, a int, b int, index idx_a(`a`))")
+
+	log.SetLevel(zap.InfoLevel)
+	s.oom.tracker = ""
+	tk.MustExec("insert into t_MemTracker4InsertAndReplaceExec values (1,1,1), (2,2,2), (3,3,3)")
+	c.Assert(s.oom.tracker, Equals, "")
+	tk.Se.GetSessionVars().MemQuotaQuery = 1
+	tk.MustExec("insert into t_MemTracker4InsertAndReplaceExec values (1,1,1), (2,2,2), (3,3,3)")
+	c.Assert(s.oom.tracker, Matches, "expensive_query during bootstrap phase")
+	tk.Se.GetSessionVars().MemQuotaQuery = -1
+
+	s.oom.tracker = ""
+	tk.MustExec("replace into t_MemTracker4InsertAndReplaceExec values (1,1,1), (2,2,2), (3,3,3)")
+	c.Assert(s.oom.tracker, Equals, "")
+	tk.Se.GetSessionVars().MemQuotaQuery = 1
+	tk.MustExec("replace into t_MemTracker4InsertAndReplaceExec values (1,1,1), (2,2,2), (3,3,3)")
+	c.Assert(s.oom.tracker, Matches, "expensive_query during bootstrap phase")
+	tk.Se.GetSessionVars().MemQuotaQuery = -1
+
+	s.oom.tracker = ""
+	tk.MustExec("insert into t_MemTracker4InsertAndReplaceExec select * from t")
+	c.Assert(s.oom.tracker, Equals, "")
+	tk.Se.GetSessionVars().MemQuotaQuery = 1
+	tk.MustExec("insert into t_MemTracker4InsertAndReplaceExec select * from t")
+	c.Assert(s.oom.tracker, Matches, "expensive_query during bootstrap phase")
+	tk.Se.GetSessionVars().MemQuotaQuery = -1
+
+	s.oom.tracker = ""
+	tk.MustExec("replace into t_MemTracker4InsertAndReplaceExec select * from t")
+	c.Assert(s.oom.tracker, Equals, "")
+	tk.Se.GetSessionVars().MemQuotaQuery = 1
+	tk.MustExec("replace into t_MemTracker4InsertAndReplaceExec select * from t")
+	c.Assert(s.oom.tracker, Matches, "expensive_query during bootstrap phase")
+	tk.Se.GetSessionVars().MemQuotaQuery = -1
+
+	tk.Se.GetSessionVars().DMLBatchSize = 1
+	tk.Se.GetSessionVars().BatchInsert = true
+	s.oom.tracker = ""
+	tk.MustExec("insert into t_MemTracker4InsertAndReplaceExec values (1,1,1), (2,2,2), (3,3,3)")
+	c.Assert(s.oom.tracker, Equals, "")
+	tk.Se.GetSessionVars().MemQuotaQuery = 1
+	tk.MustExec("insert into t_MemTracker4InsertAndReplaceExec values (1,1,1), (2,2,2), (3,3,3)")
+	c.Assert(s.oom.tracker, Matches, "expensive_query during bootstrap phase")
+	tk.Se.GetSessionVars().MemQuotaQuery = -1
+
+	s.oom.tracker = ""
+	tk.MustExec("replace into t_MemTracker4InsertAndReplaceExec values (1,1,1), (2,2,2), (3,3,3)")
+	c.Assert(s.oom.tracker, Equals, "")
+	tk.Se.GetSessionVars().MemQuotaQuery = 1
+	tk.MustExec("replace into t_MemTracker4InsertAndReplaceExec values (1,1,1), (2,2,2), (3,3,3)")
+	c.Assert(s.oom.tracker, Matches, "expensive_query during bootstrap phase")
+	tk.Se.GetSessionVars().MemQuotaQuery = -1
+}
+
+func (s *testOOMSuite) TestMemTracker4DeleteExec(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table MemTracker4DeleteExec1 (id int, a int, b int, index idx_a(`a`))")
+	tk.MustExec("create table MemTracker4DeleteExec2 (id int, a int, b int, index idx_a(`a`))")
+
+	// delete from single table
+	log.SetLevel(zap.InfoLevel)
+	tk.MustExec("insert into MemTracker4DeleteExec1 values(1,1,1), (2,2,2), (3,3,3), (4,4,4), (5,5,5)")
+	s.oom.tracker = ""
+	tk.MustExec("delete from MemTracker4DeleteExec1")
+	c.Assert(s.oom.tracker, Equals, "")
+	tk.MustExec("insert into MemTracker4DeleteExec1 values (1,1,1), (2,2,2), (3,3,3)")
+	tk.Se.GetSessionVars().MemQuotaQuery = 1
+	tk.MustExec("delete from MemTracker4DeleteExec1")
+	c.Assert(s.oom.tracker, Matches, "expensive_query during bootstrap phase")
+
+	// delete from multiple table
+	tk.Se.GetSessionVars().MemQuotaQuery = 100000
+	tk.MustExec("insert into MemTracker4DeleteExec1 values(1,1,1)")
+	tk.MustExec("insert into MemTracker4DeleteExec2 values(1,1,1)")
+	s.oom.tracker = ""
+	tk.MustExec("delete MemTracker4DeleteExec1, MemTracker4DeleteExec2 from MemTracker4DeleteExec1 join MemTracker4DeleteExec2 on MemTracker4DeleteExec1.a=MemTracker4DeleteExec2.a")
+	c.Assert(s.oom.tracker, Equals, "")
+	tk.MustExec("insert into MemTracker4DeleteExec1 values(1,1,1)")
+	tk.MustExec("insert into MemTracker4DeleteExec2 values(1,1,1)")
+	s.oom.tracker = ""
+	tk.Se.GetSessionVars().MemQuotaQuery = 10000
+	tk.MustExec("delete MemTracker4DeleteExec1, MemTracker4DeleteExec2 from MemTracker4DeleteExec1 join MemTracker4DeleteExec2 on MemTracker4DeleteExec1.a=MemTracker4DeleteExec2.a")
+	c.Assert(s.oom.tracker, Equals, "expensive_query during bootstrap phase")
+}
+
+type oomCapturer struct {
+	zapcore.Core
+	tracker string
+	mu      sync.Mutex
+}
+
+func (h *oomCapturer) Write(entry zapcore.Entry, fields []zapcore.Field) error {
+	if strings.Contains(entry.Message, "memory exceeds quota") {
+		err, _ := fields[0].Interface.(error)
+		str := err.Error()
+		begin := strings.Index(str, "8001]")
+		if begin == -1 {
+			panic("begin not found")
+		}
+		end := strings.Index(str, " holds")
+		if end == -1 {
+			panic("end not found")
+		}
+		h.tracker = str[begin+len("8001]") : end]
+		return nil
+	}
+
+	h.mu.Lock()
+	h.tracker = entry.Message
+	h.mu.Unlock()
+	return nil
+}
+
+func (h *oomCapturer) Check(e zapcore.Entry, ce *zapcore.CheckedEntry) *zapcore.CheckedEntry {
+	if h.Enabled(e.Level) {
+		return ce.AddCore(e, h)
+	}
+	return ce
 }

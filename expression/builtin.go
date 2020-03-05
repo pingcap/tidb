@@ -24,17 +24,22 @@
 package expression
 
 import (
+	"sort"
+	"strings"
 	"sync"
 
+	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/opcode"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -45,19 +50,25 @@ type baseBuiltinFunc struct {
 	ctx          sessionctx.Context
 	tp           *types.FieldType
 	pbCode       tipb.ScalarFuncSig
+	ctor         collate.Collator
+
+	childrenVectorized bool
+	childrenReversed   bool
 
 	childrenVectorizedOnce *sync.Once
-	childrenVectorized     bool
+	childrenReversedOnce   *sync.Once
+
+	collationInfo
 }
 
 func (b *baseBuiltinFunc) PbCode() tipb.ScalarFuncSig {
 	return b.pbCode
 }
 
-// implicitArgs returns the implicit arguments of this function.
-// implicit arguments means some functions contain extra inner fields which will not
+// metadata returns the metadata of a function.
+// metadata means some functions contain extra inner fields which will not
 // contain in `tipb.Expr.children` but must be pushed down to coprocessor
-func (b *baseBuiltinFunc) implicitArgs() []types.Datum {
+func (b *baseBuiltinFunc) metadata() proto.Message {
 	// We will not use a field to store them because of only
 	// a few functions contain implicit parameters
 	return nil
@@ -67,18 +78,31 @@ func (b *baseBuiltinFunc) setPbCode(c tipb.ScalarFuncSig) {
 	b.pbCode = c
 }
 
+func (b *baseBuiltinFunc) setCollator(ctor collate.Collator) {
+	b.ctor = ctor
+}
+
+func (b *baseBuiltinFunc) collator() collate.Collator {
+	return b.ctor
+}
+
 func newBaseBuiltinFunc(ctx sessionctx.Context, args []Expression) baseBuiltinFunc {
 	if ctx == nil {
 		panic("ctx should not be nil")
 	}
-	return baseBuiltinFunc{
+	derivedCharset, derivedCollate, derivedFlen := DeriveCollationFromExprs(ctx, args...)
+	bf := baseBuiltinFunc{
 		bufAllocator:           newLocalSliceBuffer(len(args)),
 		childrenVectorizedOnce: new(sync.Once),
+		childrenReversedOnce:   new(sync.Once),
 
 		args: args,
 		ctx:  ctx,
 		tp:   types.NewFieldType(mysql.TypeUnspecified),
 	}
+	bf.SetCharsetAndCollation(derivedCharset, derivedCollate, derivedFlen)
+	bf.setCollator(collate.GetCollator(derivedCollate))
+	return bf
 }
 
 // newBaseBuiltinFuncWithTp creates a built-in function signature with specified types of arguments and the return type of the function.
@@ -91,6 +115,7 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, args []Expression, retType
 	if ctx == nil {
 		panic("ctx should not be nil")
 	}
+
 	for i := range args {
 		switch argTps[i] {
 		case types.ETInt:
@@ -111,6 +136,10 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, args []Expression, retType
 			args[i] = WrapWithCastAsJSON(ctx, args[i])
 		}
 	}
+
+	// derive collation information for string function, and we must do it
+	// before doing implicit cast.
+	derivedCharset, derivedCollate, derivedFlen := DeriveCollationFromExprs(ctx, args...)
 	var fieldType *types.FieldType
 	switch retType {
 	case types.ETInt:
@@ -137,8 +166,10 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, args []Expression, retType
 	case types.ETString:
 		fieldType = &types.FieldType{
 			Tp:      mysql.TypeVarString,
-			Flen:    0,
 			Decimal: types.UnspecifiedLength,
+			Charset: derivedCharset,
+			Collate: derivedCollate,
+			Flen:    derivedFlen,
 		}
 	case types.ETDatetime:
 		fieldType = &types.FieldType{
@@ -173,17 +204,19 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, args []Expression, retType
 	}
 	if mysql.HasBinaryFlag(fieldType.Flag) && fieldType.Tp != mysql.TypeJSON {
 		fieldType.Charset, fieldType.Collate = charset.CharsetBin, charset.CollationBin
-	} else {
-		fieldType.Charset, fieldType.Collate = charset.GetDefaultCharsetAndCollate()
 	}
-	return baseBuiltinFunc{
+	bf = baseBuiltinFunc{
 		bufAllocator:           newLocalSliceBuffer(len(args)),
 		childrenVectorizedOnce: new(sync.Once),
+		childrenReversedOnce:   new(sync.Once),
 
 		args: args,
 		ctx:  ctx,
 		tp:   fieldType,
 	}
+	bf.SetCharsetAndCollation(derivedCharset, derivedCollate, derivedFlen)
+	bf.setCollator(collate.GetCollator(derivedCollate))
+	return bf
 }
 
 func (b *baseBuiltinFunc) getArgs() []Expression {
@@ -235,7 +268,7 @@ func (b *baseBuiltinFunc) evalDecimal(row chunk.Row) (*types.MyDecimal, bool, er
 }
 
 func (b *baseBuiltinFunc) evalTime(row chunk.Row) (types.Time, bool, error) {
-	return types.Time{}, false, errors.Errorf("baseBuiltinFunc.evalTime() should never be called, please contact the TiDB team for help")
+	return types.ZeroTime, false, errors.Errorf("baseBuiltinFunc.evalTime() should never be called, please contact the TiDB team for help")
 }
 
 func (b *baseBuiltinFunc) evalDuration(row chunk.Row) (types.Duration, bool, error) {
@@ -248,6 +281,27 @@ func (b *baseBuiltinFunc) evalJSON(row chunk.Row) (json.BinaryJSON, bool, error)
 
 func (b *baseBuiltinFunc) vectorized() bool {
 	return false
+}
+
+func (b *baseBuiltinFunc) supportReverseEval() bool {
+	return false
+}
+
+func (b *baseBuiltinFunc) isChildrenReversed() bool {
+	b.childrenReversedOnce.Do(func() {
+		b.childrenReversed = true
+		for _, arg := range b.args {
+			if !arg.SupportReverseEval() {
+				b.childrenReversed = false
+				break
+			}
+		}
+	})
+	return b.childrenReversed
+}
+
+func (b *baseBuiltinFunc) reverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (types.Datum, error) {
+	return types.Datum{}, errors.Errorf("baseBuiltinFunc.reverseEvalInt() should never be called, please contact the TiDB team for help")
 }
 
 func (b *baseBuiltinFunc) isChildrenVectorized() bool {
@@ -305,6 +359,8 @@ func (b *baseBuiltinFunc) cloneFrom(from *baseBuiltinFunc) {
 	b.pbCode = from.pbCode
 	b.bufAllocator = newLocalSliceBuffer(len(b.args))
 	b.childrenVectorizedOnce = new(sync.Once)
+	b.childrenReversedOnce = new(sync.Once)
+	b.ctor = from.ctor
 }
 
 func (b *baseBuiltinFunc) Clone() builtinFunc {
@@ -319,13 +375,10 @@ type baseBuiltinCastFunc struct {
 	inUnion bool
 }
 
-// implicitArgs returns the implicit arguments of cast functions
-func (b *baseBuiltinCastFunc) implicitArgs() []types.Datum {
-	args := b.baseBuiltinFunc.implicitArgs()
-	if b.inUnion {
-		args = append(args, types.NewIntDatum(1))
-	} else {
-		args = append(args, types.NewIntDatum(0))
+// metadata returns the metadata of cast functions
+func (b *baseBuiltinCastFunc) metadata() proto.Message {
+	args := &tipb.InUnionMetadata{
+		InUnion: b.inUnion,
 	}
 	return args
 }
@@ -372,9 +425,22 @@ type vecBuiltinFunc interface {
 	vecEvalJSON(input *chunk.Chunk, result *chunk.Column) error
 }
 
+// reverseBuiltinFunc evaluates the exactly one column value in the function when given a result for expression.
+// For example, the builtinFunc is builtinArithmeticPlusRealSig(2.3, builtinArithmeticMinusRealSig(Column, 3.4))
+// when given the result like 1.0, then the ReverseEval should evaluate the column value 1.0 - 2.3 + 3.4 = 2.1
+type reverseBuiltinFunc interface {
+	// supportReverseEval checks whether the builtinFunc support reverse evaluation.
+	supportReverseEval() bool
+	// isChildrenReversed checks whether the builtinFunc's children support reverse evaluation.
+	isChildrenReversed() bool
+	// reverseEval evaluates the only one column value with given function result.
+	reverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error)
+}
+
 // builtinFunc stands for a particular function signature.
 type builtinFunc interface {
 	vecBuiltinFunc
+	reverseBuiltinFunc
 
 	// evalInt evaluates int result of builtinFunc by given row.
 	evalInt(row chunk.Row) (val int64, isNull bool, err error)
@@ -402,12 +468,22 @@ type builtinFunc interface {
 	setPbCode(tipb.ScalarFuncSig)
 	// PbCode returns PbCode of this signature.
 	PbCode() tipb.ScalarFuncSig
-	// implicitArgs returns the implicit parameters of a function.
-	// implicit arguments means some functions contain extra inner fields which will not
+	// setCollator sets collator for signature.
+	setCollator(ctor collate.Collator)
+	// collator returns collator of this signature.
+	collator() collate.Collator
+	// metadata returns the metadata of a function.
+	// metadata means some functions contain extra inner fields which will not
 	// contain in `tipb.Expr.children` but must be pushed down to coprocessor
-	implicitArgs() []types.Datum
+	metadata() proto.Message
 	// Clone returns a copy of itself.
 	Clone() builtinFunc
+
+	CollationInfo
+}
+
+type builtinFuncNew interface {
+	evalIntWithCtx(ctx sessionctx.Context, row chunk.Row) (val int64, isNull bool, err error)
 }
 
 // baseFunctionClass will be contained in every struct that implement functionClass interface.
@@ -588,6 +664,7 @@ var funcs = map[string]functionClass{
 	ast.CharLength:      &charLengthFunctionClass{baseFunctionClass{ast.CharLength, 1, 1}},
 	ast.CharacterLength: &charLengthFunctionClass{baseFunctionClass{ast.CharacterLength, 1, 1}},
 	ast.FindInSet:       &findInSetFunctionClass{baseFunctionClass{ast.FindInSet, 2, 2}},
+	ast.WeightString:    &weightStringFunctionClass{baseFunctionClass{ast.WeightString, 1, 3}},
 
 	// information functions
 	ast.ConnectionID: &connectionIDFunctionClass{baseFunctionClass{ast.ConnectionID, 0, 0}},
@@ -727,10 +804,42 @@ var funcs = map[string]functionClass{
 	ast.TiDBIsDDLOwner: &tidbIsDDLOwnerFunctionClass{baseFunctionClass{ast.TiDBIsDDLOwner, 0, 0}},
 	ast.TiDBParseTso:   &tidbParseTsoFunctionClass{baseFunctionClass{ast.TiDBParseTso, 1, 1}},
 	ast.TiDBDecodePlan: &tidbDecodePlanFunctionClass{baseFunctionClass{ast.TiDBDecodePlan, 1, 1}},
+
+	// TiDB Sequence function.
+	ast.NextVal: &nextValFunctionClass{baseFunctionClass{ast.NextVal, 1, 1}},
+	ast.LastVal: &lastValFunctionClass{baseFunctionClass{ast.LastVal, 1, 1}},
+	ast.SetVal:  &setValFunctionClass{baseFunctionClass{ast.SetVal, 2, 2}},
 }
 
 // IsFunctionSupported check if given function name is a builtin sql function.
 func IsFunctionSupported(name string) bool {
 	_, ok := funcs[name]
 	return ok
+}
+
+// GetBuiltinList returns a list of builtin functions
+func GetBuiltinList() []string {
+	res := make([]string, 0, len(funcs))
+	notImplementedFunctions := []string{ast.RowFunc}
+	for funcName := range funcs {
+		skipFunc := false
+		// Skip not implemented functions
+		for _, notImplFunc := range notImplementedFunctions {
+			if funcName == notImplFunc {
+				skipFunc = true
+			}
+		}
+		// Skip literal functions
+		// (their names are not readable: 'tidb`.(dateliteral, for example)
+		// See: https://github.com/pingcap/parser/pull/591
+		if strings.HasPrefix(funcName, "'tidb`.(") {
+			skipFunc = true
+		}
+		if skipFunc {
+			continue
+		}
+		res = append(res, funcName)
+	}
+	sort.Strings(res)
+	return res
 }

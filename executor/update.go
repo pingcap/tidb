@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/memory"
 )
 
 // UpdateExec represents a new update executor.
@@ -42,7 +43,6 @@ type UpdateExec struct {
 
 	rows        [][]types.Datum // The rows fetched from TableExec.
 	newRowsData [][]types.Datum // The new values to be set.
-	fetched     bool
 	cursor      int
 	matched     uint64 // a counter of matched rows during update
 	// tblColPosInfos stores relationship between column ordinal to its table handle.
@@ -50,6 +50,8 @@ type UpdateExec struct {
 	tblColPosInfos            plannercore.TblColPosInfoSlice
 	evalBuffer                chunk.MutRow
 	allAssignmentsAreConstant bool
+	fetched                   bool
+	memTracker                *memory.Tracker
 }
 
 func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema) ([]types.Datum, error) {
@@ -100,7 +102,7 @@ func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema) ([]typ
 		}
 
 		// Update row
-		changed, _, _, err1 := updateRecord(ctx, e.ctx, handle, oldData, newTableData, flags, tbl, false)
+		changed, _, _, err1 := updateRecord(ctx, e.ctx, handle, oldData, newTableData, flags, tbl, false, e.memTracker)
 		if err1 == nil {
 			e.updatedRowKeys[content.TblID][handle] = changed
 			continue
@@ -173,7 +175,9 @@ func (e *UpdateExec) fetchChunkRows(ctx context.Context) error {
 	if !e.allAssignmentsAreConstant {
 		composeFunc = e.composeNewRow
 	}
+	memUsageOfChk := int64(0)
 	for {
+		e.memTracker.Consume(-memUsageOfChk)
 		err := Next(ctx, e.children[0], chk)
 		if err != nil {
 			return err
@@ -182,6 +186,9 @@ func (e *UpdateExec) fetchChunkRows(ctx context.Context) error {
 		if chk.NumRows() == 0 {
 			break
 		}
+		memUsageOfChk = chk.MemoryUsage()
+		e.memTracker.Consume(memUsageOfChk)
+		firstRowIdx := globalRowIdx
 		for rowIdx := 0; rowIdx < chk.NumRows(); rowIdx++ {
 			chunkRow := chk.GetRow(rowIdx)
 			datumRow := chunkRow.GetDatumRow(fields)
@@ -193,6 +200,8 @@ func (e *UpdateExec) fetchChunkRows(ctx context.Context) error {
 			e.newRowsData = append(e.newRowsData, newRow)
 			globalRowIdx++
 		}
+		e.memTracker.Consume(types.EstimatedMemUsage(e.rows[firstRowIdx], globalRowIdx-firstRowIdx))
+		e.memTracker.Consume(types.EstimatedMemUsage(e.newRowsData[firstRowIdx], globalRowIdx-firstRowIdx))
 		chk = chunk.Renew(chk, e.maxChunkSize)
 	}
 	return nil
@@ -278,6 +287,9 @@ func (e *UpdateExec) Close() error {
 
 // Open implements the Executor Open interface.
 func (e *UpdateExec) Open(ctx context.Context) error {
+	e.memTracker = memory.NewTracker(e.id, -1)
+	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+
 	return e.children[0].Open(ctx)
 }
 

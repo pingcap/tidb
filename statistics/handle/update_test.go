@@ -375,7 +375,7 @@ func (s *testStatsSuite) TestAutoUpdate(c *C) {
 	testKit.MustExec("create table t (a varchar(20))")
 
 	handle.AutoAnalyzeMinCnt = 0
-	testKit.MustExec("set global tidb_auto_analyze_ratio = 0.6")
+	testKit.MustExec("set global tidb_auto_analyze_ratio = 0.2")
 	defer func() {
 		handle.AutoAnalyzeMinCnt = 1000
 		testKit.MustExec("set global tidb_auto_analyze_ratio = 0.0")
@@ -393,18 +393,18 @@ func (s *testStatsSuite) TestAutoUpdate(c *C) {
 	stats := h.GetTableStats(tableInfo)
 	c.Assert(stats.Count, Equals, int64(0))
 
-	_, err = testKit.Exec("insert into t values ('ss')")
+	_, err = testKit.Exec("insert into t values ('ss'), ('ss'), ('ss'), ('ss'), ('ss')")
 	c.Assert(err, IsNil)
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(is), IsNil)
 	h.HandleAutoAnalyze(is)
 	c.Assert(h.Update(is), IsNil)
 	stats = h.GetTableStats(tableInfo)
-	c.Assert(stats.Count, Equals, int64(1))
+	c.Assert(stats.Count, Equals, int64(5))
 	c.Assert(stats.ModifyCount, Equals, int64(0))
 	for _, item := range stats.Columns {
-		// TotColSize = 2(length of 'ss') + 1(size of len byte).
-		c.Assert(item.TotColSize, Equals, int64(3))
+		// TotColSize = 5*(2(length of 'ss') + 1(size of len byte)).
+		c.Assert(item.TotColSize, Equals, int64(15))
 		break
 	}
 
@@ -418,7 +418,7 @@ func (s *testStatsSuite) TestAutoUpdate(c *C) {
 	h.HandleAutoAnalyze(is)
 	c.Assert(h.Update(is), IsNil)
 	stats = h.GetTableStats(tableInfo)
-	c.Assert(stats.Count, Equals, int64(2))
+	c.Assert(stats.Count, Equals, int64(6))
 	c.Assert(stats.ModifyCount, Equals, int64(1))
 
 	_, err = testKit.Exec("insert into t values ('fff')")
@@ -428,7 +428,7 @@ func (s *testStatsSuite) TestAutoUpdate(c *C) {
 	h.HandleAutoAnalyze(is)
 	c.Assert(h.Update(is), IsNil)
 	stats = h.GetTableStats(tableInfo)
-	c.Assert(stats.Count, Equals, int64(3))
+	c.Assert(stats.Count, Equals, int64(7))
 	c.Assert(stats.ModifyCount, Equals, int64(0))
 
 	_, err = testKit.Exec("insert into t values ('eee')")
@@ -438,12 +438,12 @@ func (s *testStatsSuite) TestAutoUpdate(c *C) {
 	h.HandleAutoAnalyze(is)
 	c.Assert(h.Update(is), IsNil)
 	stats = h.GetTableStats(tableInfo)
-	c.Assert(stats.Count, Equals, int64(4))
+	c.Assert(stats.Count, Equals, int64(8))
 	// Modify count is non-zero means that we do not analyze the table.
 	c.Assert(stats.ModifyCount, Equals, int64(1))
 	for _, item := range stats.Columns {
-		// TotColSize = 6, because the table has not been analyzed, and insert statement will add 3(length of 'eee') to TotColSize.
-		c.Assert(item.TotColSize, Equals, int64(15))
+		// TotColSize = 27, because the table has not been analyzed, and insert statement will add 3(length of 'eee') to TotColSize.
+		c.Assert(item.TotColSize, Equals, int64(27))
 		break
 	}
 
@@ -457,7 +457,7 @@ func (s *testStatsSuite) TestAutoUpdate(c *C) {
 	h.HandleAutoAnalyze(is)
 	c.Assert(h.Update(is), IsNil)
 	stats = h.GetTableStats(tableInfo)
-	c.Assert(stats.Count, Equals, int64(4))
+	c.Assert(stats.Count, Equals, int64(8))
 	c.Assert(stats.ModifyCount, Equals, int64(0))
 	hg, ok := stats.Indices[tableInfo.Indices[0].ID]
 	c.Assert(ok, IsTrue)

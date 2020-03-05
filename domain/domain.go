@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/domainutil"
 	"github.com/pingcap/tidb/util/expensivequery"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -207,6 +208,10 @@ func (do *Domain) fetchSchemasWithTables(schemas []*model.DBInfo, m *meta.Meta, 
 				continue
 			}
 			infoschema.ConvertCharsetCollateToLowerCaseIfNeed(tbl)
+			// Check whether the table is in repair mode.
+			if domainutil.RepairInfo.InRepairMode() && domainutil.RepairInfo.CheckAndFetchRepairedTable(di, tbl) {
+				continue
+			}
 			di.Tables = append(di.Tables, tbl)
 		}
 	}
@@ -228,7 +233,7 @@ func isTooOldSchema(usedVersion, newVersion int64) bool {
 // tryLoadSchemaDiffs tries to only load latest schema changes.
 // Return true if the schema is loaded successfully.
 // Return false if the schema can not be loaded by schema diff, then we need to do full load.
-// The second returned value is the delta updated table IDs.
+// The second returned value is the delta updated table and partition IDs.
 func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64) (bool, []int64, error) {
 	// If there isn't any used version, or used version is too old, we do full load.
 	// And when users use history read feature, we will set usedVersion to initialVersion, then full load is needed.
@@ -348,10 +353,10 @@ func (do *Domain) Reload() error {
 	}
 
 	var (
-		fullLoad        bool
-		changedTableIDs []int64
+		fullLoad                bool
+		changedPhysicalTableIDs []int64
 	)
-	neededSchemaVersion, changedTableIDs, fullLoad, err = do.loadInfoSchema(do.infoHandle, schemaVersion, ver.Ver)
+	neededSchemaVersion, changedPhysicalTableIDs, fullLoad, err = do.loadInfoSchema(do.infoHandle, schemaVersion, ver.Ver)
 	metrics.LoadSchemaDuration.Observe(time.Since(startTime).Seconds())
 	if err != nil {
 		metrics.LoadSchemaCounter.WithLabelValues("failed").Inc()
@@ -363,7 +368,7 @@ func (do *Domain) Reload() error {
 		logutil.BgLogger().Info("full load and reset schema validator")
 		do.SchemaValidator.Reset()
 	}
-	do.SchemaValidator.Update(ver.Ver, schemaVersion, neededSchemaVersion, changedTableIDs)
+	do.SchemaValidator.Update(ver.Ver, schemaVersion, neededSchemaVersion, changedPhysicalTableIDs)
 
 	lease := do.DDL().GetLease()
 	sub := time.Since(startTime)
@@ -451,6 +456,31 @@ func (do *Domain) infoSyncerKeeper() {
 	}
 }
 
+func (do *Domain) topologySyncerKeeper() {
+	defer do.wg.Done()
+	defer recoverInDomain("topologySyncerKeeper", false)
+	ticker := time.NewTicker(infosync.TopologyTimeToRefresh)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			err := do.info.StoreTopologyInfo(context.Background())
+			if err != nil {
+				logutil.BgLogger().Error("refresh topology in loop failed", zap.Error(err))
+			}
+		case <-do.info.TopologyDone():
+			logutil.BgLogger().Info("server topology syncer need to restart")
+			if err := do.info.RestartTopology(context.Background()); err != nil {
+				logutil.BgLogger().Error("server restart failed", zap.Error(err))
+			}
+			logutil.BgLogger().Info("server topology syncer restarted")
+		case <-do.exit:
+			return
+		}
+	}
+}
+
 func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 	defer do.wg.Done()
 	// Lease renewal can run at any frequency.
@@ -523,7 +553,7 @@ func (do *Domain) mustRestartSyncer() error {
 			return err
 		}
 		time.Sleep(time.Second)
-		logutil.BgLogger().Info("restart the schema syncer failed", zap.Error(err))
+		logutil.BgLogger().Error("restart the schema syncer failed", zap.Error(err))
 	}
 }
 
@@ -570,6 +600,7 @@ func (do *Domain) Close() {
 	if do.etcdClient != nil {
 		terror.Log(errors.Trace(do.etcdClient.Close()))
 	}
+
 	do.sysSessionPool.Close()
 	do.slowQuery.Close()
 	do.wg.Wait()
@@ -694,6 +725,10 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 
 	do.wg.Add(1)
 	go do.infoSyncerKeeper()
+
+	do.wg.Add(1)
+	go do.topologySyncerKeeper()
+
 	return nil
 }
 
@@ -810,8 +845,6 @@ func (do *Domain) LoadPrivilegeLoop(ctx sessionctx.Context) error {
 			metrics.LoadPrivilegeCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
 			if err != nil {
 				logutil.BgLogger().Error("load privilege failed", zap.Error(err))
-			} else {
-				logutil.BgLogger().Debug("reload privilege success")
 			}
 		}
 	}()
@@ -860,11 +893,10 @@ func (do *Domain) globalBindHandleWorkerLoop() {
 				if err != nil {
 					logutil.BgLogger().Error("update bindinfo failed", zap.Error(err))
 				}
-				if !variable.TiDBOptOn(variable.CapturePlanBaseline.GetVal()) {
-					continue
-				}
 				do.bindHandle.DropInvalidBindRecord()
-				do.bindHandle.CaptureBaselines()
+				if variable.TiDBOptOn(variable.CapturePlanBaseline.GetVal()) {
+					do.bindHandle.CaptureBaselines()
+				}
 				do.bindHandle.SaveEvolveTasksToStore()
 			}
 		}
@@ -880,6 +912,7 @@ func (do *Domain) handleEvolvePlanTasksLoop(ctx sessionctx.Context) {
 		for {
 			select {
 			case <-do.exit:
+				owner.Cancel()
 				return
 			case <-time.After(bindinfo.Lease):
 			}
@@ -1018,6 +1051,7 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 		select {
 		case <-do.exit:
 			statsHandle.FlushStats()
+			owner.Cancel()
 			return
 			// This channel is sent only by ddl owner.
 		case t := <-statsHandle.DDLEventCh():
@@ -1129,12 +1163,3 @@ var (
 	ErrInfoSchemaChanged = terror.ClassDomain.New(mysql.ErrInfoSchemaChanged,
 		mysql.MySQLErrName[mysql.ErrInfoSchemaChanged]+". "+kv.TxnRetryableMark)
 )
-
-func init() {
-	// Map error codes to mysql error codes.
-	domainMySQLErrCodes := map[terror.ErrCode]uint16{
-		mysql.ErrInfoSchemaExpired: mysql.ErrInfoSchemaExpired,
-		mysql.ErrInfoSchemaChanged: mysql.ErrInfoSchemaChanged,
-	}
-	terror.ErrClassToMySQLCodes[terror.ClassDomain] = domainMySQLErrCodes
-}

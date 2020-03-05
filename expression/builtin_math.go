@@ -21,11 +21,9 @@ import (
 	"fmt"
 	"hash/crc32"
 	"math"
-	"math/rand"
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/parser/mysql"
@@ -89,7 +87,7 @@ var (
 	_ builtinFunc = &builtinLog2Sig{}
 	_ builtinFunc = &builtinLog10Sig{}
 	_ builtinFunc = &builtinRandSig{}
-	_ builtinFunc = &builtinRandWithSeedSig{}
+	_ builtinFunc = &builtinRandWithSeedFirstGenSig{}
 	_ builtinFunc = &builtinPowSig{}
 	_ builtinFunc = &builtinConvSig{}
 	_ builtinFunc = &builtinCRC32Sig{}
@@ -976,8 +974,7 @@ func (c *randFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETReal, argTps...)
 	bt := bf
 	if len(args) == 0 {
-		seed := time.Now().UnixNano()
-		sig = &builtinRandSig{bt, &sync.Mutex{}, rand.New(rand.NewSource(seed))}
+		sig = &builtinRandSig{bt, &sync.Mutex{}, NewWithTime()}
 		sig.setPbCode(tipb.ScalarFuncSig_Rand)
 	} else if _, isConstant := args[0].(*Constant); isConstant {
 		// According to MySQL manual:
@@ -989,25 +986,27 @@ func (c *randFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 			return nil, err
 		}
 		if isNull {
-			seed = time.Now().UnixNano()
+			// When the seed is null we need to use 0 as the seed.
+			// The behavior same as MySQL.
+			seed = 0
 		}
-		sig = &builtinRandSig{bt, &sync.Mutex{}, rand.New(rand.NewSource(seed))}
+		sig = &builtinRandSig{bt, &sync.Mutex{}, NewWithSeed(seed)}
 		sig.setPbCode(tipb.ScalarFuncSig_Rand)
 	} else {
-		sig = &builtinRandWithSeedSig{bt}
-		sig.setPbCode(tipb.ScalarFuncSig_RandWithSeed)
+		sig = &builtinRandWithSeedFirstGenSig{bt}
+		sig.setPbCode(tipb.ScalarFuncSig_RandWithSeedFirstGen)
 	}
 	return sig, nil
 }
 
 type builtinRandSig struct {
 	baseBuiltinFunc
-	mu      *sync.Mutex
-	randGen *rand.Rand
+	mu       *sync.Mutex
+	mysqlRng *MysqlRng
 }
 
 func (b *builtinRandSig) Clone() builtinFunc {
-	newSig := &builtinRandSig{randGen: b.randGen, mu: b.mu}
+	newSig := &builtinRandSig{mysqlRng: b.mysqlRng, mu: b.mu}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
 }
@@ -1016,38 +1015,38 @@ func (b *builtinRandSig) Clone() builtinFunc {
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_rand
 func (b *builtinRandSig) evalReal(row chunk.Row) (float64, bool, error) {
 	b.mu.Lock()
-	res := b.randGen.Float64()
+	res := b.mysqlRng.Gen()
 	b.mu.Unlock()
 	return res, false, nil
 }
 
-type builtinRandWithSeedSig struct {
+type builtinRandWithSeedFirstGenSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinRandWithSeedSig) Clone() builtinFunc {
-	newSig := &builtinRandWithSeedSig{}
+func (b *builtinRandWithSeedFirstGenSig) Clone() builtinFunc {
+	newSig := &builtinRandWithSeedFirstGenSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
 }
 
 // evalReal evals RAND(N).
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_rand
-func (b *builtinRandWithSeedSig) evalReal(row chunk.Row) (float64, bool, error) {
+func (b *builtinRandWithSeedFirstGenSig) evalReal(row chunk.Row) (float64, bool, error) {
 	seed, isNull, err := b.args[0].EvalInt(b.ctx, row)
 	if err != nil {
 		return 0, true, err
 	}
 	// b.args[0] is promised to be a non-constant(such as a column name) in
-	// builtinRandWithSeedSig, the seed is initialized with the value for each
+	// builtinRandWithSeedFirstGenSig, the seed is initialized with the value for each
 	// invocation of RAND().
-	var randGen *rand.Rand
+	var rng *MysqlRng
 	if !isNull {
-		randGen = rand.New(rand.NewSource(seed))
+		rng = NewWithSeed(seed)
 	} else {
-		randGen = rand.New(rand.NewSource(time.Now().UnixNano()))
+		rng = NewWithSeed(0)
 	}
-	return randGen.Float64(), false, nil
+	return rng.Gen(), false, nil
 }
 
 type powFunctionClass struct {
@@ -1125,7 +1124,7 @@ func (b *builtinConvSig) Clone() builtinFunc {
 // evalString evals CONV(N,from_base,to_base).
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_conv.
 func (b *builtinConvSig) evalString(row chunk.Row) (res string, isNull bool, err error) {
-	n, isNull, err := b.args[0].EvalString(b.ctx, row)
+	str, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, err
 	}
@@ -1139,7 +1138,9 @@ func (b *builtinConvSig) evalString(row chunk.Row) (res string, isNull bool, err
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-
+	return b.conv(str, fromBase, toBase)
+}
+func (b *builtinConvSig) conv(str string, fromBase, toBase int64) (res string, isNull bool, err error) {
 	var (
 		signed     bool
 		negative   bool
@@ -1159,19 +1160,19 @@ func (b *builtinConvSig) evalString(row chunk.Row) (res string, isNull bool, err
 		return res, true, nil
 	}
 
-	n = getValidPrefix(strings.TrimSpace(n), fromBase)
-	if len(n) == 0 {
+	str = getValidPrefix(strings.TrimSpace(str), fromBase)
+	if len(str) == 0 {
 		return "0", false, nil
 	}
 
-	if n[0] == '-' {
+	if str[0] == '-' {
 		negative = true
-		n = n[1:]
+		str = str[1:]
 	}
 
-	val, err := strconv.ParseUint(n, int(fromBase), 64)
+	val, err := strconv.ParseUint(str, int(fromBase), 64)
 	if err != nil {
-		return res, false, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSINGED", n)
+		return res, false, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSINGED", str)
 	}
 	if signed {
 		if negative && val > -math.MinInt64 {
@@ -1770,7 +1771,7 @@ func (c *truncateFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	}
 
 	argTp := args[0].GetType().EvalType()
-	if argTp == types.ETTimestamp || argTp == types.ETDatetime || argTp == types.ETDuration || argTp == types.ETString {
+	if argTp.IsStringKind() {
 		argTp = types.ETReal
 	}
 
@@ -1796,6 +1797,8 @@ func (c *truncateFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	case types.ETDecimal:
 		sig = &builtinTruncateDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_TruncateDecimal)
+	default:
+		return nil, errIncorrectArgs.GenWithStackByArgs("truncate")
 	}
 
 	return sig, nil

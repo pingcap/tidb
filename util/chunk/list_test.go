@@ -93,7 +93,7 @@ func (s *testChunkSuite) TestListMemoryUsage(c *check.C) {
 
 	jsonObj, err := json.ParseBinaryFromString("1")
 	c.Assert(err, check.IsNil)
-	timeObj := types.Time{Time: types.FromGoTime(time.Now()), Fsp: 0, Type: mysql.TypeDatetime}
+	timeObj := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeDatetime, 0)
 	durationObj := types.Duration{Duration: math.MaxInt64, Fsp: 0}
 
 	maxChunkSize := 2
@@ -167,7 +167,7 @@ func BenchmarkListMemoryUsage(b *testing.B) {
 	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeDuration})
 
 	chk := NewChunkWithCapacity(fieldTypes, 2)
-	timeObj := types.Time{Time: types.FromGoTime(time.Now()), Fsp: 0, Type: mysql.TypeDatetime}
+	timeObj := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeDatetime, 0)
 	durationObj := types.Duration{Duration: math.MaxInt64, Fsp: 0}
 	chk.AppendFloat64(0, 123.123)
 	chk.AppendString(1, "123")

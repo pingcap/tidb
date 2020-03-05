@@ -132,7 +132,7 @@ TiDB/TiKV/PD 产生的日志都保存在各自的节点上，并且 TiDB 集群�
 
 - `start_time`: 日志检索的开始时间（unix 时间戳，单位毫秒），如果没有该谓词，则默认为 0。
 - `end_time`: 日志检索的开始时间（unix 时间戳，单位毫秒），如果没有该谓词，则默认为 `int64::MAX`。
-- `pattern`: 如 SELECT * FROM tidb_cluster_log WHERE pattern LIKE "%gc%" 中的 %gc% 即为过滤的关键字
+- `pattern`: 如 SELECT * FROM cluster_log WHERE pattern LIKE "%gc%" 中的 %gc% 即为过滤的关键字
 - `level`: 日志等级，可以选为 DEBUG/INFO/WARN/WARNING/TRACE/CRITICAL/ERROR
 - `limit`: 返回日志的条数，如果没有指定，则限制为 64k 条，防止日质量太大占用大量网络
 
@@ -301,7 +301,7 @@ message ServerInfoResponse {
 mysql> use information_schema;
 Database changed
 
-mysql> desc TIDB_CLUSTER_INFO;
+mysql> desc CLUSTER_INFO;
 +----------------+---------------------+------+------+---------+-------+
 | Field          | Type                | Null | Key  | Default | Extra |
 +----------------+---------------------+------+------+---------+-------+
@@ -313,7 +313,7 @@ mysql> desc TIDB_CLUSTER_INFO;
 +----------------+---------------------+------+------+---------+-------+
 5 rows in set (0.00 sec)
 
-mysql> select TYPE, ADDRESS, STATUS_ADDRESS,VERSION from TIDB_CLUSTER_INFO;
+mysql> select TYPE, ADDRESS, STATUS_ADDRESS,VERSION from CLUSTER_INFO;
 +------+-----------------+-----------------+-----------------------------------------------+
 | TYPE | ADDRESS         | STATUS_ADDRESS  | VERSION                                       |
 +------+-----------------+-----------------+-----------------------------------------------+
@@ -492,9 +492,9 @@ mysql> select address, type, value from pd_client_cmd_ops where start_time='2019
 
 | 表名 | 描述 |
 |------|-----|
-| tidb_cluster_slow_query | 所有 TiDB 节点的 slow_query 表数据 |
-| tidb_cluster_statements_summary | 所有 TiDB 节点的 statements summary 表数据 |
-| tidb_cluster_processlist | 所有 TiDB 节点的 processlist 表数据 |
+| cluster_slow_query | 所有 TiDB 节点的 slow_query 表数据 |
+| cluster_statements_summary | 所有 TiDB 节点的 statements summary 表数据 |
+| cluster_processlist | 所有 TiDB 节点的 processlist 表数据 |
 
 #### 所有节点的配置信息
 
@@ -506,7 +506,7 @@ mysql> select address, type, value from pd_client_cmd_ops where start_time='2019
 mysql> use information_schema;
 Database changed
 
-mysql> select * from tidb_cluster_config where `key` like 'log%';
+mysql> select * from cluster_config where `key` like 'log%';
 +------+-----------------+-----------------------------+---------------+
 | TYPE | ADDRESS         | KEY                         | VALUE         |
 +------+-----------------+-----------------------------+---------------+
@@ -546,7 +546,7 @@ mysql> select * from tidb_cluster_config where `key` like 'log%';
 +------+-----------------+-----------------------------+---------------+
 33 rows in set (0.00 sec)
 
-mysql> select * from tidb_cluster_config where type='tikv' and `key` like 'raftdb.wal%';
+mysql> select * from cluster_config where type='tikv' and `key` like 'raftdb.wal%';
 +------+-----------------+---------------------------+--------+
 | TYPE | ADDRESS         | KEY                       | VALUE  |
 +------+-----------------+---------------------------+--------+
@@ -567,7 +567,7 @@ mysql> select * from tidb_cluster_config where type='tikv' and `key` like 'raftd
 mysql> use information_schema;
 Database changed
 
-mysql> select * from tidb_cluster_hardware
+mysql> select * from cluster_hardware
 +------+-----------------+----------+----------+-------------+--------+
 | TYPE | ADDRESS         | HW_TYPE  | HW_NAME  | KEY         | VALUE  |
 +------+-----------------+----------+----------+-------------+--------+
@@ -584,7 +584,7 @@ mysql> select * from tidb_cluster_hardware
 +------+-----------------+----------+----------+-------------+--------+
 10 rows in set (0.01 sec)
 
-mysql> select * from tidb_cluster_systeminfo
+mysql> select * from cluster_systeminfo
 +------+-----------------+----------+--------------+--------+
 | TYPE | ADDRESS         | MODULE   | KEY          | VALUE  |
 +------+-----------------+----------+--------------+--------+
@@ -594,7 +594,7 @@ mysql> select * from tidb_cluster_systeminfo
 +------+-----------------+----------+--------------+--------+
 20 rows in set (0.01 sec)
 
-mysql> select * from tidb_cluster_load
+mysql> select * from cluster_load
 +------+-----------------+----------+-------------+--------+
 | TYPE | ADDRESS         | MODULE   | KEY         | VALUE  |
 +------+-----------------+----------+-------------+--------+
@@ -606,7 +606,7 @@ mysql> select * from tidb_cluster_load
 
 #### 全链路日志系统表
 
-当前日志搜索需要登陆多台机器分别进行检索，并且没有简单的办法对多个机器的检索结果按照时间全排序。本提案新建一个 `tidb_cluster_log` 系统表用于提供全链路日志，简化通过日志排查问题的方式以及提高效率。实现方式为：通过 gRPC Diagnosis Service 的 `search_log` 接口，将日志过滤的谓词下推到各个节点，并最终按照时间进行归并。
+当前日志搜索需要登陆多台机器分别进行检索，并且没有简单的办法对多个机器的检索结果按照时间全排序。本提案新建一个 `cluster_log` 系统表用于提供全链路日志，简化通过日志排查问题的方式以及提高效率。实现方式为：通过 gRPC Diagnosis Service 的 `search_log` 接口，将日志过滤的谓词下推到各个节点，并最终按照时间进行归并。
 
 如下示例是实现本提案后的预期结果：
 
@@ -614,7 +614,7 @@ mysql> select * from tidb_cluster_load
 mysql> use information_schema;
 Database changed
 
-mysql> desc tidb_cluster_log;
+mysql> desc cluster_log;
 +---------+-------------+------+------+---------+-------+
 | Field   | Type        | Null | Key  | Default | Extra |
 +---------+-------------+------+------+---------+-------+
@@ -626,7 +626,7 @@ mysql> desc tidb_cluster_log;
 +---------+-------------+------+------+---------+-------+
 5 rows in set (0.00 sec)
 
-mysql> select * from tidb_cluster_log where content like '%412134239937495042%'; -- 查询 TSO 为 412134239937495042 全链路日志
+mysql> select * from cluster_log where content like '%412134239937495042%'; -- 查询 TSO 为 412134239937495042 全链路日志
 +------+--------------------------------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
 | TYPE | ADDRESS                | LEVEL | CONTENT                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 +------+------------------------+-------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
@@ -665,9 +665,9 @@ mysql> select * from tidb_cluster_log where content like '%412134239937495042%';
 +------+--------------------------------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
 31 rows in set (0.01 sec) 
 
-mysql> select * from tidb_cluster_log where type='pd' and content like '%scheduler%'; -- 查询 PD 的调度日志
+mysql> select * from cluster_log where type='pd' and content like '%scheduler%'; -- 查询 PD 的调度日志
 
-mysql> select * from tidb_cluster_log where type='tidb' and content like '%ddl%'; -- 查询 TiDB 的 DDL 日志
+mysql> select * from cluster_log where type='tidb' and content like '%ddl%'; -- 查询 TiDB 的 DDL 日志
 ```
 
 ### 集群诊断

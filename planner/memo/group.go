@@ -18,6 +18,7 @@ import (
 	"fmt"
 
 	"github.com/pingcap/tidb/expression"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/property"
 )
 
@@ -70,6 +71,25 @@ func (e EngineType) String() string {
 	return "UnknownEngineType"
 }
 
+// ExploreMark is uses to mark whether a Group or GroupExpr has
+// been fully explored by a transformation rule batch.
+type ExploreMark int
+
+// SetExplored sets the roundth bit.
+func (m *ExploreMark) SetExplored(round int) {
+	*m |= 1 << round
+}
+
+// SetUnexplored unsets the roundth bit.
+func (m *ExploreMark) SetUnexplored(round int) {
+	*m &= ^(1 << round)
+}
+
+// Explored returns whether the roundth bit has been set.
+func (m *ExploreMark) Explored(round int) bool {
+	return *m&(1<<round) != 0
+}
+
 // Group is short for expression Group, which is used to store all the
 // logically equivalent expressions. It's a set of GroupExpr.
 type Group struct {
@@ -78,18 +98,27 @@ type Group struct {
 	FirstExpr    map[Operand]*list.Element
 	Fingerprints map[string]*list.Element
 
-	Explored        bool
-	SelfFingerprint string
-
 	ImplMap map[string]Implementation
 	Prop    *property.LogicalProperty
 
 	EngineType EngineType
+
+	SelfFingerprint string
+
+	// ExploreMark is uses to mark whether this Group has been explored
+	// by a transformation rule batch in a certain round.
+	ExploreMark
+
+	//hasBuiltKeyInfo indicates whether this group has called `BuildKeyInfo`.
+	// BuildKeyInfo is lazily called when a rule needs information of
+	// unique key or maxOneRow (in LogicalProp). For each Group, we only need
+	// to collect these information once.
+	hasBuiltKeyInfo bool
 }
 
 // NewGroupWithSchema creates a new Group with given schema.
 func NewGroupWithSchema(e *GroupExpr, s *expression.Schema) *Group {
-	prop := &property.LogicalProperty{Schema: s}
+	prop := &property.LogicalProperty{Schema: expression.NewSchema(s.Columns...)}
 	g := &Group{
 		Equivalents:  list.New(),
 		Fingerprints: make(map[string]*list.Element),
@@ -196,4 +225,47 @@ func (g *Group) GetImpl(prop *property.PhysicalProperty) Implementation {
 func (g *Group) InsertImpl(prop *property.PhysicalProperty, impl Implementation) {
 	key := prop.HashCode()
 	g.ImplMap[string(key)] = impl
+}
+
+// Convert2GroupExpr converts a logical plan to a GroupExpr.
+func Convert2GroupExpr(node plannercore.LogicalPlan) *GroupExpr {
+	e := NewGroupExpr(node)
+	e.Children = make([]*Group, 0, len(node.Children()))
+	for _, child := range node.Children() {
+		childGroup := Convert2Group(child)
+		e.Children = append(e.Children, childGroup)
+	}
+	return e
+}
+
+// Convert2Group converts a logical plan to a Group.
+func Convert2Group(node plannercore.LogicalPlan) *Group {
+	e := Convert2GroupExpr(node)
+	g := NewGroupWithSchema(e, node.Schema())
+	// Stats property for `Group` would be computed after exploration phase.
+	return g
+}
+
+// BuildKeyInfo recursively builds UniqueKey and MaxOneRow info in the LogicalProperty.
+func (g *Group) BuildKeyInfo() {
+	if g.hasBuiltKeyInfo {
+		return
+	}
+	g.hasBuiltKeyInfo = true
+
+	e := g.Equivalents.Front().Value.(*GroupExpr)
+	childSchema := make([]*expression.Schema, len(e.Children))
+	childMaxOneRow := make([]bool, len(e.Children))
+	for i := range e.Children {
+		e.Children[i].BuildKeyInfo()
+		childSchema[i] = e.Children[i].Prop.Schema
+		childMaxOneRow[i] = e.Children[i].Prop.MaxOneRow
+	}
+	if len(childSchema) == 1 {
+		// For UnaryPlan(such as Selection, Limit ...), we can set the child's unique key as its unique key.
+		// If the GroupExpr is a schemaProducer, schema.Keys will be reset below in `BuildKeyInfo()`.
+		g.Prop.Schema.Keys = childSchema[0].Keys
+	}
+	e.ExprNode.BuildKeyInfo(g.Prop.Schema, childSchema)
+	g.Prop.MaxOneRow = e.ExprNode.MaxOneRow() || plannercore.HasMaxOneRow(e.ExprNode, childMaxOneRow)
 }

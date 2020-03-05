@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tipb/go-binlog"
 )
 
@@ -73,8 +74,11 @@ type Context interface {
 	// StoreQueryFeedback stores the query feedback.
 	StoreQueryFeedback(feedback interface{})
 
+	// HasDirtyContent checks whether there's dirty update on the given table.
+	HasDirtyContent(tid int64) bool
+
 	// StmtCommit flush all changes by the statement to the underlying transaction.
-	StmtCommit() error
+	StmtCommit(tracker *memory.Tracker) error
 	// StmtRollback provides statement level rollback.
 	StmtRollback()
 	// StmtGetMutation gets the binlog mutation for current statement.
@@ -97,8 +101,8 @@ type Context interface {
 	ReleaseAllTableLocks()
 	// HasLockedTables uses to check whether this session locked any tables.
 	HasLockedTables() bool
-	// PrepareTxnFuture uses to prepare txn by future.
-	PrepareTxnFuture(ctx context.Context)
+	// PrepareTSFuture uses to prepare timestamp by future.
+	PrepareTSFuture(ctx context.Context)
 }
 
 type basicCtxType int

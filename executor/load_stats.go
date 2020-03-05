@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/util/chunk"
@@ -85,5 +86,5 @@ func (e *LoadStatsInfo) Update(data []byte) error {
 	if h == nil {
 		return errors.New("Load Stats: handle is nil")
 	}
-	return h.LoadStatsFromJSON(GetInfoSchema(e.Ctx), jsonTbl)
+	return h.LoadStatsFromJSON(infoschema.GetInfoSchema(e.Ctx), jsonTbl)
 }

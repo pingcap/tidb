@@ -113,6 +113,14 @@ var (
 			Name:      "add_index_total",
 			Help:      "Speed of add index",
 		}, []string{LblType})
+
+	AddIndexProgress = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "ddl",
+			Name:      "add_index_percentage_progress",
+			Help:      "Percentage progress of add index",
+		})
 )
 
 // Label constants.

@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tipb/go-binlog"
 	"go.uber.org/zap"
 )
@@ -59,6 +60,11 @@ type TxnState struct {
 func (st *TxnState) init() {
 	st.buf = kv.NewMemDbBuffer(kv.DefaultTxnMembufCap)
 	st.mutations = make(map[int64]*binlog.TableMutation)
+}
+
+// Size implements the MemBuffer interface.
+func (st *TxnState) Size() int {
+	return st.buf.Size()
 }
 
 // Valid implements the kv.Transaction interface.
@@ -151,14 +157,30 @@ type dirtyTableOperation struct {
 	handle int64
 }
 
-var hasMockAutoIDRetry = int64(0)
+var hasMockAutoIncIDRetry = int64(0)
 
-func enableMockAutoIDRetry() {
-	atomic.StoreInt64(&hasMockAutoIDRetry, 1)
+func enableMockAutoIncIDRetry() {
+	atomic.StoreInt64(&hasMockAutoIncIDRetry, 1)
 }
 
-func mockAutoIDRetry() bool {
-	return atomic.LoadInt64(&hasMockAutoIDRetry) == 1
+func mockAutoIncIDRetry() bool {
+	return atomic.LoadInt64(&hasMockAutoIncIDRetry) == 1
+}
+
+var mockAutoRandIDRetryCount = int64(0)
+
+func needMockAutoRandIDRetry() bool {
+	return atomic.LoadInt64(&mockAutoRandIDRetryCount) > 0
+}
+
+func decreaseMockAutoRandIDRetryCount() {
+	atomic.AddInt64(&mockAutoRandIDRetryCount, -1)
+}
+
+// ResetMockAutoRandIDRetryCount set the number of occurrences of
+// `kv.ErrTxnRetryable` when calling TxnState.Commit().
+func ResetMockAutoRandIDRetryCount(failTimes int64) {
+	atomic.StoreInt64(&mockAutoRandIDRetryCount, failTimes)
 }
 
 // Commit overrides the Transaction interface.
@@ -184,10 +206,17 @@ func (st *TxnState) Commit(ctx context.Context) error {
 		}
 	})
 
-	// mockCommitRetryForAutoID is used to mock an commit retry for adjustAutoIncrementDatum.
-	failpoint.Inject("mockCommitRetryForAutoID", func(val failpoint.Value) {
-		if val.(bool) && !mockAutoIDRetry() {
-			enableMockAutoIDRetry()
+	// mockCommitRetryForAutoIncID is used to mock an commit retry for adjustAutoIncrementDatum.
+	failpoint.Inject("mockCommitRetryForAutoIncID", func(val failpoint.Value) {
+		if val.(bool) && !mockAutoIncIDRetry() {
+			enableMockAutoIncIDRetry()
+			failpoint.Return(kv.ErrTxnRetryable)
+		}
+	})
+
+	failpoint.Inject("mockCommitRetryForAutoRandID", func(val failpoint.Value) {
+		if val.(bool) && needMockAutoRandIDRetry() {
+			decreaseMockAutoRandIDRetryCount()
 			failpoint.Return(kv.ErrTxnRetryable)
 		}
 	})
@@ -292,7 +321,15 @@ func (st *TxnState) IterReverse(k kv.Key) (kv.Iterator, error) {
 }
 
 func (st *TxnState) cleanup() {
-	st.buf.Reset()
+	const sz4M = 4 << 20
+	if st.buf.Size() > sz4M {
+		// The memory footprint for the large transaction could be huge here.
+		// Each active session has its own buffer, we should free the buffer to
+		// avoid memory leak.
+		st.buf = kv.NewMemDbBuffer(kv.DefaultTxnMembufCap)
+	} else {
+		st.buf.Reset()
+	}
 	for key := range st.mutations {
 		delete(st.mutations, key)
 	}
@@ -301,7 +338,12 @@ func (st *TxnState) cleanup() {
 		for i := 0; i < len(st.dirtyTableOP); i++ {
 			st.dirtyTableOP[i] = empty
 		}
-		st.dirtyTableOP = st.dirtyTableOP[:0]
+		if len(st.dirtyTableOP) > 256 {
+			// Reduce memory footprint for the large transaction.
+			st.dirtyTableOP = nil
+		} else {
+			st.dirtyTableOP = st.dirtyTableOP[:0]
+		}
 	}
 }
 
@@ -336,7 +378,7 @@ func keyNeedToLock(k, v []byte) bool {
 	if tablecodec.IsUntouchedIndexKValue(k, v) {
 		return false
 	}
-	isNonUniqueIndex := len(v) == 1
+	isNonUniqueIndex := tablecodec.IsIndexKey(k) && len(v) == 1
 	// Put row key and unique index need to lock.
 	return !isNonUniqueIndex
 }
@@ -392,6 +434,7 @@ func (tf *txnFuture) wait() (kv.Transaction, error) {
 		return nil, err
 	}
 
+	logutil.BgLogger().Warn("wait tso failed", zap.Error(err))
 	// It would retry get timestamp.
 	return tf.store.Begin()
 }
@@ -417,10 +460,30 @@ func (s *session) getTxnFuture(ctx context.Context) *txnFuture {
 	return ret
 }
 
+// HasDirtyContent checks whether there's dirty update on the given table.
+// Put this function here is to avoid cycle import.
+func (s *session) HasDirtyContent(tid int64) bool {
+	x := s.GetSessionVars().TxnCtx.DirtyDB
+	if x == nil {
+		return false
+	}
+	return !x.(*executor.DirtyDB).GetDirtyTable(tid).IsEmpty()
+}
+
 // StmtCommit implements the sessionctx.Context interface.
-func (s *session) StmtCommit() error {
-	defer s.txn.cleanup()
+func (s *session) StmtCommit(memTracker *memory.Tracker) error {
+	defer func() {
+		// If StmtCommit is called in batch mode, we need to clear the txn size
+		// in memTracker to avoid double-counting. If it's not batch mode, this
+		// work has no effect because that no more data will be appended into
+		// s.txn.
+		if memTracker != nil {
+			memTracker.Consume(int64(-s.txn.Size()))
+		}
+		s.txn.cleanup()
+	}()
 	st := &s.txn
+	txnSize := st.Transaction.Size()
 	var count int
 	err := kv.WalkMemBuffer(st.buf, func(k kv.Key, v []byte) error {
 		failpoint.Inject("mockStmtCommitError", func(val failpoint.Value) {
@@ -441,6 +504,9 @@ func (s *session) StmtCommit() error {
 	if err != nil {
 		st.doNotCommit = err
 		return err
+	}
+	if memTracker != nil {
+		memTracker.Consume(int64(st.Transaction.Size() - txnSize))
 	}
 
 	// Need to flush binlog.

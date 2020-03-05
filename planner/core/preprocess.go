@@ -30,6 +30,8 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/domainutil"
 )
 
 // PreprocessOpt presents optional parameters to `Preprocess` method.
@@ -66,6 +68,8 @@ const (
 	inCreateOrDropTable
 	// parentIsJoin is set when visiting node's parent is join.
 	parentIsJoin
+	// inRepairTable is set when visiting a repair table statement.
+	inRepairTable
 )
 
 // preprocessor is an ast.Visitor that preprocess
@@ -116,20 +120,44 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	case *ast.Join:
 		p.checkNonUniqTableAlias(node)
 	case *ast.CreateBindingStmt:
+		EraseLastSemicolon(node.OriginSel)
+		EraseLastSemicolon(node.HintedSel)
 		p.checkBindGrammar(node.OriginSel, node.HintedSel)
+		return in, true
 	case *ast.DropBindingStmt:
+		EraseLastSemicolon(node.OriginSel)
 		if node.HintedSel != nil {
+			EraseLastSemicolon(node.HintedSel)
 			p.checkBindGrammar(node.OriginSel, node.HintedSel)
 		}
-	case *ast.RecoverTableStmt:
+		return in, true
+	case *ast.RecoverTableStmt, *ast.FlashBackTableStmt:
 		// The specified table in recover table statement maybe already been dropped.
 		// So skip check table name here, otherwise, recover table [table_name] syntax will return
 		// table not exists error. But recover table statement is use to recover the dropped table. So skip children here.
 		return in, true
+	case *ast.RepairTableStmt:
+		// The RepairTable should consist of the logic for creating tables and renaming tables.
+		p.flag |= inRepairTable
+		p.checkRepairTableGrammar(node)
+	case *ast.CreateSequenceStmt:
+		p.flag |= inCreateOrDropTable
+		p.resolveCreateSequenceStmt(node)
+	case *ast.DropSequenceStmt:
+		p.flag |= inCreateOrDropTable
+		p.checkDropSequenceGrammar(node)
 	default:
 		p.flag &= ^parentIsJoin
 	}
 	return in, p.err != nil
+}
+
+// EraseLastSemicolon removes last semicolon of sql.
+func EraseLastSemicolon(stmt ast.StmtNode) {
+	sql := stmt.Text()
+	if len(sql) > 0 && sql[len(sql)-1] == ';' {
+		stmt.SetText(sql[:len(sql)-1])
+	}
 }
 
 func (p *preprocessor) checkBindGrammar(originSel, hintedSel ast.StmtNode) {
@@ -203,20 +231,24 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 				x.Args[0] = ast.NewValueExpr(0)
 			}
 		}
+	case *ast.RepairTableStmt:
+		p.flag &= ^inRepairTable
+	case *ast.CreateSequenceStmt:
+		p.flag &= ^inCreateOrDropTable
 	}
 
 	return in, p.err == nil
 }
 
-func checkAutoIncrementOp(colDef *ast.ColumnDef, num int) (bool, error) {
+func checkAutoIncrementOp(colDef *ast.ColumnDef, index int) (bool, error) {
 	var hasAutoIncrement bool
 
-	if colDef.Options[num].Tp == ast.ColumnOptionAutoIncrement {
+	if colDef.Options[index].Tp == ast.ColumnOptionAutoIncrement {
 		hasAutoIncrement = true
-		if len(colDef.Options) == num+1 {
+		if len(colDef.Options) == index+1 {
 			return hasAutoIncrement, nil
 		}
-		for _, op := range colDef.Options[num+1:] {
+		for _, op := range colDef.Options[index+1:] {
 			if op.Tp == ast.ColumnOptionDefaultValue {
 				if tmp, ok := op.Expr.(*driver.ValueExpr); ok {
 					if !tmp.Datum.IsNull() {
@@ -226,13 +258,13 @@ func checkAutoIncrementOp(colDef *ast.ColumnDef, num int) (bool, error) {
 			}
 		}
 	}
-	if colDef.Options[num].Tp == ast.ColumnOptionDefaultValue && len(colDef.Options) != num+1 {
-		if tmp, ok := colDef.Options[num].Expr.(*driver.ValueExpr); ok {
+	if colDef.Options[index].Tp == ast.ColumnOptionDefaultValue && len(colDef.Options) != index+1 {
+		if tmp, ok := colDef.Options[index].Expr.(*driver.ValueExpr); ok {
 			if tmp.Datum.IsNull() {
 				return hasAutoIncrement, nil
 			}
 		}
-		for _, op := range colDef.Options[num+1:] {
+		for _, op := range colDef.Options[index+1:] {
 			if op.Tp == ast.ColumnOptionAutoIncrement {
 				return hasAutoIncrement, errors.Errorf("Invalid default value for '%s'", colDef.Name.Name.O)
 			}
@@ -260,14 +292,11 @@ func isConstraintKeyTp(constraints []*ast.Constraint, colDef *ast.ColumnDef) boo
 }
 
 func (p *preprocessor) checkAutoIncrement(stmt *ast.CreateTableStmt) {
-	var (
-		isKey            bool
-		count            int
-		autoIncrementCol *ast.ColumnDef
-	)
+	autoIncrementCols := make(map[*ast.ColumnDef]bool)
 
 	for _, colDef := range stmt.Cols {
 		var hasAutoIncrement bool
+		var isKey bool
 		for i, op := range colDef.Options {
 			ok, err := checkAutoIncrementOp(colDef, i)
 			if err != nil {
@@ -283,33 +312,39 @@ func (p *preprocessor) checkAutoIncrement(stmt *ast.CreateTableStmt) {
 			}
 		}
 		if hasAutoIncrement {
-			count++
-			autoIncrementCol = colDef
+			autoIncrementCols[colDef] = isKey
 		}
 	}
 
-	if count < 1 {
+	if len(autoIncrementCols) < 1 {
 		return
 	}
-	if !isKey {
-		isKey = isConstraintKeyTp(stmt.Constraints, autoIncrementCol)
+	if len(autoIncrementCols) > 1 {
+		p.err = autoid.ErrWrongAutoKey.GenWithStackByArgs()
+		return
 	}
-	autoIncrementMustBeKey := true
-	for _, opt := range stmt.Options {
-		if opt.Tp == ast.TableOptionEngine && strings.EqualFold(opt.StrValue, "MyISAM") {
-			autoIncrementMustBeKey = false
+	// Only have one auto_increment col.
+	for col, isKey := range autoIncrementCols {
+		if !isKey {
+			isKey = isConstraintKeyTp(stmt.Constraints, col)
+		}
+		autoIncrementMustBeKey := true
+		for _, opt := range stmt.Options {
+			if opt.Tp == ast.TableOptionEngine && strings.EqualFold(opt.StrValue, "MyISAM") {
+				autoIncrementMustBeKey = false
+			}
+		}
+		if autoIncrementMustBeKey && !isKey {
+			p.err = autoid.ErrWrongAutoKey.GenWithStackByArgs()
+		}
+		switch col.Tp.Tp {
+		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeLong,
+			mysql.TypeFloat, mysql.TypeDouble, mysql.TypeLonglong, mysql.TypeInt24:
+		default:
+			p.err = errors.Errorf("Incorrect column specifier for column '%s'", col.Name.Name.O)
 		}
 	}
-	if (autoIncrementMustBeKey && !isKey) || count > 1 {
-		p.err = autoid.ErrWrongAutoKey.GenWithStackByArgs()
-	}
 
-	switch autoIncrementCol.Tp.Tp {
-	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeLong,
-		mysql.TypeFloat, mysql.TypeDouble, mysql.TypeLonglong, mysql.TypeInt24:
-	default:
-		p.err = errors.Errorf("Incorrect column specifier for column '%s'", autoIncrementCol.Name.Name.O)
-	}
 }
 
 // checkUnionSelectList checks union's selectList.
@@ -374,6 +409,12 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 		}
 	}
 	for _, constraint := range stmt.Constraints {
+		for _, spec := range constraint.Keys {
+			if spec.Expr != nil {
+				p.err = ErrNotSupportedYet.GenWithStackByArgs("create table with expression index")
+				return
+			}
+		}
 		switch tp := constraint.Tp; tp {
 		case ast.ConstraintKey, ast.ConstraintIndex, ast.ConstraintUniq, ast.ConstraintUniqKey, ast.ConstraintUniqIndex:
 			err := checkIndexInfo(constraint.Name, constraint.Keys)
@@ -418,8 +459,16 @@ func (p *preprocessor) checkCreateViewGrammar(stmt *ast.CreateViewStmt) {
 	}
 }
 
+func (p *preprocessor) checkDropSequenceGrammar(stmt *ast.DropSequenceStmt) {
+	p.checkDropTableNames(stmt.Sequences)
+}
+
 func (p *preprocessor) checkDropTableGrammar(stmt *ast.DropTableStmt) {
-	for _, t := range stmt.Tables {
+	p.checkDropTableNames(stmt.Tables)
+}
+
+func (p *preprocessor) checkDropTableNames(tables []*ast.TableName) {
+	for _, t := range tables {
 		if isIncorrectName(t.Name.String()) {
 			p.err = ddl.ErrWrongTableName.GenWithStackByArgs(t.Name.String())
 			return
@@ -490,13 +539,17 @@ func (p *preprocessor) checkCreateIndexGrammar(stmt *ast.CreateIndexStmt) {
 		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(tName)
 		return
 	}
-	p.err = checkIndexInfo(stmt.IndexName, stmt.IndexColNames)
+	p.err = checkIndexInfo(stmt.IndexName, stmt.IndexPartSpecifications)
 }
 
 func (p *preprocessor) checkRenameTableGrammar(stmt *ast.RenameTableStmt) {
 	oldTable := stmt.OldTable.Name.String()
 	newTable := stmt.NewTable.Name.String()
 
+	p.checkRenameTable(oldTable, newTable)
+}
+
+func (p *preprocessor) checkRenameTable(oldTable, newTable string) {
 	if isIncorrectName(oldTable) {
 		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(oldTable)
 		return
@@ -506,6 +559,23 @@ func (p *preprocessor) checkRenameTableGrammar(stmt *ast.RenameTableStmt) {
 		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(newTable)
 		return
 	}
+}
+
+func (p *preprocessor) checkRepairTableGrammar(stmt *ast.RepairTableStmt) {
+	// Check create table stmt whether it's is in REPAIR MODE.
+	if !domainutil.RepairInfo.InRepairMode() {
+		p.err = ddl.ErrRepairTableFail.GenWithStackByArgs("TiDB is not in REPAIR MODE")
+		return
+	}
+	if len(domainutil.RepairInfo.GetRepairTableList()) == 0 {
+		p.err = ddl.ErrRepairTableFail.GenWithStackByArgs("repair list is empty")
+		return
+	}
+
+	// Check rename action as the rename statement does.
+	oldTable := stmt.Table.Name.String()
+	newTable := stmt.CreateStmt.Table.Name.String()
+	p.checkRenameTable(oldTable, newTable)
 }
 
 func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
@@ -547,27 +617,29 @@ func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 }
 
 // checkDuplicateColumnName checks if index exists duplicated columns.
-func checkDuplicateColumnName(indexColNames []*ast.IndexColName) error {
-	colNames := make(map[string]struct{}, len(indexColNames))
-	for _, indexColName := range indexColNames {
-		name := indexColName.Column.Name
-		if _, ok := colNames[name.L]; ok {
-			return infoschema.ErrColumnExists.GenWithStackByArgs(name)
+func checkDuplicateColumnName(IndexPartSpecifications []*ast.IndexPartSpecification) error {
+	colNames := make(map[string]struct{}, len(IndexPartSpecifications))
+	for _, IndexColNameWithExpr := range IndexPartSpecifications {
+		if IndexColNameWithExpr.Column != nil {
+			name := IndexColNameWithExpr.Column.Name
+			if _, ok := colNames[name.L]; ok {
+				return infoschema.ErrColumnExists.GenWithStackByArgs(name)
+			}
+			colNames[name.L] = struct{}{}
 		}
-		colNames[name.L] = struct{}{}
 	}
 	return nil
 }
 
 // checkIndexInfo checks index name and index column names.
-func checkIndexInfo(indexName string, indexColNames []*ast.IndexColName) error {
+func checkIndexInfo(indexName string, IndexPartSpecifications []*ast.IndexPartSpecification) error {
 	if strings.EqualFold(indexName, mysql.PrimaryKeyName) {
 		return ddl.ErrWrongNameForIndex.GenWithStackByArgs(indexName)
 	}
-	if len(indexColNames) > mysql.MaxKeyParts {
+	if len(IndexPartSpecifications) > mysql.MaxKeyParts {
 		return infoschema.ErrTooManyKeyParts.GenWithStackByArgs(mysql.MaxKeyParts)
 	}
-	return checkDuplicateColumnName(indexColNames)
+	return checkDuplicateColumnName(IndexPartSpecifications)
 }
 
 // checkColumn checks if the column definition is valid.
@@ -715,9 +787,23 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 	}
 	if p.flag&inCreateOrDropTable > 0 {
 		// The table may not exist in create table or drop table statement.
-		// Skip resolving the table to avoid error.
+		if p.flag&inRepairTable > 0 {
+			// Create stmt is in repair stmt, skip resolving the table to avoid error.
+			return
+		}
+		// Create stmt is not in repair stmt, check the table not in repair list.
+		if domainutil.RepairInfo.InRepairMode() {
+			p.checkNotInRepair(tn)
+		}
 		return
 	}
+	// repairStmt: admin repair table A create table B ...
+	// repairStmt's tableName is whether `inCreateOrDropTable` or `inRepairTable` flag.
+	if p.flag&inRepairTable > 0 {
+		p.handleRepairName(tn)
+		return
+	}
+
 	table, err := p.is.TableByName(tn.Schema, tn.Name)
 	if err != nil {
 		p.err = err
@@ -726,6 +812,36 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 	tn.TableInfo = table.Meta()
 	dbInfo, _ := p.is.SchemaByName(tn.Schema)
 	tn.DBInfo = dbInfo
+}
+
+func (p *preprocessor) checkNotInRepair(tn *ast.TableName) {
+	tableInfo, dbInfo := domainutil.RepairInfo.GetRepairedTableInfoByTableName(tn.Schema.L, tn.Name.L)
+	if dbInfo == nil {
+		return
+	}
+	if tableInfo != nil {
+		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(tn.Name.L, "this table is in repair")
+	}
+}
+
+func (p *preprocessor) handleRepairName(tn *ast.TableName) {
+	// Check the whether the repaired table is system table.
+	if util.IsMemOrSysDB(tn.Schema.L) {
+		p.err = ddl.ErrRepairTableFail.GenWithStackByArgs("memory or system database is not for repair")
+		return
+	}
+	tableInfo, dbInfo := domainutil.RepairInfo.GetRepairedTableInfoByTableName(tn.Schema.L, tn.Name.L)
+	// tableName here only has the schema rather than DBInfo.
+	if dbInfo == nil {
+		p.err = ddl.ErrRepairTableFail.GenWithStackByArgs("database " + tn.Schema.L + " is not in repair")
+		return
+	}
+	if tableInfo == nil {
+		p.err = ddl.ErrRepairTableFail.GenWithStackByArgs("table " + tn.Name.L + " is not in repair")
+		return
+	}
+	p.ctx.SetValue(domainutil.RepairedTable, tableInfo)
+	p.ctx.SetValue(domainutil.RepairedDatabase, dbInfo)
 }
 
 func (p *preprocessor) resolveShowStmt(node *ast.ShowStmt) {
@@ -764,5 +880,13 @@ func (p *preprocessor) resolveAlterTableStmt(node *ast.AlterTableStmt) {
 			p.flag |= inCreateOrDropTable
 			break
 		}
+	}
+}
+
+func (p *preprocessor) resolveCreateSequenceStmt(stmt *ast.CreateSequenceStmt) {
+	sName := stmt.Name.Name.String()
+	if isIncorrectName(sName) {
+		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(sName)
+		return
 	}
 }

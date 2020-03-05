@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/types"
@@ -80,6 +79,7 @@ func (b *builtinArithmeticDivideDecimalSig) vecEvalDecimal(input *chunk.Chunk, r
 	y := buf.Decimals()
 	var to types.MyDecimal
 	var frac int
+	sc := b.ctx.GetSessionVars().StmtCtx
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
@@ -91,6 +91,10 @@ func (b *builtinArithmeticDivideDecimalSig) vecEvalDecimal(input *chunk.Chunk, r
 			}
 			result.SetNull(i, true)
 			continue
+		} else if err == types.ErrTruncated {
+			if err = sc.HandleTruncate(errTruncatedWrongValue.GenWithStackByArgs("DECIMAL", to)); err != nil {
+				return err
+			}
 		} else if err == nil {
 			_, frac = to.PrecisionAndFrac()
 			if frac < b.baseBuiltinFunc.tp.Decimal {
@@ -645,11 +649,90 @@ func (b *builtinArithmeticMultiplyDecimalSig) vecEvalDecimal(input *chunk.Chunk,
 }
 
 func (b *builtinArithmeticIntDivideDecimalSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinArithmeticIntDivideDecimalSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	sc := b.ctx.GetSessionVars().StmtCtx
+	n := input.NumRows()
+	var err error
+	var buf [2]*chunk.Column
+	var num [2][]types.MyDecimal
+	for i, arg := range b.args {
+		if buf[i], err = b.bufAllocator.get(types.ETDecimal, n); err != nil {
+			return err
+		}
+		defer b.bufAllocator.put(buf[i])
+
+		err = arg.VecEvalDecimal(b.ctx, input, buf[i])
+		// Its behavior is consistent with MySQL.
+		if terror.ErrorEqual(err, types.ErrTruncated) {
+			err = nil
+		}
+		if terror.ErrorEqual(err, types.ErrOverflow) {
+			newErr := errTruncatedWrongValue.GenWithStackByArgs("DECIMAL", arg)
+			err = sc.HandleOverflow(newErr, newErr)
+		}
+		if err != nil {
+			return err
+		}
+
+		num[i] = buf[i].Decimals()
+	}
+
+	isLHSUnsigned := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
+	isRHSUnsigned := mysql.HasUnsignedFlag(b.args[1].GetType().Flag)
+	isUnsigned := isLHSUnsigned || isRHSUnsigned
+
+	result.ResizeInt64(n, false)
+	result.MergeNulls(buf[0], buf[1])
+	i64s := result.Int64s()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+
+		c := &types.MyDecimal{}
+		err = types.DecimalDiv(&num[0][i], &num[1][i], c, types.DivFracIncr)
+		if err == types.ErrDivByZero {
+			if err = handleDivisionByZeroError(b.ctx); err != nil {
+				return err
+			}
+			result.SetNull(i, true)
+			continue
+		}
+		if err == types.ErrTruncated {
+			err = sc.HandleTruncate(errTruncatedWrongValue.GenWithStackByArgs("DECIMAL", c))
+		} else if err == types.ErrOverflow {
+			newErr := errTruncatedWrongValue.GenWithStackByArgs("DECIMAL", c)
+			err = sc.HandleOverflow(newErr, newErr)
+		}
+		if err != nil {
+			return err
+		}
+
+		if isUnsigned {
+			val, err := c.ToUint()
+			// err returned by ToUint may be ErrTruncated or ErrOverflow, only handle ErrOverflow, ignore ErrTruncated.
+			if err == types.ErrOverflow {
+				v, err := c.ToInt()
+				// when the final result is at (-1, 0], it should be return 0 instead of the error
+				if v == 0 && err == types.ErrTruncated {
+					i64s[i] = int64(0)
+					continue
+				}
+				return types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s DIV %s)", num[0][i].String(), num[1][i].String()))
+			}
+			i64s[i] = int64(val)
+		} else {
+			i64s[i], err = c.ToInt()
+			// err returned by ToInt may be ErrTruncated or ErrOverflow, only handle ErrOverflow, ignore ErrTruncated.
+			if err == types.ErrOverflow {
+				return types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("(%s DIV %s)", num[0][i].String(), num[1][i].String()))
+			}
+		}
+	}
+	return nil
 }
 
 func (b *builtinArithmeticMultiplyIntSig) vectorized() bool {
@@ -734,11 +817,136 @@ func (b *builtinArithmeticDivideRealSig) vecEvalReal(input *chunk.Chunk, result 
 }
 
 func (b *builtinArithmeticIntDivideIntSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinArithmeticIntDivideIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	lhsBuf, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(lhsBuf)
+
+	if err := b.args[0].VecEvalInt(b.ctx, input, lhsBuf); err != nil {
+		return err
+	}
+
+	// reuse result as rhsBuf to avoid buf allocate
+	if err := b.args[1].VecEvalInt(b.ctx, input, result); err != nil {
+		return err
+	}
+
+	result.MergeNulls(lhsBuf)
+
+	rhsBuf := result
+	lhsI64s := lhsBuf.Int64s()
+	rhsI64s := rhsBuf.Int64s()
+	resultI64s := result.Int64s()
+
+	isLHSUnsigned := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
+	isRHSUnsigned := mysql.HasUnsignedFlag(b.args[1].GetType().Flag)
+
+	switch {
+	case isLHSUnsigned && isRHSUnsigned:
+		err = b.divideUU(result, lhsI64s, rhsI64s, resultI64s)
+	case isLHSUnsigned && !isRHSUnsigned:
+		err = b.divideUS(result, lhsI64s, rhsI64s, resultI64s)
+	case !isLHSUnsigned && isRHSUnsigned:
+		err = b.divideSU(result, lhsI64s, rhsI64s, resultI64s)
+	case !isLHSUnsigned && !isRHSUnsigned:
+		err = b.divideSS(result, lhsI64s, rhsI64s, resultI64s)
+	}
+	return err
+}
+
+func (b *builtinArithmeticIntDivideIntSig) divideUU(result *chunk.Column, lhsI64s, rhsI64s, resultI64s []int64) error {
+	for i := 0; i < len(lhsI64s); i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		lhs, rhs := lhsI64s[i], rhsI64s[i]
+
+		if rhs == 0 {
+			if err := handleDivisionByZeroError(b.ctx); err != nil {
+				return err
+			}
+			result.SetNull(i, true)
+		} else {
+			resultI64s[i] = int64(uint64(lhs) / uint64(rhs))
+		}
+
+	}
+	return nil
+}
+
+func (b *builtinArithmeticIntDivideIntSig) divideUS(result *chunk.Column, lhsI64s, rhsI64s, resultI64s []int64) error {
+	for i := 0; i < len(lhsI64s); i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		lhs, rhs := lhsI64s[i], rhsI64s[i]
+
+		if rhs == 0 {
+			if err := handleDivisionByZeroError(b.ctx); err != nil {
+				return err
+			}
+			result.SetNull(i, true)
+		} else {
+			val, err := types.DivUintWithInt(uint64(lhs), rhs)
+			if err != nil {
+				return err
+			}
+			resultI64s[i] = int64(val)
+		}
+	}
+	return nil
+}
+
+func (b *builtinArithmeticIntDivideIntSig) divideSU(result *chunk.Column, lhsI64s, rhsI64s, resultI64s []int64) error {
+	for i := 0; i < len(lhsI64s); i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		lhs, rhs := lhsI64s[i], rhsI64s[i]
+
+		if rhs == 0 {
+			if err := handleDivisionByZeroError(b.ctx); err != nil {
+				return err
+			}
+			result.SetNull(i, true)
+		} else {
+			val, err := types.DivIntWithUint(lhs, uint64(rhs))
+			if err != nil {
+				return err
+			}
+			resultI64s[i] = int64(val)
+		}
+	}
+	return nil
+}
+
+func (b *builtinArithmeticIntDivideIntSig) divideSS(result *chunk.Column, lhsI64s, rhsI64s, resultI64s []int64) error {
+	for i := 0; i < len(lhsI64s); i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		lhs, rhs := lhsI64s[i], rhsI64s[i]
+
+		if rhs == 0 {
+			if err := handleDivisionByZeroError(b.ctx); err != nil {
+				return err
+			}
+			result.SetNull(i, true)
+		} else {
+			val, err := types.DivInt64(lhs, rhs)
+			if err != nil {
+				return err
+			}
+			resultI64s[i] = val
+		}
+	}
+	return nil
 }
 
 func (b *builtinArithmeticPlusIntSig) vectorized() bool {

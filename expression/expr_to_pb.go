@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync/atomic"
 
+	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
@@ -27,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
@@ -92,7 +94,16 @@ func NewPBConverter(client kv.Client, sc *stmtctx.StatementContext) PbConverter 
 // ExprToPB converts Expression to TiPB.
 func (pc PbConverter) ExprToPB(expr Expression) *tipb.Expr {
 	switch x := expr.(type) {
-	case *Constant, *CorrelatedColumn:
+	case *Constant:
+		pbExpr := pc.conOrCorColToPBExpr(expr)
+		if pbExpr == nil {
+			return nil
+		}
+		if !x.Value.IsNull() {
+			pbExpr.FieldType.Flag |= uint32(mysql.NotNullFlag)
+		}
+		return pbExpr
+	case *CorrelatedColumn:
 		return pc.conOrCorColToPBExpr(expr)
 	case *Column:
 		return pc.columnToPBExpr(x)
@@ -186,12 +197,44 @@ func ToPBFieldType(ft *types.FieldType) *tipb.FieldType {
 	}
 }
 
-func collationToProto(c string) int32 {
-	v, ok := mysql.CollationNames[c]
-	if ok {
-		return int32(v)
+// FieldTypeFromPB converts *tipb.FieldType to *types.FieldType.
+func FieldTypeFromPB(ft *tipb.FieldType) *types.FieldType {
+	return &types.FieldType{
+		Tp:      byte(ft.Tp),
+		Flag:    uint(ft.Flag),
+		Flen:    int(ft.Flen),
+		Decimal: int(ft.Decimal),
+		Charset: ft.Charset,
+		Collate: protoToCollation(ft.Collate),
 	}
-	return int32(mysql.DefaultCollationID)
+}
+
+func collationToProto(c string) int32 {
+	if v, ok := mysql.CollationNames[c]; ok {
+		return collate.RewriteNewCollationIDIfNeeded(int32(v))
+	}
+	v := collate.RewriteNewCollationIDIfNeeded(int32(mysql.DefaultCollationID))
+	logutil.BgLogger().Warn(
+		"Unable to get collation ID by name, use ID of the default collation instead",
+		zap.String("name", c),
+		zap.Int32("default collation ID", v),
+		zap.String("default collation", mysql.DefaultCollationName),
+	)
+	return v
+}
+
+func protoToCollation(c int32) string {
+	v, ok := mysql.Collations[uint8(collate.RestoreCollationIDIfNeeded(c))]
+	if ok {
+		return v
+	}
+	logutil.BgLogger().Warn(
+		"Unable to get collation name from ID, use name of the default collation instead",
+		zap.Int32("id", c),
+		zap.Int("default collation ID", mysql.DefaultCollationID),
+		zap.String("default collation", mysql.DefaultCollationName),
+	)
+	return mysql.DefaultCollationName
 }
 
 func (pc PbConverter) columnToPBExpr(column *Column) *tipb.Expr {
@@ -246,20 +289,20 @@ func (pc PbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
 		children = append(children, pbArg)
 	}
 
-	var implicitArgs []byte
-	if args := expr.Function.implicitArgs(); len(args) > 0 {
-		encoded, err := codec.EncodeValue(pc.sc, nil, args...)
+	var encoded []byte
+	if metadata := expr.Function.metadata(); metadata != nil {
+		var err error
+		encoded, err = proto.Marshal(metadata)
 		if err != nil {
-			logutil.BgLogger().Error("encode implicit parameters", zap.Any("datums", args), zap.Error(err))
+			logutil.BgLogger().Error("encode metadata", zap.Any("metadata", metadata), zap.Error(err))
 			return nil
 		}
-		implicitArgs = encoded
 	}
 
 	// Construct expression ProtoBuf.
 	return &tipb.Expr{
 		Tp:        tipb.ExprType_ScalarFunc,
-		Val:       implicitArgs,
+		Val:       encoded,
 		Sig:       pbCode,
 		Children:  children,
 		FieldType: ToPBFieldType(expr.RetType),
@@ -317,6 +360,7 @@ func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
 		ast.BitNeg,
 		ast.LeftShift,
 		ast.RightShift,
+		ast.UnaryMinus,
 
 		// compare functions.
 		ast.LT,
@@ -350,16 +394,20 @@ func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
 		ast.Log2,
 		ast.Log10,
 		ast.Exp,
-		ast.Sin,
-		ast.Asin,
-		ast.Cos,
-		ast.Acos,
-		ast.Tan,
-		ast.Atan,
-		ast.Atan2,
-		ast.Cot,
+		ast.Pow,
+		// Rust use the llvm math functions, which have different precision with Golang/MySQL(cmath)
+		// open the following switchers if we implement them in coprocessor via `cmath`
+		// ast.Sin,
+		// ast.Asin,
+		// ast.Cos,
+		// ast.Acos,
+		// ast.Tan,
+		// ast.Atan,
+		// ast.Atan2,
+		// ast.Cot,
 		ast.Radians,
 		ast.Degrees,
+		ast.Conv,
 		ast.CRC32,
 
 		// control flow functions.
@@ -372,32 +420,91 @@ func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
 		ast.Length,
 		ast.BitLength,
 		ast.Concat,
-		ast.Locate,
+		ast.ConcatWS,
+		// ast.Locate,
+		ast.Replace,
 		ast.ASCII,
+		ast.Hex,
 		ast.Reverse,
 		ast.LTrim,
 		ast.RTrim,
-		ast.Left,
+		// ast.Left,
+		ast.Strcmp,
+		ast.Space,
+		ast.Elt,
+		ast.Field,
 
 		// json functions.
 		ast.JSONType,
 		ast.JSONExtract,
-		ast.JSONUnquote,
+		// FIXME: JSONUnquote is incompatible with Coprocessor
+		// ast.JSONUnquote,
 		ast.JSONObject,
 		ast.JSONArray,
 		ast.JSONMerge,
 		ast.JSONSet,
 		ast.JSONInsert,
-		ast.JSONReplace,
+		// ast.JSONReplace,
 		ast.JSONRemove,
 		ast.JSONLength,
 
 		// date functions.
-		ast.DateFormat:
-		_, disallowPushdown := DefaultExprPushdownBlacklist.Load().(map[string]struct{})[sf.FuncName.L]
-		return true && !disallowPushdown
+		ast.DateFormat,
+		ast.FromDays,
+		// ast.ToDays,
+		ast.DayOfYear,
+		ast.DayOfMonth,
+		ast.Year,
+		ast.Month,
+		// FIXME: the coprocessor cannot keep the same behavior with TiDB in current compute framework
+		// ast.Hour,
+		// ast.Minute,
+		// ast.Second,
+		// ast.MicroSecond,
+		ast.PeriodAdd,
+		ast.PeriodDiff,
+		ast.DayName,
+
+		// encryption functions.
+		ast.MD5,
+		ast.SHA1,
+		ast.UncompressedLength,
+
+		ast.Cast,
+
+		// misc functions.
+		ast.InetNtoa,
+		ast.InetAton,
+		ast.Inet6Ntoa,
+		ast.Inet6Aton,
+		ast.IsIPv4,
+		ast.IsIPv4Compat,
+		ast.IsIPv4Mapped,
+		ast.IsIPv6:
+		return isPushdownEnabled(sf.FuncName.L)
+
+	// A special case: Only push down Round by signature
+	case ast.Round:
+		switch sf.Function.PbCode() {
+		case
+			tipb.ScalarFuncSig_RoundReal,
+			tipb.ScalarFuncSig_RoundInt,
+			tipb.ScalarFuncSig_RoundDec:
+			return isPushdownEnabled(sf.FuncName.L)
+		}
+	case ast.Rand:
+		switch sf.Function.PbCode() {
+		case
+			tipb.ScalarFuncSig_RandWithSeedFirstGen:
+			return isPushdownEnabled(sf.FuncName.L)
+		}
 	}
 	return false
+}
+
+func isPushdownEnabled(name string) bool {
+	_, disallowPushdown := DefaultExprPushdownBlacklist.Load().(map[string]struct{})[name]
+	return !disallowPushdown
 }
 
 // DefaultExprPushdownBlacklist indicates the expressions which can not be pushed down to TiKV.

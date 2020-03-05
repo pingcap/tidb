@@ -519,7 +519,6 @@ func (iw *indexHashJoinInnerWorker) buildHashTableForOuterResult(ctx context.Con
 			task.lookupMap.Put(h.Sum64(), rowPtr)
 		}
 	}
-	return
 }
 
 func (iw *indexHashJoinInnerWorker) fetchInnerResults(ctx context.Context, task *lookUpJoinTask) error {

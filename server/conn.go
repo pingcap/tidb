@@ -43,6 +43,7 @@ import (
 	"io"
 	"net"
 	"runtime"
+	"runtime/pprof"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -51,6 +52,7 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -498,23 +500,26 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 		return err
 	}
 
-	if (resp.Capability&mysql.ClientSSL > 0) && cc.server.tlsConfig != nil {
-		// The packet is a SSLRequest, let's switch to TLS.
-		if err = cc.upgradeToTLS(cc.server.tlsConfig); err != nil {
-			return err
-		}
-		// Read the following HandshakeResponse packet.
-		data, err = cc.readPacket()
-		if err != nil {
-			return err
-		}
-		if isOldVersion {
-			pos, err = parseOldHandshakeResponseHeader(ctx, &resp, data)
-		} else {
-			pos, err = parseHandshakeResponseHeader(ctx, &resp, data)
-		}
-		if err != nil {
-			return err
+	if resp.Capability&mysql.ClientSSL > 0 {
+		tlsConfig := (*tls.Config)(atomic.LoadPointer(&cc.server.tlsConfig))
+		if tlsConfig != nil {
+			// The packet is a SSLRequest, let's switch to TLS.
+			if err = cc.upgradeToTLS(tlsConfig); err != nil {
+				return err
+			}
+			// Read the following HandshakeResponse packet.
+			data, err = cc.readPacket()
+			if err != nil {
+				return err
+			}
+			if isOldVersion {
+				pos, err = parseOldHandshakeResponseHeader(ctx, &resp, data)
+			} else {
+				pos, err = parseHandshakeResponseHeader(ctx, &resp, data)
+			}
+			if err != nil {
+				return err
+			}
 		}
 	}
 
@@ -561,6 +566,10 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte) error {
 	var err error
 	cc.ctx, err = cc.server.driver.OpenCtx(uint64(cc.connectionID), cc.capability, cc.collation, cc.dbname, tlsStatePtr)
 	if err != nil {
+		return err
+	}
+
+	if err = cc.server.checkConnectionCount(); err != nil {
 		return err
 	}
 	hasPassword := "YES"
@@ -685,11 +694,16 @@ func (cc *clientConn) Run(ctx context.Context) {
 				}
 				return
 			}
+			var txnMode string
+			if cc.ctx != nil {
+				txnMode = cc.ctx.GetSessionVars().GetReadableTxnMode()
+			}
 			logutil.Logger(ctx).Warn("command dispatched failed",
 				zap.String("connInfo", cc.String()),
 				zap.String("command", mysql.Command2Str[data[0]]),
 				zap.String("status", cc.SessionStatusToString()),
 				zap.Stringer("sql", getLastStmtInConn{cc}),
+				zap.String("txn_mode", txnMode),
 				zap.String("err", errStrForLog(err)),
 			)
 			err1 := cc.writeError(err)
@@ -725,7 +739,7 @@ func queryStrForLog(query string) string {
 }
 
 func errStrForLog(err error) string {
-	if kv.ErrKeyExists.Equal(err) {
+	if kv.ErrKeyExists.Equal(err) || parser.ErrParse.Equal(err) {
 		// Do not log stack for duplicated entry error.
 		return err.Error()
 	}
@@ -804,6 +818,14 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	cc.lastPacket = data
 	cmd := data[0]
 	data = data[1:]
+	if variable.EnablePProfSQLCPU.Load() {
+		label := getLastStmtInConn{cc}.PProfLabel()
+		if len(label) > 0 {
+			defer pprof.SetGoroutineLabels(ctx)
+			ctx = pprof.WithLabels(ctx, pprof.Labels("sql", label))
+			pprof.SetGoroutineLabels(ctx)
+		}
+	}
 	token := cc.server.getToken()
 	defer func() {
 		// if handleChangeUser failed, cc.ctx may be nil
@@ -1102,6 +1124,8 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 	loadDataInfo.InitQueues()
 	loadDataInfo.SetMaxRowsInBatch(uint64(loadDataInfo.Ctx.GetSessionVars().DMLBatchSize))
 	loadDataInfo.StartStopWatcher()
+	// let stop watcher goroutine quit
+	defer loadDataInfo.ForceQuit()
 	err = loadDataInfo.Ctx.NewTxn(ctx)
 	if err != nil {
 		return err
@@ -1111,6 +1135,26 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 	err = loadDataInfo.CommitWork(ctx)
 	loadDataInfo.SetMessage()
 	return err
+}
+
+// getDataFromPath gets file contents from file path.
+func (cc *clientConn) getDataFromPath(path string) ([]byte, error) {
+	err := cc.writeReq(path)
+	if err != nil {
+		return nil, err
+	}
+	var prevData, curData []byte
+	for {
+		curData, err = cc.readPacket()
+		if err != nil && terror.ErrorNotEqual(err, io.EOF) {
+			return nil, err
+		}
+		if len(curData) == 0 {
+			break
+		}
+		prevData = append(prevData, curData...)
+	}
+	return prevData, nil
 }
 
 // handleLoadStats does the additional work after processing the 'load stats' query.
@@ -1123,25 +1167,39 @@ func (cc *clientConn) handleLoadStats(ctx context.Context, loadStatsInfo *execut
 	if loadStatsInfo == nil {
 		return errors.New("load stats: info is empty")
 	}
-	err := cc.writeReq(loadStatsInfo.Path)
+	data, err := cc.getDataFromPath(loadStatsInfo.Path)
 	if err != nil {
 		return err
 	}
-	var prevData, curData []byte
-	for {
-		curData, err = cc.readPacket()
-		if err != nil && terror.ErrorNotEqual(err, io.EOF) {
-			return err
-		}
-		if len(curData) == 0 {
-			break
-		}
-		prevData = append(prevData, curData...)
-	}
-	if len(prevData) == 0 {
+	if len(data) == 0 {
 		return nil
 	}
-	return loadStatsInfo.Update(prevData)
+	return loadStatsInfo.Update(data)
+}
+
+// handleIndexAdvise does the index advise work and returns the advise result for index.
+func (cc *clientConn) handleIndexAdvise(ctx context.Context, indexAdviseInfo *executor.IndexAdviseInfo) error {
+	if cc.capability&mysql.ClientLocalFiles == 0 {
+		return errNotAllowedCommand
+	}
+	if indexAdviseInfo == nil {
+		return errors.New("Index Advise: info is empty")
+	}
+
+	data, err := cc.getDataFromPath(indexAdviseInfo.Path)
+	if err != nil {
+		return err
+	}
+	if len(data) == 0 {
+		return errors.New("Index Advise: infile is empty")
+	}
+
+	if err := indexAdviseInfo.GetIndexAdvice(ctx, data); err != nil {
+		return err
+	}
+
+	// TODO: Write the rss []ResultSet. It will be done in another PR.
+	return nil
 }
 
 // handleQuery executes the sql query string and writes result set or result ok to the client.
@@ -1180,6 +1238,15 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 		if loadStats != nil {
 			defer cc.ctx.SetValue(executor.LoadStatsVarKey, nil)
 			if err = cc.handleLoadStats(ctx, loadStats.(*executor.LoadStatsInfo)); err != nil {
+				return err
+			}
+		}
+
+		indexAdvise := cc.ctx.Value(executor.IndexAdviseVarKey)
+		if indexAdvise != nil {
+			defer cc.ctx.SetValue(executor.IndexAdviseVarKey, nil)
+			err = cc.handleIndexAdvise(ctx, indexAdvise.(*executor.IndexAdviseInfo))
+			if err != nil {
 				return err
 			}
 		}
@@ -1499,5 +1566,30 @@ func (cc getLastStmtInConn) String() string {
 			return cmdStr
 		}
 		return string(hack.String(data))
+	}
+}
+
+// PProfLabel return sql label used to tag pprof.
+func (cc getLastStmtInConn) PProfLabel() string {
+	if len(cc.lastPacket) == 0 {
+		return ""
+	}
+	cmd, data := cc.lastPacket[0], cc.lastPacket[1:]
+	switch cmd {
+	case mysql.ComInitDB:
+		return "UseDB"
+	case mysql.ComFieldList:
+		return "ListFields"
+	case mysql.ComStmtClose:
+		return "CloseStmt"
+	case mysql.ComStmtReset:
+		return "ResetStmt"
+	case mysql.ComQuery, mysql.ComStmtPrepare:
+		return parser.Normalize(queryStrForLog(string(hack.String(data))))
+	case mysql.ComStmtExecute, mysql.ComStmtFetch:
+		stmtID := binary.LittleEndian.Uint32(data[0:4])
+		return queryStrForLog(cc.preparedStmt2StringNoArgs(stmtID))
+	default:
+		return ""
 	}
 }

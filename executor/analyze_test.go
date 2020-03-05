@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
@@ -62,7 +63,7 @@ PARTITION BY RANGE ( a ) (
 	}
 	tk.MustExec("analyze table t")
 
-	is := executor.GetInfoSchema(tk.Se.(sessionctx.Context))
+	is := infoschema.GetInfoSchema(tk.Se.(sessionctx.Context))
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	pi := table.Meta().GetPartitionInfo()
@@ -89,7 +90,7 @@ PARTITION BY RANGE ( a ) (
 		tk.MustExec(fmt.Sprintf(`insert into t values (%d, %d, "hello")`, i, i))
 	}
 	tk.MustExec("alter table t analyze partition p0")
-	is = executor.GetInfoSchema(tk.Se.(sessionctx.Context))
+	is = infoschema.GetInfoSchema(tk.Se.(sessionctx.Context))
 	table, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	pi = table.Meta().GetPartitionInfo()
@@ -139,7 +140,7 @@ func (s *testSuite1) TestAnalyzeParameters(c *C) {
 
 	tk.MustExec("set @@tidb_enable_fast_analyze = 1")
 	tk.MustExec("analyze table t with 30 samples")
-	is := executor.GetInfoSchema(tk.Se.(sessionctx.Context))
+	is := infoschema.GetInfoSchema(tk.Se.(sessionctx.Context))
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tableInfo := table.Meta()
@@ -170,7 +171,7 @@ func (s *testSuite1) TestAnalyzeTooLongColumns(c *C) {
 	tk.MustExec(fmt.Sprintf("insert into t values ('%s')", value))
 
 	tk.MustExec("analyze table t")
-	is := executor.GetInfoSchema(tk.Se.(sessionctx.Context))
+	is := infoschema.GetInfoSchema(tk.Se.(sessionctx.Context))
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tableInfo := table.Meta()
@@ -241,10 +242,8 @@ func (s *testFastAnalyze) TestAnalyzeFastSample(c *C) {
 	}
 	err = mockExec.TestFastSample()
 	c.Assert(err, IsNil)
-	vals := make([][]string, 0)
 	c.Assert(len(mockExec.Collectors), Equals, 3)
 	for i := 0; i < 2; i++ {
-		vals = append(vals, make([]string, 0))
 		samples := mockExec.Collectors[i].Samples
 		c.Assert(len(samples), Equals, 20)
 		for j := 1; j < 20; j++ {
@@ -311,7 +310,7 @@ func (s *testFastAnalyze) TestFastAnalyze(c *C) {
 	}
 	tk.MustExec("analyze table t with 5 buckets, 6 samples")
 
-	is := executor.GetInfoSchema(tk.Se.(sessionctx.Context))
+	is := infoschema.GetInfoSchema(tk.Se.(sessionctx.Context))
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tableInfo := table.Meta()
@@ -335,14 +334,14 @@ func (s *testFastAnalyze) TestFastAnalyze(c *C) {
 	tk.MustExec("insert into t1 values (1,1),(1,1),(1,2),(1,2)")
 	tk.MustExec("analyze table t1")
 	tk.MustQuery("explain select a from t1 where a = 1").Check(testkit.Rows(
-		"IndexReader_6 4.00 root index:IndexScan_5",
-		"└─IndexScan_5 4.00 cop[tikv] table:t1, index:a, b, range:[1,1], keep order:false"))
+		"IndexReader_6 4.00 root index:IndexRangeScan_5",
+		"└─IndexRangeScan_5 4.00 cop[tikv] table:t1, index:a, b, range:[1,1], keep order:false"))
 	tk.MustQuery("explain select a, b from t1 where a = 1 and b = 1").Check(testkit.Rows(
-		"IndexReader_6 2.00 root index:IndexScan_5",
-		"└─IndexScan_5 2.00 cop[tikv] table:t1, index:a, b, range:[1 1,1 1], keep order:false"))
+		"IndexReader_6 2.00 root index:IndexRangeScan_5",
+		"└─IndexRangeScan_5 2.00 cop[tikv] table:t1, index:a, b, range:[1 1,1 1], keep order:false"))
 	tk.MustQuery("explain select a, b from t1 where a = 1 and b = 2").Check(testkit.Rows(
-		"IndexReader_6 2.00 root index:IndexScan_5",
-		"└─IndexScan_5 2.00 cop[tikv] table:t1, index:a, b, range:[1 2,1 2], keep order:false"))
+		"IndexReader_6 2.00 root index:IndexRangeScan_5",
+		"└─IndexRangeScan_5 2.00 cop[tikv] table:t1, index:a, b, range:[1 2,1 2], keep order:false"))
 
 	tk.MustExec("create table t2 (a bigint unsigned, primary key(a))")
 	tk.MustExec("insert into t2 values (0), (18446744073709551615)")

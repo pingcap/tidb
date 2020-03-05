@@ -37,7 +37,9 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	mockpkg "github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"google.golang.org/grpc"
@@ -49,6 +51,7 @@ var dummySlice = make([]byte, 0)
 type dagContext struct {
 	dagReq    *tipb.DAGRequest
 	keyRanges []*coprocessor.KeyRange
+	startTS   uint64
 	evalCtx   *evalContext
 }
 
@@ -87,9 +90,6 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) *coprocessor.
 	if err == nil {
 		err = h.fillUpData4SelectResponse(selResp, dagReq, dagCtx, rows)
 	}
-	// FIXME: some err such as (overflow) will be include in Response.OtherError with calling this buildResp.
-	//  Such err should only be marshal in the data but not in OtherError.
-	//  However, we can not distinguish such err now.
 	return buildResp(selResp, execDetails, err)
 }
 
@@ -116,6 +116,7 @@ func (h *rpcHandler) buildDAGExecutor(req *coprocessor.Request) (*dagContext, ex
 	ctx := &dagContext{
 		dagReq:    dagReq,
 		keyRanges: req.Ranges,
+		startTS:   req.StartTs,
 		evalCtx:   &evalContext{sc: sc},
 	}
 	e, err := h.buildDAG(ctx, dagReq.Executors)
@@ -129,11 +130,7 @@ func (h *rpcHandler) buildDAGExecutor(req *coprocessor.Request) (*dagContext, ex
 // is set, the daylight saving problem must be considered. Otherwise the
 // timezone offset in seconds east of UTC is used to constructed the timezone.
 func constructTimeZone(name string, offset int) (*time.Location, error) {
-	if name != "" {
-		return timeutil.LoadLocation(name)
-	}
-
-	return time.FixedZone("", offset), nil
+	return timeutil.ConstructTimeZone(name, offset)
 }
 
 func (h *rpcHandler) handleCopStream(ctx context.Context, req *coprocessor.Request) (tikvpb.Tikv_CoprocessorStreamClient, error) {
@@ -197,16 +194,45 @@ func (h *rpcHandler) buildTableScan(ctx *dagContext, executor *tipb.Executor) (*
 		return nil, errors.Trace(err)
 	}
 
+	startTS := ctx.startTS
+	if startTS == 0 {
+		startTS = ctx.dagReq.GetStartTsFallback()
+	}
+	colInfos := make([]rowcodec.ColInfo, len(columns))
+	for i := range colInfos {
+		col := columns[i]
+		colInfos[i] = rowcodec.ColInfo{
+			ID:         col.ColumnId,
+			Tp:         col.Tp,
+			Flag:       col.Flag,
+			IsPKHandle: col.GetPkHandle(),
+			Collate:    collate.CollationID2Name(col.Collation),
+		}
+	}
+	defVal := func(i int) ([]byte, error) {
+		col := columns[i]
+		if col.DefaultVal == nil {
+			return nil, nil
+		}
+		// col.DefaultVal always be  varint `[flag]+[value]`.
+		if len(col.DefaultVal) < 1 {
+			panic("invalid default value")
+		}
+		return col.DefaultVal, nil
+	}
+	rd := rowcodec.NewByteDecoder(colInfos, -1, defVal, nil)
 	e := &tableScanExec{
 		TableScan:      executor.TblScan,
 		kvRanges:       ranges,
 		colIDs:         ctx.evalCtx.colIDs,
-		startTS:        ctx.dagReq.GetStartTs(),
+		startTS:        startTS,
 		isolationLevel: h.isolationLevel,
 		resolvedLocks:  h.resolvedLocks,
 		mvccStore:      h.mvccStore,
 		execDetail:     new(execDetail),
+		rd:             rd,
 	}
+
 	if ctx.dagReq.CollectRangeCounts != nil && *ctx.dagReq.CollectRangeCounts {
 		e.counts = make([]int64, len(ranges))
 	}
@@ -218,17 +244,17 @@ func (h *rpcHandler) buildIndexScan(ctx *dagContext, executor *tipb.Executor) (*
 	columns := executor.IdxScan.Columns
 	ctx.evalCtx.setColumnInfo(columns)
 	length := len(columns)
-	pkStatus := tablecodec.PrimaryKeyNotExists
+	pkStatus := tablecodec.HandleNotExists
 	// The PKHandle column info has been collected in ctx.
 	if columns[length-1].GetPkHandle() {
 		if mysql.HasUnsignedFlag(uint(columns[length-1].GetFlag())) {
-			pkStatus = tablecodec.PrimaryKeyIsUnsigned
+			pkStatus = tablecodec.HandleIsUnsigned
 		} else {
-			pkStatus = tablecodec.PrimaryKeyIsSigned
+			pkStatus = tablecodec.HandleIsSigned
 		}
 		columns = columns[:length-1]
 	} else if columns[length-1].ColumnId == model.ExtraHandleID {
-		pkStatus = tablecodec.PrimaryKeyIsSigned
+		pkStatus = tablecodec.HandleIsSigned
 		columns = columns[:length-1]
 	}
 	ranges, err := h.extractKVRanges(ctx.keyRanges, executor.IdxScan.Desc)
@@ -236,16 +262,32 @@ func (h *rpcHandler) buildIndexScan(ctx *dagContext, executor *tipb.Executor) (*
 		return nil, errors.Trace(err)
 	}
 
+	startTS := ctx.startTS
+	if startTS == 0 {
+		startTS = ctx.dagReq.GetStartTsFallback()
+	}
+	colInfos := make([]rowcodec.ColInfo, 0, len(columns))
+	for i := range columns {
+		col := columns[i]
+		colInfos = append(colInfos, rowcodec.ColInfo{
+			ID:         col.ColumnId,
+			Tp:         col.Tp,
+			Flag:       col.Flag,
+			IsPKHandle: col.GetPkHandle(),
+			Collate:    collate.CollationID2Name(col.Collation),
+		})
+	}
 	e := &indexScanExec{
 		IndexScan:      executor.IdxScan,
 		kvRanges:       ranges,
 		colsLen:        len(columns),
-		startTS:        ctx.dagReq.GetStartTs(),
+		startTS:        startTS,
 		isolationLevel: h.isolationLevel,
 		resolvedLocks:  h.resolvedLocks,
 		mvccStore:      h.mvccStore,
-		pkStatus:       pkStatus,
+		hdStatus:       pkStatus,
 		execDetail:     new(execDetail),
+		colInfos:       colInfos,
 	}
 	if ctx.dagReq.CollectRangeCounts != nil && *ctx.dagReq.CollectRangeCounts {
 		e.counts = make([]int64, len(ranges))
@@ -394,7 +436,7 @@ func (e *evalContext) setColumnInfo(cols []*tipb.ColumnInfo) {
 	e.columnInfos = make([]*tipb.ColumnInfo, len(cols))
 	copy(e.columnInfos, cols)
 
-	e.colIDs = make(map[int64]int)
+	e.colIDs = make(map[int64]int, len(e.columnInfos))
 	e.fieldTps = make([]*types.FieldType, 0, len(e.columnInfos))
 	for i, col := range e.columnInfos {
 		ft := fieldTypeFromPBColumn(col)
@@ -420,13 +462,13 @@ func flagsToStatementContext(flags uint64) *stmtctx.StatementContext {
 	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = (flags & model.FlagIgnoreTruncate) > 0
 	sc.TruncateAsWarning = (flags & model.FlagTruncateAsWarning) > 0
-	sc.PadCharToFullLength = (flags & model.FlagPadCharToFullLength) > 0
 	sc.InInsertStmt = (flags & model.FlagInInsertStmt) > 0
 	sc.InSelectStmt = (flags & model.FlagInSelectStmt) > 0
+	sc.InDeleteStmt = (flags & model.FlagInUpdateOrDeleteStmt) > 0
 	sc.OverflowAsWarning = (flags & model.FlagOverflowAsWarning) > 0
 	sc.IgnoreZeroInDate = (flags & model.FlagIgnoreZeroInDate) > 0
 	sc.DividedByZeroAsWarning = (flags & model.FlagDividedByZeroAsWarning) > 0
-	// TODO set FlagInUpdateOrDeleteStmt, FlagInUnionStmt,
+	// TODO set FlagInUnionStmt,
 	return sc
 }
 
@@ -438,12 +480,23 @@ func MockGRPCClientStream() grpc.ClientStream {
 // mockClientStream implements grpc ClientStream interface, its methods are never called.
 type mockClientStream struct{}
 
+// Header implements grpc.ClientStream interface
 func (mockClientStream) Header() (metadata.MD, error) { return nil, nil }
-func (mockClientStream) Trailer() metadata.MD         { return nil }
-func (mockClientStream) CloseSend() error             { return nil }
-func (mockClientStream) Context() context.Context     { return nil }
-func (mockClientStream) SendMsg(m interface{}) error  { return nil }
-func (mockClientStream) RecvMsg(m interface{}) error  { return nil }
+
+// Trailer implements grpc.ClientStream interface
+func (mockClientStream) Trailer() metadata.MD { return nil }
+
+// CloseSend implements grpc.ClientStream interface
+func (mockClientStream) CloseSend() error { return nil }
+
+// Context implements grpc.ClientStream interface
+func (mockClientStream) Context() context.Context { return nil }
+
+// SendMsg implements grpc.ClientStream interface
+func (mockClientStream) SendMsg(m interface{}) error { return nil }
+
+// RecvMsg implements grpc.ClientStream interface
+func (mockClientStream) RecvMsg(m interface{}) error { return nil }
 
 type mockCopStreamClient struct {
 	mockClientStream
@@ -678,16 +731,13 @@ func buildResp(selResp *tipb.SelectResponse, execDetails []*execDetail, err erro
 		selResp.ExecutionSummaries = execSummary
 	}
 
-	if err != nil {
-		if locked, ok := errors.Cause(err).(*ErrLocked); ok {
-			resp.Locked = &kvrpcpb.LockInfo{
-				Key:         locked.Key,
-				PrimaryLock: locked.Primary,
-				LockVersion: locked.StartTS,
-				LockTtl:     locked.TTL,
-			}
-		} else {
-			resp.OtherError = err.Error()
+	// Select errors have been contained in `SelectResponse.Error`
+	if locked, ok := errors.Cause(err).(*ErrLocked); ok {
+		resp.Locked = &kvrpcpb.LockInfo{
+			Key:         locked.Key,
+			PrimaryLock: locked.Primary,
+			LockVersion: locked.StartTS,
+			LockTtl:     locked.TTL,
 		}
 	}
 	data, err := proto.Marshal(selResp)
@@ -824,6 +874,6 @@ func fieldTypeFromPBColumn(col *tipb.ColumnInfo) *types.FieldType {
 		Flen:    int(col.GetColumnLen()),
 		Decimal: int(col.GetDecimal()),
 		Elems:   col.Elems,
-		Collate: mysql.Collations[uint8(col.GetCollation())],
+		Collate: mysql.Collations[uint8(collate.RestoreCollationIDIfNeeded(col.GetCollation()))],
 	}
 }

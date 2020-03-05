@@ -43,7 +43,7 @@ func (s *testEvaluatorSuite) TestColumn(c *C) {
 	c.Assert(corCol.Equal(nil, corCol), IsTrue)
 	c.Assert(corCol.Equal(nil, invalidCorCol), IsFalse)
 	c.Assert(corCol.IsCorrelated(), IsTrue)
-	c.Assert(corCol.ConstItem(), IsFalse)
+	c.Assert(corCol.ConstItem(nil), IsFalse)
 	c.Assert(corCol.Decorrelate(schema).Equal(nil, col), IsTrue)
 	c.Assert(invalidCorCol.Decorrelate(schema).Equal(nil, invalidCorCol), IsTrue)
 
@@ -226,30 +226,6 @@ func (s *testEvaluatorSuite) TestColHybird(c *C) {
 	for row, i := it.Begin(), 0; row != it.End(); row, i = it.Next(), i+1 {
 		v, _, err := col.EvalString(ctx, row)
 		c.Assert(err, IsNil)
-		c.Assert(v, Equals, result.GetString(i))
-	}
-}
-
-func (s *testEvaluatorSuite) TestPadCharToFullLength(c *C) {
-	ctx := mock.NewContext()
-	ctx.GetSessionVars().StmtCtx.PadCharToFullLength = true
-
-	ft := types.NewFieldType(mysql.TypeString)
-	ft.Flen = 10
-	col := &Column{RetType: ft, Index: 0}
-	input := chunk.New([]*types.FieldType{ft}, 1024, 1024)
-	for i := 0; i < 1024; i++ {
-		input.AppendString(0, "xy")
-	}
-	result, err := newBuffer(types.ETString, 1024)
-	c.Assert(err, IsNil)
-	c.Assert(col.VecEvalString(ctx, input, result), IsNil)
-
-	it := chunk.NewIterator4Chunk(input)
-	for row, i := it.Begin(), 0; row != it.End(); row, i = it.Next(), i+1 {
-		v, _, err := col.EvalString(ctx, row)
-		c.Assert(err, IsNil)
-		c.Assert(len(v), Equals, ft.Flen)
 		c.Assert(v, Equals, result.GetString(i))
 	}
 }

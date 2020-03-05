@@ -14,13 +14,18 @@
 package privileges
 
 import (
+	"crypto/tls"
+	"fmt"
 	"strings"
 
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/infoschema/perfschema"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -48,15 +53,30 @@ func (p *UserPrivileges) RequestVerification(activeRoles []*auth.RoleIdentity, d
 		return true
 	}
 
-	// Skip check for INFORMATION_SCHEMA database.
+	// Skip check for system databases.
 	// See https://dev.mysql.com/doc/refman/5.7/en/information-schema.html
-	if strings.EqualFold(db, "INFORMATION_SCHEMA") {
+	dbLowerName := strings.ToLower(db)
+	switch dbLowerName {
+	case util.InformationSchemaName.L:
 		switch priv {
 		case mysql.CreatePriv, mysql.AlterPriv, mysql.DropPriv, mysql.IndexPriv, mysql.CreateViewPriv,
 			mysql.InsertPriv, mysql.UpdatePriv, mysql.DeletePriv:
 			return false
 		}
 		return true
+	// We should be very careful of limiting privileges, so ignore `mysql` for now.
+	case util.PerformanceSchemaName.L, util.MetricSchemaName.L:
+		// CREATE and DROP privileges are not limited in the older versions, so ignore them now.
+		// User may have created some tables in these schema, but predefined tables can't be altered or modified.
+		if (dbLowerName == util.PerformanceSchemaName.L && perfschema.IsPredefinedTable(table)) ||
+			(dbLowerName == util.MetricSchemaName.L && infoschema.IsMetricTable(table)) {
+			switch priv {
+			case mysql.AlterPriv, mysql.DropPriv, mysql.IndexPriv, mysql.InsertPriv, mysql.UpdatePriv, mysql.DeletePriv:
+				return false
+			case mysql.SelectPriv:
+				return true
+			}
+		}
 	}
 
 	mysqlPriv := p.Handle.Get()
@@ -92,7 +112,7 @@ func (p *UserPrivileges) GetEncodedPassword(user, host string) string {
 			zap.String("user", user), zap.String("host", host))
 		return ""
 	}
-	pwd := record.Password
+	pwd := record.AuthenticationString
 	if len(pwd) != 0 && len(pwd) != mysql.PWDHashLen+1 {
 		logutil.BgLogger().Error("user password from system DB not like sha1sum", zap.String("user", user))
 		return ""
@@ -100,8 +120,33 @@ func (p *UserPrivileges) GetEncodedPassword(user, host string) string {
 	return pwd
 }
 
+// GetAuthWithoutVerification implements the Manager interface.
+func (p *UserPrivileges) GetAuthWithoutVerification(user, host string) (u string, h string, success bool) {
+	if SkipWithGrant {
+		p.user = user
+		p.host = host
+		success = true
+		return
+	}
+
+	mysqlPriv := p.Handle.Get()
+	record := mysqlPriv.connectionVerification(user, host)
+	if record == nil {
+		logutil.BgLogger().Error("get user privilege record fail",
+			zap.String("user", user), zap.String("host", host))
+		return
+	}
+
+	u = record.User
+	h = record.Host
+	p.user = user
+	p.host = h
+	success = true
+	return
+}
+
 // ConnectionVerification implements the Manager interface.
-func (p *UserPrivileges) ConnectionVerification(user, host string, authentication, salt []byte) (u string, h string, success bool) {
+func (p *UserPrivileges) ConnectionVerification(user, host string, authentication, salt []byte, tlsState *tls.ConnectionState) (u string, h string, success bool) {
 	if SkipWithGrant {
 		p.user = user
 		p.host = host
@@ -120,6 +165,16 @@ func (p *UserPrivileges) ConnectionVerification(user, host string, authenticatio
 	u = record.User
 	h = record.Host
 
+	globalPriv := mysqlPriv.matchGlobalPriv(user, host)
+	if globalPriv != nil {
+		if !p.checkSSL(globalPriv, tlsState) {
+			logutil.BgLogger().Error("global priv check ssl fail",
+				zap.String("user", user), zap.String("host", host))
+			success = false
+			return
+		}
+	}
+
 	// Login a locked account is not allowed.
 	locked := record.AccountLocked
 	if locked {
@@ -129,7 +184,7 @@ func (p *UserPrivileges) ConnectionVerification(user, host string, authenticatio
 		return
 	}
 
-	pwd := record.Password
+	pwd := record.AuthenticationString
 	if len(pwd) != 0 && len(pwd) != mysql.PWDHashLen+1 {
 		logutil.BgLogger().Error("user password from system DB not like sha1sum", zap.String("user", user))
 		return
@@ -163,6 +218,102 @@ func (p *UserPrivileges) ConnectionVerification(user, host string, authenticatio
 	return
 }
 
+type checkResult int
+
+const (
+	notCheck checkResult = iota
+	pass
+	fail
+)
+
+func (p *UserPrivileges) checkSSL(priv *globalPrivRecord, tlsState *tls.ConnectionState) bool {
+	if priv.Broken {
+		logutil.BgLogger().Debug("ssl check failure, due to broken global_priv record",
+			zap.String("user", priv.User), zap.String("host", priv.Host))
+		return false
+	}
+	switch priv.Priv.SSLType {
+	case SslTypeNotSpecified, SslTypeNone:
+		return true
+	case SslTypeAny:
+		r := tlsState != nil
+		if !r {
+			logutil.BgLogger().Debug("ssl check failure, require ssl but not use ssl",
+				zap.String("user", priv.User), zap.String("host", priv.Host))
+		}
+		return r
+	case SslTypeX509:
+		if tlsState == nil {
+			logutil.BgLogger().Debug("ssl check failure, require x509 but not use ssl",
+				zap.String("user", priv.User), zap.String("host", priv.Host))
+			return false
+		}
+		hasCert := false
+		for _, chain := range tlsState.VerifiedChains {
+			if len(chain) > 0 {
+				hasCert = true
+				break
+			}
+		}
+		if !hasCert {
+			logutil.BgLogger().Debug("ssl check failure, require x509 but no verified cert",
+				zap.String("user", priv.User), zap.String("host", priv.Host))
+		}
+		return hasCert
+	case SslTypeSpecified:
+		if tlsState == nil {
+			logutil.BgLogger().Debug("ssl check failure, require subject/issuer/cipher but not use ssl",
+				zap.String("user", priv.User), zap.String("host", priv.Host))
+			return false
+		}
+		if len(priv.Priv.SSLCipher) > 0 && priv.Priv.SSLCipher != util.TLSCipher2String(tlsState.CipherSuite) {
+			logutil.BgLogger().Debug("ssl check failure for cipher", zap.String("user", priv.User), zap.String("host", priv.Host),
+				zap.String("require", priv.Priv.SSLCipher), zap.String("given", util.TLSCipher2String(tlsState.CipherSuite)))
+			return false
+		}
+		var (
+			hasCert      = false
+			matchIssuer  checkResult
+			matchSubject checkResult
+		)
+		for _, chain := range tlsState.VerifiedChains {
+			if len(chain) == 0 {
+				continue
+			}
+			cert := chain[0]
+			if len(priv.Priv.X509Issuer) > 0 {
+				given := util.X509NameOnline(cert.Issuer)
+				if priv.Priv.X509Issuer == given {
+					matchIssuer = pass
+				} else if matchIssuer == notCheck {
+					matchIssuer = fail
+					logutil.BgLogger().Debug("ssl check failure for issuer", zap.String("user", priv.User), zap.String("host", priv.Host),
+						zap.String("require", priv.Priv.X509Issuer), zap.String("given", given))
+				}
+			}
+			if len(priv.Priv.X509Subject) > 0 {
+				given := util.X509NameOnline(cert.Subject)
+				if priv.Priv.X509Subject == given {
+					matchSubject = pass
+				} else if matchSubject == notCheck {
+					matchSubject = fail
+					logutil.BgLogger().Debug("ssl check failure for subject", zap.String("user", priv.User), zap.String("host", priv.Host),
+						zap.String("require", priv.Priv.X509Subject), zap.String("given", given))
+				}
+			}
+			hasCert = true
+		}
+		checkResult := hasCert && matchIssuer != fail && matchSubject != fail
+		if !checkResult && !hasCert {
+			logutil.BgLogger().Debug("ssl check failure, require issuer/subject but no verified cert",
+				zap.String("user", priv.User), zap.String("host", priv.Host))
+		}
+		return checkResult
+	default:
+		panic(fmt.Sprintf("support ssl_type: %d", priv.Priv.SSLType))
+	}
+}
+
 // DBIsVisible implements the Manager interface.
 func (p *UserPrivileges) DBIsVisible(activeRoles []*auth.RoleIdentity, db string) bool {
 	if SkipWithGrant {
@@ -190,7 +341,7 @@ func (p *UserPrivileges) UserPrivilegesTable() [][]types.Datum {
 // ShowGrants implements privilege.Manager ShowGrants interface.
 func (p *UserPrivileges) ShowGrants(ctx sessionctx.Context, user *auth.UserIdentity, roles []*auth.RoleIdentity) (grants []string, err error) {
 	if SkipWithGrant {
-		return nil, errNonexistingGrant.GenWithStackByArgs("root", "%")
+		return nil, ErrNonexistingGrant.GenWithStackByArgs("root", "%")
 	}
 	mysqlPrivilege := p.Handle.Get()
 	u := user.Username
@@ -201,7 +352,7 @@ func (p *UserPrivileges) ShowGrants(ctx sessionctx.Context, user *auth.UserIdent
 	}
 	grants = mysqlPrivilege.showGrants(u, h, roles)
 	if len(grants) == 0 {
-		err = errNonexistingGrant.GenWithStackByArgs(u, h)
+		err = ErrNonexistingGrant.GenWithStackByArgs(u, h)
 	}
 
 	return

@@ -23,8 +23,9 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/pd/client"
+	pd "github.com/pingcap/pd/client"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -77,12 +78,12 @@ var _ = NewLockResolver
 // NewLockResolver creates a LockResolver.
 // It is exported for other pkg to use. For instance, binlog service needs
 // to determine a transaction's commit state.
-func NewLockResolver(etcdAddrs []string, security config.Security) (*LockResolver, error) {
+func NewLockResolver(etcdAddrs []string, security config.Security, opts ...pd.ClientOption) (*LockResolver, error) {
 	pdCli, err := pd.NewClient(etcdAddrs, pd.SecurityOption{
 		CAPath:   security.ClusterSSLCA,
 		CertPath: security.ClusterSSLCert,
 		KeyPath:  security.ClusterSSLKey,
-	})
+	}, opts...)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -98,7 +99,7 @@ func NewLockResolver(etcdAddrs []string, security config.Security) (*LockResolve
 		return nil, errors.Trace(err)
 	}
 
-	s, err := newTikvStore(uuid, &codecPDClient{pdCli}, spkv, newRPCClient(security), false)
+	s, err := newTikvStore(uuid, &codecPDClient{pdCli}, spkv, newRPCClient(security), false, nil)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -131,12 +132,13 @@ var ttlFactor = 6000
 
 // Lock represents a lock from tikv server.
 type Lock struct {
-	Key      []byte
-	Primary  []byte
-	TxnID    uint64
-	TTL      uint64
-	TxnSize  uint64
-	LockType kvrpcpb.Op
+	Key             []byte
+	Primary         []byte
+	TxnID           uint64
+	TTL             uint64
+	TxnSize         uint64
+	LockType        kvrpcpb.Op
+	LockForUpdateTS uint64
 }
 
 func (l *Lock) String() string {
@@ -145,18 +147,19 @@ func (l *Lock) String() string {
 	prettyWriteKey(buf, l.Key)
 	buf.WriteString(", primary: ")
 	prettyWriteKey(buf, l.Primary)
-	return fmt.Sprintf("%s, txnStartTS: %d, ttl: %d, type: %s", buf.String(), l.TxnID, l.TTL, l.LockType)
+	return fmt.Sprintf("%s, txnStartTS: %d, lockForUpdateTS:%d, ttl: %d, type: %s", buf.String(), l.TxnID, l.LockForUpdateTS, l.TTL, l.LockType)
 }
 
 // NewLock creates a new *Lock.
 func NewLock(l *kvrpcpb.LockInfo) *Lock {
 	return &Lock{
-		Key:      l.GetKey(),
-		Primary:  l.GetPrimaryLock(),
-		TxnID:    l.GetLockVersion(),
-		TTL:      l.GetLockTtl(),
-		TxnSize:  l.GetTxnSize(),
-		LockType: l.LockType,
+		Key:             l.GetKey(),
+		Primary:         l.GetPrimaryLock(),
+		TxnID:           l.GetLockVersion(),
+		TTL:             l.GetLockTtl(),
+		TxnSize:         l.GetTxnSize(),
+		LockType:        l.LockType,
+		LockForUpdateTS: l.LockForUpdateTs,
 	}
 }
 
@@ -308,7 +311,11 @@ func (lr *LockResolver) ResolveLocks(bo *Backoffer, callerStartTS uint64, locks 
 				cleanTxns[l.TxnID] = cleanRegions
 			}
 
-			err = lr.resolveLock(bo, l, status, cleanRegions)
+			if l.LockType == kvrpcpb.Op_PessimisticLock {
+				err = lr.resolvePessimisticLock(bo, l, cleanRegions)
+			} else {
+				err = lr.resolveLock(bo, l, status, cleanRegions)
+			}
 			if err != nil {
 				msBeforeTxnExpired.update(0)
 				err = errors.Trace(err)
@@ -358,7 +365,6 @@ func (t *txnExpireTime) update(lockExpire int64) {
 	if lockExpire < t.txnExpire {
 		t.txnExpire = lockExpire
 	}
-	return
 }
 
 func (t *txnExpireTime) value() int64 {
@@ -411,19 +417,25 @@ func (lr *LockResolver) getTxnStatusFromLock(bo *Backoffer, l *Lock, callerStart
 			return TxnStatus{}, err
 		}
 
-		if l.LockType == kvrpcpb.Op_PessimisticLock {
-			return TxnStatus{ttl: l.TTL}, nil
-		}
+		failpoint.Inject("txnNotFoundRetTTL", func() {
+			failpoint.Return(TxnStatus{l.TTL, 0, kvrpcpb.Action_NoAction}, nil)
+		})
 
 		// Handle txnNotFound error.
 		// getTxnStatus() returns it when the secondary locks exist while the primary lock doesn't.
 		// This is likely to happen in the concurrently prewrite when secondary regions
 		// success before the primary region.
 		if err := bo.Backoff(boTxnNotFound, err); err != nil {
-			logutil.BgLogger().Warn("getTxnStatusFromLock backoff fail", zap.Error(err))
+			logutil.Logger(bo.ctx).Warn("getTxnStatusFromLock backoff fail", zap.Error(err))
 		}
 
 		if lr.store.GetOracle().UntilExpired(l.TxnID, l.TTL) <= 0 {
+			logutil.Logger(bo.ctx).Warn("lock txn not found, lock has expired",
+				zap.Uint64("CallerStartTs", callerStartTS),
+				zap.Stringer("lock str", l))
+			if l.LockType == kvrpcpb.Op_PessimisticLock {
+				return TxnStatus{}, nil
+			}
 			rollbackIfNotExist = true
 		}
 	}
@@ -567,6 +579,54 @@ func (lr *LockResolver) resolveLock(bo *Backoffer, l *Lock, status TxnStatus, cl
 		}
 		if cleanWholeRegion {
 			cleanRegions[loc.Region] = struct{}{}
+		}
+		return nil
+	}
+}
+
+func (lr *LockResolver) resolvePessimisticLock(bo *Backoffer, l *Lock, cleanRegions map[RegionVerID]struct{}) error {
+	tikvLockResolverCountWithResolveLocks.Inc()
+	for {
+		loc, err := lr.store.GetRegionCache().LocateKey(bo, l.Key)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if _, ok := cleanRegions[loc.Region]; ok {
+			return nil
+		}
+		forUpdateTS := l.LockForUpdateTS
+		if forUpdateTS == 0 {
+			forUpdateTS = math.MaxUint64
+		}
+		pessimisticRollbackReq := &kvrpcpb.PessimisticRollbackRequest{
+			StartVersion: l.TxnID,
+			ForUpdateTs:  forUpdateTS,
+			Keys:         [][]byte{l.Key},
+		}
+		req := tikvrpc.NewRequest(tikvrpc.CmdPessimisticRollback, pessimisticRollbackReq)
+		resp, err := lr.store.SendReq(bo, req, loc.Region, readTimeoutShort)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		regionErr, err := resp.GetRegionError()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if regionErr != nil {
+			err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
+			if err != nil {
+				return errors.Trace(err)
+			}
+			continue
+		}
+		if resp.Resp == nil {
+			return errors.Trace(ErrBodyMissing)
+		}
+		cmdResp := resp.Resp.(*kvrpcpb.PessimisticRollbackResponse)
+		if keyErr := cmdResp.GetErrors(); len(keyErr) > 0 {
+			err = errors.Errorf("unexpected resolve pessimistic lock err: %s, lock: %v", keyErr[0], l)
+			logutil.Logger(bo.ctx).Error("resolveLock error", zap.Error(err))
+			return err
 		}
 		return nil
 	}

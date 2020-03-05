@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/opcode"
@@ -32,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/stringutil"
 )
 
@@ -385,6 +387,8 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 		if _, ok := expression.DisableFoldFunctions[v.FnName.L]; ok {
 			er.disableFoldCounter++
 		}
+	case *ast.SetCollationExpr:
+		// Do nothing
 	default:
 		er.asScalar = true
 	}
@@ -814,7 +818,7 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, v *ast.Patte
 		join.names = make([]*types.FieldName, er.p.Schema().Len()+agg.Schema().Len())
 		copy(join.names, er.p.OutputNames())
 		copy(join.names[er.p.Schema().Len():], agg.OutputNames())
-		join.attachOnConds(expression.SplitCNFItems(checkCondition))
+		join.AttachOnConds(expression.SplitCNFItems(checkCondition))
 		// Set join hint for this join.
 		if er.b.TableHints() != nil {
 			join.setPreferredJoinType(er.b.TableHints())
@@ -903,7 +907,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 	}
 	switch v := inNode.(type) {
 	case *ast.AggregateFuncExpr, *ast.ColumnNameExpr, *ast.ParenthesesExpr, *ast.WhenClause,
-		*ast.SubqueryExpr, *ast.ExistsSubqueryExpr, *ast.CompareSubqueryExpr, *ast.ValuesExpr, *ast.WindowFuncExpr:
+		*ast.SubqueryExpr, *ast.ExistsSubqueryExpr, *ast.CompareSubqueryExpr, *ast.ValuesExpr, *ast.WindowFuncExpr, *ast.TableNameExpr:
 	case *driver.ValueExpr:
 		value := &expression.Constant{Value: v.Datum, RetType: &v.Type}
 		er.ctxStackAppend(value, types.EmptyName)
@@ -921,6 +925,8 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		if _, ok := expression.DisableFoldFunctions[v.FnName.L]; ok {
 			er.disableFoldCounter--
 		}
+	case *ast.TableName:
+		er.toTable(v)
 	case *ast.ColumnName:
 		er.toColumn(v)
 	case *ast.UnaryOperationExpr:
@@ -980,6 +986,33 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 			Value:   types.NewStringDatum(v.Selector.String()),
 			RetType: types.NewFieldType(mysql.TypeVarchar),
 		}, types.EmptyName)
+	case *ast.SetCollationExpr:
+		arg := er.ctxStack[len(er.ctxStack)-1]
+		if collate.NewCollationEnabled() {
+			var collInfo *charset.Collation
+			// TODO(bb7133): use charset.ValidCharsetAndCollation when its bug is fixed.
+			if collInfo, er.err = charset.GetCollationByName(v.Collate); er.err != nil {
+				er.err = charset.ErrUnknownCollation.GenWithStackByArgs(v.Collate)
+				break
+			}
+			chs := arg.GetType().Charset
+			if chs != "" && collInfo.CharsetName != chs {
+				er.err = charset.ErrCollationCharsetMismatch.GenWithStackByArgs(collInfo.Name, chs)
+				break
+			}
+		}
+		// SetCollationExpr sets the collation explicitly, even when the evaluation type of the expression is non-string.
+		if _, ok := arg.(*expression.Column); ok {
+			// Wrap a cast here to avoid changing the original FieldType of the column expression.
+			casted := expression.WrapWithCastAsString(er.sctx, arg)
+			casted.GetType().Collate = v.Collate
+			er.ctxStackPop(1)
+			er.ctxStackAppend(casted, types.EmptyName)
+		} else {
+			// For constant and scalar function, we can set its collate directly.
+			arg.GetType().Collate = v.Collate
+		}
+		er.ctxStack[len(er.ctxStack)-1].SetCoercibility(expression.CoercibilityExplicit)
 	default:
 		er.err = errors.Errorf("UnknownType: %T", v)
 		return retNode, false
@@ -1491,6 +1524,20 @@ func (er *expressionRewriter) funcCallToExpression(v *ast.FuncCallExpr) {
 	}
 }
 
+// Now TableName in expression only used by sequence function like nextval(seq).
+// The function arg should be evaluated as a table name rather than normal column name like mysql does.
+func (er *expressionRewriter) toTable(v *ast.TableName) {
+	fullName := v.Name.L
+	if len(v.Schema.L) != 0 {
+		fullName = v.Schema.L + "." + fullName
+	}
+	val := &expression.Constant{
+		Value:   types.NewDatum(fullName),
+		RetType: types.NewFieldType(mysql.TypeString),
+	}
+	er.ctxStackAppend(val, types.EmptyName)
+}
+
 func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 	idx, err := expression.FindFieldName(er.names, v)
 	if err != nil {
@@ -1499,6 +1546,10 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 	}
 	if idx >= 0 {
 		column := er.schema.Columns[idx]
+		if column.IsHidden {
+			er.err = ErrUnknownColumn.GenWithStackByArgs(v.Name, clauseMsg[er.b.curClause])
+			return
+		}
 		er.ctxStackAppend(column, er.names[idx])
 		return
 	}
@@ -1591,11 +1642,7 @@ func (er *expressionRewriter) evalDefaultExpr(v *ast.DefaultExpr) {
 		val = expression.Null
 	case isCurrentTimestamp && col.Tp == mysql.TypeTimestamp:
 		// for TIMESTAMP column with current_timestamp, use 0 to be compatible with MySQL 5.7
-		zero := types.Time{
-			Time: types.ZeroTime,
-			Type: mysql.TypeTimestamp,
-			Fsp:  int8(col.Decimal),
-		}
+		zero := types.NewTime(types.ZeroCoreTime, mysql.TypeTimestamp, int8(col.Decimal))
 		val = &expression.Constant{
 			Value:   types.NewDatum(zero),
 			RetType: types.NewFieldType(mysql.TypeTimestamp),

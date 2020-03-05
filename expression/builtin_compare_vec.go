@@ -265,7 +265,7 @@ func (b *builtinLeastStringSig) vecEvalString(input *chunk.Chunk, result *chunk.
 			}
 			srcStr := src.GetString(i)
 			argStr := arg.GetString(i)
-			if types.CompareString(srcStr, argStr) < 0 {
+			if types.CompareString(srcStr, argStr, b.collation) < 0 {
 				dst.AppendString(srcStr)
 			} else {
 				dst.AppendString(argStr)
@@ -721,11 +721,7 @@ func (b *builtinLeastTimeSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 	dst.ResizeTime(n, false)
 	dstTimes := dst.Times()
 	for i := 0; i < n; i++ {
-		dstTimes[i] = types.Time{
-			Time: types.MaxDatetime,
-			Type: mysql.TypeDatetime,
-			Fsp:  types.DefaultFsp,
-		}
+		dstTimes[i] = types.NewTime(types.MaxDatetime, mysql.TypeDatetime, types.DefaultFsp)
 	}
 	var argTime types.Time
 
@@ -806,7 +802,7 @@ func (b *builtinGreatestStringSig) vecEvalString(input *chunk.Chunk, result *chu
 			}
 			srcStr := src.GetString(i)
 			argStr := arg.GetString(i)
-			if types.CompareString(srcStr, argStr) > 0 {
+			if types.CompareString(srcStr, argStr, b.collation) > 0 {
 				dst.AppendString(srcStr)
 			} else {
 				dst.AppendString(argStr)

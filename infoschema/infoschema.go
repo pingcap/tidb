@@ -14,6 +14,7 @@
 package infoschema
 
 import (
+	"fmt"
 	"sort"
 	"sync/atomic"
 
@@ -22,8 +23,11 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 var (
@@ -39,6 +43,8 @@ var (
 	ErrTableExists = terror.ClassSchema.New(mysql.ErrTableExists, mysql.MySQLErrName[mysql.ErrTableExists])
 	// ErrTableDropExists returns for dropping a non-existent table.
 	ErrTableDropExists = terror.ClassSchema.New(mysql.ErrBadTable, mysql.MySQLErrName[mysql.ErrBadTable])
+	// ErrSequenceDropExists returns for dropping a non-exist sequence.
+	ErrSequenceDropExists = terror.ClassSchema.New(mysql.ErrUnknownSequence, mysql.MySQLErrName[mysql.ErrUnknownSequence])
 	// ErrColumnNotExists returns for column not exists.
 	ErrColumnNotExists = terror.ClassSchema.New(mysql.ErrBadField, mysql.MySQLErrName[mysql.ErrBadField])
 	// ErrColumnExists returns for column already exists.
@@ -87,7 +93,7 @@ type InfoSchema interface {
 	SchemaByID(id int64) (*model.DBInfo, bool)
 	SchemaByTable(tableInfo *model.TableInfo) (*model.DBInfo, bool)
 	TableByID(id int64) (table.Table, bool)
-	AllocByID(id int64) (autoid.Allocator, bool)
+	AllocByID(id int64) (autoid.Allocators, bool)
 	AllSchemaNames() []string
 	AllSchemas() []*model.DBInfo
 	Clone() (result []*model.DBInfo)
@@ -95,13 +101,8 @@ type InfoSchema interface {
 	SchemaMetaVersion() int64
 	// TableIsView indicates whether the schema.table is a view.
 	TableIsView(schema, table model.CIStr) bool
+	FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo)
 }
-
-// Information Schema Name.
-const (
-	Name      = util.InformationSchemaName
-	LowerName = util.InformationSchemaLowerName
-)
 
 type sortedTables []table.Table
 
@@ -245,12 +246,12 @@ func (is *infoSchema) TableByID(id int64) (val table.Table, ok bool) {
 	return slice[idx], true
 }
 
-func (is *infoSchema) AllocByID(id int64) (autoid.Allocator, bool) {
+func (is *infoSchema) AllocByID(id int64) (autoid.Allocators, bool) {
 	tbl, ok := is.TableByID(id)
 	if !ok {
 		return nil, false
 	}
-	return tbl.Allocator(nil), true
+	return tbl.AllAllocators(nil), true
 }
 
 func (is *infoSchema) AllSchemaNames() (names []string) {
@@ -278,11 +279,43 @@ func (is *infoSchema) SchemaTables(schema model.CIStr) (tables []table.Table) {
 	return
 }
 
+// FindTableByPartitionID finds the partition-table info by the partitionID.
+// FindTableByPartitionID will traverse all the tables to find the partitionID partition in which partition-table.
+func (is *infoSchema) FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo) {
+	for _, v := range is.schemaMap {
+		for _, tbl := range v.tables {
+			pi := tbl.Meta().GetPartitionInfo()
+			if pi == nil {
+				continue
+			}
+			for _, p := range pi.Definitions {
+				if p.ID == partitionID {
+					return tbl, v.dbInfo
+				}
+			}
+		}
+	}
+	return nil, nil
+}
+
 func (is *infoSchema) Clone() (result []*model.DBInfo) {
 	for _, v := range is.schemaMap {
 		result = append(result, v.dbInfo.Clone())
 	}
 	return
+}
+
+// SequenceByName implements the interface of SequenceSchema defined in util package.
+// It could be used in expression package without import cycle problem.
+func (is *infoSchema) SequenceByName(schema, sequence model.CIStr) (util.SequenceTable, error) {
+	tbl, err := is.TableByName(schema, sequence)
+	if err != nil {
+		return nil, err
+	}
+	if !tbl.Meta().IsSequence() {
+		return nil, err
+	}
+	return tbl.(util.SequenceTable), nil
 }
 
 // Handle handles information schema, including getting and setting.
@@ -320,62 +353,29 @@ func (h *Handle) EmptyClone() *Handle {
 }
 
 func init() {
-	schemaMySQLErrCodes := map[terror.ErrCode]uint16{
-		mysql.ErrDBCreateExists:         mysql.ErrDBCreateExists,
-		mysql.ErrDBDropExists:           mysql.ErrDBDropExists,
-		mysql.ErrAccessDenied:           mysql.ErrAccessDenied,
-		mysql.ErrBadDB:                  mysql.ErrBadDB,
-		mysql.ErrTableExists:            mysql.ErrTableExists,
-		mysql.ErrBadTable:               mysql.ErrBadTable,
-		mysql.ErrBadField:               mysql.ErrBadField,
-		mysql.ErrDupFieldName:           mysql.ErrDupFieldName,
-		mysql.ErrDupKeyName:             mysql.ErrDupKeyName,
-		mysql.ErrNonuniqTable:           mysql.ErrNonuniqTable,
-		mysql.ErrMultiplePriKey:         mysql.ErrMultiplePriKey,
-		mysql.ErrTooManyKeyParts:        mysql.ErrTooManyKeyParts,
-		mysql.ErrCantDropFieldOrKey:     mysql.ErrCantDropFieldOrKey,
-		mysql.ErrTableNotLockedForWrite: mysql.ErrTableNotLockedForWrite,
-		mysql.ErrTableNotLocked:         mysql.ErrTableNotLocked,
-		mysql.ErrNoSuchTable:            mysql.ErrNoSuchTable,
-		mysql.ErrKeyDoesNotExist:        mysql.ErrKeyDoesNotExist,
-		mysql.ErrCannotAddForeign:       mysql.ErrCannotAddForeign,
-		mysql.ErrWrongFkDef:             mysql.ErrWrongFkDef,
-		mysql.ErrDupIndex:               mysql.ErrDupIndex,
-		mysql.ErrBadUser:                mysql.ErrBadUser,
-		mysql.ErrUserAlreadyExists:      mysql.ErrUserAlreadyExists,
-		mysql.ErrTableLocked:            mysql.ErrTableLocked,
-	}
-	terror.ErrClassToMySQLCodes[terror.ClassSchema] = schemaMySQLErrCodes
-
 	// Initialize the information shema database and register the driver to `drivers`
-	dbID := autoid.GenLocalSchemaID()
+	dbID := autoid.InformationSchemaDBID
 	infoSchemaTables := make([]*model.TableInfo, 0, len(tableNameToColumns))
 	for name, cols := range tableNameToColumns {
 		tableInfo := buildTableMeta(name, cols)
 		infoSchemaTables = append(infoSchemaTables, tableInfo)
-		tableInfo.ID = autoid.GenLocalSchemaID()
-		for _, c := range tableInfo.Columns {
-			c.ID = autoid.GenLocalSchemaID()
+		var ok bool
+		tableInfo.ID, ok = tableIDMap[tableInfo.Name.O]
+		if !ok {
+			panic(fmt.Sprintf("get information_schema table id failed, unknown system table `%v`", tableInfo.Name.O))
+		}
+		for i, c := range tableInfo.Columns {
+			c.ID = int64(i) + 1
 		}
 	}
 	infoSchemaDB := &model.DBInfo{
 		ID:      dbID,
-		Name:    model.NewCIStr(Name),
+		Name:    util.InformationSchemaName,
 		Charset: mysql.DefaultCharset,
 		Collate: mysql.DefaultCollationName,
 		Tables:  infoSchemaTables,
 	}
 	RegisterVirtualTable(infoSchemaDB, createInfoSchemaTable)
-}
-
-// IsMemoryDB checks if the db is in memory.
-func IsMemoryDB(dbName string) bool {
-	for _, driver := range drivers {
-		if driver.DBInfo.Name.L == dbName {
-			return true
-		}
-	}
-	return false
 }
 
 // HasAutoIncrementColumn checks whether the table has auto_increment columns, if so, return true and the column name.
@@ -386,4 +386,18 @@ func HasAutoIncrementColumn(tbInfo *model.TableInfo) (bool, string) {
 		}
 	}
 	return false, ""
+}
+
+// GetInfoSchema gets TxnCtx InfoSchema if snapshot schema is not set,
+// Otherwise, snapshot schema is returned.
+func GetInfoSchema(ctx sessionctx.Context) InfoSchema {
+	sessVar := ctx.GetSessionVars()
+	var is InfoSchema
+	if snap := sessVar.SnapshotInfoschema; snap != nil {
+		is = snap.(InfoSchema)
+		logutil.BgLogger().Info("use snapshot schema", zap.Uint64("conn", sessVar.ConnectionID), zap.Int64("schemaVersion", is.SchemaMetaVersion()))
+	} else {
+		is = sessVar.TxnCtx.InfoSchema.(InfoSchema)
+	}
+	return is
 }

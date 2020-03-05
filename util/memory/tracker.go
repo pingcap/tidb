@@ -78,6 +78,12 @@ func (t *Tracker) SetBytesLimit(bytesLimit int64) {
 	t.bytesLimit = bytesLimit
 }
 
+// GetBytesLimit gets the bytes limit for this tracker.
+// "bytesLimit <= 0" means no limit.
+func (t *Tracker) GetBytesLimit() int64 {
+	return t.bytesLimit
+}
+
 // SetActionOnExceed sets the action when memory usage exceeds bytesLimit.
 func (t *Tracker) SetActionOnExceed(a ActionOnExceed) {
 	t.actionMu.Lock()
@@ -127,7 +133,7 @@ func (t *Tracker) remove(oldChild *Tracker) {
 			continue
 		}
 
-		atomic.AddInt64(&t.bytesConsumed, -oldChild.BytesConsumed())
+		t.Consume(-oldChild.BytesConsumed())
 		oldChild.parent = nil
 		t.mu.children = append(t.mu.children[:i], t.mu.children[i+1:]...)
 		break

@@ -25,10 +25,18 @@ import (
 
 // ExplainInfo implements the Expression interface.
 func (expr *ScalarFunction) ExplainInfo() string {
+	return expr.explainInfo(false)
+}
+
+func (expr *ScalarFunction) explainInfo(normalized bool) string {
 	var buffer bytes.Buffer
 	fmt.Fprintf(&buffer, "%s(", expr.FuncName.L)
 	for i, arg := range expr.GetArgs() {
-		buffer.WriteString(arg.ExplainInfo())
+		if normalized {
+			buffer.WriteString(arg.ExplainNormalizedInfo())
+		} else {
+			buffer.WriteString(arg.ExplainInfo())
+		}
 		if i+1 < len(expr.GetArgs()) {
 			buffer.WriteString(", ")
 		}
@@ -37,9 +45,19 @@ func (expr *ScalarFunction) ExplainInfo() string {
 	return buffer.String()
 }
 
+// ExplainNormalizedInfo implements the Expression interface.
+func (expr *ScalarFunction) ExplainNormalizedInfo() string {
+	return expr.explainInfo(true)
+}
+
 // ExplainInfo implements the Expression interface.
 func (col *Column) ExplainInfo() string {
 	return col.String()
+}
+
+// ExplainNormalizedInfo implements the Expression interface.
+func (col *Column) ExplainNormalizedInfo() string {
+	return col.ExplainInfo()
 }
 
 // ExplainInfo implements the Expression interface.
@@ -49,6 +67,11 @@ func (expr *Constant) ExplainInfo() string {
 		return "not recognized const vanue"
 	}
 	return expr.format(dt)
+}
+
+// ExplainNormalizedInfo implements the Expression interface.
+func (expr *Constant) ExplainNormalizedInfo() string {
+	return "?"
 }
 
 func (expr *Constant) format(dt types.Datum) string {
@@ -83,10 +106,18 @@ func ExplainExpressionList(exprs []Expression, schema *Schema) string {
 // In some scenarios, the expr's order may not be stable when executing multiple times.
 // So we add a sort to make its explain result stable.
 func SortedExplainExpressionList(exprs []Expression) []byte {
+	return sortedExplainExpressionList(exprs, false)
+}
+
+func sortedExplainExpressionList(exprs []Expression, normalized bool) []byte {
 	buffer := bytes.NewBufferString("")
 	exprInfos := make([]string, 0, len(exprs))
 	for _, expr := range exprs {
-		exprInfos = append(exprInfos, expr.ExplainInfo())
+		if normalized {
+			exprInfos = append(exprInfos, expr.ExplainNormalizedInfo())
+		} else {
+			exprInfos = append(exprInfos, expr.ExplainInfo())
+		}
 	}
 	sort.Strings(exprInfos)
 	for i, info := range exprInfos {
@@ -96,6 +127,20 @@ func SortedExplainExpressionList(exprs []Expression) []byte {
 		}
 	}
 	return buffer.Bytes()
+}
+
+// SortedExplainNormalizedExpressionList is same like SortedExplainExpressionList, but use for generating normalized information.
+func SortedExplainNormalizedExpressionList(exprs []Expression) []byte {
+	return sortedExplainExpressionList(exprs, true)
+}
+
+// SortedExplainNormalizedScalarFuncList is same like SortedExplainExpressionList, but use for generating normalized information.
+func SortedExplainNormalizedScalarFuncList(exprs []*ScalarFunction) []byte {
+	expressions := make([]Expression, len(exprs))
+	for i := range exprs {
+		expressions[i] = exprs[i]
+	}
+	return sortedExplainExpressionList(expressions, true)
 }
 
 // ExplainColumnList generates explain information for a list of columns.

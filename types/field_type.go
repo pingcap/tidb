@@ -24,9 +24,10 @@ import (
 )
 
 // UnspecifiedLength is unspecified length.
-const (
-	UnspecifiedLength = -1
-)
+const UnspecifiedLength = -1
+
+// ErrorLength is error length for blob or text.
+const ErrorLength = 0
 
 // FieldType records field type information.
 type FieldType = ast.FieldType
@@ -219,17 +220,17 @@ func DefaultTypeForValue(value interface{}, tp *FieldType) {
 		tp.Flag &= ^mysql.BinaryFlag
 		tp.Flag |= mysql.UnsignedFlag
 	case Time:
-		tp.Tp = x.Type
-		switch x.Type {
+		tp.Tp = x.Type()
+		switch x.Type() {
 		case mysql.TypeDate:
 			tp.Flen = mysql.MaxDateWidth
 			tp.Decimal = UnspecifiedLength
 		case mysql.TypeDatetime, mysql.TypeTimestamp:
 			tp.Flen = mysql.MaxDatetimeWidthNoFsp
-			if x.Fsp > DefaultFsp { // consider point('.') and the fractional part.
-				tp.Flen += int(x.Fsp) + 1
+			if x.Fsp() > DefaultFsp { // consider point('.') and the fractional part.
+				tp.Flen += int(x.Fsp()) + 1
 			}
-			tp.Decimal = int(x.Fsp)
+			tp.Decimal = int(x.Fsp())
 		}
 		SetBinChsClnFlag(tp)
 	case Duration:

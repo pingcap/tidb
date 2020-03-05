@@ -64,13 +64,6 @@ var (
 			Name:      "retry_error_total",
 			Help:      "Counter of session retry error.",
 		}, []string{LblSQLType, LblType})
-	TransactionCounter = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "session",
-			Name:      "transaction_total",
-			Help:      "Counter of transactions.",
-		}, []string{LblSQLType, LblType})
 
 	SessionRestrictedSQLCounter = prometheus.NewCounter(
 		prometheus.CounterOpts{
@@ -97,6 +90,33 @@ var (
 			Help:      "Bucketed histogram of a transaction execution duration, including retry.",
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms ~ 1049s
 		}, []string{LblSQLType, LblType})
+
+	StatementDeadlockDetectDuration = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "session",
+			Name:      "statement_deadlock_detect_duration_seconds",
+			Help:      "Bucketed histogram of a statement deadlock detect duration.",
+			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms ~ 1049s
+		},
+	)
+
+	StatementPessimisticRetryCount = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "session",
+			Name:      "statement_pessimistic_retry_count",
+			Help:      "Bucketed historgram of statement pessimistic retry count",
+			Buckets:   prometheus.ExponentialBuckets(1, 1.5, 14), // 1 ~ 291
+		})
+
+	StatementLockKeysCount = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "session",
+			Name:      "statement_lock_keys_count",
+			Help:      "Keys locking for a single statement",
+		})
 )
 
 // Label constants.
@@ -108,7 +128,6 @@ const (
 	LblCommit      = "commit"
 	LblAbort       = "abort"
 	LblRollback    = "rollback"
-	LblComRol      = "com_rol"
 	LblType        = "type"
 	LblDb          = "db"
 	LblResult      = "result"

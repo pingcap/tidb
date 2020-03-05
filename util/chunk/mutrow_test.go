@@ -68,11 +68,7 @@ func (s *testChunkSuite) TestMutRow(c *check.C) {
 	c.Assert(row.IsNull(1), check.IsFalse)
 
 	j, err := json.ParseBinaryFromString("true")
-	t := types.Time{
-		Time: types.FromDate(2000, 1, 1, 1, 0, 0, 0),
-		Type: mysql.TypeDatetime,
-		Fsp:  types.MaxFsp,
-	}
+	t := types.NewTime(types.FromDate(2000, 1, 1, 1, 0, 0, 0), mysql.TypeDatetime, types.MaxFsp)
 	c.Assert(err, check.IsNil)
 	mutRow = MutRowFromValues(j, t)
 	row = mutRow.ToRow()
@@ -165,7 +161,7 @@ func (s *testChunkSuite) TestMutRowShallowCopyPartialRow(c *check.C) {
 	row.c.AppendDatum(0, &d)
 	d = types.NewIntDatum(567)
 	row.c.AppendDatum(1, &d)
-	d = types.NewTimeDatum(types.Time{Time: types.FromGoTime(time.Now()), Fsp: 6, Type: mysql.TypeTimestamp})
+	d = types.NewTimeDatum(types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 6))
 	row.c.AppendDatum(2, &d)
 
 	c.Assert(d.GetMysqlTime(), check.DeepEquals, mutRow.ToRow().GetTime(2))
