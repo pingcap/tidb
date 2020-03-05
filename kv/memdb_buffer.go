@@ -182,3 +182,47 @@ func WalkMemBuffer(memBuf MemBuffer, f func(k Key, v []byte) error) error {
 
 	return nil
 }
+
+// BufferBatchGetter is the type for BatchGet with MemBuffer.
+type BufferBatchGetter struct {
+	buffer   MemBuffer
+	snapshot Snapshot
+}
+
+// NewBufferBatchGetter creates a new BufferBatchGetter.
+func NewBufferBatchGetter(buffer MemBuffer, snapshot Snapshot) *BufferBatchGetter {
+	return &BufferBatchGetter{buffer: buffer, snapshot: snapshot}
+}
+
+// BatchGet implements the BatchGetter interface.
+func (b *BufferBatchGetter) BatchGet(ctx context.Context, keys []Key) (map[string][]byte, error) {
+	if b.buffer.Len() == 0 {
+		return b.snapshot.BatchGet(ctx, keys)
+	}
+	bufferValues := make([][]byte, len(keys))
+	shrinkKeys := make([]Key, 0, len(keys))
+	for i, key := range keys {
+		val, err := b.buffer.Get(ctx, key)
+		if IsErrNotFound(err) {
+			shrinkKeys = append(shrinkKeys, key)
+			continue
+		}
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if len(val) != 0 {
+			bufferValues[i] = val
+		}
+	}
+	storageValues, err := b.snapshot.BatchGet(ctx, shrinkKeys)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	for i, key := range keys {
+		if bufferValues[i] == nil {
+			continue
+		}
+		storageValues[string(key)] = bufferValues[i]
+	}
+	return storageValues, nil
+}
