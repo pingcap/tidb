@@ -1337,6 +1337,7 @@ func (er *expressionRewriter) patternLikeToExpression(v *ast.PatternLikeExpr) {
 		return
 	}
 
+	char, col := er.sctx.GetSessionVars().GetCharsetInfo()
 	var function expression.Expression
 	fieldType := &types.FieldType{}
 	isPatternExactMatch := false
@@ -1354,7 +1355,7 @@ func (er *expressionRewriter) patternLikeToExpression(v *ast.PatternLikeExpr) {
 				if v.Not {
 					op = ast.NE
 				}
-				types.DefaultTypeForValue(string(patValue), fieldType)
+				types.DefaultTypeForValue(string(patValue), fieldType, char, col)
 				function, er.err = er.constructBinaryOpFunction(er.ctxStack[l-2],
 					&expression.Constant{Value: types.NewStringDatum(string(patValue)), RetType: fieldType},
 					op)
@@ -1363,7 +1364,7 @@ func (er *expressionRewriter) patternLikeToExpression(v *ast.PatternLikeExpr) {
 		}
 	}
 	if !isPatternExactMatch {
-		types.DefaultTypeForValue(int(v.Escape), fieldType)
+		types.DefaultTypeForValue(int(v.Escape), fieldType, char, col)
 		function = er.notToExpression(v.Not, ast.Like, &v.Type,
 			er.ctxStack[l-2], er.ctxStack[l-1], &expression.Constant{Value: types.NewIntDatum(int64(v.Escape)), RetType: fieldType})
 	}
