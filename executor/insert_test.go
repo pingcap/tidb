@@ -1077,6 +1077,7 @@ func (s *testSuite3) TestAutoRandomIDAllowZero(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(firstValue, Equals, 0)
 	tk.MustQuery(`select last_insert_id()`).Check(testkit.Rows(fmt.Sprintf("%d", firstValue)))
+	tk.MustExec(`delete from ar`)
 
 	tk.MustExec(`insert into ar(id) values (null)`)
 	rs = tk.MustQuery(`select id from ar`)

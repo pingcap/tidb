@@ -794,11 +794,11 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	assertWithAutoInc("create table t (a bigint auto_random(3) auto_increment, primary key (a))")
 
 	// Overflow data type max length.
-	assertOverflow("create table t (a bigint auto_random(65) primary key)", "bigint", 65, 64)
-	assertOverflow("create table t (a int auto_random(33) primary key)", "int", 33, 32)
-	assertOverflow("create table t (a mediumint auto_random(25) primary key)", "mediumint", 25, 24)
-	assertOverflow("create table t (a smallint auto_random(17) primary key)", "smallint", 17, 16)
-	assertOverflow("create table t (a tinyint auto_random(9) primary key)", "tinyint", 9, 8)
+	assertOverflow("create table t (a bigint auto_random(65) primary key)", "a", 65, 64)
+	assertOverflow("create table t (a int auto_random(33) primary key)", "a", 33, 32)
+	assertOverflow("create table t (a mediumint auto_random(25) primary key)", "a", 25, 24)
+	assertOverflow("create table t (a smallint auto_random(17) primary key)", "a", 17, 16)
+	assertOverflow("create table t (a tinyint auto_random(9) primary key)", "a", 9, 8)
 
 	assertNonPositive("create table t (a bigint auto_random(0) primary key)")
 
