@@ -15,6 +15,7 @@ package executor_test
 
 import (
 	"fmt"
+	"go.etcd.io/etcd/proxy/grpcproxy/adapter"
 	"strconv"
 	"strings"
 	"sync"
@@ -961,10 +962,13 @@ func (s *testSuite3) TestAutoIDIncrementAndOffset(c *C) {
 }
 
 func (s *testSuite3) TestAutoRandomID(c *C) {
-	config.GetGlobalConfig().Experimental.AllowAutoRandom = true
-	defer func() {
-		config.GetGlobalConfig().Experimental.AllowAutoRandom = false
-	}()
+	allowAutoRandom := config.GetGlobalConfig().Experimental.AllowAutoRandom
+	if !allowAutoRandom {
+		config.GetGlobalConfig().Experimental.AllowAutoRandom = true
+		defer func() {
+			config.GetGlobalConfig().Experimental.AllowAutoRandom = false
+		}()
+	}
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
@@ -974,37 +978,43 @@ func (s *testSuite3) TestAutoRandomID(c *C) {
 	tk.MustExec(`insert into ar(id) values (null)`)
 	rs := tk.MustQuery(`select id from ar`)
 	c.Assert(len(rs.Rows()), Equals, 1)
-	firstValue := rs.Rows()[0][0].(int64)
-	c.Assert(firstValue, Greater, int64(0))
+	firstValue, err := strconv.Atoi(rs.Rows()[0][0].(string))
+	c.Assert(err, IsNil)
+	c.Assert(firstValue, Greater, 0)
 	rs = tk.MustQuery(`select last_insert_id()`)
-	c.Assert(rs.Rows()[0][0].(int64), Equals, firstValue)
+	c.Assert(rs.Rows()[0][0].(string), Equals, fmt.Sprintf("%d", firstValue))
 	tk.MustExec(`delete from ar`)
 
 	tk.MustExec(`insert into ar(id) values (0)`)
 	rs = tk.MustQuery(`select id from ar`)
 	c.Assert(len(rs.Rows()), Equals, 1)
-	firstValue = rs.Rows()[0][0].(int64)
-	c.Assert(firstValue, Greater, int64(0))
+	firstValue, err = strconv.Atoi(rs.Rows()[0][0].(string))
+	c.Assert(err, IsNil)
+	c.Assert(firstValue, Greater, 0)
 	rs = tk.MustQuery(`select last_insert_id()`)
-	c.Assert(rs.Rows()[0][0].(int64), Equals, firstValue)
+	c.Assert(rs.Rows()[0][0].(string), Equals, fmt.Sprintf("%d", firstValue))
 	tk.MustExec(`delete from ar`)
 
 	tk.MustExec(`insert into ar(name) values ('a')`)
 	rs = tk.MustQuery(`select id from ar`)
 	c.Assert(len(rs.Rows()), Equals, 1)
-	firstValue = rs.Rows()[0][0].(int64)
-	c.Assert(firstValue, Greater, int64(0))
+	firstValue, err = strconv.Atoi(rs.Rows()[0][0].(string))
+	c.Assert(err, IsNil)
+	c.Assert(firstValue, Greater, 0)
 	rs = tk.MustQuery(`select last_insert_id()`)
-	c.Assert(rs.Rows()[0][0].(int64), Equals, firstValue)
+	c.Assert(rs.Rows()[0][0].(string), Equals, fmt.Sprintf("%d", firstValue))
 
 	tk.MustExec(`drop table ar`)
 }
 
 func (s *testSuite3) TestMultiAutoRandomID(c *C) {
-	config.GetGlobalConfig().Experimental.AllowAutoRandom = true
-	defer func() {
-		config.GetGlobalConfig().Experimental.AllowAutoRandom = false
-	}()
+	allowAutoRandom := config.GetGlobalConfig().Experimental.AllowAutoRandom
+	if !allowAutoRandom {
+		config.GetGlobalConfig().Experimental.AllowAutoRandom = true
+		defer func() {
+			config.GetGlobalConfig().Experimental.AllowAutoRandom = false
+		}()
+	}
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
@@ -1014,43 +1024,49 @@ func (s *testSuite3) TestMultiAutoRandomID(c *C) {
 	tk.MustExec(`insert into ar(id) values (null),(null),(null)`)
 	rs := tk.MustQuery(`select id from ar order by id`)
 	c.Assert(len(rs.Rows()), Equals, 3)
-	firstValue := rs.Rows()[0][0].(int64)
-	c.Assert(firstValue, Greater, int64(0))
-	c.Assert(rs.Rows()[1][0].(int64), Equals, firstValue+1)
-	c.Assert(rs.Rows()[2][0].(int64), Equals, firstValue+2)
+	firstValue, err := strconv.Atoi(rs.Rows()[0][0].(string))
+	c.Assert(err, IsNil)
+	c.Assert(firstValue, Greater, 0)
+	c.Assert(rs.Rows()[1][0].(string), Equals, fmt.Sprintf("%d", firstValue+1))
+	c.Assert(rs.Rows()[2][0].(string), Equals, fmt.Sprintf("%d", firstValue+2))
 	rs = tk.MustQuery(`select last_insert_id()`)
-	c.Assert(rs.Rows()[0][0].(int64), Equals, firstValue)
+	c.Assert(rs.Rows()[0][0].(string), Equals, fmt.Sprintf("%d", firstValue))
 	tk.MustExec(`delete from ar`)
 
 	tk.MustExec(`insert into ar(id) values (0),(0),(0)`)
 	rs = tk.MustQuery(`select id from ar order by id`)
 	c.Assert(len(rs.Rows()), Equals, 3)
-	firstValue = rs.Rows()[0][0].(int64)
-	c.Assert(firstValue, Greater, int64(0))
-	c.Assert(rs.Rows()[1][0].(int64), Equals, firstValue+1)
-	c.Assert(rs.Rows()[2][0].(int64), Equals, firstValue+2)
+	firstValue, err = strconv.Atoi(rs.Rows()[0][0].(string))
+	c.Assert(err, IsNil)
+	c.Assert(firstValue, Greater, 0)
+	c.Assert(rs.Rows()[1][0].(string), Equals, fmt.Sprintf("%d", firstValue+1))
+	c.Assert(rs.Rows()[2][0].(string), Equals, fmt.Sprintf("%d", firstValue+2))
 	rs = tk.MustQuery(`select last_insert_id()`)
-	c.Assert(rs.Rows()[0][0].(int64), Equals, firstValue)
+	c.Assert(rs.Rows()[0][0].(string), Equals, fmt.Sprintf("%d", firstValue))
 	tk.MustExec(`delete from ar`)
 
 	tk.MustExec(`insert into ar(name) values ('a'),('a'),('a')`)
 	rs = tk.MustQuery(`select id from ar order by id`)
 	c.Assert(len(rs.Rows()), Equals, 3)
-	firstValue = rs.Rows()[0][0].(int64)
-	c.Assert(firstValue, Greater, int64(0))
-	c.Assert(rs.Rows()[1][0].(int64), Equals, firstValue+1)
-	c.Assert(rs.Rows()[2][0].(int64), Equals, firstValue+2)
+	firstValue, err = strconv.Atoi(rs.Rows()[0][0].(string))
+	c.Assert(err, IsNil)
+	c.Assert(firstValue, Greater, 0)
+	c.Assert(rs.Rows()[1][0].(string), Equals, fmt.Sprintf("%d", firstValue+1))
+	c.Assert(rs.Rows()[2][0].(string), Equals, fmt.Sprintf("%d", firstValue+2))
 	rs = tk.MustQuery(`select last_insert_id()`)
-	c.Assert(rs.Rows()[0][0].(int64), Equals, firstValue)
+	c.Assert(rs.Rows()[0][0].(string), Equals, fmt.Sprintf("%d", firstValue))
 
 	tk.MustExec(`drop table ar`)
 }
 
 func (s *testSuite3) TestAutoRandomIDAllowZero(c *C) {
-	config.GetGlobalConfig().Experimental.AllowAutoRandom = true
-	defer func() {
-		config.GetGlobalConfig().Experimental.AllowAutoRandom = false
-	}()
+	allowAutoRandom := config.GetGlobalConfig().Experimental.AllowAutoRandom
+	if !allowAutoRandom {
+		config.GetGlobalConfig().Experimental.AllowAutoRandom = true
+		defer func() {
+			config.GetGlobalConfig().Experimental.AllowAutoRandom = false
+		}()
+	}
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
@@ -1064,18 +1080,20 @@ func (s *testSuite3) TestAutoRandomIDAllowZero(c *C) {
 	tk.MustExec(`insert into ar(id) values (0)`)
 	rs = tk.MustQuery(`select id from ar`)
 	c.Assert(len(rs.Rows()), Equals, 1)
-	firstValue := rs.Rows()[0][0].(int64)
-	c.Assert(firstValue, Equals, int64(0))
+	firstValue, err := strconv.Atoi(rs.Rows()[0][0].(string))
+	c.Assert(err, IsNil)
+	c.Assert(firstValue, Equals, 0)
 	rs = tk.MustQuery(`select last_insert_id()`)
-	c.Assert(rs.Rows()[0][0].(int64), Equals, firstValue)
+	c.Assert(rs.Rows()[0][0].(string), Equals, fmt.Sprintf("%d", firstValue))
 
 	tk.MustExec(`insert into ar(id) values (null)`)
 	rs = tk.MustQuery(`select id from ar`)
 	c.Assert(len(rs.Rows()), Equals, 1)
-	firstValue = rs.Rows()[0][0].(int64)
-	c.Assert(firstValue, Greater, int64(0))
+	firstValue, err = strconv.Atoi(rs.Rows()[0][0].(string))
+	c.Assert(err, IsNil)
+	c.Assert(firstValue, Greater, 0)
 	rs = tk.MustQuery(`select last_insert_id()`)
-	c.Assert(rs.Rows()[0][0].(int64), Equals, firstValue)
+	c.Assert(rs.Rows()[0][0].(string), Equals, fmt.Sprintf("%d", firstValue))
 
 	tk.MustExec(`drop table ar`)
 }
