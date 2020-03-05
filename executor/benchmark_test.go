@@ -205,7 +205,7 @@ func buildMockDataSource(opt mockDataSourceParameters) *mockDataSource {
 				m.genData[idx].AppendInt64(colIdx, colData[colIdx][i].(int64))
 			case mysql.TypeDouble, mysql.TypeFloat:
 				m.genData[idx].AppendFloat64(colIdx, colData[colIdx][i].(float64))
-			case mysql.TypeDecimal:
+			case mysql.TypeNewDecimal:
 				m.genData[idx].AppendMyDecimal(colIdx, colData[colIdx][i].(*types.MyDecimal))
 			case mysql.TypeVarString:
 				m.genData[idx].AppendString(colIdx, colData[colIdx][i].(string))
@@ -548,7 +548,7 @@ func benchmarkWindowExecWithCase(b *testing.B, casTest *windowTestCase) {
 			ret = int64(row)
 		case mysql.TypeDouble, mysql.TypeFloat:
 			ret = float64(row)
-		case mysql.TypeDecimal:
+		case mysql.TypeNewDecimal:
 			ret = types.NewDecFromInt(int64(row))
 		case mysql.TypeVarString:
 			ret = casTest.rawDataSmall
@@ -702,7 +702,7 @@ func baseBenchmarkWindowFunctionsWithSlidingWindow(b *testing.B, frameType ast.F
 		aggFunc     string
 		aggColTypes []byte
 	}{
-		{ast.AggFuncSum, []byte{mysql.TypeDecimal, mysql.TypeFloat}},
+		{ast.AggFuncSum, []byte{mysql.TypeNewDecimal, mysql.TypeFloat}},
 		{ast.AggFuncCount, []byte{mysql.TypeLong}},
 	}
 	rows := []int{1000, 100000}
