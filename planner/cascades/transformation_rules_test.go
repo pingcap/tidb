@@ -391,7 +391,7 @@ func (s *testTransformationRuleSuite) TestDecorrelate(c *C) {
 		},
 	})
 	defer func() {
-		s.optimizer.ResetTransformationRules(defaultTransformationMap)
+		s.optimizer.ResetTransformationRules(DefaultRuleBatches...)
 	}()
 	var input []string
 	var output []struct {
