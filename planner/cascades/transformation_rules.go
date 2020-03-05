@@ -2177,7 +2177,7 @@ func (r *PullSelectionUpApply) OnTransform(old *memo.ExprIter) (newExprs []*memo
 		newConds = append(newConds, cond.Clone().Decorrelate(outerChildGroup.Prop.Schema))
 	}
 	newApply := plannercore.LogicalApply{
-		LogicalJoin: apply.LogicalJoin,
+		LogicalJoin: *(apply.LogicalJoin.Clone()),
 		CorCols:     apply.CorCols,
 	}.Init(apply.SCtx(), apply.SelectBlockOffset())
 	// Update Join conditions.

@@ -789,11 +789,11 @@
       {
         "SQL": "select a from t1 where exists(select 1 from t2 where t1.a = t2.a)",
         "Plan": [
-          "MergeJoin_23 10000.00 root semi join, left key:test.t1.a, right key:test.t2.a",
-          "├─TableReader_28(Build) 10000.00 root data:TableFullScan_29",
-          "│ └─TableFullScan_29 10000.00 cop[tikv] table:t2, keep order:true, stats:pseudo",
-          "└─TableReader_25(Probe) 10000.00 root data:TableFullScan_26",
-          "  └─TableFullScan_26 10000.00 cop[tikv] table:t1, keep order:true, stats:pseudo"
+          "MergeJoin_24 10000.00 root semi join, left key:test.t1.a, right key:test.t2.a",
+          "├─TableReader_29(Build) 10000.00 root data:TableFullScan_30",
+          "│ └─TableFullScan_30 10000.00 cop[tikv] table:t2, keep order:true, stats:pseudo",
+          "└─TableReader_26(Probe) 10000.00 root data:TableFullScan_27",
+          "  └─TableFullScan_27 10000.00 cop[tikv] table:t1, keep order:true, stats:pseudo"
         ],
         "Result": [
           "1",
