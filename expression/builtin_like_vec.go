@@ -19,7 +19,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/collate"
 )
 
 func (b *builtinLikeSig) vectorized() bool {
@@ -56,7 +55,7 @@ func (b *builtinLikeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) er
 	escapes := bufEscape.Int64s()
 
 	if b.pattern == nil {
-		b.pattern = collate.GetCollator(b.args[0].GetType().Collate).Pattern()
+		b.pattern = b.collator().Pattern()
 		if b.args[1].ConstItem(b.ctx.GetSessionVars().StmtCtx) && b.args[2].ConstItem(b.ctx.GetSessionVars().StmtCtx) {
 			b.pattern.Compile(bufPattern.GetString(0), byte(escapes[0]))
 			b.isMemorizedPattern = true
@@ -69,7 +68,7 @@ func (b *builtinLikeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) er
 		if result.IsNull(i) {
 			continue
 		}
-		if b.isMemorizedPattern {
+		if !b.isMemorizedPattern {
 			b.pattern.Compile(bufPattern.GetString(i), byte(escapes[i]))
 		}
 		match := b.pattern.DoMatch(bufVal.GetString(i))

@@ -64,7 +64,7 @@ type Collator interface {
 	Compare(a, b string, opt CollatorOption) int
 	// Key returns the collate key for str. If the collation is padding, make sure the PadLen >= len(rune[]str) in opt.
 	Key(str string, opt CollatorOption) []byte
-	// Pattern get a WildcardPattern
+	// Pattern get a collation-aware WildcardPattern.
 	Pattern() WildcardPattern
 }
 
@@ -205,8 +205,11 @@ func (bpc *binPaddingCollator) Pattern() WildcardPattern {
 	return &binPattern{}
 }
 
+// WildcardPattern is the interface used for wildcard pattern match.
 type WildcardPattern interface {
+	// Compile compiles the patternStr with specified escape character.
 	Compile(patternStr string, escape byte)
+	// DoMatch tries to match the str with compiled pattern, `Compile()` must be called before calling it.
 	DoMatch(str string) bool
 }
 

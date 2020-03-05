@@ -128,8 +128,11 @@ func Unquote(s string) (t string, err error) {
 }
 
 const (
+	// PatMatch is the enumeration value for per-character match.
 	PatMatch = iota + 1
+	// PatOne is the enumeration value for '_' match.
 	PatOne
+	// PatAny is the enumeration value for '%' match.
 	PatAny
 )
 

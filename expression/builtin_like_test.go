@@ -60,14 +60,16 @@ func (s *testEvaluatorSerialSuites) TestCILike(c *C) {
 		{"a", "b", 0},
 		{"aA", "Aa", 1},
 		{"áAb", `Aa%`, 1},
+		{"áAb", `%ab%`, 1},
+		{"áAb", `%ab`, 1},
 		{"ÀAb", "aA_", 1},
 	}
 	for _, tt := range tests {
 		fc := funcs[ast.Like]
 		inputs := s.datumsToConstants(types.MakeDatums(tt.input, tt.pattern, 0))
-		inputs[0].GetType().Collate = "utf8mb4_general_ci"
 		f, err := fc.getFunction(s.ctx, inputs)
 		c.Assert(err, IsNil)
+		f.setCollator(collate.GetCollator("utf8mb4_general_ci"))
 		r, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(tt.match))
