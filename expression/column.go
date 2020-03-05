@@ -40,6 +40,14 @@ func (col *CorrelatedColumn) Clone() Expression {
 	return col
 }
 
+// HashCode implements Expression interface.
+func (col *CorrelatedColumn) HashCode(sc *stmtctx.StatementContext) []byte {
+	hashcode := make([]byte, 0, 20)
+	hashcode = append(hashcode, col.Column.HashCode(sc)...)
+	hashcode = append(hashcode, col.Data.HashCode()...)
+	return hashcode
+}
+
 // VecEvalInt evaluates this expression in a vectorized manner.
 func (col *CorrelatedColumn) VecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	return genVecFromConstExpr(ctx, col, types.ETInt, input, result)

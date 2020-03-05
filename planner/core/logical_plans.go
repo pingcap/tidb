@@ -14,7 +14,9 @@
 package core
 
 import (
+	"encoding/binary"
 	"math"
+	"reflect"
 
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
@@ -24,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -889,6 +892,17 @@ type WindowFrame struct {
 	End   *FrameBound
 }
 
+// HashCode creates the hashcode for FrameBound which can be used to identify itself from other FrameBound.
+func (wf *WindowFrame) HashCode(sc *stmtctx.StatementContext) []byte {
+	startHashCode := wf.Start.hashCode(sc)
+	endHashCode := wf.End.hashCode(sc)
+	hashcode := make([]byte, 0, 4+len(startHashCode)+len(endHashCode))
+	hashcode = EncodeIntAsUint32(hashcode, int(wf.Type))
+	hashcode = append(hashcode, startHashCode...)
+	hashcode = append(hashcode, endHashCode...)
+	return hashcode
+}
+
 // FrameBound is the boundary of a frame.
 type FrameBound struct {
 	Type      ast.BoundType
@@ -900,6 +914,25 @@ type FrameBound struct {
 	CalcFuncs []expression.Expression
 	// CmpFuncs is used to decide whether one row is included in the current frame.
 	CmpFuncs []expression.CompareFunc
+}
+
+// HashCode creates the hashcode for FrameBound which can be used to identify itself from other FrameBound.
+func (f *FrameBound) hashCode(sc *stmtctx.StatementContext) []byte {
+	hashcode := make([]byte, 0, 21+len(f.CalcFuncs)*29+len(f.CmpFuncs)*8)
+	hashcode = EncodeIntAsUint32(hashcode, int(f.Type))
+	hashcode = EncodeBool(hashcode, f.UnBounded)
+	binary.BigEndian.PutUint64(hashcode[5:], f.Num)
+
+	calcFuncCode := func(i int) []byte { return f.CalcFuncs[i].HashCode(sc) }
+	hashcode = Encode(hashcode, calcFuncCode, len(f.CalcFuncs))
+
+	hashcode = EncodeIntAsUint32(hashcode, len(f.CmpFuncs))
+	for i := range f.CmpFuncs {
+		funcPointer := reflect.ValueOf(&f.CmpFuncs[i]).Elem().Pointer()
+		hashcode = EncodeUintptr(hashcode, funcPointer)
+	}
+
+	return hashcode
 }
 
 // LogicalWindow represents a logical window function plan.

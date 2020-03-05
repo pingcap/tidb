@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
@@ -384,6 +385,19 @@ func (d Datum) String() string {
 		v = string(b)
 	}
 	return fmt.Sprintf("%v %v", t, v)
+}
+
+// HashCode creates the hashcode for Datum which can be used to identify itself from other Datum.
+// It generated as Kind+value.
+func (d *Datum) HashCode() []byte {
+	hashcode := make([]byte, 0, 11)
+	hashcode = append(hashcode, d.Kind())
+	v := d.GetValue()
+	if b, ok := v.([]byte); ok && d.k == KindBytes {
+		v = string(b)
+	}
+	hashcode = codec.EncodeCompactBytes(hashcode, hack.Slice(fmt.Sprintf("%v", v)))
+	return hashcode
 }
 
 // GetValue gets the value of the datum of any kind.

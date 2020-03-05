@@ -18,7 +18,11 @@ import (
 
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/hack"
 )
 
 // WindowFuncDesc describes a window function signature, only used in planner.
@@ -74,4 +78,13 @@ var noFrameWindowFuncs = map[string]struct{}{
 func NeedFrame(name string) bool {
 	_, ok := noFrameWindowFuncs[strings.ToLower(name)]
 	return !ok
+}
+
+// HashCode creates the hashcode for WindowFuncDesc which can be used to identify itself from other WindowFuncDesc.
+func (f *WindowFuncDesc) HashCode(sc *stmtctx.StatementContext) []byte {
+	hashcode := make([]byte, 0, 9+len(f.Args)*14)
+	hashcode = codec.EncodeCompactBytes(hashcode, hack.Slice(f.Name))
+	argHashCode := func(i int) []byte { return f.Args[i].HashCode(sc) }
+	hashcode = plannercore.Encode(hashcode, argHashCode, len(f.Args))
+	return hashcode
 }

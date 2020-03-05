@@ -17,6 +17,8 @@ import (
 	"fmt"
 
 	"github.com/pingcap/tidb/expression"
+	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/codec"
 )
 
@@ -24,6 +26,13 @@ import (
 type Item struct {
 	Col  *expression.Column
 	Desc bool
+}
+
+func (i *Item) HashCode(sc *stmtctx.StatementContext) []byte {
+	hashcode := make([]byte, 0, 10)
+	hashcode = plannercore.EncodeBool(hashcode, i.Desc)
+	hashcode = append(hashcode, i.Col.HashCode(sc)...)
+	return hashcode
 }
 
 // PhysicalProperty stands for the required physical property by parents.
