@@ -29,6 +29,7 @@ func Dump(conf *Config) (err error) {
 	if err != nil {
 		return err
 	}
+
 	if !conf.NoViews {
 		views, err := listAllViews(pool, databases)
 		if err != nil {
@@ -36,6 +37,8 @@ func Dump(conf *Config) (err error) {
 		}
 		conf.Tables.Merge(views)
 	}
+
+	filterDirtySchemaTables(conf)
 
 	conCtrl, err := NewConsistencyController(conf, pool)
 	if err != nil {
