@@ -149,7 +149,6 @@ func makeMutRowColumn(in interface{}) *Column {
 		return col
 	case types.Enum:
 		col := newMutRowVarLenColumn(len(x.Name) + 8)
-		*(*uint64)(unsafe.Pointer(&col.data[0])) = x.Value
 		copy(col.data, (*[8]byte)(unsafe.Pointer(&x.Value))[:])
 		copy(col.data[8:], x.Name)
 		return col
