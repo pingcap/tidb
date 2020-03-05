@@ -445,7 +445,7 @@ func (s *testBinlogSuite) TestBinlogForSequence(c *C) {
 	tk.MustExec("insert into t values(-1),(default),(-1),(default)")
 	// Wait for binlog write async rather than lock/unlock mu frequently.
 	// Otherwise there is a chance that binlog-write goroutine will be hungry.
-	time.Sleep(time.Millisecond * 100)
+	time.Sleep(time.Millisecond * 1000)
 	// binlog list like [... ddl prewrite(offset), ddl commit, dml prewrite, dml commit]
 	_, _, offset := getLatestDDLBinlog(c, s.pump, "select setval(`test2`.`seq`, 3)")
 	s.pump.mu.Lock()
@@ -567,7 +567,7 @@ func (s *testBinlogSuite) TestAddSpecialComment(c *C) {
 func mustGetDDLBinlog(s *testBinlogSuite, ddlQuery string, c *C) (matched bool) {
 	// Wait for binlog write async rather than lock/unlock mu frequently.
 	// Otherwise there is a chance that binlog-write goroutine will be hungry.
-	time.Sleep(time.Millisecond * 100)
+	time.Sleep(time.Millisecond * 1000)
 	for i := 0; i < 100; i++ {
 		preDDL, commitDDL, _ := getLatestDDLBinlog(c, s.pump, ddlQuery)
 		if preDDL != nil && commitDDL != nil {
