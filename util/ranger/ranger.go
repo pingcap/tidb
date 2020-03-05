@@ -91,7 +91,7 @@ func convertPoint(sc *stmtctx.StatementContext, point point, tp *types.FieldType
 		return point, nil
 	}
 	casted, err := point.value.ConvertTo(sc, tp)
-	if err != nil && !types.ErrDataTooLong.Equal(err) {
+	if err != nil {
 		return point, errors.Trace(err)
 	}
 	valCmpCasted, err := point.value.CompareDatum(sc, &casted)
@@ -488,7 +488,7 @@ func newFieldType(tp *types.FieldType) *types.FieldType {
 	// To avoid data truncate error.
 	case mysql.TypeFloat, mysql.TypeDouble, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob,
 		mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString:
-		newTp := types.NewFieldTypeWithCollation(tp.Tp, tp.Collate, tp.Flen)
+		newTp := types.NewFieldTypeWithCollation(tp.Tp, tp.Collate, types.UnspecifiedLength)
 		newTp.Charset = tp.Charset
 		return newTp
 	default:

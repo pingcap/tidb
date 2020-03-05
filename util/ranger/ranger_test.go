@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -345,20 +344,7 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 	testKit := testkit.NewTestKit(c, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
-	testKit.MustExec(`
-create table t(
-	a varchar(50),
-	b int, c double,
-	d varchar(10),
-	e binary(10),
-	f varchar(10) collate utf8mb4_general_ci,
-	index idx_ab(a(50), b),
-	index idx_cb(c, a),
-	index idx_d(d(2)),
-	index idx_e(e(2)),
-	index idx_f(f)
-)
-`)
+	testKit.MustExec("create table t(a varchar(50), b int, c double, d varchar(10), e binary(10), index idx_ab(a(50), b), index idx_cb(c, a), index idx_d(d(2)), index idx_e(e(2)))")
 
 	tests := []struct {
 		indexPos    int
@@ -571,13 +557,6 @@ create table t(
 			resultStr:   "[[\"[228 189]\",\"[228 189]\"]]",
 		},
 		{
-			indexPos:    3,
-			exprStr:     `e = "你好啊\0"`,
-			accessConds: "[eq(test.t.e, 你好啊\x00)]",
-			filterConds: "[eq(test.t.e, 你好啊\x00)]",
-			resultStr:   "[[\"[228 189]\",\"[228 189]\"]]",
-		},
-		{
 			indexPos:    2,
 			exprStr:     `d in ("你好啊", "再见")`,
 			accessConds: "[in(test.t.d, 你好啊, 再见)]",
@@ -605,31 +584,9 @@ create table t(
 			filterConds: "[and(ge(test.t.d, 你好), le(test.t.d, 你好))]",
 			resultStr:   "[[\"你好\",\"你好\"]]",
 		},
-		{
-			indexPos:    4,
-			exprStr:     `f > 'a' and f < 'B'`,
-			accessConds: "[gt(test.t.f, a) lt(test.t.f, B)]",
-			filterConds: "[]",
-			resultStr:   "[(\"a\",\"B\")]",
-		},
-		{
-			indexPos:    4,
-			exprStr:     `f like 'a' and f like 'a'`,
-			accessConds: "[eq(test.t.f, a)]",
-			filterConds: "[]",
-			resultStr:   "[[\"a\",\"a\"]]",
-		},
-		{
-			indexPos:    4,
-			exprStr:     `f like 'a%' and f like 'a%'`,
-			accessConds: "[like(test.t.f, a%, 92) like(test.t.f, a%, 92)]",
-			filterConds: "[]",
-			resultStr:   "[[\"a\",\"b\")]",
-		},
 	}
 
 	ctx := context.Background()
-	collate.SetNewCollationEnabledForTest(true)
 	for _, tt := range tests {
 		sql := "select * from t where " + tt.exprStr
 		sctx := testKit.Se.(sessionctx.Context)
@@ -657,7 +614,6 @@ create table t(
 		got := fmt.Sprintf("%v", res.Ranges)
 		c.Assert(got, Equals, tt.resultStr, Commentf("different for expr %s", tt.exprStr))
 	}
-	collate.SetNewCollationEnabledForTest(false)
 }
 
 // for issue #6661
@@ -1044,39 +1000,7 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 			exprStr:     `d > 'aaaaaaaaaaaaaa'`,
 			accessConds: "[gt(test.t.d, aaaaaaaaaaaaaa)]",
 			filterConds: "[]",
-			resultStr:   "[(\"aaa\",+inf]]",
-			length:      types.UnspecifiedLength,
-		},
-		{
-			colPos:      3,
-			exprStr:     `d >= 'aaaaaaaaaaaaaa'`,
-			accessConds: "[ge(test.t.d, aaaaaaaaaaaaaa)]",
-			filterConds: "[]",
-			resultStr:   "[(\"aaa\",+inf]]",
-			length:      types.UnspecifiedLength,
-		},
-		{
-			colPos:      3,
-			exprStr:     `d < 'aaaaaaaaaaaaaa'`,
-			accessConds: "[lt(test.t.d, aaaaaaaaaaaaaa)]",
-			filterConds: "[]",
-			resultStr:   "[[-inf,\"aaa\"]]",
-			length:      types.UnspecifiedLength,
-		},
-		{
-			colPos:      3,
-			exprStr:     `d <= 'aaaaaaaaaaaaaa'`,
-			accessConds: "[le(test.t.d, aaaaaaaaaaaaaa)]",
-			filterConds: "[]",
-			resultStr:   "[[-inf,\"aaa\"]]",
-			length:      types.UnspecifiedLength,
-		},
-		{
-			colPos:      3,
-			exprStr:     `d = 'aaaaaaaaaaaaaa'`,
-			accessConds: "[eq(test.t.d, aaaaaaaaaaaaaa)]",
-			filterConds: "[]",
-			resultStr:   "[]",
+			resultStr:   "[(\"aaaaaaaaaaaaaa\",+inf]]",
 			length:      types.UnspecifiedLength,
 		},
 		{
@@ -1138,7 +1062,7 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 		conds = ranger.ExtractAccessConditionsForColumn(conds, col.UniqueID)
 		c.Assert(fmt.Sprintf("%s", conds), Equals, tt.accessConds, Commentf("wrong access conditions for expr: %s", tt.exprStr))
 		result, err := ranger.BuildColumnRange(conds, new(stmtctx.StatementContext), col.RetType, tt.length)
-		c.Assert(err, IsNil, Commentf(sql+"\n"+fmt.Sprintf("%+v", err)))
+		c.Assert(err, IsNil)
 		got := fmt.Sprintf("%v", result)
 		c.Assert(got, Equals, tt.resultStr, Commentf("different for expr %s, col: %v", tt.exprStr, col))
 	}

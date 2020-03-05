@@ -210,23 +210,39 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []point {
 	)
 	_, collation, _ := expr.CharsetAndCollation(expr.GetCtx())
 	if col, ok := expr.GetArgs()[0].(*expression.Column); ok {
-		if col.RetType.EvalType() == types.ETString && !collate.SameCollate(col.RetType.Collate, collation) {
-			return fullRange
-		}
 		value, err = expr.GetArgs()[1].Eval(chunk.Row{})
-		op = expr.FuncName.L
 		ft = col.RetType
+		if err != nil {
+			return nil
+		}
+		if col.RetType.EvalType() == types.ETString {
+			if !collate.SameCollate(col.RetType.Collate, collation) {
+				return fullRange
+			}
+			if value.Kind() == types.KindString {
+				value.SetString(value.GetString(), ft.Collate)
+			}
+		}
+		op = expr.FuncName.L
 	} else {
 		col, ok := expr.GetArgs()[1].(*expression.Column)
 		if !ok {
 			return nil
 		}
-		if col.RetType.EvalType() == types.ETString && !collate.SameCollate(col.RetType.Collate, collation) {
-			return fullRange
-		}
 		ft = col.RetType
-
 		value, err = expr.GetArgs()[0].Eval(chunk.Row{})
+		if err != nil {
+			return nil
+		}
+		if col.RetType.EvalType() == types.ETString {
+			if !collate.SameCollate(col.RetType.Collate, collation) {
+				return fullRange
+			}
+			if value.Kind() == types.KindString {
+				value.SetString(value.GetString(), ft.Collate)
+			}
+		}
+
 		switch expr.FuncName.L {
 		case ast.GE:
 			op = ast.LE
@@ -240,9 +256,6 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []point {
 			op = expr.FuncName.L
 		}
 	}
-	if err != nil {
-		return nil
-	}
 	if value.IsNull() {
 		return nil
 	}
@@ -250,11 +263,6 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []point {
 	value, op, isValidRange := handleUnsignedIntCol(ft, value, op)
 	if !isValidRange {
 		return nil
-	}
-
-	value, err = value.ConvertTo(r.sc, ft)
-	if err != nil && !types.ErrDataTooLong.Equal(err) {
-		return fullRange
 	}
 
 	switch op {
