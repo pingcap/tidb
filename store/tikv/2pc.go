@@ -1366,7 +1366,6 @@ func (batchExe *batchExecutor) startWorker(exitCh chan struct{}, ch chan error, 
 				}
 				beforeSleep := singleBatchBackoffer.totalSleep
 				ch <- batchExe.action.handleSingleBatch(batchExe.committer, singleBatchBackoffer, batch)
-
 				commitDetail := batchExe.committer.getDetail()
 				if commitDetail != nil { // lock operations of pessimistic-txn will let commitDetail be nil
 					if delta := singleBatchBackoffer.totalSleep - beforeSleep; delta > 0 {
@@ -1409,14 +1408,14 @@ func (batchExe *batchExecutor) process(batches []batchMutations) error {
 	// check results
 	for i := 0; i < len(batches); i++ {
 		if e := <-ch; e != nil {
-			logutil.Logger(backoffer.ctx).Debug("2PC doActionOnBatchPayload failed",
+			logutil.Logger(backoffer.ctx).Debug("2PC doActionOnBatch failed",
 				zap.Uint64("conn", batchExe.committer.connID),
 				zap.Stringer("action type", batchExe.action),
 				zap.Error(e),
 				zap.Uint64("txnStartTS", batchExe.committer.startTS))
 			// Cancel other requests and return the first error.
 			if cancel != nil {
-				logutil.Logger(backoffer.ctx).Debug("2PC doActionOnBatchKeys to cancel other actions",
+				logutil.Logger(backoffer.ctx).Debug("2PC doActionOnBatch to cancel other actions",
 					zap.Uint64("conn", batchExe.committer.connID),
 					zap.Stringer("action type", batchExe.action),
 					zap.Uint64("txnStartTS", batchExe.committer.startTS))

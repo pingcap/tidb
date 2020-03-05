@@ -136,7 +136,6 @@ func (s *testCommitterSuite) TestPrewriteRollback(c *C) {
 		"a": "a0",
 		"b": "b0",
 	})
-
 	ctx := context.Background()
 	txn1 := s.begin(c)
 	err := txn1.Set([]byte("a"), []byte("a1"))

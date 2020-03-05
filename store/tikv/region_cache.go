@@ -632,6 +632,7 @@ func (c *RegionCache) GroupSortedMutationsByRegion(bo *Backoffer, m committerMut
 					region:    lastLoc.Region,
 					mutations: m.subRange(lastUpperBound, i),
 				})
+				lastUpperBound = i
 			}
 			var err error
 			lastLoc, err = c.LocateKey(bo, m.keys[i])
