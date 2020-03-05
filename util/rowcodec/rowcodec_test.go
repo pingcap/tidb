@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/rowcodec"
 )
 
@@ -228,7 +229,7 @@ func (s *testSuite) TestTypesNewRowCodec(c *C) {
 	}
 	getSetDatum := func(name string, value uint64) types.Datum {
 		var d types.Datum
-		d.SetMysqlSet(types.Set{Name: name, Value: value})
+		d.SetMysqlSet(types.Set{Name: name, Value: value}, mysql.DefaultCollationName)
 		return d
 	}
 	getTime := func(value string) types.Time {
@@ -388,7 +389,7 @@ func (s *testSuite) TestTypesNewRowCodec(c *C) {
 		},
 		{
 			9,
-			withEnumElems("y", "n")(types.NewFieldType(mysql.TypeEnum)),
+			withEnumElems("y", "n")(types.NewFieldTypeWithCollation(mysql.TypeEnum, mysql.DefaultCollationName, collate.DefaultLen)),
 			types.NewMysqlEnumDatum(types.Enum{Name: "n", Value: 2}),
 			types.NewUintDatum(2),
 			nil,
@@ -436,7 +437,7 @@ func (s *testSuite) TestTypesNewRowCodec(c *C) {
 		},
 		{
 			117,
-			withEnumElems("n1", "n2")(types.NewFieldType(mysql.TypeSet)),
+			withEnumElems("n1", "n2")(types.NewFieldTypeWithCollation(mysql.TypeSet, mysql.DefaultCollationName, collate.DefaultLen)),
 			getSetDatum("n1", 1),
 			types.NewUintDatum(1),
 			nil,

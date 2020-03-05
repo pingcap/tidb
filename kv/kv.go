@@ -331,6 +331,12 @@ type Snapshot interface {
 	DelOption(opt Option)
 }
 
+// BatchGetter is the interface for BatchGet.
+type BatchGetter interface {
+	// BatchGet gets a batch of values.
+	BatchGet(ctx context.Context, keys []Key) (map[string][]byte, error)
+}
+
 // Driver is the interface that must be implemented by a KV storage.
 type Driver interface {
 	// Open returns a new Storage.
