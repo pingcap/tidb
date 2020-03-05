@@ -31,11 +31,15 @@ split-table = true
 # The limit of concurrent executed sessions.
 token-limit = 1000
 
-# Set the memory quota for a query in bytes. Default: 32GB
-mem-quota-query = 34359738368
+# Set the memory quota for a query in bytes. Default: 1GB
+mem-quota-query = 1073741824
 
 # Set to true to enable use of temporary disk for some executors when mem-quota-query is exceeded.
 oom-use-tmp-storage = true
+
+# The location of temporary disk storage using by some executors when mem-quota-query is exceeded.
+# It defaults to `<TMPDIR>/tidb/tmp-storage` if it is unset.
+# tmp-storage-path = "/tmp/tidb/tmp-storage"
 
 # What to do when mem-quota-query is exceeded and can not be spilled over to disk any more.
 # Valid options: ["log", "cancel"]
@@ -59,6 +63,9 @@ check-mb4-value-in-utf8 = true
 
 # treat-old-version-utf8-as-utf8mb4 use for upgrade compatibility. Set to true will treat old version table/column UTF8 charset as UTF8MB4.
 treat-old-version-utf8-as-utf8mb4 = true
+
+# max-index-length is used to deal with compatibility issues from v3.0.7 and previous version upgrades. It can only be in [3072, 3072*4].
+max-index-length = 3072
 
 # enable-table-lock is used to control table lock feature. Default is false, indicate the table lock feature is disabled.
 enable-table-lock = false
@@ -109,6 +116,9 @@ format = "text"
 
 # Enable annotating logs with the full stack error message, if not set, it will be defaulted to false.
 # enable-error-stack = false
+
+# Whether to enable slow query log.
+enable-slow-log = true
 
 # Stores slow query log into separated files.
 slow-query-file = "tidb-slow.log"

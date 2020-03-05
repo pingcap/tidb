@@ -61,7 +61,7 @@ type Constant struct {
 	ParamMarker *ParamMarker
 	hashcode    []byte
 
-	coercibility
+	collationInfo
 }
 
 // ParamMarker indicates param provided by COM_STMT_EXECUTE.
@@ -226,8 +226,10 @@ func (c *Constant) EvalInt(ctx sessionctx.Context, _ chunk.Row) (int64, bool, er
 	}
 	if c.GetType().Tp == mysql.TypeNull || dt.IsNull() {
 		return 0, true, nil
-	}
-	if c.GetType().Hybrid() || dt.Kind() == types.KindBinaryLiteral || dt.Kind() == types.KindString {
+	} else if dt.Kind() == types.KindBinaryLiteral {
+		val, err := dt.GetBinaryLiteral().ToInt(ctx.GetSessionVars().StmtCtx)
+		return int64(val), err != nil, err
+	} else if c.GetType().Hybrid() || dt.Kind() == types.KindString {
 		res, err := dt.ToInt64(ctx.GetSessionVars().StmtCtx)
 		return res, false, err
 	}
@@ -412,10 +414,10 @@ func (c *Constant) ReverseEval(sc *stmtctx.StatementContext, res types.Datum, rT
 
 // Coercibility returns the coercibility value which is used to check collations.
 func (c *Constant) Coercibility() Coercibility {
-	if c.hasCoercibility() {
-		return c.coercibility.value()
+	if c.HasCoercibility() {
+		return c.collationInfo.Coercibility()
 	}
 
-	c.coercibility.SetCoercibility(deriveCoercibilityForConstant(c))
-	return c.coercibility.value()
+	c.SetCoercibility(deriveCoercibilityForConstant(c))
+	return c.collationInfo.Coercibility()
 }

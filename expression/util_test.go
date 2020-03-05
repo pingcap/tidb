@@ -517,5 +517,11 @@ func (m *MockExpr) ExplainNormalizedInfo() string                     { return "
 func (m *MockExpr) HashCode(sc *stmtctx.StatementContext) []byte      { return nil }
 func (m *MockExpr) Vectorized() bool                                  { return false }
 func (m *MockExpr) SupportReverseEval() bool                          { return false }
+func (m *MockExpr) HasCoercibility() bool                             { return false }
 func (m *MockExpr) Coercibility() Coercibility                        { return 0 }
 func (m *MockExpr) SetCoercibility(Coercibility)                      {}
+
+func (m *MockExpr) CharsetAndCollation(ctx sessionctx.Context) (string, string, int) {
+	return "", "", 0
+}
+func (m *MockExpr) SetCharsetAndCollation(chs, coll string, flen int) {}

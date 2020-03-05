@@ -1160,7 +1160,7 @@ func setTableAutoRandomBits(tbInfo *model.TableInfo, colDefs []*ast.ColumnDef) e
 			if autoRandBits == 0 {
 				return ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomNonPositive)
 			} else if autoRandBits >= maxFieldTypeBitsLength {
-				return ErrInvalidAutoRandom.GenWithStackByArgs(fmt.Sprintf(autoid.AutoRandomOverflowErrMsg, autoRandBits, maxFieldTypeBitsLength))
+				return ErrInvalidAutoRandom.GenWithStackByArgs(fmt.Sprintf(autoid.AutoRandomOverflowErrMsg, col.Name.Name.L, maxFieldTypeBitsLength, autoRandBits, col.Name.Name.L, maxFieldTypeBitsLength-1))
 			}
 			tbInfo.AutoRandomBits = autoRandBits
 		}
@@ -1349,9 +1349,11 @@ func buildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo) mode
 	tblInfo.AutoIncID = 0
 	tblInfo.ForeignKeys = nil
 	if tblInfo.TiFlashReplica != nil {
+		replica := *tblInfo.TiFlashReplica
 		// Keep the tiflash replica setting, remove the replica available status.
-		tblInfo.TiFlashReplica.AvailablePartitionIDs = nil
-		tblInfo.TiFlashReplica.Available = false
+		replica.AvailablePartitionIDs = nil
+		replica.Available = false
+		tblInfo.TiFlashReplica = &replica
 	}
 	if referTblInfo.Partition != nil {
 		pi := *referTblInfo.Partition

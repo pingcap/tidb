@@ -291,17 +291,19 @@ func (s *seqTestSuite) TestShow(c *C) {
 	tk.MustExec(`create index idx5 using hash on show_index (id) using btree comment 'idx';`)
 	tk.MustExec(`create index idx6 using hash on show_index (id);`)
 	tk.MustExec(`create index idx7 on show_index (id);`)
+	tk.MustExec(`create index expr_idx on show_index ((id*2+1))`)
 	testSQL = "SHOW index from show_index;"
 	tk.MustQuery(testSQL).Check(testutil.RowsWithSep("|",
-		"show_index|0|PRIMARY|1|id|A|0|<nil>|<nil>||BTREE||",
-		"show_index|1|cIdx|1|c|A|0|<nil>|<nil>|YES|HASH||index_comment_for_cIdx",
-		"show_index|1|idx1|1|id|A|0|<nil>|<nil>|YES|HASH||",
-		"show_index|1|idx2|1|id|A|0|<nil>|<nil>|YES|BTREE||idx",
-		"show_index|1|idx3|1|id|A|0|<nil>|<nil>|YES|HASH||idx",
-		"show_index|1|idx4|1|id|A|0|<nil>|<nil>|YES|BTREE||idx",
-		"show_index|1|idx5|1|id|A|0|<nil>|<nil>|YES|BTREE||idx",
-		"show_index|1|idx6|1|id|A|0|<nil>|<nil>|YES|HASH||",
-		"show_index|1|idx7|1|id|A|0|<nil>|<nil>|YES|BTREE||",
+		"show_index|0|PRIMARY|1|id|A|0|<nil>|<nil>||BTREE| |NULL",
+		"show_index|1|cIdx|1|c|A|0|<nil>|<nil>|YES|HASH||index_comment_for_cIdx|NULL",
+		"show_index|1|idx1|1|id|A|0|<nil>|<nil>|YES|HASH| |NULL",
+		"show_index|1|idx2|1|id|A|0|<nil>|<nil>|YES|BTREE||idx|NULL",
+		"show_index|1|idx3|1|id|A|0|<nil>|<nil>|YES|HASH||idx|NULL",
+		"show_index|1|idx4|1|id|A|0|<nil>|<nil>|YES|BTREE||idx|NULL",
+		"show_index|1|idx5|1|id|A|0|<nil>|<nil>|YES|BTREE||idx|NULL",
+		"show_index|1|idx6|1|id|A|0|<nil>|<nil>|YES|HASH| |NULL",
+		"show_index|1|idx7|1|id|A|0|<nil>|<nil>|YES|BTREE| |NULL",
+		"show_index|1|expr_idx|1|NULL|A|0|<nil>|<nil>|YES|BTREE| |(`id` * 2 + 1)",
 	))
 
 	// For show like with escape
@@ -703,10 +705,10 @@ func (s *seqTestSuite) TestParallelHashAggClose(c *C) {
 	tk.MustExec("create table t(a int, b int)")
 	tk.MustExec("insert into t values(1,1),(2,2)")
 	// desc select sum(a) from (select cast(t.a as signed) as a, b from t) t group by b
-	// HashAgg_8              | 2.40  | root | group by:t.b, funcs:sum(t.a)
-	// └─Projection_9         | 3.00  | root | cast(test.t.a), test.t.b
-	//   └─TableReader_11     | 3.00  | root | data:TableScan_10
-	//     └─TableScan_10     | 3.00  | cop[tikv]  | table:t, range:[-inf,+inf], keep order:fa$se, stats:pseudo |
+	// HashAgg_8                | 2.40  | root       | group by:t.b, funcs:sum(t.a)
+	// └─Projection_9           | 3.00  | root       | cast(test.t.a), test.t.b
+	//   └─TableReader_11       | 3.00  | root       | data:TableFullScan_10
+	//     └─TableFullScan_10   | 3.00  | cop[tikv]  | table:t, keep order:fa$se, stats:pseudo |
 
 	// Goroutine should not leak when error happen.
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/parallelHashAggError", `return(true)`), IsNil)
@@ -1338,7 +1340,7 @@ func (s *testOOMSuite) TearDownSuite(c *C) {
 func (s *testOOMSuite) registerHook() {
 	conf := &log.Config{Level: os.Getenv("log_level"), File: log.FileLogConfig{}}
 	_, r, _ := log.InitLogger(conf)
-	s.oom = &oomCapturer{r.Core, ""}
+	s.oom = &oomCapturer{r.Core, "", sync.Mutex{}}
 	lg := zap.New(s.oom)
 	log.ReplaceGlobals(lg, r)
 }
@@ -1481,6 +1483,7 @@ func (s *testOOMSuite) TestMemTracker4DeleteExec(c *C) {
 type oomCapturer struct {
 	zapcore.Core
 	tracker string
+	mu      sync.Mutex
 }
 
 func (h *oomCapturer) Write(entry zapcore.Entry, fields []zapcore.Field) error {
@@ -1498,7 +1501,10 @@ func (h *oomCapturer) Write(entry zapcore.Entry, fields []zapcore.Field) error {
 		h.tracker = str[begin+len("8001]") : end]
 		return nil
 	}
+
+	h.mu.Lock()
 	h.tracker = entry.Message
+	h.mu.Unlock()
 	return nil
 }
 

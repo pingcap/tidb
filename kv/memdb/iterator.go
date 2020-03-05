@@ -45,7 +45,7 @@ func (it *Iterator) Value() []byte {
 
 // Next moves the iterator to the next entry.
 func (it *Iterator) Next() {
-	it.changeToAddr(it.curr.nexts[0])
+	it.changeToAddr(it.curr.nexts(0))
 }
 
 // Prev moves the iterator to the previous entry.

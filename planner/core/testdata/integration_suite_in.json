@@ -87,5 +87,12 @@
       // issue #14481
       "desc select * from t where a = 1 and a = 2"
     ]
+  },
+  {
+    "name": "TestIndexJoinTableRange",
+    "cases": [
+      "desc select /*+ TIDB_INLJ(t2)*/ * from t1, t2 where t1.a = t2.a and t1.b = t2.b",
+      "desc select /*+ TIDB_INLJ(t2)*/ * from t1, t2 where t1.a = t2.a and t1.b = t2.a and t1.b = t2.b"
+    ]
   }
 ]
