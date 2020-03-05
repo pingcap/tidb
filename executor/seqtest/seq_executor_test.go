@@ -783,6 +783,7 @@ func HelperTestAdminShowNextID(c *C, s *seqTestSuite, str string) {
 	}
 	r = tk.MustQuery(str + " t next_row_id")
 	r.Check(testkit.Rows("test t _tidb_rowid 21"))
+	tk.MustExec("drop table t")
 
 	// test for a table with the primary key
 	tk.MustExec("create table tt(id int primary key auto_increment, c int)")
@@ -802,6 +803,7 @@ func HelperTestAdminShowNextID(c *C, s *seqTestSuite, str string) {
 	tk.MustExec("insert test1.tt values ()")
 	r = tk.MustQuery(str + " tt next_row_id")
 	r.Check(testkit.Rows("test1 tt id 41"))
+	tk.MustExec("drop table tt")
 }
 
 func (s *seqTestSuite) TestNoHistoryWhenDisableRetry(c *C) {
