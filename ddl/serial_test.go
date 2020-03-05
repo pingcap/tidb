@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/util/testutil"
 )
 
+// Make it serial because config is modified in test cases.
 var _ = SerialSuites(&testSerialSuite{})
 
 type testSerialSuite struct {
@@ -749,8 +750,8 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	assertWithAutoInc := func(sql string) {
 		assertInvalidAutoRandomErr(sql, autoid.AutoRandomIncompatibleWithAutoIncErrMsg)
 	}
-	assertOverflow := func(sql string, autoRandBits, maxFieldLength uint64) {
-		assertInvalidAutoRandomErr(sql, autoid.AutoRandomOverflowErrMsg, autoRandBits, maxFieldLength)
+	assertOverflow := func(sql, colType string, autoRandBits, maxFieldLength uint64) {
+		assertInvalidAutoRandomErr(sql, autoid.AutoRandomOverflowErrMsg, colType, maxFieldLength, autoRandBits, colType, maxFieldLength-1)
 	}
 	assertModifyColType := func(sql string) {
 		assertInvalidAutoRandomErr(sql, autoid.AutoRandomModifyColTypeErrMsg)
@@ -794,11 +795,11 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	assertWithAutoInc("create table t (a bigint auto_random(3) auto_increment, primary key (a))")
 
 	// Overflow data type max length.
-	assertOverflow("create table t (a bigint auto_random(65) primary key)", 65, 64)
-	assertOverflow("create table t (a int auto_random(33) primary key)", 33, 32)
-	assertOverflow("create table t (a mediumint auto_random(25) primary key)", 25, 24)
-	assertOverflow("create table t (a smallint auto_random(17) primary key)", 17, 16)
-	assertOverflow("create table t (a tinyint auto_random(9) primary key)", 9, 8)
+	assertOverflow("create table t (a bigint auto_random(65) primary key)", "a", 65, 64)
+	assertOverflow("create table t (a int auto_random(33) primary key)", "a", 33, 32)
+	assertOverflow("create table t (a mediumint auto_random(25) primary key)", "a", 25, 24)
+	assertOverflow("create table t (a smallint auto_random(17) primary key)", "a", 17, 16)
+	assertOverflow("create table t (a tinyint auto_random(9) primary key)", "a", 9, 8)
 
 	assertNonPositive("create table t (a bigint auto_random(0) primary key)")
 
