@@ -92,7 +92,7 @@ func cmpStringWithCollationInfo(l Row, lCol int, r Row, rCol int, collation stri
 	if lNull || rNull {
 		return cmpNull(lNull, rNull)
 	}
-	return types.CompareString(l.GetString(lCol), r.GetString(rCol), collation, flen)
+	return types.CompareString(l.GetString(lCol), r.GetString(rCol), collation)
 }
 
 func cmpFloat32(l Row, lCol int, r Row, rCol int) int {
@@ -192,7 +192,7 @@ func Compare(row Row, colIdx int, ad *types.Datum) int {
 	case types.KindFloat64:
 		return types.CompareFloat64(row.GetFloat64(colIdx), ad.GetFloat64())
 	case types.KindString, types.KindBytes, types.KindBinaryLiteral, types.KindMysqlBit:
-		return types.CompareString(row.GetString(colIdx), ad.GetString(), ad.Collation(), ad.Length())
+		return types.CompareString(row.GetString(colIdx), ad.GetString(), ad.Collation())
 	case types.KindMysqlDecimal:
 		l, r := row.GetMyDecimal(colIdx), ad.GetMysqlDecimal()
 		return l.Compare(r)

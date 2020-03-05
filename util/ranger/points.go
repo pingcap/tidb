@@ -23,9 +23,11 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 )
 
 // Error instances.
@@ -148,6 +150,7 @@ func NullRange() []*Range {
 type builder struct {
 	err error
 	sc  *stmtctx.StatementContext
+	ctx *sessionctx.Context
 }
 
 func (r *builder) build(expr expression.Expression) []point {
@@ -205,7 +208,11 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []point {
 		err   error
 		ft    *types.FieldType
 	)
+	_, collation, _ := expr.CharsetAndCollation(expr.GetCtx())
 	if col, ok := expr.GetArgs()[0].(*expression.Column); ok {
+		if col.RetType.EvalType() == types.ETString && !collate.SameCollate(col.RetType.Collate, collation) {
+			return fullRange
+		}
 		value, err = expr.GetArgs()[1].Eval(chunk.Row{})
 		op = expr.FuncName.L
 		ft = col.RetType
@@ -213,6 +220,9 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []point {
 		col, ok := expr.GetArgs()[1].(*expression.Column)
 		if !ok {
 			return nil
+		}
+		if col.RetType.EvalType() == types.ETString && !collate.SameCollate(col.RetType.Collate, collation) {
+			return fullRange
 		}
 		ft = col.RetType
 
@@ -240,6 +250,11 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []point {
 	value, op, isValidRange := handleUnsignedIntCol(ft, value, op)
 	if !isValidRange {
 		return nil
+	}
+
+	value, err = value.ConvertTo(r.sc, ft)
+	if err != nil && !types.ErrDataTooLong.Equal(err) {
+		return fullRange
 	}
 
 	switch op {
@@ -382,8 +397,12 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction) ([]point, bool) {
 }
 
 func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction) []point {
+	_, collation, _ := expr.CharsetAndCollation(expr.GetCtx())
+	if !collate.SameCollate(expr.GetArgs()[0].GetType().Collate, collation) {
+		return fullRange
+	}
 	pdt, err := expr.GetArgs()[1].(*expression.Constant).Eval(chunk.Row{})
-	tpOfPattern := expr.GetArgs()[1].GetType()
+	tpOfPattern := expr.GetArgs()[0].GetType()
 	if err != nil {
 		r.err = errors.Trace(err)
 		return fullRange

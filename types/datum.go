@@ -517,11 +517,6 @@ func (d *Datum) SetValue(val interface{}, tp *types.FieldType) {
 	}
 }
 
-// InferCollation infers the collation by the given two collation.
-func InferCollation(c1, c2 string) string {
-	return c1
-}
-
 // CompareDatum compares datum to another datum.
 // TODO: return error properly.
 func (d *Datum) CompareDatum(sc *stmtctx.StatementContext, ad *Datum) (int, error) {
@@ -554,8 +549,7 @@ func (d *Datum) CompareDatum(sc *stmtctx.StatementContext, ad *Datum) (int, erro
 	case KindFloat32, KindFloat64:
 		return d.compareFloat64(sc, ad.GetFloat64())
 	case KindString:
-		retCollation := InferCollation(d.collation, ad.collation)
-		return d.compareString(sc, ad.GetString(), retCollation)
+		return d.compareString(sc, ad.GetString(), d.collation)
 	case KindBytes:
 		return d.compareBytes(sc, ad.GetBytes())
 	case KindMysqlDecimal:
@@ -655,7 +649,7 @@ func (d *Datum) compareString(sc *stmtctx.StatementContext, s string, retCollati
 	case KindMaxValue:
 		return 1, nil
 	case KindString, KindBytes:
-		return CompareString(d.GetString(), s, d.collation, int(d.length)), nil
+		return CompareString(d.GetString(), s, d.collation), nil
 	case KindMysqlDecimal:
 		dec := new(MyDecimal)
 		err := sc.HandleTruncate(dec.FromString(hack.Slice(s)))
@@ -667,11 +661,11 @@ func (d *Datum) compareString(sc *stmtctx.StatementContext, s string, retCollati
 		dur, err := ParseDuration(sc, s, MaxFsp)
 		return d.GetMysqlDuration().Compare(dur), errors.Trace(err)
 	case KindMysqlSet:
-		return CompareString(d.GetMysqlSet().String(), s, d.collation, int(d.length)), nil
+		return CompareString(d.GetMysqlSet().String(), s, d.collation), nil
 	case KindMysqlEnum:
-		return CompareString(d.GetMysqlEnum().String(), s, d.collation, int(d.length)), nil
+		return CompareString(d.GetMysqlEnum().String(), s, d.collation), nil
 	case KindBinaryLiteral, KindMysqlBit:
-		return CompareString(d.GetBinaryLiteral().ToString(), s, d.collation, int(d.length)), nil
+		return CompareString(d.GetBinaryLiteral().ToString(), s, d.collation), nil
 	default:
 		fVal, err := StrToFloat(sc, s)
 		if err != nil {
@@ -722,7 +716,7 @@ func (d *Datum) compareMysqlDuration(sc *stmtctx.StatementContext, dur Duration)
 func (d *Datum) compareMysqlEnum(sc *stmtctx.StatementContext, enum Enum) (int, error) {
 	switch d.k {
 	case KindString, KindBytes:
-		return CompareString(d.GetString(), enum.String(), d.collation, int(d.length)), nil
+		return CompareString(d.GetString(), enum.String(), d.collation), nil
 	default:
 		return d.compareFloat64(sc, enum.ToNumber())
 	}
@@ -731,9 +725,9 @@ func (d *Datum) compareMysqlEnum(sc *stmtctx.StatementContext, enum Enum) (int, 
 func (d *Datum) compareBinaryLiteral(sc *stmtctx.StatementContext, b BinaryLiteral) (int, error) {
 	switch d.k {
 	case KindString, KindBytes:
-		return CompareString(d.GetString(), b.ToString(), d.collation, int(d.length)), nil
+		return CompareString(d.GetString(), b.ToString(), d.collation), nil
 	case KindBinaryLiteral, KindMysqlBit:
-		return CompareString(d.GetBinaryLiteral().ToString(), b.ToString(), d.collation, int(d.length)), nil
+		return CompareString(d.GetBinaryLiteral().ToString(), b.ToString(), d.collation), nil
 	default:
 		val, err := b.ToInt(sc)
 		if err != nil {
@@ -747,7 +741,7 @@ func (d *Datum) compareBinaryLiteral(sc *stmtctx.StatementContext, b BinaryLiter
 func (d *Datum) compareMysqlSet(sc *stmtctx.StatementContext, set Set) (int, error) {
 	switch d.k {
 	case KindString, KindBytes:
-		return CompareString(d.GetString(), set.String(), d.collation, int(d.length)), nil
+		return CompareString(d.GetString(), set.String(), d.collation), nil
 	default:
 		return d.compareFloat64(sc, set.ToNumber())
 	}
