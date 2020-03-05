@@ -228,6 +228,7 @@ func (p *LogicalJoin) AppendJoinConds(eq []*expression.ScalarFunction, left, rig
 	p.OtherConditions = append(other, p.OtherConditions...)
 }
 
+// ExtractCorrelatedCols implements LogicalPlan interface.
 func (p *LogicalJoin) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := make([]*expression.CorrelatedColumn, 0)
 	for _, fun := range p.EqualConditions {
@@ -278,6 +279,7 @@ type LogicalProjection struct {
 	AvoidColumnEvaluator bool
 }
 
+// ExtractCorrelatedCols implements LogicalPlan interface.
 func (p *LogicalProjection) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := make([]*expression.CorrelatedColumn, 0)
 	for _, expr := range p.Exprs {
@@ -334,6 +336,7 @@ func (la *LogicalAggregation) GetGroupByCols() []*expression.Column {
 	return la.groupByCols
 }
 
+// ExtractCorrelatedCols implements LogicalPlan interface.
 func (la *LogicalAggregation) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := make([]*expression.CorrelatedColumn, 0)
 	for _, expr := range la.GroupByItems {
@@ -370,6 +373,7 @@ type LogicalSelection struct {
 	Conditions []expression.Expression
 }
 
+// ExtractCorrelatedCols implements LogicalPlan interface.
 func (p *LogicalSelection) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := make([]*expression.CorrelatedColumn, 0)
 	for _, cond := range p.Conditions {
@@ -385,6 +389,7 @@ type LogicalApply struct {
 	CorCols []*expression.CorrelatedColumn
 }
 
+// ExtractCorrelatedCols implements LogicalPlan interface.
 func (la *LogicalApply) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := la.LogicalJoin.ExtractCorrelatedCols()
 	for i := len(corCols) - 1; i >= 0; i-- {
@@ -855,6 +860,7 @@ type LogicalSort struct {
 	ByItems []*ByItems
 }
 
+// ExtractCorrelatedCols implements LogicalPlan interface.
 func (ls *LogicalSort) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := make([]*expression.CorrelatedColumn, 0)
 	for _, item := range ls.ByItems {
@@ -872,9 +878,10 @@ type LogicalTopN struct {
 	Count   uint64
 }
 
-func (ls *LogicalTopN) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
+// ExtractCorrelatedCols implements LogicalPlan interface.
+func (lt *LogicalTopN) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := make([]*expression.CorrelatedColumn, 0)
-	for _, item := range ls.ByItems {
+	for _, item := range lt.ByItems {
 		corCols = append(corCols, expression.ExtractCorColumns(item.Expr)...)
 	}
 	return corCols
