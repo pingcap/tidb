@@ -209,19 +209,27 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []point {
 		ft    *types.FieldType
 	)
 	_, collation, _ := expr.CharsetAndCollation(expr.GetCtx())
-	if col, ok := expr.GetArgs()[0].(*expression.Column); ok {
-		value, err = expr.GetArgs()[1].Eval(chunk.Row{})
-		ft = col.RetType
-		if err != nil {
-			return nil
-		}
+
+	// refineValue refines the constant datum for string type since we may eval the constant to another collation instead of its own collation.
+	refineValue := func(col *expression.Column, value *types.Datum) (isFullRange bool) {
 		if col.RetType.EvalType() == types.ETString {
-			if !collate.SameCollate(col.RetType.Collate, collation) {
-				return fullRange
+			if !collate.CompatibleCollate(col.RetType.Collate, collation) {
+				return true
 			}
 			if value.Kind() == types.KindString {
 				value.SetString(value.GetString(), ft.Collate)
 			}
+		}
+		return false
+	}
+	if col, ok := expr.GetArgs()[0].(*expression.Column); ok {
+		ft = col.RetType
+		value, err = expr.GetArgs()[1].Eval(chunk.Row{})
+		if err != nil {
+			return nil
+		}
+		if refineValue(col, &value) {
+			return fullRange
 		}
 		op = expr.FuncName.L
 	} else {
@@ -234,13 +242,8 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []point {
 		if err != nil {
 			return nil
 		}
-		if col.RetType.EvalType() == types.ETString {
-			if !collate.SameCollate(col.RetType.Collate, collation) {
-				return fullRange
-			}
-			if value.Kind() == types.KindString {
-				value.SetString(value.GetString(), ft.Collate)
-			}
+		if refineValue(col, &value) {
+			return fullRange
 		}
 
 		switch expr.FuncName.L {
@@ -406,7 +409,7 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction) ([]point, bool) {
 
 func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction) []point {
 	_, collation, _ := expr.CharsetAndCollation(expr.GetCtx())
-	if !collate.SameCollate(expr.GetArgs()[0].GetType().Collate, collation) {
+	if !collate.CompatibleCollate(expr.GetArgs()[0].GetType().Collate, collation) {
 		return fullRange
 	}
 	pdt, err := expr.GetArgs()[1].(*expression.Constant).Eval(chunk.Row{})
