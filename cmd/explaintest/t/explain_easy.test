@@ -5,6 +5,7 @@ create table t2 (c1 int unique, c2 int);
 insert into t2 values(1, 0), (2, 1);
 create table t3 (a bigint, b bigint, c bigint, d bigint);
 create table t4 (a int, b int, c int, index idx(a, b), primary key(a));
+create index expr_idx on t4((a+b+1));
 
 set @@session.tidb_opt_agg_push_down = 1;
 set @@session.tidb_opt_insubq_to_join_and_agg=1;
@@ -37,6 +38,8 @@ explain select ifnull(null, t1.c1) from t1;
 explain select if(10, t1.c1, t1.c2) from t1;
 explain select c1 from t2 union select c1 from t2 union all select c1 from t2;
 explain select c1 from t2 union all select c1 from t2 union select c1 from t2;
+
+select * from information_schema.tidb_indexes where table_name='t4';
 
 # https://github.com/pingcap/tidb/issues/9125
 explain select count(1) from (select count(1) from (select * from t1 where c3 = 100) k) k2;

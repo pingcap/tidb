@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"math"
 	"strconv"
 	"sync"
@@ -55,12 +54,13 @@ func convertToKeyError(err error) *kvrpcpb.KeyError {
 	if locked, ok := errors.Cause(err).(*ErrLocked); ok {
 		return &kvrpcpb.KeyError{
 			Locked: &kvrpcpb.LockInfo{
-				Key:         locked.Key.Raw(),
-				PrimaryLock: locked.Primary,
-				LockVersion: locked.StartTS,
-				LockTtl:     locked.TTL,
-				TxnSize:     locked.TxnSize,
-				LockType:    locked.LockType,
+				Key:             locked.Key.Raw(),
+				PrimaryLock:     locked.Primary,
+				LockVersion:     locked.StartTS,
+				LockTtl:         locked.TTL,
+				TxnSize:         locked.TxnSize,
+				LockType:        locked.LockType,
+				LockForUpdateTs: locked.ForUpdateTS,
 			},
 		}
 	}
@@ -324,18 +324,10 @@ func (h *rpcHandler) handleKvPessimisticLock(req *kvrpcpb.PessimisticLockRequest
 	startTS := req.StartVersion
 	regionID := req.Context.RegionId
 	h.cluster.handleDelay(startTS, regionID)
-	errs := h.mvccStore.PessimisticLock(req.Mutations, req.PrimaryLock, req.GetStartVersion(), req.GetForUpdateTs(),
-		req.GetLockTtl(), req.WaitTimeout)
-	if req.WaitTimeout == kv.LockAlwaysWait {
-		// TODO: remove this when implement sever side wait.
-		h.simulateServerSideWaitLock(errs)
-	}
-	return &kvrpcpb.PessimisticLockResponse{
-		Errors: convertToKeyErrors(errs),
-	}
+	return h.mvccStore.PessimisticLock(req)
 }
 
-func (h *rpcHandler) simulateServerSideWaitLock(errs []error) {
+func simulateServerSideWaitLock(errs []error) {
 	for _, err := range errs {
 		if _, ok := err.(*ErrLocked); ok {
 			time.Sleep(time.Millisecond * 5)
@@ -1082,11 +1074,20 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 // Close closes the client.
 func (c *RPCClient) Close() error {
 	close(c.done)
-	if raw, ok := c.MvccStore.(io.Closer); ok {
-		return raw.Close()
+
+	var err error
+	if c.MvccStore != nil {
+		err = c.MvccStore.Close()
+		if err != nil {
+			return err
+		}
 	}
+
 	if c.rpcCli != nil {
-		return c.rpcCli.Close()
+		err = c.rpcCli.Close()
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }

@@ -101,11 +101,13 @@ var builtinInTmpl = template.Must(template.New("builtinInTmpl").Parse(`
 			compareResult = 0
 		}
 	{{- else if eq .Input.TypeName "Time" -}}
-		compareResult = arg0.Compare(arg1) 
+		compareResult = arg0.Compare(arg1)
 	{{- else if eq .Input.TypeName "Duration" -}}
 		compareResult = types.CompareDuration(arg0, arg1)
 	{{- else if eq .Input.TypeName "JSON" -}}
 		compareResult = json.CompareBinary(arg0, arg1)
+	{{- else if eq .Input.TypeName "String" -}}
+		compareResult = types.CompareString(arg0, arg1, b.collation)
 	{{- else -}}
 		compareResult = types.Compare{{ .Input.TypeNameInColumn }}(arg0, arg1)
 	{{- end -}}
@@ -207,7 +209,7 @@ func (b *{{.SigName}}) vecEvalInt(input *chunk.Chunk, result *chunk.Column) erro
 				hasNull[i] = true
 				continue
 			}
-	
+
 {{- /* get args */}}
 			{{- if $InputFixed }}
 				arg0 := args0[i]
@@ -216,7 +218,7 @@ func (b *{{.SigName}}) vecEvalInt(input *chunk.Chunk, result *chunk.Column) erro
 				arg0 := buf0.Get{{ .Input.TypeName }}(i)
 				arg1 := buf1.Get{{ .Input.TypeName }}(i)
 			{{- end }}
-	
+
 {{- /* compare */}}
 			{{- template "Compare" . }}
 			if compareResult == 0 {
@@ -314,12 +316,12 @@ func (g inGener) gen() interface{} {
 var vecBuiltin{{ .Category }}GeneratedCases = map[string][]vecExprBenchCase {
 {{- range $.Functions }}
 	ast.{{ .FuncName }}: {
-	{{- range .Sigs }} 
+	{{- range .Sigs }}
 		// {{ .SigName }}
 		{
-			retEvalType: types.ET{{ .Output.ETName }}, 
+			retEvalType: types.ET{{ .Output.ETName }},
 			childrenTypes: []types.EvalType{
-				types.ET{{ .Input.ETName }}, 
+				types.ET{{ .Input.ETName }},
 				types.ET{{ .Input.ETName }},
 				types.ET{{ .Input.ETName }},
 				types.ET{{ .Input.ETName }},
@@ -330,14 +332,14 @@ var vecBuiltin{{ .Category }}GeneratedCases = map[string][]vecExprBenchCase {
 				inGener{*newDefaultGener(0.2, types.ET{{.Input.ETName}})},
 				inGener{*newDefaultGener(0.2, types.ET{{.Input.ETName}})},
 			},
-		}, 
+		},
 	{{- end }}
-	{{- range .Sigs }} 
+	{{- range .Sigs }}
 		// {{ .SigName }} with const arguments
 		{
-			retEvalType: types.ET{{ .Output.ETName }}, 
+			retEvalType: types.ET{{ .Output.ETName }},
 			childrenTypes: []types.EvalType{
-				types.ET{{ .Input.ETName }}, 
+				types.ET{{ .Input.ETName }},
 				types.ET{{ .Input.ETName }}, types.ET{{ .Input.ETName }},
 			},
 			constants: []*Constant{
@@ -371,10 +373,10 @@ var vecBuiltin{{ .Category }}GeneratedCases = map[string][]vecExprBenchCase {
 					{Value: types.NewDecimalDatum(types.NewDecFromInt(20)), RetType: types.NewFieldType(mysql.TypeDecimal)},
 				{{- end }}
 			},
-		}, 
+		},
 	{{- end }}
 {{- end }}
-	}, 
+	},
 }
 
 func (s *testEvaluatorSuite) TestVectorizedBuiltin{{.Category}}EvalOneVecGenerated(c *C) {
