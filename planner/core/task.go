@@ -904,7 +904,7 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 		// copToFlash means whether the cop task is running on flash storage
 		copToFlash := isFlashCopTask(cop)
 		partialAgg, finalAgg := p.newPartialAggregate(copToFlash)
-		if partialAgg != nil || len(cop.rootTaskConds) == 0 {
+		if partialAgg != nil && len(cop.rootTaskConds) == 0 {
 			if cop.tablePlan != nil {
 				cop.finishIndexPlan()
 				partialAgg.SetChildren(cop.tablePlan)
@@ -913,6 +913,7 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 				partialAgg.SetChildren(cop.indexPlan)
 				cop.indexPlan = partialAgg
 			}
+			cop.addCost(p.GetCost(inputRows, false))
 			// In `newPartialAggregate`, we are using stats of final aggregation as stats
 			// of `partialAgg`, so the network cost of transferring result rows of `partialAgg`
 			// to TiDB is normally under-estimated for hash aggregation, since the group-by
@@ -924,7 +925,6 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 			attachPlan2Task(finalAgg, t)
 		} else {
 			t = finishCopTask(p.ctx, cop)
-			inputRows = t.count()
 			attachPlan2Task(p, t)
 		}
 	} else {
