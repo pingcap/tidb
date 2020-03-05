@@ -431,7 +431,7 @@ func SetBinChsClnFlag(ft *types.FieldType) {
 const DefaultFsp = int8(0)
 
 // DefaultTypeForValue returns the default FieldType for the value.
-func DefaultTypeForValue(value interface{}, tp *types.FieldType) {
+func DefaultTypeForValue(value interface{}, tp *types.FieldType, charset string, collate string) {
 	switch x := value.(type) {
 	case nil:
 		tp.Tp = mysql.TypeNull
@@ -465,7 +465,7 @@ func DefaultTypeForValue(value interface{}, tp *types.FieldType) {
 		// TODO: tp.Flen should be len(x) * 3 (max bytes length of CharsetUTF8)
 		tp.Flen = len(x)
 		tp.Decimal = types.UnspecifiedLength
-		tp.Charset, tp.Collate = charset.GetDefaultCharsetAndCollate()
+		tp.Charset, tp.Collate = charset, collate
 	case float32:
 		tp.Tp = mysql.TypeFloat
 		s := strconv.FormatFloat(float64(x), 'f', -1, 32)
