@@ -402,9 +402,9 @@ func (p *LogicalJoin) setPreferredJoinType(hintInfo *tableHintInfo) {
 	}
 	// specify whether the inner be the build or probe side
 	if hintInfo.ifPreferHashJoinBuild(lhsAlias) || hintInfo.ifPreferHashJoinProbe(rhsAlias) {
-		p.preferJoinType |= preferHashJoinInnerBuild
+		p.preferJoinType |= preferLeftAsHJBuild
 	} else if hintInfo.ifPreferHashJoinBuild(rhsAlias) || hintInfo.ifPreferHashJoinProbe(lhsAlias) {
-		p.preferJoinType |= preferHashJoinInnerProbe
+		p.preferJoinType |= preferRightAsHJBuild
 	} else if hintInfo.ifPreferHashJoin(lhsAlias, rhsAlias) {
 		p.preferJoinType |= preferHashJoin
 	}

@@ -327,19 +327,19 @@ drop table if exists t;
 create table t (id int primary key, a int, b int);
 explain select * from (t t1 left join t t2 on t1.a = t2.a) left join (t t3 left join t t4 on t3.a = t4.a) on t2.b = 1;
 id	estRows	task	operator info
-HashLeftJoin_10	155937656.25	root	CARTESIAN left outer join, inner:HashLeftJoin_18, left cond:[eq(test.t.b, 1)]
-├─HashLeftJoin_18(Build)	12487.50	root	left outer join, inner:TableReader_24, equal:[eq(test.t.a, test.t.a)]
-│ ├─TableReader_24(Build)	9990.00	root	data:Selection_23
-│ │ └─Selection_23	9990.00	cop[tikv]	not(isnull(test.t.a))
-│ │   └─TableFullScan_22	10000.00	cop[tikv]	table:t4, keep order:false, stats:pseudo
-│ └─TableReader_21(Probe)	10000.00	root	data:TableFullScan_20
-│   └─TableFullScan_20	10000.00	cop[tikv]	table:t3, keep order:false, stats:pseudo
-└─HashLeftJoin_11(Probe)	12487.50	root	left outer join, inner:TableReader_17, equal:[eq(test.t.a, test.t.a)]
-  ├─TableReader_17(Build)	9990.00	root	data:Selection_16
-  │ └─Selection_16	9990.00	cop[tikv]	not(isnull(test.t.a))
-  │   └─TableFullScan_15	10000.00	cop[tikv]	table:t2, keep order:false, stats:pseudo
-  └─TableReader_14(Probe)	10000.00	root	data:TableFullScan_13
-    └─TableFullScan_13	10000.00	cop[tikv]	table:t1, keep order:false, stats:pseudo
+HashLeftJoin_10	155937656.25	root	CARTESIAN left outer join, inner:HashLeftJoin_19, left cond:[eq(test.t.b, 1)]
+├─HashLeftJoin_19(Build)	12487.50	root	left outer join, inner:TableReader_25, equal:[eq(test.t.a, test.t.a)]
+│ ├─TableReader_25(Build)	9990.00	root	data:Selection_24
+│ │ └─Selection_24	9990.00	cop[tikv]	not(isnull(test.t.a))
+│ │   └─TableFullScan_23	10000.00	cop[tikv]	table:t4, keep order:false, stats:pseudo
+│ └─TableReader_22(Probe)	10000.00	root	data:TableFullScan_21
+│   └─TableFullScan_21	10000.00	cop[tikv]	table:t3, keep order:false, stats:pseudo
+└─HashLeftJoin_12(Probe)	12487.50	root	left outer join, inner:TableReader_18, equal:[eq(test.t.a, test.t.a)]
+  ├─TableReader_18(Build)	9990.00	root	data:Selection_17
+  │ └─Selection_17	9990.00	cop[tikv]	not(isnull(test.t.a))
+  │   └─TableFullScan_16	10000.00	cop[tikv]	table:t2, keep order:false, stats:pseudo
+  └─TableReader_15(Probe)	10000.00	root	data:TableFullScan_14
+    └─TableFullScan_14	10000.00	cop[tikv]	table:t1, keep order:false, stats:pseudo
 drop table if exists t;
 create table t(a bigint primary key, b bigint);
 desc select * from t where a = 1;

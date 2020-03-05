@@ -105,8 +105,8 @@ const (
 	preferLeftAsINLMJInner
 	preferRightAsINLMJInner
 	preferHashJoin
-	preferHashJoinInnerBuild
-	preferHashJoinInnerProbe
+	preferLeftAsHJBuild
+	preferRightAsHJBuild
 	preferMergeJoin
 	preferHashAgg
 	preferStreamAgg

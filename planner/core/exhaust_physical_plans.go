@@ -285,18 +285,14 @@ func (p *PhysicalMergeJoin) initCompareFuncs() {
 	}
 }
 
-// ForceUseOuterBuild4Test is a test option to control forcing use outer input as build.
-// TODO: use hint and remove this variable
-var ForceUseOuterBuild4Test = false
-
 func (p *LogicalJoin) tryToGetHashJoins(prop *property.PhysicalProperty) ([]PhysicalPlan, bool) {
-	forced := false
-	innerBuild := p.preferJoinType&preferHashJoinInnerBuild > 0
-	innerProbe := p.preferJoinType&preferHashJoinInnerProbe > 0
+	hintForced := false
+	innerBuild := p.preferJoinType&preferLeftAsHJBuild > 0
+	innerProbe := p.preferJoinType&preferRightAsHJBuild > 0
 	forceHJ := p.preferJoinType&preferHashJoin > 0
 	defer func() {
 		// refine error message
-		if !forced && (innerBuild || innerProbe) {
+		if !hintForced && (innerBuild || innerProbe) {
 			// Construct warning message prefix.
 			var errMsg string
 			switch {
@@ -331,65 +327,47 @@ func (p *LogicalJoin) tryToGetHashJoins(prop *property.PhysicalProperty) ([]Phys
 	}()
 
 	if !prop.IsEmpty() { // hash join doesn't promise any orders
-		return nil, forced
+		return nil, hintForced || forceHJ
 	}
 	joins := make([]PhysicalPlan, 0, 2)
 	switch p.JoinType {
 	case SemiJoin, AntiSemiJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
 		joins = append(joins, p.getHashJoin(prop, 1, false))
 	case LeftOuterJoin:
-		// TODO: support exchange the inner and the outer in CARTESIAN join
-		if len(p.EqualConditions) == 0 {
+		if innerBuild {
+			joins = append(joins, p.getHashJoin(prop, 1, true))
+			hintForced = true
+		} else if innerProbe {
 			joins = append(joins, p.getHashJoin(prop, 1, false))
+			hintForced = true
 		} else {
-			if innerBuild {
-				joins = append(joins, p.getHashJoin(prop, 1, true))
-				forced = true
-			} else if innerProbe {
-				joins = append(joins, p.getHashJoin(prop, 1, false))
-				forced = true
-			} else {
-				joins = append(joins, p.getHashJoin(prop, 1, false))
-				joins = append(joins, p.getHashJoin(prop, 1, true))
-			}
-			// TODO: delete this after support hint of SWAP_JOIN_INPUTS()
-			if ForceUseOuterBuild4Test {
-				joins = append(joins, p.getHashJoin(prop, 1, true))
-			}
+			joins = append(joins, p.getHashJoin(prop, 1, false))
+			joins = append(joins, p.getHashJoin(prop, 1, true))
 		}
 	case RightOuterJoin:
-		// TODO: support exchange the inner and the outer in CARTESIAN join
-		if len(p.EqualConditions) == 0 {
+		if innerBuild {
 			joins = append(joins, p.getHashJoin(prop, 0, false))
+			hintForced = true
+		} else if innerProbe {
+			joins = append(joins, p.getHashJoin(prop, 0, true))
+			hintForced = true
 		} else {
-			if innerBuild {
-				joins = append(joins, p.getHashJoin(prop, 0, false))
-				forced = true
-			} else if innerProbe {
-				joins = append(joins, p.getHashJoin(prop, 0, true))
-				forced = true
-			} else {
-				joins = append(joins, p.getHashJoin(prop, 0, false))
-				joins = append(joins, p.getHashJoin(prop, 0, true))
-			}
-			// TODO: delete this after support hint of SWAP_JOIN_INPUTS()
-			if ForceUseOuterBuild4Test {
-				joins = append(joins, p.getHashJoin(prop, 0, true))
-			}
+			joins = append(joins, p.getHashJoin(prop, 0, false))
+			joins = append(joins, p.getHashJoin(prop, 0, true))
 		}
 	case InnerJoin:
 		if innerBuild {
 			joins = append(joins, p.getHashJoin(prop, 0, false))
-			forced = true
+			hintForced = true
 		} else if innerProbe {
 			joins = append(joins, p.getHashJoin(prop, 1, false))
-			forced = true
+			hintForced = true
 		} else {
 			joins = append(joins, p.getHashJoin(prop, 1, false))
 			joins = append(joins, p.getHashJoin(prop, 0, false))
 		}
 	}
-	return joins, forced
+	return joins, hintForced || forceHJ
 }
 
 func (p *LogicalJoin) getHashJoin(prop *property.PhysicalProperty, innerIdx int, useOuterToBuild bool) *PhysicalHashJoin {
@@ -1470,14 +1448,14 @@ func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) []Ph
 	joins := make([]PhysicalPlan, 0, 5)
 	joins = append(joins, mergeJoins...)
 
-	indexJoins, forced := p.tryToGetIndexJoin(prop)
-	if forced {
+	indexJoins, hintForced := p.tryToGetIndexJoin(prop)
+	if hintForced {
 		return indexJoins
 	}
 	joins = append(joins, indexJoins...)
 
-	hashJoins, forced := p.tryToGetHashJoins(prop)
-	if (p.preferJoinType&preferHashJoin) > 0 || forced {
+	hashJoins, hintForced := p.tryToGetHashJoins(prop)
+	if hintForced {
 		return hashJoins
 	}
 	joins = append(joins, hashJoins...)
