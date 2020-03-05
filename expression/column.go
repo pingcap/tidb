@@ -15,7 +15,6 @@ package expression
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/util/hack"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -27,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/hack"
 )
 
 // CorrelatedColumn stands for a column in a correlated sub query.
