@@ -960,7 +960,13 @@ func (s *testSuite3) TestAutoIDIncrementAndOffset(c *C) {
 	c.Assert(err.Error(), Equals, "[autoid:8060]Invalid auto_increment settings: auto_increment_increment: 65536, auto_increment_offset: 65536, both of them must be in range [1..65535]")
 }
 
-func (s *testSuite3) TestAutoRandomID(c *C) {
+var _ = SerialSuites(&testSuite9{})
+
+type testSuite9 struct {
+	*baseTestSuite
+}
+
+func (s *testSuite9) TestAutoRandomID(c *C) {
 	allowAutoRandom := config.GetGlobalConfig().Experimental.AllowAutoRandom
 	if !allowAutoRandom {
 		config.GetGlobalConfig().Experimental.AllowAutoRandom = true
@@ -1003,7 +1009,7 @@ func (s *testSuite3) TestAutoRandomID(c *C) {
 	tk.MustExec(`drop table ar`)
 }
 
-func (s *testSuite3) TestMultiAutoRandomID(c *C) {
+func (s *testSuite9) TestMultiAutoRandomID(c *C) {
 	allowAutoRandom := config.GetGlobalConfig().Experimental.AllowAutoRandom
 	if !allowAutoRandom {
 		config.GetGlobalConfig().Experimental.AllowAutoRandom = true
@@ -1052,7 +1058,7 @@ func (s *testSuite3) TestMultiAutoRandomID(c *C) {
 	tk.MustExec(`drop table ar`)
 }
 
-func (s *testSuite3) TestAutoRandomIDAllowZero(c *C) {
+func (s *testSuite9) TestAutoRandomIDAllowZero(c *C) {
 	allowAutoRandom := config.GetGlobalConfig().Experimental.AllowAutoRandom
 	if !allowAutoRandom {
 		config.GetGlobalConfig().Experimental.AllowAutoRandom = true
@@ -1086,6 +1092,33 @@ func (s *testSuite3) TestAutoRandomIDAllowZero(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(firstValue, Greater, 0)
 	tk.MustQuery(`select last_insert_id()`).Check(testkit.Rows(fmt.Sprintf("%d", firstValue)))
+
+	tk.MustExec(`drop table ar`)
+}
+
+func (s *testSuite9) TestAutoRandomIDExplicit(c *C) {
+	allowAutoRandom := config.GetGlobalConfig().Experimental.AllowAutoRandom
+	if !allowAutoRandom {
+		config.GetGlobalConfig().Experimental.AllowAutoRandom = true
+		defer func() {
+			config.GetGlobalConfig().Experimental.AllowAutoRandom = false
+		}()
+	}
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists ar`)
+	tk.MustExec(`create table ar (id int key auto_random, name char(10))`)
+
+	tk.MustExec(`insert into ar(id) values (1)`)
+	tk.MustQuery(`select id from ar`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select last_insert_id()`).Check(testkit.Rows("0"))
+	tk.MustExec(`delete from ar`)
+
+	tk.MustExec(`insert into ar(id) values (1), (2)`)
+	tk.MustQuery(`select id from ar`).Check(testkit.Rows("1", "2"))
+	tk.MustQuery(`select last_insert_id()`).Check(testkit.Rows("0"))
+	tk.MustExec(`delete from ar`)
 
 	tk.MustExec(`drop table ar`)
 }
