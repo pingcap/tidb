@@ -17,6 +17,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
 	. "github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/test_driver"
 )
 
@@ -26,7 +27,7 @@ type testFunctionsSuite struct {
 }
 
 func (ts *testFunctionsSuite) TestFunctionsVisitorCover(c *C) {
-	valueExpr := NewValueExpr(42)
+	valueExpr := NewValueExpr(42, mysql.DefaultCharset, mysql.DefaultCollationName)
 	stmts := []Node{
 		&AggregateFuncExpr{Args: []ExprNode{valueExpr}},
 		&FuncCallExpr{Args: []ExprNode{valueExpr}},
