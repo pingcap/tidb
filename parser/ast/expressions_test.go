@@ -17,6 +17,7 @@ import (
 	. "github.com/pingcap/check"
 	. "github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/format"
+	"github.com/pingcap/parser/mysql"
 )
 
 var _ = Suite(&testExpressionsSuite{})
@@ -88,7 +89,7 @@ func (tc *testExpressionsSuite) TestExpresionsVisitorCover(c *C) {
 			{&PositionExpr{}, 0, 0},
 			{&RowExpr{Values: []ExprNode{ce, ce}}, 2, 2},
 			{&UnaryOperationExpr{V: ce}, 1, 1},
-			{NewValueExpr(0), 0, 0},
+			{NewValueExpr(0, mysql.DefaultCharset, mysql.DefaultCollationName), 0, 0},
 			{&ValuesExpr{Column: &ColumnNameExpr{Name: &ColumnName{}}}, 0, 0},
 			{&VariableExpr{Value: ce}, 1, 1},
 		}

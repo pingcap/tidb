@@ -65,7 +65,7 @@ type ValueExpr interface {
 }
 
 // NewValueExpr creates a ValueExpr with value, and sets default field type.
-var NewValueExpr func(interface{}) ValueExpr
+var NewValueExpr func(value interface{}, charset string, collate string) ValueExpr
 
 // NewParamMarkerExpr creates a ParamMarkerExpr.
 var NewParamMarkerExpr func(offset int) ParamMarkerExpr
