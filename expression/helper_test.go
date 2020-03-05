@@ -14,12 +14,12 @@
 package expression
 
 import (
-	"github.com/pingcap/parser/charset"
 	"strings"
 	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
