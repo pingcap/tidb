@@ -116,6 +116,14 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			dedup[s] = struct{}{}
 			keys = append(keys, idxKey)
 		}
+		if e.keepOrder {
+			sort.Slice(keys, func(i int, j int) bool {
+				if e.desc {
+					return keys[i].Cmp(keys[j]) > 0
+				}
+				return keys[i].Cmp(keys[j]) < 0
+			})
+		}
 
 		// Fetch all handles.
 		handleVals, err1 := reader.BatchGet(ctx, keys)
@@ -149,9 +157,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			// Wait `UPDATE` finished
 			failpoint.InjectContext(ctx, "batchPointGetRepeatableReadTest-step2", nil)
 		})
-	}
-
-	if e.keepOrder {
+	} else if e.keepOrder {
 		sort.Slice(e.handles, func(i int, j int) bool {
 			if e.desc {
 				return e.handles[i] > e.handles[j]

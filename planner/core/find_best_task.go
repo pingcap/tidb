@@ -688,15 +688,13 @@ func isCoveringIndex(columns, indexColumns []*expression.Column, idxColLens []in
 // If there is a table reader which needs to keep order, we should append a pk to table scan.
 func (ts *PhysicalTableScan) appendExtraHandleCol(ds *DataSource) (*expression.Column, bool) {
 	handleCol := ds.handleCol
-	if handleCol == nil {
-		handleCol = ds.newExtraHandleSchemaCol()
+	if handleCol != nil {
+		return handleCol, false
 	}
-	if handleCol.ID == model.ExtraHandleID && ts.schema.ColumnIndex(handleCol) == -1 {
-		ts.schema.Append(handleCol)
-		ts.Columns = append(ts.Columns, model.NewExtraHandleColInfo())
-		return handleCol, true
-	}
-	return handleCol, false
+	handleCol = ds.newExtraHandleSchemaCol()
+	ts.schema.Append(handleCol)
+	ts.Columns = append(ts.Columns, model.NewExtraHandleColInfo())
+	return handleCol, true
 }
 
 // convertToIndexScan converts the DataSource to index scan with idx.

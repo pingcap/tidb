@@ -9,7 +9,7 @@
           "└─Batch_Point_Get_15 2.40 root table:t, index:a, keep order:true, desc:true"
         ],
         "Res": [
-          "1 1 1 1"
+          "1 4 4 1"
         ]
       },
       {
@@ -24,13 +24,13 @@
         ]
       },
       {
-        "SQL": "select * from t where t.a = '1' and t.b = 1",
+        "SQL": "select * from t where t.a = '1' and t.b = 4",
         "Plan": [
-          "Selection_6 0.00 root eq(test.t.b, 1)",
+          "Selection_6 0.00 root eq(test.t.b, 4)",
           "└─Point_Get_5 1.00 root table:t, index:a"
         ],
         "Res": [
-          "1 1 1 1"
+          "1 4 4 1"
         ]
       },
       {
@@ -40,11 +40,11 @@
           "└─Batch_Point_Get_5 0.00 root table:t, index:a, keep order:false, desc:false"
         ],
         "Res": [
-          "3 3 3 3"
+          "3 2 2 3"
         ]
       },
       {
-        "SQL": "select * from t t1 join t t2 on t1.a = t2.a where t1.a = '1' and (t2.b, t2.c) in ((1,1),(2,2))",
+        "SQL": "select * from t t1 join t t2 on t1.a = t2.a where t1.a = '4' and (t2.b, t2.c) in ((1,1),(2,2))",
         "Plan": [
           "Projection_7 0.80 root test.t.a, test.t.b, test.t.c, test.t.d, test.t.a, test.t.b, test.t.c, test.t.d",
           "└─HashRightJoin_9 0.80 root CARTESIAN inner join, inner:Selection_11",
@@ -53,7 +53,18 @@
           "  └─Point_Get_16(Probe) 1.00 root table:t, index:a"
         ],
         "Res": [
-          "1 1 1 1 1 1 1 1"
+          "4 1 1 4 4 1 1 4"
+        ]
+      },
+      {
+        "SQL": "select * from t where (t.b, t.c) in ((2,2), (3,3), (4,4)) order by t.b, t.c",
+        "Plan": [
+          "Batch_Point_Get_13 3.00 root table:t, index:b c, keep order:true, desc:false"
+        ],
+        "Res": [
+          "3 2 2 3",
+          "2 3 3 2",
+          "1 4 4 1"
         ]
       }
     ]

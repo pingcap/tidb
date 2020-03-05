@@ -304,7 +304,7 @@ func (s *testPointGetSuite) TestCBOPointGet(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a varchar(20), b int, c int, d int, primary key(a), unique key(b, c))")
-	tk.MustExec("insert into t values('1',1,1,1), ('2',2,2,2), ('3',3,3,3), ('4',4,4,4)")
+	tk.MustExec("insert into t values('1',4,4,1), ('2',3,3,2), ('3',2,2,3), ('4',1,1,4)")
 
 	var input []string
 	var output []struct {
