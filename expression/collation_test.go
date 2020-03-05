@@ -59,7 +59,7 @@ func (s *testCollationSuites) TestCompareString(c *C) {
 	chk.Column(0).AppendString("a ")
 	chk.Column(1).AppendString("a  ")
 	for i := 0; i < 4; i++ {
-		v, isNull, err := CompareStringWithCollationInfo(ctx, col1, col2, chk.GetRow(0), chk.GetRow(0), "utf8_general_ci", 3)
+		v, isNull, err := CompareStringWithCollationInfo(ctx, col1, col2, chk.GetRow(0), chk.GetRow(0), "utf8_general_ci")
 		c.Assert(err, IsNil)
 		c.Assert(isNull, IsFalse)
 		c.Assert(v, Equals, int64(0))

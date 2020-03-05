@@ -38,7 +38,7 @@ func GetCompareFunc(tp *types.FieldType) CompareFunc {
 		return cmpFloat64
 	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar,
 		mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
-		return genCmpStringFunc(tp.Collate, tp.Flen)
+		return genCmpStringFunc(tp.Collate)
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		return cmpTime
 	case mysql.TypeDuration:
@@ -81,13 +81,13 @@ func cmpUint64(l Row, lCol int, r Row, rCol int) int {
 	return types.CompareUint64(l.GetUint64(lCol), r.GetUint64(rCol))
 }
 
-func genCmpStringFunc(collation string, length int) func(l Row, lCol int, r Row, rCol int) int {
+func genCmpStringFunc(collation string) func(l Row, lCol int, r Row, rCol int) int {
 	return func(l Row, lCol int, r Row, rCol int) int {
-		return cmpStringWithCollationInfo(l, lCol, r, rCol, collation, length)
+		return cmpStringWithCollationInfo(l, lCol, r, rCol, collation)
 	}
 }
 
-func cmpStringWithCollationInfo(l Row, lCol int, r Row, rCol int, collation string, flen int) int {
+func cmpStringWithCollationInfo(l Row, lCol int, r Row, rCol int, collation string) int {
 	lNull, rNull := l.IsNull(lCol), r.IsNull(rCol)
 	if lNull || rNull {
 		return cmpNull(lNull, rNull)

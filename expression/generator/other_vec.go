@@ -107,8 +107,7 @@ var builtinInTmpl = template.Must(template.New("builtinInTmpl").Parse(`
 	{{- else if eq .Input.TypeName "JSON" -}}
 		compareResult = json.CompareBinary(arg0, arg1)
 	{{- else if eq .Input.TypeName "String" -}}
-		_, collation, _ := b.CharsetAndCollation(b.ctx)
-		compareResult = types.CompareString(arg0, arg1, collation)
+		compareResult = types.CompareString(arg0, arg1, b.collation)
 	{{- else -}}
 		compareResult = types.Compare{{ .Input.TypeNameInColumn }}(arg0, arg1)
 	{{- end -}}
