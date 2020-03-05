@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"fmt"
 	"sort"
 
 	"github.com/pingcap/parser/charset"
@@ -51,6 +52,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		switch e.table.Name.O {
 		case infoschema.TableSchemata:
 			e.rows = dataForSchemata(sctx, dbs)
+		case infoschema.TableTiDBIndexes:
+			e.rows, err = dataForIndexes(sctx, dbs)
 		case infoschema.TableViews:
 			e.rows, err = dataForViews(sctx, dbs)
 		case infoschema.TableEngines:
@@ -124,6 +127,77 @@ func dataForSchemata(ctx sessionctx.Context, schemas []*model.DBInfo) [][]types.
 		rows = append(rows, record)
 	}
 	return rows
+}
+
+func dataForIndexes(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Datum, error) {
+	checker := privilege.GetPrivilegeManager(ctx)
+	var rows [][]types.Datum
+	for _, schema := range schemas {
+		for _, tb := range schema.Tables {
+			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, tb.Name.L, "", mysql.AllPrivMask) {
+				continue
+			}
+
+			if tb.PKIsHandle {
+				var pkCol *model.ColumnInfo
+				for _, col := range tb.Cols() {
+					if mysql.HasPriKeyFlag(col.Flag) {
+						pkCol = col
+						break
+					}
+				}
+				record := types.MakeDatums(
+					schema.Name.O, // TABLE_SCHEMA
+					tb.Name.O,     // TABLE_NAME
+					0,             // NON_UNIQUE
+					"PRIMARY",     // KEY_NAME
+					1,             // SEQ_IN_INDEX
+					pkCol.Name.O,  // COLUMN_NAME
+					nil,           // SUB_PART
+					"",            // INDEX_COMMENT
+					"NULL",        // Expression
+					0,             // INDEX_ID
+				)
+				rows = append(rows, record)
+			}
+			for _, idxInfo := range tb.Indices {
+				if idxInfo.State != model.StatePublic {
+					continue
+				}
+				for i, col := range idxInfo.Columns {
+					nonUniq := 1
+					if idxInfo.Unique {
+						nonUniq = 0
+					}
+					var subPart interface{}
+					if col.Length != types.UnspecifiedLength {
+						subPart = col.Length
+					}
+					colName := col.Name.O
+					expression := "NULL"
+					tblCol := tb.Columns[col.Offset]
+					if tblCol.Hidden {
+						colName = "NULL"
+						expression = fmt.Sprintf("(%s)", tblCol.GeneratedExprString)
+					}
+					record := types.MakeDatums(
+						schema.Name.O,   // TABLE_SCHEMA
+						tb.Name.O,       // TABLE_NAME
+						nonUniq,         // NON_UNIQUE
+						idxInfo.Name.O,  // KEY_NAME
+						i+1,             // SEQ_IN_INDEX
+						colName,         // COLUMN_NAME
+						subPart,         // SUB_PART
+						idxInfo.Comment, // INDEX_COMMENT
+						expression,      // Expression
+						idxInfo.ID,      // INDEX_ID
+					)
+					rows = append(rows, record)
+				}
+			}
+		}
+	}
+	return rows, nil
 }
 
 func dataForViews(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Datum, error) {
