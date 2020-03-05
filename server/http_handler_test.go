@@ -1063,7 +1063,7 @@ func (ts *HTTPHandlerTestSuite) TestDebugZip(c *C) {
 }
 
 func (ts *HTTPHandlerTestSuite) TestCheckCN(c *C) {
-	s := &Server{cfg: &config.Config{Security: config.Security{ClusterVerifyCN: " a,b, c"}}}
+	s := &Server{cfg: &config.Config{Security: config.Security{ClusterVerifyCN: []string{"a ", "b", "c"}}}}
 	tlsConfig := &tls.Config{}
 	s.setCNChecker(tlsConfig)
 	c.Assert(tlsConfig.VerifyPeerCertificate, NotNil)

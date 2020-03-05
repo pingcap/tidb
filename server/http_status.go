@@ -313,27 +313,23 @@ func (s *Server) setupStatusServerAndRPCServer(addr string, serverMux *http.Serv
 }
 
 func (s *Server) setCNChecker(tlsConfig *tls.Config) *tls.Config {
-	if tlsConfig != nil && len(s.cfg.Security.ClusterVerifyCN) > 0 {
-		cns := strings.Split(s.cfg.Security.ClusterVerifyCN, ",")
-		if len(cns) != 0 {
-			checkCN := make(map[string]struct{})
-			for _, cn := range cns {
-				cn = strings.TrimSpace(cn)
-				checkCN[cn] = struct{}{}
-			}
-			tlsConfig.VerifyPeerCertificate = func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
-				for _, chain := range verifiedChains {
-					if len(chain) != 0 {
-						if _, match := checkCN[chain[0].Subject.CommonName]; match {
-							return nil
-						}
+	if tlsConfig != nil && len(s.cfg.Security.ClusterVerifyCN) != 0 {
+		checkCN := make(map[string]struct{})
+		for _, cn := range s.cfg.Security.ClusterVerifyCN {
+			cn = strings.TrimSpace(cn)
+			checkCN[cn] = struct{}{}
+		}
+		tlsConfig.VerifyPeerCertificate = func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
+			for _, chain := range verifiedChains {
+				if len(chain) != 0 {
+					if _, match := checkCN[chain[0].Subject.CommonName]; match {
+						return nil
 					}
 				}
-				return errors.Errorf("client certificate authentication failed. The Common Name from "+
-					"the client certificate was not found in the configuration cluster-verify-cn with value: %s", s.cfg.Security.ClusterVerifyCN)
 			}
-			tlsConfig.ClientAuth = tls.RequireAndVerifyClientCert
+			return errors.Errorf("client certificate authentication failed. The Common Name from the client certificate was not found in the configuration cluster-verify-cn with value: %s", s.cfg.Security.ClusterVerifyCN)
 		}
+		tlsConfig.ClientAuth = tls.RequireAndVerifyClientCert
 	}
 	return tlsConfig
 }
