@@ -717,20 +717,6 @@ func getAutoRecordID(d types.Datum, target *types.FieldType, isInsert bool) (int
 }
 
 func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum, hasValue bool, c *table.Column) (types.Datum, error) {
-<<<<<<< HEAD
-	if !hasValue || d.IsNull() {
-		_, err := e.ctx.Txn(true)
-=======
-	retryInfo := e.ctx.GetSessionVars().RetryInfo
-	if retryInfo.Retrying {
-		autoRandomID, err := retryInfo.GetCurrAutoRandomID()
-		if err != nil {
-			return types.Datum{}, err
-		}
-		d.SetAutoID(autoRandomID, c.Flag)
-		return d, nil
-	}
-
 	var err error
 	var recordID int64
 	if !hasValue {
@@ -738,7 +724,6 @@ func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum,
 	}
 	if !d.IsNull() {
 		recordID, err = getAutoRecordID(d, &c.FieldType, true)
->>>>>>> dcb8b3d... executor: fix last_insert_id in auto_random mode (#15145)
 		if err != nil {
 			return types.Datum{}, err
 		}
@@ -749,14 +734,8 @@ func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum,
 		if err != nil {
 			return types.Datum{}, err
 		}
-<<<<<<< HEAD
-		d.SetAutoID(autoRandomID, c.Flag)
-	} else {
-		recordID, err := getAutoRecordID(d, &c.FieldType, true)
-=======
 		e.ctx.GetSessionVars().StmtCtx.InsertID = uint64(recordID)
 		d.SetAutoID(recordID, c.Flag)
-		retryInfo.AddAutoRandomID(recordID)
 		return d, nil
 	}
 
@@ -764,7 +743,6 @@ func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum,
 	// Change value 0 to auto id, if NoAutoValueOnZero SQL mode is not set.
 	if d.IsNull() || e.ctx.GetSessionVars().SQLMode&mysql.ModeNoAutoValueOnZero == 0 {
 		_, err := e.ctx.Txn(true)
->>>>>>> dcb8b3d... executor: fix last_insert_id in auto_random mode (#15145)
 		if err != nil {
 			return types.Datum{}, errors.Trace(err)
 		}
@@ -772,19 +750,14 @@ func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum,
 		if err != nil {
 			return types.Datum{}, err
 		}
-<<<<<<< HEAD
-		d.SetAutoID(recordID, c.Flag)
-=======
 		// It's compatible with mysql setting the first allocated autoID to lastInsertID.
 		// Cause autoID may be specified by user, judge only the first row is not suitable.
 		if e.lastInsertID == 0 {
 			e.lastInsertID = uint64(recordID)
 		}
->>>>>>> dcb8b3d... executor: fix last_insert_id in auto_random mode (#15145)
 	}
 
 	d.SetAutoID(recordID, c.Flag)
-	retryInfo.AddAutoRandomID(recordID)
 
 	casted, err := table.CastValue(e.ctx, d, c.ToInfo())
 	if err != nil {
