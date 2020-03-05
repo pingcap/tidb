@@ -123,6 +123,8 @@ const (
 	TableMetricSummaryByLabel = "METRICS_SUMMARY_BY_LABEL"
 	// TableInspectionSummary is the string constant of inspection summary table
 	TableInspectionSummary = "INSPECTION_SUMMARY"
+	// TableInspectionRules is the string constant of currently implemented inspection and summary rules
+	TableInspectionRules = "INSPECTION_RULES"
 )
 
 var tableIDMap = map[string]int64{
@@ -181,6 +183,7 @@ var tableIDMap = map[string]int64{
 	TableMetricSummaryByLabel:               autoid.InformationSchemaDBID + 53,
 	TableMetricTables:                       autoid.InformationSchemaDBID + 54,
 	TableInspectionSummary:                  autoid.InformationSchemaDBID + 55,
+	TableInspectionRules:                    autoid.InformationSchemaDBID + 56,
 }
 
 type columnInfo struct {
@@ -927,6 +930,12 @@ var tableInspectionSummaryCols = []columnInfo{
 	{name: "AVG_VALUE", tp: mysql.TypeDouble, size: 22, decimal: 6},
 	{name: "MIN_VALUE", tp: mysql.TypeDouble, size: 22, decimal: 6},
 	{name: "MAX_VALUE", tp: mysql.TypeDouble, size: 22, decimal: 6},
+}
+
+var tableInspectionRulesCols = []columnInfo{
+	{name: "NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "TYPE", tp: mysql.TypeVarchar, size: 64},
+	{name: "COMMENT", tp: mysql.TypeVarchar, size: 256},
 }
 
 var tableMetricTablesCols = []columnInfo{
@@ -2388,6 +2397,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableMetricSummaryByLabel:               tableMetricSummaryByLabelCols,
 	TableMetricTables:                       tableMetricTablesCols,
 	TableInspectionSummary:                  tableInspectionSummaryCols,
+	TableInspectionRules:                    tableInspectionRulesCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
