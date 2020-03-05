@@ -53,19 +53,19 @@ type dummyCloser struct{}
 
 func (dummyCloser) close() error { return nil }
 
-type clusterRetriever interface {
+type memTableRetriever interface {
 	retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error)
 	close() error
 }
 
-// ClusterReaderExec executes cluster information retrieving from the cluster components
-type ClusterReaderExec struct {
+// MemTableReaderExec executes memTable information retrieving from the MemTable components
+type MemTableReaderExec struct {
 	baseExecutor
-	retriever clusterRetriever
+	retriever memTableRetriever
 }
 
 // Next implements the Executor Next interface.
-func (e *ClusterReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
+func (e *MemTableReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	rows, err := e.retriever.retrieve(ctx, e.ctx)
 	if err != nil {
 		return err
@@ -86,7 +86,7 @@ func (e *ClusterReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
 }
 
 // Close implements the Executor Close interface.
-func (e *ClusterReaderExec) Close() error {
+func (e *MemTableReaderExec) Close() error {
 	return e.retriever.close()
 }
 
@@ -96,7 +96,7 @@ type clusterConfigRetriever struct {
 	extractor *plannercore.ClusterTableExtractor
 }
 
-// retrieve implements the clusterRetriever interface
+// retrieve implements the memTableRetriever interface
 func (e *clusterConfigRetriever) retrieve(_ context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
 	if e.extractor.SkipRequest || e.retrieved {
 		return nil, nil
@@ -118,7 +118,7 @@ func (e *clusterConfigRetriever) retrieve(_ context.Context, sctx sessionctx.Con
 	if err != nil {
 		return nil, err
 	}
-	serversInfo = filterClusterServerInfo(serversInfo, e.extractor.NodeTypes, e.extractor.Addresses)
+	serversInfo = filterClusterServerInfo(serversInfo, e.extractor.NodeTypes, e.extractor.Instances)
 
 	var finalRows [][]types.Datum
 	wg := sync.WaitGroup{}
@@ -224,7 +224,7 @@ type clusterServerInfoRetriever struct {
 	retrieved      bool
 }
 
-// retrieve implements the clusterRetriever interface
+// retrieve implements the memTableRetriever interface
 func (e *clusterServerInfoRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
 	if e.extractor.SkipRequest || e.retrieved {
 		return nil, nil
@@ -235,7 +235,7 @@ func (e *clusterServerInfoRetriever) retrieve(ctx context.Context, sctx sessionc
 	if err != nil {
 		return nil, err
 	}
-	serversInfo = filterClusterServerInfo(serversInfo, e.extractor.NodeTypes, e.extractor.Addresses)
+	serversInfo = filterClusterServerInfo(serversInfo, e.extractor.NodeTypes, e.extractor.Instances)
 
 	type result struct {
 		idx  int
@@ -244,7 +244,6 @@ func (e *clusterServerInfoRetriever) retrieve(ctx context.Context, sctx sessionc
 	}
 	wg := sync.WaitGroup{}
 	ch := make(chan result, len(serversInfo))
-	ipMap := make(map[string]struct{}, len(serversInfo))
 	infoTp := e.serverInfoType
 	finalRows := make([][]types.Datum, 0, len(serversInfo)*10)
 	for i, srv := range serversInfo {
@@ -252,14 +251,6 @@ func (e *clusterServerInfoRetriever) retrieve(ctx context.Context, sctx sessionc
 		if srv.ServerType == "tidb" {
 			address = srv.StatusAddr
 		}
-		ip := address
-		if idx := strings.Index(address, ":"); idx != -1 {
-			ip = address[:idx]
-		}
-		if _, ok := ipMap[ip]; ok {
-			continue
-		}
-		ipMap[ip] = struct{}{}
 		wg.Add(1)
 		go func(index int, address, serverTP string) {
 			util.WithRecovery(func() {
@@ -424,7 +415,7 @@ func (h *logResponseHeap) Pop() interface{} {
 	return x
 }
 
-func (e *clusterLogRetriever) startRetrieving(ctx context.Context, sctx sessionctx.Context) ([]chan logStreamResult, error) {
+func (e *clusterLogRetriever) initialize(ctx context.Context, sctx sessionctx.Context) ([]chan logStreamResult, error) {
 	isFailpointTestModeSkipCheck := false
 	serversInfo, err := infoschema.GetClusterServerInfo(sctx)
 	failpoint.Inject("mockClusterLogServerInfo", func(val failpoint.Value) {
@@ -441,20 +432,9 @@ func (e *clusterLogRetriever) startRetrieving(ctx context.Context, sctx sessionc
 		return nil, err
 	}
 
-	addresses := e.extractor.Addresses
+	instances := e.extractor.Instances
 	nodeTypes := e.extractor.NodeTypes
-	serversInfo = filterClusterServerInfo(serversInfo, nodeTypes, addresses)
-
-	// gRPC options
-	opt := grpc.WithInsecure()
-	security := config.GetGlobalConfig().Security
-	if len(security.ClusterSSLCA) != 0 {
-		tlsConfig, err := security.ToTLSConfig()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		opt = grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig))
-	}
+	serversInfo = filterClusterServerInfo(serversInfo, nodeTypes, instances)
 
 	var levels []diagnosticspb.LogLevel
 	for l := range e.extractor.LogLevels {
@@ -474,7 +454,7 @@ func (e *clusterLogRetriever) startRetrieving(ctx context.Context, sctx sessionc
 	if !isFailpointTestModeSkipCheck {
 		// To avoid search log interface overload, the user should specify at least one pattern
 		// in normally SQL. (But in test mode we should relax this limitation)
-		if len(patterns) == 0 && len(levels) == 0 && len(addresses) == 0 && len(nodeTypes) == 0 {
+		if len(patterns) == 0 && len(levels) == 0 && len(instances) == 0 && len(nodeTypes) == 0 {
 			return nil, errors.New("denied to scan full logs (use `SELECT * FROM cluster_log WHERE message LIKE '%'` explicitly if intentionally)")
 		}
 
@@ -496,6 +476,25 @@ func (e *clusterLogRetriever) startRetrieving(ctx context.Context, sctx sessionc
 		Patterns:  patterns,
 	}
 
+	return e.startRetrieving(ctx, sctx, serversInfo, req)
+}
+
+func (e *clusterLogRetriever) startRetrieving(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	serversInfo []infoschema.ServerInfo,
+	req *diagnosticspb.SearchLogRequest) ([]chan logStreamResult, error) {
+	// gRPC options
+	opt := grpc.WithInsecure()
+	security := config.GetGlobalConfig().Security
+	if len(security.ClusterSSLCA) != 0 {
+		tlsConfig, err := security.ToTLSConfig()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		opt = grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig))
+	}
+
 	// The retrieve progress may be abort
 	ctx, e.cancel = context.WithCancel(ctx)
 
@@ -515,7 +514,7 @@ func (e *clusterLogRetriever) startRetrieving(ctx context.Context, sctx sessionc
 			util.WithRecovery(func() {
 				defer close(ch)
 
-				// The TiDB provide diagnostics service via status address
+				// The TiDB provides diagnostics service via status address
 				remote := address
 				if serverType == "tidb" {
 					remote = statusAddr
@@ -540,10 +539,19 @@ func (e *clusterLogRetriever) startRetrieving(ctx context.Context, sctx sessionc
 						return
 					}
 					if err != nil {
-						ch <- logStreamResult{addr: address, typ: serverType, err: err}
+						select {
+						case ch <- logStreamResult{addr: address, typ: serverType, err: err}:
+						case <-ctx.Done():
+						}
 						return
 					}
-					ch <- logStreamResult{next: ch, addr: address, typ: serverType, messages: res.Messages}
+
+					result := logStreamResult{next: ch, addr: address, typ: serverType, messages: res.Messages}
+					select {
+					case ch <- result:
+					case <-ctx.Done():
+						return
+					}
 				}
 			}, nil)
 		}(ch, typ, address, statusAddr)
@@ -559,7 +567,7 @@ func (e *clusterLogRetriever) retrieve(ctx context.Context, sctx sessionctx.Cont
 
 	if !e.retrieving {
 		e.retrieving = true
-		results, err := e.startRetrieving(ctx, sctx)
+		results, err := e.initialize(ctx, sctx)
 		if err != nil {
 			e.isDrained = true
 			return nil, err
@@ -609,7 +617,7 @@ func (e *clusterLogRetriever) retrieve(ctx context.Context, sctx sessionctx.Cont
 		}
 	}
 
-	// All stream are draied
+	// All streams are drained
 	e.isDrained = e.heap.Len() == 0
 
 	return finalRows, nil

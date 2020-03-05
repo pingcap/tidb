@@ -64,8 +64,7 @@ type testVectorizeSuite2 struct {
 }
 
 type testEvaluatorSerialSuites struct {
-	*parser.Parser
-	ctx sessionctx.Context
+	testEvaluatorSuiteBase
 }
 
 func (s *testEvaluatorSuiteBase) SetUpSuite(c *C) {
@@ -136,6 +135,9 @@ func (s *testEvaluatorSuiteBase) datumsToConstants(datums []types.Datum) []Expre
 	constants := make([]Expression, 0, len(datums))
 	for _, d := range datums {
 		ft := s.kindToFieldType(d.Kind())
+		if types.IsNonBinaryStr(&ft) {
+			ft.Collate = d.Collation()
+		}
 		ft.Flen, ft.Decimal = types.UnspecifiedLength, types.UnspecifiedLength
 		constants = append(constants, &Constant{Value: d, RetType: &ft})
 	}

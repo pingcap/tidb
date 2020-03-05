@@ -28,19 +28,6 @@ var (
 	ErrAutoRandReadFailed        = terror.ClassAutoid.New(mysql.ErrAutoRandReadFailed, mysql.MySQLErrName[mysql.ErrAutoRandReadFailed])
 )
 
-func init() {
-	// Map error codes to mysql error codes.
-	tableMySQLErrCodes := map[terror.ErrCode]uint16{
-		mysql.ErrAutoincReadFailed:         mysql.ErrAutoincReadFailed,
-		mysql.ErrWrongAutoKey:              mysql.ErrWrongAutoKey,
-		mysql.ErrInvalidTableID:            mysql.ErrInvalidTableID,
-		mysql.ErrUnknownAllocatorType:      mysql.ErrUnknownAllocatorType,
-		mysql.ErrAutoRandReadFailed:        mysql.ErrAutoRandReadFailed,
-		mysql.ErrInvalidIncrementAndOffset: mysql.ErrInvalidIncrementAndOffset,
-	}
-	terror.ErrClassToMySQLCodes[terror.ClassAutoid] = tableMySQLErrCodes
-}
-
 const (
 	// AutoRandomPKisNotHandleErrMsg indicates the auto_random column attribute is defined on a non-primary key column, or the table's primary key is not a single integer column.
 	AutoRandomPKisNotHandleErrMsg = "column %s is not the single integer primary key, or alter-primary-key is enabled"

@@ -131,7 +131,7 @@ func (b *builtinLTStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 		if result.IsNull(i) {
 			continue
 		}
-		val := types.CompareString(buf0.GetString(i), buf1.GetString(i))
+		val := types.CompareString(buf0.GetString(i), buf1.GetString(i), b.collation)
 		if val < 0 {
 			i64s[i] = 1
 		} else {
@@ -379,7 +379,7 @@ func (b *builtinLEStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 		if result.IsNull(i) {
 			continue
 		}
-		val := types.CompareString(buf0.GetString(i), buf1.GetString(i))
+		val := types.CompareString(buf0.GetString(i), buf1.GetString(i), b.collation)
 		if val <= 0 {
 			i64s[i] = 1
 		} else {
@@ -627,7 +627,7 @@ func (b *builtinGTStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 		if result.IsNull(i) {
 			continue
 		}
-		val := types.CompareString(buf0.GetString(i), buf1.GetString(i))
+		val := types.CompareString(buf0.GetString(i), buf1.GetString(i), b.collation)
 		if val > 0 {
 			i64s[i] = 1
 		} else {
@@ -875,7 +875,7 @@ func (b *builtinGEStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 		if result.IsNull(i) {
 			continue
 		}
-		val := types.CompareString(buf0.GetString(i), buf1.GetString(i))
+		val := types.CompareString(buf0.GetString(i), buf1.GetString(i), b.collation)
 		if val >= 0 {
 			i64s[i] = 1
 		} else {
@@ -1123,7 +1123,7 @@ func (b *builtinEQStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 		if result.IsNull(i) {
 			continue
 		}
-		val := types.CompareString(buf0.GetString(i), buf1.GetString(i))
+		val := types.CompareString(buf0.GetString(i), buf1.GetString(i), b.collation)
 		if val == 0 {
 			i64s[i] = 1
 		} else {
@@ -1371,7 +1371,7 @@ func (b *builtinNEStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 		if result.IsNull(i) {
 			continue
 		}
-		val := types.CompareString(buf0.GetString(i), buf1.GetString(i))
+		val := types.CompareString(buf0.GetString(i), buf1.GetString(i), b.collation)
 		if val != 0 {
 			i64s[i] = 1
 		} else {
@@ -1622,7 +1622,7 @@ func (b *builtinNullEQStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 			i64s[i] = 1
 		case isNull0 != isNull1:
 			i64s[i] = 0
-		case types.CompareString(buf0.GetString(i), buf1.GetString(i)) == 0:
+		case types.CompareString(buf0.GetString(i), buf1.GetString(i), b.collation) == 0:
 			i64s[i] = 1
 		}
 	}

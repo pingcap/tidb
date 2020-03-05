@@ -20,6 +20,8 @@ import (
 
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/infoschema/perfschema"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
@@ -51,15 +53,30 @@ func (p *UserPrivileges) RequestVerification(activeRoles []*auth.RoleIdentity, d
 		return true
 	}
 
-	// Skip check for INFORMATION_SCHEMA database.
+	// Skip check for system databases.
 	// See https://dev.mysql.com/doc/refman/5.7/en/information-schema.html
-	if strings.EqualFold(db, "INFORMATION_SCHEMA") {
+	dbLowerName := strings.ToLower(db)
+	switch dbLowerName {
+	case util.InformationSchemaName.L:
 		switch priv {
 		case mysql.CreatePriv, mysql.AlterPriv, mysql.DropPriv, mysql.IndexPriv, mysql.CreateViewPriv,
 			mysql.InsertPriv, mysql.UpdatePriv, mysql.DeletePriv:
 			return false
 		}
 		return true
+	// We should be very careful of limiting privileges, so ignore `mysql` for now.
+	case util.PerformanceSchemaName.L, util.MetricSchemaName.L:
+		// CREATE and DROP privileges are not limited in the older versions, so ignore them now.
+		// User may have created some tables in these schema, but predefined tables can't be altered or modified.
+		if (dbLowerName == util.PerformanceSchemaName.L && perfschema.IsPredefinedTable(table)) ||
+			(dbLowerName == util.MetricSchemaName.L && infoschema.IsMetricTable(table)) {
+			switch priv {
+			case mysql.AlterPriv, mysql.DropPriv, mysql.IndexPriv, mysql.InsertPriv, mysql.UpdatePriv, mysql.DeletePriv:
+				return false
+			case mysql.SelectPriv:
+				return true
+			}
+		}
 	}
 
 	mysqlPriv := p.Handle.Get()
@@ -95,12 +112,37 @@ func (p *UserPrivileges) GetEncodedPassword(user, host string) string {
 			zap.String("user", user), zap.String("host", host))
 		return ""
 	}
-	pwd := record.Password
+	pwd := record.AuthenticationString
 	if len(pwd) != 0 && len(pwd) != mysql.PWDHashLen+1 {
 		logutil.BgLogger().Error("user password from system DB not like sha1sum", zap.String("user", user))
 		return ""
 	}
 	return pwd
+}
+
+// GetAuthWithoutVerification implements the Manager interface.
+func (p *UserPrivileges) GetAuthWithoutVerification(user, host string) (u string, h string, success bool) {
+	if SkipWithGrant {
+		p.user = user
+		p.host = host
+		success = true
+		return
+	}
+
+	mysqlPriv := p.Handle.Get()
+	record := mysqlPriv.connectionVerification(user, host)
+	if record == nil {
+		logutil.BgLogger().Error("get user privilege record fail",
+			zap.String("user", user), zap.String("host", host))
+		return
+	}
+
+	u = record.User
+	h = record.Host
+	p.user = user
+	p.host = h
+	success = true
+	return
 }
 
 // ConnectionVerification implements the Manager interface.
@@ -142,7 +184,7 @@ func (p *UserPrivileges) ConnectionVerification(user, host string, authenticatio
 		return
 	}
 
-	pwd := record.Password
+	pwd := record.AuthenticationString
 	if len(pwd) != 0 && len(pwd) != mysql.PWDHashLen+1 {
 		logutil.BgLogger().Error("user password from system DB not like sha1sum", zap.String("user", user))
 		return
@@ -299,7 +341,7 @@ func (p *UserPrivileges) UserPrivilegesTable() [][]types.Datum {
 // ShowGrants implements privilege.Manager ShowGrants interface.
 func (p *UserPrivileges) ShowGrants(ctx sessionctx.Context, user *auth.UserIdentity, roles []*auth.RoleIdentity) (grants []string, err error) {
 	if SkipWithGrant {
-		return nil, errNonexistingGrant.GenWithStackByArgs("root", "%")
+		return nil, ErrNonexistingGrant.GenWithStackByArgs("root", "%")
 	}
 	mysqlPrivilege := p.Handle.Get()
 	u := user.Username
@@ -310,7 +352,7 @@ func (p *UserPrivileges) ShowGrants(ctx sessionctx.Context, user *auth.UserIdent
 	}
 	grants = mysqlPrivilege.showGrants(u, h, roles)
 	if len(grants) == 0 {
-		err = errNonexistingGrant.GenWithStackByArgs(u, h)
+		err = ErrNonexistingGrant.GenWithStackByArgs(u, h)
 	}
 
 	return

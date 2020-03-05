@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
@@ -214,7 +215,6 @@ func (p *PhysicalIndexMergeJoin) attach2Task(tasks ...task) task {
 	} else {
 		p.SetChildren(innerTask.plan(), outerTask.plan())
 	}
-	p.schema = BuildPhysicalJoinSchema(p.JoinType, p)
 	return &rootTask{
 		p:   p,
 		cst: p.GetCost(outerTask, innerTask),
@@ -292,7 +292,6 @@ func (p *PhysicalIndexHashJoin) attach2Task(tasks ...task) task {
 	} else {
 		p.SetChildren(innerTask.plan(), outerTask.plan())
 	}
-	p.schema = BuildPhysicalJoinSchema(p.JoinType, p)
 	return &rootTask{
 		p:   p,
 		cst: p.GetCost(outerTask, innerTask),
@@ -368,7 +367,6 @@ func (p *PhysicalIndexJoin) attach2Task(tasks ...task) task {
 	} else {
 		p.SetChildren(innerTask.plan(), outerTask.plan())
 	}
-	p.schema = BuildPhysicalJoinSchema(p.JoinType, p)
 	return &rootTask{
 		p:   p,
 		cst: p.GetCost(outerTask, innerTask),
@@ -425,12 +423,12 @@ func (p *PhysicalIndexJoin) GetCost(outerTask, innerTask task) float64 {
 	return outerTask.cost() + innerPlanCost + cpuCost + memoryCost
 }
 
-func (p *PhysicalHashJoin) avgRowSize(inner PhysicalPlan) (size float64) {
-	if inner.statsInfo().HistColl != nil {
-		size = inner.statsInfo().HistColl.GetAvgRowSizeListInDisk(inner.Schema().Columns)
+func getAvgRowSize(stats *property.StatsInfo, schema *expression.Schema) (size float64) {
+	if stats.HistColl != nil {
+		size = stats.HistColl.GetAvgRowSizeListInDisk(schema.Columns)
 	} else {
 		// Estimate using just the type info.
-		cols := inner.Schema().Columns
+		cols := schema.Columns
 		for _, col := range cols {
 			size += float64(chunk.EstimateTypeWidth(col.GetType()))
 		}
@@ -450,7 +448,7 @@ func (p *PhysicalHashJoin) GetCost(lCnt, rCnt float64) float64 {
 	sessVars := p.ctx.GetSessionVars()
 	oomUseTmpStorage := config.GetGlobalConfig().OOMUseTmpStorage
 	memQuota := sessVars.StmtCtx.MemTracker.GetBytesLimit() // sessVars.MemQuotaQuery && hint
-	rowSize := p.avgRowSize(build)
+	rowSize := getAvgRowSize(build.statsInfo(), build.Schema())
 	spill := oomUseTmpStorage && memQuota > 0 && rowSize*buildCnt > float64(memQuota)
 	// Cost of building hash table.
 	cpuCost := buildCnt * sessVars.CPUFactor
@@ -521,7 +519,6 @@ func (p *PhysicalHashJoin) attach2Task(tasks ...task) task {
 	lTask := finishCopTask(p.ctx, tasks[0].copy())
 	rTask := finishCopTask(p.ctx, tasks[1].copy())
 	p.SetChildren(lTask.plan(), rTask.plan())
-	p.schema = BuildPhysicalJoinSchema(p.JoinType, p)
 	return &rootTask{
 		p:   p,
 		cst: lTask.cost() + rTask.cost() + p.GetCost(lTask.count(), rTask.count()),
@@ -640,6 +637,7 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 	}
 	if t.idxMergePartPlans != nil {
 		p := PhysicalIndexMergeReader{partialPlans: t.idxMergePartPlans, tablePlan: t.tablePlan}.Init(ctx, t.idxMergePartPlans[0].SelectBlockOffset())
+		setTableScanToTableRowIDScan(p.tablePlan)
 		newTask.p = p
 		return newTask
 	}
@@ -649,6 +647,7 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 			indexPlan:      t.indexPlan,
 			ExtraHandleCol: t.extraHandleCol,
 		}.Init(ctx, t.tablePlan.SelectBlockOffset())
+		setTableScanToTableRowIDScan(p.tablePlan)
 		p.stats = t.tablePlan.statsInfo()
 		// Add cost of building table reader executors. Handles are extracted in batch style,
 		// each handle is a range, the CPU cost of building copTasks should be:
@@ -716,6 +715,17 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 	return newTask
 }
 
+// setTableScanToTableRowIDScan is to update the isChildOfIndexLookUp attribute of PhysicalTableScan child
+func setTableScanToTableRowIDScan(p PhysicalPlan) {
+	if ts, ok := p.(*PhysicalTableScan); ok {
+		ts.SetIsChildOfIndexLookUp(true)
+	} else {
+		for _, child := range p.Children() {
+			setTableScanToTableRowIDScan(child)
+		}
+	}
+}
+
 // rootTask is the final sink node of a plan graph. It should be a single goroutine on tidb.
 type rootTask struct {
 	p   PhysicalPlan
@@ -751,7 +761,7 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 	if cop, ok := t.(*copTask); ok {
 		// For double read which requires order being kept, the limit cannot be pushed down to the table side,
 		// because handles would be reordered before being sent to table scan.
-		if !cop.keepOrder || !cop.indexPlanFinished || cop.indexPlan == nil {
+		if (!cop.keepOrder || !cop.indexPlanFinished || cop.indexPlan == nil) && len(cop.rootTaskConds) == 0 {
 			// When limit is pushed down, we should remove its offset.
 			newCount := p.Offset + p.Count
 			childProfile := cop.plan().statsInfo()
@@ -842,23 +852,41 @@ func (p *PhysicalTopN) allColsFromSchema(schema *expression.Schema) bool {
 }
 
 // GetCost computes the cost of in memory sort.
-func (p *PhysicalSort) GetCost(count float64) float64 {
+func (p *PhysicalSort) GetCost(count float64, schema *expression.Schema) float64 {
 	if count < 2.0 {
 		count = 2.0
 	}
 	sessVars := p.ctx.GetSessionVars()
-	return count*math.Log2(count)*sessVars.CPUFactor + count*sessVars.MemoryFactor
+	cpuCost := count * math.Log2(count) * sessVars.CPUFactor
+	memoryCost := count * sessVars.MemoryFactor
+
+	oomUseTmpStorage := config.GetGlobalConfig().OOMUseTmpStorage
+	memQuota := sessVars.StmtCtx.MemTracker.GetBytesLimit() // sessVars.MemQuotaQuery && hint
+	rowSize := getAvgRowSize(p.statsInfo(), schema)
+	spill := oomUseTmpStorage && memQuota > 0 && rowSize*count > float64(memQuota)
+	diskCost := count * sessVars.DiskFactor * rowSize
+	if !spill {
+		diskCost = 0
+	} else {
+		memoryCost *= float64(memQuota) / (rowSize * count)
+	}
+	return cpuCost + memoryCost + diskCost
 }
 
 func (p *PhysicalSort) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	t = attachPlan2Task(p, t)
-	t.addCost(p.GetCost(t.count()))
+	t.addCost(p.GetCost(t.count(), p.Schema()))
 	return t
 }
 
 func (p *NominalSort) attach2Task(tasks ...task) task {
-	return tasks[0]
+	if p.OnlyColumn {
+		return tasks[0]
+	}
+	t := tasks[0].copy()
+	t = attachPlan2Task(p, t)
+	return t
 }
 
 func (p *PhysicalTopN) getPushedDownTopN(childPlan PhysicalPlan) *PhysicalTopN {
@@ -882,7 +910,7 @@ func (p *PhysicalTopN) getPushedDownTopN(childPlan PhysicalPlan) *PhysicalTopN {
 func (p *PhysicalTopN) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	inputCount := t.count()
-	if copTask, ok := t.(*copTask); ok && p.canPushDown() {
+	if copTask, ok := t.(*copTask); ok && p.canPushDown() && len(copTask.rootTaskConds) == 0 {
 		// If all columns in topN are from index plan, we push it to index plan, otherwise we finish the index plan and
 		// push it to table plan.
 		var pushedDownTopN *PhysicalTopN
@@ -1141,7 +1169,11 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 		// We should not push agg down across double read, since the data of second read is ordered by handle instead of index.
 		// The `extraHandleCol` is added if the double read needs to keep order. So we just use it to decided
 		// whether the following plan is double read with order reserved.
-		if cop.extraHandleCol == nil {
+		if cop.extraHandleCol != nil || len(cop.rootTaskConds) > 0 {
+			t = finishCopTask(p.ctx, cop)
+			inputRows = t.count()
+			attachPlan2Task(p, t)
+		} else {
 			copTaskType := cop.getStoreType()
 			partialAgg, finalAgg := p.newPartialAggregate(copTaskType)
 			if partialAgg != nil {
@@ -1158,10 +1190,6 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 			t = finishCopTask(p.ctx, cop)
 			inputRows = t.count()
 			attachPlan2Task(finalAgg, t)
-		} else {
-			t = finishCopTask(p.ctx, cop)
-			inputRows = t.count()
-			attachPlan2Task(p, t)
 		}
 	} else {
 		attachPlan2Task(p, t)
@@ -1207,28 +1235,34 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	inputRows := t.count()
 	if cop, ok := t.(*copTask); ok {
-		copTaskType := cop.getStoreType()
-		partialAgg, finalAgg := p.newPartialAggregate(copTaskType)
-		if partialAgg != nil {
-			if cop.tablePlan != nil {
-				cop.finishIndexPlan()
-				partialAgg.SetChildren(cop.tablePlan)
-				cop.tablePlan = partialAgg
-			} else {
-				partialAgg.SetChildren(cop.indexPlan)
-				cop.indexPlan = partialAgg
+		if len(cop.rootTaskConds) == 0 {
+			copTaskType := cop.getStoreType()
+			partialAgg, finalAgg := p.newPartialAggregate(copTaskType)
+			if partialAgg != nil {
+				if cop.tablePlan != nil {
+					cop.finishIndexPlan()
+					partialAgg.SetChildren(cop.tablePlan)
+					cop.tablePlan = partialAgg
+				} else {
+					partialAgg.SetChildren(cop.indexPlan)
+					cop.indexPlan = partialAgg
+				}
+				cop.addCost(p.GetCost(inputRows, false))
 			}
-			cop.addCost(p.GetCost(inputRows, false))
+			// In `newPartialAggregate`, we are using stats of final aggregation as stats
+			// of `partialAgg`, so the network cost of transferring result rows of `partialAgg`
+			// to TiDB is normally under-estimated for hash aggregation, since the group-by
+			// column may be independent of the column used for region distribution, so a closer
+			// estimation of network cost for hash aggregation may multiply the number of
+			// regions involved in the `partialAgg`, which is unknown however.
+			t = finishCopTask(p.ctx, cop)
+			inputRows = t.count()
+			attachPlan2Task(finalAgg, t)
+		} else {
+			t = finishCopTask(p.ctx, cop)
+			inputRows = t.count()
+			attachPlan2Task(p, t)
 		}
-		// In `newPartialAggregate`, we are using stats of final aggregation as stats
-		// of `partialAgg`, so the network cost of transferring result rows of `partialAgg`
-		// to TiDB is normally under-estimated for hash aggregation, since the group-by
-		// column may be independent of the column used for region distribution, so a closer
-		// estimation of network cost for hash aggregation may multiply the number of
-		// regions involved in the `partialAgg`, which is unknown however.
-		t = finishCopTask(p.ctx, cop)
-		inputRows = t.count()
-		attachPlan2Task(finalAgg, t)
 	} else {
 		attachPlan2Task(p, t)
 	}

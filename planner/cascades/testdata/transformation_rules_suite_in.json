@@ -96,11 +96,88 @@
     ]
   },
   {
+    "name": "TestMergeAdjacentTopN",
+    "cases": [
+      "select b from (select b from t where c > 1 order by b limit 3) as t1 order by b limit 2",
+      "select a from (select a from t where b > 2 order by a limit 3 offset 1) as t1 order by a limit 2 offset 1",
+      "select * from (select * from t order by a limit 3) as t1 order by a limit 5",
+      "select b from (select b from t order by b limit 5) as t1 order by b limit 10",
+      "select b from (select b from t order by b limit 20) as t1 order by b limit 10",
+      "select b from (select b from t order by b limit 10) as t1 order by b limit 10",
+      "select b from (select b from t order by b limit 10 offset 10) as t1 order by b limit 10 offset 5",
+      "select b from (select b from t order by b limit 10 offset 2) as t1 order by b limit 3 offset 5",
+      "select b from (select b from t order by b limit 10 offset 5) as t1 order by b limit 5 offset 5",
+      "select a from (select a from t order by a limit 3 offset 5) as t1 order by a limit 3 offset 5",
+      "select b from (select b from t where c > 1 order by b, a limit 3) as t1 order by b limit 2",
+      "select a from (select a from t where b > 2 order by a, b limit 3 offset 1) as t1 order by a limit 2 offset 1"
+    ]
+  },
+  {
     "name": "TestTransformLimitToTableDual",
     "cases": [
       "select a from t limit 0 offset 1",
       "select * from t as t1 left join (select * from t limit 0 offset 1) as t2 on t1.a = t2.a;",
       "select a, b from ((select a, b from t) union all(select c as a, d as b from t limit 0 offset 5)) as t1 where a > 1"
+    ]
+  },
+  {
+    "name": "TestPostTransformationRules",
+    "cases": [
+      "select b from (select b+10 as b from t) as t1 order by b + 10 limit 10",
+      "select * from (select a+1 as c, a+b as d from t) as t1 order by c+d limit 10",
+      "select a from (select a, b from t order by b limit 10) as t1"
+    ]
+  },
+  {
+    "name": "TestPushLimitDownTiKVSingleGather",
+    "cases": [
+      "select * from t limit 1",
+      "select * from t as t1 left join (select * from t limit 2) as t2 on t1.a = t2.a;",
+      "select a, b from ((select a, b from t) union all(select c as a, d as b from t limit 3)) as t1 where a > 1"
+    ]
+  },
+  {
+    "name": "TestEliminateOuterJoinBelowAggregation",
+    "cases": [
+      "select t1.a, max(t1.b) from t as t1 left join (select * from t) as t2 on t1.a = t2.a and t1.b = 3 group by t1.a;",
+      "select t1.a, max(t1.b) from t as t1 left join (select * from t) as t2 on t1.a = t2.a group by t1.a;",
+      "select t1.a, sum(t1.h) from t as t1 left join (select * from t) as t2 on t1.h = t2.h group by t1.a;",
+      "select t1.a, sum(distinct t1.h) from t as t1 left join (select * from t) as t2 on t1.h = t2.h group by t1.a;",
+      "select t1.a, max(t1.b) from t as t1 left join (select * from t) as t2 on t1.a = t2.a group by t2.a;",
+      "select t1.a, max(t2.b) from t as t1 left join (select * from t) as t2 on t1.a = t2.a group by t1.a;",
+      "select t2.a, max(t2.b) from t as t1 right join (select * from t) as t2 on t1.a = t2.a group by t2.a;",
+      "select t2.a, max(t2.b) from t as t1 right join (select * from t) as t2 on t1.a = t2.a and t2.c = 3 group by t2.a;",
+      "select t2.a, sum(t2.h) from t as t1 right join (select * from t) as t2 on t1.h = t2.h group by t2.a;",
+      "select t2.a, sum(distinct t2.h) from t as t1 right join (select * from t) as t2 on t1.h = t2.h group by t2.a;",
+      "select t2.a, max(t2.b) from t as t1 right join (select * from t) as t2 on t1.a = t2.a group by t1.a;",
+      "select t2.a, max(t1.b) from t as t1 right join (select * from t) as t2 on t1.a = t2.a group by t2.a;"
+    ]
+  },
+  {
+    "name": "TestTransformAggregateCaseToSelection",
+    "cases": [
+      "select count(case when a > 10 then b end) from t",
+      "select count(case when a > 10 then b end) from t group by c",
+      "select count(case when a > 10 then b end) from t group by 'a'",
+      "select count(case when a > 10 then b end) from t group by concat(c, a)",
+      "select count(case when a > 10 then b end) from t group by concat(c, 'a')",
+      "select count(case when a > 10 then b end) from t group by concat('a', 'c')",
+      "select count(case when a > 10 then b else null end) from t",
+      "select count(case when a > 10 then null else b end) from t",
+      "select count(case when a > 10 then c else b end) from t",
+      "select count(case when a > 10 then c else 0 end) from t",
+      "select sum(case when a > 10 then c else 0 end) from t",
+      "select sum(case when a > 10 then c else 0.0 end) from t",
+      "select sum(case when a > 10 then c else 1-1 end) from t",
+      "select sum(case when a > 0 then (case when a <= 1000 then b end) else 0 end) from t",
+      "select sum(case when a > 10 then 0 else c end) from t",
+      "select sum(case when a > 10 then 2 else 1 end) from t",
+      "select count(DISTINCT case when a > 10 then null else c end) from t",
+      "select sum(DISTINCT case when a > 10 then c else 0 end) from t",
+      "select case when c > 10 then c end from t",
+      "select count(case when a > 10 then c end), c from t",
+      "select count(case when a > 10 and d < 5 then b end) from t",
+      "select count(case when a > 10 and d < 5 then null else b end) from t"
     ]
   },
   {

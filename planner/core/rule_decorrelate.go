@@ -95,7 +95,7 @@ func ExtractCorrelatedCols(p LogicalPlan) []*expression.CorrelatedColumn {
 type decorrelateSolver struct{}
 
 func (s *decorrelateSolver) aggDefaultValueMap(agg *LogicalAggregation) map[int]*expression.Constant {
-	defaultValueMap := make(map[int]*expression.Constant)
+	defaultValueMap := make(map[int]*expression.Constant, len(agg.AggFuncs))
 	for i, f := range agg.AggFuncs {
 		switch f.Name {
 		case ast.AggFuncBitOr, ast.AggFuncBitXor, ast.AggFuncCount:
