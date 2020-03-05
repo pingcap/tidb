@@ -14,7 +14,6 @@
 package tikv
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"math"
@@ -61,11 +60,7 @@ func (s *testLockSuite) lockKey(c *C, key, value, primaryKey, primaryValue []byt
 	c.Assert(err, IsNil)
 	tpc, err := newTwoPhaseCommitterWithInit(txn, 0)
 	c.Assert(err, IsNil)
-	if bytes.Equal(key, primaryKey) {
-		tpc.mutations = tpc.mutationsOfKeys([][]byte{primaryKey})
-	} else {
-		tpc.mutations = tpc.mutationsOfKeys([][]byte{primaryKey, key})
-	}
+	tpc.primaryKey = primaryKey
 
 	ctx := context.Background()
 	err = tpc.prewriteMutations(NewBackoffer(ctx, PrewriteMaxBackoff), tpc.mutations)
