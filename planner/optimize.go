@@ -15,7 +15,6 @@ package planner
 
 import (
 	"context"
-	"github.com/pingcap/tidb/config"
 	"math"
 	"strings"
 
@@ -23,6 +22,7 @@ import (
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/bindinfo"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
