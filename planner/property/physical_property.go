@@ -27,6 +27,7 @@ type Item struct {
 	Desc bool
 }
 
+// HashCode creates the hashcode for Item which can be used to identify itself from other Item.
 func (i *Item) HashCode(sc *stmtctx.StatementContext) []byte {
 	hashcode := make([]byte, 0, 10)
 	hashcode = codec.EncodeBool(hashcode, i.Desc)

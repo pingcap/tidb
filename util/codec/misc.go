@@ -18,7 +18,7 @@ func EncodeBool(result []byte, value bool) []byte {
 	return result
 }
 
-// EncodeBool append uintptr to []byte.
+// EncodeUintptr append uintptr to []byte.
 func EncodeUintptr(result []byte, value uintptr) []byte {
 	size := unsafe.Sizeof(value)
 	switch size {
