@@ -15,6 +15,7 @@ package executor_test
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	. "github.com/pingcap/check"
@@ -863,13 +864,7 @@ func (s *testSuite3) TestAutoIDIncrementAndOffset(c *C) {
 	c.Assert(err.Error(), Equals, "[autoid:8060]Invalid auto_increment settings: auto_increment_increment: 65536, auto_increment_offset: 65536, both of them must be in range [1..65535]")
 }
 
-var _ = SerialSuites(&testSuite9{&baseTestSuite{}})
-
-type testSuite9 struct {
-	*baseTestSuite
-}
-
-func (s *testSuite9) TestAutoRandomID(c *C) {
+func (s *testAutoRandomSuite) TestAutoRandomID(c *C) {
 	allowAutoRandom := config.GetGlobalConfig().Experimental.AllowAutoRandom
 	if !allowAutoRandom {
 		config.GetGlobalConfig().Experimental.AllowAutoRandom = true
@@ -912,7 +907,7 @@ func (s *testSuite9) TestAutoRandomID(c *C) {
 	tk.MustExec(`drop table ar`)
 }
 
-func (s *testSuite9) TestMultiAutoRandomID(c *C) {
+func (s *testAutoRandomSuite) TestMultiAutoRandomID(c *C) {
 	allowAutoRandom := config.GetGlobalConfig().Experimental.AllowAutoRandom
 	if !allowAutoRandom {
 		config.GetGlobalConfig().Experimental.AllowAutoRandom = true
@@ -961,7 +956,7 @@ func (s *testSuite9) TestMultiAutoRandomID(c *C) {
 	tk.MustExec(`drop table ar`)
 }
 
-func (s *testSuite9) TestAutoRandomIDAllowZero(c *C) {
+func (s *testAutoRandomSuite) TestAutoRandomIDAllowZero(c *C) {
 	allowAutoRandom := config.GetGlobalConfig().Experimental.AllowAutoRandom
 	if !allowAutoRandom {
 		config.GetGlobalConfig().Experimental.AllowAutoRandom = true
@@ -999,7 +994,7 @@ func (s *testSuite9) TestAutoRandomIDAllowZero(c *C) {
 	tk.MustExec(`drop table ar`)
 }
 
-func (s *testSuite9) TestAutoRandomIDExplicit(c *C) {
+func (s *testAutoRandomSuite) TestAutoRandomIDExplicit(c *C) {
 	allowAutoRandom := config.GetGlobalConfig().Experimental.AllowAutoRandom
 	if !allowAutoRandom {
 		config.GetGlobalConfig().Experimental.AllowAutoRandom = true
