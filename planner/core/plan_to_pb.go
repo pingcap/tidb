@@ -189,6 +189,12 @@ func (p *PhysicalBroadCastJoin) ToPB(ctx sessionctx.Context, storeType kv.StoreT
 	client := ctx.GetClient()
 	leftJoinKeys := make([]expression.Expression, 0, len(p.LeftJoinKeys))
 	rightJoinKeys := make([]expression.Expression, 0, len(p.RightJoinKeys))
+	for _, leftKey := range p.LeftJoinKeys {
+		leftJoinKeys = append(leftJoinKeys, leftKey)
+	}
+	for _, rightKey := range p.RightJoinKeys {
+		rightJoinKeys = append(rightJoinKeys, rightKey)
+	}
 	lChildren, err := p.children[0].ToPB(ctx, storeType)
 	if err != nil {
 		return nil, errors.Trace(err)
