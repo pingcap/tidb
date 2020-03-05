@@ -563,7 +563,7 @@ func (s *testIntegrationSuite) TestConstantPropagation(c *C) {
 		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
 	}
 }
-  
+
 // for issue #14822
 func (s *testIntegrationSuite) TestIndexJoinTableRange(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
