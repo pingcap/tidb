@@ -1042,7 +1042,7 @@ func newTiKVRegionPeersCols(region *helper.RegionInfo) [][]types.Datum {
 	for _, peer := range region.PendingPeers {
 		pendingPeerIDSet.Insert(peer.ID)
 	}
-	downPeerMap := make(map[int64]int64)
+	downPeerMap := make(map[int64]int64, len(region.DownPeers))
 	for _, peerStat := range region.DownPeers {
 		downPeerMap[peerStat.ID] = peerStat.DownSec
 	}
@@ -1277,7 +1277,7 @@ func getColLengthAllTables(ctx sessionctx.Context) (map[tableHistID]uint64, erro
 }
 
 func getDataAndIndexLength(info *model.TableInfo, physicalID int64, rowCount uint64, columnLengthMap map[tableHistID]uint64) (uint64, uint64) {
-	columnLength := make(map[string]uint64)
+	columnLength := make(map[string]uint64, len(info.Columns))
 	for _, col := range info.Columns {
 		if col.State != model.StatePublic {
 			continue

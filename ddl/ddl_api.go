@@ -1293,9 +1293,11 @@ func buildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo) *mod
 	tblInfo.ShardRowIDBits = referTblInfo.ShardRowIDBits
 	tblInfo.PreSplitRegions = referTblInfo.PreSplitRegions
 	if tblInfo.TiFlashReplica != nil {
+		replica := *tblInfo.TiFlashReplica
 		// Keep the tiflash replica setting, remove the replica available status.
-		tblInfo.TiFlashReplica.AvailablePartitionIDs = nil
-		tblInfo.TiFlashReplica.Available = false
+		replica.AvailablePartitionIDs = nil
+		replica.Available = false
+		tblInfo.TiFlashReplica = &replica
 	}
 	if referTblInfo.Partition != nil {
 		pi := *referTblInfo.Partition
