@@ -389,9 +389,7 @@ func (s *testBinlogSuite) TestBinlogForSequence(c *C) {
 	// the default start = 1, increment = 1.
 	tk.MustExec("create sequence seq cache 3")
 	// trigger the sequence cache allocation.
-	err := tk.QueryToErr("select nextval(seq)")
-	c.Assert(err, IsNil)
-
+	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("1"))
 	sequenceTable := testGetTableByName(c, tk.Se, "test", "seq")
 	tc, ok := sequenceTable.(*tables.TableCommon)
 	c.Assert(ok, Equals, true)
@@ -405,11 +403,9 @@ func (s *testBinlogSuite) TestBinlogForSequence(c *C) {
 	c.Assert(ok, IsTrue)
 
 	// Invalidate the current sequence cache.
-	tk.MustExec("select setval(seq, 5)")
+	tk.MustQuery("select setval(seq, 5)").Check(testkit.Rows("5"))
 	// trigger the next sequence cache allocation.
-	err = tk.QueryToErr("select nextval(seq)")
-	c.Assert(err, IsNil)
-
+	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("6"))
 	_, end, round = tc.GetSequenceCommon().GetSequenceBaseEndRound()
 	c.Assert(end, Equals, int64(8))
 	c.Assert(round, Equals, int64(0))
@@ -421,8 +417,7 @@ func (s *testBinlogSuite) TestBinlogForSequence(c *C) {
 	tk.MustExec("drop sequence if exists seq2")
 	tk.MustExec("create sequence seq2 start 1 increment -2 cache 3 minvalue -10 maxvalue 10 cycle")
 	// trigger the sequence cache allocation.
-	err = tk.QueryToErr("select nextval(seq2)")
-	c.Assert(err, IsNil)
+	tk.MustQuery("select nextval(seq2)").Check(testkit.Rows("1"))
 	sequenceTable = testGetTableByName(c, tk.Se, "test2", "seq2")
 	tc, ok = sequenceTable.(*tables.TableCommon)
 	c.Assert(ok, Equals, true)
@@ -432,10 +427,9 @@ func (s *testBinlogSuite) TestBinlogForSequence(c *C) {
 	ok = mustGetDDLBinlog(s, "select setval(`test2`.`seq2`, -3)", c)
 	c.Assert(ok, IsTrue)
 
-	tk.MustExec("select setval(seq2, -100)")
+	tk.MustQuery("select setval(seq2, -100)").Check(testkit.Rows("-100"))
 	// trigger the sequence cache allocation.
-	err = tk.QueryToErr("select nextval(seq2)")
-	c.Assert(err, IsNil)
+	tk.MustQuery("select nextval(seq2)").Check(testkit.Rows("10"))
 	_, end, round = tc.GetSequenceCommon().GetSequenceBaseEndRound()
 	c.Assert(end, Equals, int64(6))
 	c.Assert(round, Equals, int64(1))
@@ -449,10 +443,13 @@ func (s *testBinlogSuite) TestBinlogForSequence(c *C) {
 	tk.MustExec("create table t (a int default next value for seq)")
 	// sequence txn commit first then the dml txn.
 	tk.MustExec("insert into t values(-1),(default),(-1),(default)")
-	// binlog list like [... ddl prewrite(offset), ddl commit, dml prewrite]
+	// Wait for binlog write async rather than lock/unlock mu frequently.
+	// Otherwise there is a chance that binlog-write goroutine will be hungry.
+	time.Sleep(time.Millisecond * 100)
+	// binlog list like [... ddl prewrite(offset), ddl commit, dml prewrite, dml commit]
 	_, _, offset := getLatestDDLBinlog(c, s.pump, "select setval(`test2`.`seq`, 3)")
 	s.pump.mu.Lock()
-	c.Assert(offset+2, Equals, len(s.pump.mu.payloads)-1)
+	c.Assert(offset+3, Equals, len(s.pump.mu.payloads)-1)
 	s.pump.mu.Unlock()
 }
 
@@ -568,6 +565,9 @@ func (s *testBinlogSuite) TestAddSpecialComment(c *C) {
 }
 
 func mustGetDDLBinlog(s *testBinlogSuite, ddlQuery string, c *C) (matched bool) {
+	// Wait for binlog write async rather than lock/unlock mu frequently.
+	// Otherwise there is a chance that binlog-write goroutine will be hungry.
+	time.Sleep(time.Millisecond * 100)
 	for i := 0; i < 100; i++ {
 		preDDL, commitDDL, _ := getLatestDDLBinlog(c, s.pump, ddlQuery)
 		if preDDL != nil && commitDDL != nil {

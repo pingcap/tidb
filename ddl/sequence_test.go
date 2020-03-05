@@ -659,7 +659,7 @@ func (s *testSequenceSuite) TestInsertSequence(c *C) {
 	s.tk.MustExec("insert into t values(lastval(seq)),(-1),(nextval(seq))")
 	s.tk.MustQuery("select * from t").Check(testkit.Rows("13", "-1", "14"))
 	s.tk.MustExec("delete from t")
-	s.tk.MustExec("select setval(seq, 100)")
+	s.tk.MustQuery("select setval(seq, 100)").Check(testkit.Rows("100"))
 	s.tk.MustExec("insert into t values(lastval(seq)),(-1),(nextval(seq))")
 	s.tk.MustQuery("select * from t").Check(testkit.Rows("14", "-1", "101"))
 
@@ -679,7 +679,35 @@ func (s *testSequenceSuite) TestInsertSequence(c *C) {
 
 	// test sequence run out (overflow MaxInt64).
 	setSQL := "select setval(seq," + strconv.FormatInt(model.DefaultPositiveSequenceMaxValue+1, 10) + ")"
-	s.tk.MustExec(setSQL)
+	s.tk.MustQuery(setSQL).Check(testkit.Rows("9223372036854775807"))
 	err := s.tk.QueryToErr("select nextval(seq)")
 	c.Assert(err.Error(), Equals, "[table:4135]Sequence 'test.seq' has run out")
+}
+
+func (s *testSequenceSuite) TestUnflodSequence(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test")
+	// test insert into select from.
+	s.tk.MustExec("drop sequence if exists seq")
+	s.tk.MustExec("drop table if exists t1,t2,t3")
+	s.tk.MustExec("create sequence seq")
+	s.tk.MustExec("create table t1 (a int)")
+	s.tk.MustExec("create table t2 (a int, b int)")
+	s.tk.MustExec("create table t3 (a int, b int, c int)")
+	s.tk.MustExec("insert into t1 values(-1),(-1),(-1)")
+	// test sequence function unfold.
+	s.tk.MustQuery("select nextval(seq), a from t1").Check(testkit.Rows("1 -1", "2 -1", "3 -1"))
+	s.tk.MustExec("insert into t2 select nextval(seq), a from t1")
+	s.tk.MustQuery("select* from t2").Check(testkit.Rows("4 -1", "5 -1", "6 -1"))
+
+	// if lastval is folded, the first result should be always 6.
+	s.tk.MustQuery("select lastval(seq), nextval(seq), a from t1").Check(testkit.Rows("6 7 -1", "7 8 -1", "8 9 -1"))
+	s.tk.MustExec("insert into t3 select lastval(seq), nextval(seq), a from t1")
+	s.tk.MustQuery("select* from t3").Check(testkit.Rows("9 10 -1", "10 11 -1", "11 12 -1"))
+	s.tk.MustExec("delete from t3")
+
+	// if setval is folded, the result should be "101 100 -1"...
+	s.tk.MustQuery("select nextval(seq), setval(seq,100), a from t1").Check(testkit.Rows("13 100 -1", "101 <nil> -1", "102 <nil> -1"))
+	s.tk.MustExec("insert into t3 select nextval(seq), setval(seq,200), a from t1")
+	s.tk.MustQuery("select* from t3").Check(testkit.Rows("103 200 -1", "201 <nil> -1", "202 <nil> -1"))
 }
