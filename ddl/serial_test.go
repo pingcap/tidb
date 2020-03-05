@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/util/testutil"
 )
 
+// Make it serial because config is modified in test cases.
 var _ = SerialSuites(&testSerialSuite{})
 
 type testSerialSuite struct {
