@@ -17,11 +17,8 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
-<<<<<<< HEAD
-=======
 	"crypto/tls"
 	"crypto/x509"
->>>>>>> 92f6f4e... server: support check the "CommanName" of tls-cert for status-port(http/grpc) (#15137)
 	"encoding/json"
 	"fmt"
 	"net"
@@ -257,31 +254,29 @@ func (s *Server) startHTTPServer() {
 		}
 	})
 
-<<<<<<< HEAD
 	logutil.Logger(context.Background()).Info("for status and metrics report", zap.String("listening on addr", addr))
 	s.statusServer = &http.Server{Addr: addr, Handler: CorsHandler{handler: serverMux, cfg: s.cfg}}
-=======
-	logutil.BgLogger().Info("for status and metrics report", zap.String("listening on addr", addr))
-	s.setupStatusServerAndRPCServer(addr, serverMux)
-}
 
-func (s *Server) setupStatusServerAndRPCServer(addr string, serverMux *http.ServeMux) {
-	tlsConfig, err := s.cfg.Security.ToTLSConfig()
-	if err != nil {
-		logutil.BgLogger().Error("invalid TLS config", zap.Error(err))
-		return
-	}
-	tlsConfig = s.setCNChecker(tlsConfig)
->>>>>>> 92f6f4e... server: support check the "CommanName" of tls-cert for status-port(http/grpc) (#15137)
-
-	if len(s.cfg.Security.ClusterSSLCA) != 0 {
-		err = s.statusServer.ListenAndServeTLS(s.cfg.Security.ClusterSSLCert, s.cfg.Security.ClusterSSLKey)
-	} else {
-		err = s.statusServer.ListenAndServe()
-	}
-
+	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		logutil.Logger(context.Background()).Info("listen failed", zap.Error(err))
+		return
+	}
+
+	if len(s.cfg.Security.ClusterSSLCA) != 0 {
+		tlsConfig, err := s.cfg.Security.ToTLSConfig()
+		if err != nil {
+			logutil.Logger(context.Background()).Error("invalid TLS config", zap.Error(err))
+			return
+		}
+		tlsConfig = s.setCNChecker(tlsConfig)
+		ln = tls.NewListener(ln, tlsConfig)
+	} else {
+	}
+
+	err = s.statusServer.Serve(ln)
+	if err != nil {
+		logutil.Logger(context.Background()).Info("serve status port failed", zap.Error(err))
 	}
 }
 

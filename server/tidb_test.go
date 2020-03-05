@@ -22,6 +22,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"fmt"
 	"io/ioutil"
 	"math/big"
 	"net/http"
@@ -159,19 +160,19 @@ func (ts *TidbTestSuite) TestStatusAPI(c *C) {
 	runTestStatusAPI(c)
 }
 
-<<<<<<< HEAD
 func (ts *TidbTestSuite) TestMultiStatements(c *C) {
-=======
+	c.Parallel()
+	runTestMultiStatements(c)
+}
+
 func (ts *tidbTestSuite) TestStatusAPIWithTLSCNCheck(c *C) {
 	c.Skip("need add ca-tidb-test-1.crt to OS")
 	root := filepath.Join(os.Getenv("GOPATH"), "/src/github.com/pingcap/tidb")
 	ca := filepath.Join(root, "/tests/cncheckcert/ca-tidb-test-1.crt")
+	statusURL := fmt.Sprintf("%s://localhost:%d%s", "https", 4100, "/status")
 
-	cli := newTestServerClient()
-	cli.statusScheme = "https"
 	cfg := config.NewConfig()
-	cfg.Port = cli.port
-	cfg.Status.StatusPort = cli.statusPort
+	cfg.Status.StatusPort = 4100
 	cfg.Security.ClusterSSLCA = ca
 	cfg.Security.ClusterSSLCert = filepath.Join(root, "/tests/cncheckcert/server-cert.pem")
 	cfg.Security.ClusterSSLKey = filepath.Join(root, "/tests/cncheckcert/server-key.pem")
@@ -185,14 +186,14 @@ func (ts *tidbTestSuite) TestStatusAPIWithTLSCNCheck(c *C) {
 		filepath.Join(root, "/tests/cncheckcert/client-cert-1.pem"),
 		filepath.Join(root, "/tests/cncheckcert/client-key-1.pem"),
 	)
-	_, err = hc.Get(cli.statusURL("/status"))
+	_, err = hc.Get(statusURL)
 	c.Assert(err, NotNil)
 
 	hc = newTLSHttpClient(c, ca,
 		filepath.Join(root, "/tests/cncheckcert/client-cert-2.pem"),
 		filepath.Join(root, "/tests/cncheckcert/client-key-2.pem"),
 	)
-	_, err = hc.Get(cli.statusURL("/status"))
+	_, err = hc.Get(statusURL)
 	c.Assert(err, IsNil)
 }
 
@@ -210,12 +211,6 @@ func newTLSHttpClient(c *C, caFile, certFile, keyFile string) *http.Client {
 	}
 	tlsConfig.BuildNameToCertificate()
 	return &http.Client{Transport: &http.Transport{TLSClientConfig: tlsConfig}}
-}
-
-func (ts *tidbTestSuite) TestMultiStatements(c *C) {
->>>>>>> 92f6f4e... server: support check the "CommanName" of tls-cert for status-port(http/grpc) (#15137)
-	c.Parallel()
-	runTestMultiStatements(c)
 }
 
 func (ts *TidbTestSuite) TestSocketForwarding(c *C) {
