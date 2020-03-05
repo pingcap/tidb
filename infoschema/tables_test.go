@@ -325,15 +325,6 @@ func (s *testTableSuite) TestDataForTableStatsField(c *C) {
 func (s *testTableSuite) TestCharacterSetCollations(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
-	// The description column is not important
-	tk.MustQuery("SELECT default_collate_name, maxlen FROM information_schema.character_sets ORDER BY character_set_name").Check(
-		testkit.Rows("ascii_bin 1", "binary 1", "latin1_bin 1", "utf8_bin 3", "utf8mb4_bin 4"))
-
-	// The is_default column is not important
-	// but the id's are used by client libraries and must be stable
-	tk.MustQuery("SELECT character_set_name, id, sortlen FROM information_schema.collations ORDER BY collation_name").Check(
-		testkit.Rows("ascii 65 1", "binary 63 1", "latin1 47 1", "utf8 83 1", "utf8mb4 46 1"))
-
 	// Test charset/collation in information_schema.COLUMNS table.
 	tk.MustExec("DROP DATABASE IF EXISTS charset_collate_test")
 	tk.MustExec("CREATE DATABASE charset_collate_test; USE charset_collate_test")
@@ -458,13 +449,12 @@ func (sm *mockSessionManager) GetProcessInfo(id uint64) (*util.ProcessInfo, bool
 
 func (sm *mockSessionManager) Kill(connectionID uint64, query bool) {}
 
+func (sm *mockSessionManager) UpdateTLSConfig(cfg *tls.Config) {}
+
 func (s *testTableSuite) TestSomeTables(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
-	tk.MustQuery("select * from information_schema.COLLATION_CHARACTER_SET_APPLICABILITY where COLLATION_NAME='utf8mb4_bin';").Check(
-		testkit.Rows("utf8mb4_bin utf8mb4"))
 	tk.MustQuery("select * from information_schema.SESSION_VARIABLES where VARIABLE_NAME='tidb_retry_limit';").Check(testkit.Rows("tidb_retry_limit 10"))
-	tk.MustQuery("select * from information_schema.ENGINES;").Check(testkit.Rows("InnoDB DEFAULT Supports transactions, row-level locking, and foreign keys YES YES YES"))
 	tk.MustQuery("select * from information_schema.TABLE_CONSTRAINTS where TABLE_NAME='gc_delete_range';").Check(testkit.Rows("def mysql delete_range_index mysql gc_delete_range UNIQUE"))
 
 	//test the privilege of new user for information_schema.table_constraints
@@ -648,7 +638,6 @@ func (s *testTableSuite) TestTableIDAndIndexID(c *C) {
 	tblID, err := strconv.Atoi(tk.MustQuery("select tidb_table_id from information_schema.tables where table_schema = 'test' and table_name = 't'").Rows()[0][0].(string))
 	c.Assert(err, IsNil)
 	c.Assert(tblID, Greater, 0)
-	tk.MustQuery("select index_id from information_schema.tidb_indexes where table_schema = 'test' and table_name = 't'").Check(testkit.Rows("0", "1"))
 }
 
 func prepareSlowLogfile(c *C, slowLogFileName string) {

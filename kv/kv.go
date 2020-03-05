@@ -15,6 +15,7 @@ package kv
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/pingcap/tidb/config"
@@ -202,6 +203,9 @@ type LockCtx struct {
 	PessimisticLockWaited *int32
 	LockKeysDuration      *time.Duration
 	LockKeysCount         *int32
+	ReturnValues          bool
+	Values                map[string][]byte
+	ValuesLock            sync.Mutex
 }
 
 // Client is used to send request to KV layer.

@@ -788,7 +788,7 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 	// Add filter condition to table plan now.
 	indexConds, tableConds := path.IndexFilters, path.TableFilters
 
-	tableConds, copTask.rootTaskConds = splitSelCondsWithVirtualColumn(tableConds)
+	tableConds, copTask.rootTaskConds = SplitSelCondsWithVirtualColumn(tableConds)
 
 	sessVars := is.ctx.GetSessionVars()
 	if indexConds != nil {
@@ -812,8 +812,8 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 	}
 }
 
-// splitSelCondsWithVirtualColumn filter the select conditions which contain virtual column
-func splitSelCondsWithVirtualColumn(conds []expression.Expression) ([]expression.Expression, []expression.Expression) {
+// SplitSelCondsWithVirtualColumn filter the select conditions which contain virtual column
+func SplitSelCondsWithVirtualColumn(conds []expression.Expression) ([]expression.Expression, []expression.Expression) {
 	var filterConds []expression.Expression
 	for i := len(conds) - 1; i >= 0; i-- {
 		if expression.ContainVirtualColumn(conds[i : i+1]) {
@@ -1076,7 +1076,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 }
 
 func (ts *PhysicalTableScan) addPushedDownSelection(copTask *copTask, stats *property.StatsInfo) {
-	ts.filterCondition, copTask.rootTaskConds = splitSelCondsWithVirtualColumn(ts.filterCondition)
+	ts.filterCondition, copTask.rootTaskConds = SplitSelCondsWithVirtualColumn(ts.filterCondition)
 	if ts.StoreType == kv.TiFlash {
 		var newRootConds []expression.Expression
 		ts.filterCondition, newRootConds = expression.CheckExprPushFlash(ts.filterCondition)

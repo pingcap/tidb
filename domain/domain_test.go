@@ -229,6 +229,8 @@ func (msm *mockSessionManager) GetProcessInfo(id uint64) (*util.ProcessInfo, boo
 
 func (msm *mockSessionManager) Kill(cid uint64, query bool) {}
 
+func (msm *mockSessionManager) UpdateTLSConfig(cfg *tls.Config) {}
+
 func (*testSuite) TestT(c *C) {
 	defer testleak.AfterTest(c)()
 	store, err := mockstore.NewMockTikvStore()
