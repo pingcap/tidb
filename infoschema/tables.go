@@ -57,9 +57,11 @@ const (
 	tableColumns          = "COLUMNS"
 	tableColumnStatistics = "COLUMN_STATISTICS"
 	tableStatistics       = "STATISTICS"
-	tableCharacterSets    = "CHARACTER_SETS"
-	tableCollations       = "COLLATIONS"
-	tableFiles            = "FILES"
+	// TableCharacterSets is the string constant of infoschema charactersets memory table
+	TableCharacterSets = "CHARACTER_SETS"
+	// TableCollations is the string constant of infoschema collations memory table
+	TableCollations = "COLLATIONS"
+	tableFiles      = "FILES"
 	// CatalogVal is the string constant of TABLE_CATALOG
 	CatalogVal            = "def"
 	tableProfiling        = "PROFILING"
@@ -74,26 +76,29 @@ const (
 	tableSchemaPrivileges = "SCHEMA_PRIVILEGES"
 	tableTablePrivileges  = "TABLE_PRIVILEGES"
 	tableColumnPrivileges = "COLUMN_PRIVILEGES"
-	tableEngines          = "ENGINES"
+	// TableEngines is the string constant of infoschema table
+	TableEngines = "ENGINES"
 	// TableViews is the string constant of infoschema table
-	TableViews                              = "VIEWS"
-	tableRoutines                           = "ROUTINES"
-	tableParameters                         = "PARAMETERS"
-	tableEvents                             = "EVENTS"
-	tableGlobalStatus                       = "GLOBAL_STATUS"
-	tableGlobalVariables                    = "GLOBAL_VARIABLES"
-	tableSessionStatus                      = "SESSION_STATUS"
-	tableOptimizerTrace                     = "OPTIMIZER_TRACE"
-	tableTableSpaces                        = "TABLESPACES"
-	tableCollationCharacterSetApplicability = "COLLATION_CHARACTER_SET_APPLICABILITY"
+	TableViews           = "VIEWS"
+	tableRoutines        = "ROUTINES"
+	tableParameters      = "PARAMETERS"
+	tableEvents          = "EVENTS"
+	tableGlobalStatus    = "GLOBAL_STATUS"
+	tableGlobalVariables = "GLOBAL_VARIABLES"
+	tableSessionStatus   = "SESSION_STATUS"
+	tableOptimizerTrace  = "OPTIMIZER_TRACE"
+	tableTableSpaces     = "TABLESPACES"
+	// TableCollationCharacterSetApplicability is the string constant of infoschema memory table.
+	TableCollationCharacterSetApplicability = "COLLATION_CHARACTER_SET_APPLICABILITY"
 	tableProcesslist                        = "PROCESSLIST"
-	tableTiDBIndexes                        = "TIDB_INDEXES"
-	tableTiDBHotRegions                     = "TIDB_HOT_REGIONS"
-	tableTiKVStoreStatus                    = "TIKV_STORE_STATUS"
-	tableAnalyzeStatus                      = "ANALYZE_STATUS"
-	tableTiKVRegionStatus                   = "TIKV_REGION_STATUS"
-	tableTiKVRegionPeers                    = "TIKV_REGION_PEERS"
-	tableTiDBServersInfo                    = "TIDB_SERVERS_INFO"
+	// TableTiDBIndexes is the string constant of infoschema table
+	TableTiDBIndexes      = "TIDB_INDEXES"
+	tableTiDBHotRegions   = "TIDB_HOT_REGIONS"
+	tableTiKVStoreStatus  = "TIKV_STORE_STATUS"
+	tableAnalyzeStatus    = "ANALYZE_STATUS"
+	tableTiKVRegionStatus = "TIKV_REGION_STATUS"
+	tableTiKVRegionPeers  = "TIKV_REGION_PEERS"
+	tableTiDBServersInfo  = "TIDB_SERVERS_INFO"
 	// TableSlowQuery is the string constant of slow query memory table.
 	TableSlowQuery = "SLOW_QUERY"
 	// TableClusterInfo is the string constant of cluster info memory table.
@@ -119,6 +124,8 @@ const (
 	TableMetricSummaryByLabel = "METRICS_SUMMARY_BY_LABEL"
 	// TableInspectionSummary is the string constant of inspection summary table
 	TableInspectionSummary = "INSPECTION_SUMMARY"
+	// TableInspectionRules is the string constant of currently implemented inspection and summary rules
+	TableInspectionRules = "INSPECTION_RULES"
 )
 
 var tableIDMap = map[string]int64{
@@ -127,8 +134,8 @@ var tableIDMap = map[string]int64{
 	tableColumns:                            autoid.InformationSchemaDBID + 3,
 	tableColumnStatistics:                   autoid.InformationSchemaDBID + 4,
 	tableStatistics:                         autoid.InformationSchemaDBID + 5,
-	tableCharacterSets:                      autoid.InformationSchemaDBID + 6,
-	tableCollations:                         autoid.InformationSchemaDBID + 7,
+	TableCharacterSets:                      autoid.InformationSchemaDBID + 6,
+	TableCollations:                         autoid.InformationSchemaDBID + 7,
 	tableFiles:                              autoid.InformationSchemaDBID + 8,
 	CatalogVal:                              autoid.InformationSchemaDBID + 9,
 	tableProfiling:                          autoid.InformationSchemaDBID + 10,
@@ -143,7 +150,7 @@ var tableIDMap = map[string]int64{
 	tableSchemaPrivileges:                   autoid.InformationSchemaDBID + 19,
 	tableTablePrivileges:                    autoid.InformationSchemaDBID + 20,
 	tableColumnPrivileges:                   autoid.InformationSchemaDBID + 21,
-	tableEngines:                            autoid.InformationSchemaDBID + 22,
+	TableEngines:                            autoid.InformationSchemaDBID + 22,
 	TableViews:                              autoid.InformationSchemaDBID + 23,
 	tableRoutines:                           autoid.InformationSchemaDBID + 24,
 	tableParameters:                         autoid.InformationSchemaDBID + 25,
@@ -153,9 +160,9 @@ var tableIDMap = map[string]int64{
 	tableSessionStatus:                      autoid.InformationSchemaDBID + 29,
 	tableOptimizerTrace:                     autoid.InformationSchemaDBID + 30,
 	tableTableSpaces:                        autoid.InformationSchemaDBID + 31,
-	tableCollationCharacterSetApplicability: autoid.InformationSchemaDBID + 32,
+	TableCollationCharacterSetApplicability: autoid.InformationSchemaDBID + 32,
 	tableProcesslist:                        autoid.InformationSchemaDBID + 33,
-	tableTiDBIndexes:                        autoid.InformationSchemaDBID + 34,
+	TableTiDBIndexes:                        autoid.InformationSchemaDBID + 34,
 	TableSlowQuery:                          autoid.InformationSchemaDBID + 35,
 	tableTiDBHotRegions:                     autoid.InformationSchemaDBID + 36,
 	tableTiKVStoreStatus:                    autoid.InformationSchemaDBID + 37,
@@ -177,6 +184,7 @@ var tableIDMap = map[string]int64{
 	TableMetricSummaryByLabel:               autoid.InformationSchemaDBID + 53,
 	TableMetricTables:                       autoid.InformationSchemaDBID + 54,
 	TableInspectionSummary:                  autoid.InformationSchemaDBID + 55,
+	TableInspectionRules:                    autoid.InformationSchemaDBID + 56,
 }
 
 type columnInfo struct {
@@ -925,6 +933,12 @@ var tableInspectionSummaryCols = []columnInfo{
 	{name: "MAX_VALUE", tp: mysql.TypeDouble, size: 22, decimal: 6},
 }
 
+var tableInspectionRulesCols = []columnInfo{
+	{name: "NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "TYPE", tp: mysql.TypeVarchar, size: 64},
+	{name: "COMMENT", tp: mysql.TypeVarchar, size: 256},
+}
+
 var tableMetricTablesCols = []columnInfo{
 	{name: "TABLE_NAME", tp: mysql.TypeVarchar, size: 64},
 	{name: "PROMQL", tp: mysql.TypeVarchar, size: 64},
@@ -1122,59 +1136,6 @@ func dataForTiKVStoreStatus(ctx sessionctx.Context) (records [][]types.Datum, er
 	return records, nil
 }
 
-func dataForCharacterSets() (records [][]types.Datum) {
-
-	charsets := charset.GetSupportedCharsets()
-
-	for _, charset := range charsets {
-
-		records = append(records,
-			types.MakeDatums(charset.Name, charset.DefaultCollation, charset.Desc, charset.Maxlen),
-		)
-
-	}
-
-	return records
-
-}
-
-func dataForCollations() (records [][]types.Datum) {
-
-	collations := charset.GetSupportedCollations()
-
-	for _, collation := range collations {
-
-		isDefault := ""
-		if collation.IsDefault {
-			isDefault = "Yes"
-		}
-
-		records = append(records,
-			types.MakeDatums(collation.Name, collation.CharsetName, collation.ID, isDefault, "Yes", 1),
-		)
-
-	}
-
-	return records
-
-}
-
-func dataForCollationCharacterSetApplicability() (records [][]types.Datum) {
-
-	collations := charset.GetSupportedCollations()
-
-	for _, collation := range collations {
-
-		records = append(records,
-			types.MakeDatums(collation.Name, collation.CharsetName),
-		)
-
-	}
-
-	return records
-
-}
-
 func dataForSessionVar(ctx sessionctx.Context) (records [][]types.Datum, err error) {
 	sessionVars := ctx.GetSessionVars()
 	for _, v := range variable.SysVars {
@@ -1221,20 +1182,6 @@ func dataForProcesslist(ctx sessionctx.Context) [][]types.Datum {
 		record := types.MakeDatums(rows...)
 		records = append(records, record)
 	}
-	return records
-}
-
-func dataForEngines() (records [][]types.Datum) {
-	records = append(records,
-		types.MakeDatums(
-			"InnoDB",  // Engine
-			"DEFAULT", // Support
-			"Supports transactions, row-level locking, and foreign keys", // Comment
-			"YES", // Transactions
-			"YES", // XA
-			"YES", // Savepoints
-		),
-	)
 	return records
 }
 
@@ -1503,77 +1450,6 @@ func GetShardingInfo(dbInfo *model.DBInfo, tableInfo *model.TableInfo) interface
 		shardingInfo = "SHARD_BITS=" + strconv.Itoa(int(tableInfo.ShardRowIDBits))
 	}
 	return shardingInfo
-}
-
-func dataForIndexes(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Datum, error) {
-	checker := privilege.GetPrivilegeManager(ctx)
-	var rows [][]types.Datum
-	for _, schema := range schemas {
-		for _, tb := range schema.Tables {
-			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, tb.Name.L, "", mysql.AllPrivMask) {
-				continue
-			}
-
-			if tb.PKIsHandle {
-				var pkCol *model.ColumnInfo
-				for _, col := range tb.Cols() {
-					if mysql.HasPriKeyFlag(col.Flag) {
-						pkCol = col
-						break
-					}
-				}
-				record := types.MakeDatums(
-					schema.Name.O, // TABLE_SCHEMA
-					tb.Name.O,     // TABLE_NAME
-					0,             // NON_UNIQUE
-					"PRIMARY",     // KEY_NAME
-					1,             // SEQ_IN_INDEX
-					pkCol.Name.O,  // COLUMN_NAME
-					nil,           // SUB_PART
-					"",            // INDEX_COMMENT
-					"NULL",        // Expression
-					0,             // INDEX_ID
-				)
-				rows = append(rows, record)
-			}
-			for _, idxInfo := range tb.Indices {
-				if idxInfo.State != model.StatePublic {
-					continue
-				}
-				for i, col := range idxInfo.Columns {
-					nonUniq := 1
-					if idxInfo.Unique {
-						nonUniq = 0
-					}
-					var subPart interface{}
-					if col.Length != types.UnspecifiedLength {
-						subPart = col.Length
-					}
-					colName := col.Name.O
-					expression := "NULL"
-					tblCol := tb.Columns[col.Offset]
-					if tblCol.Hidden {
-						colName = "NULL"
-						expression = fmt.Sprintf("(%s)", tblCol.GeneratedExprString)
-					}
-					record := types.MakeDatums(
-						schema.Name.O,   // TABLE_SCHEMA
-						tb.Name.O,       // TABLE_NAME
-						nonUniq,         // NON_UNIQUE
-						idxInfo.Name.O,  // KEY_NAME
-						i+1,             // SEQ_IN_INDEX
-						colName,         // COLUMN_NAME
-						subPart,         // SUB_PART
-						idxInfo.Comment, // INDEX_COMMENT
-						expression,      // Expression
-						idxInfo.ID,      // INDEX_ID
-					)
-					rows = append(rows, record)
-				}
-			}
-		}
-	}
-	return rows, nil
 }
 
 func dataForColumns(ctx sessionctx.Context, schemas []*model.DBInfo) [][]types.Datum {
@@ -2404,8 +2280,8 @@ var tableNameToColumns = map[string][]columnInfo{
 	tableColumns:                            columnsCols,
 	tableColumnStatistics:                   columnStatisticsCols,
 	tableStatistics:                         statisticsCols,
-	tableCharacterSets:                      charsetCols,
-	tableCollations:                         collationsCols,
+	TableCharacterSets:                      charsetCols,
+	TableCollations:                         collationsCols,
 	tableFiles:                              filesCols,
 	tableProfiling:                          profilingCols,
 	tablePartitions:                         partitionsCols,
@@ -2419,7 +2295,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	tableSchemaPrivileges:                   tableSchemaPrivilegesCols,
 	tableTablePrivileges:                    tableTablePrivilegesCols,
 	tableColumnPrivileges:                   tableColumnPrivilegesCols,
-	tableEngines:                            tableEnginesCols,
+	TableEngines:                            tableEnginesCols,
 	TableViews:                              tableViewsCols,
 	tableRoutines:                           tableRoutinesCols,
 	tableParameters:                         tableParametersCols,
@@ -2429,9 +2305,9 @@ var tableNameToColumns = map[string][]columnInfo{
 	tableSessionStatus:                      tableSessionStatusCols,
 	tableOptimizerTrace:                     tableOptimizerTraceCols,
 	tableTableSpaces:                        tableTableSpacesCols,
-	tableCollationCharacterSetApplicability: tableCollationCharacterSetApplicabilityCols,
+	TableCollationCharacterSetApplicability: tableCollationCharacterSetApplicabilityCols,
 	tableProcesslist:                        tableProcesslistCols,
-	tableTiDBIndexes:                        tableTiDBIndexesCols,
+	TableTiDBIndexes:                        tableTiDBIndexesCols,
 	TableSlowQuery:                          slowQueryCols,
 	tableTiDBHotRegions:                     tableTiDBHotRegionsCols,
 	tableTiKVStoreStatus:                    tableTiKVStoreStatusCols,
@@ -2451,6 +2327,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableMetricSummaryByLabel:               tableMetricSummaryByLabelCols,
 	TableMetricTables:                       tableMetricTablesCols,
 	TableInspectionSummary:                  tableInspectionSummaryCols,
+	TableInspectionRules:                    tableInspectionRulesCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
@@ -2493,16 +2370,10 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 	switch it.meta.Name.O {
 	case tableTables:
 		fullRows, err = dataForTables(ctx, dbs)
-	case tableTiDBIndexes:
-		fullRows, err = dataForIndexes(ctx, dbs)
 	case tableColumns:
 		fullRows = dataForColumns(ctx, dbs)
 	case tableStatistics:
 		fullRows = dataForStatistics(ctx, dbs)
-	case tableCharacterSets:
-		fullRows = dataForCharacterSets()
-	case tableCollations:
-		fullRows = dataForCollations()
 	case tableSessionVar:
 		fullRows, err = dataForSessionVar(ctx)
 	case tableConstraints:
@@ -2520,8 +2391,6 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 	case tablePlugins, tableTriggers:
 	case tableUserPrivileges:
 		fullRows = dataForUserPrivileges(ctx)
-	case tableEngines:
-		fullRows = dataForEngines()
 	case tableRoutines:
 	// TODO: Fill the following tables.
 	case tableSchemaPrivileges:
@@ -2534,8 +2403,6 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 	case tableSessionStatus:
 	case tableOptimizerTrace:
 	case tableTableSpaces:
-	case tableCollationCharacterSetApplicability:
-		fullRows = dataForCollationCharacterSetApplicability()
 	case tableProcesslist:
 		fullRows = dataForProcesslist(ctx)
 	case tableTiDBHotRegions:

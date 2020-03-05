@@ -311,6 +311,41 @@ func (s *testIntegrationSuite) TestSelPushDownTiFlash(c *C) {
 	))
 }
 
+func (s *testIntegrationSuite) TestIssue15110(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists crm_rd_150m")
+	tk.MustExec(`CREATE TABLE crm_rd_150m (
+	product varchar(256) DEFAULT NULL,
+		uks varchar(16) DEFAULT NULL,
+		brand varchar(256) DEFAULT NULL,
+		cin varchar(16) DEFAULT NULL,
+		created_date timestamp NULL DEFAULT NULL,
+		quantity int(11) DEFAULT NULL,
+		amount decimal(11,0) DEFAULT NULL,
+		pl_date timestamp NULL DEFAULT NULL,
+		customer_first_date timestamp NULL DEFAULT NULL,
+		recent_date timestamp NULL DEFAULT NULL
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin;`)
+
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	c.Assert(exists, IsTrue)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "crm_rd_150m" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
+	tk.MustExec("explain SELECT count(*) FROM crm_rd_150m dataset_48 WHERE (CASE WHEN (month(dataset_48.customer_first_date)) <= 30 THEN '新客' ELSE NULL END) IS NOT NULL;")
+}
+
 func (s *testIntegrationSuite) TestReadFromStorageHint(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
