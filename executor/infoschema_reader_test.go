@@ -69,6 +69,13 @@ func (s *testInfoschemaTableSuite) TestSchemataTables(c *C) {
 		testkit.Rows("def INFORMATION_SCHEMA utf8mb4 utf8mb4_bin <nil>", "def mysql utf8mb4 utf8mb4_bin <nil>"))
 }
 
+func (s *testInfoschemaTableSuite) TestTableIDAndIndexID(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("drop table if exists test.t")
+	tk.MustExec("create table test.t (a int, b int, primary key(a), key k1(b))")
+	tk.MustQuery("select index_id from information_schema.tidb_indexes where table_schema = 'test' and table_name = 't'").Check(testkit.Rows("0", "1"))
+}
+
 func (s *testInfoschemaTableSuite) TestSchemataCharacterSet(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("CREATE DATABASE `foo` DEFAULT CHARACTER SET = 'utf8mb4'")
@@ -82,4 +89,25 @@ func (s *testInfoschemaTableSuite) TestViews(c *C) {
 	tk.MustExec("CREATE DEFINER='root'@'localhost' VIEW test.v1 AS SELECT 1")
 	tk.MustQuery("SELECT * FROM information_schema.views WHERE table_schema='test' AND table_name='v1'").Check(testkit.Rows("def test v1 SELECT 1 CASCADED NO root@localhost DEFINER utf8mb4 utf8mb4_bin"))
 	tk.MustQuery("SELECT table_catalog, table_schema, table_name, table_type, engine, version, row_format, table_rows, avg_row_length, data_length, max_data_length, index_length, data_free, auto_increment, update_time, check_time, table_collation, checksum, create_options, table_comment FROM information_schema.tables WHERE table_schema='test' AND table_name='v1'").Check(testkit.Rows("def test v1 VIEW <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> VIEW"))
+}
+
+func (s *testInfoschemaTableSuite) TestEngines(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustQuery("select * from information_schema.ENGINES;").Check(testkit.Rows("InnoDB DEFAULT Supports transactions, row-level locking, and foreign keys YES YES YES"))
+}
+
+func (s *testInfoschemaTableSuite) TestCharacterSetCollations(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	// The description column is not important
+	tk.MustQuery("SELECT default_collate_name, maxlen FROM information_schema.character_sets ORDER BY character_set_name").Check(
+		testkit.Rows("ascii_bin 1", "binary 1", "latin1_bin 1", "utf8_bin 3", "utf8mb4_bin 4"))
+
+	// The is_default column is not important
+	// but the id's are used by client libraries and must be stable
+	tk.MustQuery("SELECT character_set_name, id, sortlen FROM information_schema.collations ORDER BY collation_name").Check(
+		testkit.Rows("ascii 65 1", "binary 63 1", "latin1 47 1", "utf8 83 1", "utf8mb4 46 1"))
+
+	tk.MustQuery("select * from information_schema.COLLATION_CHARACTER_SET_APPLICABILITY where COLLATION_NAME='utf8mb4_bin';").Check(
+		testkit.Rows("utf8mb4_bin utf8mb4"))
 }

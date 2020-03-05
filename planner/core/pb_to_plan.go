@@ -172,9 +172,9 @@ func (b *PBPlanBuilder) pbToAgg(e *tipb.Executor, isStreamAgg bool) (PhysicalPla
 	baseAgg.schema = schema
 	var partialAgg PhysicalPlan
 	if isStreamAgg {
-		partialAgg = baseAgg.initForHash(b.sctx, nil, 0)
-	} else {
 		partialAgg = baseAgg.initForStream(b.sctx, nil, 0)
+	} else {
+		partialAgg = baseAgg.initForHash(b.sctx, nil, 0)
 	}
 	return partialAgg, nil
 }
@@ -194,9 +194,8 @@ func (b *PBPlanBuilder) buildAggSchema(aggFuncs []*aggregation.AggFuncDesc, grou
 func (b *PBPlanBuilder) getAggInfo(executor *tipb.Executor) ([]*aggregation.AggFuncDesc, []expression.Expression, error) {
 	var err error
 	aggFuncs := make([]*aggregation.AggFuncDesc, 0, len(executor.Aggregation.AggFunc))
-	sc := b.sctx.GetSessionVars().StmtCtx
 	for _, expr := range executor.Aggregation.AggFunc {
-		aggFunc, err := aggregation.PBExprToAggFuncDesc(sc, expr, b.tps)
+		aggFunc, err := aggregation.PBExprToAggFuncDesc(b.sctx, expr, b.tps)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}

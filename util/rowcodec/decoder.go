@@ -53,6 +53,7 @@ type ColInfo struct {
 	Flen    int
 	Decimal int
 	Elems   []string
+	Collate string
 }
 
 // DatumMapDecoder decodes the row to datum map.
@@ -131,8 +132,9 @@ func (decoder *DatumMapDecoder) decodeColDatum(col *ColInfo, colData []byte) (ty
 			return d, err
 		}
 		d.SetFloat64(fVal)
-	case mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeString,
-		mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+	case mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeString:
+		d.SetString(string(colData), col.Collate)
+	case mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		d.SetBytes(colData)
 	case mysql.TypeNewDecimal:
 		_, dec, precision, frac, err := codec.DecodeDecimal(colData)
@@ -168,13 +170,13 @@ func (decoder *DatumMapDecoder) decodeColDatum(col *ColInfo, colData []byte) (ty
 		if err != nil {
 			enum = types.Enum{}
 		}
-		d.SetMysqlEnum(enum)
+		d.SetMysqlEnum(enum, col.Collate)
 	case mysql.TypeSet:
 		set, err := types.ParseSetValue(col.Elems, decodeUint(colData))
 		if err != nil {
 			return d, err
 		}
-		d.SetMysqlSet(set)
+		d.SetMysqlSet(set, col.Collate)
 	case mysql.TypeBit:
 		byteSize := (col.Flen + 7) >> 3
 		d.SetMysqlBit(types.NewBinaryLiteralFromUint(decodeUint(colData), byteSize))

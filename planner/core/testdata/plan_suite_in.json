@@ -555,5 +555,19 @@
       "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by 1+t1.a+3",
       "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by 3*t1.a"
     ]
+  },
+  {
+    "name": "TestInlineProjection",
+    "cases":[
+      "select /*+ HASH_JOIN(t1) */ t1.b, t2.b from t1, t2 where t1.a = t2.a;",
+      "select /*+ HASH_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;",
+      "select /*+ HASH_JOIN(t1) */ t1.b, t2.b from t1 left outer join t2 on t1.a = t2.a;",
+      "select /*+ HASH_JOIN(t1) */ t1.b, t2.b from t1 right outer join t2 on t1.a = t2.a;",
+      "select 1 from (select /*+ HASH_JOIN(t1) */ t1.a in (select t2.a from t2) from t1) x;",
+      "select 1 from (select /*+ HASH_JOIN(t1) */ t1.a not in (select t2.a from t2) from t1) x;",
+      "select /*+ INL_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;",
+      "select /*+ INL_HASH_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;",
+      "select /*+ INL_MERGE_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;"
+    ]
   }
 ]

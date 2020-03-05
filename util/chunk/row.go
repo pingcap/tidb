@@ -14,12 +14,9 @@
 package chunk
 
 import (
-	"unsafe"
-
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
-	"github.com/pingcap/tidb/util/hack"
 )
 
 // Row represents a row of data, can be used to access values.
@@ -89,14 +86,7 @@ func (r Row) GetDuration(colIdx int, fillFsp int) types.Duration {
 }
 
 func (r Row) getNameValue(colIdx int) (string, uint64) {
-	col := r.c.columns[colIdx]
-	start, end := col.offsets[r.idx], col.offsets[r.idx+1]
-	if start == end {
-		return "", 0
-	}
-	val := *(*uint64)(unsafe.Pointer(&col.data[start]))
-	name := string(hack.String(col.data[start+8 : end]))
-	return name, val
+	return r.c.columns[colIdx].getNameValue(r.idx)
 }
 
 // GetEnum returns the Enum value with the colIdx.
@@ -156,8 +146,11 @@ func (r Row) GetDatum(colIdx int, tp *types.FieldType) types.Datum {
 		if !r.IsNull(colIdx) {
 			d.SetFloat64(r.GetFloat64(colIdx))
 		}
-	case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString,
-		mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+	case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString:
+		if !r.IsNull(colIdx) {
+			d.SetString(r.GetString(colIdx), tp.Collate)
+		}
+	case mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		if !r.IsNull(colIdx) {
 			d.SetBytes(r.GetBytes(colIdx))
 		}
@@ -186,11 +179,11 @@ func (r Row) GetDatum(colIdx int, tp *types.FieldType) types.Datum {
 		}
 	case mysql.TypeEnum:
 		if !r.IsNull(colIdx) {
-			d.SetMysqlEnum(r.GetEnum(colIdx))
+			d.SetMysqlEnum(r.GetEnum(colIdx), tp.Collate)
 		}
 	case mysql.TypeSet:
 		if !r.IsNull(colIdx) {
-			d.SetMysqlSet(r.GetSet(colIdx))
+			d.SetMysqlSet(r.GetSet(colIdx), tp.Collate)
 		}
 	case mysql.TypeBit:
 		if !r.IsNull(colIdx) {

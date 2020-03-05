@@ -765,7 +765,7 @@ func setSetDefaultValue(v types.Datum, col *table.Column) (string, error) {
 		if err != nil {
 			return "", errors.Trace(err)
 		}
-		v.SetMysqlSet(setVal)
+		v.SetMysqlSet(setVal, col.Collate)
 		return v.ToString()
 	}
 
@@ -799,7 +799,7 @@ func setSetDefaultValue(v types.Datum, col *table.Column) (string, error) {
 	if err != nil {
 		return "", ErrInvalidDefaultValue.GenWithStackByArgs(col.Name.O)
 	}
-	v.SetMysqlSet(setVal)
+	v.SetMysqlSet(setVal, col.Collate)
 
 	return v.ToString()
 }
@@ -1160,7 +1160,7 @@ func setTableAutoRandomBits(tbInfo *model.TableInfo, colDefs []*ast.ColumnDef) e
 			if autoRandBits == 0 {
 				return ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomNonPositive)
 			} else if autoRandBits >= maxFieldTypeBitsLength {
-				return ErrInvalidAutoRandom.GenWithStackByArgs(fmt.Sprintf(autoid.AutoRandomOverflowErrMsg, autoRandBits, maxFieldTypeBitsLength))
+				return ErrInvalidAutoRandom.GenWithStackByArgs(fmt.Sprintf(autoid.AutoRandomOverflowErrMsg, col.Name.Name.L, maxFieldTypeBitsLength, autoRandBits, col.Name.Name.L, maxFieldTypeBitsLength-1))
 			}
 			tbInfo.AutoRandomBits = autoRandBits
 		}
