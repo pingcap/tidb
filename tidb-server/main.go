@@ -109,7 +109,7 @@ var (
 	configPath          = flag.String(nmConfig, "", "config file path")
 	configCheck         = flagBoolean(nmConfigCheck, false, "check config file validity and exit")
 	configStrict        = flagBoolean(nmConfigStrict, false, "enforce config file validity")
-	enableDynamicConfig = flagBoolean(nmEnableDynamicConfig, true, "enable update configs dynamically")
+	enableDynamicConfig = flagBoolean(nmEnableDynamicConfig, true, "Enable dynamic configuration change")
 
 	// Base
 	store            = flag.String(nmStore, "mocktikv", "registered store name, [tikv, mocktikv]")
