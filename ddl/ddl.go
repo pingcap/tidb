@@ -463,9 +463,11 @@ func (d *ddl) start(ctx context.Context, ctxPool *pools.ResourcePool) {
 		tidbutil.WithRecovery(
 			func() { d.limitDDLJobs() },
 			func(r interface{}) {
-				logutil.BgLogger().Error("[ddl] limit DDL jobs meet panic",
-					zap.String("ID", d.uuid), zap.Reflect("r", r), zap.Stack("stack trace"))
-				metrics.PanicCounter.WithLabelValues(metrics.LabelDDL).Inc()
+				if r != nil {
+					logutil.BgLogger().Error("[ddl] limit DDL jobs meet panic",
+						zap.String("ID", d.uuid), zap.Reflect("r", r), zap.Stack("stack trace"))
+					metrics.PanicCounter.WithLabelValues(metrics.LabelDDL).Inc()
+				}
 			})
 	}()
 
