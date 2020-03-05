@@ -79,16 +79,17 @@ const (
 	// TableEngines is the string constant of infoschema table
 	TableEngines = "ENGINES"
 	// TableViews is the string constant of infoschema table
-	TableViews                              = "VIEWS"
-	tableRoutines                           = "ROUTINES"
-	tableParameters                         = "PARAMETERS"
-	tableEvents                             = "EVENTS"
-	tableGlobalStatus                       = "GLOBAL_STATUS"
-	tableGlobalVariables                    = "GLOBAL_VARIABLES"
-	tableSessionStatus                      = "SESSION_STATUS"
-	tableOptimizerTrace                     = "OPTIMIZER_TRACE"
-	tableTableSpaces                        = "TABLESPACES"
-	tableCollationCharacterSetApplicability = "COLLATION_CHARACTER_SET_APPLICABILITY"
+	TableViews           = "VIEWS"
+	tableRoutines        = "ROUTINES"
+	tableParameters      = "PARAMETERS"
+	tableEvents          = "EVENTS"
+	tableGlobalStatus    = "GLOBAL_STATUS"
+	tableGlobalVariables = "GLOBAL_VARIABLES"
+	tableSessionStatus   = "SESSION_STATUS"
+	tableOptimizerTrace  = "OPTIMIZER_TRACE"
+	tableTableSpaces     = "TABLESPACES"
+	// TableCollationCharacterSetApplicability is the string constant of infoschema memory table.
+	TableCollationCharacterSetApplicability = "COLLATION_CHARACTER_SET_APPLICABILITY"
 	tableProcesslist                        = "PROCESSLIST"
 	// TableTiDBIndexes is the string constant of infoschema table
 	TableTiDBIndexes      = "TIDB_INDEXES"
@@ -123,6 +124,8 @@ const (
 	TableMetricSummaryByLabel = "METRICS_SUMMARY_BY_LABEL"
 	// TableInspectionSummary is the string constant of inspection summary table
 	TableInspectionSummary = "INSPECTION_SUMMARY"
+	// TableInspectionRules is the string constant of currently implemented inspection and summary rules
+	TableInspectionRules = "INSPECTION_RULES"
 )
 
 var tableIDMap = map[string]int64{
@@ -157,7 +160,7 @@ var tableIDMap = map[string]int64{
 	tableSessionStatus:                      autoid.InformationSchemaDBID + 29,
 	tableOptimizerTrace:                     autoid.InformationSchemaDBID + 30,
 	tableTableSpaces:                        autoid.InformationSchemaDBID + 31,
-	tableCollationCharacterSetApplicability: autoid.InformationSchemaDBID + 32,
+	TableCollationCharacterSetApplicability: autoid.InformationSchemaDBID + 32,
 	tableProcesslist:                        autoid.InformationSchemaDBID + 33,
 	TableTiDBIndexes:                        autoid.InformationSchemaDBID + 34,
 	TableSlowQuery:                          autoid.InformationSchemaDBID + 35,
@@ -181,6 +184,7 @@ var tableIDMap = map[string]int64{
 	TableMetricSummaryByLabel:               autoid.InformationSchemaDBID + 53,
 	TableMetricTables:                       autoid.InformationSchemaDBID + 54,
 	TableInspectionSummary:                  autoid.InformationSchemaDBID + 55,
+	TableInspectionRules:                    autoid.InformationSchemaDBID + 56,
 }
 
 type columnInfo struct {
@@ -929,6 +933,12 @@ var tableInspectionSummaryCols = []columnInfo{
 	{name: "MAX_VALUE", tp: mysql.TypeDouble, size: 22, decimal: 6},
 }
 
+var tableInspectionRulesCols = []columnInfo{
+	{name: "NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "TYPE", tp: mysql.TypeVarchar, size: 64},
+	{name: "COMMENT", tp: mysql.TypeVarchar, size: 256},
+}
+
 var tableMetricTablesCols = []columnInfo{
 	{name: "TABLE_NAME", tp: mysql.TypeVarchar, size: 64},
 	{name: "PROMQL", tp: mysql.TypeVarchar, size: 64},
@@ -1124,22 +1134,6 @@ func dataForTiKVStoreStatus(ctx sessionctx.Context) (records [][]types.Datum, er
 		records = append(records, row)
 	}
 	return records, nil
-}
-
-func dataForCollationCharacterSetApplicability() (records [][]types.Datum) {
-
-	collations := charset.GetSupportedCollations()
-
-	for _, collation := range collations {
-
-		records = append(records,
-			types.MakeDatums(collation.Name, collation.CharsetName),
-		)
-
-	}
-
-	return records
-
 }
 
 func dataForSessionVar(ctx sessionctx.Context) (records [][]types.Datum, err error) {
@@ -2311,7 +2305,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	tableSessionStatus:                      tableSessionStatusCols,
 	tableOptimizerTrace:                     tableOptimizerTraceCols,
 	tableTableSpaces:                        tableTableSpacesCols,
-	tableCollationCharacterSetApplicability: tableCollationCharacterSetApplicabilityCols,
+	TableCollationCharacterSetApplicability: tableCollationCharacterSetApplicabilityCols,
 	tableProcesslist:                        tableProcesslistCols,
 	TableTiDBIndexes:                        tableTiDBIndexesCols,
 	TableSlowQuery:                          slowQueryCols,
@@ -2333,6 +2327,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableMetricSummaryByLabel:               tableMetricSummaryByLabelCols,
 	TableMetricTables:                       tableMetricTablesCols,
 	TableInspectionSummary:                  tableInspectionSummaryCols,
+	TableInspectionRules:                    tableInspectionRulesCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
@@ -2408,8 +2403,6 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 	case tableSessionStatus:
 	case tableOptimizerTrace:
 	case tableTableSpaces:
-	case tableCollationCharacterSetApplicability:
-		fullRows = dataForCollationCharacterSetApplicability()
 	case tableProcesslist:
 		fullRows = dataForProcesslist(ctx)
 	case tableTiDBHotRegions:

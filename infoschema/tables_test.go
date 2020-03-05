@@ -454,8 +454,6 @@ func (sm *mockSessionManager) UpdateTLSConfig(cfg *tls.Config) {}
 func (s *testTableSuite) TestSomeTables(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
-	tk.MustQuery("select * from information_schema.COLLATION_CHARACTER_SET_APPLICABILITY where COLLATION_NAME='utf8mb4_bin';").Check(
-		testkit.Rows("utf8mb4_bin utf8mb4"))
 	tk.MustQuery("select * from information_schema.SESSION_VARIABLES where VARIABLE_NAME='tidb_retry_limit';").Check(testkit.Rows("tidb_retry_limit 10"))
 	tk.MustQuery("select * from information_schema.TABLE_CONSTRAINTS where TABLE_NAME='gc_delete_range';").Check(testkit.Rows("def mysql delete_range_index mysql gc_delete_range UNIQUE"))
 
