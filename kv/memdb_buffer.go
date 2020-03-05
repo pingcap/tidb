@@ -189,7 +189,7 @@ type BufferBatchGetter struct {
 	snapshot Snapshot
 }
 
-// NewBufferBatchGetter gets
+// NewBufferBatchGetter creates a new BufferBatchGetter.
 func NewBufferBatchGetter(buffer MemBuffer, snapshot Snapshot) *BufferBatchGetter {
 	return &BufferBatchGetter{buffer: buffer, snapshot: snapshot}
 }
