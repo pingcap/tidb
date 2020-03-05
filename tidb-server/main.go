@@ -69,34 +69,35 @@ import (
 
 // Flag Names
 const (
-	nmVersion          = "V"
-	nmConfig           = "config"
-	nmConfigCheck      = "config-check"
-	nmConfigStrict     = "config-strict"
-	nmStore            = "store"
-	nmStorePath        = "path"
-	nmTempStoragePath  = "tmp-storage-path"
-	nmHost             = "host"
-	nmAdvertiseAddress = "advertise-address"
-	nmPort             = "P"
-	nmCors             = "cors"
-	nmSocket           = "socket"
-	nmEnableBinlog     = "enable-binlog"
-	nmRunDDL           = "run-ddl"
-	nmLogLevel         = "L"
-	nmLogFile          = "log-file"
-	nmLogSlowQuery     = "log-slow-query"
-	nmReportStatus     = "report-status"
-	nmStatusHost       = "status-host"
-	nmStatusPort       = "status"
-	nmMetricsAddr      = "metrics-addr"
-	nmMetricsInterval  = "metrics-interval"
-	nmDdlLease         = "lease"
-	nmTokenLimit       = "token-limit"
-	nmPluginDir        = "plugin-dir"
-	nmPluginLoad       = "plugin-load"
-	nmRepairMode       = "repair-mode"
-	nmRepairList       = "repair-list"
+	nmVersion             = "V"
+	nmConfig              = "config"
+	nmConfigCheck         = "config-check"
+	nmConfigStrict        = "config-strict"
+	nmEnableDynamicConfig = "enable-dynamic-config"
+	nmStore               = "store"
+	nmStorePath           = "path"
+	nmTempStoragePath     = "tmp-storage-path"
+	nmHost                = "host"
+	nmAdvertiseAddress    = "advertise-address"
+	nmPort                = "P"
+	nmCors                = "cors"
+	nmSocket              = "socket"
+	nmEnableBinlog        = "enable-binlog"
+	nmRunDDL              = "run-ddl"
+	nmLogLevel            = "L"
+	nmLogFile             = "log-file"
+	nmLogSlowQuery        = "log-slow-query"
+	nmReportStatus        = "report-status"
+	nmStatusHost          = "status-host"
+	nmStatusPort          = "status"
+	nmMetricsAddr         = "metrics-addr"
+	nmMetricsInterval     = "metrics-interval"
+	nmDdlLease            = "lease"
+	nmTokenLimit          = "token-limit"
+	nmPluginDir           = "plugin-dir"
+	nmPluginLoad          = "plugin-load"
+	nmRepairMode          = "repair-mode"
+	nmRepairList          = "repair-list"
 
 	nmProxyProtocolNetworks      = "proxy-protocol-networks"
 	nmProxyProtocolHeaderTimeout = "proxy-protocol-header-timeout"
@@ -104,10 +105,11 @@ const (
 )
 
 var (
-	version      = flagBoolean(nmVersion, false, "print version information and exit")
-	configPath   = flag.String(nmConfig, "", "config file path")
-	configCheck  = flagBoolean(nmConfigCheck, false, "check config file validity and exit")
-	configStrict = flagBoolean(nmConfigStrict, false, "enforce config file validity")
+	version             = flagBoolean(nmVersion, false, "print version information and exit")
+	configPath          = flag.String(nmConfig, "", "config file path")
+	configCheck         = flagBoolean(nmConfigCheck, false, "check config file validity and exit")
+	configStrict        = flagBoolean(nmConfigStrict, false, "enforce config file validity")
+	enableDynamicConfig = flagBoolean(nmEnableDynamicConfig, true, "enable update configs dynamically")
 
 	// Base
 	store            = flag.String(nmStore, "mocktikv", "registered store name, [tikv, mocktikv]")
@@ -448,6 +450,9 @@ func overrideConfig(cfg *config.Config) {
 		if cfg.RepairMode {
 			cfg.RepairTableList = stringToList(*repairList)
 		}
+	}
+	if actualFlags[nmEnableDynamicConfig] {
+		cfg.EnableDynamicConfig = *enableDynamicConfig
 	}
 
 	// Log
