@@ -215,11 +215,6 @@ func (e *sum4Decimal) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart
 		if isNull {
 			continue
 		}
-		if p.notNullRowCount == 0 {
-			p.val = *input
-			p.notNullRowCount = 1
-			continue
-		}
 		newSum := new(types.MyDecimal)
 		err = types.DecimalSub(&p.val, input, newSum)
 		if err != nil {

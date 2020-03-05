@@ -304,11 +304,4 @@ func baseTestSlidingWindowFunctions(tk *testkit.TestKit) {
 	result.Check(testkit.Rows("M 6", "F 10", "F 14", "F 12", "M 9", "<nil> 21", "<nil> 21"))
 	result = tk.MustQuery("SELECT sex, SUM(id) OVER (ORDER BY id DESC RANGE BETWEEN 1 PRECEDING and 2 FOLLOWING) FROM t;")
 	result.Check(testkit.Rows("<nil> 21", "<nil> 21", "M 12", "F 14", "F 10", "F 6", "M 3"))
-
-	// Some failed test units
-	tk.MustExec("drop table t")
-	tk.MustExec("create table t(a int, b date)")
-	tk.MustExec("insert into t values (null,null),(1,20190201),(2,20190202),(3,20190203),(5,20190205)")
-	result = tk.MustQuery("select a, sum(a) over(order by a desc range between 1 preceding and 2 following) from t")
-	result.Check(testkit.Rows("5 8", "3 6", "2 6", "1 3", "<nil> <nil>"))
 }
