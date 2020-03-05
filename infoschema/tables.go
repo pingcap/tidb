@@ -91,13 +91,14 @@ const (
 	// TableCollationCharacterSetApplicability is the string constant of infoschema memory table.
 	TableCollationCharacterSetApplicability = "COLLATION_CHARACTER_SET_APPLICABILITY"
 	tableProcesslist                        = "PROCESSLIST"
-	tableTiDBIndexes                        = "TIDB_INDEXES"
-	tableTiDBHotRegions                     = "TIDB_HOT_REGIONS"
-	tableTiKVStoreStatus                    = "TIKV_STORE_STATUS"
-	tableAnalyzeStatus                      = "ANALYZE_STATUS"
-	tableTiKVRegionStatus                   = "TIKV_REGION_STATUS"
-	tableTiKVRegionPeers                    = "TIKV_REGION_PEERS"
-	tableTiDBServersInfo                    = "TIDB_SERVERS_INFO"
+	// TableTiDBIndexes is the string constant of infoschema table
+	TableTiDBIndexes      = "TIDB_INDEXES"
+	tableTiDBHotRegions   = "TIDB_HOT_REGIONS"
+	tableTiKVStoreStatus  = "TIKV_STORE_STATUS"
+	tableAnalyzeStatus    = "ANALYZE_STATUS"
+	tableTiKVRegionStatus = "TIKV_REGION_STATUS"
+	tableTiKVRegionPeers  = "TIKV_REGION_PEERS"
+	tableTiDBServersInfo  = "TIDB_SERVERS_INFO"
 	// TableSlowQuery is the string constant of slow query memory table.
 	TableSlowQuery = "SLOW_QUERY"
 	// TableClusterInfo is the string constant of cluster info memory table.
@@ -161,7 +162,7 @@ var tableIDMap = map[string]int64{
 	tableTableSpaces:                        autoid.InformationSchemaDBID + 31,
 	TableCollationCharacterSetApplicability: autoid.InformationSchemaDBID + 32,
 	tableProcesslist:                        autoid.InformationSchemaDBID + 33,
-	tableTiDBIndexes:                        autoid.InformationSchemaDBID + 34,
+	TableTiDBIndexes:                        autoid.InformationSchemaDBID + 34,
 	TableSlowQuery:                          autoid.InformationSchemaDBID + 35,
 	tableTiDBHotRegions:                     autoid.InformationSchemaDBID + 36,
 	tableTiKVStoreStatus:                    autoid.InformationSchemaDBID + 37,
@@ -1451,77 +1452,6 @@ func GetShardingInfo(dbInfo *model.DBInfo, tableInfo *model.TableInfo) interface
 	return shardingInfo
 }
 
-func dataForIndexes(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Datum, error) {
-	checker := privilege.GetPrivilegeManager(ctx)
-	var rows [][]types.Datum
-	for _, schema := range schemas {
-		for _, tb := range schema.Tables {
-			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, tb.Name.L, "", mysql.AllPrivMask) {
-				continue
-			}
-
-			if tb.PKIsHandle {
-				var pkCol *model.ColumnInfo
-				for _, col := range tb.Cols() {
-					if mysql.HasPriKeyFlag(col.Flag) {
-						pkCol = col
-						break
-					}
-				}
-				record := types.MakeDatums(
-					schema.Name.O, // TABLE_SCHEMA
-					tb.Name.O,     // TABLE_NAME
-					0,             // NON_UNIQUE
-					"PRIMARY",     // KEY_NAME
-					1,             // SEQ_IN_INDEX
-					pkCol.Name.O,  // COLUMN_NAME
-					nil,           // SUB_PART
-					"",            // INDEX_COMMENT
-					"NULL",        // Expression
-					0,             // INDEX_ID
-				)
-				rows = append(rows, record)
-			}
-			for _, idxInfo := range tb.Indices {
-				if idxInfo.State != model.StatePublic {
-					continue
-				}
-				for i, col := range idxInfo.Columns {
-					nonUniq := 1
-					if idxInfo.Unique {
-						nonUniq = 0
-					}
-					var subPart interface{}
-					if col.Length != types.UnspecifiedLength {
-						subPart = col.Length
-					}
-					colName := col.Name.O
-					expression := "NULL"
-					tblCol := tb.Columns[col.Offset]
-					if tblCol.Hidden {
-						colName = "NULL"
-						expression = fmt.Sprintf("(%s)", tblCol.GeneratedExprString)
-					}
-					record := types.MakeDatums(
-						schema.Name.O,   // TABLE_SCHEMA
-						tb.Name.O,       // TABLE_NAME
-						nonUniq,         // NON_UNIQUE
-						idxInfo.Name.O,  // KEY_NAME
-						i+1,             // SEQ_IN_INDEX
-						colName,         // COLUMN_NAME
-						subPart,         // SUB_PART
-						idxInfo.Comment, // INDEX_COMMENT
-						expression,      // Expression
-						idxInfo.ID,      // INDEX_ID
-					)
-					rows = append(rows, record)
-				}
-			}
-		}
-	}
-	return rows, nil
-}
-
 func dataForColumns(ctx sessionctx.Context, schemas []*model.DBInfo) [][]types.Datum {
 	checker := privilege.GetPrivilegeManager(ctx)
 	var rows [][]types.Datum
@@ -2377,7 +2307,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	tableTableSpaces:                        tableTableSpacesCols,
 	TableCollationCharacterSetApplicability: tableCollationCharacterSetApplicabilityCols,
 	tableProcesslist:                        tableProcesslistCols,
-	tableTiDBIndexes:                        tableTiDBIndexesCols,
+	TableTiDBIndexes:                        tableTiDBIndexesCols,
 	TableSlowQuery:                          slowQueryCols,
 	tableTiDBHotRegions:                     tableTiDBHotRegionsCols,
 	tableTiKVStoreStatus:                    tableTiKVStoreStatusCols,
@@ -2440,8 +2370,6 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 	switch it.meta.Name.O {
 	case tableTables:
 		fullRows, err = dataForTables(ctx, dbs)
-	case tableTiDBIndexes:
-		fullRows, err = dataForIndexes(ctx, dbs)
 	case tableColumns:
 		fullRows = dataForColumns(ctx, dbs)
 	case tableStatistics:
