@@ -558,12 +558,16 @@ func (mvcc *MVCCLevelDB) pessimisticLockMutation(batch *leveldb.Batch, mutation 
 
 	// For pessimisticLockMutation, check the correspond rollback record, there may be rollbackLock
 	// operation between startTS and forUpdateTS
-	valDec, err := checkConflictValue(iter, mutation, forUpdateTS, startTS)
+	err = checkConflictValue(iter, mutation, forUpdateTS, startTS)
 	if err != nil {
 		return err
 	}
 	if lctx.returnValues {
-		lctx.values = append(lctx.values, valDec.value.value)
+		val, err := mvcc.getValue(mutation.Key, forUpdateTS, kvrpcpb.IsolationLevel_SI, nil)
+		if err != nil {
+			return err
+		}
+		lctx.values = append(lctx.values, val)
 	}
 
 	lock := mvccLock{
@@ -682,18 +686,18 @@ func (mvcc *MVCCLevelDB) Prewrite(req *kvrpcpb.PrewriteRequest) []error {
 	return errs
 }
 
-func checkConflictValue(iter *Iterator, m *kvrpcpb.Mutation, forUpdateTS uint64, startTS uint64) (dec *valueDecoder, err error) {
-	dec = &valueDecoder{
+func checkConflictValue(iter *Iterator, m *kvrpcpb.Mutation, forUpdateTS uint64, startTS uint64) error {
+	dec := &valueDecoder{
 		expectKey: m.Key,
 	}
 	ok, err := dec.Decode(iter)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
 
 	// Note that it's a write conflict here, even if the value is a rollback one.
 	if dec.value.commitTS >= forUpdateTS {
-		return nil, &ErrConflict{
+		return &ErrConflict{
 			StartTS:          forUpdateTS,
 			ConflictTS:       dec.value.startTS,
 			ConflictCommitTS: dec.value.commitTS,
@@ -706,13 +710,13 @@ func checkConflictValue(iter *Iterator, m *kvrpcpb.Mutation, forUpdateTS uint64,
 			if dec.value.valueType == typeRollback {
 				ok, err = dec.Decode(iter)
 				if err != nil {
-					return nil, errors.Trace(err)
+					return errors.Trace(err)
 				}
 			} else if dec.value.valueType == typeDelete {
 				break
 			} else {
 				if m.Op == kvrpcpb.Op_PessimisticLock {
-					return nil, &ErrKeyAlreadyExist{
+					return &ErrKeyAlreadyExist{
 						Key: m.Key,
 					}
 				}
@@ -725,7 +729,7 @@ func checkConflictValue(iter *Iterator, m *kvrpcpb.Mutation, forUpdateTS uint64,
 		info, ok, err1 := getTxnCommitInfo(iter, m.Key, startTS)
 		if err1 != nil {
 			err = errors.Trace(err1)
-			return nil, err
+			return err
 		}
 		if ok && info.commitTS == startTS {
 			logutil.BgLogger().Warn("rollback value found",
@@ -734,7 +738,7 @@ func checkConflictValue(iter *Iterator, m *kvrpcpb.Mutation, forUpdateTS uint64,
 				zap.Uint64("rollbacked.startTS", info.startTS),
 				zap.Uint64("rollbacked.commitTS", info.commitTS))
 			if info.valueType == typeRollback {
-				return nil, &ErrAlreadyRollbacked{
+				return &ErrAlreadyRollbacked{
 					startTS: startTS,
 					key:     m.Key,
 				}
@@ -742,7 +746,7 @@ func checkConflictValue(iter *Iterator, m *kvrpcpb.Mutation, forUpdateTS uint64,
 			panic(fmt.Sprintf("invalid value type %v not rollback", info.valueType))
 		}
 	}
-	return dec, nil
+	return nil
 }
 
 func prewriteMutation(db *leveldb.DB, batch *leveldb.Batch,
@@ -784,7 +788,7 @@ func prewriteMutation(db *leveldb.DB, batch *leveldb.Batch,
 		if isPessimisticLock {
 			return ErrAbort("pessimistic lock not found")
 		}
-		_, err = checkConflictValue(iter, mutation, startTS, 0)
+		err = checkConflictValue(iter, mutation, startTS, startTS)
 		if err != nil {
 			return err
 		}

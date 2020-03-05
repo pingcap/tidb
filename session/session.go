@@ -756,7 +756,13 @@ func (s *session) ExecRestrictedSQLWithContext(ctx context.Context, sql string) 
 		se.sessionVars.InspectionTableCache = cache
 		defer func() { se.sessionVars.InspectionTableCache = nil }()
 	}
-	defer s.sysSessionPool().Put(tmp)
+	defer func() {
+		if se != nil && se.GetSessionVars().StmtCtx.WarningCount() > 0 {
+			warnings := se.GetSessionVars().StmtCtx.GetWarnings()
+			s.GetSessionVars().StmtCtx.AppendWarnings(warnings)
+		}
+		s.sysSessionPool().Put(tmp)
+	}()
 	metrics.SessionRestrictedSQLCounter.Inc()
 
 	return execRestrictedSQL(ctx, se, sql)
