@@ -705,10 +705,10 @@ func (s *seqTestSuite) TestParallelHashAggClose(c *C) {
 	tk.MustExec("create table t(a int, b int)")
 	tk.MustExec("insert into t values(1,1),(2,2)")
 	// desc select sum(a) from (select cast(t.a as signed) as a, b from t) t group by b
-	// HashAgg_8              | 2.40  | root | group by:t.b, funcs:sum(t.a)
-	// └─Projection_9         | 3.00  | root | cast(test.t.a), test.t.b
-	//   └─TableReader_11     | 3.00  | root | data:TableScan_10
-	//     └─TableScan_10     | 3.00  | cop[tikv]  | table:t, range:[-inf,+inf], keep order:fa$se, stats:pseudo |
+	// HashAgg_8                | 2.40  | root       | group by:t.b, funcs:sum(t.a)
+	// └─Projection_9           | 3.00  | root       | cast(test.t.a), test.t.b
+	//   └─TableReader_11       | 3.00  | root       | data:TableFullScan_10
+	//     └─TableFullScan_10   | 3.00  | cop[tikv]  | table:t, keep order:fa$se, stats:pseudo |
 
 	// Goroutine should not leak when error happen.
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/parallelHashAggError", `return(true)`), IsNil)

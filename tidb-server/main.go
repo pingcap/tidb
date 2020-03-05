@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -74,6 +75,7 @@ const (
 	nmConfigStrict     = "config-strict"
 	nmStore            = "store"
 	nmStorePath        = "path"
+	nmTempStoragePath  = "tmp-storage-path"
 	nmHost             = "host"
 	nmAdvertiseAddress = "advertise-address"
 	nmPort             = "P"
@@ -110,6 +112,7 @@ var (
 	// Base
 	store            = flag.String(nmStore, "mocktikv", "registered store name, [tikv, mocktikv]")
 	storePath        = flag.String(nmStorePath, "/tmp/tidb", "tidb storage path")
+	tempStoragePath  = flag.String(nmTempStoragePath, filepath.Join(os.TempDir(), "tidb", "tmp-storage"), "tidb temporary storage path")
 	host             = flag.String(nmHost, "0.0.0.0", "tidb server host")
 	advertiseAddress = flag.String(nmAdvertiseAddress, "", "tidb server advertise IP")
 	port             = flag.String(nmPort, "4000", "tidb server port")
@@ -159,6 +162,13 @@ func main() {
 	registerMetrics()
 	config.InitializeConfig(*configPath, *configCheck, *configStrict, reloadConfig, overrideConfig)
 	if err := config.GetGlobalConfig().Valid(); err != nil {
+		absConfigPath := *configPath
+		if !filepath.IsAbs(absConfigPath) {
+			if tmp, err := filepath.Abs(absConfigPath); err == nil {
+				absConfigPath = tmp
+			}
+		}
+		fmt.Fprintln(os.Stderr, "load config file:", absConfigPath)
 		fmt.Fprintln(os.Stderr, "invalid config", err)
 		os.Exit(1)
 	}
@@ -356,8 +366,20 @@ func reloadConfig(nc, c *config.Config) {
 	if nc.Performance.PseudoEstimateRatio != c.Performance.PseudoEstimateRatio {
 		statistics.RatioOfPseudoEstimate.Store(nc.Performance.PseudoEstimateRatio)
 	}
+	if nc.Performance.MaxProcs != c.Performance.MaxProcs {
+		runtime.GOMAXPROCS(int(nc.Performance.MaxProcs))
+	}
 	if nc.TiKVClient.StoreLimit != c.TiKVClient.StoreLimit {
 		storeutil.StoreLimit.Store(nc.TiKVClient.StoreLimit)
+	}
+
+	if nc.PreparedPlanCache.Enabled != c.PreparedPlanCache.Enabled {
+		plannercore.SetPreparedPlanCache(nc.PreparedPlanCache.Enabled)
+	}
+	if nc.Log.Level != c.Log.Level {
+		if err := logutil.SetLevel(nc.Log.Level); err != nil {
+			logutil.BgLogger().Error("update log level error", zap.Error(err))
+		}
 	}
 }
 
@@ -394,6 +416,9 @@ func overrideConfig(cfg *config.Config) {
 	}
 	if actualFlags[nmStorePath] {
 		cfg.Path = *storePath
+	}
+	if actualFlags[nmTempStoragePath] {
+		cfg.TempStoragePath = *tempStoragePath
 	}
 	if actualFlags[nmSocket] {
 		cfg.Socket = *socket

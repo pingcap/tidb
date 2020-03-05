@@ -15,6 +15,7 @@ package executor_test
 
 import (
 	"context"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/mysql"
@@ -57,6 +58,8 @@ func (s *inspectionResultSuite) TestInspectionResult(c *C) {
 			types.MakeDatums("tidb", "192.168.3.23:4000", "ddl.lease", "2"),
 			types.MakeDatums("tidb", "192.168.3.24:4000", "ddl.lease", "1"),
 			types.MakeDatums("tidb", "192.168.3.25:4000", "ddl.lease", "1"),
+			types.MakeDatums("tidb", "192.168.3.24:4000", "log.slow-threshold", "0"),
+			types.MakeDatums("tidb", "192.168.3.25:4000", "log.slow-threshold", "1"),
 			types.MakeDatums("tikv", "192.168.3.32:26600", "coprocessor.high", "8"),
 			types.MakeDatums("tikv", "192.168.3.33:26600", "coprocessor.high", "8"),
 			types.MakeDatums("tikv", "192.168.3.34:26600", "coprocessor.high", "7"),
@@ -89,14 +92,17 @@ func (s *inspectionResultSuite) TestInspectionResult(c *C) {
 			types.MakeDatums("tidb", "192.168.1.13:1234", "memory", "swap", "used-percent", "0"),
 			types.MakeDatums("tikv", "192.168.1.21:1234", "memory", "swap", "used-percent", "0.6"),
 			types.MakeDatums("pd", "192.168.1.31:1234", "cpu", "cpu", "load1", "1.0"),
-			types.MakeDatums("pd", "192.168.1.32:1234", "cpu", "cpu", "load5", "0.6"),
-			types.MakeDatums("pd", "192.168.1.33:1234", "cpu", "cpu", "load15", "2.0"),
+			types.MakeDatums("pd", "192.168.1.32:1234", "cpu", "cpu", "load5", "2.0"),
+			types.MakeDatums("pd", "192.168.1.33:1234", "cpu", "cpu", "load15", "8.0"),
 		},
 	}
 	mockData[infoschema.TableClusterHardware] = variable.TableSnapshot{
 		Rows: [][]types.Datum{
 			types.MakeDatums("tikv", "192.168.1.22:1234", "disk", "sda", "used-percent", "80"),
 			types.MakeDatums("tikv", "192.168.1.23:1234", "disk", "sdb", "used-percent", "50"),
+			types.MakeDatums("pd", "192.168.1.31:1234", "cpu", "cpu", "cpu-logical-cores", "1"),
+			types.MakeDatums("pd", "192.168.1.32:1234", "cpu", "cpu", "cpu-logical-cores", "4"),
+			types.MakeDatums("pd", "192.168.1.33:1234", "cpu", "cpu", "cpu-logical-cores", "10"),
 		},
 	}
 
@@ -116,40 +122,44 @@ func (s *inspectionResultSuite) TestInspectionResult(c *C) {
 		{
 			sql: "select rule, item, type, value, reference, severity, details from information_schema.inspection_result where rule in ('config', 'version')",
 			rows: []string{
-				"config coprocessor.high tikv inconsistent consistent warning select * from information_schema.cluster_config where type='tikv' and `key`='coprocessor.high'",
-				"config ddl.lease tidb inconsistent consistent warning select * from information_schema.cluster_config where type='tidb' and `key`='ddl.lease'",
-				"version git_hash tidb inconsistent consistent critical select * from information_schema.cluster_info where type='tidb'",
-				"version git_hash tikv inconsistent consistent critical select * from information_schema.cluster_info where type='tikv'",
-				"version git_hash pd inconsistent consistent critical select * from information_schema.cluster_info where type='pd'",
+				"config coprocessor.high tikv inconsistent consistent warning execute the sql to see more detail: select * from information_schema.cluster_config where type='tikv' and `key`='coprocessor.high'",
+				"config ddl.lease tidb inconsistent consistent warning execute the sql to see more detail: select * from information_schema.cluster_config where type='tidb' and `key`='ddl.lease'",
+				"config log.slow-threshold tidb 0 not 0 warning slow-threshold = 0 will record every query to slow log, it may affect performance",
+				"config log.slow-threshold tidb inconsistent consistent warning execute the sql to see more detail: select * from information_schema.cluster_config where type='tidb' and `key`='log.slow-threshold'",
+				"version git_hash tidb inconsistent consistent critical execute the sql to see more detail: select * from information_schema.cluster_info where type='tidb'",
+				"version git_hash tikv inconsistent consistent critical execute the sql to see more detail: select * from information_schema.cluster_info where type='tikv'",
+				"version git_hash pd inconsistent consistent critical execute the sql to see more detail: select * from information_schema.cluster_info where type='pd'",
 			},
 		},
 		{
 			sql: "select rule, item, type, value, reference, severity, details from information_schema.inspection_result where rule in ('config', 'version') and item in ('coprocessor.high', 'git_hash') and type='tikv'",
 			rows: []string{
-				"config coprocessor.high tikv inconsistent consistent warning select * from information_schema.cluster_config where type='tikv' and `key`='coprocessor.high'",
-				"version git_hash tikv inconsistent consistent critical select * from information_schema.cluster_info where type='tikv'",
+				"config coprocessor.high tikv inconsistent consistent warning execute the sql to see more detail: select * from information_schema.cluster_config where type='tikv' and `key`='coprocessor.high'",
+				"version git_hash tikv inconsistent consistent critical execute the sql to see more detail: select * from information_schema.cluster_info where type='tikv'",
 			},
 		},
 		{
 			sql: "select rule, item, type, value, reference, severity, details from information_schema.inspection_result where rule='config'",
 			rows: []string{
-				"config coprocessor.high tikv inconsistent consistent warning select * from information_schema.cluster_config where type='tikv' and `key`='coprocessor.high'",
-				"config ddl.lease tidb inconsistent consistent warning select * from information_schema.cluster_config where type='tidb' and `key`='ddl.lease'",
+				"config coprocessor.high tikv inconsistent consistent warning execute the sql to see more detail: select * from information_schema.cluster_config where type='tikv' and `key`='coprocessor.high'",
+				"config ddl.lease tidb inconsistent consistent warning execute the sql to see more detail: select * from information_schema.cluster_config where type='tidb' and `key`='ddl.lease'",
+				"config log.slow-threshold tidb 0 not 0 warning slow-threshold = 0 will record every query to slow log, it may affect performance",
+				"config log.slow-threshold tidb inconsistent consistent warning execute the sql to see more detail: select * from information_schema.cluster_config where type='tidb' and `key`='log.slow-threshold'",
 			},
 		},
 		{
 			sql: "select rule, item, type, value, reference, severity, details from information_schema.inspection_result where rule='version' and item='git_hash' and type in ('pd', 'tidb')",
 			rows: []string{
-				"version git_hash tidb inconsistent consistent critical select * from information_schema.cluster_info where type='tidb'",
-				"version git_hash pd inconsistent consistent critical select * from information_schema.cluster_info where type='pd'",
+				"version git_hash tidb inconsistent consistent critical execute the sql to see more detail: select * from information_schema.cluster_info where type='tidb'",
+				"version git_hash pd inconsistent consistent critical execute the sql to see more detail: select * from information_schema.cluster_info where type='pd'",
 			},
 		},
 		{
 			sql: "select rule, item, type, instance, value, reference, severity, details from information_schema.inspection_result where rule='current-load'",
 			rows: []string{
-				"current-load cpu-load1 pd 192.168.1.31:1234 1.0 <0.7 warning ",
-				"current-load cpu-load15 pd 192.168.1.33:1234 2.0 <0.7 warning ",
-				"current-load disk-usage tikv 192.168.1.22:1234 80 <70 warning select * from information_schema.cluster_hardware where type='tikv' and instance='192.168.1.22:1234' and device_type='disk' and device_name='sda'",
+				"current-load cpu-load1 pd 192.168.1.31:1234 1.0 <0.7 warning cpu-load1 should less than (cpu_logical_cores * 0.7)",
+				"current-load cpu-load15 pd 192.168.1.33:1234 8.0 <7.0 warning cpu-load15 should less than (cpu_logical_cores * 0.7)",
+				"current-load disk-usage tikv 192.168.1.22:1234 80 <70 warning execute the sql to see more detail: select * from information_schema.cluster_hardware where type='tikv' and instance='192.168.1.22:1234' and device_type='disk' and device_name='sda'",
 				"current-load swap-memory-usage tikv 192.168.1.21:1234 0.6 0 warning ",
 				"current-load virtual-memory-usage tidb 192.168.1.11:1234 0.8 <0.7 warning ",
 			},
@@ -223,6 +233,8 @@ func (s *inspectionResultSuite) TestThresholdCheckInspection(c *C) {
 		"tikv_block_index_cache_hit":          {},
 		"tikv_block_data_cache_hit":           {},
 		"tikv_block_filter_cache_hit":         {},
+		"pd_scheduler_store_status":           {},
+		"pd_region_health":                    {},
 	}
 
 	fpName := "github.com/pingcap/tidb/executor/mockMergeMockInspectionTables"
@@ -240,22 +252,22 @@ func (s *inspectionResultSuite) TestThresholdCheckInspection(c *C) {
 		return fpName2 == fpname2 || fpname2 == fpName
 	})
 
-	rs, err := tk.Se.Execute(ctx, "select item, type, instance, value, reference, details from information_schema.inspection_result where rule='threshold-check' order by item")
+	rs, err := tk.Se.Execute(ctx, "select  /*+ time_range('2020-02-12 10:35:00','2020-02-12 10:37:00') */ item, type, instance, value, reference, details from information_schema.inspection_result where rule='threshold-check' order by item")
 	c.Assert(err, IsNil)
 	result := tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute inspect SQL failed"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0), Commentf("unexpected warnings: %+v", tk.Se.GetSessionVars().StmtCtx.GetWarnings()))
 	result.Check(testkit.Rows(
-		"apply_cpu tikv tikv-0 10.00 < 1.60, config: raftstore.apply-pool-size=2 select instance, sum(value) as cpu from metric_schema.tikv_thread_cpu where name like 'apply_%' and time=now() group by instance",
-		"coprocessor_high_cpu tikv tikv-0 10.00 < 3.60, config: readpool.coprocessor.high-concurrency=4 select instance, sum(value) as cpu from metric_schema.tikv_thread_cpu where name like 'cop_high%' and time=now() group by instance",
-		"coprocessor_low_cpu tikv tikv-0 10.00 < 3.60, config: readpool.coprocessor.low-concurrency=4 select instance, sum(value) as cpu from metric_schema.tikv_thread_cpu where name like 'cop_low%' and time=now() group by instance",
-		"coprocessor_normal_cpu tikv tikv-0 20.00 < 3.60, config: readpool.coprocessor.normal-concurrency=4 select instance, sum(value) as cpu from metric_schema.tikv_thread_cpu where name like 'cop_normal%' and time=now() group by instance",
-		"grpc_cpu tikv tikv-0 10.00 < 7.20, config: server.grpc-concurrency=8 select instance, sum(value) as cpu from metric_schema.tikv_thread_cpu where name like 'grpc%' and time=now() group by instance",
-		"raftstore_cpu tikv tikv-0 10.00 < 1.60, config: raftstore.store-pool-size=2 select instance, sum(value) as cpu from metric_schema.tikv_thread_cpu where name like 'raftstore_%' and time=now() group by instance",
-		"scheduler_worker_cpu tikv tikv-0 10.00 < 5.10, config: storage.scheduler-worker-pool-size=6 select instance, sum(value) as cpu from metric_schema.tikv_thread_cpu where name like 'sched_%' and time=now() group by instance",
-		"split_check_cpu tikv tikv-0 10.00 < 0.00 select instance, sum(value) as cpu from metric_schema.tikv_thread_cpu where name like 'split_check' and time=now() group by instance",
-		"storage_readpool_high_cpu tikv tikv-0 10.00 < 3.60, config: readpool.storage.high-concurrency=4 select instance, sum(value) as cpu from metric_schema.tikv_thread_cpu where name like 'store_read_high%' and time=now() group by instance",
-		"storage_readpool_low_cpu tikv tikv-0 10.00 < 3.60, config: readpool.storage.low-concurrency=4 select instance, sum(value) as cpu from metric_schema.tikv_thread_cpu where name like 'store_read_low%' and time=now() group by instance",
-		"storage_readpool_normal_cpu tikv tikv-0 10.00 < 3.60, config: readpool.storage.normal-concurrency=4 select instance, sum(value) as cpu from metric_schema.tikv_thread_cpu where name like 'store_read_norm%' and time=now() group by instance",
+		"apply-cpu tikv tikv-0 10.00 < 1.60, config: raftstore.apply-pool-size=2 select instance, sum(value) as cpu from metrics_schema.tikv_thread_cpu where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and name like 'apply_%' group by instance",
+		"coprocessor-high-cpu tikv tikv-0 10.00 < 3.60, config: readpool.coprocessor.high-concurrency=4 select instance, sum(value) as cpu from metrics_schema.tikv_thread_cpu where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and name like 'cop_high%' group by instance",
+		"coprocessor-low-cpu tikv tikv-0 10.00 < 3.60, config: readpool.coprocessor.low-concurrency=4 select instance, sum(value) as cpu from metrics_schema.tikv_thread_cpu where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and name like 'cop_low%' group by instance",
+		"coprocessor-normal-cpu tikv tikv-0 20.00 < 3.60, config: readpool.coprocessor.normal-concurrency=4 select instance, sum(value) as cpu from metrics_schema.tikv_thread_cpu where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and name like 'cop_normal%' group by instance",
+		"grpc-cpu tikv tikv-0 10.00 < 7.20, config: server.grpc-concurrency=8 select instance, sum(value) as cpu from metrics_schema.tikv_thread_cpu where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and name like 'grpc%' group by instance",
+		"raftstore-cpu tikv tikv-0 10.00 < 1.60, config: raftstore.store-pool-size=2 select instance, sum(value) as cpu from metrics_schema.tikv_thread_cpu where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and name like 'raftstore_%' group by instance",
+		"scheduler-worker-cpu tikv tikv-0 10.00 < 5.10, config: storage.scheduler-worker-pool-size=6 select instance, sum(value) as cpu from metrics_schema.tikv_thread_cpu where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and name like 'sched_%' group by instance",
+		"split-check-cpu tikv tikv-0 10.00 < 0.00 select instance, sum(value) as cpu from metrics_schema.tikv_thread_cpu where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and name like 'split_check' group by instance",
+		"storage-readpool-high-cpu tikv tikv-0 10.00 < 3.60, config: readpool.storage.high-concurrency=4 select instance, sum(value) as cpu from metrics_schema.tikv_thread_cpu where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and name like 'store_read_high%' group by instance",
+		"storage-readpool-low-cpu tikv tikv-0 10.00 < 3.60, config: readpool.storage.low-concurrency=4 select instance, sum(value) as cpu from metrics_schema.tikv_thread_cpu where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and name like 'store_read_low%' group by instance",
+		"storage-readpool-normal-cpu tikv tikv-0 10.00 < 3.60, config: readpool.storage.normal-concurrency=4 select instance, sum(value) as cpu from metrics_schema.tikv_thread_cpu where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and name like 'store_read_norm%' group by instance",
 	))
 
 	// construct some mock normal data
@@ -280,12 +292,11 @@ func (s *inspectionResultSuite) TestThresholdCheckInspection(c *C) {
 	ctx = failpoint.WithHook(ctx, func(_ context.Context, fpname2 string) bool {
 		return fpName2 == fpname2 || fpname2 == fpName
 	})
-	rs, err = tk.Se.Execute(ctx, "select item, type, instance, value, reference, details from information_schema.inspection_result where rule='threshold-check' order by item")
+	rs, err = tk.Se.Execute(ctx, "select item, type, instance, value, reference from information_schema.inspection_result where rule='threshold-check' order by item")
 	c.Assert(err, IsNil)
 	result = tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute inspect SQL failed"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0), Commentf("unexpected warnings: %+v", tk.Se.GetSessionVars().StmtCtx.GetWarnings()))
-	result.Check(testkit.Rows(
-		"grpc_cpu tikv tikv-0 7.21 < 7.20, config: server.grpc-concurrency=8 select instance, sum(value) as cpu from metric_schema.tikv_thread_cpu where name like 'grpc%' and time=now() group by instance"))
+	result.Check(testkit.Rows("grpc-cpu tikv tikv-0 7.21 < 7.20, config: server.grpc-concurrency=8"))
 }
 
 func (s *inspectionResultSuite) TestThresholdCheckInspection2(c *C) {
@@ -345,7 +356,9 @@ func (s *inspectionResultSuite) TestThresholdCheckInspection2(c *C) {
 		"tikv_block_filter_cache_hit": {
 			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "kv", 0.93),
 		},
-		"tikv_thread_cpu": {},
+		"tikv_thread_cpu":           {},
+		"pd_scheduler_store_status": {},
+		"pd_region_health":          {},
 	}
 
 	ctx := context.WithValue(context.Background(), "__mockMetricsTableData", mockData)
@@ -353,26 +366,77 @@ func (s *inspectionResultSuite) TestThresholdCheckInspection2(c *C) {
 		return fpname == fpName
 	})
 
-	rs, err := tk.Se.Execute(ctx, "select item, type, instance, value, reference, details from information_schema.inspection_result where rule='threshold-check' order by item")
+	rs, err := tk.Se.Execute(ctx, "select /*+ time_range('2020-02-12 10:35:00','2020-02-12 10:37:00') */ item, type, instance, value, reference, details from information_schema.inspection_result where rule='threshold-check' order by item")
 	c.Assert(err, IsNil)
 	result := tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute inspect SQL failed"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0), Commentf("unexpected warnings: %+v", tk.Se.GetSessionVars().StmtCtx.GetWarnings()))
 	result.Check(testkit.Rows(
-		"data-block-cache-hit tikv tikv-0 0.79 > 0.80 select instance, min(value) as min_value from metric_schema.tikv_block_data_cache_hit where value > 0 group by instance having min_value < 0.800000;",
-		"filter-block-cache-hit tikv tikv-0 0.93 > 0.95 select instance, min(value) as min_value from metric_schema.tikv_block_filter_cache_hit where value > 0 group by instance having min_value < 0.950000;",
-		"get-token-duration tidb tidb-0 20000.00 < 1000.00 select instance, max(value) as max_value from metric_schema.tidb_get_token_duration where quantile=0.999 group by instance having max_value > 1000.000000;",
-		"handle-snapshot-duration tikv tikv-0 40.00 < 30.00 select instance, max(value) as max_value from metric_schema.tikv_handle_snapshot_duration  group by instance having max_value > 30.000000;",
-		"index-block-cache-hit tikv tikv-0 0.94 > 0.95 select instance, min(value) as min_value from metric_schema.tikv_block_index_cache_hit where value > 0 group by instance having min_value < 0.950000;",
-		"load-schema-duration tidb tidb-0 2.00 < 1.00 select instance, max(value) as max_value from metric_schema.tidb_load_schema_duration where quantile=0.99 group by instance having max_value > 1.000000;",
-		"rocksdb-get-duration tikv tikv-0 60000.00 < 50000.00 select instance, max(value) as max_value from metric_schema.tikv_engine_max_get_duration where type='get_max' group by instance having max_value > 50000.000000;",
-		"rocksdb-seek-duration tikv tikv-0 60000.00 < 50000.00 select instance, max(value) as max_value from metric_schema.tikv_engine_max_seek_duration where type='seek_max' group by instance having max_value > 50000.000000;",
-		"rocksdb-write-duration tikv tikv-0 200000.00 < 100000.00 select instance, max(value) as max_value from metric_schema.tikv_engine_write_duration where type='write_max' group by instance having max_value > 100000.000000;",
-		"scheduler-cmd-duration tikv tikv-0 5.00 < 0.10 select instance, max(value) as max_value from metric_schema.tikv_scheduler_command_duration where quantile=0.99 group by instance having max_value > 0.100000;",
-		"scheduler-pending-cmd-count tikv tikv-0 1001.00 < 1000.00 select instance, max(value) as max_value from metric_schema.tikv_scheduler_pending_commands  group by instance having max_value > 1000.000000;",
-		"storage-snapshot-duration tikv tikv-0 0.20 < 0.05 select instance, max(value) as max_value from metric_schema.tikv_storage_async_request_duration where type='snapshot' group by instance having max_value > 0.050000;",
-		"storage-write-duration tikv tikv-0 0.20 < 0.10 select instance, max(value) as max_value from metric_schema.tikv_storage_async_request_duration where type='write' group by instance having max_value > 0.100000;",
-		"tso-duration tidb pd-0 0.06 < 0.05 select instance, max(value) as max_value from metric_schema.pd_tso_wait_duration where quantile=0.999 group by instance having max_value > 0.050000;",
+		"data-block-cache-hit tikv tikv-0 0.790 > 0.800 select instance, min(value)/1 as min_value from metrics_schema.tikv_block_data_cache_hit where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and value > 0 group by instance having min_value < 0.800000;",
+		"filter-block-cache-hit tikv tikv-0 0.930 > 0.950 select instance, min(value)/1 as min_value from metrics_schema.tikv_block_filter_cache_hit where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and value > 0 group by instance having min_value < 0.950000;",
+		"get-token-duration tidb tidb-0 0.020 < 0.001 select instance, max(value)/1000000 as max_value from metrics_schema.tidb_get_token_duration where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and quantile=0.999 group by instance having max_value > 0.001000;",
+		"handle-snapshot-duration tikv tikv-0 40.000 < 30.000 select instance, max(value)/1 as max_value from metrics_schema.tikv_handle_snapshot_duration where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' group by instance having max_value > 30.000000;",
+		"index-block-cache-hit tikv tikv-0 0.940 > 0.950 select instance, min(value)/1 as min_value from metrics_schema.tikv_block_index_cache_hit where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and value > 0 group by instance having min_value < 0.950000;",
+		"load-schema-duration tidb tidb-0 2.000 < 1.000 select instance, max(value)/1 as max_value from metrics_schema.tidb_load_schema_duration where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and quantile=0.99 group by instance having max_value > 1.000000;",
+		"rocksdb-get-duration tikv tikv-0 0.060 < 0.050 select instance, max(value)/1000000 as max_value from metrics_schema.tikv_engine_max_get_duration where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and type='get_max' group by instance having max_value > 0.050000;",
+		"rocksdb-seek-duration tikv tikv-0 0.060 < 0.050 select instance, max(value)/1000000 as max_value from metrics_schema.tikv_engine_max_seek_duration where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and type='seek_max' group by instance having max_value > 0.050000;",
+		"rocksdb-write-duration tikv tikv-0 0.200 < 0.100 select instance, max(value)/1000000 as max_value from metrics_schema.tikv_engine_write_duration where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and type='write_max' group by instance having max_value > 0.100000;",
+		"scheduler-cmd-duration tikv tikv-0 5.000 < 0.100 select instance, max(value)/1 as max_value from metrics_schema.tikv_scheduler_command_duration where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and quantile=0.99 group by instance having max_value > 0.100000;",
+		"scheduler-pending-cmd-count tikv tikv-0 1001.000 < 1000.000 select instance, max(value)/1 as max_value from metrics_schema.tikv_scheduler_pending_commands where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' group by instance having max_value > 1000.000000;",
+		"storage-snapshot-duration tikv tikv-0 0.060 < 0.050 select instance, max(value)/1 as max_value from metrics_schema.tikv_storage_async_request_duration where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and type='snapshot' group by instance having max_value > 0.050000;",
+		"storage-write-duration tikv tikv-0 0.200 < 0.100 select instance, max(value)/1 as max_value from metrics_schema.tikv_storage_async_request_duration where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and type='write' group by instance having max_value > 0.100000;",
+		"tso-duration tidb pd-0 0.060 < 0.050 select instance, max(value)/1 as max_value from metrics_schema.pd_tso_wait_duration where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and quantile=0.999 group by instance having max_value > 0.050000;",
 	))
+}
+
+func (s *inspectionResultSuite) TestThresholdCheckInspection3(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	// Mock for metric table data.
+	fpName := "github.com/pingcap/tidb/executor/mockMetricsTableData"
+	c.Assert(failpoint.Enable(fpName, "return"), IsNil)
+	defer func() { c.Assert(failpoint.Disable(fpName), IsNil) }()
+
+	datetime := func(s string) types.Time {
+		t, err := types.ParseTime(tk.Se.GetSessionVars().StmtCtx, s, mysql.TypeDatetime, types.MaxFsp)
+		c.Assert(err, IsNil)
+		return t
+	}
+
+	// construct some mock abnormal data
+	mockData := map[string][][]types.Datum{
+		"pd_scheduler_store_status": {
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "pd-0", "tikv-0", "0", "leader_score", 100.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "pd-0", "tikv-1", "1", "leader_score", 50.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "pd-0", "tikv-0", "0", "region_score", 100.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "pd-0", "tikv-1", "1", "region_score", 90.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "pd-0", "tikv-0", "0", "store_available", 100.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "pd-0", "tikv-1", "1", "store_available", 70.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "pd-0", "tikv-0", "0", "region_count", 20001.0),
+		},
+		"pd_region_health": {
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "pd-0", "extra-peer-region-count", 40.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "pd-0", "learner-peer-region-count", 40.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "pd-0", "pending-peer-region-count", 30.0),
+		},
+	}
+
+	ctx := context.WithValue(context.Background(), "__mockMetricsTableData", mockData)
+	ctx = failpoint.WithHook(ctx, func(_ context.Context, fpname string) bool {
+		return fpname == fpName
+	})
+
+	rs, err := tk.Se.Execute(ctx, `select /*+ time_range('2020-02-14 04:20:00','2020-02-14 05:20:00') */
+		item, type, instance, value, reference, details from information_schema.inspection_result
+		where rule='threshold-check' and item in ('leader-score-balance','region-score-balance','region-count','region-health','store-available-balance')
+		order by item`)
+	c.Assert(err, IsNil)
+	result := tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute inspect SQL failed"))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0), Commentf("unexpected warnings: %+v", tk.Se.GetSessionVars().StmtCtx.GetWarnings()))
+	result.Check(testkit.Rows(
+		"leader-score-balance tikv tikv-1 50.00% < 5.00% tikv-0 leader_score is 100, much more than tikv-1 leader_score 50",
+		"region-count tikv tikv-0 20001.00 <= 20000 select address,value from metrics_schema.pd_scheduler_store_status where time>='2020-02-14 04:20:00' and time<='2020-02-14 05:20:00' and type='region_count' and value > 20000;",
+		"region-health pd pd-0 110.00 < 100 the count of extra-perr and learner-peer and pending-peer is 110, it means the scheduling is too frequent or too slow",
+		"region-score-balance tikv tikv-1 10.00% < 5.00% tikv-0 region_score is 100, much more than tikv-1 region_score 90",
+		"store-available-balance tikv tikv-1 30.00% < 20.00% tikv-0 store_available is 100, much more than tikv-1 store_available 70"))
 }
 
 func (s *inspectionResultSuite) TestCriticalErrorInspection(c *C) {
@@ -443,7 +507,7 @@ func (s *inspectionResultSuite) TestCriticalErrorInspection(c *C) {
 			types.MakeDatums(datetime("2020-02-12 10:40:00"), "tikv-1", "db1", 6.0),
 		},
 		// columns: time, instance, db, type, value
-		"tikv_channel_full_total": {
+		"tikv_channel_full": {
 			types.MakeDatums(datetime("2020-02-12 10:35:00"), "tikv-0", "db1", "type1", 1.0),
 			types.MakeDatums(datetime("2020-02-12 10:36:00"), "tikv-0", "db2", "type1", 2.0),
 			types.MakeDatums(datetime("2020-02-12 10:37:00"), "tikv-1", "db1", "type2", 3.0),
@@ -488,48 +552,48 @@ func (s *inspectionResultSuite) TestCriticalErrorInspection(c *C) {
 		return fpName == fpname
 	})
 
-	rs, err := tk.Se.Execute(ctx, "select item, instance, value, details from information_schema.inspection_result where rule='critical-error'")
+	rs, err := tk.Se.Execute(ctx, "select /*+ time_range('2020-02-12 10:35:00','2020-02-12 10:37:00') */ item, instance, value, details from information_schema.inspection_result where rule='critical-error'")
 	c.Assert(err, IsNil)
 	result := tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute inspect SQL failed"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0), Commentf("unexpected warnings: %+v", tk.Se.GetSessionVars().StmtCtx.GetWarnings()))
 	result.Check(testkit.Rows(
-		"binlog-error tidb-3 1.00 select * from `metric_schema`.`tidb_binlog_error_count` where `instance`='tidb-3'",
-		"binlog-error tidb-1 4.00 select * from `metric_schema`.`tidb_binlog_error_count` where `instance`='tidb-1'",
-		"channel-is-full tikv-0 {`db`='db1',`type`='type1'}=4.00 select * from `metric_schema`.`tikv_channel_full_total` where `instance`='tikv-0' and `db`='db1' and `type`='type1'",
-		"channel-is-full tikv-1 {`db`='db1',`type`='type2'}=6.00 select * from `metric_schema`.`tikv_channel_full_total` where `instance`='tikv-1' and `db`='db1' and `type`='type2'",
-		"channel-is-full tikv-0 {`db`='db2',`type`='type1'}=5.00 select * from `metric_schema`.`tikv_channel_full_total` where `instance`='tikv-0' and `db`='db2' and `type`='type1'",
-		"coprocessor-error tikv-0 {`reason`='reason1'}=1.00 select * from `metric_schema`.`tikv_coprocessor_request_error` where `instance`='tikv-0' and `reason`='reason1'",
-		"coprocessor-error tikv-0 {`reason`='reason2'}=2.00 select * from `metric_schema`.`tikv_coprocessor_request_error` where `instance`='tikv-0' and `reason`='reason2'",
-		"coprocessor-error tikv-1 {`reason`='reason3'}=3.00 select * from `metric_schema`.`tikv_coprocessor_request_error` where `instance`='tikv-1' and `reason`='reason3'",
-		"coprocessor-is-busy tikv-0 {`db`='db1'}=4.00 select * from `metric_schema`.`tikv_coprocessor_is_busy` where `instance`='tikv-0' and `db`='db1'",
-		"coprocessor-is-busy tikv-1 {`db`='db1'}=6.00 select * from `metric_schema`.`tikv_coprocessor_is_busy` where `instance`='tikv-1' and `db`='db1'",
-		"coprocessor-is-busy tikv-0 {`db`='db2'}=5.00 select * from `metric_schema`.`tikv_coprocessor_is_busy` where `instance`='tikv-0' and `db`='db2'",
-		"critical-error tikv-1 {`type`='type1'}=1.00 select * from `metric_schema`.`tikv_critical_error` where `instance`='tikv-1' and `type`='type1'",
-		"critical-error tikv-2 {`type`='type2'}=5.00 select * from `metric_schema`.`tikv_critical_error` where `instance`='tikv-2' and `type`='type2'",
-		"failed-query-opm tidb-0 {`type`='type2'}=1.00 select * from `metric_schema`.`tidb_failed_query_opm` where `instance`='tidb-0' and `type`='type2'",
-		"failed-query-opm tidb-1 {`type`='type3'}=5.00 select * from `metric_schema`.`tidb_failed_query_opm` where `instance`='tidb-1' and `type`='type3'",
-		"grpc-errors tikv-0 {`type`='type1'}=1.00 select * from `metric_schema`.`tikv_grpc_errors` where `instance`='tikv-0' and `type`='type1'",
-		"grpc-errors tikv-0 {`type`='type2'}=2.00 select * from `metric_schema`.`tikv_grpc_errors` where `instance`='tikv-0' and `type`='type2'",
-		"grpc-errors tikv-1 {`type`='type3'}=3.00 select * from `metric_schema`.`tikv_grpc_errors` where `instance`='tikv-1' and `type`='type3'",
-		"lock-resolve tidb-0 {`type`='type1'}=1.00 select * from `metric_schema`.`tidb_lock_resolver_ops` where `instance`='tidb-0' and `type`='type1'",
-		"lock-resolve tidb-1 {`type`='type2'}=5.00 select * from `metric_schema`.`tidb_lock_resolver_ops` where `instance`='tidb-1' and `type`='type2'",
-		"panic-count tidb-1 1.00 select * from `metric_schema`.`tidb_panic_count` where `instance`='tidb-1'",
-		"panic-count tidb-0 4.00 select * from `metric_schema`.`tidb_panic_count` where `instance`='tidb-0'",
-		"pd-cmd-failed tidb-0 {`type`='type1'}=1.00 select * from `metric_schema`.`pd_cmd_fail_ops` where `instance`='tidb-0' and `type`='type1'",
-		"pd-cmd-failed tidb-1 {`type`='type2'}=5.00 select * from `metric_schema`.`pd_cmd_fail_ops` where `instance`='tidb-1' and `type`='type2'",
-		"scheduler-is-busy tikv-0 {`db`='db1',`type`='type1',`stage`='stage1'}=1.00 select * from `metric_schema`.`tikv_scheduler_is_busy` where `instance`='tikv-0' and `db`='db1' and `type`='type1' and `stage`='stage1'",
-		"scheduler-is-busy tikv-0 {`db`='db1',`type`='type1',`stage`='stage2'}=4.00 select * from `metric_schema`.`tikv_scheduler_is_busy` where `instance`='tikv-0' and `db`='db1' and `type`='type1' and `stage`='stage2'",
-		"scheduler-is-busy tikv-1 {`db`='db1',`type`='type2',`stage`='stage1'}=3.00 select * from `metric_schema`.`tikv_scheduler_is_busy` where `instance`='tikv-1' and `db`='db1' and `type`='type2' and `stage`='stage1'",
-		"scheduler-is-busy tikv-1 {`db`='db1',`type`='type2',`stage`='stage2'}=6.00 select * from `metric_schema`.`tikv_scheduler_is_busy` where `instance`='tikv-1' and `db`='db1' and `type`='type2' and `stage`='stage2'",
-		"scheduler-is-busy tikv-0 {`db`='db2',`type`='type1',`stage`='stage1'}=5.00 select * from `metric_schema`.`tikv_scheduler_is_busy` where `instance`='tikv-0' and `db`='db2' and `type`='type1' and `stage`='stage1'",
-		"scheduler-is-busy tikv-0 {`db`='db2',`type`='type1',`stage`='stage2'}=2.00 select * from `metric_schema`.`tikv_scheduler_is_busy` where `instance`='tikv-0' and `db`='db2' and `type`='type1' and `stage`='stage2'",
-		"schema-lease-error tidb-3 1.00 select * from `metric_schema`.`tidb_schema_lease_error_opm` where `instance`='tidb-3'",
-		"schema-lease-error tidb-1 4.00 select * from `metric_schema`.`tidb_schema_lease_error_opm` where `instance`='tidb-1'",
-		"ticlient-region-error tikv-0 {`type`='type1'}=1.00 select * from `metric_schema`.`tidb_kv_region_error_ops` where `instance`='tikv-0' and `type`='type1'",
-		"ticlient-region-error tikv-0 {`type`='type2'}=2.00 select * from `metric_schema`.`tidb_kv_region_error_ops` where `instance`='tikv-0' and `type`='type2'",
-		"ticlient-region-error tikv-1 {`type`='type3'}=3.00 select * from `metric_schema`.`tidb_kv_region_error_ops` where `instance`='tikv-1' and `type`='type3'",
-		"txn-retry-error tidb-0 {`type`='db1',`sql_type`='sql_type1'}=1.00 select * from `metric_schema`.`tidb_transaction_retry_error_ops` where `instance`='tidb-0' and `type`='db1' and `sql_type`='sql_type1'",
-		"txn-retry-error tidb-1 {`type`='db1',`sql_type`='sql_type2'}=3.00 select * from `metric_schema`.`tidb_transaction_retry_error_ops` where `instance`='tidb-1' and `type`='db1' and `sql_type`='sql_type2'",
-		"txn-retry-error tidb-0 {`type`='db2',`sql_type`='sql_type1'}=2.00 select * from `metric_schema`.`tidb_transaction_retry_error_ops` where `instance`='tidb-0' and `type`='db2' and `sql_type`='sql_type1'",
+		"binlog-error tidb-3 1.00 select * from `metrics_schema`.`tidb_binlog_error_count` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and `instance`='tidb-3'",
+		"binlog-error tidb-1 4.00 select * from `metrics_schema`.`tidb_binlog_error_count` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and `instance`='tidb-1'",
+		"channel-is-full tikv-0 4.00(db1, type1) select * from `metrics_schema`.`tikv_channel_full` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`db`,`type`)=('tikv-0','db1','type1')",
+		"channel-is-full tikv-0 5.00(db2, type1) select * from `metrics_schema`.`tikv_channel_full` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`db`,`type`)=('tikv-0','db2','type1')",
+		"channel-is-full tikv-1 6.00(db1, type2) select * from `metrics_schema`.`tikv_channel_full` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`db`,`type`)=('tikv-1','db1','type2')",
+		"coprocessor-error tikv-0 1.00(reason1) select * from `metrics_schema`.`tikv_coprocessor_request_error` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`reason`)=('tikv-0','reason1')",
+		"coprocessor-error tikv-0 2.00(reason2) select * from `metrics_schema`.`tikv_coprocessor_request_error` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`reason`)=('tikv-0','reason2')",
+		"coprocessor-error tikv-1 3.00(reason3) select * from `metrics_schema`.`tikv_coprocessor_request_error` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`reason`)=('tikv-1','reason3')",
+		"coprocessor-is-busy tikv-0 4.00(db1) select * from `metrics_schema`.`tikv_coprocessor_is_busy` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`db`)=('tikv-0','db1')",
+		"coprocessor-is-busy tikv-0 5.00(db2) select * from `metrics_schema`.`tikv_coprocessor_is_busy` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`db`)=('tikv-0','db2')",
+		"coprocessor-is-busy tikv-1 6.00(db1) select * from `metrics_schema`.`tikv_coprocessor_is_busy` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`db`)=('tikv-1','db1')",
+		"critical-error tikv-1 1.00(type1) select * from `metrics_schema`.`tikv_critical_error` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`type`)=('tikv-1','type1')",
+		"critical-error tikv-2 5.00(type2) select * from `metrics_schema`.`tikv_critical_error` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`type`)=('tikv-2','type2')",
+		"failed-query-opm tidb-0 1.00(type2) select * from `metrics_schema`.`tidb_failed_query_opm` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`type`)=('tidb-0','type2')",
+		"failed-query-opm tidb-1 5.00(type3) select * from `metrics_schema`.`tidb_failed_query_opm` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`type`)=('tidb-1','type3')",
+		"grpc-errors tikv-0 1.00(type1) select * from `metrics_schema`.`tikv_grpc_errors` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`type`)=('tikv-0','type1')",
+		"grpc-errors tikv-0 2.00(type2) select * from `metrics_schema`.`tikv_grpc_errors` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`type`)=('tikv-0','type2')",
+		"grpc-errors tikv-1 3.00(type3) select * from `metrics_schema`.`tikv_grpc_errors` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`type`)=('tikv-1','type3')",
+		"lock-resolve tidb-0 1.00(type1) select * from `metrics_schema`.`tidb_lock_resolver_ops` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`type`)=('tidb-0','type1')",
+		"lock-resolve tidb-1 5.00(type2) select * from `metrics_schema`.`tidb_lock_resolver_ops` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`type`)=('tidb-1','type2')",
+		"panic-count tidb-1 1.00 select * from `metrics_schema`.`tidb_panic_count` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and `instance`='tidb-1'",
+		"panic-count tidb-0 4.00 select * from `metrics_schema`.`tidb_panic_count` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and `instance`='tidb-0'",
+		"pd-cmd-failed tidb-0 1.00(type1) select * from `metrics_schema`.`pd_cmd_fail_ops` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`type`)=('tidb-0','type1')",
+		"pd-cmd-failed tidb-1 5.00(type2) select * from `metrics_schema`.`pd_cmd_fail_ops` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`type`)=('tidb-1','type2')",
+		"scheduler-is-busy tikv-0 1.00(db1, type1, stage1) select * from `metrics_schema`.`tikv_scheduler_is_busy` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`db`,`type`,`stage`)=('tikv-0','db1','type1','stage1')",
+		"scheduler-is-busy tikv-0 2.00(db2, type1, stage2) select * from `metrics_schema`.`tikv_scheduler_is_busy` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`db`,`type`,`stage`)=('tikv-0','db2','type1','stage2')",
+		"scheduler-is-busy tikv-1 3.00(db1, type2, stage1) select * from `metrics_schema`.`tikv_scheduler_is_busy` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`db`,`type`,`stage`)=('tikv-1','db1','type2','stage1')",
+		"scheduler-is-busy tikv-0 4.00(db1, type1, stage2) select * from `metrics_schema`.`tikv_scheduler_is_busy` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`db`,`type`,`stage`)=('tikv-0','db1','type1','stage2')",
+		"scheduler-is-busy tikv-0 5.00(db2, type1, stage1) select * from `metrics_schema`.`tikv_scheduler_is_busy` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`db`,`type`,`stage`)=('tikv-0','db2','type1','stage1')",
+		"scheduler-is-busy tikv-1 6.00(db1, type2, stage2) select * from `metrics_schema`.`tikv_scheduler_is_busy` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`db`,`type`,`stage`)=('tikv-1','db1','type2','stage2')",
+		"schema-lease-error tidb-3 1.00 select * from `metrics_schema`.`tidb_schema_lease_error_opm` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and `instance`='tidb-3'",
+		"schema-lease-error tidb-1 4.00 select * from `metrics_schema`.`tidb_schema_lease_error_opm` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and `instance`='tidb-1'",
+		"ticlient-region-error tikv-0 1.00(type1) select * from `metrics_schema`.`tidb_kv_region_error_ops` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`type`)=('tikv-0','type1')",
+		"ticlient-region-error tikv-0 2.00(type2) select * from `metrics_schema`.`tidb_kv_region_error_ops` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`type`)=('tikv-0','type2')",
+		"ticlient-region-error tikv-1 3.00(type3) select * from `metrics_schema`.`tidb_kv_region_error_ops` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`type`)=('tikv-1','type3')",
+		"txn-retry-error tidb-0 1.00(db1, sql_type1) select * from `metrics_schema`.`tidb_transaction_retry_error_ops` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`type`,`sql_type`)=('tidb-0','db1','sql_type1')",
+		"txn-retry-error tidb-0 2.00(db2, sql_type1) select * from `metrics_schema`.`tidb_transaction_retry_error_ops` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`type`,`sql_type`)=('tidb-0','db2','sql_type1')",
+		"txn-retry-error tidb-1 3.00(db1, sql_type2) select * from `metrics_schema`.`tidb_transaction_retry_error_ops` where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and (`instance`,`type`,`sql_type`)=('tidb-1','db1','sql_type2')",
 	))
 }
