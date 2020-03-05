@@ -37,6 +37,7 @@ type BatchPointGetExec struct {
 	idxVals    [][]types.Datum
 	startTS    uint64
 	snapshotTS uint64
+	txn        kv.Transaction
 	lock       bool
 	waitTime   int64
 	inited     bool
@@ -87,27 +88,17 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	var batchGetter kv.BatchGetter
-	if txn.Valid() {
-		// In restricted SQL, !txn.Valid() may happen, we doesn't call PrepareTxnCtx but
-		// call Next() and the code runs here.
-		if e.snapshotTS == e.startTS {
-			batchGetter = txn
-		} else {
-			var snap kv.Snapshot
-			snap, err = e.ctx.GetStore().GetSnapshot(kv.Version{Ver: e.snapshotTS})
-			if err != nil {
-				return err
-			}
-			batchGetter = kv.NewBufferBatchGetter(txn.GetMemBuffer(), snap)
-		}
-	} else {
-		// In restricted SQL, !txn.Valid() may happen, we doesn't call PrepareTxnCtx but
-		// call Next() and the code runs here.
-		batchGetter, err = e.ctx.GetStore().GetSnapshot(kv.Version{Ver: e.snapshotTS})
-		if err != nil {
-			return err
-		}
+	e.txn = txn
+	snapshot, err := e.ctx.GetStore().GetSnapshot(kv.Version{Ver: e.snapshotTS})
+	if err != nil {
+		return err
+	}
+	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
+		snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
+	}
+	var batchGetter kv.BatchGetter = snapshot
+	if txn.Valid() && txn.Size() > 0 {
+		batchGetter = kv.NewBufferBatchGetter(txn.GetMemBuffer(), snapshot)
 	}
 
 	var handleVals map[string][]byte
@@ -171,37 +162,9 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	// Fetch all values.
 	var values map[string][]byte
 	if e.lock {
-		txnCtx := e.ctx.GetSessionVars().TxnCtx
-		lctx := newLockCtx(e.ctx.GetSessionVars(), e.waitTime)
-		if txnCtx.IsPessimistic {
-			lctx.ReturnValues = true
-			lctx.Values = make(map[string][]byte, len(keys))
-			// pre-fill the values of already locked keys.
-			for _, key := range keys {
-				if val, ok := txnCtx.GetKeyInPessimisticLockCache(key); ok {
-					lctx.Values[string(key)] = val
-				}
-			}
-		}
-		err = doLockKeys(ctx, e.ctx, lctx, keys...)
+		values, err = e.lockKeys(ctx, keys)
 		if err != nil {
 			return err
-		}
-		if txnCtx.IsPessimistic {
-			// When doLockKeys returns without error, no other goroutines access the map,
-			// it's safe to read it without mutex.
-			for _, key := range keys {
-				txnCtx.SetPessimisticLockCache(key, lctx.Values[string(key)])
-			}
-			values = lctx.Values
-			// Overwrite with buffer value.
-			buffer := txn.GetMemBuffer()
-			for _, key := range keys {
-				val, err1 := buffer.Get(ctx, key)
-				if err1 != kv.ErrNotExist {
-					values[string(key)] = val
-				}
-			}
 		}
 	}
 	if values == nil {
@@ -227,4 +190,40 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	}
 	e.handles = handles
 	return nil
+}
+
+func (e *BatchPointGetExec) lockKeys(ctx context.Context, keys []kv.Key) (map[string][]byte, error) {
+	txnCtx := e.ctx.GetSessionVars().TxnCtx
+	lctx := newLockCtx(e.ctx.GetSessionVars(), e.waitTime)
+	if txnCtx.IsPessimistic {
+		lctx.ReturnValues = true
+		lctx.Values = make(map[string][]byte, len(keys))
+		// pre-fill the values of already locked keys.
+		for _, key := range keys {
+			if val, ok := txnCtx.GetKeyInPessimisticLockCache(key); ok {
+				lctx.Values[string(key)] = val
+			}
+		}
+	}
+	err := doLockKeys(ctx, e.ctx, lctx, keys...)
+	if err != nil {
+		return nil, err
+	}
+	if txnCtx.IsPessimistic {
+		// When doLockKeys returns without error, no other goroutines access the map,
+		// it's safe to read it without mutex.
+		for _, key := range keys {
+			txnCtx.SetPessimisticLockCache(key, lctx.Values[string(key)])
+		}
+		// Overwrite with buffer value.
+		buffer := e.txn.GetMemBuffer()
+		for _, key := range keys {
+			val, err1 := buffer.Get(ctx, key)
+			if err1 != kv.ErrNotExist {
+				lctx.Values[string(key)] = val
+			}
+		}
+		return lctx.Values, nil
+	}
+	return nil, nil
 }
