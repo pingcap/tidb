@@ -177,12 +177,28 @@ func newCommiterMutations(sizeHint int) committerMutations {
 }
 
 func (c *committerMutations) subRange(from, to int) committerMutations {
-	return committerMutations{
-		ops:               c.ops[from:to],
-		keys:              c.keys[from:to],
-		values:            c.values[from:to],
-		isPessimisticLock: c.isPessimisticLock[from:to],
+	var res committerMutations
+	if to > len(c.ops) {
+		res.ops = c.ops[from:]
+	} else {
+		res.ops = c.ops[from:to]
 	}
+	if to > len(c.keys) {
+		res.keys = c.keys[from:]
+	} else {
+		res.keys = c.keys[from:to]
+	}
+	if to > len(c.values) {
+		res.values = c.values[from:]
+	} else {
+		res.values = c.values[from:to]
+	}
+	if to > len(c.isPessimisticLock) {
+		res.isPessimisticLock = c.isPessimisticLock[from:]
+	} else {
+		res.isPessimisticLock = c.isPessimisticLock[from:to]
+	}
+	return res
 }
 
 func (c *committerMutations) push(op pb.Op, key []byte, value []byte, isPessimisticLock bool) {
@@ -1292,7 +1308,11 @@ func (c *twoPhaseCommitter) appendBatchMutationsBySize(b []batchMutations, regio
 	for start = 0; start < mutations.len(); start = end {
 		var size int
 		for end = start; end < mutations.len() && size < limit; end++ {
-			k, v := mutations.keys[end], mutations.values[end]
+			var k, v []byte
+			k = mutations.keys[end]
+			if end < len(mutations.values) {
+				v = mutations.values[end]
+			}
 			size += sizeFn(k, v)
 			if *primaryIdx < 0 && bytes.Equal(k, c.primary()) {
 				*primaryIdx = len(b)
