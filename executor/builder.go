@@ -2904,6 +2904,11 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		idxInfo:      plan.IndexInfo,
 		rowDecoder:   decoder,
 		startTS:      startTS,
+		lock:         plan.Lock,
+		waitTime:     plan.LockWaitTime,
+	}
+	if e.lock {
+		b.isSelectForUpdate = e.lock
 	}
 	var capacity int
 	if plan.IndexInfo != nil {
