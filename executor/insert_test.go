@@ -972,7 +972,7 @@ func (s *testSuite3) TestAutoRandomID(c *C) {
 	tk.MustExec(`create table ar (id int key auto_random, name char(10))`)
 
 	tk.MustExec(`insert into ar(id) values (null)`)
-	rs := tk.MustQuery(`select id from io`)
+	rs := tk.MustQuery(`select id from ar`)
 	c.Assert(len(rs.Rows()), Equals, 1)
 	firstValue := rs.Rows()[0][0].(int64)
 	c.Assert(firstValue, Greater, int64(0))
@@ -981,7 +981,7 @@ func (s *testSuite3) TestAutoRandomID(c *C) {
 	tk.MustExec(`delete from ar`)
 
 	tk.MustExec(`insert into ar(id) values (0)`)
-	rs = tk.MustQuery(`select id from io`)
+	rs = tk.MustQuery(`select id from ar`)
 	c.Assert(len(rs.Rows()), Equals, 1)
 	firstValue = rs.Rows()[0][0].(int64)
 	c.Assert(firstValue, Greater, int64(0))
@@ -990,7 +990,7 @@ func (s *testSuite3) TestAutoRandomID(c *C) {
 	tk.MustExec(`delete from ar`)
 
 	tk.MustExec(`insert into ar(name) values ('a')`)
-	rs = tk.MustQuery(`select id from io`)
+	rs = tk.MustQuery(`select id from ar`)
 	c.Assert(len(rs.Rows()), Equals, 1)
 	firstValue = rs.Rows()[0][0].(int64)
 	c.Assert(firstValue, Greater, int64(0))
@@ -1012,7 +1012,7 @@ func (s *testSuite3) TestMultiAutoRandomID(c *C) {
 	tk.MustExec(`create table ar (id int key auto_random, name char(10))`)
 
 	tk.MustExec(`insert into ar(id) values (null),(null),(null)`)
-	rs := tk.MustQuery(`select id from io order by id`)
+	rs := tk.MustQuery(`select id from ar order by id`)
 	c.Assert(len(rs.Rows()), Equals, 3)
 	firstValue := rs.Rows()[0][0].(int64)
 	c.Assert(firstValue, Greater, int64(0))
@@ -1023,7 +1023,7 @@ func (s *testSuite3) TestMultiAutoRandomID(c *C) {
 	tk.MustExec(`delete from ar`)
 
 	tk.MustExec(`insert into ar(id) values (0),(0),(0)`)
-	rs = tk.MustQuery(`select id from io order by id`)
+	rs = tk.MustQuery(`select id from ar order by id`)
 	c.Assert(len(rs.Rows()), Equals, 3)
 	firstValue = rs.Rows()[0][0].(int64)
 	c.Assert(firstValue, Greater, int64(0))
@@ -1034,7 +1034,7 @@ func (s *testSuite3) TestMultiAutoRandomID(c *C) {
 	tk.MustExec(`delete from ar`)
 
 	tk.MustExec(`insert into ar(name) values ('a'),('a'),('a')`)
-	rs = tk.MustQuery(`select id from io order by id`)
+	rs = tk.MustQuery(`select id from ar order by id`)
 	c.Assert(len(rs.Rows()), Equals, 3)
 	firstValue = rs.Rows()[0][0].(int64)
 	c.Assert(firstValue, Greater, int64(0))
@@ -1062,7 +1062,7 @@ func (s *testSuite3) TestAutoRandomIDAllowZero(c *C) {
 	tk.MustExec(fmt.Sprintf(`set session sql_mode="%s,%s"`, sqlMode, "NO_AUTO_VALUE_ON_ZERO"))
 
 	tk.MustExec(`insert into ar(id) values (0)`)
-	rs = tk.MustQuery(`select id from io`)
+	rs = tk.MustQuery(`select id from ar`)
 	c.Assert(len(rs.Rows()), Equals, 1)
 	firstValue := rs.Rows()[0][0].(int64)
 	c.Assert(firstValue, Equals, int64(0))
@@ -1070,7 +1070,7 @@ func (s *testSuite3) TestAutoRandomIDAllowZero(c *C) {
 	c.Assert(rs.Rows()[0][0].(int64), Equals, firstValue)
 
 	tk.MustExec(`insert into ar(id) values (null)`)
-	rs = tk.MustQuery(`select id from io`)
+	rs = tk.MustQuery(`select id from ar`)
 	c.Assert(len(rs.Rows()), Equals, 1)
 	firstValue = rs.Rows()[0][0].(int64)
 	c.Assert(firstValue, Greater, int64(0))
