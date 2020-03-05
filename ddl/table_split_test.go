@@ -64,48 +64,6 @@ func (s *testDDLTableSplitSuite) TestTableSplit(c *C) {
 	for _, def := range pi.Definitions {
 		checkRegionStartWithTableID(c, def.ID, store.(kvStore))
 	}
-
-	//test split region when create table like
-	tk.MustExec("create table t(i int)")
-	infoSchema = dom.InfoSchema()
-	c.Assert(infoSchema, NotNil)
-	t, err = infoSchema.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
-	checkRegionStartWithTableID(c, t.Meta().ID, store.(kvStore))
-
-	//tk.MustExec("create table t2 like t1")
-	//infoSchema = dom.InfoSchema()
-	//t1, err := infoSchema.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
-	//c.Assert(err, IsNil)
-	//t2, err := infoSchema.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
-	//c.Assert(err, IsNil)
-	//checkRegionStartWithTableID(c, t1.Meta().ID, store.(kvStore))
-	//checkRegionStartWithTableID(c, t2.Meta().ID, store.(kvStore))
-
-	tk.MustExec("create table t3 like t_part")
-	infoSchema = dom.InfoSchema()
-	t3, err := infoSchema.TableByName(model.NewCIStr("test"), model.NewCIStr("t_part"))
-	c.Assert(err, IsNil)
-	pi = t3.Meta().GetPartitionInfo()
-	c.Assert(pi, NotNil)
-	for _, def := range pi.Definitions {
-		checkRegionStartWithTableID(c, def.ID, store.(kvStore))
-	}
-
-	//tk.MustExec("create table t4 (a int, b int,index idx1(a)) shard_row_id_bits = 4 pre_split_regions=2")
-	//tk.MustExec("create table t5 like t4")
-	//infoSchema = dom.InfoSchema()
-	//t5, err := infoSchema.TableByName(model.NewCIStr("test"), model.NewCIStr("t4"))
-	//c.Assert(err, IsNil)
-	//id := t5.Meta().ID
-	//startKey, endKey := tablecodec.GetTableHandleKeyRange(id)
-	//pdCli := store.
-	//cache := store.(kvStore).GetRegionCache()
-	//ctx := context.Background()
-	//pdCli := cache.PDClient()
-	//regions, _, err := pdCli.ScanRegions(ctx, startKey, endKey, -1)
-	//c.Assert(err, IsNil)
-	//c.Assert(len(regions), Equals, 3)
 }
 
 type kvStore interface {

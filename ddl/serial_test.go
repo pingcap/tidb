@@ -305,6 +305,25 @@ func (s *testSerialSuite) TestCreateTableWithLike(c *C) {
 	tk.MustExec("create table ctwl_db1.pt1 like ctwl_db.pt1;")
 	tk.MustQuery("select * from ctwl_db1.pt1").Check(testkit.Rows())
 
+	// for pre_split_table
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (a int, b int,index idx1(a)) shard_row_id_bits = 4 pre_split_regions=2;")
+	tk.MustExec("create table t2 like t1")
+	is = domain.GetDomain(ctx).InfoSchema()
+	t1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	c.Assert(err, IsNil)
+	t1Info := t1.Meta()
+	c.Assert(t1Info.PreSplitRegions, NotNil)
+	t2, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	c.Assert(err, IsNil)
+	t2Info := t2.Meta()
+	c.Assert(t2Info.PreSplitRegions, NotNil)
+	c.Assert(t1Info.PreSplitRegions, Equals, t2Info.PreSplitRegions)
+
+	c.Assert(t1Info.ShardRowIDBits, NotNil)
+	c.Assert(t2Info.ShardRowIDBits, NotNil)
+	c.Assert(t1Info.ShardRowIDBits, Equals, t2Info.ShardRowIDBits)
+
 	// for failure cases
 	failSQL := fmt.Sprintf("create table t1 like test_not_exist.t")
 	tk.MustGetErrCode(failSQL, mysql.ErrNoSuchTable)
