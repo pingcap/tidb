@@ -741,9 +741,12 @@ func (r *MergeAdjacentWindow) OnTransform(old *memo.ExprIter) (newExprs []*memo.
 	window := old.GetExpr().ExprNode.(*plannercore.LogicalWindow)
 	child := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalWindow)
 	childGroups := old.Children[0].GetExpr().Children
+	windowFuncDescs := make([]*aggregation.WindowFuncDesc, len(child.WindowFuncDescs)+len(window.WindowFuncDescs))
+	copy(windowFuncDescs, child.WindowFuncDescs)
+	copy(windowFuncDescs[len(child.WindowFuncDescs):], window.WindowFuncDescs)
 
 	newWindow := plannercore.LogicalWindow{
-		WindowFuncDescs: append(child.WindowFuncDescs, window.WindowFuncDescs...),
+		WindowFuncDescs: windowFuncDescs,
 		PartitionBy:     child.PartitionBy,
 		OrderBy:         child.OrderBy,
 		Frame:           child.Frame,
