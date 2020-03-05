@@ -638,7 +638,6 @@ func (s *testTableSuite) TestTableIDAndIndexID(c *C) {
 	tblID, err := strconv.Atoi(tk.MustQuery("select tidb_table_id from information_schema.tables where table_schema = 'test' and table_name = 't'").Rows()[0][0].(string))
 	c.Assert(err, IsNil)
 	c.Assert(tblID, Greater, 0)
-	tk.MustQuery("select index_id from information_schema.tidb_indexes where table_schema = 'test' and table_name = 't'").Check(testkit.Rows("0", "1"))
 }
 
 func prepareSlowLogfile(c *C, slowLogFileName string) {

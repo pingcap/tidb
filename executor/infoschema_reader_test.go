@@ -69,6 +69,13 @@ func (s *testInfoschemaTableSuite) TestSchemataTables(c *C) {
 		testkit.Rows("def INFORMATION_SCHEMA utf8mb4 utf8mb4_bin <nil>", "def mysql utf8mb4 utf8mb4_bin <nil>"))
 }
 
+func (s *testInfoschemaTableSuite) TestTableIDAndIndexID(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("drop table if exists test.t")
+	tk.MustExec("create table test.t (a int, b int, primary key(a), key k1(b))")
+	tk.MustQuery("select index_id from information_schema.tidb_indexes where table_schema = 'test' and table_name = 't'").Check(testkit.Rows("0", "1"))
+}
+
 func (s *testInfoschemaTableSuite) TestSchemataCharacterSet(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("CREATE DATABASE `foo` DEFAULT CHARACTER SET = 'utf8mb4'")
