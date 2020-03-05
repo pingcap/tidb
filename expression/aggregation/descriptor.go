@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
-	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -54,11 +53,11 @@ func NewAggFuncDesc(ctx sessionctx.Context, name string, args []expression.Expre
 // so we pre-alloc 10 bytes for Arg's hashcode.
 func (a *AggFuncDesc) HashCode(sc *stmtctx.StatementContext) []byte {
 	hashcode := make([]byte, 0, 19+len(a.Args)*14)
-	hashcode = plannercore.EncodeBool(hashcode, a.HasDistinct)
-	hashcode = plannercore.EncodeIntAsUint32(hashcode, int(a.Mode))
+	hashcode = codec.EncodeBool(hashcode, a.HasDistinct)
+	hashcode = codec.EncodeIntAsUint32(hashcode, int(a.Mode))
 	hashcode = codec.EncodeCompactBytes(hashcode, hack.Slice(a.Name))
 	argHashCode := func(i int) []byte { return a.Args[i].HashCode(sc) }
-	hashcode = plannercore.Encode(hashcode, argHashCode, len(a.Args))
+	hashcode = codec.Encode(hashcode, argHashCode, len(a.Args))
 	return hashcode
 }
 

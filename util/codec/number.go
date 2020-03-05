@@ -282,3 +282,17 @@ func DecodeComparableVarint(b []byte) ([]byte, int64, error) {
 	}
 	return b[length:], int64(v), nil
 }
+
+// EncodeIntAsUint32 append int to []byte.
+func EncodeIntAsUint32(result []byte, value int) []byte {
+	var buf [4]byte
+	binary.BigEndian.PutUint32(buf[:], uint32(value))
+	return append(result, buf[:]...)
+}
+
+// EncodeUintAsUint32 append int to []byte.
+func EncodeUintAsUint32(result []byte, value uint) []byte {
+	var buf [4]byte
+	binary.BigEndian.PutUint32(buf[:], uint32(value))
+	return append(result, buf[:]...)
+}

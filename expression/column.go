@@ -15,6 +15,7 @@ package expression
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/util/hack"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -44,7 +45,15 @@ func (col *CorrelatedColumn) Clone() Expression {
 func (col *CorrelatedColumn) HashCode(sc *stmtctx.StatementContext) []byte {
 	hashcode := make([]byte, 0, 20)
 	hashcode = append(hashcode, col.Column.HashCode(sc)...)
-	hashcode = append(hashcode, col.Data.HashCode()...)
+
+	hashcode = append(hashcode, col.Data.Kind())
+	v := col.Data.GetValue()
+	if b, ok := v.([]byte); ok && col.Data.Kind() == types.KindBytes {
+		hashcode = append(hashcode, b...)
+	} else {
+		hashcode = codec.EncodeCompactBytes(hashcode, hack.Slice(fmt.Sprintf("%v", v)))
+	}
+
 	return hashcode
 }
 

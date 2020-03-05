@@ -50,6 +50,7 @@ import (
 	util2 "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/plancodec"
+	"github.com/pingcap/tidb/util/codec"
 )
 
 const (
@@ -1183,7 +1184,7 @@ func (by *ByItems) String() string {
 // so we pre-alloc 11 bytes for ByItems's hashcode.
 func (by *ByItems) HashCode(sc *stmtctx.StatementContext) []byte {
 	hashcode := make([]byte, 0, 11)
-	hashcode = EncodeBool(hashcode, by.Desc)
+	hashcode = codec.EncodeBool(hashcode, by.Desc)
 	hashcode = append(hashcode, by.Expr.HashCode(sc)...)
 	return hashcode
 }
