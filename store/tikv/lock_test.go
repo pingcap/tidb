@@ -62,9 +62,9 @@ func (s *testLockSuite) lockKey(c *C, key, value, primaryKey, primaryValue []byt
 	tpc, err := newTwoPhaseCommitterWithInit(txn, 0)
 	c.Assert(err, IsNil)
 	if bytes.Equal(key, primaryKey) {
-		tpc.keys = [][]byte{primaryKey}
+		tpc.mutations = tpc.mutationsOfKeys([][]byte{primaryKey})
 	} else {
-		tpc.keys = [][]byte{primaryKey, key}
+		tpc.mutations = tpc.mutationsOfKeys([][]byte{primaryKey, key})
 	}
 
 	ctx := context.Background()
@@ -74,7 +74,7 @@ func (s *testLockSuite) lockKey(c *C, key, value, primaryKey, primaryValue []byt
 	if commitPrimary {
 		tpc.commitTS, err = s.store.oracle.GetTimestamp(ctx)
 		c.Assert(err, IsNil)
-		err = tpc.commitKeys(NewBackoffer(ctx, CommitMaxBackoff), [][]byte{primaryKey})
+		err = tpc.commitMutations(NewBackoffer(ctx, CommitMaxBackoff), tpc.mutationsOfKeys([][]byte{primaryKey}))
 		c.Assert(err, IsNil)
 	}
 	return txn.startTS, tpc.commitTS
@@ -366,7 +366,7 @@ func (s *testLockSuite) TestCheckTxnStatusNoWait(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(status.ttl, Greater, uint64(0))
 	c.Assert(<-errCh, IsNil)
-	c.Assert(committer.cleanupKeys(bo, committer.keys), IsNil)
+	c.Assert(committer.cleanupMutations(bo, committer.mutations), IsNil)
 
 	// Call getTxnStatusFromLock to cover TxnNotFound and retry timeout.
 	startTS, err := oracle.GetTimestamp(context.Background())
