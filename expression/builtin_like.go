@@ -83,7 +83,7 @@ func (b *builtinLikeSig) evalInt(row chunk.Row) (int64, bool, error) {
 		return 0, isNull, err
 	}
 	if b.pattern == nil {
-		b.pattern = collate.GetCollator(b.args[0].GetType().Collate).Pattern()
+		b.pattern = b.collator().Pattern()
 		if b.args[1].ConstItem(b.ctx.GetSessionVars().StmtCtx) && b.args[2].ConstItem(b.ctx.GetSessionVars().StmtCtx) {
 			b.pattern.Compile(patternStr, byte(escape))
 			b.isMemorizedPattern = true
