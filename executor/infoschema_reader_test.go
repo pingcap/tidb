@@ -69,6 +69,13 @@ func (s *testInfoschemaTableSuite) TestSchemataTables(c *C) {
 		testkit.Rows("def INFORMATION_SCHEMA utf8mb4 utf8mb4_bin <nil>", "def mysql utf8mb4 utf8mb4_bin <nil>"))
 }
 
+func (s *testInfoschemaTableSuite) TestTableIDAndIndexID(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("drop table if exists test.t")
+	tk.MustExec("create table test.t (a int, b int, primary key(a), key k1(b))")
+	tk.MustQuery("select index_id from information_schema.tidb_indexes where table_schema = 'test' and table_name = 't'").Check(testkit.Rows("0", "1"))
+}
+
 func (s *testInfoschemaTableSuite) TestSchemataCharacterSet(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("CREATE DATABASE `foo` DEFAULT CHARACTER SET = 'utf8mb4'")
@@ -100,4 +107,7 @@ func (s *testInfoschemaTableSuite) TestCharacterSetCollations(c *C) {
 	// but the id's are used by client libraries and must be stable
 	tk.MustQuery("SELECT character_set_name, id, sortlen FROM information_schema.collations ORDER BY collation_name").Check(
 		testkit.Rows("ascii 65 1", "binary 63 1", "latin1 47 1", "utf8 83 1", "utf8mb4 46 1"))
+
+	tk.MustQuery("select * from information_schema.COLLATION_CHARACTER_SET_APPLICABILITY where COLLATION_NAME='utf8mb4_bin';").Check(
+		testkit.Rows("utf8mb4_bin utf8mb4"))
 }
