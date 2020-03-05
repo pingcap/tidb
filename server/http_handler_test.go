@@ -15,6 +15,9 @@ package server
 
 import (
 	"bytes"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
@@ -1009,3 +1012,98 @@ func (ts *HTTPHandlerTestSuite) TestAllServerInfo(c *C) {
 	c.Assert(serverInfo.GitHash, Equals, printer.TiDBGitHash)
 	c.Assert(serverInfo.ID, Equals, ddl.GetID())
 }
+<<<<<<< HEAD
+=======
+
+func (ts *HTTPHandlerTestSuite) TestHotRegionInfo(c *C) {
+	ts.startServer(c)
+	defer ts.stopServer(c)
+	resp, err := ts.fetchStatus("/regions/hot")
+	c.Assert(err, IsNil)
+	defer resp.Body.Close()
+	c.Assert(resp.StatusCode, Equals, http.StatusBadRequest)
+}
+
+func (ts *HTTPHandlerTestSuite) TestDebugZip(c *C) {
+	ts.startServer(c)
+	defer ts.stopServer(c)
+	resp, err := ts.fetchStatus("/debug/zip?seconds=1")
+	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+	b, err := httputil.DumpResponse(resp, true)
+	c.Assert(err, IsNil)
+	c.Assert(len(b), Greater, 0)
+	c.Assert(resp.Body.Close(), IsNil)
+}
+
+func (ts *HTTPHandlerTestSuite) TestCheckCN(c *C) {
+	s := &Server{cfg: &config.Config{Security: config.Security{ClusterVerifyCN: []string{"a ", "b", "c"}}}}
+	tlsConfig := &tls.Config{}
+	s.setCNChecker(tlsConfig)
+	c.Assert(tlsConfig.VerifyPeerCertificate, NotNil)
+	err := tlsConfig.VerifyPeerCertificate(nil, [][]*x509.Certificate{{{Subject: pkix.Name{CommonName: "a"}}}})
+	c.Assert(err, IsNil)
+	err = tlsConfig.VerifyPeerCertificate(nil, [][]*x509.Certificate{{{Subject: pkix.Name{CommonName: "b"}}}})
+	c.Assert(err, IsNil)
+	err = tlsConfig.VerifyPeerCertificate(nil, [][]*x509.Certificate{{{Subject: pkix.Name{CommonName: "d"}}}})
+	c.Assert(err, NotNil)
+}
+
+func (ts *HTTPHandlerTestSuite) TestZipInfoForSQL(c *C) {
+	ts.startServer(c)
+	defer ts.stopServer(c)
+
+	db, err := sql.Open("mysql", ts.getDSN())
+	c.Assert(err, IsNil, Commentf("Error connecting"))
+	defer db.Close()
+	dbt := &DBTest{c, db}
+
+	dbt.mustExec("use test")
+	dbt.mustExec("create table if not exists t (a int)")
+
+	urlValues := url.Values{
+		"sql":        {"select * from t"},
+		"current_db": {"test"},
+	}
+	resp, err := ts.formStatus("/debug/sub-optimal-plan", urlValues)
+	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+	b, err := httputil.DumpResponse(resp, true)
+	c.Assert(err, IsNil)
+	c.Assert(len(b), Greater, 0)
+	c.Assert(resp.Body.Close(), IsNil)
+
+	resp, err = ts.formStatus("/debug/sub-optimal-plan?pprof_time=5&timeout=0", urlValues)
+	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+	b, err = httputil.DumpResponse(resp, true)
+	c.Assert(err, IsNil)
+	c.Assert(len(b), Greater, 0)
+	c.Assert(resp.Body.Close(), IsNil)
+
+	resp, err = ts.formStatus("/debug/sub-optimal-plan?pprof_time=5", urlValues)
+	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+	b, err = httputil.DumpResponse(resp, true)
+	c.Assert(err, IsNil)
+	c.Assert(len(b), Greater, 0)
+	c.Assert(resp.Body.Close(), IsNil)
+
+	resp, err = ts.formStatus("/debug/sub-optimal-plan?timeout=1", urlValues)
+	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+	b, err = httputil.DumpResponse(resp, true)
+	c.Assert(err, IsNil)
+	c.Assert(len(b), Greater, 0)
+	c.Assert(resp.Body.Close(), IsNil)
+
+	urlValues.Set("current_db", "non_exists_db")
+	resp, err = ts.formStatus("/debug/sub-optimal-plan", urlValues)
+	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusInternalServerError)
+	b, err = ioutil.ReadAll(resp.Body)
+	c.Assert(err, IsNil)
+	c.Assert(string(b), Equals, "use database non_exists_db failed, err: [schema:1049]Unknown database 'non_exists_db'\n")
+	c.Assert(resp.Body.Close(), IsNil)
+}
+>>>>>>> 92f6f4e... server: support check the "CommanName" of tls-cert for status-port(http/grpc) (#15137)

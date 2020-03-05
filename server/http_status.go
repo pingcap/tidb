@@ -17,6 +17,11 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+<<<<<<< HEAD
+=======
+	"crypto/tls"
+	"crypto/x509"
+>>>>>>> 92f6f4e... server: support check the "CommanName" of tls-cert for status-port(http/grpc) (#15137)
 	"encoding/json"
 	"fmt"
 	"net"
@@ -252,8 +257,22 @@ func (s *Server) startHTTPServer() {
 		}
 	})
 
+<<<<<<< HEAD
 	logutil.Logger(context.Background()).Info("for status and metrics report", zap.String("listening on addr", addr))
 	s.statusServer = &http.Server{Addr: addr, Handler: CorsHandler{handler: serverMux, cfg: s.cfg}}
+=======
+	logutil.BgLogger().Info("for status and metrics report", zap.String("listening on addr", addr))
+	s.setupStatusServerAndRPCServer(addr, serverMux)
+}
+
+func (s *Server) setupStatusServerAndRPCServer(addr string, serverMux *http.ServeMux) {
+	tlsConfig, err := s.cfg.Security.ToTLSConfig()
+	if err != nil {
+		logutil.BgLogger().Error("invalid TLS config", zap.Error(err))
+		return
+	}
+	tlsConfig = s.setCNChecker(tlsConfig)
+>>>>>>> 92f6f4e... server: support check the "CommanName" of tls-cert for status-port(http/grpc) (#15137)
 
 	if len(s.cfg.Security.ClusterSSLCA) != 0 {
 		err = s.statusServer.ListenAndServeTLS(s.cfg.Security.ClusterSSLCert, s.cfg.Security.ClusterSSLKey)
@@ -264,6 +283,28 @@ func (s *Server) startHTTPServer() {
 	if err != nil {
 		logutil.Logger(context.Background()).Info("listen failed", zap.Error(err))
 	}
+}
+
+func (s *Server) setCNChecker(tlsConfig *tls.Config) *tls.Config {
+	if tlsConfig != nil && len(s.cfg.Security.ClusterVerifyCN) != 0 {
+		checkCN := make(map[string]struct{})
+		for _, cn := range s.cfg.Security.ClusterVerifyCN {
+			cn = strings.TrimSpace(cn)
+			checkCN[cn] = struct{}{}
+		}
+		tlsConfig.VerifyPeerCertificate = func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
+			for _, chain := range verifiedChains {
+				if len(chain) != 0 {
+					if _, match := checkCN[chain[0].Subject.CommonName]; match {
+						return nil
+					}
+				}
+			}
+			return errors.Errorf("client certificate authentication failed. The Common Name from the client certificate was not found in the configuration cluster-verify-cn with value: %s", s.cfg.Security.ClusterVerifyCN)
+		}
+		tlsConfig.ClientAuth = tls.RequireAndVerifyClientCert
+	}
+	return tlsConfig
 }
 
 // status of TiDB.
