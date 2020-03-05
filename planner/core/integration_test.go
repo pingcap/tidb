@@ -448,7 +448,7 @@ func (s *testIntegrationSuite) TestIsolationReadTiFlashNotChoosePointGet(c *C) {
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
 	tk.MustQuery("explain select * from t where t.a = 1").Check(testkit.Rows(
 		"TableReader_6 1.00 root data:TableRangeScan_5",
-			"└─TableRangeScan_5 1.00 cop[tiflash] table:t, range:[1,1], keep order:false, stats:pseudo"))
+		"└─TableRangeScan_5 1.00 cop[tiflash] table:t, range:[1,1], keep order:false, stats:pseudo"))
 	tk.MustQuery("explain select * from t where t.a in (1, 2)").Check(testkit.Rows(
 		"TableReader_6 2.00 root data:TableRangeScan_5",
 		"└─TableRangeScan_5 2.00 cop[tiflash] table:t, range:[1,1], [2,2], keep order:false, stats:pseudo"))
