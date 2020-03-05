@@ -426,6 +426,34 @@ func (s *testIntegrationSuite) TestReadFromStorageHintAndIsolationRead(c *C) {
 	}
 }
 
+func (s *testIntegrationSuite) TestIsolationReadTiFlashNotChoosePointGet(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, primary key (a))")
+
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	c.Assert(exists, IsTrue)
+	for _, tblInfo := range db.Tables {
+		tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+			Count:     1,
+			Available: true,
+		}
+	}
+
+	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
+	tk.MustQuery("explain select * from t where t.a = 1").Check(testkit.Rows(
+		"TableReader_6 1.00 root data:TableRangeScan_5",
+			"└─TableRangeScan_5 1.00 cop[tiflash] table:t, range:[1,1], keep order:false, stats:pseudo"))
+	tk.MustQuery("explain select * from t where t.a in (1, 2)").Check(testkit.Rows(
+		"TableReader_6 2.00 root data:TableRangeScan_5",
+		"└─TableRangeScan_5 2.00 cop[tiflash] table:t, range:[1,1], [2,2], keep order:false, stats:pseudo"))
+}
+
 func (s *testIntegrationSuite) TestPartitionTableStats(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 

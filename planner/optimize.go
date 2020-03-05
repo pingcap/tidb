@@ -15,6 +15,7 @@ package planner
 
 import (
 	"context"
+	"github.com/pingcap/tidb/config"
 	"math"
 	"strings"
 
@@ -38,12 +39,21 @@ import (
 // Optimize does optimization and creates a Plan.
 // The node must be prepared first.
 func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (plannercore.Plan, types.NameSlice, error) {
-	fp := plannercore.TryFastPlan(sctx, node)
-	if fp != nil {
-		if !useMaxTS(sctx, fp) {
-			sctx.PrepareTSFuture(ctx)
+	_, isolationReadContainTiKV := sctx.GetSessionVars().GetIsolationReadEngines()[kv.TiKV]
+	cfgIsolationReadContainTiKV := false
+	for _, engine := range config.GetGlobalConfig().IsolationRead.Engines {
+		if engine == kv.TiKV.Name() {
+			cfgIsolationReadContainTiKV = true
 		}
-		return fp, fp.OutputNames(), nil
+	}
+	if isolationReadContainTiKV && cfgIsolationReadContainTiKV {
+		fp := plannercore.TryFastPlan(sctx, node)
+		if fp != nil {
+			if !useMaxTS(sctx, fp) {
+				sctx.PrepareTSFuture(ctx)
+			}
+			return fp, fp.OutputNames(), nil
+		}
 	}
 
 	sctx.PrepareTSFuture(ctx)
