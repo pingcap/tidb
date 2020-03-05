@@ -97,7 +97,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 	}
 	var batchGetter kv.BatchGetter = snapshot
-	if txn.Valid() && txn.Size() > 0 {
+	if txn.Valid() {
 		batchGetter = kv.NewBufferBatchGetter(txn.GetMemBuffer(), snapshot)
 	}
 
