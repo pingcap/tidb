@@ -747,9 +747,6 @@ func (s *testSuite3) TestShardRowIDBits(c *C) {
 	c.Assert(autoid.ErrAutoincReadFailed.Equal(err), IsTrue, Commentf("err:%v", err))
 }
 
-<<<<<<< HEAD
-func (s *testSuite3) TestMaxHandleAddIndex(c *C) {
-=======
 type testAutoRandomSuite struct {
 	*baseTestSuite
 }
@@ -841,7 +838,6 @@ func (s *testAutoRandomSuite) TestAutoRandomBitsData(c *C) {
 }
 
 func (s *testSuite6) TestMaxHandleAddIndex(c *C) {
->>>>>>> e7b1993... test: fix the CI problem in TestAutoRandomBitsData (#14823)
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("use test")
