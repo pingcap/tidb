@@ -824,7 +824,7 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 		// The `doubleReadNeedProj` is always set if the double read needs to keep order. So we just use it to decided
 		// whether the following plan is double read with order reserved.
 		copToFlash := isFlashCopTask(cop)
-		if !cop.doubleReadNeedProj || len(cop.rootTaskConds) == 0 {
+		if !cop.doubleReadNeedProj && len(cop.rootTaskConds) == 0 {
 			partialAgg, finalAgg := p.newPartialAggregate(copToFlash)
 			if partialAgg != nil {
 				if cop.tablePlan != nil {
@@ -901,19 +901,21 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	inputRows := t.count()
 	if cop, ok := t.(*copTask); ok {
-		// copToFlash means whether the cop task is running on flash storage
-		copToFlash := isFlashCopTask(cop)
-		partialAgg, finalAgg := p.newPartialAggregate(copToFlash)
-		if partialAgg != nil && len(cop.rootTaskConds) == 0 {
-			if cop.tablePlan != nil {
-				cop.finishIndexPlan()
-				partialAgg.SetChildren(cop.tablePlan)
-				cop.tablePlan = partialAgg
-			} else {
-				partialAgg.SetChildren(cop.indexPlan)
-				cop.indexPlan = partialAgg
+		if len(cop.rootTaskConds) == 0 {
+			// copToFlash means whether the cop task is running on flash storage
+			copToFlash := isFlashCopTask(cop)
+			partialAgg, finalAgg := p.newPartialAggregate(copToFlash)
+			if partialAgg != nil {
+				if cop.tablePlan != nil {
+					cop.finishIndexPlan()
+					partialAgg.SetChildren(cop.tablePlan)
+					cop.tablePlan = partialAgg
+				} else {
+					partialAgg.SetChildren(cop.indexPlan)
+					cop.indexPlan = partialAgg
+				}
+				cop.addCost(p.GetCost(inputRows, false))
 			}
-			cop.addCost(p.GetCost(inputRows, false))
 			// In `newPartialAggregate`, we are using stats of final aggregation as stats
 			// of `partialAgg`, so the network cost of transferring result rows of `partialAgg`
 			// to TiDB is normally under-estimated for hash aggregation, since the group-by
