@@ -824,7 +824,7 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 		// The `doubleReadNeedProj` is always set if the double read needs to keep order. So we just use it to decided
 		// whether the following plan is double read with order reserved.
 		copToFlash := isFlashCopTask(cop)
-		if !cop.doubleReadNeedProj || len(cop.rootTaskConds) == 0{
+		if !cop.doubleReadNeedProj || len(cop.rootTaskConds) == 0 {
 			partialAgg, finalAgg := p.newPartialAggregate(copToFlash)
 			if partialAgg != nil {
 				if cop.tablePlan != nil {
