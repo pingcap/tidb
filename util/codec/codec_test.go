@@ -1043,14 +1043,14 @@ func testHashChunkRowEqual(c *C, a, b interface{}, equal bool) {
 	types.DefaultTypeForValue(a, tp1)
 	chk1 := chunk.New([]*types.FieldType{tp1}, 1, 1)
 	d := types.Datum{}
-	d.SetValue(a)
+	d.SetValue(a, tp1)
 	chk1.AppendDatum(0, &d)
 
 	tp2 := new(types.FieldType)
 	types.DefaultTypeForValue(b, tp2)
 	chk2 := chunk.New([]*types.FieldType{tp2}, 1, 1)
 	d = types.Datum{}
-	d.SetValue(b)
+	d.SetValue(b, tp2)
 	chk2.AppendDatum(0, &d)
 
 	h := crc32.NewIEEE()
