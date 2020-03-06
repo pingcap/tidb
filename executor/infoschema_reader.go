@@ -65,11 +65,11 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		case infoschema.TableViews:
 			e.rows, err = dataForViews(sctx, dbs)
 		case infoschema.TableEngines:
-			e.rows = dataForEngines()
+			e.setDataFromEngines()
 		case infoschema.TableCharacterSets:
-			e.rows = dataForCharacterSets()
+			e.setDataFromCharacterSets()
 		case infoschema.TableCollations:
-			e.rows = dataForCollations()
+			e.setDataFromCollations()
 		case infoschema.TableKeyColumn:
 			e.setDataFromKeyColumnUsage(sctx, dbs)
 		case infoschema.TableCollationCharacterSetApplicability:
@@ -592,7 +592,8 @@ func dataForViews(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Da
 	return rows, nil
 }
 
-func dataForEngines() (rows [][]types.Datum) {
+func (e *memtableRetriever) setDataFromEngines() {
+	var rows [][]types.Datum
 	rows = append(rows,
 		types.MakeDatums(
 			"InnoDB",  // Engine
@@ -603,31 +604,33 @@ func dataForEngines() (rows [][]types.Datum) {
 			"YES", // Savepoints
 		),
 	)
-	return rows
+	e.rows = rows
 }
 
-func dataForCharacterSets() (records [][]types.Datum) {
+func (e *memtableRetriever) setDataFromCharacterSets() {
+	var rows [][]types.Datum
 	charsets := charset.GetSupportedCharsets()
 	for _, charset := range charsets {
-		records = append(records,
+		rows = append(rows,
 			types.MakeDatums(charset.Name, charset.DefaultCollation, charset.Desc, charset.Maxlen),
 		)
 	}
-	return records
+	e.rows = rows
 }
 
-func dataForCollations() (records [][]types.Datum) {
+func (e *memtableRetriever) setDataFromCollations() {
+	var rows [][]types.Datum
 	collations := charset.GetSupportedCollations()
 	for _, collation := range collations {
 		isDefault := ""
 		if collation.IsDefault {
 			isDefault = "Yes"
 		}
-		records = append(records,
+		rows = append(rows,
 			types.MakeDatums(collation.Name, collation.CharsetName, collation.ID, isDefault, "Yes", 1),
 		)
 	}
-	return records
+	e.rows = rows
 }
 
 func (e *memtableRetriever) dataForCollationCharacterSetApplicability() {
