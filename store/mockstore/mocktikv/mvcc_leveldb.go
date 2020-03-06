@@ -707,7 +707,7 @@ func checkConflictValue(iter *Iterator, m *kvrpcpb.Mutation, forUpdateTS uint64,
 	needCheckAssertion := m.Assertion == kvrpcpb.Assertion_NotExist
 	needCheckRollback := true
 	var retVal []byte
-	// do the check or get operations using one iterator to make it ct faster
+	// do the check or get operations within one iteration to make CI faster
 	for ok {
 		if needCheckRollback {
 			if dec.value.valueType == typeRollback {
