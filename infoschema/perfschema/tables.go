@@ -202,9 +202,9 @@ func (vt *perfSchemaTable) Type() table.Type {
 func (vt *perfSchemaTable) getRows(ctx sessionctx.Context, cols []*table.Column) (fullRows [][]types.Datum, err error) {
 	switch vt.meta.Name.O {
 	case tableNameEventsStatementsSummaryByDigest:
-		fullRows = stmtsummary.StmtSummaryByDigestMap.ToCurrentDatum()
+		fullRows = stmtsummary.StmtSummaryByDigestMap.ToCurrentDatum(ctx)
 	case tableNameEventsStatementsSummaryByDigestHistory:
-		fullRows = stmtsummary.StmtSummaryByDigestMap.ToHistoryDatum()
+		fullRows = stmtsummary.StmtSummaryByDigestMap.ToHistoryDatum(ctx)
 	case tableNameTiDBProfileCPU:
 		fullRows, err = (&profile.Collector{}).ProfileGraph("cpu")
 	case tableNameTiDBProfileMemory:
@@ -258,9 +258,9 @@ func (vt *perfSchemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 func getClusterMemTableRows(ctx sessionctx.Context, tableName string) (rows [][]types.Datum, err error) {
 	switch tableName {
 	case tableNameClusterEventsStatementsSummaryByDigest:
-		rows = stmtsummary.StmtSummaryByDigestMap.ToCurrentDatum()
+		rows = stmtsummary.StmtSummaryByDigestMap.ToCurrentDatum(ctx)
 	case tableNameClusterEventsStatementsSummaryByDigestHistory:
-		rows = stmtsummary.StmtSummaryByDigestMap.ToHistoryDatum()
+		rows = stmtsummary.StmtSummaryByDigestMap.ToHistoryDatum(ctx)
 	default:
 		err = errors.Errorf("unknown cluster table: %v", tableName)
 	}
