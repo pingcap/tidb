@@ -347,10 +347,13 @@ func (s *testTransformationRuleSuite) TestPushLimitDownTiKVSingleGather(c *C) {
 	testGroupToString(input, output, s, c)
 }
 
-func (s *testTransformationRuleSuite) TestEliminateOuterJoinBelowAggregation(c *C) {
+func (s *testTransformationRuleSuite) TestEliminateOuterJoin(c *C) {
 	s.optimizer.ResetTransformationRules(map[memo.Operand][]Transformation{
 		memo.OperandAggregation: {
 			NewRuleEliminateOuterJoinBelowAggregation(),
+		},
+		memo.OperandProjection: {
+			NewRuleEliminateOuterJoinBelowProjection(),
 		},
 	})
 	defer func() {
