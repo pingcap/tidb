@@ -5,7 +5,6 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb-tools/pkg/filter"
-	"github.com/pingcap/tidb/util"
 )
 
 var _ = Suite(&testBWListSuite{})
@@ -46,8 +45,8 @@ func (s *testBWListSuite) TestFilterTables(c *C) {
 	dbTables := DatabaseTables{}
 	expectedDBTables := DatabaseTables{}
 
-	dbTables.AppendTables(util.InformationSchemaName.L, []string{"xxx"}...)
-	dbTables.AppendTables(strings.ToUpper(util.PerformanceSchemaName.L), []string{"xxx"}...)
+	dbTables.AppendTables(filter.InformationSchemaName, []string{"xxx"}...)
+	dbTables.AppendTables(strings.ToUpper(filter.PerformanceSchemaName), []string{"xxx"}...)
 	dbTables.AppendTables("xxx", []string{"yyy"}...)
 	expectedDBTables.AppendTables("xxx", []string{"yyy"}...)
 	dbTables.AppendTables("yyy", []string{"xxx"}...)
