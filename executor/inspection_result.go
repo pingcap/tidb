@@ -561,12 +561,12 @@ func (thresholdCheckInspection) inspectThreshold1(ctx context.Context, sctx sess
 		var sql string
 		if len(rule.configKey) > 0 {
 			sql = fmt.Sprintf("select t1.instance, t1.cpu, t2.threshold, t2.value from "+
-				"(select instance, sum(value) as cpu from metrics_schema.tikv_thread_cpu %[4]s and name like '%[1]s' group by instance) as t1,"+
+				"(select instance, max(value) as cpu from metrics_schema.tikv_thread_cpu %[4]s and name like '%[1]s' group by instance) as t1,"+
 				"(select value * %[2]f as threshold, value from inspection_schema.cluster_config where type='tikv' and `key` = '%[3]s' limit 1) as t2 "+
 				"where t1.cpu > t2.threshold;", rule.component, rule.threshold, rule.configKey, condition)
 		} else {
 			sql = fmt.Sprintf("select t1.instance, t1.cpu, %[2]f from "+
-				"(select instance, sum(value) as cpu from metrics_schema.tikv_thread_cpu %[3]s and name like '%[1]s' group by instance) as t1 "+
+				"(select instance, max(value) as cpu from metrics_schema.tikv_thread_cpu %[3]s and name like '%[1]s' group by instance) as t1 "+
 				"where t1.cpu > %[2]f;", rule.component, rule.threshold, condition)
 		}
 		rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithContext(ctx, sql)
@@ -583,8 +583,7 @@ func (thresholdCheckInspection) inspectThreshold1(ctx context.Context, sctx sess
 			} else {
 				expected = fmt.Sprintf("< %.2f", row.GetFloat64(2))
 			}
-			detail := fmt.Sprintf("select instance, sum(value) as cpu from metrics_schema.tikv_thread_cpu %s and name like '%s' group by instance",
-				condition, rule.component)
+			detail := fmt.Sprintf("the '%s' max cpu-usage of %s tikv is too high", rule.item, row.GetString(0))
 			result := inspectionResult{
 				tp:       "tikv",
 				instance: row.GetString(0),

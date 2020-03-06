@@ -257,17 +257,17 @@ func (s *inspectionResultSuite) TestThresholdCheckInspection(c *C) {
 	result := tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute inspect SQL failed"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0), Commentf("unexpected warnings: %+v", tk.Se.GetSessionVars().StmtCtx.GetWarnings()))
 	result.Check(testkit.Rows(
-		"apply-cpu tikv tikv-0 10.00 < 1.60, config: raftstore.apply-pool-size=2 select instance, sum(value) as cpu from metrics_schema.tikv_thread_cpu where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and name like 'apply_%' group by instance",
-		"coprocessor-high-cpu tikv tikv-0 10.00 < 3.60, config: readpool.coprocessor.high-concurrency=4 select instance, sum(value) as cpu from metrics_schema.tikv_thread_cpu where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and name like 'cop_high%' group by instance",
-		"coprocessor-low-cpu tikv tikv-0 10.00 < 3.60, config: readpool.coprocessor.low-concurrency=4 select instance, sum(value) as cpu from metrics_schema.tikv_thread_cpu where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and name like 'cop_low%' group by instance",
-		"coprocessor-normal-cpu tikv tikv-0 20.00 < 3.60, config: readpool.coprocessor.normal-concurrency=4 select instance, sum(value) as cpu from metrics_schema.tikv_thread_cpu where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and name like 'cop_normal%' group by instance",
-		"grpc-cpu tikv tikv-0 10.00 < 7.20, config: server.grpc-concurrency=8 select instance, sum(value) as cpu from metrics_schema.tikv_thread_cpu where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and name like 'grpc%' group by instance",
-		"raftstore-cpu tikv tikv-0 10.00 < 1.60, config: raftstore.store-pool-size=2 select instance, sum(value) as cpu from metrics_schema.tikv_thread_cpu where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and name like 'raftstore_%' group by instance",
-		"scheduler-worker-cpu tikv tikv-0 10.00 < 5.10, config: storage.scheduler-worker-pool-size=6 select instance, sum(value) as cpu from metrics_schema.tikv_thread_cpu where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and name like 'sched_%' group by instance",
-		"split-check-cpu tikv tikv-0 10.00 < 0.00 select instance, sum(value) as cpu from metrics_schema.tikv_thread_cpu where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and name like 'split_check' group by instance",
-		"storage-readpool-high-cpu tikv tikv-0 10.00 < 3.60, config: readpool.storage.high-concurrency=4 select instance, sum(value) as cpu from metrics_schema.tikv_thread_cpu where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and name like 'store_read_high%' group by instance",
-		"storage-readpool-low-cpu tikv tikv-0 10.00 < 3.60, config: readpool.storage.low-concurrency=4 select instance, sum(value) as cpu from metrics_schema.tikv_thread_cpu where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and name like 'store_read_low%' group by instance",
-		"storage-readpool-normal-cpu tikv tikv-0 10.00 < 3.60, config: readpool.storage.normal-concurrency=4 select instance, sum(value) as cpu from metrics_schema.tikv_thread_cpu where time>='2020-02-12 10:35:00' and time<='2020-02-12 10:37:00' and name like 'store_read_norm%' group by instance",
+		"apply-cpu tikv tikv-0 10.00 < 1.60, config: raftstore.apply-pool-size=2 the 'apply-cpu' max cpu-usage of tikv-0 tikv is too high",
+		"coprocessor-high-cpu tikv tikv-0 10.00 < 3.60, config: readpool.coprocessor.high-concurrency=4 the 'coprocessor-high-cpu' max cpu-usage of tikv-0 tikv is too high",
+		"coprocessor-low-cpu tikv tikv-0 10.00 < 3.60, config: readpool.coprocessor.low-concurrency=4 the 'coprocessor-low-cpu' max cpu-usage of tikv-0 tikv is too high",
+		"coprocessor-normal-cpu tikv tikv-0 10.00 < 3.60, config: readpool.coprocessor.normal-concurrency=4 the 'coprocessor-normal-cpu' max cpu-usage of tikv-0 tikv is too high",
+		"grpc-cpu tikv tikv-0 10.00 < 7.20, config: server.grpc-concurrency=8 the 'grpc-cpu' max cpu-usage of tikv-0 tikv is too high",
+		"raftstore-cpu tikv tikv-0 10.00 < 1.60, config: raftstore.store-pool-size=2 the 'raftstore-cpu' max cpu-usage of tikv-0 tikv is too high",
+		"scheduler-worker-cpu tikv tikv-0 10.00 < 5.10, config: storage.scheduler-worker-pool-size=6 the 'scheduler-worker-cpu' max cpu-usage of tikv-0 tikv is too high",
+		"split-check-cpu tikv tikv-0 10.00 < 0.00 the 'split-check-cpu' max cpu-usage of tikv-0 tikv is too high",
+		"storage-readpool-high-cpu tikv tikv-0 10.00 < 3.60, config: readpool.storage.high-concurrency=4 the 'storage-readpool-high-cpu' max cpu-usage of tikv-0 tikv is too high",
+		"storage-readpool-low-cpu tikv tikv-0 10.00 < 3.60, config: readpool.storage.low-concurrency=4 the 'storage-readpool-low-cpu' max cpu-usage of tikv-0 tikv is too high",
+		"storage-readpool-normal-cpu tikv tikv-0 10.00 < 3.60, config: readpool.storage.normal-concurrency=4 the 'storage-readpool-normal-cpu' max cpu-usage of tikv-0 tikv is too high",
 	))
 
 	// construct some mock normal data
@@ -276,7 +276,7 @@ func (s *inspectionResultSuite) TestThresholdCheckInspection(c *C) {
 		types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "cop_normal0", 1.0),
 		types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "cop_high1", 0.1),
 		types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "cop_low1", 1.0),
-		types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "grpc_1", 7.0),
+		types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "grpc_1", 7.21),
 		types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "grpc_2", 0.21),
 		types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "raftstore_1", 1.0),
 		types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "apply_0", 1.0),
