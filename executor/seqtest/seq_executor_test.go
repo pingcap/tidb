@@ -769,6 +769,7 @@ func HelperTestAdminShowNextID(c *C, s *seqTestSuite, str string) {
 	defer autoid.SetStep(autoIDStep)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t,tt")
 	tk.MustExec("create table t(id int, c int)")
 	// Start handle is 1.
 	r := tk.MustQuery(str + " t next_row_id")
@@ -795,6 +796,7 @@ func HelperTestAdminShowNextID(c *C, s *seqTestSuite, str string) {
 	r = tk.MustQuery(str + " tt next_row_id")
 	r.Check(testkit.Rows("test tt id 31"))
 	// test for renaming the table
+	tk.MustExec("drop database if exists test1")
 	tk.MustExec("create database test1")
 	tk.MustExec("rename table test.tt to test1.tt")
 	tk.MustExec("use test1")
