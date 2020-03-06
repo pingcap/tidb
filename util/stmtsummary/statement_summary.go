@@ -26,8 +26,6 @@ import (
 
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/privilege"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -295,20 +293,15 @@ func (ssMap *stmtSummaryByDigestMap) Clear() {
 }
 
 // ToCurrentDatum converts current statement summaries to datum.
-func (ssMap *stmtSummaryByDigestMap) ToCurrentDatum(ctx sessionctx.Context) [][]types.Datum {
+func (ssMap *stmtSummaryByDigestMap) ToCurrentDatum(username string, isSuper bool) [][]types.Datum {
 	ssMap.Lock()
 	values := ssMap.summaryMap.Values()
 	beginTime := ssMap.beginTimeForCurInterval
 	ssMap.Unlock()
 
-	user := ctx.GetSessionVars().User
-	isSuper := false
-	if pm := privilege.GetPrivilegeManager(ctx); pm != nil {
-		isSuper = pm.RequestVerificationWithUser("", "", "", mysql.SuperPriv, user)
-	}
 	rows := make([][]types.Datum, 0, len(values))
 	for _, value := range values {
-		record := value.(*stmtSummaryByDigest).toCurrentDatum(beginTime, user.Username, isSuper)
+		record := value.(*stmtSummaryByDigest).toCurrentDatum(beginTime, username, isSuper)
 		if record != nil {
 			rows = append(rows, record)
 		}
@@ -317,20 +310,15 @@ func (ssMap *stmtSummaryByDigestMap) ToCurrentDatum(ctx sessionctx.Context) [][]
 }
 
 // ToHistoryDatum converts history statements summaries to datum.
-func (ssMap *stmtSummaryByDigestMap) ToHistoryDatum(ctx sessionctx.Context) [][]types.Datum {
+func (ssMap *stmtSummaryByDigestMap) ToHistoryDatum(username string, isSuper bool) [][]types.Datum {
 	ssMap.Lock()
 	values := ssMap.summaryMap.Values()
 	ssMap.Unlock()
 
-	user := ctx.GetSessionVars().User
-	isSuper := false
-	if pm := privilege.GetPrivilegeManager(ctx); pm != nil {
-		isSuper = pm.RequestVerificationWithUser("", "", "", mysql.SuperPriv, user)
-	}
 	historySize := ssMap.historySize()
 	rows := make([][]types.Datum, 0, len(values)*historySize)
 	for _, value := range values {
-		records := value.(*stmtSummaryByDigest).toHistoryDatum(historySize, user.Username, isSuper)
+		records := value.(*stmtSummaryByDigest).toHistoryDatum(historySize, username, isSuper)
 		rows = append(rows, records...)
 	}
 	return rows
