@@ -135,3 +135,68 @@ func (s *testInfoschemaTableSuite) TestKeyColumnUsage(c *C) {
 	keyColumnTester.MustExec("set role r_stats_meta")
 	c.Assert(len(keyColumnTester.MustQuery("select * from information_schema.KEY_COLUMN_USAGE where TABLE_NAME='stats_meta';").Rows()), Greater, 0)
 }
+
+func (s *testInfoschemaTableSuite) TestUserPrivileges(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	//test the privilege of new user for information_schema.table_constraints
+	tk.MustExec("create user constraints_tester")
+	constraintsTester := testkit.NewTestKit(c, s.store)
+	constraintsTester.MustExec("use information_schema")
+	c.Assert(constraintsTester.Se.Auth(&auth.UserIdentity{
+		Username: "constraints_tester",
+		Hostname: "127.0.0.1",
+	}, nil, nil), IsTrue)
+	constraintsTester.MustQuery("select * from information_schema.TABLE_CONSTRAINTS;").Check([][]interface{}{})
+
+	//test the privilege of user with privilege of mysql.gc_delete_range for information_schema.table_constraints
+	tk.MustExec("CREATE ROLE r_gc_delete_range ;")
+	tk.MustExec("GRANT ALL PRIVILEGES ON mysql.gc_delete_range TO r_gc_delete_range;")
+	tk.MustExec("GRANT r_gc_delete_range TO constraints_tester;")
+	constraintsTester.MustExec("set role r_gc_delete_range")
+	c.Assert(len(constraintsTester.MustQuery("select * from information_schema.TABLE_CONSTRAINTS where TABLE_NAME='gc_delete_range';").Rows()), Greater, 0)
+	constraintsTester.MustQuery("select * from information_schema.TABLE_CONSTRAINTS where TABLE_NAME='tables_priv';").Check([][]interface{}{})
+
+	//test the privilege of new user for information_schema
+	tk.MustExec("create user tester1")
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("use information_schema")
+	c.Assert(tk1.Se.Auth(&auth.UserIdentity{
+		Username: "tester1",
+		Hostname: "127.0.0.1",
+	}, nil, nil), IsTrue)
+	tk1.MustQuery("select * from information_schema.STATISTICS;").Check([][]interface{}{})
+
+	//test the privilege of user with some privilege for information_schema
+	tk.MustExec("create user tester2")
+	tk.MustExec("CREATE ROLE r_columns_priv;")
+	tk.MustExec("GRANT ALL PRIVILEGES ON mysql.columns_priv TO r_columns_priv;")
+	tk.MustExec("GRANT r_columns_priv TO tester2;")
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk2.MustExec("use information_schema")
+	c.Assert(tk2.Se.Auth(&auth.UserIdentity{
+		Username: "tester2",
+		Hostname: "127.0.0.1",
+	}, nil, nil), IsTrue)
+	tk2.MustExec("set role r_columns_priv")
+	result := tk2.MustQuery("select * from information_schema.STATISTICS where TABLE_NAME='columns_priv' and COLUMN_NAME='Host';")
+	c.Assert(len(result.Rows()), Greater, 0)
+	tk2.MustQuery("select * from information_schema.STATISTICS where TABLE_NAME='tables_priv' and COLUMN_NAME='Host';").Check(
+		[][]interface{}{})
+
+	//test the privilege of user with all privilege for information_schema
+	tk.MustExec("create user tester3")
+	tk.MustExec("CREATE ROLE r_all_priv;")
+	tk.MustExec("GRANT ALL PRIVILEGES ON mysql.* TO r_all_priv;")
+	tk.MustExec("GRANT r_all_priv TO tester3;")
+	tk3 := testkit.NewTestKit(c, s.store)
+	tk3.MustExec("use information_schema")
+	c.Assert(tk3.Se.Auth(&auth.UserIdentity{
+		Username: "tester3",
+		Hostname: "127.0.0.1",
+	}, nil, nil), IsTrue)
+	tk3.MustExec("set role r_all_priv")
+	result = tk3.MustQuery("select * from information_schema.STATISTICS where TABLE_NAME='columns_priv' and COLUMN_NAME='Host';")
+	c.Assert(len(result.Rows()), Greater, 0)
+	result = tk3.MustQuery("select * from information_schema.STATISTICS where TABLE_NAME='tables_priv' and COLUMN_NAME='Host';")
+	c.Assert(len(result.Rows()), Greater, 0)
+}
