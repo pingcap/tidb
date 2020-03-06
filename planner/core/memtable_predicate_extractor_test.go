@@ -993,3 +993,41 @@ func (s *extractorSuite) TestInspectionSummaryTableExtractor(c *C) {
 		c.Assert(clusterConfigExtractor.SkipInspection, Equals, ca.skipInspection, Commentf("SQL: %v", ca.sql))
 	}
 }
+
+func (s *extractorSuite) TestInspectionRuleTableExtractor(c *C) {
+	se, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+
+	var cases = []struct {
+		sql  string
+		tps  set.StringSet
+		skip bool
+	}{
+		{
+			sql: "select * from information_schema.inspection_rules",
+		},
+		{
+			sql: "select * from information_schema.inspection_rules where type='inspection'",
+			tps: set.NewStringSet("inspection"),
+		},
+		{
+			sql: "select * from information_schema.inspection_rules where type='inspection' or type='summary'",
+			tps: set.NewStringSet("inspection", "summary"),
+		},
+		{
+			sql:  "select * from information_schema.inspection_rules where type='inspection' and type='summary'",
+			skip: true,
+		},
+	}
+	parser := parser.New()
+	for _, ca := range cases {
+		logicalMemTable := s.getLogicalMemTable(c, se, parser, ca.sql)
+		c.Assert(logicalMemTable.Extractor, NotNil)
+
+		clusterConfigExtractor := logicalMemTable.Extractor.(*plannercore.InspectionRuleTableExtractor)
+		if len(ca.tps) > 0 {
+			c.Assert(clusterConfigExtractor.Types, DeepEquals, ca.tps, Commentf("SQL: %v", ca.sql))
+		}
+		c.Assert(clusterConfigExtractor.SkipRequest, Equals, ca.skip, Commentf("SQL: %v", ca.sql))
+	}
+}
