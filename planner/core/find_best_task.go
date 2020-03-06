@@ -469,12 +469,15 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err
 				p: dual,
 			}, nil
 		}
-		if ((!ds.isPartition && len(path.Ranges) > 0) || (ds.isPartition && len(path.Ranges) == 1)) &&
-			candidate.path.StoreType != kv.TiFlash &&
-			(candidate.path.IsTablePath ||
-				(candidate.path.Index.Unique &&
-					!candidate.path.Index.HasPrefixIndex() &&
-					len(candidate.path.Ranges[0].LowVal) == len(candidate.path.Index.Columns))) {
+		canConvertPointGet := (!ds.isPartition && len(path.Ranges) > 0) || (ds.isPartition && len(path.Ranges) == 1)
+		canConvertPointGet = canConvertPointGet && candidate.path.StoreType != kv.TiFlash
+		if !candidate.path.IsTablePath {
+			canConvertPointGet = canConvertPointGet &&
+				candidate.path.Index.Unique &&
+				!candidate.path.Index.HasPrefixIndex() &&
+				len(candidate.path.Ranges[0].LowVal) == len(candidate.path.Index.Columns)
+		}
+		if canConvertPointGet {
 			allRangeIsPoint := true
 			for _, ran := range path.Ranges {
 				if !ran.IsPoint(ds.ctx.GetSessionVars().StmtCtx) {
