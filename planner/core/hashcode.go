@@ -332,7 +332,8 @@ func (p *TiKVSingleGather) HashCode() []byte {
 	result := make([]byte, 0, 16+len(dsHashCode))
 	result = codec.EncodeIntAsUint32(result, plancodec.TypeStringToPhysicalID(p.tp))
 	result = codec.EncodeIntAsUint32(result, p.SelectBlockOffset())
-	if p.Index != nil {
+	result = codec.EncodeBool(result, p.IsIndexGather)
+	if p.IsIndexGather && p.Index != nil {
 		result = codec.EncodeInt(result, p.Index.ID)
 	}
 	result = append(dsHashCode, dsHashCode...)
