@@ -30,16 +30,16 @@ func Vectorizable(exprs []Expression) bool {
 			return false
 		}
 	}
-	return HasMoreThanOneSequenceFunction(exprs)
+	return checkSequenceFunction(exprs)
 }
 
-// HasMoreThanOneSequenceFunction indicates where the exprs can be evaluate as a vector.
+// HasMoreThanOneSequenceFunction indicates whether the exprs can be evaluated as a vector.
 // When two or more of this three(nextval, lastval, setval) exists in exprs list and one of them is nextval, it should be eval row by row.
-func HasMoreThanOneSequenceFunction(exprs []Expression) bool {
+func checkSequenceFunction(exprs []Expression) bool {
 	var (
-		nextval bool
-		lastval bool
-		setval  bool
+		nextval int
+		lastval int
+		setval  int
 	)
 	for _, expr := range exprs {
 		scalaFunc, ok := expr.(*ScalarFunction)
@@ -48,14 +48,16 @@ func HasMoreThanOneSequenceFunction(exprs []Expression) bool {
 		}
 		switch scalaFunc.FuncName.L {
 		case ast.NextVal:
-			nextval = true
+			nextval++
 		case ast.LastVal:
-			lastval = true
+			lastval++
 		case ast.SetVal:
-			setval = true
+			setval++
 		}
 	}
-	if nextval && (lastval || setval) {
+	// case1: nextval && other sequence function.
+	// case2: more than one nextval.
+	if (nextval > 0 && (lastval > 0 || setval > 0)) || (nextval > 1) {
 		return false
 	}
 	return true

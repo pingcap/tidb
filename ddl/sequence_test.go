@@ -698,16 +698,38 @@ func (s *testSequenceSuite) TestUnflodSequence(c *C) {
 	// test sequence function unfold.
 	s.tk.MustQuery("select nextval(seq), a from t1").Check(testkit.Rows("1 -1", "2 -1", "3 -1"))
 	s.tk.MustExec("insert into t2 select nextval(seq), a from t1")
-	s.tk.MustQuery("select* from t2").Check(testkit.Rows("4 -1", "5 -1", "6 -1"))
+	s.tk.MustQuery("select * from t2").Check(testkit.Rows("4 -1", "5 -1", "6 -1"))
+	s.tk.MustExec("delete from t2")
 
 	// if lastval is folded, the first result should be always 6.
 	s.tk.MustQuery("select lastval(seq), nextval(seq), a from t1").Check(testkit.Rows("6 7 -1", "7 8 -1", "8 9 -1"))
 	s.tk.MustExec("insert into t3 select lastval(seq), nextval(seq), a from t1")
-	s.tk.MustQuery("select* from t3").Check(testkit.Rows("9 10 -1", "10 11 -1", "11 12 -1"))
+	s.tk.MustQuery("select * from t3").Check(testkit.Rows("9 10 -1", "10 11 -1", "11 12 -1"))
 	s.tk.MustExec("delete from t3")
 
 	// if setval is folded, the result should be "101 100 -1"...
 	s.tk.MustQuery("select nextval(seq), setval(seq,100), a from t1").Check(testkit.Rows("13 100 -1", "101 <nil> -1", "102 <nil> -1"))
 	s.tk.MustExec("insert into t3 select nextval(seq), setval(seq,200), a from t1")
-	s.tk.MustQuery("select* from t3").Check(testkit.Rows("103 200 -1", "201 <nil> -1", "202 <nil> -1"))
+	s.tk.MustQuery("select * from t3").Check(testkit.Rows("103 200 -1", "201 <nil> -1", "202 <nil> -1"))
+	s.tk.MustExec("delete from t3")
+
+	// lastval should be evaluated after nextval in each row.
+	s.tk.MustQuery("select nextval(seq), lastval(seq), a from t1").Check(testkit.Rows("203 203 -1", "204 204 -1", "205 205 -1"))
+	s.tk.MustExec("insert into t3 select nextval(seq), lastval(seq), a from t1")
+	s.tk.MustQuery("select * from t3").Check(testkit.Rows("206 206 -1", "207 207 -1", "208 208 -1"))
+	s.tk.MustExec("delete from t3")
+
+	// double nextval should be also evaluated in each row.
+	s.tk.MustQuery("select nextval(seq), nextval(seq), a from t1").Check(testkit.Rows("209 210 -1", "211 212 -1", "213 214 -1"))
+	s.tk.MustExec("insert into t3 select nextval(seq), nextval(seq), a from t1")
+	s.tk.MustQuery("select * from t3").Check(testkit.Rows("215 216 -1", "217 218 -1", "219 220 -1"))
+	s.tk.MustExec("delete from t3")
+
+	// For union operator like select1 union select2, select1 and select2 will be executed parallelly,
+	// so sequence function in both select are evaluated without order. Besides, the upper union operator
+	// will gather results through multi worker goroutine parallelly leading the results unordered.
+	// Cases like:
+	// `select nextval(seq), a from t1 union select lastval(seq), a from t2`
+	// `select nextval(seq), a from t1 union select nextval(seq), a from t2`
+	// The executing order of nextval and lastval is implicit, don't make any assumptions on it.
 }
