@@ -49,10 +49,12 @@ func (s *testBytesSuite) TestBytesCodec(c *C) {
 	}
 
 	for _, input := range inputs {
+
+		c.Assert(EncodedBytesLength(len(input.enc)), Equals, len(input.dec))
+
 		if input.desc {
 			b := EncodeBytesDesc(nil, input.enc)
 			c.Assert(b, BytesEquals, input.dec)
-			c.Assert(EncodedBytesLength(len(input.enc)), Equals, len(input.dec))
 			_, d, err := DecodeBytesDesc(b, nil)
 			c.Assert(err, IsNil)
 			c.Assert(d, BytesEquals, input.enc)
