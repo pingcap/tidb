@@ -392,4 +392,3 @@ func dataForUserPrivileges(ctx sessionctx.Context) [][]types.Datum {
 	pm := privilege.GetPrivilegeManager(ctx)
 	return pm.UserPrivilegesTable()
 }
-

@@ -67,12 +67,12 @@ const (
 	tableProfiling  = "PROFILING"
 	tablePartitions = "PARTITIONS"
 	// TableKeyColumn is the string constant of KEY_COLUMN_USAGE
-	TableKeyColumn        = "KEY_COLUMN_USAGE"
-	tableReferConst       = "REFERENTIAL_CONSTRAINTS"
-	tableSessionVar       = "SESSION_VARIABLES"
-	tablePlugins          = "PLUGINS"
-	tableConstraints      = "TABLE_CONSTRAINTS"
-	tableTriggers         = "TRIGGERS"
+	TableKeyColumn   = "KEY_COLUMN_USAGE"
+	tableReferConst  = "REFERENTIAL_CONSTRAINTS"
+	tableSessionVar  = "SESSION_VARIABLES"
+	tablePlugins     = "PLUGINS"
+	tableConstraints = "TABLE_CONSTRAINTS"
+	tableTriggers    = "TRIGGERS"
 	// TableUserPrivileges is the string constant of infoschema user privilege table.
 	TableUserPrivileges   = "USER_PRIVILEGES"
 	tableSchemaPrivileges = "SCHEMA_PRIVILEGES"
