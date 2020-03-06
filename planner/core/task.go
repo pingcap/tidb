@@ -1319,36 +1319,21 @@ func (p *PhysicalHashAgg) GetCost(inputRows float64, isRoot bool) float64 {
 }
 
 func (p *PhysicalShuffle) attach2Task(tasks ...task) task {
+	p.ScaleStats()
 	t := tasks[0].copy()
 	t = attachPlan2Task(p, t)
-	t.setConcurrency(1) // `RowCount` of shuffle is not relative to concurrency.
-	t.addCost(p.GetCost(t.count()))
+	t.addCost(p.GetCost(tasks[0].count()))
 	t.setConcurrency(p.FanOut)
 	return t
 }
 
 // GetCost computes the cost of in memory sort.
 func (p *PhysicalShuffle) GetCost(count float64) float64 {
-	/*if count < 2.0 {
-		count = 2.0
-	}
+	// Future: estimate cost according to splitter & merger type.
 	sessVars := p.ctx.GetSessionVars()
-	var cpuCount, memoryCount float64
-
-	switch p.MergerType {
-	case ShuffleMergeSortMergerType:
-		cpuCount += count
-		memoryCount += count
+	var concurrencyCost float64
+	if p.Concurrency > 1 {
+		concurrencyCost = (float64)(p.Concurrency) * sessVars.ConcurrencyFactor
 	}
-	switch p.SplitterType {
-	case ShuffleHashSplitterType:
-		cpuCount += count
-		memoryCount += count
-	}
-	cpuCost := cpuCount * sessVars.CPUFactor
-	memoryCost := memoryCount * sessVars.MemoryFactor
-	concurrencyCost := (float64)(p.Concurrency) * sessVars.ConcurrencyFactor
-	return cpuCost + memoryCost + concurrencyCost*/
-	// DEBUG //
-	return 0
+	return concurrencyCost
 }

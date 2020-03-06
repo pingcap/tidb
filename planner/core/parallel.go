@@ -24,7 +24,7 @@ func isExecutorsParallelEnable(ctx sessionctx.Context) bool {
 }
 
 type parallelLogicalPlanHelper struct {
-	// "Number of children" x "Possible Properties of each child".
+	// possibleChildrenProperties is "Number of children" x "Possible Properties of each child".
 	possibleChildrenProperties [][]*property.PhysicalProperty
 }
 
@@ -242,7 +242,7 @@ func newPhysicalShuffle(child PhysicalPlan, requiredProperty *property.PhysicalP
 	shuffle := PhysicalShuffle{
 		Concurrency: 1,
 		FanOut:      1,
-	}.Init(ctx, child.statsInfo(), child.SelectBlockOffset(), reqProp)
+	}.Init(ctx, child.statsInfo().ScaleByExpectCnt(reqProp.ExpectedCnt), child.SelectBlockOffset(), reqProp)
 	return shuffle
 }
 

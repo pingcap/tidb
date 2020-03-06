@@ -213,6 +213,9 @@ func (p *LogicalJoin) PreparePossibleProperties(schema *expression.Schema, child
 // PreparePossiblePartitionProperties implements LogicalPlan interface.
 func (p *LogicalJoin) PreparePossiblePartitionProperties(childrenPartitionProperties ...[]*property.PhysicalProperty) []*property.PhysicalProperty {
 	leftJoinKeys, rightJoinKeys := p.GetJoinKeys()
+	if len(leftJoinKeys) == 0 {
+		return nil
+	}
 	globalGroupings := [][]*expression.Column{leftJoinKeys, rightJoinKeys}
 	_ = p.parallelHelper.preparePossiblePartitionProperties(p, globalGroupings, childrenPartitionProperties...)
 

@@ -587,6 +587,15 @@ type PhysicalShuffle struct {
 	SplitByItems []*expression.Column
 }
 
+// ScaleStats scales stats info according to concurrency & fanout.
+func (p *PhysicalShuffle) ScaleStats() {
+	// Stats info divided by `FanOut`, as each worker of parent get rows splitted to `1 / FanOut`.
+	// But NOT multiply by `Concurrency`, as stats info of child plan is determined in logical planning phase.
+	if p.FanOut > 1 {
+		p.stats = p.stats.Scale(1 / (float64)(p.FanOut))
+	}
+}
+
 // ShuffleSplitterType is the type of `Shuffle` executor splitter, which splits data source into partitions.
 type ShuffleSplitterType int
 
