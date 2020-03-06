@@ -725,6 +725,17 @@ func (s *testSequenceSuite) TestUnflodSequence(c *C) {
 	s.tk.MustQuery("select * from t3").Check(testkit.Rows("215 216 -1", "217 218 -1", "219 220 -1"))
 	s.tk.MustExec("delete from t3")
 
+	s.tk.MustQuery("select nextval(seq)+lastval(seq), a from t1").Check(testkit.Rows("442 -1", "444 -1", "446 -1"))
+	s.tk.MustExec("insert into t2 select nextval(seq)+lastval(seq), a from t1")
+	s.tk.MustQuery("select * from t2").Check(testkit.Rows("448 -1", "450 -1", "452 -1"))
+	s.tk.MustExec("delete from t2")
+
+	// sub-query contain sequence function.
+	s.tk.MustQuery("select nextval(seq), b from (select nextval(seq) as b, a from t1) t2").Check(testkit.Rows("227 228", "229 230", "231 232"))
+	s.tk.MustExec("insert into t2 select nextval(seq), b from (select nextval(seq) as b, a from t1) t2")
+	s.tk.MustQuery("select * from t2").Check(testkit.Rows("233 234", "235 236", "237 238"))
+	s.tk.MustExec("delete from t2")
+
 	// For union operator like select1 union select2, select1 and select2 will be executed parallelly,
 	// so sequence function in both select are evaluated without order. Besides, the upper union operator
 	// will gather results through multi worker goroutine parallelly leading the results unordered.
