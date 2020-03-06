@@ -185,6 +185,7 @@ func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id fmt.S
 //
 // Different from Volcano's execution model, a "Next" function call in TiDB will
 // return a batch of rows, other than a single row in Volcano.
+//
 // NOTE: Executors must call "chk.Reset()" before appending their results to it.
 type Executor interface {
 	base() *baseExecutor
