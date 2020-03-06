@@ -336,6 +336,6 @@ func (p *TiKVSingleGather) HashCode() []byte {
 	if p.IsIndexGather && p.Index != nil {
 		result = codec.EncodeInt(result, p.Index.ID)
 	}
-	result = append(dsHashCode, dsHashCode...)
+	result = append(result, dsHashCode...)
 	return result
 }
