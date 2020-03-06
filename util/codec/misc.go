@@ -11,11 +11,10 @@ import (
 // EncodeBool append bool to []byte.
 func EncodeBool(result []byte, value bool) []byte {
 	if value {
-		result = append(result, uint8(1))
+		return append(result, uint8(1))
 	} else {
-		result = append(result, uint8(0))
+		return append(result, uint8(0))
 	}
-	return result
 }
 
 // EncodeUintptr append uintptr to []byte.
@@ -33,7 +32,6 @@ func EncodeUintptr(result []byte, value uintptr) []byte {
 	default:
 		panic(fmt.Sprintf("unknown uintptr size: %v", size))
 	}
-	return result
 }
 
 // Encode append array to []byte.
