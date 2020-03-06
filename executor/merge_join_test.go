@@ -367,9 +367,9 @@ func (s *testSuite2) TestMergeJoin(c *C) {
 	tk.MustExec("create table t(a int)")
 	tk.MustExec("insert into t value(1),(2)")
 	tk.MustQuery("explain select /*+ TIDB_SMJ(t1, t2) */ * from t t1 join t t2 order by t1.a, t2.a").Check(testkit.Rows(
-		"Shuffle_18 100000000.00 root execution info: concurrency:4, fan out:1, child:Shuffle_17, splitter:none, merger:merge-sort(test.t.a,test.t.a)",
+		"Shuffle_18 100000000.00 root execution info: concurrency:4, fan out:1, splitter:none, merger:merge-sort(test.t.a,test.t.a)",
 		"└─Sort_8 100000000.00 root test.t.a:asc, test.t.a:asc",
-		"  └─Shuffle_17 100000000.00 root execution info: concurrency:1, fan out:4, splitter:random, merger:none",
+		"  └─Shuffle_17 25000000.00 root execution info: concurrency:1, fan out:4, splitter:random, merger:none",
 		"    └─MergeJoin_10 100000000.00 root inner join",
 		"      ├─TableReader_14(Build) 10000.00 root data:TableFullScan_13",
 		"      │ └─TableFullScan_13 10000.00 cop[tikv] table:t2, keep order:false, stats:pseudo",
@@ -425,15 +425,15 @@ func (s *testSuite2) TestMergeJoin(c *C) {
 	tk.MustQuery("explain select s1.a1 from (select a as a1 from s order by s.a desc) as s1 join (select a as a2 from s order by s.a desc) as s2 on s1.a1 = s2.a2 order by s1.a1 desc").Check(testkit.Rows(
 		"Projection_40 12487.50 root test.s.a",
 		"└─MergeJoin_41 12487.50 root inner join, left key:test.s.a, right key:test.s.a",
-		"  ├─Shuffle_49(Build) 9990.00 root execution info: concurrency:4, fan out:1, child:Shuffle_38, splitter:none, merger:merge-sort(test.s.a desc)",
+		"  ├─Shuffle_49(Build) 9990.00 root execution info: concurrency:4, fan out:1, splitter:none, merger:merge-sort(test.s.a desc)",
 		"  │ └─Sort_48 9990.00 root test.s.a:desc",
-		"  │   └─Shuffle_38 9990.00 root execution info: concurrency:1, fan out:4, splitter:random, merger:none",
+		"  │   └─Shuffle_38 2497.50 root execution info: concurrency:1, fan out:4, splitter:random, merger:none",
 		"  │     └─TableReader_37 9990.00 root data:Selection_36",
 		"  │       └─Selection_36 9990.00 cop[tikv] not(isnull(test.s.a))",
 		"  │         └─TableFullScan_35 10000.00 cop[tikv] table:s, keep order:false, stats:pseudo",
-		"  └─Shuffle_45(Probe) 9990.00 root execution info: concurrency:4, fan out:1, child:Shuffle_27, splitter:none, merger:merge-sort(test.s.a desc)",
+		"  └─Shuffle_45(Probe) 9990.00 root execution info: concurrency:4, fan out:1, splitter:none, merger:merge-sort(test.s.a desc)",
 		"    └─Sort_44 9990.00 root test.s.a:desc",
-		"      └─Shuffle_27 9990.00 root execution info: concurrency:1, fan out:4, splitter:random, merger:none",
+		"      └─Shuffle_27 2497.50 root execution info: concurrency:1, fan out:4, splitter:random, merger:none",
 		"        └─TableReader_26 9990.00 root data:Selection_25",
 		"          └─Selection_25 9990.00 cop[tikv] not(isnull(test.s.a))",
 		"            └─TableFullScan_24 10000.00 cop[tikv] table:s, keep order:false, stats:pseudo",

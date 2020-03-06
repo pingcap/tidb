@@ -1232,11 +1232,11 @@ func (s *testSuiteJoin1) TestIndexNestedLoopHashJoin(c *C) {
 	tk.MustExec("analyze table s")
 	// Test IndexNestedLoopHashJoin keepOrder.
 	tk.MustQuery("explain select /*+ INL_HASH_JOIN(s) */ * from t left join s on t.a=s.a order by t.pk").Check(testkit.Rows(
-		"IndexHashJoin_29 100.00 root left outer join, inner:TableReader_23, outer key:test.t.a, inner key:test.s.a",
-		"├─TableReader_31(Build) 100.00 root data:TableFullScan_30",
-		"│ └─TableFullScan_30 100.00 cop[tikv] table:t, keep order:true",
-		"└─TableReader_23(Probe) 1.00 root data:TableRangeScan_22",
-		"  └─TableRangeScan_22 1.00 cop[tikv] table:s, range: decided by [test.t.a], keep order:false",
+		"IndexHashJoin_28 100.00 root left outer join, inner:TableReader_22, outer key:test.t.a, inner key:test.s.a",
+		"├─TableReader_30(Build) 100.00 root data:TableFullScan_29",
+		"│ └─TableFullScan_29 100.00 cop[tikv] table:t, keep order:true",
+		"└─TableReader_22(Probe) 1.00 root data:TableRangeScan_21",
+		"  └─TableRangeScan_21 1.00 cop[tikv] table:s, range: decided by [test.t.a], keep order:false",
 	))
 	rs := tk.MustQuery("select /*+ INL_HASH_JOIN(s) */ * from t left join s on t.a=s.a order by t.pk")
 	for i, row := range rs.Rows() {
