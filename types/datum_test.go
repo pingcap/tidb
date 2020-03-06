@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types/json"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hack"
 )
 
@@ -46,7 +45,7 @@ func (ts *testDatumSuite) TestDatum(c *C) {
 	for _, val := range values {
 		var d Datum
 		d.SetMinNotNull()
-		d.SetValue(val)
+		d.SetValueWithDefaultCollation(val)
 		x := d.GetValue()
 		c.Assert(x, DeepEquals, val)
 		c.Assert(d.Length(), Equals, int(d.length))
@@ -184,7 +183,7 @@ func (ts *testTypeConvertSuite) TestToFloat32(c *C) {
 	c.Assert(converted.Kind(), Equals, KindFloat32)
 	c.Assert(converted.GetFloat32(), Equals, float32(281.37))
 
-	datum.SetString("281.37", mysql.DefaultCollationName, collate.DefaultLen)
+	datum.SetString("281.37", mysql.DefaultCollationName)
 	converted, err = datum.ConvertTo(sc, ft)
 	c.Assert(err, IsNil)
 	c.Assert(converted.Kind(), Equals, KindFloat32)

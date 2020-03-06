@@ -217,7 +217,7 @@ type Column struct {
 	// from `[not] in (subq)`.
 	InOperand bool
 
-	coercibility
+	collationInfo
 }
 
 // Equal implements Expression interface.
@@ -614,9 +614,9 @@ func (col *Column) ReverseEval(sc *stmtctx.StatementContext, res types.Datum, rT
 
 // Coercibility returns the coercibility value which is used to check collations.
 func (col *Column) Coercibility() Coercibility {
-	if col.hasCoercibility() {
-		return col.coercibility.value()
+	if col.HasCoercibility() {
+		return col.collationInfo.Coercibility()
 	}
 	col.SetCoercibility(deriveCoercibilityForColumn(col))
-	return col.coercibility.value()
+	return col.collationInfo.Coercibility()
 }
