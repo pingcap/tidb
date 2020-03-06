@@ -311,6 +311,41 @@ func (s *testIntegrationSuite) TestSelPushDownTiFlash(c *C) {
 	))
 }
 
+func (s *testIntegrationSuite) TestIssue15110(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists crm_rd_150m")
+	tk.MustExec(`CREATE TABLE crm_rd_150m (
+	product varchar(256) DEFAULT NULL,
+		uks varchar(16) DEFAULT NULL,
+		brand varchar(256) DEFAULT NULL,
+		cin varchar(16) DEFAULT NULL,
+		created_date timestamp NULL DEFAULT NULL,
+		quantity int(11) DEFAULT NULL,
+		amount decimal(11,0) DEFAULT NULL,
+		pl_date timestamp NULL DEFAULT NULL,
+		customer_first_date timestamp NULL DEFAULT NULL,
+		recent_date timestamp NULL DEFAULT NULL
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin;`)
+
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	c.Assert(exists, IsTrue)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "crm_rd_150m" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
+	tk.MustExec("explain SELECT count(*) FROM crm_rd_150m dataset_48 WHERE (CASE WHEN (month(dataset_48.customer_first_date)) <= 30 THEN '新客' ELSE NULL END) IS NOT NULL;")
+}
+
 func (s *testIntegrationSuite) TestReadFromStorageHint(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
@@ -491,6 +526,30 @@ func (s *testIntegrationSuite) TestIndexMerge(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, unique index(a), unique index(b))")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
+// for issue #14822
+func (s *testIntegrationSuite) TestIndexJoinTableRange(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int, b int, primary key (a), key idx_t1_b (b))")
+	tk.MustExec("create table t2(a int, b int, primary key (a), key idx_t1_b (b))")
 
 	var input []string
 	var output []struct {

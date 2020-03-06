@@ -15,8 +15,10 @@ package util
 
 import (
 	"crypto/tls"
+	"crypto/x509"
 	"crypto/x509/pkix"
 	"fmt"
+	"io/ioutil"
 	"runtime"
 	"strconv"
 	"strings"
@@ -27,7 +29,9 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
 
@@ -297,6 +301,37 @@ func TLSCipher2String(n uint16) string {
 	return s
 }
 
+// ColumnsToProto converts a slice of model.ColumnInfo to a slice of tipb.ColumnInfo.
+func ColumnsToProto(columns []*model.ColumnInfo, pkIsHandle bool) []*tipb.ColumnInfo {
+	cols := make([]*tipb.ColumnInfo, 0, len(columns))
+	for _, c := range columns {
+		col := ColumnToProto(c)
+		// TODO: Here `PkHandle`'s meaning is changed, we will change it to `IsHandle` when tikv's old select logic
+		// is abandoned.
+		if (pkIsHandle && mysql.HasPriKeyFlag(c.Flag)) || c.ID == model.ExtraHandleID {
+			col.PkHandle = true
+		} else {
+			col.PkHandle = false
+		}
+		cols = append(cols, col)
+	}
+	return cols
+}
+
+// ColumnToProto converts model.ColumnInfo to tipb.ColumnInfo.
+func ColumnToProto(c *model.ColumnInfo) *tipb.ColumnInfo {
+	pc := &tipb.ColumnInfo{
+		ColumnId:  c.ID,
+		Collation: collate.RewriteNewCollationIDIfNeeded(int32(mysql.CollationNames[c.FieldType.Collate])),
+		ColumnLen: int32(c.FieldType.Flen),
+		Decimal:   int32(c.FieldType.Decimal),
+		Flag:      int32(c.Flag),
+		Elems:     c.Elems,
+	}
+	pc.Tp = int32(c.FieldType.Tp)
+	return pc
+}
+
 func init() {
 	for _, value := range tlsCipherString {
 		SupportCipher[value] = struct{}{}
@@ -316,6 +351,53 @@ type SequenceSchema interface {
 // Otherwise calling table will cause import cycle problem.
 type SequenceTable interface {
 	GetSequenceID() int64
-	GetSequenceNextVal(dbName, seqName string) (int64, error)
-	SetSequenceVal(newVal int64) (int64, bool, error)
+	GetSequenceNextVal(ctx interface{}, dbName, seqName string) (int64, error)
+	SetSequenceVal(ctx interface{}, newVal int64, dbName, seqName string) (int64, bool, error)
+}
+
+// LoadTLSCertificates loads CA/KEY/CERT for special paths.
+func LoadTLSCertificates(ca, key, cert string) (tlsConfig *tls.Config, err error) {
+	if len(cert) == 0 || len(key) == 0 {
+		return
+	}
+
+	var tlsCert tls.Certificate
+	tlsCert, err = tls.LoadX509KeyPair(cert, key)
+	if err != nil {
+		logutil.BgLogger().Warn("load x509 failed", zap.Error(err))
+		err = errors.Trace(err)
+		return
+	}
+
+	// Try loading CA cert.
+	clientAuthPolicy := tls.NoClientCert
+	var certPool *x509.CertPool
+	if len(ca) > 0 {
+		var caCert []byte
+		caCert, err = ioutil.ReadFile(ca)
+		if err != nil {
+			logutil.BgLogger().Warn("read file failed", zap.Error(err))
+			err = errors.Trace(err)
+			return
+		}
+		certPool = x509.NewCertPool()
+		if certPool.AppendCertsFromPEM(caCert) {
+			clientAuthPolicy = tls.VerifyClientCertIfGiven
+		}
+	}
+	tlsConfig = &tls.Config{
+		Certificates: []tls.Certificate{tlsCert},
+		ClientCAs:    certPool,
+		ClientAuth:   clientAuthPolicy,
+	}
+	return
+}
+
+// IsTLSExpiredError checks error is caused by TLS expired.
+func IsTLSExpiredError(err error) bool {
+	err = errors.Cause(err)
+	if inval, ok := err.(x509.CertificateInvalidError); !ok || inval.Reason != x509.Expired {
+		return false
+	}
+	return true
 }

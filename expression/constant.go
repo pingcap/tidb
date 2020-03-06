@@ -61,7 +61,7 @@ type Constant struct {
 	ParamMarker *ParamMarker
 	hashcode    []byte
 
-	coercibility
+	collationInfo
 }
 
 // ParamMarker indicates param provided by COM_STMT_EXECUTE.
@@ -81,14 +81,14 @@ func (d *ParamMarker) GetUserVar() types.Datum {
 func (c *Constant) String() string {
 	if c.ParamMarker != nil {
 		dt := c.ParamMarker.GetUserVar()
-		c.Value.SetValue(dt.GetValue())
+		c.Value.SetValue(dt.GetValue(), c.RetType)
 	} else if c.DeferredExpr != nil {
 		dt, err := c.Eval(chunk.Row{})
 		if err != nil {
 			logutil.BgLogger().Error("eval constant failed", zap.Error(err))
 			return ""
 		}
-		c.Value.SetValue(dt.GetValue())
+		c.Value.SetValue(dt.GetValue(), c.RetType)
 	}
 	return fmt.Sprintf("%v", c.Value.GetValue())
 }
@@ -414,10 +414,10 @@ func (c *Constant) ReverseEval(sc *stmtctx.StatementContext, res types.Datum, rT
 
 // Coercibility returns the coercibility value which is used to check collations.
 func (c *Constant) Coercibility() Coercibility {
-	if c.hasCoercibility() {
-		return c.coercibility.value()
+	if c.HasCoercibility() {
+		return c.collationInfo.Coercibility()
 	}
 
-	c.coercibility.SetCoercibility(deriveCoercibilityForConstant(c))
-	return c.coercibility.value()
+	c.SetCoercibility(deriveCoercibilityForConstant(c))
+	return c.collationInfo.Coercibility()
 }
