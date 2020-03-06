@@ -22,9 +22,12 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"fmt"
 	"io/ioutil"
 	"math/big"
+	"net/http"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/go-sql-driver/mysql"
@@ -155,6 +158,54 @@ func (ts *TidbTestSuite) TestResultFieldTableIsNull(c *C) {
 func (ts *TidbTestSuite) TestStatusAPI(c *C) {
 	c.Parallel()
 	runTestStatusAPI(c)
+}
+
+func (ts *TidbTestSuite) TestStatusAPIWithTLSCNCheck(c *C) {
+	c.Skip("need add ca-tidb-test-1.crt to OS")
+	root := filepath.Join(os.Getenv("GOPATH"), "/src/github.com/pingcap/tidb")
+	ca := filepath.Join(root, "/tests/cncheckcert/ca-tidb-test-1.crt")
+	statusURL := fmt.Sprintf("%s://localhost:%d%s", "https", 4100, "/status")
+
+	cfg := config.NewConfig()
+	cfg.Status.StatusPort = 4100
+	cfg.Security.ClusterSSLCA = ca
+	cfg.Security.ClusterSSLCert = filepath.Join(root, "/tests/cncheckcert/server-cert.pem")
+	cfg.Security.ClusterSSLKey = filepath.Join(root, "/tests/cncheckcert/server-key.pem")
+	cfg.Security.ClusterVerifyCN = []string{"tidb-client-2"}
+	server, err := NewServer(cfg, ts.tidbdrv)
+	c.Assert(err, IsNil)
+	go server.Run()
+	time.Sleep(time.Millisecond * 100)
+
+	hc := newTLSHttpClient(c, ca,
+		filepath.Join(root, "/tests/cncheckcert/client-cert-1.pem"),
+		filepath.Join(root, "/tests/cncheckcert/client-key-1.pem"),
+	)
+	_, err = hc.Get(statusURL)
+	c.Assert(err, NotNil)
+
+	hc = newTLSHttpClient(c, ca,
+		filepath.Join(root, "/tests/cncheckcert/client-cert-2.pem"),
+		filepath.Join(root, "/tests/cncheckcert/client-key-2.pem"),
+	)
+	_, err = hc.Get(statusURL)
+	c.Assert(err, IsNil)
+}
+
+func newTLSHttpClient(c *C, caFile, certFile, keyFile string) *http.Client {
+	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+	c.Assert(err, IsNil)
+	caCert, err := ioutil.ReadFile(caFile)
+	c.Assert(err, IsNil)
+	caCertPool := x509.NewCertPool()
+	caCertPool.AppendCertsFromPEM(caCert)
+	tlsConfig := &tls.Config{
+		Certificates:       []tls.Certificate{cert},
+		RootCAs:            caCertPool,
+		InsecureSkipVerify: true,
+	}
+	tlsConfig.BuildNameToCertificate()
+	return &http.Client{Transport: &http.Transport{TLSClientConfig: tlsConfig}}
 }
 
 func (ts *TidbTestSuite) TestMultiStatements(c *C) {
