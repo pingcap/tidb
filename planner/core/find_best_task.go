@@ -80,6 +80,29 @@ func GetPropByOrderByItems(items []*ByItems) (*property.PhysicalProperty, bool) 
 	return &property.PhysicalProperty{Items: propItems}, true
 }
 
+// GetPropByOrderByItemsContainScalarFunc will check if this sort property can be pushed or not. In order to simplify the
+// problem, we only consider the case that all expression are columns or some special scalar functions.
+func GetPropByOrderByItemsContainScalarFunc(items []*ByItems) (*property.PhysicalProperty, bool, bool) {
+	propItems := make([]property.Item, 0, len(items))
+	onlyColumn := true
+	for _, item := range items {
+		switch expr := item.Expr.(type) {
+		case *expression.Column:
+			propItems = append(propItems, property.Item{Col: expr, Desc: item.Desc})
+		case *expression.ScalarFunction:
+			col, desc := expr.GetSingleColumn(item.Desc)
+			if col == nil {
+				return nil, false, false
+			}
+			propItems = append(propItems, property.Item{Col: col, Desc: desc})
+			onlyColumn = false
+		default:
+			return nil, false, false
+		}
+	}
+	return &property.PhysicalProperty{Items: propItems}, true, onlyColumn
+}
+
 func (p *LogicalTableDual) findBestTask(prop *property.PhysicalProperty) (task, error) {
 	if !prop.IsEmpty() {
 		return invalidTask, nil
@@ -196,10 +219,11 @@ func (p *LogicalMemTable) findBestTask(prop *property.PhysicalProperty) (t task,
 		return invalidTask, nil
 	}
 	memTable := PhysicalMemTable{
-		DBName:    p.dbName,
-		Table:     p.tableInfo,
-		Columns:   p.tableInfo.Columns,
-		Extractor: p.Extractor,
+		DBName:         p.DBName,
+		Table:          p.TableInfo,
+		Columns:        p.TableInfo.Columns,
+		Extractor:      p.Extractor,
+		QueryTimeRange: p.QueryTimeRange,
 	}.Init(p.ctx, p.stats, p.blockOffset)
 	memTable.SetSchema(p.schema)
 	return &rootTask{p: memTable}, nil
@@ -764,7 +788,7 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 	// Add filter condition to table plan now.
 	indexConds, tableConds := path.IndexFilters, path.TableFilters
 
-	tableConds, copTask.rootTaskConds = splitSelCondsWithVirtualColumn(tableConds)
+	tableConds, copTask.rootTaskConds = SplitSelCondsWithVirtualColumn(tableConds)
 
 	sessVars := is.ctx.GetSessionVars()
 	if indexConds != nil {
@@ -788,8 +812,8 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 	}
 }
 
-// splitSelCondsWithVirtualColumn filter the select conditions which contain virtual column
-func splitSelCondsWithVirtualColumn(conds []expression.Expression) ([]expression.Expression, []expression.Expression) {
+// SplitSelCondsWithVirtualColumn filter the select conditions which contain virtual column
+func SplitSelCondsWithVirtualColumn(conds []expression.Expression) ([]expression.Expression, []expression.Expression) {
 	var filterConds []expression.Expression
 	for i := len(conds) - 1; i >= 0; i-- {
 		if expression.ContainVirtualColumn(conds[i : i+1]) {
@@ -1052,7 +1076,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 }
 
 func (ts *PhysicalTableScan) addPushedDownSelection(copTask *copTask, stats *property.StatsInfo) {
-	ts.filterCondition, copTask.rootTaskConds = splitSelCondsWithVirtualColumn(ts.filterCondition)
+	ts.filterCondition, copTask.rootTaskConds = SplitSelCondsWithVirtualColumn(ts.filterCondition)
 	if ts.StoreType == kv.TiFlash {
 		var newRootConds []expression.Expression
 		ts.filterCondition, newRootConds = expression.CheckExprPushFlash(ts.filterCondition)
@@ -1082,12 +1106,6 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 		filterCondition: path.TableFilters,
 		StoreType:       path.StoreType,
 	}.Init(ds.ctx, ds.blockOffset)
-	if ts.StoreType == kv.TiFlash {
-		// Append the AccessCondition to filterCondition because TiFlash only support full range scan for each
-		// region, do not reset ts.Ranges as it will help prune regions during `buildCopTasks`
-		ts.filterCondition = append(ts.filterCondition, ts.AccessCondition...)
-		ts.AccessCondition = nil
-	}
 	ts.SetSchema(ds.schema.Clone())
 	if ts.Table.PKIsHandle {
 		if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {

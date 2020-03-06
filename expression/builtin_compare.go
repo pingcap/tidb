@@ -210,7 +210,7 @@ func (c *coalesceFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	return sig, nil
 }
 
-// builtinCoalesceIntSig is buitin function coalesce signature which return type int
+// builtinCoalesceIntSig is builtin function coalesce signature which return type int
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
 type builtinCoalesceIntSig struct {
 	baseBuiltinFunc
@@ -232,7 +232,7 @@ func (b *builtinCoalesceIntSig) evalInt(row chunk.Row) (res int64, isNull bool, 
 	return res, isNull, err
 }
 
-// builtinCoalesceRealSig is buitin function coalesce signature which return type real
+// builtinCoalesceRealSig is builtin function coalesce signature which return type real
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
 type builtinCoalesceRealSig struct {
 	baseBuiltinFunc
@@ -254,7 +254,7 @@ func (b *builtinCoalesceRealSig) evalReal(row chunk.Row) (res float64, isNull bo
 	return res, isNull, err
 }
 
-// builtinCoalesceDecimalSig is buitin function coalesce signature which return type Decimal
+// builtinCoalesceDecimalSig is builtin function coalesce signature which return type Decimal
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
 type builtinCoalesceDecimalSig struct {
 	baseBuiltinFunc
@@ -276,7 +276,7 @@ func (b *builtinCoalesceDecimalSig) evalDecimal(row chunk.Row) (res *types.MyDec
 	return res, isNull, err
 }
 
-// builtinCoalesceStringSig is buitin function coalesce signature which return type string
+// builtinCoalesceStringSig is builtin function coalesce signature which return type string
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
 type builtinCoalesceStringSig struct {
 	baseBuiltinFunc
@@ -298,7 +298,7 @@ func (b *builtinCoalesceStringSig) evalString(row chunk.Row) (res string, isNull
 	return res, isNull, err
 }
 
-// builtinCoalesceTimeSig is buitin function coalesce signature which return type time
+// builtinCoalesceTimeSig is builtin function coalesce signature which return type time
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
 type builtinCoalesceTimeSig struct {
 	baseBuiltinFunc
@@ -320,7 +320,7 @@ func (b *builtinCoalesceTimeSig) evalTime(row chunk.Row) (res types.Time, isNull
 	return res, isNull, err
 }
 
-// builtinCoalesceDurationSig is buitin function coalesce signature which return type duration
+// builtinCoalesceDurationSig is builtin function coalesce signature which return type duration
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
 type builtinCoalesceDurationSig struct {
 	baseBuiltinFunc
@@ -342,7 +342,7 @@ func (b *builtinCoalesceDurationSig) evalDuration(row chunk.Row) (res types.Dura
 	return res, isNull, err
 }
 
-// builtinCoalesceJSONSig is buitin function coalesce signature which return type json.
+// builtinCoalesceJSONSig is builtin function coalesce signature which return type json.
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
 type builtinCoalesceJSONSig struct {
 	baseBuiltinFunc
@@ -567,7 +567,7 @@ func (b *builtinGreatestStringSig) evalString(row chunk.Row) (max string, isNull
 		if isNull || err != nil {
 			return max, isNull, err
 		}
-		if types.CompareString(v, max) > 0 {
+		if types.CompareString(v, max, b.collation) > 0 {
 			max = v
 		}
 	}
@@ -766,7 +766,7 @@ func (b *builtinLeastStringSig) evalString(row chunk.Row) (min string, isNull bo
 		if isNull || err != nil {
 			return min, isNull, err
 		}
-		if types.CompareString(v, min) < 0 {
+		if types.CompareString(v, min, b.collation) < 0 {
 			min = v
 		}
 	}
@@ -1044,7 +1044,7 @@ func GetAccurateCmpType(lhs, rhs Expression) types.EvalType {
 }
 
 // GetCmpFunction get the compare function according to two arguments.
-func GetCmpFunction(lhs, rhs Expression) CompareFunc {
+func GetCmpFunction(ctx sessionctx.Context, lhs, rhs Expression) CompareFunc {
 	switch GetAccurateCmpType(lhs, rhs) {
 	case types.ETInt:
 		return CompareInt
@@ -1053,7 +1053,8 @@ func GetCmpFunction(lhs, rhs Expression) CompareFunc {
 	case types.ETDecimal:
 		return CompareDecimal
 	case types.ETString:
-		return CompareString
+		_, dstCollation, dstFlen := DeriveCollationFromExprs(ctx, lhs, rhs)
+		return genCompareString(dstCollation, dstFlen)
 	case types.ETDuration:
 		return CompareDuration
 	case types.ETDatetime, types.ETTimestamp:
@@ -1205,7 +1206,7 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldT
 // refineArgs will rewrite the arguments if the compare expression is `int column <cmp> non-int constant` or
 // `non-int constant <cmp> int column`. E.g., `a < 1.1` will be rewritten to `a < 2`.
 func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Expression) []Expression {
-	if ctx.GetSessionVars().StmtCtx.UseCache && ContainLazyConst(args) {
+	if ContainMutableConst(ctx, args) {
 		return args
 	}
 	arg0Type, arg1Type := args[0].GetType(), args[1].GetType()
@@ -1519,7 +1520,7 @@ func (b *builtinLTStringSig) Clone() builtinFunc {
 }
 
 func (b *builtinLTStringSig) evalInt(row chunk.Row) (val int64, isNull bool, err error) {
-	return resOfLT(CompareString(b.ctx, b.args[0], b.args[1], row, row))
+	return resOfLT(CompareStringWithCollationInfo(b.ctx, b.args[0], b.args[1], row, row, b.collation))
 }
 
 type builtinLTDurationSig struct {
@@ -1617,7 +1618,7 @@ func (b *builtinLEStringSig) Clone() builtinFunc {
 }
 
 func (b *builtinLEStringSig) evalInt(row chunk.Row) (val int64, isNull bool, err error) {
-	return resOfLE(CompareString(b.ctx, b.args[0], b.args[1], row, row))
+	return resOfLE(CompareStringWithCollationInfo(b.ctx, b.args[0], b.args[1], row, row, b.collation))
 }
 
 type builtinLEDurationSig struct {
@@ -1715,7 +1716,7 @@ func (b *builtinGTStringSig) Clone() builtinFunc {
 }
 
 func (b *builtinGTStringSig) evalInt(row chunk.Row) (val int64, isNull bool, err error) {
-	return resOfGT(CompareString(b.ctx, b.args[0], b.args[1], row, row))
+	return resOfGT(CompareStringWithCollationInfo(b.ctx, b.args[0], b.args[1], row, row, b.collation))
 }
 
 type builtinGTDurationSig struct {
@@ -1813,7 +1814,7 @@ func (b *builtinGEStringSig) Clone() builtinFunc {
 }
 
 func (b *builtinGEStringSig) evalInt(row chunk.Row) (val int64, isNull bool, err error) {
-	return resOfGE(CompareString(b.ctx, b.args[0], b.args[1], row, row))
+	return resOfGE(CompareStringWithCollationInfo(b.ctx, b.args[0], b.args[1], row, row, b.collation))
 }
 
 type builtinGEDurationSig struct {
@@ -1911,7 +1912,7 @@ func (b *builtinEQStringSig) Clone() builtinFunc {
 }
 
 func (b *builtinEQStringSig) evalInt(row chunk.Row) (val int64, isNull bool, err error) {
-	return resOfEQ(CompareString(b.ctx, b.args[0], b.args[1], row, row))
+	return resOfEQ(CompareStringWithCollationInfo(b.ctx, b.args[0], b.args[1], row, row, b.collation))
 }
 
 type builtinEQDurationSig struct {
@@ -2009,7 +2010,7 @@ func (b *builtinNEStringSig) Clone() builtinFunc {
 }
 
 func (b *builtinNEStringSig) evalInt(row chunk.Row) (val int64, isNull bool, err error) {
-	return resOfNE(CompareString(b.ctx, b.args[0], b.args[1], row, row))
+	return resOfNE(CompareStringWithCollationInfo(b.ctx, b.args[0], b.args[1], row, row, b.collation))
 }
 
 type builtinNEDurationSig struct {
@@ -2189,7 +2190,7 @@ func (b *builtinNullEQStringSig) evalInt(row chunk.Row) (val int64, isNull bool,
 		res = 1
 	case isNull0 != isNull1:
 		break
-	case types.CompareString(arg0, arg1) == 0:
+	case types.CompareString(arg0, arg1, b.collation) == 0:
 		res = 1
 	}
 	return res, false, nil
@@ -2420,8 +2421,14 @@ func CompareInt(sctx sessionctx.Context, lhsArg, rhsArg Expression, lhsRow, rhsR
 	return int64(res), false, nil
 }
 
-// CompareString compares two strings.
-func CompareString(sctx sessionctx.Context, lhsArg, rhsArg Expression, lhsRow, rhsRow chunk.Row) (int64, bool, error) {
+func genCompareString(collation string, flen int) func(sctx sessionctx.Context, lhsArg, rhsArg Expression, lhsRow, rhsRow chunk.Row) (int64, bool, error) {
+	return func(sctx sessionctx.Context, lhsArg, rhsArg Expression, lhsRow, rhsRow chunk.Row) (int64, bool, error) {
+		return CompareStringWithCollationInfo(sctx, lhsArg, rhsArg, lhsRow, rhsRow, collation)
+	}
+}
+
+// CompareStringWithCollationInfo compares two strings with the specified collation information.
+func CompareStringWithCollationInfo(sctx sessionctx.Context, lhsArg, rhsArg Expression, lhsRow, rhsRow chunk.Row, collation string) (int64, bool, error) {
 	arg0, isNull0, err := lhsArg.EvalString(sctx, lhsRow)
 	if err != nil {
 		return 0, true, err
@@ -2435,7 +2442,7 @@ func CompareString(sctx sessionctx.Context, lhsArg, rhsArg Expression, lhsRow, r
 	if isNull0 || isNull1 {
 		return compareNull(isNull0, isNull1), true, nil
 	}
-	return int64(types.CompareString(arg0, arg1)), false, nil
+	return int64(types.CompareString(arg0, arg1, collation)), false, nil
 }
 
 // CompareReal compares two float-point values.

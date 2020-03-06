@@ -31,11 +31,15 @@ split-table = true
 # The limit of concurrent executed sessions.
 token-limit = 1000
 
-# Set the memory quota for a query in bytes. Default: 32GB
-mem-quota-query = 34359738368
+# Set the memory quota for a query in bytes. Default: 1GB
+mem-quota-query = 1073741824
 
 # Set to true to enable use of temporary disk for some executors when mem-quota-query is exceeded.
 oom-use-tmp-storage = true
+
+# The location of temporary disk storage using by some executors when mem-quota-query is exceeded.
+# It defaults to `<TMPDIR>/tidb/tmp-storage` if it is unset.
+# tmp-storage-path = "/tmp/tidb/tmp-storage"
 
 # What to do when mem-quota-query is exceeded and can not be spilled over to disk any more.
 # Valid options: ["log", "cancel"]
@@ -60,6 +64,9 @@ check-mb4-value-in-utf8 = true
 # treat-old-version-utf8-as-utf8mb4 use for upgrade compatibility. Set to true will treat old version table/column UTF8 charset as UTF8MB4.
 treat-old-version-utf8-as-utf8mb4 = true
 
+# max-index-length is used to deal with compatibility issues from v3.0.7 and previous version upgrades. It can only be in [3072, 3072*4].
+max-index-length = 3072
+
 # enable-table-lock is used to control table lock feature. Default is false, indicate the table lock feature is disabled.
 enable-table-lock = false
 
@@ -68,6 +75,10 @@ delay-clean-table-lock = 0
 
 # Maximum number of the splitting region, which is used by the split region statement.
 split-region-max-num = 1000
+
+# enable the TiDB to fetch configs from PD and update itself during runtime.
+# see https://github.com/pingcap/tidb/pull/13660 for more details.
+enable-dynamic-config = true
 
 # alter-primary-key is used to control alter primary key feature. Default is false, indicate the alter primary key feature is disabled.
 # If it is true, we can add the primary key by "alter table", but we may not be able to drop the primary key.
@@ -90,6 +101,9 @@ repair-table-list = []
 # The maximum permitted number of simultaneous client connections.
 max-server-connections = 4096
 
+# Whether new collations are enabled, as indicated by its name, this configuration entry take effect ONLY when a TiDB cluster bootstraps for the first time.
+new_collations_enabled_on_first_bootstrap = false
+
 [log]
 # Log level: debug, info, warn, error, fatal.
 level = "info"
@@ -102,6 +116,9 @@ format = "text"
 
 # Enable annotating logs with the full stack error message, if not set, it will be defaulted to false.
 # enable-error-stack = false
+
+# Whether to enable slow query log.
+enable-slow-log = true
 
 # Stores slow query log into separated files.
 slow-query-file = "tidb-slow.log"
@@ -215,9 +232,9 @@ bind-info-lease = "3s"
 
 # The limitation of the size in byte for the entries in one transaction.
 # If using TiKV as the storage, the entry represents a key/value pair.
-# WARNING: Do not set the value too large, otherwise it will make a very large impact on the TiKV cluster.
-# Please adjust this configuration carefully.
-txn-total-size-limit = 1073741824
+# NOTE: If binlog is enabled, this value should be less than 104857600(10M) because this is the maximum size that can be handled by Pumper.
+# If binlog is not enabled, this value should be less than 10737418240(10G).
+txn-total-size-limit = 104857600
 
 [proxy-protocol]
 # PROXY protocol acceptable client networks.
@@ -327,6 +344,7 @@ capacity = 2048000
 
 [binlog]
 # enable to write binlog.
+# NOTE: If binlog is enabled, txn-total-size-limit should be less than 104857600(10M).
 enable = false
 
 # WriteTimeout specifies how long it will wait for writing binlog to pump.

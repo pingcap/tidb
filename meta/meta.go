@@ -62,6 +62,7 @@ var (
 	mDBPrefix         = "DB"
 	mTablePrefix      = "Table"
 	mSequencePrefix   = "SID"
+	mSeqCyclePrefix   = "SequenceCycle"
 	mTableIDPrefix    = "TID"
 	mRandomIDPrefix   = "TARID"
 	mBootstrapKey     = []byte("BootstrapKey")
@@ -158,6 +159,10 @@ func (m *Meta) sequenceKey(sequenceID int64) []byte {
 	return []byte(fmt.Sprintf("%s:%d", mSequencePrefix, sequenceID))
 }
 
+func (m *Meta) sequenceCycleKey(sequenceID int64) []byte {
+	return []byte(fmt.Sprintf("%s:%d", mSeqCyclePrefix, sequenceID))
+}
+
 // DDLJobHistoryKey is only used for testing.
 func DDLJobHistoryKey(m *Meta, jobID int64) []byte {
 	return m.txn.EncodeHashDataKey(mDDLJobHistoryKey, m.jobIDKey(jobID))
@@ -230,6 +235,21 @@ func (m *Meta) GenSequenceValue(dbID, sequenceID, step int64) (int64, error) {
 // GetSequenceValue gets current sequence value with sequence id.
 func (m *Meta) GetSequenceValue(dbID int64, sequenceID int64) (int64, error) {
 	return m.txn.HGetInt64(m.dbKey(dbID), m.sequenceKey(sequenceID))
+}
+
+// SetSequenceValue sets start value when sequence in cycle.
+func (m *Meta) SetSequenceValue(dbID int64, sequenceID int64, start int64) error {
+	return m.txn.HSet(m.dbKey(dbID), m.sequenceKey(sequenceID), []byte(strconv.FormatInt(start, 10)))
+}
+
+// GetSequenceCycle gets current sequence cycle times with sequence id.
+func (m *Meta) GetSequenceCycle(dbID int64, sequenceID int64) (int64, error) {
+	return m.txn.HGetInt64(m.dbKey(dbID), m.sequenceCycleKey(sequenceID))
+}
+
+// SetSequenceCycle sets cycle times value when sequence in cycle.
+func (m *Meta) SetSequenceCycle(dbID int64, sequenceID int64, round int64) error {
+	return m.txn.HSet(m.dbKey(dbID), m.sequenceCycleKey(sequenceID), []byte(strconv.FormatInt(round, 10)))
 }
 
 // GetSchemaVersion gets current global schema version.
@@ -330,17 +350,17 @@ func (m *Meta) CreateTableOrView(dbID int64, tableInfo *model.TableInfo) error {
 
 // CreateTableAndSetAutoID creates a table with tableInfo in database,
 // and rebases the table autoID.
-func (m *Meta) CreateTableAndSetAutoID(dbID int64, tableInfo *model.TableInfo, autoID int64) error {
+func (m *Meta) CreateTableAndSetAutoID(dbID int64, tableInfo *model.TableInfo, autoIncID, autoRandID int64) error {
 	err := m.CreateTableOrView(dbID, tableInfo)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	_, err = m.txn.HInc(m.dbKey(dbID), m.autoTableIDKey(tableInfo.ID), autoID)
+	_, err = m.txn.HInc(m.dbKey(dbID), m.autoTableIDKey(tableInfo.ID), autoIncID)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	if tableInfo.AutoRandomBits > 0 {
-		_, err = m.txn.HInc(m.dbKey(dbID), m.autoRandomTableIDKey(tableInfo.ID), 0)
+		_, err = m.txn.HInc(m.dbKey(dbID), m.autoRandomTableIDKey(tableInfo.ID), autoRandID)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -348,13 +368,13 @@ func (m *Meta) CreateTableAndSetAutoID(dbID int64, tableInfo *model.TableInfo, a
 	return nil
 }
 
-// CreateSequenceAndSetSeqValue creates sequence with tableInfo in database, and rebase the sequence seqID.
-func (m *Meta) CreateSequenceAndSetSeqValue(dbID int64, tableInfo *model.TableInfo, seqID int64) error {
+// CreateSequenceAndSetSeqValue creates sequence with tableInfo in database, and rebase the sequence seqValue.
+func (m *Meta) CreateSequenceAndSetSeqValue(dbID int64, tableInfo *model.TableInfo, seqValue int64) error {
 	err := m.CreateTableOrView(dbID, tableInfo)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	_, err = m.txn.HInc(m.dbKey(dbID), m.sequenceKey(tableInfo.ID), seqID)
+	_, err = m.txn.HInc(m.dbKey(dbID), m.sequenceKey(tableInfo.ID), seqValue)
 	return errors.Trace(err)
 }
 
@@ -744,7 +764,14 @@ func (m *Meta) GetAllHistoryDDLJobs() ([]*model.Job, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return decodeAndSortJob(pairs)
+	jobs, err := decodeJob(pairs)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	// sort job.
+	sorter := &jobsSorter{jobs: jobs}
+	sort.Sort(sorter)
+	return jobs, nil
 }
 
 // GetLastNHistoryDDLJobs gets latest N history ddl jobs.
@@ -753,10 +780,48 @@ func (m *Meta) GetLastNHistoryDDLJobs(num int) ([]*model.Job, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return decodeAndSortJob(pairs)
+	return decodeJob(pairs)
 }
 
-func decodeAndSortJob(jobPairs []structure.HashPair) ([]*model.Job, error) {
+// LastJobIterator is the iterator for gets latest history.
+type LastJobIterator struct {
+	iter *structure.ReverseHashIterator
+}
+
+// GetLastHistoryDDLJobsIterator gets latest N history ddl jobs iterator.
+func (m *Meta) GetLastHistoryDDLJobsIterator() (*LastJobIterator, error) {
+	iter, err := structure.NewHashReverseIter(m.txn, mDDLJobHistoryKey)
+	if err != nil {
+		return nil, err
+	}
+	return &LastJobIterator{
+		iter: iter,
+	}, nil
+}
+
+// GetLastJobs gets last several jobs.
+func (i *LastJobIterator) GetLastJobs(num int, jobs []*model.Job) ([]*model.Job, error) {
+	if len(jobs) < num {
+		jobs = make([]*model.Job, 0, num)
+	}
+	jobs = jobs[:0]
+	iter := i.iter
+	for iter.Valid() && len(jobs) < num {
+		job := &model.Job{}
+		err := job.Decode(iter.Value())
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		jobs = append(jobs, job)
+		err = iter.Next()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	return jobs, nil
+}
+
+func decodeJob(jobPairs []structure.HashPair) ([]*model.Job, error) {
 	jobs := make([]*model.Job, 0, len(jobPairs))
 	for _, pair := range jobPairs {
 		job := &model.Job{}
@@ -766,8 +831,6 @@ func decodeAndSortJob(jobPairs []structure.HashPair) ([]*model.Job, error) {
 		}
 		jobs = append(jobs, job)
 	}
-	sorter := &jobsSorter{jobs: jobs}
-	sort.Sort(sorter)
 	return jobs, nil
 }
 
@@ -899,14 +962,4 @@ func (m *Meta) SetSchemaDiff(diff *model.SchemaDiff) error {
 	err = m.txn.Set(diffKey, data)
 	metrics.MetaHistogram.WithLabelValues(metrics.SetSchemaDiff, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	return errors.Trace(err)
-}
-
-func init() {
-	metaMySQLErrCodes := map[terror.ErrCode]uint16{
-		mysql.ErrDBCreateExists: mysql.ErrDBCreateExists,
-		mysql.ErrBadDB:          mysql.ErrBadDB,
-		mysql.ErrNoSuchTable:    mysql.ErrNoSuchTable,
-		mysql.ErrTableExists:    mysql.ErrTableExists,
-	}
-	terror.ErrClassToMySQLCodes[terror.ClassMeta] = metaMySQLErrCodes
 }

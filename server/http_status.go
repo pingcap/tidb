@@ -17,6 +17,8 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -80,7 +82,6 @@ func (s *Server) startHTTPServer() {
 	router.Handle("/stats/dump/{db}/{table}/{snapshot}", s.newStatsHistoryHandler()).Name("StatsHistoryDump")
 
 	router.Handle("/settings", settingsHandler{}).Name("Settings")
-	router.Handle("/reload-config", configReloadHandler{}).Name("ConfigReload")
 	router.Handle("/binlog/recover", binlogRecover{}).Name("BinlogRecover")
 
 	tikvHandlerTool := s.newTikvHandlerTool()
@@ -264,11 +265,24 @@ func (s *Server) startHTTPServer() {
 	})
 
 	logutil.BgLogger().Info("for status and metrics report", zap.String("listening on addr", addr))
-	s.setupStatuServerAndRPCServer(addr, serverMux)
+	s.setupStatusServerAndRPCServer(addr, serverMux)
 }
 
-func (s *Server) setupStatuServerAndRPCServer(addr string, serverMux *http.ServeMux) {
-	l, err := net.Listen("tcp", addr)
+func (s *Server) setupStatusServerAndRPCServer(addr string, serverMux *http.ServeMux) {
+	tlsConfig, err := s.cfg.Security.ToTLSConfig()
+	if err != nil {
+		logutil.BgLogger().Error("invalid TLS config", zap.Error(err))
+		return
+	}
+	tlsConfig = s.setCNChecker(tlsConfig)
+
+	var l net.Listener
+	if tlsConfig != nil {
+		// we need to manage TLS here for cmux to distinguish between HTTP and gRPC.
+		l, err = tls.Listen("tcp", addr, tlsConfig)
+	} else {
+		l, err = net.Listen("tcp", addr)
+	}
 	if err != nil {
 		logutil.BgLogger().Info("listen failed", zap.Error(err))
 		return
@@ -287,21 +301,37 @@ func (s *Server) setupStatuServerAndRPCServer(addr string, serverMux *http.Serve
 		logutil.BgLogger().Error("grpc server error", zap.Error(err))
 	}, nil)
 
-	if len(s.cfg.Security.ClusterSSLCA) != 0 {
-		go util.WithRecovery(func() {
-			err := s.statusServer.ServeTLS(httpL, s.cfg.Security.ClusterSSLCert, s.cfg.Security.ClusterSSLKey)
-			logutil.BgLogger().Error("http server error", zap.Error(err))
-		}, nil)
-	} else {
-		go util.WithRecovery(func() {
-			err := s.statusServer.Serve(httpL)
-			logutil.BgLogger().Error("http server error", zap.Error(err))
-		}, nil)
-	}
+	go util.WithRecovery(func() {
+		err := s.statusServer.Serve(httpL)
+		logutil.BgLogger().Error("http server error", zap.Error(err))
+	}, nil)
+
 	err = m.Serve()
 	if err != nil {
 		logutil.BgLogger().Error("start status/rpc server error", zap.Error(err))
 	}
+}
+
+func (s *Server) setCNChecker(tlsConfig *tls.Config) *tls.Config {
+	if tlsConfig != nil && len(s.cfg.Security.ClusterVerifyCN) != 0 {
+		checkCN := make(map[string]struct{})
+		for _, cn := range s.cfg.Security.ClusterVerifyCN {
+			cn = strings.TrimSpace(cn)
+			checkCN[cn] = struct{}{}
+		}
+		tlsConfig.VerifyPeerCertificate = func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
+			for _, chain := range verifiedChains {
+				if len(chain) != 0 {
+					if _, match := checkCN[chain[0].Subject.CommonName]; match {
+						return nil
+					}
+				}
+			}
+			return errors.Errorf("client certificate authentication failed. The Common Name from the client certificate was not found in the configuration cluster-verify-cn with value: %s", s.cfg.Security.ClusterVerifyCN)
+		}
+		tlsConfig.ClientAuth = tls.RequireAndVerifyClientCert
+	}
+	return tlsConfig
 }
 
 // status of TiDB.

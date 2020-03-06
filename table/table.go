@@ -66,8 +66,9 @@ const (
 
 var (
 	// ErrColumnCantNull is used for inserting null to a not null column.
-	ErrColumnCantNull  = terror.ClassTable.New(mysql.ErrBadNull, mysql.MySQLErrName[mysql.ErrBadNull])
-	errUnknownColumn   = terror.ClassTable.New(mysql.ErrBadField, mysql.MySQLErrName[mysql.ErrBadField])
+	ErrColumnCantNull = terror.ClassTable.New(mysql.ErrBadNull, mysql.MySQLErrName[mysql.ErrBadNull])
+	// ErrUnknownColumn is returned when accessing an unknown column.
+	ErrUnknownColumn   = terror.ClassTable.New(mysql.ErrBadField, mysql.MySQLErrName[mysql.ErrBadField])
 	errDuplicateColumn = terror.ClassTable.New(mysql.ErrFieldSpecifiedTwice, mysql.MySQLErrName[mysql.ErrFieldSpecifiedTwice])
 
 	errGetDefaultFailed = terror.ClassTable.New(mysql.ErrFieldGetDefaultFailed, mysql.MySQLErrName[mysql.ErrFieldGetDefaultFailed])
@@ -99,6 +100,8 @@ var (
 	ErrNoPartitionForGivenValue = terror.ClassTable.New(mysql.ErrNoPartitionForGivenValue, mysql.MySQLErrName[mysql.ErrNoPartitionForGivenValue])
 	// ErrLockOrActiveTransaction returns when execute unsupported statement in a lock session or an active transaction.
 	ErrLockOrActiveTransaction = terror.ClassTable.New(mysql.ErrLockOrActiveTransaction, mysql.MySQLErrName[mysql.ErrLockOrActiveTransaction])
+	// ErrSequenceHasRunOut returns when sequence has run out.
+	ErrSequenceHasRunOut = terror.ClassTable.New(mysql.ErrSequenceRunOut, mysql.MySQLErrName[mysql.ErrSequenceRunOut])
 )
 
 // RecordIterFunc is used for low-level record iteration.
@@ -153,6 +156,10 @@ type Table interface {
 	// WritableCols returns columns of the table in writable states.
 	// Writable states includes Public, WriteOnly, WriteOnlyReorganization.
 	WritableCols() []*Column
+
+	// DeletableCols returns columns of the table in deletable states.
+	// Writable states includes Public, WriteOnly, WriteOnlyReorganization, DeleteOnly.
+	DeletableCols() []*Column
 
 	// Indices returns the indices of the table.
 	Indices() []Index
@@ -258,7 +265,7 @@ type PhysicalTable interface {
 type PartitionedTable interface {
 	Table
 	GetPartition(physicalID int64) PhysicalTable
-	GetPartitionByRow(sessionctx.Context, []types.Datum) (Table, error)
+	GetPartitionByRow(sessionctx.Context, []types.Datum) (PhysicalTable, error)
 }
 
 // TableFromMeta builds a table.Table from *model.TableInfo.
@@ -278,26 +285,3 @@ func (s Slice) Less(i, j int) bool {
 }
 
 func (s Slice) Swap(i, j int) { s[i], s[j] = s[j], s[i] }
-
-func init() {
-	tableMySQLErrCodes := map[terror.ErrCode]uint16{
-		mysql.ErrBadNull:                     mysql.ErrBadNull,
-		mysql.ErrBadField:                    mysql.ErrBadField,
-		mysql.ErrFieldSpecifiedTwice:         mysql.ErrFieldSpecifiedTwice,
-		mysql.ErrNoDefaultForField:           mysql.ErrNoDefaultForField,
-		mysql.ErrTruncatedWrongValueForField: mysql.ErrTruncatedWrongValueForField,
-		mysql.ErrUnknownPartition:            mysql.ErrUnknownPartition,
-		mysql.ErrNoPartitionForGivenValue:    mysql.ErrNoPartitionForGivenValue,
-		mysql.ErrLockOrActiveTransaction:     mysql.ErrLockOrActiveTransaction,
-		mysql.ErrIndexOutBound:               mysql.ErrIndexOutBound,
-		mysql.ErrColumnStateNonPublic:        mysql.ErrColumnStateNonPublic,
-		mysql.ErrFieldGetDefaultFailed:       mysql.ErrFieldGetDefaultFailed,
-		mysql.ErrUnsupportedOp:               mysql.ErrUnsupportedOp,
-		mysql.ErrRowNotFound:                 mysql.ErrRowNotFound,
-		mysql.ErrTableStateCantNone:          mysql.ErrTableStateCantNone,
-		mysql.ErrColumnStateCantNone:         mysql.ErrColumnStateCantNone,
-		mysql.ErrIndexStateCantNone:          mysql.ErrIndexStateCantNone,
-		mysql.ErrInvalidRecordKey:            mysql.ErrInvalidRecordKey,
-	}
-	terror.ErrClassToMySQLCodes[terror.ClassTable] = tableMySQLErrCodes
-}

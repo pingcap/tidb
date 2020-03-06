@@ -46,14 +46,3 @@ type TxStructure struct {
 	readWriter kv.RetrieverMutator
 	prefix     []byte
 }
-
-func init() {
-	// Register terror to mysql error map.
-	mySQLErrCodes := map[terror.ErrCode]uint16{
-		mysql.ErrInvalidHashKeyFlag:  mysql.ErrInvalidHashKeyFlag,
-		mysql.ErrInvalidListIndex:    mysql.ErrInvalidListIndex,
-		mysql.ErrInvalidListMetaData: mysql.ErrInvalidListMetaData,
-		mysql.ErrWriteOnSnapshot:     mysql.ErrWriteOnSnapshot,
-	}
-	terror.ErrClassToMySQLCodes[terror.ClassStructure] = mySQLErrCodes
-}

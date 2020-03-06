@@ -24,9 +24,10 @@ import (
 )
 
 // UnspecifiedLength is unspecified length.
-const (
-	UnspecifiedLength = -1
-)
+const UnspecifiedLength = -1
+
+// ErrorLength is error length for blob or text.
+const ErrorLength = 0
 
 // FieldType records field type information.
 type FieldType = ast.FieldType
@@ -38,6 +39,17 @@ func NewFieldType(tp byte) *FieldType {
 		Tp:      tp,
 		Flen:    UnspecifiedLength,
 		Decimal: UnspecifiedLength,
+	}
+}
+
+// NewFieldTypeWithCollation returns a FieldType,
+// with a type and other information about field type.
+func NewFieldTypeWithCollation(tp byte, collation string, length int) *FieldType {
+	return &FieldType{
+		Tp:      tp,
+		Flen:    length,
+		Decimal: UnspecifiedLength,
+		Collate: collation,
 	}
 }
 
@@ -128,7 +140,7 @@ func DefaultParamTypeForValue(value interface{}, tp *FieldType) {
 		tp.Flen = UnspecifiedLength
 		tp.Decimal = UnspecifiedLength
 	default:
-		DefaultTypeForValue(value, tp)
+		DefaultTypeForValue(value, tp, mysql.DefaultCharset, mysql.DefaultCollationName)
 		if hasVariantFieldLength(tp) {
 			tp.Flen = UnspecifiedLength
 		}
@@ -148,7 +160,7 @@ func hasVariantFieldLength(tp *FieldType) bool {
 }
 
 // DefaultTypeForValue returns the default FieldType for the value.
-func DefaultTypeForValue(value interface{}, tp *FieldType) {
+func DefaultTypeForValue(value interface{}, tp *FieldType, char string, collate string) {
 	switch x := value.(type) {
 	case nil:
 		tp.Tp = mysql.TypeNull
@@ -182,7 +194,7 @@ func DefaultTypeForValue(value interface{}, tp *FieldType) {
 		// TODO: tp.Flen should be len(x) * 3 (max bytes length of CharsetUTF8)
 		tp.Flen = len(x)
 		tp.Decimal = UnspecifiedLength
-		tp.Charset, tp.Collate = charset.GetDefaultCharsetAndCollate()
+		tp.Charset, tp.Collate = char, collate
 	case float32:
 		tp.Tp = mysql.TypeFloat
 		s := strconv.FormatFloat(float64(x), 'f', -1, 32)
@@ -259,8 +271,8 @@ func DefaultTypeForValue(value interface{}, tp *FieldType) {
 		tp.Tp = mysql.TypeJSON
 		tp.Flen = UnspecifiedLength
 		tp.Decimal = 0
-		tp.Charset = charset.CharsetBin
-		tp.Collate = charset.CollationBin
+		tp.Charset = charset.CharsetUTF8MB4
+		tp.Collate = charset.CollationUTF8MB4
 	default:
 		tp.Tp = mysql.TypeUnspecified
 		tp.Flen = UnspecifiedLength

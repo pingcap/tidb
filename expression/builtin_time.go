@@ -25,6 +25,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -35,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
@@ -1063,6 +1063,7 @@ func (c *monthNameFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 		return nil, err
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETDatetime)
+	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	bf.tp.Flen = 10
 	sig := &builtinMonthNameSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_MonthName)
@@ -1102,6 +1103,7 @@ func (c *dayNameFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 		return nil, err
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETDatetime)
+	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	bf.tp.Flen = 10
 	sig := &builtinDayNameSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_DayName)
@@ -2769,7 +2771,7 @@ func (du *baseDateArithmitical) add(ctx sessionctx.Context, date types.Time, int
 		date.SetFsp(6)
 	}
 
-	if goTime.Year() < 0 || goTime.Year() > (1<<16-1) {
+	if goTime.Year() < 0 || goTime.Year() > 9999 {
 		return types.ZeroTime, true, handleInvalidTimeError(ctx, types.ErrDatetimeFunctionOverflow.GenWithStackByArgs("datetime"))
 	}
 
@@ -2830,7 +2832,7 @@ func (du *baseDateArithmitical) sub(ctx sessionctx.Context, date types.Time, int
 		date.SetFsp(6)
 	}
 
-	if goTime.Year() < 0 || goTime.Year() > (1<<16-1) {
+	if goTime.Year() < 0 || goTime.Year() > 9999 {
 		return types.ZeroTime, true, handleInvalidTimeError(ctx, types.ErrDatetimeFunctionOverflow.GenWithStackByArgs("datetime"))
 	}
 
@@ -6460,10 +6462,7 @@ func (b *builtinTimeFormatSig) evalString(row chunk.Row) (string, bool, error) {
 
 // formatTime see https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_time-format
 func (b *builtinTimeFormatSig) formatTime(ctx sessionctx.Context, t types.Duration, formatMask string) (res string, err error) {
-	t2 := types.NewTime(types.FromDate(0, 0, 0, t.Hour(), t.Minute(), t.Second(), t.MicroSecond()), mysql.TypeDate, 0)
-
-	str, err := t2.DateFormat(formatMask)
-	return str, err
+	return t.DurationFormat(formatMask)
 }
 
 type timeToSecFunctionClass struct {
