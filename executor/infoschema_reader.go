@@ -55,7 +55,7 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		var err error
 		switch e.table.Name.O {
 		case infoschema.TableSchemata:
-			e.rows = dataForSchemata(sctx, dbs)
+			e.dataForSchemata(sctx, dbs)
 		case infoschema.TableTables:
 			e.rows, err = dataForTables(sctx, dbs)
 		case infoschema.TablePartitions:
@@ -237,7 +237,7 @@ func getAutoIncrementID(ctx sessionctx.Context, schema *model.DBInfo, tblInfo *m
 	return tbl.Allocator(ctx, autoid.RowIDAllocType).Base() + 1, nil
 }
 
-func dataForSchemata(ctx sessionctx.Context, schemas []*model.DBInfo) [][]types.Datum {
+func (e *memtableRetriever) dataForSchemata(ctx sessionctx.Context, schemas []*model.DBInfo) {
 	checker := privilege.GetPrivilegeManager(ctx)
 	rows := make([][]types.Datum, 0, len(schemas))
 
@@ -266,7 +266,7 @@ func dataForSchemata(ctx sessionctx.Context, schemas []*model.DBInfo) [][]types.
 		)
 		rows = append(rows, record)
 	}
-	return rows
+	e.rows = rows
 }
 
 func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Datum, error) {
