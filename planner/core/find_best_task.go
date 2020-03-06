@@ -469,7 +469,12 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err
 				p: dual,
 			}, nil
 		}
-		if !ds.isPartition && len(path.Ranges) > 0 {
+		if ((!ds.isPartition && len(path.Ranges) > 0) || (ds.isPartition && len(path.Ranges) == 1)) &&
+			candidate.path.StoreType != kv.TiFlash &&
+			(candidate.path.IsTablePath ||
+				(candidate.path.Index.Unique &&
+					!candidate.path.Index.HasPrefixIndex() &&
+					len(candidate.path.Ranges[0].LowVal) == len(candidate.path.Index.Columns))) {
 			allRangeIsPoint := true
 			for _, ran := range path.Ranges {
 				if !ran.IsPoint(ds.ctx.GetSessionVars().StmtCtx) {
@@ -490,6 +495,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err
 				}
 				if pointGetTask.cost() < t.cost() {
 					t = pointGetTask
+					continue
 				}
 			}
 		}
@@ -1107,9 +1113,6 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 		prop.TaskTp == property.CopSingleReadTaskType && !candidate.isSingleScan {
 		return invalidTask, nil
 	}
-	if candidate.path.StoreType == kv.TiFlash {
-		return invalidTask, nil
-	}
 
 	pointGetPlan := PointGetPlan{
 		ctx:          ds.ctx,
@@ -1125,8 +1128,12 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 			for _, def := range pi.Definitions {
 				if def.ID == ds.physicalTableID {
 					partitionInfo = &def
+					break
 				}
 			}
+		}
+		if partitionInfo == nil {
+			return invalidTask, nil
 		}
 	}
 	rTsk := &rootTask{p: pointGetPlan}
@@ -1147,11 +1154,6 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 			rTsk.p = sel
 		}
 	} else {
-		if !candidate.path.Index.Unique ||
-			len(candidate.path.Ranges[0].LowVal) != len(candidate.path.Index.Columns) ||
-			candidate.path.Index.HasPrefixIndex() {
-			return invalidTask, nil
-		}
 		pointGetPlan.IndexInfo = candidate.path.Index
 		pointGetPlan.IndexValues = candidate.path.Ranges[0].LowVal
 		pointGetPlan.PartitionInfo = partitionInfo
@@ -1184,9 +1186,6 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 		prop.TaskTp == property.CopSingleReadTaskType && !candidate.isSingleScan {
 		return invalidTask, nil
 	}
-	if candidate.path.StoreType == kv.TiFlash {
-		return invalidTask, nil
-	}
 
 	batchPointGetPlan := BatchPointGetPlan{
 		ctx:       ds.ctx,
@@ -1214,11 +1213,6 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 			rTsk.p = sel
 		}
 	} else {
-		if !candidate.path.Index.Unique ||
-			len(candidate.path.Ranges[0].LowVal) != len(candidate.path.Index.Columns) ||
-			candidate.path.Index.HasPrefixIndex() {
-			return invalidTask, nil
-		}
 		batchPointGetPlan.IndexInfo = candidate.path.Index
 		for _, ran := range candidate.path.Ranges {
 			batchPointGetPlan.IndexValues = append(batchPointGetPlan.IndexValues, ran.LowVal)

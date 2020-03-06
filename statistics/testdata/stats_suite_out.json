@@ -83,8 +83,8 @@
     "Name": "TestSelectCombinedLowBound",
     "Cases": [
       [
-        "IndexReader_7 7.00 root index:IndexRangeScan_6",
-        "└─IndexRangeScan_6 7.00 cop[tikv] table:t, index:kid, pid, range:[1,1], keep order:false"
+        "IndexReader_6 7.00 root index:IndexRangeScan_5",
+        "└─IndexRangeScan_5 7.00 cop[tikv] table:t, index:kid, pid, range:[1,1], keep order:false"
       ]
     ]
   }
