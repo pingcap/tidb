@@ -19,6 +19,7 @@ import (
 	"math"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -306,23 +307,35 @@ func (s *testSerialSuite) TestCreateTableWithLike(c *C) {
 	tk.MustQuery("select * from ctwl_db1.pt1").Check(testkit.Rows())
 
 	// for pre_split_table
-	tk.MustExec("use test")
-	tk.MustExec("create table t1 (a int, b int,index idx1(a)) shard_row_id_bits = 4 pre_split_regions=2;")
-	tk.MustExec("create table t2 like t1")
-	is = domain.GetDomain(ctx).InfoSchema()
-	t1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
-	c.Assert(err, IsNil)
-	t1Info := t1.Meta()
-	c.Assert(t1Info.PreSplitRegions, NotNil)
-	t2, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
-	c.Assert(err, IsNil)
-	t2Info := t2.Meta()
-	c.Assert(t2Info.PreSplitRegions, NotNil)
-	c.Assert(t1Info.PreSplitRegions, Equals, t2Info.PreSplitRegions)
-
-	c.Assert(t1Info.ShardRowIDBits, NotNil)
-	c.Assert(t2Info.ShardRowIDBits, NotNil)
-	c.Assert(t1Info.ShardRowIDBits, Equals, t2Info.ShardRowIDBits)
+	//tk.MustExec("use test")
+	//tk.MustExec("create table t1 (a int, b int,index idx1(a)) shard_row_id_bits = 4 pre_split_regions=2;")
+	//tk.MustExec("create table t2 like t1")
+	//is = domain.GetDomain(ctx).InfoSchema()
+	//t1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	//c.Assert(err, IsNil)
+	//t1Info := t1.Meta()
+	//c.Assert(t1Info.PreSplitRegions, NotNil)
+	//t2, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	//c.Assert(err, IsNil)
+	//t2Info := t2.Meta()
+	//c.Assert(t2Info.PreSplitRegions, NotNil)
+	//c.Assert(t1Info.PreSplitRegions, Equals, t2Info.PreSplitRegions)
+	//
+	//c.Assert(t1Info.ShardRowIDBits, NotNil)
+	//c.Assert(t2Info.ShardRowIDBits, NotNil)
+	//c.Assert(t1Info.ShardRowIDBits, Equals, t2Info.ShardRowIDBits)
+	// Test pre-split table region when create table.
+	tk.MustExec("drop table if exists t_pre")
+	tk.MustExec("create table t_pre (a int, b int) shard_row_id_bits = 2 pre_split_regions=2;")
+	re := tk.MustQuery("show table t_pre regions")
+	rows := re.Rows()
+	// Table t_regions should have 4 regions now.
+	c.Assert(len(rows), Equals, 4)
+	tbl := testGetTableByName(c, tk.Se, "test", "t_pre")
+	c.Assert(rows[1][1], Equals, fmt.Sprintf("t_%d_r_2305843009213693952", tbl.Meta().ID))
+	c.Assert(rows[2][1], Equals, fmt.Sprintf("t_%d_r_4611686018427387904", tbl.Meta().ID))
+	c.Assert(rows[3][1], Equals, fmt.Sprintf("t_%d_r_6917529027641081856", tbl.Meta().ID))
+	defer atomic.StoreUint32(&ddl.EnableSplitTableRegion, 0)
 
 	// for failure cases
 	failSQL := fmt.Sprintf("create table t1 like test_not_exist.t")
