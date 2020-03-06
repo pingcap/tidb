@@ -999,3 +999,15 @@ func (s *testPessimisticSuite) TestPessimisticLockReadValue(c *C) {
 	tk2.MustQuery("select * from t where j = 1 for update").Check(testkit.Rows("1 1 1"))
 	tk2.MustExec("commit")
 }
+
+func (s *testPessimisticSuite) TestRCWaitTSOTwice(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (i int key)")
+	tk.MustExec("insert into t values (1)")
+	tk.MustExec("set tidb_txn_mode = 'pessimistic'")
+	tk.MustExec("set tx_isolation = 'read-committed'")
+	tk.MustExec("set autocommit = 0")
+	tk.MustQuery("select * from t where i = 1").Check(testkit.Rows("1"))
+	tk.MustExec("rollback")
+}
