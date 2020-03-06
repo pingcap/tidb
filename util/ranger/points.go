@@ -208,19 +208,12 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []point {
 		err   error
 		ft    *types.FieldType
 	)
-	_, collation, _ := expr.CharsetAndCollation(expr.GetCtx())
 
 	// refineValue refines the constant datum for string type since we may eval the constant to another collation instead of its own collation.
-	refineValue := func(col *expression.Column, value *types.Datum) (isFullRange bool) {
-		if col.RetType.EvalType() == types.ETString {
-			if !collate.CompatibleCollate(col.RetType.Collate, collation) {
-				return true
-			}
-			if value.Kind() == types.KindString {
-				value.SetString(value.GetString(), ft.Collate)
-			}
+	refineValue := func(col *expression.Column, value *types.Datum) {
+		if col.RetType.EvalType() == types.ETString && value.Kind() == types.KindString {
+			value.SetString(value.GetString(), col.RetType.Collate)
 		}
-		return false
 	}
 	if col, ok := expr.GetArgs()[0].(*expression.Column); ok {
 		ft = col.RetType
@@ -228,9 +221,7 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []point {
 		if err != nil {
 			return nil
 		}
-		if refineValue(col, &value) {
-			return fullRange
-		}
+		refineValue(col, &value)
 		op = expr.FuncName.L
 	} else {
 		col, ok := expr.GetArgs()[1].(*expression.Column)
@@ -242,9 +233,7 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []point {
 		if err != nil {
 			return nil
 		}
-		if refineValue(col, &value) {
-			return fullRange
-		}
+		refineValue(col, &value)
 
 		switch expr.FuncName.L {
 		case ast.GE:
@@ -366,6 +355,7 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction) ([]point, bool) {
 	list := expr.GetArgs()[1:]
 	rangePoints := make([]point, 0, len(list)*2)
 	hasNull := false
+	colCollate := expr.GetArgs()[0].GetType().Collate
 	for _, e := range list {
 		v, ok := e.(*expression.Constant)
 		if !ok {
@@ -381,8 +371,11 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction) ([]point, bool) {
 			hasNull = true
 			continue
 		}
-		startPoint := point{value: types.NewDatum(dt.GetValue()), start: true}
-		endPoint := point{value: types.NewDatum(dt.GetValue())}
+		if dt.Kind() == types.KindString {
+			dt.SetString(dt.GetString(), colCollate)
+		}
+		startPoint := point{value: *dt.Copy(), start: true}
+		endPoint := point{value: *dt.Copy()}
 		rangePoints = append(rangePoints, startPoint, endPoint)
 	}
 	sorter := pointSorter{points: rangePoints, sc: r.sc}
