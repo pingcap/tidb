@@ -24,6 +24,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -293,7 +294,7 @@ func (ssMap *stmtSummaryByDigestMap) Clear() {
 }
 
 // ToCurrentDatum converts current statement summaries to datum.
-func (ssMap *stmtSummaryByDigestMap) ToCurrentDatum(username string, isSuper bool) [][]types.Datum {
+func (ssMap *stmtSummaryByDigestMap) ToCurrentDatum(user *auth.UserIdentity, isSuper bool) [][]types.Datum {
 	ssMap.Lock()
 	values := ssMap.summaryMap.Values()
 	beginTime := ssMap.beginTimeForCurInterval
@@ -301,7 +302,7 @@ func (ssMap *stmtSummaryByDigestMap) ToCurrentDatum(username string, isSuper boo
 
 	rows := make([][]types.Datum, 0, len(values))
 	for _, value := range values {
-		record := value.(*stmtSummaryByDigest).toCurrentDatum(beginTime, username, isSuper)
+		record := value.(*stmtSummaryByDigest).toCurrentDatum(beginTime, user, isSuper)
 		if record != nil {
 			rows = append(rows, record)
 		}
@@ -310,7 +311,7 @@ func (ssMap *stmtSummaryByDigestMap) ToCurrentDatum(username string, isSuper boo
 }
 
 // ToHistoryDatum converts history statements summaries to datum.
-func (ssMap *stmtSummaryByDigestMap) ToHistoryDatum(username string, isSuper bool) [][]types.Datum {
+func (ssMap *stmtSummaryByDigestMap) ToHistoryDatum(user *auth.UserIdentity, isSuper bool) [][]types.Datum {
 	ssMap.Lock()
 	values := ssMap.summaryMap.Values()
 	ssMap.Unlock()
@@ -318,7 +319,7 @@ func (ssMap *stmtSummaryByDigestMap) ToHistoryDatum(username string, isSuper boo
 	historySize := ssMap.historySize()
 	rows := make([][]types.Datum, 0, len(values)*historySize)
 	for _, value := range values {
-		records := value.(*stmtSummaryByDigest).toHistoryDatum(historySize, username, isSuper)
+		records := value.(*stmtSummaryByDigest).toHistoryDatum(historySize, user, isSuper)
 		rows = append(rows, records...)
 	}
 	return rows
@@ -567,7 +568,7 @@ func (ssbd *stmtSummaryByDigest) add(sei *StmtExecInfo, beginTime int64, interva
 	}
 }
 
-func (ssbd *stmtSummaryByDigest) toCurrentDatum(beginTimeForCurInterval int64, username string, isSuper bool) []types.Datum {
+func (ssbd *stmtSummaryByDigest) toCurrentDatum(beginTimeForCurInterval int64, user *auth.UserIdentity, isSuper bool) []types.Datum {
 	var ssElement *stmtSummaryByDigestElement
 
 	ssbd.Lock()
@@ -578,20 +579,20 @@ func (ssbd *stmtSummaryByDigest) toCurrentDatum(beginTimeForCurInterval int64, u
 
 	// `ssElement` is lazy expired, so expired elements could also be read.
 	// `beginTime` won't change since `ssElement` is created, so locking is not needed here.
-	if ssElement == nil || ssElement.beginTime < beginTimeForCurInterval ||
-		(strings.Compare(ssElement.sampleUser, username) != 0 && !isSuper) {
+	if ssElement == nil || ssElement.beginTime < beginTimeForCurInterval || user == nil ||
+		(strings.Compare(ssElement.sampleUser, user.Username) != 0 && !isSuper) {
 		return nil
 	}
 	return ssElement.toDatum(ssbd)
 }
 
-func (ssbd *stmtSummaryByDigest) toHistoryDatum(historySize int, username string, isSuper bool) [][]types.Datum {
+func (ssbd *stmtSummaryByDigest) toHistoryDatum(historySize int, user *auth.UserIdentity, isSuper bool) [][]types.Datum {
 	// Collect all history summaries to an array.
 	ssElements := ssbd.collectHistorySummaries(historySize)
 
 	rows := make([][]types.Datum, 0, len(ssElements))
 	for _, ssElement := range ssElements {
-		if strings.Compare(username, ssElement.sampleUser) == 0 || isSuper {
+		if user != nil && (strings.Compare(user.Username, ssElement.sampleUser) == 0 || isSuper) {
 			rows = append(rows, ssElement.toDatum(ssbd))
 		}
 	}
