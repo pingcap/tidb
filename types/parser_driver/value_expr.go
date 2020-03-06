@@ -96,10 +96,7 @@ func (n *ValueExpr) Restore(ctx *format.RestoreCtx) error {
 	case types.KindFloat64:
 		ctx.WritePlain(strconv.FormatFloat(n.GetFloat64(), 'e', -1, 64))
 	case types.KindString:
-		if n.Type.Charset != "" && n.Type.Charset != mysql.DefaultCharset {
-			ctx.WritePlain("_")
-			ctx.WriteKeyWord(n.Type.Charset)
-		}
+		// TODO: Try other method to restore the character set introducer. For example, add a field in ValueExpr.
 		ctx.WriteString(n.GetString())
 	case types.KindBytes:
 		ctx.WriteString(n.GetString())
