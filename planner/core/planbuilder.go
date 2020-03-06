@@ -525,7 +525,8 @@ func (b *PlanBuilder) buildSet(ctx context.Context, v *ast.SetStmt) (Plan, error
 		if _, ok := vars.Value.(*ast.DefaultExpr); !ok {
 			if cn, ok2 := vars.Value.(*ast.ColumnNameExpr); ok2 && cn.Name.Table.L == "" {
 				// Convert column name expression to string value expression.
-				vars.Value = ast.NewValueExpr(cn.Name.Name.O)
+				char, col := b.ctx.GetSessionVars().GetCharsetInfo()
+				vars.Value = ast.NewValueExpr(cn.Name.Name.O, char, col)
 			}
 			mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
 			var err error
