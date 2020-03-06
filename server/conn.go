@@ -1124,6 +1124,8 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 	loadDataInfo.InitQueues()
 	loadDataInfo.SetMaxRowsInBatch(uint64(loadDataInfo.Ctx.GetSessionVars().DMLBatchSize))
 	loadDataInfo.StartStopWatcher()
+	// let stop watcher goroutine quit
+	defer loadDataInfo.ForceQuit()
 	err = loadDataInfo.Ctx.NewTxn(ctx)
 	if err != nil {
 		return err
