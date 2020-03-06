@@ -297,6 +297,7 @@ func (b *builtinSleepSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 		return err
 	}
 
+	result.ResizeInt64(1, false)
 	i64s := result.Int64s()
 
 	isNull := buf.IsNull(0)
