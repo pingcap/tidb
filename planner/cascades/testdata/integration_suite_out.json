@@ -212,10 +212,10 @@
       {
         "SQL": "select max(a+b) from t",
         "Plan": [
-          "HashAgg_31 1.00 root funcs:max(Column#4)->Column#3",
-          "└─TableReader_32 1.00 root data:HashAgg_33",
-          "  └─HashAgg_33 1.00 cop[tikv] funcs:max(plus(test.t.a, test.t.b))->Column#4",
-          "    └─TableFullScan_29 10000.00 cop[tikv] table:t, keep order:false, stats:pseudo"
+          "HashAgg_26 1.00 root funcs:max(Column#4)->Column#3",
+          "└─TableReader_27 1.00 root data:HashAgg_28",
+          "  └─HashAgg_28 1.00 cop[tikv] funcs:max(plus(test.t.a, test.t.b))->Column#4",
+          "    └─TableFullScan_24 10000.00 cop[tikv] table:t, keep order:false, stats:pseudo"
         ],
         "Result": [
           "48"
@@ -277,11 +277,11 @@
       {
         "SQL": "select max(a.a) from t a left join t b on a.a = b.a",
         "Plan": [
-          "HashAgg_33 1.00 root funcs:max(test.t.a)->Column#5",
-          "└─Limit_35 1.00 root offset:0, count:1",
-          "  └─TableReader_40 1.00 root data:Limit_41",
-          "    └─Limit_41 1.00 cop[tikv] offset:0, count:1",
-          "      └─TableFullScan_39 1.00 cop[tikv] table:a, keep order:true, desc, stats:pseudo"
+          "HashAgg_25 1.00 root funcs:max(test.t.a)->Column#5",
+          "└─Limit_27 1.00 root offset:0, count:1",
+          "  └─TableReader_32 1.00 root data:Limit_33",
+          "    └─Limit_33 1.00 cop[tikv] offset:0, count:1",
+          "      └─TableFullScan_31 1.00 cop[tikv] table:a, keep order:true, desc, stats:pseudo"
         ],
         "Result": [
           "4"
@@ -370,11 +370,11 @@
       {
         "SQL": "select max(a) from t",
         "Plan": [
-          "HashAgg_21 1.00 root funcs:max(test.t.a)->Column#3",
-          "└─Limit_23 1.00 root offset:0, count:1",
-          "  └─TableReader_28 1.00 root data:Limit_29",
-          "    └─Limit_29 1.00 cop[tikv] offset:0, count:1",
-          "      └─TableFullScan_27 1.00 cop[tikv] table:t, keep order:true, desc, stats:pseudo"
+          "HashAgg_18 1.00 root funcs:max(test.t.a)->Column#3",
+          "└─Limit_20 1.00 root offset:0, count:1",
+          "  └─TableReader_25 1.00 root data:Limit_26",
+          "    └─Limit_26 1.00 cop[tikv] offset:0, count:1",
+          "      └─TableFullScan_24 1.00 cop[tikv] table:t, keep order:true, desc, stats:pseudo"
         ],
         "Result": [
           "4"
