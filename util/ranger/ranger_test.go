@@ -42,7 +42,7 @@ func TestT(t *testing.T) {
 	TestingT(t)
 }
 
-var _ = Suite(&testRangerSuite{})
+var _ = SerialSuites(&testRangerSuite{})
 
 type testRangerSuite struct {
 	*parser.Parser
