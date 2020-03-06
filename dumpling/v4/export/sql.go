@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+
+	"github.com/pkg/errors"
 )
 
 func ShowDatabases(db *sql.DB) ([]string, error) {
@@ -31,7 +33,7 @@ func ShowCreateDatabase(db *sql.DB, database string) (string, error) {
 	query := fmt.Sprintf("SHOW CREATE DATABASE %s", database)
 	err := simpleQuery(db, query, handleOneRow)
 	if err != nil {
-		return "", err
+		return "", errors.WithMessage(err, query)
 	}
 	return oneRow[1], nil
 }
@@ -44,7 +46,7 @@ func ShowCreateTable(db *sql.DB, database, table string) (string, error) {
 	query := fmt.Sprintf("SHOW CREATE TABLE %s.%s", database, table)
 	err := simpleQuery(db, query, handleOneRow)
 	if err != nil {
-		return "", err
+		return "", errors.WithMessage(err, query)
 	}
 	return oneRow[1], nil
 }
@@ -57,7 +59,7 @@ func ShowCreateView(db *sql.DB, database, view string) (string, error) {
 	query := fmt.Sprintf("SHOW CREATE TABLE %s.%s", database, view)
 	err := simpleQuery(db, query, handleOneRow)
 	if err != nil {
-		return "", err
+		return "", errors.WithMessage(err, query)
 	}
 	return oneRow[1], nil
 }
@@ -66,7 +68,7 @@ func ListAllTables(db *sql.DB, database string) ([]string, error) {
 	var tables oneStrColumnTable
 	const query = "SELECT table_name FROM information_schema.tables WHERE table_schema = '%s' and table_type = 'BASE TABLE'"
 	if err := simpleQuery(db, fmt.Sprintf(query, database), tables.handleOneRow); err != nil {
-		return nil, err
+		return nil, errors.WithMessage(err, query)
 	}
 	return tables.data, nil
 }
@@ -75,7 +77,7 @@ func ListAllViews(db *sql.DB, database string) ([]string, error) {
 	var views oneStrColumnTable
 	const query = "SELECT table_name FROM information_schema.tables WHERE table_schema = '%s' and table_type = 'VIEW'"
 	if err := simpleQuery(db, fmt.Sprintf(query, database), views.handleOneRow); err != nil {
-		return nil, err
+		return nil, errors.WithMessage(err, query)
 	}
 	return views.data, nil
 }
@@ -104,7 +106,7 @@ func SelectAllFromTable(conf *Config, db *sql.DB, database, table string) (Table
 	}
 	rows, err := db.Query(query)
 	if err != nil {
-		return nil, withStack(err)
+		return nil, withStack(errors.WithMessage(err, query))
 	}
 
 	return &tableData{
@@ -169,15 +171,16 @@ func SelectTiDBRowID(db *sql.DB, database, table string) (bool, error) {
 		if strings.Contains(errMsg, fmt.Sprintf("%d", errBadFieldCode)) {
 			return false, nil
 		}
-		return false, withStack(err)
+		return false, withStack(errors.WithMessage(err, tiDBRowIDQuery))
 	}
 	return true, nil
 }
 
 func GetColumnTypes(db *sql.DB, database, table string) ([]*sql.ColumnType, error) {
+	query := fmt.Sprintf("SELECT * FROM %s.%s LIMIT 1", database, table)
 	rows, err := db.Query(fmt.Sprintf("SELECT * FROM %s.%s LIMIT 1", database, table))
 	if err != nil {
-		return nil, withStack(err)
+		return nil, withStack(errors.WithMessage(err, query))
 	}
 	defer rows.Close()
 	return rows.ColumnTypes()
@@ -193,7 +196,7 @@ func GetPrimaryKeyName(db *sql.DB, database, table string) (string, error) {
 	defer stmt.Close()
 	rows, err := stmt.Query(database, table)
 	if err != nil {
-		return "", withStack(err)
+		return "", withStack(errors.WithMessage(err, priKeyQuery))
 	}
 
 	var colName string

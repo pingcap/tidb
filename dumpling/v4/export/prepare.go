@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"github.com/pingcap/dumpling/v4/log"
-	"go.uber.org/zap"
 )
 
 func detectServerInfo(db *sql.DB) (ServerInfo, error) {
@@ -74,6 +73,11 @@ func NewDatabaseTables() DatabaseTables {
 	return DatabaseTables{}
 }
 
+func (d DatabaseTables) AppendTable(dbName string, table *TableInfo) DatabaseTables {
+	d[dbName] = append(d[dbName], table)
+	return d
+}
+
 func (d DatabaseTables) AppendTables(dbName string, tableNames ...string) DatabaseTables {
 	for _, t := range tableNames {
 		d[dbName] = append(d[dbName], &TableInfo{t, TableTypeBase})
@@ -94,15 +98,21 @@ func (d DatabaseTables) Merge(other DatabaseTables) {
 	}
 }
 
-func filterDirtySchemaTables(conf *Config) {
-	switch conf.ServerInfo.ServerType {
-	case ServerTypeTiDB:
-		for dbName := range conf.Tables {
-			switch strings.ToUpper(dbName) {
-			case "INSPECTION_SCHEMA", "METRICS_SCHEMA", "PERFORMANCE_SCHEMA", "INFORMATION_SCHEMA":
-				log.Zap().Warn("unsupported dump schema in TiDB now", zap.String("schema", dbName))
-				delete(conf.Tables, dbName)
-			}
+func (d DatabaseTables) Literal() string {
+	var b strings.Builder
+	b.WriteString("tables list\n")
+	b.WriteString("\n")
+
+	for dbName, tables := range d {
+		b.WriteString("schema ")
+		b.WriteString(dbName)
+		b.WriteString(" :[")
+		for _, tbl := range tables {
+			b.WriteString(tbl.Name)
+			b.WriteString(", ")
 		}
+		b.WriteString("]")
 	}
+
+	return b.String()
 }

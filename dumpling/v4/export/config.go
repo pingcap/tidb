@@ -26,6 +26,8 @@ type Config struct {
 	Snapshot      string
 	Consistency   string
 	NoViews       bool
+
+	BlackWhiteList BWListConf
 }
 
 func DefaultConfig() *Config {
