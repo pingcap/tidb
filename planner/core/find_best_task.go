@@ -487,14 +487,10 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err
 			}
 			if allRangeIsPoint {
 				var pointGetTask task
-				var err error
 				if len(path.Ranges) == 1 {
-					pointGetTask, err = ds.convertToPointGet(prop, candidate)
+					pointGetTask = ds.convertToPointGet(prop, candidate)
 				} else {
-					pointGetTask, err = ds.convertToBatchPointGet(prop, candidate)
-				}
-				if err != nil {
-					return nil, err
+					pointGetTask = ds.convertToBatchPointGet(prop, candidate)
 				}
 				if pointGetTask.cost() < t.cost() {
 					t = pointGetTask
@@ -1108,13 +1104,13 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 	return task, nil
 }
 
-func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candidate *candidatePath) (task task, err error) {
+func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candidate *candidatePath) task {
 	if !prop.IsEmpty() && !candidate.isMatchProp {
-		return invalidTask, nil
+		return invalidTask
 	}
 	if prop.TaskTp == property.CopDoubleReadTaskType && candidate.isSingleScan ||
 		prop.TaskTp == property.CopSingleReadTaskType && !candidate.isSingleScan {
-		return invalidTask, nil
+		return invalidTask
 	}
 
 	pointGetPlan := PointGetPlan{
@@ -1136,7 +1132,7 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 			}
 		}
 		if partitionInfo == nil {
-			return invalidTask, nil
+			return invalidTask
 		}
 	}
 	rTsk := &rootTask{p: pointGetPlan}
@@ -1178,16 +1174,16 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 	}
 
 	rTsk.cst = cost
-	return rTsk, nil
+	return rTsk
 }
 
-func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, candidate *candidatePath) (task task, err error) {
+func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, candidate *candidatePath) task {
 	if !prop.IsEmpty() && !candidate.isMatchProp {
-		return invalidTask, nil
+		return invalidTask
 	}
 	if prop.TaskTp == property.CopDoubleReadTaskType && candidate.isSingleScan ||
 		prop.TaskTp == property.CopSingleReadTaskType && !candidate.isSingleScan {
-		return invalidTask, nil
+		return invalidTask
 	}
 
 	batchPointGetPlan := BatchPointGetPlan{
@@ -1242,7 +1238,7 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 	}
 
 	rTsk.cst = cost
-	return rTsk, nil
+	return rTsk
 }
 
 func (ts *PhysicalTableScan) addPushedDownSelection(copTask *copTask, stats *property.StatsInfo) {

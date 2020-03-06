@@ -59,7 +59,6 @@ type PointGetPlan struct {
 	IsForUpdate        bool
 	outputNames        []*types.FieldName
 	LockWaitTime       int64
-	cost               float64
 	partitionColumnPos int
 }
 
@@ -184,16 +183,16 @@ func (p *PointGetPlan) SetOutputNames(names types.NameSlice) {
 func (p *PointGetPlan) GetCost(cols []*expression.Column) float64 {
 	sessVars := p.ctx.GetSessionVars()
 	var rowSize float64
-	p.cost = 0
+	cost := 0.0
 	if p.IndexInfo == nil {
 		rowSize = p.stats.HistColl.GetTableAvgRowSize(p.ctx, cols, kv.TiKV, true)
 	} else {
 		rowSize = p.stats.HistColl.GetIndexAvgRowSize(p.ctx, cols, p.IndexInfo.Unique)
 	}
-	p.cost += rowSize * sessVars.NetworkFactor
-	p.cost += sessVars.SeekFactor
-	p.cost /= float64(sessVars.DistSQLScanConcurrency)
-	return p.cost
+	cost += rowSize * sessVars.NetworkFactor
+	cost += sessVars.SeekFactor
+	cost /= float64(sessVars.DistSQLScanConcurrency)
+	return cost
 }
 
 // BatchPointGetPlan represents a physical plan which contains a bunch of
@@ -210,7 +209,6 @@ type BatchPointGetPlan struct {
 	IndexValueParams [][]*driver.ParamMarkerExpr
 	KeepOrder        bool
 	Desc             bool
-	cost             float64
 	Lock             bool
 	LockWaitTime     int64
 }
@@ -308,7 +306,7 @@ func (p *BatchPointGetPlan) SetOutputNames(names types.NameSlice) {
 func (p *BatchPointGetPlan) GetCost(cols []*expression.Column) float64 {
 	sessVars := p.ctx.GetSessionVars()
 	var rowSize, rowCount float64
-	p.cost = 0
+	cost := 0.0
 	if p.IndexInfo == nil {
 		rowCount = float64(len(p.Handles))
 		rowSize = p.stats.HistColl.GetTableAvgRowSize(p.ctx, cols, kv.TiKV, true)
@@ -316,10 +314,10 @@ func (p *BatchPointGetPlan) GetCost(cols []*expression.Column) float64 {
 		rowCount = float64(len(p.IndexValues))
 		rowSize = p.stats.HistColl.GetIndexAvgRowSize(p.ctx, cols, p.IndexInfo.Unique)
 	}
-	p.cost += rowCount * rowSize * sessVars.NetworkFactor
-	p.cost += rowCount * sessVars.SeekFactor
-	p.cost /= float64(sessVars.DistSQLScanConcurrency)
-	return p.cost
+	cost += rowCount * rowSize * sessVars.NetworkFactor
+	cost += rowCount * sessVars.SeekFactor
+	cost /= float64(sessVars.DistSQLScanConcurrency)
+	return cost
 }
 
 // TryFastPlan tries to use the PointGetPlan for the query.
