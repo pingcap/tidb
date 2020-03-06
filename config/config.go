@@ -632,7 +632,7 @@ var defaultConf = Config{
 	Experimental: Experimental{
 		AllowAutoRandom: false,
 	},
-	EnableDynamicConfig: false,
+	EnableDynamicConfig: true,
 }
 
 var (

@@ -1413,6 +1413,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			strings.ToLower(infoschema.TableEngines),
 			strings.ToLower(infoschema.TableCollations),
 			strings.ToLower(infoschema.TableCharacterSets),
+			strings.ToLower(infoschema.TableKeyColumn),
 			strings.ToLower(infoschema.TableCollationCharacterSetApplicability):
 			return &MemTableReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
