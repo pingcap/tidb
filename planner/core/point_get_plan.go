@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/parser_driver"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/math"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tipb/go-tipb"
@@ -43,23 +43,24 @@ import (
 type PointGetPlan struct {
 	basePlan
 	serialPhysicalPlanProducer
-	dbName           string
-	schema           *expression.Schema
-	TblInfo          *model.TableInfo
-	IndexInfo        *model.IndexInfo
-	PartitionInfo    *model.PartitionDefinition
-	Handle           int64
-	HandleParam      *driver.ParamMarkerExpr
-	IndexValues      []types.Datum
-	IndexValueParams []*driver.ParamMarkerExpr
-	expr             expression.Expression
-	ctx              sessionctx.Context
-	UnsignedHandle   bool
-	IsTableDual      bool
-	Lock             bool
-	IsForUpdate      bool
-	outputNames      []*types.FieldName
-	LockWaitTime     int64
+	dbName             string
+	schema             *expression.Schema
+	TblInfo            *model.TableInfo
+	IndexInfo          *model.IndexInfo
+	PartitionInfo      *model.PartitionDefinition
+	Handle             int64
+	HandleParam        *driver.ParamMarkerExpr
+	IndexValues        []types.Datum
+	IndexValueParams   []*driver.ParamMarkerExpr
+	expr               expression.Expression
+	ctx                sessionctx.Context
+	UnsignedHandle     bool
+	IsTableDual        bool
+	Lock               bool
+	IsForUpdate        bool
+	outputNames        []*types.FieldName
+	LockWaitTime       int64
+	partitionColumnPos int
 }
 
 type nameValuePair struct {
@@ -184,6 +185,8 @@ type BatchPointGetPlan struct {
 	HandleParams     []*driver.ParamMarkerExpr
 	IndexValues      [][]types.Datum
 	IndexValueParams [][]*driver.ParamMarkerExpr
+	Lock             bool
+	LockWaitTime     int64
 }
 
 // attach2Task makes the current physical plan as the father of task's physicalPlan and updates the cost of
@@ -210,6 +213,9 @@ func (p *BatchPointGetPlan) ExplainInfo() string {
 				buffer.WriteString(" ")
 			}
 		}
+	}
+	if p.Lock {
+		fmt.Fprintf(buffer, ", lock")
 	}
 	return buffer.String()
 }
@@ -269,6 +275,7 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) Plan {
 		// Try to convert the `SELECT a, b, c FROM t WHERE (a, b, c) in ((1, 2, 4), (1, 3, 5))` to
 		// `PhysicalUnionAll` which children are `PointGet` if exists an unique key (a, b, c) in table `t`
 		if fp := tryWhereIn2BatchPointGet(ctx, x); fp != nil {
+			fp.Lock, fp.LockWaitTime = getLockWaitTime(ctx, x.LockTp)
 			return fp
 		}
 		fp := tryPointGetPlan(ctx, x)
@@ -282,20 +289,9 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) Plan {
 				tableDual.SetSchema(fp.Schema())
 				return tableDual.Init(ctx, &property.StatsInfo{}, 0)
 			}
-			if x.LockTp == ast.SelectLockForUpdate || x.LockTp == ast.SelectLockForUpdateNoWait {
-				// Locking of rows for update using SELECT FOR UPDATE only applies when autocommit
-				// is disabled (either by beginning transaction with START TRANSACTION or by setting
-				// autocommit to 0. If autocommit is enabled, the rows matching the specification are not locked.
-				// See https://dev.mysql.com/doc/refman/5.7/en/innodb-locking-reads.html
-				sessVars := ctx.GetSessionVars()
-				if !sessVars.IsAutocommit() || sessVars.InTxn() {
-					fp.Lock = true
-					fp.IsForUpdate = true
-					fp.LockWaitTime = sessVars.LockWaitTimeout
-					if x.LockTp == ast.SelectLockForUpdateNoWait {
-						fp.LockWaitTime = kv.LockNoWait
-					}
-				}
+			fp.Lock, fp.LockWaitTime = getLockWaitTime(ctx, x.LockTp)
+			if fp.Lock {
+				fp.IsForUpdate = true
 			}
 			return fp
 		}
@@ -307,12 +303,30 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) Plan {
 	return nil
 }
 
+func getLockWaitTime(ctx sessionctx.Context, lockTp ast.SelectLockType) (lock bool, waitTime int64) {
+	if lockTp == ast.SelectLockForUpdate || lockTp == ast.SelectLockForUpdateNoWait {
+		// Locking of rows for update using SELECT FOR UPDATE only applies when autocommit
+		// is disabled (either by beginning transaction with START TRANSACTION or by setting
+		// autocommit to 0. If autocommit is enabled, the rows matching the specification are not locked.
+		// See https://dev.mysql.com/doc/refman/5.7/en/innodb-locking-reads.html
+		sessVars := ctx.GetSessionVars()
+		if !sessVars.IsAutocommit() || sessVars.InTxn() {
+			lock = true
+			waitTime = sessVars.LockWaitTimeout
+			if lockTp == ast.SelectLockForUpdateNoWait {
+				waitTime = kv.LockNoWait
+			}
+		}
+	}
+	return
+}
+
 func newBatchPointGetPlan(
 	ctx sessionctx.Context, patternInExpr *ast.PatternInExpr,
 	tryHandle bool, fieldType *types.FieldType,
 	tbl *model.TableInfo, schema *expression.Schema,
 	names []*types.FieldName, whereColNames []string,
-) Plan {
+) *BatchPointGetPlan {
 	statsInfo := &property.StatsInfo{RowCount: float64(len(patternInExpr.List))}
 	if tryHandle && fieldType != nil {
 		var handles = make([]int64, len(patternInExpr.List))
@@ -434,10 +448,10 @@ func newBatchPointGetPlan(
 	}.Init(ctx, statsInfo, schema, names)
 }
 
-func tryWhereIn2BatchPointGet(ctx sessionctx.Context, selStmt *ast.SelectStmt) Plan {
+func tryWhereIn2BatchPointGet(ctx sessionctx.Context, selStmt *ast.SelectStmt) *BatchPointGetPlan {
 	if selStmt.OrderBy != nil || selStmt.GroupBy != nil ||
 		selStmt.Limit != nil || selStmt.Having != nil ||
-		len(selStmt.WindowSpecs) > 0 || selStmt.LockTp != ast.SelectLockNone {
+		len(selStmt.WindowSpecs) > 0 {
 		return nil
 	}
 	in, ok := selStmt.Where.(*ast.PatternInExpr)
@@ -580,11 +594,12 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 	}
 
 	var partitionInfo *model.PartitionDefinition
+	var pos int
 	if pi != nil {
 		if pi.Type != model.PartitionTypeHash {
 			return nil
 		}
-		partitionInfo = getPartitionInfo(ctx, tbl, pairs)
+		partitionInfo, pos = getPartitionInfo(ctx, tbl, pairs)
 		if partitionInfo == nil {
 			return nil
 		}
@@ -649,6 +664,9 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 		p.IndexValues = idxValues
 		p.IndexValueParams = idxValueParams
 		p.PartitionInfo = partitionInfo
+		if p.PartitionInfo != nil {
+			p.partitionColumnPos = findPartitionIdx(idxInfo, pos, pairs)
+		}
 		return p
 	}
 	return nil
@@ -1029,29 +1047,38 @@ func (p *PointGetPlan) findHandleCol() *expression.Column {
 	return handleCol
 }
 
-func getPartitionInfo(ctx sessionctx.Context, tbl *model.TableInfo, pairs []nameValuePair) *model.PartitionDefinition {
+func getPartitionInfo(ctx sessionctx.Context, tbl *model.TableInfo, pairs []nameValuePair) (*model.PartitionDefinition, int) {
 	is := infoschema.GetInfoSchema(ctx)
 	table, ok := is.TableByID(tbl.ID)
 	if !ok {
-		return nil
+		return nil, 0
 	}
 	pi := tbl.Partition
 	if partitionTable, ok := table.(partitionTable); ok {
 		// PartitionExpr don't need columns and names for hash partition.
 		partitionExpr, err := partitionTable.PartitionExpr(ctx, nil, nil)
 		if err != nil {
-			return nil
+			return nil, 0
 		}
 		expr := partitionExpr.OrigExpr
 		if col, ok := expr.(*ast.ColumnNameExpr); ok {
-			for _, pair := range pairs {
+			for i, pair := range pairs {
 				if col.Name.Name.L == pair.colName {
 					val := pair.value.GetInt64()
 					pos := math.Abs(val) % int64(pi.Num)
-					return &pi.Definitions[pos]
+					return &pi.Definitions[pos], i
 				}
 			}
 		}
 	}
-	return nil
+	return nil, 0
+}
+
+func findPartitionIdx(idxInfo *model.IndexInfo, pos int, pairs []nameValuePair) int {
+	for i, idxCol := range idxInfo.Columns {
+		if idxCol.Name.L == pairs[pos].colName {
+			return i
+		}
+	}
+	return 0
 }

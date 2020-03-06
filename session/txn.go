@@ -23,6 +23,7 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
@@ -430,10 +431,11 @@ func (tf *txnFuture) wait() (kv.Transaction, error) {
 	startTS, err := tf.future.Wait()
 	if err == nil {
 		return tf.store.BeginWithStartTS(startTS)
-	} else if _, ok := tf.future.(txnFailFuture); ok {
+	} else if config.GetGlobalConfig().Store == "mocktikv" {
 		return nil, err
 	}
 
+	logutil.BgLogger().Warn("wait tso failed", zap.Error(err))
 	// It would retry get timestamp.
 	return tf.store.Begin()
 }

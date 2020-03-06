@@ -31,6 +31,7 @@ const (
 	typePut mvccValueType = iota
 	typeDelete
 	typeRollback
+	typeLock
 )
 
 type mvccValue struct {
@@ -234,7 +235,7 @@ func (e *mvccEntry) Get(ts uint64, isoLevel kvrpcpb.IsolationLevel, resolvedLock
 		}
 	}
 	for _, v := range e.values {
-		if v.commitTS <= ts && v.valueType != typeRollback {
+		if v.commitTS <= ts && v.valueType != typeRollback && v.valueType != typeLock {
 			return v.value, nil
 		}
 	}
@@ -256,8 +257,7 @@ type MVCCStore interface {
 	Scan(startKey, endKey []byte, limit int, startTS uint64, isoLevel kvrpcpb.IsolationLevel, resolvedLocks []uint64) []Pair
 	ReverseScan(startKey, endKey []byte, limit int, startTS uint64, isoLevel kvrpcpb.IsolationLevel, resolvedLocks []uint64) []Pair
 	BatchGet(ks [][]byte, startTS uint64, isoLevel kvrpcpb.IsolationLevel, resolvedLocks []uint64) []Pair
-	PessimisticLock(mutations []*kvrpcpb.Mutation, primary []byte, startTS,
-		forUpdateTS uint64, ttl uint64, lockWaitTime int64) []error
+	PessimisticLock(req *kvrpcpb.PessimisticLockRequest) *kvrpcpb.PessimisticLockResponse
 	PessimisticRollback(keys [][]byte, startTS, forUpdateTS uint64) []error
 	Prewrite(req *kvrpcpb.PrewriteRequest) []error
 	Commit(keys [][]byte, startTS, commitTS uint64) error

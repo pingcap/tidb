@@ -748,7 +748,8 @@ func onUpdateFlashReplicaStatus(t *meta.Meta, job *model.Job) (ver int64, _ erro
 	}
 	if tblInfo.TiFlashReplica == nil || (tblInfo.ID == physicalID && tblInfo.TiFlashReplica.Available == available) ||
 		(tblInfo.ID != physicalID && available == tblInfo.TiFlashReplica.IsPartitionAvailable(physicalID)) {
-		return ver, nil
+		job.State = model.JobStateCancelled
+		return ver, errors.Errorf("the replica available status of table %s is already updated", tblInfo.Name.String())
 	}
 
 	if tblInfo.ID == physicalID {

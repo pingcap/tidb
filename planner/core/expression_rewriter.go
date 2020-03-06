@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/opcode"
@@ -32,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/stringutil"
 )
 
@@ -385,6 +387,8 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 		if _, ok := expression.DisableFoldFunctions[v.FnName.L]; ok {
 			er.disableFoldCounter++
 		}
+	case *ast.SetCollationExpr:
+		// Do nothing
 	default:
 		er.asScalar = true
 	}
@@ -905,6 +909,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 	case *ast.AggregateFuncExpr, *ast.ColumnNameExpr, *ast.ParenthesesExpr, *ast.WhenClause,
 		*ast.SubqueryExpr, *ast.ExistsSubqueryExpr, *ast.CompareSubqueryExpr, *ast.ValuesExpr, *ast.WindowFuncExpr, *ast.TableNameExpr:
 	case *driver.ValueExpr:
+		v.Datum.SetValue(v.Datum.GetValue(), &v.Type)
 		value := &expression.Constant{Value: v.Datum, RetType: &v.Type}
 		er.ctxStackAppend(value, types.EmptyName)
 	case *driver.ParamMarkerExpr:
@@ -982,6 +987,33 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 			Value:   types.NewStringDatum(v.Selector.String()),
 			RetType: types.NewFieldType(mysql.TypeVarchar),
 		}, types.EmptyName)
+	case *ast.SetCollationExpr:
+		arg := er.ctxStack[len(er.ctxStack)-1]
+		if collate.NewCollationEnabled() {
+			var collInfo *charset.Collation
+			// TODO(bb7133): use charset.ValidCharsetAndCollation when its bug is fixed.
+			if collInfo, er.err = charset.GetCollationByName(v.Collate); er.err != nil {
+				er.err = charset.ErrUnknownCollation.GenWithStackByArgs(v.Collate)
+				break
+			}
+			chs := arg.GetType().Charset
+			if chs != "" && collInfo.CharsetName != chs {
+				er.err = charset.ErrCollationCharsetMismatch.GenWithStackByArgs(collInfo.Name, chs)
+				break
+			}
+		}
+		// SetCollationExpr sets the collation explicitly, even when the evaluation type of the expression is non-string.
+		if _, ok := arg.(*expression.Column); ok {
+			// Wrap a cast here to avoid changing the original FieldType of the column expression.
+			casted := expression.WrapWithCastAsString(er.sctx, arg)
+			casted.GetType().Collate = v.Collate
+			er.ctxStackPop(1)
+			er.ctxStackAppend(casted, types.EmptyName)
+		} else {
+			// For constant and scalar function, we can set its collate directly.
+			arg.GetType().Collate = v.Collate
+		}
+		er.ctxStack[len(er.ctxStack)-1].SetCoercibility(expression.CoercibilityExplicit)
 	default:
 		er.err = errors.Errorf("UnknownType: %T", v)
 		return retNode, false
@@ -1306,6 +1338,7 @@ func (er *expressionRewriter) patternLikeToExpression(v *ast.PatternLikeExpr) {
 		return
 	}
 
+	char, col := er.sctx.GetSessionVars().GetCharsetInfo()
 	var function expression.Expression
 	fieldType := &types.FieldType{}
 	isPatternExactMatch := false
@@ -1323,7 +1356,7 @@ func (er *expressionRewriter) patternLikeToExpression(v *ast.PatternLikeExpr) {
 				if v.Not {
 					op = ast.NE
 				}
-				types.DefaultTypeForValue(string(patValue), fieldType)
+				types.DefaultTypeForValue(string(patValue), fieldType, char, col)
 				function, er.err = er.constructBinaryOpFunction(er.ctxStack[l-2],
 					&expression.Constant{Value: types.NewStringDatum(string(patValue)), RetType: fieldType},
 					op)
@@ -1332,7 +1365,7 @@ func (er *expressionRewriter) patternLikeToExpression(v *ast.PatternLikeExpr) {
 		}
 	}
 	if !isPatternExactMatch {
-		types.DefaultTypeForValue(int(v.Escape), fieldType)
+		types.DefaultTypeForValue(int(v.Escape), fieldType, char, col)
 		function = er.notToExpression(v.Not, ast.Like, &v.Type,
 			er.ctxStack[l-2], er.ctxStack[l-1], &expression.Constant{Value: types.NewIntDatum(int64(v.Escape)), RetType: fieldType})
 	}

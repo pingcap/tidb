@@ -303,7 +303,7 @@ func (t *partitionedTable) GetPartition(pid int64) table.PhysicalTable {
 }
 
 // GetPartitionByRow returns a Table, which is actually a Partition.
-func (t *partitionedTable) GetPartitionByRow(ctx sessionctx.Context, r []types.Datum) (table.Table, error) {
+func (t *partitionedTable) GetPartitionByRow(ctx sessionctx.Context, r []types.Datum) (table.PhysicalTable, error) {
 	pid, err := t.locatePartition(ctx, t.Meta().GetPartitionInfo(), r)
 	if err != nil {
 		return nil, errors.Trace(err)

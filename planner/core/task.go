@@ -219,7 +219,6 @@ func (p *PhysicalIndexMergeJoin) attach2Task(tasks ...task) task {
 	} else {
 		p.SetChildren(innerTask.plan(), outerTask.plan())
 	}
-	p.schema = BuildPhysicalJoinSchema(p.JoinType, p)
 	return &rootTask{
 		p:   p,
 		cst: p.GetCost(outerTask, innerTask),
@@ -297,7 +296,6 @@ func (p *PhysicalIndexHashJoin) attach2Task(tasks ...task) task {
 	} else {
 		p.SetChildren(innerTask.plan(), outerTask.plan())
 	}
-	p.schema = BuildPhysicalJoinSchema(p.JoinType, p)
 	return &rootTask{
 		p:   p,
 		cst: p.GetCost(outerTask, innerTask),
@@ -373,7 +371,6 @@ func (p *PhysicalIndexJoin) attach2Task(tasks ...task) task {
 	} else {
 		p.SetChildren(innerTask.plan(), outerTask.plan())
 	}
-	p.schema = BuildPhysicalJoinSchema(p.JoinType, p)
 	return &rootTask{
 		p:   p,
 		cst: p.GetCost(outerTask, innerTask),
@@ -778,7 +775,7 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 	if cop, ok := t.(*copTask); ok {
 		// For double read which requires order being kept, the limit cannot be pushed down to the table side,
 		// because handles would be reordered before being sent to table scan.
-		if !cop.keepOrder || !cop.indexPlanFinished || cop.indexPlan == nil {
+		if (!cop.keepOrder || !cop.indexPlanFinished || cop.indexPlan == nil) && len(cop.rootTaskConds) == 0 {
 			// When limit is pushed down, we should remove its offset.
 			newCount := p.Offset + p.Count
 			childProfile := cop.plan().statsInfo()
@@ -927,7 +924,7 @@ func (p *PhysicalTopN) getPushedDownTopN(childPlan PhysicalPlan) *PhysicalTopN {
 func (p *PhysicalTopN) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	inputCount := t.count()
-	if copTask, ok := t.(*copTask); ok && p.canPushDown() {
+	if copTask, ok := t.(*copTask); ok && p.canPushDown() && len(copTask.rootTaskConds) == 0 {
 		// If all columns in topN are from index plan, we push it to index plan, otherwise we finish the index plan and
 		// push it to table plan.
 		var pushedDownTopN *PhysicalTopN
@@ -1186,7 +1183,11 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 		// We should not push agg down across double read, since the data of second read is ordered by handle instead of index.
 		// The `extraHandleCol` is added if the double read needs to keep order. So we just use it to decided
 		// whether the following plan is double read with order reserved.
-		if cop.extraHandleCol == nil {
+		if cop.extraHandleCol != nil || len(cop.rootTaskConds) > 0 {
+			t = finishCopTask(p.ctx, cop)
+			inputRows = t.count()
+			attachPlan2Task(p, t)
+		} else {
 			copTaskType := cop.getStoreType()
 			partialAgg, finalAgg := p.newPartialAggregate(copTaskType)
 			if partialAgg != nil {
@@ -1203,10 +1204,6 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 			t = finishCopTask(p.ctx, cop)
 			inputRows = t.count()
 			attachPlan2Task(finalAgg, t)
-		} else {
-			t = finishCopTask(p.ctx, cop)
-			inputRows = t.count()
-			attachPlan2Task(p, t)
 		}
 	} else {
 		attachPlan2Task(p, t)
@@ -1252,28 +1249,34 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	inputRows := t.count()
 	if cop, ok := t.(*copTask); ok {
-		copTaskType := cop.getStoreType()
-		partialAgg, finalAgg := p.newPartialAggregate(copTaskType)
-		if partialAgg != nil {
-			if cop.tablePlan != nil {
-				cop.finishIndexPlan()
-				partialAgg.SetChildren(cop.tablePlan)
-				cop.tablePlan = partialAgg
-			} else {
-				partialAgg.SetChildren(cop.indexPlan)
-				cop.indexPlan = partialAgg
+		if len(cop.rootTaskConds) == 0 {
+			copTaskType := cop.getStoreType()
+			partialAgg, finalAgg := p.newPartialAggregate(copTaskType)
+			if partialAgg != nil {
+				if cop.tablePlan != nil {
+					cop.finishIndexPlan()
+					partialAgg.SetChildren(cop.tablePlan)
+					cop.tablePlan = partialAgg
+				} else {
+					partialAgg.SetChildren(cop.indexPlan)
+					cop.indexPlan = partialAgg
+				}
+				cop.addCost(p.GetCost(inputRows, false))
 			}
-			cop.addCost(p.GetCost(inputRows, false))
+			// In `newPartialAggregate`, we are using stats of final aggregation as stats
+			// of `partialAgg`, so the network cost of transferring result rows of `partialAgg`
+			// to TiDB is normally under-estimated for hash aggregation, since the group-by
+			// column may be independent of the column used for region distribution, so a closer
+			// estimation of network cost for hash aggregation may multiply the number of
+			// regions involved in the `partialAgg`, which is unknown however.
+			t = finishCopTask(p.ctx, cop)
+			inputRows = t.count()
+			attachPlan2Task(finalAgg, t)
+		} else {
+			t = finishCopTask(p.ctx, cop)
+			inputRows = t.count()
+			attachPlan2Task(p, t)
 		}
-		// In `newPartialAggregate`, we are using stats of final aggregation as stats
-		// of `partialAgg`, so the network cost of transferring result rows of `partialAgg`
-		// to TiDB is normally under-estimated for hash aggregation, since the group-by
-		// column may be independent of the column used for region distribution, so a closer
-		// estimation of network cost for hash aggregation may multiply the number of
-		// regions involved in the `partialAgg`, which is unknown however.
-		t = finishCopTask(p.ctx, cop)
-		inputRows = t.count()
-		attachPlan2Task(finalAgg, t)
 	} else {
 		attachPlan2Task(p, t)
 	}
