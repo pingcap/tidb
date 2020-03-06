@@ -767,7 +767,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		ast.In, ast.Mod, ast.And, ast.LogicOr, ast.LogicAnd,
 		ast.Like, ast.UnaryNot, ast.Case, ast.Month, ast.Substr,
 		ast.Substring, ast.TimestampDiff:
-			return true
+		return true
 	default:
 		return false
 	}
