@@ -16,6 +16,7 @@ package expression
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/kv"
 	"strings"
 
 	"github.com/gogo/protobuf/proto"
@@ -593,6 +594,60 @@ func (s *testEvaluatorSuite) TestOtherFunc2Pb(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(string(js), Equals, jsons[funcNames[i]])
 	}
+}
+
+func (s *testEvaluatorSuite) TestExprOnlyPushDownToFlash(c *C) {
+	sc := new(stmtctx.StatementContext)
+	client := new(mock.Client)
+	dg := new(dataGen4Expr2PbTest)
+	function, err := NewFunction(mock.NewContext(), ast.TimestampDiff, types.NewFieldType(mysql.TypeLonglong),
+		dg.genColumn(mysql.TypeString, 1), dg.genColumn(mysql.TypeDatetime, 2), dg.genColumn(mysql.TypeDatetime, 3))
+	c.Assert(err, IsNil)
+	var exprs = make([]Expression, 0)
+	exprs = append(exprs, function)
+
+	_, pushed, remained := ExpressionsToPB(sc, exprs, client)
+	c.Assert(len(pushed), Equals, 1)
+	c.Assert(len(remained), Equals, 0)
+
+	canPush := CheckExprPushDown(sc, exprs, client, kv.TiFlash)
+	c.Assert(canPush, Equals, true)
+	canPush = CheckExprPushDown(sc, exprs, client, kv.TiKV)
+	c.Assert(canPush, Equals, false)
+
+	pushed, remained = ExprPushDown(exprs, kv.TiFlash)
+	c.Assert(len(pushed), Equals, 1)
+	c.Assert(len(remained), Equals, 0)
+
+	pushed, remained = ExprPushDown(exprs, kv.TiKV)
+	c.Assert(len(pushed), Equals, 0)
+	c.Assert(len(remained), Equals, 1)
+}
+
+func (s *testEvaluatorSuite) TestExprOnlyPushDownToTiKV(c *C) {
+	sc := new(stmtctx.StatementContext)
+	client := new(mock.Client)
+	dg := new(dataGen4Expr2PbTest)
+	function, err := NewFunction(mock.NewContext(), "dayofyear", types.NewFieldType(mysql.TypeLonglong), dg.genColumn(mysql.TypeDatetime, 1))
+	c.Assert(err, IsNil)
+	var exprs = make([]Expression, 0)
+	exprs = append(exprs, function)
+
+	_, pushed, remained := ExpressionsToPB(sc, exprs, client)
+	c.Assert(len(pushed), Equals, 1)
+	c.Assert(len(remained), Equals, 0)
+
+	canPush := CheckExprPushDown(sc, exprs, client, kv.TiFlash)
+	c.Assert(canPush, Equals, false)
+	canPush = CheckExprPushDown(sc, exprs, client, kv.TiKV)
+	c.Assert(canPush, Equals, true)
+
+	pushed, remained = ExprPushDown(exprs, kv.TiFlash)
+	c.Assert(len(pushed), Equals, 0)
+	c.Assert(len(remained), Equals, 1)
+	pushed, remained = ExprPushDown(exprs, kv.TiKV)
+	c.Assert(len(pushed), Equals, 1)
+	c.Assert(len(remained), Equals, 0)
 }
 
 func (s *testEvaluatorSuite) TestGroupByItem2Pb(c *C) {
