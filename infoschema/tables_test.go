@@ -454,8 +454,6 @@ func (sm *mockSessionManager) UpdateTLSConfig(cfg *tls.Config) {}
 func (s *testTableSuite) TestSomeTables(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
-	tk.MustQuery("select * from information_schema.COLLATION_CHARACTER_SET_APPLICABILITY where COLLATION_NAME='utf8mb4_bin';").Check(
-		testkit.Rows("utf8mb4_bin utf8mb4"))
 	tk.MustQuery("select * from information_schema.SESSION_VARIABLES where VARIABLE_NAME='tidb_retry_limit';").Check(testkit.Rows("tidb_retry_limit 10"))
 	tk.MustQuery("select * from information_schema.TABLE_CONSTRAINTS where TABLE_NAME='gc_delete_range';").Check(testkit.Rows("def mysql delete_range_index mysql gc_delete_range UNIQUE"))
 
@@ -476,26 +474,6 @@ func (s *testTableSuite) TestSomeTables(c *C) {
 	constraintsTester.MustExec("set role r_gc_delete_range")
 	c.Assert(len(constraintsTester.MustQuery("select * from information_schema.TABLE_CONSTRAINTS where TABLE_NAME='gc_delete_range';").Rows()), Greater, 0)
 	constraintsTester.MustQuery("select * from information_schema.TABLE_CONSTRAINTS where TABLE_NAME='tables_priv';").Check([][]interface{}{})
-
-	tk.MustQuery("select * from information_schema.KEY_COLUMN_USAGE where TABLE_NAME='stats_meta' and COLUMN_NAME='table_id';").Check(
-		testkit.Rows("def mysql tbl def mysql stats_meta table_id 1 <nil> <nil> <nil> <nil>"))
-
-	//test the privilege of new user for information_schema.table_constraints
-	tk.MustExec("create user key_column_tester")
-	keyColumnTester := testkit.NewTestKit(c, s.store)
-	keyColumnTester.MustExec("use information_schema")
-	c.Assert(keyColumnTester.Se.Auth(&auth.UserIdentity{
-		Username: "key_column_tester",
-		Hostname: "127.0.0.1",
-	}, nil, nil), IsTrue)
-	keyColumnTester.MustQuery("select * from information_schema.KEY_COLUMN_USAGE;").Check([][]interface{}{})
-
-	//test the privilege of user with privilege of mysql.gc_delete_range for information_schema.table_constraints
-	tk.MustExec("CREATE ROLE r_stats_meta ;")
-	tk.MustExec("GRANT ALL PRIVILEGES ON mysql.stats_meta TO r_stats_meta;")
-	tk.MustExec("GRANT r_stats_meta TO key_column_tester;")
-	keyColumnTester.MustExec("set role r_stats_meta")
-	c.Assert(len(keyColumnTester.MustQuery("select * from information_schema.KEY_COLUMN_USAGE where TABLE_NAME='stats_meta';").Rows()), Greater, 0)
 
 	//test the privilege of new user for information_schema
 	tk.MustExec("create user tester1")
@@ -640,7 +618,6 @@ func (s *testTableSuite) TestTableIDAndIndexID(c *C) {
 	tblID, err := strconv.Atoi(tk.MustQuery("select tidb_table_id from information_schema.tables where table_schema = 'test' and table_name = 't'").Rows()[0][0].(string))
 	c.Assert(err, IsNil)
 	c.Assert(tblID, Greater, 0)
-	tk.MustQuery("select index_id from information_schema.tidb_indexes where table_schema = 'test' and table_name = 't'").Check(testkit.Rows("0", "1"))
 }
 
 func prepareSlowLogfile(c *C, slowLogFileName string) {

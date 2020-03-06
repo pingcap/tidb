@@ -1707,7 +1707,7 @@
     ]
   },
   {
-    "Name": "TestEliminateOuterJoinBelowAggregation",
+    "Name": "TestEliminateOuterJoin",
     "Cases": [
       {
         "SQL": "select t1.a, max(t1.b) from t as t1 left join (select * from t) as t2 on t1.a = t2.a and t1.b = 3 group by t1.a;",
@@ -1881,6 +1881,89 @@
           "    Projection_3 input:[Group#5], test.t.a",
           "Group#5 Schema:[test.t.a]",
           "    DataSource_2 table:t"
+        ]
+      },
+      {
+        "SQL": "select t1.a, t1.b from t as t1 left join t as t2 on t1.a = t2.a and t1.b = 3 and t2.b = 3;",
+        "Result": [
+          "Group#0 Schema:[test.t.a,test.t.b]",
+          "    Projection_4 input:[Group#1], test.t.a, test.t.b",
+          "Group#1 Schema:[test.t.a,test.t.b]",
+          "    DataSource_1 table:t1"
+        ]
+      },
+      {
+        "SQL": "select t1.a, t1.b from t as t1 left join t as t2 on t1.b = t2.b and t1.a = 3 and t2.b = 3;",
+        "Result": [
+          "Group#0 Schema:[test.t.a,test.t.b]",
+          "    Projection_4 input:[Group#1], test.t.a, test.t.b",
+          "Group#1 Schema:[test.t.a,test.t.b]",
+          "    Join_3 input:[Group#2,Group#3], left outer join, equal:[eq(test.t.b, test.t.b)], left cond:eq(test.t.a, 3), right cond:eq(test.t.b, 3)",
+          "Group#2 Schema:[test.t.a,test.t.b]",
+          "    DataSource_1 table:t1",
+          "Group#3 Schema:[test.t.b]",
+          "    DataSource_2 table:t2"
+        ]
+      },
+      {
+        "SQL": "select t2.a, t1.b from t as t1 left join t as t2 on t1.a = t2.a and t1.a = 3 and t2.b = 3;",
+        "Result": [
+          "Group#0 Schema:[test.t.a,test.t.b]",
+          "    Projection_4 input:[Group#1], test.t.a, test.t.b",
+          "Group#1 Schema:[test.t.b,test.t.a]",
+          "    Join_3 input:[Group#2,Group#3], left outer join, equal:[eq(test.t.a, test.t.a)], left cond:eq(test.t.a, 3), right cond:eq(test.t.b, 3)",
+          "Group#2 Schema:[test.t.a,test.t.b]",
+          "    DataSource_1 table:t1",
+          "Group#3 Schema:[test.t.a,test.t.b]",
+          "    DataSource_2 table:t2"
+        ]
+      },
+      {
+        "SQL": "select t2.a, t2.b from t as t1 right join t as t2 on t1.a = t2.a and t1.b = 3 and t2.b = 3;",
+        "Result": [
+          "Group#0 Schema:[test.t.a,test.t.b]",
+          "    Projection_4 input:[Group#1], test.t.a, test.t.b",
+          "Group#1 Schema:[test.t.a,test.t.b]",
+          "    DataSource_2 table:t2"
+        ]
+      },
+      {
+        "SQL": "select t2.a, t2.b from t as t1 right join t as t2 on t1.b = t2.b and t1.a = 3 and t2.b = 3;",
+        "Result": [
+          "Group#0 Schema:[test.t.a,test.t.b]",
+          "    Projection_4 input:[Group#1], test.t.a, test.t.b",
+          "Group#1 Schema:[test.t.a,test.t.b]",
+          "    Join_3 input:[Group#2,Group#3], right outer join, equal:[eq(test.t.b, test.t.b)], left cond:eq(test.t.a, 3), right cond:eq(test.t.b, 3)",
+          "Group#2 Schema:[test.t.a,test.t.b], UniqueKey:[test.t.a]",
+          "    DataSource_1 table:t1",
+          "Group#3 Schema:[test.t.a,test.t.b]",
+          "    DataSource_2 table:t2"
+        ]
+      },
+      {
+        "SQL": "select t1.a, t2.b from t as t1 right join t as t2 on t1.a = t2.a and t1.a = 3 and t2.b = 3;",
+        "Result": [
+          "Group#0 Schema:[test.t.a,test.t.b]",
+          "    Projection_4 input:[Group#1], test.t.a, test.t.b",
+          "Group#1 Schema:[test.t.a,test.t.b]",
+          "    Join_3 input:[Group#2,Group#3], right outer join, equal:[eq(test.t.a, test.t.a)], left cond:eq(test.t.a, 3), right cond:eq(test.t.b, 3)",
+          "Group#2 Schema:[test.t.a]",
+          "    DataSource_1 table:t1",
+          "Group#3 Schema:[test.t.a,test.t.b]",
+          "    DataSource_2 table:t2"
+        ]
+      },
+      {
+        "SQL": "select t3.a, max(t3.b) from (select t1.a, t1.b from t as t1 left join t as t2 on t1.a = t2.a) t3 group by t3.a",
+        "Result": [
+          "Group#0 Schema:[test.t.a,Column#25]",
+          "    Projection_6 input:[Group#1], test.t.a, Column#25",
+          "Group#1 Schema:[Column#25,test.t.a]",
+          "    Aggregation_5 input:[Group#2], group by:test.t.a, funcs:max(test.t.b), firstrow(test.t.a)",
+          "Group#2 Schema:[test.t.a,test.t.b]",
+          "    Projection_4 input:[Group#3], test.t.a, test.t.b",
+          "Group#3 Schema:[test.t.a,test.t.b]",
+          "    DataSource_1 table:t1"
         ]
       }
     ]

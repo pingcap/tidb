@@ -42,6 +42,17 @@ func NewFieldType(tp byte) *FieldType {
 	}
 }
 
+// NewFieldTypeWithCollation returns a FieldType,
+// with a type and other information about field type.
+func NewFieldTypeWithCollation(tp byte, collation string, length int) *FieldType {
+	return &FieldType{
+		Tp:      tp,
+		Flen:    length,
+		Decimal: UnspecifiedLength,
+		Collate: collation,
+	}
+}
+
 // AggFieldType aggregates field types for a multi-argument function like `IF`, `IFNULL`, `COALESCE`
 // whose return type is determined by the arguments' FieldTypes.
 // Aggregation is performed by MergeFieldType function.
