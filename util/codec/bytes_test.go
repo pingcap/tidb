@@ -52,6 +52,7 @@ func (s *testBytesSuite) TestBytesCodec(c *C) {
 		if input.desc {
 			b := EncodeBytesDesc(nil, input.enc)
 			c.Assert(b, BytesEquals, input.dec)
+			c.Assert(EncodedBytesLength(input.enc), Equals, len(input.dec))
 			_, d, err := DecodeBytesDesc(b, nil)
 			c.Assert(err, IsNil)
 			c.Assert(d, BytesEquals, input.enc)
