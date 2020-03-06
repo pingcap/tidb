@@ -117,6 +117,8 @@ type Server struct {
 	// a supervisor automatically restart it, then new client connection will be created, but we can't server it.
 	// So we just stop the listener and store to force clients to chose other TiDB servers.
 	stopListenerCh chan struct{}
+	statusAddr     string
+	statusListener net.Listener
 	statusServer   *http.Server
 	grpcServer     *grpc.Server
 }
@@ -255,6 +257,9 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		s.listener = pplistener
 	}
 
+	if s.cfg.Status.ReportStatus && err == nil {
+		err = s.listenStatusHTTPServer()
+	}
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
