@@ -17,7 +17,6 @@ import (
 	goJSON "encoding/json"
 	"fmt"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tipb/go-tipb"
 	"sync"
 
 	"github.com/pingcap/errors"
@@ -769,21 +768,6 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		ast.Like, ast.UnaryNot, ast.Case, ast.Month, ast.Substr,
 		ast.Substring, ast.TimestampDiff:
 			return true
-	case ast.Cast:
-		switch function.Function.PbCode() {
-		case tipb.ScalarFuncSig_CastIntAsDecimal, tipb.ScalarFuncSig_CastRealAsDecimal,
-			tipb.ScalarFuncSig_CastDecimalAsDecimal, tipb.ScalarFuncSig_CastTimeAsTime:
-				return true
-		default:
-			return false
-		}
-	case ast.DateAdd:
-		switch function.Function.PbCode() {
-		case tipb.ScalarFuncSig_AddDateDatetimeInt, tipb.ScalarFuncSig_AddDateStringInt:
-			return true
-		default:
-			return false
-		}
 	default:
 		return false
 	}
