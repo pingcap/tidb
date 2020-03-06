@@ -579,6 +579,9 @@ func (ssbd *stmtSummaryByDigest) toCurrentDatum(beginTimeForCurInterval int64, u
 
 	// `ssElement` is lazy expired, so expired elements could also be read.
 	// `beginTime` won't change since `ssElement` is created, so locking is not needed here.
+	if user == nil {
+		return ssElement.toDatum(ssbd)
+	}
 	if ssElement == nil || ssElement.beginTime < beginTimeForCurInterval || user == nil ||
 		(strings.Compare(ssElement.sampleUser, user.Username) != 0 && !isSuper) {
 		return nil
@@ -592,7 +595,7 @@ func (ssbd *stmtSummaryByDigest) toHistoryDatum(historySize int, user *auth.User
 
 	rows := make([][]types.Datum, 0, len(ssElements))
 	for _, ssElement := range ssElements {
-		if user != nil && (strings.Compare(user.Username, ssElement.sampleUser) == 0 || isSuper) {
+		if user == nil || (strings.Compare(user.Username, ssElement.sampleUser) == 0 || isSuper) {
 			rows = append(rows, ssElement.toDatum(ssbd))
 		}
 	}
