@@ -129,18 +129,18 @@ func metricsTag(action string) string {
 
 // twoPhaseCommitter executes a two-phase commit protocol.
 type twoPhaseCommitter struct {
-	store     *tikvStore
-	txn       *tikvTxn
-	startTS   uint64
-	mutations committerMutations
-
-	lockTTL  uint64
-	commitTS uint64
-	priority pb.CommandPri
-	connID   uint64 // connID is used for log.
-	cleanWg  sync.WaitGroup
-	detail   unsafe.Pointer
-	txnSize  int
+	store            *tikvStore
+	txn              *tikvTxn
+	startTS          uint64
+	mutations        committerMutations
+	lockTTL          uint64
+	commitTS         uint64
+	priority         pb.CommandPri
+	connID           uint64 // connID is used for log.
+	cleanWg          sync.WaitGroup
+	detail           unsafe.Pointer
+	txnSize          int
+	noNeedCommitKeys map[string]struct{}
 
 	primaryKey  []byte
 	forUpdateTS uint64
@@ -265,10 +265,11 @@ func sendTxnHeartBeat(bo *Backoffer, store *tikvStore, primary []byte, startTS, 
 
 func (c *twoPhaseCommitter) initKeysAndMutations() error {
 	var (
-		size    int
-		putCnt  int
-		delCnt  int
-		lockCnt int
+		size            int
+		putCnt          int
+		delCnt          int
+		lockCnt         int
+		noNeedCommitKey = make(map[string]struct{})
 	)
 	txn := c.txn
 	sizeHint := len(txn.lockKeys) + txn.us.Len()
@@ -299,9 +300,17 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 			value = v
 			putCnt++
 		} else {
-			op = pb.Op_Del
-			key = k
-			delCnt++
+			if !txn.IsPessimistic() && txn.us.GetKeyExistErrInfo(k) != nil {
+				// delete-your-writes keys in optimistic txn need check not exists in prewrite-phase
+				// due to `Op_CheckNotExists` doesn't prewrite lock, so mark those keys should not be used in commit-phase.
+				op = pb.Op_CheckNotExists
+				noNeedCommitKey[string(k)] = struct{}{}
+			} else {
+				// normal delete keys in optimistic txn can be delete without not exists checking
+				// delete-your-writes keys in pessimistic txn can ensure must be no exists so can directly delete them
+				op = pb.Op_Del
+				delCnt++
+			}
 		}
 		for lockIdx < len(txn.lockKeys) {
 			lockKey := txn.lockKeys[lockIdx]
@@ -356,6 +365,7 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 			zap.Int("puts", putCnt),
 			zap.Int("dels", delCnt),
 			zap.Int("locks", lockCnt),
+			zap.Int("checks", len(noNeedCommitKey)),
 			zap.Uint64("txnStartTS", txn.startTS))
 	}
 
@@ -371,6 +381,7 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 	commitDetail := &execdetails.CommitDetails{WriteSize: size, WriteKeys: mutations.len()}
 	metrics.TiKVTxnWriteKVCountHistogram.Observe(float64(commitDetail.WriteKeys))
 	metrics.TiKVTxnWriteSizeHistogram.Observe(float64(commitDetail.WriteSize))
+	c.noNeedCommitKeys = noNeedCommitKey
 	c.mutations = mutations
 	c.lockTTL = txnLockTTL(txn.startTime, size)
 	c.priority = getTxnPriority(txn)
@@ -1156,6 +1167,9 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 		return errors.Trace(err)
 	}
 
+	// strip check_not_exists keys that no need to commit.
+	c.stripNoNeedCommitKeys()
+
 	start = time.Now()
 	logutil.Event(ctx, "start get commit ts")
 	commitTS, err := c.store.getTimestampWithRetry(NewBackoffer(ctx, tsoMaxBackoff).WithVars(c.txn.vars))
@@ -1216,6 +1230,32 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 			zap.Uint64("txnStartTS", c.startTS))
 	}
 	return nil
+}
+
+func (c *twoPhaseCommitter) stripNoNeedCommitKeys() {
+	if len(c.noNeedCommitKeys) == 0 {
+		return
+	}
+	m := &c.mutations
+	var newIdx int
+	for oldIdx := range m.keys {
+		key := m.keys[oldIdx]
+		if _, ck := c.noNeedCommitKeys[string(key)]; ck {
+			continue
+		}
+		m.keys[newIdx] = key
+		if m.ops != nil {
+			m.ops[newIdx] = m.ops[oldIdx]
+		}
+		if m.values != nil {
+			m.values[newIdx] = m.values[oldIdx]
+		}
+		if m.isPessimisticLock != nil {
+			m.isPessimisticLock[newIdx] = m.isPessimisticLock[oldIdx]
+		}
+		newIdx++
+	}
+	c.mutations = m.subRange(0, newIdx)
 }
 
 type schemaLeaseChecker interface {
