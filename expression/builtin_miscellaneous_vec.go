@@ -286,6 +286,7 @@ func (b *builtinSleepSig) vectorized() bool {
 }
 
 func (b *builtinSleepSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
 	buf, err := b.bufAllocator.get(types.ETReal, 1) // SLEEP input must be one row
 	if err != nil {
 		return err
@@ -297,7 +298,7 @@ func (b *builtinSleepSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 		return err
 	}
 
-	result.ResizeInt64(1, false)
+	result.ResizeInt64(n, false)
 	i64s := result.Int64s()
 
 	isNull := buf.IsNull(0)
@@ -334,7 +335,9 @@ func (b *builtinSleepSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 			}
 		default:
 			if atomic.CompareAndSwapUint32(&sessVars.Killed, 1, 0) {
-				i64s[0] = 1
+				for i := 0; i < n; i++ {
+					i64s[i] = 1
+				}
 				return nil
 			}
 		}
