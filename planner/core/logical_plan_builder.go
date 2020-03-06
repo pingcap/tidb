@@ -2838,6 +2838,8 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName model.CIStr, table
 		case infoschema.TableInspectionSummary:
 			p.Extractor = &InspectionSummaryTableExtractor{}
 			p.QueryTimeRange = b.timeRangeForSummaryTable()
+		case infoschema.TableInspectionRules:
+			p.Extractor = &InspectionRuleTableExtractor{}
 		case infoschema.TableMetricSummary, infoschema.TableMetricSummaryByLabel:
 			p.Extractor = &MetricSummaryTableExtractor{}
 			p.QueryTimeRange = b.timeRangeForSummaryTable()
