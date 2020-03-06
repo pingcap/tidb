@@ -243,13 +243,13 @@ func (tc *TransactionContext) SetForUpdateTS(forUpdateTS uint64) {
 	}
 }
 
-// SetStmtFuture sets the stmtFuture .
-func (tc *TransactionContext) SetStmtFuture(future oracle.Future) {
+// SetStmtFutureForRC sets the stmtFuture .
+func (tc *TransactionContext) SetStmtFutureForRC(future oracle.Future) {
 	tc.stmtFuture = future
 }
 
-// GetStmtFuture gets the stmtFuture.
-func (tc *TransactionContext) GetStmtFuture() oracle.Future {
+// GetStmtFutureForRC gets the stmtFuture.
+func (tc *TransactionContext) GetStmtFutureForRC() oracle.Future {
 	return tc.stmtFuture
 }
 
