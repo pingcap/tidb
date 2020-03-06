@@ -151,7 +151,7 @@ func (e *inspectionResultRetriever) retrieve(ctx context.Context, sctx sessionct
 		}
 		// make result stable
 		sort.Slice(results, func(i, j int) bool {
-			if (results[i].degree > 0 || results[j].degree > 0) && results[i].degree != results[j].degree {
+			if results[i].degree != results[j].degree {
 				return results[i].degree > results[j].degree
 			}
 			if lhs, rhs := results[i].item, results[j].item; lhs != rhs {
