@@ -78,7 +78,7 @@ split-region-max-num = 1000
 
 # enable the TiDB to fetch configs from PD and update itself during runtime.
 # see https://github.com/pingcap/tidb/pull/13660 for more details.
-enable-dynamic-config = false
+enable-dynamic-config = true
 
 # alter-primary-key is used to control alter primary key feature. Default is false, indicate the alter primary key feature is disabled.
 # If it is true, we can add the primary key by "alter table", but we may not be able to drop the primary key.
