@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -81,6 +82,7 @@ func (s *Server) listenStatusHTTPServer() error {
 		logutil.BgLogger().Error("invalid TLS config", zap.Error(err))
 		return errors.Trace(err)
 	}
+	tlsConfig = s.setCNChecker(tlsConfig)
 
 	if tlsConfig != nil {
 		// we need to manage TLS here for cmux to distinguish between HTTP and gRPC.
@@ -310,6 +312,28 @@ func (s *Server) startStatusServerAndRPCServer(serverMux *http.ServeMux) {
 	if err != nil {
 		logutil.BgLogger().Error("start status/rpc server error", zap.Error(err))
 	}
+}
+
+func (s *Server) setCNChecker(tlsConfig *tls.Config) *tls.Config {
+	if tlsConfig != nil && len(s.cfg.Security.ClusterVerifyCN) != 0 {
+		checkCN := make(map[string]struct{})
+		for _, cn := range s.cfg.Security.ClusterVerifyCN {
+			cn = strings.TrimSpace(cn)
+			checkCN[cn] = struct{}{}
+		}
+		tlsConfig.VerifyPeerCertificate = func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
+			for _, chain := range verifiedChains {
+				if len(chain) != 0 {
+					if _, match := checkCN[chain[0].Subject.CommonName]; match {
+						return nil
+					}
+				}
+			}
+			return errors.Errorf("client certificate authentication failed. The Common Name from the client certificate was not found in the configuration cluster-verify-cn with value: %s", s.cfg.Security.ClusterVerifyCN)
+		}
+		tlsConfig.ClientAuth = tls.RequireAndVerifyClientCert
+	}
+	return tlsConfig
 }
 
 // status of TiDB.
