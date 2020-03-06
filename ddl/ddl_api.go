@@ -1289,9 +1289,6 @@ func buildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo) *mod
 	tblInfo.Name = ident.Name
 	tblInfo.AutoIncID = 0
 	tblInfo.ForeignKeys = nil
-	//tblInfo.PKIsHandle = referTblInfo.PKIsHandle
-	//tblInfo.ShardRowIDBits = referTblInfo.ShardRowIDBits
-	//tblInfo.PreSplitRegions = referTblInfo.PreSplitRegions
 	if tblInfo.TiFlashReplica != nil {
 		replica := *tblInfo.TiFlashReplica
 		// Keep the tiflash replica setting, remove the replica available status.
