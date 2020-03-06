@@ -83,7 +83,7 @@ type Expression interface {
 	goJSON.Marshaler
 	VecExpr
 	ReverseExpr
-	CollationExpr
+	CollationInfo
 
 	// Eval evaluates an expression through a row.
 	Eval(row chunk.Row) (types.Datum, error)

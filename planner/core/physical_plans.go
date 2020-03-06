@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
 )
@@ -416,7 +417,8 @@ type PhysicalLock struct {
 
 	Lock ast.SelectLockType
 
-	TblID2Handle map[int64][]*expression.Column
+	TblID2Handle     map[int64][]*expression.Column
+	PartitionedTable []table.PartitionedTable
 }
 
 // PhysicalLimit is the physical operator of Limit.
@@ -490,9 +492,15 @@ type PhysicalSort struct {
 }
 
 // NominalSort asks sort properties for its child. It is a fake operator that will not
-// appear in final physical operator tree.
+// appear in final physical operator tree. It will be eliminated or converted to Projection.
 type NominalSort struct {
 	basePhysicalPlan
+
+	// These two fields are used to switch ScalarFunctions to Constants. For these
+	// NominalSorts, we need to converted to Projections check if the ScalarFunctions
+	// are out of bounds. (issue #11653)
+	ByItems    []*ByItems
+	OnlyColumn bool
 }
 
 // PhysicalUnionScan represents a union scan operator.

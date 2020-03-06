@@ -169,9 +169,39 @@ func (e *inspectionResultRetriever) retrieve(ctx context.Context, sctx sessionct
 	return finalRows, nil
 }
 
-func (configInspection) inspect(_ context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
+func (c configInspection) inspect(ctx context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
+	var results []inspectionResult
+	results = append(results, c.inspectDiffConfig(ctx, sctx, filter)...)
+	results = append(results, c.inspectCheckConfig(ctx, sctx, filter)...)
+	return results
+}
+
+func (configInspection) inspectDiffConfig(_ context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
 	// check the configuration consistent
-	sql := "select type, `key`, count(distinct value) as c from inspection_schema.cluster_config group by type, `key` having c > 1"
+	ignoreConfigKey := []string{
+		// TiDB
+		"port",
+		"host",
+		"path",
+		"advertise-address",
+		"status.status-port",
+		"log.file.filename",
+		"log.slow-query-file",
+
+		// PD
+		"data-dir",
+		"log-file",
+
+		// TiKV
+		"server.addr",
+		"server.advertise-addr",
+		"server.status-addr",
+		"log-file",
+		"raftstore.raftdb-path",
+		"storage.data-dir",
+	}
+	sql := fmt.Sprintf("select type, `key`, count(distinct value) as c from inspection_schema.cluster_config where `key` not in ('%s') group by type, `key` having c > 1",
+		strings.Join(ignoreConfigKey, "','"))
 	rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
 	if err != nil {
 		sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("check configuration consistency failed: %v", err))
@@ -180,6 +210,8 @@ func (configInspection) inspect(_ context.Context, sctx sessionctx.Context, filt
 	var results []inspectionResult
 	for _, row := range rows {
 		if filter.enable(row.GetString(1)) {
+			detail := fmt.Sprintf("execute the sql to see more detail: select * from information_schema.cluster_config where type='%s' and `key`='%s'",
+				row.GetString(0), row.GetString(1))
 			results = append(results, inspectionResult{
 				tp:       row.GetString(0),
 				instance: "",
@@ -187,8 +219,50 @@ func (configInspection) inspect(_ context.Context, sctx sessionctx.Context, filt
 				actual:   "inconsistent",
 				expected: "consistent",
 				severity: "warning",
-				detail: fmt.Sprintf("select * from information_schema.cluster_config where type='%s' and `key`='%s'",
-					row.GetString(0), row.GetString(1)),
+				detail:   detail,
+			})
+		}
+	}
+	return results
+}
+
+func (configInspection) inspectCheckConfig(_ context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
+	// check the configuration in reason.
+	cases := []struct {
+		tp     string
+		key    string
+		value  string
+		detail string
+	}{
+		{
+			tp:     "tidb",
+			key:    "log.slow-threshold",
+			value:  "0",
+			detail: "slow-threshold = 0 will record every query to slow log, it may affect performance",
+		},
+	}
+
+	var results []inspectionResult
+	for _, cas := range cases {
+		if !filter.enable(cas.key) {
+			continue
+		}
+		sql := fmt.Sprintf("select instance from inspection_schema.cluster_config where type = '%s' and `key` = '%s' and value = '%s'",
+			cas.tp, cas.key, cas.value)
+		rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+		if err != nil {
+			sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("check configuration in reason failed: %v", err))
+		}
+
+		for _, row := range rows {
+			results = append(results, inspectionResult{
+				tp:       cas.tp,
+				instance: row.GetString(0),
+				item:     cas.key,
+				actual:   cas.value,
+				expected: "not " + cas.value,
+				severity: "warning",
+				detail:   cas.detail,
 			})
 		}
 	}
@@ -214,14 +288,14 @@ func (versionInspection) inspect(_ context.Context, sctx sessionctx.Context, fil
 				actual:   "inconsistent",
 				expected: "consistent",
 				severity: "critical",
-				detail:   fmt.Sprintf("select * from information_schema.cluster_info where type='%s'", row.GetString(0)),
+				detail:   fmt.Sprintf("execute the sql to see more detail: select * from information_schema.cluster_info where type='%s'", row.GetString(0)),
 			})
 		}
 	}
 	return results
 }
 
-func (currentLoadInspection) inspect(_ context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
+func (c currentLoadInspection) inspect(_ context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
 	var commonResult = func(item, expected string, row chunk.Row) inspectionResult {
 		return inspectionResult{
 			tp:       row.GetString(0),
@@ -240,7 +314,7 @@ func (currentLoadInspection) inspect(_ context.Context, sctx sessionctx.Context,
 			actual:   row.GetString(3),
 			expected: expected,
 			severity: "warning",
-			detail: fmt.Sprintf("select * from information_schema.cluster_hardware where type='%s' and instance='%s' and device_type='disk' and device_name='%s'",
+			detail: fmt.Sprintf("execute the sql to see more detail: select * from information_schema.cluster_hardware where type='%s' and instance='%s' and device_type='disk' and device_name='%s'",
 				row.GetString(0), row.GetString(1), row.GetString(2)),
 		}
 	}
@@ -268,24 +342,6 @@ func (currentLoadInspection) inspect(_ context.Context, sctx sessionctx.Context,
 			"<70",
 			diskResult,
 		},
-		{
-			"cpu-load1",
-			"select type, instance, value from inspection_schema.cluster_load where device_type='cpu' and device_name='cpu' and name='load1' and value>0.7;",
-			"<0.7",
-			commonResult,
-		},
-		{
-			"cpu-load5",
-			"select type, instance, value from inspection_schema.cluster_load where device_type='cpu' and device_name='cpu' and name='load5' and value>0.7;",
-			"<0.7",
-			commonResult,
-		},
-		{
-			"cpu-load15",
-			"select type, instance, value from inspection_schema.cluster_load where device_type='cpu' and device_name='cpu' and name='load15' and value>0.7;",
-			"<0.7",
-			commonResult,
-		},
 	}
 
 	var results []inspectionResult
@@ -299,6 +355,38 @@ func (currentLoadInspection) inspect(_ context.Context, sctx sessionctx.Context,
 			for _, row := range rows {
 				results = append(results, rule.result(rule.item, rule.expected, row))
 			}
+		}
+	}
+	results = append(results, c.inspectCPULoad(sctx, filter)...)
+	return results
+}
+
+func (currentLoadInspection) inspectCPULoad(sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
+	var results []inspectionResult
+	for _, item := range []string{"load1", "load5", "load15"} {
+		if !filter.enable(item) {
+			continue
+		}
+		sql := fmt.Sprintf(`select t1.*, 0.7 * t2.cpu_core from
+				(select type, instance, value from inspection_schema.cluster_load where device_type='cpu' and device_name='cpu' and name='%s') as t1 join
+				(select type,instance, max(value) as cpu_core from inspection_schema.CLUSTER_HARDWARE where DEVICE_TYPE='cpu' and name='cpu-logical-cores' group by type,instance) as t2
+				where t2.instance = t1.instance and t1.type=t2.type and t1.value > 0.7 * t2.cpu_core;`, item)
+		rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+		if err != nil {
+			sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("check load %s failed: %v", item, err))
+			continue
+		}
+		for _, row := range rows {
+			result := inspectionResult{
+				tp:       row.GetString(0),
+				instance: row.GetString(1),
+				item:     "cpu-" + item,
+				actual:   row.GetString(2),
+				expected: fmt.Sprintf("<%.1f", row.GetFloat64(3)),
+				severity: "warning",
+				detail:   "cpu-" + item + " should less than (cpu_logical_cores * 0.7)",
+			}
+			results = append(results, result)
 		}
 	}
 	return results
@@ -319,7 +407,7 @@ func (criticalErrorInspection) inspect(ctx context.Context, sctx sessionctx.Cont
 		{tp: "tidb", item: "lock-resolve", tbl: "tidb_lock_resolver_ops"},
 		{tp: "tikv", item: "scheduler-is-busy", tbl: "tikv_scheduler_is_busy"},
 		{tp: "tikv", item: "coprocessor-is-busy", tbl: "tikv_coprocessor_is_busy"},
-		{tp: "tikv", item: "channel-is-full", tbl: "tikv_channel_full_total"},
+		{tp: "tikv", item: "channel-is-full", tbl: "tikv_channel_full"},
 		{tp: "tikv", item: "coprocessor-error", tbl: "tikv_coprocessor_request_error"},
 		{tp: "tidb", item: "schema-lease-error", tbl: "tidb_schema_lease_error_opm"},
 		{tp: "tidb", item: "txn-retry-error", tbl: "tidb_transaction_retry_error_ops"},
@@ -335,7 +423,7 @@ func (criticalErrorInspection) inspect(ctx context.Context, sctx sessionctx.Cont
 				sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("metrics table: %s not found", rule.tbl))
 				continue
 			}
-			sql := fmt.Sprintf("select `%[1]s`,max(value) as max from `%[2]s`.`%[3]s` %[4]s group by `%[1]s` having max>0.0",
+			sql := fmt.Sprintf("select `%[1]s`,max(value) as max from `%[2]s`.`%[3]s` %[4]s group by `%[1]s` having max>=1.0",
 				strings.Join(def.Labels, "`,`"), util.MetricSchemaName.L, rule.tbl, condition)
 			rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithContext(ctx, sql)
 			if err != nil {
@@ -518,6 +606,7 @@ func (thresholdCheckInspection) inspectThreshold2(ctx context.Context, sctx sess
 		tbl       string
 		condition string
 		threshold float64
+		factor    float64
 		isMin     bool
 	}{
 		{
@@ -532,7 +621,8 @@ func (thresholdCheckInspection) inspectThreshold2(ctx context.Context, sctx sess
 			item:      "get-token-duration",
 			tbl:       "tidb_get_token_duration",
 			condition: "quantile=0.999",
-			threshold: 0.001 * 10e5, // the unit is microsecond
+			threshold: 0.001,
+			factor:    10e5, // the unit is microsecond
 		},
 		{
 			tp:        "tidb",
@@ -573,21 +663,24 @@ func (thresholdCheckInspection) inspectThreshold2(ctx context.Context, sctx sess
 			item:      "rocksdb-write-duration",
 			tbl:       "tikv_engine_write_duration",
 			condition: "type='write_max'",
-			threshold: 0.1 * 10e5, // the unit is microsecond
+			threshold: 0.1,
+			factor:    10e5, // the unit is microsecond
 		},
 		{
 			tp:        "tikv",
 			item:      "rocksdb-get-duration",
 			tbl:       "tikv_engine_max_get_duration",
 			condition: "type='get_max'",
-			threshold: 0.05 * 10e5, // the unit is microsecond
+			threshold: 0.05,
+			factor:    10e5,
 		},
 		{
 			tp:        "tikv",
 			item:      "rocksdb-seek-duration",
 			tbl:       "tikv_engine_max_seek_duration",
 			condition: "type='seek_max'",
-			threshold: 0.05 * 10e5, // the unit is microsecond
+			threshold: 0.05,
+			factor:    10e5, // the unit is microsecond
 		},
 		{
 			tp:        "tikv",
@@ -632,10 +725,13 @@ func (thresholdCheckInspection) inspectThreshold2(ctx context.Context, sctx sess
 		if len(rule.condition) > 0 {
 			cond = fmt.Sprintf("%s and %s", cond, rule.condition)
 		}
+		if rule.factor == 0 {
+			rule.factor = 1
+		}
 		if rule.isMin {
-			sql = fmt.Sprintf("select instance, min(value) as min_value from metrics_schema.%s %s group by instance having min_value < %f;", rule.tbl, cond, rule.threshold)
+			sql = fmt.Sprintf("select instance, min(value)/%.0f as min_value from metrics_schema.%s %s group by instance having min_value < %f;", rule.factor, rule.tbl, cond, rule.threshold)
 		} else {
-			sql = fmt.Sprintf("select instance, max(value) as max_value from metrics_schema.%s %s group by instance having max_value > %f;", rule.tbl, cond, rule.threshold)
+			sql = fmt.Sprintf("select instance, max(value)/%.0f as max_value from metrics_schema.%s %s group by instance having max_value > %f;", rule.factor, rule.tbl, cond, rule.threshold)
 		}
 		rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithContext(ctx, sql)
 		if err != nil {
@@ -643,12 +739,12 @@ func (thresholdCheckInspection) inspectThreshold2(ctx context.Context, sctx sess
 			continue
 		}
 		for _, row := range rows {
-			actual := fmt.Sprintf("%.2f", row.GetFloat64(1))
+			actual := fmt.Sprintf("%.3f", row.GetFloat64(1))
 			expected := ""
 			if rule.isMin {
-				expected = fmt.Sprintf("> %.2f", rule.threshold)
+				expected = fmt.Sprintf("> %.3f", rule.threshold)
 			} else {
-				expected = fmt.Sprintf("< %.2f", rule.threshold)
+				expected = fmt.Sprintf("< %.3f", rule.threshold)
 			}
 			result := inspectionResult{
 				tp:       rule.tp,
@@ -682,11 +778,12 @@ func (c compareStoreStatus) genSQL(timeRange plannercore.QueryTimeRange) string 
 		 t2.time>='%[1]s' and t2.time<='%[2]s'`, timeRange.From.Format(plannercore.MetricTableTimeFormat),
 		timeRange.To.Format(plannercore.MetricTableTimeFormat))
 	return fmt.Sprintf(`select t1.address,t1.value,t2.address,t2.value,
-				(t1.value-t2.value)/greatest(t1.value,t2.value) as ratio
+				(t1.value-t2.value)/t1.value as ratio
 				from metrics_schema.pd_scheduler_store_status t1 join metrics_schema.pd_scheduler_store_status t2
-				%s and t1.type='%s' and
+				%s and t1.type='%s' and t1.time = t2.time and
 				t1.type=t2.type and t1.address != t2.address and
-				(t1.value-t2.value)/t1.value>%v;`, condition, c.tp, c.threshold)
+				(t1.value-t2.value)/t1.value>%v and t1.value > 0 group by t1.address,t1.value,t2.address,t2.value order by ratio desc`,
+		condition, c.tp, c.threshold)
 }
 
 func (c compareStoreStatus) genResult(_ string, row chunk.Row) inspectionResult {

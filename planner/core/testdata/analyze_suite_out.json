@@ -48,11 +48,11 @@
         "Plan": [
           "Limit_17 1.00 root offset:0, count:1",
           "└─IndexMergeJoin_70 1.00 root left outer semi join, inner:IndexReader_68, outer key:test.t.a, inner key:test.t.b",
-          "  ├─TopN_29 1.00 root test.t.a:asc, offset:0, count:1",
+          "  ├─TopN_29(Build) 1.00 root test.t.a:asc, offset:0, count:1",
           "  │ └─IndexReader_37 1.00 root index:TopN_36",
           "  │   └─TopN_36 1.00 cop[tikv] test.t.a:asc, offset:0, count:1",
           "  │     └─IndexRangeScan_35 6.00 cop[tikv] table:t1, index:b, c, range:[-inf,6], keep order:false",
-          "  └─IndexReader_68 1.04 root index:IndexRangeScan_67",
+          "  └─IndexReader_68(Probe) 1.04 root index:IndexRangeScan_67",
           "    └─IndexRangeScan_67 1.04 cop[tikv] table:t2, index:b, c, range: decided by [eq(test.t.b, test.t.a)], keep order:true"
         ]
       },
@@ -143,10 +143,10 @@
         ],
         "Plan": [
           "IndexJoin_9 12475.01 root inner join, inner:IndexReader_8, outer key:test.t1.a, inner key:test.t2.a, other cond:eq(test.t1.c, test.t2.c), gt(test.t2.b, minus(test.t1.b, 1)), lt(test.t2.b, plus(test.t1.b, 1))",
-          "├─TableReader_19 9980.01 root data:Selection_18",
+          "├─TableReader_19(Build) 9980.01 root data:Selection_18",
           "│ └─Selection_18 9980.01 cop[tikv] not(isnull(test.t1.a)), not(isnull(test.t1.c))",
           "│   └─TableFullScan_17 10000.00 cop[tikv] table:t1, keep order:false, stats:pseudo",
-          "└─IndexReader_8 1.25 root index:Selection_7",
+          "└─IndexReader_8(Probe) 1.25 root index:Selection_7",
           "  └─Selection_7 1.25 cop[tikv] not(isnull(test.t2.a)), not(isnull(test.t2.c))",
           "    └─IndexRangeScan_6 1.25 cop[tikv] table:t2, index:a, b, c, range: decided by [eq(test.t2.a, test.t1.a) gt(test.t2.b, minus(test.t1.b, 1)) lt(test.t2.b, plus(test.t1.b, 1))], keep order:false, stats:pseudo"
         ]
@@ -159,10 +159,10 @@
         "Plan": [
           "Projection_7 0.00 root test.t.a, test.t.b, test.t.a, test.t.b",
           "└─HashRightJoin_9 0.00 root inner join, inner:TableReader_12, equal:[eq(test.t.b, test.t.b)]",
-          "  ├─TableReader_12 0.00 root data:Selection_11",
+          "  ├─TableReader_12(Build) 0.00 root data:Selection_11",
           "  │ └─Selection_11 0.00 cop[tikv] isnull(test.t.b), not(isnull(test.t.b))",
           "  │   └─TableFullScan_10 10000.00 cop[tikv] table:t2, keep order:false, stats:pseudo",
-          "  └─TableReader_18 9990.00 root data:Selection_17",
+          "  └─TableReader_18(Probe) 9990.00 root data:Selection_17",
           "    └─Selection_17 9990.00 cop[tikv] not(isnull(test.t.b))",
           "      └─TableFullScan_16 10000.00 cop[tikv] table:t1, keep order:false, stats:pseudo"
         ]
@@ -195,44 +195,44 @@
     "Cases": [
       [
         "HashLeftJoin_10 10000000000000000.00 root CARTESIAN inner join, inner:TableReader_23",
-        "├─HashLeftJoin_12 1000000000000.00 root CARTESIAN inner join, inner:TableReader_21",
-        "│ ├─HashLeftJoin_14 100000000.00 root CARTESIAN inner join, inner:TableReader_19",
-        "│ │ ├─TableReader_17 10000.00 root data:TableFullScan_16",
-        "│ │ │ └─TableFullScan_16 10000.00 cop[tikv] table:t1, keep order:false, stats:pseudo",
-        "│ │ └─TableReader_19 10000.00 root data:TableFullScan_18",
-        "│ │   └─TableFullScan_18 10000.00 cop[tikv] table:t2, keep order:false, stats:pseudo",
-        "│ └─TableReader_21 10000.00 root data:TableFullScan_20",
-        "│   └─TableFullScan_20 10000.00 cop[tikv] table:t3, keep order:false, stats:pseudo",
-        "└─TableReader_23 10000.00 root data:TableFullScan_22",
-        "  └─TableFullScan_22 10000.00 cop[tikv] table:t4, keep order:false, stats:pseudo"
+        "├─TableReader_23(Build) 10000.00 root data:TableFullScan_22",
+        "│ └─TableFullScan_22 10000.00 cop[tikv] table:t4, keep order:false, stats:pseudo",
+        "└─HashLeftJoin_12(Probe) 1000000000000.00 root CARTESIAN inner join, inner:TableReader_21",
+        "  ├─TableReader_21(Build) 10000.00 root data:TableFullScan_20",
+        "  │ └─TableFullScan_20 10000.00 cop[tikv] table:t3, keep order:false, stats:pseudo",
+        "  └─HashLeftJoin_14(Probe) 100000000.00 root CARTESIAN inner join, inner:TableReader_19",
+        "    ├─TableReader_19(Build) 10000.00 root data:TableFullScan_18",
+        "    │ └─TableFullScan_18 10000.00 cop[tikv] table:t2, keep order:false, stats:pseudo",
+        "    └─TableReader_17(Probe) 10000.00 root data:TableFullScan_16",
+        "      └─TableFullScan_16 10000.00 cop[tikv] table:t1, keep order:false, stats:pseudo"
       ],
       [
         "HashLeftJoin_10 10000000000000000.00 root CARTESIAN inner join, inner:TableReader_23",
-        "├─HashLeftJoin_12 1000000000000.00 root CARTESIAN inner join, inner:TableReader_21",
-        "│ ├─HashLeftJoin_14 100000000.00 root CARTESIAN inner join, inner:TableReader_19",
-        "│ │ ├─TableReader_17 10000.00 root data:TableFullScan_16",
-        "│ │ │ └─TableFullScan_16 10000.00 cop[tikv] table:t1, keep order:false, stats:pseudo",
-        "│ │ └─TableReader_19 10000.00 root data:TableFullScan_18",
-        "│ │   └─TableFullScan_18 10000.00 cop[tikv] table:t2, keep order:false, stats:pseudo",
-        "│ └─TableReader_21 10000.00 root data:TableFullScan_20",
-        "│   └─TableFullScan_20 10000.00 cop[tikv] table:t3, keep order:false, stats:pseudo",
-        "└─TableReader_23 10000.00 root data:TableFullScan_22",
-        "  └─TableFullScan_22 10000.00 cop[tikv] table:t4, keep order:false, stats:pseudo"
+        "├─TableReader_23(Build) 10000.00 root data:TableFullScan_22",
+        "│ └─TableFullScan_22 10000.00 cop[tikv] table:t4, keep order:false, stats:pseudo",
+        "└─HashLeftJoin_12(Probe) 1000000000000.00 root CARTESIAN inner join, inner:TableReader_21",
+        "  ├─TableReader_21(Build) 10000.00 root data:TableFullScan_20",
+        "  │ └─TableFullScan_20 10000.00 cop[tikv] table:t3, keep order:false, stats:pseudo",
+        "  └─HashLeftJoin_14(Probe) 100000000.00 root CARTESIAN inner join, inner:TableReader_19",
+        "    ├─TableReader_19(Build) 10000.00 root data:TableFullScan_18",
+        "    │ └─TableFullScan_18 10000.00 cop[tikv] table:t2, keep order:false, stats:pseudo",
+        "    └─TableReader_17(Probe) 10000.00 root data:TableFullScan_16",
+        "      └─TableFullScan_16 10000.00 cop[tikv] table:t1, keep order:false, stats:pseudo"
       ],
       [
         "HashLeftJoin_11 1248750000000.00 root inner join, inner:TableReader_26, equal:[eq(test.t1.a, test.t4.a)]",
-        "├─HashLeftJoin_13 999000000000.00 root CARTESIAN inner join, inner:TableReader_23",
-        "│ ├─HashRightJoin_16 99900000.00 root CARTESIAN inner join, inner:TableReader_19",
-        "│ │ ├─TableReader_19 9990.00 root data:Selection_18",
-        "│ │ │ └─Selection_18 9990.00 cop[tikv] not(isnull(test.t1.a))",
-        "│ │ │   └─TableFullScan_17 10000.00 cop[tikv] table:t1, keep order:false, stats:pseudo",
-        "│ │ └─TableReader_21 10000.00 root data:TableFullScan_20",
-        "│ │   └─TableFullScan_20 10000.00 cop[tikv] table:t2, keep order:false, stats:pseudo",
-        "│ └─TableReader_23 10000.00 root data:TableFullScan_22",
-        "│   └─TableFullScan_22 10000.00 cop[tikv] table:t3, keep order:false, stats:pseudo",
-        "└─TableReader_26 9990.00 root data:Selection_25",
-        "  └─Selection_25 9990.00 cop[tikv] not(isnull(test.t4.a))",
-        "    └─TableFullScan_24 10000.00 cop[tikv] table:t4, keep order:false, stats:pseudo"
+        "├─TableReader_26(Build) 9990.00 root data:Selection_25",
+        "│ └─Selection_25 9990.00 cop[tikv] not(isnull(test.t4.a))",
+        "│   └─TableFullScan_24 10000.00 cop[tikv] table:t4, keep order:false, stats:pseudo",
+        "└─HashLeftJoin_13(Probe) 999000000000.00 root CARTESIAN inner join, inner:TableReader_23",
+        "  ├─TableReader_23(Build) 10000.00 root data:TableFullScan_22",
+        "  │ └─TableFullScan_22 10000.00 cop[tikv] table:t3, keep order:false, stats:pseudo",
+        "  └─HashRightJoin_16(Probe) 99900000.00 root CARTESIAN inner join, inner:TableReader_19",
+        "    ├─TableReader_19(Build) 9990.00 root data:Selection_18",
+        "    │ └─Selection_18 9990.00 cop[tikv] not(isnull(test.t1.a))",
+        "    │   └─TableFullScan_17 10000.00 cop[tikv] table:t1, keep order:false, stats:pseudo",
+        "    └─TableReader_21(Probe) 10000.00 root data:TableFullScan_20",
+        "      └─TableFullScan_20 10000.00 cop[tikv] table:t2, keep order:false, stats:pseudo"
       ]
     ]
   },
@@ -246,8 +246,8 @@
       ],
       [
         "IndexLookUp_7 2.00 root ",
-        "├─IndexFullScan_5 2.00 cop[tikv] table:t, index:a, keep order:false",
-        "└─TableRowIDScan_6 2.00 cop[tikv] table:t, keep order:false"
+        "├─IndexFullScan_5(Build) 2.00 cop[tikv] table:t, index:a, keep order:false",
+        "└─TableRowIDScan_6(Probe) 2.00 cop[tikv] table:t, keep order:false"
       ],
       [
         "TableReader_7 0.00 root data:Selection_6",
@@ -267,24 +267,24 @@
       [
         "Projection_11 10.00 root Column#14",
         "└─Apply_13 10.00 root CARTESIAN left outer semi join, inner:StreamAgg_22, other cond:eq(test.t.c, Column#13)",
-        "  ├─TableReader_15 10.00 root data:TableFullScan_14",
+        "  ├─TableReader_15(Build) 10.00 root data:TableFullScan_14",
         "  │ └─TableFullScan_14 10.00 cop[tikv] table:t, keep order:false",
-        "  └─StreamAgg_22 1.00 root funcs:count(1)->Column#13",
+        "  └─StreamAgg_22(Probe) 1.00 root funcs:count(1)->Column#13",
         "    └─HashLeftJoin_23 1.00 root inner join, inner:TableReader_33, equal:[eq(test.t.a, test.t.a)]",
-        "      ├─TableReader_27 1.00 root data:Selection_26",
-        "      │ └─Selection_26 1.00 cop[tikv] eq(test.t.a, test.t.a), not(isnull(test.t.a))",
-        "      │   └─TableFullScan_25 10.00 cop[tikv] table:s, keep order:false",
-        "      └─TableReader_33 1.00 root data:Selection_32",
-        "        └─Selection_32 1.00 cop[tikv] eq(test.t.a, test.t.a), not(isnull(test.t.a))",
-        "          └─TableFullScan_31 10.00 cop[tikv] table:t1, keep order:false"
+        "      ├─TableReader_33(Build) 1.00 root data:Selection_32",
+        "      │ └─Selection_32 1.00 cop[tikv] eq(test.t.a, test.t.a), not(isnull(test.t.a))",
+        "      │   └─TableFullScan_31 10.00 cop[tikv] table:t1, keep order:false",
+        "      └─TableReader_27(Probe) 1.00 root data:Selection_26",
+        "        └─Selection_26 1.00 cop[tikv] eq(test.t.a, test.t.a), not(isnull(test.t.a))",
+        "          └─TableFullScan_25 10.00 cop[tikv] table:s, keep order:false"
       ],
       [
         "Projection_8 10.00 root Column#9",
         "└─Apply_10 10.00 root CARTESIAN left outer join, inner:MaxOneRow_15",
-        "  ├─TableReader_12 10.00 root data:TableFullScan_11",
+        "  ├─TableReader_12(Build) 10.00 root data:TableFullScan_11",
         "  │ └─TableFullScan_11 10.00 cop[tikv] table:t, keep order:false",
-        "  └─MaxOneRow_15 1.00 root ",
-        "    └─Projection_16 0.10 root concat(cast(test.t.a), ,, cast(test.t.b))->Column#9",
+        "  └─MaxOneRow_15(Probe) 1.00 root ",
+        "    └─Projection_16 0.10 root concat(cast(test.t.a, var_string(20)), ,, cast(test.t.b, var_string(20)))->Column#9",
         "      └─IndexReader_19 0.10 root index:Selection_18",
         "        └─Selection_18 0.10 cop[tikv] eq(test.t.a, test.t.a)",
         "          └─IndexRangeScan_17 1.00 cop[tikv] table:t1, index:c, b, a, range: decided by [eq(test.t.c, test.t.c)], keep order:false"
@@ -295,7 +295,7 @@
     "Name": "TestEmptyTable",
     "Cases": [
       "TableReader(Table(t)->Sel([le(test.t.c1, 50)]))",
-      "LeftHashJoin{TableReader(Table(t)->Sel([not(isnull(test.t.c1))]))->TableReader(Table(t1)->Sel([not(isnull(test.t1.c1))]))->HashAgg}(test.t.c1,test.t1.c1)->Projection",
+      "LeftHashJoin{TableReader(Table(t)->Sel([not(isnull(test.t.c1))]))->TableReader(Table(t1)->Sel([not(isnull(test.t1.c1))]))->HashAgg}(test.t.c1,test.t1.c1)",
       "LeftHashJoin{TableReader(Table(t)->Sel([not(isnull(test.t.c1))]))->TableReader(Table(t1)->Sel([not(isnull(test.t1.c1))]))}(test.t.c1,test.t1.c1)",
       "Dual"
     ]

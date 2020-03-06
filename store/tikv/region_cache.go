@@ -848,8 +848,7 @@ func (c *RegionCache) loadRegionByID(bo *Backoffer, regionID uint64) (*Region, e
 			continue
 		}
 		if meta == nil {
-			backoffErr = errors.Errorf("region not found for regionID %q", regionID)
-			continue
+			return nil, errors.Errorf("region not found for regionID %d", regionID)
 		}
 		if len(meta.Peers) == 0 {
 			return nil, errors.New("receive Region with no peer")
