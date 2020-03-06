@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/stmtsummary"
@@ -140,7 +139,7 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 			return err
 		}
 		if value.IsNull() {
-			value.SetString("", mysql.DefaultCollationName, collate.DefaultLen)
+			value.SetString("", mysql.DefaultCollationName)
 		}
 		valStr, err = value.ToString()
 		if err != nil {

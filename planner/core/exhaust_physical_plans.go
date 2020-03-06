@@ -121,6 +121,21 @@ func (p *PhysicalMergeJoin) tryToGetChildReqProp(prop *property.PhysicalProperty
 	return []*property.PhysicalProperty{lProp, rProp}, true
 }
 
+func (p *LogicalJoin) checkJoinKeyCollation(leftKeys, rightKeys []*expression.Column) bool {
+	// if a left key and its corresponding right key have different collation, don't use MergeJoin since
+	// the their children may sort their records in different ways
+	for i := range leftKeys {
+		lt := leftKeys[i].RetType
+		rt := rightKeys[i].RetType
+		if (lt.EvalType() == types.ETString && rt.EvalType() == types.ETString) &&
+			(leftKeys[i].RetType.Charset != rightKeys[i].RetType.Charset ||
+				leftKeys[i].RetType.Collate != rightKeys[i].RetType.Collate) {
+			return false
+		}
+	}
+	return true
+}
+
 // GetMergeJoin convert the logical join to physical merge join based on the physical property.
 func (p *LogicalJoin) GetMergeJoin(prop *property.PhysicalProperty, schema *expression.Schema, statsInfo *property.StatsInfo, leftStatsInfo *property.StatsInfo, rightStatsInfo *property.StatsInfo) []PhysicalPlan {
 	joins := make([]PhysicalPlan, 0, len(p.leftProperties)+1)
@@ -142,6 +157,9 @@ func (p *LogicalJoin) GetMergeJoin(prop *property.PhysicalProperty, schema *expr
 
 		leftKeys = leftKeys[:prefixLen]
 		rightKeys = rightKeys[:prefixLen]
+		if !p.checkJoinKeyCollation(leftKeys, rightKeys) {
+			continue
+		}
 		offsets = offsets[:prefixLen]
 		baseJoin := basePhysicalJoin{
 			JoinType:        p.JoinType,
@@ -239,6 +257,9 @@ func (p *LogicalJoin) getEnforcedMergeJoin(prop *property.PhysicalProperty, sche
 	// Generate the enforced sort merge join
 	leftKeys := getNewJoinKeysByOffsets(leftJoinKeys, offsets)
 	rightKeys := getNewJoinKeysByOffsets(rightJoinKeys, offsets)
+	if !p.checkJoinKeyCollation(leftKeys, rightKeys) {
+		return nil
+	}
 	lProp := property.NewPhysicalProperty(property.RootTaskType, leftKeys, desc, math.MaxFloat64, true)
 	rProp := property.NewPhysicalProperty(property.RootTaskType, rightKeys, desc, math.MaxFloat64, true)
 	baseJoin := basePhysicalJoin{
@@ -548,6 +569,7 @@ func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 		return nil
 	}
 	keyOff2IdxOff := make([]int, len(innerJoinKeys))
+	newOuterJoinKeys := make([]*expression.Column, 0)
 	pkMatched := false
 	for i, key := range innerJoinKeys {
 		if !key.Equal(nil, pkCol) {
@@ -556,7 +578,10 @@ func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 		}
 		pkMatched = true
 		keyOff2IdxOff[i] = 0
+		// Add to newOuterJoinKeys only if conditions contain inner primary key. For issue #14822.
+		newOuterJoinKeys = append(newOuterJoinKeys, outerJoinKeys[i])
 	}
+	outerJoinKeys = newOuterJoinKeys
 	if !pkMatched {
 		return nil
 	}
@@ -1699,8 +1724,9 @@ func (p *LogicalLimit) exhaustPhysicalPlans(prop *property.PhysicalProperty) []P
 func (p *LogicalLock) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
 	childProp := prop.Clone()
 	lock := PhysicalLock{
-		Lock:         p.Lock,
-		TblID2Handle: p.tblID2Handle,
+		Lock:             p.Lock,
+		TblID2Handle:     p.tblID2Handle,
+		PartitionedTable: p.partitionedTable,
 	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
 	return []PhysicalPlan{lock}
 }

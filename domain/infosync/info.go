@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strconv"
 	"sync/atomic"
 	"time"
@@ -54,17 +55,24 @@ const (
 	InfoSessionTTL = 10 * 60
 	// ReportInterval is interval of infoSyncerKeeper reporting min startTS.
 	ReportInterval = 30 * time.Second
+	// TopologyInformationPath means etcd path for storing topology info.
+	TopologyInformationPath = "/topology/tidb"
+	// TopologySessionTTL is ttl for topology, ant it's the ETCD session's TTL in seconds.
+	TopologySessionTTL = 45
+	// TopologyTimeToRefresh means time to refresh etcd.
+	TopologyTimeToRefresh = 30 * time.Second
 )
 
 // InfoSyncer stores server info to etcd when the tidb-server starts and delete when tidb-server shuts down.
 type InfoSyncer struct {
-	etcdCli        *clientv3.Client
-	info           *ServerInfo
-	serverInfoPath string
-	minStartTS     uint64
-	minStartTSPath string
-	manager        util2.SessionManager
-	session        *concurrency.Session
+	etcdCli         *clientv3.Client
+	info            *ServerInfo
+	serverInfoPath  string
+	minStartTS      uint64
+	minStartTSPath  string
+	manager         util2.SessionManager
+	session         *concurrency.Session
+	topologySession *concurrency.Session
 }
 
 // ServerInfo is server static information.
@@ -121,7 +129,11 @@ func GlobalInfoSyncerInit(ctx context.Context, id string, etcdCli *clientv3.Clie
 
 // Init creates a new etcd session and stores server info to etcd.
 func (is *InfoSyncer) init(ctx context.Context) error {
-	return is.newSessionAndStoreServerInfo(ctx, owner.NewSessionDefaultRetryCnt)
+	err := is.newSessionAndStoreServerInfo(ctx, owner.NewSessionDefaultRetryCnt)
+	if err != nil {
+		return err
+	}
+	return is.newTopologySessionAndStoreServerInfo(ctx, owner.NewSessionDefaultRetryCnt)
 }
 
 // SetSessionManager set the session manager for InfoSyncer.
@@ -271,6 +283,45 @@ func (is *InfoSyncer) RemoveServerInfo() {
 	}
 }
 
+type topologyInfo struct {
+	ServerVersionInfo
+	StatusPort uint   `json:"status_port"`
+	BinaryPath string `json:"binary_path"`
+}
+
+func (is *InfoSyncer) getTopologyInfo() topologyInfo {
+	s, err := os.Executable()
+	if err != nil {
+		s = ""
+	}
+	return topologyInfo{
+		ServerVersionInfo: is.info.ServerVersionInfo,
+		StatusPort:        is.info.StatusPort,
+		BinaryPath:        s,
+	}
+}
+
+// StoreTopologyInfo  stores the topology of tidb to etcd.
+func (is *InfoSyncer) StoreTopologyInfo(ctx context.Context) error {
+	if is.etcdCli == nil {
+		return nil
+	}
+	topologyInfo := is.getTopologyInfo()
+	infoBuf, err := json.Marshal(topologyInfo)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	str := string(hack.String(infoBuf))
+	key := fmt.Sprintf("%s/%s:%v/info", TopologyInformationPath, is.info.IP, is.info.Port)
+	// Note: no lease is required here.
+	err = util.PutKVToEtcd(ctx, is.etcdCli, keyOpDefaultRetryCnt, key, str)
+	if err != nil {
+		return err
+	}
+	// Initialize ttl.
+	return is.updateTopologyAliveness(ctx)
+}
+
 // GetMinStartTS get min start timestamp.
 // Export for testing.
 func (is *InfoSyncer) GetMinStartTS() uint64 {
@@ -337,9 +388,22 @@ func (is *InfoSyncer) Done() <-chan struct{} {
 	return is.session.Done()
 }
 
+// TopologyDone returns a channel that closes when the topology syncer is no longer being refreshed.
+func (is *InfoSyncer) TopologyDone() <-chan struct{} {
+	if is.etcdCli == nil {
+		return make(chan struct{}, 1)
+	}
+	return is.topologySession.Done()
+}
+
 // Restart restart the info syncer with new session leaseID and store server info to etcd again.
 func (is *InfoSyncer) Restart(ctx context.Context) error {
 	return is.newSessionAndStoreServerInfo(ctx, owner.NewSessionDefaultRetryCnt)
+}
+
+// RestartTopology restart the topology syncer with new session leaseID and store server info to etcd again.
+func (is *InfoSyncer) RestartTopology(ctx context.Context) error {
+	return is.newTopologySessionAndStoreServerInfo(ctx, owner.NewSessionDefaultRetryCnt)
 }
 
 // newSessionAndStoreServerInfo creates a new etcd session and stores server info to etcd.
@@ -358,8 +422,33 @@ func (is *InfoSyncer) newSessionAndStoreServerInfo(ctx context.Context, retryCnt
 		err := is.storeServerInfo(ctx)
 		return errors.Trace(err)
 	})
-	err = is.storeServerInfo(ctx)
-	return err
+	return is.storeServerInfo(ctx)
+}
+
+// newTopologySessionAndStoreServerInfo creates a new etcd session and stores server info to etcd.
+func (is *InfoSyncer) newTopologySessionAndStoreServerInfo(ctx context.Context, retryCnt int) error {
+	if is.etcdCli == nil {
+		return nil
+	}
+	logPrefix := fmt.Sprintf("[topology-syncer] %s/%s:%d", TopologyInformationPath, is.info.IP, is.info.Port)
+	session, err := owner.NewSession(ctx, logPrefix, is.etcdCli, retryCnt, TopologySessionTTL)
+	if err != nil {
+		return err
+	}
+
+	is.topologySession = session
+	return is.StoreTopologyInfo(ctx)
+}
+
+// refreshTopology refreshes etcd topology with ttl stored in "/topology/tidb/ip:port/ttl".
+func (is *InfoSyncer) updateTopologyAliveness(ctx context.Context) error {
+	if is.etcdCli == nil {
+		return nil
+	}
+	key := fmt.Sprintf("%s/%s:%v/ttl", TopologyInformationPath, is.info.IP, is.info.Port)
+	return util.PutKVToEtcd(ctx, is.etcdCli, keyOpDefaultRetryCnt, key,
+		fmt.Sprintf("%v", time.Now().UnixNano()),
+		clientv3.WithLease(is.topologySession.Lease()))
 }
 
 // getInfo gets server information from etcd according to the key and opts.

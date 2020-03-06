@@ -626,6 +626,24 @@ func (s *testCommitterSuite) TestPessimisticTTL(c *C) {
 	c.Assert(false, IsTrue, Commentf("update pessimistic ttl fail"))
 }
 
+func (s *testCommitterSuite) TestPessimisticLockReturnValues(c *C) {
+	key := kv.Key("key")
+	key2 := kv.Key("key2")
+	txn := s.begin(c)
+	c.Assert(txn.Set(key, key), IsNil)
+	c.Assert(txn.Set(key2, key2), IsNil)
+	c.Assert(txn.Commit(context.Background()), IsNil)
+	txn = s.begin(c)
+	txn.SetOption(kv.Pessimistic, true)
+	lockCtx := &kv.LockCtx{ForUpdateTS: txn.startTS, WaitStartTime: time.Now()}
+	lockCtx.ReturnValues = true
+	lockCtx.Values = map[string][]byte{}
+	c.Assert(txn.LockKeys(context.Background(), lockCtx, key, key2), IsNil)
+	c.Assert(lockCtx.Values, HasLen, 2)
+	c.Assert(lockCtx.Values[string(key)], BytesEquals, []byte(key))
+	c.Assert(lockCtx.Values[string(key2)], BytesEquals, []byte(key2))
+}
+
 // TestElapsedTTL tests that elapsed time is correct even if ts physical time is greater than local time.
 func (s *testCommitterSuite) TestElapsedTTL(c *C) {
 	key := kv.Key("key")
