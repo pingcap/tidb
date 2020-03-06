@@ -20,9 +20,10 @@ import (
 	"math"
 	"net"
 	"strings"
+	"sync/atomic"
+	"time"
 
 	"github.com/google/uuid"
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
@@ -281,11 +282,64 @@ func (b *builtinNameConstTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk.
 }
 
 func (b *builtinSleepSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinSleepSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	buf, err := b.bufAllocator.get(types.ETReal, 1) // SLEEP input must be one row
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+
+	err = b.args[0].VecEvalReal(b.ctx, input, buf)
+	if err != nil {
+		return err
+	}
+
+	i64s := result.Int64s()
+
+	isNull := buf.IsNull(0)
+	val := buf.GetFloat64(0)
+	sessVars := b.ctx.GetSessionVars()
+	if isNull {
+		if sessVars.StrictSQLMode {
+			return errIncorrectArgs.GenWithStackByArgs("sleep")
+		}
+		return nil
+	}
+	// processing argument is negative
+	if val < 0 {
+		if sessVars.StrictSQLMode {
+			return errIncorrectArgs.GenWithStackByArgs("sleep")
+		}
+		return nil
+	}
+
+	if val > math.MaxFloat64/float64(time.Second.Nanoseconds()) {
+		return errIncorrectArgs.GenWithStackByArgs("sleep")
+	}
+
+	dur := time.Duration(val * float64(time.Second.Nanoseconds()))
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	start := time.Now()
+	finish := false
+	for !finish {
+		select {
+		case now := <-ticker.C:
+			if now.Sub(start) > dur {
+				finish = true
+			}
+		default:
+			if atomic.CompareAndSwapUint32(&sessVars.Killed, 1, 0) {
+				i64s[0] = 1
+				return nil
+			}
+		}
+	}
+
+	return nil
 }
 
 func (b *builtinIsIPv4MappedSig) vectorized() bool {
