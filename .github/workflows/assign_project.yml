@@ -17,7 +17,7 @@ jobs:
         column_name: 'Need Triage'
     - name: Run assignment to project SIG Planner Kanban
       uses: SunRunAway/assign-one-project-github-action@1.1.6
-      if: github.event.action == 'labeled' && contains(github.event.issue.labels.*.name, 'component/planner')
+      if: github.event.action == 'labeled' && (contains(github.event.issue.labels.*.name, 'component/planner') || contains(github.event.issue.labels.*.name, 'component/statistics'))
       with:
         project: 'https://github.com/pingcap/tidb/projects/39'
         column_name: 'Need Triage'
