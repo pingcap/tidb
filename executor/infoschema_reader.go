@@ -71,9 +71,9 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		case infoschema.TableCollations:
 			e.rows = dataForCollations()
 		case infoschema.TableKeyColumn:
-			e.rows = dataForKeyColumnUsage(sctx, dbs)
+			e.setDataFromKeyColumnUsage(sctx, dbs)
 		case infoschema.TableCollationCharacterSetApplicability:
-			e.rows = dataForCollationCharacterSetApplicability()
+			e.dataForCollationCharacterSetApplicability()
 		case infoschema.TableUserPrivileges:
 			e.setDataFromUserPrivileges(sctx)
 		}
@@ -630,17 +630,18 @@ func dataForCollations() (records [][]types.Datum) {
 	return records
 }
 
-func dataForCollationCharacterSetApplicability() (records [][]types.Datum) {
+func (e *memtableRetriever) dataForCollationCharacterSetApplicability() {
+	var rows [][]types.Datum
 	collations := charset.GetSupportedCollations()
 	for _, collation := range collations {
-		records = append(records,
+		rows = append(rows,
 			types.MakeDatums(collation.Name, collation.CharsetName),
 		)
 	}
-	return records
+	e.rows = rows
 }
 
-func dataForKeyColumnUsage(ctx sessionctx.Context, schemas []*model.DBInfo) [][]types.Datum {
+func (e *memtableRetriever) setDataFromKeyColumnUsage(ctx sessionctx.Context, schemas []*model.DBInfo) {
 	checker := privilege.GetPrivilegeManager(ctx)
 	rows := make([][]types.Datum, 0, len(schemas)) // The capacity is not accurate, but it is not a big problem.
 	for _, schema := range schemas {
@@ -652,7 +653,12 @@ func dataForKeyColumnUsage(ctx sessionctx.Context, schemas []*model.DBInfo) [][]
 			rows = append(rows, rs...)
 		}
 	}
-	return rows
+	e.rows = rows
+}
+
+func (e *memtableRetriever) setDataFromUserPrivileges(ctx sessionctx.Context) {
+	pm := privilege.GetPrivilegeManager(ctx)
+	e.rows = pm.UserPrivilegesTable()
 }
 
 func keyColumnUsageInTable(schema *model.DBInfo, table *model.TableInfo) [][]types.Datum {
@@ -737,9 +743,4 @@ func keyColumnUsageInTable(schema *model.DBInfo, table *model.TableInfo) [][]typ
 		}
 	}
 	return rows
-}
-
-func (e *memtableRetriever) setDataFromUserPrivileges(ctx sessionctx.Context) {
-	pm := privilege.GetPrivilegeManager(ctx)
-	e.rows = pm.UserPrivilegesTable()
 }
