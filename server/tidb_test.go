@@ -165,7 +165,7 @@ func (ts *TidbTestSuite) TestMultiStatements(c *C) {
 	runTestMultiStatements(c)
 }
 
-func (ts *tidbTestSuite) TestStatusAPIWithTLSCNCheck(c *C) {
+func (ts *TidbTestSuite) TestStatusAPIWithTLSCNCheck(c *C) {
 	c.Skip("need add ca-tidb-test-1.crt to OS")
 	root := filepath.Join(os.Getenv("GOPATH"), "/src/github.com/pingcap/tidb")
 	ca := filepath.Join(root, "/tests/cncheckcert/ca-tidb-test-1.crt")
