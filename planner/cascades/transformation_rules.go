@@ -14,6 +14,7 @@
 package cascades
 
 import (
+	"github.com/pingcap/tidb/kv"
 	"math"
 
 	"github.com/pingcap/parser/ast"
@@ -395,7 +396,7 @@ func (r *PushAggDownGather) Match(expr *memo.ExprIter) bool {
 		// TODO: Remove this check when we have implemented TiFlashAggregation.
 		return false
 	}
-	return plannercore.CheckAggCanPushCop(agg.SCtx(), agg.AggFuncs, agg.GroupByItems, false)
+	return plannercore.CheckAggCanPushCop(agg.SCtx(), agg.AggFuncs, agg.GroupByItems, kv.TiKV)
 }
 
 // OnTransform implements Transformation interface.

@@ -16,6 +16,7 @@ package expression
 import (
 	goJSON "encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tipb/go-tipb"
 	"sync"
 
@@ -688,7 +689,32 @@ func IsBinaryLiteral(expr Expression) bool {
 	return ok && con.Value.Kind() == types.KindBinaryLiteral
 }
 
-func ScalarExprSupportedByTiKV(function *ScalarFunction) bool {
+// CheckExprPushDown check if all the expr in the expr list can be push down to the storage.
+func CheckExprPushDown(sc *stmtctx.StatementContext, exprs []Expression, client kv.Client, storeType kv.StoreType) bool {
+	_, _, remained := ExpressionsToPB(sc, exprs, client)
+	if len(remained) > 0 {
+		return false
+	}
+	switch storeType {
+	case kv.TiFlash:
+		return checkFlashExprPushDown(exprs)
+	default:
+		return checkTiKVExprPushDown(exprs)
+	}
+}
+
+// ExprPushDown push down an expr list to storage.
+// Note this function assumes all the expr in expr list can be convert to pb expr
+func ExprPushDown(exprs []Expression, storeType kv.StoreType) (exprPush, remain []Expression) {
+	switch storeType {
+	case kv.TiFlash:
+		return flashExprPushDown(exprs)
+	default:
+		return tikvExprPushDown(exprs)
+	}
+}
+
+func scalarExprSupportedByTiKV(function *ScalarFunction) bool {
 	switch function.FuncName.L {
 	case ast.Substr, ast.Substring, ast.DateAdd, ast.TimestampDiff:
 		return false
@@ -696,15 +722,16 @@ func ScalarExprSupportedByTiKV(function *ScalarFunction) bool {
 		return true
 	}
 }
-// CheckExprPushTiKV checks a expr list whether each expr can be pushed to flash storage.
-func CheckExprPushTiKV(exprs []Expression) (exprPush, remain []Expression) {
+
+// tikvExprPushDown push down an expr list to tikv storage.
+func tikvExprPushDown(exprs []Expression) (exprPush, remain []Expression) {
 	for _, expr := range exprs {
 		switch x := expr.(type) {
 		case *Constant, *CorrelatedColumn, *Column:
 			exprPush = append(exprPush, expr)
 		case *ScalarFunction:
-			if ScalarExprSupportedByTiKV(x) {
-				if _, r := CheckExprPushTiKV(x.GetArgs()); len(r) > 0 {
+			if scalarExprSupportedByTiKV(x) {
+				if _, r := tikvExprPushDown(x.GetArgs()); len(r) > 0 {
 					remain = append(remain, expr)
 				} else {
 					exprPush = append(exprPush, expr)
@@ -717,7 +744,23 @@ func CheckExprPushTiKV(exprs []Expression) (exprPush, remain []Expression) {
 	return
 }
 
-func ScalarExprSupportedByTiFlash(function *ScalarFunction) bool {
+// checkTiKVExprPushDown check an expr list can be pushed down to tikv storage.
+func checkTiKVExprPushDown(exprs []Expression) bool {
+	for _, expr := range exprs {
+		if scalarFunc, ok := expr.(*ScalarFunction); ok {
+			if scalarExprSupportedByTiKV(scalarFunc) {
+				if !checkTiKVExprPushDown(scalarFunc.GetArgs()) {
+					return false
+				}
+			} else {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 	switch function.FuncName.L {
 	case ast.Plus, ast.Minus, ast.Div, ast.Mul,
 		ast.NullEQ, ast.GE, ast.LE, ast.EQ, ast.NE,
@@ -745,8 +788,9 @@ func ScalarExprSupportedByTiFlash(function *ScalarFunction) bool {
 		return false
 	}
 }
-// CheckExprPushFlash checks a expr list whether each expr can be pushed to flash storage.
-func CheckExprPushFlash(exprs []Expression) (exprPush, remain []Expression) {
+
+// flashExprPushDown push down an expr list to flash storage.
+func flashExprPushDown(exprs []Expression) (exprPush, remain []Expression) {
 	for _, expr := range exprs {
 		if expr.GetType().Tp == mysql.TypeDuration || expr.GetType().Tp == mysql.TypeJSON {
 			remain = append(remain, expr)
@@ -756,8 +800,8 @@ func CheckExprPushFlash(exprs []Expression) (exprPush, remain []Expression) {
 		case *Constant, *CorrelatedColumn, *Column:
 			exprPush = append(exprPush, expr)
 		case *ScalarFunction:
-			if ScalarExprSupportedByTiFlash(x) {
-				if _, r := CheckExprPushFlash(x.GetArgs()); len(r) > 0 {
+			if scalarExprSupportedByFlash(x) {
+				if _, r := flashExprPushDown(x.GetArgs()); len(r) > 0 {
 					remain = append(remain, expr)
 				} else {
 					exprPush = append(exprPush, expr)
@@ -768,6 +812,22 @@ func CheckExprPushFlash(exprs []Expression) (exprPush, remain []Expression) {
 		}
 	}
 	return
+}
+
+// checkFlashExprPushDown check an expr list can be pushed down to flash storage.
+func checkFlashExprPushDown(exprs []Expression) bool {
+	for _, expr := range exprs {
+		if scalarFunc, ok := expr.(*ScalarFunction); ok {
+			if scalarExprSupportedByFlash(scalarFunc) {
+				if !checkFlashExprPushDown(scalarFunc.GetArgs()) {
+					return false
+				}
+			} else {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // wrapWithIsTrue wraps `arg` with istrue function if the return type of expr is not

@@ -15,6 +15,7 @@ package aggregation
 
 import (
 	"bytes"
+	"github.com/pingcap/tidb/kv"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
@@ -185,6 +186,16 @@ func IsAllFirstRow(aggFuncs []*AggFuncDesc) bool {
 		}
 	}
 	return true
+}
+
+// CheckAggPushDown checks whether an agg function can be pushed to storage.
+func CheckAggPushDown(aggFunc *AggFuncDesc, storeType kv.StoreType) bool {
+	switch storeType {
+	case kv.TiFlash:
+		return CheckAggPushFlash(aggFunc)
+	default:
+		return true
+	}
 }
 
 // CheckAggPushFlash checks whether an agg function can be pushed to flash storage.
