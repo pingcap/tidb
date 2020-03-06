@@ -15,6 +15,7 @@ package kv
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/pingcap/tidb/config"
@@ -202,6 +203,9 @@ type LockCtx struct {
 	PessimisticLockWaited *int32
 	LockKeysDuration      *time.Duration
 	LockKeysCount         *int32
+	ReturnValues          bool
+	Values                map[string][]byte
+	ValuesLock            sync.Mutex
 }
 
 // Client is used to send request to KV layer.
@@ -325,6 +329,12 @@ type Snapshot interface {
 	SetOption(opt Option, val interface{})
 	// DelOption deletes an option.
 	DelOption(opt Option)
+}
+
+// BatchGetter is the interface for BatchGet.
+type BatchGetter interface {
+	// BatchGet gets a batch of values.
+	BatchGet(ctx context.Context, keys []Key) (map[string][]byte, error)
 }
 
 // Driver is the interface that must be implemented by a KV storage.

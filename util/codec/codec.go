@@ -780,7 +780,7 @@ func DecodeOne(b []byte) (remain []byte, d types.Datum, err error) {
 		if err == nil {
 			// use max fsp, let outer to do round manually.
 			v := types.Duration{Duration: time.Duration(r), Fsp: types.MaxFsp}
-			d.SetValue(v)
+			d.SetMysqlDuration(v)
 		}
 	case jsonFlag:
 		var size int
