@@ -23,6 +23,9 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+	"context"
+	"strconv"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/fn"
@@ -30,6 +33,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/server"
@@ -496,6 +500,26 @@ func (s *testInfoschemaTableSuite) TestForAnalyzeStatus(c *C) {
 	c.Assert(len(resultT1.Rows()), Greater, 0)
 }
 
+func (s *testInfoschemaTableSuite) TestForServersInfo(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	result := tk.MustQuery("select * from information_schema.TIDB_SERVERS_INFO")
+	c.Assert(len(result.Rows()), Equals, 1)
+
+	serversInfo, err := infosync.GetAllServerInfo(context.Background())
+	c.Assert(err, IsNil)
+	c.Assert(len(serversInfo), Equals, 1)
+
+	for _, info := range serversInfo {
+		c.Assert(result.Rows()[0][0], Equals, info.ID)
+		c.Assert(result.Rows()[0][1], Equals, info.IP)
+		c.Assert(result.Rows()[0][2], Equals, strconv.FormatInt(int64(info.Port), 10))
+		c.Assert(result.Rows()[0][3], Equals, strconv.FormatInt(int64(info.StatusPort), 10))
+		c.Assert(result.Rows()[0][4], Equals, info.Lease)
+		c.Assert(result.Rows()[0][5], Equals, info.Version)
+		c.Assert(result.Rows()[0][6], Equals, info.GitHash)
+	}
+}
+
 var _ = SerialSuites(&testInfoschemaClusterTableSuite{testInfoschemaTableSuite: &testInfoschemaTableSuite{}})
 
 type testInfoschemaClusterTableSuite struct {
@@ -698,4 +722,3 @@ func (s *testInfoschemaClusterTableSuite) TestTiDBClusterInfo(c *C) {
 		"tidb key3.key4.nest4 n-value5",
 		"tikv key3.key4.nest4 n-value5",
 	))
-}
