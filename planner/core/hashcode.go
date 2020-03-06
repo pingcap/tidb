@@ -82,9 +82,9 @@ func (p *LogicalSort) HashCode() []byte {
 	// PlanType + SelectOffset + Encode(ByItems)
 	// ByItems are commonly (bool + Column) which hashcode has the length 10,
 	// so we pre-alloc 11 bytes for each ByItems's hashcode.
-	result := make([]byte, 8, 12+len(p.ByItems)*15)
-	binary.BigEndian.PutUint32(result, uint32(plancodec.TypeStringToPhysicalID(p.tp)))
-	binary.BigEndian.PutUint32(result[4:], uint32(p.SelectBlockOffset()))
+	result := make([]byte, 0, 12+len(p.ByItems)*15)
+	result = codec.EncodeIntAsUint32(result, plancodec.TypeStringToPhysicalID(p.tp))
+	result = codec.EncodeIntAsUint32(result, p.SelectBlockOffset())
 	byItemHashCode := func(i int) []byte { return p.ByItems[i].HashCode(p.ctx.GetSessionVars().StmtCtx) }
 	result = codec.Encode(result, byItemHashCode, len(p.ByItems))
 	return result
@@ -95,11 +95,11 @@ func (p *LogicalTopN) HashCode() []byte {
 	// PlanType + SelectOffset + Encode(ByItems)
 	// ByItems are commonly (bool + Column) which hashcode has the length 10,
 	// so we pre-alloc 11 bytes for each ByItems's hashcode.
-	result := make([]byte, 24, 28+len(p.ByItems)*15)
-	binary.BigEndian.PutUint32(result, uint32(plancodec.TypeStringToPhysicalID(p.tp)))
-	binary.BigEndian.PutUint32(result[4:], uint32(p.SelectBlockOffset()))
-	binary.BigEndian.PutUint64(result[8:], p.Offset)
-	binary.BigEndian.PutUint64(result[16:], p.Count)
+	result := make([]byte, 0, 28+len(p.ByItems)*15)
+	result = codec.EncodeIntAsUint32(result, plancodec.TypeStringToPhysicalID(p.tp))
+	result = codec.EncodeIntAsUint32(result, p.SelectBlockOffset())
+	result = codec.EncodeUint(result, p.Offset)
+	result = codec.EncodeUint(result, p.Count)
 	byItemHashCode := func(i int) []byte { return p.ByItems[i].HashCode(p.ctx.GetSessionVars().StmtCtx) }
 	result = codec.Encode(result, byItemHashCode, len(p.ByItems))
 	return result

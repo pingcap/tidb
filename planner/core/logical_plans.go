@@ -14,7 +14,6 @@
 package core
 
 import (
-	"encoding/binary"
 	"math"
 	"reflect"
 
@@ -922,7 +921,7 @@ func (f *FrameBound) hashCode(sc *stmtctx.StatementContext) []byte {
 	hashcode := make([]byte, 0, 21+len(f.CalcFuncs)*29+len(f.CmpFuncs)*8)
 	hashcode = codec.EncodeIntAsUint32(hashcode, int(f.Type))
 	hashcode = codec.EncodeBool(hashcode, f.UnBounded)
-	binary.BigEndian.PutUint64(hashcode[5:], f.Num)
+	hashcode = codec.EncodeUint(hashcode, f.Num)
 
 	calcFuncCode := func(i int) []byte { return f.CalcFuncs[i].HashCode(sc) }
 	hashcode = codec.Encode(hashcode, calcFuncCode, len(f.CalcFuncs))
