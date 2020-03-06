@@ -282,7 +282,7 @@ func (s *testPointGetSuite) TestWhereIn2BatchPointGet(c *C) {
 
 	tk.MustExec("begin pessimistic")
 	tk.MustQuery("explain select * from t where (a, b) in ((1, 2), (2, 3)) FOR UPDATE").Check(testkit.Rows(
-		"Batch_Point_Get_1 2.00 root table:t, index:a b, lock",
+		"Batch_Point_Get_1 2.00 root table:t, index:a b, index:a b, keep order:false, desc:false, lock",
 	))
 	tk.MustExec("rollback")
 }
