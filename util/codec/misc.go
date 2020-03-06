@@ -11,10 +11,11 @@ import (
 // EncodeBool append bool to []byte.
 func EncodeBool(result []byte, value bool) []byte {
 	if value {
-		return append(result, uint8(1))
+		result = append(result, uint8(1))
 	} else {
-		return append(result, uint8(0))
+		result = append(result, uint8(0))
 	}
+	return result
 }
 
 // EncodeUintptr append uintptr to []byte.
