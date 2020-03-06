@@ -1,4 +1,5 @@
 language: go
+dist: bionic
 
 go:
   - 1.13.x
@@ -12,3 +13,5 @@ after_success:
 
 services:
   - mysql
+
+if: branch = master OR branch =~ /^release-/

@@ -21,22 +21,31 @@ set -eu
 mkdir -p "$DUMPLING_TEST_DIR"
 PATH="tests/_utils:$PATH"
 
+cat > "$DUMPLING_TEST_DIR/mysql.cnf" <<EOF
+[client]
+user = ${DUMPLING_TEST_USER}
+host = ${DUMPLING_TEST_HOST}
+port = ${DUMPLING_TEST_PORT}
+password = ${DUMPLING_TEST_PASSWORD}
+default-character-set = utf8mb4
+EOF
+
 test_connection() {
-  i=0
-  while ! run_sql 'select 0 limit 0' > /dev/null; do
-      i=$((i+1))
-      if [ "$i" -gt 10 ]; then
-          echo 'Failed to ping MySQL Server'
-          exit 1
-      fi
-      sleep 3
-  done
+    i=0
+    while ! run_sql 'select 0 limit 0' > /dev/null; do
+        i=$((i+1))
+        if [ "$i" -gt 5 ]; then
+            echo 'Failed to ping MySQL Server'
+            exit 1
+        fi
+        sleep 3
+    done
 }
 
 test_connection
 
 for script in tests/*/run.sh; do
-    echo "Running test $script..."
+    echo "****************** Running test $script..."
     DUMPLING_BASE_NAME="$(dirname "$script")"
     export DUMPLING_BASE_NAME
     TEST_NAME="$(basename "$(dirname "$script")")"

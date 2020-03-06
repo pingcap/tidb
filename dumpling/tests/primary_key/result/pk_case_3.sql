@@ -1,3 +1,4 @@
+/*!40101 SET NAMES binary*/;
 INSERT INTO `pk_case_3` VALUES
 (6, 4),
 (4, 6),

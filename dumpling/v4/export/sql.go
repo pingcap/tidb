@@ -112,6 +112,9 @@ func SelectAllFromTable(conf *Config, db *sql.DB, database, table string) (Table
 		table:    table,
 		rows:     rows,
 		colTypes: colTypes,
+		specCmts: []string{
+			"/*!40101 SET NAMES binary*/;",
+		},
 	}, nil
 }
 

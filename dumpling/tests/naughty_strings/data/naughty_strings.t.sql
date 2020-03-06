@@ -1,3 +1,4 @@
+/*!40101 SET NAMES binary*/;
 INSERT INTO `t` VALUES
 (''),
 ('undefined'),
