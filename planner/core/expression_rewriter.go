@@ -1005,7 +1005,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		// SetCollationExpr sets the collation explicitly, even when the evaluation type of the expression is non-string.
 		if _, ok := arg.(*expression.Column); ok {
 			// Wrap a cast here to avoid changing the original FieldType of the column expression.
-			casted := expression.WrapWithCastAsString(er.sctx, arg)
+			casted := expression.BuildCastFunction(er.sctx, arg, arg.GetType())
 			casted.GetType().Collate = v.Collate
 			er.ctxStackPop(1)
 			er.ctxStackAppend(casted, types.EmptyName)
