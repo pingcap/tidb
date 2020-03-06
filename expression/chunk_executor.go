@@ -33,7 +33,7 @@ func Vectorizable(exprs []Expression) bool {
 	return checkSequenceFunction(exprs)
 }
 
-// HasMoreThanOneSequenceFunction indicates whether the exprs can be evaluated as a vector.
+// checkSequenceFunction indicates whether the exprs can be evaluated as a vector.
 // When two or more of this three(nextval, lastval, setval) exists in exprs list and one of them is nextval, it should be eval row by row.
 func checkSequenceFunction(exprs []Expression) bool {
 	var (
