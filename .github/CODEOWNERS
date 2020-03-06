@@ -1,6 +1,7 @@
 /distsql @pingcap/co-exec
 /executor @pingcap/co-exec
-/exec @pingcap/co-exec
+/expression @pingcap/co-exec
+/types @pingcap/co-exec
 /util/chunk @pingcap/co-exec
 /util/disk @pingcap/co-exec
 /util/execdetails @pingcap/co-exec
