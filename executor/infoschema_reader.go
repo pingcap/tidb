@@ -61,9 +61,9 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		case infoschema.TablePartitions:
 			e.rows, err = dataForPartitions(sctx, dbs)
 		case infoschema.TableTiDBIndexes:
-			e.rows, err = dataForIndexes(sctx, dbs)
+			e.setDataFromIndexes(sctx, dbs)
 		case infoschema.TableViews:
-			e.rows, err = dataForViews(sctx, dbs)
+			e.setDataFromViews(sctx, dbs)
 		case infoschema.TableEngines:
 			e.setDataFromEngines()
 		case infoschema.TableCharacterSets:
@@ -484,7 +484,7 @@ func dataForPartitions(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]typ
 	return rows, nil
 }
 
-func dataForIndexes(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Datum, error) {
+func (e *memtableRetriever) setDataFromIndexes(ctx sessionctx.Context, schemas []*model.DBInfo) {
 	checker := privilege.GetPrivilegeManager(ctx)
 	var rows [][]types.Datum
 	for _, schema := range schemas {
@@ -552,10 +552,10 @@ func dataForIndexes(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.
 			}
 		}
 	}
-	return rows, nil
+	e.rows = rows
 }
 
-func dataForViews(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Datum, error) {
+func (e *memtableRetriever) setDataFromViews(ctx sessionctx.Context, schemas []*model.DBInfo) {
 	checker := privilege.GetPrivilegeManager(ctx)
 	var rows [][]types.Datum
 	for _, schema := range schemas {
@@ -589,7 +589,7 @@ func dataForViews(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Da
 			rows = append(rows, record)
 		}
 	}
-	return rows, nil
+	e.rows = rows
 }
 
 func (e *memtableRetriever) setDataFromEngines() {
