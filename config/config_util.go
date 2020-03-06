@@ -15,7 +15,14 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
+	"io/ioutil"
+	"os"
+	"path/filepath"
 	"reflect"
+	"time"
+
+	"github.com/pingcap/errors"
 )
 
 // CloneConf deeply clones this config.
@@ -40,9 +47,22 @@ var (
 		"Performance.FeedbackProbability": {},
 		"Performance.QueryFeedbackLimit":  {},
 		"Performance.PseudoEstimateRatio": {},
+		"Performance.StmtCountLimit":      {},
+		"Performance.TCPKeepAlive":        {},
 		"OOMAction":                       {},
 		"MemQuotaQuery":                   {},
 		"TiKVClient.StoreLimit":           {},
+		"Log.Level":                       {},
+		"Log.SlowThreshold":               {},
+		"Log.QueryLogMaxLen":              {},
+		"Log.ExpensiveThreshold":          {},
+		"CheckMb4ValueInUTF8":             {},
+		"EnableStreaming":                 {},
+		"TxnLocalLatches.Capacity":        {},
+		"CompatibleKillQuery":             {},
+		"TreatOldVersionUTF8AsUTF8MB4":    {},
+		"OpenTracing.Enable":              {},
+		"PreparedPlanCache.Enabled":       {},
 	}
 )
 
@@ -79,4 +99,16 @@ func mergeConfigItems(dstConf, newConf reflect.Value, fieldPath string) (accepte
 		rejectedItems = append(rejectedItems, rs...)
 	}
 	return
+}
+
+func atomicWriteConfig(c *Config, confPath string) (err error) {
+	content, err := encodeConfig(c)
+	if err != nil {
+		return err
+	}
+	tmpConfPath := filepath.Join(os.TempDir(), fmt.Sprintf("tmp_conf_%v.toml", time.Now().Format("20060102150405")))
+	if err := ioutil.WriteFile(tmpConfPath, []byte(content), 0666); err != nil {
+		return errors.Trace(err)
+	}
+	return errors.Trace(os.Rename(tmpConfPath, confPath))
 }

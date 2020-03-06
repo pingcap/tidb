@@ -473,7 +473,7 @@ func (e *LoadDataInfo) colsToRow(ctx context.Context, cols []field) []types.Datu
 		if cols[i].maybeNull && string(cols[i].str) == "N" {
 			e.row[i].SetNull()
 		} else {
-			e.row[i].SetString(string(cols[i].str))
+			e.row[i].SetString(string(cols[i].str), mysql.DefaultCollationName)
 		}
 	}
 	row, err := e.getRowInPlace(ctx, e.row, e.rows[e.curBatchCnt])

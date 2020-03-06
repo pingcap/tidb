@@ -460,12 +460,15 @@ func CutDatumByPrefixLen(v *types.Datum, length int, tp *types.FieldType) bool {
 				rs := bytes.Runes(colValue)
 				truncateStr := string(rs[:length])
 				// truncate value and limit its length
-				v.SetString(truncateStr)
+				v.SetString(truncateStr, tp.Collate)
 				return true
 			}
 		} else if length != types.UnspecifiedLength && len(colValue) > length {
 			// truncate value and limit its length
 			v.SetBytes(colValue[:length])
+			if v.Kind() == types.KindString {
+				v.SetString(v.GetString(), tp.Collate)
+			}
 			return true
 		}
 	}
@@ -485,7 +488,7 @@ func newFieldType(tp *types.FieldType) *types.FieldType {
 	// To avoid data truncate error.
 	case mysql.TypeFloat, mysql.TypeDouble, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob,
 		mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString:
-		newTp := types.NewFieldType(tp.Tp)
+		newTp := types.NewFieldTypeWithCollation(tp.Tp, tp.Collate, types.UnspecifiedLength)
 		newTp.Charset = tp.Charset
 		return newTp
 	default:

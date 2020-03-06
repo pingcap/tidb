@@ -136,36 +136,7 @@ func (txn *tikvTxn) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]b
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
-
-	if txn.IsReadOnly() {
-		return txn.snapshot.BatchGet(ctx, keys)
-	}
-	bufferValues := make([][]byte, len(keys))
-	shrinkKeys := make([]kv.Key, 0, len(keys))
-	for i, key := range keys {
-		val, err := txn.GetMemBuffer().Get(ctx, key)
-		if kv.IsErrNotFound(err) {
-			shrinkKeys = append(shrinkKeys, key)
-			continue
-		}
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if len(val) != 0 {
-			bufferValues[i] = val
-		}
-	}
-	storageValues, err := txn.snapshot.BatchGet(ctx, shrinkKeys)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	for i, key := range keys {
-		if bufferValues[i] == nil {
-			continue
-		}
-		storageValues[string(key)] = bufferValues[i]
-	}
-	return storageValues, nil
+	return kv.NewBufferBatchGetter(txn.GetMemBuffer(), txn.snapshot).BatchGet(ctx, keys)
 }
 
 func (txn *tikvTxn) Set(k kv.Key, v []byte) error {
@@ -408,6 +379,9 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 					wg.Wait()
 					// Sleep a little, wait for the other transaction that blocked by this transaction to acquire the lock.
 					time.Sleep(time.Millisecond * 5)
+					failpoint.Inject("SingleStmtDeadLockRetrySleep", func() {
+						time.Sleep(300 * time.Millisecond)
+					})
 				}
 			}
 			if assignedPrimaryKey {
@@ -445,7 +419,7 @@ func (txn *tikvTxn) asyncPessimisticRollback(ctx context.Context, keys [][]byte)
 		failpoint.Inject("AsyncRollBackSleep", func() {
 			time.Sleep(100 * time.Millisecond)
 		})
-		err := committer.pessimisticRollbackKeys(NewBackoffer(ctx, pessimisticRollbackMaxBackoff), keys)
+		err := committer.pessimisticRollbackKeys(NewBackoffer(ctx, pessimisticRollbackMaxBackoff).WithVars(txn.vars), keys)
 		if err != nil {
 			logutil.Logger(ctx).Warn("[kv] pessimisticRollback failed.", zap.Error(err))
 		}
