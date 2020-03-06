@@ -178,7 +178,7 @@ func (h *BindHandle) AddBindRecord(sctx sessionctx.Context, record *BindRecord) 
 	br := h.GetBindRecord(parser.DigestNormalized(record.OriginalSQL), record.OriginalSQL, record.Db)
 	var duplicateBinding *Binding
 	if br != nil {
-		binding := br.FindBinding(record.Bindings[0].id)
+		binding := br.FindBinding(record.Bindings[0].ID)
 		if binding != nil {
 			// There is already a binding with status `Using`, `PendingVerify` or `Rejected`, we could directly cancel the job.
 			if record.Bindings[0].Status == PendingVerify {
@@ -325,7 +325,7 @@ func (tmpMap *tmpBindRecordMap) flushToStore() {
 }
 
 func (tmpMap *tmpBindRecordMap) saveToCache(bindRecord *BindRecord) {
-	key := bindRecord.OriginalSQL + ":" + bindRecord.Db + ":" + bindRecord.Bindings[0].id
+	key := bindRecord.OriginalSQL + ":" + bindRecord.Db + ":" + bindRecord.Bindings[0].ID
 	if _, ok := tmpMap.Load().(map[string]*bindRecordUpdate)[key]; ok {
 		return
 	}
@@ -545,11 +545,16 @@ func (h *BindHandle) CaptureBaselines() {
 			continue
 		}
 		charset, collation := h.sctx.GetSessionVars().GetCharsetInfo()
+		hintsSet, err := ParseHintsSet(parser4Capture, bindSQL, charset, collation)
+		if err != nil {
+			logutil.BgLogger().Debug("parse BindSQL failed", zap.String("SQL", bindSQL), zap.Error(err))
+			continue
+		}
 		binding := Binding{
 			BindSQL:   bindSQL,
 			Status:    Using,
-			Hint:      CollectHint(stmt),
-			id:        hints,
+			Hint:      hintsSet,
+			ID:        hints,
 			Charset:   charset,
 			Collation: collation,
 		}
@@ -626,8 +631,7 @@ func (e *paramMarkerChecker) Leave(in ast.Node) (ast.Node, bool) {
 }
 
 // AddEvolvePlanTask adds the evolve plan task into memory cache. It would be flushed to store periodically.
-func (h *BindHandle) AddEvolvePlanTask(originalSQL, DB string, binding Binding, planHint string) {
-	binding.id = planHint
+func (h *BindHandle) AddEvolvePlanTask(originalSQL, DB string, binding Binding) {
 	br := &BindRecord{
 		OriginalSQL: originalSQL,
 		Db:          DB,

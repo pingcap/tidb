@@ -240,10 +240,21 @@ func handleEvolveTasks(ctx context.Context, sctx sessionctx.Context, br *bindinf
 	if bindSQL == "" {
 		return
 	}
-	globalHandle := domain.GetDomain(sctx).BindHandle()
 	charset, collation := sctx.GetSessionVars().GetCharsetInfo()
-	binding := bindinfo.Binding{BindSQL: bindSQL, Status: bindinfo.PendingVerify, Charset: charset, Collation: collation}
-	globalHandle.AddEvolvePlanTask(br.OriginalSQL, br.Db, binding, planHint)
+	hintsSet, err := bindinfo.ParseHintsSet(parser.New(), bindSQL, charset, collation)
+	if err != nil {
+		return
+	}
+	binding := bindinfo.Binding{
+		BindSQL:   bindSQL,
+		Status:    bindinfo.PendingVerify,
+		Charset:   charset,
+		Collation: collation,
+		Hint:      hintsSet,
+		ID:        planHint,
+	}
+	globalHandle := domain.GetDomain(sctx).BindHandle()
+	globalHandle.AddEvolvePlanTask(br.OriginalSQL, br.Db, binding)
 }
 
 // useMaxTS returns true when meets following conditions:
