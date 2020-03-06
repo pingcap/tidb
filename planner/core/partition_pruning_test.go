@@ -45,12 +45,14 @@ func (s *testPartitionPruningSuite) TestCanBePrune(c *C) {
 		"to_days(d)",
 	)
 	lessThan := lessThanData{data: []int64{733108, 733132}, maxvalue: false}
+	prunner := &partitionRangePrunner1{lessThan, tc.col, tc.fn}
+
 	queryExpr := tc.expr("d < '2000-03-08 00:00:00'")
-	result := partitionRangeForCNFExpr(tc.sctx, queryExpr, lessThan, tc.col, tc.fn, fullRange(len(lessThan.data)))
+	result := partitionRangeForCNFExpr(tc.sctx, queryExpr, prunner, fullRange(len(lessThan.data)))
 	c.Assert(equalPartitionRangeOR(result, partitionRangeOR{{0, 1}}), IsTrue)
 
 	queryExpr = tc.expr("d > '2018-03-08 00:00:00'")
-	result = partitionRangeForCNFExpr(tc.sctx, queryExpr, lessThan, tc.col, tc.fn, fullRange(len(lessThan.data)))
+	result = partitionRangeForCNFExpr(tc.sctx, queryExpr, prunner, fullRange(len(lessThan.data)))
 	c.Assert(equalPartitionRangeOR(result, partitionRangeOR{}), IsTrue)
 
 	// For the following case:
@@ -69,12 +71,14 @@ func (s *testPartitionPruningSuite) TestCanBePrune(c *C) {
 		"unix_timestamp(report_updated)",
 	)
 	lessThan = lessThanData{data: []int64{1199145600, 1207008000, 1262304000, 0}, maxvalue: true}
+	prunner = &partitionRangePrunner1{lessThan, tc.col, tc.fn}
+
 	queryExpr = tc.expr("report_updated > '2008-05-01 00:00:00'")
-	result = partitionRangeForCNFExpr(tc.sctx, queryExpr, lessThan, tc.col, tc.fn, fullRange(len(lessThan.data)))
+	result = partitionRangeForCNFExpr(tc.sctx, queryExpr, prunner, fullRange(len(lessThan.data)))
 	c.Assert(equalPartitionRangeOR(result, partitionRangeOR{{2, 4}}), IsTrue)
 
 	queryExpr = tc.expr("report_updated > unix_timestamp('2008-05-01 00:00:00')")
-	partitionRangeForCNFExpr(tc.sctx, queryExpr, lessThan, tc.col, tc.fn, fullRange(len(lessThan.data)))
+	partitionRangeForCNFExpr(tc.sctx, queryExpr, prunner, fullRange(len(lessThan.data)))
 	// TODO: Uncomment the check after fixing issue https://github.com/pingcap/tidb/issues/12028
 	// c.Assert(equalPartitionRangeOR(result, partitionRangeOR{{2, 4}}), IsTrue)
 	// report_updated > unix_timestamp('2008-05-01 00:00:00') is converted to gt(t.t.report_updated, <nil>)
@@ -166,6 +170,7 @@ func (s *testPartitionPruningSuite) TestPartitionRangeForExpr(c *C) {
 		"a",
 	)
 	lessThan := lessThanData{data: []int64{4, 7, 11, 14, 17, 0}, maxvalue: true}
+	prunner := &partitionRangePrunner1{lessThan, tc.columns[0], nil}
 	cases := []struct {
 		input  string
 		result partitionRangeOR
@@ -188,7 +193,7 @@ func (s *testPartitionPruningSuite) TestPartitionRangeForExpr(c *C) {
 		expr, err := expression.ParseSimpleExprsWithNames(tc.sctx, ca.input, tc.schema, tc.names)
 		c.Assert(err, IsNil)
 		result := fullRange(lessThan.length())
-		result = partitionRangeForExpr(tc.sctx, expr[0], lessThan, tc.columns[0], nil, result)
+		result = partitionRangeForExpr(tc.sctx, expr[0], prunner, result)
 		c.Assert(equalPartitionRangeOR(ca.result, result), IsTrue, Commentf("unexpected:", ca.input))
 	}
 }
@@ -264,5 +269,94 @@ func (s *testPartitionPruningSuite) TestPartitionRangeOperation(c *C) {
 	for i, ca := range testUnion {
 		result := ca.input1.union(ca.input2)
 		c.Assert(equalPartitionRangeOR(ca.result, result), IsTrue, Commentf("failed %d", i))
+	}
+}
+
+func (s *testPartitionPruningSuite) TestPartitionRangePrunner2VarChar(c *C) {
+	tc := prepareTestCtx(c,
+		"create table t (a varchar(32))",
+		"a",
+	)
+	lessThanData := []string{"'c'", "'f'", "'h'", "'l'", "'t'"}
+	lessThan := make([]expression.Expression, len(lessThanData)+1) // +1 for maxvalue
+	for i, str := range lessThanData {
+		tmp, err := expression.ParseSimpleExprsWithNames(tc.sctx, str, tc.schema, tc.names)
+		c.Assert(err, IsNil)
+		lessThan[i] = tmp[0]
+	}
+
+	prunner := &partitionRangePrunner2{lessThan, tc.columns[0], true}
+	cases := []struct {
+		input  string
+		result partitionRangeOR
+	}{
+		{"a > 'g'", partitionRangeOR{{2, 6}}},
+		{"a < 'h'", partitionRangeOR{{0, 3}}},
+		{"a >= 'm'", partitionRangeOR{{4, 6}}},
+		{"a > 'm'", partitionRangeOR{{4, 6}}},
+		{"a < 'f'", partitionRangeOR{{0, 2}}},
+		{"a = 'c'", partitionRangeOR{{1, 2}}},
+		{"a > 't'", partitionRangeOR{{5, 6}}},
+		{"a > 'c' and a < 'q'", partitionRangeOR{{1, 5}}},
+		{"a < 'l' or a >= 'w'", partitionRangeOR{{0, 4}, {5, 6}}},
+		{"a is null", partitionRangeOR{{0, 1}}},
+		{"'mm' > a", partitionRangeOR{{0, 5}}},
+		{"'f' <= a", partitionRangeOR{{2, 6}}},
+		{"'f' >= a", partitionRangeOR{{0, 3}}},
+	}
+
+	for _, ca := range cases {
+		expr, err := expression.ParseSimpleExprsWithNames(tc.sctx, ca.input, tc.schema, tc.names)
+		c.Assert(err, IsNil)
+		result := fullRange(len(lessThan))
+		result = partitionRangeForExpr(tc.sctx, expr[0], prunner, result)
+		c.Assert(equalPartitionRangeOR(ca.result, result), IsTrue, Commentf("unexpected:", ca.input))
+	}
+}
+
+func (s *testPartitionPruningSuite) TestPartitionRangePrunner2Date(c *C) {
+	tc := prepareTestCtx(c,
+		"create table t (a date)",
+		"a",
+	)
+	lessThanData := []string{
+		"'1999-06-01'",
+		"'2000-05-01'",
+		"'2008-04-01'",
+		"'2010-03-01'",
+		"'2016-02-01'",
+		"'2020-01-01'"}
+	lessThan := make([]expression.Expression, len(lessThanData))
+	for i, str := range lessThanData {
+		tmp, err := expression.ParseSimpleExprsWithNames(tc.sctx, str, tc.schema, tc.names)
+		c.Assert(err, IsNil)
+		lessThan[i] = tmp[0]
+	}
+
+	prunner := &partitionRangePrunner2{lessThan, tc.columns[0], false}
+	cases := []struct {
+		input  string
+		result partitionRangeOR
+	}{
+		{"a < '1943-02-12'", partitionRangeOR{{0, 1}}},
+		{"a >= '1969-02-13'", partitionRangeOR{{0, 6}}},
+		{"a > '2003-03-13'", partitionRangeOR{{2, 6}}},
+		{"a < '2006-02-03'", partitionRangeOR{{0, 3}}},
+		{"a = '2007-07-07'", partitionRangeOR{{2, 3}}},
+		{"a > '1949-10-10'", partitionRangeOR{{0, 6}}},
+		{"a > '2016-02-01' and a < '2000-01-03'", partitionRangeOR{}},
+		{"a < '1969-11-12' or a >= '2019-09-18'", partitionRangeOR{{0, 1}, {5, 6}}},
+		{"a is null", partitionRangeOR{{0, 1}}},
+		{"'2003-02-27' >= a", partitionRangeOR{{0, 3}}},
+		{"'2014-10-24' < a", partitionRangeOR{{4, 6}}},
+		{"'2003-03-30' > a", partitionRangeOR{{0, 3}}},
+	}
+
+	for _, ca := range cases {
+		expr, err := expression.ParseSimpleExprsWithNames(tc.sctx, ca.input, tc.schema, tc.names)
+		c.Assert(err, IsNil)
+		result := fullRange(len(lessThan))
+		result = partitionRangeForExpr(tc.sctx, expr[0], prunner, result)
+		c.Assert(equalPartitionRangeOR(ca.result, result), IsTrue, Commentf("unexpected:", ca.input))
 	}
 }
