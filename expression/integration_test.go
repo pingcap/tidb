@@ -5700,7 +5700,6 @@ func (s *testIntegrationSerialSuite) TestCollateSort(c *C) {
 	tk.MustQuery("select id from t_bin order by v, id").Check(testkit.Rows("7", "1", "5", "6", "2", "4", "3"))
 }
 
-<<<<<<< HEAD
 func (s *testIntegrationSerialSuite) TestCollateHashAgg(c *C) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
@@ -5733,14 +5732,14 @@ func (s *testIntegrationSerialSuite) TestCollateIndexReader(c *C) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
 	tk := s.prepare4Collation(c, true)
-	tk.HasPlan("select v from t where v < 'b'", "IndexReader")
-	tk.MustQuery("select v from t where v < 'b'").Sort().Check(testkit.Rows(" ", "a", "À", "á", "à"))
-	tk.HasPlan("select v from t where v < 'b' and v > ' '", "IndexReader")
-	tk.MustQuery("select v from t where v < 'b' and v > ' '").Sort().Check(testkit.Rows("a", "À", "á", "à"))
-	tk.HasPlan("select v from t_bin where v < 'b'", "IndexReader")
-	tk.MustQuery("select v from t_bin where v < 'b'").Sort().Check(testkit.Rows(" ", "a"))
-	tk.HasPlan("select v from t_bin where v < 'b' and v > ' '", "IndexReader")
-	tk.MustQuery("select v from t_bin where v < 'b' and v > ' '").Sort().Check(testkit.Rows("a"))
+	tk.HasPlan("select v from t where v < 'b'  order by v", "IndexReader")
+	tk.MustQuery("select v from t where v < 'b' order by v").Check(testkit.Rows(" ", "a", "À", "á", "à"))
+	tk.HasPlan("select v from t where v < 'b' and v > ' ' order by v", "IndexReader")
+	tk.MustQuery("select v from t where v < 'b' and v > ' ' order by v").Check(testkit.Rows("a", "À", "á", "à"))
+	tk.HasPlan("select v from t_bin where v < 'b' order by v", "IndexReader")
+	tk.MustQuery("select v from t_bin where v < 'b' order by v").Sort().Check(testkit.Rows(" ", "a"))
+	tk.HasPlan("select v from t_bin where v < 'b' and v > ' ' order by v", "IndexReader")
+	tk.MustQuery("select v from t_bin where v < 'b' and v > ' ' order by v").Sort().Check(testkit.Rows("a"))
 }
 
 func (s *testIntegrationSerialSuite) TestCollateIndexLookup(c *C) {
@@ -5748,10 +5747,10 @@ func (s *testIntegrationSerialSuite) TestCollateIndexLookup(c *C) {
 	defer collate.SetNewCollationEnabledForTest(false)
 	tk := s.prepare4Collation(c, true)
 
-	//tk.HasPlan("select id from t where v < 'b'", "IndexLookUp")
-	//tk.MustQuery("select id from t where v < 'b'").Sort().Check(testkit.Rows("1", "2", "3", "4", "7"))
-	//tk.HasPlan("select id from t where v < 'b' and v > ' '", "IndexLookUp")
-	//tk.MustQuery("select id from t where v < 'b' and v > ' '").Sort().Check(testkit.Rows("1", "2", "3", "4"))
+	tk.HasPlan("select id from t where v < 'b'", "IndexLookUp")
+	tk.MustQuery("select id from t where v < 'b'").Sort().Check(testkit.Rows("1", "2", "3", "4", "7"))
+	tk.HasPlan("select id from t where v < 'b' and v > ' '", "IndexLookUp")
+	tk.MustQuery("select id from t where v < 'b' and v > ' '").Sort().Check(testkit.Rows("1", "2", "3", "4"))
 	tk.HasPlan("select id from t_bin where v < 'b'", "IndexLookUp")
 	tk.MustQuery("select id from t_bin where v < 'b'").Sort().Check(testkit.Rows("1", "7"))
 	tk.HasPlan("select id from t_bin where v < 'b' and v > ' '", "IndexLookUp")
