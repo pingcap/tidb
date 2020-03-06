@@ -212,10 +212,10 @@
       {
         "SQL": "select max(a+b) from t",
         "Plan": [
-          "HashAgg_19 1.00 root funcs:max(Column#4)->Column#3",
-          "└─TableReader_20 1.00 root data:HashAgg_21",
-          "  └─HashAgg_21 1.00 cop[tikv] funcs:max(plus(test.t.a, test.t.b))->Column#4",
-          "    └─TableFullScan_17 10000.00 cop[tikv] table:t, keep order:false, stats:pseudo"
+          "HashAgg_31 1.00 root funcs:max(Column#4)->Column#3",
+          "└─TableReader_32 1.00 root data:HashAgg_33",
+          "  └─HashAgg_33 1.00 cop[tikv] funcs:max(plus(test.t.a, test.t.b))->Column#4",
+          "    └─TableFullScan_29 10000.00 cop[tikv] table:t, keep order:false, stats:pseudo"
         ],
         "Result": [
           "48"
@@ -277,11 +277,11 @@
       {
         "SQL": "select max(a.a) from t a left join t b on a.a = b.a",
         "Plan": [
-          "HashAgg_64 1.00 root funcs:max(test.t.a)->Column#5",
-          "└─Limit_66 1.00 root offset:0, count:1",
-          "  └─TableReader_70 1.00 root data:Limit_71",
-          "    └─Limit_71 1.00 cop[tikv] offset:0, count:1",
-          "      └─TableFullScan_34 1.00 cop[tikv] table:a, keep order:true, desc, stats:pseudo"
+          "HashAgg_33 1.00 root funcs:max(test.t.a)->Column#5",
+          "└─Limit_35 1.00 root offset:0, count:1",
+          "  └─TableReader_40 1.00 root data:Limit_41",
+          "    └─Limit_41 1.00 cop[tikv] offset:0, count:1",
+          "      └─TableFullScan_39 1.00 cop[tikv] table:a, keep order:true, desc, stats:pseudo"
         ],
         "Result": [
           "4"
@@ -351,13 +351,30 @@
         ]
       },
       {
+        "SQL": "select t3.a, max(t3.b) from (select t1.a, t1.b from t as t1 left join t as t2 on t1.b = t2.b) t3 group by t3.a order by a",
+        "Plan": [
+          "Projection_13 8000.00 root test.t.a, Column#5",
+          "└─Sort_21 8000.00 root test.t.a:asc",
+          "  └─HashAgg_18 8000.00 root group by:test.t.a, funcs:max(Column#6)->Column#5, funcs:firstrow(test.t.a)->test.t.a",
+          "    └─TableReader_19 8000.00 root data:HashAgg_20",
+          "      └─HashAgg_20 8000.00 cop[tikv] group by:test.t.a, funcs:max(test.t.b)->Column#6",
+          "        └─TableFullScan_17 10000.00 cop[tikv] table:t1, keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 11",
+          "2 22",
+          "3 33",
+          "4 44"
+        ]
+      },
+      {
         "SQL": "select max(a) from t",
         "Plan": [
-          "HashAgg_16 1.00 root funcs:max(test.t.a)->Column#3",
-          "└─Limit_18 1.00 root offset:0, count:1",
-          "  └─TableReader_23 1.00 root data:Limit_24",
-          "    └─Limit_24 1.00 cop[tikv] offset:0, count:1",
-          "      └─TableFullScan_22 1.00 cop[tikv] table:t, keep order:true, desc, stats:pseudo"
+          "HashAgg_21 1.00 root funcs:max(test.t.a)->Column#3",
+          "└─Limit_23 1.00 root offset:0, count:1",
+          "  └─TableReader_28 1.00 root data:Limit_29",
+          "    └─Limit_29 1.00 cop[tikv] offset:0, count:1",
+          "      └─TableFullScan_27 1.00 cop[tikv] table:t, keep order:true, desc, stats:pseudo"
         ],
         "Result": [
           "4"
@@ -543,6 +560,19 @@
           "3 24",
           "4 36",
           "5 48"
+        ]
+      },
+      {
+        "SQL": "select t1.a, t1.b from t as t1 left join t as t2 on t1.a = t2.a and t1.b = 3 order by a",
+        "Plan": [
+          "TableReader_24 12500.00 root data:TableFullScan_25",
+          "└─TableFullScan_25 10000.00 cop[tikv] table:t1, keep order:true, stats:pseudo"
+        ],
+        "Result": [
+          "1 11",
+          "2 22",
+          "3 33",
+          "4 44"
         ]
       }
     ]

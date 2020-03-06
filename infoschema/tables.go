@@ -63,16 +63,18 @@ const (
 	TableCollations = "COLLATIONS"
 	tableFiles      = "FILES"
 	// CatalogVal is the string constant of TABLE_CATALOG
-	CatalogVal            = "def"
-	tableProfiling        = "PROFILING"
-	tablePartitions       = "PARTITIONS"
-	tableKeyColumn        = "KEY_COLUMN_USAGE"
-	tableReferConst       = "REFERENTIAL_CONSTRAINTS"
-	tableSessionVar       = "SESSION_VARIABLES"
-	tablePlugins          = "PLUGINS"
-	tableConstraints      = "TABLE_CONSTRAINTS"
-	tableTriggers         = "TRIGGERS"
-	tableUserPrivileges   = "USER_PRIVILEGES"
+	CatalogVal      = "def"
+	tableProfiling  = "PROFILING"
+	tablePartitions = "PARTITIONS"
+	// TableKeyColumn is the string constant of KEY_COLUMN_USAGE
+	TableKeyColumn   = "KEY_COLUMN_USAGE"
+	tableReferConst  = "REFERENTIAL_CONSTRAINTS"
+	tableSessionVar  = "SESSION_VARIABLES"
+	tablePlugins     = "PLUGINS"
+	tableConstraints = "TABLE_CONSTRAINTS"
+	tableTriggers    = "TRIGGERS"
+	// TableUserPrivileges is the string constant of infoschema user privilege table.
+	TableUserPrivileges   = "USER_PRIVILEGES"
 	tableSchemaPrivileges = "SCHEMA_PRIVILEGES"
 	tableTablePrivileges  = "TABLE_PRIVILEGES"
 	tableColumnPrivileges = "COLUMN_PRIVILEGES"
@@ -140,13 +142,13 @@ var tableIDMap = map[string]int64{
 	CatalogVal:                              autoid.InformationSchemaDBID + 9,
 	tableProfiling:                          autoid.InformationSchemaDBID + 10,
 	tablePartitions:                         autoid.InformationSchemaDBID + 11,
-	tableKeyColumn:                          autoid.InformationSchemaDBID + 12,
+	TableKeyColumn:                          autoid.InformationSchemaDBID + 12,
 	tableReferConst:                         autoid.InformationSchemaDBID + 13,
 	tableSessionVar:                         autoid.InformationSchemaDBID + 14,
 	tablePlugins:                            autoid.InformationSchemaDBID + 15,
 	tableConstraints:                        autoid.InformationSchemaDBID + 16,
 	tableTriggers:                           autoid.InformationSchemaDBID + 17,
-	tableUserPrivileges:                     autoid.InformationSchemaDBID + 18,
+	TableUserPrivileges:                     autoid.InformationSchemaDBID + 18,
 	tableSchemaPrivileges:                   autoid.InformationSchemaDBID + 19,
 	tableTablePrivileges:                    autoid.InformationSchemaDBID + 20,
 	tableColumnPrivileges:                   autoid.InformationSchemaDBID + 21,
@@ -1647,8 +1649,9 @@ func dataForStatisticsInTable(schema *model.DBInfo, table *model.TableInfo) [][]
 }
 
 const (
-	primaryKeyType    = "PRIMARY KEY"
-	primaryConstraint = "PRIMARY"
+	primaryKeyType = "PRIMARY KEY"
+	// PrimaryConstraint is the string constant of PRIMARY
+	PrimaryConstraint = "PRIMARY"
 	uniqueKeyType     = "UNIQUE"
 )
 
@@ -1827,105 +1830,6 @@ func dataForPartitions(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]typ
 		}
 	}
 	return rows, nil
-}
-
-func dataForKeyColumnUsage(ctx sessionctx.Context, schemas []*model.DBInfo) [][]types.Datum {
-	checker := privilege.GetPrivilegeManager(ctx)
-	rows := make([][]types.Datum, 0, len(schemas)) // The capacity is not accurate, but it is not a big problem.
-	for _, schema := range schemas {
-		for _, table := range schema.Tables {
-			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
-				continue
-			}
-			rs := keyColumnUsageInTable(schema, table)
-			rows = append(rows, rs...)
-		}
-	}
-	return rows
-}
-
-func keyColumnUsageInTable(schema *model.DBInfo, table *model.TableInfo) [][]types.Datum {
-	var rows [][]types.Datum
-	if table.PKIsHandle {
-		for _, col := range table.Columns {
-			if mysql.HasPriKeyFlag(col.Flag) {
-				record := types.MakeDatums(
-					CatalogVal,        // CONSTRAINT_CATALOG
-					schema.Name.O,     // CONSTRAINT_SCHEMA
-					primaryConstraint, // CONSTRAINT_NAME
-					CatalogVal,        // TABLE_CATALOG
-					schema.Name.O,     // TABLE_SCHEMA
-					table.Name.O,      // TABLE_NAME
-					col.Name.O,        // COLUMN_NAME
-					1,                 // ORDINAL_POSITION
-					1,                 // POSITION_IN_UNIQUE_CONSTRAINT
-					nil,               // REFERENCED_TABLE_SCHEMA
-					nil,               // REFERENCED_TABLE_NAME
-					nil,               // REFERENCED_COLUMN_NAME
-				)
-				rows = append(rows, record)
-				break
-			}
-		}
-	}
-	nameToCol := make(map[string]*model.ColumnInfo, len(table.Columns))
-	for _, c := range table.Columns {
-		nameToCol[c.Name.L] = c
-	}
-	for _, index := range table.Indices {
-		var idxName string
-		if index.Primary {
-			idxName = primaryConstraint
-		} else if index.Unique {
-			idxName = index.Name.O
-		} else {
-			// Only handle unique/primary key
-			continue
-		}
-		for i, key := range index.Columns {
-			col := nameToCol[key.Name.L]
-			record := types.MakeDatums(
-				CatalogVal,    // CONSTRAINT_CATALOG
-				schema.Name.O, // CONSTRAINT_SCHEMA
-				idxName,       // CONSTRAINT_NAME
-				CatalogVal,    // TABLE_CATALOG
-				schema.Name.O, // TABLE_SCHEMA
-				table.Name.O,  // TABLE_NAME
-				col.Name.O,    // COLUMN_NAME
-				i+1,           // ORDINAL_POSITION,
-				nil,           // POSITION_IN_UNIQUE_CONSTRAINT
-				nil,           // REFERENCED_TABLE_SCHEMA
-				nil,           // REFERENCED_TABLE_NAME
-				nil,           // REFERENCED_COLUMN_NAME
-			)
-			rows = append(rows, record)
-		}
-	}
-	for _, fk := range table.ForeignKeys {
-		fkRefCol := ""
-		if len(fk.RefCols) > 0 {
-			fkRefCol = fk.RefCols[0].O
-		}
-		for i, key := range fk.Cols {
-			col := nameToCol[key.L]
-			record := types.MakeDatums(
-				CatalogVal,    // CONSTRAINT_CATALOG
-				schema.Name.O, // CONSTRAINT_SCHEMA
-				fk.Name.O,     // CONSTRAINT_NAME
-				CatalogVal,    // TABLE_CATALOG
-				schema.Name.O, // TABLE_SCHEMA
-				table.Name.O,  // TABLE_NAME
-				col.Name.O,    // COLUMN_NAME
-				i+1,           // ORDINAL_POSITION,
-				1,             // POSITION_IN_UNIQUE_CONSTRAINT
-				schema.Name.O, // REFERENCED_TABLE_SCHEMA
-				fk.RefTable.O, // REFERENCED_TABLE_NAME
-				fkRefCol,      // REFERENCED_COLUMN_NAME
-			)
-			rows = append(rows, record)
-		}
-	}
-	return rows
 }
 
 func dataForTiDBHotRegions(ctx sessionctx.Context) (records [][]types.Datum, err error) {
@@ -2285,13 +2189,13 @@ var tableNameToColumns = map[string][]columnInfo{
 	tableFiles:                              filesCols,
 	tableProfiling:                          profilingCols,
 	tablePartitions:                         partitionsCols,
-	tableKeyColumn:                          keyColumnUsageCols,
+	TableKeyColumn:                          keyColumnUsageCols,
 	tableReferConst:                         referConstCols,
 	tableSessionVar:                         sessionVarCols,
 	tablePlugins:                            pluginsCols,
 	tableConstraints:                        tableConstraintsCols,
 	tableTriggers:                           tableTriggersCols,
-	tableUserPrivileges:                     tableUserPrivilegesCols,
+	TableUserPrivileges:                     tableUserPrivilegesCols,
 	tableSchemaPrivileges:                   tableSchemaPrivilegesCols,
 	tableTablePrivileges:                    tableTablePrivilegesCols,
 	tableColumnPrivileges:                   tableColumnPrivilegesCols,
@@ -2385,12 +2289,8 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		}
 	case tablePartitions:
 		fullRows, err = dataForPartitions(ctx, dbs)
-	case tableKeyColumn:
-		fullRows = dataForKeyColumnUsage(ctx, dbs)
 	case tableReferConst:
 	case tablePlugins, tableTriggers:
-	case tableUserPrivileges:
-		fullRows = dataForUserPrivileges(ctx)
 	case tableRoutines:
 	// TODO: Fill the following tables.
 	case tableSchemaPrivileges:
