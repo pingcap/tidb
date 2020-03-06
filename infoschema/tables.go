@@ -67,13 +67,14 @@ const (
 	tableProfiling  = "PROFILING"
 	tablePartitions = "PARTITIONS"
 	// TableKeyColumn is the string constant of KEY_COLUMN_USAGE
-	TableKeyColumn        = "KEY_COLUMN_USAGE"
-	tableReferConst       = "REFERENTIAL_CONSTRAINTS"
-	tableSessionVar       = "SESSION_VARIABLES"
-	tablePlugins          = "PLUGINS"
-	tableConstraints      = "TABLE_CONSTRAINTS"
-	tableTriggers         = "TRIGGERS"
-	tableUserPrivileges   = "USER_PRIVILEGES"
+	TableKeyColumn   = "KEY_COLUMN_USAGE"
+	tableReferConst  = "REFERENTIAL_CONSTRAINTS"
+	tableSessionVar  = "SESSION_VARIABLES"
+	tablePlugins     = "PLUGINS"
+	tableConstraints = "TABLE_CONSTRAINTS"
+	tableTriggers    = "TRIGGERS"
+	// TableUserPrivileges is the string constant of infoschema user privilege table.
+	TableUserPrivileges   = "USER_PRIVILEGES"
 	tableSchemaPrivileges = "SCHEMA_PRIVILEGES"
 	tableTablePrivileges  = "TABLE_PRIVILEGES"
 	tableColumnPrivileges = "COLUMN_PRIVILEGES"
@@ -147,7 +148,7 @@ var tableIDMap = map[string]int64{
 	tablePlugins:                            autoid.InformationSchemaDBID + 15,
 	tableConstraints:                        autoid.InformationSchemaDBID + 16,
 	tableTriggers:                           autoid.InformationSchemaDBID + 17,
-	tableUserPrivileges:                     autoid.InformationSchemaDBID + 18,
+	TableUserPrivileges:                     autoid.InformationSchemaDBID + 18,
 	tableSchemaPrivileges:                   autoid.InformationSchemaDBID + 19,
 	tableTablePrivileges:                    autoid.InformationSchemaDBID + 20,
 	tableColumnPrivileges:                   autoid.InformationSchemaDBID + 21,
@@ -2194,7 +2195,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	tablePlugins:                            pluginsCols,
 	tableConstraints:                        tableConstraintsCols,
 	tableTriggers:                           tableTriggersCols,
-	tableUserPrivileges:                     tableUserPrivilegesCols,
+	TableUserPrivileges:                     tableUserPrivilegesCols,
 	tableSchemaPrivileges:                   tableSchemaPrivilegesCols,
 	tableTablePrivileges:                    tableTablePrivilegesCols,
 	tableColumnPrivileges:                   tableColumnPrivilegesCols,
@@ -2290,8 +2291,6 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		fullRows, err = dataForPartitions(ctx, dbs)
 	case tableReferConst:
 	case tablePlugins, tableTriggers:
-	case tableUserPrivileges:
-		fullRows = dataForUserPrivileges(ctx)
 	case tableRoutines:
 	// TODO: Fill the following tables.
 	case tableSchemaPrivileges:
