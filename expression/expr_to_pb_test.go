@@ -720,3 +720,24 @@ func (s *testEvaluatorSerialSuites) TestNewCollationsEnabled(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(string(js), Equals, "{\"expr\":{\"tp\":201,\"val\":\"gAAAAAAAAAA=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-255,\"charset\":\"\"}},\"desc\":false}")
 }
+
+func (s *testEvalSerialSuite) TestPushCollationDown(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	dg := new(dataGen4Expr2PbTest)
+	fc, err := NewFunction(mock.NewContext(), ast.EQ, types.NewFieldType(mysql.TypeUnspecified), dg.genColumn(mysql.TypeVarchar, 0), dg.genColumn(mysql.TypeVarchar, 1))
+	c.Assert(err, IsNil)
+	client := new(mock.Client)
+	sc := new(stmtctx.StatementContext)
+
+	tps := []*types.FieldType{types.NewFieldType(mysql.TypeVarchar), types.NewFieldType(mysql.TypeVarchar)}
+	for _, coll := range []string{charset.CollationBin, charset.CollationLatin1, charset.CollationUTF8, charset.CollationUTF8MB4} {
+		fc.SetCharsetAndCollation("binary", coll, types.UnspecifiedLength) // only collation matters
+		pbExpr, _, _ := ExpressionsToPB(sc, []Expression{fc}, client)
+		expr, err := PBToExpr(pbExpr, tps, sc)
+		c.Assert(err, IsNil)
+		_, eColl, _ := expr.CharsetAndCollation(nil)
+		c.Assert(eColl, Equals, coll)
+	}
+}

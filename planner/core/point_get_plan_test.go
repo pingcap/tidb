@@ -237,6 +237,12 @@ func (s *testPointGetSuite) TestWhereIn2BatchPointGet(c *C) {
 		"Batch_Point_Get_1 5.00 root table:t, handle:[1 2 3 1 2], keep order:false, desc:false",
 	))
 
+	tk.MustExec("begin")
+	tk.MustQuery("explain select * from t where a in (1, 2, 3, 1, 2) FOR UPDATE").Check(testkit.Rows(
+		"Batch_Point_Get_1 5.00 root table:t, handle:[1 2 3 1 2], keep order:false, desc:false, lock",
+	))
+	tk.MustExec("rollback")
+
 	tk.MustQuery("explain select * from t where (a) in ((1), (2), (3), (1), (2))").Check(testkit.Rows(
 		"Batch_Point_Get_1 5.00 root table:t, handle:[1 2 3 1 2], keep order:false, desc:false",
 	))
@@ -273,6 +279,12 @@ func (s *testPointGetSuite) TestWhereIn2BatchPointGet(c *C) {
 		"2 3 4",
 		"4 5 6",
 	))
+
+	tk.MustExec("begin pessimistic")
+	tk.MustQuery("explain select * from t where (a, b) in ((1, 2), (2, 3)) FOR UPDATE").Check(testkit.Rows(
+		"Batch_Point_Get_1 2.00 root table:t, index:a b, lock",
+	))
+	tk.MustExec("rollback")
 }
 
 // Test that the plan id will be reset before optimization every time.

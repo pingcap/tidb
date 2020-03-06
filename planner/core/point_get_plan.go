@@ -211,6 +211,8 @@ type BatchPointGetPlan struct {
 	KeepOrder        bool
 	Desc             bool
 	cost             float64
+	Lock             bool
+	LockWaitTime     int64
 }
 
 // attach2Task makes the current physical plan as the father of task's physicalPlan and updates the cost of
@@ -250,6 +252,9 @@ func (p *BatchPointGetPlan) explainInfo(normalized bool) string {
 	}
 	fmt.Fprintf(buffer, ", keep order:%v", p.KeepOrder)
 	fmt.Fprintf(buffer, ", desc:%v", p.Desc)
+	if p.Lock {
+		fmt.Fprintf(buffer, ", lock")
+	}
 	return buffer.String()
 }
 
@@ -326,6 +331,7 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) Plan {
 		// Try to convert the `SELECT a, b, c FROM t WHERE (a, b, c) in ((1, 2, 4), (1, 3, 5))` to
 		// `PhysicalUnionAll` which children are `PointGet` if exists an unique key (a, b, c) in table `t`
 		if fp := tryWhereIn2BatchPointGet(ctx, x); fp != nil {
+			fp.Lock, fp.LockWaitTime = getLockWaitTime(ctx, x.LockTp)
 			return fp
 		}
 		fp := tryPointGetPlan(ctx, x)
@@ -339,20 +345,9 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) Plan {
 				tableDual.SetSchema(fp.Schema())
 				return tableDual.Init(ctx, &property.StatsInfo{}, 0)
 			}
-			if x.LockTp == ast.SelectLockForUpdate || x.LockTp == ast.SelectLockForUpdateNoWait {
-				// Locking of rows for update using SELECT FOR UPDATE only applies when autocommit
-				// is disabled (either by beginning transaction with START TRANSACTION or by setting
-				// autocommit to 0. If autocommit is enabled, the rows matching the specification are not locked.
-				// See https://dev.mysql.com/doc/refman/5.7/en/innodb-locking-reads.html
-				sessVars := ctx.GetSessionVars()
-				if !sessVars.IsAutocommit() || sessVars.InTxn() {
-					fp.Lock = true
-					fp.IsForUpdate = true
-					fp.LockWaitTime = sessVars.LockWaitTimeout
-					if x.LockTp == ast.SelectLockForUpdateNoWait {
-						fp.LockWaitTime = kv.LockNoWait
-					}
-				}
+			fp.Lock, fp.LockWaitTime = getLockWaitTime(ctx, x.LockTp)
+			if fp.Lock {
+				fp.IsForUpdate = true
 			}
 			return fp
 		}
@@ -364,12 +359,30 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) Plan {
 	return nil
 }
 
+func getLockWaitTime(ctx sessionctx.Context, lockTp ast.SelectLockType) (lock bool, waitTime int64) {
+	if lockTp == ast.SelectLockForUpdate || lockTp == ast.SelectLockForUpdateNoWait {
+		// Locking of rows for update using SELECT FOR UPDATE only applies when autocommit
+		// is disabled (either by beginning transaction with START TRANSACTION or by setting
+		// autocommit to 0. If autocommit is enabled, the rows matching the specification are not locked.
+		// See https://dev.mysql.com/doc/refman/5.7/en/innodb-locking-reads.html
+		sessVars := ctx.GetSessionVars()
+		if !sessVars.IsAutocommit() || sessVars.InTxn() {
+			lock = true
+			waitTime = sessVars.LockWaitTimeout
+			if lockTp == ast.SelectLockForUpdateNoWait {
+				waitTime = kv.LockNoWait
+			}
+		}
+	}
+	return
+}
+
 func newBatchPointGetPlan(
 	ctx sessionctx.Context, patternInExpr *ast.PatternInExpr,
 	tryHandle bool, fieldType *types.FieldType,
 	tbl *model.TableInfo, schema *expression.Schema,
 	names []*types.FieldName, whereColNames []string,
-) Plan {
+) *BatchPointGetPlan {
 	statsInfo := &property.StatsInfo{RowCount: float64(len(patternInExpr.List))}
 	if tryHandle && fieldType != nil {
 		var handles = make([]int64, len(patternInExpr.List))
@@ -491,10 +504,10 @@ func newBatchPointGetPlan(
 	}.Init(ctx, statsInfo, schema, names, 0)
 }
 
-func tryWhereIn2BatchPointGet(ctx sessionctx.Context, selStmt *ast.SelectStmt) Plan {
+func tryWhereIn2BatchPointGet(ctx sessionctx.Context, selStmt *ast.SelectStmt) *BatchPointGetPlan {
 	if selStmt.OrderBy != nil || selStmt.GroupBy != nil ||
 		selStmt.Limit != nil || selStmt.Having != nil ||
-		len(selStmt.WindowSpecs) > 0 || selStmt.LockTp != ast.SelectLockNone {
+		len(selStmt.WindowSpecs) > 0 {
 		return nil
 	}
 	in, ok := selStmt.Where.(*ast.PatternInExpr)
