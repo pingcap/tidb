@@ -252,9 +252,9 @@ func (helper extractHelper) extractLikePatternCol(
 		// e.g:
 		// SELECT * FROM t WHERE c LIKE '%a%' OR c LIKE '%b%'
 		if fn.FuncName.L == ast.LogicOr {
-			canBuildPattern, pattern = helper.extractOrLikePattern(fn, expr, extractColName, extractCols)
+			canBuildPattern, pattern = helper.extractOrLikePattern(fn, extractColName, extractCols)
 		} else {
-			canBuildPattern, pattern = helper.extractLikePattern(fn, expr, extractColName, extractCols)
+			canBuildPattern, pattern = helper.extractLikePattern(fn, extractColName, extractCols)
 		}
 		if canBuildPattern {
 			patterns = append(patterns, pattern)
@@ -266,22 +266,26 @@ func (helper extractHelper) extractLikePatternCol(
 }
 
 func (helper extractHelper) extractOrLikePattern(
-	fn *expression.ScalarFunction,
-	predicate expression.Expression,
+	orFunc *expression.ScalarFunction,
 	extractColName string,
 	extractCols map[int64]*types.FieldName,
 ) (
 	ok bool,
 	pattern string,
 ) {
-	orPredicates := expression.SplitDNFItems(predicate)
-	if len(orPredicates) == 0 {
+	predicates := expression.SplitDNFItems(orFunc)
+	if len(predicates) == 0 {
 		return false, ""
 	}
 
-	patternBuilder := make([]string, 0, len(orPredicates))
-	for _, orPredicate := range orPredicates {
-		ok, partPattern := helper.extractLikePattern(fn, orPredicate, extractColName, extractCols)
+	patternBuilder := make([]string, 0, len(predicates))
+	for _, predicate := range predicates {
+		fn, ok := predicate.(*expression.ScalarFunction)
+		if !ok {
+			return false, ""
+		}
+
+		ok, partPattern := helper.extractLikePattern(fn, extractColName, extractCols)
 		if !ok {
 			return false, ""
 		}
@@ -292,7 +296,6 @@ func (helper extractHelper) extractOrLikePattern(
 
 func (helper extractHelper) extractLikePattern(
 	fn *expression.ScalarFunction,
-	predicate expression.Expression,
 	extractColName string,
 	extractCols map[int64]*types.FieldName,
 ) (
