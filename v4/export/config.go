@@ -19,6 +19,7 @@ type Config struct {
 	Threads  int
 
 	FileSize      uint64
+	StatementSize uint64
 	OutputDirPath string
 	ServerInfo    ServerInfo
 	SortByPk      bool
@@ -39,6 +40,7 @@ func DefaultConfig() *Config {
 		Password:      "",
 		Threads:       4,
 		FileSize:      UnspecifiedSize,
+		StatementSize: UnspecifiedSize,
 		OutputDirPath: ".",
 		ServerInfo:    ServerInfoUnknown,
 		SortByPk:      true,

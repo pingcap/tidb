@@ -63,7 +63,7 @@ func (s *testIRImplSuite) TestRowIter(c *C) {
 	c.Assert(iter.HasNext(), IsFalse)
 }
 
-func (s *testIRImplSuite) TestSizedRowIter(c *C) {
+func (s *testIRImplSuite) TestChunkRowIter(c *C) {
 	db, mock, err := sqlmock.New()
 	c.Assert(err, IsNil)
 	defer db.Close()
@@ -78,18 +78,41 @@ func (s *testIRImplSuite) TestSizedRowIter(c *C) {
 	rows, err := db.Query("SELECT a, b FROM t")
 	c.Assert(err, IsNil)
 
-	sizedRowIter := sizedRowIter{
-		rowIter:   newRowIter(rows, 2),
-		sizeLimit: 200,
-	}
+	var (
+		testFileSize      uint64 = 200
+		testStatementSize uint64 = 101
+
+		expectedSize = [][]uint64{
+			[]uint64{50, 50},
+			[]uint64{100, 100},
+			[]uint64{150, 150},
+			[]uint64{200, 50},
+		}
+	)
+
+	sqlRowIter := SQLRowIter(&fileRowIter{
+		rowIter:            newRowIter(rows, 2),
+		fileSizeLimit:      testFileSize,
+		statementSizeLimit: testStatementSize,
+	})
+
 	res := newSimpleRowReceiver(2)
-	for i := 0; i < 200/50; i++ {
-		c.Assert(sizedRowIter.HasNext(), IsTrue)
-		err := sizedRowIter.Next(res)
-		c.Assert(err, IsNil)
+
+	var resSize [][]uint64
+	for sqlRowIter.HasNextSQLRowIter() {
+		sqlRowIter = sqlRowIter.NextSQLRowIter()
+		fileRowIter, ok := sqlRowIter.(*fileRowIter)
+		c.Assert(ok, IsTrue)
+
+		for sqlRowIter.HasNext() {
+			c.Assert(sqlRowIter.Next(res), IsNil)
+			resSize = append(resSize, []uint64{fileRowIter.currentFileSize, fileRowIter.currentStatementSize})
+		}
 	}
-	c.Assert(sizedRowIter.HasNext(), IsFalse)
-	c.Assert(sizedRowIter.HasNext(), IsFalse)
+
+	c.Assert(resSize, DeepEquals, expectedSize)
+	c.Assert(sqlRowIter.HasNextSQLRowIter(), IsFalse)
+	c.Assert(sqlRowIter.HasNext(), IsFalse)
 	rows.Close()
-	c.Assert(sizedRowIter.Next(res), NotNil)
+	c.Assert(sqlRowIter.Next(res), NotNil)
 }
