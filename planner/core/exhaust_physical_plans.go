@@ -1404,6 +1404,7 @@ func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) []Ph
 
 	hashJoins := p.getHashJoins(prop)
 	if (p.preferJoinType & preferHashJoin) > 0 {
+		logutil.BgLogger().Info("prefer hash join")
 		return hashJoins
 	}
 	joins = append(joins, hashJoins...)
@@ -1411,7 +1412,8 @@ func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) []Ph
 	broadCastJoins := p.tryToGetBroadCastJoin(prop)
 	joins = append(joins, broadCastJoins...)
 	if (p.preferJoinType & preferBCJoin) > 0 {
-		return mergeJoins
+		logutil.BgLogger().Info("prefer bc join")
+		return broadCastJoins
 	}
 	return joins
 }
