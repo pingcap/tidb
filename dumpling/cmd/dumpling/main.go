@@ -27,18 +27,19 @@ import (
 )
 
 var (
-	database    string
-	host        string
-	user        string
-	port        int
-	password    string
-	threads     int
-	outputDir   string
-	fileSize    uint64
-	logLevel    string
-	consistency string
-	snapshot    string
-	noViews     bool
+	database      string
+	host          string
+	user          string
+	port          int
+	password      string
+	threads       int
+	outputDir     string
+	fileSize      uint64
+	statementSize uint64
+	logLevel      string
+	consistency   string
+	snapshot      string
+	noViews       bool
 
 	rootCmd = &cobra.Command{
 		Use:   "dumpling",
@@ -64,6 +65,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVarP(&password, "password", "p", "", "User password")
 	rootCmd.PersistentFlags().IntVarP(&threads, "threads", "t", 4, "Number of goroutines to use, default 4")
 	rootCmd.PersistentFlags().Uint64VarP(&fileSize, "filesize", "F", export.UnspecifiedSize, "The approximate size of output file")
+	rootCmd.PersistentFlags().Uint64VarP(&statementSize, "statement-size", "S", export.UnspecifiedSize, "Attempted size of INSERT statement in bytes")
 	rootCmd.PersistentFlags().StringVarP(&outputDir, "output", "o", defaultOutputDir, "Output directory")
 	rootCmd.PersistentFlags().StringVar(&logLevel, "loglevel", "info", "Log level: {debug|info|warn|error|dpanic|panic|fatal}")
 	rootCmd.PersistentFlags().StringVar(&consistency, "consistency", "auto", "Consistency level during dumping: {auto|none|flush|lock|snapshot}")
@@ -88,6 +90,7 @@ func run() {
 	conf.Password = password
 	conf.Threads = threads
 	conf.FileSize = fileSize
+	conf.StatementSize = statementSize
 	conf.OutputDirPath = outputDir
 	conf.NoViews = noViews
 

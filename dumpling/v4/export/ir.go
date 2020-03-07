@@ -17,6 +17,8 @@ type TableDataIR interface {
 type SQLRowIter interface {
 	Next(RowReceiver) error
 	HasNext() bool
+	HasNextSQLRowIter() bool
+	NextSQLRowIter() SQLRowIter
 }
 
 type RowReceiverStringer interface {

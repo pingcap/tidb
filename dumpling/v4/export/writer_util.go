@@ -31,8 +31,8 @@ func WriteMeta(meta MetaIR, w io.StringWriter) error {
 }
 
 func WriteInsert(tblIR TableDataIR, w io.StringWriter) error {
-	rowIter := tblIR.Rows()
-	if !rowIter.HasNext() {
+	fileRowIter := tblIR.Rows()
+	if !fileRowIter.HasNext() {
 		return nil
 	}
 
@@ -43,34 +43,40 @@ func WriteInsert(tblIR TableDataIR, w io.StringWriter) error {
 		}
 	}
 
-	tblName := wrapBackTicks(tblIR.TableName())
-	if err := write(w, fmt.Sprintf("INSERT INTO %s VALUES\n", tblName)); err != nil {
-		return err
+	var (
+		insertStatementPrefix = fmt.Sprintf("INSERT INTO %s VALUES\n", wrapBackTicks(tblIR.TableName()))
+		row                   = MakeRowReceiver(tblIR.ColumnTypes())
+		counter               = 0
+	)
+	for fileRowIter.HasNextSQLRowIter() {
+		if err := write(w, insertStatementPrefix); err != nil {
+			return err
+		}
+
+		fileRowIter = fileRowIter.NextSQLRowIter()
+		for fileRowIter.HasNext() {
+			if err := fileRowIter.Next(row); err != nil {
+				log.Zap().Error("scanning from sql.Row failed", zap.Error(err))
+				return err
+			}
+
+			if err := write(w, row.ToString()); err != nil {
+				return err
+			}
+			counter += 1
+
+			var splitter string
+			if fileRowIter.HasNext() {
+				splitter = ","
+			} else {
+				splitter = ";"
+			}
+			if err := write(w, fmt.Sprintf("%s\n", splitter)); err != nil {
+				return err
+			}
+		}
 	}
 
-	counter := 0
-	for rowIter.HasNext() {
-		row := MakeRowReceiver(tblIR.ColumnTypes())
-		if err := rowIter.Next(row); err != nil {
-			log.Zap().Error("scanning from sql.Row failed", zap.Error(err))
-			return err
-		}
-
-		if err := write(w, row.ToString()); err != nil {
-			return err
-		}
-		counter += 1
-
-		var splitter string
-		if rowIter.HasNext() {
-			splitter = ","
-		} else {
-			splitter = ";"
-		}
-		if err := write(w, fmt.Sprintf("%s\n", splitter)); err != nil {
-			return err
-		}
-	}
 	log.Zap().Debug("dumping table",
 		zap.String("table", tblIR.TableName()),
 		zap.Int("record counts", counter))

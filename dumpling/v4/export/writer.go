@@ -39,17 +39,15 @@ func (f *SimpleWriter) WriteTableMeta(ctx context.Context, db, table, createSQL 
 
 func (f *SimpleWriter) WriteTableData(ctx context.Context, ir TableDataIR) error {
 	log.Zap().Debug("start dumping table...", zap.String("table", ir.TableName()))
-	if f.cfg.FileSize == UnspecifiedSize {
-		fileName := path.Join(f.cfg.OutputDirPath, fmt.Sprintf("%s.%s.sql", ir.DatabaseName(), ir.TableName()))
-		fileWriter, tearDown := buildLazyFileWriter(fileName)
-		defer tearDown()
-		return WriteInsert(ir, fileWriter)
+
+	chunks := splitTableDataIntoChunks(ir, f.cfg.FileSize, f.cfg.StatementSize)
+	chunkCount := 0
+	fileName := fmt.Sprintf("%s.%s.sql", ir.DatabaseName(), ir.TableName())
+	if f.cfg.FileSize != UnspecifiedSize {
+		fileName = fmt.Sprintf("%s.%s.%d.sql", ir.DatabaseName(), ir.TableName(), chunkCount)
 	}
 
-	chunks := splitTableDataIntoChunks(ir, f.cfg.FileSize)
-	chunkCount := 0
 	for {
-		fileName := fmt.Sprintf("%s.%s.%d.sql", ir.DatabaseName(), ir.TableName(), chunkCount)
 		filePath := path.Join(f.cfg.OutputDirPath, fileName)
 		fileWriter, tearDown := buildLazyFileWriter(filePath)
 		intWriter := &InterceptStringWriter{StringWriter: fileWriter}
@@ -62,7 +60,12 @@ func (f *SimpleWriter) WriteTableData(ctx context.Context, ir TableDataIR) error
 		if !intWriter.SomethingIsWritten {
 			break
 		}
+
+		if f.cfg.FileSize == UnspecifiedSize {
+			break
+		}
 		chunkCount += 1
+		fileName = fmt.Sprintf("%s.%s.%d.sql", ir.DatabaseName(), ir.TableName(), chunkCount)
 	}
 	log.Zap().Debug("dumping table successfully",
 		zap.String("table", ir.TableName()))
