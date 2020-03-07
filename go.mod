@@ -78,3 +78,5 @@ require (
 )
 
 go 1.13
+
+replace github.com/pingcap/tidb => github.com/zhaox1n/tidb v0.0.0-20200307152503-80facef6cf5c
