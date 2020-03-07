@@ -514,7 +514,7 @@ func (s *extractorSuite) TestClusterLogTableExtractor(c *C) {
 			patterns:  []string{".*coprocessor.*", ".*txn=123.*"},
 		},
 		{
-			sql:       "(message regexp '.*pd.*' or message regexp '.*tidb.*')",
+			sql:       "select * from information_schema.cluster_log where (message regexp '.*pd.*' or message regexp '.*tidb.*')",
 			nodeTypes: set.NewStringSet(),
 			instances: set.NewStringSet(),
 			patterns:  []string{".*pd.*|.*tidb.*"},
