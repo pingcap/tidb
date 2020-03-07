@@ -1187,15 +1187,6 @@ func dataForProcesslist(ctx sessionctx.Context) [][]types.Datum {
 	return records
 }
 
-func getAutoIncrementID(ctx sessionctx.Context, schema *model.DBInfo, tblInfo *model.TableInfo) (int64, error) {
-	is := ctx.GetSessionVars().TxnCtx.InfoSchema.(InfoSchema)
-	tbl, err := is.TableByName(schema.Name, tblInfo.Name)
-	if err != nil {
-		return 0, err
-	}
-	return tbl.Allocator(ctx, autoid.RowIDAllocType).Base() + 1, nil
-}
-
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
 // The returned description string may be:
 //  - "NOT_SHARDED": for tables that SHARD_ROW_ID_BITS is not specified.
@@ -1846,7 +1837,7 @@ func dataForMetricTables(ctx sessionctx.Context) [][]types.Datum {
 
 var tableNameToColumns = map[string][]columnInfo{
 	TableSchemata:                           schemataCols,
-	tableTables:                             tablesCols,
+	TableTables:                             tablesCols,
 	tableColumns:                            columnsCols,
 	tableColumnStatistics:                   columnStatisticsCols,
 	tableStatistics:                         statisticsCols,
@@ -1854,7 +1845,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableCollations:                         collationsCols,
 	tableFiles:                              filesCols,
 	tableProfiling:                          profilingCols,
-	tablePartitions:                         partitionsCols,
+	TablePartitions:                         partitionsCols,
 	TableKeyColumn:                          keyColumnUsageCols,
 	tableReferConst:                         referConstCols,
 	tableSessionVar:                         sessionVarCols,
@@ -1938,8 +1929,6 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 	dbs := is.AllSchemas()
 	sort.Sort(SchemasSorter(dbs))
 	switch it.meta.Name.O {
-	//case tableTables:
-	//	fullRows, err = dataForTables(ctx, dbs)
 	case tableColumns:
 		fullRows = dataForColumns(ctx, dbs)
 	case tableStatistics:
@@ -1953,8 +1942,6 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		if v, ok := ctx.GetSessionVars().GetSystemVar("profiling"); ok && variable.TiDBOptOn(v) {
 			fullRows = dataForPseudoProfiling()
 		}
-	case tablePartitions:
-		fullRows, err = dataForPartitions(ctx, dbs)
 	case tableReferConst:
 	case tablePlugins, tableTriggers:
 	case tableRoutines:

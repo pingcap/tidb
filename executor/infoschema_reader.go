@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
@@ -55,6 +56,10 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		switch e.table.Name.O {
 		case infoschema.TableSchemata:
 			e.rows = dataForSchemata(sctx, dbs)
+		case infoschema.TableTables:
+			e.rows, err = dataForTables(sctx, dbs)
+		case infoschema.TablePartitions:
+			e.rows, err = dataForPartitions(sctx, dbs)
 		case infoschema.TableTiDBIndexes:
 			e.rows, err = dataForIndexes(sctx, dbs)
 		case infoschema.TableViews:
@@ -224,7 +229,7 @@ func (c *statsCache) get(ctx sessionctx.Context) (map[int64]uint64, map[tableHis
 }
 
 func getAutoIncrementID(ctx sessionctx.Context, schema *model.DBInfo, tblInfo *model.TableInfo) (int64, error) {
-	is := ctx.GetSessionVars().TxnCtx.InfoSchema.(InfoSchema)
+	is := ctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema)
 	tbl, err := is.TableByName(schema.Name, tblInfo.Name)
 	if err != nil {
 		return 0, err
@@ -273,7 +278,7 @@ func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.D
 	checker := privilege.GetPrivilegeManager(ctx)
 
 	var rows [][]types.Datum
-	createTimeTp := tablesCols[15].tp
+	createTimeTp := mysql.TypeDatetime
 	for _, schema := range schemas {
 		for _, table := range schema.Tables {
 			collation := table.Collate
@@ -293,7 +298,7 @@ func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.D
 					createOptions = "partitioned"
 				}
 				var autoIncID interface{}
-				hasAutoIncID, _ := HasAutoIncrementColumn(table)
+				hasAutoIncID, _ := infoschema.HasAutoIncrementColumn(table)
 				if hasAutoIncID {
 					autoIncID, err = getAutoIncrementID(ctx, schema, table)
 					if err != nil {
@@ -318,7 +323,7 @@ func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.D
 					avgRowLength = dataLength / rowCount
 				}
 
-				shardingInfo := GetShardingInfo(schema, table)
+				shardingInfo := infoschema.GetShardingInfo(schema, table)
 				record := types.MakeDatums(
 					infoschema.CatalogVal, // TABLE_CATALOG
 					schema.Name.O,         // TABLE_SCHEMA
@@ -385,7 +390,7 @@ func dataForPartitions(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]typ
 	}
 	checker := privilege.GetPrivilegeManager(ctx)
 	var rows [][]types.Datum
-	createTimeTp := partitionsCols[18].tp
+	createTimeTp := mysql.TypeDatetime
 	for _, schema := range schemas {
 		for _, table := range schema.Tables {
 			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.SelectPriv) {
