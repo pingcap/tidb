@@ -248,6 +248,9 @@ func (helper extractHelper) extractLikePatternCol(
 
 		var canBuildPattern bool
 		var pattern string
+		// We use '|' to combine DNF regular expression: .*a.*|.*b.*
+		// e.g:
+		// SELECT * FROM t WHERE c LIKE '%a%' OR c LIKE '%b%'
 		if fn.FuncName.L == ast.LogicOr {
 			canBuildPattern, pattern = helper.extractOrLikePattern(fn, expr, extractColName, extractCols)
 		} else {
@@ -274,18 +277,17 @@ func (helper extractHelper) extractOrLikePattern(
 	orPredicates := expression.SplitDNFItems(predicate)
 	if len(orPredicates) == 0 {
 		return false, ""
-	} else {
-		patternBuilder := make([]string, 0, len(orPredicates))
-		for _, orPredicate := range orPredicates {
-			ok, partPattern := helper.extractLikePattern(fn, orPredicate, extractColName, extractCols)
-			if !ok {
-				return false, ""
-			} else {
-				patternBuilder = append(patternBuilder, partPattern)
-			}
-		}
-		return true, strings.Join(patternBuilder, "|")
 	}
+
+	patternBuilder := make([]string, 0, len(orPredicates))
+	for _, orPredicate := range orPredicates {
+		ok, partPattern := helper.extractLikePattern(fn, orPredicate, extractColName, extractCols)
+		if !ok {
+			return false, ""
+		}
+		patternBuilder = append(patternBuilder, partPattern)
+	}
+	return true, strings.Join(patternBuilder, "|")
 }
 
 func (helper extractHelper) extractLikePattern(
