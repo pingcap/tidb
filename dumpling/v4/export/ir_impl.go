@@ -32,26 +32,61 @@ func (iter *rowIter) HasNext() bool {
 	return iter.hasNext
 }
 
-type sizedRowIter struct {
-	rowIter     SQLRowIter
-	sizeLimit   uint64
-	currentSize uint64
+func (iter *rowIter) HasNextSQLRowIter() bool {
+	return iter.hasNext
 }
 
-func (s *sizedRowIter) Next(row RowReceiver) error {
-	err := s.rowIter.Next(row)
+func (iter *rowIter) NextSQLRowIter() SQLRowIter {
+	return iter
+}
+
+type fileRowIter struct {
+	rowIter            SQLRowIter
+	fileSizeLimit      uint64
+	statementSizeLimit uint64
+
+	currentStatementSize uint64
+	currentFileSize      uint64
+}
+
+func (c *fileRowIter) Next(row RowReceiver) error {
+	err := c.rowIter.Next(row)
 	if err != nil {
 		return err
 	}
-	s.currentSize += row.ReportSize()
+
+	size := row.ReportSize()
+	c.currentFileSize += size
+	c.currentStatementSize += size
 	return nil
 }
 
-func (s *sizedRowIter) HasNext() bool {
-	if s.currentSize >= s.sizeLimit {
+func (c *fileRowIter) HasNext() bool {
+	if c.fileSizeLimit != UnspecifiedSize && c.currentFileSize >= c.fileSizeLimit {
 		return false
 	}
-	return s.rowIter.HasNext()
+
+	if c.statementSizeLimit != UnspecifiedSize && c.currentStatementSize >= c.statementSizeLimit {
+		return false
+	}
+	return c.rowIter.HasNext()
+}
+
+func (c *fileRowIter) HasNextSQLRowIter() bool {
+	if c.fileSizeLimit != UnspecifiedSize && c.currentFileSize >= c.fileSizeLimit {
+		return false
+	}
+	return c.rowIter.HasNext()
+}
+
+func (c *fileRowIter) NextSQLRowIter() SQLRowIter {
+	return &fileRowIter{
+		rowIter:              c.rowIter,
+		fileSizeLimit:        c.fileSizeLimit,
+		statementSizeLimit:   c.statementSizeLimit,
+		currentFileSize:      c.currentFileSize,
+		currentStatementSize: 0,
+	}
 }
 
 type stringIter struct {
@@ -117,24 +152,28 @@ func (td *tableData) SpecialComments() StringIter {
 
 type tableDataChunks struct {
 	TableDataIR
-	rows      SQLRowIter
-	sizeLimit uint64
+	rows               SQLRowIter
+	chunkSizeLimit     uint64
+	statementSizeLimit uint64
 }
 
 func (t *tableDataChunks) Rows() SQLRowIter {
 	if t.rows == nil {
 		t.rows = t.TableDataIR.Rows()
 	}
-	return &sizedRowIter{
-		rowIter:   t.rows,
-		sizeLimit: t.sizeLimit,
+
+	return &fileRowIter{
+		rowIter:            t.rows,
+		statementSizeLimit: t.statementSizeLimit,
+		fileSizeLimit:      t.chunkSizeLimit,
 	}
 }
 
-func splitTableDataIntoChunks(td TableDataIR, chunkSize uint64) *tableDataChunks {
+func splitTableDataIntoChunks(td TableDataIR, chunkSize uint64, statementSize uint64) *tableDataChunks {
 	return &tableDataChunks{
-		TableDataIR: td,
-		sizeLimit:   chunkSize,
+		TableDataIR:        td,
+		chunkSizeLimit:     chunkSize,
+		statementSizeLimit: statementSize,
 	}
 }
 
