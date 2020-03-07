@@ -425,7 +425,8 @@ func (sr *simpleRewriter) likeToScalarFunc(v *ast.PatternLikeExpr) {
 		return
 	}
 	escapeTp := &types.FieldType{}
-	types.DefaultTypeForValue(int(v.Escape), escapeTp)
+	char, col := sr.ctx.GetSessionVars().GetCharsetInfo()
+	types.DefaultTypeForValue(int(v.Escape), escapeTp, char, col)
 	function := sr.notToExpression(v.Not, ast.Like, &v.Type,
 		expr, pattern, &Constant{Value: types.NewIntDatum(int64(v.Escape)), RetType: escapeTp})
 	sr.push(function)
