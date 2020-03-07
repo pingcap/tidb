@@ -14,8 +14,8 @@
 package cascades
 
 import (
-	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util/set"
 	"math"
 
 	"github.com/pingcap/parser/ast"
