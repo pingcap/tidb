@@ -396,6 +396,7 @@ func (e *maxMin4Decimal) MergePartialResult(sctx sessionctx.Context, src, dst Pa
 
 type maxMin4String struct {
 	baseMaxMinAggFunc
+	retTp *types.FieldType
 }
 
 func (e *maxMin4String) AllocPartialResult() PartialResult {
