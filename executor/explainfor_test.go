@@ -14,6 +14,7 @@
 package executor_test
 
 import (
+	"crypto/tls"
 	"fmt"
 
 	. "github.com/pingcap/check"
@@ -49,6 +50,9 @@ func (msm *mockSessionManager1) GetProcessInfo(id uint64) (*util.ProcessInfo, bo
 // Kill implements the SessionManager.Kill interface.
 func (msm *mockSessionManager1) Kill(cid uint64, query bool) {
 
+}
+
+func (msm *mockSessionManager1) UpdateTLSConfig(cfg *tls.Config) {
 }
 
 func (s *testSuite) TestExplainFor(c *C) {

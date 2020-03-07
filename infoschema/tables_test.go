@@ -14,6 +14,7 @@
 package infoschema_test
 
 import (
+	"crypto/tls"
 	"fmt"
 	"os"
 	"strconv"
@@ -320,6 +321,8 @@ func (sm *mockSessionManager) GetProcessInfo(id uint64) (*util.ProcessInfo, bool
 }
 
 func (sm *mockSessionManager) Kill(connectionID uint64, query bool) {}
+
+func (sm *mockSessionManager) UpdateTLSConfig(cfg *tls.Config) {}
 
 func (s *testTableSuite) TestSomeTables(c *C) {
 	tk := testkit.NewTestKit(c, s.store)

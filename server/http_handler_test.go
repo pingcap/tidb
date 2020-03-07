@@ -15,6 +15,9 @@ package server
 
 import (
 	"bytes"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
@@ -878,4 +881,17 @@ func (ts *HTTPHandlerTestSuite) TestAllServerInfo(c *C) {
 	c.Assert(serverInfo.Version, Equals, mysql.ServerVersion)
 	c.Assert(serverInfo.GitHash, Equals, printer.TiDBGitHash)
 	c.Assert(serverInfo.ID, Equals, ddl.GetID())
+}
+
+func (ts *HTTPHandlerTestSuite) TestCheckCN(c *C) {
+	s := &Server{cfg: &config.Config{Security: config.Security{ClusterVerifyCN: []string{"a ", "b", "c"}}}}
+	tlsConfig := &tls.Config{}
+	s.setCNChecker(tlsConfig)
+	c.Assert(tlsConfig.VerifyPeerCertificate, NotNil)
+	err := tlsConfig.VerifyPeerCertificate(nil, [][]*x509.Certificate{{{Subject: pkix.Name{CommonName: "a"}}}})
+	c.Assert(err, IsNil)
+	err = tlsConfig.VerifyPeerCertificate(nil, [][]*x509.Certificate{{{Subject: pkix.Name{CommonName: "b"}}}})
+	c.Assert(err, IsNil)
+	err = tlsConfig.VerifyPeerCertificate(nil, [][]*x509.Certificate{{{Subject: pkix.Name{CommonName: "d"}}}})
+	c.Assert(err, NotNil)
 }
