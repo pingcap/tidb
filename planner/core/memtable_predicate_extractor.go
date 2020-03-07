@@ -219,6 +219,7 @@ func (helper extractHelper) extractCol(
 // extracts the string pattern column, e.g:
 // SELECT * FROM t WHERE c LIKE '%a%'
 // SELECT * FROM t WHERE c LIKE '%a%' AND c REGEXP '.*xxx.*'
+// SELECT * FROM t WHERE c LIKE '%a%' OR c REGEXP '.*xxx.*'
 func (helper extractHelper) extractLikePatternCol(
 	schema *expression.Schema,
 	names []*types.FieldName,
@@ -305,7 +306,7 @@ func (helper extractHelper) extractLikePattern(
 	if colName == extractColName {
 		switch fn.FuncName.L {
 		case ast.EQ:
-			return true, "^"+regexp.QuoteMeta(datums[0].GetString())+"$"
+			return true, "^" + regexp.QuoteMeta(datums[0].GetString()) + "$"
 		case ast.Like:
 			return true, stringutil.CompileLike2Regexp(datums[0].GetString())
 		case ast.Regexp:
