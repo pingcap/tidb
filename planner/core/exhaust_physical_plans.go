@@ -1410,6 +1410,9 @@ func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) []Ph
 
 	broadCastJoins := p.tryToGetBroadCastJoin(prop)
 	joins = append(joins, broadCastJoins...)
+	if (p.preferJoinType & preferBCJoin) > 0 {
+		return mergeJoins
+	}
 	return joins
 }
 

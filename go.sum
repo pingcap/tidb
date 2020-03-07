@@ -126,6 +126,8 @@ github.com/grpc-ecosystem/grpc-gateway v1.9.5 h1:UImYN5qQ8tuGpGE16ZmjvcTtTw24zw1
 github.com/grpc-ecosystem/grpc-gateway v1.9.5/go.mod h1:vNeuVxBJEsws4ogUvrchl83t/GYV9WGTSLVdBhOQFDY=
 github.com/grpc-ecosystem/grpc-gateway v1.12.1 h1:zCy2xE9ablevUOrUZc3Dl72Dt+ya2FNAvC2yLYMHzi4=
 github.com/grpc-ecosystem/grpc-gateway v1.12.1/go.mod h1:8XEsbTttt/W+VvjtQhLACqCisSPWTxCZ7sBRjU6iH9c=
+github.com/hanfei1991/parser v0.0.0-20200307110717-8b60f336a538 h1:s7PnMZNlVsFmju3e8qfNqERDf7Re7Who8fmEpvWgh3o=
+github.com/hanfei1991/parser v0.0.0-20200307110717-8b60f336a538/go.mod h1:9v0Edh8IbgjGYW2ArJr19E+bvL8zKahsFp+ixWeId+4=
 github.com/hanfei1991/tipb v0.0.0-20200226132147-3fc41406b29e h1:3O9Lc15gzfOWE+CQgsC42rH80GNgwJjPe9GOaT/ZPlk=
 github.com/hanfei1991/tipb v0.0.0-20200226132147-3fc41406b29e/go.mod h1:nPMpOLbGpW71jAalpqgYYjMAZfCGk+DdSPhoIVVizkU=
 github.com/hanfei1991/tipb v0.0.0-20200303064518-fd5903ecf553 h1:WMXryw+8ikrQE/5ZsTcOdnA1KxqJCP7Ds2BGdpoH5D4=
