@@ -14,6 +14,8 @@
 package executor_test
 
 import (
+	"strconv"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/tidb/domain"
@@ -21,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/util/testkit"
-	"strconv"
 )
 
 var _ = Suite(&testInfoschemaTableSuite{})
