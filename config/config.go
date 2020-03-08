@@ -708,6 +708,22 @@ func InitializeConfig(confPath string, configCheck, configStrict bool, reloadFun
 		}
 	}
 	enforceCmdArgs(cfg)
+
+	if err := cfg.Valid(); err != nil {
+		if !filepath.IsAbs(confPath) {
+			if tmp, err := filepath.Abs(confPath); err == nil {
+				confPath = tmp
+			}
+		}
+		fmt.Fprintln(os.Stderr, "load config file:", confPath)
+		fmt.Fprintln(os.Stderr, "invalid config", err)
+		os.Exit(1)
+	}
+	if configCheck {
+		fmt.Println("config check successful")
+		os.Exit(0)
+	}
+
 	globalConfHandler, err = NewConfHandler(confPath, cfg, reloadFunc, nil)
 	terror.MustNil(err)
 	globalConfHandler.Start()
