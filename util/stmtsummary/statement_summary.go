@@ -184,6 +184,7 @@ type stmtSummaryByDigestElement struct {
 	maxTxnRetry          int
 	sumBackoffTimes      int64
 	backoffTypes         map[fmt.Stringer]int
+	authUsers            map[string]struct{}
 	// other
 	sumMem          int64
 	maxMem          int64
@@ -542,6 +543,7 @@ func (ssbd *stmtSummaryByDigest) add(sei *StmtExecInfo, beginTime int64, interva
 			if lastElement.beginTime >= beginTime {
 				ssElement = lastElement
 				isElementNew = false
+				ssElement.authUsers[sei.User] = struct{}{}
 			} else {
 				// The last elements expires to the history.
 				lastElement.onExpire(intervalSeconds)
@@ -579,8 +581,12 @@ func (ssbd *stmtSummaryByDigest) toCurrentDatum(beginTimeForCurInterval int64, u
 
 	// `ssElement` is lazy expired, so expired elements could also be read.
 	// `beginTime` won't change since `ssElement` is created, so locking is not needed here.
+	isAuthed := false
+	if user != nil {
+		_, isAuthed = ssElement.authUsers[user.Username]
+	}
 	if ssElement == nil || ssElement.beginTime < beginTimeForCurInterval ||
-		(user != nil && strings.Compare(ssElement.sampleUser, user.Username) != 0 && !isSuper) {
+		(!isAuthed && !isSuper) {
 		return nil
 	}
 	return ssElement.toDatum(ssbd)
@@ -592,7 +598,11 @@ func (ssbd *stmtSummaryByDigest) toHistoryDatum(historySize int, user *auth.User
 
 	rows := make([][]types.Datum, 0, len(ssElements))
 	for _, ssElement := range ssElements {
-		if user == nil || (strings.Compare(user.Username, ssElement.sampleUser) == 0 || isSuper) {
+		isAuthed := true
+		if user != nil {
+			_, isAuthed = ssElement.authUsers[user.Username]
+		}
+		if isAuthed || isSuper {
 			rows = append(rows, ssElement.toDatum(ssbd))
 		}
 	}
@@ -631,8 +641,10 @@ func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64, intervalS
 		firstSeen:    sei.StartTime,
 		lastSeen:     sei.StartTime,
 		backoffTypes: make(map[fmt.Stringer]int),
+		authUsers:    make(map[string]struct{}),
 	}
 	ssElement.add(sei, intervalSeconds)
+	ssElement.authUsers[sei.User] = struct{}{}
 	return ssElement
 }
 
