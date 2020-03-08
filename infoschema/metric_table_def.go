@@ -953,7 +953,7 @@ var MetricTableMap = map[string]MetricTableDef{
 		Comment: "The number of scheduler state on each TiKV instance",
 	},
 	"tikv_scheduler_stage_total_num": {
-		PromQL:  `sum(rate(tikv_scheduler_stage_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance, stage,type)`,
+		PromQL:  `sum(increase(tikv_scheduler_stage_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance, stage,type)`,
 		Labels:  []string{"instance", "stage", "type"},
 		Comment: "The total number of scheduler state on each TiKV instance",
 	},
@@ -1191,7 +1191,7 @@ var MetricTableMap = map[string]MetricTableDef{
 	"tikv_receive_messages_total_num": {
 		PromQL:  `sum(increase(tikv_server_raft_message_recv_total{$LABEL_CONDITIONS}[60s])) by (instance)`,
 		Labels:  []string{"instance"},
-		Comment: "The number of Raft messages received by each TiKV instance",
+		Comment: "The total number of Raft messages received by each TiKV instance",
 	},
 	"tikv_raft_dropped_messages": {
 		PromQL:  `sum(rate(tikv_raftstore_raft_dropped_message_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type,instance)`,
@@ -1306,51 +1306,51 @@ var MetricTableMap = map[string]MetricTableDef{
 		PromQL:   `histogram_quantile($QUANTILE, sum(rate(tikv_scheduler_command_duration_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,instance,type))`,
 		Labels:   []string{"instance", "type"},
 		Quantile: 0.99,
-		Comment:  "The quantile of time consumed when executing commit command",
+		Comment:  "The quantile of time consumed when executing command",
 	},
 	"tikv_scheduler_command_avg_duration": {
 		PromQL:  `sum(rate(tikv_scheduler_command_duration_seconds_sum{$LABEL_CONDITIONS}[$RANGE_DURATION])) / sum(rate(tikv_scheduler_command_duration_seconds_count{$LABEL_CONDITIONS}[$RANGE_DURATION])) `,
 		Labels:  []string{"instance", "type"},
-		Comment: "The average time consumed when executing commit command",
+		Comment: "The average time consumed when executing command",
 	},
 	"tikv_scheduler_latch_wait_duration": {
 		PromQL:   `histogram_quantile($QUANTILE, sum(rate(tikv_scheduler_latch_wait_duration_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,instance,type))`,
 		Labels:   []string{"instance", "type"},
 		Quantile: 0.99,
-		Comment:  "The quantile time which is caused by latch wait in commit command",
+		Comment:  "The quantile time which is caused by latch wait in command",
 	},
 	"tikv_scheduler_latch_wait_avg_duration": {
 		PromQL:  `sum(rate(tikv_scheduler_latch_wait_duration_seconds_sum{$LABEL_CONDITIONS}[$RANGE_DURATION])) / sum(rate(tikv_scheduler_latch_wait_duration_seconds_count{$LABEL_CONDITIONS}[$RANGE_DURATION])) `,
 		Labels:  []string{"instance", "type"},
-		Comment: "The average time which is caused by latch wait in commit command",
+		Comment: "The average time which is caused by latch wait in command",
 	},
 
 	"tikv_scheduler_keys_read": {
 		PromQL:   `histogram_quantile($QUANTILE, sum(rate(tikv_scheduler_kv_command_key_read_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,instance,type))`,
 		Labels:   []string{"instance", "type"},
 		Quantile: 0.99,
-		Comment:  "The quantile count of keys read by a commit command",
+		Comment:  "The quantile count of keys read by command",
 	},
 	"tikv_scheduler_keys_read_avg": {
 		PromQL:  `sum(rate(tikv_scheduler_kv_command_key_read_sum{$LABEL_CONDITIONS}[$RANGE_DURATION])) / sum(rate(tikv_scheduler_kv_command_key_read_count{$LABEL_CONDITIONS}[$RANGE_DURATION])) `,
 		Labels:  []string{"instance", "type"},
-		Comment: "The average count of keys read by a commit command",
+		Comment: "The average count of keys read by command",
 	},
 	"tikv_scheduler_keys_written": {
 		PromQL:   `histogram_quantile($QUANTILE, sum(rate(tikv_scheduler_kv_command_key_write_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,instance,type))`,
 		Labels:   []string{"instance", "type"},
 		Quantile: 0.99,
-		Comment:  "The quantile of count of keys written by a commit command",
+		Comment:  "The quantile of count of keys written by a command",
 	},
 	"tikv_scheduler_keys_written_avg": {
 		PromQL:  `sum(rate(tikv_scheduler_kv_command_key_write_sum{$LABEL_CONDITIONS}[$RANGE_DURATION])) / sum(rate(tikv_scheduler_kv_command_key_write_count{$LABEL_CONDITIONS}[$RANGE_DURATION])) `,
 		Labels:  []string{"instance", "type"},
-		Comment: "The average count of keys written by a commit command",
+		Comment: "The average count of keys written by a command",
 	},
 	"tikv_scheduler_scan_details": {
 		PromQL:  `sum(rate(tikv_scheduler_kv_scan_details{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (tag,instance,req,cf)`,
 		Labels:  []string{"instance", "tag", "req", "cf"},
-		Comment: "The keys scan details of each CF when executing commit command",
+		Comment: "The keys scan details of each CF when executing command",
 	},
 	"tikv_scheduler_scan_details_total_num": {
 		PromQL: `sum(increase(tikv_scheduler_kv_scan_details{$LABEL_CONDITIONS}[60s])) by (tag,instance,req,cf)`,
@@ -1405,7 +1405,7 @@ var MetricTableMap = map[string]MetricTableDef{
 	"tikv_gc_keys_total_num": {
 		PromQL:  `sum(increase(tikv_gcworker_gc_keys{$LABEL_CONDITIONS}[60s])) by (tag,cf,instance)`,
 		Labels:  []string{"instance", "tag", "cf"},
-		Comment: "The total count of keys in write CF affected during GC",
+		Comment: "The total number of keys in write CF affected during GC",
 	},
 	"tikv_gc_speed": {
 		PromQL:  `sum(rate(tikv_storage_mvcc_gc_delete_versions_sum[$RANGE_DURATION]))`,
@@ -2787,22 +2787,22 @@ var MetricTableMap = map[string]MetricTableDef{
 	"tikv_scheduler_command_total_count": {
 		PromQL:  "sum(increase(tikv_scheduler_command_duration_seconds_count{$LABEL_CONDITIONS}[60s])) by (instance,type)",
 		Labels:  []string{"instance", "type"},
-		Comment: "The total count of time consumed when executing commit command",
+		Comment: "The total count of time consumed when executing command",
 	},
 	"tikv_scheduler_command_total_time": {
 		PromQL:  "sum(increase(tikv_scheduler_command_duration_seconds_sum{$LABEL_CONDITIONS}[60s])) by (instance,type)",
 		Labels:  []string{"instance", "type"},
-		Comment: "The total time of time consumed when executing commit command",
+		Comment: "The total time of time consumed when executing command",
 	},
 	"tikv_scheduler_latch_wait_total_count": {
 		PromQL:  "sum(increase(tikv_scheduler_latch_wait_duration_seconds_count{$LABEL_CONDITIONS}[60s])) by (instance,type)",
 		Labels:  []string{"instance", "type"},
-		Comment: "The total count which is caused by latch wait in commit command",
+		Comment: "The total count which is caused by latch wait in command",
 	},
 	"tikv_scheduler_latch_wait_total_time": {
 		PromQL:  "sum(increase(tikv_scheduler_latch_wait_duration_seconds_sum{$LABEL_CONDITIONS}[60s])) by (instance,type)",
 		Labels:  []string{"instance", "type"},
-		Comment: "The total time which is caused by latch wait in commit command",
+		Comment: "The total time which is caused by latch wait in command",
 	},
 	"tikv_send_snapshot_total_count": {
 		PromQL:  "sum(increase(tikv_server_send_snapshot_duration_seconds_count{$LABEL_CONDITIONS}[60s])) by (instance)",
@@ -2838,12 +2838,12 @@ var MetricTableMap = map[string]MetricTableDef{
 	"tidb_distsql_partial_scan_key_total_num": {
 		PromQL:  "sum(increase(tidb_distsql_scan_keys_partial_num_sum{$LABEL_CONDITIONS}[60s])) by (instance)",
 		Labels:  []string{"instance"},
-		Comment: "The total time of distsql partial scan key numbers",
+		Comment: "The total num of distsql partial scan key numbers",
 	},
 	"tidb_distsql_partial_total_num": {
 		PromQL:  "sum(increase(tidb_distsql_partial_num_sum{$LABEL_CONDITIONS}[60s])) by (instance)",
 		Labels:  []string{"instance"},
-		Comment: "The total time of distsql partial numbers per query",
+		Comment: "The total num of distsql partial numbers per query",
 	},
 	"tidb_distsql_scan_key_num_total_count": {
 		PromQL:  "sum(increase(tidb_distsql_scan_keys_num_count{$LABEL_CONDITIONS}[60s])) by (instance)",
@@ -2853,7 +2853,7 @@ var MetricTableMap = map[string]MetricTableDef{
 	"tidb_distsql_scan_key_total_num": {
 		PromQL:  "sum(increase(tidb_distsql_scan_keys_num_sum{$LABEL_CONDITIONS}[60s])) by (instance)",
 		Labels:  []string{"instance"},
-		Comment: "The total time of distsql scan numbers",
+		Comment: "The total num of distsql scan numbers",
 	},
 	"tidb_kv_write_num_total_count": {
 		PromQL:  "sum(increase(tidb_tikvclient_txn_write_kv_num_count{$LABEL_CONDITIONS}[60s])) by (instance)",
@@ -2868,7 +2868,7 @@ var MetricTableMap = map[string]MetricTableDef{
 	"tidb_kv_write_total_num": {
 		PromQL:  "sum(increase(tidb_tikvclient_txn_write_kv_num_sum{$LABEL_CONDITIONS}[60s])) by (instance)",
 		Labels:  []string{"instance"},
-		Comment: "The total time of kv write times per transaction execution",
+		Comment: "The total num of kv write times per transaction execution",
 	},
 	"tidb_kv_write_total_size": {
 		PromQL:  "sum(increase(tidb_tikvclient_txn_write_size_bytes_sum{$LABEL_CONDITIONS}[60s])) by (instance)",
@@ -2903,7 +2903,7 @@ var MetricTableMap = map[string]MetricTableDef{
 	"tidb_transaction_retry_total_num": {
 		PromQL:  "sum(increase(tidb_session_retry_num_sum{$LABEL_CONDITIONS}[60s])) by (instance)",
 		Labels:  []string{"instance"},
-		Comment: "The total time of TiDB transaction retry num",
+		Comment: "The total num of TiDB transaction retry num",
 	},
 	"tidb_transaction_statement_num_total_count": {
 		PromQL:  "sum(increase(tidb_session_transaction_statement_num_count{$LABEL_CONDITIONS}[60s])) by (instance,sql_type)",
@@ -2913,7 +2913,7 @@ var MetricTableMap = map[string]MetricTableDef{
 	"tidb_transaction_statement_total_num": {
 		PromQL:  "sum(increase(tidb_session_transaction_statement_num_sum{$LABEL_CONDITIONS}[60s])) by (instance,sql_type)",
 		Labels:  []string{"instance", "sql_type"},
-		Comment: "The total time of TiDB statements numbers within one transaction. Internal means TiDB inner transaction",
+		Comment: "The total num of TiDB statements numbers within one transaction. Internal means TiDB inner transaction",
 	},
 	"tidb_txn_region_num_total_count": {
 		PromQL:  "sum(increase(tidb_tikvclient_txn_regions_num_count{$LABEL_CONDITIONS}[60s])) by (instance)",
@@ -2923,7 +2923,7 @@ var MetricTableMap = map[string]MetricTableDef{
 	"tidb_txn_region_total_num": {
 		PromQL:  "sum(increase(tidb_tikvclient_txn_regions_num_sum{$LABEL_CONDITIONS}[60s])) by (instance)",
 		Labels:  []string{"instance"},
-		Comment: "The total time of regions transaction operates on count",
+		Comment: "The total num of regions transaction operates on count",
 	},
 	"tikv_approximate_region_size_total_count": {
 		PromQL:  "sum(increase(tikv_raftstore_region_size_count{$LABEL_CONDITIONS}[60s])) by (instance)",
@@ -2987,47 +2987,47 @@ var MetricTableMap = map[string]MetricTableDef{
 	"tikv_raft_proposals_per_total_ready": {
 		PromQL:  "sum(increase(tikv_raftstore_apply_proposal_sum{$LABEL_CONDITIONS}[60s])) by (instance)",
 		Labels:  []string{"instance"},
-		Comment: "The total time of proposal count of all Regions in a mio tick",
+		Comment: "The total proposal count of all Regions in a mio tick",
 	},
 	"tikv_request_batch_ratio_total_count": {
 		PromQL:  "sum(increase(tikv_server_request_batch_ratio_count{$LABEL_CONDITIONS}[60s])) by (instance,type)",
 		Labels:  []string{"instance", "type"},
-		Comment: "The total count of ratio of request batch output to input per TiKV instance",
+		Comment: "The total count of request batch output to input per TiKV instance",
 	},
 	"tikv_request_batch_size_total_count": {
 		PromQL:  "sum(increase(tikv_server_request_batch_size_count{$LABEL_CONDITIONS}[60s])) by (instance,type)",
 		Labels:  []string{"instance", "type"},
-		Comment: "The total count of size of requests into request batch per TiKV instance",
+		Comment: "The total count of request batch per TiKV instance",
 	},
 	"tikv_request_batch_total_ratio": {
 		PromQL:  "sum(increase(tikv_server_request_batch_ratio_sum{$LABEL_CONDITIONS}[60s])) by (instance,type)",
 		Labels:  []string{"instance", "type"},
-		Comment: "The total time of ratio of request batch output to input per TiKV instance",
+		Comment: "The total ratio of request batch output to input per TiKV instance",
 	},
 	"tikv_request_batch_total_size": {
 		PromQL:  "sum(increase(tikv_server_request_batch_size_sum{$LABEL_CONDITIONS}[60s])) by (instance,type)",
 		Labels:  []string{"instance", "type"},
-		Comment: "The total time of size of requests into request batch per TiKV instance",
+		Comment: "The total size of requests into request batch per TiKV instance",
 	},
 	"tikv_scheduler_keys_read_total_count": {
 		PromQL:  "sum(increase(tikv_scheduler_kv_command_key_read_count{$LABEL_CONDITIONS}[60s])) by (instance,type)",
 		Labels:  []string{"instance", "type"},
-		Comment: "The total count of keys read by a commit command",
+		Comment: "The total count of keys read by a command",
 	},
 	"tikv_scheduler_keys_total_read": {
 		PromQL:  "sum(increase(tikv_scheduler_kv_command_key_read_sum{$LABEL_CONDITIONS}[60s])) by (instance,type)",
 		Labels:  []string{"instance", "type"},
-		Comment: "The total time of keys read by a commit command",
+		Comment: "The total count of keys read by command",
 	},
 	"tikv_scheduler_keys_total_written": {
 		PromQL:  "sum(increase(tikv_scheduler_kv_command_key_write_sum{$LABEL_CONDITIONS}[60s])) by (instance,type)",
 		Labels:  []string{"instance", "type"},
-		Comment: "The total time of keys written by a commit command",
+		Comment: "The total count of keys written by a command",
 	},
 	"tikv_scheduler_keys_written_total_count": {
 		PromQL:  "sum(increase(tikv_scheduler_kv_command_key_write_count{$LABEL_CONDITIONS}[60s])) by (instance,type)",
 		Labels:  []string{"instance", "type"},
-		Comment: "The total count of keys written by a commit command",
+		Comment: "The total count of keys written by a command",
 	},
 	"tikv_snapshot_kv_count_total_count": {
 		PromQL:  "sum(increase(tikv_snapshot_kv_count_count{$LABEL_CONDITIONS}[60s])) by (instance)",
@@ -3037,7 +3037,7 @@ var MetricTableMap = map[string]MetricTableDef{
 	"tikv_snapshot_kv_total_count": {
 		PromQL:  "sum(increase(tikv_snapshot_kv_count_sum{$LABEL_CONDITIONS}[60s])) by (instance)",
 		Labels:  []string{"instance"},
-		Comment: "The total time of number of KV within a snapshot",
+		Comment: "The total number of KV within a snapshot",
 	},
 	"tikv_snapshot_size_total_count": {
 		PromQL:  "sum(increase(tikv_snapshot_size_count{$LABEL_CONDITIONS}[60s])) by (instance)",
