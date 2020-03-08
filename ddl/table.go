@@ -589,11 +589,16 @@ func onRenameTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		return ver, errors.Trace(err)
 	}
 
-	var baseID int64
+	var autoTableID, autoRandomID int64
 	shouldDelAutoID := false
 	if newSchemaID != oldSchemaID {
 		shouldDelAutoID = true
-		baseID, err = t.GetAutoTableID(tblInfo.GetDBID(oldSchemaID), tblInfo.ID)
+		autoTableID, err = t.GetAutoTableID(tblInfo.GetDBID(oldSchemaID), tblInfo.ID)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+		autoRandomID, err = t.GetAutoRandomID(tblInfo.GetDBID(oldSchemaID), tblInfo.ID)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
@@ -624,12 +629,12 @@ func onRenameTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 	}
 	// Update the table's auto-increment ID.
 	if newSchemaID != oldSchemaID {
-		_, err = t.GenAutoTableID(newSchemaID, tblInfo.ID, baseID)
+		_, err = t.GenAutoTableID(newSchemaID, tblInfo.ID, autoTableID)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
-		_, err = t.GenAutoRandomID(newSchemaID, tblInfo.ID, baseID)
+		_, err = t.GenAutoRandomID(newSchemaID, tblInfo.ID, autoRandomID)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
