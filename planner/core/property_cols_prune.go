@@ -108,7 +108,7 @@ func (p *LogicalWindow) PreparePossiblePartitionProperties(childrenPartitionProp
 		return nil
 	}
 	partitionByCols := property.ColsFromItems(p.PartitionBy)
-	return p.parallelHelper.preparePossiblePartitionProperties(p, [][]*expression.Column{partitionByCols}, childrenPartitionProperties...)
+	return p.parallelHelper.preparePossiblePartitionProperties(p.ctx, p, [][]*expression.Column{partitionByCols}, childrenPartitionProperties, true)
 }
 
 // PreparePossibleProperties implements LogicalPlan PreparePossibleProperties interface.
@@ -122,7 +122,7 @@ func (p *LogicalSort) PreparePossibleProperties(schema *expression.Schema, child
 
 // PreparePossiblePartitionProperties implements LogicalPlan PreparePossiblePartitionProperties interface.
 func (p *LogicalSort) PreparePossiblePartitionProperties(childrenPartitionProperties ...[]*property.PhysicalProperty) []*property.PhysicalProperty {
-	return p.parallelHelper.preparePossiblePartitionProperties(p, [][]*expression.Column{nil}, childrenPartitionProperties...)
+	return p.parallelHelper.preparePossiblePartitionProperties(p.ctx, p, [][]*expression.Column{nil}, childrenPartitionProperties, true)
 }
 
 // PreparePossibleProperties implements LogicalPlan PreparePossibleProperties interface.
@@ -185,6 +185,26 @@ func (p *LogicalProjection) PreparePossibleProperties(schema *expression.Schema,
 	return childProperties
 }
 
+// PreparePossiblePartitionProperties implements LogicalPlan interface.
+func (p *LogicalProjection) PreparePossiblePartitionProperties(childrenPartitionProperties ...[]*property.PhysicalProperty) []*property.PhysicalProperty {
+	// Don't enforce init-partition, to avoid low effcient.
+	originalPossibleProperties := p.parallelHelper.preparePossiblePartitionProperties(p.ctx, p, [][]*expression.Column{nil}, childrenPartitionProperties, false)
+
+	p.schemaConverter.prepare(p)
+	possibleProperties := make([]*property.PhysicalProperty, 0, len(originalPossibleProperties))
+	for _, childProp := range originalPossibleProperties {
+		groupingCols, missed := p.schemaConverter.convertColumnsToAfterProjection(childProp.PartitionGroupingCols)
+		if len(missed) > 0 {
+			continue
+		}
+		possibleProperties = append(possibleProperties, &property.PhysicalProperty{
+			IsPartitioning:        true,
+			PartitionGroupingCols: groupingCols,
+		})
+	}
+	return possibleProperties
+}
+
 // PreparePossibleProperties implements LogicalPlan PreparePossibleProperties interface.
 func (p *LogicalJoin) PreparePossibleProperties(schema *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
 	leftProperties := childrenProperties[0]
@@ -217,7 +237,9 @@ func (p *LogicalJoin) PreparePossiblePartitionProperties(childrenPartitionProper
 		return nil
 	}
 	globalGroupings := [][]*expression.Column{leftJoinKeys, rightJoinKeys}
-	_ = p.parallelHelper.preparePossiblePartitionProperties(p, globalGroupings, childrenPartitionProperties...)
+	if p.parallelHelper.preparePossiblePartitionProperties(p.ctx, p, globalGroupings, childrenPartitionProperties, true) == nil {
+		return nil
+	}
 
 	// Global properties are the same as inner, which is not determined by now.
 	// So return both.
@@ -252,5 +274,5 @@ func (la *LogicalAggregation) PreparePossiblePartitionProperties(childrenPartiti
 	if len(la.groupByCols) == 0 {
 		return nil
 	}
-	return la.parallelHelper.preparePossiblePartitionProperties(la, [][]*expression.Column{la.groupByCols}, childrenPartitionProperties...)
+	return la.parallelHelper.preparePossiblePartitionProperties(la.ctx, la, [][]*expression.Column{la.groupByCols}, childrenPartitionProperties, true)
 }

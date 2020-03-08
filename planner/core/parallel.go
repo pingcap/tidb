@@ -29,18 +29,25 @@ type parallelLogicalPlanHelper struct {
 }
 
 func (p *parallelLogicalPlanHelper) preparePossiblePartitionProperties(
+	ctx sessionctx.Context,
 	lp LogicalPlan, globalGroupings [][]*expression.Column,
-	childrenPartitionProperties ...[]*property.PhysicalProperty,
+	childrenPartitionProperties [][]*property.PhysicalProperty,
+	needInitialPartition bool,
 ) []*property.PhysicalProperty {
+	if ctx.GetSessionVars().ExecutorsConcurrency <= 1 {
+		return nil
+	}
+
 	p.possibleChildrenProperties = make([][]*property.PhysicalProperty, len(lp.Children()))
 	for i := range lp.Children() {
-		p.possibleChildrenProperties[i] = p.preparePossiblePartitionProperties4OneChild(lp, globalGroupings[i], childrenPartitionProperties[i])
+		p.possibleChildrenProperties[i] = p.preparePossiblePartitionProperties4OneChild(lp, globalGroupings[i], needInitialPartition, childrenPartitionProperties[i])
 	}
 	return p.possibleChildrenProperties[0] // Return the first one, as most plan has only one child.
 }
 
 func (p *parallelLogicalPlanHelper) preparePossiblePartitionProperties4OneChild(
 	lp LogicalPlan, globalGrouping []*expression.Column,
+	needInitialPartition bool,
 	childPartitionProperties []*property.PhysicalProperty,
 ) []*property.PhysicalProperty {
 	matched := make([]int, 0, len(childPartitionProperties))
@@ -74,7 +81,7 @@ func (p *parallelLogicalPlanHelper) preparePossiblePartitionProperties4OneChild(
 		}
 		possibleProperties = append(possibleProperties, prop)
 	}
-	if !isEqual { // enforced parallel property for init-partitioning.
+	if needInitialPartition && !isEqual { // enforced parallel property for init-partitioning.
 		prop := &property.PhysicalProperty{
 			IsPartitioning:        true,
 			PartitionGroupingCols: globalGrouping,
@@ -151,15 +158,16 @@ func (p *parallelLogicalPlanHelper) exhaustParallelPhysicalPlans(
 	plans := make([]PhysicalPlan, 0, len(possibleProperties))
 OUTER:
 	for _, possibleProp := range possibleProperties {
-		for _, childProp := range possibleProp {
+		for i, childProp := range possibleProp {
+			child := lp.Children()[i]
 			if len(childProp.PartitionGroupingCols) > 0 {
-				NDV := int(getCardinality(childProp.PartitionGroupingCols, lp.Schema(), lp.statsInfo()))
+				NDV := int(getCardinality(childProp.PartitionGroupingCols, child.Schema(), child.statsInfo()))
 				if NDV <= 1 {
 					continue OUTER
 				}
 			} else {
 				// Should not be parallel when less or equal to ONE chunk.
-				numberOfChunks := (float64)(lp.statsInfo().RowCount) / (float64)(ctx.GetSessionVars().MaxChunkSize)
+				numberOfChunks := (float64)(child.statsInfo().RowCount) / (float64)(ctx.GetSessionVars().MaxChunkSize)
 				if numberOfChunks <= 1.0 {
 					continue OUTER
 				}

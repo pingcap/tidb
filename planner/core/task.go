@@ -525,8 +525,9 @@ func (p *PhysicalHashJoin) attach2Task(tasks ...task) task {
 	rTask := finishCopTask(p.ctx, tasks[1].copy())
 	p.SetChildren(lTask.plan(), rTask.plan())
 	return &rootTask{
-		p:   p,
-		cst: lTask.cost() + rTask.cost() + p.GetCost(lTask.count(), rTask.count()),
+		p:           p,
+		cst:         lTask.cost() + rTask.cost() + p.GetCost(lTask.count(), rTask.count()),
+		concurrency: lTask.(*rootTask).concurrency, // `concurrency` of lTask & rTask should be equal.
 	}
 }
 
@@ -1338,24 +1339,21 @@ func (p *PhysicalShuffle) GetCost(count float64) float64 {
 		count = 2.0
 	}
 	sessVars := p.ctx.GetSessionVars()
-	var cpuCount, memoryCount float64
+	var cpuCount float64
 
 	switch p.MergerType {
 	case ShuffleMergeSortMergerType:
 		cpuCount += count
-		memoryCount += count
 	}
 	switch p.SplitterType {
 	case ShuffleHashSplitterType:
 		cpuCount += count
-		memoryCount += count
 	}
 	cpuCost := cpuCount * sessVars.CPUFactor
-	memoryCost := memoryCount * sessVars.MemoryFactor
 	var concurrencyCost float64
 	if p.Concurrency > 1 {
 		concurrencyCost = (float64)(p.Concurrency) * sessVars.ConcurrencyFactor
 	}
-	// Hacking: divide by concurrency to make it lower than serial `HashJoin`.
-	return (cpuCost + memoryCost + concurrencyCost) / (float64)(mathutil.Max(p.FanOut, p.Concurrency))
+	// Hacking: divided by concurrency to make it lower than serial `HashJoin`.
+	return (cpuCost + concurrencyCost) / (float64)(mathutil.Max(p.FanOut, p.Concurrency))
 }

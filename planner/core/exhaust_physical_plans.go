@@ -1449,10 +1449,14 @@ func (p *LogicalJoin) exhaustParallelPhysicalPlans(prop *property.PhysicalProper
 		exhaustor: p.getHashJoins,
 		deliveringPartitionGroupingColsFunctor: func(pp PhysicalPlan, possibleProp []*property.PhysicalProperty) []*expression.Column {
 			hashJoin := pp.(*PhysicalHashJoin)
-			return possibleProp[hashJoin.InnerChildIdx].PartitionGroupingCols
+			builderIdx := hashJoin.InnerChildIdx
+			if hashJoin.UseOuterToBuild {
+				builderIdx = 1 - builderIdx
+			}
+			return possibleProp[builderIdx].PartitionGroupingCols
 		},
 	}
-	return p.parallelHelper.exhaustParallelPhysicalPlans(p.basePlan.ctx, p, prop, options)
+	return p.parallelHelper.exhaustParallelPhysicalPlans(p.ctx, p, prop, options)
 }
 
 // TryToGetChildProp will check if this sort property can be pushed or not.
@@ -1486,6 +1490,38 @@ func (p *LogicalProjection) exhaustPhysicalPlans(prop *property.PhysicalProperty
 	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, newProp)
 	proj.SetSchema(p.schema)
 	return []PhysicalPlan{proj}
+}
+
+func (p *LogicalProjection) exhaustParallelPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
+	if !expression.Vectorizable(p.Exprs) || p.ctx.GetSessionVars().ProjectionConcurrency > 1 {
+		return nil
+	}
+
+	if !prop.IsPartitioning {
+		return nil
+	}
+	p.schemaConverter.prepare(p)
+	newGroupingCols, _ := p.schemaConverter.convertColumnsToBeforeProjection(prop.PartitionGroupingCols)
+	if len(newGroupingCols) == 0 {
+		return nil
+	}
+
+	newProp := prop.Clone()
+	newProp.IsPartitioning = true
+	newProp.PartitionGroupingCols = newGroupingCols
+
+	options := exhaustParallelPhysicalPlansOptions{
+		deliveringPartitionGroupingColsFunctor: func(pp PhysicalPlan, possibleProp []*property.PhysicalProperty) []*expression.Column {
+			originalProp := possibleProp[0]
+			p.schemaConverter.prepare(p)
+			groupingCols, missed := p.schemaConverter.convertColumnsToAfterProjection(originalProp.PartitionGroupingCols)
+			if len(missed) > 0 {
+				return nil
+			}
+			return groupingCols
+		},
+	}
+	return p.parallelHelper.exhaustParallelPhysicalPlans(p.ctx, p, newProp, options)
 }
 
 func (lt *LogicalTopN) getPhysTopN() []PhysicalPlan {
@@ -1581,8 +1617,7 @@ func (p *LogicalWindow) exhaustPhysicalPlans(prop *property.PhysicalProperty) []
 }
 
 func (p *LogicalWindow) exhaustParallelPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
-	concurrency := p.basePlan.ctx.GetSessionVars().WindowConcurrency
-	if concurrency <= 1 {
+	if p.ctx.GetSessionVars().WindowConcurrency <= 1 {
 		return nil
 	}
 
@@ -1595,7 +1630,7 @@ func (p *LogicalWindow) exhaustParallelPhysicalPlans(prop *property.PhysicalProp
 		deliveringLocalItems:     byItems,
 		deliveringLocalItemExprs: itemExprs,
 	}
-	return p.parallelHelper.exhaustParallelPhysicalPlans(p.basePlan.ctx, p, prop, options)
+	return p.parallelHelper.exhaustParallelPhysicalPlans(p.ctx, p, prop, options)
 }
 
 // exhaustPhysicalPlans is only for implementing interface. DataSource and Dual generate task in `findBestTask` directly.
@@ -1791,7 +1826,7 @@ func (la *LogicalAggregation) exhaustParallelPhysicalPlans(prop *property.Physic
 			return []PhysicalPlan{agg}
 		},
 	}
-	return la.parallelHelper.exhaustParallelPhysicalPlans(la.basePlan.ctx, la, prop, options)
+	return la.parallelHelper.exhaustParallelPhysicalPlans(la.ctx, la, prop, options)
 }
 
 func (p *LogicalSelection) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
@@ -1891,7 +1926,7 @@ func (ls *LogicalSort) exhaustParallelPhysicalPlans(prop *property.PhysicalPrope
 			deliveringLocalItems:     propByItems.Items,
 			deliveringLocalItemExprs: itemExprs,
 		}
-		return ls.parallelHelper.exhaustParallelPhysicalPlans(ls.basePlan.ctx, ls, prop, options)
+		return ls.parallelHelper.exhaustParallelPhysicalPlans(ls.ctx, ls, prop, options)
 	}
 	return nil
 }
