@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/util/testkit"
+	"strconv"
 )
 
 var _ = Suite(&testInfoschemaTableSuite{})
@@ -76,6 +77,9 @@ func (s *testInfoschemaTableSuite) TestTableIDAndIndexID(c *C) {
 	tk.MustExec("drop table if exists test.t")
 	tk.MustExec("create table test.t (a int, b int, primary key(a), key k1(b))")
 	tk.MustQuery("select index_id from information_schema.tidb_indexes where table_schema = 'test' and table_name = 't'").Check(testkit.Rows("0", "1"))
+	tblID, err := strconv.Atoi(tk.MustQuery("select tidb_table_id from information_schema.tables where table_schema = 'test' and table_name = 't'").Rows()[0][0].(string))
+	c.Assert(err, IsNil)
+	c.Assert(tblID, Greater, 0)
 }
 
 func (s *testInfoschemaTableSuite) TestSchemataCharacterSet(c *C) {

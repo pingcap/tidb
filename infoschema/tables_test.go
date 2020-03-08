@@ -42,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
@@ -497,15 +496,6 @@ func (s *testTableSuite) TestProfiling(c *C) {
 	tk.MustQuery("select * from information_schema.profiling").Check(testkit.Rows())
 	tk.MustExec("set @@profiling=1")
 	tk.MustQuery("select * from information_schema.profiling").Check(testkit.Rows("0 0  0 0 0 0 0 0 0 0 0 0 0 0   0"))
-}
-
-func (s *testTableSuite) TestTableIDAndIndexID(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("drop table if exists test.t")
-	tk.MustExec("create table test.t (a int, b int, primary key(a), key k1(b))")
-	tblID, err := strconv.Atoi(tk.MustQuery("select tidb_table_id from information_schema.tables where table_schema = 'test' and table_name = 't'").Rows()[0][0].(string))
-	c.Assert(err, IsNil)
-	c.Assert(tblID, Greater, 0)
 }
 
 func prepareSlowLogfile(c *C, slowLogFileName string) {
