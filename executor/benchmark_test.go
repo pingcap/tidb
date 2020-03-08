@@ -696,7 +696,7 @@ func BenchmarkWindowFunctionsWithFrame(b *testing.B) {
 	}
 }
 
-func baseBenchmarkWindowFunctionsWithSlidingWindow(b *testing.B, frameType ast.FrameType) {
+func BenchmarkWindowFunctionsWithSlidingWindow(b *testing.B) {
 	b.ReportAllocs()
 	windowFuncs := []struct {
 		aggFunc     string
@@ -708,33 +708,32 @@ func baseBenchmarkWindowFunctionsWithSlidingWindow(b *testing.B, frameType ast.F
 	rows := []int{1000, 100000}
 	ndvs := []int{10, 100}
 	frames := []*core.WindowFrame{
-		{Type: frameType, Start: &core.FrameBound{Type: ast.Preceding, Num: 10}, End: &core.FrameBound{Type: ast.Following, Num: 10}},
-		{Type: frameType, Start: &core.FrameBound{Type: ast.Preceding, Num: 100}, End: &core.FrameBound{Type: ast.Following, Num: 100}},
+		{Start: &core.FrameBound{Type: ast.Preceding, Num: 10}, End: &core.FrameBound{Type: ast.Following, Num: 10}},
+		{Start: &core.FrameBound{Type: ast.Preceding, Num: 100}, End: &core.FrameBound{Type: ast.Following, Num: 100}},
 	}
-	for _, windowFunc := range windowFuncs {
-		for _, aggColType := range windowFunc.aggColTypes {
-			for _, row := range rows {
-				for _, ndv := range ndvs {
-					for _, frame := range frames {
-						cas := defaultWindowTestCase()
-						cas.rows = row
-						cas.ndv = ndv
-						cas.windowFunc = windowFunc.aggFunc
-						cas.frame = frame
-						cas.columns[0] = &expression.Column{Index: 0, RetType: types.NewFieldType(aggColType)}
-						b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
-							benchmarkWindowExecWithCase(b, cas)
-						})
+	frameTypes := []ast.FrameType{ast.Rows, ast.Ranges}
+	for _, frameType := range frameTypes {
+		for _, windowFunc := range windowFuncs {
+			for _, aggColType := range windowFunc.aggColTypes {
+				for _, row := range rows {
+					for _, ndv := range ndvs {
+						for _, frame := range frames {
+							cas := defaultWindowTestCase()
+							cas.rows = row
+							cas.ndv = ndv
+							cas.windowFunc = windowFunc.aggFunc
+							frame.Type = frameType
+							cas.frame = frame
+							cas.columns[0].RetType.Tp = aggColType
+							b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+								benchmarkWindowExecWithCase(b, cas)
+							})
+						}
 					}
 				}
 			}
 		}
 	}
-}
-
-func BenchmarkWindowFunctionsWithSlidingWindow(b *testing.B) {
-	baseBenchmarkWindowFunctionsWithSlidingWindow(b, ast.Rows)
-	baseBenchmarkWindowFunctionsWithSlidingWindow(b, ast.Ranges)
 }
 
 type hashJoinTestCase struct {
