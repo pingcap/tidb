@@ -284,7 +284,6 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 	err := txn.us.WalkBuffer(func(k kv.Key, v []byte) error {
 		var (
 			op                pb.Op
-			key               []byte
 			value             []byte
 			isPessimisticLock bool
 		)
@@ -296,7 +295,6 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 			if c := txn.us.GetKeyExistErrInfo(k); c != nil {
 				op = pb.Op_Insert
 			}
-			key = k
 			value = v
 			putCnt++
 		} else {
@@ -328,7 +326,7 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 				lockIdx++
 			}
 		}
-		mutations.push(op, key, value, isPessimisticLock)
+		mutations.push(op, k, value, isPessimisticLock)
 		entrySize := len(k) + len(v)
 		if entrySize > kv.TxnEntrySizeLimit {
 			return kv.ErrEntryTooLarge.GenWithStackByArgs(kv.TxnEntrySizeLimit, entrySize)
