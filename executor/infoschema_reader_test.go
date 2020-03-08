@@ -17,8 +17,9 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/executor/infoschema_reader"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -203,9 +204,9 @@ func (s *testInfoschemaTableSuite) TestUserPrivileges(c *C) {
 }
 
 func (s *testInfoschemaTableSuite) TestPartitionsTable(c *C) {
-	oldExpiryTime := infoschema_reader.TableStatsCacheExpiry
-	infoschema_reader.TableStatsCacheExpiry = 0
-	defer func() { infoschema_reader.TableStatsCacheExpiry = oldExpiryTime }()
+	oldExpiryTime := executor.TableStatsCacheExpiry
+	executor.TableStatsCacheExpiry = 0
+	defer func() { executor.TableStatsCacheExpiry = oldExpiryTime }()
 
 	do := s.dom
 	h := do.StatsHandle()
