@@ -179,11 +179,11 @@ func (r Row) GetDatum(colIdx int, tp *types.FieldType) types.Datum {
 		}
 	case mysql.TypeEnum:
 		if !r.IsNull(colIdx) {
-			d.SetMysqlEnum(r.GetEnum(colIdx))
+			d.SetMysqlEnum(r.GetEnum(colIdx), tp.Collate)
 		}
 	case mysql.TypeSet:
 		if !r.IsNull(colIdx) {
-			d.SetMysqlSet(r.GetSet(colIdx))
+			d.SetMysqlSet(r.GetSet(colIdx), tp.Collate)
 		}
 	case mysql.TypeBit:
 		if !r.IsNull(colIdx) {
