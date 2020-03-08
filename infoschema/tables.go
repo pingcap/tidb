@@ -64,7 +64,7 @@ const (
 	// CatalogVal is the string constant of TABLE_CATALOG
 	CatalogVal     = "def"
 	tableProfiling = "PROFILING"
-	// TablePartition in the string constant of infoschema table
+	// TablePartition is the string constant of infoschema table
 	TablePartitions = "PARTITIONS"
 	// TableKeyColumn is the string constant of KEY_COLUMN_USAGE
 	TableKeyColumn   = "KEY_COLUMN_USAGE"
