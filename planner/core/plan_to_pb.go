@@ -16,6 +16,7 @@ package core
 import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/kv"
@@ -24,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -130,6 +132,11 @@ func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context, storeType kv.StoreType)
 	}
 	if storeType == kv.TiFlash && p.StoreType == kv.TiKV {
 		tsExec.NextReadEngine = tipb.EngineType_TiKV
+		ranges := distsql.TableRangesToKVRanges(tsExec.TableId, p.Ranges, nil)
+		for _, keyRange := range ranges {
+			tsExec.Ranges = append(tsExec.Ranges, tipb.KeyRange{Low:keyRange.StartKey, High:keyRange.EndKey})
+		}
+		logutil.BgLogger().Info("make range for table.")
 	}
 	err := SetPBColumnsDefaultValue(ctx, tsExec.Columns, p.Columns)
 	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tsExec}, err

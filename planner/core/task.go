@@ -100,7 +100,7 @@ func (t *copTask) copy() task {
 }
 
 func (t *copTask) plan() PhysicalPlan {
-	logutil.BgLogger().Info("index finish", zap.Bool("index finish", t.indexPlanFinished), zap.Bool("table is nil?", t.tablePlan == nil))
+	//logutil.BgLogger().Info("index finish", zap.Bool("index finish", t.indexPlanFinished), zap.Bool("table is nil?", t.tablePlan == nil))
 	if t.indexPlanFinished {
 		return t.tablePlan
 	}
