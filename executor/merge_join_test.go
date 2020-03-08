@@ -423,20 +423,20 @@ func (s *testSuite2) TestMergeJoin(c *C) {
 	tk.MustExec("create table s (a int)")
 	tk.MustExec("insert into s values (4), (1), (3), (2)")
 	tk.MustQuery("explain select s1.a1 from (select a as a1 from s order by s.a desc) as s1 join (select a as a2 from s order by s.a desc) as s2 on s1.a1 = s2.a2 order by s1.a1 desc").Check(testkit.Rows(
-		"Projection_40 12487.50 root test.s.a",
-		"└─MergeJoin_41 12487.50 root inner join, left key:test.s.a, right key:test.s.a",
-		"  ├─Shuffle_49(Build) 9990.00 root execution info: concurrency:4, fan out:1, splitter:none, merger:merge-sort(test.s.a desc)",
-		"  │ └─Sort_48 9990.00 root test.s.a:desc",
-		"  │   └─Shuffle_38 2497.50 root execution info: concurrency:1, fan out:4, splitter:random, merger:none",
-		"  │     └─TableReader_37 9990.00 root data:Selection_36",
-		"  │       └─Selection_36 9990.00 cop[tikv] not(isnull(test.s.a))",
-		"  │         └─TableFullScan_35 10000.00 cop[tikv] table:s, keep order:false, stats:pseudo",
-		"  └─Shuffle_45(Probe) 9990.00 root execution info: concurrency:4, fan out:1, splitter:none, merger:merge-sort(test.s.a desc)",
-		"    └─Sort_44 9990.00 root test.s.a:desc",
-		"      └─Shuffle_27 2497.50 root execution info: concurrency:1, fan out:4, splitter:random, merger:none",
-		"        └─TableReader_26 9990.00 root data:Selection_25",
-		"          └─Selection_25 9990.00 cop[tikv] not(isnull(test.s.a))",
-		"            └─TableFullScan_24 10000.00 cop[tikv] table:s, keep order:false, stats:pseudo",
+		"Projection_41 12487.50 root test.s.a",
+		"└─MergeJoin_42 12487.50 root inner join, left key:test.s.a, right key:test.s.a",
+		"  ├─Shuffle_50(Build) 9990.00 root execution info: concurrency:4, fan out:1, splitter:none, merger:merge-sort(test.s.a desc)",
+		"  │ └─Sort_49 9990.00 root test.s.a:desc",
+		"  │   └─Shuffle_39 2497.50 root execution info: concurrency:1, fan out:4, splitter:random, merger:none",
+		"  │     └─TableReader_38 9990.00 root data:Selection_37",
+		"  │       └─Selection_37 9990.00 cop[tikv] not(isnull(test.s.a))",
+		"  │         └─TableFullScan_36 10000.00 cop[tikv] table:s, keep order:false, stats:pseudo",
+		"  └─Shuffle_46(Probe) 9990.00 root execution info: concurrency:4, fan out:1, splitter:none, merger:merge-sort(test.s.a desc)",
+		"    └─Sort_45 9990.00 root test.s.a:desc",
+		"      └─Shuffle_28 2497.50 root execution info: concurrency:1, fan out:4, splitter:random, merger:none",
+		"        └─TableReader_27 9990.00 root data:Selection_26",
+		"          └─Selection_26 9990.00 cop[tikv] not(isnull(test.s.a))",
+		"            └─TableFullScan_25 10000.00 cop[tikv] table:s, keep order:false, stats:pseudo",
 	))
 	tk.MustQuery("select s1.a1 from (select a as a1 from s order by s.a desc) as s1 join (select a as a2 from s order by s.a desc) as s2 on s1.a1 = s2.a2 order by s1.a1 desc").Check(testkit.Rows(
 		"4", "3", "2", "1"))

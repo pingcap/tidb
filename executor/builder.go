@@ -2791,6 +2791,7 @@ func locateChildShuffles(parent plannercore.PhysicalPlan, childIdx int, childShu
 			panic("Child shuffle is NOT FOUND for concurrent shuffle.")
 		case 1:
 			current = parent.Children()[0]
+			childIdx = 0
 		default:
 			for i := range parent.Children() {
 				childShuffles = locateChildShuffles(parent, i, childShuffles)
