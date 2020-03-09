@@ -581,7 +581,7 @@ func (ssbd *stmtSummaryByDigest) toCurrentDatum(beginTimeForCurInterval int64, u
 
 	// `ssElement` is lazy expired, so expired elements could also be read.
 	// `beginTime` won't change since `ssElement` is created, so locking is not needed here.
-	isAuthed := false
+	isAuthed := true
 	if user != nil {
 		_, isAuthed = ssElement.authUsers[user.Username]
 	}
