@@ -659,7 +659,7 @@ func (s *testSequenceSuite) TestInsertSequence(c *C) {
 	s.tk.MustExec("insert into t values(lastval(seq)),(-1),(nextval(seq))")
 	s.tk.MustQuery("select * from t").Check(testkit.Rows("13", "-1", "14"))
 	s.tk.MustExec("delete from t")
-	s.tk.MustExec("select setval(seq, 100)")
+	s.tk.MustQuery("select setval(seq, 100)").Check(testkit.Rows("100"))
 	s.tk.MustExec("insert into t values(lastval(seq)),(-1),(nextval(seq))")
 	s.tk.MustQuery("select * from t").Check(testkit.Rows("14", "-1", "101"))
 
@@ -679,7 +679,68 @@ func (s *testSequenceSuite) TestInsertSequence(c *C) {
 
 	// test sequence run out (overflow MaxInt64).
 	setSQL := "select setval(seq," + strconv.FormatInt(model.DefaultPositiveSequenceMaxValue+1, 10) + ")"
-	s.tk.MustExec(setSQL)
+	s.tk.MustQuery(setSQL).Check(testkit.Rows("9223372036854775807"))
 	err := s.tk.QueryToErr("select nextval(seq)")
 	c.Assert(err.Error(), Equals, "[table:4135]Sequence 'test.seq' has run out")
+}
+
+func (s *testSequenceSuite) TestUnflodSequence(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test")
+	// test insert into select from.
+	s.tk.MustExec("drop sequence if exists seq")
+	s.tk.MustExec("drop table if exists t1,t2,t3")
+	s.tk.MustExec("create sequence seq")
+	s.tk.MustExec("create table t1 (a int)")
+	s.tk.MustExec("create table t2 (a int, b int)")
+	s.tk.MustExec("create table t3 (a int, b int, c int)")
+	s.tk.MustExec("insert into t1 values(-1),(-1),(-1)")
+	// test sequence function unfold.
+	s.tk.MustQuery("select nextval(seq), a from t1").Check(testkit.Rows("1 -1", "2 -1", "3 -1"))
+	s.tk.MustExec("insert into t2 select nextval(seq), a from t1")
+	s.tk.MustQuery("select * from t2").Check(testkit.Rows("4 -1", "5 -1", "6 -1"))
+	s.tk.MustExec("delete from t2")
+
+	// if lastval is folded, the first result should be always 6.
+	s.tk.MustQuery("select lastval(seq), nextval(seq), a from t1").Check(testkit.Rows("6 7 -1", "7 8 -1", "8 9 -1"))
+	s.tk.MustExec("insert into t3 select lastval(seq), nextval(seq), a from t1")
+	s.tk.MustQuery("select * from t3").Check(testkit.Rows("9 10 -1", "10 11 -1", "11 12 -1"))
+	s.tk.MustExec("delete from t3")
+
+	// if setval is folded, the result should be "101 100 -1"...
+	s.tk.MustQuery("select nextval(seq), setval(seq,100), a from t1").Check(testkit.Rows("13 100 -1", "101 <nil> -1", "102 <nil> -1"))
+	s.tk.MustExec("insert into t3 select nextval(seq), setval(seq,200), a from t1")
+	s.tk.MustQuery("select * from t3").Check(testkit.Rows("103 200 -1", "201 <nil> -1", "202 <nil> -1"))
+	s.tk.MustExec("delete from t3")
+
+	// lastval should be evaluated after nextval in each row.
+	s.tk.MustQuery("select nextval(seq), lastval(seq), a from t1").Check(testkit.Rows("203 203 -1", "204 204 -1", "205 205 -1"))
+	s.tk.MustExec("insert into t3 select nextval(seq), lastval(seq), a from t1")
+	s.tk.MustQuery("select * from t3").Check(testkit.Rows("206 206 -1", "207 207 -1", "208 208 -1"))
+	s.tk.MustExec("delete from t3")
+
+	// double nextval should be also evaluated in each row.
+	s.tk.MustQuery("select nextval(seq), nextval(seq), a from t1").Check(testkit.Rows("209 210 -1", "211 212 -1", "213 214 -1"))
+	s.tk.MustExec("insert into t3 select nextval(seq), nextval(seq), a from t1")
+	s.tk.MustQuery("select * from t3").Check(testkit.Rows("215 216 -1", "217 218 -1", "219 220 -1"))
+	s.tk.MustExec("delete from t3")
+
+	s.tk.MustQuery("select nextval(seq)+lastval(seq), a from t1").Check(testkit.Rows("442 -1", "444 -1", "446 -1"))
+	s.tk.MustExec("insert into t2 select nextval(seq)+lastval(seq), a from t1")
+	s.tk.MustQuery("select * from t2").Check(testkit.Rows("448 -1", "450 -1", "452 -1"))
+	s.tk.MustExec("delete from t2")
+
+	// sub-query contain sequence function.
+	s.tk.MustQuery("select nextval(seq), b from (select nextval(seq) as b, a from t1) t2").Check(testkit.Rows("227 228", "229 230", "231 232"))
+	s.tk.MustExec("insert into t2 select nextval(seq), b from (select nextval(seq) as b, a from t1) t2")
+	s.tk.MustQuery("select * from t2").Check(testkit.Rows("233 234", "235 236", "237 238"))
+	s.tk.MustExec("delete from t2")
+
+	// For union operator like select1 union select2, select1 and select2 will be executed parallelly,
+	// so sequence function in both select are evaluated without order. Besides, the upper union operator
+	// will gather results through multi worker goroutine parallelly leading the results unordered.
+	// Cases like:
+	// `select nextval(seq), a from t1 union select lastval(seq), a from t2`
+	// `select nextval(seq), a from t1 union select nextval(seq), a from t2`
+	// The executing order of nextval and lastval is implicit, don't make any assumptions on it.
 }
