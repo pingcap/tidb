@@ -137,6 +137,11 @@ var MetricTableMap = map[string]MetricTableDef{
 		PromQL:  "increase(tidb_server_panic_total{$LABEL_CONDITIONS}[$RANGE_DURATION])",
 		Labels:  []string{"instance"},
 	},
+	"tidb_panic_count_total_count": {
+		Comment: "The total count of TiDB instance panic",
+		PromQL:  "sum(increase(tidb_server_panic_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance)",
+		Labels:  []string{"instance"},
+	},
 	"tidb_binlog_error_count": {
 		Comment: "TiDB write binlog error, skip binlog count",
 		PromQL:  "tidb_server_critical_error_total{$LABEL_CONDITIONS}",
@@ -376,6 +381,11 @@ var MetricTableMap = map[string]MetricTableDef{
 		PromQL:  "sum(rate(pd_client_cmd_handle_failed_cmds_duration_seconds_count{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type,instance)",
 		Labels:  []string{"instance", "type"},
 		Comment: "pd client command fail count",
+	},
+	"pd_cmd_fail_total_count": {
+		PromQL:  "sum(increase(pd_client_cmd_handle_failed_cmds_duration_seconds_count{$LABEL_CONDITIONS}[60s])) by (type,instance)",
+		Labels:  []string{"instance", "type"},
+		Comment: "The total count of pd client command fail",
 	},
 	"pd_handle_request_ops": {
 		PromQL:  "sum(rate(pd_client_request_handle_requests_duration_seconds_count{$LABEL_CONDITIONS}[$RANGE_DURATION]))",
@@ -878,7 +888,7 @@ var MetricTableMap = map[string]MetricTableDef{
 		Comment: "The OPS of the TiKV critical error",
 	},
 	"tikv_critical_error_total_count": {
-		PromQL:  `sum(rate(tikv_critical_error_total{$LABEL_CONDITIONS}[60s])) by (instance, type)`,
+		PromQL:  `sum(increase(tikv_critical_error_total{$LABEL_CONDITIONS}[60s])) by (instance, type)`,
 		Labels:  []string{"instance", "type"},
 		Comment: "The total number of the TiKV critical error",
 	},
