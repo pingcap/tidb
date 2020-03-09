@@ -3889,6 +3889,8 @@ func (s *testSuite2) TearDownTest(c *C) {
 		tableName := tb[0]
 		if tb[1] == "VIEW" {
 			tk.MustExec(fmt.Sprintf("drop view %v", tableName))
+		} else if tb[1] == "SEQUENCE" {
+			tk.MustExec(fmt.Sprintf("drop sequence %v", tableName))
 		} else {
 			tk.MustExec(fmt.Sprintf("drop table %v", tableName))
 		}
@@ -3907,6 +3909,8 @@ func (s *testSuite3) TearDownTest(c *C) {
 		tableName := tb[0]
 		if tb[1] == "VIEW" {
 			tk.MustExec(fmt.Sprintf("drop view %v", tableName))
+		} else if tb[1] == "SEQUENCE" {
+			tk.MustExec(fmt.Sprintf("drop sequence %v", tableName))
 		} else {
 			tk.MustExec(fmt.Sprintf("drop table %v", tableName))
 		}
@@ -3925,6 +3929,8 @@ func (s *testSuite4) TearDownTest(c *C) {
 		tableName := tb[0]
 		if tb[1] == "VIEW" {
 			tk.MustExec(fmt.Sprintf("drop view %v", tableName))
+		} else if tb[1] == "SEQUENCE" {
+			tk.MustExec(fmt.Sprintf("drop sequence %v", tableName))
 		} else {
 			tk.MustExec(fmt.Sprintf("drop table %v", tableName))
 		}
@@ -3963,6 +3969,8 @@ func (s *testSuite6) TearDownTest(c *C) {
 		tableName := tb[0]
 		if tb[1] == "VIEW" {
 			tk.MustExec(fmt.Sprintf("drop view %v", tableName))
+		} else if tb[1] == "SEQUENCE" {
+			tk.MustExec(fmt.Sprintf("drop sequence %v", tableName))
 		} else {
 			tk.MustExec(fmt.Sprintf("drop table %v", tableName))
 		}
@@ -3981,6 +3989,8 @@ func (s *testSuite7) TearDownTest(c *C) {
 		tableName := tb[0]
 		if tb[1] == "VIEW" {
 			tk.MustExec(fmt.Sprintf("drop view %v", tableName))
+		} else if tb[1] == "SEQUENCE" {
+			tk.MustExec(fmt.Sprintf("drop sequence %v", tableName))
 		} else {
 			tk.MustExec(fmt.Sprintf("drop table %v", tableName))
 		}
@@ -3999,6 +4009,8 @@ func (s *testSuite8) TearDownTest(c *C) {
 		tableName := tb[0]
 		if tb[1] == "VIEW" {
 			tk.MustExec(fmt.Sprintf("drop view %v", tableName))
+		} else if tb[1] == "SEQUENCE" {
+			tk.MustExec(fmt.Sprintf("drop sequence %v", tableName))
 		} else {
 			tk.MustExec(fmt.Sprintf("drop table %v", tableName))
 		}
