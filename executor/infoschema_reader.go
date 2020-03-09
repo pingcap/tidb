@@ -57,9 +57,9 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		case infoschema.TableSchemata:
 			e.setDataFromSchemata(sctx, dbs)
 		case infoschema.TableTables:
-			e.rows, err = dataForTables(sctx, dbs)
+			err = e.dataForTables(sctx, dbs)
 		case infoschema.TablePartitions:
-			e.rows, err = dataForPartitions(sctx, dbs)
+			err = e.dataForPartitions(sctx, dbs)
 		case infoschema.TableTiDBIndexes:
 			e.setDataFromIndexes(sctx, dbs)
 		case infoschema.TableViews:
@@ -269,10 +269,10 @@ func (e *memtableRetriever) setDataFromSchemata(ctx sessionctx.Context, schemas 
 	e.rows = rows
 }
 
-func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Datum, error) {
+func (e *memtableRetriever) dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) error {
 	tableRowsMap, colLengthMap, err := tableStatsCache.get(ctx)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	checker := privilege.GetPrivilegeManager(ctx)
@@ -302,7 +302,7 @@ func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.D
 				if hasAutoIncID {
 					autoIncID, err = getAutoIncrementID(ctx, schema, table)
 					if err != nil {
-						return nil, err
+						return err
 					}
 				}
 
@@ -380,13 +380,14 @@ func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.D
 			}
 		}
 	}
-	return rows, nil
+	e.rows = rows
+	return nil
 }
 
-func dataForPartitions(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Datum, error) {
+func (e *memtableRetriever) dataForPartitions(ctx sessionctx.Context, schemas []*model.DBInfo) error {
 	tableRowsMap, colLengthMap, err := tableStatsCache.get(ctx)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	checker := privilege.GetPrivilegeManager(ctx)
 	var rows [][]types.Datum
@@ -481,7 +482,8 @@ func dataForPartitions(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]typ
 			}
 		}
 	}
-	return rows, nil
+	e.rows = rows
+	return nil
 }
 
 func (e *memtableRetriever) setDataFromIndexes(ctx sessionctx.Context, schemas []*model.DBInfo) {
