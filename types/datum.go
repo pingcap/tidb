@@ -1952,14 +1952,6 @@ func DatumsToStrNoErr(datums []Datum) string {
 	return str
 }
 
-// CloneDatum returns a new copy of the datum.
-// TODO: Abandon this function.
-func CloneDatum(datum Datum) Datum {
-	var ret Datum
-	datum.Copy(&ret)
-	return ret
-}
-
 // CloneRow deep copies a Datum slice.
 func CloneRow(dr []Datum) []Datum {
 	c := make([]Datum, len(dr))
