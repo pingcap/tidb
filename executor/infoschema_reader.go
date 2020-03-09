@@ -17,6 +17,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"time"
 
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
@@ -64,6 +65,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			e.rows = dataForCollations()
 		case infoschema.TableKeyColumn:
 			e.rows = dataForKeyColumnUsage(sctx, dbs)
+		case infoschema.TableClusterInfo:
+			e.rows, err = dataForTiDBClusterInfo(sctx)
 		case infoschema.TableCollationCharacterSetApplicability:
 			e.rows = dataForCollationCharacterSetApplicability()
 		case infoschema.TableUserPrivileges:
@@ -237,6 +240,28 @@ func dataForViews(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Da
 			)
 			rows = append(rows, record)
 		}
+	}
+	return rows, nil
+}
+
+func dataForTiDBClusterInfo(sctx sessionctx.Context) ([][]types.Datum, error) {
+	servers, err := infoschema.GetClusterServerInfo(sctx)
+	if err != nil {
+		return nil, err
+	}
+	rows := make([][]types.Datum, 0, len(servers))
+	for _, server := range servers {
+		startTime := time.Unix(server.StartTimestamp, 0)
+		row := types.MakeDatums(
+			server.ServerType,
+			server.Address,
+			server.StatusAddr,
+			server.Version,
+			server.GitHash,
+			startTime.Format(time.RFC3339),
+			time.Since(startTime).String(),
+		)
+		rows = append(rows, row)
 	}
 	return rows, nil
 }
