@@ -1030,12 +1030,14 @@ func (s *extractorSuite) TestInspectionRuleTableExtractor(c *C) {
 	parser := parser.New()
 	for _, ca := range cases {
 		logicalMemTable := s.getLogicalMemTable(c, se, parser, ca.sql)
-		c.Assert(logicalMemTable.Extractor, NotNil)
-
-		clusterConfigExtractor := logicalMemTable.Extractor.(*plannercore.InspectionRuleTableExtractor)
-		if len(ca.tps) > 0 {
-			c.Assert(clusterConfigExtractor.Types, DeepEquals, ca.tps, Commentf("SQL: %v", ca.sql))
+		if logicalMemTable == nil {
+			c.Assert(ca.skip, IsTrue)
+		} else {
+			clusterConfigExtractor := logicalMemTable.Extractor.(*plannercore.InspectionRuleTableExtractor)
+			if len(ca.tps) > 0 {
+				c.Assert(clusterConfigExtractor.Types, DeepEquals, ca.tps, Commentf("SQL: %v", ca.sql))
+			}
+			c.Assert(clusterConfigExtractor.SkipRequest, Equals, ca.skip, Commentf("SQL: %v", ca.sql))
 		}
-		c.Assert(clusterConfigExtractor.SkipRequest, Equals, ca.skip, Commentf("SQL: %v", ca.sql))
 	}
 }
