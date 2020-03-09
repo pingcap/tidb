@@ -146,8 +146,9 @@ func (s *testEvaluatorSuiteBase) datumsToConstants(datums []types.Datum) []Expre
 
 func (s *testEvaluatorSuiteBase) primitiveValsToConstants(args []interface{}) []Expression {
 	cons := s.datumsToConstants(types.MakeDatums(args...))
+	char, col := s.ctx.GetSessionVars().GetCharsetInfo()
 	for i, arg := range args {
-		types.DefaultTypeForValue(arg, cons[i].GetType())
+		types.DefaultTypeForValue(arg, cons[i].GetType(), char, col)
 	}
 	return cons
 }
