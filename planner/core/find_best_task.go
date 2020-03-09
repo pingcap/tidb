@@ -485,7 +485,15 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err
 					break
 				}
 			}
-			if allRangeIsPoint {
+			// TODO: we ignore generate column now, because there are some errors happened when point get on generate columns
+			hasGenerateCol := false
+			for _, colInfo := range ds.Columns {
+				if colInfo.IsGenerated() {
+					hasGenerateCol = true
+					break
+				}
+			}
+			if allRangeIsPoint && !hasGenerateCol {
 				var pointGetTask task
 				if len(path.Ranges) == 1 {
 					pointGetTask = ds.convertToPointGet(prop, candidate)
