@@ -22,9 +22,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gorilla/mux"
 	"context"
-	"strconv"
+	"github.com/gorilla/mux"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
@@ -722,3 +721,4 @@ func (s *testInfoschemaClusterTableSuite) TestTiDBClusterInfo(c *C) {
 		"tidb key3.key4.nest4 n-value5",
 		"tikv key3.key4.nest4 n-value5",
 	))
+}
