@@ -275,6 +275,14 @@ func (p *LogicalProjection) extractCorrelatedCols() []*expression.CorrelatedColu
 	return corCols
 }
 
+// GetUsedCols extracts all of the Columns used by proj.
+func (p *LogicalProjection) GetUsedCols() (usedCols []*expression.Column) {
+	for _, expr := range p.Exprs {
+		usedCols = append(usedCols, expression.ExtractColumns(expr)...)
+	}
+	return usedCols
+}
+
 // LogicalAggregation represents an aggregate plan.
 type LogicalAggregation struct {
 	logicalSchemaProducer
@@ -894,8 +902,9 @@ type LogicalLimit struct {
 type LogicalLock struct {
 	baseLogicalPlan
 
-	Lock         ast.SelectLockType
-	tblID2Handle map[int64][]*expression.Column
+	Lock             ast.SelectLockType
+	tblID2Handle     map[int64][]*expression.Column
+	partitionedTable []table.PartitionedTable
 }
 
 // WindowFrame represents a window function frame.

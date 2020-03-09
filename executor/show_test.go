@@ -636,7 +636,7 @@ func (s *testAutoRandomSuite) TestShowCreateTableAutoRandom(c *C) {
 	tk.MustQuery("show create table `auto_random_tbl1`").Check(testutil.RowsWithSep("|",
 		""+
 			"auto_random_tbl1 CREATE TABLE `auto_random_tbl1` (\n"+
-			"  `a` bigint(20) NOT NULL /*T!40000 AUTO_RANDOM(3) */,\n"+
+			"  `a` bigint(20) NOT NULL /*T!30100 AUTO_RANDOM(3) */,\n"+
 			"  `b` varchar(255) DEFAULT NULL,\n"+
 			"  PRIMARY KEY (`a`)\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
@@ -647,18 +647,18 @@ func (s *testAutoRandomSuite) TestShowCreateTableAutoRandom(c *C) {
 	tk.MustQuery("show create table auto_random_tbl2").Check(testutil.RowsWithSep("|",
 		""+
 			"auto_random_tbl2 CREATE TABLE `auto_random_tbl2` (\n"+
-			"  `a` bigint(20) NOT NULL /*T!40000 AUTO_RANDOM(5) */,\n"+
+			"  `a` bigint(20) NOT NULL /*T!30100 AUTO_RANDOM(5) */,\n"+
 			"  `b` char(1) DEFAULT NULL,\n"+
 			"  PRIMARY KEY (`a`)\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 
 	// Special version comment can be shown in TiDB with new version.
-	tk.MustExec("create table auto_random_tbl3 (a bigint /*T!40000 auto_random */ primary key)")
+	tk.MustExec("create table auto_random_tbl3 (a bigint /*T!30100 auto_random */ primary key)")
 	tk.MustQuery("show create table auto_random_tbl3").Check(testutil.RowsWithSep("|",
 		""+
 			"auto_random_tbl3 CREATE TABLE `auto_random_tbl3` (\n"+
-			"  `a` bigint(20) NOT NULL /*T!40000 AUTO_RANDOM(5) */,\n"+
+			"  `a` bigint(20) NOT NULL /*T!30100 AUTO_RANDOM(5) */,\n"+
 			"  PRIMARY KEY (`a`)\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
@@ -698,7 +698,7 @@ func (s *testSuite5) TestShowBuiltin(c *C) {
 	res := tk.MustQuery("show builtins;")
 	c.Assert(res, NotNil)
 	rows := res.Rows()
-	c.Assert(265, Equals, len(rows))
+	c.Assert(268, Equals, len(rows))
 	c.Assert("abs", Equals, rows[0][0].(string))
-	c.Assert("yearweek", Equals, rows[264][0].(string))
+	c.Assert("yearweek", Equals, rows[267][0].(string))
 }
