@@ -134,8 +134,7 @@ func (b *builtinSleepSig) evalInt(row chunk.Row) (int64, bool, error) {
 		return 0, false, errIncorrectArgs.GenWithStackByArgs("sleep")
 	}
 
-	err = doSleep(val, sessVars)
-	if err != nil {
+	if isKilled := doSleep(val, sessVars); isKilled {
 		return 1, false, nil
 	}
 

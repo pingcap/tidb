@@ -16,7 +16,6 @@ package expression
 import (
 	"bytes"
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"math"
 	"net"
@@ -308,27 +307,37 @@ func (b *builtinSleepSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 	for i := 0; i < n; i++ {
 		isNull := buf.IsNull(i)
 		val := buf.GetFloat64(i)
+
 		sessVars := b.ctx.GetSessionVars()
 		if isNull {
 			if sessVars.StrictSQLMode {
-				return errIncorrectArgs.GenWithStackByArgs("sleep")
+				err := errIncorrectArgs.GenWithStackByArgs("sleep")
+				sessVars.StmtCtx.AppendError(err)
+				return err
 			}
-			return nil
+			err := errIncorrectArgs.GenWithStackByArgs("sleep")
+			sessVars.StmtCtx.AppendWarning(err)
+			continue
 		}
 		// processing argument is negative
 		if val < 0 {
 			if sessVars.StrictSQLMode {
-				return errIncorrectArgs.GenWithStackByArgs("sleep")
+				err := errIncorrectArgs.GenWithStackByArgs("sleep")
+				sessVars.StmtCtx.AppendError(err)
+				return err
 			}
-			return nil
+			err := errIncorrectArgs.GenWithStackByArgs("sleep")
+			sessVars.StmtCtx.AppendWarning(err)
+			continue
 		}
 
 		if val > math.MaxFloat64/float64(time.Second.Nanoseconds()) {
-			return errIncorrectArgs.GenWithStackByArgs("sleep")
+			err := errIncorrectArgs.GenWithStackByArgs("sleep")
+			sessVars.StmtCtx.AppendError(err)
+			return err
 		}
 
-		err := doSleep(val, sessVars)
-		if err != nil {
+		if isKilled := doSleep(val, sessVars); isKilled {
 			for j := i; j < n; j++ {
 				i64s[j] = 1
 			}
@@ -339,25 +348,23 @@ func (b *builtinSleepSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 	return nil
 }
 
-func doSleep(secs float64, sessVars *variable.SessionVars) error {
+func doSleep(secs float64, sessVars *variable.SessionVars) (isKilled bool) {
 	dur := time.Duration(secs * float64(time.Second.Nanoseconds()))
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
 	start := time.Now()
-	finish := false
-	for !finish {
+	for {
 		select {
 		case now := <-ticker.C:
 			if atomic.CompareAndSwapUint32(&sessVars.Killed, 1, 0) {
-				return errors.New("session is killed")
+				return true
 			}
 
 			if now.Sub(start) > dur {
-				finish = true
+				return false
 			}
 		}
 	}
-	return nil
 }
 
 func (b *builtinIsIPv4MappedSig) vectorized() bool {
