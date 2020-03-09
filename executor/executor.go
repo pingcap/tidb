@@ -329,14 +329,34 @@ func (e *ShowDDLExec) Next(ctx context.Context, req *chunk.Chunk) error {
 // ShowDDLJobsExec represent a show DDL jobs executor.
 type ShowDDLJobsExec struct {
 	baseExecutor
+	DDLJobExecInitializer
 
-	cursor         int
+	cacheJobs []*model.Job
+	jobNumber int
+	is        infoschema.InfoSchema
+	done      bool
+}
+
+// DDLJobExecInitializer initials the DDLJobsExec.
+type DDLJobExecInitializer struct {
 	runningJobs    []*model.Job
 	historyJobIter *meta.LastJobIterator
-	cacheJobs      []*model.Job
-	jobNumber      int
-	is             infoschema.InfoSchema
-	done           bool
+	cursor         int
+}
+
+func (e *DDLJobExecInitializer) initial(txn kv.Transaction) error {
+	jobs, err := admin.GetDDLJobs(txn)
+	if err != nil {
+		return err
+	}
+	m := meta.NewMeta(txn)
+	e.historyJobIter, err = m.GetLastHistoryDDLJobsIterator()
+	if err != nil {
+		return err
+	}
+	e.runningJobs = jobs
+	e.cursor = 0
+	return nil
 }
 
 // ShowDDLJobQueriesExec represents a show DDL job queries executor.
@@ -404,21 +424,13 @@ func (e *ShowDDLJobsExec) Open(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	jobs, err := admin.GetDDLJobs(txn)
-	if err != nil {
-		return err
-	}
 	if e.jobNumber == 0 {
 		e.jobNumber = admin.DefNumHistoryJobs
 	}
-
-	m := meta.NewMeta(txn)
-	e.historyJobIter, err = m.GetLastHistoryDDLJobsIterator()
+	err = e.DDLJobExecInitializer.initial(txn)
 	if err != nil {
 		return err
 	}
-	e.runningJobs = append(e.runningJobs, jobs...)
-	e.cursor = 0
 	return nil
 }
 
@@ -429,6 +441,7 @@ func (e *ShowDDLJobsExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return nil
 	}
 	count := 0
+
 	// Append running ddl jobs.
 	if e.cursor < len(e.runningJobs) {
 		numCurBatch := mathutil.Min(req.Capacity(), len(e.runningJobs)-e.cursor)
@@ -438,8 +451,9 @@ func (e *ShowDDLJobsExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		e.cursor += numCurBatch
 		count += numCurBatch
 	}
-	var err error
+
 	// Append history ddl jobs.
+	var err error
 	if count < req.Capacity() {
 		num := req.Capacity() - count
 		remainNum := e.jobNumber - (e.cursor - len(e.runningJobs))

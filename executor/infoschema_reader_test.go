@@ -49,7 +49,7 @@ func (s *testInfoschemaTableSuite) TestSchemataTables(c *C) {
 	tk.MustQuery("select * from information_schema.SCHEMATA where schema_name='mysql';").Check(
 		testkit.Rows("def mysql utf8mb4 utf8mb4_bin <nil>"))
 
-	//test the privilege of new user for information_schema.schemata
+	// Test the privilege of new user for information_schema.schemata.
 	tk.MustExec("create user schemata_tester")
 	schemataTester := testkit.NewTestKit(c, s.store)
 	schemataTester.MustExec("use information_schema")
@@ -63,7 +63,7 @@ func (s *testInfoschemaTableSuite) TestSchemataTables(c *C) {
 	schemataTester.MustQuery("select * from information_schema.SCHEMATA where schema_name='INFORMATION_SCHEMA';").Check(
 		testkit.Rows("def INFORMATION_SCHEMA utf8mb4 utf8mb4_bin <nil>"))
 
-	//test the privilege of user with privilege of mysql for information_schema.schemata
+	// Test the privilege of user with privilege of mysql for information_schema.schemata.
 	tk.MustExec("CREATE ROLE r_mysql_priv;")
 	tk.MustExec("GRANT ALL PRIVILEGES ON mysql.* TO r_mysql_priv;")
 	tk.MustExec("GRANT r_mysql_priv TO schemata_tester;")
@@ -117,6 +117,39 @@ func (s *testInfoschemaTableSuite) TestCharacterSetCollations(c *C) {
 
 	tk.MustQuery("select * from information_schema.COLLATION_CHARACTER_SET_APPLICABILITY where COLLATION_NAME='utf8mb4_bin';").Check(
 		testkit.Rows("utf8mb4_bin utf8mb4"))
+}
+
+func (s *testInfoschemaTableSuite) TestDDLJobs(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists test_ddl_jobs")
+	tk.MustQuery("select db_name, job_type from information_schema.DDL_JOBS limit 1").Check(
+		testkit.Rows("test_ddl_jobs create schema"))
+
+	tk.MustExec("use test_ddl_jobs")
+	tk.MustExec("create table t (a int);")
+	tk.MustQuery("select db_name, table_name, job_type from information_schema.DDL_JOBS where table_name = 't'").Check(
+		testkit.Rows("test_ddl_jobs t create table"))
+
+	tk.MustQuery("select job_type from information_schema.DDL_JOBS group by job_type having job_type = 'create table'").Check(
+		testkit.Rows("create table"))
+
+	// Test the privilege of new user for information_schema.DDL_JOBS.
+	tk.MustExec("create user DDL_JOBS_tester")
+	DDLJobsTester := testkit.NewTestKit(c, s.store)
+	DDLJobsTester.MustExec("use information_schema")
+	c.Assert(DDLJobsTester.Se.Auth(&auth.UserIdentity{
+		Username: "DDL_JOBS_tester",
+		Hostname: "127.0.0.1",
+	}, nil, nil), IsTrue)
+	DDLJobsTester.MustQuery("select DB_NAME from information_schema.DDL_JOBS;").Check(
+		[][]interface{}{})
+
+	// Test the privilege of user with privilege of mysql for information_schema.ddl_jobs.
+	tk.MustExec("CREATE ROLE mysql_priv;")
+	tk.MustExec("GRANT ALL PRIVILEGES ON mysql.* TO mysql_priv;")
+	tk.MustExec("GRANT mysql_priv TO DDL_JOBS_tester;")
+	DDLJobsTester.MustExec("set role mysql_priv")
+	DDLJobsTester.MustQuery("select DISTINCT DB_NAME from information_schema.DDL_JOBS where DB_NAME = 'mysql';").Check(testkit.Rows("mysql"))
 }
 
 func (s *testInfoschemaTableSuite) TestKeyColumnUsage(c *C) {

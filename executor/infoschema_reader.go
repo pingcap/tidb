@@ -17,9 +17,11 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -28,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
@@ -590,6 +593,106 @@ func dataForViews(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Da
 		}
 	}
 	return rows, nil
+}
+
+// DDLJobsReaderExec executes DDLJobs information retrieving.
+type DDLJobsReaderExec struct {
+	baseExecutor
+	DDLJobExecInitializer
+
+	cacheJobs []*model.Job
+	is        infoschema.InfoSchema
+}
+
+// Open implements the Executor Next interface.
+func (e *DDLJobsReaderExec) Open(ctx context.Context) error {
+	if err := e.baseExecutor.Open(ctx); err != nil {
+		return err
+	}
+	txn, err := e.ctx.Txn(true)
+	if err != nil {
+		return err
+	}
+	err = e.DDLJobExecInitializer.initial(txn)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// Next implements the Executor Next interface.
+func (e *DDLJobsReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
+	req.GrowAndReset(e.maxChunkSize)
+	checker := privilege.GetPrivilegeManager(e.ctx)
+	count := 0
+
+	// Append running DDL jobs.
+	if e.cursor < len(e.runningJobs) {
+		num := mathutil.Min(req.Capacity(), len(e.runningJobs)-e.cursor)
+		for i := e.cursor; i < e.cursor+num; i++ {
+			e.appendJobToChunk(req, e.runningJobs[i], checker)
+		}
+		e.cursor += num
+		count += num
+	}
+	var err error
+
+	// Append history DDL jobs.
+	if count < req.Capacity() {
+		e.cacheJobs, err = e.historyJobIter.GetLastJobs(req.Capacity()-count, e.cacheJobs)
+		if err != nil {
+			return err
+		}
+		for _, job := range e.cacheJobs {
+			e.appendJobToChunk(req, job, checker)
+		}
+		e.cursor += len(e.cacheJobs)
+	}
+	return nil
+}
+
+func (e *DDLJobsReaderExec) appendJobToChunk(req *chunk.Chunk, job *model.Job, checker privilege.Manager) {
+	schemaName := job.SchemaName
+	tableName := ""
+	finishTS := uint64(0)
+	if job.BinlogInfo != nil {
+		finishTS = job.BinlogInfo.FinishedTS
+		if job.BinlogInfo.TableInfo != nil {
+			tableName = job.BinlogInfo.TableInfo.Name.L
+		}
+		if len(schemaName) == 0 && job.BinlogInfo.DBInfo != nil {
+			schemaName = job.BinlogInfo.DBInfo.Name.L
+		}
+	}
+	// For compatibility, the old version of DDL Job wasn't store the schema name and table name.
+	if len(schemaName) == 0 {
+		schemaName = getSchemaName(e.is, job.SchemaID)
+	}
+	if len(tableName) == 0 {
+		tableName = getTableName(e.is, job.TableID)
+	}
+
+	// Check the privilege.
+	if checker != nil && !checker.RequestVerification(e.ctx.GetSessionVars().ActiveRoles, strings.ToLower(schemaName), strings.ToLower(tableName), "", mysql.AllPrivMask) {
+		return
+	}
+
+	req.AppendInt64(0, job.ID)
+	req.AppendString(1, schemaName)
+	req.AppendString(2, tableName)
+	req.AppendString(3, job.Type.String())
+	req.AppendString(4, job.SchemaState.String())
+	req.AppendInt64(5, job.SchemaID)
+	req.AppendInt64(6, job.TableID)
+	req.AppendInt64(7, job.RowCount)
+	req.AppendString(8, model.TSConvert2Time(job.StartTS).String())
+	if finishTS > 0 {
+		req.AppendString(9, model.TSConvert2Time(finishTS).String())
+	} else {
+		req.AppendString(9, "")
+	}
+	req.AppendString(10, job.State.String())
+	req.AppendString(11, job.Query)
 }
 
 func dataForEngines() (rows [][]types.Datum) {
