@@ -16,6 +16,7 @@ package expression
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"math"
 	"net"
@@ -24,6 +25,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
@@ -325,26 +327,36 @@ func (b *builtinSleepSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 			return errIncorrectArgs.GenWithStackByArgs("sleep")
 		}
 
-		dur := time.Duration(val * float64(time.Second.Nanoseconds()))
-		ticker := time.NewTicker(10 * time.Millisecond)
-		defer ticker.Stop()
-		start := time.Now()
-		finish := false
-		for !finish {
-			select {
-			case now := <-ticker.C:
-				if now.Sub(start) > dur {
-					finish = true
-				}
-			default:
-				if atomic.CompareAndSwapUint32(&sessVars.Killed, 1, 0) {
-					i64s[i] = 1
-					return nil
-				}
+		err := doSleep(val, sessVars)
+		if err != nil {
+			for j := i; j < n; j++ {
+				i64s[j] = 1
 			}
+			return nil
 		}
 	}
 
+	return nil
+}
+
+func doSleep(secs float64, sessVars *variable.SessionVars) error {
+	dur := time.Duration(secs * float64(time.Second.Nanoseconds()))
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	start := time.Now()
+	finish := false
+	for !finish {
+		select {
+		case now := <-ticker.C:
+			if atomic.CompareAndSwapUint32(&sessVars.Killed, 1, 0) {
+				return errors.New("session is killed")
+			}
+
+			if now.Sub(start) > dur {
+				finish = true
+			}
+		}
+	}
 	return nil
 }
 
