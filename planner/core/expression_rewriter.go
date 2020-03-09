@@ -909,6 +909,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 	case *ast.AggregateFuncExpr, *ast.ColumnNameExpr, *ast.ParenthesesExpr, *ast.WhenClause,
 		*ast.SubqueryExpr, *ast.ExistsSubqueryExpr, *ast.CompareSubqueryExpr, *ast.ValuesExpr, *ast.WindowFuncExpr, *ast.TableNameExpr:
 	case *driver.ValueExpr:
+		v.Datum.SetValue(v.Datum.GetValue(), &v.Type)
 		value := &expression.Constant{Value: v.Datum, RetType: &v.Type}
 		er.ctxStackAppend(value, types.EmptyName)
 	case *driver.ParamMarkerExpr:
@@ -1004,8 +1005,9 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		// SetCollationExpr sets the collation explicitly, even when the evaluation type of the expression is non-string.
 		if _, ok := arg.(*expression.Column); ok {
 			// Wrap a cast here to avoid changing the original FieldType of the column expression.
-			casted := expression.WrapWithCastAsString(er.sctx, arg)
-			casted.GetType().Collate = v.Collate
+			exprType := arg.GetType().Clone()
+			exprType.Collate = v.Collate
+			casted := expression.BuildCastFunction(er.sctx, arg, exprType)
 			er.ctxStackPop(1)
 			er.ctxStackAppend(casted, types.EmptyName)
 		} else {
@@ -1337,6 +1339,7 @@ func (er *expressionRewriter) patternLikeToExpression(v *ast.PatternLikeExpr) {
 		return
 	}
 
+	char, col := er.sctx.GetSessionVars().GetCharsetInfo()
 	var function expression.Expression
 	fieldType := &types.FieldType{}
 	isPatternExactMatch := false
@@ -1354,7 +1357,7 @@ func (er *expressionRewriter) patternLikeToExpression(v *ast.PatternLikeExpr) {
 				if v.Not {
 					op = ast.NE
 				}
-				types.DefaultTypeForValue(string(patValue), fieldType)
+				types.DefaultTypeForValue(string(patValue), fieldType, char, col)
 				function, er.err = er.constructBinaryOpFunction(er.ctxStack[l-2],
 					&expression.Constant{Value: types.NewStringDatum(string(patValue)), RetType: fieldType},
 					op)
@@ -1363,7 +1366,7 @@ func (er *expressionRewriter) patternLikeToExpression(v *ast.PatternLikeExpr) {
 		}
 	}
 	if !isPatternExactMatch {
-		types.DefaultTypeForValue(int(v.Escape), fieldType)
+		types.DefaultTypeForValue(int(v.Escape), fieldType, char, col)
 		function = er.notToExpression(v.Not, ast.Like, &v.Type,
 			er.ctxStack[l-2], er.ctxStack[l-1], &expression.Constant{Value: types.NewIntDatum(int64(v.Escape)), RetType: fieldType})
 	}
