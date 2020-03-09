@@ -199,6 +199,8 @@ type Column struct {
 	// InOperand indicates whether this column is the inner operand of column equal condition converted
 	// from `[not] in (subq)`.
 	InOperand bool
+
+	collationInfo
 }
 
 // Equal implements Expression interface.
@@ -343,6 +345,10 @@ func (col *Column) EvalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, 
 		val := row.GetDatum(col.Index, col.RetType)
 		if val.IsNull() {
 			return 0, true, nil
+		}
+		if val.Kind() == types.KindMysqlBit {
+			val, err := val.GetBinaryLiteral().ToInt(ctx.GetSessionVars().StmtCtx)
+			return int64(val), err != nil, err
 		}
 		res, err := val.ToInt64(ctx.GetSessionVars().StmtCtx)
 		return res, err != nil, err
@@ -587,4 +593,13 @@ func (col *Column) SupportReverseEval() bool {
 // ReverseEval evaluates the only one column value with given function result.
 func (col *Column) ReverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error) {
 	return types.ChangeReverseResultByUpperLowerBound(sc, col.RetType, res, rType)
+}
+
+// Coercibility returns the coercibility value which is used to check collations.
+func (col *Column) Coercibility() Coercibility {
+	if col.HasCoercibility() {
+		return col.collationInfo.Coercibility()
+	}
+	col.SetCoercibility(deriveCoercibilityForColumn(col))
+	return col.collationInfo.Coercibility()
 }

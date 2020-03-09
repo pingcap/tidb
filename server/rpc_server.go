@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials"
 )
 
 // NewRPCServer creates a new rpc server.
@@ -46,16 +45,7 @@ func NewRPCServer(config *config.Config, dom *domain.Domain, sm util.SessionMana
 		}
 	}()
 
-	var s *grpc.Server
-	if len(config.Security.ClusterSSLCA) != 0 {
-		tlsConfig, err := config.Security.ToTLSConfig()
-		if err == nil {
-			s = grpc.NewServer(grpc.Creds(credentials.NewTLS(tlsConfig)))
-		}
-	}
-	if s == nil {
-		s = grpc.NewServer()
-	}
+	s := grpc.NewServer()
 	rpcSrv := &rpcServer{
 		DiagnosticsServer: sysutil.NewDiagnosticsServer(config.Log.File.Filename),
 		dom:               dom,
@@ -117,6 +107,65 @@ func (s *rpcServer) CoprocessorStream(in *coprocessor.Request, stream tikvpb.Tik
 
 	h := executor.NewCoprocessorDAGHandler(se)
 	return h.HandleStreamRequest(context.Background(), in, stream)
+}
+
+// BatchCommands implements the TiKVServer interface.
+func (s *rpcServer) BatchCommands(ss tikvpb.Tikv_BatchCommandsServer) error {
+	defer func() {
+		if v := recover(); v != nil {
+			logutil.BgLogger().Error("panic when RPC server handing batch commands", zap.Any("stack", v))
+		}
+	}()
+	for {
+		reqs, err := ss.Recv()
+		if err != nil {
+			logutil.BgLogger().Error("RPC server batch commands receive fail", zap.Error(err))
+			return err
+		}
+
+		responses := make([]*tikvpb.BatchCommandsResponse_Response, 0, len(reqs.Requests))
+		for _, req := range reqs.Requests {
+			var response *tikvpb.BatchCommandsResponse_Response
+			switch request := req.Cmd.(type) {
+			case *tikvpb.BatchCommandsRequest_Request_Coprocessor:
+				cop := request.Coprocessor
+				resp, err := s.Coprocessor(context.Background(), cop)
+				if err != nil {
+					return err
+				}
+				response = &tikvpb.BatchCommandsResponse_Response{
+					Cmd: &tikvpb.BatchCommandsResponse_Response_Coprocessor{
+						Coprocessor: resp,
+					},
+				}
+			case *tikvpb.BatchCommandsRequest_Request_Empty:
+				response = &tikvpb.BatchCommandsResponse_Response{
+					Cmd: &tikvpb.BatchCommandsResponse_Response_Empty{
+						Empty: &tikvpb.BatchCommandsEmptyResponse{
+							TestId: request.Empty.TestId,
+						},
+					},
+				}
+			default:
+				logutil.BgLogger().Info("RPC server batch commands receive unknown request", zap.Any("req", request))
+				response = &tikvpb.BatchCommandsResponse_Response{
+					Cmd: &tikvpb.BatchCommandsResponse_Response_Empty{
+						Empty: &tikvpb.BatchCommandsEmptyResponse{},
+					},
+				}
+			}
+			responses = append(responses, response)
+		}
+
+		err = ss.Send(&tikvpb.BatchCommandsResponse{
+			Responses:  responses,
+			RequestIds: reqs.GetRequestIds(),
+		})
+		if err != nil {
+			logutil.BgLogger().Error("RPC server batch commands send fail", zap.Error(err))
+			return err
+		}
+	}
 }
 
 // handleCopRequest handles the cop dag request.

@@ -574,16 +574,19 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 
 // UpdateForUpdateTS updates the ForUpdateTS, if newForUpdateTS is 0, it obtain a new TS from PD.
 func UpdateForUpdateTS(seCtx sessionctx.Context, newForUpdateTS uint64) error {
+	txn, err := seCtx.Txn(false)
+	if err != nil {
+		return err
+	}
+	if !txn.Valid() {
+		return kv.ErrInvalidTxn
+	}
 	if newForUpdateTS == 0 {
 		version, err := seCtx.GetStore().CurrentVersion()
 		if err != nil {
 			return err
 		}
 		newForUpdateTS = version.Ver
-	}
-	txn, err := seCtx.Txn(true)
-	if err != nil {
-		return err
 	}
 	seCtx.GetSessionVars().TxnCtx.SetForUpdateTS(newForUpdateTS)
 	txn.SetOption(kv.SnapshotTS, seCtx.GetSessionVars().TxnCtx.GetForUpdateTS())
@@ -776,8 +779,8 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	level := log.GetLevel()
 	cfg := config.GetGlobalConfig()
 	costTime := time.Since(sessVars.StartTime) + sessVars.DurationParse
-	threshold := time.Duration(atomic.LoadUint64(&cfg.Log.SlowThreshold)) * time.Millisecond
-	enable := atomic.LoadUint32(&cfg.Log.EnableSlowLog) > 0
+	threshold := time.Duration(cfg.Log.SlowThreshold) * time.Millisecond
+	enable := cfg.Log.EnableSlowLog
 	// if the level is Debug, print slow logs anyway
 	if (!enable || costTime < threshold) && level > zapcore.DebugLevel {
 		return

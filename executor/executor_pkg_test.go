@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"crypto/tls"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
@@ -35,6 +36,12 @@ import (
 
 var _ = Suite(&testExecSuite{})
 var _ = SerialSuites(&testExecSerialSuite{})
+
+// Note: it's a tricky way to export the `inspectionSummaryRules` and `inspectionRules` for unit test but invisible for normal code
+var (
+	InspectionSummaryRules = inspectionSummaryRules
+	InspectionRules        = inspectionRules
+)
 
 type testExecSuite struct {
 }
@@ -68,6 +75,9 @@ func (msm *mockSessionManager) GetProcessInfo(id uint64) (*util.ProcessInfo, boo
 // Kill implements the SessionManager.Kill interface.
 func (msm *mockSessionManager) Kill(cid uint64, query bool) {
 
+}
+
+func (msm *mockSessionManager) UpdateTLSConfig(cfg *tls.Config) {
 }
 
 func (s *testExecSuite) TestShowProcessList(c *C) {

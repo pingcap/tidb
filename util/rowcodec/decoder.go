@@ -53,6 +53,7 @@ type ColInfo struct {
 	Flen    int
 	Decimal int
 	Elems   []string
+	Collate string
 }
 
 // DatumMapDecoder decodes the row to datum map.
@@ -131,8 +132,9 @@ func (decoder *DatumMapDecoder) decodeColDatum(col *ColInfo, colData []byte) (ty
 			return d, err
 		}
 		d.SetFloat64(fVal)
-	case mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeString,
-		mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+	case mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeString:
+		d.SetString(string(colData), col.Collate)
+	case mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		d.SetBytes(colData)
 	case mysql.TypeNewDecimal:
 		_, dec, precision, frac, err := codec.DecodeDecimal(colData)
@@ -168,13 +170,13 @@ func (decoder *DatumMapDecoder) decodeColDatum(col *ColInfo, colData []byte) (ty
 		if err != nil {
 			enum = types.Enum{}
 		}
-		d.SetMysqlEnum(enum)
+		d.SetMysqlEnum(enum, col.Collate)
 	case mysql.TypeSet:
 		set, err := types.ParseSetValue(col.Elems, decodeUint(colData))
 		if err != nil {
 			return d, err
 		}
-		d.SetMysqlSet(set)
+		d.SetMysqlSet(set, col.Collate)
 	case mysql.TypeBit:
 		byteSize := (col.Flen + 7) >> 3
 		d.SetMysqlBit(types.NewBinaryLiteralFromUint(decodeUint(colData), byteSize))
@@ -353,8 +355,7 @@ func NewByteDecoder(columns []ColInfo, handleColID int64, defBytes func(i int) (
 	}
 }
 
-// DecodeToBytes decodes raw byte slice to row data.
-func (decoder *BytesDecoder) DecodeToBytes(outputOffset map[int64]int, handle int64, value []byte, cacheBytes []byte) ([][]byte, error) {
+func (decoder *BytesDecoder) decodeToBytesInternal(outputOffset map[int64]int, handle int64, value []byte, cacheBytes []byte, useHandle bool) ([][]byte, error) {
 	var r row
 	err := r.fromBytes(value)
 	if err != nil {
@@ -365,7 +366,7 @@ func (decoder *BytesDecoder) DecodeToBytes(outputOffset map[int64]int, handle in
 		tp := fieldType2Flag(byte(col.Tp), uint(col.Flag)&mysql.UnsignedFlag == 0)
 		colID := col.ID
 		offset := outputOffset[colID]
-		if col.IsPKHandle || colID == model.ExtraHandleID {
+		if useHandle && (col.IsPKHandle || colID == model.ExtraHandleID) {
 			handleData := cacheBytes
 			if mysql.HasUnsignedFlag(uint(col.Flag)) {
 				handleData = append(handleData, UintFlag)
@@ -404,6 +405,16 @@ func (decoder *BytesDecoder) DecodeToBytes(outputOffset map[int64]int, handle in
 		values[offset] = []byte{NilFlag}
 	}
 	return values, nil
+}
+
+// DecodeToBytesNoHandle decodes raw byte slice to row dat without handle.
+func (decoder *BytesDecoder) DecodeToBytesNoHandle(outputOffset map[int64]int, value []byte) ([][]byte, error) {
+	return decoder.decodeToBytesInternal(outputOffset, 0, value, nil, false)
+}
+
+// DecodeToBytes decodes raw byte slice to row data.
+func (decoder *BytesDecoder) DecodeToBytes(outputOffset map[int64]int, handle int64, value []byte, cacheBytes []byte) ([][]byte, error) {
+	return decoder.decodeToBytesInternal(outputOffset, handle, value, cacheBytes, true)
 }
 
 func (decoder *BytesDecoder) encodeOldDatum(tp byte, val []byte) []byte {

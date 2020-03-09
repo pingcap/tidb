@@ -23,6 +23,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/model"
@@ -38,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
@@ -646,7 +646,7 @@ func (h *Handle) getAutoAnalyzeParameters() map[string]string {
 	if err != nil {
 		return map[string]string{}
 	}
-	parameters := make(map[string]string)
+	parameters := make(map[string]string, len(rows))
 	for _, row := range rows {
 		parameters[row.GetString(0)] = row.GetString(1)
 	}
