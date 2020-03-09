@@ -261,6 +261,9 @@ func (s *testIntegrationSuite) TestNoneAccessPathsFoundByIsolationRead(c *C) {
 	tk.MustQuery("explain select * from mysql.stats_meta").Check(testkit.Rows(
 		"TableReader_5 10000.00 root data:TableFullScan_4",
 		"└─TableFullScan_4 10000.00 cop[tikv] table:stats_meta, keep order:false, stats:pseudo"))
+	tk.MustQuery("explain select * from information_schema.tables").Check(testkit.Rows(
+		"TableReader_5 10000.00 root data:TableFullScan_4",
+		"└─TableFullScan_4 10000.00 cop[tikv] table:tables, keep order:false, stats:pseudo"))
 
 	_, err = tk.Exec("select * from t")
 	c.Assert(err, NotNil)

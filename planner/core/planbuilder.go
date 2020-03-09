@@ -756,7 +756,7 @@ func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tbl ta
 
 func (b *PlanBuilder) filterPathByIsolationRead(paths []*util.AccessPath, dbName model.CIStr) ([]*util.AccessPath, error) {
 	// TODO: filter paths with isolation read locations.
-	if dbName.L == mysql.SystemDB {
+	if dbName.L == mysql.SystemDB || dbName.L == "information_schema" || dbName.L == "performance_schema" {
 		return paths, nil
 	}
 	cfgIsolationEngines := set.StringSet{}
