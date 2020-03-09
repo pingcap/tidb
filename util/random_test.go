@@ -37,7 +37,7 @@ func (s *testMiscSuite) TestRand(c *C) {
 	sum := 0
 	for i := 0; i < 1024; i++ {
 		val := FastRand()
-		testBit := uint32(0x1 << (i%32));
+		testBit := uint32(0x1 << (i % 32))
 		if (val & testBit) > 0 {
 			sum++
 		} else {
