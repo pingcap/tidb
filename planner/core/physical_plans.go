@@ -570,12 +570,11 @@ type PhysicalWindow struct {
 
 // PhysicalShuffle represents a Shuffle plan.
 // Between this Shuffle and `ChildShuffle`, executors are running in a parallel manner.
-// `Tail` is the last plan within.
 // Take `Window` operator for example:
 //  Window -> Sort -> DataSource
 //  ==> Shuffle(this) -> Window -> Sort -> Shuffle(child) -> DataSource, will be separated into:
 //      └─> Shuffle(this): for main thread
-//      └─> Window -> Sort(:Tail) -> shuffleWorker: for workers
+//      └─> Window -> Sort -> stub: for workers
 //      └─> Shuffle(child) -> DataSource: for `fetchDataAndSplit` thread
 type PhysicalShuffle struct {
 	basePhysicalPlan

@@ -93,27 +93,6 @@ func (s *testSuiteJoin2) TestJoin(c *C) {
 	c.Assert(tk.Se.GetSessionVars().IndexLookupJoinConcurrency, Equals, 4)
 
 	tk.MustExec("set @@tidb_index_lookup_size = 2")
-	tk.MustExec("set @@tidb_executors_concurrency = 1")
-	defer func() {
-		tk.MustExec("set @@tidb_executors_concurrency = 4")
-	}()
-	doTestJoin(c, tk)
-}
-
-func (s *testSuiteJoin2) TestShuffleJoin(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-
-	tk.MustExec("set @@tidb_index_lookup_join_concurrency = 4")
-	tk.MustExec("set @@tidb_index_lookup_size = 2")
-	tk.MustExec("set @@tidb_hash_join_concurrency = 1")
-	tk.MustExec("set @@tidb_executors_concurrency = 4")
-	defer func() {
-		tk.MustExec("set @@tidb_hash_join_concurrency = 5")
-	}()
-	doTestJoin(c, tk)
-}
-
-func doTestJoin(c *C, tk *testkit.TestKit) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (c int)")
@@ -152,7 +131,7 @@ func doTestJoin(c *C, tk *testkit.TestKit) {
 	result.Check(testkit.Rows())
 	result = tk.MustQuery("select * from t left outer join t1 on t.c1 = t1.c1 and t.c1 != 1 order by t1.c1")
 	result.Check(testkit.Rows("1 1 <nil> <nil>", "2 2 2 3"))
-	result = tk.MustQuery("select t.c1, t1.c1 from t left outer join t1 on t.c1 = t1.c1 and t.c2 + t1.c2 <= 5").Sort()
+	result = tk.MustQuery("select t.c1, t1.c1 from t left outer join t1 on t.c1 = t1.c1 and t.c2 + t1.c2 <= 5")
 	result.Check(testkit.Rows("1 <nil>", "2 2"))
 
 	tk.MustExec("drop table if exists t1")
@@ -208,22 +187,22 @@ func doTestJoin(c *C, tk *testkit.TestKit) {
 	tk.MustExec("insert into t1 values(1, 2), (1, 3), (1, 4), (3, 4), (4, 5)")
 
 	// The physical plans of the two sql are tested at physical_plan_test.go
-	tk.MustQuery("select /*+ INL_JOIN(t, t1) */ * from t join t1 on t.a=t1.a").Sort().Check(testkit.Rows("1 1 1 2", "1 1 1 3", "1 1 1 4", "3 3 3 4"))
-	tk.MustQuery("select /*+ INL_HASH_JOIN(t, t1) */ * from t join t1 on t.a=t1.a").Sort().Check(testkit.Rows("1 1 1 2", "1 1 1 3", "1 1 1 4", "3 3 3 4"))
-	tk.MustQuery("select /*+ INL_MERGE_JOIN(t, t1) */ * from t join t1 on t.a=t1.a").Sort().Check(testkit.Rows("1 1 1 2", "1 1 1 3", "1 1 1 4", "3 3 3 4"))
-	tk.MustQuery("select /*+ INL_JOIN(t) */ * from t1 join t on t.a=t1.a and t.a < t1.b").Sort().Check(testkit.Rows("1 2 1 1", "1 3 1 1", "1 4 1 1", "3 4 3 3"))
-	tk.MustQuery("select /*+ INL_HASH_JOIN(t) */ * from t1 join t on t.a=t1.a and t.a < t1.b").Sort().Check(testkit.Rows("1 2 1 1", "1 3 1 1", "1 4 1 1", "3 4 3 3"))
-	tk.MustQuery("select /*+ INL_MERGE_JOIN(t) */ * from t1 join t on t.a=t1.a and t.a < t1.b").Sort().Check(testkit.Rows("1 2 1 1", "1 3 1 1", "1 4 1 1", "3 4 3 3"))
+	tk.MustQuery("select /*+ INL_JOIN(t, t1) */ * from t join t1 on t.a=t1.a").Check(testkit.Rows("1 1 1 2", "1 1 1 3", "1 1 1 4", "3 3 3 4"))
+	tk.MustQuery("select /*+ INL_HASH_JOIN(t, t1) */ * from t join t1 on t.a=t1.a").Check(testkit.Rows("1 1 1 2", "1 1 1 3", "1 1 1 4", "3 3 3 4"))
+	tk.MustQuery("select /*+ INL_MERGE_JOIN(t, t1) */ * from t join t1 on t.a=t1.a").Check(testkit.Rows("1 1 1 2", "1 1 1 3", "1 1 1 4", "3 3 3 4"))
+	tk.MustQuery("select /*+ INL_JOIN(t) */ * from t1 join t on t.a=t1.a and t.a < t1.b").Check(testkit.Rows("1 2 1 1", "1 3 1 1", "1 4 1 1", "3 4 3 3"))
+	tk.MustQuery("select /*+ INL_HASH_JOIN(t) */ * from t1 join t on t.a=t1.a and t.a < t1.b").Check(testkit.Rows("1 2 1 1", "1 3 1 1", "1 4 1 1", "3 4 3 3"))
+	tk.MustQuery("select /*+ INL_MERGE_JOIN(t) */ * from t1 join t on t.a=t1.a and t.a < t1.b").Check(testkit.Rows("1 2 1 1", "1 3 1 1", "1 4 1 1", "3 4 3 3"))
 	// Test single index reader.
-	tk.MustQuery("select /*+ INL_JOIN(t, t1) */ t1.b from t1 join t on t.b=t1.b").Sort().Check(testkit.Rows("2", "3"))
-	tk.MustQuery("select /*+ INL_HASH_JOIN(t, t1) */ t1.b from t1 join t on t.b=t1.b").Sort().Check(testkit.Rows("2", "3"))
-	tk.MustQuery("select /*+ INL_MERGE_JOIN(t, t1) */ t1.b from t1 join t on t.b=t1.b").Sort().Check(testkit.Rows("2", "3"))
-	tk.MustQuery("select /*+ INL_JOIN(t1) */ * from t right outer join t1 on t.a=t1.a").Sort().Check(testkit.Rows("1 1 1 2", "1 1 1 3", "1 1 1 4", "3 3 3 4", "<nil> <nil> 4 5"))
-	tk.MustQuery("select /*+ INL_HASH_JOIN(t1) */ * from t right outer join t1 on t.a=t1.a").Sort().Check(testkit.Rows("1 1 1 2", "1 1 1 3", "1 1 1 4", "3 3 3 4", "<nil> <nil> 4 5"))
-	tk.MustQuery("select /*+ INL_MERGE_JOIN(t1) */ * from t right outer join t1 on t.a=t1.a").Sort().Check(testkit.Rows("1 1 1 2", "1 1 1 3", "1 1 1 4", "3 3 3 4", "<nil> <nil> 4 5"))
-	tk.MustQuery("select /*+ INL_JOIN(t) */ avg(t.b) from t right outer join t1 on t.a=t1.a").Sort().Check(testkit.Rows("1.5000"))
-	tk.MustQuery("select /*+ INL_HASH_JOIN(t) */ avg(t.b) from t right outer join t1 on t.a=t1.a").Sort().Check(testkit.Rows("1.5000"))
-	tk.MustQuery("select /*+ INL_MERGE_JOIN(t) */ avg(t.b) from t right outer join t1 on t.a=t1.a").Sort().Check(testkit.Rows("1.5000"))
+	tk.MustQuery("select /*+ INL_JOIN(t, t1) */ t1.b from t1 join t on t.b=t1.b").Check(testkit.Rows("2", "3"))
+	tk.MustQuery("select /*+ INL_HASH_JOIN(t, t1) */ t1.b from t1 join t on t.b=t1.b").Check(testkit.Rows("2", "3"))
+	tk.MustQuery("select /*+ INL_MERGE_JOIN(t, t1) */ t1.b from t1 join t on t.b=t1.b").Check(testkit.Rows("2", "3"))
+	tk.MustQuery("select /*+ INL_JOIN(t1) */ * from t right outer join t1 on t.a=t1.a").Check(testkit.Rows("1 1 1 2", "1 1 1 3", "1 1 1 4", "3 3 3 4", "<nil> <nil> 4 5"))
+	tk.MustQuery("select /*+ INL_HASH_JOIN(t1) */ * from t right outer join t1 on t.a=t1.a").Check(testkit.Rows("1 1 1 2", "1 1 1 3", "1 1 1 4", "3 3 3 4", "<nil> <nil> 4 5"))
+	tk.MustQuery("select /*+ INL_MERGE_JOIN(t1) */ * from t right outer join t1 on t.a=t1.a").Check(testkit.Rows("1 1 1 2", "1 1 1 3", "1 1 1 4", "3 3 3 4", "<nil> <nil> 4 5"))
+	tk.MustQuery("select /*+ INL_JOIN(t) */ avg(t.b) from t right outer join t1 on t.a=t1.a").Check(testkit.Rows("1.5000"))
+	tk.MustQuery("select /*+ INL_HASH_JOIN(t) */ avg(t.b) from t right outer join t1 on t.a=t1.a").Check(testkit.Rows("1.5000"))
+	tk.MustQuery("select /*+ INL_MERGE_JOIN(t) */ avg(t.b) from t right outer join t1 on t.a=t1.a").Check(testkit.Rows("1.5000"))
 
 	// Test that two conflict hints will return warning.
 	tk.MustExec("select /*+ TIDB_INLJ(t) TIDB_SMJ(t) */ * from t join t1 on t.a=t1.a")
@@ -325,7 +304,7 @@ func doTestJoin(c *C, tk *testkit.TestKit) {
 	// This case is for testing:
 	// when the main thread calls Executor.Close() while the out data fetch worker and join workers are still working,
 	// we need to stop the goroutines as soon as possible to avoid unexpected error.
-	//tk.MustExec("set @@tidb_hash_join_concurrency=5")
+	tk.MustExec("set @@tidb_hash_join_concurrency=5")
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a int)")
 	for i := 0; i < 100; i++ {
@@ -734,9 +713,9 @@ func (s *testSuiteJoin3) TestSubquery(c *C) {
 	result := tk.MustQuery("select * from t where exists(select * from t k where t.c = k.c having sum(c) = 1)")
 	result.Check(testkit.Rows("1 1"))
 	result = tk.MustQuery("select * from t where exists(select k.c, k.d from t k, t p where t.c = k.d)")
-	result.Sort().Check(testkit.Rows("1 1", "2 2"))
+	result.Check(testkit.Rows("1 1", "2 2"))
 	result = tk.MustQuery("select 1 = (select count(*) from t where t.c = k.d) from t k")
-	result.Sort().Check(testkit.Rows("0", "1", "1"))
+	result.Check(testkit.Rows("1", "1", "0"))
 	result = tk.MustQuery("select 1 = (select count(*) from t where exists( select * from t m where t.c = k.d)) from t k")
 	result.Sort().Check(testkit.Rows("0", "1", "1"))
 	result = tk.MustQuery("select t.c = any (select count(*) from t) from t")
@@ -790,7 +769,7 @@ func (s *testSuiteJoin3) TestSubquery(c *C) {
 	tk.MustExec("create table t(id int, v int)")
 	tk.MustExec("insert into t values(1, 1), (2, 2), (3, 3)")
 	result = tk.MustQuery("select * from t where v=(select min(t1.v) from t t1, t t2, t t3 where t1.id=t2.id and t2.id=t3.id and t1.id=t.id)")
-	result.Sort().Check(testkit.Rows("1 1", "2 2", "3 3"))
+	result.Check(testkit.Rows("1 1", "2 2", "3 3"))
 
 	result = tk.MustQuery("select exists (select t.id from t where s.id < 2 and t.id = s.id) from t s")
 	result.Sort().Check(testkit.Rows("0", "0", "1"))
@@ -829,7 +808,7 @@ func (s *testSuiteJoin3) TestSubquery(c *C) {
 	tk.MustExec("insert into t values(1), (2)")
 	tk.MustExec("insert into s values(2), (2)")
 	result = tk.MustQuery("select *, (select count(id) from s where id = t.id) from t")
-	result.Sort().Check(testkit.Rows("1 0", "2 2"))
+	result.Check(testkit.Rows("1 0", "2 2"))
 	result = tk.MustQuery("select *, 0 < any (select count(id) from s where id = t.id) from t")
 	result.Check(testkit.Rows("1 0", "2 1"))
 	result = tk.MustQuery("select (select count(*) from t k where t.id = id) from s, t where t.id = s.id limit 1")
@@ -1232,11 +1211,11 @@ func (s *testSuiteJoin1) TestIndexNestedLoopHashJoin(c *C) {
 	tk.MustExec("analyze table s")
 	// Test IndexNestedLoopHashJoin keepOrder.
 	tk.MustQuery("explain select /*+ INL_HASH_JOIN(s) */ * from t left join s on t.a=s.a order by t.pk").Check(testkit.Rows(
-		"IndexHashJoin_30 100.00 root left outer join, inner:TableReader_24, outer key:test.t.a, inner key:test.s.a",
-		"├─TableReader_32(Build) 100.00 root data:TableFullScan_31",
-		"│ └─TableFullScan_31 100.00 cop[tikv] table:t, keep order:true",
-		"└─TableReader_24(Probe) 1.00 root data:TableRangeScan_23",
-		"  └─TableRangeScan_23 1.00 cop[tikv] table:s, range: decided by [test.t.a], keep order:false",
+		"IndexHashJoin_28 100.00 root left outer join, inner:TableReader_22, outer key:test.t.a, inner key:test.s.a",
+		"├─TableReader_30(Build) 100.00 root data:TableFullScan_29",
+		"│ └─TableFullScan_29 100.00 cop[tikv] table:t, keep order:true",
+		"└─TableReader_22(Probe) 1.00 root data:TableRangeScan_21",
+		"  └─TableRangeScan_21 1.00 cop[tikv] table:s, range: decided by [test.t.a], keep order:false",
 	))
 	rs := tk.MustQuery("select /*+ INL_HASH_JOIN(s) */ * from t left join s on t.a=s.a order by t.pk")
 	for i, row := range rs.Rows() {
@@ -1259,12 +1238,12 @@ func (s *testSuiteJoin3) TestIssue13449(c *C) {
 	tk.MustExec("set @@tidb_index_join_batch_size=32;")
 
 	tk.MustQuery("desc select /*+ INL_HASH_JOIN(s) */ * from t join s on t.a=s.a order by t.a;").Check(testkit.Rows(
-		"IndexHashJoin_38 12487.50 root inner join, inner:IndexReader_30, outer key:test.t.a, inner key:test.s.a",
-		"├─IndexReader_40(Build) 9990.00 root index:IndexFullScan_39",
-		"│ └─IndexFullScan_39 9990.00 cop[tikv] table:t, index:a, keep order:true, stats:pseudo",
-		"└─IndexReader_30(Probe) 1.25 root index:Selection_29",
-		"  └─Selection_29 1.25 cop[tikv] not(isnull(test.s.a))",
-		"    └─IndexRangeScan_28 1.25 cop[tikv] table:s, index:a, range: decided by [eq(test.s.a, test.t.a)], keep order:false, stats:pseudo"))
+		"IndexHashJoin_35 12487.50 root inner join, inner:IndexReader_27, outer key:test.t.a, inner key:test.s.a",
+		"├─IndexReader_37(Build) 9990.00 root index:IndexFullScan_36",
+		"│ └─IndexFullScan_36 9990.00 cop[tikv] table:t, index:a, keep order:true, stats:pseudo",
+		"└─IndexReader_27(Probe) 1.25 root index:Selection_26",
+		"  └─Selection_26 1.25 cop[tikv] not(isnull(test.s.a))",
+		"    └─IndexRangeScan_25 1.25 cop[tikv] table:s, index:a, range: decided by [eq(test.s.a, test.t.a)], keep order:false, stats:pseudo"))
 	tk.MustQuery("select /*+ INL_HASH_JOIN(s) */ * from t join s on t.a=s.a order by t.a;").Check(testkit.Rows("1 1", "128 128"))
 }
 
@@ -1278,11 +1257,11 @@ func (s *testSuiteJoin3) TestMergejoinOrder(c *C) {
 	tk.MustExec("insert into t2 select a*100, b*100 from t1;")
 
 	tk.MustQuery("explain select /*+ TIDB_SMJ(t2) */ * from t1 left outer join t2 on t1.a=t2.a and t1.a!=3 order by t1.a;").Check(testkit.Rows(
-		"MergeJoin_23 10000.00 root left outer join, left key:test.t1.a, right key:test.t2.a, left cond:[ne(test.t1.a, 3)]",
-		"├─TableReader_17(Build) 6666.67 root data:TableRangeScan_16",
-		"│ └─TableRangeScan_16 6666.67 cop[tikv] table:t2, range:[-inf,3), (3,+inf], keep order:true, stats:pseudo",
-		"└─TableReader_15(Probe) 10000.00 root data:TableFullScan_14",
-		"  └─TableFullScan_14 10000.00 cop[tikv] table:t1, keep order:true, stats:pseudo",
+		"MergeJoin_20 10000.00 root left outer join, left key:test.t1.a, right key:test.t2.a, left cond:[ne(test.t1.a, 3)]",
+		"├─TableReader_14(Build) 6666.67 root data:TableRangeScan_13",
+		"│ └─TableRangeScan_13 6666.67 cop[tikv] table:t2, range:[-inf,3), (3,+inf], keep order:true, stats:pseudo",
+		"└─TableReader_12(Probe) 10000.00 root data:TableFullScan_11",
+		"  └─TableFullScan_11 10000.00 cop[tikv] table:t1, keep order:true, stats:pseudo",
 	))
 
 	tk.MustExec("set @@tidb_init_chunk_size=1")

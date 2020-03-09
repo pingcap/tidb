@@ -255,14 +255,13 @@ func buildExecutorWithShuffle(ctx sessionctx.Context, plan core.PhysicalPlan,
 
 type aggTestCase struct {
 	// The test table's schema is fixed (aggCol Double, groupBy LongLong).
-	execType       string // "hash" or "stream"
-	aggFunc        string // sum, avg, count ....
-	groupByNDV     int    // the number of distinct group-by keys
-	hasDistinct    bool
-	isPartitioning bool
-	rows           int
-	concurrency    int
-	ctx            sessionctx.Context
+	execType    string // "hash" or "stream"
+	aggFunc     string // sum, avg, count ....
+	groupByNDV  int    // the number of distinct group-by keys
+	hasDistinct bool
+	rows        int
+	concurrency int
+	ctx         sessionctx.Context
 }
 
 func (a aggTestCase) columns() []*expression.Column {
@@ -273,15 +272,15 @@ func (a aggTestCase) columns() []*expression.Column {
 }
 
 func (a aggTestCase) String() string {
-	return fmt.Sprintf("(execType:%v, aggFunc:%v, ndv:%v, hasDistinct:%v, rows:%v, concurrency:%v, partitioning:%v)",
-		a.execType, a.aggFunc, a.groupByNDV, a.hasDistinct, a.rows, a.concurrency, a.isPartitioning)
+	return fmt.Sprintf("(execType:%v, aggFunc:%v, ndv:%v, hasDistinct:%v, rows:%v, concurrency:%v)",
+		a.execType, a.aggFunc, a.groupByNDV, a.hasDistinct, a.rows, a.concurrency)
 }
 
 func defaultAggTestCase(exec string) *aggTestCase {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
 	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
-	return &aggTestCase{exec, ast.AggFuncSum, 1000, false, false, 10000000, 4, ctx}
+	return &aggTestCase{exec, ast.AggFuncSum, 1000, false, 10000000, 4, ctx}
 }
 
 func buildHashAggExecutor(ctx sessionctx.Context, src Executor, schema *expression.Schema,
@@ -322,9 +321,6 @@ func buildAggExecutor(b *testing.B, testCase *aggTestCase, child Executor) Execu
 	if err := ctx.GetSessionVars().SetSystemVar(variable.TiDBHashAggPartialConcurrency, fmt.Sprintf("%v", testCase.concurrency)); err != nil {
 		b.Fatal(err)
 	}
-	if err := ctx.GetSessionVars().SetSystemVar(variable.TiDBExecutorsConcurrency, fmt.Sprintf("%v", 1)); err != nil {
-		b.Fatal(err)
-	}
 
 	childCols := testCase.columns()
 	schema := expression.NewSchema(childCols...)
@@ -347,47 +343,6 @@ func buildAggExecutor(b *testing.B, testCase *aggTestCase, child Executor) Execu
 	return aggExec
 }
 
-func buildAggPartitioningExecutor(b *testing.B, testCase *aggTestCase, dataSource Executor) Executor {
-	ctx := testCase.ctx
-	if err := ctx.GetSessionVars().SetSystemVar(variable.TiDBHashAggFinalConcurrency, fmt.Sprintf("%v", 1)); err != nil {
-		b.Fatal(err)
-	}
-	if err := ctx.GetSessionVars().SetSystemVar(variable.TiDBHashAggPartialConcurrency, fmt.Sprintf("%v", 1)); err != nil {
-		b.Fatal(err)
-	}
-	if err := ctx.GetSessionVars().SetSystemVar(variable.TiDBExecutorsConcurrency, fmt.Sprintf("%v", testCase.concurrency)); err != nil {
-		b.Fatal(err)
-	}
-
-	childCols := testCase.columns()
-	schema := expression.NewSchema(childCols...)
-	groupBy := []expression.Expression{childCols[1]}
-	groupByCols := []*expression.Column{childCols[1]}
-	aggFunc, err := aggregation.NewAggFuncDesc(testCase.ctx, testCase.aggFunc, []expression.Expression{childCols[0]}, testCase.hasDistinct)
-	if err != nil {
-		b.Fatal(err)
-	}
-	aggFuncs := []*aggregation.AggFuncDesc{aggFunc}
-
-	var agg core.PhysicalPlan
-	switch testCase.execType {
-	case "hash":
-		plan := new(core.PhysicalHashAgg)
-		plan.AggFuncs = aggFuncs
-		plan.GroupByItems = groupBy
-		plan.SetSchema(schema)
-		plan.Init(ctx, nil, 0)
-		agg = plan
-	//Future: case "stream":
-	default:
-		b.Fatal("not implement")
-	}
-
-	return buildExecutorWithShuffle(testCase.ctx, agg, dataSource, testCase.concurrency,
-		core.ShuffleHashSplitterType, groupByCols, core.ShuffleRandomMergerType, nil,
-	)
-}
-
 func benchmarkAggExecWithCase(b *testing.B, casTest *aggTestCase) {
 	cols := casTest.columns()
 	orders := []bool{false, casTest.execType == "stream"}
@@ -399,20 +354,10 @@ func benchmarkAggExecWithCase(b *testing.B, casTest *aggTestCase) {
 		ctx:    casTest.ctx,
 	})
 
-	if casTest.isPartitioning && casTest.execType == "stream" {
-		b.Skip()
-		return
-	}
-
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		b.StopTimer() // prepare a new agg-executor
-		var aggExec Executor
-		if casTest.isPartitioning && casTest.concurrency > 1 {
-			aggExec = buildAggPartitioningExecutor(b, casTest, dataSource)
-		} else {
-			aggExec = buildAggExecutor(b, casTest, dataSource)
-		}
+		aggExec := buildAggExecutor(b, casTest, dataSource)
 		tmpCtx := context.Background()
 		chk := newFirstChunk(aggExec)
 		dataSource.prepareChunks()
@@ -471,60 +416,19 @@ func BenchmarkAggGroupByNDV(b *testing.B) {
 }
 
 func BenchmarkAggConcurrency(b *testing.B) {
-	concs := []int{1, 2, 3, 4}
-	NDVs := []int{2000, 10000, 50000}
-	rows := 100000
-	for _, hasDistinct := range []bool{false, true} {
-		for _, NDV := range NDVs {
-			for _, isPartitioning := range []bool{false, true} {
-				for _, con := range concs {
-					for _, exec := range []string{"stream", "hash"} {
-						if exec == "stream" && con > 1 {
-							continue
-						}
-						cas := defaultAggTestCase(exec)
-						cas.concurrency = con
-						cas.rows = rows
-						cas.groupByNDV = NDV
-						cas.hasDistinct = hasDistinct
-						cas.aggFunc = ast.AggFuncAvg
-						cas.isPartitioning = isPartitioning
-						b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
-							benchmarkAggExecWithCase(b, cas)
-						})
-					}
-				}
+	concs := []int{1, 4, 8, 15, 20, 30, 40}
+	for _, con := range concs {
+		for _, exec := range []string{"hash", "stream"} {
+			if exec == "stream" && con > 1 {
+				continue
 			}
+			cas := defaultAggTestCase(exec)
+			cas.concurrency = con
+			b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+				benchmarkAggExecWithCase(b, cas)
+			})
 		}
 	}
-}
-
-// TODOO: Delete this one.
-func BenchmarkHashAggDefaultConcurrency(b *testing.B) {
-	cas := defaultAggTestCase("hash")
-	cas.concurrency = 4
-	cas.rows = 100000
-	cas.groupByNDV = 10000
-	cas.hasDistinct = false
-	cas.aggFunc = ast.AggFuncAvg
-	cas.isPartitioning = false
-	b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
-		benchmarkAggExecWithCase(b, cas)
-	})
-}
-
-// TODOO: Delete this one.
-func BenchmarkHashAggPartitioningConcurrency(b *testing.B) {
-	cas := defaultAggTestCase("hash")
-	cas.concurrency = 4
-	cas.rows = 100000
-	cas.groupByNDV = 10000
-	cas.hasDistinct = false
-	cas.aggFunc = ast.AggFuncAvg
-	cas.isPartitioning = true
-	b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
-		benchmarkAggExecWithCase(b, cas)
-	})
 }
 
 func BenchmarkAggDistinct(b *testing.B) {

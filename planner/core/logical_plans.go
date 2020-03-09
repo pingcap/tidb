@@ -118,7 +118,6 @@ const (
 // LogicalJoin is the logical join plan.
 type LogicalJoin struct {
 	logicalSchemaProducer
-	parallelHelper parallelLogicalPlanHelper
 
 	JoinType      JoinType
 	reordered     bool
@@ -244,63 +243,9 @@ func (p *LogicalJoin) ExtractJoinKeys(childIdx int) *expression.Schema {
 	return expression.NewSchema(joinKeys...)
 }
 
-// logicalProjectionSchemaConverter converts columns before->after projection, or after->before projection.
-type logicalProjectionSchemaConverter struct {
-	prepared  bool
-	proj      *LogicalProjection
-	oldCols   []*expression.Column
-	newCols   []*expression.Column
-	tmpSchema *expression.Schema
-}
-
-func (c *logicalProjectionSchemaConverter) prepare(proj *LogicalProjection) {
-	if c.prepared {
-		return
-	}
-
-	c.proj = proj
-	c.oldCols = make([]*expression.Column, 0, proj.schema.Len())
-	c.newCols = make([]*expression.Column, 0, proj.schema.Len())
-	for i, expr := range proj.Exprs {
-		if col, ok := expr.(*expression.Column); ok {
-			c.newCols = append(c.newCols, proj.schema.Columns[i])
-			c.oldCols = append(c.oldCols, col)
-		}
-	}
-	c.tmpSchema = expression.NewSchema(c.oldCols...)
-
-	c.prepared = true
-}
-
-func (c *logicalProjectionSchemaConverter) convertColumnsToAfterProjection(before []*expression.Column) (after []*expression.Column, missed []*expression.Column) {
-	for _, col := range before {
-		pos := c.tmpSchema.ColumnIndex(col)
-		if pos >= 0 {
-			after = append(after, c.newCols[pos])
-		} else {
-			missed = append(missed, col)
-		}
-	}
-	return
-}
-
-func (c *logicalProjectionSchemaConverter) convertColumnsToBeforeProjection(after []*expression.Column) (before []*expression.Column, missed []*expression.Column) {
-	for _, col := range after {
-		idx := c.proj.schema.ColumnIndex(col)
-		switch expr := c.proj.Exprs[idx].(type) {
-		case *expression.Column:
-			before = append(before, expr)
-		default:
-			missed = append(missed, col)
-		}
-	}
-	return
-}
-
 // LogicalProjection represents a select fields plan.
 type LogicalProjection struct {
 	logicalSchemaProducer
-	parallelHelper parallelLogicalPlanHelper
 
 	Exprs []expression.Expression
 
@@ -320,8 +265,6 @@ type LogicalProjection struct {
 	// This can be removed after column pool being supported.
 	// Related issue: TiDB#8141(https://github.com/pingcap/tidb/issues/8141)
 	AvoidColumnEvaluator bool
-
-	schemaConverter logicalProjectionSchemaConverter
 }
 
 func (p *LogicalProjection) extractCorrelatedCols() []*expression.CorrelatedColumn {
@@ -343,7 +286,6 @@ func (p *LogicalProjection) GetUsedCols() (usedCols []*expression.Column) {
 // LogicalAggregation represents an aggregate plan.
 type LogicalAggregation struct {
 	logicalSchemaProducer
-	parallelHelper parallelLogicalPlanHelper
 
 	AggFuncs     []*aggregation.AggFuncDesc
 	GroupByItems []expression.Expression

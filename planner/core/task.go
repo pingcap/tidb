@@ -524,9 +524,8 @@ func (p *PhysicalHashJoin) attach2Task(tasks ...task) task {
 	rTask := finishCopTask(p.ctx, tasks[1].copy())
 	p.SetChildren(lTask.plan(), rTask.plan())
 	return &rootTask{
-		p:           p,
-		cst:         lTask.cost() + rTask.cost() + p.GetCost(lTask.count(), rTask.count()),
-		concurrency: lTask.(*rootTask).concurrency, // `concurrency` of lTask & rTask should be equal.
+		p:   p,
+		cst: lTask.cost() + rTask.cost() + p.GetCost(lTask.count(), rTask.count()),
 	}
 }
 

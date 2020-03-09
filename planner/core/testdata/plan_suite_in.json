@@ -151,8 +151,6 @@
       "select /*+ TIDB_SMJ(t1,t2)*/ * from t t1, t t2 where t1.a = t2.a order by t2.a",
       "select /*+ TIDB_SMJ(t1,t2)*/ * from t t1, t t2 where t1.b = t2.b order by t2.a",
       // Test Single Merge Join + Sort + desc.
-      //   `order by t2.a DESC` leads to higher cost of `TableReader`, and would be more expensive than ascend `TableReader` + parallel sort.
-      //   Notice that result of testcase do not show the `keep order` property of `TableReader`. Check it by `explain`.
       "select /*+ TIDB_SMJ(t1,t2)*/ * from t t1, t t2 where t1.a = t2.a order by t2.a desc",
       "select /*+ TIDB_SMJ(t1,t2)*/ * from t t1, t t2 where t1.b = t2.b order by t2.b desc",
       // Test Multi Merge Join.

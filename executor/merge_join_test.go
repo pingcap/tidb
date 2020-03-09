@@ -16,10 +16,9 @@ package executor_test
 import (
 	"bytes"
 	"fmt"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"math/rand"
 	"strings"
-
-	"github.com/pingcap/tidb/sessionctx/variable"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/config"
@@ -367,14 +366,12 @@ func (s *testSuite2) TestMergeJoin(c *C) {
 	tk.MustExec("create table t(a int)")
 	tk.MustExec("insert into t value(1),(2)")
 	tk.MustQuery("explain select /*+ TIDB_SMJ(t1, t2) */ * from t t1 join t t2 order by t1.a, t2.a").Check(testkit.Rows(
-		"Shuffle_18 100000000.00 root execution info: concurrency:4, fan out:1, splitter:none, merger:merge-sort(test.t.a,test.t.a)",
-		"└─Sort_8 100000000.00 root test.t.a:asc, test.t.a:asc",
-		"  └─Shuffle_17 25000000.00 root execution info: concurrency:1, fan out:4, splitter:random, merger:none",
-		"    └─MergeJoin_10 100000000.00 root inner join",
-		"      ├─TableReader_14(Build) 10000.00 root data:TableFullScan_13",
-		"      │ └─TableFullScan_13 10000.00 cop[tikv] table:t2, keep order:false, stats:pseudo",
-		"      └─TableReader_12(Probe) 10000.00 root data:TableFullScan_11",
-		"        └─TableFullScan_11 10000.00 cop[tikv] table:t1, keep order:false, stats:pseudo",
+		"Sort_6 100000000.00 root test.t.a:asc, test.t.a:asc",
+		"└─MergeJoin_9 100000000.00 root inner join",
+		"  ├─TableReader_13(Build) 10000.00 root data:TableFullScan_12",
+		"  │ └─TableFullScan_12 10000.00 cop[tikv] table:t2, keep order:false, stats:pseudo",
+		"  └─TableReader_11(Probe) 10000.00 root data:TableFullScan_10",
+		"    └─TableFullScan_10 10000.00 cop[tikv] table:t1, keep order:false, stats:pseudo",
 	))
 	tk.MustQuery("select /*+ TIDB_SMJ(t1, t2) */ * from t t1 join t t2 order by t1.a, t2.a").Check(testkit.Rows(
 		"1 1",
@@ -423,20 +420,16 @@ func (s *testSuite2) TestMergeJoin(c *C) {
 	tk.MustExec("create table s (a int)")
 	tk.MustExec("insert into s values (4), (1), (3), (2)")
 	tk.MustQuery("explain select s1.a1 from (select a as a1 from s order by s.a desc) as s1 join (select a as a2 from s order by s.a desc) as s2 on s1.a1 = s2.a2 order by s1.a1 desc").Check(testkit.Rows(
-		"Projection_41 12487.50 root test.s.a",
-		"└─MergeJoin_42 12487.50 root inner join, left key:test.s.a, right key:test.s.a",
-		"  ├─Shuffle_50(Build) 9990.00 root execution info: concurrency:4, fan out:1, splitter:none, merger:merge-sort(test.s.a desc)",
-		"  │ └─Sort_49 9990.00 root test.s.a:desc",
-		"  │   └─Shuffle_39 2497.50 root execution info: concurrency:1, fan out:4, splitter:random, merger:none",
-		"  │     └─TableReader_38 9990.00 root data:Selection_37",
-		"  │       └─Selection_37 9990.00 cop[tikv] not(isnull(test.s.a))",
-		"  │         └─TableFullScan_36 10000.00 cop[tikv] table:s, keep order:false, stats:pseudo",
-		"  └─Shuffle_46(Probe) 9990.00 root execution info: concurrency:4, fan out:1, splitter:none, merger:merge-sort(test.s.a desc)",
-		"    └─Sort_45 9990.00 root test.s.a:desc",
-		"      └─Shuffle_28 2497.50 root execution info: concurrency:1, fan out:4, splitter:random, merger:none",
-		"        └─TableReader_27 9990.00 root data:Selection_26",
-		"          └─Selection_26 9990.00 cop[tikv] not(isnull(test.s.a))",
-		"            └─TableFullScan_25 10000.00 cop[tikv] table:s, keep order:false, stats:pseudo",
+		"Projection_27 12487.50 root test.s.a",
+		"└─MergeJoin_28 12487.50 root inner join, left key:test.s.a, right key:test.s.a",
+		"  ├─Sort_31(Build) 9990.00 root test.s.a:desc",
+		"  │ └─TableReader_26 9990.00 root data:Selection_25",
+		"  │   └─Selection_25 9990.00 cop[tikv] not(isnull(test.s.a))",
+		"  │     └─TableFullScan_24 10000.00 cop[tikv] table:s, keep order:false, stats:pseudo",
+		"  └─Sort_29(Probe) 9990.00 root test.s.a:desc",
+		"    └─TableReader_21 9990.00 root data:Selection_20",
+		"      └─Selection_20 9990.00 cop[tikv] not(isnull(test.s.a))",
+		"        └─TableFullScan_19 10000.00 cop[tikv] table:s, keep order:false, stats:pseudo",
 	))
 	tk.MustQuery("select s1.a1 from (select a as a1 from s order by s.a desc) as s1 join (select a as a2 from s order by s.a desc) as s2 on s1.a1 = s2.a2 order by s1.a1 desc").Check(testkit.Rows(
 		"4", "3", "2", "1"))

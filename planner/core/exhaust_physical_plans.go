@@ -1438,27 +1438,6 @@ func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) []Ph
 	return joins
 }
 
-func (p *LogicalJoin) exhaustParallelPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
-	if p.ctx.GetSessionVars().HashJoinConcurrency > 1 {
-		return nil
-	}
-
-	// Support hash join ONLY.
-	// Future: support other joins.
-	options := exhaustParallelPhysicalPlansOptions{
-		exhaustor: p.getHashJoins,
-		deliveringPartitionGroupingColsFunctor: func(pp PhysicalPlan, possibleProp []*property.PhysicalProperty) []*expression.Column {
-			hashJoin := pp.(*PhysicalHashJoin)
-			builderIdx := hashJoin.InnerChildIdx
-			if hashJoin.UseOuterToBuild {
-				builderIdx = 1 - builderIdx
-			}
-			return possibleProp[builderIdx].PartitionGroupingCols
-		},
-	}
-	return p.parallelHelper.exhaustParallelPhysicalPlans(p.ctx, p, prop, options)
-}
-
 // TryToGetChildProp will check if this sort property can be pushed or not.
 // When a sort column will be replaced by scalar function, we refuse it.
 // When a sort column will be replaced by a constant, we just remove it.
@@ -1490,38 +1469,6 @@ func (p *LogicalProjection) exhaustPhysicalPlans(prop *property.PhysicalProperty
 	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, newProp)
 	proj.SetSchema(p.schema)
 	return []PhysicalPlan{proj}
-}
-
-func (p *LogicalProjection) exhaustParallelPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
-	if !expression.Vectorizable(p.Exprs) || p.ctx.GetSessionVars().ProjectionConcurrency > 1 {
-		return nil
-	}
-
-	if !prop.IsPartitioning {
-		return nil
-	}
-	p.schemaConverter.prepare(p)
-	newGroupingCols, _ := p.schemaConverter.convertColumnsToBeforeProjection(prop.PartitionGroupingCols)
-	if len(newGroupingCols) == 0 {
-		return nil
-	}
-
-	newProp := prop.Clone()
-	newProp.IsPartitioning = true
-	newProp.PartitionGroupingCols = newGroupingCols
-
-	options := exhaustParallelPhysicalPlansOptions{
-		deliveringPartitionGroupingColsFunctor: func(pp PhysicalPlan, possibleProp []*property.PhysicalProperty) []*expression.Column {
-			originalProp := possibleProp[0]
-			p.schemaConverter.prepare(p)
-			groupingCols, missed := p.schemaConverter.convertColumnsToAfterProjection(originalProp.PartitionGroupingCols)
-			if len(missed) > 0 {
-				return nil
-			}
-			return groupingCols
-		},
-	}
-	return p.parallelHelper.exhaustParallelPhysicalPlans(p.ctx, p, newProp, options)
 }
 
 func (lt *LogicalTopN) getPhysTopN() []PhysicalPlan {
@@ -1753,15 +1700,13 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 
 // ResetHintIfConflicted resets the aggHints.preferAggType if they are conflicted,
 // and returns the two preferAggType hints.
-func (la *LogicalAggregation) ResetHintIfConflicted(setWarning bool) (preferHash bool, preferStream bool) {
+func (la *LogicalAggregation) ResetHintIfConflicted() (preferHash bool, preferStream bool) {
 	preferHash = (la.aggHints.preferAggType & preferHashAgg) > 0
 	preferStream = (la.aggHints.preferAggType & preferStreamAgg) > 0
 	if preferHash && preferStream {
-		if setWarning {
-			errMsg := "Optimizer aggregation hints are conflicted"
-			warning := ErrInternal.GenWithStack(errMsg)
-			la.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
-		}
+		errMsg := "Optimizer aggregation hints are conflicted"
+		warning := ErrInternal.GenWithStack(errMsg)
+		la.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
 		la.aggHints.preferAggType = 0
 		preferHash, preferStream = false, false
 	}
@@ -1778,7 +1723,7 @@ func (la *LogicalAggregation) exhaustPhysicalPlans(prop *property.PhysicalProper
 		}
 	}
 
-	preferHash, preferStream := la.ResetHintIfConflicted(true)
+	preferHash, preferStream := la.ResetHintIfConflicted()
 
 	hashAggs := la.getHashAggs(prop)
 	if hashAggs != nil && preferHash {
@@ -1800,33 +1745,6 @@ func (la *LogicalAggregation) exhaustPhysicalPlans(prop *property.PhysicalProper
 	aggs = append(aggs, hashAggs...)
 	aggs = append(aggs, streamAggs...)
 	return aggs
-}
-
-func (la *LogicalAggregation) exhaustParallelPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
-	sessionVars := la.ctx.GetSessionVars()
-	if finalCon, partialCon := sessionVars.HashAggFinalConcurrency, sessionVars.HashAggPartialConcurrency; finalCon*partialCon > 1 {
-		return nil
-	}
-
-	// Support hash aggregation ONLY.
-	// Future: support streaming aggregation.
-	_, preferStream := la.ResetHintIfConflicted(false)
-	if preferStream {
-		return nil
-	}
-
-	options := exhaustParallelPhysicalPlansOptions{
-		exhaustor: func(prop *property.PhysicalProperty) []PhysicalPlan {
-			if !prop.IsEmpty() {
-				return nil
-			}
-			// Shuffle cannot be pushed to cop.
-			agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, TaskTp: property.RootTaskType})
-			agg.SetSchema(la.schema.Clone())
-			return []PhysicalPlan{agg}
-		},
-	}
-	return la.parallelHelper.exhaustParallelPhysicalPlans(la.ctx, la, prop, options)
 }
 
 func (p *LogicalSelection) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
