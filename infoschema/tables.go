@@ -17,7 +17,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/pingcap/tidb/util/admin"
 	"io/ioutil"
 	"net/http"
 	"sort"
@@ -1767,52 +1766,6 @@ func GetTiKVServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	return servers, nil
 }
 
-func dataForDDLJobs(ctx sessionctx.Context) (rows [][]types.Datum, err error) {
-	txn, err := ctx.Txn(true)
-	if err != nil {
-		return nil, err
-	}
-	jobs, err := admin.GetDDLJobs(txn)
-	if err != nil {
-		return nil, err
-	}
-	historyJobs, err := admin.GetHistoryDDLJobs(txn, admin.DefNumHistoryJobs)
-	if err != nil {
-		return nil, err
-	}
-	jobs = append(jobs, jobs...)
-	jobs = append(jobs, historyJobs...)
-	for i := 0; i < len(jobs); i++ {
-		schemaName := jobs[i].SchemaName
-		tableName := ""
-		finishTS := uint64(0)
-		if jobs[i].BinlogInfo != nil {
-			finishTS = jobs[i].BinlogInfo.FinishedTS
-			if jobs[i].BinlogInfo.TableInfo != nil {
-				tableName = jobs[i].BinlogInfo.TableInfo.Name.L
-			}
-			if len(schemaName) == 0 && jobs[i].BinlogInfo.DBInfo != nil {
-				schemaName = jobs[i].BinlogInfo.DBInfo.Name.L
-			}
-		}
-		row := types.MakeDatums(
-			jobs[i].ID,
-			schemaName,
-			tableName,
-			jobs[i].Type.String(),
-			jobs[i].SchemaState.String(),
-			jobs[i].SchemaID,
-			jobs[i].TableID,
-			jobs[i].RowCount,
-			model.TSConvert2Time(jobs[i].StartTS).String(),
-			model.TSConvert2Time(finishTS).String(),
-			jobs[i].State.String(),
-		)
-		rows = append(rows, row)
-	}
-	return
-}
-
 func dataForTiDBClusterInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
 	servers, err := GetClusterServerInfo(ctx)
 	if err != nil {
@@ -2035,8 +1988,6 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		fullRows, err = dataForTikVRegionPeers(ctx)
 	case tableTiDBServersInfo:
 		fullRows, err = dataForServersInfo()
-	case TableDDLJobs:
-		fullRows, err = dataForDDLJobs(ctx)
 	case TableClusterInfo:
 		fullRows, err = dataForTiDBClusterInfo(ctx)
 	case tableTiFlashReplica:
