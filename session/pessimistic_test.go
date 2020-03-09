@@ -1011,3 +1011,14 @@ func (s *testPessimisticSuite) TestRCWaitTSOTwice(c *C) {
 	tk.MustQuery("select * from t where i = 1").Check(testkit.Rows("1"))
 	tk.MustExec("rollback")
 }
+
+func (s *testPessimisticSuite) TestNonAutoCommitWithPessimisticMode(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (c1 int primary key, c2 int)")
+	tk.MustExec("insert into t1 values (1, 1)")
+	tk.MustExec("set tidb_txn_mode = 'pessimistic'")
+	tk.MustExec("set autocommit = 0")
+	tk.MustQuery("select * from t1 where c2 = 1 for update").Check(testkit.Rows("1 1"))
+}
