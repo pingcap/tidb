@@ -1017,6 +1017,7 @@ func GetColDefaultValue(ctx sessionctx.Context, col *table.Column, defaultVals [
 	return colVal, nil
 }
 
+// AllocHandle allocate a new handle.
 func AllocHandle(ctx sessionctx.Context, t table.Table) (int64, error) {
 	_, rowID, err := allocHandleIDs(ctx, t, 1)
 	return rowID, err

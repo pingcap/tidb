@@ -116,6 +116,7 @@ func NewAllocators(allocators ...Allocator) Allocators {
 	return allocators
 }
 
+// Get returns the Allocator according to the AllocatorType.
 func (all Allocators) Get(allocType AllocatorType) Allocator {
 	for _, a := range all {
 		if a.GetType() == allocType {
