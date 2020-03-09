@@ -342,6 +342,28 @@
     ]
   },
   {
+    "Name": "TestSubqueryWithTopN",
+    "Cases": [
+      {
+        "SQL": "desc select t1.b from t t1 where t1.b in (select t2.a from t t2 order by t1.a+t2.a limit 1)",
+        "Plan": [
+          "Projection_11 9990.00 root test.t.b",
+          "└─Apply_13 9990.00 root semi join, inner:Selection_17, equal:[eq(test.t.b, test.t.a)]",
+          "  ├─TableReader_16(Build) 9990.00 root data:Selection_15",
+          "  │ └─Selection_15 9990.00 cop[tikv] not(isnull(test.t.b))",
+          "  │   └─TableFullScan_14 10000.00 cop[tikv] table:t1, keep order:false, stats:pseudo",
+          "  └─Selection_17(Probe) 0.80 root not(isnull(test.t.a))",
+          "    └─Projection_26 1.00 root test.t.a",
+          "      └─TopN_18 1.00 root Column#7:asc, offset:0, count:1",
+          "        └─Projection_27 1.00 root test.t.a, plus(test.t.a, test.t.a)->Column#7",
+          "          └─TableReader_23 1.00 root data:TopN_22",
+          "            └─TopN_22 1.00 cop[tikv] plus(test.t.a, test.t.a):asc, offset:0, count:1",
+          "              └─TableFullScan_21 10000.00 cop[tikv] table:t2, keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  },
+  {
     "Name": "TestIndexJoinTableRange",
     "Cases": [
       {
