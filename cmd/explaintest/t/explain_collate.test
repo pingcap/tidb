@@ -1,5 +1,0 @@
-drop table if exists t;
-create table t (a char(10) collate utf8mb4_bin, b char(10) collate utf8mb4_general_ci);
-insert into t values ('a', 'A');
-desc select * from t t1, t t2 where t1.a=t2.b and t2.b='a';
-desc select * from t t1, t t2 where t1.a=t2.b and t2.a=t2.b and t2.b='a';
