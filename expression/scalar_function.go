@@ -185,7 +185,7 @@ func newFunctionImpl(ctx sessionctx.Context, fold bool, funcName string, retType
 	if !ok {
 		db := ctx.GetSessionVars().CurrentDB
 		if db == "" {
-			return nil, ErrNoDB
+			return nil, errors.Trace(ErrNoDB)
 		}
 
 		return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", db+"."+funcName)
