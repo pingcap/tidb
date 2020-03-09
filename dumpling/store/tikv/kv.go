@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/oracle/oracles"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.etcd.io/etcd/clientv3"
 	"go.uber.org/zap"
@@ -208,7 +209,7 @@ func newTikvStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Clie
 		safePoint:       0,
 		spTime:          time.Now(),
 		closed:          make(chan struct{}),
-		replicaReadSeed: rand.Uint32(),
+		replicaReadSeed: util.FastRand(),
 	}
 	store.lockResolver = newLockResolver(store)
 	store.enableGC = enableGC
