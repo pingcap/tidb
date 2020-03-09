@@ -338,9 +338,10 @@ func (t *testTableSuite) TestGetDefaultValue(c *C) {
 		{
 			&model.ColumnInfo{
 				FieldType: types.FieldType{
-					Tp:    mysql.TypeEnum,
-					Flag:  mysql.NotNullFlag,
-					Elems: []string{"abc", "def"},
+					Tp:      mysql.TypeEnum,
+					Flag:    mysql.NotNullFlag,
+					Elems:   []string{"abc", "def"},
+					Collate: mysql.DefaultCollationName,
 				},
 			},
 			false,
