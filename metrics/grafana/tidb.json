@@ -4716,17 +4716,17 @@
             "x": 16,
             "y": 32
           },
-          "id": 200,
+          "id": 201,
           "legend": {
             "alignAsTable": true,
             "avg": false,
-            "current": true,
-            "max": true,
+            "current": false,
+            "max": false,
             "min": false,
             "rightSide": true,
             "show": true,
             "total": false,
-            "values": true
+            "values": false
           },
           "lines": true,
           "linewidth": 1,
@@ -4742,11 +4742,26 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "sum(rate(tidb_session_statement_lock_keys_count[1m])) by (instance)",
+              "expr": "histogram_quantile(1.0, sum(rate(tidb_session_statement_lock_keys_count_bucket[30s])) by (le))",
               "format": "time_series",
-              "intervalFactor": 1,
-              "legendFormat": "{{instance}}",
-              "refId": "A"
+              "intervalFactor": 2,
+              "legendFormat": "100",
+              "refId": "A",
+              "step": 10
+            },
+            {
+              "expr": "histogram_quantile(0.99, sum(rate(tidb_session_statement_lock_keys_count_bucket[30s])) by (le))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "99",
+              "refId": "B"
+            },
+            {
+              "expr": "histogram_quantile(0.90, sum(rate(tidb_session_statement_lock_keys_count_bucket[30s])) by (le))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "90",
+              "refId": "C"
             }
           ],
           "thresholds": [],
