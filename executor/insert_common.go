@@ -514,9 +514,8 @@ func (e *InsertValues) getColDefaultValue(idx int, col *table.Column) (d types.D
 	if e.colDefaultVals != nil && e.colDefaultVals[idx].valid {
 		if !col.DefaultIsExpr {
 			return e.colDefaultVals[idx].val, nil
-		} else {
-			return table.EvalColDefaultExprNode(e.ctx, col.ToInfo(), e.colDefaultVals[idx].expr)
 		}
+		return table.EvalColDefaultExpr(e.ctx, col.ToInfo(), e.colDefaultVals[idx].expr)
 	}
 	var (
 		defaultVal  types.Datum
@@ -529,7 +528,7 @@ func (e *InsertValues) getColDefaultValue(idx int, col *table.Column) (d types.D
 		if err != nil {
 			return types.Datum{}, err
 		}
-		defaultVal, err = table.EvalColDefaultExprNode(e.ctx, col.ToInfo(), defaultExpr)
+		defaultVal, err = table.EvalColDefaultExpr(e.ctx, col.ToInfo(), defaultExpr)
 	}
 	if err != nil {
 		return types.Datum{}, err
