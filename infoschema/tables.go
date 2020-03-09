@@ -22,7 +22,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -47,13 +46,13 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/set"
-	"github.com/pingcap/tidb/util/sqlexec"
 )
 
 const (
 	// TableSchemata is the string constant of infoschema table
-	TableSchemata         = "SCHEMATA"
-	tableTables           = "TABLES"
+	TableSchemata = "SCHEMATA"
+	// TableTables is the string constant of infoschema table
+	TableTables           = "TABLES"
 	tableColumns          = "COLUMNS"
 	tableColumnStatistics = "COLUMN_STATISTICS"
 	tableStatistics       = "STATISTICS"
@@ -63,9 +62,10 @@ const (
 	TableCollations = "COLLATIONS"
 	tableFiles      = "FILES"
 	// CatalogVal is the string constant of TABLE_CATALOG
-	CatalogVal      = "def"
-	tableProfiling  = "PROFILING"
-	tablePartitions = "PARTITIONS"
+	CatalogVal     = "def"
+	tableProfiling = "PROFILING"
+	// TablePartitions is the string constant of infoschema table
+	TablePartitions = "PARTITIONS"
 	// TableKeyColumn is the string constant of KEY_COLUMN_USAGE
 	TableKeyColumn   = "KEY_COLUMN_USAGE"
 	tableReferConst  = "REFERENTIAL_CONSTRAINTS"
@@ -132,7 +132,7 @@ const (
 
 var tableIDMap = map[string]int64{
 	TableSchemata:                           autoid.InformationSchemaDBID + 1,
-	tableTables:                             autoid.InformationSchemaDBID + 2,
+	TableTables:                             autoid.InformationSchemaDBID + 2,
 	tableColumns:                            autoid.InformationSchemaDBID + 3,
 	tableColumnStatistics:                   autoid.InformationSchemaDBID + 4,
 	tableStatistics:                         autoid.InformationSchemaDBID + 5,
@@ -141,7 +141,7 @@ var tableIDMap = map[string]int64{
 	tableFiles:                              autoid.InformationSchemaDBID + 8,
 	CatalogVal:                              autoid.InformationSchemaDBID + 9,
 	tableProfiling:                          autoid.InformationSchemaDBID + 10,
-	tablePartitions:                         autoid.InformationSchemaDBID + 11,
+	TablePartitions:                         autoid.InformationSchemaDBID + 11,
 	TableKeyColumn:                          autoid.InformationSchemaDBID + 12,
 	tableReferConst:                         autoid.InformationSchemaDBID + 13,
 	tableSessionVar:                         autoid.InformationSchemaDBID + 14,
@@ -1187,248 +1187,6 @@ func dataForProcesslist(ctx sessionctx.Context) [][]types.Datum {
 	return records
 }
 
-func getRowCountAllTable(ctx sessionctx.Context) (map[int64]uint64, error) {
-	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL("select table_id, count from mysql.stats_meta")
-	if err != nil {
-		return nil, err
-	}
-	rowCountMap := make(map[int64]uint64, len(rows))
-	for _, row := range rows {
-		tableID := row.GetInt64(0)
-		rowCnt := row.GetUint64(1)
-		rowCountMap[tableID] = rowCnt
-	}
-	return rowCountMap, nil
-}
-
-type tableHistID struct {
-	tableID int64
-	histID  int64
-}
-
-func getColLengthAllTables(ctx sessionctx.Context) (map[tableHistID]uint64, error) {
-	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL("select table_id, hist_id, tot_col_size from mysql.stats_histograms where is_index = 0")
-	if err != nil {
-		return nil, err
-	}
-	colLengthMap := make(map[tableHistID]uint64, len(rows))
-	for _, row := range rows {
-		tableID := row.GetInt64(0)
-		histID := row.GetInt64(1)
-		totalSize := row.GetInt64(2)
-		if totalSize < 0 {
-			totalSize = 0
-		}
-		colLengthMap[tableHistID{tableID: tableID, histID: histID}] = uint64(totalSize)
-	}
-	return colLengthMap, nil
-}
-
-func getDataAndIndexLength(info *model.TableInfo, physicalID int64, rowCount uint64, columnLengthMap map[tableHistID]uint64) (uint64, uint64) {
-	columnLength := make(map[string]uint64, len(info.Columns))
-	for _, col := range info.Columns {
-		if col.State != model.StatePublic {
-			continue
-		}
-		length := col.FieldType.StorageLength()
-		if length != types.VarStorageLen {
-			columnLength[col.Name.L] = rowCount * uint64(length)
-		} else {
-			length := columnLengthMap[tableHistID{tableID: physicalID, histID: col.ID}]
-			columnLength[col.Name.L] = length
-		}
-	}
-	dataLength, indexLength := uint64(0), uint64(0)
-	for _, length := range columnLength {
-		dataLength += length
-	}
-	for _, idx := range info.Indices {
-		if idx.State != model.StatePublic {
-			continue
-		}
-		for _, col := range idx.Columns {
-			if col.Length == types.UnspecifiedLength {
-				indexLength += columnLength[col.Name.L]
-			} else {
-				indexLength += rowCount * uint64(col.Length)
-			}
-		}
-	}
-	return dataLength, indexLength
-}
-
-type statsCache struct {
-	mu         sync.Mutex
-	loading    bool
-	modifyTime time.Time
-	tableRows  map[int64]uint64
-	colLength  map[tableHistID]uint64
-}
-
-var tableStatsCache = &statsCache{}
-
-// TableStatsCacheExpiry is the expiry time for table stats cache.
-var TableStatsCacheExpiry = 3 * time.Second
-
-func (c *statsCache) setLoading(loading bool) {
-	c.mu.Lock()
-	c.loading = loading
-	c.mu.Unlock()
-}
-
-func (c *statsCache) get(ctx sessionctx.Context) (map[int64]uint64, map[tableHistID]uint64, error) {
-	c.mu.Lock()
-	if time.Since(c.modifyTime) < TableStatsCacheExpiry || c.loading {
-		tableRows, colLength := c.tableRows, c.colLength
-		c.mu.Unlock()
-		return tableRows, colLength, nil
-	}
-	c.loading = true
-	c.mu.Unlock()
-
-	tableRows, err := getRowCountAllTable(ctx)
-	if err != nil {
-		c.setLoading(false)
-		return nil, nil, err
-	}
-	colLength, err := getColLengthAllTables(ctx)
-	if err != nil {
-		c.setLoading(false)
-		return nil, nil, err
-	}
-
-	c.mu.Lock()
-	c.loading = false
-	c.tableRows = tableRows
-	c.colLength = colLength
-	c.modifyTime = time.Now()
-	c.mu.Unlock()
-	return tableRows, colLength, nil
-}
-
-func getAutoIncrementID(ctx sessionctx.Context, schema *model.DBInfo, tblInfo *model.TableInfo) (int64, error) {
-	is := ctx.GetSessionVars().TxnCtx.InfoSchema.(InfoSchema)
-	tbl, err := is.TableByName(schema.Name, tblInfo.Name)
-	if err != nil {
-		return 0, err
-	}
-	return tbl.Allocator(ctx, autoid.RowIDAllocType).Base() + 1, nil
-}
-
-func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Datum, error) {
-	tableRowsMap, colLengthMap, err := tableStatsCache.get(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	checker := privilege.GetPrivilegeManager(ctx)
-
-	var rows [][]types.Datum
-	createTimeTp := tablesCols[15].tp
-	for _, schema := range schemas {
-		for _, table := range schema.Tables {
-			collation := table.Collate
-			if collation == "" {
-				collation = mysql.DefaultCollationName
-			}
-			createTime := types.NewTime(types.FromGoTime(table.GetUpdateTime()), createTimeTp, types.DefaultFsp)
-
-			createOptions := ""
-
-			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
-				continue
-			}
-
-			if !table.IsView() {
-				if table.GetPartitionInfo() != nil {
-					createOptions = "partitioned"
-				}
-				var autoIncID interface{}
-				hasAutoIncID, _ := HasAutoIncrementColumn(table)
-				if hasAutoIncID {
-					autoIncID, err = getAutoIncrementID(ctx, schema, table)
-					if err != nil {
-						return nil, err
-					}
-				}
-
-				var rowCount, dataLength, indexLength uint64
-				if table.GetPartitionInfo() == nil {
-					rowCount = tableRowsMap[table.ID]
-					dataLength, indexLength = getDataAndIndexLength(table, table.ID, rowCount, colLengthMap)
-				} else {
-					for _, pi := range table.GetPartitionInfo().Definitions {
-						rowCount += tableRowsMap[pi.ID]
-						parDataLen, parIndexLen := getDataAndIndexLength(table, pi.ID, tableRowsMap[pi.ID], colLengthMap)
-						dataLength += parDataLen
-						indexLength += parIndexLen
-					}
-				}
-				avgRowLength := uint64(0)
-				if rowCount != 0 {
-					avgRowLength = dataLength / rowCount
-				}
-
-				shardingInfo := GetShardingInfo(schema, table)
-				record := types.MakeDatums(
-					CatalogVal,    // TABLE_CATALOG
-					schema.Name.O, // TABLE_SCHEMA
-					table.Name.O,  // TABLE_NAME
-					"BASE TABLE",  // TABLE_TYPE
-					"InnoDB",      // ENGINE
-					uint64(10),    // VERSION
-					"Compact",     // ROW_FORMAT
-					rowCount,      // TABLE_ROWS
-					avgRowLength,  // AVG_ROW_LENGTH
-					dataLength,    // DATA_LENGTH
-					uint64(0),     // MAX_DATA_LENGTH
-					indexLength,   // INDEX_LENGTH
-					uint64(0),     // DATA_FREE
-					autoIncID,     // AUTO_INCREMENT
-					createTime,    // CREATE_TIME
-					nil,           // UPDATE_TIME
-					nil,           // CHECK_TIME
-					collation,     // TABLE_COLLATION
-					nil,           // CHECKSUM
-					createOptions, // CREATE_OPTIONS
-					table.Comment, // TABLE_COMMENT
-					table.ID,      // TIDB_TABLE_ID
-					shardingInfo,  // TIDB_ROW_ID_SHARDING_INFO
-				)
-				rows = append(rows, record)
-			} else {
-				record := types.MakeDatums(
-					CatalogVal,    // TABLE_CATALOG
-					schema.Name.O, // TABLE_SCHEMA
-					table.Name.O,  // TABLE_NAME
-					"VIEW",        // TABLE_TYPE
-					nil,           // ENGINE
-					nil,           // VERSION
-					nil,           // ROW_FORMAT
-					nil,           // TABLE_ROWS
-					nil,           // AVG_ROW_LENGTH
-					nil,           // DATA_LENGTH
-					nil,           // MAX_DATA_LENGTH
-					nil,           // INDEX_LENGTH
-					nil,           // DATA_FREE
-					nil,           // AUTO_INCREMENT
-					createTime,    // CREATE_TIME
-					nil,           // UPDATE_TIME
-					nil,           // CHECK_TIME
-					nil,           // TABLE_COLLATION
-					nil,           // CHECKSUM
-					nil,           // CREATE_OPTIONS
-					"VIEW",        // TABLE_COMMENT
-					table.ID,      // TIDB_TABLE_ID
-					nil,           // TIDB_ROW_ID_SHARDING_INFO
-				)
-				rows = append(rows, record)
-			}
-		}
-	}
-	return rows, nil
-}
-
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
 // The returned description string may be:
 //  - "NOT_SHARDED": for tables that SHARD_ROW_ID_BITS is not specified.
@@ -1729,107 +1487,6 @@ func dataForPseudoProfiling() [][]types.Datum {
 	)
 	rows = append(rows, row)
 	return rows
-}
-
-func dataForPartitions(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Datum, error) {
-	tableRowsMap, colLengthMap, err := tableStatsCache.get(ctx)
-	if err != nil {
-		return nil, err
-	}
-	checker := privilege.GetPrivilegeManager(ctx)
-	var rows [][]types.Datum
-	createTimeTp := partitionsCols[18].tp
-	for _, schema := range schemas {
-		for _, table := range schema.Tables {
-			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.SelectPriv) {
-				continue
-			}
-			createTime := types.NewTime(types.FromGoTime(table.GetUpdateTime()), createTimeTp, types.DefaultFsp)
-
-			var rowCount, dataLength, indexLength uint64
-			if table.GetPartitionInfo() == nil {
-				rowCount = tableRowsMap[table.ID]
-				dataLength, indexLength = getDataAndIndexLength(table, table.ID, rowCount, colLengthMap)
-				avgRowLength := uint64(0)
-				if rowCount != 0 {
-					avgRowLength = dataLength / rowCount
-				}
-				record := types.MakeDatums(
-					CatalogVal,    // TABLE_CATALOG
-					schema.Name.O, // TABLE_SCHEMA
-					table.Name.O,  // TABLE_NAME
-					nil,           // PARTITION_NAME
-					nil,           // SUBPARTITION_NAME
-					nil,           // PARTITION_ORDINAL_POSITION
-					nil,           // SUBPARTITION_ORDINAL_POSITION
-					nil,           // PARTITION_METHOD
-					nil,           // SUBPARTITION_METHOD
-					nil,           // PARTITION_EXPRESSION
-					nil,           // SUBPARTITION_EXPRESSION
-					nil,           // PARTITION_DESCRIPTION
-					rowCount,      // TABLE_ROWS
-					avgRowLength,  // AVG_ROW_LENGTH
-					dataLength,    // DATA_LENGTH
-					nil,           // MAX_DATA_LENGTH
-					indexLength,   // INDEX_LENGTH
-					nil,           // DATA_FREE
-					createTime,    // CREATE_TIME
-					nil,           // UPDATE_TIME
-					nil,           // CHECK_TIME
-					nil,           // CHECKSUM
-					nil,           // PARTITION_COMMENT
-					nil,           // NODEGROUP
-					nil,           // TABLESPACE_NAME
-				)
-				rows = append(rows, record)
-			} else {
-				for i, pi := range table.GetPartitionInfo().Definitions {
-					rowCount = tableRowsMap[pi.ID]
-					dataLength, indexLength = getDataAndIndexLength(table, pi.ID, tableRowsMap[pi.ID], colLengthMap)
-
-					avgRowLength := uint64(0)
-					if rowCount != 0 {
-						avgRowLength = dataLength / rowCount
-					}
-
-					var partitionDesc string
-					if table.Partition.Type == model.PartitionTypeRange {
-						partitionDesc = pi.LessThan[0]
-					}
-
-					record := types.MakeDatums(
-						CatalogVal,                    // TABLE_CATALOG
-						schema.Name.O,                 // TABLE_SCHEMA
-						table.Name.O,                  // TABLE_NAME
-						pi.Name.O,                     // PARTITION_NAME
-						nil,                           // SUBPARTITION_NAME
-						i+1,                           // PARTITION_ORDINAL_POSITION
-						nil,                           // SUBPARTITION_ORDINAL_POSITION
-						table.Partition.Type.String(), // PARTITION_METHOD
-						nil,                           // SUBPARTITION_METHOD
-						table.Partition.Expr,          // PARTITION_EXPRESSION
-						nil,                           // SUBPARTITION_EXPRESSION
-						partitionDesc,                 // PARTITION_DESCRIPTION
-						rowCount,                      // TABLE_ROWS
-						avgRowLength,                  // AVG_ROW_LENGTH
-						dataLength,                    // DATA_LENGTH
-						uint64(0),                     // MAX_DATA_LENGTH
-						indexLength,                   // INDEX_LENGTH
-						uint64(0),                     // DATA_FREE
-						createTime,                    // CREATE_TIME
-						nil,                           // UPDATE_TIME
-						nil,                           // CHECK_TIME
-						nil,                           // CHECKSUM
-						pi.Comment,                    // PARTITION_COMMENT
-						nil,                           // NODEGROUP
-						nil,                           // TABLESPACE_NAME
-					)
-					rows = append(rows, record)
-				}
-			}
-		}
-	}
-	return rows, nil
 }
 
 func dataForTiDBHotRegions(ctx sessionctx.Context) (records [][]types.Datum, err error) {
@@ -2180,7 +1837,7 @@ func dataForMetricTables(ctx sessionctx.Context) [][]types.Datum {
 
 var tableNameToColumns = map[string][]columnInfo{
 	TableSchemata:                           schemataCols,
-	tableTables:                             tablesCols,
+	TableTables:                             tablesCols,
 	tableColumns:                            columnsCols,
 	tableColumnStatistics:                   columnStatisticsCols,
 	tableStatistics:                         statisticsCols,
@@ -2188,7 +1845,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableCollations:                         collationsCols,
 	tableFiles:                              filesCols,
 	tableProfiling:                          profilingCols,
-	tablePartitions:                         partitionsCols,
+	TablePartitions:                         partitionsCols,
 	TableKeyColumn:                          keyColumnUsageCols,
 	tableReferConst:                         referConstCols,
 	tableSessionVar:                         sessionVarCols,
@@ -2272,8 +1929,6 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 	dbs := is.AllSchemas()
 	sort.Sort(SchemasSorter(dbs))
 	switch it.meta.Name.O {
-	case tableTables:
-		fullRows, err = dataForTables(ctx, dbs)
 	case tableColumns:
 		fullRows = dataForColumns(ctx, dbs)
 	case tableStatistics:
@@ -2287,8 +1942,6 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		if v, ok := ctx.GetSessionVars().GetSystemVar("profiling"); ok && variable.TiDBOptOn(v) {
 			fullRows = dataForPseudoProfiling()
 		}
-	case tablePartitions:
-		fullRows, err = dataForPartitions(ctx, dbs)
 	case tableReferConst:
 	case tablePlugins, tableTriggers:
 	case tableRoutines:
