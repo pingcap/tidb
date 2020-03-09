@@ -704,7 +704,20 @@ func CheckExprPushDown(sc *stmtctx.StatementContext, exprs []Expression, client 
 
 // ExprPushDown push down an expr list to storage.
 // Note this function assumes all the expr in expr list can be convert to pb expr
-func ExprPushDown(exprs []Expression, storeType kv.StoreType) (exprPush, remain []Expression) {
+func ExprPushDown(sc *stmtctx.StatementContext, exprs []Expression, client kv.Client, storeType kv.StoreType, skipPBCheck bool) (exprPush, remain []Expression) {
+	if !skipPBCheck {
+		_, exprPush, remain = ExpressionsToPB(sc, exprs, client)
+		var storeRemained []Expression
+		switch storeType {
+		case kv.TiFlash:
+			exprPush, storeRemained = flashExprPushDown(exprPush)
+		default:
+			exprPush, storeRemained = tikvExprPushDown(exprPush)
+		}
+		remain = append(remain, storeRemained...)
+		return
+	}
+
 	switch storeType {
 	case kv.TiFlash:
 		return flashExprPushDown(exprs)

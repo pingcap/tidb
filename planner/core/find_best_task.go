@@ -1078,7 +1078,11 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 func (ts *PhysicalTableScan) addPushedDownSelection(copTask *copTask, stats *property.StatsInfo) {
 	ts.filterCondition, copTask.rootTaskConds = SplitSelCondsWithVirtualColumn(ts.filterCondition)
 	var newRootConds []expression.Expression
-	ts.filterCondition, newRootConds = expression.ExprPushDown(ts.filterCondition, ts.StoreType)
+	// Skip PB check because it is already checked in Logical plan's PredicatePushDown.
+	// Maybe a better way is to push down all the predicates in logical plan, and check
+	// whether it can be pushed to the storage layer in physical plan, but it may break
+	// too many existing tests
+	ts.filterCondition, newRootConds = expression.ExprPushDown(ts.ctx.GetSessionVars().StmtCtx, ts.filterCondition, ts.ctx.GetClient(), ts.StoreType, true)
 	copTask.rootTaskConds = append(copTask.rootTaskConds, newRootConds...)
 
 	// Add filter condition to table plan now.
