@@ -351,8 +351,8 @@
         ]
       }
     ]
-},
-{
+  },
+  {
     "Name": "TestSubqueryWithTopN",
     "Cases": [
       {
