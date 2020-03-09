@@ -1150,6 +1150,7 @@ func (ts *HTTPHandlerTestSuite) TestFailpointHandler(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
 	b, err := ioutil.ReadAll(resp.Body)
+	c.Assert(err, IsNil)
 	c.Assert(strings.Contains(string(b), "github.com/pingcap/tidb/server/integrateFailpoint=return"), IsTrue)
 	c.Assert(resp.Body.Close(), IsNil)
 }
