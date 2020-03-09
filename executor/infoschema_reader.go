@@ -62,7 +62,7 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		case infoschema.TableSchemata:
 			e.setDataFromSchemata(sctx, dbs)
 		case infoschema.TableStatistics:
-			e.rows = dataForStatistics(sctx, dbs)
+			e.setDataForStatistics(sctx, dbs)
 		case infoschema.TableTables:
 			err = e.dataForTables(sctx, dbs)
 		case infoschema.TablePartitions:
@@ -84,9 +84,9 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		case infoschema.TableUserPrivileges:
 			e.setDataFromUserPrivileges(sctx)
 		case infoschema.TableTiKVRegionPeers:
-			e.rows, err = dataForTikVRegionPeers(sctx)
+			err = e.dataForTikVRegionPeers(sctx)
 		case infoschema.TableTiDBHotRegions:
-			e.rows, err = dataForTiDBHotRegions(sctx)
+			err = e.dataForTiDBHotRegions(sctx)
 		}
 		if err != nil {
 			return nil, err
@@ -280,7 +280,7 @@ func (e *memtableRetriever) setDataFromSchemata(ctx sessionctx.Context, schemas 
 	e.rows = rows
 }
 
-func dataForStatistics(ctx sessionctx.Context, schemas []*model.DBInfo) [][]types.Datum {
+func (e *memtableRetriever) setDataForStatistics(ctx sessionctx.Context, schemas []*model.DBInfo) {
 	checker := privilege.GetPrivilegeManager(ctx)
 	var rows [][]types.Datum
 	for _, schema := range schemas {
@@ -293,7 +293,7 @@ func dataForStatistics(ctx sessionctx.Context, schemas []*model.DBInfo) [][]type
 			rows = append(rows, rs...)
 		}
 	}
-	return rows
+	e.rows = rows
 }
 
 func dataForStatisticsInTable(schema *model.DBInfo, table *model.TableInfo) [][]types.Datum {
@@ -852,10 +852,10 @@ func keyColumnUsageInTable(schema *model.DBInfo, table *model.TableInfo) [][]typ
 	return rows
 }
 
-func dataForTikVRegionPeers(ctx sessionctx.Context) (records [][]types.Datum, err error) {
+func (e *memtableRetriever) dataForTikVRegionPeers(ctx sessionctx.Context) (err error) {
 	tikvStore, ok := ctx.GetStore().(tikv.Storage)
 	if !ok {
-		return nil, errors.New("Information about TiKV region status can be gotten only when the storage is TiKV")
+		return errors.New("Information about TiKV region status can be gotten only when the storage is TiKV")
 	}
 	tikvHelper := &helper.Helper{
 		Store:       tikvStore,
@@ -863,13 +863,15 @@ func dataForTikVRegionPeers(ctx sessionctx.Context) (records [][]types.Datum, er
 	}
 	regionsInfo, err := tikvHelper.GetRegionsInfo()
 	if err != nil {
-		return nil, err
+		return err
 	}
+	var records [][]types.Datum
 	for _, region := range regionsInfo.Regions {
 		rows := newTiKVRegionPeersCols(&region)
 		records = append(records, rows...)
 	}
-	return records, nil
+	e.rows = records
+	return nil
 }
 
 func newTiKVRegionPeersCols(region *helper.RegionInfo) [][]types.Datum {
@@ -916,10 +918,10 @@ const (
 	downPeer    = "DOWN"
 )
 
-func dataForTiDBHotRegions(ctx sessionctx.Context) (records [][]types.Datum, err error) {
+func (e *memtableRetriever) dataForTiDBHotRegions(ctx sessionctx.Context) (err error) {
 	tikvStore, ok := ctx.GetStore().(tikv.Storage)
 	if !ok {
-		return nil, errors.New("Information about hot region can be gotten only when the storage is TiKV")
+		return errors.New("Information about hot region can be gotten only when the storage is TiKV")
 	}
 	allSchemas := ctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema).AllSchemas()
 	tikvHelper := &helper.Helper{
@@ -928,15 +930,18 @@ func dataForTiDBHotRegions(ctx sessionctx.Context) (records [][]types.Datum, err
 	}
 	metrics, err := tikvHelper.ScrapeHotInfo(pdapi.HotRead, allSchemas)
 	if err != nil {
-		return nil, err
+		return err
 	}
+	var records [][]types.Datum
 	records = append(records, dataForHotRegionByMetrics(metrics, "read")...)
 	metrics, err = tikvHelper.ScrapeHotInfo(pdapi.HotWrite, allSchemas)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	records = append(records, dataForHotRegionByMetrics(metrics, "write")...)
-	return records, nil
+
+	e.rows = records
+	return nil
 }
 
 func dataForHotRegionByMetrics(metrics []helper.HotTableIndex, tp string) [][]types.Datum {
@@ -966,9 +971,4 @@ func dataForHotRegionByMetrics(metrics []helper.HotTableIndex, tp string) [][]ty
 		rows = append(rows, row)
 	}
 	return rows
-}
-
-func (e *memtableRetriever) setDataFromUserPrivileges(ctx sessionctx.Context) {
-	pm := privilege.GetPrivilegeManager(ctx)
-	e.rows = pm.UserPrivilegesTable()
 }
