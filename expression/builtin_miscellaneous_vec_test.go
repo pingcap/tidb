@@ -127,7 +127,7 @@ func (s *testEvaluatorSuite) TestSleepVectorized(c *C) {
 	sessVars := ctx.GetSessionVars()
 
 	fc := funcs[ast.Sleep]
-	ft := eType2FieldType(types.ETInt)
+	ft := eType2FieldType(types.ETReal)
 	col0 := &Column{RetType: ft, Index: 0}
 	f, err := fc.getFunction(ctx, []Expression{col0})
 	c.Assert(err, IsNil)
@@ -211,5 +211,4 @@ func (s *testEvaluatorSuite) TestSleepVectorized(c *C) {
 	c.Assert(result.GetInt64(0), Equals, int64(1))
 	c.Assert(sub.Nanoseconds(), LessEqual, int64(2*1e9))
 	c.Assert(sub.Nanoseconds(), GreaterEqual, int64(1*1e9))
-
 }
