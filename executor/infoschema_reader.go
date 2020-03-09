@@ -32,6 +32,12 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
+const (
+	primaryKeyType    = "PRIMARY KEY"
+	primaryConstraint = "PRIMARY"
+	uniqueKeyType     = "UNIQUE"
+)
+
 type memtableRetriever struct {
 	dummyCloser
 	table       *model.TableInfo
@@ -58,9 +64,9 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		case infoschema.TableSchemata:
 			e.setDataFromSchemata(sctx, dbs)
 		case infoschema.TableTables:
-			err = e.dataForTables(sctx, dbs)
+			err = e.setDataFromTables(sctx, dbs)
 		case infoschema.TablePartitions:
-			err = e.dataForPartitions(sctx, dbs)
+			err = e.setDataFromPartitions(sctx, dbs)
 		case infoschema.TableTiDBIndexes:
 			e.setDataFromIndexes(sctx, dbs)
 		case infoschema.TableViews:
@@ -77,6 +83,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			e.dataForCollationCharacterSetApplicability()
 		case infoschema.TableUserPrivileges:
 			e.setDataFromUserPrivileges(sctx)
+		case infoschema.TableConstraints:
+			e.setDataFromTableConstraints(sctx, dbs)
 		}
 		if err != nil {
 			return nil, err
@@ -270,7 +278,7 @@ func (e *memtableRetriever) setDataFromSchemata(ctx sessionctx.Context, schemas 
 	e.rows = rows
 }
 
-func (e *memtableRetriever) dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) error {
+func (e *memtableRetriever) setDataFromTables(ctx sessionctx.Context, schemas []*model.DBInfo) error {
 	tableRowsMap, colLengthMap, err := tableStatsCache.get(ctx)
 	if err != nil {
 		return err
@@ -392,7 +400,7 @@ func (e *memtableRetriever) dataForTables(ctx sessionctx.Context, schemas []*mod
 	return nil
 }
 
-func (e *memtableRetriever) dataForPartitions(ctx sessionctx.Context, schemas []*model.DBInfo) error {
+func (e *memtableRetriever) setDataFromPartitions(ctx sessionctx.Context, schemas []*model.DBInfo) error {
 	tableRowsMap, colLengthMap, err := tableStatsCache.get(ctx)
 	if err != nil {
 		return err
@@ -680,18 +688,18 @@ func keyColumnUsageInTable(schema *model.DBInfo, table *model.TableInfo) [][]typ
 		for _, col := range table.Columns {
 			if mysql.HasPriKeyFlag(col.Flag) {
 				record := types.MakeDatums(
-					infoschema.CatalogVal,        // CONSTRAINT_CATALOG
-					schema.Name.O,                // CONSTRAINT_SCHEMA
-					infoschema.PrimaryConstraint, // CONSTRAINT_NAME
-					infoschema.CatalogVal,        // TABLE_CATALOG
-					schema.Name.O,                // TABLE_SCHEMA
-					table.Name.O,                 // TABLE_NAME
-					col.Name.O,                   // COLUMN_NAME
-					1,                            // ORDINAL_POSITION
-					1,                            // POSITION_IN_UNIQUE_CONSTRAINT
-					nil,                          // REFERENCED_TABLE_SCHEMA
-					nil,                          // REFERENCED_TABLE_NAME
-					nil,                          // REFERENCED_COLUMN_NAME
+					infoschema.CatalogVal, // CONSTRAINT_CATALOG
+					schema.Name.O,         // CONSTRAINT_SCHEMA
+					primaryConstraint,     // CONSTRAINT_NAME
+					infoschema.CatalogVal, // TABLE_CATALOG
+					schema.Name.O,         // TABLE_SCHEMA
+					table.Name.O,          // TABLE_NAME
+					col.Name.O,            // COLUMN_NAME
+					1,                     // ORDINAL_POSITION
+					1,                     // POSITION_IN_UNIQUE_CONSTRAINT
+					nil,                   // REFERENCED_TABLE_SCHEMA
+					nil,                   // REFERENCED_TABLE_NAME
+					nil,                   // REFERENCED_COLUMN_NAME
 				)
 				rows = append(rows, record)
 				break
@@ -705,7 +713,7 @@ func keyColumnUsageInTable(schema *model.DBInfo, table *model.TableInfo) [][]typ
 	for _, index := range table.Indices {
 		var idxName string
 		if index.Primary {
-			idxName = infoschema.PrimaryConstraint
+			idxName = primaryConstraint
 		} else if index.Unique {
 			idxName = index.Name.O
 		} else {
@@ -756,4 +764,53 @@ func keyColumnUsageInTable(schema *model.DBInfo, table *model.TableInfo) [][]typ
 		}
 	}
 	return rows
+}
+
+// setDataFromTableConstraints constructs data for table information_schema.constraints.See https://dev.mysql.com/doc/refman/5.7/en/table-constraints-table.html
+func (e *memtableRetriever) setDataFromTableConstraints(ctx sessionctx.Context, schemas []*model.DBInfo) {
+	checker := privilege.GetPrivilegeManager(ctx)
+	var rows [][]types.Datum
+	for _, schema := range schemas {
+		for _, tbl := range schema.Tables {
+			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, tbl.Name.L, "", mysql.AllPrivMask) {
+				continue
+			}
+
+			if tbl.PKIsHandle {
+				record := types.MakeDatums(
+					infoschema.CatalogVal, // CONSTRAINT_CATALOG
+					schema.Name.O,         // CONSTRAINT_SCHEMA
+					mysql.PrimaryKeyName,  // CONSTRAINT_NAME
+					schema.Name.O,         // TABLE_SCHEMA
+					tbl.Name.O,            // TABLE_NAME
+					primaryKeyType,        // CONSTRAINT_TYPE
+				)
+				rows = append(rows, record)
+			}
+
+			for _, idx := range tbl.Indices {
+				var cname, ctype string
+				if idx.Primary {
+					cname = mysql.PrimaryKeyName
+					ctype = primaryKeyType
+				} else if idx.Unique {
+					cname = idx.Name.O
+					ctype = uniqueKeyType
+				} else {
+					// The index has no constriant.
+					continue
+				}
+				record := types.MakeDatums(
+					infoschema.CatalogVal, // CONSTRAINT_CATALOG
+					schema.Name.O,         // CONSTRAINT_SCHEMA
+					cname,                 // CONSTRAINT_NAME
+					schema.Name.O,         // TABLE_SCHEMA
+					tbl.Name.O,            // TABLE_NAME
+					ctype,                 // CONSTRAINT_TYPE
+				)
+				rows = append(rows, record)
+			}
+		}
+	}
+	e.rows = rows
 }
