@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"testing"
 	"time"
 
@@ -69,7 +70,22 @@ var _ = Suite(&testSuite{})
 type testSuite struct {
 }
 
+// ETCD use ip:port as unix socket address, however this address is invalid on windows.
+// We have to skip some of the test in such case.
+// https://github.com/etcd-io/etcd/blob/f0faa5501d936cd8c9f561bb9d1baca70eb67ab1/pkg/types/urls.go#L42
+func unixSocketAvailable() bool {
+	c, err := net.Listen("unix", "127.0.0.1:0")
+	if err == nil {
+		c.Close()
+		return true
+	}
+	return false
+}
+
 func TestTopology(t *testing.T) {
+	if !unixSocketAvailable() {
+		return
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	currentID := "test"
