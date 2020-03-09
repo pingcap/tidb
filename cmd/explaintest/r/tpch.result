@@ -809,7 +809,7 @@ Sort_9	7500000.00	root	Column#19:desc, Column#18:desc
 └─Projection_11	7500000.00	root	Column#18, Column#19
   └─HashAgg_14	7500000.00	root	group by:Column#18, funcs:count(1)->Column#19, funcs:firstrow(Column#18)->Column#18
     └─HashAgg_17	7500000.00	root	group by:tpch.customer.c_custkey, funcs:count(tpch.orders.o_orderkey)->Column#18
-      └─HashLeftJoin_21	60000000.00	root	left outer join, inner:TableReader_23 (REVERSED), equal:[eq(tpch.customer.c_custkey, tpch.orders.o_custkey)]
+      └─HashLeftJoin_21	60000000.00	root	left outer join, inner:TableReader_26, equal:[eq(tpch.customer.c_custkey, tpch.orders.o_custkey)]
         ├─TableReader_23(Build)	7500000.00	root	data:TableFullScan_22
         │ └─TableFullScan_22	7500000.00	cop[tikv]	table:customer, keep order:false
         └─TableReader_26(Probe)	60000000.00	root	data:Selection_25
@@ -1155,7 +1155,7 @@ Sort_28	20000.00	root	tpch.supplier.s_name:asc
     └─Projection_54	257492.04	root	tpch.partsupp.ps_suppkey
       └─Selection_55	257492.04	root	gt(cast(tpch.partsupp.ps_availqty), mul(0.5, Column#44))
         └─HashAgg_58	321865.05	root	group by:tpch.partsupp.ps_partkey, tpch.partsupp.ps_suppkey, funcs:firstrow(tpch.partsupp.ps_suppkey)->tpch.partsupp.ps_suppkey, funcs:firstrow(tpch.partsupp.ps_availqty)->tpch.partsupp.ps_availqty, funcs:sum(tpch.lineitem.l_quantity)->Column#44
-          └─HashLeftJoin_62	9711455.06	root	left outer join, inner:IndexHashJoin_75 (REVERSED), equal:[eq(tpch.partsupp.ps_partkey, tpch.lineitem.l_partkey) eq(tpch.partsupp.ps_suppkey, tpch.lineitem.l_suppkey)]
+          └─HashLeftJoin_62	9711455.06	root	left outer join, inner:TableReader_103, equal:[eq(tpch.partsupp.ps_partkey, tpch.lineitem.l_partkey) eq(tpch.partsupp.ps_suppkey, tpch.lineitem.l_suppkey)]
             ├─IndexHashJoin_75(Build)	321865.05	root	inner join, inner:IndexLookUp_66, outer key:tpch.part.p_partkey, inner key:tpch.partsupp.ps_partkey
             │ ├─TableReader_98(Build)	80007.93	root	data:Selection_97
             │ │ └─Selection_97	80007.93	cop[tikv]	like(tpch.part.p_name, "green%", 92)
