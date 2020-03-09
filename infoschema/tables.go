@@ -127,10 +127,10 @@ const (
 	TableMetricSummaryByLabel = "METRICS_SUMMARY_BY_LABEL"
 	// TableInspectionSummary is the string constant of inspection summary table
 	TableInspectionSummary = "INSPECTION_SUMMARY"
-	TableDDLJobs         = "DDL_JOBS"
 	// TableInspectionRules is the string constant of currently implemented inspection and summary rules
 	TableInspectionRules = "INSPECTION_RULES"
 	// TableDDLJobs is the string constant of DDL job table.
+	TableDDLJobs = "DDL_JOBS"
 )
 
 var tableIDMap = map[string]int64{
@@ -814,21 +814,6 @@ var tableTiDBServersInfoCols = []columnInfo{
 	{name: "BINLOG_STATUS", tp: mysql.TypeVarchar, size: 64},
 }
 
-var tableDDLJobsCols = []columnInfo{
-	{name: "JOB_ID", tp: mysql.TypeLonglong, size: 21},
-	{name: "DB_NAME", tp: mysql.TypeVarchar, size: 64},
-	{name: "TABLE_NAME", tp: mysql.TypeVarchar, size: 64},
-	{name: "JOB_TYPE", tp: mysql.TypeVarchar, size: 64},
-	{name: "SCHEMA_STATE", tp: mysql.TypeVarchar, size: 64},
-	{name: "SCHEMA_ID", tp: mysql.TypeLonglong, size: 21},
-	{name: "TABLE_ID", tp: mysql.TypeLonglong, size: 21},
-	{name: "ROW_COUNT", tp: mysql.TypeLonglong, size: 21},
-	{name: "START_TIME", tp: mysql.TypeVarchar, size: 64},
-	{name: "END_TIME", tp: mysql.TypeVarchar, size: 64},
-	{name: "STATE", tp: mysql.TypeVarchar, size: 64},
-	{name: "QUERY", tp: mysql.TypeVarchar, size: 64},
-}
-
 var tableClusterConfigCols = []columnInfo{
 	{name: "TYPE", tp: mysql.TypeVarchar, size: 64},
 	{name: "INSTANCE", tp: mysql.TypeVarchar, size: 64},
@@ -988,6 +973,21 @@ var tableMetricSummaryByLabelCols = []columnInfo{
 	{name: "MIN_VALUE", tp: mysql.TypeDouble, size: 22, decimal: 6},
 	{name: "MAX_VALUE", tp: mysql.TypeDouble, size: 22, decimal: 6},
 	{name: "COMMENT", tp: mysql.TypeVarchar, size: 256},
+}
+
+var tableDDLJobsCols = []columnInfo{
+	{name: "JOB_ID", tp: mysql.TypeLonglong, size: 21},
+	{name: "DB_NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "TABLE_NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "JOB_TYPE", tp: mysql.TypeVarchar, size: 64},
+	{name: "SCHEMA_STATE", tp: mysql.TypeVarchar, size: 64},
+	{name: "SCHEMA_ID", tp: mysql.TypeLonglong, size: 21},
+	{name: "TABLE_ID", tp: mysql.TypeLonglong, size: 21},
+	{name: "ROW_COUNT", tp: mysql.TypeLonglong, size: 21},
+	{name: "START_TIME", tp: mysql.TypeVarchar, size: 64},
+	{name: "END_TIME", tp: mysql.TypeVarchar, size: 64},
+	{name: "STATE", tp: mysql.TypeVarchar, size: 64},
+	{name: "QUERY", tp: mysql.TypeVarchar, size: 64},
 }
 
 func dataForTiKVRegionStatus(ctx sessionctx.Context) (records [][]types.Datum, err error) {
@@ -1782,7 +1782,7 @@ func dataForDDLJobs(ctx sessionctx.Context) (rows [][]types.Datum, err error) {
 	}
 	jobs = append(jobs, jobs...)
 	jobs = append(jobs, historyJobs...)
-	for i := 0; i< len(jobs); i++ {
+	for i := 0; i < len(jobs); i++ {
 		schemaName := jobs[i].SchemaName
 		tableName := ""
 		finishTS := uint64(0)
@@ -1950,10 +1950,10 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableInspectionResult:                   tableInspectionResultCols,
 	TableMetricSummary:                      tableMetricSummaryCols,
 	TableMetricSummaryByLabel:               tableMetricSummaryByLabelCols,
-	TableDDLJobs:                            tableDDLJobsCols,
 	TableMetricTables:                       tableMetricTablesCols,
 	TableInspectionSummary:                  tableInspectionSummaryCols,
 	TableInspectionRules:                    tableInspectionRulesCols,
+	TableDDLJobs:                            tableDDLJobsCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
