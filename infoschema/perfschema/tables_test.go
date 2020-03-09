@@ -117,13 +117,27 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 	tk.MustExec("create table p(a int primary key, b int)")
 	for i := 1; i < 3; i++ {
 		tk.MustQuery("select b from p where a=1")
-		expectedResult := fmt.Sprintf("%d \tPoint_Get_1\troot\t1\ttable:p, handle:1", i)
+		expectedResult := fmt.Sprintf("%d \tPoint_Get_1\troot\t1\ttable:p, handle:1 %s", i, "test.p")
 		// Also make sure that the plan digest is not empty
-		tk.MustQuery(`select exec_count, plan
+		tk.MustQuery(`select exec_count, plan, table_names
 			from performance_schema.events_statements_summary_by_digest
 			where digest_text like 'select b from p%' and plan_digest != ''`,
 		).Check(testkit.Rows(expectedResult))
 	}
+
+	// Point get another database.
+	tk.MustQuery("select variable_value from mysql.tidb where variable_name = 'system_tz'")
+	tk.MustQuery(`select table_names
+			from performance_schema.events_statements_summary_by_digest
+			where digest_text like 'select variable_value%' and schema_name='test'`,
+	).Check(testkit.Rows("mysql.tidb"))
+
+	// Test `create database`.
+	tk.MustExec("create database if not exists test")
+	tk.MustQuery(`select table_names
+			from performance_schema.events_statements_summary_by_digest
+			where digest_text like 'create database%' and schema_name='test'`,
+	).Check(testkit.Rows("<nil>"))
 
 	// Test SELECT.
 	const failpointName = "github.com/pingcap/tidb/planner/core/mockPlanRowCount"
