@@ -495,7 +495,8 @@ type DataSource struct {
 	preferStoreType int
 }
 
-func (ds *DataSource) extractCorrelatedCols() []*expression.CorrelatedColumn {
+// ExtractCorrelatedCols implements LogicalPlan interface.
+func (ds *DataSource) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := make([]*expression.CorrelatedColumn, 0, len(ds.pushedDownConds))
 	for _, expr := range ds.pushedDownConds {
 		corCols = append(corCols, expression.ExtractCorColumns(expr)...)
@@ -955,8 +956,9 @@ type LogicalWindow struct {
 	Frame           *WindowFrame
 }
 
-func (p *LogicalWindow) extractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := p.baseLogicalPlan.extractCorrelatedCols()
+// ExtractCorrelatedCols implements LogicalPlan interface.
+func (p *LogicalWindow) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
+	corCols := make([]*expression.CorrelatedColumn, 0)
 	for _, windowFunc := range p.WindowFuncDescs {
 		for _, arg := range windowFunc.Args {
 			corCols = append(corCols, expression.ExtractCorColumns(arg)...)
