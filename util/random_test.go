@@ -15,6 +15,8 @@ package util
 
 import (
 	. "github.com/pingcap/check"
+	"math/rand"
+	"testing"
 )
 
 var _ = Suite(&testRandSuite{})
@@ -29,4 +31,22 @@ func (s *testMiscSuite) TestRand(c *C) {
 	c.Assert(y < 1<<63, IsTrue)
 
 	_ = RandomBuf(20)
+}
+
+func BenchmarkFastRand(b *testing.B) {
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			FastRand()
+		}
+	})
+	b.Log(FastRand())
+}
+
+func BenchmarkGlobalRand(b *testing.B) {
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			rand.Int()
+		}
+	})
+	b.Log(rand.Int())
 }
