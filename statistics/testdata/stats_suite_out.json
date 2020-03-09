@@ -3,8 +3,7 @@
     "Name": "TestUniqCompEqualEst",
     "Cases": [
       [
-        "IndexReader_6 1.00 root index:IndexRangeScan_5",
-        "└─IndexRangeScan_5 1.00 cop[tikv] table:t, index:a, b, range:[1 5,1 5], keep order:false"
+        "Point_Get_5 1.00 root table:t, index:a b"
       ]
     ]
   },

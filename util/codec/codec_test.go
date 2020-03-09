@@ -1040,14 +1040,14 @@ func testHashChunkRowEqual(c *C, a, b interface{}, equal bool) {
 	buf2 := make([]byte, 1)
 
 	tp1 := new(types.FieldType)
-	types.DefaultTypeForValue(a, tp1)
+	types.DefaultTypeForValue(a, tp1, mysql.DefaultCharset, mysql.DefaultCollationName)
 	chk1 := chunk.New([]*types.FieldType{tp1}, 1, 1)
 	d := types.Datum{}
 	d.SetValue(a, tp1)
 	chk1.AppendDatum(0, &d)
 
 	tp2 := new(types.FieldType)
-	types.DefaultTypeForValue(b, tp2)
+	types.DefaultTypeForValue(b, tp2, mysql.DefaultCharset, mysql.DefaultCollationName)
 	chk2 := chunk.New([]*types.FieldType{tp2}, 1, 1)
 	d = types.Datum{}
 	d.SetValue(b, tp2)
