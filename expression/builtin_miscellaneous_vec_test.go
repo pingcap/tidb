@@ -14,11 +14,15 @@
 package expression
 
 import (
+	"sync/atomic"
 	"testing"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/mock"
 )
 
 var vecBuiltinMiscellaneousCases = map[string][]vecExprBenchCase{
@@ -28,8 +32,10 @@ var vecBuiltinMiscellaneousCases = map[string][]vecExprBenchCase{
 	ast.IsIPv6: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}},
 	},
-	ast.Sleep: {},
-	ast.UUID:  {},
+	ast.Sleep: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETReal}},
+	},
+	ast.UUID: {},
 	ast.Inet6Ntoa: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{
 			newSelectStringGener(
@@ -107,4 +113,71 @@ func BenchmarkVectorizedBuiltinMiscellaneousEvalOneVec(b *testing.B) {
 
 func BenchmarkVectorizedBuiltinMiscellaneousFunc(b *testing.B) {
 	benchmarkVectorizedBuiltinFunc(b, vecBuiltinMiscellaneousCases)
+}
+
+func (s *testEvaluatorSuite) TestSleepVectorized(c *C) {
+	// TODO(ziyi) Refer to expression/builtin_op_vec_test.go:159
+	ctx := mock.NewContext()
+	sessVars := ctx.GetSessionVars()
+
+	fc := funcs[ast.Sleep]
+	// non-strict model
+	sessVars.StrictSQLMode = false
+	d := make([]types.Datum, 1)
+	f, err := fc.getFunction(ctx, s.datumsToConstants(d))
+	c.Assert(err, IsNil)
+	ret, isNull, err := f.evalInt(chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(isNull, IsTrue)
+	c.Assert(ret, Equals, int64(0))
+	d[0].SetInt64(-1)
+	f, err = fc.getFunction(ctx, s.datumsToConstants(d))
+	c.Assert(err, IsNil)
+	ret, isNull, err = f.evalInt(chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(isNull, IsFalse)
+	c.Assert(ret, Equals, int64(0))
+
+	// for error case under the strict model
+	sessVars.StrictSQLMode = true
+	d[0].SetNull()
+	_, err = fc.getFunction(ctx, s.datumsToConstants(d))
+	c.Assert(err, IsNil)
+	_, isNull, err = f.evalInt(chunk.Row{})
+	c.Assert(err, NotNil)
+	c.Assert(isNull, IsFalse)
+	d[0].SetFloat64(-2.5)
+	_, err = fc.getFunction(ctx, s.datumsToConstants(d))
+	c.Assert(err, IsNil)
+	_, isNull, err = f.evalInt(chunk.Row{})
+	c.Assert(err, NotNil)
+	c.Assert(isNull, IsFalse)
+
+	// strict model
+	d[0].SetFloat64(0.5)
+	start := time.Now()
+	f, err = fc.getFunction(ctx, s.datumsToConstants(d))
+	c.Assert(err, IsNil)
+	ret, isNull, err = f.evalInt(chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(isNull, IsFalse)
+	c.Assert(ret, Equals, int64(0))
+	sub := time.Since(start)
+	c.Assert(sub.Nanoseconds(), GreaterEqual, int64(0.5*1e9))
+
+	d[0].SetFloat64(3)
+	f, err = fc.getFunction(ctx, s.datumsToConstants(d))
+	c.Assert(err, IsNil)
+	start = time.Now()
+	go func() {
+		time.Sleep(1 * time.Second)
+		atomic.CompareAndSwapUint32(&ctx.GetSessionVars().Killed, 0, 1)
+	}()
+	ret, isNull, err = f.evalInt(chunk.Row{})
+	sub = time.Since(start)
+	c.Assert(err, IsNil)
+	c.Assert(isNull, IsFalse)
+	c.Assert(ret, Equals, int64(1))
+	c.Assert(sub.Nanoseconds(), LessEqual, int64(2*1e9))
+	c.Assert(sub.Nanoseconds(), GreaterEqual, int64(1*1e9))
 }
