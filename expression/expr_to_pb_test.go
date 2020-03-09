@@ -615,11 +615,11 @@ func (s *testEvaluatorSuite) TestExprOnlyPushDownToFlash(c *C) {
 	canPush = CheckExprPushDown(sc, exprs, client, kv.TiKV)
 	c.Assert(canPush, Equals, false)
 
-	pushed, remained = ExprPushDown(exprs, kv.TiFlash)
+	pushed, remained = ExprPushDown(sc, exprs, client, kv.TiFlash, true)
 	c.Assert(len(pushed), Equals, 1)
 	c.Assert(len(remained), Equals, 0)
 
-	pushed, remained = ExprPushDown(exprs, kv.TiKV)
+	pushed, remained = ExprPushDown(sc, exprs, client, kv.TiKV, true)
 	c.Assert(len(pushed), Equals, 0)
 	c.Assert(len(remained), Equals, 1)
 }
@@ -642,10 +642,10 @@ func (s *testEvaluatorSuite) TestExprOnlyPushDownToTiKV(c *C) {
 	canPush = CheckExprPushDown(sc, exprs, client, kv.TiKV)
 	c.Assert(canPush, Equals, true)
 
-	pushed, remained = ExprPushDown(exprs, kv.TiFlash)
+	pushed, remained = ExprPushDown(sc, exprs, client, kv.TiFlash, false)
 	c.Assert(len(pushed), Equals, 0)
 	c.Assert(len(remained), Equals, 1)
-	pushed, remained = ExprPushDown(exprs, kv.TiKV)
+	pushed, remained = ExprPushDown(sc, exprs, client, kv.TiKV, false)
 	c.Assert(len(pushed), Equals, 1)
 	c.Assert(len(remained), Equals, 0)
 }
