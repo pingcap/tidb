@@ -32,7 +32,7 @@
       {
         "SQL": "select * from t1 where a in (1,2,3)",
         "Plan": [
-          " Batch_Point_Get_1 root table:t1"
+          " Batch_Point_Get_1 root table:t1, handle:?, keep order:false, desc:false"
         ]
       },
       {
