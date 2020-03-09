@@ -117,7 +117,17 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 		if ctx.GetSessionVars().ClientCapability&mysql.ClientFoundRows > 0 {
 			sc.AddAffectedRows(1)
 		}
-		unchangedRowKey := tablecodec.EncodeRowKeyWithHandle(t.Meta().ID, h)
+
+		physicalID := t.Meta().ID
+		if pt, ok := t.(table.PartitionedTable); ok {
+			p, err := pt.GetPartitionByRow(ctx, oldData)
+			if err != nil {
+				return false, false, 0, err
+			}
+			physicalID = p.GetPhysicalID()
+		}
+
+		unchangedRowKey := tablecodec.EncodeRowKeyWithHandle(physicalID, h)
 		txnCtx := ctx.GetSessionVars().TxnCtx
 		if txnCtx.IsPessimistic {
 			txnCtx.AddUnchangedRowKey(unchangedRowKey)
