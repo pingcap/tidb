@@ -17,6 +17,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/opcode"
@@ -24,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/collate"
 )
 
 type simpleRewriter struct {
@@ -245,6 +247,34 @@ func (sr *simpleRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok boo
 			Value:   types.NewStringDatum(v.Selector.String()),
 			RetType: types.NewFieldType(mysql.TypeVarchar),
 		})
+	case *ast.SetCollationExpr:
+		arg := sr.pop()
+		if collate.NewCollationEnabled() {
+			var collInfo *charset.Collation
+			// TODO(bb7133): use charset.ValidCharsetAndCollation when its bug is fixed.
+			if collInfo, sr.err = charset.GetCollationByName(v.Collate); sr.err != nil {
+				sr.err = charset.ErrUnknownCollation.GenWithStackByArgs(v.Collate)
+				break
+			}
+			chs := arg.GetType().Charset
+			if chs != "" && collInfo.CharsetName != chs {
+				sr.err = charset.ErrCollationCharsetMismatch.GenWithStackByArgs(collInfo.Name, chs)
+				break
+			}
+		}
+		// SetCollationExpr sets the collation explicitly, even when the evaluation type of the expression is non-string.
+		if _, ok := arg.(*Column); ok {
+			// Wrap a cast here to avoid changing the original FieldType of the column expression.
+			exprType := arg.GetType().Clone()
+			exprType.Collate = v.Collate
+			casted := BuildCastFunction(sr.ctx, arg, exprType)
+			sr.pop()
+			sr.push(casted)
+		} else {
+			// For constant and scalar function, we can set its collate directly.
+			arg.GetType().Collate = v.Collate
+		}
+		sr.stack[len(sr.stack)-1].SetCoercibility(CoercibilityExplicit)
 	default:
 		sr.err = errors.Errorf("UnknownType: %T", v)
 		return retNode, false
