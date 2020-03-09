@@ -15,6 +15,7 @@ package executor_test
 
 import (
 	"strconv"
+	"sync"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/auth"
@@ -208,7 +209,11 @@ func (s *testInfoschemaTableSuite) TestUserPrivileges(c *C) {
 	c.Assert(len(result.Rows()), Greater, 0)
 }
 
+// mu is used to test DataForTableStatsField and PartitionsTable serially
+var mu sync.Mutex
+
 func (s *testInfoschemaTableSuite) TestDataForTableStatsField(c *C) {
+	mu.Lock()
 	s.dom.SetStatsUpdating(true)
 	oldExpiryTime := executor.TableStatsCacheExpiry
 	executor.TableStatsCacheExpiry = 0
@@ -256,9 +261,11 @@ func (s *testInfoschemaTableSuite) TestDataForTableStatsField(c *C) {
 	c.Assert(h.Update(is), IsNil)
 	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("3 18 54 6"))
+	mu.Unlock()
 }
 
 func (s *testInfoschemaTableSuite) TestPartitionsTable(c *C) {
+	mu.Lock()
 	oldExpiryTime := executor.TableStatsCacheExpiry
 	executor.TableStatsCacheExpiry = 0
 	defer func() { executor.TableStatsCacheExpiry = oldExpiryTime }()
@@ -308,4 +315,5 @@ func (s *testInfoschemaTableSuite) TestPartitionsTable(c *C) {
 		testkit.Rows("<nil> 3 18 54 6"))
 
 	tk.MustExec("DROP TABLE `test_partitions`;")
+	mu.Unlock()
 }
