@@ -15,7 +15,6 @@ package ddl
 
 import (
 	"context"
-	"runtime"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -42,10 +41,6 @@ func (s *testStatSuite) getDDLSchemaVer(c *C, d *ddl) int64 {
 }
 
 func (s *testStatSuite) TestStat(c *C) {
-	if runtime.GOOS == "windows" {
-		// TODO: find the cause of the failure.
-		c.Skip("skip on windows")
-	}
 	store := testCreateStore(c, "test_stat")
 	defer store.Close()
 

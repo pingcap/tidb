@@ -15,7 +15,6 @@ package ddl
 
 import (
 	"context"
-	"runtime"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -124,10 +123,6 @@ func testCheckSchemaState(c *C, d *ddl, dbInfo *model.DBInfo, state model.Schema
 }
 
 func (s *testSchemaSuite) TestSchema(c *C) {
-	if runtime.GOOS == "windows" {
-		// TODO: find the cause of the failure.
-		c.Skip("skip on windows")
-	}
 	store := testCreateStore(c, "test_schema")
 	defer store.Close()
 	d := newDDL(

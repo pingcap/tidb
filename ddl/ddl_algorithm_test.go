@@ -14,8 +14,6 @@
 package ddl_test
 
 import (
-	"runtime"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/ddl"
@@ -37,10 +35,6 @@ type testCase struct {
 }
 
 func (s *testDDLAlgorithmSuite) TestFindAlterAlgorithm(c *C) {
-	if runtime.GOOS == "windows" {
-		// TODO: find the cause of the failure.
-		c.Skip("skip on windows")
-	}
 	instantAlgorithm := []ast.AlgorithmType{ast.AlgorithmTypeInstant}
 	inplaceAlgorithm := []ast.AlgorithmType{ast.AlgorithmTypeInplace}
 

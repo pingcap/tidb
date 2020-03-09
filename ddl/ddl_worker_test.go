@@ -15,7 +15,6 @@ package ddl
 
 import (
 	"context"
-	"runtime"
 	"sync"
 	"time"
 
@@ -880,10 +879,6 @@ func (s *testDDLSuite) TestIgnorableSpec(c *C) {
 }
 
 func (s *testDDLSuite) TestBuildJobDependence(c *C) {
-	if runtime.GOOS == "windows" {
-		// TODO: find the cause of the failure.
-		c.Skip("skip on windows")
-	}
 	store := testCreateStore(c, "test_set_job_relation")
 	defer store.Close()
 

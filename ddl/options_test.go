@@ -14,7 +14,6 @@
 package ddl_test
 
 import (
-	"runtime"
 	"time"
 
 	"github.com/ngaut/pools"
@@ -30,10 +29,6 @@ type ddlOptionsSuite struct{}
 var _ = Suite(&ddlOptionsSuite{})
 
 func (s *ddlOptionsSuite) TestOptions(c *C) {
-	if runtime.GOOS == "windows" {
-		// TODO: find the cause of the failure.
-		c.Skip("skip on windows")
-	}
 	client, err := clientv3.NewFromURL("test")
 	c.Assert(err, IsNil)
 	callback := &ddl.BaseCallback{}
