@@ -14,9 +14,10 @@
 package util
 
 import (
-	. "github.com/pingcap/check"
 	"math/rand"
 	"testing"
+
+	. "github.com/pingcap/check"
 )
 
 var _ = Suite(&testRandSuite{})
