@@ -1,0 +1,23 @@
+name: Auto Assign Project Local
+
+on: [issues]
+env:
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+jobs:
+  assign_one_project:
+    runs-on: ubuntu-latest
+    name: Assign to One Project
+    steps:
+    - name: Run assignment to project SIG Runtime Kanban
+      uses: SunRunAway/assign-one-project-github-action@1.1.6
+      if: github.event.action == 'labeled' && (contains(github.event.issue.labels.*.name, 'component/executor') || contains(github.event.issue.labels.*.name, 'component/expression'))
+      with:
+        project: 'https://github.com/pingcap/tidb/projects/38'
+        column_name: 'Need Triage'
+    - name: Run assignment to project SIG Planner Kanban
+      uses: SunRunAway/assign-one-project-github-action@1.1.6
+      if: github.event.action == 'labeled' && (contains(github.event.issue.labels.*.name, 'component/planner') || contains(github.event.issue.labels.*.name, 'component/statistics'))
+      with:
+        project: 'https://github.com/pingcap/tidb/projects/39'
+        column_name: 'Need Triage'

@@ -847,29 +847,49 @@ func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum,
 		return d, nil
 	}
 
-	if !hasValue || d.IsNull() {
-		_, err := e.ctx.Txn(true)
-		if err != nil {
-			return types.Datum{}, errors.Trace(err)
-		}
-		autoRandomID, err := e.allocAutoRandomID(&c.FieldType)
-		if err != nil {
-			return types.Datum{}, err
-		}
-		d.SetAutoID(autoRandomID, c.Flag)
-		retryInfo.AddAutoRandomID(autoRandomID)
-	} else {
-		recordID, err := getAutoRecordID(d, &c.FieldType, true)
+	var err error
+	var recordID int64
+	if !hasValue {
+		d.SetNull()
+	}
+	if !d.IsNull() {
+		recordID, err = getAutoRecordID(d, &c.FieldType, true)
 		if err != nil {
 			return types.Datum{}, err
 		}
+	}
+	// Use the value if it's not null and not 0.
+	if recordID != 0 {
 		err = e.rebaseAutoRandomID(recordID, &c.FieldType)
 		if err != nil {
 			return types.Datum{}, err
 		}
+		e.ctx.GetSessionVars().StmtCtx.InsertID = uint64(recordID)
 		d.SetAutoID(recordID, c.Flag)
 		retryInfo.AddAutoRandomID(recordID)
+		return d, nil
 	}
+
+	// Change NULL to auto id.
+	// Change value 0 to auto id, if NoAutoValueOnZero SQL mode is not set.
+	if d.IsNull() || e.ctx.GetSessionVars().SQLMode&mysql.ModeNoAutoValueOnZero == 0 {
+		_, err := e.ctx.Txn(true)
+		if err != nil {
+			return types.Datum{}, errors.Trace(err)
+		}
+		recordID, err = e.allocAutoRandomID(&c.FieldType)
+		if err != nil {
+			return types.Datum{}, err
+		}
+		// It's compatible with mysql setting the first allocated autoID to lastInsertID.
+		// Cause autoID may be specified by user, judge only the first row is not suitable.
+		if e.lastInsertID == 0 {
+			e.lastInsertID = uint64(recordID)
+		}
+	}
+
+	d.SetAutoID(recordID, c.Flag)
+	retryInfo.AddAutoRandomID(recordID)
 
 	casted, err := table.CastValue(e.ctx, d, c.ToInfo())
 	if err != nil {
