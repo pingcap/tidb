@@ -229,8 +229,6 @@ func (p *binPattern) DoMatch(str string) bool {
 }
 
 func init() {
-	atomic.StoreInt32(&newCollationEnabled, 1)
-
 	collatorMap = make(map[string]Collator)
 	collatorIDMap = make(map[int]Collator)
 	newCollatorMap = make(map[string]Collator)
