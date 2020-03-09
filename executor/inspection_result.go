@@ -294,7 +294,7 @@ func (versionInspection) inspect(_ context.Context, sctx sessionctx.Context, fil
 				actual:   "inconsistent",
 				expected: "consistent",
 				severity: "critical",
-				detail:   fmt.Sprintf("the cluster has %[1]v different %[2]s version, execute the sql to see more detail: select * from information_schema.cluster_info where type='%[2]s'", row.GetUint64(1), row.GetString(0)),
+				detail:   fmt.Sprintf("the cluster has %[1]v different %[2]s versions, execute the sql to see more detail: select * from information_schema.cluster_info where type='%[2]s'", row.GetUint64(1), row.GetString(0)),
 			})
 		}
 	}
@@ -753,9 +753,9 @@ func (thresholdCheckInspection) inspectThreshold2(ctx context.Context, sctx sess
 			detail := rule.detail
 			if len(detail) == 0 {
 				if strings.HasSuffix(rule.item, "duration") {
-					detail = fmt.Sprintf("max duration of %s %s %s was too slow", row.GetString(0), rule.tp, rule.item)
+					detail = fmt.Sprintf("max duration of %s %s %s is too slow", row.GetString(0), rule.tp, rule.item)
 				} else if strings.HasSuffix(rule.item, "hit") {
-					detail = fmt.Sprintf("min %s rate of %s %s was too low", rule.item, row.GetString(0), rule.tp)
+					detail = fmt.Sprintf("min %s rate of %s %s is too low", rule.item, row.GetString(0), rule.tp)
 				}
 			} else {
 				detail = fmt.Sprintf(detail, row.GetString(0))

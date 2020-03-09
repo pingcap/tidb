@@ -126,16 +126,16 @@ func (s *inspectionResultSuite) TestInspectionResult(c *C) {
 				"config ddl.lease tidb inconsistent consistent warning the cluster has different config value of ddl.lease, execute the sql to see more detail: select * from information_schema.cluster_config where type='tidb' and `key`='ddl.lease'",
 				"config log.slow-threshold tidb 0 not 0 warning slow-threshold = 0 will record every query to slow log, it may affect performance",
 				"config log.slow-threshold tidb inconsistent consistent warning the cluster has different config value of log.slow-threshold, execute the sql to see more detail: select * from information_schema.cluster_config where type='tidb' and `key`='log.slow-threshold'",
-				"version git_hash tidb inconsistent consistent critical the cluster has 3 different tidb version, execute the sql to see more detail: select * from information_schema.cluster_info where type='tidb'",
-				"version git_hash tikv inconsistent consistent critical the cluster has 2 different tikv version, execute the sql to see more detail: select * from information_schema.cluster_info where type='tikv'",
-				"version git_hash pd inconsistent consistent critical the cluster has 3 different pd version, execute the sql to see more detail: select * from information_schema.cluster_info where type='pd'",
+				"version git_hash tidb inconsistent consistent critical the cluster has 3 different tidb versions, execute the sql to see more detail: select * from information_schema.cluster_info where type='tidb'",
+				"version git_hash tikv inconsistent consistent critical the cluster has 2 different tikv versions, execute the sql to see more detail: select * from information_schema.cluster_info where type='tikv'",
+				"version git_hash pd inconsistent consistent critical the cluster has 3 different pd versions, execute the sql to see more detail: select * from information_schema.cluster_info where type='pd'",
 			},
 		},
 		{
 			sql: "select rule, item, type, value, reference, severity, details from information_schema.inspection_result where rule in ('config', 'version') and item in ('coprocessor.high', 'git_hash') and type='tikv'",
 			rows: []string{
 				"config coprocessor.high tikv inconsistent consistent warning the cluster has different config value of coprocessor.high, execute the sql to see more detail: select * from information_schema.cluster_config where type='tikv' and `key`='coprocessor.high'",
-				"version git_hash tikv inconsistent consistent critical the cluster has 2 different tikv version, execute the sql to see more detail: select * from information_schema.cluster_info where type='tikv'",
+				"version git_hash tikv inconsistent consistent critical the cluster has 2 different tikv versions, execute the sql to see more detail: select * from information_schema.cluster_info where type='tikv'",
 			},
 		},
 		{
@@ -150,8 +150,8 @@ func (s *inspectionResultSuite) TestInspectionResult(c *C) {
 		{
 			sql: "select rule, item, type, value, reference, severity, details from information_schema.inspection_result where rule='version' and item='git_hash' and type in ('pd', 'tidb')",
 			rows: []string{
-				"version git_hash tidb inconsistent consistent critical the cluster has 3 different tidb version, execute the sql to see more detail: select * from information_schema.cluster_info where type='tidb'",
-				"version git_hash pd inconsistent consistent critical the cluster has 3 different pd version, execute the sql to see more detail: select * from information_schema.cluster_info where type='pd'",
+				"version git_hash tidb inconsistent consistent critical the cluster has 3 different tidb versions, execute the sql to see more detail: select * from information_schema.cluster_info where type='tidb'",
+				"version git_hash pd inconsistent consistent critical the cluster has 3 different pd versions, execute the sql to see more detail: select * from information_schema.cluster_info where type='pd'",
 			},
 		},
 		{
@@ -371,20 +371,20 @@ func (s *inspectionResultSuite) TestThresholdCheckInspection2(c *C) {
 	result := tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute inspect SQL failed"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0), Commentf("unexpected warnings: %+v", tk.Se.GetSessionVars().StmtCtx.GetWarnings()))
 	result.Check(testkit.Rows(
-		"data-block-cache-hit tikv tikv-0 0.790 > 0.800 min data-block-cache-hit rate of tikv-0 tikv was too low",
-		"filter-block-cache-hit tikv tikv-0 0.930 > 0.950 min filter-block-cache-hit rate of tikv-0 tikv was too low",
-		"get-token-duration tidb tidb-0 0.020 < 0.001 max duration of tidb-0 tidb get-token-duration was too slow",
-		"handle-snapshot-duration tikv tikv-0 40.000 < 30.000 max duration of tikv-0 tikv handle-snapshot-duration was too slow",
-		"index-block-cache-hit tikv tikv-0 0.940 > 0.950 min index-block-cache-hit rate of tikv-0 tikv was too low",
-		"load-schema-duration tidb tidb-0 2.000 < 1.000 max duration of tidb-0 tidb load-schema-duration was too slow",
-		"rocksdb-get-duration tikv tikv-0 0.060 < 0.050 max duration of tikv-0 tikv rocksdb-get-duration was too slow",
-		"rocksdb-seek-duration tikv tikv-0 0.060 < 0.050 max duration of tikv-0 tikv rocksdb-seek-duration was too slow",
-		"rocksdb-write-duration tikv tikv-0 0.200 < 0.100 max duration of tikv-0 tikv rocksdb-write-duration was too slow",
-		"scheduler-cmd-duration tikv tikv-0 5.000 < 0.100 max duration of tikv-0 tikv scheduler-cmd-duration was too slow",
+		"data-block-cache-hit tikv tikv-0 0.790 > 0.800 min data-block-cache-hit rate of tikv-0 tikv is too low",
+		"filter-block-cache-hit tikv tikv-0 0.930 > 0.950 min filter-block-cache-hit rate of tikv-0 tikv is too low",
+		"get-token-duration tidb tidb-0 0.020 < 0.001 max duration of tidb-0 tidb get-token-duration is too slow",
+		"handle-snapshot-duration tikv tikv-0 40.000 < 30.000 max duration of tikv-0 tikv handle-snapshot-duration is too slow",
+		"index-block-cache-hit tikv tikv-0 0.940 > 0.950 min index-block-cache-hit rate of tikv-0 tikv is too low",
+		"load-schema-duration tidb tidb-0 2.000 < 1.000 max duration of tidb-0 tidb load-schema-duration is too slow",
+		"rocksdb-get-duration tikv tikv-0 0.060 < 0.050 max duration of tikv-0 tikv rocksdb-get-duration is too slow",
+		"rocksdb-seek-duration tikv tikv-0 0.060 < 0.050 max duration of tikv-0 tikv rocksdb-seek-duration is too slow",
+		"rocksdb-write-duration tikv tikv-0 0.200 < 0.100 max duration of tikv-0 tikv rocksdb-write-duration is too slow",
+		"scheduler-cmd-duration tikv tikv-0 5.000 < 0.100 max duration of tikv-0 tikv scheduler-cmd-duration is too slow",
 		"scheduler-pending-cmd-count tikv tikv-0 1001.000 < 1000.000  tikv-0 tikv scheduler has too many pending commands",
-		"storage-snapshot-duration tikv tikv-0 0.060 < 0.050 max duration of tikv-0 tikv storage-snapshot-duration was too slow",
-		"storage-write-duration tikv tikv-0 0.200 < 0.100 max duration of tikv-0 tikv storage-write-duration was too slow",
-		"tso-duration tidb pd-0 0.060 < 0.050 max duration of pd-0 tidb tso-duration was too slow",
+		"storage-snapshot-duration tikv tikv-0 0.060 < 0.050 max duration of tikv-0 tikv storage-snapshot-duration is too slow",
+		"storage-write-duration tikv tikv-0 0.200 < 0.100 max duration of tikv-0 tikv storage-write-duration is too slow",
+		"tso-duration tidb pd-0 0.060 < 0.050 max duration of pd-0 tidb tso-duration is too slow",
 	))
 }
 
