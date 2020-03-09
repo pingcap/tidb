@@ -269,6 +269,22 @@ func (s *testTableSuite) TestInfoschemaFieldValue(c *C) {
 	}
 	tk.Se.SetSessionManager(sm)
 	tk.MustQuery("SELECT user,host,command FROM information_schema.processlist;").Check(testkit.Rows("root 127.0.0.1 Query"))
+
+	// Test for system table default value
+	tk.MustQuery("show create table information_schema.PROCESSLIST").Check(
+		testkit.Rows("" +
+			"PROCESSLIST CREATE TABLE `PROCESSLIST` (\n" +
+			"  `ID` bigint(21) unsigned DEFAULT '0',\n" +
+			"  `USER` varchar(16) NOT NULL DEFAULT '',\n" +
+			"  `HOST` varchar(64) NOT NULL DEFAULT '',\n" +
+			"  `DB` varchar(64) DEFAULT NULL,\n" +
+			"  `COMMAND` varchar(16) NOT NULL DEFAULT '',\n" +
+			"  `TIME` int(7) unsigned DEFAULT '0',\n" +
+			"  `STATE` varchar(7) DEFAULT NULL,\n" +
+			"  `INFO` binary(512) unsigned DEFAULT NULL,\n" +
+			"  `MEM` bigint(21) unsigned DEFAULT NULL,\n" +
+			"  `TxnStart` varchar(64) NOT NULL DEFAULT ''\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 }
 
 func (s *testTableSuite) TestCharacterSetCollations(c *C) {
