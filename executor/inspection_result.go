@@ -869,7 +869,7 @@ func (c checkStoreRegionTooMuch) genResult(sql string, row chunk.Row) inspection
 		actual:   actual,
 		expected: "<= 20000",
 		severity: "warning",
-		detail:   fmt.Sprintf("%s tikv has too many region count", row.GetString(0)),
+		detail:   fmt.Sprintf("%s tikv has too many regions", row.GetString(0)),
 		degree:   degree,
 	}
 }
