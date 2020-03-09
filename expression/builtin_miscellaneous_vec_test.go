@@ -14,7 +14,9 @@
 package expression
 
 import (
+	"sync/atomic"
 	"testing"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
@@ -30,10 +32,8 @@ var vecBuiltinMiscellaneousCases = map[string][]vecExprBenchCase{
 	ast.IsIPv6: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}},
 	},
-	ast.Sleep: {
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETReal}},
-	},
-	ast.UUID: {},
+	ast.Sleep: {},
+	ast.UUID:  {},
 	ast.Inet6Ntoa: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{
 			newSelectStringGener(
@@ -113,8 +113,16 @@ func BenchmarkVectorizedBuiltinMiscellaneousFunc(b *testing.B) {
 	benchmarkVectorizedBuiltinFunc(b, vecBuiltinMiscellaneousCases)
 }
 
+type counter struct {
+	count int
+}
+
+func (c *counter) add(diff int) int {
+	c.count += diff
+	return c.count
+}
+
 func (s *testEvaluatorSuite) TestSleepVectorized(c *C) {
-	// TODO(ziyi) Refer to expression/builtin_op_vec_test.go:159
 	ctx := mock.NewContext()
 	sessVars := ctx.GetSessionVars()
 
@@ -125,78 +133,83 @@ func (s *testEvaluatorSuite) TestSleepVectorized(c *C) {
 	c.Assert(err, IsNil)
 	input := chunk.NewChunkWithCapacity([]*types.FieldType{ft}, 1024)
 	result := chunk.NewColumn(ft, 1024)
+	errCnt := counter{}
+	warnCnt := counter{}
 
 	// non-strict model
 	sessVars.StrictSQLMode = false
-	input.AppendInt64(0, 1)
+	input.AppendFloat64(0, 1)
 	err = f.vecEvalInt(input, result)
 	c.Assert(err, IsNil)
 	c.Assert(result.GetInt64(0), Equals, int64(0))
-	c.Assert(sessVars.StmtCtx.WarningCount(), Equals, 0)
+	c.Assert(sessVars.StmtCtx.WarningCount(), Equals, uint16(warnCnt.add(0)))
+
 	input.Reset()
-	input.AppendInt64(0, -1)
+	input.AppendFloat64(0, -1)
 	err = f.vecEvalInt(input, result)
 	c.Assert(err, IsNil)
 	c.Assert(result.GetInt64(0), Equals, int64(0))
-	c.Assert(sessVars.StmtCtx.WarningCount(), Equals, 1)
-	input.Reset()
-	input.AppendNull(0)
-	err = f.vecEvalInt(input, result)
-	c.Assert(err, IsNil)
-	c.Assert(result.GetInt64(0), Equals, int64(0))
-	c.Assert(sessVars.StmtCtx.WarningCount(), Equals, 1)
+	c.Assert(sessVars.StmtCtx.WarningCount(), Equals, uint16(warnCnt.add(1)))
+
 	input.Reset()
 	input.AppendNull(0)
-	input.AppendInt64(0, 1)
-	input.AppendInt64(0, -1)
+	err = f.vecEvalInt(input, result)
+	c.Assert(err, IsNil)
+	c.Assert(result.GetInt64(0), Equals, int64(0))
+	c.Assert(sessVars.StmtCtx.WarningCount(), Equals, uint16(warnCnt.add(1)))
+
+	input.Reset()
+	input.AppendNull(0)
+	input.AppendFloat64(0, 1)
+	input.AppendFloat64(0, -1)
 	err = f.vecEvalInt(input, result)
 	c.Assert(err, IsNil)
 	c.Assert(result.GetInt64(0), Equals, int64(0))
 	c.Assert(result.GetInt64(1), Equals, int64(0))
 	c.Assert(result.GetInt64(2), Equals, int64(0))
-	c.Assert(sessVars.StmtCtx.WarningCount(), Equals, 2)
+	c.Assert(sessVars.StmtCtx.WarningCount(), Equals, uint16(warnCnt.add(2)))
 
 	// for error case under the strict model
-	//sessVars.StrictSQLMode = true
-	//d[0].SetNull()
-	//_, err = fc.getFunction(ctx, s.datumsToConstants(d))
-	//c.Assert(err, IsNil)
-	//_, isNull, err = f.evalInt(chunk.Row{})
-	//c.Assert(err, NotNil)
-	//c.Assert(isNull, IsFalse)
-	//d[0].SetFloat64(-2.5)
-	//_, err = fc.getFunction(ctx, s.datumsToConstants(d))
-	//c.Assert(err, IsNil)
-	//_, isNull, err = f.evalInt(chunk.Row{})
-	//c.Assert(err, NotNil)
-	//c.Assert(isNull, IsFalse)
-	//
+	sessVars.StrictSQLMode = true
+	input.Reset()
+	input.AppendNull(0)
+	err = f.vecEvalInt(input, result)
+	c.Assert(err, NotNil)
+	c.Assert(result.GetInt64(0), Equals, int64(0))
+	ec, _ := sessVars.StmtCtx.NumErrorWarnings()
+	c.Assert(ec, Equals, uint16(errCnt.add(1)))
+
+	sessVars.StmtCtx.SetWarnings(nil)
+	input.Reset()
+	input.AppendFloat64(0, -2.5)
+	err = f.vecEvalInt(input, result)
+	c.Assert(err, NotNil)
+	c.Assert(result.GetInt64(0), Equals, int64(0))
+	ec, _ = sessVars.StmtCtx.NumErrorWarnings()
+	c.Assert(ec, Equals, uint16(errCnt.add(1)))
+
 	//// strict model
-	//d[0].SetFloat64(0.5)
-	//start := time.Now()
-	//f, err = fc.getFunction(ctx, s.datumsToConstants(d))
-	//c.Assert(err, IsNil)
-	//ret, isNull, err = f.evalInt(chunk.Row{})
-	//c.Assert(err, IsNil)
-	//c.Assert(isNull, IsFalse)
-	//c.Assert(ret, Equals, int64(0))
-	//sub := time.Since(start)
-	//c.Assert(sub.Nanoseconds(), GreaterEqual, int64(0.5*1e9))
-	//
-	//d[0].SetFloat64(3)
-	//f, err = fc.getFunction(ctx, s.datumsToConstants(d))
-	//c.Assert(err, IsNil)
-	//start = time.Now()
-	//go func() {
-	//	time.Sleep(1 * time.Second)
-	//	atomic.CompareAndSwapUint32(&ctx.GetSessionVars().Killed, 0, 1)
-	//}()
-	//ret, isNull, err = f.evalInt(chunk.Row{})
-	//sub = time.Since(start)
-	//c.Assert(err, IsNil)
-	//c.Assert(isNull, IsFalse)
-	//c.Assert(ret, Equals, int64(1))
-	//c.Assert(sub.Nanoseconds(), LessEqual, int64(2*1e9))
-	//c.Assert(sub.Nanoseconds(), GreaterEqual, int64(1*1e9))
+	input.Reset()
+	input.AppendFloat64(0, 0.5)
+	start := time.Now()
+	err = f.vecEvalInt(input, result)
+	c.Assert(err, IsNil)
+	c.Assert(result.GetInt64(0), Equals, int64(0))
+	sub := time.Since(start)
+	c.Assert(sub.Nanoseconds(), GreaterEqual, int64(0.5*1e9))
+
+	input.Reset()
+	input.AppendFloat64(0, 3)
+	start = time.Now()
+	go func() {
+		time.Sleep(1 * time.Second)
+		atomic.CompareAndSwapUint32(&ctx.GetSessionVars().Killed, 0, 1)
+	}()
+	err = f.vecEvalInt(input, result)
+	sub = time.Since(start)
+	c.Assert(err, IsNil)
+	c.Assert(result.GetInt64(0), Equals, int64(1))
+	c.Assert(sub.Nanoseconds(), LessEqual, int64(2*1e9))
+	c.Assert(sub.Nanoseconds(), GreaterEqual, int64(1*1e9))
 
 }
