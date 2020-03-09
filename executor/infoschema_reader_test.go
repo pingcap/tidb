@@ -31,7 +31,7 @@ var _ = Suite(&testInfoschemaTableSuite{})
 type testInfoschemaTableSuite struct {
 	store kv.Storage
 	dom   *domain.Domain
-	// mu is used to test DataForTableStatsField and PartitionsTable serially
+	// mu is used to protect the TableStatsCacheExpiry global variable.
 	mu sync.Mutex
 }
 
