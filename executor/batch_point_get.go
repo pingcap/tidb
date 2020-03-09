@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"sort"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
@@ -44,6 +45,8 @@ type BatchPointGetExec struct {
 	values     [][]byte
 	index      int
 	rowDecoder *rowcodec.ChunkDecoder
+	keepOrder  bool
+	desc       bool
 }
 
 // Open implements the Executor interface.
@@ -118,6 +121,14 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			dedup[s] = struct{}{}
 			keys = append(keys, idxKey)
 		}
+		if e.keepOrder {
+			sort.Slice(keys, func(i int, j int) bool {
+				if e.desc {
+					return keys[i].Cmp(keys[j]) > 0
+				}
+				return keys[i].Cmp(keys[j]) < 0
+			})
+		}
 
 		// Fetch all handles.
 		handleVals, err = batchGetter.BatchGet(ctx, keys)
@@ -150,6 +161,13 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			}
 			// Wait `UPDATE` finished
 			failpoint.InjectContext(ctx, "batchPointGetRepeatableReadTest-step2", nil)
+		})
+	} else if e.keepOrder {
+		sort.Slice(e.handles, func(i int, j int) bool {
+			if e.desc {
+				return e.handles[i] > e.handles[j]
+			}
+			return e.handles[i] < e.handles[j]
 		})
 	}
 
