@@ -334,7 +334,6 @@ type ShowDDLJobsExec struct {
 	baseExecutor
 	DDLJobRetriever
 
-	cacheJobs []*model.Job
 	jobNumber int
 	is        infoschema.InfoSchema
 	done      bool
@@ -347,6 +346,7 @@ type DDLJobRetriever struct {
 	cursor         int
 	is             infoschema.InfoSchema
 	activeRoles    []*auth.RoleIdentity
+	cacheJobs      []*model.Job
 }
 
 func (e *DDLJobRetriever) initial(txn kv.Transaction) error {
@@ -1299,7 +1299,6 @@ func (e *TableScanExec) getRow(handle int64) ([]types.Datum, error) {
 
 // Open implements the Executor Open interface.
 func (e *TableScanExec) Open(ctx context.Context) error {
-
 	e.iter = nil
 	e.virtualTableChunkList = nil
 	return nil
