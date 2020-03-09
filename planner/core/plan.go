@@ -228,6 +228,12 @@ type PhysicalPlan interface {
 
 	// ExplainNormalizedInfo returns operator normalized information for generating digest.
 	ExplainNormalizedInfo() string
+
+	// GetTaskCost returns cost of operator and children.
+	GetTaskCost() float64
+
+	// setTaskCost sets the taskCost from task.
+	setTaskCost(cost float64) 
 }
 
 type baseLogicalPlan struct {
@@ -254,6 +260,7 @@ type basePhysicalPlan struct {
 	childrenReqProps []*property.PhysicalProperty
 	self             PhysicalPlan
 	children         []PhysicalPlan
+	taskCost         float64
 }
 
 // ExplainInfo implements Plan interface.
@@ -270,6 +277,17 @@ func (p *basePhysicalPlan) GetChildReqProps(idx int) *property.PhysicalProperty 
 	return p.childrenReqProps[idx]
 }
 
+// GetTaskCost implements PhysicalPlan interface.
+func (p *basePhysicalPlan) GetTaskCost() float64{
+	return p.taskCost
+}
+
+// setTaskCost implements PhysicalPlan interface.
+func (p *basePhysicalPlan) setTaskCost(cost float64) {
+	p.taskCost = cost
+}
+
+
 func (p *baseLogicalPlan) getTask(prop *property.PhysicalProperty) task {
 	key := prop.HashCode()
 	return p.taskMap[string(key)]
@@ -279,6 +297,8 @@ func (p *baseLogicalPlan) storeTask(prop *property.PhysicalProperty, task task) 
 	key := prop.HashCode()
 	p.taskMap[string(key)] = task
 }
+
+
 
 // HasMaxOneRow returns if the LogicalPlan will output at most one row.
 func HasMaxOneRow(p LogicalPlan, childMaxOneRow []bool) bool {

@@ -145,6 +145,15 @@ func (p *PointGetPlan) statsInfo() *property.StatsInfo {
 	return p.stats
 }
 
+// GetTaskCost implements PhysicalPlan interface.
+func (p *PointGetPlan) GetTaskCost() float64{
+	return 0
+}
+
+// setTaskCost implements PhysicalPlan interface.
+func (p *PointGetPlan) setTaskCost(float64) {}
+
+
 // Children gets all the children.
 func (p *PointGetPlan) Children() []PhysicalPlan {
 	return nil
@@ -236,6 +245,14 @@ func (p *BatchPointGetPlan) statsInfo() *property.StatsInfo {
 func (p *BatchPointGetPlan) Children() []PhysicalPlan {
 	return nil
 }
+
+// GetTaskCost implements PhysicalPlan interface.
+func (p *BatchPointGetPlan) GetTaskCost() float64{
+	return 0
+}
+
+// setTaskCost implements PhysicalPlan interface.
+func (p *BatchPointGetPlan) setTaskCost(float64) {}
 
 // SetChildren sets the children for the plan.
 func (p *BatchPointGetPlan) SetChildren(...PhysicalPlan) {}

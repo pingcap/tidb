@@ -848,6 +848,9 @@ func (e *Explain) prepareOperatorInfo(p Plan, taskType, driverSide, indent strin
 	id := texttree.PrettyIdentifier(p.ExplainID().String()+driverSide, indent, isLastChild)
 
 	estCost := "N/A"
+	if physPlan, ok := p.(PhysicalPlan); ok {
+		estCost = fmt.Sprint(physPlan.GetTaskCost())
+	}
 
 	estRows := "N/A"
 	if si := p.statsInfo(); si != nil {
