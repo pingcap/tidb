@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/types"
-	"github.com/pingcap/tipb/go-tipb"
 )
 
 // SchemaState is the state for schema elements.
@@ -851,63 +850,6 @@ func (cis *CIStr) UnmarshalJSON(b []byte) error {
 	}
 	cis.L = strings.ToLower(cis.O)
 	return nil
-}
-
-// ColumnsToProto converts a slice of model.ColumnInfo to a slice of tipb.ColumnInfo.
-func ColumnsToProto(columns []*ColumnInfo, pkIsHandle bool) []*tipb.ColumnInfo {
-	cols := make([]*tipb.ColumnInfo, 0, len(columns))
-	for _, c := range columns {
-		col := ColumnToProto(c)
-		// TODO: Here `PkHandle`'s meaning is changed, we will change it to `IsHandle` when tikv's old select logic
-		// is abandoned.
-		if (pkIsHandle && mysql.HasPriKeyFlag(c.Flag)) || c.ID == ExtraHandleID {
-			col.PkHandle = true
-		} else {
-			col.PkHandle = false
-		}
-		cols = append(cols, col)
-	}
-	return cols
-}
-
-// IndexToProto converts a model.IndexInfo to a tipb.IndexInfo.
-func IndexToProto(t *TableInfo, idx *IndexInfo) *tipb.IndexInfo {
-	pi := &tipb.IndexInfo{
-		TableId: t.ID,
-		IndexId: idx.ID,
-		Unique:  idx.Unique,
-	}
-	cols := make([]*tipb.ColumnInfo, 0, len(idx.Columns)+1)
-	for _, c := range idx.Columns {
-		cols = append(cols, ColumnToProto(t.Columns[c.Offset]))
-	}
-	if t.PKIsHandle {
-		// Coprocessor needs to know PKHandle column info, so we need to append it.
-		for _, col := range t.Columns {
-			if mysql.HasPriKeyFlag(col.Flag) {
-				colPB := ColumnToProto(col)
-				colPB.PkHandle = true
-				cols = append(cols, colPB)
-				break
-			}
-		}
-	}
-	pi.Columns = cols
-	return pi
-}
-
-// ColumnToProto converts model.ColumnInfo to tipb.ColumnInfo.
-func ColumnToProto(c *ColumnInfo) *tipb.ColumnInfo {
-	pc := &tipb.ColumnInfo{
-		ColumnId:  c.ID,
-		Collation: int32(mysql.CollationNames[c.FieldType.Collate]),
-		ColumnLen: int32(c.FieldType.Flen),
-		Decimal:   int32(c.FieldType.Decimal),
-		Flag:      int32(c.Flag),
-		Elems:     c.Elems,
-	}
-	pc.Tp = int32(c.FieldType.Tp)
-	return pc
 }
 
 // TableColumnID is composed by table ID and column ID.
