@@ -744,3 +744,30 @@ func (s *testSequenceSuite) TestUnflodSequence(c *C) {
 	// `select nextval(seq), a from t1 union select nextval(seq), a from t2`
 	// The executing order of nextval and lastval is implicit, don't make any assumptions on it.
 }
+
+// before this PR:
+// insert consume: 50.498672ms
+// after this PR:
+// insert consume: 33.213615ms
+func (s *testSequenceSuite) TestBenchInsertCacheDefaultExpr(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test")
+	s.tk.MustExec("drop sequence if exists seq")
+	s.tk.MustExec("drop table if exists t")
+	s.tk.MustExec("create sequence seq")
+	s.tk.MustExec("create table t(a int default next value for seq)")
+	sql := "insert into t values "
+	for i := 0; i < 1000; i++ {
+		if i == 0 {
+			sql += "()"
+		} else {
+			sql += ",()"
+		}
+	}
+	// start := time.Now()
+	for i := 0; i < 100; i++ {
+		s.tk.MustExec(sql)
+	}
+	// fmt.Println(time.Now().Sub(start) / 100)
+}
+

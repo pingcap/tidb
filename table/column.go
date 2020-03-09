@@ -379,6 +379,32 @@ func GetColDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo) (types.Da
 	return getColDefaultExprValue(ctx, col, defaultValue.(string))
 }
 
+// GetColDefaultExpr gets default expr node of the column with expr default value.
+func GetColDefaultExpr(col *model.ColumnInfo) (ast.ExprNode, error) {
+	var defaultExpr ast.ExprNode
+	expr := fmt.Sprintf("select %s", col.GetDefaultValue().(string))
+	stmts, _, err := parser.New().Parse(expr, "", "")
+	if err != nil {
+		return nil, err
+	}
+	defaultExpr = stmts[0].(*ast.SelectStmt).Fields.Fields[0].Expr
+	return defaultExpr, nil
+}
+
+// EvalColDefaultExpr eval default expr node to explicit default value.
+func EvalColDefaultExprNode(ctx sessionctx.Context, col *model.ColumnInfo, defaultExpr ast.ExprNode) (types.Datum, error) {
+	d, err := expression.EvalAstExpr(ctx, defaultExpr)
+	if err != nil {
+		return types.Datum{}, err
+	}
+	// Check the evaluated data type by cast.
+	value, err := CastValue(ctx, d, col)
+	if err != nil {
+		return types.Datum{}, err
+	}
+	return value, nil
+}
+
 func getColDefaultExprValue(ctx sessionctx.Context, col *model.ColumnInfo, defaultValue string) (types.Datum, error) {
 	var defaultExpr ast.ExprNode
 	expr := fmt.Sprintf("select %s", defaultValue)
