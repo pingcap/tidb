@@ -92,6 +92,7 @@ func run() {
 	conf.FileSize = fileSize
 	conf.StatementSize = statementSize
 	conf.OutputDirPath = outputDir
+	conf.Consistency = consistency
 	conf.NoViews = noViews
 
 	err = export.Dump(conf)

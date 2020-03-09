@@ -1,15 +1,13 @@
 package export
 
 import (
-	"strings"
-
 	"github.com/pingcap/dumpling/v4/log"
 	"github.com/pingcap/tidb-tools/pkg/filter"
 	"go.uber.org/zap"
 )
 
 type BWList interface {
-	Apply(string, string) bool
+	Apply(schema string, table string) bool
 }
 
 type BWListMode byte
@@ -66,7 +64,7 @@ func filterDirtySchemaTables(conf *Config) {
 	switch conf.ServerInfo.ServerType {
 	case ServerTypeTiDB:
 		for dbName := range conf.Tables {
-			if filter.IsSystemSchema(strings.ToLower(dbName)) {
+			if filter.IsSystemSchema(dbName) {
 				log.Zap().Warn("unsupported dump schema in TiDB now", zap.String("schema", dbName))
 				delete(conf.Tables, dbName)
 			}
