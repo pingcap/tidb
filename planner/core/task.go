@@ -141,7 +141,6 @@ func (t *copTask) finishIndexPlan() {
 	for p = t.indexPlan; len(p.Children()) > 0; p = p.Children()[0] {
 	}
 	rowSize := t.tblColHists.GetIndexAvgRowSize(t.indexPlan.SCtx(), t.tblCols, p.(*PhysicalIndexScan).Index.Unique)
-
 	t.cst += cnt * rowSize * sessVars.ScanFactor
 }
 
@@ -614,6 +613,56 @@ func splitCopAvg2CountAndSum(p PhysicalPlan) {
 	}
 }
 
+func buildIndexLookUpTask(ctx sessionctx.Context, t *copTask) *rootTask {
+	newTask := &rootTask{cst: t.cst}
+	sessVars := ctx.GetSessionVars()
+	p := PhysicalIndexLookUpReader{
+		tablePlan:      t.tablePlan,
+		indexPlan:      t.indexPlan,
+		ExtraHandleCol: t.extraHandleCol,
+	}.Init(ctx, t.tablePlan.SelectBlockOffset())
+	setTableScanToTableRowIDScan(p.tablePlan)
+	p.stats = t.tablePlan.statsInfo()
+	// Add cost of building table reader executors. Handles are extracted in batch style,
+	// each handle is a range, the CPU cost of building copTasks should be:
+	// (indexRows / batchSize) * batchSize * CPUFactor
+	// Since we don't know the number of copTasks built, ignore these network cost now.
+	indexRows := t.indexPlan.statsInfo().RowCount
+	newTask.cst += indexRows * sessVars.CPUFactor
+	// Add cost of worker goroutines in index lookup.
+	numTblWorkers := float64(sessVars.IndexLookupConcurrency)
+	newTask.cst += (numTblWorkers + 1) * sessVars.ConcurrencyFactor
+	// When building table reader executor for each batch, we would sort the handles. CPU
+	// cost of sort is:
+	// CPUFactor * batchSize * Log2(batchSize) * (indexRows / batchSize)
+	indexLookupSize := float64(sessVars.IndexLookupSize)
+	batchSize := math.Min(indexLookupSize, indexRows)
+	if batchSize > 2 {
+		sortCPUCost := (indexRows * math.Log2(batchSize) * sessVars.CPUFactor) / numTblWorkers
+		newTask.cst += sortCPUCost
+	}
+	// Also, we need to sort the retrieved rows if index lookup reader is expected to return
+	// ordered results. Note that row count of these two sorts can be different, if there are
+	// operators above table scan.
+	tableRows := t.tablePlan.statsInfo().RowCount
+	selectivity := tableRows / indexRows
+	batchSize = math.Min(indexLookupSize*selectivity, tableRows)
+	if t.keepOrder && batchSize > 2 {
+		sortCPUCost := (tableRows * math.Log2(batchSize) * sessVars.CPUFactor) / numTblWorkers
+		newTask.cst += sortCPUCost
+	}
+	if t.doubleReadNeedProj {
+		schema := p.IndexPlans[0].(*PhysicalIndexScan).dataSourceSchema
+		proj := PhysicalProjection{Exprs: expression.Column2Exprs(schema.Columns)}.Init(ctx, p.stats, t.tablePlan.SelectBlockOffset(), nil)
+		proj.SetSchema(schema)
+		proj.SetChildren(p)
+		newTask.p = proj
+	} else {
+		newTask.p = p
+	}
+	return newTask
+}
+
 // finishCopTask means we close the coprocessor task and create a root task.
 func finishCopTask(ctx sessionctx.Context, task task) task {
 	t, ok := task.(*copTask)
@@ -642,50 +691,7 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 		return newTask
 	}
 	if t.indexPlan != nil && t.tablePlan != nil {
-		p := PhysicalIndexLookUpReader{
-			tablePlan:      t.tablePlan,
-			indexPlan:      t.indexPlan,
-			ExtraHandleCol: t.extraHandleCol,
-		}.Init(ctx, t.tablePlan.SelectBlockOffset())
-		setTableScanToTableRowIDScan(p.tablePlan)
-		p.stats = t.tablePlan.statsInfo()
-		// Add cost of building table reader executors. Handles are extracted in batch style,
-		// each handle is a range, the CPU cost of building copTasks should be:
-		// (indexRows / batchSize) * batchSize * CPUFactor
-		// Since we don't know the number of copTasks built, ignore these network cost now.
-		indexRows := t.indexPlan.statsInfo().RowCount
-		newTask.cst += indexRows * sessVars.CPUFactor
-		// Add cost of worker goroutines in index lookup.
-		numTblWorkers := float64(sessVars.IndexLookupConcurrency)
-		newTask.cst += (numTblWorkers + 1) * sessVars.ConcurrencyFactor
-		// When building table reader executor for each batch, we would sort the handles. CPU
-		// cost of sort is:
-		// CPUFactor * batchSize * Log2(batchSize) * (indexRows / batchSize)
-		indexLookupSize := float64(sessVars.IndexLookupSize)
-		batchSize := math.Min(indexLookupSize, indexRows)
-		if batchSize > 2 {
-			sortCPUCost := (indexRows * math.Log2(batchSize) * sessVars.CPUFactor) / numTblWorkers
-			newTask.cst += sortCPUCost
-		}
-		// Also, we need to sort the retrieved rows if index lookup reader is expected to return
-		// ordered results. Note that row count of these two sorts can be different, if there are
-		// operators above table scan.
-		tableRows := t.tablePlan.statsInfo().RowCount
-		selectivity := tableRows / indexRows
-		batchSize = math.Min(indexLookupSize*selectivity, tableRows)
-		if t.keepOrder && batchSize > 2 {
-			sortCPUCost := (tableRows * math.Log2(batchSize) * sessVars.CPUFactor) / numTblWorkers
-			newTask.cst += sortCPUCost
-		}
-		if t.doubleReadNeedProj {
-			schema := p.IndexPlans[0].(*PhysicalIndexScan).dataSourceSchema
-			proj := PhysicalProjection{Exprs: expression.Column2Exprs(schema.Columns)}.Init(ctx, p.stats, t.tablePlan.SelectBlockOffset(), nil)
-			proj.SetSchema(schema)
-			proj.SetChildren(p)
-			newTask.p = proj
-		} else {
-			newTask.p = p
-		}
+		newTask = buildIndexLookUpTask(ctx, t)
 	} else if t.indexPlan != nil {
 		p := PhysicalIndexReader{indexPlan: t.indexPlan}.Init(ctx, t.indexPlan.SelectBlockOffset())
 		p.stats = t.indexPlan.statsInfo()
