@@ -34,6 +34,7 @@ type testSequenceSuite struct{ *testDBSuite }
 func (s *testSequenceSuite) TestCreateSequence(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test")
+	s.tk.MustExec("drop sequence if exists seq")
 	s.tk.MustGetErrCode("create sequence `seq  `", mysql.ErrWrongTableName)
 
 	// increment should not be set as 0.
