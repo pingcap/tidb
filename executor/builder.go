@@ -1440,13 +1440,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 				is:           b.is,
 			}
 		}
-		case strings.ToLower(infoschema.TableDDLJobs):
-			return &ShowDDLJobsExec{
-				jobNumber:    0,
-				is:           b.is,
-				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
-			}
-		}
+	}
 	tb, _ := b.is.TableByID(v.Table.ID)
 	return &TableScanExec{
 		baseExecutor:   newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),

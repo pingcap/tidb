@@ -17,7 +17,6 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 
@@ -598,7 +597,7 @@ func dataForViews(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Da
 // DDLJobsReaderExec executes DDLJobs information retrieving.
 type DDLJobsReaderExec struct {
 	baseExecutor
-	DDLJobExecInitializer
+	DDLJobRetriever
 
 	cacheJobs []*model.Job
 	is        infoschema.InfoSchema
@@ -613,7 +612,9 @@ func (e *DDLJobsReaderExec) Open(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	err = e.DDLJobExecInitializer.initial(txn)
+	e.DDLJobRetriever.is = e.is
+	e.activeRoles = e.ctx.GetSessionVars().ActiveRoles
+	err = e.DDLJobRetriever.initial(txn)
 	if err != nil {
 		return err
 	}
@@ -631,6 +632,7 @@ func (e *DDLJobsReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		num := mathutil.Min(req.Capacity(), len(e.runningJobs)-e.cursor)
 		for i := e.cursor; i < e.cursor+num; i++ {
 			e.appendJobToChunk(req, e.runningJobs[i], checker)
+			req.AppendString(11, e.runningJobs[i].Query)
 		}
 		e.cursor += num
 		count += num
@@ -645,54 +647,11 @@ func (e *DDLJobsReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 		for _, job := range e.cacheJobs {
 			e.appendJobToChunk(req, job, checker)
+			req.AppendString(11, job.Query)
 		}
 		e.cursor += len(e.cacheJobs)
 	}
 	return nil
-}
-
-func (e *DDLJobsReaderExec) appendJobToChunk(req *chunk.Chunk, job *model.Job, checker privilege.Manager) {
-	schemaName := job.SchemaName
-	tableName := ""
-	finishTS := uint64(0)
-	if job.BinlogInfo != nil {
-		finishTS = job.BinlogInfo.FinishedTS
-		if job.BinlogInfo.TableInfo != nil {
-			tableName = job.BinlogInfo.TableInfo.Name.L
-		}
-		if len(schemaName) == 0 && job.BinlogInfo.DBInfo != nil {
-			schemaName = job.BinlogInfo.DBInfo.Name.L
-		}
-	}
-	// For compatibility, the old version of DDL Job wasn't store the schema name and table name.
-	if len(schemaName) == 0 {
-		schemaName = getSchemaName(e.is, job.SchemaID)
-	}
-	if len(tableName) == 0 {
-		tableName = getTableName(e.is, job.TableID)
-	}
-
-	// Check the privilege.
-	if checker != nil && !checker.RequestVerification(e.ctx.GetSessionVars().ActiveRoles, strings.ToLower(schemaName), strings.ToLower(tableName), "", mysql.AllPrivMask) {
-		return
-	}
-
-	req.AppendInt64(0, job.ID)
-	req.AppendString(1, schemaName)
-	req.AppendString(2, tableName)
-	req.AppendString(3, job.Type.String())
-	req.AppendString(4, job.SchemaState.String())
-	req.AppendInt64(5, job.SchemaID)
-	req.AppendInt64(6, job.TableID)
-	req.AppendInt64(7, job.RowCount)
-	req.AppendString(8, model.TSConvert2Time(job.StartTS).String())
-	if finishTS > 0 {
-		req.AppendString(9, model.TSConvert2Time(finishTS).String())
-	} else {
-		req.AppendString(9, "")
-	}
-	req.AppendString(10, job.State.String())
-	req.AppendString(11, job.Query)
 }
 
 func dataForEngines() (rows [][]types.Datum) {
