@@ -288,6 +288,14 @@ func (p *LogicalProjection) ExtractCorrelatedCols() []*expression.CorrelatedColu
 	return corCols
 }
 
+// GetUsedCols extracts all of the Columns used by proj.
+func (p *LogicalProjection) GetUsedCols() (usedCols []*expression.Column) {
+	for _, expr := range p.Exprs {
+		usedCols = append(usedCols, expression.ExtractColumns(expr)...)
+	}
+	return usedCols
+}
+
 // LogicalAggregation represents an aggregate plan.
 type LogicalAggregation struct {
 	logicalSchemaProducer
@@ -485,6 +493,14 @@ type DataSource struct {
 	TblColHists *statistics.HistColl
 	//preferStoreType means the DataSource is enforced to which storage.
 	preferStoreType int
+}
+
+func (ds *DataSource) extractCorrelatedCols() []*expression.CorrelatedColumn {
+	corCols := make([]*expression.CorrelatedColumn, 0, len(ds.pushedDownConds))
+	for _, expr := range ds.pushedDownConds {
+		corCols = append(corCols, expression.ExtractCorColumns(expr)...)
+	}
+	return corCols
 }
 
 // TiKVSingleGather is a leaf logical operator of TiDB layer to gather
@@ -937,6 +953,28 @@ type LogicalWindow struct {
 	PartitionBy     []property.Item
 	OrderBy         []property.Item
 	Frame           *WindowFrame
+}
+
+func (p *LogicalWindow) extractCorrelatedCols() []*expression.CorrelatedColumn {
+	corCols := p.baseLogicalPlan.extractCorrelatedCols()
+	for _, windowFunc := range p.WindowFuncDescs {
+		for _, arg := range windowFunc.Args {
+			corCols = append(corCols, expression.ExtractCorColumns(arg)...)
+		}
+	}
+	if p.Frame != nil {
+		if p.Frame.Start != nil {
+			for _, expr := range p.Frame.Start.CalcFuncs {
+				corCols = append(corCols, expression.ExtractCorColumns(expr)...)
+			}
+		}
+		if p.Frame.End != nil {
+			for _, expr := range p.Frame.End.CalcFuncs {
+				corCols = append(corCols, expression.ExtractCorColumns(expr)...)
+			}
+		}
+	}
+	return corCols
 }
 
 // GetWindowResultColumns returns the columns storing the result of the window function.

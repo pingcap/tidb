@@ -82,6 +82,12 @@
     ]
   },
   {
+    "name": "TestSubqueryWithTopN",
+    "cases": [
+      "desc select t1.b from t t1 where t1.b in (select t2.a from t t2 order by t1.a+t2.a limit 1)"
+    ]
+  },
+  {
     "name": "TestIndexJoinTableRange",
     "cases": [
       "desc select /*+ TIDB_INLJ(t2)*/ * from t1, t2 where t1.a = t2.a and t1.b = t2.b",
