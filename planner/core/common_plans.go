@@ -849,7 +849,7 @@ func (e *Explain) prepareOperatorInfo(p Plan, taskType, driverSide, indent strin
 
 	estCost := "N/A"
 	if physPlan, ok := p.(PhysicalPlan); ok {
-		estCost = fmt.Sprint(physPlan.GetTaskCost())
+		estCost = strconv.FormatFloat(physPlan.GetTaskCost(), 'f', 2, 64)
 	}
 
 	estRows := "N/A"
