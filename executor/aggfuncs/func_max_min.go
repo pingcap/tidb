@@ -635,7 +635,7 @@ func (e *maxMin4JSON) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 		}
 		cmp := json.CompareBinary(input, p.val)
 		if e.isMax && cmp > 0 || !e.isMax && cmp < 0 {
-			p.val = input
+			p.val = input.Copy()
 		}
 	}
 	return nil
@@ -652,7 +652,7 @@ func (e *maxMin4JSON) MergePartialResult(sctx sessionctx.Context, src, dst Parti
 	}
 	cmp := json.CompareBinary(p1.val, p2.val)
 	if e.isMax && cmp > 0 || !e.isMax && cmp < 0 {
-		p2.val = p1.val
+		p2.val = p1.val.Copy()
 		p2.isNull = false
 	}
 	return nil
