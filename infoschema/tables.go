@@ -198,7 +198,7 @@ type columnInfo struct {
 	deflt   interface{}
 }
 
-func buildColumnInfo(tableName string, col columnInfo) *model.ColumnInfo {
+func buildColumnInfo(col columnInfo) *model.ColumnInfo {
 	mCharset := charset.CharsetBin
 	mCollation := charset.CharsetBin
 	mFlag := mysql.UnsignedFlag
@@ -216,16 +216,17 @@ func buildColumnInfo(tableName string, col columnInfo) *model.ColumnInfo {
 		Flag:    mFlag,
 	}
 	return &model.ColumnInfo{
-		Name:      model.NewCIStr(col.name),
-		FieldType: fieldType,
-		State:     model.StatePublic,
+		Name:         model.NewCIStr(col.name),
+		FieldType:    fieldType,
+		State:        model.StatePublic,
+		DefaultValue: col.deflt,
 	}
 }
 
 func buildTableMeta(tableName string, cs []columnInfo) *model.TableInfo {
 	cols := make([]*model.ColumnInfo, 0, len(cs))
 	for _, c := range cs {
-		cols = append(cols, buildColumnInfo(tableName, c))
+		cols = append(cols, buildColumnInfo(c))
 	}
 	for i, col := range cols {
 		col.Offset = i

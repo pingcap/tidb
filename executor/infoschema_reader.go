@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
@@ -56,27 +57,27 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		var err error
 		switch e.table.Name.O {
 		case infoschema.TableSchemata:
-			e.rows = dataForSchemata(sctx, dbs)
+			e.setDataFromSchemata(sctx, dbs)
 		case infoschema.TableTables:
-			e.rows, err = dataForTables(sctx, dbs)
+			err = e.dataForTables(sctx, dbs)
 		case infoschema.TablePartitions:
-			e.rows, err = dataForPartitions(sctx, dbs)
+			err = e.dataForPartitions(sctx, dbs)
 		case infoschema.TableTiDBIndexes:
-			e.rows, err = dataForIndexes(sctx, dbs)
+			e.setDataFromIndexes(sctx, dbs)
 		case infoschema.TableViews:
-			e.rows, err = dataForViews(sctx, dbs)
+			e.setDataFromViews(sctx, dbs)
 		case infoschema.TableEngines:
-			e.rows = dataForEngines()
+			e.setDataFromEngines()
 		case infoschema.TableCharacterSets:
-			e.rows = dataForCharacterSets()
+			e.setDataFromCharacterSets()
 		case infoschema.TableCollations:
-			e.rows = dataForCollations()
+			e.setDataFromCollations()
 		case infoschema.TableKeyColumn:
-			e.rows = dataForKeyColumnUsage(sctx, dbs)
+			e.setDataFromKeyColumnUsage(sctx, dbs)
 		case infoschema.TableMetricTables:
-			e.rows = dataForMetricTables(sctx)
+			e.setDataForMetricTables(sctx)
 		case infoschema.TableCollationCharacterSetApplicability:
-			e.rows = dataForCollationCharacterSetApplicability()
+			e.dataForCollationCharacterSetApplicability()
 		case infoschema.TableUserPrivileges:
 			e.setDataFromUserPrivileges(sctx)
 		}
@@ -240,7 +241,7 @@ func getAutoIncrementID(ctx sessionctx.Context, schema *model.DBInfo, tblInfo *m
 	return tbl.Allocator(ctx, autoid.RowIDAllocType).Base() + 1, nil
 }
 
-func dataForSchemata(ctx sessionctx.Context, schemas []*model.DBInfo) [][]types.Datum {
+func (e *memtableRetriever) setDataFromSchemata(ctx sessionctx.Context, schemas []*model.DBInfo) {
 	checker := privilege.GetPrivilegeManager(ctx)
 	rows := make([][]types.Datum, 0, len(schemas))
 
@@ -269,13 +270,13 @@ func dataForSchemata(ctx sessionctx.Context, schemas []*model.DBInfo) [][]types.
 		)
 		rows = append(rows, record)
 	}
-	return rows
+	e.rows = rows
 }
 
-func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Datum, error) {
+func (e *memtableRetriever) dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) error {
 	tableRowsMap, colLengthMap, err := tableStatsCache.get(ctx)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	checker := privilege.GetPrivilegeManager(ctx)
@@ -305,7 +306,7 @@ func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.D
 				if hasAutoIncID {
 					autoIncID, err = getAutoIncrementID(ctx, schema, table)
 					if err != nil {
-						return nil, err
+						return err
 					}
 				}
 
@@ -325,13 +326,20 @@ func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.D
 				if rowCount != 0 {
 					avgRowLength = dataLength / rowCount
 				}
-
+				var tableType string
+				switch schema.Name.L {
+				case util.InformationSchemaName.L, util.PerformanceSchemaName.L,
+					util.MetricSchemaName.L, util.InspectionSchemaName.L:
+					tableType = "SYSTEM VIEW"
+				default:
+					tableType = "BASE TABLE"
+				}
 				shardingInfo := infoschema.GetShardingInfo(schema, table)
 				record := types.MakeDatums(
 					infoschema.CatalogVal, // TABLE_CATALOG
 					schema.Name.O,         // TABLE_SCHEMA
 					table.Name.O,          // TABLE_NAME
-					"BASE TABLE",          // TABLE_TYPE
+					tableType,             // TABLE_TYPE
 					"InnoDB",              // ENGINE
 					uint64(10),            // VERSION
 					"Compact",             // ROW_FORMAT
@@ -383,13 +391,14 @@ func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.D
 			}
 		}
 	}
-	return rows, nil
+	e.rows = rows
+	return nil
 }
 
-func dataForPartitions(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Datum, error) {
+func (e *memtableRetriever) dataForPartitions(ctx sessionctx.Context, schemas []*model.DBInfo) error {
 	tableRowsMap, colLengthMap, err := tableStatsCache.get(ctx)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	checker := privilege.GetPrivilegeManager(ctx)
 	var rows [][]types.Datum
@@ -484,10 +493,11 @@ func dataForPartitions(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]typ
 			}
 		}
 	}
-	return rows, nil
+	e.rows = rows
+	return nil
 }
 
-func dataForIndexes(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Datum, error) {
+func (e *memtableRetriever) setDataFromIndexes(ctx sessionctx.Context, schemas []*model.DBInfo) {
 	checker := privilege.GetPrivilegeManager(ctx)
 	var rows [][]types.Datum
 	for _, schema := range schemas {
@@ -555,10 +565,10 @@ func dataForIndexes(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.
 			}
 		}
 	}
-	return rows, nil
+	e.rows = rows
 }
 
-func dataForViews(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Datum, error) {
+func (e *memtableRetriever) setDataFromViews(ctx sessionctx.Context, schemas []*model.DBInfo) {
 	checker := privilege.GetPrivilegeManager(ctx)
 	var rows [][]types.Datum
 	for _, schema := range schemas {
@@ -592,10 +602,11 @@ func dataForViews(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Da
 			rows = append(rows, record)
 		}
 	}
-	return rows, nil
+	e.rows = rows
 }
 
-func dataForEngines() (rows [][]types.Datum) {
+func (e *memtableRetriever) setDataFromEngines() {
+	var rows [][]types.Datum
 	rows = append(rows,
 		types.MakeDatums(
 			"InnoDB",  // Engine
@@ -606,44 +617,47 @@ func dataForEngines() (rows [][]types.Datum) {
 			"YES", // Savepoints
 		),
 	)
-	return rows
+	e.rows = rows
 }
 
-func dataForCharacterSets() (records [][]types.Datum) {
+func (e *memtableRetriever) setDataFromCharacterSets() {
+	var rows [][]types.Datum
 	charsets := charset.GetSupportedCharsets()
 	for _, charset := range charsets {
-		records = append(records,
+		rows = append(rows,
 			types.MakeDatums(charset.Name, charset.DefaultCollation, charset.Desc, charset.Maxlen),
 		)
 	}
-	return records
+	e.rows = rows
 }
 
-func dataForCollations() (records [][]types.Datum) {
+func (e *memtableRetriever) setDataFromCollations() {
+	var rows [][]types.Datum
 	collations := charset.GetSupportedCollations()
 	for _, collation := range collations {
 		isDefault := ""
 		if collation.IsDefault {
 			isDefault = "Yes"
 		}
-		records = append(records,
+		rows = append(rows,
 			types.MakeDatums(collation.Name, collation.CharsetName, collation.ID, isDefault, "Yes", 1),
 		)
 	}
-	return records
+	e.rows = rows
 }
 
-func dataForCollationCharacterSetApplicability() (records [][]types.Datum) {
+func (e *memtableRetriever) dataForCollationCharacterSetApplicability() {
+	var rows [][]types.Datum
 	collations := charset.GetSupportedCollations()
 	for _, collation := range collations {
-		records = append(records,
+		rows = append(rows,
 			types.MakeDatums(collation.Name, collation.CharsetName),
 		)
 	}
-	return records
+	e.rows = rows
 }
 
-func dataForKeyColumnUsage(ctx sessionctx.Context, schemas []*model.DBInfo) [][]types.Datum {
+func (e *memtableRetriever) setDataFromKeyColumnUsage(ctx sessionctx.Context, schemas []*model.DBInfo) {
 	checker := privilege.GetPrivilegeManager(ctx)
 	rows := make([][]types.Datum, 0, len(schemas)) // The capacity is not accurate, but it is not a big problem.
 	for _, schema := range schemas {
@@ -655,7 +669,34 @@ func dataForKeyColumnUsage(ctx sessionctx.Context, schemas []*model.DBInfo) [][]
 			rows = append(rows, rs...)
 		}
 	}
-	return rows
+	e.rows = rows
+}
+
+func (e *memtableRetriever) setDataFromUserPrivileges(ctx sessionctx.Context) {
+	pm := privilege.GetPrivilegeManager(ctx)
+	e.rows = pm.UserPrivilegesTable()
+}
+
+// dataForTableTiFlashReplica constructs data for all metric table definition.
+func (e *memtableRetriever) setDataForMetricTables(ctx sessionctx.Context) {
+	var rows [][]types.Datum
+	tables := make([]string, 0, len(infoschema.MetricTableMap))
+	for name := range infoschema.MetricTableMap {
+		tables = append(tables, name)
+	}
+	sort.Strings(tables)
+	for _, name := range tables {
+		schema := infoschema.MetricTableMap[name]
+		record := types.MakeDatums(
+			name,                             // METRICS_NAME
+			schema.PromQL,                    // PROMQL
+			strings.Join(schema.Labels, ","), // LABELS
+			schema.Quantile,                  // QUANTILE
+			schema.Comment,                   // COMMENT
+		)
+		rows = append(rows, record)
+	}
+	e.rows = rows
 }
 
 func keyColumnUsageInTable(schema *model.DBInfo, table *model.TableInfo) [][]types.Datum {
@@ -741,31 +782,3 @@ func keyColumnUsageInTable(schema *model.DBInfo, table *model.TableInfo) [][]typ
 	}
 	return rows
 }
-
-func (e *memtableRetriever) setDataFromUserPrivileges(ctx sessionctx.Context) {
-	pm := privilege.GetPrivilegeManager(ctx)
-	e.rows = pm.UserPrivilegesTable()
-}
-
-// dataForTableTiFlashReplica constructs data for all metric table definition.
-func dataForMetricTables(ctx sessionctx.Context) [][]types.Datum {
-	var rows [][]types.Datum
-	tables := make([]string, 0, len(infoschema.MetricTableMap))
-	for name := range infoschema.MetricTableMap {
-		tables = append(tables, name)
-	}
-	sort.Strings(tables)
-	for _, name := range tables {
-		schema := infoschema.MetricTableMap[name]
-		record := types.MakeDatums(
-			name,                             // METRICS_NAME
-			schema.PromQL,                    // PROMQL
-			strings.Join(schema.Labels, ","), // LABELS
-			schema.Quantile,                  // QUANTILE
-			schema.Comment,                   // COMMENT
-		)
-		rows = append(rows, record)
-	}
-	return rows
-}
-
