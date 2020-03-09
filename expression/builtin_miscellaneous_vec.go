@@ -285,9 +285,11 @@ func (b *builtinSleepSig) vectorized() bool {
 	return true
 }
 
+// vecEvalInt evals a builtinSleepSig in a vectorized manner.
+// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_sleep
 func (b *builtinSleepSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETReal, 1) // SLEEP input must be one row
+	buf, err := b.bufAllocator.get(types.ETReal, n)
 	if err != nil {
 		return err
 	}
@@ -301,44 +303,44 @@ func (b *builtinSleepSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 	result.ResizeInt64(n, false)
 	i64s := result.Int64s()
 
-	isNull := buf.IsNull(0)
-	val := buf.GetFloat64(0)
-	sessVars := b.ctx.GetSessionVars()
-	if isNull {
-		if sessVars.StrictSQLMode {
-			return errIncorrectArgs.GenWithStackByArgs("sleep")
-		}
-		return nil
-	}
-	// processing argument is negative
-	if val < 0 {
-		if sessVars.StrictSQLMode {
-			return errIncorrectArgs.GenWithStackByArgs("sleep")
-		}
-		return nil
-	}
-
-	if val > math.MaxFloat64/float64(time.Second.Nanoseconds()) {
-		return errIncorrectArgs.GenWithStackByArgs("sleep")
-	}
-
-	dur := time.Duration(val * float64(time.Second.Nanoseconds()))
-	ticker := time.NewTicker(10 * time.Millisecond)
-	defer ticker.Stop()
-	start := time.Now()
-	finish := false
-	for !finish {
-		select {
-		case now := <-ticker.C:
-			if now.Sub(start) > dur {
-				finish = true
+	for i := 0; i < n; i++ {
+		isNull := buf.IsNull(i)
+		val := buf.GetFloat64(i)
+		sessVars := b.ctx.GetSessionVars()
+		if isNull {
+			if sessVars.StrictSQLMode {
+				return errIncorrectArgs.GenWithStackByArgs("sleep")
 			}
-		default:
-			if atomic.CompareAndSwapUint32(&sessVars.Killed, 1, 0) {
-				for i := 0; i < n; i++ {
-					i64s[i] = 1
+			return nil
+		}
+		// processing argument is negative
+		if val < 0 {
+			if sessVars.StrictSQLMode {
+				return errIncorrectArgs.GenWithStackByArgs("sleep")
+			}
+			return nil
+		}
+
+		if val > math.MaxFloat64/float64(time.Second.Nanoseconds()) {
+			return errIncorrectArgs.GenWithStackByArgs("sleep")
+		}
+
+		dur := time.Duration(val * float64(time.Second.Nanoseconds()))
+		ticker := time.NewTicker(10 * time.Millisecond)
+		defer ticker.Stop()
+		start := time.Now()
+		finish := false
+		for !finish {
+			select {
+			case now := <-ticker.C:
+				if now.Sub(start) > dur {
+					finish = true
 				}
-				return nil
+			default:
+				if atomic.CompareAndSwapUint32(&sessVars.Killed, 1, 0) {
+					i64s[i] = 1
+					return nil
+				}
 			}
 		}
 	}
