@@ -265,8 +265,9 @@ func (sr *simpleRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok boo
 		// SetCollationExpr sets the collation explicitly, even when the evaluation type of the expression is non-string.
 		if _, ok := arg.(*Column); ok {
 			// Wrap a cast here to avoid changing the original FieldType of the column expression.
-			casted := BuildCastFunction(sr.ctx, arg, arg.GetType())
-			casted.GetType().Collate = v.Collate
+			exprType := arg.GetType().Clone()
+			exprType.Collate = v.Collate
+			casted := BuildCastFunction(sr.ctx, arg, exprType)
 			sr.pop()
 			sr.push(casted)
 		} else {
