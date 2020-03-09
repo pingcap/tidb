@@ -86,9 +86,8 @@ IndexLookUp_11	0.00	root
   └─TableRowIDScan_9	0.00	cop[tikv]	table:t1, keep order:false
 explain select * from t1 where c1 = 1 and c2 > 1;
 id	estRows	task	operator info
-TableReader_7	0.50	root	data:Selection_6
-└─Selection_6	0.50	cop[tikv]	gt(test.t1.c2, 1)
-  └─TableRangeScan_5	1.00	cop[tikv]	table:t1, range:[1,1], keep order:false
+Selection_6	0.50	root	gt(test.t1.c2, 1)
+└─Point_Get_5	1.00	root	table:t1, handle:1
 explain select c1 from t1 where c1 in (select c2 from t2);
 id	estRows	task	operator info
 HashLeftJoin_19	1985.00	root	inner join, inner:HashAgg_23, equal:[eq(test.t1.c1, test.t2.c2)]
@@ -162,16 +161,12 @@ id	estRows	task	operator info
 TableDual_5	0.00	root	rows:0
 explain select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 LIMIT 1, 1;
 id	estRows	task	operator info
-IndexLookUp_14	1.00	root	limit embedded(offset:1, count:1)
-├─Limit_13(Build)	1.00	cop[tikv]	offset:0, count:2
-│ └─IndexRangeScan_11	1.00	cop[tikv]	table:index_prune, index:a, b, range:[1010010404050976781 26467085526790,1010010404050976781 26467085526790], keep order:false
-└─TableRowIDScan_12(Probe)	1.00	cop[tikv]	table:index_prune, keep order:false, stats:pseudo
+Limit_9	1.00	root	offset:1, count:1
+└─Point_Get_11	1.00	root	table:index_prune, index:a b
 explain select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 LIMIT 1, 0;
 id	estRows	task	operator info
-IndexLookUp_14	0.00	root	limit embedded(offset:1, count:0)
-├─Limit_13(Build)	1.00	cop[tikv]	offset:0, count:1
-│ └─IndexRangeScan_11	1.00	cop[tikv]	table:index_prune, index:a, b, range:[1010010404050976781 26467085526790,1010010404050976781 26467085526790], keep order:false
-└─TableRowIDScan_12(Probe)	0.00	cop[tikv]	table:index_prune, keep order:false, stats:pseudo
+Limit_9	0.00	root	offset:1, count:0
+└─Point_Get_11	1.00	root	table:index_prune, index:a b
 explain select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 LIMIT 0, 1;
 id	estRows	task	operator info
 Point_Get_1	1.00	root	table:index_prune, index:a b
