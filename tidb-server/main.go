@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/pd/client"
+	"github.com/pingcap/pd/v4/client"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
@@ -161,21 +161,6 @@ func main() {
 	registerStores()
 	registerMetrics()
 	config.InitializeConfig(*configPath, *configCheck, *configStrict, reloadConfig, overrideConfig)
-	if err := config.GetGlobalConfig().Valid(); err != nil {
-		absConfigPath := *configPath
-		if !filepath.IsAbs(absConfigPath) {
-			if tmp, err := filepath.Abs(absConfigPath); err == nil {
-				absConfigPath = tmp
-			}
-		}
-		fmt.Fprintln(os.Stderr, "load config file:", absConfigPath)
-		fmt.Fprintln(os.Stderr, "invalid config", err)
-		os.Exit(1)
-	}
-	if *configCheck {
-		fmt.Println("config check successful")
-		os.Exit(0)
-	}
 	setGlobalVars()
 	setCPUAffinity()
 	setupLog()

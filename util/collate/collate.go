@@ -35,6 +35,17 @@ const (
 	DefaultLen = 0
 )
 
+// CompatibleCollate checks whether the two collate are the same.
+func CompatibleCollate(collate1, collate2 string) bool {
+	if (collate1 == "utf8mb4_general_ci" || collate1 == "utf8_general_ci") && (collate2 == "utf8mb4_general_ci" || collate2 == "utf8_general_ci") {
+		return true
+	} else if (collate1 == "utf8mb4_bin" || collate1 == "utf8_bin") && (collate2 == "utf8mb4_bin" || collate2 == "utf8_bin") {
+		return true
+	} else {
+		return collate1 == collate2
+	}
+}
+
 // CollatorOption is the option of collator.
 type CollatorOption struct {
 	PadLen int

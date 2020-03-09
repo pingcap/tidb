@@ -88,6 +88,12 @@
       "desc select * from t where a = 1 and a = 2"
     ]
   },
+ {
+    "name": "TestSubqueryWithTopN",
+    "cases": [
+      "desc select t1.b from t t1 where t1.b in (select t2.a from t t2 order by t1.a+t2.a limit 1)"
+    ]
+  },
   {
     "name": "TestIndexJoinTableRange",
     "cases": [
