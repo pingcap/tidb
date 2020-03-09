@@ -16,9 +16,10 @@ package executor_test
 import (
 	"bytes"
 	"fmt"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"math/rand"
 	"strings"
+
+	"github.com/pingcap/tidb/sessionctx/variable"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/config"
@@ -276,6 +277,7 @@ func (s *testSuite2) TestMergeJoinInDisk(c *C) {
 func (s *testSuite2) TestMergeJoin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_executors_concurrency=1")
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("drop table if exists t1")

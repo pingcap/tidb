@@ -26,7 +26,6 @@ drop table if exists t;
 create table t(id int primary key, a int, b int);
 set session tidb_hashagg_partial_concurrency = 1;
 set session tidb_hashagg_final_concurrency = 1;
-set session tidb_executors_concurrency = 1;
 explain select group_concat(a) from t group by id;
 id	estRows	task	operator info
 StreamAgg_8	8000.00	root	group by:Column#6, funcs:group_concat(Column#5, ",")->Column#4

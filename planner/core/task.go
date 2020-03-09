@@ -16,7 +16,6 @@ package core
 import (
 	"math"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
@@ -1339,13 +1338,12 @@ func (p *PhysicalShuffle) attach2Task(tasks ...task) task {
 
 // GetCost computes the cost of in memory sort.
 func (p *PhysicalShuffle) GetCost(count float64) float64 {
-	// Future: estimate cost according to splitter & merger type.
 	if count < 2.0 {
 		count = 2.0
 	}
 	sessVars := p.ctx.GetSessionVars()
-	var cpuCount float64
 
+	var cpuCount float64
 	switch p.MergerType {
 	case ShuffleMergeSortMergerType:
 		cpuCount += count
@@ -1355,10 +1353,11 @@ func (p *PhysicalShuffle) GetCost(count float64) float64 {
 		cpuCount += count
 	}
 	cpuCost := cpuCount * sessVars.CPUFactor
+
 	var concurrencyCost float64
 	if p.Concurrency > 1 {
 		concurrencyCost = (float64)(p.Concurrency) * sessVars.ConcurrencyFactor
 	}
-	// Hacking: divided by concurrency to make it lower than serial `HashJoin`.
-	return (cpuCost + concurrencyCost) / (float64)(mathutil.Max(p.FanOut, p.Concurrency))
+
+	return cpuCost + concurrencyCost
 }

@@ -1236,6 +1236,7 @@ func (s *testSuiteJoin3) TestIssue13449(c *C) {
 	tk.MustExec("set @@tidb_max_chunk_size=32;")
 	tk.MustExec("set @@tidb_index_lookup_join_concurrency=1;")
 	tk.MustExec("set @@tidb_index_join_batch_size=32;")
+	tk.MustExec("set @@tidb_executors_concurrency=1;")
 
 	tk.MustQuery("desc select /*+ INL_HASH_JOIN(s) */ * from t join s on t.a=s.a order by t.a;").Check(testkit.Rows(
 		"IndexHashJoin_35 12487.50 root inner join, inner:IndexReader_27, outer key:test.t.a, inner key:test.s.a",
@@ -1250,6 +1251,7 @@ func (s *testSuiteJoin3) TestIssue13449(c *C) {
 func (s *testSuiteJoin3) TestMergejoinOrder(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_executors_concurrency=1;")
 	tk.MustExec("drop table if exists t1, t2;")
 	tk.MustExec("create table t1(a bigint primary key, b bigint);")
 	tk.MustExec("create table t2(a bigint primary key, b bigint);")

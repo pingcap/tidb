@@ -1297,7 +1297,8 @@ func (s *testPlanSuite) TestSelectView(c *C) {
 
 func (s *testPlanSuite) TestWindowFunction(c *C) {
 	s.optimizeVars = map[string]string{
-		variable.TiDBWindowConcurrency: "1",
+		variable.TiDBWindowConcurrency:    "1",
+		variable.TiDBExecutorsConcurrency: "1",
 	}
 	defer func() {
 		s.optimizeVars = nil
@@ -1310,7 +1311,8 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 
 func (s *testPlanSuite) TestWindowParallelFunction(c *C) {
 	s.optimizeVars = map[string]string{
-		variable.TiDBWindowConcurrency: "4",
+		variable.TiDBWindowConcurrency:    "4",
+		variable.TiDBExecutorsConcurrency: "4",
 	}
 	defer func() {
 		s.optimizeVars = nil
