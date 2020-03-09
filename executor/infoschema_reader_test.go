@@ -41,7 +41,7 @@ import (
 )
 
 var _ = Suite(&testInfoschemaTableSuite{})
-var _ = SerialSuites(&testinfoReaderClusterTableSuiteD{testInfoschemaTableSuite: &testInfoschemaTableSuite{}})
+var _ = SerialSuites(&testInfoschemaClusterSuite{testInfoschemaTableSuite: &testInfoschemaTableSuite{}})
 
 type testInfoschemaTableSuite struct {
 	store kv.Storage
@@ -60,7 +60,7 @@ func (s *testInfoschemaTableSuite) TearDownSuite(c *C) {
 	s.store.Close()
 }
 
-type testinfoReaderClusterTableSuiteD struct {
+type testInfoschemaClusterSuite struct {
 	*testInfoschemaTableSuite
 	rpcserver  *grpc.Server
 	httpServer *httptest.Server
@@ -69,7 +69,7 @@ type testinfoReaderClusterTableSuiteD struct {
 	startTime  time.Time
 }
 
-func (s *testinfoReaderClusterTableSuiteD) SetUpSuite(c *C) {
+func (s *testInfoschemaClusterSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
 	s.testInfoschemaTableSuite.SetUpSuite(c)
 	s.rpcserver, s.listenAddr = s.setUpRPCService(c, ":0")
@@ -77,7 +77,7 @@ func (s *testinfoReaderClusterTableSuiteD) SetUpSuite(c *C) {
 	s.startTime = time.Now()
 }
 
-func (s *testinfoReaderClusterTableSuiteD) setUpRPCService(c *C, addr string) (*grpc.Server, string) {
+func (s *testInfoschemaClusterSuite) setUpRPCService(c *C, addr string) (*grpc.Server, string) {
 	lis, err := net.Listen("tcp", addr)
 	c.Assert(err, IsNil)
 	// Fix issue 9836
@@ -101,7 +101,7 @@ func (s *testinfoReaderClusterTableSuiteD) setUpRPCService(c *C, addr string) (*
 	return srv, addr
 }
 
-func (s *testinfoReaderClusterTableSuiteD) setUpMockPDHTTPServer() (*httptest.Server, string) {
+func (s *testInfoschemaClusterSuite) setUpMockPDHTTPServer() (*httptest.Server, string) {
 	// mock PD http server
 	router := mux.NewRouter()
 	server := httptest.NewServer(router)
@@ -162,7 +162,7 @@ func (s *testinfoReaderClusterTableSuiteD) setUpMockPDHTTPServer() (*httptest.Se
 	return server, mockAddr
 }
 
-func (s *testinfoReaderClusterTableSuiteD) TearDownSuite(c *C) {
+func (s *testInfoschemaClusterSuite) TearDownSuite(c *C) {
 	if s.rpcserver != nil {
 		s.rpcserver.Stop()
 		s.rpcserver = nil
@@ -362,7 +362,7 @@ func (s *mockStore) EtcdAddrs() []string    { return []string{s.host} }
 func (s *mockStore) TLSConfig() *tls.Config { panic("not implemented") }
 func (s *mockStore) StartGCWorker() error   { panic("not implemented") }
 
-func (s *testinfoReaderClusterTableSuiteD) TestTiDBClusterInfo(c *C) {
+func (s *testInfoschemaClusterSuite) TestTiDBClusterInfo(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	err := tk.QueryToErr("select * from information_schema.cluster_info")
 	c.Assert(err, NotNil)
