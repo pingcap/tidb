@@ -111,7 +111,7 @@ var _ = Suite(&testSuiteAgg{baseTestSuite: &baseTestSuite{}})
 var _ = Suite(&testSuite6{&baseTestSuite{}})
 var _ = Suite(&testSuite7{&baseTestSuite{}})
 var _ = Suite(&testSuite8{&baseTestSuite{}})
-var _ = Suite(&testShowStatsSuite{&baseTestSuite{}})
+var _ = SerialSuites(&testShowStatsSuite{&baseTestSuite{}})
 var _ = Suite(&testBypassSuite{})
 var _ = Suite(&testUpdateSuite{})
 var _ = Suite(&testPointGetSuite{})
@@ -2090,7 +2090,7 @@ func (s *testSuiteP2) TestIsPointGet(c *C) {
 	ctx := tk.Se.(sessionctx.Context)
 	tests := map[string]bool{
 		"select * from help_topic where name='aaa'":         false,
-		"select 1 from help_topic where name='aaa'":         true,
+		"select 1 from help_topic where name='aaa'":         false,
 		"select * from help_topic where help_topic_id=1":    true,
 		"select * from help_topic where help_category_id=1": false,
 	}

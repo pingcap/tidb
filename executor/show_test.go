@@ -698,7 +698,7 @@ func (s *testSuite5) TestShowBuiltin(c *C) {
 	res := tk.MustQuery("show builtins;")
 	c.Assert(res, NotNil)
 	rows := res.Rows()
-	c.Assert(266, Equals, len(rows))
+	c.Assert(268, Equals, len(rows))
 	c.Assert("abs", Equals, rows[0][0].(string))
-	c.Assert("yearweek", Equals, rows[265][0].(string))
+	c.Assert("yearweek", Equals, rows[267][0].(string))
 }
