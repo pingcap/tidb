@@ -8,8 +8,8 @@ on:
 
 jobs:
 
-  test:
-    name: test
+  windows-test:
+    name: Windows Test
     runs-on: windows-latest
     steps:
 
