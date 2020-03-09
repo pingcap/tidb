@@ -622,6 +622,11 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 			"  KEY `expr_idx` ((`a` * `b` + 1))\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
+
+	// Fix issue #15175, show create table sequence_name.
+	tk.MustExec("drop sequence seq")
+	tk.MustExec("create sequence seq")
+	tk.MustQuery("show create table seq;").Check(testkit.Rows("seq CREATE SEQUENCE `seq` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 cache 1000 nocycle ENGINE=InnoDB"))
 }
 
 func (s *testAutoRandomSuite) TestShowCreateTableAutoRandom(c *C) {

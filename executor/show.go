@@ -700,6 +700,10 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 		fetchShowCreateTable4View(ctx, tableInfo, buf)
 		return nil
 	}
+	if tableInfo.IsSequence() {
+		ConstructResultOfShowCreateSequence(ctx, tableInfo, buf)
+		return nil
+	}
 
 	tblCharset := tableInfo.Charset
 	if len(tblCharset) == 0 {
