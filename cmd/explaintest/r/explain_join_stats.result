@@ -7,7 +7,7 @@ load stats 's/explain_join_stats_lo.json';
 explain select count(*) from e, lo where lo.a=e.a and e.b=22336;
 id	estRows	task	operator info
 StreamAgg_13	1.00	root	funcs:count(1)->Column#5
-└─HashRightJoin_89	19977.00	root	inner join, inner:TableReader_50, equal:[eq(test.lo.a, test.e.a)]
+└─HashRightJoin_89	19977.00	root	inner join, equal:[eq(test.lo.a, test.e.a)]
   ├─TableReader_50(Build)	250.00	root	data:TableFullScan_49
   │ └─TableFullScan_49	250.00	cop[tikv]	table:lo, keep order:false
   └─IndexLookUp_61(Probe)	19977.00	root	

@@ -18,6 +18,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
@@ -27,9 +28,34 @@ import (
 
 var _ = Suite(&testInfoschemaTableSuite{})
 
+// this SerialSuites is used to solve the data race caused by TableStatsCacheExpiry,
+// if your test not change the TableStatsCacheExpiry variable, please use testInfoschemaTableSuite for test.
+var _ = SerialSuites(&testInfoschemaTableSerialSuite{})
+
 type testInfoschemaTableSuite struct {
 	store kv.Storage
 	dom   *domain.Domain
+}
+
+type testInfoschemaTableSerialSuite struct {
+	store kv.Storage
+	dom   *domain.Domain
+}
+
+func (s *testInfoschemaTableSerialSuite) SetUpSuite(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	s.store = store
+	s.dom = dom
+	originCfg := config.GetGlobalConfig()
+	newConf := *originCfg
+	newConf.OOMAction = config.OOMActionLog
+	config.StoreGlobalConfig(&newConf)
+}
+
+func (s *testInfoschemaTableSerialSuite) TearDownSuite(c *C) {
+	s.dom.Close()
+	s.store.Close()
 }
 
 func (s *testInfoschemaTableSuite) SetUpSuite(c *C) {
@@ -37,6 +63,10 @@ func (s *testInfoschemaTableSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	s.store = store
 	s.dom = dom
+	originCfg := config.GetGlobalConfig()
+	newConf := *originCfg
+	newConf.OOMAction = config.OOMActionLog
+	config.StoreGlobalConfig(&newConf)
 }
 
 func (s *testInfoschemaTableSuite) TearDownSuite(c *C) {
@@ -208,12 +238,11 @@ func (s *testInfoschemaTableSuite) TestUserPrivileges(c *C) {
 	c.Assert(len(result.Rows()), Greater, 0)
 }
 
-func (s *testInfoschemaTableSuite) TestDataForTableStatsField(c *C) {
+func (s *testInfoschemaTableSerialSuite) TestDataForTableStatsField(c *C) {
 	s.dom.SetStatsUpdating(true)
 	oldExpiryTime := executor.TableStatsCacheExpiry
 	executor.TableStatsCacheExpiry = 0
 	defer func() { executor.TableStatsCacheExpiry = oldExpiryTime }()
-
 	do := s.dom
 	h := do.StatsHandle()
 	h.Clear()
@@ -258,11 +287,11 @@ func (s *testInfoschemaTableSuite) TestDataForTableStatsField(c *C) {
 		testkit.Rows("3 18 54 6"))
 }
 
-func (s *testInfoschemaTableSuite) TestPartitionsTable(c *C) {
+func (s *testInfoschemaTableSerialSuite) TestPartitionsTable(c *C) {
+	s.dom.SetStatsUpdating(true)
 	oldExpiryTime := executor.TableStatsCacheExpiry
 	executor.TableStatsCacheExpiry = 0
 	defer func() { executor.TableStatsCacheExpiry = oldExpiryTime }()
-
 	do := s.dom
 	h := do.StatsHandle()
 	h.Clear()
@@ -308,4 +337,9 @@ func (s *testInfoschemaTableSuite) TestPartitionsTable(c *C) {
 		testkit.Rows("<nil> 3 18 54 6"))
 
 	tk.MustExec("DROP TABLE `test_partitions`;")
+}
+
+func (s *testInfoschemaTableSuite) TestTableConstraintsTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustQuery("select * from information_schema.TABLE_CONSTRAINTS where TABLE_NAME='gc_delete_range';").Check(testkit.Rows("def mysql delete_range_index mysql gc_delete_range UNIQUE"))
 }
