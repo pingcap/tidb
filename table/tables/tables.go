@@ -488,7 +488,10 @@ func (t *TableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 	}
 	if !hasRecordID {
 		if opt.ReserveAutoID > 0 {
-			// Reserve a batch of auto ID in the statement ctx.
+			// Reserve a batch of auto ID in the statement context.
+			// The reserved ID could be used in the future within this statement, by the
+			// following AddRecord() operation.
+			// Make the IDs continuous benefit for the performance of TiKV.
 			stmtCtx := ctx.GetSessionVars().StmtCtx
 			stmtCtx.BaseRowID, stmtCtx.MaxRowID, err = allocHandleIDs(ctx, t, uint64(opt.ReserveAutoID))
 			if err != nil {
@@ -1014,12 +1017,15 @@ func GetColDefaultValue(ctx sessionctx.Context, col *table.Column, defaultVals [
 }
 
 // AllocHandle allocate a new handle.
+// A statement could reserve some ID in the statement context, try those ones first.
 func AllocHandle(ctx sessionctx.Context, t table.Table) (int64, error) {
-	if stmtCtx := ctx.GetSessionVars().StmtCtx; stmtCtx != nil {
-		// First try to alloc if the statement has reserved auto ID.
-		if stmtCtx.BaseRowID < stmtCtx.MaxRowID {
-			stmtCtx.BaseRowID += 1
-			return stmtCtx.BaseRowID, nil
+	if ctx != nil {
+		if stmtCtx := ctx.GetSessionVars().StmtCtx; stmtCtx != nil {
+			// First try to alloc if the statement has reserved auto ID.
+			if stmtCtx.BaseRowID < stmtCtx.MaxRowID {
+				stmtCtx.BaseRowID += 1
+				return stmtCtx.BaseRowID, nil
+			}
 		}
 	}
 
