@@ -206,8 +206,6 @@ func (c *statsCache) get(ctx sessionctx.Context) (map[int64]uint64, map[tableHis
 		c.mu.Unlock()
 		return tableRows, colLength, nil
 	}
-	c.loading = true
-	c.mu.Unlock()
 
 	tableRows, err := getRowCountAllTable(ctx)
 	if err != nil {
@@ -220,11 +218,10 @@ func (c *statsCache) get(ctx sessionctx.Context) (map[int64]uint64, map[tableHis
 		return nil, nil, err
 	}
 
-	c.mu.Lock()
-	c.loading = false
 	c.tableRows = tableRows
 	c.colLength = colLength
 	c.modifyTime = time.Now()
+	c.loading = true
 	c.mu.Unlock()
 	return tableRows, colLength, nil
 }
