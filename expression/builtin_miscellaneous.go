@@ -116,17 +116,12 @@ func (b *builtinSleepSig) evalInt(row chunk.Row) (int64, bool, error) {
 	}
 
 	sessVars := b.ctx.GetSessionVars()
-	if isNull {
-		if sessVars.StrictSQLMode {
-			return 0, true, errIncorrectArgs.GenWithStackByArgs("sleep")
-		}
-		return 0, true, nil
-	}
-	// processing argument is negative
-	if val < 0 {
+	if isNull || val < 0 {
 		if sessVars.StrictSQLMode {
 			return 0, false, errIncorrectArgs.GenWithStackByArgs("sleep")
 		}
+		err := errIncorrectArgs.GenWithStackByArgs("sleep")
+		sessVars.StmtCtx.AppendWarning(err)
 		return 0, false, nil
 	}
 
