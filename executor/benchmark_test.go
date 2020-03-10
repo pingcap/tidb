@@ -50,7 +50,7 @@ var (
 
 type mockDataSourceParameters struct {
 	schema      *expression.Schema
-	genDataFunc func(col, row int, typ *types.FieldType) interface{}
+	genDataFunc func(row int, typ *types.FieldType) interface{}
 	ndvs        []int  // number of distinct values on columns[i] and zero represents no limit
 	orders      []bool // columns[i] should be ordered if orders[i] is true
 	rows        int    // number of rows the DataSource should output
@@ -105,25 +105,31 @@ func (mds *mockDataSource) genColDatums(col int) (results []interface{}) {
 		NDV = mds.p.ndvs[col]
 	}
 	results = make([]interface{}, 0, rows)
+	var genDataFunc func(row int, typ *types.FieldType) interface{}
 	if mds.p.genDataFunc != nil {
+		genDataFunc = mds.p.genDataFunc
+	} else {
+		genDataFunc = mds.randDatum
+	}
+	if NDV == 0 {
 		for i := 0; i < rows; i++ {
-			results = append(results, mds.p.genDataFunc(col, i, typ))
-		}
-	} else if NDV == 0 {
-		for i := 0; i < rows; i++ {
-			results = append(results, mds.randDatum(typ))
+			results = append(results, genDataFunc(i, typ))
 		}
 	} else {
 		datumSet := make(map[string]bool, NDV)
 		datums := make([]interface{}, 0, NDV)
-		for len(datums) < NDV {
-			d := mds.randDatum(typ)
-			str := fmt.Sprintf("%v", d)
-			if datumSet[str] {
-				continue
+		for i := 0; i < rows; i++ {
+			if len(datums) < NDV {
+				d := genDataFunc(i, typ)
+				str := fmt.Sprintf("%v", d)
+				if datumSet[str] {
+					continue
+				}
+				datumSet[str] = true
+				datums = append(datums, d)
+			} else {
+				break
 			}
-			datumSet[str] = true
-			datums = append(datums, d)
 		}
 
 		for i := 0; i < rows; i++ {
@@ -149,7 +155,7 @@ func (mds *mockDataSource) genColDatums(col int) (results []interface{}) {
 	return
 }
 
-func (mds *mockDataSource) randDatum(typ *types.FieldType) interface{} {
+func (mds *mockDataSource) randDatum(row int, typ *types.FieldType) interface{} {
 	switch typ.Tp {
 	case mysql.TypeLong, mysql.TypeLonglong:
 		return int64(rand.Int())
@@ -539,35 +545,20 @@ func benchmarkWindowExecWithCase(b *testing.B, casTest *windowTestCase) {
 		b.Fatal(err)
 	}
 
-	const ndvIndex = 1
-	datumSet := make(map[string]bool, casTest.ndv)
-	datums := make([]interface{}, 0, casTest.ndv)
 	decimalBuff := make([]types.MyDecimal, casTest.rows)
-	genDataFunc := func(col, row int, typ *types.FieldType) interface{} {
-		var ret interface{}
+	genDataFunc := func(row int, typ *types.FieldType) interface{} {
 		switch typ.Tp {
 		case mysql.TypeLong, mysql.TypeLonglong:
-			ret = int64(row)
+			return int64(row)
 		case mysql.TypeDouble, mysql.TypeFloat:
-			ret = float64(row)
+			return float64(row)
 		case mysql.TypeNewDecimal:
-			ret = decimalBuff[row].FromInt(int64(row))
+			return decimalBuff[row].FromInt(int64(row))
 		case mysql.TypeVarString:
-			ret = casTest.rawDataSmall
+			return casTest.rawDataSmall
 		default:
 			panic("not implement")
 		}
-		if col != ndvIndex {
-			return ret
-		}
-
-		if len(datums) < casTest.ndv {
-			str := fmt.Sprintf("%v", ret)
-			datumSet[str] = true
-			datums = append(datums, ret)
-			return ret
-		}
-		return datums[rand.Intn(casTest.ndv)]
 	}
 
 	cols := casTest.columns
@@ -718,6 +709,7 @@ func baseBenchmarkWindowFunctionsWithSlidingWindow(b *testing.B, frameType ast.F
 	}
 	for _, windowFunc := range windowFuncs {
 		cas := defaultWindowTestCase()
+		cas.ctx.GetSessionVars().WindowingUseHighPrecision = false
 		cas.rows = row
 		cas.ndv = ndv
 		cas.windowFunc = windowFunc.aggFunc
@@ -844,7 +836,7 @@ func benchmarkHashJoinExecWithCase(b *testing.B, casTest *hashJoinTestCase) {
 	opt1 := mockDataSourceParameters{
 		rows: casTest.rows,
 		ctx:  casTest.ctx,
-		genDataFunc: func(col, row int, typ *types.FieldType) interface{} {
+		genDataFunc: func(row int, typ *types.FieldType) interface{} {
 			switch typ.Tp {
 			case mysql.TypeLong, mysql.TypeLonglong:
 				return int64(row)
@@ -1036,7 +1028,7 @@ func benchmarkBuildHashTableForList(b *testing.B, casTest *hashJoinTestCase) {
 		schema: expression.NewSchema(casTest.columns()...),
 		rows:   casTest.rows,
 		ctx:    casTest.ctx,
-		genDataFunc: func(col, row int, typ *types.FieldType) interface{} {
+		genDataFunc: func(row int, typ *types.FieldType) interface{} {
 			switch typ.Tp {
 			case mysql.TypeLong, mysql.TypeLonglong:
 				return int64(row)
@@ -1160,7 +1152,7 @@ func (tc indexJoinTestCase) getMockDataSourceOptByRows(rows int) mockDataSourceP
 		schema: expression.NewSchema(tc.columns()...),
 		rows:   rows,
 		ctx:    tc.ctx,
-		genDataFunc: func(col, row int, typ *types.FieldType) interface{} {
+		genDataFunc: func(row int, typ *types.FieldType) interface{} {
 			switch typ.Tp {
 			case mysql.TypeLong, mysql.TypeLonglong:
 				return int64(row)
@@ -1452,7 +1444,7 @@ func newMergeJoinBenchmark(numOuterRows, numInnerDup, numInnerRedundant int) (tc
 		schema: expression.NewSchema(tc.columns()...),
 		rows:   numOuterRows,
 		ctx:    tc.ctx,
-		genDataFunc: func(col, row int, typ *types.FieldType) interface{} {
+		genDataFunc: func(row int, typ *types.FieldType) interface{} {
 			switch typ.Tp {
 			case mysql.TypeLong, mysql.TypeLonglong:
 				return int64(row)
@@ -1470,7 +1462,7 @@ func newMergeJoinBenchmark(numOuterRows, numInnerDup, numInnerRedundant int) (tc
 		schema: expression.NewSchema(tc.columns()...),
 		rows:   numInnerRows,
 		ctx:    tc.ctx,
-		genDataFunc: func(col, row int, typ *types.FieldType) interface{} {
+		genDataFunc: func(row int, typ *types.FieldType) interface{} {
 			row = row / numInnerDup
 			switch typ.Tp {
 			case mysql.TypeLong, mysql.TypeLonglong:
