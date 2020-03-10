@@ -574,16 +574,19 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 
 // UpdateForUpdateTS updates the ForUpdateTS, if newForUpdateTS is 0, it obtain a new TS from PD.
 func UpdateForUpdateTS(seCtx sessionctx.Context, newForUpdateTS uint64) error {
+	txn, err := seCtx.Txn(false)
+	if err != nil {
+		return err
+	}
+	if !txn.Valid() {
+		return kv.ErrInvalidTxn
+	}
 	if newForUpdateTS == 0 {
 		version, err := seCtx.GetStore().CurrentVersion()
 		if err != nil {
 			return err
 		}
 		newForUpdateTS = version.Ver
-	}
-	txn, err := seCtx.Txn(true)
-	if err != nil {
-		return err
 	}
 	seCtx.GetSessionVars().TxnCtx.SetForUpdateTS(newForUpdateTS)
 	txn.SetOption(kv.SnapshotTS, seCtx.GetSessionVars().TxnCtx.GetForUpdateTS())
