@@ -1073,6 +1073,18 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 			return nil
 		}
 	}
+
+	// consider collations
+	leftTypes := make([]*types.FieldType, 0, len(retTypes(leftExec)))
+	for _, tp := range retTypes(leftExec) {
+		leftTypes = append(leftTypes, tp.Clone())
+	}
+	rightTypes := make([]*types.FieldType, 0, len(retTypes(rightExec)))
+	for _, tp := range retTypes(rightExec) {
+		rightTypes = append(rightTypes, tp.Clone())
+	}
+	leftIsBuildSide := true
+
 	if v.UseOuterToBuild {
 		// update the buildSideEstCount due to changing the build side
 		e.buildSideEstCount = v.Children()[1-v.InnerChildIdx].StatsCount()
@@ -1084,6 +1096,7 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 			e.buildSideExec, e.buildKeys = rightExec, v.RightJoinKeys
 			e.probeSideExec, e.probeKeys = leftExec, v.LeftJoinKeys
 			e.outerFilter = v.RightConditions
+			leftIsBuildSide = false
 		}
 		if defaultValues == nil {
 			defaultValues = make([]types.Datum, e.probeSideExec.Schema().Len())
@@ -1097,6 +1110,7 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 			e.buildSideExec, e.buildKeys = rightExec, v.RightJoinKeys
 			e.probeSideExec, e.probeKeys = leftExec, v.LeftJoinKeys
 			e.outerFilter = v.LeftConditions
+			leftIsBuildSide = false
 		}
 		if defaultValues == nil {
 			defaultValues = make([]types.Datum, e.buildSideExec.Schema().Len())
@@ -1109,6 +1123,19 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 			v.OtherConditions, lhsTypes, rhsTypes, childrenUsedSchema)
 	}
 	executorCountHashJoinExec.Inc()
+
+	for i := range v.EqualConditions {
+		chs, coll, flen := v.EqualConditions[i].CharsetAndCollation(e.ctx)
+		bt := leftTypes[v.LeftJoinKeys[i].Index]
+		bt.Charset, bt.Collate, bt.Flen = chs, coll, flen
+		pt := rightTypes[v.RightJoinKeys[i].Index]
+		pt.Charset, pt.Collate, pt.Flen = chs, coll, flen
+	}
+	if leftIsBuildSide {
+		e.buildTypes, e.probeTypes = leftTypes, rightTypes
+	} else {
+		e.buildTypes, e.probeTypes = rightTypes, leftTypes
+	}
 	return e
 }
 
@@ -1355,6 +1382,13 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 					timeRange: v.QueryTimeRange,
 				},
 			}
+		case strings.ToLower(infoschema.TableInspectionRules):
+			return &MemTableReaderExec{
+				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+				retriever: &inspectionRuleRetriever{
+					extractor: v.Extractor.(*plannercore.InspectionRuleTableExtractor),
+				},
+			}
 		case strings.ToLower(infoschema.TableMetricSummary):
 			return &MemTableReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
@@ -1373,7 +1407,17 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 					timeRange: v.QueryTimeRange,
 				},
 			}
-		case strings.ToLower(infoschema.TableSchemata), strings.ToLower(infoschema.TableViews):
+		case strings.ToLower(infoschema.TableSchemata),
+			strings.ToLower(infoschema.TableTiDBIndexes),
+			strings.ToLower(infoschema.TableViews),
+			strings.ToLower(infoschema.TableTables),
+			strings.ToLower(infoschema.TablePartitions),
+			strings.ToLower(infoschema.TableEngines),
+			strings.ToLower(infoschema.TableCollations),
+			strings.ToLower(infoschema.TableCharacterSets),
+			strings.ToLower(infoschema.TableKeyColumn),
+			strings.ToLower(infoschema.TableUserPrivileges),
+			strings.ToLower(infoschema.TableCollationCharacterSetApplicability):
 			return &MemTableReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 				retriever: &memtableRetriever{
@@ -1600,7 +1644,7 @@ func (b *executorBuilder) updateForUpdateTSIfNeeded(selectPlan plannercore.Physi
 // refreshForUpdateTSForRC is used to refresh the for-update-ts for reading data at read consistency level in pessimistic transaction.
 // It could use the cached tso from the statement future to avoid get tso many times.
 func (b *executorBuilder) refreshForUpdateTSForRC() error {
-	future := b.ctx.GetSessionVars().TxnCtx.GetStmtFuture()
+	future := b.ctx.GetSessionVars().TxnCtx.GetStmtFutureForRC()
 	if future == nil {
 		return nil
 	}
@@ -1610,7 +1654,7 @@ func (b *executorBuilder) refreshForUpdateTSForRC() error {
 			zap.Uint64("startTS", b.ctx.GetSessionVars().TxnCtx.StartTS),
 			zap.Error(waitErr))
 	}
-	b.ctx.GetSessionVars().TxnCtx.SetStmtFuture(nil)
+	b.ctx.GetSessionVars().TxnCtx.SetStmtFutureForRC(nil)
 	// If newForUpdateTS is 0, it will force to get a new for-update-ts from PD.
 	if err := UpdateForUpdateTS(b.ctx, newForUpdateTS); err != nil {
 		return err
@@ -2359,6 +2403,7 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLoo
 
 	ret.ranges = is.Ranges
 	executorCounterIndexLookUpExecutor.Inc()
+
 	sctx := b.ctx.GetSessionVars().StmtCtx
 	sctx.IndexNames = append(sctx.IndexNames, is.Table.Name.O+":"+is.Index.Name.O)
 	sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
@@ -2864,6 +2909,13 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		idxInfo:      plan.IndexInfo,
 		rowDecoder:   decoder,
 		startTS:      startTS,
+		keepOrder:    plan.KeepOrder,
+		desc:         plan.Desc,
+		lock:         plan.Lock,
+		waitTime:     plan.LockWaitTime,
+	}
+	if e.lock {
+		b.isSelectForUpdate = e.lock
 	}
 	var capacity int
 	if plan.IndexInfo != nil {

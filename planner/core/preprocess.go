@@ -228,7 +228,7 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 		// no need sleep when retry transaction and avoid unexpect sleep caused by retry.
 		if p.flag&inTxnRetry > 0 && x.FnName.L == ast.Sleep {
 			if len(x.Args) == 1 {
-				x.Args[0] = ast.NewValueExpr(0)
+				x.Args[0] = ast.NewValueExpr(0, "", "")
 			}
 		}
 	case *ast.RepairTableStmt:
