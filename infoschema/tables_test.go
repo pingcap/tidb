@@ -424,7 +424,6 @@ func (s *testTableSuite) TestSomeTables(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustQuery("select * from information_schema.SESSION_VARIABLES where VARIABLE_NAME='tidb_retry_limit';").Check(testkit.Rows("tidb_retry_limit 10"))
-	tk.MustQuery("select * from information_schema.TABLE_CONSTRAINTS where TABLE_NAME='gc_delete_range';").Check(testkit.Rows("def mysql delete_range_index mysql gc_delete_range UNIQUE"))
 
 	sm := &mockSessionManager{make(map[uint64]*util.ProcessInfo, 2)}
 	sm.processInfoMap[1] = &util.ProcessInfo{
