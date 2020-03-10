@@ -32,12 +32,6 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
-const (
-	primaryKeyType    = "PRIMARY KEY"
-	primaryConstraint = "PRIMARY"
-	uniqueKeyType     = "UNIQUE"
-)
-
 type memtableRetriever struct {
 	dummyCloser
 	table       *model.TableInfo
@@ -688,18 +682,18 @@ func keyColumnUsageInTable(schema *model.DBInfo, table *model.TableInfo) [][]typ
 		for _, col := range table.Columns {
 			if mysql.HasPriKeyFlag(col.Flag) {
 				record := types.MakeDatums(
-					infoschema.CatalogVal, // CONSTRAINT_CATALOG
-					schema.Name.O,         // CONSTRAINT_SCHEMA
-					primaryConstraint,     // CONSTRAINT_NAME
-					infoschema.CatalogVal, // TABLE_CATALOG
-					schema.Name.O,         // TABLE_SCHEMA
-					table.Name.O,          // TABLE_NAME
-					col.Name.O,            // COLUMN_NAME
-					1,                     // ORDINAL_POSITION
-					1,                     // POSITION_IN_UNIQUE_CONSTRAINT
-					nil,                   // REFERENCED_TABLE_SCHEMA
-					nil,                   // REFERENCED_TABLE_NAME
-					nil,                   // REFERENCED_COLUMN_NAME
+					infoschema.CatalogVal,        // CONSTRAINT_CATALOG
+					schema.Name.O,                // CONSTRAINT_SCHEMA
+					infoschema.PrimaryConstraint, // CONSTRAINT_NAME
+					infoschema.CatalogVal,        // TABLE_CATALOG
+					schema.Name.O,                // TABLE_SCHEMA
+					table.Name.O,                 // TABLE_NAME
+					col.Name.O,                   // COLUMN_NAME
+					1,                            // ORDINAL_POSITION
+					1,                            // POSITION_IN_UNIQUE_CONSTRAINT
+					nil,                          // REFERENCED_TABLE_SCHEMA
+					nil,                          // REFERENCED_TABLE_NAME
+					nil,                          // REFERENCED_COLUMN_NAME
 				)
 				rows = append(rows, record)
 				break
@@ -713,7 +707,7 @@ func keyColumnUsageInTable(schema *model.DBInfo, table *model.TableInfo) [][]typ
 	for _, index := range table.Indices {
 		var idxName string
 		if index.Primary {
-			idxName = primaryConstraint
+			idxName = infoschema.PrimaryConstraint
 		} else if index.Unique {
 			idxName = index.Name.O
 		} else {
@@ -778,12 +772,12 @@ func (e *memtableRetriever) setDataFromTableConstraints(ctx sessionctx.Context, 
 
 			if tbl.PKIsHandle {
 				record := types.MakeDatums(
-					infoschema.CatalogVal, // CONSTRAINT_CATALOG
-					schema.Name.O,         // CONSTRAINT_SCHEMA
-					mysql.PrimaryKeyName,  // CONSTRAINT_NAME
-					schema.Name.O,         // TABLE_SCHEMA
-					tbl.Name.O,            // TABLE_NAME
-					primaryKeyType,        // CONSTRAINT_TYPE
+					infoschema.CatalogVal,     // CONSTRAINT_CATALOG
+					schema.Name.O,             // CONSTRAINT_SCHEMA
+					mysql.PrimaryKeyName,      // CONSTRAINT_NAME
+					schema.Name.O,             // TABLE_SCHEMA
+					tbl.Name.O,                // TABLE_NAME
+					infoschema.PrimaryKeyType, // CONSTRAINT_TYPE
 				)
 				rows = append(rows, record)
 			}
@@ -792,10 +786,10 @@ func (e *memtableRetriever) setDataFromTableConstraints(ctx sessionctx.Context, 
 				var cname, ctype string
 				if idx.Primary {
 					cname = mysql.PrimaryKeyName
-					ctype = primaryKeyType
+					ctype = infoschema.PrimaryKeyType
 				} else if idx.Unique {
 					cname = idx.Name.O
-					ctype = uniqueKeyType
+					ctype = infoschema.UniqueKeyType
 				} else {
 					// The index has no constriant.
 					continue

@@ -1408,6 +1408,15 @@ func dataForStatisticsInTable(schema *model.DBInfo, table *model.TableInfo) [][]
 	return rows
 }
 
+const (
+	// PrimaryKeyType is the string constant of PRIMARY KEY.
+	PrimaryKeyType = "PRIMARY KEY"
+	// PrimaryConstraint is the string constant of PRIMARY.
+	PrimaryConstraint = "PRIMARY"
+	// UniqueKeyType is the string constant of UNIQUE.
+	UniqueKeyType = "UNIQUE"
+)
+
 // dataForPseudoProfiling returns pseudo data for table profiling when system variable `profiling` is set to `ON`.
 func dataForPseudoProfiling() [][]types.Datum {
 	var rows [][]types.Datum
