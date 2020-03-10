@@ -1856,6 +1856,7 @@ func dataForMetricTables(ctx sessionctx.Context) [][]types.Datum {
 
 var tableNameToColumns = map[string][]columnInfo{
 	TableSchemata:                           schemataCols,
+	TableTables:                             tablesCols,
 	tableColumns:                            columnsCols,
 	tableColumnStatistics:                   columnStatisticsCols,
 	tableStatistics:                         statisticsCols,
