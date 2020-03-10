@@ -45,7 +45,7 @@ func (p *PhysicalHashAgg) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (
 	for _, aggFunc := range p.AggFuncs {
 		aggExec.AggFunc = append(aggExec.AggFunc, aggregation.AggFuncToPBExpr(sc, client, aggFunc))
 	}
-	if (storeType == kv.TiFlash) {
+	if storeType == kv.TiFlash {
 		var err error
 		aggExec.Child, err = p.children[0].ToPB(ctx, storeType)
 		if err != nil {
@@ -56,7 +56,7 @@ func (p *PhysicalHashAgg) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (
 }
 
 // ToPB implements PhysicalPlan ToPB interface.
-func (p *PhysicalStreamAgg) ToPB(ctx sessionctx.Context, _ kv.StoreType) (*tipb.Executor, error) {
+func (p *PhysicalStreamAgg) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	client := ctx.GetClient()
 	aggExec := &tipb.Aggregation{
@@ -64,6 +64,13 @@ func (p *PhysicalStreamAgg) ToPB(ctx sessionctx.Context, _ kv.StoreType) (*tipb.
 	}
 	for _, aggFunc := range p.AggFuncs {
 		aggExec.AggFunc = append(aggExec.AggFunc, aggregation.AggFuncToPBExpr(sc, client, aggFunc))
+	}
+	if storeType == kv.TiFlash {
+		var err error
+		aggExec.Child, err = p.children[0].ToPB(ctx, storeType)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
 	return &tipb.Executor{Tp: tipb.ExecType_TypeStreamAgg, Aggregation: aggExec}, nil
 }
