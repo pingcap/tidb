@@ -309,16 +309,7 @@ func (b *builtinSleepSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 		val := buf.GetFloat64(i)
 
 		sessVars := b.ctx.GetSessionVars()
-		if isNull {
-			if sessVars.StrictSQLMode {
-				return errIncorrectArgs.GenWithStackByArgs("sleep")
-			}
-			err := errIncorrectArgs.GenWithStackByArgs("sleep")
-			sessVars.StmtCtx.AppendWarning(err)
-			continue
-		}
-		// processing argument is negative
-		if val < 0 {
+		if isNull || val < 0 {
 			if sessVars.StrictSQLMode {
 				return errIncorrectArgs.GenWithStackByArgs("sleep")
 			}
