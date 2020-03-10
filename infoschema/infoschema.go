@@ -251,7 +251,7 @@ func (is *infoSchema) AllocByID(id int64) (autoid.Allocators, bool) {
 	if !ok {
 		return nil, false
 	}
-	return tbl.AllAllocators(nil), true
+	return tbl.Allocators(nil), true
 }
 
 func (is *infoSchema) AllSchemaNames() (names []string) {
