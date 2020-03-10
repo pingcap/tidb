@@ -34,6 +34,7 @@ import (
 type dataSourcePlan interface {
 	Plan
 
+	// AccessObjectInfo Return plan's accessObject, like `table`, `partition` and `index`.
 	AccessObjectInfo() string
 }
 
