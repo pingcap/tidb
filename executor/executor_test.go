@@ -158,6 +158,7 @@ func (s *baseTestSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	d.SetStatsUpdating(true)
 	s.domain = d
+	config.GetGlobalConfig().OOMAction = config.OOMActionLog
 }
 
 func (s *baseTestSuite) TearDownSuite(c *C) {
