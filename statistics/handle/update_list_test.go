@@ -15,6 +15,7 @@ package handle
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/statistics"
 )
 
 var _ = Suite(&testUpdateListSuite{})
@@ -23,7 +24,10 @@ type testUpdateListSuite struct {
 }
 
 func (s *testUpdateListSuite) TestInsertAndDelete(c *C) {
-	h := Handle{listHead: &SessionStatsCollector{mapper: make(tableDeltaMap)}}
+	h := Handle{
+		listHead: &SessionStatsCollector{mapper: make(tableDeltaMap)},
+		feedback: statistics.NewQueryFeedbackMap(),
+	}
 	var items []*SessionStatsCollector
 	for i := 0; i < 5; i++ {
 		items = append(items, h.NewSessionStatsCollector())
