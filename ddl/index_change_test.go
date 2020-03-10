@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/sessionctx"
@@ -45,6 +46,10 @@ func (s *testIndexChangeSuite) SetUpSuite(c *C) {
 		return errors.Trace(t.CreateDatabase(s.dbInfo))
 	})
 	c.Check(err, IsNil, Commentf("err %v", errors.ErrorStack(err)))
+	originCfg := config.GetGlobalConfig()
+	newConf := *originCfg
+	newConf.OOMAction = config.OOMActionLog
+	config.StoreGlobalConfig(&newConf)
 }
 
 func (s *testIndexChangeSuite) TearDownSuite(c *C) {
