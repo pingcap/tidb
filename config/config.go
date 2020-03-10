@@ -121,7 +121,7 @@ type Config struct {
 	// EnableDynamicConfig enables the TiDB to fetch configs from PD and update itself during runtime.
 	// see https://github.com/pingcap/tidb/pull/13660 for more details.
 	EnableDynamicConfig bool `toml:"enable-dynamic-config" json:"enable-dynamic-config"`
-
+	// IgnoreDDLTemporaryKeyword make ddl TEMPORARY keyword ignored if enabled
 	IgnoreDDLTemporaryKeyword bool `toml:"ignore-ddl-temporary-keyword" json:"ignore-ddl-temporary-keyword"`
 }
 
