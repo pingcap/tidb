@@ -16,9 +16,13 @@ package expression
 import (
 	goJSON "encoding/json"
 	"fmt"
+	"strings"
 	"sync"
+	"sync/atomic"
 
+	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -30,6 +34,9 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tipb/go-tipb"
+	"go.uber.org/zap"
 )
 
 // These are byte flags used for `HashCode()`.
@@ -688,41 +695,275 @@ func IsBinaryLiteral(expr Expression) bool {
 	return ok && con.Value.Kind() == types.KindBinaryLiteral
 }
 
-// CheckExprPushDown check if all the expr in the expr list can be push down to the storage.
-// The check contains two stage:
-// 1. check if the expr can be converted to PB, which is a precondition for all store type
-// 2. check based on the store type
-func CheckExprPushDown(sc *stmtctx.StatementContext, exprs []Expression, client kv.Client, storeType kv.StoreType) bool {
-	_, _, remained := ExpressionsToPB(sc, exprs, client)
-	if len(remained) > 0 {
+func canFuncBePushed(sf *ScalarFunction, storeType kv.StoreType) bool {
+	// Use the failpoint to control whether to push down an expression in the integration test.
+	// Push down all expression if the `failpoint expression` is `all`, otherwise, check
+	// whether scalar function's name is contained in the enabled expression list (e.g.`ne,eq,lt`).
+	failpoint.Inject("PushDownTestSwitcher", func(val failpoint.Value) bool {
+		enabled := val.(string)
+		if enabled == "all" {
+			return true
+		}
+		exprs := strings.Split(enabled, ",")
+		for _, expr := range exprs {
+			if strings.ToLower(strings.TrimSpace(expr)) == sf.FuncName.L {
+				return true
+			}
+		}
 		return false
+	})
+
+	ret := false
+	switch sf.FuncName.L {
+	case
+		// op functions.
+		ast.LogicAnd,
+		ast.LogicOr,
+		ast.LogicXor,
+		ast.UnaryNot,
+		ast.And,
+		ast.Or,
+		ast.Xor,
+		ast.BitNeg,
+		ast.LeftShift,
+		ast.RightShift,
+		ast.UnaryMinus,
+
+		// compare functions.
+		ast.LT,
+		ast.LE,
+		ast.EQ,
+		ast.NE,
+		ast.GE,
+		ast.GT,
+		ast.NullEQ,
+		ast.In,
+		ast.IsNull,
+		ast.Like,
+		ast.IsTruth,
+		ast.IsFalsity,
+
+		// arithmetical functions.
+		ast.Plus,
+		ast.Minus,
+		ast.Mul,
+		ast.Div,
+		ast.Abs,
+
+		// math functions.
+		ast.Ceil,
+		ast.Ceiling,
+		ast.Floor,
+		ast.Sqrt,
+		ast.Sign,
+		ast.Ln,
+		ast.Log,
+		ast.Log2,
+		ast.Log10,
+		ast.Exp,
+		ast.Pow,
+		// Rust use the llvm math functions, which have different precision with Golang/MySQL(cmath)
+		// open the following switchers if we implement them in coprocessor via `cmath`
+		// ast.Sin,
+		// ast.Asin,
+		// ast.Cos,
+		// ast.Acos,
+		// ast.Tan,
+		// ast.Atan,
+		// ast.Atan2,
+		// ast.Cot,
+		ast.Radians,
+		ast.Degrees,
+		ast.Conv,
+		ast.CRC32,
+
+		// control flow functions.
+		ast.Case,
+		ast.If,
+		ast.Ifnull,
+		ast.Coalesce,
+
+		// string functions.
+		ast.Length,
+		ast.BitLength,
+		ast.Concat,
+		ast.ConcatWS,
+		// ast.Locate,
+		ast.Replace,
+		ast.ASCII,
+		ast.Hex,
+		ast.Reverse,
+		ast.LTrim,
+		ast.RTrim,
+		// ast.Left,
+		ast.Strcmp,
+		ast.Space,
+		ast.Elt,
+		ast.Field,
+
+		// json functions.
+		ast.JSONType,
+		ast.JSONExtract,
+		// FIXME: JSONUnquote is incompatible with Coprocessor
+		// ast.JSONUnquote,
+		ast.JSONObject,
+		ast.JSONArray,
+		ast.JSONMerge,
+		ast.JSONSet,
+		ast.JSONInsert,
+		// ast.JSONReplace,
+		ast.JSONRemove,
+		ast.JSONLength,
+
+		// date functions.
+		ast.DateFormat,
+		ast.FromDays,
+		// ast.ToDays,
+		ast.DayOfYear,
+		ast.DayOfMonth,
+		ast.Year,
+		ast.Month,
+		// FIXME: the coprocessor cannot keep the same behavior with TiDB in current compute framework
+		// ast.Hour,
+		// ast.Minute,
+		// ast.Second,
+		// ast.MicroSecond,
+		ast.PeriodAdd,
+		ast.PeriodDiff,
+		ast.DayName,
+		ast.TimestampDiff,
+
+		// encryption functions.
+		ast.MD5,
+		ast.SHA1,
+		ast.UncompressedLength,
+
+		ast.Cast,
+
+		// misc functions.
+		ast.InetNtoa,
+		ast.InetAton,
+		ast.Inet6Ntoa,
+		ast.Inet6Aton,
+		ast.IsIPv4,
+		ast.IsIPv4Compat,
+		ast.IsIPv4Mapped,
+		ast.IsIPv6:
+		ret = isPushDownEnabled(sf.FuncName.L)
+
+	// A special case: Only push down Round by signature
+	case ast.Round:
+		switch sf.Function.PbCode() {
+		case
+			tipb.ScalarFuncSig_RoundReal,
+			tipb.ScalarFuncSig_RoundInt,
+			tipb.ScalarFuncSig_RoundDec:
+			ret = isPushDownEnabled(sf.FuncName.L)
+		}
+	case
+		ast.Substring,
+		ast.Substr:
+		switch sf.Function.PbCode() {
+		case
+			tipb.ScalarFuncSig_Substring2ArgsUTF8,
+			tipb.ScalarFuncSig_Substring3ArgsUTF8:
+			ret = isPushDownEnabled(sf.FuncName.L)
+		}
+	case ast.Rand:
+		switch sf.Function.PbCode() {
+		case
+			tipb.ScalarFuncSig_RandWithSeedFirstGen:
+			ret = isPushDownEnabled(sf.FuncName.L)
+		}
 	}
-	switch storeType {
-	case kv.TiFlash:
-		return checkFlashExprPushDown(exprs)
-	default:
-		return checkTiKVExprPushDown(exprs)
+	if ret {
+		switch storeType {
+		case kv.TiFlash:
+			return scalarExprSupportedByFlash(sf)
+		case kv.TiKV:
+			return scalarExprSupportedByTiKV(sf)
+		}
 	}
+	return ret
 }
 
-// ExprPushDown push down an expr list to storage.
-// Note this function assumes all the expr in expr list can be convert to pb expr
-func ExprPushDown(sc *stmtctx.StatementContext, exprs []Expression, client kv.Client, storeType kv.StoreType, skipPBCheck bool) (exprPush, remain []Expression) {
-	exprsToPushDown := exprs
-	if !skipPBCheck {
-		_, exprPush, remain = ExpressionsToPB(sc, exprs, client)
-		exprsToPushDown = exprPush
+func isPushDownEnabled(name string) bool {
+	_, disallowPushDown := DefaultExprPushDownBlacklist.Load().(map[string]struct{})[name]
+	return !disallowPushDown
+}
+
+// DefaultExprPushDownBlacklist indicates the expressions which can not be pushed down to TiKV.
+var DefaultExprPushDownBlacklist *atomic.Value
+
+func init() {
+	DefaultExprPushDownBlacklist = new(atomic.Value)
+	DefaultExprPushDownBlacklist.Store(make(map[string]struct{}))
+}
+
+func canScalarFuncPushDown(scalarFunc *ScalarFunction, pc PbConverter, storeType kv.StoreType) bool {
+	pbCode := scalarFunc.Function.PbCode()
+	if pbCode <= tipb.ScalarFuncSig_Unspecified {
+		failpoint.Inject("PanicIfPbCodeUnspecified", func() {
+			panic(errors.Errorf("unspecified PbCode: %T", scalarFunc.Function))
+		})
+		return false
 	}
 
-	var storeRemained []Expression
-	switch storeType {
-	case kv.TiFlash:
-		exprPush, storeRemained = flashExprPushDown(exprsToPushDown)
-	default:
-		exprPush, storeRemained = tikvExprPushDown(exprsToPushDown)
+	// Check whether this function can be pushed.
+	if !canFuncBePushed(scalarFunc, storeType) {
+		return false
 	}
-	remain = append(remain, storeRemained...)
+
+	// Check whether all of its parameters can be pushed.
+	for _, arg := range scalarFunc.GetArgs() {
+		if !canExprPushDown(arg, pc, storeType) {
+			return false
+		}
+	}
+
+	if metadata := scalarFunc.Function.metadata(); metadata != nil {
+		var err error
+		_, err = proto.Marshal(metadata)
+		if err != nil {
+			logutil.BgLogger().Error("encode metadata", zap.Any("metadata", metadata), zap.Error(err))
+			return false
+		}
+	}
+	return true
+}
+
+func canExprPushDown(expr Expression, pc PbConverter, storeType kv.StoreType) bool {
+	if storeType == kv.TiFlash && (expr.GetType().Tp == mysql.TypeDuration || expr.GetType().Tp == mysql.TypeJSON) {
+		return false
+	}
+	switch x := expr.(type) {
+	case *Constant, *CorrelatedColumn:
+		return pc.conOrCorColToPBExpr(expr) != nil
+	case *Column:
+		return pc.columnToPBExpr(x) != nil
+	case *ScalarFunction:
+		return canScalarFuncPushDown(x, pc, storeType)
+	}
+	return false
+}
+
+// ExprsPushDown split the input exprs into pushed and remained, pushed include all the exprs that can be pushed down
+func ExprsPushDown(sc *stmtctx.StatementContext, exprs []Expression, client kv.Client, storeType kv.StoreType) (pushed []Expression, remained []Expression) {
+	pc := PbConverter{sc: sc, client: client}
+	for _, expr := range exprs {
+		if canExprPushDown(expr, pc, storeType) {
+			pushed = append(pushed, expr)
+		} else {
+			remained = append(remained, expr)
+		}
+	}
 	return
+}
+
+// CanExprsPushDown return true if all the expr in exprs can be pushed down
+func CanExprsPushDown(sc *stmtctx.StatementContext, exprs []Expression, client kv.Client, storeType kv.StoreType) bool {
+	_, remained := ExprsPushDown(sc, exprs, client, storeType)
+	return len(remained) == 0
 }
 
 func scalarExprSupportedByTiKV(function *ScalarFunction) bool {
@@ -732,43 +973,6 @@ func scalarExprSupportedByTiKV(function *ScalarFunction) bool {
 	default:
 		return true
 	}
-}
-
-// tikvExprPushDown push down an expr list to tikv storage.
-func tikvExprPushDown(exprs []Expression) (exprPush, remain []Expression) {
-	for _, expr := range exprs {
-		switch x := expr.(type) {
-		case *Constant, *CorrelatedColumn, *Column:
-			exprPush = append(exprPush, expr)
-		case *ScalarFunction:
-			if scalarExprSupportedByTiKV(x) {
-				if _, r := tikvExprPushDown(x.GetArgs()); len(r) > 0 {
-					remain = append(remain, expr)
-				} else {
-					exprPush = append(exprPush, expr)
-				}
-			} else {
-				remain = append(remain, expr)
-			}
-		}
-	}
-	return
-}
-
-// checkTiKVExprPushDown check an expr list can be pushed down to tikv storage.
-func checkTiKVExprPushDown(exprs []Expression) bool {
-	for _, expr := range exprs {
-		if scalarFunc, ok := expr.(*ScalarFunction); ok {
-			if scalarExprSupportedByTiKV(scalarFunc) {
-				if !checkTiKVExprPushDown(scalarFunc.GetArgs()) {
-					return false
-				}
-			} else {
-				return false
-			}
-		}
-	}
-	return true
 }
 
 func scalarExprSupportedByFlash(function *ScalarFunction) bool {
@@ -783,50 +987,6 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 	default:
 		return false
 	}
-}
-
-// flashExprPushDown push down an expr list to flash storage.
-func flashExprPushDown(exprs []Expression) (exprPush, remain []Expression) {
-	for _, expr := range exprs {
-		if expr.GetType().Tp == mysql.TypeDuration || expr.GetType().Tp == mysql.TypeJSON {
-			remain = append(remain, expr)
-			continue
-		}
-		switch x := expr.(type) {
-		case *Constant, *CorrelatedColumn, *Column:
-			exprPush = append(exprPush, expr)
-		case *ScalarFunction:
-			if scalarExprSupportedByFlash(x) {
-				if _, r := flashExprPushDown(x.GetArgs()); len(r) > 0 {
-					remain = append(remain, expr)
-				} else {
-					exprPush = append(exprPush, expr)
-				}
-			} else {
-				remain = append(remain, expr)
-			}
-		}
-	}
-	return
-}
-
-// checkFlashExprPushDown check an expr list can be pushed down to flash storage.
-func checkFlashExprPushDown(exprs []Expression) bool {
-	for _, expr := range exprs {
-		if expr.GetType().Tp == mysql.TypeDuration || expr.GetType().Tp == mysql.TypeJSON {
-			return false
-		}
-		if scalarFunc, ok := expr.(*ScalarFunction); ok {
-			if scalarExprSupportedByFlash(scalarFunc) {
-				if !checkFlashExprPushDown(scalarFunc.GetArgs()) {
-					return false
-				}
-			} else {
-				return false
-			}
-		}
-	}
-	return true
 }
 
 // wrapWithIsTrue wraps `arg` with istrue function if the return type of expr is not

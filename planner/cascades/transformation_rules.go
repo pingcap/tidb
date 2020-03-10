@@ -314,7 +314,7 @@ func (r *PushSelDownTiKVSingleGather) OnTransform(old *memo.ExprIter) (newExprs 
 	childGroup := old.Children[0].Children[0].Group
 	var pushed, remained []expression.Expression
 	sctx := sg.SCtx()
-	pushed, remained = expression.ExprPushDown(sctx.GetSessionVars().StmtCtx, sel.Conditions, sctx.GetClient(), kv.TiKV, false)
+	pushed, remained = expression.ExprsPushDown(sctx.GetSessionVars().StmtCtx, sel.Conditions, sctx.GetClient(), kv.TiKV)
 	if len(pushed) == 0 {
 		return nil, false, false, nil
 	}

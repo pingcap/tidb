@@ -849,7 +849,7 @@ func (p *PhysicalTopN) canPushDown(cop *copTask) bool {
 	if tableScan, ok := cop.tablePlan.(*PhysicalTableScan); ok {
 		storeType = tableScan.StoreType
 	}
-	return expression.CheckExprPushDown(p.ctx.GetSessionVars().StmtCtx, exprs, p.ctx.GetClient(), storeType)
+	return expression.CanExprsPushDown(p.ctx.GetSessionVars().StmtCtx, exprs, p.ctx.GetClient(), storeType)
 }
 
 func (p *PhysicalTopN) allColsFromSchema(schema *expression.Schema) bool {
@@ -1006,14 +1006,14 @@ func CheckAggCanPushCop(sctx sessionctx.Context, aggFuncs []*aggregation.AggFunc
 		if !aggregation.CheckAggPushDown(aggFunc, storeType) {
 			return false
 		}
-		if !expression.CheckExprPushDown(sc, aggFunc.Args, client, storeType) {
+		if !expression.CanExprsPushDown(sc, aggFunc.Args, client, storeType) {
 			return false
 		}
 	}
 	if expression.ContainVirtualColumn(groupByItems) {
 		return false
 	}
-	return expression.CheckExprPushDown(sc, groupByItems, client, storeType)
+	return expression.CanExprsPushDown(sc, groupByItems, client, storeType)
 }
 
 // BuildFinalModeAggregation splits either LogicalAggregation or PhysicalAggregation to finalAgg and partial1Agg,
