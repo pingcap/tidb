@@ -326,7 +326,8 @@ func (e *InsertValues) evalRow(ctx context.Context, list []expression.Expression
 		}
 
 		offset := e.insertColumns[i].Offset
-		row[offset], hasValue[offset] = *val1.Copy(), true
+		val1.Copy(&row[offset])
+		hasValue[offset] = true
 		e.evalBuffer.SetDatum(offset, val1)
 	}
 	// Row may lack of generated column, autoIncrement column, empty column here.

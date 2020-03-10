@@ -14,6 +14,7 @@
 package util
 
 import (
+	"fmt"
 	"math/rand"
 	"testing"
 
@@ -32,20 +33,19 @@ func (s *testMiscSuite) TestRand(c *C) {
 	c.Assert(y < 1<<63, IsTrue)
 
 	_ = RandomBuf(20)
-
-	// Test rand result uniform distributed
-	sum := 0
+	var arr [256]bool
 	for i := 0; i < 1024; i++ {
-		val := FastRand()
-		testBit := uint32(0x1 << (i % 32))
-		if (val & testBit) > 0 {
+		idx := FastRand32N(256)
+		arr[idx] = true
+	}
+	sum := 0
+	for i := 0; i < 256; i++ {
+		if arr[i] == false {
 			sum++
-		} else {
-			sum--
 		}
 	}
-	c.Assert(sum < 124, IsTrue)
-	c.Assert(sum > -124, IsTrue)
+	fmt.Println(sum)
+	c.Assert(sum < 24, IsTrue)
 }
 
 func BenchmarkFastRand(b *testing.B) {

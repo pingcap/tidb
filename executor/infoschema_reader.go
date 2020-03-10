@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
@@ -322,13 +323,20 @@ func (e *memtableRetriever) dataForTables(ctx sessionctx.Context, schemas []*mod
 				if rowCount != 0 {
 					avgRowLength = dataLength / rowCount
 				}
-
+				var tableType string
+				switch schema.Name.L {
+				case util.InformationSchemaName.L, util.PerformanceSchemaName.L,
+					util.MetricSchemaName.L, util.InspectionSchemaName.L:
+					tableType = "SYSTEM VIEW"
+				default:
+					tableType = "BASE TABLE"
+				}
 				shardingInfo := infoschema.GetShardingInfo(schema, table)
 				record := types.MakeDatums(
 					infoschema.CatalogVal, // TABLE_CATALOG
 					schema.Name.O,         // TABLE_SCHEMA
 					table.Name.O,          // TABLE_NAME
-					"BASE TABLE",          // TABLE_TYPE
+					tableType,             // TABLE_TYPE
 					"InnoDB",              // ENGINE
 					uint64(10),            // VERSION
 					"Compact",             // ROW_FORMAT
