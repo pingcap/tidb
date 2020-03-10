@@ -269,8 +269,10 @@ func (s *testSuite5) TestShow2(c *C) {
 	tk.MustQuery(`show columns from v`).Check(testutil.RowsWithSep(",", "c,int(11),YES,,<nil>,"))
 	tk.MustQuery(`describe v`).Check(testutil.RowsWithSep(",", "c,int(11),YES,,<nil>,"))
 	tk.MustQuery("show collation where Charset = 'utf8' and Collation = 'utf8_bin'").Check(testutil.RowsWithSep(",", "utf8_bin,utf8,83,Yes,Yes,1"))
-	tk.MustQuery("show tables").Check(testkit.Rows("t", "v"))
-	tk.MustQuery("show full tables").Check(testkit.Rows("t BASE TABLE", "v VIEW"))
+	tk.MustExec(`drop sequence if exists seq`)
+	tk.MustExec(`create sequence seq`)
+	tk.MustQuery("show tables").Check(testkit.Rows("seq", "t", "v"))
+	tk.MustQuery("show full tables").Check(testkit.Rows("seq SEQUENCE", "t BASE TABLE", "v VIEW"))
 	ctx := tk.Se.(sessionctx.Context)
 	is := domain.GetDomain(ctx).InfoSchema()
 	tblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -622,6 +624,11 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 			"  KEY `expr_idx` ((`a` * `b` + 1))\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
+
+	// Fix issue #15175, show create table sequence_name.
+	tk.MustExec("drop sequence if exists seq")
+	tk.MustExec("create sequence seq")
+	tk.MustQuery("show create table seq;").Check(testkit.Rows("seq CREATE SEQUENCE `seq` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 cache 1000 nocycle ENGINE=InnoDB"))
 }
 
 func (s *testAutoRandomSuite) TestShowCreateTableAutoRandom(c *C) {
