@@ -153,6 +153,9 @@ func (t *copTask) getStoreType() kv.StoreType {
 	}
 	tp := t.tablePlan
 	for len(tp.Children()) > 0 {
+		if len(tp.Children()) > 1 {
+			return kv.TiFlash
+		}
 		tp = tp.Children()[0]
 	}
 	if ts, ok := tp.(*PhysicalTableScan); ok {
