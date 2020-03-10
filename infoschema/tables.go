@@ -49,24 +49,24 @@ import (
 )
 
 const (
-	// TableSchemata is the string constant of infoschema table
+	// TableSchemata is the string constant of infoschema table.
 	TableSchemata = "SCHEMATA"
-	// TableTables is the string constant of infoschema table
+	// TableTables is the string constant of infoschema table.
 	TableTables           = "TABLES"
 	tableColumns          = "COLUMNS"
 	tableColumnStatistics = "COLUMN_STATISTICS"
 	tableStatistics       = "STATISTICS"
-	// TableCharacterSets is the string constant of infoschema charactersets memory table
+	// TableCharacterSets is the string constant of infoschema charactersets memory table.
 	TableCharacterSets = "CHARACTER_SETS"
-	// TableCollations is the string constant of infoschema collations memory table
+	// TableCollations is the string constant of infoschema collations memory table.
 	TableCollations = "COLLATIONS"
 	tableFiles      = "FILES"
-	// CatalogVal is the string constant of TABLE_CATALOG
+	// CatalogVal is the string constant of TABLE_CATALOG.
 	CatalogVal     = "def"
 	tableProfiling = "PROFILING"
-	// TablePartitions is the string constant of infoschema table
+	// TablePartitions is the string constant of infoschema table.
 	TablePartitions = "PARTITIONS"
-	// TableKeyColumn is the string constant of KEY_COLUMN_USAGE
+	// TableKeyColumn is the string constant of KEY_COLUMN_USAGE.
 	TableKeyColumn  = "KEY_COLUMN_USAGE"
 	tableReferConst = "REFERENTIAL_CONSTRAINTS"
 	// TableSessionVar is the string constant of SESSION_VARIABLES.
@@ -80,9 +80,9 @@ const (
 	tableSchemaPrivileges = "SCHEMA_PRIVILEGES"
 	tableTablePrivileges  = "TABLE_PRIVILEGES"
 	tableColumnPrivileges = "COLUMN_PRIVILEGES"
-	// TableEngines is the string constant of infoschema table
+	// TableEngines is the string constant of infoschema table.
 	TableEngines = "ENGINES"
-	// TableViews is the string constant of infoschema table
+	// TableViews is the string constant of infoschema table.
 	TableViews           = "VIEWS"
 	tableRoutines        = "ROUTINES"
 	tableParameters      = "PARAMETERS"
@@ -95,7 +95,7 @@ const (
 	// TableCollationCharacterSetApplicability is the string constant of infoschema memory table.
 	TableCollationCharacterSetApplicability = "COLLATION_CHARACTER_SET_APPLICABILITY"
 	tableProcesslist                        = "PROCESSLIST"
-	// TableTiDBIndexes is the string constant of infoschema table
+	// TableTiDBIndexes is the string constant of infoschema table.
 	TableTiDBIndexes      = "TIDB_INDEXES"
 	tableTiDBHotRegions   = "TIDB_HOT_REGIONS"
 	tableTiKVStoreStatus  = "TIKV_STORE_STATUS"
@@ -126,9 +126,9 @@ const (
 	TableMetricSummary = "METRICS_SUMMARY"
 	// TableMetricSummaryByLabel is a metric table that contains all metrics that group by label info.
 	TableMetricSummaryByLabel = "METRICS_SUMMARY_BY_LABEL"
-	// TableInspectionSummary is the string constant of inspection summary table
+	// TableInspectionSummary is the string constant of inspection summary table.
 	TableInspectionSummary = "INSPECTION_SUMMARY"
-	// TableInspectionRules is the string constant of currently implemented inspection and summary rules
+	// TableInspectionRules is the string constant of currently implemented inspection and summary rules.
 	TableInspectionRules = "INSPECTION_RULES"
 )
 
