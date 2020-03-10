@@ -3,8 +3,11 @@ package export
 import (
 	"context"
 	"database/sql"
+	"time"
 
 	_ "github.com/go-sql-driver/mysql"
+	"github.com/pingcap/log"
+	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -51,6 +54,15 @@ func Dump(conf *Config) (err error) {
 		return err
 	}
 
+	m := newGlobalMetadata(conf.OutputDirPath)
+	// write metadata even if dump failed
+	defer m.writeGlobalMetaData()
+	m.recordStartTime(time.Now())
+	err = m.getGlobalMetaData(pool, conf.ServerInfo.ServerType)
+	if err != nil {
+		log.L().Info("get global metadata failed", zap.Error(err))
+	}
+
 	writer, err := NewSimpleWriter(conf)
 	if err != nil {
 		return err
@@ -58,6 +70,8 @@ func Dump(conf *Config) (err error) {
 	if err = dumpDatabases(context.Background(), conf, pool, writer); err != nil {
 		return err
 	}
+
+	m.recordFinishTime(time.Now())
 
 	return conCtrl.TearDown()
 }
