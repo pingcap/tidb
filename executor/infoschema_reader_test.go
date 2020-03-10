@@ -27,6 +27,9 @@ import (
 )
 
 var _ = Suite(&testInfoschemaTableSuite{})
+
+// this SerialSuites is used to solve the data race caused by TableStatsCacheExpiry,
+// if your test not change the TableStatsCacheExpiry variable, please use testInfoschemaTableSuite for test.
 var _ = SerialSuites(&testInfoschemaTableSerialSuite{})
 
 type testInfoschemaTableSuite struct {

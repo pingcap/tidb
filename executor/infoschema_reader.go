@@ -201,9 +201,9 @@ func (c *statsCache) setLoading(loading bool) {
 
 func (c *statsCache) get(ctx sessionctx.Context) (map[int64]uint64, map[tableHistID]uint64, error) {
 	c.mu.Lock()
+	defer c.mu.Unlock()
 	if time.Since(c.modifyTime) < TableStatsCacheExpiry && c.loading {
 		tableRows, colLength := c.tableRows, c.colLength
-		c.mu.Unlock()
 		return tableRows, colLength, nil
 	}
 
@@ -222,7 +222,6 @@ func (c *statsCache) get(ctx sessionctx.Context) (map[int64]uint64, map[tableHis
 	c.colLength = colLength
 	c.modifyTime = time.Now()
 	c.loading = true
-	c.mu.Unlock()
 	return tableRows, colLength, nil
 }
 
