@@ -14,6 +14,7 @@
 package executor_test
 
 import (
+	"github.com/pingcap/tidb/executor"
 	"strconv"
 
 	. "github.com/pingcap/check"
@@ -26,10 +27,32 @@ import (
 )
 
 var _ = Suite(&testInfoschemaTableSuite{})
+var _ = SerialSuites(&testInfoschemaTableSerialSuite{})
 
 type testInfoschemaTableSuite struct {
 	store kv.Storage
 	dom   *domain.Domain
+}
+
+type testInfoschemaTableSerialSuite struct {
+	store kv.Storage
+	dom   *domain.Domain
+}
+
+func (s *testInfoschemaTableSerialSuite) SetUpSuite(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	s.store = store
+	s.dom = dom
+	originCfg := config.GetGlobalConfig()
+	newConf := *originCfg
+	newConf.OOMAction = config.OOMActionLog
+	config.StoreGlobalConfig(&newConf)
+}
+
+func (s *testInfoschemaTableSerialSuite) TearDownSuite(c *C) {
+	s.dom.Close()
+	s.store.Close()
 }
 
 func (s *testInfoschemaTableSuite) SetUpSuite(c *C) {
@@ -212,8 +235,11 @@ func (s *testInfoschemaTableSuite) TestUserPrivileges(c *C) {
 	c.Assert(len(result.Rows()), Greater, 0)
 }
 
-func (s *testInfoschemaTableSuite) TestDataForTableStatsField(c *C) {
+func (s *testInfoschemaTableSerialSuite) TestDataForTableStatsField(c *C) {
 	s.dom.SetStatsUpdating(true)
+	oldExpiryTime := executor.TableStatsCacheExpiry
+	executor.TableStatsCacheExpiry = 0
+	defer func() { executor.TableStatsCacheExpiry = oldExpiryTime }()
 	do := s.dom
 	h := do.StatsHandle()
 	h.Clear()
@@ -258,8 +284,10 @@ func (s *testInfoschemaTableSuite) TestDataForTableStatsField(c *C) {
 		testkit.Rows("3 18 54 6"))
 }
 
-func (s *testInfoschemaTableSuite) TestPartitionsTable(c *C) {
-	s.dom.SetStatsUpdating(true)
+func (s *testInfoschemaTableSerialSuite) TestPartitionsTable(c *C) {
+	oldExpiryTime := executor.TableStatsCacheExpiry
+	executor.TableStatsCacheExpiry = 0
+	defer func() { executor.TableStatsCacheExpiry = oldExpiryTime }()
 	do := s.dom
 	h := do.StatsHandle()
 	h.Clear()
