@@ -233,7 +233,7 @@ type PhysicalPlan interface {
 	GetTaskCost() float64
 
 	// setTaskCost sets the taskCost from task.
-	setTaskCost(cost float64) 
+	setTaskCost(cost float64)
 }
 
 type baseLogicalPlan struct {
@@ -278,7 +278,7 @@ func (p *basePhysicalPlan) GetChildReqProps(idx int) *property.PhysicalProperty 
 }
 
 // GetTaskCost implements PhysicalPlan interface.
-func (p *basePhysicalPlan) GetTaskCost() float64{
+func (p *basePhysicalPlan) GetTaskCost() float64 {
 	return p.taskCost
 }
 
@@ -286,7 +286,6 @@ func (p *basePhysicalPlan) GetTaskCost() float64{
 func (p *basePhysicalPlan) setTaskCost(cost float64) {
 	p.taskCost = cost
 }
-
 
 func (p *baseLogicalPlan) getTask(prop *property.PhysicalProperty) task {
 	key := prop.HashCode()
@@ -297,8 +296,6 @@ func (p *baseLogicalPlan) storeTask(prop *property.PhysicalProperty, task task) 
 	key := prop.HashCode()
 	p.taskMap[string(key)] = task
 }
-
-
 
 // HasMaxOneRow returns if the LogicalPlan will output at most one row.
 func HasMaxOneRow(p LogicalPlan, childMaxOneRow []bool) bool {

@@ -31,6 +31,12 @@ import (
 	"github.com/pingcap/tidb/util/stringutil"
 )
 
+type dataSourcePlan interface {
+	Plan
+
+	AccessObjectInfo() string
+}
+
 // ExplainInfo implements Plan interface.
 func (p *PhysicalLock) ExplainInfo() string {
 	return p.Lock.String()
@@ -51,7 +57,13 @@ func (p *PhysicalIndexScan) ExplainInfo() string {
 	return p.explainInfo(false)
 }
 
-func (p *PhysicalIndexScan) explainInfo(normalized bool) string {
+// ExplainNormalizedInfo implements Plan interface.
+func (p *PhysicalIndexScan) ExplainNormalizedInfo() string {
+	return p.AccessObjectInfo() + ", " + p.explainInfo(true)
+}
+
+// AccessObjectInfo implements dataSourcePlan interface.
+func (p *PhysicalIndexScan) AccessObjectInfo() string {
 	buffer := bytes.NewBufferString("")
 	tblName := p.Table.Name.O
 	if p.TableAsName != nil && p.TableAsName.O != "" {
@@ -73,35 +85,37 @@ func (p *PhysicalIndexScan) explainInfo(normalized bool) string {
 			}
 		}
 	}
+	return buffer.String()
+}
 
+func (p *PhysicalIndexScan) explainInfo(normalized bool) string {
+	buffer := bytes.NewBufferString("")
 	if len(p.rangeInfo) > 0 {
-		fmt.Fprintf(buffer, ", range: decided by %v", p.rangeInfo)
+		fmt.Fprintf(buffer, "range: decided by %v, ", p.rangeInfo)
 	} else if p.haveCorCol() {
 		if normalized {
-			fmt.Fprintf(buffer, ", range: decided by %s", expression.SortedExplainNormalizedExpressionList(p.AccessCondition))
+			fmt.Fprintf(buffer, "range: decided by %s, ", expression.SortedExplainNormalizedExpressionList(p.AccessCondition))
 		} else {
-			fmt.Fprintf(buffer, ", range: decided by %v", p.AccessCondition)
+			fmt.Fprintf(buffer, "range: decided by %v, ", p.AccessCondition)
 		}
 	} else if len(p.Ranges) > 0 {
 		if normalized {
-			fmt.Fprint(buffer, ", range:[?,?]")
+			fmt.Fprint(buffer, "range:[?,?], ")
 		} else if !p.isFullScan() {
-			fmt.Fprint(buffer, ", range:")
-			for i, idxRange := range p.Ranges {
-				fmt.Fprint(buffer, idxRange.String())
-				if i+1 < len(p.Ranges) {
-					fmt.Fprint(buffer, ", ")
-				}
+			fmt.Fprint(buffer, "range:")
+			for _, idxRange := range p.Ranges {
+				fmt.Fprint(buffer, idxRange.String()+", ")
 			}
 		}
 	}
-	fmt.Fprintf(buffer, ", keep order:%v", p.KeepOrder)
+	fmt.Fprintf(buffer, "keep order:%v, ", p.KeepOrder)
 	if p.Desc {
-		buffer.WriteString(", desc")
+		buffer.WriteString("desc, ")
 	}
 	if p.stats.StatsVersion == statistics.PseudoVersion && !normalized {
-		buffer.WriteString(", stats:pseudo")
+		buffer.WriteString("stats:pseudo, ")
 	}
+	buffer.Truncate(buffer.Len() - 2)
 	return buffer.String()
 }
 
@@ -126,11 +140,6 @@ func (p *PhysicalIndexScan) isFullScan() bool {
 	return true
 }
 
-// ExplainNormalizedInfo implements Plan interface.
-func (p *PhysicalIndexScan) ExplainNormalizedInfo() string {
-	return p.explainInfo(true)
-}
-
 // ExplainID overrides the ExplainID in order to match different range.
 func (p *PhysicalTableScan) ExplainID() fmt.Stringer {
 	return stringutil.MemoizeStr(func() string {
@@ -150,10 +159,11 @@ func (p *PhysicalTableScan) ExplainInfo() string {
 
 // ExplainNormalizedInfo implements Plan interface.
 func (p *PhysicalTableScan) ExplainNormalizedInfo() string {
-	return p.explainInfo(true)
+	return p.AccessObjectInfo() + ", " + p.explainInfo(true)
 }
 
-func (p *PhysicalTableScan) explainInfo(normalized bool) string {
+// AccessObjectInfo implements dataSourcePlan interface.
+func (p *PhysicalTableScan) AccessObjectInfo() string {
 	buffer := bytes.NewBufferString("")
 	tblName := p.Table.Name.O
 	if p.TableAsName != nil && p.TableAsName.O != "" {
@@ -166,37 +176,40 @@ func (p *PhysicalTableScan) explainInfo(normalized bool) string {
 			fmt.Fprintf(buffer, ", partition:%s", partitionName)
 		}
 	}
+	return buffer.String()
+}
+
+func (p *PhysicalTableScan) explainInfo(normalized bool) string {
+	buffer := bytes.NewBufferString("")
 	if p.pkCol != nil {
-		fmt.Fprintf(buffer, ", pk col:%s", p.pkCol.ExplainInfo())
+		fmt.Fprintf(buffer, "pk col:%s, ", p.pkCol.ExplainInfo())
 	}
 	if len(p.rangeDecidedBy) > 0 {
-		fmt.Fprintf(buffer, ", range: decided by %v", p.rangeDecidedBy)
+		fmt.Fprintf(buffer, "range: decided by %v, ", p.rangeDecidedBy)
 	} else if p.haveCorCol() {
 		if normalized {
-			fmt.Fprintf(buffer, ", range: decided by %s", expression.SortedExplainNormalizedExpressionList(p.AccessCondition))
+			fmt.Fprintf(buffer, "range: decided by %s, ", expression.SortedExplainNormalizedExpressionList(p.AccessCondition))
 		} else {
-			fmt.Fprintf(buffer, ", range: decided by %v", p.AccessCondition)
+			fmt.Fprintf(buffer, "range: decided by %v, ", p.AccessCondition)
 		}
 	} else if len(p.Ranges) > 0 {
 		if normalized {
-			fmt.Fprint(buffer, ", range:[?,?]")
+			fmt.Fprint(buffer, "range:[?,?], ")
 		} else if !p.isFullScan() {
-			fmt.Fprint(buffer, ", range:")
-			for i, idxRange := range p.Ranges {
-				fmt.Fprint(buffer, idxRange.String())
-				if i+1 < len(p.Ranges) {
-					fmt.Fprint(buffer, ", ")
-				}
+			fmt.Fprint(buffer, "range:")
+			for _, idxRange := range p.Ranges {
+				fmt.Fprint(buffer, idxRange.String()+", ")
 			}
 		}
 	}
-	fmt.Fprintf(buffer, ", keep order:%v", p.KeepOrder)
+	fmt.Fprintf(buffer, "keep order:%v, ", p.KeepOrder)
 	if p.Desc {
-		buffer.WriteString(", desc")
+		buffer.WriteString("desc, ")
 	}
 	if p.stats.StatsVersion == statistics.PseudoVersion && !normalized {
-		buffer.WriteString(", stats:pseudo")
+		buffer.WriteString("stats:pseudo, ")
 	}
+	buffer.Truncate(buffer.Len() - 2)
 	return buffer.String()
 }
 
@@ -233,12 +246,17 @@ func (p *PhysicalTableReader) ExplainNormalizedInfo() string {
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalIndexReader) ExplainInfo() string {
-	return "index:" + p.indexPlan.ExplainID().String()
+	return ""
 }
 
 // ExplainNormalizedInfo implements Plan interface.
 func (p *PhysicalIndexReader) ExplainNormalizedInfo() string {
-	return p.ExplainInfo()
+	return p.AccessObjectInfo()
+}
+
+// AccessObjectInfo implements dataSourcePlan interface.
+func (p *PhysicalIndexReader) AccessObjectInfo() string {
+	return "index:" + p.indexPlan.ExplainID().String()
 }
 
 // ExplainInfo implements Plan interface.

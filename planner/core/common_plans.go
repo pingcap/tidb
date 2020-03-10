@@ -898,7 +898,10 @@ func (e *Explain) prepareOperatorInfo(p Plan, taskType, driverSide, indent strin
 		estRows = strconv.FormatFloat(si.RowCount, 'f', 2, 64)
 	}
 
-	accessObject := "N/A"
+	accessObject := ""
+	if dsPlan, ok := p.(dataSourcePlan); ok {
+		accessObject = dsPlan.AccessObjectInfo()
+	}
 
 	operatorInfo := p.ExplainInfo()
 
