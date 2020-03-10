@@ -15,13 +15,13 @@ package executor
 
 import (
 	"context"
-	"github.com/pingcap/tidb/meta/autoid"
 	"strings"
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -135,7 +135,17 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h int64, oldData
 		if sctx.GetSessionVars().ClientCapability&mysql.ClientFoundRows > 0 {
 			sc.AddAffectedRows(1)
 		}
-		unchangedRowKey := tablecodec.EncodeRowKeyWithHandle(t.Meta().ID, h)
+
+		physicalID := t.Meta().ID
+		if pt, ok := t.(table.PartitionedTable); ok {
+			p, err := pt.GetPartitionByRow(sctx, oldData)
+			if err != nil {
+				return false, false, 0, err
+			}
+			physicalID = p.GetPhysicalID()
+		}
+
+		unchangedRowKey := tablecodec.EncodeRowKeyWithHandle(physicalID, h)
 		txnCtx := sctx.GetSessionVars().TxnCtx
 		if txnCtx.IsPessimistic {
 			txnCtx.AddUnchangedRowKey(unchangedRowKey)
@@ -209,7 +219,7 @@ func rebaseAutoRandomValue(sctx sessionctx.Context, t table.Table, newData *type
 	}
 	shardBits := tableInfo.AutoRandomBits + 1 // sign bit is reserved.
 	recordID = recordID << shardBits >> shardBits
-	return t.Allocator(sctx, autoid.AutoRandomType).Rebase(tableInfo.ID, recordID, true)
+	return t.Allocators(sctx).Get(autoid.AutoRandomType).Rebase(tableInfo.ID, recordID, true)
 }
 
 // resetErrDataTooLong reset ErrDataTooLong error msg.

@@ -21,6 +21,7 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/distsql"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
@@ -228,18 +229,23 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 	return result, nil
 }
 
-// buildVirtualColumnInfo saves virtual column indices and sort them in definition order
-func (e *TableReaderExecutor) buildVirtualColumnInfo() {
-	e.virtualColumnIndex = make([]int, 0)
-	for i, col := range e.schema.Columns {
+func buildVirtualColumnIndex(schema *expression.Schema, columns []*model.ColumnInfo) []int {
+	virtualColumnIndex := make([]int, 0, len(columns))
+	for i, col := range schema.Columns {
 		if col.VirtualExpr != nil {
-			e.virtualColumnIndex = append(e.virtualColumnIndex, i)
+			virtualColumnIndex = append(virtualColumnIndex, i)
 		}
 	}
-	sort.Slice(e.virtualColumnIndex, func(i, j int) bool {
-		return plannercore.FindColumnInfoByID(e.columns, e.schema.Columns[e.virtualColumnIndex[i]].ID).Offset <
-			plannercore.FindColumnInfoByID(e.columns, e.schema.Columns[e.virtualColumnIndex[j]].ID).Offset
+	sort.Slice(virtualColumnIndex, func(i, j int) bool {
+		return plannercore.FindColumnInfoByID(columns, schema.Columns[virtualColumnIndex[i]].ID).Offset <
+			plannercore.FindColumnInfoByID(columns, schema.Columns[virtualColumnIndex[j]].ID).Offset
 	})
+	return virtualColumnIndex
+}
+
+// buildVirtualColumnInfo saves virtual column indices and sort them in definition order
+func (e *TableReaderExecutor) buildVirtualColumnInfo() {
+	e.virtualColumnIndex = buildVirtualColumnIndex(e.Schema(), e.columns)
 	if len(e.virtualColumnIndex) > 0 {
 		e.virtualColumnRetFieldTypes = make([]*types.FieldType, len(e.virtualColumnIndex))
 		for i, idx := range e.virtualColumnIndex {

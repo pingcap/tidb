@@ -410,7 +410,7 @@ func (b *BucketFeedback) splitBucket(newNumBkts int, totalCount float64, originB
 	bkts := make([]bucket, 0, len(bounds)-1)
 	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 	for i := 1; i < len(bounds); i++ {
-		newBkt := bucket{&bounds[i-1], bounds[i].Copy(), 0, 0}
+		newBkt := bucket{&bounds[i-1], bounds[i].Clone(), 0, 0}
 		// get bucket count
 		_, ratio := getOverlapFraction(Feedback{b.lower, b.upper, int64(originBucketCount), 0}, newBkt)
 		countInNewBkt := originBucketCount * ratio

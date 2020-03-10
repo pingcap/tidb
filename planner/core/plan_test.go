@@ -122,7 +122,7 @@ func (s *testPlanNormalize) TestNormalizedDigest(c *C) {
 		},
 		{ // test for indexReader.
 			sql1:   "select a+1,b+2 from t1 use index(b) where b=3",
-			sql2:   "select a+2,b+3 from t1 use index(b) where b>2",
+			sql2:   "select a+2,b+3 from t1 use index(b) where b=2",
 			isSame: true,
 		},
 		{ // test for merge join.
