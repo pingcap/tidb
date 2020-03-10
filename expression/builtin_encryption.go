@@ -578,6 +578,7 @@ func (c *md5FunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 		return nil, err
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
+	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	bf.tp.Flen = 32
 	sig := &builtinMD5Sig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_MD5)
@@ -615,6 +616,7 @@ func (c *sha1FunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 		return nil, err
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
+	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	bf.tp.Flen = 40
 	sig := &builtinSHA1Sig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_SHA1)
@@ -656,6 +658,7 @@ func (c *sha2FunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 		return nil, err
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString, types.ETInt)
+	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	bf.tp.Flen = 128 // sha512
 	sig := &builtinSHA2Sig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_SHA2)

@@ -211,29 +211,31 @@ func (s *testSnapshotSuite) TestLockNotFoundPrint(c *C) {
 }
 
 func (s *testSnapshotSuite) TestSkipLargeTxnLock(c *C) {
+	x := kv.Key("x_key_TestSkipLargeTxnLock")
+	y := kv.Key("y_key_TestSkipLargeTxnLock")
 	txn := s.beginTxn(c)
-	c.Assert(txn.Set(kv.Key("x"), []byte("x")), IsNil)
-	c.Assert(txn.Set(kv.Key("y"), []byte("y")), IsNil)
+	c.Assert(txn.Set(x, []byte("x")), IsNil)
+	c.Assert(txn.Set(y, []byte("y")), IsNil)
 	ctx := context.Background()
 	bo := NewBackoffer(ctx, PrewriteMaxBackoff)
 	committer, err := newTwoPhaseCommitterWithInit(txn, 0)
 	c.Assert(err, IsNil)
-	committer.lockTTL = txnLockTTL(txn.startTime, 10<<20)
-	c.Assert(committer.prewriteKeys(bo, committer.keys), IsNil)
+	committer.lockTTL = 3000
+	c.Assert(committer.prewriteMutations(bo, committer.mutations), IsNil)
 
 	txn1 := s.beginTxn(c)
 	// txn1 is not blocked by txn in the large txn protocol.
-	_, err = txn1.Get(ctx, kv.Key("x"))
+	_, err = txn1.Get(ctx, kv.Key(x))
 	c.Assert(kv.IsErrNotFound(errors.Trace(err)), IsTrue)
 
-	res, err := txn1.BatchGet(ctx, []kv.Key{kv.Key("x"), kv.Key("y"), kv.Key("z")})
+	res, err := txn1.BatchGet(ctx, []kv.Key{x, y, kv.Key("z")})
 	c.Assert(err, IsNil)
 	c.Assert(res, HasLen, 0)
 
 	// Commit txn, check the final commit ts is pushed.
 	committer.commitTS = txn.StartTS() + 1
-	c.Assert(committer.commitKeys(bo, committer.keys), IsNil)
-	status, err := s.store.lockResolver.GetTxnStatus(txn.StartTS(), 0, []byte("x"))
+	c.Assert(committer.commitMutations(bo, committer.mutations), IsNil)
+	status, err := s.store.lockResolver.GetTxnStatus(txn.StartTS(), 0, x)
 	c.Assert(err, IsNil)
 	c.Assert(status.IsCommitted(), IsTrue)
 	c.Assert(status.CommitTS(), Greater, txn1.StartTS())

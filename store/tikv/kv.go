@@ -18,8 +18,6 @@ import (
 	"crypto/tls"
 	"fmt"
 	"math/rand"
-	"net/url"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -27,7 +25,7 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	pd "github.com/pingcap/pd/client"
+	"github.com/pingcap/pd/v4/client"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
@@ -35,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/oracle/oracles"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.etcd.io/etcd/clientv3"
 	"go.uber.org/zap"
@@ -79,7 +78,7 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 	security := config.GetGlobalConfig().Security
 	tikvConfig := config.GetGlobalConfig().TiKVClient
 	txnLocalLatches := config.GetGlobalConfig().TxnLocalLatches
-	etcdAddrs, disableGC, err := parsePath(path)
+	etcdAddrs, disableGC, err := config.ParsePath(path)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -210,10 +209,13 @@ func newTikvStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Clie
 		safePoint:       0,
 		spTime:          time.Now(),
 		closed:          make(chan struct{}),
-		replicaReadSeed: rand.Uint32(),
+		replicaReadSeed: util.FastRand(),
 	}
 	store.lockResolver = newLockResolver(store)
 	store.enableGC = enableGC
+	if rpcClient, ok := store.client.(*rpcClient); ok {
+		rpcClient.dieEventListener = store.regionCache.NotifyNodeDie
+	}
 
 	coprCache, err := newCoprCache(coprCacheConfig)
 	if err != nil {
@@ -432,30 +434,6 @@ func (s *tikvStore) SetTiKVClient(client Client) {
 
 func (s *tikvStore) GetTiKVClient() (client Client) {
 	return s.client
-}
-
-func parsePath(path string) (etcdAddrs []string, disableGC bool, err error) {
-	var u *url.URL
-	u, err = url.Parse(path)
-	if err != nil {
-		err = errors.Trace(err)
-		return
-	}
-	if strings.ToLower(u.Scheme) != "tikv" {
-		err = errors.Errorf("Uri scheme expected[tikv] but found [%s]", u.Scheme)
-		logutil.BgLogger().Error("parsePath error", zap.Error(err))
-		return
-	}
-	switch strings.ToLower(u.Query().Get("disableGC")) {
-	case "true":
-		disableGC = true
-	case "false", "":
-	default:
-		err = errors.New("disableGC flag should be true/false")
-		return
-	}
-	etcdAddrs = strings.Split(u.Host, ",")
-	return
 }
 
 func init() {

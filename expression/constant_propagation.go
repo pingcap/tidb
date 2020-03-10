@@ -64,18 +64,24 @@ func (s *basePropConstSolver) tryToUpdateEQList(col *Column, con *Constant) (boo
 }
 
 // validEqualCond checks if the cond is an expression like [column eq constant].
-func validEqualCond(cond Expression) (*Column, *Constant) {
+func validEqualCond(ctx sessionctx.Context, cond Expression) (*Column, *Constant) {
 	if eq, ok := cond.(*ScalarFunction); ok {
 		if eq.FuncName.L != ast.EQ {
 			return nil, nil
 		}
 		if col, colOk := eq.GetArgs()[0].(*Column); colOk {
 			if con, conOk := eq.GetArgs()[1].(*Constant); conOk {
+				if ContainMutableConst(ctx, []Expression{con}) {
+					return nil, nil
+				}
 				return col, con
 			}
 		}
 		if col, colOk := eq.GetArgs()[1].(*Column); colOk {
 			if con, conOk := eq.GetArgs()[0].(*Constant); conOk {
+				if ContainMutableConst(ctx, []Expression{con}) {
+					return nil, nil
+				}
 				return col, con
 			}
 		}
@@ -241,20 +247,26 @@ func (s *propConstSolver) pickNewEQConds(visited []bool) (retMapper map[int]*Con
 		if visited[i] {
 			continue
 		}
-		col, con := validEqualCond(cond)
+		col, con := validEqualCond(s.ctx, cond)
 		// Then we check if this CNF item is a false constant. If so, we will set the whole condition to false.
 		var ok bool
 		if col == nil {
-			if con, ok = cond.(*Constant); ok {
-				value, _, err := EvalBool(s.ctx, []Expression{con}, chunk.Row{})
-				if err != nil {
-					terror.Log(err)
-					return nil
-				}
-				if !value {
-					s.setConds2ConstFalse()
-					return nil
-				}
+			con, ok = cond.(*Constant)
+			if !ok {
+				continue
+			}
+			visited[i] = true
+			if ContainMutableConst(s.ctx, []Expression{con}) {
+				continue
+			}
+			value, _, err := EvalBool(s.ctx, []Expression{con}, chunk.Row{})
+			if err != nil {
+				terror.Log(err)
+				return nil
+			}
+			if !value {
+				s.setConds2ConstFalse()
+				return nil
 			}
 			continue
 		}
@@ -337,20 +349,26 @@ func (s *propOuterJoinConstSolver) pickEQCondsOnOuterCol(retMapper map[int]*Cons
 		if visited[i+condsOffset] {
 			continue
 		}
-		col, con := validEqualCond(cond)
+		col, con := validEqualCond(s.ctx, cond)
 		// Then we check if this CNF item is a false constant. If so, we will set the whole condition to false.
 		var ok bool
 		if col == nil {
-			if con, ok = cond.(*Constant); ok {
-				value, _, err := EvalBool(s.ctx, []Expression{con}, chunk.Row{})
-				if err != nil {
-					terror.Log(err)
-					return nil
-				}
-				if !value {
-					s.setConds2ConstFalse(filterConds)
-					return nil
-				}
+			con, ok = cond.(*Constant)
+			if !ok {
+				continue
+			}
+			visited[i+condsOffset] = true
+			if ContainMutableConst(s.ctx, []Expression{con}) {
+				continue
+			}
+			value, _, err := EvalBool(s.ctx, []Expression{con}, chunk.Row{})
+			if err != nil {
+				terror.Log(err)
+				return nil
+			}
+			if !value {
+				s.setConds2ConstFalse(filterConds)
+				return nil
 			}
 			continue
 		}

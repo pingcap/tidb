@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 	"golang.org/x/text/transform"
@@ -41,19 +42,8 @@ func (b *builtinLowerSig) vecEvalString(input *chunk.Chunk, result *chunk.Column
 		return nil
 	}
 
-Loop:
 	for i := 0; i < input.NumRows(); i++ {
-		str := result.GetBytes(i)
-		for _, c := range str {
-			if c >= utf8.RuneSelf {
-				continue Loop
-			}
-		}
-		for i := range str {
-			if str[i] >= 'A' && str[i] <= 'Z' {
-				str[i] += 'a' - 'A'
-			}
-		}
+		result.SetRaw(i, []byte(strings.ToLower(result.GetString(i))))
 	}
 	return nil
 }
@@ -146,29 +136,23 @@ func (b *builtinStringIsNullSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinUpperSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinUpperUTF8Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	if err := b.args[0].VecEvalString(b.ctx, input, result); err != nil {
 		return err
 	}
-	if types.IsBinaryStr(b.args[0].GetType()) {
-		return nil
-	}
 
-Loop:
 	for i := 0; i < input.NumRows(); i++ {
-		str := result.GetBytes(i)
-		for _, c := range str {
-			if c >= utf8.RuneSelf {
-				continue Loop
-			}
-		}
-		for i := range str {
-			if str[i] >= 'a' && str[i] <= 'z' {
-				str[i] -= 'a' - 'A'
-			}
-		}
+		result.SetRaw(i, []byte(strings.ToUpper(result.GetString(i))))
 	}
 	return nil
+}
+
+func (b *builtinUpperUTF8Sig) vectorized() bool {
+	return true
+}
+
+func (b *builtinUpperSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+	return b.args[0].VecEvalString(b.ctx, input, result)
 }
 
 func (b *builtinUpperSig) vectorized() bool {
@@ -1073,7 +1057,7 @@ func (b *builtinFindInSetSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 			continue
 		}
 		for j, strInSet := range strings.Split(strlistI, ",") {
-			if str.GetString(i) == strInSet {
+			if b.ctor.Compare(str.GetString(i), strInSet, collate.NewCollatorOption(0)) == 0 {
 				res[i] = int64(j + 1)
 			}
 		}
@@ -1200,7 +1184,7 @@ func (b *builtinStrcmpSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 		if result.IsNull(i) {
 			continue
 		}
-		i64s[i] = int64(types.CompareString(leftBuf.GetString(i), rightBuf.GetString(i)))
+		i64s[i] = int64(types.CompareString(leftBuf.GetString(i), rightBuf.GetString(i), b.collation))
 	}
 	return nil
 }
@@ -2563,11 +2547,113 @@ func (b *builtinBinSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) 
 }
 
 func (b *builtinFormatSig) vectorized() bool {
-	return false
+	return true
 }
 
+// evalString evals FORMAT(X,D).
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_format
 func (b *builtinFormatSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+
+	dBuf, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(dBuf)
+	if err := b.args[1].VecEvalInt(b.ctx, input, dBuf); err != nil {
+		return err
+	}
+	dInt64s := dBuf.Int64s()
+
+	// decimal x
+	if b.args[0].GetType().EvalType() == types.ETDecimal {
+		xBuf, err := b.bufAllocator.get(types.ETDecimal, n)
+		if err != nil {
+			return err
+		}
+		defer b.bufAllocator.put(xBuf)
+		if err := b.args[0].VecEvalDecimal(b.ctx, input, xBuf); err != nil {
+			return err
+		}
+
+		result.ReserveString(n)
+		xBuf.MergeNulls(dBuf)
+		xDecimals := xBuf.Decimals()
+
+		return b.formatDecimal(xBuf, xDecimals, dInt64s, result)
+	}
+
+	// real x
+	xBuf, err := b.bufAllocator.get(types.ETReal, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(xBuf)
+	if err := b.args[0].VecEvalReal(b.ctx, input, xBuf); err != nil {
+		return err
+	}
+
+	result.ReserveString(n)
+	xBuf.MergeNulls(dBuf)
+	xFloat64s := xBuf.Float64s()
+
+	return b.formatReal(xBuf, xFloat64s, dInt64s, result)
+}
+
+func (b *builtinFormatSig) formatDecimal(xBuf *chunk.Column, xDecimals []types.MyDecimal, dInt64s []int64, result *chunk.Column) error {
+	localeFormatFunction := mysql.GetLocaleFormatFunction("en_US")
+	for i := range xDecimals {
+		if xBuf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+
+		x, d := xDecimals[i], dInt64s[i]
+
+		if d < 0 {
+			d = 0
+		} else if d > formatMaxDecimals {
+			d = formatMaxDecimals
+		}
+
+		xStr := roundFormatArgs(x.String(), int(d))
+		dStr := strconv.FormatInt(d, 10)
+
+		formatString, err := localeFormatFunction(xStr, dStr)
+		if err != nil {
+			return err
+		}
+		result.AppendString(formatString)
+	}
+	return nil
+}
+
+func (b *builtinFormatSig) formatReal(xBuf *chunk.Column, xFloat64s []float64, dInt64s []int64, result *chunk.Column) error {
+	localeFormatFunction := mysql.GetLocaleFormatFunction("en_US")
+	for i := range xFloat64s {
+		if xBuf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+
+		x, d := xFloat64s[i], dInt64s[i]
+
+		if d < 0 {
+			d = 0
+		} else if d > formatMaxDecimals {
+			d = formatMaxDecimals
+		}
+
+		xStr := roundFormatArgs(strconv.FormatFloat(x, 'f', -1, 64), int(d))
+		dStr := strconv.FormatInt(d, 10)
+
+		formatString, err := localeFormatFunction(xStr, dStr)
+		if err != nil {
+			return err
+		}
+		result.AppendString(formatString)
+	}
+	return nil
 }
 
 func (b *builtinRightSig) vectorized() bool {

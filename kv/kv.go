@@ -15,6 +15,7 @@ package kv
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/pingcap/tidb/config"
@@ -93,13 +94,14 @@ const (
 	ReplicaReadLeader ReplicaReadType = 1 << iota
 	// ReplicaReadFollower stands for 'read from follower'.
 	ReplicaReadFollower
-	// ReplicaReadLearner stands for 'read from learner'.
-	ReplicaReadLearner
+	// ReplicaReadMixed stands for 'read from leader and follower and learner'.
+	ReplicaReadMixed
 )
 
 // IsFollowerRead checks if leader is going to be used to read data.
 func (r ReplicaReadType) IsFollowerRead() bool {
-	return r == ReplicaReadFollower
+	// In some cases the default value is 0, which should be treated as `ReplicaReadLeader`.
+	return r != ReplicaReadLeader && r != 0
 }
 
 // Those limits is enforced to make sure the transaction can be well handled by TiKV.
@@ -200,6 +202,10 @@ type LockCtx struct {
 	WaitStartTime         time.Time
 	PessimisticLockWaited *int32
 	LockKeysDuration      *time.Duration
+	LockKeysCount         *int32
+	ReturnValues          bool
+	Values                map[string][]byte
+	ValuesLock            sync.Mutex
 }
 
 // Client is used to send request to KV layer.
@@ -323,6 +329,12 @@ type Snapshot interface {
 	SetOption(opt Option, val interface{})
 	// DelOption deletes an option.
 	DelOption(opt Option)
+}
+
+// BatchGetter is the interface for BatchGet.
+type BatchGetter interface {
+	// BatchGet gets a batch of values.
+	BatchGet(ctx context.Context, keys []Key) (map[string][]byte, error)
 }
 
 // Driver is the interface that must be implemented by a KV storage.

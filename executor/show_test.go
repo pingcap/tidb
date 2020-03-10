@@ -553,18 +553,18 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 		"KEY `IDX_UserId_EndTime` (`USER_ID`,`END_TIME`)" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin AUTO_INCREMENT=505488 " +
 		"PARTITION BY RANGE ( month(`end_time`) ) (" +
-		"PARTITION p1 VALUES LESS THAN (2)," +
-		"PARTITION p2 VALUES LESS THAN (3)," +
-		"PARTITION p3 VALUES LESS THAN (4)," +
-		"PARTITION p4 VALUES LESS THAN (5)," +
-		"PARTITION p5 VALUES LESS THAN (6)," +
-		"PARTITION p6 VALUES LESS THAN (7)," +
-		"PARTITION p7 VALUES LESS THAN (8)," +
-		"PARTITION p8 VALUES LESS THAN (9)," +
-		"PARTITION p9 VALUES LESS THAN (10)," +
-		"PARTITION p10 VALUES LESS THAN (11)," +
-		"PARTITION p11 VALUES LESS THAN (12)," +
-		"PARTITION p12 VALUES LESS THAN (MAXVALUE))")
+		"PARTITION `p1` VALUES LESS THAN (2)," +
+		"PARTITION `p2` VALUES LESS THAN (3)," +
+		"PARTITION `p3` VALUES LESS THAN (4)," +
+		"PARTITION `p4` VALUES LESS THAN (5)," +
+		"PARTITION `p5` VALUES LESS THAN (6)," +
+		"PARTITION `p6` VALUES LESS THAN (7)," +
+		"PARTITION `p7` VALUES LESS THAN (8)," +
+		"PARTITION `p8` VALUES LESS THAN (9)," +
+		"PARTITION `p9` VALUES LESS THAN (10)," +
+		"PARTITION `p10` VALUES LESS THAN (11)," +
+		"PARTITION `p11` VALUES LESS THAN (12)," +
+		"PARTITION `p12` VALUES LESS THAN (MAXVALUE))")
 	tk.MustQuery("show create table log").Check(testutil.RowsWithSep("|",
 		"log CREATE TABLE `log` (\n"+
 			"  `LOG_ID` bigint(20) unsigned NOT NULL AUTO_INCREMENT,\n"+
@@ -580,18 +580,18 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 			"  KEY `IDX_UserId_EndTime` (`USER_ID`,`END_TIME`)\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin AUTO_INCREMENT=505488\n"+
 			"PARTITION BY RANGE ( month(`end_time`) ) (\n"+
-			"  PARTITION p1 VALUES LESS THAN (2),\n"+
-			"  PARTITION p2 VALUES LESS THAN (3),\n"+
-			"  PARTITION p3 VALUES LESS THAN (4),\n"+
-			"  PARTITION p4 VALUES LESS THAN (5),\n"+
-			"  PARTITION p5 VALUES LESS THAN (6),\n"+
-			"  PARTITION p6 VALUES LESS THAN (7),\n"+
-			"  PARTITION p7 VALUES LESS THAN (8),\n"+
-			"  PARTITION p8 VALUES LESS THAN (9),\n"+
-			"  PARTITION p9 VALUES LESS THAN (10),\n"+
-			"  PARTITION p10 VALUES LESS THAN (11),\n"+
-			"  PARTITION p11 VALUES LESS THAN (12),\n"+
-			"  PARTITION p12 VALUES LESS THAN (MAXVALUE)\n"+
+			"  PARTITION `p1` VALUES LESS THAN (2),\n"+
+			"  PARTITION `p2` VALUES LESS THAN (3),\n"+
+			"  PARTITION `p3` VALUES LESS THAN (4),\n"+
+			"  PARTITION `p4` VALUES LESS THAN (5),\n"+
+			"  PARTITION `p5` VALUES LESS THAN (6),\n"+
+			"  PARTITION `p6` VALUES LESS THAN (7),\n"+
+			"  PARTITION `p7` VALUES LESS THAN (8),\n"+
+			"  PARTITION `p8` VALUES LESS THAN (9),\n"+
+			"  PARTITION `p9` VALUES LESS THAN (10),\n"+
+			"  PARTITION `p10` VALUES LESS THAN (11),\n"+
+			"  PARTITION `p11` VALUES LESS THAN (12),\n"+
+			"  PARTITION `p12` VALUES LESS THAN (MAXVALUE)\n"+
 			")"))
 
 	// for issue #11831
@@ -636,7 +636,7 @@ func (s *testAutoRandomSuite) TestShowCreateTableAutoRandom(c *C) {
 	tk.MustQuery("show create table `auto_random_tbl1`").Check(testutil.RowsWithSep("|",
 		""+
 			"auto_random_tbl1 CREATE TABLE `auto_random_tbl1` (\n"+
-			"  `a` bigint(20) NOT NULL /*T!40000 AUTO_RANDOM(3) */,\n"+
+			"  `a` bigint(20) NOT NULL /*T!30100 AUTO_RANDOM(3) */,\n"+
 			"  `b` varchar(255) DEFAULT NULL,\n"+
 			"  PRIMARY KEY (`a`)\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
@@ -647,18 +647,18 @@ func (s *testAutoRandomSuite) TestShowCreateTableAutoRandom(c *C) {
 	tk.MustQuery("show create table auto_random_tbl2").Check(testutil.RowsWithSep("|",
 		""+
 			"auto_random_tbl2 CREATE TABLE `auto_random_tbl2` (\n"+
-			"  `a` bigint(20) NOT NULL /*T!40000 AUTO_RANDOM(5) */,\n"+
+			"  `a` bigint(20) NOT NULL /*T!30100 AUTO_RANDOM(5) */,\n"+
 			"  `b` char(1) DEFAULT NULL,\n"+
 			"  PRIMARY KEY (`a`)\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 
 	// Special version comment can be shown in TiDB with new version.
-	tk.MustExec("create table auto_random_tbl3 (a bigint /*T!40000 auto_random */ primary key)")
+	tk.MustExec("create table auto_random_tbl3 (a bigint /*T!30100 auto_random */ primary key)")
 	tk.MustQuery("show create table auto_random_tbl3").Check(testutil.RowsWithSep("|",
 		""+
 			"auto_random_tbl3 CREATE TABLE `auto_random_tbl3` (\n"+
-			"  `a` bigint(20) NOT NULL /*T!40000 AUTO_RANDOM(5) */,\n"+
+			"  `a` bigint(20) NOT NULL /*T!30100 AUTO_RANDOM(5) */,\n"+
 			"  PRIMARY KEY (`a`)\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
@@ -698,7 +698,7 @@ func (s *testSuite5) TestShowBuiltin(c *C) {
 	res := tk.MustQuery("show builtins;")
 	c.Assert(res, NotNil)
 	rows := res.Rows()
-	c.Assert(262, Equals, len(rows))
+	c.Assert(268, Equals, len(rows))
 	c.Assert("abs", Equals, rows[0][0].(string))
-	c.Assert("yearweek", Equals, rows[261][0].(string))
+	c.Assert("yearweek", Equals, rows[267][0].(string))
 }

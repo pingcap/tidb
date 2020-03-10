@@ -17,6 +17,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -27,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 )
@@ -109,7 +109,15 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache *stat
 				terror.Log(errors.Trace(err))
 			}
 			hist := statistics.NewHistogram(id, ndv, nullCount, version, types.NewFieldType(mysql.TypeBlob), chunk.InitialCapacity, 0)
-			table.Indices[hist.ID] = &statistics.Index{Histogram: *hist, CMSketch: cms, Info: idxInfo, StatsVer: row.GetInt64(8), Flag: row.GetInt64(10), LastAnalyzePos: *lastAnalyzePos.Copy()}
+			index := &statistics.Index{
+				Histogram: *hist,
+				CMSketch:  cms,
+				Info:      idxInfo,
+				StatsVer:  row.GetInt64(8),
+				Flag:      row.GetInt64(10),
+			}
+			lastAnalyzePos.Copy(&index.LastAnalyzePos)
+			table.Indices[hist.ID] = index
 		} else {
 			var colInfo *model.ColumnInfo
 			for _, col := range tbl.Meta().Columns {
@@ -123,15 +131,16 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache *stat
 			}
 			hist := statistics.NewHistogram(id, ndv, nullCount, version, &colInfo.FieldType, 0, totColSize)
 			hist.Correlation = row.GetFloat64(9)
-			table.Columns[hist.ID] = &statistics.Column{
-				Histogram:      *hist,
-				PhysicalID:     table.PhysicalID,
-				Info:           colInfo,
-				Count:          nullCount,
-				IsHandle:       tbl.Meta().PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag),
-				Flag:           row.GetInt64(10),
-				LastAnalyzePos: *lastAnalyzePos.Copy(),
+			col := &statistics.Column{
+				Histogram:  *hist,
+				PhysicalID: table.PhysicalID,
+				Info:       colInfo,
+				Count:      nullCount,
+				IsHandle:   tbl.Meta().PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag),
+				Flag:       row.GetInt64(10),
 			}
+			lastAnalyzePos.Copy(&col.LastAnalyzePos)
+			table.Columns[hist.ID] = col
 		}
 	}
 }
