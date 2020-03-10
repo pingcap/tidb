@@ -87,13 +87,6 @@ const (
 
 	// The following session variables controls the memory quota during query execution.
 	// "tidb_mem_quota_query":				control the memory quota of a query.
-	// "tidb_mem_quota_hashjoin": 			control the memory quota of "HashJoinExec".
-	// "tidb_mem_quota_mergejoin": 			control the memory quota of "MergeJoinExec".
-	// "tidb_mem_quota_sort":     			control the memory quota of "SortExec".
-	// "tidb_mem_quota_topn":     			control the memory quota of "TopNExec".
-	// "tidb_mem_quota_indexlookupreader":	control the memory quota of "IndexLookUpExecutor".
-	// "tidb_mem_quota_indexlookupjoin":	control the memory quota of "IndexLookUpJoin".
-	// "tidb_mem_quota_nestedloopapply": 	control the memory quota of "NestedLoopApplyExec".
 	TIDBMemQuotaQuery = "tidb_mem_quota_query" // Bytes.
 	// TODO: remove them below sometime, it should have only one Quota(TIDBMemQuotaQuery).
 	TIDBMemQuotaHashJoin          = "tidb_mem_quota_hashjoin"          // Bytes.
