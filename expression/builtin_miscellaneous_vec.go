@@ -311,9 +311,7 @@ func (b *builtinSleepSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 		sessVars := b.ctx.GetSessionVars()
 		if isNull {
 			if sessVars.StrictSQLMode {
-				err := errIncorrectArgs.GenWithStackByArgs("sleep")
-				sessVars.StmtCtx.AppendError(err)
-				return err
+				return errIncorrectArgs.GenWithStackByArgs("sleep")
 			}
 			err := errIncorrectArgs.GenWithStackByArgs("sleep")
 			sessVars.StmtCtx.AppendWarning(err)
@@ -322,9 +320,7 @@ func (b *builtinSleepSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 		// processing argument is negative
 		if val < 0 {
 			if sessVars.StrictSQLMode {
-				err := errIncorrectArgs.GenWithStackByArgs("sleep")
-				sessVars.StmtCtx.AppendError(err)
-				return err
+				return errIncorrectArgs.GenWithStackByArgs("sleep")
 			}
 			err := errIncorrectArgs.GenWithStackByArgs("sleep")
 			sessVars.StmtCtx.AppendWarning(err)
@@ -332,9 +328,7 @@ func (b *builtinSleepSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 		}
 
 		if val > math.MaxFloat64/float64(time.Second.Nanoseconds()) {
-			err := errIncorrectArgs.GenWithStackByArgs("sleep")
-			sessVars.StmtCtx.AppendError(err)
-			return err
+			return errIncorrectArgs.GenWithStackByArgs("sleep")
 		}
 
 		if isKilled := doSleep(val, sessVars); isKilled {

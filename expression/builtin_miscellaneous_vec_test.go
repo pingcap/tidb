@@ -133,7 +133,6 @@ func (s *testEvaluatorSuite) TestSleepVectorized(c *C) {
 	c.Assert(err, IsNil)
 	input := chunk.NewChunkWithCapacity([]*types.FieldType{ft}, 1024)
 	result := chunk.NewColumn(ft, 1024)
-	errCnt := counter{}
 	warnCnt := counter{}
 
 	// non-strict model
@@ -176,8 +175,6 @@ func (s *testEvaluatorSuite) TestSleepVectorized(c *C) {
 	err = f.vecEvalInt(input, result)
 	c.Assert(err, NotNil)
 	c.Assert(result.GetInt64(0), Equals, int64(0))
-	ec, _ := sessVars.StmtCtx.NumErrorWarnings()
-	c.Assert(ec, Equals, uint16(errCnt.add(1)))
 
 	sessVars.StmtCtx.SetWarnings(nil)
 	input.Reset()
@@ -185,8 +182,6 @@ func (s *testEvaluatorSuite) TestSleepVectorized(c *C) {
 	err = f.vecEvalInt(input, result)
 	c.Assert(err, NotNil)
 	c.Assert(result.GetInt64(0), Equals, int64(0))
-	ec, _ = sessVars.StmtCtx.NumErrorWarnings()
-	c.Assert(ec, Equals, uint16(errCnt.add(1)))
 
 	//// strict model
 	input.Reset()
