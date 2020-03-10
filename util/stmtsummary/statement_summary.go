@@ -130,7 +130,6 @@ type stmtSummaryByDigestElement struct {
 	sampleSQL  string
 	prevSQL    string
 	samplePlan string
-	sampleUser string
 	indexNames []string
 	execCount  int64
 	// latency
@@ -343,8 +342,8 @@ func (ssMap *stmtSummaryByDigestMap) GetMoreThanOnceSelect() ([]string, []string
 				if ssbd.history.Len() > 0 {
 					ssElement := ssbd.history.Back().Value.(*stmtSummaryByDigestElement)
 					ssElement.Lock()
-					// Empty sample users means that it is an internal queries.
-					if ssElement.sampleUser != "" && (ssbd.history.Len() > 1 || ssElement.execCount > 1) {
+					// Empty auth users map means that it is an internal queries.
+					if len(ssElement.authUsers) > 0 && (ssbd.history.Len() > 1 || ssElement.execCount > 1) {
 						schemas = append(schemas, ssbd.schemaName)
 						sqls = append(sqls, ssElement.sampleSQL)
 					}
@@ -582,11 +581,10 @@ func (ssbd *stmtSummaryByDigest) toCurrentDatum(beginTimeForCurInterval int64, u
 	// `ssElement` is lazy expired, so expired elements could also be read.
 	// `beginTime` won't change since `ssElement` is created, so locking is not needed here.
 	isAuthed := true
-	if user != nil {
+	if user != nil && !isSuper {
 		_, isAuthed = ssElement.authUsers[user.Username]
 	}
-	if ssElement == nil || ssElement.beginTime < beginTimeForCurInterval ||
-		(!isAuthed && !isSuper) {
+	if ssElement == nil || ssElement.beginTime < beginTimeForCurInterval || !isAuthed {
 		return nil
 	}
 	return ssElement.toDatum(ssbd)
@@ -599,10 +597,10 @@ func (ssbd *stmtSummaryByDigest) toHistoryDatum(historySize int, user *auth.User
 	rows := make([][]types.Datum, 0, len(ssElements))
 	for _, ssElement := range ssElements {
 		isAuthed := true
-		if user != nil {
+		if user != nil && !isSuper {
 			_, isAuthed = ssElement.authUsers[user.Username]
 		}
-		if isAuthed || isSuper {
+		if isAuthed {
 			rows = append(rows, ssElement.toDatum(ssbd))
 		}
 	}
@@ -635,7 +633,6 @@ func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64, intervalS
 		prevSQL: sei.PrevSQL,
 		// samplePlan needs to be decoded so it can't be truncated.
 		samplePlan:   sei.PlanGenerator(),
-		sampleUser:   sei.User,
 		indexNames:   sei.StmtCtx.IndexNames,
 		minLatency:   sei.TotalLatency,
 		firstSeen:    sei.StartTime,
@@ -806,6 +803,12 @@ func (ssElement *stmtSummaryByDigestElement) toDatum(ssbd *stmtSummaryByDigest) 
 		plan = ""
 	}
 
+	sampleUser := ""
+	for key := range ssElement.authUsers {
+		sampleUser = key
+		break
+	}
+
 	// Actually, there's a small chance that endTime is out of date, but it's hard to keep it up to date all the time.
 	return types.MakeDatums(
 		types.NewTime(types.FromGoTime(time.Unix(ssElement.beginTime, 0)), mysql.TypeTimestamp, 0),
@@ -816,7 +819,7 @@ func (ssElement *stmtSummaryByDigestElement) toDatum(ssbd *stmtSummaryByDigest) 
 		ssbd.normalizedSQL,
 		convertEmptyToNil(ssbd.tableNames),
 		convertEmptyToNil(strings.Join(ssElement.indexNames, ",")),
-		convertEmptyToNil(ssElement.sampleUser),
+		convertEmptyToNil(sampleUser),
 		ssElement.execCount,
 		int64(ssElement.sumLatency),
 		int64(ssElement.maxLatency),

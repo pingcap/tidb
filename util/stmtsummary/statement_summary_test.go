@@ -80,7 +80,6 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 		sampleSQL:            stmtExecInfo1.OriginalSQL,
 		samplePlan:           stmtExecInfo1.PlanGenerator(),
 		indexNames:           stmtExecInfo1.StmtCtx.IndexNames,
-		sampleUser:           stmtExecInfo1.User,
 		execCount:            1,
 		sumLatency:           stmtExecInfo1.TotalLatency,
 		maxLatency:           stmtExecInfo1.TotalLatency,
@@ -425,7 +424,6 @@ func matchStmtSummaryByDigest(first, second *stmtSummaryByDigest) bool {
 			ssElement1.sampleSQL != ssElement2.sampleSQL ||
 			ssElement1.samplePlan != ssElement2.samplePlan ||
 			ssElement1.prevSQL != ssElement2.prevSQL ||
-			ssElement1.sampleUser != ssElement2.sampleUser ||
 			ssElement1.execCount != ssElement2.execCount ||
 			ssElement1.sumLatency != ssElement2.sumLatency ||
 			ssElement1.maxLatency != ssElement2.maxLatency ||
