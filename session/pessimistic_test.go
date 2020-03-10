@@ -1021,4 +1021,5 @@ func (s *testPessimisticSuite) TestNonAutoCommitWithPessimisticMode(c *C) {
 	tk.MustExec("set tidb_txn_mode = 'pessimistic'")
 	tk.MustExec("set autocommit = 0")
 	tk.MustQuery("select * from t1 where c2 = 1 for update").Check(testkit.Rows("1 1"))
+	tk.MustExec("commit")
 }
