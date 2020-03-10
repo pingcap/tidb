@@ -384,3 +384,14 @@ func (s *testSuite3) TestGrantOnNonExistTable(c *C) {
 	_, err = tk.Exec("grant Select,Update on test.xx to 'genius'")
 	c.Assert(err, IsNil)
 }
+
+func (s *testSuite3) TestGrantOnNonExistDB(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create user imtbkcat")
+	_, err := tk.Exec("use nonexist")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrDatabaseNotExists), IsTrue)
+	_, err = tk.Exec("grant Select,Insert on nonexist.* to 'imtbkcat'")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrDatabaseNotExists), IsTrue)
+	_, err = tk.Exec("grant Select,Insert on test.* to 'imtbkcat'")
+	c.Assert(err, IsNil)
+}

@@ -91,6 +91,15 @@ func (e *GrantExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			}
 		}
 	}
+	// Make sure the db exist.
+	if e.Level.Level == ast.GrantLevelDB {
+		dbNameStr := model.NewCIStr(dbName)
+		schema := infoschema.GetInfoSchema(e.ctx)
+		db, succ := schema.SchemaByName(dbNameStr)
+		if !succ || db.Name.String() != dbName {
+			return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName)
+		}
+	}
 
 	// Commit the old transaction, like DDL.
 	if err := e.ctx.NewTxn(ctx); err != nil {
