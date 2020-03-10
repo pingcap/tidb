@@ -34,7 +34,7 @@ var vecBuiltinMiscellaneousCases = map[string][]vecExprBenchCase{
 	},
 	ast.Sleep: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETReal}, geners: []dataGenerator{
-			newRangeRealGener(0, 0.1, 0),
+			newSelectRealGener([]float64{0, 0.000001}),
 		}},
 	},
 	ast.UUID: {},
