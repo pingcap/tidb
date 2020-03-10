@@ -42,7 +42,10 @@ func NewFieldType(tp byte) *FieldType {
 	}
 	if tp != mysql.TypeVarchar && tp != mysql.TypeVarString && tp != mysql.TypeString {
 		ft.Collate = charset.CollationBin
+	} else {
+		ft.Collate = mysql.DefaultCollationName
 	}
+	// TODO: use DefaultCharsetForType to set charset and collate
 	return ft
 }
 
@@ -288,7 +291,7 @@ func DefaultTypeForValue(value interface{}, tp *FieldType, char string, collate 
 func DefaultCharsetForType(tp byte) (string, string) {
 	switch tp {
 	case mysql.TypeVarString, mysql.TypeString, mysql.TypeVarchar:
-		// Default charset for string types is utf8.
+		// Default charset for string types is utf8mb4.
 		return mysql.DefaultCharset, mysql.DefaultCollationName
 	}
 	return charset.CharsetBin, charset.CollationBin
