@@ -421,7 +421,10 @@ func (sm *mockSessionManager) Kill(connectionID uint64, query bool) {}
 func (sm *mockSessionManager) UpdateTLSConfig(cfg *tls.Config) {}
 
 func (s *testTableSuite) TestSomeTables(c *C) {
+	se, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
 	tk := testkit.NewTestKit(c, s.store)
+	tk.Se = se
 	sm := &mockSessionManager{make(map[uint64]*util.ProcessInfo, 2)}
 	sm.processInfoMap[1] = &util.ProcessInfo{
 		ID:      1,
