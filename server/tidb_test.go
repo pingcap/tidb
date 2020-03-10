@@ -291,7 +291,7 @@ func (ts *tidbTestSuite) TestSocketForwarding(c *C) {
 		config.Net = "unix"
 		config.Addr = "/tmp/tidbtest.sock"
 		config.DBName = "test"
-		config.Strict = true
+		config.Params = map[string]string{"sql_mode": "'STRICT_ALL_TABLES'"}
 	}, "SocketRegression")
 }
 
@@ -316,7 +316,7 @@ func (ts *tidbTestSuite) TestSocket(c *C) {
 		config.Net = "unix"
 		config.Addr = "/tmp/tidbtest.sock"
 		config.DBName = "test"
-		config.Strict = true
+		config.Params = map[string]string{"sql_mode": "STRICT_ALL_TABLES"}
 	}, "SocketRegression")
 
 }

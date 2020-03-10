@@ -15,9 +15,11 @@ package executor_test
 
 import (
 	"strconv"
+	"sync"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
@@ -30,6 +32,8 @@ var _ = Suite(&testInfoschemaTableSuite{})
 type testInfoschemaTableSuite struct {
 	store kv.Storage
 	dom   *domain.Domain
+	// mu is used to protect the TableStatsCacheExpiry global variable.
+	mu sync.Mutex
 }
 
 func (s *testInfoschemaTableSuite) SetUpSuite(c *C) {
@@ -37,6 +41,10 @@ func (s *testInfoschemaTableSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	s.store = store
 	s.dom = dom
+	originCfg := config.GetGlobalConfig()
+	newConf := *originCfg
+	newConf.OOMAction = config.OOMActionLog
+	config.StoreGlobalConfig(&newConf)
 }
 
 func (s *testInfoschemaTableSuite) TearDownSuite(c *C) {
@@ -209,6 +217,7 @@ func (s *testInfoschemaTableSuite) TestUserPrivileges(c *C) {
 }
 
 func (s *testInfoschemaTableSuite) TestDataForTableStatsField(c *C) {
+	s.mu.Lock()
 	s.dom.SetStatsUpdating(true)
 	oldExpiryTime := executor.TableStatsCacheExpiry
 	executor.TableStatsCacheExpiry = 0
@@ -256,9 +265,11 @@ func (s *testInfoschemaTableSuite) TestDataForTableStatsField(c *C) {
 	c.Assert(h.Update(is), IsNil)
 	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("3 18 54 6"))
+	s.mu.Unlock()
 }
 
 func (s *testInfoschemaTableSuite) TestPartitionsTable(c *C) {
+	s.mu.Lock()
 	oldExpiryTime := executor.TableStatsCacheExpiry
 	executor.TableStatsCacheExpiry = 0
 	defer func() { executor.TableStatsCacheExpiry = oldExpiryTime }()
@@ -308,4 +319,5 @@ func (s *testInfoschemaTableSuite) TestPartitionsTable(c *C) {
 		testkit.Rows("<nil> 3 18 54 6"))
 
 	tk.MustExec("DROP TABLE `test_partitions`;")
+	s.mu.Unlock()
 }
