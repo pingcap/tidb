@@ -246,7 +246,7 @@ func (e *UpdateExec) fastComposeNewRow(rowIdx int, oldRow []types.Datum, cols []
 			}
 		}
 
-		newRowData[assign.Col.Index] = *val.Copy()
+		val.Copy(&newRowData[assign.Col.Index])
 	}
 	return newRowData, nil
 }
@@ -273,7 +273,7 @@ func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum, cols []*tab
 			}
 		}
 
-		newRowData[assign.Col.Index] = *val.Copy()
+		val.Copy(&newRowData[assign.Col.Index])
 		e.evalBuffer.SetDatum(assign.Col.Index, val)
 	}
 	return newRowData, nil

@@ -198,7 +198,7 @@ type columnInfo struct {
 	deflt   interface{}
 }
 
-func buildColumnInfo(tableName string, col columnInfo) *model.ColumnInfo {
+func buildColumnInfo(col columnInfo) *model.ColumnInfo {
 	mCharset := charset.CharsetBin
 	mCollation := charset.CharsetBin
 	mFlag := mysql.UnsignedFlag
@@ -216,16 +216,17 @@ func buildColumnInfo(tableName string, col columnInfo) *model.ColumnInfo {
 		Flag:    mFlag,
 	}
 	return &model.ColumnInfo{
-		Name:      model.NewCIStr(col.name),
-		FieldType: fieldType,
-		State:     model.StatePublic,
+		Name:         model.NewCIStr(col.name),
+		FieldType:    fieldType,
+		State:        model.StatePublic,
+		DefaultValue: col.deflt,
 	}
 }
 
 func buildTableMeta(tableName string, cs []columnInfo) *model.TableInfo {
 	cols := make([]*model.ColumnInfo, 0, len(cs))
 	for _, c := range cs {
-		cols = append(cols, buildColumnInfo(tableName, c))
+		cols = append(cols, buildColumnInfo(c))
 	}
 	for i, col := range cols {
 		col.Offset = i
@@ -2104,23 +2105,8 @@ func (it *infoschemaTable) UpdateRecord(ctx sessionctx.Context, h int64, oldData
 	return table.ErrUnsupportedOp
 }
 
-// AllocHandle implements table.Table AllocHandle interface.
-func (it *infoschemaTable) AllocHandle(ctx sessionctx.Context) (int64, error) {
-	return 0, table.ErrUnsupportedOp
-}
-
-// AllocHandleIDs implements table.Table AllocHandleIDs interface.
-func (it *infoschemaTable) AllocHandleIDs(ctx sessionctx.Context, n uint64) (int64, int64, error) {
-	return 0, 0, table.ErrUnsupportedOp
-}
-
-// Allocator implements table.Table Allocator interface.
-func (it *infoschemaTable) Allocator(_ sessionctx.Context, _ autoid.AllocatorType) autoid.Allocator {
-	return nil
-}
-
-// AllAllocators implements table.Table AllAllocators interface.
-func (it *infoschemaTable) AllAllocators(_ sessionctx.Context) autoid.Allocators {
+// Allocators implements table.Table Allocators interface.
+func (it *infoschemaTable) Allocators(_ sessionctx.Context) autoid.Allocators {
 	return nil
 }
 
@@ -2246,23 +2232,8 @@ func (vt *VirtualTable) UpdateRecord(ctx sessionctx.Context, h int64, oldData, n
 	return table.ErrUnsupportedOp
 }
 
-// AllocHandle implements table.Table AllocHandle interface.
-func (vt *VirtualTable) AllocHandle(ctx sessionctx.Context) (int64, error) {
-	return 0, table.ErrUnsupportedOp
-}
-
-// AllocHandleIDs implements table.Table AllocHandleIDs interface.
-func (vt *VirtualTable) AllocHandleIDs(ctx sessionctx.Context, n uint64) (int64, int64, error) {
-	return 0, 0, table.ErrUnsupportedOp
-}
-
-// Allocator implements table.Table Allocator interface.
-func (vt *VirtualTable) Allocator(_ sessionctx.Context, _ autoid.AllocatorType) autoid.Allocator {
-	return nil
-}
-
-// AllAllocators implements table.Table AllAllocators interface.
-func (vt *VirtualTable) AllAllocators(_ sessionctx.Context) autoid.Allocators {
+// Allocators implements table.Table Allocators interface.
+func (vt *VirtualTable) Allocators(_ sessionctx.Context) autoid.Allocators {
 	return nil
 }
 
