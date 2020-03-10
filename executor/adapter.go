@@ -579,7 +579,7 @@ func UpdateForUpdateTS(seCtx sessionctx.Context, newForUpdateTS uint64) error {
 		return err
 	}
 	if !txn.Valid() {
-		return kv.ErrInvalidTxn
+		return errors.Trace(kv.ErrInvalidTxn)
 	}
 	if newForUpdateTS == 0 {
 		version, err := seCtx.GetStore().CurrentVersion()
