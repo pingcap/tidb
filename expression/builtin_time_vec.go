@@ -1762,15 +1762,11 @@ func (b *builtinDateFormatSig) vecEvalString(input *chunk.Chunk, result *chunk.C
 
 	for i := range times {
 		t := times[i]
-		if dateBuf.IsNull(i) {
+		if dateBuf.IsNull(i) || formatBuf.IsNull(i) {
 			result.AppendNull()
 			continue
 		}
 
-		if formatBuf.IsNull(i) {
-			result.AppendNull()
-			continue
-		}
 		formatMask := formatBuf.GetString(i)
 		// MySQL compatibility, #11203
 		// If format mask is 0 then return 0 without warnings
