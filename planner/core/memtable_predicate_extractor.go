@@ -776,7 +776,7 @@ func (e *SlowQueryExtractor) setTimeRange(start, end int64) {
 	e.Enable = true
 }
 
-// SlowQueryExtractor is used to extract some predicates of `slow_query`
+// DiskUsageExtractor is used to extract some predicates of `disk_usage`
 type DiskUsageExtractor struct {
 	extractHelper
 	// SkipRequest means the where clause always false, we don't need to request any component
@@ -797,16 +797,15 @@ func (e *DiskUsageExtractor) Extract(
 	names []*types.FieldName,
 	predicates []expression.Expression,
 ) []expression.Expression {
-	// Extract the `rule` columns
+	// Extract the `table_schema` columns
 	remained, schemaSkip, tableSchema := e.extractCol(schema, names, predicates, "table_schema", true)
-	remained, tableSkip, tableName := e.extractCol(schema, names, predicates, "table_name", true)
-	//remained, usageSkip, diskUsage := e.extractCol(schema, names, predicates, "table_schema", true)
+	// Extract the `table_name` columns
+	remained, tableSkip, tableName := e.extractCol(schema, names, remained, "table_name", true)
 	e.SkipRequest = schemaSkip || tableSkip
 	if e.SkipRequest {
 		return nil
 	}
 	e.TableSchema = tableSchema
 	e.TableName = tableName
-	//e.usage = diskUsage
 	return remained
 }

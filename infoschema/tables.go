@@ -976,7 +976,7 @@ var tableMetricSummaryByLabelCols = []columnInfo{
 	{name: "COMMENT", tp: mysql.TypeVarchar, size: 256},
 }
 
-var TableDiskUsageCols = []columnInfo{
+var tableDiskUsageCols = []columnInfo{
 	{name: "TABLE_SCHEMA", tp: mysql.TypeVarchar, size: 64},
 	{name: "TABLE_NAME", tp: mysql.TypeVarchar, size: 64},
 	{name: "TABLE_ID", tp: mysql.TypeLonglong, size: 21},
@@ -1853,8 +1853,8 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableMetricSummaryByLabel:               tableMetricSummaryByLabelCols,
 	TableMetricTables:                       tableMetricTablesCols,
 	TableInspectionSummary:                  tableInspectionSummaryCols,
-	TableDiskUsage:                          TableDiskUsageCols,
 	TableInspectionRules:                    tableInspectionRulesCols,
+	TableDiskUsage:                          tableDiskUsageCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
