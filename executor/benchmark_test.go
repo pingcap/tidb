@@ -18,6 +18,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"math/rand"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -541,6 +542,7 @@ func benchmarkWindowExecWithCase(b *testing.B, casTest *windowTestCase) {
 	const ndvIndex = 1
 	datumSet := make(map[string]bool, casTest.ndv)
 	datums := make([]interface{}, 0, casTest.ndv)
+	decimalBuff := make([]types.MyDecimal, casTest.rows)
 	genDataFunc := func(col, row int, typ *types.FieldType) interface{} {
 		var ret interface{}
 		switch typ.Tp {
@@ -549,7 +551,7 @@ func benchmarkWindowExecWithCase(b *testing.B, casTest *windowTestCase) {
 		case mysql.TypeDouble, mysql.TypeFloat:
 			ret = float64(row)
 		case mysql.TypeNewDecimal:
-			ret = types.NewDecFromInt(int64(row))
+			ret = decimalBuff[row].FromInt(int64(row))
 		case mysql.TypeVarString:
 			ret = casTest.rawDataSmall
 		default:
@@ -578,6 +580,7 @@ func benchmarkWindowExecWithCase(b *testing.B, casTest *windowTestCase) {
 		genDataFunc: genDataFunc,
 	})
 
+	runtime.GC()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		b.StopTimer() // prepare a new window-executor
@@ -706,8 +709,8 @@ func baseBenchmarkWindowFunctionsWithSlidingWindow(b *testing.B, frameType ast.F
 		{ast.AggFuncSum, mysql.TypeNewDecimal},
 		{ast.AggFuncCount, mysql.TypeLong},
 	}
-	row := 10000
-	ndv := 100
+	row := 1000
+	ndv := 10
 	frame := &core.WindowFrame{
 		Type:  frameType,
 		Start: &core.FrameBound{Type: ast.Preceding, Num: 10},
