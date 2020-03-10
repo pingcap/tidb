@@ -771,4 +771,3 @@ func (s *testSequenceSuite) TestBenchInsertCacheDefaultExpr(c *C) {
 	}
 	// fmt.Println(time.Now().Sub(start) / 100)
 }
-
