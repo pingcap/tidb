@@ -88,6 +88,7 @@ func TestT(t *testing.T) {
 	old := config.GetGlobalConfig()
 	new := *old
 	new.Log.SlowThreshold = 30000 // 30s
+	new.Experimental.AllowsExpressionIndex = true
 	config.StoreGlobalConfig(&new)
 
 	testleak.BeforeTest()
