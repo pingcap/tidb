@@ -1617,6 +1617,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 		},
 	}.Init(b.ctx)
 	isView := false
+	isSequence := false
 	switch show.Tp {
 	case ast.ShowTables, ast.ShowTableStatus:
 		if p.DBName == "" {
@@ -1631,12 +1632,13 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AllPrivMask, show.Table.Schema.L, show.Table.Name.L, "", err)
 		if table, err := b.is.TableByName(show.Table.Schema, show.Table.Name); err == nil {
 			isView = table.Meta().IsView()
+			isSequence = table.Meta().IsSequence()
 		}
 	case ast.ShowCreateView:
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("SHOW VIEW")
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShowViewPriv, show.Table.Schema.L, show.Table.Name.L, "", err)
 	}
-	schema, names := buildShowSchema(show, isView)
+	schema, names := buildShowSchema(show, isView, isSequence)
 	p.SetSchema(schema)
 	p.names = names
 	for _, col := range p.schema.Columns {
@@ -2835,7 +2837,7 @@ func buildShowWarningsSchema() (*expression.Schema, types.NameSlice) {
 }
 
 // buildShowSchema builds column info for ShowStmt including column name and type.
-func buildShowSchema(s *ast.ShowStmt, isView bool) (schema *expression.Schema, outputNames []*types.FieldName) {
+func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *expression.Schema, outputNames []*types.FieldName) {
 	var names []string
 	var ftypes []byte
 	switch s.Tp {
@@ -2882,10 +2884,12 @@ func buildShowSchema(s *ast.ShowStmt, isView bool) (schema *expression.Schema, o
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong,
 			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong}
 	case ast.ShowCreateTable, ast.ShowCreateSequence:
-		if !isView {
-			names = []string{"Table", "Create Table"}
-		} else {
+		if isSequence {
+			names = []string{"Sequence", "Create Sequence"}
+		} else if isView {
 			names = []string{"View", "Create View", "character_set_client", "collation_connection"}
+		} else {
+			names = []string{"Table", "Create Table"}
 		}
 	case ast.ShowCreateUser:
 		if s.User != nil {

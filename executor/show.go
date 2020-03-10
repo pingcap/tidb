@@ -371,6 +371,8 @@ func (e *ShowExec) fetchShowTables() error {
 		tableNames = append(tableNames, v.Meta().Name.O)
 		if v.Meta().IsView() {
 			tableTypes[v.Meta().Name.O] = "VIEW"
+		} else if v.Meta().IsSequence() {
+			tableTypes[v.Meta().Name.O] = "SEQUENCE"
 		} else {
 			tableTypes[v.Meta().Name.O] = "BASE TABLE"
 		}
@@ -698,6 +700,10 @@ func getDefaultCollate(charsetName string) string {
 func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.TableInfo, allocator autoid.Allocator, buf *bytes.Buffer) (err error) {
 	if tableInfo.IsView() {
 		fetchShowCreateTable4View(ctx, tableInfo, buf)
+		return nil
+	}
+	if tableInfo.IsSequence() {
+		ConstructResultOfShowCreateSequence(ctx, tableInfo, buf)
 		return nil
 	}
 
