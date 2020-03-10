@@ -340,7 +340,7 @@ func (lr *LockResolver) resolveLocks(bo *Backoffer, callerStartTS uint64, locks 
 				// abort current transaction.
 				// This could avoids the deadlock scene of two large transaction.
 				if l.LockType == kvrpcpb.Op_Put && l.TxnID > callerStartTS {
-					return msBeforeTxnExpired.value(), nil, kv.ErrWriteConflict
+					return msBeforeTxnExpired.value(), nil, kv.ErrWriteConflict.GenWithStackByArgs(callerStartTS, l.TxnID, status.commitTS, l.Key)
 				}
 			} else {
 				if status.action != kvrpcpb.Action_MinCommitTSPushed {

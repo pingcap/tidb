@@ -19,6 +19,7 @@ import (
 	"math"
 	"math/rand"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -876,10 +877,14 @@ func (s *testCommitterSuite) TestCommitDeadLock(c *C) {
 	// Txn1 prewrites k1, k2 and txn2 prewrites k2, k1, the large txn
 	// protocol run ttlManager and update their TTL, cause dead lock.
 	ch := make(chan error, 2)
+	var wg sync.WaitGroup
+	wg.Add(1)
 	go func() {
 		ch <- commit2.execute(context.Background())
+		wg.Done()
 	}()
 	ch <- commit1.execute(context.Background())
+	wg.Wait()
 	close(ch)
 
 	res := 0
