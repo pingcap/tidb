@@ -15,7 +15,6 @@ package ddl
 
 import (
 	"context"
-	"github.com/pingcap/tidb/config"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
@@ -46,7 +45,6 @@ func (s *testIndexChangeSuite) SetUpSuite(c *C) {
 		return errors.Trace(t.CreateDatabase(s.dbInfo))
 	})
 	c.Check(err, IsNil, Commentf("err %v", errors.ErrorStack(err)))
-	config.GetGlobalConfig().OOMAction = config.OOMActionLog
 }
 
 func (s *testIndexChangeSuite) TearDownSuite(c *C) {

@@ -1330,7 +1330,6 @@ func (s *testOOMSuite) SetUpSuite(c *C) {
 	domain.RunAutoAnalyze = false
 	s.do, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
-	config.GetGlobalConfig().OOMAction = config.OOMActionLog
 }
 
 func (s *testOOMSuite) TearDownSuite(c *C) {
