@@ -15,7 +15,6 @@ package tikv
 
 import (
 	"context"
-	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"strconv"
 	"sync/atomic"
 	"time"
@@ -78,7 +77,9 @@ func (ss *RegionBatchRequestSender) sendReqToAddr(bo *Backoffer, ctxs []copTaskA
 		return nil, errors.Trace(e)
 	}
 	for {
+		logutil.BgLogger().Debug("begin send")
 		resp, err = ss.client.SendRequest(bo.ctx, ctx.Addr, req, timout)
+		logutil.BgLogger().Debug("end send")
 		if err != nil {
 			ss.rpcError = err
 			// todo should all the region need to call onSendFail??
@@ -89,21 +90,7 @@ func (ss *RegionBatchRequestSender) sendReqToAddr(bo *Backoffer, ctxs []copTaskA
 			// always return error on send fail
 			return nil, errors.Trace(err)
 		}
-		seed := req.ReplicaReadSeed
-		if batchResponse, isBatchResponse := resp.Resp.(*coprocessor.BatchResponse); isBatchResponse {
-			for idx, s := range batchResponse.RegionStatus {
-				if s.RegionError != nil {
-					// do not retry on region error
-					// todo check check all the region error
-					_, err = ss.onRegionError(bo, ctxs[idx].ctx, &seed, s.RegionError)
-					if err != nil {
-						return nil, errors.Trace(err)
-					}
-				}
-			}
-		} else {
-			return nil, errors.New("Should not happen, batch coprocessor request should receive batch coprocessor response")
-		}
+		logutil.BgLogger().Debug("no error")
 		return resp, nil
 	}
 }
