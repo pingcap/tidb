@@ -183,7 +183,7 @@ func DeriveCollationFromExprs(ctx sessionctx.Context, exprs ...Expression) (dstC
 			curCoer, dstCharset, dstCollation, dstFlen = coer, ft.Charset, ft.Collate, ft.Flen
 		}
 	}
-	if hasStrArg == false {
+	if !hasStrArg {
 		dstCharset, dstCollation, dstFlen = charset.CharsetBin, charset.CollationBin, types.UnspecifiedLength
 	}
 	return
