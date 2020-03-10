@@ -806,6 +806,7 @@ func (e *memtableRetriever) setDataFromTableConstraints(ctx sessionctx.Context, 
 
 func (e *memtableRetriever) setDataFromSessionVar(ctx sessionctx.Context) error {
 	var rows [][]types.Datum
+	var err error
 	sessionVars := ctx.GetSessionVars()
 	for _, v := range variable.SysVars {
 		var value string
