@@ -262,6 +262,20 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		str = fmt.Sprintf("Partition(%s)", x.ExplainInfo())
 	case *PhysicalShuffleDataSourceStub:
 		str = fmt.Sprintf("PartitionDataSourceStub(%s)", x.ExplainInfo())
+	case *PointGetPlan:
+		str = fmt.Sprintf("PointGet(")
+		if x.IndexInfo != nil {
+			str += fmt.Sprintf("Index(%s.%s)%v)", x.TblInfo.Name.L, x.IndexInfo.Name.L, x.IndexValues)
+		} else {
+			str += fmt.Sprintf("Handle(%s.%s)%v)", x.TblInfo.Name.L, x.TblInfo.GetPkName().L, x.Handle)
+		}
+	case *BatchPointGetPlan:
+		str = fmt.Sprintf("BatchPointGet(")
+		if x.IndexInfo != nil {
+			str += fmt.Sprintf("Index(%s.%s)%v)", x.TblInfo.Name.L, x.IndexInfo.Name.L, x.IndexValues)
+		} else {
+			str += fmt.Sprintf("Handle(%s.%s)%v)", x.TblInfo.Name.L, x.TblInfo.GetPkName().L, x.Handles)
+		}
 	default:
 		str = fmt.Sprintf("%T", in)
 	}
