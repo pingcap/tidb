@@ -25,7 +25,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/configpb"
-	"github.com/pingcap/pd/client"
+	"github.com/pingcap/pd/v4/client"
 )
 
 type mockPDConfigClient struct {
