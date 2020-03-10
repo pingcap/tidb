@@ -158,7 +158,7 @@ func (ts *testSuite) TestBasic(c *C) {
 	c.Assert(err, IsNil)
 
 	table.MockTableFromMeta(tb.Meta())
-	alc := tb.AllAllocators(nil).Get(autoid.RowIDAllocType)
+	alc := tb.Allocators(nil).Get(autoid.RowIDAllocType)
 	c.Assert(alc, NotNil)
 
 	err = tb.RebaseAutoID(nil, 0, false)

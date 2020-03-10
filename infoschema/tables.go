@@ -2105,8 +2105,8 @@ func (it *infoschemaTable) UpdateRecord(ctx sessionctx.Context, h int64, oldData
 	return table.ErrUnsupportedOp
 }
 
-// AllAllocators implements table.Table AllAllocators interface.
-func (it *infoschemaTable) AllAllocators(_ sessionctx.Context) autoid.Allocators {
+// Allocators implements table.Table Allocators interface.
+func (it *infoschemaTable) Allocators(_ sessionctx.Context) autoid.Allocators {
 	return nil
 }
 
@@ -2232,8 +2232,8 @@ func (vt *VirtualTable) UpdateRecord(ctx sessionctx.Context, h int64, oldData, n
 	return table.ErrUnsupportedOp
 }
 
-// AllAllocators implements table.Table AllAllocators interface.
-func (vt *VirtualTable) AllAllocators(_ sessionctx.Context) autoid.Allocators {
+// Allocators implements table.Table Allocators interface.
+func (vt *VirtualTable) Allocators(_ sessionctx.Context) autoid.Allocators {
 	return nil
 }
 

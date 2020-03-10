@@ -1025,7 +1025,7 @@ func AllocHandle(ctx sessionctx.Context, t table.Table) (int64, error) {
 
 func allocHandleIDs(ctx sessionctx.Context, t table.Table, n uint64) (int64, int64, error) {
 	meta := t.Meta()
-	base, maxID, err := t.AllAllocators(ctx).Get(autoid.RowIDAllocType).Alloc(meta.ID, n, 1, 1)
+	base, maxID, err := t.Allocators(ctx).Get(autoid.RowIDAllocType).Alloc(meta.ID, n, 1, 1)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -1066,8 +1066,8 @@ func CalcShard(shardRowIDBits uint64, startTS uint64, typeBitsLength uint64) int
 	return (hashVal & (1<<shardRowIDBits - 1)) << (typeBitsLength - shardRowIDBits - 1)
 }
 
-// AllAllocators implements table.Table AllAllocators interface.
-func (t *TableCommon) AllAllocators(ctx sessionctx.Context) autoid.Allocators {
+// Allocators implements table.Table Allocators interface.
+func (t *TableCommon) Allocators(ctx sessionctx.Context) autoid.Allocators {
 	if ctx == nil || ctx.GetSessionVars().IDAllocator == nil {
 		return t.allocs
 	}
@@ -1093,7 +1093,7 @@ func (t *TableCommon) AllAllocators(ctx sessionctx.Context) autoid.Allocators {
 
 // RebaseAutoID implements table.Table RebaseAutoID interface.
 func (t *TableCommon) RebaseAutoID(ctx sessionctx.Context, newBase int64, isSetStep bool) error {
-	return t.AllAllocators(ctx).Get(autoid.RowIDAllocType).Rebase(t.tableID, newBase, isSetStep)
+	return t.Allocators(ctx).Get(autoid.RowIDAllocType).Rebase(t.tableID, newBase, isSetStep)
 }
 
 // Seek implements table.Table Seek interface.
