@@ -19,6 +19,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
@@ -40,6 +41,10 @@ func (s *testInfoschemaTableSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	s.store = store
 	s.dom = dom
+	originCfg := config.GetGlobalConfig()
+	newConf := *originCfg
+	newConf.OOMAction = config.OOMActionLog
+	config.StoreGlobalConfig(&newConf)
 }
 
 func (s *testInfoschemaTableSuite) TearDownSuite(c *C) {
