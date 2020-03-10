@@ -21,6 +21,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -1134,7 +1135,7 @@ func checkConstraintNames(constraints []*ast.Constraint) error {
 	return nil
 }
 
-func setTableAutoRandomBits(tbInfo *model.TableInfo, colDefs []*ast.ColumnDef) error {
+func setTableAutoRandomBits(ctx sessionctx.Context, tbInfo *model.TableInfo, colDefs []*ast.ColumnDef) error {
 	allowAutoRandom := config.GetGlobalConfig().Experimental.AllowAutoRandom
 	pkColName := tbInfo.GetPkName()
 	for _, col := range colDefs {
@@ -1163,6 +1164,10 @@ func setTableAutoRandomBits(tbInfo *model.TableInfo, colDefs []*ast.ColumnDef) e
 				return ErrInvalidAutoRandom.GenWithStackByArgs(fmt.Sprintf(autoid.AutoRandomOverflowErrMsg, col.Name.Name.L, maxFieldTypeBitsLength, autoRandBits, col.Name.Name.L, maxFieldTypeBitsLength-1))
 			}
 			tbInfo.AutoRandomBits = autoRandBits
+
+			availableBits := maxFieldTypeBitsLength - 1 - autoRandBits
+			msg := fmt.Sprintf(autoid.AutoRandomAvailableAllocTimesNote, uint64(math.Pow(2, float64(availableBits)))-1)
+			ctx.GetSessionVars().StmtCtx.AppendNote(errors.Errorf(msg))
 		}
 	}
 	return nil
@@ -1364,7 +1369,7 @@ func buildTableInfoWithCheck(ctx sessionctx.Context, s *ast.CreateTableStmt, dbC
 	tbInfo.Collate = tableCollate
 	tbInfo.Charset = tableCharset
 
-	if err = setTableAutoRandomBits(tbInfo, colDefs); err != nil {
+	if err = setTableAutoRandomBits(ctx, tbInfo, colDefs); err != nil {
 		return nil, errors.Trace(err)
 	}
 
