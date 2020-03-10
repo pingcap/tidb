@@ -10,7 +10,7 @@ run_sql "create table t (a varchar(255))"
 chars_20="1111_0000_1111_0000_"
 
 # insert 100 records, each occupies 20 bytes
-run_sql "insert into t values $(seq -s, 100 | sed "s/[0-9]\+/('$chars_20')/g")"
+run_sql "insert into t values $(seq -s, 100 | sed 's/,*$//g' | sed "s/[0-9]*/('$chars_20')/g");"
 
 # dumping with file size = 200 bytes
 run_dumpling -F 200
