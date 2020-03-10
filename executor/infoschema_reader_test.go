@@ -259,6 +259,7 @@ func (s *testInfoschemaTableSuite) TestDataForTableStatsField(c *C) {
 }
 
 func (s *testInfoschemaTableSuite) TestPartitionsTable(c *C) {
+	s.dom.SetStatsUpdating(true)
 	do := s.dom
 	h := do.StatsHandle()
 	h.Clear()
