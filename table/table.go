@@ -110,7 +110,7 @@ type RecordIterFunc func(h int64, rec []types.Datum, cols []*Column) (more bool,
 // AddRecordOpt contains the options will be used when adding a record.
 type AddRecordOpt struct {
 	CreateIdxOpt
-	IsUpdate bool
+	IsUpdate      bool
 	ReserveAutoID int
 }
 
