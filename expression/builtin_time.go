@@ -1623,20 +1623,9 @@ func evalFromUnixTime(ctx sessionctx.Context, fsp int, row chunk.Row, arg Expres
 	if err != nil && !terror.ErrorEqual(err, types.ErrTruncated) {
 		return res, true, errors.Trace(err)
 	}
-<<<<<<< HEAD
-	fracDigitsNumber := int(unixTimeStamp.GetDigitsFrac())
 	if fsp < 0 {
 		fsp = types.MaxFsp
 	}
-	fsp = mathutil.Max(fracDigitsNumber, fsp)
-	if fsp > types.MaxFsp {
-		fsp = types.MaxFsp
-	}
-=======
-	if fsp < 0 {
-		fsp = types.MaxFsp
-	}
->>>>>>> 7c39e5e... expression: fix decimal of function FROM_UNIXTIME (#14936)
 
 	sc := ctx.GetSessionVars().StmtCtx
 	tmp := time.Unix(integralPart, fractionalPart).In(sc.TimeZone)
