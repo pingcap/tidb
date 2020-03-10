@@ -26,3 +26,6 @@ component/DDL:
   - ddl/*
   - infoschema/*
   - meta/*
+
+component/config:
+  - config/*
