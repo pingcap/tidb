@@ -49,7 +49,7 @@ func (rs *batchCopResponse) GetStartKey() kv.Key {
 }
 
 func (rs *batchCopResponse) GetExecDetails() *execdetails.ExecDetails {
-	return rs.detail
+	return &execdetails.ExecDetails{}
 }
 
 // MemSize returns how many bytes of memory this response use
@@ -119,7 +119,7 @@ func buildBatchCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, re
 				ranges: ranges.slice(i, nextI),
 				// Channel buffer is 2 for handling region split.
 				// In a common case, two region split tasks will not be blocked.
-				respChan:  make(chan *copResponse, 2),
+				respChan:  make(chan *copResponse),
 				cmdType:   cmdType,
 				storeType: req.StoreType,
 			})
@@ -146,10 +146,11 @@ func buildBatchCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, re
 			batchCop.regionTaskMap[task.region.id] = task
 		} else {
 			batchTask := &batchCopTask {
-				respChan : make(chan * batchCopResponse, 10),
+				respChan : make(chan * batchCopResponse, 2048),
 				storeAddr: rpcCtx.Addr,
 				cmdType : task.cmdType,
 				regionTaskMap: make(map[uint64]*copTask),
+				copTasks : []copTaskAndRPCContext{{task, rpcCtx}} ,
 			}
 			batchTask.regionTaskMap[task.region.id] = task
 			storeTaskMap[rpcCtx.Addr] = batchTask
@@ -206,7 +207,7 @@ func (c *CopClient) SendBatch(ctx context.Context, req *kv.Request, vars *kv.Var
 	} else {
 		it.respChan = make(chan *batchCopResponse, it.concurrency)
 	}
-	it.open(ctx)
+	go it.run(ctx)
 	return it
 }
 
@@ -242,12 +243,14 @@ type batchCopIterator struct {
 
 }
 
-func (b * batchCopIterator) open(ctx context.Context) {
+func (b * batchCopIterator) run(ctx context.Context) {
 	for _, task := range b.tasks {
+		b.wg.Add(1)
 		bo := NewBackoffer(ctx, copNextMaxBackoff).WithVars(b.vars)
 		go b.handleTask(ctx, bo, task)
 	}
-
+	b.wg.Wait()
+	close(b.respChan)
 }
 
 // Next returns next coprocessor result.
@@ -303,6 +306,7 @@ func (it *batchCopIterator) Close() error {
 
 
 func (b *batchCopIterator) handleTask(ctx context.Context, bo *Backoffer, task *batchCopTask) {
+	logutil.BgLogger().Debug("handle batch task")
 	tasks := []*batchCopTask{task}
 	idx := 0
 	for idx < len(tasks) {
@@ -313,11 +317,14 @@ func (b *batchCopIterator) handleTask(ctx context.Context, bo *Backoffer, task *
 		} else {
 			tasks = append(tasks, ret...)
 		}
+		idx ++
 	}
+	close(task.respChan)
+	b.wg.Done();
 }
 
 func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo * Backoffer, task *batchCopTask)([]*batchCopTask, error){
-
+	logutil.BgLogger().Debug("handle batch task once")
 	sender := NewRegionBatchRequestSender(b.store.regionCache, b.store.client)
 	var regionInfos []*coprocessor.RegionInfo
 	for _, task := range task.copTasks {
@@ -348,11 +355,12 @@ func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo * Backoffer, t
 	})
 	req.StoreTp = kv.TiFlash
 
+	logutil.BgLogger().Debug("send batch to ", zap.String("req info", req.String()), zap.Int("cop task len", len(task.copTasks)))
 	resp, err := sender.sendReqToAddr(bo, task.copTasks, req, ReadTimeoutMedium)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return b.handleBatchCopResponse(ctx, bo, resp.Resp.(*coprocessor.BatchResponse), task)
+	return b.handleStreamedBatchCopResponse(ctx, bo, resp.Resp.(*tikvrpc.BatchCopStreamResponse), task)
 }
 func (b *batchCopIterator) handleStreamedBatchCopResponse(ctx context.Context, bo *Backoffer, response *tikvrpc.BatchCopStreamResponse, task *batchCopTask) (totalRetTask []*batchCopTask, err error) {
 	for {
@@ -372,6 +380,7 @@ func (b *batchCopIterator) handleStreamedBatchCopResponse(ctx context.Context, b
 			} else {
 				logutil.BgLogger().Info("stream unknown error", zap.Error(err))
 			}
+			return nil, errors.Trace(err)
 		}
 
 		remainedTasks, err := b.handleBatchCopResponse(ctx, bo, resp, task)

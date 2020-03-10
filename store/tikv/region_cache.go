@@ -389,6 +389,7 @@ func (c *RegionCache) GetTiFlashRPCContext(bo *Backoffer, id RegionVerID) (*RPCC
 
 	cachedRegion := c.getCachedRegionWithRLock(id)
 	if cachedRegion == nil {
+		logutil.BgLogger().Info("not found region", zap.Uint64("region id", id.id))
 		return nil, nil
 	}
 	if !cachedRegion.checkRegionCacheTTL(ts) {

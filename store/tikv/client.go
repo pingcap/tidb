@@ -16,6 +16,7 @@ package tikv
 
 import (
 	"context"
+	"go.uber.org/zap"
 	"io"
 	"math"
 	"strconv"
@@ -347,6 +348,12 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	}
 
 	client := tikvpb.NewTikvClient(clientConn)
+
+	if req.Type == tikvrpc.CmdBatchCop {
+		logutil.BgLogger().Debug("send query to ", zap.String("store addr", addr))
+		return tikvrpc.CallRPC(ctx, client, req)
+
+	}
 
 	if req.Type != tikvrpc.CmdCopStream {
 		ctx1, cancel := context.WithTimeout(ctx, timeout)

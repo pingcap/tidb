@@ -57,6 +57,7 @@ type CopClient struct {
 // Send builds the request and gets the coprocessor iterator response.
 func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variables) kv.Response {
 	if req.StoreType == kv.TiFlash {
+		logutil.BgLogger().Info("send batch requests")
 		return c.SendBatch(ctx, req, vars)
 	}
 	ctx = context.WithValue(ctx, txnStartKey, req.StartTs)
