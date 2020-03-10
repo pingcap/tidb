@@ -120,9 +120,9 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 		if exec.Selection != nil {
 			exec.Selection.Bloom = bl
 		} else {
-			e.dagPB.Executors = append(e.dagPB.Executors, &tipb.Executor{Selection: &tipb.Selection{Bloom: bl}})
+			exec.Selection = &tipb.Selection{Bloom: bl}
+			//		e.dagPB.Executors = append(e.dagPB.Executors, &tipb.Executor{Selection: &tipb.Selection{Bloom: bl}})
 		}
-
 	}
 	if e.runtimeStats != nil {
 		collExec := true
