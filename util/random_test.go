@@ -45,7 +45,7 @@ func (s *testMiscSuite) TestRand(c *C) {
 		}
 	}
 	fmt.Println(sum)
-	c.Assert(sum < 6, IsTrue)
+	c.Assert(sum < 24, IsTrue)
 }
 
 func BenchmarkFastRand(b *testing.B) {
