@@ -13,7 +13,7 @@ set @@session.tidb_hashagg_final_concurrency = 1;
 set @@session.tidb_window_concurrency = 1;
 explain select * from t3 where exists (select s.a from t3 s having sum(s.a) = t3.a );
 id	estRows	task	operator info
-HashLeftJoin_12	8000.00	root	semi join, inner:StreamAgg_27, equal:[eq(Column#13, Column#11)]
+HashLeftJoin_12	8000.00	root	semi join, equal:[eq(Column#13, Column#11)]
 ├─StreamAgg_27(Build)	1.00	root	funcs:sum(Column#16)->Column#11
 │ └─TableReader_28	1.00	root	data:StreamAgg_19
 │   └─StreamAgg_19	1.00	cop[tikv]	funcs:sum(test.t3.a)->Column#16
@@ -45,7 +45,7 @@ IndexReader_6	10.00	root	index:IndexRangeScan_5
 └─IndexRangeScan_5	10.00	cop[tikv]	table:t1, index:c2, range:[1,1], keep order:false, stats:pseudo
 explain select * from t1 left join t2 on t1.c2 = t2.c1 where t1.c1 > 1;
 id	estRows	task	operator info
-HashLeftJoin_23	4166.67	root	left outer join, inner:TableReader_33 (REVERSED), equal:[eq(test.t1.c2, test.t2.c1)]
+HashLeftJoin_23	4166.67	root	left outer join, equal:[eq(test.t1.c2, test.t2.c1)]
 ├─TableReader_33(Build)	3333.33	root	data:TableRangeScan_32
 │ └─TableRangeScan_32	3333.33	cop[tikv]	table:t1, range:(1,+inf], keep order:false, stats:pseudo
 └─TableReader_36(Probe)	9990.00	root	data:Selection_35
@@ -64,7 +64,7 @@ Delete_4	N/A	root	N/A
 explain select count(b.c2) from t1 a, t2 b where a.c1 = b.c2 group by a.c1;
 id	estRows	task	operator info
 Projection_11	9990.00	root	cast(Column#8, bigint(21) BINARY)->Column#7
-└─HashLeftJoin_21	9990.00	root	inner join, inner:HashAgg_28, equal:[eq(test.t1.c1, test.t2.c2)]
+└─HashLeftJoin_21	9990.00	root	inner join, equal:[eq(test.t1.c1, test.t2.c2)]
   ├─HashAgg_28(Build)	7992.00	root	group by:test.t2.c2, funcs:count(Column#9)->Column#8, funcs:firstrow(test.t2.c2)->test.t2.c2
   │ └─TableReader_29	7992.00	root	data:HashAgg_23
   │   └─HashAgg_23	7992.00	cop[tikv]	group by:test.t2.c2, funcs:count(test.t2.c2)->Column#9
@@ -92,14 +92,14 @@ explain select sum(t1.c1 in (select c1 from t2)) from t1;
 id	estRows	task	operator info
 StreamAgg_12	1.00	root	funcs:sum(Column#10)->Column#8
 └─Projection_23	10000.00	root	cast(Column#7, decimal(65,0) BINARY)->Column#10
-  └─HashLeftJoin_22	10000.00	root	CARTESIAN left outer semi join, inner:IndexReader_21, other cond:eq(test.t1.c1, test.t2.c1)
+  └─HashLeftJoin_22	10000.00	root	CARTESIAN left outer semi join, other cond:eq(test.t1.c1, test.t2.c1)
     ├─IndexReader_21(Build)	10000.00	root	index:IndexFullScan_20
     │ └─IndexFullScan_20	10000.00	cop[tikv]	table:t2, index:c1, keep order:false, stats:pseudo
     └─TableReader_15(Probe)	10000.00	root	data:TableFullScan_14
       └─TableFullScan_14	10000.00	cop[tikv]	table:t1, keep order:false, stats:pseudo
 explain select c1 from t1 where c1 in (select c2 from t2);
 id	estRows	task	operator info
-HashLeftJoin_19	9990.00	root	inner join, inner:HashAgg_23, equal:[eq(test.t1.c1, test.t2.c2)]
+HashLeftJoin_19	9990.00	root	inner join, equal:[eq(test.t1.c1, test.t2.c2)]
 ├─HashAgg_23(Build)	7992.00	root	group by:test.t2.c2, funcs:firstrow(test.t2.c2)->test.t2.c2
 │ └─TableReader_30	9990.00	root	data:Selection_29
 │   └─Selection_29	9990.00	cop[tikv]	not(isnull(test.t2.c2))
@@ -121,7 +121,7 @@ MemTableScan_4	10000.00	root
 explain select c2 = (select c2 from t2 where t1.c1 = t2.c1 order by c1 limit 1) from t1;
 id	estRows	task	operator info
 Projection_12	10000.00	root	eq(test.t1.c2, test.t2.c2)->Column#8
-└─Apply_14	10000.00	root	CARTESIAN left outer join, inner:Projection_43
+└─Apply_14	10000.00	root	CARTESIAN left outer join
   ├─TableReader_16(Build)	10000.00	root	data:TableFullScan_15
   │ └─TableFullScan_15	10000.00	cop[tikv]	table:t1, keep order:false, stats:pseudo
   └─Projection_43(Probe)	1.00	root	test.t2.c1, test.t2.c2
@@ -224,14 +224,14 @@ explain select sum(t1.c1 in (select c1 from t2)) from t1;
 id	estRows	task	operator info
 StreamAgg_12	1.00	root	funcs:sum(Column#10)->Column#8
 └─Projection_23	10000.00	root	cast(Column#7, decimal(65,0) BINARY)->Column#10
-  └─HashLeftJoin_22	10000.00	root	CARTESIAN left outer semi join, inner:IndexReader_21, other cond:eq(test.t1.c1, test.t2.c1)
+  └─HashLeftJoin_22	10000.00	root	CARTESIAN left outer semi join, other cond:eq(test.t1.c1, test.t2.c1)
     ├─IndexReader_21(Build)	10000.00	root	index:IndexFullScan_20
     │ └─IndexFullScan_20	10000.00	cop[tikv]	table:t2, index:c1, keep order:false, stats:pseudo
     └─TableReader_15(Probe)	10000.00	root	data:TableFullScan_14
       └─TableFullScan_14	10000.00	cop[tikv]	table:t1, keep order:false, stats:pseudo
 explain select 1 in (select c2 from t2) from t1;
 id	estRows	task	operator info
-HashLeftJoin_7	10000.00	root	CARTESIAN left outer semi join, inner:TableReader_14
+HashLeftJoin_7	10000.00	root	CARTESIAN left outer semi join
 ├─TableReader_14(Build)	10.00	root	data:Selection_13
 │ └─Selection_13	10.00	cop[tikv]	eq(1, test.t2.c2)
 │   └─TableFullScan_12	10000.00	cop[tikv]	table:t2, keep order:false, stats:pseudo
@@ -241,7 +241,7 @@ explain select sum(6 in (select c2 from t2)) from t1;
 id	estRows	task	operator info
 StreamAgg_12	1.00	root	funcs:sum(Column#10)->Column#8
 └─Projection_22	10000.00	root	cast(Column#7, decimal(65,0) BINARY)->Column#10
-  └─HashLeftJoin_21	10000.00	root	CARTESIAN left outer semi join, inner:TableReader_20
+  └─HashLeftJoin_21	10000.00	root	CARTESIAN left outer semi join
     ├─TableReader_20(Build)	10.00	root	data:Selection_19
     │ └─Selection_19	10.00	cop[tikv]	eq(6, test.t2.c2)
     │   └─TableFullScan_18	10000.00	cop[tikv]	table:t2, keep order:false, stats:pseudo
@@ -309,7 +309,7 @@ create table t(a int primary key, b int, c int, index idx(b));
 explain select t.c in (select count(*) from t s ignore index(idx), t t1 where s.a = t.a and s.a = t1.a) from t;
 id	estRows	task	operator info
 Projection_11	10000.00	root	Column#11
-└─Apply_13	10000.00	root	CARTESIAN left outer semi join, inner:StreamAgg_20, other cond:eq(test.t.c, Column#10)
+└─Apply_13	10000.00	root	CARTESIAN left outer semi join, other cond:eq(test.t.c, Column#10)
   ├─TableReader_15(Build)	10000.00	root	data:TableFullScan_14
   │ └─TableFullScan_14	10000.00	cop[tikv]	table:t, keep order:false, stats:pseudo
   └─StreamAgg_20(Probe)	1.00	root	funcs:count(1)->Column#10
@@ -321,7 +321,7 @@ Projection_11	10000.00	root	Column#11
 explain select t.c in (select count(*) from t s use index(idx), t t1 where s.b = t.a and s.a = t1.a) from t;
 id	estRows	task	operator info
 Projection_11	10000.00	root	Column#11
-└─Apply_13	10000.00	root	CARTESIAN left outer semi join, inner:StreamAgg_20, other cond:eq(test.t.c, Column#10)
+└─Apply_13	10000.00	root	CARTESIAN left outer semi join, other cond:eq(test.t.c, Column#10)
   ├─TableReader_15(Build)	10000.00	root	data:TableFullScan_14
   │ └─TableFullScan_14	10000.00	cop[tikv]	table:t, keep order:false, stats:pseudo
   └─StreamAgg_20(Probe)	1.00	root	funcs:count(1)->Column#10
@@ -333,7 +333,7 @@ Projection_11	10000.00	root	Column#11
 explain select t.c in (select count(*) from t s use index(idx), t t1 where s.b = t.a and s.c = t1.a) from t;
 id	estRows	task	operator info
 Projection_11	10000.00	root	Column#11
-└─Apply_13	10000.00	root	CARTESIAN left outer semi join, inner:StreamAgg_20, other cond:eq(test.t.c, Column#10)
+└─Apply_13	10000.00	root	CARTESIAN left outer semi join, other cond:eq(test.t.c, Column#10)
   ├─TableReader_15(Build)	10000.00	root	data:TableFullScan_14
   │ └─TableFullScan_14	10000.00	cop[tikv]	table:t, keep order:false, stats:pseudo
   └─StreamAgg_20(Probe)	1.00	root	funcs:count(1)->Column#10
@@ -349,7 +349,7 @@ analyze table t;
 explain select t.c in (select count(*) from t s, t t1 where s.b = t.a and s.b = 3 and s.a = t1.a) from t;
 id	estRows	task	operator info
 Projection_11	5.00	root	Column#11
-└─Apply_13	5.00	root	CARTESIAN left outer semi join, inner:StreamAgg_20, other cond:eq(test.t.c, Column#10)
+└─Apply_13	5.00	root	CARTESIAN left outer semi join, other cond:eq(test.t.c, Column#10)
   ├─TableReader_15(Build)	5.00	root	data:TableFullScan_14
   │ └─TableFullScan_14	5.00	cop[tikv]	table:t, keep order:false
   └─StreamAgg_20(Probe)	1.00	root	funcs:count(1)->Column#10
@@ -363,7 +363,7 @@ Projection_11	5.00	root	Column#11
 explain select t.c in (select count(*) from t s left join t t1 on s.a = t1.a where 3 = t.a and s.b = 3) from t;
 id	estRows	task	operator info
 Projection_10	5.00	root	Column#11
-└─Apply_12	5.00	root	CARTESIAN left outer semi join, inner:StreamAgg_19, other cond:eq(test.t.c, Column#10)
+└─Apply_12	5.00	root	CARTESIAN left outer semi join, other cond:eq(test.t.c, Column#10)
   ├─TableReader_14(Build)	5.00	root	data:TableFullScan_13
   │ └─TableFullScan_13	5.00	cop[tikv]	table:t, keep order:false
   └─StreamAgg_19(Probe)	1.00	root	funcs:count(1)->Column#10
@@ -377,7 +377,7 @@ Projection_10	5.00	root	Column#11
 explain select t.c in (select count(*) from t s right join t t1 on s.a = t1.a where 3 = t.a and t1.b = 3) from t;
 id	estRows	task	operator info
 Projection_10	5.00	root	Column#11
-└─Apply_12	5.00	root	CARTESIAN left outer semi join, inner:StreamAgg_19, other cond:eq(test.t.c, Column#10)
+└─Apply_12	5.00	root	CARTESIAN left outer semi join, other cond:eq(test.t.c, Column#10)
   ├─TableReader_14(Build)	5.00	root	data:TableFullScan_13
   │ └─TableFullScan_13	5.00	cop[tikv]	table:t, keep order:false
   └─StreamAgg_19(Probe)	1.00	root	funcs:count(1)->Column#10
@@ -434,7 +434,7 @@ TableDual_5	0.00	root	rows:0
 explain select * from t t1 join t t2 where t1.b = t2.b and t2.b is null;
 id	estRows	task	operator info
 Projection_7	0.00	root	test.t.a, test.t.b, test.t.a, test.t.b
-└─HashRightJoin_9	0.00	root	inner join, inner:TableReader_12, equal:[eq(test.t.b, test.t.b)]
+└─HashRightJoin_9	0.00	root	inner join, equal:[eq(test.t.b, test.t.b)]
   ├─TableReader_12(Build)	0.00	root	data:Selection_11
   │ └─Selection_11	0.00	cop[tikv]	isnull(test.t.b), not(isnull(test.t.b))
   │   └─TableFullScan_10	10000.00	cop[tikv]	table:t2, keep order:false, stats:pseudo
@@ -443,7 +443,7 @@ Projection_7	0.00	root	test.t.a, test.t.b, test.t.a, test.t.b
       └─TableFullScan_16	10000.00	cop[tikv]	table:t1, keep order:false, stats:pseudo
 explain select * from t t1 where not exists (select * from t t2 where t1.b = t2.b);
 id	estRows	task	operator info
-HashLeftJoin_9	8000.00	root	anti semi join, inner:TableReader_15, equal:[eq(test.t.b, test.t.b)]
+HashLeftJoin_9	8000.00	root	anti semi join, equal:[eq(test.t.b, test.t.b)]
 ├─TableReader_15(Build)	10000.00	root	data:TableFullScan_14
 │ └─TableFullScan_14	10000.00	cop[tikv]	table:t2, keep order:false, stats:pseudo
 └─TableReader_11(Probe)	10000.00	root	data:TableFullScan_10
@@ -555,7 +555,7 @@ Projection_4	10.00	root	plus(1, test.t.nb)->Column#5
     └─TableFullScan_5	10000.00	cop[tikv]	table:t, keep order:false, stats:pseudo
 explain select * from t ta left outer join t tb on ta.nb = tb.nb and ta.a > 1 where ifnull(ta.nb, 1) or ta.nb is null;
 id	estRows	task	operator info
-HashLeftJoin_7	8320.83	root	left outer join, inner:TableReader_13, equal:[eq(test.t.nb, test.t.nb)], left cond:[gt(test.t.a, 1)]
+HashLeftJoin_7	8320.83	root	left outer join, equal:[eq(test.t.nb, test.t.nb)], left cond:[gt(test.t.a, 1)]
 ├─TableReader_13(Build)	10000.00	root	data:TableFullScan_12
 │ └─TableFullScan_12	10000.00	cop[tikv]	table:tb, keep order:false, stats:pseudo
 └─TableReader_11(Probe)	6656.67	root	data:Selection_10
@@ -563,7 +563,7 @@ HashLeftJoin_7	8320.83	root	left outer join, inner:TableReader_13, equal:[eq(tes
     └─TableFullScan_9	10000.00	cop[tikv]	table:ta, keep order:false, stats:pseudo
 explain select * from t ta right outer join t tb on ta.nb = tb.nb and ta.a > 1 where ifnull(tb.nb, 1) or tb.nb is null;
 id	estRows	task	operator info
-HashRightJoin_7	6656.67	root	right outer join, inner:TableReader_11, equal:[eq(test.t.nb, test.t.nb)]
+HashRightJoin_7	6656.67	root	right outer join, equal:[eq(test.t.nb, test.t.nb)]
 ├─TableReader_11(Build)	3333.33	root	data:Selection_10
 │ └─Selection_10	3333.33	cop[tikv]	gt(test.t.a, 1)
 │   └─TableFullScan_9	10000.00	cop[tikv]	table:ta, keep order:false, stats:pseudo
@@ -572,7 +572,7 @@ HashRightJoin_7	6656.67	root	right outer join, inner:TableReader_11, equal:[eq(t
     └─TableFullScan_12	10000.00	cop[tikv]	table:tb, keep order:false, stats:pseudo
 explain select * from t ta inner join t tb on ta.nb = tb.nb and ta.a > 1 where ifnull(tb.nb, 1) or tb.nb is null;
 id	estRows	task	operator info
-HashRightJoin_9	4166.67	root	inner join, inner:TableReader_12, equal:[eq(test.t.nb, test.t.nb)]
+HashRightJoin_9	4166.67	root	inner join, equal:[eq(test.t.nb, test.t.nb)]
 ├─TableReader_12(Build)	3333.33	root	data:Selection_11
 │ └─Selection_11	3333.33	cop[tikv]	gt(test.t.a, 1)
 │   └─TableFullScan_10	10000.00	cop[tikv]	table:ta, keep order:false, stats:pseudo
@@ -582,11 +582,11 @@ HashRightJoin_9	4166.67	root	inner join, inner:TableReader_12, equal:[eq(test.t.
 explain select ifnull(t.nc, 1) in (select count(*) from t s , t t1 where s.a = t.a and s.a = t1.a) from t;
 id	estRows	task	operator info
 Projection_12	10000.00	root	Column#14
-└─Apply_14	10000.00	root	CARTESIAN left outer semi join, inner:HashAgg_19, other cond:eq(test.t.nc, Column#13)
+└─Apply_14	10000.00	root	CARTESIAN left outer semi join, other cond:eq(test.t.nc, Column#13)
   ├─TableReader_16(Build)	10000.00	root	data:TableFullScan_15
   │ └─TableFullScan_15	10000.00	cop[tikv]	table:t, keep order:false, stats:pseudo
   └─HashAgg_19(Probe)	1.00	root	funcs:count(Column#15)->Column#13
-    └─HashLeftJoin_20	9.99	root	inner join, inner:HashAgg_30, equal:[eq(test.t.a, test.t.a)]
+    └─HashLeftJoin_20	9.99	root	inner join, equal:[eq(test.t.a, test.t.a)]
       ├─HashAgg_30(Build)	7.99	root	group by:test.t.a, funcs:count(Column#16)->Column#15, funcs:firstrow(test.t.a)->test.t.a
       │ └─TableReader_31	7.99	root	data:HashAgg_25
       │   └─HashAgg_25	7.99	cop[tikv]	group by:test.t.a, funcs:count(1)->Column#16
@@ -598,14 +598,14 @@ Projection_12	10000.00	root	Column#14
 explain select * from t ta left outer join t tb on ta.nb = tb.nb and ta.a > 1 where ifnull(tb.a, 1) or tb.a is null;
 id	estRows	task	operator info
 Selection_7	10000.00	root	or(ifnull(test.t.a, 1), isnull(test.t.a))
-└─HashLeftJoin_8	12500.00	root	left outer join, inner:TableReader_13, equal:[eq(test.t.nb, test.t.nb)], left cond:[gt(test.t.a, 1)]
+└─HashLeftJoin_8	12500.00	root	left outer join, equal:[eq(test.t.nb, test.t.nb)], left cond:[gt(test.t.a, 1)]
   ├─TableReader_13(Build)	10000.00	root	data:TableFullScan_12
   │ └─TableFullScan_12	10000.00	cop[tikv]	table:tb, keep order:false, stats:pseudo
   └─TableReader_11(Probe)	10000.00	root	data:TableFullScan_10
     └─TableFullScan_10	10000.00	cop[tikv]	table:ta, keep order:false, stats:pseudo
 explain select * from t ta right outer join t tb on ta.nb = tb.nb and ta.a > 1 where ifnull(tb.a, 1) or tb.a is null;
 id	estRows	task	operator info
-HashRightJoin_7	8000.00	root	right outer join, inner:TableReader_11, equal:[eq(test.t.nb, test.t.nb)]
+HashRightJoin_7	8000.00	root	right outer join, equal:[eq(test.t.nb, test.t.nb)]
 ├─TableReader_11(Build)	3333.33	root	data:Selection_10
 │ └─Selection_10	3333.33	cop[tikv]	gt(test.t.a, 1)
 │   └─TableFullScan_9	10000.00	cop[tikv]	table:ta, keep order:false, stats:pseudo
@@ -615,11 +615,11 @@ HashRightJoin_7	8000.00	root	right outer join, inner:TableReader_11, equal:[eq(t
 explain select ifnull(t.a, 1) in (select count(*) from t s , t t1 where s.a = t.a and s.a = t1.a) from t;
 id	estRows	task	operator info
 Projection_12	10000.00	root	Column#14
-└─Apply_14	10000.00	root	CARTESIAN left outer semi join, inner:HashAgg_19, other cond:eq(ifnull(test.t.a, 1), Column#13)
+└─Apply_14	10000.00	root	CARTESIAN left outer semi join, other cond:eq(ifnull(test.t.a, 1), Column#13)
   ├─TableReader_16(Build)	10000.00	root	data:TableFullScan_15
   │ └─TableFullScan_15	10000.00	cop[tikv]	table:t, keep order:false, stats:pseudo
   └─HashAgg_19(Probe)	1.00	root	funcs:count(Column#15)->Column#13
-    └─HashLeftJoin_20	9.99	root	inner join, inner:HashAgg_30, equal:[eq(test.t.a, test.t.a)]
+    └─HashLeftJoin_20	9.99	root	inner join, equal:[eq(test.t.a, test.t.a)]
       ├─HashAgg_30(Build)	7.99	root	group by:test.t.a, funcs:count(Column#16)->Column#15, funcs:firstrow(test.t.a)->test.t.a
       │ └─TableReader_31	7.99	root	data:HashAgg_25
       │   └─HashAgg_25	7.99	cop[tikv]	group by:test.t.a, funcs:count(1)->Column#16
@@ -696,7 +696,7 @@ begin;
 insert into t values (1);
 explain select * from t left outer join t t1 on t.a = t1.a where t.a not between 1 and 2;
 id	estRows	task	operator info
-HashLeftJoin_9	8320.83	root	left outer join, inner:UnionScan_15, equal:[eq(test.t.a, test.t.a)]
+HashLeftJoin_9	8320.83	root	left outer join, equal:[eq(test.t.a, test.t.a)]
 ├─UnionScan_15(Build)	6656.67	root	not(and(ge(test.t.a, 1), le(test.t.a, 2))), not(isnull(test.t.a))
 │ └─TableReader_18	6656.67	root	data:Selection_17
 │   └─Selection_17	6656.67	cop[tikv]	not(isnull(test.t.a)), or(lt(test.t.a, 1), gt(test.t.a, 2))
