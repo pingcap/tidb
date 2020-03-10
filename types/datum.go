@@ -70,21 +70,27 @@ type Datum struct {
 	x         interface{} // x hold all other types.
 }
 
-// Copy deep copies a Datum.
-func (d *Datum) Copy() *Datum {
-	ret := *d
+// Clone create a deep copy of the Datum.
+func (d *Datum) Clone() *Datum {
+	ret := new(Datum)
+	d.Copy(ret)
+	return ret
+}
+
+// Copy deep copies a Datum into destination.
+func (d *Datum) Copy(dst *Datum) {
+	*dst = *d
 	if d.b != nil {
-		ret.b = make([]byte, len(d.b))
-		copy(ret.b, d.b)
+		dst.b = make([]byte, len(d.b))
+		copy(dst.b, d.b)
 	}
-	switch ret.Kind() {
+	switch dst.Kind() {
 	case KindMysqlDecimal:
 		d := *d.GetMysqlDecimal()
-		ret.SetMysqlDecimal(&d)
+		dst.SetMysqlDecimal(&d)
 	case KindMysqlTime:
-		ret.SetMysqlTime(d.GetMysqlTime())
+		dst.SetMysqlTime(d.GetMysqlTime())
 	}
-	return &ret
 }
 
 // Kind gets the kind of the datum.
@@ -1946,17 +1952,11 @@ func DatumsToStrNoErr(datums []Datum) string {
 	return str
 }
 
-// CloneDatum returns a new copy of the datum.
-// TODO: Abandon this function.
-func CloneDatum(datum Datum) Datum {
-	return *datum.Copy()
-}
-
 // CloneRow deep copies a Datum slice.
 func CloneRow(dr []Datum) []Datum {
 	c := make([]Datum, len(dr))
 	for i, d := range dr {
-		c[i] = *d.Copy()
+		d.Copy(&c[i])
 	}
 	return c
 }
