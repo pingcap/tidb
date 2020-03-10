@@ -200,6 +200,10 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowTableRegions()
 	case ast.ShowBuiltins:
 		return e.fetchShowBuiltins()
+	case ast.ShowBackups:
+		return e.fetchShowBRIE(ast.BRIEKindBackup)
+	case ast.ShowRestores:
+		return e.fetchShowBRIE(ast.BRIEKindRestore)
 	}
 	return nil
 }
