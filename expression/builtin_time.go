@@ -815,8 +815,8 @@ func (b *builtinDateFormatSig) evalString(row chunk.Row) (string, bool, error) {
 	if t.InvalidZero() {
 		// MySQL compatibility, #11203
 		// 0 | 0.0 should be converted to null without warnings
-		n, isNullInt, errInt := b.args[0].EvalInt(b.ctx, row)
-		isOriginalIntOrDecimalZero := n == 0 && !isNullInt && errInt == nil
+		n, err := t.ToNumber().ToInt()
+		isOriginalIntOrDecimalZero := err == nil && n == 0
 		// Args like "0000-00-00", "0000-00-00 00:00:00" set Fsp to 6
 		isOriginalStringZero := t.Fsp() > 0
 		if isOriginalIntOrDecimalZero && !isOriginalStringZero {
