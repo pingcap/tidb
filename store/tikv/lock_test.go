@@ -430,7 +430,7 @@ func (s *testLockSuite) TestLockTTL(c *C) {
 	c.Assert(err, IsNil)
 	txn.Set(kv.Key("key"), []byte("value"))
 	time.Sleep(time.Millisecond)
-	s.prewriteTxnWithTTL(c, txn.(*tikvTxn), 3000)
+	s.prewriteTxnWithTTL(c, txn.(*tikvTxn), 3100)
 	l := s.mustGetLock(c, []byte("key"))
 	c.Assert(l.TTL >= defaultLockTTL, IsTrue)
 
