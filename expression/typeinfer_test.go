@@ -14,7 +14,6 @@
 package expression_test
 
 import (
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"math"
 
 	. "github.com/pingcap/check"
@@ -25,6 +24,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/testkit"
