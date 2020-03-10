@@ -1134,7 +1134,6 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 		}
 	}()
 
-	binlogPrewriteStart := time.Now()
 	binlogChan := c.prewriteBinlog(ctx)
 	prewriteBo := NewBackoffer(ctx, PrewriteMaxBackoff).WithVars(c.txn.vars)
 	start := time.Now()
@@ -1157,7 +1156,6 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 			}
 		}
 	}
-	commitDetail.BinlogPrewriteTime = time.Since(binlogPrewriteStart)
 	if err != nil {
 		logutil.Logger(ctx).Debug("2PC failed on prewrite",
 			zap.Error(err),
@@ -1284,7 +1282,9 @@ func (c *twoPhaseCommitter) prewriteBinlog(ctx context.Context) chan *binloginfo
 		if bin.Tp == binlog.BinlogType_Prewrite {
 			bin.PrewriteKey = c.primary()
 		}
+		binlogPrewriteStart := time.Now()
 		wr := binInfo.WriteBinlog(c.store.clusterID)
+		c.getDetail().BinlogPrewriteTime = time.Since(binlogPrewriteStart)
 		if wr.Skipped() {
 			binInfo.Data.PrewriteValue = nil
 			binloginfo.AddOneSkippedCommitter()
