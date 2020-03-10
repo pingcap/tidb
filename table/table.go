@@ -111,11 +111,20 @@ type RecordIterFunc func(h int64, rec []types.Datum, cols []*Column) (more bool,
 type AddRecordOpt struct {
 	CreateIdxOpt
 	IsUpdate bool
+	ReserveAutoID int
 }
 
 // AddRecordOption is defined for the AddRecord() method of the Table interface.
 type AddRecordOption interface {
 	ApplyOn(*AddRecordOpt)
+}
+
+// WithReserveAutoIDHint tells the AddRecord operation to reserve a batch of auto ID in the stmtctx.
+type WithReserveAutoIDHint int
+
+// ApplyOn implements the AddRecordOption interface.
+func (n WithReserveAutoIDHint) ApplyOn(opt *AddRecordOpt) {
+	opt.ReserveAutoID = int(n)
 }
 
 // ApplyOn implements the AddRecordOption interface, so any CreateIdxOptFunc

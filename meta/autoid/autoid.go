@@ -579,7 +579,9 @@ func (alloc *allocator) alloc4Signed(tableID int64, n uint64, increment, offset 
 
 	// Condition alloc.base+N1 > alloc.end will overflow when alloc.base + N1 > MaxInt64. So need this.
 	if math.MaxInt64-alloc.base <= n1 {
-		return 0, 0, ErrAutoincReadFailed
+		// TODO: This error information is not accurate, it should be something
+		// like "The Auto Increment ID is exhausted".
+		return 0, 0, errors.Trace(ErrAutoincReadFailed)
 	}
 	// The local rest is not enough for allocN, skip it.
 	if alloc.base+n1 > alloc.end {
@@ -604,7 +606,9 @@ func (alloc *allocator) alloc4Signed(tableID int64, n uint64, increment, offset 
 			tmpStep := mathutil.MinInt64(math.MaxInt64-newBase, alloc.step)
 			// The global rest is not enough for alloc.
 			if tmpStep < n1 {
-				return ErrAutoincReadFailed
+				// TODO: This error information is not accurate, it should be something
+				// like "The Auto Increment ID is exhausted".
+				return errors.Trace(ErrAutoincReadFailed)
 			}
 			newEnd, err1 = generateAutoIDByAllocType(m, alloc.dbID, tableID, tmpStep, alloc.allocType)
 			return err1
@@ -615,7 +619,9 @@ func (alloc *allocator) alloc4Signed(tableID int64, n uint64, increment, offset 
 		}
 		alloc.lastAllocTime = time.Now()
 		if newBase == math.MaxInt64 {
-			return 0, 0, ErrAutoincReadFailed
+			// TODO: This error information is not accurate, it should be something
+			// like "The Auto Increment ID is exhausted".
+			return 0, 0, errors.Trace(ErrAutoincReadFailed)
 		}
 		alloc.base, alloc.end = newBase, newEnd
 	}
@@ -641,7 +647,9 @@ func (alloc *allocator) alloc4Unsigned(tableID int64, n uint64, increment, offse
 
 	// Condition alloc.base+n1 > alloc.end will overflow when alloc.base + n1 > MaxInt64. So need this.
 	if math.MaxUint64-uint64(alloc.base) <= uint64(n1) {
-		return 0, 0, ErrAutoincReadFailed
+		// TODO: This error information is not accurate, it should be something
+		// like "The Auto Increment ID is exhausted".
+		return 0, 0, errors.Trace(ErrAutoincReadFailed)
 	}
 	// The local rest is not enough for alloc, skip it.
 	if uint64(alloc.base)+uint64(n1) > uint64(alloc.end) {
@@ -656,6 +664,8 @@ func (alloc *allocator) alloc4Unsigned(tableID int64, n uint64, increment, offse
 		} else {
 			alloc.step = nextStep
 		}
+
+		// TODO: Reduce code duplication with alloc4Unsigned.
 		err := kv.RunInNewTxn(alloc.store, true, func(txn kv.Transaction) error {
 			m := meta.NewMeta(txn)
 			var err1 error
@@ -666,7 +676,9 @@ func (alloc *allocator) alloc4Unsigned(tableID int64, n uint64, increment, offse
 			tmpStep := int64(mathutil.MinUint64(math.MaxUint64-uint64(newBase), uint64(alloc.step)))
 			// The global rest is not enough for alloc.
 			if tmpStep < n1 {
-				return ErrAutoincReadFailed
+				// TODO: This error information is not accurate, it should be something
+				// like "The Auto Increment ID is exhausted".
+				return errors.Trace(ErrAutoincReadFailed)
 			}
 			newEnd, err1 = generateAutoIDByAllocType(m, alloc.dbID, tableID, tmpStep, alloc.allocType)
 			return err1
@@ -677,7 +689,9 @@ func (alloc *allocator) alloc4Unsigned(tableID int64, n uint64, increment, offse
 		}
 		alloc.lastAllocTime = time.Now()
 		if uint64(newBase) == math.MaxUint64 {
-			return 0, 0, ErrAutoincReadFailed
+			// TODO: This error information is not accurate, it should be something
+			// like "The Auto Increment ID is exhausted".
+			return 0, 0, errors.Trace(ErrAutoincReadFailed)
 		}
 		alloc.base, alloc.end = newBase, newEnd
 	}
@@ -744,7 +758,7 @@ func (alloc *allocator) alloc4Sequence(tableID int64) (min int64, max int64, rou
 
 		if err1 != nil && err1 == ErrAutoincReadFailed {
 			if !alloc.sequence.Cycle {
-				return err1
+				return errors.Trace(err1)
 			}
 			// Reset the sequence base and offset.
 			if alloc.sequence.Increment > 0 {
@@ -756,7 +770,7 @@ func (alloc *allocator) alloc4Sequence(tableID int64) (min int64, max int64, rou
 			}
 			err1 = m.SetSequenceValue(alloc.dbID, tableID, newBase)
 			if err1 != nil {
-				return err1
+				return errors.Trace(err1)
 			}
 
 			// Reset sequence round state value.
@@ -766,13 +780,13 @@ func (alloc *allocator) alloc4Sequence(tableID int64) (min int64, max int64, rou
 			// TiDB is a stateless node, it should know whether the sequence is already in cycle when restart.
 			err1 = m.SetSequenceCycle(alloc.dbID, tableID, round)
 			if err1 != nil {
-				return err1
+				return errors.Trace(err1)
 			}
 
 			// Recompute the sequence next batch size.
 			seqStep, err1 = CalcSequenceBatchSize(newBase, cacheSize, increment, offset, minValue, maxValue)
 			if err1 != nil {
-				return err1
+				return errors.Trace(err1)
 			}
 		}
 		var delta int64
