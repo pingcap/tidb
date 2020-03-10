@@ -16,7 +16,6 @@ package expression
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/pingcap/tidb/kv"
 	"strings"
 
 	"github.com/gogo/protobuf/proto"
@@ -26,6 +25,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"

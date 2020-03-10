@@ -16,7 +16,6 @@ package expression
 import (
 	goJSON "encoding/json"
 	"fmt"
-	"github.com/pingcap/tidb/kv"
 	"sync"
 
 	"github.com/pingcap/errors"
@@ -25,6 +24,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/opcode"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
@@ -689,6 +689,9 @@ func IsBinaryLiteral(expr Expression) bool {
 }
 
 // CheckExprPushDown check if all the expr in the expr list can be push down to the storage.
+// The check contains two stage:
+// 1. check if the expr can be converted to PB, which is a precondition for all store type
+// 2. check based on the store type
 func CheckExprPushDown(sc *stmtctx.StatementContext, exprs []Expression, client kv.Client, storeType kv.StoreType) bool {
 	_, _, remained := ExpressionsToPB(sc, exprs, client)
 	if len(remained) > 0 {
@@ -705,25 +708,21 @@ func CheckExprPushDown(sc *stmtctx.StatementContext, exprs []Expression, client 
 // ExprPushDown push down an expr list to storage.
 // Note this function assumes all the expr in expr list can be convert to pb expr
 func ExprPushDown(sc *stmtctx.StatementContext, exprs []Expression, client kv.Client, storeType kv.StoreType, skipPBCheck bool) (exprPush, remain []Expression) {
+	exprsToPushDown := exprs
 	if !skipPBCheck {
 		_, exprPush, remain = ExpressionsToPB(sc, exprs, client)
-		var storeRemained []Expression
-		switch storeType {
-		case kv.TiFlash:
-			exprPush, storeRemained = flashExprPushDown(exprPush)
-		default:
-			exprPush, storeRemained = tikvExprPushDown(exprPush)
-		}
-		remain = append(remain, storeRemained...)
-		return
+		exprsToPushDown = exprPush
 	}
 
+	var storeRemained []Expression
 	switch storeType {
 	case kv.TiFlash:
-		return flashExprPushDown(exprs)
+		exprPush, storeRemained = flashExprPushDown(exprsToPushDown)
 	default:
-		return tikvExprPushDown(exprs)
+		exprPush, storeRemained = tikvExprPushDown(exprsToPushDown)
 	}
+	remain = append(remain, storeRemained...)
+	return
 }
 
 func scalarExprSupportedByTiKV(function *ScalarFunction) bool {
@@ -814,6 +813,9 @@ func flashExprPushDown(exprs []Expression) (exprPush, remain []Expression) {
 // checkFlashExprPushDown check an expr list can be pushed down to flash storage.
 func checkFlashExprPushDown(exprs []Expression) bool {
 	for _, expr := range exprs {
+		if expr.GetType().Tp == mysql.TypeDuration || expr.GetType().Tp == mysql.TypeJSON {
+			return false
+		}
 		if scalarFunc, ok := expr.(*ScalarFunction); ok {
 			if scalarExprSupportedByFlash(scalarFunc) {
 				if !checkFlashExprPushDown(scalarFunc.GetArgs()) {
