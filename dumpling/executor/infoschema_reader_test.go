@@ -338,3 +338,8 @@ func (s *testInfoschemaTableSerialSuite) TestPartitionsTable(c *C) {
 
 	tk.MustExec("DROP TABLE `test_partitions`;")
 }
+
+func (s *testInfoschemaTableSuite) TestTableConstraintsTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustQuery("select * from information_schema.TABLE_CONSTRAINTS where TABLE_NAME='gc_delete_range';").Check(testkit.Rows("def mysql delete_range_index mysql gc_delete_range UNIQUE"))
+}

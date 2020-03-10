@@ -67,11 +67,12 @@ const (
 	// TablePartitions is the string constant of infoschema table
 	TablePartitions = "PARTITIONS"
 	// TableKeyColumn is the string constant of KEY_COLUMN_USAGE
-	TableKeyColumn   = "KEY_COLUMN_USAGE"
-	tableReferConst  = "REFERENTIAL_CONSTRAINTS"
-	tableSessionVar  = "SESSION_VARIABLES"
-	tablePlugins     = "PLUGINS"
-	tableConstraints = "TABLE_CONSTRAINTS"
+	TableKeyColumn  = "KEY_COLUMN_USAGE"
+	tableReferConst = "REFERENTIAL_CONSTRAINTS"
+	tableSessionVar = "SESSION_VARIABLES"
+	tablePlugins    = "PLUGINS"
+	// TableConstraints is the string constant of TABLE_CONSTRAINTS.
+	TableConstraints = "TABLE_CONSTRAINTS"
 	tableTriggers    = "TRIGGERS"
 	// TableUserPrivileges is the string constant of infoschema user privilege table.
 	TableUserPrivileges   = "USER_PRIVILEGES"
@@ -146,7 +147,7 @@ var tableIDMap = map[string]int64{
 	tableReferConst:                         autoid.InformationSchemaDBID + 13,
 	tableSessionVar:                         autoid.InformationSchemaDBID + 14,
 	tablePlugins:                            autoid.InformationSchemaDBID + 15,
-	tableConstraints:                        autoid.InformationSchemaDBID + 16,
+	TableConstraints:                        autoid.InformationSchemaDBID + 16,
 	tableTriggers:                           autoid.InformationSchemaDBID + 17,
 	TableUserPrivileges:                     autoid.InformationSchemaDBID + 18,
 	tableSchemaPrivileges:                   autoid.InformationSchemaDBID + 19,
@@ -1408,60 +1409,13 @@ func dataForStatisticsInTable(schema *model.DBInfo, table *model.TableInfo) [][]
 }
 
 const (
-	primaryKeyType = "PRIMARY KEY"
-	// PrimaryConstraint is the string constant of PRIMARY
+	// PrimaryKeyType is the string constant of PRIMARY KEY.
+	PrimaryKeyType = "PRIMARY KEY"
+	// PrimaryConstraint is the string constant of PRIMARY.
 	PrimaryConstraint = "PRIMARY"
-	uniqueKeyType     = "UNIQUE"
+	// UniqueKeyType is the string constant of UNIQUE.
+	UniqueKeyType = "UNIQUE"
 )
-
-// dataForTableConstraints constructs data for table information_schema.constraints.See https://dev.mysql.com/doc/refman/5.7/en/table-constraints-table.html
-func dataForTableConstraints(ctx sessionctx.Context, schemas []*model.DBInfo) [][]types.Datum {
-	checker := privilege.GetPrivilegeManager(ctx)
-	var rows [][]types.Datum
-	for _, schema := range schemas {
-		for _, tbl := range schema.Tables {
-			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, tbl.Name.L, "", mysql.AllPrivMask) {
-				continue
-			}
-
-			if tbl.PKIsHandle {
-				record := types.MakeDatums(
-					CatalogVal,           // CONSTRAINT_CATALOG
-					schema.Name.O,        // CONSTRAINT_SCHEMA
-					mysql.PrimaryKeyName, // CONSTRAINT_NAME
-					schema.Name.O,        // TABLE_SCHEMA
-					tbl.Name.O,           // TABLE_NAME
-					primaryKeyType,       // CONSTRAINT_TYPE
-				)
-				rows = append(rows, record)
-			}
-
-			for _, idx := range tbl.Indices {
-				var cname, ctype string
-				if idx.Primary {
-					cname = mysql.PrimaryKeyName
-					ctype = primaryKeyType
-				} else if idx.Unique {
-					cname = idx.Name.O
-					ctype = uniqueKeyType
-				} else {
-					// The index has no constriant.
-					continue
-				}
-				record := types.MakeDatums(
-					CatalogVal,    // CONSTRAINT_CATALOG
-					schema.Name.O, // CONSTRAINT_SCHEMA
-					cname,         // CONSTRAINT_NAME
-					schema.Name.O, // TABLE_SCHEMA
-					tbl.Name.O,    // TABLE_NAME
-					ctype,         // CONSTRAINT_TYPE
-				)
-				rows = append(rows, record)
-			}
-		}
-	}
-	return rows
-}
 
 // dataForPseudoProfiling returns pseudo data for table profiling when system variable `profiling` is set to `ON`.
 func dataForPseudoProfiling() [][]types.Datum {
@@ -1851,7 +1805,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	tableReferConst:                         referConstCols,
 	tableSessionVar:                         sessionVarCols,
 	tablePlugins:                            pluginsCols,
-	tableConstraints:                        tableConstraintsCols,
+	TableConstraints:                        tableConstraintsCols,
 	tableTriggers:                           tableTriggersCols,
 	TableUserPrivileges:                     tableUserPrivilegesCols,
 	tableSchemaPrivileges:                   tableSchemaPrivilegesCols,
@@ -1936,8 +1890,6 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		fullRows = dataForStatistics(ctx, dbs)
 	case tableSessionVar:
 		fullRows, err = dataForSessionVar(ctx)
-	case tableConstraints:
-		fullRows = dataForTableConstraints(ctx, dbs)
 	case tableFiles:
 	case tableProfiling:
 		if v, ok := ctx.GetSessionVars().GetSystemVar("profiling"); ok && variable.TiDBOptOn(v) {
