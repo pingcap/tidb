@@ -182,8 +182,15 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	// Fetch all values.
 	var values map[string][]byte
 	if e.lock {
-		keys := append(keys, indexKeys...)
-		values, err = e.lockKeys(ctx, keys)
+		lockKeys := make([]kv.Key, len(keys), len(keys)+len(indexKeys))
+		copy(lockKeys, keys)
+		for _, idxKey := range indexKeys {
+			// lock the non-exist index key
+			if _, ok := handleVals[string(idxKey)]; !ok {
+				lockKeys = append(lockKeys, idxKey)
+			}
+		}
+		values, err = e.lockKeys(ctx, lockKeys)
 		if err != nil {
 			return err
 		}
