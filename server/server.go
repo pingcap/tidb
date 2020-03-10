@@ -37,6 +37,7 @@ import (
 	"net"
 	"net/http"
 	"unsafe"
+
 	// For pprof
 	_ "net/http/pprof"
 	"os"
@@ -55,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/fastrand"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sys/linux"
 	"github.com/pingcap/tidb/util/timeutil"
@@ -158,7 +160,7 @@ func (s *Server) newConn(conn net.Conn) *clientConn {
 		}
 	}
 	cc.setConn(conn)
-	cc.salt = util.RandomBuf(20)
+	cc.salt = fastrand.Buf(20)
 	return cc
 }
 
