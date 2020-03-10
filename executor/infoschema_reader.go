@@ -181,8 +181,7 @@ func getDataAndIndexLength(info *model.TableInfo, physicalID int64, rowCount uin
 }
 
 type statsCache struct {
-	mu         sync.Mutex
-	loading    bool
+	mu         sync.RWMutex
 	modifyTime time.Time
 	tableRows  map[int64]uint64
 	colLength  map[tableHistID]uint64
@@ -193,39 +192,32 @@ var tableStatsCache = &statsCache{}
 // TableStatsCacheExpiry is the expiry time for table stats cache.
 var TableStatsCacheExpiry = 3 * time.Second
 
-func (c *statsCache) setLoading(loading bool) {
-	c.mu.Lock()
-	c.loading = loading
-	c.mu.Unlock()
-}
-
 func (c *statsCache) get(ctx sessionctx.Context) (map[int64]uint64, map[tableHistID]uint64, error) {
-	c.mu.Lock()
-	if time.Since(c.modifyTime) < TableStatsCacheExpiry || c.loading {
+	c.mu.RLock()
+	if time.Since(c.modifyTime) < TableStatsCacheExpiry {
 		tableRows, colLength := c.tableRows, c.colLength
-		c.mu.Unlock()
+		c.mu.RUnlock()
 		return tableRows, colLength, nil
 	}
-	c.loading = true
-	c.mu.Unlock()
+	c.mu.RUnlock()
 
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if time.Since(c.modifyTime) < TableStatsCacheExpiry {
+		return c.tableRows, c.colLength, nil
+	}
 	tableRows, err := getRowCountAllTable(ctx)
 	if err != nil {
-		c.setLoading(false)
 		return nil, nil, err
 	}
 	colLength, err := getColLengthAllTables(ctx)
 	if err != nil {
-		c.setLoading(false)
 		return nil, nil, err
 	}
 
-	c.mu.Lock()
-	c.loading = false
 	c.tableRows = tableRows
 	c.colLength = colLength
 	c.modifyTime = time.Now()
-	c.mu.Unlock()
 	return tableRows, colLength, nil
 }
 
@@ -235,7 +227,7 @@ func getAutoIncrementID(ctx sessionctx.Context, schema *model.DBInfo, tblInfo *m
 	if err != nil {
 		return 0, err
 	}
-	return tbl.Allocator(ctx, autoid.RowIDAllocType).Base() + 1, nil
+	return tbl.Allocators(ctx).Get(autoid.RowIDAllocType).Base() + 1, nil
 }
 
 func (e *memtableRetriever) setDataFromSchemata(ctx sessionctx.Context, schemas []*model.DBInfo) {
