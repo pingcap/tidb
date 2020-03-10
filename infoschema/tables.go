@@ -69,7 +69,8 @@ const (
 	// TableKeyColumn is the string constant of KEY_COLUMN_USAGE
 	TableKeyColumn  = "KEY_COLUMN_USAGE"
 	tableReferConst = "REFERENTIAL_CONSTRAINTS"
-	tableSessionVar = "SESSION_VARIABLES"
+	// TableConstraints is the string constant of SESSION_VARIABLES.
+	TableSessionVar = "SESSION_VARIABLES"
 	tablePlugins    = "PLUGINS"
 	// TableConstraints is the string constant of TABLE_CONSTRAINTS.
 	TableConstraints = "TABLE_CONSTRAINTS"
@@ -1140,25 +1141,6 @@ func dataForTiKVStoreStatus(ctx sessionctx.Context) (records [][]types.Datum, er
 	return records, nil
 }
 
-func dataForSessionVar(ctx sessionctx.Context) (records [][]types.Datum, err error) {
-	sessionVars := ctx.GetSessionVars()
-	for _, v := range variable.SysVars {
-		var value string
-		value, err = variable.GetSessionSystemVar(sessionVars, v.Name)
-		if err != nil {
-			return nil, err
-		}
-		row := types.MakeDatums(v.Name, value)
-		records = append(records, row)
-	}
-	return
-}
-
-func dataForUserPrivileges(ctx sessionctx.Context) [][]types.Datum {
-	pm := privilege.GetPrivilegeManager(ctx)
-	return pm.UserPrivilegesTable()
-}
-
 func dataForProcesslist(ctx sessionctx.Context) [][]types.Datum {
 	sm := ctx.GetSessionManager()
 	if sm == nil {
@@ -1888,8 +1870,6 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		fullRows = dataForColumns(ctx, dbs)
 	case tableStatistics:
 		fullRows = dataForStatistics(ctx, dbs)
-	case tableSessionVar:
-		fullRows, err = dataForSessionVar(ctx)
 	case tableFiles:
 	case tableProfiling:
 		if v, ok := ctx.GetSessionVars().GetSystemVar("profiling"); ok && variable.TiDBOptOn(v) {
