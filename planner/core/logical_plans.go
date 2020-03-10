@@ -151,8 +151,8 @@ type LogicalJoin struct {
 	equalCondOutCnt float64
 }
 
-// Clone clones a LogicalJoin struct.
-func (p *LogicalJoin) Clone() *LogicalJoin {
+// Shallow shallow copies a LogicalJoin struct.
+func (p *LogicalJoin) Shallow() *LogicalJoin {
 	join := *p
 	return join.Init(p.ctx, p.blockOffset)
 }

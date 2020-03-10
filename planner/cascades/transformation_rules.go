@@ -2180,7 +2180,7 @@ func (r *TransformApplyToJoin) OnTransform(old *memo.ExprIter) (newExprs []*memo
 		return nil, false, false, nil
 	}
 
-	join := apply.LogicalJoin.Clone()
+	join := apply.LogicalJoin.Shallow()
 	joinGroupExpr := memo.NewGroupExpr(join)
 	joinGroupExpr.SetChildren(groupExpr.Children...)
 	return []*memo.GroupExpr{joinGroupExpr}, true, false, nil
@@ -2238,7 +2238,7 @@ func (r *PullSelectionUpApply) OnTransform(old *memo.ExprIter) (newExprs []*memo
 		newConds = append(newConds, cond.Clone().Decorrelate(outerChildGroup.Prop.Schema))
 	}
 	newApply := plannercore.LogicalApply{
-		LogicalJoin: *(apply.LogicalJoin.Clone()),
+		LogicalJoin: *(apply.LogicalJoin.Shallow()),
 		CorCols:     apply.CorCols,
 	}.Init(apply.SCtx(), apply.SelectBlockOffset())
 	// Update Join conditions.
