@@ -47,6 +47,7 @@ func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction
 	case ast.EQ, ast.NE, ast.GE, ast.GT, ast.LE, ast.LT:
 		if _, ok := scalar.GetArgs()[0].(*expression.Constant); ok {
 			if c.checkColumn(scalar.GetArgs()[1]) {
+				// Checks whether the scalar function is calculated use the collation compatible with the column.
 				if scalar.GetArgs()[1].GetType().EvalType() == types.ETString && !collate.CompatibleCollate(scalar.GetArgs()[1].GetType().Collate, collation) {
 					return false
 				}
@@ -55,7 +56,8 @@ func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction
 		}
 		if _, ok := scalar.GetArgs()[1].(*expression.Constant); ok {
 			if c.checkColumn(scalar.GetArgs()[0]) {
-				if scalar.GetArgs()[1].GetType().EvalType() == types.ETString && !collate.CompatibleCollate(scalar.GetArgs()[0].GetType().Collate, collation) {
+				// Checks whether the scalar function is calculated use the collation compatible with the column.
+				if scalar.GetArgs()[0].GetType().EvalType() == types.ETString && !collate.CompatibleCollate(scalar.GetArgs()[0].GetType().Collate, collation) {
 					return false
 				}
 				return scalar.FuncName.L != ast.NE || c.length == types.UnspecifiedLength
