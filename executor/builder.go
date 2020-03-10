@@ -1639,11 +1639,11 @@ func (b *executorBuilder) updateForUpdateTSIfNeeded(selectPlan plannercore.Physi
 		return err
 	}
 	if !txn.Valid() {
-		txn, err := b.ctx.Txn(true)
+		_, err := b.ctx.Txn(true)
 		if err != nil {
 			return err
 		}
-		return UpdateForUpdateTS(b.ctx, txn.StartTS())
+		return nil
 	}
 	// The Repeatable Read transaction use Read Committed level to read data for writing (insert, update, delete, select for update),
 	// We should always update/refresh the for-update-ts no matter the isolation level is RR or RC.
