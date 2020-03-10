@@ -11,18 +11,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package util
+package fastrand
 
 import (
 	_ "unsafe" // required by go:linkname
 )
 
-// RandomBuf generates a random string using ASCII characters but avoid separator character.
+// Buf generates a random string using ASCII characters but avoid separator character.
 // See https://github.com/mysql/mysql-server/blob/5.7/mysys_ssl/crypt_genhash_impl.cc#L435
-func RandomBuf(size int) []byte {
+func Buf(size int) []byte {
 	buf := make([]byte, size)
 	for i := 0; i < size; i++ {
-		buf[i] = byte(FastRand32N(127))
+		buf[i] = byte(Uint32N(127))
 		if buf[i] == 0 || buf[i] == byte('$') {
 			buf[i]++
 		}
@@ -30,22 +30,22 @@ func RandomBuf(size int) []byte {
 	return buf
 }
 
-// FastRand returns a lock free uint32 value.
-//go:linkname FastRand runtime.fastrand
-func FastRand() uint32
+// Uint32 returns a lock free uint32 value.
+//go:linkname Uint32 runtime.fastrand
+func Uint32() uint32
 
-// FastRand32N returns, as an uint32, a pseudo-random number in [0,n).
-func FastRand32N(n uint32) uint32 {
+// Uint32N returns, as an uint32, a pseudo-random number in [0,n).
+func Uint32N(n uint32) uint32 {
 	if n&(n-1) == 0 { // n is power of two, can mask
-		return FastRand() & (n - 1)
+		return Uint32() & (n - 1)
 	}
-	return FastRand() % n
+	return Uint32() % n
 }
 
-// FastRand64N returns, as an uint64, a pseudo-random number in [0,n).
-func FastRand64N(n uint64) uint64 {
-	a := FastRand()
-	b := FastRand()
+// Uint64N returns, as an uint64, a pseudo-random number in [0,n).
+func Uint64N(n uint64) uint64 {
+	a := Uint32()
+	b := Uint32()
 	v := uint64(a)<<32 + uint64(b)
 	if n&(n-1) == 0 { // n is power of two, can mask
 		return v & (n - 1)

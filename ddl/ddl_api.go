@@ -2096,7 +2096,7 @@ func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int6
 	if err != nil {
 		return errors.Trace(err)
 	}
-	autoIncID, err := t.Allocator(ctx, autoid.RowIDAllocType).NextGlobalAutoID(t.Meta().ID)
+	autoIncID, err := t.Allocators(ctx).Get(autoid.RowIDAllocType).NextGlobalAutoID(t.Meta().ID)
 	if err != nil {
 		return errors.Trace(err)
 	}
