@@ -290,7 +290,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 			}
 			lockKeysCnt := a.Ctx.GetSessionVars().StmtCtx.LockKeysCount
 			if lockKeysCnt > 0 {
-				metrics.StatementLockKeysCount.Add(float64(lockKeysCnt))
+				metrics.StatementLockKeysCount.Observe(float64(lockKeysCnt))
 			}
 			return
 		}
