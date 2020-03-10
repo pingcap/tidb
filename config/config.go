@@ -242,13 +242,14 @@ func (l *Log) getDisableErrorStack() bool {
 
 // Security is the security section of the config.
 type Security struct {
-	SkipGrantTable bool   `toml:"skip-grant-table" json:"skip-grant-table"`
-	SSLCA          string `toml:"ssl-ca" json:"ssl-ca"`
-	SSLCert        string `toml:"ssl-cert" json:"ssl-cert"`
-	SSLKey         string `toml:"ssl-key" json:"ssl-key"`
-	ClusterSSLCA   string `toml:"cluster-ssl-ca" json:"cluster-ssl-ca"`
-	ClusterSSLCert string `toml:"cluster-ssl-cert" json:"cluster-ssl-cert"`
-	ClusterSSLKey  string `toml:"cluster-ssl-key" json:"cluster-ssl-key"`
+	SkipGrantTable  bool     `toml:"skip-grant-table" json:"skip-grant-table"`
+	SSLCA           string   `toml:"ssl-ca" json:"ssl-ca"`
+	SSLCert         string   `toml:"ssl-cert" json:"ssl-cert"`
+	SSLKey          string   `toml:"ssl-key" json:"ssl-key"`
+	ClusterSSLCA    string   `toml:"cluster-ssl-ca" json:"cluster-ssl-ca"`
+	ClusterSSLCert  string   `toml:"cluster-ssl-cert" json:"cluster-ssl-cert"`
+	ClusterSSLKey   string   `toml:"cluster-ssl-key" json:"cluster-ssl-key"`
+	ClusterVerifyCN []string `toml:"cluster-verify-cn" json:"cluster-verify-cn"`
 }
 
 // The ErrConfigValidationFailed error is used so that external callers can do a type assertion
@@ -506,7 +507,7 @@ var defaultConf = Config{
 	TokenLimit:                   1000,
 	OOMUseTmpStorage:             true,
 	TempStoragePath:              filepath.Join(os.TempDir(), "tidb", "tmp-storage"),
-	OOMAction:                    "log",
+	OOMAction:                    OOMActionCancel,
 	MemQuotaQuery:                1 << 30,
 	EnableStreaming:              false,
 	EnableBatchDML:               false,
@@ -631,7 +632,7 @@ var defaultConf = Config{
 	Experimental: Experimental{
 		AllowAutoRandom: false,
 	},
-	EnableDynamicConfig: false,
+	EnableDynamicConfig: true,
 }
 
 var (
@@ -707,6 +708,22 @@ func InitializeConfig(confPath string, configCheck, configStrict bool, reloadFun
 		}
 	}
 	enforceCmdArgs(cfg)
+
+	if err := cfg.Valid(); err != nil {
+		if !filepath.IsAbs(confPath) {
+			if tmp, err := filepath.Abs(confPath); err == nil {
+				confPath = tmp
+			}
+		}
+		fmt.Fprintln(os.Stderr, "load config file:", confPath)
+		fmt.Fprintln(os.Stderr, "invalid config", err)
+		os.Exit(1)
+	}
+	if configCheck {
+		fmt.Println("config check successful")
+		os.Exit(0)
+	}
+
 	globalConfHandler, err = NewConfHandler(confPath, cfg, reloadFunc, nil)
 	terror.MustNil(err)
 	globalConfHandler.Start()

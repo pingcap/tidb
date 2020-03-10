@@ -254,7 +254,6 @@ func (b *builtinLeastStringSig) vecEvalString(input *chunk.Chunk, result *chunk.
 	src := result
 	arg := buf1
 	dst := buf2
-	_, collation, flen := b.CharsetAndCollation(b.ctx)
 	for j := 1; j < len(b.args); j++ {
 		if err := b.args[j].VecEvalString(b.ctx, input, arg); err != nil {
 			return err
@@ -266,7 +265,7 @@ func (b *builtinLeastStringSig) vecEvalString(input *chunk.Chunk, result *chunk.
 			}
 			srcStr := src.GetString(i)
 			argStr := arg.GetString(i)
-			if types.CompareString(srcStr, argStr, collation, flen) < 0 {
+			if types.CompareString(srcStr, argStr, b.collation) < 0 {
 				dst.AppendString(srcStr)
 			} else {
 				dst.AppendString(argStr)
@@ -792,7 +791,6 @@ func (b *builtinGreatestStringSig) vecEvalString(input *chunk.Chunk, result *chu
 	src := result
 	arg := buf1
 	dst := buf2
-	_, collation, flen := b.CharsetAndCollation(b.ctx)
 	for j := 1; j < len(b.args); j++ {
 		if err := b.args[j].VecEvalString(b.ctx, input, arg); err != nil {
 			return err
@@ -804,7 +802,7 @@ func (b *builtinGreatestStringSig) vecEvalString(input *chunk.Chunk, result *chu
 			}
 			srcStr := src.GetString(i)
 			argStr := arg.GetString(i)
-			if types.CompareString(srcStr, argStr, collation, flen) > 0 {
+			if types.CompareString(srcStr, argStr, b.collation) > 0 {
 				dst.AppendString(srcStr)
 			} else {
 				dst.AppendString(argStr)
