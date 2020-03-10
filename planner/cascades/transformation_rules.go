@@ -2200,6 +2200,9 @@ func (r *TransformApplyToJoin) extractCorColumnsFromGroup(g *memo.Group) []*expr
 			corCols = append(corCols, r.extractCorColumnsFromGroup(child)...)
 		}
 	}
+	// We may have duplicate CorrelatedColumns here, but it won't influence
+	// the logic of the transformation. Apply.CorCols will be deduplicated in
+	// `ResolveIndices`.
 	return corCols
 }
 
