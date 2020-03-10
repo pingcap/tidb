@@ -15,7 +15,6 @@ package executor_test
 
 import (
 	"strconv"
-	"sync"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/auth"
@@ -29,11 +28,34 @@ import (
 
 var _ = Suite(&testInfoschemaTableSuite{})
 
+// this SerialSuites is used to solve the data race caused by TableStatsCacheExpiry,
+// if your test not change the TableStatsCacheExpiry variable, please use testInfoschemaTableSuite for test.
+var _ = SerialSuites(&testInfoschemaTableSerialSuite{})
+
 type testInfoschemaTableSuite struct {
 	store kv.Storage
 	dom   *domain.Domain
-	// mu is used to protect the TableStatsCacheExpiry global variable.
-	mu sync.Mutex
+}
+
+type testInfoschemaTableSerialSuite struct {
+	store kv.Storage
+	dom   *domain.Domain
+}
+
+func (s *testInfoschemaTableSerialSuite) SetUpSuite(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	s.store = store
+	s.dom = dom
+	originCfg := config.GetGlobalConfig()
+	newConf := *originCfg
+	newConf.OOMAction = config.OOMActionLog
+	config.StoreGlobalConfig(&newConf)
+}
+
+func (s *testInfoschemaTableSerialSuite) TearDownSuite(c *C) {
+	s.dom.Close()
+	s.store.Close()
 }
 
 func (s *testInfoschemaTableSuite) SetUpSuite(c *C) {
@@ -216,13 +238,11 @@ func (s *testInfoschemaTableSuite) TestUserPrivileges(c *C) {
 	c.Assert(len(result.Rows()), Greater, 0)
 }
 
-func (s *testInfoschemaTableSuite) TestDataForTableStatsField(c *C) {
-	s.mu.Lock()
+func (s *testInfoschemaTableSerialSuite) TestDataForTableStatsField(c *C) {
 	s.dom.SetStatsUpdating(true)
 	oldExpiryTime := executor.TableStatsCacheExpiry
 	executor.TableStatsCacheExpiry = 0
 	defer func() { executor.TableStatsCacheExpiry = oldExpiryTime }()
-
 	do := s.dom
 	h := do.StatsHandle()
 	h.Clear()
@@ -265,15 +285,13 @@ func (s *testInfoschemaTableSuite) TestDataForTableStatsField(c *C) {
 	c.Assert(h.Update(is), IsNil)
 	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("3 18 54 6"))
-	s.mu.Unlock()
 }
 
-func (s *testInfoschemaTableSuite) TestPartitionsTable(c *C) {
-	s.mu.Lock()
+func (s *testInfoschemaTableSerialSuite) TestPartitionsTable(c *C) {
+	s.dom.SetStatsUpdating(true)
 	oldExpiryTime := executor.TableStatsCacheExpiry
 	executor.TableStatsCacheExpiry = 0
 	defer func() { executor.TableStatsCacheExpiry = oldExpiryTime }()
-
 	do := s.dom
 	h := do.StatsHandle()
 	h.Clear()
@@ -319,5 +337,4 @@ func (s *testInfoschemaTableSuite) TestPartitionsTable(c *C) {
 		testkit.Rows("<nil> 3 18 54 6"))
 
 	tk.MustExec("DROP TABLE `test_partitions`;")
-	s.mu.Unlock()
 }
