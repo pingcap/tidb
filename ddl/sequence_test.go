@@ -747,9 +747,9 @@ func (s *testSequenceSuite) TestUnflodSequence(c *C) {
 }
 
 // before this PR:
-// insert consume: 50.498672ms
+// single insert consume: 50.498672ms
 // after this PR:
-// insert consume: 33.213615ms
+// single insert consume: 33.213615ms
 func (s *testSequenceSuite) TestBenchInsertCacheDefaultExpr(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test")
@@ -765,9 +765,7 @@ func (s *testSequenceSuite) TestBenchInsertCacheDefaultExpr(c *C) {
 			sql += ",()"
 		}
 	}
-	// start := time.Now()
 	for i := 0; i < 100; i++ {
 		s.tk.MustExec(sql)
 	}
-	// fmt.Println(time.Now().Sub(start) / 100)
 }

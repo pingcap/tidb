@@ -76,7 +76,7 @@ type InsertValues struct {
 type defaultVal struct {
 	// common default value is a constant.
 	val types.Datum
-	// default expr like `nextval(seq)` should be evaluated row by row.
+	// default expr(nextval(seq)) should be evaluated row by row.
 	expr ast.ExprNode
 	// valid indicates whether the val is evaluated. We evaluate the default value lazily.
 	valid bool
