@@ -111,10 +111,6 @@ func setUpSuite(s *testDBSuite, c *C) {
 	s.s.Execute(context.Background(), "set @@global.tidb_max_delta_schema_count= 4096")
 
 	s.tk = testkit.NewTestKit(c, s.store)
-	originCfg := config.GetGlobalConfig()
-	newConf := *originCfg
-	newConf.OOMAction = config.OOMActionLog
-	config.StoreGlobalConfig(&newConf)
 }
 
 func tearDownSuite(s *testDBSuite, c *C) {
