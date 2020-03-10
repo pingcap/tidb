@@ -101,7 +101,7 @@ func (ts *testSuite) TestBasic(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(autoID, Greater, int64(0))
 
-	handle, err := tb.AllocHandle(nil)
+	handle, err := tables.AllocHandle(nil, tb)
 	c.Assert(err, IsNil)
 	c.Assert(handle, Greater, int64(0))
 
@@ -158,7 +158,7 @@ func (ts *testSuite) TestBasic(c *C) {
 	c.Assert(err, IsNil)
 
 	table.MockTableFromMeta(tb.Meta())
-	alc := tb.Allocator(nil, autoid.RowIDAllocType)
+	alc := tb.Allocators(nil).Get(autoid.RowIDAllocType)
 	c.Assert(alc, NotNil)
 
 	err = tb.RebaseAutoID(nil, 0, false)
@@ -245,7 +245,7 @@ func (ts *testSuite) TestUniqueIndexMultipleNullEntries(c *C) {
 	c.Assert(string(tb.RecordPrefix()), Not(Equals), "")
 	c.Assert(tables.FindIndexByColName(tb, "b"), NotNil)
 
-	handle, err := tb.AllocHandle(nil)
+	handle, err := tables.AllocHandle(nil, tb)
 	c.Assert(err, IsNil)
 	c.Assert(handle, Greater, int64(0))
 
@@ -384,14 +384,14 @@ func (ts *testSuite) TestTableFromMeta(c *C) {
 	tk.MustExec("create table t_meta (a int) shard_row_id_bits = 15")
 	tb, err = domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t_meta"))
 	c.Assert(err, IsNil)
-	_, err = tb.AllocHandle(tk.Se)
+	_, err = tables.AllocHandle(tk.Se, tb)
 	c.Assert(err, IsNil)
 
 	maxID := 1<<(64-15-1) - 1
 	err = tb.RebaseAutoID(tk.Se, int64(maxID), false)
 	c.Assert(err, IsNil)
 
-	_, err = tb.AllocHandle(tk.Se)
+	_, err = tables.AllocHandle(tk.Se, tb)
 	c.Assert(err, NotNil)
 }
 
