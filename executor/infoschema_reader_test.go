@@ -14,13 +14,13 @@
 package executor_test
 
 import (
-	"github.com/pingcap/tidb/executor"
 	"strconv"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/util/testkit"
@@ -285,6 +285,7 @@ func (s *testInfoschemaTableSerialSuite) TestDataForTableStatsField(c *C) {
 }
 
 func (s *testInfoschemaTableSerialSuite) TestPartitionsTable(c *C) {
+	s.dom.SetStatsUpdating(true)
 	oldExpiryTime := executor.TableStatsCacheExpiry
 	executor.TableStatsCacheExpiry = 0
 	defer func() { executor.TableStatsCacheExpiry = oldExpiryTime }()
