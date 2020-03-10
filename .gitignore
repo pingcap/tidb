@@ -3,3 +3,4 @@ bin/
 coverage.txt
 .idea
 var
+fix.sql
