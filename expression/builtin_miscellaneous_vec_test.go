@@ -194,7 +194,9 @@ func (s *testEvaluatorSuite) TestSleepVectorized(c *C) {
 	c.Assert(sub.Nanoseconds(), GreaterEqual, int64(0.5*1e9))
 
 	input.Reset()
-	input.AppendFloat64(0, 3)
+	input.AppendFloat64(0, 0.01)
+	input.AppendFloat64(0, 1)
+	input.AppendFloat64(0, 2)
 	start = time.Now()
 	go func() {
 		time.Sleep(1 * time.Second)
@@ -203,7 +205,9 @@ func (s *testEvaluatorSuite) TestSleepVectorized(c *C) {
 	err = f.vecEvalInt(input, result)
 	sub = time.Since(start)
 	c.Assert(err, IsNil)
-	c.Assert(result.GetInt64(0), Equals, int64(1))
+	c.Assert(result.GetInt64(0), Equals, int64(0))
+	c.Assert(result.GetInt64(1), Equals, int64(1))
+	c.Assert(result.GetInt64(2), Equals, int64(1))
 	c.Assert(sub.Nanoseconds(), LessEqual, int64(2*1e9))
 	c.Assert(sub.Nanoseconds(), GreaterEqual, int64(1*1e9))
 }
