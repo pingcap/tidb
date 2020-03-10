@@ -69,7 +69,7 @@ const (
 	// TableKeyColumn is the string constant of KEY_COLUMN_USAGE
 	TableKeyColumn  = "KEY_COLUMN_USAGE"
 	tableReferConst = "REFERENTIAL_CONSTRAINTS"
-	// TableConstraints is the string constant of SESSION_VARIABLES.
+	// TableSessionVar is the string constant of SESSION_VARIABLES.
 	TableSessionVar = "SESSION_VARIABLES"
 	tablePlugins    = "PLUGINS"
 	// TableConstraints is the string constant of TABLE_CONSTRAINTS.
