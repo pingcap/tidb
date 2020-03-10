@@ -703,6 +703,28 @@ func (e *InspectionSummaryTableExtractor) Extract(
 	return remained
 }
 
+// InspectionRuleTableExtractor is used to extract some predicates of `inspection_rules`
+type InspectionRuleTableExtractor struct {
+	extractHelper
+
+	SkipRequest bool
+	Types       set.StringSet
+}
+
+// Extract implements the MemTablePredicateExtractor Extract interface
+func (e *InspectionRuleTableExtractor) Extract(
+	_ sessionctx.Context,
+	schema *expression.Schema,
+	names []*types.FieldName,
+	predicates []expression.Expression,
+) (remained []expression.Expression) {
+	// Extract the `type` columns
+	remained, tpSkip, tps := e.extractCol(schema, names, predicates, "type", true)
+	e.SkipRequest = tpSkip
+	e.Types = tps
+	return remained
+}
+
 // SlowQueryExtractor is used to extract some predicates of `slow_query`
 type SlowQueryExtractor struct {
 	extractHelper

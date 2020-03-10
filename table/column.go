@@ -132,7 +132,7 @@ func truncateTrailingSpaces(v *types.Datum) {
 	}
 	b = b[:length]
 	str := string(hack.String(b))
-	v.SetString(str, v.Collation(), v.Length())
+	v.SetString(str, v.Collation())
 }
 
 // CastValues casts values based on columns type.
@@ -391,7 +391,7 @@ func getColDefaultExprValue(ctx sessionctx.Context, col *model.ColumnInfo, defau
 		return types.Datum{}, err
 	}
 	// Check the evaluated data type by cast.
-	value, err := CastValue(ctx, types.NewDatum(d), col)
+	value, err := CastValue(ctx, d, col)
 	if err != nil {
 		return types.Datum{}, err
 	}
@@ -454,7 +454,7 @@ func getColDefaultValueFromNil(ctx sessionctx.Context, col *model.ColumnInfo) (t
 		if err != nil {
 			return types.Datum{}, err
 		}
-		return types.NewMysqlEnumDatum(defEnum), nil
+		return types.NewCollateMysqlEnumDatum(defEnum, col.Collate), nil
 	}
 	if mysql.HasAutoIncrementFlag(col.Flag) {
 		// Auto increment column doesn't has default value and we should not return error.
@@ -493,10 +493,10 @@ func GetZeroValue(col *model.ColumnInfo) types.Datum {
 		if col.Flen > 0 && col.Charset == charset.CharsetBin {
 			d.SetBytes(make([]byte, col.Flen))
 		} else {
-			d.SetString("", col.Collate, col.Flen)
+			d.SetString("", col.Collate)
 		}
 	case mysql.TypeVarString, mysql.TypeVarchar:
-		d.SetString("", col.Collate, col.Flen)
+		d.SetString("", col.Collate)
 	case mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		d.SetBytes([]byte{})
 	case mysql.TypeDuration:
@@ -510,9 +510,9 @@ func GetZeroValue(col *model.ColumnInfo) types.Datum {
 	case mysql.TypeBit:
 		d.SetMysqlBit(types.ZeroBinaryLiteral)
 	case mysql.TypeSet:
-		d.SetMysqlSet(types.Set{})
+		d.SetMysqlSet(types.Set{}, col.Collate)
 	case mysql.TypeEnum:
-		d.SetMysqlEnum(types.Enum{})
+		d.SetMysqlEnum(types.Enum{}, col.Collate)
 	case mysql.TypeJSON:
 		d.SetMysqlJSON(json.CreateBinary(nil))
 	}

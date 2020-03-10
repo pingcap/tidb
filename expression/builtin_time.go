@@ -1063,6 +1063,7 @@ func (c *monthNameFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 		return nil, err
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETDatetime)
+	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	bf.tp.Flen = 10
 	sig := &builtinMonthNameSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_MonthName)
@@ -1102,6 +1103,7 @@ func (c *dayNameFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 		return nil, err
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETDatetime)
+	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	bf.tp.Flen = 10
 	sig := &builtinDayNameSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_DayName)
@@ -5070,6 +5072,7 @@ func (c *addTimeFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 			sig.setPbCode(tipb.ScalarFuncSig_AddDatetimeAndString)
 		}
 	case mysql.TypeDate:
+		bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 		switch tp2.Tp {
 		case mysql.TypeDuration:
 			sig = &builtinAddDateAndDurationSig{bf}
@@ -6026,6 +6029,7 @@ func (c *subTimeFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 			sig.setPbCode(tipb.ScalarFuncSig_SubDatetimeAndString)
 		}
 	case mysql.TypeDate:
+		bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 		switch tp2.Tp {
 		case mysql.TypeDuration:
 			sig = &builtinSubDateAndDurationSig{bf}
