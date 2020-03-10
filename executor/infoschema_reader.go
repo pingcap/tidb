@@ -283,21 +283,17 @@ func (e *memtableRetriever) setDataFromSchemata(ctx sessionctx.Context, schemas 
 
 func (e *memtableRetriever) setDataForStatistics(ctx sessionctx.Context, schemas []*model.DBInfo) {
 	checker := privilege.GetPrivilegeManager(ctx)
-	var rows [][]types.Datum
 	for _, schema := range schemas {
 		for _, table := range schema.Tables {
 			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
 				continue
 			}
-
-			rs := dataForStatisticsInTable(schema, table)
-			rows = append(rows, rs...)
+			e.dataForStatisticsInTable(schema, table)
 		}
 	}
-	e.rows = rows
 }
 
-func dataForStatisticsInTable(schema *model.DBInfo, table *model.TableInfo) [][]types.Datum {
+func (e *memtableRetriever) dataForStatisticsInTable(schema *model.DBInfo, table *model.TableInfo) {
 	var rows [][]types.Datum
 	if table.PKIsHandle {
 		for _, col := range table.Columns {
@@ -369,7 +365,7 @@ func dataForStatisticsInTable(schema *model.DBInfo, table *model.TableInfo) [][]
 			rows = append(rows, record)
 		}
 	}
-	return rows
+	e.rows = append(e.rows, rows...)
 }
 
 func (e *memtableRetriever) dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) error {
@@ -860,7 +856,7 @@ func keyColumnUsageInTable(schema *model.DBInfo, table *model.TableInfo) [][]typ
 	return rows
 }
 
-func (e *memtableRetriever) dataForTikVRegionPeers(ctx sessionctx.Context) (err error) {
+func (e *memtableRetriever) dataForTikVRegionPeers(ctx sessionctx.Context) error {
 	tikvStore, ok := ctx.GetStore().(tikv.Storage)
 	if !ok {
 		return errors.New("Information about TiKV region status can be gotten only when the storage is TiKV")
@@ -873,16 +869,13 @@ func (e *memtableRetriever) dataForTikVRegionPeers(ctx sessionctx.Context) (err 
 	if err != nil {
 		return err
 	}
-	var records [][]types.Datum
 	for _, region := range regionsInfo.Regions {
-		rows := newTiKVRegionPeersCols(&region)
-		records = append(records, rows...)
+		e.newTiKVRegionPeersCols(&region)
 	}
-	e.rows = records
 	return nil
 }
 
-func newTiKVRegionPeersCols(region *helper.RegionInfo) [][]types.Datum {
+func (e *memtableRetriever) newTiKVRegionPeersCols(region *helper.RegionInfo) {
 	records := make([][]types.Datum, 0, len(region.Peers))
 	pendingPeerIDSet := set.NewInt64Set()
 	for _, peer := range region.PendingPeers {
@@ -917,7 +910,7 @@ func newTiKVRegionPeersCols(region *helper.RegionInfo) [][]types.Datum {
 		}
 		records = append(records, row)
 	}
-	return records
+	e.rows = append(e.rows, records...)
 }
 
 const (
@@ -926,7 +919,7 @@ const (
 	downPeer    = "DOWN"
 )
 
-func (e *memtableRetriever) dataForTiDBHotRegions(ctx sessionctx.Context) (err error) {
+func (e *memtableRetriever) dataForTiDBHotRegions(ctx sessionctx.Context) error {
 	tikvStore, ok := ctx.GetStore().(tikv.Storage)
 	if !ok {
 		return errors.New("Information about hot region can be gotten only when the storage is TiKV")
@@ -940,19 +933,17 @@ func (e *memtableRetriever) dataForTiDBHotRegions(ctx sessionctx.Context) (err e
 	if err != nil {
 		return err
 	}
-	var records [][]types.Datum
-	records = append(records, dataForHotRegionByMetrics(metrics, "read")...)
+	e.dataForHotRegionByMetrics(metrics, "read")
 	metrics, err = tikvHelper.ScrapeHotInfo(pdapi.HotWrite, allSchemas)
 	if err != nil {
 		return err
 	}
-	records = append(records, dataForHotRegionByMetrics(metrics, "write")...)
+	e.dataForHotRegionByMetrics(metrics, "write")
 
-	e.rows = records
 	return nil
 }
 
-func dataForHotRegionByMetrics(metrics []helper.HotTableIndex, tp string) [][]types.Datum {
+func (e *memtableRetriever) dataForHotRegionByMetrics(metrics []helper.HotTableIndex, tp string) {
 	rows := make([][]types.Datum, 0, len(metrics))
 	for _, tblIndex := range metrics {
 		row := make([]types.Datum, len(infoschema.TableTiDBHotRegionsCols))
@@ -978,5 +969,5 @@ func dataForHotRegionByMetrics(metrics []helper.HotTableIndex, tp string) [][]ty
 		row[9].SetUint64(tblIndex.RegionMetric.FlowBytes)
 		rows = append(rows, row)
 	}
-	return rows
+	e.rows = append(e.rows, rows...)
 }
