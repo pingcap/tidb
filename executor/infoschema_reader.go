@@ -190,9 +190,6 @@ type statsCache struct {
 
 var tableStatsCache = &statsCache{}
 
-// TableStatsCacheExpiry is the expiry time for table stats cache.
-var TableStatsCacheExpiry = 3 * time.Second
-
 func (c *statsCache) setLoading(loading bool) {
 	c.mu.Lock()
 	c.loading = loading
@@ -201,7 +198,7 @@ func (c *statsCache) setLoading(loading bool) {
 
 func (c *statsCache) get(ctx sessionctx.Context) (map[int64]uint64, map[tableHistID]uint64, error) {
 	c.mu.Lock()
-	if time.Since(c.modifyTime) < TableStatsCacheExpiry || c.loading {
+	if c.loading {
 		tableRows, colLength := c.tableRows, c.colLength
 		c.mu.Unlock()
 		return tableRows, colLength, nil
