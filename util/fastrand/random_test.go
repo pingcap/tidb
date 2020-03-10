@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package util
+package fastrand
 
 import (
 	"fmt"
@@ -26,16 +26,16 @@ var _ = Suite(&testRandSuite{})
 type testRandSuite struct {
 }
 
-func (s *testMiscSuite) TestRand(c *C) {
-	x := FastRand32N(1024)
+func (s *testRandSuite) TestRand(c *C) {
+	x := Uint32N(1024)
 	c.Assert(x < 1024, IsTrue)
-	y := FastRand64N(1 << 63)
+	y := Uint64N(1 << 63)
 	c.Assert(y < 1<<63, IsTrue)
 
-	_ = RandomBuf(20)
+	_ = Buf(20)
 	var arr [256]bool
 	for i := 0; i < 1024; i++ {
-		idx := FastRand32N(256)
+		idx := Uint32N(256)
 		arr[idx] = true
 	}
 	sum := 0
@@ -51,10 +51,10 @@ func (s *testMiscSuite) TestRand(c *C) {
 func BenchmarkFastRand(b *testing.B) {
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			FastRand()
+			Uint32()
 		}
 	})
-	b.Log(FastRand())
+	b.Log(Uint32())
 }
 
 func BenchmarkGlobalRand(b *testing.B) {
