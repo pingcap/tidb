@@ -882,6 +882,23 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 		assertModifyColType("alter table t modify column a smallint auto_random(3)")
 	})
 
+	// Test show warnings when create auto_random table.
+	assertShowWarningCorrect := func(sql string, times int) {
+		mustExecAndDrop(sql, func() {
+			note := fmt.Sprintf(autoid.AutoRandomAvailableAllocTimesNote, times)
+			result := fmt.Sprintf("Note|1105|%s", note)
+			tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", result))
+			c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
+		})
+	}
+	assertShowWarningCorrect("create table t (a tinyint unsigned auto_random(6) primary key)", 1)
+	assertShowWarningCorrect("create table t (a tinyint unsigned auto_random(5) primary key)", 3)
+	assertShowWarningCorrect("create table t (a tinyint auto_random(4) primary key)", 7)
+	assertShowWarningCorrect("create table t (a bigint auto_random(62) primary key)", 1)
+	assertShowWarningCorrect("create table t (a bigint unsigned auto_random(61) primary key)", 3)
+	assertShowWarningCorrect("create table t (a int auto_random(30) primary key)", 1)
+	assertShowWarningCorrect("create table t (a int auto_random(29) primary key)", 3)
+
 	// Disallow using it when allow-auto-random is not enabled.
 	config.GetGlobalConfig().Experimental.AllowAutoRandom = false
 	assertExperimentDisabled("create table auto_random_table (a int primary key auto_random(3))")
