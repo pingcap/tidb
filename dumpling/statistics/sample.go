@@ -23,8 +23,8 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/fastrand"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/spaolacci/murmur3"
@@ -166,9 +166,9 @@ func (c *SampleCollector) collect(sc *stmtctx.StatementContext, d types.Datum) e
 		d.Copy(&newItem.Value)
 		c.Samples = append(c.Samples, newItem)
 	} else {
-		shouldAdd := int64(util.FastRand64N(uint64(c.seenValues))) < c.MaxSampleSize
+		shouldAdd := int64(fastrand.Uint64N(uint64(c.seenValues))) < c.MaxSampleSize
 		if shouldAdd {
-			idx := int(util.FastRand32N(uint32(c.MaxSampleSize)))
+			idx := int(fastrand.Uint32N(uint32(c.MaxSampleSize)))
 			newItem := &SampleItem{}
 			d.Copy(&newItem.Value)
 			// To keep the order of the elements, we use delete and append, not direct replacement.
