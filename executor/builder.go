@@ -77,8 +77,8 @@ type executorBuilder struct {
 	is      infoschema.InfoSchema
 	startTS uint64 // cached when the first time getStartTS() is called
 	// err is set when there is error happened during Executor building process.
-	err               error
-	isSelectForUpdate bool
+	err     error
+	hasLock bool
 }
 
 func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema) *executorBuilder {
@@ -560,7 +560,7 @@ func (b *executorBuilder) buildDeallocate(v *plannercore.Deallocate) Executor {
 }
 
 func (b *executorBuilder) buildSelectLock(v *plannercore.PhysicalLock) Executor {
-	b.isSelectForUpdate = true
+	b.hasLock = true
 	if b.err = b.updateForUpdateTSIfNeeded(v.Children()[0]); b.err != nil {
 		return nil
 	}
@@ -1408,6 +1408,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 				},
 			}
 		case strings.ToLower(infoschema.TableSchemata),
+			strings.ToLower(infoschema.TableStatistics),
 			strings.ToLower(infoschema.TableTiDBIndexes),
 			strings.ToLower(infoschema.TableViews),
 			strings.ToLower(infoschema.TableTables),
@@ -1417,7 +1418,11 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			strings.ToLower(infoschema.TableCharacterSets),
 			strings.ToLower(infoschema.TableKeyColumn),
 			strings.ToLower(infoschema.TableUserPrivileges),
+			strings.ToLower(infoschema.TableMetricTables),
 			strings.ToLower(infoschema.TableCollationCharacterSetApplicability),
+			strings.ToLower(infoschema.TableTiKVRegionPeers),
+			strings.ToLower(infoschema.TableTiDBHotRegions),
+			strings.ToLower(infoschema.TableSessionVar),
 			strings.ToLower(infoschema.TableConstraints):
 			return &MemTableReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
@@ -2928,7 +2933,7 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		waitTime:     plan.LockWaitTime,
 	}
 	if e.lock {
-		b.isSelectForUpdate = e.lock
+		b.hasLock = true
 	}
 	var capacity int
 	if plan.IndexInfo != nil {

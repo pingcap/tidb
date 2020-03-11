@@ -165,7 +165,7 @@ func (s *testEvaluatorSuite) TestSleep(c *C) {
 	c.Assert(err, IsNil)
 	ret, isNull, err := f.evalInt(chunk.Row{})
 	c.Assert(err, IsNil)
-	c.Assert(isNull, IsTrue)
+	c.Assert(isNull, IsFalse)
 	c.Assert(ret, Equals, int64(0))
 	d[0].SetInt64(-1)
 	f, err = fc.getFunction(ctx, s.datumsToConstants(d))

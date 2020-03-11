@@ -105,6 +105,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	}
 
 	var handleVals map[string][]byte
+	var indexKeys []kv.Key
 	if e.idxInfo != nil {
 		// `SELECT a, b FROM t WHERE (a, b) IN ((1, 2), (1, 2), (2, 1), (1, 2))` should not return duplicated rows
 		dedup := make(map[hack.MutableString]struct{})
@@ -129,6 +130,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 				return keys[i].Cmp(keys[j]) < 0
 			})
 		}
+		indexKeys = keys
 
 		// Fetch all handles.
 		handleVals, err = batchGetter.BatchGet(ctx, keys)
@@ -180,7 +182,15 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	// Fetch all values.
 	var values map[string][]byte
 	if e.lock {
-		values, err = e.lockKeys(ctx, keys)
+		lockKeys := make([]kv.Key, len(keys), len(keys)+len(indexKeys))
+		copy(lockKeys, keys)
+		for _, idxKey := range indexKeys {
+			// lock the non-exist index key, using len(val) in case BatchGet result contains some zero len entries
+			if val := handleVals[string(idxKey)]; len(val) == 0 {
+				lockKeys = append(lockKeys, idxKey)
+			}
+		}
+		values, err = e.lockKeys(ctx, lockKeys)
 		if err != nil {
 			return err
 		}
