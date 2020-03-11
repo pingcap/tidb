@@ -16,12 +16,14 @@ package expression
 import (
 	goJSON "encoding/json"
 	"fmt"
+	"sync/atomic"
 
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/opcode"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
@@ -403,6 +405,160 @@ func wrapWithIsTrue(ctx sessionctx.Context, keepNull bool, arg Expression) (Expr
 		RetType:  f.getRetTp(),
 	}
 	return FoldConstant(sf), nil
+}
+
+func canFuncBePushed(sf *ScalarFunction, storeType kv.StoreType) bool {
+	ret := false
+	switch sf.FuncName.L {
+	case
+		// logical functions.
+		ast.LogicAnd,
+		ast.LogicOr,
+		ast.UnaryNot,
+
+		// compare functions.
+		ast.LT,
+		ast.LE,
+		ast.EQ,
+		ast.NE,
+		ast.GE,
+		ast.GT,
+		ast.NullEQ,
+		ast.In,
+		ast.IsNull,
+		ast.Like,
+		ast.IsTruth,
+		ast.IsFalsity,
+
+		// arithmetical functions.
+		ast.Plus,
+		ast.Minus,
+		ast.Mul,
+		ast.Div,
+		ast.Abs,
+		ast.Ceil,
+		ast.Ceiling,
+		ast.Floor,
+
+		// control flow functions.
+		ast.Case,
+		ast.If,
+		ast.Ifnull,
+		ast.Coalesce,
+
+		// json functions.
+		ast.JSONType,
+		ast.JSONExtract,
+		ast.JSONUnquote,
+		ast.JSONObject,
+		ast.JSONArray,
+		ast.JSONMerge,
+		ast.JSONSet,
+		ast.JSONInsert,
+		ast.JSONReplace,
+		ast.JSONRemove,
+
+		// date functions.
+		ast.DateFormat:
+		_, disallowPushDown := DefaultExprPushDownBlacklist.Load().(map[string]struct{})[sf.FuncName.L]
+		ret = !disallowPushDown
+	}
+
+	if ret {
+		switch storeType {
+		case kv.TiFlash:
+			return scalarExprSupportedByFlash(sf)
+		case kv.TiKV:
+			return scalarExprSupportedByTiKV(sf)
+		}
+	}
+	return ret
+}
+
+// DefaultExprPushDownBlacklist indicates the expressions which can not be pushed down to TiKV.
+var DefaultExprPushDownBlacklist *atomic.Value
+
+func init() {
+	DefaultExprPushDownBlacklist = new(atomic.Value)
+	DefaultExprPushDownBlacklist.Store(make(map[string]struct{}))
+}
+
+func canScalarFuncPushDown(scalarFunc *ScalarFunction, pc PbConverter, storeType kv.StoreType) bool {
+	// Check whether this function can be pushed.
+	if !canFuncBePushed(scalarFunc, storeType) {
+		return false
+	}
+
+	// check whether this function has ProtoBuf signature.
+	pbCode := scalarFunc.Function.PbCode()
+	if pbCode < 0 {
+		return false
+	}
+
+	// Check whether all of its parameters can be pushed.
+	for _, arg := range scalarFunc.GetArgs() {
+		if !canExprPushDown(arg, pc, storeType) {
+			return false
+		}
+	}
+	return true
+}
+
+func canExprPushDown(expr Expression, pc PbConverter, storeType kv.StoreType) bool {
+	if storeType == kv.TiFlash && (expr.GetType().Tp == mysql.TypeDuration || expr.GetType().Tp == mysql.TypeJSON) {
+		return false
+	}
+	switch x := expr.(type) {
+	case *Constant, *CorrelatedColumn:
+		return pc.conOrCorColToPBExpr(expr) != nil
+	case *Column:
+		return pc.columnToPBExpr(x) != nil
+	case *ScalarFunction:
+		return canScalarFuncPushDown(x, pc, storeType)
+	}
+	return false
+}
+
+// PushDownExprs split the input exprs into pushed and remained, pushed include all the exprs that can be pushed down
+func PushDownExprs(sc *stmtctx.StatementContext, exprs []Expression, client kv.Client, storeType kv.StoreType) (pushed []Expression, remained []Expression) {
+	pc := PbConverter{sc: sc, client: client}
+	for _, expr := range exprs {
+		if canExprPushDown(expr, pc, storeType) {
+			pushed = append(pushed, expr)
+		} else {
+			remained = append(remained, expr)
+		}
+	}
+	return
+}
+
+// CanExprsPushDown return true if all the expr in exprs can be pushed down
+func CanExprsPushDown(sc *stmtctx.StatementContext, exprs []Expression, client kv.Client, storeType kv.StoreType) bool {
+	_, remained := PushDownExprs(sc, exprs, client, storeType)
+	return len(remained) == 0
+}
+
+func scalarExprSupportedByTiKV(function *ScalarFunction) bool {
+	switch function.FuncName.L {
+	case ast.Substr, ast.Substring, ast.DateAdd, ast.TimestampDiff:
+		return false
+	default:
+		return true
+	}
+}
+
+func scalarExprSupportedByFlash(function *ScalarFunction) bool {
+	switch function.FuncName.L {
+	case ast.Plus, ast.Minus, ast.Div, ast.Mul,
+		ast.NullEQ, ast.GE, ast.LE, ast.EQ, ast.NE,
+		ast.LT, ast.GT, ast.Ifnull, ast.IsNull, ast.Or,
+		ast.In, ast.Mod, ast.And, ast.LogicOr, ast.LogicAnd,
+		ast.Like, ast.UnaryNot, ast.Case, ast.Month, ast.Substr,
+		ast.Substring, ast.TimestampDiff:
+		return true
+	default:
+		return false
+	}
 }
 
 // CheckExprPushFlash checks a expr list whether each expr can be pushed to flash storage.

@@ -595,13 +595,13 @@ func (p *PhysicalTopN) GetCost(count float64, isRoot bool) float64 {
 }
 
 // canPushDown checks if this topN can be pushed down. If each of the expression can be converted to pb, it can be pushed.
-func (p *PhysicalTopN) canPushDown() bool {
+func (p *PhysicalTopN) canPushDown(cop *copTask) bool {
 	exprs := make([]expression.Expression, 0, len(p.ByItems))
 	for _, item := range p.ByItems {
 		exprs = append(exprs, item.Expr)
 	}
-	_, _, remained := expression.ExpressionsToPB(p.ctx.GetSessionVars().StmtCtx, exprs, p.ctx.GetClient())
-	return len(remained) == 0
+	storeType := getStoreTypeFromCopTask(cop)
+	return expression.CanExprsPushDown(p.ctx.GetSessionVars().StmtCtx, exprs, p.ctx.GetClient(), storeType)
 }
 
 func (p *PhysicalTopN) allColsFromSchema(schema *expression.Schema) bool {
@@ -654,7 +654,7 @@ func (p *PhysicalTopN) getPushedDownTopN(childPlan PhysicalPlan) *PhysicalTopN {
 func (p *PhysicalTopN) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	inputCount := t.count()
-	if copTask, ok := t.(*copTask); ok && p.canPushDown() {
+	if copTask, ok := t.(*copTask); ok && p.canPushDown(copTask) {
 		// If all columns in topN are from index plan, we push it to index plan, otherwise we finish the index plan and
 		// push it to table plan.
 		var pushedDownTopN *PhysicalTopN
@@ -725,26 +725,24 @@ func (sel *PhysicalSelection) attach2Task(tasks ...task) task {
 	return t
 }
 
-func (p *basePhysicalAgg) newPartialAggregate(copToFlash bool) (partial, final PhysicalPlan) {
+func (p *basePhysicalAgg) newPartialAggregate(storeType kv.StoreType) (partial, final PhysicalPlan) {
 	// Check if this aggregation can push down.
 	sc := p.ctx.GetSessionVars().StmtCtx
 	client := p.ctx.GetClient()
 	for _, aggFunc := range p.AggFuncs {
-		if copToFlash {
-			if !aggregation.CheckAggPushFlash(aggFunc) {
-				return nil, p.self
-			}
-			if _, remain := expression.CheckExprPushFlash(append(aggFunc.Args, p.GroupByItems...)); len(remain) > 0 {
-				return nil, p.self
-			}
-		}
 		pb := aggregation.AggFuncToPBExpr(sc, client, aggFunc)
 		if pb == nil {
 			return nil, p.self
 		}
+		if !aggregation.CheckAggPushDown(aggFunc, storeType) {
+			return nil, p.self
+		}
+		if !expression.CanExprsPushDown(sc, aggFunc.Args, client, storeType) {
+			return nil, p.self
+		}
 	}
-	_, _, remained := expression.ExpressionsToPB(sc, p.GroupByItems, client)
-	if len(remained) > 0 {
+
+	if !expression.CanExprsPushDown(sc, p.GroupByItems, client, storeType) {
 		return nil, p.self
 	}
 
@@ -823,9 +821,9 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 		// We should not push agg down across double read, since the data of second read is ordered by handle instead of index.
 		// The `doubleReadNeedProj` is always set if the double read needs to keep order. So we just use it to decided
 		// whether the following plan is double read with order reserved.
-		copToFlash := isFlashCopTask(cop)
+		storeType := getStoreTypeFromCopTask(cop)
 		if !cop.doubleReadNeedProj {
-			partialAgg, finalAgg := p.newPartialAggregate(copToFlash)
+			partialAgg, finalAgg := p.newPartialAggregate(storeType)
 			if partialAgg != nil {
 				if cop.tablePlan != nil {
 					cop.finishIndexPlan()
@@ -849,6 +847,14 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 	}
 	t.addCost(p.GetCost(inputRows, true))
 	return t
+}
+
+func getStoreTypeFromCopTask(cop *copTask) kv.StoreType {
+	storeType := kv.TiKV
+	if tableScan, ok := cop.tablePlan.(*PhysicalTableScan); ok {
+		storeType = tableScan.StoreType
+	}
+	return storeType
 }
 
 func isFlashCopTask(cop *copTask) bool {
@@ -901,9 +907,8 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	inputRows := t.count()
 	if cop, ok := t.(*copTask); ok {
-		// copToFlash means whether the cop task is running on flash storage
-		copToFlash := isFlashCopTask(cop)
-		partialAgg, finalAgg := p.newPartialAggregate(copToFlash)
+		storeType := getStoreTypeFromCopTask(cop)
+		partialAgg, finalAgg := p.newPartialAggregate(storeType)
 		if partialAgg != nil {
 			if cop.tablePlan != nil {
 				cop.finishIndexPlan()

@@ -862,9 +862,11 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		indexPlanFinished: true,
 		tableStats:        ds.tableStats,
 	}
-	if ts.StoreType == kv.TiFlash {
-		ts.filterCondition, copTask.rootTaskConds = expression.CheckExprPushFlash(ts.filterCondition)
-	}
+
+	var newRootConds []expression.Expression
+	ts.filterCondition, newRootConds = expression.PushDownExprs(ts.ctx.GetSessionVars().StmtCtx, ts.filterCondition, ts.ctx.GetClient(), ts.StoreType)
+	copTask.rootTaskConds = append(copTask.rootTaskConds, newRootConds...)
+
 	task = copTask
 	// Adjust number of rows we actually need to scan if prop.ExpectedCnt is smaller than the count we calculated.
 	if prop.ExpectedCnt < ds.stats.RowCount {

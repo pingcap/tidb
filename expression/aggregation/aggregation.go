@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
@@ -249,6 +250,16 @@ func IsAllFirstRow(aggFuncs []*AggFuncDesc) bool {
 		}
 	}
 	return true
+}
+
+// CheckAggPushDown checks whether an agg function can be pushed to storage.
+func CheckAggPushDown(aggFunc *AggFuncDesc, storeType kv.StoreType) bool {
+	switch storeType {
+	case kv.TiFlash:
+		return CheckAggPushFlash(aggFunc)
+	default:
+		return true
+	}
 }
 
 // CheckAggPushFlash checks whether an agg function can be pushed to flash storage.
