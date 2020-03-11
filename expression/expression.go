@@ -947,8 +947,8 @@ func canExprPushDown(expr Expression, pc PbConverter, storeType kv.StoreType) bo
 	return false
 }
 
-// ExprsPushDown split the input exprs into pushed and remained, pushed include all the exprs that can be pushed down
-func ExprsPushDown(sc *stmtctx.StatementContext, exprs []Expression, client kv.Client, storeType kv.StoreType) (pushed []Expression, remained []Expression) {
+// PushDownExprs split the input exprs into pushed and remained, pushed include all the exprs that can be pushed down
+func PushDownExprs(sc *stmtctx.StatementContext, exprs []Expression, client kv.Client, storeType kv.StoreType) (pushed []Expression, remained []Expression) {
 	pc := PbConverter{sc: sc, client: client}
 	for _, expr := range exprs {
 		if canExprPushDown(expr, pc, storeType) {
@@ -962,7 +962,7 @@ func ExprsPushDown(sc *stmtctx.StatementContext, exprs []Expression, client kv.C
 
 // CanExprsPushDown return true if all the expr in exprs can be pushed down
 func CanExprsPushDown(sc *stmtctx.StatementContext, exprs []Expression, client kv.Client, storeType kv.StoreType) bool {
-	_, remained := ExprsPushDown(sc, exprs, client, storeType)
+	_, remained := PushDownExprs(sc, exprs, client, storeType)
 	return len(remained) == 0
 }
 

@@ -110,7 +110,7 @@ func (s *testEvaluatorSuite) TestConstant2Pb(c *C) {
 	c.Assert(constValue.Value.Kind(), Equals, types.KindMysqlEnum)
 	constExprs = append(constExprs, constValue)
 
-	pushed, remained := ExprsPushDown(sc, constExprs, client, kv.UnSpecified)
+	pushed, remained := PushDownExprs(sc, constExprs, client, kv.UnSpecified)
 	c.Assert(len(pushed), Equals, len(constExprs)-3)
 	c.Assert(len(remained), Equals, 3)
 
@@ -148,7 +148,7 @@ func (s *testEvaluatorSuite) TestColumn2Pb(c *C) {
 	colExprs = append(colExprs, dg.genColumn(mysql.TypeUnspecified, 5))
 	colExprs = append(colExprs, dg.genColumn(mysql.TypeDecimal, 6))
 
-	pushed, remained := ExprsPushDown(sc, colExprs, client, kv.UnSpecified)
+	pushed, remained := PushDownExprs(sc, colExprs, client, kv.UnSpecified)
 	c.Assert(len(pushed), Equals, 0)
 	c.Assert(len(remained), Equals, len(colExprs))
 
@@ -180,7 +180,7 @@ func (s *testEvaluatorSuite) TestColumn2Pb(c *C) {
 	colExprs = append(colExprs, dg.genColumn(mysql.TypeBlob, 21))
 	colExprs = append(colExprs, dg.genColumn(mysql.TypeVarString, 22))
 	colExprs = append(colExprs, dg.genColumn(mysql.TypeString, 23))
-	pushed, remained = ExprsPushDown(sc, colExprs, client, kv.UnSpecified)
+	pushed, remained = PushDownExprs(sc, colExprs, client, kv.UnSpecified)
 	c.Assert(len(pushed), Equals, len(colExprs))
 	c.Assert(len(remained), Equals, 0)
 	pbExprs = ExpressionsToPBList(sc, colExprs, client)
@@ -219,7 +219,7 @@ func (s *testEvaluatorSuite) TestColumn2Pb(c *C) {
 		expr.(*Column).ID = 0
 		expr.(*Column).Index = 0
 	}
-	pushed, remained = ExprsPushDown(sc, colExprs, client, kv.UnSpecified)
+	pushed, remained = PushDownExprs(sc, colExprs, client, kv.UnSpecified)
 	c.Assert(len(pushed), Equals, len(colExprs))
 	c.Assert(len(remained), Equals, 0)
 }
@@ -237,7 +237,7 @@ func (s *testEvaluatorSuite) TestCompareFunc2Pb(c *C) {
 		compareExprs = append(compareExprs, fc)
 	}
 
-	pushed, remained := ExprsPushDown(sc, compareExprs, client, kv.UnSpecified)
+	pushed, remained := PushDownExprs(sc, compareExprs, client, kv.UnSpecified)
 	c.Assert(len(pushed), Equals, len(compareExprs))
 	c.Assert(len(remained), Equals, 0)
 
@@ -591,7 +591,7 @@ func (s *testEvaluatorSuite) TestExprOnlyPushDownToFlash(c *C) {
 	var exprs = make([]Expression, 0)
 	exprs = append(exprs, function)
 
-	pushed, remained := ExprsPushDown(sc, exprs, client, kv.UnSpecified)
+	pushed, remained := PushDownExprs(sc, exprs, client, kv.UnSpecified)
 	c.Assert(len(pushed), Equals, 1)
 	c.Assert(len(remained), Equals, 0)
 
@@ -600,11 +600,11 @@ func (s *testEvaluatorSuite) TestExprOnlyPushDownToFlash(c *C) {
 	canPush = CanExprsPushDown(sc, exprs, client, kv.TiKV)
 	c.Assert(canPush, Equals, false)
 
-	pushed, remained = ExprsPushDown(sc, exprs, client, kv.TiFlash)
+	pushed, remained = PushDownExprs(sc, exprs, client, kv.TiFlash)
 	c.Assert(len(pushed), Equals, 1)
 	c.Assert(len(remained), Equals, 0)
 
-	pushed, remained = ExprsPushDown(sc, exprs, client, kv.TiKV)
+	pushed, remained = PushDownExprs(sc, exprs, client, kv.TiKV)
 	c.Assert(len(pushed), Equals, 0)
 	c.Assert(len(remained), Equals, 1)
 }
@@ -618,7 +618,7 @@ func (s *testEvaluatorSuite) TestExprOnlyPushDownToTiKV(c *C) {
 	var exprs = make([]Expression, 0)
 	exprs = append(exprs, function)
 
-	pushed, remained := ExprsPushDown(sc, exprs, client, kv.UnSpecified)
+	pushed, remained := PushDownExprs(sc, exprs, client, kv.UnSpecified)
 	c.Assert(len(pushed), Equals, 1)
 	c.Assert(len(remained), Equals, 0)
 
@@ -627,10 +627,10 @@ func (s *testEvaluatorSuite) TestExprOnlyPushDownToTiKV(c *C) {
 	canPush = CanExprsPushDown(sc, exprs, client, kv.TiKV)
 	c.Assert(canPush, Equals, true)
 
-	pushed, remained = ExprsPushDown(sc, exprs, client, kv.TiFlash)
+	pushed, remained = PushDownExprs(sc, exprs, client, kv.TiFlash)
 	c.Assert(len(pushed), Equals, 0)
 	c.Assert(len(remained), Equals, 1)
-	pushed, remained = ExprsPushDown(sc, exprs, client, kv.TiKV)
+	pushed, remained = PushDownExprs(sc, exprs, client, kv.TiKV)
 	c.Assert(len(pushed), Equals, 1)
 	c.Assert(len(remained), Equals, 0)
 }
@@ -734,7 +734,7 @@ func (s *testEvaluatorSerialSuites) TestNewCollationsEnabled(c *C) {
 	colExprs = append(colExprs, columnCollation(dg.genColumn(mysql.TypeVarString, 3), "utf8mb4_general_ci"))
 	colExprs = append(colExprs, columnCollation(dg.genColumn(mysql.TypeString, 4), "utf8mb4_0900_ai_ci"))
 	colExprs = append(colExprs, columnCollation(dg.genColumn(mysql.TypeVarchar, 5), "utf8_bin"))
-	pushed, _ := ExprsPushDown(sc, colExprs, client, kv.UnSpecified)
+	pushed, _ := PushDownExprs(sc, colExprs, client, kv.UnSpecified)
 	c.Assert(len(pushed), Equals, len(colExprs))
 	pbExprs := ExpressionsToPBList(sc, colExprs, client)
 	jsons := []string{
