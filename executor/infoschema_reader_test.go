@@ -20,7 +20,6 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/gorilla/mux"
