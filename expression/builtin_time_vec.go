@@ -1757,7 +1757,6 @@ func (b *builtinDateFormatSig) vecEvalString(input *chunk.Chunk, result *chunk.C
 		return err
 	}
 
-	var dateAsIntBuf *chunk.Column
 	result.ReserveString(n)
 
 	for i := range times {
@@ -1778,16 +1777,8 @@ func (b *builtinDateFormatSig) vecEvalString(input *chunk.Chunk, result *chunk.C
 		if t.InvalidZero() {
 			// MySQL compatibility, #11203
 			// 0 | 0.0 should be converted to null without warnings
-			if dateAsIntBuf == nil {
-				if dateAsIntBuf, err = b.bufAllocator.get(types.ETInt, n); err != nil {
-					return err
-				}
-				defer b.bufAllocator.put(dateAsIntBuf)
-				if err := b.args[0].VecEvalInt(b.ctx, input, dateAsIntBuf); err != nil {
-					return err
-				}
-			}
-			isOriginalIntOrDecimalZero := dateAsIntBuf.Int64s()[i] == 0 && !dateAsIntBuf.IsNull(i)
+			n, err := t.ToNumber().ToInt()
+			isOriginalIntOrDecimalZero := err == nil && n == 0
 			// Args like "0000-00-00", "0000-00-00 00:00:00" set Fsp to 6
 			isOriginalStringZero := t.Fsp() > 0
 
