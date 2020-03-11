@@ -535,15 +535,15 @@ func (e *CleanupIndexExec) deleteDanglingIdx(txn kv.Transaction, values map[stri
 
 func extractIdxVals(row chunk.Row, idxVals []types.Datum,
 	fieldTypes []*types.FieldType) []types.Datum {
-	if idxVals == nil {
-		idxVals = make([]types.Datum, 0, row.Len()-1)
+	if cap(idxVals) < row.Len()-1 {
+		idxVals = make([]types.Datum, row.Len()-1)
 	} else {
-		idxVals = idxVals[:0]
+		idxVals = idxVals[:row.Len()-1]
 	}
 
 	for i := 0; i < row.Len()-1; i++ {
 		colVal := row.GetDatum(i, fieldTypes[i])
-		idxVals = append(idxVals, *colVal.Copy())
+		colVal.Copy(&idxVals[i])
 	}
 	return idxVals
 }

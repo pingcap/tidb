@@ -2660,6 +2660,16 @@ func (s *testIntegrationSuite2) TestBuiltin(c *C) {
 	result = tk.MustQuery("select from_unixtime(1451606400)")
 	unixTime := time.Unix(1451606400, 0).String()[:19]
 	result.Check(testkit.Rows(unixTime))
+	result = tk.MustQuery("select from_unixtime(14516064000/10)")
+	result.Check(testkit.Rows("2016-01-01 08:00:00.0000"))
+	result = tk.MustQuery("select from_unixtime('14516064000'/10)")
+	result.Check(testkit.Rows("2016-01-01 08:00:00.000000"))
+	result = tk.MustQuery("select from_unixtime(cast(1451606400 as double))")
+	result.Check(testkit.Rows("2016-01-01 08:00:00.000000"))
+	result = tk.MustQuery("select from_unixtime(cast(cast(1451606400 as double) as DECIMAL))")
+	result.Check(testkit.Rows("2016-01-01 08:00:00"))
+	result = tk.MustQuery("select from_unixtime(cast(cast(1451606400 as double) as DECIMAL(65,1)))")
+	result.Check(testkit.Rows("2016-01-01 08:00:00.0"))
 	result = tk.MustQuery("select from_unixtime(1451606400.123456)")
 	unixTime = time.Unix(1451606400, 123456000).String()[:26]
 	result.Check(testkit.Rows(unixTime))
@@ -2671,6 +2681,14 @@ func (s *testIntegrationSuite2) TestBuiltin(c *C) {
 	result.Check(testkit.Rows(unixTime))
 	result = tk.MustQuery("select from_unixtime(1511247196661)")
 	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select from_unixtime('1451606400.123');")
+	result.Check(testkit.Rows("2016-01-01 08:00:00.123000"))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("insert into t value(1451606400);")
+	result = tk.MustQuery("select from_unixtime(a) from t;")
+	result.Check(testkit.Rows("2016-01-01 08:00:00"))
 
 	// test strcmp
 	result = tk.MustQuery("select strcmp('abc', 'def')")
@@ -5703,6 +5721,13 @@ func (s *testIntegrationSerialSuite) TestCollateSort(c *C) {
 	tk := s.prepare4Collation(c, false)
 	tk.MustQuery("select id from t order by v, id").Check(testkit.Rows("7", "1", "2", "3", "4", "5", "6"))
 	tk.MustQuery("select id from t_bin order by v, id").Check(testkit.Rows("7", "1", "5", "6", "2", "4", "3"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(10) collate utf8mb4_general_ci, key(a))")
+	tk.MustExec("insert into t values ('a'), ('A'), ('b')")
+	tk.MustExec("insert into t values ('a'), ('A'), ('b')")
+	tk.MustExec("insert into t values ('a'), ('A'), ('b')")
+	tk.MustQuery("select * from t order by a collate utf8mb4_bin").Check(testkit.Rows("A", "A", "A", "a", "a", "a", "b", "b", "b"))
 }
 
 func (s *testIntegrationSerialSuite) TestCollateHashAgg(c *C) {
@@ -5717,6 +5742,13 @@ func (s *testIntegrationSerialSuite) TestCollateHashAgg(c *C) {
 	tk.MustQuery("select v, count(*) from t_bin group by v").Sort().Check(testkit.Rows("  1", "a 1", "b 1", "c 1", "À 1", "à 1", "á 1"))
 	tk.HasPlan("select v, count(*) from t group by v", "HashAgg")
 	tk.MustQuery("select v, count(*) from t group by v").Sort().Check(testkit.Rows("  1", "a 4", "b 1", "c 1"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(10) collate utf8mb4_general_ci, key(a))")
+	tk.MustExec("insert into t values ('a'), ('A'), ('b')")
+	tk.MustExec("insert into t values ('a'), ('A'), ('b')")
+	tk.MustExec("insert into t values ('a'), ('A'), ('b')")
+	tk.MustQuery("select count(1) from t group by a collate utf8mb4_bin").Check(testkit.Rows("3", "3", "3"))
 }
 
 func (s *testIntegrationSerialSuite) TestCollateStreamAgg(c *C) {

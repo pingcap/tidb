@@ -701,7 +701,7 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, v *ast.Ex
 		}
 		er.ctxStackAppend(er.p.Schema().Columns[er.p.Schema().Len()-1], er.p.OutputNames()[er.p.Schema().Len()-1])
 	} else {
-		physicalPlan, _, err := DoOptimize(ctx, er.b.optFlag, np)
+		physicalPlan, _, err := DoOptimize(ctx, er.sctx, er.b.optFlag, np)
 		if err != nil {
 			er.err = err
 			return v, true
@@ -864,7 +864,7 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, v *ast.S
 		}
 		return v, true
 	}
-	physicalPlan, _, err := DoOptimize(ctx, er.b.optFlag, np)
+	physicalPlan, _, err := DoOptimize(ctx, er.sctx, er.b.optFlag, np)
 	if err != nil {
 		er.err = err
 		return v, true
@@ -1005,8 +1005,9 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		// SetCollationExpr sets the collation explicitly, even when the evaluation type of the expression is non-string.
 		if _, ok := arg.(*expression.Column); ok {
 			// Wrap a cast here to avoid changing the original FieldType of the column expression.
-			casted := expression.WrapWithCastAsString(er.sctx, arg)
-			casted.GetType().Collate = v.Collate
+			exprType := arg.GetType().Clone()
+			exprType.Collate = v.Collate
+			casted := expression.BuildCastFunction(er.sctx, arg, exprType)
 			er.ctxStackPop(1)
 			er.ctxStackAppend(casted, types.EmptyName)
 		} else {
