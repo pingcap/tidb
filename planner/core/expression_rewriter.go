@@ -694,7 +694,7 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, v *ast.Ex
 		return v, true
 	}
 	np = er.popExistsSubPlan(np)
-	if len(np.extractCorrelatedCols()) > 0 {
+	if len(ExtractCorrelatedCols(np)) > 0 {
 		er.p, er.err = er.b.buildSemiApply(er.p, np, nil, er.asScalar, v.Not)
 		if er.err != nil || !er.asScalar {
 			return v, true
@@ -846,7 +846,7 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, v *ast.S
 		return v, true
 	}
 	np = er.b.buildMaxOneRow(np)
-	if len(np.extractCorrelatedCols()) > 0 {
+	if len(ExtractCorrelatedCols(np)) > 0 {
 		er.p = er.b.buildApplyWithJoinType(er.p, np, LeftOuterJoin)
 		if np.Schema().Len() > 1 {
 			newCols := make([]expression.Expression, 0, np.Schema().Len())
