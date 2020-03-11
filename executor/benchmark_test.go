@@ -18,7 +18,6 @@ import (
 	"encoding/base64"
 	"fmt"
 	"math/rand"
-	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -105,31 +104,27 @@ func (mds *mockDataSource) genColDatums(col int) (results []interface{}) {
 		NDV = mds.p.ndvs[col]
 	}
 	results = make([]interface{}, 0, rows)
-	var genDataFunc func(row int, typ *types.FieldType) interface{}
-	if mds.p.genDataFunc != nil {
-		genDataFunc = mds.p.genDataFunc
-	} else {
-		genDataFunc = mds.randDatum
-	}
 	if NDV == 0 {
-		for i := 0; i < rows; i++ {
-			results = append(results, genDataFunc(i, typ))
+		if mds.p.genDataFunc == nil {
+			for i := 0; i < rows; i++ {
+				results = append(results, mds.randDatum(typ))
+			}
+		} else {
+			for i := 0; i < rows; i++ {
+				results = append(results, mds.p.genDataFunc(i, typ))
+			}
 		}
 	} else {
 		datumSet := make(map[string]bool, NDV)
 		datums := make([]interface{}, 0, NDV)
-		for i := 0; i < rows; i++ {
-			if len(datums) < NDV {
-				d := genDataFunc(i, typ)
-				str := fmt.Sprintf("%v", d)
-				if datumSet[str] {
-					continue
-				}
-				datumSet[str] = true
-				datums = append(datums, d)
-			} else {
-				break
+		for len(datums) < NDV {
+			d := mds.randDatum(typ)
+			str := fmt.Sprintf("%v", d)
+			if datumSet[str] {
+				continue
 			}
+			datumSet[str] = true
+			datums = append(datums, d)
 		}
 
 		for i := 0; i < rows; i++ {
@@ -155,12 +150,15 @@ func (mds *mockDataSource) genColDatums(col int) (results []interface{}) {
 	return
 }
 
-func (mds *mockDataSource) randDatum(row int, typ *types.FieldType) interface{} {
+func (mds *mockDataSource) randDatum(typ *types.FieldType) interface{} {
 	switch typ.Tp {
 	case mysql.TypeLong, mysql.TypeLonglong:
 		return int64(rand.Int())
-	case mysql.TypeDouble:
+	case mysql.TypeDouble, mysql.TypeFloat:
 		return rand.Float64()
+	case mysql.TypeNewDecimal:
+		var d types.MyDecimal
+		return d.FromInt(int64(rand.Int()))
 	case mysql.TypeVarString:
 		buff := make([]byte, 10)
 		rand.Read(buff)
@@ -545,33 +543,15 @@ func benchmarkWindowExecWithCase(b *testing.B, casTest *windowTestCase) {
 		b.Fatal(err)
 	}
 
-	decimalBuff := make([]types.MyDecimal, casTest.rows)
-	genDataFunc := func(row int, typ *types.FieldType) interface{} {
-		switch typ.Tp {
-		case mysql.TypeLong, mysql.TypeLonglong:
-			return int64(row)
-		case mysql.TypeDouble, mysql.TypeFloat:
-			return float64(row)
-		case mysql.TypeNewDecimal:
-			return decimalBuff[row].FromInt(int64(row))
-		case mysql.TypeVarString:
-			return casTest.rawDataSmall
-		default:
-			panic("not implement")
-		}
-	}
-
 	cols := casTest.columns
 	dataSource := buildMockDataSource(mockDataSourceParameters{
-		schema:      expression.NewSchema(cols...),
-		ndvs:        []int{0, casTest.ndv, 0, 0},
-		orders:      []bool{false, casTest.dataSourceSorted, false, false},
-		rows:        casTest.rows,
-		ctx:         casTest.ctx,
-		genDataFunc: genDataFunc,
+		schema: expression.NewSchema(cols...),
+		ndvs:   []int{0, casTest.ndv, 0, 0},
+		orders: []bool{false, casTest.dataSourceSorted, false, false},
+		rows:   casTest.rows,
+		ctx:    casTest.ctx,
 	})
 
-	runtime.GC()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		b.StopTimer() // prepare a new window-executor
@@ -700,8 +680,8 @@ func baseBenchmarkWindowFunctionsWithSlidingWindow(b *testing.B, frameType ast.F
 		{ast.AggFuncSum, mysql.TypeNewDecimal},
 		{ast.AggFuncCount, mysql.TypeLong},
 	}
-	row := 1000
-	ndv := 10
+	row := 100000
+	ndv := 100
 	frame := &core.WindowFrame{
 		Type:  frameType,
 		Start: &core.FrameBound{Type: ast.Preceding, Num: 10},
