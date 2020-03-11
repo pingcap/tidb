@@ -156,11 +156,13 @@ func DeriveCollationFromExprs(ctx sessionctx.Context, exprs ...Expression) (dstC
 		}
 	}
 	dstFlen = types.UnspecifiedLength
+	hasStrArg := false
 	// see https://dev.mysql.com/doc/refman/8.0/en/charset-collation-coercibility.html
 	for _, e := range exprs {
 		if e.GetType().EvalType() != types.ETString {
 			continue
 		}
+		hasStrArg = true
 
 		coer := e.Coercibility()
 		ft := e.GetType()
@@ -180,6 +182,9 @@ func DeriveCollationFromExprs(ctx sessionctx.Context, exprs ...Expression) (dstC
 			isBinCollation(ft.Collate) { // use the _bin collation
 			curCoer, dstCharset, dstCollation, dstFlen = coer, ft.Charset, ft.Collate, ft.Flen
 		}
+	}
+	if !hasStrArg {
+		dstCharset, dstCollation, dstFlen = charset.CharsetBin, charset.CollationBin, types.UnspecifiedLength
 	}
 	return
 }

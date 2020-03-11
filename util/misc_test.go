@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/fastrand"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/testleak"
@@ -197,7 +198,7 @@ func (s *testMiscSuite) TestBasicFunc(c *C) {
 	c.Assert(row3[8], Equals, int64(0))
 
 	// Test for RandomBuf.
-	buf := RandomBuf(5)
+	buf := fastrand.Buf(5)
 	c.Assert(len(buf), Equals, 5)
 	c.Assert(bytes.Contains(buf, []byte("$")), IsFalse)
 	c.Assert(bytes.Contains(buf, []byte{0}), IsFalse)
