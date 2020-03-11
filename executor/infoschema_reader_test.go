@@ -14,6 +14,8 @@
 package executor_test
 
 import (
+	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/util/testutil"
 	"strconv"
 
 	. "github.com/pingcap/check"
@@ -73,6 +75,7 @@ func (s *testInfoschemaTableSuite) TearDownSuite(c *C) {
 	s.dom.Close()
 	s.store.Close()
 }
+
 func (s *testInfoschemaTableSuite) TestSchemataTables(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
@@ -337,6 +340,15 @@ func (s *testInfoschemaTableSerialSuite) TestPartitionsTable(c *C) {
 		testkit.Rows("<nil> 3 18 54 6"))
 
 	tk.MustExec("DROP TABLE `test_partitions`;")
+}
+
+func (s *testInfoschemaTableSuite) TestMetricTables(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	statistics.ClearHistoryJobs()
+	tk.MustExec("use information_schema")
+	tk.MustQuery("select count(*) > 0 from `METRICS_TABLES`").Check(testkit.Rows("1"))
+	tk.MustQuery("select * from `METRICS_TABLES` where table_name='tidb_qps'").
+		Check(testutil.RowsWithSep("|", "tidb_qps|sum(rate(tidb_server_query_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (result,type,instance)|instance,type,result|0|TiDB query processing numbers per second"))
 }
 
 func (s *testInfoschemaTableSuite) TestTableConstraintsTable(c *C) {
