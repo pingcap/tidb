@@ -507,7 +507,7 @@ var defaultConf = Config{
 	TokenLimit:                   1000,
 	OOMUseTmpStorage:             true,
 	TempStoragePath:              filepath.Join(os.TempDir(), "tidb", "tmp-storage"),
-	OOMAction:                    "log",
+	OOMAction:                    OOMActionCancel,
 	MemQuotaQuery:                1 << 30,
 	EnableStreaming:              false,
 	EnableBatchDML:               false,

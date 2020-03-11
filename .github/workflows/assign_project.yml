@@ -1,6 +1,10 @@
 name: Auto Assign Project Local
 
-on: [issues]
+on:
+  issues:
+    types: [labeled]
+  pull_request:
+    types: [labeled]
 env:
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -9,15 +13,43 @@ jobs:
     runs-on: ubuntu-latest
     name: Assign to One Project
     steps:
-    - name: Run assignment to project SIG Runtime Kanban
-      uses: SunRunAway/assign-one-project-github-action@1.1.6
-      if: github.event.action == 'labeled' && (contains(github.event.issue.labels.*.name, 'component/executor') || contains(github.event.issue.labels.*.name, 'component/expression'))
+    - name: Run issues assignment to project SIG Runtime Kanban
+      uses: srggrs/assign-one-project-github-action@1.2.0
+      if: |
+        github.event_name == 'issues' && (
+        contains(github.event.issue.labels.*.name, 'component/executor') ||
+        contains(github.event.issue.labels.*.name, 'component/expression')
+        )
       with:
         project: 'https://github.com/pingcap/tidb/projects/38'
-        column_name: 'Need Triage'
-    - name: Run assignment to project SIG Planner Kanban
-      uses: SunRunAway/assign-one-project-github-action@1.1.6
-      if: github.event.action == 'labeled' && (contains(github.event.issue.labels.*.name, 'component/planner') || contains(github.event.issue.labels.*.name, 'component/statistics'))
+        column_name: 'Issue Backlog: Need Triage'
+    - name: Run PRs assignment to project SIG Runtime Kanban
+      uses: srggrs/assign-one-project-github-action@1.2.0
+      if: |
+        github.event_name == 'pull_request' && (
+        contains(github.event.pull_request.labels.*.name, 'component/executor') ||
+        contains(github.event.pull_request.labels.*.name, 'component/expression')
+        )
+      with:
+        project: 'https://github.com/pingcap/tidb/projects/38'
+        column_name: 'PR: In Progress'
+    - name: Run issues assignment to project SIG Planner Kanban
+      uses: srggrs/assign-one-project-github-action@1.2.0
+      if: |
+        github.event_name == 'issues' && (
+        contains(github.event.issue.labels.*.name, 'component/planner') ||
+        contains(github.event.issue.labels.*.name, 'component/statistics')
+        )
       with:
         project: 'https://github.com/pingcap/tidb/projects/39'
-        column_name: 'Need Triage'
+        column_name: 'Issue Backlog: Need Triage'
+    - name: Run PRs assignment to project SIG Planner Kanban
+      uses: srggrs/assign-one-project-github-action@1.2.0
+      if: |
+        github.event_name == 'pull_request' && (
+        contains(github.event.pull_request.labels.*.name, 'component/planner') ||
+        contains(github.event.pull_request.labels.*.name, 'component/statistics')
+        )
+      with:
+        project: 'https://github.com/pingcap/tidb/projects/39'
+        column_name: 'PR: In Progress'
