@@ -1128,3 +1128,25 @@ func (ts *HTTPHandlerTestSuite) TestZipInfoForSQL(c *C) {
 	c.Assert(string(b), Equals, "use database non_exists_db failed, err: [schema:1049]Unknown database 'non_exists_db'\n")
 	c.Assert(resp.Body.Close(), IsNil)
 }
+
+func (ts *HTTPHandlerTestSuite) TestFailpointHandler(c *C) {
+	defer ts.stopServer(c)
+
+	// start server without enabling failpoint integration
+	ts.startServer(c)
+	resp, err := ts.fetchStatus("/failpoints/")
+	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusNotFound)
+	ts.stopServer(c)
+
+	// enable failpoint integration and start server
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/server/integrateFailpoint", "return"), IsNil)
+	ts.startServer(c)
+	resp, err = ts.fetchStatus("/failpoints/")
+	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+	b, err := ioutil.ReadAll(resp.Body)
+	c.Assert(err, IsNil)
+	c.Assert(strings.Contains(string(b), "github.com/pingcap/tidb/server/integrateFailpoint=return"), IsTrue)
+	c.Assert(resp.Body.Close(), IsNil)
+}
