@@ -226,9 +226,36 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 	// Disable it in global scope.
 	tk.MustExec("set global tidb_enable_stmt_summary = off")
 
+	// Create a new session to test.
+	tk = testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustQuery("select * from t where a=2")
+
+	// Statement summary is still enabled.
+	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, cop_task_num, avg_total_keys,
+		max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions,
+		max_prewrite_regions, avg_affected_rows, query_sample_text, plan
+		from performance_schema.events_statements_summary_by_digest
+		where digest_text like 'select * from t%'`,
+	).Check(testkit.Rows("select test test.t t:k 2 4 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tIndexLookUp_10\troot\t1000\t\n" +
+		"\t├─IndexScan_8 \tcop \t1000\ttable:t, index:a, range:[2,2], keep order:false, stats:pseudo\n" +
+		"\t└─TableScan_9 \tcop \t1000\ttable:t, keep order:false, stats:pseudo"))
+
+	// Unset session variable.
+	tk.MustExec("set session tidb_enable_stmt_summary = ''")
+	tk.MustQuery("select * from t where a=2")
+
+	// Statement summary is disabled.
+	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, cop_task_num, avg_total_keys,
+		max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions,
+		max_prewrite_regions, avg_affected_rows, query_sample_text, plan
+		from performance_schema.events_statements_summary_by_digest`,
+	).Check(testkit.Rows())
+
 	// Create a new session to test
 	tk = testkit.NewTestKitWithInit(c, s.store)
 
+	tk.MustExec("set global tidb_enable_stmt_summary = on")
 	tk.MustExec("set global tidb_stmt_summary_history_size = 100")
 
 	// Create a new user to test statements summary table privilege
@@ -281,32 +308,6 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 		where digest_text like 'select * from t%'`,
 	)
 	c.Assert(len(result.Rows()), Equals, 1)
-
-	// Create a new session to test.
-	tk = testkit.NewTestKitWithInit(c, s.store)
-
-	tk.MustQuery("select * from t where a=2")
-
-	// Statement summary is still enabled.
-	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, cop_task_num, avg_total_keys,
-		max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions,
-		max_prewrite_regions, avg_affected_rows, query_sample_text, plan
-		from performance_schema.events_statements_summary_by_digest
-		where digest_text like 'select * from t%'`,
-	).Check(testkit.Rows("select test test.t t:k 2 4 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tIndexLookUp_10\troot\t1000\t\n" +
-		"\t├─IndexScan_8 \tcop \t1000\ttable:t, index:a, range:[2,2], keep order:false, stats:pseudo\n" +
-		"\t└─TableScan_9 \tcop \t1000\ttable:t, keep order:false, stats:pseudo"))
-
-	// Unset session variable.
-	tk.MustExec("set session tidb_enable_stmt_summary = ''")
-	tk.MustQuery("select * from t where a=2")
-
-	// Statement summary is disabled.
-	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, cop_task_num, avg_total_keys,
-		max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions,
-		max_prewrite_regions, avg_affected_rows, query_sample_text, plan
-		from performance_schema.events_statements_summary_by_digest`,
-	).Check(testkit.Rows())
 }
 
 // Test events_statements_summary_by_digest_history.
