@@ -64,6 +64,7 @@ var (
 
 var _ = Suite(&testSessionSuite{})
 var _ = Suite(&testSessionSuite2{})
+var _ = Suite(&testSessionSuite3{})
 var _ = Suite(&testSchemaSuite{})
 var _ = Suite(&testIsolationSuite{})
 var _ = SerialSuites(&testSchemaSerialSuite{})
@@ -82,6 +83,10 @@ type testSessionSuite struct {
 }
 
 type testSessionSuite2 struct {
+	testSessionSuiteBase
+}
+
+type testSessionSuite3 struct {
 	testSessionSuiteBase
 }
 
@@ -261,7 +266,7 @@ func (s *testSessionSuite) TestForCoverage(c *C) {
 	c.Check(err, IsNil)
 }
 
-func (s *testSessionSuite) TestErrorRollback(c *C) {
+func (s *testSessionSuite2) TestErrorRollback(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t_rollback")
 	tk.MustExec("create table t_rollback (c1 int, c2 int, primary key(c1))")
@@ -354,7 +359,7 @@ func (s *testSessionSuite) TestAffectedRows(c *C) {
 	c.Assert(int(tk.Se.AffectedRows()), Equals, 2)
 }
 
-func (s *testSessionSuite) TestLastMessage(c *C) {
+func (s *testSessionSuite3) TestLastMessage(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
 	tk.MustExec("drop table if exists t")
@@ -1246,7 +1251,7 @@ func (s *testSessionSuite) TestPrepare(c *C) {
 	c.Assert(err, IsNil)
 }
 
-func (s *testSessionSuite) TestSpecifyIndexPrefixLength(c *C) {
+func (s *testSessionSuite2) TestSpecifyIndexPrefixLength(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
 	_, err := tk.Exec("create table t (c1 char, index(c1(3)));")
@@ -1402,7 +1407,7 @@ func (s *testSessionSuite) TestFieldText(c *C) {
 	}
 }
 
-func (s *testSessionSuite2) TestIndexMaxLength(c *C) {
+func (s *testSessionSuite3) TestIndexMaxLength(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create database test_index_max_length")
 	tk.MustExec("use test_index_max_length")
@@ -1518,7 +1523,7 @@ func (s *testSessionSuite2) TestIgnoreForeignKey(c *C) {
 }
 
 // TestISColumns tests information_schema.columns.
-func (s *testSessionSuite2) TestISColumns(c *C) {
+func (s *testSessionSuite3) TestISColumns(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("select ORDINAL_POSITION from INFORMATION_SCHEMA.COLUMNS;")
 	tk.MustQuery("SELECT CHARACTER_SET_NAME FROM INFORMATION_SCHEMA.CHARACTER_SETS WHERE CHARACTER_SET_NAME = 'utf8mb4'").Check(testkit.Rows("utf8mb4"))
@@ -1570,7 +1575,7 @@ func (s *testSessionSuite2) TestRetry(c *C) {
 	wg.Wait()
 }
 
-func (s *testSessionSuite2) TestMultiStmts(c *C) {
+func (s *testSessionSuite3) TestMultiStmts(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t1; create table t1(id int ); insert into t1 values (1);")
 	tk.MustQuery("select * from t1;").Check(testkit.Rows("1"))
@@ -1585,7 +1590,7 @@ func (s *testSessionSuite2) TestLastExecuteDDLFlag(c *C) {
 	c.Assert(tk.Se.Value(sessionctx.LastExecuteDDL), IsNil)
 }
 
-func (s *testSessionSuite2) TestDecimal(c *C) {
+func (s *testSessionSuite3) TestDecimal(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
 	tk.MustExec("drop table if exists t;")
@@ -1610,7 +1615,7 @@ func (s *testSessionSuite2) TestParser(c *C) {
 	tk.MustExec(`drop table t1,t2;`)
 }
 
-func (s *testSessionSuite2) TestOnDuplicate(c *C) {
+func (s *testSessionSuite3) TestOnDuplicate(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
 	// test for https://github.com/pingcap/tidb/pull/454
@@ -1636,7 +1641,7 @@ func (s *testSessionSuite2) TestReplace(c *C) {
 	tk.MustExec("replace into t select * from t1 limit 1;")
 }
 
-func (s *testSessionSuite2) TestDelete(c *C) {
+func (s *testSessionSuite3) TestDelete(c *C) {
 	// test for https://github.com/pingcap/tidb/pull/1135
 
 	tk := testkit.NewTestKitWithInit(c, s.store)
@@ -1707,7 +1712,7 @@ func (s *testSessionSuite2) TestResetCtx(c *C) {
 	tk.MustQuery("select * from t;").Check(testkit.Rows("13", "25"))
 }
 
-func (s *testSessionSuite2) TestUnique(c *C) {
+func (s *testSessionSuite3) TestUnique(c *C) {
 	// test for https://github.com/pingcap/tidb/pull/461
 
 	tk := testkit.NewTestKitWithInit(c, s.store)
@@ -1794,7 +1799,7 @@ func (s *testSessionSuite2) TestSet(c *C) {
 	tk.MustQuery("select @tmp := c-2 from t where c=3").Check(testkit.Rows("1"))
 }
 
-func (s *testSessionSuite2) TestMySQLTypes(c *C) {
+func (s *testSessionSuite3) TestMySQLTypes(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustQuery(`select 0x01 + 1, x'4D7953514C' = "MySQL"`).Check(testkit.Rows("2 1"))
 	tk.MustQuery(`select 0b01 + 1, 0b01000001 = "A"`).Check(testkit.Rows("2 1"))
@@ -1809,7 +1814,7 @@ func (s *testSessionSuite2) TestIssue986(c *C) {
 	tk.MustExec(`insert into address values ('10')`)
 }
 
-func (s *testSessionSuite2) TestCast(c *C) {
+func (s *testSessionSuite3) TestCast(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustQuery("select cast(0.5 as unsigned)")
 	tk.MustQuery("select cast(-0.5 as signed)")
@@ -1847,7 +1852,7 @@ func (s *testSessionSuite2) TestTableInfoMeta(c *C) {
 	tk.MustQuery("select * from tbl_test").Check(testkit.Rows("1 hello"))
 }
 
-func (s *testSessionSuite2) TestCaseInsensitive(c *C) {
+func (s *testSessionSuite3) TestCaseInsensitive(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
 	tk.MustExec("create table T (a text, B int)")
@@ -2474,7 +2479,7 @@ func (s *testSessionSerialSuite) TestBatchCommit(c *C) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("4", "5"))
 }
 
-func (s *testSessionSuite2) TestCastTimeToDate(c *C) {
+func (s *testSessionSuite3) TestCastTimeToDate(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("set time_zone = '-8:00'")
 	date := time.Now().In(time.FixedZone("", -8*int(time.Hour/time.Second)))
@@ -2531,7 +2536,7 @@ func (s *testSessionSuite2) TestRollbackOnCompileError(c *C) {
 	c.Assert(recoverErr, IsTrue)
 }
 
-func (s *testSessionSuite2) TestSetTransactionIsolationOneShot(c *C) {
+func (s *testSessionSuite3) TestSetTransactionIsolationOneShot(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table t (k int, v int)")
 	tk.MustExec("insert t values (1, 42)")
@@ -2637,7 +2642,7 @@ func (s *testSessionSuite2) TestCommitRetryCount(c *C) {
 	c.Assert(err, NotNil)
 }
 
-func (s *testSessionSuite2) TestEnablePartition(c *C) {
+func (s *testSessionSuite3) TestEnablePartition(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("set tidb_enable_table_partition=off")
 	tk.MustQuery("show variables like 'tidb_enable_table_partition'").Check(testkit.Rows("tidb_enable_table_partition off"))
@@ -2902,7 +2907,7 @@ func (s *testSessionSuite2) TestTxnGoString(c *C) {
 	c.Assert(fmt.Sprintf("%#v", txn), Equals, "Txn{state=invalid}")
 }
 
-func (s *testSessionSuite2) TestMaxExeucteTime(c *C) {
+func (s *testSessionSuite3) TestMaxExeucteTime(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
 	tk.MustExec("create table MaxExecTime( id int,name varchar(128),age int);")
@@ -2966,7 +2971,7 @@ func (s *testSessionSuite2) TestGrantViewRelated(c *C) {
 	tkUser.MustExec("create view v_version29_c as select * from v_version29;")
 }
 
-func (s *testSessionSuite2) TestLoadClientInteractive(c *C) {
+func (s *testSessionSuite3) TestLoadClientInteractive(c *C) {
 	var (
 		err          error
 		connectionID uint64
@@ -2992,7 +2997,7 @@ func (s *testSessionSuite2) TestReplicaRead(c *C) {
 	c.Assert(tk.Se.GetSessionVars().GetReplicaRead(), Equals, kv.ReplicaReadLeader)
 }
 
-func (s *testSessionSuite2) TestIsolationRead(c *C) {
+func (s *testSessionSuite3) TestIsolationRead(c *C) {
 	var err error
 	tk := testkit.NewTestKit(c, s.store)
 	tk.Se, err = session.CreateSession4Test(s.store)
@@ -3057,7 +3062,7 @@ func (s *testSessionSuite2) TestStmtHints(c *C) {
 	c.Assert(tk.Se.GetSessionVars().GetReplicaRead(), Equals, kv.ReplicaReadFollower)
 }
 
-func (s *testSessionSuite2) TestPessimisticLockOnPartition(c *C) {
+func (s *testSessionSuite3) TestPessimisticLockOnPartition(c *C) {
 	// This test checks that 'select ... for update' locks the partition instead of the table.
 	// Cover a bug that table ID is used to encode the lock key mistakenly.
 	tk := testkit.NewTestKit(c, s.store)
