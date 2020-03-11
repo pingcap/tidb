@@ -1323,7 +1323,7 @@ func (s *session) DropPreparedStmt(stmtID uint32) error {
 
 func (s *session) Txn(active bool) (kv.Transaction, error) {
 	if !s.txn.validOrPending() && active {
-		return &s.txn, kv.ErrInvalidTxn
+		return &s.txn, errors.AddStack(kv.ErrInvalidTxn)
 	}
 	if s.txn.pending() && active {
 		// Transaction is lazy initialized.
