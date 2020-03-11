@@ -44,7 +44,6 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/set"
@@ -710,79 +709,6 @@ func (s *testTableSuite) TestForServersInfo(c *C) {
 func (s *testTableSuite) TestColumnStatistics(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustQuery("select * from information_schema.column_statistics").Check(testkit.Rows())
-}
-
-type mockStore struct {
-	tikv.Storage
-	host string
-}
-
-func (s *mockStore) EtcdAddrs() []string    { return []string{s.host} }
-func (s *mockStore) TLSConfig() *tls.Config { panic("not implemented") }
-func (s *mockStore) StartGCWorker() error   { panic("not implemented") }
-
-func (s *testClusterTableSuite) TestTiDBClusterInfo(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	err := tk.QueryToErr("select * from information_schema.cluster_info")
-	c.Assert(err, NotNil)
-	mockAddr := s.mockAddr
-	store := &mockStore{
-		s.store.(tikv.Storage),
-		mockAddr,
-	}
-
-	// information_schema.cluster_info
-	tk = testkit.NewTestKit(c, store)
-	tidbStatusAddr := fmt.Sprintf(":%d", config.GetGlobalConfig().Status.StatusPort)
-	row := func(cols ...string) string { return strings.Join(cols, " ") }
-	tk.MustQuery("select type, instance, status_address, version, git_hash from information_schema.cluster_info").Check(testkit.Rows(
-		row("tidb", ":4000", tidbStatusAddr, "5.7.25-TiDB-None", "None"),
-		row("pd", mockAddr, mockAddr, "4.0.0-alpha", "mock-pd-githash"),
-		row("tikv", "127.0.0.1:20160", mockAddr, "4.0.0-alpha", "mock-tikv-githash"),
-	))
-	startTime := s.startTime.Format(time.RFC3339)
-	tk.MustQuery("select type, instance, start_time from information_schema.cluster_info where type != 'tidb'").Check(testkit.Rows(
-		row("pd", mockAddr, startTime),
-		row("tikv", "127.0.0.1:20160", startTime),
-	))
-
-	// information_schema.cluster_config
-	instances := []string{
-		"pd,127.0.0.1:11080," + mockAddr + ",mock-version,mock-githash",
-		"tidb,127.0.0.1:11080," + mockAddr + ",mock-version,mock-githash",
-		"tikv,127.0.0.1:11080," + mockAddr + ",mock-version,mock-githash",
-	}
-	fpExpr := `return("` + strings.Join(instances, ";") + `")`
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockClusterInfo", fpExpr), IsNil)
-	defer func() { c.Assert(failpoint.Disable("github.com/pingcap/tidb/infoschema/mockClusterInfo"), IsNil) }()
-	tk.MustQuery("select * from information_schema.cluster_config").Check(testkit.Rows(
-		"pd 127.0.0.1:11080 key1 value1",
-		"pd 127.0.0.1:11080 key2.nest1 n-value1",
-		"pd 127.0.0.1:11080 key2.nest2 n-value2",
-		"pd 127.0.0.1:11080 key3.key4.nest3 n-value4",
-		"pd 127.0.0.1:11080 key3.key4.nest4 n-value5",
-		"pd 127.0.0.1:11080 key3.nest1 n-value1",
-		"pd 127.0.0.1:11080 key3.nest2 n-value2",
-		"tidb 127.0.0.1:11080 key1 value1",
-		"tidb 127.0.0.1:11080 key2.nest1 n-value1",
-		"tidb 127.0.0.1:11080 key2.nest2 n-value2",
-		"tidb 127.0.0.1:11080 key3.key4.nest3 n-value4",
-		"tidb 127.0.0.1:11080 key3.key4.nest4 n-value5",
-		"tidb 127.0.0.1:11080 key3.nest1 n-value1",
-		"tidb 127.0.0.1:11080 key3.nest2 n-value2",
-		"tikv 127.0.0.1:11080 key1 value1",
-		"tikv 127.0.0.1:11080 key2.nest1 n-value1",
-		"tikv 127.0.0.1:11080 key2.nest2 n-value2",
-		"tikv 127.0.0.1:11080 key3.key4.nest3 n-value4",
-		"tikv 127.0.0.1:11080 key3.key4.nest4 n-value5",
-		"tikv 127.0.0.1:11080 key3.nest1 n-value1",
-		"tikv 127.0.0.1:11080 key3.nest2 n-value2",
-	))
-	tk.MustQuery("select TYPE, `KEY`, VALUE from information_schema.cluster_config where `key`='key3.key4.nest4' order by type").Check(testkit.Rows(
-		"pd key3.key4.nest4 n-value5",
-		"tidb key3.key4.nest4 n-value5",
-		"tikv key3.key4.nest4 n-value5",
-	))
 }
 
 func (s *testTableSuite) TestReloadDropDatabase(c *C) {
