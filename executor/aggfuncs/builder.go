@@ -106,7 +106,10 @@ func buildCount(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	if aggFuncDesc.HasDistinct &&
 		(aggFuncDesc.Mode == aggregation.CompleteMode || aggFuncDesc.Mode == aggregation.Partial1Mode) {
 		if len(base.args) == 1 {
-			// optimize with single column except Time and JSON
+			// optimize with single column
+			// TODO: because Time and JSON does not have `hashcode()` or similar method
+			// so they're in exception for now.
+			// TODO: add hashCode method for all evaluate types (Decimal, Time, Duration, JSON).
 			switch aggFuncDesc.Args[0].GetType().EvalType() {
 			case types.ETInt:
 				return &countOriginalWithDistinct4Int{baseCount{base}}
