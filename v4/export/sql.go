@@ -99,7 +99,12 @@ func SelectVersion(db *sql.DB) (string, error) {
 }
 
 func SelectAllFromTable(conf *Config, db *sql.DB, database, table string) (TableDataIR, error) {
-	colTypes, err := GetColumnTypes(db, database, table)
+	selectedField, err := buildSelectField(db, database, table)
+	if err != nil {
+		return nil, err
+	}
+
+	colTypes, err := GetColumnTypes(db, selectedField, database, table)
 	if err != nil {
 		return nil, err
 	}
@@ -109,26 +114,29 @@ func SelectAllFromTable(conf *Config, db *sql.DB, database, table string) (Table
 		return nil, err
 	}
 
-	query := buildSelectQuery(database, table, buildWhereCondition(conf, ""), orderByClause)
+	query := buildSelectQuery(database, table, selectedField, buildWhereCondition(conf, ""), orderByClause)
 	rows, err := db.Query(query)
 	if err != nil {
 		return nil, withStack(errors.WithMessage(err, query))
 	}
 
 	return &tableData{
-		database: database,
-		table:    table,
-		rows:     rows,
-		colTypes: colTypes,
+		database:      database,
+		table:         table,
+		rows:          rows,
+		colTypes:      colTypes,
+		selectedField: selectedField,
 		specCmts: []string{
 			"/*!40101 SET NAMES binary*/;",
 		},
 	}, nil
 }
 
-func buildSelectQuery(database, table string, where string, orderByClause string) string {
+func buildSelectQuery(database, table string, fields string, where string, orderByClause string) string {
 	var query strings.Builder
-	query.WriteString("SELECT * FROM ")
+	query.WriteString("SELECT ")
+	query.WriteString(fields)
+	query.WriteString(" FROM ")
 	query.WriteString(database)
 	query.WriteString(".")
 	query.WriteString(table)
@@ -186,9 +194,9 @@ func SelectTiDBRowID(db *sql.DB, database, table string) (bool, error) {
 	return true, nil
 }
 
-func GetColumnTypes(db *sql.DB, database, table string) ([]*sql.ColumnType, error) {
-	query := fmt.Sprintf("SELECT * FROM %s.%s LIMIT 1", database, table)
-	rows, err := db.Query(fmt.Sprintf("SELECT * FROM %s.%s LIMIT 1", database, table))
+func GetColumnTypes(db *sql.DB, fields, database, table string) ([]*sql.ColumnType, error) {
+	query := fmt.Sprintf("SELECT %s FROM %s.%s LIMIT 1", fields, database, table)
+	rows, err := db.Query(query)
 	if err != nil {
 		return nil, withStack(errors.WithMessage(err, query))
 	}
@@ -220,7 +228,7 @@ func GetPrimaryKeyName(db *sql.DB, database, table string) (string, error) {
 }
 
 func GetUniqueIndexName(db *sql.DB, database, table string) (string, error) {
-	uniKeyQuery := "SELECT column_name FROM information_schema.columns "+
+	uniKeyQuery := "SELECT column_name FROM information_schema.columns " +
 		"WHERE table_schema = ? AND table_name = ? AND column_key = 'UNI';"
 	var colName string
 	row := db.QueryRow(uniKeyQuery, database, table)
@@ -273,6 +281,36 @@ func ShowMasterStatus(db *sql.DB, fieldNum int) ([]string, error) {
 func SetTiDBSnapshot(db *sql.DB, snapshot string) error {
 	_, err := db.Exec("SET SESSION tidb_snapshot = ?", snapshot)
 	return withStack(err)
+}
+
+func buildSelectField(db *sql.DB, dbName, tableName string) (string, error) {
+	query := `SELECT COLUMN_NAME,EXTRA FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME=?;`
+	rows, err := db.Query(query, dbName, tableName)
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+	availableFields := make([]string, 0)
+
+	hasGenerateColumn := false
+	var fieldName string
+	var extra string
+	for rows.Next() {
+		err = rows.Scan(&fieldName, &extra)
+		if err != nil {
+			return "", withStack(errors.WithMessage(err, query))
+		}
+		switch extra {
+		case "STORED GENERATED", "VIRTUAL GENERATED":
+			hasGenerateColumn = true
+			continue
+		}
+		availableFields = append(availableFields, wrapBackTicks(fieldName))
+	}
+	if hasGenerateColumn {
+		return strings.Join(availableFields, ","), nil
+	}
+	return "*", nil
 }
 
 type oneStrColumnTable struct {
@@ -332,7 +370,7 @@ func pickupPossibleField(dbName, tableName string, db *sql.DB, conf *Config) (st
 		return "", nil
 	}
 
-	query := "SELECT DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS "+
+	query := "SELECT DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS " +
 		"WHERE TABLE_NAME = ? AND COLUMN_NAME = ?"
 	var fieldType string
 	row := db.QueryRow(query, tableName, fieldName)
@@ -398,7 +436,7 @@ func estimateCount(dbName, tableName string, db *sql.DB, field string, conf *Con
 func detectEstimateRows(db *sql.DB, query string, dbType string, fieldIndex int, fieldLength int) int {
 	oneRow := make([]sql.NullString, fieldLength)
 	addr := make([]interface{}, fieldLength)
-	for i := range oneRow{
+	for i := range oneRow {
 		addr[i] = &oneRow[i]
 	}
 	row := db.QueryRow(query)
