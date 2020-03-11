@@ -85,9 +85,9 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		case infoschema.TableUserPrivileges:
 			e.setDataFromUserPrivileges(sctx)
 		case infoschema.TableTiKVRegionPeers:
-			err = e.dataForTikVRegionPeers(sctx)
+			err = e.setDataForTikVRegionPeers(sctx)
 		case infoschema.TableTiDBHotRegions:
-			err = e.dataForTiDBHotRegions(sctx)
+			err = e.setDataForTiDBHotRegions(sctx)
 		case infoschema.TableConstraints:
 			e.setDataFromTableConstraints(sctx, dbs)
 		}
@@ -850,7 +850,7 @@ func keyColumnUsageInTable(schema *model.DBInfo, table *model.TableInfo) [][]typ
 	return rows
 }
 
-func (e *memtableRetriever) dataForTikVRegionPeers(ctx sessionctx.Context) error {
+func (e *memtableRetriever) setDataForTikVRegionPeers(ctx sessionctx.Context) error {
 	tikvStore, ok := ctx.GetStore().(tikv.Storage)
 	if !ok {
 		return errors.New("Information about TiKV region status can be gotten only when the storage is TiKV")
@@ -864,12 +864,12 @@ func (e *memtableRetriever) dataForTikVRegionPeers(ctx sessionctx.Context) error
 		return err
 	}
 	for _, region := range regionsInfo.Regions {
-		e.newTiKVRegionPeersCols(&region)
+		e.setNewTiKVRegionPeersCols(&region)
 	}
 	return nil
 }
 
-func (e *memtableRetriever) newTiKVRegionPeersCols(region *helper.RegionInfo) {
+func (e *memtableRetriever) setNewTiKVRegionPeersCols(region *helper.RegionInfo) {
 	records := make([][]types.Datum, 0, len(region.Peers))
 	pendingPeerIDSet := set.NewInt64Set()
 	for _, peer := range region.PendingPeers {
@@ -913,7 +913,7 @@ const (
 	downPeer    = "DOWN"
 )
 
-func (e *memtableRetriever) dataForTiDBHotRegions(ctx sessionctx.Context) error {
+func (e *memtableRetriever) setDataForTiDBHotRegions(ctx sessionctx.Context) error {
 	tikvStore, ok := ctx.GetStore().(tikv.Storage)
 	if !ok {
 		return errors.New("Information about hot region can be gotten only when the storage is TiKV")
@@ -927,17 +927,16 @@ func (e *memtableRetriever) dataForTiDBHotRegions(ctx sessionctx.Context) error 
 	if err != nil {
 		return err
 	}
-	e.dataForHotRegionByMetrics(metrics, "read")
+	e.setDataForHotRegionByMetrics(metrics, "read")
 	metrics, err = tikvHelper.ScrapeHotInfo(pdapi.HotWrite, allSchemas)
 	if err != nil {
 		return err
 	}
-	e.dataForHotRegionByMetrics(metrics, "write")
-
+	e.setDataForHotRegionByMetrics(metrics, "write")
 	return nil
 }
 
-func (e *memtableRetriever) dataForHotRegionByMetrics(metrics []helper.HotTableIndex, tp string) {
+func (e *memtableRetriever) setDataForHotRegionByMetrics(metrics []helper.HotTableIndex, tp string) {
 	rows := make([][]types.Datum, 0, len(metrics))
 	for _, tblIndex := range metrics {
 		row := make([]types.Datum, len(infoschema.TableTiDBHotRegionsCols))
