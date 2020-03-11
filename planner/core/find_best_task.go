@@ -835,7 +835,184 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 	if !prop.IsEmpty() && !candidate.isMatchProp {
 		return invalidTask, nil
 	}
+<<<<<<< HEAD
 	path := candidate.path
+=======
+	ts, cost, _ := ds.getOriginalPhysicalTableScan(prop, candidate.path, candidate.isMatchProp)
+	copTask := &copTask{
+		tablePlan:         ts,
+		indexPlanFinished: true,
+		tblColHists:       ds.TblColHists,
+		cst:               cost,
+	}
+	task = copTask
+	if candidate.isMatchProp {
+		copTask.keepOrder = true
+	}
+	ts.addPushedDownSelection(copTask, ds.stats.ScaleByExpectCnt(prop.ExpectedCnt))
+	if prop.TaskTp == property.RootTaskType {
+		task = finishCopTask(ds.ctx, task)
+	} else if _, ok := task.(*rootTask); ok {
+		return invalidTask, nil
+	}
+	return task, nil
+}
+
+func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candidate *candidatePath) task {
+	if !prop.IsEmpty() && !candidate.isMatchProp {
+		return invalidTask
+	}
+	if prop.TaskTp == property.CopDoubleReadTaskType && candidate.isSingleScan ||
+		prop.TaskTp == property.CopSingleReadTaskType && !candidate.isSingleScan {
+		return invalidTask
+	}
+
+	pointGetPlan := PointGetPlan{
+		ctx:          ds.ctx,
+		schema:       ds.schema.Clone(),
+		dbName:       ds.DBName.L,
+		TblInfo:      ds.TableInfo(),
+		outputNames:  ds.OutputNames(),
+		LockWaitTime: ds.ctx.GetSessionVars().LockWaitTimeout,
+	}.Init(ds.ctx, ds.stats.ScaleByExpectCnt(1.0), ds.blockOffset)
+	var partitionInfo *model.PartitionDefinition
+	if ds.isPartition {
+		if pi := ds.tableInfo.GetPartitionInfo(); pi != nil {
+			for _, def := range pi.Definitions {
+				if def.ID == ds.physicalTableID {
+					partitionInfo = &def
+					break
+				}
+			}
+		}
+		if partitionInfo == nil {
+			return invalidTask
+		}
+	}
+	rTsk := &rootTask{p: pointGetPlan}
+	var cost float64
+	if candidate.path.IsTablePath {
+		pointGetPlan.Handle = candidate.path.Ranges[0].LowVal[0].GetInt64()
+		pointGetPlan.UnsignedHandle = mysql.HasUnsignedFlag(ds.getHandleCol().RetType.Flag)
+		pointGetPlan.PartitionInfo = partitionInfo
+		cost = pointGetPlan.GetCost(ds.TblCols)
+		// Add filter condition to table plan now.
+		if len(candidate.path.TableFilters) > 0 {
+			sessVars := ds.ctx.GetSessionVars()
+			cost += pointGetPlan.stats.RowCount * sessVars.CPUFactor
+			sel := PhysicalSelection{
+				Conditions: candidate.path.TableFilters,
+			}.Init(ds.ctx, ds.stats.ScaleByExpectCnt(prop.ExpectedCnt), ds.blockOffset)
+			sel.SetChildren(pointGetPlan)
+			rTsk.p = sel
+		}
+	} else {
+		pointGetPlan.IndexInfo = candidate.path.Index
+		pointGetPlan.IndexValues = candidate.path.Ranges[0].LowVal
+		pointGetPlan.PartitionInfo = partitionInfo
+		if candidate.isSingleScan {
+			cost = pointGetPlan.GetCost(candidate.path.IdxCols)
+		} else {
+			cost = pointGetPlan.GetCost(ds.TblCols)
+		}
+		// Add index condition to table plan now.
+		if len(candidate.path.IndexFilters)+len(candidate.path.TableFilters) > 0 {
+			sessVars := ds.ctx.GetSessionVars()
+			cost += pointGetPlan.stats.RowCount * sessVars.CPUFactor
+			sel := PhysicalSelection{
+				Conditions: append(candidate.path.IndexFilters, candidate.path.TableFilters...),
+			}.Init(ds.ctx, ds.stats.ScaleByExpectCnt(prop.ExpectedCnt), ds.blockOffset)
+			sel.SetChildren(pointGetPlan)
+			rTsk.p = sel
+		}
+	}
+
+	rTsk.cst = cost
+	return rTsk
+}
+
+func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, candidate *candidatePath) task {
+	if !prop.IsEmpty() && !candidate.isMatchProp {
+		return invalidTask
+	}
+	if prop.TaskTp == property.CopDoubleReadTaskType && candidate.isSingleScan ||
+		prop.TaskTp == property.CopSingleReadTaskType && !candidate.isSingleScan {
+		return invalidTask
+	}
+
+	batchPointGetPlan := BatchPointGetPlan{
+		ctx:       ds.ctx,
+		TblInfo:   ds.TableInfo(),
+		KeepOrder: !prop.IsEmpty(),
+	}.Init(ds.ctx, ds.stats.ScaleByExpectCnt(float64(len(candidate.path.Ranges))), ds.schema.Clone(), ds.names, ds.blockOffset)
+	if batchPointGetPlan.KeepOrder {
+		batchPointGetPlan.Desc = prop.Items[0].Desc
+	}
+	rTsk := &rootTask{p: batchPointGetPlan}
+	var cost float64
+	if candidate.path.IsTablePath {
+		for _, ran := range candidate.path.Ranges {
+			batchPointGetPlan.Handles = append(batchPointGetPlan.Handles, ran.LowVal[0].GetInt64())
+		}
+		cost = batchPointGetPlan.GetCost(ds.TblCols)
+		// Add filter condition to table plan now.
+		if len(candidate.path.TableFilters) > 0 {
+			sessVars := ds.ctx.GetSessionVars()
+			cost += batchPointGetPlan.stats.RowCount * sessVars.CPUFactor
+			sel := PhysicalSelection{
+				Conditions: candidate.path.TableFilters,
+			}.Init(ds.ctx, ds.stats.ScaleByExpectCnt(prop.ExpectedCnt), ds.blockOffset)
+			sel.SetChildren(batchPointGetPlan)
+			rTsk.p = sel
+		}
+	} else {
+		batchPointGetPlan.IndexInfo = candidate.path.Index
+		for _, ran := range candidate.path.Ranges {
+			batchPointGetPlan.IndexValues = append(batchPointGetPlan.IndexValues, ran.LowVal)
+		}
+		if !prop.IsEmpty() {
+			batchPointGetPlan.KeepOrder = true
+			batchPointGetPlan.Desc = prop.Items[0].Desc
+		}
+		if candidate.isSingleScan {
+			cost = batchPointGetPlan.GetCost(candidate.path.IdxCols)
+		} else {
+			cost = batchPointGetPlan.GetCost(ds.TblCols)
+		}
+		// Add index condition to table plan now.
+		if len(candidate.path.IndexFilters)+len(candidate.path.TableFilters) > 0 {
+			sessVars := ds.ctx.GetSessionVars()
+			cost += batchPointGetPlan.stats.RowCount * sessVars.CPUFactor
+			sel := PhysicalSelection{
+				Conditions: append(candidate.path.IndexFilters, candidate.path.TableFilters...),
+			}.Init(ds.ctx, ds.stats.ScaleByExpectCnt(prop.ExpectedCnt), ds.blockOffset)
+			sel.SetChildren(batchPointGetPlan)
+			rTsk.p = sel
+		}
+	}
+
+	rTsk.cst = cost
+	return rTsk
+}
+
+func (ts *PhysicalTableScan) addPushedDownSelection(copTask *copTask, stats *property.StatsInfo) {
+	ts.filterCondition, copTask.rootTaskConds = SplitSelCondsWithVirtualColumn(ts.filterCondition)
+	var newRootConds []expression.Expression
+	ts.filterCondition, newRootConds = expression.PushDownExprs(ts.ctx.GetSessionVars().StmtCtx, ts.filterCondition, ts.ctx.GetClient(), ts.StoreType)
+	copTask.rootTaskConds = append(copTask.rootTaskConds, newRootConds...)
+
+	// Add filter condition to table plan now.
+	sessVars := ts.ctx.GetSessionVars()
+	if len(ts.filterCondition) > 0 {
+		copTask.cst += copTask.count() * sessVars.CopCPUFactor
+		sel := PhysicalSelection{Conditions: ts.filterCondition}.Init(ts.ctx, stats, ts.blockOffset)
+		sel.SetChildren(ts)
+		copTask.tablePlan = sel
+	}
+}
+
+func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProperty, path *util.AccessPath, isMatchProp bool) (*PhysicalTableScan, float64, float64) {
+>>>>>>> a999ef6... expression: support different expr push down for TiKV and TiFlash (#15174)
 	ts := PhysicalTableScan{
 		Table:           ds.tableInfo,
 		Columns:         ds.Columns,

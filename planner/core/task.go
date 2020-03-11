@@ -595,13 +595,16 @@ func (p *PhysicalTopN) GetCost(count float64, isRoot bool) float64 {
 }
 
 // canPushDown checks if this topN can be pushed down. If each of the expression can be converted to pb, it can be pushed.
-func (p *PhysicalTopN) canPushDown() bool {
+func (p *PhysicalTopN) canPushDown(cop *copTask) bool {
 	exprs := make([]expression.Expression, 0, len(p.ByItems))
 	for _, item := range p.ByItems {
 		exprs = append(exprs, item.Expr)
 	}
-	_, _, remained := expression.ExpressionsToPB(p.ctx.GetSessionVars().StmtCtx, exprs, p.ctx.GetClient())
-	return len(remained) == 0
+	storeType := kv.TiKV
+	if tableScan, ok := cop.tablePlan.(*PhysicalTableScan); ok {
+		storeType = tableScan.StoreType
+	}
+	return expression.CanExprsPushDown(p.ctx.GetSessionVars().StmtCtx, exprs, p.ctx.GetClient(), storeType)
 }
 
 func (p *PhysicalTopN) allColsFromSchema(schema *expression.Schema) bool {
@@ -654,7 +657,11 @@ func (p *PhysicalTopN) getPushedDownTopN(childPlan PhysicalPlan) *PhysicalTopN {
 func (p *PhysicalTopN) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	inputCount := t.count()
+<<<<<<< HEAD
 	if copTask, ok := t.(*copTask); ok && p.canPushDown() {
+=======
+	if copTask, ok := t.(*copTask); ok && p.canPushDown(copTask) && len(copTask.rootTaskConds) == 0 {
+>>>>>>> a999ef6... expression: support different expr push down for TiKV and TiFlash (#15174)
 		// If all columns in topN are from index plan, we push it to index plan, otherwise we finish the index plan and
 		// push it to table plan.
 		var pushedDownTopN *PhysicalTopN
@@ -725,6 +732,7 @@ func (sel *PhysicalSelection) attach2Task(tasks ...task) task {
 	return t
 }
 
+<<<<<<< HEAD
 func (p *basePhysicalAgg) newPartialAggregate(copToFlash bool) (partial, final PhysicalPlan) {
 	// Check if this aggregation can push down.
 	sc := p.ctx.GetSessionVars().StmtCtx
@@ -737,16 +745,40 @@ func (p *basePhysicalAgg) newPartialAggregate(copToFlash bool) (partial, final P
 			if _, remain := expression.CheckExprPushFlash(append(aggFunc.Args, p.GroupByItems...)); len(remain) > 0 {
 				return nil, p.self
 			}
+=======
+// CheckAggCanPushCop checks whether the aggFuncs and groupByItems can
+// be pushed down to coprocessor.
+func CheckAggCanPushCop(sctx sessionctx.Context, aggFuncs []*aggregation.AggFuncDesc, groupByItems []expression.Expression, storeType kv.StoreType) bool {
+	sc := sctx.GetSessionVars().StmtCtx
+	client := sctx.GetClient()
+	for _, aggFunc := range aggFuncs {
+		if expression.ContainVirtualColumn(aggFunc.Args) {
+			return false
+>>>>>>> a999ef6... expression: support different expr push down for TiKV and TiFlash (#15174)
 		}
 		pb := aggregation.AggFuncToPBExpr(sc, client, aggFunc)
 		if pb == nil {
 			return nil, p.self
 		}
+		if !aggregation.CheckAggPushDown(aggFunc, storeType) {
+			return false
+		}
+		if !expression.CanExprsPushDown(sc, aggFunc.Args, client, storeType) {
+			return false
+		}
 	}
+<<<<<<< HEAD
 	_, _, remained := expression.ExpressionsToPB(sc, p.GroupByItems, client)
 	if len(remained) > 0 {
 		return nil, p.self
 	}
+=======
+	if expression.ContainVirtualColumn(groupByItems) {
+		return false
+	}
+	return expression.CanExprsPushDown(sc, groupByItems, client, storeType)
+}
+>>>>>>> a999ef6... expression: support different expr push down for TiKV and TiFlash (#15174)
 
 	finalSchema := p.schema
 	partialSchema := expression.NewSchema()
@@ -798,6 +830,30 @@ func (p *basePhysicalAgg) newPartialAggregate(copToFlash bool) (partial, final P
 		groupByItems = append(groupByItems, gbyCol)
 	}
 
+<<<<<<< HEAD
+=======
+func (p *basePhysicalAgg) newPartialAggregate(copTaskType kv.StoreType) (partial, final PhysicalPlan) {
+	// Check if this aggregation can push down.
+	if !CheckAggCanPushCop(p.ctx, p.AggFuncs, p.GroupByItems, copTaskType) {
+		return nil, p.self
+	}
+	finalAggFuncs, finalGbyItems, partialSchema := BuildFinalModeAggregation(p.ctx, p.AggFuncs, p.GroupByItems, p.schema)
+	// Remove unnecessary FirstRow.
+	p.AggFuncs = RemoveUnnecessaryFirstRow(p.ctx, finalAggFuncs, finalGbyItems, p.AggFuncs, p.GroupByItems, partialSchema)
+	if copTaskType == kv.TiDB {
+		// For partial agg of TiDB cop task, since TiDB coprocessor reuse the TiDB executor,
+		// and TiDB aggregation executor won't output the group by value,
+		// so we need add `firstrow` aggregation function to output the group by value.
+		aggFuncs, err := genFirstRowAggForGroupBy(p.ctx, p.GroupByItems)
+		if err != nil {
+			return nil, p.self
+		}
+		p.AggFuncs = append(p.AggFuncs, aggFuncs...)
+	}
+	finalSchema := p.schema
+	p.schema = partialSchema
+	partialAgg := p.self
+>>>>>>> a999ef6... expression: support different expr push down for TiKV and TiFlash (#15174)
 	// Create physical "final" aggregation.
 	if p.tp == plancodec.TypeStreamAgg {
 		finalAgg := basePhysicalAgg{

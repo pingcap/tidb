@@ -1291,6 +1291,7 @@ group by
 cntrycode
 order by
 cntrycode;
+<<<<<<< HEAD
 id	count	task	operator info
 Sort_32	1.00	root	custsale.cntrycode:asc
 └─Projection_34	1.00	root	custsale.cntrycode, 28_col_0, 28_col_1
@@ -1303,3 +1304,17 @@ Sort_32	1.00	root	custsale.cntrycode:asc
         │     └─TableScan_41	7500000.00	cop[tikv]	table:customer, range:[-inf,+inf], keep order:false
         └─TableReader_45	75000000.00	root	data:TableScan_44
           └─TableScan_44	75000000.00	cop[tikv]	table:orders, range:[-inf,+inf], keep order:false
+=======
+id	estRows	task	operator info
+Sort_39	1.00	root	Column#27:asc
+└─Projection_41	1.00	root	Column#27, Column#28, Column#29
+  └─HashAgg_44	1.00	root	group by:Column#27, funcs:count(1)->Column#28, funcs:sum(tpch.customer.c_acctbal)->Column#29, funcs:firstrow(Column#27)->Column#27
+    └─Projection_45	0.00	root	substring(tpch.customer.c_phone, 1, 2)->Column#27, tpch.customer.c_acctbal
+      └─HashLeftJoin_46	0.00	root	anti semi join, equal:[eq(tpch.customer.c_custkey, tpch.orders.o_custkey)]
+        ├─TableReader_52(Build)	75000000.00	root	data:TableFullScan_51
+        │ └─TableFullScan_51	75000000.00	cop[tikv]	table:orders, keep order:false
+        └─Selection_50(Probe)	0.00	root	in(substring(tpch.customer.c_phone, 1, 2), "20", "40", "22", "30", "39", "42", "21")
+          └─TableReader_49	0.00	root	data:Selection_48
+            └─Selection_48	0.00	cop[tikv]	gt(tpch.customer.c_acctbal, NULL)
+              └─TableFullScan_47	7500000.00	cop[tikv]	table:customer, keep order:false
+>>>>>>> a999ef6... expression: support different expr push down for TiKV and TiFlash (#15174)
