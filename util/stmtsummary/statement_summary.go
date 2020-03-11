@@ -542,7 +542,6 @@ func (ssbd *stmtSummaryByDigest) add(sei *StmtExecInfo, beginTime int64, interva
 			if lastElement.beginTime >= beginTime {
 				ssElement = lastElement
 				isElementNew = false
-				ssElement.authUsers[sei.User] = struct{}{}
 			} else {
 				// The last elements expires to the history.
 				lastElement.onExpire(intervalSeconds)
@@ -624,7 +623,7 @@ func (ssbd *stmtSummaryByDigest) collectHistorySummaries(historySize int) []*stm
 }
 
 func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64, intervalSeconds int64) *stmtSummaryByDigestElement {
-	// sampleSQL / sampleUser / samplePlan / prevSQL / indexNames store the values shown at the first time,
+	// sampleSQL / authUsers(sampleUser) / samplePlan / prevSQL / indexNames store the values shown at the first time,
 	// because it compacts performance to update every time.
 	ssElement := &stmtSummaryByDigestElement{
 		beginTime: beginTime,
@@ -641,7 +640,6 @@ func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64, intervalS
 		authUsers:    make(map[string]struct{}),
 	}
 	ssElement.add(sei, intervalSeconds)
-	ssElement.authUsers[sei.User] = struct{}{}
 	return ssElement
 }
 
@@ -666,6 +664,9 @@ func (ssElement *stmtSummaryByDigestElement) onExpire(intervalSeconds int64) {
 func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeconds int64) {
 	ssElement.Lock()
 	defer ssElement.Unlock()
+
+	// add user to auth users set
+	ssElement.authUsers[sei.User] = struct{}{}
 
 	// refreshInterval may change anytime, update endTime ASAP.
 	ssElement.endTime = ssElement.beginTime + intervalSeconds
