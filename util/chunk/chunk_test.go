@@ -27,12 +27,17 @@ import (
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 )
 
 func TestT(t *testing.T) {
+	cfg := config.GetGlobalConfig()
+	conf := *cfg
+	conf.TempStoragePath = "/tmp/tidb/test-temp-storage"
+	config.StoreGlobalConfig(&conf)
 	check.TestingT(t)
 }
 
@@ -603,15 +608,15 @@ func (s *testChunkSuite) TestSwapColumn(c *check.C) {
 
 	// chk1: column1 refers to column0
 	chk1 := NewChunkWithCapacity(fieldTypes, 1)
-	chk1.AppendFloat64(0, 1)
+	chk1.AppendFloat32(0, 1)
 	chk1.MakeRef(0, 1)
-	chk1.AppendFloat64(2, 3)
+	chk1.AppendFloat32(2, 3)
 
 	// chk2: column1 refers to column0
 	chk2 := NewChunkWithCapacity(fieldTypes, 1)
-	chk2.AppendFloat64(0, 1)
+	chk2.AppendFloat32(0, 1)
 	chk2.MakeRef(0, 1)
-	chk2.AppendFloat64(2, 3)
+	chk2.AppendFloat32(2, 3)
 
 	c.Assert(chk1.columns[0] == chk1.columns[1], check.IsTrue)
 	c.Assert(chk2.columns[0] == chk2.columns[1], check.IsTrue)
@@ -766,8 +771,8 @@ func (s *testChunkSuite) TestMakeRefTo(c *check.C) {
 	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeFloat})
 
 	chk1 := NewChunkWithCapacity(fieldTypes, 1)
-	chk1.AppendFloat64(0, 1)
-	chk1.AppendFloat64(1, 3)
+	chk1.AppendFloat32(0, 1)
+	chk1.AppendFloat32(1, 3)
 
 	chk2 := NewChunkWithCapacity(fieldTypes, 1)
 	chk2.MakeRefTo(0, chk1, 1)

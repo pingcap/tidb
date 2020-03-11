@@ -323,6 +323,23 @@ func (g *selectStringGener) gen() interface{} {
 	return g.candidates[g.randGen.Intn(len(g.candidates))]
 }
 
+// selectRealGener select one real number randomly from the candidates array
+type selectRealGener struct {
+	candidates []float64
+	randGen    *defaultRandGen
+}
+
+func newSelectRealGener(candidates []float64) *selectRealGener {
+	return &selectRealGener{candidates, newDefaultRandGen()}
+}
+
+func (g *selectRealGener) gen() interface{} {
+	if len(g.candidates) == 0 {
+		return nil
+	}
+	return g.candidates[g.randGen.Intn(len(g.candidates))]
+}
+
 type constJSONGener struct {
 	jsonStr string
 }

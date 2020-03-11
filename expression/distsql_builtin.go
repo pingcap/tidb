@@ -37,7 +37,7 @@ func PbTypeToFieldType(tp *tipb.FieldType) *types.FieldType {
 		Flen:    int(tp.Flen),
 		Decimal: int(tp.Decimal),
 		Charset: tp.Charset,
-		Collate: mysql.Collations[uint8(tp.Collate)],
+		Collate: protoToCollation(tp.Collate),
 	}
 }
 
@@ -1110,7 +1110,17 @@ func PBToExpr(expr *tipb.Expr, tps []*types.FieldType, sc *stmtctx.StatementCont
 		}
 		args = append(args, arg)
 	}
-	return newDistSQLFunctionBySig(sc, expr.Sig, expr.FieldType, args)
+	sf, err := newDistSQLFunctionBySig(sc, expr.Sig, expr.FieldType, args)
+	if err != nil {
+		return nil, err
+	}
+
+	// recover collation information
+	if collate.NewCollationEnabled() {
+		tp := sf.GetType()
+		sf.SetCharsetAndCollation(tp.Charset, tp.Collate, types.UnspecifiedLength)
+	}
+	return sf, nil
 }
 
 func convertTime(data []byte, ftPB *tipb.FieldType, tz *time.Location) (*Constant, error) {
@@ -1172,7 +1182,7 @@ func convertUint(val []byte) (*Constant, error) {
 
 func convertString(val []byte, tp *tipb.FieldType) (*Constant, error) {
 	var d types.Datum
-	d.SetBytesAsString(val, collate.CollationID2Name(tp.Collate), uint32(tp.Flen))
+	d.SetBytesAsString(val, protoToCollation(tp.Collate), uint32(tp.Flen))
 	return &Constant{Value: d, RetType: types.NewFieldType(mysql.TypeVarString)}, nil
 }
 

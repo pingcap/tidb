@@ -173,10 +173,10 @@ func ConvertFloatToUint(sc *stmtctx.StatementContext, fval float64, upperBound u
 	// which can not be represented by 64bit integer.
 	// So `uint64(float64(math.MaxUint64))` is undefined behavior.
 	if val == ubf {
-		return uint64(math.MaxInt64), nil
+		return math.MaxUint64, nil
 	}
 	if val > ubf {
-		return uint64(math.MaxInt64), overflow(val, tp)
+		return math.MaxUint64, overflow(val, tp)
 	}
 	return uint64(val), nil
 }
@@ -264,7 +264,7 @@ func convertDecimalStrToUint(sc *stmtctx.StatementContext, str string, upperBoun
 
 	val, err := strconv.ParseUint(intStr, 10, 64)
 	if err != nil {
-		return val, err
+		return val, errors.Trace(err)
 	}
 	return val + round, nil
 }
