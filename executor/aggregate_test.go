@@ -830,6 +830,7 @@ func (s *testSuiteAgg) TestIssue12759HashAggCalledByApply(c *C) {
 		tk.MustQuery(tt).Check(testkit.Rows(output[i]...))
 	}
 }
+
 func (s *testSuiteAgg) TestPR15242ShallowCopy(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec(`drop table if exists t;`)
