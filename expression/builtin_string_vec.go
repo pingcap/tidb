@@ -1449,9 +1449,7 @@ func (b *builtinFormatWithLocaleSig) vecEvalString(input *chunk.Chunk, result *c
 
 		result.ReserveString(n)
 		xBuf.MergeNulls(dBuf)
-		xDecimals := xBuf.Decimals()
-
-		return formatDecimalWithLocale(b.ctx, xBuf, xDecimals, dInt64s, result, localeBuf)
+		return formatDecimal(b.ctx, xBuf, dInt64s, result, localeBuf)
 	}
 
 	// real x
@@ -1466,9 +1464,7 @@ func (b *builtinFormatWithLocaleSig) vecEvalString(input *chunk.Chunk, result *c
 
 	result.ReserveString(n)
 	xBuf.MergeNulls(dBuf)
-	xFloat64s := xBuf.Float64s()
-
-	return formatRealWithLocale(b.ctx, xBuf, xFloat64s, dInt64s, result, localeBuf)
+	return formatReal(b.ctx, xBuf, dInt64s, result, localeBuf)
 }
 
 func (b *builtinSubstring2ArgsSig) vectorized() bool {
@@ -2632,9 +2628,7 @@ func (b *builtinFormatSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 
 		result.ReserveString(n)
 		xBuf.MergeNulls(dBuf)
-		xDecimals := xBuf.Decimals()
-
-		return formatDecimal(xBuf, xDecimals, dInt64s, result)
+		return formatDecimal(b.ctx, xBuf, dInt64s, result, nil)
 	}
 
 	// real x
@@ -2649,9 +2643,7 @@ func (b *builtinFormatSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 
 	result.ReserveString(n)
 	xBuf.MergeNulls(dBuf)
-	xFloat64s := xBuf.Float64s()
-
-	return formatReal(xBuf, xFloat64s, dInt64s, result)
+	return formatReal(b.ctx, xBuf, dInt64s, result, nil)
 }
 
 func (b *builtinRightSig) vectorized() bool {
@@ -2867,11 +2859,8 @@ func (b *builtinCharLengthUTF8Sig) vecEvalInt(input *chunk.Chunk, result *chunk.
 	return nil
 }
 
-func formatDecimal(xBuf *chunk.Column, xDecimals []types.MyDecimal, dInt64s []int64, result *chunk.Column) error {
-	return formatDecimalWithLocale(nil, xBuf, xDecimals, dInt64s, result, nil)
-}
-
-func formatDecimalWithLocale(sctx sessionctx.Context, xBuf *chunk.Column, xDecimals []types.MyDecimal, dInt64s []int64, result *chunk.Column, localeBuf *chunk.Column) error {
+func formatDecimal(sctx sessionctx.Context, xBuf *chunk.Column, dInt64s []int64, result *chunk.Column, localeBuf *chunk.Column) error {
+	xDecimals := xBuf.Decimals()
 	for i := range xDecimals {
 		if xBuf.IsNull(i) {
 			result.AppendNull()
@@ -2911,11 +2900,8 @@ func formatDecimalWithLocale(sctx sessionctx.Context, xBuf *chunk.Column, xDecim
 	return nil
 }
 
-func formatReal(xBuf *chunk.Column, xFloat64s []float64, dInt64s []int64, result *chunk.Column) error {
-	return formatRealWithLocale(nil, xBuf, xFloat64s, dInt64s, result, nil)
-}
-
-func formatRealWithLocale(sctx sessionctx.Context, xBuf *chunk.Column, xFloat64s []float64, dInt64s []int64, result *chunk.Column, localeBuf *chunk.Column) error {
+func formatReal(sctx sessionctx.Context, xBuf *chunk.Column, dInt64s []int64, result *chunk.Column, localeBuf *chunk.Column) error {
+	xFloat64s := xBuf.Float64s()
 	for i := range xFloat64s {
 		if xBuf.IsNull(i) {
 			result.AppendNull()
