@@ -47,8 +47,8 @@ jobs:
       uses: srggrs/assign-one-project-github-action@1.2.0
       if: |
         github.event_name == 'pull_request' && (
-        contains(github.event.issue.labels.*.name, 'component/planner') ||
-        contains(github.event.issue.labels.*.name, 'component/statistics')
+        contains(github.event.pull_request.labels.*.name, 'component/planner') ||
+        contains(github.event.pull_request.labels.*.name, 'component/statistics')
         )
       with:
         project: 'https://github.com/pingcap/tidb/projects/39'
