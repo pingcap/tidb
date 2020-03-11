@@ -152,9 +152,114 @@ func (ts *TidbTestSuite) TestResultFieldTableIsNull(c *C) {
 	runTestResultFieldTableIsNull(c)
 }
 
+<<<<<<< HEAD
 func (ts *TidbTestSuite) TestStatusAPI(c *C) {
 	c.Parallel()
 	runTestStatusAPI(c)
+=======
+func (ts *tidbTestSuite) TestStatusAPIWithTLS(c *C) {
+	caCert, caKey, err := generateCert(0, "TiDB CA 2", nil, nil, "/tmp/ca-key-2.pem", "/tmp/ca-cert-2.pem")
+	c.Assert(err, IsNil)
+	_, _, err = generateCert(1, "tidb-server-2", caCert, caKey, "/tmp/server-key-2.pem", "/tmp/server-cert-2.pem")
+	c.Assert(err, IsNil)
+
+	defer func() {
+		os.Remove("/tmp/ca-key-2.pem")
+		os.Remove("/tmp/ca-cert-2.pem")
+		os.Remove("/tmp/server-key-2.pem")
+		os.Remove("/tmp/server-cert-2.pem")
+	}()
+
+	cli := newTestServerClient()
+	cli.statusScheme = "https"
+	cfg := config.NewConfig()
+	cfg.Port = cli.port
+	cfg.Status.StatusPort = cli.statusPort
+	cfg.Security.ClusterSSLCA = "/tmp/ca-cert-2.pem"
+	cfg.Security.ClusterSSLCert = "/tmp/server-cert-2.pem"
+	cfg.Security.ClusterSSLKey = "/tmp/server-key-2.pem"
+	server, err := NewServer(cfg, ts.tidbdrv)
+	c.Assert(err, IsNil)
+	go server.Run()
+	time.Sleep(time.Millisecond * 100)
+
+	// https connection should work.
+	ts.runTestStatusAPI(c)
+
+	// but plain http connection should fail.
+	cli.statusScheme = "http"
+	_, err = cli.fetchStatus("/status")
+	c.Assert(err, NotNil)
+
+	server.Close()
+}
+
+func (ts *tidbTestSuite) TestStatusAPIWithTLSCNCheck(c *C) {
+	caPath := filepath.Join(os.TempDir(), "ca-cert-cn.pem")
+	serverKeyPath := filepath.Join(os.TempDir(), "server-key-cn.pem")
+	serverCertPath := filepath.Join(os.TempDir(), "server-cert-cn.pem")
+	client1KeyPath := filepath.Join(os.TempDir(), "client-key-cn-check-a.pem")
+	client1CertPath := filepath.Join(os.TempDir(), "client-cert-cn-check-a.pem")
+	client2KeyPath := filepath.Join(os.TempDir(), "client-key-cn-check-b.pem")
+	client2CertPath := filepath.Join(os.TempDir(), "client-cert-cn-check-b.pem")
+
+	caCert, caKey, err := generateCert(0, "TiDB CA CN CHECK", nil, nil, filepath.Join(os.TempDir(), "ca-key-cn.pem"), caPath)
+	c.Assert(err, IsNil)
+	_, _, err = generateCert(1, "tidb-server-cn-check", caCert, caKey, serverKeyPath, serverCertPath)
+	c.Assert(err, IsNil)
+	_, _, err = generateCert(2, "tidb-client-cn-check-a", caCert, caKey, client1KeyPath, client1CertPath, func(c *x509.Certificate) {
+		c.Subject.CommonName = "tidb-client-1"
+	})
+	c.Assert(err, IsNil)
+	_, _, err = generateCert(3, "tidb-client-cn-check-b", caCert, caKey, client2KeyPath, client2CertPath, func(c *x509.Certificate) {
+		c.Subject.CommonName = "tidb-client-2"
+	})
+	c.Assert(err, IsNil)
+
+	cli := newTestServerClient()
+	cli.statusScheme = "https"
+	cfg := config.NewConfig()
+	cfg.Port = cli.port
+	cfg.Status.StatusPort = cli.statusPort
+	cfg.Security.ClusterSSLCA = caPath
+	cfg.Security.ClusterSSLCert = serverCertPath
+	cfg.Security.ClusterSSLKey = serverKeyPath
+	cfg.Security.ClusterVerifyCN = []string{"tidb-client-2"}
+	server, err := NewServer(cfg, ts.tidbdrv)
+	c.Assert(err, IsNil)
+	go server.Run()
+	time.Sleep(time.Millisecond * 100)
+
+	hc := newTLSHttpClient(c, caPath,
+		client1CertPath,
+		client1KeyPath,
+	)
+	_, err = hc.Get(cli.statusURL("/status"))
+	c.Assert(err, NotNil)
+
+	hc = newTLSHttpClient(c, caPath,
+		client2CertPath,
+		client2KeyPath,
+	)
+	_, err = hc.Get(cli.statusURL("/status"))
+	c.Assert(err, IsNil)
+}
+
+func newTLSHttpClient(c *C, caFile, certFile, keyFile string) *http.Client {
+	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+	c.Assert(err, IsNil)
+	caCert, err := ioutil.ReadFile(caFile)
+	c.Assert(err, IsNil)
+	caCertPool := x509.NewCertPool()
+	caCertPool.AppendCertsFromPEM(caCert)
+	tlsConfig := &tls.Config{
+		Certificates:       []tls.Certificate{cert},
+		RootCAs:            caCertPool,
+		InsecureSkipVerify: true,
+	}
+	tlsConfig.BuildNameToCertificate()
+	return &http.Client{Transport: &http.Transport{TLSClientConfig: tlsConfig}}
+>>>>>>> 6c67561... server: fix tls setup and error log (#15287)
 }
 
 func (ts *TidbTestSuite) TestMultiStatements(c *C) {
