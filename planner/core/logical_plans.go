@@ -230,7 +230,7 @@ func (p *LogicalJoin) AppendJoinConds(eq []*expression.ScalarFunction, left, rig
 
 // ExtractCorrelatedCols implements LogicalPlan interface.
 func (p *LogicalJoin) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := make([]*expression.CorrelatedColumn, 0)
+	corCols := make([]*expression.CorrelatedColumn, 0, len(p.EqualConditions)+len(p.LeftConditions)+len(p.RightConditions)+len(p.OtherConditions))
 	for _, fun := range p.EqualConditions {
 		corCols = append(corCols, expression.ExtractCorColumns(fun)...)
 	}
@@ -281,7 +281,7 @@ type LogicalProjection struct {
 
 // ExtractCorrelatedCols implements LogicalPlan interface.
 func (p *LogicalProjection) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := make([]*expression.CorrelatedColumn, 0)
+	corCols := make([]*expression.CorrelatedColumn, 0, len(p.Exprs))
 	for _, expr := range p.Exprs {
 		corCols = append(corCols, expression.ExtractCorColumns(expr)...)
 	}
@@ -346,7 +346,7 @@ func (la *LogicalAggregation) GetGroupByCols() []*expression.Column {
 
 // ExtractCorrelatedCols implements LogicalPlan interface.
 func (la *LogicalAggregation) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := make([]*expression.CorrelatedColumn, 0)
+	corCols := make([]*expression.CorrelatedColumn, 0, len(la.GroupByItems)+len(la.AggFuncs))
 	for _, expr := range la.GroupByItems {
 		corCols = append(corCols, expression.ExtractCorColumns(expr)...)
 	}
@@ -383,7 +383,7 @@ type LogicalSelection struct {
 
 // ExtractCorrelatedCols implements LogicalPlan interface.
 func (p *LogicalSelection) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := make([]*expression.CorrelatedColumn, 0)
+	corCols := make([]*expression.CorrelatedColumn, 0, len(p.Conditions))
 	for _, cond := range p.Conditions {
 		corCols = append(corCols, expression.ExtractCorColumns(cond)...)
 	}
@@ -879,7 +879,7 @@ type LogicalSort struct {
 
 // ExtractCorrelatedCols implements LogicalPlan interface.
 func (ls *LogicalSort) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := make([]*expression.CorrelatedColumn, 0)
+	corCols := make([]*expression.CorrelatedColumn, 0, len(ls.ByItems))
 	for _, item := range ls.ByItems {
 		corCols = append(corCols, expression.ExtractCorColumns(item.Expr)...)
 	}
@@ -897,7 +897,7 @@ type LogicalTopN struct {
 
 // ExtractCorrelatedCols implements LogicalPlan interface.
 func (lt *LogicalTopN) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := make([]*expression.CorrelatedColumn, 0)
+	corCols := make([]*expression.CorrelatedColumn, 0, len(lt.ByItems))
 	for _, item := range lt.ByItems {
 		corCols = append(corCols, expression.ExtractCorColumns(item.Expr)...)
 	}
@@ -958,7 +958,7 @@ type LogicalWindow struct {
 
 // ExtractCorrelatedCols implements LogicalPlan interface.
 func (p *LogicalWindow) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := make([]*expression.CorrelatedColumn, 0)
+	corCols := make([]*expression.CorrelatedColumn, 0, len(p.WindowFuncDescs))
 	for _, windowFunc := range p.WindowFuncDescs {
 		for _, arg := range windowFunc.Args {
 			corCols = append(corCols, expression.ExtractCorColumns(arg)...)
