@@ -45,7 +45,6 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/pdapi"
-	"github.com/pingcap/tidb/util/set"
 )
 
 const (
@@ -55,8 +54,9 @@ const (
 	TableTables           = "TABLES"
 	tableColumns          = "COLUMNS"
 	tableColumnStatistics = "COLUMN_STATISTICS"
-	tableStatistics       = "STATISTICS"
-	// TableCharacterSets is the string constant of infoschema charactersets memory table.
+	// TableStatistics is the string constant of infoschema table
+	TableStatistics = "STATISTICS"
+	// TableCharacterSets is the string constant of infoschema charactersets memory table
 	TableCharacterSets = "CHARACTER_SETS"
 	// TableCollations is the string constant of infoschema collations memory table.
 	TableCollations = "COLLATIONS"
@@ -95,14 +95,16 @@ const (
 	// TableCollationCharacterSetApplicability is the string constant of infoschema memory table.
 	TableCollationCharacterSetApplicability = "COLLATION_CHARACTER_SET_APPLICABILITY"
 	tableProcesslist                        = "PROCESSLIST"
-	// TableTiDBIndexes is the string constant of infoschema table.
-	TableTiDBIndexes      = "TIDB_INDEXES"
-	tableTiDBHotRegions   = "TIDB_HOT_REGIONS"
+	// TableTiDBIndexes is the string constant of infoschema table
+	TableTiDBIndexes = "TIDB_INDEXES"
+	// TableTiDBHotRegions is the string constant of infoschema table
+	TableTiDBHotRegions   = "TIDB_HOT_REGIONS"
 	tableTiKVStoreStatus  = "TIKV_STORE_STATUS"
 	tableAnalyzeStatus    = "ANALYZE_STATUS"
 	tableTiKVRegionStatus = "TIKV_REGION_STATUS"
-	tableTiKVRegionPeers  = "TIKV_REGION_PEERS"
-	tableTiDBServersInfo  = "TIDB_SERVERS_INFO"
+	// TableTiKVRegionPeers is the string constant of infoschema table
+	TableTiKVRegionPeers = "TIKV_REGION_PEERS"
+	tableTiDBServersInfo = "TIDB_SERVERS_INFO"
 	// TableSlowQuery is the string constant of slow query memory table.
 	TableSlowQuery = "SLOW_QUERY"
 	// TableClusterInfo is the string constant of cluster info memory table.
@@ -137,7 +139,7 @@ var tableIDMap = map[string]int64{
 	TableTables:                             autoid.InformationSchemaDBID + 2,
 	tableColumns:                            autoid.InformationSchemaDBID + 3,
 	tableColumnStatistics:                   autoid.InformationSchemaDBID + 4,
-	tableStatistics:                         autoid.InformationSchemaDBID + 5,
+	TableStatistics:                         autoid.InformationSchemaDBID + 5,
 	TableCharacterSets:                      autoid.InformationSchemaDBID + 6,
 	TableCollations:                         autoid.InformationSchemaDBID + 7,
 	tableFiles:                              autoid.InformationSchemaDBID + 8,
@@ -168,11 +170,11 @@ var tableIDMap = map[string]int64{
 	tableProcesslist:                        autoid.InformationSchemaDBID + 33,
 	TableTiDBIndexes:                        autoid.InformationSchemaDBID + 34,
 	TableSlowQuery:                          autoid.InformationSchemaDBID + 35,
-	tableTiDBHotRegions:                     autoid.InformationSchemaDBID + 36,
+	TableTiDBHotRegions:                     autoid.InformationSchemaDBID + 36,
 	tableTiKVStoreStatus:                    autoid.InformationSchemaDBID + 37,
 	tableAnalyzeStatus:                      autoid.InformationSchemaDBID + 38,
 	tableTiKVRegionStatus:                   autoid.InformationSchemaDBID + 39,
-	tableTiKVRegionPeers:                    autoid.InformationSchemaDBID + 40,
+	TableTiKVRegionPeers:                    autoid.InformationSchemaDBID + 40,
 	tableTiDBServersInfo:                    autoid.InformationSchemaDBID + 41,
 	TableClusterInfo:                        autoid.InformationSchemaDBID + 42,
 	TableClusterConfig:                      autoid.InformationSchemaDBID + 43,
@@ -729,7 +731,8 @@ var slowQueryCols = []columnInfo{
 	{name: variable.SlowLogQuerySQLStr, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
 }
 
-var tableTiDBHotRegionsCols = []columnInfo{
+// TableTiDBHotRegionsCols is TiDB hot region mem table columns.
+var TableTiDBHotRegionsCols = []columnInfo{
 	{name: "TABLE_ID", tp: mysql.TypeLonglong, size: 21},
 	{name: "INDEX_ID", tp: mysql.TypeLonglong, size: 21},
 	{name: "DB_NAME", tp: mysql.TypeVarchar, size: 64},
@@ -792,7 +795,8 @@ var tableTiKVRegionStatusCols = []columnInfo{
 	{name: "APPROXIMATE_KEYS", tp: mysql.TypeLonglong, size: 21},
 }
 
-var tableTiKVRegionPeersCols = []columnInfo{
+// TableTiKVRegionPeersCols is TiKV region peers mem table columns.
+var TableTiKVRegionPeersCols = []columnInfo{
 	{name: "REGION_ID", tp: mysql.TypeLonglong, size: 21},
 	{name: "PEER_ID", tp: mysql.TypeLonglong, size: 21},
 	{name: "STORE_ID", tp: mysql.TypeLonglong, size: 21},
@@ -1028,70 +1032,6 @@ func newTiKVRegionStatusCol(region *helper.RegionInfo, table *helper.TableInfo) 
 	return row
 }
 
-const (
-	normalPeer  = "NORMAL"
-	pendingPeer = "PENDING"
-	downPeer    = "DOWN"
-)
-
-func dataForTikVRegionPeers(ctx sessionctx.Context) (records [][]types.Datum, err error) {
-	tikvStore, ok := ctx.GetStore().(tikv.Storage)
-	if !ok {
-		return nil, errors.New("Information about TiKV region status can be gotten only when the storage is TiKV")
-	}
-	tikvHelper := &helper.Helper{
-		Store:       tikvStore,
-		RegionCache: tikvStore.GetRegionCache(),
-	}
-	regionsInfo, err := tikvHelper.GetRegionsInfo()
-	if err != nil {
-		return nil, err
-	}
-	for _, region := range regionsInfo.Regions {
-		rows := newTiKVRegionPeersCols(&region)
-		records = append(records, rows...)
-	}
-	return records, nil
-}
-
-func newTiKVRegionPeersCols(region *helper.RegionInfo) [][]types.Datum {
-	records := make([][]types.Datum, 0, len(region.Peers))
-	pendingPeerIDSet := set.NewInt64Set()
-	for _, peer := range region.PendingPeers {
-		pendingPeerIDSet.Insert(peer.ID)
-	}
-	downPeerMap := make(map[int64]int64, len(region.DownPeers))
-	for _, peerStat := range region.DownPeers {
-		downPeerMap[peerStat.ID] = peerStat.DownSec
-	}
-	for _, peer := range region.Peers {
-		row := make([]types.Datum, len(tableTiKVRegionPeersCols))
-		row[0].SetInt64(region.ID)
-		row[1].SetInt64(peer.ID)
-		row[2].SetInt64(peer.StoreID)
-		if peer.IsLearner {
-			row[3].SetInt64(1)
-		} else {
-			row[3].SetInt64(0)
-		}
-		if peer.ID == region.Leader.ID {
-			row[4].SetInt64(1)
-		} else {
-			row[4].SetInt64(0)
-		}
-		if pendingPeerIDSet.Exist(peer.ID) {
-			row[5].SetString(pendingPeer, mysql.DefaultCollationName)
-		} else if downSec, ok := downPeerMap[peer.ID]; ok {
-			row[5].SetString(downPeer, mysql.DefaultCollationName)
-			row[6].SetInt64(downSec)
-		} else {
-			row[5].SetString(normalPeer, mysql.DefaultCollationName)
-		}
-		records = append(records, row)
-	}
-	return records
-}
-
 func dataForTiKVStoreStatus(ctx sessionctx.Context) (records [][]types.Datum, err error) {
 	tikvStore, ok := ctx.GetStore().(tikv.Storage)
 	if !ok {
@@ -1299,97 +1239,6 @@ func dataForColumnsInTable(schema *model.DBInfo, tbl *model.TableInfo) [][]types
 	return rows
 }
 
-func dataForStatistics(ctx sessionctx.Context, schemas []*model.DBInfo) [][]types.Datum {
-	checker := privilege.GetPrivilegeManager(ctx)
-	var rows [][]types.Datum
-	for _, schema := range schemas {
-		for _, table := range schema.Tables {
-			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
-				continue
-			}
-
-			rs := dataForStatisticsInTable(schema, table)
-			rows = append(rows, rs...)
-		}
-	}
-	return rows
-}
-
-func dataForStatisticsInTable(schema *model.DBInfo, table *model.TableInfo) [][]types.Datum {
-	var rows [][]types.Datum
-	if table.PKIsHandle {
-		for _, col := range table.Columns {
-			if mysql.HasPriKeyFlag(col.Flag) {
-				record := types.MakeDatums(
-					CatalogVal,    // TABLE_CATALOG
-					schema.Name.O, // TABLE_SCHEMA
-					table.Name.O,  // TABLE_NAME
-					"0",           // NON_UNIQUE
-					schema.Name.O, // INDEX_SCHEMA
-					"PRIMARY",     // INDEX_NAME
-					1,             // SEQ_IN_INDEX
-					col.Name.O,    // COLUMN_NAME
-					"A",           // COLLATION
-					0,             // CARDINALITY
-					nil,           // SUB_PART
-					nil,           // PACKED
-					"",            // NULLABLE
-					"BTREE",       // INDEX_TYPE
-					"",            // COMMENT
-					"NULL",        // Expression
-					"",            // INDEX_COMMENT
-				)
-				rows = append(rows, record)
-			}
-		}
-	}
-	nameToCol := make(map[string]*model.ColumnInfo, len(table.Columns))
-	for _, c := range table.Columns {
-		nameToCol[c.Name.L] = c
-	}
-	for _, index := range table.Indices {
-		nonUnique := "1"
-		if index.Unique {
-			nonUnique = "0"
-		}
-		for i, key := range index.Columns {
-			col := nameToCol[key.Name.L]
-			nullable := "YES"
-			if mysql.HasNotNullFlag(col.Flag) {
-				nullable = ""
-			}
-			colName := col.Name.O
-			expression := "NULL"
-			tblCol := table.Columns[col.Offset]
-			if tblCol.Hidden {
-				colName = "NULL"
-				expression = fmt.Sprintf("(%s)", tblCol.GeneratedExprString)
-			}
-			record := types.MakeDatums(
-				CatalogVal,    // TABLE_CATALOG
-				schema.Name.O, // TABLE_SCHEMA
-				table.Name.O,  // TABLE_NAME
-				nonUnique,     // NON_UNIQUE
-				schema.Name.O, // INDEX_SCHEMA
-				index.Name.O,  // INDEX_NAME
-				i+1,           // SEQ_IN_INDEX
-				colName,       // COLUMN_NAME
-				"A",           // COLLATION
-				0,             // CARDINALITY
-				nil,           // SUB_PART
-				nil,           // PACKED
-				nullable,      // NULLABLE
-				"BTREE",       // INDEX_TYPE
-				"",            // COMMENT
-				expression,    // Expression
-				"",            // INDEX_COMMENT
-			)
-			rows = append(rows, record)
-		}
-	}
-	return rows
-}
-
 const (
 	// PrimaryKeyType is the string constant of PRIMARY KEY.
 	PrimaryKeyType = "PRIMARY KEY"
@@ -1423,58 +1272,6 @@ func dataForPseudoProfiling() [][]types.Datum {
 		0,                      // SOURCE_LINE
 	)
 	rows = append(rows, row)
-	return rows
-}
-
-func dataForTiDBHotRegions(ctx sessionctx.Context) (records [][]types.Datum, err error) {
-	tikvStore, ok := ctx.GetStore().(tikv.Storage)
-	if !ok {
-		return nil, errors.New("Information about hot region can be gotten only when the storage is TiKV")
-	}
-	allSchemas := ctx.GetSessionVars().TxnCtx.InfoSchema.(InfoSchema).AllSchemas()
-	tikvHelper := &helper.Helper{
-		Store:       tikvStore,
-		RegionCache: tikvStore.GetRegionCache(),
-	}
-	metrics, err := tikvHelper.ScrapeHotInfo(pdapi.HotRead, allSchemas)
-	if err != nil {
-		return nil, err
-	}
-	records = append(records, dataForHotRegionByMetrics(metrics, "read")...)
-	metrics, err = tikvHelper.ScrapeHotInfo(pdapi.HotWrite, allSchemas)
-	if err != nil {
-		return nil, err
-	}
-	records = append(records, dataForHotRegionByMetrics(metrics, "write")...)
-	return records, nil
-}
-
-func dataForHotRegionByMetrics(metrics []helper.HotTableIndex, tp string) [][]types.Datum {
-	rows := make([][]types.Datum, 0, len(metrics))
-	for _, tblIndex := range metrics {
-		row := make([]types.Datum, len(tableTiDBHotRegionsCols))
-		if tblIndex.IndexName != "" {
-			row[1].SetInt64(tblIndex.IndexID)
-			row[4].SetString(tblIndex.IndexName, mysql.DefaultCollationName)
-		} else {
-			row[1].SetNull()
-			row[4].SetNull()
-		}
-		row[0].SetInt64(tblIndex.TableID)
-		row[2].SetString(tblIndex.DbName, mysql.DefaultCollationName)
-		row[3].SetString(tblIndex.TableName, mysql.DefaultCollationName)
-		row[5].SetUint64(tblIndex.RegionID)
-		row[6].SetString(tp, mysql.DefaultCollationName)
-		if tblIndex.RegionMetric == nil {
-			row[7].SetNull()
-			row[8].SetNull()
-		} else {
-			row[7].SetInt64(int64(tblIndex.RegionMetric.MaxHotDegree))
-			row[8].SetInt64(int64(tblIndex.RegionMetric.Count))
-		}
-		row[9].SetUint64(tblIndex.RegionMetric.FlowBytes)
-		rows = append(rows, row)
-	}
 	return rows
 }
 
@@ -1755,7 +1552,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableTables:                             tablesCols,
 	tableColumns:                            columnsCols,
 	tableColumnStatistics:                   columnStatisticsCols,
-	tableStatistics:                         statisticsCols,
+	TableStatistics:                         statisticsCols,
 	TableCharacterSets:                      charsetCols,
 	TableCollations:                         collationsCols,
 	tableFiles:                              filesCols,
@@ -1785,11 +1582,11 @@ var tableNameToColumns = map[string][]columnInfo{
 	tableProcesslist:                        tableProcesslistCols,
 	TableTiDBIndexes:                        tableTiDBIndexesCols,
 	TableSlowQuery:                          slowQueryCols,
-	tableTiDBHotRegions:                     tableTiDBHotRegionsCols,
+	TableTiDBHotRegions:                     TableTiDBHotRegionsCols,
 	tableTiKVStoreStatus:                    tableTiKVStoreStatusCols,
 	tableAnalyzeStatus:                      tableAnalyzeStatusCols,
 	tableTiKVRegionStatus:                   tableTiKVRegionStatusCols,
-	tableTiKVRegionPeers:                    tableTiKVRegionPeersCols,
+	TableTiKVRegionPeers:                    TableTiKVRegionPeersCols,
 	tableTiDBServersInfo:                    tableTiDBServersInfoCols,
 	TableClusterInfo:                        tableClusterInfoCols,
 	TableClusterConfig:                      tableClusterConfigCols,
@@ -1846,8 +1643,6 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 	switch it.meta.Name.O {
 	case tableColumns:
 		fullRows = dataForColumns(ctx, dbs)
-	case tableStatistics:
-		fullRows = dataForStatistics(ctx, dbs)
 	case tableFiles:
 	case tableProfiling:
 		if v, ok := ctx.GetSessionVars().GetSystemVar("profiling"); ok && variable.TiDBOptOn(v) {
@@ -1869,16 +1664,12 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 	case tableTableSpaces:
 	case tableProcesslist:
 		fullRows = dataForProcesslist(ctx)
-	case tableTiDBHotRegions:
-		fullRows, err = dataForTiDBHotRegions(ctx)
 	case tableTiKVStoreStatus:
 		fullRows, err = dataForTiKVStoreStatus(ctx)
 	case tableAnalyzeStatus:
 		fullRows = DataForAnalyzeStatus(ctx)
 	case tableTiKVRegionStatus:
 		fullRows, err = dataForTiKVRegionStatus(ctx)
-	case tableTiKVRegionPeers:
-		fullRows, err = dataForTikVRegionPeers(ctx)
 	case tableTiDBServersInfo:
 		fullRows, err = dataForServersInfo()
 	case TableClusterInfo:
