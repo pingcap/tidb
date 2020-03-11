@@ -185,8 +185,8 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		lockKeys := make([]kv.Key, len(keys), len(keys)+len(indexKeys))
 		copy(lockKeys, keys)
 		for _, idxKey := range indexKeys {
-			// lock the non-exist index key
-			if _, ok := handleVals[string(idxKey)]; !ok {
+			// lock the non-exist index key, using len(val) in case BatchGet result contains some zero len entries
+			if val := handleVals[string(idxKey)]; len(val) == 0 {
 				lockKeys = append(lockKeys, idxKey)
 			}
 		}
