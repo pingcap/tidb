@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/pd/client"
+	"github.com/pingcap/pd/v4/client"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
@@ -158,14 +158,6 @@ func main() {
 	registerStores()
 	registerMetrics()
 	config.InitializeConfig(*configPath, *configCheck, *configStrict, reloadConfig, overrideConfig)
-	if err := config.GetGlobalConfig().Valid(); err != nil {
-		fmt.Fprintln(os.Stderr, "invalid config", err)
-		os.Exit(1)
-	}
-	if *configCheck {
-		fmt.Println("config check successful")
-		os.Exit(0)
-	}
 	setGlobalVars()
 	setCPUAffinity()
 	setupLog()
@@ -356,8 +348,20 @@ func reloadConfig(nc, c *config.Config) {
 	if nc.Performance.PseudoEstimateRatio != c.Performance.PseudoEstimateRatio {
 		statistics.RatioOfPseudoEstimate.Store(nc.Performance.PseudoEstimateRatio)
 	}
+	if nc.Performance.MaxProcs != c.Performance.MaxProcs {
+		runtime.GOMAXPROCS(int(nc.Performance.MaxProcs))
+	}
 	if nc.TiKVClient.StoreLimit != c.TiKVClient.StoreLimit {
 		storeutil.StoreLimit.Store(nc.TiKVClient.StoreLimit)
+	}
+
+	if nc.PreparedPlanCache.Enabled != c.PreparedPlanCache.Enabled {
+		plannercore.SetPreparedPlanCache(nc.PreparedPlanCache.Enabled)
+	}
+	if nc.Log.Level != c.Log.Level {
+		if err := logutil.SetLevel(nc.Log.Level); err != nil {
+			logutil.BgLogger().Error("update log level error", zap.Error(err))
+		}
 	}
 }
 

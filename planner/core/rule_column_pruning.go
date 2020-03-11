@@ -320,6 +320,11 @@ func (p *LogicalJoin) PruneColumns(parentUsedCols []*expression.Column) error {
 	}
 
 	p.mergeSchema()
+	if p.JoinType == LeftOuterSemiJoin || p.JoinType == AntiLeftOuterSemiJoin {
+		joinCol := p.schema.Columns[len(p.schema.Columns)-1]
+		parentUsedCols = append(parentUsedCols, joinCol)
+	}
+	p.inlineProjection(parentUsedCols)
 	return nil
 }
 
@@ -332,14 +337,7 @@ func (la *LogicalApply) PruneColumns(parentUsedCols []*expression.Column) error 
 		return err
 	}
 
-	if la.CorCols == nil {
-		// note: it's a hack here.
-		// PruneColumns will be called twice, and the second call which is after
-		// PredicatePushDown should not handle Correlate columns.
-		// TODO: Move this to other rules before PredicatePushDown.
-		// This line should not appear in PruneColumns
-		la.CorCols = extractCorColumnsBySchema(la.children[1], la.children[0].Schema())
-	}
+	la.CorCols = extractCorColumnsBySchema(la.children[1], la.children[0].Schema())
 	for _, col := range la.CorCols {
 		leftCols = append(leftCols, &col.Column)
 	}
@@ -357,6 +355,12 @@ func (la *LogicalApply) PruneColumns(parentUsedCols []*expression.Column) error 
 func (p *LogicalLock) PruneColumns(parentUsedCols []*expression.Column) error {
 	if p.Lock != ast.SelectLockForUpdate && p.Lock != ast.SelectLockForUpdateNoWait {
 		return p.baseLogicalPlan.PruneColumns(parentUsedCols)
+	}
+
+	if len(p.partitionedTable) > 0 {
+		// If the children include partitioned tables, do not prune columns.
+		// Because the executor needs the partitioned columns to calculate the lock key.
+		return p.children[0].PruneColumns(p.Schema().Columns)
 	}
 
 	for _, cols := range p.tblID2Handle {

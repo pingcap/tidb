@@ -111,7 +111,7 @@ var _ = Suite(&testSuiteAgg{baseTestSuite: &baseTestSuite{}})
 var _ = Suite(&testSuite6{&baseTestSuite{}})
 var _ = Suite(&testSuite7{&baseTestSuite{}})
 var _ = Suite(&testSuite8{&baseTestSuite{}})
-var _ = Suite(&testShowStatsSuite{&baseTestSuite{}})
+var _ = SerialSuites(&testShowStatsSuite{&baseTestSuite{}})
 var _ = Suite(&testBypassSuite{})
 var _ = Suite(&testUpdateSuite{})
 var _ = Suite(&testPointGetSuite{})
@@ -158,6 +158,10 @@ func (s *baseTestSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	d.SetStatsUpdating(true)
 	s.domain = d
+	originCfg := config.GetGlobalConfig()
+	newConf := *originCfg
+	newConf.OOMAction = config.OOMActionLog
+	config.StoreGlobalConfig(&newConf)
 }
 
 func (s *baseTestSuite) TearDownSuite(c *C) {
@@ -2090,7 +2094,7 @@ func (s *testSuiteP2) TestIsPointGet(c *C) {
 	ctx := tk.Se.(sessionctx.Context)
 	tests := map[string]bool{
 		"select * from help_topic where name='aaa'":         false,
-		"select 1 from help_topic where name='aaa'":         true,
+		"select 1 from help_topic where name='aaa'":         false,
 		"select * from help_topic where help_topic_id=1":    true,
 		"select * from help_topic where help_category_id=1": false,
 	}
@@ -3889,6 +3893,8 @@ func (s *testSuite2) TearDownTest(c *C) {
 		tableName := tb[0]
 		if tb[1] == "VIEW" {
 			tk.MustExec(fmt.Sprintf("drop view %v", tableName))
+		} else if tb[1] == "SEQUENCE" {
+			tk.MustExec(fmt.Sprintf("drop sequence %v", tableName))
 		} else {
 			tk.MustExec(fmt.Sprintf("drop table %v", tableName))
 		}
@@ -3907,6 +3913,8 @@ func (s *testSuite3) TearDownTest(c *C) {
 		tableName := tb[0]
 		if tb[1] == "VIEW" {
 			tk.MustExec(fmt.Sprintf("drop view %v", tableName))
+		} else if tb[1] == "SEQUENCE" {
+			tk.MustExec(fmt.Sprintf("drop sequence %v", tableName))
 		} else {
 			tk.MustExec(fmt.Sprintf("drop table %v", tableName))
 		}
@@ -3925,6 +3933,8 @@ func (s *testSuite4) TearDownTest(c *C) {
 		tableName := tb[0]
 		if tb[1] == "VIEW" {
 			tk.MustExec(fmt.Sprintf("drop view %v", tableName))
+		} else if tb[1] == "SEQUENCE" {
+			tk.MustExec(fmt.Sprintf("drop sequence %v", tableName))
 		} else {
 			tk.MustExec(fmt.Sprintf("drop table %v", tableName))
 		}
@@ -3943,6 +3953,8 @@ func (s *testSuite5) TearDownTest(c *C) {
 		tableName := tb[0]
 		if tb[1] == "VIEW" {
 			tk.MustExec(fmt.Sprintf("drop view %v", tableName))
+		} else if tb[1] == "SEQUENCE" {
+			tk.MustExec(fmt.Sprintf("drop sequence %v", tableName))
 		} else {
 			tk.MustExec(fmt.Sprintf("drop table %v", tableName))
 		}
@@ -3961,6 +3973,8 @@ func (s *testSuite6) TearDownTest(c *C) {
 		tableName := tb[0]
 		if tb[1] == "VIEW" {
 			tk.MustExec(fmt.Sprintf("drop view %v", tableName))
+		} else if tb[1] == "SEQUENCE" {
+			tk.MustExec(fmt.Sprintf("drop sequence %v", tableName))
 		} else {
 			tk.MustExec(fmt.Sprintf("drop table %v", tableName))
 		}
@@ -3979,6 +3993,8 @@ func (s *testSuite7) TearDownTest(c *C) {
 		tableName := tb[0]
 		if tb[1] == "VIEW" {
 			tk.MustExec(fmt.Sprintf("drop view %v", tableName))
+		} else if tb[1] == "SEQUENCE" {
+			tk.MustExec(fmt.Sprintf("drop sequence %v", tableName))
 		} else {
 			tk.MustExec(fmt.Sprintf("drop table %v", tableName))
 		}
@@ -3997,6 +4013,8 @@ func (s *testSuite8) TearDownTest(c *C) {
 		tableName := tb[0]
 		if tb[1] == "VIEW" {
 			tk.MustExec(fmt.Sprintf("drop view %v", tableName))
+		} else if tb[1] == "SEQUENCE" {
+			tk.MustExec(fmt.Sprintf("drop sequence %v", tableName))
 		} else {
 			tk.MustExec(fmt.Sprintf("drop table %v", tableName))
 		}
@@ -4421,7 +4439,7 @@ func (s *testSuiteP2) TestUnsignedFeedback(c *C) {
 	tk.MustExec("analyze table t")
 	tk.MustQuery("select count(distinct b) from t").Check(testkit.Rows("2"))
 	result := tk.MustQuery("explain analyze select count(distinct b) from t")
-	c.Assert(result.Rows()[2][3], Equals, "table:t, range:[0,+inf], keep order:false")
+	c.Assert(result.Rows()[2][4], Equals, "table:t, range:[0,+inf], keep order:false")
 }
 
 func (s *testSuite) TestOOMPanicAction(c *C) {
