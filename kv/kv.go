@@ -244,6 +244,8 @@ const (
 	TiFlash
 	// TiDB means the type of a store is TiDB.
 	TiDB
+	// UnSpecified means the store type is unknown
+	UnSpecified = 255
 )
 
 // Name returns the name of store type.
@@ -252,8 +254,10 @@ func (t StoreType) Name() string {
 		return "tiflash"
 	} else if t == TiDB {
 		return "tidb"
+	} else if t == TiKV {
+		return "tikv"
 	}
-	return "tikv"
+	return "unspecified"
 }
 
 // Request represents a kv request.
