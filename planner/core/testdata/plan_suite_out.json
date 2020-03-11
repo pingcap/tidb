@@ -1304,7 +1304,7 @@
           "explain select /*+ TIDB_INLJ(t2) */ * from t t1, t t2 where t1.a = t2.b"
         ],
         "Plan": [
-          "HashLeftJoin_15 12487.50 root inner join, inner:UnionScan_17, equal:[eq(test.t.a, test.t.b)]",
+          "HashLeftJoin_15 12487.50 root inner join, equal:[eq(test.t.a, test.t.b)]",
           "├─UnionScan_17(Build) 9990.00 root not(isnull(test.t.b))",
           "│ └─TableReader_20 9990.00 root data:Selection_19",
           "│   └─Selection_19 9990.00 cop[tikv] not(isnull(test.t.b))",
@@ -1320,7 +1320,7 @@
           "explain select /*+ TIDB_INLJ(t2) */ t1.a , t2.b from t t1, t t2 where t1.a = t2.b"
         ],
         "Plan": [
-          "HashLeftJoin_15 12487.50 root inner join, inner:UnionScan_17, equal:[eq(test.t.a, test.t.b)]",
+          "HashLeftJoin_15 12487.50 root inner join, equal:[eq(test.t.a, test.t.b)]",
           "├─UnionScan_17(Build) 9990.00 root not(isnull(test.t.b))",
           "│ └─TableReader_20 9990.00 root data:Selection_19",
           "│   └─Selection_19 9990.00 cop[tikv] not(isnull(test.t.b))",
@@ -1336,7 +1336,7 @@
           "explain select /*+ TIDB_INLJ(t2) */ * from tt t1, tt t2 where t1.a = t2.a"
         ],
         "Plan": [
-          "HashLeftJoin_19 25000.00 root inner join, inner:Union_28, equal:[eq(test.tt.a, test.tt.a)]",
+          "HashLeftJoin_19 25000.00 root inner join, equal:[eq(test.tt.a, test.tt.a)]",
           "├─Union_28(Build) 20000.00 root ",
           "│ ├─UnionScan_29 10000.00 root ",
           "│ │ └─TableReader_31 10000.00 root data:TableFullScan_30",
