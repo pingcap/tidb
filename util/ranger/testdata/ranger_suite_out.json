@@ -6,7 +6,7 @@
         "SQL": "explain select t.e in (select count(*) from t s use index(idx), t t1 where s.b = 1 and s.c in (1, 2) and s.d = t.a and s.a = t1.a) from t",
         "Result": [
           "Projection_11 2.00 root Column#17",
-          "└─Apply_13 2.00 root CARTESIAN left outer semi join, inner:StreamAgg_20, other cond:eq(test.t.e, Column#16)",
+          "└─Apply_13 2.00 root CARTESIAN left outer semi join, other cond:eq(test.t.e, Column#16)",
           "  ├─TableReader_15(Build) 2.00 root data:TableFullScan_14",
           "  │ └─TableFullScan_14 2.00 cop[tikv] table:t, keep order:false",
           "  └─StreamAgg_20(Probe) 1.00 root funcs:count(1)->Column#16",
