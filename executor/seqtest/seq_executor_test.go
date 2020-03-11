@@ -1330,6 +1330,10 @@ func (s *testOOMSuite) SetUpSuite(c *C) {
 	domain.RunAutoAnalyze = false
 	s.do, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
+	originCfg := config.GetGlobalConfig()
+	newConf := *originCfg
+	newConf.OOMAction = config.OOMActionLog
+	config.StoreGlobalConfig(&newConf)
 }
 
 func (s *testOOMSuite) TearDownSuite(c *C) {
@@ -1340,41 +1344,9 @@ func (s *testOOMSuite) TearDownSuite(c *C) {
 func (s *testOOMSuite) registerHook() {
 	conf := &log.Config{Level: os.Getenv("log_level"), File: log.FileLogConfig{}}
 	_, r, _ := log.InitLogger(conf)
-	s.oom = &oomCapturer{r.Core, ""}
+	s.oom = &oomCapturer{r.Core, "", sync.Mutex{}}
 	lg := zap.New(s.oom)
 	log.ReplaceGlobals(lg, r)
-}
-
-func (s *testOOMSuite) TestDistSQLMemoryControl(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t (id int, a int, b int, index idx_a(`a`))")
-	tk.MustExec("insert into t values (1,1,1), (2,2,2), (3,3,3)")
-
-	log.SetLevel(zap.WarnLevel)
-	s.oom.tracker = ""
-	tk.MustQuery("select * from t")
-	c.Assert(s.oom.tracker, Equals, "")
-	tk.Se.GetSessionVars().MemQuotaDistSQL = 1
-	tk.MustQuery("select * from t")
-	c.Assert(s.oom.tracker, Equals, "TableReader_5")
-	tk.Se.GetSessionVars().MemQuotaDistSQL = -1
-
-	s.oom.tracker = ""
-	tk.MustQuery("select a from t")
-	c.Assert(s.oom.tracker, Equals, "")
-	tk.Se.GetSessionVars().MemQuotaDistSQL = 1
-	tk.MustQuery("select a from t use index(idx_a)")
-	c.Assert(s.oom.tracker, Equals, "IndexReader_5")
-	tk.Se.GetSessionVars().MemQuotaDistSQL = -1
-
-	s.oom.tracker = ""
-	tk.MustQuery("select * from t")
-	c.Assert(s.oom.tracker, Equals, "")
-	tk.Se.GetSessionVars().MemQuotaIndexLookupReader = 1
-	tk.MustQuery("select * from t use index(idx_a)")
-	c.Assert(s.oom.tracker, Equals, "IndexLookUp_6")
-	tk.Se.GetSessionVars().MemQuotaIndexLookupReader = -1
 }
 
 func (s *testOOMSuite) TestMemTracker4UpdateExec(c *C) {
@@ -1394,6 +1366,9 @@ func (s *testOOMSuite) TestMemTracker4UpdateExec(c *C) {
 func (s *testOOMSuite) TestMemTracker4InsertAndReplaceExec(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("create table t (id int, a int, b int, index idx_a(`a`))")
+	tk.MustExec("insert into t values (1,1,1), (2,2,2), (3,3,3)")
+
 	tk.MustExec("create table t_MemTracker4InsertAndReplaceExec (id int, a int, b int, index idx_a(`a`))")
 
 	log.SetLevel(zap.InfoLevel)
@@ -1483,6 +1458,7 @@ func (s *testOOMSuite) TestMemTracker4DeleteExec(c *C) {
 type oomCapturer struct {
 	zapcore.Core
 	tracker string
+	mu      sync.Mutex
 }
 
 func (h *oomCapturer) Write(entry zapcore.Entry, fields []zapcore.Field) error {
@@ -1500,7 +1476,10 @@ func (h *oomCapturer) Write(entry zapcore.Entry, fields []zapcore.Field) error {
 		h.tracker = str[begin+len("8001]") : end]
 		return nil
 	}
+
+	h.mu.Lock()
 	h.tracker = entry.Message
+	h.mu.Unlock()
 	return nil
 }
 

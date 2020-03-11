@@ -500,6 +500,10 @@ func (ssbd *stmtSummaryByDigest) init(sei *StmtExecInfo, beginTime int64, interv
 	// Use "," to separate table names to support FIND_IN_SET.
 	var buffer bytes.Buffer
 	for i, value := range sei.StmtCtx.Tables {
+		// In `create database` statement, DB name is not empty but table name is empty.
+		if len(value.Table) == 0 {
+			continue
+		}
 		buffer.WriteString(strings.ToLower(value.DB))
 		buffer.WriteString(".")
 		buffer.WriteString(strings.ToLower(value.Table))
