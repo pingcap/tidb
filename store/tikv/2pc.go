@@ -1147,9 +1147,9 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 		commitDetail.Mu.Unlock()
 	}
 	if binlogChan != nil {
-		binlogPrewriteStart := time.Now()
+		startWaitBinlog := time.Now()
 		binlogWriteResult := <-binlogChan
-		commitDetail.BinlogPrewriteTime = time.Since(binlogPrewriteStart)
+		commitDetail.WaitPrewriteBinlogTime = time.Since(startWaitBinlog)
 		if binlogWriteResult != nil {
 			binlogSkipped = binlogWriteResult.Skipped()
 			binlogErr := binlogWriteResult.GetError()
