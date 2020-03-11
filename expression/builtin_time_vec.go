@@ -1782,10 +1782,9 @@ func (b *builtinDateFormatSig) vecEvalString(input *chunk.Chunk, result *chunk.C
 			// Args like "0000-00-00", "0000-00-00 00:00:00" set Fsp to 6
 			isOriginalStringZero := t.Fsp() > 0
 
-			result.AppendNull()
-
 			if isOriginalIntOrDecimalZero && !isOriginalStringZero {
-				return nil
+				result.AppendNull()
+				continue
 			}
 			if errHandled := handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, t.String())); errHandled != nil {
 				return errHandled
