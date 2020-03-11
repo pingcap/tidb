@@ -48,6 +48,14 @@ func WriteInsert(tblIR TableDataIR, w io.StringWriter) error {
 		row                   = MakeRowReceiver(tblIR.ColumnTypes())
 		counter               = 0
 	)
+
+	selectedField := tblIR.SelectedField()
+	// if has generated column
+	if selectedField != "" {
+		insertStatementPrefix = fmt.Sprintf("INSERT INTO %s %s VALUES\n",
+			wrapBackTicks(tblIR.TableName()), selectedField)
+	}
+
 	for fileRowIter.HasNextSQLRowIter() {
 		if err := write(w, insertStatementPrefix); err != nil {
 			return err

@@ -75,12 +75,13 @@ func newMockMetaIR(targetName string, meta string, specialComments []string) Met
 }
 
 type mockTableIR struct {
-	dbName    string
-	tblName   string
-	chunIndex int
-	data      [][]driver.Value
-	specCmt   []string
-	colTypes  []string
+	dbName        string
+	tblName       string
+	chunIndex     int
+	data          [][]driver.Value
+	selectedField string
+	specCmt       []string
+	colTypes      []string
 }
 
 func (m *mockTableIR) DatabaseName() string {
@@ -101,6 +102,13 @@ func (m *mockTableIR) ColumnCount() uint {
 
 func (m *mockTableIR) ColumnTypes() []string {
 	return m.colTypes
+}
+
+func (m *mockTableIR) SelectedField() string {
+	if m.selectedField == "*" {
+		return ""
+	}
+	return m.selectedField
 }
 
 func (m *mockTableIR) SpecialComments() StringIter {
@@ -128,10 +136,11 @@ func (m *mockTableIR) Rows() SQLRowIter {
 
 func newMockTableIR(databaseName, tableName string, data [][]driver.Value, specialComments, colTypes []string) TableDataIR {
 	return &mockTableIR{
-		dbName:   databaseName,
-		tblName:  tableName,
-		data:     data,
-		specCmt:  specialComments,
-		colTypes: colTypes,
+		dbName:        databaseName,
+		tblName:       tableName,
+		data:          data,
+		specCmt:       specialComments,
+		selectedField: "*",
+		colTypes:      colTypes,
 	}
 }

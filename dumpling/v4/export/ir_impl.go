@@ -131,12 +131,13 @@ func (m *stringIter) HasNext() bool {
 }
 
 type tableData struct {
-	database   string
-	table      string
-	chunkIndex int
-	rows       *sql.Rows
-	colTypes   []*sql.ColumnType
-	specCmts   []string
+	database      string
+	table         string
+	chunkIndex    int
+	rows          *sql.Rows
+	colTypes      []*sql.ColumnType
+	selectedField string
+	specCmts      []string
 }
 
 func (td *tableData) ColumnTypes() []string {
@@ -165,6 +166,13 @@ func (td *tableData) ColumnCount() uint {
 
 func (td *tableData) Rows() SQLRowIter {
 	return newRowIter(td.rows, len(td.colTypes))
+}
+
+func (td *tableData) SelectedField() string {
+	if td.selectedField == "*" {
+		return ""
+	}
+	return fmt.Sprintf("(%s)", td.selectedField)
 }
 
 func (td *tableData) SpecialComments() StringIter {
@@ -266,7 +274,13 @@ func splitTableDataIntoChunks(
 	estimatedStep := (max-min)/estimatedChunks + 1
 	cutoff := min
 
-	colTypes, err := GetColumnTypes(db, dbName, tableName)
+	selectedField, err := buildSelectField(db, dbName, tableName)
+	if err != nil {
+		errCh <- withStack(err)
+		return
+	}
+
+	colTypes, err := GetColumnTypes(db, selectedField, dbName, tableName)
 	if err != nil {
 		errCh <- withStack(err)
 		return
@@ -282,7 +296,7 @@ LOOP:
 	for cutoff <= max {
 		chunkIndex += 1
 		where := fmt.Sprintf("(`%s` >= %d AND `%s` < %d)", field, cutoff, field, cutoff+estimatedStep)
-		query = buildSelectQuery(dbName, tableName, buildWhereCondition(conf, where), orderByClause)
+		query = buildSelectQuery(dbName, tableName, selectedField, buildWhereCondition(conf, where), orderByClause)
 		rows, err := db.Query(query)
 		if err != nil {
 			errCh <- errors.WithMessage(err, query)
@@ -290,11 +304,12 @@ LOOP:
 		}
 
 		td := &tableData{
-			database:   dbName,
-			table:      tableName,
-			rows:       rows,
-			chunkIndex: chunkIndex,
-			colTypes:   colTypes,
+			database:      dbName,
+			table:         tableName,
+			rows:          rows,
+			chunkIndex:    chunkIndex,
+			colTypes:      colTypes,
+			selectedField: selectedField,
 			specCmts: []string{
 				"/*!40101 SET NAMES binary*/;",
 			},
