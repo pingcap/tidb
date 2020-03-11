@@ -753,32 +753,6 @@ func (s *testSuite1) TestIssue10608(c *C) {
 
 }
 
-func (s *testSuiteAgg) TestIssue12759HashAggCalledByApply(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.Se.GetSessionVars().HashAggFinalConcurrency = 4
-	tk.MustExec(`insert into mysql.opt_rule_blacklist value("decorrelate");`)
-	defer func() {
-		tk.MustExec(`delete from mysql.opt_rule_blacklist where name = "decorrelate";`)
-		tk.MustExec(`admin reload opt_rule_blacklist;`)
-	}()
-	tk.MustExec(`drop table if exists test;`)
-	tk.MustExec("create table test (a int);")
-	tk.MustExec("insert into test value(1);")
-	tk.MustQuery("select /*+ hash_agg() */ sum(a), (select NULL from test where tt.a = test.a limit 1),(select NULL from test where tt.a = test.a limit 1),(select NULL from test where tt.a = test.a limit 1) from test tt;").Check(testkit.Rows("1 <nil> <nil> <nil>"))
-
-	var (
-		input  []string
-		output [][]string
-	)
-	s.testData.GetTestCases(c, &input, &output)
-	for i, tt := range input {
-		s.testData.OnRecord(func() {
-			output[i] = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
-		})
-		tk.MustQuery(tt).Check(testkit.Rows(output[i]...))
-	}
-}
-
 func (s *testSuiteAgg) TestPR15242ShallowCopy(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec(`drop table if exists t;`)
