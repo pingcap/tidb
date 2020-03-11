@@ -1147,7 +1147,9 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 		commitDetail.Mu.Unlock()
 	}
 	if binlogChan != nil {
+		binlogPrewriteStart := time.Now()
 		binlogWriteResult := <-binlogChan
+		commitDetail.BinlogPrewriteTime = time.Since(binlogPrewriteStart)
 		if binlogWriteResult != nil {
 			binlogSkipped = binlogWriteResult.Skipped()
 			binlogErr := binlogWriteResult.GetError()
@@ -1282,9 +1284,7 @@ func (c *twoPhaseCommitter) prewriteBinlog(ctx context.Context) chan *binloginfo
 		if bin.Tp == binlog.BinlogType_Prewrite {
 			bin.PrewriteKey = c.primary()
 		}
-		binlogPrewriteStart := time.Now()
 		wr := binInfo.WriteBinlog(c.store.clusterID)
-		c.getDetail().BinlogPrewriteTime = time.Since(binlogPrewriteStart)
 		if wr.Skipped() {
 			binInfo.Data.PrewriteValue = nil
 			binloginfo.AddOneSkippedCommitter()
