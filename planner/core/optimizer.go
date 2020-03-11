@@ -213,19 +213,21 @@ func eliminateUnionScanAndLock(sctx sessionctx.Context, p PhysicalPlan) Physical
 	if pointGet == nil && batchPointGet == nil {
 		return p
 	}
-	if physLock == nil {
+	if physLock == nil && unionScan == nil {
 		return p
 	}
-	lock, waitTime := getLockWaitTime(sctx, physLock.Lock)
-	if !lock {
-		return p
-	}
-	if pointGet != nil {
-		pointGet.Lock = lock
-		pointGet.LockWaitTime = waitTime
-	} else {
-		batchPointGet.Lock = lock
-		batchPointGet.LockWaitTime = waitTime
+	if physLock != nil {
+		lock, waitTime := getLockWaitTime(sctx, physLock.Lock)
+		if !lock {
+			return p
+		}
+		if pointGet != nil {
+			pointGet.Lock = lock
+			pointGet.LockWaitTime = waitTime
+		} else {
+			batchPointGet.Lock = lock
+			batchPointGet.LockWaitTime = waitTime
+		}
 	}
 	return transformPhysicalPlan(p, func(p PhysicalPlan) PhysicalPlan {
 		if p == physLock {
