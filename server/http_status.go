@@ -268,32 +268,9 @@ func (s *Server) startHTTPServer() {
 			return
 		}
 		tlsConfig = s.setCNChecker(tlsConfig)
+		logutil.Logger(context.Background()).Info("HTTP/gRPC status server secure connection is enabled", zap.Bool("CN verification enabled", tlsConfig.VerifyPeerCertificate != nil))
 		ln = tls.NewListener(ln, tlsConfig)
 	}
-<<<<<<< HEAD
-=======
-	if tlsConfig != nil {
-		logutil.BgLogger().Info("HTTP/gRPC status server secure connection is enabled", zap.Bool("CN verification enabled", tlsConfig.VerifyPeerCertificate != nil))
-	}
-	m := cmux.New(l)
-	// Match connections in order:
-	// First HTTP, and otherwise grpc.
-	httpL := m.Match(cmux.HTTP1Fast())
-	grpcL := m.Match(cmux.Any())
-
-	s.statusServer = &http.Server{Addr: addr, Handler: CorsHandler{handler: serverMux, cfg: s.cfg}}
-	s.grpcServer = NewRPCServer(s.cfg, s.dom, s)
-
-	go util.WithRecovery(func() {
-		err := s.grpcServer.Serve(grpcL)
-		logutil.BgLogger().Error("grpc server error", zap.Error(err))
-	}, nil)
-
-	go util.WithRecovery(func() {
-		err := s.statusServer.Serve(httpL)
-		logutil.BgLogger().Error("http server error", zap.Error(err))
-	}, nil)
->>>>>>> 6c67561... server: fix tls setup and error log (#15287)
 
 	err = s.statusServer.Serve(ln)
 	if err != nil {

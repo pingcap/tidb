@@ -170,21 +170,13 @@ func (s *Security) ToTLSConfig() (*tls.Config, error) {
 
 		// Append the certificates from the CA
 		if !certPool.AppendCertsFromPEM(ca) {
-<<<<<<< HEAD
 			return nil, errors.New("failed to append ca certs")
-=======
-			err = errors.New("failed to append ca certs")
-			return
-		}
-		tlsConfig = &tls.Config{
-			RootCAs:   certPool,
-			ClientCAs: certPool,
->>>>>>> 6c67561... server: fix tls setup and error log (#15287)
 		}
 
 		tlsConfig = &tls.Config{
 			Certificates: certificates,
 			RootCAs:      certPool,
+			ClientCAs:    certPool,
 		}
 	}
 

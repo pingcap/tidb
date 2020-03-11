@@ -160,14 +160,7 @@ func (ts *TidbTestSuite) TestStatusAPI(c *C) {
 	runTestStatusAPI(c)
 }
 
-<<<<<<< HEAD
 func (ts *TidbTestSuite) TestStatusAPIWithTLSCNCheck(c *C) {
-	c.Skip("need add ca-tidb-test-1.crt to OS")
-	root := filepath.Join(os.Getenv("GOPATH"), "/src/github.com/pingcap/tidb")
-	ca := filepath.Join(root, "/tests/cncheckcert/ca-tidb-test-1.crt")
-	statusURL := fmt.Sprintf("%s://localhost:%d%s", "https", 4100, "/status")
-=======
-func (ts *tidbTestSuite) TestStatusAPIWithTLSCNCheck(c *C) {
 	caPath := filepath.Join(os.TempDir(), "ca-cert-cn.pem")
 	serverKeyPath := filepath.Join(os.TempDir(), "server-key-cn.pem")
 	serverCertPath := filepath.Join(os.TempDir(), "server-cert-cn.pem")
@@ -175,6 +168,8 @@ func (ts *tidbTestSuite) TestStatusAPIWithTLSCNCheck(c *C) {
 	client1CertPath := filepath.Join(os.TempDir(), "client-cert-cn-check-a.pem")
 	client2KeyPath := filepath.Join(os.TempDir(), "client-key-cn-check-b.pem")
 	client2CertPath := filepath.Join(os.TempDir(), "client-cert-cn-check-b.pem")
+
+	statusURL := fmt.Sprintf("%s://localhost:%d%s", "https", 4100, "/status")
 
 	caCert, caKey, err := generateCert(0, "TiDB CA CN CHECK", nil, nil, filepath.Join(os.TempDir(), "ca-key-cn.pem"), caPath)
 	c.Assert(err, IsNil)
@@ -188,21 +183,12 @@ func (ts *tidbTestSuite) TestStatusAPIWithTLSCNCheck(c *C) {
 		c.Subject.CommonName = "tidb-client-2"
 	})
 	c.Assert(err, IsNil)
->>>>>>> 6c67561... server: fix tls setup and error log (#15287)
 
 	cfg := config.NewConfig()
-<<<<<<< HEAD
 	cfg.Status.StatusPort = 4100
-	cfg.Security.ClusterSSLCA = ca
-	cfg.Security.ClusterSSLCert = filepath.Join(root, "/tests/cncheckcert/server-cert.pem")
-	cfg.Security.ClusterSSLKey = filepath.Join(root, "/tests/cncheckcert/server-key.pem")
-=======
-	cfg.Port = cli.port
-	cfg.Status.StatusPort = cli.statusPort
 	cfg.Security.ClusterSSLCA = caPath
 	cfg.Security.ClusterSSLCert = serverCertPath
 	cfg.Security.ClusterSSLKey = serverKeyPath
->>>>>>> 6c67561... server: fix tls setup and error log (#15287)
 	cfg.Security.ClusterVerifyCN = []string{"tidb-client-2"}
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
