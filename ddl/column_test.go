@@ -43,15 +43,7 @@ type testColumnSuite struct {
 
 func (s *testColumnSuite) SetUpSuite(c *C) {
 	s.store = testCreateStore(c, "test_column")
-<<<<<<< HEAD
-	s.d = testNewDDL(context.Background(), nil, s.store, nil, nil, testLease)
-=======
-	d := newDDL(
-		context.Background(),
-		WithStore(s.store),
-		WithLease(testLease),
-	)
->>>>>>> 6ccdf64... ddl: add a channel to limit multiple DDL jobs writing at the same time (#14342)
+	d := testNewDDL(context.Background(), nil, s.store, nil, nil, testLease)
 
 	s.dbInfo = testSchemaInfo(c, d, "test_column")
 	testCreateSchema(c, testNewContext(d), d, s.dbInfo)
@@ -846,17 +838,8 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 }
 
 func (s *testColumnSuite) TestDropColumn(c *C) {
-<<<<<<< HEAD
 	d := testNewDDL(context.Background(), nil, s.store, nil, nil, testLease)
-	tblInfo := testTableInfo(c, d, "t", 4)
-=======
-	d := newDDL(
-		context.Background(),
-		WithStore(s.store),
-		WithLease(testLease),
-	)
 	tblInfo := testTableInfo(c, d, "t2", 4)
->>>>>>> 6ccdf64... ddl: add a channel to limit multiple DDL jobs writing at the same time (#14342)
 	ctx := testNewContext(d)
 
 	err := ctx.NewTxn(context.Background())

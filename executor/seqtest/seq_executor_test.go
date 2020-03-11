@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
@@ -53,7 +54,10 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 func TestT(t *testing.T) {
@@ -1119,41 +1123,7 @@ func (s *seqTestSuite) TestOOMPanicInHashJoinWhenFetchBuildRows(c *C) {
 	c.Assert(err.Error(), Equals, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")
 }
 
-<<<<<<< HEAD
 func (s *seqTestSuite) TestBatchDML(c *C) {
-=======
-type testOOMSuite struct {
-	store kv.Storage
-	do    *domain.Domain
-	oom   *oomCapturer
-}
-
-func (s *testOOMSuite) SetUpSuite(c *C) {
-	testleak.BeforeTest()
-	s.registerHook()
-	var err error
-	s.store, err = mockstore.NewMockTikvStore()
-	c.Assert(err, IsNil)
-	domain.RunAutoAnalyze = false
-	s.do, err = session.BootstrapSession(s.store)
-	c.Assert(err, IsNil)
-}
-
-func (s *testOOMSuite) TearDownSuite(c *C) {
-	s.do.Close()
-	s.store.Close()
-}
-
-func (s *testOOMSuite) registerHook() {
-	conf := &log.Config{Level: os.Getenv("log_level"), File: log.FileLogConfig{}}
-	_, r, _ := log.InitLogger(conf)
-	s.oom = &oomCapturer{r.Core, "", sync.Mutex{}}
-	lg := zap.New(s.oom)
-	log.ReplaceGlobals(lg, r)
-}
-
-func (s *testOOMSuite) TestDistSQLMemoryControl(c *C) {
->>>>>>> 6ccdf64... ddl: add a channel to limit multiple DDL jobs writing at the same time (#14342)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1211,7 +1181,6 @@ func (s *testOOMSuite) TestDistSQLMemoryControl(c *C) {
 	c.Assert(kv.ErrTxnTooLarge.Equal(err), IsTrue)
 	tk.MustQuery("select * from t order by i").Check(testkit.Rows("1 a", "2 b", "3 c"))
 
-<<<<<<< HEAD
 	// Test batched retry
 	config.GetGlobalConfig().EnableBatchDML = true
 	atomic.StoreUint64(&kv.TxnEntryCountLimit, 10)
@@ -1225,35 +1194,6 @@ func (s *testOOMSuite) TestDistSQLMemoryControl(c *C) {
 	_, err = tk.Exec("update t set j = 'd'")
 	c.Assert(executor.ErrBatchDMLFail.Equal(err), IsTrue, Commentf("error %s", err))
 	tk.MustQuery("select * from t order by i").Check(testkit.Rows("1 e", "2 e", "3 e"))
-=======
-type oomCapturer struct {
-	zapcore.Core
-	tracker string
-	mu      sync.Mutex
-}
-
-func (h *oomCapturer) Write(entry zapcore.Entry, fields []zapcore.Field) error {
-	if strings.Contains(entry.Message, "memory exceeds quota") {
-		err, _ := fields[0].Interface.(error)
-		str := err.Error()
-		begin := strings.Index(str, "8001]")
-		if begin == -1 {
-			panic("begin not found")
-		}
-		end := strings.Index(str, " holds")
-		if end == -1 {
-			panic("end not found")
-		}
-		h.tracker = str[begin+len("8001]") : end]
-		return nil
-	}
-
-	h.mu.Lock()
-	h.tracker = entry.Message
-	h.mu.Unlock()
-	return nil
-}
->>>>>>> 6ccdf64... ddl: add a channel to limit multiple DDL jobs writing at the same time (#14342)
 
 	// Test normal retry
 	config.GetGlobalConfig().EnableBatchDML = false
