@@ -207,9 +207,17 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	if err != nil {
 		logutil.Logger(context.Background()).Error("secure connection cert/key/ca load fail", zap.Error(err))
 	}
+<<<<<<< HEAD
 	logutil.Logger(context.Background()).Info("secure connection is enabled", zap.Bool("client verification enabled", len(variable.SysVars["ssl_ca"].Value) > 0))
 	setSSLVariable(s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert)
 	atomic.StorePointer(&s.tlsConfig, unsafe.Pointer(tlsConfig))
+=======
+	if tlsConfig != nil {
+		setSSLVariable(s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert)
+		atomic.StorePointer(&s.tlsConfig, unsafe.Pointer(tlsConfig))
+		logutil.BgLogger().Info("mysql protocol server secure connection is enabled", zap.Bool("client verification enabled", len(variable.SysVars["ssl_ca"].Value) > 0))
+	}
+>>>>>>> 6c67561... server: fix tls setup and error log (#15287)
 
 	setSystemTimeZoneVariable()
 
@@ -369,6 +377,7 @@ func (s *Server) Close() {
 func (s *Server) onConn(conn *clientConn) {
 	ctx := logutil.WithConnID(context.Background(), conn.connectionID)
 	if err := conn.handshake(ctx); err != nil {
+		terror.Log(err)
 		if plugin.IsEnable(plugin.Audit) {
 			conn.ctx.GetSessionVars().ConnectionInfo = conn.connectInfo()
 		}
