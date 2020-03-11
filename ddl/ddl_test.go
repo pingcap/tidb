@@ -80,7 +80,7 @@ func (d *ddl) restartWorkers(ctx context.Context) {
 		util.WithRecovery(
 			func() { d.limitDDLJobs() },
 			func(r interface{}) {
-				logutil.BgLogger().Error("[ddl] DDL add batch DDL jobs meet panic",
+				logutil.Logger(ddlLogCtx).Error("[ddl] DDL add batch DDL jobs meet panic",
 					zap.String("ID", d.uuid), zap.Reflect("r", r), zap.Stack("stack trace"))
 				metrics.PanicCounter.WithLabelValues(metrics.LabelDDL).Inc()
 			})

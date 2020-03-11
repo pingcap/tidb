@@ -443,7 +443,7 @@ func (d *ddl) start(ctx context.Context, ctxPool *pools.ResourcePool) {
 			func() { d.limitDDLJobs() },
 			func(r interface{}) {
 				if r != nil {
-					logutil.BgLogger().Error("[ddl] limit DDL jobs meet panic",
+					logutil.Logger(ddlLogCtx).Error("[ddl] limit DDL jobs meet panic",
 						zap.String("ID", d.uuid), zap.Reflect("r", r), zap.Stack("stack trace"))
 					metrics.PanicCounter.WithLabelValues(metrics.LabelDDL).Inc()
 				}

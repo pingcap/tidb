@@ -240,7 +240,7 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) {
 		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerAddDDLJob, task.job.Type.String(),
 			metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	}
-	logutil.BgLogger().Info("[ddl] add DDL jobs", zap.Int("batch count", len(tasks)), zap.String("jobs", jobs))
+	logutil.Logger(ddlLogCtx).Info("[ddl] add DDL jobs", zap.Int("batch count", len(tasks)), zap.String("jobs", jobs))
 }
 
 // getHistoryDDLJob gets a DDL job with job's ID from history queue.

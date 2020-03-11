@@ -110,11 +110,7 @@ func testDropColumn(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, 
 }
 
 func (s *testColumnSuite) TestColumn(c *C) {
-	d := newDDL(
-		context.Background(),
-		WithStore(s.store),
-		WithLease(testLease),
-	)
+	d := testNewDDL(context.Background(), nil, s.store, nil, nil, testLease)
 	defer d.Stop()
 
 	tblInfo := testTableInfo(c, d, "t1", 3)
