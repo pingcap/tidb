@@ -1785,7 +1785,7 @@ func (b *builtinDateFormatSig) vecEvalString(input *chunk.Chunk, result *chunk.C
 			result.AppendNull()
 
 			if isOriginalIntOrDecimalZero && !isOriginalStringZero {
-				continue
+				return nil
 			}
 			if errHandled := handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, t.String())); errHandled != nil {
 				return errHandled
