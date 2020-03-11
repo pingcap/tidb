@@ -1417,6 +1417,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			strings.ToLower(infoschema.TableCharacterSets),
 			strings.ToLower(infoschema.TableKeyColumn),
 			strings.ToLower(infoschema.TableUserPrivileges),
+			strings.ToLower(infoschema.TableMetricTables),
 			strings.ToLower(infoschema.TableCollationCharacterSetApplicability),
 			strings.ToLower(infoschema.TableSessionVar),
 			strings.ToLower(infoschema.TableConstraints):

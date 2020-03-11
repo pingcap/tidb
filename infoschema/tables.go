@@ -1750,28 +1750,6 @@ func dataForTableTiFlashReplica(ctx sessionctx.Context, schemas []*model.DBInfo)
 	return rows
 }
 
-// dataForTableTiFlashReplica constructs data for all metric table definition.
-func dataForMetricTables(ctx sessionctx.Context) [][]types.Datum {
-	var rows [][]types.Datum
-	tables := make([]string, 0, len(MetricTableMap))
-	for name := range MetricTableMap {
-		tables = append(tables, name)
-	}
-	sort.Strings(tables)
-	for _, name := range tables {
-		schema := MetricTableMap[name]
-		record := types.MakeDatums(
-			name,                             // METRICS_NAME
-			schema.PromQL,                    // PROMQL
-			strings.Join(schema.Labels, ","), // LABELS
-			schema.Quantile,                  // QUANTILE
-			schema.Comment,                   // COMMENT
-		)
-		rows = append(rows, record)
-	}
-	return rows
-}
-
 var tableNameToColumns = map[string][]columnInfo{
 	TableSchemata:                           schemataCols,
 	TableTables:                             tablesCols,
@@ -1907,8 +1885,6 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		fullRows, err = dataForTiDBClusterInfo(ctx)
 	case tableTiFlashReplica:
 		fullRows = dataForTableTiFlashReplica(ctx, dbs)
-	case TableMetricTables:
-		fullRows = dataForMetricTables(ctx)
 	// Data for cluster processlist memory table.
 	case clusterTableProcesslist:
 		fullRows, err = dataForClusterProcesslist(ctx)
