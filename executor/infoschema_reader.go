@@ -70,6 +70,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataFromTables(sctx, dbs)
 		case infoschema.TablePartitions:
 			err = e.setDataFromPartitions(sctx, dbs)
+		case infoschema.TableClusterInfo:
+			err = e.dataForTiDBClusterInfo(sctx)
 		case infoschema.TableTiDBIndexes:
 			e.setDataFromIndexes(sctx, dbs)
 		case infoschema.TableViews:
@@ -750,6 +752,30 @@ func (e *memtableRetriever) dataForCollationCharacterSetApplicability() {
 		)
 	}
 	e.rows = rows
+}
+
+func (e *memtableRetriever) dataForTiDBClusterInfo(ctx sessionctx.Context) error {
+	servers, err := infoschema.GetClusterServerInfo(ctx)
+	if err != nil {
+		e.rows = nil
+		return err
+	}
+	rows := make([][]types.Datum, 0, len(servers))
+	for _, server := range servers {
+		startTime := time.Unix(server.StartTimestamp, 0)
+		row := types.MakeDatums(
+			server.ServerType,
+			server.Address,
+			server.StatusAddr,
+			server.Version,
+			server.GitHash,
+			startTime.Format(time.RFC3339),
+			time.Since(startTime).String(),
+		)
+		rows = append(rows, row)
+	}
+	e.rows = rows
+	return nil
 }
 
 func (e *memtableRetriever) setDataFromKeyColumnUsage(ctx sessionctx.Context, schemas []*model.DBInfo) {
