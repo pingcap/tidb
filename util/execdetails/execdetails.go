@@ -82,7 +82,7 @@ const (
 	ProcessKeysStr = "Process_keys"
 	// PreWriteTimeStr means the time of pre-write.
 	PreWriteTimeStr = "Prewrite_time"
-	// WaitPrewriteBinlogTime means the time of waiting prewrite binlog finished when transaction committing.
+	// WaitPrewriteBinlogTimeStr means the time of waiting prewrite binlog finished when transaction committing.
 	WaitPrewriteBinlogTimeStr = "Wait_prewrite_binlog_time"
 	// CommitTimeStr means the time of commit.
 	CommitTimeStr = "Commit_time"
