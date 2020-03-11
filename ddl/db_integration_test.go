@@ -1875,8 +1875,8 @@ func (s *testIntegrationSuite3) TestSqlFunctionsInGeneratedColumns(c *C) {
 	tk.MustExec("drop table if exists t, t1")
 
 	// In generated columns expression, these items are not allowed:
-	// 1. Blocked function (for full function list, please visit https://github.com/errno/errno-server/blob/5.7/errno-test/suite/gcol/inc/gcol_blocked_sql_funcs_main.inc)
-	// Note: This list is not complete, if you need a complete list, please refer to Errno 5.7 source code.
+	// 1. Blocked function (for full function list, please visit https://github.com/mysql/mysql-server/blob/5.7/errno-test/suite/gcol/inc/gcol_blocked_sql_funcs_main.inc)
+	// Note: This list is not complete, if you need a complete list, please refer to MySQL 5.7 source code.
 	tk.MustGetErrCode("create table t (a int, b int as (sysdate()))", errno.ErrGeneratedColumnFunctionIsNotAllowed)
 	// 2. Non-builtin function
 	tk.MustGetErrCode("create table t (a int, b int as (non_exist_funcA()))", errno.ErrGeneratedColumnFunctionIsNotAllowed)
@@ -1899,7 +1899,7 @@ func (s *testIntegrationSuite3) TestSqlFunctionsInGeneratedColumns(c *C) {
 	tk.MustExec("insert into t1 values (-1, default)")
 	tk.MustQuery("select * from t1").Check(testkit.Rows("-1 1"))
 
-	// Functions added in Errno 8.0, but now not supported in TiDB
+	// Functions added in MySQL 8.0, but now not supported in TiDB
 	// They will be deal with non-exists function, and throw error.git
 	tk.MustGetErrCode("create table t (a int, b int as (updatexml(1, 1, 1)))", errno.ErrGeneratedColumnFunctionIsNotAllowed)
 	tk.MustGetErrCode("create table t (a int, b int as (statement_digest(1)))", errno.ErrGeneratedColumnFunctionIsNotAllowed)
