@@ -385,10 +385,10 @@ func (s *Server) Close() {
 func (s *Server) onConn(conn *clientConn) {
 	ctx := logutil.WithConnID(context.Background(), conn.connectionID)
 	if err := conn.handshake(ctx); err != nil {
+		terror.Log(err)
 		if plugin.IsEnable(plugin.Audit) {
 			conn.ctx.GetSessionVars().ConnectionInfo = conn.connectInfo()
 		}
-		terror.Log(err)
 		err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 			authPlugin := plugin.DeclareAuditManifest(p.Manifest)
 			if authPlugin.OnConnectionEvent != nil {
