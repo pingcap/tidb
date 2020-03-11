@@ -344,12 +344,6 @@ github.com/syndtr/goleveldb v0.0.0-20180815032940-ae2bd5eed72d h1:4J9HCZVpvDmj2t
 github.com/syndtr/goleveldb v0.0.0-20180815032940-ae2bd5eed72d/go.mod h1:Z4AUp2Km+PwemOoO/VB5AOx9XSsIItzFjoJlOSiYmn0=
 github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2 h1:mbAskLJ0oJfDRtkanvQPiooDH8HvJ2FBh+iKT/OmiQQ=
 github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2/go.mod h1:2PfKggNGDuadAa0LElHrByyrz4JPZ9fFx6Gs7nx7ZZU=
-github.com/tiancaiamao/parser v0.0.0-20200311024545-ff0568b33c35 h1:YXdyzP76zzpthmrHX+Ly8YB6pvn55leSvWEWYbimVik=
-github.com/tiancaiamao/parser v0.0.0-20200311024545-ff0568b33c35/go.mod h1:9v0Edh8IbgjGYW2ArJr19E+bvL8zKahsFp+ixWeId+4=
-github.com/tiancaiamao/parser v0.0.0-20200311025843-81dd2ffe3349 h1:UJlvOybNbqWgHY+BotmRXi4ilzBRH6GfPlKZpP3EDKc=
-github.com/tiancaiamao/parser v0.0.0-20200311025843-81dd2ffe3349/go.mod h1:9v0Edh8IbgjGYW2ArJr19E+bvL8zKahsFp+ixWeId+4=
-github.com/tiancaiamao/parser v0.0.0-20200311030529-dfb7d5052a8b h1:F4OXYBudCSmF/KN83UBUdRuzOqrI2ts0AVQtvMbHS34=
-github.com/tiancaiamao/parser v0.0.0-20200311030529-dfb7d5052a8b/go.mod h1:9v0Edh8IbgjGYW2ArJr19E+bvL8zKahsFp+ixWeId+4=
 github.com/tidwall/gjson v1.3.5/go.mod h1:P256ACg0Mn+j1RXIDXoss50DeIABTYK1PULOJHhxOls=
 github.com/tidwall/match v1.0.1/go.mod h1:LujAq0jyVjBy028G1WhWfIzbpQfMO8bBZ6Tyb0+pL9E=
 github.com/tidwall/pretty v1.0.0/go.mod h1:XNkn88O1ChpSDQmQeStsy+sBenx6DDtFZJxhVysOjyk=
