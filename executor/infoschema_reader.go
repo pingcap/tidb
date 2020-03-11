@@ -17,6 +17,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -74,6 +75,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			e.setDataFromCollations()
 		case infoschema.TableKeyColumn:
 			e.setDataFromKeyColumnUsage(sctx, dbs)
+		case infoschema.TableMetricTables:
+			e.setDataForMetricTables(sctx)
 		case infoschema.TableCollationCharacterSetApplicability:
 			e.dataForCollationCharacterSetApplicability()
 		case infoschema.TableUserPrivileges:
@@ -669,6 +672,28 @@ func (e *memtableRetriever) setDataFromKeyColumnUsage(ctx sessionctx.Context, sc
 func (e *memtableRetriever) setDataFromUserPrivileges(ctx sessionctx.Context) {
 	pm := privilege.GetPrivilegeManager(ctx)
 	e.rows = pm.UserPrivilegesTable()
+}
+
+// dataForTableTiFlashReplica constructs data for all metric table definition.
+func (e *memtableRetriever) setDataForMetricTables(ctx sessionctx.Context) {
+	var rows [][]types.Datum
+	tables := make([]string, 0, len(infoschema.MetricTableMap))
+	for name := range infoschema.MetricTableMap {
+		tables = append(tables, name)
+	}
+	sort.Strings(tables)
+	for _, name := range tables {
+		schema := infoschema.MetricTableMap[name]
+		record := types.MakeDatums(
+			name,                             // METRICS_NAME
+			schema.PromQL,                    // PROMQL
+			strings.Join(schema.Labels, ","), // LABELS
+			schema.Quantile,                  // QUANTILE
+			schema.Comment,                   // COMMENT
+		)
+		rows = append(rows, record)
+	}
+	e.rows = rows
 }
 
 func keyColumnUsageInTable(schema *model.DBInfo, table *model.TableInfo) [][]types.Datum {
