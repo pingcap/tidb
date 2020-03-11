@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -79,6 +80,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			e.setDataFromUserPrivileges(sctx)
 		case infoschema.TableConstraints:
 			e.setDataFromTableConstraints(sctx, dbs)
+		case infoschema.TableSessionVar:
+			err = e.setDataFromSessionVar(sctx)
 		}
 		if err != nil {
 			return nil, err
@@ -799,4 +802,21 @@ func (e *memtableRetriever) setDataFromTableConstraints(ctx sessionctx.Context, 
 		}
 	}
 	e.rows = rows
+}
+
+func (e *memtableRetriever) setDataFromSessionVar(ctx sessionctx.Context) error {
+	var rows [][]types.Datum
+	var err error
+	sessionVars := ctx.GetSessionVars()
+	for _, v := range variable.SysVars {
+		var value string
+		value, err = variable.GetSessionSystemVar(sessionVars, v.Name)
+		if err != nil {
+			return err
+		}
+		row := types.MakeDatums(v.Name, value)
+		rows = append(rows, row)
+	}
+	e.rows = rows
+	return nil
 }
