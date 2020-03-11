@@ -38,7 +38,7 @@
       {
         "SQL": "explain select * from t1 join t2 on (t1.id = t2.id) where t1.id = 5 and t2.a = 7",
         "Result": [
-          "HashLeftJoin_10 1.00 root CARTESIAN inner join, inner:Point_Get_13",
+          "HashLeftJoin_10 1.00 root CARTESIAN inner join",
           "├─Point_Get_13(Build) 1.00 root table:t2, index:id a, partition:p2",
           "└─Point_Get_12(Probe) 1.00 root table:t1, handle:5, partition:p5"
         ]
@@ -46,7 +46,7 @@
       {
         "SQL": "explain select * from t1 left join t2 on t1.id = 1 and t2.a = 2 where t2.id = 7",
         "Result": [
-          "HashLeftJoin_9 1.00 root CARTESIAN inner join, inner:Point_Get_12",
+          "HashLeftJoin_9 1.00 root CARTESIAN inner join",
           "├─Point_Get_12(Build) 1.00 root table:t2, index:id a, partition:p9",
           "└─Point_Get_11(Probe) 1.00 root table:t1, handle:1, partition:p1"
         ]
@@ -54,7 +54,7 @@
       {
         "SQL": "explain select * from t2 join t1 on t1.id = t2.id and t2.a = t1.id and t2.id = 12",
         "Result": [
-          "HashLeftJoin_9 1.00 root CARTESIAN inner join, inner:Point_Get_12",
+          "HashLeftJoin_9 1.00 root CARTESIAN inner join",
           "├─Point_Get_12(Build) 1.00 root table:t1, handle:12, partition:p2",
           "└─Point_Get_11(Probe) 1.00 root table:t2, index:id a, partition:p4"
         ]

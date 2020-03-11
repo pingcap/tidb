@@ -1417,7 +1417,9 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			strings.ToLower(infoschema.TableCharacterSets),
 			strings.ToLower(infoschema.TableKeyColumn),
 			strings.ToLower(infoschema.TableUserPrivileges),
-			strings.ToLower(infoschema.TableCollationCharacterSetApplicability):
+			strings.ToLower(infoschema.TableCollationCharacterSetApplicability),
+			strings.ToLower(infoschema.TableSessionVar),
+			strings.ToLower(infoschema.TableConstraints):
 			return &MemTableReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 				retriever: &memtableRetriever{
@@ -1631,6 +1633,18 @@ func (b *executorBuilder) updateForUpdateTSIfNeeded(selectPlan plannercore.Physi
 		return nil
 	}
 	if _, ok := selectPlan.(*plannercore.PointGetPlan); ok {
+		return nil
+	}
+	// Activate the invalid txn, use the txn startTS as newForUpdateTS
+	txn, err := b.ctx.Txn(false)
+	if err != nil {
+		return err
+	}
+	if !txn.Valid() {
+		_, err := b.ctx.Txn(true)
+		if err != nil {
+			return err
+		}
 		return nil
 	}
 	// The Repeatable Read transaction use Read Committed level to read data for writing (insert, update, delete, select for update),
