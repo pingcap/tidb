@@ -105,6 +105,21 @@ func buildCount(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	// use countOriginalWithDistinct.
 	if aggFuncDesc.HasDistinct &&
 		(aggFuncDesc.Mode == aggregation.CompleteMode || aggFuncDesc.Mode == aggregation.Partial1Mode) {
+		if len(base.args) == 1 {
+			// optimize with single column except Time and JSON
+			switch aggFuncDesc.Args[0].GetType().EvalType() {
+			case types.ETInt:
+				return &countOriginalWithDistinct4Int{baseCount{base}}
+			case types.ETReal:
+				return &countOriginalWithDistinct4Real{baseCount{base}}
+			case types.ETDecimal:
+				return &countOriginalWithDistinct4Decimal{baseCount{base}}
+			case types.ETDuration:
+				return &countOriginalWithDistinct4Duration{baseCount{base}}
+			case types.ETString:
+				return &countOriginalWithDistinct4String{baseCount{base}}
+			}
+		}
 		return &countOriginalWithDistinct{baseCount{base}}
 	}
 
