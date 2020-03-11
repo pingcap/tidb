@@ -336,10 +336,10 @@ func (lr *LockResolver) resolveLocks(bo *Backoffer, callerStartTS uint64, locks 
 			msBeforeTxnExpired.update(msBeforeLockExpired)
 			if forWrite {
 				// Write conflict detected!
-				// If it's a optimistic conflict and current txn is later than the lock owner,
+				// If it's a optimistic conflict and current txn is earlier than the lock owner,
 				// abort current transaction.
 				// This could avoids the deadlock scene of two large transaction.
-				if l.LockType == kvrpcpb.Op_Put && l.TxnID > callerStartTS {
+				if l.LockType != kvrpcpb.Op_PessimisticLock && l.TxnID > callerStartTS {
 					return msBeforeTxnExpired.value(), nil, kv.ErrWriteConflict.GenWithStackByArgs(callerStartTS, l.TxnID, status.commitTS, l.Key)
 				}
 			} else {
