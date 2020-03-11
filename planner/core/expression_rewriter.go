@@ -797,13 +797,12 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, v *ast.Patte
 		return v, true
 	}
 
-	// If the leftKey and the rightKey have different charsets or collations, don't convert the sub-query to an inner-join
+	// If the leftKey and the rightKey have different collations, don't convert the sub-query to an inner-join
 	// since when converting we will add a distinct-agg upon the right child and this distinct-agg doesn't have the right collation.
 	// To keep it simple, we forbid this converting if they have different collations.
 	collFlag := true
 	lt, rt := lexpr.GetType(), rexpr.GetType()
-	if lt.EvalType() == types.ETString && rt.EvalType() == types.ETString &&
-		(lt.Charset != rt.Charset || lt.Collate != rt.Collate) {
+	if lt.EvalType() == types.ETString && rt.EvalType() == types.ETString && lt.Collate != rt.Collate {
 		collFlag = false
 	}
 
