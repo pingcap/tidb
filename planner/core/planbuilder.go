@@ -200,6 +200,9 @@ type PlanBuilder struct {
 	inStraightJoin bool
 
 	windowSpecs map[string]*ast.WindowSpec
+
+	// SelectLock need this information to locate the lock on partitions.
+	partitionedTable []table.PartitionedTable
 }
 
 // GetVisitInfo gets the visitInfo of the PlanBuilder.
@@ -282,7 +285,7 @@ func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
 	case *ast.AnalyzeTableStmt:
 		return b.buildAnalyze(x)
 	case *ast.BinlogStmt, *ast.FlushStmt, *ast.UseStmt,
-		*ast.BeginStmt, *ast.CommitStmt, *ast.RollbackStmt, *ast.CreateUserStmt, *ast.SetPwdStmt,
+		*ast.BeginStmt, *ast.CommitStmt, *ast.RollbackStmt, *ast.CreateUserStmt, *ast.SetPwdStmt, *ast.AlterInstanceStmt,
 		*ast.GrantStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.RevokeStmt, *ast.KillStmt, *ast.DropStatsStmt,
 		*ast.GrantRoleStmt, *ast.RevokeRoleStmt, *ast.SetRoleStmt, *ast.SetDefaultRoleStmt, *ast.ShutdownStmt:
 		return b.buildSimple(node.(ast.StmtNode))
@@ -575,7 +578,7 @@ func removeIgnoredPaths(paths, ignoredPaths []*accessPath, tblInfo *model.TableI
 }
 
 func (b *PlanBuilder) buildSelectLock(src LogicalPlan, lock ast.SelectLockType) *LogicalLock {
-	selectLock := LogicalLock{Lock: lock}.Init(b.ctx)
+	selectLock := LogicalLock{Lock: lock, partitionedTable: b.partitionedTable}.Init(b.ctx)
 	selectLock.SetChildren(src)
 	return selectLock
 }
@@ -1385,6 +1388,9 @@ func (b *PlanBuilder) buildSimple(node ast.StmtNode) (Plan, error) {
 	p := &Simple{Statement: node}
 
 	switch raw := node.(type) {
+	case *ast.AlterInstanceStmt:
+		err := ErrSpecificAccessDenied.GenWithStack("ALTER INSTANCE")
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", err)
 	case *ast.AlterUserStmt:
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateUserPriv, "", "", "", err)
