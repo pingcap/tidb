@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -104,20 +103,19 @@ var (
 	errUnsupportedShardRowIDBits = terror.ClassDDL.New(codeUnsupportedShardRowIDBits, "unsupported shard_row_id_bits for table with primary key as row id.")
 	errBlobKeyWithoutLength      = terror.ClassDDL.New(codeBlobKeyWithoutLength, "BLOB/TEXT column '%-.192s' used in key specification without a key length")
 	errIncorrectPrefixKey        = terror.ClassDDL.New(codeIncorrectPrefixKey, "Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys")
-	errTooLongKey                = terror.ClassDDL.New(codeTooLongKey,
-		fmt.Sprintf("Specified key was too long; max key length is %d bytes", config.GetGlobalConfig().MaxIndexLength))
-	errKeyColumnDoesNotExits    = terror.ClassDDL.New(codeKeyColumnDoesNotExits, mysql.MySQLErrName[mysql.ErrKeyColumnDoesNotExits])
-	errUnknownTypeLength        = terror.ClassDDL.New(codeUnknownTypeLength, "Unknown length for type tp %d")
-	errUnknownFractionLength    = terror.ClassDDL.New(codeUnknownFractionLength, "Unknown Length for type tp %d and fraction %d")
-	errInvalidJobVersion        = terror.ClassDDL.New(codeInvalidJobVersion, "DDL job with version %d greater than current %d")
-	errFileNotFound             = terror.ClassDDL.New(codeFileNotFound, "Can't find file: './%s/%s.frm'")
-	errErrorOnRename            = terror.ClassDDL.New(codeErrorOnRename, "Error on rename of './%s/%s' to './%s/%s'")
-	errInvalidUseOfNull         = terror.ClassDDL.New(codeInvalidUseOfNull, "Invalid use of NULL value")
-	errTooManyFields            = terror.ClassDDL.New(codeTooManyFields, "Too many columns")
-	errInvalidSplitRegionRanges = terror.ClassDDL.New(codeInvalidRanges, "Failed to split region ranges")
-	errReorgPanic               = terror.ClassDDL.New(codeReorgWorkerPanic, "reorg worker panic.")
-	errFkColumnCannotDrop       = terror.ClassDDL.New(mysql.ErrFkColumnCannotDrop, mysql.MySQLErrName[mysql.ErrFkColumnCannotDrop])
-	errFKIncompatibleColumns    = terror.ClassDDL.New(mysql.ErrFKIncompatibleColumns, mysql.MySQLErrName[mysql.ErrFKIncompatibleColumns])
+	errTooLongKey                = terror.ClassDDL.New(codeTooLongKey, mysql.MySQLErrName[mysql.ErrTooLongKey])
+	errKeyColumnDoesNotExits     = terror.ClassDDL.New(codeKeyColumnDoesNotExits, mysql.MySQLErrName[mysql.ErrKeyColumnDoesNotExits])
+	errUnknownTypeLength         = terror.ClassDDL.New(codeUnknownTypeLength, "Unknown length for type tp %d")
+	errUnknownFractionLength     = terror.ClassDDL.New(codeUnknownFractionLength, "Unknown Length for type tp %d and fraction %d")
+	errInvalidJobVersion         = terror.ClassDDL.New(codeInvalidJobVersion, "DDL job with version %d greater than current %d")
+	errFileNotFound              = terror.ClassDDL.New(codeFileNotFound, "Can't find file: './%s/%s.frm'")
+	errErrorOnRename             = terror.ClassDDL.New(codeErrorOnRename, "Error on rename of './%s/%s' to './%s/%s'")
+	errInvalidUseOfNull          = terror.ClassDDL.New(codeInvalidUseOfNull, "Invalid use of NULL value")
+	errTooManyFields             = terror.ClassDDL.New(codeTooManyFields, "Too many columns")
+	errInvalidSplitRegionRanges  = terror.ClassDDL.New(codeInvalidRanges, "Failed to split region ranges")
+	errReorgPanic                = terror.ClassDDL.New(codeReorgWorkerPanic, "reorg worker panic.")
+	errFkColumnCannotDrop        = terror.ClassDDL.New(mysql.ErrFkColumnCannotDrop, mysql.MySQLErrName[mysql.ErrFkColumnCannotDrop])
+	errFKIncompatibleColumns     = terror.ClassDDL.New(mysql.ErrFKIncompatibleColumns, mysql.MySQLErrName[mysql.ErrFKIncompatibleColumns])
 
 	errOnlyOnRangeListPartition = terror.ClassDDL.New(codeOnlyOnRangeListPartition, mysql.MySQLErrName[mysql.ErrOnlyOnRangeListPartition])
 	// errWrongKeyColumn is for table column cannot be indexed.
