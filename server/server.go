@@ -31,13 +31,13 @@ package server
 import (
 	"context"
 	"crypto/tls"
-	"crypto/x509"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"math/rand"
 	"net"
 	"net/http"
+	"unsafe"
+
 	// For pprof
 	_ "net/http/pprof"
 	"os"
@@ -52,10 +52,12 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/fastrand"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sys/linux"
 	"github.com/pingcap/tidb/util/timeutil"
@@ -85,12 +87,12 @@ func init() {
 }
 
 var (
-	errUnknownFieldType  = terror.ClassServer.New(mysql.ErrUnknownFieldType, mysql.MySQLErrName[mysql.ErrUnknownFieldType])
-	errInvalidSequence   = terror.ClassServer.New(mysql.ErrInvalidSequence, mysql.MySQLErrName[mysql.ErrInvalidSequence])
-	errInvalidType       = terror.ClassServer.New(mysql.ErrInvalidType, mysql.MySQLErrName[mysql.ErrInvalidType])
-	errNotAllowedCommand = terror.ClassServer.New(mysql.ErrNotAllowedCommand, mysql.MySQLErrName[mysql.ErrNotAllowedCommand])
-	errAccessDenied      = terror.ClassServer.New(mysql.ErrAccessDenied, mysql.MySQLErrName[mysql.ErrAccessDenied])
-	errConCount          = terror.ClassServer.New(mysql.ErrConCount, mysql.MySQLErrName[mysql.ErrConCount])
+	errUnknownFieldType  = terror.ClassServer.New(errno.ErrUnknownFieldType, errno.MySQLErrName[errno.ErrUnknownFieldType])
+	errInvalidSequence   = terror.ClassServer.New(errno.ErrInvalidSequence, errno.MySQLErrName[errno.ErrInvalidSequence])
+	errInvalidType       = terror.ClassServer.New(errno.ErrInvalidType, errno.MySQLErrName[errno.ErrInvalidType])
+	errNotAllowedCommand = terror.ClassServer.New(errno.ErrNotAllowedCommand, errno.MySQLErrName[errno.ErrNotAllowedCommand])
+	errAccessDenied      = terror.ClassServer.New(errno.ErrAccessDenied, errno.MySQLErrName[errno.ErrAccessDenied])
+	errConCount          = terror.ClassServer.New(errno.ErrConCount, errno.MySQLErrName[errno.ErrConCount])
 )
 
 // DefaultCapability is the capability of the server when it is created using the default configuration.
@@ -104,7 +106,7 @@ const defaultCapability = mysql.ClientLongPassword | mysql.ClientLongFlag |
 // Server is the MySQL protocol server
 type Server struct {
 	cfg               *config.Config
-	tlsConfig         *tls.Config
+	tlsConfig         unsafe.Pointer // *tls.Config
 	driver            IDriver
 	listener          net.Listener
 	socket            net.Listener
@@ -159,7 +161,7 @@ func (s *Server) newConn(conn net.Conn) *clientConn {
 		}
 	}
 	cc.setConn(conn)
-	cc.salt = util.RandomBuf(20)
+	cc.salt = fastrand.Buf(20)
 	return cc
 }
 
@@ -209,15 +211,24 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		clients:           make(map[uint32]*clientConn),
 		stopListenerCh:    make(chan struct{}, 1),
 	}
-	s.loadTLSCertificates()
+
+	tlsConfig, err := util.LoadTLSCertificates(s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert)
+	if err != nil {
+		logutil.BgLogger().Error("secure connection cert/key/ca load fail", zap.Error(err))
+		return nil, err
+	}
+	if tlsConfig != nil {
+		setSSLVariable(s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert)
+		atomic.StorePointer(&s.tlsConfig, unsafe.Pointer(tlsConfig))
+		logutil.BgLogger().Info("mysql protocol server secure connection is enabled", zap.Bool("client verification enabled", len(variable.SysVars["ssl_ca"].Value) > 0))
+	}
+
 	setSystemTimeZoneVariable()
 
 	s.capability = defaultCapability
 	if s.tlsConfig != nil {
 		s.capability |= mysql.ClientSSL
 	}
-
-	var err error
 
 	if s.cfg.Host != "" && s.cfg.Port != 0 {
 		addr := fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port)
@@ -258,51 +269,12 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	return s, nil
 }
 
-func (s *Server) loadTLSCertificates() {
-	defer func() {
-		if s.tlsConfig != nil {
-			logutil.BgLogger().Info("secure connection is enabled", zap.Bool("client verification enabled", len(variable.SysVars["ssl_ca"].Value) > 0))
-			variable.SysVars["have_openssl"].Value = "YES"
-			variable.SysVars["have_ssl"].Value = "YES"
-			variable.SysVars["ssl_cert"].Value = s.cfg.Security.SSLCert
-			variable.SysVars["ssl_key"].Value = s.cfg.Security.SSLKey
-		} else {
-			logutil.BgLogger().Warn("secure connection is not enabled")
-		}
-	}()
-
-	if len(s.cfg.Security.SSLCert) == 0 || len(s.cfg.Security.SSLKey) == 0 {
-		s.tlsConfig = nil
-		return
-	}
-
-	tlsCert, err := tls.LoadX509KeyPair(s.cfg.Security.SSLCert, s.cfg.Security.SSLKey)
-	if err != nil {
-		logutil.BgLogger().Warn("load x509 failed", zap.Error(err))
-		s.tlsConfig = nil
-		return
-	}
-
-	// Try loading CA cert.
-	clientAuthPolicy := tls.NoClientCert
-	var certPool *x509.CertPool
-	if len(s.cfg.Security.SSLCA) > 0 {
-		caCert, err := ioutil.ReadFile(s.cfg.Security.SSLCA)
-		if err != nil {
-			logutil.BgLogger().Warn("read file failed", zap.Error(err))
-		} else {
-			certPool = x509.NewCertPool()
-			if certPool.AppendCertsFromPEM(caCert) {
-				clientAuthPolicy = tls.VerifyClientCertIfGiven
-			}
-			variable.SysVars["ssl_ca"].Value = s.cfg.Security.SSLCA
-		}
-	}
-	s.tlsConfig = &tls.Config{
-		Certificates: []tls.Certificate{tlsCert},
-		ClientCAs:    certPool,
-		ClientAuth:   clientAuthPolicy,
-	}
+func setSSLVariable(ca, key, cert string) {
+	variable.SysVars["have_openssl"].Value = "YES"
+	variable.SysVars["have_ssl"].Value = "YES"
+	variable.SysVars["ssl_cert"].Value = cert
+	variable.SysVars["ssl_key"].Value = key
+	variable.SysVars["ssl_ca"].Value = ca
 }
 
 // Run runs the server.
@@ -413,6 +385,7 @@ func (s *Server) Close() {
 func (s *Server) onConn(conn *clientConn) {
 	ctx := logutil.WithConnID(context.Background(), conn.connectionID)
 	if err := conn.handshake(ctx); err != nil {
+		terror.Log(err)
 		if plugin.IsEnable(plugin.Audit) {
 			conn.ctx.GetSessionVars().ConnectionInfo = conn.connectInfo()
 		}
@@ -562,6 +535,15 @@ func (s *Server) Kill(connectionID uint64, query bool) {
 		atomic.StoreInt32(&conn.status, connStatusWaitShutdown)
 	}
 	killConn(conn)
+}
+
+// UpdateTLSConfig implements the SessionManager interface.
+func (s *Server) UpdateTLSConfig(cfg *tls.Config) {
+	atomic.StorePointer(&s.tlsConfig, unsafe.Pointer(cfg))
+}
+
+func (s *Server) getTLSConfig() *tls.Config {
+	return (*tls.Config)(atomic.LoadPointer(&s.tlsConfig))
 }
 
 func killConn(conn *clientConn) {
