@@ -49,38 +49,40 @@ import (
 )
 
 const (
-	// TableSchemata is the string constant of infoschema table
+	// TableSchemata is the string constant of infoschema table.
 	TableSchemata = "SCHEMATA"
-	// TableTables is the string constant of infoschema table
+	// TableTables is the string constant of infoschema table.
 	TableTables           = "TABLES"
 	tableColumns          = "COLUMNS"
 	tableColumnStatistics = "COLUMN_STATISTICS"
 	tableStatistics       = "STATISTICS"
-	// TableCharacterSets is the string constant of infoschema charactersets memory table
+	// TableCharacterSets is the string constant of infoschema charactersets memory table.
 	TableCharacterSets = "CHARACTER_SETS"
-	// TableCollations is the string constant of infoschema collations memory table
+	// TableCollations is the string constant of infoschema collations memory table.
 	TableCollations = "COLLATIONS"
 	tableFiles      = "FILES"
-	// CatalogVal is the string constant of TABLE_CATALOG
+	// CatalogVal is the string constant of TABLE_CATALOG.
 	CatalogVal     = "def"
 	tableProfiling = "PROFILING"
-	// TablePartitions is the string constant of infoschema table
+	// TablePartitions is the string constant of infoschema table.
 	TablePartitions = "PARTITIONS"
-	// TableKeyColumn is the string constant of KEY_COLUMN_USAGE
-	TableKeyColumn   = "KEY_COLUMN_USAGE"
-	tableReferConst  = "REFERENTIAL_CONSTRAINTS"
-	tableSessionVar  = "SESSION_VARIABLES"
-	tablePlugins     = "PLUGINS"
-	tableConstraints = "TABLE_CONSTRAINTS"
+	// TableKeyColumn is the string constant of KEY_COLUMN_USAGE.
+	TableKeyColumn  = "KEY_COLUMN_USAGE"
+	tableReferConst = "REFERENTIAL_CONSTRAINTS"
+	// TableSessionVar is the string constant of SESSION_VARIABLES.
+	TableSessionVar = "SESSION_VARIABLES"
+	tablePlugins    = "PLUGINS"
+	// TableConstraints is the string constant of TABLE_CONSTRAINTS.
+	TableConstraints = "TABLE_CONSTRAINTS"
 	tableTriggers    = "TRIGGERS"
 	// TableUserPrivileges is the string constant of infoschema user privilege table.
 	TableUserPrivileges   = "USER_PRIVILEGES"
 	tableSchemaPrivileges = "SCHEMA_PRIVILEGES"
 	tableTablePrivileges  = "TABLE_PRIVILEGES"
 	tableColumnPrivileges = "COLUMN_PRIVILEGES"
-	// TableEngines is the string constant of infoschema table
+	// TableEngines is the string constant of infoschema table.
 	TableEngines = "ENGINES"
-	// TableViews is the string constant of infoschema table
+	// TableViews is the string constant of infoschema table.
 	TableViews           = "VIEWS"
 	tableRoutines        = "ROUTINES"
 	tableParameters      = "PARAMETERS"
@@ -93,7 +95,7 @@ const (
 	// TableCollationCharacterSetApplicability is the string constant of infoschema memory table.
 	TableCollationCharacterSetApplicability = "COLLATION_CHARACTER_SET_APPLICABILITY"
 	tableProcesslist                        = "PROCESSLIST"
-	// TableTiDBIndexes is the string constant of infoschema table
+	// TableTiDBIndexes is the string constant of infoschema table.
 	TableTiDBIndexes      = "TIDB_INDEXES"
 	tableTiDBHotRegions   = "TIDB_HOT_REGIONS"
 	tableTiKVStoreStatus  = "TIKV_STORE_STATUS"
@@ -124,9 +126,9 @@ const (
 	TableMetricSummary = "METRICS_SUMMARY"
 	// TableMetricSummaryByLabel is a metric table that contains all metrics that group by label info.
 	TableMetricSummaryByLabel = "METRICS_SUMMARY_BY_LABEL"
-	// TableInspectionSummary is the string constant of inspection summary table
+	// TableInspectionSummary is the string constant of inspection summary table.
 	TableInspectionSummary = "INSPECTION_SUMMARY"
-	// TableInspectionRules is the string constant of currently implemented inspection and summary rules
+	// TableInspectionRules is the string constant of currently implemented inspection and summary rules.
 	TableInspectionRules = "INSPECTION_RULES"
 )
 
@@ -144,9 +146,9 @@ var tableIDMap = map[string]int64{
 	TablePartitions:                         autoid.InformationSchemaDBID + 11,
 	TableKeyColumn:                          autoid.InformationSchemaDBID + 12,
 	tableReferConst:                         autoid.InformationSchemaDBID + 13,
-	tableSessionVar:                         autoid.InformationSchemaDBID + 14,
+	TableSessionVar:                         autoid.InformationSchemaDBID + 14,
 	tablePlugins:                            autoid.InformationSchemaDBID + 15,
-	tableConstraints:                        autoid.InformationSchemaDBID + 16,
+	TableConstraints:                        autoid.InformationSchemaDBID + 16,
 	tableTriggers:                           autoid.InformationSchemaDBID + 17,
 	TableUserPrivileges:                     autoid.InformationSchemaDBID + 18,
 	tableSchemaPrivileges:                   autoid.InformationSchemaDBID + 19,
@@ -688,7 +690,7 @@ var slowQueryCols = []columnInfo{
 	{name: variable.SlowLogParseTimeStr, tp: mysql.TypeDouble, size: 22},
 	{name: variable.SlowLogCompileTimeStr, tp: mysql.TypeDouble, size: 22},
 	{name: execdetails.PreWriteTimeStr, tp: mysql.TypeDouble, size: 22},
-	{name: execdetails.BinlogPrewriteTimeStr, tp: mysql.TypeDouble, size: 22},
+	{name: execdetails.WaitPrewriteBinlogTimeStr, tp: mysql.TypeDouble, size: 22},
 	{name: execdetails.CommitTimeStr, tp: mysql.TypeDouble, size: 22},
 	{name: execdetails.GetCommitTSTimeStr, tp: mysql.TypeDouble, size: 22},
 	{name: execdetails.CommitBackoffTimeStr, tp: mysql.TypeDouble, size: 22},
@@ -1139,25 +1141,6 @@ func dataForTiKVStoreStatus(ctx sessionctx.Context) (records [][]types.Datum, er
 	return records, nil
 }
 
-func dataForSessionVar(ctx sessionctx.Context) (records [][]types.Datum, err error) {
-	sessionVars := ctx.GetSessionVars()
-	for _, v := range variable.SysVars {
-		var value string
-		value, err = variable.GetSessionSystemVar(sessionVars, v.Name)
-		if err != nil {
-			return nil, err
-		}
-		row := types.MakeDatums(v.Name, value)
-		records = append(records, row)
-	}
-	return
-}
-
-func dataForUserPrivileges(ctx sessionctx.Context) [][]types.Datum {
-	pm := privilege.GetPrivilegeManager(ctx)
-	return pm.UserPrivilegesTable()
-}
-
 func dataForProcesslist(ctx sessionctx.Context) [][]types.Datum {
 	sm := ctx.GetSessionManager()
 	if sm == nil {
@@ -1408,60 +1391,13 @@ func dataForStatisticsInTable(schema *model.DBInfo, table *model.TableInfo) [][]
 }
 
 const (
-	primaryKeyType = "PRIMARY KEY"
-	// PrimaryConstraint is the string constant of PRIMARY
+	// PrimaryKeyType is the string constant of PRIMARY KEY.
+	PrimaryKeyType = "PRIMARY KEY"
+	// PrimaryConstraint is the string constant of PRIMARY.
 	PrimaryConstraint = "PRIMARY"
-	uniqueKeyType     = "UNIQUE"
+	// UniqueKeyType is the string constant of UNIQUE.
+	UniqueKeyType = "UNIQUE"
 )
-
-// dataForTableConstraints constructs data for table information_schema.constraints.See https://dev.mysql.com/doc/refman/5.7/en/table-constraints-table.html
-func dataForTableConstraints(ctx sessionctx.Context, schemas []*model.DBInfo) [][]types.Datum {
-	checker := privilege.GetPrivilegeManager(ctx)
-	var rows [][]types.Datum
-	for _, schema := range schemas {
-		for _, tbl := range schema.Tables {
-			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, tbl.Name.L, "", mysql.AllPrivMask) {
-				continue
-			}
-
-			if tbl.PKIsHandle {
-				record := types.MakeDatums(
-					CatalogVal,           // CONSTRAINT_CATALOG
-					schema.Name.O,        // CONSTRAINT_SCHEMA
-					mysql.PrimaryKeyName, // CONSTRAINT_NAME
-					schema.Name.O,        // TABLE_SCHEMA
-					tbl.Name.O,           // TABLE_NAME
-					primaryKeyType,       // CONSTRAINT_TYPE
-				)
-				rows = append(rows, record)
-			}
-
-			for _, idx := range tbl.Indices {
-				var cname, ctype string
-				if idx.Primary {
-					cname = mysql.PrimaryKeyName
-					ctype = primaryKeyType
-				} else if idx.Unique {
-					cname = idx.Name.O
-					ctype = uniqueKeyType
-				} else {
-					// The index has no constriant.
-					continue
-				}
-				record := types.MakeDatums(
-					CatalogVal,    // CONSTRAINT_CATALOG
-					schema.Name.O, // CONSTRAINT_SCHEMA
-					cname,         // CONSTRAINT_NAME
-					schema.Name.O, // TABLE_SCHEMA
-					tbl.Name.O,    // TABLE_NAME
-					ctype,         // CONSTRAINT_TYPE
-				)
-				rows = append(rows, record)
-			}
-		}
-	}
-	return rows
-}
 
 // dataForPseudoProfiling returns pseudo data for table profiling when system variable `profiling` is set to `ON`.
 func dataForPseudoProfiling() [][]types.Datum {
@@ -1814,28 +1750,6 @@ func dataForTableTiFlashReplica(ctx sessionctx.Context, schemas []*model.DBInfo)
 	return rows
 }
 
-// dataForTableTiFlashReplica constructs data for all metric table definition.
-func dataForMetricTables(ctx sessionctx.Context) [][]types.Datum {
-	var rows [][]types.Datum
-	tables := make([]string, 0, len(MetricTableMap))
-	for name := range MetricTableMap {
-		tables = append(tables, name)
-	}
-	sort.Strings(tables)
-	for _, name := range tables {
-		schema := MetricTableMap[name]
-		record := types.MakeDatums(
-			name,                             // METRICS_NAME
-			schema.PromQL,                    // PROMQL
-			strings.Join(schema.Labels, ","), // LABELS
-			schema.Quantile,                  // QUANTILE
-			schema.Comment,                   // COMMENT
-		)
-		rows = append(rows, record)
-	}
-	return rows
-}
-
 var tableNameToColumns = map[string][]columnInfo{
 	TableSchemata:                           schemataCols,
 	TableTables:                             tablesCols,
@@ -1849,9 +1763,9 @@ var tableNameToColumns = map[string][]columnInfo{
 	TablePartitions:                         partitionsCols,
 	TableKeyColumn:                          keyColumnUsageCols,
 	tableReferConst:                         referConstCols,
-	tableSessionVar:                         sessionVarCols,
+	TableSessionVar:                         sessionVarCols,
 	tablePlugins:                            pluginsCols,
-	tableConstraints:                        tableConstraintsCols,
+	TableConstraints:                        tableConstraintsCols,
 	tableTriggers:                           tableTriggersCols,
 	TableUserPrivileges:                     tableUserPrivilegesCols,
 	tableSchemaPrivileges:                   tableSchemaPrivilegesCols,
@@ -1934,10 +1848,6 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		fullRows = dataForColumns(ctx, dbs)
 	case tableStatistics:
 		fullRows = dataForStatistics(ctx, dbs)
-	case tableSessionVar:
-		fullRows, err = dataForSessionVar(ctx)
-	case tableConstraints:
-		fullRows = dataForTableConstraints(ctx, dbs)
 	case tableFiles:
 	case tableProfiling:
 		if v, ok := ctx.GetSessionVars().GetSystemVar("profiling"); ok && variable.TiDBOptOn(v) {
@@ -1975,8 +1885,6 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		fullRows, err = dataForTiDBClusterInfo(ctx)
 	case tableTiFlashReplica:
 		fullRows = dataForTableTiFlashReplica(ctx, dbs)
-	case TableMetricTables:
-		fullRows = dataForMetricTables(ctx)
 	// Data for cluster processlist memory table.
 	case clusterTableProcesslist:
 		fullRows, err = dataForClusterProcesslist(ctx)
