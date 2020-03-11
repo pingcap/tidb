@@ -282,12 +282,12 @@ func (e *memtableRetriever) setDataForStatistics(ctx sessionctx.Context, schemas
 			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
 				continue
 			}
-			e.dataForStatisticsInTable(schema, table)
+			e.setDataForStatisticsInTable(schema, table)
 		}
 	}
 }
 
-func (e *memtableRetriever) dataForStatisticsInTable(schema *model.DBInfo, table *model.TableInfo) {
+func (e *memtableRetriever) setDataForStatisticsInTable(schema *model.DBInfo, table *model.TableInfo) {
 	var rows [][]types.Datum
 	if table.PKIsHandle {
 		for _, col := range table.Columns {
