@@ -14,18 +14,34 @@
 package executor_test
 
 import (
-	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/util/testutil"
+	"crypto/tls"
+	"fmt"
+	"net"
+	"net/http/httptest"
 	"strconv"
+	"strings"
+	"time"
 
+	"github.com/gorilla/mux"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/fn"
 	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/server"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
+	"github.com/pingcap/tidb/store/helper"
+	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testutil"
+	"google.golang.org/grpc"
 )
 
 var _ = Suite(&testInfoschemaTableSuite{})
@@ -359,4 +375,208 @@ func (s *testInfoschemaTableSuite) TestTableConstraintsTable(c *C) {
 func (s *testInfoschemaTableSuite) TestTableSessionVar(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustQuery("select * from information_schema.SESSION_VARIABLES where VARIABLE_NAME='tidb_retry_limit';").Check(testkit.Rows("tidb_retry_limit 10"))
+}
+
+var _ = SerialSuites(&testInfoschemaClusterTableSuite{testInfoschemaTableSuite: &testInfoschemaTableSuite{}})
+
+type testInfoschemaClusterTableSuite struct {
+	*testInfoschemaTableSuite
+	rpcserver  *grpc.Server
+	httpServer *httptest.Server
+	mockAddr   string
+	listenAddr string
+	startTime  time.Time
+}
+
+func (s *testInfoschemaClusterTableSuite) SetUpSuite(c *C) {
+	s.testInfoschemaTableSuite.SetUpSuite(c)
+	s.rpcserver, s.listenAddr = s.setUpRPCService(c, ":0")
+	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
+	s.startTime = time.Now()
+}
+
+func (s *testInfoschemaClusterTableSuite) setUpRPCService(c *C, addr string) (*grpc.Server, string) {
+	lis, err := net.Listen("tcp", addr)
+	c.Assert(err, IsNil)
+	// Fix issue 9836
+	sm := &mockSessionManager{make(map[uint64]*util.ProcessInfo, 1)}
+	sm.processInfoMap[1] = &util.ProcessInfo{
+		ID:      1,
+		User:    "root",
+		Host:    "127.0.0.1",
+		Command: mysql.ComQuery,
+	}
+	srv := server.NewRPCServer(config.GetGlobalConfig(), s.dom, sm)
+	port := lis.Addr().(*net.TCPAddr).Port
+	addr = fmt.Sprintf("127.0.0.1:%d", port)
+	go func() {
+		err = srv.Serve(lis)
+		c.Assert(err, IsNil)
+	}()
+	cfg := config.GetGlobalConfig()
+	cfg.Status.StatusPort = uint(port)
+	config.StoreGlobalConfig(cfg)
+	return srv, addr
+}
+
+func (s *testInfoschemaClusterTableSuite) setUpMockPDHTTPServer() (*httptest.Server, string) {
+	// mock PD http server
+	router := mux.NewRouter()
+	server := httptest.NewServer(router)
+	// mock store stats stat
+	mockAddr := strings.TrimPrefix(server.URL, "http://")
+	router.Handle(pdapi.Stores, fn.Wrap(func() (*helper.StoresStat, error) {
+		return &helper.StoresStat{
+			Count: 1,
+			Stores: []helper.StoreStat{
+				{
+					Store: helper.StoreBaseStat{
+						ID:             1,
+						Address:        "127.0.0.1:20160",
+						State:          0,
+						StateName:      "Up",
+						Version:        "4.0.0-alpha",
+						StatusAddress:  mockAddr,
+						GitHash:        "mock-tikv-githash",
+						StartTimestamp: s.startTime.Unix(),
+					},
+				},
+			},
+		}, nil
+	}))
+	// mock PD API
+	router.Handle(pdapi.ClusterVersion, fn.Wrap(func() (string, error) { return "4.0.0-alpha", nil }))
+	router.Handle(pdapi.Status, fn.Wrap(func() (interface{}, error) {
+		return struct {
+			GitHash        string `json:"git_hash"`
+			StartTimestamp int64  `json:"start_timestamp"`
+		}{
+			GitHash:        "mock-pd-githash",
+			StartTimestamp: s.startTime.Unix(),
+		}, nil
+	}))
+	var mockConfig = func() (map[string]interface{}, error) {
+		configuration := map[string]interface{}{
+			"key1": "value1",
+			"key2": map[string]string{
+				"nest1": "n-value1",
+				"nest2": "n-value2",
+			},
+			"key3": map[string]interface{}{
+				"nest1": "n-value1",
+				"nest2": "n-value2",
+				"key4": map[string]string{
+					"nest3": "n-value4",
+					"nest4": "n-value5",
+				},
+			},
+		}
+		return configuration, nil
+	}
+	// pd config
+	router.Handle(pdapi.Config, fn.Wrap(mockConfig))
+	// TiDB/TiKV config
+	router.Handle("/config", fn.Wrap(mockConfig))
+	return server, mockAddr
+}
+
+func (s *testInfoschemaClusterTableSuite) TearDownSuite(c *C) {
+	if s.rpcserver != nil {
+		s.rpcserver.Stop()
+		s.rpcserver = nil
+	}
+	if s.httpServer != nil {
+		s.httpServer.Close()
+	}
+	s.testInfoschemaTableSuite.TearDownSuite(c)
+}
+
+type mockSessionManager struct {
+	processInfoMap map[uint64]*util.ProcessInfo
+}
+
+func (sm *mockSessionManager) ShowProcessList() map[uint64]*util.ProcessInfo {
+	return sm.processInfoMap
+}
+
+func (sm *mockSessionManager) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
+	rs, ok := sm.processInfoMap[id]
+	return rs, ok
+}
+
+func (sm *mockSessionManager) Kill(connectionID uint64, query bool) {}
+
+func (sm *mockSessionManager) UpdateTLSConfig(cfg *tls.Config) {}
+
+type mockStore struct {
+	tikv.Storage
+	host string
+}
+
+func (s *mockStore) EtcdAddrs() []string    { return []string{s.host} }
+func (s *mockStore) TLSConfig() *tls.Config { panic("not implemented") }
+func (s *mockStore) StartGCWorker() error   { panic("not implemented") }
+
+func (s *testInfoschemaClusterTableSuite) TestTiDBClusterInfo(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	err := tk.QueryToErr("select * from information_schema.cluster_info")
+	c.Assert(err, NotNil)
+	mockAddr := s.mockAddr
+	store := &mockStore{
+		s.store.(tikv.Storage),
+		mockAddr,
+	}
+
+	// information_schema.cluster_info
+	tk = testkit.NewTestKit(c, store)
+	tidbStatusAddr := fmt.Sprintf(":%d", config.GetGlobalConfig().Status.StatusPort)
+	row := func(cols ...string) string { return strings.Join(cols, " ") }
+	tk.MustQuery("select type, instance, status_address, version, git_hash from information_schema.cluster_info").Check(testkit.Rows(
+		row("tidb", ":4000", tidbStatusAddr, "5.7.25-TiDB-None", "None"),
+		row("pd", mockAddr, mockAddr, "4.0.0-alpha", "mock-pd-githash"),
+		row("tikv", "127.0.0.1:20160", mockAddr, "4.0.0-alpha", "mock-tikv-githash"),
+	))
+	startTime := s.startTime.Format(time.RFC3339)
+	tk.MustQuery("select type, instance, start_time from information_schema.cluster_info where type != 'tidb'").Check(testkit.Rows(
+		row("pd", mockAddr, startTime),
+		row("tikv", "127.0.0.1:20160", startTime),
+	))
+
+	// information_schema.cluster_config
+	instances := []string{
+		"pd,127.0.0.1:11080," + mockAddr + ",mock-version,mock-githash",
+		"tidb,127.0.0.1:11080," + mockAddr + ",mock-version,mock-githash",
+		"tikv,127.0.0.1:11080," + mockAddr + ",mock-version,mock-githash",
+	}
+	fpExpr := `return("` + strings.Join(instances, ";") + `")`
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockClusterInfo", fpExpr), IsNil)
+	defer func() { c.Assert(failpoint.Disable("github.com/pingcap/tidb/infoschema/mockClusterInfo"), IsNil) }()
+	tk.MustQuery("select * from information_schema.cluster_config").Check(testkit.Rows(
+		"pd 127.0.0.1:11080 key1 value1",
+		"pd 127.0.0.1:11080 key2.nest1 n-value1",
+		"pd 127.0.0.1:11080 key2.nest2 n-value2",
+		"pd 127.0.0.1:11080 key3.key4.nest3 n-value4",
+		"pd 127.0.0.1:11080 key3.key4.nest4 n-value5",
+		"pd 127.0.0.1:11080 key3.nest1 n-value1",
+		"pd 127.0.0.1:11080 key3.nest2 n-value2",
+		"tidb 127.0.0.1:11080 key1 value1",
+		"tidb 127.0.0.1:11080 key2.nest1 n-value1",
+		"tidb 127.0.0.1:11080 key2.nest2 n-value2",
+		"tidb 127.0.0.1:11080 key3.key4.nest3 n-value4",
+		"tidb 127.0.0.1:11080 key3.key4.nest4 n-value5",
+		"tidb 127.0.0.1:11080 key3.nest1 n-value1",
+		"tidb 127.0.0.1:11080 key3.nest2 n-value2",
+		"tikv 127.0.0.1:11080 key1 value1",
+		"tikv 127.0.0.1:11080 key2.nest1 n-value1",
+		"tikv 127.0.0.1:11080 key2.nest2 n-value2",
+		"tikv 127.0.0.1:11080 key3.key4.nest3 n-value4",
+		"tikv 127.0.0.1:11080 key3.key4.nest4 n-value5",
+		"tikv 127.0.0.1:11080 key3.nest1 n-value1",
+		"tikv 127.0.0.1:11080 key3.nest2 n-value2",
+	))
+	tk.MustQuery("select TYPE, `KEY`, VALUE from information_schema.cluster_config where `key`='key3.key4.nest4' order by type").Check(testkit.Rows(
+		"pd key3.key4.nest4 n-value5",
+		"tidb key3.key4.nest4 n-value5",
+		"tikv key3.key4.nest4 n-value5",
+	))
 }
