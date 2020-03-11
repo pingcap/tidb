@@ -166,7 +166,10 @@ func (e *MetricRetriever) getMetricAddr(sctx sessionctx.Context) (string, error)
 			return "", errors.Trace(err)
 		}
 		var prometheus prometheus
-		json.Unmarshal([]byte(values), &prometheus)
+		err = json.Unmarshal([]byte(values), &prometheus)
+		if err != nil {
+			return "", errors.Trace(err)
+		}
 		res = fmt.Sprintf("http://%s:%v", prometheus.IP, strconv.Itoa(prometheus.Port))
 	}
 	return res, nil
