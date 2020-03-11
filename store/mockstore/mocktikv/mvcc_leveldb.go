@@ -641,14 +641,9 @@ func (mvcc *MVCCLevelDB) Prewrite(req *kvrpcpb.PrewriteRequest) []error {
 		// If the operation is Insert, check if key is exists at first.
 		var err error
 		// no need to check insert values for pessimistic transaction.
-<<<<<<< HEAD
-		if m.GetOp() == kvrpcpb.Op_Insert && forUpdateTS == 0 {
-			v, err := mvcc.getValue(m.Key, startTS, kvrpcpb.IsolationLevel_SI)
-=======
 		op := m.GetOp()
 		if (op == kvrpcpb.Op_Insert || op == kvrpcpb.Op_CheckNotExists) && forUpdateTS == 0 {
-			v, err := mvcc.getValue(m.Key, startTS, kvrpcpb.IsolationLevel_SI, req.Context.ResolvedLocks)
->>>>>>> a37a0ff... store: check constraint for "Delete-Your-Writes" records when txn commit (#14968)
+			v, err := mvcc.getValue(m.Key, startTS, kvrpcpb.IsolationLevel_SI)
 			if err != nil {
 				errs = append(errs, err)
 				anyError = true

@@ -2561,10 +2561,7 @@ func (s *testSuite4) TestRebaseIfNeeded(c *C) {
 	tk.MustQuery(`select a from t where b = 6;`).Check(testkit.Rows("30003"))
 }
 
-<<<<<<< HEAD
-func (s *testSuite4) TestDeferConstraintCheckForInsert(c *C) {
-=======
-func (s *testSuite7) TestDeferConstraintCheckForDelete(c *C) {
+func (s *testSuite4) TestDeferConstraintCheckForDelete(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set tidb_constraint_check_in_place = 0")
 	tk.MustExec("set @@tidb_txn_mode = 'optimistic'")
@@ -2614,8 +2611,7 @@ func (s *testSuite7) TestDeferConstraintCheckForDelete(c *C) {
 	tk.MustQuery("select * from t5").Check(testkit.Rows("1 4"))
 }
 
-func (s *testSuite7) TestDeferConstraintCheckForInsert(c *C) {
->>>>>>> a37a0ff... store: check constraint for "Delete-Your-Writes" records when txn commit (#14968)
+func (s *testSuite4) TestDeferConstraintCheckForInsert(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists t;create table t (i int key);`)
@@ -2629,10 +2625,7 @@ func (s *testSuite7) TestDeferConstraintCheckForInsert(c *C) {
 	tk.MustQuery(`select * from t;`).Check(testkit.Rows("2"))
 }
 
-<<<<<<< HEAD
-func (s *testSuite4) TestDefEnumInsert(c *C) {
-=======
-func (s *testSuite7) TestPessimisticDeleteYourWrites(c *C) {
+func (s *testSuite4) TestPessimisticDeleteYourWrites(c *C) {
 	session1 := testkit.NewTestKitWithInit(c, s.store)
 	session2 := testkit.NewTestKitWithInit(c, s.store)
 
@@ -2658,8 +2651,7 @@ func (s *testSuite7) TestPessimisticDeleteYourWrites(c *C) {
 	session2.MustQuery("select * from x").Check(testkit.Rows("1 2"))
 }
 
-func (s *testSuite7) TestDefEnumInsert(c *C) {
->>>>>>> a37a0ff... store: check constraint for "Delete-Your-Writes" records when txn commit (#14968)
+func (s *testSuite4) TestDefEnumInsert(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table test (id int, prescription_type enum('a','b','c','d','e','f') NOT NULL, primary key(id));")

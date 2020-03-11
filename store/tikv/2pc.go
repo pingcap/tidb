@@ -101,7 +101,6 @@ func metricsTag(ca twoPhaseCommitAction) string {
 
 // twoPhaseCommitter executes a two-phase commit protocol.
 type twoPhaseCommitter struct {
-<<<<<<< HEAD
 	store     *tikvStore
 	txn       *tikvTxn
 	startTS   uint64
@@ -115,29 +114,12 @@ type twoPhaseCommitter struct {
 	// maxTxnTimeUse represents max time a Txn may use (in ms) from its startTS to commitTS.
 	// We use it to guarantee GC worker will not influence any active txn. The value
 	// should be less than GC life time.
-	maxTxnTimeUse  uint64
-	detail         unsafe.Pointer
-	primaryKey     []byte
-	forUpdateTS    uint64
-	pessimisticTTL uint64
-=======
-	store            *tikvStore
-	txn              *tikvTxn
-	startTS          uint64
-	keys             [][]byte
-	mutations        map[string]*mutationEx
-	lockTTL          uint64
-	commitTS         uint64
-	priority         pb.CommandPri
-	connID           uint64 // connID is used for log.
-	cleanWg          sync.WaitGroup
+	maxTxnTimeUse    uint64
 	detail           unsafe.Pointer
-	txnSize          int
+	primaryKey       []byte
+	forUpdateTS      uint64
+	pessimisticTTL   uint64
 	noNeedCommitKeys map[string]struct{}
-
-	primaryKey  []byte
-	forUpdateTS uint64
->>>>>>> a37a0ff... store: check constraint for "Delete-Your-Writes" records when txn commit (#14968)
 
 	mu struct {
 		sync.RWMutex
@@ -255,7 +237,7 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 			putCnt++
 		} else {
 			var op pb.Op
-			if !txn.IsPessimistic() && txn.us.GetKeyExistErrInfo(k) != nil {
+			if !txn.IsPessimistic() && txn.us.LookupConditionPair(k) != nil {
 				// delete-your-writes keys in optimistic txn need check not exists in prewrite-phase
 				// due to `Op_CheckNotExists` doesn't prewrite lock, so mark those keys should not be used in commit-phase.
 				op = pb.Op_CheckNotExists
