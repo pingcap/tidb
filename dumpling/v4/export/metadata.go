@@ -9,11 +9,11 @@ import (
 
 type globalMetadata struct {
 	logFile string
-	pos string
+	pos     string
 	gtidSet string
 
-	filePath string
-	startTime time.Time
+	filePath   string
+	startTime  time.Time
 	finishTime time.Time
 }
 
@@ -21,8 +21,8 @@ const (
 	metadataPath       = "metadata"
 	metadataTimeLayout = "2006-01-02 15:04:05"
 
-	fileFieldIndex = 0
-	posFieldIndex = 1
+	fileFieldIndex    = 0
+	posFieldIndex     = 1
 	gtidSetFieldIndex = 4
 
 	mariadbShowMasterStatusFieldNum = 4
@@ -41,7 +41,7 @@ func (m globalMetadata) String() string {
 	}
 	str += "Started dump at: " + m.startTime.Format(metadataTimeLayout) + "\n"
 
-	str += "SHOW MASTER STATUS:"
+	str += "SHOW MASTER STATUS:\n"
 	if m.logFile != "" {
 		str += "\t\tLog: " + m.logFile + "\n"
 	}
@@ -63,7 +63,7 @@ func (m *globalMetadata) recordStartTime(t time.Time) {
 	m.startTime = t
 }
 
-func (m *globalMetadata) recordFinishTime(t time.Time)  {
+func (m *globalMetadata) recordFinishTime(t time.Time) {
 	m.finishTime = t
 }
 
@@ -120,12 +120,12 @@ func (m *globalMetadata) getGlobalMetaData(db *sql.DB, serverType ServerType) er
 			return err
 		}
 	default:
-		return errors.New("unsupported serverType" +serverType.String() + "for getGlobalMetaData")
+		return errors.New("unsupported serverType" + serverType.String() + "for getGlobalMetaData")
 	}
 	return nil
 }
 
-func (m globalMetadata) writeGlobalMetaData() error {
+func (m *globalMetadata) writeGlobalMetaData() error {
 	fileWriter, tearDown, err := buildFileWriter(m.filePath)
 	if err != nil {
 		return err

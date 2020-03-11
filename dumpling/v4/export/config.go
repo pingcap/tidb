@@ -24,6 +24,7 @@ type Config struct {
 	ServerInfo    ServerInfo
 	SortByPk      bool
 	Tables        DatabaseTables
+	StatusAddr    string
 	Snapshot      string
 	Consistency   string
 	NoViews       bool
@@ -41,6 +42,7 @@ func DefaultConfig() *Config {
 		Port:          3306,
 		Password:      "",
 		Threads:       4,
+		StatusAddr:    ":8281",
 		FileSize:      UnspecifiedSize,
 		StatementSize: UnspecifiedSize,
 		OutputDirPath: ".",

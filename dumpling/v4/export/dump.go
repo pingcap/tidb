@@ -5,13 +5,20 @@ import (
 	"database/sql"
 	"time"
 
+	"github.com/pingcap/dumpling/v4/log"
+
 	_ "github.com/go-sql-driver/mysql"
-	"github.com/pingcap/log"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
 
 func Dump(conf *Config) (err error) {
+	go func() {
+		err1 := startDumplingService(conf.StatusAddr)
+		if err1 != nil {
+			log.Zap().Error("dumpling stops to serving service", zap.Error(err1))
+		}
+	}()
 	pool, err := sql.Open("mysql", conf.getDSN(""))
 	if err != nil {
 		return withStack(err)
@@ -62,7 +69,7 @@ func Dump(conf *Config) (err error) {
 	m.recordStartTime(time.Now())
 	err = m.getGlobalMetaData(pool, conf.ServerInfo.ServerType)
 	if err != nil {
-		log.L().Info("get global metadata failed", zap.Error(err))
+		log.Zap().Info("get global metadata failed", zap.Error(err))
 	}
 
 	writer, err := NewSimpleWriter(conf)

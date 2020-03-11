@@ -40,6 +40,7 @@ var (
 	consistency   string
 	snapshot      string
 	noViews       bool
+	statusAddr    string
 	rows          uint64
 	where         string
 
@@ -73,6 +74,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&consistency, "consistency", "auto", "Consistency level during dumping: {auto|none|flush|lock|snapshot}")
 	rootCmd.PersistentFlags().StringVar(&snapshot, "snapshot", "", "Snapshot position. Valid only when consistency=snapshot")
 	rootCmd.PersistentFlags().BoolVarP(&noViews, "no-views", "W", true, "Do not dump views")
+	rootCmd.PersistentFlags().StringVar(&statusAddr, "status-addr", ":8281", "dumpling API server and pprof addr")
 	rootCmd.PersistentFlags().Uint64VarP(&rows, "rows", "r", export.UnspecifiedSize, "Split table into chunks of this many rows, default unlimited")
 	rootCmd.PersistentFlags().StringVar(&where, "where", "", "Dump only selected records")
 }
@@ -98,6 +100,7 @@ func run() {
 	conf.OutputDirPath = outputDir
 	conf.Consistency = consistency
 	conf.NoViews = noViews
+	conf.StatusAddr = statusAddr
 	conf.Rows = rows
 	conf.Where = where
 
