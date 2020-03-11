@@ -84,7 +84,7 @@ func (s *testDumpSuite) TestWriteTableData(c *C) {
 	err = writer.WriteTableData(ctx, tableIR)
 	c.Assert(err, IsNil)
 
-	p := path.Join(dir, "test.employee.sql")
+	p := path.Join(dir, "test.employee.0.sql")
 	_, err = os.Stat(p)
 	c.Assert(err, IsNil)
 	bytes, err := ioutil.ReadFile(p)
@@ -181,7 +181,7 @@ func (s *testDumpSuite) TestWriteTableDataWithStatementSize(c *C) {
 
 	// only with statement size
 	cases := map[string]string{
-		"test.employee.sql": "/*!40101 SET NAMES binary*/;\n" +
+		"test.employee.0.sql": "/*!40101 SET NAMES binary*/;\n" +
 			"/*!40014 SET FOREIGN_KEY_CHECKS=0*/;\n" +
 			"INSERT INTO `employee` VALUES\n" +
 			"(1, 'male', 'bob@mail.com', '020-1234', NULL),\n" +

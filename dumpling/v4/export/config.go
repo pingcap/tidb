@@ -29,6 +29,8 @@ type Config struct {
 	NoViews       bool
 
 	BlackWhiteList BWListConf
+	Rows           uint64
+	Where          string
 }
 
 func DefaultConfig() *Config {
@@ -48,6 +50,8 @@ func DefaultConfig() *Config {
 		Snapshot:      "",
 		Consistency:   "auto",
 		NoViews:       true,
+		Rows:          UnspecifiedSize,
+		Where:         "",
 	}
 }
 
@@ -55,7 +59,10 @@ func (conf *Config) getDSN(db string) string {
 	return fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4", conf.User, conf.Password, conf.Host, conf.Port, db)
 }
 
-const UnspecifiedSize = 0
+const (
+	UnspecifiedSize    = 0
+	defaultDumpThreads = 128
+)
 
 type ServerInfo struct {
 	ServerType    ServerType

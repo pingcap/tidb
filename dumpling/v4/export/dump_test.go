@@ -3,6 +3,7 @@ package export
 import (
 	"context"
 	"fmt"
+	"strconv"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	. "github.com/pingcap/check"
@@ -98,9 +99,59 @@ func (s *testDumpSuite) TestDumpTable(c *C) {
 	c.Assert(specCmts.HasNext(), IsTrue)
 	c.Assert(specCmts.Next(), Equals, "/*!40101 SET NAMES binary*/;")
 	c.Assert(specCmts.HasNext(), IsFalse)
-	c.Assert(tbDataRes.Rows().HasNext(), Equals, true)
+	rowIter := tbDataRes.Rows()
+	c.Assert(rowIter.HasNext(), IsTrue)
 	receiver := newSimpleRowReceiver(1)
-	c.Assert(tbDataRes.Rows().Next(receiver), IsNil)
+	c.Assert(rowIter.Next(receiver), IsNil)
+	c.Assert(receiver.data[0], Equals, "1")
+	c.Assert(rowIter.Next(receiver), IsNil)
 	c.Assert(receiver.data[0], Equals, "2")
+	c.Assert(mock.ExpectationsWereMet(), IsNil)
+}
+
+func (s *testDumpSuite) TestDumpTableWhereClause(c *C) {
+	mockConfig := DefaultConfig()
+	mockConfig.SortByPk = false
+	mockConfig.Where = "a > 3 and a < 9"
+	db, mock, err := sqlmock.New()
+	c.Assert(err, IsNil)
+
+	showCreateTableResult := "CREATE TABLE t (a INT)"
+	rows := mock.NewRows([]string{"Table", "Create Table"}).AddRow("t", showCreateTableResult)
+	mock.ExpectQuery("SHOW CREATE TABLE test.t").WillReturnRows(rows)
+
+	rows = mock.NewRows([]string{"a"}).AddRow(1)
+	mock.ExpectQuery("SELECT (.) FROM test.t LIMIT 1").WillReturnRows(rows)
+
+	rows = mock.NewRows([]string{"a"})
+	for i := 4; i < 9; i++ {
+		rows.AddRow(i)
+	}
+	mock.ExpectQuery("SELECT (.) FROM test.t WHERE a > 3 and a < 9").WillReturnRows(rows)
+
+	mockWriter := newMockWriter()
+	err = dumpTable(context.Background(), mockConfig, db, "test", &TableInfo{Name: "t"}, mockWriter)
+	c.Assert(err, IsNil)
+
+	c.Assert(mockWriter.tableMeta["test.t"], Equals, showCreateTableResult)
+	c.Assert(len(mockWriter.tableData), Equals, 1)
+	tbDataRes := mockWriter.tableData[0]
+	c.Assert(tbDataRes.DatabaseName(), Equals, "test")
+	c.Assert(tbDataRes.TableName(), Equals, "t")
+	c.Assert(tbDataRes.ColumnCount(), Equals, uint(1))
+	specCmts := tbDataRes.SpecialComments()
+	c.Assert(specCmts.HasNext(), IsTrue)
+	c.Assert(specCmts.Next(), Equals, "/*!40101 SET NAMES binary*/;")
+	c.Assert(specCmts.HasNext(), IsFalse)
+	rowIter := tbDataRes.Rows()
+	c.Assert(rowIter.HasNext(), IsTrue)
+	receiver := newSimpleRowReceiver(1)
+
+	for i := 4; i < 9; i++ {
+		c.Assert(rowIter.HasNext(), IsTrue)
+		c.Assert(rowIter.Next(receiver), IsNil)
+		c.Assert(receiver.data[0], Equals, strconv.Itoa(i))
+	}
+	c.Assert(tbDataRes.Rows().HasNext(), IsFalse)
 	c.Assert(mock.ExpectationsWereMet(), IsNil)
 }
