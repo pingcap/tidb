@@ -752,8 +752,6 @@ func (s *testSuite1) TestIssue10608(c *C) {
 	tk.MustQuery("select (select group_concat(concat(123,'-')) from t where t.a = s.b group by t.a) as t from s;").Check(testkit.Rows("123-", "123-"))
 
 }
-<<<<<<< HEAD
-=======
 
 func (s *testSuiteAgg) TestIssue12759HashAggCalledByApply(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
@@ -794,4 +792,3 @@ func (s *testSuiteAgg) TestPR15242ShallowCopy(c *C) {
 	tk.MustQuery(`select max(JSON_EXTRACT(a, '$.score')) as max_score,JSON_EXTRACT(a,'$.id') as id from t group by id order by id;`).Check(testkit.Rows("233 1", "233 2", "233 3"))
 
 }
->>>>>>> 34ff2b9... executor: use deep copy for maxMin4JSON (#15242)
