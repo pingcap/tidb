@@ -146,8 +146,9 @@ func (s *testEvaluatorSuiteBase) datumsToConstants(datums []types.Datum) []Expre
 
 func (s *testEvaluatorSuiteBase) primitiveValsToConstants(args []interface{}) []Expression {
 	cons := s.datumsToConstants(types.MakeDatums(args...))
+	char, col := s.ctx.GetSessionVars().GetCharsetInfo()
 	for i, arg := range args {
-		types.DefaultTypeForValue(arg, cons[i].GetType())
+		types.DefaultTypeForValue(arg, cons[i].GetType(), char, col)
 	}
 	return cons
 }
@@ -164,7 +165,7 @@ func (s *testEvaluatorSuite) TestSleep(c *C) {
 	c.Assert(err, IsNil)
 	ret, isNull, err := f.evalInt(chunk.Row{})
 	c.Assert(err, IsNil)
-	c.Assert(isNull, IsTrue)
+	c.Assert(isNull, IsFalse)
 	c.Assert(ret, Equals, int64(0))
 	d[0].SetInt64(-1)
 	f, err = fc.getFunction(ctx, s.datumsToConstants(d))

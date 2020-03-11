@@ -77,8 +77,8 @@ type executorBuilder struct {
 	is      infoschema.InfoSchema
 	startTS uint64 // cached when the first time getStartTS() is called
 	// err is set when there is error happened during Executor building process.
-	err               error
-	isSelectForUpdate bool
+	err     error
+	hasLock bool
 }
 
 func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema) *executorBuilder {
@@ -560,7 +560,7 @@ func (b *executorBuilder) buildDeallocate(v *plannercore.Deallocate) Executor {
 }
 
 func (b *executorBuilder) buildSelectLock(v *plannercore.PhysicalLock) Executor {
-	b.isSelectForUpdate = true
+	b.hasLock = true
 	if b.err = b.updateForUpdateTSIfNeeded(v.Children()[0]); b.err != nil {
 		return nil
 	}
@@ -1410,11 +1410,17 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 		case strings.ToLower(infoschema.TableSchemata),
 			strings.ToLower(infoschema.TableTiDBIndexes),
 			strings.ToLower(infoschema.TableViews),
+			strings.ToLower(infoschema.TableTables),
+			strings.ToLower(infoschema.TablePartitions),
 			strings.ToLower(infoschema.TableEngines),
 			strings.ToLower(infoschema.TableCollations),
 			strings.ToLower(infoschema.TableCharacterSets),
 			strings.ToLower(infoschema.TableKeyColumn),
-			strings.ToLower(infoschema.TableCollationCharacterSetApplicability):
+			strings.ToLower(infoschema.TableUserPrivileges),
+			strings.ToLower(infoschema.TableMetricTables),
+			strings.ToLower(infoschema.TableCollationCharacterSetApplicability),
+			strings.ToLower(infoschema.TableSessionVar),
+			strings.ToLower(infoschema.TableConstraints):
 			return &MemTableReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 				retriever: &memtableRetriever{
@@ -1628,6 +1634,18 @@ func (b *executorBuilder) updateForUpdateTSIfNeeded(selectPlan plannercore.Physi
 		return nil
 	}
 	if _, ok := selectPlan.(*plannercore.PointGetPlan); ok {
+		return nil
+	}
+	// Activate the invalid txn, use the txn startTS as newForUpdateTS
+	txn, err := b.ctx.Txn(false)
+	if err != nil {
+		return err
+	}
+	if !txn.Valid() {
+		_, err := b.ctx.Txn(true)
+		if err != nil {
+			return err
+		}
 		return nil
 	}
 	// The Repeatable Read transaction use Read Committed level to read data for writing (insert, update, delete, select for update),
@@ -2400,6 +2418,7 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLoo
 
 	ret.ranges = is.Ranges
 	executorCounterIndexLookUpExecutor.Inc()
+
 	sctx := b.ctx.GetSessionVars().StmtCtx
 	sctx.IndexNames = append(sctx.IndexNames, is.Table.Name.O+":"+is.Index.Name.O)
 	sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
@@ -2905,11 +2924,13 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		idxInfo:      plan.IndexInfo,
 		rowDecoder:   decoder,
 		startTS:      startTS,
+		keepOrder:    plan.KeepOrder,
+		desc:         plan.Desc,
 		lock:         plan.Lock,
 		waitTime:     plan.LockWaitTime,
 	}
 	if e.lock {
-		b.isSelectForUpdate = e.lock
+		b.hasLock = true
 	}
 	var capacity int
 	if plan.IndexInfo != nil {
