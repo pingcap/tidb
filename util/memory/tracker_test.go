@@ -21,6 +21,10 @@ import (
 
 	"github.com/cznic/mathutil"
 	. "github.com/pingcap/check"
+<<<<<<< HEAD
+=======
+	"github.com/pingcap/tidb/errno"
+>>>>>>> 9f0736e... errno: move the error code from the parser/mysql to tidb/errno (#15277)
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/testleak"
@@ -244,3 +248,10 @@ func BenchmarkConsume(b *testing.B) {
 		}
 	})
 }
+<<<<<<< HEAD
+=======
+
+func (s *testSuite) TestErrorCode(c *C) {
+	c.Assert(int(errMemExceedThreshold.ToSQLError().Code), Equals, errno.ErrMemExceedThreshold)
+}
+>>>>>>> 9f0736e... errno: move the error code from the parser/mysql to tidb/errno (#15277)

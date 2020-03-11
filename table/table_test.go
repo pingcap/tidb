@@ -15,6 +15,10 @@ package table
 
 import (
 	. "github.com/pingcap/check"
+<<<<<<< HEAD
+=======
+	mysql "github.com/pingcap/tidb/errno"
+>>>>>>> 9f0736e... errno: move the error code from the parser/mysql to tidb/errno (#15277)
 )
 
 var _ = Suite(&testTableSuite{})

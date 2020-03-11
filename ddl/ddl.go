@@ -76,6 +76,7 @@ var (
 	ddlLogCtx = context.Background()
 )
 
+<<<<<<< HEAD
 var (
 	// errWorkerClosed means we have already closed the DDL worker.
 	errInvalidWorker = terror.ClassDDL.New(codeInvalidWorker, "invalid worker")
@@ -235,6 +236,8 @@ var (
 	ErrWrongTypeColumnValue = terror.ClassDDL.New(codeWrongTypeColumnValue, mysql.MySQLErrName[mysql.ErrWrongTypeColumnValue])
 )
 
+=======
+>>>>>>> 9f0736e... errno: move the error code from the parser/mysql to tidb/errno (#15277)
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
 type DDL interface {
 	CreateSchema(ctx sessionctx.Context, name model.CIStr, charsetInfo *ast.CharsetOpt) error

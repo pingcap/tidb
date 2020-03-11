@@ -51,6 +51,11 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
+<<<<<<< HEAD
+=======
+	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/errno"
+>>>>>>> 9f0736e... errno: move the error code from the parser/mysql to tidb/errno (#15277)
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -83,6 +88,7 @@ func init() {
 }
 
 var (
+<<<<<<< HEAD
 	errUnknownFieldType    = terror.ClassServer.New(codeUnknownFieldType, "unknown field type")
 	errInvalidPayloadLen   = terror.ClassServer.New(codeInvalidPayloadLen, "invalid payload length")
 	errInvalidSequence     = terror.ClassServer.New(codeInvalidSequence, "invalid sequence")
@@ -90,6 +96,14 @@ var (
 	errNotAllowedCommand   = terror.ClassServer.New(codeNotAllowedCommand, "the used command is not allowed with this TiDB version")
 	errAccessDenied        = terror.ClassServer.New(codeAccessDenied, mysql.MySQLErrName[mysql.ErrAccessDenied])
 	errMaxExecTimeExceeded = terror.ClassServer.New(codeMaxExecTimeExceeded, mysql.MySQLErrName[mysql.ErrMaxExecTimeExceeded])
+=======
+	errUnknownFieldType  = terror.ClassServer.New(errno.ErrUnknownFieldType, errno.MySQLErrName[errno.ErrUnknownFieldType])
+	errInvalidSequence   = terror.ClassServer.New(errno.ErrInvalidSequence, errno.MySQLErrName[errno.ErrInvalidSequence])
+	errInvalidType       = terror.ClassServer.New(errno.ErrInvalidType, errno.MySQLErrName[errno.ErrInvalidType])
+	errNotAllowedCommand = terror.ClassServer.New(errno.ErrNotAllowedCommand, errno.MySQLErrName[errno.ErrNotAllowedCommand])
+	errAccessDenied      = terror.ClassServer.New(errno.ErrAccessDenied, errno.MySQLErrName[errno.ErrAccessDenied])
+	errConCount          = terror.ClassServer.New(errno.ErrConCount, errno.MySQLErrName[errno.ErrConCount])
+>>>>>>> 9f0736e... errno: move the error code from the parser/mysql to tidb/errno (#15277)
 )
 
 // DefaultCapability is the capability of the server when it is created using the default configuration.

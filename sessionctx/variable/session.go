@@ -52,6 +52,7 @@ const (
 
 var preparedStmtCount int64
 
+<<<<<<< HEAD
 // Error instances.
 var (
 	errCantGetValidID = terror.ClassVariable.New(codeCantGetValidID, "cannot get valid auto-increment id in retry")
@@ -59,6 +60,8 @@ var (
 	ErrSnapshotTooOld = terror.ClassVariable.New(codeSnapshotTooOld, "snapshot is older than GC safe point %s")
 )
 
+=======
+>>>>>>> 9f0736e... errno: move the error code from the parser/mysql to tidb/errno (#15277)
 // RetryInfo saves retry information.
 type RetryInfo struct {
 	Retrying               bool

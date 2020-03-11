@@ -19,7 +19,6 @@ import (
 	"sync/atomic"
 
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/logutil"
@@ -61,6 +60,7 @@ func GetSysVar(name string) *SysVar {
 // PluginVarNames is global plugin var names set.
 var PluginVarNames []string
 
+<<<<<<< HEAD
 // Variable error codes.
 const (
 	CodeUnknownStatusVar            terror.ErrCode = 1
@@ -89,6 +89,8 @@ var (
 	ErrUnsupportedIsolationLevel   = terror.ClassVariable.New(CodeUnknownStatusVar, "The isolation level '%s' is not supported. Set tidb_skip_isolation_level_check=1 to skip this error")
 )
 
+=======
+>>>>>>> 9f0736e... errno: move the error code from the parser/mysql to tidb/errno (#15277)
 func init() {
 	SysVars = make(map[string]*SysVar)
 	for _, v := range defaultSysVars {

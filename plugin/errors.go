@@ -14,11 +14,12 @@
 package plugin
 
 import (
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/errno"
 )
 
 var (
+<<<<<<< HEAD
 	errInvalidPluginID            = createPluginError(mysql.ErrInvalidPluginID)
 	errInvalidPluginManifest      = createPluginError(mysql.ErrInvalidPluginManifest)
 	errInvalidPluginName          = createPluginError(mysql.ErrInvalidPluginName)
@@ -28,6 +29,15 @@ var (
 	errRequireVersionCheckFail    = createPluginError(mysql.ErrRequireVersionCheckFail)
 	errUnsupportedReloadPlugin    = createPluginError(mysql.ErrUnsupportedReloadPlugin)
 	errUnsupportedReloadPluginVar = createPluginError(mysql.ErrUnsupportedReloadPluginVar)
+=======
+	errInvalidPluginID         = terror.ClassPlugin.NewStd(errno.ErrInvalidPluginID)
+	errInvalidPluginManifest   = terror.ClassPlugin.NewStd(errno.ErrInvalidPluginManifest)
+	errInvalidPluginName       = terror.ClassPlugin.NewStd(errno.ErrInvalidPluginName)
+	errInvalidPluginVersion    = terror.ClassPlugin.NewStd(errno.ErrInvalidPluginVersion)
+	errDuplicatePlugin         = terror.ClassPlugin.NewStd(errno.ErrDuplicatePlugin)
+	errInvalidPluginSysVarName = terror.ClassPlugin.NewStd(errno.ErrInvalidPluginSysVarName)
+	errRequireVersionCheckFail = terror.ClassPlugin.NewStd(errno.ErrRequireVersionCheckFail)
+>>>>>>> 9f0736e... errno: move the error code from the parser/mysql to tidb/errno (#15277)
 )
 
 func createPluginError(code terror.ErrCode) *terror.Error {

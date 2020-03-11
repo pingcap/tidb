@@ -14,10 +14,14 @@
 package types
 
 import (
+<<<<<<< HEAD
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
+=======
+>>>>>>> 9f0736e... errno: move the error code from the parser/mysql to tidb/errno (#15277)
 	"github.com/pingcap/parser/terror"
 	parser_types "github.com/pingcap/parser/types"
+	mysql "github.com/pingcap/tidb/errno"
 )
 
 var (
