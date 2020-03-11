@@ -15,10 +15,14 @@ package executor
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/util/pdapi"
 	"math"
+	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -43,11 +47,12 @@ const promReadTimeout = time.Second * 10
 // MetricRetriever uses to read metric data.
 type MetricRetriever struct {
 	dummyCloser
-	table     *model.TableInfo
-	tblDef    *infoschema.MetricTableDef
-	extractor *plannercore.MetricTableExtractor
-	timeRange plannercore.QueryTimeRange
-	retrieved bool
+	table          *model.TableInfo
+	tblDef         *infoschema.MetricTableDef
+	extractor      *plannercore.MetricTableExtractor
+	timeRange      plannercore.QueryTimeRange
+	retrieved      bool
+	prometheusAddr string
 }
 
 func (e *MetricRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
@@ -76,14 +81,7 @@ func (e *MetricRetriever) retrieve(ctx context.Context, sctx sessionctx.Context)
 	}
 	for _, quantile := range quantiles {
 		var queryValue pmodel.Value
-		// Add retry to avoid network error.
-		for i := 0; i < 10; i++ {
-			queryValue, err = e.queryMetric(ctx, sctx, queryRange, quantile)
-			if err == nil || strings.Contains(err.Error(), "parse error") {
-				break
-			}
-			time.Sleep(100 * time.Millisecond)
-		}
+		queryValue, err = e.queryMetric(ctx, sctx, queryRange, quantile)
 		if err != nil {
 			if err1, ok := err.(*promv1.Error); ok {
 				return nil, errors.Errorf("query metric error, msg: %v, detail: %v", err1.Msg, err1.Detail)
@@ -100,13 +98,14 @@ func (e *MetricRetriever) queryMetric(ctx context.Context, sctx sessionctx.Conte
 	failpoint.InjectContext(ctx, "mockMetricsPromData", func() {
 		failpoint.Return(ctx.Value("__mockMetricsPromData").(pmodel.Matrix), nil)
 	})
-
-	addr, err := e.getMetricAddr(sctx)
-	if err != nil {
-		return nil, err
+	var err error
+	if e.prometheusAddr == "" {
+		e.prometheusAddr, err = e.getMetricAddr(sctx)
+		if err != nil {
+			return nil, err
+		}
 	}
-
-	queryClient, err := newQueryClient(addr)
+	queryClient, err := newQueryClient(e.prometheusAddr)
 	if err != nil {
 		return nil, err
 	}
@@ -120,6 +119,18 @@ func (e *MetricRetriever) queryMetric(ctx context.Context, sctx sessionctx.Conte
 	return result, err
 }
 
+type MetricStorage struct {
+	PdServer struct {
+		MetricStorage string `json:"metric-storage"`
+	} `json:"pd-server"`
+}
+
+type prometheus struct {
+	IP         string `json:"ip"`
+	BinaryPath string `json:"binary_path"`
+	Port       int    `json:"port"`
+}
+
 func (e *MetricRetriever) getMetricAddr(sctx sessionctx.Context) (string, error) {
 	// Get PD servers info.
 	store := sctx.GetStore()
@@ -127,10 +138,38 @@ func (e *MetricRetriever) getMetricAddr(sctx sessionctx.Context) (string, error)
 	if !ok {
 		return "", errors.Errorf("%T not an etcd backend", store)
 	}
-	for _, addr := range etcd.EtcdAddrs() {
-		return addr, nil
+	pdAddrs := etcd.EtcdAddrs()
+	if len(pdAddrs) < 0 {
+		return "", errors.New("pd unavailable")
 	}
-	return "", errors.Errorf("pd address was not found")
+	var res string
+
+	// get prometheus address from pdApi
+	url := fmt.Sprintf("http://%s%s", pdAddrs[0], pdapi.Config)
+	resp, err := http.Get(url)
+	if err != nil {
+		return "", err
+	}
+	var metricStorage MetricStorage
+	dec := json.NewDecoder(resp.Body)
+	err = dec.Decode(&metricStorage)
+	if err != nil {
+		return "", err
+	}
+	res = metricStorage.PdServer.MetricStorage
+
+	// get prometheus address from etcdApi
+	if res == "" {
+		spkv, err := tikv.NewEtcdSafePointKV(pdAddrs, nil)
+		values, err := spkv.Get("/topology/prometheus")
+		if err != nil {
+			return "", errors.Trace(err)
+		}
+		var prometheus prometheus
+		json.Unmarshal([]byte(values), &prometheus)
+		res = fmt.Sprintf("http://%s:%v", prometheus.IP, strconv.Itoa(prometheus.Port))
+	}
+	return res, nil
 }
 
 type promQLQueryRange = promv1.Range
@@ -191,7 +230,7 @@ type queryClient struct {
 
 func newQueryClient(addr string) (api.Client, error) {
 	promClient, err := api.NewClient(api.Config{
-		Address: fmt.Sprintf("http://%s", addr),
+		Address: fmt.Sprintf("%s", addr),
 	})
 	if err != nil {
 		return nil, err
@@ -204,8 +243,8 @@ func newQueryClient(addr string) (api.Client, error) {
 // URL implement the api.Client interface.
 // This is use to convert prometheus api path to PD API path.
 func (c *queryClient) URL(ep string, args map[string]string) *url.URL {
-	// FIXME: add `PD-Allow-follower-handle: true` in http header, let pd follower can handle this request too.
-	ep = strings.Replace(ep, "api/v1", "pd/api/v1/metric", 1)
+	//// FIXME: add `PD-Allow-follower-handle: true` in http header, let pd follower can handle this request too.
+	//ep = strings.Replace(ep, "api/v1", "pd/api/v1/metric", 1)
 	return c.Client.URL(ep, args)
 }
 
