@@ -14,18 +14,19 @@
 package cascades
 
 import (
-	"github.com/pingcap/tidb/util/set"
 	"math"
 
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/memo"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/set"
 )
 
 // Transformation defines the interface for the transformation rules.
@@ -313,7 +314,7 @@ func (r *PushSelDownTiKVSingleGather) OnTransform(old *memo.ExprIter) (newExprs 
 	childGroup := old.Children[0].Children[0].Group
 	var pushed, remained []expression.Expression
 	sctx := sg.SCtx()
-	_, pushed, remained = expression.ExpressionsToPB(sctx.GetSessionVars().StmtCtx, sel.Conditions, sctx.GetClient())
+	pushed, remained = expression.PushDownExprs(sctx.GetSessionVars().StmtCtx, sel.Conditions, sctx.GetClient(), kv.TiKV)
 	if len(pushed) == 0 {
 		return nil, false, false, nil
 	}
@@ -396,7 +397,7 @@ func (r *PushAggDownGather) Match(expr *memo.ExprIter) bool {
 		// TODO: Remove this check when we have implemented TiFlashAggregation.
 		return false
 	}
-	return plannercore.CheckAggCanPushCop(agg.SCtx(), agg.AggFuncs, agg.GroupByItems, false)
+	return plannercore.CheckAggCanPushCop(agg.SCtx(), agg.AggFuncs, agg.GroupByItems, kv.TiKV)
 }
 
 // OnTransform implements Transformation interface.
