@@ -158,26 +158,13 @@ func TestInfo(t *testing.T) {
 		t.Fatalf("server one info %v, info %v", infos[ddlID], info)
 	}
 
-	// Test the scene where syncer.Done() gets the information.
-	err = failpoint.Enable("github.com/pingcap/tidb/ddl/util/ErrorMockSessionDone", `return(true)`)
+	// test the scene where syncer.Done() gets the information.
+	err = dom.ddl.SchemaSyncer().Close()
 	if err != nil {
 		t.Fatal(err)
 	}
-	<-dom.ddl.SchemaSyncer().Done()
-	err = failpoint.Disable("github.com/pingcap/tidb/ddl/util/ErrorMockSessionDone")
-	if err != nil {
-		t.Fatal(err)
-	}
-	time.Sleep(15 * time.Millisecond)
-	syncerStarted := false
-	for i := 0; i < 200; i++ {
-		if dom.SchemaValidator.IsStarted() {
-			syncerStarted = true
-			break
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	if !syncerStarted {
+	time.Sleep(time.Second)
+	if !dom.SchemaValidator.IsStarted() {
 		t.Fatal("start syncer failed")
 	}
 	// Make sure loading schema is normal.

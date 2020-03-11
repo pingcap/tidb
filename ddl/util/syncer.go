@@ -24,7 +24,6 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/owner"
@@ -85,6 +84,9 @@ type SchemaSyncer interface {
 	Done() <-chan struct{}
 	// Restart restarts the syncer when it's on longer being refreshed.
 	Restart(ctx context.Context) error
+	// Close the session, after call this, domain will notice syncer stopped and restart syncer.
+	// Used for testing syncer.Done() and syncer.Restart() function.
+	Close() error
 	// OwnerCheckAllVersions checks whether all followers' schema version are equal to
 	// the latest schema version. If the result is false, wait for a while and check again util the processing time reach 2 * lease.
 	// It returns until all servers' versions are equal to the latest version or the ctx is done.
@@ -193,14 +195,12 @@ func (s *schemaVersionSyncer) storeSession(session *concurrency.Session) {
 
 // Done implements SchemaSyncer.Done interface.
 func (s *schemaVersionSyncer) Done() <-chan struct{} {
-	failpoint.Inject("ErrorMockSessionDone", func(val failpoint.Value) {
-		if val.(bool) {
-			err := s.loadSession().Close()
-			logutil.BgLogger().Error("close session failed", zap.Error(err))
-		}
-	})
-
 	return s.loadSession().Done()
+}
+
+// Close implements SchemaSyncer.Close interface.
+func (s *schemaVersionSyncer) Close() error {
+	return errors.Trace(s.loadSession().Close())
 }
 
 // Restart implements SchemaSyncer.Restart interface.

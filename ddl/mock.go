@@ -123,6 +123,9 @@ func (s *MockSchemaSyncer) StartCleanWork() {}
 // CloseCleanWork implements SchemaSyncer.CloseCleanWork interface.
 func (s *MockSchemaSyncer) CloseCleanWork() {}
 
+// Close implements SchemaSyncer.Close interface.
+func (s *MockSchemaSyncer) Close() error { return nil }
+
 type mockDelRange struct {
 }
 
