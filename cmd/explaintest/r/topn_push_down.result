@@ -189,7 +189,7 @@ create table t1(a bigint, b bigint);
 create table t2(a bigint, b bigint);
 desc select * from t1 where t1.a in (select t2.a as a from t2 where t2.b > t1.b order by t1.b limit 1);
 id	estRows	task	operator info
-Apply_15	9990.00	root	semi join, inner:Selection_19, equal:[eq(test.t1.a, test.t2.a)]
+Apply_15	9990.00	root	semi join, equal:[eq(test.t1.a, test.t2.a)]
 ├─TableReader_18(Build)	9990.00	root	data:Selection_17
 │ └─Selection_17	9990.00	cop[tikv]	not(isnull(test.t1.a))
 │   └─TableFullScan_16	10000.00	cop[tikv]	table:t1, keep order:false, stats:pseudo
@@ -201,7 +201,7 @@ Apply_15	9990.00	root	semi join, inner:Selection_19, equal:[eq(test.t1.a, test.t
           └─TableFullScan_23	1.25	cop[tikv]	table:t2, keep order:false, stats:pseudo
 desc select * from t1 where t1.a in (select a from (select t2.a as a, t1.b as b from t2 where t2.b > t1.b) x order by b limit 1);
 id	estRows	task	operator info
-Apply_17	9990.00	root	semi join, inner:Selection_21, equal:[eq(test.t1.a, test.t2.a)]
+Apply_17	9990.00	root	semi join, equal:[eq(test.t1.a, test.t2.a)]
 ├─TableReader_20(Build)	9990.00	root	data:Selection_19
 │ └─Selection_19	9990.00	cop[tikv]	not(isnull(test.t1.a))
 │   └─TableFullScan_18	10000.00	cop[tikv]	table:t1, keep order:false, stats:pseudo
@@ -251,7 +251,7 @@ Limit_12	5.00	root	offset:0, count:5
 explain select /*+ TIDB_HJ(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a limit 5;
 id	estRows	task	operator info
 Limit_11	5.00	root	offset:0, count:5
-└─HashLeftJoin_31	5.00	root	inner join, inner:TableReader_38, equal:[eq(test.t.a, test.t.a)]
+└─HashLeftJoin_31	5.00	root	inner join, equal:[eq(test.t.a, test.t.a)]
   ├─TableReader_38(Build)	10000.00	root	data:TableFullScan_37
   │ └─TableFullScan_37	10000.00	cop[tikv]	table:t2, keep order:false, stats:pseudo
   └─TableReader_34(Probe)	4.00	root	data:TableFullScan_33
@@ -260,7 +260,7 @@ explain select /*+ TIDB_HJ(t1, t2) */ * from t t1 left join t t2 on t1.a = t2.a 
 id	estRows	task	operator info
 Limit_12	5.00	root	offset:0, count:5
 └─Selection_13	5.00	root	isnull(test.t.a)
-  └─HashLeftJoin_25	5.00	root	left outer join, inner:TableReader_27 (REVERSED), equal:[eq(test.t.a, test.t.a)]
+  └─HashLeftJoin_25	5.00	root	left outer join, equal:[eq(test.t.a, test.t.a)]
     ├─TableReader_27(Build)	4.00	root	data:TableFullScan_26
     │ └─TableFullScan_26	4.00	cop[tikv]	table:t1, keep order:false, stats:pseudo
     └─TableReader_31(Probe)	10000.00	root	data:TableFullScan_30

@@ -682,6 +682,7 @@ type pessimisticTxn interface {
 // buildExecutor build a executor from plan, prepared statement may need additional procedure.
 func (a *ExecStmt) buildExecutor() (Executor, error) {
 	ctx := a.Ctx
+	stmtCtx := ctx.GetSessionVars().StmtCtx
 	if _, ok := a.Plan.(*plannercore.Execute); !ok {
 		// Do not sync transaction for Execute statement, because the real optimization work is done in
 		// "ExecuteExec.Build".
@@ -701,7 +702,6 @@ func (a *ExecStmt) buildExecutor() (Executor, error) {
 			return nil, err
 		}
 
-		stmtCtx := ctx.GetSessionVars().StmtCtx
 		if stmtPri := stmtCtx.Priority; stmtPri == mysql.NoPriority {
 			switch {
 			case useMaxTS:
@@ -735,7 +735,7 @@ func (a *ExecStmt) buildExecutor() (Executor, error) {
 		}
 		e = executorExec.stmtExec
 	}
-	a.isSelectForUpdate = b.isSelectForUpdate
+	a.isSelectForUpdate = b.hasLock && (!stmtCtx.InDeleteStmt && !stmtCtx.InUpdateStmt)
 	return e, nil
 }
 
