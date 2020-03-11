@@ -44,7 +44,7 @@ oom-use-tmp-storage = true
 
 # Specifies what operation TiDB performs when a single SQL statement exceeds the memory quota specified by mem-quota-query and cannot be spilled over to disk.
 # Valid options: ["log", "cancel"]
-oom-action = "log"
+oom-action = "cancel"
 
 # Enable coprocessor streaming.
 enable-streaming = false
