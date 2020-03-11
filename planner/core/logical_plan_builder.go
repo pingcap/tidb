@@ -3164,7 +3164,9 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 		}
 	}
 	if !b.ctx.GetSessionVars().IsAutocommit() || b.ctx.GetSessionVars().InTxn() {
-		p = b.buildSelectLock(p, ast.SelectLockForUpdate)
+		if !update.MultipleTable {
+			p = b.buildSelectLock(p, ast.SelectLockForUpdate)
+		}
 	}
 
 	if update.Order != nil {
@@ -3402,7 +3404,9 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 		}
 	}
 	if !b.ctx.GetSessionVars().IsAutocommit() || b.ctx.GetSessionVars().InTxn() {
-		p = b.buildSelectLock(p, ast.SelectLockForUpdate)
+		if !delete.IsMultiTable {
+			p = b.buildSelectLock(p, ast.SelectLockForUpdate)
+		}
 	}
 
 	if delete.Order != nil {
