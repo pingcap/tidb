@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
@@ -103,6 +104,27 @@ func (e *clusterConfigRetriever) retrieve(_ context.Context, sctx sessionctx.Con
 	}
 	e.retrieved = true
 
+	// The `InspectionTableCache` will be assigned in the begin of retrieving` and be
+	// cleaned at the end of retrieving, so nil represents currently in non-inspection mode.
+	if cache := sctx.GetSessionVars().InspectionTableCache; cache != nil {
+		// Obtain data from cache first.
+		tblName := strings.ToLower(infoschema.TableClusterConfig)
+		cached, found := cache[tblName]
+		if !found {
+			rows, err := e.fetch(sctx)
+			cached = variable.TableSnapshot{
+				Rows: rows,
+				Err:  err,
+			}
+			cache[tblName] = cached
+		}
+		return cached.Rows, cached.Err
+	}
+
+	return e.fetch(sctx)
+}
+
+func (e clusterConfigRetriever) fetch(sctx sessionctx.Context) ([][]types.Datum, error) {
 	type result struct {
 		idx  int
 		rows [][]types.Datum
@@ -231,6 +253,34 @@ func (e *clusterServerInfoRetriever) retrieve(ctx context.Context, sctx sessionc
 	}
 	e.retrieved = true
 
+	// The `InspectionTableCache` will be assigned in the begin of retrieving` and be
+	// cleaned at the end of retrieving, so nil represents currently in non-inspection mode.
+	if cache := sctx.GetSessionVars().InspectionTableCache; cache != nil {
+		// Obtain data from cache first.
+		var tblName string
+		switch e.serverInfoType {
+		case diagnosticspb.ServerInfoType_HardwareInfo:
+			tblName = strings.ToLower(infoschema.TableClusterHardware)
+		case diagnosticspb.ServerInfoType_LoadInfo:
+			tblName = strings.ToLower(infoschema.TableClusterLoad)
+		case diagnosticspb.ServerInfoType_SystemInfo:
+			tblName = strings.ToLower(infoschema.TableClusterSystemInfo)
+		default:
+			return nil, errors.Errorf("unknown server info type: %v", e.serverInfoType)
+		}
+		cached, found := cache[tblName]
+		if !found {
+			rows, err := e.fetch(ctx, sctx)
+			cached = variable.TableSnapshot{Rows: rows, Err: err}
+			cache[tblName] = cached
+		}
+		return cached.Rows, cached.Err
+	}
+
+	return e.fetch(ctx, sctx)
+}
+
+func (e *clusterServerInfoRetriever) fetch(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
 	serversInfo, err := infoschema.GetClusterServerInfo(sctx)
 	if err != nil {
 		return nil, err

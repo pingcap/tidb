@@ -426,7 +426,7 @@ func (e *memtableRetriever) setDataFromTables(ctx sessionctx.Context, schemas []
 				var tableType string
 				switch schema.Name.L {
 				case util.InformationSchemaName.L, util.PerformanceSchemaName.L,
-					util.MetricSchemaName.L, util.InspectionSchemaName.L:
+					util.MetricSchemaName.L:
 					tableType = "SYSTEM VIEW"
 				default:
 					tableType = "BASE TABLE"
@@ -755,27 +755,48 @@ func (e *memtableRetriever) dataForCollationCharacterSetApplicability() {
 }
 
 func (e *memtableRetriever) dataForTiDBClusterInfo(ctx sessionctx.Context) error {
-	servers, err := infoschema.GetClusterServerInfo(ctx)
-	if err != nil {
-		e.rows = nil
-		return err
+	retrieve := func() error {
+		servers, err := infoschema.GetClusterServerInfo(ctx)
+		if err != nil {
+			e.rows = nil
+			return err
+		}
+		rows := make([][]types.Datum, 0, len(servers))
+		for _, server := range servers {
+			startTime := time.Unix(server.StartTimestamp, 0)
+			row := types.MakeDatums(
+				server.ServerType,
+				server.Address,
+				server.StatusAddr,
+				server.Version,
+				server.GitHash,
+				startTime.Format(time.RFC3339),
+				time.Since(startTime).String(),
+			)
+			rows = append(rows, row)
+		}
+		e.rows = rows
+		return nil
 	}
-	rows := make([][]types.Datum, 0, len(servers))
-	for _, server := range servers {
-		startTime := time.Unix(server.StartTimestamp, 0)
-		row := types.MakeDatums(
-			server.ServerType,
-			server.Address,
-			server.StatusAddr,
-			server.Version,
-			server.GitHash,
-			startTime.Format(time.RFC3339),
-			time.Since(startTime).String(),
-		)
-		rows = append(rows, row)
+
+	// The `InspectionTableCache` will be assigned in the begin of retrieving` and be
+	// cleaned at the end of retrieving, so nil represents currently in non-inspection mode.
+	if cache := ctx.GetSessionVars().InspectionTableCache; cache != nil {
+		// Obtain data from cache first.
+		cached, found := cache[e.table.Name.L]
+		if !found {
+			err := retrieve()
+			cached = variable.TableSnapshot{
+				Rows: e.rows,
+				Err:  err,
+			}
+			cache[e.table.Name.L] = cached
+		}
+		e.rows = cached.Rows
+		return cached.Err
 	}
-	e.rows = rows
-	return nil
+
+	return retrieve()
 }
 
 func (e *memtableRetriever) setDataFromKeyColumnUsage(ctx sessionctx.Context, schemas []*model.DBInfo) {
