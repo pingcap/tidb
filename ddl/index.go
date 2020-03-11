@@ -78,7 +78,7 @@ func buildIndexColumns(columns []*model.ColumnInfo, idxColNames []*ast.IndexColN
 
 		// The sum of all lengths must be shorter than the max length for prefix.
 		if sumLength > config.GetGlobalConfig().MaxIndexLength {
-			return nil, errors.Trace(errTooLongKey)
+			return nil, errTooLongKey.GenWithStackByArgs(config.GetGlobalConfig().MaxIndexLength)
 		}
 
 		idxColumns = append(idxColumns, &model.IndexColumn{
@@ -123,7 +123,7 @@ func checkIndexPrefixLength(columns []*model.ColumnInfo, idxColumns []*model.Ind
 		sumLength += indexColumnLength
 		// The sum of all lengths must be shorter than the max length for prefix.
 		if sumLength > config.GetGlobalConfig().MaxIndexLength {
-			return errors.Trace(errTooLongKey)
+			return errTooLongKey.GenWithStackByArgs(config.GetGlobalConfig().MaxIndexLength)
 		}
 	}
 	return nil
@@ -157,7 +157,7 @@ func checkIndexColumn(col *model.ColumnInfo, ic *ast.IndexColName) error {
 
 	// Specified length must be shorter than the max length for prefix.
 	if ic.Length > config.GetGlobalConfig().MaxIndexLength {
-		return errors.Trace(errTooLongKey)
+		return errTooLongKey.GenWithStackByArgs(config.GetGlobalConfig().MaxIndexLength)
 	}
 	return nil
 }

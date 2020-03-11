@@ -200,6 +200,9 @@ type PlanBuilder struct {
 	inStraightJoin bool
 
 	windowSpecs map[string]*ast.WindowSpec
+
+	// SelectLock need this information to locate the lock on partitions.
+	partitionedTable []table.PartitionedTable
 }
 
 // GetVisitInfo gets the visitInfo of the PlanBuilder.
@@ -575,7 +578,7 @@ func removeIgnoredPaths(paths, ignoredPaths []*accessPath, tblInfo *model.TableI
 }
 
 func (b *PlanBuilder) buildSelectLock(src LogicalPlan, lock ast.SelectLockType) *LogicalLock {
-	selectLock := LogicalLock{Lock: lock}.Init(b.ctx)
+	selectLock := LogicalLock{Lock: lock, partitionedTable: b.partitionedTable}.Init(b.ctx)
 	selectLock.SetChildren(src)
 	return selectLock
 }
