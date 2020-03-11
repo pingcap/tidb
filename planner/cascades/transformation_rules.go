@@ -97,6 +97,10 @@ var TiDBLayerOptimizationBatch = TransformationRuleBatch{
 		NewRulePushTopNDownUnionAll(),
 		NewRuleMergeAdjacentTopN(),
 	},
+	memo.OperandApply: {
+		NewRuleTransformApplyToJoin(),
+		NewRulePullSelectionUpApply(),
+	},
 }
 
 // TiKVLayerOptimizationBatch does the optimization related to TiKV layer.
@@ -913,7 +917,8 @@ func (r *PushSelDownJoin) OnTransform(old *memo.ExprIter) (newExprs []*memo.Grou
 		} else {
 			joinConds, remainCond = expression.PropConstOverOuterJoin(join.SCtx(), joinConds, remainCond, leftGroup.Prop.Schema, rightGroup.Prop.Schema, nullSensitive)
 		}
-		join.AttachOnConds(joinConds)
+		eq, left, right, other := join.ExtractOnCondition(joinConds, leftGroup.Prop.Schema, rightGroup.Prop.Schema, false, false)
+		join.AppendJoinConds(eq, left, right, other)
 		// Return table dual when filter is constant false or null.
 		dual := plannercore.Conds2TableDual(join, remainCond)
 		if dual != nil {
@@ -2149,4 +2154,99 @@ func (r *InjectProjectionBelowTopN) OnTransform(old *memo.ExprIter) (newExprs []
 	topProjGroupExpr := memo.NewGroupExpr(topProj)
 	topProjGroupExpr.SetChildren(topNGroup)
 	return []*memo.GroupExpr{topProjGroupExpr}, true, false, nil
+}
+
+// TransformApplyToJoin transforms a LogicalApply to LogicalJoin if it's
+// inner children has no correlated columns from it's outer schema.
+type TransformApplyToJoin struct {
+	baseRule
+}
+
+// NewRuleTransformApplyToJoin creates a new Transformation TransformApplyToJoin.
+// The pattern of this rule is: `Apply -> (X, Y)`.
+func NewRuleTransformApplyToJoin() Transformation {
+	rule := &TransformApplyToJoin{}
+	rule.pattern = memo.NewPattern(memo.OperandApply, memo.EngineTiDBOnly)
+	return rule
+}
+
+// OnTransform implements Transformation interface.
+func (r *TransformApplyToJoin) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	apply := old.GetExpr().ExprNode.(*plannercore.LogicalApply)
+	groupExpr := old.GetExpr()
+	// It's safe to use the old apply instead of creating a new LogicalApply here,
+	// Because apply.CorCols will only be used and updated by this rule during Transformation.
+	apply.CorCols = r.extractCorColumnsBySchema(groupExpr.Children[1], groupExpr.Children[0].Prop.Schema)
+	if len(apply.CorCols) != 0 {
+		return nil, false, false, nil
+	}
+
+	join := apply.LogicalJoin.Shallow()
+	joinGroupExpr := memo.NewGroupExpr(join)
+	joinGroupExpr.SetChildren(groupExpr.Children...)
+	return []*memo.GroupExpr{joinGroupExpr}, true, false, nil
+}
+
+func (r *TransformApplyToJoin) extractCorColumnsBySchema(innerGroup *memo.Group, outerSchema *expression.Schema) []*expression.CorrelatedColumn {
+	corCols := r.extractCorColumnsFromGroup(innerGroup)
+	return plannercore.ExtractCorColumnsBySchema(corCols, outerSchema)
+}
+
+func (r *TransformApplyToJoin) extractCorColumnsFromGroup(g *memo.Group) []*expression.CorrelatedColumn {
+	corCols := make([]*expression.CorrelatedColumn, 0)
+	for elem := g.Equivalents.Front(); elem != nil; elem = elem.Next() {
+		expr := elem.Value.(*memo.GroupExpr)
+		corCols = append(corCols, expr.ExprNode.ExtractCorrelatedCols()...)
+		for _, child := range expr.Children {
+			corCols = append(corCols, r.extractCorColumnsFromGroup(child)...)
+		}
+	}
+	// We may have duplicate CorrelatedColumns here, but it won't influence
+	// the logic of the transformation. Apply.CorCols will be deduplicated in
+	// `ResolveIndices`.
+	return corCols
+}
+
+// PullSelectionUpApply pulls up the inner-side Selection into Apply as
+// its join condition.
+type PullSelectionUpApply struct {
+	baseRule
+}
+
+// NewRulePullSelectionUpApply creates a new Transformation PullSelectionUpApply.
+// The pattern of this rule is: `Apply -> (Any<outer>, Selection<inner>)`.
+func NewRulePullSelectionUpApply() Transformation {
+	rule := &PullSelectionUpApply{}
+	rule.pattern = memo.BuildPattern(
+		memo.OperandApply,
+		memo.EngineTiDBOnly,
+		memo.NewPattern(memo.OperandAny, memo.EngineTiDBOnly),       // outer child
+		memo.NewPattern(memo.OperandSelection, memo.EngineTiDBOnly), // inner child
+	)
+	return rule
+}
+
+// OnTransform implements Transformation interface.
+// This rule tries to pull up the inner side Selection, and add these conditions
+// to Join condition inside the Apply.
+func (r *PullSelectionUpApply) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	apply := old.GetExpr().ExprNode.(*plannercore.LogicalApply)
+	outerChildGroup := old.Children[0].Group
+	innerChildGroup := old.Children[1].Group
+	sel := old.Children[1].GetExpr().ExprNode.(*plannercore.LogicalSelection)
+	newConds := make([]expression.Expression, 0, len(sel.Conditions))
+	for _, cond := range sel.Conditions {
+		newConds = append(newConds, cond.Clone().Decorrelate(outerChildGroup.Prop.Schema))
+	}
+	newApply := plannercore.LogicalApply{
+		LogicalJoin: *(apply.LogicalJoin.Shallow()),
+		CorCols:     apply.CorCols,
+	}.Init(apply.SCtx(), apply.SelectBlockOffset())
+	// Update Join conditions.
+	eq, left, right, other := newApply.LogicalJoin.ExtractOnCondition(newConds, outerChildGroup.Prop.Schema, innerChildGroup.Prop.Schema, false, false)
+	newApply.LogicalJoin.AppendJoinConds(eq, left, right, other)
+
+	newApplyGroupExpr := memo.NewGroupExpr(newApply)
+	newApplyGroupExpr.SetChildren(outerChildGroup, old.Children[1].GetExpr().Children[0])
+	return []*memo.GroupExpr{newApplyGroupExpr}, false, false, nil
 }
