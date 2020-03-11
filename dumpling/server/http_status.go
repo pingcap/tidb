@@ -295,6 +295,9 @@ func (s *Server) setupStatusServerAndRPCServer(addr string, serverMux *http.Serv
 		logutil.BgLogger().Info("listen failed", zap.Error(err))
 		return
 	}
+	if tlsConfig != nil {
+		logutil.BgLogger().Info("HTTP/gRPC status server secure connection is enabled", zap.Bool("CN verification enabled", tlsConfig.VerifyPeerCertificate != nil))
+	}
 	m := cmux.New(l)
 	// Match connections in order:
 	// First HTTP, and otherwise grpc.
