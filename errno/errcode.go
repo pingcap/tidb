@@ -926,11 +926,11 @@ const (
 	ErrWindowNestedWindowFuncUseInWindowSpec                        = 3595
 	ErrWindowRowsIntervalUse                                        = 3596
 	ErrWindowNoGroupOrderUnused                                     = 3597
-	ErrWindowExplainJson                                            = 3598
+	ErrWindowExplainJSON                                            = 3598
 	ErrWindowFunctionIgnoresFrame                                   = 3599
 	ErrDataTruncatedFunctionalIndex                                 = 3751
 	ErrDataOutOfRangeFunctionalIndex                                = 3752
-	ErrFunctionalIndexOnJsonOrGeometryFunction                      = 3753
+	ErrFunctionalIndexOnJSONOrGeometryFunction                      = 3753
 	ErrFunctionalIndexRefAutoIncrement                              = 3754
 	ErrCannotDropColumnFunctionalIndex                              = 3755
 	ErrFunctionalIndexPrimaryKey                                    = 3756
@@ -943,8 +943,8 @@ const (
 	ErrFKIncompatibleColumns                                        = 3780
 	ErrFunctionalIndexRowValueIsNotAllowed                          = 3800
 	ErrDependentByFunctionalIndex                                   = 3837
-	ErrInvalidJsonValueForFuncIndex                                 = 3903
-	ErrJsonValueOutOfRangeForFuncIndex                              = 3904
+	ErrInvalidJSONValueForFuncIndex                                 = 3903
+	ErrJSONValueOutOfRangeForFuncIndex                              = 3904
 	ErrFunctionalIndexDataIsTooLong                                 = 3907
 	ErrFunctionalIndexNotApplicable                                 = 3909
 
