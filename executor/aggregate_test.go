@@ -752,3 +752,46 @@ func (s *testSuite1) TestIssue10608(c *C) {
 	tk.MustQuery("select (select group_concat(concat(123,'-')) from t where t.a = s.b group by t.a) as t from s;").Check(testkit.Rows("123-", "123-"))
 
 }
+<<<<<<< HEAD
+=======
+
+func (s *testSuiteAgg) TestIssue12759HashAggCalledByApply(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.Se.GetSessionVars().HashAggFinalConcurrency = 4
+	tk.MustExec(`insert into mysql.opt_rule_blacklist value("decorrelate");`)
+	defer func() {
+		tk.MustExec(`delete from mysql.opt_rule_blacklist where name = "decorrelate";`)
+		tk.MustExec(`admin reload opt_rule_blacklist;`)
+	}()
+	tk.MustExec(`drop table if exists test;`)
+	tk.MustExec("create table test (a int);")
+	tk.MustExec("insert into test value(1);")
+	tk.MustQuery("select /*+ hash_agg() */ sum(a), (select NULL from test where tt.a = test.a limit 1),(select NULL from test where tt.a = test.a limit 1),(select NULL from test where tt.a = test.a limit 1) from test tt;").Check(testkit.Rows("1 <nil> <nil> <nil>"))
+
+	var (
+		input  []string
+		output [][]string
+	)
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i] = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery(tt).Check(testkit.Rows(output[i]...))
+	}
+}
+
+func (s *testSuiteAgg) TestPR15242ShallowCopy(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a json);`)
+	tk.MustExec(`insert into t values ('{"id": 1,"score":23}');`)
+	tk.MustExec(`insert into t values ('{"id": 2,"score":23}');`)
+	tk.MustExec(`insert into t values ('{"id": 1,"score":233}');`)
+	tk.MustExec(`insert into t values ('{"id": 2,"score":233}');`)
+	tk.MustExec(`insert into t values ('{"id": 3,"score":233}');`)
+	tk.Se.GetSessionVars().MaxChunkSize = 2
+	tk.MustQuery(`select max(JSON_EXTRACT(a, '$.score')) as max_score,JSON_EXTRACT(a,'$.id') as id from t group by id order by id;`).Check(testkit.Rows("233 1", "233 2", "233 3"))
+
+}
+>>>>>>> 34ff2b9... executor: use deep copy for maxMin4JSON (#15242)
