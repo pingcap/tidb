@@ -6,6 +6,7 @@ import "database/sql"
 type TableDataIR interface {
 	DatabaseName() string
 	TableName() string
+	ChunkIndex() int
 	ColumnCount() uint
 	ColumnTypes() []string
 
@@ -19,6 +20,8 @@ type SQLRowIter interface {
 	HasNext() bool
 	HasNextSQLRowIter() bool
 	NextSQLRowIter() SQLRowIter
+	// release SQLRowIter
+	Close() error
 }
 
 type RowReceiverStringer interface {

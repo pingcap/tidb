@@ -7,6 +7,13 @@ import (
 	"github.com/pingcap/dumpling/v4/log"
 )
 
+func adjustConfig(conf *Config) {
+	if conf.Rows != UnspecifiedSize {
+		// Disable filesize if rows was set
+		conf.FileSize = UnspecifiedSize
+	}
+}
+
 func detectServerInfo(db *sql.DB) (ServerInfo, error) {
 	versionStr, err := SelectVersion(db)
 	if err != nil {

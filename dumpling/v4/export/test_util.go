@@ -75,11 +75,12 @@ func newMockMetaIR(targetName string, meta string, specialComments []string) Met
 }
 
 type mockTableIR struct {
-	dbName   string
-	tblName  string
-	data     [][]driver.Value
-	specCmt  []string
-	colTypes []string
+	dbName    string
+	tblName   string
+	chunIndex int
+	data      [][]driver.Value
+	specCmt   []string
+	colTypes  []string
 }
 
 func (m *mockTableIR) DatabaseName() string {
@@ -88,6 +89,10 @@ func (m *mockTableIR) DatabaseName() string {
 
 func (m *mockTableIR) TableName() string {
 	return m.tblName
+}
+
+func (m *mockTableIR) ChunkIndex() int {
+	return m.chunIndex
 }
 
 func (m *mockTableIR) ColumnCount() uint {

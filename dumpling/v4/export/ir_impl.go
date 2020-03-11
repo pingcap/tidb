@@ -1,7 +1,15 @@
 package export
 
 import (
+	"context"
 	"database/sql"
+	"fmt"
+	"strconv"
+
+	"github.com/pkg/errors"
+	"go.uber.org/zap"
+
+	"github.com/pingcap/dumpling/v4/log"
 )
 
 // rowIter implements the SQLRowIter interface.
@@ -20,6 +28,10 @@ func newRowIter(rows *sql.Rows, argLen int) *rowIter {
 	}
 	r.hasNext = r.rows.Next()
 	return r
+}
+
+func (iter *rowIter) Close() error {
+	return iter.rows.Close()
 }
 
 func (iter *rowIter) Next(row RowReceiver) error {
@@ -47,6 +59,10 @@ type fileRowIter struct {
 
 	currentStatementSize uint64
 	currentFileSize      uint64
+}
+
+func (c *fileRowIter) Close() error {
+	return c.rowIter.Close()
 }
 
 func (c *fileRowIter) Next(row RowReceiver) error {
@@ -115,11 +131,12 @@ func (m *stringIter) HasNext() bool {
 }
 
 type tableData struct {
-	database string
-	table    string
-	rows     *sql.Rows
-	colTypes []*sql.ColumnType
-	specCmts []string
+	database   string
+	table      string
+	chunkIndex int
+	rows       *sql.Rows
+	colTypes   []*sql.ColumnType
+	specCmts   []string
 }
 
 func (td *tableData) ColumnTypes() []string {
@@ -136,6 +153,10 @@ func (td *tableData) DatabaseName() string {
 
 func (td *tableData) TableName() string {
 	return td.table
+}
+
+func (td *tableData) ChunkIndex() int {
+	return td.chunkIndex
 }
 
 func (td *tableData) ColumnCount() uint {
@@ -169,12 +190,123 @@ func (t *tableDataChunks) Rows() SQLRowIter {
 	}
 }
 
-func splitTableDataIntoChunks(td TableDataIR, chunkSize uint64, statementSize uint64) *tableDataChunks {
+func buildChunksIter(td TableDataIR, chunkSize uint64, statementSize uint64) *tableDataChunks {
 	return &tableDataChunks{
 		TableDataIR:        td,
 		chunkSizeLimit:     chunkSize,
 		statementSizeLimit: statementSize,
 	}
+}
+
+func splitTableDataIntoChunks(
+	ctx context.Context,
+	tableDataIRCh chan TableDataIR,
+	errCh chan error,
+	linear chan struct{},
+	dbName, tableName string, db *sql.DB, conf *Config) {
+	field, err := pickupPossibleField(dbName, tableName, db, conf)
+	if err != nil {
+		errCh <- withStack(err)
+		return
+	}
+	if field == "" {
+		// skip split chunk logic if not found proper field
+		log.Zap().Debug("skip concurrent dump due to no proper field", zap.String("field", field))
+		linear <- struct{}{}
+		return
+	}
+
+	query := fmt.Sprintf("SELECT MIN(`%s`),MAX(`%s`) FROM `%s`.`%s` ",
+		field, field, dbName, tableName)
+	if conf.Where != "" {
+		query = fmt.Sprintf("%s WHERE %s", query, conf.Where)
+	}
+	log.Zap().Debug("split chunks", zap.String("query", query))
+
+	var smin sql.NullString
+	var smax sql.NullString
+	row := db.QueryRow(query)
+	err = row.Scan(&smin, &smax)
+	if err != nil {
+		log.Zap().Error("split chunks - get max min failed", zap.String("query", query), zap.Error(err))
+		errCh <- withStack(err)
+		return
+	}
+	if !smax.Valid || !smin.Valid {
+		// found no data
+		log.Zap().Warn("no data to dump", zap.String("schema", dbName), zap.String("table", tableName))
+		close(tableDataIRCh)
+		return
+	}
+
+	var max uint64
+	var min uint64
+	if max, err = strconv.ParseUint(smax.String, 10, 64); err != nil {
+		errCh <- errors.WithMessagef(err, "fail to convert max value %s in query %s", smax.String, query)
+		return
+	}
+	if min, err = strconv.ParseUint(smin.String, 10, 64); err != nil {
+		errCh <- errors.WithMessagef(err, "fail to convert min value %s in query %s", smin.String, query)
+		return
+	}
+
+	count := estimateCount(dbName, tableName, db, field, conf)
+	if count < conf.Rows {
+		// skip chunk logic if estimates are low
+		log.Zap().Debug("skip concurrent dump due to estimate count < rows",
+			zap.Uint64("estimate count", count),
+			zap.Uint64("conf.rows", conf.Rows),
+		)
+		linear <- struct{}{}
+		return
+	}
+
+	// every chunk would have eventual adjustments
+	estimatedChunks := count / conf.Rows
+	estimatedStep := (max-min)/estimatedChunks + 1
+	cutoff := min
+
+	colTypes, err := GetColumnTypes(db, dbName, tableName)
+	if err != nil {
+		errCh <- withStack(err)
+		return
+	}
+	orderByClause, err := buildOrderByClause(conf, db, dbName, tableName)
+	if err != nil {
+		errCh <- withStack(err)
+		return
+	}
+
+	chunkIndex := 0
+LOOP:
+	for cutoff <= max {
+		chunkIndex += 1
+		where := fmt.Sprintf("(`%s` >= %d AND `%s` < %d)", field, cutoff, field, cutoff+estimatedStep)
+		query = buildSelectQuery(dbName, tableName, buildWhereCondition(conf, where), orderByClause)
+		rows, err := db.Query(query)
+		if err != nil {
+			errCh <- errors.WithMessage(err, query)
+			return
+		}
+
+		td := &tableData{
+			database:   dbName,
+			table:      tableName,
+			rows:       rows,
+			chunkIndex: chunkIndex,
+			colTypes:   colTypes,
+			specCmts: []string{
+				"/*!40101 SET NAMES binary*/;",
+			},
+		}
+		cutoff += estimatedStep
+		select {
+		case <-ctx.Done():
+			break LOOP
+		case tableDataIRCh <- td:
+		}
+	}
+	close(tableDataIRCh)
 }
 
 type metaData struct {

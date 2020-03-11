@@ -16,6 +16,6 @@ for file_path in "$DUMPLING_BASE_NAME"/data/*; do
   base_name=$(basename "$file_path")
   table_name="${base_name%.sql}"
   file_should_exist "$DUMPLING_BASE_NAME/result/$table_name.sql"
-  file_should_exist "$DUMPLING_OUTPUT_DIR/primary_key.$table_name.sql"
-  diff "$DUMPLING_BASE_NAME/result/$table_name.sql" "$DUMPLING_OUTPUT_DIR/primary_key.$table_name.sql"
+  file_should_exist "$DUMPLING_OUTPUT_DIR/primary_key.$table_name.0.sql"
+  diff "$DUMPLING_BASE_NAME/result/$table_name.sql" "$DUMPLING_OUTPUT_DIR/primary_key.$table_name.0.sql"
 done

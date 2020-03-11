@@ -64,13 +64,17 @@ func (s *testDumpSuite) TestBuildSelectAllQuery(c *C) {
 	// _tidb_rowid is available.
 	mock.ExpectExec("SELECT _tidb_rowid from test.t").
 		WillReturnResult(sqlmock.NewResult(0, 0))
-	q, err := buildSelectAllQuery(mockConf, db, "test", "t")
+	orderByClause, err := buildOrderByClause(mockConf, db, "test", "t")
+	c.Assert(err, IsNil)
+	q := buildSelectQuery("test", "t", "", orderByClause)
 	c.Assert(q, Equals, "SELECT * FROM test.t ORDER BY _tidb_rowid")
 
 	// _tidb_rowid is unavailable, or PKIsHandle.
 	mock.ExpectExec("SELECT _tidb_rowid from test.t").
 		WillReturnError(errors.New(`1054, "Unknown column '_tidb_rowid' in 'field list'"`))
-	q, err = buildSelectAllQuery(mockConf, db, "test", "t")
+	orderByClause, err = buildOrderByClause(mockConf, db, "test", "t")
+	c.Assert(err, IsNil)
+	q = buildSelectQuery("test", "t", "", orderByClause)
 	c.Assert(q, Equals, "SELECT * FROM test.t")
 	c.Assert(mock.ExpectationsWereMet(), IsNil)
 
@@ -84,9 +88,9 @@ func (s *testDumpSuite) TestBuildSelectAllQuery(c *C) {
 		mock.ExpectPrepare("SELECT column_name FROM information_schema.columns").
 			ExpectQuery().WithArgs("test", "t").
 			WillReturnRows(sqlmock.NewRows([]string{"column_name"}).AddRow("id"))
-
-		q, err := buildSelectAllQuery(mockConf, db, "test", "t")
+		orderByClause, err := buildOrderByClause(mockConf, db, "test", "t")
 		c.Assert(err, IsNil, cmt)
+		q = buildSelectQuery("test", "t", "", orderByClause)
 		c.Assert(q, Equals, "SELECT * FROM test.t ORDER BY id", cmt)
 		err = mock.ExpectationsWereMet()
 		c.Assert(err, IsNil, cmt)
@@ -101,8 +105,9 @@ func (s *testDumpSuite) TestBuildSelectAllQuery(c *C) {
 			ExpectQuery().WithArgs("test", "t").
 			WillReturnRows(sqlmock.NewRows([]string{"column_name"}))
 
-		q, err := buildSelectAllQuery(mockConf, db, "test", "t")
+		orderByClause, err := buildOrderByClause(mockConf, db, "test", "t")
 		c.Assert(err, IsNil, cmt)
+		q := buildSelectQuery("test", "t", "", orderByClause)
 		c.Assert(q, Equals, "SELECT * FROM test.t", cmt)
 		err = mock.ExpectationsWereMet()
 		c.Assert(err, IsNil, cmt)
@@ -115,8 +120,7 @@ func (s *testDumpSuite) TestBuildSelectAllQuery(c *C) {
 		mockConf.ServerInfo.ServerType = ServerType(tp)
 		cmt := Commentf("current server type: ", tp)
 
-		q, err := buildSelectAllQuery(mockConf, db, "test", "t")
-		c.Assert(err, IsNil, cmt)
+		q := buildSelectQuery("test", "t", "", "")
 		c.Assert(q, Equals, "SELECT * FROM test.t", cmt)
 		c.Assert(mock.ExpectationsWereMet(), IsNil, cmt)
 	}

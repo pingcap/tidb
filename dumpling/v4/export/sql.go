@@ -3,9 +3,13 @@ package export
 import (
 	"database/sql"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/pkg/errors"
+	"go.uber.org/zap"
+
+	"github.com/pingcap/dumpling/v4/log"
 )
 
 func ShowDatabases(db *sql.DB) ([]string, error) {
@@ -100,10 +104,12 @@ func SelectAllFromTable(conf *Config, db *sql.DB, database, table string) (Table
 		return nil, err
 	}
 
-	query, err := buildSelectAllQuery(conf, db, database, table)
+	orderByClause, err := buildOrderByClause(conf, db, database, table)
 	if err != nil {
 		return nil, err
 	}
+
+	query := buildSelectQuery(database, table, buildWhereCondition(conf, ""), orderByClause)
 	rows, err := db.Query(query)
 	if err != nil {
 		return nil, withStack(errors.WithMessage(err, query))
@@ -120,30 +126,34 @@ func SelectAllFromTable(conf *Config, db *sql.DB, database, table string) (Table
 	}, nil
 }
 
-func buildSelectAllQuery(conf *Config, db *sql.DB, database, table string) (string, error) {
+func buildSelectQuery(database, table string, where string, orderByClause string) string {
 	var query strings.Builder
 	query.WriteString("SELECT * FROM ")
 	query.WriteString(database)
 	query.WriteString(".")
 	query.WriteString(table)
-	if conf.SortByPk {
-		orderByClause, err := buildOrderByClause(conf, db, database, table)
-		if err != nil {
-			return "", err
-		}
-		if orderByClause != "" {
-			query.WriteString(" ")
-			query.WriteString(orderByClause)
-		}
+
+	if where != "" {
+		query.WriteString(" ")
+		query.WriteString(where)
 	}
-	return query.String(), nil
+
+	if orderByClause != "" {
+		query.WriteString(" ")
+		query.WriteString(orderByClause)
+	}
+
+	return query.String()
 }
 
 func buildOrderByClause(conf *Config, db *sql.DB, database, table string) (string, error) {
+	if !conf.SortByPk {
+		return "", nil
+	}
 	if conf.ServerInfo.ServerType == ServerTypeTiDB {
 		ok, err := SelectTiDBRowID(db, database, table)
 		if err != nil {
-			return "", err
+			return "", withStack(err)
 		}
 		if ok {
 			return "ORDER BY _tidb_rowid", nil
@@ -153,7 +163,7 @@ func buildOrderByClause(conf *Config, db *sql.DB, database, table string) (strin
 	}
 	pkName, err := GetPrimaryKeyName(db, database, table)
 	if err != nil {
-		return "", err
+		return "", withStack(err)
 	}
 	tableContainsPriKey := pkName != ""
 	if tableContainsPriKey {
@@ -204,6 +214,21 @@ func GetPrimaryKeyName(db *sql.DB, database, table string) (string, error) {
 		if err := rows.Scan(&colName); err != nil {
 			rows.Close()
 			return "", withStack(err)
+		}
+	}
+	return colName, nil
+}
+
+func GetUniqueIndexName(db *sql.DB, database, table string) (string, error) {
+	uniKeyQuery := "SELECT column_name FROM information_schema.columns "+
+		"WHERE table_schema = ? AND table_name = ? AND column_key = 'UNI';"
+	var colName string
+	row := db.QueryRow(uniKeyQuery, database, table)
+	if err := row.Scan(&colName); err != nil {
+		if err == sql.ErrNoRows {
+			return "", nil
+		} else {
+			return "", withStack(errors.WithMessage(err, uniKeyQuery))
 		}
 	}
 	return colName, nil
@@ -276,4 +301,139 @@ func simpleQuery(db *sql.DB, sql string, handleOneRow func(*sql.Rows) error) err
 		}
 	}
 	return nil
+}
+
+func pickupPossibleField(dbName, tableName string, db *sql.DB, conf *Config) (string, error) {
+	// If detected server is TiDB, try using _tidb_rowid
+	if conf.ServerInfo.ServerType == ServerTypeTiDB {
+		ok, err := SelectTiDBRowID(db, dbName, tableName)
+		if err != nil {
+			return "", nil
+		}
+		if ok {
+			return "_tidb_rowid", nil
+		}
+	}
+	// try to use pk
+	fieldName, err := GetPrimaryKeyName(db, dbName, tableName)
+	if err != nil {
+		return "", err
+	}
+	// try to use first uniqueIndex
+	if fieldName == "" {
+		fieldName, err = GetUniqueIndexName(db, dbName, tableName)
+		if err != nil {
+			return "", err
+		}
+	}
+
+	// there is no proper index
+	if fieldName == "" {
+		return "", nil
+	}
+
+	query := "SELECT DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS "+
+		"WHERE TABLE_NAME = ? AND COLUMN_NAME = ?"
+	var fieldType string
+	row := db.QueryRow(query, tableName, fieldName)
+	err = row.Scan(&fieldType)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", nil
+		} else {
+			return "", withStack(errors.WithMessage(err, query))
+		}
+	}
+	switch strings.ToLower(fieldType) {
+	case "int", "bigint":
+		return fieldName, nil
+	}
+	return "", nil
+}
+
+func estimateCount(dbName, tableName string, db *sql.DB, field string, conf *Config) uint64 {
+	query := fmt.Sprintf("EXPLAIN SELECT `%s` FROM `%s`.`%s`", field, dbName, tableName)
+
+	if conf.Where != "" {
+		query += " WHERE "
+		query += conf.Where
+	}
+
+	var estRows int
+	if conf.ServerInfo.ServerType == ServerTypeTiDB {
+		/* tidb results field name is estrows
+		+-----------------------+----------+-----------+-----------------------------------------+
+		| id                    | estrows  | task      | operator info                           |
+		+-----------------------+----------+-----------+-----------------------------------------+
+		| tablereader_5         | 10000.00 | root      | data:tablefullscan_4                    |
+		| └─tablefullscan_4     | 10000.00 | cop[tikv] | table:a, keep order:false, stats:pseudo |
+		+-----------------------+----------+-----------+----------------------------------------
+		*/
+		estRows = detectEstimateRows(db, query, "tidb", 1, 4)
+	} else if conf.ServerInfo.ServerType == ServerTypeMariaDB {
+		/* mariadb result field name is rows
+		+------+-------------+---------+-------+---------------+------+---------+------+----------+-------------+
+		| id   | select_type | table   | type  | possible_keys | key  | key_len | ref  | rows     | Extra       |
+		+------+-------------+---------+-------+---------------+------+---------+------+----------+-------------+
+		|    1 | SIMPLE      | sbtest1 | index | NULL          | k_1  | 4       | NULL | 15000049 | Using index |
+		+------+-------------+---------+-------+---------------+------+---------+------+----------+-------------+
+		*/
+		estRows = detectEstimateRows(db, query, "mariadb", 8, 10)
+	} else if conf.ServerInfo.ServerType == ServerTypeMySQL {
+		/* mysql result field name is rows
+		+----+-------------+-------+------------+-------+---------------+-----------+---------+------+------+----------+-------------+
+		| id | select_type | table | partitions | type  | possible_keys | key       | key_len | ref  | rows | filtered | Extra       |
+		+----+-------------+-------+------------+-------+---------------+-----------+---------+------+------+----------+-------------+
+		|  1 | SIMPLE      | t1    | NULL       | index | NULL          | multi_col | 10      | NULL |    5 |   100.00 | Using index |
+		+----+-------------+-------+------------+-------+---------------+-----------+---------+------+------+----------+-------------+
+		*/
+		estRows = detectEstimateRows(db, query, "mysql", 9, 12)
+	}
+	if estRows > 0 {
+		return uint64(estRows)
+	}
+	return 0
+}
+
+func detectEstimateRows(db *sql.DB, query string, dbType string, fieldIndex int, fieldLength int) int {
+	oneRow := make([]sql.NullString, fieldLength)
+	addr := make([]interface{}, fieldLength)
+	for i := range oneRow{
+		addr[i] = &oneRow[i]
+	}
+	row := db.QueryRow(query)
+	err := row.Scan(addr...)
+	if err != nil {
+		log.Zap().Warn("can't get estimate count from db",
+			zap.String("db", dbType),
+			zap.String("query", query), zap.Error(err))
+		return 0
+	}
+	estRows, err := strconv.ParseFloat(oneRow[fieldIndex].String, 64)
+	if err != nil {
+		log.Zap().Warn("can't get parse rows from db",
+			zap.String("db", dbType),
+			zap.String("query", query), zap.Error(err))
+		return 0
+	}
+	return int(estRows)
+}
+
+func buildWhereCondition(conf *Config, where string) string {
+	var query strings.Builder
+	separator := "WHERE"
+	if conf.Where != "" {
+		query.WriteString(" ")
+		query.WriteString(separator)
+		query.WriteString(" ")
+		query.WriteString(conf.Where)
+		separator = "AND"
+	}
+	if where != "" {
+		query.WriteString(" ")
+		query.WriteString(separator)
+		query.WriteString(" ")
+		query.WriteString(where)
+	}
+	return query.String()
 }

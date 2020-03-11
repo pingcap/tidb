@@ -83,10 +83,10 @@ func (s *testIRImplSuite) TestChunkRowIter(c *C) {
 		testStatementSize uint64 = 101
 
 		expectedSize = [][]uint64{
-			[]uint64{50, 50},
-			[]uint64{100, 100},
-			[]uint64{150, 150},
-			[]uint64{200, 50},
+			{50, 50},
+			{100, 100},
+			{150, 150},
+			{200, 50},
 		}
 	)
 
