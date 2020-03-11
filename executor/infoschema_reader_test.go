@@ -16,8 +16,6 @@ package executor_test
 import (
 	"crypto/tls"
 	"fmt"
-	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/util/testutil"
 	"net"
 	"net/http/httptest"
 	"strconv"
@@ -35,12 +33,14 @@ import (
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/server"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testutil"
 	"google.golang.org/grpc"
 )
 
