@@ -112,10 +112,7 @@ func (e *clusterConfigRetriever) retrieve(_ context.Context, sctx sessionctx.Con
 		cached, found := cache[tblName]
 		if !found {
 			rows, err := e.fetch(sctx)
-			cached = variable.TableSnapshot{
-				Rows: rows,
-				Err:  err,
-			}
+			cached = variable.TableSnapshot{Rows: rows, Err: err}
 			cache[tblName] = cached
 		}
 		return cached.Rows, cached.Err
