@@ -65,9 +65,9 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		case infoschema.TableStatistics:
 			e.setDataForStatistics(sctx, dbs)
 		case infoschema.TableTables:
-			err = e.dataForTables(sctx, dbs)
+			err = e.setDataFromTables(sctx, dbs)
 		case infoschema.TablePartitions:
-			err = e.dataForPartitions(sctx, dbs)
+			err = e.setDataFromPartitions(sctx, dbs)
 		case infoschema.TableTiDBIndexes:
 			e.setDataFromIndexes(sctx, dbs)
 		case infoschema.TableViews:
@@ -88,6 +88,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.dataForTikVRegionPeers(sctx)
 		case infoschema.TableTiDBHotRegions:
 			err = e.dataForTiDBHotRegions(sctx)
+		case infoschema.TableConstraints:
+			e.setDataFromTableConstraints(sctx, dbs)
 		}
 		if err != nil {
 			return nil, err
@@ -192,8 +194,7 @@ func getDataAndIndexLength(info *model.TableInfo, physicalID int64, rowCount uin
 }
 
 type statsCache struct {
-	mu         sync.Mutex
-	loading    bool
+	mu         sync.RWMutex
 	modifyTime time.Time
 	tableRows  map[int64]uint64
 	colLength  map[tableHistID]uint64
@@ -204,39 +205,32 @@ var tableStatsCache = &statsCache{}
 // TableStatsCacheExpiry is the expiry time for table stats cache.
 var TableStatsCacheExpiry = 3 * time.Second
 
-func (c *statsCache) setLoading(loading bool) {
-	c.mu.Lock()
-	c.loading = loading
-	c.mu.Unlock()
-}
-
 func (c *statsCache) get(ctx sessionctx.Context) (map[int64]uint64, map[tableHistID]uint64, error) {
-	c.mu.Lock()
-	if time.Since(c.modifyTime) < TableStatsCacheExpiry || c.loading {
+	c.mu.RLock()
+	if time.Since(c.modifyTime) < TableStatsCacheExpiry {
 		tableRows, colLength := c.tableRows, c.colLength
-		c.mu.Unlock()
+		c.mu.RUnlock()
 		return tableRows, colLength, nil
 	}
-	c.loading = true
-	c.mu.Unlock()
+	c.mu.RUnlock()
 
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if time.Since(c.modifyTime) < TableStatsCacheExpiry {
+		return c.tableRows, c.colLength, nil
+	}
 	tableRows, err := getRowCountAllTable(ctx)
 	if err != nil {
-		c.setLoading(false)
 		return nil, nil, err
 	}
 	colLength, err := getColLengthAllTables(ctx)
 	if err != nil {
-		c.setLoading(false)
 		return nil, nil, err
 	}
 
-	c.mu.Lock()
-	c.loading = false
 	c.tableRows = tableRows
 	c.colLength = colLength
 	c.modifyTime = time.Now()
-	c.mu.Unlock()
 	return tableRows, colLength, nil
 }
 
@@ -368,7 +362,7 @@ func (e *memtableRetriever) dataForStatisticsInTable(schema *model.DBInfo, table
 	e.rows = append(e.rows, rows...)
 }
 
-func (e *memtableRetriever) dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) error {
+func (e *memtableRetriever) setDataFromTables(ctx sessionctx.Context, schemas []*model.DBInfo) error {
 	tableRowsMap, colLengthMap, err := tableStatsCache.get(ctx)
 	if err != nil {
 		return err
@@ -490,7 +484,7 @@ func (e *memtableRetriever) dataForTables(ctx sessionctx.Context, schemas []*mod
 	return nil
 }
 
-func (e *memtableRetriever) dataForPartitions(ctx sessionctx.Context, schemas []*model.DBInfo) error {
+func (e *memtableRetriever) setDataFromPartitions(ctx sessionctx.Context, schemas []*model.DBInfo) error {
 	tableRowsMap, colLengthMap, err := tableStatsCache.get(ctx)
 	if err != nil {
 		return err
@@ -970,4 +964,53 @@ func (e *memtableRetriever) dataForHotRegionByMetrics(metrics []helper.HotTableI
 		rows = append(rows, row)
 	}
 	e.rows = append(e.rows, rows...)
+}
+
+// setDataFromTableConstraints constructs data for table information_schema.constraints.See https://dev.mysql.com/doc/refman/5.7/en/table-constraints-table.html
+func (e *memtableRetriever) setDataFromTableConstraints(ctx sessionctx.Context, schemas []*model.DBInfo) {
+	checker := privilege.GetPrivilegeManager(ctx)
+	var rows [][]types.Datum
+	for _, schema := range schemas {
+		for _, tbl := range schema.Tables {
+			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, tbl.Name.L, "", mysql.AllPrivMask) {
+				continue
+			}
+
+			if tbl.PKIsHandle {
+				record := types.MakeDatums(
+					infoschema.CatalogVal,     // CONSTRAINT_CATALOG
+					schema.Name.O,             // CONSTRAINT_SCHEMA
+					mysql.PrimaryKeyName,      // CONSTRAINT_NAME
+					schema.Name.O,             // TABLE_SCHEMA
+					tbl.Name.O,                // TABLE_NAME
+					infoschema.PrimaryKeyType, // CONSTRAINT_TYPE
+				)
+				rows = append(rows, record)
+			}
+
+			for _, idx := range tbl.Indices {
+				var cname, ctype string
+				if idx.Primary {
+					cname = mysql.PrimaryKeyName
+					ctype = infoschema.PrimaryKeyType
+				} else if idx.Unique {
+					cname = idx.Name.O
+					ctype = infoschema.UniqueKeyType
+				} else {
+					// The index has no constriant.
+					continue
+				}
+				record := types.MakeDatums(
+					infoschema.CatalogVal, // CONSTRAINT_CATALOG
+					schema.Name.O,         // CONSTRAINT_SCHEMA
+					cname,                 // CONSTRAINT_NAME
+					schema.Name.O,         // TABLE_SCHEMA
+					tbl.Name.O,            // TABLE_NAME
+					ctype,                 // CONSTRAINT_TYPE
+				)
+				rows = append(rows, record)
+			}
+		}
+	}
+	e.rows = rows
 }
