@@ -23,11 +23,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
-<<<<<<< HEAD
 	"github.com/pingcap/tidb/sessionctx"
-=======
-	"github.com/pingcap/tidb/kv"
->>>>>>> a999ef6... expression: support different expr push down for TiKV and TiFlash (#15174)
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -253,16 +249,6 @@ func IsAllFirstRow(aggFuncs []*AggFuncDesc) bool {
 		}
 	}
 	return true
-}
-
-// CheckAggPushDown checks whether an agg function can be pushed to storage.
-func CheckAggPushDown(aggFunc *AggFuncDesc, storeType kv.StoreType) bool {
-	switch storeType {
-	case kv.TiFlash:
-		return CheckAggPushFlash(aggFunc)
-	default:
-		return true
-	}
 }
 
 // CheckAggPushFlash checks whether an agg function can be pushed to flash storage.
