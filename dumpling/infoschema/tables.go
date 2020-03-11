@@ -49,27 +49,28 @@ import (
 )
 
 const (
-	// TableSchemata is the string constant of infoschema table
+	// TableSchemata is the string constant of infoschema table.
 	TableSchemata = "SCHEMATA"
-	// TableTables is the string constant of infoschema table
+	// TableTables is the string constant of infoschema table.
 	TableTables           = "TABLES"
 	tableColumns          = "COLUMNS"
 	tableColumnStatistics = "COLUMN_STATISTICS"
 	tableStatistics       = "STATISTICS"
-	// TableCharacterSets is the string constant of infoschema charactersets memory table
+	// TableCharacterSets is the string constant of infoschema charactersets memory table.
 	TableCharacterSets = "CHARACTER_SETS"
-	// TableCollations is the string constant of infoschema collations memory table
+	// TableCollations is the string constant of infoschema collations memory table.
 	TableCollations = "COLLATIONS"
 	tableFiles      = "FILES"
-	// CatalogVal is the string constant of TABLE_CATALOG
+	// CatalogVal is the string constant of TABLE_CATALOG.
 	CatalogVal     = "def"
 	tableProfiling = "PROFILING"
-	// TablePartitions is the string constant of infoschema table
+	// TablePartitions is the string constant of infoschema table.
 	TablePartitions = "PARTITIONS"
-	// TableKeyColumn is the string constant of KEY_COLUMN_USAGE
+	// TableKeyColumn is the string constant of KEY_COLUMN_USAGE.
 	TableKeyColumn  = "KEY_COLUMN_USAGE"
 	tableReferConst = "REFERENTIAL_CONSTRAINTS"
-	tableSessionVar = "SESSION_VARIABLES"
+	// TableSessionVar is the string constant of SESSION_VARIABLES.
+	TableSessionVar = "SESSION_VARIABLES"
 	tablePlugins    = "PLUGINS"
 	// TableConstraints is the string constant of TABLE_CONSTRAINTS.
 	TableConstraints = "TABLE_CONSTRAINTS"
@@ -79,9 +80,9 @@ const (
 	tableSchemaPrivileges = "SCHEMA_PRIVILEGES"
 	tableTablePrivileges  = "TABLE_PRIVILEGES"
 	tableColumnPrivileges = "COLUMN_PRIVILEGES"
-	// TableEngines is the string constant of infoschema table
+	// TableEngines is the string constant of infoschema table.
 	TableEngines = "ENGINES"
-	// TableViews is the string constant of infoschema table
+	// TableViews is the string constant of infoschema table.
 	TableViews           = "VIEWS"
 	tableRoutines        = "ROUTINES"
 	tableParameters      = "PARAMETERS"
@@ -94,7 +95,7 @@ const (
 	// TableCollationCharacterSetApplicability is the string constant of infoschema memory table.
 	TableCollationCharacterSetApplicability = "COLLATION_CHARACTER_SET_APPLICABILITY"
 	tableProcesslist                        = "PROCESSLIST"
-	// TableTiDBIndexes is the string constant of infoschema table
+	// TableTiDBIndexes is the string constant of infoschema table.
 	TableTiDBIndexes      = "TIDB_INDEXES"
 	tableTiDBHotRegions   = "TIDB_HOT_REGIONS"
 	tableTiKVStoreStatus  = "TIKV_STORE_STATUS"
@@ -125,9 +126,9 @@ const (
 	TableMetricSummary = "METRICS_SUMMARY"
 	// TableMetricSummaryByLabel is a metric table that contains all metrics that group by label info.
 	TableMetricSummaryByLabel = "METRICS_SUMMARY_BY_LABEL"
-	// TableInspectionSummary is the string constant of inspection summary table
+	// TableInspectionSummary is the string constant of inspection summary table.
 	TableInspectionSummary = "INSPECTION_SUMMARY"
-	// TableInspectionRules is the string constant of currently implemented inspection and summary rules
+	// TableInspectionRules is the string constant of currently implemented inspection and summary rules.
 	TableInspectionRules = "INSPECTION_RULES"
 )
 
@@ -145,7 +146,7 @@ var tableIDMap = map[string]int64{
 	TablePartitions:                         autoid.InformationSchemaDBID + 11,
 	TableKeyColumn:                          autoid.InformationSchemaDBID + 12,
 	tableReferConst:                         autoid.InformationSchemaDBID + 13,
-	tableSessionVar:                         autoid.InformationSchemaDBID + 14,
+	TableSessionVar:                         autoid.InformationSchemaDBID + 14,
 	tablePlugins:                            autoid.InformationSchemaDBID + 15,
 	TableConstraints:                        autoid.InformationSchemaDBID + 16,
 	tableTriggers:                           autoid.InformationSchemaDBID + 17,
@@ -1140,25 +1141,6 @@ func dataForTiKVStoreStatus(ctx sessionctx.Context) (records [][]types.Datum, er
 	return records, nil
 }
 
-func dataForSessionVar(ctx sessionctx.Context) (records [][]types.Datum, err error) {
-	sessionVars := ctx.GetSessionVars()
-	for _, v := range variable.SysVars {
-		var value string
-		value, err = variable.GetSessionSystemVar(sessionVars, v.Name)
-		if err != nil {
-			return nil, err
-		}
-		row := types.MakeDatums(v.Name, value)
-		records = append(records, row)
-	}
-	return
-}
-
-func dataForUserPrivileges(ctx sessionctx.Context) [][]types.Datum {
-	pm := privilege.GetPrivilegeManager(ctx)
-	return pm.UserPrivilegesTable()
-}
-
 func dataForProcesslist(ctx sessionctx.Context) [][]types.Datum {
 	sm := ctx.GetSessionManager()
 	if sm == nil {
@@ -1803,7 +1785,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TablePartitions:                         partitionsCols,
 	TableKeyColumn:                          keyColumnUsageCols,
 	tableReferConst:                         referConstCols,
-	tableSessionVar:                         sessionVarCols,
+	TableSessionVar:                         sessionVarCols,
 	tablePlugins:                            pluginsCols,
 	TableConstraints:                        tableConstraintsCols,
 	tableTriggers:                           tableTriggersCols,
@@ -1888,8 +1870,6 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		fullRows = dataForColumns(ctx, dbs)
 	case tableStatistics:
 		fullRows = dataForStatistics(ctx, dbs)
-	case tableSessionVar:
-		fullRows, err = dataForSessionVar(ctx)
 	case tableFiles:
 	case tableProfiling:
 		if v, ok := ctx.GetSessionVars().GetSystemVar("profiling"); ok && variable.TiDBOptOn(v) {
