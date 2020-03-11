@@ -313,7 +313,9 @@ type mockSessionManager struct {
 	processInfoMap map[uint64]*util.ProcessInfo
 }
 
-func (sm *mockSessionManager) ShowProcessList() map[uint64]*util.ProcessInfo { return sm.processInfoMap }
+func (sm *mockSessionManager) ShowProcessList() map[uint64]*util.ProcessInfo {
+	return sm.processInfoMap
+}
 
 func (sm *mockSessionManager) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
 	rs, ok := sm.processInfoMap[id]
@@ -469,7 +471,7 @@ func (s *testTableSuite) TestSlowQuery(c *C) {
 # Query_time: 4.895492
 # Parse_time: 0.4
 # Compile_time: 0.2
-# Request_count: 1 Prewrite_time: 0.19 Binlog_prewrite_time: 0.21 Commit_time: 0.01 Commit_backoff_time: 0.18 Backoff_types: [txnLock] Resolve_lock_time: 0.03 Write_keys: 15 Write_size: 480 Prewrite_region: 1 Txn_retry: 8
+# Request_count: 1 Prewrite_time: 0.19 Wait_prewrite_binlog_time: 0.21 Commit_time: 0.01 Commit_backoff_time: 0.18 Backoff_types: [txnLock] Resolve_lock_time: 0.03 Write_keys: 15 Write_size: 480 Prewrite_region: 1 Txn_retry: 8
 # Process_time: 0.161 Request_count: 1 Total_keys: 100001 Process_keys: 100000
 # Wait_time: 0.101
 # Backoff_time: 0.092 LockKeys_time: 1.72
