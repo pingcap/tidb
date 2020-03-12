@@ -78,6 +78,9 @@ func (builder *RequestBuilder) SetDAGRequest(dag *tipb.DAGRequest) *RequestBuild
 		builder.Request.Tp = kv.ReqTypeDAG
 		builder.Request.Cacheable = true
 		builder.Request.Data, builder.err = dag.Marshal()
+		if dag.Executors[0].Tp == tipb.ExecType_TypeJoin {
+			builder.CopTaskBatch = true
+		}
 	}
 
 	return builder
