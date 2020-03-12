@@ -255,8 +255,10 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 	// Create a new session to test
 	tk = testkit.NewTestKitWithInit(c, s.store)
 
-	tk.MustExec("set global tidb_enable_stmt_summary = on")
+	tk.MustExec("set global tidb_enable_stmt_summary = true")
 	tk.MustExec("set global tidb_stmt_summary_history_size = 100")
+	defer tk.MustExec("set global tidb_enable_stmt_summary = false")
+	defer tk.MustExec("set global tidb_stmt_summary_history_size = 0")
 
 	// Create a new user to test statements summary table privilege
 	tk.MustExec("create user 'test_user'@'localhost'")
