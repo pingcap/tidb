@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	ddltestutil "github.com/pingcap/tidb/ddl/testutil"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -1214,7 +1215,7 @@ func (s *seqTestSuite) TestAutoRandIDRetry(c *C) {
 	tk.MustExec("insert into t values ()")
 	c.Assert(failpoint.Enable(fpName, `return(true)`), IsNil)
 	// Insertion failure will skip the 6 in retryInfo.
-	tk.MustGetErrCode("commit", mysql.ErrTxnRetryable)
+	tk.MustGetErrCode("commit", errno.ErrTxnRetryable)
 	c.Assert(failpoint.Disable(fpName), IsNil)
 
 	tk.MustExec("insert into t values ()")
@@ -1331,6 +1332,10 @@ func (s *testOOMSuite) SetUpSuite(c *C) {
 	domain.RunAutoAnalyze = false
 	s.do, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
+	originCfg := config.GetGlobalConfig()
+	newConf := *originCfg
+	newConf.OOMAction = config.OOMActionLog
+	config.StoreGlobalConfig(&newConf)
 }
 
 func (s *testOOMSuite) TearDownSuite(c *C) {
@@ -1344,38 +1349,6 @@ func (s *testOOMSuite) registerHook() {
 	s.oom = &oomCapturer{r.Core, "", sync.Mutex{}}
 	lg := zap.New(s.oom)
 	log.ReplaceGlobals(lg, r)
-}
-
-func (s *testOOMSuite) TestDistSQLMemoryControl(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t (id int, a int, b int, index idx_a(`a`))")
-	tk.MustExec("insert into t values (1,1,1), (2,2,2), (3,3,3)")
-
-	log.SetLevel(zap.WarnLevel)
-	s.oom.tracker = ""
-	tk.MustQuery("select * from t")
-	c.Assert(s.oom.tracker, Equals, "")
-	tk.Se.GetSessionVars().MemQuotaDistSQL = 1
-	tk.MustQuery("select * from t")
-	c.Assert(s.oom.tracker, Equals, "TableReader_5")
-	tk.Se.GetSessionVars().MemQuotaDistSQL = -1
-
-	s.oom.tracker = ""
-	tk.MustQuery("select a from t")
-	c.Assert(s.oom.tracker, Equals, "")
-	tk.Se.GetSessionVars().MemQuotaDistSQL = 1
-	tk.MustQuery("select a from t use index(idx_a)")
-	c.Assert(s.oom.tracker, Equals, "IndexReader_5")
-	tk.Se.GetSessionVars().MemQuotaDistSQL = -1
-
-	s.oom.tracker = ""
-	tk.MustQuery("select * from t")
-	c.Assert(s.oom.tracker, Equals, "")
-	tk.Se.GetSessionVars().MemQuotaIndexLookupReader = 1
-	tk.MustQuery("select * from t use index(idx_a)")
-	c.Assert(s.oom.tracker, Equals, "IndexLookUp_6")
-	tk.Se.GetSessionVars().MemQuotaIndexLookupReader = -1
 }
 
 func (s *testOOMSuite) TestMemTracker4UpdateExec(c *C) {
@@ -1395,6 +1368,9 @@ func (s *testOOMSuite) TestMemTracker4UpdateExec(c *C) {
 func (s *testOOMSuite) TestMemTracker4InsertAndReplaceExec(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("create table t (id int, a int, b int, index idx_a(`a`))")
+	tk.MustExec("insert into t values (1,1,1), (2,2,2), (3,3,3)")
+
 	tk.MustExec("create table t_MemTracker4InsertAndReplaceExec (id int, a int, b int, index idx_a(`a`))")
 
 	log.SetLevel(zap.InfoLevel)

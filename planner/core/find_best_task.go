@@ -1251,11 +1251,9 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 
 func (ts *PhysicalTableScan) addPushedDownSelection(copTask *copTask, stats *property.StatsInfo) {
 	ts.filterCondition, copTask.rootTaskConds = SplitSelCondsWithVirtualColumn(ts.filterCondition)
-	if ts.StoreType == kv.TiFlash {
-		var newRootConds []expression.Expression
-		ts.filterCondition, newRootConds = expression.CheckExprPushFlash(ts.filterCondition)
-		copTask.rootTaskConds = append(copTask.rootTaskConds, newRootConds...)
-	}
+	var newRootConds []expression.Expression
+	ts.filterCondition, newRootConds = expression.PushDownExprs(ts.ctx.GetSessionVars().StmtCtx, ts.filterCondition, ts.ctx.GetClient(), ts.StoreType)
+	copTask.rootTaskConds = append(copTask.rootTaskConds, newRootConds...)
 
 	// Add filter condition to table plan now.
 	sessVars := ts.ctx.GetSessionVars()
