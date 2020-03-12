@@ -1096,3 +1096,40 @@ func (s *testPessimisticSuite) TestBatchPointGetLockIndex(c *C) {
 	tk.MustExec("rollback")
 	tk2.MustExec("rollback")
 }
+
+func (s *testPessimisticSuite) TestRollbackWakeupBlockedTxn(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk2.MustExec("use test")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (c1 int primary key, c2 int, c3 int, unique key uk(c2))")
+	tk.MustExec("insert into t1 values (1, 1, 1)")
+	tk.MustExec("insert into t1 values (5, 5, 5)")
+	tk.MustExec("insert into t1 values (10, 10, 10)")
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/txnExpireRetTTL", "return"), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/getTxnStatusDelay", "return"), IsNil)
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("set innodb_lock_wait_timeout = 1")
+	tk2.MustExec("begin pessimistic")
+	tk.MustExec("update t1 set c3 = c3 + 1")
+	errCh := make(chan error)
+	go func() {
+		var err error
+		defer func() {
+			errCh <- err
+		}()
+		_, err = tk2.Exec("update t1 set c3 = 100 where c1 = 1")
+		if err != nil {
+			return
+		}
+	}()
+	time.Sleep(time.Millisecond * 30)
+	tk.MustExec("rollback")
+	err := <-errCh
+	c.Assert(err, IsNil)
+	tk2.MustExec("rollback")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/txnExpireRetTTL"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/getTxnStatusDelay"), IsNil)
+}
