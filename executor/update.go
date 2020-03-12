@@ -124,12 +124,12 @@ func (e *UpdateExec) canNotUpdate(handle types.Datum) bool {
 func (e *UpdateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	if !e.drained {
-		rows, err := e.updateRows(ctx)
+		numRows, err := e.updateRows(ctx)
 		if err != nil {
 			return err
 		}
 		e.drained = true
-		e.ctx.GetSessionVars().StmtCtx.AddRecordRows(uint64(rows))
+		e.ctx.GetSessionVars().StmtCtx.AddRecordRows(uint64(numRows))
 	}
 	return nil
 }
