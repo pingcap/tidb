@@ -5226,6 +5226,13 @@ func (s *testIntegrationSuite) TestIssue12301(c *C) {
 	tk.MustQuery("select * from t where d = i").Check(testkit.Rows("123456789012 123456789012"))
 }
 
+func (s *testIntegrationSerialSuite) TestIssue15315(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustQuery("select '0-3261554956'+0.0").Check(testkit.Rows("0"))
+	tk.MustQuery("select cast('0-1234' as real)").Check(testkit.Rows("0"))
+}
+
 func (s *testIntegrationSuite) TestNotExistFunc(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
@@ -5812,4 +5819,51 @@ func (s *testIntegrationSerialSuite) TestCollateStringFunction(c *C) {
 	tk.MustQuery("select FIND_IN_SET('a','b,a ,c,d' collate utf8mb4_bin);").Check(testkit.Rows("2"))
 	tk.MustQuery("select FIND_IN_SET('a','b,A,c,d' collate utf8mb4_general_ci);").Check(testkit.Rows("2"))
 	tk.MustQuery("select FIND_IN_SET('a','b,a ,c,d' collate utf8mb4_general_ci);").Check(testkit.Rows("2"))
+}
+
+func (s *testIntegrationSerialSuite) TestCollateLike(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set names utf8mb4 collate utf8mb4_general_ci")
+	tk.MustQuery("select 'a' like 'A'").Check(testkit.Rows("1"))
+	tk.MustQuery("select 'a' like 'A' collate utf8mb4_general_ci").Check(testkit.Rows("1"))
+	tk.MustQuery("select 'a' like 'À'").Check(testkit.Rows("1"))
+	tk.MustQuery("select 'a' like '%À'").Check(testkit.Rows("1"))
+	tk.MustQuery("select 'a' like '%À '").Check(testkit.Rows("0"))
+	tk.MustQuery("select 'a' like 'À%'").Check(testkit.Rows("1"))
+	tk.MustQuery("select 'a' like 'À_'").Check(testkit.Rows("0"))
+	tk.MustQuery("select 'a' like '%À%'").Check(testkit.Rows("1"))
+	tk.MustQuery("select 'aaa' like '%ÀAa%'").Check(testkit.Rows("1"))
+	tk.MustExec("set names utf8mb4 collate utf8mb4_bin")
+
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t_like;")
+	tk.MustExec("create table t_like(id int, b varchar(20) collate utf8mb4_general_ci);")
+	tk.MustExec("insert into t_like values (1, 'aaa'), (2, 'abc'), (3, 'aac');")
+	tk.MustQuery("select b like 'AaÀ' from t_like order by id;").Check(testkit.Rows("1", "0", "0"))
+	tk.MustQuery("select b like 'Aa_' from t_like order by id;").Check(testkit.Rows("1", "0", "1"))
+	tk.MustQuery("select b like '_A_' from t_like order by id;").Check(testkit.Rows("1", "0", "1"))
+	tk.MustQuery("select b from t_like where b like 'Aa_' order by id;").Check(testkit.Rows("aaa", "aac"))
+	tk.MustQuery("select b from t_like where b like 'A%' order by id;").Check(testkit.Rows("aaa", "abc", "aac"))
+	tk.MustQuery("select b from t_like where b like '%A%' order by id;").Check(testkit.Rows("aaa", "abc", "aac"))
+	tk.MustExec("alter table t_like add index idx_b(b);")
+	tk.MustQuery("select b from t_like use index(idx_b) where b like 'Aa_' order by id;").Check(testkit.Rows("aaa", "aac"))
+	tk.MustQuery("select b from t_like use index(idx_b) where b like 'A%' order by id;").Check(testkit.Rows("aaa", "abc", "aac"))
+	tk.MustQuery("select b from t_like use index(idx_b) where b like '%A%' order by id;").Check(testkit.Rows("aaa", "abc", "aac"))
+}
+
+func (s *testIntegrationSerialSuite) TestCollateSubQuery(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	tk := s.prepare4Collation(c, false)
+	tk.MustQuery("select id from t where v in (select v from t_bin) order by id").Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7"))
+	tk.MustQuery("select id from t_bin where v in (select v from t) order by id").Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7"))
+	tk.MustQuery("select id from t where v not in (select v from t_bin) order by id").Check(testkit.Rows())
+	tk.MustQuery("select id from t_bin where v not in (select v from t) order by id").Check(testkit.Rows())
+	tk.MustQuery("select id from t where exists (select 1 from t_bin where t_bin.v=t.v) order by id").Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7"))
+	tk.MustQuery("select id from t_bin where exists (select 1 from t where t_bin.v=t.v) order by id").Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7"))
+	tk.MustQuery("select id from t where not exists (select 1 from t_bin where t_bin.v=t.v) order by id").Check(testkit.Rows())
+	tk.MustQuery("select id from t_bin where not exists (select 1 from t where t_bin.v=t.v) order by id").Check(testkit.Rows())
 }
