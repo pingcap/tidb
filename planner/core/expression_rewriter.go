@@ -800,11 +800,8 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, v *ast.Patte
 	// If the leftKey and the rightKey have different collations, don't convert the sub-query to an inner-join
 	// since when converting we will add a distinct-agg upon the right child and this distinct-agg doesn't have the right collation.
 	// To keep it simple, we forbid this converting if they have different collations.
-	collFlag := true
 	lt, rt := lexpr.GetType(), rexpr.GetType()
-	if lt.EvalType() == types.ETString && rt.EvalType() == types.ETString && lt.Collate != rt.Collate {
-		collFlag = false
-	}
+	collFlag := collate.CompatibleCollate(lt.Collate, rt.Collate)
 
 	// If it's not the form of `not in (SUBQUERY)`,
 	// and has no correlated column from the current level plan(if the correlated column is from upper level,
