@@ -662,7 +662,8 @@ func onModifyTableComment(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 
 func onModifyTableCharsetAndCollate(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	var toCharset, toCollate string
-	if err := job.DecodeArgs(&toCharset, &toCollate); err != nil {
+	var needsOverwriteCols bool
+	if err := job.DecodeArgs(&toCharset, &toCollate, &needsOverwriteCols); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
@@ -686,14 +687,17 @@ func onModifyTableCharsetAndCollate(t *meta.Meta, job *model.Job) (ver int64, _ 
 
 	tblInfo.Charset = toCharset
 	tblInfo.Collate = toCollate
-	// update column charset.
-	for _, col := range tblInfo.Columns {
-		if field_types.HasCharset(&col.FieldType) {
-			col.Charset = toCharset
-			col.Collate = toCollate
-		} else {
-			col.Charset = charset.CharsetBin
-			col.Collate = charset.CharsetBin
+
+	if needsOverwriteCols {
+		// update column charset.
+		for _, col := range tblInfo.Columns {
+			if field_types.HasCharset(&col.FieldType) {
+				col.Charset = toCharset
+				col.Collate = toCollate
+			} else {
+				col.Charset = charset.CharsetBin
+				col.Collate = charset.CharsetBin
+			}
 		}
 	}
 
