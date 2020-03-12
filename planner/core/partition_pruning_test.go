@@ -44,8 +44,8 @@ func (s *testPartitionPruningSuite) TestCanBePrune(c *C) {
 		"create table t (d datetime not null)",
 		"to_days(d)",
 	)
-	lessThan := lessThanData{data: []int64{733108, 733132}, maxvalue: false}
-	prunner := &partitionRangePrunner1{lessThan, tc.col, tc.fn}
+	lessThan := lessThanDataInt{data: []int64{733108, 733132}, maxvalue: false}
+	prunner := &rangePruner{lessThan, tc.col, tc.fn}
 
 	queryExpr := tc.expr("d < '2000-03-08 00:00:00'")
 	result := partitionRangeForCNFExpr(tc.sctx, queryExpr, prunner, fullRange(len(lessThan.data)))
@@ -70,8 +70,8 @@ func (s *testPartitionPruningSuite) TestCanBePrune(c *C) {
 		"create table t (report_updated timestamp)",
 		"unix_timestamp(report_updated)",
 	)
-	lessThan = lessThanData{data: []int64{1199145600, 1207008000, 1262304000, 0}, maxvalue: true}
-	prunner = &partitionRangePrunner1{lessThan, tc.col, tc.fn}
+	lessThan = lessThanDataInt{data: []int64{1199145600, 1207008000, 1262304000, 0}, maxvalue: true}
+	prunner = &rangePruner{lessThan, tc.col, tc.fn}
 
 	queryExpr = tc.expr("report_updated > '2008-05-01 00:00:00'")
 	result = partitionRangeForCNFExpr(tc.sctx, queryExpr, prunner, fullRange(len(lessThan.data)))
@@ -87,7 +87,7 @@ func (s *testPartitionPruningSuite) TestCanBePrune(c *C) {
 }
 
 func (s *testPartitionPruningSuite) TestPruneUseBinarySearch(c *C) {
-	lessThan := lessThanData{data: []int64{4, 7, 11, 14, 17, 0}, maxvalue: true}
+	lessThan := lessThanDataInt{data: []int64{4, 7, 11, 14, 17, 0}, maxvalue: true}
 	cases := []struct {
 		input  dataForPrune
 		result partitionRange
@@ -130,7 +130,7 @@ type testCtx struct {
 	schema   *expression.Schema
 	columns  []*expression.Column
 	names    types.NameSlice
-	lessThan lessThanData
+	lessThan lessThanDataInt
 	col      *expression.Column
 	fn       *expression.ScalarFunction
 }
@@ -169,8 +169,8 @@ func (s *testPartitionPruningSuite) TestPartitionRangeForExpr(c *C) {
 		"create table t (a int)",
 		"a",
 	)
-	lessThan := lessThanData{data: []int64{4, 7, 11, 14, 17, 0}, maxvalue: true}
-	prunner := &partitionRangePrunner1{lessThan, tc.columns[0], nil}
+	lessThan := lessThanDataInt{data: []int64{4, 7, 11, 14, 17, 0}, maxvalue: true}
+	prunner := &rangePruner{lessThan, tc.columns[0], nil}
 	cases := []struct {
 		input  string
 		result partitionRangeOR
@@ -277,15 +277,15 @@ func (s *testPartitionPruningSuite) TestPartitionRangePrunner2VarChar(c *C) {
 		"create table t (a varchar(32))",
 		"a",
 	)
-	lessThanData := []string{"'c'", "'f'", "'h'", "'l'", "'t'"}
-	lessThan := make([]expression.Expression, len(lessThanData)+1) // +1 for maxvalue
-	for i, str := range lessThanData {
+	lessThanDataInt := []string{"'c'", "'f'", "'h'", "'l'", "'t'"}
+	lessThan := make([]expression.Expression, len(lessThanDataInt)+1) // +1 for maxvalue
+	for i, str := range lessThanDataInt {
 		tmp, err := expression.ParseSimpleExprsWithNames(tc.sctx, str, tc.schema, tc.names)
 		c.Assert(err, IsNil)
 		lessThan[i] = tmp[0]
 	}
 
-	prunner := &partitionRangePrunner2{lessThan, tc.columns[0], true}
+	prunner := &rangeColumnPruner{lessThan, tc.columns[0], true}
 	cases := []struct {
 		input  string
 		result partitionRangeOR
@@ -319,21 +319,21 @@ func (s *testPartitionPruningSuite) TestPartitionRangePrunner2Date(c *C) {
 		"create table t (a date)",
 		"a",
 	)
-	lessThanData := []string{
+	lessThanDataInt := []string{
 		"'1999-06-01'",
 		"'2000-05-01'",
 		"'2008-04-01'",
 		"'2010-03-01'",
 		"'2016-02-01'",
 		"'2020-01-01'"}
-	lessThan := make([]expression.Expression, len(lessThanData))
-	for i, str := range lessThanData {
+	lessThan := make([]expression.Expression, len(lessThanDataInt))
+	for i, str := range lessThanDataInt {
 		tmp, err := expression.ParseSimpleExprsWithNames(tc.sctx, str, tc.schema, tc.names)
 		c.Assert(err, IsNil)
 		lessThan[i] = tmp[0]
 	}
 
-	prunner := &partitionRangePrunner2{lessThan, tc.columns[0], false}
+	prunner := &rangeColumnPruner{lessThan, tc.columns[0], false}
 	cases := []struct {
 		input  string
 		result partitionRangeOR
