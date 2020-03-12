@@ -426,7 +426,7 @@ func (e *memtableRetriever) setDataFromTables(ctx sessionctx.Context, schemas []
 				var tableType string
 				switch schema.Name.L {
 				case util.InformationSchemaName.L, util.PerformanceSchemaName.L,
-					util.MetricSchemaName.L, util.InspectionSchemaName.L:
+					util.MetricSchemaName.L:
 					tableType = "SYSTEM VIEW"
 				default:
 					tableType = "BASE TABLE"

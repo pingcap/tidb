@@ -33,13 +33,17 @@ import (
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/server"
+	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/helper"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 	"google.golang.org/grpc"
 )
@@ -50,12 +54,19 @@ var _ = Suite(&testInfoschemaTableSuite{})
 // if your test not change the TableStatsCacheExpiry variable, please use testInfoschemaTableSuite for test.
 var _ = SerialSuites(&testInfoschemaTableSerialSuite{})
 
+var _ = SerialSuites(&inspectionSuite{})
+
 type testInfoschemaTableSuite struct {
 	store kv.Storage
 	dom   *domain.Domain
 }
 
 type testInfoschemaTableSerialSuite struct {
+	store kv.Storage
+	dom   *domain.Domain
+}
+
+type inspectionSuite struct {
 	store kv.Storage
 	dom   *domain.Domain
 }
@@ -90,6 +101,62 @@ func (s *testInfoschemaTableSuite) SetUpSuite(c *C) {
 func (s *testInfoschemaTableSuite) TearDownSuite(c *C) {
 	s.dom.Close()
 	s.store.Close()
+}
+
+func (s *inspectionSuite) SetUpSuite(c *C) {
+	testleak.BeforeTest()
+
+	var err error
+	s.store, err = mockstore.NewMockTikvStore()
+	c.Assert(err, IsNil)
+	session.DisableStats4Test()
+	s.dom, err = session.BootstrapSession(s.store)
+	c.Assert(err, IsNil)
+}
+
+func (s *inspectionSuite) TearDownSuite(c *C) {
+	s.dom.Close()
+	s.store.Close()
+	testleak.AfterTest(c)()
+}
+
+func (s *inspectionSuite) TestInspectionTables(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	instances := []string{
+		"pd,127.0.0.1:11080,127.0.0.1:10080,mock-version,mock-githash",
+		"tidb,127.0.0.1:11080,127.0.0.1:10080,mock-version,mock-githash",
+		"tikv,127.0.0.1:11080,127.0.0.1:10080,mock-version,mock-githash",
+	}
+	fpName := "github.com/pingcap/tidb/infoschema/mockClusterInfo"
+	fpExpr := `return("` + strings.Join(instances, ";") + `")`
+	c.Assert(failpoint.Enable(fpName, fpExpr), IsNil)
+	defer func() { c.Assert(failpoint.Disable(fpName), IsNil) }()
+
+	tk.MustQuery("select type, instance, status_address, version, git_hash from information_schema.cluster_info").Check(testkit.Rows(
+		"pd 127.0.0.1:11080 127.0.0.1:10080 mock-version mock-githash",
+		"tidb 127.0.0.1:11080 127.0.0.1:10080 mock-version mock-githash",
+		"tikv 127.0.0.1:11080 127.0.0.1:10080 mock-version mock-githash",
+	))
+
+	// enable inspection mode
+	inspectionTableCache := map[string]variable.TableSnapshot{}
+	tk.Se.GetSessionVars().InspectionTableCache = inspectionTableCache
+	tk.MustQuery("select type, instance, status_address, version, git_hash from information_schema.cluster_info").Check(testkit.Rows(
+		"pd 127.0.0.1:11080 127.0.0.1:10080 mock-version mock-githash",
+		"tidb 127.0.0.1:11080 127.0.0.1:10080 mock-version mock-githash",
+		"tikv 127.0.0.1:11080 127.0.0.1:10080 mock-version mock-githash",
+	))
+	c.Assert(inspectionTableCache["cluster_info"].Err, IsNil)
+	c.Assert(len(inspectionTableCache["cluster_info"].Rows), DeepEquals, 3)
+
+	// check whether is obtain data from cache at the next time
+	inspectionTableCache["cluster_info"].Rows[0][0].SetString("modified-pd", mysql.DefaultCollationName)
+	tk.MustQuery("select type, instance, status_address, version, git_hash from information_schema.cluster_info").Check(testkit.Rows(
+		"modified-pd 127.0.0.1:11080 127.0.0.1:10080 mock-version mock-githash",
+		"tidb 127.0.0.1:11080 127.0.0.1:10080 mock-version mock-githash",
+		"tikv 127.0.0.1:11080 127.0.0.1:10080 mock-version mock-githash",
+	))
+	tk.Se.GetSessionVars().InspectionTableCache = nil
 }
 
 func (s *testInfoschemaTableSuite) TestSchemataTables(c *C) {
