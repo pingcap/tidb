@@ -893,7 +893,7 @@ type WindowFrame struct {
 	End   *FrameBound
 }
 
-// HashCode creates the hashcode for FrameBound which can be used to identify itself from other FrameBound.
+// HashCode creates the hashcode for WindowFrame which can be used to identify itself from other WindowFrame.
 func (wf *WindowFrame) HashCode(sc *stmtctx.StatementContext) []byte {
 	startHashCode := wf.Start.hashCode(sc)
 	endHashCode := wf.End.hashCode(sc)
@@ -919,6 +919,12 @@ type FrameBound struct {
 
 // HashCode creates the hashcode for FrameBound which can be used to identify itself from other FrameBound.
 func (f *FrameBound) hashCode(sc *stmtctx.StatementContext) []byte {
+	// CalcFuncs are commonly `ScalarFunction`s, whose hashcode usually has a
+	// length larger than 20, so we pre-alloc 25 bytes for each calcFunc's hashcode.
+	// we pre-alloc total bytes size = SizeOf(Type)+SizeOf(UnBounded)+SizeOf(Num)+SizeOf(Encode(CalcFuncs))+SizeOf(CmpFuncs)
+	//								 = 4+1+8+(4+len(CalcFuncs)*(4+Sizeof(CalcFunc.hashcode)))+(SizeOf(len(CmpFuncs))+len(CmpFuncs)*SizeOf(uintptr))
+	//								 = 4+1+8+4+len(CalcFuncs)*29+4+len(CmpFuncs)*8
+	//								 = 21+len(CalcFuncs)*29+len(CmpFuncs)*8
 	hashcode := make([]byte, 0, 21+len(f.CalcFuncs)*29+len(f.CmpFuncs)*8)
 	hashcode = codec.EncodeIntAsUint32(hashcode, int(f.Type))
 	hashcode = codec.EncodeBool(hashcode, f.UnBounded)

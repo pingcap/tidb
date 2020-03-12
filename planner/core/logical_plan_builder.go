@@ -46,7 +46,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/parser_driver"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	util2 "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
@@ -1179,10 +1179,10 @@ func (by *ByItems) String() string {
 }
 
 // HashCode creates the hashcode for ByItems which can be used to identify itself from other ByItems.
-// It generated as Desc+Expr.
-// ByItems are commonly (bool + Column) which hashcode has the length 10,
-// so we pre-alloc 11 bytes for ByItems's hashcode.
+// It is generated as Desc+Expr.
 func (by *ByItems) HashCode(sc *stmtctx.StatementContext) []byte {
+	// ByItems is commonly (bool + Column) whose hashcode has the length 10,
+	// so we pre-alloc 11 bytes for ByItems's hashcode.
 	hashcode := make([]byte, 0, 11)
 	hashcode = codec.EncodeBool(hashcode, by.Desc)
 	hashcode = append(hashcode, by.Expr.HashCode(sc)...)

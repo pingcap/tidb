@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/hack"
 )
 
 // CorrelatedColumn stands for a column in a correlated sub query.
@@ -39,22 +38,6 @@ type CorrelatedColumn struct {
 // Clone implements Expression interface.
 func (col *CorrelatedColumn) Clone() Expression {
 	return col
-}
-
-// HashCode implements Expression interface.
-func (col *CorrelatedColumn) HashCode(sc *stmtctx.StatementContext) []byte {
-	hashcode := make([]byte, 0, 20)
-	hashcode = append(hashcode, col.Column.HashCode(sc)...)
-
-	hashcode = append(hashcode, col.Data.Kind())
-	v := col.Data.GetValue()
-	if b, ok := v.([]byte); ok && col.Data.Kind() == types.KindBytes {
-		hashcode = append(hashcode, b...)
-	} else {
-		hashcode = codec.EncodeCompactBytes(hashcode, hack.Slice(fmt.Sprintf("%v", v)))
-	}
-
-	return hashcode
 }
 
 // VecEvalInt evaluates this expression in a vectorized manner.

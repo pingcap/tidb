@@ -48,11 +48,16 @@ func NewAggFuncDesc(ctx sessionctx.Context, name string, args []expression.Expre
 }
 
 // HashCode creates the hashcode for AggFuncDesc which can be used to identify itself from other AggFuncDesc.
-// It generated as HasDistinct+Mode+Name+Encode(Args).
-// Arg are commonly Column which hashcode has the length 9,
-// so we pre-alloc 10 bytes for Arg's hashcode.
+// It is generated as HasDistinct+Mode+Name+Encode(Args).
 func (a *AggFuncDesc) HashCode(sc *stmtctx.StatementContext) []byte {
-	hashcode := make([]byte, 0, 19+len(a.Args)*14)
+	// the max length of AggFuncName ('json_objectagg') is 14.
+	// Arg is commonly Column whose hashcode has the length 9,
+	// so we pre-alloc 10 bytes for Arg's hashcode.
+	// we pre-alloc total bytes size = SizeOf(HasDistinct)+SizeOf(Mode)+SizeOf(AggFuncName)+SizeOf(Encode(args))
+	//								 = 1+4+14+SizeOf(len(args))+len(args)*(SizeOf(SizeOf(arg.hashcode))+SizeOf(arg.hashcode))
+	//								 = 19+4+len(args)*(4+SizeOf(arg.hashcode))
+	//								 = 23+len(args)*14
+	hashcode := make([]byte, 0, 23+len(a.Args)*14)
 	hashcode = codec.EncodeBool(hashcode, a.HasDistinct)
 	hashcode = codec.EncodeIntAsUint32(hashcode, int(a.Mode))
 	hashcode = codec.EncodeCompactBytes(hashcode, hack.Slice(a.Name))
