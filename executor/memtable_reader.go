@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
 	"github.com/pingcap/log"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/sysutil"
 	"github.com/pingcap/tidb/config"
@@ -62,12 +63,45 @@ type memTableRetriever interface {
 // MemTableReaderExec executes memTable information retrieving from the MemTable components
 type MemTableReaderExec struct {
 	baseExecutor
+	table     *model.TableInfo
 	retriever memTableRetriever
+}
+
+func (e MemTableReaderExec) isInspectionCacheableTable(tblName string) bool {
+	switch tblName {
+	case strings.ToLower(infoschema.TableClusterConfig),
+		strings.ToLower(infoschema.TableClusterInfo),
+		strings.ToLower(infoschema.TableClusterSystemInfo),
+		strings.ToLower(infoschema.TableClusterLoad),
+		strings.ToLower(infoschema.TableClusterHardware):
+		return true
+	default:
+		return false
+	}
 }
 
 // Next implements the Executor Next interface.
 func (e *MemTableReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
-	rows, err := e.retriever.retrieve(ctx, e.ctx)
+	var (
+		rows [][]types.Datum
+		err  error
+	)
+
+	// The `InspectionTableCache` will be assigned in the begin of retrieving` and be
+	// cleaned at the end of retrieving, so nil represents currently in non-inspection mode.
+	if cache, tbl := e.ctx.GetSessionVars().InspectionTableCache, e.table.Name.L; cache != nil &&
+		e.isInspectionCacheableTable(tbl) {
+		// Obtain data from cache first.
+		cached, found := cache[tbl]
+		if !found {
+			rows, err := e.retriever.retrieve(ctx, e.ctx)
+			cached = variable.TableSnapshot{Rows: rows, Err: err}
+			cache[tbl] = cached
+		}
+		rows, err = cached.Rows, cached.Err
+	} else {
+		rows, err = e.retriever.retrieve(ctx, e.ctx)
+	}
 	if err != nil {
 		return err
 	}
@@ -104,24 +138,6 @@ func (e *clusterConfigRetriever) retrieve(_ context.Context, sctx sessionctx.Con
 	}
 	e.retrieved = true
 
-	// The `InspectionTableCache` will be assigned in the begin of retrieving` and be
-	// cleaned at the end of retrieving, so nil represents currently in non-inspection mode.
-	if cache := sctx.GetSessionVars().InspectionTableCache; cache != nil {
-		// Obtain data from cache first.
-		tblName := strings.ToLower(infoschema.TableClusterConfig)
-		cached, found := cache[tblName]
-		if !found {
-			rows, err := e.fetch(sctx)
-			cached = variable.TableSnapshot{Rows: rows, Err: err}
-			cache[tblName] = cached
-		}
-		return cached.Rows, cached.Err
-	}
-
-	return e.fetch(sctx)
-}
-
-func (e clusterConfigRetriever) fetch(sctx sessionctx.Context) ([][]types.Datum, error) {
 	type result struct {
 		idx  int
 		rows [][]types.Datum
@@ -250,34 +266,6 @@ func (e *clusterServerInfoRetriever) retrieve(ctx context.Context, sctx sessionc
 	}
 	e.retrieved = true
 
-	// The `InspectionTableCache` will be assigned in the begin of retrieving` and be
-	// cleaned at the end of retrieving, so nil represents currently in non-inspection mode.
-	if cache := sctx.GetSessionVars().InspectionTableCache; cache != nil {
-		// Obtain data from cache first.
-		var tblName string
-		switch e.serverInfoType {
-		case diagnosticspb.ServerInfoType_HardwareInfo:
-			tblName = strings.ToLower(infoschema.TableClusterHardware)
-		case diagnosticspb.ServerInfoType_LoadInfo:
-			tblName = strings.ToLower(infoschema.TableClusterLoad)
-		case diagnosticspb.ServerInfoType_SystemInfo:
-			tblName = strings.ToLower(infoschema.TableClusterSystemInfo)
-		default:
-			return nil, errors.Errorf("unknown server info type: %v", e.serverInfoType)
-		}
-		cached, found := cache[tblName]
-		if !found {
-			rows, err := e.fetch(ctx, sctx)
-			cached = variable.TableSnapshot{Rows: rows, Err: err}
-			cache[tblName] = cached
-		}
-		return cached.Rows, cached.Err
-	}
-
-	return e.fetch(ctx, sctx)
-}
-
-func (e *clusterServerInfoRetriever) fetch(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
 	serversInfo, err := infoschema.GetClusterServerInfo(sctx)
 	if err != nil {
 		return nil, err

@@ -755,48 +755,27 @@ func (e *memtableRetriever) dataForCollationCharacterSetApplicability() {
 }
 
 func (e *memtableRetriever) dataForTiDBClusterInfo(ctx sessionctx.Context) error {
-	retrieve := func() error {
-		servers, err := infoschema.GetClusterServerInfo(ctx)
-		if err != nil {
-			e.rows = nil
-			return err
-		}
-		rows := make([][]types.Datum, 0, len(servers))
-		for _, server := range servers {
-			startTime := time.Unix(server.StartTimestamp, 0)
-			row := types.MakeDatums(
-				server.ServerType,
-				server.Address,
-				server.StatusAddr,
-				server.Version,
-				server.GitHash,
-				startTime.Format(time.RFC3339),
-				time.Since(startTime).String(),
-			)
-			rows = append(rows, row)
-		}
-		e.rows = rows
-		return nil
+	servers, err := infoschema.GetClusterServerInfo(ctx)
+	if err != nil {
+		e.rows = nil
+		return err
 	}
-
-	// The `InspectionTableCache` will be assigned in the begin of retrieving` and be
-	// cleaned at the end of retrieving, so nil represents currently in non-inspection mode.
-	if cache := ctx.GetSessionVars().InspectionTableCache; cache != nil {
-		// Obtain data from cache first.
-		cached, found := cache[e.table.Name.L]
-		if !found {
-			err := retrieve()
-			cached = variable.TableSnapshot{
-				Rows: e.rows,
-				Err:  err,
-			}
-			cache[e.table.Name.L] = cached
-		}
-		e.rows = cached.Rows
-		return cached.Err
+	rows := make([][]types.Datum, 0, len(servers))
+	for _, server := range servers {
+		startTime := time.Unix(server.StartTimestamp, 0)
+		row := types.MakeDatums(
+			server.ServerType,
+			server.Address,
+			server.StatusAddr,
+			server.Version,
+			server.GitHash,
+			startTime.Format(time.RFC3339),
+			time.Since(startTime).String(),
+		)
+		rows = append(rows, row)
 	}
-
-	return retrieve()
+	e.rows = rows
+	return nil
 }
 
 func (e *memtableRetriever) setDataFromKeyColumnUsage(ctx sessionctx.Context, schemas []*model.DBInfo) {
