@@ -271,7 +271,7 @@ func (ib *WriteStmtBufs) clean() {
 	ib.IndexKeyBuf = nil
 }
 
-// TableSnapshot represents a data snapshot of the table contained in `inspection_schema`.
+// TableSnapshot represents a data snapshot of the table contained in `information_schema`.
 type TableSnapshot struct {
 	Rows [][]types.Datum
 	Err  error
