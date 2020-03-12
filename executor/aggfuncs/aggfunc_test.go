@@ -456,7 +456,7 @@ func (s *testSuite) benchmarkAggFunc(b *testing.B, p aggTest) {
 	}
 	finalFunc = aggfuncs.Build(s.ctx, desc, 0)
 	resultChk.Reset()
-	b.Run(fmt.Sprintf("%v(disctinct)/%v", p.funcName, p.dataType), func(b *testing.B) {
+	b.Run(fmt.Sprintf("%v(distinct)/%v", p.funcName, p.dataType), func(b *testing.B) {
 		s.baseBenchmarkAggFunc(b, finalFunc, input, resultChk)
 	})
 }
@@ -497,7 +497,7 @@ func (s *testSuite) benchmarkMultiArgsAggFunc(b *testing.B, p multiArgsAggTest) 
 	}
 	finalFunc = aggfuncs.Build(s.ctx, desc, 0)
 	resultChk.Reset()
-	b.Run(fmt.Sprintf("%v(disctinct)/%v", p.funcName, p.dataTypes), func(b *testing.B) {
+	b.Run(fmt.Sprintf("%v(distinct)/%v", p.funcName, p.dataTypes), func(b *testing.B) {
 		s.baseBenchmarkAggFunc(b, finalFunc, input, resultChk)
 	})
 }
