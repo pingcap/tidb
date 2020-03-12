@@ -3173,6 +3173,11 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 			return nil, err
 		}
 	}
+	if !b.ctx.GetSessionVars().IsAutocommit() || b.ctx.GetSessionVars().InTxn() {
+		if !update.MultipleTable {
+			p = b.buildSelectLock(p, ast.SelectLockForUpdate)
+		}
+	}
 
 	if update.Order != nil {
 		p, err = b.buildSort(ctx, p, update.Order.Items, nil, nil)
@@ -3211,7 +3216,7 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 	updt.names = p.OutputNames()
 	// We cannot apply projection elimination when building the subplan, because
 	// columns in orderedList cannot be resolved.
-	updt.SelectPlan, _, err = DoOptimize(ctx, b.optFlag&^flagEliminateProjection, p)
+	updt.SelectPlan, _, err = DoOptimize(ctx, b.ctx, b.optFlag&^flagEliminateProjection, p)
 	if err != nil {
 		return nil, err
 	}
@@ -3408,6 +3413,11 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 			return nil, err
 		}
 	}
+	if !b.ctx.GetSessionVars().IsAutocommit() || b.ctx.GetSessionVars().InTxn() {
+		if !delete.IsMultiTable {
+			p = b.buildSelectLock(p, ast.SelectLockForUpdate)
+		}
+	}
 
 	if delete.Order != nil {
 		p, err = b.buildSort(ctx, p, delete.Order.Items, nil, nil)
@@ -3434,7 +3444,7 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 	}.Init(b.ctx)
 
 	del.names = p.OutputNames()
-	del.SelectPlan, _, err = DoOptimize(ctx, b.optFlag, p)
+	del.SelectPlan, _, err = DoOptimize(ctx, b.ctx, b.optFlag, p)
 	if err != nil {
 		return nil, err
 	}
