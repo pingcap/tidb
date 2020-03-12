@@ -1966,7 +1966,7 @@ func (s *testIntegrationSuite7) TestAddExpressionIndex(c *C) {
 
 	// Test experiment switch.
 	config.GetGlobalConfig().Experimental.AllowsExpressionIndex = false
-	tk.MustGetErrCode("create index d on t((a+1))", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrMsg("create index d on t((a+1))", "[ddl:8200]Unsupported creating expression index without allow-expression-index in config")
 }
 
 func (s *testIntegrationSuite7) TestCreateExpressionIndexError(c *C) {
