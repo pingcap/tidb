@@ -1133,7 +1133,6 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 		}
 	}()
 
-	binlogPrewriteStart := time.Now()
 	binlogChan := c.prewriteBinlog(ctx)
 	prewriteBo := NewBackoffer(ctx, PrewriteMaxBackoff).WithVars(c.txn.vars)
 	start := time.Now()
@@ -1147,7 +1146,9 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 		commitDetail.Mu.Unlock()
 	}
 	if binlogChan != nil {
+		startWaitBinlog := time.Now()
 		binlogWriteResult := <-binlogChan
+		commitDetail.WaitPrewriteBinlogTime = time.Since(startWaitBinlog)
 		if binlogWriteResult != nil {
 			binlogSkipped = binlogWriteResult.Skipped()
 			binlogErr := binlogWriteResult.GetError()
@@ -1156,7 +1157,6 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 			}
 		}
 	}
-	commitDetail.BinlogPrewriteTime = time.Since(binlogPrewriteStart)
 	if err != nil {
 		logutil.Logger(ctx).Debug("2PC failed on prewrite",
 			zap.Error(err),

@@ -15,6 +15,7 @@ package session_test
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -927,6 +928,46 @@ func (s *testPessimisticSuite) TestPessimisticReadCommitted(c *C) {
 	tk.MustExec("commit;")
 }
 
+func (s *testPessimisticSuite) TestPessimisticLockNonExistsKey(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (k int primary key, c int)")
+	tk.MustExec("insert t values (1, 1), (3, 3), (5, 5)")
+
+	// verify that select with project and filter on a non exists key still locks the key.
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert t values (8, 8)") // Make the transaction dirty.
+	tk.MustQuery("select c + 1 from t where k = 2 and c = 2 for update").Check(testkit.Rows())
+	explainStr := tk.MustQuery("explain select c + 1 from t where k = 2 and c = 2 for update").Rows()[0][0].(string)
+	c.Assert(strings.Contains(explainStr, "UnionScan"), IsFalse)
+	tk.MustQuery("select * from t where k in (4, 5, 7) for update").Check(testkit.Rows("5 5"))
+
+	tk1.MustExec("begin pessimistic")
+	err := tk1.ExecToErr("select * from t where k = 2 for update nowait")
+	c.Check(tikv.ErrLockAcquireFailAndNoWaitSet.Equal(err), IsTrue)
+	err = tk1.ExecToErr("select * from t where k = 4 for update nowait")
+	c.Check(tikv.ErrLockAcquireFailAndNoWaitSet.Equal(err), IsTrue)
+	err = tk1.ExecToErr("select * from t where k = 7 for update nowait")
+	c.Check(tikv.ErrLockAcquireFailAndNoWaitSet.Equal(err), IsTrue)
+	tk.MustExec("rollback")
+	tk1.MustExec("rollback")
+
+	// verify update and delete non exists keys still locks the key.
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert t values (8, 8)") // Make the transaction dirty.
+	tk.MustExec("update t set c = c + 1 where k in (2, 3, 4) and c > 0")
+	tk.MustExec("delete from t where k in (5, 6, 7) and c > 0")
+
+	tk1.MustExec("begin pessimistic")
+	err = tk1.ExecToErr("select * from t where k = 2 for update nowait")
+	c.Check(tikv.ErrLockAcquireFailAndNoWaitSet.Equal(err), IsTrue)
+	err = tk1.ExecToErr("select * from t where k = 6 for update nowait")
+	c.Check(tikv.ErrLockAcquireFailAndNoWaitSet.Equal(err), IsTrue)
+	tk.MustExec("rollback")
+	tk1.MustExec("rollback")
+}
+
 func (s *testPessimisticSuite) TestPessimisticCommitReadLock(c *C) {
 	// set lock ttl to 3s, tk1 lock wait timeout is 2s
 	atomic.StoreUint64(&tikv.ManagedLockTTL, 3000)
@@ -1031,4 +1072,27 @@ func (s *testPessimisticSuite) TestNonAutoCommitWithPessimisticMode(c *C) {
 	tk2.MustExec("insert into t1 values(4, 1)")
 	tk.MustQuery("select * from t1 where c2 = 1 for update").Check(testkit.Rows("1 1", "2 1", "3 1", "4 1"))
 	tk.MustExec("commit")
+}
+
+func (s *testPessimisticSuite) TestBatchPointGetLockIndex(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk2.MustExec("use test")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (c1 int primary key, c2 int, c3 int, unique key uk(c2))")
+	tk.MustExec("insert into t1 values (1, 1, 1)")
+	tk.MustExec("insert into t1 values (5, 5, 5)")
+	tk.MustExec("insert into t1 values (10, 10, 10)")
+	tk.MustExec("begin pessimistic")
+	// the handle does not exist and the index key should be locked as point get executor did
+	tk.MustQuery("select * from t1 where c2 in (2, 3) for update").Check(testkit.Rows())
+	tk2.MustExec("set innodb_lock_wait_timeout = 1")
+	tk2.MustExec("begin pessimistic")
+	err := tk2.ExecToErr("insert into t1 values(2, 2, 2)")
+	c.Assert(tikv.ErrLockWaitTimeout.Equal(err), IsTrue)
+	err = tk2.ExecToErr("select * from t1 where c2 = 3 for update nowait")
+	c.Assert(tikv.ErrLockAcquireFailAndNoWaitSet.Equal(err), IsTrue)
+	tk.MustExec("rollback")
+	tk2.MustExec("rollback")
 }

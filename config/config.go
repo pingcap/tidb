@@ -282,7 +282,8 @@ func (s *Security) ToTLSConfig() (tlsConfig *tls.Config, err error) {
 			return
 		}
 		tlsConfig = &tls.Config{
-			RootCAs: certPool,
+			RootCAs:   certPool,
+			ClientCAs: certPool,
 		}
 
 		if len(s.ClusterSSLCert) != 0 && len(s.ClusterSSLKey) != 0 {
