@@ -17,10 +17,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/pingcap/tidb/util/pdapi"
 	"math"
 	"net/http"
-	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -30,12 +28,14 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/prometheus/client_golang/api"
 	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
@@ -98,19 +98,17 @@ func (e *MetricRetriever) queryMetric(ctx context.Context, sctx sessionctx.Conte
 	failpoint.InjectContext(ctx, "mockMetricsPromData", func() {
 		failpoint.Return(ctx.Value("__mockMetricsPromData").(pmodel.Matrix), nil)
 	})
-	var err error
-	if e.prometheusAddr == "" {
-		e.prometheusAddr, err = e.getMetricAddr(sctx)
-		if err != nil {
-			return nil, err
-		}
-	}
-	queryClient, err := newQueryClient(e.prometheusAddr)
+	prometheusAddr, err := infosync.GetPrometheusAddr()
 	if err != nil {
 		return nil, err
 	}
-
-	promQLAPI := promv1.NewAPI(queryClient)
+	promClient, err := api.NewClient(api.Config{
+		Address: prometheusAddr,
+	})
+	if err != nil {
+		return nil, err
+	}
+	promQLAPI := promv1.NewAPI(promClient)
 	ctx, cancel := context.WithTimeout(ctx, promReadTimeout)
 	defer cancel()
 
@@ -138,6 +136,7 @@ func (e *MetricRetriever) getMetricAddr(sctx sessionctx.Context) (string, error)
 	if !ok {
 		return "", errors.Errorf("%T not an etcd backend", store)
 	}
+
 	pdAddrs := etcd.EtcdAddrs()
 	if len(pdAddrs) < 0 {
 		return "", errors.New("pd unavailable")
@@ -225,30 +224,6 @@ func (e *MetricRetriever) genRecord(metric pmodel.Metric, pair pmodel.SamplePair
 		record = append(record, types.NewFloat64Datum(float64(pair.Value)))
 	}
 	return record
-}
-
-type queryClient struct {
-	api.Client
-}
-
-func newQueryClient(addr string) (api.Client, error) {
-	promClient, err := api.NewClient(api.Config{
-		Address: fmt.Sprintf("%s", addr),
-	})
-	if err != nil {
-		return nil, err
-	}
-	return &queryClient{
-		promClient,
-	}, nil
-}
-
-// URL implement the api.Client interface.
-// This is use to convert prometheus api path to PD API path.
-func (c *queryClient) URL(ep string, args map[string]string) *url.URL {
-	//// FIXME: add `PD-Allow-follower-handle: true` in http header, let pd follower can handle this request too.
-	//ep = strings.Replace(ep, "api/v1", "pd/api/v1/metric", 1)
-	return c.Client.URL(ep, args)
 }
 
 // MetricsSummaryRetriever uses to read metric data.

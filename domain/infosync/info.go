@@ -17,8 +17,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -34,6 +36,7 @@ import (
 	util2 "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/printer"
 	"go.etcd.io/etcd/clientv3"
 	"go.etcd.io/etcd/clientv3/concurrency"
@@ -61,6 +64,10 @@ const (
 	TopologySessionTTL = 45
 	// TopologyTimeToRefresh means time to refresh etcd.
 	TopologyTimeToRefresh = 30 * time.Second
+	// TopologyPrometheus means address of prometheus.
+	TopologyPrometheus = "/topology/prometheus"
+	// TablePrometheusCacheExpiry is the expiry time for table stats cache.
+	TablePrometheusCacheExpiry = 5 * time.Second
 )
 
 // InfoSyncer stores server info to etcd when the tidb-server starts and delete when tidb-server shuts down.
@@ -73,6 +80,8 @@ type InfoSyncer struct {
 	manager         util2.SessionManager
 	session         *concurrency.Session
 	topologySession *concurrency.Session
+	prometheusAddr  string
+	modifyTime      time.Time
 }
 
 // ServerInfo is server static information.
@@ -449,6 +458,93 @@ func (is *InfoSyncer) updateTopologyAliveness(ctx context.Context) error {
 	return util.PutKVToEtcd(ctx, is.etcdCli, keyOpDefaultRetryCnt, key,
 		fmt.Sprintf("%v", time.Now().UnixNano()),
 		clientv3.WithLease(is.topologySession.Lease()))
+}
+
+// GetPrometheusAddr gets prometheus Address
+func GetPrometheusAddr() (string, error) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return "", err
+	}
+
+	// if the cache of prometheusAddr is over 5s, update the prometheusAddr
+	if time.Since(is.modifyTime) < TablePrometheusCacheExpiry {
+		return is.prometheusAddr, nil
+	} else {
+		is.prometheusAddr = ""
+		return is.getPrometheusAddr()
+	}
+}
+
+type prometheus struct {
+	IP         string `json:"ip"`
+	BinaryPath string `json:"binary_path"`
+	Port       int    `json:"port"`
+}
+
+type metricStorage struct {
+	PdServer struct {
+		MetricStorage string `json:"metric-storage"`
+	} `json:"pd-server"`
+}
+
+func (is *InfoSyncer) getPrometheusAddr() (string, error) {
+	// Get PD servers info.
+	pdAddrs := is.etcdCli.Endpoints()
+	if len(pdAddrs) < 0 {
+		return "", errors.New("pd unavailable")
+	}
+	var res string
+
+	// get prometheus address from pdApi
+	var url string
+	if strings.HasPrefix(pdAddrs[0], "http://") {
+		url = fmt.Sprintf("%s%s", pdAddrs[0], pdapi.Config)
+	} else {
+		url = fmt.Sprintf("http://%s%s", pdAddrs[0], pdapi.Config)
+	}
+	resp, err := http.Get(url)
+	if err != nil {
+		return "", err
+	}
+	var metricStorage metricStorage
+	dec := json.NewDecoder(resp.Body)
+	err = dec.Decode(&metricStorage)
+	if err != nil {
+		return "", err
+	}
+	res = metricStorage.PdServer.MetricStorage
+
+	// get prometheus address from etcdApi
+	if res == "" {
+		values, err := is.get(TopologyPrometheus)
+		if err != nil {
+			return "", errors.Trace(err)
+		}
+		var prometheus prometheus
+		err = json.Unmarshal([]byte(values), &prometheus)
+		if err != nil {
+			return "", errors.Trace(err)
+		}
+		res = fmt.Sprintf("http://%s:%v", prometheus.IP, strconv.Itoa(prometheus.Port))
+	}
+	is.prometheusAddr = res
+	is.modifyTime = time.Now()
+	return res, nil
+}
+
+// Get implements the Get method for SafePointKV
+func (is *InfoSyncer) get(k string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
+	resp, err := is.etcdCli.Get(ctx, k)
+	cancel()
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	if len(resp.Kvs) > 0 {
+		return string(resp.Kvs[0].Value), nil
+	}
+	return "", nil
 }
 
 // getInfo gets server information from etcd according to the key and opts.
