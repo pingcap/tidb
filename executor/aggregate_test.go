@@ -830,3 +830,17 @@ func (s *testSuiteAgg) TestIssue12759HashAggCalledByApply(c *C) {
 		tk.MustQuery(tt).Check(testkit.Rows(output[i]...))
 	}
 }
+
+func (s *testSuiteAgg) TestPR15242ShallowCopy(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a json);`)
+	tk.MustExec(`insert into t values ('{"id": 1,"score":23}');`)
+	tk.MustExec(`insert into t values ('{"id": 2,"score":23}');`)
+	tk.MustExec(`insert into t values ('{"id": 1,"score":233}');`)
+	tk.MustExec(`insert into t values ('{"id": 2,"score":233}');`)
+	tk.MustExec(`insert into t values ('{"id": 3,"score":233}');`)
+	tk.Se.GetSessionVars().MaxChunkSize = 2
+	tk.MustQuery(`select max(JSON_EXTRACT(a, '$.score')) as max_score,JSON_EXTRACT(a,'$.id') as id from t group by id order by id;`).Check(testkit.Rows("233 1", "233 2", "233 3"))
+
+}

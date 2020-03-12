@@ -548,9 +548,6 @@ func (s *testSuite5) TestValidateSetVar(c *C) {
 	_, err = tk.Exec("set @@tidb_batch_delete=3;")
 	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))
 
-	_, err = tk.Exec("set @@tidb_mem_quota_mergejoin='tidb';")
-	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))
-
 	tk.MustExec("set @@group_concat_max_len=1")
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect group_concat_max_len value: '1'"))
 	result := tk.MustQuery("select @@group_concat_max_len;")

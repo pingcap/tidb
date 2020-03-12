@@ -560,14 +560,15 @@ func tryWhereIn2BatchPointGet(ctx sessionctx.Context, selStmt *ast.SelectStmt) *
 		// Try use handle
 		if tbl.PKIsHandle {
 			for _, col := range tbl.Columns {
-				if mysql.HasPriKeyFlag(col.Flag) {
-					tryHandle = col.Name.L == colName.Name.Name.L
+				if mysql.HasPriKeyFlag(col.Flag) && col.Name.L == colName.Name.Name.L {
+					tryHandle = true
 					fieldType = &col.FieldType
 					whereColNames = append(whereColNames, col.Name.L)
 					break
 				}
 			}
-		} else {
+		}
+		if !tryHandle {
 			// Downgrade to use unique index
 			whereColNames = append(whereColNames, colName.Name.Name.L)
 		}

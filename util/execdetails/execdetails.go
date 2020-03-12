@@ -48,13 +48,13 @@ type ExecDetails struct {
 
 // CommitDetails contains commit detail information.
 type CommitDetails struct {
-	GetCommitTsTime    time.Duration
-	PrewriteTime       time.Duration
-	BinlogPrewriteTime time.Duration
-	CommitTime         time.Duration
-	LocalLatchTime     time.Duration
-	CommitBackoffTime  int64
-	Mu                 struct {
+	GetCommitTsTime        time.Duration
+	PrewriteTime           time.Duration
+	WaitPrewriteBinlogTime time.Duration
+	CommitTime             time.Duration
+	LocalLatchTime         time.Duration
+	CommitBackoffTime      int64
+	Mu                     struct {
 		sync.Mutex
 		BackoffTypes []fmt.Stringer
 	}
@@ -82,8 +82,8 @@ const (
 	ProcessKeysStr = "Process_keys"
 	// PreWriteTimeStr means the time of pre-write.
 	PreWriteTimeStr = "Prewrite_time"
-	// BinlogPrewriteTimeStr means the time of binlog prewrite
-	BinlogPrewriteTimeStr = "Binlog_prewrite_time"
+	// WaitPrewriteBinlogTimeStr means the time of waiting prewrite binlog finished when transaction committing.
+	WaitPrewriteBinlogTimeStr = "Wait_prewrite_binlog_time"
 	// CommitTimeStr means the time of commit.
 	CommitTimeStr = "Commit_time"
 	// GetCommitTSTimeStr means the time of getting commit ts.
@@ -135,8 +135,8 @@ func (d ExecDetails) String() string {
 		if commitDetails.PrewriteTime > 0 {
 			parts = append(parts, PreWriteTimeStr+": "+strconv.FormatFloat(commitDetails.PrewriteTime.Seconds(), 'f', -1, 64))
 		}
-		if commitDetails.BinlogPrewriteTime > 0 {
-			parts = append(parts, BinlogPrewriteTimeStr+": "+strconv.FormatFloat(commitDetails.BinlogPrewriteTime.Seconds(), 'f', -1, 64))
+		if commitDetails.WaitPrewriteBinlogTime > 0 {
+			parts = append(parts, WaitPrewriteBinlogTimeStr+": "+strconv.FormatFloat(commitDetails.WaitPrewriteBinlogTime.Seconds(), 'f', -1, 64))
 		}
 		if commitDetails.CommitTime > 0 {
 			parts = append(parts, CommitTimeStr+": "+strconv.FormatFloat(commitDetails.CommitTime.Seconds(), 'f', -1, 64))
