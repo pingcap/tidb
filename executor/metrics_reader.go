@@ -117,7 +117,7 @@ func (e *MetricRetriever) queryMetric(ctx context.Context, sctx sessionctx.Conte
 	return result, err
 }
 
-type MetricStorage struct {
+type metricStorage struct {
 	PdServer struct {
 		MetricStorage string `json:"metric-storage"`
 	} `json:"pd-server"`
@@ -149,7 +149,7 @@ func (e *MetricRetriever) getMetricAddr(sctx sessionctx.Context) (string, error)
 	if err != nil {
 		return "", err
 	}
-	var metricStorage MetricStorage
+	var metricStorage metricStorage
 	dec := json.NewDecoder(resp.Body)
 	err = dec.Decode(&metricStorage)
 	if err != nil {

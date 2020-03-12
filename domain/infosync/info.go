@@ -470,10 +470,9 @@ func GetPrometheusAddr() (string, error) {
 	// if the cache of prometheusAddr is over 5s, update the prometheusAddr
 	if time.Since(is.modifyTime) < TablePrometheusCacheExpiry {
 		return is.prometheusAddr, nil
-	} else {
-		is.prometheusAddr = ""
-		return is.getPrometheusAddr()
 	}
+	is.prometheusAddr = ""
+	return is.getPrometheusAddr()
 }
 
 type prometheus struct {
