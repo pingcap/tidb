@@ -115,7 +115,7 @@ func tableNames2HintTableInfo(ctx sessionctx.Context, hintTables []ast.HintTable
 	hintTableInfos := make([]hintTableInfo, len(hintTables))
 	defaultDBName := model.NewCIStr(ctx.GetSessionVars().CurrentDB)
 	for i, hintTable := range hintTables {
-		tableInfo := hintTableInfo{tblName: hintTable.TableName, selectOffset: p.getHintOffset(hintTable.QBName, nodeType, currentOffset)}
+		tableInfo := hintTableInfo{dbName: hintTable.DBName, tblName: hintTable.TableName, selectOffset: p.getHintOffset(hintTable.QBName, nodeType, currentOffset)}
 		if tableInfo.dbName.L == "" {
 			tableInfo.dbName = defaultDBName
 		}
