@@ -158,15 +158,17 @@ func TestInfo(t *testing.T) {
 		t.Fatalf("server one info %v, info %v", infos[ddlID], info)
 	}
 
-	// test the scene where syncer.Done() gets the information.
+	// Test the scene where syncer.Done() gets the information.
+	if !dom.SchemaValidator.IsStarted() {
+		t.Fatal("syncer is not start")
+	}
+	// Note: We do not check if the syncer is stopped and then restart here,
+	// but the following code ensure the SchemaSyncer restart successfully
 	err = dom.ddl.SchemaSyncer().Close()
 	if err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(time.Second)
-	if !dom.SchemaValidator.IsStarted() {
-		t.Fatal("start syncer failed")
-	}
+
 	// Make sure loading schema is normal.
 	cs := &ast.CharsetOpt{
 		Chs: "utf8",
