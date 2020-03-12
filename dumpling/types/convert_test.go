@@ -849,6 +849,8 @@ func (s *testTypeConvertSuite) TestGetValidFloat(c *C) {
 		{"", "0"},
 		{"123e+", "123"},
 		{"123.e", "123."},
+		{"0-123", "0"},
+		{"9-3", "9"},
 	}
 	sc := new(stmtctx.StatementContext)
 	for _, tt := range tests {
