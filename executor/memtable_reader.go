@@ -67,7 +67,7 @@ type MemTableReaderExec struct {
 	retriever memTableRetriever
 }
 
-func (e MemTableReaderExec) isInspectionCacheableTable(tblName string) bool {
+func (e *MemTableReaderExec) isInspectionCacheableTable(tblName string) bool {
 	switch tblName {
 	case strings.ToLower(infoschema.TableClusterConfig),
 		strings.ToLower(infoschema.TableClusterInfo),
