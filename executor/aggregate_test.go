@@ -726,7 +726,7 @@ func (s *testSuite) TestIssue10608(c *C) {
 	tk.MustQuery("select (select group_concat(concat(123,'-')) from t where t.id = b group by t.id)  from s;").Check(testkit.Rows("123-", "123-"))
 }
 
-func (s *testSuiteAgg) TestPR15242ShallowCopy(c *C) {
+func (s *testSuite) TestPR15242ShallowCopy(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec(`drop table if exists t;`)
 	tk.MustExec(`create table t(a json);`)
