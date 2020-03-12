@@ -1639,6 +1639,11 @@ var MetricTableMap = map[string]MetricTableDef{
 		Comment: "The count of write operations",
 	},
 	"tikv_engine_write_duration": {
+		PromQL:  `avg(tikv_engine_write_micro_seconds{$LABEL_CONDITIONS}) by (db,type,instance)`,
+		Labels:  []string{"instance", "type", "db"},
+		Comment: "The time consumed when executing write operation, the unit is microsecond",
+	},
+	"tikv_engine_write_max_duration": {
 		PromQL:  `max(tikv_engine_write_micro_seconds{$LABEL_CONDITIONS}) by (db,type,instance)`,
 		Labels:  []string{"instance", "type", "db"},
 		Comment: "The time consumed when executing write operation, the unit is microsecond",
