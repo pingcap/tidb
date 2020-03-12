@@ -1,0 +1,14 @@
+use test;
+drop table if exists t1, t2, t3, t4;
+create table t1 (c1 int primary key, c2 int, c3 int, index c2 (c2));
+create table t2 (c1 int unique, c2 int);
+insert into t2 values(1, 0), (2, 1);
+create table t3 (a bigint, b bigint, c bigint, d bigint);
+create table t4 (a int, b int, c int, index idx(a, b), primary key(a));
+create index expr_idx on t4((a+b+1));
+
+set @@session.tidb_window_concurrency = 4;
+set @@session.tidb_executors_concurrency = 4;
+
+explain select * from t1 order by c2;
+explain select * from t2 order by c2;

@@ -1542,6 +1542,9 @@ func CreateSession4TestWithOpt(store kv.Storage, opt *Opt) (Session, error) {
 		// initialize session variables for test.
 		s.GetSessionVars().InitChunkSize = 2
 		s.GetSessionVars().MaxChunkSize = 32
+
+		// disable executors_concurrency by default, and enable for specific shuffle test cases.
+		_, err = s.Execute(context.Background(), "set @@tidb_executors_concurrency = 1")
 	}
 	return s, err
 }

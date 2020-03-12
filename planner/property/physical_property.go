@@ -180,8 +180,8 @@ func (p *PhysicalProperty) String() string {
 // required property for children plan in `exhaustPhysicalPlans`, so we don't copy `Enforced` field
 // because if `Enforced` is true, the `Items` must be empty now, this makes `Enforced` meaningless
 // for children nodes.
-// We don't copy `IsPartitioning` and `PartitionGroupingCols` fields,
-// otherwise, non-parallel logical plans using `Clone()` will return partitioning properties.
+// We don't copy `IsPartitioning` and `PartitionGroupingCols` fields.
+// Otherwise, some existing codes do a `Clone` would lead to non-parallel logical plans returning partitioning properties.
 func (p *PhysicalProperty) Clone() *PhysicalProperty {
 	prop := &PhysicalProperty{
 		Items:       p.Items,

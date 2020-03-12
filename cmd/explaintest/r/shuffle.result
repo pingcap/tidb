@@ -1,0 +1,24 @@
+use test;
+drop table if exists t1, t2, t3, t4;
+create table t1 (c1 int primary key, c2 int, c3 int, index c2 (c2));
+create table t2 (c1 int unique, c2 int);
+insert into t2 values(1, 0), (2, 1);
+create table t3 (a bigint, b bigint, c bigint, d bigint);
+create table t4 (a int, b int, c int, index idx(a, b), primary key(a));
+create index expr_idx on t4((a+b+1));
+set @@session.tidb_window_concurrency = 4;
+set @@session.tidb_executors_concurrency = 4;
+explain select * from t1 order by c2;
+id	estRows	task	operator info
+Shuffle_16	10000.00	root	execution info: concurrency:4, fan out:1, splitter:none, merger:merge-sort(test.t1.c2)
+└─Sort_6	10000.00	root	test.t1.c2:asc
+  └─Shuffle_15	2500.00	root	execution info: concurrency:1, fan out:4, splitter:random, merger:none
+    └─TableReader_9	10000.00	root	data:TableFullScan_8
+      └─TableFullScan_8	10000.00	cop[tikv]	table:t1, keep order:false, stats:pseudo
+explain select * from t2 order by c2;
+id	estRows	task	operator info
+Shuffle_13	10000.00	root	execution info: concurrency:4, fan out:1, splitter:none, merger:merge-sort(test.t2.c2)
+└─Sort_6	10000.00	root	test.t2.c2:asc
+  └─Shuffle_12	2500.00	root	execution info: concurrency:1, fan out:4, splitter:random, merger:none
+    └─TableReader_9	10000.00	root	data:TableFullScan_8
+      └─TableFullScan_8	10000.00	cop[tikv]	table:t2, keep order:false, stats:pseudo

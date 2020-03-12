@@ -144,16 +144,14 @@
       {
         "SQL": "explain select * from t order by a",
         "Result": [
-          "Shuffle_22 10005.00 root execution info: concurrency:4, fan out:1, splitter:none, merger:merge-sort(test.t.a)",
-          "└─Sort_10 10005.00 root test.t.a:asc",
-          "  └─Shuffle_21 2501.25 root execution info: concurrency:1, fan out:4, splitter:random, merger:none",
-          "    └─Union_12 10005.00 root ",
-          "      ├─TableReader_14 10000.00 root data:TableFullScan_13",
-          "      │ └─TableFullScan_13 10000.00 cop[tikv] table:t, partition:p0, keep order:false, stats:pseudo",
-          "      ├─TableReader_16 1.00 root data:TableFullScan_15",
-          "      │ └─TableFullScan_15 1.00 cop[tikv] table:t, partition:p1, keep order:false",
-          "      └─TableReader_18 4.00 root data:TableFullScan_17",
-          "        └─TableFullScan_17 4.00 cop[tikv] table:t, partition:p2, keep order:false"
+          "Sort_8 10005.00 root test.t.a:asc",
+          "└─Union_11 10005.00 root ",
+          "  ├─TableReader_13 10000.00 root data:TableFullScan_12",
+          "  │ └─TableFullScan_12 10000.00 cop[tikv] table:t, partition:p0, keep order:false, stats:pseudo",
+          "  ├─TableReader_15 1.00 root data:TableFullScan_14",
+          "  │ └─TableFullScan_14 1.00 cop[tikv] table:t, partition:p1, keep order:false",
+          "  └─TableReader_17 4.00 root data:TableFullScan_16",
+          "    └─TableFullScan_16 4.00 cop[tikv] table:t, partition:p2, keep order:false"
         ]
       },
       {
@@ -280,27 +278,25 @@
       {
         "SQL": "desc select * from ttt order by ttt.a desc",
         "Plan": [
-          "TableReader_14 10000.00 root data:TableFullScan_13",
-          "└─TableFullScan_13 10000.00 cop[tikv] table:ttt, keep order:true, desc, stats:pseudo"
+          "TableReader_13 10000.00 root data:TableFullScan_12",
+          "└─TableFullScan_12 10000.00 cop[tikv] table:ttt, keep order:true, desc, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "desc select /*+ read_from_storage(tiflash[ttt]) */ * from ttt order by ttt.a desc",
         "Plan": [
-          "Shuffle_13 10000.00 root execution info: concurrency:4, fan out:1, splitter:none, merger:merge-sort(test.ttt.a desc)",
-          "└─Sort_6 10000.00 root test.ttt.a:desc",
-          "  └─Shuffle_12 2500.00 root execution info: concurrency:1, fan out:4, splitter:random, merger:none",
-          "    └─TableReader_9 10000.00 root data:TableFullScan_8",
-          "      └─TableFullScan_8 10000.00 cop[tiflash] table:ttt, keep order:false, stats:pseudo"
+          "Sort_4 10000.00 root test.ttt.a:desc",
+          "└─TableReader_8 10000.00 root data:TableFullScan_7",
+          "  └─TableFullScan_7 10000.00 cop[tiflash] table:ttt, keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "desc select /*+ read_from_storage(tiflash[ttt]) */ * from ttt order by ttt.a",
         "Plan": [
-          "TableReader_12 10000.00 root data:TableFullScan_11",
-          "└─TableFullScan_11 10000.00 cop[tiflash] table:ttt, keep order:true, stats:pseudo"
+          "TableReader_11 10000.00 root data:TableFullScan_10",
+          "└─TableFullScan_10 10000.00 cop[tiflash] table:ttt, keep order:true, stats:pseudo"
         ],
         "Warn": null
       }
