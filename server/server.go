@@ -112,12 +112,7 @@ type Server struct {
 	concurrentLimiter *TokenLimiter
 	clients           map[uint32]*clientConn
 	capability        uint32
-
-	// stopListenerCh is used when a critical error occurred, we don't want to exit the process, because there may be
-	// a supervisor automatically restart it, then new client connection will be created, but we can't server it.
-	// So we just stop the listener and store to force clients to chose other TiDB servers.
-	stopListenerCh chan struct{}
-	statusServer   *http.Server
+	statusServer      *http.Server
 }
 
 // ConnectionCount gets current connection count.
@@ -201,7 +196,6 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		driver:            driver,
 		concurrentLimiter: NewTokenLimiter(cfg.TokenLimit),
 		clients:           make(map[uint32]*clientConn),
-		stopListenerCh:    make(chan struct{}, 1),
 	}
 	s.loadTLSCertificates()
 	setSystemTimeZoneVariable()
@@ -326,11 +320,6 @@ func (s *Server) Run() error {
 			logutil.Logger(context.Background()).Error("accept failed", zap.Error(err))
 			return errors.Trace(err)
 		}
-		if s.shouldStopListener() {
-			err = conn.Close()
-			terror.Log(errors.Trace(err))
-			break
-		}
 
 		clientConn := s.newConn(conn)
 
@@ -357,23 +346,6 @@ func (s *Server) Run() error {
 		}
 
 		go s.onConn(clientConn)
-	}
-	err := s.listener.Close()
-	terror.Log(errors.Trace(err))
-	s.listener = nil
-	for {
-		metrics.ServerEventCounter.WithLabelValues(metrics.EventHang).Inc()
-		logutil.Logger(context.Background()).Error("listener stopped, waiting for manual kill.")
-		time.Sleep(time.Minute)
-	}
-}
-
-func (s *Server) shouldStopListener() bool {
-	select {
-	case <-s.stopListenerCh:
-		return true
-	default:
-		return false
 	}
 }
 
