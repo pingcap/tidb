@@ -66,7 +66,7 @@ const (
 	TopologyTimeToRefresh = 30 * time.Second
 	// TopologyPrometheus means address of prometheus.
 	TopologyPrometheus = "/topology/prometheus"
-	// TablePrometheusCacheExpiry is the expiry time for table stats cache.
+	// TablePrometheusCacheExpiry is the expiry time for prometheus address cache.
 	TablePrometheusCacheExpiry = 5 * time.Second
 )
 
@@ -532,7 +532,6 @@ func (is *InfoSyncer) getPrometheusAddr() (string, error) {
 	return res, nil
 }
 
-// Get implements the Get method for SafePointKV
 func (is *InfoSyncer) get(k string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
 	resp, err := is.etcdCli.Get(ctx, k)
