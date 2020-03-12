@@ -432,6 +432,9 @@ func (lr *LockResolver) getTxnStatusFromLock(bo *Backoffer, l *Lock, callerStart
 	}
 
 	rollbackIfNotExist := false
+	failpoint.Inject("getTxnStatusDelay", func() {
+		time.Sleep(100 * time.Millisecond)
+	})
 	for {
 		status, err = lr.getTxnStatus(bo, l.TxnID, l.Primary, callerStartTS, currentTS, rollbackIfNotExist)
 		if err == nil {
@@ -460,9 +463,17 @@ func (lr *LockResolver) getTxnStatusFromLock(bo *Backoffer, l *Lock, callerStart
 				zap.Uint64("CallerStartTs", callerStartTS),
 				zap.Stringer("lock str", l))
 			if l.LockType == kvrpcpb.Op_PessimisticLock {
+				failpoint.Inject("txnExpireRetTTL", func() {
+					failpoint.Return(TxnStatus{l.TTL, 0, kvrpcpb.Action_NoAction},
+						errors.New("error txn not found and lock expired"))
+				})
 				return TxnStatus{}, nil
 			}
 			rollbackIfNotExist = true
+		} else {
+			if l.LockType == kvrpcpb.Op_PessimisticLock {
+				return TxnStatus{ttl: l.TTL}, nil
+			}
 		}
 	}
 }
