@@ -65,6 +65,9 @@ type MemTableReaderExec struct {
 	baseExecutor
 	table     *model.TableInfo
 	retriever memTableRetriever
+	// cacheRetrieved is used to indicate whether has the parent executor retrieved
+	// from inspection cache in inspection mode.
+	cacheRetrieved bool
 }
 
 func (e *MemTableReaderExec) isInspectionCacheableTable(tblName string) bool {
@@ -91,14 +94,18 @@ func (e *MemTableReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	// cleaned at the end of retrieving, so nil represents currently in non-inspection mode.
 	if cache, tbl := e.ctx.GetSessionVars().InspectionTableCache, e.table.Name.L; cache != nil &&
 		e.isInspectionCacheableTable(tbl) {
-		// Obtain data from cache first.
-		cached, found := cache[tbl]
-		if !found {
-			rows, err := e.retriever.retrieve(ctx, e.ctx)
-			cached = variable.TableSnapshot{Rows: rows, Err: err}
-			cache[tbl] = cached
+		// TODO: cached rows will be returned fully, we should refactor this part.
+		if !e.cacheRetrieved {
+			// Obtain data from cache first.
+			cached, found := cache[tbl]
+			if !found {
+				rows, err := e.retriever.retrieve(ctx, e.ctx)
+				cached = variable.TableSnapshot{Rows: rows, Err: err}
+				cache[tbl] = cached
+			}
+			e.cacheRetrieved = true
+			rows, err = cached.Rows, cached.Err
 		}
-		rows, err = cached.Rows, cached.Err
 	} else {
 		rows, err = e.retriever.retrieve(ctx, e.ctx)
 	}
