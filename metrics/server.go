@@ -79,9 +79,7 @@ var (
 	EventStart        = "start"
 	EventGracefulDown = "graceful_shutdown"
 	// Eventkill occurs when the server.Kill() function is called.
-	EventKill = "kill"
-	// EventHang occurs when server meet some critical error. It will close the listening port and hang for ever.
-	EventHang          = "hang"
+	EventKill          = "kill"
 	EventClose         = "close"
 	ServerEventCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
