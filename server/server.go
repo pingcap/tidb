@@ -111,12 +111,18 @@ type Server struct {
 	concurrentLimiter *TokenLimiter
 	clients           map[uint32]*clientConn
 	capability        uint32
+<<<<<<< HEAD
 
 	// stopListenerCh is used when a critical error occurred, we don't want to exit the process, because there may be
 	// a supervisor automatically restart it, then new client connection will be created, but we can't server it.
 	// So we just stop the listener and store to force clients to chose other TiDB servers.
 	stopListenerCh chan struct{}
 	statusServer   *http.Server
+=======
+	dom               *domain.Domain
+	statusServer      *http.Server
+	grpcServer        *grpc.Server
+>>>>>>> d052f5c... server: stop the server when writing binlog failed (#15324)
 }
 
 // ConnectionCount gets current connection count.
@@ -200,7 +206,6 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		driver:            driver,
 		concurrentLimiter: NewTokenLimiter(cfg.TokenLimit),
 		clients:           make(map[uint32]*clientConn),
-		stopListenerCh:    make(chan struct{}, 1),
 	}
 
 	tlsConfig, err := util.LoadTLSCertificates(s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert)
@@ -291,11 +296,6 @@ func (s *Server) Run() error {
 			logutil.Logger(context.Background()).Error("accept failed", zap.Error(err))
 			return errors.Trace(err)
 		}
-		if s.shouldStopListener() {
-			err = conn.Close()
-			terror.Log(errors.Trace(err))
-			break
-		}
 
 		clientConn := s.newConn(conn)
 
@@ -323,6 +323,7 @@ func (s *Server) Run() error {
 
 		go s.onConn(clientConn)
 	}
+<<<<<<< HEAD
 	err := s.listener.Close()
 	terror.Log(errors.Trace(err))
 	s.listener = nil
@@ -340,6 +341,8 @@ func (s *Server) shouldStopListener() bool {
 	default:
 		return false
 	}
+=======
+>>>>>>> d052f5c... server: stop the server when writing binlog failed (#15324)
 }
 
 // Close closes the server.
