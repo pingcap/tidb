@@ -22,7 +22,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -1482,28 +1481,6 @@ func GetTiKVServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	return servers, nil
 }
 
-func dataForTiDBClusterInfo(ctx sessionctx.Context) ([][]types.Datum, error) {
-	servers, err := GetClusterServerInfo(ctx)
-	if err != nil {
-		return nil, err
-	}
-	rows := make([][]types.Datum, 0, len(servers))
-	for _, server := range servers {
-		startTime := time.Unix(server.StartTimestamp, 0)
-		row := types.MakeDatums(
-			server.ServerType,
-			server.Address,
-			server.StatusAddr,
-			server.Version,
-			server.GitHash,
-			startTime.Format(time.RFC3339),
-			time.Since(startTime).String(),
-		)
-		rows = append(rows, row)
-	}
-	return rows, nil
-}
-
 // dataForTableTiFlashReplica constructs data for table tiflash replica info.
 func dataForTableTiFlashReplica(ctx sessionctx.Context, schemas []*model.DBInfo) [][]types.Datum {
 	var rows [][]types.Datum
@@ -1672,8 +1649,6 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		fullRows, err = dataForTiKVRegionStatus(ctx)
 	case tableTiDBServersInfo:
 		fullRows, err = dataForServersInfo()
-	case TableClusterInfo:
-		fullRows, err = dataForTiDBClusterInfo(ctx)
 	case tableTiFlashReplica:
 		fullRows = dataForTableTiFlashReplica(ctx, dbs)
 	// Data for cluster processlist memory table.
