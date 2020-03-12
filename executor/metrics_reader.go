@@ -52,7 +52,6 @@ type MetricRetriever struct {
 	extractor      *plannercore.MetricTableExtractor
 	timeRange      plannercore.QueryTimeRange
 	retrieved      bool
-	prometheusAddr string
 }
 
 func (e *MetricRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
