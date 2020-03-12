@@ -796,11 +796,18 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, v *ast.Patte
 		er.err = err
 		return v, true
 	}
+
+	// If the leftKey and the rightKey have different collations, don't convert the sub-query to an inner-join
+	// since when converting we will add a distinct-agg upon the right child and this distinct-agg doesn't have the right collation.
+	// To keep it simple, we forbid this converting if they have different collations.
+	lt, rt := lexpr.GetType(), rexpr.GetType()
+	collFlag := collate.CompatibleCollate(lt.Collate, rt.Collate)
+
 	// If it's not the form of `not in (SUBQUERY)`,
 	// and has no correlated column from the current level plan(if the correlated column is from upper level,
 	// we can treat it as constant, because the upper LogicalApply cannot be eliminated since current node is a join node),
 	// and don't need to append a scalar value, we can rewrite it to inner join.
-	if er.sctx.GetSessionVars().GetAllowInSubqToJoinAndAgg() && !v.Not && !asScalar && len(extractCorColumnsBySchema(np, er.p.Schema())) == 0 {
+	if er.sctx.GetSessionVars().GetAllowInSubqToJoinAndAgg() && !v.Not && !asScalar && len(extractCorColumnsBySchema(np, er.p.Schema())) == 0 && collFlag {
 		// We need to try to eliminate the agg and the projection produced by this operation.
 		er.b.optFlag |= flagEliminateAgg
 		er.b.optFlag |= flagEliminateProjection
