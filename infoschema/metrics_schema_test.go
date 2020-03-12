@@ -31,7 +31,7 @@ func (s *metricSchemaSuite) SetUpSuite(c *C) {
 func (s *metricSchemaSuite) TearDownSuite(c *C) {
 }
 
-func (s *inspectionSuite) TestMetricSchemaDef(c *C) {
+func (s *metricSchemaSuite) TestMetricSchemaDef(c *C) {
 	for name, def := range infoschema.MetricTableMap {
 		if strings.Contains(def.PromQL, "$QUANTILE") || strings.Contains(def.PromQL, "histogram_quantile") {
 			c.Assert(def.Quantile > 0, IsTrue, Commentf("the quantile of metric table %v should > 0", name))
