@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -564,64 +563,6 @@ func (s *testEvaluatorSuite) TestExtract(c *C) {
 	v, err := evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(v.Kind(), Equals, types.KindNull)
-}
-
-func (s *testEvaluatorSuite) TestLike(c *C) {
-	tests := []struct {
-		input   string
-		pattern string
-		match   int
-	}{
-		{"a", "", 0},
-		{"a", "a", 1},
-		{"a", "b", 0},
-		{"aA", "Aa", 0},
-		{"aAb", `Aa%`, 0},
-		{"aAb", "aA_", 1},
-	}
-	for _, tt := range tests {
-		fc := funcs[ast.Like]
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tt.input, tt.pattern, 0)))
-		c.Assert(err, IsNil)
-		r, err := evalBuiltinFunc(f, chunk.Row{})
-		c.Assert(err, IsNil)
-		c.Assert(r, testutil.DatumEquals, types.NewDatum(tt.match))
-	}
-}
-
-func (s *testEvaluatorSuite) TestRegexp(c *C) {
-	tests := []struct {
-		pattern string
-		input   string
-		match   int64
-		err     error
-	}{
-		{"^$", "a", 0, nil},
-		{"a", "a", 1, nil},
-		{"a", "b", 0, nil},
-		{"aA", "aA", 1, nil},
-		{".", "a", 1, nil},
-		{"^.$", "ab", 0, nil},
-		{"..", "b", 0, nil},
-		{".ab", "aab", 1, nil},
-		{".*", "abcd", 1, nil},
-		{"(", "", 0, ErrRegexp},
-		{"(*", "", 0, ErrRegexp},
-		{"[a", "", 0, ErrRegexp},
-		{"\\", "", 0, ErrRegexp},
-	}
-	for _, tt := range tests {
-		fc := funcs[ast.Regexp]
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tt.input, tt.pattern)))
-		c.Assert(err, IsNil)
-		match, err := evalBuiltinFunc(f, chunk.Row{})
-		if tt.err == nil {
-			c.Assert(err, IsNil)
-			c.Assert(match, testutil.DatumEquals, types.NewDatum(tt.match), Commentf("%v", tt))
-		} else {
-			c.Assert(terror.ErrorEqual(err, tt.err), IsTrue)
-		}
-	}
 }
 
 func (s *testEvaluatorSuite) TestUnaryOp(c *C) {
