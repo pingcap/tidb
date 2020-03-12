@@ -148,15 +148,12 @@ var (
 	PerformanceSchemaName = model.NewCIStr("PERFORMANCE_SCHEMA")
 	// MetricSchemaName is the `METRICS_SCHEMA` database name.
 	MetricSchemaName = model.NewCIStr("METRICS_SCHEMA")
-	// InspectionSchemaName is the `INSPECTION_SCHEMA` database name
-	InspectionSchemaName = model.NewCIStr("INSPECTION_SCHEMA")
 )
 
 // IsMemOrSysDB uses to check whether dbLowerName is memory database or system database.
 func IsMemOrSysDB(dbLowerName string) bool {
 	switch dbLowerName {
 	case InformationSchemaName.L,
-		InspectionSchemaName.L,
 		PerformanceSchemaName.L,
 		mysql.SystemDB,
 		MetricSchemaName.L:

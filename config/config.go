@@ -282,7 +282,8 @@ func (s *Security) ToTLSConfig() (tlsConfig *tls.Config, err error) {
 			return
 		}
 		tlsConfig = &tls.Config{
-			RootCAs: certPool,
+			RootCAs:   certPool,
+			ClientCAs: certPool,
 		}
 
 		if len(s.ClusterSSLCert) != 0 && len(s.ClusterSSLKey) != 0 {
@@ -507,7 +508,7 @@ var defaultConf = Config{
 	TokenLimit:                   1000,
 	OOMUseTmpStorage:             true,
 	TempStoragePath:              filepath.Join(os.TempDir(), "tidb", "tmp-storage"),
-	OOMAction:                    "log",
+	OOMAction:                    OOMActionCancel,
 	MemQuotaQuery:                1 << 30,
 	EnableStreaming:              false,
 	EnableBatchDML:               false,
