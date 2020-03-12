@@ -753,7 +753,7 @@ func (s *testSuite1) TestIssue10608(c *C) {
 
 }
 
-func (s *testSuiteAgg) TestPR15242ShallowCopy(c *C) {
+func (s *testSuite) TestPR15242ShallowCopy(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec(`drop table if exists t;`)
 	tk.MustExec(`create table t(a json);`)
