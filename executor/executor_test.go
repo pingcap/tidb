@@ -4596,7 +4596,7 @@ func (s *testRecoverTable) TestRecoverTable(c *C) {
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeAfterDrop))
 	_, err = tk.Exec("recover table t_recover")
 	c.Assert(err, NotNil)
-	c.Assert(strings.Contains(err.Error(), "can't not find drop/truncate table 't_recover' in within GC safe point"), Equals, true)
+	c.Assert(strings.Contains(err.Error(), "can't find drop/truncate table 't_recover' in GC safe point"), Equals, true)
 
 	// set GC safe point
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
