@@ -815,6 +815,21 @@
         "Result": [
           "6 1 11"
         ]
+      },
+      {
+        "SQL": "select a from t1 where exists(select 1 from t2 where t1.a = t2.a)",
+        "Plan": [
+          "MergeJoin_27 10000.00 root semi join, left key:test.t1.a, right key:test.t2.a",
+          "├─TableReader_32(Build) 10000.00 root data:TableFullScan_33",
+          "│ └─TableFullScan_33 10000.00 cop[tikv] table:t2, keep order:true, stats:pseudo",
+          "└─TableReader_29(Probe) 10000.00 root data:TableFullScan_30",
+          "  └─TableFullScan_30 10000.00 cop[tikv] table:t1, keep order:true, stats:pseudo"
+        ],
+        "Result": [
+          "1",
+          "2",
+          "3"
+        ]
       }
     ]
   },
@@ -998,12 +1013,12 @@
       {
         "SQL": "select 1 from (select /*+ HASH_JOIN(t1) */ t1.a in (select t2.a from t2) from t1) x;",
         "Plan": [
-          "Projection_16 10000.00 root 1->Column#8",
-          "└─Apply_18 10000.00 root CARTESIAN left outer semi join, other cond:eq(test.t1.a, test.t2.a)",
-          "  ├─IndexReader_21(Build) 10000.00 root index:IndexFullScan_22",
-          "  │ └─IndexFullScan_22 10000.00 cop[tikv] table:t1, index:a, keep order:false, stats:pseudo",
-          "  └─IndexReader_25(Probe) 10000.00 root index:IndexFullScan_26",
-          "    └─IndexFullScan_26 10000.00 cop[tikv] table:t2, index:a, keep order:false, stats:pseudo"
+          "Projection_17 10000.00 root 1->Column#8",
+          "└─HashLeftJoin_18 10000.00 root CARTESIAN left outer semi join, other cond:eq(test.t1.a, test.t2.a)",
+          "  ├─IndexReader_25(Build) 10000.00 root index:IndexFullScan_26",
+          "  │ └─IndexFullScan_26 10000.00 cop[tikv] table:t2, index:a, keep order:false, stats:pseudo",
+          "  └─IndexReader_21(Probe) 10000.00 root index:IndexFullScan_22",
+          "    └─IndexFullScan_22 10000.00 cop[tikv] table:t1, index:a, keep order:false, stats:pseudo"
         ],
         "Result": [
           "1",
@@ -1013,12 +1028,12 @@
       {
         "SQL": "select 1 from (select /*+ HASH_JOIN(t1) */ t1.a not in (select t2.a from t2) from t1) x;",
         "Plan": [
-          "Projection_16 10000.00 root 1->Column#8",
-          "└─Apply_18 10000.00 root CARTESIAN anti left outer semi join, other cond:eq(test.t1.a, test.t2.a)",
-          "  ├─IndexReader_21(Build) 10000.00 root index:IndexFullScan_22",
-          "  │ └─IndexFullScan_22 10000.00 cop[tikv] table:t1, index:a, keep order:false, stats:pseudo",
-          "  └─IndexReader_25(Probe) 10000.00 root index:IndexFullScan_26",
-          "    └─IndexFullScan_26 10000.00 cop[tikv] table:t2, index:a, keep order:false, stats:pseudo"
+          "Projection_17 10000.00 root 1->Column#8",
+          "└─HashLeftJoin_18 10000.00 root CARTESIAN anti left outer semi join, other cond:eq(test.t1.a, test.t2.a)",
+          "  ├─IndexReader_25(Build) 10000.00 root index:IndexFullScan_26",
+          "  │ └─IndexFullScan_26 10000.00 cop[tikv] table:t2, index:a, keep order:false, stats:pseudo",
+          "  └─IndexReader_21(Probe) 10000.00 root index:IndexFullScan_22",
+          "    └─IndexFullScan_22 10000.00 cop[tikv] table:t1, index:a, keep order:false, stats:pseudo"
         ],
         "Result": [
           "1",
