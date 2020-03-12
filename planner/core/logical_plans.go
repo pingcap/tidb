@@ -895,6 +895,10 @@ type WindowFrame struct {
 
 // HashCode creates the hashcode for WindowFrame which can be used to identify itself from other WindowFrame.
 func (wf *WindowFrame) HashCode(sc *stmtctx.StatementContext) []byte {
+	if wf == nil {
+		return nil
+	}
+
 	startHashCode := wf.Start.hashCode(sc)
 	endHashCode := wf.End.hashCode(sc)
 	hashcode := make([]byte, 0, 4+len(startHashCode)+len(endHashCode))

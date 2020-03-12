@@ -81,7 +81,7 @@ func NeedFrame(name string) bool {
 
 // HashCode creates the hashcode for WindowFuncDesc which can be used to identify itself from other WindowFuncDesc.
 func (f *WindowFuncDesc) HashCode(sc *stmtctx.StatementContext) []byte {
-	// the max length of WindowFuncName ('percemnt_rank') is 12.
+	// the max length of WindowFuncName ('percent_rank') is 12.
 	// Arg is commonly Column whose hashcode has the length 9,
 	// so we pre-alloc 10 bytes for Arg's hashcode.
 	// we pre-alloc total bytes size = SizeOf(WindowFuncName)+SizeOf(Encode(args))

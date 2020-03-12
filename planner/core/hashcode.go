@@ -15,9 +15,7 @@ package core
 
 import (
 	"encoding/binary"
-
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/plancodec"
 )
 
@@ -35,6 +33,9 @@ func (p *LogicalProjection) HashCode() []byte {
 	// PlanType + SelectOffset + Encode(Exprs)
 	// Expressions are commonly `Column`s, whose hashcode has the length 9, so
 	// we pre-alloc 10 bytes for each expr's hashcode.
+	// we pre-alloc total bytes size = SizeOf(PlanType)+SizeOf(SelectOffset)+SizeOf(Encode(Exprs))
+	//								 = 4+4+(4+len(Exprs)*(4+SizeOf(Expr.hashcode)))
+	//								 = 12+len(Exprs)*14
 	result := make([]byte, 0, 12+len(p.Exprs)*14)
 	result = codec.EncodeIntAsUint32(result, plancodec.TypeStringToPhysicalID(p.tp))
 	result = codec.EncodeIntAsUint32(result, p.SelectBlockOffset())
@@ -58,6 +59,9 @@ func (p *LogicalSelection) HashCode() []byte {
 	// PlanType + SelectOffset + Encode(Conditions)
 	// Conditions are commonly `ScalarFunction`s, whose hashcode usually has a
 	// length larger than 20, so we pre-alloc 25 bytes for each expr's hashcode.
+	// we pre-alloc total bytes size = SizeOf(PlanType)+SizeOf(SelectOffset)+SizeOf(Encode(Conditions))
+	//								 = 4+4+(4+len(Conditions)*(4+SizeOf(Condition.hashcode)))
+	//								 = 12+len(Conditions)*29
 	result := make([]byte, 0, 12+len(p.Conditions)*29)
 	result = codec.EncodeIntAsUint32(result, plancodec.TypeStringToPhysicalID(p.tp))
 	result = codec.EncodeIntAsUint32(result, p.SelectBlockOffset())
@@ -80,8 +84,11 @@ func (p *LogicalLimit) HashCode() []byte {
 // HashCode implements LogicalPlan interface.
 func (p *LogicalSort) HashCode() []byte {
 	// PlanType + SelectOffset + Encode(ByItems)
-	// ByItems are commonly (bool + Column) which hashcode has the length 10,
+	// ByItems is commonly (bool + Column) whose hashcode has the length 10,
 	// so we pre-alloc 11 bytes for each ByItems's hashcode.
+	// we pre-alloc total bytes size = SizeOf(PlanType)+SizeOf(SelectOffset)+SizeOf(Encode(ByItems))
+	//								 = 4+4+(4+len(ByItems)*(4+SizeOf(ByItems.hashcode)))
+	//								 = 12+len(ByItems)*15
 	result := make([]byte, 0, 12+len(p.ByItems)*15)
 	result = codec.EncodeIntAsUint32(result, plancodec.TypeStringToPhysicalID(p.tp))
 	result = codec.EncodeIntAsUint32(result, p.SelectBlockOffset())
@@ -93,8 +100,9 @@ func (p *LogicalSort) HashCode() []byte {
 // HashCode implements LogicalPlan interface.
 func (p *LogicalTopN) HashCode() []byte {
 	// PlanType + SelectOffset + Encode(ByItems)
-	// ByItems are commonly (bool + Column) which hashcode has the length 10,
-	// so we pre-alloc 11 bytes for each ByItems's hashcode.
+	// we pre-alloc total bytes size = SizeOf(LogicalSort.hashcode)+ SizeOf(Offset)+SizeOf(Count)
+	//								 = (12+len(ByItems)*15)+8+8
+	//								 = 28+len(ByItems)*15
 	result := make([]byte, 0, 28+len(p.ByItems)*15)
 	result = codec.EncodeIntAsUint32(result, plancodec.TypeStringToPhysicalID(p.tp))
 	result = codec.EncodeIntAsUint32(result, p.SelectBlockOffset())
@@ -107,14 +115,17 @@ func (p *LogicalTopN) HashCode() []byte {
 
 // HashCode implements LogicalPlan interface.
 func (p *LogicalJoin) HashCode() []byte {
-	// PlanType + SelectOffset + JoinType + preferJoinType + Encode(EqualConditions) + Encode(LeftConditions) + Encode(RightConditions) + Encode(OtherConditions)
+	// PlanType + SelectOffset + JoinType + Encode(EqualConditions) + Encode(LeftConditions) + Encode(RightConditions) + Encode(OtherConditions)
 	// Conditions are commonly `ScalarFunction`s, whose hashcode usually has a
-	// length larger than 20, so we pre-alloc 25 bytes for each expr's hashcode.
-	result := make([]byte, 0, 32+(len(p.EqualConditions)+len(p.LeftConditions)+len(p.RightConditions)+len(p.OtherConditions))*29)
+	// length larger than 20, so we pre-alloc 25 bytes for each Condition's hashcode.
+	// we pre-alloc total bytes size = SizeOf(PlanType)+SizeOf(SelectOffset)+SizeOf(JoinType)+SizeOf(Encode(EqualConditions))+SizeOf(Encode(LeftConditions))+SizeOf(Encode(RightConditions))+SizeOf(Encode(OtherConditions))
+	//								 = 4+4+4+(4+len(EqualConditions)*(4+SizeOf(EqualCondition.hashcode)))+(4+len(LeftConditions)*(4+SizeOf(LeftConditions.hashcode)))+(4+len(RightConditions)*(4+SizeOf(RightConditions.hashcode)))+(4+len(OtherConditions)*(4+SizeOf(OtherConditions.hashcode)))
+	//								 = 4+4+4+4*4+(4+SizeOf(condition.hashcode))*((len(p.EqualConditions)+len(p.LeftConditions)+len(p.RightConditions)+len(p.OtherConditions)))
+	//								 = 28+29*(len(p.EqualConditions)+len(p.LeftConditions)+len(p.RightConditions)+len(p.OtherConditions))
+	result := make([]byte, 0, 28+(len(p.EqualConditions)+len(p.LeftConditions)+len(p.RightConditions)+len(p.OtherConditions))*29)
 	result = codec.EncodeIntAsUint32(result, plancodec.TypeStringToPhysicalID(p.tp))
 	result = codec.EncodeIntAsUint32(result, p.SelectBlockOffset())
 	result = codec.EncodeIntAsUint32(result, int(p.JoinType))
-	result = codec.EncodeUintAsUint32(result, p.preferJoinType)
 
 	eqCondHashCode := func(i int) []byte { return p.EqualConditions[i].HashCode(p.ctx.GetSessionVars().StmtCtx) }
 	result = codec.EncodeAndSort(result, eqCondHashCode, len(p.EqualConditions))
@@ -132,19 +143,35 @@ func (p *LogicalJoin) HashCode() []byte {
 }
 
 // HashCode implements LogicalPlan interface.
+func (p *LogicalApply) HashCode() []byte {
+	// p.LogicalJoin.HashCode() + Encode(CorCols)
+	// we pre-alloc total bytes size = SizeOf(p.join.HashCode)+SizeOf(Encode(CorCols))
+	//								 = SizeOf(p.join.HashCode)+(4+len(CorCols)*(4+Sizeof(CorCol)))
+	//								 = SizeOf(p.join.HashCode)+4+len(CorCols)*13
+	joinHashCode := p.LogicalJoin.HashCode()
+	result := make([]byte, 0, len(joinHashCode)+4+len(p.CorCols)*13)
+	result = append(result, joinHashCode...)
+	corColHashCode := func(i int) []byte { return p.CorCols[i].HashCode(p.ctx.GetSessionVars().StmtCtx) }
+	result = codec.Encode(result, corColHashCode, len(p.CorCols))
+	//rewrite PlanType
+	binary.BigEndian.PutUint32(result[:], uint32(plancodec.TypeStringToPhysicalID(p.tp)))
+	return result
+}
+
+// HashCode implements LogicalPlan interface.
 func (p *LogicalAggregation) HashCode() []byte {
-	// PlanType + SelectOffset + AggFuncs[0].Mode + p.aggHints.preferAggType + p.aggHints.preferAggToCop + Encode(AggFuncs) + Encode(GroupByItems)
+	// PlanType + SelectOffset + AggFuncs[0].Mode + Encode(AggFuncs) + Encode(GroupByItems)
 	// AggFuncs are commonly `ScalarFunction`s, whose hashcode usually has a
-	// length larger than 20, so we pre-alloc 25 bytes for each expr's hashcode.
-	// ByItems are commonly Column which hashcode has the length 9,
-	// so we pre-alloc 10 bytes for each ByItems's hashcode.
-	result := make([]byte, 0, 25+len(p.AggFuncs)*29+len(p.GroupByItems)*14)
+	// length larger than 20, so we pre-alloc 25 bytes for each AggFunc's hashcode.
+	// GroupByItems are commonly Column whose hashcode has the length 9,
+	// so we pre-alloc 10 bytes for each GroupByItem's hashcode.
+	// we pre-alloc total bytes size = SizeOf(PlanType)+SizeOf(SelectOffset)+SizeOf(AggMode)+SizeOf(Encode(AggFuncs))+SizeOf(Encode(GroupByItems))
+	//								 = 4+4+4+(4+len(AggFuncs)*(4+SizeOf(AggFunc.hashcode)))+(4+len(GroupByItems)*(4+SizeOf(GroupByItem.hashcode)))
+	//								 = 20+len(p.AggFuncs)*29+len(p.GroupByItems)*14
+	result := make([]byte, 0, 20+len(p.AggFuncs)*29+len(p.GroupByItems)*14)
 	result = codec.EncodeIntAsUint32(result, plancodec.TypeStringToPhysicalID(p.tp))
 	result = codec.EncodeIntAsUint32(result, p.SelectBlockOffset())
 	result = codec.EncodeIntAsUint32(result, int(p.AggFuncs[0].Mode))
-
-	result = codec.EncodeUintAsUint32(result, uint(p.aggHints.preferAggType))
-	result = codec.EncodeBool(result, p.aggHints.preferAggToCop)
 
 	aggFuncHashCode := func(i int) []byte { return p.AggFuncs[i].HashCode(p.ctx.GetSessionVars().StmtCtx) }
 	result = codec.Encode(result, aggFuncHashCode, len(p.AggFuncs))
@@ -167,27 +194,142 @@ func (p *LogicalMaxOneRow) HashCode() []byte {
 // HashCode implements LogicalPlan interface.
 func (p *LogicalShowDDLJobs) HashCode() []byte {
 	// PlanType + SelectOffset + JobNumber
-	result := make([]byte, 16)
+	result := make([]byte, 0, 16)
 	result = codec.EncodeIntAsUint32(result, plancodec.TypeStringToPhysicalID(p.tp))
 	result = codec.EncodeIntAsUint32(result, p.SelectBlockOffset())
-	binary.BigEndian.PutUint64(result[8:], uint64(p.JobNumber))
+	result = codec.EncodeInt(result, p.JobNumber)
+	return result
+}
+
+// HashCode implements LogicalPlan interface.
+func (p *LogicalUnionScan) HashCode() []byte {
+	// PlanType + SelectOffset + handleCol + Encode(conditions)
+	// conditions are commonly `ScalarFunction`s, whose hashcode usually has a
+	// length larger than 20, so we pre-alloc 25 bytes for each expr's hashcode.
+	// we pre-alloc total bytes size = SizeOf(PlanType)+SizeOf(SelectOffset)+SizeOf(handleCol)+SizeOf(Encode(conditions))
+	//								 = 4+4+9+(4+len(conditions)*(4+Sizeof(condition.hashcode)))
+	//								 = 21+len(conditions)*29
+	result := make([]byte, 0, 21+len(p.conditions)*29)
+	result = codec.EncodeIntAsUint32(result, plancodec.TypeStringToPhysicalID(p.tp))
+	result = codec.EncodeIntAsUint32(result, p.SelectBlockOffset())
+	result = append(result, p.handleCol.HashCode(p.ctx.GetSessionVars().StmtCtx)...)
+	condHashCode := func(i int) []byte { return p.conditions[i].HashCode(p.ctx.GetSessionVars().StmtCtx) }
+	result = codec.EncodeAndSort(result, condHashCode, len(p.conditions))
+	return result
+}
+
+// HashCode implements LogicalPlan interface.
+func (p *LogicalUnionAll) HashCode() []byte {
+	// PlanType + SelectOffset
+	result := make([]byte, 0, 8)
+	result = codec.EncodeIntAsUint32(result, plancodec.TypeStringToPhysicalID(p.tp))
+	result = codec.EncodeIntAsUint32(result, p.SelectBlockOffset())
+	return result
+}
+
+// HashCode implements LogicalPlan interface.
+func (p *LogicalWindow) HashCode() []byte {
+	// PlanType + SelectOffset + Encode(WindowFuncDescs) + Encode(PartitionBys) + Encode(OrderBys) + Frame
+	// WindowFuncDescs are commonly has less than one arg, so we pre-alloc 30 bytes for each WindowFuncDesc's hashcode.
+	// we pre-alloc total bytes size = SizeOf(PlanType)+SizeOf(SelectOffset)+SizeOf(Encode(WindowFuncDescs))+SizeOf(Encode(PartitionBys))+SizeOf(Encode(OrderBys))+SizeOf(Frame)
+	//								 = 4+4+(4+len(WindowFuncDescs)*(4+Sizeof(WindowFuncDesc)))+(4+len(PartitionBys)*(4+Sizeof(PartitionBy)))+(4+len(OrderBys)*(4+Sizeof(OrderBy)))+SizeOf(Frame.hashcode)
+	//								 = 20+34*len(WindowFuncDescs)+14*(len(p.PartitionBy)+len(p.OrderBy))+SizeOf(Frame.hashcode)
+	frameHashcode := p.Frame.HashCode(p.ctx.GetSessionVars().StmtCtx)
+
+	result := make([]byte, 0, 20+len(p.WindowFuncDescs)*34+14*(len(p.PartitionBy)+len(p.OrderBy))+len(frameHashcode))
+	result = codec.EncodeIntAsUint32(result, plancodec.TypeStringToPhysicalID(p.tp))
+	result = codec.EncodeIntAsUint32(result, p.SelectBlockOffset())
+
+	wfdHashCode := func(i int) []byte { return p.WindowFuncDescs[i].HashCode(p.ctx.GetSessionVars().StmtCtx) }
+	result = codec.Encode(result, wfdHashCode, len(p.WindowFuncDescs))
+
+	partitionByHashCode := func(i int) []byte { return p.PartitionBy[i].HashCode(p.ctx.GetSessionVars().StmtCtx) }
+	result = codec.EncodeAndSort(result, partitionByHashCode, len(p.PartitionBy))
+
+	orderByHashCode := func(i int) []byte { return p.OrderBy[i].HashCode(p.ctx.GetSessionVars().StmtCtx) }
+	result = codec.Encode(result, orderByHashCode, len(p.OrderBy))
+
+	result = append(result, frameHashcode...)
+
+	return result
+}
+
+// HashCode implements LogicalPlan interface.
+func (p *LogicalMemTable) HashCode() []byte {
+	// PlanType + SelectOffset + TableInfo.ID + QueryTimeRange
+	result := make([]byte, 0, 32)
+	result = codec.EncodeIntAsUint32(result, plancodec.TypeStringToPhysicalID(p.tp))
+	result = codec.EncodeIntAsUint32(result, p.SelectBlockOffset())
+
+	result = codec.EncodeInt(result, p.TableInfo.ID)
+
+	result = codec.EncodeInt(result, p.QueryTimeRange.From.Unix())
+	result = codec.EncodeInt(result, p.QueryTimeRange.To.Unix())
 	return result
 }
 
 // HashCode implements LogicalPlan interface.
 func (p *DataSource) HashCode() []byte {
-	// PlanType + SelectOffset + id + isPartition + physicalTableID
-	// usually we would not copy a dataSource same as other one and we can use PlanID as hashCode.
-	// but in rule_partition_processor, it will copy the old dataSource,
-	// and only change isPartition,physicalTableID and share the same PlanID.
-	// So we should append isPartition and physicalTableID.
+	// PlanType + SelectOffset + tableInfo.ID + Encode(allConds)
+	// allConds are commonly `ScalarFunction`s, whose hashcode usually has a
+	// length larger than 20, so we pre-alloc 25 bytes for each expr's hashcode.
+	// we pre-alloc total bytes size = SizeOf(PlanType)+SizeOf(SelectOffset)+SizeOf(tableInfo.ID)+SizeOf(Encode(allConds))
+	//								 = 4+4+8+(4+len(allConds)*(4+Sizeof(condition.hashcode)))
+	//								 = 20+len(allConds)*29
 	if p == nil {
 		return nil
 	}
-	result := make([]byte, 0, 13)
-	result = codec.EncodeIntAsUint32(result, p.id)
-	result = codec.EncodeBool(result, p.isPartition)
-	codec.EncodeInt(result, p.physicalTableID)
+
+	result := make([]byte, 0, 20+len(p.allConds)*29)
+	result = codec.EncodeIntAsUint32(result, plancodec.TypeStringToPhysicalID(p.tp))
+	result = codec.EncodeIntAsUint32(result, p.SelectBlockOffset())
+	result = codec.EncodeInt(result, p.tableInfo.ID)
+	condHashCode := func(i int) []byte { return p.allConds[i].HashCode(p.ctx.GetSessionVars().StmtCtx) }
+	result = codec.EncodeAndSort(result, condHashCode, len(p.allConds))
+	return result
+}
+
+
+// HashCode implements LogicalPlan interface.
+func (p *TiKVSingleGather) HashCode() []byte {
+	// PlanType + SelectOffset + Source.tableInfo.ID + IsIndexGather + Index.ID
+	result := make([]byte, 0, 25)
+	result = codec.EncodeIntAsUint32(result, plancodec.TypeStringToPhysicalID(p.tp))
+	result = codec.EncodeIntAsUint32(result, p.SelectBlockOffset())
+	if p.Source != nil {
+		result = codec.EncodeInt(result, p.Source.tableInfo.ID)
+	}
+	result = codec.EncodeBool(result, p.IsIndexGather)
+	if p.IsIndexGather && p.Index != nil {
+		result = codec.EncodeInt(result, p.Index.ID)
+	}
+	return result
+}
+
+
+// HashCode implements LogicalPlan interface.
+func (p *LogicalTableScan) HashCode() []byte {
+	// PlanType + SelectOffset + Source.tableInfo.ID + Handle + Encode(AccessConds)
+	// AccessConds are commonly `ScalarFunction`s, whose hashcode usually has a
+	// length larger than 20, so we pre-alloc 25 bytes for each expr's hashcode.
+	// we pre-alloc total bytes size = SizeOf(PlanType)+SizeOf(SelectOffset)+SizeOf(tableInfo.ID)+SizeOf(Handle)+SizeOf(Encode(AccessConds))
+	//								 = 4+4+8+9+(4+len(AccessConds)*(4+Sizeof(AccessCond.hashcode)))
+	//								 = 29+len(AccessConds)*29
+	result := make([]byte, 0, 29+len(p.AccessConds)*29)
+	result = codec.EncodeIntAsUint32(result, plancodec.TypeStringToPhysicalID(p.tp))
+	result = codec.EncodeIntAsUint32(result, p.SelectBlockOffset())
+
+	if p.Source != nil {
+		result = codec.EncodeInt(result, p.Source.tableInfo.ID)
+	}
+
+	if p.Handle != nil {
+		result = append(result, p.Handle.HashCode(p.ctx.GetSessionVars().StmtCtx)...)
+	}
+
+	accessCondHashCode := func(i int) []byte { return p.AccessConds[i].HashCode(p.ctx.GetSessionVars().StmtCtx) }
+	result = codec.EncodeAndSort(result, accessCondHashCode, len(p.AccessConds))
+
 	return result
 }
 
@@ -239,103 +381,5 @@ func (p *LogicalIndexScan) HashCode() []byte {
 		result = codec.EncodeIntAsUint32(result, colLen)
 	}
 
-	return result
-}
-
-// HashCode implements LogicalPlan interface.
-func (p *LogicalTableScan) HashCode() []byte {
-	// PlanType + SelectOffset + Source.HashCode() + p.Handle + Encode(AccessConds)
-	result := make([]byte, 0, 34+len(p.AccessConds)*29)
-	result = codec.EncodeIntAsUint32(result, plancodec.TypeStringToPhysicalID(p.tp))
-	result = codec.EncodeIntAsUint32(result, p.SelectBlockOffset())
-	result = append(result, p.Source.HashCode()...)
-
-	if p.Handle != nil {
-		result = append(result, p.Handle.HashCode(p.ctx.GetSessionVars().StmtCtx)...)
-	}
-
-	accessCondHashCode := func(i int) []byte { return p.AccessConds[i].HashCode(p.ctx.GetSessionVars().StmtCtx) }
-	result = codec.EncodeAndSort(result, accessCondHashCode, len(p.AccessConds))
-
-	return result
-}
-
-// HashCode implements LogicalPlan interface.
-func (p *LogicalUnionAll) HashCode() []byte {
-	// PlanType + SelectOffset
-	result := make([]byte, 0, 8)
-	result = codec.EncodeIntAsUint32(result, plancodec.TypeStringToPhysicalID(p.tp))
-	result = codec.EncodeIntAsUint32(result, p.SelectBlockOffset())
-	return result
-}
-
-// HashCode implements LogicalPlan interface.
-func (p *LogicalApply) HashCode() []byte {
-	// p.LogicalJoin.HashCode() + Encode(CorCols)
-	result := p.LogicalJoin.HashCode()
-	corColHashCode := func(i int) []byte { return p.CorCols[i].HashCode(p.ctx.GetSessionVars().StmtCtx) }
-	result = codec.Encode(result, corColHashCode, len(p.CorCols))
-	return result
-}
-
-// HashCode implements LogicalPlan interface.
-func (p *LogicalWindow) HashCode() []byte {
-	result := make([]byte, 0, 48+len(p.WindowFuncDescs)*29+14*(len(p.PartitionBy)+len(p.OrderBy)))
-	result = codec.EncodeIntAsUint32(result, plancodec.TypeStringToPhysicalID(p.tp))
-	result = codec.EncodeIntAsUint32(result, p.SelectBlockOffset())
-
-	wfdHashCode := func(i int) []byte { return p.WindowFuncDescs[i].HashCode(p.ctx.GetSessionVars().StmtCtx) }
-	result = codec.Encode(result, wfdHashCode, len(p.WindowFuncDescs))
-
-	partitionByHashCode := func(i int) []byte { return p.PartitionBy[i].HashCode(p.ctx.GetSessionVars().StmtCtx) }
-	result = codec.EncodeAndSort(result, partitionByHashCode, len(p.PartitionBy))
-
-	orderByHashCode := func(i int) []byte { return p.OrderBy[i].HashCode(p.ctx.GetSessionVars().StmtCtx) }
-	result = codec.Encode(result, orderByHashCode, len(p.OrderBy))
-
-	if p.Frame != nil {
-		result = append(result, p.Frame.HashCode(p.ctx.GetSessionVars().StmtCtx)...)
-	}
-
-	return result
-}
-
-// HashCode implements LogicalPlan interface.
-func (p *LogicalMemTable) HashCode() []byte {
-	result := make([]byte, 0, 37)
-	result = codec.EncodeIntAsUint32(result, plancodec.TypeStringToPhysicalID(p.tp))
-	result = codec.EncodeIntAsUint32(result, p.SelectBlockOffset())
-
-	result = codec.EncodeInt(result, p.TableInfo.ID)
-	result = codec.EncodeCompactBytes(result, hack.Slice(p.DBName.L))
-
-	result = codec.EncodeInt(result, p.QueryTimeRange.From.Unix())
-	result = codec.EncodeInt(result, p.QueryTimeRange.To.Unix())
-	return result
-}
-
-// HashCode implements LogicalPlan interface.
-func (p *LogicalUnionScan) HashCode() []byte {
-	result := make([]byte, 0, 30+13*(len(p.conditions)))
-	result = codec.EncodeIntAsUint32(result, plancodec.TypeStringToPhysicalID(p.tp))
-	result = codec.EncodeIntAsUint32(result, p.SelectBlockOffset())
-	result = append(result, p.handleCol.HashCode(p.ctx.GetSessionVars().StmtCtx)...)
-	condHashCode := func(i int) []byte { return p.conditions[i].HashCode(p.ctx.GetSessionVars().StmtCtx) }
-	result = codec.EncodeAndSort(result, condHashCode, len(p.conditions))
-	result = append(result, p.handleCol.HashCode(p.ctx.GetSessionVars().StmtCtx)...)
-	return result
-}
-
-// HashCode implements LogicalPlan interface.
-func (p *TiKVSingleGather) HashCode() []byte {
-	dsHashCode := p.Source.HashCode()
-	result := make([]byte, 0, 16+len(dsHashCode))
-	result = codec.EncodeIntAsUint32(result, plancodec.TypeStringToPhysicalID(p.tp))
-	result = codec.EncodeIntAsUint32(result, p.SelectBlockOffset())
-	result = codec.EncodeBool(result, p.IsIndexGather)
-	if p.IsIndexGather && p.Index != nil {
-		result = codec.EncodeInt(result, p.Index.ID)
-	}
-	result = append(result, dsHashCode...)
 	return result
 }
