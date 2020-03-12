@@ -220,7 +220,7 @@ func (s *testEvaluatorSuite) TestColumn2Pb(c *C) {
 		expr.(*Column).ID = 0
 		expr.(*Column).Index = 0
 	}
-  
+
 	pushed, remained = PushDownExprs(sc, colExprs, client, kv.UnSpecified)
 	c.Assert(len(pushed), Equals, len(colExprs))
 	c.Assert(len(remained), Equals, 0)
