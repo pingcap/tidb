@@ -5819,7 +5819,6 @@ func (s *testIntegrationSerialSuite) TestCollateLike(c *C) {
 	defer collate.SetNewCollationEnabledForTest(false)
 
 	tk := testkit.NewTestKit(c, s.store)
-	// Uncomment those cases after we fix the explicit collation for constants comparison.
 	tk.MustExec("set names utf8mb4 collate utf8mb4_general_ci")
 	tk.MustQuery("select 'a' like 'A'").Check(testkit.Rows("1"))
 	tk.MustQuery("select 'a' like 'A' collate utf8mb4_general_ci").Check(testkit.Rows("1"))
