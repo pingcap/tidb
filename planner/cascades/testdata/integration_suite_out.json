@@ -212,10 +212,10 @@
       {
         "SQL": "select max(a+b) from t",
         "Plan": [
-          "HashAgg_31 1.00 root funcs:max(Column#4)->Column#3",
-          "└─TableReader_32 1.00 root data:HashAgg_33",
-          "  └─HashAgg_33 1.00 cop[tikv] funcs:max(plus(test.t.a, test.t.b))->Column#4",
-          "    └─TableFullScan_29 10000.00 cop[tikv] table:t, keep order:false, stats:pseudo"
+          "HashAgg_26 1.00 root funcs:max(Column#4)->Column#3",
+          "└─TableReader_27 1.00 root data:HashAgg_28",
+          "  └─HashAgg_28 1.00 cop[tikv] funcs:max(plus(test.t.a, test.t.b))->Column#4",
+          "    └─TableFullScan_24 10000.00 cop[tikv] table:t, keep order:false, stats:pseudo"
         ],
         "Result": [
           "48"
@@ -277,11 +277,11 @@
       {
         "SQL": "select max(a.a) from t a left join t b on a.a = b.a",
         "Plan": [
-          "HashAgg_33 1.00 root funcs:max(test.t.a)->Column#5",
-          "└─Limit_35 1.00 root offset:0, count:1",
-          "  └─TableReader_40 1.00 root data:Limit_41",
-          "    └─Limit_41 1.00 cop[tikv] offset:0, count:1",
-          "      └─TableFullScan_39 1.00 cop[tikv] table:a, keep order:true, desc, stats:pseudo"
+          "HashAgg_25 1.00 root funcs:max(test.t.a)->Column#5",
+          "└─Limit_27 1.00 root offset:0, count:1",
+          "  └─TableReader_32 1.00 root data:Limit_33",
+          "    └─Limit_33 1.00 cop[tikv] offset:0, count:1",
+          "      └─TableFullScan_31 1.00 cop[tikv] table:a, keep order:true, desc, stats:pseudo"
         ],
         "Result": [
           "4"
@@ -370,11 +370,11 @@
       {
         "SQL": "select max(a) from t",
         "Plan": [
-          "HashAgg_21 1.00 root funcs:max(test.t.a)->Column#3",
-          "└─Limit_23 1.00 root offset:0, count:1",
-          "  └─TableReader_28 1.00 root data:Limit_29",
-          "    └─Limit_29 1.00 cop[tikv] offset:0, count:1",
-          "      └─TableFullScan_27 1.00 cop[tikv] table:t, keep order:true, desc, stats:pseudo"
+          "HashAgg_18 1.00 root funcs:max(test.t.a)->Column#3",
+          "└─Limit_20 1.00 root offset:0, count:1",
+          "  └─TableReader_25 1.00 root data:Limit_26",
+          "    └─Limit_26 1.00 cop[tikv] offset:0, count:1",
+          "      └─TableFullScan_24 1.00 cop[tikv] table:t, keep order:true, desc, stats:pseudo"
         ],
         "Result": [
           "4"
@@ -774,13 +774,12 @@
           "└─Apply_20 10000.00 root CARTESIAN left outer join",
           "  ├─TableReader_21(Build) 10000.00 root data:TableFullScan_22",
           "  │ └─TableFullScan_22 10000.00 cop[tikv] table:t1, keep order:false, stats:pseudo",
-          "  └─MaxOneRow_23(Probe) 1.00 root ",
-          "    └─Projection_24 1.00 root test.t2.a",
-          "      └─Limit_26 1.00 root offset:0, count:1",
-          "        └─TableReader_34 1.00 root data:Limit_35",
-          "          └─Limit_35 1.00 cop[tikv] offset:0, count:1",
-          "            └─Selection_32 1.00 cop[tikv] eq(test.t1.b, test.t2.b)",
-          "              └─TableFullScan_33 1.00 cop[tikv] table:t2, keep order:true, stats:pseudo"
+          "  └─Projection_23(Probe) 1.00 root test.t2.a",
+          "    └─Limit_25 1.00 root offset:0, count:1",
+          "      └─TableReader_33 1.00 root data:Limit_34",
+          "        └─Limit_34 1.00 cop[tikv] offset:0, count:1",
+          "          └─Selection_31 1.00 cop[tikv] eq(test.t1.b, test.t2.b)",
+          "            └─TableFullScan_32 1.00 cop[tikv] table:t2, keep order:true, stats:pseudo"
         ],
         "Result": [
           "1",
@@ -799,18 +798,16 @@
           "  │ │ └─TableReader_38 1.00 root data:HashAgg_39",
           "  │ │   └─HashAgg_39 1.00 cop[tikv] funcs:sum(test.t2.a)->Column#8, funcs:firstrow(test.t2.a)->Column#9, funcs:firstrow(test.t2.b)->Column#10",
           "  │ │     └─TableFullScan_35 10000.00 cop[tikv] table:t2, keep order:false, stats:pseudo",
-          "  │ └─MaxOneRow_40(Probe) 1.00 root ",
-          "  │   └─Limit_41 1.00 root offset:0, count:1",
-          "  │     └─TableReader_42 1.00 root data:Limit_43",
-          "  │       └─Limit_43 1.00 cop[tikv] offset:0, count:1",
-          "  │         └─Selection_44 1.00 cop[tikv] eq(test.t1.a, test.t2.a)",
-          "  │           └─TableFullScan_45 1.00 cop[tikv] table:t1, keep order:false, stats:pseudo",
-          "  └─MaxOneRow_46(Probe) 1.00 root ",
-          "    └─Limit_47 1.00 root offset:0, count:1",
-          "      └─TableReader_48 1.00 root data:Limit_49",
-          "        └─Limit_49 1.00 cop[tikv] offset:0, count:1",
-          "          └─Selection_50 1.00 cop[tikv] eq(test.t1.b, test.t2.b)",
-          "            └─TableFullScan_51 1.00 cop[tikv] table:t1, keep order:false, stats:pseudo"
+          "  │ └─Limit_40(Probe) 1.00 root offset:0, count:1",
+          "  │   └─TableReader_41 1.00 root data:Limit_42",
+          "  │     └─Limit_42 1.00 cop[tikv] offset:0, count:1",
+          "  │       └─Selection_43 1.00 cop[tikv] eq(test.t1.a, test.t2.a)",
+          "  │         └─TableFullScan_44 1.00 cop[tikv] table:t1, keep order:false, stats:pseudo",
+          "  └─Limit_45(Probe) 1.00 root offset:0, count:1",
+          "    └─TableReader_46 1.00 root data:Limit_47",
+          "      └─Limit_47 1.00 cop[tikv] offset:0, count:1",
+          "        └─Selection_48 1.00 cop[tikv] eq(test.t1.b, test.t2.b)",
+          "          └─TableFullScan_49 1.00 cop[tikv] table:t1, keep order:false, stats:pseudo"
         ],
         "Result": [
           "6 1 11"
@@ -1077,6 +1074,69 @@
         ],
         "Result": [
           "1 1"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestDecorrelate",
+    "Cases": [
+      {
+        "SQL": "select t1.a, (select sum(t2.b) from t2 where t1.a = t2.a) from t1 order by t1.a",
+        "Plan": [
+          "Sort_42 8000.00 root test.t1.a:asc",
+          "└─HashAgg_23 8000.00 root group by:Column#8, funcs:firstrow(Column#6)->test.t1.a, funcs:sum(Column#7)->Column#5",
+          "  └─Projection_41 10000.00 root test.t1.a, cast(test.t2.b, decimal(65,0) BINARY)->Column#7, test.t1.a",
+          "    └─MergeJoin_33 10000.00 root left outer join, left key:test.t1.a, right key:test.t2.a",
+          "      ├─TableReader_38(Build) 10000.00 root data:TableFullScan_39",
+          "      │ └─TableFullScan_39 10000.00 cop[tikv] table:t2, keep order:true, stats:pseudo",
+          "      └─TableReader_35(Probe) 10000.00 root data:TableFullScan_36",
+          "        └─TableFullScan_36 10000.00 cop[tikv] table:t1, keep order:true, stats:pseudo"
+        ],
+        "Result": [
+          "1 11",
+          "2 22",
+          "3 33",
+          "4 <nil>"
+        ]
+      },
+      {
+        "SQL": "select t1.a, (select count(1) from t2 where t1.a = t2.a) from t1 order by t1.a",
+        "Plan": [
+          "Apply_19 10000.00 root CARTESIAN left outer join",
+          "├─TableReader_20(Build) 10000.00 root data:TableFullScan_21",
+          "│ └─TableFullScan_21 10000.00 cop[tikv] table:t1, keep order:true, stats:pseudo",
+          "└─HashAgg_29(Probe) 1.00 root funcs:count(Column#6)->Column#5",
+          "  └─TableReader_30 1.00 root data:HashAgg_31",
+          "    └─HashAgg_31 1.00 cop[tikv] funcs:count(1)->Column#6",
+          "      └─Selection_27 8000.00 cop[tikv] eq(test.t1.a, test.t2.a)",
+          "        └─TableFullScan_28 10000.00 cop[tikv] table:t2, keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1",
+          "2 1",
+          "3 1",
+          "4 0"
+        ]
+      },
+      {
+        "SQL": "select t1.a, (select t2.b from t2 where t2.a < t1.a order by t2.b limit 1) from t1 order by t1.a",
+        "Plan": [
+          "Apply_21 10000.00 root CARTESIAN left outer join",
+          "├─TableReader_22(Build) 10000.00 root data:TableFullScan_23",
+          "│ └─TableFullScan_23 10000.00 cop[tikv] table:t1, keep order:true, stats:pseudo",
+          "└─Projection_27(Probe) 1.00 root test.t2.b",
+          "  └─TopN_28 1.00 root test.t2.b:asc, offset:0, count:1",
+          "    └─TableReader_30 1.00 root data:TopN_31",
+          "      └─TopN_31 1.00 cop[tikv] test.t2.b:asc, offset:0, count:1",
+          "        └─Selection_33 8000.00 cop[tikv] lt(test.t2.a, test.t1.a)",
+          "          └─TableFullScan_34 10000.00 cop[tikv] table:t2, keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 <nil>",
+          "2 11",
+          "3 11",
+          "4 11"
         ]
       }
     ]

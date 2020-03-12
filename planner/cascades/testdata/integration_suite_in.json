@@ -127,5 +127,13 @@
       "select /*+ INL_HASH_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;",
       "select /*+ INL_MERGE_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;"
     ]
+  },
+  {
+    "name": "TestDecorrelate",
+    "cases": [
+      "select t1.a, (select sum(t2.b) from t2 where t1.a = t2.a) from t1 order by t1.a",
+      "select t1.a, (select count(1) from t2 where t1.a = t2.a) from t1 order by t1.a",
+      "select t1.a, (select t2.b from t2 where t2.a < t1.a order by t2.b limit 1) from t1 order by t1.a"
+    ]
   }
 ]
