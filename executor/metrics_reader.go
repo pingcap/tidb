@@ -160,6 +160,9 @@ func (e *MetricRetriever) getMetricAddr(sctx sessionctx.Context) (string, error)
 	// get prometheus address from etcdApi
 	if res == "" {
 		spkv, err := tikv.NewEtcdSafePointKV(pdAddrs, nil)
+		if err != nil {
+			return "", err
+		}
 		values, err := spkv.Get("/topology/prometheus")
 		if err != nil {
 			return "", errors.Trace(err)
