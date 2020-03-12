@@ -176,6 +176,7 @@ func (s *Security) ToTLSConfig() (*tls.Config, error) {
 		tlsConfig = &tls.Config{
 			Certificates: certificates,
 			RootCAs:      certPool,
+			ClientCAs:    certPool,
 		}
 	}
 
