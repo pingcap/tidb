@@ -485,7 +485,7 @@ func (e *DDLExec) getRecoverTableByTableName(tableName *ast.TableName) (*model.J
 		// Check GC safe point for getting snapshot infoSchema.
 		err = gcutil.ValidateSnapshotWithGCSafePoint(job.StartTS, gcSafePoint)
 		if err != nil {
-			return nil, nil, errors.Errorf("can't find drop/truncate table '%s' in GC safe point %s", tableName.Name.O, model.TSConvert2Time(gcSafePoint).String())
+			return nil, nil, errors.Errorf("Can't find drop/truncate table '%s' in GC safe point %s", tableName.Name.O, model.TSConvert2Time(gcSafePoint).String())
 		}
 		// Get the snapshot infoSchema before drop table.
 		snapInfo, err := dom.GetSnapshotInfoSchema(job.StartTS)
@@ -514,7 +514,7 @@ func (e *DDLExec) getRecoverTableByTableName(tableName *ast.TableName) (*model.J
 		}
 	}
 	if tblInfo == nil {
-		return nil, nil, errors.Errorf("Can't find drop/truncate table: %v in ddl history jobs", tableName.Name)
+		return nil, nil, errors.Errorf("Can't find drop/truncate table: %v in DDL history jobs", tableName.Name)
 	}
 	return job, tblInfo, nil
 }
