@@ -139,7 +139,7 @@ func (e *MetricRetriever) getMetricAddr(sctx sessionctx.Context) (string, error)
 
 	pdAddrs := etcd.EtcdAddrs()
 	if len(pdAddrs) < 0 {
-		return "", errors.New("pd unavailable")
+		return "", errors.Errorf("pd unavailable")
 	}
 	var res string
 
