@@ -43,8 +43,6 @@ const (
 	PerformanceSchemaDBID int64 = SystemSchemaIDFlag | 10000
 	// MetricSchemaDBID is the metrics_schema schema id, it's exported for test.
 	MetricSchemaDBID int64 = SystemSchemaIDFlag | 20000
-	// InspectionSchemaDBID is the inspection_schema id, it's exports for test.
-	InspectionSchemaDBID int64 = SystemSchemaIDFlag | 30000
 )
 
 const (
@@ -114,6 +112,16 @@ type Allocators []Allocator
 // NewAllocators packs multiple `Allocator`s into Allocators.
 func NewAllocators(allocators ...Allocator) Allocators {
 	return allocators
+}
+
+// Get returns the Allocator according to the AllocatorType.
+func (all Allocators) Get(allocType AllocatorType) Allocator {
+	for _, a := range all {
+		if a.GetType() == allocType {
+			return a
+		}
+	}
+	return nil
 }
 
 type allocator struct {

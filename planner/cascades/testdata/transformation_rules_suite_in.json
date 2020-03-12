@@ -186,5 +186,11 @@
       "select count(case when a > 10 and d < 5 then b end) from t",
       "select count(case when a > 10 and d < 5 then null else b end) from t"
     ]
+  },
+  {
+    "name": "TestDecorrelate",
+    "cases": [
+      "select a from t t1 where exists (select 1 from t t2 where t1.a = t2.b)"
+    ]
   }
 ]
