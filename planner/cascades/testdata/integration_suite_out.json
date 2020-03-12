@@ -818,11 +818,11 @@
       {
         "SQL": "select a from t1 where exists(select 1 from t2 where t1.a = t2.a)",
         "Plan": [
-          "MergeJoin_27 10000.00 root semi join, left key:test.t1.a, right key:test.t2.a",
-          "├─TableReader_32(Build) 10000.00 root data:TableFullScan_33",
-          "│ └─TableFullScan_33 10000.00 cop[tikv] table:t2, keep order:true, stats:pseudo",
-          "└─TableReader_29(Probe) 10000.00 root data:TableFullScan_30",
-          "  └─TableFullScan_30 10000.00 cop[tikv] table:t1, keep order:true, stats:pseudo"
+          "MergeJoin_28 4.00 root semi join, left key:test.t1.a, right key:test.t2.a",
+          "├─TableReader_34(Build) 3.00 root data:TableFullScan_35",
+          "│ └─TableFullScan_35 3.00 cop[tikv] table:t2, keep order:true",
+          "└─TableReader_31(Probe) 4.00 root data:TableFullScan_32",
+          "  └─TableFullScan_32 4.00 cop[tikv] table:t1, keep order:true"
         ],
         "Result": [
           "1",
