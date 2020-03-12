@@ -373,7 +373,7 @@ func txnLockTTL(startTime time.Time, txnSize int) uint64 {
 	// Increase lockTTL for large transactions.
 	// The formula is `ttl = ttlFactor * sqrt(sizeInMiB)`.
 	// When writeSize is less than 256KB, the base ttl is defaultTTL (3s);
-	// When writeSize is 1MiB, 100MiB, or 400MiB, ttl is 6s, 60s, 120s correspondingly;
+	// When writeSize is 1MiB, 4MiB, or 10MiB, ttl is 6s, 12s, 20s correspondingly;
 	lockTTL := defaultLockTTL
 	if txnSize >= txnCommitBatchSize {
 		sizeMiB := float64(txnSize) / bytesPerMiB
@@ -381,8 +381,8 @@ func txnLockTTL(startTime time.Time, txnSize int) uint64 {
 		if lockTTL < defaultLockTTL {
 			lockTTL = defaultLockTTL
 		}
-		if lockTTL > maxLockTTL {
-			lockTTL = maxLockTTL
+		if lockTTL > ManagedLockTTL {
+			lockTTL = ManagedLockTTL
 		}
 	}
 
@@ -617,6 +617,16 @@ func (actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, bat
 		}
 		keyErrs := prewriteResp.GetErrors()
 		if len(keyErrs) == 0 {
+<<<<<<< HEAD
+=======
+			if bytes.Equal(c.primary(), batch.mutations.keys[0]) {
+				// After writing the primary key, if the size of the transaction is large than 32M,
+				// start the ttlManager. The ttlManager will be closed in tikvTxn.Commit().
+				if c.txnSize > 32*1024*1024 {
+					c.run(c, nil)
+				}
+			}
+>>>>>>> d7a8eab... store/tikv: handle the large transaction commit dead lock (#15072)
 			return nil
 		}
 		var locks []*Lock
@@ -639,13 +649,21 @@ func (actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, bat
 			if err1 != nil {
 				return errors.Trace(err1)
 			}
+<<<<<<< HEAD
 			logutil.Logger(context.Background()).Debug("prewrite encounters lock",
+=======
+			logutil.BgLogger().Warn("prewrite encounters lock",
+>>>>>>> d7a8eab... store/tikv: handle the large transaction commit dead lock (#15072)
 				zap.Uint64("conn", c.connID),
 				zap.Stringer("lock", lock))
 			locks = append(locks, lock)
 		}
 		start := time.Now()
+<<<<<<< HEAD
 		msBeforeExpired, err := c.store.lockResolver.ResolveLocks(bo, locks)
+=======
+		msBeforeExpired, err := c.store.lockResolver.resolveLocksForWrite(bo, c.startTS, locks)
+>>>>>>> d7a8eab... store/tikv: handle the large transaction commit dead lock (#15072)
 		if err != nil {
 			return errors.Trace(err)
 		}
