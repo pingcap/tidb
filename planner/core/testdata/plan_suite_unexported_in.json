@@ -266,7 +266,7 @@
       // Test issue 11943
       "SELECT ROW_NUMBER() OVER (partition by b) + a FROM t",
 	  // Test issue 10996
-	  "select GROUP_CONCAT('1') OVER ()"
+	  "select GROUP_CONCAT(a) OVER () FROM t"
     ]
   },
   {
