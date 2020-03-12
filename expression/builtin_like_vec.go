@@ -56,10 +56,6 @@ func (b *builtinLikeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) er
 
 	if b.pattern == nil {
 		b.pattern = b.collator().Pattern()
-		if b.args[1].ConstItem(b.ctx.GetSessionVars().StmtCtx) && b.args[2].ConstItem(b.ctx.GetSessionVars().StmtCtx) {
-			b.pattern.Compile(bufPattern.GetString(0), byte(escapes[0]))
-			b.isMemorizedPattern = true
-		}
 	}
 	result.ResizeInt64(n, false)
 	result.MergeNulls(bufVal, bufPattern, bufEscape)
@@ -68,9 +64,7 @@ func (b *builtinLikeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) er
 		if result.IsNull(i) {
 			continue
 		}
-		if !b.isMemorizedPattern {
-			b.pattern.Compile(bufPattern.GetString(i), byte(escapes[i]))
-		}
+		b.pattern.Compile(bufPattern.GetString(i), byte(escapes[i]))
 		match := b.pattern.DoMatch(bufVal.GetString(i))
 		i64s[i] = boolToInt64(match)
 	}
