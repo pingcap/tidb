@@ -256,7 +256,7 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 	tk = testkit.NewTestKitWithInit(c, s.store)
 
 	tk.MustExec("set global tidb_enable_stmt_summary = on")
-	tk.MustExec("set global tidb_stmt_summary_history_size = 100")
+	tk.MustExec("set global tidb_stmt_summary_history_size = 24")
 
 	// Create a new user to test statements summary table privilege
 	tk.MustExec("create user 'test_user'@'localhost'")
@@ -316,7 +316,6 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 		AuthHostname: "%",
 	}, nil, nil)
 	tk.MustExec("set global tidb_enable_stmt_summary = off")
-	tk.MustExec("set global tidb_stmt_summary_history_size = 0")
 }
 
 // Test events_statements_summary_by_digest_history.
