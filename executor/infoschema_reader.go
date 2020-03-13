@@ -74,7 +74,7 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		case infoschema.TableClusterInfo:
 			err = e.dataForTiDBClusterInfo(sctx)
 		case infoschema.TableAnalyzeStatus:
-			e.rows = dataForAnalyzeStatus(sctx)
+			e.setDataForAnalyzeStatus(sctx)
 		case infoschema.TableTiDBIndexes:
 			e.setDataFromIndexes(sctx, dbs)
 		case infoschema.TableViews:
@@ -1087,9 +1087,9 @@ func (e *memtableRetriever) setDataFromSessionVar(ctx sessionctx.Context) error 
 	return nil
 }
 
-// dataForAnalyzeStatus gets all the analyze jobs.
-func dataForAnalyzeStatus(ctx sessionctx.Context) (rows [][]types.Datum) {
-	checker := privilege.GetPrivilegeManager(ctx)
+// dataForAnalyzeStatusHelper is a helper function which can be used in show_stats.go
+func dataForAnalyzeStatusHelper(sctx sessionctx.Context) (rows [][]types.Datum) {
+	checker := privilege.GetPrivilegeManager(sctx)
 	for _, job := range statistics.GetAllAnalyzeJobs() {
 		job.Lock()
 		var startTime interface{}
@@ -1098,7 +1098,7 @@ func dataForAnalyzeStatus(ctx sessionctx.Context) (rows [][]types.Datum) {
 		} else {
 			startTime = types.NewTime(types.FromGoTime(job.StartTime), mysql.TypeDatetime, 0)
 		}
-		if checker == nil || checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, job.DBName, job.TableName, "", mysql.AllPrivMask) {
+		if checker == nil || checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, job.DBName, job.TableName, "", mysql.AllPrivMask) {
 			rows = append(rows, types.MakeDatums(
 				job.DBName,        // TABLE_SCHEMA
 				job.TableName,     // TABLE_NAME
@@ -1112,4 +1112,9 @@ func dataForAnalyzeStatus(ctx sessionctx.Context) (rows [][]types.Datum) {
 		job.Unlock()
 	}
 	return
+}
+
+// setDataForAnalyzeStatus gets all the analyze jobs.
+func (e *memtableRetriever) setDataForAnalyzeStatus(sctx sessionctx.Context) {
+	e.rows = dataForAnalyzeStatusHelper(sctx)
 }

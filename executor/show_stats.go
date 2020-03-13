@@ -223,7 +223,7 @@ func (e *ShowExec) appendTableForStatsHealthy(dbName, tblName, partitionName str
 }
 
 func (e *ShowExec) fetchShowAnalyzeStatus() {
-	rows := dataForAnalyzeStatus(e.baseExecutor.ctx)
+	rows := dataForAnalyzeStatusHelper(e.baseExecutor.ctx)
 	for _, row := range rows {
 		for i, val := range row {
 			e.result.AppendDatum(i, &val)
