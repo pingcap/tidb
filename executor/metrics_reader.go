@@ -97,6 +97,8 @@ func (e *MetricRetriever) queryMetric(ctx context.Context, sctx sessionctx.Conte
 	failpoint.InjectContext(ctx, "mockMetricsPromData", func() {
 		failpoint.Return(ctx.Value("__mockMetricsPromData").(pmodel.Matrix), nil)
 	})
+
+	//TODO: the prometheus will be Integrated into the PD, then we need to query the prometheus in PD directly, which need change the quire API
 	prometheusAddr, err := infosync.GetPrometheusAddr()
 	if err != nil {
 		return nil, err
