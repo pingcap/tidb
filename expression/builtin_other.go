@@ -800,7 +800,7 @@ func (b *builtinValuesIntSig) evalInt(_ chunk.Row) (int64, bool, error) {
 		// For BinaryLiteral, see issue #15310
 		val := row.GetRaw(b.offset)
 		if len(val) > 8 {
-			return 0, true, errors.New("Session current insert values is too long.")
+			return 0, true, errors.New("Session current insert values is too long")
 		}
 		if len(val) < 8 {
 			var binary types.BinaryLiteral = val
