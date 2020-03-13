@@ -21,6 +21,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -1134,7 +1135,7 @@ func checkConstraintNames(constraints []*ast.Constraint) error {
 	return nil
 }
 
-func setTableAutoRandomBits(tbInfo *model.TableInfo, colDefs []*ast.ColumnDef) error {
+func setTableAutoRandomBits(ctx sessionctx.Context, tbInfo *model.TableInfo, colDefs []*ast.ColumnDef) error {
 	allowAutoRandom := config.GetGlobalConfig().Experimental.AllowAutoRandom
 	pkColName := tbInfo.GetPkName()
 	for _, col := range colDefs {
@@ -1163,6 +1164,10 @@ func setTableAutoRandomBits(tbInfo *model.TableInfo, colDefs []*ast.ColumnDef) e
 				return ErrInvalidAutoRandom.GenWithStackByArgs(fmt.Sprintf(autoid.AutoRandomOverflowErrMsg, col.Name.Name.L, maxFieldTypeBitsLength, autoRandBits, col.Name.Name.L, maxFieldTypeBitsLength-1))
 			}
 			tbInfo.AutoRandomBits = autoRandBits
+
+			availableBits := maxFieldTypeBitsLength - 1 - autoRandBits
+			msg := fmt.Sprintf(autoid.AutoRandomAvailableAllocTimesNote, uint64(math.Pow(2, float64(availableBits)))-1)
+			ctx.GetSessionVars().StmtCtx.AppendNote(errors.Errorf(msg))
 		}
 	}
 	return nil
@@ -1364,7 +1369,7 @@ func buildTableInfoWithCheck(ctx sessionctx.Context, s *ast.CreateTableStmt, dbC
 	tbInfo.Collate = tableCollate
 	tbInfo.Charset = tableCharset
 
-	if err = setTableAutoRandomBits(tbInfo, colDefs); err != nil {
+	if err = setTableAutoRandomBits(ctx, tbInfo, colDefs); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -1930,6 +1935,18 @@ func getCharsetAndCollateInTableOption(startIdx int, options []*ast.TableOption)
 	return
 }
 
+func needToOverwriteColCharset(options []*ast.TableOption) bool {
+	for i := len(options) - 1; i >= 0; i-- {
+		opt := options[i]
+		switch opt.Tp {
+		case ast.TableOptionCharset:
+			// Only overwrite columns charset if the option contains `CONVERT TO`.
+			return opt.UintValue == ast.TableOptionCharsetWithConvertTo
+		}
+	}
+	return false
+}
+
 // resolveAlterTableSpec resolves alter table algorithm and removes ignore table spec in specs.
 // returns valied specs, and the occurred error.
 func resolveAlterTableSpec(ctx sessionctx.Context, specs []*ast.AlterTableSpec) ([]*ast.AlterTableSpec, error) {
@@ -2067,7 +2084,8 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 					if err != nil {
 						return err
 					}
-					err = d.AlterTableCharsetAndCollate(ctx, ident, toCharset, toCollate)
+					needsOverwriteCols := needToOverwriteColCharset(spec.Options)
+					err = d.AlterTableCharsetAndCollate(ctx, ident, toCharset, toCollate, needsOverwriteCols)
 					handledCharsetOrCollate = true
 				}
 
@@ -3123,7 +3141,7 @@ func (d *ddl) AlterTableComment(ctx sessionctx.Context, ident ast.Ident, spec *a
 }
 
 // AlterTableCharset changes the table charset and collate.
-func (d *ddl) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast.Ident, toCharset, toCollate string) error {
+func (d *ddl) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast.Ident, toCharset, toCollate string, needsOverwriteCols bool) error {
 	// use the last one.
 	if toCharset == "" && toCollate == "" {
 		return ErrUnknownCharacterSet.GenWithStackByArgs(toCharset)
@@ -3166,7 +3184,7 @@ func (d *ddl) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast.Iden
 		SchemaName: schema.Name.L,
 		Type:       model.ActionModifyTableCharsetAndCollate,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{toCharset, toCollate},
+		Args:       []interface{}{toCharset, toCollate, needsOverwriteCols},
 	}
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
