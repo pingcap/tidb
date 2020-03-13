@@ -277,7 +277,8 @@ func (s *testEvaluatorSuite) TestExprOnlyPushDownToTiKV(c *C) {
 	sc := new(stmtctx.StatementContext)
 	client := new(mock.Client)
 	dg := new(dataGen4Expr2PbTest)
-	function, err := NewFunction(mock.NewContext(), "dayofyear", types.NewFieldType(mysql.TypeLonglong), dg.genColumn(mysql.TypeDatetime, 1))
+	function, err := NewFunction(mock.NewContext(), ast.DateFormat, types.NewFieldType(mysql.TypeString),
+		dg.genColumn(mysql.TypeDatetime, 1), dg.genColumn(mysql.TypeString, 2))
 	c.Assert(err, IsNil)
 	var exprs = make([]Expression, 0)
 	exprs = append(exprs, function)

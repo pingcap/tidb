@@ -23,6 +23,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"github.com/pingcap/tipb/go-tipb"
 	"math"
 	"strconv"
 	"strings"
@@ -1041,12 +1042,16 @@ func (c *substringFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	switch {
 	case len(args) == 3 && types.IsBinaryStr(argType):
 		sig = &builtinSubstringBinary3ArgsSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_SubstringBinary3Args)
 	case len(args) == 3:
 		sig = &builtinSubstring3ArgsSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_Substring3Args)
 	case len(args) == 2 && types.IsBinaryStr(argType):
 		sig = &builtinSubstringBinary2ArgsSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_SubstringBinary2Args)
 	case len(args) == 2:
 		sig = &builtinSubstring2ArgsSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_Substring2Args)
 	default:
 		// Should never happens.
 		return nil, errors.Errorf("SUBSTR invalid arg length, expect 2 or 3 but got: %v", len(args))

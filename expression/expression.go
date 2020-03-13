@@ -16,6 +16,7 @@ package expression
 import (
 	goJSON "encoding/json"
 	"fmt"
+	"github.com/pingcap/tipb/go-tipb"
 	"sync/atomic"
 
 	"github.com/pingcap/parser/ast"
@@ -459,7 +460,13 @@ func canFuncBePushed(sf *ScalarFunction, storeType kv.StoreType) bool {
 		ast.JSONRemove,
 
 		// date functions.
-		ast.DateFormat:
+		ast.DateFormat,
+		ast.Month,
+		ast.TimestampDiff,
+
+		// string functions
+		ast.Substring,
+		ast.Substr:
 		_, disallowPushDown := DefaultExprPushDownBlacklist.Load().(map[string]struct{})[sf.FuncName.L]
 		ret = !disallowPushDown
 	}
@@ -540,7 +547,8 @@ func CanExprsPushDown(sc *stmtctx.StatementContext, exprs []Expression, client k
 
 func scalarExprSupportedByTiKV(function *ScalarFunction) bool {
 	switch function.FuncName.L {
-	case ast.Substr, ast.Substring, ast.DateAdd, ast.TimestampDiff:
+	case ast.Substr, ast.Substring, ast.DateAdd,
+	ast.TimestampDiff, ast.Month:
 		return false
 	default:
 		return true
@@ -553,9 +561,15 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		ast.NullEQ, ast.GE, ast.LE, ast.EQ, ast.NE,
 		ast.LT, ast.GT, ast.Ifnull, ast.IsNull, ast.Or,
 		ast.In, ast.Mod, ast.And, ast.LogicOr, ast.LogicAnd,
-		ast.Like, ast.UnaryNot, ast.Case, ast.Month, ast.Substr,
-		ast.Substring, ast.TimestampDiff:
+		ast.Like, ast.UnaryNot, ast.Case, ast.Month, ast.TimestampDiff:
 		return true
+	case ast.Substr, ast.Substring:
+		switch function.Function.PbCode() {
+		case tipb.ScalarFuncSig_Substring2Args, tipb.ScalarFuncSig_Substring3Args:
+			return true
+		default:
+			return false
+		}
 	default:
 		return false
 	}
