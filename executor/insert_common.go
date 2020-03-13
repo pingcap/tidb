@@ -456,7 +456,6 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 }
 
 func (e *InsertValues) doBatchInsert(ctx context.Context) error {
-	sessVars := e.ctx.GetSessionVars()
 	if err := e.ctx.StmtCommit(e.memTracker); err != nil {
 		return err
 	}
@@ -464,11 +463,6 @@ func (e *InsertValues) doBatchInsert(ctx context.Context) error {
 		// We should return a special error for batch insert.
 		return ErrBatchInsertFail.GenWithStack("BatchInsert failed with error: %v", err)
 	}
-	txn, err := e.ctx.Txn(true)
-	if err != nil {
-		return err
-	}
-	sessVars.GetWriteStmtBufs().BufStore = kv.NewBufferStore(txn, kv.TempTxnMemBufCap)
 	return nil
 }
 

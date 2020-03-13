@@ -299,6 +299,22 @@ func (t *TableCommon) FirstKey() kv.Key {
 	return t.RecordKey(math.MinInt64)
 }
 
+var tempBufStorePool = sync.Pool{
+	New: func() interface{} { return kv.NewBufferStore(nil, kv.DefaultTxnMembufCap) },
+}
+
+func getTempBufStore(txn kv.Transaction) *kv.BufferStore {
+	bs := tempBufStorePool.Get().(*kv.BufferStore)
+	bs.SetRetriever(txn)
+	return bs
+}
+
+func returnTempBufStore(bs *kv.BufferStore) {
+	bs.Reset()
+	bs.SetRetriever(nil)
+	tempBufStorePool.Put(bs)
+}
+
 // UpdateRecord implements table.Table UpdateRecord interface.
 // `touched` means which columns are really modified, used for secondary indices.
 // Length of `oldData` and `newData` equals to length of `t.WritableCols()`.
@@ -308,8 +324,8 @@ func (t *TableCommon) UpdateRecord(ctx sessionctx.Context, h int64, oldData, new
 		return err
 	}
 
-	// TODO: reuse bs, like AddRecord does.
-	bs := kv.NewBufferStore(txn, kv.DefaultTxnMembufCap)
+	bs := getTempBufStore(txn)
+	defer returnTempBufStore(bs)
 
 	// rebuild index
 	err = t.rebuildIndices(ctx, bs, h, touched, oldData, newData)
@@ -448,22 +464,6 @@ func adjustRowValuesBuf(writeBufs *variable.WriteStmtBufs, rowLen int) {
 	writeBufs.AddRowValues = writeBufs.AddRowValues[:adjustLen]
 }
 
-// getRollbackableMemStore get a rollbackable BufferStore, when we are importing data,
-// Just add the kv to transaction's membuf directly.
-func (t *TableCommon) getRollbackableMemStore(ctx sessionctx.Context) (kv.RetrieverMutator, error) {
-	bs := ctx.GetSessionVars().GetWriteStmtBufs().BufStore
-	if bs == nil {
-		txn, err := ctx.Txn(true)
-		if err != nil {
-			return nil, err
-		}
-		bs = kv.NewBufferStore(txn, kv.DefaultTxnMembufCap)
-	} else {
-		bs.Reset()
-	}
-	return bs, nil
-}
-
 // AddRecord implements table.Table AddRecord interface.
 func (t *TableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID int64, err error) {
 	var opt table.AddRecordOpt
@@ -512,10 +512,9 @@ func (t *TableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 
 	sessVars := ctx.GetSessionVars()
 
-	rm, err := t.getRollbackableMemStore(ctx)
-	if err != nil {
-		return 0, err
-	}
+	bs := getTempBufStore(txn)
+	defer returnTempBufStore(bs)
+
 	var createIdxOpts []table.CreateIdxOptFunc
 	if len(opts) > 0 {
 		createIdxOpts = make([]table.CreateIdxOptFunc, 0, len(opts))
@@ -526,7 +525,7 @@ func (t *TableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 		}
 	}
 	// Insert new entries into indices.
-	h, err := t.addIndices(ctx, recordID, r, rm, createIdxOpts)
+	h, err := t.addIndices(ctx, recordID, r, bs, createIdxOpts)
 	if err != nil {
 		return h, err
 	}
@@ -574,7 +573,7 @@ func (t *TableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 		return 0, err
 	}
 
-	if err = rm.(*kv.BufferStore).SaveTo(txn); err != nil {
+	if err = bs.SaveTo(txn); err != nil {
 		return 0, err
 	}
 	ctx.StmtAddDirtyTableOP(table.DirtyTableAddRow, t.physicalTableID, recordID)
