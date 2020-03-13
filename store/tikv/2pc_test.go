@@ -643,8 +643,8 @@ func (s *testCommitterSuite) TestPessimisticLockReturnValues(c *C) {
 	lockCtx.Values = map[string]kv.ReturnedValue{}
 	c.Assert(txn.LockKeys(context.Background(), lockCtx, key, key2), IsNil)
 	c.Assert(lockCtx.Values, HasLen, 2)
-	c.Assert(lockCtx.Values[string(key)], BytesEquals, []byte(key))
-	c.Assert(lockCtx.Values[string(key2)], BytesEquals, []byte(key2))
+	c.Assert(lockCtx.Values[string(key)].Value, BytesEquals, []byte(key))
+	c.Assert(lockCtx.Values[string(key2)].Value, BytesEquals, []byte(key2))
 }
 
 // TestElapsedTTL tests that elapsed time is correct even if ts physical time is greater than local time.
