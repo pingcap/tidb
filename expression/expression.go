@@ -548,7 +548,7 @@ func CanExprsPushDown(sc *stmtctx.StatementContext, exprs []Expression, client k
 func scalarExprSupportedByTiKV(function *ScalarFunction) bool {
 	switch function.FuncName.L {
 	case ast.Substr, ast.Substring, ast.DateAdd,
-	ast.TimestampDiff, ast.Month:
+		ast.TimestampDiff, ast.Month:
 		return false
 	default:
 		return true
