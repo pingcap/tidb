@@ -5344,6 +5344,7 @@ func (s *testIntegrationSuite) TestCastStrToInt(c *C) {
 func (s *testIntegrationSuite) TestValuesForBinaryLiteral(c *C) {
 	// See issue #15310
 	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
 	tk.MustExec("create table t(id int primary key auto_increment, a bit(1));")
 	tk.MustExec("insert into t values(1,1);")
 	err := tk.ExecToErr("insert into t values(1,1) on duplicate key update id = values(id),a = values(a);")
@@ -5352,6 +5353,7 @@ func (s *testIntegrationSuite) TestValuesForBinaryLiteral(c *C) {
 	err = tk.ExecToErr("insert into t values(1,0) on duplicate key update id = values(id),a = values(a);")
 	c.Assert(err, IsNil)
 	tk.MustQuery("select a=0 from t;").Check(testkit.Rows("1"))
+	tk.MustExec("drop table t;")
 }
 
 func (s *testIntegrationSuite) TestIssue14159(c *C) {
