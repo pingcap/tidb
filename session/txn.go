@@ -65,7 +65,11 @@ func (st *TxnState) init() {
 
 // Size implements the MemBuffer interface.
 func (st *TxnState) Size() int {
-	return st.buf.Size()
+	size := st.buf.Size()
+	if st.Transaction != nil {
+		size += st.Transaction.Size()
+	}
+	return size
 }
 
 // Valid implements the kv.Transaction interface.
