@@ -1103,8 +1103,8 @@ func (s *testPessimisticSuite) TestBatchPointGetAlreadyLocked(c *C) {
 	tk.MustExec("create table t (c1 int, c2 int, c3 int, primary key(c1, c2))")
 	tk.MustExec("insert t values (1, 1, 1), (2, 2, 2)")
 	tk.MustExec("begin pessimistic")
-	tk.MustExec("select * from t where c1 > 1 for update")
-	tk.MustExec("select * from t where (c1, c2) in ((2,2)) for update")
+	tk.MustQuery("select * from t where c1 > 1 for update").Check(testkit.Rows("2 2 2"))
+	tk.MustQuery("select * from t where (c1, c2) in ((2,2)) for update").Check(testkit.Rows("2 2 2"))
 	tk.MustExec("commit")
 }
 
