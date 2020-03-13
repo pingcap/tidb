@@ -235,7 +235,7 @@ func (s *propConstSolver) propagateColumnEQ() {
 		if fun, ok := s.conditions[i].(*ScalarFunction); ok && fun.FuncName.L == ast.EQ {
 			lCol, lOk := fun.GetArgs()[0].(*Column)
 			rCol, rOk := fun.GetArgs()[1].(*Column)
-			if lOk && rOk && lCol.GetType().Collate == rCol.GetType().Collate {
+			if lOk && rOk && collate.CompatibleCollate(lCol.GetType().Collate, rCol.GetType().Collate) {
 				lID := s.getColID(lCol)
 				rID := s.getColID(rCol)
 				s.unionSet.Union(lID, rID)
@@ -482,7 +482,7 @@ func (s *propOuterJoinConstSolver) validColEqualCond(cond Expression) (*Column, 
 	if fun, ok := cond.(*ScalarFunction); ok && fun.FuncName.L == ast.EQ {
 		lCol, lOk := fun.GetArgs()[0].(*Column)
 		rCol, rOk := fun.GetArgs()[1].(*Column)
-		if lOk && rOk && lCol.GetType().Collate == rCol.GetType().Collate {
+		if lOk && rOk && collate.CompatibleCollate(lCol.GetType().Collate, rCol.GetType().Collate) {
 			return s.colsFromOuterAndInner(lCol, rCol)
 		}
 	}
