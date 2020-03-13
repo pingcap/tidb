@@ -84,7 +84,7 @@ func (p *LogicalLimit) HashCode() []byte {
 // HashCode implements LogicalPlan interface.
 func (p *LogicalSort) HashCode() []byte {
 	// PlanType + SelectOffset + Encode(ByItems)
-	// ByItems is commonly (bool + Column) whose hashcode has the length 10,
+	// ByItems are commonly (bool + Column)s whose hashcode has the length 10,
 	// so we pre-alloc 11 bytes for each ByItems's hashcode.
 	// we pre-alloc total bytes size = SizeOf(PlanType)+SizeOf(SelectOffset)+SizeOf(Encode(ByItems))
 	//								 = 4+4+(4+len(ByItems)*(4+SizeOf(ByItems.hashcode)))
@@ -289,7 +289,6 @@ func (p *DataSource) HashCode() []byte {
 	return result
 }
 
-
 // HashCode implements LogicalPlan interface.
 func (p *TiKVSingleGather) HashCode() []byte {
 	// PlanType + SelectOffset + Source.tableInfo.ID + IsIndexGather + Index.ID
@@ -305,7 +304,6 @@ func (p *TiKVSingleGather) HashCode() []byte {
 	}
 	return result
 }
-
 
 // HashCode implements LogicalPlan interface.
 func (p *LogicalTableScan) HashCode() []byte {
