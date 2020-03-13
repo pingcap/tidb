@@ -72,13 +72,42 @@ func (builder *RequestBuilder) SetTableHandles(tid int64, handles []int64) *Requ
 	return builder
 }
 
+func hasJoinNode(executor *tipb.Executor) bool {
+	if executor.Tp == tipb.ExecType_TypeJoin {
+		return true
+	}
+	switch executor.Tp {
+	case tipb.ExecType_TypeAggregation:
+		if executor.Aggregation.Child != nil {
+			return hasJoinNode(executor.Aggregation.Child)
+		}
+		return false
+	case tipb.ExecType_TypeSelection:
+		if executor.Selection.Child != nil {
+			return hasJoinNode(executor.Selection.Child)
+		}
+		return false
+	case tipb.ExecType_TypeLimit:
+		if executor.Limit.Child != nil {
+			return hasJoinNode(executor.Limit.Child)
+		}
+		return false
+	case tipb.ExecType_TypeTopN:
+		if executor.TopN.Child != nil {
+			return hasJoinNode(executor.TopN.Child)
+		}
+		return false
+	default:
+		return false
+	}
+}
 // SetDAGRequest sets the request type to "ReqTypeDAG" and construct request data.
 func (builder *RequestBuilder) SetDAGRequest(dag *tipb.DAGRequest) *RequestBuilder {
 	if builder.err == nil {
 		builder.Request.Tp = kv.ReqTypeDAG
 		builder.Request.Cacheable = true
 		builder.Request.Data, builder.err = dag.Marshal()
-		if dag.Executors[0].Tp == tipb.ExecType_TypeJoin {
+		if hasJoinNode(dag.Executors[0]) {
 			builder.CopTaskBatch = true
 		}
 	}
