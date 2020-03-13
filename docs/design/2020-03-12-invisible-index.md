@@ -8,7 +8,7 @@
 
 MySQL supports [Invisible indexes](https://dev.mysql.com/doc/refman/8.0/en/invisible-indexes.html); that is, indexes that are not used by the optimizer. 
 
-This is a useful feature when you want to drop an index in a safe way. Invisible indexes make it possible to test the effect of removing an index on query performance, without making a destructive change that must be undone should the index turn out to be required. Dropping and re-adding an index can be expensive for a large table, whereas making it invisible and visible are fast, in-place operations.
+This is a useful feature for dropping an index in a safe way. Invisible indexes make it possible to test the effect of removing an index on query performance, without making a destructive change that must be undone should the index turn out to be required. Dropping and re-adding an index can be expensive for a large table, whereas making it invisible and visible are fast, in-place operations.
 
 Support the option of `VISIBLE | INVISIBLE`.
 ```
@@ -51,7 +51,7 @@ CREATE INDEX index_name ON table_name(key) [ INVISIBLE | VISIBLE ];
 
 In order to know whether an index is invisible, it can be read from the `INFORMATION_SCHEMA.STATISTICS` table or through the `SHOW INDEX` command.
 
-In addition, add new flag `use_invisible_indexes` in system variable `optimizer_switch`, which determine whether the option `INVISIBLE` takes effect. If `use_invite_indexes` is on, the optimizer can still use invisible index.
+In addition, add a new flag `use_invisible_indexes` in system variable `optimizer_switch`, which determine whether the option `INVISIBLE` takes effect. If `use_invite_indexes` is on, the optimizer can still use invisible index.
 
 A table with no explicit primary key may still have an effective implicit primary key if it has any UNIQUE indexes on NOT NULL columns. In this case, the first such index places the same constraint on table rows as an explicit primary key and that index cannot be made invisible.
 
