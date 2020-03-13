@@ -475,12 +475,13 @@ func (p *preprocessor) checkCreateViewWithSelectGrammar(stmt *ast.CreateViewStmt
 	switch stmt := stmt.Select.(type) {
 	case *ast.SelectStmt:
 		p.checkCreateViewWithSelect(stmt)
-		break
 	case *ast.UnionStmt:
 		for _, selectStmt := range stmt.SelectList.Selects {
 			p.checkCreateViewWithSelect(selectStmt)
+			if p.err != nil {
+				return
+			}
 		}
-		break
 	}
 }
 
