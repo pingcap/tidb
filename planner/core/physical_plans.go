@@ -569,7 +569,7 @@ type PhysicalWindow struct {
 }
 
 // PhysicalShuffle represents a Shuffle plan.
-// Between this Shuffle and `ChildShuffle`, executors are running in a parallel manner.
+// Between the Shuffles, executors are running in a parallel manner.
 // Take `Window` operator for example:
 //  Window -> Sort -> DataSource
 //  ==> Shuffle(this) -> Window -> Sort -> Shuffle(child) -> DataSource, will be separated into:
@@ -591,10 +591,8 @@ type PhysicalShuffle struct {
 // ScaleStats scales stats info according to concurrency & fanout.
 func (p *PhysicalShuffle) ScaleStats() {
 	// Stats info divided by `FanOut`, as each worker of parent get rows splitted to `1 / FanOut`.
-	// But NOT multiply by `Concurrency`, as stats info of child plan is determined in logical planning phase.
-	if p.FanOut > 1 {
-		p.stats = p.stats.Scale(1 / (float64)(p.FanOut))
-	}
+	// And multiply by `Concurrency`, as each worker of parent get rows merged from `Concurrency` children.
+	p.stats = p.stats.Scale((float64)(p.Concurrency) / (float64)(p.FanOut))
 }
 
 // ShuffleSplitterType is the type of `Shuffle` executor splitter, which splits data source into partitions.

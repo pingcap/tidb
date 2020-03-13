@@ -69,7 +69,7 @@ explain select sum(a) over(partition by a order by b) from t;
 id	estRows	task	operator info
 Projection_7	10000.00	root	Column#6
 └─Shuffle_17	10000.00	root	execution info: concurrency:4, fan out:1, splitter:none, merger:random
-  └─Window_9	10000.00	root	sum(cast(test.t.a, decimal(65,0) BINARY))->Column#6 over(partition by test.t.a order by test.t.b asc range between unbounded preceding and current row)
+  └─Window_9	2500.00	root	sum(cast(test.t.a, decimal(65,0) BINARY))->Column#6 over(partition by test.t.a order by test.t.b asc range between unbounded preceding and current row)
     └─Sort_16	2500.00	root	test.t.a:asc, test.t.b:asc
       └─Shuffle_15	2500.00	root	execution info: concurrency:1, fan out:4, splitter:hash(test.t.a), merger:none
         └─TableReader_14	10000.00	root	data:TableFullScan_13
@@ -78,7 +78,7 @@ explain select sum(a) over(partition by a order by b rows unbounded preceding) f
 id	estRows	task	operator info
 Projection_7	10000.00	root	Column#6
 └─Shuffle_17	10000.00	root	execution info: concurrency:4, fan out:1, splitter:none, merger:random
-  └─Window_9	10000.00	root	sum(cast(test.t.a, decimal(65,0) BINARY))->Column#6 over(partition by test.t.a order by test.t.b asc rows between unbounded preceding and current row)
+  └─Window_9	2500.00	root	sum(cast(test.t.a, decimal(65,0) BINARY))->Column#6 over(partition by test.t.a order by test.t.b asc rows between unbounded preceding and current row)
     └─Sort_16	2500.00	root	test.t.a:asc, test.t.b:asc
       └─Shuffle_15	2500.00	root	execution info: concurrency:1, fan out:4, splitter:hash(test.t.a), merger:none
         └─TableReader_14	10000.00	root	data:TableFullScan_13
@@ -87,7 +87,7 @@ explain select sum(a) over(partition by a order by b rows between 1 preceding an
 id	estRows	task	operator info
 Projection_7	10000.00	root	Column#6
 └─Shuffle_17	10000.00	root	execution info: concurrency:4, fan out:1, splitter:none, merger:random
-  └─Window_9	10000.00	root	sum(cast(test.t.a, decimal(65,0) BINARY))->Column#6 over(partition by test.t.a order by test.t.b asc rows between 1 preceding and 1 following)
+  └─Window_9	2500.00	root	sum(cast(test.t.a, decimal(65,0) BINARY))->Column#6 over(partition by test.t.a order by test.t.b asc rows between 1 preceding and 1 following)
     └─Sort_16	2500.00	root	test.t.a:asc, test.t.b:asc
       └─Shuffle_15	2500.00	root	execution info: concurrency:1, fan out:4, splitter:hash(test.t.a), merger:none
         └─TableReader_14	10000.00	root	data:TableFullScan_13
@@ -96,7 +96,7 @@ explain select sum(a) over(partition by a order by b range between 1 preceding a
 id	estRows	task	operator info
 Projection_7	10000.00	root	Column#6
 └─Shuffle_17	10000.00	root	execution info: concurrency:4, fan out:1, splitter:none, merger:random
-  └─Window_9	10000.00	root	sum(cast(test.t.a, decimal(65,0) BINARY))->Column#6 over(partition by test.t.a order by test.t.b asc range between 1 preceding and 1 following)
+  └─Window_9	2500.00	root	sum(cast(test.t.a, decimal(65,0) BINARY))->Column#6 over(partition by test.t.a order by test.t.b asc range between 1 preceding and 1 following)
     └─Sort_16	2500.00	root	test.t.a:asc, test.t.b:asc
       └─Shuffle_15	2500.00	root	execution info: concurrency:1, fan out:4, splitter:hash(test.t.a), merger:none
         └─TableReader_14	10000.00	root	data:TableFullScan_13
@@ -105,7 +105,7 @@ explain select sum(a) over(partition by a order by c range between interval '2:3
 id	estRows	task	operator info
 Projection_7	10000.00	root	Column#6
 └─Shuffle_17	10000.00	root	execution info: concurrency:4, fan out:1, splitter:none, merger:random
-  └─Window_9	10000.00	root	sum(cast(test.t.a, decimal(65,0) BINARY))->Column#6 over(partition by test.t.a order by test.t.c asc range between interval "2:30" "MINUTE_SECOND" preceding and interval "2:30" "MINUTE_SECOND" following)
+  └─Window_9	2500.00	root	sum(cast(test.t.a, decimal(65,0) BINARY))->Column#6 over(partition by test.t.a order by test.t.c asc range between interval "2:30" "MINUTE_SECOND" preceding and interval "2:30" "MINUTE_SECOND" following)
     └─Sort_16	2500.00	root	test.t.a:asc, test.t.c:asc
       └─Shuffle_15	2500.00	root	execution info: concurrency:1, fan out:4, splitter:hash(test.t.a), merger:none
         └─TableReader_14	10000.00	root	data:TableFullScan_13
@@ -114,10 +114,10 @@ explain select sum(a) over(partition by a order by b), avg(a) over(partition by 
 id	estRows	task	operator info
 Projection_9	10000.00	root	Column#9, Column#8
 └─Shuffle_30	10000.00	root	execution info: concurrency:4, fan out:1, splitter:none, merger:random
-  └─Window_11	10000.00	root	sum(cast(test.t.a, decimal(65,0) BINARY))->Column#9 over(partition by test.t.a order by test.t.b asc range between unbounded preceding and current row)
+  └─Window_11	2500.00	root	sum(cast(test.t.a, decimal(65,0) BINARY))->Column#9 over(partition by test.t.a order by test.t.b asc range between unbounded preceding and current row)
     └─Sort_29	2500.00	root	test.t.a:asc, test.t.b:asc
       └─Shuffle_28	2500.00	root	execution info: concurrency:4, fan out:4, splitter:hash(test.t.a), merger:merge-sort(Column#7,test.t.b)
-        └─Window_25	10000.00	root	avg(cast(test.t.a, decimal(65,4) BINARY))->Column#8 over(partition by Column#7 order by test.t.b asc range between unbounded preceding and current row)
+        └─Window_25	2500.00	root	avg(cast(test.t.a, decimal(65,4) BINARY))->Column#8 over(partition by Column#7 order by test.t.b asc range between unbounded preceding and current row)
           └─Sort_21	2500.00	root	Column#7:asc, test.t.b:asc
             └─Shuffle_20	2500.00	root	execution info: concurrency:1, fan out:4, splitter:hash(Column#7), merger:none
               └─Projection_19	10000.00	root	test.t.a, test.t.b, plus(test.t.a, 1)->Column#7
@@ -127,7 +127,7 @@ explain select sum(a) over(partition by b order by c) from t;
 id	estRows	task	operator info
 Projection_7	10000.00	root	Column#6
 └─Shuffle_17	10000.00	root	execution info: concurrency:4, fan out:1, splitter:none, merger:random
-  └─Window_9	10000.00	root	sum(cast(test.t.a, decimal(65,0) BINARY))->Column#6 over(partition by test.t.b order by test.t.c asc range between unbounded preceding and current row)
+  └─Window_9	2500.00	root	sum(cast(test.t.a, decimal(65,0) BINARY))->Column#6 over(partition by test.t.b order by test.t.c asc range between unbounded preceding and current row)
     └─Sort_16	2500.00	root	test.t.b:asc, test.t.c:asc
       └─Shuffle_15	2500.00	root	execution info: concurrency:1, fan out:4, splitter:hash(test.t.b), merger:none
         └─TableReader_14	10000.00	root	data:TableFullScan_13
@@ -136,7 +136,7 @@ explain select sum(a) over(partition by b order by c) from t order by b, c;
 id	estRows	task	operator info
 Projection_8	10000.00	root	Column#6
 └─Shuffle_25	10000.00	root	execution info: concurrency:4, fan out:1, splitter:none, merger:merge-sort(test.t.b,test.t.c)
-  └─Window_24	10000.00	root	sum(cast(test.t.a, decimal(65,0) BINARY))->Column#6 over(partition by test.t.b order by test.t.c asc range between unbounded preceding and current row)
+  └─Window_24	2500.00	root	sum(cast(test.t.a, decimal(65,0) BINARY))->Column#6 over(partition by test.t.b order by test.t.c asc range between unbounded preceding and current row)
     └─Sort_21	2500.00	root	test.t.b:asc, test.t.c:asc
       └─Shuffle_20	2500.00	root	execution info: concurrency:1, fan out:4, splitter:hash(test.t.b), merger:none
         └─TableReader_19	10000.00	root	data:TableFullScan_18
@@ -158,7 +158,7 @@ explain select sum(a) over(partition by b) from t1;
 id	estRows	task	operator info
 Projection_7	8.00	root	Column#4
 └─Shuffle_17	8.00	root	execution info: concurrency:4, fan out:1, splitter:none, merger:random
-  └─Window_9	8.00	root	sum(cast(test.t1.a, decimal(65,0) BINARY))->Column#4 over(partition by test.t1.b)
+  └─Window_9	2.00	root	sum(cast(test.t1.a, decimal(65,0) BINARY))->Column#4 over(partition by test.t1.b)
     └─Sort_16	2.00	root	test.t1.b:asc
       └─Shuffle_15	2.00	root	execution info: concurrency:1, fan out:4, splitter:hash(test.t1.b), merger:none
         └─TableReader_14	8.00	root	data:TableFullScan_13

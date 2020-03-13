@@ -72,7 +72,7 @@ func enforceProperty(p *property.PhysicalProperty, tsk task, ctx sessionctx.Cont
 	for _, col := range p.Items {
 		sort.ByItems = append(sort.ByItems, &ByItems{col.Col, col.Desc})
 	}
-	return sort.attach2Task(tsk)
+	return sort.attach2TaskByEnforced(tsk)
 }
 
 // LogicalPlan is a tree of logical operators.
@@ -384,6 +384,13 @@ func (p *basePlan) SelectBlockOffset() int {
 // Stats implements Plan Stats interface.
 func (p *basePlan) Stats() *property.StatsInfo {
 	return p.stats
+}
+
+// ScaleStatsByConcurrency scales stats by concurrency.
+func (p *basePlan) ScaleStatsByConcurrency(concurrency int) {
+	if concurrency > 1 {
+		p.stats = p.stats.Scale(1 / (float64)(concurrency))
+	}
 }
 
 // Schema implements Plan Schema interface.

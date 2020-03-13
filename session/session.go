@@ -1108,6 +1108,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 	isInternal := s.isInternal()
 	if isInternal {
 		sessionExecuteParseDurationInternal.Observe(durParse.Seconds())
+		s.GetSessionVars().ExecutorsConcurrency = 1 // disable executors concurrency for internal sessions.
 	} else {
 		sessionExecuteParseDurationGeneral.Observe(durParse.Seconds())
 	}

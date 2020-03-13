@@ -41,6 +41,7 @@ type task interface {
 	plan() PhysicalPlan
 	invalid() bool
 	setConcurrency(concurrency int)
+	getConcurrency() int
 }
 
 // copTask is a task that runs in a distributed kv store.
@@ -106,6 +107,10 @@ func (t *copTask) plan() PhysicalPlan {
 }
 
 func (t *copTask) setConcurrency(concurrency int) {
+}
+
+func (t *copTask) getConcurrency() int {
+	return 0
 }
 
 func attachPlan2Task(p PhysicalPlan, t task) task {
@@ -740,7 +745,7 @@ func setTableScanToTableRowIDScan(p PhysicalPlan) {
 type rootTask struct {
 	p           PhysicalPlan
 	cst         float64
-	concurrency float64
+	concurrency int
 }
 
 func (t *rootTask) copy() task {
@@ -752,9 +757,9 @@ func (t *rootTask) copy() task {
 }
 
 func (t *rootTask) count() float64 {
-	if t.concurrency > 1.0 {
+	if t.concurrency > 1 {
 		//Future: fix wrong result for memory cost.
-		return t.p.statsInfo().RowCount / t.concurrency
+		return t.p.statsInfo().RowCount / (float64)(t.concurrency)
 	}
 	return t.p.statsInfo().RowCount
 }
@@ -772,7 +777,11 @@ func (t *rootTask) plan() PhysicalPlan {
 }
 
 func (t *rootTask) setConcurrency(concurrency int) {
-	t.concurrency = (float64)(concurrency)
+	t.concurrency = concurrency
+}
+
+func (t *rootTask) getConcurrency() int {
+	return t.concurrency
 }
 
 func (p *PhysicalLimit) attach2Task(tasks ...task) task {
@@ -897,6 +906,14 @@ func (p *PhysicalSort) GetCost(count float64, schema *expression.Schema) float64
 }
 
 func (p *PhysicalSort) attach2Task(tasks ...task) task {
+	t := tasks[0].copy()
+	p.ScaleStatsByConcurrency(t.getConcurrency())
+	t = attachPlan2Task(p, t)
+	t.addCost(p.GetCost(t.count(), p.Schema()))
+	return t
+}
+
+func (p *PhysicalSort) attach2TaskByEnforced(tasks ...task) task {
 	t := tasks[0].copy()
 	t = attachPlan2Task(p, t)
 	t.addCost(p.GetCost(t.count(), p.Schema()))
@@ -1322,6 +1339,13 @@ func (p *PhysicalHashAgg) GetCost(inputRows float64, isRoot bool) float64 {
 	// check duplication.
 	memoryCost += inputRows * distinctFactor * sessVars.MemoryFactor * float64(numDistinctFunc)
 	return cpuCost + memoryCost
+}
+
+func (p *PhysicalWindow) attach2Task(tasks ...task) task {
+	t := finishCopTask(p.ctx, tasks[0].copy())
+	p.ScaleStatsByConcurrency(t.getConcurrency())
+	// Future: implements `GetCost()`.
+	return attachPlan2Task(p.self, t)
 }
 
 func (p *PhysicalShuffle) attach2Task(tasks ...task) task {
