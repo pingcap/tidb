@@ -16,6 +16,7 @@ package executor
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"io"
 	"os"
 	"strings"
@@ -34,7 +35,7 @@ import (
 func parseSlowLog(ctx sessionctx.Context, reader *bufio.Reader) ([][]types.Datum, error) {
 	retriever := &slowQueryRetriever{}
 	// Ignore the error is ok for test.
-	terror.Log(retriever.initialize(ctx))
+	terror.Log(retriever.initialize(context.Background(), ctx))
 	rows, err := retriever.parseSlowLog(ctx, reader, 1024)
 	if err == io.EOF {
 		err = nil
@@ -354,7 +355,7 @@ select 6;`
 
 		}
 		retriever := &slowQueryRetriever{extractor: extractor}
-		err := retriever.initialize(ctx)
+		err := retriever.initialize(context.Background(), ctx)
 		c.Assert(err, IsNil)
 		comment := Commentf("case id: %v", i)
 		c.Assert(retriever.files, HasLen, len(cas.files), comment)

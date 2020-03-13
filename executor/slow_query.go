@@ -46,33 +46,31 @@ import (
 type slowQueryRetriever struct {
 	table       *model.TableInfo
 	outputCols  []*model.ColumnInfo
-	retrieved   bool
 	initialized bool
 	extractor   *plannercore.SlowQueryExtractor
 	files       []logFile
 	fileIdx     int
 	fileLine    int
 	checker     *slowLogChecker
+
+	parsedSlowLogCh chan parsedSlowLog
+	test            bool
 }
 
 func (e *slowQueryRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
-	if e.retrieved {
-		return nil, nil
-	}
 	if !e.initialized {
-		err := e.initialize(sctx)
+		err := e.initialize(ctx, sctx)
 		if err != nil {
 			return nil, err
 		}
 	}
-	if len(e.files) == 0 || e.fileIdx >= len(e.files) {
-		e.retrieved = true
-		return nil, nil
-	}
 
-	rows, err := e.dataForSlowLog(sctx)
+	rows, retrieved, err := e.dataForSlowLog(ctx)
 	if err != nil {
 		return nil, err
+	}
+	if retrieved {
+		return nil, nil
 	}
 	if len(e.outputCols) == len(e.table.Columns) {
 		return rows, nil
@@ -88,7 +86,7 @@ func (e *slowQueryRetriever) retrieve(ctx context.Context, sctx sessionctx.Conte
 	return retRows, nil
 }
 
-func (e *slowQueryRetriever) initialize(sctx sessionctx.Context) error {
+func (e *slowQueryRetriever) initialize(ctx context.Context, sctx sessionctx.Context) error {
 	var err error
 	var hasProcessPriv bool
 	if pm := privilege.GetPrivilegeManager(sctx); pm != nil {
@@ -105,7 +103,14 @@ func (e *slowQueryRetriever) initialize(sctx sessionctx.Context) error {
 	}
 	e.initialized = true
 	e.files, err = e.getAllFiles(sctx, sctx.GetSessionVars().SlowQueryFile)
-	return err
+	if err != nil {
+		return err
+	}
+	if !e.test {
+		e.parsedSlowLogCh = make(chan parsedSlowLog, 1)
+		go e.parseDataForSlowLog(ctx, sctx)
+	}
+	return nil
 }
 
 func (e *slowQueryRetriever) close() error {
@@ -118,16 +123,54 @@ func (e *slowQueryRetriever) close() error {
 	return nil
 }
 
-func (e *slowQueryRetriever) dataForSlowLog(ctx sessionctx.Context) ([][]types.Datum, error) {
-	reader := bufio.NewReader(e.files[e.fileIdx].file)
-	rows, err := e.parseSlowLog(ctx, reader, 1024)
+type parsedSlowLog struct {
+	rows [][]types.Datum
+	err  error
+}
+
+func (e *slowQueryRetriever) parseDataForSlowLog(ctx context.Context, sctx sessionctx.Context) {
+	if len(e.files) == 0 {
+		close(e.parsedSlowLogCh)
+		return
+	}
+	for e.fileIdx < len(e.files) {
+		select {
+		case <-ctx.Done():
+			break
+		default:
+		}
+
+		reader := bufio.NewReader(e.files[e.fileIdx].file)
+		rows, err := e.parseSlowLog(sctx, reader, 1024)
+		e.parsedSlowLogCh <- parsedSlowLog{rows, err}
+	}
+	close(e.parsedSlowLogCh)
+}
+
+func (e *slowQueryRetriever) dataForSlowLog(ctx context.Context) ([][]types.Datum, bool, error) {
+	var (
+		slowLog parsedSlowLog
+		ok      bool
+	)
+	select {
+	case slowLog, ok = <-e.parsedSlowLogCh:
+	case <-ctx.Done():
+		return nil, false, ctx.Err()
+	}
+	if !ok {
+		// When e.parsedSlowLogCh is closed, the slow log data is retrieved.
+		return nil, true, nil
+	}
+
+	rows, err := slowLog.rows, slowLog.err
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if e.table.Name.L == strings.ToLower(infoschema.ClusterTableSlowLog) {
-		return infoschema.AppendHostInfoToRows(rows)
+		rows, err := infoschema.AppendHostInfoToRows(rows)
+		return rows, false, err
 	}
-	return rows, nil
+	return rows, false, nil
 }
 
 type slowLogChecker struct {
@@ -168,7 +211,6 @@ func (e *slowQueryRetriever) parseSlowLog(ctx sessionctx.Context, reader *bufio.
 				e.fileIdx++
 				e.fileLine = 0
 				if e.fileIdx >= len(e.files) {
-					e.retrieved = true
 					return rows, nil
 				}
 				reader = bufio.NewReader(e.files[e.fileIdx].file)
