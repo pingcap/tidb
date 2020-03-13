@@ -40,7 +40,7 @@ import (
 func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (plannercore.Plan, types.NameSlice, error) {
 	fp := plannercore.TryFastPlan(sctx, node)
 	if fp != nil {
-		if !isPointGetWithoutDoubleRead(sctx, fp) {
+		if !useMaxTS(sctx, fp) {
 			sctx.PrepareTSFuture(ctx)
 		}
 		return fp, fp.OutputNames(), nil
@@ -169,7 +169,7 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		finalPlan, cost, err := cascades.DefaultOptimizer.FindBestPlan(sctx, logic)
 		return finalPlan, names, cost, err
 	}
-	finalPlan, cost, err := plannercore.DoOptimize(ctx, builder.GetOptFlag(), logic)
+	finalPlan, cost, err := plannercore.DoOptimize(ctx, sctx, builder.GetOptFlag(), logic)
 	return finalPlan, names, cost, err
 }
 
@@ -246,10 +246,10 @@ func handleEvolveTasks(ctx context.Context, sctx sessionctx.Context, br *bindinf
 	globalHandle.AddEvolvePlanTask(br.OriginalSQL, br.Db, binding, planHint)
 }
 
-// isPointGetWithoutDoubleRead returns true when meets following conditions:
+// useMaxTS returns true when meets following conditions:
 //  1. ctx is auto commit tagged.
 //  2. plan is point get by pk.
-func isPointGetWithoutDoubleRead(ctx sessionctx.Context, p plannercore.Plan) bool {
+func useMaxTS(ctx sessionctx.Context, p plannercore.Plan) bool {
 	if !plannercore.IsAutoCommitTxn(ctx) {
 		return false
 	}
@@ -323,13 +323,13 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 			warns = append(warns, warn)
 		}
 		// Executor use MemoryQuota <= 0 to indicate no memory limit, here use < 0 to handle hint syntax error.
-		if memoryQuotaHint.MemoryQuota < 0 {
+		if memoryQuota := memoryQuotaHint.HintData.(int64); memoryQuota < 0 {
 			warn := errors.New("The use of MEMORY_QUOTA hint is invalid, valid usage: MEMORY_QUOTA(10 MB) or MEMORY_QUOTA(10 GB)")
 			warns = append(warns, warn)
 		} else {
 			stmtHints.HasMemQuotaHint = true
-			stmtHints.MemQuotaQuery = memoryQuotaHint.MemoryQuota
-			if memoryQuotaHint.MemoryQuota == 0 {
+			stmtHints.MemQuotaQuery = memoryQuota
+			if memoryQuota == 0 {
 				warn := errors.New("Setting the MEMORY_QUOTA to 0 means no memory limit")
 				warns = append(warns, warn)
 			}
@@ -342,7 +342,7 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 			warns = append(warns, warn)
 		}
 		stmtHints.HasAllowInSubqToJoinAndAggHint = true
-		stmtHints.AllowInSubqToJoinAndAgg = useToJAHint.HintFlag
+		stmtHints.AllowInSubqToJoinAndAgg = useToJAHint.HintData.(bool)
 	}
 	// Handle NO_INDEX_MERGE
 	if noIndexMergeHintCnt != 0 {
@@ -368,7 +368,7 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 			warns = append(warns, warn)
 		}
 		stmtHints.HasMaxExecutionTime = true
-		stmtHints.MaxExecutionTime = maxExecutionTime.MaxExecutionTime
+		stmtHints.MaxExecutionTime = maxExecutionTime.HintData.(uint64)
 	}
 	return
 }

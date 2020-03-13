@@ -17,8 +17,8 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -100,17 +100,10 @@ func (a *PanicOnExceed) Action(t *Tracker) {
 func (a *PanicOnExceed) SetFallback(ActionOnExceed) {}
 
 var (
-	errMemExceedThreshold = terror.ClassUtil.New(mysql.ErrMemExceedThreshold, mysql.MySQLErrName[mysql.ErrMemExceedThreshold])
+	errMemExceedThreshold = terror.ClassUtil.New(errno.ErrMemExceedThreshold, errno.MySQLErrName[errno.ErrMemExceedThreshold])
 )
 
 const (
 	// PanicMemoryExceed represents the panic message when out of memory quota.
 	PanicMemoryExceed string = "Out Of Memory Quota!"
 )
-
-func init() {
-	errCodes := map[terror.ErrCode]uint16{
-		mysql.ErrMemExceedThreshold: mysql.ErrMemExceedThreshold,
-	}
-	terror.ErrClassToMySQLCodes[terror.ClassUtil] = errCodes
-}

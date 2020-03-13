@@ -57,6 +57,8 @@ const (
 	OperandLimit
 	// OperandTiKVSingleGather is the operand for TiKVSingleGather.
 	OperandTiKVSingleGather
+	// OperandMemTableScan is the operand for MemTableScan.
+	OperandMemTableScan
 	// OperandTableScan is the operand for TableScan.
 	OperandTableScan
 	// OperandIndexScan is the operand for IndexScan.
@@ -72,6 +74,8 @@ const (
 // GetOperand maps logical plan operator to Operand.
 func GetOperand(p plannercore.LogicalPlan) Operand {
 	switch p.(type) {
+	case *plannercore.LogicalApply:
+		return OperandApply
 	case *plannercore.LogicalJoin:
 		return OperandJoin
 	case *plannercore.LogicalAggregation:
@@ -80,8 +84,6 @@ func GetOperand(p plannercore.LogicalPlan) Operand {
 		return OperandProjection
 	case *plannercore.LogicalSelection:
 		return OperandSelection
-	case *plannercore.LogicalApply:
-		return OperandApply
 	case *plannercore.LogicalMaxOneRow:
 		return OperandMaxOneRow
 	case *plannercore.LogicalTableDual:
@@ -104,6 +106,8 @@ func GetOperand(p plannercore.LogicalPlan) Operand {
 		return OperandTiKVSingleGather
 	case *plannercore.LogicalTableScan:
 		return OperandTableScan
+	case *plannercore.LogicalMemTable:
+		return OperandMemTableScan
 	case *plannercore.LogicalIndexScan:
 		return OperandIndexScan
 	case *plannercore.LogicalShow:

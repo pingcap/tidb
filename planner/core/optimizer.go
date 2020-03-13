@@ -39,7 +39,8 @@ var OptimizeAstNode func(ctx context.Context, sctx sessionctx.Context, node ast.
 var AllowCartesianProduct = atomic.NewBool(true)
 
 const (
-	flagPrunColumns uint64 = 1 << iota
+	flagGcSubstitute uint64 = 1 << iota
+	flagPrunColumns
 	flagBuildKeyInfo
 	flagDecorrelate
 	flagEliminateAgg
@@ -51,9 +52,11 @@ const (
 	flagPushDownAgg
 	flagPushDownTopN
 	flagJoinReOrder
+	flagPrunColumnsAgain
 )
 
 var optRuleList = []logicalOptRule{
+	&gcSubstituter{},
 	&columnPruner{},
 	&buildKeySolver{},
 	&decorrelateSolver{},
@@ -66,6 +69,7 @@ var optRuleList = []logicalOptRule{
 	&aggregationPushDownSolver{},
 	&pushDownTopNOptimizer{},
 	&joinReOrderSolver{},
+	&columnPruner{}, // column pruning again at last, note it will mess up the results of buildKeySolver
 }
 
 // logicalOptRule means a logical optimizing rule, which contains decorrelate, ppd, column pruning, etc.
@@ -115,7 +119,7 @@ func CheckTableLock(ctx sessionctx.Context, is infoschema.InfoSchema, vs []visit
 }
 
 // DoOptimize optimizes a logical plan to a physical plan.
-func DoOptimize(ctx context.Context, flag uint64, logic LogicalPlan) (PhysicalPlan, float64, error) {
+func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic LogicalPlan) (PhysicalPlan, float64, error) {
 	logic, err := logicalOptimize(ctx, flag, logic)
 	if err != nil {
 		return nil, 0, err
@@ -127,13 +131,14 @@ func DoOptimize(ctx context.Context, flag uint64, logic LogicalPlan) (PhysicalPl
 	if err != nil {
 		return nil, 0, err
 	}
-	finalPlan := postOptimize(physical)
+	finalPlan := postOptimize(sctx, physical)
 	return finalPlan, cost, nil
 }
 
-func postOptimize(plan PhysicalPlan) PhysicalPlan {
+func postOptimize(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPlan {
 	plan = eliminatePhysicalProjection(plan)
 	plan = injectExtraProjection(plan)
+	plan = eliminateUnionScanAndLock(sctx, plan)
 	return plan
 }
 
@@ -181,6 +186,74 @@ func physicalOptimize(logic LogicalPlan) (PhysicalPlan, float64, error) {
 
 	err = t.plan().ResolveIndices()
 	return t.plan(), t.cost(), err
+}
+
+// eliminateUnionScanAndLock set lock property for PointGet and BatchPointGet and eliminates UnionScan and Lock.
+func eliminateUnionScanAndLock(sctx sessionctx.Context, p PhysicalPlan) PhysicalPlan {
+	var pointGet *PointGetPlan
+	var batchPointGet *BatchPointGetPlan
+	var physLock *PhysicalLock
+	var unionScan *PhysicalUnionScan
+	iteratePhysicalPlan(p, func(p PhysicalPlan) bool {
+		if len(p.Children()) > 1 {
+			return false
+		}
+		switch x := p.(type) {
+		case *PointGetPlan:
+			pointGet = x
+		case *BatchPointGetPlan:
+			batchPointGet = x
+		case *PhysicalLock:
+			physLock = x
+		case *PhysicalUnionScan:
+			unionScan = x
+		}
+		return true
+	})
+	if pointGet == nil && batchPointGet == nil {
+		return p
+	}
+	if physLock == nil && unionScan == nil {
+		return p
+	}
+	if physLock != nil {
+		lock, waitTime := getLockWaitTime(sctx, physLock.Lock)
+		if !lock {
+			return p
+		}
+		if pointGet != nil {
+			pointGet.Lock = lock
+			pointGet.LockWaitTime = waitTime
+		} else {
+			batchPointGet.Lock = lock
+			batchPointGet.LockWaitTime = waitTime
+		}
+	}
+	return transformPhysicalPlan(p, func(p PhysicalPlan) PhysicalPlan {
+		if p == physLock {
+			return p.Children()[0]
+		}
+		if p == unionScan {
+			return p.Children()[0]
+		}
+		return p
+	})
+}
+
+func iteratePhysicalPlan(p PhysicalPlan, f func(p PhysicalPlan) bool) {
+	if !f(p) {
+		return
+	}
+	for _, child := range p.Children() {
+		iteratePhysicalPlan(child, f)
+	}
+}
+
+func transformPhysicalPlan(p PhysicalPlan, f func(p PhysicalPlan) PhysicalPlan) PhysicalPlan {
+	for i, child := range p.Children() {
+		p.Children()[i] = transformPhysicalPlan(child, f)
+	}
+	return f(p)
 }
 
 func existsCartesianProduct(p LogicalPlan) bool {

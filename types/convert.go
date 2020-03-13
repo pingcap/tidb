@@ -24,7 +24,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/hack"
@@ -174,10 +173,10 @@ func ConvertFloatToUint(sc *stmtctx.StatementContext, fval float64, upperBound u
 	// which can not be represented by 64bit integer.
 	// So `uint64(float64(math.MaxUint64))` is undefined behavior.
 	if val == ubf {
-		return uint64(math.MaxInt64), nil
+		return math.MaxUint64, nil
 	}
 	if val > ubf {
-		return uint64(math.MaxInt64), overflow(val, tp)
+		return math.MaxUint64, overflow(val, tp)
 	}
 	return uint64(val), nil
 }
@@ -265,7 +264,7 @@ func convertDecimalStrToUint(sc *stmtctx.StatementContext, str string, upperBoun
 
 	val, err := strconv.ParseUint(intStr, 10, 64)
 	if err != nil {
-		return val, err
+		return val, errors.Trace(err)
 	}
 	return val + round, nil
 }
@@ -341,12 +340,10 @@ func NumberToDuration(number int64, fsp int8) (Duration, error) {
 				return dur, errors.Trace(err1)
 			}
 		}
-		dur, err1 := MaxMySQLTime(fsp).ConvertToDuration()
-		terror.Log(err1)
+		dur := MaxMySQLDuration(fsp)
 		return dur, ErrOverflow.GenWithStackByArgs("Duration", strconv.Itoa(int(number)))
 	} else if number < -TimeMaxValue {
-		dur, err1 := MaxMySQLTime(fsp).ConvertToDuration()
-		terror.Log(err1)
+		dur := MaxMySQLDuration(fsp)
 		dur.Duration = -dur.Duration
 		return dur, ErrOverflow.GenWithStackByArgs("Duration", strconv.Itoa(int(number)))
 	}
@@ -358,11 +355,7 @@ func NumberToDuration(number int64, fsp int8) (Duration, error) {
 	if number/10000 > TimeMaxHour || number%100 >= 60 || (number/100)%100 >= 60 {
 		return ZeroDuration, errors.Trace(ErrWrongValue.GenWithStackByArgs(TimeStr, strconv.FormatInt(number, 10)))
 	}
-	t := NewTime(FromDate(0, 0, 0, int(number/10000), int((number/100)%100), int(number%100), 0), mysql.TypeDuration, fsp)
-	dur, err := t.ConvertToDuration()
-	if err != nil {
-		return ZeroDuration, errors.Trace(err)
-	}
+	dur := NewDuration(int(number/10000), int((number/100)%100), int(number%100), 0, fsp)
 	if neg {
 		dur.Duration = -dur.Duration
 	}
@@ -637,7 +630,7 @@ func getValidFloatPrefix(sc *stmtctx.StatementContext, s string) (valid string, 
 		sawDot   bool
 		sawDigit bool
 		validLen int
-		eIdx     int
+		eIdx     = -1
 	)
 	for i := 0; i < len(s); i++ {
 		c := s[i]
@@ -657,7 +650,7 @@ func getValidFloatPrefix(sc *stmtctx.StatementContext, s string) (valid string, 
 			if !sawDigit { // "+.e"
 				break
 			}
-			if eIdx != 0 { // "1e5e"
+			if eIdx != -1 { // "1e5e"
 				break
 			}
 			eIdx = i

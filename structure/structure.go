@@ -14,8 +14,8 @@
 package structure
 
 import (
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 )
 
@@ -45,15 +45,4 @@ type TxStructure struct {
 	reader     kv.Retriever
 	readWriter kv.RetrieverMutator
 	prefix     []byte
-}
-
-func init() {
-	// Register terror to mysql error map.
-	mySQLErrCodes := map[terror.ErrCode]uint16{
-		mysql.ErrInvalidHashKeyFlag:  mysql.ErrInvalidHashKeyFlag,
-		mysql.ErrInvalidListIndex:    mysql.ErrInvalidListIndex,
-		mysql.ErrInvalidListMetaData: mysql.ErrInvalidListMetaData,
-		mysql.ErrWriteOnSnapshot:     mysql.ErrWriteOnSnapshot,
-	}
-	terror.ErrClassToMySQLCodes[terror.ClassStructure] = mySQLErrCodes
 }

@@ -43,6 +43,12 @@ func (h *Handle) HandleDDLEvent(t *util.Event) error {
 				return err
 			}
 		}
+	case model.ActionAddTablePartition, model.ActionTruncateTablePartition:
+		for _, def := range t.PartInfo.Definitions {
+			if err := h.insertTableStats2KV(t.TableInfo, def.ID); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }

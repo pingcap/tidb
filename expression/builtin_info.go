@@ -22,12 +22,15 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/plancodec"
@@ -53,6 +56,11 @@ var (
 	_ functionClass = &tidbIsDDLOwnerFunctionClass{}
 	_ functionClass = &tidbDecodePlanFunctionClass{}
 	_ functionClass = &tidbDecodeKeyFunctionClass{}
+	_ functionClass = &nextValFunctionClass{}
+	_ functionClass = &lastValFunctionClass{}
+	_ functionClass = &setValFunctionClass{}
+	_ functionClass = &formatBytesFunctionClass{}
+	_ functionClass = &formatNanoTimeFunctionClass{}
 )
 
 var (
@@ -67,6 +75,11 @@ var (
 	_ builtinFunc = &builtinTiDBVersionSig{}
 	_ builtinFunc = &builtinRowCountSig{}
 	_ builtinFunc = &builtinTiDBDecodeKeySig{}
+	_ builtinFunc = &builtinNextValSig{}
+	_ builtinFunc = &builtinLastValSig{}
+	_ builtinFunc = &builtinSetValSig{}
+	_ builtinFunc = &builtinFormatBytesSig{}
+	_ builtinFunc = &builtinFormatNanoTimeSig{}
 )
 
 type databaseFunctionClass struct {
@@ -78,6 +91,7 @@ func (c *databaseFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		return nil, err
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString)
+	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	bf.tp.Flen = 64
 	sig := &builtinDatabaseSig{bf}
 	return sig, nil
@@ -144,6 +158,7 @@ func (c *currentUserFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 		return nil, err
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString)
+	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	bf.tp.Flen = 64
 	sig := &builtinCurrentUserSig{bf}
 	return sig, nil
@@ -227,6 +242,7 @@ func (c *userFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 		return nil, err
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString)
+	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	bf.tp.Flen = 64
 	sig := &builtinUserSig{bf}
 	return sig, nil
@@ -359,6 +375,7 @@ func (c *versionFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 		return nil, err
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString)
+	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	bf.tp.Flen = 64
 	sig := &builtinVersionSig{bf}
 	return sig, nil
@@ -389,6 +406,7 @@ func (c *tidbVersionFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 		return nil, err
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString)
+	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	bf.tp.Flen = len(printer.GetTiDBInfo())
 	sig := &builtinTiDBVersionSig{bf}
 	return sig, nil
@@ -578,7 +596,27 @@ type coercibilityFunctionClass struct {
 }
 
 func (c *coercibilityFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "COERCIBILITY")
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, args[0].GetType().EvalType())
+	sig := &builtinCoercibilitySig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_Unspecified)
+	return sig, nil
+}
+
+type builtinCoercibilitySig struct {
+	baseBuiltinFunc
+}
+
+func (c *builtinCoercibilitySig) evalInt(_ chunk.Row) (res int64, isNull bool, err error) {
+	return int64(c.args[0].Coercibility()), false, nil
+}
+
+func (c *builtinCoercibilitySig) Clone() builtinFunc {
+	newSig := &builtinCoercibilitySig{}
+	newSig.cloneFrom(&c.baseBuiltinFunc)
+	return newSig
 }
 
 type collationFunctionClass struct {
@@ -586,7 +624,30 @@ type collationFunctionClass struct {
 }
 
 func (c *collationFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "COLLATION")
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	argsTps := make([]types.EvalType, 0, len(args))
+	for _, arg := range args {
+		argsTps = append(argsTps, arg.GetType().EvalType())
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, argsTps...)
+	sig := &builtinCollationSig{bf}
+	return sig, nil
+}
+
+type builtinCollationSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinCollationSig) Clone() builtinFunc {
+	newSig := &builtinCollationSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinCollationSig) evalString(_ chunk.Row) (string, bool, error) {
+	return b.args[0].GetType().Collate, false, nil
 }
 
 type rowCountFunctionClass struct {
@@ -710,4 +771,213 @@ func (b *builtinTiDBDecodePlanSig) evalString(row chunk.Row) (string, bool, erro
 	}
 	planTree, err := plancodec.DecodePlan(planString)
 	return planTree, false, err
+}
+
+type nextValFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *nextValFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETString)
+	sig := &builtinNextValSig{bf}
+	bf.tp.Flen = 10
+	return sig, nil
+}
+
+type builtinNextValSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinNextValSig) Clone() builtinFunc {
+	newSig := &builtinNextValSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinNextValSig) evalInt(row chunk.Row) (int64, bool, error) {
+	sequenceName, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, err
+	}
+	db, seq := getSchemaAndSequence(sequenceName)
+	if len(db) == 0 {
+		db = b.ctx.GetSessionVars().CurrentDB
+	}
+	// Check the tableName valid.
+	sequence, err := b.ctx.GetSessionVars().TxnCtx.InfoSchema.(util.SequenceSchema).SequenceByName(model.NewCIStr(db), model.NewCIStr(seq))
+	if err != nil {
+		return 0, false, err
+	}
+	nextVal, err := sequence.GetSequenceNextVal(b.ctx, db, seq)
+	if err != nil {
+		return 0, false, err
+	}
+	// update the sequenceState.
+	b.ctx.GetSessionVars().SequenceState.UpdateState(sequence.GetSequenceID(), nextVal)
+	return nextVal, false, nil
+}
+
+type lastValFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *lastValFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETString)
+	sig := &builtinLastValSig{bf}
+	bf.tp.Flen = 10
+	return sig, nil
+}
+
+type builtinLastValSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinLastValSig) Clone() builtinFunc {
+	newSig := &builtinLastValSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinLastValSig) evalInt(row chunk.Row) (int64, bool, error) {
+	sequenceName, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, err
+	}
+	db, seq := getSchemaAndSequence(sequenceName)
+	if len(db) == 0 {
+		db = b.ctx.GetSessionVars().CurrentDB
+	}
+	// Check the tableName valid.
+	sequence, err := b.ctx.GetSessionVars().TxnCtx.InfoSchema.(util.SequenceSchema).SequenceByName(model.NewCIStr(db), model.NewCIStr(seq))
+	if err != nil {
+		return 0, false, err
+	}
+	return b.ctx.GetSessionVars().SequenceState.GetLastValue(sequence.GetSequenceID())
+}
+
+type setValFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *setValFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETString, types.ETInt)
+	sig := &builtinSetValSig{bf}
+	bf.tp.Flen = args[1].GetType().Flen
+	return sig, nil
+}
+
+type builtinSetValSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinSetValSig) Clone() builtinFunc {
+	newSig := &builtinSetValSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinSetValSig) evalInt(row chunk.Row) (int64, bool, error) {
+	sequenceName, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, err
+	}
+	db, seq := getSchemaAndSequence(sequenceName)
+	if len(db) == 0 {
+		db = b.ctx.GetSessionVars().CurrentDB
+	}
+	// Check the tableName valid.
+	sequence, err := b.ctx.GetSessionVars().TxnCtx.InfoSchema.(util.SequenceSchema).SequenceByName(model.NewCIStr(db), model.NewCIStr(seq))
+	if err != nil {
+		return 0, false, err
+	}
+	setValue, isNull, err := b.args[1].EvalInt(b.ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, err
+	}
+	return sequence.SetSequenceVal(b.ctx, setValue, db, seq)
+}
+
+func getSchemaAndSequence(sequenceName string) (string, string) {
+	res := strings.Split(sequenceName, ".")
+	if len(res) == 1 {
+		return "", res[0]
+	}
+	return res[0], res[1]
+}
+
+type formatBytesFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *formatBytesFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETReal)
+	bf.tp.Flag |= mysql.UnsignedFlag
+	sig := &builtinFormatBytesSig{bf}
+	return sig, nil
+}
+
+type builtinFormatBytesSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinFormatBytesSig) Clone() builtinFunc {
+	newSig := &builtinFormatBytesSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// formatBytes evals a builtinFormatBytesSig.
+// See https://dev.mysql.com/doc/refman/8.0/en/performance-schema-functions.html#function_format-bytes
+func (b *builtinFormatBytesSig) evalString(row chunk.Row) (string, bool, error) {
+	val, isNull, err := b.args[0].EvalReal(b.ctx, row)
+	if isNull || err != nil {
+		return "", isNull, err
+	}
+	return GetFormatBytes(val), false, nil
+}
+
+type formatNanoTimeFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *formatNanoTimeFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETReal)
+	bf.tp.Flag |= mysql.UnsignedFlag
+	sig := &builtinFormatNanoTimeSig{bf}
+	return sig, nil
+}
+
+type builtinFormatNanoTimeSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinFormatNanoTimeSig) Clone() builtinFunc {
+	newSig := &builtinFormatNanoTimeSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// formatNanoTime evals a builtinFormatNanoTimeSig, as time unit in TiDB is always nanosecond, not picosecond.
+// See https://dev.mysql.com/doc/refman/8.0/en/performance-schema-functions.html#function_format-pico-time
+func (b *builtinFormatNanoTimeSig) evalString(row chunk.Row) (string, bool, error) {
+	val, isNull, err := b.args[0].EvalReal(b.ctx, row)
+	if isNull || err != nil {
+		return "", isNull, err
+	}
+	return GetFormatNanoTime(val), false, nil
 }

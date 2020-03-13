@@ -15,7 +15,7 @@ package table
 
 import (
 	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/mysql"
+	mysql "github.com/pingcap/tidb/errno"
 )
 
 var _ = Suite(&testTableSuite{})
@@ -31,7 +31,7 @@ func (t *testTableSuite) TestSlice(c *C) {
 
 func (t *testTableSuite) TestErrorCode(c *C) {
 	c.Assert(int(ErrColumnCantNull.ToSQLError().Code), Equals, mysql.ErrBadNull)
-	c.Assert(int(errUnknownColumn.ToSQLError().Code), Equals, mysql.ErrBadField)
+	c.Assert(int(ErrUnknownColumn.ToSQLError().Code), Equals, mysql.ErrBadField)
 	c.Assert(int(errDuplicateColumn.ToSQLError().Code), Equals, mysql.ErrFieldSpecifiedTwice)
 	c.Assert(int(errGetDefaultFailed.ToSQLError().Code), Equals, mysql.ErrFieldGetDefaultFailed)
 	c.Assert(int(ErrNoDefaultValue.ToSQLError().Code), Equals, mysql.ErrNoDefaultForField)

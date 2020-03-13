@@ -100,6 +100,7 @@ func (c *jsonTypeFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		return nil, err
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETJson)
+	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	bf.tp.Flen = 51 // Flen of JSON_TYPE is length of UNSIGNED INTEGER.
 	sig := &builtinJSONTypeSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonTypeSig)
@@ -1268,7 +1269,7 @@ func (b *builtinJSONKeysSig) evalJSON(row chunk.Row) (res json.BinaryJSON, isNul
 		return res, isNull, err
 	}
 	if res.TypeCode != json.TypeCodeObject {
-		return res, true, json.ErrInvalidJSONData
+		return res, true, nil
 	}
 	return res.GetKeys(), false, nil
 }
@@ -1287,9 +1288,6 @@ func (b *builtinJSONKeys2ArgsSig) evalJSON(row chunk.Row) (res json.BinaryJSON, 
 	res, isNull, err = b.args[0].EvalJSON(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, err
-	}
-	if res.TypeCode != json.TypeCodeObject {
-		return res, true, json.ErrInvalidJSONData
 	}
 
 	path, isNull, err := b.args[1].EvalString(b.ctx, row)

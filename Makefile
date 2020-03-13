@@ -175,7 +175,7 @@ ifeq ("$(TRAVIS_COVERAGE)", "1")
 			|| { $(FAILPOINT_DISABLE); exit 1; }
 else
 	@echo "Running in native mode."
-	@export log_level=error; export TZ='Asia/Shanghai'; \
+	@export log_level=fatal; export TZ='Asia/Shanghai'; \
 	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' -cover $(PACKAGES) -check.p true -check.timeout 4s || { $(FAILPOINT_DISABLE); exit 1; }
 endif
 	@$(FAILPOINT_DISABLE)
@@ -300,7 +300,7 @@ tools/bin/golangci-lint:
 # 	$ make vectorized-bench VB_FILE=Time VB_FUNC=builtinCurrentDateSig
 vectorized-bench:
 	cd ./expression && \
-		go test -v -benchmem \
+		go test -v -timeout=0 -benchmem \
 			-bench=BenchmarkVectorizedBuiltin$(VB_FILE)Func \
 			-run=BenchmarkVectorizedBuiltin$(VB_FILE)Func \
 			-args "$(VB_FUNC)"

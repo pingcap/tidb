@@ -73,7 +73,13 @@ func createSequenceWithCheck(t *meta.Meta, job *model.Job, schemaID int64, tbInf
 		job.State = model.JobStateCancelled
 		return errors.Trace(err)
 	}
-	return t.CreateSequenceAndSetSeqValue(schemaID, tbInfo, tbInfo.Sequence.Start)
+	var sequenceBase int64
+	if tbInfo.Sequence.Increment >= 0 {
+		sequenceBase = tbInfo.Sequence.Start - 1
+	} else {
+		sequenceBase = tbInfo.Sequence.Start + 1
+	}
+	return t.CreateSequenceAndSetSeqValue(schemaID, tbInfo, sequenceBase)
 }
 
 func handleSequenceOptions(SeqOptions []*ast.SequenceOption, sequenceInfo *model.SequenceInfo) {
@@ -125,7 +131,7 @@ func handleSequenceOptions(SeqOptions []*ast.SequenceOption, sequenceInfo *model
 				sequenceInfo.Start = mathutil.MinInt64(sequenceInfo.MaxValue, model.DefaultNegativeSequenceStartValue)
 			}
 			if !minSetFlag {
-				sequenceInfo.MaxValue = model.DefaultNegativeSequenceMinValue
+				sequenceInfo.MinValue = model.DefaultNegativeSequenceMinValue
 			}
 		}
 	}
@@ -134,11 +140,12 @@ func handleSequenceOptions(SeqOptions []*ast.SequenceOption, sequenceInfo *model
 func validateSequenceOptions(seqInfo *model.SequenceInfo) bool {
 	// To ensure that cache * increment will never overflows.
 	var maxIncrement int64
-	if seqInfo.Increment != 0 {
-		maxIncrement = math2.Abs(seqInfo.Increment)
-	} else {
-		maxIncrement = math.MaxInt16
+	if seqInfo.Increment == 0 {
+		// Increment shouldn't be set as 0.
+		return false
 	}
+	maxIncrement = math2.Abs(seqInfo.Increment)
+
 	return seqInfo.MaxValue >= seqInfo.Start &&
 		seqInfo.MaxValue > seqInfo.MinValue &&
 		seqInfo.Start >= seqInfo.MinValue &&
@@ -160,6 +167,8 @@ func buildSequenceInfo(stmt *ast.CreateSequenceStmt, ident ast.Ident) (*model.Se
 		switch op.Tp {
 		case ast.TableOptionComment:
 			sequenceInfo.Comment = op.StrValue
+		case ast.TableOptionEngine:
+			// TableOptionEngine will always be 'InnoDB', thus we do nothing in this branch to avoid error happening.
 		default:
 			return nil, ErrSequenceUnsupportedTableOption.GenWithStackByArgs(op.StrValue)
 		}

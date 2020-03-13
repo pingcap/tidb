@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
@@ -118,13 +119,11 @@ var (
 	statsLease = int64(3 * time.Second)
 )
 
-// ResetForWithTiKVTest is only used in the test code.
+// ResetStoreForWithTiKVTest is only used in the test code.
 // TODO: Remove domap and storeBootstrapped. Use store.SetOption() to do it.
-func ResetForWithTiKVTest() {
-	domap = &domainMap{
-		domains: map[string]*domain.Domain{},
-	}
-	storeBootstrapped = make(map[string]bool)
+func ResetStoreForWithTiKVTest(store kv.Storage) {
+	domap.Delete(store)
+	unsetStoreBootstrapped(store.UUID())
 }
 
 func setStoreBootstrapped(storeUUID string) {
@@ -377,12 +376,5 @@ func ResultSetToStringSlice(ctx context.Context, s Session, rs sqlexec.RecordSet
 
 // Session errors.
 var (
-	ErrForUpdateCantRetry = terror.ClassSession.New(mysql.ErrForUpdateCantRetry, mysql.MySQLErrName[mysql.ErrForUpdateCantRetry])
+	ErrForUpdateCantRetry = terror.ClassSession.New(errno.ErrForUpdateCantRetry, errno.MySQLErrName[errno.ErrForUpdateCantRetry])
 )
-
-func init() {
-	sessionMySQLErrCodes := map[terror.ErrCode]uint16{
-		mysql.ErrForUpdateCantRetry: mysql.ErrForUpdateCantRetry,
-	}
-	terror.ErrClassToMySQLCodes[terror.ClassSession] = sessionMySQLErrCodes
-}

@@ -52,6 +52,39 @@ var vecBuiltinArithmeticCases = map[string][]vecExprBenchCase{
 			childrenFieldTypes: []*types.FieldType{nil, {Tp: mysql.TypeNewDecimal, Flag: mysql.UnsignedFlag}},
 			geners:             []dataGenerator{newRangeDecimalGener(-100, -1, 0.2), newRangeDecimalGener(1000, 2000, 0.2)},
 		},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt},
+			geners: []dataGenerator{
+				newRangeInt64Gener(math.MinInt64/2, math.MaxInt64/2),
+				newRangeInt64Gener(math.MinInt64/2, math.MaxInt64/2),
+			},
+		},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt},
+			childrenFieldTypes: []*types.FieldType{
+				{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag},
+				{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag}},
+			geners: []dataGenerator{
+				newRangeInt64Gener(0, math.MaxInt64),
+				newRangeInt64Gener(0, math.MaxInt64),
+			},
+		},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt},
+			childrenFieldTypes: []*types.FieldType{
+				{Tp: mysql.TypeLonglong},
+				{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag}},
+			geners: []dataGenerator{
+				newRangeInt64Gener(0, math.MaxInt64),
+				newRangeInt64Gener(0, math.MaxInt64),
+			},
+		},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt},
+			childrenFieldTypes: []*types.FieldType{
+				{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag},
+				{Tp: mysql.TypeLonglong}},
+			geners: []dataGenerator{
+				newRangeInt64Gener(0, math.MaxInt64),
+				newRangeInt64Gener(0, math.MaxInt64),
+			},
+		},
 	},
 	ast.Mod: {
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal, types.ETReal}},

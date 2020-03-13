@@ -21,6 +21,7 @@ import (
 	"math/rand"
 	"net"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -200,7 +201,7 @@ func BenchmarkScalarFunctionClone(b *testing.B) {
 	b.ReportAllocs()
 }
 
-func getRandomTime(r *rand.Rand) types.MysqlTime {
+func getRandomTime(r *rand.Rand) types.CoreTime {
 	return types.FromDate(r.Intn(2200), r.Intn(10)+1, r.Intn(20)+1,
 		r.Intn(12), r.Intn(60), r.Intn(60), r.Intn(1000000))
 
@@ -316,6 +317,23 @@ func newSelectStringGener(candidates []string) *selectStringGener {
 }
 
 func (g *selectStringGener) gen() interface{} {
+	if len(g.candidates) == 0 {
+		return nil
+	}
+	return g.candidates[g.randGen.Intn(len(g.candidates))]
+}
+
+// selectRealGener select one real number randomly from the candidates array
+type selectRealGener struct {
+	candidates []float64
+	randGen    *defaultRandGen
+}
+
+func newSelectRealGener(candidates []float64) *selectRealGener {
+	return &selectRealGener{candidates, newDefaultRandGen()}
+}
+
+func (g *selectRealGener) gen() interface{} {
 	if len(g.candidates) == 0 {
 		return nil
 	}
@@ -702,7 +720,7 @@ func (g *dateTimeGener) gen() interface{} {
 	if g.Day == 0 {
 		g.Day = g.randGen.Intn(20) + 1
 	}
-	var gt types.MysqlTime
+	var gt types.CoreTime
 	if g.Fsp > 0 && g.Fsp <= 6 {
 		gt = types.FromDate(g.Year, g.Month, g.Day, g.randGen.Intn(12), g.randGen.Intn(60), g.randGen.Intn(60), g.randGen.Intn(1000000))
 	} else {
@@ -850,6 +868,12 @@ func newRandDurDecimal() *randDurDecimal {
 func (g *randDurDecimal) gen() interface{} {
 	d := new(types.MyDecimal)
 	return d.FromFloat64(float64(g.randGen.Intn(types.TimeMaxHour)*10000 + g.randGen.Intn(60)*100 + g.randGen.Intn(60)))
+}
+
+type randDurString struct{}
+
+func (g *randDurString) gen() interface{} {
+	return strconv.Itoa(rand.Intn(types.TimeMaxHour)*10000 + rand.Intn(60)*100 + rand.Intn(60))
 }
 
 // locationGener is used to generate location for the built-in function GetFormat.

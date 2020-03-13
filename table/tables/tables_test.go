@@ -101,7 +101,7 @@ func (ts *testSuite) TestBasic(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(autoID, Greater, int64(0))
 
-	handle, err := tb.AllocHandle(nil)
+	handle, err := tables.AllocHandle(nil, tb)
 	c.Assert(err, IsNil)
 	c.Assert(handle, Greater, int64(0))
 
@@ -158,7 +158,7 @@ func (ts *testSuite) TestBasic(c *C) {
 	c.Assert(err, IsNil)
 
 	table.MockTableFromMeta(tb.Meta())
-	alc := tb.Allocator(nil, autoid.RowIDAllocType)
+	alc := tb.Allocators(nil).Get(autoid.RowIDAllocType)
 	c.Assert(alc, NotNil)
 
 	err = tb.RebaseAutoID(nil, 0, false)
@@ -245,7 +245,7 @@ func (ts *testSuite) TestUniqueIndexMultipleNullEntries(c *C) {
 	c.Assert(string(tb.RecordPrefix()), Not(Equals), "")
 	c.Assert(tables.FindIndexByColName(tb, "b"), NotNil)
 
-	handle, err := tb.AllocHandle(nil)
+	handle, err := tables.AllocHandle(nil, tb)
 	c.Assert(err, IsNil)
 	c.Assert(handle, Greater, int64(0))
 
@@ -384,14 +384,14 @@ func (ts *testSuite) TestTableFromMeta(c *C) {
 	tk.MustExec("create table t_meta (a int) shard_row_id_bits = 15")
 	tb, err = domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t_meta"))
 	c.Assert(err, IsNil)
-	_, err = tb.AllocHandle(tk.Se)
+	_, err = tables.AllocHandle(tk.Se, tb)
 	c.Assert(err, IsNil)
 
 	maxID := 1<<(64-15-1) - 1
 	err = tb.RebaseAutoID(tk.Se, int64(maxID), false)
 	c.Assert(err, IsNil)
 
-	_, err = tb.AllocHandle(tk.Se)
+	_, err = tables.AllocHandle(tk.Se, tb)
 	c.Assert(err, NotNil)
 }
 
@@ -520,15 +520,15 @@ func (ts *testSuite) TestHiddenColumn(c *C) {
 	tk.MustGetErrMsg("update t set a=1 where b=1;", "[planner:1054]Unknown column 'b' in 'where clause'")
 	tk.MustGetErrMsg("update t set a=1 where c=3 order by b;", "[planner:1054]Unknown column 'b' in 'order clause'")
 
-	// FIXME: `DELETE` statement
-	//tk.MustExec("delete from t;")
-	//tk.MustQuery("select count(*) from t;").Check(testkit.Rows("0"))
-	//tk.MustExec("insert into t values (1, 3, 5);")
-	//tk.MustQuery("select * from t;").Check(testkit.Rows("1 3 5"))
-	//tk.MustGetErr("delete from t where b = 1;", "[planner:1054]Unknown column 'b' in 'where clause'")
-	//tk.MustQuery("select * from t;").Check(testkit.Rows("1 3 5"))
-	//tk.MustGetErr("delete from t order by d = 1;", "[planner:1054]Unknown column 'd' in 'order clause'")
-	//tk.MustQuery("select * from t;").Check(testkit.Rows("1 3 5"))
+	// `DELETE` statement
+	tk.MustExec("delete from t;")
+	tk.MustQuery("select count(*) from t;").Check(testkit.Rows("0"))
+	tk.MustExec("insert into t values (1, 3, 5);")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1 3 5"))
+	tk.MustGetErrMsg("delete from t where b = 1;", "[planner:1054]Unknown column 'b' in 'where clause'")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1 3 5"))
+	tk.MustGetErrMsg("delete from t order by d = 1;", "[planner:1054]Unknown column 'd' in 'order clause'")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1 3 5"))
 
 	// `DROP COLUMN` statement
 	tk.MustGetErrMsg("ALTER TABLE t DROP COLUMN b;", "[ddl:1091]column b doesn't exist")

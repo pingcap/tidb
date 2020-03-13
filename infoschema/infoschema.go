@@ -20,7 +20,6 @@ import (
 
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx"
@@ -28,55 +27,6 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
-)
-
-var (
-	// ErrDatabaseExists returns for database already exists.
-	ErrDatabaseExists = terror.ClassSchema.New(mysql.ErrDBCreateExists, mysql.MySQLErrName[mysql.ErrDBCreateExists])
-	// ErrDatabaseDropExists returns for dropping a non-existent database.
-	ErrDatabaseDropExists = terror.ClassSchema.New(mysql.ErrDBDropExists, mysql.MySQLErrName[mysql.ErrDBDropExists])
-	// ErrAccessDenied return when the user doesn't have the permission to access the table.
-	ErrAccessDenied = terror.ClassSchema.New(mysql.ErrAccessDenied, mysql.MySQLErrName[mysql.ErrAccessDenied])
-	// ErrDatabaseNotExists returns for database not exists.
-	ErrDatabaseNotExists = terror.ClassSchema.New(mysql.ErrBadDB, mysql.MySQLErrName[mysql.ErrBadDB])
-	// ErrTableExists returns for table already exists.
-	ErrTableExists = terror.ClassSchema.New(mysql.ErrTableExists, mysql.MySQLErrName[mysql.ErrTableExists])
-	// ErrTableDropExists returns for dropping a non-existent table.
-	ErrTableDropExists = terror.ClassSchema.New(mysql.ErrBadTable, mysql.MySQLErrName[mysql.ErrBadTable])
-	// ErrColumnNotExists returns for column not exists.
-	ErrColumnNotExists = terror.ClassSchema.New(mysql.ErrBadField, mysql.MySQLErrName[mysql.ErrBadField])
-	// ErrColumnExists returns for column already exists.
-	ErrColumnExists = terror.ClassSchema.New(mysql.ErrDupFieldName, mysql.MySQLErrName[mysql.ErrDupFieldName])
-	// ErrKeyNameDuplicate returns for index duplicate when rename index.
-	ErrKeyNameDuplicate = terror.ClassSchema.New(mysql.ErrDupKeyName, mysql.MySQLErrName[mysql.ErrDupKeyName])
-	// ErrNonuniqTable returns when none unique tables errors.
-	ErrNonuniqTable = terror.ClassSchema.New(mysql.ErrNonuniqTable, mysql.MySQLErrName[mysql.ErrNonuniqTable])
-	// ErrMultiplePriKey returns for multiple primary keys.
-	ErrMultiplePriKey = terror.ClassSchema.New(mysql.ErrMultiplePriKey, mysql.MySQLErrName[mysql.ErrMultiplePriKey])
-	// ErrTooManyKeyParts returns for too many key parts.
-	ErrTooManyKeyParts = terror.ClassSchema.New(mysql.ErrTooManyKeyParts, mysql.MySQLErrName[mysql.ErrTooManyKeyParts])
-	// ErrForeignKeyNotExists returns for foreign key not exists.
-	ErrForeignKeyNotExists = terror.ClassSchema.New(mysql.ErrCantDropFieldOrKey, mysql.MySQLErrName[mysql.ErrCantDropFieldOrKey])
-	// ErrTableNotLockedForWrite returns for write tables when only hold the table read lock.
-	ErrTableNotLockedForWrite = terror.ClassSchema.New(mysql.ErrTableNotLockedForWrite, mysql.MySQLErrName[mysql.ErrTableNotLockedForWrite])
-	// ErrTableNotLocked returns when session has explicitly lock tables, then visit unlocked table will return this error.
-	ErrTableNotLocked = terror.ClassSchema.New(mysql.ErrTableNotLocked, mysql.MySQLErrName[mysql.ErrTableNotLocked])
-	// ErrTableNotExists returns for table not exists.
-	ErrTableNotExists = terror.ClassSchema.New(mysql.ErrNoSuchTable, mysql.MySQLErrName[mysql.ErrNoSuchTable])
-	// ErrKeyNotExists returns for index not exists.
-	ErrKeyNotExists = terror.ClassSchema.New(mysql.ErrKeyDoesNotExist, mysql.MySQLErrName[mysql.ErrKeyDoesNotExist])
-	// ErrCannotAddForeign returns for foreign key exists.
-	ErrCannotAddForeign = terror.ClassSchema.New(mysql.ErrCannotAddForeign, mysql.MySQLErrName[mysql.ErrCannotAddForeign])
-	// ErrForeignKeyNotMatch returns for foreign key not match.
-	ErrForeignKeyNotMatch = terror.ClassSchema.New(mysql.ErrWrongFkDef, mysql.MySQLErrName[mysql.ErrWrongFkDef])
-	// ErrIndexExists returns for index already exists.
-	ErrIndexExists = terror.ClassSchema.New(mysql.ErrDupIndex, mysql.MySQLErrName[mysql.ErrDupIndex])
-	// ErrUserDropExists returns for dropping a non-existent user.
-	ErrUserDropExists = terror.ClassSchema.New(mysql.ErrBadUser, mysql.MySQLErrName[mysql.ErrBadUser])
-	// ErrUserAlreadyExists return for creating a existent user.
-	ErrUserAlreadyExists = terror.ClassSchema.New(mysql.ErrUserAlreadyExists, mysql.MySQLErrName[mysql.ErrUserAlreadyExists])
-	// ErrTableLocked returns when the table was locked by other session.
-	ErrTableLocked = terror.ClassSchema.New(mysql.ErrTableLocked, mysql.MySQLErrName[mysql.ErrTableLocked])
 )
 
 // InfoSchema is the interface used to retrieve the schema information.
@@ -99,6 +49,7 @@ type InfoSchema interface {
 	SchemaMetaVersion() int64
 	// TableIsView indicates whether the schema.table is a view.
 	TableIsView(schema, table model.CIStr) bool
+	FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo)
 }
 
 type sortedTables []table.Table
@@ -248,7 +199,7 @@ func (is *infoSchema) AllocByID(id int64) (autoid.Allocators, bool) {
 	if !ok {
 		return nil, false
 	}
-	return tbl.AllAllocators(nil), true
+	return tbl.Allocators(nil), true
 }
 
 func (is *infoSchema) AllSchemaNames() (names []string) {
@@ -276,11 +227,43 @@ func (is *infoSchema) SchemaTables(schema model.CIStr) (tables []table.Table) {
 	return
 }
 
+// FindTableByPartitionID finds the partition-table info by the partitionID.
+// FindTableByPartitionID will traverse all the tables to find the partitionID partition in which partition-table.
+func (is *infoSchema) FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo) {
+	for _, v := range is.schemaMap {
+		for _, tbl := range v.tables {
+			pi := tbl.Meta().GetPartitionInfo()
+			if pi == nil {
+				continue
+			}
+			for _, p := range pi.Definitions {
+				if p.ID == partitionID {
+					return tbl, v.dbInfo
+				}
+			}
+		}
+	}
+	return nil, nil
+}
+
 func (is *infoSchema) Clone() (result []*model.DBInfo) {
 	for _, v := range is.schemaMap {
 		result = append(result, v.dbInfo.Clone())
 	}
 	return
+}
+
+// SequenceByName implements the interface of SequenceSchema defined in util package.
+// It could be used in expression package without import cycle problem.
+func (is *infoSchema) SequenceByName(schema, sequence model.CIStr) (util.SequenceTable, error) {
+	tbl, err := is.TableByName(schema, sequence)
+	if err != nil {
+		return nil, err
+	}
+	if !tbl.Meta().IsSequence() {
+		return nil, err
+	}
+	return tbl.(util.SequenceTable), nil
 }
 
 // Handle handles information schema, including getting and setting.
@@ -318,33 +301,6 @@ func (h *Handle) EmptyClone() *Handle {
 }
 
 func init() {
-	schemaMySQLErrCodes := map[terror.ErrCode]uint16{
-		mysql.ErrDBCreateExists:         mysql.ErrDBCreateExists,
-		mysql.ErrDBDropExists:           mysql.ErrDBDropExists,
-		mysql.ErrAccessDenied:           mysql.ErrAccessDenied,
-		mysql.ErrBadDB:                  mysql.ErrBadDB,
-		mysql.ErrTableExists:            mysql.ErrTableExists,
-		mysql.ErrBadTable:               mysql.ErrBadTable,
-		mysql.ErrBadField:               mysql.ErrBadField,
-		mysql.ErrDupFieldName:           mysql.ErrDupFieldName,
-		mysql.ErrDupKeyName:             mysql.ErrDupKeyName,
-		mysql.ErrNonuniqTable:           mysql.ErrNonuniqTable,
-		mysql.ErrMultiplePriKey:         mysql.ErrMultiplePriKey,
-		mysql.ErrTooManyKeyParts:        mysql.ErrTooManyKeyParts,
-		mysql.ErrCantDropFieldOrKey:     mysql.ErrCantDropFieldOrKey,
-		mysql.ErrTableNotLockedForWrite: mysql.ErrTableNotLockedForWrite,
-		mysql.ErrTableNotLocked:         mysql.ErrTableNotLocked,
-		mysql.ErrNoSuchTable:            mysql.ErrNoSuchTable,
-		mysql.ErrKeyDoesNotExist:        mysql.ErrKeyDoesNotExist,
-		mysql.ErrCannotAddForeign:       mysql.ErrCannotAddForeign,
-		mysql.ErrWrongFkDef:             mysql.ErrWrongFkDef,
-		mysql.ErrDupIndex:               mysql.ErrDupIndex,
-		mysql.ErrBadUser:                mysql.ErrBadUser,
-		mysql.ErrUserAlreadyExists:      mysql.ErrUserAlreadyExists,
-		mysql.ErrTableLocked:            mysql.ErrTableLocked,
-	}
-	terror.ErrClassToMySQLCodes[terror.ClassSchema] = schemaMySQLErrCodes
-
 	// Initialize the information shema database and register the driver to `drivers`
 	dbID := autoid.InformationSchemaDBID
 	infoSchemaTables := make([]*model.TableInfo, 0, len(tableNameToColumns))
