@@ -5880,5 +5880,3 @@ func (s *testIntegrationSerialSuite) TestCollateSubQuery(c *C) {
 	tk.MustQuery("select id from t where not exists (select 1 from t_bin where t_bin.v=t.v) order by id").Check(testkit.Rows())
 	tk.MustQuery("select id from t_bin where not exists (select 1 from t where t_bin.v=t.v) order by id").Check(testkit.Rows())
 }
-
-
