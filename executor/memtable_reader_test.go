@@ -815,6 +815,18 @@ func (s *testMemTableReaderSuite) TestTiDBClusterLog(c *C) {
 			},
 			expected: [][]string{},
 		},
+		{
+			conditions: []string{
+				"level='critical'",
+				"(message regexp '.*pd.*' or message regexp '.*tidb.*')",
+			},
+			expected: [][]string{
+				{"2019/08/26 06:19:17.011", "tidb", "CRITICAL", "[test log message tidb 5, foo]"},
+				{"2019/08/26 06:22:17.011", "pd", "CRITICAL", "[test log message pd 5, foo]"},
+				{"2019/08/26 06:25:17.011", "tidb", "critical", "[test log message tidb 14, bar]"},
+				{"2019/08/26 06:27:17.011", "pd", "critical", "[test log message pd 14, bar]"},
+			},
+		},
 	}
 
 	var servers []string

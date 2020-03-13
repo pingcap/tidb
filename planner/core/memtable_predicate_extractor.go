@@ -219,6 +219,7 @@ func (helper extractHelper) extractCol(
 // extracts the string pattern column, e.g:
 // SELECT * FROM t WHERE c LIKE '%a%'
 // SELECT * FROM t WHERE c LIKE '%a%' AND c REGEXP '.*xxx.*'
+// SELECT * FROM t WHERE c LIKE '%a%' OR c REGEXP '.*xxx.*'
 func (helper extractHelper) extractLikePatternCol(
 	schema *expression.Schema,
 	names []*types.FieldName,
@@ -244,29 +245,83 @@ func (helper extractHelper) extractLikePatternCol(
 			remained = append(remained, expr)
 			continue
 		}
-		var colName string
-		var datums []types.Datum
 
-		switch fn.FuncName.L {
-		case ast.EQ, ast.Like, ast.Regexp:
-			colName, datums = helper.extractColBinaryOpConsExpr(extractCols, fn)
+		var canBuildPattern bool
+		var pattern string
+		// We use '|' to combine DNF regular expression: .*a.*|.*b.*
+		// e.g:
+		// SELECT * FROM t WHERE c LIKE '%a%' OR c LIKE '%b%'
+		if fn.FuncName.L == ast.LogicOr {
+			canBuildPattern, pattern = helper.extractOrLikePattern(fn, extractColName, extractCols)
+		} else {
+			canBuildPattern, pattern = helper.extractLikePattern(fn, extractColName, extractCols)
 		}
-		if colName == extractColName {
-			switch fn.FuncName.L {
-			case ast.EQ:
-				patterns = append(patterns, "^"+regexp.QuoteMeta(datums[0].GetString())+"$")
-			case ast.Like:
-				patterns = append(patterns, stringutil.CompileLike2Regexp(datums[0].GetString()))
-			case ast.Regexp:
-				patterns = append(patterns, datums[0].GetString())
-			default:
-				remained = append(remained, expr)
-			}
+		if canBuildPattern {
+			patterns = append(patterns, pattern)
 		} else {
 			remained = append(remained, expr)
 		}
 	}
 	return
+}
+
+func (helper extractHelper) extractOrLikePattern(
+	orFunc *expression.ScalarFunction,
+	extractColName string,
+	extractCols map[int64]*types.FieldName,
+) (
+	ok bool,
+	pattern string,
+) {
+	predicates := expression.SplitDNFItems(orFunc)
+	if len(predicates) == 0 {
+		return false, ""
+	}
+
+	patternBuilder := make([]string, 0, len(predicates))
+	for _, predicate := range predicates {
+		fn, ok := predicate.(*expression.ScalarFunction)
+		if !ok {
+			return false, ""
+		}
+
+		ok, partPattern := helper.extractLikePattern(fn, extractColName, extractCols)
+		if !ok {
+			return false, ""
+		}
+		patternBuilder = append(patternBuilder, partPattern)
+	}
+	return true, strings.Join(patternBuilder, "|")
+}
+
+func (helper extractHelper) extractLikePattern(
+	fn *expression.ScalarFunction,
+	extractColName string,
+	extractCols map[int64]*types.FieldName,
+) (
+	ok bool,
+	pattern string,
+) {
+	var colName string
+	var datums []types.Datum
+	switch fn.FuncName.L {
+	case ast.EQ, ast.Like, ast.Regexp:
+		colName, datums = helper.extractColBinaryOpConsExpr(extractCols, fn)
+	}
+	if colName == extractColName {
+		switch fn.FuncName.L {
+		case ast.EQ:
+			return true, "^" + regexp.QuoteMeta(datums[0].GetString()) + "$"
+		case ast.Like:
+			return true, stringutil.CompileLike2Regexp(datums[0].GetString())
+		case ast.Regexp:
+			return true, datums[0].GetString()
+		default:
+			return false, ""
+		}
+	} else {
+		return false, ""
+	}
 }
 
 func (helper extractHelper) findColumn(schema *expression.Schema, names []*types.FieldName, colName string) map[int64]*types.FieldName {
