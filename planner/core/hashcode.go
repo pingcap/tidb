@@ -230,7 +230,7 @@ func (p *LogicalUnionAll) HashCode() []byte {
 // HashCode implements LogicalPlan interface.
 func (p *LogicalWindow) HashCode() []byte {
 	// PlanType + SelectOffset + Encode(WindowFuncDescs) + Encode(PartitionBys) + Encode(OrderBys) + Frame
-	// WindowFuncDescs are commonly has less than one arg, so we pre-alloc 30 bytes for each WindowFuncDesc's hashcode.
+	// WindowFuncDescs are commonly has at most one arg, so we pre-alloc 30 bytes for each WindowFuncDesc's hashcode.
 	// we pre-alloc total bytes size = SizeOf(PlanType)+SizeOf(SelectOffset)+SizeOf(Encode(WindowFuncDescs))+SizeOf(Encode(PartitionBys))+SizeOf(Encode(OrderBys))+SizeOf(Frame)
 	//								 = 4+4+(4+len(WindowFuncDescs)*(4+Sizeof(WindowFuncDesc)))+(4+len(PartitionBys)*(4+Sizeof(PartitionBy)))+(4+len(OrderBys)*(4+Sizeof(OrderBy)))+SizeOf(Frame.hashcode)
 	//								 = 20+34*len(WindowFuncDescs)+14*(len(p.PartitionBy)+len(p.OrderBy))+SizeOf(Frame.hashcode)
@@ -335,21 +335,22 @@ func (p *LogicalTableScan) HashCode() []byte {
 
 // HashCode implements LogicalPlan interface.
 func (p *LogicalIndexScan) HashCode() []byte {
-	// PlanType + SelectOffset + IsDoubleRead + EqCondCount + Index.ID + Source.HashCode() +
-	// EncodeAndSort(AccessConds) + Encode(FullIdxCols) + Encode(FullIdxCols) + Encode(FullIdxColLens) + Encode(FullIdxCols)
-	result := make([]byte, 0, 58+len(p.AccessConds)*29+len(p.FullIdxCols)*13+len(p.FullIdxColLens)*4+len(p.IdxCols)*13+len(p.IdxColLens)*4)
+	// PlanType + SelectOffset + IsDoubleRead + EqCondCount + Source.tableInfo.ID + Index.ID + Encode(AccessConds) + FullIdxCols + FullIdxColLens + IdxCols + IdxColLens
+	// AccessConds are commonly `ScalarFunction`s, whose hashcode usually has a
+	// length larger than 20, so we pre-alloc 25 bytes for each expr's hashcode.
+	// we pre-alloc total bytes size = SizeOf(PlanType)+SizeOf(SelectOffset)+SizeOf(IsDoubleRead)+SizeOf(EqCondCount)+SizeOf(tableInfo.ID)+SizeOf(Index.ID)+SizeOf(Encode(AccessConds))+SizeOf(FullIdxCols)+SizeOf(FullIdxColLens)+SizeOf(IdxCols)+SizeOf(IdxColLens)
+	//								 = 4+4+1+4+8+8+(4+len(AccessConds)*(4+Sizeof(AccessCond.hashcode)))+(4+len(FullIdxCols)*(4+SizeOf(FullIdxCol.hashcode)))+(4+len(FullIdxColLens)*SizeOf(FullIdxColLen.hashcode))+(4+len(IdxCols)*(4+SizeOf(IdxCol.hashcode)))+(4+len(IdxColLens)*SizeOf(IdxColLen.hashcode))
+	//								 = 49+len(p.AccessConds)*29+len(p.FullIdxCols)*13+len(p.FullIdxColLens)*4+len(p.IdxCols)*13+len(p.IdxColLens)*4
+	result := make([]byte, 0, 49+len(p.AccessConds)*29+len(p.FullIdxCols)*13+len(p.FullIdxColLens)*4+len(p.IdxCols)*13+len(p.IdxColLens)*4)
 	result = codec.EncodeIntAsUint32(result, plancodec.TypeStringToPhysicalID(p.tp))
 	result = codec.EncodeIntAsUint32(result, p.SelectBlockOffset())
 	result = codec.EncodeBool(result, p.IsDoubleRead)
 	result = codec.EncodeIntAsUint32(result, p.EqCondCount)
+	if p.Source != nil {
+		result = codec.EncodeInt(result, p.Source.tableInfo.ID)
+	}
 	if p.Index != nil {
 		result = codec.EncodeInt(result, p.Index.ID)
-	}
-	result = append(result, p.Source.HashCode()...)
-
-	result = codec.EncodeIntAsUint32(result, len(p.Columns))
-	for _, col := range p.Columns {
-		result = codec.EncodeInt(result, col.ID)
 	}
 
 	accessCondHashCode := func(i int) []byte { return p.AccessConds[i].HashCode(p.ctx.GetSessionVars().StmtCtx) }
