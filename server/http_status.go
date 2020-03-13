@@ -33,6 +33,7 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/fn"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -233,6 +234,13 @@ func (s *Server) startHTTPServer() {
 	fetcher := sqlInfoFetcher{store: tikvHandlerTool.Store}
 	serverMux.HandleFunc("/debug/sub-optimal-plan", fetcher.zipInfoForSQL)
 
+	failpoint.Inject("integrateFailpoint", func() {
+		serverMux.HandleFunc("/failpoints/", func(w http.ResponseWriter, r *http.Request) {
+			r.URL.Path = strings.TrimPrefix(r.URL.Path, "/failpoints")
+			new(failpoint.HttpHandler).ServeHTTP(w, r)
+		})
+	})
+
 	var (
 		httpRouterPage bytes.Buffer
 		pathTemplate   string
@@ -286,6 +294,9 @@ func (s *Server) setupStatusServerAndRPCServer(addr string, serverMux *http.Serv
 	if err != nil {
 		logutil.BgLogger().Info("listen failed", zap.Error(err))
 		return
+	}
+	if tlsConfig != nil {
+		logutil.BgLogger().Info("HTTP/gRPC status server secure connection is enabled", zap.Bool("CN verification enabled", tlsConfig.VerifyPeerCertificate != nil))
 	}
 	m := cmux.New(l)
 	// Match connections in order:
