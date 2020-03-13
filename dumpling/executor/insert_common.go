@@ -996,6 +996,10 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 }
 
 func (e *InsertValues) addRecord(ctx context.Context, row []types.Datum) (int64, error) {
+	return e.addRecordWithAutoIDHint(ctx, row, 0)
+}
+
+func (e *InsertValues) addRecordWithAutoIDHint(ctx context.Context, row []types.Datum, reserveAutoIDCount int) (int64, error) {
 	txn, err := e.ctx.Txn(true)
 	if err != nil {
 		return 0, err
@@ -1003,7 +1007,12 @@ func (e *InsertValues) addRecord(ctx context.Context, row []types.Datum) (int64,
 	if !e.ctx.GetSessionVars().ConstraintCheckInPlace {
 		txn.SetOption(kv.PresumeKeyNotExists, nil)
 	}
-	h, err := e.Table.AddRecord(e.ctx, row, table.WithCtx(ctx))
+	var h int64
+	if reserveAutoIDCount > 0 {
+		h, err = e.Table.AddRecord(e.ctx, row, table.WithCtx(ctx), table.WithReserveAutoIDHint(reserveAutoIDCount))
+	} else {
+		h, err = e.Table.AddRecord(e.ctx, row, table.WithCtx(ctx))
+	}
 	txn.DelOption(kv.PresumeKeyNotExists)
 	if err != nil {
 		return 0, err
