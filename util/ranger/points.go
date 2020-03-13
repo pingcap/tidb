@@ -374,8 +374,11 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction) ([]point, bool) {
 		if dt.Kind() == types.KindString {
 			dt.SetString(dt.GetString(), colCollate)
 		}
-		startPoint := point{value: *dt.Copy(), start: true}
-		endPoint := point{value: *dt.Copy()}
+		var startValue, endValue types.Datum
+		dt.Copy(&startValue)
+		dt.Copy(&endValue)
+		startPoint := point{value: startValue, start: true}
+		endPoint := point{value: endValue}
 		rangePoints = append(rangePoints, startPoint, endPoint)
 	}
 	sorter := pointSorter{points: rangePoints, sc: r.sc}
