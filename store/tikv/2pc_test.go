@@ -640,7 +640,7 @@ func (s *testCommitterSuite) TestPessimisticLockReturnValues(c *C) {
 	txn.SetOption(kv.Pessimistic, true)
 	lockCtx := &kv.LockCtx{ForUpdateTS: txn.startTS, WaitStartTime: time.Now()}
 	lockCtx.ReturnValues = true
-	lockCtx.Values = map[string][]byte{}
+	lockCtx.Values = map[string]kv.ReturnedValue{}
 	c.Assert(txn.LockKeys(context.Background(), lockCtx, key, key2), IsNil)
 	c.Assert(lockCtx.Values, HasLen, 2)
 	c.Assert(lockCtx.Values[string(key)], BytesEquals, []byte(key))
