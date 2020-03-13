@@ -207,6 +207,7 @@ type BatchPointGetPlan struct {
 	HandleParams     []*driver.ParamMarkerExpr
 	IndexValues      [][]types.Datum
 	IndexValueParams [][]*driver.ParamMarkerExpr
+	PartitionColPos  int
 	KeepOrder        bool
 	Desc             bool
 	Lock             bool
@@ -377,12 +378,15 @@ func getLockWaitTime(ctx sessionctx.Context, lockTp ast.SelectLockType) (lock bo
 
 func newBatchPointGetPlan(
 	ctx sessionctx.Context, patternInExpr *ast.PatternInExpr,
-	tryHandle bool, fieldType *types.FieldType,
-	tbl *model.TableInfo, schema *expression.Schema,
+	handleCol *model.ColumnInfo, tbl *model.TableInfo, schema *expression.Schema,
 	names []*types.FieldName, whereColNames []string,
 ) *BatchPointGetPlan {
 	statsInfo := &property.StatsInfo{RowCount: float64(len(patternInExpr.List))}
-	if tryHandle && fieldType != nil {
+	partitionColName := getHashPartitionColumnName(ctx, tbl)
+	if tbl.GetPartitionInfo() != nil && partitionColName == nil {
+		return nil
+	}
+	if handleCol != nil {
 		var handles = make([]int64, len(patternInExpr.List))
 		var handleParams = make([]*driver.ParamMarkerExpr, len(patternInExpr.List))
 		for i, item := range patternInExpr.List {
@@ -404,7 +408,7 @@ func newBatchPointGetPlan(
 			if d.IsNull() {
 				return nil
 			}
-			intDatum, err := d.ConvertTo(ctx.GetSessionVars().StmtCtx, fieldType)
+			intDatum, err := d.ConvertTo(ctx.GetSessionVars().StmtCtx, &handleCol.FieldType)
 			if err != nil {
 				return nil
 			}
@@ -499,6 +503,7 @@ func newBatchPointGetPlan(
 		IndexInfo:        matchIdxInfo,
 		IndexValues:      indexValues,
 		IndexValueParams: indexValueParams,
+		PartitionColPos:  getPartitionColumnPos(matchIdxInfo, partitionColName),
 	}.Init(ctx, statsInfo, schema, names, 0)
 }
 
@@ -522,14 +527,6 @@ func tryWhereIn2BatchPointGet(ctx sessionctx.Context, selStmt *ast.SelectStmt) *
 		return nil
 	}
 
-	// Do not handle partitioned table.
-	// Table partition implementation translates LogicalPlan from `DataSource` to
-	// `Union -> DataSource` in the logical plan optimization pass, since BatchPointGetPlan
-	// bypass the logical plan optimization, it can't support partitioned table.
-	if tbl.GetPartitionInfo() != nil {
-		return nil
-	}
-
 	for _, col := range tbl.Columns {
 		if col.IsGenerated() || col.State != model.StatePublic {
 			return nil
@@ -542,8 +539,7 @@ func tryWhereIn2BatchPointGet(ctx sessionctx.Context, selStmt *ast.SelectStmt) *
 	}
 
 	var (
-		tryHandle     bool
-		fieldType     *types.FieldType
+		handleCol     *model.ColumnInfo
 		whereColNames []string
 	)
 
@@ -561,14 +557,13 @@ func tryWhereIn2BatchPointGet(ctx sessionctx.Context, selStmt *ast.SelectStmt) *
 		if tbl.PKIsHandle {
 			for _, col := range tbl.Columns {
 				if mysql.HasPriKeyFlag(col.Flag) && col.Name.L == colName.Name.Name.L {
-					tryHandle = true
-					fieldType = &col.FieldType
+					handleCol = col
 					whereColNames = append(whereColNames, col.Name.L)
 					break
 				}
 			}
 		}
-		if !tryHandle {
+		if handleCol == nil {
 			// Downgrade to use unique index
 			whereColNames = append(whereColNames, colName.Name.Name.L)
 		}
@@ -588,7 +583,7 @@ func tryWhereIn2BatchPointGet(ctx sessionctx.Context, selStmt *ast.SelectStmt) *
 		return nil
 	}
 
-	p := newBatchPointGetPlan(ctx, in, tryHandle, fieldType, tbl, schema, names, whereColNames)
+	p := newBatchPointGetPlan(ctx, in, handleCol, tbl, schema, names, whereColNames)
 	if p == nil {
 		return nil
 	}
@@ -627,10 +622,6 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 	if tbl == nil {
 		return nil
 	}
-	// Do not handle partitioned table.
-	// Table partition implementation translates LogicalPlan from `DataSource` to
-	// `Union -> DataSource` in the logical plan optimization pass, since PointGetPlan
-	// bypass the logical plan optimization, it can't support partitioned table.
 	pi := tbl.GetPartitionInfo()
 	for _, col := range tbl.Columns {
 		// Do not handle generated columns.
@@ -1103,27 +1094,16 @@ func (p *PointGetPlan) findHandleCol() *expression.Column {
 }
 
 func getPartitionInfo(ctx sessionctx.Context, tbl *model.TableInfo, pairs []nameValuePair) (*model.PartitionDefinition, int) {
-	is := infoschema.GetInfoSchema(ctx)
-	table, ok := is.TableByID(tbl.ID)
-	if !ok {
+	partitionColName := getHashPartitionColumnName(ctx, tbl)
+	if partitionColName == nil {
 		return nil, 0
 	}
 	pi := tbl.Partition
-	if partitionTable, ok := table.(partitionTable); ok {
-		// PartitionExpr don't need columns and names for hash partition.
-		partitionExpr, err := partitionTable.PartitionExpr(ctx, nil, nil)
-		if err != nil {
-			return nil, 0
-		}
-		expr := partitionExpr.OrigExpr
-		if col, ok := expr.(*ast.ColumnNameExpr); ok {
-			for i, pair := range pairs {
-				if col.Name.Name.L == pair.colName {
-					val := pair.value.GetInt64()
-					pos := math.Abs(val) % int64(pi.Num)
-					return &pi.Definitions[pos], i
-				}
-			}
+	for i, pair := range pairs {
+		if partitionColName.Name.L == pair.colName {
+			val := pair.value.GetInt64()
+			pos := math.Abs(val) % int64(pi.Num)
+			return &pi.Definitions[pos], i
 		}
 	}
 	return nil, 0
@@ -1136,4 +1116,43 @@ func findPartitionIdx(idxInfo *model.IndexInfo, pos int, pairs []nameValuePair) 
 		}
 	}
 	return 0
+}
+
+// getPartitionColumnPos gets the partition column's position in the index.
+func getPartitionColumnPos(idx *model.IndexInfo, partitionColName *ast.ColumnName) int {
+	if partitionColName == nil {
+		return 0
+	}
+	for i, idxCol := range idx.Columns {
+		if partitionColName.Name.L == idxCol.Name.L {
+			return i
+		}
+	}
+	panic("unique index must include all partition columns")
+}
+
+func getHashPartitionColumnName(ctx sessionctx.Context, tbl *model.TableInfo) *ast.ColumnName {
+	pi := tbl.GetPartitionInfo()
+	if pi == nil {
+		return nil
+	}
+	if pi.Type != model.PartitionTypeHash {
+		return nil
+	}
+	is := infoschema.GetInfoSchema(ctx)
+	table, ok := is.TableByID(tbl.ID)
+	if !ok {
+		return nil
+	}
+	// PartitionExpr don't need columns and names for hash partition.
+	partitionExpr, err := table.(partitionTable).PartitionExpr(ctx, nil, nil)
+	if err != nil {
+		return nil
+	}
+	expr := partitionExpr.OrigExpr
+	col, ok := expr.(*ast.ColumnNameExpr)
+	if !ok {
+		return nil
+	}
+	return col.Name
 }

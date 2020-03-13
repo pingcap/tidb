@@ -48,14 +48,6 @@ import (
 
 var preparedStmtCount int64
 
-// Error instances.
-var (
-	errCantGetValidID       = terror.ClassVariable.New(mysql.ErrCantGetValidID, mysql.MySQLErrName[mysql.ErrCantGetValidID])
-	errWarnDeprecatedSyntax = terror.ClassVariable.New(mysql.ErrWarnDeprecatedSyntax, mysql.MySQLErrName[mysql.ErrWarnDeprecatedSyntax])
-	ErrCantSetToNull        = terror.ClassVariable.New(mysql.ErrCantSetToNull, mysql.MySQLErrName[mysql.ErrCantSetToNull])
-	ErrSnapshotTooOld       = terror.ClassVariable.New(mysql.ErrSnapshotTooOld, mysql.MySQLErrName[mysql.ErrSnapshotTooOld])
-)
-
 // RetryInfo saves retry information.
 type RetryInfo struct {
 	Retrying               bool
@@ -279,7 +271,7 @@ func (ib *WriteStmtBufs) clean() {
 	ib.IndexKeyBuf = nil
 }
 
-// TableSnapshot represents a data snapshot of the table contained in `inspection_schema`.
+// TableSnapshot represents a data snapshot of the table contained in `information_schema`.
 type TableSnapshot struct {
 	Rows [][]types.Datum
 	Err  error
