@@ -16,7 +16,6 @@ package expression
 import (
 	goJSON "encoding/json"
 	"fmt"
-	"github.com/pingcap/tipb/go-tipb"
 	"sync/atomic"
 
 	"github.com/pingcap/parser/ast"
@@ -30,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 // These are byte flags used for `HashCode()`.
