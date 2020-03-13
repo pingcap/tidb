@@ -308,7 +308,7 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 		where digest_text like 'select * from t%'`,
 	)
 	c.Assert(len(result.Rows()), Equals, 1)
-	// use root user to set varibales back
+	// use root user to set variables back
 	tk.Se.Auth(&auth.UserIdentity{
 		Username:     "root",
 		Hostname:     "%",
