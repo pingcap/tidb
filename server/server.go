@@ -111,12 +111,7 @@ type Server struct {
 	concurrentLimiter *TokenLimiter
 	clients           map[uint32]*clientConn
 	capability        uint32
-
-	// stopListenerCh is used when a critical error occurred, we don't want to exit the process, because there may be
-	// a supervisor automatically restart it, then new client connection will be created, but we can't server it.
-	// So we just stop the listener and store to force clients to chose other TiDB servers.
-	stopListenerCh chan struct{}
-	statusServer   *http.Server
+	statusServer      *http.Server
 }
 
 // ConnectionCount gets current connection count.
@@ -200,16 +195,17 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		driver:            driver,
 		concurrentLimiter: NewTokenLimiter(cfg.TokenLimit),
 		clients:           make(map[uint32]*clientConn),
-		stopListenerCh:    make(chan struct{}, 1),
 	}
 
 	tlsConfig, err := util.LoadTLSCertificates(s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert)
 	if err != nil {
 		logutil.Logger(context.Background()).Error("secure connection cert/key/ca load fail", zap.Error(err))
 	}
-	logutil.Logger(context.Background()).Info("secure connection is enabled", zap.Bool("client verification enabled", len(variable.SysVars["ssl_ca"].Value) > 0))
-	setSSLVariable(s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert)
-	atomic.StorePointer(&s.tlsConfig, unsafe.Pointer(tlsConfig))
+	if tlsConfig != nil {
+		setSSLVariable(s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert)
+		atomic.StorePointer(&s.tlsConfig, unsafe.Pointer(tlsConfig))
+		logutil.Logger(context.Background()).Info("mysql protocol server secure connection is enabled", zap.Bool("client verification enabled", len(variable.SysVars["ssl_ca"].Value) > 0))
+	}
 
 	setSystemTimeZoneVariable()
 
@@ -291,11 +287,6 @@ func (s *Server) Run() error {
 			logutil.Logger(context.Background()).Error("accept failed", zap.Error(err))
 			return errors.Trace(err)
 		}
-		if s.shouldStopListener() {
-			err = conn.Close()
-			terror.Log(errors.Trace(err))
-			break
-		}
 
 		clientConn := s.newConn(conn)
 
@@ -322,23 +313,6 @@ func (s *Server) Run() error {
 		}
 
 		go s.onConn(clientConn)
-	}
-	err := s.listener.Close()
-	terror.Log(errors.Trace(err))
-	s.listener = nil
-	for {
-		metrics.ServerEventCounter.WithLabelValues(metrics.EventHang).Inc()
-		logutil.Logger(context.Background()).Error("listener stopped, waiting for manual kill.")
-		time.Sleep(time.Minute)
-	}
-}
-
-func (s *Server) shouldStopListener() bool {
-	select {
-	case <-s.stopListenerCh:
-		return true
-	default:
-		return false
 	}
 }
 
@@ -369,6 +343,7 @@ func (s *Server) Close() {
 func (s *Server) onConn(conn *clientConn) {
 	ctx := logutil.WithConnID(context.Background(), conn.connectionID)
 	if err := conn.handshake(ctx); err != nil {
+		terror.Log(err)
 		if plugin.IsEnable(plugin.Audit) {
 			conn.ctx.GetSessionVars().ConnectionInfo = conn.connectInfo()
 		}
