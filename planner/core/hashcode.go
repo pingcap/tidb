@@ -15,7 +15,7 @@ package core
 
 import (
 	"encoding/binary"
-	
+
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/plancodec"
 )
