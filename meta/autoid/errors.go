@@ -14,8 +14,8 @@
 package autoid
 
 import (
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	mysql "github.com/pingcap/tidb/errno"
 )
 
 // Error instances.
@@ -45,4 +45,6 @@ const (
 	AutoRandomAlterErrMsg = "adding/dropping/modifying auto_random is not supported"
 	// AutoRandomNonPositive is reported then a user specifies a non-positive value for auto_random.
 	AutoRandomNonPositive = "the value of auto_random should be positive"
+	// AutoRandomAvailableAllocTimesNote is reported when a table containing auto_random is created.
+	AutoRandomAvailableAllocTimesNote = "Available implicit allocation times: %d"
 )

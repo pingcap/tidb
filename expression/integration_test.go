@@ -2660,6 +2660,16 @@ func (s *testIntegrationSuite2) TestBuiltin(c *C) {
 	result = tk.MustQuery("select from_unixtime(1451606400)")
 	unixTime := time.Unix(1451606400, 0).String()[:19]
 	result.Check(testkit.Rows(unixTime))
+	result = tk.MustQuery("select from_unixtime(14516064000/10)")
+	result.Check(testkit.Rows("2016-01-01 08:00:00.0000"))
+	result = tk.MustQuery("select from_unixtime('14516064000'/10)")
+	result.Check(testkit.Rows("2016-01-01 08:00:00.000000"))
+	result = tk.MustQuery("select from_unixtime(cast(1451606400 as double))")
+	result.Check(testkit.Rows("2016-01-01 08:00:00.000000"))
+	result = tk.MustQuery("select from_unixtime(cast(cast(1451606400 as double) as DECIMAL))")
+	result.Check(testkit.Rows("2016-01-01 08:00:00"))
+	result = tk.MustQuery("select from_unixtime(cast(cast(1451606400 as double) as DECIMAL(65,1)))")
+	result.Check(testkit.Rows("2016-01-01 08:00:00.0"))
 	result = tk.MustQuery("select from_unixtime(1451606400.123456)")
 	unixTime = time.Unix(1451606400, 123456000).String()[:26]
 	result.Check(testkit.Rows(unixTime))
@@ -2671,6 +2681,14 @@ func (s *testIntegrationSuite2) TestBuiltin(c *C) {
 	result.Check(testkit.Rows(unixTime))
 	result = tk.MustQuery("select from_unixtime(1511247196661)")
 	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select from_unixtime('1451606400.123');")
+	result.Check(testkit.Rows("2016-01-01 08:00:00.123000"))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("insert into t value(1451606400);")
+	result = tk.MustQuery("select from_unixtime(a) from t;")
+	result.Check(testkit.Rows("2016-01-01 08:00:00"))
 
 	// test strcmp
 	result = tk.MustQuery("select strcmp('abc', 'def')")
@@ -5208,6 +5226,13 @@ func (s *testIntegrationSuite) TestIssue12301(c *C) {
 	tk.MustQuery("select * from t where d = i").Check(testkit.Rows("123456789012 123456789012"))
 }
 
+func (s *testIntegrationSerialSuite) TestIssue15315(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustQuery("select '0-3261554956'+0.0").Check(testkit.Rows("0"))
+	tk.MustQuery("select cast('0-1234' as real)").Check(testkit.Rows("0"))
+}
+
 func (s *testIntegrationSuite) TestNotExistFunc(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
@@ -5406,6 +5431,11 @@ func (s *testIntegrationSuite) TestCollation(c *C) {
 	tk.MustQuery("select collation(upper(utf8_bin_c)) from t").Check(testkit.Rows("utf8_bin"))
 	tk.MustQuery("select collation(upper(utf8_gen_c)) from t").Check(testkit.Rows("utf8_general_ci"))
 	tk.MustQuery("select collation(upper(bin_c)) from t").Check(testkit.Rows("binary"))
+
+	tk.MustExec("set names utf8mb4 collate utf8mb4_bin")
+	tk.MustQuery("select collation('a')").Check(testkit.Rows("utf8mb4_bin"))
+	tk.MustExec("set names utf8mb4 collate utf8mb4_general_ci")
+	tk.MustQuery("select collation('a')").Check(testkit.Rows("utf8mb4_general_ci"))
 }
 
 func (s *testIntegrationSuite) TestCoercibility(c *C) {
@@ -5666,17 +5696,26 @@ func (s *testIntegrationSerialSuite) TestCollateMergeJoin2(c *C) {
 		testkit.Rows("1 a a", "2 À À", "3 á á", "4 à à", "5 b b", "6 c c", "7    "))
 }
 
-func (s *testIntegrationSerialSuite) TestCollateSelection(c *C) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
+func (s *testIntegrationSerialSuite) prepare4Collation(c *C, hasIndex bool) *testkit.TestKit {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("USE test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("drop table if exists t_bin")
-	tk.MustExec("create table t (id int, v varchar(5) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL)")
-	tk.MustExec("create table t_bin (id int, v varchar(5) CHARACTER SET binary);")
+	idxSQL := ", key(v)"
+	if !hasIndex {
+		idxSQL = ""
+	}
+	tk.MustExec(fmt.Sprintf("create table t (id int, v varchar(5) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL %v)", idxSQL))
+	tk.MustExec(fmt.Sprintf("create table t_bin (id int, v varchar(5) CHARACTER SET binary %v)", idxSQL))
 	tk.MustExec("insert into t values (1, 'a'), (2, 'À'), (3, 'á'), (4, 'à'), (5, 'b'), (6, 'c'), (7, ' ')")
 	tk.MustExec("insert into t_bin values (1, 'a'), (2, 'À'), (3, 'á'), (4, 'à'), (5, 'b'), (6, 'c'), (7, ' ')")
+	return tk
+}
+
+func (s *testIntegrationSerialSuite) TestCollateSelection(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	tk := s.prepare4Collation(c, false)
 	tk.MustQuery("select v from t where v='a' order by id").Check(testkit.Rows("a", "À", "á", "à"))
 	tk.MustQuery("select v from t_bin where v='a' order by id").Check(testkit.Rows("a"))
 	tk.MustQuery("select v from t where v<'b' and id<=3").Check(testkit.Rows("a", "À", "á"))
@@ -5686,16 +5725,80 @@ func (s *testIntegrationSerialSuite) TestCollateSelection(c *C) {
 func (s *testIntegrationSerialSuite) TestCollateSort(c *C) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("USE test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("drop table if exists t_bin")
-	tk.MustExec("create table t (id int, v varchar(5) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL)")
-	tk.MustExec("create table t_bin (id int, v varchar(5) CHARACTER SET binary);")
-	tk.MustExec("insert into t values (1, 'a'), (2, 'À'), (3, 'á'), (4, 'à'), (5, 'b'), (6, 'c'), (7, ' ')")
-	tk.MustExec("insert into t_bin values (1, 'a'), (2, 'À'), (3, 'á'), (4, 'à'), (5, 'b'), (6, 'c'), (7, ' ')")
+	tk := s.prepare4Collation(c, false)
 	tk.MustQuery("select id from t order by v, id").Check(testkit.Rows("7", "1", "2", "3", "4", "5", "6"))
 	tk.MustQuery("select id from t_bin order by v, id").Check(testkit.Rows("7", "1", "5", "6", "2", "4", "3"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(10) collate utf8mb4_general_ci, key(a))")
+	tk.MustExec("insert into t values ('a'), ('A'), ('b')")
+	tk.MustExec("insert into t values ('a'), ('A'), ('b')")
+	tk.MustExec("insert into t values ('a'), ('A'), ('b')")
+	tk.MustQuery("select * from t order by a collate utf8mb4_bin").Check(testkit.Rows("A", "A", "A", "a", "a", "a", "b", "b", "b"))
+}
+
+func (s *testIntegrationSerialSuite) TestCollateHashAgg(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	tk := s.prepare4Collation(c, false)
+	tk.HasPlan("select distinct(v) from t_bin", "HashAgg")
+	tk.MustQuery("select distinct(v) from t_bin").Sort().Check(testkit.Rows(" ", "a", "b", "c", "À", "à", "á"))
+	tk.HasPlan("select distinct(v) from t", "HashAgg")
+	tk.MustQuery("select distinct(v) from t").Sort().Check(testkit.Rows(" ", "a", "b", "c"))
+	tk.HasPlan("select v, count(*) from t_bin group by v", "HashAgg")
+	tk.MustQuery("select v, count(*) from t_bin group by v").Sort().Check(testkit.Rows("  1", "a 1", "b 1", "c 1", "À 1", "à 1", "á 1"))
+	tk.HasPlan("select v, count(*) from t group by v", "HashAgg")
+	tk.MustQuery("select v, count(*) from t group by v").Sort().Check(testkit.Rows("  1", "a 4", "b 1", "c 1"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(10) collate utf8mb4_general_ci, key(a))")
+	tk.MustExec("insert into t values ('a'), ('A'), ('b')")
+	tk.MustExec("insert into t values ('a'), ('A'), ('b')")
+	tk.MustExec("insert into t values ('a'), ('A'), ('b')")
+	tk.MustQuery("select count(1) from t group by a collate utf8mb4_bin").Check(testkit.Rows("3", "3", "3"))
+}
+
+func (s *testIntegrationSerialSuite) TestCollateStreamAgg(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	tk := s.prepare4Collation(c, true)
+	tk.HasPlan("select distinct(v) from t_bin", "StreamAgg")
+	tk.MustQuery("select distinct(v) from t_bin").Sort().Check(testkit.Rows(" ", "a", "b", "c", "À", "à", "á"))
+	tk.HasPlan("select distinct(v) from t", "StreamAgg")
+	tk.MustQuery("select distinct(v) from t").Sort().Check(testkit.Rows(" ", "a", "b", "c"))
+	tk.HasPlan("select v, count(*) from t_bin group by v", "StreamAgg")
+	tk.MustQuery("select v, count(*) from t_bin group by v").Sort().Check(testkit.Rows("  1", "a 1", "b 1", "c 1", "À 1", "à 1", "á 1"))
+	tk.HasPlan("select v, count(*) from t group by v", "StreamAgg")
+	tk.MustQuery("select v, count(*) from t group by v").Sort().Check(testkit.Rows("  1", "a 4", "b 1", "c 1"))
+}
+
+func (s *testIntegrationSerialSuite) TestCollateIndexReader(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	tk := s.prepare4Collation(c, true)
+	tk.HasPlan("select v from t where v < 'b'  order by v", "IndexReader")
+	tk.MustQuery("select v from t where v < 'b' order by v").Check(testkit.Rows(" ", "a", "À", "á", "à"))
+	tk.HasPlan("select v from t where v < 'b' and v > ' ' order by v", "IndexReader")
+	tk.MustQuery("select v from t where v < 'b' and v > ' ' order by v").Check(testkit.Rows("a", "À", "á", "à"))
+	tk.HasPlan("select v from t_bin where v < 'b' order by v", "IndexReader")
+	tk.MustQuery("select v from t_bin where v < 'b' order by v").Sort().Check(testkit.Rows(" ", "a"))
+	tk.HasPlan("select v from t_bin where v < 'b' and v > ' ' order by v", "IndexReader")
+	tk.MustQuery("select v from t_bin where v < 'b' and v > ' ' order by v").Sort().Check(testkit.Rows("a"))
+}
+
+func (s *testIntegrationSerialSuite) TestCollateIndexLookup(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	tk := s.prepare4Collation(c, true)
+
+	tk.HasPlan("select id from t where v < 'b'", "IndexLookUp")
+	tk.MustQuery("select id from t where v < 'b'").Sort().Check(testkit.Rows("1", "2", "3", "4", "7"))
+	tk.HasPlan("select id from t where v < 'b' and v > ' '", "IndexLookUp")
+	tk.MustQuery("select id from t where v < 'b' and v > ' '").Sort().Check(testkit.Rows("1", "2", "3", "4"))
+	tk.HasPlan("select id from t_bin where v < 'b'", "IndexLookUp")
+	tk.MustQuery("select id from t_bin where v < 'b'").Sort().Check(testkit.Rows("1", "7"))
+	tk.HasPlan("select id from t_bin where v < 'b' and v > ' '", "IndexLookUp")
+	tk.MustQuery("select id from t_bin where v < 'b' and v > ' '").Sort().Check(testkit.Rows("1"))
 }
 
 func (s *testIntegrationSerialSuite) TestCollateStringFunction(c *C) {
@@ -5716,4 +5819,51 @@ func (s *testIntegrationSerialSuite) TestCollateStringFunction(c *C) {
 	tk.MustQuery("select FIND_IN_SET('a','b,a ,c,d' collate utf8mb4_bin);").Check(testkit.Rows("2"))
 	tk.MustQuery("select FIND_IN_SET('a','b,A,c,d' collate utf8mb4_general_ci);").Check(testkit.Rows("2"))
 	tk.MustQuery("select FIND_IN_SET('a','b,a ,c,d' collate utf8mb4_general_ci);").Check(testkit.Rows("2"))
+}
+
+func (s *testIntegrationSerialSuite) TestCollateLike(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set names utf8mb4 collate utf8mb4_general_ci")
+	tk.MustQuery("select 'a' like 'A'").Check(testkit.Rows("1"))
+	tk.MustQuery("select 'a' like 'A' collate utf8mb4_general_ci").Check(testkit.Rows("1"))
+	tk.MustQuery("select 'a' like 'À'").Check(testkit.Rows("1"))
+	tk.MustQuery("select 'a' like '%À'").Check(testkit.Rows("1"))
+	tk.MustQuery("select 'a' like '%À '").Check(testkit.Rows("0"))
+	tk.MustQuery("select 'a' like 'À%'").Check(testkit.Rows("1"))
+	tk.MustQuery("select 'a' like 'À_'").Check(testkit.Rows("0"))
+	tk.MustQuery("select 'a' like '%À%'").Check(testkit.Rows("1"))
+	tk.MustQuery("select 'aaa' like '%ÀAa%'").Check(testkit.Rows("1"))
+	tk.MustExec("set names utf8mb4 collate utf8mb4_bin")
+
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t_like;")
+	tk.MustExec("create table t_like(id int, b varchar(20) collate utf8mb4_general_ci);")
+	tk.MustExec("insert into t_like values (1, 'aaa'), (2, 'abc'), (3, 'aac');")
+	tk.MustQuery("select b like 'AaÀ' from t_like order by id;").Check(testkit.Rows("1", "0", "0"))
+	tk.MustQuery("select b like 'Aa_' from t_like order by id;").Check(testkit.Rows("1", "0", "1"))
+	tk.MustQuery("select b like '_A_' from t_like order by id;").Check(testkit.Rows("1", "0", "1"))
+	tk.MustQuery("select b from t_like where b like 'Aa_' order by id;").Check(testkit.Rows("aaa", "aac"))
+	tk.MustQuery("select b from t_like where b like 'A%' order by id;").Check(testkit.Rows("aaa", "abc", "aac"))
+	tk.MustQuery("select b from t_like where b like '%A%' order by id;").Check(testkit.Rows("aaa", "abc", "aac"))
+	tk.MustExec("alter table t_like add index idx_b(b);")
+	tk.MustQuery("select b from t_like use index(idx_b) where b like 'Aa_' order by id;").Check(testkit.Rows("aaa", "aac"))
+	tk.MustQuery("select b from t_like use index(idx_b) where b like 'A%' order by id;").Check(testkit.Rows("aaa", "abc", "aac"))
+	tk.MustQuery("select b from t_like use index(idx_b) where b like '%A%' order by id;").Check(testkit.Rows("aaa", "abc", "aac"))
+}
+
+func (s *testIntegrationSerialSuite) TestCollateSubQuery(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	tk := s.prepare4Collation(c, false)
+	tk.MustQuery("select id from t where v in (select v from t_bin) order by id").Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7"))
+	tk.MustQuery("select id from t_bin where v in (select v from t) order by id").Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7"))
+	tk.MustQuery("select id from t where v not in (select v from t_bin) order by id").Check(testkit.Rows())
+	tk.MustQuery("select id from t_bin where v not in (select v from t) order by id").Check(testkit.Rows())
+	tk.MustQuery("select id from t where exists (select 1 from t_bin where t_bin.v=t.v) order by id").Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7"))
+	tk.MustQuery("select id from t_bin where exists (select 1 from t where t_bin.v=t.v) order by id").Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7"))
+	tk.MustQuery("select id from t where not exists (select 1 from t_bin where t_bin.v=t.v) order by id").Check(testkit.Rows())
+	tk.MustQuery("select id from t_bin where not exists (select 1 from t where t_bin.v=t.v) order by id").Check(testkit.Rows())
 }

@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"sort"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
@@ -24,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/util/math"
 	"github.com/pingcap/tidb/util/rowcodec"
 )
 
@@ -34,6 +36,8 @@ type BatchPointGetExec struct {
 	tblInfo    *model.TableInfo
 	idxInfo    *model.IndexInfo
 	handles    []int64
+	physIDs    []int64
+	partPos    int
 	idxVals    [][]types.Datum
 	startTS    uint64
 	snapshotTS uint64
@@ -44,6 +48,8 @@ type BatchPointGetExec struct {
 	values     [][]byte
 	index      int
 	rowDecoder *rowcodec.ChunkDecoder
+	keepOrder  bool
+	desc       bool
 }
 
 // Open implements the Executor interface.
@@ -102,12 +108,14 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	}
 
 	var handleVals map[string][]byte
+	var indexKeys []kv.Key
 	if e.idxInfo != nil {
 		// `SELECT a, b FROM t WHERE (a, b) IN ((1, 2), (1, 2), (2, 1), (1, 2))` should not return duplicated rows
 		dedup := make(map[hack.MutableString]struct{})
 		keys := make([]kv.Key, 0, len(e.idxVals))
 		for _, idxVals := range e.idxVals {
-			idxKey, err1 := encodeIndexKey(e.base(), e.tblInfo, e.idxInfo, idxVals, e.tblInfo.ID)
+			physID := getPhysID(e.tblInfo, idxVals[e.partPos].GetInt64())
+			idxKey, err1 := encodeIndexKey(e.base(), e.tblInfo, e.idxInfo, idxVals, physID)
 			if err1 != nil && !kv.ErrNotExist.Equal(err1) {
 				return err1
 			}
@@ -118,6 +126,15 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			dedup[s] = struct{}{}
 			keys = append(keys, idxKey)
 		}
+		if e.keepOrder {
+			sort.Slice(keys, func(i int, j int) bool {
+				if e.desc {
+					return keys[i].Cmp(keys[j]) > 0
+				}
+				return keys[i].Cmp(keys[j]) < 0
+			})
+		}
+		indexKeys = keys
 
 		// Fetch all handles.
 		handleVals, err = batchGetter.BatchGet(ctx, keys)
@@ -126,6 +143,9 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		}
 
 		e.handles = make([]int64, 0, len(keys))
+		if e.tblInfo.Partition != nil {
+			e.physIDs = make([]int64, 0, len(keys))
+		}
 		for _, key := range keys {
 			handleVal := handleVals[string(key)]
 			if len(handleVal) == 0 {
@@ -136,6 +156,9 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 				return err1
 			}
 			e.handles = append(e.handles, handle)
+			if e.tblInfo.Partition != nil {
+				e.physIDs = append(e.physIDs, tablecodec.DecodeTableID(key))
+			}
 		}
 
 		// The injection is used to simulate following scenario:
@@ -151,18 +174,39 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			// Wait `UPDATE` finished
 			failpoint.InjectContext(ctx, "batchPointGetRepeatableReadTest-step2", nil)
 		})
+	} else if e.keepOrder {
+		sort.Slice(e.handles, func(i int, j int) bool {
+			if e.desc {
+				return e.handles[i] > e.handles[j]
+			}
+			return e.handles[i] < e.handles[j]
+		})
 	}
 
 	keys := make([]kv.Key, len(e.handles))
 	for i, handle := range e.handles {
-		key := tablecodec.EncodeRowKeyWithHandle(e.tblInfo.ID, handle)
+		var tID int64
+		if len(e.physIDs) > 0 {
+			tID = e.physIDs[i]
+		} else {
+			tID = getPhysID(e.tblInfo, handle)
+		}
+		key := tablecodec.EncodeRowKeyWithHandle(tID, handle)
 		keys[i] = key
 	}
 
 	// Fetch all values.
 	var values map[string][]byte
 	if e.lock {
-		values, err = e.lockKeys(ctx, keys)
+		lockKeys := make([]kv.Key, len(keys), len(keys)+len(indexKeys))
+		copy(lockKeys, keys)
+		for _, idxKey := range indexKeys {
+			// lock the non-exist index key, using len(val) in case BatchGet result contains some zero len entries
+			if val := handleVals[string(idxKey)]; len(val) == 0 {
+				lockKeys = append(lockKeys, idxKey)
+			}
+		}
+		values, err = e.lockKeys(ctx, lockKeys)
 		if err != nil {
 			return err
 		}
@@ -226,4 +270,13 @@ func (e *BatchPointGetExec) lockKeys(ctx context.Context, keys []kv.Key) (map[st
 		return lctx.Values, nil
 	}
 	return nil, nil
+}
+
+func getPhysID(tblInfo *model.TableInfo, val int64) int64 {
+	pi := tblInfo.Partition
+	if pi == nil {
+		return tblInfo.ID
+	}
+	partIdx := math.Abs(val) % int64(pi.Num)
+	return pi.Definitions[partIdx].ID
 }
