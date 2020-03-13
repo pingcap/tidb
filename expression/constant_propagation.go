@@ -195,7 +195,7 @@ func (s *propConstSolver) propagateConstantEQ() {
 					baseCollation := sf.GetArgs()[0].GetType().Collate
 					skip := false
 					for _, arg := range sf.GetArgs() {
-						if arg.GetType().Collate != baseCollation {
+						if !collate.CompatibleCollate(arg.GetType().Collate, baseCollation) {
 							skip = true
 							break
 						}
