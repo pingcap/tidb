@@ -26,12 +26,10 @@ import (
 	"reflect"
 	"regexp"
 	"runtime"
-	"sort"
 	"strings"
 
 	"github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
@@ -261,14 +259,6 @@ func (t *TestData) ConvertRowsToStrings(rows [][]interface{}) (rs []string) {
 	return rs
 }
 
-// ConvertSQLWarnToStrings converts []SQLWarn to []string.
-func (t *TestData) ConvertSQLWarnToStrings(warns []stmtctx.SQLWarn) (rs []string) {
-	for _, warn := range warns {
-		rs = append(rs, fmt.Sprintf(warn.Err.Error()))
-	}
-	return rs
-}
-
 // GenerateOutputIfNeeded generate the output file.
 func (t *TestData) GenerateOutputIfNeeded() error {
 	if !record {
@@ -321,31 +311,18 @@ type autoRandom struct {
 
 // SetupAutoRandomTestConfig set alter-primary-key to false, and set allow-auto-random to true and save their origin values.
 // This method should only be used for the tests in SerialSuite.
-func (a *autoRandom) SetupAutoRandomTestConfig() {
+func (c *configTestUtils) SetupAutoRandomTestConfig() {
 	globalCfg := config.GetGlobalConfig()
-	a.originAllowAutoRandom = globalCfg.Experimental.AllowAutoRandom
-	a.originAlterPrimaryKey = globalCfg.AlterPrimaryKey
+	c.originAllowAutoRandom = globalCfg.Experimental.AllowAutoRandom
+	c.originAlterPrimaryKey = globalCfg.AlterPrimaryKey
 	globalCfg.AlterPrimaryKey = false
 	globalCfg.Experimental.AllowAutoRandom = true
 }
 
 // RestoreAutoRandomTestConfig restore the values had been saved in SetupTestConfig.
 // This method should only be used for the tests in SerialSuite.
-func (a *autoRandom) RestoreAutoRandomTestConfig() {
+func (c *configTestUtils) RestoreAutoRandomTestConfig() {
 	globalCfg := config.GetGlobalConfig()
-	globalCfg.Experimental.AllowAutoRandom = a.originAllowAutoRandom
-	globalCfg.AlterPrimaryKey = a.originAlterPrimaryKey
-}
-
-// MaskSortHandles masks highest shard_bits numbers of table handles and sort it.
-func (a *autoRandom) MaskSortHandles(handles []int64, shardBitsCount int, fieldType byte) []int64 {
-	typeBitsLength := mysql.DefaultLengthOfMysqlTypes[fieldType] * 8
-	const signBitCount = 1
-	shiftBitsCount := 64 - typeBitsLength + shardBitsCount + signBitCount
-	ordered := make([]int64, len(handles))
-	for i, h := range handles {
-		ordered[i] = h << shiftBitsCount >> shiftBitsCount
-	}
-	sort.Slice(ordered, func(i, j int) bool { return ordered[i] < ordered[j] })
-	return ordered
+	globalCfg.Experimental.AllowAutoRandom = c.originAllowAutoRandom
+	globalCfg.AlterPrimaryKey = c.originAlterPrimaryKey
 }

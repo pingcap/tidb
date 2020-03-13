@@ -24,7 +24,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
@@ -132,7 +131,7 @@ func truncateTrailingSpaces(v *types.Datum) {
 	}
 	b = b[:length]
 	str := string(hack.String(b))
-	v.SetString(str, v.Collation(), v.Length())
+	v.SetString(str)
 }
 
 // CastValues casts values based on columns type.
@@ -372,30 +371,7 @@ func GetColOriginDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo) (ty
 
 // GetColDefaultValue gets default value of the column.
 func GetColDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo) (types.Datum, error) {
-	defaultValue := col.GetDefaultValue()
-	if !col.DefaultIsExpr {
-		return getColDefaultValue(ctx, col, defaultValue)
-	}
-	return getColDefaultExprValue(ctx, col, defaultValue.(string))
-}
-
-func getColDefaultExprValue(ctx sessionctx.Context, col *model.ColumnInfo, defaultValue string) (types.Datum, error) {
-	var defaultExpr ast.ExprNode
-	expr := fmt.Sprintf("select %s", defaultValue)
-	stmts, _, err := parser.New().Parse(expr, "", "")
-	if err == nil {
-		defaultExpr = stmts[0].(*ast.SelectStmt).Fields.Fields[0].Expr
-	}
-	d, err := expression.EvalAstExpr(ctx, defaultExpr)
-	if err != nil {
-		return types.Datum{}, err
-	}
-	// Check the evaluated data type by cast.
-	value, err := CastValue(ctx, types.NewDatum(d), col)
-	if err != nil {
-		return types.Datum{}, err
-	}
-	return value, nil
+	return getColDefaultValue(ctx, col, col.GetDefaultValue())
 }
 
 func getColDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo, defaultVal interface{}) (types.Datum, error) {
@@ -493,10 +469,10 @@ func GetZeroValue(col *model.ColumnInfo) types.Datum {
 		if col.Flen > 0 && col.Charset == charset.CharsetBin {
 			d.SetBytes(make([]byte, col.Flen))
 		} else {
-			d.SetString("", col.Collate, col.Flen)
+			d.SetString("")
 		}
 	case mysql.TypeVarString, mysql.TypeVarchar:
-		d.SetString("", col.Collate, col.Flen)
+		d.SetString("")
 	case mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		d.SetBytes([]byte{})
 	case mysql.TypeDuration:

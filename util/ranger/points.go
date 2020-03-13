@@ -383,7 +383,6 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction) ([]point, bool) {
 
 func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction) []point {
 	pdt, err := expr.GetArgs()[1].(*expression.Constant).Eval(chunk.Row{})
-	tpOfPattern := expr.GetArgs()[1].GetType()
 	if err != nil {
 		r.err = errors.Trace(err)
 		return fullRange
@@ -435,11 +434,11 @@ func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction) []poi
 		return []point{{value: types.MinNotNullDatum(), start: true}, {value: types.MaxValueDatum()}}
 	}
 	if isExactMatch {
-		val := types.NewCollationStringDatum(string(lowValue), tpOfPattern.Collate, tpOfPattern.Flen)
+		val := types.NewStringDatum(string(lowValue))
 		return []point{{value: val, start: true}, {value: val}}
 	}
 	startPoint := point{start: true, excl: exclude}
-	startPoint.value.SetBytesAsString(lowValue, tpOfPattern.Collate, uint32(tpOfPattern.Flen))
+	startPoint.value.SetBytesAsString(lowValue)
 	highValue := make([]byte, len(lowValue))
 	copy(highValue, lowValue)
 	endPoint := point{excl: true}
@@ -449,7 +448,7 @@ func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction) []poi
 		// e.g., the start point value is "abc", so the end point value is "abd".
 		highValue[i]++
 		if highValue[i] != 0 {
-			endPoint.value.SetBytesAsString(highValue, tpOfPattern.Collate, uint32(tpOfPattern.Flen))
+			endPoint.value.SetBytesAsString(highValue)
 			break
 		}
 		// If highValue[i] is 255 and highValue[i]++ is 0, then the end point value is max value.

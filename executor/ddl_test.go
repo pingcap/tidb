@@ -17,6 +17,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -27,7 +28,6 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/ddl"
-	ddltestutil "github.com/pingcap/tidb/ddl/testutil"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
@@ -173,13 +173,6 @@ func (s *testSuite6) TestCreateTable(c *C) {
 	tk.MustExec("insert into create_auto_increment_test (name) values ('aa')")
 	r = tk.MustQuery("select * from create_auto_increment_test;")
 	r.Check(testkit.Rows("1000 aa"))
-
-	// Test for `drop table if exists`.
-	tk.MustExec("drop table if exists t_if_exists;")
-	tk.MustQuery("show warnings;").Check(testkit.Rows("Note 1051 Unknown table 'test.t_if_exists'"))
-	tk.MustExec("create table if not exists t1_if_exists(c int)")
-	tk.MustExec("drop table if exists t1_if_exists,t2_if_exists,t3_if_exists")
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1051|Unknown table 'test.t2_if_exists'", "Note|1051|Unknown table 'test.t3_if_exists'"))
 }
 
 func (s *testSuite6) TestCreateView(c *C) {
@@ -260,54 +253,6 @@ func (s *testSuite6) TestCreateView(c *C) {
 	tk.MustExec("drop view v")
 	tk.MustExec("create view v as (select * from t1 union select * from t2)")
 	tk.MustExec("drop view v")
-
-	// Test for `drop view if exists`.
-	tk.MustExec("drop view if exists v_if_exists;")
-	tk.MustQuery("show warnings;").Check(testkit.Rows("Note 1051 Unknown table 'test.v_if_exists'"))
-	tk.MustExec("create view v1_if_exists as (select * from t1)")
-	tk.MustExec("drop view if exists v1_if_exists,v2_if_exists,v3_if_exists")
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1051|Unknown table 'test.v2_if_exists'", "Note|1051|Unknown table 'test.v3_if_exists'"))
-}
-
-func (s *testSuite6) TestCreateViewWithOverlongColName(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t(a int)")
-	defer tk.MustExec("drop table t")
-	tk.MustExec("create view v as select distinct'" + strings.Repeat("a", 65) + "', " +
-		"max('" + strings.Repeat("b", 65) + "'), " +
-		"'cccccccccc', '" + strings.Repeat("d", 65) + "';")
-	resultCreateStmt := "CREATE ALGORITHM=UNDEFINED DEFINER=``@`` SQL SECURITY DEFINER VIEW `v` (`name_exp_1`, `name_exp_2`, `cccccccccc`, `name_exp_4`) AS SELECT DISTINCT '" + strings.Repeat("a", 65) + "',MAX('" + strings.Repeat("b", 65) + "'),'cccccccccc','" + strings.Repeat("d", 65) + "'"
-	tk.MustQuery("select * from v")
-	tk.MustQuery("select name_exp_1, name_exp_2, cccccccccc, name_exp_4 from v")
-	tk.MustQuery("show create view v").Check(testkit.Rows("v " + resultCreateStmt + "  "))
-	tk.MustExec("drop view v;")
-	tk.MustExec(resultCreateStmt)
-
-	tk.MustExec("drop view v ")
-	tk.MustExec("create definer='root'@'localhost' view v as select 'a', '" + strings.Repeat("b", 65) + "' from t " +
-		"union select '" + strings.Repeat("c", 65) + "', " +
-		"count(distinct '" + strings.Repeat("b", 65) + "', " +
-		"'c');")
-	resultCreateStmt = "CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`localhost` SQL SECURITY DEFINER VIEW `v` (`a`, `name_exp_2`) AS SELECT 'a','" + strings.Repeat("b", 65) + "' FROM `test`.`t` UNION SELECT '" + strings.Repeat("c", 65) + "',COUNT(DISTINCT '" + strings.Repeat("b", 65) + "', 'c')"
-	tk.MustQuery("select * from v")
-	tk.MustQuery("select a, name_exp_2 from v")
-	tk.MustQuery("show create view v").Check(testkit.Rows("v " + resultCreateStmt + "  "))
-	tk.MustExec("drop view v;")
-	tk.MustExec(resultCreateStmt)
-
-	tk.MustExec("drop view v ")
-	tk.MustExec("create definer='root'@'localhost' view v as select 'a' as '" + strings.Repeat("b", 65) + "' from t;")
-	tk.MustQuery("select * from v")
-	tk.MustQuery("select name_exp_1 from v")
-	resultCreateStmt = "CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`localhost` SQL SECURITY DEFINER VIEW `v` (`name_exp_1`) AS SELECT 'a' AS `" + strings.Repeat("b", 65) + "` FROM `test`.`t`"
-	tk.MustQuery("show create view v").Check(testkit.Rows("v " + resultCreateStmt + "  "))
-	tk.MustExec("drop view v;")
-	tk.MustExec(resultCreateStmt)
-
-	tk.MustExec("drop view v ")
-	err := tk.ExecToErr("create view v(`" + strings.Repeat("b", 65) + "`) as select a from t;")
-	c.Assert(err.Error(), Equals, "[ddl:1059]Identifier name 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' is too long")
 }
 
 func (s *testSuite6) TestCreateDropDatabase(c *C) {
@@ -358,13 +303,6 @@ func (s *testSuite6) TestCreateDropView(c *C) {
 	tk.MustExec("create table t_v(a int)")
 	_, err = tk.Exec("drop view t_v")
 	c.Assert(err.Error(), Equals, "[ddl:1347]'test.t_v' is not VIEW")
-
-	tk.MustExec("create table t_v1(a int, b int);")
-	tk.MustExec("create table t_v2(a int, b int);")
-	tk.MustExec("create view v as select * from t_v1;")
-	tk.MustExec("create or replace view v  as select * from t_v2;")
-	tk.MustQuery("select * from information_schema.views where table_name ='v';").Check(
-		testkit.Rows("def test v SELECT `test`.`t_v2`.`a`,`test`.`t_v2`.`b` FROM `test`.`t_v2` CASCADED NO @ DEFINER utf8mb4 utf8mb4_bin"))
 }
 
 func (s *testSuite6) TestCreateDropIndex(c *C) {
@@ -763,20 +701,31 @@ func (s *testAutoRandomSuite) TestAutoRandomBitsData(c *C) {
 	for i := 0; i < 100; i++ {
 		tk.MustExec("insert into t(b) values (?)", i)
 	}
-	allHandles, err := ddltestutil.ExtractAllTableHandles(tk.Se, "test_auto_random_bits", "t")
+	dom := domain.GetDomain(tk.Se)
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test_auto_random_bits"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	c.Assert(tk.Se.NewTxn(context.Background()), IsNil)
+	var allHandles []int64
+	// Iterate all the record. The order is not guaranteed.
+	err = tbl.IterRecords(tk.Se, tbl.FirstKey(), nil, func(h int64, _ []types.Datum, _ []*table.Column) (more bool, err error) {
+		allHandles = append(allHandles, h)
+		return true, nil
+	})
 	c.Assert(err, IsNil)
 	tk.MustExec("drop table t")
 
 	// Test auto random id number.
 	c.Assert(len(allHandles), Equals, 100)
-	// Test the handles are not all zero.
-	allZero := true
+	// Test the first 15 bits of each handle is greater than 0.
 	for _, h := range allHandles {
-		allZero = allZero && (h>>(64-16)) == 0
+		c.Assert(h>>(64-15), Greater, int64(0))
 	}
-	c.Assert(allZero, IsFalse)
-	// Test non-shard-bits part of auto random id is monotonic increasing and continuous.
-	orderedHandles := testutil.ConfigTestUtils.MaskSortHandles(allHandles, 15, mysql.TypeLonglong)
+	// Test auto random id is monotonic increasing and continuous.
+	orderedHandles := make([]int64, len(allHandles))
+	for i, h := range allHandles {
+		orderedHandles[i] = h << 16 >> 16
+	}
+	sort.Slice(orderedHandles, func(i, j int) bool { return orderedHandles[i] < orderedHandles[j] })
 	size := int64(len(allHandles))
 	for i := int64(1); i <= size; i++ {
 		c.Assert(i, Equals, orderedHandles[i-1])

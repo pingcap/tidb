@@ -14,10 +14,8 @@
 package executor
 
 import (
-	"fmt"
 	"hash"
 	"hash/fnv"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx"
@@ -75,20 +73,10 @@ func (hc *hashContext) initHash(rows int) {
 	}
 }
 
-type hashStatistic struct {
-	probeCollision   int
-	buildTableElapse time.Duration
-}
-
-func (s *hashStatistic) String() string {
-	return fmt.Sprintf("probe collision:%v, build:%v", s.probeCollision, s.buildTableElapse)
-}
-
 // hashRowContainer handles the rows and the hash map of a table.
 type hashRowContainer struct {
 	sc   *stmtctx.StatementContext
 	hCtx *hashContext
-	stat hashStatistic
 
 	// hashTable stores the map of hashKey and RowPtr
 	hashTable *rowHashMap
@@ -142,7 +130,6 @@ func (c *hashRowContainer) GetMatchedRowsAndPtrs(probeKey uint64, probeRow chunk
 			return
 		}
 		if !ok {
-			c.stat.probeCollision++
 			continue
 		}
 		matched = append(matched, matchedRow)
@@ -175,9 +162,6 @@ func (c *hashRowContainer) PutChunk(chk *chunk.Chunk) error {
 // key of hash table: hash value of key columns
 // value of hash table: RowPtr of the corresponded row
 func (c *hashRowContainer) PutChunkSelected(chk *chunk.Chunk, selected []bool) error {
-	start := time.Now()
-	defer func() { c.stat.buildTableElapse += time.Since(start) }()
-
 	chkIdx := uint32(c.rowContainer.NumChunks())
 	err := c.rowContainer.Add(chk)
 	if err != nil {

@@ -38,7 +38,6 @@ import (
 const (
 	btreeDegree               = 32
 	invalidatedLastAccessTime = -1
-	defaultRegionsPerBatch    = 128
 )
 
 // RegionCacheTTLSec is the max idle time for regions in the region cache.
@@ -113,25 +112,6 @@ func (r *RegionStore) follower(seed uint32) int32 {
 		seed++
 	}
 	return r.workTiKVIdx
-}
-
-// return next leader or follower store's index
-func (r *RegionStore) peer(seed uint32) int32 {
-	candidates := make([]int32, 0, len(r.stores))
-	for i := 0; i < len(r.stores); i++ {
-		if r.stores[i].storeType != kv.TiKV {
-			continue
-		}
-		if r.storeFails[i] != atomic.LoadUint32(&r.stores[i].fail) {
-			continue
-		}
-		candidates = append(candidates, int32(i))
-	}
-
-	if len(candidates) == 0 {
-		return r.workTiKVIdx
-	}
-	return candidates[int32(seed)%int32(len(candidates))]
 }
 
 // init initializes region after constructed.
@@ -325,8 +305,6 @@ func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRe
 	switch replicaRead {
 	case kv.ReplicaReadFollower:
 		store, peer, storeIdx = cachedRegion.FollowerStorePeer(regionStore, followerStoreSeed)
-	case kv.ReplicaReadMixed:
-		store, peer, storeIdx = cachedRegion.AnyStorePeer(regionStore, followerStoreSeed)
 	default:
 		store, peer, storeIdx = cachedRegion.WorkStorePeer(regionStore)
 	}
@@ -612,38 +590,36 @@ func (c *RegionCache) ListRegionIDsInKeyRange(bo *Backoffer, startKey, endKey []
 	return regionIDs, nil
 }
 
-// LoadRegionsInKeyRange lists regions in [start_key,end_key].
+// LoadRegionsInKeyRange lists ids of regions in [start_key,end_key].
 func (c *RegionCache) LoadRegionsInKeyRange(bo *Backoffer, startKey, endKey []byte) (regions []*Region, err error) {
-	var batchRegions []*Region
 	for {
-		batchRegions, err = c.BatchLoadRegionsWithKeyRange(bo, startKey, endKey, defaultRegionsPerBatch)
+		curRegion, err := c.loadRegion(bo, startKey, false)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if len(batchRegions) == 0 {
-			// should never happen
+		c.mu.Lock()
+		c.insertRegionToCache(curRegion)
+		c.mu.Unlock()
+
+		regions = append(regions, curRegion)
+		if curRegion.Contains(endKey) {
 			break
 		}
-		regions = append(regions, batchRegions...)
-		endRegion := batchRegions[len(batchRegions)-1]
-		if endRegion.Contains(endKey) {
-			break
-		}
-		startKey = endRegion.EndKey()
+		startKey = curRegion.EndKey()
 	}
-	return
+	return regions, nil
 }
 
-// BatchLoadRegionsWithKeyRange loads at most given numbers of regions to the RegionCache,
-// within the given key range from the startKey to endKey. Returns the loaded regions.
-func (c *RegionCache) BatchLoadRegionsWithKeyRange(bo *Backoffer, startKey []byte, endKey []byte, count int) (regions []*Region, err error) {
-	regions, err = c.scanRegions(bo, startKey, endKey, count)
+// BatchLoadRegionsFromKey loads at most given numbers of regions to the RegionCache, from the given startKey. Returns
+// the endKey of the last loaded region. If some of the regions has no leader, their entries in RegionCache will not be
+// updated.
+func (c *RegionCache) BatchLoadRegionsFromKey(bo *Backoffer, startKey []byte, count int) ([]byte, error) {
+	regions, err := c.scanRegions(bo, startKey, count)
 	if err != nil {
-		return
+		return nil, errors.Trace(err)
 	}
 	if len(regions) == 0 {
-		err = errors.New("PD returned no region")
-		return
+		return nil, errors.New("PD returned no region")
 	}
 
 	c.mu.Lock()
@@ -653,17 +629,6 @@ func (c *RegionCache) BatchLoadRegionsWithKeyRange(bo *Backoffer, startKey []byt
 		c.insertRegionToCache(region)
 	}
 
-	return
-}
-
-// BatchLoadRegionsFromKey loads at most given numbers of regions to the RegionCache, from the given startKey. Returns
-// the endKey of the last loaded region. If some of the regions has no leader, their entries in RegionCache will not be
-// updated.
-func (c *RegionCache) BatchLoadRegionsFromKey(bo *Backoffer, startKey []byte, count int) ([]byte, error) {
-	regions, err := c.BatchLoadRegionsWithKeyRange(bo, startKey, nil, count)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
 	return regions[len(regions)-1].EndKey(), nil
 }
 
@@ -848,7 +813,7 @@ func (c *RegionCache) loadRegionByID(bo *Backoffer, regionID uint64) (*Region, e
 
 // scanRegions scans at most `limit` regions from PD, starts from the region containing `startKey` and in key order.
 // Regions with no leader will not be returned.
-func (c *RegionCache) scanRegions(bo *Backoffer, startKey, endKey []byte, limit int) ([]*Region, error) {
+func (c *RegionCache) scanRegions(bo *Backoffer, startKey []byte, limit int) ([]*Region, error) {
 	if limit == 0 {
 		return nil, nil
 	}
@@ -861,7 +826,7 @@ func (c *RegionCache) scanRegions(bo *Backoffer, startKey, endKey []byte, limit 
 				return nil, errors.Trace(err)
 			}
 		}
-		metas, leaders, err := c.pdClient.ScanRegions(bo.ctx, startKey, endKey, limit)
+		metas, leaders, err := c.pdClient.ScanRegions(bo.ctx, startKey, nil, limit)
 		if err != nil {
 			tikvRegionCacheCounterWithScanRegionsError.Inc()
 			backoffErr = errors.Errorf(
@@ -1074,11 +1039,6 @@ func (r *Region) WorkStorePeer(rs *RegionStore) (store *Store, peer *metapb.Peer
 // FollowerStorePeer returns a follower store with follower peer.
 func (r *Region) FollowerStorePeer(rs *RegionStore, followerStoreSeed uint32) (*Store, *metapb.Peer, int) {
 	return r.getStorePeer(rs, rs.follower(followerStoreSeed))
-}
-
-// AnyStorePeer returns a leader or follower store with the associated peer.
-func (r *Region) AnyStorePeer(rs *RegionStore, followerStoreSeed uint32) (*Store, *metapb.Peer, int) {
-	return r.getStorePeer(rs, rs.peer(followerStoreSeed))
 }
 
 // RegionVerID is a unique ID that can identify a Region at a specific version.

@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"math"
 	"strconv"
 	"sync"
@@ -1081,20 +1082,11 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 // Close closes the client.
 func (c *RPCClient) Close() error {
 	close(c.done)
-
-	var err error
-	if c.MvccStore != nil {
-		err = c.MvccStore.Close()
-		if err != nil {
-			return err
-		}
+	if raw, ok := c.MvccStore.(io.Closer); ok {
+		return raw.Close()
 	}
-
 	if c.rpcCli != nil {
-		err = c.rpcCli.Close()
-		if err != nil {
-			return err
-		}
+		return c.rpcCli.Close()
 	}
 	return nil
 }

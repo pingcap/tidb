@@ -337,7 +337,6 @@ func (txn *tikvTxn) rollbackPessimisticLocks() error {
 func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput ...kv.Key) error {
 	// Exclude keys that are already locked.
 	var err error
-	keys := make([][]byte, 0, len(keysInput))
 	defer func() {
 		if err == nil {
 			if lockCtx.PessimisticLockWaited != nil {
@@ -348,10 +347,8 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 				}
 			}
 		}
-		if lockCtx.LockKeysCount != nil {
-			*lockCtx.LockKeysCount += int32(len(keys))
-		}
 	}()
+	keys := make([][]byte, 0, len(keysInput))
 	txn.mu.Lock()
 	for _, key := range keysInput {
 		if _, ok := txn.lockedMap[string(key)]; !ok {
@@ -408,9 +405,6 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 					wg.Wait()
 					// Sleep a little, wait for the other transaction that blocked by this transaction to acquire the lock.
 					time.Sleep(time.Millisecond * 5)
-					failpoint.Inject("SingleStmtDeadLockRetrySleep", func() {
-						time.Sleep(300 * time.Millisecond)
-					})
 				}
 			}
 			if assignedPrimaryKey {
@@ -448,7 +442,7 @@ func (txn *tikvTxn) asyncPessimisticRollback(ctx context.Context, keys [][]byte)
 		failpoint.Inject("AsyncRollBackSleep", func() {
 			time.Sleep(100 * time.Millisecond)
 		})
-		err := committer.pessimisticRollbackKeys(NewBackoffer(ctx, pessimisticRollbackMaxBackoff).WithVars(txn.vars), keys)
+		err := committer.pessimisticRollbackKeys(NewBackoffer(ctx, pessimisticRollbackMaxBackoff), keys)
 		if err != nil {
 			logutil.Logger(ctx).Warn("[kv] pessimisticRollback failed.", zap.Error(err))
 		}

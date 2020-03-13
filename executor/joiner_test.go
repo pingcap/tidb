@@ -59,7 +59,7 @@ func (s *testSuiteJoiner) TestRequiredRows(c *C) {
 				for i, f := range rfields {
 					defaultInner = append(defaultInner, innerChk.GetRow(0).GetDatum(i, f))
 				}
-				joiner := newJoiner(defaultCtx(), joinType, false, defaultInner, nil, lfields, rfields, nil)
+				joiner := newJoiner(defaultCtx(), joinType, false, defaultInner, nil, lfields, rfields)
 
 				fields := make([]*types.FieldType, 0, len(lfields)+len(rfields))
 				fields = append(fields, rfields...)

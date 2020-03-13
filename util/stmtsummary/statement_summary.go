@@ -106,7 +106,6 @@ type stmtSummaryByDigest struct {
 	// It's rare to read concurrently, so RWMutex is not needed.
 	// Mutex is only used to lock `history`.
 	sync.Mutex
-	initialized bool
 	// Each element in history is a summary in one interval.
 	history *list.List
 	// Following fields are common for each summary element.
@@ -203,7 +202,6 @@ type StmtExecInfo struct {
 	PrevSQLDigest  string
 	PlanGenerator  func() string
 	PlanDigest     string
-	PlanDigestGen  func() string
 	User           string
 	TotalLatency   time.Duration
 	ParseLatency   time.Duration
@@ -245,17 +243,15 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 		prevDigest: sei.PrevSQLDigest,
 		planDigest: sei.PlanDigest,
 	}
-	// Calculate hash value in advance, to reduce the time holding the lock.
-	key.Hash()
 
 	// Enclose the block in a function to ensure the lock will always be released.
-	summary, beginTime := func() (*stmtSummaryByDigest, int64) {
+	value, beginTime, ok := func() (kvcache.Value, int64, bool) {
 		ssMap.Lock()
 		defer ssMap.Unlock()
 
 		// Check again. Statements could be added before disabling the flag and after Clear().
 		if !ssMap.Enabled() {
-			return nil, 0
+			return nil, 0, false
 		}
 
 		if ssMap.beginTimeForCurInterval+intervalSeconds <= now {
@@ -266,20 +262,16 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 
 		beginTime := ssMap.beginTimeForCurInterval
 		value, ok := ssMap.summaryMap.Get(key)
-		var summary *stmtSummaryByDigest
 		if !ok {
-			// Lazy initialize it to release ssMap.mutex ASAP.
-			summary = new(stmtSummaryByDigest)
-			ssMap.summaryMap.Put(key, summary)
-		} else {
-			summary = value.(*stmtSummaryByDigest)
+			newSummary := newStmtSummaryByDigest(sei, beginTime, intervalSeconds, historySize)
+			ssMap.summaryMap.Put(key, newSummary)
 		}
-		return summary, beginTime
+		return value, beginTime, ok
 	}()
 
 	// Lock a single entry, not the whole cache.
-	if summary != nil {
-		summary.add(sei, beginTime, intervalSeconds, historySize)
+	if ok {
+		value.(*stmtSummaryByDigest).add(sei, beginTime, intervalSeconds, historySize)
 	}
 }
 
@@ -334,22 +326,21 @@ func (ssMap *stmtSummaryByDigestMap) GetMoreThanOnceSelect() ([]string, []string
 	sqls := make([]string, 0, len(values))
 	for _, value := range values {
 		ssbd := value.(*stmtSummaryByDigest)
-		func() {
+		// `stmtType` won't change once created, so locking is not needed.
+		if ssbd.stmtType == "select" {
 			ssbd.Lock()
-			defer ssbd.Unlock()
-			if ssbd.initialized && ssbd.stmtType == "select" {
-				if ssbd.history.Len() > 0 {
-					ssElement := ssbd.history.Back().Value.(*stmtSummaryByDigestElement)
-					ssElement.Lock()
-					// Empty sample users means that it is an internal queries.
-					if ssElement.sampleUser != "" && (ssbd.history.Len() > 1 || ssElement.execCount > 1) {
-						schemas = append(schemas, ssbd.schemaName)
-						sqls = append(sqls, ssElement.sampleSQL)
-					}
-					ssElement.Unlock()
+			if ssbd.history.Len() > 0 {
+				ssElement := ssbd.history.Back().Value.(*stmtSummaryByDigestElement)
+				ssElement.Lock()
+				// Empty sample users means that it is an internal queries.
+				if ssElement.sampleUser != "" && (ssbd.history.Len() > 1 || ssElement.execCount > 1) {
+					schemas = append(schemas, ssbd.schemaName)
+					sqls = append(sqls, ssElement.sampleSQL)
 				}
+				ssElement.Unlock()
 			}
-		}()
+			ssbd.Unlock()
+		}
 	}
 	return schemas, sqls
 }
@@ -496,7 +487,7 @@ func (ssMap *stmtSummaryByDigestMap) historySize() int {
 }
 
 // newStmtSummaryByDigest creates a stmtSummaryByDigest from StmtExecInfo.
-func (ssbd *stmtSummaryByDigest) init(sei *StmtExecInfo, beginTime int64, intervalSeconds int64, historySize int) {
+func newStmtSummaryByDigest(sei *StmtExecInfo, beginTime int64, intervalSeconds int64, historySize int) *stmtSummaryByDigest {
 	// Use "," to separate table names to support FIND_IN_SET.
 	var buffer bytes.Buffer
 	for i, value := range sei.StmtCtx.Tables {
@@ -509,19 +500,17 @@ func (ssbd *stmtSummaryByDigest) init(sei *StmtExecInfo, beginTime int64, interv
 	}
 	tableNames := buffer.String()
 
-	planDigest := sei.PlanDigest
-	if sei.PlanDigestGen != nil && len(planDigest) == 0 {
-		// It comes here only when the plan is 'Point_Get'.
-		planDigest = sei.PlanDigestGen()
+	ssbd := &stmtSummaryByDigest{
+		schemaName:    sei.SchemaName,
+		digest:        sei.Digest,
+		planDigest:    sei.PlanDigest,
+		stmtType:      strings.ToLower(sei.StmtCtx.StmtType),
+		normalizedSQL: formatSQL(sei.NormalizedSQL),
+		tableNames:    tableNames,
+		history:       list.New(),
 	}
-	ssbd.schemaName = sei.SchemaName
-	ssbd.digest = sei.Digest
-	ssbd.planDigest = planDigest
-	ssbd.stmtType = strings.ToLower(sei.StmtCtx.StmtType)
-	ssbd.normalizedSQL = formatSQL(sei.NormalizedSQL)
-	ssbd.tableNames = tableNames
-	ssbd.history = list.New()
-	ssbd.initialized = true
+	ssbd.add(sei, beginTime, intervalSeconds, historySize)
+	return ssbd
 }
 
 func (ssbd *stmtSummaryByDigest) add(sei *StmtExecInfo, beginTime int64, intervalSeconds int64, historySize int) {
@@ -529,10 +518,6 @@ func (ssbd *stmtSummaryByDigest) add(sei *StmtExecInfo, beginTime int64, interva
 	ssElement, isElementNew := func() (*stmtSummaryByDigestElement, bool) {
 		ssbd.Lock()
 		defer ssbd.Unlock()
-
-		if !ssbd.initialized {
-			ssbd.init(sei, beginTime, intervalSeconds, historySize)
-		}
 
 		var ssElement *stmtSummaryByDigestElement
 		isElementNew := true
@@ -571,7 +556,7 @@ func (ssbd *stmtSummaryByDigest) toCurrentDatum(beginTimeForCurInterval int64) [
 	var ssElement *stmtSummaryByDigestElement
 
 	ssbd.Lock()
-	if ssbd.initialized && ssbd.history.Len() > 0 {
+	if ssbd.history.Len() > 0 {
 		ssElement = ssbd.history.Back().Value.(*stmtSummaryByDigestElement)
 	}
 	ssbd.Unlock()
@@ -600,9 +585,6 @@ func (ssbd *stmtSummaryByDigest) collectHistorySummaries(historySize int) []*stm
 	ssbd.Lock()
 	defer ssbd.Unlock()
 
-	if !ssbd.initialized {
-		return nil
-	}
 	ssElements := make([]*stmtSummaryByDigestElement, 0, ssbd.history.Len())
 	for listElement := ssbd.history.Front(); listElement != nil && len(ssElements) < historySize; listElement = listElement.Next() {
 		ssElement := listElement.Value.(*stmtSummaryByDigestElement)
@@ -727,10 +709,9 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 		if commitDetails.GetCommitTsTime > ssElement.maxGetCommitTsTime {
 			ssElement.maxGetCommitTsTime = commitDetails.GetCommitTsTime
 		}
-		commitBackoffTime := atomic.LoadInt64(&commitDetails.CommitBackoffTime)
-		ssElement.sumCommitBackoffTime += commitBackoffTime
-		if commitBackoffTime > ssElement.maxCommitBackoffTime {
-			ssElement.maxCommitBackoffTime = commitBackoffTime
+		ssElement.sumCommitBackoffTime += commitDetails.CommitBackoffTime
+		if commitDetails.CommitBackoffTime > ssElement.maxCommitBackoffTime {
+			ssElement.maxCommitBackoffTime = commitDetails.CommitBackoffTime
 		}
 		resolveLockTime := atomic.LoadInt64(&commitDetails.ResolveLockTime)
 		ssElement.sumResolveLockTime += resolveLockTime

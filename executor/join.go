@@ -20,7 +20,6 @@ import (
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
@@ -136,7 +135,6 @@ func (e *HashJoinExec) Close() error {
 	if e.runtimeStats != nil {
 		concurrency := cap(e.joiners)
 		e.runtimeStats.SetConcurrencyInfo("Concurrency", concurrency)
-		e.runtimeStats.SetAdditionalInfo(e.rowContainer.stat.String())
 	}
 	err := e.baseExecutor.Close()
 	return err
@@ -249,7 +247,6 @@ func (e *HashJoinExec) fetchBuildSideRows(ctx context.Context, chkCh chan<- *chu
 			e.buildFinished <- errors.Trace(err)
 			return
 		}
-		failpoint.Inject("errorFetchBuildSideRowsMockOOMPanic", nil)
 		if chk.NumRows() == 0 {
 			return
 		}
@@ -459,12 +456,11 @@ func (e *HashJoinExec) runJoinWorker(workerID uint, probeKeyColIdx []int) {
 		emptyProbeSideResult.chk = probeSideResult
 		e.probeChkResourceCh <- emptyProbeSideResult
 	}
-	// note joinResult.chk may be nil when getNewJoinResult fails in loops
 	if joinResult == nil {
 		return
 	} else if joinResult.err != nil || (joinResult.chk != nil && joinResult.chk.NumRows() > 0) {
 		e.joinResultCh <- joinResult
-	} else if joinResult.chk != nil && joinResult.chk.NumRows() == 0 {
+	} else if joinResult.chk.NumRows() == 0 {
 		e.joinChkResourceCh[workerID] <- joinResult.chk
 	}
 }
@@ -482,7 +478,6 @@ func (e *HashJoinExec) joinMatchedProbeSideRow2ChunkForOuterHashJoin(workerID ui
 
 	iter := chunk.NewIterator4Slice(buildSideRows)
 	var outerMatchStatus []outerRowStatusFlag
-	rowIdx := 0
 	for iter.Begin(); iter.Current() != iter.End(); {
 		outerMatchStatus, err = e.joiners[workerID].tryToMatchOuters(iter, probeSideRow, joinResult.chk, outerMatchStatus)
 		if err != nil {
@@ -491,10 +486,9 @@ func (e *HashJoinExec) joinMatchedProbeSideRow2ChunkForOuterHashJoin(workerID ui
 		}
 		for i := range outerMatchStatus {
 			if outerMatchStatus[i] == outerRowMatched {
-				e.outerMatchedStatus[rowsPtrs[rowIdx+i].ChkIdx].Set(int(rowsPtrs[rowIdx+i].RowIdx))
+				e.outerMatchedStatus[rowsPtrs[i].ChkIdx].Set(int(rowsPtrs[i].RowIdx))
 			}
 		}
-		rowIdx += len(outerMatchStatus)
 		if joinResult.chk.IsFull() {
 			e.joinResultCh <- joinResult
 			ok, joinResult := e.getNewJoinResult(workerID)
@@ -660,16 +654,7 @@ func (e *HashJoinExec) fetchAndBuildHashTable(ctx context.Context) {
 	// buildSideResultCh transfers build side chunk from build side fetch to build hash table.
 	buildSideResultCh := make(chan *chunk.Chunk, 1)
 	doneCh := make(chan struct{})
-	fetchBuildSideRowsOk := make(chan error, 1)
-	go util.WithRecovery(
-		func() { e.fetchBuildSideRows(ctx, buildSideResultCh, doneCh) },
-		func(r interface{}) {
-			if r != nil {
-				fetchBuildSideRowsOk <- errors.Errorf("%v", r)
-			}
-			close(fetchBuildSideRowsOk)
-		},
-	)
+	go util.WithRecovery(func() { e.fetchBuildSideRows(ctx, buildSideResultCh, doneCh) }, nil)
 
 	// TODO: Parallel build hash table. Currently not support because `rowHashMap` is not thread-safe.
 	err := e.buildHashTableForList(buildSideResultCh)
@@ -681,12 +666,6 @@ func (e *HashJoinExec) fetchAndBuildHashTable(ctx context.Context) {
 	// 1. if buildHashTableForList fails
 	// 2. if probeSideResult.NumRows() == 0, fetchProbeSideChunks will not wait for the build side.
 	for range buildSideResultCh {
-	}
-	// Check whether err is nil to avoid sending redundant error into buildFinished.
-	if err == nil {
-		if err = <-fetchBuildSideRowsOk; err != nil {
-			e.buildFinished <- err
-		}
 	}
 }
 

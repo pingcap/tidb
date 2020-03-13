@@ -528,7 +528,7 @@ func (do *Domain) mustRestartSyncer() error {
 			return err
 		}
 		time.Sleep(time.Second)
-		logutil.BgLogger().Error("restart the schema syncer failed", zap.Error(err))
+		logutil.BgLogger().Info("restart the schema syncer failed", zap.Error(err))
 	}
 }
 
@@ -1134,3 +1134,12 @@ var (
 	ErrInfoSchemaChanged = terror.ClassDomain.New(mysql.ErrInfoSchemaChanged,
 		mysql.MySQLErrName[mysql.ErrInfoSchemaChanged]+". "+kv.TxnRetryableMark)
 )
+
+func init() {
+	// Map error codes to mysql error codes.
+	domainMySQLErrCodes := map[terror.ErrCode]uint16{
+		mysql.ErrInfoSchemaExpired: mysql.ErrInfoSchemaExpired,
+		mysql.ErrInfoSchemaChanged: mysql.ErrInfoSchemaChanged,
+	}
+	terror.ErrClassToMySQLCodes[terror.ClassDomain] = domainMySQLErrCodes
+}

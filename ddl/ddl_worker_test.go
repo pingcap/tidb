@@ -34,15 +34,13 @@ import (
 )
 
 var _ = Suite(&testDDLSuite{})
-var _ = Suite(&testDDLSerialSuite{})
 
 type testDDLSuite struct{}
-type testDDLSerialSuite struct{}
 
 const testLease = 5 * time.Millisecond
 
-func (s *testDDLSerialSuite) SetUpSuite(c *C) {
-	SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
+func (s *testDDLSuite) SetUpSuite(c *C) {
+	WaitTimeWhenErrorOccured = 1 * time.Microsecond
 
 	// We hope that this test is serially executed. So put it here.
 	s.testRunWorker(c)
@@ -68,7 +66,7 @@ func (s *testDDLSuite) TestCheckOwner(c *C) {
 }
 
 // testRunWorker tests no job is handled when the value of RunWorker is false.
-func (s *testDDLSerialSuite) testRunWorker(c *C) {
+func (s *testDDLSuite) testRunWorker(c *C) {
 	store := testCreateStore(c, "test_run_worker")
 	defer store.Close()
 

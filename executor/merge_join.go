@@ -17,11 +17,13 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/pingcap/errors"
+
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/stringutil"
 )
@@ -40,227 +42,170 @@ type MergeJoinExec struct {
 	compareFuncs []expression.CompareFunc
 	joiner       joiner
 	isOuterJoin  bool
-	desc         bool
 
-	innerTable *mergeJoinTable
-	outerTable *mergeJoinTable
+	prepared bool
+	outerIdx int
 
-	hasMatch bool
-	hasNull  bool
+	innerTable *mergeJoinInnerTable
+	outerTable *mergeJoinOuterTable
 
-	memTracker  *memory.Tracker
-	diskTracker *disk.Tracker
-}
+	innerIter4Row chunk.Iterator
 
-var (
-	innerTableLabel fmt.Stringer = stringutil.StringerStr("innerTable")
-	outerTableLabel fmt.Stringer = stringutil.StringerStr("outerTable")
-)
-
-type mergeJoinTable struct {
-	isInner    bool
-	childIndex int
-	joinKeys   []*expression.Column
-	filters    []expression.Expression
-
-	executed          bool
-	childChunk        *chunk.Chunk
-	childChunkIter    *chunk.Iterator4Chunk
-	groupChecker      *vecGroupChecker
-	groupRowsSelected []int
-	groupRowsIter     chunk.Iterator
-
-	// for inner table, an unbroken group may refer many chunks
-	rowContainer *chunk.RowContainer
-
-	// for outer table, save result of filters
-	filtersSelected []bool
+	childrenResults []*chunk.Chunk
 
 	memTracker *memory.Tracker
 }
 
-func (t *mergeJoinTable) init(exec *MergeJoinExec) {
-	child := exec.children[t.childIndex]
-	t.childChunk = newFirstChunk(child)
-	t.childChunkIter = chunk.NewIterator4Chunk(t.childChunk)
+type mergeJoinOuterTable struct {
+	reader Executor
+	filter []expression.Expression
+	keys   []*expression.Column
 
-	items := make([]expression.Expression, 0, len(t.joinKeys))
-	for _, col := range t.joinKeys {
-		items = append(items, col)
-	}
-	t.groupChecker = newVecGroupChecker(exec.ctx, items)
-	t.groupRowsIter = chunk.NewIterator4Chunk(t.childChunk)
+	chk      *chunk.Chunk
+	selected []bool
 
-	if t.isInner {
-		t.rowContainer = chunk.NewRowContainer(child.base().retFieldTypes, t.childChunk.Capacity())
-		t.rowContainer.GetMemTracker().AttachTo(exec.memTracker)
-		t.rowContainer.GetMemTracker().SetLabel(innerTableLabel)
-		t.rowContainer.GetDiskTracker().AttachTo(exec.diskTracker)
-		t.rowContainer.GetDiskTracker().SetLabel(innerTableLabel)
-		if config.GetGlobalConfig().OOMUseTmpStorage {
-			actionSpill := t.rowContainer.ActionSpill()
-			exec.ctx.GetSessionVars().StmtCtx.MemTracker.SetActionOnExceed(actionSpill)
-		}
-		t.memTracker = memory.NewTracker(innerTableLabel, -1)
-	} else {
-		t.filtersSelected = make([]bool, 0, exec.maxChunkSize)
-		t.memTracker = memory.NewTracker(outerTableLabel, -1)
-	}
-
-	t.memTracker.AttachTo(exec.memTracker)
-	t.memTracker.Consume(t.childChunk.MemoryUsage())
+	iter     *chunk.Iterator4Chunk
+	row      chunk.Row
+	hasMatch bool
+	hasNull  bool
 }
 
-func (t *mergeJoinTable) finish() error {
-	t.memTracker.Consume(-t.childChunk.MemoryUsage())
+// mergeJoinInnerTable represents the inner table of merge join.
+// All the inner rows which have the same join key are returned when function
+// "rowsWithSameKey()" being called.
+type mergeJoinInnerTable struct {
+	reader   Executor
+	joinKeys []*expression.Column
+	ctx      context.Context
 
-	if t.isInner {
-		if err := t.rowContainer.Close(); err != nil {
-			return err
-		}
-	}
+	// for chunk executions
+	rowContainer *chunk.RowContainer
+	keyCmpFuncs  []chunk.CompareFunc
+	firstRow4Key chunk.Row
+	curRow       chunk.Row
+	curChk       *chunk.Chunk
+	curSel       []int
+	curIter      *chunk.Iterator4Chunk
+	curChkInUse  bool
 
-	t.executed = false
-	t.childChunk = nil
-	t.childChunkIter = nil
-	t.groupChecker = nil
-	t.groupRowsSelected = nil
-	t.groupRowsIter = nil
-	t.rowContainer = nil
-	t.filtersSelected = nil
-	t.memTracker = nil
-	return nil
+	memTracker *memory.Tracker
 }
 
-func (t *mergeJoinTable) selectNextGroup() {
-	t.groupRowsSelected = t.groupRowsSelected[:0]
-	begin, end := t.groupChecker.getNextGroup()
-	if t.isInner && t.hasNullInJoinKey(t.childChunk.GetRow(begin)) {
-		return
+func (t *mergeJoinInnerTable) init(ctx context.Context, sctx sessionctx.Context, chk4Reader *chunk.Chunk) (err error) {
+	if t.reader == nil || ctx == nil {
+		return errors.Errorf("Invalid arguments: Empty arguments detected.")
 	}
-
-	for i := begin; i < end; i++ {
-		t.groupRowsSelected = append(t.groupRowsSelected, i)
+	t.ctx = ctx
+	t.curChk = chk4Reader
+	t.curIter = chunk.NewIterator4Chunk(t.curChk)
+	t.curRow = t.curIter.End()
+	t.curChkInUse = false
+	t.memTracker.Consume(chk4Reader.MemoryUsage())
+	// t.rowContainer needs to be closed when exit, it is done by the MergeJoinExec, see MergeJoinExec.Close
+	t.rowContainer = chunk.NewRowContainer(t.reader.base().retFieldTypes, t.curChk.Capacity())
+	t.rowContainer.GetMemTracker().AttachTo(sctx.GetSessionVars().StmtCtx.MemTracker)
+	t.rowContainer.GetDiskTracker().AttachTo(sctx.GetSessionVars().StmtCtx.DiskTracker)
+	if config.GetGlobalConfig().OOMUseTmpStorage {
+		actionSpill := t.rowContainer.ActionSpill()
+		sctx.GetSessionVars().StmtCtx.MemTracker.SetActionOnExceed(actionSpill)
 	}
-	t.childChunk.SetSel(t.groupRowsSelected)
+	t.firstRow4Key, err = t.nextRow()
+	t.keyCmpFuncs = make([]chunk.CompareFunc, 0, len(t.joinKeys))
+	for i := range t.joinKeys {
+		t.keyCmpFuncs = append(t.keyCmpFuncs, chunk.GetCompareFunc(t.joinKeys[i].RetType))
+	}
+	return err
 }
 
-func (t *mergeJoinTable) fetchNextChunk(ctx context.Context, exec *MergeJoinExec) error {
-	oldMemUsage := t.childChunk.MemoryUsage()
-	err := Next(ctx, exec.children[t.childIndex], t.childChunk)
-	t.memTracker.Consume(t.childChunk.MemoryUsage() - oldMemUsage)
-	if err != nil {
-		return err
-	}
-	t.executed = t.childChunk.NumRows() == 0
-	return nil
+func (t *mergeJoinInnerTable) selectRow(row chunk.Row) {
+	t.curSel = append(t.curSel, row.Idx())
 }
 
-func (t *mergeJoinTable) fetchNextInnerGroup(ctx context.Context, exec *MergeJoinExec) error {
-	t.childChunk.SetSel(nil)
-	if err := t.rowContainer.Reset(); err != nil {
-		return err
-	}
-
-fetchNext:
-	if t.executed && t.groupChecker.isExhausted() {
-		// Ensure iter at the end, since sel of childChunk has been cleared.
-		t.groupRowsIter.ReachEnd()
-		return nil
-	}
-
-	isEmpty := true
-	// For inner table, rows have null in join keys should be skip by selectNextGroup.
-	for isEmpty && !t.groupChecker.isExhausted() {
-		t.selectNextGroup()
-		isEmpty = len(t.groupRowsSelected) == 0
-	}
-
-	// For inner table, all the rows have the same join keys should be put into one group.
-	for !t.executed && t.groupChecker.isExhausted() {
-		if !isEmpty {
-			// Group is not empty, hand over the management of childChunk to t.rowContainer.
-			if err := t.rowContainer.Add(t.childChunk); err != nil {
-				return err
-			}
-			t.memTracker.Consume(-t.childChunk.MemoryUsage())
-			t.groupRowsSelected = nil
-
-			t.childChunk = t.rowContainer.AllocChunk()
-			t.childChunkIter = chunk.NewIterator4Chunk(t.childChunk)
-			t.memTracker.Consume(t.childChunk.MemoryUsage())
-		}
-
-		if err := t.fetchNextChunk(ctx, exec); err != nil {
-			return err
-		}
-		if t.executed {
-			break
-		}
-
-		isFirstGroupSameAsPrev, err := t.groupChecker.splitIntoGroups(t.childChunk)
-		if err != nil {
-			return err
-		}
-		if isFirstGroupSameAsPrev && !isEmpty {
-			t.selectNextGroup()
-		}
-	}
-	if isEmpty {
-		goto fetchNext
-	}
-
-	// iterate all data in t.rowContainer and t.childChunk
-	var iter chunk.Iterator
+func (t *mergeJoinInnerTable) selectedRowsIter() chunk.Iterator {
+	var iters []chunk.Iterator
 	if t.rowContainer.NumChunks() != 0 {
-		iter = chunk.NewIterator4RowContainer(t.rowContainer)
+		iters = append(iters, chunk.NewIterator4RowContainer(t.rowContainer))
 	}
-	if len(t.groupRowsSelected) != 0 {
-		if iter != nil {
-			iter = chunk.NewMultiIterator(iter, t.childChunkIter)
+	if t.curSel != nil {
+		t.curChk.SetSel(t.curSel)
+		iters = append(iters, chunk.NewIterator4Chunk(t.curChk))
+		t.curSel = nil
+	}
+	if len(iters) == 1 {
+		return iters[0]
+	}
+	// If any of iters has zero length it will be discarded in the following function.
+	// If all of them are empty, the returned iterator is also empty.
+	// Check out the implementation of multiIterator for more details.
+	return chunk.NewMultiIterator(iters...)
+}
+
+func (t *mergeJoinInnerTable) rowsWithSameKeyIter() (chunk.Iterator, error) {
+	// t.curSel sets to nil, so that it won't overwrite Sel in chunks in RowContainer,
+	// it might be unnecessary since merge join only runs single thread. However since we want to hand
+	// over the management of a chunk to the RowContainer, to keep the semantic consistent, we set it
+	// to nil.
+	t.curSel = nil
+	t.curChk.SetSel(nil)
+	err := t.rowContainer.Reset()
+	if err != nil {
+		return nil, err
+	}
+
+	// no more data.
+	if t.firstRow4Key == t.curIter.End() {
+		// the iterator is a blank iterator only as a place holder
+		return chunk.NewIterator4Chunk(t.curChk), nil
+	}
+	t.selectRow(t.firstRow4Key)
+	for {
+		selectedRow, err := t.nextRow()
+		// error happens or no more data.
+		if err != nil || selectedRow == t.curIter.End() {
+			t.firstRow4Key = t.curIter.End()
+			return t.selectedRowsIter(), err
+		}
+		compareResult := compareChunkRow(t.keyCmpFuncs, selectedRow, t.firstRow4Key, t.joinKeys, t.joinKeys)
+		if compareResult == 0 {
+			t.selectRow(selectedRow)
 		} else {
-			iter = t.childChunkIter
+			t.firstRow4Key = selectedRow
+			return t.selectedRowsIter(), nil
 		}
 	}
-	t.groupRowsIter = iter
-	t.groupRowsIter.Begin()
-	return nil
 }
 
-func (t *mergeJoinTable) fetchNextOuterGroup(ctx context.Context, exec *MergeJoinExec, requiredRows int) error {
-	if t.executed && t.groupChecker.isExhausted() {
-		return nil
+func (t *mergeJoinInnerTable) nextRow() (chunk.Row, error) {
+	for {
+		if t.curRow == t.curIter.End() {
+			err := t.reallocCurChkForReader()
+			if err != nil {
+				t.curRow = t.curIter.End()
+				return t.curRow, err
+			}
+			oldMemUsage := t.curChk.MemoryUsage()
+			err = Next(t.ctx, t.reader, t.curChk)
+			// error happens or no more data.
+			if err != nil || t.curChk.NumRows() == 0 {
+				t.curRow = t.curIter.End()
+				return t.curRow, err
+			}
+			newMemUsage := t.curChk.MemoryUsage()
+			t.memTracker.Consume(newMemUsage - oldMemUsage)
+			t.curRow = t.curIter.Begin()
+		}
+
+		result := t.curRow
+		t.curChkInUse = true
+		t.curRow = t.curIter.Next()
+
+		if !t.hasNullInJoinKey(result) {
+			return result, nil
+		}
 	}
-
-	if !t.executed && t.groupChecker.isExhausted() {
-		// It's hard to calculate selectivity if there is any filter or it's inner join,
-		// so we just push the requiredRows down when it's outer join and has no filter.
-		if exec.isOuterJoin && len(t.filters) == 0 {
-			t.childChunk.SetRequiredRows(requiredRows, exec.maxChunkSize)
-		}
-		err := t.fetchNextChunk(ctx, exec)
-		if err != nil || t.executed {
-			return err
-		}
-
-		t.childChunkIter.Begin()
-		t.filtersSelected, err = expression.VectorizedFilter(exec.ctx, t.filters, t.childChunkIter, t.filtersSelected)
-		if err != nil {
-			return err
-		}
-
-		_, err = t.groupChecker.splitIntoGroups(t.childChunk)
-		if err != nil {
-			return err
-		}
-	}
-
-	t.selectNextGroup()
-	t.groupRowsIter.Begin()
-	return nil
 }
 
-func (t *mergeJoinTable) hasNullInJoinKey(row chunk.Row) bool {
+func (t *mergeJoinInnerTable) hasNullInJoinKey(row chunk.Row) bool {
 	for _, col := range t.joinKeys {
 		ordinal := col.Index
 		if row.IsNull(ordinal) {
@@ -270,21 +215,56 @@ func (t *mergeJoinTable) hasNullInJoinKey(row chunk.Row) bool {
 	return false
 }
 
-// Close implements the Executor Close interface.
-func (e *MergeJoinExec) Close() error {
-	if err := e.innerTable.finish(); err != nil {
-		return err
-	}
-	if err := e.outerTable.finish(); err != nil {
-		return err
+// reallocCurChkForNext resets "t.curChk" to an empty Chunk to buffer the result of "t.reader".
+// It saves the curChk to RowContainer and then allocates a new one from RowContainer.
+func (t *mergeJoinInnerTable) reallocCurChkForReader() (err error) {
+	if !t.curChkInUse || t.curSel == nil {
+		// If "t.curResult" is not in use, we can just reuse it.
+		// Note: t.curSel should never be nil. There is a case the chunk is in use but curSel is nil,
+		// and it would cause panic, so we add the condition here to avoid it. The case is that when
+		// init is called, and the firstRow4Key is set up by nextRow(), however the first several rows
+		// contain null value and are skipped, and in the next time the reallocCurChkFOrReader is called
+		// the curChkInUse would be set however the curSel is still nil.
+		t.curChk.Reset()
+		return
 	}
 
-	e.hasMatch = false
-	e.hasNull = false
+	newChk := t.rowContainer.AllocChunk()
+	t.memTracker.Consume(newChk.MemoryUsage() - t.curChk.MemoryUsage())
+
+	// hand over the management to the RowContainer, therefore needs to reserve the first row by CopyConstruct
+	t.firstRow4Key = t.firstRow4Key.CopyConstruct()
+	// curSel be never be nil, since the chunk is in use.
+	t.curChk.SetSel(t.curSel)
+	err = t.rowContainer.Add(t.curChk)
+	if err != nil {
+		return err
+	}
+	t.curChk = newChk
+	t.curChk.Reset()
+	t.curSel = nil
+	t.curChkInUse = false
+	t.curIter = chunk.NewIterator4Chunk(t.curChk)
+	return
+}
+
+// Close implements the Executor Close interface.
+func (e *MergeJoinExec) Close() error {
+	e.childrenResults = nil
+	if e.innerTable.curChk != nil {
+		e.innerTable.memTracker.Consume(-e.innerTable.curChk.MemoryUsage())
+	}
 	e.memTracker = nil
-	e.diskTracker = nil
+	if e.innerTable.rowContainer != nil {
+		if err := e.innerTable.rowContainer.Close(); err != nil {
+			return err
+		}
+	}
+
 	return e.baseExecutor.Close()
 }
+
+var innerTableLabel fmt.Stringer = stringutil.StringerStr("innerTable")
 
 // Open implements the Executor Open interface.
 func (e *MergeJoinExec) Open(ctx context.Context) error {
@@ -292,94 +272,139 @@ func (e *MergeJoinExec) Open(ctx context.Context) error {
 		return err
 	}
 
+	e.prepared = false
 	e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaMergeJoin)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
-	e.diskTracker = disk.NewTracker(e.id, -1)
-	e.diskTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.DiskTracker)
 
-	e.innerTable.init(e)
-	e.outerTable.init(e)
+	e.childrenResults = make([]*chunk.Chunk, 0, len(e.children))
+	for _, child := range e.children {
+		e.childrenResults = append(e.childrenResults, newFirstChunk(child))
+	}
+
+	e.innerTable.memTracker = memory.NewTracker(innerTableLabel, -1)
+	e.innerTable.memTracker.AttachTo(e.memTracker)
+
+	return nil
+}
+
+func compareChunkRow(cmpFuncs []chunk.CompareFunc, lhsRow, rhsRow chunk.Row, lhsKey, rhsKey []*expression.Column) int {
+	for i := range lhsKey {
+		cmp := cmpFuncs[i](lhsRow, lhsKey[i].Index, rhsRow, rhsKey[i].Index)
+		if cmp != 0 {
+			return cmp
+		}
+	}
+	return 0
+}
+
+func (e *MergeJoinExec) prepare(ctx context.Context, requiredRows int) error {
+	err := e.innerTable.init(ctx, e.ctx, e.childrenResults[e.outerIdx^1])
+	if err != nil {
+		return err
+	}
+
+	err = e.fetchNextInnerRows()
+	if err != nil {
+		return err
+	}
+
+	// init outer table.
+	e.outerTable.chk = e.childrenResults[e.outerIdx]
+	e.outerTable.iter = chunk.NewIterator4Chunk(e.outerTable.chk)
+	e.outerTable.selected = make([]bool, 0, e.maxChunkSize)
+
+	err = e.fetchNextOuterRows(ctx, requiredRows)
+	if err != nil {
+		return err
+	}
+
+	e.prepared = true
 	return nil
 }
 
 // Next implements the Executor Next interface.
-func (e *MergeJoinExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
+func (e *MergeJoinExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
+	if !e.prepared {
+		if err := e.prepare(ctx, req.RequiredRows()); err != nil {
+			return err
+		}
+	}
 
-	innerIter := e.innerTable.groupRowsIter
-	outerIter := e.outerTable.groupRowsIter
 	for !req.IsFull() {
-		if innerIter.Current() == innerIter.End() {
-			if err := e.innerTable.fetchNextInnerGroup(ctx, e); err != nil {
-				return err
-			}
-			innerIter = e.innerTable.groupRowsIter
-		}
-		if outerIter.Current() == outerIter.End() {
-			if err := e.outerTable.fetchNextOuterGroup(ctx, e, req.RequiredRows()-req.NumRows()); err != nil {
-				return err
-			}
-			outerIter = e.outerTable.groupRowsIter
-			if e.outerTable.executed {
-				return nil
-			}
-		}
-
-		cmpResult := -1
-		if e.desc {
-			cmpResult = 1
-		}
-		if innerIter.Current() != innerIter.End() {
-			cmpResult, err = e.compare(outerIter.Current(), innerIter.Current())
-			if err != nil {
-				return err
-			}
-		}
-
-		if (cmpResult > 0 && !e.desc) || (cmpResult < 0 && e.desc) {
-			innerIter.ReachEnd()
-			continue
-		}
-
-		if (cmpResult < 0 && !e.desc) || (cmpResult > 0 && e.desc) {
-			for row := outerIter.Current(); row != outerIter.End() && !req.IsFull(); row = outerIter.Next() {
-				e.joiner.onMissMatch(false, row, req)
-			}
-			continue
-		}
-
-		for row := outerIter.Current(); row != outerIter.End() && !req.IsFull(); row = outerIter.Next() {
-			if !e.outerTable.filtersSelected[row.Idx()] {
-				e.joiner.onMissMatch(false, row, req)
-				continue
-			}
-
-			matched, isNull, err := e.joiner.tryToMatchInners(row, innerIter, req)
-			if err != nil {
-				return err
-			}
-			e.hasMatch = e.hasMatch || matched
-			e.hasNull = e.hasNull || isNull
-
-			// The inner rows is not exhausted, which means the result chunk is full.
-			// We should keep match context, so return directly.
-			if innerIter.Current() != innerIter.End() && req.IsFull() {
-				return nil
-			}
-
-			if !e.hasMatch {
-				e.joiner.onMissMatch(e.hasNull, row, req)
-			}
-			e.hasMatch = false
-			e.hasNull = false
-			innerIter.Begin()
+		hasMore, err := e.joinToChunk(ctx, req)
+		if err != nil || !hasMore {
+			return err
 		}
 	}
 	return nil
 }
 
+func (e *MergeJoinExec) joinToChunk(ctx context.Context, chk *chunk.Chunk) (hasMore bool, err error) {
+	for {
+		if e.outerTable.row == e.outerTable.iter.End() {
+			err = e.fetchNextOuterRows(ctx, chk.RequiredRows()-chk.NumRows())
+			if err != nil || e.outerTable.chk.NumRows() == 0 {
+				return false, err
+			}
+		}
+
+		cmpResult := -1
+		if e.outerTable.selected[e.outerTable.row.Idx()] && e.innerIter4Row.Len() > 0 {
+			cmpResult, err = e.compare(e.outerTable.row, e.innerIter4Row.Current())
+			if err != nil {
+				return false, err
+			}
+		}
+
+		if cmpResult > 0 {
+			if err = e.fetchNextInnerRows(); err != nil {
+				return false, err
+			}
+			continue
+		}
+
+		if cmpResult < 0 {
+			e.joiner.onMissMatch(false, e.outerTable.row, chk)
+			if err != nil {
+				return false, err
+			}
+
+			e.outerTable.row = e.outerTable.iter.Next()
+			e.outerTable.hasMatch = false
+			e.outerTable.hasNull = false
+
+			if chk.IsFull() {
+				return true, nil
+			}
+			continue
+		}
+
+		matched, isNull, err := e.joiner.tryToMatchInners(e.outerTable.row, e.innerIter4Row, chk)
+		if err != nil {
+			return false, err
+		}
+		e.outerTable.hasMatch = e.outerTable.hasMatch || matched
+		e.outerTable.hasNull = e.outerTable.hasNull || isNull
+
+		if e.innerIter4Row.Current() == e.innerIter4Row.End() {
+			if !e.outerTable.hasMatch {
+				e.joiner.onMissMatch(e.outerTable.hasNull, e.outerTable.row, chk)
+			}
+			e.outerTable.row = e.outerTable.iter.Next()
+			e.outerTable.hasMatch = false
+			e.outerTable.hasNull = false
+			e.innerIter4Row.Begin()
+		}
+
+		if chk.IsFull() {
+			return true, err
+		}
+	}
+}
+
 func (e *MergeJoinExec) compare(outerRow, innerRow chunk.Row) (int, error) {
-	outerJoinKeys := e.outerTable.joinKeys
+	outerJoinKeys := e.outerTable.keys
 	innerJoinKeys := e.innerTable.joinKeys
 	for i := range outerJoinKeys {
 		cmp, _, err := e.compareFuncs[i](e.ctx, outerJoinKeys[i], innerJoinKeys[i], outerRow, innerRow)
@@ -392,4 +417,39 @@ func (e *MergeJoinExec) compare(outerRow, innerRow chunk.Row) (int, error) {
 		}
 	}
 	return 0, nil
+}
+
+// fetchNextInnerRows fetches the next join group, within which all the rows
+// have the same join key, from the inner table.
+func (e *MergeJoinExec) fetchNextInnerRows() (err error) {
+	e.innerIter4Row, err = e.innerTable.rowsWithSameKeyIter()
+	if err != nil {
+		return err
+	}
+	e.innerIter4Row.Begin()
+	return nil
+}
+
+// fetchNextOuterRows fetches the next Chunk of outer table. Rows in a Chunk
+// may not all belong to the same join key, but are guaranteed to be sorted
+// according to the join key.
+func (e *MergeJoinExec) fetchNextOuterRows(ctx context.Context, requiredRows int) (err error) {
+	// It's hard to calculate selectivity if there is any filter or it's inner join,
+	// so we just push the requiredRows down when it's outer join and has no filter.
+	if e.isOuterJoin && len(e.outerTable.filter) == 0 {
+		e.outerTable.chk.SetRequiredRows(requiredRows, e.maxChunkSize)
+	}
+
+	err = Next(ctx, e.outerTable.reader, e.outerTable.chk)
+	if err != nil {
+		return err
+	}
+
+	e.outerTable.iter.Begin()
+	e.outerTable.selected, err = expression.VectorizedFilter(e.ctx, e.outerTable.filter, e.outerTable.iter, e.outerTable.selected)
+	if err != nil {
+		return err
+	}
+	e.outerTable.row = e.outerTable.iter.Begin()
+	return nil
 }

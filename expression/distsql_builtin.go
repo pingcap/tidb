@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -364,7 +363,7 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 		f = &builtinLog10Sig{base}
 	//case tipb.ScalarFuncSig_Rand:
 	case tipb.ScalarFuncSig_RandWithSeedFirstGen:
-		f = &builtinRandWithSeedFirstGenSig{base}
+		f = &builtinRandWithSeedSig{base}
 	case tipb.ScalarFuncSig_Pow:
 		f = &builtinPowSig{base}
 	case tipb.ScalarFuncSig_Conv:
@@ -484,19 +483,19 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 	//case tipb.ScalarFuncSig_ValuesTime:
 	//	f = &builtinValuesTimeSig{base}
 	case tipb.ScalarFuncSig_InInt:
-		f = &builtinInIntSig{baseInSig: baseInSig{baseBuiltinFunc: base}}
+		f = &builtinInIntSig{base}
 	case tipb.ScalarFuncSig_InReal:
-		f = &builtinInRealSig{baseInSig: baseInSig{baseBuiltinFunc: base}}
+		f = &builtinInRealSig{base}
 	case tipb.ScalarFuncSig_InDecimal:
-		f = &builtinInDecimalSig{baseInSig: baseInSig{baseBuiltinFunc: base}}
+		f = &builtinInDecimalSig{base}
 	case tipb.ScalarFuncSig_InString:
-		f = &builtinInStringSig{baseInSig: baseInSig{baseBuiltinFunc: base}}
+		f = &builtinInStringSig{base}
 	case tipb.ScalarFuncSig_InTime:
-		f = &builtinInTimeSig{baseInSig: baseInSig{baseBuiltinFunc: base}}
+		f = &builtinInTimeSig{base}
 	case tipb.ScalarFuncSig_InDuration:
-		f = &builtinInDurationSig{baseInSig: baseInSig{baseBuiltinFunc: base}}
+		f = &builtinInDurationSig{base}
 	case tipb.ScalarFuncSig_InJson:
-		f = &builtinInJSONSig{baseBuiltinFunc: base}
+		f = &builtinInJSONSig{base}
 	case tipb.ScalarFuncSig_IfNullInt:
 		f = &builtinIfNullIntSig{base}
 	case tipb.ScalarFuncSig_IfNullReal:
@@ -1071,7 +1070,7 @@ func PBToExpr(expr *tipb.Expr, tps []*types.FieldType, sc *stmtctx.StatementCont
 	case tipb.ExprType_Uint64:
 		return convertUint(expr.Val)
 	case tipb.ExprType_String:
-		return convertString(expr.Val, expr.FieldType)
+		return convertString(expr.Val)
 	case tipb.ExprType_Bytes:
 		return &Constant{Value: types.NewBytesDatum(expr.Val), RetType: types.NewFieldType(mysql.TypeString)}, nil
 	case tipb.ExprType_Float32:
@@ -1170,9 +1169,9 @@ func convertUint(val []byte) (*Constant, error) {
 	return &Constant{Value: d, RetType: &types.FieldType{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag}}, nil
 }
 
-func convertString(val []byte, tp *tipb.FieldType) (*Constant, error) {
+func convertString(val []byte) (*Constant, error) {
 	var d types.Datum
-	d.SetBytesAsString(val, collate.CollationID2Name(tp.Collate), uint32(tp.Flen))
+	d.SetBytesAsString(val)
 	return &Constant{Value: d, RetType: types.NewFieldType(mysql.TypeVarString)}, nil
 }
 

@@ -142,8 +142,8 @@ var (
 	InformationSchemaName = model.NewCIStr("INFORMATION_SCHEMA")
 	// PerformanceSchemaName is the `PERFORMANCE_SCHEMA` database name.
 	PerformanceSchemaName = model.NewCIStr("PERFORMANCE_SCHEMA")
-	// MetricSchemaName is the `METRICS_SCHEMA` database name.
-	MetricSchemaName = model.NewCIStr("METRICS_SCHEMA")
+	// MetricSchemaName is the `METRIC_SCHEMA` database name.
+	MetricSchemaName = model.NewCIStr("METRIC_SCHEMA")
 	// InspectionSchemaName is the `INSPECTION_SCHEMA` database name
 	InspectionSchemaName = model.NewCIStr("INSPECTION_SCHEMA")
 )
@@ -304,18 +304,4 @@ func init() {
 	for key, value := range pkixAttributeTypeNames {
 		pkixTypeNameAttributes[value] = key
 	}
-}
-
-// SequenceSchema is implemented by infoSchema and used by sequence function in expression package.
-// Otherwise calling information schema will cause import cycle problem.
-type SequenceSchema interface {
-	SequenceByName(schema, sequence model.CIStr) (SequenceTable, error)
-}
-
-// SequenceTable is implemented by tableCommon, and it is specialised in handling sequence operation.
-// Otherwise calling table will cause import cycle problem.
-type SequenceTable interface {
-	GetSequenceID() int64
-	GetSequenceNextVal(dbName, seqName string) (int64, error)
-	SetSequenceVal(newVal int64) (int64, bool, error)
 }

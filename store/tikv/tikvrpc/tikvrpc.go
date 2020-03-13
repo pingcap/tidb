@@ -426,63 +426,60 @@ type Response struct {
 }
 
 // FromBatchCommandsResponse converts a BatchCommands response to Response.
-func FromBatchCommandsResponse(res *tikvpb.BatchCommandsResponse_Response) (*Response, error) {
-	if res.GetCmd() == nil {
-		return nil, errors.New("Unknown command response")
-	}
+func FromBatchCommandsResponse(res *tikvpb.BatchCommandsResponse_Response) *Response {
 	switch res := res.GetCmd().(type) {
 	case *tikvpb.BatchCommandsResponse_Response_Get:
-		return &Response{Resp: res.Get}, nil
+		return &Response{Resp: res.Get}
 	case *tikvpb.BatchCommandsResponse_Response_Scan:
-		return &Response{Resp: res.Scan}, nil
+		return &Response{Resp: res.Scan}
 	case *tikvpb.BatchCommandsResponse_Response_Prewrite:
-		return &Response{Resp: res.Prewrite}, nil
+		return &Response{Resp: res.Prewrite}
 	case *tikvpb.BatchCommandsResponse_Response_Commit:
-		return &Response{Resp: res.Commit}, nil
+		return &Response{Resp: res.Commit}
 	case *tikvpb.BatchCommandsResponse_Response_Cleanup:
-		return &Response{Resp: res.Cleanup}, nil
+		return &Response{Resp: res.Cleanup}
 	case *tikvpb.BatchCommandsResponse_Response_BatchGet:
-		return &Response{Resp: res.BatchGet}, nil
+		return &Response{Resp: res.BatchGet}
 	case *tikvpb.BatchCommandsResponse_Response_BatchRollback:
-		return &Response{Resp: res.BatchRollback}, nil
+		return &Response{Resp: res.BatchRollback}
 	case *tikvpb.BatchCommandsResponse_Response_ScanLock:
-		return &Response{Resp: res.ScanLock}, nil
+		return &Response{Resp: res.ScanLock}
 	case *tikvpb.BatchCommandsResponse_Response_ResolveLock:
-		return &Response{Resp: res.ResolveLock}, nil
+		return &Response{Resp: res.ResolveLock}
 	case *tikvpb.BatchCommandsResponse_Response_GC:
-		return &Response{Resp: res.GC}, nil
+		return &Response{Resp: res.GC}
 	case *tikvpb.BatchCommandsResponse_Response_DeleteRange:
-		return &Response{Resp: res.DeleteRange}, nil
+		return &Response{Resp: res.DeleteRange}
 	case *tikvpb.BatchCommandsResponse_Response_RawGet:
-		return &Response{Resp: res.RawGet}, nil
+		return &Response{Resp: res.RawGet}
 	case *tikvpb.BatchCommandsResponse_Response_RawBatchGet:
-		return &Response{Resp: res.RawBatchGet}, nil
+		return &Response{Resp: res.RawBatchGet}
 	case *tikvpb.BatchCommandsResponse_Response_RawPut:
-		return &Response{Resp: res.RawPut}, nil
+		return &Response{Resp: res.RawPut}
 	case *tikvpb.BatchCommandsResponse_Response_RawBatchPut:
-		return &Response{Resp: res.RawBatchPut}, nil
+		return &Response{Resp: res.RawBatchPut}
 	case *tikvpb.BatchCommandsResponse_Response_RawDelete:
-		return &Response{Resp: res.RawDelete}, nil
+		return &Response{Resp: res.RawDelete}
 	case *tikvpb.BatchCommandsResponse_Response_RawBatchDelete:
-		return &Response{Resp: res.RawBatchDelete}, nil
+		return &Response{Resp: res.RawBatchDelete}
 	case *tikvpb.BatchCommandsResponse_Response_RawDeleteRange:
-		return &Response{Resp: res.RawDeleteRange}, nil
+		return &Response{Resp: res.RawDeleteRange}
 	case *tikvpb.BatchCommandsResponse_Response_RawScan:
-		return &Response{Resp: res.RawScan}, nil
+		return &Response{Resp: res.RawScan}
 	case *tikvpb.BatchCommandsResponse_Response_Coprocessor:
-		return &Response{Resp: res.Coprocessor}, nil
+		return &Response{Resp: res.Coprocessor}
 	case *tikvpb.BatchCommandsResponse_Response_PessimisticLock:
-		return &Response{Resp: res.PessimisticLock}, nil
+		return &Response{Resp: res.PessimisticLock}
 	case *tikvpb.BatchCommandsResponse_Response_PessimisticRollback:
-		return &Response{Resp: res.PessimisticRollback}, nil
+		return &Response{Resp: res.PessimisticRollback}
 	case *tikvpb.BatchCommandsResponse_Response_Empty:
-		return &Response{Resp: res.Empty}, nil
+		return &Response{Resp: res.Empty}
 	case *tikvpb.BatchCommandsResponse_Response_TxnHeartBeat:
-		return &Response{Resp: res.TxnHeartBeat}, nil
+		return &Response{Resp: res.TxnHeartBeat}
 	case *tikvpb.BatchCommandsResponse_Response_CheckTxnStatus:
-		return &Response{Resp: res.CheckTxnStatus}, nil
+		return &Response{Resp: res.CheckTxnStatus}
 	}
-	panic("unreachable")
+	return nil
 }
 
 // CopStreamResponse combinates tikvpb.Tikv_CoprocessorStreamClient and the first Recv() result together.

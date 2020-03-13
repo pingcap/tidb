@@ -579,7 +579,6 @@ func (s *testEvaluatorSuite) TestJSONKeys(c *C) {
 		expected interface{}
 		success  bool
 	}{
-
 		// Tests nil arguments
 		{[]interface{}{nil}, nil, true},
 		{[]interface{}{nil, "$.c"}, nil, true},
@@ -587,12 +586,12 @@ func (s *testEvaluatorSuite) TestJSONKeys(c *C) {
 		{[]interface{}{nil, nil}, nil, true},
 
 		// Tests with other type
-		{[]interface{}{`1`}, nil, true},
-		{[]interface{}{`"str"`}, nil, true},
-		{[]interface{}{`true`}, nil, true},
-		{[]interface{}{`null`}, nil, true},
-		{[]interface{}{`[1, 2]`}, nil, true},
-		{[]interface{}{`["1", "2"]`}, nil, true},
+		{[]interface{}{`1`}, nil, false},
+		{[]interface{}{`"str"`}, nil, false},
+		{[]interface{}{`true`}, nil, false},
+		{[]interface{}{`null`}, nil, false},
+		{[]interface{}{`[1, 2]`}, nil, false},
+		{[]interface{}{`["1", "2"]`}, nil, false},
 
 		// Tests without path expression
 		{[]interface{}{`{}`}, `[]`, true},

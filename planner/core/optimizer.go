@@ -39,15 +39,13 @@ var OptimizeAstNode func(ctx context.Context, sctx sessionctx.Context, node ast.
 var AllowCartesianProduct = atomic.NewBool(true)
 
 const (
-	flagGcSubstitute uint64 = 1 << iota
-	flagPrunColumns
+	flagPrunColumns uint64 = 1 << iota
 	flagBuildKeyInfo
 	flagDecorrelate
 	flagEliminateAgg
 	flagEliminateProjection
 	flagMaxMinEliminate
 	flagPredicatePushDown
-	flagPrunColumnsAgain
 	flagEliminateOuterJoin
 	flagPartitionProcessor
 	flagPushDownAgg
@@ -56,7 +54,6 @@ const (
 )
 
 var optRuleList = []logicalOptRule{
-	&gcSubstituter{},
 	&columnPruner{},
 	&buildKeySolver{},
 	&decorrelateSolver{},
@@ -64,7 +61,6 @@ var optRuleList = []logicalOptRule{
 	&projectionEliminator{},
 	&maxMinEliminator{},
 	&ppdSolver{},
-	&columnPruner{}, // column pruning again after predicate push down
 	&outerJoinEliminator{},
 	&partitionProcessor{},
 	&aggregationPushDownSolver{},

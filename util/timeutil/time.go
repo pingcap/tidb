@@ -22,15 +22,14 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/uber-go/atomic"
 	"go.uber.org/zap"
 )
 
 // init initializes `locCache`.
 func init() {
 	// We need set systemTZ when it is in testing process.
-	if systemTZ.Load() == "" {
-		systemTZ.Store("System")
+	if systemTZ == "" {
+		systemTZ = "System"
 	}
 	locCa = &locCache{}
 	locCa.locMap = make(map[string]*time.Location)
@@ -40,7 +39,7 @@ func init() {
 var locCa *locCache
 
 // systemTZ is current TiDB's system timezone name.
-var systemTZ atomic.String
+var systemTZ string
 
 // locCache is a simple map with lock. It stores all used timezone during the lifetime of tidb instance.
 // Talked with Golang team about whether they can have some forms of cache policy available for programmer,
@@ -102,7 +101,7 @@ func inferTZNameFromFileName(path string) (string, error) {
 
 // SystemLocation returns time.SystemLocation's IANA timezone location. It is TiDB's global timezone location.
 func SystemLocation() *time.Location {
-	loc, err := LoadLocation(systemTZ.Load())
+	loc, err := LoadLocation(systemTZ)
 	if err != nil {
 		return time.Local
 	}
@@ -114,13 +113,12 @@ var setSysTZOnce sync.Once
 // SetSystemTZ sets systemTZ by the value loaded from mysql.tidb.
 func SetSystemTZ(name string) {
 	setSysTZOnce.Do(func() {
-		systemTZ.Store(name)
+		systemTZ = name
 	})
 }
 
 // GetSystemTZ gets the value of systemTZ, an error is returned if systemTZ is not properly set.
 func GetSystemTZ() (string, error) {
-	systemTZ := systemTZ.Load()
 	if systemTZ == "System" || systemTZ == "" {
 		return "", fmt.Errorf("variable `systemTZ` is not properly set")
 	}

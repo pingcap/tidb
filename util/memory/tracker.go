@@ -133,7 +133,7 @@ func (t *Tracker) remove(oldChild *Tracker) {
 			continue
 		}
 
-		t.Consume(-oldChild.BytesConsumed())
+		atomic.AddInt64(&t.bytesConsumed, -oldChild.BytesConsumed())
 		oldChild.parent = nil
 		t.mu.children = append(t.mu.children[:i], t.mu.children[i+1:]...)
 		break

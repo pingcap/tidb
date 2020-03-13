@@ -125,7 +125,7 @@ func handleSequenceOptions(SeqOptions []*ast.SequenceOption, sequenceInfo *model
 				sequenceInfo.Start = mathutil.MinInt64(sequenceInfo.MaxValue, model.DefaultNegativeSequenceStartValue)
 			}
 			if !minSetFlag {
-				sequenceInfo.MinValue = model.DefaultNegativeSequenceMinValue
+				sequenceInfo.MaxValue = model.DefaultNegativeSequenceMinValue
 			}
 		}
 	}
@@ -160,8 +160,6 @@ func buildSequenceInfo(stmt *ast.CreateSequenceStmt, ident ast.Ident) (*model.Se
 		switch op.Tp {
 		case ast.TableOptionComment:
 			sequenceInfo.Comment = op.StrValue
-		case ast.TableOptionEngine:
-			// TableOptionEngine will always be 'InnoDB', thus we do nothing in this branch to avoid error happening.
 		default:
 			return nil, ErrSequenceUnsupportedTableOption.GenWithStackByArgs(op.StrValue)
 		}

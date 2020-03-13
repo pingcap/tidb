@@ -53,8 +53,6 @@ func Build(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal
 		return buildBitAnd(aggFuncDesc, ordinal)
 	case ast.AggFuncVarPop:
 		return buildVarPop(aggFuncDesc, ordinal)
-	case ast.AggFuncJsonObjectAgg:
-		return buildJSONObjectAgg(aggFuncDesc, ordinal)
 	}
 	return nil
 }
@@ -370,20 +368,6 @@ func buildVarPop(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 			return &varPop4DistinctFloat64{base}
 		}
 		return &varPop4Float64{base}
-	}
-}
-
-// buildJSONObjectAgg builds the AggFunc implementation for function "json_objectagg".
-func buildJSONObjectAgg(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
-	base := baseAggFunc{
-		args:    aggFuncDesc.Args,
-		ordinal: ordinal,
-	}
-	switch aggFuncDesc.Mode {
-	case aggregation.DedupMode:
-		return nil
-	default:
-		return &jsonObjectAgg{base}
 	}
 }
 

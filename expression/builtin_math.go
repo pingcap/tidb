@@ -21,15 +21,17 @@ import (
 	"fmt"
 	"hash/crc32"
 	"math"
+	"math/rand"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -87,7 +89,7 @@ var (
 	_ builtinFunc = &builtinLog2Sig{}
 	_ builtinFunc = &builtinLog10Sig{}
 	_ builtinFunc = &builtinRandSig{}
-	_ builtinFunc = &builtinRandWithSeedFirstGenSig{}
+	_ builtinFunc = &builtinRandWithSeedSig{}
 	_ builtinFunc = &builtinPowSig{}
 	_ builtinFunc = &builtinConvSig{}
 	_ builtinFunc = &builtinCRC32Sig{}
@@ -974,7 +976,8 @@ func (c *randFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETReal, argTps...)
 	bt := bf
 	if len(args) == 0 {
-		sig = &builtinRandSig{bt, &sync.Mutex{}, NewWithTime()}
+		seed := time.Now().UnixNano()
+		sig = &builtinRandSig{bt, &sync.Mutex{}, rand.New(rand.NewSource(seed))}
 		sig.setPbCode(tipb.ScalarFuncSig_Rand)
 	} else if _, isConstant := args[0].(*Constant); isConstant {
 		// According to MySQL manual:
@@ -986,14 +989,12 @@ func (c *randFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 			return nil, err
 		}
 		if isNull {
-			// When the seed is null we need to use 0 as the seed.
-			// The behavior same as MySQL.
-			seed = 0
+			seed = time.Now().UnixNano()
 		}
-		sig = &builtinRandSig{bt, &sync.Mutex{}, NewWithSeed(seed)}
+		sig = &builtinRandSig{bt, &sync.Mutex{}, rand.New(rand.NewSource(seed))}
 		sig.setPbCode(tipb.ScalarFuncSig_Rand)
 	} else {
-		sig = &builtinRandWithSeedFirstGenSig{bt}
+		sig = &builtinRandWithSeedSig{bt}
 		sig.setPbCode(tipb.ScalarFuncSig_RandWithSeedFirstGen)
 	}
 	return sig, nil
@@ -1001,12 +1002,12 @@ func (c *randFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 
 type builtinRandSig struct {
 	baseBuiltinFunc
-	mu       *sync.Mutex
-	mysqlRng *MysqlRng
+	mu      *sync.Mutex
+	randGen *rand.Rand
 }
 
 func (b *builtinRandSig) Clone() builtinFunc {
-	newSig := &builtinRandSig{mysqlRng: b.mysqlRng, mu: b.mu}
+	newSig := &builtinRandSig{randGen: b.randGen, mu: b.mu}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
 }
@@ -1015,38 +1016,38 @@ func (b *builtinRandSig) Clone() builtinFunc {
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_rand
 func (b *builtinRandSig) evalReal(row chunk.Row) (float64, bool, error) {
 	b.mu.Lock()
-	res := b.mysqlRng.Gen()
+	res := b.randGen.Float64()
 	b.mu.Unlock()
 	return res, false, nil
 }
 
-type builtinRandWithSeedFirstGenSig struct {
+type builtinRandWithSeedSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinRandWithSeedFirstGenSig) Clone() builtinFunc {
-	newSig := &builtinRandWithSeedFirstGenSig{}
+func (b *builtinRandWithSeedSig) Clone() builtinFunc {
+	newSig := &builtinRandWithSeedSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
 }
 
 // evalReal evals RAND(N).
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_rand
-func (b *builtinRandWithSeedFirstGenSig) evalReal(row chunk.Row) (float64, bool, error) {
+func (b *builtinRandWithSeedSig) evalReal(row chunk.Row) (float64, bool, error) {
 	seed, isNull, err := b.args[0].EvalInt(b.ctx, row)
 	if err != nil {
 		return 0, true, err
 	}
 	// b.args[0] is promised to be a non-constant(such as a column name) in
-	// builtinRandWithSeedFirstGenSig, the seed is initialized with the value for each
+	// builtinRandWithSeedSig, the seed is initialized with the value for each
 	// invocation of RAND().
-	var rng *MysqlRng
+	var randGen *rand.Rand
 	if !isNull {
-		rng = NewWithSeed(seed)
+		randGen = rand.New(rand.NewSource(seed))
 	} else {
-		rng = NewWithSeed(0)
+		randGen = rand.New(rand.NewSource(time.Now().UnixNano()))
 	}
-	return rng.Gen(), false, nil
+	return randGen.Float64(), false, nil
 }
 
 type powFunctionClass struct {

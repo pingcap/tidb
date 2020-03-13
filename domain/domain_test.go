@@ -17,7 +17,6 @@ import (
 	"context"
 	"crypto/tls"
 	"math"
-	"net"
 	"testing"
 	"time"
 
@@ -74,22 +73,7 @@ func (mebd *mockEtcdBackend) StartGCWorker() error {
 	panic("not implemented")
 }
 
-// ETCD use ip:port as unix socket address, however this addrss is invalid on windows.
-// We have to skip some of the test in such case.
-// https://github.com/etcd-io/etcd/blob/f0faa5501d936cd8c9f561bb9d1baca70eb67ab1/pkg/types/urls.go#L42
-func unixSocketAvailable() bool {
-	c, err := net.Listen("unix", "127.0.0.1:0")
-	if err == nil {
-		c.Close()
-		return true
-	}
-	return false
-}
-
 func TestInfo(t *testing.T) {
-	if !unixSocketAvailable() {
-		return
-	}
 	defer testleak.AfterTestT(t)()
 	ddlLease := 80 * time.Millisecond
 	s, err := mockstore.NewMockTikvStore()
@@ -164,10 +148,6 @@ func TestInfo(t *testing.T) {
 		t.Fatal(err)
 	}
 	<-dom.ddl.SchemaSyncer().Done()
-	err = failpoint.Disable("github.com/pingcap/tidb/ddl/util/ErrorMockSessionDone")
-	if err != nil {
-		t.Fatal(err)
-	}
 	time.Sleep(15 * time.Millisecond)
 	syncerStarted := false
 	for i := 0; i < 200; i++ {
@@ -179,6 +159,10 @@ func TestInfo(t *testing.T) {
 	}
 	if !syncerStarted {
 		t.Fatal("start syncer failed")
+	}
+	err = failpoint.Disable("github.com/pingcap/tidb/ddl/util/ErrorMockSessionDone")
+	if err != nil {
+		t.Fatal(err)
 	}
 	// Make sure loading schema is normal.
 	cs := &ast.CharsetOpt{

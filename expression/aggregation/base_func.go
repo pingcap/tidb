@@ -18,7 +18,6 @@ import (
 	"math"
 	"strings"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
@@ -26,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/mathutil"
 )
 
 // baseFuncDesc describes an function signature, only used in planner.
@@ -109,8 +109,6 @@ func (a *baseFuncDesc) typeInfer(ctx sessionctx.Context) error {
 		a.typeInfer4LeadLag(ctx)
 	case ast.AggFuncVarPop:
 		a.typeInfer4VarPop(ctx)
-	case ast.AggFuncJsonObjectAgg:
-		a.typeInfer4JsonFuncs(ctx)
 	default:
 		return errors.Errorf("unsupported agg function: %s", a.Name)
 	}
@@ -206,11 +204,6 @@ func (a *baseFuncDesc) typeInfer4BitFuncs(ctx sessionctx.Context) {
 	// TODO: a.Args[0] = expression.WrapWithCastAsInt(ctx, a.Args[0])
 }
 
-func (a *baseFuncDesc) typeInfer4JsonFuncs(ctx sessionctx.Context) {
-	a.RetTp = types.NewFieldType(mysql.TypeJSON)
-	types.SetBinChsClnFlag(a.RetTp)
-}
-
 func (a *baseFuncDesc) typeInfer4NumberFuncs() {
 	a.RetTp = types.NewFieldType(mysql.TypeLonglong)
 	a.RetTp.Flen = 21
@@ -281,12 +274,11 @@ func (a *baseFuncDesc) GetDefaultValue() (v types.Datum) {
 // We do not need to wrap cast upon these functions,
 // since the EvalXXX method called by the arg is determined by the corresponding arg type.
 var noNeedCastAggFuncs = map[string]struct{}{
-	ast.AggFuncCount:         {},
-	ast.AggFuncMax:           {},
-	ast.AggFuncMin:           {},
-	ast.AggFuncFirstRow:      {},
-	ast.WindowFuncNtile:      {},
-	ast.AggFuncJsonObjectAgg: {},
+	ast.AggFuncCount:    {},
+	ast.AggFuncMax:      {},
+	ast.AggFuncMin:      {},
+	ast.AggFuncFirstRow: {},
+	ast.WindowFuncNtile: {},
 }
 
 // WrapCastForAggArgs wraps the args of an aggregate function with a cast function.

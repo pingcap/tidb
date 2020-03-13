@@ -56,10 +56,9 @@ import (
 )
 
 var (
-	withTiKV        = flag.Bool("with-tikv", false, "run tests with TiKV cluster started. (not use the mock server)")
-	pdAddrs         = flag.String("pd-addrs", "127.0.0.1:2379", "pd addrs")
-	pdAddrChan      chan string
-	initPdAddrsOnce sync.Once
+	withTiKVGlobalLock sync.RWMutex
+	withTiKV           = flag.Bool("with-tikv", false, "run tests with TiKV cluster started. (not use the mock server)")
+	pdAddrs            = flag.String("pd-addrs", "127.0.0.1:2379", "pd addrs")
 )
 
 var _ = Suite(&testSessionSuite{})
@@ -74,7 +73,6 @@ type testSessionSuiteBase struct {
 	mvccStore mocktikv.MVCCStore
 	store     kv.Storage
 	dom       *domain.Domain
-	pdAddr    string
 }
 
 type testSessionSuite struct {
@@ -138,35 +136,21 @@ func clearETCD(ebd tikv.EtcdBackend) error {
 	return nil
 }
 
-func initPdAddrs() {
-	initPdAddrsOnce.Do(func() {
-		addrs := strings.Split(*pdAddrs, ",")
-		pdAddrChan = make(chan string, len(addrs))
-		for _, addr := range addrs {
-			addr = strings.TrimSpace(addr)
-			if addr != "" {
-				pdAddrChan <- addr
-			}
-		}
-	})
-}
-
 func (s *testSessionSuiteBase) SetUpSuite(c *C) {
 	testleak.BeforeTest()
 	s.cluster = mocktikv.NewCluster()
 
 	if *withTiKV {
-		initPdAddrs()
-		s.pdAddr = <-pdAddrChan
+		withTiKVGlobalLock.Lock()
 		var d tikv.Driver
 		config.GetGlobalConfig().TxnLocalLatches.Enabled = false
-		store, err := d.Open(fmt.Sprintf("tikv://%s", s.pdAddr))
+		store, err := d.Open(fmt.Sprintf("tikv://%s", *pdAddrs))
 		c.Assert(err, IsNil)
 		err = clearStorage(store)
 		c.Assert(err, IsNil)
 		err = clearETCD(store.(tikv.EtcdBackend))
 		c.Assert(err, IsNil)
-		session.ResetStoreForWithTiKVTest(store)
+		session.ResetForWithTiKVTest()
 		s.store = store
 	} else {
 		mocktikv.BootstrapWithSingleStore(s.cluster)
@@ -177,6 +161,7 @@ func (s *testSessionSuiteBase) SetUpSuite(c *C) {
 		)
 		c.Assert(err, IsNil)
 		s.store = store
+		session.SetSchemaLease(0)
 		session.DisableStats4Test()
 	}
 
@@ -191,7 +176,7 @@ func (s *testSessionSuiteBase) TearDownSuite(c *C) {
 	s.store.Close()
 	testleak.AfterTest(c)()
 	if *withTiKV {
-		pdAddrChan <- s.pdAddr
+		withTiKVGlobalLock.Unlock()
 	}
 }
 
@@ -1863,6 +1848,7 @@ type testSchemaSuiteBase struct {
 	cluster   *mocktikv.Cluster
 	mvccStore mocktikv.MVCCStore
 	store     kv.Storage
+	lease     time.Duration
 	dom       *domain.Domain
 }
 
@@ -1894,6 +1880,8 @@ func (s *testSchemaSuiteBase) SetUpSuite(c *C) {
 	)
 	c.Assert(err, IsNil)
 	s.store = store
+	s.lease = 20 * time.Millisecond
+	session.SetSchemaLease(s.lease)
 	session.DisableStats4Test()
 	dom, err := session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
@@ -2674,11 +2662,7 @@ func (s *testSchemaSuite) TestDisableTxnAutoRetry(c *C) {
 
 	// test for disable transaction local latch
 	tk1.Se.GetSessionVars().InRestrictedSQL = false
-	orgCfg := config.GetGlobalConfig()
-	disableLatchCfg := *orgCfg
-	disableLatchCfg.TxnLocalLatches.Enabled = false
-	config.StoreGlobalConfig(&disableLatchCfg)
-	defer config.StoreGlobalConfig(orgCfg)
+	config.GetGlobalConfig().TxnLocalLatches.Enabled = false
 	tk1.MustExec("begin")
 	tk1.MustExec("update no_retry set id = 9")
 
@@ -2690,9 +2674,7 @@ func (s *testSchemaSuite) TestDisableTxnAutoRetry(c *C) {
 	c.Assert(strings.Contains(err.Error(), kv.TxnRetryableMark), IsTrue, Commentf("error: %s", err))
 	tk1.MustExec("rollback")
 
-	enableLatchCfg := *orgCfg
-	enableLatchCfg.TxnLocalLatches.Enabled = true
-	config.StoreGlobalConfig(&enableLatchCfg)
+	config.GetGlobalConfig().TxnLocalLatches.Enabled = true
 	tk1.MustExec("begin")
 	tk2.MustExec("alter table no_retry add index idx(id)")
 	tk2.MustQuery("select * from no_retry").Check(testkit.Rows("8"))
@@ -2924,10 +2906,8 @@ func (s *testSessionSuite2) TestGrantViewRelated(c *C) {
 	err = tkUser.ExecToErr("create view v_version29_c as select * from v_version29;")
 	c.Assert(err, NotNil)
 
-	tkRoot.MustExec("create view v_version29_c as select * from v_version29;")
-	tkRoot.MustExec(`grant create view on v_version29_c to 'u_version29'@'%'`) // Can't grant privilege on a non-exist table/view.
+	tkRoot.MustExec(`grant create view on v_version29_c to 'u_version29'@'%'`)
 	tkRoot.MustQuery("select table_priv from mysql.tables_priv where host='%' and db='test' and user='u_version29' and table_name='v_version29_c'").Check(testkit.Rows("Create View"))
-	tkRoot.MustExec("drop view v_version29_c")
 
 	tkRoot.MustExec(`grant select on v_version29 to 'u_version29'@'%'`)
 	tkUser.MustQuery("select current_user();").Check(testkit.Rows("u_version29@%"))

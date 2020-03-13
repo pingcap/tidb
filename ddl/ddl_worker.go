@@ -43,19 +43,9 @@ var (
 	RunWorker = true
 	// ddlWorkerID is used for generating the next DDL worker ID.
 	ddlWorkerID = int32(0)
-	// WaitTimeWhenErrorOccurred is waiting interval when processing DDL jobs encounter errors.
-	WaitTimeWhenErrorOccurred = int64(1 * time.Second)
+	// WaitTimeWhenErrorOccured is waiting interval when processing DDL jobs encounter errors.
+	WaitTimeWhenErrorOccured = 1 * time.Second
 )
-
-// GetWaitTimeWhenErrorOccurred return waiting interval when processing DDL jobs encounter errors.
-func GetWaitTimeWhenErrorOccurred() time.Duration {
-	return time.Duration(atomic.LoadInt64(&WaitTimeWhenErrorOccurred))
-}
-
-// SetWaitTimeWhenErrorOccurred update waiting interval when processing DDL jobs encounter errors.
-func SetWaitTimeWhenErrorOccurred(dur time.Duration) {
-	atomic.StoreInt64(&WaitTimeWhenErrorOccurred, int64(dur))
-}
 
 type workerType byte
 
@@ -329,9 +319,9 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 
 func finishRecoverTable(w *worker, t *meta.Meta, job *model.Job) error {
 	tbInfo := &model.TableInfo{}
-	var autoIncID, autoRandID, dropJobID, recoverTableCheckFlag int64
+	var autoID, dropJobID, recoverTableCheckFlag int64
 	var snapshotTS uint64
-	err := job.DecodeArgs(tbInfo, &autoIncID, &dropJobID, &snapshotTS, &recoverTableCheckFlag, &autoRandID)
+	err := job.DecodeArgs(tbInfo, &autoID, &dropJobID, &snapshotTS, &recoverTableCheckFlag)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -445,8 +435,8 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			// wait a while to retry again. If we don't wait here, DDL will retry this job immediately,
 			// which may act like a deadlock.
 			logutil.Logger(w.logCtx).Info("[ddl] run DDL job failed, sleeps a while then retries it.",
-				zap.Duration("waitTime", GetWaitTimeWhenErrorOccurred()), zap.Error(runJobErr))
-			time.Sleep(GetWaitTimeWhenErrorOccurred())
+				zap.Duration("waitTime", WaitTimeWhenErrorOccured), zap.Error(runJobErr))
+			time.Sleep(WaitTimeWhenErrorOccured)
 		}
 
 		if err != nil {
@@ -541,12 +531,12 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		ver, err = onRepairTable(d, t, job)
 	case model.ActionCreateView:
 		ver, err = onCreateView(d, t, job)
-	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence:
+	case model.ActionDropTable, model.ActionDropView:
 		ver, err = onDropTableOrView(t, job)
 	case model.ActionDropTablePartition:
 		ver, err = onDropTablePartition(t, job)
 	case model.ActionTruncateTablePartition:
-		ver, err = onTruncateTablePartition(d, t, job)
+		ver, err = onTruncateTablePartition(t, job)
 	case model.ActionAddColumn:
 		ver, err = onAddColumn(d, t, job)
 	case model.ActionDropColumn:
@@ -578,7 +568,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	case model.ActionModifyTableComment:
 		ver, err = onModifyTableComment(t, job)
 	case model.ActionAddTablePartition:
-		ver, err = onAddTablePartition(d, t, job)
+		ver, err = onAddTablePartition(t, job)
 	case model.ActionModifyTableCharsetAndCollate:
 		ver, err = onModifyTableCharsetAndCollate(t, job)
 	case model.ActionRecoverTable:
@@ -643,7 +633,7 @@ func toTError(err error) *terror.Error {
 	}
 
 	// TODO: Add the error code.
-	return terror.ClassDDL.Synthesize(terror.CodeUnknown, err.Error())
+	return terror.ClassDDL.New(terror.CodeUnknown, err.Error())
 }
 
 // waitSchemaChanged waits for the completion of updating all servers' schema. In order to make sure that happens,
@@ -735,34 +725,20 @@ func updateSchemaVersion(t *meta.Meta, job *model.Job) (int64, error) {
 		Type:     job.Type,
 		SchemaID: job.SchemaID,
 	}
-	switch job.Type {
-	case model.ActionTruncateTable:
+	if job.Type == model.ActionTruncateTable {
 		// Truncate table has two table ID, should be handled differently.
 		err = job.DecodeArgs(&diff.TableID)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
 		diff.OldTableID = job.TableID
-	case model.ActionCreateView:
-		tbInfo := &model.TableInfo{}
-		var orReplace bool
-		var oldTbInfoID int64
-		if err := job.DecodeArgs(tbInfo, &orReplace, &oldTbInfoID); err != nil {
-			return 0, errors.Trace(err)
-		}
-		// When the statement is "create or replace view " and we need to drop the old view,
-		// it has two table IDs and should be handled differently.
-		if oldTbInfoID > 0 && orReplace {
-			diff.OldTableID = oldTbInfoID
-		}
-		diff.TableID = tbInfo.ID
-	case model.ActionRenameTable:
+	} else if job.Type == model.ActionRenameTable {
 		err = job.DecodeArgs(&diff.OldSchemaID)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
 		diff.TableID = job.TableID
-	default:
+	} else {
 		diff.TableID = job.TableID
 	}
 	err = t.SetSchemaDiff(diff)

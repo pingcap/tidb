@@ -10,7 +10,6 @@
 // distributed under the License is distributed on an "AS IS" BASIS,
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// +build !windows
 
 package owner
 
@@ -32,8 +31,6 @@ import (
 	"google.golang.org/grpc"
 )
 
-// Ignore this test on the windows platform, because calling unix socket with address in
-// host:port format fails on windows.
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
 	logLevel := os.Getenv("log_level")

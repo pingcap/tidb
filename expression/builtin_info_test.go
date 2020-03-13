@@ -184,8 +184,8 @@ func (s *testEvaluatorSuite) TestCharset(c *C) {
 func (s *testEvaluatorSuite) TestCoercibility(c *C) {
 	fc := funcs[ast.Coercibility]
 	f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(nil)))
-	c.Assert(f, NotNil)
-	c.Assert(err, IsNil)
+	c.Assert(f, IsNil)
+	c.Assert(err, ErrorMatches, "*FUNCTION COERCIBILITY does not exist")
 }
 
 func (s *testEvaluatorSuite) TestCollation(c *C) {

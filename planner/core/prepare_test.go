@@ -44,7 +44,7 @@ type testPrepareSuite struct {
 type testPrepareSerialSuite struct {
 }
 
-func (s *testPrepareSerialSuite) TestPrepareCache(c *C) {
+func (s *testPrepareSuite) TestPrepareCache(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)

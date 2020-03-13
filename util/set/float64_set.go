@@ -17,12 +17,8 @@ package set
 type Float64Set map[float64]struct{}
 
 // NewFloat64Set builds a float64 set.
-func NewFloat64Set(fs ...float64) Float64Set {
-	x := make(map[float64]struct{}, len(fs))
-	for _, f := range fs {
-		x[f] = struct{}{}
-	}
-	return x
+func NewFloat64Set() Float64Set {
+	return make(map[float64]struct{})
 }
 
 // Exist checks whether `val` exists in `s`.

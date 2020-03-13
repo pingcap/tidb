@@ -23,9 +23,11 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/set"
 )
 
@@ -148,6 +150,10 @@ func (p *PhysicalTableScan) explainInfo(normalized bool) string {
 	} else if len(p.Ranges) > 0 {
 		if normalized {
 			fmt.Fprint(buffer, ", range:[?,?]")
+		} else if p.StoreType == kv.TiFlash {
+			// TiFlash table always use full range scan for each region,
+			// the ranges in p.Ranges is used to prune cop task
+			fmt.Fprintf(buffer, ", range:"+ranger.FullIntRange(false)[0].String())
 		} else {
 			fmt.Fprint(buffer, ", range:")
 			for i, idxRange := range p.Ranges {
@@ -699,9 +705,6 @@ func (p *TiKVSingleGather) ExplainInfo() string {
 	return buffer.String()
 }
 
-// MetricTableTimeFormat is the time format for metric table explain and format.
-const MetricTableTimeFormat = "2006-01-02 15:04:05.999"
-
 // ExplainInfo implements Plan interface.
 func (p *PhysicalMemTable) ExplainInfo() string {
 	if p.DBName.L != util.MetricSchemaName.L || !infoschema.IsMetricTable(p.Table.Name.L) {
@@ -717,8 +720,8 @@ func (p *PhysicalMemTable) ExplainInfo() string {
 	step := time.Second * time.Duration(p.ctx.GetSessionVars().MetricSchemaStep)
 	return fmt.Sprintf("PromQL:%v, start_time:%v, end_time:%v, step:%v",
 		promQL,
-		startTime.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format(MetricTableTimeFormat),
-		endTime.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format(MetricTableTimeFormat),
+		startTime.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format("2006-01-02 15:04:05.999"),
+		endTime.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format("2006-01-02 15:04:05.999"),
 		step,
 	)
 }

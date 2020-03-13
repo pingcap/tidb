@@ -55,14 +55,7 @@ func interestingGoroutines() (gs []string) {
 			strings.Contains(stack, "runtime.goexit") ||
 			strings.Contains(stack, "created by runtime.gc") ||
 			strings.Contains(stack, "interestingGoroutines") ||
-			strings.Contains(stack, "runtime.MHeap_Scavenger") ||
-			// these go routines are async terminated, so they may still alive after test end, thus cause
-			// false positive leak failures
-			strings.Contains(stack, "google.golang.org/grpc.(*addrConn).resetTransport") ||
-			strings.Contains(stack, "google.golang.org/grpc.(*ccBalancerWrapper).watcher") ||
-			strings.Contains(stack, "github.com/pingcap/goleveldb/leveldb/util.(*BufferPool).drain") ||
-			strings.Contains(stack, "github.com/pingcap/goleveldb/leveldb.(*DB).compactionError") ||
-			strings.Contains(stack, "github.com/pingcap/goleveldb/leveldb.(*DB).mpoolDrain") {
+			strings.Contains(stack, "runtime.MHeap_Scavenger") {
 			continue
 		}
 		gs = append(gs, stack)
@@ -71,42 +64,37 @@ func interestingGoroutines() (gs []string) {
 	return
 }
 
-var beforeTestGoroutines = map[string]bool{}
-var testGoroutinesInited bool
+var beforeTestGorountines = map[string]bool{}
 
 // BeforeTest gets the current goroutines.
 // It's used for check.Suite.SetUpSuite() function.
 // Now it's only used in the tidb_test.go.
 func BeforeTest() {
 	for _, g := range interestingGoroutines() {
-		beforeTestGoroutines[g] = true
+		beforeTestGorountines[g] = true
 	}
-	testGoroutinesInited = true
 }
 
 const defaultCheckCnt = 50
 
 func checkLeakAfterTest(errorFunc func(cnt int, g string)) func() {
-	// After `BeforeTest`, `beforeTestGoroutines` may still be empty, in this case,
-	// we shouldn't init it again.
-	if !testGoroutinesInited && len(beforeTestGoroutines) == 0 {
+	if len(beforeTestGorountines) == 0 {
 		for _, g := range interestingGoroutines() {
-			beforeTestGoroutines[g] = true
+			beforeTestGorountines[g] = true
 		}
 	}
 
 	cnt := defaultCheckCnt
 	return func() {
 		defer func() {
-			beforeTestGoroutines = map[string]bool{}
-			testGoroutinesInited = false
+			beforeTestGorountines = map[string]bool{}
 		}()
 
 		var leaked []string
 		for i := 0; i < cnt; i++ {
 			leaked = leaked[:0]
 			for _, g := range interestingGoroutines() {
-				if !beforeTestGoroutines[g] {
+				if !beforeTestGorountines[g] {
 					leaked = append(leaked, g)
 				}
 			}

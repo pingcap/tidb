@@ -90,6 +90,9 @@ func (ts *tidbTestSuiteBase) SetUpSuite(c *C) {
 	ts.server = server
 	go ts.server.Run()
 	ts.waitUntilServerOnline()
+
+	// Run this test here because parallel would affect the result of it.
+	ts.runTestStmtCount(c)
 }
 
 func (ts *tidbTestSuiteBase) TearDownSuite(c *C) {
@@ -133,11 +136,8 @@ func (ts *tidbTestSuite) TestPreparedTimestamp(c *C) {
 // this test will change `kv.TxnTotalSizeLimit` which may affect other test suites,
 // so we must make it running in serial.
 func (ts *tidbTestSerialSuite) TestLoadData(c *C) {
+	c.Parallel()
 	ts.runTestLoadData(c, ts.server)
-}
-
-func (ts *tidbTestSerialSuite) TestStmtCount(c *C) {
-	ts.runTestStmtCount(c)
 }
 
 func (ts *tidbTestSuite) TestConcurrentUpdate(c *C) {
@@ -175,43 +175,6 @@ func (ts *tidbTestSuite) TestResultFieldTableIsNull(c *C) {
 func (ts *tidbTestSuite) TestStatusAPI(c *C) {
 	c.Parallel()
 	ts.runTestStatusAPI(c)
-}
-
-func (ts *tidbTestSuite) TestStatusAPIWithTLS(c *C) {
-	caCert, caKey, err := generateCert(0, "TiDB CA 2", nil, nil, "/tmp/ca-key-2.pem", "/tmp/ca-cert-2.pem")
-	c.Assert(err, IsNil)
-	_, _, err = generateCert(1, "tidb-server-2", caCert, caKey, "/tmp/server-key-2.pem", "/tmp/server-cert-2.pem")
-	c.Assert(err, IsNil)
-
-	defer func() {
-		os.Remove("/tmp/ca-key-2.pem")
-		os.Remove("/tmp/ca-cert-2.pem")
-		os.Remove("/tmp/server-key-2.pem")
-		os.Remove("/tmp/server-cert-2.pem")
-	}()
-
-	cli := newTestServerClient()
-	cli.statusScheme = "https"
-	cfg := config.NewConfig()
-	cfg.Port = cli.port
-	cfg.Status.StatusPort = cli.statusPort
-	cfg.Security.ClusterSSLCA = "/tmp/ca-cert-2.pem"
-	cfg.Security.ClusterSSLCert = "/tmp/server-cert-2.pem"
-	cfg.Security.ClusterSSLKey = "/tmp/server-key-2.pem"
-	server, err := NewServer(cfg, ts.tidbdrv)
-	c.Assert(err, IsNil)
-	go server.Run()
-	time.Sleep(time.Millisecond * 100)
-
-	// https connection should work.
-	ts.runTestStatusAPI(c)
-
-	// but plain http connection should fail.
-	cli.statusScheme = "http"
-	_, err = cli.fetchStatus("/status")
-	c.Assert(err, NotNil)
-
-	server.Close()
 }
 
 func (ts *tidbTestSuite) TestMultiStatements(c *C) {

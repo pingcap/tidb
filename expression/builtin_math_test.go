@@ -15,6 +15,7 @@ package expression
 
 import (
 	"math"
+	"math/rand"
 	"runtime"
 	"time"
 
@@ -356,11 +357,11 @@ func (s *testEvaluatorSuite) TestRand(c *C) {
 	// issue 3211
 	f2, err := fc.getFunction(s.ctx, []Expression{&Constant{Value: types.NewIntDatum(20160101), RetType: types.NewFieldType(mysql.TypeLonglong)}})
 	c.Assert(err, IsNil)
-	randGen := NewWithSeed(20160101)
+	randGen := rand.New(rand.NewSource(20160101))
 	for i := 0; i < 3; i++ {
 		v, err = evalBuiltinFunc(f2, chunk.Row{})
 		c.Assert(err, IsNil)
-		c.Assert(v.GetFloat64(), Equals, randGen.Gen())
+		c.Assert(v.GetFloat64(), Equals, randGen.Float64())
 	}
 }
 

@@ -24,10 +24,9 @@ import (
 )
 
 // UnspecifiedLength is unspecified length.
-const UnspecifiedLength = -1
-
-// ErrorLength is error length for blob or text.
-const ErrorLength = 0
+const (
+	UnspecifiedLength = -1
+)
 
 // FieldType records field type information.
 type FieldType = ast.FieldType

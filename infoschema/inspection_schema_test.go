@@ -18,13 +18,11 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -65,7 +63,7 @@ func (s *inspectionSuite) TestInspectionTables(c *C) {
 	c.Assert(failpoint.Enable(fpName, fpExpr), IsNil)
 	defer func() { c.Assert(failpoint.Disable(fpName), IsNil) }()
 
-	tk.MustQuery("select type, instance, status_address, version, git_hash from information_schema.cluster_info").Check(testkit.Rows(
+	tk.MustQuery("select * from information_schema.cluster_info").Check(testkit.Rows(
 		"pd 127.0.0.1:11080 127.0.0.1:10080 mock-version mock-githash",
 		"tidb 127.0.0.1:11080 127.0.0.1:10080 mock-version mock-githash",
 		"tikv 127.0.0.1:11080 127.0.0.1:10080 mock-version mock-githash",
@@ -74,7 +72,7 @@ func (s *inspectionSuite) TestInspectionTables(c *C) {
 	// enable inspection mode
 	inspectionTableCache := map[string]variable.TableSnapshot{}
 	tk.Se.GetSessionVars().InspectionTableCache = inspectionTableCache
-	tk.MustQuery("select type, instance, status_address, version, git_hash from inspection_schema.cluster_info").Check(testkit.Rows(
+	tk.MustQuery("select * from inspection_schema.cluster_info").Check(testkit.Rows(
 		"pd 127.0.0.1:11080 127.0.0.1:10080 mock-version mock-githash",
 		"tidb 127.0.0.1:11080 127.0.0.1:10080 mock-version mock-githash",
 		"tikv 127.0.0.1:11080 127.0.0.1:10080 mock-version mock-githash",
@@ -88,8 +86,8 @@ func (s *inspectionSuite) TestInspectionTables(c *C) {
 	c.Assert(err, ErrorMatches, "not currently in inspection mode")
 
 	// check whether is obtain data from cache at the next time
-	inspectionTableCache["cluster_info"].Rows[0][0].SetString("modified-pd", mysql.DefaultCollationName, collate.DefaultLen)
-	tk.MustQuery("select type, instance, status_address, version, git_hash from inspection_schema.cluster_info").Check(testkit.Rows(
+	inspectionTableCache["cluster_info"].Rows[0][0].SetString("modified-pd")
+	tk.MustQuery("select * from inspection_schema.cluster_info").Check(testkit.Rows(
 		"modified-pd 127.0.0.1:11080 127.0.0.1:10080 mock-version mock-githash",
 		"tidb 127.0.0.1:11080 127.0.0.1:10080 mock-version mock-githash",
 		"tikv 127.0.0.1:11080 127.0.0.1:10080 mock-version mock-githash",

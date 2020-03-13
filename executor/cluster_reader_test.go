@@ -41,29 +41,29 @@ import (
 	"google.golang.org/grpc"
 )
 
-type testMemTableReaderSuite struct {
+type testClusterReaderSuite struct {
 	store kv.Storage
 	dom   *domain.Domain
 }
 
-func (s *testMemTableReaderSuite) SetUpSuite(c *C) {
+func (s *testClusterReaderSuite) SetUpSuite(c *C) {
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	s.store = store
 	s.dom = dom
 }
 
-func (s *testMemTableReaderSuite) TearDownSuite(c *C) {
+func (s *testClusterReaderSuite) TearDownSuite(c *C) {
 	s.dom.Close()
 	s.store.Close()
 }
 
-func (s *testMemTableReaderSuite) TestMetricTableData(c *C) {
-	fpName := "github.com/pingcap/tidb/executor/mockMetricsPromData"
-	c.Assert(failpoint.Enable(fpName, "return"), IsNil)
-	defer func() { c.Assert(failpoint.Disable(fpName), IsNil) }()
-
-	// mock prometheus data
+func (s *testClusterReaderSuite) TestMetricTableData(c *C) {
+	failPoint := "github.com/pingcap/tidb/executor/mockMetricRetrieverQueryPromQL"
+	c.Assert(failpoint.Enable(failPoint, "return"), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable(failPoint), IsNil)
+	}()
 	matrix := pmodel.Matrix{}
 	metric := map[pmodel.LabelName]pmodel.LabelValue{
 		"instance": "127.0.0.1:10080",
@@ -75,49 +75,28 @@ func (s *testMemTableReaderSuite) TestMetricTableData(c *C) {
 		Value:     pmodel.SampleValue(0.1),
 	}
 	matrix = append(matrix, &pmodel.SampleStream{Metric: metric, Values: []pmodel.SamplePair{v1}})
-
-	ctx := context.WithValue(context.Background(), "__mockMetricsPromData", matrix)
+	ctx := context.WithValue(context.Background(), "__mockMetricsData", matrix)
 	ctx = failpoint.WithHook(ctx, func(ctx context.Context, fpname string) bool {
-		return fpname == fpName
+		return fpname == failPoint
 	})
 
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use metrics_schema")
+	tk.MustExec("use metric_schema")
+	rs, err := tk.Se.Execute(ctx, "select * from query_duration;")
+	c.Assert(err, IsNil)
+	result := tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute sql fail"))
+	result.Check(testkit.Rows(
+		"2019-12-23 20:11:35.000000 0.1 127.0.0.1:10080  0.9"))
 
-	cases := []struct {
-		sql string
-		exp []string
-	}{
-		{
-			sql: "select time,instance,quantile,value from tidb_query_duration;",
-			exp: []string{
-				"2019-12-23 20:11:35.000000 127.0.0.1:10080 0.9 0.1",
-			},
-		},
-		{
-			sql: "select time,instance,quantile,value from tidb_query_duration where quantile in (0.85, 0.95);",
-			exp: []string{
-				"2019-12-23 20:11:35.000000 127.0.0.1:10080 0.85 0.1",
-				"2019-12-23 20:11:35.000000 127.0.0.1:10080 0.95 0.1",
-			},
-		},
-		{
-			sql: "select time,instance,quantile,value from tidb_query_duration where quantile=0.5",
-			exp: []string{
-				"2019-12-23 20:11:35.000000 127.0.0.1:10080 0.5 0.1",
-			},
-		},
-	}
-
-	for _, cas := range cases {
-		rs, err := tk.Se.Execute(ctx, cas.sql)
-		c.Assert(err, IsNil)
-		result := tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("sql: %s", cas.sql))
-		result.Check(testkit.Rows(cas.exp...))
-	}
+	rs, err = tk.Se.Execute(ctx, "select * from query_duration where quantile in (0.85, 0.95);")
+	c.Assert(err, IsNil)
+	result = tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute sql fail"))
+	result.Check(testkit.Rows(
+		"2019-12-23 20:11:35.000000 0.1 127.0.0.1:10080  0.85",
+		"2019-12-23 20:11:35.000000 0.1 127.0.0.1:10080  0.95"))
 }
 
-func (s *testMemTableReaderSuite) TestTiDBClusterConfig(c *C) {
+func (s *testClusterReaderSuite) TestTiDBClusterConfig(c *C) {
 	// mock PD http server
 	router := mux.NewRouter()
 
@@ -258,7 +237,7 @@ func (s *testMemTableReaderSuite) TestTiDBClusterConfig(c *C) {
 			),
 		},
 		{
-			sql:      "select * from information_schema.cluster_config where type='pd' or instance='" + testServers[0].address + "'",
+			sql:      "select * from information_schema.cluster_config where type='pd' or address='" + testServers[0].address + "'",
 			reqCount: 9,
 			rows: flatten(
 				rows["tidb"][0],
@@ -336,7 +315,7 @@ func (s *testMemTableReaderSuite) TestTiDBClusterConfig(c *C) {
 			),
 		},
 		{
-			sql: fmt.Sprintf(`select * from information_schema.cluster_config where instance='%s'`,
+			sql: fmt.Sprintf(`select * from information_schema.cluster_config where address='%s'`,
 				testServers[0].address),
 			reqCount: 3,
 			rows: flatten(
@@ -346,7 +325,7 @@ func (s *testMemTableReaderSuite) TestTiDBClusterConfig(c *C) {
 			),
 		},
 		{
-			sql: fmt.Sprintf(`select * from information_schema.cluster_config where type='tidb' and instance='%s'`,
+			sql: fmt.Sprintf(`select * from information_schema.cluster_config where type='tidb' and address='%s'`,
 				testServers[0].address),
 			reqCount: 1,
 			rows: flatten(
@@ -354,7 +333,7 @@ func (s *testMemTableReaderSuite) TestTiDBClusterConfig(c *C) {
 			),
 		},
 		{
-			sql: fmt.Sprintf(`select * from information_schema.cluster_config where type in ('tidb', 'tikv') and instance='%s'`,
+			sql: fmt.Sprintf(`select * from information_schema.cluster_config where type in ('tidb', 'tikv') and address='%s'`,
 				testServers[0].address),
 			reqCount: 2,
 			rows: flatten(
@@ -363,7 +342,7 @@ func (s *testMemTableReaderSuite) TestTiDBClusterConfig(c *C) {
 			),
 		},
 		{
-			sql: fmt.Sprintf(`select * from information_schema.cluster_config where type in ('tidb', 'tikv') and instance in ('%s', '%s')`,
+			sql: fmt.Sprintf(`select * from information_schema.cluster_config where type in ('tidb', 'tikv') and address in ('%s', '%s')`,
 				testServers[0].address, testServers[0].address),
 			reqCount: 2,
 			rows: flatten(
@@ -372,7 +351,7 @@ func (s *testMemTableReaderSuite) TestTiDBClusterConfig(c *C) {
 			),
 		},
 		{
-			sql: fmt.Sprintf(`select * from information_schema.cluster_config where type in ('tidb', 'tikv') and instance in ('%s', '%s')`,
+			sql: fmt.Sprintf(`select * from information_schema.cluster_config where type in ('tidb', 'tikv') and address in ('%s', '%s')`,
 				testServers[0].address, testServers[1].address),
 			reqCount: 4,
 			rows: flatten(
@@ -383,17 +362,17 @@ func (s *testMemTableReaderSuite) TestTiDBClusterConfig(c *C) {
 			),
 		},
 		{
-			sql: fmt.Sprintf(`select * from information_schema.cluster_config where type in ('tidb', 'tikv') and type='pd' and instance in ('%s', '%s')`,
+			sql: fmt.Sprintf(`select * from information_schema.cluster_config where type in ('tidb', 'tikv') and type='pd' and address in ('%s', '%s')`,
 				testServers[0].address, testServers[1].address),
 			reqCount: 0,
 		},
 		{
-			sql: fmt.Sprintf(`select * from information_schema.cluster_config where type in ('tidb', 'tikv') and instance in ('%s', '%s') and instance='%s'`,
+			sql: fmt.Sprintf(`select * from information_schema.cluster_config where type in ('tidb', 'tikv') and address in ('%s', '%s') and address='%s'`,
 				testServers[0].address, testServers[1].address, testServers[2].address),
 			reqCount: 0,
 		},
 		{
-			sql: fmt.Sprintf(`select * from information_schema.cluster_config where type in ('tidb', 'tikv') and instance in ('%s', '%s') and instance='%s'`,
+			sql: fmt.Sprintf(`select * from information_schema.cluster_config where type in ('tidb', 'tikv') and address in ('%s', '%s') and address='%s'`,
 				testServers[0].address, testServers[1].address, testServers[0].address),
 			reqCount: 2,
 			rows: flatten(
@@ -413,12 +392,12 @@ func (s *testMemTableReaderSuite) TestTiDBClusterConfig(c *C) {
 	}
 }
 
-func (s *testMemTableReaderSuite) writeTmpFile(c *C, dir, filename string, lines []string) {
+func (s *testClusterReaderSuite) writeTmpFile(c *C, dir, filename string, lines []string) {
 	err := ioutil.WriteFile(filepath.Join(dir, filename), []byte(strings.Join(lines, "\n")), os.ModePerm)
 	c.Assert(err, IsNil, Commentf("write tmp file %s failed", filename))
 }
 
-func (s *testMemTableReaderSuite) TestTiDBClusterLog(c *C) {
+func (s *testClusterReaderSuite) TestTiDBClusterLog(c *C) {
 	type testServer struct {
 		typ     string
 		server  *grpc.Server
@@ -426,7 +405,7 @@ func (s *testMemTableReaderSuite) TestTiDBClusterLog(c *C) {
 		tmpDir  string
 		logFile string
 	}
-	// tp => testServer
+	// typ => testServer
 	testServers := map[string]*testServer{}
 
 	// create gRPC servers
@@ -486,7 +465,7 @@ func (s *testMemTableReaderSuite) TestTiDBClusterLog(c *C) {
 		logtime(`2019/08/26 06:19:16.011`) + ` [trace] [test log message tidb 4, foo]`,
 		logtime(`2019/08/26 06:19:17.011`) + ` [CRITICAL] [test log message tidb 5, foo]`,
 	})
-	s.writeTmpFile(c, testServers["tidb"].tmpDir, "tidb-1.log", []string{
+	s.writeTmpFile(c, testServers["tidb"].tmpDir, "tidb.log.1", []string{
 		logtime(`2019/08/26 06:25:13.011`) + ` [info] [test log message tidb 10, bar]`,
 		logtime(`2019/08/26 06:25:14.011`) + ` [debug] [test log message tidb 11, bar]`,
 		logtime(`2019/08/26 06:25:15.011`) + ` [ERROR] [test log message tidb 12, bar]`,
@@ -502,7 +481,7 @@ func (s *testMemTableReaderSuite) TestTiDBClusterLog(c *C) {
 		logtime(`2019/08/26 06:22:16.011`) + ` [trace] [test log message tikv 4, foo]`,
 		logtime(`2019/08/26 06:23:17.011`) + ` [CRITICAL] [test log message tikv 5, foo]`,
 	})
-	s.writeTmpFile(c, testServers["tikv"].tmpDir, "tikv-1.log", []string{
+	s.writeTmpFile(c, testServers["tikv"].tmpDir, "tikv.log.1", []string{
 		logtime(`2019/08/26 06:24:15.011`) + ` [info] [test log message tikv 10, bar]`,
 		logtime(`2019/08/26 06:25:16.011`) + ` [debug] [test log message tikv 11, bar]`,
 		logtime(`2019/08/26 06:26:17.011`) + ` [ERROR] [test log message tikv 12, bar]`,
@@ -518,7 +497,7 @@ func (s *testMemTableReaderSuite) TestTiDBClusterLog(c *C) {
 		logtime(`2019/08/26 06:21:16.011`) + ` [trace] [test log message pd 4, foo]`,
 		logtime(`2019/08/26 06:22:17.011`) + ` [CRITICAL] [test log message pd 5, foo]`,
 	})
-	s.writeTmpFile(c, testServers["pd"].tmpDir, "pd-1.log", []string{
+	s.writeTmpFile(c, testServers["pd"].tmpDir, "pd.log.1", []string{
 		logtime(`2019/08/26 06:23:13.011`) + ` [info] [test log message pd 10, bar]`,
 		logtime(`2019/08/26 06:24:14.011`) + ` [debug] [test log message pd 11, bar]`,
 		logtime(`2019/08/26 06:25:15.011`) + ` [ERROR] [test log message pd 12, bar]`,
@@ -671,7 +650,7 @@ func (s *testMemTableReaderSuite) TestTiDBClusterLog(c *C) {
 			conditions: []string{
 				"time>='2019/08/26 06:19:13.011'",
 				"time<='2019/08/26 06:21:15.011'",
-				fmt.Sprintf("instance='%s'", testServers["pd"].address),
+				fmt.Sprintf("address='%s'", testServers["pd"].address),
 			},
 			expected: [][]string{
 				{"2019/08/26 06:19:14.011", "pd", "DEBUG", "[test log message pd 2, foo]"},
@@ -682,7 +661,7 @@ func (s *testMemTableReaderSuite) TestTiDBClusterLog(c *C) {
 			conditions: []string{
 				"time>='2019/08/26 06:19:13.011'",
 				"time<='2019/08/26 06:21:15.011'",
-				fmt.Sprintf("instance='%s'", testServers["tidb"].address),
+				fmt.Sprintf("address='%s'", testServers["tidb"].address),
 			},
 			expected: [][]string{
 				{"2019/08/26 06:19:13.011", "tidb", "INFO", "[test log message tidb 1, foo]"},
@@ -696,7 +675,7 @@ func (s *testMemTableReaderSuite) TestTiDBClusterLog(c *C) {
 			conditions: []string{
 				"time>='2019/08/26 06:19:13.011'",
 				"time<='2019/08/26 06:21:15.011'",
-				fmt.Sprintf("instance='%s'", testServers["tikv"].address),
+				fmt.Sprintf("address='%s'", testServers["tikv"].address),
 			},
 			expected: [][]string{
 				{"2019/08/26 06:19:13.011", "tikv", "INFO", "[test log message tikv 1, foo]"},
@@ -708,7 +687,7 @@ func (s *testMemTableReaderSuite) TestTiDBClusterLog(c *C) {
 			conditions: []string{
 				"time>='2019/08/26 06:19:13.011'",
 				"time<='2019/08/26 06:21:15.011'",
-				fmt.Sprintf("instance in ('%s', '%s')", testServers["pd"].address, testServers["tidb"].address),
+				fmt.Sprintf("address in ('%s', '%s')", testServers["pd"].address, testServers["tidb"].address),
 			},
 			expected: [][]string{
 				{"2019/08/26 06:19:13.011", "tidb", "INFO", "[test log message tidb 1, foo]"},
@@ -840,7 +819,7 @@ func (s *testMemTableReaderSuite) TestTiDBClusterLog(c *C) {
 			expectedRow := []string{
 				restime(row[0]),             // time column
 				row[1],                      // type column
-				testServers[row[1]].address, // instance column
+				testServers[row[1]].address, // address column
 				strings.ToUpper(sysutil.ParseLogLevel(row[2]).String()), // level column
 				row[3], // message column
 			}
@@ -850,7 +829,7 @@ func (s *testMemTableReaderSuite) TestTiDBClusterLog(c *C) {
 	}
 }
 
-func (s *testMemTableReaderSuite) TestTiDBClusterLogError(c *C) {
+func (s *testClusterReaderSuite) TestTiDBClusterLogError(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	fpName := "github.com/pingcap/tidb/executor/mockClusterLogServerInfo"
 	c.Assert(failpoint.Enable(fpName, `return("")`), IsNil)

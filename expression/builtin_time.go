@@ -25,7 +25,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -36,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
@@ -2769,7 +2769,7 @@ func (du *baseDateArithmitical) add(ctx sessionctx.Context, date types.Time, int
 		date.SetFsp(6)
 	}
 
-	if goTime.Year() < 0 || goTime.Year() > 9999 {
+	if goTime.Year() < 0 || goTime.Year() > (1<<16-1) {
 		return types.ZeroTime, true, handleInvalidTimeError(ctx, types.ErrDatetimeFunctionOverflow.GenWithStackByArgs("datetime"))
 	}
 
@@ -2830,7 +2830,7 @@ func (du *baseDateArithmitical) sub(ctx sessionctx.Context, date types.Time, int
 		date.SetFsp(6)
 	}
 
-	if goTime.Year() < 0 || goTime.Year() > 9999 {
+	if goTime.Year() < 0 || goTime.Year() > (1<<16-1) {
 		return types.ZeroTime, true, handleInvalidTimeError(ctx, types.ErrDatetimeFunctionOverflow.GenWithStackByArgs("datetime"))
 	}
 
@@ -6460,7 +6460,10 @@ func (b *builtinTimeFormatSig) evalString(row chunk.Row) (string, bool, error) {
 
 // formatTime see https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_time-format
 func (b *builtinTimeFormatSig) formatTime(ctx sessionctx.Context, t types.Duration, formatMask string) (res string, err error) {
-	return t.DurationFormat(formatMask)
+	t2 := types.NewTime(types.FromDate(0, 0, 0, t.Hour(), t.Minute(), t.Second(), t.MicroSecond()), mysql.TypeDate, 0)
+
+	str, err := t2.DateFormat(formatMask)
+	return str, err
 }
 
 type timeToSecFunctionClass struct {

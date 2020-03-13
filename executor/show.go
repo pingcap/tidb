@@ -23,7 +23,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
@@ -56,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/format"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
@@ -126,8 +126,6 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowColumns(ctx)
 	case ast.ShowCreateTable:
 		return e.fetchShowCreateTable()
-	case ast.ShowCreateSequence:
-		return e.fetchShowCreateSequence()
 	case ast.ShowCreateUser:
 		return e.fetchShowCreateUser()
 	case ast.ShowCreateView:
@@ -198,38 +196,6 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 	return nil
 }
 
-// visibleChecker checks if a stmt is visible for a certain user.
-type visibleChecker struct {
-	defaultDB string
-	ctx       sessionctx.Context
-	is        infoschema.InfoSchema
-	manager   privilege.Manager
-	ok        bool
-}
-
-func (v *visibleChecker) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
-	switch x := in.(type) {
-	case *ast.TableName:
-		schema := x.Schema.L
-		if schema == "" {
-			schema = v.defaultDB
-		}
-		if !v.is.TableExists(model.NewCIStr(schema), x.Name) {
-			return in, true
-		}
-		activeRoles := v.ctx.GetSessionVars().ActiveRoles
-		if v.manager != nil && !v.manager.RequestVerification(activeRoles, schema, x.Name.L, "", mysql.SelectPriv) {
-			v.ok = false
-		}
-		return in, true
-	}
-	return in, false
-}
-
-func (v *visibleChecker) Leave(in ast.Node) (out ast.Node, ok bool) {
-	return in, true
-}
-
 func (e *ShowExec) fetchShowBind() error {
 	var bindRecords []*bindinfo.BindRecord
 	if !e.GlobalScope {
@@ -238,24 +204,8 @@ func (e *ShowExec) fetchShowBind() error {
 	} else {
 		bindRecords = domain.GetDomain(e.ctx).BindHandle().GetAllBindRecord()
 	}
-	parser := parser.New()
 	for _, bindData := range bindRecords {
 		for _, hint := range bindData.Bindings {
-			stmt, err := parser.ParseOneStmt(hint.BindSQL, hint.Charset, hint.Collation)
-			if err != nil {
-				return err
-			}
-			checker := visibleChecker{
-				defaultDB: bindData.Db,
-				ctx:       e.ctx,
-				is:        e.is,
-				manager:   privilege.GetPrivilegeManager(e.ctx),
-				ok:        true,
-			}
-			stmt.Accept(&checker)
-			if !checker.ok {
-				continue
-			}
 			e.appendRow([]interface{}{
 				bindData.OriginalSQL,
 				hint.BindSQL,
@@ -546,7 +496,6 @@ func (e *ShowExec) fetchShowIndex() error {
 			"BTREE",          // Index_type
 			"",               // Comment
 			"",               // Index_comment
-			"NULL",           // Expression
 		})
 	}
 	for _, idx := range tb.Indices() {
@@ -567,19 +516,12 @@ func (e *ShowExec) fetchShowIndex() error {
 			if idx.Meta().Name.O == mysql.PrimaryKeyName {
 				nullVal = ""
 			}
-			colName := col.Name.O
-			expression := "NULL"
-			tblCol := tb.Meta().Columns[col.Offset]
-			if tblCol.Hidden {
-				colName = "NULL"
-				expression = fmt.Sprintf("(%s)", tblCol.GeneratedExprString)
-			}
 			e.appendRow([]interface{}{
 				tb.Meta().Name.O,       // Table
 				nonUniq,                // Non_unique
 				idx.Meta().Name.O,      // Key_name
 				i + 1,                  // Seq_in_index
-				colName,                // Column_name
+				col.Name.O,             // Column_name
 				"A",                    // Collation
 				0,                      // Cardinality
 				subPart,                // Sub_part
@@ -588,7 +530,6 @@ func (e *ShowExec) fetchShowIndex() error {
 				idx.Meta().Tp.String(), // Index_type
 				"",                     // Comment
 				idx.Meta().Comment,     // Index_comment
-				expression,             // Expression
 			})
 		}
 	}
@@ -909,46 +850,6 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 	return nil
 }
 
-// ConstructResultOfShowCreateSequence constructs the result for show create sequence.
-func ConstructResultOfShowCreateSequence(ctx sessionctx.Context, tableInfo *model.TableInfo, buf *bytes.Buffer) {
-	sqlMode := ctx.GetSessionVars().SQLMode
-	fmt.Fprintf(buf, "CREATE SEQUENCE %s ", escape(tableInfo.Name, sqlMode))
-	sequenceInfo := tableInfo.Sequence
-	fmt.Fprintf(buf, "start with %d ", sequenceInfo.Start)
-	fmt.Fprintf(buf, "minvalue %d ", sequenceInfo.MinValue)
-	fmt.Fprintf(buf, "maxvalue %d ", sequenceInfo.MaxValue)
-	fmt.Fprintf(buf, "increment by %d ", sequenceInfo.Increment)
-	if sequenceInfo.Cache {
-		fmt.Fprintf(buf, "cache %d ", sequenceInfo.CacheValue)
-	} else {
-		buf.WriteString("nocache ")
-	}
-	if sequenceInfo.Cycle {
-		buf.WriteString("cycle ")
-	} else {
-		buf.WriteString("nocycle ")
-	}
-	buf.WriteString("ENGINE=InnoDB")
-	if len(sequenceInfo.Comment) > 0 {
-		fmt.Fprintf(buf, " COMMENT='%s'", format.OutputFormat(sequenceInfo.Comment))
-	}
-}
-
-func (e *ShowExec) fetchShowCreateSequence() error {
-	tbl, err := e.getTable()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	tableInfo := tbl.Meta()
-	if !tableInfo.IsSequence() {
-		return ErrWrongObject.GenWithStackByArgs(e.DBName.O, tableInfo.Name.O, "SEQUENCE")
-	}
-	var buf bytes.Buffer
-	ConstructResultOfShowCreateSequence(e.ctx, tableInfo, &buf)
-	e.appendRow([]interface{}{tableInfo.Name.O, buf.String()})
-	return nil
-}
-
 func (e *ShowExec) fetchShowCreateTable() error {
 	tb, err := e.getTable()
 	if err != nil {
@@ -959,7 +860,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	allocator := tb.Allocator(e.ctx, autoid.RowIDAllocType)
 	var buf bytes.Buffer
 	// TODO: let the result more like MySQL.
-	if err = ConstructResultOfShowCreateTable(e.ctx, tableInfo, allocator, &buf); err != nil {
+	if err = ConstructResultOfShowCreateTable(e.ctx, tb.Meta(), allocator, &buf); err != nil {
 		return err
 	}
 	if tableInfo.IsView() {
@@ -967,7 +868,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 		return nil
 	}
 
-	e.appendRow([]interface{}{tableInfo.Name.O, buf.String()})
+	e.appendRow([]interface{}{tb.Meta().Name.O, buf.String()})
 	return nil
 }
 
@@ -1032,7 +933,7 @@ func appendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer) 
 	}
 	for i, def := range partitionInfo.Definitions {
 		lessThans := strings.Join(def.LessThan, ",")
-		fmt.Fprintf(buf, "  PARTITION `%s` VALUES LESS THAN (%s)", def.Name, lessThans)
+		fmt.Fprintf(buf, "  PARTITION %s VALUES LESS THAN (%s)", def.Name, lessThans)
 		if i < len(partitionInfo.Definitions)-1 {
 			buf.WriteString(",\n")
 		} else {

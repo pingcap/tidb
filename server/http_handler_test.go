@@ -30,7 +30,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	dmysql "github.com/go-sql-driver/mysql"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	zaplog "github.com/pingcap/log"
@@ -554,7 +553,6 @@ func (ts *HTTPHandlerTestSuite) TestTiFlashReplica(c *C) {
 	decoder = json.NewDecoder(resp.Body)
 	err = decoder.Decode(&data)
 	c.Assert(err, IsNil)
-	resp.Body.Close()
 	c.Assert(len(data), Equals, 1)
 	c.Assert(data[0].ReplicaCount, Equals, uint64(2))
 	c.Assert(strings.Join(data[0].LocationLabels, ","), Equals, "a,b")
@@ -567,65 +565,10 @@ func (ts *HTTPHandlerTestSuite) TestTiFlashReplica(c *C) {
 	decoder = json.NewDecoder(resp.Body)
 	err = decoder.Decode(&data)
 	c.Assert(err, IsNil)
-	resp.Body.Close()
 	c.Assert(len(data), Equals, 1)
 	c.Assert(data[0].ReplicaCount, Equals, uint64(2))
 	c.Assert(strings.Join(data[0].LocationLabels, ","), Equals, "a,b")
 	c.Assert(data[0].Available, Equals, true) // The status should be true now.
-
-	// Test for partition table.
-	dbt.mustExec("alter table pt set tiflash replica 2 location labels 'a','b';")
-	dbt.mustExec("alter table test set tiflash replica 0;")
-	resp, err = ts.fetchStatus("/tiflash/replica")
-	c.Assert(err, IsNil)
-	decoder = json.NewDecoder(resp.Body)
-	err = decoder.Decode(&data)
-	c.Assert(err, IsNil)
-	resp.Body.Close()
-	c.Assert(len(data), Equals, 3)
-	c.Assert(data[0].ReplicaCount, Equals, uint64(2))
-	c.Assert(strings.Join(data[0].LocationLabels, ","), Equals, "a,b")
-	c.Assert(data[0].Available, Equals, false)
-
-	pid0 := data[0].ID
-	pid1 := data[1].ID
-	pid2 := data[2].ID
-
-	// Mock for partition 1 replica was available.
-	req = fmt.Sprintf(`{"id":%d,"region_count":3,"flash_region_count":3}`, pid1)
-	resp, err = ts.postStatus("/tiflash/replica", "application/json", bytes.NewBuffer([]byte(req)))
-	c.Assert(err, IsNil)
-	resp.Body.Close()
-	resp, err = ts.fetchStatus("/tiflash/replica")
-	c.Assert(err, IsNil)
-	decoder = json.NewDecoder(resp.Body)
-	err = decoder.Decode(&data)
-	c.Assert(err, IsNil)
-	resp.Body.Close()
-	c.Assert(len(data), Equals, 3)
-	c.Assert(data[0].Available, Equals, false)
-	c.Assert(data[1].Available, Equals, true)
-	c.Assert(data[2].Available, Equals, false)
-
-	// Mock for partition 0,2 replica was available.
-	req = fmt.Sprintf(`{"id":%d,"region_count":3,"flash_region_count":3}`, pid0)
-	resp, err = ts.postStatus("/tiflash/replica", "application/json", bytes.NewBuffer([]byte(req)))
-	c.Assert(err, IsNil)
-	resp.Body.Close()
-	req = fmt.Sprintf(`{"id":%d,"region_count":3,"flash_region_count":3}`, pid2)
-	resp, err = ts.postStatus("/tiflash/replica", "application/json", bytes.NewBuffer([]byte(req)))
-	c.Assert(err, IsNil)
-	resp.Body.Close()
-	resp, err = ts.fetchStatus("/tiflash/replica")
-	c.Assert(err, IsNil)
-	decoder = json.NewDecoder(resp.Body)
-	err = decoder.Decode(&data)
-	c.Assert(err, IsNil)
-	resp.Body.Close()
-	c.Assert(len(data), Equals, 3)
-	c.Assert(data[0].Available, Equals, true)
-	c.Assert(data[1].Available, Equals, true)
-	c.Assert(data[2].Available, Equals, true)
 }
 
 func (ts *HTTPHandlerTestSuite) TestDecodeColumnValue(c *C) {
@@ -777,7 +720,7 @@ func (ts *HTTPHandlerTestSuite) TestGetSchema(c *C) {
 	var dbs []*model.DBInfo
 	err = decoder.Decode(&dbs)
 	c.Assert(err, IsNil)
-	expects := []string{"information_schema", "inspection_schema", "metrics_schema", "mysql", "performance_schema", "test", "tidb"}
+	expects := []string{"information_schema", "inspection_schema", "metric_schema", "mysql", "performance_schema", "test", "tidb"}
 	names := make([]string, len(dbs))
 	for i, v := range dbs {
 		names[i] = v.Name.L
@@ -928,10 +871,7 @@ func (ts *HTTPHandlerTestSuite) TestPostSettings(c *C) {
 	c.Assert(atomic.LoadUint32(&variable.DDLSlowOprThreshold), Equals, uint32(200))
 
 	// test check_mb4_value_in_utf8
-	overriders := []configOverrider{func(config *dmysql.Config) {
-		config.Strict = false
-	}}
-	db, err := sql.Open("mysql", ts.getDSN(overriders...))
+	db, err := sql.Open("mysql", ts.getDSN())
 	c.Assert(err, IsNil, Commentf("Error connecting"))
 	defer db.Close()
 	dbt := &DBTest{c, db}

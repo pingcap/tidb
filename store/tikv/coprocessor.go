@@ -26,18 +26,21 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/zap"
 )
 
@@ -220,6 +223,13 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, req *kv
 	if req.Streaming {
 		cmdType = tikvrpc.CmdCopStream
 	}
+	var tableStart, tableEnd kv.Key
+	if req.StoreType == kv.TiFlash {
+		tableID := tablecodec.DecodeTableID(ranges.at(0).StartKey)
+		fullRange := ranger.FullIntRange(false)
+		keyRange := distsql.TableRangesToKVRanges(tableID, fullRange, nil)
+		tableStart, tableEnd = keyRange[0].StartKey, keyRange[0].EndKey
+	}
 
 	if req.StoreType == kv.TiDB {
 		return buildTiDBMemCopTasks(ranges, req)
@@ -228,21 +238,44 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, req *kv
 	rangesLen := ranges.len()
 	var tasks []*copTask
 	appendTask := func(regionWithRangeInfo *KeyLocation, ranges *copRanges) {
-		// TiKV will return gRPC error if the message is too large. So we need to limit the length of the ranges slice
-		// to make sure the message can be sent successfully.
-		rLen := ranges.len()
-		for i := 0; i < rLen; {
-			nextI := mathutil.Min(i+rangesPerTask, rLen)
+		if req.StoreType == kv.TiKV {
+			// TiKV will return gRPC error if the message is too large. So we need to limit the length of the ranges slice
+			// to make sure the message can be sent successfully.
+			rLen := ranges.len()
+			for i := 0; i < rLen; {
+				nextI := mathutil.Min(i+rangesPerTask, rLen)
+				tasks = append(tasks, &copTask{
+					region: regionWithRangeInfo.Region,
+					ranges: ranges.slice(i, nextI),
+					// Channel buffer is 2 for handling region split.
+					// In a common case, two region split tasks will not be blocked.
+					respChan:  make(chan *copResponse, 2),
+					cmdType:   cmdType,
+					storeType: req.StoreType,
+				})
+				i = nextI
+			}
+		} else if req.StoreType == kv.TiFlash {
+			left, right := regionWithRangeInfo.StartKey, regionWithRangeInfo.EndKey
+			if bytes.Compare(tableStart, left) >= 0 {
+				left = tableStart
+			}
+			if bytes.Compare(tableEnd, right) <= 0 || len(right) == 0 {
+				right = tableEnd
+			}
+			fullRange := kv.KeyRange{StartKey: left, EndKey: right}
 			tasks = append(tasks, &copTask{
 				region: regionWithRangeInfo.Region,
-				ranges: ranges.slice(i, nextI),
+				// TiFlash only support full range scan for the region, ignore the real ranges
+				// does not affect the correctness because we already merge the access range condition
+				// into filter condition in `getOriginalPhysicalTableScan`
+				ranges: &copRanges{mid: []kv.KeyRange{fullRange}},
 				// Channel buffer is 2 for handling region split.
 				// In a common case, two region split tasks will not be blocked.
 				respChan:  make(chan *copResponse, 2),
 				cmdType:   cmdType,
 				storeType: req.StoreType,
 			})
-			i = nextI
 		}
 	}
 
@@ -852,7 +885,7 @@ func (worker *copIteratorWorker) logTimeCopTask(costTime time.Duration, task *co
 			}
 		}
 	}
-	logutil.Logger(bo.ctx).Info(logStr)
+	logutil.BgLogger().Info(logStr)
 }
 
 func appendScanDetail(logStr string, columnFamily string, scanInfo *kvrpcpb.ScanInfo) string {
