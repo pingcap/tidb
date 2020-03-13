@@ -500,23 +500,26 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 		return err
 	}
 
-	if (resp.Capability&mysql.ClientSSL > 0) && cc.server.tlsConfig != nil {
-		// The packet is a SSLRequest, let's switch to TLS.
-		if err = cc.upgradeToTLS(cc.server.tlsConfig); err != nil {
-			return err
-		}
-		// Read the following HandshakeResponse packet.
-		data, err = cc.readPacket()
-		if err != nil {
-			return err
-		}
-		if isOldVersion {
-			pos, err = parseOldHandshakeResponseHeader(ctx, &resp, data)
-		} else {
-			pos, err = parseHandshakeResponseHeader(ctx, &resp, data)
-		}
-		if err != nil {
-			return err
+	if resp.Capability&mysql.ClientSSL > 0 {
+		tlsConfig := (*tls.Config)(atomic.LoadPointer(&cc.server.tlsConfig))
+		if tlsConfig != nil {
+			// The packet is a SSLRequest, let's switch to TLS.
+			if err = cc.upgradeToTLS(tlsConfig); err != nil {
+				return err
+			}
+			// Read the following HandshakeResponse packet.
+			data, err = cc.readPacket()
+			if err != nil {
+				return err
+			}
+			if isOldVersion {
+				pos, err = parseOldHandshakeResponseHeader(ctx, &resp, data)
+			} else {
+				pos, err = parseHandshakeResponseHeader(ctx, &resp, data)
+			}
+			if err != nil {
+				return err
+			}
 		}
 	}
 
@@ -683,13 +686,8 @@ func (cc *clientConn) Run(ctx context.Context) {
 				logutil.Logger(ctx).Error("result undetermined, close this connection", zap.Error(err))
 				return
 			} else if terror.ErrCritical.Equal(err) {
-				logutil.Logger(ctx).Error("critical error, stop the server listener", zap.Error(err))
 				metrics.CriticalErrorCounter.Add(1)
-				select {
-				case cc.server.stopListenerCh <- struct{}{}:
-				default:
-				}
-				return
+				logutil.Logger(ctx).Fatal("critical error, stop the server", zap.Error(err))
 			}
 			var txnMode string
 			if cc.ctx != nil {
@@ -736,7 +734,7 @@ func queryStrForLog(query string) string {
 }
 
 func errStrForLog(err error) string {
-	if kv.ErrKeyExists.Equal(err) {
+	if kv.ErrKeyExists.Equal(err) || parser.ErrParse.Equal(err) {
 		// Do not log stack for duplicated entry error.
 		return err.Error()
 	}
@@ -1121,6 +1119,8 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 	loadDataInfo.InitQueues()
 	loadDataInfo.SetMaxRowsInBatch(uint64(loadDataInfo.Ctx.GetSessionVars().DMLBatchSize))
 	loadDataInfo.StartStopWatcher()
+	// let stop watcher goroutine quit
+	defer loadDataInfo.ForceQuit()
 	err = loadDataInfo.Ctx.NewTxn(ctx)
 	if err != nil {
 		return err

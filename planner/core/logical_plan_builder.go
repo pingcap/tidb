@@ -1597,7 +1597,7 @@ func (b *PlanBuilder) extractAggFuncs(fields []*ast.SelectField) ([]*ast.Aggrega
 		f.Expr = n.(ast.ExprNode)
 	}
 	aggList := extractor.AggFuncs
-	totalAggMapper := make(map[*ast.AggregateFuncExpr]int)
+	totalAggMapper := make(map[*ast.AggregateFuncExpr]int, len(aggList))
 
 	for i, agg := range aggList {
 		totalAggMapper[agg] = i
@@ -1988,7 +1988,7 @@ func (b *PlanBuilder) checkOnlyFullGroupByWithGroupClause(p LogicalPlan, sel *as
 		if field.Auxiliary {
 			continue
 		}
-		checkExprInGroupBy(p, field.Expr, offset, ErrExprInSelect, gbyColNames, gbyExprs, notInGbyColNames)
+		checkExprInGroupBy(p, getInnerFromParenthesesAndUnaryPlus(field.Expr), offset, ErrExprInSelect, gbyColNames, gbyExprs, notInGbyColNames)
 	}
 
 	if sel.OrderBy != nil {
@@ -2565,6 +2565,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 
 	if tableInfo.GetPartitionInfo() != nil {
 		b.optFlag = b.optFlag | flagPartitionProcessor
+		b.partitionedTable = append(b.partitionedTable, tbl.(table.PartitionedTable))
 		// check partition by name.
 		for _, name := range tn.PartitionNames {
 			_, err = tables.FindPartitionByName(tableInfo, name.L)
@@ -2837,6 +2838,8 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName model.CIStr, table
 		case infoschema.TableInspectionSummary:
 			p.Extractor = &InspectionSummaryTableExtractor{}
 			p.QueryTimeRange = b.timeRangeForSummaryTable()
+		case infoschema.TableInspectionRules:
+			p.Extractor = &InspectionRuleTableExtractor{}
 		case infoschema.TableMetricSummary, infoschema.TableMetricSummaryByLabel:
 			p.Extractor = &MetricSummaryTableExtractor{}
 			p.QueryTimeRange = b.timeRangeForSummaryTable()
@@ -3160,6 +3163,11 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 			return nil, err
 		}
 	}
+	if !b.ctx.GetSessionVars().IsAutocommit() || b.ctx.GetSessionVars().InTxn() {
+		if !update.MultipleTable {
+			p = b.buildSelectLock(p, ast.SelectLockForUpdate)
+		}
+	}
 
 	if update.Order != nil {
 		p, err = b.buildSort(ctx, p, update.Order.Items, nil, nil)
@@ -3198,7 +3206,7 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 	updt.names = p.OutputNames()
 	// We cannot apply projection elimination when building the subplan, because
 	// columns in orderedList cannot be resolved.
-	updt.SelectPlan, _, err = DoOptimize(ctx, b.optFlag&^flagEliminateProjection, p)
+	updt.SelectPlan, _, err = DoOptimize(ctx, b.ctx, b.optFlag&^flagEliminateProjection, p)
 	if err != nil {
 		return nil, err
 	}
@@ -3210,7 +3218,7 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 	if err != nil {
 		return nil, err
 	}
-	tblID2table := make(map[int64]table.Table)
+	tblID2table := make(map[int64]table.Table, len(tblID2Handle))
 	for id := range tblID2Handle {
 		tblID2table[id], _ = b.is.TableByID(id)
 	}
@@ -3395,6 +3403,11 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 			return nil, err
 		}
 	}
+	if !b.ctx.GetSessionVars().IsAutocommit() || b.ctx.GetSessionVars().InTxn() {
+		if !delete.IsMultiTable {
+			p = b.buildSelectLock(p, ast.SelectLockForUpdate)
+		}
+	}
 
 	if delete.Order != nil {
 		p, err = b.buildSort(ctx, p, delete.Order.Items, nil, nil)
@@ -3421,7 +3434,7 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 	}.Init(b.ctx)
 
 	del.names = p.OutputNames()
-	del.SelectPlan, _, err = DoOptimize(ctx, b.optFlag, p)
+	del.SelectPlan, _, err = DoOptimize(ctx, b.ctx, b.optFlag, p)
 	if err != nil {
 		return nil, err
 	}
@@ -3497,7 +3510,7 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 		}
 		tblID2Handle = del.cleanTblID2HandleMap(tblID2TableName, tblID2Handle, del.names)
 	}
-	tblID2table := make(map[int64]table.Table)
+	tblID2table := make(map[int64]table.Table, len(tblID2Handle))
 	for id := range tblID2Handle {
 		tblID2table[id], _ = b.is.TableByID(id)
 	}
@@ -3711,7 +3724,7 @@ func (b *PlanBuilder) buildWindowFunctionFrameBound(ctx context.Context, spec *a
 		for i, item := range orderByItems {
 			col := item.Col
 			bound.CalcFuncs[i] = col
-			bound.CmpFuncs[i] = expression.GetCmpFunction(col, col)
+			bound.CmpFuncs[i] = expression.GetCmpFunction(b.ctx, col, col)
 		}
 		return bound, nil
 	}
@@ -3759,7 +3772,7 @@ func (b *PlanBuilder) buildWindowFunctionFrameBound(ctx context.Context, spec *a
 		if err != nil {
 			return nil, err
 		}
-		bound.CmpFuncs[0] = expression.GetCmpFunction(orderByItems[0].Col, bound.CalcFuncs[0])
+		bound.CmpFuncs[0] = expression.GetCmpFunction(b.ctx, orderByItems[0].Col, bound.CalcFuncs[0])
 		return bound, nil
 	}
 	// When the order is asc:
@@ -3773,7 +3786,7 @@ func (b *PlanBuilder) buildWindowFunctionFrameBound(ctx context.Context, spec *a
 	if err != nil {
 		return nil, err
 	}
-	bound.CmpFuncs[0] = expression.GetCmpFunction(orderByItems[0].Col, bound.CalcFuncs[0])
+	bound.CmpFuncs[0] = expression.GetCmpFunction(b.ctx, orderByItems[0].Col, bound.CalcFuncs[0])
 	return bound, nil
 }
 
