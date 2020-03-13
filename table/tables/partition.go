@@ -133,6 +133,7 @@ type PartitionExpr struct {
 	*ForRangePruning
 }
 
+// ForRangePruning is used for range partition pruning.
 type ForRangePruning struct {
 	LessThan []int64
 	MaxValue bool
