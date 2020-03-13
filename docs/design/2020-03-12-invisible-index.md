@@ -33,15 +33,15 @@ Index has a great influence on the performance of the database. Whether there is
 
 ## Proposal
 
-Adding an option (visible or not) to the index. If it is not visible, it's called **Invisible Index**. Invisible Index cannot be used by the optimizer (with the `use_invisible_indexes` switch on), but the index will be maintained during DML operations. For a query statement, invisible index has the same effect as ignoring the index through Index Hint.
+Adding an option (visible or not) to the index. If it is not visible, it's called **Invisible Index**. Invisible Index cannot be used by the optimizer (with the `use_invisible_indexes` switch on), but the index is maintained during DML operations. For a query statement, invisible index has the same effect as ignoring the index through Index Hint.
 
-The invisible option of an index can be changed by using the following DDL statement:
+The option `INVISIBLE` of an index can be changed by using the following DDL statement:
 
 ```
 ALTER TABLE table_name ALTER INDEX index_name { INVISIBLE | VISIBLE };
 ```
 
-Or set invisible option when creating an index:
+Or set option `INVISIBLE` when creating an index:
 
 ```
 CREATE INDEX index_name ON table_name(key) [ INVISIBLE | VISIBLE ];
