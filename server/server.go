@@ -87,12 +87,13 @@ func init() {
 }
 
 var (
-	errUnknownFieldType  = terror.ClassServer.New(errno.ErrUnknownFieldType, errno.MySQLErrName[errno.ErrUnknownFieldType])
-	errInvalidSequence   = terror.ClassServer.New(errno.ErrInvalidSequence, errno.MySQLErrName[errno.ErrInvalidSequence])
-	errInvalidType       = terror.ClassServer.New(errno.ErrInvalidType, errno.MySQLErrName[errno.ErrInvalidType])
-	errNotAllowedCommand = terror.ClassServer.New(errno.ErrNotAllowedCommand, errno.MySQLErrName[errno.ErrNotAllowedCommand])
-	errAccessDenied      = terror.ClassServer.New(errno.ErrAccessDenied, errno.MySQLErrName[errno.ErrAccessDenied])
-	errConCount          = terror.ClassServer.New(errno.ErrConCount, errno.MySQLErrName[errno.ErrConCount])
+	errUnknownFieldType        = terror.ClassServer.New(errno.ErrUnknownFieldType, errno.MySQLErrName[errno.ErrUnknownFieldType])
+	errInvalidSequence         = terror.ClassServer.New(errno.ErrInvalidSequence, errno.MySQLErrName[errno.ErrInvalidSequence])
+	errInvalidType             = terror.ClassServer.New(errno.ErrInvalidType, errno.MySQLErrName[errno.ErrInvalidType])
+	errNotAllowedCommand       = terror.ClassServer.New(errno.ErrNotAllowedCommand, errno.MySQLErrName[errno.ErrNotAllowedCommand])
+	errAccessDenied            = terror.ClassServer.New(errno.ErrAccessDenied, errno.MySQLErrName[errno.ErrAccessDenied])
+	errConCount                = terror.ClassServer.New(errno.ErrConCount, errno.MySQLErrName[errno.ErrConCount])
+	errSecureTransportRequired = terror.ClassServer.New(errno.ErrSecureTransportRequired, errno.MySQLErrName[errno.ErrSecureTransportRequired])
 )
 
 // DefaultCapability is the capability of the server when it is created using the default configuration.
@@ -215,7 +216,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		atomic.StorePointer(&s.tlsConfig, unsafe.Pointer(tlsConfig))
 		logutil.BgLogger().Info("mysql protocol server secure connection is enabled", zap.Bool("client verification enabled", len(variable.SysVars["ssl_ca"].Value) > 0))
 	} else if cfg.Security.RequireSecureTransport {
-		return nil, errors.New("start with --require-secure-transport option, but have no available cert/key/ca, please check security - ssl* configuration")
+		return nil, errSecureTransportRequired.FastGenByArgs()
 	}
 
 	setSystemTimeZoneVariable()

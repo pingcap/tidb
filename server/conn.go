@@ -523,7 +523,7 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 			}
 		}
 	} else if config.GetGlobalConfig().Security.RequireSecureTransport {
-		return errors.New("secure transport is required")
+		return errSecureTransportRequired.FastGenByArgs()
 	}
 
 	// Read the remaining part of the packet.
