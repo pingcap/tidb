@@ -111,6 +111,9 @@ func (m *memDbBuffer) Set(k Key, v []byte) error {
 // Delete removes the entry from buffer with provided key.
 func (m *memDbBuffer) Delete(k Key) error {
 	m.db.Put(k, nil)
+	if m.Size() > int(m.bufferSizeLimit) {
+		return ErrTxnTooLarge.GenWithStackByArgs(m.Size())
+	}
 	return nil
 }
 
