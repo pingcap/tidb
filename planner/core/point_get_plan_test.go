@@ -371,3 +371,36 @@ func (s *testPointGetSuite) TestBatchPointGetPlanCache(c *C) {
 		"4 4",
 	))
 }
+
+func (s *testPointGetSuite) TestBatchPointGetPartition(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+
+	var err error
+	tk.Se, err = session.CreateSession4TestWithOpt(s.store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int primary key, b int) PARTITION BY HASH(a) PARTITIONS 4")
+	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3), (4, 4)")
+	tk.MustQuery("explain select * from t where a in (1, 2, 3, 4)").Check(testkit.Rows(
+		"Batch_Point_Get_1 4.00 root table:t, handle:[1 2 3 4], keep order:false, desc:false",
+	))
+	tk.MustQuery("select * from t where a in (1, 2, 3, 4)").Check(testkit.Rows("1 1", "2 2", "3 3", "4 4"))
+
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t(a int, b int, c int, primary key (a, b)) PARTITION BY HASH(a) PARTITIONS 4")
+	tk.MustExec("insert into t values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4)")
+	tk.MustQuery("explain select * from t where (a, b) in ((1, 1), (2, 2), (3, 3), (4, 4))").Check(testkit.Rows(
+		"Batch_Point_Get_1 4.00 root table:t, index:a b, keep order:false, desc:false",
+	))
+	tk.MustQuery("select * from t where (a, b) in ((1, 1), (2, 2), (3, 3), (4, 4))").
+		Check(testkit.Rows("1 1 1", "2 2 2", "3 3 3", "4 4 4"))
+}
