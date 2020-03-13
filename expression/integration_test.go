@@ -5226,6 +5226,13 @@ func (s *testIntegrationSuite) TestIssue12301(c *C) {
 	tk.MustQuery("select * from t where d = i").Check(testkit.Rows("123456789012 123456789012"))
 }
 
+func (s *testIntegrationSerialSuite) TestIssue15315(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustQuery("select '0-3261554956'+0.0").Check(testkit.Rows("0"))
+	tk.MustQuery("select cast('0-1234' as real)").Check(testkit.Rows("0"))
+}
+
 func (s *testIntegrationSuite) TestNotExistFunc(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
