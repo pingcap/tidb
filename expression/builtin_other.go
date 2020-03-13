@@ -14,6 +14,9 @@
 package expression
 
 import (
+	"strings"
+	"time"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
@@ -23,8 +26,6 @@ import (
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
-	"strings"
-	"time"
 )
 
 var (
