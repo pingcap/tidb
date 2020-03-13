@@ -268,6 +268,7 @@ func (s *Server) startHTTPServer() {
 			return
 		}
 		tlsConfig = s.setCNChecker(tlsConfig)
+		logutil.Logger(context.Background()).Info("HTTP/gRPC status server secure connection is enabled", zap.Bool("CN verification enabled", tlsConfig.VerifyPeerCertificate != nil))
 		ln = tls.NewListener(ln, tlsConfig)
 	}
 
