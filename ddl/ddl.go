@@ -57,6 +57,8 @@ const (
 
 	shardRowIDBitsMax = 15
 
+	batchAddingJobs = 10
+
 	// PartitionCountLimit is limit of the number of partitions in a table.
 	// Mysql maximum number of partitions is 8192, our maximum number of partitions is 1024.
 	// Reference linking https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations.html.
@@ -101,20 +103,19 @@ var (
 	errUnsupportedShardRowIDBits = terror.ClassDDL.New(codeUnsupportedShardRowIDBits, "unsupported shard_row_id_bits for table with primary key as row id.")
 	errBlobKeyWithoutLength      = terror.ClassDDL.New(codeBlobKeyWithoutLength, "BLOB/TEXT column '%-.192s' used in key specification without a key length")
 	errIncorrectPrefixKey        = terror.ClassDDL.New(codeIncorrectPrefixKey, "Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys")
-	errTooLongKey                = terror.ClassDDL.New(codeTooLongKey,
-		fmt.Sprintf("Specified key was too long; max key length is %d bytes", maxPrefixLength))
-	errKeyColumnDoesNotExits    = terror.ClassDDL.New(codeKeyColumnDoesNotExits, mysql.MySQLErrName[mysql.ErrKeyColumnDoesNotExits])
-	errUnknownTypeLength        = terror.ClassDDL.New(codeUnknownTypeLength, "Unknown length for type tp %d")
-	errUnknownFractionLength    = terror.ClassDDL.New(codeUnknownFractionLength, "Unknown Length for type tp %d and fraction %d")
-	errInvalidJobVersion        = terror.ClassDDL.New(codeInvalidJobVersion, "DDL job with version %d greater than current %d")
-	errFileNotFound             = terror.ClassDDL.New(codeFileNotFound, "Can't find file: './%s/%s.frm'")
-	errErrorOnRename            = terror.ClassDDL.New(codeErrorOnRename, "Error on rename of './%s/%s' to './%s/%s'")
-	errInvalidUseOfNull         = terror.ClassDDL.New(codeInvalidUseOfNull, "Invalid use of NULL value")
-	errTooManyFields            = terror.ClassDDL.New(codeTooManyFields, "Too many columns")
-	errInvalidSplitRegionRanges = terror.ClassDDL.New(codeInvalidRanges, "Failed to split region ranges")
-	errReorgPanic               = terror.ClassDDL.New(codeReorgWorkerPanic, "reorg worker panic.")
-	errFkColumnCannotDrop       = terror.ClassDDL.New(mysql.ErrFkColumnCannotDrop, mysql.MySQLErrName[mysql.ErrFkColumnCannotDrop])
-	errFKIncompatibleColumns    = terror.ClassDDL.New(mysql.ErrFKIncompatibleColumns, mysql.MySQLErrName[mysql.ErrFKIncompatibleColumns])
+	errTooLongKey                = terror.ClassDDL.New(codeTooLongKey, mysql.MySQLErrName[mysql.ErrTooLongKey])
+	errKeyColumnDoesNotExits     = terror.ClassDDL.New(codeKeyColumnDoesNotExits, mysql.MySQLErrName[mysql.ErrKeyColumnDoesNotExits])
+	errUnknownTypeLength         = terror.ClassDDL.New(codeUnknownTypeLength, "Unknown length for type tp %d")
+	errUnknownFractionLength     = terror.ClassDDL.New(codeUnknownFractionLength, "Unknown Length for type tp %d and fraction %d")
+	errInvalidJobVersion         = terror.ClassDDL.New(codeInvalidJobVersion, "DDL job with version %d greater than current %d")
+	errFileNotFound              = terror.ClassDDL.New(codeFileNotFound, "Can't find file: './%s/%s.frm'")
+	errErrorOnRename             = terror.ClassDDL.New(codeErrorOnRename, "Error on rename of './%s/%s' to './%s/%s'")
+	errInvalidUseOfNull          = terror.ClassDDL.New(codeInvalidUseOfNull, "Invalid use of NULL value")
+	errTooManyFields             = terror.ClassDDL.New(codeTooManyFields, "Too many columns")
+	errInvalidSplitRegionRanges  = terror.ClassDDL.New(codeInvalidRanges, "Failed to split region ranges")
+	errReorgPanic                = terror.ClassDDL.New(codeReorgWorkerPanic, "reorg worker panic.")
+	errFkColumnCannotDrop        = terror.ClassDDL.New(mysql.ErrFkColumnCannotDrop, mysql.MySQLErrName[mysql.ErrFkColumnCannotDrop])
+	errFKIncompatibleColumns     = terror.ClassDDL.New(mysql.ErrFKIncompatibleColumns, mysql.MySQLErrName[mysql.ErrFKIncompatibleColumns])
 
 	errOnlyOnRangeListPartition = terror.ClassDDL.New(codeOnlyOnRangeListPartition, mysql.MySQLErrName[mysql.ErrOnlyOnRangeListPartition])
 	// errWrongKeyColumn is for table column cannot be indexed.
@@ -278,10 +279,17 @@ type DDL interface {
 	GetHook() Callback
 }
 
+type limitJobTask struct {
+	job *model.Job
+	err chan error
+}
+
 // ddl is used to handle the statements that define the structure or schema of the database.
 type ddl struct {
-	m      sync.RWMutex
-	quitCh chan struct{}
+	m          sync.RWMutex
+	quitCh     chan struct{}
+	wg         sync.WaitGroup // It's only used to deal with data race in state_test and schema_test.
+	limitJobCh chan *limitJobTask
 
 	*ddlCtx
 	workers     map[workerType]*worker
@@ -386,7 +394,8 @@ func newDDL(ctx context.Context, etcdCli *clientv3.Client, store kv.Storage,
 	ddlCtx.mu.hook = hook
 	ddlCtx.mu.interceptor = &BaseInterceptor{}
 	d := &ddl{
-		ddlCtx: ddlCtx,
+		ddlCtx:     ddlCtx,
+		limitJobCh: make(chan *limitJobTask, batchAddingJobs),
 	}
 
 	d.start(ctx, ctxPool)
@@ -425,6 +434,20 @@ func (d *ddl) start(ctx context.Context, ctxPool *pools.ResourcePool) {
 	logutil.Logger(ddlLogCtx).Info("[ddl] start DDL", zap.String("ID", d.uuid), zap.Bool("runWorker", RunWorker))
 	d.quitCh = make(chan struct{})
 
+	d.wg.Add(1)
+	go func() {
+		defer d.wg.Done()
+		tidbutil.WithRecovery(
+			func() { d.limitDDLJobs() },
+			func(r interface{}) {
+				if r != nil {
+					logutil.Logger(ddlLogCtx).Error("[ddl] limit DDL jobs meet panic",
+						zap.String("ID", d.uuid), zap.Reflect("r", r), zap.Stack("stack trace"))
+					metrics.PanicCounter.WithLabelValues(metrics.LabelDDL).Inc()
+				}
+			})
+	}()
+
 	// If RunWorker is true, we need campaign owner and do DDL job.
 	// Otherwise, we needn't do that.
 	if RunWorker {
@@ -444,7 +467,7 @@ func (d *ddl) start(ctx context.Context, ctxPool *pools.ResourcePool) {
 				func(r interface{}) {
 					if r != nil {
 						logutil.Logger(w.logCtx).Error("[ddl] DDL worker meet panic", zap.String("ID", d.uuid))
-						metrics.PanicCounter.WithLabelValues(metrics.LabelDDL).Inc()
+						metrics.PanicCounter.WithLabelValues(metrics.LabelDDLWorker).Inc()
 					}
 				})
 			metrics.DDLCounter.WithLabelValues(fmt.Sprintf("%s_%s", metrics.CreateDDL, worker.String())).Inc()
@@ -474,6 +497,7 @@ func (d *ddl) close() {
 
 	startTime := time.Now()
 	close(d.quitCh)
+	d.wg.Wait()
 	d.ownerManager.Cancel()
 	d.schemaSyncer.CloseCleanWork()
 	err := d.schemaSyncer.RemoveSelfVersionPath()
@@ -579,7 +603,10 @@ func (d *ddl) asyncNotifyWorker(jobTp model.ActionType) {
 
 func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	// Get a global job ID and put the DDL job in the queue.
-	err := d.addDDLJob(ctx, job)
+	job.Query, _ = ctx.Value(sessionctx.QueryString).(string)
+	task := &limitJobTask{job, make(chan error)}
+	d.limitJobCh <- task
+	err := <-task.err
 	if err != nil {
 		return errors.Trace(err)
 	}

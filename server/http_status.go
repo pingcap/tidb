@@ -17,6 +17,8 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -253,15 +255,49 @@ func (s *Server) startHTTPServer() {
 	logutil.Logger(context.Background()).Info("for status and metrics report", zap.String("listening on addr", addr))
 	s.statusServer = &http.Server{Addr: addr, Handler: CorsHandler{handler: serverMux, cfg: s.cfg}}
 
-	if len(s.cfg.Security.ClusterSSLCA) != 0 {
-		err = s.statusServer.ListenAndServeTLS(s.cfg.Security.ClusterSSLCert, s.cfg.Security.ClusterSSLKey)
-	} else {
-		err = s.statusServer.ListenAndServe()
-	}
-
+	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		logutil.Logger(context.Background()).Info("listen failed", zap.Error(err))
+		return
 	}
+
+	if len(s.cfg.Security.ClusterSSLCA) != 0 {
+		tlsConfig, err := s.cfg.Security.ToTLSConfig()
+		if err != nil {
+			logutil.Logger(context.Background()).Error("invalid TLS config", zap.Error(err))
+			return
+		}
+		tlsConfig = s.setCNChecker(tlsConfig)
+		logutil.Logger(context.Background()).Info("HTTP/gRPC status server secure connection is enabled", zap.Bool("CN verification enabled", tlsConfig.VerifyPeerCertificate != nil))
+		ln = tls.NewListener(ln, tlsConfig)
+	}
+
+	err = s.statusServer.Serve(ln)
+	if err != nil {
+		logutil.Logger(context.Background()).Info("serve status port failed", zap.Error(err))
+	}
+}
+
+func (s *Server) setCNChecker(tlsConfig *tls.Config) *tls.Config {
+	if tlsConfig != nil && len(s.cfg.Security.ClusterVerifyCN) != 0 {
+		checkCN := make(map[string]struct{})
+		for _, cn := range s.cfg.Security.ClusterVerifyCN {
+			cn = strings.TrimSpace(cn)
+			checkCN[cn] = struct{}{}
+		}
+		tlsConfig.VerifyPeerCertificate = func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
+			for _, chain := range verifiedChains {
+				if len(chain) != 0 {
+					if _, match := checkCN[chain[0].Subject.CommonName]; match {
+						return nil
+					}
+				}
+			}
+			return errors.Errorf("client certificate authentication failed. The Common Name from the client certificate was not found in the configuration cluster-verify-cn with value: %s", s.cfg.Security.ClusterVerifyCN)
+		}
+		tlsConfig.ClientAuth = tls.RequireAndVerifyClientCert
+	}
+	return tlsConfig
 }
 
 // status of TiDB.
