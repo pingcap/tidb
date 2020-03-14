@@ -54,15 +54,15 @@ type slowQueryRetriever struct {
 	checker     *slowLogChecker
 
 	parsedSlowLogCh chan parsedSlowLog
-	test            bool
 }
 
 func (e *slowQueryRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
 	if !e.initialized {
-		err := e.initialize(ctx, sctx)
+		err := e.initialize(sctx)
 		if err != nil {
 			return nil, err
 		}
+		e.initializeAsyncParsing(ctx, sctx)
 	}
 
 	rows, retrieved, err := e.dataForSlowLog(ctx)
@@ -86,7 +86,7 @@ func (e *slowQueryRetriever) retrieve(ctx context.Context, sctx sessionctx.Conte
 	return retRows, nil
 }
 
-func (e *slowQueryRetriever) initialize(ctx context.Context, sctx sessionctx.Context) error {
+func (e *slowQueryRetriever) initialize(sctx sessionctx.Context) error {
 	var err error
 	var hasProcessPriv bool
 	if pm := privilege.GetPrivilegeManager(sctx); pm != nil {
@@ -103,14 +103,7 @@ func (e *slowQueryRetriever) initialize(ctx context.Context, sctx sessionctx.Con
 	}
 	e.initialized = true
 	e.files, err = e.getAllFiles(sctx, sctx.GetSessionVars().SlowQueryFile)
-	if err != nil {
-		return err
-	}
-	if !e.test {
-		e.parsedSlowLogCh = make(chan parsedSlowLog, 1)
-		go e.parseDataForSlowLog(ctx, sctx)
-	}
-	return nil
+	return err
 }
 
 func (e *slowQueryRetriever) close() error {
@@ -698,4 +691,9 @@ func (e *slowQueryRetriever) getFileEndTime(file *os.File) (time.Time, error) {
 			return t, errors.Errorf("malform slow query file %v", file.Name())
 		}
 	}
+}
+
+func (e *slowQueryRetriever) initializeAsyncParsing(ctx context.Context, sctx sessionctx.Context) {
+	e.parsedSlowLogCh = make(chan parsedSlowLog, 1)
+	go e.parseDataForSlowLog(ctx, sctx)
 }
