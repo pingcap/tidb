@@ -513,6 +513,18 @@ func (s *extractorSuite) TestClusterLogTableExtractor(c *C) {
 			level:     set.NewStringSet("debug", "info", "error"),
 			patterns:  []string{".*coprocessor.*", ".*txn=123.*"},
 		},
+		{
+			sql:       "select * from information_schema.cluster_log where (message regexp '.*pd.*' or message regexp '.*tidb.*' or message like '%tikv%')",
+			nodeTypes: set.NewStringSet(),
+			instances: set.NewStringSet(),
+			patterns:  []string{".*pd.*|.*tidb.*|.*tikv.*"},
+		},
+		{
+			sql:       "select * from information_schema.cluster_log where (level = 'debug' or level = 'ERROR')",
+			nodeTypes: set.NewStringSet(),
+			instances: set.NewStringSet(),
+			level:     set.NewStringSet("debug", "error"),
+		},
 	}
 	for _, ca := range cases {
 		logicalMemTable := s.getLogicalMemTable(c, se, parser, ca.sql)
