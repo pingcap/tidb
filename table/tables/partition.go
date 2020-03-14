@@ -16,6 +16,7 @@ package tables
 import (
 	"bytes"
 	"context"
+	stderr "errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -138,25 +139,33 @@ type ForRangePruning struct {
 	LessThan []int64
 	MaxValue bool
 	FnCol    ast.ExprNode
+	Unsigned bool
 }
 
 // makeLessThanData extracts the less than parts from 'partition p0 less than xx ... partitoin p1 less than ...'
-func makeLessThanData(pi *model.PartitionInfo) ([]int64, bool, error) {
-	var maxValue bool
+func makeLessThanData(pi *model.PartitionInfo, res *ForRangePruning) error {
 	lessThan := make([]int64, len(pi.Definitions))
 	for i := 0; i < len(pi.Definitions); i++ {
 		if strings.EqualFold(pi.Definitions[i].LessThan[0], "MAXVALUE") {
 			// Use a bool flag instead of math.MaxInt64 to avoid the corner cases.
-			maxValue = true
+			res.MaxValue = true
 		} else {
 			var err error
 			lessThan[i], err = strconv.ParseInt(pi.Definitions[i].LessThan[0], 10, 64)
+			var numErr *strconv.NumError
+			if stderr.As(err, &numErr) && numErr.Err == strconv.ErrRange {
+				var tmp uint64
+				tmp, err = strconv.ParseUint(pi.Definitions[i].LessThan[0], 10, 64)
+				lessThan[i] = int64(tmp)
+				res.Unsigned = true
+			}
 			if err != nil {
-				return nil, false, errors.WithStack(err)
+				return errors.WithStack(err)
 			}
 		}
 	}
-	return lessThan, maxValue, nil
+	res.LessThan = lessThan
+	return nil
 }
 
 // rangePartitionString returns the partition string for a range typed partition.
@@ -232,18 +241,16 @@ func generatePartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 
 	var rangePruning *ForRangePruning
 	if len(pi.Columns) == 0 {
-		lessThan, maxValue, err := makeLessThanData(pi)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
 		stmts, _, err := parser.New().Parse("select "+pi.Expr, "", "")
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		rangePruning = &ForRangePruning{
-			LessThan: lessThan,
-			MaxValue: maxValue,
-			FnCol:    stmts[0].(*ast.SelectStmt).Fields.Fields[0].Expr,
+			FnCol: stmts[0].(*ast.SelectStmt).Fields.Fields[0].Expr,
+		}
+		err = makeLessThanData(pi, rangePruning)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
 	}
 
