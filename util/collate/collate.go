@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
 )
 
@@ -63,6 +64,8 @@ type Collator interface {
 	Compare(a, b string, opt CollatorOption) int
 	// Key returns the collate key for str. If the collation is padding, make sure the PadLen >= len(rune[]str) in opt.
 	Key(str string, opt CollatorOption) []byte
+	// Pattern get a collation-aware WildcardPattern.
+	Pattern() WildcardPattern
 }
 
 // EnableNewCollations enables the new collation.
@@ -158,8 +161,13 @@ func (bc *binCollator) Key(str string, opt CollatorOption) []byte {
 	return []byte(str)
 }
 
+// Pattern implements Collator interface.
+func (bc *binCollator) Pattern() WildcardPattern {
+	return &binPattern{}
+}
+
 // CollationID2Name return the collation name by the given id.
-// If the id is not found in the map, we reutrn the default one directly.
+// If the id is not found in the map, the default collation is returned.
 func CollationID2Name(id int32) string {
 	name, ok := mysql.Collations[uint8(id)]
 	if !ok {
@@ -189,6 +197,35 @@ func (bpc *binPaddingCollator) Compare(a, b string, opt CollatorOption) int {
 
 func (bpc *binPaddingCollator) Key(str string, opt CollatorOption) []byte {
 	return []byte(truncateTailingSpace(str))
+}
+
+// Pattern implements Collator interface.
+// Notice that trailing spaces are significant.
+func (bpc *binPaddingCollator) Pattern() WildcardPattern {
+	return &binPattern{}
+}
+
+// WildcardPattern is the interface used for wildcard pattern match.
+type WildcardPattern interface {
+	// Compile compiles the patternStr with specified escape character.
+	Compile(patternStr string, escape byte)
+	// DoMatch tries to match the str with compiled pattern, `Compile()` must be called before calling it.
+	DoMatch(str string) bool
+}
+
+type binPattern struct {
+	patChars []byte
+	patTypes []byte
+}
+
+// Compile implements WildcardPattern interface.
+func (p *binPattern) Compile(patternStr string, escape byte) {
+	p.patChars, p.patTypes = stringutil.CompilePattern(patternStr, escape)
+}
+
+// Compile implements WildcardPattern interface.
+func (p *binPattern) DoMatch(str string) bool {
+	return stringutil.DoMatch(str, p.patChars, p.patTypes)
 }
 
 func init() {

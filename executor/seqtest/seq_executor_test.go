@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	ddltestutil "github.com/pingcap/tidb/ddl/testutil"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -1213,7 +1214,7 @@ func (s *seqTestSuite) TestAutoRandIDRetry(c *C) {
 	tk.MustExec("insert into t values ()")
 	c.Assert(failpoint.Enable(fpName, `return(true)`), IsNil)
 	// Insertion failure will skip the 6 in retryInfo.
-	tk.MustGetErrCode("commit", mysql.ErrTxnRetryable)
+	tk.MustGetErrCode("commit", errno.ErrTxnRetryable)
 	c.Assert(failpoint.Disable(fpName), IsNil)
 
 	tk.MustExec("insert into t values ()")
