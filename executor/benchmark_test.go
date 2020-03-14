@@ -241,6 +241,8 @@ func buildExecutorWithShuffle(ctx sessionctx.Context, plan core.PhysicalPlan,
 	}.Init(ctx, nil, 0)
 	shuffleSplitter.SetChildren(src)
 
+	plan.SetChildren(shuffleSplitter)
+
 	shuffleMerger := core.PhysicalShuffle{
 		Concurrency:  concurrency,
 		MergerType:   mergerType,
@@ -1672,7 +1674,7 @@ func benchmarkSortExec(b *testing.B, cas *sortCase) {
 func BenchmarkSortExec(b *testing.B) {
 	b.ReportAllocs()
 	cas := defaultSortTestCase()
-	concs := []int{1, 2, 4}
+	concs := []int{1, 2, 3, 4}
 	// all random data
 	cas.ndvs = []int{0, 0}
 	cas.orderByIdx = []int{0, 1}
