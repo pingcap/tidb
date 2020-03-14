@@ -112,11 +112,16 @@ var (
 	TxnTotalSizeLimit uint64 = config.DefTxnTotalSizeLimit
 )
 
-// Retriever is the interface wraps the basic Get and Seek methods.
-type Retriever interface {
+// Getter is the interface for the Get method.
+type Getter interface {
 	// Get gets the value for key k from kv store.
 	// If corresponding kv pair does not exist, it returns nil and ErrNotExist.
 	Get(ctx context.Context, k Key) ([]byte, error)
+}
+
+// Retriever is the interface wraps the basic Get and Seek methods.
+type Retriever interface {
+	Getter
 	// Iter creates an Iterator positioned on the first entry that k <= entry's key.
 	// If such entry is not found, it returns an invalid Iterator with no error.
 	// It yields only keys that < upperBound. If upperBound is nil, it means the upperBound is unbounded.
@@ -204,8 +209,14 @@ type LockCtx struct {
 	LockKeysDuration      *time.Duration
 	LockKeysCount         *int32
 	ReturnValues          bool
-	Values                map[string][]byte
+	Values                map[string]ReturnedValue
 	ValuesLock            sync.Mutex
+}
+
+// ReturnedValue pairs the Value and AlreadyLocked flag for PessimisticLock return values result.
+type ReturnedValue struct {
+	Value         []byte
+	AlreadyLocked bool
 }
 
 // Client is used to send request to KV layer.
