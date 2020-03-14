@@ -503,6 +503,14 @@ func (s *inspectionResultSuite) TestCriticalErrorInspection(c *C) {
 			types.MakeDatums(datetime("2020-02-12 10:36:00"), "tikv-0", "raft", 2.0),
 			types.MakeDatums(datetime("2020-02-12 10:37:00"), "tikv-1", "reason3", 3.0),
 		},
+		// columns: time, instance, job, value
+		"up": {
+			types.MakeDatums(datetime("2020-02-12 10:35:00"), "tikv-0", "tikv", 1.0),
+			types.MakeDatums(datetime("2020-02-12 10:36:00"), "tikv-0", "tikv", 0.0),
+			types.MakeDatums(datetime("2020-02-12 10:37:00"), "tidb-0", "tidb", 0.0),
+			types.MakeDatums(datetime("2020-02-12 10:37:00"), "tidb-1", "tidb", 0.0),
+			types.MakeDatums(datetime("2020-02-12 10:38:00"), "tidb-1", "tidb", 1.0),
+		},
 	}
 
 	ctx := context.WithValue(context.Background(), "__mockMetricsTableData", mockData)
