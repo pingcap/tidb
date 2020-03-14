@@ -2977,6 +2977,7 @@ func (s *testSessionSuite2) TestLoadClientInteractive(c *C) {
 	id := atomic.AddUint64(&connectionID, 1)
 	tk.Se.SetConnectionID(id)
 	tk.Se.GetSessionVars().ClientCapability = tk.Se.GetSessionVars().ClientCapability | mysql.ClientInteractive
+	tk.Se.GetSessionVars().CommonGlobalLoaded = false
 	tk.MustQuery("select @@wait_timeout").Check(testkit.Rows("28800"))
 }
 
