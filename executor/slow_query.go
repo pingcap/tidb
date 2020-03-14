@@ -122,10 +122,6 @@ type parsedSlowLog struct {
 }
 
 func (e *slowQueryRetriever) parseDataForSlowLog(ctx context.Context, sctx sessionctx.Context) {
-	if len(e.files) == 0 {
-		close(e.parsedSlowLogCh)
-		return
-	}
 	for e.fileIdx < len(e.files) {
 		select {
 		case <-ctx.Done():
