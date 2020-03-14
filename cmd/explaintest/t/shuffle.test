@@ -8,7 +8,7 @@ create table t4 (a int, b int, c int, index idx(a, b), primary key(a));
 create index expr_idx on t4((a+b+1));
 
 set @@session.tidb_window_concurrency = 4;
-set @@session.tidb_executors_concurrency = 4;
+set @@session.tidb_shuffle_concurrency = 4;
 
 explain select * from t1 order by c2;
 explain select * from t2 order by c2;

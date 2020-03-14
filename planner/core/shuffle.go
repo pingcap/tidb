@@ -19,8 +19,68 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 )
 
-func isExecutorsParallelEnable(ctx sessionctx.Context) bool {
-	return ctx.GetSessionVars().ExecutorsConcurrency > 1
+////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Shuffle redistributes data, to run executors in a parallel manner.
+// It changes the data property from one distribution to another, to meet the requirements of parallel executing.
+//
+//                                +------------------------------+
+//                                |            Parent            |
+//                                +---------------^--------------+
+//                                                |
+//     +------------------------------------------^-------------------------------------------+
+//     |                                       merger#0                                       |
+//     |                                          |                                           |
+//     |                   +----------+-----------+-----+          <Shuffle(Full-Merge)>      |
+//     |                   ^          ^                 ^                (M x 1)              |
+//     |              splitter#1     ...           splitter#M                                 |
+//     +--------------------------------------------------------------------------------------+
+//                         ^          ^                 ^
+//                         |          |                 |
+//                         |          |                 |
+//                         |          |                 |
+//                 +---------------+             +---------------+
+//                 | Executor(s) A |     ....    | Executor(s) A | (M Concurrency)
+//                 +---------------+             +---------------+
+//                         ^          ^                 ^
+//                         |          |                 |
+//                         |          |                 |
+//                         |          |                 |
+//     +-------------------^----------^-----------------^-------------------------------------+
+//     |                merger#1   merger#2     ...  merger#M                                 |
+//     |                   ^          ^                 ^                                     |
+//     |                +--+--------+-+--------- ... ---+---+     <Shuffle(Repartitioning)>   |
+//     |                ^           ^            ...        ^             (N x M)             |
+//     |           splitter#1  splitter#2        ...    splitter#N                            |
+//     +--------------------------------------------------------------------------------------+
+//                      ^           ^             ^         ^
+//                      |           |             |         |
+//                      |           |             |         |
+//                      |           |             |         |
+//              +---------------+                    +---------------+
+//              | Executor(s) B |        .....       | Executor(s) B | (N Concurrency)
+//              +---------------+                    +---------------+
+//                      ^           ^             ^         ^
+//                      |           |             |         |
+//                      |           |             |         |
+//                      |           |             |         |
+//     +----------------^-----------^-------------^---------^---------------------------------+
+//     |            merger#1    merger#2         ...    merger#N                              |
+//     |                ^           ^            ...        ^                                 |
+//     |                |           |            ...        |   <Shuffle(Init-partitioning)>  |
+//     |                +-----------+------v------+---------+             (1 x N)             |
+//     |                               splitter#0                                             |
+//     +--------------------------------------------------------------------------------------+
+//                                         ^
+//                                         |
+//                         +---------------v---------------+
+//                         |          Data Source          |
+//                         +-------------------------------+
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+func getShuffleConcurrency(ctx sessionctx.Context) (concurrency int, enabled bool) {
+	concurrency = ctx.GetSessionVars().ShuffleConcurrency
+	return concurrency, concurrency > 1
 }
 
 type parallelLogicalPlanHelper struct {
@@ -34,7 +94,7 @@ func (p *parallelLogicalPlanHelper) preparePossiblePartitionProperties(
 	childrenPartitionProperties [][]*property.PhysicalProperty,
 	needInitialPartition bool,
 ) []*property.PhysicalProperty {
-	if ctx.GetSessionVars().ExecutorsConcurrency <= 1 {
+	if _, enabled := getShuffleConcurrency(ctx); !enabled {
 		return nil
 	}
 
@@ -146,8 +206,8 @@ func (p *parallelLogicalPlanHelper) exhaustParallelPhysicalPlans(
 	ctx sessionctx.Context, lp LogicalPlan, prop *property.PhysicalProperty,
 	options exhaustParallelPhysicalPlansOptions,
 ) []PhysicalPlan {
-	concurrency := ctx.GetSessionVars().ExecutorsConcurrency
-	if concurrency <= 1 {
+	concurrency, enabled := getShuffleConcurrency(ctx)
+	if !enabled {
 		return nil
 	}
 	if len(p.possibleChildrenProperties) == 0 {
@@ -211,7 +271,7 @@ OUTER:
 
 // matchPhysicalProperty match parent required property and delivering property, and enforce Shuffle if necessary.
 func matchPhysicalProperty(pp PhysicalPlan, requiredProperty *property.PhysicalProperty, tsk task, ctx sessionctx.Context) task {
-	if !isExecutorsParallelEnable(ctx) {
+	if _, enabled := getShuffleConcurrency(ctx); !enabled {
 		return tsk
 	}
 	if tsk.plan() == nil {
@@ -287,8 +347,10 @@ func setShuffleMergeByRandom(shuffle *PhysicalShuffle, concurrency int) {
 	shuffle.MergerType = ShuffleRandomMergerType
 }
 
+// enforceInitialPartition enforces "initial-partition" Shuffle.
+// "initial-partition" splits tuples from a serial executors to partitions.
 func enforceInitialPartition(pp PhysicalPlan, requiredProperty *property.PhysicalProperty, ctx sessionctx.Context) *PhysicalShuffle {
-	concurrency := ctx.GetSessionVars().ExecutorsConcurrency
+	concurrency, _ := getShuffleConcurrency(ctx)
 	shuffle := newPhysicalShuffle(pp, requiredProperty, ctx)
 	if len(requiredProperty.PartitionGroupingCols) > 0 {
 		setShuffleSplitByHash(shuffle, concurrency, requiredProperty.PartitionGroupingCols)
@@ -299,8 +361,10 @@ func enforceInitialPartition(pp PhysicalPlan, requiredProperty *property.Physica
 	return shuffle
 }
 
+// enforceFullMerge enforces "full-merge" Shuffle.
+// "full-merge" merges tuples from partitions to one stream for serial executors.
 func enforceFullMerge(pp PhysicalPlan, requiredProperty *property.PhysicalProperty, deliveringProperty *property.PhysicalProperty, ctx sessionctx.Context) *PhysicalShuffle {
-	concurrency := ctx.GetSessionVars().ExecutorsConcurrency
+	concurrency, _ := getShuffleConcurrency(ctx)
 	_, isPhysicalSort := pp.(*PhysicalSort)
 	shuffle := newPhysicalShuffle(pp, requiredProperty, ctx)
 	setShuffleNoneSplit(shuffle)
@@ -321,8 +385,10 @@ func matchGlobalPhysicalProperty(requiredProperty *property.PhysicalProperty, de
 	return including
 }
 
+// enforceRepartition enforces "repartition" Shuffle.
+// "repartition" shuffles partitions from one distribution to another.
 func enforceRepartition(pp PhysicalPlan, requiredProperty *property.PhysicalProperty, deliveringProperty *property.PhysicalProperty, ctx sessionctx.Context) *PhysicalShuffle {
-	concurrency := ctx.GetSessionVars().ExecutorsConcurrency
+	concurrency, _ := getShuffleConcurrency(ctx)
 	_, isPhysicalSort := pp.(*PhysicalSort)
 	shuffle := newPhysicalShuffle(pp, requiredProperty, ctx)
 	setShuffleSplitByHash(shuffle, concurrency, requiredProperty.PartitionGroupingCols)

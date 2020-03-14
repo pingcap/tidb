@@ -277,7 +277,7 @@ func (s *testSuite2) TestMergeJoinInDisk(c *C) {
 func (s *testSuite2) TestMergeJoin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_executors_concurrency=1")
+	tk.MustExec("set @@tidb_shuffle_concurrency=1")
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("drop table if exists t1")

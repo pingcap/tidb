@@ -679,7 +679,7 @@ func NewSessionVars() *SessionVars {
 		HashAggPartialConcurrency:  DefTiDBHashAggPartialConcurrency,
 		HashAggFinalConcurrency:    DefTiDBHashAggFinalConcurrency,
 		WindowConcurrency:          DefTiDBWindowConcurrency,
-		ExecutorsConcurrency:       DefTiDBExecutorsConcurrency,
+		ShuffleConcurrency:         DefTiDBShuffleConcurrency,
 	}
 	vars.MemQuota = MemQuota{
 		MemQuotaQuery: config.GetGlobalConfig().MemQuotaQuery,
@@ -1054,8 +1054,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.HashAggFinalConcurrency = tidbOptPositiveInt32(val, DefTiDBHashAggFinalConcurrency)
 	case TiDBWindowConcurrency:
 		s.WindowConcurrency = tidbOptPositiveInt32(val, DefTiDBWindowConcurrency)
-	case TiDBExecutorsConcurrency:
-		s.ExecutorsConcurrency = tidbOptPositiveInt32(val, DefTiDBExecutorsConcurrency)
+	case TiDBShuffleConcurrency:
+		s.ShuffleConcurrency = tidbOptPositiveInt32(val, DefTiDBShuffleConcurrency)
 	case TiDBDistSQLScanConcurrency:
 		s.DistSQLScanConcurrency = tidbOptPositiveInt32(val, DefDistSQLScanConcurrency)
 	case TiDBIndexSerialScanConcurrency:
@@ -1310,9 +1310,9 @@ type Concurrency struct {
 	// IndexSerialScanConcurrency is the number of concurrent index serial scan worker.
 	IndexSerialScanConcurrency int
 
-	// ExecutorsConcurrency is the number of concurrent workers for parallel executors.
-	// In the new parallel framework, specific executor variable (e.g. `WindowConcurrency`) is just a parallel switch.
-	ExecutorsConcurrency int
+	// ShuffleConcurrency is the number of concurrent workers for parallel executors, driven by `Shuffle`.
+	// In the new parallel framework, specific executor variable (e.g. `WindowConcurrency`) is just a switch.
+	ShuffleConcurrency int
 }
 
 // MemQuota defines memory quota values.

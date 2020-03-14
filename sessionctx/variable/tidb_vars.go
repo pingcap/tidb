@@ -254,8 +254,8 @@ const (
 	// tidb_window_concurrency is used for window parallel executor.
 	TiDBWindowConcurrency = "tidb_window_concurrency"
 
-	// tidb_executor_concurrency is used for parallel executors.
-	TiDBExecutorsConcurrency = "tidb_executors_concurrency"
+	// tidb_shuffle_concurrency is used for `Shuffle`.
+	TiDBShuffleConcurrency = "tidb_shuffle_concurrency"
 
 	// tidb_backoff_lock_fast is used for tikv backoff base time in milliseconds.
 	TiDBBackoffLockFast = "tidb_backoff_lock_fast"
@@ -427,7 +427,7 @@ const (
 	DefTiDBHashAggPartialConcurrency   = 4
 	DefTiDBHashAggFinalConcurrency     = 4
 	DefTiDBWindowConcurrency           = 4
-	DefTiDBExecutorsConcurrency        = 4
+	DefTiDBShuffleConcurrency          = 4
 	DefTiDBForcePriority               = mysql.NoPriority
 	DefTiDBUseRadixJoin                = false
 	DefEnableWindowFunction            = true

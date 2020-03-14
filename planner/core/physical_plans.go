@@ -570,39 +570,41 @@ type PhysicalWindow struct {
 
 // PhysicalShuffle represents a Shuffle plan.
 // Between the Shuffles, executors are running in a parallel manner.
-// Take `Window` operator for example:
-//  Window -> Sort -> DataSource
-//  ==> Shuffle(this) -> Window -> Sort -> Shuffle(child) -> DataSource, will be separated into:
-//      └─> Shuffle(this): for main thread
-//      └─> Window -> Sort -> stub: for workers
-//      └─> Shuffle(child) -> DataSource: for `fetchDataAndSplit` thread
 type PhysicalShuffle struct {
 	basePhysicalPlan
 
-	Concurrency  int
-	MergerType   ShuffleMergerType
+	// Concurrency is the degree of parallelism of children executors.
+	Concurrency int
+	// MergerType is the type of merger, which merges tuples from children executors.
+	MergerType ShuffleMergerType
+	// MergeByItems used by some merger, e.g. `MergeSortMerger`.
 	MergeByItems []property.ItemExpression
 
-	FanOut       int
+	// FanOut the number of partitions which Shuffle should split tuples to.
+	// And `FanOut` should be the same as the degree of parallelism of parent executors.
+	FanOut int
+	// SplitterType is the type of splitter, which splits tuples for parent executors.
 	SplitterType ShuffleSplitterType
+	// SplitByItems used by some splitter, e.g. `HashSpliter`.
 	SplitByItems []*expression.Column
 }
 
-// ScaleStats scales stats info according to concurrency & fanout.
+// ScaleStats scales stats info according to Concurrency & FanOut,
+// to provide the estimated `RowCount` for parent executor.
 func (p *PhysicalShuffle) ScaleStats() {
-	// Stats info divided by `FanOut`, as each worker of parent get rows splitted to `1 / FanOut`.
-	// And multiply by `Concurrency`, as each worker of parent get rows merged from `Concurrency` children.
+	// Stats info is divided by `FanOut`, as each worker of parent get tuples splitted to `1 / FanOut`.
+	// And is multiplied by `Concurrency`, as each worker of parent get tuples merged from `Concurrency` children.
 	p.stats = p.stats.Scale((float64)(p.Concurrency) / (float64)(p.FanOut))
 }
 
-// ShuffleSplitterType is the type of `Shuffle` executor splitter, which splits data source into partitions.
+// ShuffleSplitterType is the type of `Shuffle` executor splitter, which splits children tuples into partitions.
 type ShuffleSplitterType int
 
 const (
 	// ShuffleNoneSplitterType is used for FullMerge (i.e. parent is serial executing, so splitting is not necessary).
 	// Should be 0 as default value.
 	ShuffleNoneSplitterType = 0
-	// ShuffleRandomSplitterType splits data source by the whole chunk, resulting random order.
+	// ShuffleRandomSplitterType splits tuples by chunks, resulting random order.
 	ShuffleRandomSplitterType = iota + 10
 	// ShuffleHashSplitterType splits by hash.
 	ShuffleHashSplitterType
@@ -621,16 +623,16 @@ func getShuffleSplitterName4Explain(tp ShuffleSplitterType) string {
 	}
 }
 
-// ShuffleMergerType is the type of `Shuffle` executor merger, which merges results from partitions.
+// ShuffleMergerType is the type of `Shuffle` merger, which merges results from children partitions.
 type ShuffleMergerType int
 
 const (
 	// ShuffleNoneMergerType is used for initial partitioning (i.e. child is serial executing, so merging is not necessary).
 	// Should be 0 as default value.
 	ShuffleNoneMergerType = 0
-	// ShuffleRandomMergerType merges results by the whole chunk, resulting random order.
+	// ShuffleRandomMergerType merges results by the chunk, resulting random order.
 	ShuffleRandomMergerType = iota + 10
-	// ShuffleMergeSortMergerType merges results by `Merge-Sort`
+	// ShuffleMergeSortMergerType merges tuples by `Merge-Sort`
 	ShuffleMergeSortMergerType
 )
 
@@ -647,14 +649,13 @@ func getShuffleMergerName4Explain(tp ShuffleMergerType) string {
 	}
 }
 
-// PhysicalShuffleDataSourceStub represents a data source stub of `PhysicalShuffle`,
-// and actually, is executed by `executor.shuffleWorker`.
+// PhysicalShuffleDataSourceStub represents a data source stub of `PhysicalShuffle`.
 type PhysicalShuffleDataSourceStub struct {
 	physicalSchemaProducer
 
 	// WorkerIdx represents worker index.
 	WorkerIdx int
-	// ChildShuffleExec points to `executor.ShuffleExec`.
+	// ChildShuffleExec points to child `executor.ShuffleExec`.
 	ChildShuffleExec unsafe.Pointer
 }
 

@@ -7,7 +7,7 @@ create table t3 (a bigint, b bigint, c bigint, d bigint);
 create table t4 (a int, b int, c int, index idx(a, b), primary key(a));
 create index expr_idx on t4((a+b+1));
 set @@session.tidb_window_concurrency = 4;
-set @@session.tidb_executors_concurrency = 4;
+set @@session.tidb_shuffle_concurrency = 4;
 explain select * from t1 order by c2;
 id	estRows	task	operator info
 Shuffle_16	10000.00	root	execution info: concurrency:4, fan out:1, splitter:none, merger:merge-sort(test.t1.c2)

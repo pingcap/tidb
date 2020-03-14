@@ -3,7 +3,7 @@ drop table if exists t;
 create table t (a int, b int, c timestamp, index idx(a));
 set @@tidb_enable_window_function = 1;
 set @@session.tidb_window_concurrency = 1;
-set @@session.tidb_executors_concurrency = 1;
+set @@session.tidb_shuffle_concurrency = 1;
 explain select sum(a) over() from t;
 id	estRows	task	operator info
 Projection_7	10000.00	root	Column#6
@@ -52,7 +52,7 @@ Projection_7	10000.00	root	Column#6
     └─TableReader_10	10000.00	root	data:TableFullScan_9
       └─TableFullScan_9	10000.00	cop[tikv]	table:t, keep order:false, stats:pseudo
 set @@session.tidb_window_concurrency = 4;
-set @@session.tidb_executors_concurrency = 4;
+set @@session.tidb_shuffle_concurrency = 4;
 explain select sum(a) over() from t;
 id	estRows	task	operator info
 Projection_7	10000.00	root	Column#6

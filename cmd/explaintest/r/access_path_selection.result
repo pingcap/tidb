@@ -5,7 +5,7 @@ KEY `IDX_a` (`a`),
 KEY `IDX_b` (`b`),
 KEY `IDX_ab` (`a`, `b`)
 );
-set @@session.tidb_executors_concurrency = 1;
+set @@session.tidb_shuffle_concurrency = 1;
 explain select a from access_path_selection where a < 3;
 id	estRows	task	operator info
 IndexReader_6	3323.33	root	index:IndexRangeScan_5

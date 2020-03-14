@@ -1108,7 +1108,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 	isInternal := s.isInternal()
 	if isInternal {
 		sessionExecuteParseDurationInternal.Observe(durParse.Seconds())
-		s.GetSessionVars().ExecutorsConcurrency = 1 // disable executors concurrency for internal sessions.
+		s.GetSessionVars().ShuffleConcurrency = 1 // disable shuffle concurrency for internal sessions.
 	} else {
 		sessionExecuteParseDurationGeneral.Observe(durParse.Seconds())
 	}
@@ -1544,8 +1544,9 @@ func CreateSession4TestWithOpt(store kv.Storage, opt *Opt) (Session, error) {
 		s.GetSessionVars().InitChunkSize = 2
 		s.GetSessionVars().MaxChunkSize = 32
 
-		// disable executors_concurrency by default, and enable for specific shuffle test cases.
-		_, err = s.Execute(context.Background(), "set @@tidb_executors_concurrency = 1")
+		// Disable `tidb_shuffle_concurrency` by default, and enable for specific shuffle test cases.
+		// `session.Execute` invokes `loadCommonGlobalVariablesIfNeeded` and overrides `s.GetSessionVars().ShuffleConcurrency`, so set variable by SQL here.
+		_, err = s.Execute(context.Background(), "set @@tidb_shuffle_concurrency = 1")
 	}
 	return s, err
 }
@@ -1901,7 +1902,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBHashAggPartialConcurrency,
 	variable.TiDBHashAggFinalConcurrency,
 	variable.TiDBWindowConcurrency,
-	variable.TiDBExecutorsConcurrency,
+	variable.TiDBShuffleConcurrency,
 	variable.TiDBBackoffLockFast,
 	variable.TiDBBackOffWeight,
 	variable.TiDBConstraintCheckInPlace,
