@@ -524,8 +524,8 @@ func (s *inspectionResultSuite) TestCriticalErrorInspection(c *C) {
 	result := tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute inspect SQL failed"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0), Commentf("unexpected warnings: %+v", tk.Se.GetSessionVars().StmtCtx.GetWarnings()))
 	result.Check(testkit.Rows(
-		"server-down tidb-1  tidb tidb-1 disconnect with prometheus around time '2020-02-12 10:37:00.000000'",
 		"server-down tikv-0  tikv tikv-0 disconnect with prometheus around time '2020-02-12 10:36:00.000000'",
+		"server-down tidb-1  tidb tidb-1 disconnect with prometheus around time '2020-02-12 10:37:00.000000'",
 		"channel-is-full tikv-1 9.00(db1, type2) the total number of errors about 'channel-is-full' is too many",
 		"coprocessor-is-busy tikv-1 9.00(db1) the total number of errors about 'coprocessor-is-busy' is too many",
 		"channel-is-full tikv-0 7.00(db2, type1) the total number of errors about 'channel-is-full' is too many",

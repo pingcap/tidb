@@ -478,7 +478,7 @@ func (criticalErrorInspection) inspectForServerDown(ctx context.Context, sctx se
 	condition := filter.timeRange.Condition()
 	sql := fmt.Sprintf(`select t1.job,t1.instance, t2.min_time from
 		(select instance,job from metrics_schema.up %[1]s group by instance,job having max(value)-min(value)>0) as t1 join
-		(select instance,min(time) as min_time from metrics_schema.up %[1]s and value=0 group by instance,job) as t2 on t1.instance=t2.instance;`, condition)
+		(select instance,min(time) as min_time from metrics_schema.up %[1]s and value=0 group by instance,job) as t2 on t1.instance=t2.instance order by job`, condition)
 	rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithContext(ctx, sql)
 	if err != nil {
 		sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("execute '%s' failed: %v", sql, err))
@@ -497,7 +497,7 @@ func (criticalErrorInspection) inspectForServerDown(ctx context.Context, sctx se
 			expected: "",
 			severity: "critical",
 			detail:   detail,
-			degree:   math.MaxFloat64 - float64(len(results)),
+			degree:   10000 + float64(len(results)),
 		}
 		results = append(results, result)
 	}
@@ -520,7 +520,7 @@ func (criticalErrorInspection) inspectForServerDown(ctx context.Context, sctx se
 			expected: "",
 			severity: "critical",
 			detail:   detail,
-			degree:   math.MaxFloat64 - float64(len(results)),
+			degree:   10000 + float64(len(results)),
 		}
 		results = append(results, result)
 	}
