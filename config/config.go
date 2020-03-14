@@ -282,7 +282,8 @@ func (s *Security) ToTLSConfig() (tlsConfig *tls.Config, err error) {
 			return
 		}
 		tlsConfig = &tls.Config{
-			RootCAs: certPool,
+			RootCAs:   certPool,
+			ClientCAs: certPool,
 		}
 
 		if len(s.ClusterSSLCert) != 0 && len(s.ClusterSSLKey) != 0 {
@@ -507,7 +508,7 @@ var defaultConf = Config{
 	TokenLimit:                   1000,
 	OOMUseTmpStorage:             true,
 	TempStoragePath:              filepath.Join(os.TempDir(), "tidb", "tmp-storage"),
-	OOMAction:                    "log",
+	OOMAction:                    OOMActionCancel,
 	MemQuotaQuery:                1 << 30,
 	EnableStreaming:              false,
 	EnableBatchDML:               false,
@@ -708,6 +709,22 @@ func InitializeConfig(confPath string, configCheck, configStrict bool, reloadFun
 		}
 	}
 	enforceCmdArgs(cfg)
+
+	if err := cfg.Valid(); err != nil {
+		if !filepath.IsAbs(confPath) {
+			if tmp, err := filepath.Abs(confPath); err == nil {
+				confPath = tmp
+			}
+		}
+		fmt.Fprintln(os.Stderr, "load config file:", confPath)
+		fmt.Fprintln(os.Stderr, "invalid config", err)
+		os.Exit(1)
+	}
+	if configCheck {
+		fmt.Println("config check successful")
+		os.Exit(0)
+	}
+
 	globalConfHandler, err = NewConfHandler(confPath, cfg, reloadFunc, nil)
 	terror.MustNil(err)
 	globalConfHandler.Start()
