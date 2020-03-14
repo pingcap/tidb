@@ -267,5 +267,7 @@ func (s *testEvaluatorSuite) TestSetVarFromColumn(c *C) {
 	sessionVars := s.ctx.GetSessionVars()
 	sessionVars.UsersLock.RLock()
 	defer sessionVars.UsersLock.RUnlock()
-	c.Assert(sessionVars.Users["a"], Equals, "a")
+	sessionVar, ok := sessionVars.Users["a"]
+	c.Assert(ok, Equals, true)
+	c.Assert(sessionVar.GetString(), Equals, "a")
 }
