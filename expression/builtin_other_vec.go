@@ -187,7 +187,8 @@ func (b *builtinSetVarSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 		}
 		varName := strings.ToLower(buf0.GetString(i))
 		res := buf1.GetString(i)
-		sessionVars.Users[varName] = stringutil.Copy(res)
+
+		sessionVars.Users[varName] = types.NewStringDatum(stringutil.Copy(res))
 		result.AppendString(res)
 	}
 	return nil
@@ -226,7 +227,7 @@ func (b *builtinGetVarSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 		}
 		varName := strings.ToLower(buf0.GetString(i))
 		if v, ok := sessionVars.Users[varName]; ok {
-			result.AppendString(v)
+			result.AppendString(v.GetString())
 			continue
 		}
 		result.AppendNull()

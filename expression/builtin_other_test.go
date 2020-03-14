@@ -172,7 +172,7 @@ func (s *testEvaluatorSuite) TestGetVar(c *C) {
 		{"c", ""},
 	}
 	for _, kv := range sessionVars {
-		s.ctx.GetSessionVars().Users[kv.key] = kv.val
+		s.ctx.GetSessionVars().Users[kv.key] = types.NewStringDatum(kv.val)
 	}
 
 	testCases := []struct {
