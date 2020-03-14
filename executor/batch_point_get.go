@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -87,8 +88,9 @@ func (e *BatchPointGetExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	e.snapshotTS = e.startTS
+	txnCtx := e.ctx.GetSessionVars().TxnCtx
 	if e.lock {
-		e.snapshotTS = e.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
+		e.snapshotTS = txnCtx.GetForUpdateTS()
 	}
 	txn, err := e.ctx.Txn(false)
 	if err != nil {
@@ -104,7 +106,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	}
 	var batchGetter kv.BatchGetter = snapshot
 	if txn.Valid() {
-		batchGetter = kv.NewBufferBatchGetter(txn.GetMemBuffer(), snapshot)
+		batchGetter = kv.NewBufferBatchGetter(txn.GetMemBuffer(), &PessimisticLockCacheGetter{txnCtx: txnCtx}, snapshot)
 	}
 
 	var handleVals map[string][]byte
@@ -206,17 +208,15 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 				lockKeys = append(lockKeys, idxKey)
 			}
 		}
-		values, err = e.lockKeys(ctx, lockKeys)
+		err = e.lockKeys(ctx, lockKeys)
 		if err != nil {
 			return err
 		}
 	}
-	if values == nil {
-		// Fetch all values.
-		values, err = batchGetter.BatchGet(ctx, keys)
-		if err != nil {
-			return err
-		}
+	// Fetch all values.
+	values, err = batchGetter.BatchGet(ctx, keys)
+	if err != nil {
+		return err
 	}
 	handles := make([]int64, 0, len(values))
 	e.values = make([][]byte, 0, len(values))
@@ -236,40 +236,43 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	return nil
 }
 
-func (e *BatchPointGetExec) lockKeys(ctx context.Context, keys []kv.Key) (map[string][]byte, error) {
+func (e *BatchPointGetExec) lockKeys(ctx context.Context, keys []kv.Key) error {
 	txnCtx := e.ctx.GetSessionVars().TxnCtx
 	lctx := newLockCtx(e.ctx.GetSessionVars(), e.waitTime)
 	if txnCtx.IsPessimistic {
 		lctx.ReturnValues = true
-		lctx.Values = make(map[string][]byte, len(keys))
-		// pre-fill the values of already locked keys.
-		for _, key := range keys {
-			if val, ok := txnCtx.GetKeyInPessimisticLockCache(key); ok {
-				lctx.Values[string(key)] = val
-			}
-		}
+		lctx.Values = make(map[string]kv.ReturnedValue, len(keys))
 	}
 	err := doLockKeys(ctx, e.ctx, lctx, keys...)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if txnCtx.IsPessimistic {
 		// When doLockKeys returns without error, no other goroutines access the map,
 		// it's safe to read it without mutex.
 		for _, key := range keys {
-			txnCtx.SetPessimisticLockCache(key, lctx.Values[string(key)])
-		}
-		// Overwrite with buffer value.
-		buffer := e.txn.GetMemBuffer()
-		for _, key := range keys {
-			val, err1 := buffer.Get(ctx, key)
-			if err1 != kv.ErrNotExist {
-				lctx.Values[string(key)] = val
+			rv := lctx.Values[string(key)]
+			if !rv.AlreadyLocked {
+				txnCtx.SetPessimisticLockCache(key, rv.Value)
 			}
 		}
-		return lctx.Values, nil
 	}
-	return nil, nil
+	return nil
+}
+
+// PessimisticLockCacheGetter implements the kv.Getter interface.
+// It is used as a middle cache to construct the BufferedBatchGetter.
+type PessimisticLockCacheGetter struct {
+	txnCtx *variable.TransactionContext
+}
+
+// Get implements the kv.Getter interface.
+func (getter *PessimisticLockCacheGetter) Get(_ context.Context, key kv.Key) ([]byte, error) {
+	val, ok := getter.txnCtx.GetKeyInPessimisticLockCache(key)
+	if ok {
+		return val, nil
+	}
+	return nil, kv.ErrNotExist
 }
 
 func getPhysID(tblInfo *model.TableInfo, val int64) int64 {
