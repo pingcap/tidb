@@ -23,8 +23,6 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -138,7 +136,6 @@ type PartitionExpr struct {
 type ForRangePruning struct {
 	LessThan []int64
 	MaxValue bool
-	FnCol    ast.ExprNode
 	Unsigned bool
 }
 
@@ -241,14 +238,8 @@ func generatePartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 
 	var rangePruning *ForRangePruning
 	if len(pi.Columns) == 0 {
-		stmts, _, err := parser.New().Parse("select "+pi.Expr, "", "")
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		rangePruning = &ForRangePruning{
-			FnCol: stmts[0].(*ast.SelectStmt).Fields.Fields[0].Expr,
-		}
-		err = makeLessThanData(pi, rangePruning)
+		rangePruning = &ForRangePruning{}
+		err := makeLessThanData(pi, rangePruning)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

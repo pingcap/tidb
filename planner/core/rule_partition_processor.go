@@ -17,6 +17,7 @@ import (
 	"sort"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -517,7 +518,7 @@ func (s *partitionProcessor) pruneRangePartition(ds *DataSource, pi *model.Parti
 		maxvalue: pExpr.MaxValue,
 	}
 
-	col, fn, err := makePartitionByFnCol(ds, pExpr.FnCol)
+	col, fn, err := makePartitionByFnCol(ds, pi.Expr)
 	if err != nil {
 		return nil, err
 	}
@@ -530,8 +531,23 @@ func (s *partitionProcessor) pruneRangePartition(ds *DataSource, pi *model.Parti
 	return s.makeUnionAllChildren(ds, pi, result)
 }
 
+type parse interface {
+	ParseSQL(ctx context.Context, sql, charset, collation string) ([]ast.StmtNode, []error, error)
+}
+
 // makePartitionByFnCol extracts the column and function information in 'partition by ... fn(col)'.
-func makePartitionByFnCol(ds *DataSource, fnCol ast.ExprNode) (*expression.Column, *expression.ScalarFunction, error) {
+func makePartitionByFnCol(ds *DataSource, partitionExpr string) (*expression.Column, *expression.ScalarFunction, error) {
+	var err error
+	var stmts []ast.StmtNode
+	if p, ok := ds.context().(parse); ok {
+		stmts, _, err = p.ParseSQL(context.Background(), "select "+partitionExpr, "", "")
+	} else {
+		stmts, _, err = parser.New().Parse("select "+partitionExpr, "", "")
+	}
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	fnCol := stmts[0].(*ast.SelectStmt).Fields.Fields[0].Expr
 	schema := expression.NewSchema(ds.TblCols...)
 	partExpr, err := expression.RewriteSimpleExprWithSchema(ds.context(), fnCol, schema)
 	if err != nil {
