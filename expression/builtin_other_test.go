@@ -155,7 +155,7 @@ func (s *testEvaluatorSuite) TestSetVar(c *C) {
 			c.Assert(ok, Equals, true)
 			val, ok := tc.res.(string)
 			c.Assert(ok, Equals, true)
-			c.Assert(s.ctx.GetSessionVars().Users[key], Equals, val)
+			c.Assert(s.ctx.GetSessionVars().Users[key].GetString(), Equals, val)
 		}
 	}
 }
