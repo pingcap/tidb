@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/collate"
 )
 
 // detachColumnCNFConditions detaches the condition for calculating range from the other conditions.
@@ -95,8 +96,12 @@ func getEqOrInColOffset(expr expression.Expression, cols []*expression.Column) i
 	if !ok {
 		return -1
 	}
+	_, collation, _ := expr.CharsetAndCollation(f.GetCtx())
 	if f.FuncName.L == ast.EQ {
 		if c, ok := f.GetArgs()[0].(*expression.Column); ok {
+			if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.Collate, collation) {
+				return -1
+			}
 			if _, ok := f.GetArgs()[1].(*expression.Constant); ok {
 				for i, col := range cols {
 					if col.Equal(nil, c) {
@@ -106,6 +111,9 @@ func getEqOrInColOffset(expr expression.Expression, cols []*expression.Column) i
 			}
 		}
 		if c, ok := f.GetArgs()[1].(*expression.Column); ok {
+			if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.Collate, collation) {
+				return -1
+			}
 			if _, ok := f.GetArgs()[0].(*expression.Constant); ok {
 				for i, col := range cols {
 					if col.Equal(nil, c) {
@@ -118,6 +126,9 @@ func getEqOrInColOffset(expr expression.Expression, cols []*expression.Column) i
 	if f.FuncName.L == ast.In {
 		c, ok := f.GetArgs()[0].(*expression.Column)
 		if !ok {
+			return -1
+		}
+		if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.Collate, collation) {
 			return -1
 		}
 		for _, arg := range f.GetArgs()[1:] {
