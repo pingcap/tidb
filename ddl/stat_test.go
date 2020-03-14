@@ -47,8 +47,6 @@ func (s *testStatSuite) TestStat(c *C) {
 	d := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
 	defer d.Stop()
 
-	time.Sleep(testLease)
-
 	dbInfo := testSchemaInfo(c, d, "test")
 	testCreateSchema(c, testNewContext(d), d, dbInfo)
 
@@ -73,13 +71,12 @@ func (s *testStatSuite) TestStat(c *C) {
 
 	ticker := time.NewTicker(d.lease * 1)
 	defer ticker.Stop()
-
 	ver := s.getDDLSchemaVer(c, d)
 LOOP:
 	for {
 		select {
 		case <-ticker.C:
-			d.close()
+			d.Stop()
 			c.Assert(s.getDDLSchemaVer(c, d), GreaterEqual, ver)
 			d.restartWorkers(context.Background())
 			time.Sleep(time.Millisecond * 20)

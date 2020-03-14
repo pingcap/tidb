@@ -127,7 +127,6 @@ func (s *testIndexChangeSuite) TestIndexChange(c *C) {
 	txn, err = ctx.Txn(true)
 	c.Assert(err, IsNil)
 	c.Assert(txn.Commit(context.Background()), IsNil)
-	d.Stop()
 	prevState = model.StateNone
 	var noneTable table.Table
 	tc.onJobUpdated = func(job *model.Job) {
@@ -166,7 +165,6 @@ func (s *testIndexChangeSuite) TestIndexChange(c *C) {
 			}
 		}
 	}
-	d.start(context.Background(), nil)
 	testDropIndex(c, ctx, d, s.dbInfo, publicTable.Meta(), "c2")
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
 }

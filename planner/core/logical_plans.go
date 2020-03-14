@@ -684,7 +684,8 @@ type LogicalLimit struct {
 type LogicalLock struct {
 	baseLogicalPlan
 
-	Lock ast.SelectLockType
+	Lock             ast.SelectLockType
+	partitionedTable []table.PartitionedTable
 }
 
 // WindowFrame represents a window function frame.

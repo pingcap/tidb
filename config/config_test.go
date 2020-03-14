@@ -67,6 +67,7 @@ token-limit = 0
 alter-primary-key = true
 split-region-max-num=10000
 server-version = "test_version"
+max-index-length = 3080
 [performance]
 txn-entry-count-limit=2000
 txn-total-size-limit=2000
@@ -112,6 +113,7 @@ history-size=100
 	c.Assert(conf.StmtSummary.MaxSQLLength, Equals, uint(1024))
 	c.Assert(conf.StmtSummary.RefreshInterval, Equals, 100)
 	c.Assert(conf.StmtSummary.HistorySize, Equals, 100)
+	c.Assert(conf.MaxIndexLength, Equals, 3080)
 	c.Assert(f.Close(), IsNil)
 	c.Assert(os.Remove(configFile), IsNil)
 
@@ -245,4 +247,16 @@ func (s *testConfigSuite) TestOOMActionValid(c *C) {
 		c1.OOMAction = tt.oomAction
 		c.Assert(c1.Valid() == nil, Equals, tt.valid)
 	}
+}
+
+func (s *testConfigSuite) TestMaxIndexLength(c *C) {
+	conf := NewConfig()
+	checkValid := func(indexLen int, shouldBeValid bool) {
+		conf.MaxIndexLength = indexLen
+		c.Assert(conf.Valid() == nil, Equals, shouldBeValid)
+	}
+	checkValid(DefMaxIndexLength, true)
+	checkValid(DefMaxIndexLength-1, false)
+	checkValid(DefMaxOfMaxIndexLength, true)
+	checkValid(DefMaxOfMaxIndexLength+1, false)
 }

@@ -14,6 +14,7 @@
 package util
 
 import (
+	"crypto/tls"
 	"fmt"
 	"time"
 
@@ -76,4 +77,5 @@ type SessionManager interface {
 	ShowProcessList() map[uint64]*ProcessInfo
 	GetProcessInfo(id uint64) (*ProcessInfo, bool)
 	Kill(connectionID uint64, query bool)
+	UpdateTLSConfig(cfg *tls.Config)
 }

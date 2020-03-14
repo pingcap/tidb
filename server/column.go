@@ -17,6 +17,8 @@ import (
 	"github.com/pingcap/parser/mysql"
 )
 
+const maxColumnNameSize = 256
+
 // ColumnInfo contains information of a column
 type ColumnInfo struct {
 	Schema             string
@@ -35,12 +37,19 @@ type ColumnInfo struct {
 
 // Dump dumps ColumnInfo to bytes.
 func (column *ColumnInfo) Dump(buffer []byte) []byte {
+	nameDump, orgnameDump := []byte(column.Name), []byte(column.OrgName)
+	if len(nameDump) > maxColumnNameSize {
+		nameDump = nameDump[0:maxColumnNameSize]
+	}
+	if len(orgnameDump) > maxColumnNameSize {
+		orgnameDump = orgnameDump[0:maxColumnNameSize]
+	}
 	buffer = dumpLengthEncodedString(buffer, []byte("def"))
 	buffer = dumpLengthEncodedString(buffer, []byte(column.Schema))
 	buffer = dumpLengthEncodedString(buffer, []byte(column.Table))
 	buffer = dumpLengthEncodedString(buffer, []byte(column.OrgTable))
-	buffer = dumpLengthEncodedString(buffer, []byte(column.Name))
-	buffer = dumpLengthEncodedString(buffer, []byte(column.OrgName))
+	buffer = dumpLengthEncodedString(buffer, nameDump)
+	buffer = dumpLengthEncodedString(buffer, orgnameDump)
 
 	buffer = append(buffer, 0x0c)
 
