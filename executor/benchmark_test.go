@@ -241,7 +241,11 @@ func buildExecutorWithShuffle(ctx sessionctx.Context, plan core.PhysicalPlan,
 	}.Init(ctx, nil, 0)
 	shuffleSplitter.SetChildren(src)
 
-	plan.SetChildren(shuffleSplitter)
+	tail := plan
+	for len(tail.Children()) > 0 {
+		tail = tail.Children()[0]
+	}
+	tail.SetChildren(shuffleSplitter)
 
 	shuffleMerger := core.PhysicalShuffle{
 		Concurrency:  concurrency,
@@ -499,42 +503,25 @@ func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, funcs int, f
 			byItems = append(byItems, &core.ByItems{Expr: col, Desc: false})
 		}
 		sort := &core.PhysicalSort{ByItems: byItems}
-		sort.SetChildren(src)
 		win.SetChildren(sort)
 		tail = sort
-	} else {
-		win.SetChildren(src)
 	}
 
-	var plan core.PhysicalPlan
-	if concurrency > 1 {
-		byItems := make([]*expression.Column, 0, len(win.PartitionBy))
-		for _, item := range win.PartitionBy {
-			byItems = append(byItems, item.Col)
-		}
-
-		child := core.PhysicalShuffle{
-			Concurrency:  1,
-			FanOut:       concurrency,
-			SplitterType: core.ShuffleHashSplitterType,
-			SplitByItems: byItems,
-		}.Init(ctx, nil, 0)
-		tail.SetChildren(child)
-		child.SetChildren(src)
-
-		plan = core.PhysicalShuffle{
-			Concurrency: concurrency,
-			MergerType:  core.ShuffleRandomMergerType,
-			FanOut:      1,
-		}.Init(ctx, nil, 0)
-		plan.SetChildren(win)
-	} else {
-		plan = win
+	if concurrency <= 1 {
+		tail.SetChildren(src)
+		b := newExecutorBuilder(ctx, nil)
+		return b.build(win)
 	}
 
-	b := newExecutorBuilder(ctx, nil)
-	exec := b.build(plan)
-	return exec
+	byItems := make([]*expression.Column, 0, len(win.PartitionBy))
+	for _, item := range win.PartitionBy {
+		byItems = append(byItems, item.Col)
+	}
+	return buildExecutorWithShuffle(
+		ctx, win, srcExec, concurrency,
+		core.ShuffleHashSplitterType, byItems,
+		core.ShuffleRandomMergerType, nil,
+	)
 }
 
 type windowTestCase struct {
