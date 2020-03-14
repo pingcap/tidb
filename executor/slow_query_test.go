@@ -339,9 +339,9 @@ select 6;`
 
 	loc, err := time.LoadLocation("Asia/Shanghai")
 	c.Assert(err, IsNil)
-	sctx := mock.NewContext()
-	sctx.GetSessionVars().TimeZone = loc
-	sctx.GetSessionVars().SlowQueryFile = fileName3
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().TimeZone = loc
+	ctx.GetSessionVars().SlowQueryFile = fileName3
 	for i, cas := range cases {
 		extractor := &plannercore.SlowQueryExtractor{Enable: (len(cas.startTime) > 0 && len(cas.endTime) > 0)}
 		if extractor.Enable {
@@ -354,12 +354,12 @@ select 6;`
 
 		}
 		retriever := &slowQueryRetriever{extractor: extractor}
-		err := retriever.initialize(sctx)
+		err := retriever.initialize(ctx)
 		c.Assert(err, IsNil)
 		comment := Commentf("case id: %v", i)
 		c.Assert(retriever.files, HasLen, len(cas.files), comment)
 		if len(retriever.files) > 0 {
-			rows, err := retriever.parseSlowLog(sctx, bufio.NewReader(retriever.files[0].file), 1024)
+			rows, err := retriever.parseSlowLog(ctx, bufio.NewReader(retriever.files[0].file), 1024)
 			c.Assert(err, IsNil)
 			c.Assert(len(rows), Equals, len(cas.querys), comment)
 			for i, row := range rows {
