@@ -8,21 +8,21 @@ PR Title Format:
 
 ### What problem does this PR solve?
 
-**Issue Number**: close #xxx <!-- REMOVE this line if no issue to close -->
+Issue Number: close #xxx <!-- REMOVE this line if no issue to close -->
 
-**problem summary**:
+Problem Summary:
 
-### what is changed and how it works?
+### What is changed and how it works?
 
-**Proposal**: [xxx](url) <!-- REMOVE this line if not applicable -->
+Proposal: [xxx](url) <!-- REMOVE this line if not applicable -->
 
-**What's Changed**:
+What's Changed:
 
-**How it Works**:
+How it Works:
 
 ### Related changes
 
-- PR to update `pingcap/docs` or `pingcap/docs-cn`:
+- PR to update `pingcap/docs`/`pingcap/docs-cn`:
 - PR to update `pingcap/tidb-ansible`:
 - Need to cherry-pick to the release branch
 
@@ -43,9 +43,3 @@ Side effects
 - Breaking backward compatibility
 
 ### Release note <!-- bugfixes or new feature need a release note -->
-
-Please choose at least one of them to write the release note:
-
-- **Release Note(in English)**:
-
-- **Release Note(in Chinese)**:
