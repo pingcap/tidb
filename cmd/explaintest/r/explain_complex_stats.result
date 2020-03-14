@@ -128,7 +128,7 @@ id	estRows	task	operator info
 Projection_13	424.00	root	test.st.id, test.dd.id, test.st.aid, test.st.cm, test.dd.dic, test.dd.ip, test.dd.t, test.st.p1, test.st.p2, test.st.p3, test.st.p4, test.st.p5, test.st.p6_md5, test.st.p7_md5, test.st.ext, test.st.t
 └─Limit_16	424.00	root	offset:0, count:2500
   └─HashAgg_19	424.00	root	group by:test.dd.dic, test.st.aid, funcs:firstrow(test.st.id)->test.st.id, funcs:firstrow(test.st.aid)->test.st.aid, funcs:firstrow(test.st.cm)->test.st.cm, funcs:firstrow(test.st.p1)->test.st.p1, funcs:firstrow(test.st.p2)->test.st.p2, funcs:firstrow(test.st.p3)->test.st.p3, funcs:firstrow(test.st.p4)->test.st.p4, funcs:firstrow(test.st.p5)->test.st.p5, funcs:firstrow(test.st.p6_md5)->test.st.p6_md5, funcs:firstrow(test.st.p7_md5)->test.st.p7_md5, funcs:firstrow(test.st.ext)->test.st.ext, funcs:firstrow(test.st.t)->test.st.t, funcs:firstrow(test.dd.id)->test.dd.id, funcs:firstrow(test.dd.dic)->test.dd.dic, funcs:firstrow(test.dd.ip)->test.dd.ip, funcs:firstrow(test.dd.t)->test.dd.t
-    └─HashRightJoin_34	424.00	root	inner join, inner:TableReader_37, equal:[eq(test.st.aid, test.dd.aid) eq(test.st.ip, test.dd.ip)], other cond:gt(test.dd.t, test.st.t)
+    └─HashRightJoin_34	424.00	root	inner join, equal:[eq(test.st.aid, test.dd.aid) eq(test.st.ip, test.dd.ip)], other cond:gt(test.dd.t, test.st.t)
       ├─TableReader_37(Build)	424.00	root	data:Selection_36
       │ └─Selection_36	424.00	cop[tikv]	eq(test.st.bm, 0), eq(test.st.pt, "android"), gt(test.st.t, 1478143908), not(isnull(test.st.ip))
       │   └─TableRangeScan_35	1999.00	cop[tikv]	table:gad, range:[0,+inf], keep order:false

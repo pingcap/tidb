@@ -815,8 +815,8 @@ func (b *builtinDateFormatSig) evalString(row chunk.Row) (string, bool, error) {
 	if t.InvalidZero() {
 		// MySQL compatibility, #11203
 		// 0 | 0.0 should be converted to null without warnings
-		n, isNullInt, errInt := b.args[0].EvalInt(b.ctx, row)
-		isOriginalIntOrDecimalZero := n == 0 && !isNullInt && errInt == nil
+		n, err := t.ToNumber().ToInt()
+		isOriginalIntOrDecimalZero := err == nil && n == 0
 		// Args like "0000-00-00", "0000-00-00 00:00:00" set Fsp to 6
 		isOriginalStringZero := t.Fsp() > 0
 		if isOriginalIntOrDecimalZero && !isOriginalStringZero {
@@ -1614,7 +1614,6 @@ func (c *fromUnixTimeFunctionClass) getFunction(ctx sessionctx.Context, args []E
 		argTps = append(argTps, types.ETString)
 	}
 
-	_, isArg0Con := args[0].(*Constant)
 	isArg0Str := args[0].GetType().EvalType() == types.ETString
 	bf := newBaseBuiltinFuncWithTp(ctx, args, retTp, argTps...)
 
@@ -1626,19 +1625,10 @@ func (c *fromUnixTimeFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	}
 
 	// Calculate the time fsp.
-	switch {
-	case isArg0Str:
-		bf.tp.Decimal = int(types.MaxFsp)
-	case isArg0Con:
-		arg0, arg0IsNull, err0 := args[0].EvalDecimal(ctx, chunk.Row{})
-		if err0 != nil {
-			return nil, err0
-		}
-
-		bf.tp.Decimal = int(types.MaxFsp)
-		if !arg0IsNull {
-			fsp := int(arg0.GetDigitsFrac())
-			bf.tp.Decimal = mathutil.Min(fsp, int(types.MaxFsp))
+	bf.tp.Decimal = int(types.MaxFsp)
+	if !isArg0Str {
+		if args[0].GetType().Decimal != types.UnspecifiedLength {
+			bf.tp.Decimal = mathutil.Min(bf.tp.Decimal, args[0].GetType().Decimal)
 		}
 	}
 
@@ -1679,12 +1669,7 @@ func evalFromUnixTime(ctx sessionctx.Context, fsp int8, unixTimeStamp *types.MyD
 	if err != nil && !terror.ErrorEqual(err, types.ErrTruncated) {
 		return res, true, err
 	}
-	fracDigitsNumber := unixTimeStamp.GetDigitsFrac()
 	if fsp < 0 {
-		fsp = types.MaxFsp
-	}
-	fsp = mathutil.MaxInt8(fracDigitsNumber, fsp)
-	if fsp > types.MaxFsp {
 		fsp = types.MaxFsp
 	}
 
@@ -5072,6 +5057,7 @@ func (c *addTimeFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 			sig.setPbCode(tipb.ScalarFuncSig_AddDatetimeAndString)
 		}
 	case mysql.TypeDate:
+		bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 		switch tp2.Tp {
 		case mysql.TypeDuration:
 			sig = &builtinAddDateAndDurationSig{bf}
@@ -6028,6 +6014,7 @@ func (c *subTimeFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 			sig.setPbCode(tipb.ScalarFuncSig_SubDatetimeAndString)
 		}
 	case mysql.TypeDate:
+		bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 		switch tp2.Tp {
 		case mysql.TypeDuration:
 			sig = &builtinSubDateAndDurationSig{bf}

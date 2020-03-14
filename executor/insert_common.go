@@ -326,7 +326,8 @@ func (e *InsertValues) evalRow(ctx context.Context, list []expression.Expression
 		}
 
 		offset := e.insertColumns[i].Offset
-		row[offset], hasValue[offset] = *val1.Copy(), true
+		val1.Copy(&row[offset])
+		hasValue[offset] = true
 		e.evalBuffer.SetDatum(offset, val1)
 	}
 	// Row may lack of generated column, autoIncrement column, empty column here.
@@ -900,7 +901,7 @@ func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum,
 
 // allocAutoRandomID allocates a random id for primary key column. It assumes tableInfo.AutoRandomBits > 0.
 func (e *InsertValues) allocAutoRandomID(fieldType *types.FieldType) (int64, error) {
-	alloc := e.Table.Allocator(e.ctx, autoid.AutoRandomType)
+	alloc := e.Table.Allocators(e.ctx).Get(autoid.AutoRandomType)
 	tableInfo := e.Table.Meta()
 	_, autoRandomID, err := alloc.Alloc(tableInfo.ID, 1, 1, 1)
 	if err != nil {
@@ -917,7 +918,7 @@ func (e *InsertValues) allocAutoRandomID(fieldType *types.FieldType) (int64, err
 }
 
 func (e *InsertValues) rebaseAutoRandomID(recordID int64, fieldType *types.FieldType) error {
-	alloc := e.Table.Allocator(e.ctx, autoid.AutoRandomType)
+	alloc := e.Table.Allocators(e.ctx).Get(autoid.AutoRandomType)
 	tableInfo := e.Table.Meta()
 
 	typeBitsLength := uint64(mysql.DefaultLengthOfMysqlTypes[fieldType.Tp] * 8)
@@ -995,6 +996,10 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 }
 
 func (e *InsertValues) addRecord(ctx context.Context, row []types.Datum) (int64, error) {
+	return e.addRecordWithAutoIDHint(ctx, row, 0)
+}
+
+func (e *InsertValues) addRecordWithAutoIDHint(ctx context.Context, row []types.Datum, reserveAutoIDCount int) (int64, error) {
 	txn, err := e.ctx.Txn(true)
 	if err != nil {
 		return 0, err
@@ -1002,7 +1007,12 @@ func (e *InsertValues) addRecord(ctx context.Context, row []types.Datum) (int64,
 	if !e.ctx.GetSessionVars().ConstraintCheckInPlace {
 		txn.SetOption(kv.PresumeKeyNotExists, nil)
 	}
-	h, err := e.Table.AddRecord(e.ctx, row, table.WithCtx(ctx))
+	var h int64
+	if reserveAutoIDCount > 0 {
+		h, err = e.Table.AddRecord(e.ctx, row, table.WithCtx(ctx), table.WithReserveAutoIDHint(reserveAutoIDCount))
+	} else {
+		h, err = e.Table.AddRecord(e.ctx, row, table.WithCtx(ctx))
+	}
 	txn.DelOption(kv.PresumeKeyNotExists)
 	if err != nil {
 		return 0, err
