@@ -718,7 +718,7 @@ func (c *getVarFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 }
 
 func (c *getVarFunctionClass) resolveCollation(ctx sessionctx.Context, args []Expression, bf *baseBuiltinFunc) (err error) {
-	if constant, ok:= args[0].(*Constant); ok {
+	if constant, ok := args[0].(*Constant); ok {
 		varName, err := constant.Value.ToString()
 		if err != nil {
 			return err
