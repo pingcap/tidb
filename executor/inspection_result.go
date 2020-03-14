@@ -152,7 +152,13 @@ func (e *inspectionResultRetriever) retrieve(ctx context.Context, sctx sessionct
 			if lhs, rhs := results[i].item, results[j].item; lhs != rhs {
 				return lhs < rhs
 			}
-			return results[i].actual < results[j].actual
+			if results[i].actual != results[j].actual {
+				return results[i].actual < results[j].actual
+			}
+			if lhs, rhs := results[i].tp, results[j].tp; lhs != rhs {
+				return lhs < rhs
+			}
+			return results[i].instance < results[j].instance
 		})
 		for _, result := range results {
 			finalRows = append(finalRows, types.MakeDatums(
@@ -470,11 +476,9 @@ func (criticalErrorInspection) inspectForServerDown(ctx context.Context, sctx se
 		return nil
 	}
 	condition := filter.timeRange.Condition()
-	sql := fmt.Sprintf(`set @@tidb_metric_query_step=30;set @@tidb_metric_query_range_duration=30;
-		select t1.job,t1.instance, t2.min_time from
+	sql := fmt.Sprintf(`select t1.job,t1.instance, t2.min_time from
 		(select instance,job from metrics_schema.up %[1]s group by instance,job having max(value)-min(value)>0) as t1 join
 		(select instance,min(time) as min_time from metrics_schema.up %[1]s and value=0 group by instance,job) as t2 on t1.instance=t2.instance;`, condition)
-	fmt.Println(sql)
 	rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithContext(ctx, sql)
 	if err != nil {
 		sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("execute '%s' failed: %v", sql, err))
@@ -484,7 +488,7 @@ func (criticalErrorInspection) inspectForServerDown(ctx context.Context, sctx se
 		if row.Len() < 3 {
 			continue
 		}
-		detail := fmt.Sprintf("%s %s disconnect with prometheus around time '%s'", row.GetString(0), row.GetString(1), row.GetString(2))
+		detail := fmt.Sprintf("%s %s disconnect with prometheus around time '%s'", row.GetString(0), row.GetString(1), row.GetTime(2))
 		result := inspectionResult{
 			tp:       row.GetString(0),
 			instance: row.GetString(1),
@@ -493,7 +497,30 @@ func (criticalErrorInspection) inspectForServerDown(ctx context.Context, sctx se
 			expected: "",
 			severity: "critical",
 			detail:   detail,
-			degree:   math.MaxFloat64,
+			degree:   math.MaxFloat64 - float64(len(results)),
+		}
+		results = append(results, result)
+	}
+	// Check from log.
+	sql = fmt.Sprintf("select type,instance,time from information_schema.cluster_log %s and level = 'info' and message like '%%Welcome to'", condition)
+	rows, _, err = sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithContext(ctx, sql)
+	if err != nil {
+		sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("execute '%s' failed: %v", sql, err))
+	}
+	for _, row := range rows {
+		if row.Len() < 3 {
+			continue
+		}
+		detail := fmt.Sprintf("%s %s restarted at time '%s'", row.GetString(0), row.GetString(1), row.GetString(2))
+		result := inspectionResult{
+			tp:       row.GetString(0),
+			instance: row.GetString(1),
+			item:     item,
+			actual:   "",
+			expected: "",
+			severity: "critical",
+			detail:   detail,
+			degree:   math.MaxFloat64 - float64(len(results)),
 		}
 		results = append(results, result)
 	}
