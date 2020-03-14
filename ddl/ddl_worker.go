@@ -188,7 +188,9 @@ func buildJobDependence(t *meta.Meta, curJob *model.Job) error {
 func (d *ddl) addDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	startTime := time.Now()
 	job.Version = currentVersion
-	job.Query, _ = ctx.Value(sessionctx.QueryString).(string)
+	if job.Query != "" {
+		job.Query, _ = ctx.Value(sessionctx.QueryString).(string)
+	}
 	err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
 		t := newMetaWithQueueTp(txn, job.Type.String())
 		var err error

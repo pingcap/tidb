@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
@@ -84,6 +85,12 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	}
 	defer func() { e.ctx.GetSessionVars().StmtCtx.IsDDLJobInQueue = false }()
 
+	qs := e.ctx.Value(sessionctx.QueryString).(string)
+	if qs != e.stmt.Text() {
+		e.ctx.SetValue(sessionctx.QueryString, e.stmt.Text())
+		logutil.Logger(context.Background()).Warn("the QueryString in sessionContext is not equal to the stmt.text()", zap.String("QueryString", qs), zap.String("stmt.text()", e.stmt.Text()))
+	}
+
 	switch x := e.stmt.(type) {
 	case *ast.AlterDatabaseStmt:
 		err = e.executeAlterDatabase(x)
@@ -139,7 +146,7 @@ func (e *DDLExec) executeRenameTable(s *ast.RenameTableStmt) error {
 	oldIdent := ast.Ident{Schema: s.OldTable.Schema, Name: s.OldTable.Name}
 	newIdent := ast.Ident{Schema: s.NewTable.Schema, Name: s.NewTable.Name}
 	isAlterTable := false
-	err := domain.GetDomain(e.ctx).DDL().RenameTable(e.ctx, oldIdent, newIdent, isAlterTable)
+	err := domain.GetDomain(e.ctx).DDL().RenameTable(e.ctx, oldIdent, newIdent, isAlterTable, "")
 	return err
 }
 
@@ -301,7 +308,7 @@ func (e *DDLExec) executeDropIndex(s *ast.DropIndexStmt) error {
 
 func (e *DDLExec) executeAlterTable(s *ast.AlterTableStmt) error {
 	ti := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
-	err := domain.GetDomain(e.ctx).DDL().AlterTable(e.ctx, ti, s.Specs)
+	err := domain.GetDomain(e.ctx).DDL().AlterTable(e.ctx, ti, s.Specs, e.stmt.Text())
 	return err
 }
 
