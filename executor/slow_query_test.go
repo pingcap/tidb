@@ -33,7 +33,7 @@ import (
 )
 
 func parseSlowLog(ctx sessionctx.Context, reader *bufio.Reader) ([][]types.Datum, error) {
-	retriever := &slowQueryRetriever{}
+	retriever := &slowQueryRetriever{test: true}
 	// Ignore the error is ok for test.
 	terror.Log(retriever.initialize(context.Background(), ctx))
 	rows, err := retriever.parseSlowLog(ctx, reader, 1024)
@@ -340,9 +340,9 @@ select 6;`
 
 	loc, err := time.LoadLocation("Asia/Shanghai")
 	c.Assert(err, IsNil)
-	ctx := mock.NewContext()
-	ctx.GetSessionVars().TimeZone = loc
-	ctx.GetSessionVars().SlowQueryFile = fileName3
+	sctx := mock.NewContext()
+	sctx.GetSessionVars().TimeZone = loc
+	sctx.GetSessionVars().SlowQueryFile = fileName3
 	for i, cas := range cases {
 		extractor := &plannercore.SlowQueryExtractor{Enable: (len(cas.startTime) > 0 && len(cas.endTime) > 0)}
 		if extractor.Enable {
@@ -354,13 +354,14 @@ select 6;`
 			extractor.EndTime = endTime
 
 		}
-		retriever := &slowQueryRetriever{extractor: extractor}
-		err := retriever.initialize(context.Background(), ctx)
+		retriever := &slowQueryRetriever{test: true, extractor: extractor}
+		ctx := context.Background()
+		err := retriever.initialize(ctx, sctx)
 		c.Assert(err, IsNil)
 		comment := Commentf("case id: %v", i)
 		c.Assert(retriever.files, HasLen, len(cas.files), comment)
 		if len(retriever.files) > 0 {
-			rows, err := retriever.parseSlowLog(ctx, bufio.NewReader(retriever.files[0].file), 1024)
+			rows, err := retriever.parseSlowLog(sctx, bufio.NewReader(retriever.files[0].file), 1024)
 			c.Assert(err, IsNil)
 			c.Assert(len(rows), Equals, len(cas.querys), comment)
 			for i, row := range rows {
