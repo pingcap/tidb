@@ -1128,6 +1128,18 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 	// processStream process input data, enqueue commit task
 	go processStream(ctx, cc, loadDataInfo)
 	err = loadDataInfo.CommitWork(ctx)
+	if terror.ErrorEqual(err, executor.ErrQueryInterrupted) {
+		// drain the data from client conn util empty packet received, otherwise the connection will be reset
+		for {
+			curData, err := cc.readPacket()
+			if err != nil {
+				break
+			}
+			if len(curData) == 0 {
+				break
+			}
+		}
+	}
 	loadDataInfo.SetMessage()
 	return err
 }
