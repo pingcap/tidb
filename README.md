@@ -76,9 +76,12 @@ Read the [Quick Start Guide](https://pingcap.com/docs/QUICKSTART), which include
 ![architecture](./docs/architecture.png)
 
 ## Contributing
+
+[<img src="docs/contribution-map.png" alt="contribution-map" width="180">](https://github.com/pingcap/tidb-map/blob/master/maps/contribution-map.md#tidb-is-an-open-source-distributed-htap-database-compatible-with-the-mysql-protocol)
+
 Contributions are welcomed and greatly appreciated. See
 [CONTRIBUTING.md](https://github.com/pingcap/community/blob/master/CONTRIBUTING.md)
-for details on submitting patches and the contribution workflow.
+for details on submitting patches and the contribution workflow. For more contributing information, click on the contributor icon above.
 
 ## License
 TiDB is under the Apache 2.0 license. See the [LICENSE](./LICENSE) file for details.
