@@ -24,7 +24,6 @@ import (
 	"context"
 
 	"github.com/gorilla/mux"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/fn"
