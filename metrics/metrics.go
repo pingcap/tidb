@@ -32,6 +32,7 @@ const (
 	LabelDomain    = "domain"
 	LabelDDLOwner  = "ddl-owner"
 	LabelDDL       = "ddl"
+	LabelDDLWorker = "ddl-worker"
 	LabelDDLSyncer = "ddl-syncer"
 	LabelGCWorker  = "gcworker"
 	LabelAnalyze   = "analyze"
@@ -155,6 +156,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(HandleSchemaValidate)
 	prometheus.MustRegister(TiKVTokenWaitDuration)
 	prometheus.MustRegister(TiKVTxnHeartBeatHistogram)
+	prometheus.MustRegister(TiKVPessimisticLockKeysDuration)
 	prometheus.MustRegister(GRPCConnTransientFailureCounter)
 	prometheus.MustRegister(TiKVTTLLifeTimeReachCounter)
 }

@@ -391,15 +391,7 @@ func (p *PhysicalHashJoin) explainInfo(normalized bool) string {
 	}
 
 	buffer.WriteString(p.JoinType.String())
-	var InnerChildIdx = p.InnerChildIdx
-	// TODO: update the explain info in issue #12985
-	if p.UseOuterToBuild && ((p.JoinType == LeftOuterJoin && InnerChildIdx == 1) || (p.JoinType == RightOuterJoin && InnerChildIdx == 0)) {
-		InnerChildIdx = 1 - InnerChildIdx
-	}
-	fmt.Fprintf(buffer, ", inner:%s", p.Children()[InnerChildIdx].ExplainID())
-	if p.UseOuterToBuild {
-		buffer.WriteString(" (REVERSED)")
-	}
+
 	if len(p.EqualConditions) > 0 {
 		if normalized {
 			fmt.Fprintf(buffer, ", equal:%s", expression.SortedExplainNormalizedScalarFuncList(p.EqualConditions))

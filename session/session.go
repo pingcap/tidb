@@ -1323,7 +1323,7 @@ func (s *session) DropPreparedStmt(stmtID uint32) error {
 
 func (s *session) Txn(active bool) (kv.Transaction, error) {
 	if !s.txn.validOrPending() && active {
-		return &s.txn, kv.ErrInvalidTxn
+		return &s.txn, errors.AddStack(kv.ErrInvalidTxn)
 	}
 	if s.txn.pending() && active {
 		// Transaction is lazy initialized.
@@ -2031,16 +2031,15 @@ func (s *session) PrepareTxnCtx(ctx context.Context) {
 	}
 }
 
-// PrepareTSFuture uses to try to get txn future.
+// PrepareTSFuture uses to try to get ts future.
 func (s *session) PrepareTSFuture(ctx context.Context) {
 	if !s.txn.validOrPending() {
+		// Prepare the transaction future if the transaction is invalid (at the beginning of the transaction).
 		txnFuture := s.getTxnFuture(ctx)
 		s.txn.changeInvalidToPending(txnFuture)
-		s.GetSessionVars().TxnCtx.SetStmtFuture(txnFuture.future)
-		return
-	}
-	if s.txn.Valid() && s.GetSessionVars().IsPessimisticReadConsistency() {
-		s.GetSessionVars().TxnCtx.SetStmtFuture(s.getTxnFuture(ctx).future)
+	} else if s.txn.Valid() && s.GetSessionVars().IsPessimisticReadConsistency() {
+		// Prepare the statement future if the transaction is valid in RC transactions.
+		s.GetSessionVars().TxnCtx.SetStmtFutureForRC(s.getTxnFuture(ctx).future)
 	}
 }
 

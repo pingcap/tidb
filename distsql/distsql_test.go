@@ -43,8 +43,7 @@ func (s *testSuite) createSelectNormal(batch, totalRows int, c *C, planIDs []str
 		SetDesc(false).
 		SetKeepOrder(false).
 		SetFromSessionVars(variable.NewSessionVars()).
-		SetMemTracker(memory.NewTracker(stringutil.StringerStr("testSuite.createSelectNormal"),
-			s.sctx.GetSessionVars().MemQuotaDistSQL)).
+		SetMemTracker(memory.NewTracker(stringutil.StringerStr("testSuite.createSelectNormal"), -1)).
 		Build()
 	c.Assert(err, IsNil)
 
@@ -447,8 +446,7 @@ func createSelectNormal(batch, totalRows int, ctx sessionctx.Context) (*selectRe
 		SetDesc(false).
 		SetKeepOrder(false).
 		SetFromSessionVars(variable.NewSessionVars()).
-		SetMemTracker(memory.NewTracker(stringutil.StringerStr("testSuite.createSelectNormal"),
-			ctx.GetSessionVars().MemQuotaDistSQL)).
+		SetMemTracker(memory.NewTracker(stringutil.StringerStr("testSuite.createSelectNormal"), -1)).
 		Build()
 
 	/// 4 int64 types.

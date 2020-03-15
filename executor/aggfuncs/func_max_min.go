@@ -396,6 +396,7 @@ func (e *maxMin4Decimal) MergePartialResult(sctx sessionctx.Context, src, dst Pa
 
 type maxMin4String struct {
 	baseMaxMinAggFunc
+	retTp *types.FieldType
 }
 
 func (e *maxMin4String) AllocPartialResult() PartialResult {
@@ -634,7 +635,7 @@ func (e *maxMin4JSON) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 		}
 		cmp := json.CompareBinary(input, p.val)
 		if e.isMax && cmp > 0 || !e.isMax && cmp < 0 {
-			p.val = input
+			p.val = input.Copy()
 		}
 	}
 	return nil

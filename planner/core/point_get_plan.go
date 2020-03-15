@@ -68,6 +68,13 @@ type nameValuePair struct {
 	param   *driver.ParamMarkerExpr
 }
 
+// Init initializes PointGetPlan.
+func (p PointGetPlan) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PointGetPlan {
+	p.basePlan = newBasePlan(ctx, plancodec.TypePointGet, offset)
+	p.stats = stats
+	return &p
+}
+
 // Schema implements the Plan interface.
 func (p *PointGetPlan) Schema() *expression.Schema {
 	return p.schema
@@ -172,17 +179,39 @@ func (p *PointGetPlan) SetOutputNames(names types.NameSlice) {
 	p.outputNames = names
 }
 
+// GetCost returns cost of the PointGetPlan.
+func (p *PointGetPlan) GetCost(cols []*expression.Column) float64 {
+	sessVars := p.ctx.GetSessionVars()
+	var rowSize float64
+	cost := 0.0
+	if p.IndexInfo == nil {
+		rowSize = p.stats.HistColl.GetTableAvgRowSize(p.ctx, cols, kv.TiKV, true)
+	} else {
+		rowSize = p.stats.HistColl.GetIndexAvgRowSize(p.ctx, cols, p.IndexInfo.Unique)
+	}
+	cost += rowSize * sessVars.NetworkFactor
+	cost += sessVars.SeekFactor
+	cost /= float64(sessVars.DistSQLScanConcurrency)
+	return cost
+}
+
 // BatchPointGetPlan represents a physical plan which contains a bunch of
 // keys reference the same table and use the same `unique key`
 type BatchPointGetPlan struct {
 	baseSchemaProducer
 
+	ctx              sessionctx.Context
 	TblInfo          *model.TableInfo
 	IndexInfo        *model.IndexInfo
 	Handles          []int64
 	HandleParams     []*driver.ParamMarkerExpr
 	IndexValues      [][]types.Datum
 	IndexValueParams [][]*driver.ParamMarkerExpr
+	PartitionColPos  int
+	KeepOrder        bool
+	Desc             bool
+	Lock             bool
+	LockWaitTime     int64
 }
 
 // attach2Task makes the current physical plan as the father of task's physicalPlan and updates the cost of
@@ -198,6 +227,10 @@ func (p *BatchPointGetPlan) ToPB(ctx sessionctx.Context) (*tipb.Executor, error)
 
 // ExplainInfo returns operator information to be explained.
 func (p *BatchPointGetPlan) ExplainInfo() string {
+	return p.explainInfo(false)
+}
+
+func (p *BatchPointGetPlan) explainInfo(normalized bool) string {
 	buffer := bytes.NewBufferString("")
 	tblName := p.TblInfo.Name.O
 	fmt.Fprintf(buffer, "table:%s", tblName)
@@ -209,13 +242,24 @@ func (p *BatchPointGetPlan) ExplainInfo() string {
 				buffer.WriteString(" ")
 			}
 		}
+	} else {
+		if normalized {
+			fmt.Fprintf(buffer, ", handle:?")
+		} else {
+			fmt.Fprintf(buffer, ", handle:%v", p.Handles)
+		}
+	}
+	fmt.Fprintf(buffer, ", keep order:%v", p.KeepOrder)
+	fmt.Fprintf(buffer, ", desc:%v", p.Desc)
+	if p.Lock {
+		fmt.Fprintf(buffer, ", lock")
 	}
 	return buffer.String()
 }
 
 // ExplainNormalizedInfo returns normalized operator information to be explained.
 func (p *BatchPointGetPlan) ExplainNormalizedInfo() string {
-	return p.ExplainInfo()
+	return p.explainInfo(true)
 }
 
 // GetChildReqProps gets the required property by child index.
@@ -259,6 +303,24 @@ func (p *BatchPointGetPlan) SetOutputNames(names types.NameSlice) {
 	p.names = names
 }
 
+// GetCost returns cost of the PointGetPlan.
+func (p *BatchPointGetPlan) GetCost(cols []*expression.Column) float64 {
+	sessVars := p.ctx.GetSessionVars()
+	var rowSize, rowCount float64
+	cost := 0.0
+	if p.IndexInfo == nil {
+		rowCount = float64(len(p.Handles))
+		rowSize = p.stats.HistColl.GetTableAvgRowSize(p.ctx, cols, kv.TiKV, true)
+	} else {
+		rowCount = float64(len(p.IndexValues))
+		rowSize = p.stats.HistColl.GetIndexAvgRowSize(p.ctx, cols, p.IndexInfo.Unique)
+	}
+	cost += rowCount * rowSize * sessVars.NetworkFactor
+	cost += rowCount * sessVars.SeekFactor
+	cost /= float64(sessVars.DistSQLScanConcurrency)
+	return cost
+}
+
 // TryFastPlan tries to use the PointGetPlan for the query.
 func TryFastPlan(ctx sessionctx.Context, node ast.Node) Plan {
 	ctx.GetSessionVars().PlanID = 0
@@ -268,6 +330,7 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) Plan {
 		// Try to convert the `SELECT a, b, c FROM t WHERE (a, b, c) in ((1, 2, 4), (1, 3, 5))` to
 		// `PhysicalUnionAll` which children are `PointGet` if exists an unique key (a, b, c) in table `t`
 		if fp := tryWhereIn2BatchPointGet(ctx, x); fp != nil {
+			fp.Lock, fp.LockWaitTime = getLockWaitTime(ctx, x.LockTp)
 			return fp
 		}
 		fp := tryPointGetPlan(ctx, x)
@@ -281,20 +344,9 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) Plan {
 				tableDual.SetSchema(fp.Schema())
 				return tableDual.Init(ctx, &property.StatsInfo{}, 0)
 			}
-			if x.LockTp == ast.SelectLockForUpdate || x.LockTp == ast.SelectLockForUpdateNoWait {
-				// Locking of rows for update using SELECT FOR UPDATE only applies when autocommit
-				// is disabled (either by beginning transaction with START TRANSACTION or by setting
-				// autocommit to 0. If autocommit is enabled, the rows matching the specification are not locked.
-				// See https://dev.mysql.com/doc/refman/5.7/en/innodb-locking-reads.html
-				sessVars := ctx.GetSessionVars()
-				if !sessVars.IsAutocommit() || sessVars.InTxn() {
-					fp.Lock = true
-					fp.IsForUpdate = true
-					fp.LockWaitTime = sessVars.LockWaitTimeout
-					if x.LockTp == ast.SelectLockForUpdateNoWait {
-						fp.LockWaitTime = kv.LockNoWait
-					}
-				}
+			fp.Lock, fp.LockWaitTime = getLockWaitTime(ctx, x.LockTp)
+			if fp.Lock {
+				fp.IsForUpdate = true
 			}
 			return fp
 		}
@@ -306,14 +358,35 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) Plan {
 	return nil
 }
 
+func getLockWaitTime(ctx sessionctx.Context, lockTp ast.SelectLockType) (lock bool, waitTime int64) {
+	if lockTp == ast.SelectLockForUpdate || lockTp == ast.SelectLockForUpdateNoWait {
+		// Locking of rows for update using SELECT FOR UPDATE only applies when autocommit
+		// is disabled (either by beginning transaction with START TRANSACTION or by setting
+		// autocommit to 0. If autocommit is enabled, the rows matching the specification are not locked.
+		// See https://dev.mysql.com/doc/refman/5.7/en/innodb-locking-reads.html
+		sessVars := ctx.GetSessionVars()
+		if !sessVars.IsAutocommit() || sessVars.InTxn() {
+			lock = true
+			waitTime = sessVars.LockWaitTimeout
+			if lockTp == ast.SelectLockForUpdateNoWait {
+				waitTime = kv.LockNoWait
+			}
+		}
+	}
+	return
+}
+
 func newBatchPointGetPlan(
 	ctx sessionctx.Context, patternInExpr *ast.PatternInExpr,
-	tryHandle bool, fieldType *types.FieldType,
-	tbl *model.TableInfo, schema *expression.Schema,
+	handleCol *model.ColumnInfo, tbl *model.TableInfo, schema *expression.Schema,
 	names []*types.FieldName, whereColNames []string,
-) Plan {
+) *BatchPointGetPlan {
 	statsInfo := &property.StatsInfo{RowCount: float64(len(patternInExpr.List))}
-	if tryHandle && fieldType != nil {
+	partitionColName := getHashPartitionColumnName(ctx, tbl)
+	if tbl.GetPartitionInfo() != nil && partitionColName == nil {
+		return nil
+	}
+	if handleCol != nil {
 		var handles = make([]int64, len(patternInExpr.List))
 		var handleParams = make([]*driver.ParamMarkerExpr, len(patternInExpr.List))
 		for i, item := range patternInExpr.List {
@@ -335,7 +408,7 @@ func newBatchPointGetPlan(
 			if d.IsNull() {
 				return nil
 			}
-			intDatum, err := d.ConvertTo(ctx.GetSessionVars().StmtCtx, fieldType)
+			intDatum, err := d.ConvertTo(ctx.GetSessionVars().StmtCtx, &handleCol.FieldType)
 			if err != nil {
 				return nil
 			}
@@ -351,7 +424,7 @@ func newBatchPointGetPlan(
 			TblInfo:      tbl,
 			Handles:      handles,
 			HandleParams: handleParams,
-		}.Init(ctx, statsInfo, schema, names)
+		}.Init(ctx, statsInfo, schema, names, 0)
 	}
 
 	// The columns in where clause should be covered by unique index
@@ -430,13 +503,14 @@ func newBatchPointGetPlan(
 		IndexInfo:        matchIdxInfo,
 		IndexValues:      indexValues,
 		IndexValueParams: indexValueParams,
-	}.Init(ctx, statsInfo, schema, names)
+		PartitionColPos:  getPartitionColumnPos(matchIdxInfo, partitionColName),
+	}.Init(ctx, statsInfo, schema, names, 0)
 }
 
-func tryWhereIn2BatchPointGet(ctx sessionctx.Context, selStmt *ast.SelectStmt) Plan {
+func tryWhereIn2BatchPointGet(ctx sessionctx.Context, selStmt *ast.SelectStmt) *BatchPointGetPlan {
 	if selStmt.OrderBy != nil || selStmt.GroupBy != nil ||
 		selStmt.Limit != nil || selStmt.Having != nil ||
-		len(selStmt.WindowSpecs) > 0 || selStmt.LockTp != ast.SelectLockNone {
+		len(selStmt.WindowSpecs) > 0 {
 		return nil
 	}
 	in, ok := selStmt.Where.(*ast.PatternInExpr)
@@ -453,14 +527,6 @@ func tryWhereIn2BatchPointGet(ctx sessionctx.Context, selStmt *ast.SelectStmt) P
 		return nil
 	}
 
-	// Do not handle partitioned table.
-	// Table partition implementation translates LogicalPlan from `DataSource` to
-	// `Union -> DataSource` in the logical plan optimization pass, since BatchPointGetPlan
-	// bypass the logical plan optimization, it can't support partitioned table.
-	if tbl.GetPartitionInfo() != nil {
-		return nil
-	}
-
 	for _, col := range tbl.Columns {
 		if col.IsGenerated() || col.State != model.StatePublic {
 			return nil
@@ -473,8 +539,7 @@ func tryWhereIn2BatchPointGet(ctx sessionctx.Context, selStmt *ast.SelectStmt) P
 	}
 
 	var (
-		tryHandle     bool
-		fieldType     *types.FieldType
+		handleCol     *model.ColumnInfo
 		whereColNames []string
 	)
 
@@ -491,14 +556,14 @@ func tryWhereIn2BatchPointGet(ctx sessionctx.Context, selStmt *ast.SelectStmt) P
 		// Try use handle
 		if tbl.PKIsHandle {
 			for _, col := range tbl.Columns {
-				if mysql.HasPriKeyFlag(col.Flag) {
-					tryHandle = col.Name.L == colName.Name.Name.L
-					fieldType = &col.FieldType
+				if mysql.HasPriKeyFlag(col.Flag) && col.Name.L == colName.Name.Name.L {
+					handleCol = col
 					whereColNames = append(whereColNames, col.Name.L)
 					break
 				}
 			}
-		} else {
+		}
+		if handleCol == nil {
 			// Downgrade to use unique index
 			whereColNames = append(whereColNames, colName.Name.Name.L)
 		}
@@ -518,7 +583,7 @@ func tryWhereIn2BatchPointGet(ctx sessionctx.Context, selStmt *ast.SelectStmt) P
 		return nil
 	}
 
-	p := newBatchPointGetPlan(ctx, in, tryHandle, fieldType, tbl, schema, names, whereColNames)
+	p := newBatchPointGetPlan(ctx, in, handleCol, tbl, schema, names, whereColNames)
 	if p == nil {
 		return nil
 	}
@@ -557,10 +622,6 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 	if tbl == nil {
 		return nil
 	}
-	// Do not handle partitioned table.
-	// Table partition implementation translates LogicalPlan from `DataSource` to
-	// `Union -> DataSource` in the logical plan optimization pass, since PointGetPlan
-	// bypass the logical plan optimization, it can't support partitioned table.
 	pi := tbl.GetPartitionInfo()
 	for _, col := range tbl.Columns {
 		// Do not handle generated columns.
@@ -666,7 +727,7 @@ func newPointGetPlan(ctx sessionctx.Context, dbName string, schema *expression.S
 		outputNames:  names,
 		LockWaitTime: ctx.GetSessionVars().LockWaitTimeout,
 	}
-	ctx.GetSessionVars().StmtCtx.Tables = []stmtctx.TableEntry{{DB: ctx.GetSessionVars().CurrentDB, Table: tbl.Name.L}}
+	ctx.GetSessionVars().StmtCtx.Tables = []stmtctx.TableEntry{{DB: dbName, Table: tbl.Name.L}}
 	return p
 }
 
@@ -1033,27 +1094,16 @@ func (p *PointGetPlan) findHandleCol() *expression.Column {
 }
 
 func getPartitionInfo(ctx sessionctx.Context, tbl *model.TableInfo, pairs []nameValuePair) (*model.PartitionDefinition, int) {
-	is := infoschema.GetInfoSchema(ctx)
-	table, ok := is.TableByID(tbl.ID)
-	if !ok {
+	partitionColName := getHashPartitionColumnName(ctx, tbl)
+	if partitionColName == nil {
 		return nil, 0
 	}
 	pi := tbl.Partition
-	if partitionTable, ok := table.(partitionTable); ok {
-		// PartitionExpr don't need columns and names for hash partition.
-		partitionExpr, err := partitionTable.PartitionExpr(ctx, nil, nil)
-		if err != nil {
-			return nil, 0
-		}
-		expr := partitionExpr.OrigExpr
-		if col, ok := expr.(*ast.ColumnNameExpr); ok {
-			for i, pair := range pairs {
-				if col.Name.Name.L == pair.colName {
-					val := pair.value.GetInt64()
-					pos := math.Abs(val) % int64(pi.Num)
-					return &pi.Definitions[pos], i
-				}
-			}
+	for i, pair := range pairs {
+		if partitionColName.Name.L == pair.colName {
+			val := pair.value.GetInt64()
+			pos := math.Abs(val) % int64(pi.Num)
+			return &pi.Definitions[pos], i
 		}
 	}
 	return nil, 0
@@ -1066,4 +1116,43 @@ func findPartitionIdx(idxInfo *model.IndexInfo, pos int, pairs []nameValuePair) 
 		}
 	}
 	return 0
+}
+
+// getPartitionColumnPos gets the partition column's position in the index.
+func getPartitionColumnPos(idx *model.IndexInfo, partitionColName *ast.ColumnName) int {
+	if partitionColName == nil {
+		return 0
+	}
+	for i, idxCol := range idx.Columns {
+		if partitionColName.Name.L == idxCol.Name.L {
+			return i
+		}
+	}
+	panic("unique index must include all partition columns")
+}
+
+func getHashPartitionColumnName(ctx sessionctx.Context, tbl *model.TableInfo) *ast.ColumnName {
+	pi := tbl.GetPartitionInfo()
+	if pi == nil {
+		return nil
+	}
+	if pi.Type != model.PartitionTypeHash {
+		return nil
+	}
+	is := infoschema.GetInfoSchema(ctx)
+	table, ok := is.TableByID(tbl.ID)
+	if !ok {
+		return nil
+	}
+	// PartitionExpr don't need columns and names for hash partition.
+	partitionExpr, err := table.(partitionTable).PartitionExpr(ctx, nil, nil)
+	if err != nil {
+		return nil
+	}
+	expr := partitionExpr.OrigExpr
+	col, ok := expr.(*ast.ColumnNameExpr)
+	if !ok {
+		return nil
+	}
+	return col.Name
 }
