@@ -2945,6 +2945,7 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		desc:         plan.Desc,
 		lock:         plan.Lock,
 		waitTime:     plan.LockWaitTime,
+		partPos:      plan.PartitionColPos,
 	}
 	if e.lock {
 		b.hasLock = true

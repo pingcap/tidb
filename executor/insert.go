@@ -81,8 +81,14 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 			return err
 		}
 	} else {
-		for _, row := range rows {
-			if _, err := e.addRecord(ctx, row); err != nil {
+		for i, row := range rows {
+			var err error
+			if i == 0 {
+				_, err = e.addRecordWithAutoIDHint(ctx, row, len(rows))
+			} else {
+				_, err = e.addRecord(ctx, row)
+			}
+			if err != nil {
 				return err
 			}
 		}
