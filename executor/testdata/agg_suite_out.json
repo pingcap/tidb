@@ -50,9 +50,9 @@
     "Cases": [
       [
         "Projection_28 1.00 root Column#3, Column#6, Column#9, Column#12",
-        "└─Apply_30 1.00 root CARTESIAN left outer join, inner:Projection_65",
-        "  ├─Apply_32(Build) 1.00 root CARTESIAN left outer join, inner:Projection_54",
-        "  │ ├─Apply_34(Build) 1.00 root CARTESIAN left outer join, inner:Projection_43",
+        "└─Apply_30 1.00 root CARTESIAN left outer join",
+        "  ├─Apply_32(Build) 1.00 root CARTESIAN left outer join",
+        "  │ ├─Apply_34(Build) 1.00 root CARTESIAN left outer join",
         "  │ │ ├─HashAgg_39(Build) 1.00 root funcs:sum(Column#22)->Column#3, funcs:firstrow(Column#23)->test.test.a",
         "  │ │ │ └─TableReader_40 1.00 root data:HashAgg_35",
         "  │ │ │   └─HashAgg_35 1.00 cop[tikv] funcs:sum(test.test.a)->Column#22, funcs:firstrow(test.test.a)->Column#23",

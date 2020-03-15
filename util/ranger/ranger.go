@@ -488,7 +488,7 @@ func newFieldType(tp *types.FieldType) *types.FieldType {
 	// To avoid data truncate error.
 	case mysql.TypeFloat, mysql.TypeDouble, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob,
 		mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString:
-		newTp := types.NewFieldType(tp.Tp)
+		newTp := types.NewFieldTypeWithCollation(tp.Tp, tp.Collate, types.UnspecifiedLength)
 		newTp.Charset = tp.Charset
 		return newTp
 	default:

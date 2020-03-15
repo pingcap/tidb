@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -32,6 +33,7 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/fn"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -232,6 +234,13 @@ func (s *Server) startHTTPServer() {
 	fetcher := sqlInfoFetcher{store: tikvHandlerTool.Store}
 	serverMux.HandleFunc("/debug/sub-optimal-plan", fetcher.zipInfoForSQL)
 
+	failpoint.Inject("integrateFailpoint", func() {
+		serverMux.HandleFunc("/failpoints/", func(w http.ResponseWriter, r *http.Request) {
+			r.URL.Path = strings.TrimPrefix(r.URL.Path, "/failpoints")
+			new(failpoint.HttpHandler).ServeHTTP(w, r)
+		})
+	})
+
 	var (
 		httpRouterPage bytes.Buffer
 		pathTemplate   string
@@ -273,6 +282,7 @@ func (s *Server) setupStatusServerAndRPCServer(addr string, serverMux *http.Serv
 		logutil.BgLogger().Error("invalid TLS config", zap.Error(err))
 		return
 	}
+	tlsConfig = s.setCNChecker(tlsConfig)
 
 	var l net.Listener
 	if tlsConfig != nil {
@@ -284,6 +294,9 @@ func (s *Server) setupStatusServerAndRPCServer(addr string, serverMux *http.Serv
 	if err != nil {
 		logutil.BgLogger().Info("listen failed", zap.Error(err))
 		return
+	}
+	if tlsConfig != nil {
+		logutil.BgLogger().Info("HTTP/gRPC status server secure connection is enabled", zap.Bool("CN verification enabled", tlsConfig.VerifyPeerCertificate != nil))
 	}
 	m := cmux.New(l)
 	// Match connections in order:
@@ -308,6 +321,28 @@ func (s *Server) setupStatusServerAndRPCServer(addr string, serverMux *http.Serv
 	if err != nil {
 		logutil.BgLogger().Error("start status/rpc server error", zap.Error(err))
 	}
+}
+
+func (s *Server) setCNChecker(tlsConfig *tls.Config) *tls.Config {
+	if tlsConfig != nil && len(s.cfg.Security.ClusterVerifyCN) != 0 {
+		checkCN := make(map[string]struct{})
+		for _, cn := range s.cfg.Security.ClusterVerifyCN {
+			cn = strings.TrimSpace(cn)
+			checkCN[cn] = struct{}{}
+		}
+		tlsConfig.VerifyPeerCertificate = func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
+			for _, chain := range verifiedChains {
+				if len(chain) != 0 {
+					if _, match := checkCN[chain[0].Subject.CommonName]; match {
+						return nil
+					}
+				}
+			}
+			return errors.Errorf("client certificate authentication failed. The Common Name from the client certificate was not found in the configuration cluster-verify-cn with value: %s", s.cfg.Security.ClusterVerifyCN)
+		}
+		tlsConfig.ClientAuth = tls.RequireAndVerifyClientCert
+	}
+	return tlsConfig
 }
 
 // status of TiDB.
