@@ -2315,7 +2315,7 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 			}
 			ctx.WriteName(index.String())
 		}
-	case "use_toja", "enable_plan_cache":
+	case "use_toja", "enable_plan_cache", "use_cascades":
 		if n.HintData.(bool) {
 			ctx.WritePlain("TRUE")
 		} else {

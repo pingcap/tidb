@@ -97,6 +97,7 @@ import (
 	hintUsePlanCache          "USE_PLAN_CACHE"
 	hintUseToja               "USE_TOJA"
 	hintTimeRange             "TIME_RANGE"
+	hintUseCascades           "USE_CASCADES"
 
 	/* Other keywords */
 	hintOLAP            "OLAP"
@@ -519,6 +520,7 @@ SubqueryStrategy:
 BooleanHintName:
 	"USE_TOJA"
 |	"ENABLE_PLAN_CACHE"
+|	"USE_CASCADES"
 
 NullaryHintName:
 	"USE_PLAN_CACHE"
@@ -586,6 +588,7 @@ Identifier:
 |	"USE_PLAN_CACHE"
 |	"USE_TOJA"
 |	"TIME_RANGE"
+|	"USE_CASCADES"
 /* other keywords */
 |	"OLAP"
 |	"OLTP"

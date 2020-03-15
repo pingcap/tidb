@@ -176,7 +176,7 @@ func (s *testHintParserSuite) TestParseHint(c *C) {
 			},
 		},
 		{
-			input: "USE_TOJA(TRUE) ENABLE_PLAN_CACHE(FALSE) QUERY_TYPE(@qb1 OLAP) QUERY_TYPE(OLTP) NO_INDEX_MERGE()",
+			input: "USE_TOJA(TRUE) ENABLE_PLAN_CACHE(FALSE) USE_CASCADES(TRUE) QUERY_TYPE(@qb1 OLAP) QUERY_TYPE(OLTP) NO_INDEX_MERGE()",
 			output: []*ast.TableOptimizerHint{
 				{
 					HintName: model.NewCIStr("USE_TOJA"),
@@ -185,6 +185,10 @@ func (s *testHintParserSuite) TestParseHint(c *C) {
 				{
 					HintName: model.NewCIStr("ENABLE_PLAN_CACHE"),
 					HintData: false,
+				},
+				{
+					HintName: model.NewCIStr("USE_CASCADES"),
+					HintData: true,
 				},
 				{
 					HintName: model.NewCIStr("QUERY_TYPE"),
