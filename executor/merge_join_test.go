@@ -535,7 +535,7 @@ func (s *testSuiteJoin3) TestVectorizedMergeJoin(c *C) {
 			`      └─TableFullScan_8 10000.00 cop[tikv] table:t1, keep order:false, stats:pseudo`,
 		))
 		tk.MustQuery("explain select /*+ TIDB_HJ(t1, t2) */ * from t1, t2 where t1.a=t2.a and t1.b>5 and t2.b<5").Check(testkit.Rows(
-			`HashLeftJoin_7 4150.01 root inner join, inner:TableReader_14, equal:[eq(test.t1.a, test.t2.a)]`,
+			`HashLeftJoin_7 4150.01 root inner join, equal:[eq(test.t1.a, test.t2.a)]`,
 			`├─TableReader_14(Build) 3320.01 root data:Selection_13`,
 			`│ └─Selection_13 3320.01 cop[tikv] lt(test.t2.b, 5), not(isnull(test.t2.a))`,
 			`│   └─TableFullScan_12 10000.00 cop[tikv] table:t2, keep order:false, stats:pseudo`,
