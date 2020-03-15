@@ -257,15 +257,22 @@ func (s *testInfoschemaTableSuite) TestDDLJobs(c *C) {
 		Username: "DDL_JOBS_tester",
 		Hostname: "127.0.0.1",
 	}, nil, nil), IsTrue)
+
+	// Test the privilege of user for information_schema.ddl_jobs.
 	DDLJobsTester.MustQuery("select DB_NAME from information_schema.DDL_JOBS;").Check(
 		[][]interface{}{})
-
-	// Test the privilege of user with privilege of mysql for information_schema.ddl_jobs.
 	tk.MustExec("CREATE ROLE mysql_priv;")
 	tk.MustExec("GRANT ALL PRIVILEGES ON mysql.* TO mysql_priv;")
 	tk.MustExec("GRANT mysql_priv TO DDL_JOBS_tester;")
 	DDLJobsTester.MustExec("set role mysql_priv")
 	DDLJobsTester.MustQuery("select DISTINCT DB_NAME from information_schema.DDL_JOBS where DB_NAME = 'mysql';").Check(testkit.Rows("mysql"))
+
+	tk.MustExec("CREATE ROLE test_priv;")
+	tk.MustExec("GRANT ALL PRIVILEGES ON test_ddl_jobs.t TO test_priv;")
+	tk.MustExec("GRANT test_priv TO DDL_JOBS_tester;")
+	DDLJobsTester.MustExec("set role test_priv")
+	DDLJobsTester.MustQuery("select DISTINCT TABLE_NAME from information_schema.DDL_JOBS where DB_NAME = 'test_ddl_jobs' and TABLE_NAME = 't';").Check(testkit.Rows("t"))
+	tk.MustExec("drop database `test_ddl_jobs`")
 }
 
 func (s *testInfoschemaTableSuite) TestKeyColumnUsage(c *C) {
