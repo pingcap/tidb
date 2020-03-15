@@ -273,7 +273,6 @@ func (s *testInfoschemaTableSuite) TestDDLJobs(c *C) {
 	tk.MustExec("GRANT ALL PRIVILEGES ON test_ddl_jobs.* TO test_priv;")
 	tk.MustExec("GRANT test_priv TO DDL_JOBS_tester;")
 	DDLJobsTester.MustExec("set role test_priv")
-	DDLJobsTester.MustQuery("select DISTINCT TABLE_NAME from information_schema.DDL_JOBS where DB_NAME = 'test_ddl_jobs' and TABLE_NAME = 't';").Check(testkit.Rows("t"))
 }
 
 func (s *testInfoschemaTableSuite) TestKeyColumnUsage(c *C) {
