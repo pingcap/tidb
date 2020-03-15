@@ -266,13 +266,6 @@ func (s *testInfoschemaTableSuite) TestDDLJobs(c *C) {
 	tk.MustExec("GRANT mysql_priv TO DDL_JOBS_tester;")
 	DDLJobsTester.MustExec("set role mysql_priv")
 	DDLJobsTester.MustQuery("select DISTINCT DB_NAME from information_schema.DDL_JOBS where DB_NAME = 'mysql';").Check(testkit.Rows("mysql"))
-
-	tk.MustExec("CREATE ROLE test_priv;")
-	tk.MustExec("GRANT ALL PRIVILEGES ON test_ddl_jobs.t TO test_priv;")
-	tk.MustExec("GRANT test_priv TO DDL_JOBS_tester;")
-	DDLJobsTester.MustExec("set role test_priv")
-	DDLJobsTester.MustQuery("select DISTINCT TABLE_NAME from information_schema.DDL_JOBS where DB_NAME = 'test_ddl_jobs' and TABLE_NAME = 't';").Check(testkit.Rows("t"))
-	tk.MustExec("drop database `test_ddl_jobs`")
 }
 
 func (s *testInfoschemaTableSuite) TestKeyColumnUsage(c *C) {
