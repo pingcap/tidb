@@ -15,12 +15,9 @@ package executor
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"math"
-	"net/http"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -32,10 +29,8 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/prometheus/client_golang/api"
 	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
@@ -116,66 +111,6 @@ func (e *MetricRetriever) queryMetric(ctx context.Context, sctx sessionctx.Conte
 	promQL := e.tblDef.GenPromQL(sctx, e.extractor.LabelConditions, quantile)
 	result, _, err := promQLAPI.QueryRange(ctx, promQL, queryRange)
 	return result, err
-}
-
-type metricStorage struct {
-	PdServer struct {
-		MetricStorage string `json:"metric-storage"`
-	} `json:"pd-server"`
-}
-
-type prometheus struct {
-	IP         string `json:"ip"`
-	BinaryPath string `json:"binary_path"`
-	Port       int    `json:"port"`
-}
-
-func (e *MetricRetriever) getMetricAddr(sctx sessionctx.Context) (string, error) {
-	// Get PD servers info.
-	store := sctx.GetStore()
-	etcd, ok := store.(tikv.EtcdBackend)
-	if !ok {
-		return "", errors.Errorf("%T not an etcd backend", store)
-	}
-
-	pdAddrs := etcd.EtcdAddrs()
-	if len(pdAddrs) < 0 {
-		return "", errors.Errorf("pd unavailable")
-	}
-	var res string
-
-	// get prometheus address from pdApi
-	url := fmt.Sprintf("http://%s%s", pdAddrs[0], pdapi.Config)
-	resp, err := http.Get(url)
-	if err != nil {
-		return "", err
-	}
-	var metricStorage metricStorage
-	dec := json.NewDecoder(resp.Body)
-	err = dec.Decode(&metricStorage)
-	if err != nil {
-		return "", err
-	}
-	res = metricStorage.PdServer.MetricStorage
-
-	// get prometheus address from etcdApi
-	if res == "" {
-		spkv, err := tikv.NewEtcdSafePointKV(pdAddrs, nil)
-		if err != nil {
-			return "", err
-		}
-		values, err := spkv.Get("/topology/prometheus")
-		if err != nil {
-			return "", errors.Trace(err)
-		}
-		var prometheus prometheus
-		err = json.Unmarshal([]byte(values), &prometheus)
-		if err != nil {
-			return "", errors.Trace(err)
-		}
-		res = fmt.Sprintf("http://%s:%v", prometheus.IP, strconv.Itoa(prometheus.Port))
-	}
-	return res, nil
 }
 
 type promQLQueryRange = promv1.Range

@@ -482,7 +482,7 @@ type prometheus struct {
 }
 
 type metricStorage struct {
-	PdServer struct {
+	PDServer struct {
 		MetricStorage string `json:"metric-storage"`
 	} `json:"pd-server"`
 }
@@ -490,7 +490,7 @@ type metricStorage struct {
 func (is *InfoSyncer) getPrometheusAddr() (string, error) {
 	// Get PD servers info.
 	pdAddrs := is.etcdCli.Endpoints()
-	if len(pdAddrs) < 0 {
+	if len(pdAddrs) == 0 {
 		return "", errors.New("pd unavailable")
 	}
 	var res string
@@ -512,11 +512,11 @@ func (is *InfoSyncer) getPrometheusAddr() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	res = metricStorage.PdServer.MetricStorage
+	res = metricStorage.PDServer.MetricStorage
 
 	// get prometheus address from etcdApi
 	if res == "" {
-		values, err := is.get(TopologyPrometheus)
+		values, err := is.getPrometheusAddrFromEtcd(TopologyPrometheus)
 		if err != nil {
 			return "", errors.Trace(err)
 		}
@@ -529,10 +529,11 @@ func (is *InfoSyncer) getPrometheusAddr() (string, error) {
 	}
 	is.prometheusAddr = res
 	is.modifyTime = time.Now()
+	setGlobalInfoSyncer(is)
 	return res, nil
 }
 
-func (is *InfoSyncer) get(k string) (string, error) {
+func (is *InfoSyncer) getPrometheusAddrFromEtcd(k string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
 	resp, err := is.etcdCli.Get(ctx, k)
 	cancel()
