@@ -809,8 +809,8 @@ func (e *memtableRetriever) setDataFromTableConstraints(ctx sessionctx.Context, 
 	e.rows = rows
 }
 
-//slowQueryRetriever is used to read slow log data.
-type diskUsageRetriever struct {
+//tableStorageStatsRetriever is used to read slow log data.
+type tableStorageStatsRetriever struct {
 	dummyCloser
 	table         *model.TableInfo
 	outputCols    []*model.ColumnInfo
@@ -821,7 +821,7 @@ type diskUsageRetriever struct {
 	curTable      int
 }
 
-func (e *diskUsageRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
+func (e *tableStorageStatsRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
 	if e.retrieved {
 		return nil, nil
 	}
@@ -859,7 +859,7 @@ type initialTable struct {
 	tb *model.TableInfo
 }
 
-func (e *diskUsageRetriever) initialize(sctx sessionctx.Context) error {
+func (e *tableStorageStatsRetriever) initialize(sctx sessionctx.Context) error {
 	is := infoschema.GetInfoSchema(sctx)
 	dbs := is.AllSchemas()
 	sort.Sort(infoschema.SchemasSorter(dbs))
@@ -918,7 +918,7 @@ type pdRegionStats struct {
 	StorePeerSize    map[uint64]int64 `json:"store_peer_size"`
 }
 
-func (e *diskUsageRetriever) dataForDiskUsage(ctx sessionctx.Context) ([][]types.Datum, error) {
+func (e *tableStorageStatsRetriever) dataForDiskUsage(ctx sessionctx.Context) ([][]types.Datum, error) {
 	rows := make([][]types.Datum, 0, 1024)
 	tikvStore, ok := ctx.GetStore().(tikv.Storage)
 	if !ok {
@@ -930,7 +930,7 @@ func (e *diskUsageRetriever) dataForDiskUsage(ctx sessionctx.Context) ([][]types
 		return nil, errors.New("not implemented")
 	}
 	pdAddrs = etcd.EtcdAddrs()
-	if len(pdAddrs) < 0 {
+	if len(pdAddrs) == 0 {
 		return nil, errors.New("pd unavailable")
 	}
 	count := 0
