@@ -267,7 +267,6 @@ func (s *testInfoschemaTableSuite) TestDDLJobs(c *C) {
 	DDLJobsTester.MustExec("set role r_priv")
 	DDLJobsTester.MustQuery("select DB_NAME, TABLE_NAME from information_schema.DDL_JOBS where DB_NAME = 'test_ddl_jobs' and TABLE_NAME = 't';").Check(
 		testkit.Rows("test_ddl_jobs t"))
-	tk.MustExec("drop database `test_ddl_jobs`")
 }
 
 func (s *testInfoschemaTableSuite) TestKeyColumnUsage(c *C) {
