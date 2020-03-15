@@ -134,8 +134,13 @@ const (
 	TableInspectionSummary = "INSPECTION_SUMMARY"
 	// TableInspectionRules is the string constant of currently implemented inspection and summary rules.
 	TableInspectionRules = "INSPECTION_RULES"
+<<<<<<< HEAD
 	// TableDDLJobs is the string constant of DDL job table.
 	TableDDLJobs = "DDL_JOBS"
+=======
+	// TableSequences is the string constant of all sequences created by user.
+	TableSequences = "SEQUENCES"
+>>>>>>> implement sequence view
 )
 
 var tableIDMap = map[string]int64{
@@ -195,7 +200,11 @@ var tableIDMap = map[string]int64{
 	TableMetricTables:                       autoid.InformationSchemaDBID + 54,
 	TableInspectionSummary:                  autoid.InformationSchemaDBID + 55,
 	TableInspectionRules:                    autoid.InformationSchemaDBID + 56,
+<<<<<<< HEAD
 	TableDDLJobs:                            autoid.InformationSchemaDBID + 57,
+=======
+	TableSequences:                          autoid.InformationSchemaDBID + 57,
+>>>>>>> implement sequence view
 }
 
 type columnInfo struct {
@@ -999,6 +1008,21 @@ var tableDDLJobsCols = []columnInfo{
 	{name: "QUERY", tp: mysql.TypeVarchar, size: 64},
 }
 
+var tableSequencesCols = []columnInfo{
+	{name: "TABLE_CATALOG", tp: mysql.TypeVarchar, size: 512, flag: mysql.NotNullFlag},
+	{name: "SEQUENCE_SCHEMA", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
+	{name: "SEQUENCE_NAME", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
+	{name: "CACHE", tp: mysql.TypeTiny, flag: mysql.NotNullFlag},
+	{name: "CACHE_VALUE", tp: mysql.TypeLonglong, size: 21},
+	{name: "CYCLE", tp: mysql.TypeTiny, flag: mysql.NotNullFlag},
+	{name: "INCREMENT", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
+	{name: "MAX_VALUE", tp: mysql.TypeLonglong, size: 21},
+	{name: "MIN_VALUE", tp: mysql.TypeLonglong, size: 21},
+	{name: "ORDER", tp: mysql.TypeTiny, flag: mysql.NotNullFlag},
+	{name: "START", tp: mysql.TypeLonglong, size: 21},
+	{name: "COMMENT", tp: mysql.TypeVarchar, size: 64},
+}
+
 func dataForTiKVRegionStatus(ctx sessionctx.Context) (records [][]types.Datum, err error) {
 	tikvStore, ok := ctx.GetStore().(tikv.Storage)
 	if !ok {
@@ -1421,7 +1445,11 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableMetricTables:                       tableMetricTablesCols,
 	TableInspectionSummary:                  tableInspectionSummaryCols,
 	TableInspectionRules:                    tableInspectionRulesCols,
+<<<<<<< HEAD
 	TableDDLJobs:                            tableDDLJobsCols,
+=======
+	TableSequences:                          tableSequencesCols,
+>>>>>>> implement sequence view
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {

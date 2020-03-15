@@ -75,6 +75,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataFromTables(sctx, dbs)
 		case infoschema.TableColumns:
 			e.setDataForColumns(sctx, dbs)
+		case infoschema.TableSequences:
+			e.setDataFromSequences(sctx, dbs)
 		case infoschema.TablePartitions:
 			err = e.setDataFromPartitions(sctx, dbs)
 		case infoschema.TableClusterInfo:
@@ -411,6 +413,10 @@ func (e *memtableRetriever) setDataFromTables(ctx sessionctx.Context, schemas []
 			createTime := types.NewTime(types.FromGoTime(table.GetUpdateTime()), createTimeTp, types.DefaultFsp)
 
 			createOptions := ""
+
+			if table.IsSequence() {
+				continue
+			}
 
 			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
 				continue
@@ -1301,6 +1307,7 @@ func (e *memtableRetriever) setDataForAnalyzeStatus(sctx sessionctx.Context) {
 	e.rows = dataForAnalyzeStatusHelper(sctx)
 }
 
+<<<<<<< HEAD
 // setDataForPseudoProfiling returns pseudo data for table profiling when system variable `profiling` is set to `ON`.
 func (e *memtableRetriever) setDataForPseudoProfiling(sctx sessionctx.Context) {
 	if v, ok := sctx.GetSessionVars().GetSystemVar("profiling"); ok && variable.TiDBOptOn(v) {
@@ -1349,4 +1356,35 @@ func (e *memtableRetriever) setDataForServersInfo() error {
 	}
 	e.rows = rows
 	return nil
+}
+
+func (e *memtableRetriever) setDataFromSequences(ctx sessionctx.Context, schemas []*model.DBInfo) {
+	checker := privilege.GetPrivilegeManager(ctx)
+	var rows [][]types.Datum
+	for _, schema := range schemas {
+		for _, table := range schema.Tables {
+			if !table.IsSequence() {
+				continue
+			}
+			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
+				continue
+			}
+			record := types.MakeDatums(
+				infoschema.CatalogVal,     // TABLE_CATALOG
+				schema.Name.O,             // TABLE_SCHEMA
+				table.Name.O,              // TABLE_NAME
+				table.Sequence.Cache,      // Cache
+				table.Sequence.CacheValue, // CACHE_VALUE
+				table.Sequence.Cycle,      // CYCLE
+				table.Sequence.Increment,  // INCREMENT
+				table.Sequence.MaxValue,   // MAXVALUE
+				table.Sequence.MinValue,   // MINVALUE
+				table.Sequence.Order,      // ORDER
+				table.Sequence.Start,      // START
+				table.Sequence.Comment,    // COMMENT
+			)
+			rows = append(rows, record)
+		}
+	}
+	e.rows = rows
 }
