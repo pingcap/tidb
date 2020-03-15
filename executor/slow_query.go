@@ -122,8 +122,9 @@ type parsedSlowLog struct {
 }
 
 func (e *slowQueryRetriever) parseDataForSlowLog(ctx context.Context, sctx sessionctx.Context) {
+	reader := bufio.NewReader(nil)
 	for e.fileIdx < len(e.files) {
-		reader := bufio.NewReader(e.files[e.fileIdx].file)
+		reader.Reset(e.files[e.fileIdx].file)
 		rows, err := e.parseSlowLog(sctx, reader, 1024)
 		select {
 		case <-ctx.Done():
