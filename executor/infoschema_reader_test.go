@@ -270,7 +270,6 @@ func (s *testInfoschemaTableSuite) TestDDLJobs(c *C) {
 	DDLJobsTester.MustQuery("select TABLE_NAME from information_schema.DDL_JOBS where DB_NAME = 'test_ddl_jobs' and TABLE_NAME = 't';").Check(
 		[][]interface{}{})
 	tk.MustExec("GRANT ALL PRIVILEGES ON test_ddl_jobs.* TO r_priv;")
-	DDLJobsTester.MustExec("set role r_priv")
 	DDLJobsTester.MustQuery("select TABLE_NAME from information_schema.DDL_JOBS where DB_NAME = 'test_ddl_jobs' and TABLE_NAME = 't';").Check(
 		testkit.Rows("t"))
 }
