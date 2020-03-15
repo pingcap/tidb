@@ -29,9 +29,10 @@ type Config struct {
 	Consistency   string
 	NoViews       bool
 
-	BlackWhiteList BWListConf
-	Rows           uint64
-	Where          string
+	BlackWhiteList  BWListConf
+	Rows            uint64
+	Where           string
+	EscapeBackslash bool
 }
 
 func DefaultConfig() *Config {
