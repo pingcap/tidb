@@ -14,6 +14,7 @@
 package executor_test
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
 	"net"
@@ -21,7 +22,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"context"
 
 	"github.com/gorilla/mux"
 	. "github.com/pingcap/check"
