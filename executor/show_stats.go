@@ -19,7 +19,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
@@ -224,7 +223,7 @@ func (e *ShowExec) appendTableForStatsHealthy(dbName, tblName, partitionName str
 }
 
 func (e *ShowExec) fetchShowAnalyzeStatus() {
-	rows := infoschema.DataForAnalyzeStatus(e.baseExecutor.ctx)
+	rows := dataForAnalyzeStatusHelper(e.baseExecutor.ctx)
 	for _, row := range rows {
 		for i, val := range row {
 			e.result.AppendDatum(i, &val)

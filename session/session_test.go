@@ -3122,3 +3122,16 @@ func (s *testSessionSuite2) TestPessimisticLockOnPartition(c *C) {
 	c.Assert(<-ch, Equals, int32(1))
 	c.Assert(<-ch, Equals, int32(0))
 }
+
+func (s *testSchemaSuite) TestTxnSize(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists txn_size")
+	tk.MustExec("create table txn_size (k int , v varchar(64))")
+	tk.MustExec("begin")
+	tk.MustExec("insert txn_size values (1, 'dfaasdfsdf')")
+	tk.MustExec("insert txn_size values (2, 'dsdfaasdfsdf')")
+	tk.MustExec("insert txn_size values (3, 'abcdefghijkl')")
+	txn, err := tk.Se.Txn(false)
+	c.Assert(err, IsNil)
+	c.Assert(txn.Size() > 0, IsTrue)
+}

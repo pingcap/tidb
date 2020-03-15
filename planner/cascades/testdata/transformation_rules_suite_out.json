@@ -2236,5 +2236,121 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestTransformAggToProj",
+    "Cases": [
+      {
+        "SQL": "select count(b) from t group by a",
+        "Result": [
+          "Group#0 Schema:[Column#13]",
+          "    Projection_5 input:[Group#1], 1->Column#13",
+          "Group#1 Schema:[test.t.a,test.t.b], UniqueKey:[test.t.a]",
+          "    DataSource_1 table:t"
+        ]
+      },
+      {
+        "SQL": "select count(b) from t group by b",
+        "Result": [
+          "Group#0 Schema:[Column#13]",
+          "    Projection_3 input:[Group#1], Column#13",
+          "Group#1 Schema:[Column#13]",
+          "    Aggregation_2 input:[Group#2], group by:test.t.b, funcs:count(test.t.b)",
+          "Group#2 Schema:[test.t.b]",
+          "    DataSource_1 table:t"
+        ]
+      },
+      {
+        "SQL": "select count(b) from t",
+        "Result": [
+          "Group#0 Schema:[Column#13]",
+          "    Projection_3 input:[Group#1], Column#13",
+          "Group#1 Schema:[Column#13]",
+          "    Aggregation_2 input:[Group#2], funcs:count(test.t.b)",
+          "Group#2 Schema:[test.t.b]",
+          "    DataSource_1 table:t"
+        ]
+      },
+      {
+        "SQL": "select a from t group by a having sum(b) > 4",
+        "Result": [
+          "Group#0 Schema:[test.t.a]",
+          "    Projection_5 input:[Group#1], test.t.a",
+          "Group#1 Schema:[test.t.a,Column#13]",
+          "    Selection_4 input:[Group#2], gt(Column#13, 4)",
+          "Group#2 Schema:[test.t.a,Column#13]",
+          "    Projection_7 input:[Group#3], test.t.a, cast(test.t.b, decimal(65,0) BINARY)->Column#13",
+          "Group#3 Schema:[test.t.a,test.t.b], UniqueKey:[test.t.a]",
+          "    DataSource_1 table:t"
+        ]
+      },
+      {
+        "SQL": "select count(b), sum(b), avg(b), b, max(b), min(b), bit_and(b), bit_or(b), bit_xor(b) from t group by a having sum(b) >= 0 and count(b) >= 0 order by b",
+        "Result": [
+          "Group#0 Schema:[Column#21,Column#22,Column#23,test.t.b,Column#25,Column#26,Column#27,Column#28,Column#29]",
+          "    Projection_6 input:[Group#1], Column#13, Column#14, Column#15, test.t.b, Column#16, Column#17, Column#18, Column#19, Column#20",
+          "Group#1 Schema:[Column#13,Column#14,Column#15,test.t.b,Column#16,Column#17,Column#18,Column#19,Column#20,Column#14,Column#13]",
+          "    Sort_5 input:[Group#2], test.t.b:asc",
+          "Group#2 Schema:[Column#13,Column#14,Column#15,test.t.b,Column#16,Column#17,Column#18,Column#19,Column#20,Column#14,Column#13]",
+          "    Selection_4 input:[Group#3], ge(Column#13, 0), ge(Column#14, 0)",
+          "Group#3 Schema:[Column#13,Column#14,Column#15,test.t.b,Column#16,Column#17,Column#18,Column#19,Column#20,Column#14,Column#13]",
+          "    Projection_8 input:[Group#4], 1->Column#13, cast(test.t.b, decimal(65,0) BINARY)->Column#14, cast(test.t.b, decimal(65,30) BINARY)->Column#15, test.t.b, cast(test.t.b, int(11))->Column#16, cast(test.t.b, int(11))->Column#17, ifnull(cast(test.t.b, bigint(21) UNSIGNED BINARY), 18446744073709551615)->Column#18, ifnull(cast(test.t.b, bigint(21) UNSIGNED BINARY), 0)->Column#19, ifnull(cast(test.t.b, bigint(21) UNSIGNED BINARY), 0)->Column#20, cast(test.t.b, decimal(65,0) BINARY)->Column#14, 1->Column#13",
+          "Group#4 Schema:[test.t.a,test.t.b], UniqueKey:[test.t.a]",
+          "    DataSource_1 table:t"
+        ]
+      },
+      {
+        "SQL": "select count(b), sum(b), avg(b), f, max(c), min(c), bit_and(c), bit_or(d), bit_xor(g) from t group by a",
+        "Result": [
+          "Group#0 Schema:[Column#13,Column#14,Column#15,test.t.f,Column#16,Column#17,Column#18,Column#19,Column#20]",
+          "    Projection_5 input:[Group#1], 1->Column#13, cast(test.t.b, decimal(65,0) BINARY)->Column#14, cast(test.t.b, decimal(65,30) BINARY)->Column#15, test.t.f, cast(test.t.c, int(11))->Column#16, cast(test.t.c, int(11))->Column#17, ifnull(cast(test.t.c, bigint(21) UNSIGNED BINARY), 18446744073709551615)->Column#18, ifnull(cast(test.t.d, bigint(21) UNSIGNED BINARY), 0)->Column#19, ifnull(cast(test.t.g, bigint(21) UNSIGNED BINARY), 0)->Column#20",
+          "Group#1 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.f,test.t.g], UniqueKey:[test.t.f,test.t.f,test.t.g,test.t.a]",
+          "    DataSource_1 table:t"
+        ]
+      },
+      {
+        "SQL": "select count(b), sum(b), avg(b), f, max(c), min(c), bit_and(c), bit_or(d), bit_xor(g), var_pop(b) from t group by a",
+        "Result": [
+          "Group#0 Schema:[Column#13,Column#14,Column#15,test.t.f,Column#16,Column#17,Column#18,Column#19,Column#20,Column#21]",
+          "    Projection_3 input:[Group#1], Column#13, Column#14, Column#15, test.t.f, Column#16, Column#17, Column#18, Column#19, Column#20, Column#21",
+          "Group#1 Schema:[Column#13,Column#14,Column#15,Column#16,Column#17,Column#18,Column#19,Column#20,Column#21,test.t.f]",
+          "    Aggregation_2 input:[Group#2], group by:test.t.a, funcs:count(test.t.b), sum(test.t.b), avg(test.t.b), max(test.t.c), min(test.t.c), bit_and(test.t.c), bit_or(test.t.d), bit_xor(test.t.g), var_pop(test.t.b), firstrow(test.t.f)",
+          "Group#2 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.f,test.t.g], UniqueKey:[test.t.f,test.t.f,test.t.g,test.t.a]",
+          "    DataSource_1 table:t"
+        ]
+      },
+      {
+        "SQL": "select count(b), sum(b), avg(b), f, max(c), min(c), bit_and(c), bit_or(d), bit_xor(g), group_concat(b, c, d, f) from t group by a",
+        "Result": [
+          "Group#0 Schema:[Column#13,Column#14,Column#15,test.t.f,Column#16,Column#17,Column#18,Column#19,Column#20,Column#21]",
+          "    Projection_3 input:[Group#1], Column#13, Column#14, Column#15, test.t.f, Column#16, Column#17, Column#18, Column#19, Column#20, Column#21",
+          "Group#1 Schema:[Column#13,Column#14,Column#15,Column#16,Column#17,Column#18,Column#19,Column#20,Column#21,test.t.f]",
+          "    Aggregation_2 input:[Group#2], group by:test.t.a, funcs:count(test.t.b), sum(test.t.b), avg(test.t.b), max(test.t.c), min(test.t.c), bit_and(test.t.c), bit_or(test.t.d), bit_xor(test.t.g), group_concat(test.t.b, test.t.c, test.t.d, test.t.f, \",\"), firstrow(test.t.f)",
+          "Group#2 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.f,test.t.g]",
+          "    DataSource_1 table:t"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestDecorrelate",
+    "Cases": [
+      {
+        "SQL": "select a from t t1 where exists (select 1 from t t2 where t1.a = t2.b)",
+        "Result": [
+          "Group#0 Schema:[test.t.a]",
+          "    Projection_7 input:[Group#1], test.t.a",
+          "Group#1 Schema:[test.t.a]",
+          "    Apply_6 input:[Group#2,Group#3], semi join",
+          "    Join_10 input:[Group#2,Group#4], semi join, equal:[eq(test.t.a, test.t.b)]",
+          "Group#2 Schema:[test.t.a]",
+          "    DataSource_1 table:t1",
+          "Group#3 Schema:[test.t.b]",
+          "    Selection_4 input:[Group#4], eq(test.t.a, test.t.b)",
+          "Group#4 Schema:[test.t.b]",
+          "    DataSource_3 table:t2"
+        ]
+      }
+    ]
   }
 ]
