@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/memo"
 	"github.com/pingcap/tidb/sessionctx"
@@ -76,6 +77,7 @@ var TiDBLayerOptimizationBatch = TransformationRuleBatch{
 		NewRuleEliminateSingleMaxMin(),
 		NewRuleEliminateOuterJoinBelowAggregation(),
 		NewRuleTransformAggregateCaseToSelection(),
+		NewRuleTransformAggToProj(),
 	},
 	memo.OperandLimit: {
 		NewRuleTransformLimitToTopN(),
@@ -88,12 +90,17 @@ var TiDBLayerOptimizationBatch = TransformationRuleBatch{
 	memo.OperandProjection: {
 		NewRuleEliminateProjection(),
 		NewRuleMergeAdjacentProjection(),
+		NewRuleEliminateOuterJoinBelowProjection(),
 	},
 	memo.OperandTopN: {
 		NewRulePushTopNDownProjection(),
 		NewRulePushTopNDownOuterJoin(),
 		NewRulePushTopNDownUnionAll(),
 		NewRuleMergeAdjacentTopN(),
+	},
+	memo.OperandApply: {
+		NewRuleTransformApplyToJoin(),
+		NewRulePullSelectionUpApply(),
 	},
 }
 
@@ -312,7 +319,7 @@ func (r *PushSelDownTiKVSingleGather) OnTransform(old *memo.ExprIter) (newExprs 
 	childGroup := old.Children[0].Children[0].Group
 	var pushed, remained []expression.Expression
 	sctx := sg.SCtx()
-	_, pushed, remained = expression.ExpressionsToPB(sctx.GetSessionVars().StmtCtx, sel.Conditions, sctx.GetClient())
+	pushed, remained = expression.PushDownExprs(sctx.GetSessionVars().StmtCtx, sel.Conditions, sctx.GetClient(), kv.TiKV)
 	if len(pushed) == 0 {
 		return nil, false, false, nil
 	}
@@ -395,7 +402,7 @@ func (r *PushAggDownGather) Match(expr *memo.ExprIter) bool {
 		// TODO: Remove this check when we have implemented TiFlashAggregation.
 		return false
 	}
-	return plannercore.CheckAggCanPushCop(agg.SCtx(), agg.AggFuncs, agg.GroupByItems, false)
+	return plannercore.CheckAggCanPushCop(agg.SCtx(), agg.AggFuncs, agg.GroupByItems, kv.TiKV)
 }
 
 // OnTransform implements Transformation interface.
@@ -911,7 +918,8 @@ func (r *PushSelDownJoin) OnTransform(old *memo.ExprIter) (newExprs []*memo.Grou
 		} else {
 			joinConds, remainCond = expression.PropConstOverOuterJoin(join.SCtx(), joinConds, remainCond, leftGroup.Prop.Schema, rightGroup.Prop.Schema, nullSensitive)
 		}
-		join.AttachOnConds(joinConds)
+		eq, left, right, other := join.ExtractOnCondition(joinConds, leftGroup.Prop.Schema, rightGroup.Prop.Schema, false, false)
+		join.AppendJoinConds(eq, left, right, other)
 		// Return table dual when filter is constant false or null.
 		dual := plannercore.Conds2TableDual(join, remainCond)
 		if dual != nil {
@@ -1031,7 +1039,10 @@ func (r *EliminateProjection) OnTransform(old *memo.ExprIter) (newExprs []*memo.
 	// Promote the children group's expression.
 	finalGroupExprs := make([]*memo.GroupExpr, 0, child.Group.Equivalents.Len())
 	for elem := child.Group.Equivalents.Front(); elem != nil; elem = elem.Next() {
-		finalGroupExprs = append(finalGroupExprs, elem.Value.(*memo.GroupExpr))
+		childExpr := elem.Value.(*memo.GroupExpr)
+		copyChildExpr := memo.NewGroupExpr(childExpr.ExprNode)
+		copyChildExpr.SetChildren(childExpr.Children...)
+		finalGroupExprs = append(finalGroupExprs, copyChildExpr)
 	}
 	return finalGroupExprs, true, false, nil
 }
@@ -1694,9 +1705,9 @@ func (r *PushLimitDownOuterJoin) OnTransform(old *memo.ExprIter) (newExprs []*me
 
 	switch join.JoinType {
 	case plannercore.LeftOuterJoin, plannercore.LeftOuterSemiJoin, plannercore.AntiLeftOuterSemiJoin:
-		leftGroup = pushLimitDownOuterJoinToChild(limit, leftGroup)
+		leftGroup = r.pushLimitDownOuterJoinToChild(limit, leftGroup)
 	case plannercore.RightOuterJoin:
-		rightGroup = pushLimitDownOuterJoinToChild(limit, rightGroup)
+		rightGroup = r.pushLimitDownOuterJoinToChild(limit, rightGroup)
 	default:
 		return nil, false, false, nil
 	}
@@ -1709,7 +1720,7 @@ func (r *PushLimitDownOuterJoin) OnTransform(old *memo.ExprIter) (newExprs []*me
 	return []*memo.GroupExpr{newLimitExpr}, true, false, nil
 }
 
-func pushLimitDownOuterJoinToChild(limit *plannercore.LogicalLimit, outerGroup *memo.Group) *memo.Group {
+func (r *PushLimitDownOuterJoin) pushLimitDownOuterJoinToChild(limit *plannercore.LogicalLimit, outerGroup *memo.Group) *memo.Group {
 	newLimit := plannercore.LogicalLimit{
 		Count: limit.Count + limit.Offset,
 	}.Init(limit.SCtx(), limit.SelectBlockOffset())
@@ -1766,9 +1777,56 @@ func (r *PushLimitDownTiKVSingleGather) OnTransform(old *memo.ExprIter) (newExpr
 	return []*memo.GroupExpr{finalLimitExpr}, true, false, nil
 }
 
+type outerJoinEliminator struct {
+}
+
+func (*outerJoinEliminator) prepareForEliminateOuterJoin(joinExpr *memo.GroupExpr) (ok bool, innerChildIdx int, outerGroup *memo.Group, innerGroup *memo.Group, outerUniqueIDs set.Int64Set) {
+	join := joinExpr.ExprNode.(*plannercore.LogicalJoin)
+
+	switch join.JoinType {
+	case plannercore.LeftOuterJoin:
+		innerChildIdx = 1
+	case plannercore.RightOuterJoin:
+		innerChildIdx = 0
+	default:
+		ok = false
+		return
+	}
+	outerGroup = joinExpr.Children[1^innerChildIdx]
+	innerGroup = joinExpr.Children[innerChildIdx]
+
+	outerUniqueIDs = set.NewInt64Set()
+	for _, outerCol := range outerGroup.Prop.Schema.Columns {
+		outerUniqueIDs.Insert(outerCol.UniqueID)
+	}
+
+	ok = true
+	return
+}
+
+// check whether one of unique keys sets is contained by inner join keys.
+func (*outerJoinEliminator) isInnerJoinKeysContainUniqueKey(innerGroup *memo.Group, joinKeys *expression.Schema) (bool, error) {
+	// builds UniqueKey info of innerGroup.
+	innerGroup.BuildKeyInfo()
+	for _, keyInfo := range innerGroup.Prop.Schema.Keys {
+		joinKeysContainKeyInfo := true
+		for _, col := range keyInfo {
+			if !joinKeys.Contains(col) {
+				joinKeysContainKeyInfo = false
+				break
+			}
+		}
+		if joinKeysContainKeyInfo {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // EliminateOuterJoinBelowAggregation eliminate the outer join which below aggregation.
 type EliminateOuterJoinBelowAggregation struct {
 	baseRule
+	outerJoinEliminator
 }
 
 // NewRuleEliminateOuterJoinBelowAggregation creates a new Transformation EliminateOuterJoinBelowAggregation.
@@ -1796,22 +1854,11 @@ func (r *EliminateOuterJoinBelowAggregation) OnTransform(old *memo.ExprIter) (ne
 	joinExpr := old.Children[0].GetExpr()
 	join := joinExpr.ExprNode.(*plannercore.LogicalJoin)
 
-	var innerChildIdx int
-	switch join.JoinType {
-	case plannercore.LeftOuterJoin:
-		innerChildIdx = 1
-	case plannercore.RightOuterJoin:
-		innerChildIdx = 0
-	default:
+	ok, innerChildIdx, outerGroup, innerGroup, outerUniqueIDs := r.prepareForEliminateOuterJoin(joinExpr)
+	if !ok {
 		return nil, false, false, nil
 	}
-	outerGroup := joinExpr.Children[1^innerChildIdx]
-	innerGroup := joinExpr.Children[innerChildIdx]
 
-	outerUniqueIDs := set.NewInt64Set()
-	for _, outerCol := range outerGroup.Prop.Schema.Columns {
-		outerUniqueIDs.Insert(outerCol.UniqueID)
-	}
 	// only when agg only use the columns from outer table can eliminate outer join.
 	if !plannercore.IsColsAllFromOuterTable(agg.GetUsedCols(), outerUniqueIDs) {
 		return nil, false, false, nil
@@ -1825,7 +1872,7 @@ func (r *EliminateOuterJoinBelowAggregation) OnTransform(old *memo.ExprIter) (ne
 	}
 	// outer join elimination without duplicate agnostic aggregate functions.
 	innerJoinKeys := join.ExtractJoinKeys(innerChildIdx)
-	contain, err := isInnerJoinKeysContainUniqueKey(innerGroup, innerJoinKeys)
+	contain, err := r.isInnerJoinKeysContainUniqueKey(innerGroup, innerJoinKeys)
 	if err != nil {
 		return nil, false, false, err
 	}
@@ -1838,41 +1885,59 @@ func (r *EliminateOuterJoinBelowAggregation) OnTransform(old *memo.ExprIter) (ne
 	return nil, false, false, nil
 }
 
-// Return true only if all the aggregate functions are duplicate agnostic.
-// Only the following functions are considered to be duplicate agnostic:
-//   1. MAX(arg)
-//   2. MIN(arg)
-//   3. FIRST_ROW(arg)
-//   4. Other agg functions with DISTINCT flag, like SUM(DISTINCT arg)
-func (r *EliminateOuterJoinBelowAggregation) isAggFuncAllDupAgnostic(agg *plannercore.LogicalAggregation) bool {
-	for _, aggDesc := range agg.AggFuncs {
-		if !aggDesc.HasDistinct &&
-			aggDesc.Name != ast.AggFuncFirstRow &&
-			aggDesc.Name != ast.AggFuncMax &&
-			aggDesc.Name != ast.AggFuncMin {
-			return false
-		}
-	}
-	return true
+// EliminateOuterJoinBelowProjection eliminate the outer join which below projection.
+type EliminateOuterJoinBelowProjection struct {
+	baseRule
+	outerJoinEliminator
 }
 
-// check whether one of unique keys sets is contained by inner join keys.
-func isInnerJoinKeysContainUniqueKey(innerGroup *memo.Group, joinKeys *expression.Schema) (bool, error) {
-	// builds UniqueKey info of innerGroup.
-	innerGroup.BuildKeyInfo()
-	for _, keyInfo := range innerGroup.Prop.Schema.Keys {
-		joinKeysContainKeyInfo := true
-		for _, col := range keyInfo {
-			if !joinKeys.Contains(col) {
-				joinKeysContainKeyInfo = false
-				break
-			}
-		}
-		if joinKeysContainKeyInfo {
-			return true, nil
-		}
+// NewRuleEliminateOuterJoinBelowProjection creates a new Transformation EliminateOuterJoinBelowProjection.
+// The pattern of this rule is `Projection->Join->X`.
+func NewRuleEliminateOuterJoinBelowProjection() Transformation {
+	rule := &EliminateOuterJoinBelowProjection{}
+	rule.pattern = memo.BuildPattern(
+		memo.OperandProjection,
+		memo.EngineTiDBOnly,
+		memo.NewPattern(memo.OperandJoin, memo.EngineTiDBOnly),
+	)
+	return rule
+}
+
+// Match implements Transformation interface.
+func (r *EliminateOuterJoinBelowProjection) Match(expr *memo.ExprIter) bool {
+	joinType := expr.Children[0].GetExpr().ExprNode.(*plannercore.LogicalJoin).JoinType
+	return joinType == plannercore.LeftOuterJoin || joinType == plannercore.RightOuterJoin
+}
+
+// OnTransform implements Transformation interface.
+// This rule tries to eliminate outer join which below projection.
+func (r *EliminateOuterJoinBelowProjection) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	proj := old.GetExpr().ExprNode.(*plannercore.LogicalProjection)
+	joinExpr := old.Children[0].GetExpr()
+	join := joinExpr.ExprNode.(*plannercore.LogicalJoin)
+
+	ok, innerChildIdx, outerGroup, innerGroup, outerUniqueIDs := r.prepareForEliminateOuterJoin(joinExpr)
+	if !ok {
+		return nil, false, false, nil
 	}
-	return false, nil
+
+	// only when proj only use the columns from outer table can eliminate outer join.
+	if !plannercore.IsColsAllFromOuterTable(proj.GetUsedCols(), outerUniqueIDs) {
+		return nil, false, false, nil
+	}
+
+	innerJoinKeys := join.ExtractJoinKeys(innerChildIdx)
+	contain, err := r.isInnerJoinKeysContainUniqueKey(innerGroup, innerJoinKeys)
+	if err != nil {
+		return nil, false, false, err
+	}
+	if contain {
+		newProjExpr := memo.NewGroupExpr(proj)
+		newProjExpr.SetChildren(outerGroup)
+		return []*memo.GroupExpr{newProjExpr}, true, false, nil
+	}
+
+	return nil, false, false, nil
 }
 
 // TransformAggregateCaseToSelection convert Agg(case when) to Agg->Selection.
@@ -1995,6 +2060,63 @@ func (r *TransformAggregateCaseToSelection) isTwoOrThreeArgCase(expr expression.
 	return scalarFunc.FuncName.L == ast.Case && (len(scalarFunc.GetArgs()) == 2 || len(scalarFunc.GetArgs()) == 3)
 }
 
+// TransformAggToProj convert Agg to Proj.
+type TransformAggToProj struct {
+	baseRule
+}
+
+// NewRuleTransformAggToProj creates a new Transformation TransformAggToProj.
+// The pattern of this rule is `Agg`.
+func NewRuleTransformAggToProj() Transformation {
+	rule := &TransformAggToProj{}
+	rule.pattern = memo.BuildPattern(
+		memo.OperandAggregation,
+		memo.EngineTiDBOnly,
+	)
+	return rule
+}
+
+// Match implements Transformation interface.
+func (r *TransformAggToProj) Match(expr *memo.ExprIter) bool {
+	agg := expr.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
+
+	if !agg.IsCompleteModeAgg() {
+		return false
+	}
+
+	for _, af := range agg.AggFuncs {
+		// TODO(issue #9968): same as rule_aggregation_elimination.go -> tryToEliminateAggregation.
+		// waiting for (issue #14616): `nullable` information.
+		if af.Name == ast.AggFuncGroupConcat {
+			return false
+		}
+	}
+
+	childGroup := expr.GetExpr().Children[0]
+	childGroup.BuildKeyInfo()
+	schemaByGroupby := expression.NewSchema(agg.GetGroupByCols()...)
+	for _, key := range childGroup.Prop.Schema.Keys {
+		if schemaByGroupby.ColumnsIndices(key) != nil {
+			return true
+		}
+	}
+
+	return false
+}
+
+// OnTransform implements Transformation interface.
+// This rule tries to convert agg to proj.
+func (r *TransformAggToProj) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	agg := old.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
+	if ok, proj := plannercore.ConvertAggToProj(agg, old.GetExpr().Schema()); ok {
+		newProjExpr := memo.NewGroupExpr(proj)
+		newProjExpr.SetChildren(old.GetExpr().Children...)
+		return []*memo.GroupExpr{newProjExpr}, true, false, nil
+	}
+
+	return nil, false, false, nil
+}
+
 // InjectProjectionBelowTopN injects two Projections below and upon TopN if TopN's ByItems
 // contain ScalarFunctions.
 type InjectProjectionBelowTopN struct {
@@ -2090,4 +2212,99 @@ func (r *InjectProjectionBelowTopN) OnTransform(old *memo.ExprIter) (newExprs []
 	topProjGroupExpr := memo.NewGroupExpr(topProj)
 	topProjGroupExpr.SetChildren(topNGroup)
 	return []*memo.GroupExpr{topProjGroupExpr}, true, false, nil
+}
+
+// TransformApplyToJoin transforms a LogicalApply to LogicalJoin if it's
+// inner children has no correlated columns from it's outer schema.
+type TransformApplyToJoin struct {
+	baseRule
+}
+
+// NewRuleTransformApplyToJoin creates a new Transformation TransformApplyToJoin.
+// The pattern of this rule is: `Apply -> (X, Y)`.
+func NewRuleTransformApplyToJoin() Transformation {
+	rule := &TransformApplyToJoin{}
+	rule.pattern = memo.NewPattern(memo.OperandApply, memo.EngineTiDBOnly)
+	return rule
+}
+
+// OnTransform implements Transformation interface.
+func (r *TransformApplyToJoin) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	apply := old.GetExpr().ExprNode.(*plannercore.LogicalApply)
+	groupExpr := old.GetExpr()
+	// It's safe to use the old apply instead of creating a new LogicalApply here,
+	// Because apply.CorCols will only be used and updated by this rule during Transformation.
+	apply.CorCols = r.extractCorColumnsBySchema(groupExpr.Children[1], groupExpr.Children[0].Prop.Schema)
+	if len(apply.CorCols) != 0 {
+		return nil, false, false, nil
+	}
+
+	join := apply.LogicalJoin.Shallow()
+	joinGroupExpr := memo.NewGroupExpr(join)
+	joinGroupExpr.SetChildren(groupExpr.Children...)
+	return []*memo.GroupExpr{joinGroupExpr}, true, false, nil
+}
+
+func (r *TransformApplyToJoin) extractCorColumnsBySchema(innerGroup *memo.Group, outerSchema *expression.Schema) []*expression.CorrelatedColumn {
+	corCols := r.extractCorColumnsFromGroup(innerGroup)
+	return plannercore.ExtractCorColumnsBySchema(corCols, outerSchema)
+}
+
+func (r *TransformApplyToJoin) extractCorColumnsFromGroup(g *memo.Group) []*expression.CorrelatedColumn {
+	corCols := make([]*expression.CorrelatedColumn, 0)
+	for elem := g.Equivalents.Front(); elem != nil; elem = elem.Next() {
+		expr := elem.Value.(*memo.GroupExpr)
+		corCols = append(corCols, expr.ExprNode.ExtractCorrelatedCols()...)
+		for _, child := range expr.Children {
+			corCols = append(corCols, r.extractCorColumnsFromGroup(child)...)
+		}
+	}
+	// We may have duplicate CorrelatedColumns here, but it won't influence
+	// the logic of the transformation. Apply.CorCols will be deduplicated in
+	// `ResolveIndices`.
+	return corCols
+}
+
+// PullSelectionUpApply pulls up the inner-side Selection into Apply as
+// its join condition.
+type PullSelectionUpApply struct {
+	baseRule
+}
+
+// NewRulePullSelectionUpApply creates a new Transformation PullSelectionUpApply.
+// The pattern of this rule is: `Apply -> (Any<outer>, Selection<inner>)`.
+func NewRulePullSelectionUpApply() Transformation {
+	rule := &PullSelectionUpApply{}
+	rule.pattern = memo.BuildPattern(
+		memo.OperandApply,
+		memo.EngineTiDBOnly,
+		memo.NewPattern(memo.OperandAny, memo.EngineTiDBOnly),       // outer child
+		memo.NewPattern(memo.OperandSelection, memo.EngineTiDBOnly), // inner child
+	)
+	return rule
+}
+
+// OnTransform implements Transformation interface.
+// This rule tries to pull up the inner side Selection, and add these conditions
+// to Join condition inside the Apply.
+func (r *PullSelectionUpApply) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	apply := old.GetExpr().ExprNode.(*plannercore.LogicalApply)
+	outerChildGroup := old.Children[0].Group
+	innerChildGroup := old.Children[1].Group
+	sel := old.Children[1].GetExpr().ExprNode.(*plannercore.LogicalSelection)
+	newConds := make([]expression.Expression, 0, len(sel.Conditions))
+	for _, cond := range sel.Conditions {
+		newConds = append(newConds, cond.Clone().Decorrelate(outerChildGroup.Prop.Schema))
+	}
+	newApply := plannercore.LogicalApply{
+		LogicalJoin: *(apply.LogicalJoin.Shallow()),
+		CorCols:     apply.CorCols,
+	}.Init(apply.SCtx(), apply.SelectBlockOffset())
+	// Update Join conditions.
+	eq, left, right, other := newApply.LogicalJoin.ExtractOnCondition(newConds, outerChildGroup.Prop.Schema, innerChildGroup.Prop.Schema, false, false)
+	newApply.LogicalJoin.AppendJoinConds(eq, left, right, other)
+
+	newApplyGroupExpr := memo.NewGroupExpr(newApply)
+	newApplyGroupExpr.SetChildren(outerChildGroup, old.Children[1].GetExpr().Children[0])
+	return []*memo.GroupExpr{newApplyGroupExpr}, false, false, nil
 }
