@@ -186,5 +186,24 @@
       "select count(case when a > 10 and d < 5 then b end) from t",
       "select count(case when a > 10 and d < 5 then null else b end) from t"
     ]
+  },
+  {
+    "name": "TestTransformAggToProj",
+    "cases": [
+      "select count(b) from t group by a",
+      "select count(b) from t group by b",
+      "select count(b) from t",
+      "select a from t group by a having sum(b) > 4",
+      "select count(b), sum(b), avg(b), b, max(b), min(b), bit_and(b), bit_or(b), bit_xor(b) from t group by a having sum(b) >= 0 and count(b) >= 0 order by b",
+      "select count(b), sum(b), avg(b), f, max(c), min(c), bit_and(c), bit_or(d), bit_xor(g) from t group by a",
+      "select count(b), sum(b), avg(b), f, max(c), min(c), bit_and(c), bit_or(d), bit_xor(g), var_pop(b) from t group by a",
+      "select count(b), sum(b), avg(b), f, max(c), min(c), bit_and(c), bit_or(d), bit_xor(g), group_concat(b, c, d, f) from t group by a"
+    ]
+  },
+  {
+    "name": "TestDecorrelate",
+    "cases": [
+      "select a from t t1 where exists (select 1 from t t2 where t1.a = t2.b)"
+    ]
   }
 ]
