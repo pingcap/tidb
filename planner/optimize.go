@@ -350,7 +350,7 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 	// Handle USE_CASCADES
 	if useCascadesHintCnt != 0 {
 		if useCascadesHintCnt > 1 {
-			warn := errors.New("There are multiple USE_CASCADES hints, only the last one will take effect")
+			warn := errors.Errorf("USE_CASCADES() is defined more than once, only the last definition takes effect: USE_CASCADES(%v)", useCascadesHint.HintData.(bool))
 			warns = append(warns, warn)
 		}
 		stmtHints.HasEnableCascadesPlannerHint = true
