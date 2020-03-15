@@ -103,7 +103,7 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		case infoschema.TableSessionVar:
 			err = e.setDataFromSessionVar(sctx)
 		case infoschema.TableTiDBServersInfo:
-			e.rows, err = dataForServersInfo()
+			err = e.setDataForServersInfo()
 		}
 		if err != nil {
 			return nil, err
@@ -1122,10 +1122,10 @@ func (e *memtableRetriever) setDataForAnalyzeStatus(sctx sessionctx.Context) {
 	e.rows = dataForAnalyzeStatusHelper(sctx)
 }
 
-func dataForServersInfo() ([][]types.Datum, error) {
+func (e *memtableRetriever) setDataForServersInfo() error {
 	serversInfo, err := infosync.GetAllServerInfo(context.Background())
 	if err != nil {
-		return nil, err
+		return err
 	}
 	rows := make([][]types.Datum, 0, len(serversInfo))
 	for _, info := range serversInfo {
@@ -1141,5 +1141,6 @@ func dataForServersInfo() ([][]types.Datum, error) {
 		)
 		rows = append(rows, row)
 	}
-	return rows, nil
+	e.rows = rows
+	return nil
 }
