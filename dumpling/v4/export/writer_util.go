@@ -47,6 +47,7 @@ func WriteInsert(tblIR TableDataIR, w io.StringWriter) error {
 		insertStatementPrefix = fmt.Sprintf("INSERT INTO %s VALUES\n", wrapBackTicks(tblIR.TableName()))
 		row                   = MakeRowReceiver(tblIR.ColumnTypes())
 		counter               = 0
+		escapeBackSlash       = tblIR.EscapeBackSlash()
 	)
 
 	selectedField := tblIR.SelectedField()
@@ -68,7 +69,7 @@ func WriteInsert(tblIR TableDataIR, w io.StringWriter) error {
 				return err
 			}
 
-			if err := write(w, row.ToString()); err != nil {
+			if err := write(w, row.ToString(escapeBackSlash)); err != nil {
 				return err
 			}
 			counter += 1
