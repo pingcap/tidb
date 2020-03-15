@@ -10,6 +10,7 @@ type TableDataIR interface {
 	ColumnCount() uint
 	ColumnTypes() []string
 	SelectedField() string
+	EscapeBackSlash() bool
 
 	SpecialComments() StringIter
 	Rows() SQLRowIter
@@ -31,7 +32,7 @@ type RowReceiverStringer interface {
 }
 
 type Stringer interface {
-	ToString() string
+	ToString(bool) string
 }
 
 type RowReceiver interface {

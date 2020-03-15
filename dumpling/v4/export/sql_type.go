@@ -1,6 +1,7 @@
 package export
 
 import (
+	"bytes"
 	"database/sql"
 	"fmt"
 	"strings"
@@ -39,6 +40,62 @@ var dataTypeBin = []string{
 	"BLOB", "TINYBLOB", "MEDIUMBLOB", "LONGBLOB", "LONG",
 	"BINARY", "VARBINARY",
 	"BIT",
+}
+
+func escape(s string, escapeBackslash bool) string {
+	if !escapeBackslash {
+		return strings.ReplaceAll(s, "'", "''")
+	}
+	var (
+		bf     bytes.Buffer
+		escape byte
+		last   = 0
+	)
+	// reference: https://gist.github.com/siddontang/8875771
+	for i := 0; i < len(s); i++ {
+		escape = 0
+
+		switch s[i] {
+		case 0: /* Must be escaped for 'mysql' */
+			escape = '0'
+			break
+		case '\n': /* Must be escaped for logs */
+			escape = 'n'
+			break
+		case '\r':
+			escape = 'r'
+			break
+		case '\\':
+			escape = '\\'
+			break
+		case '\'':
+			escape = '\''
+			break
+		case '"': /* Better safe than sorry */
+			escape = '"'
+			break
+		case '\032': /* This gives problems on Win32 */
+			escape = 'Z'
+		}
+
+		if escape != 0 {
+			if last == 0 {
+				bf.Grow(2 * len(s))
+			}
+			bf.WriteString(s[last:i])
+			bf.WriteByte('\\')
+			bf.WriteByte(escape)
+			last = i + 1
+		}
+	}
+	if last == 0 {
+		return s
+	}
+	if last < len(s) {
+		bf.WriteString(s[last:])
+	}
+	defer bf.Reset()
+	return bf.String()
 }
 
 func SQLTypeStringMaker() RowReceiverStringer {
@@ -81,11 +138,11 @@ func (r RowReceiverArr) ReportSize() uint64 {
 	}
 	return sum
 }
-func (r RowReceiverArr) ToString() string {
+func (r RowReceiverArr) ToString(escapeBackslash bool) string {
 	var sb strings.Builder
 	sb.WriteString("(")
 	for i, receiver := range r {
-		sb.WriteString(receiver.ToString())
+		sb.WriteString(receiver.ToString(escapeBackslash))
 		if i != len(r)-1 {
 			sb.WriteString(", ")
 		}
@@ -98,7 +155,7 @@ type SQLTypeNumber struct {
 	SQLTypeString
 }
 
-func (s SQLTypeNumber) ToString() string {
+func (s SQLTypeNumber) ToString(bool) string {
 	if s.Valid {
 		return s.String
 	} else {
@@ -119,17 +176,12 @@ func (s *SQLTypeString) ReportSize() uint64 {
 	}
 	return uint64(len("NULL"))
 }
-func (s *SQLTypeString) ToString() string {
+func (s *SQLTypeString) ToString(escapeBackslash bool) string {
 	if s.Valid {
-		return fmt.Sprintf(`'%s'`, escape(s.String))
+		return fmt.Sprintf(`'%s'`, escape(s.String, escapeBackslash))
 	} else {
 		return "NULL"
 	}
-}
-
-func escape(src string) string {
-	src = strings.ReplaceAll(src, "'", "''")
-	return strings.ReplaceAll(src, `\`, `\\`)
 }
 
 type SQLTypeBytes struct {
@@ -142,6 +194,6 @@ func (s *SQLTypeBytes) BindAddress(arg []interface{}) {
 func (s *SQLTypeBytes) ReportSize() uint64 {
 	return uint64(len(s.bytes))
 }
-func (s *SQLTypeBytes) ToString() string {
+func (s *SQLTypeBytes) ToString(bool) string {
 	return fmt.Sprintf("x'%x'", s.bytes)
 }

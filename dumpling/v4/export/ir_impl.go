@@ -131,13 +131,14 @@ func (m *stringIter) HasNext() bool {
 }
 
 type tableData struct {
-	database      string
-	table         string
-	chunkIndex    int
-	rows          *sql.Rows
-	colTypes      []*sql.ColumnType
-	selectedField string
-	specCmts      []string
+	database        string
+	table           string
+	chunkIndex      int
+	rows            *sql.Rows
+	colTypes        []*sql.ColumnType
+	selectedField   string
+	specCmts        []string
+	escapeBackslash bool
 }
 
 func (td *tableData) ColumnTypes() []string {
@@ -179,6 +180,10 @@ func (td *tableData) SpecialComments() StringIter {
 	return newStringIter(td.specCmts...)
 }
 
+func (td *tableData) EscapeBackSlash() bool {
+	return td.escapeBackslash
+}
+
 type tableDataChunks struct {
 	TableDataIR
 	rows               SQLRowIter
@@ -196,6 +201,10 @@ func (t *tableDataChunks) Rows() SQLRowIter {
 		statementSizeLimit: t.statementSizeLimit,
 		fileSizeLimit:      t.chunkSizeLimit,
 	}
+}
+
+func (t *tableDataChunks) EscapeBackSlash() bool {
+	return t.TableDataIR.EscapeBackSlash()
 }
 
 func buildChunksIter(td TableDataIR, chunkSize uint64, statementSize uint64) *tableDataChunks {

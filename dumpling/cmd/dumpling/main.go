@@ -44,6 +44,8 @@ var (
 	rows          uint64
 	where         string
 
+	escapeBackslash bool
+
 	rootCmd = &cobra.Command{
 		Use:   "dumpling",
 		Short: "A tool to dump MySQL/TiDB data",
@@ -77,6 +79,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&statusAddr, "status-addr", ":8281", "dumpling API server and pprof addr")
 	rootCmd.PersistentFlags().Uint64VarP(&rows, "rows", "r", export.UnspecifiedSize, "Split table into chunks of this many rows, default unlimited")
 	rootCmd.PersistentFlags().StringVar(&where, "where", "", "Dump only selected records")
+	rootCmd.PersistentFlags().BoolVar(&escapeBackslash, "escape-backslash", true, "use backslash to escape quotation marks")
 }
 
 func run() {
@@ -103,6 +106,7 @@ func run() {
 	conf.StatusAddr = statusAddr
 	conf.Rows = rows
 	conf.Where = where
+	conf.EscapeBackslash = escapeBackslash
 
 	err = export.Dump(conf)
 	if err != nil {
