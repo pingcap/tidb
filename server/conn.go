@@ -686,13 +686,8 @@ func (cc *clientConn) Run(ctx context.Context) {
 				logutil.Logger(ctx).Error("result undetermined, close this connection", zap.Error(err))
 				return
 			} else if terror.ErrCritical.Equal(err) {
-				logutil.Logger(ctx).Error("critical error, stop the server listener", zap.Error(err))
 				metrics.CriticalErrorCounter.Add(1)
-				select {
-				case cc.server.stopListenerCh <- struct{}{}:
-				default:
-				}
-				return
+				logutil.Logger(ctx).Fatal("critical error, stop the server", zap.Error(err))
 			}
 			var txnMode string
 			if cc.ctx != nil {
@@ -1124,6 +1119,8 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 	loadDataInfo.InitQueues()
 	loadDataInfo.SetMaxRowsInBatch(uint64(loadDataInfo.Ctx.GetSessionVars().DMLBatchSize))
 	loadDataInfo.StartStopWatcher()
+	// let stop watcher goroutine quit
+	defer loadDataInfo.ForceQuit()
 	err = loadDataInfo.Ctx.NewTxn(ctx)
 	if err != nil {
 		return err

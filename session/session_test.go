@@ -702,6 +702,40 @@ func (s *testSessionSuite) TestReadOnlyNotInHistory(c *C) {
 	c.Assert(history.Count(), Equals, 0)
 }
 
+func (s *testSessionSuite) TestRetryUnion(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table history (a int)")
+	tk.MustExec("insert history values (1), (2), (3)")
+	tk.MustExec("set @@autocommit = 0")
+	tk.MustExec("set tidb_disable_txn_auto_retry = 0")
+	// UNION should't be in retry history.
+	tk.MustQuery("(select * from history) union (select * from history)")
+	history := session.GetHistory(tk.Se)
+	c.Assert(history.Count(), Equals, 0)
+	tk.MustQuery("(select * from history for update) union (select * from history)")
+	tk.MustExec("update history set a = a + 1")
+	history = session.GetHistory(tk.Se)
+	c.Assert(history.Count(), Equals, 2)
+
+	// Make retryable error.
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk1.MustExec("update history set a = a + 1")
+
+	_, err := tk.Exec("commit")
+	c.Assert(err, ErrorMatches, ".*can not retry select for update statement")
+}
+
+func (s *testSessionSuite) TestRetryShow(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set @@autocommit = 0")
+	tk.MustExec("set tidb_disable_txn_auto_retry = 0")
+	// UNION should't be in retry history.
+	tk.MustQuery("show variables")
+	tk.MustQuery("show databases")
+	history := session.GetHistory(tk.Se)
+	c.Assert(history.Count(), Equals, 0)
+}
+
 func (s *testSessionSuite) TestNoRetryForCurrentTxn(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
@@ -3087,4 +3121,17 @@ func (s *testSessionSuite2) TestPessimisticLockOnPartition(c *C) {
 	// tk1 should be blocked until tk commit, check the order.
 	c.Assert(<-ch, Equals, int32(1))
 	c.Assert(<-ch, Equals, int32(0))
+}
+
+func (s *testSchemaSuite) TestTxnSize(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists txn_size")
+	tk.MustExec("create table txn_size (k int , v varchar(64))")
+	tk.MustExec("begin")
+	tk.MustExec("insert txn_size values (1, 'dfaasdfsdf')")
+	tk.MustExec("insert txn_size values (2, 'dsdfaasdfsdf')")
+	tk.MustExec("insert txn_size values (3, 'abcdefghijkl')")
+	txn, err := tk.Se.Txn(false)
+	c.Assert(err, IsNil)
+	c.Assert(txn.Size() > 0, IsTrue)
 }
