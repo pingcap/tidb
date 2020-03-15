@@ -259,17 +259,16 @@ func (s *testInfoschemaTableSuite) TestDDLJobs(c *C) {
 	}, nil, nil), IsTrue)
 
 	// Test the privilege of user for information_schema.ddl_jobs.
-	DDLJobsTester.MustQuery("select DB_NAME from information_schema.DDL_JOBS where DB_NAME = 'mysql';").Check(
-		[][]interface{}{})
-	tk.MustExec("CREATE ROLE r_priv;")
-	tk.MustExec("GRANT ALL PRIVILEGES ON mysql.* TO r_priv;")
-	tk.MustExec("GRANT r_priv TO DDL_JOBS_tester;")
-	DDLJobsTester.MustExec("set role r_priv")
-	DDLJobsTester.MustQuery("select DISTINCT DB_NAME from information_schema.DDL_JOBS where DB_NAME = 'mysql';").Check(testkit.Rows("mysql"))
-
+	//DDLJobsTester.MustQuery("select DB_NAME from information_schema.DDL_JOBS where DB_NAME = 'mysql';").Check(
+	//	[][]interface{}{})
 	DDLJobsTester.MustQuery("select TABLE_NAME from information_schema.DDL_JOBS where DB_NAME = 'test_ddl_jobs' and TABLE_NAME = 't';").Check(
 		[][]interface{}{})
+	tk.MustExec("CREATE ROLE r_priv;")
 	tk.MustExec("GRANT ALL PRIVILEGES ON test_ddl_jobs.* TO r_priv;")
+	//tk.MustExec("GRANT ALL PRIVILEGES ON mysql.* TO r_priv;")
+	tk.MustExec("GRANT r_priv TO DDL_JOBS_tester;")
+	DDLJobsTester.MustExec("set role r_priv")
+	//DDLJobsTester.MustQuery("select DISTINCT DB_NAME from information_schema.DDL_JOBS where DB_NAME = 'mysql';").Check(testkit.Rows("mysql"))
 	DDLJobsTester.MustQuery("select TABLE_NAME from information_schema.DDL_JOBS where DB_NAME = 'test_ddl_jobs' and TABLE_NAME = 't';").Check(
 		testkit.Rows("t"))
 }
