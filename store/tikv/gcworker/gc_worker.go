@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/terror"
-	pd "github.com/pingcap/pd/client"
+	pd "github.com/pingcap/pd/v4/client"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
@@ -1857,7 +1857,7 @@ func (s *mergeLockScanner) NextBatch(batchSize int) []*tikv.Lock {
 
 // GetSucceededStores gets a set of successfully scanned stores. Only call this after finishing scanning all locks.
 func (s *mergeLockScanner) GetSucceededStores() map[uint64]interface{} {
-	stores := make(map[uint64]interface{})
+	stores := make(map[uint64]interface{}, len(s.receivers))
 	for _, receiver := range s.receivers {
 		if receiver.Err == nil {
 			stores[receiver.StoreID] = nil

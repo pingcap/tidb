@@ -1,8 +1,6 @@
 port = 4001
 lease = "0"
-
-[log]
-level = "error"
+mem-quota-query = 34359738368
 
 [status]
 status-port = 10081

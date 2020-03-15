@@ -121,6 +121,14 @@
     ]
   },
   {
+    "name": "TestPostTransformationRules",
+    "cases": [
+      "select b from (select b+10 as b from t) as t1 order by b + 10 limit 10",
+      "select * from (select a+1 as c, a+b as d from t) as t1 order by c+d limit 10",
+      "select a from (select a, b from t order by b limit 10) as t1"
+    ]
+  },
+  {
     "name": "TestPushLimitDownTiKVSingleGather",
     "cases": [
       "select * from t limit 1",
@@ -129,7 +137,7 @@
     ]
   },
   {
-    "name": "TestEliminateOuterJoinBelowAggregation",
+    "name": "TestEliminateOuterJoin",
     "cases": [
       "select t1.a, max(t1.b) from t as t1 left join (select * from t) as t2 on t1.a = t2.a and t1.b = 3 group by t1.a;",
       "select t1.a, max(t1.b) from t as t1 left join (select * from t) as t2 on t1.a = t2.a group by t1.a;",
@@ -142,7 +150,14 @@
       "select t2.a, sum(t2.h) from t as t1 right join (select * from t) as t2 on t1.h = t2.h group by t2.a;",
       "select t2.a, sum(distinct t2.h) from t as t1 right join (select * from t) as t2 on t1.h = t2.h group by t2.a;",
       "select t2.a, max(t2.b) from t as t1 right join (select * from t) as t2 on t1.a = t2.a group by t1.a;",
-      "select t2.a, max(t1.b) from t as t1 right join (select * from t) as t2 on t1.a = t2.a group by t2.a;"
+      "select t2.a, max(t1.b) from t as t1 right join (select * from t) as t2 on t1.a = t2.a group by t2.a;",
+      "select t1.a, t1.b from t as t1 left join t as t2 on t1.a = t2.a and t1.b = 3 and t2.b = 3;",
+      "select t1.a, t1.b from t as t1 left join t as t2 on t1.b = t2.b and t1.a = 3 and t2.b = 3;",
+      "select t2.a, t1.b from t as t1 left join t as t2 on t1.a = t2.a and t1.a = 3 and t2.b = 3;",
+      "select t2.a, t2.b from t as t1 right join t as t2 on t1.a = t2.a and t1.b = 3 and t2.b = 3;",
+      "select t2.a, t2.b from t as t1 right join t as t2 on t1.b = t2.b and t1.a = 3 and t2.b = 3;",
+      "select t1.a, t2.b from t as t1 right join t as t2 on t1.a = t2.a and t1.a = 3 and t2.b = 3;",
+      "select t3.a, max(t3.b) from (select t1.a, t1.b from t as t1 left join t as t2 on t1.a = t2.a) t3 group by t3.a"
     ]
   },
   {
@@ -170,6 +185,25 @@
       "select count(case when a > 10 then c end), c from t",
       "select count(case when a > 10 and d < 5 then b end) from t",
       "select count(case when a > 10 and d < 5 then null else b end) from t"
+    ]
+  },
+  {
+    "name": "TestTransformAggToProj",
+    "cases": [
+      "select count(b) from t group by a",
+      "select count(b) from t group by b",
+      "select count(b) from t",
+      "select a from t group by a having sum(b) > 4",
+      "select count(b), sum(b), avg(b), b, max(b), min(b), bit_and(b), bit_or(b), bit_xor(b) from t group by a having sum(b) >= 0 and count(b) >= 0 order by b",
+      "select count(b), sum(b), avg(b), f, max(c), min(c), bit_and(c), bit_or(d), bit_xor(g) from t group by a",
+      "select count(b), sum(b), avg(b), f, max(c), min(c), bit_and(c), bit_or(d), bit_xor(g), var_pop(b) from t group by a",
+      "select count(b), sum(b), avg(b), f, max(c), min(c), bit_and(c), bit_or(d), bit_xor(g), group_concat(b, c, d, f) from t group by a"
+    ]
+  },
+  {
+    "name": "TestDecorrelate",
+    "cases": [
+      "select a from t t1 where exists (select 1 from t t2 where t1.a = t2.b)"
     ]
   }
 ]
