@@ -342,13 +342,9 @@ func (ssMap *stmtSummaryByDigestMap) GetMoreThanOnceSelect() ([]string, []string
 				if ssbd.history.Len() > 0 {
 					ssElement := ssbd.history.Back().Value.(*stmtSummaryByDigestElement)
 					ssElement.Lock()
-					sampleUser := ""
-					for key := range ssElement.authUsers {
-						sampleUser = key
-						break
-					}
-					// Empty sample user means that it is an internal queries.
-					if sampleUser != "" && (ssbd.history.Len() > 1 || ssElement.execCount > 1) {
+
+					// Empty auth users means that it is an internal queries.
+					if len(ssElement.authUsers) > 0 && (ssbd.history.Len() > 1 || ssElement.execCount > 1) {
 						schemas = append(schemas, ssbd.schemaName)
 						sqls = append(sqls, ssElement.sampleSQL)
 					}
@@ -675,7 +671,9 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 	defer ssElement.Unlock()
 
 	// add user to auth users set
-	ssElement.authUsers[sei.User] = struct{}{}
+	if len(sei.User) > 0 {
+		ssElement.authUsers[sei.User] = struct{}{}
+	}
 
 	// refreshInterval may change anytime, update endTime ASAP.
 	ssElement.endTime = ssElement.beginTime + intervalSeconds
