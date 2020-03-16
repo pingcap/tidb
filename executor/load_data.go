@@ -123,6 +123,7 @@ type LoadDataInfo struct {
 	IgnoreLines uint64
 	Ctx         sessionctx.Context
 	rows        [][]types.Datum
+	Drained     bool
 
 	commitTaskQueue chan CommitTask
 	StopCh          chan struct{}
