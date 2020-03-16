@@ -261,7 +261,7 @@ func (j *baseJoiner) filter(
 			innerColOffset, outerColOffset = len(lUsed), 0
 		}
 	}
-	return chunk.CopySelectedJoinRowsWithSameOuterRows(input, innerColOffset, outerColOffset, j.selected, output)
+	return chunk.CopySelectedJoinRowsDirect(input, j.selected, output)
 }
 
 // filterAndCheckOuterRowStatus is used to filter the result constructed by
