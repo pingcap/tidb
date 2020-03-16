@@ -39,6 +39,11 @@ type SortExec struct {
 	Idx     int
 	fetched bool
 	schema  *expression.Schema
+	// used show which columns are used by father for child
+	// NOTE:
+	// 1. every columns are used if used is nil.
+	// 2. no columns are used if used is not nil but the size of used is 0.
+	used []int
 
 	keyExprs []expression.Expression
 	keyTypes []*types.FieldType
@@ -167,6 +172,13 @@ func (e *SortExec) Next(ctx context.Context, req *chunk.Chunk) error {
 func (e *SortExec) generatePartition() {
 	e.initPointers()
 	sort.Slice(e.rowPtrs, e.keyColumnsLess)
+	if e.used != nil {
+		numChunks := e.rowChunks.NumChunks()
+		for chkIdx := 0; chkIdx < numChunks; chkIdx++ {
+			rowChk := e.rowChunks.GetChunk(chkIdx)
+			rowChk.Prune(e.used)
+		}
+	}
 	e.partitionList = append(e.partitionList, e.rowChunks)
 	e.partitionRowPtrs = append(e.partitionRowPtrs, e.rowPtrs)
 }

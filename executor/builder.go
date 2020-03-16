@@ -1473,10 +1473,21 @@ func (b *executorBuilder) buildSort(v *plannercore.PhysicalSort) Executor {
 	if b.err != nil {
 		return nil
 	}
+	childrenUsedSchema := markChildrenUsedCols(v.Schema(), v.Children()[0].Schema())
+	var used []int
+	if childrenUsedSchema != nil {
+		used = make([]int, 0, len(childrenUsedSchema[0]))
+		for i, usedSchema := range childrenUsedSchema[0] {
+			if usedSchema {
+				used = append(used, i)
+			}
+		}
+	}
 	sortExec := SortExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), childExec),
 		ByItems:      v.ByItems,
 		schema:       v.Schema(),
+		used:         used,
 	}
 	executorCounterSortExec.Inc()
 	return &sortExec

@@ -148,6 +148,7 @@ func (ls *LogicalSort) PruneColumns(parentUsedCols []*expression.Column) error {
 			parentUsedCols = append(parentUsedCols, cols...)
 		}
 	}
+	ls.inlineProjection(parentUsedCols)
 	return child.PruneColumns(parentUsedCols)
 }
 
