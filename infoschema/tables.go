@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
@@ -97,13 +96,15 @@ const (
 	// TableTiDBIndexes is the string constant of infoschema table
 	TableTiDBIndexes = "TIDB_INDEXES"
 	// TableTiDBHotRegions is the string constant of infoschema table
-	TableTiDBHotRegions   = "TIDB_HOT_REGIONS"
-	tableTiKVStoreStatus  = "TIKV_STORE_STATUS"
-	tableAnalyzeStatus    = "ANALYZE_STATUS"
+	TableTiDBHotRegions  = "TIDB_HOT_REGIONS"
+	tableTiKVStoreStatus = "TIKV_STORE_STATUS"
+	// TableAnalyzeStatus is the string constant of Analyze Status
+	TableAnalyzeStatus    = "ANALYZE_STATUS"
 	tableTiKVRegionStatus = "TIKV_REGION_STATUS"
 	// TableTiKVRegionPeers is the string constant of infoschema table
 	TableTiKVRegionPeers = "TIKV_REGION_PEERS"
-	tableTiDBServersInfo = "TIDB_SERVERS_INFO"
+	// TableTiDBServersInfo is the string constant of TiDB server information table.
+	TableTiDBServersInfo = "TIDB_SERVERS_INFO"
 	// TableSlowQuery is the string constant of slow query memory table.
 	TableSlowQuery = "SLOW_QUERY"
 	// TableClusterInfo is the string constant of cluster info memory table.
@@ -171,10 +172,10 @@ var tableIDMap = map[string]int64{
 	TableSlowQuery:                          autoid.InformationSchemaDBID + 35,
 	TableTiDBHotRegions:                     autoid.InformationSchemaDBID + 36,
 	tableTiKVStoreStatus:                    autoid.InformationSchemaDBID + 37,
-	tableAnalyzeStatus:                      autoid.InformationSchemaDBID + 38,
+	TableAnalyzeStatus:                      autoid.InformationSchemaDBID + 38,
 	tableTiKVRegionStatus:                   autoid.InformationSchemaDBID + 39,
 	TableTiKVRegionPeers:                    autoid.InformationSchemaDBID + 40,
-	tableTiDBServersInfo:                    autoid.InformationSchemaDBID + 41,
+	TableTiDBServersInfo:                    autoid.InformationSchemaDBID + 41,
 	TableClusterInfo:                        autoid.InformationSchemaDBID + 42,
 	TableClusterConfig:                      autoid.InformationSchemaDBID + 43,
 	TableClusterLoad:                        autoid.InformationSchemaDBID + 44,
@@ -1274,55 +1275,6 @@ func dataForPseudoProfiling() [][]types.Datum {
 	return rows
 }
 
-// DataForAnalyzeStatus gets all the analyze jobs.
-func DataForAnalyzeStatus(ctx sessionctx.Context) (rows [][]types.Datum) {
-	checker := privilege.GetPrivilegeManager(ctx)
-	for _, job := range statistics.GetAllAnalyzeJobs() {
-		job.Lock()
-		var startTime interface{}
-		if job.StartTime.IsZero() {
-			startTime = nil
-		} else {
-			startTime = types.NewTime(types.FromGoTime(job.StartTime), mysql.TypeDatetime, 0)
-		}
-		if checker == nil || checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, job.DBName, job.TableName, "", mysql.AllPrivMask) {
-			rows = append(rows, types.MakeDatums(
-				job.DBName,        // TABLE_SCHEMA
-				job.TableName,     // TABLE_NAME
-				job.PartitionName, // PARTITION_NAME
-				job.JobInfo,       // JOB_INFO
-				job.RowCount,      // ROW_COUNT
-				startTime,         // START_TIME
-				job.State,         // STATE
-			))
-		}
-		job.Unlock()
-	}
-	return
-}
-
-func dataForServersInfo() ([][]types.Datum, error) {
-	serversInfo, err := infosync.GetAllServerInfo(context.Background())
-	if err != nil {
-		return nil, err
-	}
-	rows := make([][]types.Datum, 0, len(serversInfo))
-	for _, info := range serversInfo {
-		row := types.MakeDatums(
-			info.ID,              // DDL_ID
-			info.IP,              // IP
-			int(info.Port),       // PORT
-			int(info.StatusPort), // STATUS_PORT
-			info.Lease,           // LEASE
-			info.Version,         // VERSION
-			info.GitHash,         // GIT_HASH
-			info.BinlogStatus,    // BINLOG_STATUS
-		)
-		rows = append(rows, row)
-	}
-	return rows, nil
-}
-
 // ServerInfo represents the basic server information of single cluster component
 type ServerInfo struct {
 	ServerType     string
@@ -1561,10 +1513,10 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableSlowQuery:                          slowQueryCols,
 	TableTiDBHotRegions:                     TableTiDBHotRegionsCols,
 	tableTiKVStoreStatus:                    tableTiKVStoreStatusCols,
-	tableAnalyzeStatus:                      tableAnalyzeStatusCols,
+	TableAnalyzeStatus:                      tableAnalyzeStatusCols,
 	tableTiKVRegionStatus:                   tableTiKVRegionStatusCols,
 	TableTiKVRegionPeers:                    TableTiKVRegionPeersCols,
-	tableTiDBServersInfo:                    tableTiDBServersInfoCols,
+	TableTiDBServersInfo:                    tableTiDBServersInfoCols,
 	TableClusterInfo:                        tableClusterInfoCols,
 	TableClusterConfig:                      tableClusterConfigCols,
 	TableClusterLog:                         tableClusterLogCols,
@@ -1643,12 +1595,8 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		fullRows = dataForProcesslist(ctx)
 	case tableTiKVStoreStatus:
 		fullRows, err = dataForTiKVStoreStatus(ctx)
-	case tableAnalyzeStatus:
-		fullRows = DataForAnalyzeStatus(ctx)
 	case tableTiKVRegionStatus:
 		fullRows, err = dataForTiKVRegionStatus(ctx)
-	case tableTiDBServersInfo:
-		fullRows, err = dataForServersInfo()
 	case tableTiFlashReplica:
 		fullRows = dataForTableTiFlashReplica(ctx, dbs)
 	// Data for cluster processlist memory table.
