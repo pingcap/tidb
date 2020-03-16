@@ -356,3 +356,47 @@ func (m *rowHashMap) Get(hashKey uint64) (rowPtrs []chunk.RowPtr) {
 // Len returns the number of rowPtrs in the rowHashMap, the number of keys may be less than Len
 // if the same key is put more than once.
 func (m *rowHashMap) Len() int { return m.length }
+
+// hashPartitioner split the rows in chunk into multiple buckets using the hash function
+type hashPartitioner struct {
+	sc           *stmtctx.StatementContext
+	hCtx         *hashContext
+	partitionCnt int
+	partitions   [][]uint32
+}
+
+func newHashPartitioner(sCtx sessionctx.Context, partitionCnt int, hCtx *hashContext) *hashPartitioner {
+	partitions := make([][]uint32, partitionCnt)
+	for i := range partitions {
+		partitions[i] = make([]uint32, 0, sCtx.GetSessionVars().MaxChunkSize)
+	}
+	h := &hashPartitioner{
+		sc:           sCtx.GetSessionVars().StmtCtx,
+		hCtx:         hCtx,
+		partitionCnt: partitionCnt,
+		partitions:   partitions,
+	}
+	return h
+}
+
+func (h *hashPartitioner) split(chk *chunk.Chunk) ([][]uint32, error) {
+	numRows := chk.NumRows()
+	h.hCtx.initHash(numRows)
+
+	for _, colIdx := range h.hCtx.keyColIdx {
+		err := codec.HashChunkSelected(h.sc, h.hCtx.hashVals, chk, h.hCtx.allTypes[colIdx], colIdx, h.hCtx.buf, h.hCtx.hasNull, nil)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+
+	for i := 0; i < len(h.partitions); i++ {
+		h.partitions[i] = h.partitions[i][:0]
+	}
+
+	for i := 0; i < numRows; i++ {
+		partitionIdx := uint32(h.hCtx.hashVals[i].Sum64() % uint64(h.partitionCnt))
+		h.partitions[partitionIdx] = append(h.partitions[partitionIdx], uint32(i))
+	}
+	return h.partitions, nil
+}

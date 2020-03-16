@@ -92,6 +92,7 @@ func NewListInDisk(fieldTypes []*types.FieldType) *ListInDisk {
 func (l *ListInDisk) initDiskFile() (err error) {
 	initializeTempDir()
 	l.disk, err = ioutil.TempFile(config.GetGlobalConfig().TempStoragePath, l.diskTracker.Label().String())
+
 	if err != nil {
 		return
 	}
@@ -152,6 +153,22 @@ func (l *ListInDisk) Add(chk *Chunk) (err error) {
 	l.diskTracker.Consume(n)
 	l.numRowsInDisk += chk.NumRows()
 	return
+}
+
+// GetChunk gets chunk from the ListInDisk by chkIdx.
+func (l *ListInDisk) GetChunk(chkIdx int, chk *Chunk) (err error) {
+	if chkIdx >= l.NumChunks() {
+		return errors.New("chunk not exist")
+	}
+	for i := 0; i < len(l.offsets[chkIdx]); i++ {
+		ptr := RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(i)}
+		row, err := l.GetRow(ptr)
+		if err != nil {
+			return err
+		}
+		chk.AppendRow(row)
+	}
+	return nil
 }
 
 // GetRow gets a Row from the ListInDisk by RowPtr.
@@ -359,4 +376,97 @@ func (format *diskFormatRow) toMutRow(fields []*types.FieldType) MutRow {
 		chk.columns = append(chk.columns, col)
 	}
 	return MutRow{c: chk}
+}
+
+// PartitionInDisk save chunks in multiple ListInDisk.
+// the chunk is splitted by hash function into partitions
+type PartitionInDisk struct {
+	fieldTypes          []*types.FieldType
+	chunkSize           int
+	partitionIdxToIndex map[int]int
+	chks                []*Chunk
+	disks               []*ListInDisk
+}
+
+func NewPartitionInDisk(fieldTypes []*types.FieldType, chunkSize int) *PartitionInDisk {
+	p := &PartitionInDisk{
+		fieldTypes:          fieldTypes,
+		chunkSize:           chunkSize,
+		partitionIdxToIndex: make(map[int]int),
+		chks:                make([]*Chunk, 0),
+		disks:               make([]*ListInDisk, 0),
+	}
+	return p
+}
+
+// Add adds a chunk to multiple ListInDisk. The partition index of each row
+// is stored in partitions. ListInDisk is lazily created when the partition
+// has data. The partition chunk will be Added to disk only when the chunk
+// is full.
+func (p *PartitionInDisk) Add(chk *Chunk, partitions [][]uint32) (err error) {
+	for partitionIdx, partition := range partitions {
+		if len(partition) == 0 {
+			continue
+		}
+		idx, ok := p.partitionIdxToIndex[partitionIdx]
+		if !ok {
+			diskChk := NewChunkWithCapacity(p.fieldTypes, p.chunkSize)
+			listInDisk := NewListInDisk(p.fieldTypes)
+			idx = len(p.disks)
+			p.chks = append(p.chks, diskChk)
+			p.disks = append(p.disks, listInDisk)
+			p.partitionIdxToIndex[partitionIdx] = idx
+		}
+		diskChk := p.chks[idx]
+		listInDisk := p.disks[idx]
+		for _, i := range partition {
+			diskChk.AppendRow(chk.GetRow(int(i)))
+			if diskChk.IsFull() {
+				listInDisk.Add(diskChk)
+				diskChk.Reset()
+			}
+		}
+	}
+	return nil
+}
+
+func (p *PartitionInDisk) Flush() (err error) {
+	for _, idx := range p.partitionIdxToIndex {
+		diskChk := p.chks[idx]
+		listInDisk := p.disks[idx]
+		if diskChk.NumRows() > 0 {
+			listInDisk.Add(diskChk)
+			diskChk.Reset()
+		}
+	}
+	return nil
+}
+
+func (p *PartitionInDisk) GetChunk(partitionIdx int, chkIdx int, chk *Chunk) (err error) {
+	idx, ok := p.partitionIdxToIndex[partitionIdx]
+	if !ok {
+		return errors.New("partition not exist")
+	}
+	listInDisk := p.disks[idx]
+	return listInDisk.GetChunk(chkIdx, chk)
+}
+
+// NumChunks returns the number of chunks in the partition.
+func (p *PartitionInDisk) NumChunks(partitionIdx int) (num int, err error) {
+	idx, ok := p.partitionIdxToIndex[partitionIdx]
+	if !ok {
+		return 0, errors.New("partition not exist")
+	}
+	return p.disks[idx].NumChunks(), nil
+}
+
+// Close releases the disk resource.
+func (p *PartitionInDisk) Close() (err error) {
+	for _, idx := range p.partitionIdxToIndex {
+		err := p.disks[idx].Close()
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
