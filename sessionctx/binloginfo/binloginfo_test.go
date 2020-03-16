@@ -549,15 +549,15 @@ func (s *testBinlogSuite) TestAddSpecialComment(c *C) {
 		},
 		{
 			"create table t1 (id int primary key auto_random(2));",
-			"create table t1 (id int primary key /*T!30100 auto_random(2) */ );",
+			"create table t1 (id int primary key /*T![auto_rand] auto_random(2) */ );",
 		},
 		{
 			"create table t1 (id int auto_random ( 4 ) primary key);",
-			"create table t1 (id int /*T!30100 auto_random ( 4 ) */ primary key);",
+			"create table t1 (id int /*T![auto_rand] auto_random ( 4 ) */ primary key);",
 		},
 		{
 			"create table t1 (id int  auto_random  (   4    ) primary key);",
-			"create table t1 (id int  /*T!30100 auto_random  (   4    ) */ primary key);",
+			"create table t1 (id int  /*T![auto_rand] auto_random  (   4    ) */ primary key);",
 		},
 	}
 	for _, ca := range testCase {
