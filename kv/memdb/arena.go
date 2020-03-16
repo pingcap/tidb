@@ -52,10 +52,8 @@ type arenaSnapshot struct {
 	offsetInBlock int
 }
 
-func newArenaLocator(initBlockSize int) *arena {
-	return &arena{
-		blockSize: initBlockSize,
-	}
+func newArenaLocator() *arena {
+	return new(arena)
 }
 
 func (a *arena) snapshot() arenaSnapshot {
@@ -103,7 +101,7 @@ func (a *arena) alloc(size int) (arenaAddr, []byte) {
 	}
 
 	if len(a.blocks) == 0 {
-		a.enlarge(size, a.blockSize)
+		a.enlarge(size, initBlockSize)
 	}
 
 	addr, data := a.allocInLastBlock(size)

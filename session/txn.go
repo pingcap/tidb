@@ -59,17 +59,34 @@ type TxnState struct {
 }
 
 func (st *TxnState) init() {
-	st.buf = kv.NewMemDbBuffer(kv.DefaultTxnMembufCap)
 	st.mutations = make(map[int64]*binlog.TableMutation)
 }
 
 // Size implements the MemBuffer interface.
 func (st *TxnState) Size() int {
-	size := st.buf.Size()
+	size := 0
+	if st.buf != nil {
+		size += st.buf.Size()
+	}
 	if st.Transaction != nil {
 		size += st.Transaction.Size()
 	}
 	return size
+}
+
+// NewBuffer returns a new child write buffer.
+func (st *TxnState) NewBuffer() kv.MemBuffer {
+	return st.buf.NewBuffer()
+}
+
+// Flush flushes all staging kvs into parent buffer.
+func (st *TxnState) Flush() (int, error) {
+	return st.buf.Flush()
+}
+
+// Discard discards all staging kvs.
+func (st *TxnState) Discard() {
+	st.buf.Discard()
 }
 
 // Valid implements the kv.Transaction interface.
@@ -123,6 +140,7 @@ func (st *TxnState) GoString() string {
 
 func (st *TxnState) changeInvalidToValid(txn kv.Transaction) {
 	st.Transaction = txn
+	st.buf = txn.NewBuffer()
 	st.txnFuture = nil
 }
 
@@ -131,7 +149,7 @@ func (st *TxnState) changeInvalidToPending(future *txnFuture) {
 	st.txnFuture = future
 }
 
-func (st *TxnState) changePendingToValid(txnCap int) error {
+func (st *TxnState) changePendingToValid() error {
 	if st.txnFuture == nil {
 		return errors.New("transaction future is not set")
 	}
@@ -144,12 +162,13 @@ func (st *TxnState) changePendingToValid(txnCap int) error {
 		st.Transaction = nil
 		return err
 	}
-	txn.SetCap(txnCap)
 	st.Transaction = txn
+	st.buf = txn.NewBuffer()
 	return nil
 }
 
 func (st *TxnState) changeToInvalid() {
+	st.buf = nil
 	st.Transaction = nil
 	st.txnFuture = nil
 }
@@ -326,14 +345,11 @@ func (st *TxnState) IterReverse(k kv.Key) (kv.Iterator, error) {
 }
 
 func (st *TxnState) cleanup() {
-	const sz4M = 4 << 20
-	if st.buf.Size() > sz4M {
-		// The memory footprint for the large transaction could be huge here.
-		// Each active session has its own buffer, we should free the buffer to
-		// avoid memory leak.
-		st.buf = kv.NewMemDbBuffer(kv.DefaultTxnMembufCap)
-	} else {
-		st.buf.Reset()
+	if st.buf != nil {
+		st.Discard()
+	}
+	if st.Transaction != nil {
+		st.buf = st.Transaction.NewBuffer()
 	}
 	for key := range st.mutations {
 		delete(st.mutations, key)
@@ -489,22 +505,16 @@ func (s *session) StmtCommit(memTracker *memory.Tracker) error {
 	}()
 	st := &s.txn
 	txnSize := st.Transaction.Size()
-	var count int
-	err := kv.WalkMemBuffer(st.buf, func(k kv.Key, v []byte) error {
-		failpoint.Inject("mockStmtCommitError", func(val failpoint.Value) {
-			if val.(bool) {
-				count++
-			}
-		})
 
-		if count > 3 {
-			return errors.New("mock stmt commit error")
-		}
+	if _, err := st.Flush(); err != nil {
+		return err
+	}
 
-		if len(v) == 0 {
-			return st.Transaction.Delete(k)
+	var err error
+	failpoint.Inject("mockStmtCommitError", func(val failpoint.Value) {
+		if val.(bool) && st.buf.Len() > 3 {
+			err = errors.New("mock stmt commit error")
 		}
-		return st.Transaction.Set(k, v)
 	})
 	if err != nil {
 		st.doNotCommit = err
