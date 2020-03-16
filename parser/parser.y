@@ -90,6 +90,7 @@ import (
 	character         "CHARACTER"
 	charType          "CHAR"
 	check             "CHECK"
+	config            "CONFIG"
 	collate           "COLLATE"
 	column            "COLUMN"
 	constraint        "CONSTRAINT"
@@ -7991,6 +7992,14 @@ SetStmt:
 		}
 		$$ = &ast.SetStmt{Variables: assigns}
 	}
+|	"SET" "CONFIG" Identifier VariableName EqOrAssignmentEq SetExpr
+	{
+		$$ = &ast.SetConfigStmt{Type: strings.ToLower($3), Name: $4, Value: $6}
+	}
+|	"SET" "CONFIG" stringLit VariableName EqOrAssignmentEq SetExpr
+	{
+		$$ = &ast.SetConfigStmt{Instance: $3, Name: $4, Value: $6}
+	}
 
 SetRoleStmt:
 	"SET" "ROLE" SetRoleOpt
@@ -8810,6 +8819,10 @@ ShowTargetFilterable:
 |	"DATABASES"
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowDatabases}
+	}
+|	"CONFIG"
+	{
+		$$ = &ast.ShowStmt{Tp: ast.ShowConfig}
 	}
 |	CharsetKw
 	{

@@ -1863,6 +1863,7 @@ const (
 	ShowIndex
 	ShowProcessList
 	ShowCreateDatabase
+	ShowConfig
 	ShowEvents
 	ShowStatsMeta
 	ShowStatsHistograms
@@ -2087,6 +2088,8 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 		switch n.Tp {
 		case ShowEngines:
 			ctx.WriteKeyWord("ENGINES")
+		case ShowConfig:
+			ctx.WriteKeyWord("CONFIG")
 		case ShowDatabases:
 			ctx.WriteKeyWord("DATABASES")
 		case ShowCharset:
