@@ -467,6 +467,7 @@ func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, funcs int, f
 			byItems = append(byItems, &core.ByItems{Expr: col, Desc: false})
 		}
 		sort := &core.PhysicalSort{ByItems: byItems}
+		sort.SetSchema(src.Schema().Clone())
 		sort.SetChildren(src)
 		win.SetChildren(sort)
 		tail = sort

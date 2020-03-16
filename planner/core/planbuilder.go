@@ -1689,6 +1689,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 		sort := LogicalSort{
 			ByItems: []*ByItems{{Expr: orderByCol}},
 		}.Init(b.ctx, b.getSelectOffset())
+		sort.SetSchema(np.Schema().Clone())
 		sort.SetChildren(np)
 		np = sort
 	}

@@ -486,7 +486,7 @@ type PhysicalStreamAgg struct {
 
 // PhysicalSort is the physical operator of sort, which implements a memory sort.
 type PhysicalSort struct {
-	basePhysicalPlan
+	physicalSchemaProducer
 
 	ByItems []*ByItems
 }
@@ -494,7 +494,7 @@ type PhysicalSort struct {
 // NominalSort asks sort properties for its child. It is a fake operator that will not
 // appear in final physical operator tree. It will be eliminated or converted to Projection.
 type NominalSort struct {
-	basePhysicalPlan
+	physicalSchemaProducer
 
 	// These two fields are used to switch ScalarFunctions to Constants. For these
 	// NominalSorts, we need to converted to Projections check if the ScalarFunctions

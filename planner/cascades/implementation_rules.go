@@ -310,6 +310,7 @@ func (r *ImplSort) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalP
 		ls.SelectBlockOffset(),
 		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64},
 	)
+	ps.SetSchema(ls.Schema())
 	return []memo.Implementation{impl.NewSortImpl(ps)}, nil
 }
 

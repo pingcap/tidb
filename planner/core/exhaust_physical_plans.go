@@ -1747,6 +1747,7 @@ func (p *LogicalUnionAll) exhaustPhysicalPlans(prop *property.PhysicalProperty) 
 
 func (ls *LogicalSort) getPhysicalSort(prop *property.PhysicalProperty) *PhysicalSort {
 	ps := PhysicalSort{ByItems: ls.ByItems}.Init(ls.ctx, ls.stats.ScaleByExpectCnt(prop.ExpectedCnt), ls.blockOffset, &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64})
+	ps.SetSchema(ls.Schema().Clone())
 	return ps
 }
 
@@ -1757,6 +1758,7 @@ func (ls *LogicalSort) getNominalSort(reqProp *property.PhysicalProperty) *Nomin
 	}
 	prop.ExpectedCnt = reqProp.ExpectedCnt
 	ps := NominalSort{OnlyColumn: onlyColumn, ByItems: ls.ByItems}.Init(ls.ctx, ls.blockOffset, prop)
+	ps.SetSchema(ls.Schema().Clone())
 	return ps
 }
 

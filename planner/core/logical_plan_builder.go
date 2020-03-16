@@ -1224,6 +1224,8 @@ func (b *PlanBuilder) buildSort(ctx context.Context, p LogicalPlan, byItems []*a
 		exprs = append(exprs, &ByItems{Expr: it, Desc: item.Desc})
 	}
 	sort.ByItems = exprs
+	sort.SetSchema(p.Schema().Clone())
+	sort.names = p.OutputNames()
 	sort.SetChildren(p)
 	return sort, nil
 }
