@@ -211,7 +211,6 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty) (bestTas
 	}
 
 	p.storeTask(prop, bestTask)
-	bestTask.plan().setTaskCost(bestTask.cost())
 	return bestTask, nil
 }
 
@@ -440,7 +439,6 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err
 			t = enforceProperty(prop, t, ds.basePlan.ctx)
 		}
 		ds.storeTask(prop, t)
-		t.plan().setTaskCost(t.cost())
 	}()
 
 	t, err = ds.tryToGetDualTask()

@@ -229,12 +229,6 @@ type PhysicalPlan interface {
 
 	// ExplainNormalizedInfo returns operator normalized information for generating digest.
 	ExplainNormalizedInfo() string
-
-	// GetTaskCost returns cost of operator and children.
-	GetTaskCost() float64
-
-	// setTaskCost sets the taskCost from task.
-	setTaskCost(cost float64)
 }
 
 type baseLogicalPlan struct {
@@ -261,7 +255,6 @@ type basePhysicalPlan struct {
 	childrenReqProps []*property.PhysicalProperty
 	self             PhysicalPlan
 	children         []PhysicalPlan
-	taskCost         float64
 }
 
 // ExplainInfo implements Plan interface.
@@ -276,16 +269,6 @@ func (p *basePhysicalPlan) ExplainNormalizedInfo() string {
 
 func (p *basePhysicalPlan) GetChildReqProps(idx int) *property.PhysicalProperty {
 	return p.childrenReqProps[idx]
-}
-
-// GetTaskCost implements PhysicalPlan interface.
-func (p *basePhysicalPlan) GetTaskCost() float64 {
-	return p.taskCost
-}
-
-// setTaskCost implements PhysicalPlan interface.
-func (p *basePhysicalPlan) setTaskCost(cost float64) {
-	p.taskCost = cost
 }
 
 func (p *baseLogicalPlan) getTask(prop *property.PhysicalProperty) task {

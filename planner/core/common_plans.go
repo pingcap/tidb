@@ -733,9 +733,9 @@ func (e *Explain) prepareSchema() error {
 
 	switch {
 	case format == ast.ExplainFormatROW && !e.Analyze:
-		fieldNames = []string{"id", "estCost", "estRows", "task", "access object", "operator info"}
+		fieldNames = []string{"id", "estRows", "task", "access object", "operator info"}
 	case format == ast.ExplainFormatROW && e.Analyze:
-		fieldNames = []string{"id", "estCost", "estRows", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"}
+		fieldNames = []string{"id", "estRows", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"}
 	case format == ast.ExplainFormatDOT:
 		fieldNames = []string{"dot contents"}
 	case format == ast.ExplainFormatHint:
@@ -888,11 +888,6 @@ func (e *Explain) explainPlanInRowFormat(p Plan, taskType, driverSide, indent st
 func (e *Explain) prepareOperatorInfo(p Plan, taskType, driverSide, indent string, isLastChild bool) {
 	id := texttree.PrettyIdentifier(p.ExplainID().String()+driverSide, indent, isLastChild)
 
-	estCost := "N/A"
-	if physPlan, ok := p.(PhysicalPlan); ok {
-		estCost = strconv.FormatFloat(physPlan.GetTaskCost(), 'f', 2, 64)
-	}
-
 	estRows := "N/A"
 	if si := p.statsInfo(); si != nil {
 		estRows = strconv.FormatFloat(si.RowCount, 'f', 2, 64)
@@ -943,9 +938,9 @@ func (e *Explain) prepareOperatorInfo(p Plan, taskType, driverSide, indent strin
 			diskInfo = diskTracker.BytesToString(diskTracker.MaxConsumed())
 		}
 
-		row = []string{id, estCost, estRows, actRows, taskType, accessObject, analyzeInfo, operatorInfo, memoryInfo, diskInfo}
+		row = []string{id, estRows, actRows, taskType, accessObject, analyzeInfo, operatorInfo, memoryInfo, diskInfo}
 	} else {
-		row = []string{id, estCost, estRows, taskType, accessObject, operatorInfo}
+		row = []string{id, estRows, taskType, accessObject, operatorInfo}
 	}
 	e.Rows = append(e.Rows, row)
 }
