@@ -104,7 +104,8 @@ const (
 	tableTiKVRegionStatus = "TIKV_REGION_STATUS"
 	// TableTiKVRegionPeers is the string constant of infoschema table
 	TableTiKVRegionPeers = "TIKV_REGION_PEERS"
-	tableTiDBServersInfo = "TIDB_SERVERS_INFO"
+	// TableTiDBServersInfo is the string constant of TiDB server information table.
+	TableTiDBServersInfo = "TIDB_SERVERS_INFO"
 	// TableSlowQuery is the string constant of slow query memory table.
 	TableSlowQuery = "SLOW_QUERY"
 	// TableClusterInfo is the string constant of cluster info memory table.
@@ -175,7 +176,7 @@ var tableIDMap = map[string]int64{
 	TableAnalyzeStatus:                      autoid.InformationSchemaDBID + 38,
 	tableTiKVRegionStatus:                   autoid.InformationSchemaDBID + 39,
 	TableTiKVRegionPeers:                    autoid.InformationSchemaDBID + 40,
-	tableTiDBServersInfo:                    autoid.InformationSchemaDBID + 41,
+	TableTiDBServersInfo:                    autoid.InformationSchemaDBID + 41,
 	TableClusterInfo:                        autoid.InformationSchemaDBID + 42,
 	TableClusterConfig:                      autoid.InformationSchemaDBID + 43,
 	TableClusterLoad:                        autoid.InformationSchemaDBID + 44,
@@ -1172,28 +1173,6 @@ func dataForPseudoProfiling() [][]types.Datum {
 	return rows
 }
 
-func dataForServersInfo() ([][]types.Datum, error) {
-	serversInfo, err := infosync.GetAllServerInfo(context.Background())
-	if err != nil {
-		return nil, err
-	}
-	rows := make([][]types.Datum, 0, len(serversInfo))
-	for _, info := range serversInfo {
-		row := types.MakeDatums(
-			info.ID,              // DDL_ID
-			info.IP,              // IP
-			int(info.Port),       // PORT
-			int(info.StatusPort), // STATUS_PORT
-			info.Lease,           // LEASE
-			info.Version,         // VERSION
-			info.GitHash,         // GIT_HASH
-			info.BinlogStatus,    // BINLOG_STATUS
-		)
-		rows = append(rows, row)
-	}
-	return rows, nil
-}
-
 // ServerInfo represents the basic server information of single cluster component
 type ServerInfo struct {
 	ServerType     string
@@ -1272,13 +1251,13 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 		addr = strings.TrimSpace(addr)
 
 		// Get PD version
-		url := fmt.Sprintf("http://%s%s", addr, pdapi.ClusterVersion)
+		url := fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), addr, pdapi.ClusterVersion)
 		req, err := http.NewRequest(http.MethodGet, url, nil)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		req.Header.Add("PD-Allow-follower-handle", "true")
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := util.InternalHTTPClient().Do(req)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1290,13 +1269,13 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 		version := strings.Trim(strings.Trim(string(pdVersion), "\n"), "\"")
 
 		// Get PD git_hash
-		url = fmt.Sprintf("http://%s%s", addr, pdapi.Status)
+		url = fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), addr, pdapi.Status)
 		req, err = http.NewRequest(http.MethodGet, url, nil)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		req.Header.Add("PD-Allow-follower-handle", "true")
-		resp, err = http.DefaultClient.Do(req)
+		resp, err = util.InternalHTTPClient().Do(req)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1435,7 +1414,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableAnalyzeStatus:                      tableAnalyzeStatusCols,
 	tableTiKVRegionStatus:                   tableTiKVRegionStatusCols,
 	TableTiKVRegionPeers:                    TableTiKVRegionPeersCols,
-	tableTiDBServersInfo:                    tableTiDBServersInfoCols,
+	TableTiDBServersInfo:                    tableTiDBServersInfoCols,
 	TableClusterInfo:                        tableClusterInfoCols,
 	TableClusterConfig:                      tableClusterConfigCols,
 	TableClusterLog:                         tableClusterLogCols,
@@ -1514,8 +1493,6 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		fullRows, err = dataForTiKVStoreStatus(ctx)
 	case tableTiKVRegionStatus:
 		fullRows, err = dataForTiKVRegionStatus(ctx)
-	case tableTiDBServersInfo:
-		fullRows, err = dataForServersInfo()
 	case tableTiFlashReplica:
 		fullRows = dataForTableTiFlashReplica(ctx, dbs)
 	// Data for cluster processlist memory table.
