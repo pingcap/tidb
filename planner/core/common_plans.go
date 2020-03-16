@@ -943,7 +943,7 @@ func (e *Explain) prepareOperatorInfo(p Plan, taskType, driverSide, indent strin
 			diskInfo = diskTracker.BytesToString(diskTracker.MaxConsumed())
 		}
 
-		row = []string{id, estCost, estRows, actRows, taskType, accessObject, operatorInfo, analyzeInfo, memoryInfo, diskInfo}
+		row = []string{id, estCost, estRows, actRows, taskType, accessObject, analyzeInfo, operatorInfo, memoryInfo, diskInfo}
 	} else {
 		row = []string{id, estCost, estRows, taskType, accessObject, operatorInfo}
 	}
