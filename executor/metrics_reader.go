@@ -191,7 +191,7 @@ type queryClient struct {
 
 func newQueryClient(addr string) (api.Client, error) {
 	promClient, err := api.NewClient(api.Config{
-		Address: fmt.Sprintf("http://%s", addr),
+		Address: fmt.Sprintf("%s://%s", util.InternalHTTPSchema(), addr),
 	})
 	if err != nil {
 		return nil, err
