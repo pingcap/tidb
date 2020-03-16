@@ -656,7 +656,7 @@ func (s *extractorSuite) TestMetricTableExtractor(c *C) {
 			c.Assert(metricTableExtractor.Quantiles, DeepEquals, ca.quantiles)
 		}
 		if !ca.skipRequest {
-			promQL := plannercore.GetMetricTablePromQL(se, "tidb_query_duration", metricTableExtractor.LabelConditions, metricTableExtractor.Quantiles)
+			promQL := metricTableExtractor.GetMetricTablePromQL(se, "tidb_query_duration")
 			c.Assert(promQL, DeepEquals, ca.promQL, Commentf("SQL: %v", ca.sql))
 			start, end := metricTableExtractor.StartTime, metricTableExtractor.EndTime
 			c.Assert(start.UnixNano() <= end.UnixNano(), IsTrue)
