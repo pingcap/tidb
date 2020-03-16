@@ -169,7 +169,7 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		finalPlan, cost, err := cascades.DefaultOptimizer.FindBestPlan(sctx, logic)
 		return finalPlan, names, cost, err
 	}
-	finalPlan, cost, err := plannercore.DoOptimize(ctx, builder.GetOptFlag(), logic)
+	finalPlan, cost, err := plannercore.DoOptimize(ctx, sctx, builder.GetOptFlag(), logic)
 	return finalPlan, names, cost, err
 }
 

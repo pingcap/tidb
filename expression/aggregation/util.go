@@ -68,7 +68,7 @@ func calculateSum(sc *stmtctx.StatementContext, sum, v types.Datum) (data types.
 			data = types.NewDecimalDatum(d)
 		}
 	case types.KindMysqlDecimal:
-		data = types.CloneDatum(v)
+		v.Copy(&data)
 	default:
 		var f float64
 		f, err = v.ToFloat64(sc)

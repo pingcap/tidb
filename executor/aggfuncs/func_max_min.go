@@ -635,7 +635,7 @@ func (e *maxMin4JSON) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 		}
 		cmp := json.CompareBinary(input, p.val)
 		if e.isMax && cmp > 0 || !e.isMax && cmp < 0 {
-			p.val = input
+			p.val = input.Copy()
 		}
 	}
 	return nil

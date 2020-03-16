@@ -371,6 +371,8 @@ func (e *ShowExec) fetchShowTables() error {
 		tableNames = append(tableNames, v.Meta().Name.O)
 		if v.Meta().IsView() {
 			tableTypes[v.Meta().Name.O] = "VIEW"
+		} else if v.Meta().IsSequence() {
+			tableTypes[v.Meta().Name.O] = "SEQUENCE"
 		} else {
 			tableTypes[v.Meta().Name.O] = "BASE TABLE"
 		}
@@ -700,6 +702,10 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 		fetchShowCreateTable4View(ctx, tableInfo, buf)
 		return nil
 	}
+	if tableInfo.IsSequence() {
+		ConstructResultOfShowCreateSequence(ctx, tableInfo, buf)
+		return nil
+	}
 
 	tblCharset := tableInfo.Charset
 	if len(tblCharset) == 0 {
@@ -943,7 +949,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	}
 
 	tableInfo := tb.Meta()
-	allocator := tb.Allocator(e.ctx, autoid.RowIDAllocType)
+	allocator := tb.Allocators(e.ctx).Get(autoid.RowIDAllocType)
 	var buf bytes.Buffer
 	// TODO: let the result more like MySQL.
 	if err = ConstructResultOfShowCreateTable(e.ctx, tableInfo, allocator, &buf); err != nil {
