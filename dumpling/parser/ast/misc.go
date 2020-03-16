@@ -817,6 +817,43 @@ func (n *SetStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+// SetConfigStmt is the statement to set cluster configs.
+type SetConfigStmt struct {
+	stmtNode
+
+	Type     string // TiDB, TiKV, PD
+	Instance string // '127.0.0.1:3306'
+	Name     string // the variable name
+	Value    ExprNode
+}
+
+func (n *SetConfigStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("SET CONFIG ")
+	if n.Type != "" {
+		ctx.WriteKeyWord(n.Type)
+	} else {
+		ctx.WriteString(n.Instance)
+	}
+	ctx.WritePlain(" ")
+	ctx.WriteKeyWord(n.Name)
+	ctx.WritePlain(" = ")
+	return n.Value.Restore(ctx)
+}
+
+func (n *SetConfigStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*SetConfigStmt)
+	if node, ok := n.Value.Accept(v); !ok {
+		return n, false
+	} else {
+		n.Value = node.(ExprNode)
+	}
+	return v.Leave(n)
+}
+
 /*
 // SetCharsetStmt is a statement to assign values to character and collation variables.
 // See https://dev.mysql.com/doc/refman/5.7/en/set-statement.html
