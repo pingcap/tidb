@@ -753,6 +753,29 @@ func (s *testSuite) TestOldRowCodec(c *C) {
 	}
 }
 
+func (s *testSuite) Test65535Bug(c *C) {
+	colIds := []int64{1}
+	tps := make([]*types.FieldType, 1)
+	tps[0] = types.NewFieldType(mysql.TypeString)
+	sc := new(stmtctx.StatementContext)
+	text65535 := strings.Repeat("a", 65535)
+	encode := rowcodec.Encoder{}
+	bd, err := encode.Encode(sc, colIds, []types.Datum{types.NewStringDatum(text65535)}, nil)
+	c.Check(err, IsNil)
+
+	cols := make([]rowcodec.ColInfo, 1)
+	cols[0] = rowcodec.ColInfo{
+		ID:   1,
+		Tp:   int32(tps[0].Tp),
+		Flag: int32(tps[0].Flag),
+	}
+	dc := rowcodec.NewDatumMapDecoder(cols, -1, nil)
+	result, err := dc.DecodeToDatumMap(bd, -1, nil)
+	c.Check(err, IsNil)
+	rs := result[1]
+	c.Check(rs.GetString(), Equals, text65535)
+}
+
 var (
 	withUnsigned = func(ft *types.FieldType) *types.FieldType {
 		ft.Flag = ft.Flag | mysql.UnsignedFlag
