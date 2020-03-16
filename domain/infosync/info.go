@@ -467,11 +467,10 @@ func GetPrometheusAddr() (string, error) {
 		return "", err
 	}
 
-	// if the cache of prometheusAddr is over 5s, update the prometheusAddr
+	// if the cache of prometheusAddr is over 10s, update the prometheusAddr
 	if time.Since(is.modifyTime) < TablePrometheusCacheExpiry {
 		return is.prometheusAddr, nil
 	}
-	is.prometheusAddr = ""
 	return is.getPrometheusAddr()
 }
 
@@ -493,10 +492,9 @@ func (is *InfoSyncer) getPrometheusAddr() (string, error) {
 	if len(pdAddrs) == 0 {
 		return "", errors.Errorf("pd unavailable")
 	}
-	var res string
 
 	// get prometheus address from pdApi
-	var url string
+	var url, res string
 	if strings.HasPrefix(pdAddrs[0], "http://") {
 		url = fmt.Sprintf("%s%s", pdAddrs[0], pdapi.Config)
 	} else {
