@@ -119,6 +119,23 @@ func (m *Meta) GenGlobalID() (int64, error) {
 	return m.txn.Inc(mNextGlobalIDKey, 1)
 }
 
+// GenGlobalIDs generates the next n global IDs.
+func (m *Meta) GenGlobalIDs(n int) ([]int64, error) {
+	globalIDMutex.Lock()
+	defer globalIDMutex.Unlock()
+
+	newID, err := m.txn.Inc(mNextGlobalIDKey, int64(n))
+	if err != nil {
+		return nil, err
+	}
+	origID := newID - int64(n)
+	ids := make([]int64, 0, n)
+	for i := origID + 1; i <= newID; i++ {
+		ids = append(ids, i)
+	}
+	return ids, nil
+}
+
 // GetGlobalID gets current global id.
 func (m *Meta) GetGlobalID() (int64, error) {
 	return m.txn.GetInt64(mNextGlobalIDKey)

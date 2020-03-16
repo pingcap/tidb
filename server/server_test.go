@@ -17,6 +17,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/errors"
 	"io/ioutil"
 	"net/http"
 	"os"
@@ -1012,10 +1013,26 @@ func runTestStmtCount(t *C) {
 }
 
 func runTestTLSConnection(t *C, overrider configOverrider) error {
-	db, err := sql.Open("mysql", getDSN(overrider))
+	dsn := getDSN(overrider)
+	db, err := sql.Open("mysql", dsn)
 	t.Assert(err, IsNil)
 	defer db.Close()
 	_, err = db.Exec("USE test")
+	if err != nil {
+		return errors.Annotate(err, "dsn:"+dsn)
+	}
+	return err
+}
+
+func runReloadTLS(t *C, overrider configOverrider, errorNoRollback bool) error {
+	db, err := sql.Open("mysql", getDSN(overrider))
+	t.Assert(err, IsNil)
+	defer db.Close()
+	sql := "alter instance reload tls"
+	if errorNoRollback {
+		sql += " no rollback on error"
+	}
+	_, err = db.Exec(sql)
 	return err
 }
 

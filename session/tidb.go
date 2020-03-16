@@ -119,6 +119,12 @@ var (
 	statsLease = int64(3 * time.Second)
 )
 
+// ResetStoreForWithTiKVTest is only used in the test code.
+// TODO: Remove domap. Use store.SetOption() to do it.
+func ResetStoreForWithTiKVTest(store kv.Storage) {
+	domap.Delete(store)
+}
+
 // SetSchemaLease changes the default schema lease time for DDL.
 // This function is very dangerous, don't use it if you really know what you do.
 // SetSchemaLease only affects not local storage after bootstrapped.
