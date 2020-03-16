@@ -27,10 +27,12 @@ import (
 	"unsafe"
 
 	"github.com/cznic/mathutil"
+	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
@@ -38,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
 
@@ -724,6 +727,10 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	startTime := time.Now()
 	resp, rpcCtx, storeAddr, err := worker.SendReqCtx(bo, req, task.region, ReadTimeoutMedium, task.storeType, task.storeAddr)
 	if err != nil {
+		if task.storeType == kv.TiDB {
+			err = worker.handleTiDBSendReqErr(err, task, ch)
+			return nil, err
+		}
 		return nil, errors.Trace(err)
 	}
 	// Set task.storeAddr field so its task.String() method have the store address information.
@@ -1001,6 +1008,32 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 	}
 	worker.sendToRespCh(resp, ch, true)
 	return nil, nil
+}
+
+func (worker *copIteratorWorker) handleTiDBSendReqErr(err error, task *copTask, ch chan<- *copResponse) error {
+	errMsg := err.Error()
+	if terror.ErrorEqual(err, ErrTiKVServerTimeout) {
+		errMsg = "TiDB server timeout, address is " + task.storeAddr
+	}
+	selResp := tipb.SelectResponse{
+		Warnings: []*tipb.Error{
+			{
+				Msg: errMsg,
+			},
+		},
+	}
+	data, err := proto.Marshal(&selResp)
+	if err != nil {
+		return nil
+	}
+	resp := &copResponse{
+		pbResp: &coprocessor.Response{
+			Data: data,
+		},
+		detail: &execdetails.ExecDetails{},
+	}
+	worker.sendToRespCh(resp, ch, true)
+	return nil
 }
 
 func (worker *copIteratorWorker) buildCopTasksFromRemain(bo *Backoffer, lastRange *coprocessor.KeyRange, task *copTask) ([]*copTask, error) {
