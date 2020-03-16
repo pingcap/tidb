@@ -212,7 +212,7 @@ func (cc *clientConn) Close() error {
 func closeConn(cc *clientConn, connections int) error {
 	metrics.ConnGauge.Set(float64(connections))
 	err := cc.bufReadConn.Close()
-	terror.Log(err)
+	logutil.LogErrStack(err)
 	if cc.ctx != nil {
 		return cc.ctx.Close()
 	}
@@ -639,7 +639,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 		}
 		if atomic.LoadInt32(&cc.status) != connStatusShutdown {
 			err := cc.Close()
-			terror.Log(err)
+			logutil.LogErrStack(err)
 		}
 	}()
 	// Usually, client connection status changes between [dispatching] <=> [reading].
@@ -707,7 +707,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 				zap.String("err", errStrForLog(err)),
 			)
 			err1 := cc.writeError(err)
-			terror.Log(err1)
+			logutil.LogErrStack(err1)
 		}
 		cc.addMetrics(data[0], startTime, err)
 		cc.pkt.sequence = 0

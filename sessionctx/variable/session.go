@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
@@ -42,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/storeutil"
 	"github.com/pingcap/tidb/util/timeutil"
@@ -713,7 +713,7 @@ func NewSessionVars() *SessionVars {
 	} else {
 		enableStreaming = "0"
 	}
-	terror.Log(vars.SetSystemVar(TiDBEnableStreaming, enableStreaming))
+	logutil.LogErrStack(vars.SetSystemVar(TiDBEnableStreaming, enableStreaming))
 
 	var enableChunkRPC string
 	if config.GetGlobalConfig().TiKVClient.EnableChunkRPC {
@@ -721,7 +721,7 @@ func NewSessionVars() *SessionVars {
 	} else {
 		enableChunkRPC = "0"
 	}
-	terror.Log(vars.SetSystemVar(TiDBEnableChunkRPC, enableChunkRPC))
+	logutil.LogErrStack(vars.SetSystemVar(TiDBEnableChunkRPC, enableChunkRPC))
 	return vars
 }
 

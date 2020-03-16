@@ -314,13 +314,13 @@ func (s *Server) Run() error {
 				host, err := clientConn.PeerHost("")
 				if err != nil {
 					logutil.BgLogger().Error("get peer host failed", zap.Error(err))
-					terror.Log(clientConn.Close())
+					logutil.LogErrStack(clientConn.Close())
 					return errors.Trace(err)
 				}
 				err = authPlugin.OnConnectionEvent(context.Background(), plugin.PreAuth, &variable.ConnectionInfo{Host: host})
 				if err != nil {
 					logutil.BgLogger().Info("do connection event failed", zap.Error(err))
-					terror.Log(clientConn.Close())
+					logutil.LogErrStack(clientConn.Close())
 					return errors.Trace(err)
 				}
 			}
@@ -341,17 +341,17 @@ func (s *Server) Close() {
 
 	if s.listener != nil {
 		err := s.listener.Close()
-		terror.Log(errors.Trace(err))
+		logutil.LogErrStack(err)
 		s.listener = nil
 	}
 	if s.socket != nil {
 		err := s.socket.Close()
-		terror.Log(errors.Trace(err))
+		logutil.LogErrStack(err)
 		s.socket = nil
 	}
 	if s.statusServer != nil {
 		err := s.statusServer.Close()
-		terror.Log(errors.Trace(err))
+		logutil.LogErrStack(err)
 		s.statusServer = nil
 	}
 	if s.grpcServer != nil {
@@ -365,7 +365,7 @@ func (s *Server) Close() {
 func (s *Server) onConn(conn *clientConn) {
 	ctx := logutil.WithConnID(context.Background(), conn.connectionID)
 	if err := conn.handshake(ctx); err != nil {
-		terror.Log(err)
+		logutil.LogErrStack(err)
 		if plugin.IsEnable(plugin.Audit) {
 			conn.ctx.GetSessionVars().ConnectionInfo = conn.connectInfo()
 		}
@@ -377,12 +377,12 @@ func (s *Server) onConn(conn *clientConn) {
 			}
 			return nil
 		})
-		terror.Log(err)
+		logutil.LogErrStack(err)
 		// Some keep alive services will send request to TiDB and disconnect immediately.
 		// So we only record metrics.
 		metrics.HandShakeErrorCounter.Inc()
 		err = conn.Close()
-		terror.Log(errors.Trace(err))
+		logutil.LogErrStack(err)
 		return
 	}
 
@@ -540,7 +540,7 @@ func (s *Server) KillAllConnections() {
 	for _, conn := range s.clients {
 		atomic.StoreInt32(&conn.status, connStatusShutdown)
 		if err := conn.closeWithoutLock(); err != nil {
-			terror.Log(err)
+			logutil.LogErrStack(err)
 		}
 		killConn(conn)
 	}

@@ -23,7 +23,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
@@ -139,7 +138,7 @@ func (dr *delRange) startEmulator() {
 		}
 		if IsEmulatorGCEnable() {
 			err := dr.doDelRangeWork()
-			terror.Log(errors.Trace(err))
+			logutil.LogErrStack(err)
 		}
 	}
 }

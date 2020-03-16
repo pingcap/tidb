@@ -39,7 +39,6 @@ import (
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
@@ -323,9 +322,9 @@ func (s *session) SetCollation(coID int) error {
 		return err
 	}
 	for _, v := range variable.SetNamesVariables {
-		terror.Log(s.sessionVars.SetSystemVar(v, cs))
+		logutil.LogErrStack(s.sessionVars.SetSystemVar(v, cs))
 	}
-	terror.Log(s.sessionVars.SetSystemVar(variable.CollationConnection, co))
+	logutil.LogErrStack(s.sessionVars.SetSystemVar(variable.CollationConnection, co))
 	return nil
 }
 
@@ -532,7 +531,7 @@ func (s *session) RollbackTxn(ctx context.Context) {
 	}
 
 	if s.txn.Valid() {
-		terror.Log(s.txn.Rollback())
+		logutil.LogErrStack(s.txn.Rollback())
 	}
 	if ctx.Value(inCloseSession{}) == nil {
 		s.cleanRetryInfo()
@@ -570,7 +569,7 @@ func (s *session) String() string {
 		data["preparedStmtCount"] = len(sessVars.PreparedStmts)
 	}
 	b, err := json.MarshalIndent(data, "", "  ")
-	terror.Log(errors.Trace(err))
+	logutil.LogErrStack(err)
 	return string(b)
 }
 

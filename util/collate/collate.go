@@ -187,7 +187,7 @@ func GetSupportedCollations() []*charset.Collation {
 		for name := range newCollatorMap {
 			if coll, err := charset.GetCollationByName(name); err != nil {
 				// Should never happens.
-				terror.Log(err)
+				logutil.LogErrStack(err)
 			} else {
 				newSupportedCollations = append(newSupportedCollations, coll)
 			}

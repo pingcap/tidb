@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/fn"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util"
@@ -61,7 +60,7 @@ func serveError(w http.ResponseWriter, status int, txt string) {
 	w.Header().Del("Content-Disposition")
 	w.WriteHeader(status)
 	_, err := fmt.Fprintln(w, txt)
-	terror.Log(err)
+	logutil.LogErrStack(err)
 }
 
 func sleepWithCtx(ctx context.Context, d time.Duration) {
@@ -206,7 +205,7 @@ func (s *Server) startHTTPServer() {
 				return
 			}
 			err = p.WriteTo(fw, item.debug)
-			terror.Log(err)
+			logutil.LogErrStack(err)
 		}
 
 		// dump profile
@@ -239,7 +238,7 @@ func (s *Server) startHTTPServer() {
 			return
 		}
 		_, err = fw.Write(js)
-		terror.Log(err)
+		logutil.LogErrStack(err)
 
 		// dump version
 		fw, err = zw.Create("version")
@@ -248,10 +247,10 @@ func (s *Server) startHTTPServer() {
 			return
 		}
 		_, err = fw.Write([]byte(printer.GetTiDBInfo()))
-		terror.Log(err)
+		logutil.LogErrStack(err)
 
 		err = zw.Close()
-		terror.Log(err)
+		logutil.LogErrStack(err)
 	})
 	fetcher := sqlInfoFetcher{store: tikvHandlerTool.Store}
 	serverMux.HandleFunc("/debug/sub-optimal-plan", fetcher.zipInfoForSQL)
@@ -365,6 +364,6 @@ func (s *Server) handleStatus(w http.ResponseWriter, req *http.Request) {
 		logutil.BgLogger().Error("encode json failed", zap.Error(err))
 	} else {
 		_, err = w.Write(js)
-		terror.Log(errors.Trace(err))
+		logutil.LogErrStack(err)
 	}
 }

@@ -16,7 +16,6 @@ package expression
 import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -299,7 +298,7 @@ func (s *propConstSolver) pickNewEQConds(visited []bool) (retMapper map[int]*Con
 			}
 			value, _, err := EvalBool(s.ctx, []Expression{con}, chunk.Row{})
 			if err != nil {
-				terror.Log(err)
+				logutil.LogErrStack(err)
 				return nil
 			}
 			if !value {
@@ -401,7 +400,7 @@ func (s *propOuterJoinConstSolver) pickEQCondsOnOuterCol(retMapper map[int]*Cons
 			}
 			value, _, err := EvalBool(s.ctx, []Expression{con}, chunk.Row{})
 			if err != nil {
-				terror.Log(err)
+				logutil.LogErrStack(err)
 				return nil
 			}
 			if !value {

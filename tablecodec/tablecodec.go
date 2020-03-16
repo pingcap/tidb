@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/structure"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/rowcodec"
 )
 
@@ -236,7 +237,7 @@ func DecodeTableID(key kv.Key) int64 {
 	key = key[len(tablePrefix):]
 	_, tableID, err := codec.DecodeInt(key)
 	// TODO: return error.
-	terror.Log(errors.Trace(err))
+	logutil.LogErrStack(err)
 	return tableID
 }
 

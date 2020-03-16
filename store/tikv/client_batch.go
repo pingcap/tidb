@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -411,7 +410,7 @@ func (c *batchCommandsClient) reCreateStreamingClient(err error) (stopped bool) 
 		err2 := b.Backoff(boTiKVRPC, err1)
 		// As timeout is set to math.MaxUint32, err2 should always be nil.
 		// This line is added to make the 'make errcheck' pass.
-		terror.Log(err2)
+		logutil.LogErrStack(err2)
 	}
 	return false
 }

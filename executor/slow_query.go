@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/infoschema"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege"
@@ -587,7 +586,7 @@ func (e *slowQueryRetriever) getAllFiles(sctx sessionctx.Context, logFilePath st
 		skip := false
 		defer func() {
 			if !skip {
-				terror.Log(file.Close())
+				logutil.LogErrStack(file.Close())
 			}
 		}()
 		// Get the file start time.

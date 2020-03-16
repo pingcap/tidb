@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/set"
 	"go.uber.org/zap"
@@ -199,7 +200,7 @@ func (e *clusterConfigRetriever) retrieve(_ context.Context, sctx sessionctx.Con
 					return
 				}
 				defer func() {
-					terror.Log(resp.Body.Close())
+					logutil.LogErrStack(resp.Body.Close())
 				}()
 				if resp.StatusCode != http.StatusOK {
 					ch <- result{err: errors.Errorf("request %s failed: %s", url, resp.Status)}

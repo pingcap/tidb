@@ -25,7 +25,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/logutil"
 	tidbMath "github.com/pingcap/tidb/util/math"
@@ -369,12 +368,12 @@ func (t Time) String() string {
 	if t.Type() == mysql.TypeDate {
 		// We control the format, so no error would occur.
 		str, err := t.DateFormat("%Y-%m-%d")
-		terror.Log(errors.Trace(err))
+		logutil.LogErrStack(err)
 		return str
 	}
 
 	str, err := t.DateFormat("%Y-%m-%d %H:%i:%s")
-	terror.Log(errors.Trace(err))
+	logutil.LogErrStack(err)
 	fsp := t.Fsp()
 	if fsp > 0 {
 		tmp := fmt.Sprintf(".%06d", t.Microsecond())
@@ -437,7 +436,7 @@ func (t Time) FillNumber(dec *MyDecimal) {
 	}
 	// We skip checking error here because time formatted string can be parsed certainly.
 	err = dec.FromString([]byte(s))
-	terror.Log(errors.Trace(err))
+	logutil.LogErrStack(err)
 }
 
 // Convert converts t with type tp.
@@ -677,9 +676,9 @@ func (t *Time) Sub(sc *stmtctx.StatementContext, t1 *Time) Duration {
 	var duration gotime.Duration
 	if t.Type() == mysql.TypeTimestamp && t1.Type() == mysql.TypeTimestamp {
 		a, err := t.GoTime(sc.TimeZone)
-		terror.Log(errors.Trace(err))
+		logutil.LogErrStack(err)
 		b, err := t1.GoTime(sc.TimeZone)
-		terror.Log(errors.Trace(err))
+		logutil.LogErrStack(err)
 		duration = a.Sub(b)
 	} else {
 		seconds, microseconds, neg := calcTimeTimeDiff(t.coreTime, t1.coreTime, 1)
@@ -1179,7 +1178,7 @@ func (d Duration) ToNumber() *MyDecimal {
 	// We skip checking error here because time formatted string can be parsed certainly.
 	dec := new(MyDecimal)
 	err := dec.FromString([]byte(s))
-	terror.Log(errors.Trace(err))
+	logutil.LogErrStack(err)
 	return dec
 }
 

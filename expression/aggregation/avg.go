@@ -16,10 +16,10 @@ package aggregation
 import (
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 )
 
 type avgFunction struct {
@@ -80,13 +80,13 @@ func (af *avgFunction) GetResult(evalCtx *AggEvaluateContext) (d types.Datum) {
 		y := types.NewDecFromInt(evalCtx.Count)
 		to := new(types.MyDecimal)
 		err := types.DecimalDiv(x, y, to, types.DivFracIncr)
-		terror.Log(err)
+		logutil.LogErrStack(err)
 		frac := af.RetTp.Decimal
 		if frac == -1 {
 			frac = mysql.MaxDecimalScale
 		}
 		err = to.Round(to, mathutil.Min(frac, mysql.MaxDecimalScale), types.ModeHalfEven)
-		terror.Log(err)
+		logutil.LogErrStack(err)
 		d.SetMysqlDecimal(to)
 	}
 	return

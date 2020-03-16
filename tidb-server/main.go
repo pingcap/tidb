@@ -26,7 +26,6 @@ import (
 	"time"
 
 	"github.com/opentracing/opentracing-go"
-	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -619,7 +618,7 @@ func closeDomainAndStorage() {
 	atomic.StoreUint32(&tikv.ShuttingDown, 1)
 	dom.Close()
 	err := storage.Close()
-	terror.Log(errors.Trace(err))
+	logutil.LogErrStack(err)
 }
 
 func cleanup() {

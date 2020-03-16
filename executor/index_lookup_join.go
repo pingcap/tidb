@@ -596,7 +596,7 @@ func compareRow(sc *stmtctx.StatementContext, left, right []types.Datum) int {
 	for idx := 0; idx < len(left); idx++ {
 		cmp, err := left[idx].CompareDatum(sc, &right[idx])
 		// We only compare rows with the same type, no error to return.
-		terror.Log(err)
+		logutil.LogErrStack(err)
 		if cmp > 0 {
 			return 1
 		} else if cmp < 0 {

@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/goleveldb/leveldb/storage"
 	"github.com/pingcap/goleveldb/leveldb/util"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/codec"
@@ -392,7 +391,7 @@ func (mvcc *MVCCLevelDB) ReverseScan(startKey, endKey []byte, limit int, startTS
 	succ := iter.Last()
 	currKey, _, err := mvccDecode(iter.Key())
 	// TODO: return error.
-	terror.Log(errors.Trace(err))
+	logutil.LogErrStack(err)
 	helper := reverseScanHelper{
 		startTS:       startTS,
 		isoLevel:      isoLevel,
@@ -1479,7 +1478,7 @@ func (mvcc *MVCCLevelDB) RawPut(key, value []byte) {
 	if value == nil {
 		value = []byte{}
 	}
-	terror.Log(mvcc.db.Put(key, value, nil))
+	logutil.LogErrStack(mvcc.db.Put(key, value, nil))
 }
 
 // RawBatchPut implements the RawKV interface
@@ -1495,7 +1494,7 @@ func (mvcc *MVCCLevelDB) RawBatchPut(keys, values [][]byte) {
 		}
 		batch.Put(key, value)
 	}
-	terror.Log(mvcc.db.Write(batch, nil))
+	logutil.LogErrStack(mvcc.db.Write(batch, nil))
 }
 
 // RawGet implements the RawKV interface.
@@ -1504,7 +1503,7 @@ func (mvcc *MVCCLevelDB) RawGet(key []byte) []byte {
 	defer mvcc.mu.Unlock()
 
 	ret, err := mvcc.db.Get(key, nil)
-	terror.Log(err)
+	logutil.LogErrStack(err)
 	return ret
 }
 
@@ -1516,7 +1515,7 @@ func (mvcc *MVCCLevelDB) RawBatchGet(keys [][]byte) [][]byte {
 	values := make([][]byte, 0, len(keys))
 	for _, key := range keys {
 		value, err := mvcc.db.Get(key, nil)
-		terror.Log(err)
+		logutil.LogErrStack(err)
 		values = append(values, value)
 	}
 	return values
@@ -1527,7 +1526,7 @@ func (mvcc *MVCCLevelDB) RawDelete(key []byte) {
 	mvcc.mu.Lock()
 	defer mvcc.mu.Unlock()
 
-	terror.Log(mvcc.db.Delete(key, nil))
+	logutil.LogErrStack(mvcc.db.Delete(key, nil))
 }
 
 // RawBatchDelete implements the RawKV interface.
@@ -1539,7 +1538,7 @@ func (mvcc *MVCCLevelDB) RawBatchDelete(keys [][]byte) {
 	for _, key := range keys {
 		batch.Delete(key)
 	}
-	terror.Log(mvcc.db.Write(batch, nil))
+	logutil.LogErrStack(mvcc.db.Write(batch, nil))
 }
 
 // RawScan implements the RawKV interface.
@@ -1601,7 +1600,7 @@ func (mvcc *MVCCLevelDB) RawReverseScan(startKey, endKey []byte, limit int) []Pa
 
 // RawDeleteRange implements the RawKV interface.
 func (mvcc *MVCCLevelDB) RawDeleteRange(startKey, endKey []byte) {
-	terror.Log(mvcc.doRawDeleteRange(startKey, endKey))
+	logutil.LogErrStack(mvcc.doRawDeleteRange(startKey, endKey))
 }
 
 // doRawDeleteRange deletes all keys in a range and return the error if any.

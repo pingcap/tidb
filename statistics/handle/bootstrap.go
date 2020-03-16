@@ -106,7 +106,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache *stat
 			cms, err := statistics.DecodeCMSketch(row.GetBytes(6), nil)
 			if err != nil {
 				cms = nil
-				terror.Log(errors.Trace(err))
+				logutil.LogErrStack(err)
 			}
 			hist := statistics.NewHistogram(id, ndv, nullCount, version, types.NewFieldType(mysql.TypeBlob), chunk.InitialCapacity, 0)
 			index := &statistics.Index{

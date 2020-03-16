@@ -202,7 +202,7 @@ func (h *BindHandle) AddBindRecord(sctx sessionctx.Context, record *BindRecord) 
 		if err != nil {
 			_, err1 := exec.ExecuteInternal(context.TODO(), "ROLLBACK")
 			h.sctx.Unlock()
-			terror.Log(err1)
+			logutil.LogErrStack(err1)
 			return
 		}
 
@@ -264,7 +264,7 @@ func (h *BindHandle) DropBindRecord(originalSQL, db string, binding *Binding) (e
 		if err != nil {
 			_, err1 := exec.ExecuteInternal(context.TODO(), "ROLLBACK")
 			h.sctx.Unlock()
-			terror.Log(err1)
+			logutil.LogErrStack(err1)
 			return
 		}
 
@@ -574,7 +574,7 @@ func getHintsForSQL(sctx sessionctx.Context, sql string) (string, error) {
 	recordSets, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), fmt.Sprintf("explain format='hint' %s", sql))
 	sctx.GetSessionVars().UsePlanBaselines = oriVals
 	if len(recordSets) > 0 {
-		defer terror.Log(recordSets[0].Close())
+		defer logutil.LogErrStack(recordSets[0].Close())
 	}
 	if err != nil {
 		return "", err

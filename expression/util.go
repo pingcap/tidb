@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/opcode"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
@@ -330,9 +329,9 @@ func timeZone2Duration(tz string) time.Duration {
 
 	i := strings.Index(tz, ":")
 	h, err := strconv.Atoi(tz[1:i])
-	terror.Log(err)
+	logutil.LogErrStack(err)
 	m, err := strconv.Atoi(tz[i+1:])
-	terror.Log(err)
+	logutil.LogErrStack(err)
 	return time.Duration(sign) * (time.Duration(h)*time.Hour + time.Duration(m)*time.Minute)
 }
 

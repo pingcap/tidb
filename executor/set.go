@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/plugin"
@@ -194,7 +193,7 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 		} else {
 			var err error
 			valStr, err = value.ToString()
-			terror.Log(err)
+			logutil.LogErrStack(err)
 		}
 		if name != variable.AutoCommit {
 			logutil.BgLogger().Info("set session var", zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))

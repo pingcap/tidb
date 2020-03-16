@@ -389,3 +389,9 @@ func SetTag(ctx context.Context, key string, value interface{}) {
 		span.SetTag(key, value)
 	}
 }
+
+func LogErrStack(err error) {
+	if err != nil {
+		BgLogger().Error("Encountered Error", zap.Error(err), zap.Stack("stack"))
+	}
+}

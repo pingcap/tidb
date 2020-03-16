@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/debugpb"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
@@ -197,7 +196,7 @@ func (a *connArray) Close() {
 	for i, c := range a.v {
 		if c != nil {
 			err := c.Close()
-			terror.Log(errors.Trace(err))
+			logutil.LogErrStack(err)
 			a.v[i] = nil
 		}
 	}

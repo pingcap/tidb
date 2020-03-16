@@ -20,11 +20,11 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/fastrand"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/spaolacci/murmur3"
@@ -93,11 +93,11 @@ func (c *SampleCollector) MergeSampleCollector(sc *stmtctx.StatementContext, rc 
 	c.FMSketch.mergeFMSketch(rc.FMSketch)
 	if rc.CMSketch != nil {
 		err := c.CMSketch.MergeCMSketch(rc.CMSketch, 0)
-		terror.Log(errors.Trace(err))
+		logutil.LogErrStack(err)
 	}
 	for _, item := range rc.Samples {
 		err := c.collect(sc, item.Value)
-		terror.Log(errors.Trace(err))
+		logutil.LogErrStack(err)
 	}
 }
 

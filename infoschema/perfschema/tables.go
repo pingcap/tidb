@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -34,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/profile"
 	"github.com/pingcap/tidb/util/stmtsummary"
 )
@@ -382,7 +382,7 @@ func dataForRemoteProfile(ctx sessionctx.Context, nodeType, uri string, isGorout
 					return
 				}
 				defer func() {
-					terror.Log(resp.Body.Close())
+					logutil.LogErrStack(resp.Body.Close())
 				}()
 				if resp.StatusCode != http.StatusOK {
 					ch <- result{err: errors.Errorf("request %s failed: %s", url, resp.Status)}

@@ -41,7 +41,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/util/logutil"
 )
 
 const defaultWriterSize = 16 * 1024
@@ -156,7 +156,7 @@ func (p *packetIO) writePacket(data []byte) error {
 	data[3] = p.sequence
 
 	if n, err := p.bufWriter.Write(data); err != nil {
-		terror.Log(errors.Trace(err))
+		logutil.LogErrStack(err)
 		return errors.Trace(mysql.ErrBadConn)
 	} else if n != len(data) {
 		return errors.Trace(mysql.ErrBadConn)

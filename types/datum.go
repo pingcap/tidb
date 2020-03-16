@@ -1948,7 +1948,7 @@ func DatumsToString(datums []Datum, handleSpecialValue bool) (string, error) {
 // If an error occurs, it will print a log instead of returning an error.
 func DatumsToStrNoErr(datums []Datum) string {
 	str, err := DatumsToString(datums, true)
-	terror.Log(errors.Trace(err))
+	logutil.LogErrStack(err)
 	return str
 }
 

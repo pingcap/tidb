@@ -590,7 +590,7 @@ func (do *Domain) isClose() bool {
 func (do *Domain) Close() {
 	startTime := time.Now()
 	if do.ddl != nil {
-		terror.Log(do.ddl.Stop())
+		logutil.LogErrStack(do.ddl.Stop())
 	}
 	if do.info != nil {
 		do.info.RemoveServerInfo()
@@ -598,7 +598,7 @@ func (do *Domain) Close() {
 	}
 	close(do.exit)
 	if do.etcdClient != nil {
-		terror.Log(errors.Trace(do.etcdClient.Close()))
+		logutil.LogErrStack(do.etcdClient.Close())
 	}
 
 	do.sysSessionPool.Close()

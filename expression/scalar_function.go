@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/util/logutil"
 )
 
 // error definitions.
@@ -229,7 +230,7 @@ func NewFunctionBase(ctx sessionctx.Context, funcName string, retType *types.Fie
 // NewFunctionInternal is similar to NewFunction, but do not returns error, should only be used internally.
 func NewFunctionInternal(ctx sessionctx.Context, funcName string, retType *types.FieldType, args ...Expression) Expression {
 	expr, err := NewFunction(ctx, funcName, retType, args...)
-	terror.Log(err)
+	logutil.LogErrStack(err)
 	return expr
 }
 

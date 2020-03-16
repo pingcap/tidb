@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
@@ -94,7 +93,7 @@ const (
 func writeError(w http.ResponseWriter, err error) {
 	w.WriteHeader(http.StatusBadRequest)
 	_, err = w.Write([]byte(err.Error()))
-	terror.Log(errors.Trace(err))
+	logutil.LogErrStack(err)
 }
 
 func writeData(w http.ResponseWriter, data interface{}) {
@@ -107,7 +106,7 @@ func writeData(w http.ResponseWriter, data interface{}) {
 	w.Header().Set(headerContentType, contentTypeJSON)
 	w.WriteHeader(http.StatusOK)
 	_, err = w.Write(js)
-	terror.Log(errors.Trace(err))
+	logutil.LogErrStack(err)
 }
 
 type tikvHandlerTool struct {

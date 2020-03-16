@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
@@ -125,30 +126,30 @@ func (sh *sqlInfoFetcher) zipInfoForSQL(w http.ResponseWriter, r *http.Request) 
 	}
 	zw := zip.NewWriter(w)
 	defer func() {
-		terror.Log(zw.Close())
+		logutil.LogErrStack(zw.Close())
 	}()
 	for pair := range pairs {
 		jsonTbl, err := sh.getStatsForTable(pair)
 		if err != nil {
 			err = sh.writeErrFile(zw, fmt.Sprintf("%v.%v.stats.err.txt", pair.DBName, pair.TableName), err)
-			terror.Log(err)
+			logutil.LogErrStack(err)
 			continue
 		}
 		statsFw, err := zw.Create(fmt.Sprintf("%v.%v.json", pair.DBName, pair.TableName))
 		if err != nil {
-			terror.Log(err)
+			logutil.LogErrStack(err)
 			continue
 		}
 		data, err := json.Marshal(jsonTbl)
 		if err != nil {
 			err = sh.writeErrFile(zw, fmt.Sprintf("%v.%v.stats.err.txt", pair.DBName, pair.TableName), err)
-			terror.Log(err)
+			logutil.LogErrStack(err)
 			continue
 		}
 		_, err = statsFw.Write(data)
 		if err != nil {
 			err = sh.writeErrFile(zw, fmt.Sprintf("%v.%v.stats.err.txt", pair.DBName, pair.TableName), err)
-			terror.Log(err)
+			logutil.LogErrStack(err)
 			continue
 		}
 	}
@@ -156,7 +157,7 @@ func (sh *sqlInfoFetcher) zipInfoForSQL(w http.ResponseWriter, r *http.Request) 
 		err = sh.getShowCreateTable(pair, zw)
 		if err != nil {
 			err = sh.writeErrFile(zw, fmt.Sprintf("%v.%v.schema.err.txt", pair.DBName, pair.TableName), err)
-			terror.Log(err)
+			logutil.LogErrStack(err)
 			return
 		}
 	}
@@ -168,18 +169,18 @@ func (sh *sqlInfoFetcher) zipInfoForSQL(w http.ResponseWriter, r *http.Request) 
 		}
 		if err != nil {
 			err = sh.writeErrFile(zw, "explain.err.txt", err)
-			terror.Log(err)
+			logutil.LogErrStack(err)
 			return
 		}
 		sRows, err := session.ResultSetToStringSlice(reqCtx, sh.s, recordSets[0])
 		if err != nil {
 			err = sh.writeErrFile(zw, "explain.err.txt", err)
-			terror.Log(err)
+			logutil.LogErrStack(err)
 			return
 		}
 		fw, err := zw.Create("explain.txt")
 		if err != nil {
-			terror.Log(err)
+			logutil.LogErrStack(err)
 			return
 		}
 		for _, row := range sRows {
@@ -200,7 +201,7 @@ func (sh *sqlInfoFetcher) zipInfoForSQL(w http.ResponseWriter, r *http.Request) 
 			cancelFunc()
 			if result.err != nil {
 				err = sh.writeErrFile(zw, "explain_analyze.err.txt", result.err)
-				terror.Log(err)
+				logutil.LogErrStack(err)
 				return
 			}
 			if len(result.rows) == 0 {
@@ -208,7 +209,7 @@ func (sh *sqlInfoFetcher) zipInfoForSQL(w http.ResponseWriter, r *http.Request) 
 			}
 			fw, err := zw.Create("explain_analyze.txt")
 			if err != nil {
-				terror.Log(err)
+				logutil.LogErrStack(err)
 				break
 			}
 			for _, row := range result.rows {
@@ -220,7 +221,7 @@ func (sh *sqlInfoFetcher) zipInfoForSQL(w http.ResponseWriter, r *http.Request) 
 		err = dumpCPUProfile(errChan, &buf, zw)
 		if err != nil {
 			err = sh.writeErrFile(zw, "profile.err.txt", err)
-			terror.Log(err)
+			logutil.LogErrStack(err)
 			return
 		}
 	}
@@ -267,7 +268,7 @@ func (sh *sqlInfoFetcher) getExplainAnalyze(ctx context.Context, sql string, res
 	}
 	rows, err := session.ResultSetToStringSlice(ctx, sh.s, recordSets[0])
 	if err != nil {
-		terror.Log(err)
+		logutil.LogErrStack(err)
 		return
 	}
 	resultChan <- &explainAnalyzeResult{rows: rows}
@@ -304,12 +305,12 @@ func (sh *sqlInfoFetcher) getShowCreateTable(pair tableNamePair, zw *zip.Writer)
 	}
 	sRows, err := session.ResultSetToStringSlice(context.Background(), sh.s, recordSets[0])
 	if err != nil {
-		terror.Log(err)
+		logutil.LogErrStack(err)
 		return nil
 	}
 	fw, err := zw.Create(fmt.Sprintf("%v.%v.schema.txt", pair.DBName, pair.TableName))
 	if err != nil {
-		terror.Log(err)
+		logutil.LogErrStack(err)
 		return nil
 	}
 	for _, row := range sRows {

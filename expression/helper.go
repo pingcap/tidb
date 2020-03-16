@@ -20,11 +20,11 @@ import (
 
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/util/logutil"
 )
 
 func boolToInt64(v bool) int64 {
@@ -76,7 +76,7 @@ func GetTimeValue(ctx sessionctx.Context, v interface{}, tp byte, fsp int8) (d t
 			}
 		} else if upperX == types.ZeroDatetimeStr {
 			value, err = types.ParseTimeFromNum(sc, 0, tp, fsp)
-			terror.Log(err)
+			logutil.LogErrStack(err)
 		} else {
 			value, err = types.ParseTime(sc, x, tp, fsp)
 			if err != nil {

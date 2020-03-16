@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/tablecodec"
@@ -285,9 +284,9 @@ func ValueToString(value *types.Datum, idxCols int) (string, error) {
 // BucketToString change the given bucket to string format.
 func (hg *Histogram) BucketToString(bktID, idxCols int) string {
 	upperVal, err := ValueToString(hg.GetUpper(bktID), idxCols)
-	terror.Log(errors.Trace(err))
+	logutil.LogErrStack(err)
 	lowerVal, err := ValueToString(hg.GetLower(bktID), idxCols)
-	terror.Log(errors.Trace(err))
+	logutil.LogErrStack(err)
 	return fmt.Sprintf("num: %d lower_bound: %s upper_bound: %s repeats: %d", hg.bucketCount(bktID), lowerVal, upperVal, hg.Buckets[bktID].Repeat)
 }
 

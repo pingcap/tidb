@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
@@ -296,7 +295,7 @@ func (d *ddl) start(ctx context.Context, ctxPool *pools.ResourcePool) {
 	// Otherwise, we needn't do that.
 	if RunWorker {
 		err := d.ownerManager.CampaignOwner(ctx)
-		terror.Log(errors.Trace(err))
+		logutil.LogErrStack(err)
 
 		d.workers = make(map[workerType]*worker, 2)
 		d.sessPool = newSessionPool(ctxPool)

@@ -22,11 +22,11 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 )
 
 func (b *builtinMonthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
@@ -464,7 +464,7 @@ func (b *builtinUnixTimestampCurrentSig) vecEvalInt(input *chunk.Chunk, result *
 		return err
 	}
 	intVal, err := dec.ToInt()
-	terror.Log(err)
+	logutil.LogErrStack(err)
 	n := input.NumRows()
 	result.ResizeInt64(n, false)
 	intRes := result.Int64s()
@@ -2271,7 +2271,7 @@ func (b *builtinUnixTimestampIntSig) vecEvalInt(input *chunk.Chunk, result *chun
 				return err
 			}
 			intVal, err := dec.ToInt()
-			terror.Log(err)
+			logutil.LogErrStack(err)
 			i64s[i] = intVal
 		}
 	}

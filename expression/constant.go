@@ -17,7 +17,6 @@ import (
 	"fmt"
 
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
@@ -370,12 +369,12 @@ func (c *Constant) HashCode(sc *stmtctx.StatementContext) []byte {
 	}
 	_, err := c.Eval(chunk.Row{})
 	if err != nil {
-		terror.Log(err)
+		logutil.LogErrStack(err)
 	}
 	c.hashcode = append(c.hashcode, constantFlag)
 	c.hashcode, err = codec.EncodeValue(sc, c.hashcode, c.Value)
 	if err != nil {
-		terror.Log(err)
+		logutil.LogErrStack(err)
 	}
 	return c.hashcode
 }

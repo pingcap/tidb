@@ -20,7 +20,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 
@@ -261,7 +261,7 @@ func (d *MyDecimal) GetDigitsInt() int8 {
 func (d *MyDecimal) String() string {
 	tmp := *d
 	err := tmp.Round(&tmp, int(tmp.resultFrac), ModeHalfEven)
-	terror.Log(errors.Trace(err))
+	logutil.LogErrStack(err)
 	return string(tmp.ToString())
 }
 
@@ -1469,7 +1469,7 @@ func writeWord(b []byte, word int32, size int) {
 func (d *MyDecimal) Compare(to *MyDecimal) int {
 	if d.negative == to.negative {
 		cmp, err := doSub(d, to, nil)
-		terror.Log(errors.Trace(err))
+		logutil.LogErrStack(err)
 		return cmp
 	}
 	if d.negative {
@@ -2323,6 +2323,6 @@ func NewMaxOrMinDec(negative bool, prec, frac int) *MyDecimal {
 	str[1+prec-frac] = '.'
 	dec := new(MyDecimal)
 	err := dec.FromString(str)
-	terror.Log(errors.Trace(err))
+	logutil.LogErrStack(err)
 	return dec
 }

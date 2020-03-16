@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -41,6 +40,7 @@ import (
 	binaryJson "github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/pdapi"
 )
 
@@ -1247,7 +1247,7 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		terror.Log(resp.Body.Close())
+		logutil.LogErrStack(resp.Body.Close())
 		version := strings.Trim(strings.Trim(string(pdVersion), "\n"), "\"")
 
 		// Get PD git_hash
@@ -1268,7 +1268,7 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 		if err := json.NewDecoder(resp.Body).Decode(&content); err != nil {
 			return nil, errors.Trace(err)
 		}
-		terror.Log(resp.Body.Close())
+		logutil.LogErrStack(resp.Body.Close())
 
 		servers = append(servers, ServerInfo{
 			ServerType:     "pd",

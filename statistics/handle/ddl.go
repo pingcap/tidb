@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
@@ -171,7 +172,7 @@ func finishTransaction(ctx context.Context, exec sqlexec.SQLExecutor, err error)
 		_, err = exec.Execute(ctx, "commit")
 	} else {
 		_, err1 := exec.Execute(ctx, "rollback")
-		terror.Log(errors.Trace(err1))
+		logutil.LogErrStack(err1)
 	}
 	return errors.Trace(err)
 }

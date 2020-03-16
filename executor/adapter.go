@@ -307,15 +307,15 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		oriScan := sctx.GetSessionVars().DistSQLScanConcurrency
 		oriIndex := sctx.GetSessionVars().IndexSerialScanConcurrency
 		oriIso, _ := sctx.GetSessionVars().GetSystemVar(variable.TxnIsolation)
-		terror.Log(sctx.GetSessionVars().SetSystemVar(variable.TiDBBuildStatsConcurrency, "1"))
+		logutil.LogErrStack(sctx.GetSessionVars().SetSystemVar(variable.TiDBBuildStatsConcurrency, "1"))
 		sctx.GetSessionVars().DistSQLScanConcurrency = 1
 		sctx.GetSessionVars().IndexSerialScanConcurrency = 1
-		terror.Log(sctx.GetSessionVars().SetSystemVar(variable.TxnIsolation, ast.ReadCommitted))
+		logutil.LogErrStack(sctx.GetSessionVars().SetSystemVar(variable.TxnIsolation, ast.ReadCommitted))
 		defer func() {
-			terror.Log(sctx.GetSessionVars().SetSystemVar(variable.TiDBBuildStatsConcurrency, oriStats))
+			logutil.LogErrStack(sctx.GetSessionVars().SetSystemVar(variable.TiDBBuildStatsConcurrency, oriStats))
 			sctx.GetSessionVars().DistSQLScanConcurrency = oriScan
 			sctx.GetSessionVars().IndexSerialScanConcurrency = oriIndex
-			terror.Log(sctx.GetSessionVars().SetSystemVar(variable.TxnIsolation, oriIso))
+			logutil.LogErrStack(sctx.GetSessionVars().SetSystemVar(variable.TxnIsolation, oriIso))
 		}()
 	}
 
@@ -460,7 +460,7 @@ func (a *ExecStmt) runPessimisticSelectForUpdate(ctx context.Context, e Executor
 		stmt:     a,
 	}
 	defer func() {
-		terror.Log(rs.Close())
+		logutil.LogErrStack(rs.Close())
 	}()
 
 	var rows []chunk.Row
@@ -509,7 +509,7 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, e Executor) (sqlex
 
 	var err error
 	defer func() {
-		terror.Log(e.Close())
+		logutil.LogErrStack(e.Close())
 		a.logAudit()
 	}()
 

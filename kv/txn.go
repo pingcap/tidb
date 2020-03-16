@@ -20,7 +20,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -47,7 +46,7 @@ func RunInNewTxn(store Storage, retryable bool, f func(txn Transaction) error) e
 		err = f(txn)
 		if err != nil {
 			err1 := txn.Rollback()
-			terror.Log(err1)
+			logutil.LogErrStack(err1)
 			if retryable && IsTxnRetryableError(err) {
 				logutil.BgLogger().Warn("RunInNewTxn",
 					zap.Uint64("retry txn", txn.StartTS()),
