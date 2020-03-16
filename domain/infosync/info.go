@@ -493,7 +493,7 @@ func (is *InfoSyncer) getPrometheusAddr() (string, error) {
 		return "", errors.Errorf("pd unavailable")
 	}
 
-	// get prometheus address from pdApi
+	// Get prometheus address from pdApi.
 	var url, res string
 	if strings.HasPrefix(pdAddrs[0], "http://") {
 		url = fmt.Sprintf("%s%s", pdAddrs[0], pdapi.Config)
@@ -512,14 +512,14 @@ func (is *InfoSyncer) getPrometheusAddr() (string, error) {
 	}
 	res = metricStorage.PDServer.MetricStorage
 
-	// get prometheus address from etcdApi
+	// Get prometheus address from etcdApi.
 	if res == "" {
 		values, err := is.getPrometheusAddrFromEtcd(TopologyPrometheus)
 		if err != nil {
 			return "", errors.Trace(err)
 		}
 		if values == "" {
-			return "", errors.Errorf("prometheus address is not set in Etcd")
+			return "", errors.Errorf("prometheus address is not set in etcd")
 		}
 		var prometheus prometheus
 		err = json.Unmarshal([]byte(values), &prometheus)
@@ -535,7 +535,7 @@ func (is *InfoSyncer) getPrometheusAddr() (string, error) {
 }
 
 func (is *InfoSyncer) getPrometheusAddrFromEtcd(k string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
+	ctx, cancel := context.WithTimeout(context.Background(), keyOpDefaultTimeout)
 	resp, err := is.etcdCli.Get(ctx, k)
 	cancel()
 	if err != nil {
