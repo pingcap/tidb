@@ -334,8 +334,15 @@ func (b *builtinSleepSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 }
 
 func doSleep(secs float64, sessVars *variable.SessionVars) (isKilled bool) {
+	if secs <= 0.0 {
+		return false
+	}
 	dur := time.Duration(secs * float64(time.Second.Nanoseconds()))
-	ticker := time.NewTicker(10 * time.Millisecond)
+	d := 10 * time.Millisecond
+	if dur < d {
+		d = dur
+	}
+	ticker := time.NewTicker(d)
 	defer ticker.Stop()
 	start := time.Now()
 	for {
