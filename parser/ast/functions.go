@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/format"
@@ -950,6 +951,30 @@ func (unit TimeUnitType) String() string {
 		return "YEAR_MONTH"
 	default:
 		return ""
+	}
+}
+
+// Duration represented by this unit.
+// Returns error if the time unit is not a fixed time interval (such as MONTH)
+// or a composite unit (such as MINUTE_SECOND).
+func (unit TimeUnitType) Duration() (time.Duration, error) {
+	switch unit {
+	case TimeUnitMicrosecond:
+		return time.Microsecond, nil
+	case TimeUnitSecond:
+		return time.Second, nil
+	case TimeUnitMinute:
+		return time.Minute, nil
+	case TimeUnitHour:
+		return time.Hour, nil
+	case TimeUnitDay:
+		return time.Hour * 24, nil
+	case TimeUnitWeek:
+		return time.Hour * 24 * 7, nil
+	case TimeUnitMonth, TimeUnitQuarter, TimeUnitYear:
+		return 0, errors.Errorf("%s is not a constant time interval and cannot be used here", unit)
+	default:
+		return 0, errors.Errorf("%s is a composite time unit and is not supported yet", unit)
 	}
 }
 
