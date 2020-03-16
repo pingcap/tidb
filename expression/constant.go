@@ -68,7 +68,6 @@ type Constant struct {
 type ParamMarker struct {
 	ctx   sessionctx.Context
 	order int
-	tp    types.FieldType
 }
 
 // GetUserVar returns the corresponding user variable presented in the `EXECUTE` statement or `COM_EXECUTE` command.
@@ -107,13 +106,12 @@ func (c *Constant) Clone() Expression {
 	return c
 }
 
-var unspecifiedTp = types.NewFieldType(mysql.TypeUnspecified)
-
 // GetType implements Expression interface.
 func (c *Constant) GetType() *types.FieldType {
 	if c.ParamMarker != nil {
-		tp := &c.ParamMarker.tp
-		*tp = *unspecifiedTp
+		// GetType() may be called in multi-threaded context, e.g, in building inner executors of IndexJoin,
+		// so it should avoid data race. We achieve this by returning different FieldType pointer for each call.
+		tp := types.NewFieldType(mysql.TypeUnspecified)
 		dt := c.ParamMarker.GetUserVar()
 		types.DefaultParamTypeForValue(dt.GetValue(), tp)
 		return tp
