@@ -76,3 +76,5 @@ require (
 )
 
 go 1.13
+
+replace github.com/pingcap/parser => github.com/lawyerphx/parser v0.0.0-20200316023126-7af13c9e0b85
