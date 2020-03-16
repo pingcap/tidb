@@ -3053,6 +3053,18 @@ func (s *testSessionSuite2) TestStmtHints(c *C) {
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 1)
 	c.Assert(tk.Se.GetSessionVars().GetAllowInSubqToJoinAndAgg(), IsTrue)
 
+	// Test USE_CASCADES hint
+	tk.Se.GetSessionVars().SetEnableCascadesPlanner(true)
+	tk.MustExec("select /*+ USE_CASCADES(false) */ 1;")
+	c.Assert(tk.Se.GetSessionVars().GetEnableCascadesPlanner(), IsFalse)
+	tk.Se.GetSessionVars().SetEnableCascadesPlanner(false)
+	tk.MustExec("select /*+ USE_CASCADES(true) */ 1;")
+	c.Assert(tk.Se.GetSessionVars().GetEnableCascadesPlanner(), IsTrue)
+	tk.MustExec("select /*+ USE_CASCADES(false), USE_CASCADES(true) */ 1;")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 1)
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings()[0].Err.Error(), Equals, "USE_CASCADES() is defined more than once, only the last definition takes effect: USE_CASCADES(true)")
+	c.Assert(tk.Se.GetSessionVars().GetEnableCascadesPlanner(), IsTrue)
+
 	// Test READ_CONSISTENT_REPLICA hint
 	tk.Se.GetSessionVars().SetReplicaRead(kv.ReplicaReadLeader)
 	tk.MustExec("select /*+ READ_CONSISTENT_REPLICA() */ 1;")
