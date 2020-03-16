@@ -1097,6 +1097,17 @@ func (s *testPessimisticSuite) TestBatchPointGetLockIndex(c *C) {
 	tk2.MustExec("rollback")
 }
 
+func (s *testPessimisticSuite) TestBatchPointGetAlreadyLocked(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c1 int, c2 int, c3 int, primary key(c1, c2))")
+	tk.MustExec("insert t values (1, 1, 1), (2, 2, 2)")
+	tk.MustExec("begin pessimistic")
+	tk.MustQuery("select * from t where c1 > 1 for update").Check(testkit.Rows("2 2 2"))
+	tk.MustQuery("select * from t where (c1, c2) in ((2,2)) for update").Check(testkit.Rows("2 2 2"))
+	tk.MustExec("commit")
+}
+
 func (s *testPessimisticSuite) TestRollbackWakeupBlockedTxn(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
