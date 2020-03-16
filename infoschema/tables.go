@@ -60,8 +60,9 @@ const (
 	TableCollations = "COLLATIONS"
 	tableFiles      = "FILES"
 	// CatalogVal is the string constant of TABLE_CATALOG.
-	CatalogVal     = "def"
-	tableProfiling = "PROFILING"
+	CatalogVal = "def"
+	// TableProfiling is the string constant of infoschema table.
+	TableProfiling = "PROFILING"
 	// TablePartitions is the string constant of infoschema table.
 	TablePartitions = "PARTITIONS"
 	// TableKeyColumn is the string constant of KEY_COLUMN_USAGE.
@@ -143,7 +144,7 @@ var tableIDMap = map[string]int64{
 	TableCollations:                         autoid.InformationSchemaDBID + 7,
 	tableFiles:                              autoid.InformationSchemaDBID + 8,
 	CatalogVal:                              autoid.InformationSchemaDBID + 9,
-	tableProfiling:                          autoid.InformationSchemaDBID + 10,
+	TableProfiling:                          autoid.InformationSchemaDBID + 10,
 	TablePartitions:                         autoid.InformationSchemaDBID + 11,
 	TableKeyColumn:                          autoid.InformationSchemaDBID + 12,
 	tableReferConst:                         autoid.InformationSchemaDBID + 13,
@@ -1247,33 +1248,6 @@ const (
 	UniqueKeyType = "UNIQUE"
 )
 
-// dataForPseudoProfiling returns pseudo data for table profiling when system variable `profiling` is set to `ON`.
-func dataForPseudoProfiling() [][]types.Datum {
-	var rows [][]types.Datum
-	row := types.MakeDatums(
-		0,                      // QUERY_ID
-		0,                      // SEQ
-		"",                     // STATE
-		types.NewDecFromInt(0), // DURATION
-		types.NewDecFromInt(0), // CPU_USER
-		types.NewDecFromInt(0), // CPU_SYSTEM
-		0,                      // CONTEXT_VOLUNTARY
-		0,                      // CONTEXT_INVOLUNTARY
-		0,                      // BLOCK_OPS_IN
-		0,                      // BLOCK_OPS_OUT
-		0,                      // MESSAGES_SENT
-		0,                      // MESSAGES_RECEIVED
-		0,                      // PAGE_FAULTS_MAJOR
-		0,                      // PAGE_FAULTS_MINOR
-		0,                      // SWAPS
-		"",                     // SOURCE_FUNCTION
-		"",                     // SOURCE_FILE
-		0,                      // SOURCE_LINE
-	)
-	rows = append(rows, row)
-	return rows
-}
-
 func dataForServersInfo() ([][]types.Datum, error) {
 	serversInfo, err := infosync.GetAllServerInfo(context.Background())
 	if err != nil {
@@ -1506,7 +1480,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableCharacterSets:                      charsetCols,
 	TableCollations:                         collationsCols,
 	tableFiles:                              filesCols,
-	tableProfiling:                          profilingCols,
+	TableProfiling:                          profilingCols,
 	TablePartitions:                         partitionsCols,
 	TableKeyColumn:                          keyColumnUsageCols,
 	tableReferConst:                         referConstCols,
@@ -1594,10 +1568,6 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 	case tableColumns:
 		fullRows = dataForColumns(ctx, dbs)
 	case tableFiles:
-	case tableProfiling:
-		if v, ok := ctx.GetSessionVars().GetSystemVar("profiling"); ok && variable.TiDBOptOn(v) {
-			fullRows = dataForPseudoProfiling()
-		}
 	case tableReferConst:
 	case tablePlugins, tableTriggers:
 	case tableRoutines:
