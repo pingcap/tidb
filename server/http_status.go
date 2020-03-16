@@ -134,7 +134,7 @@ func (s *Server) startHTTPServer() {
 			host = "localhost"
 		}
 		baseURL := &url.URL{
-			Scheme: "http",
+			Scheme: util.InternalHTTPSchema(),
 			Host:   fmt.Sprintf("%s:%s", host, port),
 		}
 		router.HandleFunc("/web/trace", traceapp.HandleTiDB).Name("Trace Viewer")
