@@ -190,7 +190,7 @@ func (s *testMiscSuite) TestBasicFunc(c *C) {
 	c.Assert(row[3], Equals, pi.DB)
 	c.Assert(row[4], Equals, "Sleep")
 	c.Assert(row[5], Equals, uint64(0))
-	c.Assert(row[6], Equals, "1")
+	c.Assert(row[6], Equals, "in transaction")
 	c.Assert(row[7], Equals, "test")
 
 	row3 := pi.ToRow(time.UTC)
