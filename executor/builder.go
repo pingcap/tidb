@@ -1426,6 +1426,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			strings.ToLower(infoschema.TablePartitions),
 			strings.ToLower(infoschema.TableEngines),
 			strings.ToLower(infoschema.TableCollations),
+			strings.ToLower(infoschema.TableAnalyzeStatus),
 			strings.ToLower(infoschema.TableClusterInfo),
 			strings.ToLower(infoschema.TableCharacterSets),
 			strings.ToLower(infoschema.TableKeyColumn),
@@ -1435,7 +1436,8 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			strings.ToLower(infoschema.TableTiKVRegionPeers),
 			strings.ToLower(infoschema.TableTiDBHotRegions),
 			strings.ToLower(infoschema.TableSessionVar),
-			strings.ToLower(infoschema.TableConstraints):
+			strings.ToLower(infoschema.TableConstraints),
+			strings.ToLower(infoschema.TableTiDBServersInfo):
 			return &MemTableReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 				table:        v.Table,
@@ -2945,6 +2947,7 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		desc:         plan.Desc,
 		lock:         plan.Lock,
 		waitTime:     plan.LockWaitTime,
+		partPos:      plan.PartitionColPos,
 	}
 	if e.lock {
 		b.hasLock = true
