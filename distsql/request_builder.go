@@ -77,7 +77,7 @@ func hasJoinNode(executor *tipb.Executor) bool {
 		return true
 	}
 	switch executor.Tp {
-	case tipb.ExecType_TypeAggregation:
+	case tipb.ExecType_TypeAggregation, tipb.ExecType_TypeStreamAgg:
 		if executor.Aggregation.Child != nil {
 			return hasJoinNode(executor.Aggregation.Child)
 		}
