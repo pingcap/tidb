@@ -97,9 +97,16 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		return err
 	}
 	e.txn = txn
-	snapshot, err := e.ctx.GetStore().GetSnapshot(kv.Version{Ver: e.snapshotTS})
-	if err != nil {
-		return err
+	var snapshot kv.Snapshot
+	if txn.Valid() && txnCtx.StartTS == txnCtx.GetForUpdateTS() {
+		// We can safely reuse the transaction snapshot if startTS is equal to forUpdateTS.
+		// The snapshot may contains cache that can reduce RPC call.
+		snapshot = txn.GetSnapshot()
+	} else {
+		snapshot, err = e.ctx.GetStore().GetSnapshot(kv.Version{Ver: e.snapshotTS})
+		if err != nil {
+			return err
+		}
 	}
 	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
 		snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
