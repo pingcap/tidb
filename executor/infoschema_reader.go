@@ -25,11 +25,13 @@ import (
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/types"
@@ -72,6 +74,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataFromPartitions(sctx, dbs)
 		case infoschema.TableClusterInfo:
 			err = e.dataForTiDBClusterInfo(sctx)
+		case infoschema.TableAnalyzeStatus:
+			e.setDataForAnalyzeStatus(sctx)
 		case infoschema.TableTiDBIndexes:
 			e.setDataFromIndexes(sctx, dbs)
 		case infoschema.TableViews:
@@ -98,6 +102,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			e.setDataFromTableConstraints(sctx, dbs)
 		case infoschema.TableSessionVar:
 			err = e.setDataFromSessionVar(sctx)
+		case infoschema.TableTiDBServersInfo:
+			err = e.setDataForServersInfo()
 		}
 		if err != nil {
 			return nil, err
@@ -798,7 +804,6 @@ func (e *memtableRetriever) setDataFromUserPrivileges(ctx sessionctx.Context) {
 	e.rows = pm.UserPrivilegesTable()
 }
 
-// dataForTableTiFlashReplica constructs data for all metric table definition.
 func (e *memtableRetriever) setDataForMetricTables(ctx sessionctx.Context) {
 	var rows [][]types.Datum
 	tables := make([]string, 0, len(infoschema.MetricTableMap))
@@ -1079,6 +1084,61 @@ func (e *memtableRetriever) setDataFromSessionVar(ctx sessionctx.Context) error 
 			return err
 		}
 		row := types.MakeDatums(v.Name, value)
+		rows = append(rows, row)
+	}
+	e.rows = rows
+	return nil
+}
+
+// dataForAnalyzeStatusHelper is a helper function which can be used in show_stats.go
+func dataForAnalyzeStatusHelper(sctx sessionctx.Context) (rows [][]types.Datum) {
+	checker := privilege.GetPrivilegeManager(sctx)
+	for _, job := range statistics.GetAllAnalyzeJobs() {
+		job.Lock()
+		var startTime interface{}
+		if job.StartTime.IsZero() {
+			startTime = nil
+		} else {
+			startTime = types.NewTime(types.FromGoTime(job.StartTime), mysql.TypeDatetime, 0)
+		}
+		if checker == nil || checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, job.DBName, job.TableName, "", mysql.AllPrivMask) {
+			rows = append(rows, types.MakeDatums(
+				job.DBName,        // TABLE_SCHEMA
+				job.TableName,     // TABLE_NAME
+				job.PartitionName, // PARTITION_NAME
+				job.JobInfo,       // JOB_INFO
+				job.RowCount,      // ROW_COUNT
+				startTime,         // START_TIME
+				job.State,         // STATE
+			))
+		}
+		job.Unlock()
+	}
+	return
+}
+
+// setDataForAnalyzeStatus gets all the analyze jobs.
+func (e *memtableRetriever) setDataForAnalyzeStatus(sctx sessionctx.Context) {
+	e.rows = dataForAnalyzeStatusHelper(sctx)
+}
+
+func (e *memtableRetriever) setDataForServersInfo() error {
+	serversInfo, err := infosync.GetAllServerInfo(context.Background())
+	if err != nil {
+		return err
+	}
+	rows := make([][]types.Datum, 0, len(serversInfo))
+	for _, info := range serversInfo {
+		row := types.MakeDatums(
+			info.ID,              // DDL_ID
+			info.IP,              // IP
+			int(info.Port),       // PORT
+			int(info.StatusPort), // STATUS_PORT
+			info.Lease,           // LEASE
+			info.Version,         // VERSION
+			info.GitHash,         // GIT_HASH
+			info.BinlogStatus,    // BINLOG_STATUS
+		)
 		rows = append(rows, row)
 	}
 	e.rows = rows
