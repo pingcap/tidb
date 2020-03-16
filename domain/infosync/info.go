@@ -519,7 +519,7 @@ func (is *InfoSyncer) getPrometheusAddr() (string, error) {
 			return "", errors.Trace(err)
 		}
 		if values == "" {
-			return "", errors.Errorf("no prometheus address in Etcd")
+			return "", errors.Errorf("prometheus address is not set in Etcd")
 		}
 		var prometheus prometheus
 		err = json.Unmarshal([]byte(values), &prometheus)

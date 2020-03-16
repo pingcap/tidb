@@ -88,13 +88,21 @@ func (e *MetricRetriever) retrieve(ctx context.Context, sctx sessionctx.Context)
 	return totalRows, nil
 }
 
-func (e *MetricRetriever) queryMetric(ctx context.Context, sctx sessionctx.Context, queryRange promv1.Range, quantile float64) (pmodel.Value, error) {
+func (e *MetricRetriever) queryMetric(ctx context.Context, sctx sessionctx.Context, queryRange promv1.Range, quantile float64) (result pmodel.Value, err error) {
 	failpoint.InjectContext(ctx, "mockMetricsPromData", func() {
 		failpoint.Return(ctx.Value("__mockMetricsPromData").(pmodel.Matrix), nil)
 	})
 
-	//TODO: the prometheus will be Integrated into the PD, then we need to query the prometheus in PD directly, which need change the quire API
-	prometheusAddr, err := infosync.GetPrometheusAddr()
+	// Add retry to avoid network error.
+	var prometheusAddr string
+	for i := 0; i < 5; i++ {
+		//TODO: the prometheus will be Integrated into the PD, then we need to query the prometheus in PD directly, which need change the quire API
+		prometheusAddr, err = infosync.GetPrometheusAddr()
+		if err == nil || strings.Contains(err.Error(), "prometheus address is not set") {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -107,9 +115,16 @@ func (e *MetricRetriever) queryMetric(ctx context.Context, sctx sessionctx.Conte
 	promQLAPI := promv1.NewAPI(promClient)
 	ctx, cancel := context.WithTimeout(ctx, promReadTimeout)
 	defer cancel()
-
 	promQL := e.tblDef.GenPromQL(sctx, e.extractor.LabelConditions, quantile)
-	result, _, err := promQLAPI.QueryRange(ctx, promQL, queryRange)
+
+	// Add retry to avoid network error.
+	for i := 0; i < 5; i++ {
+		result, _, err = promQLAPI.QueryRange(ctx, promQL, queryRange)
+		if err == nil {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 	return result, err
 }
 
