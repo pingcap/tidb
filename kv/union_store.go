@@ -13,7 +13,9 @@
 
 package kv
 
-import "context"
+import (
+	"context"
+)
 
 // UnionStore is a store that wraps a snapshot for read and a BufferStore for buffered write.
 // Also, it provides some transaction related utilities.
@@ -91,7 +93,7 @@ type unionStore struct {
 // NewUnionStore builds a new UnionStore.
 func NewUnionStore(snapshot Snapshot) UnionStore {
 	return &unionStore{
-		BufferStore:  NewBufferStore(snapshot, DefaultTxnMembufCap),
+		BufferStore:  NewBufferStore(snapshot),
 		keyExistErrs: make(map[string]*existErrInfo),
 		opts:         make(map[Option]interface{}),
 	}
@@ -150,13 +152,16 @@ func (us *unionStore) GetMemBuffer() MemBuffer {
 	return us.BufferStore.MemBuffer
 }
 
-// SetCap sets membuffer capability.
-func (us *unionStore) SetCap(cap int) {
-	us.BufferStore.SetCap(cap)
+func (us *unionStore) NewBuffer() MemBuffer {
+	return us.BufferStore.NewBuffer()
 }
 
-func (us *unionStore) Reset() {
-	us.BufferStore.Reset()
+func (us *unionStore) Flush() (int, error) {
+	return us.BufferStore.Flush()
+}
+
+func (us *unionStore) Discard() {
+	us.BufferStore.Discard()
 }
 
 type options map[Option]interface{}

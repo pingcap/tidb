@@ -466,20 +466,19 @@ func (s *testSuiteP2) TestAdminShowDDLJobs(c *C) {
 	jobID, err := strconv.Atoi(row[0].(string))
 	c.Assert(err, IsNil)
 
-	c.Assert(tk.Se.NewTxn(context.Background()), IsNil)
-	txn, err := tk.Se.Txn(true)
-	c.Assert(err, IsNil)
-	t := meta.NewMeta(txn)
-	job, err := t.GetHistoryDDLJob(int64(jobID))
-	c.Assert(err, IsNil)
-	c.Assert(job, NotNil)
-	// Test for compatibility. Old TiDB version doesn't have SchemaName field, and the BinlogInfo maybe nil.
-	// See PR: 11561.
-	job.BinlogInfo = nil
-	job.SchemaName = ""
-	err = t.AddHistoryDDLJob(job, true)
-	c.Assert(err, IsNil)
-	err = tk.Se.CommitTxn(context.Background())
+	err = kv.RunInNewTxn(s.store, true, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		job, err := t.GetHistoryDDLJob(int64(jobID))
+		c.Assert(err, IsNil)
+		c.Assert(job, NotNil)
+		// Test for compatibility. Old TiDB version doesn't have SchemaName field, and the BinlogInfo maybe nil.
+		// See PR: 11561.
+		job.BinlogInfo = nil
+		job.SchemaName = ""
+		err = t.AddHistoryDDLJob(job, true)
+		c.Assert(err, IsNil)
+		return nil
+	})
 	c.Assert(err, IsNil)
 
 	re = tk.MustQuery("admin show ddl jobs 1")

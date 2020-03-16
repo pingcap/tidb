@@ -107,14 +107,32 @@ func (txn *tikvTxn) SetVars(vars *kv.Variables) {
 	txn.snapshot.vars = vars
 }
 
-// SetCap sets the transaction's MemBuffer capability, to reduce memory allocations.
-func (txn *tikvTxn) SetCap(cap int) {
-	txn.us.SetCap(cap)
+type tikvTxnBuffer struct {
+	kv.MemBuffer
+	txn *tikvTxn
 }
 
-// Reset reset tikvTxn's membuf.
-func (txn *tikvTxn) Reset() {
-	txn.us.Reset()
+func (buf *tikvTxnBuffer) Flush() (int, error) {
+	cnt, err := buf.MemBuffer.Flush()
+	if cnt != 0 {
+		buf.txn.dirty = true
+	}
+	return cnt, err
+}
+
+func (txn *tikvTxn) NewBuffer() kv.MemBuffer {
+	return &tikvTxnBuffer{
+		MemBuffer: txn.us.NewBuffer(),
+		txn:       txn,
+	}
+}
+
+func (txn *tikvTxn) Flush() (int, error) {
+	return txn.us.Flush()
+}
+
+func (txn *tikvTxn) Discard() {
+	txn.us.Discard()
 }
 
 // Get implements transaction interface.

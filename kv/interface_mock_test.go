@@ -105,7 +105,15 @@ func (t *mockTxn) GetSnapshot() Snapshot {
 	return nil
 }
 
-func (t *mockTxn) SetCap(cap int) {
+func (t *mockTxn) NewBuffer() MemBuffer {
+	return nil
+}
+
+func (t *mockTxn) Flush() (int, error) {
+	return 0, nil
+}
+
+func (t *mockTxn) Discard() {
 
 }
 
@@ -144,7 +152,7 @@ func (s *mockStorage) BeginWithStartTS(startTS uint64) (Transaction, error) {
 
 func (s *mockStorage) GetSnapshot(ver Version) (Snapshot, error) {
 	return &mockSnapshot{
-		store: NewMemDbBuffer(DefaultTxnMembufCap),
+		store: NewMemDbBuffer(),
 	}, nil
 }
 
