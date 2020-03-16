@@ -947,6 +947,10 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		{"show analyze status where table_name like '%'", true, "SHOW ANALYZE STATUS WHERE `table_name` LIKE '%'"},
 		// for show builtins
 		{"show builtins", true, "SHOW BUILTINS"},
+		// for show backup & restore
+		{"show backup", true, "SHOW BACKUP"},
+		{"show restore like 'r0001'", true, "SHOW RESTORE LIKE 'r0001'"},
+		{"show backup where start_time > now() - interval 10 hour", true, "SHOW BACKUP WHERE `start_time`>DATE_SUB(NOW(), INTERVAL 10 HOUR)"},
 
 		// for load stats
 		{"load stats '/tmp/stats.json'", true, "LOAD STATS '/tmp/stats.json'"},
@@ -5009,6 +5013,54 @@ func (s *testParserSuite) TestIndexAdviseStmt(c *C) {
 		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 0 MAX_IDXNUM PER_TABLE 8 PER_DB 4 LINES STARTING BY 'ab' TERMINATED BY 'cd'", true, "INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES 0 MAX_IDXNUM PER_TABLE 8 PER_DB 4 LINES STARTING BY 'ab' TERMINATED BY 'cd'"},
 		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES -1 MAX_IDXNUM PER_TABLE 8 PER_DB 4 LINES STARTING BY 'ab' TERMINATED BY '\n'", false, ""},
 		{"INDEX ADVISE INFILE '/tmp/t.sql' MAX_MINUTES -1 MAX_IDXNUM PER_TABLE 8 PER_DB 4 LINES STARTING BY 'ab' TERMINATED BY 'cd'", false, ""},
+	}
+
+	s.RunTest(c, table)
+}
+
+// For BRIE
+func (s *testParserSuite) TestBRIE(c *C) {
+	table := []testCase{
+		{"BACKUP DATABASE a TO 'local:///tmp/archive01/'", true, "BACKUP DATABASE `a` TO 'local:///tmp/archive01/'"},
+		{"BACKUP SCHEMA a TO 'local:///tmp/archive01/'", true, "BACKUP DATABASE `a` TO 'local:///tmp/archive01/'"},
+		{"BACKUP DATABASE a,b,c FULL TO 'noop://'", true, "BACKUP DATABASE `a`, `b`, `c` TO 'noop://'"},
+		{"BACKUP DATABASE a.b FULL TO 'noop://'", false, ""},
+		{"BACKUP DATABASE * TO 'noop://'", true, "BACKUP DATABASE * TO 'noop://'"},
+		{"BACKUP DATABASE *, a TO 'noop://'", false, ""},
+		{"BACKUP DATABASE a, * TO 'noop://'", false, ""},
+		{"BACKUP DATABASE TO 'noop://'", false, ""},
+		{"BACKUP TABLE a TO 'noop://'", true, "BACKUP TABLE `a` TO 'noop://'"},
+		{"BACKUP TABLE a.b TO 'noop://'", true, "BACKUP TABLE `a`.`b` TO 'noop://'"},
+		{"BACKUP TABLE a.b,c.d,e TO 'noop://'", true, "BACKUP TABLE `a`.`b`, `c`.`d`, `e` TO 'noop://'"},
+		{"BACKUP TABLE a.* TO 'noop://'", false, ""},
+		{"BACKUP TABLE * TO 'noop://'", false, ""},
+		{"BACKUP TABLE TO 'noop://'", false, ""},
+		{"RESTORE DATABASE * FROM 's3://bucket/path/'", true, "RESTORE DATABASE * FROM 's3://bucket/path/'"},
+
+		{"BACKUP DATABASE * INCREMENTAL UNTIL TIMESTAMP '2020-02-02 14:14:14' TO 'noop://'", true, "BACKUP DATABASE * INCREMENTAL UNTIL TIMESTAMP '2020-02-02 14:14:14' TO 'noop://'"},
+		{"BACKUP DATABASE * INCREMENTAL UNTIL TIMESTAMP_ORACLE 1234567890 TO 'noop://'", true, "BACKUP DATABASE * INCREMENTAL UNTIL TIMESTAMP_ORACLE 1234567890 TO 'noop://'"},
+		{"BACKUP DATABASE * INCREMENTAL UNTIL TIMESTAMP_ORACLE '2020-02-02 14:14:14' TO 'noop://'", false, ""},
+		{"BACKUP DATABASE * INCREMENTAL UNTIL TIMESTAMP 1234567890 TO 'noop://'", false, ""},
+
+		{"backup database * to 'noop://' rate_limit 500 MB/second snapshot 5 minute ago", true, "BACKUP DATABASE * TO 'noop://' RATE_LIMIT = 500 MB/SECOND SNAPSHOT = 300000000 MICROSECOND AGO"},
+		{"backup database * to 'noop://' snapshot = '1234567890'", true, "BACKUP DATABASE * TO 'noop://' SNAPSHOT = '1234567890'"},
+		{"restore table g from 'noop://' concurrency 40 checksum 0 online 1", true, "RESTORE TABLE `g` FROM 'noop://' CONCURRENCY = 40 CHECKSUM = 0 ONLINE = 1"},
+		{
+			// FIXME: should we really include the access key in the Restore() text???
+			"backup table x to 's3://bucket/path/' s3_endpoint = 'https://test-cluster-s3.local' s3_access_key = 'aaaaaaaaa' s3_secret_access_key = 'bbbbbbbb' s3_force_path_style = 1",
+			true,
+			"BACKUP TABLE `x` TO 's3://bucket/path/' S3_ENDPOINT = 'https://test-cluster-s3.local' S3_ACCESS_KEY = 'aaaaaaaaa' S3_SECRET_ACCESS_KEY = 'bbbbbbbb' S3_FORCE_PATH_STYLE = 1",
+		},
+		{
+			"backup database * to 's3://bucket/path/' send_credentials_to_tikv = 1 s3_provider = 'alibaba' s3_region = 'us-west-9' s3_storage_class = 'glacier' s3_sse = 'AES256' s3_acl = 'authenticated-read' s3_use_accelerate_endpoint = 1",
+			true,
+			"BACKUP DATABASE * TO 's3://bucket/path/' SEND_CREDENTIALS_TO_TIKV = 1 S3_PROVIDER = 'alibaba' S3_REGION = 'us-west-9' S3_STORAGE_CLASS = 'glacier' S3_SSE = 'AES256' S3_ACL = 'authenticated-read' S3_USE_ACCELERATE_ENDPOINT = 1",
+		},
+		{
+			"restore database * from 'gcs://bucket/path/' gcs_endpoint 'https://test-cluster.gcs.local' gcs_storage_class 'coldline' gcs_predefined_acl 'OWNER' gcs_credentials_file '/data/private/creds.json'",
+			true,
+			"RESTORE DATABASE * FROM 'gcs://bucket/path/' GCS_ENDPOINT = 'https://test-cluster.gcs.local' GCS_STORAGE_CLASS = 'coldline' GCS_PREDEFINED_ACL = 'OWNER' GCS_CREDENTIALS_FILE = '/data/private/creds.json'",
+		},
 	}
 
 	s.RunTest(c, table)
