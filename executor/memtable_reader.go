@@ -180,9 +180,9 @@ func (e *clusterConfigRetriever) retrieve(_ context.Context, sctx sessionctx.Con
 				var url string
 				switch typ {
 				case "pd":
-					url = fmt.Sprintf("http://%s%s", statusAddr, pdapi.Config)
+					url = fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), statusAddr, pdapi.Config)
 				case "tikv", "tidb":
-					url = fmt.Sprintf("http://%s/config", statusAddr)
+					url = fmt.Sprintf("%s://%s/config", util.InternalHTTPSchema(), statusAddr)
 				default:
 					ch <- result{err: errors.Errorf("unknown node type: %s(%s)", typ, address)}
 					return
@@ -194,7 +194,7 @@ func (e *clusterConfigRetriever) retrieve(_ context.Context, sctx sessionctx.Con
 					return
 				}
 				req.Header.Add("PD-Allow-follower-handle", "true")
-				resp, err := http.DefaultClient.Do(req)
+				resp, err := util.InternalHTTPClient().Do(req)
 				if err != nil {
 					ch <- result{err: errors.Trace(err)}
 					return
