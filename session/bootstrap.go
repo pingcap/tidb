@@ -718,10 +718,6 @@ func upgradeToVer12(s Session) {
 	terror.MustNil(err)
 	sql := "SELECT HIGH_PRIORITY user, host, password FROM mysql.user WHERE password != ''"
 	rs, err := s.Execute(ctx, sql)
-	if terror.ErrorEqual(err, core.ErrUnknownColumn) {
-		sql := "SELECT HIGH_PRIORITY user, host, authentication_string FROM mysql.user WHERE authentication_string != ''"
-		rs, err = s.Execute(ctx, sql)
-	}
 	terror.MustNil(err)
 	r := rs[0]
 	sqls := make([]string, 0, 1)
@@ -966,7 +962,8 @@ func upgradeToVer40(s Session) {
 }
 
 func upgradeToVer41(s Session) {
-	doReentrantDDL(s, "ALTER TABLE mysql.user CHANGE COLUMN `Password` `authentication_string` TEXT", infoschema.ErrColumnNotExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.user CHANGE `password` `authentication_string` TEXT", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `password` TEXT as (`authentication_string`)", infoschema.ErrColumnExists)
 }
 
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
