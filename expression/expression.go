@@ -984,6 +984,14 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		ast.Like, ast.UnaryNot, ast.Case, ast.Month, ast.Substr,
 		ast.Substring, ast.TimestampDiff:
 		return true
+	case ast.Cast:
+		switch function.Function.PbCode() {
+		case tipb.ScalarFuncSig_CastIntAsDecimal, tipb.ScalarFuncSig_CastRealAsDecimal,
+		tipb.ScalarFuncSig_CastDecimalAsDecimal:
+			return true
+		default:
+			return false
+		}
 	default:
 		return false
 	}
