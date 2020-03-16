@@ -1353,13 +1353,13 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 		addr = strings.TrimSpace(addr)
 
 		// Get PD version
-		url := fmt.Sprintf("http://%s%s", addr, pdapi.ClusterVersion)
+		url := fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), addr, pdapi.ClusterVersion)
 		req, err := http.NewRequest(http.MethodGet, url, nil)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		req.Header.Add("PD-Allow-follower-handle", "true")
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := util.InternalHTTPClient().Do(req)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1371,13 +1371,13 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 		version := strings.Trim(strings.Trim(string(pdVersion), "\n"), "\"")
 
 		// Get PD git_hash
-		url = fmt.Sprintf("http://%s%s", addr, pdapi.Status)
+		url = fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), addr, pdapi.Status)
 		req, err = http.NewRequest(http.MethodGet, url, nil)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		req.Header.Add("PD-Allow-follower-handle", "true")
-		resp, err = http.DefaultClient.Do(req)
+		resp, err = util.InternalHTTPClient().Do(req)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
