@@ -19,9 +19,11 @@ import (
 	"crypto/x509/pkix"
 	"fmt"
 	"io/ioutil"
+	"net/http"
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -29,6 +31,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-tipb"
@@ -397,4 +400,38 @@ func IsTLSExpiredError(err error) bool {
 		return false
 	}
 	return true
+}
+
+var (
+	internalClientInit sync.Once
+	internalHTTPClient *http.Client
+	internalHTTPSchema string
+)
+
+// InternalHTTPClient is used by TiDB-Server to request other components.
+func InternalHTTPClient() *http.Client {
+	internalClientInit.Do(initInternalClient)
+	return internalHTTPClient
+}
+
+// InternalHTTPSchema specifies use http or https to request other components.
+func InternalHTTPSchema() string {
+	internalClientInit.Do(initInternalClient)
+	return internalHTTPSchema
+}
+
+func initInternalClient() {
+	tlsCfg, err := config.GetGlobalConfig().Security.ToTLSConfig()
+	if err != nil {
+		logutil.BgLogger().Fatal("could not load cluster ssl", zap.Error(err))
+	}
+	if tlsCfg == nil {
+		internalHTTPSchema = "http"
+		internalHTTPClient = http.DefaultClient
+		return
+	}
+	internalHTTPSchema = "https"
+	internalHTTPClient = &http.Client{
+		Transport: &http.Transport{TLSClientConfig: tlsCfg},
+	}
 }

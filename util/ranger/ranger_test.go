@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -41,7 +42,7 @@ func TestT(t *testing.T) {
 	TestingT(t)
 }
 
-var _ = Suite(&testRangerSuite{})
+var _ = SerialSuites(&testRangerSuite{})
 
 type testRangerSuite struct {
 	*parser.Parser
@@ -344,7 +345,20 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 	testKit := testkit.NewTestKit(c, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
-	testKit.MustExec("create table t(a varchar(50), b int, c double, d varchar(10), e binary(10), index idx_ab(a(50), b), index idx_cb(c, a), index idx_d(d(2)), index idx_e(e(2)))")
+	testKit.MustExec(`
+create table t(
+	a varchar(50),
+	b int,
+	c double,
+	d varchar(10),
+	e binary(10),
+	f varchar(10) collate utf8mb4_general_ci,
+	index idx_ab(a(50), b),
+	index idx_cb(c, a),
+	index idx_d(d(2)),
+	index idx_e(e(2)),
+	index idx_f(f)
+)`)
 
 	tests := []struct {
 		indexPos    int
@@ -584,8 +598,31 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 			filterConds: "[and(ge(test.t.d, 你好), le(test.t.d, 你好))]",
 			resultStr:   "[[\"你好\",\"你好\"]]",
 		},
+		{
+			indexPos:    4,
+			exprStr:     "f >= 'a' and f <= 'B'",
+			accessConds: "[ge(test.t.f, a) le(test.t.f, B)]",
+			filterConds: "[]",
+			resultStr:   "[[\"a\",\"B\"]]",
+		},
+		{
+			indexPos:    4,
+			exprStr:     "f in ('a', 'B')",
+			accessConds: "[in(test.t.f, a, B)]",
+			filterConds: "[]",
+			resultStr:   "[[\"a\",\"a\"] [\"B\",\"B\"]]",
+		},
+		{
+			indexPos:    4,
+			exprStr:     "f = 'a' and f = 'B' collate utf8mb4_bin",
+			accessConds: "[eq(test.t.f, a)]",
+			filterConds: "[eq(test.t.f, B)]",
+			resultStr:   "[[\"a\",\"a\"]]",
+		},
 	}
 
+	collate.SetNewCollationEnabledForTest(true)
+	defer func() { collate.SetNewCollationEnabledForTest(false) }()
 	ctx := context.Background()
 	for _, tt := range tests {
 		sql := "select * from t where " + tt.exprStr
