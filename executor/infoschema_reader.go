@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/privilege"
@@ -101,6 +102,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			e.setDataFromTableConstraints(sctx, dbs)
 		case infoschema.TableSessionVar:
 			err = e.setDataFromSessionVar(sctx)
+		case infoschema.TableTiDBServersInfo:
+			err = e.setDataForServersInfo()
 		}
 		if err != nil {
 			return nil, err
@@ -1117,4 +1120,27 @@ func dataForAnalyzeStatusHelper(sctx sessionctx.Context) (rows [][]types.Datum) 
 // setDataForAnalyzeStatus gets all the analyze jobs.
 func (e *memtableRetriever) setDataForAnalyzeStatus(sctx sessionctx.Context) {
 	e.rows = dataForAnalyzeStatusHelper(sctx)
+}
+
+func (e *memtableRetriever) setDataForServersInfo() error {
+	serversInfo, err := infosync.GetAllServerInfo(context.Background())
+	if err != nil {
+		return err
+	}
+	rows := make([][]types.Datum, 0, len(serversInfo))
+	for _, info := range serversInfo {
+		row := types.MakeDatums(
+			info.ID,              // DDL_ID
+			info.IP,              // IP
+			int(info.Port),       // PORT
+			int(info.StatusPort), // STATUS_PORT
+			info.Lease,           // LEASE
+			info.Version,         // VERSION
+			info.GitHash,         // GIT_HASH
+			info.BinlogStatus,    // BINLOG_STATUS
+		)
+		rows = append(rows, row)
+	}
+	e.rows = rows
+	return nil
 }
