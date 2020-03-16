@@ -1,4 +1,10 @@
 cloud.google.com/go v0.26.0/go.mod h1:aQUYkXzVsufM+DwF1aE+0xfcU+56JwCaLick0ClmMTw=
+github.com/AilinKid/parser v0.0.0-20200311094700-32b00c20e49f h1:I8Harvh03p9uzSDM8LrMbHTQwEQ8PR2tqTrjOpKF0RE=
+github.com/AilinKid/parser v0.0.0-20200311094700-32b00c20e49f/go.mod h1:9v0Edh8IbgjGYW2ArJr19E+bvL8zKahsFp+ixWeId+4=
+github.com/AilinKid/parser v0.0.0-20200313072339-42bee261ee7f h1:u8F8lTaR509OBPq7XuyINXfh7Kbs/5xAKoyhGyr0ulg=
+github.com/AilinKid/parser v0.0.0-20200313072339-42bee261ee7f/go.mod h1:9v0Edh8IbgjGYW2ArJr19E+bvL8zKahsFp+ixWeId+4=
+github.com/AilinKid/parser v0.0.0-20200313094519-fdd8d3c78f48 h1:4BpU8z0GnWwLBlAjM5z7hq9TvxzSK7reTcMG5b6HwOw=
+github.com/AilinKid/parser v0.0.0-20200313094519-fdd8d3c78f48/go.mod h1:9v0Edh8IbgjGYW2ArJr19E+bvL8zKahsFp+ixWeId+4=
 github.com/BurntSushi/toml v0.3.1 h1:WXkYYl6Yr3qBf1K79EBnL4mak0OimBfB0XUf9Vl28OQ=
 github.com/BurntSushi/toml v0.3.1/go.mod h1:xHWCNGjB5oqiDr8zfno3MHue2Ht5sIBksp03qcyfWMU=
 github.com/KyleBanks/depth v1.2.1/go.mod h1:jzSb9d0L43HxTQfT+oSA1EEp2q+ne2uh6XgeJcm8brE=

@@ -1923,6 +1923,8 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 		switch op.Tp {
 		case ast.TableOptionAutoIncrement:
 			tbInfo.AutoIncID = int64(op.UintValue)
+		case ast.TableOptionAutoIncrementCache:
+			tbInfo.AutoIncCache = int64(op.UintValue)
 		case ast.TableOptionComment:
 			tbInfo.Comment = op.StrValue
 		case ast.TableOptionCompression:
@@ -2150,6 +2152,8 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 					err = d.ShardRowID(ctx, ident, opt.UintValue)
 				case ast.TableOptionAutoIncrement:
 					err = d.RebaseAutoID(ctx, ident, int64(opt.UintValue))
+				case ast.TableOptionAutoIncrementCache:
+					err = d.AlterTableAutoIncCache(ctx, ident, int64(opt.UintValue))
 				case ast.TableOptionComment:
 					spec.Comment = opt.StrValue
 					err = d.AlterTableComment(ctx, ident, spec)
@@ -3387,6 +3391,33 @@ func (d *ddl) AlterTableComment(ctx sessionctx.Context, ident ast.Ident, spec *a
 		Type:       model.ActionModifyTableComment,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{spec.Comment},
+	}
+
+	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+// AlterTableComment updates the table comment information.
+func (d *ddl) AlterTableAutoIncCache(ctx sessionctx.Context, ident ast.Ident, newCache int64) error {
+	is := d.infoHandle.Get()
+	schema, ok := is.SchemaByName(ident.Schema)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
+	}
+
+	tb, err := is.TableByName(ident.Schema, ident.Name)
+	if err != nil {
+		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
+	}
+
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    tb.Meta().ID,
+		SchemaName: schema.Name.L,
+		Type:       model.ActionModifyTableAutoIncCache,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{newCache},
 	}
 
 	err = d.doDDLJob(ctx, job)

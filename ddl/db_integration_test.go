@@ -2152,3 +2152,72 @@ func (s *testIntegrationSuite7) TestAddExpressionIndexOnPartition(c *C) {
 
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 'test' 2", "12 'test' 3", "15 'test' 10", "20 'test' 20"))
 }
+
+func (s *testIntegrationSuite3) TestCreateTableWithAutoIncCache(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("USE test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("drop table if exists t1;")
+
+	// Test primary key is handle.
+	tk.MustExec("create table t(a int auto_increment key) auto_increment_cache 100")
+	tblInfo, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	c.Assert(tblInfo.Meta().AutoIncCache, Equals, int64(100))
+	tk.MustExec("insert into t values()")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1"))
+	tk.MustExec("delete from t")
+
+	// Invalid the allocator cache, insert will trigger a new cache
+	tk.MustExec("rename table t to t1;")
+	tk.MustExec("insert into t1 values()")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("101"))
+
+	// Test primary key is not handle.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t(a int) auto_increment_cache 100")
+	tblInfo, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+
+	tk.MustExec("insert into t values()")
+	tk.MustQuery("select _tidb_rowid from t").Check(testkit.Rows("1"))
+	tk.MustExec("delete from t")
+
+	// Invalid the allocator cache, insert will trigger a new cache
+	tk.MustExec("rename table t to t1;")
+	tk.MustExec("insert into t1 values()")
+	tk.MustQuery("select _tidb_rowid from t1").Check(testkit.Rows("101"))
+
+	// Test both auto_increment and rowid exist.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t(a int null, b int auto_increment unique) auto_increment_cache 100")
+	tblInfo, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+
+	tk.MustExec("insert into t(b) values(NULL)")
+	tk.MustQuery("select b, _tidb_rowid from t").Check(testkit.Rows("1 2"))
+	tk.MustExec("delete from t")
+
+	// Invalid the allocator cache, insert will trigger a new cache.
+	tk.MustExec("rename table t to t1;")
+	tk.MustExec("insert into t1(b) values(NULL)")
+	tk.MustQuery("select b, _tidb_rowid from t1").Check(testkit.Rows("101 102"))
+	tk.MustExec("delete from t1")
+
+	// Test alter auto_increment_cache.
+	tk.MustExec("alter table t1 auto_increment_cache 200")
+	tblInfo, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	c.Assert(err, IsNil)
+	c.Assert(tblInfo.Meta().AutoIncCache, Equals, int64(200))
+
+	tk.MustExec("insert into t1(b) values(NULL)")
+	tk.MustQuery("select b, _tidb_rowid from t1").Check(testkit.Rows("201 202"))
+	tk.MustExec("delete from t1")
+
+	// Invalid the allocator cache, insert will trigger a new cache.
+	tk.MustExec("rename table t1 to t;")
+	tk.MustExec("insert into t(b) values(NULL)")
+	tk.MustQuery("select b, _tidb_rowid from t").Check(testkit.Rows("401 402"))
+}
