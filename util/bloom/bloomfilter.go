@@ -15,7 +15,7 @@ type Filter struct {
 // NewFilter returns a filter with a given size
 func NewFilter(length int) (*Filter, error) {
 	if length <= 0 {
-		return nil, fmt.Errorf("length is not positive")
+		length = 10000
 	}
 	bitset := make([]uint64, length)
 	bits := uint64(64)
@@ -24,6 +24,18 @@ func NewFilter(length int) (*Filter, error) {
 		length:   bits * uint64(length),
 		unitSize: bits,
 	}, nil
+}
+
+// Init reset the length
+func (bf *Filter) Init(length int) {
+	if length == 0 {
+		length = 1000
+	}
+	bitset := make([]uint64, length)
+	bits := uint64(64)
+	bf.BitSet = bitset
+	bf.length = bits * uint64(length)
+	bf.unitSize = bits
 }
 
 // NewFilterBySlice create a bloom filter by the given slice

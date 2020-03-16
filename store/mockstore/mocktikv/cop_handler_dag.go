@@ -310,14 +310,18 @@ func (h *rpcHandler) buildSelection(ctx *dagContext, executor *tipb.Executor) (*
 		return nil, errors.Trace(err)
 	}
 
-	var bl *bloom.Filter = nil
-	var jkIdx []int64
+	var bl []*bloom.Filter
+	var jkIdxs [][]int64
 	if executor.Selection.Bloom != nil {
-		bl, err = bloom.NewFilterBySlice(executor.Selection.Bloom.BitSet)
-		if err != nil {
-			return nil, errors.Trace(err)
+		for _, ebf := range executor.Selection.Bloom {
+			bf, err := bloom.NewFilterBySlice(ebf.BitSet)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			jkIdx := ebf.ColIdx
+			bl = append(bl, bf)
+			jkIdxs = append(jkIdxs, jkIdx)
 		}
-		jkIdx = executor.Selection.Bloom.ColIdx
 	}
 
 	return &selectionExec{
@@ -327,7 +331,7 @@ func (h *rpcHandler) buildSelection(ctx *dagContext, executor *tipb.Executor) (*
 		row:               make([]types.Datum, len(ctx.evalCtx.columnInfos)),
 		execDetail:        new(execDetail),
 		bloomFilter:       bl,
-		joinKeyIdx:        jkIdx,
+		joinKeyIdx:        jkIdxs,
 	}, nil
 }
 

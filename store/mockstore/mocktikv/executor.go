@@ -424,8 +424,8 @@ type selectionExec struct {
 	src               executor
 	execDetail        *execDetail
 
-	bloomFilter *bloom.Filter
-	joinKeyIdx  []int64
+	bloomFilter []*bloom.Filter
+	joinKeyIdx  [][]int64
 }
 
 func (e *selectionExec) ExecDetails() []*execDetail {
@@ -497,8 +497,11 @@ func (e *selectionExec) Next(ctx context.Context) (value [][]byte, err error) {
 			return nil, errors.Trace(err)
 		}
 		match, err := evalBool(e.conditions, e.row, e.evalCtx.sc)
+
 		if e.bloomFilter != nil {
-			match = evalBoolForBloom(e.evalCtx.sc, e.bloomFilter, e.joinKeyIdx, e.row)
+			for i := range e.bloomFilter {
+				match = match && evalBoolForBloom(e.evalCtx.sc, e.bloomFilter[i], e.joinKeyIdx[i], e.row)
+			}
 		}
 		if err != nil {
 			return nil, errors.Trace(err)

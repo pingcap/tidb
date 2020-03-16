@@ -376,6 +376,8 @@ github.com/wshwsh12/tipb v0.0.0-20200226140455-5ce1bd8df8c2 h1:ehOqPgM4He75bDt91
 github.com/wshwsh12/tipb v0.0.0-20200226140455-5ce1bd8df8c2/go.mod h1:UFKGXY+Ij4rifkYSXsZOrEQcV70dCog1faHm7QKJiWs=
 github.com/wshwsh12/tipb v0.0.0-20200227022041-d89cbe431d94 h1:2XatErr6ff8HE6lcgmy77HUcTjacFrrV8zIvQVWMOAk=
 github.com/wshwsh12/tipb v0.0.0-20200227022041-d89cbe431d94/go.mod h1:UFKGXY+Ij4rifkYSXsZOrEQcV70dCog1faHm7QKJiWs=
+github.com/wshwsh12/tipb v0.0.0-20200401074107-b98a3ab068d2 h1:Gn4h4ARZZTseNp197A2w0EcF6+xvX+NxSm/0xyaqhK8=
+github.com/wshwsh12/tipb v0.0.0-20200401074107-b98a3ab068d2/go.mod h1:UFKGXY+Ij4rifkYSXsZOrEQcV70dCog1faHm7QKJiWs=
 github.com/xiang90/probing v0.0.0-20190116061207-43a291ad63a2 h1:eY9dn8+vbi4tKz5Qo6v2eYzo7kUS51QINcR5jNpbZS8=
 github.com/xiang90/probing v0.0.0-20190116061207-43a291ad63a2/go.mod h1:UETIi67q53MR2AWcXfiuqkDkRtnGDLqkBTpCHuJHxtU=
 github.com/yookoala/realpath v1.0.0/go.mod h1:gJJMA9wuX7AcqLy1+ffPatSCySA1FQ2S8Ya9AIoYBpE=

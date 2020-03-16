@@ -86,7 +86,10 @@ type HashJoinExec struct {
 	joinWorkerWaitGroup sync.WaitGroup
 	finished            atomic.Value
 
-	bloomFilter *bloom.Filter
+	bloomFilter      *bloom.Filter
+	bloomFilters     []*bloom.Filter
+	joinKeysForMulti [][]int64
+	indexChange      []int64
 }
 
 // probeChkResource stores the result of the join probe side fetch worker,
@@ -725,6 +728,9 @@ func (e *HashJoinExec) buildHashTableForList(buildSideResultCh <-chan *chunk.Chu
 	var err error
 	var selected []bool
 	e.rowContainer = newHashRowContainer(e.ctx, int(e.buildSideEstCount), hCtx)
+	if e.bloomFilter != nil {
+		e.bloomFilter.Init(int(e.buildSideEstCount * 6 / 64))
+	}
 	e.rowContainer.GetMemTracker().AttachTo(e.memTracker)
 	e.rowContainer.GetMemTracker().SetLabel(buildSideResultLabel)
 	e.rowContainer.GetDiskTracker().AttachTo(e.diskTracker)
@@ -739,7 +745,9 @@ func (e *HashJoinExec) buildHashTableForList(buildSideResultCh <-chan *chunk.Chu
 		}
 		if !e.useOuterToBuild {
 			err = e.rowContainer.PutChunk(chk)
-			e.PutChunkToBloom(hCtx)
+			if e.bloomFilter != nil {
+				e.PutChunkToBloom(hCtx)
+			}
 		} else {
 			var bitMap = bitmap.NewConcurrentBitmap(chk.NumRows())
 			e.outerMatchedStatus = append(e.outerMatchedStatus, bitMap)

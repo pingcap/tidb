@@ -1136,11 +1136,65 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 	if e.joinType == plannercore.InnerJoin {
 		if probeExec, ok := e.probeSideExec.(*TableReaderExecutor); ok {
 			bl, _ := bloom.NewFilter(10)
-			probeExec.bloomFilter = bl
 			e.bloomFilter = bl
-			probeExec.joinKeyIdx = make([]int64, len(e.probeKeys))
+			e.bloomFilters = make([]*bloom.Filter, 0, 100)
+			e.joinKeysForMulti = make([][]int64, 0, 100)
+			probeExec.bloomFilters = e.bloomFilters
+			probeExec.joinKeyIdx = e.joinKeysForMulti
+
+			e.bloomFilters = append(e.bloomFilters, bl)
+			joinKeyIdx := make([]int64, len(e.probeKeys))
 			for i := range e.probeKeys {
-				probeExec.joinKeyIdx[i] = int64(e.probeKeys[i].Index)
+				joinKeyIdx[i] = int64(e.probeKeys[i].Index)
+			}
+			e.joinKeysForMulti = append(e.joinKeysForMulti, joinKeyIdx)
+
+			e.indexChange = make([]int64, e.Schema().Len())
+			for i := 0; i < len(e.indexChange); i++ {
+				e.indexChange[i] = -1
+			}
+
+			for i, col := range e.probeSideExec.Schema().Columns {
+				for j, col2 := range e.Schema().Columns {
+					if col.String() == col2.String() {
+						e.indexChange[j] = int64(i)
+					}
+				}
+			}
+		}
+		if probeExec, ok := e.probeSideExec.(*HashJoinExec); ok {
+			var canPushBfInThisJoin = true
+
+			e.bloomFilters = probeExec.bloomFilters
+			e.joinKeysForMulti = probeExec.joinKeysForMulti
+
+			joinKeyIdx := make([]int64, len(e.probeKeys))
+			for i := range e.probeKeys {
+				if probeExec.indexChange[e.probeKeys[i].Index] == -1 {
+					canPushBfInThisJoin = false
+					break
+				}
+				joinKeyIdx[i] = probeExec.indexChange[e.probeKeys[i].Index]
+			}
+
+			if canPushBfInThisJoin {
+				bl, _ := bloom.NewFilter(10)
+				e.bloomFilter = bl
+				e.bloomFilters = append(e.bloomFilters, bl)
+				e.joinKeysForMulti = append(e.joinKeysForMulti, joinKeyIdx)
+			}
+
+			e.indexChange = make([]int64, e.Schema().Len())
+			for i := 0; i < len(e.indexChange); i++ {
+				e.indexChange[i] = -1
+			}
+
+			for i, col := range e.probeSideExec.Schema().Columns {
+				for j, col2 := range e.Schema().Columns {
+					if col.String() == col2.String() {
+						e.indexChange[j] = probeExec.indexChange[i]
+					}
+				}
 			}
 		}
 	}
