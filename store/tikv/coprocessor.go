@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
@@ -1011,14 +1012,17 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 }
 
 func (worker *copIteratorWorker) handleTiDBSendReqErr(err error, task *copTask, ch chan<- *copResponse) error {
+	errCode := 0
 	errMsg := err.Error()
 	if terror.ErrorEqual(err, ErrTiKVServerTimeout) {
 		errMsg = "TiDB server timeout, address is " + task.storeAddr
+		errCode = mysql.ErrTiKVServerTimeout
 	}
 	selResp := tipb.SelectResponse{
 		Warnings: []*tipb.Error{
 			{
-				Msg: errMsg,
+				Code: int32(errCode),
+				Msg:  errMsg,
 			},
 		},
 	}
