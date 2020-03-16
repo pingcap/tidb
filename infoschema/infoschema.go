@@ -15,6 +15,7 @@ package infoschema
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"sort"
 	"sync/atomic"
 
@@ -415,7 +416,12 @@ func HasAutoIncrementColumn(tbInfo *model.TableInfo) (bool, string) {
 // GetInfoSchema gets TxnCtx InfoSchema if snapshot schema is not set,
 // Otherwise, snapshot schema is returned.
 func GetInfoSchema(ctx sessionctx.Context) InfoSchema {
-	sessVar := ctx.GetSessionVars()
+	return GetInfoSchemaBySessionVars(ctx.GetSessionVars())
+}
+
+// GetInfoSchemaBySessionVars gets TxnCtx InfoSchema if snapshot schema is not set,
+// Otherwise, snapshot schema is returned.
+func GetInfoSchemaBySessionVars(sessVar *variable.SessionVars) InfoSchema {
 	var is InfoSchema
 	if snap := sessVar.SnapshotInfoschema; snap != nil {
 		is = snap.(InfoSchema)

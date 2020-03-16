@@ -167,7 +167,7 @@ func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *Req
 	builder.Request.Priority = builder.getKVPriority(sv)
 	builder.Request.ReplicaRead = sv.GetReplicaRead()
 	if sv.SnapshotInfoschema != nil {
-		builder.Request.SchemaVar = sv.SnapshotInfoschema.(infoschema.InfoSchema).SchemaMetaVersion()
+		builder.Request.SchemaVar = infoschema.GetInfoSchemaBySessionVars(sv).SchemaMetaVersion()
 	} else {
 		builder.Request.SchemaVar = sv.TxnCtx.SchemaVersion
 	}
