@@ -15,10 +15,7 @@ package expression
 
 import (
 	"context"
-	"sync/atomic"
 
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -29,42 +26,6 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
-
-// ExpressionsToPB converts expression to tipb.Expr.
-func ExpressionsToPB(sc *stmtctx.StatementContext, exprs []Expression, client kv.Client) (pbCNF *tipb.Expr, pushed []Expression, remained []Expression) {
-	pc := PbConverter{client: client, sc: sc}
-	retTypeOfAnd := &types.FieldType{
-		Tp:      mysql.TypeLonglong,
-		Flen:    1,
-		Decimal: 0,
-		Flag:    mysql.BinaryFlag,
-		Charset: charset.CharsetBin,
-		Collate: charset.CollationBin,
-	}
-
-	for _, expr := range exprs {
-		pbExpr := pc.ExprToPB(expr)
-		if pbExpr == nil {
-			remained = append(remained, expr)
-			continue
-		}
-
-		pushed = append(pushed, expr)
-		if pbCNF == nil {
-			pbCNF = pbExpr
-			continue
-		}
-
-		// Merge multiple converted pb expression into a CNF.
-		pbCNF = &tipb.Expr{
-			Tp:        tipb.ExprType_ScalarFunc,
-			Sig:       tipb.ScalarFuncSig_LogicalAnd,
-			Children:  []*tipb.Expr{pbCNF, pbExpr},
-			FieldType: ToPBFieldType(retTypeOfAnd),
-		}
-	}
-	return
-}
 
 // ExpressionsToPBList converts expressions to tipb.Expr list for new plan.
 func ExpressionsToPBList(sc *stmtctx.StatementContext, exprs []Expression, client kv.Client) (pbExpr []*tipb.Expr) {
@@ -230,7 +191,7 @@ func (pc PbConverter) columnToPBExpr(column *Column) *tipb.Expr {
 
 func (pc PbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
 	// check whether this function can be pushed.
-	if !pc.canFuncBePushed(expr) {
+	if !canFuncBePushed(expr, kv.UnSpecified) {
 		return nil
 	}
 
@@ -277,70 +238,4 @@ func SortByItemToPB(sc *stmtctx.StatementContext, client kv.Client, expr Express
 		return nil
 	}
 	return &tipb.ByItem{Expr: e, Desc: desc}
-}
-
-func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
-	switch sf.FuncName.L {
-	case
-		// logical functions.
-		ast.LogicAnd,
-		ast.LogicOr,
-		ast.UnaryNot,
-
-		// compare functions.
-		ast.LT,
-		ast.LE,
-		ast.EQ,
-		ast.NE,
-		ast.GE,
-		ast.GT,
-		ast.NullEQ,
-		ast.In,
-		ast.IsNull,
-		ast.Like,
-		ast.IsTruth,
-		ast.IsFalsity,
-
-		// arithmetical functions.
-		ast.Plus,
-		ast.Minus,
-		ast.Mul,
-		ast.Div,
-		ast.Abs,
-		ast.Ceil,
-		ast.Ceiling,
-		ast.Floor,
-
-		// control flow functions.
-		ast.Case,
-		ast.If,
-		ast.Ifnull,
-		ast.Coalesce,
-
-		// json functions.
-		ast.JSONType,
-		ast.JSONExtract,
-		ast.JSONUnquote,
-		ast.JSONObject,
-		ast.JSONArray,
-		ast.JSONMerge,
-		ast.JSONSet,
-		ast.JSONInsert,
-		ast.JSONReplace,
-		ast.JSONRemove,
-
-		// date functions.
-		ast.DateFormat:
-		_, disallowPushdown := DefaultExprPushdownBlacklist.Load().(map[string]struct{})[sf.FuncName.L]
-		return true && !disallowPushdown
-	}
-	return false
-}
-
-// DefaultExprPushdownBlacklist indicates the expressions which can not be pushed down to TiKV.
-var DefaultExprPushdownBlacklist *atomic.Value
-
-func init() {
-	DefaultExprPushdownBlacklist = new(atomic.Value)
-	DefaultExprPushdownBlacklist.Store(make(map[string]struct{}))
 }

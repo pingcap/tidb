@@ -994,6 +994,7 @@ func (c *monthFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETDatetime)
 	bf.tp.Flen, bf.tp.Decimal = 2, 0
 	sig := &builtinMonthSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_Month)
 	return sig, nil
 }
 
@@ -4145,6 +4146,7 @@ func (c *timestampDiffFunctionClass) getFunction(ctx sessionctx.Context, args []
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETString, types.ETDatetime, types.ETDatetime)
 	sig := &builtinTimestampDiffSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_TimestampDiff)
 	return sig, nil
 }
 
