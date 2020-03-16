@@ -3057,6 +3057,7 @@ func (s *testSessionSuite2) TestStmtHints(c *C) {
 	c.Assert(tk.Se.GetSessionVars().GetEnableCascadesPlanner(), IsTrue)
 	tk.MustExec("select /*+ USE_CASCADES(false), USE_CASCADES(true) */ 1;")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 1)
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings()[0].Err.Error(), Equals, "USE_CASCADES() is defined more than once, only the last definition takes effect: USE_CASCADES(true)")
 	c.Assert(tk.Se.GetSessionVars().GetEnableCascadesPlanner(), IsTrue)
 
 	// Test READ_CONSISTENT_REPLICA hint
