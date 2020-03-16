@@ -153,12 +153,15 @@ type StmtHints struct {
 	ReplicaRead             byte
 	AllowInSubqToJoinAndAgg bool
 	NoIndexMergeHint        bool
+	// EnableCascadesPlanner is use cascades planner for a single query only.
+	EnableCascadesPlanner bool
 
 	// Hint flags
 	HasAllowInSubqToJoinAndAggHint bool
 	HasMemQuotaHint                bool
 	HasReplicaReadHint             bool
 	HasMaxExecutionTime            bool
+	HasEnableCascadesPlannerHint   bool
 }
 
 // GetNowTsCached getter for nowTs, if not set get now time and cache it
