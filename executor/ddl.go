@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta"
@@ -332,18 +333,40 @@ func (e *DDLExec) executeRecoverTable(s *ast.RecoverTableStmt) error {
 	if err != nil {
 		return err
 	}
-	// Get table original autoID before table drop.
-	m, err := dom.GetSnapshotMeta(job.StartTS)
+	autoIncID, autoRandID, err := e.getTableAutoIDsFromSnapshot(job)
 	if err != nil {
 		return err
 	}
-	autoID, err := m.GetAutoTableID(job.SchemaID, job.TableID)
-	if err != nil {
-		return errors.Errorf("recover table_id: %d, get original autoID from snapshot meta err: %s", job.TableID, err.Error())
+
+	recoverInfo := &ddl.RecoverInfo{
+		SchemaID:      job.SchemaID,
+		TableInfo:     tblInfo,
+		DropJobID:     job.ID,
+		SnapshotTS:    job.StartTS,
+		CurAutoIncID:  autoIncID,
+		CurAutoRandID: autoRandID,
 	}
-	// Call DDL RecoverTable
-	err = domain.GetDomain(e.ctx).DDL().RecoverTable(e.ctx, tblInfo, job.SchemaID, autoID, job.ID, job.StartTS)
+	// Call DDL RecoverTable.
+	err = domain.GetDomain(e.ctx).DDL().RecoverTable(e.ctx, recoverInfo)
 	return err
+}
+
+func (e *DDLExec) getTableAutoIDsFromSnapshot(job *model.Job) (autoIncID, autoRandID int64, err error) {
+	// Get table original autoIDs before table drop.
+	dom := domain.GetDomain(e.ctx)
+	m, err := dom.GetSnapshotMeta(job.StartTS)
+	if err != nil {
+		return 0, 0, err
+	}
+	autoIncID, err = m.GetAutoTableID(job.SchemaID, job.TableID)
+	if err != nil {
+		return 0, 0, errors.Errorf("recover table_id: %d, get original autoIncID from snapshot meta err: %s", job.TableID, err.Error())
+	}
+	autoRandID, err = m.GetAutoRandomID(job.SchemaID, job.TableID)
+	if err != nil {
+		return 0, 0, errors.Errorf("recover table_id: %d, get original autoRandID from snapshot meta err: %s", job.TableID, err.Error())
+	}
+	return autoIncID, autoRandID, nil
 }
 
 func (e *DDLExec) getRecoverTableByJobID(s *ast.RecoverTableStmt, t *meta.Meta, dom *domain.Domain) (*model.Job, *model.TableInfo, error) {
