@@ -67,7 +67,7 @@ const (
 	// TopologyPrometheus means address of prometheus.
 	TopologyPrometheus = "/topology/prometheus"
 	// TablePrometheusCacheExpiry is the expiry time for prometheus address cache.
-	TablePrometheusCacheExpiry = 5 * time.Second
+	TablePrometheusCacheExpiry = 10 * time.Second
 )
 
 // InfoSyncer stores server info to etcd when the tidb-server starts and delete when tidb-server shuts down.
@@ -491,7 +491,7 @@ func (is *InfoSyncer) getPrometheusAddr() (string, error) {
 	// Get PD servers info.
 	pdAddrs := is.etcdCli.Endpoints()
 	if len(pdAddrs) == 0 {
-		return "", errors.New("pd unavailable")
+		return "", errors.Errorf("pd unavailable")
 	}
 	var res string
 
@@ -520,12 +520,15 @@ func (is *InfoSyncer) getPrometheusAddr() (string, error) {
 		if err != nil {
 			return "", errors.Trace(err)
 		}
+		if values == "" {
+			return "", errors.Errorf("no prometheus address in Etcd")
+		}
 		var prometheus prometheus
 		err = json.Unmarshal([]byte(values), &prometheus)
 		if err != nil {
 			return "", errors.Trace(err)
 		}
-		res = fmt.Sprintf("http://%s:%v", prometheus.IP, strconv.Itoa(prometheus.Port))
+		res = fmt.Sprintf("http://%s:%v", prometheus.IP, prometheus.Port)
 	}
 	is.prometheusAddr = res
 	is.modifyTime = time.Now()
