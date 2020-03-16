@@ -1296,7 +1296,7 @@ Sort_39	1.00	root	custsale.cntrycode:asc
 └─Projection_41	1.00	root	custsale.cntrycode, 36_col_0, 36_col_1
   └─HashAgg_44	1.00	root	group by:custsale.cntrycode, funcs:count(1), sum(tpch.custsale.c_acctbal), firstrow(custsale.cntrycode)
     └─Projection_45	0.00	root	substring(tpch.customer.c_phone, 1, 2), tpch.customer.c_acctbal
-      └─HashLeftJoin_46	0.00	root	anti semi join, inner:TableReader_45, equal:[eq(tpch.customer.c_custkey, tpch.orders.o_custkey)]
+      └─HashLeftJoin_46	0.00	root	anti semi join, inner:TableReader_52, equal:[eq(tpch.customer.c_custkey, tpch.orders.o_custkey)]
         ├─Selection_50	0.00	root	in(substring(tpch.customer.c_phone, 1, 2), "20", "40", "22", "30", "39", "42", "21")
         │ └─TableReader_49	0.00	root	data:Selection_48
         │   └─Selection_48	0.00	cop[tikv]	gt(tpch.customer.c_acctbal, NULL)
