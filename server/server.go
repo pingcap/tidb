@@ -83,6 +83,7 @@ func init() {
 }
 
 var (
+<<<<<<< HEAD
 	errUnknownFieldType    = terror.ClassServer.New(codeUnknownFieldType, "unknown field type")
 	errInvalidPayloadLen   = terror.ClassServer.New(codeInvalidPayloadLen, "invalid payload length")
 	errInvalidSequence     = terror.ClassServer.New(codeInvalidSequence, "invalid sequence")
@@ -90,6 +91,15 @@ var (
 	errNotAllowedCommand   = terror.ClassServer.New(codeNotAllowedCommand, "the used command is not allowed with this TiDB version")
 	errAccessDenied        = terror.ClassServer.New(codeAccessDenied, mysql.MySQLErrName[mysql.ErrAccessDenied])
 	errMaxExecTimeExceeded = terror.ClassServer.New(codeMaxExecTimeExceeded, mysql.MySQLErrName[mysql.ErrMaxExecTimeExceeded])
+=======
+	errUnknownFieldType        = terror.ClassServer.New(errno.ErrUnknownFieldType, errno.MySQLErrName[errno.ErrUnknownFieldType])
+	errInvalidSequence         = terror.ClassServer.New(errno.ErrInvalidSequence, errno.MySQLErrName[errno.ErrInvalidSequence])
+	errInvalidType             = terror.ClassServer.New(errno.ErrInvalidType, errno.MySQLErrName[errno.ErrInvalidType])
+	errNotAllowedCommand       = terror.ClassServer.New(errno.ErrNotAllowedCommand, errno.MySQLErrName[errno.ErrNotAllowedCommand])
+	errAccessDenied            = terror.ClassServer.New(errno.ErrAccessDenied, errno.MySQLErrName[errno.ErrAccessDenied])
+	errConCount                = terror.ClassServer.New(errno.ErrConCount, errno.MySQLErrName[errno.ErrConCount])
+	errSecureTransportRequired = terror.ClassServer.New(errno.ErrSecureTransportRequired, errno.MySQLErrName[errno.ErrSecureTransportRequired])
+>>>>>>> aec6143... *: support require-secure-transport startup option (#15341)
 )
 
 // DefaultCapability is the capability of the server when it is created using the default configuration.
@@ -199,12 +209,22 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 
 	tlsConfig, err := util.LoadTLSCertificates(s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert)
 	if err != nil {
+<<<<<<< HEAD
 		logutil.Logger(context.Background()).Error("secure connection cert/key/ca load fail", zap.Error(err))
+=======
+		logutil.BgLogger().Error("secure connection cert/key/ca load fail", zap.Error(err))
+>>>>>>> aec6143... *: support require-secure-transport startup option (#15341)
 	}
 	if tlsConfig != nil {
 		setSSLVariable(s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert)
 		atomic.StorePointer(&s.tlsConfig, unsafe.Pointer(tlsConfig))
+<<<<<<< HEAD
 		logutil.Logger(context.Background()).Info("mysql protocol server secure connection is enabled", zap.Bool("client verification enabled", len(variable.SysVars["ssl_ca"].Value) > 0))
+=======
+		logutil.BgLogger().Info("mysql protocol server secure connection is enabled", zap.Bool("client verification enabled", len(variable.SysVars["ssl_ca"].Value) > 0))
+	} else if cfg.Security.RequireSecureTransport {
+		return nil, errSecureTransportRequired.FastGenByArgs()
+>>>>>>> aec6143... *: support require-secure-transport startup option (#15341)
 	}
 
 	setSystemTimeZoneVariable()

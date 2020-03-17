@@ -63,6 +63,7 @@ import (
 
 // Flag Names
 const (
+<<<<<<< HEAD
 	nmVersion          = "V"
 	nmConfig           = "config"
 	nmConfigCheck      = "config-check"
@@ -88,6 +89,36 @@ const (
 	nmTokenLimit       = "token-limit"
 	nmPluginDir        = "plugin-dir"
 	nmPluginLoad       = "plugin-load"
+=======
+	nmVersion                = "V"
+	nmConfig                 = "config"
+	nmConfigCheck            = "config-check"
+	nmConfigStrict           = "config-strict"
+	nmStore                  = "store"
+	nmStorePath              = "path"
+	nmHost                   = "host"
+	nmAdvertiseAddress       = "advertise-address"
+	nmPort                   = "P"
+	nmCors                   = "cors"
+	nmSocket                 = "socket"
+	nmEnableBinlog           = "enable-binlog"
+	nmRunDDL                 = "run-ddl"
+	nmLogLevel               = "L"
+	nmLogFile                = "log-file"
+	nmLogSlowQuery           = "log-slow-query"
+	nmReportStatus           = "report-status"
+	nmStatusHost             = "status-host"
+	nmStatusPort             = "status"
+	nmMetricsAddr            = "metrics-addr"
+	nmMetricsInterval        = "metrics-interval"
+	nmDdlLease               = "lease"
+	nmTokenLimit             = "token-limit"
+	nmPluginDir              = "plugin-dir"
+	nmPluginLoad             = "plugin-load"
+	nmRepairMode             = "repair-mode"
+	nmRepairList             = "repair-list"
+	nmRequireSecureTransport = "require-secure-transport"
+>>>>>>> aec6143... *: support require-secure-transport startup option (#15341)
 
 	nmProxyProtocolNetworks      = "proxy-protocol-networks"
 	nmProxyProtocolHeaderTimeout = "proxy-protocol-header-timeout"
@@ -113,6 +144,13 @@ var (
 	tokenLimit       = flag.Int(nmTokenLimit, 1000, "the limit of concurrent executed sessions")
 	pluginDir        = flag.String(nmPluginDir, "/data/deploy/plugin", "the folder that hold plugin")
 	pluginLoad       = flag.String(nmPluginLoad, "", "wait load plugin name(separated by comma)")
+<<<<<<< HEAD
+=======
+	affinityCPU      = flag.String(nmAffinityCPU, "", "affinity cpu (cpu-no. separated by comma, e.g. 1,2,3)")
+	repairMode       = flagBoolean(nmRepairMode, false, "enable admin repair mode")
+	repairList       = flag.String(nmRepairList, "", "admin repair table list")
+	requireTLS       = flag.Bool(nmRequireSecureTransport, false, "require client use secure transport")
+>>>>>>> aec6143... *: support require-secure-transport startup option (#15341)
 
 	// Log
 	logLevel     = flag.String(nmLogLevel, "info", "log level: info, debug, warn, error, fatal")
@@ -439,6 +477,20 @@ func overrideConfig() {
 	if actualFlags[nmPluginDir] {
 		cfg.Plugin.Dir = *pluginDir
 	}
+<<<<<<< HEAD
+=======
+	if actualFlags[nmRequireSecureTransport] {
+		cfg.Security.RequireSecureTransport = *requireTLS
+	}
+	if actualFlags[nmRepairMode] {
+		cfg.RepairMode = *repairMode
+	}
+	if actualFlags[nmRepairList] {
+		if cfg.RepairMode {
+			cfg.RepairTableList = stringToList(*repairList)
+		}
+	}
+>>>>>>> aec6143... *: support require-secure-transport startup option (#15341)
 
 	// Log
 	if actualFlags[nmLogLevel] {

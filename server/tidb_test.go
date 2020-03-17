@@ -609,6 +609,18 @@ func (ts *TidbTestSuite) TestErrorNoRollback(c *C) {
 	cfg.Port = 4006
 	cfg.Status.ReportStatus = false
 
+<<<<<<< HEAD
+=======
+	cfg.Security = config.Security{
+		RequireSecureTransport: true,
+		SSLCA:                  "wrong path",
+		SSLCert:                "wrong path",
+		SSLKey:                 "wrong path",
+	}
+	_, err = NewServer(cfg, ts.tidbdrv)
+	c.Assert(err, NotNil)
+
+>>>>>>> aec6143... *: support require-secure-transport startup option (#15341)
 	// test reload tls fail with/without "error no rollback option"
 	cfg.Security = config.Security{
 		SSLCA:   "/tmp/ca-cert-rollback.pem",
