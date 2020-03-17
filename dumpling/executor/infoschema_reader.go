@@ -322,8 +322,9 @@ func (e *memtableRetriever) setDataForStatisticsInTable(schema *model.DBInfo, ta
 					"",                    // NULLABLE
 					"BTREE",               // INDEX_TYPE
 					"",                    // COMMENT
-					"NULL",                // Expression
 					"",                    // INDEX_COMMENT
+					"YES",                 // IS_VISIBLE
+					"NULL",                // Expression
 				)
 				rows = append(rows, record)
 			}
@@ -344,6 +345,12 @@ func (e *memtableRetriever) setDataForStatisticsInTable(schema *model.DBInfo, ta
 			if mysql.HasNotNullFlag(col.Flag) {
 				nullable = ""
 			}
+
+			visible := "YES"
+			if index.Invisible {
+				visible = "NO"
+			}
+
 			colName := col.Name.O
 			expression := "NULL"
 			tblCol := table.Columns[col.Offset]
@@ -351,6 +358,7 @@ func (e *memtableRetriever) setDataForStatisticsInTable(schema *model.DBInfo, ta
 				colName = "NULL"
 				expression = fmt.Sprintf("(%s)", tblCol.GeneratedExprString)
 			}
+
 			record := types.MakeDatums(
 				infoschema.CatalogVal, // TABLE_CATALOG
 				schema.Name.O,         // TABLE_SCHEMA
@@ -367,8 +375,9 @@ func (e *memtableRetriever) setDataForStatisticsInTable(schema *model.DBInfo, ta
 				nullable,              // NULLABLE
 				"BTREE",               // INDEX_TYPE
 				"",                    // COMMENT
-				expression,            // Expression
 				"",                    // INDEX_COMMENT
+				visible,               // IS_VISIBLE
+				expression,            // Expression
 			)
 			rows = append(rows, record)
 		}
