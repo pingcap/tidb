@@ -750,7 +750,8 @@ func (s *testSequenceSuite) TestUnflodSequence(c *C) {
 // single insert consume: 50.498672ms
 // after this PR:
 // single insert consume: 33.213615ms
-func (s *testSequenceSuite) TestBenchInsertCacheDefaultExpr(c *C) {
+// Notice: use go test -check.b Benchmarkxxx to test it.
+func (s *testSequenceSuite) BenchmarkInsertCacheDefaultExpr(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test")
 	s.tk.MustExec("drop sequence if exists seq")
@@ -765,7 +766,8 @@ func (s *testSequenceSuite) TestBenchInsertCacheDefaultExpr(c *C) {
 			sql += ",()"
 		}
 	}
-	for i := 0; i < 100; i++ {
+	c.ResetTimer()
+	for i := 0; i < c.N; i++ {
 		s.tk.MustExec(sql)
 	}
 }
