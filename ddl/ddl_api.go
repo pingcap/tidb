@@ -1135,7 +1135,6 @@ func checkConstraintNames(constraints []*ast.Constraint) error {
 	return nil
 }
 
-
 func checkInvisibleIndexOnPK(tblInfo *model.TableInfo) error {
 	// cannot set primary key as invisible index
 	pk := getPK(tblInfo)
