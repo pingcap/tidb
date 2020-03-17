@@ -16,7 +16,6 @@ package core
 import (
 	"bytes"
 	"fmt"
-	"github.com/pingcap/tidb/util/logutil"
 	"math"
 	"regexp"
 	"sort"
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"

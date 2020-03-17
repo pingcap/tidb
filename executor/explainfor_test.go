@@ -16,12 +16,13 @@ package executor_test
 import (
 	"crypto/tls"
 	"fmt"
+	"os"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testkit"
-	"os"
 )
 
 // mockSessionManager is a mocked session manager which is used for test.
