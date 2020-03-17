@@ -663,11 +663,11 @@ func (ts *tidbTestSerialSuite) TestErrorNoRollback(c *C) {
 	cfg.Port = cli.port
 	cfg.Status.ReportStatus = false
 
-	// test cannot startup with wrong tls config
 	cfg.Security = config.Security{
-		SSLCA:   "wrong path",
-		SSLCert: "wrong path",
-		SSLKey:  "wrong path",
+		RequireSecureTransport: true,
+		SSLCA:                  "wrong path",
+		SSLCert:                "wrong path",
+		SSLKey:                 "wrong path",
 	}
 	_, err = NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, NotNil)
