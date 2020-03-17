@@ -1257,6 +1257,9 @@ func buildTableInfo(ctx sessionctx.Context, tableName model.CIStr, cols []*table
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
+			if constr.Option.Visibility == ast.IndexVisibilityInvisible {
+				idxInfo.Invisible = true
+			}
 			if constr.Option.Tp == model.IndexTypeInvalid {
 				// Use btree as default index type.
 				idxInfo.Tp = model.IndexTypeBtree
