@@ -70,7 +70,7 @@ const (
 	TablePrometheusCacheExpiry = 10 * time.Second
 )
 
-// ErrPrometheusAddIsNotSet is the error that Prometheus address is not set in PD and etcd
+// ErrPrometheusAddrIsNotSet is the error that Prometheus address is not set in PD and etcd
 var ErrPrometheusAddrIsNotSet = errors.New("response body is missing")
 
 // InfoSyncer stores server info to etcd when the tidb-server starts and delete when tidb-server shuts down.
