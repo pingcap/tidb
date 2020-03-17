@@ -897,6 +897,7 @@ var MySQLErrName = map[uint16]string{
 	ErrInvalidJSONContainsPathType:                           "The second argument can only be either 'one' or 'all'.",
 	ErrJSONUsedAsKey:                                         "JSON column '%-.192s' cannot be used in key specification.",
 	ErrJSONDocumentNULLKey:                                   "JSON documents may not contain NULL member names.",
+	ErrSecureTransportRequired:                               "Connections using insecure transport are prohibited while --require_secure_transport=ON.",
 	ErrBadUser:                                               "User %s does not exist.",
 	ErrUserAlreadyExists:                                     "User %s already exists.",
 	ErrInvalidJSONPathArrayCell:                              "A path expression is not a path to a cell in an array.",

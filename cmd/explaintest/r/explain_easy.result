@@ -118,7 +118,7 @@ Projection_12	10000.00	root	ifnull(Column#7, 0)->Column#7
     └─TableFullScan_16	10000.00	cop[tikv]	table:t1, keep order:true, stats:pseudo
 explain select * from information_schema.columns;
 id	estRows	task	operator info
-MemTableScan_4	10000.00	root	
+MemTableScan_4	10000.00	root	table:COLUMNS
 explain select c2 = (select c2 from t2 where t1.c1 = t2.c1 order by c1 limit 1) from t1;
 id	estRows	task	operator info
 Projection_12	10000.00	root	eq(test.t1.c2, test.t2.c2)->Column#8
