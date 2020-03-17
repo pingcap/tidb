@@ -326,8 +326,9 @@ var statisticsCols = []columnInfo{
 	{name: "NULLABLE", tp: mysql.TypeVarchar, size: 3},
 	{name: "INDEX_TYPE", tp: mysql.TypeVarchar, size: 16},
 	{name: "COMMENT", tp: mysql.TypeVarchar, size: 16},
-	{name: "Expression", tp: mysql.TypeVarchar, size: 64},
 	{name: "INDEX_COMMENT", tp: mysql.TypeVarchar, size: 1024},
+	{name: "IS_VISIBLE", tp: mysql.TypeVarchar, size: 3},
+	{name: "Expression", tp: mysql.TypeVarchar, size: 64},
 }
 
 var profilingCols = []columnInfo{
