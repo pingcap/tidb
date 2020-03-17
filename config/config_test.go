@@ -69,6 +69,7 @@ split-region-max-num=10000
 server-version = "test_version"
 enable-table-lock = true
 delay-clean-table-lock = 5
+max-index-length = 3080
 [performance]
 txn-entry-count-limit=2000
 txn-total-size-limit=2000
@@ -122,6 +123,7 @@ allow-auto-random = true
 	c.Assert(conf.DelayCleanTableLock, Equals, uint64(5))
 	c.Assert(conf.IsolationRead.Engines, DeepEquals, []string{"tiflash"})
 	c.Assert(conf.Experimental.AllowAutoRandom, IsTrue)
+	c.Assert(conf.MaxIndexLength, Equals, 3080)
 	c.Assert(f.Close(), IsNil)
 	c.Assert(os.Remove(configFile), IsNil)
 
@@ -268,4 +270,16 @@ func (s *testConfigSuite) TestAllowAutoRandomValid(c *C) {
 	checkValid(true, false, true)
 	checkValid(false, true, true)
 	checkValid(false, false, true)
+}
+
+func (s *testConfigSuite) TestMaxIndexLength(c *C) {
+	conf := NewConfig()
+	checkValid := func(indexLen int, shouldBeValid bool) {
+		conf.MaxIndexLength = indexLen
+		c.Assert(conf.Valid() == nil, Equals, shouldBeValid)
+	}
+	checkValid(DefMaxIndexLength, true)
+	checkValid(DefMaxIndexLength-1, false)
+	checkValid(DefMaxOfMaxIndexLength, true)
+	checkValid(DefMaxOfMaxIndexLength+1, false)
 }

@@ -278,7 +278,7 @@ func (c *concatFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
 	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 
 	sig := &builtinConcatSig{bf, maxAllowedPacket}
@@ -355,7 +355,7 @@ func (c *concatWSFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
 	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 
 	sig := &builtinConcatWSSig{bf, maxAllowedPacket}
@@ -592,7 +592,7 @@ func (c *repeatFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
 	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 	sig := &builtinRepeatSig{bf, maxAllowedPacket}
 	return sig, nil
@@ -759,7 +759,7 @@ func (c *spaceFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
 	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 	sig := &builtinSpaceSig{bf, maxAllowedPacket}
 	return sig, nil
@@ -1858,7 +1858,7 @@ func (c *lpadFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
 	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 
 	if types.IsBinaryStr(args[0].GetType()) || types.IsBinaryStr(args[2].GetType()) {
@@ -1986,7 +1986,7 @@ func (c *rpadFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
 	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 
 	if types.IsBinaryStr(args[0].GetType()) || types.IsBinaryStr(args[2].GetType()) {
@@ -2612,7 +2612,7 @@ func (b *builtinOctStringSig) evalString(row chunk.Row) (string, bool, error) {
 	if err != nil {
 		numError, ok := err.(*strconv.NumError)
 		if !ok || numError.Err != strconv.ErrRange {
-			return "", true, err
+			return "", true, errors.Trace(err)
 		}
 		overflow = true
 	}
@@ -3166,7 +3166,7 @@ func (c *fromBase64FunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
 	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 
 	types.SetBinChsClnFlag(bf.tp)
@@ -3239,7 +3239,7 @@ func (c *toBase64FunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
 	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 
 	sig := &builtinToBase64Sig{bf, maxAllowedPacket}
@@ -3340,7 +3340,7 @@ func (c *insertFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
 	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 
 	if types.IsBinaryStr(args[0].GetType()) {

@@ -18,6 +18,8 @@ import (
 	"context"
 	"fmt"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util"
+
 	"strings"
 
 	"github.com/cznic/mathutil"
@@ -228,6 +230,8 @@ type PlanBuilder struct {
 	windowSpecs map[string]*ast.WindowSpec
 
 	hintProcessor *BlockHintProcessor
+	// SelectLock need this information to locate the lock on partitions.
+	partitionedTable []table.PartitionedTable
 }
 
 // GetVisitInfo gets the visitInfo of the PlanBuilder.
@@ -311,7 +315,7 @@ func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
 	case *ast.AnalyzeTableStmt:
 		return b.buildAnalyze(x)
 	case *ast.BinlogStmt, *ast.FlushStmt, *ast.UseStmt,
-		*ast.BeginStmt, *ast.CommitStmt, *ast.RollbackStmt, *ast.CreateUserStmt, *ast.SetPwdStmt,
+		*ast.BeginStmt, *ast.CommitStmt, *ast.RollbackStmt, *ast.CreateUserStmt, *ast.SetPwdStmt, *ast.AlterInstanceStmt,
 		*ast.GrantStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.RevokeStmt, *ast.KillStmt, *ast.DropStatsStmt,
 		*ast.GrantRoleStmt, *ast.RevokeRoleStmt, *ast.SetRoleStmt, *ast.SetDefaultRoleStmt, *ast.ShutdownStmt:
 		return b.buildSimple(node.(ast.StmtNode))
@@ -660,7 +664,7 @@ func removeIgnoredPaths(paths, ignoredPaths []*accessPath, tblInfo *model.TableI
 }
 
 func (b *PlanBuilder) buildSelectLock(src LogicalPlan, lock ast.SelectLockType) *LogicalLock {
-	selectLock := LogicalLock{Lock: lock}.Init(b.ctx)
+	selectLock := LogicalLock{Lock: lock, partitionedTable: b.partitionedTable}.Init(b.ctx)
 	selectLock.SetChildren(src)
 	return selectLock
 }
@@ -1340,7 +1344,7 @@ func buildColumn(tableName, name string, tp byte, size int) *expression.Column {
 	return &expression.Column{
 		ColName: model.NewCIStr(name),
 		TblName: model.NewCIStr(tableName),
-		DBName:  model.NewCIStr(infoschema.Name),
+		DBName:  util.InformationSchemaName,
 		RetType: fieldType,
 	}
 }
@@ -1472,6 +1476,9 @@ func (b *PlanBuilder) buildSimple(node ast.StmtNode) (Plan, error) {
 	p := &Simple{Statement: node}
 
 	switch raw := node.(type) {
+	case *ast.AlterInstanceStmt:
+		err := ErrSpecificAccessDenied.GenWithStack("ALTER INSTANCE")
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", err)
 	case *ast.AlterUserStmt:
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateUserPriv, "", "", "", err)
@@ -2285,6 +2292,7 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 		}
 		schema := plan.Schema()
 		if v.Cols == nil {
+			adjustOverlongViewColname(plan.(LogicalPlan))
 			v.Cols = make([]model.CIStr, len(schema.Columns))
 			for i, col := range schema.Columns {
 				v.Cols[i] = col.ColName
@@ -2293,14 +2301,12 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 		if len(v.Cols) != schema.Len() {
 			return nil, ddl.ErrViewWrongList
 		}
-		if _, ok := plan.(LogicalPlan); ok {
-			if b.ctx.GetSessionVars().User != nil {
-				authErr = ErrTableaccessDenied.GenWithStackByArgs("CREATE VIEW", b.ctx.GetSessionVars().User.Hostname,
-					b.ctx.GetSessionVars().User.Username, v.ViewName.Name.L)
-			}
-			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateViewPriv, v.ViewName.Schema.L,
-				v.ViewName.Name.L, "", authErr)
+		if b.ctx.GetSessionVars().User != nil {
+			authErr = ErrTableaccessDenied.GenWithStackByArgs("CREATE VIEW", b.ctx.GetSessionVars().User.Hostname,
+				b.ctx.GetSessionVars().User.Username, v.ViewName.Name.L)
 		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateViewPriv, v.ViewName.Schema.L,
+			v.ViewName.Name.L, "", authErr)
 		if v.Definer.CurrentUser && b.ctx.GetSessionVars().User != nil {
 			v.Definer = b.ctx.GetSessionVars().User
 		}
@@ -2677,4 +2683,16 @@ func buildChecksumTableSchema() *expression.Schema {
 	schema.Append(buildColumn("", "Total_kvs", mysql.TypeLonglong, 22))
 	schema.Append(buildColumn("", "Total_bytes", mysql.TypeLonglong, 22))
 	return schema
+}
+
+// adjustOverlongViewColname adjusts the overlong outputNames of a view to
+// `new_exp_$off` where `$off` is the offset of the output column, $off starts from 1.
+// There is still some MySQL compatible problems.
+func adjustOverlongViewColname(plan LogicalPlan) {
+	outputCols := plan.Schema().Columns
+	for i := range outputCols {
+		if outputName := outputCols[i].ColName.L; len(outputName) > mysql.MaxColumnNameLength {
+			outputCols[i].ColName = model.NewCIStr(fmt.Sprintf("name_exp_%d", i+1))
+		}
+	}
 }

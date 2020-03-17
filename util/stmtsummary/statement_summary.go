@@ -250,13 +250,13 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 	key.Hash()
 
 	// Enclose the block in a function to ensure the lock will always be released.
-	value, beginTime, ok := func() (kvcache.Value, int64, bool) {
+	summary, beginTime := func() (*stmtSummaryByDigest, int64) {
 		ssMap.Lock()
 		defer ssMap.Unlock()
 
 		// Check again. Statements could be added before disabling the flag and after Clear().
 		if !ssMap.Enabled() {
-			return nil, 0, false
+			return nil, 0
 		}
 
 		if ssMap.beginTimeForCurInterval+intervalSeconds <= now {
@@ -267,16 +267,21 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 
 		beginTime := ssMap.beginTimeForCurInterval
 		value, ok := ssMap.summaryMap.Get(key)
+
+		var summary *stmtSummaryByDigest
 		if !ok {
-			newSummary := newStmtSummaryByDigest(sei, beginTime, intervalSeconds, historySize)
-			ssMap.summaryMap.Put(key, newSummary)
+			// Lazy initialize it to release ssMap.mutex ASAP.
+			summary = new(stmtSummaryByDigest)
+			ssMap.summaryMap.Put(key, summary)
+		} else {
+			summary = value.(*stmtSummaryByDigest)
 		}
-		return value, beginTime, ok
+		return summary, beginTime
 	}()
 
 	// Lock a single entry, not the whole cache.
-	if ok {
-		value.(*stmtSummaryByDigest).add(sei, beginTime, intervalSeconds, historySize)
+	if summary != nil {
+		summary.add(sei, beginTime, intervalSeconds, historySize)
 	}
 }
 
@@ -331,20 +336,22 @@ func (ssMap *stmtSummaryByDigestMap) GetMoreThanOnceSelect() ([]string, []string
 	sqls := make([]string, 0, len(values))
 	for _, value := range values {
 		ssbd := value.(*stmtSummaryByDigest)
-		// `stmtType` won't change once created, so locking is not needed.
-		if ssbd.stmtType == "select" {
+		func() {
 			ssbd.Lock()
-			if ssbd.history.Len() > 0 {
-				ssElement := ssbd.history.Back().Value.(*stmtSummaryByDigestElement)
-				ssElement.Lock()
-				if ssbd.history.Len() > 1 || ssElement.execCount > 1 {
-					schemas = append(schemas, ssbd.schemaName)
-					sqls = append(sqls, ssElement.sampleSQL)
+			defer ssbd.Unlock()
+			if ssbd.initialized && ssbd.stmtType == "select" {
+				if ssbd.history.Len() > 0 {
+					ssElement := ssbd.history.Back().Value.(*stmtSummaryByDigestElement)
+					ssElement.Lock()
+					// Empty sample users means that it is an internal queries.
+					if ssElement.sampleUser != "" && (ssbd.history.Len() > 1 || ssElement.execCount > 1) {
+						schemas = append(schemas, ssbd.schemaName)
+						sqls = append(sqls, ssElement.sampleSQL)
+					}
+					ssElement.Unlock()
 				}
-				ssElement.Unlock()
 			}
-			ssbd.Unlock()
-		}
+		}()
 	}
 	return schemas, sqls
 }
@@ -490,38 +497,14 @@ func (ssMap *stmtSummaryByDigestMap) historySize() int {
 	return int(atomic.LoadInt32(&ssMap.sysVars.historySize))
 }
 
-// newStmtSummaryByDigest creates a stmtSummaryByDigest from StmtExecInfo.
-func newStmtSummaryByDigest(sei *StmtExecInfo, beginTime int64, intervalSeconds int64, historySize int) *stmtSummaryByDigest {
-	// Use "," to separate table names to support FIND_IN_SET.
-	var buffer bytes.Buffer
-	for i, value := range sei.StmtCtx.Tables {
-		buffer.WriteString(strings.ToLower(value.DB))
-		buffer.WriteString(".")
-		buffer.WriteString(strings.ToLower(value.Table))
-		if i < len(sei.StmtCtx.Tables)-1 {
-			buffer.WriteString(",")
-		}
-	}
-	tableNames := buffer.String()
-
-	ssbd := &stmtSummaryByDigest{
-		schemaName:    sei.SchemaName,
-		digest:        sei.Digest,
-		planDigest:    sei.PlanDigest,
-		stmtType:      strings.ToLower(sei.StmtCtx.StmtType),
-		normalizedSQL: formatSQL(sei.NormalizedSQL),
-		tableNames:    tableNames,
-		history:       list.New(),
-	}
-	ssbd.add(sei, beginTime, intervalSeconds, historySize)
-	return ssbd
-}
-
-// newStmtSummaryByDigest creates a stmtSummaryByDigest from StmtExecInfo.
 func (ssbd *stmtSummaryByDigest) init(sei *StmtExecInfo, beginTime int64, intervalSeconds int64, historySize int) {
 	// Use "," to separate table names to support FIND_IN_SET.
 	var buffer bytes.Buffer
 	for i, value := range sei.StmtCtx.Tables {
+		// In `create database` statement, DB name is not empty but table name is empty.
+		if len(value.Table) == 0 {
+			continue
+		}
 		buffer.WriteString(strings.ToLower(value.DB))
 		buffer.WriteString(".")
 		buffer.WriteString(strings.ToLower(value.Table))
@@ -592,7 +575,7 @@ func (ssbd *stmtSummaryByDigest) toCurrentDatum(beginTimeForCurInterval int64) [
 	var ssElement *stmtSummaryByDigestElement
 
 	ssbd.Lock()
-	if ssbd.history.Len() > 0 {
+	if ssbd.initialized && ssbd.history.Len() > 0 {
 		ssElement = ssbd.history.Back().Value.(*stmtSummaryByDigestElement)
 	}
 	ssbd.Unlock()
@@ -748,9 +731,10 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 		if commitDetails.GetCommitTsTime > ssElement.maxGetCommitTsTime {
 			ssElement.maxGetCommitTsTime = commitDetails.GetCommitTsTime
 		}
-		ssElement.sumCommitBackoffTime += commitDetails.CommitBackoffTime
-		if commitDetails.CommitBackoffTime > ssElement.maxCommitBackoffTime {
-			ssElement.maxCommitBackoffTime = commitDetails.CommitBackoffTime
+		commitBackoffTime := atomic.LoadInt64(&commitDetails.CommitBackoffTime)
+		ssElement.sumCommitBackoffTime += commitBackoffTime
+		if commitBackoffTime > ssElement.maxCommitBackoffTime {
+			ssElement.maxCommitBackoffTime = commitBackoffTime
 		}
 		resolveLockTime := atomic.LoadInt64(&commitDetails.ResolveLockTime)
 		ssElement.sumResolveLockTime += resolveLockTime

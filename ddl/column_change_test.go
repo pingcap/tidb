@@ -147,7 +147,6 @@ func (s *testColumnChangeSuite) TestColumnChange(c *C) {
 }
 
 func (s *testColumnChangeSuite) testAddColumnNoDefault(c *C, ctx sessionctx.Context, d *ddl, tblInfo *model.TableInfo) {
-	d.Stop()
 	tc := &TestDDLCallback{}
 	// set up hook
 	prevState := model.StateNone
@@ -190,14 +189,12 @@ func (s *testColumnChangeSuite) testAddColumnNoDefault(c *C, ctx sessionctx.Cont
 		}
 	}
 	d.SetHook(tc)
-	d.start(context.Background(), nil)
 	job := testCreateColumn(c, ctx, d, s.dbInfo, tblInfo, "c3", &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, nil)
 	c.Assert(errors.ErrorStack(checkErr), Equals, "")
 	testCheckJobDone(c, d, job, true)
 }
 
 func (s *testColumnChangeSuite) testColumnDrop(c *C, ctx sessionctx.Context, d *ddl, tbl table.Table) {
-	d.Stop()
 	dropCol := tbl.Cols()[2]
 	tc := &TestDDLCallback{}
 	// set up hook
@@ -219,7 +216,6 @@ func (s *testColumnChangeSuite) testColumnDrop(c *C, ctx sessionctx.Context, d *
 		}
 	}
 	d.SetHook(tc)
-	d.start(context.Background(), nil)
 	c.Assert(errors.ErrorStack(checkErr), Equals, "")
 	testDropColumn(c, ctx, d, s.dbInfo, tbl.Meta(), dropCol.Name.L, false)
 }

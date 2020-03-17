@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/util"
 )
 
 var once sync.Once
@@ -58,7 +59,7 @@ func Init() {
 		}
 		dbInfo := &model.DBInfo{
 			ID:      dbID,
-			Name:    model.NewCIStr(Name),
+			Name:    util.PerformanceSchemaName,
 			Charset: mysql.DefaultCharset,
 			Collate: mysql.DefaultCollationName,
 			Tables:  tbls,

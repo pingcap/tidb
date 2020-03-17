@@ -31,10 +31,8 @@ package server
 import (
 	"context"
 	"crypto/tls"
-	"crypto/x509"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"math/rand"
 	"net"
 	"net/http"
@@ -43,6 +41,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	// For pprof
 	_ "net/http/pprof"
@@ -104,7 +103,7 @@ const defaultCapability = mysql.ClientLongPassword | mysql.ClientLongFlag |
 // Server is the MySQL protocol server
 type Server struct {
 	cfg               *config.Config
-	tlsConfig         *tls.Config
+	tlsConfig         unsafe.Pointer // *tls.Config
 	driver            IDriver
 	listener          net.Listener
 	socket            net.Listener
@@ -112,12 +111,7 @@ type Server struct {
 	concurrentLimiter *TokenLimiter
 	clients           map[uint32]*clientConn
 	capability        uint32
-
-	// stopListenerCh is used when a critical error occurred, we don't want to exit the process, because there may be
-	// a supervisor automatically restart it, then new client connection will be created, but we can't server it.
-	// So we just stop the listener and store to force clients to chose other TiDB servers.
-	stopListenerCh chan struct{}
-	statusServer   *http.Server
+	statusServer      *http.Server
 }
 
 // ConnectionCount gets current connection count.
@@ -201,17 +195,24 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		driver:            driver,
 		concurrentLimiter: NewTokenLimiter(cfg.TokenLimit),
 		clients:           make(map[uint32]*clientConn),
-		stopListenerCh:    make(chan struct{}, 1),
 	}
-	s.loadTLSCertificates()
+
+	tlsConfig, err := util.LoadTLSCertificates(s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert)
+	if err != nil {
+		logutil.Logger(context.Background()).Error("secure connection cert/key/ca load fail", zap.Error(err))
+	}
+	if tlsConfig != nil {
+		setSSLVariable(s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert)
+		atomic.StorePointer(&s.tlsConfig, unsafe.Pointer(tlsConfig))
+		logutil.Logger(context.Background()).Info("mysql protocol server secure connection is enabled", zap.Bool("client verification enabled", len(variable.SysVars["ssl_ca"].Value) > 0))
+	}
+
 	setSystemTimeZoneVariable()
 
 	s.capability = defaultCapability
 	if s.tlsConfig != nil {
 		s.capability |= mysql.ClientSSL
 	}
-
-	var err error
 
 	if s.cfg.Host != "" && s.cfg.Port != 0 {
 		addr := fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port)
@@ -252,52 +253,12 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	return s, nil
 }
 
-func (s *Server) loadTLSCertificates() {
-	defer func() {
-		if s.tlsConfig != nil {
-			logutil.Logger(context.Background()).Info("secure connection is enabled", zap.Bool("client verification enabled", len(variable.SysVars["ssl_ca"].Value) > 0))
-			variable.SysVars["have_openssl"].Value = "YES"
-			variable.SysVars["have_ssl"].Value = "YES"
-			variable.SysVars["ssl_cert"].Value = s.cfg.Security.SSLCert
-			variable.SysVars["ssl_key"].Value = s.cfg.Security.SSLKey
-		} else {
-			logutil.Logger(context.Background()).Warn("secure connection is not enabled")
-		}
-	}()
-
-	if len(s.cfg.Security.SSLCert) == 0 || len(s.cfg.Security.SSLKey) == 0 {
-		s.tlsConfig = nil
-		return
-	}
-
-	tlsCert, err := tls.LoadX509KeyPair(s.cfg.Security.SSLCert, s.cfg.Security.SSLKey)
-	if err != nil {
-		logutil.Logger(context.Background()).Warn("load x509 failed", zap.Error(err))
-		s.tlsConfig = nil
-		return
-	}
-
-	// Try loading CA cert.
-	clientAuthPolicy := tls.NoClientCert
-	var certPool *x509.CertPool
-	if len(s.cfg.Security.SSLCA) > 0 {
-		caCert, err := ioutil.ReadFile(s.cfg.Security.SSLCA)
-		if err != nil {
-			logutil.Logger(context.Background()).Warn("read file failed", zap.Error(err))
-		} else {
-			certPool = x509.NewCertPool()
-			if certPool.AppendCertsFromPEM(caCert) {
-				clientAuthPolicy = tls.VerifyClientCertIfGiven
-			}
-			variable.SysVars["ssl_ca"].Value = s.cfg.Security.SSLCA
-		}
-	}
-	s.tlsConfig = &tls.Config{
-		Certificates: []tls.Certificate{tlsCert},
-		ClientCAs:    certPool,
-		ClientAuth:   clientAuthPolicy,
-		MinVersion:   0,
-	}
+func setSSLVariable(ca, key, cert string) {
+	variable.SysVars["have_openssl"].Value = "YES"
+	variable.SysVars["have_ssl"].Value = "YES"
+	variable.SysVars["ssl_cert"].Value = cert
+	variable.SysVars["ssl_key"].Value = key
+	variable.SysVars["ssl_ca"].Value = ca
 }
 
 // Run runs the server.
@@ -326,11 +287,6 @@ func (s *Server) Run() error {
 			logutil.Logger(context.Background()).Error("accept failed", zap.Error(err))
 			return errors.Trace(err)
 		}
-		if s.shouldStopListener() {
-			err = conn.Close()
-			terror.Log(errors.Trace(err))
-			break
-		}
 
 		clientConn := s.newConn(conn)
 
@@ -357,23 +313,6 @@ func (s *Server) Run() error {
 		}
 
 		go s.onConn(clientConn)
-	}
-	err := s.listener.Close()
-	terror.Log(errors.Trace(err))
-	s.listener = nil
-	for {
-		metrics.ServerEventCounter.WithLabelValues(metrics.EventHang).Inc()
-		logutil.Logger(context.Background()).Error("listener stopped, waiting for manual kill.")
-		time.Sleep(time.Minute)
-	}
-}
-
-func (s *Server) shouldStopListener() bool {
-	select {
-	case <-s.stopListenerCh:
-		return true
-	default:
-		return false
 	}
 }
 
@@ -404,6 +343,7 @@ func (s *Server) Close() {
 func (s *Server) onConn(conn *clientConn) {
 	ctx := logutil.WithConnID(context.Background(), conn.connectionID)
 	if err := conn.handshake(ctx); err != nil {
+		terror.Log(err)
 		if plugin.IsEnable(plugin.Audit) {
 			conn.ctx.GetSessionVars().ConnectionInfo = conn.connectInfo()
 		}
@@ -543,6 +483,15 @@ func (s *Server) Kill(connectionID uint64, query bool) {
 		atomic.StoreInt32(&conn.status, connStatusWaitShutdown)
 	}
 	killConn(conn)
+}
+
+// UpdateTLSConfig implements the SessionManager interface.
+func (s *Server) UpdateTLSConfig(cfg *tls.Config) {
+	atomic.StorePointer(&s.tlsConfig, unsafe.Pointer(cfg))
+}
+
+func (s *Server) getTLSConfig() *tls.Config {
+	return (*tls.Config)(atomic.LoadPointer(&s.tlsConfig))
 }
 
 func killConn(conn *clientConn) {

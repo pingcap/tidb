@@ -235,6 +235,20 @@ func (e *ShowExec) fetchShowBind() error {
 	}
 	parser := parser.New()
 	for _, bindData := range bindRecords {
+		// Deleted bind record won't have bind sql.
+		if bindData.BindSQL == "" {
+			e.appendRow([]interface{}{
+				bindData.OriginalSQL,
+				bindData.BindSQL,
+				bindData.Db,
+				bindData.Status,
+				bindData.CreateTime,
+				bindData.UpdateTime,
+				bindData.Charset,
+				bindData.Collation,
+			})
+			continue
+		}
 		stmt, err := parser.ParseOneStmt(bindData.BindSQL, bindData.Charset, bindData.Collation)
 		if err != nil {
 			return err

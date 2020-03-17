@@ -41,6 +41,10 @@ const (
 	DefTxnEntryCountLimit = 300 * 1000
 	// DefTxnTotalSizeLimit is the default value of TxnTxnTotalSizeLimit.
 	DefTxnTotalSizeLimit = 100 * 1024 * 1024
+	// DefMaxIndexLength is the maximum index length(in bytes). This value is consistent with MySQL.
+	DefMaxIndexLength = 3072
+	// DefMaxOfMaxIndexLength is the maximum index length(in bytes) for TiDB v3.0.7 and previous version.
+	DefMaxOfMaxIndexLength = 3072 * 4
 )
 
 // Valid config maps
@@ -90,6 +94,7 @@ type Config struct {
 	Plugin              Plugin            `toml:"plugin" json:"plugin"`
 	PessimisticTxn      PessimisticTxn    `toml:"pessimistic-txn" json:"pessimistic-txn"`
 	CheckMb4ValueInUTF8 bool              `toml:"check-mb4-value-in-utf8" json:"check-mb4-value-in-utf8"`
+	MaxIndexLength      int               `toml:"max-index-length" json:"max-index-length"`
 	// AlterPrimaryKey is used to control alter primary key feature.
 	AlterPrimaryKey bool `toml:"alter-primary-key" json:"alter-primary-key"`
 	// TreatOldVersionUTF8AsUTF8MB4 is use to treat old version table/column UTF8 charset as UTF8MB4. This is for compatibility.
@@ -126,13 +131,14 @@ type Log struct {
 
 // Security is the security section of the config.
 type Security struct {
-	SkipGrantTable bool   `toml:"skip-grant-table" json:"skip-grant-table"`
-	SSLCA          string `toml:"ssl-ca" json:"ssl-ca"`
-	SSLCert        string `toml:"ssl-cert" json:"ssl-cert"`
-	SSLKey         string `toml:"ssl-key" json:"ssl-key"`
-	ClusterSSLCA   string `toml:"cluster-ssl-ca" json:"cluster-ssl-ca"`
-	ClusterSSLCert string `toml:"cluster-ssl-cert" json:"cluster-ssl-cert"`
-	ClusterSSLKey  string `toml:"cluster-ssl-key" json:"cluster-ssl-key"`
+	SkipGrantTable  bool     `toml:"skip-grant-table" json:"skip-grant-table"`
+	SSLCA           string   `toml:"ssl-ca" json:"ssl-ca"`
+	SSLCert         string   `toml:"ssl-cert" json:"ssl-cert"`
+	SSLKey          string   `toml:"ssl-key" json:"ssl-key"`
+	ClusterSSLCA    string   `toml:"cluster-ssl-ca" json:"cluster-ssl-ca"`
+	ClusterSSLCert  string   `toml:"cluster-ssl-cert" json:"cluster-ssl-cert"`
+	ClusterSSLKey   string   `toml:"cluster-ssl-key" json:"cluster-ssl-key"`
+	ClusterVerifyCN []string `toml:"cluster-verify-cn" json:"cluster-verify-cn"`
 }
 
 // The ErrConfigValidationFailed error is used so that external callers can do a type assertion
@@ -149,47 +155,39 @@ func (e *ErrConfigValidationFailed) Error() string {
 }
 
 // ToTLSConfig generates tls's config based on security section of the config.
-func (s *Security) ToTLSConfig() (tlsConfig *tls.Config, err error) {
+func (s *Security) ToTLSConfig() (*tls.Config, error) {
+	var tlsConfig *tls.Config
 	if len(s.ClusterSSLCA) != 0 {
-		certPool := x509.NewCertPool()
-		// Create a certificate pool from the certificate authority
-		var ca []byte
-		ca, err = ioutil.ReadFile(s.ClusterSSLCA)
-		if err != nil {
-			err = errors.Errorf("could not read ca certificate: %s", err)
-			return
-		}
-		// Append the certificates from the CA
-		if !certPool.AppendCertsFromPEM(ca) {
-			err = errors.New("failed to append ca certs")
-			return
-		}
-		tlsConfig = &tls.Config{
-			RootCAs: certPool,
+		var certificates = make([]tls.Certificate, 0)
+		if len(s.ClusterSSLCert) != 0 && len(s.ClusterSSLKey) != 0 {
+			// Load the client certificates from disk
+			certificate, err := tls.LoadX509KeyPair(s.ClusterSSLCert, s.ClusterSSLKey)
+			if err != nil {
+				return nil, errors.Errorf("could not load client key pair: %s", err)
+			}
+			certificates = append(certificates, certificate)
 		}
 
-		if len(s.ClusterSSLCert) != 0 && len(s.ClusterSSLKey) != 0 {
-			getCert := func() (*tls.Certificate, error) {
-				// Load the client certificates from disk
-				cert, err := tls.LoadX509KeyPair(s.ClusterSSLCert, s.ClusterSSLKey)
-				if err != nil {
-					return nil, errors.Errorf("could not load client key pair: %s", err)
-				}
-				return &cert, nil
-			}
-			// pre-test cert's loading.
-			if _, err = getCert(); err != nil {
-				return
-			}
-			tlsConfig.GetClientCertificate = func(info *tls.CertificateRequestInfo) (certificate *tls.Certificate, err error) {
-				return getCert()
-			}
-			tlsConfig.GetCertificate = func(info *tls.ClientHelloInfo) (certificate *tls.Certificate, err error) {
-				return getCert()
-			}
+		// Create a certificate pool from the certificate authority
+		certPool := x509.NewCertPool()
+		ca, err := ioutil.ReadFile(s.ClusterSSLCA)
+		if err != nil {
+			return nil, errors.Errorf("could not read ca certificate: %s", err)
+		}
+
+		// Append the certificates from the CA
+		if !certPool.AppendCertsFromPEM(ca) {
+			return nil, errors.New("failed to append ca certs")
+		}
+
+		tlsConfig = &tls.Config{
+			Certificates: certificates,
+			RootCAs:      certPool,
+			ClientCAs:    certPool,
 		}
 	}
-	return
+
+	return tlsConfig, nil
 }
 
 // Status is the status section of the config.
@@ -380,6 +378,7 @@ var defaultConf = Config{
 	EnableStreaming:              false,
 	EnableBatchDML:               false,
 	CheckMb4ValueInUTF8:          true,
+	MaxIndexLength:               3072,
 	AlterPrimaryKey:              false,
 	TreatOldVersionUTF8AsUTF8MB4: true,
 	SplitRegionMaxNum:            1000,
@@ -625,6 +624,9 @@ func (c *Config) Valid() error {
 	}
 	if c.Store == "mocktikv" && !c.RunDDL {
 		return fmt.Errorf("can't disable DDL on mocktikv")
+	}
+	if c.MaxIndexLength < DefMaxIndexLength || c.MaxIndexLength > DefMaxOfMaxIndexLength {
+		return fmt.Errorf("max-index-length should be [%d, %d]", DefMaxIndexLength, DefMaxOfMaxIndexLength)
 	}
 	if c.Log.File.MaxSize > MaxLogFileSize {
 		return fmt.Errorf("invalid max log file size=%v which is larger than max=%v", c.Log.File.MaxSize, MaxLogFileSize)

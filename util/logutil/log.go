@@ -95,7 +95,7 @@ type contextHook struct{}
 // Fire implements logrus.Hook interface
 // https://github.com/sirupsen/logrus/issues/63
 func (hook *contextHook) Fire(entry *log.Entry) error {
-	pc := make([]uintptr, 4)
+	pc := make([]uintptr, 6)
 	cnt := runtime.Callers(6, pc)
 
 	for i := 0; i < cnt; i++ {

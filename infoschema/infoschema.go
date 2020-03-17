@@ -100,12 +100,6 @@ type InfoSchema interface {
 	FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo)
 }
 
-// Information Schema Name.
-const (
-	Name      = util.InformationSchemaName
-	LowerName = util.InformationSchemaLowerName
-)
-
 type sortedTables []table.Table
 
 func (s sortedTables) Len() int {
@@ -416,7 +410,7 @@ func initInfoSchemaDB() {
 	}
 	infoSchemaDB = &model.DBInfo{
 		ID:      dbID,
-		Name:    model.NewCIStr(Name),
+		Name:    util.InformationSchemaName,
 		Charset: mysql.DefaultCharset,
 		Collate: mysql.DefaultCollationName,
 		Tables:  infoSchemaTables,

@@ -16,8 +16,10 @@ package util
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"crypto/x509/pkix"
 	"fmt"
+	"io/ioutil"
 	"runtime"
 	"strconv"
 	"strings"
@@ -25,6 +27,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/util/logutil"
@@ -137,23 +140,19 @@ func SyntaxWarn(err error) error {
 	return parser.ErrParse.GenWithStackByArgs(syntaxErrorPrefix, err.Error())
 }
 
-const (
+var (
 	// InformationSchemaName is the `INFORMATION_SCHEMA` database name.
-	InformationSchemaName = "INFORMATION_SCHEMA"
-	// InformationSchemaLowerName is the `INFORMATION_SCHEMA` database lower name.
-	InformationSchemaLowerName = "information_schema"
+	InformationSchemaName = model.CIStr{O: "INFORMATION_SCHEMA", L: "information_schema"}
 	// PerformanceSchemaName is the `PERFORMANCE_SCHEMA` database name.
-	PerformanceSchemaName = "PERFORMANCE_SCHEMA"
-	// PerformanceSchemaLowerName is the `PERFORMANCE_SCHEMA` database lower name.
-	PerformanceSchemaLowerName = "performance_schema"
+	PerformanceSchemaName = model.CIStr{O: "PERFORMANCE_SCHEMA", L: "performance_schema"}
 	// MetricSchemaName is the `METRIC_SCHEMA` database name.
-	MetricSchemaName = "METRIC_SCHEMA"
+	MetricSchemaName = model.CIStr{O: "METRIC_SCHEMA", L: "metric_schema"}
 )
 
 // IsMemOrSysDB uses to check whether dbLowerName is memory database or system database.
 func IsMemOrSysDB(dbLowerName string) bool {
 	switch dbLowerName {
-	case InformationSchemaLowerName, PerformanceSchemaLowerName, mysql.SystemDB, MetricSchemaName:
+	case InformationSchemaName.L, PerformanceSchemaName.L, mysql.SystemDB, MetricSchemaName.L:
 		return true
 	}
 	return false
@@ -302,4 +301,51 @@ func init() {
 	for key, value := range pkixAttributeTypeNames {
 		pkixTypeNameAttributes[value] = key
 	}
+}
+
+// LoadTLSCertificates loads CA/KEY/CERT for special paths.
+func LoadTLSCertificates(ca, key, cert string) (tlsConfig *tls.Config, err error) {
+	if len(cert) == 0 || len(key) == 0 {
+		return
+	}
+
+	var tlsCert tls.Certificate
+	tlsCert, err = tls.LoadX509KeyPair(cert, key)
+	if err != nil {
+		logutil.Logger(context.Background()).Warn("load x509 failed", zap.Error(err))
+		err = errors.Trace(err)
+		return
+	}
+
+	// Try loading CA cert.
+	clientAuthPolicy := tls.NoClientCert
+	var certPool *x509.CertPool
+	if len(ca) > 0 {
+		var caCert []byte
+		caCert, err = ioutil.ReadFile(ca)
+		if err != nil {
+			logutil.Logger(context.Background()).Warn("read file failed", zap.Error(err))
+			err = errors.Trace(err)
+			return
+		}
+		certPool = x509.NewCertPool()
+		if certPool.AppendCertsFromPEM(caCert) {
+			clientAuthPolicy = tls.VerifyClientCertIfGiven
+		}
+	}
+	tlsConfig = &tls.Config{
+		Certificates: []tls.Certificate{tlsCert},
+		ClientCAs:    certPool,
+		ClientAuth:   clientAuthPolicy,
+	}
+	return
+}
+
+// IsTLSExpiredError checks error is caused by TLS expired.
+func IsTLSExpiredError(err error) bool {
+	err = errors.Cause(err)
+	if inval, ok := err.(x509.CertificateInvalidError); !ok || inval.Reason != x509.Expired {
+		return false
+	}
+	return true
 }

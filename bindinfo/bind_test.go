@@ -392,6 +392,9 @@ func (s *testSuite) TestGlobalAndSessionBindingBothExist(c *C) {
 	// Session bindings should be able to cover the global bindings.
 	tk.MustExec("drop session binding for select * from t where a = 10")
 	tk.MustContains("select * from t where a = -1", "IndexLookUp")
+	res := tk.MustQuery("show session bindings")
+	c.Assert(len(res.Rows()), Equals, 1)
+	c.Assert(res.Rows()[0][3], Equals, "deleted")
 }
 
 func (s *testSuite) TestExplain(c *C) {
