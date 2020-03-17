@@ -17,6 +17,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"go.etcd.io/etcd/clientv3"
+	"go.etcd.io/etcd/clientv3/concurrency"
+	"go.uber.org/zap"
 	"net/http"
 	"os"
 	"strconv"
@@ -38,9 +41,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/printer"
-	"go.etcd.io/etcd/clientv3"
-	"go.etcd.io/etcd/clientv3/concurrency"
-	"go.uber.org/zap"
 )
 
 const (
@@ -69,6 +69,9 @@ const (
 	// TablePrometheusCacheExpiry is the expiry time for prometheus address cache.
 	TablePrometheusCacheExpiry = 10 * time.Second
 )
+
+// ErrPrometheusAddIsNotSet is the error that Prometheus address is not set in PD and etcd
+var ErrPrometheusAddrIsNotSet = errors.New("response body is missing")
 
 // InfoSyncer stores server info to etcd when the tidb-server starts and delete when tidb-server shuts down.
 type InfoSyncer struct {
@@ -519,7 +522,7 @@ func (is *InfoSyncer) getPrometheusAddr() (string, error) {
 			return "", errors.Trace(err)
 		}
 		if values == "" {
-			return "", errors.Errorf("prometheus address is not set in etcd")
+			return "", ErrPrometheusAddrIsNotSet
 		}
 		var prometheus prometheus
 		err = json.Unmarshal([]byte(values), &prometheus)
