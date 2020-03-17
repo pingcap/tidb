@@ -14,14 +14,12 @@
 package infoschema_test
 
 import (
-	"context"
 	"crypto/tls"
 	"fmt"
 	"net"
 	"net/http/httptest"
 	"os"
 	"runtime"
-	"strconv"
 	"strings"
 	"time"
 
@@ -35,7 +33,6 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -44,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/set"
@@ -271,8 +267,8 @@ func (s *testTableSuite) TestInfoschemaFieldValue(c *C) {
 	tk.MustQuery("SELECT user,host,command FROM information_schema.processlist;").Check(testkit.Rows("root 127.0.0.1 Query"))
 
 	// Test for all system tables `TABLE_TYPE` is `SYSTEM VIEW`.
-	rows1 := tk.MustQuery("select count(*) from information_schema.tables where table_schema in ('INFORMATION_SCHEMA','PERFORMANCE_SCHEMA','METRICS_SCHEMA','INSPECTION_SCHEMA');").Rows()
-	rows2 := tk.MustQuery("select count(*) from information_schema.tables where table_schema in ('INFORMATION_SCHEMA','PERFORMANCE_SCHEMA','METRICS_SCHEMA','INSPECTION_SCHEMA') and  table_type = 'SYSTEM VIEW';").Rows()
+	rows1 := tk.MustQuery("select count(*) from information_schema.tables where table_schema in ('INFORMATION_SCHEMA','PERFORMANCE_SCHEMA','METRICS_SCHEMA');").Rows()
+	rows2 := tk.MustQuery("select count(*) from information_schema.tables where table_schema in ('INFORMATION_SCHEMA','PERFORMANCE_SCHEMA','METRICS_SCHEMA') and  table_type = 'SYSTEM VIEW';").Rows()
 	c.Assert(rows1, DeepEquals, rows2)
 	// Test for system table default value
 	tk.MustQuery("show create table information_schema.PROCESSLIST").Check(
@@ -635,154 +631,9 @@ func (s *testTableSuite) TestSlowQuery(c *C) {
 	c.Assert(rows[0][0], Equals, sql)
 }
 
-func (s *testTableSuite) TestForAnalyzeStatus(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	statistics.ClearHistoryJobs()
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (a int, b int, index idx(a))")
-	tk.MustExec("insert into t values (1,2),(3,4)")
-	tk.MustExec("analyze table t")
-
-	result := tk.MustQuery("select * from information_schema.analyze_status").Sort()
-
-	c.Assert(len(result.Rows()), Equals, 2)
-	c.Assert(result.Rows()[0][0], Equals, "test")
-	c.Assert(result.Rows()[0][1], Equals, "t")
-	c.Assert(result.Rows()[0][2], Equals, "")
-	c.Assert(result.Rows()[0][3], Equals, "analyze columns")
-	c.Assert(result.Rows()[0][4], Equals, "2")
-	c.Assert(result.Rows()[0][5], NotNil)
-	c.Assert(result.Rows()[0][6], Equals, "finished")
-
-	c.Assert(len(result.Rows()), Equals, 2)
-	c.Assert(result.Rows()[1][0], Equals, "test")
-	c.Assert(result.Rows()[1][1], Equals, "t")
-	c.Assert(result.Rows()[1][2], Equals, "")
-	c.Assert(result.Rows()[1][3], Equals, "analyze index idx")
-	c.Assert(result.Rows()[1][4], Equals, "2")
-	c.Assert(result.Rows()[1][5], NotNil)
-	c.Assert(result.Rows()[1][6], Equals, "finished")
-
-	//test the privilege of new user for information_schema.analyze_status
-	tk.MustExec("create user analyze_tester")
-	analyzeTester := testkit.NewTestKit(c, s.store)
-	analyzeTester.MustExec("use information_schema")
-	c.Assert(analyzeTester.Se.Auth(&auth.UserIdentity{
-		Username: "analyze_tester",
-		Hostname: "127.0.0.1",
-	}, nil, nil), IsTrue)
-	analyzeTester.MustQuery("show analyze status").Check([][]interface{}{})
-	analyzeTester.MustQuery("select * from information_schema.ANALYZE_STATUS;").Check([][]interface{}{})
-
-	//test the privilege of user with privilege of test.t1 for information_schema.analyze_status
-	tk.MustExec("create table t1 (a int, b int, index idx(a))")
-	tk.MustExec("insert into t values (1,2),(3,4)")
-	tk.MustExec("analyze table t1")
-	tk.MustExec("CREATE ROLE r_t1 ;")
-	tk.MustExec("GRANT ALL PRIVILEGES ON test.t1 TO r_t1;")
-	tk.MustExec("GRANT r_t1 TO analyze_tester;")
-	analyzeTester.MustExec("set role r_t1")
-	resultT1 := tk.MustQuery("select * from information_schema.analyze_status where TABLE_NAME='t1'").Sort()
-	c.Assert(len(resultT1.Rows()), Greater, 0)
-}
-
-func (s *testTableSuite) TestForServersInfo(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	result := tk.MustQuery("select * from information_schema.TIDB_SERVERS_INFO")
-	c.Assert(len(result.Rows()), Equals, 1)
-
-	serversInfo, err := infosync.GetAllServerInfo(context.Background())
-	c.Assert(err, IsNil)
-	c.Assert(len(serversInfo), Equals, 1)
-
-	for _, info := range serversInfo {
-		c.Assert(result.Rows()[0][0], Equals, info.ID)
-		c.Assert(result.Rows()[0][1], Equals, info.IP)
-		c.Assert(result.Rows()[0][2], Equals, strconv.FormatInt(int64(info.Port), 10))
-		c.Assert(result.Rows()[0][3], Equals, strconv.FormatInt(int64(info.StatusPort), 10))
-		c.Assert(result.Rows()[0][4], Equals, info.Lease)
-		c.Assert(result.Rows()[0][5], Equals, info.Version)
-		c.Assert(result.Rows()[0][6], Equals, info.GitHash)
-	}
-}
-
 func (s *testTableSuite) TestColumnStatistics(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustQuery("select * from information_schema.column_statistics").Check(testkit.Rows())
-}
-
-type mockStore struct {
-	tikv.Storage
-	host string
-}
-
-func (s *mockStore) EtcdAddrs() []string    { return []string{s.host} }
-func (s *mockStore) TLSConfig() *tls.Config { panic("not implemented") }
-func (s *mockStore) StartGCWorker() error   { panic("not implemented") }
-
-func (s *testClusterTableSuite) TestTiDBClusterInfo(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	err := tk.QueryToErr("select * from information_schema.cluster_info")
-	c.Assert(err, NotNil)
-	mockAddr := s.mockAddr
-	store := &mockStore{
-		s.store.(tikv.Storage),
-		mockAddr,
-	}
-
-	// information_schema.cluster_info
-	tk = testkit.NewTestKit(c, store)
-	tidbStatusAddr := fmt.Sprintf(":%d", config.GetGlobalConfig().Status.StatusPort)
-	row := func(cols ...string) string { return strings.Join(cols, " ") }
-	tk.MustQuery("select type, instance, status_address, version, git_hash from information_schema.cluster_info").Check(testkit.Rows(
-		row("tidb", ":4000", tidbStatusAddr, "5.7.25-TiDB-None", "None"),
-		row("pd", mockAddr, mockAddr, "4.0.0-alpha", "mock-pd-githash"),
-		row("tikv", "127.0.0.1:20160", mockAddr, "4.0.0-alpha", "mock-tikv-githash"),
-	))
-	startTime := s.startTime.Format(time.RFC3339)
-	tk.MustQuery("select type, instance, start_time from information_schema.cluster_info where type != 'tidb'").Check(testkit.Rows(
-		row("pd", mockAddr, startTime),
-		row("tikv", "127.0.0.1:20160", startTime),
-	))
-
-	// information_schema.cluster_config
-	instances := []string{
-		"pd,127.0.0.1:11080," + mockAddr + ",mock-version,mock-githash",
-		"tidb,127.0.0.1:11080," + mockAddr + ",mock-version,mock-githash",
-		"tikv,127.0.0.1:11080," + mockAddr + ",mock-version,mock-githash",
-	}
-	fpExpr := `return("` + strings.Join(instances, ";") + `")`
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockClusterInfo", fpExpr), IsNil)
-	defer func() { c.Assert(failpoint.Disable("github.com/pingcap/tidb/infoschema/mockClusterInfo"), IsNil) }()
-	tk.MustQuery("select * from information_schema.cluster_config").Check(testkit.Rows(
-		"pd 127.0.0.1:11080 key1 value1",
-		"pd 127.0.0.1:11080 key2.nest1 n-value1",
-		"pd 127.0.0.1:11080 key2.nest2 n-value2",
-		"pd 127.0.0.1:11080 key3.key4.nest3 n-value4",
-		"pd 127.0.0.1:11080 key3.key4.nest4 n-value5",
-		"pd 127.0.0.1:11080 key3.nest1 n-value1",
-		"pd 127.0.0.1:11080 key3.nest2 n-value2",
-		"tidb 127.0.0.1:11080 key1 value1",
-		"tidb 127.0.0.1:11080 key2.nest1 n-value1",
-		"tidb 127.0.0.1:11080 key2.nest2 n-value2",
-		"tidb 127.0.0.1:11080 key3.key4.nest3 n-value4",
-		"tidb 127.0.0.1:11080 key3.key4.nest4 n-value5",
-		"tidb 127.0.0.1:11080 key3.nest1 n-value1",
-		"tidb 127.0.0.1:11080 key3.nest2 n-value2",
-		"tikv 127.0.0.1:11080 key1 value1",
-		"tikv 127.0.0.1:11080 key2.nest1 n-value1",
-		"tikv 127.0.0.1:11080 key2.nest2 n-value2",
-		"tikv 127.0.0.1:11080 key3.key4.nest3 n-value4",
-		"tikv 127.0.0.1:11080 key3.key4.nest4 n-value5",
-		"tikv 127.0.0.1:11080 key3.nest1 n-value1",
-		"tikv 127.0.0.1:11080 key3.nest2 n-value2",
-	))
-	tk.MustQuery("select TYPE, `KEY`, VALUE from information_schema.cluster_config where `key`='key3.key4.nest4' order by type").Check(testkit.Rows(
-		"pd key3.key4.nest4 n-value5",
-		"tidb key3.key4.nest4 n-value5",
-		"tikv key3.key4.nest4 n-value5",
-	))
 }
 
 func (s *testTableSuite) TestReloadDropDatabase(c *C) {
@@ -892,7 +743,6 @@ func (s *testTableSuite) TestSystemSchemaID(c *C) {
 	s.checkSystemSchemaTableID(c, "information_schema", autoid.InformationSchemaDBID, 1, 10000, uniqueIDMap)
 	s.checkSystemSchemaTableID(c, "performance_schema", autoid.PerformanceSchemaDBID, 10000, 20000, uniqueIDMap)
 	s.checkSystemSchemaTableID(c, "metrics_schema", autoid.MetricSchemaDBID, 20000, 30000, uniqueIDMap)
-	s.checkSystemSchemaTableID(c, "inspection_schema", autoid.InspectionSchemaDBID, 30000, 40000, uniqueIDMap)
 }
 
 func (s *testTableSuite) checkSystemSchemaTableID(c *C, dbName string, dbID, start, end int64, uniqueIDMap map[int64]string) {

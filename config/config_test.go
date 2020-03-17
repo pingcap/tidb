@@ -28,7 +28,7 @@ import (
 	tracing "github.com/uber/jaeger-client-go/config"
 )
 
-var _ = Suite(&testConfigSuite{})
+var _ = SerialSuites(&testConfigSuite{})
 
 type testConfigSuite struct{}
 
