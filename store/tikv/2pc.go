@@ -24,6 +24,7 @@ import (
 	"sync/atomic"
 	"time"
 	"unsafe"
+	"runtime/debug"
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
@@ -331,7 +332,7 @@ func (c *twoPhaseCommitter) commit(ctx context.Context) error {
 
 func (c *twoPhaseCommitter) do(bo *Backoffer, action twoPhaseCommitAction) error {
 	txn := c.txn
-	iter, err := txn.us.Iter(nil, nil)
+	iter, err := txn.us.GetMemBuffer().Iter(nil, nil)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -439,6 +440,11 @@ func (c *twoPhaseCommitter) takeBatchMutationFromIterator(bo *Backoffer, iter, l
 		v := currIter.Value()
 		// fmt.Println("key = ", k, "value = ", len(v))
 
+		if bytes.HasPrefix(k, []byte{'m'}) {
+			fmt.Println("so there is meta key", k)
+			// debug.PrintStack()
+		}
+
 		if lastLoc == nil {
 			var err error
 			lastLoc, err = c.store.regionCache.LocateKey(bo, k)
@@ -454,15 +460,22 @@ func (c *twoPhaseCommitter) takeBatchMutationFromIterator(bo *Backoffer, iter, l
 		txnSize = txnSize + len(k) + len(v)
 
 		var op pb.Op
+		skip := false
 		if equal {
 			op = pb.Op_Lock
 			if lockIter.Next() != nil {}
 		} else if currIter == lockIter {
 			op = pb.Op_Lock
 		} else {
-			op = c.getOpByKeyValue(k, v)
+			if tablecodec.IsUntouchedIndexKValue(k, v) {
+				skip = true
+			} else {
+				op = c.getOpByKeyValue(k, v)
+			}
 		}
-		mutations.push(op, k, v, c.isPessimistic)
+		if !skip {
+			mutations.push(op, k, v, c.isPessimistic)
+		}
 
 		if err := currIter.Next(); err != nil {
 			return nil, false, errors.Trace(err)
@@ -831,9 +844,15 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch *batchMutations, txnSize 
 	})
 
 	// fmt.Println("handle single batch === ", len(mutations))
-	// for _, mut := range mutations {
-		// fmt.Println("key = ", mut.Op, mut.Key, mut.Value)
-	// }
+
+	if len(c.primary()) == 0 {
+		fmt.Println("what the fuck????!!!")
+		for _, mut := range mutations {
+			fmt.Println("key = ", mut.Op, mut.Key, mut.Value)
+		}
+		debug.PrintStack()
+	}
+
 	req := &pb.PrewriteRequest{
 		Mutations:         mutations,
 		PrimaryLock:       c.primary(),

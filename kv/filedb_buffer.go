@@ -14,7 +14,10 @@
 package kv
 
 import (
+	"fmt"
+	"bytes"
 	"context"
+	"runtime/debug"
 
 	"github.com/pingcap/errors"
 	"github.com/syndtr/goleveldb/leveldb"
@@ -74,6 +77,10 @@ func (i *fileDBBufferIter) Valid() bool {
 }
 
 func (i *fileDBBufferIter) Key() Key {
+	if bytes.HasPrefix(i.Iterator.Key(), []byte{'m'}) {
+		fmt.Println("ITER KEY be META ???a")
+		debug.PrintStack()
+	}
 	return i.Iterator.Key()
 }
 
@@ -102,6 +109,10 @@ func (mb *fileDBBuffer) IterReverse(k Key) (Iterator, error) {
 }
 
 func (mb *fileDBBuffer) Set(k Key, v []byte) error {
+	if bytes.HasPrefix(k, []byte{'m'}) {
+		fmt.Println("What the FUCK!! set should not meta")
+		debug.PrintStack()
+	}
 	err := mb.db.Put(k, v, nil)
 	if err != nil {
 		return errors.Trace(err)
