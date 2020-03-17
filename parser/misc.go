@@ -856,7 +856,7 @@ var hintTokenMap = map[string]int{
 	"QUERY_TYPE":              hintQueryType,
 	"READ_CONSISTENT_REPLICA": hintReadConsistentReplica,
 	"READ_FROM_STORAGE":       hintReadFromStorage,
-	"SM_JOIN":                 hintSMJoin,
+	"MERGE_JOIN":              hintSMJoin,
 	"STREAM_AGG":              hintStreamAgg,
 	"SWAP_JOIN_INPUTS":        hintSwapJoinInputs,
 	"USE_INDEX_MERGE":         hintUseIndexMerge,
