@@ -67,9 +67,20 @@ func tableNames2HintTableInfo(tableNames []model.CIStr) []hintTableInfo {
 	if len(tableNames) == 0 {
 		return nil
 	}
+<<<<<<< HEAD
 	hintTables := make([]hintTableInfo, 0, len(tableNames))
 	for _, tableName := range tableNames {
 		hintTables = append(hintTables, hintTableInfo{name: tableName})
+=======
+	hintTableInfos := make([]hintTableInfo, len(hintTables))
+	defaultDBName := model.NewCIStr(ctx.GetSessionVars().CurrentDB)
+	for i, hintTable := range hintTables {
+		tableInfo := hintTableInfo{dbName: hintTable.DBName, tblName: hintTable.TableName, selectOffset: p.getHintOffset(hintTable.QBName, nodeType, currentOffset)}
+		if tableInfo.dbName.L == "" {
+			tableInfo.dbName = defaultDBName
+		}
+		hintTableInfos[i] = tableInfo
+>>>>>>> 5268094... planner: correct the dbName for hint (#15319)
 	}
 	return hintTables
 }
