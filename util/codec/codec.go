@@ -90,7 +90,9 @@ func encode(sc *stmtctx.StatementContext, b []byte, vals []types.Datum, comparab
 		case types.KindFloat32, types.KindFloat64:
 			b = append(b, floatFlag)
 			b = EncodeFloat(b, vals[i].GetFloat64())
-		case types.KindString, types.KindBytes:
+		case types.KindString:
+			b = encodeString(b, vals[i], comparable)
+		case types.KindBytes:
 			b = encodeBytes(b, vals[i].GetBytes(), comparable)
 		case types.KindMysqlTime:
 			b = append(b, uintFlag)
@@ -191,6 +193,13 @@ func EncodeMySQLTime(sc *stmtctx.StatementContext, t types.Time, tp byte, b []by
 	}
 	b = EncodeUint(b, v)
 	return b, nil
+}
+
+func encodeString(b []byte, val types.Datum, comparable bool) []byte {
+	if collate.NewCollationEnabled() && comparable {
+		return encodeBytes(b, collate.GetCollator(val.Collation()).Key(val.GetString(), collate.CollatorOption{PadLen: val.Length()}), true)
+	}
+	return encodeBytes(b, val.GetBytes(), comparable)
 }
 
 func encodeBytes(b []byte, v []byte, comparable bool) []byte {
@@ -308,7 +317,7 @@ func encodeHashChunkRowIdx(sc *stmtctx.StatementContext, row chunk.Row, tp *type
 	case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		flag = compactBytesFlag
 		b = row.GetBytes(idx)
-		b = convertByCollation(b, tp)
+		b = ConvertByCollation(b, tp)
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		flag = uintFlag
 		t := row.GetTime(idx)
@@ -446,7 +455,7 @@ func HashChunkSelected(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk
 			} else {
 				buf[0] = compactBytesFlag
 				b = column.GetBytes(i)
-				b = convertByCollation(b, tp)
+				b = ConvertByCollation(b, tp)
 			}
 
 			// As the golang doc described, `Hash.Write` never returns an error.
@@ -771,7 +780,7 @@ func DecodeOne(b []byte) (remain []byte, d types.Datum, err error) {
 		if err == nil {
 			// use max fsp, let outer to do round manually.
 			v := types.Duration{Duration: time.Duration(r), Fsp: types.MaxFsp}
-			d.SetValue(v)
+			d.SetMysqlDuration(v)
 		}
 	case jsonFlag:
 		var size int
@@ -1166,7 +1175,7 @@ func HashGroupKey(sc *stmtctx.StatementContext, n int, col *chunk.Column, buf []
 			if col.IsNull(i) {
 				buf[i] = append(buf[i], NilFlag)
 			} else {
-				buf[i] = encodeBytes(buf[i], convertByCollation(col.GetBytes(i), ft), false)
+				buf[i] = encodeBytes(buf[i], ConvertByCollation(col.GetBytes(i), ft), false)
 			}
 		}
 	default:
@@ -1175,7 +1184,14 @@ func HashGroupKey(sc *stmtctx.StatementContext, n int, col *chunk.Column, buf []
 	return buf, nil
 }
 
-func convertByCollation(raw []byte, tp *types.FieldType) []byte {
+// ConvertByCollation converts these bytes according to its collation.
+func ConvertByCollation(raw []byte, tp *types.FieldType) []byte {
 	collator := collate.GetCollator(tp.Collate)
 	return collator.Key(string(hack.String(raw)), collate.NewCollatorOption(tp.Flen))
+}
+
+// ConvertByCollationStr converts this string according to its collation.
+func ConvertByCollationStr(str string, tp *types.FieldType) string {
+	collator := collate.GetCollator(tp.Collate)
+	return string(hack.String(collator.Key(str, collate.NewCollatorOption(tp.Flen))))
 }

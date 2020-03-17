@@ -136,36 +136,7 @@ func (txn *tikvTxn) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]b
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
-
-	if txn.IsReadOnly() {
-		return txn.snapshot.BatchGet(ctx, keys)
-	}
-	bufferValues := make([][]byte, len(keys))
-	shrinkKeys := make([]kv.Key, 0, len(keys))
-	for i, key := range keys {
-		val, err := txn.GetMemBuffer().Get(ctx, key)
-		if kv.IsErrNotFound(err) {
-			shrinkKeys = append(shrinkKeys, key)
-			continue
-		}
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if len(val) != 0 {
-			bufferValues[i] = val
-		}
-	}
-	storageValues, err := txn.snapshot.BatchGet(ctx, shrinkKeys)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	for i, key := range keys {
-		if bufferValues[i] == nil {
-			continue
-		}
-		storageValues[string(key)] = bufferValues[i]
-	}
-	return storageValues, nil
+	return kv.NewBufferBatchGetter(txn.GetMemBuffer(), nil, txn.snapshot).BatchGet(ctx, keys)
 }
 
 func (txn *tikvTxn) Set(k kv.Key, v []byte) error {
@@ -259,7 +230,7 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	if err := committer.initKeysAndMutations(); err != nil {
 		return errors.Trace(err)
 	}
-	if len(committer.keys) == 0 {
+	if committer.mutations.len() == 0 {
 		return nil
 	}
 
@@ -285,7 +256,7 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	// latches enabled
 	// for transactions which need to acquire latches
 	start = time.Now()
-	lock := txn.store.txnLatches.Lock(committer.startTS, committer.keys)
+	lock := txn.store.txnLatches.Lock(committer.startTS, committer.mutations.keys)
 	commitDetail := committer.getDetail()
 	commitDetail.LocalLatchTime = time.Since(start)
 	if commitDetail.LocalLatchTime > 0 {
@@ -330,7 +301,7 @@ func (txn *tikvTxn) rollbackPessimisticLocks() error {
 	if len(txn.lockKeys) == 0 {
 		return nil
 	}
-	return txn.committer.pessimisticRollbackKeys(NewBackoffer(context.Background(), cleanupMaxBackoff), txn.lockKeys)
+	return txn.committer.pessimisticRollbackMutations(NewBackoffer(context.Background(), cleanupMaxBackoff), committerMutations{keys: txn.lockKeys})
 }
 
 // lockWaitTime in ms, except that kv.LockAlwaysWait(0) means always wait lock, kv.LockNowait(-1) means nowait lock
@@ -356,6 +327,10 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 	for _, key := range keysInput {
 		if _, ok := txn.lockedMap[string(key)]; !ok {
 			keys = append(keys, key)
+		} else if lockCtx.ReturnValues {
+			// An already locked key can not return values, we add an entry to let the caller get the value
+			// in other ways.
+			lockCtx.Values[string(key)] = kv.ReturnedValue{AlreadyLocked: true}
 		}
 	}
 	txn.mu.Unlock()
@@ -387,7 +362,7 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 		// If the number of keys greater than 1, it can be on different region,
 		// concurrently execute on multiple regions may lead to deadlock.
 		txn.committer.isFirstLock = len(txn.lockKeys) == 0 && len(keys) == 1
-		err = txn.committer.pessimisticLockKeys(bo, lockCtx, keys)
+		err = txn.committer.pessimisticLockMutations(bo, lockCtx, committerMutations{keys: keys})
 		if lockCtx.Killed != nil {
 			// If the kill signal is received during waiting for pessimisticLock,
 			// pessimisticLockKeys would handle the error but it doesn't reset the flag.
@@ -408,6 +383,9 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 					wg.Wait()
 					// Sleep a little, wait for the other transaction that blocked by this transaction to acquire the lock.
 					time.Sleep(time.Millisecond * 5)
+					failpoint.Inject("SingleStmtDeadLockRetrySleep", func() {
+						time.Sleep(300 * time.Millisecond)
+					})
 				}
 			}
 			if assignedPrimaryKey {
@@ -445,7 +423,7 @@ func (txn *tikvTxn) asyncPessimisticRollback(ctx context.Context, keys [][]byte)
 		failpoint.Inject("AsyncRollBackSleep", func() {
 			time.Sleep(100 * time.Millisecond)
 		})
-		err := committer.pessimisticRollbackKeys(NewBackoffer(ctx, pessimisticRollbackMaxBackoff), keys)
+		err := committer.pessimisticRollbackMutations(NewBackoffer(ctx, pessimisticRollbackMaxBackoff).WithVars(txn.vars), committerMutations{keys: keys})
 		if err != nil {
 			logutil.Logger(ctx).Warn("[kv] pessimisticRollback failed.", zap.Error(err))
 		}
@@ -485,4 +463,8 @@ func (txn *tikvTxn) Size() int {
 
 func (txn *tikvTxn) GetMemBuffer() kv.MemBuffer {
 	return txn.us.GetMemBuffer()
+}
+
+func (txn *tikvTxn) GetSnapshot() kv.Snapshot {
+	return txn.snapshot
 }

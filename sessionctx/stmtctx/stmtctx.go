@@ -153,12 +153,15 @@ type StmtHints struct {
 	ReplicaRead             byte
 	AllowInSubqToJoinAndAgg bool
 	NoIndexMergeHint        bool
+	// EnableCascadesPlanner is use cascades planner for a single query only.
+	EnableCascadesPlanner bool
 
 	// Hint flags
 	HasAllowInSubqToJoinAndAggHint bool
 	HasMemQuotaHint                bool
 	HasReplicaReadHint             bool
 	HasMaxExecutionTime            bool
+	HasEnableCascadesPlannerHint   bool
 }
 
 // GetNowTsCached getter for nowTs, if not set get now time and cache it
@@ -352,6 +355,15 @@ func (sc *StatementContext) AppendWarning(warn error) {
 	sc.mu.Lock()
 	if len(sc.mu.warnings) < math.MaxUint16 {
 		sc.mu.warnings = append(sc.mu.warnings, SQLWarn{WarnLevelWarning, warn})
+	}
+	sc.mu.Unlock()
+}
+
+// AppendWarnings appends some warnings.
+func (sc *StatementContext) AppendWarnings(warns []SQLWarn) {
+	sc.mu.Lock()
+	if len(sc.mu.warnings) < math.MaxUint16 {
+		sc.mu.warnings = append(sc.mu.warnings, warns...)
 	}
 	sc.mu.Unlock()
 }

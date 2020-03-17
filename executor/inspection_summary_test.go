@@ -96,7 +96,7 @@ func (s *inspectionSummarySuite) TestInspectionSummary(c *C) {
 		return fpName == fpname
 	})
 
-	rs, err := tk.Se.Execute(ctx, "select * from information_schema.inspection_summary where rule='query-summary' and metric_name in ('tidb_qps', 'tidb_query_duration')")
+	rs, err := tk.Se.Execute(ctx, "select * from information_schema.inspection_summary where rule='query-summary' and metrics_name in ('tidb_qps', 'tidb_query_duration')")
 	c.Assert(err, IsNil)
 	result := tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute inspect SQL failed"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0), Commentf("unexpected warnings: %+v", tk.Se.GetSessionVars().StmtCtx.GetWarnings()))
@@ -104,8 +104,8 @@ func (s *inspectionSummarySuite) TestInspectionSummary(c *C) {
 		"query-summary tikv-0 tidb_query_duration Select 0.99 0 0 0",
 		"query-summary tikv-1 tidb_query_duration Update 0.99 2 1 3",
 		"query-summary tikv-2 tidb_query_duration Delete 0.99 5 5 5",
-		"query-summary tidb-0 tidb_qps Query, Error 0 1 1 1",
-		"query-summary tidb-0 tidb_qps Query, OK 0 0 0 0",
-		"query-summary tidb-1 tidb_qps Quit, Error 0 7 5 9",
+		"query-summary tidb-0 tidb_qps Query, Error <nil> 1 1 1",
+		"query-summary tidb-0 tidb_qps Query, OK <nil> 0 0 0",
+		"query-summary tidb-1 tidb_qps Quit, Error <nil> 7 5 9",
 	))
 }

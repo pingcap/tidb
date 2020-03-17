@@ -18,8 +18,6 @@ import (
 	"container/heap"
 	"context"
 	"fmt"
-	"io"
-	"math"
 	"os"
 	"sort"
 	"strconv"
@@ -32,9 +30,8 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/parser/terror"
-	pd "github.com/pingcap/pd/client"
+	pd "github.com/pingcap/pd/v4/client"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
@@ -1717,6 +1714,7 @@ type mergeLockScanner struct {
 	stores         map[uint64]*metapb.Store
 	receivers      mergeReceiver
 	currentLockKey []byte
+	scanLockLimit  uint32
 }
 
 type receiver struct {
@@ -1790,9 +1788,10 @@ type scanLockResult struct {
 
 func newMergeLockScanner(safePoint uint64, client tikv.Client, stores map[uint64]*metapb.Store) *mergeLockScanner {
 	return &mergeLockScanner{
-		safePoint: safePoint,
-		client:    client,
-		stores:    stores,
+		safePoint:     safePoint,
+		client:        client,
+		stores:        stores,
+		scanLockLimit: gcScanLockLimit,
 	}
 }
 
@@ -1858,7 +1857,7 @@ func (s *mergeLockScanner) NextBatch(batchSize int) []*tikv.Lock {
 
 // GetSucceededStores gets a set of successfully scanned stores. Only call this after finishing scanning all locks.
 func (s *mergeLockScanner) GetSucceededStores() map[uint64]interface{} {
-	stores := make(map[uint64]interface{})
+	stores := make(map[uint64]interface{}, len(s.receivers))
 	for _, receiver := range s.receivers {
 		if receiver.Err == nil {
 			stores[receiver.StoreID] = nil
@@ -1871,38 +1870,41 @@ func (s *mergeLockScanner) physicalScanLocksForStore(ctx context.Context, safePo
 	address := store.Address
 	req := tikvrpc.NewRequest(tikvrpc.CmdPhysicalScanLock, &kvrpcpb.PhysicalScanLockRequest{
 		MaxTs: safePoint,
+		Limit: s.scanLockLimit,
 	})
 
-	const Unlimited = time.Duration(math.MaxInt64)
-
-	ctx1, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	response, err := s.client.SendRequest(ctx1, address, req, Unlimited)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	respStream := response.Resp.(tikvpb.Tikv_PhysicalScanLockClient)
-	if respStream == nil {
-		return errors.Errorf("cannot get stream from physical scan lock response")
-	}
+	nextKey := make([]byte, 0)
 
 	for {
-		resp, err := respStream.Recv()
-		if err == io.EOF {
-			break
-		}
+		req.PhysicalScanLock().StartKey = nextKey
+
+		response, err := s.client.SendRequest(ctx, address, req, tikv.ReadTimeoutMedium)
 		if err != nil {
 			return errors.Trace(err)
+		}
+
+		resp := response.Resp.(*kvrpcpb.PhysicalScanLockResponse)
+		if resp == nil {
+			return errors.Errorf("physical scan lock response is nil")
 		}
 
 		if len(resp.Error) > 0 {
 			return errors.Errorf("physical scan lock received error from store: %v", resp.Error)
 		}
 
+		if len(resp.Locks) == 0 {
+			break
+		}
+
+		nextKey = resp.Locks[len(resp.Locks)-1].Key
+		nextKey = append(nextKey, 0)
+
 		for _, lockInfo := range resp.Locks {
 			lockCh <- scanLockResult{Lock: tikv.NewLock(lockInfo)}
+		}
+
+		if len(resp.Locks) < int(s.scanLockLimit) {
+			break
 		}
 	}
 

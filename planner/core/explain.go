@@ -16,22 +16,29 @@ package core
 import (
 	"bytes"
 	"fmt"
+	"strconv"
 	"strings"
-	"time"
 
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
-	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/set"
+	"github.com/pingcap/tidb/util/stringutil"
 )
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalLock) ExplainInfo() string {
 	return p.Lock.String()
+}
+
+// ExplainID overrides the ExplainID in order to match different range.
+func (p *PhysicalIndexScan) ExplainID() fmt.Stringer {
+	return stringutil.MemoizeStr(func() string {
+		if p.isFullScan() {
+			return "IndexFullScan_" + strconv.Itoa(p.id)
+		}
+		return "IndexRangeScan_" + strconv.Itoa(p.id)
+	})
 }
 
 // ExplainInfo implements Plan interface.
@@ -61,16 +68,10 @@ func (p *PhysicalIndexScan) explainInfo(normalized bool) string {
 			}
 		}
 	}
-	haveCorCol := false
-	for _, cond := range p.AccessCondition {
-		if len(expression.ExtractCorColumns(cond)) > 0 {
-			haveCorCol = true
-			break
-		}
-	}
+
 	if len(p.rangeInfo) > 0 {
 		fmt.Fprintf(buffer, ", range: decided by %v", p.rangeInfo)
-	} else if haveCorCol {
+	} else if p.haveCorCol() {
 		if normalized {
 			fmt.Fprintf(buffer, ", range: decided by %s", expression.SortedExplainNormalizedExpressionList(p.AccessCondition))
 		} else {
@@ -79,7 +80,7 @@ func (p *PhysicalIndexScan) explainInfo(normalized bool) string {
 	} else if len(p.Ranges) > 0 {
 		if normalized {
 			fmt.Fprint(buffer, ", range:[?,?]")
-		} else {
+		} else if !p.isFullScan() {
 			fmt.Fprint(buffer, ", range:")
 			for i, idxRange := range p.Ranges {
 				fmt.Fprint(buffer, idxRange.String())
@@ -99,9 +100,42 @@ func (p *PhysicalIndexScan) explainInfo(normalized bool) string {
 	return buffer.String()
 }
 
+func (p *PhysicalIndexScan) haveCorCol() bool {
+	for _, cond := range p.AccessCondition {
+		if len(expression.ExtractCorColumns(cond)) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func (p *PhysicalIndexScan) isFullScan() bool {
+	if len(p.rangeInfo) > 0 || p.haveCorCol() {
+		return false
+	}
+	for _, ran := range p.Ranges {
+		if !ran.IsFullRange() {
+			return false
+		}
+	}
+	return true
+}
+
 // ExplainNormalizedInfo implements Plan interface.
 func (p *PhysicalIndexScan) ExplainNormalizedInfo() string {
 	return p.explainInfo(true)
+}
+
+// ExplainID overrides the ExplainID in order to match different range.
+func (p *PhysicalTableScan) ExplainID() fmt.Stringer {
+	return stringutil.MemoizeStr(func() string {
+		if p.isChildOfIndexLookUp {
+			return "TableRowIDScan_" + strconv.Itoa(p.id)
+		} else if p.isFullScan() {
+			return "TableFullScan_" + strconv.Itoa(p.id)
+		}
+		return "TableRangeScan_" + strconv.Itoa(p.id)
+	})
 }
 
 // ExplainInfo implements Plan interface.
@@ -130,16 +164,9 @@ func (p *PhysicalTableScan) explainInfo(normalized bool) string {
 	if p.pkCol != nil {
 		fmt.Fprintf(buffer, ", pk col:%s", p.pkCol.ExplainInfo())
 	}
-	haveCorCol := false
-	for _, cond := range p.AccessCondition {
-		if len(expression.ExtractCorColumns(cond)) > 0 {
-			haveCorCol = true
-			break
-		}
-	}
 	if len(p.rangeDecidedBy) > 0 {
 		fmt.Fprintf(buffer, ", range: decided by %v", p.rangeDecidedBy)
-	} else if haveCorCol {
+	} else if p.haveCorCol() {
 		if normalized {
 			fmt.Fprintf(buffer, ", range: decided by %s", expression.SortedExplainNormalizedExpressionList(p.AccessCondition))
 		} else {
@@ -148,7 +175,7 @@ func (p *PhysicalTableScan) explainInfo(normalized bool) string {
 	} else if len(p.Ranges) > 0 {
 		if normalized {
 			fmt.Fprint(buffer, ", range:[?,?]")
-		} else {
+		} else if !p.isFullScan() {
 			fmt.Fprint(buffer, ", range:")
 			for i, idxRange := range p.Ranges {
 				fmt.Fprint(buffer, idxRange.String())
@@ -166,6 +193,27 @@ func (p *PhysicalTableScan) explainInfo(normalized bool) string {
 		buffer.WriteString(", stats:pseudo")
 	}
 	return buffer.String()
+}
+
+func (p *PhysicalTableScan) haveCorCol() bool {
+	for _, cond := range p.AccessCondition {
+		if len(expression.ExtractCorColumns(cond)) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func (p *PhysicalTableScan) isFullScan() bool {
+	if len(p.rangeDecidedBy) > 0 || p.haveCorCol() {
+		return false
+	}
+	for _, ran := range p.Ranges {
+		if !ran.IsFullRange() {
+			return false
+		}
+	}
+	return true
 }
 
 // ExplainInfo implements Plan interface.
@@ -338,15 +386,7 @@ func (p *PhysicalHashJoin) explainInfo(normalized bool) string {
 	}
 
 	buffer.WriteString(p.JoinType.String())
-	var InnerChildIdx = p.InnerChildIdx
-	// TODO: update the explain info in issue #12985
-	if p.UseOuterToBuild && ((p.JoinType == LeftOuterJoin && InnerChildIdx == 1) || (p.JoinType == RightOuterJoin && InnerChildIdx == 0)) {
-		InnerChildIdx = 1 - InnerChildIdx
-	}
-	fmt.Fprintf(buffer, ", inner:%s", p.Children()[InnerChildIdx].ExplainID())
-	if p.UseOuterToBuild {
-		buffer.WriteString(" (REVERSED)")
-	}
+
 	if len(p.EqualConditions) > 0 {
 		if normalized {
 			fmt.Fprintf(buffer, ", equal:%s", expression.SortedExplainNormalizedScalarFuncList(p.EqualConditions))
@@ -704,41 +744,12 @@ const MetricTableTimeFormat = "2006-01-02 15:04:05.999"
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalMemTable) ExplainInfo() string {
-	if p.DBName.L != util.MetricSchemaName.L || !infoschema.IsMetricTable(p.Table.Name.L) {
-		return ""
-	}
-
-	e := p.Extractor.(*MetricTableExtractor)
-	if e.SkipRequest {
-		return "skip_request: true"
-	}
-	promQL := GetMetricTablePromQL(p.ctx, p.Table.Name.L, e.LabelConditions, e.Quantiles)
-	startTime, endTime := e.StartTime, e.EndTime
-	step := time.Second * time.Duration(p.ctx.GetSessionVars().MetricSchemaStep)
-	return fmt.Sprintf("PromQL:%v, start_time:%v, end_time:%v, step:%v",
-		promQL,
-		startTime.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format(MetricTableTimeFormat),
-		endTime.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format(MetricTableTimeFormat),
-		step,
-	)
-}
-
-// GetMetricTablePromQL uses to get the promQL of metric table.
-func GetMetricTablePromQL(sctx sessionctx.Context, lowerTableName string, labels map[string]set.StringSet, quantiles []float64) string {
-	def, err := infoschema.GetMetricTableDef(lowerTableName)
-	if err != nil {
-		return ""
-	}
-	if len(quantiles) == 0 {
-		quantiles = []float64{def.Quantile}
-	}
-	var buf bytes.Buffer
-	for i, quantile := range quantiles {
-		promQL := def.GenPromQL(sctx, labels, quantile)
-		if i > 0 {
-			buf.WriteByte(',')
+	explain := "table:" + p.Table.Name.O
+	if p.Extractor != nil {
+		info := p.Extractor.explainInfo(p)
+		if len(info) > 0 {
+			return explain + ", " + info
 		}
-		buf.WriteString(promQL)
 	}
-	return buf.String()
+	return explain
 }

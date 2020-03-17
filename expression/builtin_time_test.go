@@ -795,7 +795,7 @@ func (s *testEvaluatorSuite) TestNowAndUTCTimestamp(c *C) {
 		c.Assert(err, IsNil)
 		t = v.GetMysqlTime()
 		c.Assert(strings.Contains(t.String(), "."), IsTrue)
-		c.Assert(ts.Sub(gotime(t, ts.Location())), LessEqual, 3*time.Millisecond)
+		c.Assert(ts.Sub(gotime(t, ts.Location())), LessEqual, time.Second)
 
 		resetStmtContext(s.ctx)
 		f, err = x.fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(8)))
@@ -1150,7 +1150,7 @@ func builtinDateFormat(ctx sessionctx.Context, args []types.Datum) (d types.Datu
 	if err != nil {
 		return d, err
 	}
-	d.SetString(str)
+	d.SetString(str, mysql.DefaultCollationName)
 	return
 }
 
@@ -1161,16 +1161,16 @@ func (s *testEvaluatorSuite) TestFromUnixTime(c *C) {
 		fractionalPart int64
 		decimal        float64
 		format         string
-		ansLen         int
+		expect         string
 	}{
-		{false, 1451606400, 0, 0, "", 19},
-		{true, 1451606400, 123456000, 1451606400.123456, "", 26},
-		{true, 1451606400, 999999000, 1451606400.999999, "", 26},
-		{true, 1451606400, 999999900, 1451606400.9999999, "", 19},
-		{false, 1451606400, 0, 0, `%Y %D %M %h:%i:%s %x`, 19},
-		{true, 1451606400, 123456000, 1451606400.123456, `%Y %D %M %h:%i:%s %x`, 26},
-		{true, 1451606400, 999999000, 1451606400.999999, `%Y %D %M %h:%i:%s %x`, 26},
-		{true, 1451606400, 999999900, 1451606400.9999999, `%Y %D %M %h:%i:%s %x`, 19},
+		{false, 1451606400, 0, 0, "", "2016-01-01 08:00:00"},
+		{true, 1451606400, 123456000, 1451606400.123456, "", "2016-01-01 08:00:00.123456"},
+		{true, 1451606400, 999999000, 1451606400.999999, "", "2016-01-01 08:00:00.999999"},
+		{true, 1451606400, 999999900, 1451606400.9999999, "", "2016-01-01 08:00:01.000000"},
+		{false, 1451606400, 0, 0, `%Y %D %M %h:%i:%s %x`, "2016-01-01 08:00:00"},
+		{true, 1451606400, 123456000, 1451606400.123456, `%Y %D %M %h:%i:%s %x`, "2016-01-01 08:00:00.123456"},
+		{true, 1451606400, 999999000, 1451606400.999999, `%Y %D %M %h:%i:%s %x`, "2016-01-01 08:00:00.999999"},
+		{true, 1451606400, 999999900, 1451606400.9999999, `%Y %D %M %h:%i:%s %x`, "2016-01-01 08:00:01.000000"},
 	}
 	sc := s.ctx.GetSessionVars().StmtCtx
 	originTZ := sc.TimeZone
@@ -1187,23 +1187,32 @@ func (s *testEvaluatorSuite) TestFromUnixTime(c *C) {
 			timestamp.SetFloat64(t.decimal)
 		}
 		// result of from_unixtime() is dependent on specific time zone.
-		unixTime := time.Unix(t.integralPart, t.fractionalPart).Round(time.Microsecond).String()[:t.ansLen]
 		if len(t.format) == 0 {
-			f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{timestamp}))
+			constants := s.datumsToConstants([]types.Datum{timestamp})
+			if !t.isDecimal {
+				constants[0].GetType().Decimal = 0
+			}
+
+			f, err := fc.getFunction(s.ctx, constants)
 			c.Assert(err, IsNil)
+
 			v, err := evalBuiltinFunc(f, chunk.Row{})
 			c.Assert(err, IsNil)
 			ans := v.GetMysqlTime()
-			c.Assert(ans.String(), Equals, unixTime)
+			c.Assert(ans.String(), Equals, t.expect, Commentf("%+v", t))
 		} else {
 			format := types.NewStringDatum(t.format)
-			f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{timestamp, format}))
+			constants := s.datumsToConstants([]types.Datum{timestamp, format})
+			if !t.isDecimal {
+				constants[0].GetType().Decimal = 0
+			}
+			f, err := fc.getFunction(s.ctx, constants)
 			c.Assert(err, IsNil)
 			v, err := evalBuiltinFunc(f, chunk.Row{})
 			c.Assert(err, IsNil)
-			result, err := builtinDateFormat(s.ctx, []types.Datum{types.NewStringDatum(unixTime), format})
+			result, err := builtinDateFormat(s.ctx, []types.Datum{types.NewStringDatum(t.expect), format})
 			c.Assert(err, IsNil)
-			c.Assert(v.GetString(), Equals, result.GetString())
+			c.Assert(v.GetString(), Equals, result.GetString(), Commentf("%+v", t))
 		}
 	}
 

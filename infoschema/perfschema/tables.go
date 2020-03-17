@@ -118,6 +118,12 @@ type perfSchemaTable struct {
 
 var pluginTable = make(map[string]func(autoid.Allocators, *model.TableInfo) (table.Table, error))
 
+// IsPredefinedTable judges whether this table is predefined.
+func IsPredefinedTable(tableName string) bool {
+	_, ok := tableIDMap[strings.ToLower(tableName)]
+	return ok
+}
+
 // RegisterTable registers a new table into TiDB.
 func RegisterTable(tableName, sql string,
 	tableFromMeta func(autoid.Allocators, *model.TableInfo) (table.Table, error)) {
@@ -342,7 +348,7 @@ func dataForRemoteProfile(ctx sessionctx.Context, nodeType, uri string, isGorout
 		go func(address string) {
 			util.WithRecovery(func() {
 				defer wg.Done()
-				url := fmt.Sprintf("http://%s%s", statusAddr, uri)
+				url := fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), statusAddr, uri)
 				req, err := http.NewRequest(http.MethodGet, url, nil)
 				if err != nil {
 					ch <- result{err: errors.Trace(err)}
@@ -352,7 +358,7 @@ func dataForRemoteProfile(ctx sessionctx.Context, nodeType, uri string, isGorout
 				req.Header.Add("PD-Allow-follower-handle", "true")
 				// TiKV output svg format in default
 				req.Header.Add("Content-Type", "application/protobuf")
-				resp, err := http.DefaultClient.Do(req)
+				resp, err := util.InternalHTTPClient().Do(req)
 				if err != nil {
 					ch <- result{err: errors.Trace(err)}
 					return
