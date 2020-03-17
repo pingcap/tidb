@@ -227,10 +227,11 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 		}
 	}
 	defer committer.ttlManager.close()
+
 	if err := committer.initKeysAndMutations(); err != nil {
 		return errors.Trace(err)
 	}
-	if committer.mutations.len() == 0 {
+	if !committer.fuck && committer.mutations.len() == 0 {
 		return nil
 	}
 

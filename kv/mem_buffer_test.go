@@ -237,6 +237,18 @@ func (s *testKVSuite) TestBufferLimit(c *C) {
 	c.Assert(err, NotNil)
 }
 
+func (s *testKVSuite) TestWalkMemBufer(c *C) {
+	buffer, err := NewFileDBBuffer(fmt.Sprintf("/tmp/file_db_test_%s_%d", time.Now().Format("20060102150405"), rand.Int()))
+	c.Assert(err, IsNil)
+	for c:= byte('a'); c<byte('z'); c++ {
+		buffer.Set([]byte{c}, []byte{c})
+	}
+	WalkMemBuffer(buffer, func(k Key, v []byte) error{
+		fmt.Println("key=", k, "value=", v)
+		return nil
+	})
+}
+
 var opCnt = 100000
 
 func BenchmarkMemDbBufferSequential(b *testing.B) {

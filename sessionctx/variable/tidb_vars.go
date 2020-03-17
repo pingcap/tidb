@@ -408,7 +408,7 @@ const (
 	DefTiDBMemQuotaDistSQL             = 32 << 30 // 32GB.
 	DefTiDBGeneralLog                  = 0
 	DefTiDBPProfSQLCPU                 = 0
-	DefTiDBRetryLimit                  = 10
+	DefTiDBRetryLimit                  = 0
 	DefTiDBDisableTxnAutoRetry         = true
 	DefTiDBConstraintCheckInPlace      = false
 	DefTiDBHashJoinConcurrency         = 5

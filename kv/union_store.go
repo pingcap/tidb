@@ -133,6 +133,10 @@ type lazyMemBuffer struct {
 	fileBased bool
 }
 
+func (lmb *lazyMemBuffer) IsFileBased() bool {
+	return lmb.fileBased
+}
+
 func (lmb *lazyMemBuffer) Get(ctx context.Context, k Key) ([]byte, error) {
 	if lmb.mb == nil {
 		return nil, ErrNotExist
@@ -141,7 +145,7 @@ func (lmb *lazyMemBuffer) Get(ctx context.Context, k Key) ([]byte, error) {
 	return lmb.mb.Get(ctx, k)
 }
 
-const saveToFile = 20 *1024*1024
+const saveToFile = 1024*1024
 
 func (lmb *lazyMemBuffer) Set(key Key, value []byte) error {
 	if lmb.mb == nil {
@@ -151,6 +155,7 @@ func (lmb *lazyMemBuffer) Set(key Key, value []byte) error {
 	// If the membuffer is large, such as the large txn case,
 	// use file based membuffer to reduce memory usage.
 	if lmb.fileBased == false && lmb.mb.Size() > saveToFile {
+		fmt.Println("============== upgrade to file db buffer ==========")
 		mb, err := upgradeToFileDBBuffer(lmb.mb)
 		if err != nil {
 			return err
