@@ -618,7 +618,7 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 	case tipb.ScalarFuncSig_UUID:
 		f = &builtinUUIDSig{base}
 	case tipb.ScalarFuncSig_LikeSig:
-		f = &builtinLikeSig{base}
+		f = &builtinLikeSig{base, nil, false}
 	//case tipb.ScalarFuncSig_RegexpSig:
 	//	f = &builtinRegexpSig{base}
 	//case tipb.ScalarFuncSig_RegexpUTF8Sig:
@@ -661,7 +661,8 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 		f = &builtinJSONQuoteSig{base}
 	case tipb.ScalarFuncSig_JsonSearchSig:
 		f = &builtinJSONSearchSig{base}
-	//case tipb.ScalarFuncSig_JsonStorageSizeSig:
+	case tipb.ScalarFuncSig_JsonStorageSizeSig:
+		f = &builtinJSONStorageSizeSig{base}
 	case tipb.ScalarFuncSig_JsonDepthSig:
 		f = &builtinJSONDepthSig{base}
 	case tipb.ScalarFuncSig_JsonKeysSig:

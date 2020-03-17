@@ -118,12 +118,7 @@ func (e *inspectionResultRetriever) retrieve(ctx context.Context, sctx sessionct
 	// Some data of cluster-level memory tables will be retrieved many times in different inspection rules,
 	// and the cost of retrieving some data is expensive. We use the `TableSnapshot` to cache those data
 	// and obtain them lazily, and provide a consistent view of inspection tables for each inspection rules.
-	// All cached snapshots should be released at the end of retrieving. So all diagnosis rules should query
-	// `cluster_config/cluster_hardware/cluster_load/cluster_info` in `inspection_schema`.
-	// e.g:
-	// SELECT * FROM inspection_schema.cluster_config
-	// instead of:
-	// SELECT * FROM information_schema.cluster_config
+	// All cached snapshots should be released at the end of retrieving.
 	sctx.GetSessionVars().InspectionTableCache = map[string]variable.TableSnapshot{}
 	defer func() { sctx.GetSessionVars().InspectionTableCache = nil }()
 
@@ -157,7 +152,13 @@ func (e *inspectionResultRetriever) retrieve(ctx context.Context, sctx sessionct
 			if lhs, rhs := results[i].item, results[j].item; lhs != rhs {
 				return lhs < rhs
 			}
-			return results[i].actual < results[j].actual
+			if results[i].actual != results[j].actual {
+				return results[i].actual < results[j].actual
+			}
+			if lhs, rhs := results[i].tp, results[j].tp; lhs != rhs {
+				return lhs < rhs
+			}
+			return results[i].instance < results[j].instance
 		})
 		for _, result := range results {
 			finalRows = append(finalRows, types.MakeDatums(
@@ -206,7 +207,7 @@ func (configInspection) inspectDiffConfig(_ context.Context, sctx sessionctx.Con
 		"raftstore.raftdb-path",
 		"storage.data-dir",
 	}
-	sql := fmt.Sprintf("select type, `key`, count(distinct value) as c from inspection_schema.cluster_config where `key` not in ('%s') group by type, `key` having c > 1",
+	sql := fmt.Sprintf("select type, `key`, count(distinct value) as c from information_schema.cluster_config where `key` not in ('%s') group by type, `key` having c > 1",
 		strings.Join(ignoreConfigKey, "','"))
 	rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
 	if err != nil {
@@ -253,7 +254,7 @@ func (configInspection) inspectCheckConfig(_ context.Context, sctx sessionctx.Co
 		if !filter.enable(cas.key) {
 			continue
 		}
-		sql := fmt.Sprintf("select instance from inspection_schema.cluster_config where type = '%s' and `key` = '%s' and value = '%s'",
+		sql := fmt.Sprintf("select instance from information_schema.cluster_config where type = '%s' and `key` = '%s' and value = '%s'",
 			cas.tp, cas.key, cas.value)
 		rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
 		if err != nil {
@@ -277,7 +278,7 @@ func (configInspection) inspectCheckConfig(_ context.Context, sctx sessionctx.Co
 
 func (versionInspection) inspect(_ context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
 	// check the configuration consistent
-	sql := "select type, count(distinct git_hash) as c from inspection_schema.cluster_info group by type having c > 1;"
+	sql := "select type, count(distinct git_hash) as c from information_schema.cluster_info group by type having c > 1;"
 	rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
 	if err != nil {
 		sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("check version consistency failed: %v", err))
@@ -332,19 +333,19 @@ func (c currentLoadInspection) inspect(_ context.Context, sctx sessionctx.Contex
 	}{
 		{
 			"virtual-memory-usage",
-			"select type, instance, value from inspection_schema.cluster_load where device_type='memory' and device_name='virtual' and name='used-percent' and value > 0.7",
+			"select type, instance, value from information_schema.cluster_load where device_type='memory' and device_name='virtual' and name='used-percent' and value > 0.7",
 			"< 0.7",
 			commonResult,
 		},
 		{
 			"swap-memory-usage",
-			"select type, instance, value from inspection_schema.cluster_load where device_type='memory' and device_name='swap' and name='used-percent' and value > 0",
+			"select type, instance, value from information_schema.cluster_load where device_type='memory' and device_name='swap' and name='used-percent' and value > 0",
 			"0",
 			commonResult,
 		},
 		{
 			"disk-usage",
-			"select type, instance, device_name, value from inspection_schema.cluster_hardware where device_type='disk' and name='used-percent' and value > 70",
+			"select type, instance, device_name, value from information_schema.cluster_hardware where device_type='disk' and name='used-percent' and value > 70",
 			"< 70",
 			diskResult,
 		},
@@ -374,8 +375,8 @@ func (currentLoadInspection) inspectCPULoad(sctx sessionctx.Context, filter insp
 			continue
 		}
 		sql := fmt.Sprintf(`select t1.*, 0.7 * t2.cpu_core from
-				(select type, instance, value from inspection_schema.cluster_load where device_type='cpu' and device_name='cpu' and name='%s') as t1 join
-				(select type,instance, max(value) as cpu_core from inspection_schema.CLUSTER_HARDWARE where DEVICE_TYPE='cpu' and name='cpu-logical-cores' group by type,instance) as t2
+				(select type, instance, value from information_schema.cluster_load where device_type='cpu' and device_name='cpu' and name='%s') as t1 join
+				(select type,instance, max(value) as cpu_core from information_schema.CLUSTER_HARDWARE where DEVICE_TYPE='cpu' and name='cpu-logical-cores' group by type,instance) as t2
 				where t2.instance = t1.instance and t1.type=t2.type and t1.value > 0.7 * t2.cpu_core;`, item)
 		rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
 		if err != nil {
@@ -398,7 +399,12 @@ func (currentLoadInspection) inspectCPULoad(sctx sessionctx.Context, filter insp
 	return results
 }
 
-func (criticalErrorInspection) inspect(ctx context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
+func (c criticalErrorInspection) inspect(ctx context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
+	results := c.inspectError(ctx, sctx, filter)
+	results = append(results, c.inspectForServerDown(ctx, sctx, filter)...)
+	return results
+}
+func (criticalErrorInspection) inspectError(ctx context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
 	var rules = []struct {
 		tp   string
 		item string
@@ -460,6 +466,63 @@ func (criticalErrorInspection) inspect(ctx context.Context, sctx sessionctx.Cont
 				results = append(results, result)
 			}
 		}
+	}
+	return results
+}
+
+func (criticalErrorInspection) inspectForServerDown(ctx context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
+	item := "server-down"
+	if !filter.enable(item) {
+		return nil
+	}
+	condition := filter.timeRange.Condition()
+	sql := fmt.Sprintf(`select t1.job,t1.instance, t2.min_time from
+		(select instance,job from metrics_schema.up %[1]s group by instance,job having max(value)-min(value)>0) as t1 join
+		(select instance,min(time) as min_time from metrics_schema.up %[1]s and value=0 group by instance,job) as t2 on t1.instance=t2.instance order by job`, condition)
+	rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithContext(ctx, sql)
+	if err != nil {
+		sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("execute '%s' failed: %v", sql, err))
+	}
+	var results []inspectionResult
+	for _, row := range rows {
+		if row.Len() < 3 {
+			continue
+		}
+		detail := fmt.Sprintf("%s %s disconnect with prometheus around time '%s'", row.GetString(0), row.GetString(1), row.GetTime(2))
+		result := inspectionResult{
+			tp:       row.GetString(0),
+			instance: row.GetString(1),
+			item:     item,
+			actual:   "",
+			expected: "",
+			severity: "critical",
+			detail:   detail,
+			degree:   10000 + float64(len(results)),
+		}
+		results = append(results, result)
+	}
+	// Check from log.
+	sql = fmt.Sprintf("select type,instance,time from information_schema.cluster_log %s and level = 'info' and message like '%%Welcome to'", condition)
+	rows, _, err = sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithContext(ctx, sql)
+	if err != nil {
+		sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("execute '%s' failed: %v", sql, err))
+	}
+	for _, row := range rows {
+		if row.Len() < 3 {
+			continue
+		}
+		detail := fmt.Sprintf("%s %s restarted at time '%s'", row.GetString(0), row.GetString(1), row.GetString(2))
+		result := inspectionResult{
+			tp:       row.GetString(0),
+			instance: row.GetString(1),
+			item:     item,
+			actual:   "",
+			expected: "",
+			severity: "critical",
+			detail:   detail,
+			degree:   10000 + float64(len(results)),
+		}
+		results = append(results, result)
 	}
 	return results
 }
@@ -562,7 +625,7 @@ func (thresholdCheckInspection) inspectThreshold1(ctx context.Context, sctx sess
 		if len(rule.configKey) > 0 {
 			sql = fmt.Sprintf("select t1.instance, t1.cpu, t2.threshold, t2.value from "+
 				"(select instance, max(value) as cpu from metrics_schema.tikv_thread_cpu %[4]s and name like '%[1]s' group by instance) as t1,"+
-				"(select value * %[2]f as threshold, value from inspection_schema.cluster_config where type='tikv' and `key` = '%[3]s' limit 1) as t2 "+
+				"(select value * %[2]f as threshold, value from information_schema.cluster_config where type='tikv' and `key` = '%[3]s' limit 1) as t2 "+
 				"where t1.cpu > t2.threshold;", rule.component, rule.threshold, rule.configKey, condition)
 		} else {
 			sql = fmt.Sprintf("select t1.instance, t1.cpu, %[2]f from "+
