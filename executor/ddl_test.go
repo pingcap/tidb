@@ -253,15 +253,6 @@ func (s *testSuite3) TestCreateView(c *C) {
 	tk.MustExec("drop view v")
 	tk.MustExec("create view v as (select * from t1 union select * from t2)")
 	tk.MustExec("drop view v")
-<<<<<<< HEAD
-=======
-
-	// Test for `drop view if exists`.
-	tk.MustExec("drop view if exists v_if_exists;")
-	tk.MustQuery("show warnings;").Check(testkit.Rows("Note 1051 Unknown table 'test.v_if_exists'"))
-	tk.MustExec("create view v1_if_exists as (select * from t1)")
-	tk.MustExec("drop view if exists v1_if_exists,v2_if_exists,v3_if_exists")
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1051|Unknown table 'test.v2_if_exists'", "Note|1051|Unknown table 'test.v3_if_exists'"))
 
 	// Test for create nested view.
 	tk.MustExec("create table test_v_nested(a int)")
@@ -271,7 +262,6 @@ func (s *testSuite3) TestCreateView(c *C) {
 	c.Assert(terror.ErrorEqual(err, plannercore.ErrNoSuchTable), IsTrue)
 	tk.MustExec("drop table test_v_nested")
 	tk.MustExec("drop view v_nested, v_nested2")
->>>>>>> 0c5e58107... planner: forbiden nested view creation (#15420)
 }
 
 func (s *testSuite3) TestCreateViewWithOverlongColName(c *C) {
