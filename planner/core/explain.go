@@ -26,8 +26,8 @@ import (
 	"github.com/pingcap/tidb/util/stringutil"
 )
 
-type dataSourcePlan interface {
-	Plan
+type physicalScan interface {
+	PhysicalPlan
 
 	// AccessObjectInfo Return plan's accessObject, like `table`, `partition` and `index`.
 	AccessObjectInfo() string
@@ -242,17 +242,12 @@ func (p *PhysicalTableReader) ExplainNormalizedInfo() string {
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalIndexReader) ExplainInfo() string {
-	return ""
+	return "index:" + p.indexPlan.ExplainID().String()
 }
 
 // ExplainNormalizedInfo implements Plan interface.
 func (p *PhysicalIndexReader) ExplainNormalizedInfo() string {
-	return p.AccessObjectInfo()
-}
-
-// AccessObjectInfo implements dataSourcePlan interface.
-func (p *PhysicalIndexReader) AccessObjectInfo() string {
-	return "index:" + p.indexPlan.ExplainID().String()
+	return p.ExplainInfo()
 }
 
 // ExplainInfo implements Plan interface.

@@ -894,8 +894,8 @@ func (e *Explain) prepareOperatorInfo(p Plan, taskType, driverSide, indent strin
 	}
 
 	accessObject := ""
-	if dsPlan, ok := p.(dataSourcePlan); ok {
-		accessObject = dsPlan.AccessObjectInfo()
+	if scan, ok := p.(physicalScan); ok {
+		accessObject = scan.AccessObjectInfo()
 	}
 
 	operatorInfo := p.ExplainInfo()
