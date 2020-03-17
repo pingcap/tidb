@@ -368,3 +368,37 @@ func (ts *testSuite) TestCreatePartitionTableNotSupport(c *C) {
 	_, err = tk.Exec(`create table t7 (a int) partition by range (-(select * from t)) (partition p1 values less than (1));`)
 	c.Assert(ddl.ErrPartitionFunctionIsNotAllowed.Equal(err), IsTrue)
 }
+
+func (ts *testSuite) TestIntUint(c *C) {
+	tk := testkit.NewTestKitWithInit(c, ts.store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t_uint (id bigint unsigned) partition by range (id) (
+partition p0 values less than (4294967293),
+partition p1 values less than (4294967296),
+partition p2 values less than (484467440737095),
+partition p3 values less than (18446744073709551614))`)
+	tk.MustExec("insert into t_uint values (1)")
+	tk.MustExec("insert into t_uint values (4294967294)")
+	tk.MustExec("insert into t_uint values (4294967295)")
+	tk.MustExec("insert into t_uint values (18446744073709551613)")
+	tk.MustQuery("select * from t_uint where id > 484467440737095").Check(testkit.Rows("18446744073709551613"))
+	tk.MustQuery("select * from t_uint where id = 4294967295").Check(testkit.Rows("4294967295"))
+	tk.MustQuery("select * from t_uint where id < 4294967294").Check(testkit.Rows("1"))
+	tk.MustQuery("select * from t_uint where id >= 4294967293 order by id").Check(testkit.Rows("4294967294", "4294967295", "18446744073709551613"))
+
+	tk.MustExec(`create table t_int (id bigint signed) partition by range (id) (
+partition p0 values less than (-4294967293),
+partition p1 values less than (-12345),
+partition p2 values less than (0),
+partition p3 values less than (484467440737095),
+partition p4 values less than (9223372036854775806))`)
+	tk.MustExec("insert into t_int values (-9223372036854775803)")
+	tk.MustExec("insert into t_int values (-429496729312)")
+	tk.MustExec("insert into t_int values (-1)")
+	tk.MustExec("insert into t_int values (4294967295)")
+	tk.MustExec("insert into t_int values (9223372036854775805)")
+	tk.MustQuery("select * from t_int where id > 484467440737095").Check(testkit.Rows("9223372036854775805"))
+	tk.MustQuery("select * from t_int where id = 4294967295").Check(testkit.Rows("4294967295"))
+	tk.MustQuery("select * from t_int where id = -4294967294").Check(testkit.Rows())
+	tk.MustQuery("select * from t_int where id < -12345 order by id desc").Check(testkit.Rows("-429496729312", "-9223372036854775803"))
+}

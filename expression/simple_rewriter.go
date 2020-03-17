@@ -14,6 +14,8 @@
 package expression
 
 import (
+	"context"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
@@ -41,10 +43,20 @@ type simpleRewriter struct {
 // The expression string must only reference the column in table Info.
 func ParseSimpleExprWithTableInfo(ctx sessionctx.Context, exprStr string, tableInfo *model.TableInfo) (Expression, error) {
 	exprStr = "select " + exprStr
-	stmts, warns, err := parser.New().Parse(exprStr, "", "")
-	for _, warn := range warns {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(util.SyntaxWarn(warn))
+	var stmts []ast.StmtNode
+	var err error
+	if p, ok := ctx.(interface {
+		ParseSQL(context.Context, string, string, string) ([]ast.StmtNode, []error, error)
+	}); ok {
+		stmts, _, err = p.ParseSQL(context.Background(), exprStr, "", "")
+	} else {
+		var warns []error
+		stmts, warns, err = parser.New().Parse(exprStr, "", "")
+		for _, warn := range warns {
+			ctx.GetSessionVars().StmtCtx.AppendWarning(util.SyntaxWarn(warn))
+		}
 	}
+
 	if err != nil {
 		return nil, util.SyntaxError(err)
 	}
@@ -102,9 +114,18 @@ func ParseSimpleExprsWithSchema(ctx sessionctx.Context, exprStr string, schema *
 // The expression string must only reference the column in the given NameSlice.
 func ParseSimpleExprsWithNames(ctx sessionctx.Context, exprStr string, schema *Schema, names types.NameSlice) ([]Expression, error) {
 	exprStr = "select " + exprStr
-	stmts, warns, err := parser.New().Parse(exprStr, "", "")
-	for _, warn := range warns {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(util.SyntaxWarn(warn))
+	var stmts []ast.StmtNode
+	var err error
+	if p, ok := ctx.(interface {
+		ParseSQL(context.Context, string, string, string) ([]ast.StmtNode, []error, error)
+	}); ok {
+		stmts, _, err = p.ParseSQL(context.Background(), exprStr, "", "")
+	} else {
+		var warns []error
+		stmts, warns, err = parser.New().Parse(exprStr, "", "")
+		for _, warn := range warns {
+			ctx.GetSessionVars().StmtCtx.AppendWarning(util.SyntaxWarn(warn))
+		}
 	}
 	if err != nil {
 		return nil, util.SyntaxWarn(err)
