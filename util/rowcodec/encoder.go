@@ -152,21 +152,6 @@ func (encoder *Encoder) encodeRowCols(sc *stmtctx.StatementContext, numCols, not
 			r.offsets[i] = uint16(len(r.data))
 		}
 	}
-	// handle convert to large
-	if !r.large {
-		if len(r.data) >= math.MaxUint16 {
-			r.large = true
-			r.initColIDs32()
-			for i, val := range r.colIDs {
-				r.colIDs32[i] = uint32(val)
-			}
-		} else {
-			r.initOffsets()
-			for i, val := range r.offsets32 {
-				r.offsets[i] = uint16(val)
-			}
-		}
-	}
 	return nil
 }
 
