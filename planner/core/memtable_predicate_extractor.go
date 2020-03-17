@@ -16,6 +16,7 @@ package core
 import (
 	"bytes"
 	"fmt"
+	"github.com/pingcap/tidb/util/logutil"
 	"math"
 	"regexp"
 	"sort"
@@ -896,5 +897,21 @@ func (e *SlowQueryExtractor) setTimeRange(start, end int64) {
 }
 
 func (e *SlowQueryExtractor) explainInfo(p *PhysicalMemTable) string {
-	return ""
+	if e.SkipRequest {
+		return "skip_request: true"
+	}
+
+	enable := e.Enable
+	startTime, endTime := e.StartTime, e.EndTime
+	slowQueryFile := p.ctx.GetSessionVars().SlowQueryFile
+
+	if enable {
+		return fmt.Sprintf("slowQueryFile:%v, enable:%v, start_time:%v, end_time:%v",
+			slowQueryFile,
+			true,
+			startTime.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format(logutil.OldSlowLogTimeFormat),
+			endTime.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format(logutil.OldSlowLogTimeFormat),
+		)
+	}
+	return fmt.Sprintf("slowQueryFile:%v, enable:%v", slowQueryFile, false)
 }

@@ -16,12 +16,12 @@ package executor_test
 import (
 	"crypto/tls"
 	"fmt"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testkit"
+	"os"
 )
 
 // mockSessionManager is a mocked session manager which is used for test.
@@ -112,4 +112,26 @@ func (s *testSuite) TestExplainMetricTable(c *C) {
 		"MemTableScan_5 10000.00 root table:tidb_query_duration, PromQL:histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le,sql_type,instance)), start_time:2019-12-23 16:10:13, end_time:2019-12-23 16:30:13, step:1m0s"))
 	tk.MustQuery(fmt.Sprintf("desc select * from METRICS_SCHEMA.up where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13' ")).Check(testkit.Rows(
 		"MemTableScan_5 10000.00 root table:up, PromQL:up{}, start_time:2019-12-23 16:10:13, end_time:2019-12-23 16:30:13, step:1m0s"))
+}
+
+func (s *testSuite) TestExplainSlowQuery(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	slowLogFileName := "tidb-slow.log"
+	prepareSlowLogfile(c, slowLogFileName)
+	defer os.Remove(slowLogFileName)
+
+	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.slow_query where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13'")).Check(testkit.Rows(
+		"MemTableScan_5 10000.00 root table:SLOW_QUERY, slowQueryFile:tidb-slow.log, enable:true, start_time:2019-12-23-16:10:13 +0000, end_time:2019-12-23-16:30:13 +0000"))
+	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.slow_query where time >= '2019-12-23 16:10:13'")).Check(testkit.Rows(
+		"MemTableScan_5 10000.00 root table:SLOW_QUERY, slowQueryFile:tidb-slow.log, enable:true, start_time:2019-12-23-16:10:13 +0000, end_time:2019-12-24-16:10:13 +0000"))
+	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.slow_query")).Check(testkit.Rows(
+		"MemTableScan_4 10000.00 root table:SLOW_QUERY, slowQueryFile:tidb-slow.log, enable:false"))
+
+}
+
+func prepareSlowLogfile(c *C, slowLogFileName string) {
+	f, err := os.OpenFile(slowLogFileName, os.O_CREATE|os.O_WRONLY, 0644)
+	c.Assert(err, IsNil)
+	c.Assert(f.Close(), IsNil)
+	c.Assert(err, IsNil)
 }
