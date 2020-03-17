@@ -20,6 +20,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/infoschema/perfschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -54,6 +55,11 @@ func (s *testTableSuite) TearDownSuite(c *C) {
 	defer testleak.AfterTest(c)()
 	s.dom.Close()
 	s.store.Close()
+}
+
+func (s *testTableSuite) TestPredefinedTables(c *C) {
+	c.Assert(perfschema.IsPredefinedTable("EVENTS_statements_summary_by_digest"), IsTrue)
+	c.Assert(perfschema.IsPredefinedTable("statements"), IsFalse)
 }
 
 func (s *testTableSuite) TestPerfSchemaTables(c *C) {
