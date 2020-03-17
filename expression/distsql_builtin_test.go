@@ -222,6 +222,13 @@ func (s *testEvalSuite) TestEval(c *C) {
 			types.NewIntDatum(3),
 		},
 		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_JsonStorageSizeSig,
+				toPBFieldType(newIntFieldType()),
+				jsonDatumExpr(c, `[{"a":{"a":1},"b":2}]`),
+			),
+			types.NewIntDatum(25),
+		},
+		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_JsonSearchSig,
 				toPBFieldType(newJSONFieldType()),
 				jsonDatumExpr(c, `["abc", [{"k": "10"}, "def"], {"x":"abc"}, {"y":"bcd"}]`),
