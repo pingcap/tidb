@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
@@ -50,8 +49,9 @@ const (
 	// TableSchemata is the string constant of infoschema table.
 	TableSchemata = "SCHEMATA"
 	// TableTables is the string constant of infoschema table.
-	TableTables           = "TABLES"
-	tableColumns          = "COLUMNS"
+	TableTables = "TABLES"
+	// TableColumns is the string constant of infoschema table
+	TableColumns          = "COLUMNS"
 	tableColumnStatistics = "COLUMN_STATISTICS"
 	// TableStatistics is the string constant of infoschema table
 	TableStatistics = "STATISTICS"
@@ -97,13 +97,15 @@ const (
 	// TableTiDBIndexes is the string constant of infoschema table
 	TableTiDBIndexes = "TIDB_INDEXES"
 	// TableTiDBHotRegions is the string constant of infoschema table
-	TableTiDBHotRegions   = "TIDB_HOT_REGIONS"
-	tableTiKVStoreStatus  = "TIKV_STORE_STATUS"
-	tableAnalyzeStatus    = "ANALYZE_STATUS"
+	TableTiDBHotRegions  = "TIDB_HOT_REGIONS"
+	tableTiKVStoreStatus = "TIKV_STORE_STATUS"
+	// TableAnalyzeStatus is the string constant of Analyze Status
+	TableAnalyzeStatus    = "ANALYZE_STATUS"
 	tableTiKVRegionStatus = "TIKV_REGION_STATUS"
 	// TableTiKVRegionPeers is the string constant of infoschema table
 	TableTiKVRegionPeers = "TIKV_REGION_PEERS"
-	tableTiDBServersInfo = "TIDB_SERVERS_INFO"
+	// TableTiDBServersInfo is the string constant of TiDB server information table.
+	TableTiDBServersInfo = "TIDB_SERVERS_INFO"
 	// TableSlowQuery is the string constant of slow query memory table.
 	TableSlowQuery = "SLOW_QUERY"
 	// TableClusterInfo is the string constant of cluster info memory table.
@@ -136,7 +138,7 @@ const (
 var tableIDMap = map[string]int64{
 	TableSchemata:                           autoid.InformationSchemaDBID + 1,
 	TableTables:                             autoid.InformationSchemaDBID + 2,
-	tableColumns:                            autoid.InformationSchemaDBID + 3,
+	TableColumns:                            autoid.InformationSchemaDBID + 3,
 	tableColumnStatistics:                   autoid.InformationSchemaDBID + 4,
 	TableStatistics:                         autoid.InformationSchemaDBID + 5,
 	TableCharacterSets:                      autoid.InformationSchemaDBID + 6,
@@ -171,10 +173,10 @@ var tableIDMap = map[string]int64{
 	TableSlowQuery:                          autoid.InformationSchemaDBID + 35,
 	TableTiDBHotRegions:                     autoid.InformationSchemaDBID + 36,
 	tableTiKVStoreStatus:                    autoid.InformationSchemaDBID + 37,
-	tableAnalyzeStatus:                      autoid.InformationSchemaDBID + 38,
+	TableAnalyzeStatus:                      autoid.InformationSchemaDBID + 38,
 	tableTiKVRegionStatus:                   autoid.InformationSchemaDBID + 39,
 	TableTiKVRegionPeers:                    autoid.InformationSchemaDBID + 40,
-	tableTiDBServersInfo:                    autoid.InformationSchemaDBID + 41,
+	TableTiDBServersInfo:                    autoid.InformationSchemaDBID + 41,
 	TableClusterInfo:                        autoid.InformationSchemaDBID + 42,
 	TableClusterConfig:                      autoid.InformationSchemaDBID + 43,
 	TableClusterLoad:                        autoid.InformationSchemaDBID + 44,
@@ -325,8 +327,9 @@ var statisticsCols = []columnInfo{
 	{name: "NULLABLE", tp: mysql.TypeVarchar, size: 3},
 	{name: "INDEX_TYPE", tp: mysql.TypeVarchar, size: 16},
 	{name: "COMMENT", tp: mysql.TypeVarchar, size: 16},
-	{name: "Expression", tp: mysql.TypeVarchar, size: 64},
 	{name: "INDEX_COMMENT", tp: mysql.TypeVarchar, size: 1024},
+	{name: "IS_VISIBLE", tp: mysql.TypeVarchar, size: 3},
+	{name: "Expression", tp: mysql.TypeVarchar, size: 64},
 }
 
 var profilingCols = []columnInfo{
@@ -1135,109 +1138,6 @@ func GetShardingInfo(dbInfo *model.DBInfo, tableInfo *model.TableInfo) interface
 	return shardingInfo
 }
 
-func dataForColumns(ctx sessionctx.Context, schemas []*model.DBInfo) [][]types.Datum {
-	checker := privilege.GetPrivilegeManager(ctx)
-	var rows [][]types.Datum
-	for _, schema := range schemas {
-		for _, table := range schema.Tables {
-			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
-				continue
-			}
-
-			rs := dataForColumnsInTable(schema, table)
-			rows = append(rows, rs...)
-		}
-	}
-	return rows
-}
-
-func dataForColumnsInTable(schema *model.DBInfo, tbl *model.TableInfo) [][]types.Datum {
-	rows := make([][]types.Datum, 0, len(tbl.Columns))
-	for i, col := range tbl.Columns {
-		if col.Hidden {
-			continue
-		}
-		var charMaxLen, charOctLen, numericPrecision, numericScale, datetimePrecision interface{}
-		colLen, decimal := col.Flen, col.Decimal
-		defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimal(col.Tp)
-		if decimal == types.UnspecifiedLength {
-			decimal = defaultDecimal
-		}
-		if colLen == types.UnspecifiedLength {
-			colLen = defaultFlen
-		}
-		if col.Tp == mysql.TypeSet {
-			// Example: In MySQL set('a','bc','def','ghij') has length 13, because
-			// len('a')+len('bc')+len('def')+len('ghij')+len(ThreeComma)=13
-			// Reference link: https://bugs.mysql.com/bug.php?id=22613
-			colLen = 0
-			for _, ele := range col.Elems {
-				colLen += len(ele)
-			}
-			if len(col.Elems) != 0 {
-				colLen += (len(col.Elems) - 1)
-			}
-			charMaxLen = colLen
-			charOctLen = colLen
-		} else if col.Tp == mysql.TypeEnum {
-			// Example: In MySQL enum('a', 'ab', 'cdef') has length 4, because
-			// the longest string in the enum is 'cdef'
-			// Reference link: https://bugs.mysql.com/bug.php?id=22613
-			colLen = 0
-			for _, ele := range col.Elems {
-				if len(ele) > colLen {
-					colLen = len(ele)
-				}
-			}
-			charMaxLen = colLen
-			charOctLen = colLen
-		} else if types.IsString(col.Tp) {
-			charMaxLen = colLen
-			charOctLen = colLen
-		} else if types.IsTypeFractionable(col.Tp) {
-			datetimePrecision = decimal
-		} else if types.IsTypeNumeric(col.Tp) {
-			numericPrecision = colLen
-			if col.Tp != mysql.TypeFloat && col.Tp != mysql.TypeDouble {
-				numericScale = decimal
-			} else if decimal != -1 {
-				numericScale = decimal
-			}
-		}
-		columnType := col.FieldType.InfoSchemaStr()
-		columnDesc := table.NewColDesc(table.ToColumn(col))
-		var columnDefault interface{}
-		if columnDesc.DefaultValue != nil {
-			columnDefault = fmt.Sprintf("%v", columnDesc.DefaultValue)
-		}
-		record := types.MakeDatums(
-			CatalogVal,                           // TABLE_CATALOG
-			schema.Name.O,                        // TABLE_SCHEMA
-			tbl.Name.O,                           // TABLE_NAME
-			col.Name.O,                           // COLUMN_NAME
-			i+1,                                  // ORIGINAL_POSITION
-			columnDefault,                        // COLUMN_DEFAULT
-			columnDesc.Null,                      // IS_NULLABLE
-			types.TypeToStr(col.Tp, col.Charset), // DATA_TYPE
-			charMaxLen,                           // CHARACTER_MAXIMUM_LENGTH
-			charOctLen,                           // CHARACTER_OCTET_LENGTH
-			numericPrecision,                     // NUMERIC_PRECISION
-			numericScale,                         // NUMERIC_SCALE
-			datetimePrecision,                    // DATETIME_PRECISION
-			columnDesc.Charset,                   // CHARACTER_SET_NAME
-			columnDesc.Collation,                 // COLLATION_NAME
-			columnType,                           // COLUMN_TYPE
-			columnDesc.Key,                       // COLUMN_KEY
-			columnDesc.Extra,                     // EXTRA
-			"select,insert,update,references",    // PRIVILEGES
-			columnDesc.Comment,                   // COLUMN_COMMENT
-			col.GeneratedExprString,              // GENERATION_EXPRESSION
-		)
-		rows = append(rows, record)
-	}
-	return rows
-}
-
 const (
 	// PrimaryKeyType is the string constant of PRIMARY KEY.
 	PrimaryKeyType = "PRIMARY KEY"
@@ -1272,55 +1172,6 @@ func dataForPseudoProfiling() [][]types.Datum {
 	)
 	rows = append(rows, row)
 	return rows
-}
-
-// DataForAnalyzeStatus gets all the analyze jobs.
-func DataForAnalyzeStatus(ctx sessionctx.Context) (rows [][]types.Datum) {
-	checker := privilege.GetPrivilegeManager(ctx)
-	for _, job := range statistics.GetAllAnalyzeJobs() {
-		job.Lock()
-		var startTime interface{}
-		if job.StartTime.IsZero() {
-			startTime = nil
-		} else {
-			startTime = types.NewTime(types.FromGoTime(job.StartTime), mysql.TypeDatetime, 0)
-		}
-		if checker == nil || checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, job.DBName, job.TableName, "", mysql.AllPrivMask) {
-			rows = append(rows, types.MakeDatums(
-				job.DBName,        // TABLE_SCHEMA
-				job.TableName,     // TABLE_NAME
-				job.PartitionName, // PARTITION_NAME
-				job.JobInfo,       // JOB_INFO
-				job.RowCount,      // ROW_COUNT
-				startTime,         // START_TIME
-				job.State,         // STATE
-			))
-		}
-		job.Unlock()
-	}
-	return
-}
-
-func dataForServersInfo() ([][]types.Datum, error) {
-	serversInfo, err := infosync.GetAllServerInfo(context.Background())
-	if err != nil {
-		return nil, err
-	}
-	rows := make([][]types.Datum, 0, len(serversInfo))
-	for _, info := range serversInfo {
-		row := types.MakeDatums(
-			info.ID,              // DDL_ID
-			info.IP,              // IP
-			int(info.Port),       // PORT
-			int(info.StatusPort), // STATUS_PORT
-			info.Lease,           // LEASE
-			info.Version,         // VERSION
-			info.GitHash,         // GIT_HASH
-			info.BinlogStatus,    // BINLOG_STATUS
-		)
-		rows = append(rows, row)
-	}
-	return rows, nil
 }
 
 // ServerInfo represents the basic server information of single cluster component
@@ -1401,13 +1252,13 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 		addr = strings.TrimSpace(addr)
 
 		// Get PD version
-		url := fmt.Sprintf("http://%s%s", addr, pdapi.ClusterVersion)
+		url := fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), addr, pdapi.ClusterVersion)
 		req, err := http.NewRequest(http.MethodGet, url, nil)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		req.Header.Add("PD-Allow-follower-handle", "true")
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := util.InternalHTTPClient().Do(req)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1419,13 +1270,13 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 		version := strings.Trim(strings.Trim(string(pdVersion), "\n"), "\"")
 
 		// Get PD git_hash
-		url = fmt.Sprintf("http://%s%s", addr, pdapi.Status)
+		url = fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), addr, pdapi.Status)
 		req, err = http.NewRequest(http.MethodGet, url, nil)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		req.Header.Add("PD-Allow-follower-handle", "true")
-		resp, err = http.DefaultClient.Do(req)
+		resp, err = util.InternalHTTPClient().Do(req)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1527,7 +1378,7 @@ func dataForTableTiFlashReplica(ctx sessionctx.Context, schemas []*model.DBInfo)
 var tableNameToColumns = map[string][]columnInfo{
 	TableSchemata:                           schemataCols,
 	TableTables:                             tablesCols,
-	tableColumns:                            columnsCols,
+	TableColumns:                            columnsCols,
 	tableColumnStatistics:                   columnStatisticsCols,
 	TableStatistics:                         statisticsCols,
 	TableCharacterSets:                      charsetCols,
@@ -1561,10 +1412,10 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableSlowQuery:                          slowQueryCols,
 	TableTiDBHotRegions:                     TableTiDBHotRegionsCols,
 	tableTiKVStoreStatus:                    tableTiKVStoreStatusCols,
-	tableAnalyzeStatus:                      tableAnalyzeStatusCols,
+	TableAnalyzeStatus:                      tableAnalyzeStatusCols,
 	tableTiKVRegionStatus:                   tableTiKVRegionStatusCols,
 	TableTiKVRegionPeers:                    TableTiKVRegionPeersCols,
-	tableTiDBServersInfo:                    tableTiDBServersInfoCols,
+	TableTiDBServersInfo:                    tableTiDBServersInfoCols,
 	TableClusterInfo:                        tableClusterInfoCols,
 	TableClusterConfig:                      tableClusterConfigCols,
 	TableClusterLog:                         tableClusterLogCols,
@@ -1618,8 +1469,6 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 	dbs := is.AllSchemas()
 	sort.Sort(SchemasSorter(dbs))
 	switch it.meta.Name.O {
-	case tableColumns:
-		fullRows = dataForColumns(ctx, dbs)
 	case tableFiles:
 	case tableProfiling:
 		if v, ok := ctx.GetSessionVars().GetSystemVar("profiling"); ok && variable.TiDBOptOn(v) {
@@ -1643,12 +1492,8 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		fullRows = dataForProcesslist(ctx)
 	case tableTiKVStoreStatus:
 		fullRows, err = dataForTiKVStoreStatus(ctx)
-	case tableAnalyzeStatus:
-		fullRows = DataForAnalyzeStatus(ctx)
 	case tableTiKVRegionStatus:
 		fullRows, err = dataForTiKVRegionStatus(ctx)
-	case tableTiDBServersInfo:
-		fullRows, err = dataForServersInfo()
 	case tableTiFlashReplica:
 		fullRows = dataForTableTiFlashReplica(ctx, dbs)
 	// Data for cluster processlist memory table.

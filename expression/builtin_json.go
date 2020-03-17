@@ -71,6 +71,7 @@ var (
 	_ builtinFunc = &builtinJSONRemoveSig{}
 	_ builtinFunc = &builtinJSONMergeSig{}
 	_ builtinFunc = &builtinJSONContainsSig{}
+	_ builtinFunc = &builtinJSONStorageSizeSig{}
 	_ builtinFunc = &builtinJSONDepthSig{}
 	_ builtinFunc = &builtinJSONSearchSig{}
 	_ builtinFunc = &builtinJSONKeysSig{}
@@ -1190,8 +1191,39 @@ type jsonStorageSizeFunctionClass struct {
 	baseFunctionClass
 }
 
+type builtinJSONStorageSizeSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinJSONStorageSizeSig) Clone() builtinFunc {
+	newSig := &builtinJSONStorageSizeSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 func (c *jsonStorageSizeFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "JSON_STORAGE_SIZE")
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETJson)
+	sig := &builtinJSONStorageSizeSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_JsonStorageSizeSig)
+	return sig, nil
+}
+
+func (b *builtinJSONStorageSizeSig) evalInt(row chunk.Row) (res int64, isNull bool, err error) {
+	obj, isNull, err := b.args[0].EvalJSON(b.ctx, row)
+	if isNull || err != nil {
+		return res, isNull, err
+	}
+
+	buf, err := obj.MarshalJSON()
+	if err != nil {
+		return res, isNull, err
+	}
+
+	return int64(len(buf)), false, nil
 }
 
 type jsonDepthFunctionClass struct {
