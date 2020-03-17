@@ -57,6 +57,7 @@ import (
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
@@ -522,6 +523,8 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 				return err
 			}
 		}
+	} else if config.GetGlobalConfig().Security.RequireSecureTransport {
+		return errSecureTransportRequired.FastGenByArgs()
 	}
 
 	// Read the remaining part of the packet.
