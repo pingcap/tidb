@@ -243,7 +243,8 @@
       "[planner:3586]Window 'w': frame start or end is negative, NULL or of non-integral type",
       "[planner:3586]Window 'w': frame start or end is negative, NULL or of non-integral type",
       "[planner:3586]Window 'w': frame start or end is negative, NULL or of non-integral type",
-      "TableReader(Table(t))->Sort->Window(row_number()->Column#14 over(partition by test.t.b))->Projection"
+      "TableReader(Table(t))->Sort->Window(row_number()->Column#14 over(partition by test.t.b))->Projection",
+      "[planner:1235]This version of TiDB doesn't yet support 'group_concat as window function'"
     ]
   },
   {
