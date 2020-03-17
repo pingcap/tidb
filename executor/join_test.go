@@ -1891,8 +1891,6 @@ func (s *testSuiteJoinSerial) TestOuterMatchStatusIssue14742(c *C) {
 }
 
 func (s *testSuiteJoinSerial) TestInlineProjection4HashJoinIssue15316(c *C) {
-	plannercore.ForceUseOuterBuild4Test = true
-	defer func() { plannercore.ForceUseOuterBuild4Test = false }()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table S (a int not null, b int, c int);")
