@@ -186,3 +186,27 @@ func (s *pkgTestSuite) testHashRowContainer(c *C, hashFunc func() hash.Hash64, s
 	c.Assert(matched[1].GetDatumRow(colTypes), DeepEquals, chk1.GetRow(1).GetDatumRow(colTypes))
 	return rowContainer
 }
+
+func (s *pkgTestSuite) TestHashPartitioner(c *C) {
+	sctx := mock.NewContext()
+	var err error
+	numRows := 10
+
+	chk0, colTypes := initBuildChunk(numRows)
+	chk1, _ := initBuildChunk(numRows)
+
+	hCtx := &hashContext{
+		allTypes:  colTypes,
+		keyColIdx: []int{1, 2},
+	}
+	partitionCnt := 4
+	hashPartitioner := newHashPartitioner(sctx, partitionCnt, hCtx)
+
+	partitions, err := hashPartitioner.split(chk0)
+	c.Assert(err, IsNil)
+	c.Assert(len(partitions), Equals, partitionCnt)
+
+	partitions, err = hashPartitioner.split(chk1)
+	c.Assert(err, IsNil)
+	c.Assert(len(partitions), Equals, partitionCnt)
+}

@@ -1645,3 +1645,163 @@ func BenchmarkSortExec(b *testing.B) {
 		})
 	}
 }
+
+func prepare4GraceHashJoin(testCase *hashJoinTestCase, opt1, opt2 mockDataSourceParameters, innerExec, outerExec Executor) *GraceHashJoinExec {
+
+	if testCase.useOuterToBuild {
+		opt1, opt2 = opt2, opt1
+		innerExec, outerExec = outerExec, innerExec
+	}
+	cols0 := innerExec.Schema().Columns
+	cols1 := outerExec.Schema().Columns
+
+	buildTypes := retTypes(innerExec)
+	probeTypes := retTypes(outerExec)
+
+	buildPartitionInDisk := chunk.NewPartitionInDisk(buildTypes, innerExec.base().maxChunkSize)
+	probePartitionInDisk := chunk.NewPartitionInDisk(probeTypes, outerExec.base().maxChunkSize)
+
+	buildPartitionerExec := &PartitionerExec{
+		baseExecutor:    newBaseExecutor(opt1.ctx, innerExec.Schema(), stringutil.StringerStr("buildPartitionExec")),
+		partitionIdx:    0,
+		partitionInDisk: buildPartitionInDisk,
+	}
+	probePartitionerExec := &PartitionerExec{
+		baseExecutor:    newBaseExecutor(opt2.ctx, outerExec.Schema(), stringutil.StringerStr("probePartitionExec")),
+		partitionIdx:    0,
+		partitionInDisk: probePartitionInDisk,
+	}
+
+	var hashJoinExec *HashJoinExec
+	if testCase.useOuterToBuild {
+		hashJoinExec = prepare4HashJoin(testCase, probePartitionerExec, buildPartitionerExec)
+	} else {
+		hashJoinExec = prepare4HashJoin(testCase, buildPartitionerExec, probePartitionerExec)
+	}
+
+	joinSchema := expression.NewSchema()
+	if testCase.childrenUsedSchema != nil {
+		for i, used := range testCase.childrenUsedSchema[0] {
+			if used {
+				joinSchema.Append(cols0[i])
+			}
+		}
+		for i, used := range testCase.childrenUsedSchema[1] {
+			if used {
+				joinSchema.Append(cols1[i])
+			}
+		}
+	} else {
+		joinSchema.Append(cols0...)
+		joinSchema.Append(cols1...)
+	}
+
+	partitionCnt := 4
+
+	joinKeys := make([]*expression.Column, 0, len(testCase.keyIdx))
+	for _, keyIdx := range testCase.keyIdx {
+		joinKeys = append(joinKeys, cols0[keyIdx])
+	}
+	probeKeys := make([]*expression.Column, 0, len(testCase.keyIdx))
+	for _, keyIdx := range testCase.keyIdx {
+		probeKeys = append(probeKeys, cols1[keyIdx])
+	}
+	e := &GraceHashJoinExec{
+		baseExecutor:  newBaseExecutor(testCase.ctx, joinSchema, stringutil.StringerStr("GraceHashJoin"), innerExec, outerExec),
+		buildKeys:     joinKeys,
+		probeKeys:     probeKeys,
+		buildSideExec: innerExec,
+		probeSideExec: outerExec,
+
+		hashJoinExec:         hashJoinExec,
+		buildPartitionerExec: buildPartitionerExec,
+		probePartitionerExec: probePartitionerExec,
+		partitionCnt:         partitionCnt,
+	}
+
+	memLimit := int64(-1)
+	if testCase.disk {
+		memLimit = 1
+	}
+	t := memory.NewTracker(stringutil.StringerStr("root of prepare4HashJoin"), memLimit)
+	t.SetActionOnExceed(nil)
+	t2 := disk.NewTracker(stringutil.StringerStr("root of prepare4HashJoin"), -1)
+	e.ctx.GetSessionVars().StmtCtx.MemTracker = t
+	e.ctx.GetSessionVars().StmtCtx.DiskTracker = t2
+
+	return e
+}
+
+func benchmarkGraceHashJoinExecWithCase(b *testing.B, casTest *hashJoinTestCase) {
+	opt1 := mockDataSourceParameters{
+		rows: casTest.rows,
+		ctx:  casTest.ctx,
+		genDataFunc: func(row int, typ *types.FieldType) interface{} {
+			switch typ.Tp {
+			case mysql.TypeLong, mysql.TypeLonglong:
+				return int64(row)
+			case mysql.TypeVarString:
+				return casTest.rawData
+			case mysql.TypeDouble:
+				return float64(row)
+			default:
+				panic("not implement")
+			}
+		},
+	}
+	opt2 := opt1
+	opt1.schema = expression.NewSchema(casTest.columns()...)
+	opt2.schema = expression.NewSchema(casTest.columns()...)
+	dataSource1 := buildMockDataSource(opt1)
+	dataSource2 := buildMockDataSource(opt2)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		b.StopTimer()
+		exec := prepare4GraceHashJoin(casTest, opt1, opt2, dataSource1, dataSource2)
+		tmpCtx := context.Background()
+		chk := newFirstChunk(exec)
+		dataSource1.prepareChunks()
+		dataSource2.prepareChunks()
+
+		totalRow := 0
+		b.StartTimer()
+		if err := exec.Open(tmpCtx); err != nil {
+			b.Fatal(err)
+		}
+		for {
+			if err := exec.Next(tmpCtx, chk); err != nil {
+				b.Fatal(err)
+			}
+			if chk.NumRows() == 0 {
+				break
+			}
+			totalRow += chk.NumRows()
+		}
+		if err := exec.Close(); err != nil {
+			b.Fatal(err)
+		}
+		b.StopTimer()
+		if totalRow == 0 {
+			b.Fatal("totalRow == 0")
+		}
+	}
+}
+
+func BenchmarkGraceHashJoinExec(b *testing.B) {
+	lvl := log.GetLevel()
+	log.SetLevel(zapcore.ErrorLevel)
+	defer log.SetLevel(lvl)
+
+	cols := []*types.FieldType{
+		types.NewFieldType(mysql.TypeLonglong),
+		types.NewFieldType(mysql.TypeVarString),
+	}
+
+	b.ReportAllocs()
+	cas := defaultHashJoinTestCase(cols, 0, false)
+	b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+		benchmarkGraceHashJoinExecWithCase(b, cas)
+	})
+
+}

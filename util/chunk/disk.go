@@ -430,6 +430,7 @@ func (p *PartitionInDisk) Add(chk *Chunk, partitions [][]uint32) (err error) {
 	return nil
 }
 
+// Flush write all chunks to disk
 func (p *PartitionInDisk) Flush() (err error) {
 	for _, idx := range p.partitionIdxToIndex {
 		diskChk := p.chks[idx]
@@ -442,10 +443,11 @@ func (p *PartitionInDisk) Flush() (err error) {
 	return nil
 }
 
+// GetChunk get chunk by partitionIdx and chkIdx
 func (p *PartitionInDisk) GetChunk(partitionIdx int, chkIdx int, chk *Chunk) (err error) {
 	idx, ok := p.partitionIdxToIndex[partitionIdx]
 	if !ok {
-		return errors.New("partition not exist")
+		return nil
 	}
 	listInDisk := p.disks[idx]
 	return listInDisk.GetChunk(chkIdx, chk)
@@ -455,7 +457,7 @@ func (p *PartitionInDisk) GetChunk(partitionIdx int, chkIdx int, chk *Chunk) (er
 func (p *PartitionInDisk) NumChunks(partitionIdx int) (num int, err error) {
 	idx, ok := p.partitionIdxToIndex[partitionIdx]
 	if !ok {
-		return 0, errors.New("partition not exist")
+		return 0, nil
 	}
 	return p.disks[idx].NumChunks(), nil
 }

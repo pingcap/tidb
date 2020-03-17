@@ -85,6 +85,49 @@ func (s *testChunkSuite) TestListInDisk(c *check.C) {
 	}
 }
 
+func initPartitions(numRow, partitionCnt int) [][]uint32 {
+	partitions := make([][]uint32, partitionCnt)
+	for i := range partitions {
+		partitions[i] = make([]uint32, 0, numRow)
+	}
+	for i := 0; i < numRow; i++ {
+		j := i % partitionCnt
+		partitions[j] = append(partitions[j], uint32(i))
+	}
+	return partitions
+}
+
+func (s *testChunkSuite) TestPartitionInDisk(c *check.C) {
+
+	numChk, numRow := 16, 16
+	partitionCnt := 4
+	chks, fields := initChunks(numChk, numRow)
+	partitions := initPartitions(numRow, partitionCnt)
+	p := NewPartitionInDisk(fields, numRow)
+	defer func() {
+		err := p.Close()
+		c.Check(err, check.IsNil)
+	}()
+
+	for _, chk := range chks {
+		err := p.Add(chk, partitions)
+		c.Check(err, check.IsNil)
+	}
+	err := p.Flush()
+	c.Check(err, check.IsNil)
+
+	chk := chks[0]
+	for i := 0; i < partitionCnt; i++ {
+		num, err := p.NumChunks(i)
+		c.Check(err, check.IsNil)
+		for j := 0; j < num; j++ {
+			chk.Reset()
+			p.GetChunk(i, j, chk)
+			c.Check(chk.NumRows(), check.Equals, numRow)
+		}
+	}
+}
+
 func BenchmarkListInDiskAdd(b *testing.B) {
 	numChk, numRow := 1, 2
 	chks, fields := initChunks(numChk, numRow)
