@@ -94,9 +94,14 @@ type hashRowContainer struct {
 	hashTable *rowHashMap
 
 	rowContainer *chunk.RowContainer
+
+	// matchedRows[i] is used to store the matched rows in probe phase for join worker i.
+	matchedRows [][]chunk.Row
+	// matchedRtrs[i] is used to store the matched rows' pointer in probe phase for join worker i.
+	matchedPtrs [][]chunk.RowPtr
 }
 
-func newHashRowContainer(sCtx sessionctx.Context, estCount int, hCtx *hashContext) *hashRowContainer {
+func newHashRowContainer(workNum uint, sCtx sessionctx.Context, estCount int, hCtx *hashContext) *hashRowContainer {
 	maxChunkSize := sCtx.GetSessionVars().MaxChunkSize
 	// The estCount from cost model is not quite accurate and we need
 	// to avoid that it's too large to consume redundant memory.
@@ -110,11 +115,15 @@ func newHashRowContainer(sCtx sessionctx.Context, estCount int, hCtx *hashContex
 		estCount = 0
 	}
 	rc := chunk.NewRowContainer(hCtx.allTypes, maxChunkSize)
+	matchedRows := make([][]chunk.Row, workNum)
+	matchedPtrs := make([][]chunk.RowPtr, workNum)
 	c := &hashRowContainer{
 		sc:           sCtx.GetSessionVars().StmtCtx,
 		hCtx:         hCtx,
 		hashTable:    newRowHashMap(estCount),
 		rowContainer: rc,
+		matchedRows:  matchedRows,
+		matchedPtrs:  matchedPtrs,
 	}
 
 	return c
@@ -123,14 +132,19 @@ func newHashRowContainer(sCtx sessionctx.Context, estCount int, hCtx *hashContex
 // GetMatchedRowsAndPtrs get matched rows and Ptrs from probeRow. It can be called
 // in multiple goroutines while each goroutine should keep its own
 // h and buf.
-func (c *hashRowContainer) GetMatchedRowsAndPtrs(probeKey uint64, probeRow chunk.Row, hCtx *hashContext) (matched []chunk.Row, matchedPtrs []chunk.RowPtr, err error) {
+func (c *hashRowContainer) GetMatchedRowsAndPtrs(workID uint, probeKey uint64, probeRow chunk.Row, hCtx *hashContext) (matched []chunk.Row, matchedPtrs []chunk.RowPtr, err error) {
 	innerPtrs := c.hashTable.Get(probeKey)
-	if len(innerPtrs) == 0 {
+	lenInnerPtrs := len(innerPtrs)
+	if lenInnerPtrs == 0 {
 		return
 	}
-	matched = make([]chunk.Row, 0, len(innerPtrs))
+	if c.matchedRows[workID] == nil || len(c.matchedRows[workID]) < lenInnerPtrs {
+		c.matchedRows[workID] = make([]chunk.Row, 0, lenInnerPtrs)
+	}
+	if c.matchedPtrs[workID] == nil || len(c.matchedPtrs[workID]) < lenInnerPtrs {
+		c.matchedPtrs[workID] = make([]chunk.RowPtr, 0, lenInnerPtrs)
+	}
 	var matchedRow chunk.Row
-	matchedPtrs = make([]chunk.RowPtr, 0, len(innerPtrs))
 	for _, ptr := range innerPtrs {
 		matchedRow, err = c.rowContainer.GetRow(ptr)
 		if err != nil {
@@ -145,8 +159,8 @@ func (c *hashRowContainer) GetMatchedRowsAndPtrs(probeKey uint64, probeRow chunk
 			c.stat.probeCollision++
 			continue
 		}
-		matched = append(matched, matchedRow)
-		matchedPtrs = append(matchedPtrs, ptr)
+		c.matchedRows[workID] = append(c.matchedRows[workID], matchedRow)
+		c.matchedPtrs[workID] = append(c.matchedPtrs[workID], ptr)
 	}
 	return
 }
