@@ -32,7 +32,6 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
-	"github.com/pingcap/tidb/errno"
 	"io"
 	"math/rand"
 	"net"
@@ -91,7 +90,7 @@ var (
 	errNotAllowedCommand       = terror.ClassServer.New(codeNotAllowedCommand, "the used command is not allowed with this TiDB version")
 	errAccessDenied            = terror.ClassServer.New(codeAccessDenied, mysql.MySQLErrName[mysql.ErrAccessDenied])
 	errMaxExecTimeExceeded     = terror.ClassServer.New(codeMaxExecTimeExceeded, mysql.MySQLErrName[mysql.ErrMaxExecTimeExceeded])
-	errSecureTransportRequired = terror.ClassServer.New(codeSecureTransportRequired, errno.MySQLErrName[mysql.ErrSecureTransportRequired])
+	errSecureTransportRequired = terror.ClassServer.New(codeSecureTransportRequired, mysql.MySQLErrName[mysql.ErrSecureTransportRequired])
 )
 
 // DefaultCapability is the capability of the server when it is created using the default configuration.
