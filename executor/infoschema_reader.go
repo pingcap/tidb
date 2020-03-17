@@ -1088,7 +1088,7 @@ func (e *memtableRetriever) setDataFromTableConstraints(ctx sessionctx.Context, 
 	e.rows = rows
 }
 
-//slowQueryRetriever is used to read slow log data.
+//tableStorageStatsRetriever is used to read slow log data.
 type tableStorageStatsRetriever struct {
 	dummyCloser
 	table         *model.TableInfo
@@ -1208,7 +1208,7 @@ func (e *tableStorageStatsRetriever) dataForTableStorageStats(ctx sessionctx.Con
 		return nil, errors.New("not implemented")
 	}
 	pdAddrs = etcd.EtcdAddrs()
-	if len(pdAddrs) < 0 {
+	if len(pdAddrs) == 0 {
 		return nil, errors.New("pd unavailable")
 	}
 	count := 0
