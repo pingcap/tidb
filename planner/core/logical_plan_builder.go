@@ -2560,8 +2560,8 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	}
 
 	if tableInfo.IsView() {
-		if b.capFlag & collectUnderlyingViewName != 0 {
-			 b.underlyingViewNames.Insert(dbName.L + "." + tn.Name.L)
+		if b.capFlag&collectUnderlyingViewName != 0 {
+			b.underlyingViewNames.Insert(dbName.L + "." + tn.Name.L)
 		}
 		return b.BuildDataSourceFromView(ctx, dbName, tableInfo)
 	}
