@@ -486,11 +486,13 @@ func (e *HashJoinExec) runJoinWorker(workerID uint, probeKeyColIdx []int) {
 
 func (e *HashJoinExec) joinMatchedProbeSideRow2ChunkForOuterHashJoin(workerID uint, probeKey uint64, probeSideRow chunk.Row, hCtx *hashContext,
 	joinResult *hashjoinWorkerResult) (bool, *hashjoinWorkerResult) {
-	buildSideRows, rowsPtrs, err := e.rowContainer.GetMatchedRowsAndPtrs(workerID, probeKey, probeSideRow, hCtx)
+	err := e.rowContainer.GetMatchedRowsAndPtrs(workerID, probeKey, probeSideRow, hCtx)
 	if err != nil {
 		joinResult.err = err
 		return false, joinResult
 	}
+	buildSideRows := e.rowContainer.matchedRows[workerID]
+	rowsPtrs := e.rowContainer.matchedPtrs[workerID]
 	if len(buildSideRows) == 0 {
 		return true, joinResult
 	}
@@ -522,11 +524,12 @@ func (e *HashJoinExec) joinMatchedProbeSideRow2ChunkForOuterHashJoin(workerID ui
 }
 func (e *HashJoinExec) joinMatchedProbeSideRow2Chunk(workerID uint, probeKey uint64, probeSideRow chunk.Row, hCtx *hashContext,
 	joinResult *hashjoinWorkerResult) (bool, *hashjoinWorkerResult) {
-	buildSideRows, _, err := e.rowContainer.GetMatchedRowsAndPtrs(workerID, probeKey, probeSideRow, hCtx)
+	err := e.rowContainer.GetMatchedRowsAndPtrs(workerID, probeKey, probeSideRow, hCtx)
 	if err != nil {
 		joinResult.err = err
 		return false, joinResult
 	}
+	buildSideRows := e.rowContainer.matchedRows[workerID]
 	if len(buildSideRows) == 0 {
 		e.joiners[workerID].onMissMatch(false, probeSideRow, joinResult.chk)
 		return true, joinResult
