@@ -513,6 +513,18 @@ func (s *extractorSuite) TestClusterLogTableExtractor(c *C) {
 			level:     set.NewStringSet("debug", "info", "error"),
 			patterns:  []string{".*coprocessor.*", ".*txn=123.*"},
 		},
+		{
+			sql:       "select * from information_schema.cluster_log where (message regexp '.*pd.*' or message regexp '.*tidb.*' or message like '%tikv%')",
+			nodeTypes: set.NewStringSet(),
+			instances: set.NewStringSet(),
+			patterns:  []string{".*pd.*|.*tidb.*|.*tikv.*"},
+		},
+		{
+			sql:       "select * from information_schema.cluster_log where (level = 'debug' or level = 'ERROR')",
+			nodeTypes: set.NewStringSet(),
+			instances: set.NewStringSet(),
+			level:     set.NewStringSet("debug", "error"),
+		},
 	}
 	for _, ca := range cases {
 		logicalMemTable := s.getLogicalMemTable(c, se, parser, ca.sql)
@@ -644,7 +656,7 @@ func (s *extractorSuite) TestMetricTableExtractor(c *C) {
 			c.Assert(metricTableExtractor.Quantiles, DeepEquals, ca.quantiles)
 		}
 		if !ca.skipRequest {
-			promQL := plannercore.GetMetricTablePromQL(se, "tidb_query_duration", metricTableExtractor.LabelConditions, metricTableExtractor.Quantiles)
+			promQL := metricTableExtractor.GetMetricTablePromQL(se, "tidb_query_duration")
 			c.Assert(promQL, DeepEquals, ca.promQL, Commentf("SQL: %v", ca.sql))
 			start, end := metricTableExtractor.StartTime, metricTableExtractor.EndTime
 			c.Assert(start.UnixNano() <= end.UnixNano(), IsTrue)
