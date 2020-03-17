@@ -98,7 +98,7 @@ var (
 	// It's exported for testing.
 	ErrUnsupportedModifyPrimaryKey = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation], "%s primary key"))
 	// ErrPKIndexCantBeInvisible return an error when primary key is invisible index
-	ErrPKIndexCantBeInvisible      = terror.ClassDDL.New(mysql.ErrPKIndexCantBeInvisible, mysql.MySQLErrName[mysql.ErrPKIndexCantBeInvisible])
+	ErrPKIndexCantBeInvisible = terror.ClassDDL.New(mysql.ErrPKIndexCantBeInvisible, mysql.MySQLErrName[mysql.ErrPKIndexCantBeInvisible])
 
 	// ErrColumnBadNull returns for a bad null value.
 	ErrColumnBadNull = terror.ClassDDL.New(mysql.ErrBadNull, mysql.MySQLErrName[mysql.ErrBadNull])
