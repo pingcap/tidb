@@ -1071,12 +1071,13 @@ const (
 	ErrColumnTypeUnsupportedNextValue = 8228
 
 	// TiKV/PD errors.
-	ErrPDServerTimeout    = 9001
-	ErrTiKVServerTimeout  = 9002
-	ErrTiKVServerBusy     = 9003
-	ErrResolveLockTimeout = 9004
-	ErrRegionUnavailable  = 9005
-	ErrGCTooEarly         = 9006
-	ErrWriteConflict      = 9007
-	ErrTiKVStoreLimit     = 9008
+	ErrPDServerTimeout        = 9001
+	ErrTiKVServerTimeout      = 9002
+	ErrTiKVServerBusy         = 9003
+	ErrResolveLockTimeout     = 9004
+	ErrRegionUnavailable      = 9005
+	ErrGCTooEarly             = 9006
+	ErrWriteConflict          = 9007
+	ErrTiKVStoreLimit         = 9008
+	ErrPrometheusAddrIsNotSet = 9009
 )
