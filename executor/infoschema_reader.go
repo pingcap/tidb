@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/pdapi"
@@ -70,6 +71,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			e.setDataForStatistics(sctx, dbs)
 		case infoschema.TableTables:
 			err = e.setDataFromTables(sctx, dbs)
+		case infoschema.TableColumns:
+			e.setDataForColumns(sctx, dbs)
 		case infoschema.TablePartitions:
 			err = e.setDataFromPartitions(sctx, dbs)
 		case infoschema.TableClusterInfo:
@@ -505,6 +508,109 @@ func (e *memtableRetriever) setDataFromTables(ctx sessionctx.Context, schemas []
 	}
 	e.rows = rows
 	return nil
+}
+
+func (e *memtableRetriever) setDataForColumns(ctx sessionctx.Context, schemas []*model.DBInfo) {
+	checker := privilege.GetPrivilegeManager(ctx)
+	var rows [][]types.Datum
+	for _, schema := range schemas {
+		for _, table := range schema.Tables {
+			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
+				continue
+			}
+
+			rs := e.dataForColumnsInTable(schema, table)
+			rows = append(rows, rs...)
+		}
+	}
+	e.rows = rows
+}
+
+func (e *memtableRetriever) dataForColumnsInTable(schema *model.DBInfo, tbl *model.TableInfo) [][]types.Datum {
+	rows := make([][]types.Datum, 0, len(tbl.Columns))
+	for i, col := range tbl.Columns {
+		if col.Hidden {
+			continue
+		}
+		var charMaxLen, charOctLen, numericPrecision, numericScale, datetimePrecision interface{}
+		colLen, decimal := col.Flen, col.Decimal
+		defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimal(col.Tp)
+		if decimal == types.UnspecifiedLength {
+			decimal = defaultDecimal
+		}
+		if colLen == types.UnspecifiedLength {
+			colLen = defaultFlen
+		}
+		if col.Tp == mysql.TypeSet {
+			// Example: In MySQL set('a','bc','def','ghij') has length 13, because
+			// len('a')+len('bc')+len('def')+len('ghij')+len(ThreeComma)=13
+			// Reference link: https://bugs.mysql.com/bug.php?id=22613
+			colLen = 0
+			for _, ele := range col.Elems {
+				colLen += len(ele)
+			}
+			if len(col.Elems) != 0 {
+				colLen += (len(col.Elems) - 1)
+			}
+			charMaxLen = colLen
+			charOctLen = colLen
+		} else if col.Tp == mysql.TypeEnum {
+			// Example: In MySQL enum('a', 'ab', 'cdef') has length 4, because
+			// the longest string in the enum is 'cdef'
+			// Reference link: https://bugs.mysql.com/bug.php?id=22613
+			colLen = 0
+			for _, ele := range col.Elems {
+				if len(ele) > colLen {
+					colLen = len(ele)
+				}
+			}
+			charMaxLen = colLen
+			charOctLen = colLen
+		} else if types.IsString(col.Tp) {
+			charMaxLen = colLen
+			charOctLen = colLen
+		} else if types.IsTypeFractionable(col.Tp) {
+			datetimePrecision = decimal
+		} else if types.IsTypeNumeric(col.Tp) {
+			numericPrecision = colLen
+			if col.Tp != mysql.TypeFloat && col.Tp != mysql.TypeDouble {
+				numericScale = decimal
+			} else if decimal != -1 {
+				numericScale = decimal
+			}
+		}
+		columnType := col.FieldType.InfoSchemaStr()
+		columnDesc := table.NewColDesc(table.ToColumn(col))
+		var columnDefault interface{}
+		if columnDesc.DefaultValue != nil {
+			columnDefault = fmt.Sprintf("%v", columnDesc.DefaultValue)
+		}
+		record := types.MakeDatums(
+			infoschema.CatalogVal,                // TABLE_CATALOG
+			schema.Name.O,                        // TABLE_SCHEMA
+			tbl.Name.O,                           // TABLE_NAME
+			col.Name.O,                           // COLUMN_NAME
+			i+1,                                  // ORIGINAL_POSITION
+			columnDefault,                        // COLUMN_DEFAULT
+			columnDesc.Null,                      // IS_NULLABLE
+			types.TypeToStr(col.Tp, col.Charset), // DATA_TYPE
+			charMaxLen,                           // CHARACTER_MAXIMUM_LENGTH
+			charOctLen,                           // CHARACTER_OCTET_LENGTH
+			numericPrecision,                     // NUMERIC_PRECISION
+			numericScale,                         // NUMERIC_SCALE
+			datetimePrecision,                    // DATETIME_PRECISION
+			columnDesc.Charset,                   // CHARACTER_SET_NAME
+			columnDesc.Collation,                 // COLLATION_NAME
+			columnType,                           // COLUMN_TYPE
+			columnDesc.Key,                       // COLUMN_KEY
+			columnDesc.Extra,                     // EXTRA
+			"select,insert,update,references",    // PRIVILEGES
+			columnDesc.Comment,                   // COLUMN_COMMENT
+			col.GeneratedExprString,              // GENERATION_EXPRESSION
+		)
+		rows = append(rows, record)
+	}
+	return rows
 }
 
 func (e *memtableRetriever) setDataFromPartitions(ctx sessionctx.Context, schemas []*model.DBInfo) error {
