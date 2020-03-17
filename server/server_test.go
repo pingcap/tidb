@@ -52,7 +52,7 @@ func getDSN(overriders ...configOverrider) string {
 	config := mysql.NewConfig()
 	config.User = "root"
 	config.Net = "tcp"
-	config.Addr = fmt.Sprintf("127.0.0.1:%d", cli.port)
+	config.Addr = fmt.Sprintf("127.0.0.1:4001")
 	config.DBName = "test"
 	for _, overrider := range overriders {
 		if overrider != nil {
