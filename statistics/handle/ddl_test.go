@@ -244,34 +244,4 @@ PARTITION BY RANGE ( a ) (
 		statsTbl := h.GetPartitionStats(tableInfo, def.ID)
 		c.Assert(statsTbl.Pseudo, IsFalse)
 	}
-
-	addPartition := "alter table t add partition (partition p4 values less than (26))"
-	testKit.MustExec(addPartition)
-	is = s.do.InfoSchema()
-	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
-	tableInfo = tbl.Meta()
-	err = h.HandleDDLEvent(<-h.DDLEventCh())
-	c.Assert(err, IsNil)
-	c.Assert(h.Update(is), IsNil)
-	pi = tableInfo.GetPartitionInfo()
-	for _, def := range pi.Definitions {
-		statsTbl := h.GetPartitionStats(tableInfo, def.ID)
-		c.Assert(statsTbl.Pseudo, IsFalse)
-	}
-
-	truncatePartition := "alter table t truncate partition p4"
-	testKit.MustExec(truncatePartition)
-	is = s.do.InfoSchema()
-	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
-	tableInfo = tbl.Meta()
-	err = h.HandleDDLEvent(<-h.DDLEventCh())
-	c.Assert(err, IsNil)
-	c.Assert(h.Update(is), IsNil)
-	pi = tableInfo.GetPartitionInfo()
-	for _, def := range pi.Definitions {
-		statsTbl := h.GetPartitionStats(tableInfo, def.ID)
-		c.Assert(statsTbl.Pseudo, IsFalse)
-	}
 }
