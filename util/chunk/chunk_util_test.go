@@ -61,7 +61,7 @@ func TestCopySelectedJoinRows(t *testing.T) {
 	}
 	// batch copy
 	dstChk2 := newChunkWithInitCap(numRows, 0, 0, 8, 8, sizeTime, 0)
-	CopySelectedJoinRowsWithSameOuterRows(srcChk, 0, 3, selected, dstChk2)
+	CopySelectedJoinRowsWithSameOuterRows(srcChk, 0, 3, selected, dstChk2, false)
 
 	if !reflect.DeepEqual(dstChk, dstChk2) {
 		t.Fatal()
@@ -118,7 +118,7 @@ func TestCopySelectedVirtualNum(t *testing.T) {
 	}
 
 	dstChk = newChunk()
-	ok, err = CopySelectedJoinRowsWithSameOuterRows(srcChk, 0, 0, selected, dstChk)
+	ok, err = CopySelectedJoinRowsWithSameOuterRows(srcChk, 0, 0, selected, dstChk, false)
 	if err != nil || !ok {
 		t.Fatal(ok, err)
 	}
@@ -132,7 +132,7 @@ func TestCopySelectedVirtualNum(t *testing.T) {
 	srcChk.AppendInt64(0, 1)
 	srcChk.AppendInt64(0, 2)
 	dstChk = newChunkWithInitCap(0, 8)
-	ok, err = CopySelectedJoinRowsWithSameOuterRows(srcChk, 0, 1, selected, dstChk)
+	ok, err = CopySelectedJoinRowsWithSameOuterRows(srcChk, 0, 1, selected, dstChk, false)
 	if err != nil || !ok {
 		t.Fatal(ok, err)
 	}
@@ -149,7 +149,7 @@ func TestCopySelectedVirtualNum(t *testing.T) {
 	srcChk.AppendInt64(0, 3)
 	srcChk.AppendInt64(0, 3)
 	dstChk = newChunkWithInitCap(0, 8)
-	ok, err = CopySelectedJoinRowsWithSameOuterRows(srcChk, 1, 0, selected, dstChk)
+	ok, err = CopySelectedJoinRowsWithSameOuterRows(srcChk, 1, 0, selected, dstChk, false)
 	if err != nil || !ok {
 		t.Fatal(ok, err)
 	}
@@ -167,7 +167,7 @@ func BenchmarkCopySelectedJoinRows(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		dstChk.Reset()
-		CopySelectedJoinRowsWithSameOuterRows(srcChk, 0, 3, selected, dstChk)
+		CopySelectedJoinRowsWithSameOuterRows(srcChk, 0, 3, selected, dstChk, false)
 	}
 }
 func BenchmarkCopySelectedJoinRowsDirect(b *testing.B) {
