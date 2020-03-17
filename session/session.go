@@ -1237,6 +1237,7 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args .
 	if err != nil {
 		return nil, err
 	}
+	s.SetValue(sessionctx.QueryString, st.OriginText())
 	logQuery(st.OriginText(), s.sessionVars)
 	r, err := runStmt(ctx, s, st)
 	return r, err

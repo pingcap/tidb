@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/arena"
 )
@@ -283,4 +284,51 @@ func (ts ConnTestSuite) TestConnExecutionTimeout(c *C) {
 	c.Assert(time.Since(now) < 3*time.Second, IsTrue)
 
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/server/FakeClientConn"), IsNil)
+}
+
+func (ts ConnTestSuite) TestExecDDL(c *C) {
+	c.Parallel()
+	var err error
+	ts.store, err = mockstore.NewMockTikvStore()
+	c.Assert(err, IsNil)
+	ts.dom, err = session.BootstrapSession(ts.store)
+	c.Assert(err, IsNil)
+	se, err := session.CreateSession4Test(ts.store)
+	c.Assert(err, IsNil)
+
+	connID := 1
+	se.SetConnectionID(uint64(connID))
+	tc := &TiDBContext{
+		session: se,
+		stmts:   make(map[int]*TiDBStatement),
+	}
+	cc := &clientConn{
+		connectionID: uint32(connID),
+		server: &Server{
+			capability: defaultCapability,
+		},
+		ctx:   tc,
+		alloc: arena.NewAllocator(32 * 1024),
+	}
+	srv := &Server{
+		clients: map[uint32]*clientConn{
+			uint32(connID): cc,
+		},
+	}
+	handle := ts.dom.ExpensiveQueryHandle().SetSessionManager(srv)
+	go handle.Run()
+	defer handle.Close()
+
+	_, err = se.Execute(context.Background(), "use test;")
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "CREATE TABLE t (id bigint PRIMARY KEY, age int)")
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "show create table t")
+	c.Assert(err, IsNil)
+	id, _, _, err := se.PrepareStmt("CREATE TABLE t2(id bigint PRIMARY KEY, age int)")
+	c.Assert(err, IsNil)
+	_, err = se.ExecutePreparedStmt(context.Background(), id)
+	c.Assert(err, IsNil)
+	qs := cc.ctx.Value(sessionctx.QueryString)
+	c.Assert(qs.(string), Equals, "CREATE TABLE t2(id bigint PRIMARY KEY, age int)")
 }
