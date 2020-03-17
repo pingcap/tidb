@@ -89,7 +89,7 @@ import (
 	hintQueryType             "QUERY_TYPE"
 	hintReadConsistentReplica "READ_CONSISTENT_REPLICA"
 	hintReadFromStorage       "READ_FROM_STORAGE"
-	hintSMJoin                "SM_JOIN"
+	hintSMJoin                "MERGE_JOIN"
 	hintStreamAgg             "STREAM_AGG"
 	hintSwapJoinInputs        "SWAP_JOIN_INPUTS"
 	hintUseIndexMerge         "USE_INDEX_MERGE"
@@ -484,7 +484,7 @@ UnsupportedTableLevelOptimizerHintName:
 |	"NO_MERGE"
 
 SupportedTableLevelOptimizerHintName:
-	"SM_JOIN"
+	"MERGE_JOIN"
 |	"INL_JOIN"
 |	"INL_HASH_JOIN"
 |	"SWAP_JOIN_INPUTS"
@@ -580,7 +580,7 @@ Identifier:
 |	"QUERY_TYPE"
 |	"READ_CONSISTENT_REPLICA"
 |	"READ_FROM_STORAGE"
-|	"SM_JOIN"
+|	"MERGE_JOIN"
 |	"STREAM_AGG"
 |	"SWAP_JOIN_INPUTS"
 |	"USE_INDEX_MERGE"

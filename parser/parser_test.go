@@ -3099,19 +3099,19 @@ func (s *testParserSuite) TestOptimizerHints(c *C) {
 	c.Assert(hints[1].Tables[0].TableName.L, Equals, "t3")
 	c.Assert(hints[1].Tables[1].TableName.L, Equals, "t4")
 
-	// Test SM_JOIN
-	stmt, _, err = parser.Parse("select /*+ SM_JOIN(t1, T2), sm_join(t3, t4) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
+	// Test MERGE_JOIN
+	stmt, _, err = parser.Parse("select /*+ MERGE_JOIN(t1, T2), merge_join(t3, t4) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
 	c.Assert(err, IsNil)
 	selectStmt = stmt[0].(*ast.SelectStmt)
 
 	hints = selectStmt.TableHints
 	c.Assert(hints, HasLen, 2)
-	c.Assert(hints[0].HintName.L, Equals, "sm_join")
+	c.Assert(hints[0].HintName.L, Equals, "merge_join")
 	c.Assert(hints[0].Tables, HasLen, 2)
 	c.Assert(hints[0].Tables[0].TableName.L, Equals, "t1")
 	c.Assert(hints[0].Tables[1].TableName.L, Equals, "t2")
 
-	c.Assert(hints[1].HintName.L, Equals, "sm_join")
+	c.Assert(hints[1].HintName.L, Equals, "merge_join")
 	c.Assert(hints[1].Tables, HasLen, 2)
 	c.Assert(hints[1].Tables[0].TableName.L, Equals, "t3")
 	c.Assert(hints[1].Tables[1].TableName.L, Equals, "t4")
