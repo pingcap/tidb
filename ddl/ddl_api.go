@@ -1135,6 +1135,42 @@ func checkConstraintNames(constraints []*ast.Constraint) error {
 	return nil
 }
 
+
+func checkInvisibleIndexOnPK(tblInfo *model.TableInfo) error {
+	// cannot set primary key as invisible index
+	pk := getPK(tblInfo)
+	if pk != nil && pk.Invisible {
+		return ErrPKIndexCantBeInvisible
+	}
+	return nil
+}
+
+func getPK(tblInfo *model.TableInfo) *model.IndexInfo {
+	var implicitPK *model.IndexInfo
+
+	for _, key := range tblInfo.Indices {
+		if key.Primary {
+			// table has explicit primary key
+			return key
+		}
+		// find the first unique key with NOT NULL columns
+		if implicitPK == nil && key.Unique {
+			// ensure all columns in unique key have NOT NULL flag
+			allColNotNull := true
+			for _, idxCol := range key.Columns {
+				col := model.FindColumnInfo(tblInfo.Cols(), idxCol.Name.L)
+				if !mysql.HasNotNullFlag(col.Flag) {
+					allColNotNull = false
+				}
+			}
+			if allColNotNull {
+				implicitPK = key
+			}
+		}
+	}
+	return implicitPK
+}
+
 func setTableAutoRandomBits(ctx sessionctx.Context, tbInfo *model.TableInfo, colDefs []*ast.ColumnDef) error {
 	allowAutoRandom := config.GetGlobalConfig().Experimental.AllowAutoRandom
 	pkColName := tbInfo.GetPkName()
@@ -1258,6 +1294,7 @@ func buildTableInfo(ctx sessionctx.Context, tableName model.CIStr, cols []*table
 				return nil, errors.Trace(err)
 			}
 			if constr.Option.Visibility == ast.IndexVisibilityInvisible {
+				// check if primary key
 				idxInfo.Invisible = true
 			}
 			if constr.Option.Tp == model.IndexTypeInvalid {
@@ -1279,7 +1316,10 @@ func buildTableInfo(ctx sessionctx.Context, tableName model.CIStr, cols []*table
 // checkTableInfoValid uses to check table info valid. This is used to validate table info.
 func checkTableInfoValid(tblInfo *model.TableInfo) error {
 	_, err := tables.TableFromMeta(nil, tblInfo)
-	return err
+	if err != nil {
+		return err
+	}
+	return checkInvisibleIndexOnPK(tblInfo)
 }
 
 func buildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo) *model.TableInfo {
@@ -1411,6 +1451,10 @@ func buildTableInfoWithCheck(ctx sessionctx.Context, s *ast.CreateTableStmt, dbC
 	}
 
 	if err = checkCharsetAndCollation(tbInfo.Charset, tbInfo.Collate); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if err = checkInvisibleIndexOnPK(tbInfo); err != nil {
 		return nil, errors.Trace(err)
 	}
 
