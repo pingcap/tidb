@@ -369,8 +369,13 @@ func LoadTLSCertificates(ca, key, cert string) (tlsConfig *tls.Config, err error
 		return
 	}
 
+	requireTLS := config.GetGlobalConfig().Security.RequireSecureTransport
+
 	// Try loading CA cert.
 	clientAuthPolicy := tls.NoClientCert
+	if requireTLS {
+		clientAuthPolicy = tls.RequestClientCert
+	}
 	var certPool *x509.CertPool
 	if len(ca) > 0 {
 		var caCert []byte
@@ -382,7 +387,11 @@ func LoadTLSCertificates(ca, key, cert string) (tlsConfig *tls.Config, err error
 		}
 		certPool = x509.NewCertPool()
 		if certPool.AppendCertsFromPEM(caCert) {
-			clientAuthPolicy = tls.VerifyClientCertIfGiven
+			if requireTLS {
+				clientAuthPolicy = tls.RequireAndVerifyClientCert
+			} else {
+				clientAuthPolicy = tls.VerifyClientCertIfGiven
+			}
 		}
 	}
 	tlsConfig = &tls.Config{
