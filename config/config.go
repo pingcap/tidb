@@ -635,7 +635,7 @@ var defaultConf = Config{
 		AllowAutoRandom: false,
 	},
 	EnableDynamicConfig:       true,
-	IgnoreDDLTemporaryKeyword: false,
+	IgnoreDDLTemporaryKeyword: true,
 }
 
 var (

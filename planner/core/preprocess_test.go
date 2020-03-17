@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -234,6 +235,7 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 	c.Assert(err, IsNil)
 	ctx := se.(sessionctx.Context)
 	is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable()})
+	config.GetGlobalConfig().IgnoreDDLTemporaryKeyword = false
 	for _, tt := range tests {
 		stmts, err1 := session.Parse(ctx, tt.sql)
 		c.Assert(err1, IsNil)
