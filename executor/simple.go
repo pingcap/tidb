@@ -1111,7 +1111,7 @@ func (e *SimpleExec) executeAlterInstance(s *ast.AlterInstanceStmt) error {
 			variable.SysVars["ssl_cert"].Value,
 		)
 		if err != nil {
-			if !s.NoRollbackOnError {
+			if !s.NoRollbackOnError || config.GetGlobalConfig().Security.RequireSecureTransport {
 				return err
 			}
 			logutil.BgLogger().Warn("reload TLS fail but keep working without TLS due to 'no rollback on error'")
