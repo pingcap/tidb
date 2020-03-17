@@ -55,6 +55,7 @@ func NewIterator4Slice(rows []Row) Iterator {
 	return &Iterator4Slice{rows: rows}
 }
 
+// Iterator4Slice is used to iterate rows slice.
 type Iterator4Slice struct {
 	rows   []Row
 	cursor int

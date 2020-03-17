@@ -138,11 +138,15 @@ func (c *hashRowContainer) GetMatchedRowsAndPtrs(workID uint, probeKey uint64, p
 	if lenInnerPtrs == 0 {
 		return
 	}
-	if c.matchedRows[workID] == nil || len(c.matchedRows[workID]) < lenInnerPtrs {
+	if c.matchedRows[workID] == nil || cap(c.matchedRows[workID]) < lenInnerPtrs {
 		c.matchedRows[workID] = make([]chunk.Row, 0, lenInnerPtrs)
+	} else {
+		c.matchedRows[workID] = c.matchedRows[workID][:0]
 	}
-	if c.matchedPtrs[workID] == nil || len(c.matchedPtrs[workID]) < lenInnerPtrs {
+	if c.matchedPtrs[workID] == nil || cap(c.matchedPtrs[workID]) < lenInnerPtrs {
 		c.matchedPtrs[workID] = make([]chunk.RowPtr, 0, lenInnerPtrs)
+	} else {
+		c.matchedPtrs[workID] = c.matchedPtrs[workID][:0]
 	}
 	var matchedRow chunk.Row
 	for _, ptr := range innerPtrs {
