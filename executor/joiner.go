@@ -235,7 +235,7 @@ func (j *baseJoiner) filter(
 	lUsed, rUsed []int) (bool, error) {
 
 	var err error
-	prunOuters := false
+	prunedOuters := false
 	j.selected, err = expression.VectorizedFilter(j.ctx, j.conditions, chunk.NewIterator4Chunk(input), j.selected)
 	if err != nil {
 		return false, err
@@ -262,12 +262,12 @@ func (j *baseJoiner) filter(
 			innerColOffset, outerColOffset = len(lUsed), 0
 			// the same outers are pruned, remaining the different inners
 			if innerColOffset-outerColOffset == 0 {
-				prunOuters = true
+				prunedOuters = true
 			}
 		}
 
 	}
-	return chunk.CopySelectedJoinRowsWithSameOuterRows(input, innerColOffset, outerColOffset, j.selected, output, prunOuters)
+	return chunk.CopySelectedJoinRowsWithSameOuterRows(input, innerColOffset, outerColOffset, j.selected, output, prunedOuters)
 }
 
 // filterAndCheckOuterRowStatus is used to filter the result constructed by
