@@ -902,15 +902,6 @@ func (s *testPrivilegeSuite) TestSystemSchema(c *C) {
 	c.Assert(strings.Contains(err.Error(), "privilege check fail"), IsTrue)
 	_, err = se.Execute(context.Background(), "delete from performance_schema.events_statements_summary_by_digest")
 	c.Assert(strings.Contains(err.Error(), "privilege check fail"), IsTrue)
-
-	// Test metric_schema.
-	mustExec(c, se, `select * from metrics_schema.tidb_query_duration`)
-	_, err = se.Execute(context.Background(), "drop table metrics_schema.tidb_query_duration")
-	c.Assert(strings.Contains(err.Error(), "denied to user"), IsTrue)
-	_, err = se.Execute(context.Background(), "update metrics_schema.tidb_query_duration set instance = 'tst'")
-	c.Assert(strings.Contains(err.Error(), "privilege check fail"), IsTrue)
-	_, err = se.Execute(context.Background(), "delete from metrics_schema.tidb_query_duration")
-	c.Assert(strings.Contains(err.Error(), "privilege check fail"), IsTrue)
 }
 
 func (s *testPrivilegeSuite) TestAdminCommand(c *C) {

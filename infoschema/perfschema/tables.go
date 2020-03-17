@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/profile"
 	"github.com/pingcap/tidb/util/stmtsummary"
+	"strings"
 )
 
 const (
@@ -36,6 +37,17 @@ const (
 	tableNameTiDBProfileGoroutines                  = "tidb_profile_goroutines"
 )
 
+var tableList = []string{
+	tableNameEventsStatementsSummaryByDigest,
+	tableNameTiDBProfileCPU,
+	tableNameTiDBProfileMemory,
+	tableNameTiDBProfileMutex,
+	tableNameTiDBProfileAllocs,
+	tableNameTiDBProfileBlock,
+	tableNameTiDBProfileGoroutines,
+	tableNameEventsStatementsSummaryByDigestHistory,
+}
+
 // perfSchemaTable stands for the fake table all its data is in the memory.
 type perfSchemaTable struct {
 	infoschema.VirtualTable
@@ -47,8 +59,12 @@ var pluginTable = make(map[string]func(autoid.Allocator, *model.TableInfo) (tabl
 
 // IsPredefinedTable judges whether this table is predefined.
 func IsPredefinedTable(tableName string) bool {
-	_, ok := tableIDMap[strings.ToLower(tableName)]
-	return ok
+	for _, name := range tableList {
+		if strings.EqualFold(tableName, name) {
+			return true
+		}
+	}
+	return false
 }
 
 // RegisterTable registers a new table into TiDB.
