@@ -895,8 +895,8 @@ func (e *SlowQueryExtractor) setTimeRange(start, end int64) {
 	e.Enable = true
 }
 
-// DiskUsageExtractor is used to extract some predicates of `disk_usage`
-type DiskUsageExtractor struct {
+// TableStorageStatsExtractor is used to extract some predicates of `disk_usage`
+type TableStorageStatsExtractor struct {
 	extractHelper
 	// SkipRequest means the where clause always false, we don't need to request any component
 	SkipRequest bool
@@ -910,7 +910,7 @@ type DiskUsageExtractor struct {
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
-func (e *DiskUsageExtractor) Extract(
+func (e *TableStorageStatsExtractor) Extract(
 	_ sessionctx.Context,
 	schema *expression.Schema,
 	names []*types.FieldName,
@@ -927,6 +927,10 @@ func (e *DiskUsageExtractor) Extract(
 	e.TableSchema = tableSchema
 	e.TableName = tableName
 	return remained
+}
+
+func (e *TableStorageStatsExtractor) explainInfo(p *PhysicalMemTable) string {
+	return ""
 }
 
 func (e *SlowQueryExtractor) explainInfo(p *PhysicalMemTable) string {

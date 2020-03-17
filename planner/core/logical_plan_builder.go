@@ -2846,7 +2846,7 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName model.CIStr, table
 		case infoschema.TableSlowQuery:
 			p.Extractor = &SlowQueryExtractor{}
 		case infoschema.TableDiskUsage:
-			p.Extractor = &DiskUsageExtractor{}
+			p.Extractor = &TableStorageStatsExtractor{}
 		}
 	}
 	return p, nil

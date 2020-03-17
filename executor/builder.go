@@ -1458,10 +1458,10 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 		case strings.ToLower(infoschema.TableDiskUsage):
 			return &MemTableReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
-				retriever: &diskUsageRetriever{
+				retriever: &tableStorageStatsRetriever{
 					table:      v.Table,
 					outputCols: v.Columns,
-					extractor:  v.Extractor.(*plannercore.DiskUsageExtractor),
+					extractor:  v.Extractor.(*plannercore.TableStorageStatsExtractor),
 				},
 			}
 		}

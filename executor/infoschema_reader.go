@@ -1089,18 +1089,18 @@ func (e *memtableRetriever) setDataFromTableConstraints(ctx sessionctx.Context, 
 }
 
 //slowQueryRetriever is used to read slow log data.
-type diskUsageRetriever struct {
+type tableStorageStatsRetriever struct {
 	dummyCloser
 	table         *model.TableInfo
 	outputCols    []*model.ColumnInfo
 	retrieved     bool
 	initialized   bool
-	extractor     *plannercore.DiskUsageExtractor
+	extractor     *plannercore.TableStorageStatsExtractor
 	initialTables []*initialTable
 	curTable      int
 }
 
-func (e *diskUsageRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
+func (e *tableStorageStatsRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
 	if e.retrieved {
 		return nil, nil
 	}
@@ -1115,7 +1115,7 @@ func (e *diskUsageRetriever) retrieve(ctx context.Context, sctx sessionctx.Conte
 		return nil, nil
 	}
 
-	rows, err := e.dataForDiskUsage(sctx)
+	rows, err := e.dataForTableStorageStats(sctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1138,13 +1138,12 @@ type initialTable struct {
 	tb *model.TableInfo
 }
 
-func (e *diskUsageRetriever) initialize(sctx sessionctx.Context) error {
+func (e *tableStorageStatsRetriever) initialize(sctx sessionctx.Context) error {
 	is := infoschema.GetInfoSchema(sctx)
 	dbs := is.AllSchemas()
 	sort.Sort(infoschema.SchemasSorter(dbs))
 	schemas := e.extractor.TableSchema
 	tables := e.extractor.TableName
-	//var initialTables []initialTable
 	if len(schemas) != 0 {
 		for _, schema := range dbs {
 			if schemas.Exist(schema.Name.L) {
@@ -1197,7 +1196,7 @@ type pdRegionStats struct {
 	StorePeerSize    map[uint64]int64 `json:"store_peer_size"`
 }
 
-func (e *diskUsageRetriever) dataForDiskUsage(ctx sessionctx.Context) ([][]types.Datum, error) {
+func (e *tableStorageStatsRetriever) dataForTableStorageStats(ctx sessionctx.Context) ([][]types.Datum, error) {
 	rows := make([][]types.Datum, 0, 1024)
 	tikvStore, ok := ctx.GetStore().(tikv.Storage)
 	if !ok {
