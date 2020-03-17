@@ -235,7 +235,11 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 	c.Assert(err, IsNil)
 	ctx := se.(sessionctx.Context)
 	is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable()})
-	config.GetGlobalConfig().IgnoreDDLTemporaryKeyword = false
+	// set ignoreDDLTemporaryKeyword to false, enable error report while 'TEMPORARY' keyword exist
+	old := config.GetGlobalConfig()
+	new := *old
+	new.IgnoreDDLTemporaryKeyword = false
+	config.StoreGlobalConfig(&new)
 	for _, tt := range tests {
 		stmts, err1 := session.Parse(ctx, tt.sql)
 		c.Assert(err1, IsNil)
