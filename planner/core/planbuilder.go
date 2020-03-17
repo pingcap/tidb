@@ -89,7 +89,15 @@ func tableNames2HintTableInfo(hintTables []ast.HintTable) []hintTableInfo {
 	}
 	hintTableInfos := make([]hintTableInfo, len(hintTables))
 	for i, hintTable := range hintTables {
+<<<<<<< HEAD
 		hintTableInfos[i] = hintTableInfo{name: hintTable.TableName}
+=======
+		tableInfo := hintTableInfo{dbName: hintTable.DBName, tblName: hintTable.TableName, selectOffset: p.getHintOffset(hintTable.QBName, nodeType, currentOffset)}
+		if tableInfo.dbName.L == "" {
+			tableInfo.dbName = defaultDBName
+		}
+		hintTableInfos[i] = tableInfo
+>>>>>>> 5268094... planner: correct the dbName for hint (#15319)
 	}
 	return hintTableInfos
 }
