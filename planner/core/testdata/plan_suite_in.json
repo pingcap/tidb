@@ -569,5 +569,11 @@
       "select /*+ INL_HASH_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;",
       "select /*+ INL_MERGE_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;"
     ]
+  },
+  {
+    "name": "TestHintFromDiffDatabase",
+    "cases": [
+      "select /*+ inl_hash_join(test.t1) */ * from test.t2 join test.t1 on test.t2.a = test.t1.a"
+    ]
   }
 ]
