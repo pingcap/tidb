@@ -33,6 +33,7 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/fn"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -155,7 +156,7 @@ func (s *Server) startHTTPServer() {
 			host = "localhost"
 		}
 		baseURL := &url.URL{
-			Scheme: "http",
+			Scheme: util.InternalHTTPSchema(),
 			Host:   fmt.Sprintf("%s:%s", host, port),
 		}
 		router.HandleFunc("/web/trace", traceapp.HandleTiDB).Name("Trace Viewer")
@@ -254,6 +255,13 @@ func (s *Server) startHTTPServer() {
 	})
 	fetcher := sqlInfoFetcher{store: tikvHandlerTool.Store}
 	serverMux.HandleFunc("/debug/sub-optimal-plan", fetcher.zipInfoForSQL)
+
+	failpoint.Inject("integrateFailpoint", func() {
+		serverMux.HandleFunc("/failpoints/", func(w http.ResponseWriter, r *http.Request) {
+			r.URL.Path = strings.TrimPrefix(r.URL.Path, "/failpoints")
+			new(failpoint.HttpHandler).ServeHTTP(w, r)
+		})
+	})
 
 	var (
 		httpRouterPage bytes.Buffer

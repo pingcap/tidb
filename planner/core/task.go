@@ -141,7 +141,6 @@ func (t *copTask) finishIndexPlan() {
 	for p = t.indexPlan; len(p.Children()) > 0; p = p.Children()[0] {
 	}
 	rowSize := t.tblColHists.GetIndexAvgRowSize(t.indexPlan.SCtx(), t.tblCols, p.(*PhysicalIndexScan).Index.Unique)
-
 	t.cst += cnt * rowSize * sessVars.ScanFactor
 }
 
@@ -614,6 +613,56 @@ func splitCopAvg2CountAndSum(p PhysicalPlan) {
 	}
 }
 
+func buildIndexLookUpTask(ctx sessionctx.Context, t *copTask) *rootTask {
+	newTask := &rootTask{cst: t.cst}
+	sessVars := ctx.GetSessionVars()
+	p := PhysicalIndexLookUpReader{
+		tablePlan:      t.tablePlan,
+		indexPlan:      t.indexPlan,
+		ExtraHandleCol: t.extraHandleCol,
+	}.Init(ctx, t.tablePlan.SelectBlockOffset())
+	setTableScanToTableRowIDScan(p.tablePlan)
+	p.stats = t.tablePlan.statsInfo()
+	// Add cost of building table reader executors. Handles are extracted in batch style,
+	// each handle is a range, the CPU cost of building copTasks should be:
+	// (indexRows / batchSize) * batchSize * CPUFactor
+	// Since we don't know the number of copTasks built, ignore these network cost now.
+	indexRows := t.indexPlan.statsInfo().RowCount
+	newTask.cst += indexRows * sessVars.CPUFactor
+	// Add cost of worker goroutines in index lookup.
+	numTblWorkers := float64(sessVars.IndexLookupConcurrency)
+	newTask.cst += (numTblWorkers + 1) * sessVars.ConcurrencyFactor
+	// When building table reader executor for each batch, we would sort the handles. CPU
+	// cost of sort is:
+	// CPUFactor * batchSize * Log2(batchSize) * (indexRows / batchSize)
+	indexLookupSize := float64(sessVars.IndexLookupSize)
+	batchSize := math.Min(indexLookupSize, indexRows)
+	if batchSize > 2 {
+		sortCPUCost := (indexRows * math.Log2(batchSize) * sessVars.CPUFactor) / numTblWorkers
+		newTask.cst += sortCPUCost
+	}
+	// Also, we need to sort the retrieved rows if index lookup reader is expected to return
+	// ordered results. Note that row count of these two sorts can be different, if there are
+	// operators above table scan.
+	tableRows := t.tablePlan.statsInfo().RowCount
+	selectivity := tableRows / indexRows
+	batchSize = math.Min(indexLookupSize*selectivity, tableRows)
+	if t.keepOrder && batchSize > 2 {
+		sortCPUCost := (tableRows * math.Log2(batchSize) * sessVars.CPUFactor) / numTblWorkers
+		newTask.cst += sortCPUCost
+	}
+	if t.doubleReadNeedProj {
+		schema := p.IndexPlans[0].(*PhysicalIndexScan).dataSourceSchema
+		proj := PhysicalProjection{Exprs: expression.Column2Exprs(schema.Columns)}.Init(ctx, p.stats, t.tablePlan.SelectBlockOffset(), nil)
+		proj.SetSchema(schema)
+		proj.SetChildren(p)
+		newTask.p = proj
+	} else {
+		newTask.p = p
+	}
+	return newTask
+}
+
 // finishCopTask means we close the coprocessor task and create a root task.
 func finishCopTask(ctx sessionctx.Context, task task) task {
 	t, ok := task.(*copTask)
@@ -642,50 +691,7 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 		return newTask
 	}
 	if t.indexPlan != nil && t.tablePlan != nil {
-		p := PhysicalIndexLookUpReader{
-			tablePlan:      t.tablePlan,
-			indexPlan:      t.indexPlan,
-			ExtraHandleCol: t.extraHandleCol,
-		}.Init(ctx, t.tablePlan.SelectBlockOffset())
-		setTableScanToTableRowIDScan(p.tablePlan)
-		p.stats = t.tablePlan.statsInfo()
-		// Add cost of building table reader executors. Handles are extracted in batch style,
-		// each handle is a range, the CPU cost of building copTasks should be:
-		// (indexRows / batchSize) * batchSize * CPUFactor
-		// Since we don't know the number of copTasks built, ignore these network cost now.
-		indexRows := t.indexPlan.statsInfo().RowCount
-		newTask.cst += indexRows * sessVars.CPUFactor
-		// Add cost of worker goroutines in index lookup.
-		numTblWorkers := float64(sessVars.IndexLookupConcurrency)
-		newTask.cst += (numTblWorkers + 1) * sessVars.ConcurrencyFactor
-		// When building table reader executor for each batch, we would sort the handles. CPU
-		// cost of sort is:
-		// CPUFactor * batchSize * Log2(batchSize) * (indexRows / batchSize)
-		indexLookupSize := float64(sessVars.IndexLookupSize)
-		batchSize := math.Min(indexLookupSize, indexRows)
-		if batchSize > 2 {
-			sortCPUCost := (indexRows * math.Log2(batchSize) * sessVars.CPUFactor) / numTblWorkers
-			newTask.cst += sortCPUCost
-		}
-		// Also, we need to sort the retrieved rows if index lookup reader is expected to return
-		// ordered results. Note that row count of these two sorts can be different, if there are
-		// operators above table scan.
-		tableRows := t.tablePlan.statsInfo().RowCount
-		selectivity := tableRows / indexRows
-		batchSize = math.Min(indexLookupSize*selectivity, tableRows)
-		if t.keepOrder && batchSize > 2 {
-			sortCPUCost := (tableRows * math.Log2(batchSize) * sessVars.CPUFactor) / numTblWorkers
-			newTask.cst += sortCPUCost
-		}
-		if t.doubleReadNeedProj {
-			schema := p.IndexPlans[0].(*PhysicalIndexScan).dataSourceSchema
-			proj := PhysicalProjection{Exprs: expression.Column2Exprs(schema.Columns)}.Init(ctx, p.stats, t.tablePlan.SelectBlockOffset(), nil)
-			proj.SetSchema(schema)
-			proj.SetChildren(p)
-			newTask.p = proj
-		} else {
-			newTask.p = p
-		}
+		newTask = buildIndexLookUpTask(ctx, t)
 	} else if t.indexPlan != nil {
 		p := PhysicalIndexReader{indexPlan: t.indexPlan}.Init(ctx, t.indexPlan.SelectBlockOffset())
 		p.stats = t.indexPlan.statsInfo()
@@ -834,13 +840,16 @@ func (p *PhysicalTopN) GetCost(count float64, isRoot bool) float64 {
 }
 
 // canPushDown checks if this topN can be pushed down. If each of the expression can be converted to pb, it can be pushed.
-func (p *PhysicalTopN) canPushDown() bool {
+func (p *PhysicalTopN) canPushDown(cop *copTask) bool {
 	exprs := make([]expression.Expression, 0, len(p.ByItems))
 	for _, item := range p.ByItems {
 		exprs = append(exprs, item.Expr)
 	}
-	_, _, remained := expression.ExpressionsToPB(p.ctx.GetSessionVars().StmtCtx, exprs, p.ctx.GetClient())
-	return len(remained) == 0
+	storeType := kv.TiKV
+	if tableScan, ok := cop.tablePlan.(*PhysicalTableScan); ok {
+		storeType = tableScan.StoreType
+	}
+	return expression.CanExprsPushDown(p.ctx.GetSessionVars().StmtCtx, exprs, p.ctx.GetClient(), storeType)
 }
 
 func (p *PhysicalTopN) allColsFromSchema(schema *expression.Schema) bool {
@@ -910,7 +919,7 @@ func (p *PhysicalTopN) getPushedDownTopN(childPlan PhysicalPlan) *PhysicalTopN {
 func (p *PhysicalTopN) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	inputCount := t.count()
-	if copTask, ok := t.(*copTask); ok && p.canPushDown() && len(copTask.rootTaskConds) == 0 {
+	if copTask, ok := t.(*copTask); ok && p.canPushDown(copTask) && len(copTask.rootTaskConds) == 0 {
 		// If all columns in topN are from index plan, we push it to index plan, otherwise we finish the index plan and
 		// push it to table plan.
 		var pushedDownTopN *PhysicalTopN
@@ -983,34 +992,28 @@ func (sel *PhysicalSelection) attach2Task(tasks ...task) task {
 
 // CheckAggCanPushCop checks whether the aggFuncs and groupByItems can
 // be pushed down to coprocessor.
-func CheckAggCanPushCop(sctx sessionctx.Context, aggFuncs []*aggregation.AggFuncDesc, groupByItems []expression.Expression, copToFlash bool) bool {
+func CheckAggCanPushCop(sctx sessionctx.Context, aggFuncs []*aggregation.AggFuncDesc, groupByItems []expression.Expression, storeType kv.StoreType) bool {
 	sc := sctx.GetSessionVars().StmtCtx
 	client := sctx.GetClient()
 	for _, aggFunc := range aggFuncs {
 		if expression.ContainVirtualColumn(aggFunc.Args) {
 			return false
 		}
-		if copToFlash {
-			if !aggregation.CheckAggPushFlash(aggFunc) {
-				return false
-			}
-			if _, remain := expression.CheckExprPushFlash(append(aggFunc.Args, groupByItems...)); len(remain) > 0 {
-				return false
-			}
-		}
 		pb := aggregation.AggFuncToPBExpr(sc, client, aggFunc)
 		if pb == nil {
+			return false
+		}
+		if !aggregation.CheckAggPushDown(aggFunc, storeType) {
+			return false
+		}
+		if !expression.CanExprsPushDown(sc, aggFunc.Args, client, storeType) {
 			return false
 		}
 	}
 	if expression.ContainVirtualColumn(groupByItems) {
 		return false
 	}
-	_, _, remained := expression.ExpressionsToPB(sc, groupByItems, client)
-	if len(remained) > 0 {
-		return false
-	}
-	return true
+	return expression.CanExprsPushDown(sc, groupByItems, client, storeType)
 }
 
 // BuildFinalModeAggregation splits either LogicalAggregation or PhysicalAggregation to finalAgg and partial1Agg,
@@ -1071,7 +1074,7 @@ func BuildFinalModeAggregation(
 
 func (p *basePhysicalAgg) newPartialAggregate(copTaskType kv.StoreType) (partial, final PhysicalPlan) {
 	// Check if this aggregation can push down.
-	if !CheckAggCanPushCop(p.ctx, p.AggFuncs, p.GroupByItems, copTaskType == kv.TiFlash) {
+	if !CheckAggCanPushCop(p.ctx, p.AggFuncs, p.GroupByItems, copTaskType) {
 		return nil, p.self
 	}
 	finalAggFuncs, finalGbyItems, partialSchema := BuildFinalModeAggregation(p.ctx, p.AggFuncs, p.GroupByItems, p.schema)

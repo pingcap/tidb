@@ -360,7 +360,7 @@ func (ts *testDatumSuite) TestCloneDatum(c *C) {
 	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = true
 	for _, tt := range tests {
-		tt1 := CloneDatum(tt)
+		tt1 := *tt.Clone()
 		res, err := tt.CompareDatum(sc, &tt1)
 		c.Assert(err, IsNil)
 		c.Assert(res, Equals, 0)
