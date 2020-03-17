@@ -134,5 +134,4 @@ func prepareSlowLogfile(c *C, slowLogFileName string) {
 	f, err := os.OpenFile(slowLogFileName, os.O_CREATE|os.O_WRONLY, 0644)
 	c.Assert(err, IsNil)
 	c.Assert(f.Close(), IsNil)
-	c.Assert(err, IsNil)
 }
