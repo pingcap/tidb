@@ -853,7 +853,6 @@ func updateVersionAndTableInfoWithCheck(t *meta.Meta, job *model.Job, tblInfo *m
 		return ver, errors.Trace(err)
 	}
 	return updateVersionAndTableInfo(t, job, tblInfo, shouldUpdateVer)
-
 }
 
 // updateVersionAndTableInfo updates the schema version and the table information.

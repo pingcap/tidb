@@ -542,6 +542,31 @@ func (s *testIntegrationSuite) TestIndexMerge(c *C) {
 	}
 }
 
+func (s *testIntegrationSuite) TestInvisibleIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+
+	// Optimizer cannot see invisible indexes
+	tk.MustExec("create table t(a int, b int, unique index i_a (a) invisible, unique index i_b(b))")
+	tk.MustExec("insert into t values (1,2)")
+	// optimizer cannot use invisible indexes
+	c.Check(tk.MustUseIndex("select a from t order by a", "i_a"), IsFalse)
+	c.Check(tk.MustUseIndex("select a from t where a > 1", "i_a"), IsFalse)
+	// if use invisible indexes in index hint and sql hint, throw an error
+	errStr := "[planner:1176]Key 'i_a' doesn't exist in table 't'"
+	tk.MustGetErrMsg("select * from t use index(i_a)", errStr)
+	tk.MustGetErrMsg("select * from t force index(i_a)", errStr)
+	tk.MustGetErrMsg("select * from t ignore index(i_a)", errStr)
+	tk.MustQuery("select /*+ USE_INDEX(t, i_a) */ * from t")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 1)
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings()[0].Err.Error(), Equals, errStr)
+	tk.MustQuery("select /*+ IGNORE_INDEX(t, i_a), USE_INDEX(t, i_b) */ a from t order by a")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 1)
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings()[0].Err.Error(), Equals, errStr)
+}
+
 // for issue #14822
 func (s *testIntegrationSuite) TestIndexJoinTableRange(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
