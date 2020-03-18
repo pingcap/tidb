@@ -21,9 +21,7 @@ import (
 
 	"github.com/pingcap/dumpling/v4/cli"
 	"github.com/pingcap/dumpling/v4/export"
-	"github.com/pingcap/dumpling/v4/log"
 	"github.com/spf13/cobra"
-	"go.uber.org/zap"
 )
 
 var (
@@ -85,12 +83,6 @@ func init() {
 func run() {
 	println(cli.LongVersion())
 
-	err := log.InitAppLogger(&log.Config{Level: logLevel})
-	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "initialize logger failed: %s", err.Error())
-		os.Exit(1)
-	}
-
 	conf := export.DefaultConfig()
 	conf.Database = database
 	conf.Host = host
@@ -107,10 +99,11 @@ func run() {
 	conf.Rows = rows
 	conf.Where = where
 	conf.EscapeBackslash = escapeBackslash
+	conf.LogLevel = logLevel
 
-	err = export.Dump(conf)
+	err := export.Dump(conf)
 	if err != nil {
-		log.Zap().Error("dump failed", zap.Error(err))
+		fmt.Printf("dump failed: %s\n", err.Error())
 		os.Exit(1)
 	}
 	return

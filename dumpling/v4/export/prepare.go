@@ -7,11 +7,23 @@ import (
 	"github.com/pingcap/dumpling/v4/log"
 )
 
-func adjustConfig(conf *Config) {
+func adjustConfig(conf *Config) error {
+	// Init logger
+	if conf.Logger != nil {
+		log.SetAppLogger(conf.Logger)
+	} else {
+		err := log.InitAppLogger(&log.Config{Level: conf.LogLevel})
+		if err != nil {
+			return err
+		}
+	}
+
 	if conf.Rows != UnspecifiedSize {
 		// Disable filesize if rows was set
 		conf.FileSize = UnspecifiedSize
 	}
+
+	return nil
 }
 
 func detectServerInfo(db *sql.DB) (ServerInfo, error) {

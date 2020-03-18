@@ -13,10 +13,16 @@ import (
 )
 
 func Dump(conf *Config) (err error) {
+	if err = adjustConfig(conf); err != nil {
+		return withStack(err)
+	}
+
 	go func() {
-		err1 := startDumplingService(conf.StatusAddr)
-		if err1 != nil {
-			log.Zap().Error("dumpling stops to serving service", zap.Error(err1))
+		if conf.StatusAddr != "" {
+			err1 := startDumplingService(conf.StatusAddr)
+			if err1 != nil {
+				log.Zap().Error("dumpling stops to serving service", zap.Error(err1))
+			}
 		}
 	}()
 	pool, err := sql.Open("mysql", conf.getDSN(""))
@@ -24,8 +30,6 @@ func Dump(conf *Config) (err error) {
 		return withStack(err)
 	}
 	defer pool.Close()
-
-	adjustConfig(conf)
 
 	conf.ServerInfo, err = detectServerInfo(pool)
 	if err != nil {
