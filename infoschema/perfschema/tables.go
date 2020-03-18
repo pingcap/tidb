@@ -14,6 +14,8 @@
 package perfschema
 
 import (
+	"strings"
+
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -23,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/profile"
 	"github.com/pingcap/tidb/util/stmtsummary"
-	"strings"
 )
 
 const (
