@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/infoschema/perfschema"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
@@ -52,15 +53,29 @@ func (p *UserPrivileges) RequestVerification(activeRoles []*auth.RoleIdentity, d
 		return true
 	}
 
-	// Skip check for INFORMATION_SCHEMA database.
+	// Skip check for system databases.
 	// See https://dev.mysql.com/doc/refman/5.7/en/information-schema.html
-	if strings.EqualFold(db, "INFORMATION_SCHEMA") {
+	dbLowerName := strings.ToLower(db)
+	switch dbLowerName {
+	case util.InformationSchemaName.L:
 		switch priv {
 		case mysql.CreatePriv, mysql.AlterPriv, mysql.DropPriv, mysql.IndexPriv, mysql.CreateViewPriv,
 			mysql.InsertPriv, mysql.UpdatePriv, mysql.DeletePriv:
 			return false
 		}
 		return true
+	// We should be very careful of limiting privileges, so ignore `mysql` for now.
+	case util.PerformanceSchemaName.L:
+		// CREATE and DROP privileges are not limited in the older versions, so ignore them now.
+		// User may have created some tables in these schema, but predefined tables can't be altered or modified.
+		if dbLowerName == util.PerformanceSchemaName.L && perfschema.IsPredefinedTable(table) {
+			switch priv {
+			case mysql.AlterPriv, mysql.DropPriv, mysql.IndexPriv, mysql.InsertPriv, mysql.UpdatePriv, mysql.DeletePriv:
+				return false
+			case mysql.SelectPriv:
+				return true
+			}
+		}
 	}
 
 	mysqlPriv := p.Handle.Get()
