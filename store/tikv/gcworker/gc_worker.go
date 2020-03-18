@@ -134,7 +134,7 @@ const (
 	gcScanLockModeKey      = "tikv_gc_scan_lock_mode"
 	gcScanLockModeLegacy   = "legacy"
 	gcScanLockModePhysical = "physical"
-	gcScanLockModeDefault  = gcScanLockModeLegacy
+	gcScanLockModeDefault  = gcScanLockModePhysical
 
 	gcAutoConcurrencyKey     = "tikv_gc_auto_concurrency"
 	gcDefaultAutoConcurrency = true
@@ -823,7 +823,10 @@ func (w *GCWorker) checkUsePhysicalScanLock() (bool, error) {
 		return false, errors.Trace(err)
 	}
 	if str == "" {
-		// Do not save it here, so that this config is hidden.
+		err = w.saveValueToSysTable(gcScanLockModeKey, gcScanLockModeDefault)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
 		str = gcScanLockModeDefault
 	}
 	if strings.EqualFold(str, gcScanLockModePhysical) {

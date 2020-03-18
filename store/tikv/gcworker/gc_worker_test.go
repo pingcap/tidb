@@ -440,11 +440,11 @@ func (s *testGCWorkerSuite) TestCheckGCMode(c *C) {
 func (s *testGCWorkerSuite) TestCheckScanLockMode(c *C) {
 	usePhysical, err := s.gcWorker.checkUsePhysicalScanLock()
 	c.Assert(err, IsNil)
-	c.Assert(usePhysical, Equals, false)
-	// This is a hidden config, so default value will not be inserted to table.
+	c.Assert(usePhysical, Equals, true)
+	// Now the row must be set to the default value.
 	str, err := s.gcWorker.loadValueFromSysTable(gcScanLockModeKey)
 	c.Assert(err, IsNil)
-	c.Assert(str, Equals, "")
+	c.Assert(str, Equals, gcScanLockModePhysical)
 
 	err = s.gcWorker.saveValueToSysTable(gcScanLockModeKey, gcScanLockModePhysical)
 	c.Assert(err, IsNil)
