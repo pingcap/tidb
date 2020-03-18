@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -123,7 +124,7 @@ func (s *Server) startHTTPServer() {
 			host = "localhost"
 		}
 		baseURL := &url.URL{
-			Scheme: "http",
+			Scheme: util.InternalHTTPSchema(),
 			Host:   fmt.Sprintf("%s:%s", host, port),
 		}
 		router.HandleFunc("/web/trace", traceapp.HandleTiDB).Name("Trace Viewer")
