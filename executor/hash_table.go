@@ -133,6 +133,8 @@ func newHashRowContainer(workNum uint, sCtx sessionctx.Context, estCount int, hC
 // in multiple goroutines while each goroutine should keep its own
 // h and buf.
 func (c *hashRowContainer) GetMatchedRowsAndPtrs(workID uint, probeKey uint64, probeRow chunk.Row, hCtx *hashContext) (err error) {
+	c.matchedRows[workID] = c.matchedRows[workID][:0]
+	c.matchedPtrs[workID] = c.matchedPtrs[workID][:0]
 	innerPtrs := c.hashTable.Get(probeKey)
 	lenInnerPtrs := len(innerPtrs)
 	if lenInnerPtrs == 0 {
@@ -140,13 +142,9 @@ func (c *hashRowContainer) GetMatchedRowsAndPtrs(workID uint, probeKey uint64, p
 	}
 	if c.matchedRows[workID] == nil || cap(c.matchedRows[workID]) < lenInnerPtrs {
 		c.matchedRows[workID] = make([]chunk.Row, 0, lenInnerPtrs)
-	} else {
-		c.matchedRows[workID] = c.matchedRows[workID][:0]
 	}
 	if c.matchedPtrs[workID] == nil || cap(c.matchedPtrs[workID]) < lenInnerPtrs {
 		c.matchedPtrs[workID] = make([]chunk.RowPtr, 0, lenInnerPtrs)
-	} else {
-		c.matchedPtrs[workID] = c.matchedPtrs[workID][:0]
 	}
 	var matchedRow chunk.Row
 	for _, ptr := range innerPtrs {
