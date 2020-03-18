@@ -1,11 +1,13 @@
 package export
 
 import (
+	"bytes"
 	"fmt"
 	"strings"
 	"testing"
 
 	"database/sql/driver"
+
 	. "github.com/pingcap/check"
 )
 
@@ -55,18 +57,18 @@ func (s *testUtilSuite) TestWriteInsert(c *C) {
 		"/*!40014 SET FOREIGN_KEY_CHECKS=0*/;",
 	}
 	tableIR := newMockTableIR("test", "employee", data, specCmts, colTypes)
-	strCollector := &mockStringCollector{}
+	bf := &bytes.Buffer{}
 
-	err := WriteInsert(tableIR, strCollector)
+	err := WriteInsert(tableIR, bf)
 	c.Assert(err, IsNil)
 	expected := "/*!40101 SET NAMES binary*/;\n" +
 		"/*!40014 SET FOREIGN_KEY_CHECKS=0*/;\n" +
 		"INSERT INTO `employee` VALUES\n" +
-		"(1, 'male', 'bob@mail.com', '020-1234', NULL),\n" +
-		"(2, 'female', 'sarah@mail.com', '020-1253', 'healthy'),\n" +
-		"(3, 'male', 'john@mail.com', '020-1256', 'healthy'),\n" +
-		"(4, 'female', 'sarah@mail.com', '020-1235', 'healthy');\n"
-	c.Assert(strCollector.buf, Equals, expected)
+		"(1,'male','bob@mail.com','020-1234',NULL),\n" +
+		"(2,'female','sarah@mail.com','020-1253','healthy'),\n" +
+		"(3,'male','john@mail.com','020-1256','healthy'),\n" +
+		"(4,'female','sarah@mail.com','020-1235','healthy');\n"
+	c.Assert(bf.String(), Equals, expected)
 }
 
 func (s *testUtilSuite) TestSQLDataTypes(c *C) {
@@ -82,11 +84,11 @@ func (s *testUtilSuite) TestSQLDataTypes(c *C) {
 		tableData := [][]driver.Value{{origin}}
 		colType := []string{sqlType}
 		tableIR := newMockTableIR("test", "t", tableData, nil, colType)
-		strCollector := &mockStringCollector{}
+		bf := &bytes.Buffer{}
 
-		err := WriteInsert(tableIR, strCollector)
+		err := WriteInsert(tableIR, bf)
 		c.Assert(err, IsNil)
-		lines := strings.Split(strCollector.buf, "\n")
+		lines := strings.Split(bf.String(), "\n")
 		c.Assert(len(lines), Equals, 3)
 		c.Assert(lines[1], Equals, fmt.Sprintf("(%s);", result))
 	}

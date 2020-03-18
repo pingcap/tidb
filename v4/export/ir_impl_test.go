@@ -51,14 +51,17 @@ func (s *testIRImplSuite) TestRowIter(c *C) {
 		c.Assert(iter.HasNext(), IsTrue)
 	}
 	res := newSimpleRowReceiver(1)
-	c.Assert(iter.Next(res), IsNil)
+	c.Assert(iter.Decode(res), IsNil)
 	c.Assert(res.data, DeepEquals, []string{"1"})
+	iter.Next()
 	c.Assert(iter.HasNext(), IsTrue)
 	c.Assert(iter.HasNext(), IsTrue)
-	c.Assert(iter.Next(res), IsNil)
+	c.Assert(iter.Decode(res), IsNil)
 	c.Assert(res.data, DeepEquals, []string{"2"})
+	iter.Next()
 	c.Assert(iter.HasNext(), IsTrue)
-	c.Assert(iter.Next(res), IsNil)
+	c.Assert(iter.Decode(res), IsNil)
+	iter.Next()
 	c.Assert(res.data, DeepEquals, []string{"3"})
 	c.Assert(iter.HasNext(), IsFalse)
 }
@@ -105,7 +108,8 @@ func (s *testIRImplSuite) TestChunkRowIter(c *C) {
 		c.Assert(ok, IsTrue)
 
 		for sqlRowIter.HasNext() {
-			c.Assert(sqlRowIter.Next(res), IsNil)
+			c.Assert(sqlRowIter.Decode(res), IsNil)
+			sqlRowIter.Next()
 			resSize = append(resSize, []uint64{fileRowIter.currentFileSize, fileRowIter.currentStatementSize})
 		}
 	}
@@ -114,5 +118,6 @@ func (s *testIRImplSuite) TestChunkRowIter(c *C) {
 	c.Assert(sqlRowIter.HasNextSQLRowIter(), IsFalse)
 	c.Assert(sqlRowIter.HasNext(), IsFalse)
 	rows.Close()
-	c.Assert(sqlRowIter.Next(res), NotNil)
+	c.Assert(sqlRowIter.Decode(res), NotNil)
+	sqlRowIter.Next()
 }
