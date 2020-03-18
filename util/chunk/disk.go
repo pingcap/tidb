@@ -388,6 +388,7 @@ type PartitionInDisk struct {
 	disks               []*ListInDisk
 }
 
+// NewListInDisk creates a new PartitionInDisk with field types.
 func NewPartitionInDisk(fieldTypes []*types.FieldType, chunkSize int) *PartitionInDisk {
 	p := &PartitionInDisk{
 		fieldTypes:          fieldTypes,

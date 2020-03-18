@@ -19,6 +19,11 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 )
 
+var (
+	_ Executor = &PartitionerExec{}
+)
+
+// PartitionerExec read chunks from disk
 type PartitionerExec struct {
 	baseExecutor
 
@@ -29,10 +34,8 @@ type PartitionerExec struct {
 
 // Open implements the Executor Open interface.
 func (e *PartitionerExec) Open(ctx context.Context) error {
-	if err := e.baseExecutor.Open(ctx); err != nil {
-		return err
-	}
-	return nil
+	err := e.baseExecutor.Open(ctx)
+	return err
 }
 
 // Close implements the Executor Close interface.
