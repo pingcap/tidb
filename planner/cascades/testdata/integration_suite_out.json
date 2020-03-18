@@ -1081,7 +1081,7 @@
         ]
       },
       {
-        "SQL": "select /*+ MERGE_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;",
+        "SQL": "select /*+ MERGE_JOIN(t1, t2) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;",
         "Plan": [
           "HashRightJoin_9 12500.00 root inner join, equal:[eq(test.t1.a, test.t2.a)]",
           "├─TableReader_11(Build) 10000.00 root data:TableFullScan_12",

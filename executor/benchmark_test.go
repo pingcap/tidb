@@ -225,6 +225,7 @@ func buildMockDataSourceWithIndex(opt mockDataSourceParameters, index []int) *mo
 
 type aggTestCase struct {
 	// The test table's schema is fixed (aggCol Double, groupBy LongLong).
+
 	execType    string // "hash" or "stream"
 	aggFunc     string // sum, avg, count ....
 	groupByNDV  int    // the number of distinct group-by keys

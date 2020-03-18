@@ -127,7 +127,7 @@
       "select /*+ INL_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;",
       "select /*+ INL_HASH_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;",
       "select /*+ INL_MERGE_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;",
-      "select /*+ MERGE_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;"
+      "select /*+ MERGE_JOIN(t1, t2) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;"
     ]
   }
 ]
