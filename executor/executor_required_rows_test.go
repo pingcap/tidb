@@ -828,6 +828,10 @@ func (mp *mockPlan) GetExecutor() Executor {
 	return mp.exec
 }
 
+func (mp *mockPlan) Schema() *expression.Schema {
+	return mp.exec.Schema()
+}
+
 func (s *testExecSuite) TestVecGroupCheckerDATARACE(c *C) {
 	ctx := mock.NewContext()
 

@@ -1366,18 +1366,19 @@ func prepare4MergeJoin(tc *mergeJoinTestCase, leftExec, rightExec *mockDataSourc
 		stmtCtx:      tc.ctx.GetSessionVars().StmtCtx,
 		baseExecutor: newBaseExecutor(tc.ctx, joinSchema, stringutil.StringerStr("MergeJoin"), leftExec, rightExec),
 		compareFuncs: compareFuncs,
-		joiner: newJoiner(
-			tc.ctx,
-			0,
-			false,
-			defaultValues,
-			nil,
-			retTypes(leftExec),
-			retTypes(rightExec),
-			nil,
-		),
-		isOuterJoin: false,
+		isOuterJoin:  false,
 	}
+
+	e.joiner = newJoiner(
+		tc.ctx,
+		0,
+		false,
+		defaultValues,
+		nil,
+		retTypes(leftExec),
+		retTypes(rightExec),
+		markChildrenUsedCols(joinSchema, e.children[0].Schema(), e.children[1].Schema()),
+	)
 
 	e.innerTable = &mergeJoinTable{
 		isInner:    true,
