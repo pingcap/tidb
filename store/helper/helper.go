@@ -30,13 +30,10 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/pdapi"
 	"go.uber.org/zap"
-)
-
-const (
-	protocol = "http://"
 )
 
 // Helper is a middleware to get some information from tikv/pd. It can be used for TiDB's http api or mem table.
@@ -119,11 +116,11 @@ func (h *Helper) FetchHotRegion(rw string) (map[uint64]RegionMetric, error) {
 	if len(pdHosts) == 0 {
 		return nil, errors.New("pd unavailable")
 	}
-	req, err := http.NewRequest("GET", protocol+pdHosts[0]+rw, nil)
+	req, err := http.NewRequest("GET", util.InternalHTTPSchema()+"://"+pdHosts[0]+rw, nil)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := util.InternalHTTPClient().Do(req)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -431,12 +428,12 @@ func (h *Helper) requestPD(method, uri string, body io.Reader, res interface{}) 
 		return errors.New("pd unavailable")
 	}
 
-	logutil.Logger(context.Background()).Debug("RequestPD URL", zap.String("url", protocol+pdHosts[0]+uri))
-	req, err := http.NewRequest(method, protocol+pdHosts[0]+uri, body)
+	logutil.Logger(context.Background()).Debug("RequestPD URL", zap.String("url", util.InternalHTTPSchema()+"://"+pdHosts[0]+uri))
+	req, err := http.NewRequest(method, util.InternalHTTPSchema()+"://"+pdHosts[0]+uri, body)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := util.InternalHTTPClient().Do(req)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -511,11 +508,11 @@ func (h *Helper) GetStoresStat() (*StoresStat, error) {
 	if len(pdHosts) == 0 {
 		return nil, errors.New("pd unavailable")
 	}
-	req, err := http.NewRequest("GET", protocol+pdHosts[0]+pdapi.Stores, nil)
+	req, err := http.NewRequest("GET", util.InternalHTTPSchema()+"://"+pdHosts[0]+pdapi.Stores, nil)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := util.InternalHTTPClient().Do(req)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
