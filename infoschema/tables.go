@@ -49,8 +49,9 @@ const (
 	// TableSchemata is the string constant of infoschema table.
 	TableSchemata = "SCHEMATA"
 	// TableTables is the string constant of infoschema table.
-	TableTables           = "TABLES"
-	tableColumns          = "COLUMNS"
+	TableTables = "TABLES"
+	// TableColumns is the string constant of infoschema table
+	TableColumns          = "COLUMNS"
 	tableColumnStatistics = "COLUMN_STATISTICS"
 	// TableStatistics is the string constant of infoschema table
 	TableStatistics = "STATISTICS"
@@ -60,8 +61,9 @@ const (
 	TableCollations = "COLLATIONS"
 	tableFiles      = "FILES"
 	// CatalogVal is the string constant of TABLE_CATALOG.
-	CatalogVal     = "def"
-	tableProfiling = "PROFILING"
+	CatalogVal = "def"
+	// TableProfiling is the string constant of infoschema table.
+	TableProfiling = "PROFILING"
 	// TablePartitions is the string constant of infoschema table.
 	TablePartitions = "PARTITIONS"
 	// TableKeyColumn is the string constant of KEY_COLUMN_USAGE.
@@ -137,14 +139,14 @@ const (
 var tableIDMap = map[string]int64{
 	TableSchemata:                           autoid.InformationSchemaDBID + 1,
 	TableTables:                             autoid.InformationSchemaDBID + 2,
-	tableColumns:                            autoid.InformationSchemaDBID + 3,
+	TableColumns:                            autoid.InformationSchemaDBID + 3,
 	tableColumnStatistics:                   autoid.InformationSchemaDBID + 4,
 	TableStatistics:                         autoid.InformationSchemaDBID + 5,
 	TableCharacterSets:                      autoid.InformationSchemaDBID + 6,
 	TableCollations:                         autoid.InformationSchemaDBID + 7,
 	tableFiles:                              autoid.InformationSchemaDBID + 8,
 	CatalogVal:                              autoid.InformationSchemaDBID + 9,
-	tableProfiling:                          autoid.InformationSchemaDBID + 10,
+	TableProfiling:                          autoid.InformationSchemaDBID + 10,
 	TablePartitions:                         autoid.InformationSchemaDBID + 11,
 	TableKeyColumn:                          autoid.InformationSchemaDBID + 12,
 	tableReferConst:                         autoid.InformationSchemaDBID + 13,
@@ -1137,109 +1139,6 @@ func GetShardingInfo(dbInfo *model.DBInfo, tableInfo *model.TableInfo) interface
 	return shardingInfo
 }
 
-func dataForColumns(ctx sessionctx.Context, schemas []*model.DBInfo) [][]types.Datum {
-	checker := privilege.GetPrivilegeManager(ctx)
-	var rows [][]types.Datum
-	for _, schema := range schemas {
-		for _, table := range schema.Tables {
-			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
-				continue
-			}
-
-			rs := dataForColumnsInTable(schema, table)
-			rows = append(rows, rs...)
-		}
-	}
-	return rows
-}
-
-func dataForColumnsInTable(schema *model.DBInfo, tbl *model.TableInfo) [][]types.Datum {
-	rows := make([][]types.Datum, 0, len(tbl.Columns))
-	for i, col := range tbl.Columns {
-		if col.Hidden {
-			continue
-		}
-		var charMaxLen, charOctLen, numericPrecision, numericScale, datetimePrecision interface{}
-		colLen, decimal := col.Flen, col.Decimal
-		defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimal(col.Tp)
-		if decimal == types.UnspecifiedLength {
-			decimal = defaultDecimal
-		}
-		if colLen == types.UnspecifiedLength {
-			colLen = defaultFlen
-		}
-		if col.Tp == mysql.TypeSet {
-			// Example: In MySQL set('a','bc','def','ghij') has length 13, because
-			// len('a')+len('bc')+len('def')+len('ghij')+len(ThreeComma)=13
-			// Reference link: https://bugs.mysql.com/bug.php?id=22613
-			colLen = 0
-			for _, ele := range col.Elems {
-				colLen += len(ele)
-			}
-			if len(col.Elems) != 0 {
-				colLen += (len(col.Elems) - 1)
-			}
-			charMaxLen = colLen
-			charOctLen = colLen
-		} else if col.Tp == mysql.TypeEnum {
-			// Example: In MySQL enum('a', 'ab', 'cdef') has length 4, because
-			// the longest string in the enum is 'cdef'
-			// Reference link: https://bugs.mysql.com/bug.php?id=22613
-			colLen = 0
-			for _, ele := range col.Elems {
-				if len(ele) > colLen {
-					colLen = len(ele)
-				}
-			}
-			charMaxLen = colLen
-			charOctLen = colLen
-		} else if types.IsString(col.Tp) {
-			charMaxLen = colLen
-			charOctLen = colLen
-		} else if types.IsTypeFractionable(col.Tp) {
-			datetimePrecision = decimal
-		} else if types.IsTypeNumeric(col.Tp) {
-			numericPrecision = colLen
-			if col.Tp != mysql.TypeFloat && col.Tp != mysql.TypeDouble {
-				numericScale = decimal
-			} else if decimal != -1 {
-				numericScale = decimal
-			}
-		}
-		columnType := col.FieldType.InfoSchemaStr()
-		columnDesc := table.NewColDesc(table.ToColumn(col))
-		var columnDefault interface{}
-		if columnDesc.DefaultValue != nil {
-			columnDefault = fmt.Sprintf("%v", columnDesc.DefaultValue)
-		}
-		record := types.MakeDatums(
-			CatalogVal,                           // TABLE_CATALOG
-			schema.Name.O,                        // TABLE_SCHEMA
-			tbl.Name.O,                           // TABLE_NAME
-			col.Name.O,                           // COLUMN_NAME
-			i+1,                                  // ORIGINAL_POSITION
-			columnDefault,                        // COLUMN_DEFAULT
-			columnDesc.Null,                      // IS_NULLABLE
-			types.TypeToStr(col.Tp, col.Charset), // DATA_TYPE
-			charMaxLen,                           // CHARACTER_MAXIMUM_LENGTH
-			charOctLen,                           // CHARACTER_OCTET_LENGTH
-			numericPrecision,                     // NUMERIC_PRECISION
-			numericScale,                         // NUMERIC_SCALE
-			datetimePrecision,                    // DATETIME_PRECISION
-			columnDesc.Charset,                   // CHARACTER_SET_NAME
-			columnDesc.Collation,                 // COLLATION_NAME
-			columnType,                           // COLUMN_TYPE
-			columnDesc.Key,                       // COLUMN_KEY
-			columnDesc.Extra,                     // EXTRA
-			"select,insert,update,references",    // PRIVILEGES
-			columnDesc.Comment,                   // COLUMN_COMMENT
-			col.GeneratedExprString,              // GENERATION_EXPRESSION
-		)
-		rows = append(rows, record)
-	}
-	return rows
-}
-
 const (
 	// PrimaryKeyType is the string constant of PRIMARY KEY.
 	PrimaryKeyType = "PRIMARY KEY"
@@ -1248,33 +1147,6 @@ const (
 	// UniqueKeyType is the string constant of UNIQUE.
 	UniqueKeyType = "UNIQUE"
 )
-
-// dataForPseudoProfiling returns pseudo data for table profiling when system variable `profiling` is set to `ON`.
-func dataForPseudoProfiling() [][]types.Datum {
-	var rows [][]types.Datum
-	row := types.MakeDatums(
-		0,                      // QUERY_ID
-		0,                      // SEQ
-		"",                     // STATE
-		types.NewDecFromInt(0), // DURATION
-		types.NewDecFromInt(0), // CPU_USER
-		types.NewDecFromInt(0), // CPU_SYSTEM
-		0,                      // CONTEXT_VOLUNTARY
-		0,                      // CONTEXT_INVOLUNTARY
-		0,                      // BLOCK_OPS_IN
-		0,                      // BLOCK_OPS_OUT
-		0,                      // MESSAGES_SENT
-		0,                      // MESSAGES_RECEIVED
-		0,                      // PAGE_FAULTS_MAJOR
-		0,                      // PAGE_FAULTS_MINOR
-		0,                      // SWAPS
-		"",                     // SOURCE_FUNCTION
-		"",                     // SOURCE_FILE
-		0,                      // SOURCE_LINE
-	)
-	rows = append(rows, row)
-	return rows
-}
 
 // ServerInfo represents the basic server information of single cluster component
 type ServerInfo struct {
@@ -1480,13 +1352,13 @@ func dataForTableTiFlashReplica(ctx sessionctx.Context, schemas []*model.DBInfo)
 var tableNameToColumns = map[string][]columnInfo{
 	TableSchemata:                           schemataCols,
 	TableTables:                             tablesCols,
-	tableColumns:                            columnsCols,
+	TableColumns:                            columnsCols,
 	tableColumnStatistics:                   columnStatisticsCols,
 	TableStatistics:                         statisticsCols,
 	TableCharacterSets:                      charsetCols,
 	TableCollations:                         collationsCols,
 	tableFiles:                              filesCols,
-	tableProfiling:                          profilingCols,
+	TableProfiling:                          profilingCols,
 	TablePartitions:                         partitionsCols,
 	TableKeyColumn:                          keyColumnUsageCols,
 	tableReferConst:                         referConstCols,
@@ -1571,13 +1443,7 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 	dbs := is.AllSchemas()
 	sort.Sort(SchemasSorter(dbs))
 	switch it.meta.Name.O {
-	case tableColumns:
-		fullRows = dataForColumns(ctx, dbs)
 	case tableFiles:
-	case tableProfiling:
-		if v, ok := ctx.GetSessionVars().GetSystemVar("profiling"); ok && variable.TiDBOptOn(v) {
-			fullRows = dataForPseudoProfiling()
-		}
 	case tableReferConst:
 	case tablePlugins, tableTriggers:
 	case tableRoutines:
