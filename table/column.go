@@ -379,9 +379,6 @@ func GetColDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo) (types.Da
 	if !col.DefaultIsExpr {
 		return getColDefaultValue(ctx, col, defaultValue)
 	}
-	// This is reserved for some cases like: `columnInfo` call `ToColumn` to be column, and then get its default value.
-	// In this case, the default expr node is not cached in column, but we still need to guarantee the correct result
-	// for default expr.
 	return getColDefaultExprValue(ctx, col, defaultValue.(string))
 }
 
