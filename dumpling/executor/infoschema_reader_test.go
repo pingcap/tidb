@@ -456,30 +456,13 @@ func (s *testInfoschemaTableSuite) TestForAnalyzeStatus(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	statistics.ClearHistoryJobs()
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (a int, b int, index idx(a))")
-	tk.MustExec("insert into t values (1,2),(3,4)")
-	tk.MustExec("analyze table t")
+	tk.MustExec("drop table if exists analyze_test")
+	tk.MustExec("create table analyze_test (a int, b int, index idx(a))")
+	tk.MustExec("insert into analyze_test values (1,2),(3,4)")
 
-	result := tk.MustQuery("select * from information_schema.analyze_status").Sort()
-
-	c.Assert(len(result.Rows()), Equals, 2)
-	c.Assert(result.Rows()[0][0], Equals, "test")
-	c.Assert(result.Rows()[0][1], Equals, "t")
-	c.Assert(result.Rows()[0][2], Equals, "")
-	c.Assert(result.Rows()[0][3], Equals, "analyze columns")
-	c.Assert(result.Rows()[0][4], Equals, "2")
-	c.Assert(result.Rows()[0][5], NotNil)
-	c.Assert(result.Rows()[0][6], Equals, "finished")
-
-	c.Assert(len(result.Rows()), Equals, 2)
-	c.Assert(result.Rows()[1][0], Equals, "test")
-	c.Assert(result.Rows()[1][1], Equals, "t")
-	c.Assert(result.Rows()[1][2], Equals, "")
-	c.Assert(result.Rows()[1][3], Equals, "analyze index idx")
-	c.Assert(result.Rows()[1][4], Equals, "2")
-	c.Assert(result.Rows()[1][5], NotNil)
-	c.Assert(result.Rows()[1][6], Equals, "finished")
+	tk.MustQuery("select distinct TABLE_NAME from information_schema.analyze_status where TABLE_NAME='analyze_test'").Check([][]interface{}{})
+	tk.MustExec("analyze table analyze_test")
+	tk.MustQuery("select distinct TABLE_NAME from information_schema.analyze_status where TABLE_NAME='analyze_test'").Check(testkit.Rows("analyze_test"))
 
 	//test the privilege of new user for information_schema.analyze_status
 	tk.MustExec("create user analyze_tester")
@@ -494,7 +477,7 @@ func (s *testInfoschemaTableSuite) TestForAnalyzeStatus(c *C) {
 
 	//test the privilege of user with privilege of test.t1 for information_schema.analyze_status
 	tk.MustExec("create table t1 (a int, b int, index idx(a))")
-	tk.MustExec("insert into t values (1,2),(3,4)")
+	tk.MustExec("insert into t1 values (1,2),(3,4)")
 	tk.MustExec("analyze table t1")
 	tk.MustExec("CREATE ROLE r_t1 ;")
 	tk.MustExec("GRANT ALL PRIVILEGES ON test.t1 TO r_t1;")
