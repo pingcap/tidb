@@ -795,7 +795,7 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 			if action.ReturnValues {
 				action.ValuesLock.Lock()
 				for i, mutation := range mutations {
-					action.Values[string(mutation.Key)] = lockResp.Values[i]
+					action.Values[string(mutation.Key)] = kv.ReturnedValue{Value: lockResp.Values[i]}
 				}
 				action.ValuesLock.Unlock()
 			}

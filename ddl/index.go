@@ -435,6 +435,9 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		}
 		if indexOption != nil {
 			indexInfo.Comment = indexOption.Comment
+			if indexOption.Visibility == ast.IndexVisibilityInvisible {
+				indexInfo.Invisible = true
+			}
 			if indexOption.Tp == model.IndexTypeInvalid {
 				// Use btree as default index type.
 				indexInfo.Tp = model.IndexTypeBtree
