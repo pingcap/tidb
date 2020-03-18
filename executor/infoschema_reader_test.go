@@ -88,7 +88,6 @@ func (s *testInfoschemaTableSerialSuite) TearDownSuite(c *C) {
 	s.dom.Close()
 	s.store.Close()
 }
-
 func (s *testInfoschemaTableSuite) SetUpSuite(c *C) {
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
@@ -159,6 +158,13 @@ func (s *inspectionSuite) TestInspectionTables(c *C) {
 		"tikv 127.0.0.1:11080 127.0.0.1:10080 mock-version mock-githash",
 	))
 	tk.Se.GetSessionVars().InspectionTableCache = nil
+}
+
+func (s *testInfoschemaTableSuite) TestProfiling(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustQuery("select * from information_schema.profiling").Check(testkit.Rows())
+	tk.MustExec("set @@profiling=1")
+	tk.MustQuery("select * from information_schema.profiling").Check(testkit.Rows("0 0  0 0 0 0 0 0 0 0 0 0 0 0   0"))
 }
 
 func (s *testInfoschemaTableSuite) TestSchemataTables(c *C) {
