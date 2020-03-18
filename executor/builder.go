@@ -1679,6 +1679,9 @@ func (b *executorBuilder) updateForUpdateTSIfNeeded(selectPlan plannercore.Physi
 // refreshForUpdateTSForRC is used to refresh the for-update-ts for reading data at read consistency level in pessimistic transaction.
 // It could use the cached tso from the statement future to avoid get tso many times.
 func (b *executorBuilder) refreshForUpdateTSForRC() error {
+	defer func() {
+		b.snapshotTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
+	}()
 	future := b.ctx.GetSessionVars().TxnCtx.GetStmtFutureForRC()
 	if future == nil {
 		return nil
@@ -1694,7 +1697,6 @@ func (b *executorBuilder) refreshForUpdateTSForRC() error {
 	if err := UpdateForUpdateTS(b.ctx, newForUpdateTS); err != nil {
 		return err
 	}
-	b.snapshotTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
 	return nil
 }
 
