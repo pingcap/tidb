@@ -18,6 +18,9 @@ type Config struct {
 	Password string
 	Threads  int
 
+	LogLevel string
+	Logger   *zap.Logger
+
 	FileSize      uint64
 	StatementSize uint64
 	OutputDirPath string
@@ -43,6 +46,7 @@ func DefaultConfig() *Config {
 		Port:          3306,
 		Password:      "",
 		Threads:       4,
+		Logger:        nil,
 		StatusAddr:    ":8281",
 		FileSize:      UnspecifiedSize,
 		StatementSize: UnspecifiedSize,
