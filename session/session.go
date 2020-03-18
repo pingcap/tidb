@@ -1212,6 +1212,8 @@ func (s *session) CachedPlanExec(ctx context.Context,
 	if err != nil {
 		return nil, err
 	}
+
+	stmtCtx := s.GetSessionVars().StmtCtx
 	stmt := &executor.ExecStmt{
 		InfoSchema:  is,
 		Plan:        execPlan,
@@ -1222,7 +1224,9 @@ func (s *session) CachedPlanExec(ctx context.Context,
 	}
 	s.GetSessionVars().DurationCompile = time.Since(s.sessionVars.StartTime)
 	stmt.Text = prepared.Stmt.Text()
-	s.GetSessionVars().StmtCtx.OriginalSQL = stmt.Text
+	stmtCtx.OriginalSQL = stmt.Text
+	stmtCtx.InitSQLDigest(prepareStmt.NormalizedSQL, prepareStmt.SQLDigest)
+	stmtCtx.SetPlanDigest(prepareStmt.NormalizedPlan, prepareStmt.PlanDigest)
 	logQuery(stmt.OriginText(), s.sessionVars)
 
 	// run ExecStmt
@@ -1233,7 +1237,7 @@ func (s *session) CachedPlanExec(ctx context.Context,
 		s.txn.changeToInvalid()
 	case *plannercore.Update:
 		s.PrepareTSFuture(ctx)
-		s.GetSessionVars().StmtCtx.Priority = kv.PriorityHigh
+		stmtCtx.Priority = kv.PriorityHigh
 		resultSet, err = runStmt(ctx, s, stmt)
 	default:
 		prepared.CachedPlan = nil

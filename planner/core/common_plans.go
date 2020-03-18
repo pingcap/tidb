@@ -263,6 +263,7 @@ func (e *Execute) checkPreparedPriv(ctx context.Context, sctx sessionctx.Context
 }
 
 func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, preparedStmt *CachedPrepareStmt) error {
+	stmtCtx := sctx.GetSessionVars().StmtCtx
 	prepared := preparedStmt.PreparedAst
 	if prepared.CachedPlan != nil {
 		// Rewriting the expression in the select.where condition  will convert its
@@ -282,11 +283,11 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 		}
 		e.names = names
 		e.Plan = plan
-		sctx.GetSessionVars().StmtCtx.PointExec = true
+		stmtCtx.PointExec = true
 		return nil
 	}
 	var cacheKey kvcache.Key
-	sctx.GetSessionVars().StmtCtx.UseCache = prepared.UseCache
+	stmtCtx.UseCache = prepared.UseCache
 	if prepared.UseCache {
 		cacheKey = NewPSTMTPlanCacheKey(sctx.GetSessionVars(), e.ExecID, prepared.SchemaVersion)
 		if cacheValue, exists := sctx.PreparedPlanCache().Get(cacheKey); exists {
@@ -305,7 +306,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 			}
 			e.names = cachedVal.OutPutNames
 			e.Plan = cachedVal.Plan
-			sctx.GetSessionVars().StmtCtx.SetPlanDigest(cachedVal.Normalized, cachedVal.Digest)
+			stmtCtx.SetPlanDigest(preparedStmt.NormalizedPlan, preparedStmt.PlanDigest)
 			return nil
 		}
 	}
@@ -313,7 +314,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	if err != nil {
 		return err
 	}
-	err = e.tryCachePointPlan(ctx, sctx, prepared, is, p)
+	err = e.tryCachePointPlan(ctx, sctx, preparedStmt, is, p)
 	if err != nil {
 		return err
 	}
@@ -322,8 +323,9 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	_, isTableDual := p.(*PhysicalTableDual)
 	if !isTableDual && prepared.UseCache {
 		cached := NewPSTMTPlanCacheValue(p, names)
+		preparedStmt.NormalizedPlan, preparedStmt.PlanDigest = NormalizePlan(p)
+		stmtCtx.SetPlanDigest(preparedStmt.NormalizedPlan, preparedStmt.PlanDigest)
 		sctx.PreparedPlanCache().Put(cacheKey, cached)
-		sctx.GetSessionVars().StmtCtx.SetPlanDigest(cached.Normalized, cached.Digest)
 	}
 	return err
 }
@@ -331,11 +333,12 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 // tryCachePointPlan will try to cache point execution plan, there may be some
 // short paths for these executions, currently "point select" and "point update"
 func (e *Execute) tryCachePointPlan(ctx context.Context, sctx sessionctx.Context,
-	prepared *ast.Prepared, is infoschema.InfoSchema, p Plan) error {
+	preparedStmt *CachedPrepareStmt, is infoschema.InfoSchema, p Plan) error {
 	var (
-		ok    bool
-		err   error
-		names types.NameSlice
+		prepared = preparedStmt.PreparedAst
+		ok       bool
+		err      error
+		names    types.NameSlice
 	)
 	switch p.(type) {
 	case *PointGetPlan:
@@ -359,6 +362,8 @@ func (e *Execute) tryCachePointPlan(ctx context.Context, sctx sessionctx.Context
 		// just cache point plan now
 		prepared.CachedPlan = p
 		prepared.CachedNames = names
+		preparedStmt.NormalizedPlan, preparedStmt.PlanDigest = NormalizePlan(p)
+		sctx.GetSessionVars().StmtCtx.SetPlanDigest(preparedStmt.NormalizedPlan, preparedStmt.PlanDigest)
 	}
 	return err
 }
