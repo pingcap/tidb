@@ -76,6 +76,7 @@ func TestCopySelectedJoinRows(t *testing.T) {
 		t.Fatal(dstChk2.numVirtualRows, dstChk2.NumRows(), numSelected)
 	}
 }
+
 func TestCopySelectedJoinRowsWithoutSameOuters(t *testing.T) {
 	srcChk, dstChk, selected := getChk(false)
 	numRows := srcChk.NumRows()
