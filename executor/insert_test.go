@@ -1130,5 +1130,5 @@ func (s *testSuite9) TestInsertErrorMsg(c *C) {
 	tk.MustExec(`create table t (a int primary key, b datetime, d date)`)
 	_, err := tk.Exec(`insert into t values (1, '2019-02-11 30:00:00', '2019-01-31')`)
 	c.Assert(err, NotNil)
-	c.Assert(strings.Contains(err.Error(), "Incorrect time value: '30'"), IsTrue)
+	c.Assert(strings.Contains(err.Error(), "Incorrect datetime value: '2019-02-11 30:00:00' for column 'b' at row 1"), IsTrue, Commentf("%v", err))
 }

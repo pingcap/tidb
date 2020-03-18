@@ -37,7 +37,7 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 			return nil
 		}
 	}
-	startTS, err := b.getStartTS()
+	startTS, err := b.getSnapshotTS()
 	if err != nil {
 		b.err = err
 		return nil
@@ -66,6 +66,7 @@ type PointGetExecutor struct {
 	handleVal    []byte
 	idxVals      []types.Datum
 	startTS      uint64
+	txn          kv.Transaction
 	snapshot     kv.Snapshot
 	done         bool
 	lock         bool
@@ -105,14 +106,23 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		return nil
 	}
 	e.done = true
+	txnCtx := e.ctx.GetSessionVars().TxnCtx
 	snapshotTS := e.startTS
 	if e.lock {
-		snapshotTS = e.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
+		snapshotTS = txnCtx.GetForUpdateTS()
 	}
 	var err error
-	e.snapshot, err = e.ctx.GetStore().GetSnapshot(kv.Version{Ver: snapshotTS})
+	e.txn, err = e.ctx.Txn(false)
 	if err != nil {
 		return err
+	}
+	if e.txn.Valid() && txnCtx.StartTS == txnCtx.GetForUpdateTS() {
+		e.snapshot = e.txn.GetSnapshot()
+	} else {
+		e.snapshot, err = e.ctx.GetStore().GetSnapshot(kv.Version{Ver: snapshotTS})
+		if err != nil {
+			return err
+		}
 	}
 	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
 		e.snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
@@ -181,7 +191,7 @@ func (e *PointGetExecutor) lockKeyIfNeeded(ctx context.Context, key []byte) erro
 		seVars := e.ctx.GetSessionVars()
 		lockCtx := newLockCtx(seVars, e.lockWaitTime)
 		lockCtx.ReturnValues = true
-		lockCtx.Values = map[string][]byte{}
+		lockCtx.Values = map[string]kv.ReturnedValue{}
 		err := doLockKeys(ctx, e.ctx, lockCtx, key)
 		if err != nil {
 			return err
@@ -189,7 +199,9 @@ func (e *PointGetExecutor) lockKeyIfNeeded(ctx context.Context, key []byte) erro
 		lockCtx.ValuesLock.Lock()
 		defer lockCtx.ValuesLock.Unlock()
 		for key, val := range lockCtx.Values {
-			seVars.TxnCtx.SetPessimisticLockCache(kv.Key(key), val)
+			if !val.AlreadyLocked {
+				seVars.TxnCtx.SetPessimisticLockCache(kv.Key(key), val.Value)
+			}
 		}
 		if len(e.handleVal) > 0 {
 			seVars.TxnCtx.SetPessimisticLockCache(e.idxKey, e.handleVal)
@@ -199,14 +211,10 @@ func (e *PointGetExecutor) lockKeyIfNeeded(ctx context.Context, key []byte) erro
 }
 
 func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) (val []byte, err error) {
-	txn, err := e.ctx.Txn(false)
-	if err != nil {
-		return nil, err
-	}
-	if txn != nil && txn.Valid() && !txn.IsReadOnly() {
+	if e.txn.Valid() && !e.txn.IsReadOnly() {
 		// We cannot use txn.Get directly here because the snapshot in txn and the snapshot of e.snapshot may be
 		// different for pessimistic transaction.
-		val, err = txn.GetMemBuffer().Get(ctx, key)
+		val, err = e.txn.GetMemBuffer().Get(ctx, key)
 		if err == nil {
 			return val, err
 		}
