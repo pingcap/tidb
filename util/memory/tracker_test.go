@@ -219,6 +219,7 @@ func (s *testSuite) TestToString(c *C) {
 "parent"{
   "consumed": 4.00293168798089 GB
   "child 1"{
+    "quota": 1000 Bytes
     "consumed": 100 Bytes
   }
   "child 2"{
