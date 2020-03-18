@@ -93,6 +93,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			e.setDataFromKeyColumnUsage(sctx, dbs)
 		case infoschema.TableMetricTables:
 			e.setDataForMetricTables(sctx)
+		case infoschema.TableProfiling:
+			e.setDataForPseudoProfiling(sctx)
 		case infoschema.TableCollationCharacterSetApplicability:
 			e.dataForCollationCharacterSetApplicability()
 		case infoschema.TableUserPrivileges:
@@ -1235,6 +1237,33 @@ func dataForAnalyzeStatusHelper(sctx sessionctx.Context) (rows [][]types.Datum) 
 // setDataForAnalyzeStatus gets all the analyze jobs.
 func (e *memtableRetriever) setDataForAnalyzeStatus(sctx sessionctx.Context) {
 	e.rows = dataForAnalyzeStatusHelper(sctx)
+}
+
+// setDataForPseudoProfiling returns pseudo data for table profiling when system variable `profiling` is set to `ON`.
+func (e *memtableRetriever) setDataForPseudoProfiling(sctx sessionctx.Context) {
+	if v, ok := sctx.GetSessionVars().GetSystemVar("profiling"); ok && variable.TiDBOptOn(v) {
+		row := types.MakeDatums(
+			0,                      // QUERY_ID
+			0,                      // SEQ
+			"",                     // STATE
+			types.NewDecFromInt(0), // DURATION
+			types.NewDecFromInt(0), // CPU_USER
+			types.NewDecFromInt(0), // CPU_SYSTEM
+			0,                      // CONTEXT_VOLUNTARY
+			0,                      // CONTEXT_INVOLUNTARY
+			0,                      // BLOCK_OPS_IN
+			0,                      // BLOCK_OPS_OUT
+			0,                      // MESSAGES_SENT
+			0,                      // MESSAGES_RECEIVED
+			0,                      // PAGE_FAULTS_MAJOR
+			0,                      // PAGE_FAULTS_MINOR
+			0,                      // SWAPS
+			"",                     // SOURCE_FUNCTION
+			"",                     // SOURCE_FILE
+			0,                      // SOURCE_LINE
+		)
+		e.rows = append(e.rows, row)
+	}
 }
 
 func (e *memtableRetriever) setDataForServersInfo() error {
