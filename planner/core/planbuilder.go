@@ -680,8 +680,12 @@ func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tbl ta
 		publicPaths = append(publicPaths, &util.AccessPath{IsTablePath: true, StoreType: kv.TiFlash})
 	}
 	for _, index := range tblInfo.Indices {
-		// Filter out invisible index, because they are not visible to index hint
-		if index.State == model.StatePublic && !index.Invisible {
+		if index.State == model.StatePublic {
+			// Filter out invisible index, because they are not visible to index hint
+			// Also, if in a restricted SQL, it should see invisible index
+			if index.Invisible && !b.ctx.GetSessionVars().InRestrictedSQL {
+				continue
+			}
 			publicPaths = append(publicPaths, &util.AccessPath{Index: index})
 		}
 	}

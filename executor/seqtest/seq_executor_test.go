@@ -286,7 +286,7 @@ func (s *seqTestSuite) TestShow(c *C) {
 		b int,
 		c int UNIQUE KEY,
 		d int UNIQUE KEY,
-		index (b) invisible,
+		index invisible_idx_b (b) invisible,
 		index (d) invisible)`)
 	excepted :=
 		"t CREATE TABLE `t` (\n" +
@@ -294,12 +294,13 @@ func (s *seqTestSuite) TestShow(c *C) {
 			"  `b` int(11) DEFAULT NULL,\n" +
 			"  `c` int(11) DEFAULT NULL,\n" +
 			"  `d` int(11) DEFAULT NULL,\n" +
-			"  KEY `b` (`b`) /*!80000 INVISIBLE */,\n" +
+			"  KEY `invisible_idx_b` (`b`) /*!80000 INVISIBLE */,\n" +
 			"  KEY `d` (`d`) /*!80000 INVISIBLE */,\n" +
 			"  UNIQUE KEY `c` (`c`),\n" +
 			"  UNIQUE KEY `d_2` (`d`)\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
 	tk.MustQuery("show create table t").Check(testkit.Rows(excepted))
+	tk.MustExec("drop table t")
 
 	testSQL = "SHOW VARIABLES LIKE 'character_set_results';"
 	result = tk.MustQuery(testSQL)
