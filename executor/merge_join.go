@@ -354,17 +354,17 @@ func (e *MergeJoinExec) Next(ctx context.Context, req *chunk.Chunk) (err error) 
 				continue
 			}
 
-			matched, isNull, err := e.joiner.tryToMatchInners(row, innerIter, req)
-			if err != nil {
-				return err
-			}
-			e.hasMatch = e.hasMatch || matched
-			e.hasNull = e.hasNull || isNull
-
-			// The inner rows is not exhausted, which means the result chunk is full.
-			// We should keep match context, so return directly.
-			if innerIter.Current() != innerIter.End() && req.IsFull() {
-				return nil
+			// the inner maybe not exhausted at one time
+			for innerIter.Current() != innerIter.End() {
+				matched, isNull, err := e.joiner.tryToMatchInners(row, innerIter, req)
+				if err != nil {
+					return err
+				}
+				e.hasMatch = e.hasMatch || matched
+				e.hasNull = e.hasNull || isNull
+				if req.IsFull() {
+					return nil
+				}
 			}
 
 			if !e.hasMatch {
