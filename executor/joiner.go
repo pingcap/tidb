@@ -244,7 +244,6 @@ func (j *baseJoiner) filter(
 	innerColLen, outerColLen := input.NumCols()-outerColsLen, outerColsLen
 	if !j.outerIsRight {
 		innerColOffset, outerColOffset = outerColsLen, 0
-		innerColLen, outerColLen = outerColLen, innerColLen
 	}
 	if lUsed != nil || rUsed != nil {
 		lSize := outerColOffset
