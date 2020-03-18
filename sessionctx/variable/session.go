@@ -670,15 +670,15 @@ func NewSessionVars() *SessionVars {
 	}
 	vars.KVVars = kv.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
-		IndexLookupConcurrency:     DefIndexLookupConcurrency,
-		IndexSerialScanConcurrency: DefIndexSerialScanConcurrency,
-		IndexLookupJoinConcurrency: DefIndexLookupJoinConcurrency,
-		HashJoinConcurrency:        DefTiDBHashJoinConcurrency,
-		ProjectionConcurrency:      DefTiDBProjectionConcurrency,
-		DistSQLScanConcurrency:     DefDistSQLScanConcurrency,
-		HashAggPartialConcurrency:  DefTiDBHashAggPartialConcurrency,
-		HashAggFinalConcurrency:    DefTiDBHashAggFinalConcurrency,
-		WindowConcurrency:          DefTiDBWindowConcurrency,
+		IndexLookupConcurrency:     ExecutorConcurrency,
+		IndexSerialScanConcurrency: ExecutorConcurrency,
+		IndexLookupJoinConcurrency: ExecutorConcurrency,
+		HashJoinConcurrency:        ExecutorConcurrency,
+		ProjectionConcurrency:      int64(ExecutorConcurrency),
+		DistSQLScanConcurrency:     ExecutorConcurrency,
+		HashAggPartialConcurrency:  ExecutorConcurrency,
+		HashAggFinalConcurrency:    ExecutorConcurrency,
+		WindowConcurrency:          ExecutorConcurrency,
 	}
 	vars.MemQuota = MemQuota{
 		MemQuotaQuery: config.GetGlobalConfig().MemQuotaQuery,
@@ -1049,27 +1049,27 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBOptConcurrencyFactor:
 		s.ConcurrencyFactor = tidbOptFloat64(val, DefOptConcurrencyFactor)
 	case TiDBIndexLookupConcurrency:
-		s.IndexLookupConcurrency = tidbOptPositiveInt32(val, DefIndexLookupConcurrency)
+		s.IndexLookupConcurrency = tidbOptPositiveInt32(val, ExecutorConcurrency)
 	case TiDBIndexLookupJoinConcurrency:
-		s.IndexLookupJoinConcurrency = tidbOptPositiveInt32(val, DefIndexLookupJoinConcurrency)
+		s.IndexLookupJoinConcurrency = tidbOptPositiveInt32(val, ExecutorConcurrency)
 	case TiDBIndexJoinBatchSize:
 		s.IndexJoinBatchSize = tidbOptPositiveInt32(val, DefIndexJoinBatchSize)
 	case TiDBIndexLookupSize:
 		s.IndexLookupSize = tidbOptPositiveInt32(val, DefIndexLookupSize)
 	case TiDBHashJoinConcurrency:
-		s.HashJoinConcurrency = tidbOptPositiveInt32(val, DefTiDBHashJoinConcurrency)
+		s.HashJoinConcurrency = tidbOptPositiveInt32(val, ExecutorConcurrency)
 	case TiDBProjectionConcurrency:
-		s.ProjectionConcurrency = tidbOptInt64(val, DefTiDBProjectionConcurrency)
+		s.ProjectionConcurrency = tidbOptInt64(val, int64(ExecutorConcurrency))
 	case TiDBHashAggPartialConcurrency:
-		s.HashAggPartialConcurrency = tidbOptPositiveInt32(val, DefTiDBHashAggPartialConcurrency)
+		s.HashAggPartialConcurrency = tidbOptPositiveInt32(val, ExecutorConcurrency)
 	case TiDBHashAggFinalConcurrency:
-		s.HashAggFinalConcurrency = tidbOptPositiveInt32(val, DefTiDBHashAggFinalConcurrency)
+		s.HashAggFinalConcurrency = tidbOptPositiveInt32(val, ExecutorConcurrency)
 	case TiDBWindowConcurrency:
-		s.WindowConcurrency = tidbOptPositiveInt32(val, DefTiDBWindowConcurrency)
+		s.WindowConcurrency = tidbOptPositiveInt32(val, ExecutorConcurrency)
 	case TiDBDistSQLScanConcurrency:
-		s.DistSQLScanConcurrency = tidbOptPositiveInt32(val, DefDistSQLScanConcurrency)
+		s.DistSQLScanConcurrency = tidbOptPositiveInt32(val, ExecutorConcurrency)
 	case TiDBIndexSerialScanConcurrency:
-		s.IndexSerialScanConcurrency = tidbOptPositiveInt32(val, DefIndexSerialScanConcurrency)
+		s.IndexSerialScanConcurrency = tidbOptPositiveInt32(val, ExecutorConcurrency)
 	case TiDBBackoffLockFast:
 		s.KVVars.BackoffLockFast = tidbOptPositiveInt32(val, kv.DefBackoffLockFast)
 	case TiDBBackOffWeight:

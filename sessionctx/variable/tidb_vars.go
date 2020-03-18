@@ -15,6 +15,7 @@ package variable
 
 import (
 	"os"
+	"runtime"
 
 	"github.com/pingcap/parser/mysql"
 	"github.com/uber-go/atomic"
@@ -361,12 +362,8 @@ const (
 // Default TiDB system variable values.
 const (
 	DefHostname                        = "localhost"
-	DefIndexLookupConcurrency          = 4
-	DefIndexLookupJoinConcurrency      = 4
-	DefIndexSerialScanConcurrency      = 1
 	DefIndexJoinBatchSize              = 25000
 	DefIndexLookupSize                 = 20000
-	DefDistSQLScanConcurrency          = 15
 	DefBuildStatsConcurrency           = 4
 	DefAutoAnalyzeRatio                = 0.5
 	DefAutoAnalyzeStartTime            = "00:00 +0000"
@@ -411,8 +408,6 @@ const (
 	DefTiDBRetryLimit                  = 10
 	DefTiDBDisableTxnAutoRetry         = true
 	DefTiDBConstraintCheckInPlace      = false
-	DefTiDBHashJoinConcurrency         = 5
-	DefTiDBProjectionConcurrency       = 4
 	DefTiDBOptimizerSelectivityLevel   = 0
 	DefTiDBTxnMode                     = ""
 	DefTiDBRowFormatV1                 = 1
@@ -421,9 +416,6 @@ const (
 	DefTiDBDDLReorgBatchSize           = 256
 	DefTiDBDDLErrorCountLimit          = 512
 	DefTiDBMaxDeltaSchemaCount         = 1024
-	DefTiDBHashAggPartialConcurrency   = 4
-	DefTiDBHashAggFinalConcurrency     = 4
-	DefTiDBWindowConcurrency           = 4
 	DefTiDBForcePriority               = mysql.NoPriority
 	DefTiDBUseRadixJoin                = false
 	DefEnableWindowFunction            = true
@@ -451,6 +443,8 @@ const (
 
 // Process global variables.
 var (
+	// Executor Concurrency
+	ExecutorConcurrency    = runtime.NumCPU()
 	ProcessGeneralLog      uint32
 	EnablePProfSQLCPU            = atomic.NewBool(false)
 	ddlReorgWorkerCounter  int32 = DefTiDBDDLReorgWorkerCount
