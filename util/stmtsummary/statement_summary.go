@@ -81,6 +81,10 @@ type stmtSummaryByDigestMap struct {
 		sessionEnabled string
 		// setInSession indicates whether statement summary has been set in any session.
 		globalEnabled string
+		// sessionInternalQueryEnabled indicates whether internal statement summary is enabled in current server.
+		sessionInternalQueryEnabled string
+		// globalInternalQueryEnabled indicates whether internal statement summary has been set in any session.
+		globalInternalQueryEnabled string
 
 		// These variables indicate the refresh interval of summaries.
 		// They must be > 0.
@@ -213,6 +217,7 @@ type StmtExecInfo struct {
 	ExecDetail     *execdetails.ExecDetails
 	MemMax         int64
 	StartTime      time.Time
+	IsInternal     bool
 }
 
 // newStmtSummaryByDigestMap creates an empty stmtSummaryByDigestMap.
@@ -255,6 +260,9 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 
 		// Check again. Statements could be added before disabling the flag and after Clear().
 		if !ssMap.Enabled() {
+			return nil, 0
+		}
+		if !ssMap.EnabledInternal() && sei.IsInternal {
 			return nil, 0
 		}
 
@@ -380,6 +388,32 @@ func (ssMap *stmtSummaryByDigestMap) SetEnabled(value string, inSession bool) {
 	}
 }
 
+// SetEnabledInternalQuery enables or disables internal statement summary in global(cluster) or session(server) scope.
+func (ssMap *stmtSummaryByDigestMap) SetEnabledInternalQuery(value string, inSession bool) {
+	value = ssMap.normalizeEnableValue(value)
+
+	ssMap.sysVars.Lock()
+	if inSession {
+		ssMap.sysVars.sessionInternalQueryEnabled = value
+	} else {
+		ssMap.sysVars.globalInternalQueryEnabled = value
+	}
+	sessionInternalQueryEnabled := ssMap.sysVars.sessionInternalQueryEnabled
+	globalInternalQueryEnabled := ssMap.sysVars.globalInternalQueryEnabled
+	ssMap.sysVars.Unlock()
+
+	// Clear all summaries once statement summary is disabled.
+	var needClear bool
+	if ssMap.isSet(sessionInternalQueryEnabled) {
+		needClear = !ssMap.isEnabled(sessionInternalQueryEnabled)
+	} else {
+		needClear = !ssMap.isEnabled(globalInternalQueryEnabled)
+	}
+	if needClear {
+		ssMap.Clear()
+	}
+}
+
 // Enabled returns whether statement summary is enabled.
 func (ssMap *stmtSummaryByDigestMap) Enabled() bool {
 	ssMap.sysVars.RLock()
@@ -390,6 +424,20 @@ func (ssMap *stmtSummaryByDigestMap) Enabled() bool {
 		enabled = ssMap.isEnabled(ssMap.sysVars.sessionEnabled)
 	} else {
 		enabled = ssMap.isEnabled(ssMap.sysVars.globalEnabled)
+	}
+	return enabled
+}
+
+// EnabledInternal returns whether internal statement summary is enabled.
+func (ssMap *stmtSummaryByDigestMap) EnabledInternal() bool {
+	ssMap.sysVars.RLock()
+	defer ssMap.sysVars.RUnlock()
+
+	var enabled bool
+	if ssMap.isSet(ssMap.sysVars.sessionInternalQueryEnabled) {
+		enabled = ssMap.isEnabled(ssMap.sysVars.sessionInternalQueryEnabled)
+	} else {
+		enabled = ssMap.isEnabled(ssMap.sysVars.globalInternalQueryEnabled)
 	}
 	return enabled
 }
