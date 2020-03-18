@@ -74,5 +74,5 @@ var (
 	// ErrInvalidWeekModeFormat is returned when the week mode is wrong.
 	ErrInvalidWeekModeFormat = terror.ClassTypes.New(mysql.ErrInvalidWeekModeFormat, mysql.MySQLErrName[mysql.ErrInvalidWeekModeFormat])
 	// ErrWrongValue is returned when the input value is in wrong format.
-	ErrWrongValue = terror.ClassTypes.New(mysql.ErrWrongValue, mysql.MySQLErrName[mysql.ErrWrongValue])
+	ErrWrongValue = terror.ClassTypes.New(mysql.ErrTruncatedWrongValue, mysql.MySQLErrName[mysql.ErrWrongValue])
 )
