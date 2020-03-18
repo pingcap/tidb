@@ -501,6 +501,7 @@ func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, funcs int, f
 
 type windowTestCase struct {
 	// The test table's schema is fixed (col Double, partitionBy LongLong, rawData VarString(16), col LongLong).
+
 	windowFunc       string
 	numFunc          int // The number of windowFuncs. Default: 1.
 	frame            *core.WindowFrame
