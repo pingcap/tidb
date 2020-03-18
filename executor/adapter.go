@@ -942,6 +942,6 @@ func (a *ExecStmt) SummaryStmt() {
 		ExecDetail:     &execDetail,
 		MemMax:         memMax,
 		StartTime:      sessVars.StartTime,
-		IsInternal:     sessVars.IsInternalQuery,
+		IsInternal:     sessVars.InRestrictedSQL,
 	})
 }

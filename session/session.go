@@ -1066,9 +1066,9 @@ func (s *session) executeStatement(ctx context.Context, connID uint64, stmtNode 
 }
 
 func (s *session) ExecuteInternal(ctx context.Context, sql string) (recordSets []sqlexec.RecordSet, err error) {
-	s.sessionVars.IsInternalQuery = true
+	s.sessionVars.InRestrictedSQL = true
 	defer func() {
-		s.sessionVars.IsInternalQuery = false
+		s.sessionVars.InRestrictedSQL = false
 	}()
 	return s.Execute(ctx, sql)
 }
