@@ -456,3 +456,14 @@ func (*testExpressionSuite) TestVectorizedConstant(c *C) {
 		}
 	}
 }
+
+func (*testExpressionSuite) TestGetTypeThreadSafe(c *C) {
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().PreparedParams = []types.Datum{
+		types.NewIntDatum(1),
+	}
+	con := &Constant{ParamMarker: &ParamMarker{ctx: ctx, order: 0}, RetType: newStringFieldType()}
+	ft1 := con.GetType()
+	ft2 := con.GetType()
+	c.Assert(ft1, Not(Equals), ft2)
+}
