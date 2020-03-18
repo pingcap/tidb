@@ -422,7 +422,10 @@ func (p *PartitionInDisk) Add(chk *Chunk, partitions [][]uint32) (err error) {
 		for _, i := range partition {
 			diskChk.AppendRow(chk.GetRow(int(i)))
 			if diskChk.IsFull() {
-				listInDisk.Add(diskChk)
+				err := listInDisk.Add(diskChk)
+				if err != nil {
+					return err
+				}
 				diskChk.Reset()
 			}
 		}
@@ -436,7 +439,10 @@ func (p *PartitionInDisk) Flush() (err error) {
 		diskChk := p.chks[idx]
 		listInDisk := p.disks[idx]
 		if diskChk.NumRows() > 0 {
-			listInDisk.Add(diskChk)
+			err := listInDisk.Add(diskChk)
+			if err != nil {
+				return err
+			}
 			diskChk.Reset()
 		}
 	}

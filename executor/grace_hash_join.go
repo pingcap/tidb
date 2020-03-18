@@ -139,13 +139,19 @@ func (e *GraceHashJoinExec) Open(ctx context.Context) error {
 
 // Close implements the Executor Close interface.
 func (e *GraceHashJoinExec) Close() error {
-	e.buildPartitionerExec.partitionInDisk.Close()
-	e.probePartitionerExec.partitionInDisk.Close()
+	err := e.buildPartitionerExec.partitionInDisk.Close()
+	if err != nil {
+		return err
+	}
+	err = e.probePartitionerExec.partitionInDisk.Close()
+	if err != nil {
+		return err
+	}
 
 	e.buildHashPartitioner = nil
 	e.probeHashPartitioner = nil
 
-	err := e.hashJoinExec.Close()
+	err = e.hashJoinExec.Close()
 	if err != nil {
 		return err
 	}
@@ -157,18 +163,23 @@ func (e *GraceHashJoinExec) Close() error {
 // partitioning the chunk into partitions and write them to disk.
 func (e *GraceHashJoinExec) partition(chk *chunk.Chunk, hashPartitioner *hashPartitioner, partitionInDisk *chunk.PartitionInDisk) (err error) {
 	if chk.NumRows() == 0 {
-		partitionInDisk.Flush()
-		return
+		err := partitionInDisk.Flush()
+		if err != nil {
+			return err
+		}
+		return nil
 	}
 
 	partitions, err := hashPartitioner.split(chk)
 	if err != nil {
 		return err
 	}
+	err = partitionInDisk.Add(chk, partitions)
+	if err != nil {
+		return err
+	}
 
-	partitionInDisk.Add(chk, partitions)
-
-	return
+	return nil
 }
 
 func (e *GraceHashJoinExec) buildPartitionInDisk(ctx context.Context) (err error) {
@@ -211,7 +222,10 @@ func (e *GraceHashJoinExec) buildPartitionInDisk(ctx context.Context) (err error
 // phases 2 is joining. fetch data from disk and execting join by partition order.
 func (e *GraceHashJoinExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	if !e.prepared {
-		e.buildPartitionInDisk(ctx)
+		err := e.buildPartitionInDisk(ctx)
+		if err != nil {
+			return err
+		}
 		e.prepared = true
 	}
 
@@ -238,8 +252,14 @@ func (e *GraceHashJoinExec) Next(ctx context.Context, req *chunk.Chunk) (err err
 		e.buildPartitionerExec.chkIdx = 0
 		e.probePartitionerExec.partitionIdx = e.partitionIdx
 		e.probePartitionerExec.chkIdx = 0
-		e.hashJoinExec.Close()
-		e.hashJoinExec.Open(ctx)
+		err = e.hashJoinExec.Close()
+		if err != nil {
+			return err
+		}
+		err = e.hashJoinExec.Open(ctx)
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil
