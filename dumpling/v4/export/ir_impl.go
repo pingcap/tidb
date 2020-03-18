@@ -34,10 +34,12 @@ func (iter *rowIter) Close() error {
 	return iter.rows.Close()
 }
 
-func (iter *rowIter) Next(row RowReceiver) error {
-	err := decodeFromRows(iter.rows, iter.args, row)
+func (iter *rowIter) Decode(row RowReceiver) error {
+	return decodeFromRows(iter.rows, iter.args, row)
+}
+
+func (iter *rowIter) Next() {
 	iter.hasNext = iter.rows.Next()
-	return err
 }
 
 func (iter *rowIter) HasNext() bool {
@@ -65,16 +67,19 @@ func (c *fileRowIter) Close() error {
 	return c.rowIter.Close()
 }
 
-func (c *fileRowIter) Next(row RowReceiver) error {
-	err := c.rowIter.Next(row)
+func (c *fileRowIter) Decode(row RowReceiver) error {
+	err := c.rowIter.Decode(row)
 	if err != nil {
 		return err
 	}
-
 	size := row.ReportSize()
 	c.currentFileSize += size
 	c.currentStatementSize += size
 	return nil
+}
+
+func (c *fileRowIter) Next() {
+	c.rowIter.Next()
 }
 
 func (c *fileRowIter) HasNext() bool {

@@ -2,6 +2,8 @@ package export
 
 import (
 	"bufio"
+	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -11,6 +13,61 @@ import (
 	"github.com/pingcap/dumpling/v4/log"
 	"go.uber.org/zap"
 )
+
+const lengthLimit = 1048576
+
+var pool = sync.Pool{New: func() interface{} {
+	return &bytes.Buffer{}
+}}
+
+type writerPipe struct {
+	input  chan []byte
+	closed chan struct{}
+	errCh  chan error
+
+	w io.Writer
+}
+
+func newWriterPipe(w io.Writer) *writerPipe {
+	return &writerPipe{
+		input:  make(chan []byte, 8),
+		closed: make(chan struct{}),
+		errCh:  make(chan error, 1),
+		w:      w,
+	}
+}
+
+func (b *writerPipe) Run(ctx context.Context) {
+	defer close(b.closed)
+	var errOccurs bool
+	for {
+		select {
+		case s, ok := <-b.input:
+			if !ok {
+				return
+			}
+			if errOccurs {
+				continue
+			}
+			err := writeBytes(b.w, s)
+			if err != nil {
+				errOccurs = true
+				b.errCh <- err
+			}
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+func (b *writerPipe) Error() error {
+	select {
+	case err := <-b.errCh:
+		return err
+	default:
+		return nil
+	}
+}
 
 func WriteMeta(meta MetaIR, w io.StringWriter) error {
 	log.Zap().Debug("start dumping meta data", zap.String("target", meta.TargetName()))
@@ -30,24 +87,41 @@ func WriteMeta(meta MetaIR, w io.StringWriter) error {
 	return nil
 }
 
-func WriteInsert(tblIR TableDataIR, w io.StringWriter) error {
+func WriteInsert(tblIR TableDataIR, w io.Writer) error {
 	fileRowIter := tblIR.Rows()
 	if !fileRowIter.HasNext() {
 		return nil
 	}
 
+	bf := pool.Get().(*bytes.Buffer)
+	bf.Grow(lengthLimit)
+
+	wp := newWriterPipe(w)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		wp.Run(ctx)
+		wg.Done()
+	}()
+	defer func() {
+		cancel()
+		wg.Wait()
+	}()
+
 	specCmtIter := tblIR.SpecialComments()
 	for specCmtIter.HasNext() {
-		if err := write(w, fmt.Sprintf("%s\n", specCmtIter.Next())); err != nil {
-			return err
-		}
+		bf.WriteString(specCmtIter.Next())
+		bf.WriteByte('\n')
 	}
 
 	var (
-		insertStatementPrefix = fmt.Sprintf("INSERT INTO %s VALUES\n", wrapBackTicks(tblIR.TableName()))
+		insertStatementPrefix string
 		row                   = MakeRowReceiver(tblIR.ColumnTypes())
 		counter               = 0
 		escapeBackSlash       = tblIR.EscapeBackSlash()
+		err                   error
 	)
 
 	selectedField := tblIR.SelectedField()
@@ -55,48 +129,79 @@ func WriteInsert(tblIR TableDataIR, w io.StringWriter) error {
 	if selectedField != "" {
 		insertStatementPrefix = fmt.Sprintf("INSERT INTO %s %s VALUES\n",
 			wrapBackTicks(tblIR.TableName()), selectedField)
+	} else {
+		insertStatementPrefix = fmt.Sprintf("INSERT INTO %s VALUES\n",
+			wrapBackTicks(tblIR.TableName()))
 	}
 
 	for fileRowIter.HasNextSQLRowIter() {
-		if err := write(w, insertStatementPrefix); err != nil {
-			return err
-		}
+		bf.WriteString(insertStatementPrefix)
 
 		fileRowIter = fileRowIter.NextSQLRowIter()
 		for fileRowIter.HasNext() {
-			if err := fileRowIter.Next(row); err != nil {
+			if err = fileRowIter.Decode(row); err != nil {
 				log.Zap().Error("scanning from sql.Row failed", zap.Error(err))
 				return err
 			}
 
-			if err := write(w, row.ToString(escapeBackSlash)); err != nil {
-				return err
-			}
+			row.WriteToBuffer(bf, escapeBackSlash)
 			counter += 1
 
-			var splitter string
-			if fileRowIter.HasNext() {
-				splitter = ","
-			} else {
-				splitter = ";"
+			if bf.Len() >= lengthLimit {
+				wp.input <- bf.Bytes()
+				bf.Reset()
 			}
-			if err := write(w, fmt.Sprintf("%s\n", splitter)); err != nil {
+
+			fileRowIter.Next()
+			if fileRowIter.HasNext() {
+				bf.WriteString(",\n")
+			} else {
+				bf.WriteString(";\n")
+			}
+
+			if err = wp.Error(); err != nil {
 				return err
 			}
 		}
 	}
-
 	log.Zap().Debug("dumping table",
 		zap.String("table", tblIR.TableName()),
 		zap.Int("record counts", counter))
-	return nil
+	if bf.Len() > 0 {
+		wp.input <- bf.Bytes()
+		bf.Reset()
+	}
+	close(wp.input)
+	<-wp.closed
+	pool.Put(bf)
+	return wp.Error()
 }
 
 func write(writer io.StringWriter, str string) error {
 	_, err := writer.WriteString(str)
 	if err != nil {
+		// str might be very long, only output the first 200 chars
+		outputLength := len(str)
+		if outputLength >= 200 {
+			outputLength = 200
+		}
 		log.Zap().Error("writing failed",
-			zap.String("string", str),
+			zap.String("string", str[:outputLength]),
+			zap.Error(err))
+	}
+	return err
+}
+
+func writeBytes(writer io.Writer, p []byte) error {
+	_, err := writer.Write(p)
+	if err != nil {
+		// str might be very long, only output the first 200 chars
+		outputLength := len(p)
+		if outputLength >= 200 {
+			outputLength = 200
+		}
+		log.Zap().Error("writing failed",
+			zap.ByteString("string", p[:outputLength]),
 			zap.Error(err))
 	}
 	return err
@@ -125,10 +230,9 @@ func buildFileWriter(path string) (io.StringWriter, func(), error) {
 	return buf, tearDownRoutine, nil
 }
 
-func buildLazyFileWriter(path string) (io.StringWriter, func()) {
+func buildInterceptFileWriter(path string) (io.Writer, func()) {
 	var file *os.File
-	var buf *bufio.Writer
-	lazyStringWriter := &LazyStringWriter{}
+	fileWriter := &InterceptFileWriter{}
 	initRoutine := func() error {
 		f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
 		file = f
@@ -138,25 +242,23 @@ func buildLazyFileWriter(path string) (io.StringWriter, func()) {
 				zap.Error(err))
 		}
 		log.Zap().Debug("opened file", zap.String("path", path))
-		buf = bufio.NewWriter(file)
-		lazyStringWriter.StringWriter = buf
+		fileWriter.Writer = file
 		return err
 	}
-	lazyStringWriter.initRoutine = initRoutine
+	fileWriter.initRoutine = initRoutine
 
 	tearDownRoutine := func() {
 		if file == nil {
 			return
 		}
 		log.Zap().Debug("tear down lazy file writer...")
-		_ = buf.Flush()
 		err := file.Close()
 		if err == nil {
 			return
 		}
 		log.Zap().Error("close file failed", zap.String("path", path))
 	}
-	return lazyStringWriter, tearDownRoutine
+	return fileWriter, tearDownRoutine
 }
 
 type LazyStringWriter struct {
@@ -174,18 +276,26 @@ func (l *LazyStringWriter) WriteString(str string) (int, error) {
 	return l.StringWriter.WriteString(str)
 }
 
-// InterceptStringWriter is an interceptor of io.StringWriter,
+// InterceptFileWriter is an interceptor of os.File,
 // tracking whether a StringWriter has written something.
-type InterceptStringWriter struct {
-	io.StringWriter
+type InterceptFileWriter struct {
+	io.Writer
+	sync.Once
+	initRoutine func() error
+	err         error
+
 	SomethingIsWritten bool
 }
 
-func (w *InterceptStringWriter) WriteString(str string) (int, error) {
-	if len(str) > 0 {
+func (w *InterceptFileWriter) Write(p []byte) (int, error) {
+	w.Do(func() { w.err = w.initRoutine() })
+	if len(p) > 0 {
 		w.SomethingIsWritten = true
 	}
-	return w.StringWriter.WriteString(str)
+	if w.err != nil {
+		return 0, fmt.Errorf("open file error: %s", w.err.Error())
+	}
+	return w.Writer.Write(p)
 }
 
 func wrapBackTicks(identifier string) string {

@@ -4,10 +4,14 @@ import (
 	"bytes"
 	"database/sql"
 	"fmt"
-	"strings"
 )
 
 var colTypeRowReceiverMap = map[string]func() RowReceiverStringer{}
+
+var nullValue = "NULL"
+var quotationMark byte = '\''
+var quotationMarkNotQuote = []byte{quotationMark}
+var quotationMarkQuote = []byte{quotationMark, quotationMark}
 
 func init() {
 	for _, s := range dataTypeString {
@@ -42,12 +46,12 @@ var dataTypeBin = []string{
 	"BIT",
 }
 
-func escape(s string, escapeBackslash bool) string {
+func escape(s []byte, bf *bytes.Buffer, escapeBackslash bool) {
 	if !escapeBackslash {
-		return strings.ReplaceAll(s, "'", "''")
+		bf.Write(bytes.ReplaceAll(s, quotationMarkNotQuote, quotationMarkQuote))
+		return
 	}
 	var (
-		bf     bytes.Buffer
 		escape byte
 		last   = 0
 	)
@@ -79,23 +83,17 @@ func escape(s string, escapeBackslash bool) string {
 		}
 
 		if escape != 0 {
-			if last == 0 {
-				bf.Grow(2 * len(s))
-			}
-			bf.WriteString(s[last:i])
+			bf.Write(s[last:i])
 			bf.WriteByte('\\')
 			bf.WriteByte(escape)
 			last = i + 1
 		}
 	}
 	if last == 0 {
-		return s
+		bf.Write(s)
+	} else if last < len(s) {
+		bf.Write(s[last:])
 	}
-	if last < len(s) {
-		bf.WriteString(s[last:])
-	}
-	defer bf.Reset()
-	return bf.String()
 }
 
 func SQLTypeStringMaker() RowReceiverStringer {
@@ -126,9 +124,7 @@ type RowReceiverArr []RowReceiverStringer
 
 func (r RowReceiverArr) BindAddress(args []interface{}) {
 	for i := range args {
-		var singleAddr [1]interface{}
-		r[i].BindAddress(singleAddr[:])
-		args[i] = singleAddr[0]
+		r[i].BindAddress(args[i : i+1])
 	}
 }
 func (r RowReceiverArr) ReportSize() uint64 {
@@ -138,62 +134,65 @@ func (r RowReceiverArr) ReportSize() uint64 {
 	}
 	return sum
 }
-func (r RowReceiverArr) ToString(escapeBackslash bool) string {
-	var sb strings.Builder
-	sb.WriteString("(")
+
+func (r RowReceiverArr) WriteToBuffer(bf *bytes.Buffer, escapeBackslash bool) {
+	bf.WriteByte('(')
 	for i, receiver := range r {
-		sb.WriteString(receiver.ToString(escapeBackslash))
+		receiver.WriteToBuffer(bf, escapeBackslash)
 		if i != len(r)-1 {
-			sb.WriteString(", ")
+			bf.WriteByte(',')
 		}
 	}
-	sb.WriteString(")")
-	return sb.String()
+	bf.WriteByte(')')
 }
 
 type SQLTypeNumber struct {
 	SQLTypeString
 }
 
-func (s SQLTypeNumber) ToString(bool) string {
-	if s.Valid {
-		return s.String
+func (s SQLTypeNumber) WriteToBuffer(bf *bytes.Buffer, _ bool) {
+	if s.RawBytes != nil {
+		bf.Write(s.RawBytes)
 	} else {
-		return "NULL"
+		bf.WriteString(nullValue)
 	}
 }
 
 type SQLTypeString struct {
-	sql.NullString
+	sql.RawBytes
 }
 
 func (s *SQLTypeString) BindAddress(arg []interface{}) {
-	arg[0] = s
+	arg[0] = &s.RawBytes
 }
 func (s *SQLTypeString) ReportSize() uint64 {
-	if s.Valid {
-		return uint64(len(s.String))
+	if s.RawBytes != nil {
+		return uint64(len(s.RawBytes))
 	}
-	return uint64(len("NULL"))
+	return uint64(len(nullValue))
 }
-func (s *SQLTypeString) ToString(escapeBackslash bool) string {
-	if s.Valid {
-		return fmt.Sprintf(`'%s'`, escape(s.String, escapeBackslash))
+
+func (s *SQLTypeString) WriteToBuffer(bf *bytes.Buffer, escapeBackslash bool) {
+	if s.RawBytes != nil {
+		bf.WriteByte(quotationMark)
+		escape(s.RawBytes, bf, escapeBackslash)
+		bf.WriteByte(quotationMark)
 	} else {
-		return "NULL"
+		bf.WriteString(nullValue)
 	}
 }
 
 type SQLTypeBytes struct {
-	bytes []byte
+	sql.RawBytes
 }
 
 func (s *SQLTypeBytes) BindAddress(arg []interface{}) {
-	arg[0] = &s.bytes
+	arg[0] = &s.RawBytes
 }
 func (s *SQLTypeBytes) ReportSize() uint64 {
-	return uint64(len(s.bytes))
+	return uint64(len(s.RawBytes))
 }
-func (s *SQLTypeBytes) ToString(bool) string {
-	return fmt.Sprintf("x'%x'", s.bytes)
+
+func (s *SQLTypeBytes) WriteToBuffer(bf *bytes.Buffer, _ bool) {
+	fmt.Fprintf(bf, "x'%x'", s.RawBytes)
 }

@@ -93,10 +93,10 @@ func (s *testDumpSuite) TestWriteTableData(c *C) {
 	expected := "/*!40101 SET NAMES binary*/;\n" +
 		"/*!40014 SET FOREIGN_KEY_CHECKS=0*/;\n" +
 		"INSERT INTO `employee` VALUES\n" +
-		"(1, 'male', 'bob@mail.com', '020-1234', NULL),\n" +
-		"(2, 'female', 'sarah@mail.com', '020-1253', 'healthy'),\n" +
-		"(3, 'male', 'john@mail.com', '020-1256', 'healthy'),\n" +
-		"(4, 'female', 'sarah@mail.com', '020-1235', 'healthy');\n"
+		"(1,'male','bob@mail.com','020-1234',NULL),\n" +
+		"(2,'female','sarah@mail.com','020-1253','healthy'),\n" +
+		"(3,'male','john@mail.com','020-1256','healthy'),\n" +
+		"(4,'female','sarah@mail.com','020-1235','healthy');\n"
 	c.Assert(string(bytes), Equals, expected)
 }
 
@@ -132,13 +132,13 @@ func (s *testDumpSuite) TestWriteTableDataWithFileSize(c *C) {
 		"test.employee.0.sql": "/*!40101 SET NAMES binary*/;\n" +
 			"/*!40014 SET FOREIGN_KEY_CHECKS=0*/;\n" +
 			"INSERT INTO `employee` VALUES\n" +
-			"(1, 'male', 'bob@mail.com', '020-1234', NULL),\n" +
-			"(2, 'female', 'sarah@mail.com', '020-1253', 'healthy');\n",
+			"(1,'male','bob@mail.com','020-1234',NULL),\n" +
+			"(2,'female','sarah@mail.com','020-1253','healthy');\n",
 		"test.employee.1.sql": "/*!40101 SET NAMES binary*/;\n" +
 			"/*!40014 SET FOREIGN_KEY_CHECKS=0*/;\n" +
 			"INSERT INTO `employee` VALUES\n" +
-			"(3, 'male', 'john@mail.com', '020-1256', 'healthy'),\n" +
-			"(4, 'female', 'sarah@mail.com', '020-1235', 'healthy');\n",
+			"(3,'male','john@mail.com','020-1256','healthy'),\n" +
+			"(4,'female','sarah@mail.com','020-1235','healthy');\n",
 	}
 
 	for p, expected := range cases {
@@ -184,11 +184,11 @@ func (s *testDumpSuite) TestWriteTableDataWithStatementSize(c *C) {
 		"test.employee.0.sql": "/*!40101 SET NAMES binary*/;\n" +
 			"/*!40014 SET FOREIGN_KEY_CHECKS=0*/;\n" +
 			"INSERT INTO `employee` VALUES\n" +
-			"(1, 'male', 'bob@mail.com', '020-1234', NULL),\n" +
-			"(2, 'female', 'sarah@mail.com', '020-1253', 'healthy');\n" +
+			"(1,'male','bob@mail.com','020-1234',NULL),\n" +
+			"(2,'female','sarah@mail.com','020-1253','healthy');\n" +
 			"INSERT INTO `employee` VALUES\n" +
-			"(3, 'male', 'john@mail.com', '020-1256', 'healthy'),\n" +
-			"(4, 'female', 'sarah@mail.com', '020-1235', 'healthy');\n",
+			"(3,'male','john@mail.com','020-1256','healthy'),\n" +
+			"(4,'female','sarah@mail.com','020-1235','healthy');\n",
 	}
 
 	for p, expected := range cases {
@@ -212,14 +212,14 @@ func (s *testDumpSuite) TestWriteTableDataWithStatementSize(c *C) {
 		"test.employee.0.sql": "/*!40101 SET NAMES binary*/;\n" +
 			"/*!40014 SET FOREIGN_KEY_CHECKS=0*/;\n" +
 			"INSERT INTO `employee` VALUES\n" +
-			"(1, 'male', 'bob@mail.com', '020-1234', NULL),\n" +
-			"(2, 'female', 'sarah@mail.com', '020-1253', 'healthy');\n" +
+			"(1,'male','bob@mail.com','020-1234',NULL),\n" +
+			"(2,'female','sarah@mail.com','020-1253','healthy');\n" +
 			"INSERT INTO `employee` VALUES\n" +
-			"(3, 'male', 'john@mail.com', '020-1256', 'healthy');\n",
+			"(3,'male','john@mail.com','020-1256','healthy');\n",
 		"test.employee.1.sql": "/*!40101 SET NAMES binary*/;\n" +
 			"/*!40014 SET FOREIGN_KEY_CHECKS=0*/;\n" +
 			"INSERT INTO `employee` VALUES\n" +
-			"(4, 'female', 'sarah@mail.com', '020-1235', 'healthy');\n",
+			"(4,'female','sarah@mail.com','020-1235','healthy');\n",
 	}
 
 	tableIR = newMockTableIR("test", "employee", data, specCmts, colTypes)

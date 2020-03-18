@@ -106,10 +106,12 @@ func (s *testDumpSuite) TestDumpTable(c *C) {
 	rowIter := tbDataRes.Rows()
 	c.Assert(rowIter.HasNext(), IsTrue)
 	receiver := newSimpleRowReceiver(1)
-	c.Assert(rowIter.Next(receiver), IsNil)
+	c.Assert(rowIter.Decode(receiver), IsNil)
 	c.Assert(receiver.data[0], Equals, "1")
-	c.Assert(rowIter.Next(receiver), IsNil)
+	rowIter.Next()
+	c.Assert(rowIter.Decode(receiver), IsNil)
 	c.Assert(receiver.data[0], Equals, "2")
+	rowIter.Next()
 	c.Assert(mock.ExpectationsWereMet(), IsNil)
 }
 
@@ -154,8 +156,9 @@ func (s *testDumpSuite) TestDumpTableWhereClause(c *C) {
 
 	for i := 4; i < 9; i++ {
 		c.Assert(rowIter.HasNext(), IsTrue)
-		c.Assert(rowIter.Next(receiver), IsNil)
+		c.Assert(rowIter.Decode(receiver), IsNil)
 		c.Assert(receiver.data[0], Equals, strconv.Itoa(i))
+		rowIter.Next()
 	}
 	c.Assert(tbDataRes.Rows().HasNext(), IsFalse)
 	c.Assert(mock.ExpectationsWereMet(), IsNil)

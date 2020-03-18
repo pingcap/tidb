@@ -56,15 +56,14 @@ func (f *SimpleWriter) WriteTableData(ctx context.Context, ir TableDataIR) error
 
 	for {
 		filePath := path.Join(f.cfg.OutputDirPath, fileName)
-		fileWriter, tearDown := buildLazyFileWriter(filePath)
-		intWriter := &InterceptStringWriter{StringWriter: fileWriter}
-		err := WriteInsert(chunksIter, intWriter)
+		fileWriter, tearDown := buildInterceptFileWriter(filePath)
+		err := WriteInsert(chunksIter, fileWriter)
 		tearDown()
 		if err != nil {
 			return err
 		}
 
-		if !intWriter.SomethingIsWritten {
+		if w, ok := fileWriter.(*InterceptFileWriter); ok && !w.SomethingIsWritten {
 			break
 		}
 
