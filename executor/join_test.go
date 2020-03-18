@@ -1323,10 +1323,10 @@ func (s *testSuiteJoin1) TestHashJoin(c *C) {
 	//     └─TableFullScan_10 10000.00 cop[tikv] table:t1, keep order:false, stats:pseudo time:0s, loops:0, rows:5
 	row := result.Rows()
 	c.Assert(len(row), Equals, 7)
-	outerExecInfo := row[4][4].(string)
+	outerExecInfo := row[4][5].(string)
 	// FIXME: revert this result to 1 after TableReaderExecutor can handle initChunkSize.
 	c.Assert(outerExecInfo[strings.Index(outerExecInfo, "rows")+5:strings.Index(outerExecInfo, "rows")+6], Equals, "5")
-	innerExecInfo := row[1][4].(string)
+	innerExecInfo := row[1][5].(string)
 	c.Assert(innerExecInfo[strings.Index(innerExecInfo, "rows")+5:strings.Index(innerExecInfo, "rows")+6], Equals, "0")
 }
 
@@ -1425,7 +1425,7 @@ func (s *testSuiteJoin2) TestNullEmptyAwareSemiJoin(c *C) {
 	}
 	hints := [5]string{
 		"/*+ HASH_JOIN(t1, t2) */",
-		"/*+ SM_JOIN(t1, t2) */",
+		"/*+ MERGE_JOIN(t1, t2) */",
 		"/*+ INL_JOIN(t1, t2) */",
 		"/*+ INL_HASH_JOIN(t1, t2) */",
 		"/*+ INL_MERGE_JOIN(t1, t2) */",
@@ -1793,10 +1793,9 @@ func (s *testSuiteJoinSerial) TestOuterTableBuildHashTableIsuse13933(c *C) {
 	tk.MustExec("create table s (a int,b int)")
 	tk.MustExec("insert into t values (11,11),(1,2)")
 	tk.MustExec("insert into s values (1,2),(2,1),(11,11)")
-	// TODO : add hint HASH_JOIN() and SWAP_JOIN_INPUTS() to specify the hash join and its build side
 	tk.MustQuery("select * from t left join s on s.a > t.a").Sort().Check(testkit.Rows("1 2 11 11", "1 2 2 1", "11 11 <nil> <nil>"))
 	tk.MustQuery("explain select * from t left join s on s.a > t.a").Check(testkit.Rows(
-		"HashLeftJoin_6 99900000.00 root CARTESIAN left outer join, inner:TableReader_8 (REVERSED), other cond:gt(test.s.a, test.t.a)",
+		"HashLeftJoin_6 99900000.00 root CARTESIAN left outer join, other cond:gt(test.s.a, test.t.a)",
 		"├─TableReader_8(Build) 10000.00 root data:TableFullScan_7",
 		"│ └─TableFullScan_7 10000.00 cop[tikv] table:t, keep order:false, stats:pseudo",
 		"└─TableReader_11(Probe) 9990.00 root data:Selection_10",

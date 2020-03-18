@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	ddltestutil "github.com/pingcap/tidb/ddl/testutil"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -278,6 +279,28 @@ func (s *seqTestSuite) TestShow(c *C) {
 		c.Check(r, Equals, expectedRow[i])
 	}
 
+	// test SHOW CREATE TABLE with invisible index
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`create table t (
+		a int,
+		b int,
+		c int UNIQUE KEY,
+		d int UNIQUE KEY,
+		index (b) invisible,
+		index (d) invisible)`)
+	excepted :=
+		"t CREATE TABLE `t` (\n" +
+			"  `a` int(11) DEFAULT NULL,\n" +
+			"  `b` int(11) DEFAULT NULL,\n" +
+			"  `c` int(11) DEFAULT NULL,\n" +
+			"  `d` int(11) DEFAULT NULL,\n" +
+			"  KEY `b` (`b`) /*!80000 INVISIBLE */,\n" +
+			"  KEY `d` (`d`) /*!80000 INVISIBLE */,\n" +
+			"  UNIQUE KEY `c` (`c`),\n" +
+			"  UNIQUE KEY `d_2` (`d`)\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+	tk.MustQuery("show create table t").Check(testkit.Rows(excepted))
+
 	testSQL = "SHOW VARIABLES LIKE 'character_set_results';"
 	result = tk.MustQuery(testSQL)
 	c.Check(result.Rows(), HasLen, 1)
@@ -291,19 +314,23 @@ func (s *seqTestSuite) TestShow(c *C) {
 	tk.MustExec(`create index idx5 using hash on show_index (id) using btree comment 'idx';`)
 	tk.MustExec(`create index idx6 using hash on show_index (id);`)
 	tk.MustExec(`create index idx7 on show_index (id);`)
+	tk.MustExec(`create index idx8 on show_index (id) visible;`)
+	tk.MustExec(`create index idx9 on show_index (id) invisible;`)
 	tk.MustExec(`create index expr_idx on show_index ((id*2+1))`)
 	testSQL = "SHOW index from show_index;"
 	tk.MustQuery(testSQL).Check(testutil.RowsWithSep("|",
-		"show_index|0|PRIMARY|1|id|A|0|<nil>|<nil>||BTREE| |NULL",
-		"show_index|1|cIdx|1|c|A|0|<nil>|<nil>|YES|HASH||index_comment_for_cIdx|NULL",
-		"show_index|1|idx1|1|id|A|0|<nil>|<nil>|YES|HASH| |NULL",
-		"show_index|1|idx2|1|id|A|0|<nil>|<nil>|YES|BTREE||idx|NULL",
-		"show_index|1|idx3|1|id|A|0|<nil>|<nil>|YES|HASH||idx|NULL",
-		"show_index|1|idx4|1|id|A|0|<nil>|<nil>|YES|BTREE||idx|NULL",
-		"show_index|1|idx5|1|id|A|0|<nil>|<nil>|YES|BTREE||idx|NULL",
-		"show_index|1|idx6|1|id|A|0|<nil>|<nil>|YES|HASH| |NULL",
-		"show_index|1|idx7|1|id|A|0|<nil>|<nil>|YES|BTREE| |NULL",
-		"show_index|1|expr_idx|1|NULL|A|0|<nil>|<nil>|YES|BTREE| |(`id` * 2 + 1)",
+		"show_index|0|PRIMARY|1|id|A|0|<nil>|<nil>||BTREE| |YES|NULL",
+		"show_index|1|cIdx|1|c|A|0|<nil>|<nil>|YES|HASH||index_comment_for_cIdx|YES|NULL",
+		"show_index|1|idx1|1|id|A|0|<nil>|<nil>|YES|HASH| |YES|NULL",
+		"show_index|1|idx2|1|id|A|0|<nil>|<nil>|YES|BTREE||idx|YES|NULL",
+		"show_index|1|idx3|1|id|A|0|<nil>|<nil>|YES|HASH||idx|YES|NULL",
+		"show_index|1|idx4|1|id|A|0|<nil>|<nil>|YES|BTREE||idx|YES|NULL",
+		"show_index|1|idx5|1|id|A|0|<nil>|<nil>|YES|BTREE||idx|YES|NULL",
+		"show_index|1|idx6|1|id|A|0|<nil>|<nil>|YES|HASH| |YES|NULL",
+		"show_index|1|idx7|1|id|A|0|<nil>|<nil>|YES|BTREE| |YES|NULL",
+		"show_index|1|idx8|1|id|A|0|<nil>|<nil>|YES|BTREE| |YES|NULL",
+		"show_index|1|idx9|1|id|A|0|<nil>|<nil>|YES|BTREE| |NO|NULL",
+		"show_index|1|expr_idx|1|NULL|A|0|<nil>|<nil>|YES|BTREE| |YES|(`id` * 2 + 1)",
 	))
 
 	// For show like with escape
@@ -754,6 +781,11 @@ func checkGoroutineExists(keyword string) bool {
 }
 
 func (s *seqTestSuite) TestAdminShowNextID(c *C) {
+	HelperTestAdminShowNextID(c, s, `admin show `)
+	HelperTestAdminShowNextID(c, s, `show table `)
+}
+
+func HelperTestAdminShowNextID(c *C, s *seqTestSuite, str string) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`), IsNil)
 	defer func() {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"), IsNil)
@@ -764,39 +796,43 @@ func (s *seqTestSuite) TestAdminShowNextID(c *C) {
 	defer autoid.SetStep(autoIDStep)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t,tt")
 	tk.MustExec("create table t(id int, c int)")
 	// Start handle is 1.
-	r := tk.MustQuery("admin show t next_row_id")
+	r := tk.MustQuery(str + " t next_row_id")
 	r.Check(testkit.Rows("test t _tidb_rowid 1"))
 	// Row ID is step + 1.
 	tk.MustExec("insert into t values(1, 1)")
-	r = tk.MustQuery("admin show t next_row_id")
+	r = tk.MustQuery(str + " t next_row_id")
 	r.Check(testkit.Rows("test t _tidb_rowid 11"))
 	// Row ID is original + step.
 	for i := 0; i < int(step); i++ {
 		tk.MustExec("insert into t values(10000, 1)")
 	}
-	r = tk.MustQuery("admin show t next_row_id")
+	r = tk.MustQuery(str + " t next_row_id")
 	r.Check(testkit.Rows("test t _tidb_rowid 21"))
+	tk.MustExec("drop table t")
 
 	// test for a table with the primary key
 	tk.MustExec("create table tt(id int primary key auto_increment, c int)")
 	// Start handle is 1.
-	r = tk.MustQuery("admin show tt next_row_id")
+	r = tk.MustQuery(str + " tt next_row_id")
 	r.Check(testkit.Rows("test tt id 1"))
 	// After rebasing auto ID, row ID is 20 + step + 1.
 	tk.MustExec("insert into tt values(20, 1)")
-	r = tk.MustQuery("admin show tt next_row_id")
+	r = tk.MustQuery(str + " tt next_row_id")
 	r.Check(testkit.Rows("test tt id 31"))
 	// test for renaming the table
+	tk.MustExec("drop database if exists test1")
 	tk.MustExec("create database test1")
 	tk.MustExec("rename table test.tt to test1.tt")
 	tk.MustExec("use test1")
-	r = tk.MustQuery("admin show tt next_row_id")
+	r = tk.MustQuery(str + " tt next_row_id")
 	r.Check(testkit.Rows("test1 tt id 31"))
 	tk.MustExec("insert test1.tt values ()")
-	r = tk.MustQuery("admin show tt next_row_id")
+	r = tk.MustQuery(str + " tt next_row_id")
 	r.Check(testkit.Rows("test1 tt id 41"))
+	tk.MustExec("drop table tt")
 }
 
 func (s *seqTestSuite) TestNoHistoryWhenDisableRetry(c *C) {
@@ -1213,7 +1249,7 @@ func (s *seqTestSuite) TestAutoRandIDRetry(c *C) {
 	tk.MustExec("insert into t values ()")
 	c.Assert(failpoint.Enable(fpName, `return(true)`), IsNil)
 	// Insertion failure will skip the 6 in retryInfo.
-	tk.MustGetErrCode("commit", mysql.ErrTxnRetryable)
+	tk.MustGetErrCode("commit", errno.ErrTxnRetryable)
 	c.Assert(failpoint.Disable(fpName), IsNil)
 
 	tk.MustExec("insert into t values ()")
@@ -1330,6 +1366,10 @@ func (s *testOOMSuite) SetUpSuite(c *C) {
 	domain.RunAutoAnalyze = false
 	s.do, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
+	originCfg := config.GetGlobalConfig()
+	newConf := *originCfg
+	newConf.OOMAction = config.OOMActionLog
+	config.StoreGlobalConfig(&newConf)
 }
 
 func (s *testOOMSuite) TearDownSuite(c *C) {
@@ -1340,41 +1380,9 @@ func (s *testOOMSuite) TearDownSuite(c *C) {
 func (s *testOOMSuite) registerHook() {
 	conf := &log.Config{Level: os.Getenv("log_level"), File: log.FileLogConfig{}}
 	_, r, _ := log.InitLogger(conf)
-	s.oom = &oomCapturer{r.Core, ""}
+	s.oom = &oomCapturer{r.Core, "", sync.Mutex{}}
 	lg := zap.New(s.oom)
 	log.ReplaceGlobals(lg, r)
-}
-
-func (s *testOOMSuite) TestDistSQLMemoryControl(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t (id int, a int, b int, index idx_a(`a`))")
-	tk.MustExec("insert into t values (1,1,1), (2,2,2), (3,3,3)")
-
-	log.SetLevel(zap.WarnLevel)
-	s.oom.tracker = ""
-	tk.MustQuery("select * from t")
-	c.Assert(s.oom.tracker, Equals, "")
-	tk.Se.GetSessionVars().MemQuotaDistSQL = 1
-	tk.MustQuery("select * from t")
-	c.Assert(s.oom.tracker, Equals, "TableReader_5")
-	tk.Se.GetSessionVars().MemQuotaDistSQL = -1
-
-	s.oom.tracker = ""
-	tk.MustQuery("select a from t")
-	c.Assert(s.oom.tracker, Equals, "")
-	tk.Se.GetSessionVars().MemQuotaDistSQL = 1
-	tk.MustQuery("select a from t use index(idx_a)")
-	c.Assert(s.oom.tracker, Equals, "IndexReader_5")
-	tk.Se.GetSessionVars().MemQuotaDistSQL = -1
-
-	s.oom.tracker = ""
-	tk.MustQuery("select * from t")
-	c.Assert(s.oom.tracker, Equals, "")
-	tk.Se.GetSessionVars().MemQuotaIndexLookupReader = 1
-	tk.MustQuery("select * from t use index(idx_a)")
-	c.Assert(s.oom.tracker, Equals, "IndexLookUp_6")
-	tk.Se.GetSessionVars().MemQuotaIndexLookupReader = -1
 }
 
 func (s *testOOMSuite) TestMemTracker4UpdateExec(c *C) {
@@ -1394,6 +1402,9 @@ func (s *testOOMSuite) TestMemTracker4UpdateExec(c *C) {
 func (s *testOOMSuite) TestMemTracker4InsertAndReplaceExec(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("create table t (id int, a int, b int, index idx_a(`a`))")
+	tk.MustExec("insert into t values (1,1,1), (2,2,2), (3,3,3)")
+
 	tk.MustExec("create table t_MemTracker4InsertAndReplaceExec (id int, a int, b int, index idx_a(`a`))")
 
 	log.SetLevel(zap.InfoLevel)
@@ -1483,6 +1494,7 @@ func (s *testOOMSuite) TestMemTracker4DeleteExec(c *C) {
 type oomCapturer struct {
 	zapcore.Core
 	tracker string
+	mu      sync.Mutex
 }
 
 func (h *oomCapturer) Write(entry zapcore.Entry, fields []zapcore.Field) error {
@@ -1500,7 +1512,10 @@ func (h *oomCapturer) Write(entry zapcore.Entry, fields []zapcore.Field) error {
 		h.tracker = str[begin+len("8001]") : end]
 		return nil
 	}
+
+	h.mu.Lock()
 	h.tracker = entry.Message
+	h.mu.Unlock()
 	return nil
 }
 

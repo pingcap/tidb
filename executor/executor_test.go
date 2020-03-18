@@ -111,13 +111,13 @@ var _ = Suite(&testSuiteAgg{baseTestSuite: &baseTestSuite{}})
 var _ = Suite(&testSuite6{&baseTestSuite{}})
 var _ = Suite(&testSuite7{&baseTestSuite{}})
 var _ = Suite(&testSuite8{&baseTestSuite{}})
-var _ = Suite(&testShowStatsSuite{&baseTestSuite{}})
+var _ = SerialSuites(&testShowStatsSuite{&baseTestSuite{}})
 var _ = Suite(&testBypassSuite{})
 var _ = Suite(&testUpdateSuite{})
 var _ = Suite(&testPointGetSuite{})
 var _ = Suite(&testBatchPointGetSuite{})
 var _ = Suite(&testRecoverTable{})
-var _ = Suite(&testMemTableReaderSuite{})
+var _ = Suite(&testMemTableReaderSuite{&testClusterTableBase{}})
 var _ = SerialSuites(&testFlushSuite{})
 var _ = SerialSuites(&testAutoRandomSuite{&baseTestSuite{}})
 var _ = SerialSuites(&testClusterTableSuite{})
@@ -158,6 +158,10 @@ func (s *baseTestSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	d.SetStatsUpdating(true)
 	s.domain = d
+	originCfg := config.GetGlobalConfig()
+	newConf := *originCfg
+	newConf.OOMAction = config.OOMActionLog
+	config.StoreGlobalConfig(&newConf)
 }
 
 func (s *baseTestSuite) TearDownSuite(c *C) {
@@ -2090,7 +2094,7 @@ func (s *testSuiteP2) TestIsPointGet(c *C) {
 	ctx := tk.Se.(sessionctx.Context)
 	tests := map[string]bool{
 		"select * from help_topic where name='aaa'":         false,
-		"select 1 from help_topic where name='aaa'":         true,
+		"select 1 from help_topic where name='aaa'":         false,
 		"select * from help_topic where help_topic_id=1":    true,
 		"select * from help_topic where help_category_id=1": false,
 	}
@@ -3889,6 +3893,8 @@ func (s *testSuite2) TearDownTest(c *C) {
 		tableName := tb[0]
 		if tb[1] == "VIEW" {
 			tk.MustExec(fmt.Sprintf("drop view %v", tableName))
+		} else if tb[1] == "SEQUENCE" {
+			tk.MustExec(fmt.Sprintf("drop sequence %v", tableName))
 		} else {
 			tk.MustExec(fmt.Sprintf("drop table %v", tableName))
 		}
@@ -3907,6 +3913,8 @@ func (s *testSuite3) TearDownTest(c *C) {
 		tableName := tb[0]
 		if tb[1] == "VIEW" {
 			tk.MustExec(fmt.Sprintf("drop view %v", tableName))
+		} else if tb[1] == "SEQUENCE" {
+			tk.MustExec(fmt.Sprintf("drop sequence %v", tableName))
 		} else {
 			tk.MustExec(fmt.Sprintf("drop table %v", tableName))
 		}
@@ -3925,6 +3933,8 @@ func (s *testSuite4) TearDownTest(c *C) {
 		tableName := tb[0]
 		if tb[1] == "VIEW" {
 			tk.MustExec(fmt.Sprintf("drop view %v", tableName))
+		} else if tb[1] == "SEQUENCE" {
+			tk.MustExec(fmt.Sprintf("drop sequence %v", tableName))
 		} else {
 			tk.MustExec(fmt.Sprintf("drop table %v", tableName))
 		}
@@ -3943,6 +3953,8 @@ func (s *testSuite5) TearDownTest(c *C) {
 		tableName := tb[0]
 		if tb[1] == "VIEW" {
 			tk.MustExec(fmt.Sprintf("drop view %v", tableName))
+		} else if tb[1] == "SEQUENCE" {
+			tk.MustExec(fmt.Sprintf("drop sequence %v", tableName))
 		} else {
 			tk.MustExec(fmt.Sprintf("drop table %v", tableName))
 		}
@@ -3961,6 +3973,8 @@ func (s *testSuite6) TearDownTest(c *C) {
 		tableName := tb[0]
 		if tb[1] == "VIEW" {
 			tk.MustExec(fmt.Sprintf("drop view %v", tableName))
+		} else if tb[1] == "SEQUENCE" {
+			tk.MustExec(fmt.Sprintf("drop sequence %v", tableName))
 		} else {
 			tk.MustExec(fmt.Sprintf("drop table %v", tableName))
 		}
@@ -3979,6 +3993,8 @@ func (s *testSuite7) TearDownTest(c *C) {
 		tableName := tb[0]
 		if tb[1] == "VIEW" {
 			tk.MustExec(fmt.Sprintf("drop view %v", tableName))
+		} else if tb[1] == "SEQUENCE" {
+			tk.MustExec(fmt.Sprintf("drop sequence %v", tableName))
 		} else {
 			tk.MustExec(fmt.Sprintf("drop table %v", tableName))
 		}
@@ -3997,6 +4013,8 @@ func (s *testSuite8) TearDownTest(c *C) {
 		tableName := tb[0]
 		if tb[1] == "VIEW" {
 			tk.MustExec(fmt.Sprintf("drop view %v", tableName))
+		} else if tb[1] == "SEQUENCE" {
+			tk.MustExec(fmt.Sprintf("drop sequence %v", tableName))
 		} else {
 			tk.MustExec(fmt.Sprintf("drop table %v", tableName))
 		}
@@ -4421,7 +4439,7 @@ func (s *testSuiteP2) TestUnsignedFeedback(c *C) {
 	tk.MustExec("analyze table t")
 	tk.MustQuery("select count(distinct b) from t").Check(testkit.Rows("2"))
 	result := tk.MustQuery("explain analyze select count(distinct b) from t")
-	c.Assert(result.Rows()[2][3], Equals, "table:t, range:[0,+inf], keep order:false")
+	c.Assert(result.Rows()[2][4], Equals, "table:t, range:[0,+inf], keep order:false")
 }
 
 func (s *testSuite) TestOOMPanicAction(c *C) {
@@ -4578,7 +4596,7 @@ func (s *testRecoverTable) TestRecoverTable(c *C) {
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeAfterDrop))
 	_, err = tk.Exec("recover table t_recover")
 	c.Assert(err, NotNil)
-	c.Assert(strings.Contains(err.Error(), "snapshot is older than GC safe point"), Equals, true)
+	c.Assert(strings.Contains(err.Error(), "Can't find dropped/truncated table 't_recover' in GC safe point"), Equals, true)
 
 	// set GC safe point
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
@@ -4619,6 +4637,13 @@ func (s *testRecoverTable) TestRecoverTable(c *C) {
 	// check recover table autoID.
 	tk.MustExec("insert into t_recover values (7),(8),(9)")
 	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1", "7", "8", "9"))
+
+	// Recover truncate table.
+	tk.MustExec("truncate table t_recover")
+	tk.MustExec("rename table t_recover to t_recover_new")
+	tk.MustExec("recover table t_recover")
+	tk.MustExec("insert into t_recover values (10)")
+	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1", "7", "8", "9", "10"))
 
 	gcEnable, err := gcutil.CheckGCEnable(tk.Se)
 	c.Assert(err, IsNil)
@@ -4664,7 +4689,7 @@ func (s *testRecoverTable) TestFlashbackTable(c *C) {
 
 	// Test flash table with not_exist_table_name name.
 	_, err = tk.Exec("flashback table t_not_exists")
-	c.Assert(err.Error(), Equals, "Can't find dropped table: t_not_exists in ddl history jobs")
+	c.Assert(err.Error(), Equals, "Can't find dropped/truncated table: t_not_exists in DDL history jobs")
 
 	// Test flashback table failed by there is already a new table with the same name.
 	// If there is a new table with the same name, should return failed.

@@ -116,7 +116,7 @@ func (s *testSuite1) TestExplainAnalyzeMemory(c *C) {
 	s.checkMemoryInfo(c, tk, "explain analyze select * from t order by v")
 	s.checkMemoryInfo(c, tk, "explain analyze select * from t order by v limit 5")
 	s.checkMemoryInfo(c, tk, "explain analyze select /*+ HASH_JOIN(t1, t2) */ t1.k from t t1, t t2 where t1.v = t2.v+1")
-	s.checkMemoryInfo(c, tk, "explain analyze select /*+ SM_JOIN(t1, t2) */ t1.k from t t1, t t2 where t1.k = t2.k+1")
+	s.checkMemoryInfo(c, tk, "explain analyze select /*+ MERGE_JOIN(t1, t2) */ t1.k from t t1, t t2 where t1.k = t2.k+1")
 	s.checkMemoryInfo(c, tk, "explain analyze select /*+ INL_JOIN(t1, t2) */ t1.k from t t1, t t2 where t1.k = t2.k and t1.v=1")
 	s.checkMemoryInfo(c, tk, "explain analyze select /*+ INL_HASH_JOIN(t1, t2) */ t1.k from t t1, t t2 where t1.k = t2.k and t1.v=1")
 	s.checkMemoryInfo(c, tk, "explain analyze select /*+ INL_MERGE_JOIN(t1, t2) */ t1.k from t t1, t t2 where t1.k = t2.k and t1.v=1")
@@ -129,7 +129,7 @@ func (s *testSuite1) TestExplainAnalyzeMemory(c *C) {
 }
 
 func (s *testSuite1) checkMemoryInfo(c *C, tk *testkit.TestKit, sql string) {
-	memCol := 5
+	memCol := 6
 	ops := []string{"Join", "Reader", "Top", "Sort", "LookUp", "Projection", "Selection", "Agg"}
 	rows := tk.MustQuery(sql).Rows()
 	for _, row := range rows {
@@ -137,7 +137,7 @@ func (s *testSuite1) checkMemoryInfo(c *C, tk *testkit.TestKit, sql string) {
 		for i, c := range row {
 			strs[i] = c.(string)
 		}
-		if strings.Contains(strs[2], "cop") {
+		if strings.Contains(strs[3], "cop") {
 			continue
 		}
 
@@ -201,7 +201,7 @@ func (s *testSuite2) TestExplainAnalyzeExecutionInfo(c *C) {
 	s.checkExecutionInfo(c, tk, "explain analyze select * from t order by v")
 	s.checkExecutionInfo(c, tk, "explain analyze select * from t order by v limit 5")
 	s.checkExecutionInfo(c, tk, "explain analyze select /*+ HASH_JOIN(t1, t2) */ t1.k from t t1, t t2 where t1.v = t2.v+1")
-	s.checkExecutionInfo(c, tk, "explain analyze select /*+ SM_JOIN(t1, t2) */ t1.k from t t1, t t2 where t1.k = t2.k+1")
+	s.checkExecutionInfo(c, tk, "explain analyze select /*+ MERGE_JOIN(t1, t2) */ t1.k from t t1, t t2 where t1.k = t2.k+1")
 	s.checkExecutionInfo(c, tk, "explain analyze select /*+ INL_JOIN(t1, t2) */ t1.k from t t1, t t2 where t1.k = t2.k and t1.v=1")
 	s.checkExecutionInfo(c, tk, "explain analyze select /*+ INL_HASH_JOIN(t1, t2) */ t1.k from t t1, t t2 where t1.k = t2.k and t1.v=1")
 	s.checkExecutionInfo(c, tk, "explain analyze select /*+ INL_MERGE_JOIN(t1, t2) */ t1.k from t t1, t t2 where t1.k = t2.k and t1.v=1")

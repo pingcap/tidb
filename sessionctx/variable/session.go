@@ -48,13 +48,6 @@ import (
 
 var preparedStmtCount int64
 
-// Error instances.
-var (
-	errCantGetValidID = terror.ClassVariable.New(mysql.ErrCantGetValidID, mysql.MySQLErrName[mysql.ErrCantGetValidID])
-	ErrCantSetToNull  = terror.ClassVariable.New(mysql.ErrCantSetToNull, mysql.MySQLErrName[mysql.ErrCantSetToNull])
-	ErrSnapshotTooOld = terror.ClassVariable.New(mysql.ErrSnapshotTooOld, mysql.MySQLErrName[mysql.ErrSnapshotTooOld])
-)
-
 // RetryInfo saves retry information.
 type RetryInfo struct {
 	Retrying               bool
@@ -133,7 +126,7 @@ type stmtFuture struct {
 // TransactionContext is used to store variables that has transaction scope.
 type TransactionContext struct {
 	forUpdateTS   uint64
-	stmtFuture    *stmtFuture
+	stmtFuture    oracle.Future
 	DirtyDB       interface{}
 	Binlog        interface{}
 	InfoSchema    interface{}
@@ -148,6 +141,10 @@ type TransactionContext struct {
 
 	// unchangedRowKeys is used to store the unchanged rows that needs to lock for pessimistic transaction.
 	unchangedRowKeys map[string]struct{}
+
+	// pessimisticLockCache is the cache for pessimistic locked keys,
+	// The value never changes during the transaction.
+	pessimisticLockCache map[string][]byte
 
 	// CreateTime For metrics.
 	CreateTime     time.Time
@@ -192,6 +189,23 @@ func (tc *TransactionContext) UpdateDeltaForTable(physicalTableID int64, delta i
 	tc.TableDeltaMap[physicalTableID] = item
 }
 
+// GetKeyInPessimisticLockCache gets a key in pessimistic lock cache.
+func (tc *TransactionContext) GetKeyInPessimisticLockCache(key kv.Key) (val []byte, ok bool) {
+	if tc.pessimisticLockCache == nil {
+		return nil, false
+	}
+	val, ok = tc.pessimisticLockCache[string(key)]
+	return
+}
+
+// SetPessimisticLockCache sets a key value pair into pessimistic lock cache.
+func (tc *TransactionContext) SetPessimisticLockCache(key kv.Key, val []byte) {
+	if tc.pessimisticLockCache == nil {
+		tc.pessimisticLockCache = map[string][]byte{}
+	}
+	tc.pessimisticLockCache[string(key)] = val
+}
+
 // Cleanup clears up transaction info that no longer use.
 func (tc *TransactionContext) Cleanup() {
 	// tc.InfoSchema = nil; we cannot do it now, because some operation like handleFieldList depend on this.
@@ -199,6 +213,7 @@ func (tc *TransactionContext) Cleanup() {
 	tc.Binlog = nil
 	tc.History = nil
 	tc.TableDeltaMap = nil
+	tc.pessimisticLockCache = nil
 }
 
 // ClearDelta clears the delta map.
@@ -221,19 +236,14 @@ func (tc *TransactionContext) SetForUpdateTS(forUpdateTS uint64) {
 	}
 }
 
-// SetStmtFuture sets the stmtFuture .
-func (tc *TransactionContext) SetStmtFuture(future oracle.Future, cachedTS uint64) {
-	tc.stmtFuture = &stmtFuture{future: future, cachedTS: cachedTS}
+// SetStmtFutureForRC sets the stmtFuture .
+func (tc *TransactionContext) SetStmtFutureForRC(future oracle.Future) {
+	tc.stmtFuture = future
 }
 
-// GetStmtFuture gets the stmtFuture.
-func (tc *TransactionContext) GetStmtFuture() (oracle.Future, uint64) {
-	if tc.stmtFuture == nil {
-		panic("The statement future is nil, it should not happen." +
-			" The statement future should be set at the beginning of the transaction or" +
-			" at the beginning of each statement in the pessimistic read-committed transaction in PrepareTSFuture.")
-	}
-	return tc.stmtFuture.future, tc.stmtFuture.cachedTS
+// GetStmtFutureForRC gets the stmtFuture.
+func (tc *TransactionContext) GetStmtFutureForRC() oracle.Future {
+	return tc.stmtFuture
 }
 
 // WriteStmtBufs can be used by insert/replace/delete/update statement.
@@ -261,7 +271,7 @@ func (ib *WriteStmtBufs) clean() {
 	ib.IndexKeyBuf = nil
 }
 
-// TableSnapshot represents a data snapshot of the table contained in `inspection_schema`.
+// TableSnapshot represents a data snapshot of the table contained in `information_schema`.
 type TableSnapshot struct {
 	Rows [][]types.Datum
 	Err  error
@@ -671,7 +681,10 @@ func NewSessionVars() *SessionVars {
 		WindowConcurrency:          DefTiDBWindowConcurrency,
 	}
 	vars.MemQuota = MemQuota{
-		MemQuotaQuery:             config.GetGlobalConfig().MemQuotaQuery,
+		MemQuotaQuery: config.GetGlobalConfig().MemQuotaQuery,
+
+		// The variables below do not take any effect anymore, it's remaining for compatibility.
+		// TODO: remove them in v4.1
 		MemQuotaHashJoin:          DefTiDBMemQuotaHashJoin,
 		MemQuotaMergeJoin:         DefTiDBMemQuotaMergeJoin,
 		MemQuotaSort:              DefTiDBMemQuotaSort,
@@ -717,6 +730,19 @@ func (s *SessionVars) GetAllowInSubqToJoinAndAgg() bool {
 // SetAllowInSubqToJoinAndAgg set SessionVars.allowInSubqToJoinAndAgg.
 func (s *SessionVars) SetAllowInSubqToJoinAndAgg(val bool) {
 	s.allowInSubqToJoinAndAgg = val
+}
+
+// GetEnableCascadesPlanner get EnableCascadesPlanner from sql hints and SessionVars.EnableCascadesPlanner.
+func (s *SessionVars) GetEnableCascadesPlanner() bool {
+	if s.StmtCtx.HasEnableCascadesPlannerHint {
+		return s.StmtCtx.EnableCascadesPlanner
+	}
+	return s.EnableCascadesPlanner
+}
+
+// SetEnableCascadesPlanner set SessionVars.EnableCascadesPlanner.
+func (s *SessionVars) SetEnableCascadesPlanner(val bool) {
+	s.EnableCascadesPlanner = val
 }
 
 // GetEnableIndexMerge get EnableIndexMerge from SessionVars.enableIndexMerge.
@@ -1068,18 +1094,25 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.MemQuotaQuery = tidbOptInt64(val, config.GetGlobalConfig().MemQuotaQuery)
 	case TIDBMemQuotaHashJoin:
 		s.MemQuotaHashJoin = tidbOptInt64(val, DefTiDBMemQuotaHashJoin)
+		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TIDBMemQuotaQuery))
 	case TIDBMemQuotaMergeJoin:
 		s.MemQuotaMergeJoin = tidbOptInt64(val, DefTiDBMemQuotaMergeJoin)
+		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TIDBMemQuotaQuery))
 	case TIDBMemQuotaSort:
 		s.MemQuotaSort = tidbOptInt64(val, DefTiDBMemQuotaSort)
+		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TIDBMemQuotaQuery))
 	case TIDBMemQuotaTopn:
 		s.MemQuotaTopn = tidbOptInt64(val, DefTiDBMemQuotaTopn)
+		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TIDBMemQuotaQuery))
 	case TIDBMemQuotaIndexLookupReader:
 		s.MemQuotaIndexLookupReader = tidbOptInt64(val, DefTiDBMemQuotaIndexLookupReader)
+		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TIDBMemQuotaQuery))
 	case TIDBMemQuotaIndexLookupJoin:
 		s.MemQuotaIndexLookupJoin = tidbOptInt64(val, DefTiDBMemQuotaIndexLookupJoin)
+		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TIDBMemQuotaQuery))
 	case TIDBMemQuotaNestedLoopApply:
 		s.MemQuotaNestedLoopApply = tidbOptInt64(val, DefTiDBMemQuotaNestedLoopApply)
+		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TIDBMemQuotaQuery))
 	case TiDBGeneralLog:
 		atomic.StoreUint32(&ProcessGeneralLog, uint32(tidbOptPositiveInt32(val, DefTiDBGeneralLog)))
 	case TiDBPProfSQLCPU:
@@ -1095,7 +1128,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBEnableChunkRPC:
 		s.EnableChunkRPC = TiDBOptOn(val)
 	case TiDBEnableCascadesPlanner:
-		s.EnableCascadesPlanner = TiDBOptOn(val)
+		s.SetEnableCascadesPlanner(TiDBOptOn(val))
 	case TiDBOptimizerSelectivityLevel:
 		s.OptimizerSelectivityLevel = tidbOptPositiveInt32(val, DefTiDBOptimizerSelectivityLevel)
 	case TiDBEnableTablePartition:
@@ -1293,7 +1326,8 @@ type MemQuota struct {
 	// MemQuotaQuery defines the memory quota for a query.
 	MemQuotaQuery int64
 
-	// TODO: remove them below sometime, it should have only one Quota(MemQuotaQuery).
+	// The variables below do not take any effect anymore, it's remaining for compatibility.
+	// TODO: remove them in v4.1
 	// MemQuotaHashJoin defines the memory quota for a hash join executor.
 	MemQuotaHashJoin int64
 	// MemQuotaMergeJoin defines the memory quota for a merge join executor.

@@ -94,6 +94,7 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	case *ast.CreateViewStmt:
 		p.flag |= inCreateOrDropTable
 		p.checkCreateViewGrammar(node)
+		p.checkCreateViewWithSelectGrammar(node)
 	case *ast.DropTableStmt:
 		p.flag |= inCreateOrDropTable
 		p.checkDropTableGrammar(node)
@@ -228,7 +229,7 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 		// no need sleep when retry transaction and avoid unexpect sleep caused by retry.
 		if p.flag&inTxnRetry > 0 && x.FnName.L == ast.Sleep {
 			if len(x.Args) == 1 {
-				x.Args[0] = ast.NewValueExpr(0)
+				x.Args[0] = ast.NewValueExpr(0, "", "")
 			}
 		}
 	case *ast.RepairTableStmt:
@@ -455,6 +456,31 @@ func (p *preprocessor) checkCreateViewGrammar(stmt *ast.CreateViewStmt) {
 		if isIncorrectName(col.String()) {
 			p.err = ddl.ErrWrongColumnName.GenWithStackByArgs(col)
 			return
+		}
+	}
+}
+
+func (p *preprocessor) checkCreateViewWithSelect(stmt *ast.SelectStmt) {
+	if stmt.SelectIntoOpt != nil {
+		p.err = ddl.ErrViewSelectClause.GenWithStackByArgs("INFO")
+		return
+	}
+	if stmt.LockTp != ast.SelectLockNone {
+		stmt.LockTp = ast.SelectLockNone
+		return
+	}
+}
+
+func (p *preprocessor) checkCreateViewWithSelectGrammar(stmt *ast.CreateViewStmt) {
+	switch stmt := stmt.Select.(type) {
+	case *ast.SelectStmt:
+		p.checkCreateViewWithSelect(stmt)
+	case *ast.UnionStmt:
+		for _, selectStmt := range stmt.SelectList.Selects {
+			p.checkCreateViewWithSelect(selectStmt)
+			if p.err != nil {
+				return
+			}
 		}
 	}
 }

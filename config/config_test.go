@@ -28,7 +28,7 @@ import (
 	tracing "github.com/uber/jaeger-client-go/config"
 )
 
-var _ = Suite(&testConfigSuite{})
+var _ = SerialSuites(&testConfigSuite{})
 
 type testConfigSuite struct{}
 
@@ -148,6 +148,7 @@ disable-error-stack = false
 
 func (s *testConfigSuite) TestConfig(c *C) {
 	conf := new(Config)
+	conf.TempStoragePath = filepath.Join(os.TempDir(), "tidb", "tmp-storage")
 	conf.Binlog.Enable = true
 	conf.Binlog.IgnoreError = true
 	conf.Binlog.Strategy = "hash"
@@ -185,6 +186,7 @@ server-version = "test_version"
 repair-mode = true
 max-server-connections = 200
 mem-quota-query = 10000
+max-index-length = 3080
 [performance]
 txn-total-size-limit=2000
 [tikv-client]
@@ -238,6 +240,7 @@ engines = ["tiflash"]
 	c.Assert(conf.MemQuotaQuery, Equals, int64(10000))
 	c.Assert(conf.Experimental.AllowAutoRandom, IsTrue)
 	c.Assert(conf.IsolationRead.Engines, DeepEquals, []string{"tiflash"})
+	c.Assert(conf.MaxIndexLength, Equals, 3080)
 
 	_, err = f.WriteString(`
 [log.file]
@@ -394,6 +397,18 @@ func (s *testConfigSuite) TestAllowAutoRandomValid(c *C) {
 	checkValid(true, false, true)
 	checkValid(false, true, true)
 	checkValid(false, false, true)
+}
+
+func (s *testConfigSuite) TestMaxIndexLength(c *C) {
+	conf := NewConfig()
+	checkValid := func(indexLen int, shouldBeValid bool) {
+		conf.MaxIndexLength = indexLen
+		c.Assert(conf.Valid() == nil, Equals, shouldBeValid)
+	}
+	checkValid(DefMaxIndexLength, true)
+	checkValid(DefMaxIndexLength-1, false)
+	checkValid(DefMaxOfMaxIndexLength, true)
+	checkValid(DefMaxOfMaxIndexLength+1, false)
 }
 
 func (s *testConfigSuite) TestParsePath(c *C) {

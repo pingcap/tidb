@@ -29,8 +29,10 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
@@ -39,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-binlog"
 	"github.com/spaolacci/murmur3"
 	"go.uber.org/zap"
@@ -484,22 +487,21 @@ func (t *TableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 		}
 	}
 	if !hasRecordID {
-		stmtCtx := ctx.GetSessionVars().StmtCtx
-		rows := stmtCtx.RecordRows()
-		if rows > 1 {
-			if stmtCtx.BaseRowID >= stmtCtx.MaxRowID {
-				stmtCtx.BaseRowID, stmtCtx.MaxRowID, err = t.AllocHandleIDs(ctx, rows)
-				if err != nil {
-					return 0, err
-				}
-			}
-			stmtCtx.BaseRowID += 1
-			recordID = stmtCtx.BaseRowID
-		} else {
-			recordID, err = t.AllocHandle(ctx)
+		if opt.ReserveAutoID > 0 {
+			// Reserve a batch of auto ID in the statement context.
+			// The reserved ID could be used in the future within this statement, by the
+			// following AddRecord() operation.
+			// Make the IDs continuous benefit for the performance of TiKV.
+			stmtCtx := ctx.GetSessionVars().StmtCtx
+			stmtCtx.BaseRowID, stmtCtx.MaxRowID, err = allocHandleIDs(ctx, t, uint64(opt.ReserveAutoID))
 			if err != nil {
 				return 0, err
 			}
+		}
+
+		recordID, err = AllocHandle(ctx, t)
+		if err != nil {
+			return 0, err
 		}
 	}
 
@@ -587,6 +589,9 @@ func (t *TableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 		}
 	}
 	sc.AddAffectedRows(1)
+	if sessVars.TxnCtx == nil {
+		return recordID, nil
+	}
 	colSize := make(map[int64]int64, len(r))
 	for id, col := range t.Cols() {
 		size, err := codec.EstimateValueSize(sc, r[id])
@@ -826,6 +831,29 @@ func (t *TableCommon) addDeleteBinlog(ctx sessionctx.Context, r []types.Datum, c
 	return nil
 }
 
+func writeSequenceUpdateValueBinlog(ctx sessionctx.Context, db, sequence string, end int64) error {
+	// 1: when sequenceCommon update the local cache passively.
+	// 2: When sequenceCommon setval to the allocator actively.
+	// Both of this two case means the upper bound the sequence has changed in meta, which need to write the binlog
+	// to the downstream.
+	// Sequence sends `select setval(seq, num)` sql string to downstream via `setDDLBinlog`, which is mocked as a DDL binlog.
+	binlogCli := ctx.GetSessionVars().BinlogClient
+	sqlMode := ctx.GetSessionVars().SQLMode
+	sequenceFullName := stringutil.Escape(db, sqlMode) + "." + stringutil.Escape(sequence, sqlMode)
+	sql := "select setval(" + sequenceFullName + ", " + strconv.FormatInt(end, 10) + ")"
+
+	err := kv.RunInNewTxn(ctx.GetStore(), true, func(txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		mockJobID, err := m.GenGlobalID()
+		if err != nil {
+			return err
+		}
+		binloginfo.SetDDLBinlog(binlogCli, txn, mockJobID, int32(model.StatePublic), sql)
+		return nil
+	})
+	return err
+}
+
 func (t *TableCommon) removeRowData(ctx sessionctx.Context, h int64) error {
 	// Remove row data.
 	txn, err := ctx.Txn(true)
@@ -988,21 +1016,32 @@ func GetColDefaultValue(ctx sessionctx.Context, col *table.Column, defaultVals [
 	return colVal, nil
 }
 
-// AllocHandle implements table.Table AllocHandle interface.
-func (t *TableCommon) AllocHandle(ctx sessionctx.Context) (int64, error) {
-	_, rowID, err := t.AllocHandleIDs(ctx, 1)
+// AllocHandle allocate a new handle.
+// A statement could reserve some ID in the statement context, try those ones first.
+func AllocHandle(ctx sessionctx.Context, t table.Table) (int64, error) {
+	if ctx != nil {
+		if stmtCtx := ctx.GetSessionVars().StmtCtx; stmtCtx != nil {
+			// First try to alloc if the statement has reserved auto ID.
+			if stmtCtx.BaseRowID < stmtCtx.MaxRowID {
+				stmtCtx.BaseRowID += 1
+				return stmtCtx.BaseRowID, nil
+			}
+		}
+	}
+
+	_, rowID, err := allocHandleIDs(ctx, t, 1)
 	return rowID, err
 }
 
-// AllocHandleIDs implements table.Table AllocHandleIDs interface.
-func (t *TableCommon) AllocHandleIDs(ctx sessionctx.Context, n uint64) (int64, int64, error) {
-	base, maxID, err := t.Allocator(ctx, autoid.RowIDAllocType).Alloc(t.tableID, n, 1, 1)
+func allocHandleIDs(ctx sessionctx.Context, t table.Table, n uint64) (int64, int64, error) {
+	meta := t.Meta()
+	base, maxID, err := t.Allocators(ctx).Get(autoid.RowIDAllocType).Alloc(meta.ID, n, 1, 1)
 	if err != nil {
 		return 0, 0, err
 	}
-	if t.meta.ShardRowIDBits > 0 {
+	if meta.ShardRowIDBits > 0 {
 		// Use max record ShardRowIDBits to check overflow.
-		if OverflowShardBits(maxID, t.meta.MaxShardRowIDBits, autoid.RowIDBitLength) {
+		if OverflowShardBits(maxID, meta.MaxShardRowIDBits, autoid.RowIDBitLength) {
 			// If overflow, the rowID may be duplicated. For examples,
 			// t.meta.ShardRowIDBits = 4
 			// rowID = 0010111111111111111111111111111111111111111111111111111111111111
@@ -1014,7 +1053,7 @@ func (t *TableCommon) AllocHandleIDs(ctx sessionctx.Context, n uint64) (int64, i
 		}
 		txnCtx := ctx.GetSessionVars().TxnCtx
 		if txnCtx.Shard == nil {
-			shard := CalcShard(t.meta.ShardRowIDBits, txnCtx.StartTS, autoid.RowIDBitLength)
+			shard := CalcShard(meta.ShardRowIDBits, txnCtx.StartTS, autoid.RowIDBitLength)
 			txnCtx.Shard = &shard
 		}
 		base |= *txnCtx.Shard
@@ -1037,19 +1076,8 @@ func CalcShard(shardRowIDBits uint64, startTS uint64, typeBitsLength uint64) int
 	return (hashVal & (1<<shardRowIDBits - 1)) << (typeBitsLength - shardRowIDBits - 1)
 }
 
-// Allocator implements table.Table Allocator interface.
-func (t *TableCommon) Allocator(ctx sessionctx.Context, allocType autoid.AllocatorType) autoid.Allocator {
-	allAllocs := t.AllAllocators(ctx)
-	for _, a := range allAllocs {
-		if a.GetType() == allocType {
-			return a
-		}
-	}
-	return nil
-}
-
-// AllAllocators implements table.Table AllAllocators interface.
-func (t *TableCommon) AllAllocators(ctx sessionctx.Context) autoid.Allocators {
+// Allocators implements table.Table Allocators interface.
+func (t *TableCommon) Allocators(ctx sessionctx.Context) autoid.Allocators {
 	if ctx == nil || ctx.GetSessionVars().IDAllocator == nil {
 		return t.allocs
 	}
@@ -1075,7 +1103,7 @@ func (t *TableCommon) AllAllocators(ctx sessionctx.Context) autoid.Allocators {
 
 // RebaseAutoID implements table.Table RebaseAutoID interface.
 func (t *TableCommon) RebaseAutoID(ctx sessionctx.Context, newBase int64, isSetStep bool) error {
-	return t.Allocator(ctx, autoid.RowIDAllocType).Rebase(t.tableID, newBase, isSetStep)
+	return t.Allocators(ctx).Get(autoid.RowIDAllocType).Rebase(t.tableID, newBase, isSetStep)
 }
 
 // Seek implements table.Table Seek interface.
@@ -1218,7 +1246,7 @@ func (s *sequenceCommon) GetSequenceBaseEndRound() (int64, int64, int64) {
 // GetSequenceNextVal implements util.SequenceTable GetSequenceNextVal interface.
 // Caching the sequence value in table, we can easily be notified with the cache empty,
 // and write the binlogInfo in table level rather than in allocator.
-func (t *TableCommon) GetSequenceNextVal(dbName, seqName string) (nextVal int64, err error) {
+func (t *TableCommon) GetSequenceNextVal(ctx interface{}, dbName, seqName string) (nextVal int64, err error) {
 	seq := t.sequence
 	if seq == nil {
 		// TODO: refine the error.
@@ -1263,6 +1291,13 @@ func (t *TableCommon) GetSequenceNextVal(dbName, seqName string) (nextVal int64,
 		if err1 != nil {
 			return err1
 		}
+		// write sequence binlog to the pumpClient.
+		if ctx.(sessionctx.Context).GetSessionVars().BinlogClient != nil {
+			err = writeSequenceUpdateValueBinlog(ctx.(sessionctx.Context), dbName, seqName, seq.end)
+			if err != nil {
+				return err
+			}
+		}
 		// Seek the first valid value in new cache.
 		// Offset may have changed cause the round is updated.
 		offset = seq.getOffset()
@@ -1289,7 +1324,7 @@ func (t *TableCommon) GetSequenceNextVal(dbName, seqName string) (nextVal int64,
 
 // SetSequenceVal implements util.SequenceTable SetSequenceVal interface.
 // The returned bool indicates the newVal is already under the base.
-func (t *TableCommon) SetSequenceVal(newVal int64) (int64, bool, error) {
+func (t *TableCommon) SetSequenceVal(ctx interface{}, newVal int64, dbName, seqName string) (int64, bool, error) {
 	seq := t.sequence
 	if seq == nil {
 		// TODO: refine the error.
@@ -1327,6 +1362,13 @@ func (t *TableCommon) SetSequenceVal(newVal int64) (int64, bool, error) {
 	err = sequenceAlloc.Rebase(t.tableID, newVal, false)
 	if err != nil {
 		return 0, false, err
+	}
+	// write sequence binlog to the pumpClient.
+	if ctx.(sessionctx.Context).GetSessionVars().BinlogClient != nil {
+		err = writeSequenceUpdateValueBinlog(ctx.(sessionctx.Context), dbName, seqName, seq.end)
+		if err != nil {
+			return 0, false, err
+		}
 	}
 	return newVal, false, nil
 }
