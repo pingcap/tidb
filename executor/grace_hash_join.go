@@ -28,9 +28,15 @@ var (
 )
 
 // GraceHashJoinExec implements the grace hash join algorithm.
-// It first partitioning both build side and probe side chunks via a hash fucntion,
-// and writing these partitions out to disk. Then we load each pairs of partition
-// from disk and implements hash join algorithm using HashJoinExec.
+// It is executed in two phases:
+//
+// phases 1:
+// 1. Use a hash function to split input chunk into multi partitions
+// 2. Write each partition into the disk
+//
+// phases 2:
+// 1. Read each partition from disk in order
+// 2. Execute hash join using HashJoinExec
 //
 // The execution flow is as the following graph shows:
 //
