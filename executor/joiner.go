@@ -231,7 +231,7 @@ func (j *baseJoiner) makeShallowJoinRow(isRightJoin bool, inner, outer chunk.Row
 // built by one outer row and multiple inner rows. The returned bool value
 // indicates whether the outer row matches any inner rows.
 func (j *baseJoiner) filter(
-	input, output *chunk.Chunk, outerColsLen int,
+	input, output *chunk.Chunk, outerColLen int,
 	lUsed, rUsed []int) (bool, error) {
 
 	var err error
@@ -240,10 +240,10 @@ func (j *baseJoiner) filter(
 		return false, err
 	}
 	// Batch copies selected rows to output chunk.
-	innerColOffset, outerColOffset := 0, input.NumCols()-outerColsLen
-	innerColLen, outerColLen := input.NumCols()-outerColsLen, outerColsLen
+	innerColOffset, outerColOffset := 0, input.NumCols()-outerColLen
+	innerColLen := input.NumCols() - outerColLen
 	if !j.outerIsRight {
-		innerColOffset, outerColOffset = outerColsLen, 0
+		innerColOffset, outerColOffset = outerColLen, 0
 	}
 	if lUsed != nil || rUsed != nil {
 		lSize := outerColOffset
