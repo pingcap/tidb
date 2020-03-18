@@ -74,7 +74,6 @@ type InsertValues struct {
 }
 
 type defaultVal struct {
-	// common default value is a constant.
 	val types.Datum
 	// valid indicates whether the val is evaluated. We evaluate the default value lazily.
 	valid bool

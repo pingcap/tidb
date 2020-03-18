@@ -19,12 +19,12 @@ package table
 
 import (
 	"fmt"
-	"github.com/pingcap/parser"
 	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
 
+	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
