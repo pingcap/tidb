@@ -2339,8 +2339,7 @@ func (r *PullSelectionUpApply) OnTransform(old *memo.ExprIter) (newExprs []*memo
 	return []*memo.GroupExpr{newApplyGroupExpr}, false, false, nil
 }
 
-// TransformJoinCondToSel convert Join(len(cond) > 0) to Join-->Selection.
-//														   |--->Selection
+// TransformJoinCondToSel convert Join(len(cond) > 0) to Join-->(Sel, Sel).
 type TransformJoinCondToSel struct {
 	baseRule
 	pushDownJoin
