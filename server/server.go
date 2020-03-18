@@ -112,7 +112,16 @@ type Server struct {
 	concurrentLimiter *TokenLimiter
 	clients           map[uint32]*clientConn
 	capability        uint32
+<<<<<<< HEAD
 	statusServer      *http.Server
+=======
+	dom               *domain.Domain
+
+	statusAddr     string
+	statusListener net.Listener
+	statusServer   *http.Server
+	grpcServer     *grpc.Server
+>>>>>>> f8b2d96... server: if status address already in use, return an error (#15177)
 }
 
 // ConnectionCount gets current connection count.
@@ -247,6 +256,9 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		s.listener = pplistener
 	}
 
+	if s.cfg.Status.ReportStatus && err == nil {
+		err = s.listenStatusHTTPServer()
+	}
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
