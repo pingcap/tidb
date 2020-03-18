@@ -22,6 +22,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"fmt"
 	"io/ioutil"
 	"math/big"
 	"net/http"
@@ -178,6 +179,27 @@ func (ts *tidbTestSuite) TestResultFieldTableIsNull(c *C) {
 func (ts *tidbTestSuite) TestStatusAPI(c *C) {
 	c.Parallel()
 	ts.runTestStatusAPI(c)
+}
+
+func (ts *tidbTestSuite) TestStatusPort(c *C) {
+	var err error
+	ts.store, err = mockstore.NewMockTikvStore()
+	session.DisableStats4Test()
+	c.Assert(err, IsNil)
+	ts.domain, err = session.BootstrapSession(ts.store)
+	c.Assert(err, IsNil)
+	ts.tidbdrv = NewTiDBDriver(ts.store)
+	cfg := config.NewConfig()
+	cfg.Port = genPort()
+	cfg.Status.ReportStatus = true
+	cfg.Status.StatusPort = ts.statusPort
+	cfg.Performance.TCPKeepAlive = true
+
+	server, err := NewServer(cfg, ts.tidbdrv)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals,
+		fmt.Sprintf("listen tcp 0.0.0.0:%d: bind: address already in use", ts.statusPort))
+	c.Assert(server, IsNil)
 }
 
 func (ts *tidbTestSuite) TestStatusAPIWithTLS(c *C) {
@@ -663,11 +685,11 @@ func (ts *tidbTestSerialSuite) TestErrorNoRollback(c *C) {
 	cfg.Port = cli.port
 	cfg.Status.ReportStatus = false
 
-	// test cannot startup with wrong tls config
 	cfg.Security = config.Security{
-		SSLCA:   "wrong path",
-		SSLCert: "wrong path",
-		SSLKey:  "wrong path",
+		RequireSecureTransport: true,
+		SSLCA:                  "wrong path",
+		SSLCert:                "wrong path",
+		SSLKey:                 "wrong path",
 	}
 	_, err = NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, NotNil)

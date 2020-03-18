@@ -966,7 +966,8 @@ func upgradeToVer40(s Session) {
 }
 
 func upgradeToVer41(s Session) {
-	doReentrantDDL(s, "ALTER TABLE mysql.user CHANGE COLUMN `Password` `authentication_string` TEXT", infoschema.ErrColumnNotExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.user CHANGE `password` `authentication_string` TEXT", infoschema.ErrColumnExists, infoschema.ErrColumnNotExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `password` TEXT as (`authentication_string`)", infoschema.ErrColumnExists)
 }
 
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
