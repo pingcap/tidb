@@ -1135,16 +1135,22 @@ func checkConstraintNames(constraints []*ast.Constraint) error {
 	return nil
 }
 
+// checkInvisibleIndexOnPK check if primary key is invisible index
 func checkInvisibleIndexOnPK(tblInfo *model.TableInfo) error {
-	// cannot set primary key as invisible index
-	pk := getPK(tblInfo)
+	pk := getPrimaryKey(tblInfo)
 	if pk != nil && pk.Invisible {
 		return ErrPKIndexCantBeInvisible
 	}
 	return nil
 }
 
-func getPK(tblInfo *model.TableInfo) *model.IndexInfo {
+// getPrimaryKey extract the primary key in a table and return `IndexInfo`
+// The primary key could be explicit or implicit.
+// If there is no explicit primary key in table,
+// the first UNIQUE INDEX on NOT NULL columns will be the implicit primary key and returned.
+// For more infomation about implicit primary key, see
+// https://dev.mysql.com/doc/refman/8.0/en/invisible-indexes.html
+func getPrimaryKey(tblInfo *model.TableInfo) *model.IndexInfo {
 	var implicitPK *model.IndexInfo
 
 	for _, key := range tblInfo.Indices {
