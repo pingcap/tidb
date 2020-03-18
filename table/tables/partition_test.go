@@ -19,14 +19,11 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -266,16 +263,14 @@ func (ts *testSuite) TestGeneratePartitionExpr(c *C) {
 	tbl, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
 	type partitionExpr interface {
-		PartitionExpr(ctx sessionctx.Context, columns []*expression.Column, names types.NameSlice) (*tables.PartitionExpr, error)
+		PartitionExpr() (*tables.PartitionExpr, error)
 	}
-	ctx := mock.NewContext()
-	columns, names := expression.ColumnInfos2ColumnsAndNames(ctx, model.NewCIStr("test"), tbl.Meta().Name, tbl.Meta().Columns)
-	pe, err := tbl.(partitionExpr).PartitionExpr(ctx, columns, names)
+	pe, err := tbl.(partitionExpr).PartitionExpr()
 	c.Assert(err, IsNil)
 
 	upperBounds := []string{
-		"lt(test.t1.id, 4)",
-		"lt(test.t1.id, 7)",
+		"lt(t1.id, 4)",
+		"lt(t1.id, 7)",
 		"1",
 	}
 	for i, expr := range pe.UpperBounds {
