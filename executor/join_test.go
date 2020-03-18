@@ -1891,6 +1891,11 @@ func (s *testSuiteJoinSerial) TestOuterMatchStatusIssue14742(c *C) {
 }
 
 func (s *testSuiteJoinSerial) TestInlineProjection4HashJoinIssue15316(c *C) {
+	// Two necessary factors to reproduce this issue:
+	// (1) taking HashLeftJoin, i.e., letting the probing tuple lay at the left side of joined tuples
+	// (2) the projection only contains a part of columns from the build side, i.e., pruning the same probe side
+	plannercore.ForcedLeftJoin4Test = true
+	defer func() { plannercore.ForcedLeftJoin4Test = false }()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table S (a int not null, b int, c int);")
@@ -1905,4 +1910,15 @@ func (s *testSuiteJoinSerial) TestInlineProjection4HashJoinIssue15316(c *C) {
 		"0 0 2",
 		"0 0 2",
 	))
+	// NOTE: the HashLeftJoin should be kept
+	tk.MustQuery("explain select T.a,T.a,T.c from S join T on T.a = S.a where S.b<T.b order by T.a,T.c;").Check(testkit.Rows(
+		"Sort_8 12487.50 root test.t.a:asc, test.t.c:asc",
+		"└─Projection_10 12487.50 root test.t.a, test.t.a, test.t.c",
+		"  └─HashLeftJoin_11 12487.50 root inner join, inner:TableReader_17, equal:[eq(test.s.a, test.t.a)], other cond:lt(test.s.b, test.t.b)",
+		"    ├─TableReader_17(Build) 9990.00 root data:Selection_16",
+		"    │ └─Selection_16 9990.00 cop[tikv] not(isnull(test.t.b))",
+		"    │   └─TableFullScan_15 10000.00 cop[tikv] table:T, keep order:false, stats:pseudo",
+		"    └─TableReader_14(Probe) 9990.00 root data:Selection_13",
+		"      └─Selection_13 9990.00 cop[tikv] not(isnull(test.s.b))",
+		"        └─TableFullScan_12 10000.00 cop[tikv] table:S, keep order:false, stats:pseudo"))
 }

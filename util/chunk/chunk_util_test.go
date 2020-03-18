@@ -76,6 +76,32 @@ func TestCopySelectedJoinRows(t *testing.T) {
 		t.Fatal(dstChk2.numVirtualRows, dstChk2.NumRows(), numSelected)
 	}
 }
+func TestCopySelectedJoinRowsWithoutSameOuters(t *testing.T) {
+	srcChk, dstChk, selected := getChk(false)
+	numRows := srcChk.NumRows()
+	for i := 0; i < numRows; i++ {
+		if !selected[i] {
+			continue
+		}
+		dstChk.AppendRow(srcChk.GetRow(i))
+	}
+	// batch copy
+	dstChk2 := newChunkWithInitCap(numRows, 0, 0, 8, 8, sizeTime, 0)
+	CopySelectedJoinRowsWithSameOuterRows(srcChk, 0, 0, selected, dstChk2, true)
+
+	if !reflect.DeepEqual(dstChk, dstChk2) {
+		t.Fatal()
+	}
+	numSelected := 0
+	for i := range selected {
+		if selected[i] {
+			numSelected++
+		}
+	}
+	if dstChk2.numVirtualRows != numSelected || dstChk2.NumRows() != numSelected {
+		t.Fatal(dstChk2.numVirtualRows, dstChk2.NumRows(), numSelected)
+	}
+}
 
 func TestCopySelectedJoinRowsDirect(t *testing.T) {
 	srcChk, dstChk, selected := getChk(false)

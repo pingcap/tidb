@@ -75,7 +75,7 @@ func CopySelectedJoinRowsDirect(src *Chunk, selected []bool, dst *Chunk) (bool, 
 // Return true if at least one joined row was selected.
 //
 // NOTE: All the outer rows in the source Chunk should be the same.
-func CopySelectedJoinRowsWithSameOuterRows(src *Chunk, innerColOffset, outerColOffset int, selected []bool, dst *Chunk, purnedOuters bool) (bool, error) {
+func CopySelectedJoinRowsWithSameOuterRows(src *Chunk, innerColOffset, outerColOffset int, selected []bool, dst *Chunk, withoutOuters bool) (bool, error) {
 	if src.NumRows() == 0 {
 		return false, nil
 	}
@@ -83,8 +83,8 @@ func CopySelectedJoinRowsWithSameOuterRows(src *Chunk, innerColOffset, outerColO
 		return false, errors.New(msgErrSelNotNil)
 	}
 
-	numSelected := copySelectedInnerRows(innerColOffset, outerColOffset, src, selected, dst, purnedOuters)
-	copyOuterRows(innerColOffset, outerColOffset, src, numSelected, dst, purnedOuters)
+	numSelected := copySelectedInnerRows(innerColOffset, outerColOffset, src, selected, dst, withoutOuters)
+	copyOuterRows(innerColOffset, outerColOffset, src, numSelected, dst, withoutOuters)
 	dst.numVirtualRows += numSelected
 	return numSelected > 0, nil
 }
@@ -92,9 +92,9 @@ func CopySelectedJoinRowsWithSameOuterRows(src *Chunk, innerColOffset, outerColO
 // copySelectedInnerRows copies the selected inner rows from the source Chunk
 // to the destination Chunk.
 // return the number of rows which is selected.
-func copySelectedInnerRows(innerColOffset, outerColOffset int, src *Chunk, selected []bool, dst *Chunk, purnedOuters bool) int {
+func copySelectedInnerRows(innerColOffset, outerColOffset int, src *Chunk, selected []bool, dst *Chunk, withoutOuters bool) int {
 	var srcCols []*Column
-	if purnedOuters {
+	if withoutOuters {
 		// there are only inners, and innerColOffset and outerColOffset are 0
 		srcCols = src.columns[innerColOffset:]
 	} else {
@@ -147,8 +147,8 @@ func copySelectedInnerRows(innerColOffset, outerColOffset int, src *Chunk, selec
 
 // copyOuterRows copies the continuous 'numRows' outer rows in the source Chunk
 // to the destination Chunk.
-func copyOuterRows(innerColOffset, outerColOffset int, src *Chunk, numRows int, dst *Chunk, purnedOuters bool) {
-	if numRows <= 0 || purnedOuters {
+func copyOuterRows(innerColOffset, outerColOffset int, src *Chunk, numRows int, dst *Chunk, withoutOuters bool) {
+	if numRows <= 0 || withoutOuters {
 		return
 	}
 	row := src.GetRow(0)

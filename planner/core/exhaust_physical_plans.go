@@ -267,6 +267,7 @@ func (p *PhysicalMergeJoin) initCompareFuncs() {
 // ForceUseOuterBuild4Test is a test option to control forcing use outer input as build.
 // TODO: use hint and remove this variable
 var ForceUseOuterBuild4Test = false
+var ForcedLeftJoin4Test = false
 
 func (p *LogicalJoin) getHashJoins(prop *property.PhysicalProperty) []PhysicalPlan {
 	if !prop.IsEmpty() { // hash join doesn't promise any orders
@@ -291,8 +292,12 @@ func (p *LogicalJoin) getHashJoins(prop *property.PhysicalProperty) []PhysicalPl
 			joins = append(joins, p.getHashJoin(prop, 0, true))
 		}
 	case InnerJoin:
-		joins = append(joins, p.getHashJoin(prop, 1, false))
-		joins = append(joins, p.getHashJoin(prop, 0, false))
+		if ForcedLeftJoin4Test {
+			joins = append(joins, p.getHashJoin(prop, 1, false))
+		} else {
+			joins = append(joins, p.getHashJoin(prop, 1, false))
+			joins = append(joins, p.getHashJoin(prop, 0, false))
+		}
 	}
 	return joins
 }
