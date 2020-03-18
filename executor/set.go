@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/stmtsummary"
+	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
 )
 
@@ -94,10 +95,10 @@ func (e *SetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 				}
 
 				if len(value.Collation()) > 0 {
-					sessionVars.Users[name] = types.NewCollationStringDatum(svalue, value.Collation(), collate.DefaultLen)
+					sessionVars.Users[name] = types.NewCollationStringDatum(stringutil.Copy(svalue), value.Collation(), collate.DefaultLen)
 				} else {
 					_, collation := sessionVars.GetCharsetInfo()
-					sessionVars.Users[name] = types.NewCollationStringDatum(svalue, collation, collate.DefaultLen)
+					sessionVars.Users[name] = types.NewCollationStringDatum(stringutil.Copy(svalue), collation, collate.DefaultLen)
 				}
 			}
 			continue

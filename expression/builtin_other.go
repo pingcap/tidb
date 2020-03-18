@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
@@ -688,13 +689,26 @@ func (b *builtinSetVarSig) evalString(row chunk.Row) (res string, isNull bool, e
 	if isNull || err != nil {
 		return "", isNull, err
 	}
-	res, isNull, err = b.args[1].EvalString(b.ctx, row)
+
+	datum, err := b.args[1].Eval(row)
+	isNull = datum.IsNull()
 	if isNull || err != nil {
 		return "", isNull, err
 	}
+
+	res, err = datum.ToString()
+	if err != nil {
+		return "", isNull, err
+	}
+
 	varName = strings.ToLower(varName)
 	sessionVars.UsersLock.Lock()
-	sessionVars.Users[varName] = types.NewStringDatum(stringutil.Copy(res))
+	if len(datum.Collation()) > 0 {
+		sessionVars.Users[varName] = types.NewCollationStringDatum(stringutil.Copy(res), datum.Collation(), collate.DefaultLen)
+	} else {
+		_, collation := sessionVars.GetCharsetInfo()
+		sessionVars.Users[varName] = types.NewCollationStringDatum(stringutil.Copy(res), collation, collate.DefaultLen)
+	}
 	sessionVars.UsersLock.Unlock()
 	return res, false, nil
 }
@@ -718,17 +732,11 @@ func (c *getVarFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 }
 
 func (c *getVarFunctionClass) resolveCollation(ctx sessionctx.Context, args []Expression, bf *baseBuiltinFunc) (err error) {
-	argValue, err := args[0].Eval(chunk.Row{})
-	if err != nil {
-		return err
-	}
-
-	if !argValue.IsNull() {
-		varName, err := argValue.ToString()
+	if constant, ok := args[0].(*Constant); ok {
+		varName, err := constant.Value.ToString()
 		if err != nil {
 			return err
 		}
-
 		varName = strings.ToLower(varName)
 		ctx.GetSessionVars().UsersLock.RLock()
 		defer ctx.GetSessionVars().UsersLock.RUnlock()
