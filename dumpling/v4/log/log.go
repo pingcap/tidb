@@ -54,6 +54,10 @@ func InitAppLogger(cfg *Config) error {
 	return nil
 }
 
+func SetAppLogger(logger *zap.Logger) {
+	appLogger = Logger{logger}
+}
+
 func ChangeAppLogLevel(level zapcore.Level) {
 	appLevel.SetLevel(level)
 }
