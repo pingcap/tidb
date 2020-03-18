@@ -155,12 +155,12 @@ func (ts *TidbTestSuite) TestResultFieldTableIsNull(c *C) {
 	runTestResultFieldTableIsNull(c)
 }
 
-<<<<<<< HEAD
 func (ts *TidbTestSuite) TestStatusAPI(c *C) {
 	c.Parallel()
 	runTestStatusAPI(c)
-=======
-func (ts *tidbTestSuite) TestStatusPort(c *C) {
+}
+
+func (ts *TidbTestSuite) TestStatusPort(c *C) {
 	var err error
 	ts.store, err = mockstore.NewMockTikvStore()
 	session.DisableStats4Test()
@@ -169,54 +169,16 @@ func (ts *tidbTestSuite) TestStatusPort(c *C) {
 	c.Assert(err, IsNil)
 	ts.tidbdrv = NewTiDBDriver(ts.store)
 	cfg := config.NewConfig()
-	cfg.Port = genPort()
+	cfg.Port = 4008
 	cfg.Status.ReportStatus = true
-	cfg.Status.StatusPort = ts.statusPort
+	cfg.Status.StatusPort = 10090
 	cfg.Performance.TCPKeepAlive = true
 
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals,
-		fmt.Sprintf("listen tcp 0.0.0.0:%d: bind: address already in use", ts.statusPort))
+		fmt.Sprintf("listen tcp 0.0.0.0:%d: bind: address already in use", cfg.Status.StatusPort))
 	c.Assert(server, IsNil)
-}
-
-func (ts *tidbTestSuite) TestStatusAPIWithTLS(c *C) {
-	caCert, caKey, err := generateCert(0, "TiDB CA 2", nil, nil, "/tmp/ca-key-2.pem", "/tmp/ca-cert-2.pem")
-	c.Assert(err, IsNil)
-	_, _, err = generateCert(1, "tidb-server-2", caCert, caKey, "/tmp/server-key-2.pem", "/tmp/server-cert-2.pem")
-	c.Assert(err, IsNil)
-
-	defer func() {
-		os.Remove("/tmp/ca-key-2.pem")
-		os.Remove("/tmp/ca-cert-2.pem")
-		os.Remove("/tmp/server-key-2.pem")
-		os.Remove("/tmp/server-cert-2.pem")
-	}()
-
-	cli := newTestServerClient()
-	cli.statusScheme = "https"
-	cfg := config.NewConfig()
-	cfg.Port = cli.port
-	cfg.Status.StatusPort = cli.statusPort
-	cfg.Security.ClusterSSLCA = "/tmp/ca-cert-2.pem"
-	cfg.Security.ClusterSSLCert = "/tmp/server-cert-2.pem"
-	cfg.Security.ClusterSSLKey = "/tmp/server-key-2.pem"
-	server, err := NewServer(cfg, ts.tidbdrv)
-	c.Assert(err, IsNil)
-	go server.Run()
-	time.Sleep(time.Millisecond * 100)
-
-	// https connection should work.
-	ts.runTestStatusAPI(c)
-
-	// but plain http connection should fail.
-	cli.statusScheme = "http"
-	_, err = cli.fetchStatus("/status")
-	c.Assert(err, NotNil)
-
-	server.Close()
->>>>>>> f8b2d96... server: if status address already in use, return an error (#15177)
 }
 
 func (ts *TidbTestSuite) TestStatusAPIWithTLSCNCheck(c *C) {
