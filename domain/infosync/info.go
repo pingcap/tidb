@@ -313,8 +313,8 @@ func (is *InfoSyncer) getTopologyInfo() topologyInfo {
 			Version: mysql.TiDBReleaseVersion,
 			GitHash: is.info.ServerVersionInfo.GitHash,
 		},
-		StatusPort:        is.info.StatusPort,
-		BinaryPath:        s,
+		StatusPort: is.info.StatusPort,
+		BinaryPath: s,
 	}
 }
 
