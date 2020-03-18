@@ -116,8 +116,11 @@ type Server struct {
 	clients           map[uint32]*clientConn
 	capability        uint32
 	dom               *domain.Domain
-	statusServer      *http.Server
-	grpcServer        *grpc.Server
+
+	statusAddr     string
+	statusListener net.Listener
+	statusServer   *http.Server
+	grpcServer     *grpc.Server
 }
 
 // ConnectionCount gets current connection count.
@@ -256,6 +259,9 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		s.listener = pplistener
 	}
 
+	if s.cfg.Status.ReportStatus && err == nil {
+		err = s.listenStatusHTTPServer()
+	}
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
