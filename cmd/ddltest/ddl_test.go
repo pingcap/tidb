@@ -358,7 +358,8 @@ func isRetryError(err error) bool {
 		strings.Contains(err.Error(), "connection refused") ||
 		strings.Contains(err.Error(), "getsockopt: connection reset by peer") ||
 		strings.Contains(err.Error(), "KV error safe to retry") ||
-		strings.Contains(err.Error(), "try again later") {
+		strings.Contains(err.Error(), "try again later") ||
+		strings.Contains(err.Error(), "invalid connection") {
 		return true
 	}
 

@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	pd "github.com/pingcap/pd/client"
+	pd "github.com/pingcap/pd/v3/client"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
@@ -64,31 +64,32 @@ import (
 
 // Flag Names
 const (
-	nmVersion          = "V"
-	nmConfig           = "config"
-	nmConfigCheck      = "config-check"
-	nmConfigStrict     = "config-strict"
-	nmStore            = "store"
-	nmStorePath        = "path"
-	nmHost             = "host"
-	nmAdvertiseAddress = "advertise-address"
-	nmPort             = "P"
-	nmCors             = "cors"
-	nmSocket           = "socket"
-	nmEnableBinlog     = "enable-binlog"
-	nmRunDDL           = "run-ddl"
-	nmLogLevel         = "L"
-	nmLogFile          = "log-file"
-	nmLogSlowQuery     = "log-slow-query"
-	nmReportStatus     = "report-status"
-	nmStatusHost       = "status-host"
-	nmStatusPort       = "status"
-	nmMetricsAddr      = "metrics-addr"
-	nmMetricsInterval  = "metrics-interval"
-	nmDdlLease         = "lease"
-	nmTokenLimit       = "token-limit"
-	nmPluginDir        = "plugin-dir"
-	nmPluginLoad       = "plugin-load"
+	nmVersion                = "V"
+	nmConfig                 = "config"
+	nmConfigCheck            = "config-check"
+	nmConfigStrict           = "config-strict"
+	nmStore                  = "store"
+	nmStorePath              = "path"
+	nmHost                   = "host"
+	nmAdvertiseAddress       = "advertise-address"
+	nmPort                   = "P"
+	nmCors                   = "cors"
+	nmSocket                 = "socket"
+	nmEnableBinlog           = "enable-binlog"
+	nmRunDDL                 = "run-ddl"
+	nmLogLevel               = "L"
+	nmLogFile                = "log-file"
+	nmLogSlowQuery           = "log-slow-query"
+	nmReportStatus           = "report-status"
+	nmStatusHost             = "status-host"
+	nmStatusPort             = "status"
+	nmMetricsAddr            = "metrics-addr"
+	nmMetricsInterval        = "metrics-interval"
+	nmDdlLease               = "lease"
+	nmTokenLimit             = "token-limit"
+	nmPluginDir              = "plugin-dir"
+	nmPluginLoad             = "plugin-load"
+	nmRequireSecureTransport = "require-secure-transport"
 
 	nmProxyProtocolNetworks      = "proxy-protocol-networks"
 	nmProxyProtocolHeaderTimeout = "proxy-protocol-header-timeout"
@@ -114,6 +115,7 @@ var (
 	tokenLimit       = flag.Int(nmTokenLimit, 1000, "the limit of concurrent executed sessions")
 	pluginDir        = flag.String(nmPluginDir, "/data/deploy/plugin", "the folder that hold plugin")
 	pluginLoad       = flag.String(nmPluginLoad, "", "wait load plugin name(separated by comma)")
+	requireTLS       = flag.Bool(nmRequireSecureTransport, false, "require client use secure transport")
 
 	// Log
 	logLevel     = flag.String(nmLogLevel, "info", "log level: info, debug, warn, error, fatal")
@@ -440,7 +442,9 @@ func overrideConfig() {
 	if actualFlags[nmPluginDir] {
 		cfg.Plugin.Dir = *pluginDir
 	}
-
+	if actualFlags[nmRequireSecureTransport] {
+		cfg.Security.RequireSecureTransport = *requireTLS
+	}
 	// Log
 	if actualFlags[nmLogLevel] {
 		cfg.Log.Level = *logLevel

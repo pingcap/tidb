@@ -253,6 +253,15 @@ func (s *testSuite3) TestCreateView(c *C) {
 	tk.MustExec("drop view v")
 	tk.MustExec("create view v as (select * from t1 union select * from t2)")
 	tk.MustExec("drop view v")
+
+	// Test for create nested view.
+	tk.MustExec("create table test_v_nested(a int)")
+	tk.MustExec("create definer='root'@'localhost' view v_nested as select * from test_v_nested")
+	tk.MustExec("create definer='root'@'localhost' view v_nested2 as select * from v_nested")
+	_, err = tk.Exec("create or replace definer='root'@'localhost' view v_nested as select * from v_nested2")
+	c.Assert(terror.ErrorEqual(err, plannercore.ErrNoSuchTable), IsTrue)
+	tk.MustExec("drop table test_v_nested")
+	tk.MustExec("drop view v_nested, v_nested2")
 }
 
 func (s *testSuite3) TestCreateViewWithOverlongColName(c *C) {

@@ -249,7 +249,7 @@ func (ts *TidbTestSuite) TestSocketForwarding(c *C) {
 		config.Net = "unix"
 		config.Addr = "/tmp/tidbtest.sock"
 		config.DBName = "test"
-		config.Strict = true
+		config.Params = map[string]string{"sql_mode": "STRICT_ALL_TABLES"}
 	}, "SocketRegression")
 }
 
@@ -272,7 +272,7 @@ func (ts *TidbTestSuite) TestSocket(c *C) {
 		config.Net = "unix"
 		config.Addr = "/tmp/tidbtest.sock"
 		config.DBName = "test"
-		config.Strict = true
+		config.Params = map[string]string{"sql_mode": "STRICT_ALL_TABLES"}
 	}, "SocketRegression")
 
 }
@@ -608,6 +608,15 @@ func (ts *TidbTestSuite) TestErrorNoRollback(c *C) {
 	cfg := config.NewConfig()
 	cfg.Port = 4006
 	cfg.Status.ReportStatus = false
+
+	cfg.Security = config.Security{
+		RequireSecureTransport: true,
+		SSLCA:                  "wrong path",
+		SSLCert:                "wrong path",
+		SSLKey:                 "wrong path",
+	}
+	_, err = NewServer(cfg, ts.tidbdrv)
+	c.Assert(err, NotNil)
 
 	// test reload tls fail with/without "error no rollback option"
 	cfg.Security = config.Security{
