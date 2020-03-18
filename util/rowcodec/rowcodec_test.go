@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/rowcodec"
 )
 
@@ -228,7 +229,7 @@ func (s *testSuite) TestTypesNewRowCodec(c *C) {
 	}
 	getSetDatum := func(name string, value uint64) types.Datum {
 		var d types.Datum
-		d.SetMysqlSet(types.Set{Name: name, Value: value})
+		d.SetMysqlSet(types.Set{Name: name, Value: value}, mysql.DefaultCollationName)
 		return d
 	}
 	getTime := func(value string) types.Time {
@@ -388,7 +389,7 @@ func (s *testSuite) TestTypesNewRowCodec(c *C) {
 		},
 		{
 			9,
-			withEnumElems("y", "n")(types.NewFieldType(mysql.TypeEnum)),
+			withEnumElems("y", "n")(types.NewFieldTypeWithCollation(mysql.TypeEnum, mysql.DefaultCollationName, collate.DefaultLen)),
 			types.NewMysqlEnumDatum(types.Enum{Name: "n", Value: 2}),
 			types.NewUintDatum(2),
 			nil,
@@ -436,7 +437,7 @@ func (s *testSuite) TestTypesNewRowCodec(c *C) {
 		},
 		{
 			117,
-			withEnumElems("n1", "n2")(types.NewFieldType(mysql.TypeSet)),
+			withEnumElems("n1", "n2")(types.NewFieldTypeWithCollation(mysql.TypeSet, mysql.DefaultCollationName, collate.DefaultLen)),
 			getSetDatum("n1", 1),
 			types.NewUintDatum(1),
 			nil,
@@ -750,6 +751,29 @@ func (s *testSuite) TestOldRowCodec(c *C) {
 	for i := 0; i < 3; i++ {
 		c.Assert(row.GetInt64(i), Equals, int64(i)+1)
 	}
+}
+
+func (s *testSuite) Test65535Bug(c *C) {
+	colIds := []int64{1}
+	tps := make([]*types.FieldType, 1)
+	tps[0] = types.NewFieldType(mysql.TypeString)
+	sc := new(stmtctx.StatementContext)
+	text65535 := strings.Repeat("a", 65535)
+	encode := rowcodec.Encoder{}
+	bd, err := encode.Encode(sc, colIds, []types.Datum{types.NewStringDatum(text65535)}, nil)
+	c.Check(err, IsNil)
+
+	cols := make([]rowcodec.ColInfo, 1)
+	cols[0] = rowcodec.ColInfo{
+		ID:   1,
+		Tp:   int32(tps[0].Tp),
+		Flag: int32(tps[0].Flag),
+	}
+	dc := rowcodec.NewDatumMapDecoder(cols, -1, nil)
+	result, err := dc.DecodeToDatumMap(bd, -1, nil)
+	c.Check(err, IsNil)
+	rs := result[1]
+	c.Check(rs.GetString(), Equals, text65535)
 }
 
 var (

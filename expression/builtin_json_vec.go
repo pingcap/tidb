@@ -100,6 +100,39 @@ func vecJSONModify(ctx sessionctx.Context, args []Expression, bufAllocator colum
 	return nil
 }
 
+func (b *builtinJSONStorageSizeSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinJSONStorageSizeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETJson, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalJSON(b.ctx, input, buf); err != nil {
+		return err
+	}
+	result.ResizeInt64(n, false)
+	result.MergeNulls(buf)
+	int64s := result.Int64s()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		j := buf.GetJSON(i)
+
+		jb, err := j.MarshalJSON()
+		if err != nil {
+			continue
+		}
+
+		int64s[i] = int64(len(jb))
+	}
+	return nil
+}
+
 func (b *builtinJSONDepthSig) vectorized() bool {
 	return true
 }
