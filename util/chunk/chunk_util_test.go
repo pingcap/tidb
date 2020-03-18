@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/types"
 )
 
-// getChk generate a chunk of data, isFirst3ColTheSame means the first three columns are the same.
+// getChk generate a chunk of data, isLast3ColTheSame means the last three columns are the same.
 func getChk(isLast3ColTheSame bool) (*Chunk, *Chunk, []bool) {
 	numRows := 1024
 	srcChk := newChunkWithInitCap(numRows, 0, 0, 8, 8, sizeTime, 0)
@@ -61,7 +61,7 @@ func TestCopySelectedJoinRows(t *testing.T) {
 	}
 	// batch copy
 	dstChk2 := newChunkWithInitCap(numRows, 0, 0, 8, 8, sizeTime, 0)
-	CopySelectedJoinRowsWithSameOuterRows(srcChk, 0, 3, selected, dstChk2, false)
+	CopySelectedJoinRowsWithSameOuterRows(srcChk, 0, 3, 3, 3, selected, dstChk2)
 
 	if !reflect.DeepEqual(dstChk, dstChk2) {
 		t.Fatal()
@@ -87,7 +87,7 @@ func TestCopySelectedJoinRowsWithoutSameOuters(t *testing.T) {
 	}
 	// batch copy
 	dstChk2 := newChunkWithInitCap(numRows, 0, 0, 8, 8, sizeTime, 0)
-	CopySelectedJoinRowsWithSameOuterRows(srcChk, 0, 0, selected, dstChk2, true)
+	CopySelectedJoinRowsWithSameOuterRows(srcChk, 0, 6, 0, 0, selected, dstChk2)
 
 	if !reflect.DeepEqual(dstChk, dstChk2) {
 		t.Fatal()
@@ -131,6 +131,7 @@ func TestCopySelectedJoinRowsDirect(t *testing.T) {
 }
 
 func TestCopySelectedVirtualNum(t *testing.T) {
+	// srcChk does not contain columns
 	srcChk := newChunk()
 	srcChk.TruncateTo(3)
 	dstChk := newChunk()
@@ -144,7 +145,7 @@ func TestCopySelectedVirtualNum(t *testing.T) {
 	}
 
 	dstChk = newChunk()
-	ok, err = CopySelectedJoinRowsWithSameOuterRows(srcChk, 0, 0, selected, dstChk, false)
+	ok, err = CopySelectedJoinRowsWithSameOuterRows(srcChk, 0, 0, 0, 0, selected, dstChk)
 	if err != nil || !ok {
 		t.Fatal(ok, err)
 	}
@@ -158,7 +159,7 @@ func TestCopySelectedVirtualNum(t *testing.T) {
 	srcChk.AppendInt64(0, 1)
 	srcChk.AppendInt64(0, 2)
 	dstChk = newChunkWithInitCap(0, 8)
-	ok, err = CopySelectedJoinRowsWithSameOuterRows(srcChk, 0, 1, selected, dstChk, false)
+	ok, err = CopySelectedJoinRowsWithSameOuterRows(srcChk, 0, 1, 1, 0, selected, dstChk)
 	if err != nil || !ok {
 		t.Fatal(ok, err)
 	}
@@ -175,7 +176,7 @@ func TestCopySelectedVirtualNum(t *testing.T) {
 	srcChk.AppendInt64(0, 3)
 	srcChk.AppendInt64(0, 3)
 	dstChk = newChunkWithInitCap(0, 8)
-	ok, err = CopySelectedJoinRowsWithSameOuterRows(srcChk, 1, 0, selected, dstChk, false)
+	ok, err = CopySelectedJoinRowsWithSameOuterRows(srcChk, 1, 0, 0, 1, selected, dstChk)
 	if err != nil || !ok {
 		t.Fatal(ok, err)
 	}
@@ -193,7 +194,7 @@ func BenchmarkCopySelectedJoinRows(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		dstChk.Reset()
-		CopySelectedJoinRowsWithSameOuterRows(srcChk, 0, 3, selected, dstChk, false)
+		CopySelectedJoinRowsWithSameOuterRows(srcChk, 0, 3, 3, 3, selected, dstChk)
 	}
 }
 func BenchmarkCopySelectedJoinRowsDirect(b *testing.B) {

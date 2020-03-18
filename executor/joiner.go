@@ -235,15 +235,16 @@ func (j *baseJoiner) filter(
 	lUsed, rUsed []int) (bool, error) {
 
 	var err error
-	withoutOuters := false
 	j.selected, err = expression.VectorizedFilter(j.ctx, j.conditions, chunk.NewIterator4Chunk(input), j.selected)
 	if err != nil {
 		return false, err
 	}
 	// Batch copies selected rows to output chunk.
 	innerColOffset, outerColOffset := 0, input.NumCols()-outerColsLen
+	innerColLen, outerColLen := input.NumCols()-outerColsLen, outerColsLen
 	if !j.outerIsRight {
 		innerColOffset, outerColOffset = outerColsLen, 0
+		innerColLen, outerColLen = outerColLen, innerColLen
 	}
 	if lUsed != nil || rUsed != nil {
 		lSize := outerColOffset
@@ -258,16 +259,14 @@ func (j *baseJoiner) filter(
 		input = input.Prune(used)
 
 		innerColOffset, outerColOffset = 0, len(lUsed)
+		innerColLen, outerColLen = len(lUsed), len(rUsed)
 		if !j.outerIsRight {
 			innerColOffset, outerColOffset = len(lUsed), 0
-			// the same outers are pruned, remaining the different inners
-			if innerColOffset-outerColOffset == 0 {
-				withoutOuters = true
-			}
+			innerColLen, outerColLen = outerColLen, innerColLen
 		}
 
 	}
-	return chunk.CopySelectedJoinRowsWithSameOuterRows(input, innerColOffset, outerColOffset, j.selected, output, withoutOuters)
+	return chunk.CopySelectedJoinRowsWithSameOuterRows(input, innerColOffset, innerColLen, outerColOffset, outerColLen, j.selected, output)
 }
 
 // filterAndCheckOuterRowStatus is used to filter the result constructed by
