@@ -1068,12 +1068,13 @@ var MySQLErrName = map[uint16]string{
 	ErrUnsupportedSecondArgumentType:       "JSON_OBJECTAGG: unsupported second argument type %v",
 
 	// TiKV/PD errors.
-	ErrPDServerTimeout:    "PD server timeout",
-	ErrTiKVServerTimeout:  "TiKV server timeout",
-	ErrTiKVServerBusy:     "TiKV server is busy",
-	ErrResolveLockTimeout: "Resolve lock timeout",
-	ErrRegionUnavailable:  "Region is unavailable",
-	ErrGCTooEarly:         "GC life time is shorter than transaction duration, transaction starts at %v, GC safe point is %v",
-	ErrWriteConflict:      "Write conflict, txnStartTS=%d, conflictStartTS=%d, conflictCommitTS=%d, key=%s",
-	ErrTiKVStoreLimit:     "Store token is up to the limit, store id = %d",
+	ErrPDServerTimeout:        "PD server timeout",
+	ErrTiKVServerTimeout:      "TiKV server timeout",
+	ErrTiKVServerBusy:         "TiKV server is busy",
+	ErrResolveLockTimeout:     "Resolve lock timeout",
+	ErrRegionUnavailable:      "Region is unavailable",
+	ErrGCTooEarly:             "GC life time is shorter than transaction duration, transaction starts at %v, GC safe point is %v",
+	ErrWriteConflict:          "Write conflict, txnStartTS=%d, conflictStartTS=%d, conflictCommitTS=%d, key=%s",
+	ErrTiKVStoreLimit:         "Store token is up to the limit, store id = %d",
+	ErrPrometheusAddrIsNotSet: "Prometheus address is not set in PD and etcd",
 }
