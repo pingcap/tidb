@@ -1012,7 +1012,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 }
 
 func (worker *copIteratorWorker) handleTiDBSendReqErr(err error, task *copTask, ch chan<- *copResponse) error {
-	errCode := 0
+	errCode := errno.ErrUnknown
 	errMsg := err.Error()
 	if terror.ErrorEqual(err, ErrTiKVServerTimeout) {
 		errCode = errno.ErrTiKVServerTimeout
@@ -1028,7 +1028,7 @@ func (worker *copIteratorWorker) handleTiDBSendReqErr(err error, task *copTask, 
 	}
 	data, err := proto.Marshal(&selResp)
 	if err != nil {
-		return nil
+		return errors.Trace(err)
 	}
 	resp := &copResponse{
 		pbResp: &coprocessor.Response{
