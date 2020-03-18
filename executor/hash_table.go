@@ -312,8 +312,8 @@ func (es *entryStore) put(e entry) entryAddr {
 	return addr
 }
 
-func (es *entryStore) get(addr entryAddr) *entry {
-	return &es.slices[addr.sliceIdx][addr.offset]
+func (es *entryStore) get(addr entryAddr) entry {
+	return es.slices[addr.sliceIdx][addr.offset]
 }
 
 type entryAddr struct {
