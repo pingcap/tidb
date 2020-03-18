@@ -2153,17 +2153,20 @@ func (s *testIntegrationSuite7) TestAddExpressionIndexOnPartition(c *C) {
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 'test' 2", "12 'test' 3", "15 'test' 10", "20 'test' 20"))
 }
 
-func (s *testIntegrationSuite3) TestCreateTableWithAutoIncCache(c *C) {
+// TestCreateTableWithAutoIdCache test the auto_id_cache table option.
+// `auto_id_cache` take effects on handle too when `PKIshandle` is false,
+// or even there is no auto_increment column at all.
+func (s *testIntegrationSuite3) TestCreateTableWithAutoIdCache(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("USE test;")
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("drop table if exists t1;")
 
 	// Test primary key is handle.
-	tk.MustExec("create table t(a int auto_increment key) auto_increment_cache 100")
+	tk.MustExec("create table t(a int auto_increment key) auto_id_cache 100")
 	tblInfo, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
-	c.Assert(tblInfo.Meta().AutoIncCache, Equals, int64(100))
+	c.Assert(tblInfo.Meta().AutoIdCache, Equals, int64(100))
 	tk.MustExec("insert into t values()")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1"))
 	tk.MustExec("delete from t")
@@ -2176,7 +2179,7 @@ func (s *testIntegrationSuite3) TestCreateTableWithAutoIncCache(c *C) {
 	// Test primary key is not handle.
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("drop table if exists t1;")
-	tk.MustExec("create table t(a int) auto_increment_cache 100")
+	tk.MustExec("create table t(a int) auto_id_cache 100")
 	tblInfo, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 
@@ -2192,7 +2195,7 @@ func (s *testIntegrationSuite3) TestCreateTableWithAutoIncCache(c *C) {
 	// Test both auto_increment and rowid exist.
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("drop table if exists t1;")
-	tk.MustExec("create table t(a int null, b int auto_increment unique) auto_increment_cache 100")
+	tk.MustExec("create table t(a int null, b int auto_increment unique) auto_id_cache 100")
 	tblInfo, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 
@@ -2206,11 +2209,11 @@ func (s *testIntegrationSuite3) TestCreateTableWithAutoIncCache(c *C) {
 	tk.MustQuery("select b, _tidb_rowid from t1").Check(testkit.Rows("101 102"))
 	tk.MustExec("delete from t1")
 
-	// Test alter auto_increment_cache.
-	tk.MustExec("alter table t1 auto_increment_cache 200")
+	// Test alter auto_id_cache.
+	tk.MustExec("alter table t1 auto_id_cache 200")
 	tblInfo, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
-	c.Assert(tblInfo.Meta().AutoIncCache, Equals, int64(200))
+	c.Assert(tblInfo.Meta().AutoIdCache, Equals, int64(200))
 
 	tk.MustExec("insert into t1(b) values(NULL)")
 	tk.MustQuery("select b, _tidb_rowid from t1").Check(testkit.Rows("201 202"))

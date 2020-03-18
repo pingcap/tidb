@@ -1923,8 +1923,8 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 		switch op.Tp {
 		case ast.TableOptionAutoIncrement:
 			tbInfo.AutoIncID = int64(op.UintValue)
-		case ast.TableOptionAutoIncrementCache:
-			tbInfo.AutoIncCache = int64(op.UintValue)
+		case ast.TableOptionAutoIdCache:
+			tbInfo.AutoIdCache = int64(op.UintValue)
 		case ast.TableOptionComment:
 			tbInfo.Comment = op.StrValue
 		case ast.TableOptionCompression:
@@ -2152,7 +2152,7 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 					err = d.ShardRowID(ctx, ident, opt.UintValue)
 				case ast.TableOptionAutoIncrement:
 					err = d.RebaseAutoID(ctx, ident, int64(opt.UintValue))
-				case ast.TableOptionAutoIncrementCache:
+				case ast.TableOptionAutoIdCache:
 					err = d.AlterTableAutoIncCache(ctx, ident, int64(opt.UintValue))
 				case ast.TableOptionComment:
 					spec.Comment = opt.StrValue
@@ -3415,7 +3415,7 @@ func (d *ddl) AlterTableAutoIncCache(ctx sessionctx.Context, ident ast.Ident, ne
 		SchemaID:   schema.ID,
 		TableID:    tb.Meta().ID,
 		SchemaName: schema.Name.L,
-		Type:       model.ActionModifyTableAutoIncCache,
+		Type:       model.ActionModifyTableAutoIdCache,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{newCache},
 	}

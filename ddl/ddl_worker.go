@@ -635,7 +635,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		ver, err = w.onShardRowID(d, t, job)
 	case model.ActionModifyTableComment:
 		ver, err = onModifyTableComment(t, job)
-	case model.ActionModifyTableAutoIncCache:
+	case model.ActionModifyTableAutoIdCache:
 		ver, err = onModifyTableAutoIncCache(t, job)
 	case model.ActionAddTablePartition:
 		ver, err = onAddTablePartition(d, t, job)

@@ -524,7 +524,7 @@ func onModifyTableAutoIncCache(t *meta.Meta, job *model.Job) (ver int64, _ error
 		return ver, errors.Trace(err)
 	}
 
-	tblInfo.AutoIncCache = cache
+	tblInfo.AutoIdCache = cache
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)

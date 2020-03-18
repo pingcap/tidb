@@ -903,8 +903,8 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 		}
 	}
 
-	if tableInfo.AutoIncCache != 0 {
-		fmt.Fprintf(buf, " AUTO_INCREMENT_CACHE=%d", tableInfo.AutoIncCache)
+	if tableInfo.AutoIdCache != 0 {
+		fmt.Fprintf(buf, " AUTO_ID_CACHE=%d", tableInfo.AutoIdCache)
 	}
 
 	if tableInfo.ShardRowIDBits > 0 {
