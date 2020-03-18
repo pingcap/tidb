@@ -238,7 +238,10 @@ func (t *Tracker) toString(indent string, buffer *bytes.Buffer) {
 	t.mu.Lock()
 	for i := range t.mu.children {
 		if t.mu.children[i] != nil {
+			tmp := t.mu.children[i].bytesLimit
+			t.mu.children[i].bytesLimit = 0
 			t.mu.children[i].toString(indent+"  ", buffer)
+			t.mu.children[i].bytesLimit = tmp
 		}
 	}
 	t.mu.Unlock()
