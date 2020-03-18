@@ -305,6 +305,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 			}
 			e.names = cachedVal.OutPutNames
 			e.Plan = cachedVal.Plan
+			sctx.GetSessionVars().StmtCtx.SetPlanDigest(cachedVal.Normalized, cachedVal.Digest)
 			return nil
 		}
 	}
@@ -320,7 +321,9 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	e.Plan = p
 	_, isTableDual := p.(*PhysicalTableDual)
 	if !isTableDual && prepared.UseCache {
-		sctx.PreparedPlanCache().Put(cacheKey, NewPSTMTPlanCacheValue(p, names))
+		cached := NewPSTMTPlanCacheValue(p, names)
+		sctx.PreparedPlanCache().Put(cacheKey, cached)
+		sctx.GetSessionVars().StmtCtx.SetPlanDigest(cached.Normalized, cached.Digest)
 	}
 	return err
 }
