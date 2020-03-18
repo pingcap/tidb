@@ -1,6 +1,9 @@
 package export
 
-import "database/sql"
+import (
+	"bytes"
+	"database/sql"
+)
 
 // TableDataIR is table data intermediate representation.
 type TableDataIR interface {
@@ -18,7 +21,8 @@ type TableDataIR interface {
 
 // SQLRowIter is the iterator on a collection of sql.Row.
 type SQLRowIter interface {
-	Next(RowReceiver) error
+	Decode(RowReceiver) error
+	Next()
 	HasNext() bool
 	HasNextSQLRowIter() bool
 	NextSQLRowIter() SQLRowIter
@@ -32,7 +36,7 @@ type RowReceiverStringer interface {
 }
 
 type Stringer interface {
-	ToString(bool) string
+	WriteToBuffer(*bytes.Buffer, bool)
 }
 
 type RowReceiver interface {
