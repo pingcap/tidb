@@ -1145,10 +1145,10 @@ func checkInvisibleIndexOnPK(tblInfo *model.TableInfo) error {
 }
 
 // getPrimaryKey extract the primary key in a table and return `IndexInfo`
-// The primary key could be explicit or implicit.
+// The returned primary key could be explicit or implicit.
 // If there is no explicit primary key in table,
-// the first UNIQUE INDEX on NOT NULL columns will be the implicit primary key and returned.
-// For more infomation about implicit primary key, see
+// the first UNIQUE INDEX on NOT NULL columns will be the implicit primary key.
+// For more information about implicit primary key, see
 // https://dev.mysql.com/doc/refman/8.0/en/invisible-indexes.html
 func getPrimaryKey(tblInfo *model.TableInfo) *model.IndexInfo {
 	var implicitPK *model.IndexInfo
