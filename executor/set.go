@@ -93,10 +93,11 @@ func (e *SetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 					return err1
 				}
 
-				if len(value.Collation()) != 0 {
+				if len(value.Collation()) > 0 {
 					sessionVars.Users[name] = types.NewCollationStringDatum(svalue, value.Collation(), collate.DefaultLen)
 				} else {
-					sessionVars.Users[name] = types.NewStringDatum(svalue)
+					_, collation := sessionVars.GetCharsetInfo()
+					sessionVars.Users[name] = types.NewCollationStringDatum(svalue, collation, collate.DefaultLen)
 				}
 			}
 			continue

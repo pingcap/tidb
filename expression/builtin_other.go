@@ -718,22 +718,30 @@ func (c *getVarFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 }
 
 func (c *getVarFunctionClass) resolveCollation(ctx sessionctx.Context, args []Expression, bf *baseBuiltinFunc) (err error) {
-	if constant, ok := args[0].(*Constant); ok {
-		varName, err := constant.Value.ToString()
+	argValue, err := args[0].Eval(chunk.Row{})
+	if err != nil {
+		return err
+	}
+
+	if !argValue.IsNull() {
+		varName, err := argValue.ToString()
 		if err != nil {
 			return err
 		}
+
 		varName = strings.ToLower(varName)
 		ctx.GetSessionVars().UsersLock.RLock()
 		defer ctx.GetSessionVars().UsersLock.RUnlock()
 		if v, ok := ctx.GetSessionVars().Users[varName]; ok {
 			bf.tp.Collate = v.Collation()
 			if len(bf.tp.Charset) <= 0 {
-				bf.tp.Charset = mysql.DefaultCharset
+				charset, _ := ctx.GetSessionVars().GetCharsetInfo()
+				bf.tp.Charset = charset
 			}
 			return nil
 		}
 	}
+
 	return nil
 }
 
