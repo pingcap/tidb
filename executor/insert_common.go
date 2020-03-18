@@ -76,8 +76,6 @@ type InsertValues struct {
 type defaultVal struct {
 	// common default value is a constant.
 	val types.Datum
-	// default expr(nextval(seq)) should be evaluated row by row.
-	expr ast.ExprNode
 	// valid indicates whether the val is evaluated. We evaluate the default value lazily.
 	valid bool
 }
@@ -497,36 +495,22 @@ func (e *InsertValues) getRow(ctx context.Context, vals []types.Datum) ([]types.
 
 // getColDefaultValue gets the column default value.
 func (e *InsertValues) getColDefaultValue(idx int, col *table.Column) (d types.Datum, err error) {
-	if e.colDefaultVals != nil && e.colDefaultVals[idx].valid {
-		if !col.DefaultIsExpr {
-			return e.colDefaultVals[idx].val, nil
-		}
-		return table.EvalColDefaultExpr(e.ctx, col.ToInfo(), e.colDefaultVals[idx].expr)
+	if !col.DefaultIsExpr && e.colDefaultVals != nil && e.colDefaultVals[idx].valid {
+		return e.colDefaultVals[idx].val, nil
 	}
-	var (
-		defaultVal  types.Datum
-		defaultExpr ast.ExprNode
-	)
+
+	var defaultVal types.Datum
 	if !col.DefaultIsExpr {
 		defaultVal, err = table.GetColDefaultValue(e.ctx, col.ToInfo())
 	} else {
-		defaultExpr, err = table.GetColDefaultExpr(col.ToInfo())
-		if err != nil {
-			return types.Datum{}, err
-		}
-		defaultVal, err = table.EvalColDefaultExpr(e.ctx, col.ToInfo(), defaultExpr)
+		defaultVal, err = table.EvalColDefaultExpr(e.ctx, col.ToInfo(), col.DefaultExpr)
 	}
 	if err != nil {
 		return types.Datum{}, err
 	}
-	if initialized := e.lazilyInitColDefaultValBuf(); initialized {
-		if !col.DefaultIsExpr {
-			e.colDefaultVals[idx].val = defaultVal
-			e.colDefaultVals[idx].valid = true
-		} else {
-			e.colDefaultVals[idx].expr = defaultExpr
-			e.colDefaultVals[idx].valid = true
-		}
+	if initialized := e.lazilyInitColDefaultValBuf(); initialized && !col.DefaultIsExpr {
+		e.colDefaultVals[idx].val = defaultVal
+		e.colDefaultVals[idx].valid = true
 	}
 
 	return defaultVal, nil

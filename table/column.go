@@ -19,12 +19,12 @@ package table
 
 import (
 	"fmt"
+	"github.com/pingcap/parser"
 	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
 
-	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
@@ -47,6 +47,8 @@ type Column struct {
 	*model.ColumnInfo
 	// If this column is a generated column, the expression will be stored here.
 	GeneratedExpr ast.ExprNode
+	// If this column has default expr value, this expression will be stored here.
+	DefaultExpr ast.ExprNode
 }
 
 // String implements fmt.Stringer interface.
@@ -81,6 +83,7 @@ func FindCol(cols []*Column, name string) *Column {
 func ToColumn(col *model.ColumnInfo) *Column {
 	return &Column{
 		col,
+		nil,
 		nil,
 	}
 }
@@ -376,19 +379,10 @@ func GetColDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo) (types.Da
 	if !col.DefaultIsExpr {
 		return getColDefaultValue(ctx, col, defaultValue)
 	}
+	// This is reserved for some cases like: `columnInfo` call `ToColumn` to be column, and then get its default value.
+	// In this case, the default expr node is not cached in column, but we still need to guarantee the correct result
+	// for default expr.
 	return getColDefaultExprValue(ctx, col, defaultValue.(string))
-}
-
-// GetColDefaultExpr gets default expr node of the column with expr default value.
-func GetColDefaultExpr(col *model.ColumnInfo) (ast.ExprNode, error) {
-	var defaultExpr ast.ExprNode
-	expr := fmt.Sprintf("select %s", col.GetDefaultValue().(string))
-	stmts, _, err := parser.New().Parse(expr, "", "")
-	if err != nil {
-		return nil, err
-	}
-	defaultExpr = stmts[0].(*ast.SelectStmt).Fields.Fields[0].Expr
-	return defaultExpr, nil
 }
 
 // EvalColDefaultExpr eval default expr node to explicit default value.
