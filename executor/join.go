@@ -68,7 +68,7 @@ type HashJoinExec struct {
 	joiners []joiner
 
 	// iter is used to store the matched buildSideRows as an iterator in probe phase.
-	iter *chunk.Iterator4Slice
+	iter []chunk.Iterator4Slice
 
 	probeChkResourceCh chan *probeChkResource
 	probeResultChs     []chan *chunk.Chunk
@@ -165,7 +165,7 @@ func (e *HashJoinExec) Open(ctx context.Context) error {
 	e.finished.Store(false)
 	e.joinWorkerWaitGroup = sync.WaitGroup{}
 
-	e.iter = &chunk.Iterator4Slice{}
+	e.iter = make([]chunk.Iterator4Slice, e.concurrency)
 
 	if e.probeTypes == nil {
 		e.probeTypes = retTypes(e.probeSideExec)
@@ -497,11 +497,11 @@ func (e *HashJoinExec) joinMatchedProbeSideRow2ChunkForOuterHashJoin(workerID ui
 		return true, joinResult
 	}
 
-	e.iter.Reset(buildSideRows)
+	e.iter[workerID].Reset(buildSideRows)
 	var outerMatchStatus []outerRowStatusFlag
 	rowIdx := 0
-	for e.iter.Begin(); e.iter.Current() != e.iter.End(); {
-		outerMatchStatus, err = e.joiners[workerID].tryToMatchOuters(e.iter, probeSideRow, joinResult.chk, outerMatchStatus)
+	for e.iter[workerID].Begin(); e.iter[workerID].Current() != e.iter[workerID].End(); {
+		outerMatchStatus, err = e.joiners[workerID].tryToMatchOuters(&e.iter[workerID], probeSideRow, joinResult.chk, outerMatchStatus)
 		if err != nil {
 			joinResult.err = err
 			return false, joinResult
@@ -534,10 +534,10 @@ func (e *HashJoinExec) joinMatchedProbeSideRow2Chunk(workerID uint, probeKey uin
 		e.joiners[workerID].onMissMatch(false, probeSideRow, joinResult.chk)
 		return true, joinResult
 	}
-	e.iter.Reset(buildSideRows)
+	e.iter[workerID].Reset(buildSideRows)
 	hasMatch, hasNull := false, false
-	for e.iter.Begin(); e.iter.Current() != e.iter.End(); {
-		matched, isNull, err := e.joiners[workerID].tryToMatchInners(probeSideRow, e.iter, joinResult.chk)
+	for e.iter[workerID].Begin(); e.iter[workerID].Current() != e.iter[workerID].End(); {
+		matched, isNull, err := e.joiners[workerID].tryToMatchInners(probeSideRow, &e.iter[workerID], joinResult.chk)
 		if err != nil {
 			joinResult.err = err
 			return false, joinResult
