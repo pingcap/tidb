@@ -80,9 +80,7 @@
       {
         "SQL": "explain select * from t4 where d = '2019-10-07 10:40:00' and a = 1",
         "Result": [
-          "IndexLookUp_8 1.00 root ",
-          "├─IndexRangeScan_6(Build) 1.00 cop[tikv] table:t4, partition:p9, index:d, a, range:[2019-10-07 10:40:00 1,2019-10-07 10:40:00 1], keep order:false, stats:pseudo",
-          "└─TableRowIDScan_7(Probe) 1.00 cop[tikv] table:t4, partition:p9, keep order:false, stats:pseudo"
+          "Point_Get_6 1.00 root table:t4, index:d a, partition:p9"
         ]
       },
       {
