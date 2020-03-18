@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/gcworker"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/printer"
@@ -543,6 +544,8 @@ func setupLog() {
 
 	err = logutil.InitLogger(cfg.Log.ToLogConfig())
 	terror.MustNil(err)
+	// trigger internal http(s) client init.
+	util.InternalHTTPClient()
 }
 
 func printInfo() {
