@@ -1694,10 +1694,7 @@ func (b *executorBuilder) refreshForUpdateTSForRC() error {
 	}
 	b.ctx.GetSessionVars().TxnCtx.SetStmtFutureForRC(nil)
 	// If newForUpdateTS is 0, it will force to get a new for-update-ts from PD.
-	if err := UpdateForUpdateTS(b.ctx, newForUpdateTS); err != nil {
-		return err
-	}
-	return nil
+	return UpdateForUpdateTS(b.ctx, newForUpdateTS)
 }
 
 func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeIndexTask, opts map[ast.AnalyzeOptionType]uint64, autoAnalyze string) *analyzeTask {
