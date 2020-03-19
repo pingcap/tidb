@@ -1030,12 +1030,6 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 }
 
 func (s *session) executeStatement(ctx context.Context, connID uint64, stmtNode ast.StmtNode, stmt sqlexec.Statement, recordSets []sqlexec.RecordSet, inMulitQuery bool) ([]sqlexec.RecordSet, error) {
-	s.SetValue(sessionctx.QueryString, stmt.OriginText())
-	if _, ok := stmtNode.(ast.DDLNode); ok {
-		s.SetValue(sessionctx.LastExecuteDDL, true)
-	} else {
-		s.ClearValue(sessionctx.LastExecuteDDL)
-	}
 	logStmt(stmtNode, s.sessionVars)
 	startTime := time.Now()
 	recordSet, err := runStmt(ctx, s, stmt)
@@ -1323,7 +1317,7 @@ func (s *session) DropPreparedStmt(stmtID uint32) error {
 
 func (s *session) Txn(active bool) (kv.Transaction, error) {
 	if !s.txn.validOrPending() && active {
-		return &s.txn, kv.ErrInvalidTxn
+		return &s.txn, errors.AddStack(kv.ErrInvalidTxn)
 	}
 	if s.txn.pending() && active {
 		// Transaction is lazy initialized.

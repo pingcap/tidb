@@ -327,14 +327,14 @@ drop table if exists t;
 create table t (id int primary key, a int, b int);
 explain select * from (t t1 left join t t2 on t1.a = t2.a) left join (t t3 left join t t4 on t3.a = t4.a) on t2.b = 1;
 id	estRows	task	operator info
-HashLeftJoin_10	155937656.25	root	CARTESIAN left outer join, inner:HashLeftJoin_19, left cond:[eq(test.t.b, 1)]
-├─HashLeftJoin_19(Build)	12487.50	root	left outer join, inner:TableReader_25, equal:[eq(test.t.a, test.t.a)]
+HashLeftJoin_10	155937656.25	root	CARTESIAN left outer join, left cond:[eq(test.t.b, 1)]
+├─HashLeftJoin_19(Build)	12487.50	root	left outer join, equal:[eq(test.t.a, test.t.a)]
 │ ├─TableReader_25(Build)	9990.00	root	data:Selection_24
 │ │ └─Selection_24	9990.00	cop[tikv]	not(isnull(test.t.a))
 │ │   └─TableFullScan_23	10000.00	cop[tikv]	table:t4, keep order:false, stats:pseudo
 │ └─TableReader_22(Probe)	10000.00	root	data:TableFullScan_21
 │   └─TableFullScan_21	10000.00	cop[tikv]	table:t3, keep order:false, stats:pseudo
-└─HashLeftJoin_12(Probe)	12487.50	root	left outer join, inner:TableReader_18, equal:[eq(test.t.a, test.t.a)]
+└─HashLeftJoin_12(Probe)	12487.50	root	left outer join, equal:[eq(test.t.a, test.t.a)]
   ├─TableReader_18(Build)	9990.00	root	data:Selection_17
   │ └─Selection_17	9990.00	cop[tikv]	not(isnull(test.t.a))
   │   └─TableFullScan_16	10000.00	cop[tikv]	table:t2, keep order:false, stats:pseudo
@@ -383,7 +383,7 @@ create table t(a int, b int);
 explain select a != any (select a from t t2) from t t1;
 id	estRows	task	operator info
 Projection_8	10000.00	root	and(or(or(gt(Column#8, 1), ne(test.t.a, Column#7)), if(ne(Column#9, 0), <nil>, 0)), and(ne(Column#10, 0), if(isnull(test.t.a), <nil>, 1)))->Column#11
-└─HashLeftJoin_9	10000.00	root	CARTESIAN inner join, inner:StreamAgg_16
+└─HashLeftJoin_9	10000.00	root	CARTESIAN inner join
   ├─StreamAgg_16(Build)	1.00	root	funcs:firstrow(Column#13)->Column#7, funcs:count(distinct Column#14)->Column#8, funcs:sum(Column#15)->Column#9, funcs:count(1)->Column#10
   │ └─Projection_26	10000.00	root	test.t.a, test.t.a, cast(isnull(test.t.a), decimal(65,0) BINARY)->Column#15
   │   └─TableReader_23	10000.00	root	data:TableFullScan_22
@@ -393,7 +393,7 @@ Projection_8	10000.00	root	and(or(or(gt(Column#8, 1), ne(test.t.a, Column#7)), i
 explain select a = all (select a from t t2) from t t1;
 id	estRows	task	operator info
 Projection_8	10000.00	root	or(and(and(le(Column#8, 1), eq(test.t.a, Column#7)), if(ne(Column#9, 0), <nil>, 1)), or(eq(Column#10, 0), if(isnull(test.t.a), <nil>, 0)))->Column#11
-└─HashLeftJoin_9	10000.00	root	CARTESIAN inner join, inner:StreamAgg_16
+└─HashLeftJoin_9	10000.00	root	CARTESIAN inner join
   ├─StreamAgg_16(Build)	1.00	root	funcs:firstrow(Column#13)->Column#7, funcs:count(distinct Column#14)->Column#8, funcs:sum(Column#15)->Column#9, funcs:count(1)->Column#10
   │ └─Projection_26	10000.00	root	test.t.a, test.t.a, cast(isnull(test.t.a), decimal(65,0) BINARY)->Column#15
   │   └─TableReader_23	10000.00	root	data:TableFullScan_22
@@ -406,7 +406,7 @@ drop table if exists s;
 create table s(a varchar(20), b varchar(20));
 explain select a in (select a from s where s.b = t.b) from t;
 id	estRows	task	operator info
-HashLeftJoin_10	10000.00	root	left outer semi join, inner:Projection_14, equal:[eq(Column#8, Column#9)], other cond:eq(cast(test.t.a), cast(test.s.a))
+HashLeftJoin_10	10000.00	root	left outer semi join, equal:[eq(Column#8, Column#9)], other cond:eq(cast(test.t.a), cast(test.s.a))
 ├─Projection_14(Build)	10000.00	root	test.s.a, cast(test.s.b, double BINARY)->Column#9
 │ └─TableReader_16	10000.00	root	data:TableFullScan_15
 │   └─TableFullScan_15	10000.00	cop[tikv]	table:s, keep order:false, stats:pseudo
@@ -415,7 +415,7 @@ HashLeftJoin_10	10000.00	root	left outer semi join, inner:Projection_14, equal:[
     └─TableFullScan_12	10000.00	cop[tikv]	table:t, keep order:false, stats:pseudo
 explain select a in (select a+b from t t2 where t2.b = t1.b) from t t1;
 id	estRows	task	operator info
-HashLeftJoin_8	10000.00	root	left outer semi join, inner:TableReader_12, equal:[eq(test.t.b, test.t.b)], other cond:eq(test.t.a, plus(test.t.a, test.t.b))
+HashLeftJoin_8	10000.00	root	left outer semi join, equal:[eq(test.t.b, test.t.b)], other cond:eq(test.t.a, plus(test.t.a, test.t.b))
 ├─TableReader_12(Build)	10000.00	root	data:TableFullScan_11
 │ └─TableFullScan_11	10000.00	cop[tikv]	table:t2, keep order:false, stats:pseudo
 └─TableReader_10(Probe)	10000.00	root	data:TableFullScan_9
@@ -424,7 +424,7 @@ drop table t;
 create table t(a int not null, b int);
 explain select a in (select a from t t2 where t2.b = t1.b) from t t1;
 id	estRows	task	operator info
-HashLeftJoin_8	10000.00	root	left outer semi join, inner:TableReader_12, equal:[eq(test.t.b, test.t.b) eq(test.t.a, test.t.a)]
+HashLeftJoin_8	10000.00	root	left outer semi join, equal:[eq(test.t.b, test.t.b) eq(test.t.a, test.t.a)]
 ├─TableReader_12(Build)	10000.00	root	data:TableFullScan_11
 │ └─TableFullScan_11	10000.00	cop[tikv]	table:t2, keep order:false, stats:pseudo
 └─TableReader_10(Probe)	10000.00	root	data:TableFullScan_9
@@ -460,7 +460,7 @@ drop table if exists t2;
 create table t2(a int, b int);
 explain select * from t1 where t1.a in (select t2.a as a from t2 where t2.b > t1.b order by t1.b);
 id	estRows	task	operator info
-HashLeftJoin_10	7984.01	root	semi join, inner:TableReader_16, equal:[eq(test.t1.a, test.t2.a)], other cond:gt(test.t2.b, test.t1.b)
+HashLeftJoin_10	7984.01	root	semi join, equal:[eq(test.t1.a, test.t2.a)], other cond:gt(test.t2.b, test.t1.b)
 ├─TableReader_16(Build)	9980.01	root	data:Selection_15
 │ └─Selection_15	9980.01	cop[tikv]	not(isnull(test.t2.a)), not(isnull(test.t2.b))
 │   └─TableFullScan_14	10000.00	cop[tikv]	table:t2, keep order:false, stats:pseudo
