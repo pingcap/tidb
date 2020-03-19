@@ -1307,7 +1307,6 @@ func (e *memtableRetriever) setDataForAnalyzeStatus(sctx sessionctx.Context) {
 	e.rows = dataForAnalyzeStatusHelper(sctx)
 }
 
-<<<<<<< HEAD
 // setDataForPseudoProfiling returns pseudo data for table profiling when system variable `profiling` is set to `ON`.
 func (e *memtableRetriever) setDataForPseudoProfiling(sctx sessionctx.Context) {
 	if v, ok := sctx.GetSessionVars().GetSystemVar("profiling"); ok && variable.TiDBOptOn(v) {
