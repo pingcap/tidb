@@ -998,7 +998,9 @@ func (w *GCWorker) resolveLocksPhysical(ctx context.Context, safePoint uint64) e
 		return errors.Trace(err)
 	}
 
-	// TODO: If failed anywhere, should we try to cleanup the observers?
+	defer func() {
+		w.removeLockObservers(ctx, safePoint, stores)
+	}()
 
 	err = w.registerLockObservers(ctx, safePoint, stores)
 	if err != nil {
@@ -1036,8 +1038,6 @@ func (w *GCWorker) resolveLocksPhysical(ctx context.Context, safePoint uint64) e
 			break
 		}
 	}
-
-	w.removeLockObservers(ctx, safePoint, stores)
 
 	logutil.Logger(ctx).Info("[gc worker] finish resolve locks with physical scan locks",
 		zap.String("uuid", w.uuid),
