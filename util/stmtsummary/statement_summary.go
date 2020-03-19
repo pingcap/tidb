@@ -195,6 +195,8 @@ type stmtSummaryByDigestElement struct {
 	firstSeen time.Time
 	// The last time this type of SQL executes.
 	lastSeen time.Time
+	// Whether is a internal element.
+	isInternal bool
 }
 
 // StmtExecInfo records execution information of each statement.
@@ -298,6 +300,25 @@ func (ssMap *stmtSummaryByDigestMap) Clear() {
 
 	ssMap.summaryMap.DeleteAll()
 	ssMap.beginTimeForCurInterval = 0
+}
+
+// ClearInternal removes all statement summaries which are internal summaries.
+func (ssMap *stmtSummaryByDigestMap) ClearInternal() {
+	ssMap.Lock()
+	defer ssMap.Unlock()
+
+	for _, value := range ssMap.summaryMap.Values() {
+		summary := value.(*stmtSummaryByDigest)
+		for ele := summary.history.Front(); ele != summary.history.Back(); {
+			if ele.Value.(*stmtSummaryByDigestElement).isInternal {
+				delElement := ele
+				ele = delElement.Next()
+				summary.history.Remove(delElement)
+			} else {
+				ele = ele.Next()
+			}
+		}
+	}
 }
 
 // ToCurrentDatum converts current statement summaries to datum.
@@ -410,7 +431,7 @@ func (ssMap *stmtSummaryByDigestMap) SetEnabledInternalQuery(value string, inSes
 		needClear = !ssMap.isEnabled(globalInternalQueryEnabled)
 	}
 	if needClear {
-		ssMap.Clear()
+		ssMap.ClearInternal()
 	}
 }
 
@@ -679,6 +700,7 @@ func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64, intervalS
 		firstSeen:    sei.StartTime,
 		lastSeen:     sei.StartTime,
 		backoffTypes: make(map[fmt.Stringer]int),
+		isInternal:   sei.IsInternal,
 	}
 	ssElement.add(sei, intervalSeconds)
 	return ssElement

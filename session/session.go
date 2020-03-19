@@ -1066,9 +1066,10 @@ func (s *session) executeStatement(ctx context.Context, connID uint64, stmtNode 
 }
 
 func (s *session) ExecuteInternal(ctx context.Context, sql string) (recordSets []sqlexec.RecordSet, err error) {
+	origin := s.sessionVars.InRestrictedSQL
 	s.sessionVars.InRestrictedSQL = true
 	defer func() {
-		s.sessionVars.InRestrictedSQL = false
+		s.sessionVars.InRestrictedSQL = origin
 	}()
 	return s.Execute(ctx, sql)
 }
