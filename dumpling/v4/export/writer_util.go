@@ -21,7 +21,7 @@ var pool = sync.Pool{New: func() interface{} {
 }}
 
 type writerPipe struct {
-	input  chan []byte
+	input  chan *bytes.Buffer
 	closed chan struct{}
 	errCh  chan error
 
@@ -30,7 +30,7 @@ type writerPipe struct {
 
 func newWriterPipe(w io.Writer) *writerPipe {
 	return &writerPipe{
-		input:  make(chan []byte, 8),
+		input:  make(chan *bytes.Buffer, 8),
 		closed: make(chan struct{}),
 		errCh:  make(chan error, 1),
 		w:      w,
@@ -49,7 +49,9 @@ func (b *writerPipe) Run(ctx context.Context) {
 			if errOccurs {
 				continue
 			}
-			err := writeBytes(b.w, s)
+			err := writeBytes(b.w, s.Bytes())
+			s.Reset()
+			pool.Put(s)
 			if err != nil {
 				errOccurs = true
 				b.errCh <- err
@@ -94,7 +96,9 @@ func WriteInsert(tblIR TableDataIR, w io.Writer) error {
 	}
 
 	bf := pool.Get().(*bytes.Buffer)
-	bf.Grow(lengthLimit)
+	if bfCap := bf.Cap(); bfCap < lengthLimit {
+		bf.Grow(lengthLimit - bfCap)
+	}
 
 	wp := newWriterPipe(w)
 
@@ -148,8 +152,11 @@ func WriteInsert(tblIR TableDataIR, w io.Writer) error {
 			counter += 1
 
 			if bf.Len() >= lengthLimit {
-				wp.input <- bf.Bytes()
-				bf.Reset()
+				wp.input <- bf
+				bf = pool.Get().(*bytes.Buffer)
+				if bfCap := bf.Cap(); bfCap < lengthLimit {
+					bf.Grow(lengthLimit - bfCap)
+				}
 			}
 
 			fileRowIter.Next()
@@ -168,12 +175,10 @@ func WriteInsert(tblIR TableDataIR, w io.Writer) error {
 		zap.String("table", tblIR.TableName()),
 		zap.Int("record counts", counter))
 	if bf.Len() > 0 {
-		wp.input <- bf.Bytes()
-		bf.Reset()
+		wp.input <- bf
 	}
 	close(wp.input)
 	<-wp.closed
-	pool.Put(bf)
 	return wp.Error()
 }
 
