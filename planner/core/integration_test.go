@@ -65,7 +65,7 @@ type testIntegrationSerialSuite struct {
 
 func (s *testIntegrationSerialSuite) SetUpSuite(c *C) {
 	var err error
-	s.testData, err = testutil.LoadTestSuiteData("testdata", "integration_suite")
+	s.testData, err = testutil.LoadTestSuiteData("testdata", "integration_serial_suite")
 	c.Assert(err, IsNil)
 }
 
