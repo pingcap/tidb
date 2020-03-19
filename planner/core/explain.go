@@ -26,10 +26,10 @@ import (
 	"github.com/pingcap/tidb/util/stringutil"
 )
 
+// Include `PhysicalTableScan`, `PhysicalIndexScan`, `PointGetPlan`, `BatchPointScan`.
 type physicalScan interface {
-	PhysicalPlan
 
-	// AccessObjectInfo Return plan's accessObject, like `table`, `partition` and `index`.
+	// AccessObjectInfo Return plan's accessObject, include `table` and `index`.
 	AccessObjectInfo() string
 }
 
@@ -58,7 +58,7 @@ func (p *PhysicalIndexScan) ExplainNormalizedInfo() string {
 	return p.AccessObjectInfo() + ", " + p.explainInfo(true)
 }
 
-// AccessObjectInfo implements dataSourcePlan interface.
+// AccessObjectInfo implements physicalScan interface.
 func (p *PhysicalIndexScan) AccessObjectInfo() string {
 	buffer := bytes.NewBufferString("")
 	tblName := p.Table.Name.O
@@ -158,7 +158,7 @@ func (p *PhysicalTableScan) ExplainNormalizedInfo() string {
 	return p.AccessObjectInfo() + ", " + p.explainInfo(true)
 }
 
-// AccessObjectInfo implements dataSourcePlan interface.
+// AccessObjectInfo implements physicalScan interface.
 func (p *PhysicalTableScan) AccessObjectInfo() string {
 	buffer := bytes.NewBufferString("")
 	tblName := p.Table.Name.O

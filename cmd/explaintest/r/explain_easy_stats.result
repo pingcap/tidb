@@ -55,7 +55,7 @@ HashLeftJoin_22	2481.25	root		left outer join, equal:[eq(test.t1.c2, test.t2.c1)
 explain update t1 set t1.c2 = 2 where t1.c1 = 1;
 id	estRows	task	access object	operator info
 Update_2	N/A	root		N/A
-└─Point_Get_1	1.00	root		table:t1, handle:1
+└─Point_Get_1	1.00	root	table:t1	handle:1
 explain delete from t1 where t1.c2 = 1;
 id	estRows	task	access object	operator info
 Delete_5	N/A	root		N/A
@@ -88,7 +88,7 @@ IndexLookUp_11	0.00	root
 explain select * from t1 where c1 = 1 and c2 > 1;
 id	estRows	task	access object	operator info
 Selection_6	0.50	root		gt(test.t1.c2, 1)
-└─Point_Get_5	1.00	root		table:t1, handle:1
+└─Point_Get_5	1.00	root	table:t1	handle:1
 explain select c1 from t1 where c1 in (select c2 from t2);
 id	estRows	task	access object	operator info
 HashLeftJoin_19	1985.00	root		inner join, equal:[eq(test.t1.c1, test.t2.c2)]
@@ -156,30 +156,30 @@ label = "cop"
 
 explain select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 LIMIT 1;
 id	estRows	task	access object	operator info
-Point_Get_1	1.00	root		table:index_prune, index:a b
+Point_Get_1	1.00	root	table:index_prune, index:a, b	
 explain select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 LIMIT 0;
 id	estRows	task	access object	operator info
 TableDual_5	0.00	root		rows:0
 explain select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 LIMIT 1, 1;
 id	estRows	task	access object	operator info
 Limit_9	1.00	root		offset:1, count:1
-└─Point_Get_11	1.00	root		table:index_prune, index:a b
+└─Point_Get_11	1.00	root	table:index_prune, index:a, b	
 explain select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 LIMIT 1, 0;
 id	estRows	task	access object	operator info
 Limit_9	0.00	root		offset:1, count:0
-└─Point_Get_11	1.00	root		table:index_prune, index:a b
+└─Point_Get_11	1.00	root	table:index_prune, index:a, b	
 explain select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 LIMIT 0, 1;
 id	estRows	task	access object	operator info
-Point_Get_1	1.00	root		table:index_prune, index:a b
+Point_Get_1	1.00	root	table:index_prune, index:a, b	
 explain select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 ORDER BY a;
 id	estRows	task	access object	operator info
-Point_Get_1	1.00	root		table:index_prune, index:a b
+Point_Get_1	1.00	root	table:index_prune, index:a, b	
 explain select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 GROUP BY b;
 id	estRows	task	access object	operator info
-Point_Get_1	1.00	root		table:index_prune, index:a b
+Point_Get_1	1.00	root	table:index_prune, index:a, b	
 explain select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 GROUP BY b ORDER BY a limit 1;
 id	estRows	task	access object	operator info
-Point_Get_1	1.00	root		table:index_prune, index:a b
+Point_Get_1	1.00	root	table:index_prune, index:a, b	
 drop table if exists t1, t2, t3, index_prune;
 set @@session.tidb_opt_insubq_to_join_and_agg=1;
 drop table if exists tbl;

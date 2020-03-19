@@ -46,7 +46,7 @@ func (s *testSuite) TestUpdateCopRuntimeStats(c *C) {
 	c.Assert(ctx.GetSessionVars().StmtCtx.RuntimeStatsColl, NotNil)
 	c.Assert(len(sr.selectResp.GetExecutionSummaries()), Equals, len(sr.copPlanIDs))
 	sr.updateCopRuntimeStats(&execdetails.ExecDetails{CalleeAddress: "callee"}, 0)
-	c.Assert(ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetCopStats("callee").String(), Equals, "time:1ns, loops:1, rows:1")
+	c.Assert(ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetCopStats("callee").String(), Equals, "time:1ns, loops:1")
 }
 
 type copPlan struct{}

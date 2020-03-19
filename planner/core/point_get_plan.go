@@ -95,42 +95,50 @@ func (p *PointGetPlan) ExplainInfo() string {
 	return p.explainInfo(false)
 }
 
+// ExplainNormalizedInfo returns normalized operator information to be explained.
+func (p *PointGetPlan) ExplainNormalizedInfo() string {
+	return p.AccessObjectInfo() + ", " + p.explainInfo(true)
+}
+
+// AccessObjectInfo implements physicalScan interface.
+func (p *PointGetPlan) AccessObjectInfo() string {
+	buffer := bytes.NewBufferString("")
+	tblName := p.TblInfo.Name.O
+	fmt.Fprintf(buffer, "table:%s, ", tblName)
+	if p.PartitionInfo != nil {
+		fmt.Fprintf(buffer, "partition:%s, ", p.PartitionInfo.Name.L)
+	}
+	if p.IndexInfo != nil {
+		fmt.Fprintf(buffer, "index:")
+		for _, col := range p.IndexInfo.Columns {
+			buffer.WriteString(col.Name.O + ", ")
+		}
+	}
+	buffer.Truncate(buffer.Len() - 2)
+	return buffer.String()
+}
+
 // ExplainInfo returns operator information to be explained.
 func (p *PointGetPlan) explainInfo(normalized bool) string {
 	buffer := bytes.NewBufferString("")
-	tblName := p.TblInfo.Name.O
-	fmt.Fprintf(buffer, "table:%s", tblName)
-	if p.IndexInfo != nil {
-		fmt.Fprintf(buffer, ", index:")
-		for i, col := range p.IndexInfo.Columns {
-			buffer.WriteString(col.Name.O)
-			if i < len(p.IndexInfo.Columns)-1 {
-				buffer.WriteString(" ")
-			}
-		}
-	} else {
+	if p.IndexInfo == nil {
 		if normalized {
-			fmt.Fprintf(buffer, ", handle:?")
+			fmt.Fprintf(buffer, "handle:?, ")
 		} else {
 			if p.UnsignedHandle {
-				fmt.Fprintf(buffer, ", handle:%d", uint64(p.Handle))
+				fmt.Fprintf(buffer, "handle:%d, ", uint64(p.Handle))
 			} else {
-				fmt.Fprintf(buffer, ", handle:%d", p.Handle)
+				fmt.Fprintf(buffer, "handle:%d, ", p.Handle)
 			}
 		}
 	}
 	if p.Lock {
-		fmt.Fprintf(buffer, ", lock")
+		fmt.Fprintf(buffer, "lock, ")
 	}
-	if p.PartitionInfo != nil {
-		fmt.Fprintf(buffer, ", partition:%s", p.PartitionInfo.Name.L)
+	if buffer.Len() >= 2 {
+		buffer.Truncate(buffer.Len() - 2)
 	}
 	return buffer.String()
-}
-
-// ExplainNormalizedInfo returns normalized operator information to be explained.
-func (p *PointGetPlan) ExplainNormalizedInfo() string {
-	return p.explainInfo(true)
 }
 
 // GetChildReqProps gets the required property by child index.
@@ -230,36 +238,44 @@ func (p *BatchPointGetPlan) ExplainInfo() string {
 	return p.explainInfo(false)
 }
 
-func (p *BatchPointGetPlan) explainInfo(normalized bool) string {
+// ExplainNormalizedInfo returns normalized operator information to be explained.
+func (p *BatchPointGetPlan) ExplainNormalizedInfo() string {
+	return p.AccessObjectInfo() + ", " + p.explainInfo(true)
+}
+
+// AccessObjectInfo implements physicalScan interface.
+func (p *BatchPointGetPlan) AccessObjectInfo() string {
 	buffer := bytes.NewBufferString("")
 	tblName := p.TblInfo.Name.O
-	fmt.Fprintf(buffer, "table:%s", tblName)
+	fmt.Fprintf(buffer, "table:%s, ", tblName)
 	if p.IndexInfo != nil {
-		fmt.Fprintf(buffer, ", index:")
-		for i, col := range p.IndexInfo.Columns {
-			buffer.WriteString(col.Name.O)
-			if i < len(p.IndexInfo.Columns)-1 {
-				buffer.WriteString(" ")
-			}
-		}
-	} else {
-		if normalized {
-			fmt.Fprintf(buffer, ", handle:?")
-		} else {
-			fmt.Fprintf(buffer, ", handle:%v", p.Handles)
+		fmt.Fprintf(buffer, "index:")
+		for _, col := range p.IndexInfo.Columns {
+			buffer.WriteString(col.Name.O + ", ")
 		}
 	}
-	fmt.Fprintf(buffer, ", keep order:%v", p.KeepOrder)
-	fmt.Fprintf(buffer, ", desc:%v", p.Desc)
-	if p.Lock {
-		fmt.Fprintf(buffer, ", lock")
-	}
+	buffer.Truncate(buffer.Len() - 2)
 	return buffer.String()
 }
 
-// ExplainNormalizedInfo returns normalized operator information to be explained.
-func (p *BatchPointGetPlan) ExplainNormalizedInfo() string {
-	return p.explainInfo(true)
+func (p *BatchPointGetPlan) explainInfo(normalized bool) string {
+	buffer := bytes.NewBufferString("")
+	if p.IndexInfo == nil {
+		if normalized {
+			fmt.Fprintf(buffer, "handle:?, ")
+		} else {
+			fmt.Fprintf(buffer, "handle:%v, ", p.Handles)
+		}
+	}
+	fmt.Fprintf(buffer, "keep order:%v, ", p.KeepOrder)
+	fmt.Fprintf(buffer, "desc:%v, ", p.Desc)
+	if p.Lock {
+		fmt.Fprintf(buffer, "lock, ")
+	}
+	if buffer.Len() >= 2 {
+		buffer.Truncate(buffer.Len() - 2)
+	}
+	return buffer.String()
 }
 
 // GetChildReqProps gets the required property by child index.

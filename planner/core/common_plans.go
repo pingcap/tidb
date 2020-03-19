@@ -917,7 +917,7 @@ func (e *Explain) prepareOperatorInfo(p Plan, taskType, driverSide, indent strin
 			analyzeInfo = rootstats.String()
 			actRows = fmt.Sprint(rootstats.GetActRows())
 		} else {
-			analyzeInfo = "time:0ns, loops:0, rows:0"
+			analyzeInfo = "time:0ns, loops:0"
 		}
 		switch p.(type) {
 		case *PhysicalTableReader, *PhysicalIndexReader, *PhysicalIndexLookUpReader:

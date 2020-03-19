@@ -3427,9 +3427,9 @@ func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
 	tk.MustExec("create table t(a date)")
 	result = tk.MustQuery("desc select a = a from t")
 	result.Check(testkit.Rows(
-		"Projection_3 10000.00 root eq(test.t.a, test.t.a)->Column#3",
-		"└─TableReader_5 10000.00 root data:TableFullScan_4",
-		"  └─TableFullScan_4 10000.00 cop[tikv] table:t, keep order:false, stats:pseudo",
+		"Projection_3 10000.00 root  eq(test.t.a, test.t.a)->Column#3",
+		"└─TableReader_5 10000.00 root  data:TableFullScan_4",
+		"  └─TableFullScan_4 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	))
 
 	// for interval
@@ -4890,9 +4890,9 @@ func (s *testIntegrationSuite) TestTimestampDatumEncode(c *C) {
 	tk.MustExec(`create table t (a bigint primary key, b timestamp)`)
 	tk.MustExec(`insert into t values (1, "2019-04-29 11:56:12")`)
 	tk.MustQuery(`explain select * from t where b = (select max(b) from t)`).Check(testkit.Rows(
-		"TableReader_43 10.00 root data:Selection_42",
-		"└─Selection_42 10.00 cop[tikv] eq(test.t.b, 2019-04-29 11:56:12)",
-		"  └─TableFullScan_41 10000.00 cop[tikv] table:t, keep order:false, stats:pseudo",
+		"TableReader_43 10.00 root  data:Selection_42",
+		"└─Selection_42 10.00 cop[tikv]  eq(test.t.b, 2019-04-29 11:56:12)",
+		"  └─TableFullScan_41 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	))
 	tk.MustQuery(`select * from t where b = (select max(b) from t)`).Check(testkit.Rows(`1 2019-04-29 11:56:12`))
 }

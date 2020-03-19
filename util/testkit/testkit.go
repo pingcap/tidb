@@ -201,7 +201,7 @@ func (tk *TestKit) HasPlan(sql string, plan string, args ...interface{}) bool {
 func (tk *TestKit) MustUseIndex(sql string, index string, args ...interface{}) bool {
 	rs := tk.MustQuery("explain "+sql, args...)
 	for i := range rs.rows {
-		if strings.Contains(rs.rows[i][3], "index:"+index+",") {
+		if strings.Contains(rs.rows[i][3], "index:"+index) {
 			return true
 		}
 	}
