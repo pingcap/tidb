@@ -122,6 +122,14 @@ func TableFromMeta(allocs autoid.Allocators, tblInfo *model.TableInfo) (table.Ta
 			}
 			col.GeneratedExpr = expr
 		}
+		// default value is expr.
+		if col.DefaultIsExpr {
+			expr, err := parseExpression(colInfo.DefaultValue.(string))
+			if err != nil {
+				return nil, err
+			}
+			col.DefaultExpr = expr
+		}
 		columns = append(columns, col)
 	}
 

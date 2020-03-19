@@ -115,7 +115,7 @@ func tableNames2HintTableInfo(ctx sessionctx.Context, hintTables []ast.HintTable
 	hintTableInfos := make([]hintTableInfo, len(hintTables))
 	defaultDBName := model.NewCIStr(ctx.GetSessionVars().CurrentDB)
 	for i, hintTable := range hintTables {
-		tableInfo := hintTableInfo{tblName: hintTable.TableName, selectOffset: p.getHintOffset(hintTable.QBName, nodeType, currentOffset)}
+		tableInfo := hintTableInfo{dbName: hintTable.DBName, tblName: hintTable.TableName, selectOffset: p.getHintOffset(hintTable.QBName, nodeType, currentOffset)}
 		if tableInfo.dbName.L == "" {
 			tableInfo.dbName = defaultDBName
 		}
@@ -1817,7 +1817,15 @@ func collectVisitInfoFromGrantStmt(sctx sessionctx.Context, vi []visitInfo, stmt
 }
 
 func (b *PlanBuilder) getDefaultValue(col *table.Column) (*expression.Constant, error) {
-	value, err := table.GetColDefaultValue(b.ctx, col.ToInfo())
+	var (
+		value types.Datum
+		err   error
+	)
+	if col.DefaultIsExpr && col.DefaultExpr != nil {
+		value, err = table.EvalColDefaultExpr(b.ctx, col.ToInfo(), col.DefaultExpr)
+	} else {
+		value, err = table.GetColDefaultValue(b.ctx, col.ToInfo())
+	}
 	if err != nil {
 		return nil, err
 	}
