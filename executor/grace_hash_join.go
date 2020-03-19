@@ -252,6 +252,9 @@ func (e *GraceHashJoinExec) Next(ctx context.Context, req *chunk.Chunk) (err err
 		if e.partitionIdx == e.partitionCnt {
 			break
 		}
+		e.buildPartitionerExec.partitionWaitGroup.Wait()
+		e.probePartitionerExec.partitionWaitGroup.Wait()
+
 		// this partition has fininshed
 		// reset partitionIdx and chkIdx to begin next partition
 		e.buildPartitionerExec.partitionIdx = e.partitionIdx
