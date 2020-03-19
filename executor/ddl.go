@@ -377,8 +377,8 @@ func (e *DDLExec) getRecoverTableByJobID(s *ast.RecoverTableStmt, t *meta.Meta, 
 	if job == nil {
 		return nil, nil, admin.ErrDDLJobNotFound.GenWithStackByArgs(s.JobID)
 	}
-	if job.Type != model.ActionDropTable {
-		return nil, nil, errors.Errorf("Job %v type is %v, not drop table", job.ID, job.Type)
+	if job.Type != model.ActionDropTable && job.Type != model.ActionTruncateTable {
+		return nil, nil, errors.Errorf("Job %v type is %v, not dropped/truncated table", job.ID, job.Type)
 	}
 
 	// Check GC safe point for getting snapshot infoSchema.
@@ -424,7 +424,7 @@ func (e *DDLExec) getRecoverTableByTableName(s *ast.RecoverTableStmt, t *meta.Me
 	// TODO: only search recent `e.JobNum` DDL jobs.
 	for i := len(jobs) - 1; i > 0; i-- {
 		job = jobs[i]
-		if job.Type != model.ActionDropTable {
+		if job.Type != model.ActionDropTable && job.Type != model.ActionTruncateTable {
 			continue
 		}
 		// Check GC safe point for getting snapshot infoSchema.
