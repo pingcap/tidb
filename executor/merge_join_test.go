@@ -589,3 +589,30 @@ func (s *testSuiteJoin3) TestVectorizedMergeJoin(c *C) {
 		runTest(ca.t2, ca.t1)
 	}
 }
+
+func (s *testSuite2) TestMergeJoinWithOtherConditions(c *C) {
+	// more than one inner tuple should be filtered on other conditions
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists R;`)
+	tk.MustExec(`drop table if exists Y;`)
+	tk.MustExec(`create table Y (a int primary key, b int, index id_b(b));`)
+	tk.MustExec(`insert into Y values (0,2),(2,2);`)
+	tk.MustExec(`create table R (a int primary key, b int);`)
+	tk.MustExec(`insert into R values (2,2);`)
+	tk.MustQuery(`select /*+tidb_smj(R)*/ max(Y.a) from R join Y  on R.a=Y.b where R.b <= Y.a;`).Check(testkit.Rows(
+		`2`,
+	))
+	// the max() limits the required rows at most one
+	// NOTE Y should be the build side
+	tk.MustQuery("explain select /*+tidb_smj(R)*/ max(Y.a) from R join Y  on R.a=Y.b where R.b <= Y.a;").Check(testkit.Rows(
+		"StreamAgg_15 1.00 root funcs:max(test.y.a)->Column#5",
+		"└─TopN_18 1.00 root test.y.a:desc, offset:0, count:1",
+		"  └─MergeJoin_22 12487.50 root inner join, left key:test.r.a, right key:test.y.b, other cond:le(test.r.b, test.y.a)",
+		"    ├─IndexReader_28(Build) 9990.00 root index:IndexFullScan_27",
+		"    │ └─IndexFullScan_27 9990.00 cop[tikv] table:Y, index:b, keep order:true, stats:pseudo",
+		"    └─TableReader_26(Probe) 9990.00 root data:Selection_25",
+		"      └─Selection_25 9990.00 cop[tikv] not(isnull(test.r.b))",
+		"        └─TableFullScan_24 10000.00 cop[tikv] table:R, keep order:true, stats:pseudo",
+	))
+}

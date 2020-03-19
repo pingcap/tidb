@@ -303,6 +303,8 @@ func (e *MergeJoinExec) Open(ctx context.Context) error {
 }
 
 // Next implements the Executor Next interface.
+// Note the inner group collects all identical keys in a group across multiple chunks, but the outer group just covers
+// the identical keys within a chunk, so identical keys may cover more than one chunk.
 func (e *MergeJoinExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	req.Reset()
 
@@ -335,12 +337,12 @@ func (e *MergeJoinExec) Next(ctx context.Context, req *chunk.Chunk) (err error) 
 				return err
 			}
 		}
-
+		// the inner group falls behind
 		if (cmpResult > 0 && !e.desc) || (cmpResult < 0 && e.desc) {
 			innerIter.ReachEnd()
 			continue
 		}
-
+		// the outer group falls behind
 		if (cmpResult < 0 && !e.desc) || (cmpResult > 0 && e.desc) {
 			for row := outerIter.Current(); row != outerIter.End() && !req.IsFull(); row = outerIter.Next() {
 				e.joiner.onMissMatch(false, row, req)
@@ -353,7 +355,7 @@ func (e *MergeJoinExec) Next(ctx context.Context, req *chunk.Chunk) (err error) 
 				e.joiner.onMissMatch(false, row, req)
 				continue
 			}
-
+			// compare each outer item with each inner item
 			// the inner maybe not exhausted at one time
 			for innerIter.Current() != innerIter.End() {
 				matched, isNull, err := e.joiner.tryToMatchInners(row, innerIter, req)
@@ -363,6 +365,9 @@ func (e *MergeJoinExec) Next(ctx context.Context, req *chunk.Chunk) (err error) 
 				e.hasMatch = e.hasMatch || matched
 				e.hasNull = e.hasNull || isNull
 				if req.IsFull() {
+					if innerIter.Current() == innerIter.End() {
+						break
+					}
 					return nil
 				}
 			}
