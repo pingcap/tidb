@@ -198,7 +198,7 @@ var tableIDMap = map[string]int64{
 	TableInspectionSummary:                  autoid.InformationSchemaDBID + 55,
 	TableInspectionRules:                    autoid.InformationSchemaDBID + 56,
 	TableDDLJobs:                            autoid.InformationSchemaDBID + 57,
-	TableSequences:                          autoid.InformationSchemaDBID + 57,
+	TableSequences:                          autoid.InformationSchemaDBID + 58,
 }
 
 type columnInfo struct {
