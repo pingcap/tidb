@@ -2845,7 +2845,7 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName model.CIStr, table
 			p.QueryTimeRange = b.timeRangeForSummaryTable()
 		case infoschema.TableSlowQuery:
 			p.Extractor = &SlowQueryExtractor{}
-		case infoschema.TableDiskUsage:
+		case infoschema.TableStorageStats:
 			p.Extractor = &TableStorageStatsExtractor{}
 		}
 	}
