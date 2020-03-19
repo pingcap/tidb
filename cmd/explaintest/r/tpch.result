@@ -302,7 +302,7 @@ Sort_10	1.00	root		tpch.orders.o_orderpriority:asc
       │ └─Selection_41	2925937.50	cop[tikv]		ge(tpch.orders.o_orderdate, 1995-01-01 00:00:00.000000), lt(tpch.orders.o_orderdate, 1995-04-01)
       │   └─TableFullScan_40	75000000.00	cop[tikv]	table:orders	keep order:false
       └─IndexLookUp_20(Probe)	4.05	root		
-        ├─IndexRangeScan_17(Build)	5.06	cop[tikv]	table:lineitem, index:L_ORDERKEY, L_LINENUMBER	range: decided by [eq(tpch.lineitem.l_orderkey, tpch.orders.o_orderkey)], keep order:false
+        ├─IndexRangeScan_17(Build)	5.06	cop[tikv]	table:lineitem, index:PRIMARY(L_ORDERKEY, L_LINENUMBER)	range: decided by [eq(tpch.lineitem.l_orderkey, tpch.orders.o_orderkey)], keep order:false
         └─Selection_19(Probe)	4.05	cop[tikv]		lt(tpch.lineitem.l_commitdate, tpch.lineitem.l_receiptdate)
           └─TableRowIDScan_18	5.06	cop[tikv]	table:lineitem	keep order:false
 /*
@@ -545,7 +545,7 @@ Sort_29	719.02	root		Column#62:asc
                 │   └─Selection_111	22413367.93	cop[tikv]		ge(tpch.orders.o_orderdate, 1995-01-01 00:00:00.000000), le(tpch.orders.o_orderdate, 1996-12-31 00:00:00.000000)
                 │     └─TableFullScan_110	75000000.00	cop[tikv]	table:orders	keep order:false
                 └─IndexLookUp_74(Probe)	4.05	root		
-                  ├─IndexRangeScan_72(Build)	4.05	cop[tikv]	table:lineitem, index:L_ORDERKEY, L_LINENUMBER	range: decided by [eq(tpch.lineitem.l_orderkey, tpch.orders.o_orderkey)], keep order:false
+                  ├─IndexRangeScan_72(Build)	4.05	cop[tikv]	table:lineitem, index:PRIMARY(L_ORDERKEY, L_LINENUMBER)	range: decided by [eq(tpch.lineitem.l_orderkey, tpch.orders.o_orderkey)], keep order:false
                   └─TableRowIDScan_73(Probe)	4.05	cop[tikv]	table:lineitem	keep order:false
 /*
 Q9 Product Type Profit Measure Query
@@ -672,7 +672,7 @@ Projection_17	20.00	root		tpch.customer.c_custkey, tpch.customer.c_name, Column#
         │   └─TableReader_58(Probe)	7500000.00	root		data:TableFullScan_57
         │     └─TableFullScan_57	7500000.00	cop[tikv]	table:customer	keep order:false
         └─IndexLookUp_31(Probe)	4.05	root		
-          ├─IndexRangeScan_28(Build)	16.44	cop[tikv]	table:lineitem, index:L_ORDERKEY, L_LINENUMBER	range: decided by [eq(tpch.lineitem.l_orderkey, tpch.orders.o_orderkey)], keep order:false
+          ├─IndexRangeScan_28(Build)	16.44	cop[tikv]	table:lineitem, index:PRIMARY(L_ORDERKEY, L_LINENUMBER)	range: decided by [eq(tpch.lineitem.l_orderkey, tpch.orders.o_orderkey)], keep order:false
           └─Selection_30(Probe)	4.05	cop[tikv]		eq(tpch.lineitem.l_returnflag, "R")
             └─TableRowIDScan_29	16.44	cop[tikv]	table:lineitem	keep order:false
 /*
@@ -938,7 +938,7 @@ Sort_13	14.41	root		Column#23:desc, tpch.part.p_brand:asc, tpch.part.p_type:asc,
         │ └─Selection_60	1200618.43	cop[tikv]		in(tpch.part.p_size, 48, 19, 12, 4, 41, 7, 21, 39), ne(tpch.part.p_brand, "Brand#34"), not(like(tpch.part.p_type, "LARGE BRUSHED%", 92))
         │   └─TableFullScan_59	10000000.00	cop[tikv]	table:part	keep order:false
         └─IndexReader_36(Probe)	4.02	root		index:IndexRangeScan_35
-          └─IndexRangeScan_35	4.02	cop[tikv]	table:partsupp, index:PS_PARTKEY, PS_SUPPKEY	range: decided by [eq(tpch.partsupp.ps_partkey, tpch.part.p_partkey)], keep order:true
+          └─IndexRangeScan_35	4.02	cop[tikv]	table:partsupp, index:PRIMARY(PS_PARTKEY, PS_SUPPKEY)	range: decided by [eq(tpch.partsupp.ps_partkey, tpch.part.p_partkey)], keep order:true
 /*
 Q17 Small-Quantity-Order Revenue Query
 This query determines how much average yearly revenue would be lost if orders were no longer filled for small
@@ -1161,7 +1161,7 @@ Sort_28	20000.00	root		tpch.supplier.s_name:asc
             │ │ └─Selection_97	80007.93	cop[tikv]		like(tpch.part.p_name, "green%", 92)
             │ │   └─TableFullScan_96	10000000.00	cop[tikv]	table:part	keep order:false
             │ └─IndexLookUp_66(Probe)	4.02	root		
-            │   ├─IndexRangeScan_64(Build)	4.02	cop[tikv]	table:partsupp, index:PS_PARTKEY, PS_SUPPKEY	range: decided by [eq(tpch.partsupp.ps_partkey, tpch.part.p_partkey)], keep order:false
+            │   ├─IndexRangeScan_64(Build)	4.02	cop[tikv]	table:partsupp, index:PRIMARY(PS_PARTKEY, PS_SUPPKEY)	range: decided by [eq(tpch.partsupp.ps_partkey, tpch.part.p_partkey)], keep order:false
             │   └─TableRowIDScan_65(Probe)	4.02	cop[tikv]	table:partsupp	keep order:false
             └─TableReader_103(Probe)	44189356.65	root		data:Selection_102
               └─Selection_102	44189356.65	cop[tikv]		ge(tpch.lineitem.l_shipdate, 1993-01-01 00:00:00.000000), lt(tpch.lineitem.l_shipdate, 1994-01-01)
@@ -1235,10 +1235,10 @@ Projection_25	100.00	root		tpch.supplier.s_name, Column#72
       │ │   └─Selection_96	0.49	cop[tikv]		eq(tpch.orders.o_orderstatus, "F")
       │ │     └─TableRangeScan_95	1.00	cop[tikv]	table:orders	range: decided by [tpch.lineitem.l_orderkey], keep order:true
       │ └─IndexLookUp_79(Probe)	4.05	root		
-      │   ├─IndexRangeScan_77(Build)	4.05	cop[tikv]	table:l2, index:L_ORDERKEY, L_LINENUMBER	range: decided by [eq(tpch.lineitem.l_orderkey, tpch.lineitem.l_orderkey)], keep order:false
+      │   ├─IndexRangeScan_77(Build)	4.05	cop[tikv]	table:l2, index:PRIMARY(L_ORDERKEY, L_LINENUMBER)	range: decided by [eq(tpch.lineitem.l_orderkey, tpch.lineitem.l_orderkey)], keep order:false
       │   └─TableRowIDScan_78(Probe)	4.05	cop[tikv]	table:l2	keep order:false
       └─IndexLookUp_39(Probe)	4.05	root		
-        ├─IndexRangeScan_36(Build)	5.06	cop[tikv]	table:l3, index:L_ORDERKEY, L_LINENUMBER	range: decided by [eq(tpch.lineitem.l_orderkey, tpch.lineitem.l_orderkey)], keep order:false
+        ├─IndexRangeScan_36(Build)	5.06	cop[tikv]	table:l3, index:PRIMARY(L_ORDERKEY, L_LINENUMBER)	range: decided by [eq(tpch.lineitem.l_orderkey, tpch.lineitem.l_orderkey)], keep order:false
         └─Selection_38(Probe)	4.05	cop[tikv]		gt(tpch.lineitem.l_receiptdate, tpch.lineitem.l_commitdate)
           └─TableRowIDScan_37	5.06	cop[tikv]	table:l3	keep order:false
 /*

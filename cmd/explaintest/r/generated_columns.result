@@ -10,7 +10,7 @@ EXPLAIN SELECT name, id FROM person WHERE city = 'Beijing';
 id	estRows	task	access object	operator info
 Projection_4	10.00	root		test.person.name, test.person.id
 └─IndexLookUp_10	10.00	root		
-  ├─IndexRangeScan_8(Build)	10.00	cop[tikv]	table:person, index:city	range:["Beijing","Beijing"], keep order:false, stats:pseudo
+  ├─IndexRangeScan_8(Build)	10.00	cop[tikv]	table:person, index:city(city)	range:["Beijing","Beijing"], keep order:false, stats:pseudo
   └─TableRowIDScan_9(Probe)	10.00	cop[tikv]	table:person	keep order:false, stats:pseudo
 DROP TABLE IF EXISTS `sgc`;
 CREATE TABLE `sgc` (
@@ -25,21 +25,21 @@ KEY `idx_a_b` (`a`,`b`)
 EXPLAIN SELECT a FROM sgc where a < 3;
 id	estRows	task	access object	operator info
 IndexReader_6	3323.33	root		index:IndexRangeScan_5
-└─IndexRangeScan_5	3323.33	cop[tikv]	table:sgc, index:a	range:[-inf,3), keep order:false, stats:pseudo
+└─IndexRangeScan_5	3323.33	cop[tikv]	table:sgc, index:idx_a(a)	range:[-inf,3), keep order:false, stats:pseudo
 EXPLAIN SELECT a, b FROM sgc where a < 3;
 id	estRows	task	access object	operator info
 IndexReader_6	3323.33	root		index:IndexRangeScan_5
-└─IndexRangeScan_5	3323.33	cop[tikv]	table:sgc, index:a, b	range:[-inf,3), keep order:false, stats:pseudo
+└─IndexRangeScan_5	3323.33	cop[tikv]	table:sgc, index:idx_a_b(a, b)	range:[-inf,3), keep order:false, stats:pseudo
 EXPLAIN SELECT a, b from sgc where b < 3;
 id	estRows	task	access object	operator info
 IndexReader_13	3323.33	root		index:Selection_12
 └─Selection_12	3323.33	cop[tikv]		lt(test.sgc.b, 3)
-  └─IndexFullScan_11	10000.00	cop[tikv]	table:sgc, index:a, b	keep order:false, stats:pseudo
+  └─IndexFullScan_11	10000.00	cop[tikv]	table:sgc, index:idx_a_b(a, b)	keep order:false, stats:pseudo
 EXPLAIN SELECT a, b from sgc where a < 3 and b < 3;
 id	estRows	task	access object	operator info
 IndexReader_11	1104.45	root		index:Selection_10
 └─Selection_10	1104.45	cop[tikv]		lt(test.sgc.b, 3)
-  └─IndexRangeScan_9	3323.33	cop[tikv]	table:sgc, index:a, b	range:[-inf,3), keep order:false, stats:pseudo
+  └─IndexRangeScan_9	3323.33	cop[tikv]	table:sgc, index:idx_a_b(a, b)	range:[-inf,3), keep order:false, stats:pseudo
 DROP TABLE IF EXISTS sgc1,
 sgc2;
 CREATE TABLE `sgc1` (
@@ -77,7 +77,7 @@ IndexJoin_26	5.00	root		inner join, inner:IndexLookUp_25, outer key:test.sgc2.a,
 │   └─TableFullScan_45	1.00	cop[tikv]	table:sgc2	keep order:false
 └─IndexLookUp_25(Probe)	5.00	root		
   ├─Selection_24(Build)	5.00	cop[tikv]		not(isnull(test.sgc1.a))
-  │ └─IndexRangeScan_22	5.00	cop[tikv]	table:sgc1, index:a	range: decided by [eq(test.sgc1.a, test.sgc2.a)], keep order:false
+  │ └─IndexRangeScan_22	5.00	cop[tikv]	table:sgc1, index:idx_a(a)	range: decided by [eq(test.sgc1.a, test.sgc2.a)], keep order:false
   └─TableRowIDScan_23(Probe)	5.00	cop[tikv]	table:sgc1	keep order:false
 EXPLAIN SELECT * from sgc1 join sgc2 on sgc1.a=sgc2.a;
 id	estRows	task	access object	operator info
@@ -141,23 +141,23 @@ INSERT INTO t1 (a) VALUES (0);
 EXPLAIN SELECT b FROM t1 WHERE b=1;
 id	estRows	task	access object	operator info
 IndexReader_6	10.00	root		index:IndexRangeScan_5
-└─IndexRangeScan_5	10.00	cop[tikv]	table:t1, index:b	range:[1,1], keep order:false, stats:pseudo
+└─IndexRangeScan_5	10.00	cop[tikv]	table:t1, index:b(b)	range:[1,1], keep order:false, stats:pseudo
 EXPLAIN SELECT b, c, d FROM t1 WHERE b=1;
 id	estRows	task	access object	operator info
 Projection_4	10.00	root		test.t1.b, test.t1.c, test.t1.d
 └─IndexLookUp_10	10.00	root		
-  ├─IndexRangeScan_8(Build)	10.00	cop[tikv]	table:t1, index:b	range:[1,1], keep order:false, stats:pseudo
+  ├─IndexRangeScan_8(Build)	10.00	cop[tikv]	table:t1, index:b(b)	range:[1,1], keep order:false, stats:pseudo
   └─TableRowIDScan_9(Probe)	10.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b=1;
 id	estRows	task	access object	operator info
 IndexLookUp_10	10.00	root		
-├─IndexRangeScan_8(Build)	10.00	cop[tikv]	table:t1, index:b	range:[1,1], keep order:false, stats:pseudo
+├─IndexRangeScan_8(Build)	10.00	cop[tikv]	table:t1, index:b(b)	range:[1,1], keep order:false, stats:pseudo
 └─TableRowIDScan_9(Probe)	10.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 EXPLAIN SELECT c FROM t1 WHERE c=2 AND d=3;
 id	estRows	task	access object	operator info
 Projection_4	0.10	root		test.t1.c
 └─IndexReader_6	0.10	root		index:IndexRangeScan_5
-  └─IndexRangeScan_5	0.10	cop[tikv]	table:t1, index:c, d	range:[2 3,2 3], keep order:false, stats:pseudo
+  └─IndexRangeScan_5	0.10	cop[tikv]	table:t1, index:IDX(c, d)	range:[2 3,2 3], keep order:false, stats:pseudo
 DROP TABLE IF EXISTS person;
 CREATE TABLE person (
 id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -170,7 +170,7 @@ EXPLAIN SELECT name FROM person where city_no=1;
 id	estRows	task	access object	operator info
 Projection_4	10.00	root		test.person.name
 └─IndexLookUp_10	10.00	root		
-  ├─IndexRangeScan_8(Build)	10.00	cop[tikv]	table:person, index:city_no	range:[1,1], keep order:false, stats:pseudo
+  ├─IndexRangeScan_8(Build)	10.00	cop[tikv]	table:person, index:city_no(city_no)	range:[1,1], keep order:false, stats:pseudo
   └─TableRowIDScan_9(Probe)	10.00	cop[tikv]	table:person	keep order:false, stats:pseudo
 DROP TABLE IF EXISTS t1;
 CREATE TABLE t1 (a INT,

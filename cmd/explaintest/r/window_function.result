@@ -8,13 +8,13 @@ id	estRows	task	access object	operator info
 Projection_7	10000.00	root		Column#6
 └─Window_8	10000.00	root		sum(cast(test.t.a, decimal(65,0) BINARY))->Column#6 over()
   └─IndexReader_12	10000.00	root		index:IndexFullScan_11
-    └─IndexFullScan_11	10000.00	cop[tikv]	table:t, index:a	keep order:false, stats:pseudo
+    └─IndexFullScan_11	10000.00	cop[tikv]	table:t, index:idx(a)	keep order:false, stats:pseudo
 explain select sum(a) over(partition by a) from t;
 id	estRows	task	access object	operator info
 Projection_7	10000.00	root		Column#6
 └─Window_8	10000.00	root		sum(cast(test.t.a, decimal(65,0) BINARY))->Column#6 over(partition by test.t.a)
   └─IndexReader_10	10000.00	root		index:IndexFullScan_9
-    └─IndexFullScan_9	10000.00	cop[tikv]	table:t, index:a	keep order:true, stats:pseudo
+    └─IndexFullScan_9	10000.00	cop[tikv]	table:t, index:idx(a)	keep order:true, stats:pseudo
 explain select sum(a) over(partition by a order by b) from t;
 id	estRows	task	access object	operator info
 Projection_7	10000.00	root		Column#6
@@ -56,13 +56,13 @@ id	estRows	task	access object	operator info
 Projection_7	10000.00	root		Column#6
 └─Window_8	10000.00	root		sum(cast(test.t.a, decimal(65,0) BINARY))->Column#6 over()
   └─IndexReader_12	10000.00	root		index:IndexFullScan_11
-    └─IndexFullScan_11	10000.00	cop[tikv]	table:t, index:a	keep order:false, stats:pseudo
+    └─IndexFullScan_11	10000.00	cop[tikv]	table:t, index:idx(a)	keep order:false, stats:pseudo
 explain select sum(a) over(partition by a) from t;
 id	estRows	task	access object	operator info
 Projection_7	10000.00	root		Column#6
 └─Window_8	10000.00	root		sum(cast(test.t.a, decimal(65,0) BINARY))->Column#6 over(partition by test.t.a)
   └─IndexReader_10	10000.00	root		index:IndexFullScan_9
-    └─IndexFullScan_9	10000.00	cop[tikv]	table:t, index:a	keep order:true, stats:pseudo
+    └─IndexFullScan_9	10000.00	cop[tikv]	table:t, index:idx(a)	keep order:true, stats:pseudo
 explain select sum(a) over(partition by a order by b) from t;
 id	estRows	task	access object	operator info
 Projection_7	10000.00	root		Column#6

@@ -21,7 +21,7 @@ Limit_20	10.00	root		offset:0, count:10
   │   │   └─TableFullScan_48	10.33	cop[tikv]	table:t2	keep order:false
   │   └─UnionScan_37(Probe)	0.97	root		gt(test.city.province_id, 1), lt(test.city.province_id, 100)
   │     └─IndexLookUp_36	0.97	root		
-  │       ├─IndexRangeScan_33(Build)	1.00	cop[tikv]	table:t1, index:id	range: decided by [eq(test.city.id, test.city.id)], keep order:false
+  │       ├─IndexRangeScan_33(Build)	1.00	cop[tikv]	table:t1, index:PRIMARY(id)	range: decided by [eq(test.city.id, test.city.id)], keep order:false
   │       └─Selection_35(Probe)	0.97	cop[tikv]		gt(test.city.province_id, 1), lt(test.city.province_id, 100)
   │         └─TableRowIDScan_34	1.00	cop[tikv]	table:t1	keep order:false
   └─UnionScan_57(Probe)	519304.44	root		gt(test.city.province_id, 1), lt(test.city.province_id, 100), not(isnull(test.city.province_id))

@@ -8,11 +8,11 @@ KEY `IDX_ab` (`a`, `b`)
 explain select a from access_path_selection where a < 3;
 id	estRows	task	access object	operator info
 IndexReader_6	3323.33	root		index:IndexRangeScan_5
-└─IndexRangeScan_5	3323.33	cop[tikv]	table:access_path_selection, index:a	range:[-inf,3), keep order:false, stats:pseudo
+└─IndexRangeScan_5	3323.33	cop[tikv]	table:access_path_selection, index:IDX_a(a)	range:[-inf,3), keep order:false, stats:pseudo
 explain select a, b from access_path_selection where a < 3;
 id	estRows	task	access object	operator info
 IndexReader_6	3323.33	root		index:IndexRangeScan_5
-└─IndexRangeScan_5	3323.33	cop[tikv]	table:access_path_selection, index:a, b	range:[-inf,3), keep order:false, stats:pseudo
+└─IndexRangeScan_5	3323.33	cop[tikv]	table:access_path_selection, index:IDX_ab(a, b)	range:[-inf,3), keep order:false, stats:pseudo
 explain select a, b from access_path_selection where b < 3;
 id	estRows	task	access object	operator info
 TableReader_7	3323.33	root		data:Selection_6
@@ -22,7 +22,7 @@ explain select a, b from access_path_selection where a < 3 and b < 3;
 id	estRows	task	access object	operator info
 IndexReader_11	1104.45	root		index:Selection_10
 └─Selection_10	1104.45	cop[tikv]		lt(test.access_path_selection.b, 3)
-  └─IndexRangeScan_9	3323.33	cop[tikv]	table:access_path_selection, index:a, b	range:[-inf,3), keep order:false, stats:pseudo
+  └─IndexRangeScan_9	3323.33	cop[tikv]	table:access_path_selection, index:IDX_ab(a, b)	range:[-inf,3), keep order:false, stats:pseudo
 explain select a, b from access_path_selection where a > 10 order by _tidb_rowid;
 id	estRows	task	access object	operator info
 Projection_6	3333.33	root		test.access_path_selection.a, test.access_path_selection.b

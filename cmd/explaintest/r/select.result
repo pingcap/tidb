@@ -244,7 +244,7 @@ id	estRows	task	access object	operator info
 TopN_7	5.00	root		test.t1.a:asc, offset:0, count:5
 └─IndexReader_15	5.00	root		index:TopN_14
   └─TopN_14	5.00	cop[tikv]		test.t1.a:asc, offset:0, count:5
-    └─IndexFullScan_13	10000.00	cop[tikv]	table:t1, index:b, c	keep order:false, stats:pseudo
+    └─IndexFullScan_13	10000.00	cop[tikv]	table:t1, index:idx(b, c)	keep order:false, stats:pseudo
 select c, a from t1 use index(idx) order by a limit 5;
 c	a
 3	1
@@ -270,7 +270,7 @@ HashAgg_7	8000.00	root		group by:test.t.b, funcs:firstrow(test.t.b)->test.t.b
 └─StreamAgg_22	8000.00	root		group by:test.t.a, funcs:firstrow(Column#9)->test.t.b
   └─IndexReader_23	8000.00	root		index:StreamAgg_11
     └─StreamAgg_11	8000.00	cop[tikv]		group by:test.t.a, funcs:firstrow(test.t.b)->Column#9
-      └─IndexFullScan_21	10000.00	cop[tikv]	table:t, index:a, b, c	keep order:true, stats:pseudo
+      └─IndexFullScan_21	10000.00	cop[tikv]	table:t, index:idx(a, b, c)	keep order:true, stats:pseudo
 select distinct b from t group by a;
 b
 0
@@ -279,7 +279,7 @@ id	estRows	task	access object	operator info
 StreamAgg_19	8000.00	root		group by:test.t.a, funcs:count(Column#10)->Column#5
 └─IndexReader_20	8000.00	root		index:StreamAgg_8
   └─StreamAgg_8	8000.00	cop[tikv]		group by:test.t.a, funcs:count(test.t.b)->Column#10
-    └─IndexFullScan_18	10000.00	cop[tikv]	table:t, index:a, b, c	keep order:true, stats:pseudo
+    └─IndexFullScan_18	10000.00	cop[tikv]	table:t, index:idx(a, b, c)	keep order:true, stats:pseudo
 select count(b) from t group by a;
 count(b)
 1
@@ -290,7 +290,7 @@ StreamAgg_25	2666.67	root		group by:test.t.a, test.t.b, funcs:count(Column#10)->
 └─IndexReader_26	2666.67	root		index:StreamAgg_9
   └─StreamAgg_9	2666.67	cop[tikv]		group by:test.t.a, test.t.b, funcs:count(test.t.a)->Column#10
     └─Selection_24	3333.33	cop[tikv]		gt(test.t.b, 0)
-      └─IndexFullScan_23	10000.00	cop[tikv]	table:t, index:a, b, c	keep order:true, stats:pseudo
+      └─IndexFullScan_23	10000.00	cop[tikv]	table:t, index:idx(a, b, c)	keep order:true, stats:pseudo
 select count(a) from t where b>0 group by a, b;
 count(a)
 3
@@ -304,7 +304,7 @@ Projection_7	2666.67	root		Column#5
   └─IndexReader_37	2666.67	root		index:StreamAgg_34
     └─StreamAgg_34	2666.67	cop[tikv]		group by:test.t.a, test.t.b, funcs:count(test.t.a)->Column#15
       └─Selection_28	3333.33	cop[tikv]		gt(test.t.b, 0)
-        └─IndexFullScan_27	10000.00	cop[tikv]	table:t, index:a, b, c	keep order:true, stats:pseudo
+        └─IndexFullScan_27	10000.00	cop[tikv]	table:t, index:idx(a, b, c)	keep order:true, stats:pseudo
 select count(a) from t where b>0 group by a, b order by a;
 count(a)
 3
@@ -319,7 +319,7 @@ Projection_9	1.00	root		Column#5
     └─IndexReader_45	1.00	root		index:StreamAgg_40
       └─StreamAgg_40	1.00	cop[tikv]		group by:test.t.a, test.t.b, funcs:count(test.t.a)->Column#16
         └─Selection_43	1.25	cop[tikv]		gt(test.t.b, 0)
-          └─IndexFullScan_42	3.75	cop[tikv]	table:t, index:a, b, c	keep order:true, stats:pseudo
+          └─IndexFullScan_42	3.75	cop[tikv]	table:t, index:idx(a, b, c)	keep order:true, stats:pseudo
 select count(a) from t where b>0 group by a, b order by a limit 1;
 count(a)
 3
