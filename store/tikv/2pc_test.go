@@ -668,6 +668,9 @@ func (s *testCommitterSuite) TestElapsedTTL(c *C) {
 // TestAcquireFalseTimeoutLock tests acquiring a key which is a secondary key of another transaction.
 // The lock's own TTL is expired but the primary key is still alive due to heartbeats.
 func (s *testCommitterSuite) TestAcquireFalseTimeoutLock(c *C) {
+	atomic.StoreUint64(&ManagedLockTTL, 1000)       // 1s
+	defer atomic.StoreUint64(&ManagedLockTTL, 3000) // restore default test value
+
 	// k1 is the primary lock of txn1
 	k1 := kv.Key("k1")
 	// k2 is a secondary lock of txn1 and a key txn2 wants to lock
@@ -701,15 +704,11 @@ func (s *testCommitterSuite) TestAcquireFalseTimeoutLock(c *C) {
 	// it should return immediately
 	c.Assert(elapsed, Less, 50*time.Millisecond)
 
-	// test for wait limited time (300ms)
-	lockCtx = &kv.LockCtx{ForUpdateTS: txn2.startTS, LockWaitTime: 300, WaitStartTime: time.Now()}
-	startTime = time.Now()
+	// test for wait limited time (200ms)
+	lockCtx = &kv.LockCtx{ForUpdateTS: txn2.startTS, LockWaitTime: 200, WaitStartTime: time.Now()}
 	err = txn2.LockKeys(context.Background(), lockCtx, k2)
-	elapsed = time.Since(startTime)
 	// cannot acquire lock in time thus error
 	c.Assert(err.Error(), Equals, ErrLockWaitTimeout.Error())
-	// it should return after about 300ms
-	c.Assert(elapsed, Less, 350*time.Millisecond)
 }
 
 func (s *testCommitterSuite) getLockInfo(c *C, key []byte) *kvrpcpb.LockInfo {
