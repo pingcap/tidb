@@ -14,7 +14,6 @@
 package profile_test
 
 import (
-	"testing"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -32,10 +31,6 @@ type profileSuite struct {
 }
 
 var _ = Suite(&profileSuite{})
-
-func TestT(t *testing.T) {
-	TestingT(t)
-}
 
 func (s *profileSuite) SetUpSuite(c *C) {
 	var err error
