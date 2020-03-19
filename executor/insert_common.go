@@ -497,7 +497,13 @@ func (e *InsertValues) getColDefaultValue(idx int, col *table.Column) (d types.D
 	if !col.DefaultIsExpr && e.colDefaultVals != nil && e.colDefaultVals[idx].valid {
 		return e.colDefaultVals[idx].val, nil
 	}
-	defaultVal, err := table.GetColDefaultValue(e.ctx, col.ToInfo())
+
+	var defaultVal types.Datum
+	if col.DefaultIsExpr && col.DefaultExpr != nil {
+		defaultVal, err = table.EvalColDefaultExpr(e.ctx, col.ToInfo(), col.DefaultExpr)
+	} else {
+		defaultVal, err = table.GetColDefaultValue(e.ctx, col.ToInfo())
+	}
 	if err != nil {
 		return types.Datum{}, err
 	}
