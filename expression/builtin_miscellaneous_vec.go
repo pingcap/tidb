@@ -338,23 +338,18 @@ func doSleep(secs float64, sessVars *variable.SessionVars) (isKilled bool) {
 		return false
 	}
 	dur := time.Duration(secs * float64(time.Second.Nanoseconds()))
-	d := 10 * time.Millisecond
-	if dur < d {
-		d = dur
-	}
-	ticker := time.NewTicker(d)
+	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
-	start := time.Now()
+	timer := time.NewTimer(dur)
+	defer timer.Stop()
 	for {
 		select {
-		case now := <-ticker.C:
+		case <-ticker.C:
 			if atomic.CompareAndSwapUint32(&sessVars.Killed, 1, 0) {
 				return true
 			}
-
-			if now.Sub(start) > dur {
-				return false
-			}
+		case <-timer.C:
+			return false
 		}
 	}
 }
