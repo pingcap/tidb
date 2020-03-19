@@ -486,7 +486,7 @@ func (s *testInfoschemaTableSuite) TestTableSessionVar(c *C) {
 	tk.MustQuery("select * from information_schema.SESSION_VARIABLES where VARIABLE_NAME='tidb_retry_limit';").Check(testkit.Rows("tidb_retry_limit 10"))
 }
 
-func (s *testInfoschemaTableSuite) TestForAnalyzeStatus(c *C) {
+func (s *testInfoschemaTableSerialSuite) TestForAnalyzeStatus(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	statistics.ClearHistoryJobs()
 	tk.MustExec("use test")
