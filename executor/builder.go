@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor/aggfuncs"
@@ -95,6 +96,9 @@ type MockPhysicalPlan interface {
 }
 
 func (b *executorBuilder) build(p plannercore.Plan) Executor {
+	if config.GetGlobalConfig().EnableCollectExecutionInfo {
+		b.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = execdetails.NewRuntimeStatsColl()
+	}
 	switch v := p.(type) {
 	case nil:
 		return nil
@@ -877,7 +881,9 @@ func (b *executorBuilder) buildExplain(v *plannercore.Explain) Executor {
 		explain:      v,
 	}
 	if v.Analyze {
-		b.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = execdetails.NewRuntimeStatsColl()
+		if b.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl == nil {
+			b.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = execdetails.NewRuntimeStatsColl()
+		}
 		explainExec.analyzeExec = b.build(v.TargetPlan)
 	}
 	return explainExec

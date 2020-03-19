@@ -121,6 +121,8 @@ type Config struct {
 	// EnableDynamicConfig enables the TiDB to fetch configs from PD and update itself during runtime.
 	// see https://github.com/pingcap/tidb/pull/13660 for more details.
 	EnableDynamicConfig bool `toml:"enable-dynamic-config" json:"enable-dynamic-config"`
+	// EnableCollectExecutionInfo enables the TiDB to collect execution info.
+	EnableCollectExecutionInfo bool `toml:"enable-collect-execution-info" json:"enable-collect-execution-info"`
 }
 
 // nullableBool defaults unset bool options to unset instead of false, which enables us to know if the user has set 2
