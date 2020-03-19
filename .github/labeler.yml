@@ -24,8 +24,10 @@ component/statistics:
 
 component/DDL:
   - ddl/*
+  - domain/*
   - infoschema/*
   - meta/*
+  - owner/*
 
 component/config:
   - config/*
