@@ -49,9 +49,9 @@ const (
 
 // AddNewAnalyzeJob adds new analyze job.
 func AddNewAnalyzeJob(job *AnalyzeJob) {
+	analyzeStatus.Lock()
 	job.updateTime = time.Now()
 	job.State = pending
-	analyzeStatus.Lock()
 	analyzeStatus.jobs[job] = struct{}{}
 	analyzeStatus.Unlock()
 }
@@ -92,32 +92,29 @@ func GetAllAnalyzeJobs() []*AnalyzeJob {
 
 // Start marks status of the analyze job as running and update the start time.
 func (job *AnalyzeJob) Start() {
-	now := time.Now()
 	job.Mutex.Lock()
 	job.State = running
-	job.StartTime = now
-	job.updateTime = now
+	job.StartTime = time.Now()
+	job.updateTime = time.Now()
 	job.Mutex.Unlock()
 }
 
 // Update updates the row count of analyze job.
 func (job *AnalyzeJob) Update(rowCount int64) {
-	now := time.Now()
 	job.Mutex.Lock()
 	job.RowCount += rowCount
-	job.updateTime = now
+	job.updateTime = time.Now()
 	job.Mutex.Unlock()
 }
 
 // Finish update the status of analyze job to finished or failed according to `meetError`.
 func (job *AnalyzeJob) Finish(meetError bool) {
-	now := time.Now()
 	job.Mutex.Lock()
 	if meetError {
 		job.State = failed
 	} else {
 		job.State = finished
 	}
-	job.updateTime = now
+	job.updateTime = time.Now()
 	job.Mutex.Unlock()
 }
