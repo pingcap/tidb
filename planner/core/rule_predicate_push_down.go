@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 )
@@ -99,7 +100,7 @@ func (p *LogicalUnionScan) PredicatePushDown(predicates []expression.Expression)
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (ds *DataSource) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan) {
 	ds.allConds = predicates
-	_, ds.pushedDownConds, predicates = expression.ExpressionsToPB(ds.ctx.GetSessionVars().StmtCtx, predicates, ds.ctx.GetClient())
+	ds.pushedDownConds, predicates = expression.PushDownExprs(ds.ctx.GetSessionVars().StmtCtx, predicates, ds.ctx.GetClient(), kv.UnSpecified)
 	return predicates, ds
 }
 
@@ -510,6 +511,9 @@ func Conds2TableDual(p LogicalPlan, conds []expression.Expression) LogicalPlan {
 		return nil
 	}
 	sc := p.SCtx().GetSessionVars().StmtCtx
+	if expression.ContainMutableConst(p.SCtx(), []expression.Expression{con}) {
+		return nil
+	}
 	if isTrue, err := con.Value.ToBool(sc); (err == nil && isTrue == 0) || con.Value.IsNull() {
 		dual := LogicalTableDual{}.Init(p.SCtx(), p.SelectBlockOffset())
 		dual.SetSchema(p.Schema())

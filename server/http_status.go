@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -32,6 +33,7 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/fn"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -67,6 +69,33 @@ func sleepWithCtx(ctx context.Context, d time.Duration) {
 	case <-time.After(d):
 	case <-ctx.Done():
 	}
+}
+
+func (s *Server) listenStatusHTTPServer() error {
+	s.statusAddr = fmt.Sprintf("%s:%d", s.cfg.Status.StatusHost, s.cfg.Status.StatusPort)
+	if s.cfg.Status.StatusPort == 0 {
+		s.statusAddr = fmt.Sprintf("%s:%d", s.cfg.Status.StatusHost, defaultStatusPort)
+	}
+
+	logutil.BgLogger().Info("for status and metrics report", zap.String("listening on addr", s.statusAddr))
+	tlsConfig, err := s.cfg.Security.ToTLSConfig()
+	if err != nil {
+		logutil.BgLogger().Error("invalid TLS config", zap.Error(err))
+		return errors.Trace(err)
+	}
+	tlsConfig = s.setCNChecker(tlsConfig)
+
+	if tlsConfig != nil {
+		// we need to manage TLS here for cmux to distinguish between HTTP and gRPC.
+		s.statusListener, err = tls.Listen("tcp", s.statusAddr, tlsConfig)
+	} else {
+		s.statusListener, err = net.Listen("tcp", s.statusAddr)
+	}
+	if err != nil {
+		logutil.BgLogger().Info("listen failed", zap.Error(err))
+		return errors.Trace(err)
+	}
+	return nil
 }
 
 func (s *Server) startHTTPServer() {
@@ -121,18 +150,13 @@ func (s *Server) startHTTPServer() {
 	router.Handle("/mvcc/hex/{hexKey}", mvccTxnHandler{tikvHandlerTool, opMvccGetByHex})
 	router.Handle("/mvcc/index/{db}/{table}/{index}/{handle}", mvccTxnHandler{tikvHandlerTool, opMvccGetByIdx})
 
-	addr := fmt.Sprintf("%s:%d", s.cfg.Status.StatusHost, s.cfg.Status.StatusPort)
-	if s.cfg.Status.StatusPort == 0 {
-		addr = fmt.Sprintf("%s:%d", s.cfg.Status.StatusHost, defaultStatusPort)
-	}
-
 	// HTTP path for web UI.
-	if host, port, err := net.SplitHostPort(addr); err == nil {
+	if host, port, err := net.SplitHostPort(s.statusAddr); err == nil {
 		if host == "" {
 			host = "localhost"
 		}
 		baseURL := &url.URL{
-			Scheme: "http",
+			Scheme: util.InternalHTTPSchema(),
 			Host:   fmt.Sprintf("%s:%s", host, port),
 		}
 		router.HandleFunc("/web/trace", traceapp.HandleTiDB).Name("Trace Viewer")
@@ -232,6 +256,13 @@ func (s *Server) startHTTPServer() {
 	fetcher := sqlInfoFetcher{store: tikvHandlerTool.Store}
 	serverMux.HandleFunc("/debug/sub-optimal-plan", fetcher.zipInfoForSQL)
 
+	failpoint.Inject("integrateFailpoint", func() {
+		serverMux.HandleFunc("/fail/", func(w http.ResponseWriter, r *http.Request) {
+			r.URL.Path = strings.TrimPrefix(r.URL.Path, "/fail")
+			new(failpoint.HttpHandler).ServeHTTP(w, r)
+		})
+	})
+
 	var (
 		httpRouterPage bytes.Buffer
 		pathTemplate   string
@@ -262,36 +293,17 @@ func (s *Server) startHTTPServer() {
 			logutil.BgLogger().Error("write HTTP index page failed", zap.Error(err))
 		}
 	})
-
-	logutil.BgLogger().Info("for status and metrics report", zap.String("listening on addr", addr))
-	s.setupStatusServerAndRPCServer(addr, serverMux)
+	s.startStatusServerAndRPCServer(serverMux)
 }
 
-func (s *Server) setupStatusServerAndRPCServer(addr string, serverMux *http.ServeMux) {
-	tlsConfig, err := s.cfg.Security.ToTLSConfig()
-	if err != nil {
-		logutil.BgLogger().Error("invalid TLS config", zap.Error(err))
-		return
-	}
-
-	var l net.Listener
-	if tlsConfig != nil {
-		// we need to manage TLS here for cmux to distinguish between HTTP and gRPC.
-		l, err = tls.Listen("tcp", addr, tlsConfig)
-	} else {
-		l, err = net.Listen("tcp", addr)
-	}
-	if err != nil {
-		logutil.BgLogger().Info("listen failed", zap.Error(err))
-		return
-	}
-	m := cmux.New(l)
+func (s *Server) startStatusServerAndRPCServer(serverMux *http.ServeMux) {
+	m := cmux.New(s.statusListener)
 	// Match connections in order:
 	// First HTTP, and otherwise grpc.
 	httpL := m.Match(cmux.HTTP1Fast())
 	grpcL := m.Match(cmux.Any())
 
-	s.statusServer = &http.Server{Addr: addr, Handler: CorsHandler{handler: serverMux, cfg: s.cfg}}
+	s.statusServer = &http.Server{Addr: s.statusAddr, Handler: CorsHandler{handler: serverMux, cfg: s.cfg}}
 	s.grpcServer = NewRPCServer(s.cfg, s.dom, s)
 
 	go util.WithRecovery(func() {
@@ -304,10 +316,32 @@ func (s *Server) setupStatusServerAndRPCServer(addr string, serverMux *http.Serv
 		logutil.BgLogger().Error("http server error", zap.Error(err))
 	}, nil)
 
-	err = m.Serve()
+	err := m.Serve()
 	if err != nil {
 		logutil.BgLogger().Error("start status/rpc server error", zap.Error(err))
 	}
+}
+
+func (s *Server) setCNChecker(tlsConfig *tls.Config) *tls.Config {
+	if tlsConfig != nil && len(s.cfg.Security.ClusterVerifyCN) != 0 {
+		checkCN := make(map[string]struct{})
+		for _, cn := range s.cfg.Security.ClusterVerifyCN {
+			cn = strings.TrimSpace(cn)
+			checkCN[cn] = struct{}{}
+		}
+		tlsConfig.VerifyPeerCertificate = func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
+			for _, chain := range verifiedChains {
+				if len(chain) != 0 {
+					if _, match := checkCN[chain[0].Subject.CommonName]; match {
+						return nil
+					}
+				}
+			}
+			return errors.Errorf("client certificate authentication failed. The Common Name from the client certificate was not found in the configuration cluster-verify-cn with value: %s", s.cfg.Security.ClusterVerifyCN)
+		}
+		tlsConfig.ClientAuth = tls.RequireAndVerifyClientCert
+	}
+	return tlsConfig
 }
 
 // status of TiDB.

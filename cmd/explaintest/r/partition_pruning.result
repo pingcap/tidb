@@ -334,50 +334,43 @@ a
 1
 EXPLAIN SELECT * FROM t1 WHERE a = 1;
 id	estRows	task	operator info
-TableReader_7	1.00	root	data:TableRangeScan_6
-└─TableRangeScan_6	1.00	cop[tikv]	table:t1, partition:p1, range:[1,1], keep order:false, stats:pseudo
+Point_Get_6	1.00	root	table:t1, handle:1, partition:p1
 SELECT * FROM t1 WHERE a = 2 order by a;
 a
 2
 EXPLAIN SELECT * FROM t1 WHERE a = 2;
 id	estRows	task	operator info
-TableReader_7	1.00	root	data:TableRangeScan_6
-└─TableRangeScan_6	1.00	cop[tikv]	table:t1, partition:p2, range:[2,2], keep order:false, stats:pseudo
+Point_Get_6	1.00	root	table:t1, handle:2, partition:p2
 SELECT * FROM t1 WHERE a = 3 order by a;
 a
 3
 EXPLAIN SELECT * FROM t1 WHERE a = 3;
 id	estRows	task	operator info
-TableReader_7	1.00	root	data:TableRangeScan_6
-└─TableRangeScan_6	1.00	cop[tikv]	table:t1, partition:p3, range:[3,3], keep order:false, stats:pseudo
+Point_Get_6	1.00	root	table:t1, handle:3, partition:p3
 SELECT * FROM t1 WHERE a = 4 order by a;
 a
 4
 EXPLAIN SELECT * FROM t1 WHERE a = 4;
 id	estRows	task	operator info
-TableReader_7	1.00	root	data:TableRangeScan_6
-└─TableRangeScan_6	1.00	cop[tikv]	table:t1, partition:p4, range:[4,4], keep order:false, stats:pseudo
+Point_Get_6	1.00	root	table:t1, handle:4, partition:p4
 SELECT * FROM t1 WHERE a = 5 order by a;
 a
 5
 EXPLAIN SELECT * FROM t1 WHERE a = 5;
 id	estRows	task	operator info
-TableReader_7	1.00	root	data:TableRangeScan_6
-└─TableRangeScan_6	1.00	cop[tikv]	table:t1, partition:p5, range:[5,5], keep order:false, stats:pseudo
+Point_Get_6	1.00	root	table:t1, handle:5, partition:p5
 SELECT * FROM t1 WHERE a = 6 order by a;
 a
 6
 EXPLAIN SELECT * FROM t1 WHERE a = 6;
 id	estRows	task	operator info
-TableReader_7	1.00	root	data:TableRangeScan_6
-└─TableRangeScan_6	1.00	cop[tikv]	table:t1, partition:max, range:[6,6], keep order:false, stats:pseudo
+Point_Get_6	1.00	root	table:t1, handle:6, partition:max
 SELECT * FROM t1 WHERE a = 7 order by a;
 a
 7
 EXPLAIN SELECT * FROM t1 WHERE a = 7;
 id	estRows	task	operator info
-TableReader_7	1.00	root	data:TableRangeScan_6
-└─TableRangeScan_6	1.00	cop[tikv]	table:t1, partition:max, range:[7,7], keep order:false, stats:pseudo
+Point_Get_6	1.00	root	table:t1, handle:7, partition:max
 SELECT * FROM t1 WHERE a >= 1 order by a;
 a
 1
@@ -812,43 +805,37 @@ a
 1
 EXPLAIN SELECT * FROM t1 WHERE a = 1;
 id	estRows	task	operator info
-TableReader_7	1.00	root	data:TableRangeScan_6
-└─TableRangeScan_6	1.00	cop[tikv]	table:t1, partition:p1, range:[1,1], keep order:false, stats:pseudo
+Point_Get_6	1.00	root	table:t1, handle:1, partition:p1
 SELECT * FROM t1 WHERE a = 2;
 a
 2
 EXPLAIN SELECT * FROM t1 WHERE a = 2;
 id	estRows	task	operator info
-TableReader_7	1.00	root	data:TableRangeScan_6
-└─TableRangeScan_6	1.00	cop[tikv]	table:t1, partition:p2, range:[2,2], keep order:false, stats:pseudo
+Point_Get_6	1.00	root	table:t1, handle:2, partition:p2
 SELECT * FROM t1 WHERE a = 3;
 a
 3
 EXPLAIN SELECT * FROM t1 WHERE a = 3;
 id	estRows	task	operator info
-TableReader_7	1.00	root	data:TableRangeScan_6
-└─TableRangeScan_6	1.00	cop[tikv]	table:t1, partition:p3, range:[3,3], keep order:false, stats:pseudo
+Point_Get_6	1.00	root	table:t1, handle:3, partition:p3
 SELECT * FROM t1 WHERE a = 4;
 a
 4
 EXPLAIN SELECT * FROM t1 WHERE a = 4;
 id	estRows	task	operator info
-TableReader_7	1.00	root	data:TableRangeScan_6
-└─TableRangeScan_6	1.00	cop[tikv]	table:t1, partition:p4, range:[4,4], keep order:false, stats:pseudo
+Point_Get_6	1.00	root	table:t1, handle:4, partition:p4
 SELECT * FROM t1 WHERE a = 5;
 a
 5
 EXPLAIN SELECT * FROM t1 WHERE a = 5;
 id	estRows	task	operator info
-TableReader_7	1.00	root	data:TableRangeScan_6
-└─TableRangeScan_6	1.00	cop[tikv]	table:t1, partition:max, range:[5,5], keep order:false, stats:pseudo
+Point_Get_6	1.00	root	table:t1, handle:5, partition:max
 SELECT * FROM t1 WHERE a = 6;
 a
 6
 EXPLAIN SELECT * FROM t1 WHERE a = 6;
 id	estRows	task	operator info
-TableReader_7	1.00	root	data:TableRangeScan_6
-└─TableRangeScan_6	1.00	cop[tikv]	table:t1, partition:max, range:[6,6], keep order:false, stats:pseudo
+Point_Get_6	1.00	root	table:t1, handle:6, partition:max
 SELECT * FROM t1 WHERE a >= 1 order by a;
 a
 1

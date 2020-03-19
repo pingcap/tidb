@@ -55,7 +55,7 @@ const (
 	// TiDBMergeJoin is hint enforce merge join.
 	TiDBMergeJoin = "tidb_smj"
 	// HintSMJ is hint enforce merge join.
-	HintSMJ = "sm_join"
+	HintSMJ = "merge_join"
 	// TiDBIndexNestedLoopJoin is hint enforce index nested loop join.
 	TiDBIndexNestedLoopJoin = "tidb_inlj"
 	// HintINLJ is hint enforce index nested loop join.
@@ -2560,6 +2560,9 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	}
 
 	if tableInfo.IsView() {
+		if b.capFlag&collectUnderlyingViewName != 0 {
+			b.underlyingViewNames.Insert(dbName.L + "." + tn.Name.L)
+		}
 		return b.BuildDataSourceFromView(ctx, dbName, tableInfo)
 	}
 
@@ -2838,6 +2841,8 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName model.CIStr, table
 		case infoschema.TableInspectionSummary:
 			p.Extractor = &InspectionSummaryTableExtractor{}
 			p.QueryTimeRange = b.timeRangeForSummaryTable()
+		case infoschema.TableInspectionRules:
+			p.Extractor = &InspectionRuleTableExtractor{}
 		case infoschema.TableMetricSummary, infoschema.TableMetricSummaryByLabel:
 			p.Extractor = &MetricSummaryTableExtractor{}
 			p.QueryTimeRange = b.timeRangeForSummaryTable()
@@ -3161,6 +3166,11 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 			return nil, err
 		}
 	}
+	if !b.ctx.GetSessionVars().IsAutocommit() || b.ctx.GetSessionVars().InTxn() {
+		if !update.MultipleTable {
+			p = b.buildSelectLock(p, ast.SelectLockForUpdate)
+		}
+	}
 
 	if update.Order != nil {
 		p, err = b.buildSort(ctx, p, update.Order.Items, nil, nil)
@@ -3199,7 +3209,7 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 	updt.names = p.OutputNames()
 	// We cannot apply projection elimination when building the subplan, because
 	// columns in orderedList cannot be resolved.
-	updt.SelectPlan, _, err = DoOptimize(ctx, b.optFlag&^flagEliminateProjection, p)
+	updt.SelectPlan, _, err = DoOptimize(ctx, b.ctx, b.optFlag&^flagEliminateProjection, p)
 	if err != nil {
 		return nil, err
 	}
@@ -3396,6 +3406,11 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 			return nil, err
 		}
 	}
+	if !b.ctx.GetSessionVars().IsAutocommit() || b.ctx.GetSessionVars().InTxn() {
+		if !delete.IsMultiTable {
+			p = b.buildSelectLock(p, ast.SelectLockForUpdate)
+		}
+	}
 
 	if delete.Order != nil {
 		p, err = b.buildSort(ctx, p, delete.Order.Items, nil, nil)
@@ -3422,7 +3437,7 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 	}.Init(b.ctx)
 
 	del.names = p.OutputNames()
-	del.SelectPlan, _, err = DoOptimize(ctx, b.optFlag, p)
+	del.SelectPlan, _, err = DoOptimize(ctx, b.ctx, b.optFlag, p)
 	if err != nil {
 		return nil, err
 	}
@@ -3817,6 +3832,9 @@ func (b *PlanBuilder) buildWindowFunctionFrame(ctx context.Context, spec *ast.Wi
 
 func (b *PlanBuilder) checkWindowFuncArgs(ctx context.Context, p LogicalPlan, windowFuncExprs []*ast.WindowFuncExpr, windowAggMap map[*ast.AggregateFuncExpr]int) error {
 	for _, windowFuncExpr := range windowFuncExprs {
+		if strings.ToLower(windowFuncExpr.F) == ast.AggFuncGroupConcat {
+			return ErrNotSupportedYet.GenWithStackByArgs("group_concat as window function")
+		}
 		args, err := b.buildArgs4WindowFunc(ctx, p, windowFuncExpr.Args, windowAggMap)
 		if err != nil {
 			return err

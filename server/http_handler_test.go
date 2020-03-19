@@ -15,6 +15,9 @@ package server
 
 import (
 	"bytes"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
@@ -30,7 +33,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	dmysql "github.com/go-sql-driver/mysql"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	zaplog "github.com/pingcap/log"
@@ -777,7 +779,7 @@ func (ts *HTTPHandlerTestSuite) TestGetSchema(c *C) {
 	var dbs []*model.DBInfo
 	err = decoder.Decode(&dbs)
 	c.Assert(err, IsNil)
-	expects := []string{"information_schema", "inspection_schema", "metrics_schema", "mysql", "performance_schema", "test", "tidb"}
+	expects := []string{"information_schema", "metrics_schema", "mysql", "performance_schema", "test", "tidb"}
 	names := make([]string, len(dbs))
 	for i, v := range dbs {
 		names[i] = v.Name.L
@@ -928,10 +930,7 @@ func (ts *HTTPHandlerTestSuite) TestPostSettings(c *C) {
 	c.Assert(atomic.LoadUint32(&variable.DDLSlowOprThreshold), Equals, uint32(200))
 
 	// test check_mb4_value_in_utf8
-	overriders := []configOverrider{func(config *dmysql.Config) {
-		config.Strict = false
-	}}
-	db, err := sql.Open("mysql", ts.getDSN(overriders...))
+	db, err := sql.Open("mysql", ts.getDSN())
 	c.Assert(err, IsNil, Commentf("Error connecting"))
 	defer db.Close()
 	dbt := &DBTest{c, db}
@@ -1059,6 +1058,19 @@ func (ts *HTTPHandlerTestSuite) TestDebugZip(c *C) {
 	c.Assert(resp.Body.Close(), IsNil)
 }
 
+func (ts *HTTPHandlerTestSuite) TestCheckCN(c *C) {
+	s := &Server{cfg: &config.Config{Security: config.Security{ClusterVerifyCN: []string{"a ", "b", "c"}}}}
+	tlsConfig := &tls.Config{}
+	s.setCNChecker(tlsConfig)
+	c.Assert(tlsConfig.VerifyPeerCertificate, NotNil)
+	err := tlsConfig.VerifyPeerCertificate(nil, [][]*x509.Certificate{{{Subject: pkix.Name{CommonName: "a"}}}})
+	c.Assert(err, IsNil)
+	err = tlsConfig.VerifyPeerCertificate(nil, [][]*x509.Certificate{{{Subject: pkix.Name{CommonName: "b"}}}})
+	c.Assert(err, IsNil)
+	err = tlsConfig.VerifyPeerCertificate(nil, [][]*x509.Certificate{{{Subject: pkix.Name{CommonName: "d"}}}})
+	c.Assert(err, NotNil)
+}
+
 func (ts *HTTPHandlerTestSuite) TestZipInfoForSQL(c *C) {
 	ts.startServer(c)
 	defer ts.stopServer(c)
@@ -1114,5 +1126,27 @@ func (ts *HTTPHandlerTestSuite) TestZipInfoForSQL(c *C) {
 	b, err = ioutil.ReadAll(resp.Body)
 	c.Assert(err, IsNil)
 	c.Assert(string(b), Equals, "use database non_exists_db failed, err: [schema:1049]Unknown database 'non_exists_db'\n")
+	c.Assert(resp.Body.Close(), IsNil)
+}
+
+func (ts *HTTPHandlerTestSuite) TestFailpointHandler(c *C) {
+	defer ts.stopServer(c)
+
+	// start server without enabling failpoint integration
+	ts.startServer(c)
+	resp, err := ts.fetchStatus("/fail/")
+	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusNotFound)
+	ts.stopServer(c)
+
+	// enable failpoint integration and start server
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/server/integrateFailpoint", "return"), IsNil)
+	ts.startServer(c)
+	resp, err = ts.fetchStatus("/fail/")
+	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+	b, err := ioutil.ReadAll(resp.Body)
+	c.Assert(err, IsNil)
+	c.Assert(strings.Contains(string(b), "github.com/pingcap/tidb/server/integrateFailpoint=return"), IsTrue)
 	c.Assert(resp.Body.Close(), IsNil)
 }

@@ -76,6 +76,8 @@ const (
 // GetOperand maps logical plan operator to Operand.
 func GetOperand(p plannercore.LogicalPlan) Operand {
 	switch p.(type) {
+	case *plannercore.LogicalApply:
+		return OperandApply
 	case *plannercore.LogicalJoin:
 		return OperandJoin
 	case *plannercore.LogicalAggregation:
@@ -84,8 +86,6 @@ func GetOperand(p plannercore.LogicalPlan) Operand {
 		return OperandProjection
 	case *plannercore.LogicalSelection:
 		return OperandSelection
-	case *plannercore.LogicalApply:
-		return OperandApply
 	case *plannercore.LogicalMaxOneRow:
 		return OperandMaxOneRow
 	case *plannercore.LogicalTableDual:

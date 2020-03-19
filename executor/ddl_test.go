@@ -267,6 +267,15 @@ func (s *testSuite6) TestCreateView(c *C) {
 	tk.MustExec("create view v1_if_exists as (select * from t1)")
 	tk.MustExec("drop view if exists v1_if_exists,v2_if_exists,v3_if_exists")
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1051|Unknown table 'test.v2_if_exists'", "Note|1051|Unknown table 'test.v3_if_exists'"))
+
+	// Test for create nested view.
+	tk.MustExec("create table test_v_nested(a int)")
+	tk.MustExec("create definer='root'@'localhost' view v_nested as select * from test_v_nested")
+	tk.MustExec("create definer='root'@'localhost' view v_nested2 as select * from v_nested")
+	_, err = tk.Exec("create or replace definer='root'@'localhost' view v_nested as select * from v_nested2")
+	c.Assert(terror.ErrorEqual(err, plannercore.ErrNoSuchTable), IsTrue)
+	tk.MustExec("drop table test_v_nested")
+	tk.MustExec("drop view v_nested, v_nested2")
 }
 
 func (s *testSuite6) TestCreateViewWithOverlongColName(c *C) {
@@ -784,7 +793,7 @@ func (s *testAutoRandomSuite) TestAutoRandomBitsData(c *C) {
 
 	// Test explicit insert.
 	tk.MustExec("create table t (a tinyint primary key auto_random(2), b int)")
-	for i := 0; i < 100; i++ {
+	for i := 1; i <= 100; i++ {
 		tk.MustExec("insert into t values (?, ?)", i, i)
 	}
 	_, err = tk.Exec("insert into t (b) values (0)")
@@ -813,8 +822,8 @@ func (s *testAutoRandomSuite) TestAutoRandomBitsData(c *C) {
 	tk.MustExec("drop table t")
 
 	tk.MustExec("create table t (a tinyint primary key auto_random(2), b int)")
-	tk.MustExec("insert into t values (0, 2)")
-	tk.MustExec("update t set a = 31 where a = 0")
+	tk.MustExec("insert into t values (1, 2)")
+	tk.MustExec("update t set a = 31 where a = 1")
 	_, err = tk.Exec("insert into t (b) values (0)")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, autoid.ErrAutoRandReadFailed.GenWithStackByArgs().Error())

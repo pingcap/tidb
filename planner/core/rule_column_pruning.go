@@ -337,14 +337,7 @@ func (la *LogicalApply) PruneColumns(parentUsedCols []*expression.Column) error 
 		return err
 	}
 
-	if la.CorCols == nil {
-		// note: it's a hack here.
-		// PruneColumns will be called twice, and the second call which is after
-		// PredicatePushDown should not handle Correlate columns.
-		// TODO: Move this to other rules before PredicatePushDown.
-		// This line should not appear in PruneColumns
-		la.CorCols = extractCorColumnsBySchema(la.children[1], la.children[0].Schema())
-	}
+	la.CorCols = extractCorColumnsBySchema(la.children[1], la.children[0].Schema())
 	for _, col := range la.CorCols {
 		leftCols = append(leftCols, &col.Column)
 	}

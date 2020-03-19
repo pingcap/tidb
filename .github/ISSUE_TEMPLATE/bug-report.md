@@ -9,7 +9,7 @@ labels: type/bug
 Please answer these questions before submitting your issue. Thanks!
 
 1. What did you do?
-If possible, provide a recipe for reproducing the error.
+<!--If possible, provide a recipe for reproducing the error.-->
 
 
 2. What did you expect to see?

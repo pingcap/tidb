@@ -15,6 +15,7 @@ package expression
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -30,14 +31,14 @@ func (s *testCollationSuites) TestCompareString(c *C) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
 
-	c.Assert(types.CompareString("a", "A", "utf8_general_ci", 1), Equals, 0)
-	c.Assert(types.CompareString("À", "A", "utf8_general_ci", 1), Equals, 0)
-	c.Assert(types.CompareString("😜", "😃", "utf8_general_ci", 1), Equals, 0)
-	c.Assert(types.CompareString("a ", "a  ", "utf8_general_ci", 3), Equals, 0)
-	c.Assert(types.CompareString("a", "A", "binary", 1), Not(Equals), 0)
-	c.Assert(types.CompareString("À", "A", "binary", 1), Not(Equals), 0)
-	c.Assert(types.CompareString("😜", "😃", "binary", 1), Not(Equals), 0)
-	c.Assert(types.CompareString("a ", "a  ", "binary", 3), Not(Equals), 0)
+	c.Assert(types.CompareString("a", "A", "utf8_general_ci"), Equals, 0)
+	c.Assert(types.CompareString("À", "A", "utf8_general_ci"), Equals, 0)
+	c.Assert(types.CompareString("😜", "😃", "utf8_general_ci"), Equals, 0)
+	c.Assert(types.CompareString("a ", "a  ", "utf8_general_ci"), Equals, 0)
+	c.Assert(types.CompareString("a", "A", "binary"), Not(Equals), 0)
+	c.Assert(types.CompareString("À", "A", "binary"), Not(Equals), 0)
+	c.Assert(types.CompareString("😜", "😃", "binary"), Not(Equals), 0)
+	c.Assert(types.CompareString("a ", "a  ", "binary"), Not(Equals), 0)
 
 	ctx := mock.NewContext()
 	ft := types.NewFieldType(mysql.TypeVarString)
@@ -59,9 +60,20 @@ func (s *testCollationSuites) TestCompareString(c *C) {
 	chk.Column(0).AppendString("a ")
 	chk.Column(1).AppendString("a  ")
 	for i := 0; i < 4; i++ {
-		v, isNull, err := CompareStringWithCollationInfo(ctx, col1, col2, chk.GetRow(0), chk.GetRow(0), "utf8_general_ci", 3)
+		v, isNull, err := CompareStringWithCollationInfo(ctx, col1, col2, chk.GetRow(0), chk.GetRow(0), "utf8_general_ci")
 		c.Assert(err, IsNil)
 		c.Assert(isNull, IsFalse)
 		c.Assert(v, Equals, int64(0))
 	}
+}
+
+func (s *testCollationSuites) TestDeriveCollationFromExprs(c *C) {
+	tInt := types.NewFieldType(mysql.TypeLonglong)
+	ctx := mock.NewContext()
+
+	// no string column
+	chs, coll, flen := DeriveCollationFromExprs(ctx, newColumnWithType(0, tInt), newColumnWithType(0, tInt), newColumnWithType(0, tInt))
+	c.Assert(chs, Equals, charset.CharsetBin)
+	c.Assert(coll, Equals, charset.CollationBin)
+	c.Assert(flen, Equals, types.UnspecifiedLength)
 }
