@@ -14,9 +14,7 @@
 package chunk
 
 import (
-	"bytes"
 	"errors"
-	"fmt"
 	"sync"
 	"sync/atomic"
 
@@ -228,15 +226,8 @@ func (a *SpillDiskAction) Action(t *memory.Tracker) {
 	}
 	a.once.Do(func() {
 		atomic.StoreUint32(&a.c.exceeded, 1)
-		buffer := bytes.NewBufferString("\n")
-		fmt.Fprintf(buffer, "%s\"%s\"{\n", "", t.Label())
-		bytesLimit := t.GetBytesLimit()
-		if bytesLimit > 0 {
-			fmt.Fprintf(buffer, "%s  \"quota\": %s\n", "", t.BytesToString(bytesLimit))
-		}
-		fmt.Fprintf(buffer, "%s  \"consumed\": %s\n", "", t.BytesToString(t.BytesConsumed()))
-		buffer.WriteString("}\n")
-		logutil.BgLogger().Info("memory exceeds quota, spill to disk now.", zap.String("memory", buffer.String()))
+		logutil.BgLogger().Info("memory exceeds quota, spill to disk now.",
+			zap.Int64("qonsumed", t.BytesConsumed()), zap.Int64("quota", t.GetBytesLimit()))
 	})
 }
 
