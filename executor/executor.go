@@ -16,6 +16,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"math"
 	"runtime"
 	"strconv"
 	"strings"
@@ -367,9 +368,9 @@ func (e *DDLJobRetriever) initial(txn kv.Transaction) error {
 func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, checker privilege.Manager) {
 	schemaName := job.SchemaName
 	tableName := ""
-	finishTS := uint64(0)
+	finishTs := uint64(0)
 	if job.BinlogInfo != nil {
-		finishTS = job.BinlogInfo.FinishedTS
+		finishTs = job.BinlogInfo.FinishedTS
 		if job.BinlogInfo.TableInfo != nil {
 			tableName = job.BinlogInfo.TableInfo.Name.L
 		}
@@ -385,6 +386,9 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 		tableName = getTableName(e.is, job.TableID)
 	}
 
+	startTS := ts2Time(job.StartTS)
+	finishTS := ts2Time(finishTs)
+
 	// Check the privilege.
 	if checker != nil && !checker.RequestVerification(e.activeRoles, strings.ToLower(schemaName), strings.ToLower(tableName), "", mysql.AllPrivMask) {
 		return
@@ -398,13 +402,17 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 	req.AppendInt64(5, job.SchemaID)
 	req.AppendInt64(6, job.TableID)
 	req.AppendInt64(7, job.RowCount)
-	req.AppendString(8, model.TSConvert2Time(job.StartTS).String())
-	if finishTS > 0 {
-		req.AppendString(9, model.TSConvert2Time(finishTS).String())
+	req.AppendTime(8, startTS)
+	if finishTS != types.ZeroTime {
+		req.AppendTime(9, finishTS)
 	} else {
-		req.AppendString(9, "")
+		req.AppendTime(9, types.ZeroTime)
 	}
 	req.AppendString(10, job.State.String())
+}
+
+func ts2Time(timestamp uint64) types.Time {
+	return types.NewTime(types.FromGoTime(model.TSConvert2Time(timestamp).Truncate(time.Duration(math.Pow10(9))*time.Nanosecond)), mysql.TypeDatetime, types.DefaultFsp)
 }
 
 // ShowDDLJobQueriesExec represents a show DDL job queries executor.
