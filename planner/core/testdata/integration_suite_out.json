@@ -7,7 +7,7 @@
         "Plan": [
           "IndexLookUp_14 1.00 root  limit embedded(offset:2, count:1)",
           "├─Limit_13(Build) 3.00 cop[tikv]  offset:0, count:3",
-          "│ └─IndexRangeScan_11 3.00 cop[tikv] table:tbl, index:b, c range:(1,+inf], keep order:false",
+          "│ └─IndexRangeScan_11 3.00 cop[tikv] table:tbl, index:idx_b_c(b, c) range:(1,+inf], keep order:false",
           "└─TableRowIDScan_12(Probe) 1.00 cop[tikv] table:tbl keep order:false, stats:pseudo"
         ]
       },
@@ -17,7 +17,7 @@
           "Projection_25 1.00 root  test.tbl.a, test.tbl.b, test.tbl.c",
           "└─IndexLookUp_24 1.00 root  limit embedded(offset:2, count:1)",
           "  ├─Limit_23(Build) 3.00 cop[tikv]  offset:0, count:3",
-          "  │ └─IndexRangeScan_21 3.00 cop[tikv] table:tbl, index:b, c range:(1,+inf], keep order:true, desc",
+          "  │ └─IndexRangeScan_21 3.00 cop[tikv] table:tbl, index:idx_b_c(b, c) range:(1,+inf], keep order:true, desc",
           "  └─TableRowIDScan_22(Probe) 1.00 cop[tikv] table:tbl keep order:false, stats:pseudo"
         ]
       },
@@ -27,7 +27,7 @@
           "IndexLookUp_15 1.00 root  limit embedded(offset:2, count:1)",
           "├─Limit_14(Build) 3.00 cop[tikv]  offset:0, count:3",
           "│ └─Selection_13 3.00 cop[tikv]  gt(test.tbl.c, 1)",
-          "│   └─IndexRangeScan_11 3.75 cop[tikv] table:tbl, index:b, c range:(1,+inf], keep order:false",
+          "│   └─IndexRangeScan_11 3.75 cop[tikv] table:tbl, index:idx_b_c(b, c) range:(1,+inf], keep order:false",
           "└─TableRowIDScan_12(Probe) 1.00 cop[tikv] table:tbl keep order:false, stats:pseudo"
         ]
       },
@@ -36,7 +36,7 @@
         "Plan": [
           "Limit_9 1.00 root  offset:2, count:1",
           "└─IndexLookUp_15 3.00 root  ",
-          "  ├─IndexRangeScan_11(Build) 3.75 cop[tikv] table:tbl, index:b, c range:(1,+inf], keep order:false",
+          "  ├─IndexRangeScan_11(Build) 3.75 cop[tikv] table:tbl, index:idx_b_c(b, c) range:(1,+inf], keep order:false",
           "  └─Limit_14(Probe) 3.00 cop[tikv]  offset:0, count:3",
           "    └─Selection_13 3.00 cop[tikv]  gt(test.tbl.a, 1)",
           "      └─TableRowIDScan_12 3.75 cop[tikv] table:tbl keep order:false"
@@ -110,7 +110,7 @@
           "├─TableReader_19(Build) 1.00 root  data:TableFullScan_18",
           "│ └─TableFullScan_18 1.00 cop[tikv] table:t1 keep order:false",
           "└─IndexLookUp_8(Probe) 2.00 root  ",
-          "  ├─IndexRangeScan_6(Build) 2.00 cop[tikv] table:t2, index:a, b range: decided by [eq(test.t2.a, test.t1.a)], keep order:false",
+          "  ├─IndexRangeScan_6(Build) 2.00 cop[tikv] table:t2, index:PRIMARY(a, b) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false",
           "  └─TableRowIDScan_7(Probe) 2.00 cop[tikv] table:t2 keep order:false"
         ]
       },
@@ -121,7 +121,7 @@
           "├─TableReader_19(Build) 1.00 root  data:TableFullScan_18",
           "│ └─TableFullScan_18 1.00 cop[tikv] table:t1 keep order:false",
           "└─IndexLookUp_8(Probe) 2.00 root  ",
-          "  ├─IndexRangeScan_6(Build) 2.00 cop[tikv] table:t2, index:a, b range: decided by [eq(test.t2.a, test.t1.a) le(test.t1.c, test.t2.b)], keep order:false",
+          "  ├─IndexRangeScan_6(Build) 2.00 cop[tikv] table:t2, index:PRIMARY(a, b) range: decided by [eq(test.t2.a, test.t1.a) le(test.t1.c, test.t2.b)], keep order:false",
           "  └─TableRowIDScan_7(Probe) 2.00 cop[tikv] table:t2 keep order:false"
         ]
       },
@@ -132,7 +132,7 @@
           "├─TableReader_19(Build) 1.00 root  data:TableFullScan_18",
           "│ └─TableFullScan_18 1.00 cop[tikv] table:t1 keep order:false",
           "└─IndexLookUp_8(Probe) 1.00 root  ",
-          "  ├─IndexRangeScan_6(Build) 1.00 cop[tikv] table:t2, index:a, b range: decided by [eq(test.t2.a, test.t1.a) eq(test.t2.b, 1)], keep order:false",
+          "  ├─IndexRangeScan_6(Build) 1.00 cop[tikv] table:t2, index:PRIMARY(a, b) range: decided by [eq(test.t2.a, test.t1.a) eq(test.t2.b, 1)], keep order:false",
           "  └─TableRowIDScan_7(Probe) 1.00 cop[tikv] table:t2 keep order:false"
         ]
       }
@@ -199,8 +199,8 @@
         "SQL": "explain select /*+ USE_INDEX_MERGE(t, a, b) */ * from t where a = 1 or b = 2",
         "Plan": [
           "IndexMerge_8 2.00 root  ",
-          "├─IndexRangeScan_5(Build) 1.00 cop[tikv] table:t, index:a range:[1,1], keep order:false, stats:pseudo",
-          "├─IndexRangeScan_6(Build) 1.00 cop[tikv] table:t, index:b range:[2,2], keep order:false, stats:pseudo",
+          "├─IndexRangeScan_5(Build) 1.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false, stats:pseudo",
+          "├─IndexRangeScan_6(Build) 1.00 cop[tikv] table:t, index:b(b) range:[2,2], keep order:false, stats:pseudo",
           "└─TableRowIDScan_7(Probe) 2.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       }
@@ -311,7 +311,7 @@
           "StreamAgg_20 1.00 root  funcs:avg(Column#7, Column#8)->Column#4",
           "└─IndexReader_21 1.00 root  index:StreamAgg_8",
           "  └─StreamAgg_8 1.00 cop[tikv]  funcs:avg(test.t.a)->Column#7",
-          "    └─IndexFullScan_19 10000.00 cop[tikv] table:t, index:a keep order:false, stats:pseudo"
+          "    └─IndexFullScan_19 10000.00 cop[tikv] table:t, index:ia(a) keep order:false, stats:pseudo"
         ],
         "Warn": [
           "[planner:1815]Storage hints are conflict, you can only specify one storage type of table test.t"
@@ -323,7 +323,7 @@
           "StreamAgg_20 1.00 root  funcs:avg(Column#7, Column#8)->Column#4",
           "└─IndexReader_21 1.00 root  index:StreamAgg_8",
           "  └─StreamAgg_8 1.00 cop[tikv]  funcs:avg(test.t.a)->Column#7",
-          "    └─IndexFullScan_19 10000.00 cop[tikv] table:t, index:a keep order:false, stats:pseudo"
+          "    └─IndexFullScan_19 10000.00 cop[tikv] table:t, index:ia(a) keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -333,7 +333,7 @@
           "StreamAgg_20 1.00 root  funcs:avg(Column#7, Column#8)->Column#4",
           "└─IndexReader_21 1.00 root  index:StreamAgg_8",
           "  └─StreamAgg_8 1.00 cop[tikv]  funcs:avg(test.t.a)->Column#7",
-          "    └─IndexFullScan_19 10000.00 cop[tikv] table:t, index:a keep order:false, stats:pseudo"
+          "    └─IndexFullScan_19 10000.00 cop[tikv] table:t, index:ia(a) keep order:false, stats:pseudo"
         ],
         "Warn": [
           "[planner:1815]No available path for table test.t with the store type tiflash of the hint /*+ read_from_storage */, please check the status of the table replica and variable value of tidb_isolation_read_engines(map[0:{}])"
@@ -371,7 +371,7 @@
         "Plan": [
           "IndexJoin_12 12487.50 root  inner join, inner:TableReader_11, outer key:test.t1.a, inner key:test.t2.a, other cond:eq(test.t1.b, test.t2.b)",
           "├─IndexReader_21(Build) 9990.00 root  index:IndexFullScan_20",
-          "│ └─IndexFullScan_20 9990.00 cop[tikv] table:t1, index:b keep order:false, stats:pseudo",
+          "│ └─IndexFullScan_20 9990.00 cop[tikv] table:t1, index:idx_t1_b(b) keep order:false, stats:pseudo",
           "└─TableReader_11(Probe) 1.00 root  data:Selection_10",
           "  └─Selection_10 1.00 cop[tikv]  not(isnull(test.t2.b))",
           "    └─TableRangeScan_9 1.00 cop[tikv] table:t2 range: decided by [test.t1.a], keep order:false, stats:pseudo"
@@ -382,7 +382,7 @@
         "Plan": [
           "IndexJoin_12 12487.50 root  inner join, inner:TableReader_11, outer key:test.t1.a, test.t1.b, inner key:test.t2.a, test.t2.a, other cond:eq(test.t1.b, test.t2.b)",
           "├─IndexReader_21(Build) 9990.00 root  index:IndexFullScan_20",
-          "│ └─IndexFullScan_20 9990.00 cop[tikv] table:t1, index:b keep order:false, stats:pseudo",
+          "│ └─IndexFullScan_20 9990.00 cop[tikv] table:t1, index:idx_t1_b(b) keep order:false, stats:pseudo",
           "└─TableReader_11(Probe) 1.00 root  data:Selection_10",
           "  └─Selection_10 1.00 cop[tikv]  not(isnull(test.t2.b))",
           "    └─TableRangeScan_9 1.00 cop[tikv] table:t2 range: decided by [test.t1.a test.t1.b], keep order:false, stats:pseudo"

@@ -1154,7 +1154,7 @@ func (s *testSuiteJoin1) TestIndexLookupJoin(c *C) {
 		"  │   └─TableFullScan_24 64.00 cop[tikv] table:t keep order:false",
 		"  └─IndexReader_15(Probe) 1.00 root  index:Selection_14",
 		"    └─Selection_14 1.00 cop[tikv]  not(isnull(test.s.a)), not(isnull(test.s.b))",
-		"      └─IndexRangeScan_13 1.00 cop[tikv] table:s, index:a, b range: decided by [eq(test.s.a, test.t.a) lt(test.s.b, test.t.b)], keep order:false"))
+		"      └─IndexRangeScan_13 1.00 cop[tikv] table:s, index:idx(a, b) range: decided by [eq(test.s.a, test.t.a) lt(test.s.b, test.t.b)], keep order:false"))
 	tk.MustQuery("select /*+ TIDB_INLJ(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b").Check(testkit.Rows("64"))
 	tk.MustExec("set @@tidb_index_lookup_join_concurrency=1;")
 	tk.MustQuery("select /*+ TIDB_INLJ(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b").Check(testkit.Rows("64"))
@@ -1167,7 +1167,7 @@ func (s *testSuiteJoin1) TestIndexLookupJoin(c *C) {
 		"  │   └─TableFullScan_24 64.00 cop[tikv] table:t keep order:false",
 		"  └─IndexReader_19(Probe) 1.00 root  index:Selection_18",
 		"    └─Selection_18 1.00 cop[tikv]  not(isnull(test.s.a)), not(isnull(test.s.b))",
-		"      └─IndexRangeScan_17 1.00 cop[tikv] table:s, index:a, b range: decided by [eq(test.s.a, test.t.a) lt(test.s.b, test.t.b)], keep order:true",
+		"      └─IndexRangeScan_17 1.00 cop[tikv] table:s, index:idx(a, b) range: decided by [eq(test.s.a, test.t.a) lt(test.s.b, test.t.b)], keep order:true",
 	))
 	tk.MustQuery("select /*+ INL_MERGE_JOIN(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b").Check(testkit.Rows("64"))
 	tk.MustExec("set @@tidb_index_lookup_join_concurrency=1;")
@@ -1181,7 +1181,7 @@ func (s *testSuiteJoin1) TestIndexLookupJoin(c *C) {
 		"  │   └─TableFullScan_24 64.00 cop[tikv] table:t keep order:false",
 		"  └─IndexReader_15(Probe) 1.00 root  index:Selection_14",
 		"    └─Selection_14 1.00 cop[tikv]  not(isnull(test.s.a)), not(isnull(test.s.b))",
-		"      └─IndexRangeScan_13 1.00 cop[tikv] table:s, index:a, b range: decided by [eq(test.s.a, test.t.a) lt(test.s.b, test.t.b)], keep order:false",
+		"      └─IndexRangeScan_13 1.00 cop[tikv] table:s, index:idx(a, b) range: decided by [eq(test.s.a, test.t.a) lt(test.s.b, test.t.b)], keep order:false",
 	))
 	tk.MustQuery("select /*+ INL_HASH_JOIN(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b").Check(testkit.Rows("64"))
 	tk.MustExec("set @@tidb_index_lookup_join_concurrency=1;")
@@ -1239,10 +1239,10 @@ func (s *testSuiteJoin3) TestIssue13449(c *C) {
 	tk.MustQuery("desc select /*+ INL_HASH_JOIN(s) */ * from t join s on t.a=s.a order by t.a;").Check(testkit.Rows(
 		"IndexHashJoin_35 12487.50 root  inner join, inner:IndexReader_27, outer key:test.t.a, inner key:test.s.a",
 		"├─IndexReader_37(Build) 9990.00 root  index:IndexFullScan_36",
-		"│ └─IndexFullScan_36 9990.00 cop[tikv] table:t, index:a keep order:true, stats:pseudo",
+		"│ └─IndexFullScan_36 9990.00 cop[tikv] table:t, index:a(a) keep order:true, stats:pseudo",
 		"└─IndexReader_27(Probe) 1.25 root  index:Selection_26",
 		"  └─Selection_26 1.25 cop[tikv]  not(isnull(test.s.a))",
-		"    └─IndexRangeScan_25 1.25 cop[tikv] table:s, index:a range: decided by [eq(test.s.a, test.t.a)], keep order:false, stats:pseudo"))
+		"    └─IndexRangeScan_25 1.25 cop[tikv] table:s, index:a(a) range: decided by [eq(test.s.a, test.t.a)], keep order:false, stats:pseudo"))
 	tk.MustQuery("select /*+ INL_HASH_JOIN(s) */ * from t join s on t.a=s.a order by t.a;").Check(testkit.Rows("1 1", "128 128"))
 }
 
@@ -1813,7 +1813,7 @@ func (s *testSuiteJoinSerial) TestOuterTableBuildHashTableIsuse13933(c *C) {
 		"│ └─TableFullScan_23 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
 		"└─IndexLookUp_11(Probe) 1.25 root  ",
 		"  ├─Selection_9(Build) 1.25 cop[tikv]  not(isnull(test.s.b))",
-		"  │ └─IndexRangeScan_7 1.25 cop[tikv] table:s, index:b range: decided by [eq(test.s.b, test.t.b)], keep order:false, stats:pseudo",
+		"  │ └─IndexRangeScan_7 1.25 cop[tikv] table:s, index:b(b) range: decided by [eq(test.s.b, test.t.b)], keep order:false, stats:pseudo",
 		"  └─Selection_10(Probe) 1.25 cop[tikv]  not(isnull(test.s.a))",
 		"    └─TableRowIDScan_8 1.25 cop[tikv] table:s keep order:false, stats:pseudo"))
 }

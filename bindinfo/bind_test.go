@@ -383,14 +383,14 @@ func (s *testSuite) TestBindingSymbolList(c *C) {
 	// before binding
 	tk.MustQuery("select a, b from t where a = 3 limit 1, 100")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:ia")
-	c.Assert(tk.MustUseIndex("select a, b from t where a = 3 limit 1, 100", "a"), IsTrue)
+	c.Assert(tk.MustUseIndex("select a, b from t where a = 3 limit 1, 100", "ia(a)"), IsTrue)
 
 	tk.MustExec(`create global binding for select a, b from t where a = 1 limit 0, 1 using select a, b from t use index (ib) where a = 1 limit 0, 1`)
 
 	// after binding
 	tk.MustQuery("select a, b from t where a = 3 limit 1, 100")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:ib")
-	c.Assert(tk.MustUseIndex("select a, b from t where a = 3 limit 1, 100", "b"), IsTrue)
+	c.Assert(tk.MustUseIndex("select a, b from t where a = 3 limit 1, 100", "ib(b)"), IsTrue)
 
 	// Normalize
 	sql, hash := parser.NormalizeDigest("select a, b from t where a = 1 limit 0, 1")

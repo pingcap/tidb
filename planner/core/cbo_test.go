@@ -546,7 +546,7 @@ func (s *testAnalyzeSuite) TestInconsistentEstimation(c *C) {
 	tk.MustQuery("explain select * from t use index(ab) where a = 5 and c = 5").
 		Check(testkit.Rows(
 			"IndexLookUp_8 10.00 root  ",
-			"├─IndexRangeScan_5(Build) 12.50 cop[tikv] table:t, index:a, b range:[5,5], keep order:false",
+			"├─IndexRangeScan_5(Build) 12.50 cop[tikv] table:t, index:ab(a, b) range:[5,5], keep order:false",
 			"└─Selection_7(Probe) 10.00 cop[tikv]  eq(test.t.c, 5)",
 			"  └─TableRowIDScan_6 12.50 cop[tikv] table:t keep order:false",
 		))
