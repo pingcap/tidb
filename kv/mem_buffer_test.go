@@ -250,8 +250,6 @@ func (s *testKVSuite) TestBufferBatchGetter(c *C) {
 	buffer := NewMemDbBuffer(4096)
 	buffer.Set(ka, []byte("a2"))
 	buffer.Delete(kb)
-	r, err := buffer.Get(context.Background(), kb)
-	fmt.Println(r, err)
 
 	batchGetter := NewBufferBatchGetter(buffer, middle, snap)
 	result, err := batchGetter.BatchGet(context.Background(), []Key{ka, kb, kc, kd})
