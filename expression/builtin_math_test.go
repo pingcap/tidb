@@ -15,21 +15,20 @@ package expression
 
 import (
 	"math"
-	"math/rand"
 	"runtime"
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/charset"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/charset"
-	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/testutil"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 func (s *testEvaluatorSuite) TestAbs(c *C) {
-	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Arg interface{}
 		Ret interface{}
@@ -48,15 +47,13 @@ func (s *testEvaluatorSuite) TestAbs(c *C) {
 		fc := funcs[ast.Abs]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t["Arg"]))
 		c.Assert(err, IsNil)
-		v, err := evalBuiltinFunc(f, nil)
+		v, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["Ret"][0])
 	}
 }
 
 func (s *testEvaluatorSuite) TestCeil(c *C) {
-	defer testleak.AfterTest(c)()
-
 	sc := s.ctx.GetSessionVars().StmtCtx
 	tmpIT := sc.IgnoreTruncate
 	sc.IgnoreTruncate = true
@@ -97,7 +94,7 @@ func (s *testEvaluatorSuite) TestCeil(c *C) {
 			f, err := newFunctionForTest(s.ctx, funcName, s.primitiveValsToConstants([]interface{}{test.arg})...)
 			c.Assert(err, IsNil)
 
-			result, err := f.Eval(nil)
+			result, err := f.Eval(chunk.Row{})
 			if test.getErr {
 				c.Assert(err, NotNil)
 			} else {
@@ -121,8 +118,6 @@ func (s *testEvaluatorSuite) TestCeil(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestExp(c *C) {
-	defer testleak.AfterTest(c)()
-
 	tests := []struct {
 		args   interface{}
 		expect float64
@@ -148,7 +143,7 @@ func (s *testEvaluatorSuite) TestExp(c *C) {
 		f, err := newFunctionForTest(s.ctx, ast.Exp, s.primitiveValsToConstants([]interface{}{test.args})...)
 		c.Assert(err, IsNil)
 
-		result, err := f.Eval(nil)
+		result, err := f.Eval(chunk.Row{})
 		if test.getErr {
 			c.Assert(err, NotNil)
 			if test.errMsg != "" {
@@ -169,8 +164,6 @@ func (s *testEvaluatorSuite) TestExp(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestFloor(c *C) {
-	defer testleak.AfterTest(c)()
-
 	sc := s.ctx.GetSessionVars().StmtCtx
 	tmpIT := sc.IgnoreTruncate
 	sc.IgnoreTruncate = true
@@ -187,10 +180,7 @@ func (s *testEvaluatorSuite) TestFloor(c *C) {
 	}
 
 	genTime := func(y, m, d int) types.Time {
-		return types.Time{
-			Time: types.FromDate(y, m, d, 0, 0, 0, 0),
-			Type: mysql.TypeDatetime,
-			Fsp:  types.DefaultFsp}
+		return types.NewTime(types.FromDate(y, m, d, 0, 0, 0, 0), mysql.TypeDatetime, types.DefaultFsp)
 	}
 
 	for _, test := range []struct {
@@ -214,7 +204,7 @@ func (s *testEvaluatorSuite) TestFloor(c *C) {
 		f, err := newFunctionForTest(s.ctx, ast.Floor, s.primitiveValsToConstants([]interface{}{test.arg})...)
 		c.Assert(err, IsNil)
 
-		result, err := f.Eval(nil)
+		result, err := f.Eval(chunk.Row{})
 		if test.getErr {
 			c.Assert(err, NotNil)
 		} else {
@@ -243,8 +233,6 @@ func (s *testEvaluatorSuite) TestFloor(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestLog(c *C) {
-	defer testleak.AfterTest(c)()
-
 	tests := []struct {
 		args   []interface{}
 		expect float64
@@ -267,7 +255,7 @@ func (s *testEvaluatorSuite) TestLog(c *C) {
 		f, err := newFunctionForTest(s.ctx, ast.Log, s.primitiveValsToConstants(test.args)...)
 		c.Assert(err, IsNil)
 
-		result, err := f.Eval(nil)
+		result, err := f.Eval(chunk.Row{})
 		if test.getErr {
 			c.Assert(err, NotNil)
 		} else {
@@ -285,8 +273,6 @@ func (s *testEvaluatorSuite) TestLog(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestLog2(c *C) {
-	defer testleak.AfterTest(c)()
-
 	tests := []struct {
 		args   interface{}
 		expect float64
@@ -305,7 +291,7 @@ func (s *testEvaluatorSuite) TestLog2(c *C) {
 		f, err := newFunctionForTest(s.ctx, ast.Log2, s.primitiveValsToConstants([]interface{}{test.args})...)
 		c.Assert(err, IsNil)
 
-		result, err := f.Eval(nil)
+		result, err := f.Eval(chunk.Row{})
 		if test.getErr {
 			c.Assert(err, NotNil)
 		} else {
@@ -323,8 +309,6 @@ func (s *testEvaluatorSuite) TestLog2(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestLog10(c *C) {
-	defer testleak.AfterTest(c)()
-
 	tests := []struct {
 		args   interface{}
 		expect float64
@@ -343,7 +327,7 @@ func (s *testEvaluatorSuite) TestLog10(c *C) {
 		f, err := newFunctionForTest(s.ctx, ast.Log10, s.primitiveValsToConstants([]interface{}{test.args})...)
 		c.Assert(err, IsNil)
 
-		result, err := f.Eval(nil)
+		result, err := f.Eval(chunk.Row{})
 		if test.getErr {
 			c.Assert(err, NotNil)
 		} else {
@@ -361,11 +345,10 @@ func (s *testEvaluatorSuite) TestLog10(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestRand(c *C) {
-	defer testleak.AfterTest(c)()
 	fc := funcs[ast.Rand]
 	f, err := fc.getFunction(s.ctx, nil)
 	c.Assert(err, IsNil)
-	v, err := evalBuiltinFunc(f, nil)
+	v, err := evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(v.GetFloat64(), Less, float64(1))
 	c.Assert(v.GetFloat64(), GreaterEqual, float64(0))
@@ -373,16 +356,15 @@ func (s *testEvaluatorSuite) TestRand(c *C) {
 	// issue 3211
 	f2, err := fc.getFunction(s.ctx, []Expression{&Constant{Value: types.NewIntDatum(20160101), RetType: types.NewFieldType(mysql.TypeLonglong)}})
 	c.Assert(err, IsNil)
-	randGen := rand.New(rand.NewSource(20160101))
+	randGen := NewWithSeed(20160101)
 	for i := 0; i < 3; i++ {
-		v, err = evalBuiltinFunc(f2, nil)
+		v, err = evalBuiltinFunc(f2, chunk.Row{})
 		c.Assert(err, IsNil)
-		c.Assert(v.GetFloat64(), Equals, randGen.Float64())
+		c.Assert(v.GetFloat64(), Equals, randGen.Gen())
 	}
 }
 
 func (s *testEvaluatorSuite) TestPow(c *C) {
-	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Arg []interface{}
 		Ret float64
@@ -399,7 +381,7 @@ func (s *testEvaluatorSuite) TestPow(c *C) {
 		fc := funcs[ast.Pow]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t["Arg"]))
 		c.Assert(err, IsNil)
-		v, err := evalBuiltinFunc(f, nil)
+		v, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["Ret"][0])
 	}
@@ -417,13 +399,12 @@ func (s *testEvaluatorSuite) TestPow(c *C) {
 		fc := funcs[ast.Pow]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t["Arg"]))
 		c.Assert(err, IsNil)
-		_, err = evalBuiltinFunc(f, nil)
+		_, err = evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, NotNil)
 	}
 }
 
 func (s *testEvaluatorSuite) TestRound(c *C) {
-	defer testleak.AfterTest(c)()
 	newDec := types.NewDecFromStringForTest
 	tbl := []struct {
 		Arg []interface{}
@@ -444,6 +425,8 @@ func (s *testEvaluatorSuite) TestRound(c *C) {
 		{[]interface{}{newDec("1.58"), 1}, newDec("1.6")},
 		{[]interface{}{newDec("23.298"), -1}, newDec("20")},
 		{[]interface{}{nil, 2}, nil},
+		{[]interface{}{1, -2012}, 0},
+		{[]interface{}{1, -201299999999999}, 0},
 	}
 
 	Dtbl := tblToDtbl(tbl)
@@ -452,14 +435,27 @@ func (s *testEvaluatorSuite) TestRound(c *C) {
 		fc := funcs[ast.Round]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t["Arg"]))
 		c.Assert(err, IsNil)
-		v, err := evalBuiltinFunc(f, nil)
+		switch f.(type) {
+		case *builtinRoundWithFracIntSig:
+			c.Assert(f.PbCode(), Equals, tipb.ScalarFuncSig_RoundWithFracInt)
+		case *builtinRoundWithFracDecSig:
+			c.Assert(f.PbCode(), Equals, tipb.ScalarFuncSig_RoundWithFracDec)
+		case *builtinRoundWithFracRealSig:
+			c.Assert(f.PbCode(), Equals, tipb.ScalarFuncSig_RoundWithFracReal)
+		case *builtinRoundIntSig:
+			c.Assert(f.PbCode(), Equals, tipb.ScalarFuncSig_RoundInt)
+		case *builtinRoundDecSig:
+			c.Assert(f.PbCode(), Equals, tipb.ScalarFuncSig_RoundDec)
+		case *builtinRoundRealSig:
+			c.Assert(f.PbCode(), Equals, tipb.ScalarFuncSig_RoundReal)
+		}
+		v, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["Ret"][0])
 	}
 }
 
 func (s *testEvaluatorSuite) TestTruncate(c *C) {
-	defer testleak.AfterTest(c)()
 	newDec := types.NewDecFromStringForTest
 	tbl := []struct {
 		Arg []interface{}
@@ -484,6 +480,9 @@ func (s *testEvaluatorSuite) TestTruncate(c *C) {
 		{[]interface{}{newDec("23.298"), -100}, newDec("0")},
 		{[]interface{}{newDec("23.298"), 100}, newDec("23.298")},
 		{[]interface{}{nil, 2}, nil},
+		{[]interface{}{uint64(9223372036854775808), -10}, 9223372030000000000},
+		{[]interface{}{9223372036854775807, -7}, 9223372036850000000},
+		{[]interface{}{uint64(18446744073709551615), -10}, uint64(18446744070000000000)},
 	}
 
 	Dtbl := tblToDtbl(tbl)
@@ -493,14 +492,13 @@ func (s *testEvaluatorSuite) TestTruncate(c *C) {
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t["Arg"]))
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
-		v, err := evalBuiltinFunc(f, nil)
+		v, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["Ret"][0])
 	}
 }
 
 func (s *testEvaluatorSuite) TestCRC32(c *C) {
-	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Arg []interface{}
 		Ret interface{}
@@ -520,14 +518,13 @@ func (s *testEvaluatorSuite) TestCRC32(c *C) {
 		fc := funcs[ast.CRC32]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t["Arg"]))
 		c.Assert(err, IsNil)
-		v, err := evalBuiltinFunc(f, nil)
+		v, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["Ret"][0])
 	}
 }
 
 func (s *testEvaluatorSuite) TestConv(c *C) {
-	defer testleak.AfterTest(c)()
 	cases := []struct {
 		args     []interface{}
 		expected interface{}
@@ -555,11 +552,11 @@ func (s *testEvaluatorSuite) TestConv(c *C) {
 		c.Assert(err, IsNil)
 		tp := f.GetType()
 		c.Assert(tp.Tp, Equals, mysql.TypeVarString)
-		c.Assert(tp.Charset, Equals, charset.CharsetUTF8)
-		c.Assert(tp.Collate, Equals, charset.CharsetUTF8)
+		c.Assert(tp.Charset, Equals, charset.CharsetUTF8MB4)
+		c.Assert(tp.Collate, Equals, charset.CollationUTF8MB4)
 		c.Assert(tp.Flag, Equals, uint(0))
 
-		d, err := f.Eval(nil)
+		d, err := f.Eval(chunk.Row{})
 		if t.getErr {
 			c.Assert(err, NotNil)
 		} else {
@@ -591,8 +588,6 @@ func (s *testEvaluatorSuite) TestConv(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestSign(c *C) {
-	defer testleak.AfterTest(c)()
-
 	sc := s.ctx.GetSessionVars().StmtCtx
 	tmpIT := sc.IgnoreTruncate
 	sc.IgnoreTruncate = true
@@ -620,14 +615,13 @@ func (s *testEvaluatorSuite) TestSign(c *C) {
 		fc := funcs[ast.Sign]
 		f, err := fc.getFunction(s.ctx, s.primitiveValsToConstants(t.num))
 		c.Assert(err, IsNil, Commentf("%v", t))
-		v, err := evalBuiltinFunc(f, nil)
+		v, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil, Commentf("%v", t))
 		c.Assert(v, testutil.DatumEquals, types.NewDatum(t.ret), Commentf("%v", t))
 	}
 }
 
 func (s *testEvaluatorSuite) TestDegrees(c *C) {
-	defer testleak.AfterTest(c)()
 	sc := s.ctx.GetSessionVars().StmtCtx
 	sc.IgnoreTruncate = false
 	cases := []struct {
@@ -651,7 +645,7 @@ func (s *testEvaluatorSuite) TestDegrees(c *C) {
 	for _, t := range cases {
 		f, err := newFunctionForTest(s.ctx, ast.Degrees, s.primitiveValsToConstants([]interface{}{t.args})...)
 		c.Assert(err, IsNil)
-		d, err := f.Eval(nil)
+		d, err := f.Eval(chunk.Row{})
 		if t.getErr {
 			c.Assert(err, NotNil)
 		} else {
@@ -668,7 +662,6 @@ func (s *testEvaluatorSuite) TestDegrees(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestSqrt(c *C) {
-	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Arg []interface{}
 		Ret interface{}
@@ -685,24 +678,22 @@ func (s *testEvaluatorSuite) TestSqrt(c *C) {
 		fc := funcs[ast.Sqrt]
 		f, err := fc.getFunction(s.ctx, s.primitiveValsToConstants(t.Arg))
 		c.Assert(err, IsNil)
-		v, err := evalBuiltinFunc(f, nil)
+		v, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, types.NewDatum(t.Ret), Commentf("%v", t))
 	}
 }
 
 func (s *testEvaluatorSuite) TestPi(c *C) {
-	defer testleak.AfterTest(c)()
 	f, err := funcs[ast.PI].getFunction(s.ctx, nil)
 	c.Assert(err, IsNil)
 
-	pi, err := evalBuiltinFunc(f, nil)
+	pi, err := evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(pi, testutil.DatumEquals, types.NewDatum(math.Pi))
 }
 
 func (s *testEvaluatorSuite) TestRadians(c *C) {
-	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Arg interface{}
 		Ret interface{}
@@ -720,7 +711,7 @@ func (s *testEvaluatorSuite) TestRadians(c *C) {
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t["Arg"]))
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
-		v, err := evalBuiltinFunc(f, nil)
+		v, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["Ret"][0])
 	}
@@ -729,12 +720,11 @@ func (s *testEvaluatorSuite) TestRadians(c *C) {
 	fc := funcs[ast.Radians]
 	f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{types.NewDatum(invalidArg)}))
 	c.Assert(err, IsNil)
-	_, err = evalBuiltinFunc(f, nil)
+	_, err = evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, NotNil)
 }
 
 func (s *testEvaluatorSuite) TestSin(c *C) {
-	defer testleak.AfterTest(c)()
 	cases := []struct {
 		args     interface{}
 		expected float64
@@ -758,7 +748,7 @@ func (s *testEvaluatorSuite) TestSin(c *C) {
 		f, err := newFunctionForTest(s.ctx, ast.Sin, s.primitiveValsToConstants([]interface{}{t.args})...)
 		c.Assert(err, IsNil)
 
-		d, err := f.Eval(nil)
+		d, err := f.Eval(chunk.Row{})
 		if t.getErr {
 			c.Assert(err, NotNil)
 		} else {
@@ -776,7 +766,6 @@ func (s *testEvaluatorSuite) TestSin(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestCos(c *C) {
-	defer testleak.AfterTest(c)()
 	cases := []struct {
 		args     interface{}
 		expected float64
@@ -797,7 +786,7 @@ func (s *testEvaluatorSuite) TestCos(c *C) {
 		f, err := newFunctionForTest(s.ctx, ast.Cos, s.primitiveValsToConstants([]interface{}{t.args})...)
 		c.Assert(err, IsNil)
 
-		d, err := f.Eval(nil)
+		d, err := f.Eval(chunk.Row{})
 		if t.getErr {
 			c.Assert(err, NotNil)
 		} else {
@@ -815,8 +804,6 @@ func (s *testEvaluatorSuite) TestCos(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestAcos(c *C) {
-	defer testleak.AfterTest(c)()
-
 	tests := []struct {
 		args   interface{}
 		expect float64
@@ -835,7 +822,7 @@ func (s *testEvaluatorSuite) TestAcos(c *C) {
 		f, err := newFunctionForTest(s.ctx, ast.Acos, s.primitiveValsToConstants([]interface{}{test.args})...)
 		c.Assert(err, IsNil)
 
-		result, err := f.Eval(nil)
+		result, err := f.Eval(chunk.Row{})
 		if test.getErr {
 			c.Assert(err, NotNil)
 		} else {
@@ -853,8 +840,6 @@ func (s *testEvaluatorSuite) TestAcos(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestAsin(c *C) {
-	defer testleak.AfterTest(c)()
-
 	tests := []struct {
 		args   interface{}
 		expect float64
@@ -873,7 +858,7 @@ func (s *testEvaluatorSuite) TestAsin(c *C) {
 		f, err := newFunctionForTest(s.ctx, ast.Asin, s.primitiveValsToConstants([]interface{}{test.args})...)
 		c.Assert(err, IsNil)
 
-		result, err := f.Eval(nil)
+		result, err := f.Eval(chunk.Row{})
 		if test.getErr {
 			c.Assert(err, NotNil)
 		} else {
@@ -891,8 +876,6 @@ func (s *testEvaluatorSuite) TestAsin(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestAtan(c *C) {
-	defer testleak.AfterTest(c)()
-
 	tests := []struct {
 		args   []interface{}
 		expect float64
@@ -911,7 +894,7 @@ func (s *testEvaluatorSuite) TestAtan(c *C) {
 		f, err := newFunctionForTest(s.ctx, ast.Atan, s.primitiveValsToConstants(test.args)...)
 		c.Assert(err, IsNil)
 
-		result, err := f.Eval(nil)
+		result, err := f.Eval(chunk.Row{})
 		if test.getErr {
 			c.Assert(err, NotNil)
 		} else {
@@ -929,7 +912,6 @@ func (s *testEvaluatorSuite) TestAtan(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestTan(c *C) {
-	defer testleak.AfterTest(c)()
 	cases := []struct {
 		args     interface{}
 		expected float64
@@ -949,7 +931,7 @@ func (s *testEvaluatorSuite) TestTan(c *C) {
 		f, err := newFunctionForTest(s.ctx, ast.Tan, s.primitiveValsToConstants([]interface{}{t.args})...)
 		c.Assert(err, IsNil)
 
-		d, err := f.Eval(nil)
+		d, err := f.Eval(chunk.Row{})
 		if t.getErr {
 			c.Assert(err, NotNil)
 		} else {
@@ -967,8 +949,6 @@ func (s *testEvaluatorSuite) TestTan(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestCot(c *C) {
-	defer testleak.AfterTest(c)()
-
 	tests := []struct {
 		args   interface{}
 		expect float64
@@ -990,7 +970,7 @@ func (s *testEvaluatorSuite) TestCot(c *C) {
 		f, err := newFunctionForTest(s.ctx, ast.Cot, s.primitiveValsToConstants([]interface{}{test.args})...)
 		c.Assert(err, IsNil)
 
-		result, err := f.Eval(nil)
+		result, err := f.Eval(chunk.Row{})
 		if test.getErr {
 			c.Assert(err, NotNil)
 			if test.errMsg != "" {

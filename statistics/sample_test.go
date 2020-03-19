@@ -17,18 +17,18 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/sqlexec"
 )
 
 var _ = Suite(&testSampleSuite{})
 
 type testSampleSuite struct {
 	count int
-	rs    ast.RecordSet
+	rs    sqlexec.RecordSet
 }
 
 func (s *testSampleSuite) SetUpSuite(c *C) {
@@ -66,7 +66,7 @@ func (s *testSampleSuite) TestCollectColumnStats(c *C) {
 		CMSketchWidth:   2048,
 		CMSketchDepth:   8,
 	}
-	s.rs.Close()
+	c.Assert(s.rs.Close(), IsNil)
 	collectors, pkBuilder, err := builder.CollectColumnStats()
 	c.Assert(err, IsNil)
 	c.Assert(collectors[0].NullCount+collectors[0].Count, Equals, int64(s.count))
@@ -87,7 +87,7 @@ func (s *testSampleSuite) TestMergeSampleCollector(c *C) {
 		CMSketchWidth:   2048,
 		CMSketchDepth:   8,
 	}
-	s.rs.Close()
+	c.Assert(s.rs.Close(), IsNil)
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	collectors, pkBuilder, err := builder.CollectColumnStats()
 	c.Assert(err, IsNil)
@@ -113,7 +113,7 @@ func (s *testSampleSuite) TestCollectorProtoConversion(c *C) {
 		CMSketchWidth:   2048,
 		CMSketchDepth:   8,
 	}
-	s.rs.Close()
+	c.Assert(s.rs.Close(), IsNil)
 	collectors, pkBuilder, err := builder.CollectColumnStats()
 	c.Assert(err, IsNil)
 	c.Assert(pkBuilder, IsNil)

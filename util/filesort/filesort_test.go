@@ -181,7 +181,25 @@ func (s *testFileSortSuite) TestMultipleFiles(c *C) {
 	c.Assert(err, IsNil)
 
 	fsBuilder := new(Builder)
-	fs, err = fsBuilder.SetSC(sc).SetSchema(keySize, valSize).SetBuf(bufSize).SetWorkers(1).SetDesc(byDesc).SetDir(tmpDir).Build()
+
+	// Test for basic function.
+	_, err = fsBuilder.Build()
+	c.Assert(err.Error(), Equals, "StatementContext is nil")
+	fsBuilder.SetSC(sc)
+	_, err = fsBuilder.Build()
+	c.Assert(err.Error(), Equals, "key size is not positive")
+	fsBuilder.SetDesc(byDesc)
+	_, err = fsBuilder.Build()
+	c.Assert(err.Error(), Equals, "mismatch in key size and byDesc slice")
+	fsBuilder.SetSchema(keySize, valSize)
+	_, err = fsBuilder.Build()
+	c.Assert(err.Error(), Equals, "buffer size is not positive")
+	fsBuilder.SetBuf(bufSize)
+	_, err = fsBuilder.Build()
+	c.Assert(err.Error(), Equals, "tmpDir does not exist")
+	fsBuilder.SetDir(tmpDir)
+
+	fs, err = fsBuilder.SetWorkers(1).Build()
 	c.Assert(err, IsNil)
 	defer fs.Close()
 

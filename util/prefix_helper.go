@@ -20,13 +20,13 @@ package util
 import (
 	"bytes"
 
-	"github.com/juju/errors"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 )
 
 // ScanMetaWithPrefix scans metadata with the prefix.
 func ScanMetaWithPrefix(retriever kv.Retriever, prefix kv.Key, filter func(kv.Key, []byte) bool) error {
-	iter, err := retriever.Seek(prefix)
+	iter, err := retriever.Iter(prefix, prefix.PrefixNext())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -56,7 +56,7 @@ func ScanMetaWithPrefix(retriever kv.Retriever, prefix kv.Key, filter func(kv.Ke
 // DelKeyWithPrefix deletes keys with prefix.
 func DelKeyWithPrefix(rm kv.RetrieverMutator, prefix kv.Key) error {
 	var keys []kv.Key
-	iter, err := rm.Seek(prefix)
+	iter, err := rm.Iter(prefix, prefix.PrefixNext())
 	if err != nil {
 		return errors.Trace(err)
 	}

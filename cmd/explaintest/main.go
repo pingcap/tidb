@@ -16,6 +16,7 @@ package main
 import (
 	"bytes"
 	"database/sql"
+	"flag"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -23,17 +24,17 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
-	"flag"
-	"github.com/go-sql-driver/mysql"
-	"github.com/juju/errors"
-	"github.com/pingcap/tidb/ast"
+	_ "github.com/go-sql-driver/mysql"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
-	log "github.com/sirupsen/logrus"
-	"time"
+	"go.uber.org/zap"
 )
 
 const dbName = "test"
@@ -87,6 +88,7 @@ func newTester(name string) *tester {
 	t.name = name
 	t.enableQueryLog = true
 	t.ctx = mock.NewContext()
+	t.ctx.GetSessionVars().EnableWindowFunction = true
 
 	return t
 }
@@ -104,17 +106,17 @@ func (t *tester) Run() error {
 	var s string
 	defer func() {
 		if t.tx != nil {
-			log.Errorf("transaction is not committed correctly, rollback")
+			log.Error("transaction is not committed correctly, rollback")
 			err = t.rollback()
 			if err != nil {
-				log.Errorf("transaction is rollback err %v", err)
+				log.Error("transaction is failed rollback", zap.Error(err))
 			}
 		}
 
 		if t.resultFD != nil {
 			err = t.resultFD.Close()
 			if err != nil {
-				log.Errorf("result fd close error", err)
+				log.Error("result fd close failed", zap.Error(err))
 			}
 		}
 	}()
@@ -138,11 +140,11 @@ LOOP:
 				break LOOP
 			default:
 				if strings.HasPrefix(s, "--error") {
-					t.expectedErrs = strings.Split(strings.TrimSpace(strings.TrimLeft(s, "--error")), ",")
+					t.expectedErrs = strings.Split(strings.TrimSpace(strings.TrimPrefix(s, "--error")), ",")
 				} else if strings.HasPrefix(s, "-- error") {
-					t.expectedErrs = strings.Split(strings.TrimSpace(strings.TrimLeft(s, "-- error")), ",")
+					t.expectedErrs = strings.Split(strings.TrimSpace(strings.TrimPrefix(s, "-- error")), ",")
 				} else if strings.HasPrefix(s, "--echo") {
-					echo := strings.TrimSpace(strings.TrimLeft(s, "--echo"))
+					echo := strings.TrimSpace(strings.TrimPrefix(s, "--echo"))
 					t.buf.WriteString(echo)
 					t.buf.WriteString("\n")
 				}
@@ -245,7 +247,7 @@ func (t *tester) executeDefault(qText string) (err error) {
 	if t.tx, err = mdb.Begin(); err != nil {
 		err2 := t.rollback()
 		if err2 != nil {
-			log.Errorf("transaction is rollback err %v", err)
+			log.Error("transaction is failed to rollback", zap.Error(err))
 		}
 		return err
 	}
@@ -253,7 +255,7 @@ func (t *tester) executeDefault(qText string) (err error) {
 	if err = filterWarning(t.executeStmt(qText)); err != nil {
 		err2 := t.rollback()
 		if err2 != nil {
-			log.Errorf("transaction is rollback err %v", err)
+			log.Error("transaction is failed rollback", zap.Error(err))
 		}
 		return err
 	}
@@ -261,7 +263,7 @@ func (t *tester) executeDefault(qText string) (err error) {
 	if err = t.commit(); err != nil {
 		err2 := t.rollback()
 		if err2 != nil {
-			log.Errorf("transaction is rollback err %v", err)
+			log.Error("transaction is failed rollback", zap.Error(err))
 		}
 		return err
 	}
@@ -295,7 +297,7 @@ func (t *tester) execute(query query) error {
 			if err != nil {
 				err2 := t.rollback()
 				if err2 != nil {
-					log.Errorf("transaction is rollback err %v", err)
+					log.Error("transaction is failed rollback", zap.Error(err))
 				}
 				break
 			}
@@ -304,7 +306,7 @@ func (t *tester) execute(query query) error {
 			if err != nil {
 				err2 := t.rollback()
 				if err2 != nil {
-					log.Errorf("transaction is rollback err %v", err)
+					log.Error("transaction is failed rollback", zap.Error(err))
 				}
 				break
 			}
@@ -355,10 +357,9 @@ func (t *tester) execute(query query) error {
 			gotBuf := t.buf.Bytes()[offset:]
 
 			buf := make([]byte, t.buf.Len()-offset)
-			if _, err = t.resultFD.ReadAt(buf, int64(offset)); err != nil {
+			if _, err = t.resultFD.ReadAt(buf, int64(offset)); !(err == nil || err == io.EOF) {
 				return errors.Trace(errors.Errorf("run \"%v\" at line %d err, we got \n%s\nbut read result err %s", st.Text(), query.Line, gotBuf, err))
 			}
-
 			if !bytes.Equal(gotBuf, buf) {
 				return errors.Trace(errors.Errorf("run \"%v\" at line %d err, we need:\n%s\nbut got:\n%s\n", query.Query, query.Line, buf, gotBuf))
 			}
@@ -368,10 +369,6 @@ func (t *tester) execute(query query) error {
 }
 
 func filterWarning(err error) error {
-	causeErr := errors.Cause(err)
-	if _, ok := causeErr.(mysql.MySQLWarnings); ok {
-		return nil
-	}
 	return err
 }
 
@@ -382,11 +379,11 @@ func (t *tester) create(tableName string, qText string) error {
 	cmd := exec.Command("sh", "-c", path)
 	stdoutIn, err := cmd.StdoutPipe()
 	if err != nil {
-		log.Errorf("open stdout pipe failure %v", err)
+		log.Error("open stdout pipe failed", zap.Error(err))
 	}
 	stderrIn, err := cmd.StderrPipe()
 	if err != nil {
-		log.Errorf("open stderr pipe failure %v", err)
+		log.Error("open stderr pipe failed", zap.Error(err))
 	}
 
 	var stdoutBuf, stderrBuf bytes.Buffer
@@ -406,7 +403,7 @@ func (t *tester) create(tableName string, qText string) error {
 	}()
 
 	if err = cmd.Wait(); err != nil {
-		log.Fatalf("importer failed with: %s", err)
+		log.Fatal("importer failed", zap.Error(err))
 		return err
 	}
 
@@ -458,7 +455,7 @@ func (t *tester) analyze(tableName string) error {
 }
 
 func (t *tester) executeStmt(query string) error {
-	if session.IsQuery(query) {
+	if isQuery(query) {
 		rows, err := t.tx.Query(query)
 		if err != nil {
 			return errors.Trace(err)
@@ -566,11 +563,6 @@ func loadAllTests() ([]string, error) {
 		if strings.HasSuffix(name, ".test") {
 			name = strings.TrimSuffix(name, ".test")
 
-			// if we use record and the result file exists, skip generating
-			if record && resultExists(name) {
-				continue
-			}
-
 			if create && !strings.HasSuffix(name, "_stats") {
 				continue
 			}
@@ -580,17 +572,6 @@ func loadAllTests() ([]string, error) {
 	}
 
 	return tests, nil
-}
-
-func resultExists(name string) bool {
-	resultFile := fmt.Sprintf("./r/%s.result", name)
-
-	if _, err := os.Stat(resultFile); err != nil {
-		if os.IsNotExist(err) {
-			return false
-		}
-	}
-	return true
 }
 
 // openDBWithRetry opens a database specified by its database driver name and a
@@ -603,7 +584,7 @@ func openDBWithRetry(driverName, dataSourceName string) (mdb *sql.DB, err error)
 	for i := 0; i < retryCnt; i++ {
 		mdb, err = sql.Open(driverName, dataSourceName)
 		if err != nil {
-			log.Warnf("open db failed, retry count %d err %v", i, err)
+			log.Warn("open DB failed", zap.Int("retry count", i), zap.Error(err))
 			time.Sleep(sleepTime)
 			continue
 		}
@@ -611,15 +592,14 @@ func openDBWithRetry(driverName, dataSourceName string) (mdb *sql.DB, err error)
 		if err == nil {
 			break
 		}
-		log.Warnf("ping db failed, retry count %d err %v", i, err)
-		err = mdb.Close()
-		if err != nil {
-			log.Errorf("close db err %v", err)
+		log.Warn("ping DB failed", zap.Int("retry count", i), zap.Error(err))
+		if err1 := mdb.Close(); err1 != nil {
+			log.Error("close DB failed", zap.Error(err1))
 		}
 		time.Sleep(sleepTime)
 	}
 	if err != nil {
-		log.Errorf("open db failed %v, take time %v", err, time.Since(startTime))
+		log.Error("open Db failed", zap.Duration("take time", time.Since(startTime)), zap.Error(err))
 		return nil, errors.Trace(err)
 	}
 
@@ -629,42 +609,44 @@ func openDBWithRetry(driverName, dataSourceName string) (mdb *sql.DB, err error)
 func main() {
 	flag.Parse()
 
-	err := logutil.InitLogger(&logutil.LogConfig{
-		Level: logLevel,
-	})
+	err := logutil.InitZapLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
 	if err != nil {
 		panic("init logger fail, " + err.Error())
 	}
 
 	mdb, err = openDBWithRetry(
 		"mysql",
-		"root@tcp(localhost:4001)/"+dbName+"?strict=true&allowAllFiles=true",
+		"root@tcp(localhost:4001)/"+dbName+"?allowAllFiles=true",
 	)
 	if err != nil {
-		log.Fatalf("Open db err %v", err)
+		log.Fatal("open DB failed", zap.Error(err))
 	}
 
 	defer func() {
-		log.Warn("close db")
+		log.Warn("close DB")
 		err = mdb.Close()
 		if err != nil {
-			log.Errorf("close db err %v", err)
+			log.Error("close DB failed", zap.Error(err))
 		}
 	}()
 
-	log.Warn("Create new db", mdb)
+	log.Warn("create new DB", zap.Reflect("DB", mdb))
 
 	if _, err = mdb.Exec("DROP DATABASE IF EXISTS test"); err != nil {
-		log.Fatalf("Executing drop db test err[%v]", err)
+		log.Fatal("executing drop DB test failed", zap.Error(err))
 	}
 	if _, err = mdb.Exec("CREATE DATABASE test"); err != nil {
-		log.Fatalf("Executing create db test err[%v]", err)
+		log.Fatal("executing create DB test failed", zap.Error(err))
 	}
 	if _, err = mdb.Exec("USE test"); err != nil {
-		log.Fatalf("Executing Use test err[%v]", err)
+		log.Fatal("executing use test failed", zap.Error(err))
 	}
 	if _, err = mdb.Exec("set @@tidb_hash_join_concurrency=1"); err != nil {
-		log.Fatalf("set @@tidb_hash_join_concurrency=1 err[%v]", err)
+		log.Fatal("set @@tidb_hash_join_concurrency=1 failed", zap.Error(err))
+	}
+
+	if _, err = mdb.Exec("set sql_mode='STRICT_TRANS_TABLES'"); err != nil {
+		log.Fatal("set sql_mode='STRICT_TRANS_TABLES' failed", zap.Error(err))
 	}
 
 	tests := flag.Args()
@@ -672,16 +654,16 @@ func main() {
 	// we will run all tests if no tests assigned
 	if len(tests) == 0 {
 		if tests, err = loadAllTests(); err != nil {
-			log.Fatalf("load all tests err %v", err)
+			log.Fatal("load all tests failed", zap.Error(err))
 		}
 	}
 
 	if record {
-		log.Printf("recording tests: %v", tests)
+		log.Info("recording tests", zap.Strings("tests", tests))
 	} else if create {
-		log.Printf("creating data for tests: %v", tests)
+		log.Info("creating data", zap.Strings("tests", tests))
 	} else {
-		log.Printf("running tests: %v", tests)
+		log.Info("running tests", zap.Strings("tests", tests))
 	}
 
 	for _, t := range tests {
@@ -690,11 +672,42 @@ func main() {
 		}
 		tr := newTester(t)
 		if err = tr.Run(); err != nil {
-			log.Fatalf("run test [%s] err: %v", t, err)
-		} else {
-			log.Infof("run test [%s] ok", t)
+			log.Fatal("run test", zap.String("test", t), zap.Error(err))
+		}
+		log.Info("run test ok", zap.String("test", t))
+	}
+
+	log.Info("Explain test passed")
+}
+
+var queryStmtTable = []string{"explain", "select", "show", "execute", "describe", "desc", "admin"}
+
+func trimSQL(sql string) string {
+	// Trim space.
+	sql = strings.TrimSpace(sql)
+	// Trim leading /*comment*/
+	// There may be multiple comments
+	for strings.HasPrefix(sql, "/*") {
+		i := strings.Index(sql, "*/")
+		if i != -1 && i < len(sql)+1 {
+			sql = sql[i+2:]
+			sql = strings.TrimSpace(sql)
+			continue
+		}
+		break
+	}
+	// Trim leading '('. For `(select 1);` is also a query.
+	return strings.TrimLeft(sql, "( ")
+}
+
+// isQuery checks if a sql statement is a query statement.
+func isQuery(sql string) bool {
+	sqlText := strings.ToLower(trimSQL(sql))
+	for _, key := range queryStmtTable {
+		if strings.HasPrefix(sqlText, key) {
+			return true
 		}
 	}
 
-	println("\nGreat, All tests passed")
+	return false
 }

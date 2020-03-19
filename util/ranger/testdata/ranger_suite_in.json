@@ -1,0 +1,9 @@
+[
+  {
+    "name": "TestCompIndexInExprCorrCol",
+    "cases": [
+      "explain select t.e in (select count(*) from t s use index(idx), t t1 where s.b = 1 and s.c in (1, 2) and s.d = t.a and s.a = t1.a) from t",
+      "select t.e in (select count(*) from t s use index(idx), t t1 where s.b = 1 and s.c in (1, 2) and s.d = t.a and s.a = t1.a) from t"
+    ]
+  }
+]

@@ -14,13 +14,12 @@
 package mockoracle
 
 import (
+	"context"
 	"sync"
 	"time"
 
-	"github.com/juju/errors"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/store/tikv/oracle"
-
-	"golang.org/x/net/context"
 )
 
 var errStopped = errors.New("stopped")
@@ -45,13 +44,6 @@ func (o *MockOracle) Disable() {
 	o.Lock()
 	defer o.Unlock()
 	o.stop = true
-}
-
-func (o *MockOracle) setOffset(offset time.Duration) {
-	o.Lock()
-	defer o.Unlock()
-
-	o.offset = offset
 }
 
 // AddOffset adds the offset of the oracle.
@@ -93,12 +85,29 @@ func (o *MockOracle) GetTimestampAsync(ctx context.Context) oracle.Future {
 	return &mockOracleFuture{o, ctx}
 }
 
+// GetLowResolutionTimestamp implements oracle.Oracle interface.
+func (o *MockOracle) GetLowResolutionTimestamp(ctx context.Context) (uint64, error) {
+	return o.GetTimestamp(ctx)
+}
+
+// GetLowResolutionTimestampAsync implements oracle.Oracle interface.
+func (o *MockOracle) GetLowResolutionTimestampAsync(ctx context.Context) oracle.Future {
+	return o.GetTimestampAsync(ctx)
+}
+
 // IsExpired implements oracle.Oracle interface.
 func (o *MockOracle) IsExpired(lockTimestamp uint64, TTL uint64) bool {
 	o.RLock()
 	defer o.RUnlock()
 
 	return oracle.GetPhysical(time.Now().Add(o.offset)) >= oracle.ExtractPhysical(lockTimestamp)+int64(TTL)
+}
+
+// UntilExpired implement oracle.Oracle interface.
+func (o *MockOracle) UntilExpired(lockTimeStamp uint64, TTL uint64) int64 {
+	o.RLock()
+	defer o.RUnlock()
+	return oracle.ExtractPhysical(lockTimeStamp) + int64(TTL) - oracle.GetPhysical(time.Now().Add(o.offset))
 }
 
 // Close implements oracle.Oracle interface.

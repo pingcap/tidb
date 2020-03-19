@@ -19,9 +19,10 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -66,10 +67,11 @@ func (s *testVarsutilSuite) TestNewSessionVars(c *C) {
 	c.Assert(vars.ProjectionConcurrency, Equals, int64(DefTiDBProjectionConcurrency))
 	c.Assert(vars.HashAggPartialConcurrency, Equals, DefTiDBHashAggPartialConcurrency)
 	c.Assert(vars.HashAggFinalConcurrency, Equals, DefTiDBHashAggFinalConcurrency)
+	c.Assert(vars.WindowConcurrency, Equals, DefTiDBWindowConcurrency)
 	c.Assert(vars.DistSQLScanConcurrency, Equals, DefDistSQLScanConcurrency)
 	c.Assert(vars.MaxChunkSize, Equals, DefMaxChunkSize)
 	c.Assert(vars.DMLBatchSize, Equals, DefDMLBatchSize)
-	c.Assert(vars.MemQuotaQuery, Equals, int64(config.GetGlobalConfig().MemQuotaQuery))
+	c.Assert(vars.MemQuotaQuery, Equals, config.GetGlobalConfig().MemQuotaQuery)
 	c.Assert(vars.MemQuotaHashJoin, Equals, int64(DefTiDBMemQuotaHashJoin))
 	c.Assert(vars.MemQuotaMergeJoin, Equals, int64(DefTiDBMemQuotaMergeJoin))
 	c.Assert(vars.MemQuotaSort, Equals, int64(DefTiDBMemQuotaSort))
@@ -77,6 +79,10 @@ func (s *testVarsutilSuite) TestNewSessionVars(c *C) {
 	c.Assert(vars.MemQuotaIndexLookupReader, Equals, int64(DefTiDBMemQuotaIndexLookupReader))
 	c.Assert(vars.MemQuotaIndexLookupJoin, Equals, int64(DefTiDBMemQuotaIndexLookupJoin))
 	c.Assert(vars.MemQuotaNestedLoopApply, Equals, int64(DefTiDBMemQuotaNestedLoopApply))
+	c.Assert(vars.EnableRadixJoin, Equals, DefTiDBUseRadixJoin)
+	c.Assert(vars.AllowWriteRowID, Equals, DefOptWriteRowID)
+	c.Assert(vars.TiDBOptJoinReorderThreshold, Equals, DefTiDBOptJoinReorderThreshold)
+	c.Assert(vars.EnableFastAnalyze, Equals, DefTiDBUseFastAnalyze)
 
 	assertFieldsGreaterThanZero(c, reflect.ValueOf(vars.Concurrency))
 	assertFieldsGreaterThanZero(c, reflect.ValueOf(vars.MemQuota))
@@ -93,15 +99,31 @@ func assertFieldsGreaterThanZero(c *C, val reflect.Value) {
 func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	defer testleak.AfterTest(c)()
 	v := NewSessionVars()
-	v.GlobalVarsAccessor = newMockGlobalAccessor()
+	v.GlobalVarsAccessor = NewMockGlobalAccessor()
 
-	SetSessionSystemVar(v, "autocommit", types.NewStringDatum("1"))
+	err := SetSessionSystemVar(v, "autocommit", types.NewStringDatum("1"))
+	c.Assert(err, IsNil)
 	val, err := GetSessionSystemVar(v, "autocommit")
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "1")
 	c.Assert(SetSessionSystemVar(v, "autocommit", types.Datum{}), NotNil)
 
-	SetSessionSystemVar(v, "sql_mode", types.NewStringDatum("strict_trans_tables"))
+	// 0 converts to OFF
+	err = SetSessionSystemVar(v, "foreign_key_checks", types.NewStringDatum("0"))
+	c.Assert(err, IsNil)
+	val, err = GetSessionSystemVar(v, "foreign_key_checks")
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "OFF")
+
+	// 1/ON is not supported (generates a warning and sets to OFF)
+	err = SetSessionSystemVar(v, "foreign_key_checks", types.NewStringDatum("1"))
+	c.Assert(err, IsNil)
+	val, err = GetSessionSystemVar(v, "foreign_key_checks")
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "OFF")
+
+	err = SetSessionSystemVar(v, "sql_mode", types.NewStringDatum("strict_trans_tables"))
+	c.Assert(err, IsNil)
 	val, err = GetSessionSystemVar(v, "sql_mode")
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "STRICT_TRANS_TABLES")
@@ -109,33 +131,15 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	SetSessionSystemVar(v, "sql_mode", types.NewStringDatum(""))
 	c.Assert(v.StrictSQLMode, IsFalse)
 
-	SetSessionSystemVar(v, "character_set_connection", types.NewStringDatum("utf8"))
-	SetSessionSystemVar(v, "collation_connection", types.NewStringDatum("utf8_general_ci"))
+	err = SetSessionSystemVar(v, "character_set_connection", types.NewStringDatum("utf8"))
+	c.Assert(err, IsNil)
+	err = SetSessionSystemVar(v, "collation_connection", types.NewStringDatum("utf8_general_ci"))
+	c.Assert(err, IsNil)
 	charset, collation := v.GetCharsetInfo()
 	c.Assert(charset, Equals, "utf8")
 	c.Assert(collation, Equals, "utf8_general_ci")
 
 	c.Assert(SetSessionSystemVar(v, "character_set_results", types.Datum{}), IsNil)
-
-	// Test case for get TiDBImportingData session variable.
-	val, err = GetSessionSystemVar(v, TiDBImportingData)
-	c.Assert(err, IsNil)
-	c.Assert(val, Equals, "0")
-
-	// Test case for tidb_import_data
-	c.Assert(v.ImportingData, IsFalse)
-	SetSessionSystemVar(v, TiDBImportingData, types.NewStringDatum("0"))
-	c.Assert(v.ImportingData, IsFalse)
-	SetSessionSystemVar(v, TiDBImportingData, types.NewStringDatum("1"))
-	c.Assert(v.ImportingData, IsTrue)
-	SetSessionSystemVar(v, TiDBImportingData, types.NewStringDatum("0"))
-	c.Assert(v.ImportingData, IsFalse)
-
-	// Test case for change TiDBImportingData session variable.
-	SetSessionSystemVar(v, TiDBImportingData, types.NewStringDatum("1"))
-	val, err = GetSessionSystemVar(v, TiDBImportingData)
-	c.Assert(err, IsNil)
-	c.Assert(val, Equals, "1")
 
 	// Test case for time_zone session variable.
 	tests := []struct {
@@ -143,16 +147,26 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 		expect       string
 		compareValue bool
 		diff         time.Duration
+		err          error
 	}{
-		{"Europe/Helsinki", "Europe/Helsinki", true, -2 * time.Hour},
-		{"US/Eastern", "US/Eastern", true, 5 * time.Hour},
+		{"Europe/Helsinki", "Europe/Helsinki", true, -2 * time.Hour, nil},
+		{"US/Eastern", "US/Eastern", true, 5 * time.Hour, nil},
 		//TODO: Check it out and reopen this case.
 		//{"SYSTEM", "Local", false, 0},
-		{"+10:00", "UTC", true, -10 * time.Hour},
-		{"-6:00", "UTC", true, 6 * time.Hour},
+		{"+10:00", "", true, -10 * time.Hour, nil},
+		{"-6:00", "", true, 6 * time.Hour, nil},
+		{"+14:00", "", true, -14 * time.Hour, nil},
+		{"-12:59", "", true, 12*time.Hour + 59*time.Minute, nil},
+		{"+14:01", "", false, -14 * time.Hour, ErrUnknownTimeZone.GenWithStackByArgs("+14:01")},
+		{"-13:00", "", false, 13 * time.Hour, ErrUnknownTimeZone.GenWithStackByArgs("-13:00")},
 	}
 	for _, tt := range tests {
 		err = SetSessionSystemVar(v, TimeZone, types.NewStringDatum(tt.input))
+		if tt.err != nil {
+			c.Assert(err, NotNil)
+			continue
+		}
+
 		c.Assert(err, IsNil)
 		c.Assert(v.TimeZone.String(), Equals, tt.expect)
 		if tt.compareValue {
@@ -191,9 +205,12 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	SetSessionSystemVar(v, TiDBBatchInsert, types.NewStringDatum("1"))
 	c.Assert(v.BatchInsert, IsTrue)
 
+	c.Assert(v.InitChunkSize, Equals, 32)
 	c.Assert(v.MaxChunkSize, Equals, 1024)
-	SetSessionSystemVar(v, TiDBMaxChunkSize, types.NewStringDatum("2"))
-	c.Assert(v.MaxChunkSize, Equals, 2)
+	err = SetSessionSystemVar(v, TiDBMaxChunkSize, types.NewStringDatum("2"))
+	c.Assert(err, NotNil)
+	err = SetSessionSystemVar(v, TiDBInitChunkSize, types.NewStringDatum("1024"))
+	c.Assert(err, NotNil)
 
 	// Test case for TiDBConfig session variable.
 	err = SetSessionSystemVar(v, TiDBConfig, types.NewStringDatum("abc"))
@@ -219,15 +236,11 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	SetSessionSystemVar(v, TiDBOptimizerSelectivityLevel, types.NewIntDatum(1))
 	c.Assert(v.OptimizerSelectivityLevel, Equals, 1)
 
-	c.Assert(GetDDLReorgWorkerCounter(), Equals, int32(DefTiDBDDLReorgWorkerCount))
-	SetSessionSystemVar(v, TiDBDDLReorgWorkerCount, types.NewIntDatum(1))
-	c.Assert(GetDDLReorgWorkerCounter(), Equals, int32(1))
-
-	SetSessionSystemVar(v, TiDBDDLReorgWorkerCount, types.NewIntDatum(-1))
-	c.Assert(GetDDLReorgWorkerCounter(), Equals, int32(DefTiDBDDLReorgWorkerCount))
+	err = SetSessionSystemVar(v, TiDBDDLReorgWorkerCount, types.NewIntDatum(-1))
+	c.Assert(terror.ErrorEqual(err, ErrWrongValueForVar), IsTrue)
 
 	SetSessionSystemVar(v, TiDBDDLReorgWorkerCount, types.NewIntDatum(int64(maxDDLReorgWorkerCount)+1))
-	c.Assert(GetDDLReorgWorkerCounter(), Equals, int32(maxDDLReorgWorkerCount))
+	c.Assert(terror.ErrorEqual(err, ErrWrongValueForVar), IsTrue)
 
 	err = SetSessionSystemVar(v, TiDBRetryLimit, types.NewStringDatum("3"))
 	c.Assert(err, IsNil)
@@ -236,38 +249,254 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(val, Equals, "3")
 	c.Assert(v.RetryLimit, Equals, int64(3))
 
-	c.Assert(v.EnableTablePartition, IsFalse)
-	err = SetSessionSystemVar(v, TiDBEnableTablePartition, types.NewStringDatum("1"))
+	c.Assert(v.EnableTablePartition, Equals, "")
+	err = SetSessionSystemVar(v, TiDBEnableTablePartition, types.NewStringDatum("on"))
 	c.Assert(err, IsNil)
 	val, err = GetSessionSystemVar(v, TiDBEnableTablePartition)
 	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "on")
+	c.Assert(v.EnableTablePartition, Equals, "on")
+
+	c.Assert(v.TiDBOptJoinReorderThreshold, Equals, DefTiDBOptJoinReorderThreshold)
+	err = SetSessionSystemVar(v, TiDBOptJoinReorderThreshold, types.NewIntDatum(5))
+	c.Assert(err, IsNil)
+	val, err = GetSessionSystemVar(v, TiDBOptJoinReorderThreshold)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "5")
+	c.Assert(v.TiDBOptJoinReorderThreshold, Equals, 5)
+
+	SetSessionSystemVar(v, TiDBLowResolutionTSO, types.NewStringDatum("1"))
+	val, err = GetSessionSystemVar(v, TiDBLowResolutionTSO)
+	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "1")
-	c.Assert(v.EnableTablePartition, IsTrue)
+	c.Assert(v.LowResolutionTSO, Equals, true)
+	SetSessionSystemVar(v, TiDBLowResolutionTSO, types.NewStringDatum("0"))
+	val, err = GetSessionSystemVar(v, TiDBLowResolutionTSO)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "0")
+	c.Assert(v.LowResolutionTSO, Equals, false)
+
+	c.Assert(v.CorrelationThreshold, Equals, 0.9)
+	err = SetSessionSystemVar(v, TiDBOptCorrelationThreshold, types.NewStringDatum("0"))
+	c.Assert(err, IsNil)
+	val, err = GetSessionSystemVar(v, TiDBOptCorrelationThreshold)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "0")
+	c.Assert(v.CorrelationThreshold, Equals, float64(0))
+
+	c.Assert(v.CPUFactor, Equals, 3.0)
+	err = SetSessionSystemVar(v, TiDBOptCPUFactor, types.NewStringDatum("5.0"))
+	c.Assert(err, IsNil)
+	val, err = GetSessionSystemVar(v, TiDBOptCPUFactor)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "5.0")
+	c.Assert(v.CPUFactor, Equals, 5.0)
+
+	c.Assert(v.CopCPUFactor, Equals, 3.0)
+	err = SetSessionSystemVar(v, TiDBOptCopCPUFactor, types.NewStringDatum("5.0"))
+	c.Assert(err, IsNil)
+	val, err = GetSessionSystemVar(v, TiDBOptCopCPUFactor)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "5.0")
+	c.Assert(v.CopCPUFactor, Equals, 5.0)
+
+	c.Assert(v.NetworkFactor, Equals, 1.0)
+	err = SetSessionSystemVar(v, TiDBOptNetworkFactor, types.NewStringDatum("3.0"))
+	c.Assert(err, IsNil)
+	val, err = GetSessionSystemVar(v, TiDBOptNetworkFactor)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "3.0")
+	c.Assert(v.NetworkFactor, Equals, 3.0)
+
+	c.Assert(v.ScanFactor, Equals, 1.5)
+	err = SetSessionSystemVar(v, TiDBOptScanFactor, types.NewStringDatum("3.0"))
+	c.Assert(err, IsNil)
+	val, err = GetSessionSystemVar(v, TiDBOptScanFactor)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "3.0")
+	c.Assert(v.ScanFactor, Equals, 3.0)
+
+	c.Assert(v.DescScanFactor, Equals, 3.0)
+	err = SetSessionSystemVar(v, TiDBOptDescScanFactor, types.NewStringDatum("5.0"))
+	c.Assert(err, IsNil)
+	val, err = GetSessionSystemVar(v, TiDBOptDescScanFactor)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "5.0")
+	c.Assert(v.DescScanFactor, Equals, 5.0)
+
+	c.Assert(v.SeekFactor, Equals, 20.0)
+	err = SetSessionSystemVar(v, TiDBOptSeekFactor, types.NewStringDatum("50.0"))
+	c.Assert(err, IsNil)
+	val, err = GetSessionSystemVar(v, TiDBOptSeekFactor)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "50.0")
+	c.Assert(v.SeekFactor, Equals, 50.0)
+
+	c.Assert(v.MemoryFactor, Equals, 0.001)
+	err = SetSessionSystemVar(v, TiDBOptMemoryFactor, types.NewStringDatum("1.0"))
+	c.Assert(err, IsNil)
+	val, err = GetSessionSystemVar(v, TiDBOptMemoryFactor)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "1.0")
+	c.Assert(v.MemoryFactor, Equals, 1.0)
+
+	c.Assert(v.DiskFactor, Equals, 1.5)
+	err = SetSessionSystemVar(v, TiDBOptDiskFactor, types.NewStringDatum("1.1"))
+	c.Assert(err, IsNil)
+	val, err = GetSessionSystemVar(v, TiDBOptDiskFactor)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "1.1")
+	c.Assert(v.DiskFactor, Equals, 1.1)
+
+	c.Assert(v.ConcurrencyFactor, Equals, 3.0)
+	err = SetSessionSystemVar(v, TiDBOptConcurrencyFactor, types.NewStringDatum("5.0"))
+	c.Assert(err, IsNil)
+	val, err = GetSessionSystemVar(v, TiDBOptConcurrencyFactor)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "5.0")
+	c.Assert(v.ConcurrencyFactor, Equals, 5.0)
+
+	SetSessionSystemVar(v, TiDBReplicaRead, types.NewStringDatum("follower"))
+	val, err = GetSessionSystemVar(v, TiDBReplicaRead)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "follower")
+	c.Assert(v.GetReplicaRead(), Equals, kv.ReplicaReadFollower)
+	SetSessionSystemVar(v, TiDBReplicaRead, types.NewStringDatum("leader"))
+	val, err = GetSessionSystemVar(v, TiDBReplicaRead)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "leader")
+	c.Assert(v.GetReplicaRead(), Equals, kv.ReplicaReadLeader)
+	SetSessionSystemVar(v, TiDBReplicaRead, types.NewStringDatum("leader-and-follower"))
+	val, err = GetSessionSystemVar(v, TiDBReplicaRead)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "leader-and-follower")
+	c.Assert(v.GetReplicaRead(), Equals, kv.ReplicaReadMixed)
+
+	SetSessionSystemVar(v, TiDBEnableStmtSummary, types.NewStringDatum("on"))
+	val, err = GetSessionSystemVar(v, TiDBEnableStmtSummary)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "1")
+
+	SetSessionSystemVar(v, TiDBStmtSummaryRefreshInterval, types.NewStringDatum("10"))
+	val, err = GetSessionSystemVar(v, TiDBStmtSummaryRefreshInterval)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "10")
+
+	SetSessionSystemVar(v, TiDBStmtSummaryHistorySize, types.NewStringDatum("10"))
+	val, err = GetSessionSystemVar(v, TiDBStmtSummaryHistorySize)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "10")
 }
 
-type mockGlobalAccessor struct {
-	vars map[string]string
+func (s *testVarsutilSuite) TestSetOverflowBehave(c *C) {
+	ddRegWorker := maxDDLReorgWorkerCount + 1
+	SetDDLReorgWorkerCounter(ddRegWorker)
+	c.Assert(maxDDLReorgWorkerCount, Equals, GetDDLReorgWorkerCounter())
+
+	ddlReorgBatchSize := MaxDDLReorgBatchSize + 1
+	SetDDLReorgBatchSize(ddlReorgBatchSize)
+	c.Assert(MaxDDLReorgBatchSize, Equals, GetDDLReorgBatchSize())
+	ddlReorgBatchSize = MinDDLReorgBatchSize - 1
+	SetDDLReorgBatchSize(ddlReorgBatchSize)
+	c.Assert(MinDDLReorgBatchSize, Equals, GetDDLReorgBatchSize())
+
+	val := tidbOptInt64("a", 1)
+	c.Assert(val, Equals, int64(1))
+	val2 := tidbOptFloat64("b", 1.2)
+	c.Assert(val2, Equals, 1.2)
 }
 
-func newMockGlobalAccessor() *mockGlobalAccessor {
-	m := &mockGlobalAccessor{
-		vars: make(map[string]string),
+func (s *testVarsutilSuite) TestValidate(c *C) {
+	v := NewSessionVars()
+	v.GlobalVarsAccessor = NewMockGlobalAccessor()
+	v.TimeZone = time.UTC
+
+	tests := []struct {
+		key   string
+		value string
+		error bool
+	}{
+		{TiDBAutoAnalyzeStartTime, "15:04", false},
+		{TiDBAutoAnalyzeStartTime, "15:04 -0700", false},
+		{DelayKeyWrite, "ON", false},
+		{DelayKeyWrite, "OFF", false},
+		{DelayKeyWrite, "ALL", false},
+		{DelayKeyWrite, "3", true},
+		{ForeignKeyChecks, "3", true},
+		{MaxSpRecursionDepth, "256", false},
+		{SessionTrackGtids, "OFF", false},
+		{SessionTrackGtids, "OWN_GTID", false},
+		{SessionTrackGtids, "ALL_GTIDS", false},
+		{SessionTrackGtids, "ON", true},
+		{EnforceGtidConsistency, "OFF", false},
+		{EnforceGtidConsistency, "ON", false},
+		{EnforceGtidConsistency, "WARN", false},
+		{QueryCacheType, "OFF", false},
+		{QueryCacheType, "ON", false},
+		{QueryCacheType, "DEMAND", false},
+		{QueryCacheType, "3", true},
+		{SecureAuth, "1", false},
+		{SecureAuth, "3", true},
+		{MyISAMUseMmap, "ON", false},
+		{MyISAMUseMmap, "OFF", false},
+		{TiDBEnableTablePartition, "ON", false},
+		{TiDBEnableTablePartition, "OFF", false},
+		{TiDBEnableTablePartition, "AUTO", false},
+		{TiDBEnableTablePartition, "UN", true},
+		{TiDBOptCorrelationExpFactor, "a", true},
+		{TiDBOptCorrelationExpFactor, "-10", true},
+		{TiDBOptCorrelationThreshold, "a", true},
+		{TiDBOptCorrelationThreshold, "-2", true},
+		{TiDBOptCPUFactor, "a", true},
+		{TiDBOptCPUFactor, "-2", true},
+		{TiDBOptCopCPUFactor, "a", true},
+		{TiDBOptCopCPUFactor, "-2", true},
+		{TiDBOptNetworkFactor, "a", true},
+		{TiDBOptNetworkFactor, "-2", true},
+		{TiDBOptScanFactor, "a", true},
+		{TiDBOptScanFactor, "-2", true},
+		{TiDBOptDescScanFactor, "a", true},
+		{TiDBOptDescScanFactor, "-2", true},
+		{TiDBOptSeekFactor, "a", true},
+		{TiDBOptSeekFactor, "-2", true},
+		{TiDBOptMemoryFactor, "a", true},
+		{TiDBOptMemoryFactor, "-2", true},
+		{TiDBOptDiskFactor, "a", true},
+		{TiDBOptDiskFactor, "-2", true},
+		{TiDBOptConcurrencyFactor, "a", true},
+		{TiDBOptConcurrencyFactor, "-2", true},
+		{TxnIsolation, "READ-UNCOMMITTED", true},
+		{TiDBInitChunkSize, "a", true},
+		{TiDBInitChunkSize, "-1", true},
+		{TiDBMaxChunkSize, "a", true},
+		{TiDBMaxChunkSize, "-1", true},
+		{TiDBOptJoinReorderThreshold, "a", true},
+		{TiDBOptJoinReorderThreshold, "-1", true},
+		{TiDBReplicaRead, "invalid", true},
+		{TiDBTxnMode, "invalid", true},
+		{TiDBTxnMode, "pessimistic", false},
+		{TiDBTxnMode, "optimistic", false},
+		{TiDBTxnMode, "", false},
+		{TiDBIsolationReadEngines, "", true},
+		{TiDBIsolationReadEngines, "tikv", false},
+		{TiDBIsolationReadEngines, "TiKV,tiflash", false},
+		{TiDBIsolationReadEngines, "   tikv,   tiflash  ", false},
+		{TiDBEnableStmtSummary, "a", true},
+		{TiDBEnableStmtSummary, "-1", true},
+		{TiDBEnableStmtSummary, "", false},
+		{TiDBStmtSummaryRefreshInterval, "a", true},
+		{TiDBStmtSummaryRefreshInterval, "", false},
+		{TiDBStmtSummaryHistorySize, "a", true},
+		{TiDBStmtSummaryHistorySize, "", false},
 	}
-	for name, val := range SysVars {
-		m.vars[name] = val.Value
+
+	for _, t := range tests {
+		_, err := ValidateSetSystemVar(v, t.key, t.value)
+		if t.error {
+			c.Assert(err, NotNil, Commentf("%v got err=%v", t, err))
+		} else {
+			c.Assert(err, IsNil, Commentf("%v got err=%v", t, err))
+		}
 	}
-	return m
-}
 
-func (m *mockGlobalAccessor) GetGlobalSysVar(name string) (string, error) {
-	return m.vars[name], nil
-}
-
-func (m *mockGlobalAccessor) SetGlobalSysVar(name string, value string) error {
-	m.vars[name] = value
-	return nil
-}
-
-func (m *mockGlobalAccessor) GetAllSysVars() (map[string]string, error) {
-	return m.vars, nil
 }

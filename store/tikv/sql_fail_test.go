@@ -14,55 +14,71 @@
 package tikv_test
 
 import (
+	"context"
 	"fmt"
+	"os"
 	"sync"
+	"testing"
 	"time"
 
-	gofail "github.com/coreos/gofail/runtime"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/session"
 	. "github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
-	"golang.org/x/net/context"
 )
 
-var _ = Suite(new(testSQLSuite))
+var _ = Suite(&testSQLSuite{})
+var _ = SerialSuites(&testSQLSerialSuite{})
 
 type testSQLSuite struct {
+	testSQLSuiteBase
+}
+
+type testSQLSerialSuite struct {
+	testSQLSuiteBase
+}
+
+type testSQLSuiteBase struct {
 	OneByOneSuite
 	store Storage
 	dom   *domain.Domain
 }
 
-func (s *testSQLSuite) SetUpSuite(c *C) {
+func (s *testSQLSuiteBase) SetUpSuite(c *C) {
 	s.OneByOneSuite.SetUpSuite(c)
 	var err error
 	s.store = NewTestStore(c).(Storage)
+	// actual this is better done in `OneByOneSuite.SetUpSuite`, but this would cause circle dependency
+	if *WithTiKV {
+		session.ResetStoreForWithTiKVTest(s.store)
+	}
+
 	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 }
 
-func (s *testSQLSuite) TearDownSuite(c *C) {
+func (s *testSQLSuiteBase) TearDownSuite(c *C) {
 	s.dom.Close()
 	s.store.Close()
 	s.OneByOneSuite.TearDownSuite(c)
 }
 
-func (s *testSQLSuite) TestFailBusyServerCop(c *C) {
+func (s *testSQLSerialSuite) TestFailBusyServerCop(c *C) {
 	se, err := session.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
 
 	var wg sync.WaitGroup
 	wg.Add(2)
 
-	gofail.Enable("github.com/pingcap/tidb/store/mockstore/mocktikv/rpcServerBusy", `return(true)`)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/mocktikv/rpcServerBusy", `return(true)`), IsNil)
 	go func() {
 		defer wg.Done()
 		time.Sleep(time.Millisecond * 100)
-		gofail.Disable("github.com/pingcap/tidb/store/mockstore/mocktikv/rpcServerBusy")
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/mocktikv/rpcServerBusy"), IsNil)
 	}()
 
 	go func() {
@@ -72,14 +88,19 @@ func (s *testSQLSuite) TestFailBusyServerCop(c *C) {
 			defer terror.Call(rs[0].Close)
 		}
 		c.Assert(err, IsNil)
-		chk := rs[0].NewChunk()
-		err = rs[0].Next(context.Background(), chk)
+		req := rs[0].NewChunk()
+		err = rs[0].Next(context.Background(), req)
 		c.Assert(err, IsNil)
-		c.Assert(chk.NumRows() == 0, IsFalse)
-		c.Assert(chk.GetRow(0).GetString(0), Equals, "True")
+		c.Assert(req.NumRows() == 0, IsFalse)
+		c.Assert(req.GetRow(0).GetString(0), Equals, "True")
 	}()
 
 	wg.Wait()
+}
+
+func TestMain(m *testing.M) {
+	ReadTimeoutMedium = 2 * time.Second
+	os.Exit(m.Run())
 }
 
 func (s *testSQLSuite) TestCoprocessorStreamRecvTimeout(c *C) {
@@ -89,31 +110,85 @@ func (s *testSQLSuite) TestCoprocessorStreamRecvTimeout(c *C) {
 	for i := 0; i < 200; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t values (%d)", i))
 	}
+	tk.Se.GetSessionVars().EnableStreaming = true
 
-	// rowsPerChunk in MockTiKV is 64, so the result will be 4 chunks.
-	enable := true
-	ctx := context.WithValue(context.Background(), mock.HookKeyForTest("mockTiKVStreamRecvHook"), func(ctx context.Context) {
-		if !enable {
-			return
-		}
+	{
+		enable := true
+		visited := make(chan int, 1)
+		timeouted := false
+		timeout := ReadTimeoutMedium + 100*time.Second
+		ctx := context.WithValue(context.Background(), mock.HookKeyForTest("mockTiKVStreamRecvHook"), func(ctx context.Context) {
+			if !enable {
+				return
+			}
+			visited <- 1
 
-		select {
-		case <-ctx.Done():
-		case <-time.After(time.Minute):
-		}
-		enable = false
-	})
+			select {
+			case <-ctx.Done():
+			case <-time.After(timeout):
+				timeouted = true
+			}
+			enable = false
+		})
 
-	res, err := tk.Se.Execute(ctx, "select * from t")
-	c.Assert(err, IsNil)
-
-	chk := res[0].NewChunk()
-	for {
-		err := res[0].Next(ctx, chk)
+		res, err := tk.Se.Execute(ctx, "select * from t")
 		c.Assert(err, IsNil)
-		if chk.NumRows() == 0 {
-			break
+
+		req := res[0].NewChunk()
+		for i := 0; ; i++ {
+			err := res[0].Next(ctx, req)
+			c.Assert(err, IsNil)
+			if req.NumRows() == 0 {
+				break
+			}
+			req.Reset()
 		}
-		chk.Reset()
+		select {
+		case <-visited:
+			// run with mocktikv
+			c.Assert(timeouted, IsFalse)
+		default:
+			// run with real tikv
+		}
+	}
+
+	{
+		enable := true
+		visited := make(chan int, 1)
+		timeouted := false
+		timeout := 1 * time.Millisecond
+		ctx := context.WithValue(context.Background(), mock.HookKeyForTest("mockTiKVStreamRecvHook"), func(ctx context.Context) {
+			if !enable {
+				return
+			}
+			visited <- 1
+
+			select {
+			case <-ctx.Done():
+			case <-time.After(timeout):
+				timeouted = true
+			}
+			enable = false
+		})
+
+		res, err := tk.Se.Execute(ctx, "select * from t")
+		c.Assert(err, IsNil)
+
+		req := res[0].NewChunk()
+		for i := 0; ; i++ {
+			err := res[0].Next(ctx, req)
+			c.Assert(err, IsNil)
+			if req.NumRows() == 0 {
+				break
+			}
+			req.Reset()
+		}
+		select {
+		case <-visited:
+			// run with mocktikv
+			c.Assert(timeouted, IsTrue)
+		default:
+			// run with real tikv
+		}
 	}
 }

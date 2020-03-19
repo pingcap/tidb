@@ -14,14 +14,18 @@
 package ddl_test
 
 import (
+	"context"
+	"sync/atomic"
+	"time"
+
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/tablecodec"
-	"golang.org/x/net/context"
+	"github.com/pingcap/tidb/util/testkit"
 )
 
 type testDDLTableSplitSuite struct{}
@@ -31,23 +35,49 @@ var _ = Suite(&testDDLTableSplitSuite{})
 func (s *testDDLTableSplitSuite) TestTableSplit(c *C) {
 	store, err := mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
-	session.SetSchemaLease(0)
-	session.SetStatsLease(0)
-	ddl.EnableSplitTableRegion = true
+	defer store.Close()
+	session.SetSchemaLease(100 * time.Millisecond)
+	session.DisableStats4Test()
+	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
 	dom, err := session.BootstrapSession(store)
 	c.Assert(err, IsNil)
-	ddl.EnableSplitTableRegion = false
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("use test")
+	// Synced split table region.
+	tk.MustExec("set global tidb_scatter_region = 1")
+	tk.MustExec(`create table t_part (a int key) partition by range(a) (
+		partition p0 values less than (10),
+		partition p1 values less than (20)
+	)`)
+	defer dom.Close()
+	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 0)
 	infoSchema := dom.InfoSchema()
 	c.Assert(infoSchema, NotNil)
 	t, err := infoSchema.TableByName(model.NewCIStr("mysql"), model.NewCIStr("tidb"))
 	c.Assert(err, IsNil)
-	regionStartKey := tablecodec.EncodeTablePrefix(t.Meta().ID)
+	checkRegionStartWithTableID(c, t.Meta().ID, store.(kvStore))
 
-	type kvStore interface {
-		GetRegionCache() *tikv.RegionCache
-	}
-	cache := store.(kvStore).GetRegionCache()
-	loc, err := cache.LocateKey(tikv.NewBackoffer(context.Background(), 5000), regionStartKey)
+	t, err = infoSchema.TableByName(model.NewCIStr("test"), model.NewCIStr("t_part"))
 	c.Assert(err, IsNil)
-	c.Assert(loc.StartKey, BytesEquals, []byte(regionStartKey))
+	pi := t.Meta().GetPartitionInfo()
+	c.Assert(pi, NotNil)
+	for _, def := range pi.Definitions {
+		checkRegionStartWithTableID(c, def.ID, store.(kvStore))
+	}
+}
+
+type kvStore interface {
+	GetRegionCache() *tikv.RegionCache
+}
+
+func checkRegionStartWithTableID(c *C, id int64, store kvStore) {
+	regionStartKey := tablecodec.EncodeTablePrefix(id)
+	var loc *tikv.KeyLocation
+	var err error
+	cache := store.GetRegionCache()
+	loc, err = cache.LocateKey(tikv.NewBackoffer(context.Background(), 5000), regionStartKey)
+	c.Assert(err, IsNil)
+	// Region cache may be out of date, so we need to drop this expired region and load it again.
+	cache.InvalidateCachedRegion(loc.Region)
+	c.Assert([]byte(loc.StartKey), BytesEquals, []byte(regionStartKey))
 }

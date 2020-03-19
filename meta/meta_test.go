@@ -14,15 +14,18 @@
 package meta_test
 
 import (
+	"context"
+	"math"
+	"strconv"
+	"sync"
 	"testing"
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/testleak"
-	"golang.org/x/net/context"
 )
 
 func TestT(t *testing.T) {
@@ -43,7 +46,6 @@ func (s *testSuite) TestMeta(c *C) {
 
 	txn, err := store.Begin()
 	c.Assert(err, IsNil)
-
 	defer txn.Rollback()
 
 	t := meta.NewMeta(txn)
@@ -55,6 +57,24 @@ func (s *testSuite) TestMeta(c *C) {
 	n, err = t.GetGlobalID()
 	c.Assert(err, IsNil)
 	c.Assert(n, Equals, int64(1))
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		ids, err := t.GenGlobalIDs(3)
+		c.Assert(err, IsNil)
+		anyMatch(c, ids, []int64{2, 3, 4}, []int64{6, 7, 8})
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		ids, err := t.GenGlobalIDs(4)
+		c.Assert(err, IsNil)
+		anyMatch(c, ids, []int64{5, 6, 7, 8}, []int64{2, 3, 4, 5})
+	}()
+	wg.Wait()
 
 	n, err = t.GetSchemaVersion()
 	c.Assert(err, IsNil)
@@ -77,6 +97,7 @@ func (s *testSuite) TestMeta(c *C) {
 
 	err = t.CreateDatabase(dbInfo)
 	c.Assert(err, NotNil)
+	c.Assert(meta.ErrDBExists.Equal(err), IsTrue)
 
 	v, err := t.GetDatabase(1)
 	c.Assert(err, IsNil)
@@ -98,7 +119,7 @@ func (s *testSuite) TestMeta(c *C) {
 		ID:   1,
 		Name: model.NewCIStr("t"),
 	}
-	err = t.CreateTable(1, tbInfo)
+	err = t.CreateTableOrView(1, tbInfo)
 	c.Assert(err, IsNil)
 
 	n, err = t.GenAutoTableID(1, 1, 10)
@@ -109,8 +130,9 @@ func (s *testSuite) TestMeta(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(n, Equals, int64(10))
 
-	err = t.CreateTable(1, tbInfo)
+	err = t.CreateTableOrView(1, tbInfo)
 	c.Assert(err, NotNil)
+	c.Assert(meta.ErrTableExists.Equal(err), IsTrue)
 
 	tbInfo.Name = model.NewCIStr("tt")
 	err = t.UpdateTable(1, tbInfo)
@@ -128,7 +150,7 @@ func (s *testSuite) TestMeta(c *C) {
 		ID:   2,
 		Name: model.NewCIStr("bb"),
 	}
-	err = t.CreateTable(1, tbInfo2)
+	err = t.CreateTableOrView(1, tbInfo2)
 	c.Assert(err, IsNil)
 
 	tables, err := t.ListTables(1)
@@ -143,7 +165,7 @@ func (s *testSuite) TestMeta(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(n, Equals, int64(10))
 
-	err = t.DropTable(1, tbInfo2.ID, true)
+	err = t.DropTableOrView(1, tbInfo2.ID, true)
 	c.Assert(err, IsNil)
 	// Make sure auto id key-value entry is gone.
 	n, err = t.GetAutoTableID(1, 2)
@@ -161,7 +183,7 @@ func (s *testSuite) TestMeta(c *C) {
 		Name: model.NewCIStr("t_rename"),
 	}
 	// Create table.
-	err = t.CreateTable(1, tbInfo100)
+	err = t.CreateTableOrView(1, tbInfo100)
 	c.Assert(err, IsNil)
 	// Update auto ID.
 	currentDBID := int64(1)
@@ -173,11 +195,27 @@ func (s *testSuite) TestMeta(c *C) {
 	nonExistentID := int64(1234)
 	_, err = t.GenAutoTableID(currentDBID, nonExistentID, 10)
 	c.Assert(err, NotNil)
+	c.Assert(meta.ErrTableNotExists.Equal(err), IsTrue)
 	// Fail to update auto ID.
 	// The current database ID doesn't exist.
 	currentDBID = nonExistentID
 	_, err = t.GenAutoTableID(currentDBID, tid, 10)
 	c.Assert(err, NotNil)
+	c.Assert(meta.ErrDBNotExists.Equal(err), IsTrue)
+	// Test case for CreateTableAndSetAutoID.
+	tbInfo3 := &model.TableInfo{
+		ID:   3,
+		Name: model.NewCIStr("tbl3"),
+	}
+	err = t.CreateTableAndSetAutoID(1, tbInfo3, 123, 0)
+	c.Assert(err, IsNil)
+	id, err := t.GetAutoTableID(1, tbInfo3.ID)
+	c.Assert(err, IsNil)
+	c.Assert(id, Equals, int64(123))
+	// Test case for GenAutoTableIDKeyValue.
+	key, val := t.GenAutoTableIDKeyValue(1, tbInfo3.ID, 1234)
+	c.Assert(val, DeepEquals, []byte(strconv.FormatInt(1234, 10)))
+	c.Assert(key, DeepEquals, []byte{0x6d, 0x44, 0x42, 0x3a, 0x31, 0x0, 0x0, 0x0, 0x0, 0xfb, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x68, 0x54, 0x49, 0x44, 0x3a, 0x33, 0x0, 0x0, 0x0, 0xfc})
 
 	err = t.DropDatabase(1)
 	c.Assert(err, IsNil)
@@ -217,10 +255,15 @@ func (s *testSuite) TestMeta(c *C) {
 	err = t.SetSchemaDiff(schemaDiff)
 	c.Assert(err, IsNil)
 	readDiff, err := t.GetSchemaDiff(schemaDiff.Version)
+	c.Assert(err, IsNil)
 	c.Assert(readDiff, DeepEquals, schemaDiff)
 
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
+
+	// Test for DDLJobHistoryKey.
+	key = meta.DDLJobHistoryKey(t, 888)
+	c.Assert(key, DeepEquals, []byte{0x6d, 0x44, 0x44, 0x4c, 0x4a, 0x6f, 0x62, 0x48, 0x69, 0xff, 0x73, 0x74, 0x6f, 0x72, 0x79, 0x0, 0x0, 0x0, 0xfc, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x68, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x3, 0x78, 0xff, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xf7})
 }
 
 func (s *testSuite) TestSnapshot(c *C) {
@@ -251,6 +294,7 @@ func (s *testSuite) TestSnapshot(c *C) {
 	c.Assert(n, Equals, int64(1))
 	_, err = snapMeta.GenGlobalID()
 	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[structure:8220]write on snapshot")
 }
 
 func (s *testSuite) TestDDL(c *C) {
@@ -273,54 +317,187 @@ func (s *testSuite) TestDDL(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(n, Equals, int64(1))
 
-	v, err := t.GetDDLJob(0)
+	v, err := t.GetDDLJobByIdx(0)
 	c.Assert(err, IsNil)
 	c.Assert(v, DeepEquals, job)
-	v, err = t.GetDDLJob(1)
+	v, err = t.GetDDLJobByIdx(1)
 	c.Assert(err, IsNil)
 	c.Assert(v, IsNil)
 	job.ID = 2
 	err = t.UpdateDDLJob(0, job, true)
 	c.Assert(err, IsNil)
 
-	err = t.UpdateDDLReorgHandle(job, 1)
+	err = t.UpdateDDLReorgStartHandle(job, 1)
 	c.Assert(err, IsNil)
 
-	h, err := t.GetDDLReorgHandle(job)
+	i, j, k, err := t.GetDDLReorgHandle(job)
 	c.Assert(err, IsNil)
-	c.Assert(h, Equals, int64(1))
+	c.Assert(i, Equals, int64(1))
+	c.Assert(j, Equals, int64(math.MaxInt64))
+	c.Assert(k, Equals, int64(0))
+
+	err = t.UpdateDDLReorgHandle(job, 1, 2, 3)
+	c.Assert(err, IsNil)
+
+	i, j, k, err = t.GetDDLReorgHandle(job)
+	c.Assert(err, IsNil)
+	c.Assert(i, Equals, int64(1))
+	c.Assert(j, Equals, int64(2))
+	c.Assert(k, Equals, int64(3))
 
 	err = t.RemoveDDLReorgHandle(job)
+	c.Assert(err, IsNil)
+
+	i, j, k, err = t.GetDDLReorgHandle(job)
+	c.Assert(err, IsNil)
+	c.Assert(i, Equals, int64(0))
+	// The default value for endHandle is MaxInt64, not 0.
+	c.Assert(j, Equals, int64(math.MaxInt64))
+	c.Assert(k, Equals, int64(0))
+
+	// Test GetDDLReorgHandle failed.
+	_, _, _, err = t.GetDDLReorgHandle(job)
 	c.Assert(err, IsNil)
 
 	v, err = t.DeQueueDDLJob()
 	c.Assert(err, IsNil)
 	c.Assert(v, DeepEquals, job)
 
-	err = t.AddHistoryDDLJob(job)
+	err = t.AddHistoryDDLJob(job, true)
 	c.Assert(err, IsNil)
 	v, err = t.GetHistoryDDLJob(2)
 	c.Assert(err, IsNil)
 	c.Assert(v, DeepEquals, job)
 
+	// Add multiple history jobs.
+	arg := "test arg"
+	historyJob1 := &model.Job{ID: 1234}
+	historyJob1.Args = append(job.Args, arg)
+	err = t.AddHistoryDDLJob(historyJob1, true)
+	c.Assert(err, IsNil)
+	historyJob2 := &model.Job{ID: 123}
+	historyJob2.Args = append(job.Args, arg)
+	err = t.AddHistoryDDLJob(historyJob2, false)
+	c.Assert(err, IsNil)
 	all, err := t.GetAllHistoryDDLJobs()
 	c.Assert(err, IsNil)
 	var lastID int64
 	for _, job := range all {
 		c.Assert(job.ID, Greater, lastID)
 		lastID = job.ID
+		arg1 := ""
+		job.DecodeArgs(&arg1)
+		if job.ID == historyJob1.ID {
+			c.Assert(*(job.Args[0].(*string)), Equals, historyJob1.Args[0])
+		} else {
+			c.Assert(job.Args, IsNil)
+		}
 	}
 
-	// Test GetAllDDLJobs.
+	// Test for get last N history ddl jobs.
+	historyJobs, err := t.GetLastNHistoryDDLJobs(2)
+	c.Assert(err, IsNil)
+	c.Assert(len(historyJobs), Equals, 2)
+	c.Assert(historyJobs[0].ID == 1234, IsTrue)
+	c.Assert(historyJobs[1].ID == 123, IsTrue)
+
+	// Test GetAllDDLJobsInQueue.
 	err = t.EnQueueDDLJob(job)
+	c.Assert(err, IsNil)
 	job1 := &model.Job{ID: 2}
 	err = t.EnQueueDDLJob(job1)
 	c.Assert(err, IsNil)
-	jobs, err := t.GetAllDDLJobs()
+	jobs, err := t.GetAllDDLJobsInQueue()
 	c.Assert(err, IsNil)
 	expectJobs := []*model.Job{job, job1}
 	c.Assert(jobs, DeepEquals, expectJobs)
 
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
+
+	// Test for add index job.
+	txn1, err := store.Begin()
+	c.Assert(err, IsNil)
+	defer txn1.Rollback()
+
+	m := meta.NewMeta(txn1, meta.AddIndexJobListKey)
+	err = m.EnQueueDDLJob(job)
+	c.Assert(err, IsNil)
+	job.ID = 123
+	err = m.UpdateDDLJob(0, job, true, meta.AddIndexJobListKey)
+	c.Assert(err, IsNil)
+	v, err = m.GetDDLJobByIdx(0, meta.AddIndexJobListKey)
+	c.Assert(err, IsNil)
+	c.Assert(v, DeepEquals, job)
+	l, err := m.DDLJobQueueLen(meta.AddIndexJobListKey)
+	c.Assert(err, IsNil)
+	c.Assert(l, Equals, int64(1))
+	jobs, err = m.GetAllDDLJobsInQueue(meta.AddIndexJobListKey)
+	c.Assert(err, IsNil)
+	expectJobs = []*model.Job{job}
+	c.Assert(jobs, DeepEquals, expectJobs)
+
+	err = txn1.Commit(context.Background())
+	c.Assert(err, IsNil)
+}
+
+func (s *testSuite) BenchmarkGenGlobalIDs(c *C) {
+	defer testleak.AfterTest(c)()
+	store, err := mockstore.NewMockTikvStore()
+	c.Assert(err, IsNil)
+	defer store.Close()
+
+	txn, err := store.Begin()
+	c.Assert(err, IsNil)
+	defer txn.Rollback()
+
+	t := meta.NewMeta(txn)
+
+	c.ResetTimer()
+	var ids []int64
+	for i := 0; i < c.N; i++ {
+		ids, _ = t.GenGlobalIDs(10)
+	}
+	c.Assert(ids, HasLen, 10)
+	c.Assert(ids[9], Equals, int64(c.N)*10)
+}
+
+func (s *testSuite) BenchmarkGenGlobalIDOneByOne(c *C) {
+	defer testleak.AfterTest(c)()
+	store, err := mockstore.NewMockTikvStore()
+	c.Assert(err, IsNil)
+	defer store.Close()
+
+	txn, err := store.Begin()
+	c.Assert(err, IsNil)
+	defer txn.Rollback()
+
+	t := meta.NewMeta(txn)
+
+	c.ResetTimer()
+	var id int64
+	for i := 0; i < c.N; i++ {
+		for j := 0; j < 10; j++ {
+			id, _ = t.GenGlobalID()
+		}
+	}
+	c.Assert(id, Equals, int64(c.N)*10)
+}
+
+func anyMatch(c *C, ids []int64, candidates ...[]int64) {
+	var match bool
+OUTER:
+	for _, cand := range candidates {
+		if len(ids) != len(cand) {
+			continue
+		}
+		for i, v := range cand {
+			if ids[i] != v {
+				continue OUTER
+			}
+		}
+		match = true
+		break
+	}
+	c.Assert(match, IsTrue)
 }

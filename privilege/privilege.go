@@ -14,10 +14,11 @@
 package privilege
 
 import (
-	"github.com/pingcap/tidb/mysql"
+	"crypto/tls"
+	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/auth"
 )
 
 type keyType int
@@ -29,22 +30,45 @@ func (k keyType) String() string {
 // Manager is the interface for providing privilege related operations.
 type Manager interface {
 	// ShowGrants shows granted privileges for user.
-	ShowGrants(ctx sessionctx.Context, user *auth.UserIdentity) ([]string, error)
+	ShowGrants(ctx sessionctx.Context, user *auth.UserIdentity, roles []*auth.RoleIdentity) ([]string, error)
+
+	// GetEncodedPassword shows the encoded password for user.
+	GetEncodedPassword(user, host string) string
 
 	// RequestVerification verifies user privilege for the request.
 	// If table is "", only check global/db scope privileges.
 	// If table is not "", check global/db/table scope privileges.
 	// priv should be a defined constant like CreatePriv, if pass AllPrivMask to priv,
 	// this means any privilege would be OK.
-	RequestVerification(db, table, column string, priv mysql.PrivilegeType) bool
+	RequestVerification(activeRole []*auth.RoleIdentity, db, table, column string, priv mysql.PrivilegeType) bool
+
+	// RequestVerificationWithUser verifies specific user privilege for the request.
+	RequestVerificationWithUser(db, table, column string, priv mysql.PrivilegeType, user *auth.UserIdentity) bool
+
 	// ConnectionVerification verifies user privilege for connection.
-	ConnectionVerification(user, host string, auth, salt []byte) bool
+	ConnectionVerification(user, host string, auth, salt []byte, tlsState *tls.ConnectionState) (string, string, bool)
+
+	// GetAuthWithoutVerification uses to get auth name without verification.
+	GetAuthWithoutVerification(user, host string) (string, string, bool)
 
 	// DBIsVisible returns true is the database is visible to current user.
-	DBIsVisible(db string) bool
+	DBIsVisible(activeRole []*auth.RoleIdentity, db string) bool
 
 	// UserPrivilegesTable provide data for INFORMATION_SCHEMA.USERS_PRIVILEGE table.
 	UserPrivilegesTable() [][]types.Datum
+
+	// ActiveRoles active roles for current session.
+	// The first illegal role will be returned.
+	ActiveRoles(ctx sessionctx.Context, roleList []*auth.RoleIdentity) (bool, string)
+
+	// FindEdge find if there is an edge between role and user.
+	FindEdge(ctx sessionctx.Context, role *auth.RoleIdentity, user *auth.UserIdentity) bool
+
+	// GetDefaultRoles returns all default roles for certain user.
+	GetDefaultRoles(user, host string) []*auth.RoleIdentity
+
+	// GetAllRoles return all roles of user.
+	GetAllRoles(user, host string) []*auth.RoleIdentity
 }
 
 const key keyType = 0

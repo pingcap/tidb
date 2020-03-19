@@ -15,12 +15,12 @@ package expression
 
 import (
 	"github.com/cznic/mathutil"
-	"github.com/juju/errors"
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/parser/charset"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
-	"github.com/pingcap/tidb/util/charset"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -37,6 +37,7 @@ var (
 	_ builtinFunc = &builtinCaseWhenStringSig{}
 	_ builtinFunc = &builtinCaseWhenTimeSig{}
 	_ builtinFunc = &builtinCaseWhenDurationSig{}
+	_ builtinFunc = &builtinCaseWhenJSONSig{}
 	_ builtinFunc = &builtinIfNullIntSig{}
 	_ builtinFunc = &builtinIfNullRealSig{}
 	_ builtinFunc = &builtinIfNullDecimalSig{}
@@ -53,8 +54,8 @@ var (
 	_ builtinFunc = &builtinIfJSONSig{}
 )
 
-// Infer result type for builtin IF, IFNULL && NULLIF.
-func inferType4ControlFuncs(lhs, rhs *types.FieldType) *types.FieldType {
+// InferType4ControlFuncs infer result type for builtin IF, IFNULL, NULLIF, LEAD and LAG.
+func InferType4ControlFuncs(lhs, rhs *types.FieldType) *types.FieldType {
 	resultFieldType := &types.FieldType{}
 	if lhs.Tp == mysql.TypeNull {
 		*resultFieldType = *rhs
@@ -67,9 +68,8 @@ func inferType4ControlFuncs(lhs, rhs *types.FieldType) *types.FieldType {
 	} else if rhs.Tp == mysql.TypeNull {
 		*resultFieldType = *lhs
 	} else {
-		var unsignedFlag uint
-		evalType := types.AggregateEvalType([]*types.FieldType{lhs, rhs}, &unsignedFlag)
 		resultFieldType = types.AggFieldType([]*types.FieldType{lhs, rhs})
+		evalType := types.AggregateEvalType([]*types.FieldType{lhs, rhs}, &resultFieldType.Flag)
 		if evalType == types.ETInt {
 			resultFieldType.Decimal = 0
 		} else {
@@ -80,19 +80,19 @@ func inferType4ControlFuncs(lhs, rhs *types.FieldType) *types.FieldType {
 			}
 		}
 		if types.IsNonBinaryStr(lhs) && !types.IsBinaryStr(rhs) {
-			resultFieldType.Charset, resultFieldType.Collate, resultFieldType.Flag = charset.CharsetUTF8, charset.CollationUTF8, 0
+			resultFieldType.Charset, resultFieldType.Collate, resultFieldType.Flag = charset.CharsetUTF8MB4, charset.CollationUTF8MB4, 0
 			if mysql.HasBinaryFlag(lhs.Flag) || !types.IsNonBinaryStr(rhs) {
 				resultFieldType.Flag |= mysql.BinaryFlag
 			}
 		} else if types.IsNonBinaryStr(rhs) && !types.IsBinaryStr(lhs) {
-			resultFieldType.Charset, resultFieldType.Collate, resultFieldType.Flag = charset.CharsetUTF8, charset.CollationUTF8, 0
+			resultFieldType.Charset, resultFieldType.Collate, resultFieldType.Flag = charset.CharsetUTF8MB4, charset.CollationUTF8MB4, 0
 			if mysql.HasBinaryFlag(rhs.Flag) || !types.IsNonBinaryStr(lhs) {
 				resultFieldType.Flag |= mysql.BinaryFlag
 			}
 		} else if types.IsBinaryStr(lhs) || types.IsBinaryStr(rhs) || !evalType.IsStringKind() {
 			types.SetBinChsClnFlag(resultFieldType)
 		} else {
-			resultFieldType.Charset, resultFieldType.Collate, resultFieldType.Flag = charset.CharsetUTF8, charset.CollationUTF8, 0
+			resultFieldType.Charset, resultFieldType.Collate, resultFieldType.Flag = mysql.DefaultCharset, mysql.DefaultCollationName, 0
 		}
 		if evalType == types.ETDecimal || evalType == types.ETInt {
 			lhsUnsignedFlag, rhsUnsignedFlag := mysql.HasUnsignedFlag(lhs.Flag), mysql.HasUnsignedFlag(rhs.Flag)
@@ -134,7 +134,7 @@ type caseWhenFunctionClass struct {
 
 func (c *caseWhenFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
 	if err = c.verifyArgs(args); err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	l := len(args)
 	// Fill in each 'THEN' clause parameter type.
@@ -163,18 +163,21 @@ func (c *caseWhenFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	}
 	fieldTp.Decimal, fieldTp.Flen = decimal, flen
 	if fieldTp.EvalType().IsStringKind() && !isBinaryStr {
-		fieldTp.Charset, fieldTp.Collate = mysql.DefaultCharset, mysql.DefaultCollationName
+		fieldTp.Charset, fieldTp.Collate = charset.CharsetUTF8MB4, charset.CollationUTF8MB4
 	}
 	if isBinaryFlag {
 		fieldTp.Flag |= mysql.BinaryFlag
 	}
 	// Set retType to BINARY(0) if all arguments are of type NULL.
 	if fieldTp.Tp == mysql.TypeNull {
-		fieldTp.Flen, fieldTp.Decimal = 0, -1
+		fieldTp.Flen, fieldTp.Decimal = 0, types.UnspecifiedLength
 		types.SetBinChsClnFlag(fieldTp)
 	}
 	argTps := make([]types.EvalType, 0, l)
 	for i := 0; i < l-1; i += 2 {
+		if args[i], err = wrapWithIsTrue(ctx, true, args[i]); err != nil {
+			return nil, err
+		}
 		argTps = append(argTps, types.ETInt, tp)
 	}
 	if l%2 == 1 {
@@ -204,6 +207,9 @@ func (c *caseWhenFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	case types.ETDuration:
 		sig = &builtinCaseWhenDurationSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CaseWhenDuration)
+	case types.ETJson:
+		sig = &builtinCaseWhenJSONSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_CaseWhenJson)
 	}
 	return sig, nil
 }
@@ -219,27 +225,27 @@ func (b *builtinCaseWhenIntSig) Clone() builtinFunc {
 }
 
 // evalInt evals a builtinCaseWhenIntSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/case.html
-func (b *builtinCaseWhenIntSig) evalInt(row types.Row) (ret int64, isNull bool, err error) {
+// See https://dev.mysql.com/doc/refman/5.7/en/control-flow-functions.html#operator_case
+func (b *builtinCaseWhenIntSig) evalInt(row chunk.Row) (ret int64, isNull bool, err error) {
 	var condition int64
 	args, l := b.getArgs(), len(b.getArgs())
 	for i := 0; i < l-1; i += 2 {
 		condition, isNull, err = args[i].EvalInt(b.ctx, row)
 		if err != nil {
-			return 0, isNull, errors.Trace(err)
+			return 0, isNull, err
 		}
 		if isNull || condition == 0 {
 			continue
 		}
 		ret, isNull, err = args[i+1].EvalInt(b.ctx, row)
-		return ret, isNull, errors.Trace(err)
+		return ret, isNull, err
 	}
 	// when clause(condition, result) -> args[i], args[i+1]; (i >= 0 && i+1 < l-1)
 	// else clause -> args[l-1]
 	// If case clause has else clause, l%2 == 1.
 	if l%2 == 1 {
 		ret, isNull, err = args[l-1].EvalInt(b.ctx, row)
-		return ret, isNull, errors.Trace(err)
+		return ret, isNull, err
 	}
 	return ret, true, nil
 }
@@ -255,27 +261,27 @@ func (b *builtinCaseWhenRealSig) Clone() builtinFunc {
 }
 
 // evalReal evals a builtinCaseWhenRealSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/case.html
-func (b *builtinCaseWhenRealSig) evalReal(row types.Row) (ret float64, isNull bool, err error) {
+// See https://dev.mysql.com/doc/refman/5.7/en/control-flow-functions.html#operator_case
+func (b *builtinCaseWhenRealSig) evalReal(row chunk.Row) (ret float64, isNull bool, err error) {
 	var condition int64
 	args, l := b.getArgs(), len(b.getArgs())
 	for i := 0; i < l-1; i += 2 {
 		condition, isNull, err = args[i].EvalInt(b.ctx, row)
 		if err != nil {
-			return 0, isNull, errors.Trace(err)
+			return 0, isNull, err
 		}
 		if isNull || condition == 0 {
 			continue
 		}
 		ret, isNull, err = args[i+1].EvalReal(b.ctx, row)
-		return ret, isNull, errors.Trace(err)
+		return ret, isNull, err
 	}
 	// when clause(condition, result) -> args[i], args[i+1]; (i >= 0 && i+1 < l-1)
 	// else clause -> args[l-1]
 	// If case clause has else clause, l%2 == 1.
 	if l%2 == 1 {
 		ret, isNull, err = args[l-1].EvalReal(b.ctx, row)
-		return ret, isNull, errors.Trace(err)
+		return ret, isNull, err
 	}
 	return ret, true, nil
 }
@@ -291,27 +297,27 @@ func (b *builtinCaseWhenDecimalSig) Clone() builtinFunc {
 }
 
 // evalDecimal evals a builtinCaseWhenDecimalSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/case.html
-func (b *builtinCaseWhenDecimalSig) evalDecimal(row types.Row) (ret *types.MyDecimal, isNull bool, err error) {
+// See https://dev.mysql.com/doc/refman/5.7/en/control-flow-functions.html#operator_case
+func (b *builtinCaseWhenDecimalSig) evalDecimal(row chunk.Row) (ret *types.MyDecimal, isNull bool, err error) {
 	var condition int64
 	args, l := b.getArgs(), len(b.getArgs())
 	for i := 0; i < l-1; i += 2 {
 		condition, isNull, err = args[i].EvalInt(b.ctx, row)
 		if err != nil {
-			return nil, isNull, errors.Trace(err)
+			return nil, isNull, err
 		}
 		if isNull || condition == 0 {
 			continue
 		}
 		ret, isNull, err = args[i+1].EvalDecimal(b.ctx, row)
-		return ret, isNull, errors.Trace(err)
+		return ret, isNull, err
 	}
 	// when clause(condition, result) -> args[i], args[i+1]; (i >= 0 && i+1 < l-1)
 	// else clause -> args[l-1]
 	// If case clause has else clause, l%2 == 1.
 	if l%2 == 1 {
 		ret, isNull, err = args[l-1].EvalDecimal(b.ctx, row)
-		return ret, isNull, errors.Trace(err)
+		return ret, isNull, err
 	}
 	return ret, true, nil
 }
@@ -327,27 +333,27 @@ func (b *builtinCaseWhenStringSig) Clone() builtinFunc {
 }
 
 // evalString evals a builtinCaseWhenStringSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/case.html
-func (b *builtinCaseWhenStringSig) evalString(row types.Row) (ret string, isNull bool, err error) {
+// See https://dev.mysql.com/doc/refman/5.7/en/control-flow-functions.html#operator_case
+func (b *builtinCaseWhenStringSig) evalString(row chunk.Row) (ret string, isNull bool, err error) {
 	var condition int64
 	args, l := b.getArgs(), len(b.getArgs())
 	for i := 0; i < l-1; i += 2 {
 		condition, isNull, err = args[i].EvalInt(b.ctx, row)
 		if err != nil {
-			return "", isNull, errors.Trace(err)
+			return "", isNull, err
 		}
 		if isNull || condition == 0 {
 			continue
 		}
 		ret, isNull, err = args[i+1].EvalString(b.ctx, row)
-		return ret, isNull, errors.Trace(err)
+		return ret, isNull, err
 	}
 	// when clause(condition, result) -> args[i], args[i+1]; (i >= 0 && i+1 < l-1)
 	// else clause -> args[l-1]
 	// If case clause has else clause, l%2 == 1.
 	if l%2 == 1 {
 		ret, isNull, err = args[l-1].EvalString(b.ctx, row)
-		return ret, isNull, errors.Trace(err)
+		return ret, isNull, err
 	}
 	return ret, true, nil
 }
@@ -363,27 +369,27 @@ func (b *builtinCaseWhenTimeSig) Clone() builtinFunc {
 }
 
 // evalTime evals a builtinCaseWhenTimeSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/case.html
-func (b *builtinCaseWhenTimeSig) evalTime(row types.Row) (ret types.Time, isNull bool, err error) {
+// See https://dev.mysql.com/doc/refman/5.7/en/control-flow-functions.html#operator_case
+func (b *builtinCaseWhenTimeSig) evalTime(row chunk.Row) (ret types.Time, isNull bool, err error) {
 	var condition int64
 	args, l := b.getArgs(), len(b.getArgs())
 	for i := 0; i < l-1; i += 2 {
 		condition, isNull, err = args[i].EvalInt(b.ctx, row)
 		if err != nil {
-			return ret, isNull, errors.Trace(err)
+			return ret, isNull, err
 		}
 		if isNull || condition == 0 {
 			continue
 		}
 		ret, isNull, err = args[i+1].EvalTime(b.ctx, row)
-		return ret, isNull, errors.Trace(err)
+		return ret, isNull, err
 	}
 	// when clause(condition, result) -> args[i], args[i+1]; (i >= 0 && i+1 < l-1)
 	// else clause -> args[l-1]
 	// If case clause has else clause, l%2 == 1.
 	if l%2 == 1 {
 		ret, isNull, err = args[l-1].EvalTime(b.ctx, row)
-		return ret, isNull, errors.Trace(err)
+		return ret, isNull, err
 	}
 	return ret, true, nil
 }
@@ -399,27 +405,61 @@ func (b *builtinCaseWhenDurationSig) Clone() builtinFunc {
 }
 
 // evalDuration evals a builtinCaseWhenDurationSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/case.html
-func (b *builtinCaseWhenDurationSig) evalDuration(row types.Row) (ret types.Duration, isNull bool, err error) {
+// See https://dev.mysql.com/doc/refman/5.7/en/control-flow-functions.html#operator_case
+func (b *builtinCaseWhenDurationSig) evalDuration(row chunk.Row) (ret types.Duration, isNull bool, err error) {
 	var condition int64
 	args, l := b.getArgs(), len(b.getArgs())
 	for i := 0; i < l-1; i += 2 {
 		condition, isNull, err = args[i].EvalInt(b.ctx, row)
 		if err != nil {
-			return ret, true, errors.Trace(err)
+			return ret, true, err
 		}
 		if isNull || condition == 0 {
 			continue
 		}
 		ret, isNull, err = args[i+1].EvalDuration(b.ctx, row)
-		return ret, isNull, errors.Trace(err)
+		return ret, isNull, err
 	}
 	// when clause(condition, result) -> args[i], args[i+1]; (i >= 0 && i+1 < l-1)
 	// else clause -> args[l-1]
 	// If case clause has else clause, l%2 == 1.
 	if l%2 == 1 {
 		ret, isNull, err = args[l-1].EvalDuration(b.ctx, row)
-		return ret, isNull, errors.Trace(err)
+		return ret, isNull, err
+	}
+	return ret, true, nil
+}
+
+type builtinCaseWhenJSONSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinCaseWhenJSONSig) Clone() builtinFunc {
+	newSig := &builtinCaseWhenJSONSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalJSON evals a builtinCaseWhenJSONSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/control-flow-functions.html#operator_case
+func (b *builtinCaseWhenJSONSig) evalJSON(row chunk.Row) (ret json.BinaryJSON, isNull bool, err error) {
+	var condition int64
+	args, l := b.getArgs(), len(b.getArgs())
+	for i := 0; i < l-1; i += 2 {
+		condition, isNull, err = args[i].EvalInt(b.ctx, row)
+		if err != nil {
+			return
+		}
+		if isNull || condition == 0 {
+			continue
+		}
+		return args[i+1].EvalJSON(b.ctx, row)
+	}
+	// when clause(condition, result) -> args[i], args[i+1]; (i >= 0 && i+1 < l-1)
+	// else clause -> args[l-1]
+	// If case clause has else clause, l%2 == 1.
+	if l%2 == 1 {
+		return args[l-1].EvalJSON(b.ctx, row)
 	}
 	return ret, true, nil
 }
@@ -428,13 +468,17 @@ type ifFunctionClass struct {
 	baseFunctionClass
 }
 
-// See https://dev.mysql.com/doc/refman/5.7/en/control-flow-functions.html#function_if
+// getFunction see https://dev.mysql.com/doc/refman/5.7/en/control-flow-functions.html#function_if
 func (c *ifFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
 	if err = c.verifyArgs(args); err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
-	retTp := inferType4ControlFuncs(args[1].GetType(), args[2].GetType())
+	retTp := InferType4ControlFuncs(args[1].GetType(), args[2].GetType())
 	evalTps := retTp.EvalType()
+	args[0], err = wrapWithIsTrue(ctx, true, args[0])
+	if err != nil {
+		return nil, err
+	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, evalTps, types.ETInt, evalTps, evalTps)
 	retTp.Flag |= bf.tp.Flag
 	bf.tp = retTp
@@ -474,17 +518,17 @@ func (b *builtinIfIntSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinIfIntSig) evalInt(row types.Row) (ret int64, isNull bool, err error) {
+func (b *builtinIfIntSig) evalInt(row chunk.Row) (ret int64, isNull bool, err error) {
 	arg0, isNull0, err := b.args[0].EvalInt(b.ctx, row)
 	if err != nil {
-		return 0, true, errors.Trace(err)
+		return 0, true, err
 	}
 	arg1, isNull1, err := b.args[1].EvalInt(b.ctx, row)
 	if (!isNull0 && arg0 != 0) || err != nil {
-		return arg1, isNull1, errors.Trace(err)
+		return arg1, isNull1, err
 	}
 	arg2, isNull2, err := b.args[2].EvalInt(b.ctx, row)
-	return arg2, isNull2, errors.Trace(err)
+	return arg2, isNull2, err
 }
 
 type builtinIfRealSig struct {
@@ -497,17 +541,17 @@ func (b *builtinIfRealSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinIfRealSig) evalReal(row types.Row) (ret float64, isNull bool, err error) {
+func (b *builtinIfRealSig) evalReal(row chunk.Row) (ret float64, isNull bool, err error) {
 	arg0, isNull0, err := b.args[0].EvalInt(b.ctx, row)
 	if err != nil {
-		return 0, true, errors.Trace(err)
+		return 0, true, err
 	}
 	arg1, isNull1, err := b.args[1].EvalReal(b.ctx, row)
 	if (!isNull0 && arg0 != 0) || err != nil {
-		return arg1, isNull1, errors.Trace(err)
+		return arg1, isNull1, err
 	}
 	arg2, isNull2, err := b.args[2].EvalReal(b.ctx, row)
-	return arg2, isNull2, errors.Trace(err)
+	return arg2, isNull2, err
 }
 
 type builtinIfDecimalSig struct {
@@ -520,17 +564,17 @@ func (b *builtinIfDecimalSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinIfDecimalSig) evalDecimal(row types.Row) (ret *types.MyDecimal, isNull bool, err error) {
+func (b *builtinIfDecimalSig) evalDecimal(row chunk.Row) (ret *types.MyDecimal, isNull bool, err error) {
 	arg0, isNull0, err := b.args[0].EvalInt(b.ctx, row)
 	if err != nil {
-		return nil, true, errors.Trace(err)
+		return nil, true, err
 	}
 	arg1, isNull1, err := b.args[1].EvalDecimal(b.ctx, row)
 	if (!isNull0 && arg0 != 0) || err != nil {
-		return arg1, isNull1, errors.Trace(err)
+		return arg1, isNull1, err
 	}
 	arg2, isNull2, err := b.args[2].EvalDecimal(b.ctx, row)
-	return arg2, isNull2, errors.Trace(err)
+	return arg2, isNull2, err
 }
 
 type builtinIfStringSig struct {
@@ -543,17 +587,17 @@ func (b *builtinIfStringSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinIfStringSig) evalString(row types.Row) (ret string, isNull bool, err error) {
+func (b *builtinIfStringSig) evalString(row chunk.Row) (ret string, isNull bool, err error) {
 	arg0, isNull0, err := b.args[0].EvalInt(b.ctx, row)
 	if err != nil {
-		return "", true, errors.Trace(err)
+		return "", true, err
 	}
 	arg1, isNull1, err := b.args[1].EvalString(b.ctx, row)
 	if (!isNull0 && arg0 != 0) || err != nil {
-		return arg1, isNull1, errors.Trace(err)
+		return arg1, isNull1, err
 	}
 	arg2, isNull2, err := b.args[2].EvalString(b.ctx, row)
-	return arg2, isNull2, errors.Trace(err)
+	return arg2, isNull2, err
 }
 
 type builtinIfTimeSig struct {
@@ -566,17 +610,17 @@ func (b *builtinIfTimeSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinIfTimeSig) evalTime(row types.Row) (ret types.Time, isNull bool, err error) {
+func (b *builtinIfTimeSig) evalTime(row chunk.Row) (ret types.Time, isNull bool, err error) {
 	arg0, isNull0, err := b.args[0].EvalInt(b.ctx, row)
 	if err != nil {
-		return ret, true, errors.Trace(err)
+		return ret, true, err
 	}
 	arg1, isNull1, err := b.args[1].EvalTime(b.ctx, row)
 	if (!isNull0 && arg0 != 0) || err != nil {
-		return arg1, isNull1, errors.Trace(err)
+		return arg1, isNull1, err
 	}
 	arg2, isNull2, err := b.args[2].EvalTime(b.ctx, row)
-	return arg2, isNull2, errors.Trace(err)
+	return arg2, isNull2, err
 }
 
 type builtinIfDurationSig struct {
@@ -589,17 +633,17 @@ func (b *builtinIfDurationSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinIfDurationSig) evalDuration(row types.Row) (ret types.Duration, isNull bool, err error) {
+func (b *builtinIfDurationSig) evalDuration(row chunk.Row) (ret types.Duration, isNull bool, err error) {
 	arg0, isNull0, err := b.args[0].EvalInt(b.ctx, row)
 	if err != nil {
-		return ret, true, errors.Trace(err)
+		return ret, true, err
 	}
 	arg1, isNull1, err := b.args[1].EvalDuration(b.ctx, row)
 	if (!isNull0 && arg0 != 0) || err != nil {
-		return arg1, isNull1, errors.Trace(err)
+		return arg1, isNull1, err
 	}
 	arg2, isNull2, err := b.args[2].EvalDuration(b.ctx, row)
-	return arg2, isNull2, errors.Trace(err)
+	return arg2, isNull2, err
 }
 
 type builtinIfJSONSig struct {
@@ -612,18 +656,18 @@ func (b *builtinIfJSONSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinIfJSONSig) evalJSON(row types.Row) (ret json.BinaryJSON, isNull bool, err error) {
+func (b *builtinIfJSONSig) evalJSON(row chunk.Row) (ret json.BinaryJSON, isNull bool, err error) {
 	arg0, isNull0, err := b.args[0].EvalInt(b.ctx, row)
 	if err != nil {
-		return ret, true, errors.Trace(err)
+		return ret, true, err
 	}
 	arg1, isNull1, err := b.args[1].EvalJSON(b.ctx, row)
 	if err != nil {
-		return ret, true, errors.Trace(err)
+		return ret, true, err
 	}
 	arg2, isNull2, err := b.args[2].EvalJSON(b.ctx, row)
 	if err != nil {
-		return ret, true, errors.Trace(err)
+		return ret, true, err
 	}
 	switch {
 	case isNull0 || arg0 == 0:
@@ -639,11 +683,11 @@ type ifNullFunctionClass struct {
 }
 
 func (c *ifNullFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
-	if err = errors.Trace(c.verifyArgs(args)); err != nil {
-		return nil, errors.Trace(err)
+	if err = c.verifyArgs(args); err != nil {
+		return nil, err
 	}
 	lhs, rhs := args[0].GetType(), args[1].GetType()
-	retTp := inferType4ControlFuncs(lhs, rhs)
+	retTp := InferType4ControlFuncs(lhs, rhs)
 	retTp.Flag |= (lhs.Flag & mysql.NotNullFlag) | (rhs.Flag & mysql.NotNullFlag)
 	if lhs.Tp == mysql.TypeNull && rhs.Tp == mysql.TypeNull {
 		retTp.Tp = mysql.TypeNull
@@ -689,13 +733,13 @@ func (b *builtinIfNullIntSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinIfNullIntSig) evalInt(row types.Row) (int64, bool, error) {
+func (b *builtinIfNullIntSig) evalInt(row chunk.Row) (int64, bool, error) {
 	arg0, isNull, err := b.args[0].EvalInt(b.ctx, row)
 	if !isNull || err != nil {
-		return arg0, err != nil, errors.Trace(err)
+		return arg0, err != nil, err
 	}
 	arg1, isNull, err := b.args[1].EvalInt(b.ctx, row)
-	return arg1, isNull || err != nil, errors.Trace(err)
+	return arg1, isNull || err != nil, err
 }
 
 type builtinIfNullRealSig struct {
@@ -708,13 +752,13 @@ func (b *builtinIfNullRealSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinIfNullRealSig) evalReal(row types.Row) (float64, bool, error) {
+func (b *builtinIfNullRealSig) evalReal(row chunk.Row) (float64, bool, error) {
 	arg0, isNull, err := b.args[0].EvalReal(b.ctx, row)
 	if !isNull || err != nil {
-		return arg0, err != nil, errors.Trace(err)
+		return arg0, err != nil, err
 	}
 	arg1, isNull, err := b.args[1].EvalReal(b.ctx, row)
-	return arg1, isNull || err != nil, errors.Trace(err)
+	return arg1, isNull || err != nil, err
 }
 
 type builtinIfNullDecimalSig struct {
@@ -727,13 +771,13 @@ func (b *builtinIfNullDecimalSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinIfNullDecimalSig) evalDecimal(row types.Row) (*types.MyDecimal, bool, error) {
+func (b *builtinIfNullDecimalSig) evalDecimal(row chunk.Row) (*types.MyDecimal, bool, error) {
 	arg0, isNull, err := b.args[0].EvalDecimal(b.ctx, row)
 	if !isNull || err != nil {
-		return arg0, err != nil, errors.Trace(err)
+		return arg0, err != nil, err
 	}
 	arg1, isNull, err := b.args[1].EvalDecimal(b.ctx, row)
-	return arg1, isNull || err != nil, errors.Trace(err)
+	return arg1, isNull || err != nil, err
 }
 
 type builtinIfNullStringSig struct {
@@ -746,13 +790,13 @@ func (b *builtinIfNullStringSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinIfNullStringSig) evalString(row types.Row) (string, bool, error) {
+func (b *builtinIfNullStringSig) evalString(row chunk.Row) (string, bool, error) {
 	arg0, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if !isNull || err != nil {
-		return arg0, err != nil, errors.Trace(err)
+		return arg0, err != nil, err
 	}
 	arg1, isNull, err := b.args[1].EvalString(b.ctx, row)
-	return arg1, isNull || err != nil, errors.Trace(err)
+	return arg1, isNull || err != nil, err
 }
 
 type builtinIfNullTimeSig struct {
@@ -765,13 +809,13 @@ func (b *builtinIfNullTimeSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinIfNullTimeSig) evalTime(row types.Row) (types.Time, bool, error) {
+func (b *builtinIfNullTimeSig) evalTime(row chunk.Row) (types.Time, bool, error) {
 	arg0, isNull, err := b.args[0].EvalTime(b.ctx, row)
 	if !isNull || err != nil {
-		return arg0, err != nil, errors.Trace(err)
+		return arg0, err != nil, err
 	}
 	arg1, isNull, err := b.args[1].EvalTime(b.ctx, row)
-	return arg1, isNull || err != nil, errors.Trace(err)
+	return arg1, isNull || err != nil, err
 }
 
 type builtinIfNullDurationSig struct {
@@ -784,13 +828,13 @@ func (b *builtinIfNullDurationSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinIfNullDurationSig) evalDuration(row types.Row) (types.Duration, bool, error) {
+func (b *builtinIfNullDurationSig) evalDuration(row chunk.Row) (types.Duration, bool, error) {
 	arg0, isNull, err := b.args[0].EvalDuration(b.ctx, row)
 	if !isNull || err != nil {
-		return arg0, err != nil, errors.Trace(err)
+		return arg0, err != nil, err
 	}
 	arg1, isNull, err := b.args[1].EvalDuration(b.ctx, row)
-	return arg1, isNull || err != nil, errors.Trace(err)
+	return arg1, isNull || err != nil, err
 }
 
 type builtinIfNullJSONSig struct {
@@ -803,11 +847,11 @@ func (b *builtinIfNullJSONSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinIfNullJSONSig) evalJSON(row types.Row) (json.BinaryJSON, bool, error) {
+func (b *builtinIfNullJSONSig) evalJSON(row chunk.Row) (json.BinaryJSON, bool, error) {
 	arg0, isNull, err := b.args[0].EvalJSON(b.ctx, row)
 	if !isNull {
-		return arg0, err != nil, errors.Trace(err)
+		return arg0, err != nil, err
 	}
 	arg1, isNull, err := b.args[1].EvalJSON(b.ctx, row)
-	return arg1, isNull || err != nil, errors.Trace(err)
+	return arg1, isNull || err != nil, err
 }

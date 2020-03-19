@@ -25,7 +25,7 @@ var (
 			Subsystem: "statistics",
 			Name:      "auto_analyze_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) of auto analyze.",
-			Buckets:   prometheus.ExponentialBuckets(0.01, 2, 20),
+			Buckets:   prometheus.ExponentialBuckets(0.01, 2, 20), // 10ms ~ 3hours
 		})
 
 	AutoAnalyzeCounter = prometheus.NewCounterVec(
@@ -76,14 +76,29 @@ var (
 			Name:      "store_query_feedback_total",
 			Help:      "Counter of storing query feedback.",
 		}, []string{LblType})
-)
 
-func init() {
-	prometheus.MustRegister(AutoAnalyzeHistogram)
-	prometheus.MustRegister(AutoAnalyzeCounter)
-	prometheus.MustRegister(StatsInaccuracyRate)
-	prometheus.MustRegister(PseudoEstimation)
-	prometheus.MustRegister(DumpFeedbackCounter)
-	prometheus.MustRegister(UpdateStatsCounter)
-	prometheus.MustRegister(StoreQueryFeedbackCounter)
-}
+	GetStoreLimitErrorCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "statistics",
+			Name:      "get_store_limit_token_error",
+			Help:      "store token is up to the limit, probably because one of the stores is the hotspot or unavailable",
+		}, []string{LblAddress, LblStore})
+
+	SignificantFeedbackCounter = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "statistics",
+			Name:      "high_error_rate_feedback_total",
+			Help:      "Counter of query feedback whose actual count is much different than calculated by current statistics",
+		})
+
+	FastAnalyzeHistogram = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "statistics",
+			Name:      "fast_analyze_status",
+			Help:      "Bucketed histogram of some stats in fast analyze.",
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 16),
+		}, []string{LblSQLType, LblType})
+)

@@ -15,6 +15,8 @@ package executor
 
 import (
 	"bytes"
+	"context"
+	gjson "encoding/json"
 	"fmt"
 	"sort"
 	"strconv"
@@ -22,52 +24,74 @@ import (
 	"time"
 
 	"github.com/cznic/mathutil"
-	"github.com/juju/errors"
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/parser/charset"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb-tools/pkg/etcd"
+	"github.com/pingcap/tidb-tools/pkg/utils"
+	"github.com/pingcap/tidb-tools/tidb-binlog/node"
+	"github.com/pingcap/tidb/bindinfo"
+	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta/autoid"
+	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/privilege"
+	"github.com/pingcap/tidb/privilege/privileges"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
-	"github.com/pingcap/tidb/util/auth"
-	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/format"
-	"golang.org/x/net/context"
+	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/stringutil"
 )
+
+var etcdDialTimeout = 5 * time.Second
 
 // ShowExec represents a show executor.
 type ShowExec struct {
 	baseExecutor
 
-	Tp     ast.ShowStmtType // Databases/Tables/Columns/....
-	DBName model.CIStr
-	Table  *ast.TableName  // Used for showing columns.
-	Column *ast.ColumnName // Used for `desc table column`.
-	Flag   int             // Some flag parsed from sql, such as FULL.
-	Full   bool
-	User   *auth.UserIdentity // Used for show grants.
-
-	// GlobalScope is used by show variables
-	GlobalScope bool
+	Tp        ast.ShowStmtType // Databases/Tables/Columns/....
+	DBName    model.CIStr
+	Table     *ast.TableName       // Used for showing columns.
+	Column    *ast.ColumnName      // Used for `desc table column`.
+	IndexName model.CIStr          // Used for show table regions.
+	Flag      int                  // Some flag parsed from sql, such as FULL.
+	Roles     []*auth.RoleIdentity // Used for show grants.
+	User      *auth.UserIdentity   // Used by show grants, show create user.
 
 	is infoschema.InfoSchema
 
 	result *chunk.Chunk
 	cursor int
+
+	Full        bool
+	IfNotExists bool // Used for `show create database if not exists`
+	GlobalScope bool // GlobalScope is used by show variables
+	Extended    bool // Used for `show extended columns from ...`
 }
 
 // Next implements the Executor Next interface.
-func (e *ShowExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	chk.Reset()
+func (e *ShowExec) Next(ctx context.Context, req *chunk.Chunk) error {
+	req.GrowAndReset(e.maxChunkSize)
 	if e.result == nil {
-		e.result = e.newChunk()
-		err := e.fetchAll()
+		e.result = newFirstChunk(e)
+		err := e.fetchAll(ctx)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -87,26 +111,34 @@ func (e *ShowExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if e.cursor >= e.result.NumRows() {
 		return nil
 	}
-	numCurBatch := mathutil.Min(e.maxChunkSize, e.result.NumRows()-e.cursor)
-	chk.Append(e.result, e.cursor, e.cursor+numCurBatch)
+	numCurBatch := mathutil.Min(req.Capacity(), e.result.NumRows()-e.cursor)
+	req.Append(e.result, e.cursor, e.cursor+numCurBatch)
 	e.cursor += numCurBatch
 	return nil
 }
 
-func (e *ShowExec) fetchAll() error {
+func (e *ShowExec) fetchAll(ctx context.Context) error {
 	switch e.Tp {
 	case ast.ShowCharset:
 		return e.fetchShowCharset()
 	case ast.ShowCollation:
 		return e.fetchShowCollation()
 	case ast.ShowColumns:
-		return e.fetchShowColumns()
+		return e.fetchShowColumns(ctx)
 	case ast.ShowCreateTable:
 		return e.fetchShowCreateTable()
+	case ast.ShowCreateSequence:
+		return e.fetchShowCreateSequence()
+	case ast.ShowCreateUser:
+		return e.fetchShowCreateUser()
+	case ast.ShowCreateView:
+		return e.fetchShowCreateView()
 	case ast.ShowCreateDatabase:
 		return e.fetchShowCreateDatabase()
 	case ast.ShowDatabases:
 		return e.fetchShowDatabases()
+	case ast.ShowDrainerStatus:
+		return e.fetchShowPumpOrDrainerStatus(node.DrainerNode)
 	case ast.ShowEngines:
 		return e.fetchShowEngines()
 	case ast.ShowGrants:
@@ -115,10 +147,14 @@ func (e *ShowExec) fetchAll() error {
 		return e.fetchShowIndex()
 	case ast.ShowProcedureStatus:
 		return e.fetchShowProcedureStatus()
+	case ast.ShowPumpStatus:
+		return e.fetchShowPumpOrDrainerStatus(node.PumpNode)
 	case ast.ShowStatus:
 		return e.fetchShowStatus()
 	case ast.ShowTables:
 		return e.fetchShowTables()
+	case ast.ShowOpenTables:
+		return e.fetchShowOpenTables()
 	case ast.ShowTableStatus:
 		return e.fetchShowTableStatus()
 	case ast.ShowTriggers:
@@ -150,29 +186,126 @@ func (e *ShowExec) fetchAll() error {
 		return e.fetchShowMasterStatus()
 	case ast.ShowPrivileges:
 		return e.fetchShowPrivileges()
+	case ast.ShowBindings:
+		return e.fetchShowBind()
+	case ast.ShowAnalyzeStatus:
+		e.fetchShowAnalyzeStatus()
+		return nil
+	case ast.ShowRegions:
+		return e.fetchShowTableRegions()
+	case ast.ShowBuiltins:
+		return e.fetchShowBuiltins()
+	}
+	return nil
+}
+
+// visibleChecker checks if a stmt is visible for a certain user.
+type visibleChecker struct {
+	defaultDB string
+	ctx       sessionctx.Context
+	is        infoschema.InfoSchema
+	manager   privilege.Manager
+	ok        bool
+}
+
+func (v *visibleChecker) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+	switch x := in.(type) {
+	case *ast.TableName:
+		schema := x.Schema.L
+		if schema == "" {
+			schema = v.defaultDB
+		}
+		if !v.is.TableExists(model.NewCIStr(schema), x.Name) {
+			return in, true
+		}
+		activeRoles := v.ctx.GetSessionVars().ActiveRoles
+		if v.manager != nil && !v.manager.RequestVerification(activeRoles, schema, x.Name.L, "", mysql.SelectPriv) {
+			v.ok = false
+		}
+		return in, true
+	}
+	return in, false
+}
+
+func (v *visibleChecker) Leave(in ast.Node) (out ast.Node, ok bool) {
+	return in, true
+}
+
+func (e *ShowExec) fetchShowBind() error {
+	var bindRecords []*bindinfo.BindRecord
+	if !e.GlobalScope {
+		handle := e.ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
+		bindRecords = handle.GetAllBindRecord()
+	} else {
+		bindRecords = domain.GetDomain(e.ctx).BindHandle().GetAllBindRecord()
+	}
+	parser := parser.New()
+	for _, bindData := range bindRecords {
+		for _, hint := range bindData.Bindings {
+			stmt, err := parser.ParseOneStmt(hint.BindSQL, hint.Charset, hint.Collation)
+			if err != nil {
+				return err
+			}
+			checker := visibleChecker{
+				defaultDB: bindData.Db,
+				ctx:       e.ctx,
+				is:        e.is,
+				manager:   privilege.GetPrivilegeManager(e.ctx),
+				ok:        true,
+			}
+			stmt.Accept(&checker)
+			if !checker.ok {
+				continue
+			}
+			e.appendRow([]interface{}{
+				bindData.OriginalSQL,
+				hint.BindSQL,
+				bindData.Db,
+				hint.Status,
+				hint.CreateTime,
+				hint.UpdateTime,
+				hint.Charset,
+				hint.Collation,
+			})
+		}
 	}
 	return nil
 }
 
 func (e *ShowExec) fetchShowEngines() error {
-	e.appendRow([]interface{}{
-		"InnoDB",
-		"DEFAULT",
-		"Supports transactions, row-level locking, and foreign keys",
-		"YES",
-		"YES",
-		"YES",
-	})
+	sql := `SELECT * FROM information_schema.engines`
+	rows, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for _, row := range rows {
+		e.result.AppendRow(row)
+	}
 	return nil
+}
+
+// moveInfoSchemaToFront moves information_schema to the first, and the others are sorted in the origin ascending order.
+func moveInfoSchemaToFront(dbs []string) {
+	if len(dbs) > 0 && strings.EqualFold(dbs[0], "INFORMATION_SCHEMA") {
+		return
+	}
+
+	i := sort.SearchStrings(dbs, "INFORMATION_SCHEMA")
+	if i < len(dbs) && strings.EqualFold(dbs[i], "INFORMATION_SCHEMA") {
+		copy(dbs[1:i+1], dbs[0:i])
+		dbs[0] = "INFORMATION_SCHEMA"
+	}
 }
 
 func (e *ShowExec) fetchShowDatabases() error {
 	dbs := e.is.AllSchemaNames()
 	checker := privilege.GetPrivilegeManager(e.ctx)
-	// TODO: let information_schema be the first database
 	sort.Strings(dbs)
+	// let information_schema be the first database
+	moveInfoSchemaToFront(dbs)
 	for _, d := range dbs {
-		if checker != nil && !checker.DBIsVisible(d) {
+		if checker != nil && !checker.DBIsVisible(e.ctx.GetSessionVars().ActiveRoles, d) {
 			continue
 		}
 		e.appendRow([]interface{}{
@@ -188,56 +321,66 @@ func (e *ShowExec) fetchShowProcessList() error {
 		return nil
 	}
 
+	loginUser, activeRoles := e.ctx.GetSessionVars().User, e.ctx.GetSessionVars().ActiveRoles
+	var hasProcessPriv bool
+	if pm := privilege.GetPrivilegeManager(e.ctx); pm != nil {
+		if pm.RequestVerification(activeRoles, "", "", "", mysql.ProcessPriv) {
+			hasProcessPriv = true
+		}
+	}
+
 	pl := sm.ShowProcessList()
 	for _, pi := range pl {
-		var t uint64
-		if len(pi.Info) != 0 {
-			t = uint64(time.Since(pi.Time) / time.Second)
+		// If you have the PROCESS privilege, you can see all threads.
+		// Otherwise, you can see only your own threads.
+		if !hasProcessPriv && pi.User != loginUser.Username {
+			continue
 		}
-
-		var info string
-		if e.Full {
-			info = pi.Info
-		} else {
-			info = fmt.Sprintf("%.100v", pi.Info)
-		}
-
-		e.appendRow([]interface{}{
-			pi.ID,
-			pi.User,
-			pi.Host,
-			pi.DB,
-			pi.Command,
-			t,
-			fmt.Sprintf("%d", pi.State),
-			info,
-			pi.Mem,
-		})
+		row := pi.ToRowForShow(e.Full)
+		e.appendRow(row)
 	}
 	return nil
 }
 
+func (e *ShowExec) fetchShowOpenTables() error {
+	// TiDB has no concept like mysql's "table cache" and "open table"
+	// For simplicity, we just return an empty result with the same structure as MySQL's SHOW OPEN TABLES
+	return nil
+}
+
 func (e *ShowExec) fetchShowTables() error {
-	if !e.is.SchemaExists(e.DBName) {
-		return errors.Errorf("Can not find DB: %s", e.DBName)
-	}
 	checker := privilege.GetPrivilegeManager(e.ctx)
+	if checker != nil && e.ctx.GetSessionVars().User != nil {
+		if !checker.DBIsVisible(e.ctx.GetSessionVars().ActiveRoles, e.DBName.O) {
+			return e.dbAccessDenied()
+		}
+	}
+	if !e.is.SchemaExists(e.DBName) {
+		return ErrBadDB.GenWithStackByArgs(e.DBName)
+	}
 	// sort for tables
-	var tableNames []string
+	tableNames := make([]string, 0, len(e.is.SchemaTables(e.DBName)))
+	activeRoles := e.ctx.GetSessionVars().ActiveRoles
+	var tableTypes = make(map[string]string)
 	for _, v := range e.is.SchemaTables(e.DBName) {
 		// Test with mysql.AllPrivMask means any privilege would be OK.
 		// TODO: Should consider column privileges, which also make a table visible.
-		if checker != nil && !checker.RequestVerification(e.DBName.O, v.Meta().Name.O, "", mysql.AllPrivMask) {
+		if checker != nil && !checker.RequestVerification(activeRoles, e.DBName.O, v.Meta().Name.O, "", mysql.AllPrivMask) {
 			continue
 		}
 		tableNames = append(tableNames, v.Meta().Name.O)
+		if v.Meta().IsView() {
+			tableTypes[v.Meta().Name.O] = "VIEW"
+		} else if v.Meta().IsSequence() {
+			tableTypes[v.Meta().Name.O] = "SEQUENCE"
+		} else {
+			tableTypes[v.Meta().Name.O] = "BASE TABLE"
+		}
 	}
 	sort.Strings(tableNames)
 	for _, v := range tableNames {
 		if e.Full {
-			// TODO: support "VIEW" later if we have supported view feature.
-			// now, just use "BASE TABLE".
-			e.appendRow([]interface{}{v, "BASE TABLE"})
+			e.appendRow([]interface{}{v, tableTypes[v]})
 		} else {
 			e.appendRow([]interface{}{v})
 		}
@@ -246,34 +389,103 @@ func (e *ShowExec) fetchShowTables() error {
 }
 
 func (e *ShowExec) fetchShowTableStatus() error {
+	checker := privilege.GetPrivilegeManager(e.ctx)
+	if checker != nil && e.ctx.GetSessionVars().User != nil {
+		if !checker.DBIsVisible(e.ctx.GetSessionVars().ActiveRoles, e.DBName.O) {
+			return e.dbAccessDenied()
+		}
+	}
 	if !e.is.SchemaExists(e.DBName) {
-		return errors.Errorf("Can not find DB: %s", e.DBName)
+		return ErrBadDB.GenWithStackByArgs(e.DBName)
 	}
 
-	// sort for tables
-	tables := e.is.SchemaTables(e.DBName)
-	sort.Sort(table.Slice(tables))
+	sql := fmt.Sprintf(`SELECT
+               table_name, engine, version, row_format, table_rows,
+               avg_row_length, data_length, max_data_length, index_length,
+               data_free, auto_increment, create_time, update_time, check_time,
+               table_collation, IFNULL(checksum,''), create_options, table_comment
+               FROM information_schema.tables
+	       WHERE table_schema='%s' ORDER BY table_name`, e.DBName)
 
-	for _, t := range tables {
-		now := types.CurrentTime(mysql.TypeDatetime)
-		e.appendRow([]interface{}{t.Meta().Name.O, "InnoDB", 10, "Compact", 100, 100, 100, 100, 100, 100, 100,
-			now, now, now, "utf8_general_ci", "", "", t.Meta().Comment})
+	rows, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithSnapshot(sql)
+
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	activeRoles := e.ctx.GetSessionVars().ActiveRoles
+	for _, row := range rows {
+		if checker != nil && !checker.RequestVerification(activeRoles, e.DBName.O, row.GetString(0), "", mysql.AllPrivMask) {
+			continue
+		}
+		e.result.AppendRow(row)
+
 	}
 	return nil
 }
 
-func (e *ShowExec) fetchShowColumns() error {
+func (e *ShowExec) fetchShowColumns(ctx context.Context) error {
 	tb, err := e.getTable()
+
 	if err != nil {
 		return errors.Trace(err)
 	}
-	cols := tb.Cols()
+	checker := privilege.GetPrivilegeManager(e.ctx)
+	activeRoles := e.ctx.GetSessionVars().ActiveRoles
+	if checker != nil && e.ctx.GetSessionVars().User != nil && !checker.RequestVerification(activeRoles, e.DBName.O, tb.Meta().Name.O, "", mysql.AllPrivMask) {
+		return e.tableAccessDenied("SELECT", tb.Meta().Name.O)
+	}
+
+	var cols []*table.Column
+	// The optional EXTENDED keyword causes the output to include information about hidden columns that MySQL uses internally and are not accessible by users.
+	// See https://dev.mysql.com/doc/refman/8.0/en/show-columns.html
+	if e.Extended {
+		cols = tb.Cols()
+	} else {
+		cols = tb.VisibleCols()
+	}
+	if tb.Meta().IsView() {
+		// Because view's undertable's column could change or recreate, so view's column type may change overtime.
+		// To avoid this situation we need to generate a logical plan and extract current column types from Schema.
+		planBuilder := plannercore.NewPlanBuilder(e.ctx, e.is, &plannercore.BlockHintProcessor{})
+		viewLogicalPlan, err := planBuilder.BuildDataSourceFromView(ctx, e.DBName, tb.Meta())
+		if err != nil {
+			return err
+		}
+		viewSchema := viewLogicalPlan.Schema()
+		viewOutputNames := viewLogicalPlan.OutputNames()
+		for _, col := range cols {
+			idx := expression.FindFieldNameIdxByColName(viewOutputNames, col.Name.L)
+			if idx >= 0 {
+				col.FieldType = *viewSchema.Columns[idx].GetType()
+			}
+		}
+	}
 	for _, col := range cols {
 		if e.Column != nil && e.Column.Name.L != col.Name.L {
 			continue
 		}
 
 		desc := table.NewColDesc(col)
+		var columnDefault interface{}
+		if desc.DefaultValue != nil {
+			// SHOW COLUMNS result expects string value
+			defaultValStr := fmt.Sprintf("%v", desc.DefaultValue)
+			// If column is timestamp, and default value is not current_timestamp, should convert the default value to the current session time zone.
+			if col.Tp == mysql.TypeTimestamp && defaultValStr != types.ZeroDatetimeStr && !strings.HasPrefix(strings.ToUpper(defaultValStr), strings.ToUpper(ast.CurrentTimestamp)) {
+				timeValue, err := table.GetColDefaultValue(e.ctx, col.ToInfo())
+				if err != nil {
+					return errors.Trace(err)
+				}
+				defaultValStr = timeValue.GetMysqlTime().String()
+			}
+			if col.Tp == mysql.TypeBit {
+				defaultValBinaryLiteral := types.BinaryLiteral(defaultValStr)
+				columnDefault = defaultValBinaryLiteral.ToBitLiteralString(true)
+			} else {
+				columnDefault = defaultValStr
+			}
+		}
 
 		// The FULL keyword causes the output to include the column collation and comments,
 		// as well as the privileges you have for each column.
@@ -284,7 +496,7 @@ func (e *ShowExec) fetchShowColumns() error {
 				desc.Collation,
 				desc.Null,
 				desc.Key,
-				desc.DefaultValue,
+				columnDefault,
 				desc.Extra,
 				desc.Privileges,
 				desc.Comment,
@@ -295,7 +507,7 @@ func (e *ShowExec) fetchShowColumns() error {
 				desc.Type,
 				desc.Null,
 				desc.Key,
-				desc.DefaultValue,
+				columnDefault,
 				desc.Extra,
 			})
 		}
@@ -303,13 +515,18 @@ func (e *ShowExec) fetchShowColumns() error {
 	return nil
 }
 
-// TODO: index collation can have values A (ascending) or NULL (not sorted).
-// see: https://dev.mysql.com/doc/refman/5.7/en/show-index.html
 func (e *ShowExec) fetchShowIndex() error {
 	tb, err := e.getTable()
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	checker := privilege.GetPrivilegeManager(e.ctx)
+	activeRoles := e.ctx.GetSessionVars().ActiveRoles
+	if checker != nil && e.ctx.GetSessionVars().User != nil && !checker.RequestVerification(activeRoles, e.DBName.O, tb.Meta().Name.O, "", mysql.AllPrivMask) {
+		return e.tableAccessDenied("SELECT", tb.Meta().Name.O)
+	}
+
 	if tb.Meta().PKIsHandle {
 		var pkCol *table.Column
 		for _, col := range tb.Cols() {
@@ -332,6 +549,8 @@ func (e *ShowExec) fetchShowIndex() error {
 			"BTREE",          // Index_type
 			"",               // Comment
 			"",               // Index_comment
+			"YES",            // Index_visible
+			"NULL",           // Expression
 		})
 	}
 	for _, idx := range tb.Indices() {
@@ -344,24 +563,46 @@ func (e *ShowExec) fetchShowIndex() error {
 			if idx.Meta().Unique {
 				nonUniq = 0
 			}
+
 			var subPart interface{}
 			if col.Length != types.UnspecifiedLength {
 				subPart = col.Length
 			}
+
+			nullVal := "YES"
+			if idx.Meta().Name.O == mysql.PrimaryKeyName {
+				nullVal = ""
+			}
+
+			visible := "YES"
+			if idx.Meta().Invisible {
+				visible = "NO"
+			}
+
+			colName := col.Name.O
+			expression := "NULL"
+			tblCol := tb.Meta().Columns[col.Offset]
+			if tblCol.Hidden {
+				colName = "NULL"
+				expression = fmt.Sprintf("(%s)", tblCol.GeneratedExprString)
+			}
+
 			e.appendRow([]interface{}{
-				tb.Meta().Name.O,  // Table
-				nonUniq,           // Non_unique
-				idx.Meta().Name.O, // Key_name
-				i + 1,             // Seq_in_index
-				col.Name.O,        // Column_name
-				"A",               // Collation
-				0,                 // Cardinality
-				subPart,           // Sub_part
-				nil,               // Packed
-				"YES",             // Null
+				tb.Meta().Name.O,       // Table
+				nonUniq,                // Non_unique
+				idx.Meta().Name.O,      // Key_name
+				i + 1,                  // Seq_in_index
+				colName,                // Column_name
+				"A",                    // Collation
+				0,                      // Cardinality
+				subPart,                // Sub_part
+				nil,                    // Packed
+				nullVal,                // Null
 				idx.Meta().Tp.String(), // Index_type
-				"",                 // Comment
-				idx.Meta().Comment, // Index_comment
+				"",                     // Comment
+				idx.Meta().Comment,     // Index_comment
+				visible,                // Index_visible
+				expression,             // Expression
 			})
 		}
 	}
@@ -371,7 +612,7 @@ func (e *ShowExec) fetchShowIndex() error {
 // fetchShowCharset gets all charset information and fill them into e.rows.
 // See http://dev.mysql.com/doc/refman/5.7/en/show-character-set.html
 func (e *ShowExec) fetchShowCharset() error {
-	descs := charset.GetAllCharsets()
+	descs := charset.GetSupportedCharsets()
 	for _, desc := range descs {
 		e.appendRow([]interface{}{
 			desc.Name,
@@ -458,7 +699,7 @@ func (e *ShowExec) fetchShowStatus() error {
 }
 
 func getDefaultCollate(charsetName string) string {
-	for _, c := range charset.GetAllCharsets() {
+	for _, c := range charset.GetSupportedCharsets() {
 		if strings.EqualFold(c.Name, charsetName) {
 			return c.DefaultCollation
 		}
@@ -466,25 +707,56 @@ func getDefaultCollate(charsetName string) string {
 	return ""
 }
 
-func (e *ShowExec) fetchShowCreateTable() error {
-	tb, err := e.getTable()
-	if err != nil {
-		return errors.Trace(err)
+// ConstructResultOfShowCreateTable constructs the result for show create table.
+func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.TableInfo, allocator autoid.Allocator, buf *bytes.Buffer) (err error) {
+	if tableInfo.IsView() {
+		fetchShowCreateTable4View(ctx, tableInfo, buf)
+		return nil
+	}
+	if tableInfo.IsSequence() {
+		ConstructResultOfShowCreateSequence(ctx, tableInfo, buf)
+		return nil
 	}
 
-	// TODO: let the result more like MySQL.
-	var buf bytes.Buffer
-	buf.WriteString(fmt.Sprintf("CREATE TABLE `%s` (\n", tb.Meta().Name.O))
-	var pkCol *table.Column
+	tblCharset := tableInfo.Charset
+	if len(tblCharset) == 0 {
+		tblCharset = mysql.DefaultCharset
+	}
+	tblCollate := tableInfo.Collate
+	// Set default collate if collate is not specified.
+	if len(tblCollate) == 0 {
+		tblCollate = getDefaultCollate(tblCharset)
+	}
+
+	sqlMode := ctx.GetSessionVars().SQLMode
+	fmt.Fprintf(buf, "CREATE TABLE %s (\n", stringutil.Escape(tableInfo.Name.O, sqlMode))
+	var pkCol *model.ColumnInfo
 	var hasAutoIncID bool
-	for i, col := range tb.Cols() {
-		if col.State != model.StatePublic {
+	needAddComma := false
+	for i, col := range tableInfo.Cols() {
+		if col.Hidden {
 			continue
 		}
-		buf.WriteString(fmt.Sprintf("  `%s` %s", col.Name.O, col.GetTypeDesc()))
+		if needAddComma {
+			buf.WriteString(",\n")
+		}
+		fmt.Fprintf(buf, "  %s %s", stringutil.Escape(col.Name.O, sqlMode), col.GetTypeDesc())
+		if col.Charset != "binary" {
+			if col.Charset != tblCharset {
+				fmt.Fprintf(buf, " CHARACTER SET %s", col.Charset)
+			}
+			if col.Collate != tblCollate {
+				fmt.Fprintf(buf, " COLLATE %s", col.Collate)
+			} else {
+				defcol, err := charset.GetDefaultCollation(col.Charset)
+				if err == nil && defcol != col.Collate {
+					fmt.Fprintf(buf, " COLLATE %s", col.Collate)
+				}
+			}
+		}
 		if col.IsGenerated() {
 			// It's a generated column.
-			buf.WriteString(fmt.Sprintf(" GENERATED ALWAYS AS (%s)", col.GeneratedExprString))
+			fmt.Fprintf(buf, " GENERATED ALWAYS AS (%s)", col.GeneratedExprString)
 			if col.GeneratedStored {
 				buf.WriteString(" STORED")
 			} else {
@@ -498,8 +770,10 @@ func (e *ShowExec) fetchShowCreateTable() error {
 			if mysql.HasNotNullFlag(col.Flag) {
 				buf.WriteString(" NOT NULL")
 			}
-			if !mysql.HasNoDefaultValueFlag(col.Flag) {
-				switch col.DefaultValue {
+			// default values are not shown for generated columns in MySQL
+			if !mysql.HasNoDefaultValueFlag(col.Flag) && !col.IsGenerated() {
+				defaultValue := col.GetDefaultValue()
+				switch defaultValue {
 				case nil:
 					if !mysql.HasNotNullFlag(col.Flag) {
 						if col.Tp == mysql.TypeTimestamp {
@@ -509,27 +783,43 @@ func (e *ShowExec) fetchShowCreateTable() error {
 					}
 				case "CURRENT_TIMESTAMP":
 					buf.WriteString(" DEFAULT CURRENT_TIMESTAMP")
+					if col.Decimal > 0 {
+						buf.WriteString(fmt.Sprintf("(%d)", col.Decimal))
+					}
 				default:
-					defaultValStr := fmt.Sprintf("%v", col.DefaultValue)
+					defaultValStr := fmt.Sprintf("%v", defaultValue)
+					// If column is timestamp, and default value is not current_timestamp, should convert the default value to the current session time zone.
+					if col.Tp == mysql.TypeTimestamp && defaultValStr != types.ZeroDatetimeStr {
+						timeValue, err := table.GetColDefaultValue(ctx, col)
+						if err != nil {
+							return errors.Trace(err)
+						}
+						defaultValStr = timeValue.GetMysqlTime().String()
+					}
+
 					if col.Tp == mysql.TypeBit {
 						defaultValBinaryLiteral := types.BinaryLiteral(defaultValStr)
-						buf.WriteString(fmt.Sprintf(" DEFAULT %s", defaultValBinaryLiteral.ToBitLiteralString(true)))
+						fmt.Fprintf(buf, " DEFAULT %s", defaultValBinaryLiteral.ToBitLiteralString(true))
 					} else {
-						buf.WriteString(fmt.Sprintf(" DEFAULT '%s'", format.OutputFormat(defaultValStr)))
+						fmt.Fprintf(buf, " DEFAULT '%s'", format.OutputFormat(defaultValStr))
 					}
 				}
 			}
 			if mysql.HasOnUpdateNowFlag(col.Flag) {
 				buf.WriteString(" ON UPDATE CURRENT_TIMESTAMP")
+				buf.WriteString(table.OptionalFsp(&col.FieldType))
 			}
+		}
+		if tableInfo.PKIsHandle && tableInfo.ContainsAutoRandomBits() && tableInfo.GetPkName().L == col.Name.L {
+			buf.WriteString(fmt.Sprintf(" /*T!%s AUTO_RANDOM(%d) */", parser.CommentCodeAutoRandom, tableInfo.AutoRandomBits))
 		}
 		if len(col.Comment) > 0 {
 			buf.WriteString(fmt.Sprintf(" COMMENT '%s'", format.OutputFormat(col.Comment)))
 		}
-		if i != len(tb.Cols())-1 {
-			buf.WriteString(",\n")
+		if i != len(tableInfo.Cols())-1 {
+			needAddComma = true
 		}
-		if tb.Meta().PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {
+		if tableInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {
 			pkCol = col
 		}
 	}
@@ -537,36 +827,46 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	if pkCol != nil {
 		// If PKIsHanle, pk info is not in tb.Indices(). We should handle it here.
 		buf.WriteString(",\n")
-		buf.WriteString(fmt.Sprintf("  PRIMARY KEY (`%s`)", pkCol.Name.O))
+		fmt.Fprintf(buf, "  PRIMARY KEY (%s)", stringutil.Escape(pkCol.Name.O, sqlMode))
 	}
 
-	if len(tb.Indices()) > 0 {
+	publicIndices := make([]*model.IndexInfo, 0, len(tableInfo.Indices))
+	for _, idx := range tableInfo.Indices {
+		if idx.State == model.StatePublic {
+			publicIndices = append(publicIndices, idx)
+		}
+	}
+	if len(publicIndices) > 0 {
 		buf.WriteString(",\n")
 	}
 
-	for i, idx := range tb.Indices() {
-		idxInfo := idx.Meta()
-		if idxInfo.State != model.StatePublic {
-			continue
-		}
+	for i, idxInfo := range publicIndices {
 		if idxInfo.Primary {
 			buf.WriteString("  PRIMARY KEY ")
 		} else if idxInfo.Unique {
-			buf.WriteString(fmt.Sprintf("  UNIQUE KEY `%s` ", idxInfo.Name.O))
+			fmt.Fprintf(buf, "  UNIQUE KEY %s ", stringutil.Escape(idxInfo.Name.O, sqlMode))
 		} else {
-			buf.WriteString(fmt.Sprintf("  KEY `%s` ", idxInfo.Name.O))
+			fmt.Fprintf(buf, "  KEY %s ", stringutil.Escape(idxInfo.Name.O, sqlMode))
 		}
 
 		cols := make([]string, 0, len(idxInfo.Columns))
+		var colInfo string
 		for _, c := range idxInfo.Columns {
-			colInfo := fmt.Sprintf("`%s`", c.Name.String())
-			if c.Length != types.UnspecifiedLength {
-				colInfo = fmt.Sprintf("%s(%s)", colInfo, strconv.Itoa(c.Length))
+			if tableInfo.Columns[c.Offset].Hidden {
+				colInfo = fmt.Sprintf("(%s)", tableInfo.Columns[c.Offset].GeneratedExprString)
+			} else {
+				colInfo = stringutil.Escape(c.Name.O, sqlMode)
+				if c.Length != types.UnspecifiedLength {
+					colInfo = fmt.Sprintf("%s(%s)", colInfo, strconv.Itoa(c.Length))
+				}
 			}
 			cols = append(cols, colInfo)
 		}
-		buf.WriteString(fmt.Sprintf("(%s)", strings.Join(cols, ",")))
-		if i != len(tb.Indices())-1 {
+		fmt.Fprintf(buf, "(%s)", strings.Join(cols, ","))
+		if idxInfo.Invisible {
+			fmt.Fprintf(buf, ` /*!80000 INVISIBLE */`)
+		}
+		if i != len(publicIndices)-1 {
 			buf.WriteString(",\n")
 		}
 	}
@@ -574,100 +874,219 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	buf.WriteString("\n")
 
 	buf.WriteString(") ENGINE=InnoDB")
-	charsetName := tb.Meta().Charset
-	if len(charsetName) == 0 {
-		charsetName = charset.CharsetUTF8
-	}
-	collate := tb.Meta().Collate
-	// Set default collate if collate is not specified.
-	if len(collate) == 0 {
-		collate = getDefaultCollate(charsetName)
-	}
 	// Because we only support case sensitive utf8_bin collate, we need to explicitly set the default charset and collation
 	// to make it work on MySQL server which has default collate utf8_general_ci.
-	if len(collate) == 0 {
+	if len(tblCollate) == 0 {
 		// If we can not find default collate for the given charset,
 		// do not show the collate part.
-		buf.WriteString(fmt.Sprintf(" DEFAULT CHARSET=%s", charsetName))
+		fmt.Fprintf(buf, " DEFAULT CHARSET=%s", tblCharset)
 	} else {
-		buf.WriteString(fmt.Sprintf(" DEFAULT CHARSET=%s COLLATE=%s", charsetName, collate))
+		fmt.Fprintf(buf, " DEFAULT CHARSET=%s COLLATE=%s", tblCharset, tblCollate)
 	}
 
-	// add partition info here.
-	partitionInfo := tb.Meta().Partition
-	if partitionInfo != nil {
-		// this if statement takes care of range columns case
-		if partitionInfo.Columns != nil && partitionInfo.Type == model.PartitionTypeRange {
-			buf.WriteString(fmt.Sprintf("\nPARTITION BY RANGE COLUMNS("))
-			for i, col := range partitionInfo.Columns {
-				buf.WriteString(col.L)
-				if i < len(partitionInfo.Columns)-1 {
-					buf.WriteString(",")
-				}
-			}
-			buf.WriteString(") (\n")
-		} else {
-			buf.WriteString(fmt.Sprintf("\nPARTITION BY %s ( %s ) (\n", partitionInfo.Type.String(), partitionInfo.Expr))
-		}
-		for i, def := range partitionInfo.Definitions {
-			lessThans := ""
-			lessThans = strings.Join(def.LessThan, ",")
-
-			var parDef string
-			parDef = fmt.Sprintf("  PARTITION %s VALUES LESS THAN (%s)", def.Name, lessThans)
-			if i < len(partitionInfo.Definitions)-1 {
-				buf.WriteString(parDef)
-				buf.WriteString(",\n")
-			} else {
-				buf.WriteString(parDef)
-				buf.WriteString("\n")
-			}
-		}
-		buf.WriteString(")")
+	// Displayed if the compression typed is set.
+	if len(tableInfo.Compression) != 0 {
+		fmt.Fprintf(buf, " COMPRESSION='%s'", tableInfo.Compression)
 	}
 
 	if hasAutoIncID {
-		autoIncID, err := tb.Allocator(e.ctx).NextGlobalAutoID(tb.Meta().ID)
+		autoIncID, err := allocator.NextGlobalAutoID(tableInfo.ID)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		// It's campatible with MySQL.
+		// It's compatible with MySQL.
 		if autoIncID > 1 {
-			buf.WriteString(fmt.Sprintf(" AUTO_INCREMENT=%d", autoIncID))
+			fmt.Fprintf(buf, " AUTO_INCREMENT=%d", autoIncID)
 		}
 	}
 
-	if tb.Meta().ShardRowIDBits > 0 {
-		buf.WriteString(fmt.Sprintf("/*!90000 SHARD_ROW_ID_BITS=%d */", tb.Meta().ShardRowIDBits))
+	if tableInfo.ShardRowIDBits > 0 {
+		fmt.Fprintf(buf, "/*!90000 SHARD_ROW_ID_BITS=%d ", tableInfo.ShardRowIDBits)
+		if tableInfo.PreSplitRegions > 0 {
+			fmt.Fprintf(buf, "PRE_SPLIT_REGIONS=%d ", tableInfo.PreSplitRegions)
+		}
+		buf.WriteString("*/")
 	}
 
-	if len(tb.Meta().Comment) > 0 {
-		buf.WriteString(fmt.Sprintf(" COMMENT='%s'", format.OutputFormat(tb.Meta().Comment)))
+	if len(tableInfo.Comment) > 0 {
+		fmt.Fprintf(buf, " COMMENT='%s'", format.OutputFormat(tableInfo.Comment))
+	}
+	// add partition info here.
+	appendPartitionInfo(tableInfo.Partition, buf)
+	return nil
+}
+
+// ConstructResultOfShowCreateSequence constructs the result for show create sequence.
+func ConstructResultOfShowCreateSequence(ctx sessionctx.Context, tableInfo *model.TableInfo, buf *bytes.Buffer) {
+	sqlMode := ctx.GetSessionVars().SQLMode
+	fmt.Fprintf(buf, "CREATE SEQUENCE %s ", stringutil.Escape(tableInfo.Name.O, sqlMode))
+	sequenceInfo := tableInfo.Sequence
+	fmt.Fprintf(buf, "start with %d ", sequenceInfo.Start)
+	fmt.Fprintf(buf, "minvalue %d ", sequenceInfo.MinValue)
+	fmt.Fprintf(buf, "maxvalue %d ", sequenceInfo.MaxValue)
+	fmt.Fprintf(buf, "increment by %d ", sequenceInfo.Increment)
+	if sequenceInfo.Cache {
+		fmt.Fprintf(buf, "cache %d ", sequenceInfo.CacheValue)
+	} else {
+		buf.WriteString("nocache ")
+	}
+	if sequenceInfo.Cycle {
+		buf.WriteString("cycle ")
+	} else {
+		buf.WriteString("nocycle ")
+	}
+	buf.WriteString("ENGINE=InnoDB")
+	if len(sequenceInfo.Comment) > 0 {
+		fmt.Fprintf(buf, " COMMENT='%s'", format.OutputFormat(sequenceInfo.Comment))
+	}
+}
+
+func (e *ShowExec) fetchShowCreateSequence() error {
+	tbl, err := e.getTable()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	tableInfo := tbl.Meta()
+	if !tableInfo.IsSequence() {
+		return ErrWrongObject.GenWithStackByArgs(e.DBName.O, tableInfo.Name.O, "SEQUENCE")
+	}
+	var buf bytes.Buffer
+	ConstructResultOfShowCreateSequence(e.ctx, tableInfo, &buf)
+	e.appendRow([]interface{}{tableInfo.Name.O, buf.String()})
+	return nil
+}
+
+func (e *ShowExec) fetchShowCreateTable() error {
+	tb, err := e.getTable()
+	if err != nil {
+		return errors.Trace(err)
 	}
 
-	e.appendRow([]interface{}{tb.Meta().Name.O, buf.String()})
+	tableInfo := tb.Meta()
+	allocator := tb.Allocators(e.ctx).Get(autoid.RowIDAllocType)
+	var buf bytes.Buffer
+	// TODO: let the result more like MySQL.
+	if err = ConstructResultOfShowCreateTable(e.ctx, tableInfo, allocator, &buf); err != nil {
+		return err
+	}
+	if tableInfo.IsView() {
+		e.appendRow([]interface{}{tableInfo.Name.O, buf.String(), tableInfo.Charset, tableInfo.Collate})
+		return nil
+	}
+
+	e.appendRow([]interface{}{tableInfo.Name.O, buf.String()})
+	return nil
+}
+
+func (e *ShowExec) fetchShowCreateView() error {
+	db, ok := e.is.SchemaByName(e.DBName)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(e.DBName.O)
+	}
+
+	tb, err := e.getTable()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if !tb.Meta().IsView() {
+		return ErrWrongObject.GenWithStackByArgs(db.Name.O, tb.Meta().Name.O, "VIEW")
+	}
+
+	var buf bytes.Buffer
+	fetchShowCreateTable4View(e.ctx, tb.Meta(), &buf)
+	e.appendRow([]interface{}{tb.Meta().Name.O, buf.String(), tb.Meta().Charset, tb.Meta().Collate})
+	return nil
+}
+
+func fetchShowCreateTable4View(ctx sessionctx.Context, tb *model.TableInfo, buf *bytes.Buffer) {
+	sqlMode := ctx.GetSessionVars().SQLMode
+
+	fmt.Fprintf(buf, "CREATE ALGORITHM=%s ", tb.View.Algorithm.String())
+	fmt.Fprintf(buf, "DEFINER=%s@%s ", stringutil.Escape(tb.View.Definer.Username, sqlMode), stringutil.Escape(tb.View.Definer.Hostname, sqlMode))
+	fmt.Fprintf(buf, "SQL SECURITY %s ", tb.View.Security.String())
+	fmt.Fprintf(buf, "VIEW %s (", stringutil.Escape(tb.Name.O, sqlMode))
+	for i, col := range tb.Columns {
+		fmt.Fprintf(buf, "%s", stringutil.Escape(col.Name.O, sqlMode))
+		if i < len(tb.Columns)-1 {
+			fmt.Fprintf(buf, ", ")
+		}
+	}
+	fmt.Fprintf(buf, ") AS %s", tb.View.SelectStmt)
+}
+
+func appendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer) {
+	if partitionInfo == nil {
+		return
+	}
+	if partitionInfo.Type == model.PartitionTypeHash {
+		fmt.Fprintf(buf, "\nPARTITION BY HASH( %s )", partitionInfo.Expr)
+		fmt.Fprintf(buf, "\nPARTITIONS %d", partitionInfo.Num)
+		return
+	}
+	// this if statement takes care of range columns case
+	if partitionInfo.Columns != nil && partitionInfo.Type == model.PartitionTypeRange {
+		buf.WriteString("\nPARTITION BY RANGE COLUMNS(")
+		for i, col := range partitionInfo.Columns {
+			buf.WriteString(col.L)
+			if i < len(partitionInfo.Columns)-1 {
+				buf.WriteString(",")
+			}
+		}
+		buf.WriteString(") (\n")
+	} else {
+		fmt.Fprintf(buf, "\nPARTITION BY %s ( %s ) (\n", partitionInfo.Type.String(), partitionInfo.Expr)
+	}
+	for i, def := range partitionInfo.Definitions {
+		lessThans := strings.Join(def.LessThan, ",")
+		fmt.Fprintf(buf, "  PARTITION `%s` VALUES LESS THAN (%s)", def.Name, lessThans)
+		if i < len(partitionInfo.Definitions)-1 {
+			buf.WriteString(",\n")
+		} else {
+			buf.WriteString("\n")
+		}
+	}
+	buf.WriteString(")")
+}
+
+// ConstructResultOfShowCreateDatabase constructs the result for show create database.
+func ConstructResultOfShowCreateDatabase(ctx sessionctx.Context, dbInfo *model.DBInfo, ifNotExists bool, buf *bytes.Buffer) (err error) {
+	sqlMode := ctx.GetSessionVars().SQLMode
+	var ifNotExistsStr string
+	if ifNotExists {
+		ifNotExistsStr = "/*!32312 IF NOT EXISTS*/ "
+	}
+	fmt.Fprintf(buf, "CREATE DATABASE %s%s", ifNotExistsStr, stringutil.Escape(dbInfo.Name.O, sqlMode))
+	if s := dbInfo.Charset; len(s) > 0 {
+		fmt.Fprintf(buf, " /*!40100 DEFAULT CHARACTER SET %s */", s)
+	}
 	return nil
 }
 
 // fetchShowCreateDatabase composes show create database result.
 func (e *ShowExec) fetchShowCreateDatabase() error {
-	db, ok := e.is.SchemaByName(e.DBName)
+	checker := privilege.GetPrivilegeManager(e.ctx)
+	if checker != nil && e.ctx.GetSessionVars().User != nil {
+		if !checker.DBIsVisible(e.ctx.GetSessionVars().ActiveRoles, e.DBName.String()) {
+			return e.dbAccessDenied()
+		}
+	}
+	dbInfo, ok := e.is.SchemaByName(e.DBName)
 	if !ok {
-		return infoschema.ErrDatabaseNotExists.GenByArgs(e.DBName.O)
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(e.DBName.O)
 	}
 
 	var buf bytes.Buffer
-	fmt.Fprintf(&buf, "CREATE DATABASE `%s`", db.Name.O)
-	if s := db.Charset; len(s) > 0 {
-		fmt.Fprintf(&buf, " /* !40100 DEFAULT CHARACTER SET %s */", s)
+	err := ConstructResultOfShowCreateDatabase(e.ctx, dbInfo, e.IfNotExists, &buf)
+	if err != nil {
+		return err
 	}
-
-	e.appendRow([]interface{}{db.Name.O, buf.String()})
+	e.appendRow([]interface{}{dbInfo.Name.O, buf.String()})
 	return nil
 }
 
 func (e *ShowExec) fetchShowCollation() error {
-	collations := charset.GetCollations()
+	collations := charset.GetSupportedCollations()
 	for _, v := range collations {
 		isDefault := ""
 		if v.IsDefault {
@@ -685,13 +1104,74 @@ func (e *ShowExec) fetchShowCollation() error {
 	return nil
 }
 
+// fetchShowCreateUser composes show create create user result.
+func (e *ShowExec) fetchShowCreateUser() error {
+	checker := privilege.GetPrivilegeManager(e.ctx)
+	if checker == nil {
+		return errors.New("miss privilege checker")
+	}
+
+	userName, hostName := e.User.Username, e.User.Hostname
+	sessVars := e.ctx.GetSessionVars()
+	if e.User.CurrentUser {
+		userName = sessVars.User.AuthUsername
+		hostName = sessVars.User.AuthHostname
+	} else {
+		// Show create user requires the SELECT privilege on mysql.user.
+		// Ref https://dev.mysql.com/doc/refman/5.7/en/show-create-user.html
+		activeRoles := sessVars.ActiveRoles
+		if !checker.RequestVerification(activeRoles, mysql.SystemDB, mysql.UserTable, "", mysql.SelectPriv) {
+			return e.tableAccessDenied("SELECT", mysql.UserTable)
+		}
+	}
+
+	sql := fmt.Sprintf(`SELECT * FROM %s.%s WHERE User='%s' AND Host='%s';`,
+		mysql.SystemDB, mysql.UserTable, userName, hostName)
+	rows, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if len(rows) == 0 {
+		return ErrCannotUser.GenWithStackByArgs("SHOW CREATE USER",
+			fmt.Sprintf("'%s'@'%s'", e.User.Username, e.User.Hostname))
+	}
+	sql = fmt.Sprintf(`SELECT PRIV FROM %s.%s WHERE User='%s' AND Host='%s'`,
+		mysql.SystemDB, mysql.GlobalPrivTable, userName, hostName)
+	rows, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	require := "NONE"
+	if len(rows) == 1 {
+		privData := rows[0].GetString(0)
+		var privValue privileges.GlobalPrivValue
+		err = gjson.Unmarshal(hack.Slice(privData), &privValue)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		require = privValue.RequireStr()
+	}
+	showStr := fmt.Sprintf("CREATE USER '%s'@'%s' IDENTIFIED WITH 'mysql_native_password' AS '%s' REQUIRE %s PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK",
+		e.User.Username, e.User.Hostname, checker.GetEncodedPassword(e.User.Username, e.User.Hostname), require)
+	e.appendRow([]interface{}{showStr})
+	return nil
+}
+
 func (e *ShowExec) fetchShowGrants() error {
 	// Get checker
 	checker := privilege.GetPrivilegeManager(e.ctx)
 	if checker == nil {
 		return errors.New("miss privilege checker")
 	}
-	gs, err := checker.ShowGrants(e.ctx, e.User)
+	for _, r := range e.Roles {
+		if r.Hostname == "" {
+			r.Hostname = "%"
+		}
+		if !checker.FindEdge(e.ctx, r, e.User) {
+			return ErrRoleNotGranted.GenWithStackByArgs(r.String(), e.User.String())
+		}
+	}
+	gs, err := checker.ShowGrants(e.ctx, e.User, e.Roles)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -746,6 +1226,12 @@ func (e *ShowExec) fetchShowProcedureStatus() error {
 }
 
 func (e *ShowExec) fetchShowPlugins() error {
+	tiPlugins := plugin.GetAll()
+	for _, ps := range tiPlugins {
+		for _, p := range ps {
+			e.appendRow([]interface{}{p.Name, p.StateValue(), p.Kind.String(), p.Path, p.License, strconv.Itoa(int(p.Version))})
+		}
+	}
 	return nil
 }
 
@@ -767,6 +1253,46 @@ func (e *ShowExec) fetchShowWarnings(errOnly bool) error {
 	return nil
 }
 
+// fetchShowPumpOrDrainerStatus gets status of all pumps or drainers and fill them into e.rows.
+func (e *ShowExec) fetchShowPumpOrDrainerStatus(kind string) error {
+	registry, err := createRegistry(config.GetGlobalConfig().Path)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	nodes, _, err := registry.Nodes(context.Background(), node.NodePrefix[kind])
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = registry.Close()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	for _, n := range nodes {
+		if n.State == node.Offline {
+			continue
+		}
+		e.appendRow([]interface{}{n.NodeID, n.Addr, n.State, n.MaxCommitTS, utils.TSOToRoughTime(n.UpdateTS).Format(types.TimeFormat)})
+	}
+
+	return nil
+}
+
+// createRegistry returns an ectd registry
+func createRegistry(urls string) (*node.EtcdRegistry, error) {
+	ectdEndpoints, err := utils.ParseHostPortAddr(urls)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	cli, err := etcd.NewClientFromCfg(ectdEndpoints, etcdDialTimeout, node.DefaultRootPath, nil)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	return node.NewEtcdRegistry(cli, etcdDialTimeout), nil
+}
+
 func (e *ShowExec) getTable() (table.Table, error) {
 	if e.Table == nil {
 		return nil, errors.New("table not found")
@@ -776,6 +1302,28 @@ func (e *ShowExec) getTable() (table.Table, error) {
 		return nil, errors.Errorf("table %s not found", e.Table.Name)
 	}
 	return tb, nil
+}
+
+func (e *ShowExec) dbAccessDenied() error {
+	user := e.ctx.GetSessionVars().User
+	u := user.Username
+	h := user.Hostname
+	if len(user.AuthUsername) > 0 && len(user.AuthHostname) > 0 {
+		u = user.AuthUsername
+		h = user.AuthHostname
+	}
+	return ErrDBaccessDenied.GenWithStackByArgs(u, h, e.DBName)
+}
+
+func (e *ShowExec) tableAccessDenied(access string, table string) error {
+	user := e.ctx.GetSessionVars().User
+	u := user.Username
+	h := user.Hostname
+	if len(user.AuthUsername) > 0 && len(user.AuthHostname) > 0 {
+		u = user.AuthUsername
+		h = user.AuthHostname
+	}
+	return ErrTableaccessDenied.GenWithStackByArgs(access, u, h, table)
 }
 
 func (e *ShowExec) appendRow(row []interface{}) {
@@ -819,4 +1367,121 @@ func (e *ShowExec) appendRow(row []interface{}) {
 			e.result.AppendNull(i)
 		}
 	}
+}
+
+func (e *ShowExec) fetchShowTableRegions() error {
+	store := e.ctx.GetStore()
+	tikvStore, ok := store.(tikv.Storage)
+	if !ok {
+		return nil
+	}
+	splitStore, ok := store.(kv.SplittableStore)
+	if !ok {
+		return nil
+	}
+
+	tb, err := e.getTable()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// Get table regions from from pd, not from regionCache, because the region cache maybe outdated.
+	var regions []regionMeta
+	if len(e.IndexName.L) != 0 {
+		indexInfo := tb.Meta().FindIndexByName(e.IndexName.L)
+		if indexInfo == nil {
+			return plannercore.ErrKeyDoesNotExist.GenWithStackByArgs(e.IndexName, tb.Meta().Name)
+		}
+		regions, err = getTableIndexRegions(tb, indexInfo, tikvStore, splitStore)
+	} else {
+		regions, err = getTableRegions(tb, tikvStore, splitStore)
+	}
+
+	if err != nil {
+		return err
+	}
+	e.fillRegionsToChunk(regions)
+	return nil
+}
+
+func getTableRegions(tb table.Table, tikvStore tikv.Storage, splitStore kv.SplittableStore) ([]regionMeta, error) {
+	if info := tb.Meta().GetPartitionInfo(); info != nil {
+		return getPartitionTableRegions(info, tb.(table.PartitionedTable), tikvStore, splitStore)
+	}
+	return getPhysicalTableRegions(tb.Meta().ID, tb.Meta(), tikvStore, splitStore, nil)
+}
+
+func getTableIndexRegions(tb table.Table, indexInfo *model.IndexInfo, tikvStore tikv.Storage, splitStore kv.SplittableStore) ([]regionMeta, error) {
+	if info := tb.Meta().GetPartitionInfo(); info != nil {
+		return getPartitionIndexRegions(info, tb.(table.PartitionedTable), indexInfo, tikvStore, splitStore)
+	}
+	return getPhysicalIndexRegions(tb.Meta().ID, indexInfo, tikvStore, splitStore, nil)
+}
+
+func getPartitionTableRegions(info *model.PartitionInfo, tbl table.PartitionedTable, tikvStore tikv.Storage, splitStore kv.SplittableStore) ([]regionMeta, error) {
+	regions := make([]regionMeta, 0, len(info.Definitions))
+	uniqueRegionMap := make(map[uint64]struct{})
+	for _, def := range info.Definitions {
+		pid := def.ID
+		partition := tbl.GetPartition(pid)
+		partition.GetPhysicalID()
+		partitionRegions, err := getPhysicalTableRegions(partition.GetPhysicalID(), tbl.Meta(), tikvStore, splitStore, uniqueRegionMap)
+		if err != nil {
+			return nil, err
+		}
+		regions = append(regions, partitionRegions...)
+	}
+	return regions, nil
+}
+
+func getPartitionIndexRegions(info *model.PartitionInfo, tbl table.PartitionedTable, indexInfo *model.IndexInfo, tikvStore tikv.Storage, splitStore kv.SplittableStore) ([]regionMeta, error) {
+	var regions []regionMeta
+	uniqueRegionMap := make(map[uint64]struct{})
+	for _, def := range info.Definitions {
+		pid := def.ID
+		partition := tbl.GetPartition(pid)
+		partition.GetPhysicalID()
+		partitionRegions, err := getPhysicalIndexRegions(partition.GetPhysicalID(), indexInfo, tikvStore, splitStore, uniqueRegionMap)
+		if err != nil {
+			return nil, err
+		}
+		regions = append(regions, partitionRegions...)
+	}
+	return regions, nil
+}
+
+func (e *ShowExec) fillRegionsToChunk(regions []regionMeta) {
+	for i := range regions {
+		e.result.AppendUint64(0, regions[i].region.Id)
+		e.result.AppendString(1, regions[i].start)
+		e.result.AppendString(2, regions[i].end)
+		e.result.AppendUint64(3, regions[i].leaderID)
+		e.result.AppendUint64(4, regions[i].storeID)
+
+		peers := ""
+		for i, peer := range regions[i].region.Peers {
+			if i > 0 {
+				peers += ", "
+			}
+			peers += strconv.FormatUint(peer.Id, 10)
+		}
+		e.result.AppendString(5, peers)
+		if regions[i].scattering {
+			e.result.AppendInt64(6, 1)
+		} else {
+			e.result.AppendInt64(6, 0)
+		}
+
+		e.result.AppendInt64(7, regions[i].writtenBytes)
+		e.result.AppendInt64(8, regions[i].readBytes)
+		e.result.AppendInt64(9, regions[i].approximateSize)
+		e.result.AppendInt64(10, regions[i].approximateKeys)
+	}
+}
+
+func (e *ShowExec) fetchShowBuiltins() error {
+	for _, f := range expression.GetBuiltinList() {
+		e.appendRow([]interface{}{f})
+	}
+	return nil
 }

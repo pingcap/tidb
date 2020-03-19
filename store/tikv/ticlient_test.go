@@ -14,22 +14,22 @@
 package tikv
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"sync"
 	"time"
 
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/util/codec"
-	"golang.org/x/net/context"
 )
 
 var (
-	withTiKVGlobalLock sync.Mutex
-	withTiKV           = flag.Bool("with-tikv", false, "run tests with TiKV cluster started. (not use the mock server)")
+	withTiKVGlobalLock sync.RWMutex
+	WithTiKV           = flag.Bool("with-tikv", false, "run tests with TiKV cluster started. (not use the mock server)")
 	pdAddrs            = flag.String("pd-addrs", "127.0.0.1:2379", "pd addrs")
 )
 
@@ -39,7 +39,7 @@ func NewTestStore(c *C) kv.Storage {
 		flag.Parse()
 	}
 
-	if *withTiKV {
+	if *WithTiKV {
 		var d Driver
 		store, err := d.Open(fmt.Sprintf("tikv://%s", *pdAddrs))
 		c.Assert(err, IsNil)
@@ -48,7 +48,7 @@ func NewTestStore(c *C) kv.Storage {
 		return store
 	}
 
-	client, pdClient, err := mocktikv.NewTestClient(nil, nil, "")
+	client, pdClient, err := mocktikv.NewTiKVAndPDClient(nil, nil, "")
 	c.Assert(err, IsNil)
 
 	store, err := NewTestTiKVStore(client, pdClient, nil, nil, 0)
@@ -61,7 +61,7 @@ func clearStorage(store kv.Storage) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	iter, err := txn.Seek(nil)
+	iter, err := txn.Iter(nil, nil)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -93,7 +93,7 @@ func (s *testTiclientSuite) SetUpSuite(c *C) {
 func (s *testTiclientSuite) TearDownSuite(c *C) {
 	// Clean all data, or it may pollute other data.
 	txn := s.beginTxn(c)
-	scanner, err := txn.Seek(encodeKey(s.prefix, ""))
+	scanner, err := txn.Iter(encodeKey(s.prefix, ""), nil)
 	c.Assert(err, IsNil)
 	c.Assert(scanner, NotNil)
 	for scanner.Valid() {
@@ -119,13 +119,13 @@ func (s *testTiclientSuite) TestSingleKey(c *C) {
 	txn := s.beginTxn(c)
 	err := txn.Set(encodeKey(s.prefix, "key"), []byte("value"))
 	c.Assert(err, IsNil)
-	err = txn.LockKeys(encodeKey(s.prefix, "key"))
+	err = txn.LockKeys(context.Background(), new(kv.LockCtx), encodeKey(s.prefix, "key"))
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	txn = s.beginTxn(c)
-	val, err := txn.Get(encodeKey(s.prefix, "key"))
+	val, err := txn.Get(context.TODO(), encodeKey(s.prefix, "key"))
 	c.Assert(err, IsNil)
 	c.Assert(val, BytesEquals, []byte("value"))
 
@@ -149,7 +149,7 @@ func (s *testTiclientSuite) TestMultiKeys(c *C) {
 
 	txn = s.beginTxn(c)
 	for i := 0; i < keyNum; i++ {
-		val, err1 := txn.Get(encodeKey(s.prefix, s08d("key", i)))
+		val, err1 := txn.Get(context.TODO(), encodeKey(s.prefix, s08d("key", i)))
 		c.Assert(err1, IsNil)
 		c.Assert(val, BytesEquals, valueBytes(i))
 	}
@@ -165,7 +165,7 @@ func (s *testTiclientSuite) TestMultiKeys(c *C) {
 
 func (s *testTiclientSuite) TestNotExist(c *C) {
 	txn := s.beginTxn(c)
-	_, err := txn.Get(encodeKey(s.prefix, "noSuchKey"))
+	_, err := txn.Get(context.TODO(), encodeKey(s.prefix, "noSuchKey"))
 	c.Assert(err, NotNil)
 }
 
@@ -176,7 +176,7 @@ func (s *testTiclientSuite) TestLargeRequest(c *C) {
 	c.Assert(err, NotNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
-	c.Assert(kv.IsRetryableError(err), IsFalse)
+	c.Assert(kv.IsTxnRetryableError(err), IsFalse)
 }
 
 func encodeKey(prefix, s string) []byte {

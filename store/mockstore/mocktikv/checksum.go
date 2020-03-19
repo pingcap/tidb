@@ -28,7 +28,7 @@ func (h *rpcHandler) handleCopChecksumRequest(req *coprocessor.Request) *coproce
 	}
 	data, err := resp.Marshal()
 	if err != nil {
-		panic(fmt.Sprintf("marshal checksum response error: %v", err))
+		return &coprocessor.Response{OtherError: fmt.Sprintf("marshal checksum response error: %v", err)}
 	}
 	return &coprocessor.Response{Data: data}
 }

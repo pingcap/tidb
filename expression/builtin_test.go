@@ -16,18 +16,17 @@ package expression
 import (
 	"reflect"
 
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/charset"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/charset"
-	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/util/chunk"
 )
 
-func evalBuiltinFunc(f builtinFunc, row types.Row) (d types.Datum, err error) {
+func evalBuiltinFunc(f builtinFunc, row chunk.Row) (d types.Datum, err error) {
 	var (
 		res    interface{}
 		isNull bool
@@ -56,10 +55,10 @@ func evalBuiltinFunc(f builtinFunc, row types.Row) (d types.Datum, err error) {
 	}
 
 	if isNull || err != nil {
-		d.SetValue(nil)
-		return d, errors.Trace(err)
+		d.SetNull()
+		return d, err
 	}
-	d.SetValue(res)
+	d.SetValue(res, f.getRetTp())
 	return
 }
 
@@ -99,36 +98,32 @@ func makeDatums(i interface{}) []types.Datum {
 }
 
 func (s *testEvaluatorSuite) TestIsNullFunc(c *C) {
-	defer testleak.AfterTest(c)()
-
 	fc := funcs[ast.IsNull]
 	f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(1)))
 	c.Assert(err, IsNil)
-	v, err := evalBuiltinFunc(f, nil)
+	v, err := evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(v.GetInt64(), Equals, int64(0))
 
 	f, err = fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(nil)))
 	c.Assert(err, IsNil)
-	v, err = evalBuiltinFunc(f, nil)
+	v, err = evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(v.GetInt64(), Equals, int64(1))
 }
 
 func (s *testEvaluatorSuite) TestLock(c *C) {
-	defer testleak.AfterTest(c)()
-
 	lock := funcs[ast.GetLock]
 	f, err := lock.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(nil, 1)))
 	c.Assert(err, IsNil)
-	v, err := evalBuiltinFunc(f, nil)
+	v, err := evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(v.GetInt64(), Equals, int64(1))
 
 	releaseLock := funcs[ast.ReleaseLock]
 	f, err = releaseLock.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(1)))
 	c.Assert(err, IsNil)
-	v, err = evalBuiltinFunc(f, nil)
+	v, err = evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(v.GetInt64(), Equals, int64(1))
 }
@@ -138,13 +133,13 @@ func (s *testEvaluatorSuite) TestLock(c *C) {
 func newFunctionForTest(ctx sessionctx.Context, funcName string, args ...Expression) (Expression, error) {
 	fc, ok := funcs[funcName]
 	if !ok {
-		return nil, errFunctionNotExists.GenByArgs("FUNCTION", funcName)
+		return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", funcName)
 	}
 	funcArgs := make([]Expression, len(args))
 	copy(funcArgs, args)
 	f, err := fc.getFunction(ctx, funcArgs)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	return &ScalarFunction{
 		FuncName: model.NewCIStr(funcName),

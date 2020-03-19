@@ -14,17 +14,30 @@
 package executor
 
 import (
+	"context"
+
 	"github.com/cznic/mathutil"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/util/chunk"
-	"golang.org/x/net/context"
 )
 
 // ExplainExec represents an explain executor.
 type ExplainExec struct {
 	baseExecutor
 
-	rows   [][]string
-	cursor int
+	explain     *core.Explain
+	analyzeExec Executor
+	rows        [][]string
+	cursor      int
+}
+
+// Open implements the Executor Open interface.
+func (e *ExplainExec) Open(ctx context.Context) error {
+	if e.analyzeExec != nil {
+		return e.analyzeExec.Open(ctx)
+	}
+	return nil
 }
 
 // Close implements the Executor Close interface.
@@ -34,18 +47,67 @@ func (e *ExplainExec) Close() error {
 }
 
 // Next implements the Executor Next interface.
-func (e *ExplainExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	chk.Reset()
+func (e *ExplainExec) Next(ctx context.Context, req *chunk.Chunk) error {
+	if e.rows == nil {
+		var err error
+		e.rows, err = e.generateExplainInfo(ctx)
+		if err != nil {
+			return err
+		}
+	}
+
+	req.GrowAndReset(e.maxChunkSize)
 	if e.cursor >= len(e.rows) {
 		return nil
 	}
 
-	numCurRows := mathutil.Min(e.maxChunkSize, len(e.rows)-e.cursor)
+	numCurRows := mathutil.Min(req.Capacity(), len(e.rows)-e.cursor)
 	for i := e.cursor; i < e.cursor+numCurRows; i++ {
 		for j := range e.rows[i] {
-			chk.AppendString(j, e.rows[i][j])
+			req.AppendString(j, e.rows[i][j])
 		}
 	}
 	e.cursor += numCurRows
 	return nil
+}
+
+func (e *ExplainExec) generateExplainInfo(ctx context.Context) (rows [][]string, err error) {
+	closed := false
+	defer func() {
+		if !closed && e.analyzeExec != nil {
+			err = e.analyzeExec.Close()
+			closed = true
+		}
+	}()
+	if e.analyzeExec != nil {
+		chk := newFirstChunk(e.analyzeExec)
+		var nextErr, closeErr error
+		for {
+			nextErr = Next(ctx, e.analyzeExec, chk)
+			if nextErr != nil || chk.NumRows() == 0 {
+				break
+			}
+		}
+		closeErr = e.analyzeExec.Close()
+		closed = true
+		if nextErr != nil {
+			if closeErr != nil {
+				err = errors.New(nextErr.Error() + ", " + closeErr.Error())
+			} else {
+				err = nextErr
+			}
+		} else if closeErr != nil {
+			err = closeErr
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	if err = e.explain.RenderResult(); err != nil {
+		return nil, err
+	}
+	if e.analyzeExec != nil {
+		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = nil
+	}
+	return e.explain.Rows, nil
 }

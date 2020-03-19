@@ -14,6 +14,7 @@
 package kv
 
 import (
+	"errors"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -45,10 +46,46 @@ func mustBackOff(c *C, cnt uint, sleep int) {
 
 func (s *testTxnSuite) TestRetryExceedCountError(c *C) {
 	defer testleak.AfterTest(c)()
+	defer func(cnt uint) {
+		maxRetryCnt = cnt
+	}(maxRetryCnt)
+
 	maxRetryCnt = 5
 	err := RunInNewTxn(&mockStorage{}, true, func(txn Transaction) error {
 		return nil
 	})
 	c.Assert(err, NotNil)
-	maxRetryCnt = 100
+
+	err = RunInNewTxn(&mockStorage{}, true, func(txn Transaction) error {
+		return ErrTxnRetryable
+	})
+	c.Assert(err, NotNil)
+
+	err = RunInNewTxn(&mockStorage{}, true, func(txn Transaction) error {
+		return errors.New("do not retry")
+	})
+	c.Assert(err, NotNil)
+
+	var cfg InjectionConfig
+	err1 := errors.New("foo")
+	cfg.SetGetError(err1)
+	cfg.SetCommitError(err1)
+	storage := NewInjectedStore(NewMockStorage(), &cfg)
+	err = RunInNewTxn(storage, true, func(txn Transaction) error {
+		return nil
+	})
+	c.Assert(err, NotNil)
+}
+
+func (s *testTxnSuite) TestBasicFunc(c *C) {
+	if IsMockCommitErrorEnable() {
+		defer MockCommitErrorEnable()
+	} else {
+		defer MockCommitErrorDisable()
+	}
+
+	MockCommitErrorEnable()
+	c.Assert(IsMockCommitErrorEnable(), IsTrue)
+	MockCommitErrorDisable()
+	c.Assert(IsMockCommitErrorEnable(), IsFalse)
 }

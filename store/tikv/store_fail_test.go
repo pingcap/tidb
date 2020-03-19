@@ -14,15 +14,15 @@
 package tikv
 
 import (
+	"context"
 	"sync"
 	"time"
 
-	gofail "github.com/coreos/gofail/runtime"
 	. "github.com/pingcap/check"
-	"golang.org/x/net/context"
+	"github.com/pingcap/failpoint"
 )
 
-func (s *testStoreSuite) TestFailBusyServerKV(c *C) {
+func (s *testStoreFailedSuite) TestFailBusyServerKV(c *C) {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	err = txn.Set([]byte("key"), []byte("value"))
@@ -33,18 +33,18 @@ func (s *testStoreSuite) TestFailBusyServerKV(c *C) {
 	var wg sync.WaitGroup
 	wg.Add(2)
 
-	gofail.Enable("github.com/pingcap/tidb/store/mockstore/mocktikv/rpcServerBusy", `return(true)`)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/mocktikv/rpcServerBusy", `return(true)`), IsNil)
 	go func() {
 		defer wg.Done()
 		time.Sleep(time.Millisecond * 100)
-		gofail.Disable("github.com/pingcap/tidb/store/mockstore/mocktikv/rpcServerBusy")
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/mocktikv/rpcServerBusy"), IsNil)
 	}()
 
 	go func() {
 		defer wg.Done()
 		txn, err := s.store.Begin()
 		c.Assert(err, IsNil)
-		val, err := txn.Get([]byte("key"))
+		val, err := txn.Get(context.TODO(), []byte("key"))
 		c.Assert(err, IsNil)
 		c.Assert(val, BytesEquals, []byte("value"))
 	}()

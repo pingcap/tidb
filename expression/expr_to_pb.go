@@ -14,56 +14,20 @@
 package expression
 
 import (
-	"time"
-
-	"github.com/juju/errors"
-	"github.com/pingcap/tidb/ast"
+	"github.com/gogo/protobuf/proto"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/charset"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-tipb"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
-
-// ExpressionsToPB converts expression to tipb.Expr.
-func ExpressionsToPB(sc *stmtctx.StatementContext, exprs []Expression, client kv.Client) (pbCNF *tipb.Expr, pushed []Expression, remained []Expression) {
-	pc := PbConverter{client: client, sc: sc}
-	retTypeOfAnd := &types.FieldType{
-		Tp:      mysql.TypeLonglong,
-		Flen:    1,
-		Decimal: 0,
-		Flag:    mysql.BinaryFlag,
-		Charset: charset.CharsetBin,
-		Collate: charset.CollationBin,
-	}
-
-	for _, expr := range exprs {
-		pbExpr := pc.ExprToPB(expr)
-		if pbExpr == nil {
-			remained = append(remained, expr)
-			continue
-		}
-
-		pushed = append(pushed, expr)
-		if pbCNF == nil {
-			pbCNF = pbExpr
-			continue
-		}
-
-		// Merge multiple converted pb expression into a CNF.
-		pbCNF = &tipb.Expr{
-			Tp:        tipb.ExprType_ScalarFunc,
-			Sig:       tipb.ScalarFuncSig_LogicalAnd,
-			Children:  []*tipb.Expr{pbCNF, pbExpr},
-			FieldType: toPBFieldType(retTypeOfAnd),
-		}
-	}
-	return
-}
 
 // ExpressionsToPBList converts expressions to tipb.Expr list for new plan.
 func ExpressionsToPBList(sc *stmtctx.StatementContext, exprs []Expression, client kv.Client) (pbExpr []*tipb.Expr) {
@@ -89,7 +53,16 @@ func NewPBConverter(client kv.Client, sc *stmtctx.StatementContext) PbConverter 
 // ExprToPB converts Expression to TiPB.
 func (pc PbConverter) ExprToPB(expr Expression) *tipb.Expr {
 	switch x := expr.(type) {
-	case *Constant, *CorrelatedColumn:
+	case *Constant:
+		pbExpr := pc.conOrCorColToPBExpr(expr)
+		if pbExpr == nil {
+			return nil
+		}
+		if !x.Value.IsNull() {
+			pbExpr.FieldType.Flag |= uint32(mysql.NotNullFlag)
+		}
+		return pbExpr
+	case *CorrelatedColumn:
 		return pc.conOrCorColToPBExpr(expr)
 	case *Column:
 		return pc.columnToPBExpr(x)
@@ -101,12 +74,12 @@ func (pc PbConverter) ExprToPB(expr Expression) *tipb.Expr {
 
 func (pc PbConverter) conOrCorColToPBExpr(expr Expression) *tipb.Expr {
 	ft := expr.GetType()
-	d, err := expr.Eval(nil)
+	d, err := expr.Eval(chunk.Row{})
 	if err != nil {
-		log.Errorf("Fail to eval constant, err: %s", err.Error())
+		logutil.BgLogger().Error("eval constant or correlated column", zap.String("expression", expr.ExplainInfo()), zap.Error(err))
 		return nil
 	}
-	tp, val, ok := pc.encodeDatum(d)
+	tp, val, ok := pc.encodeDatum(ft, d)
 	if !ok {
 		return nil
 	}
@@ -114,10 +87,10 @@ func (pc PbConverter) conOrCorColToPBExpr(expr Expression) *tipb.Expr {
 	if !pc.client.IsRequestTypeSupported(kv.ReqTypeSelect, int64(tp)) {
 		return nil
 	}
-	return &tipb.Expr{Tp: tp, Val: val, FieldType: toPBFieldType(ft)}
+	return &tipb.Expr{Tp: tp, Val: val, FieldType: ToPBFieldType(ft)}
 }
 
-func (pc *PbConverter) encodeDatum(d types.Datum) (tipb.ExprType, []byte, bool) {
+func (pc *PbConverter) encodeDatum(ft *types.FieldType, d types.Datum) (tipb.ExprType, []byte, bool) {
 	var (
 		tp  tipb.ExprType
 		val []byte
@@ -151,24 +124,17 @@ func (pc *PbConverter) encodeDatum(d types.Datum) (tipb.ExprType, []byte, bool) 
 		var err error
 		val, err = codec.EncodeDecimal(nil, d.GetMysqlDecimal(), d.Length(), d.Frac())
 		if err != nil {
-			log.Errorf("Fail to encode value, err: %s", err.Error())
+			logutil.BgLogger().Error("encode decimal", zap.Error(err))
 			return tp, nil, false
 		}
 	case types.KindMysqlTime:
 		if pc.client.IsRequestTypeSupported(kv.ReqTypeDAG, int64(tipb.ExprType_MysqlTime)) {
 			tp = tipb.ExprType_MysqlTime
-			loc := pc.sc.TimeZone
-			t := d.GetMysqlTime()
-			if t.Type == mysql.TypeTimestamp && loc != time.UTC {
-				err := t.ConvertTimeZone(loc, time.UTC)
-				terror.Log(errors.Trace(err))
-			}
-			v, err := t.ToPackedUint()
+			val, err := codec.EncodeMySQLTime(pc.sc, d.GetMysqlTime(), ft.Tp, nil)
 			if err != nil {
-				log.Errorf("Fail to encode value, err: %s", err.Error())
+				logutil.BgLogger().Error("encode mysql time", zap.Error(err))
 				return tp, nil, false
 			}
-			val = codec.EncodeUint(nil, v)
 			return tp, val, true
 		}
 		return tp, nil, false
@@ -178,7 +144,8 @@ func (pc *PbConverter) encodeDatum(d types.Datum) (tipb.ExprType, []byte, bool) 
 	return tp, val, true
 }
 
-func toPBFieldType(ft *types.FieldType) *tipb.FieldType {
+// ToPBFieldType converts *types.FieldType to *tipb.FieldType.
+func ToPBFieldType(ft *types.FieldType) *tipb.FieldType {
 	return &tipb.FieldType{
 		Tp:      int32(ft.Tp),
 		Flag:    uint32(ft.Flag),
@@ -189,12 +156,44 @@ func toPBFieldType(ft *types.FieldType) *tipb.FieldType {
 	}
 }
 
-func collationToProto(c string) int32 {
-	v, ok := mysql.CollationNames[c]
-	if ok {
-		return int32(v)
+// FieldTypeFromPB converts *tipb.FieldType to *types.FieldType.
+func FieldTypeFromPB(ft *tipb.FieldType) *types.FieldType {
+	return &types.FieldType{
+		Tp:      byte(ft.Tp),
+		Flag:    uint(ft.Flag),
+		Flen:    int(ft.Flen),
+		Decimal: int(ft.Decimal),
+		Charset: ft.Charset,
+		Collate: protoToCollation(ft.Collate),
 	}
-	return int32(mysql.DefaultCollationID)
+}
+
+func collationToProto(c string) int32 {
+	if v, ok := mysql.CollationNames[c]; ok {
+		return collate.RewriteNewCollationIDIfNeeded(int32(v))
+	}
+	v := collate.RewriteNewCollationIDIfNeeded(int32(mysql.DefaultCollationID))
+	logutil.BgLogger().Warn(
+		"Unable to get collation ID by name, use ID of the default collation instead",
+		zap.String("name", c),
+		zap.Int32("default collation ID", v),
+		zap.String("default collation", mysql.DefaultCollationName),
+	)
+	return v
+}
+
+func protoToCollation(c int32) string {
+	v, ok := mysql.Collations[uint8(collate.RestoreCollationIDIfNeeded(c))]
+	if ok {
+		return v
+	}
+	logutil.BgLogger().Warn(
+		"Unable to get collation name from ID, use name of the default collation instead",
+		zap.Int32("id", c),
+		zap.Int("default collation ID", mysql.DefaultCollationID),
+		zap.String("default collation", mysql.DefaultCollationName),
+	)
+	return mysql.DefaultCollationName
 }
 
 func (pc PbConverter) columnToPBExpr(column *Column) *tipb.Expr {
@@ -210,7 +209,7 @@ func (pc PbConverter) columnToPBExpr(column *Column) *tipb.Expr {
 		return &tipb.Expr{
 			Tp:        tipb.ExprType_ColumnRef,
 			Val:       codec.EncodeInt(nil, int64(column.Index)),
-			FieldType: toPBFieldType(column.RetType),
+			FieldType: ToPBFieldType(column.RetType),
 		}
 	}
 	id := column.ID
@@ -225,18 +224,21 @@ func (pc PbConverter) columnToPBExpr(column *Column) *tipb.Expr {
 }
 
 func (pc PbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
-	// check whether this function can be pushed.
-	if !pc.canFuncBePushed(expr) {
-		return nil
-	}
-
-	// check whether this function has ProtoBuf signature.
+	// Check whether this function has ProtoBuf signature.
 	pbCode := expr.Function.PbCode()
-	if pbCode < 0 {
+	if pbCode <= tipb.ScalarFuncSig_Unspecified {
+		failpoint.Inject("PanicIfPbCodeUnspecified", func() {
+			panic(errors.Errorf("unspecified PbCode: %T", expr.Function))
+		})
 		return nil
 	}
 
-	// check whether all of its parameters can be pushed.
+	// Check whether this function can be pushed.
+	if !canFuncBePushed(expr, kv.UnSpecified) {
+		return nil
+	}
+
+	// Check whether all of its parameters can be pushed.
 	children := make([]*tipb.Expr, 0, len(expr.GetArgs()))
 	for _, arg := range expr.GetArgs() {
 		pbArg := pc.ExprToPB(arg)
@@ -246,12 +248,29 @@ func (pc PbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
 		children = append(children, pbArg)
 	}
 
-	// construct expression ProtoBuf.
+	var encoded []byte
+	if metadata := expr.Function.metadata(); metadata != nil {
+		var err error
+		encoded, err = proto.Marshal(metadata)
+		if err != nil {
+			logutil.BgLogger().Error("encode metadata", zap.Any("metadata", metadata), zap.Error(err))
+			return nil
+		}
+	}
+
+	// put collation information into the RetType enforcedly and push it down to TiKV/MockTiKV
+	tp := *expr.RetType
+	if collate.NewCollationEnabled() {
+		_, tp.Collate, _ = expr.CharsetAndCollation(expr.GetCtx())
+	}
+
+	// Construct expression ProtoBuf.
 	return &tipb.Expr{
 		Tp:        tipb.ExprType_ScalarFunc,
+		Val:       encoded,
 		Sig:       pbCode,
 		Children:  children,
-		FieldType: toPBFieldType(expr.RetType),
+		FieldType: ToPBFieldType(&tp),
 	}
 }
 
@@ -273,62 +292,4 @@ func SortByItemToPB(sc *stmtctx.StatementContext, client kv.Client, expr Express
 		return nil
 	}
 	return &tipb.ByItem{Expr: e, Desc: desc}
-}
-
-func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
-	switch sf.FuncName.L {
-	case
-		// logical functions.
-		ast.LogicAnd,
-		ast.LogicOr,
-		ast.UnaryNot,
-
-		// compare functions.
-		ast.LT,
-		ast.LE,
-		ast.EQ,
-		ast.NE,
-		ast.GE,
-		ast.GT,
-		ast.NullEQ,
-		ast.In,
-		ast.IsNull,
-		ast.Like,
-		ast.IsTruth,
-		ast.IsFalsity,
-
-		// arithmetical functions.
-		ast.Plus,
-		ast.Minus,
-		ast.Mul,
-		ast.Div,
-		ast.Abs,
-		ast.Ceil,
-		ast.Ceiling,
-		ast.Floor,
-
-		// control flow functions.
-		ast.Case,
-		ast.If,
-		ast.Ifnull,
-		ast.Coalesce,
-
-		// json functions.
-		ast.JSONType,
-		ast.JSONExtract,
-		ast.JSONUnquote,
-		ast.JSONObject,
-		ast.JSONArray,
-		ast.JSONMerge,
-		ast.JSONSet,
-		ast.JSONInsert,
-		ast.JSONReplace,
-		ast.JSONRemove,
-
-		// date functions.
-		ast.DateFormat:
-
-		return true
-	}
-	return false
 }

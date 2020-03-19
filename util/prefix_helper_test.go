@@ -14,15 +14,16 @@
 package util_test
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testleak"
-	"golang.org/x/net/context"
 )
 
 const (
@@ -133,6 +134,15 @@ func (s *testPrefixSuite) TestPrefix(c *C) {
 		return true
 	})
 	c.Assert(err, IsNil)
+	err = util.ScanMetaWithPrefix(txn, k, func(kv.Key, []byte) bool {
+		return false
+	})
+	c.Assert(err, IsNil)
+	err = util.DelKeyWithPrefix(txn, []byte("key"))
+	c.Assert(err, IsNil)
+	_, err = txn.Get(context.TODO(), k)
+	c.Assert(terror.ErrorEqual(kv.ErrNotExist, err), IsTrue)
+
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 }

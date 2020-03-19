@@ -14,12 +14,14 @@
 package mocktikv
 
 import (
+	"context"
 	"sync"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/pd/pd-client"
-	"golang.org/x/net/context"
+	"github.com/pingcap/kvproto/pkg/pdpb"
+	"github.com/pingcap/pd/v4/client"
 )
 
 // Use global variables to prevent pdClients from creating duplicate timestamps.
@@ -31,6 +33,9 @@ var tsMu = struct {
 
 type pdClient struct {
 	cluster *Cluster
+	// SafePoint set by `UpdateGCSafePoint`. Not to be confused with SafePointKV.
+	gcSafePoint   uint64
+	gcSafePointMu sync.Mutex
 }
 
 // NewPDClient creates a mock pd.Client that uses local timestamp and meta data
@@ -39,6 +44,10 @@ func NewPDClient(cluster *Cluster) pd.Client {
 	return &pdClient{
 		cluster: cluster,
 	}
+}
+
+func (c *pdClient) ConfigClient() pd.ConfigClient {
+	return nil
 }
 
 func (c *pdClient) GetClusterID(ctx context.Context) uint64 {
@@ -60,15 +69,20 @@ func (c *pdClient) GetTS(context.Context) (int64, int64, error) {
 }
 
 func (c *pdClient) GetTSAsync(ctx context.Context) pd.TSFuture {
-	return &mockTSFuture{c, ctx}
+	return &mockTSFuture{c, ctx, false}
 }
 
 type mockTSFuture struct {
-	pdc *pdClient
-	ctx context.Context
+	pdc  *pdClient
+	ctx  context.Context
+	used bool
 }
 
 func (m *mockTSFuture) Wait() (int64, int64, error) {
+	if m.used {
+		return 0, 0, errors.New("cannot wait tso twice")
+	}
+	m.used = true
 	return m.pdc.GetTS(m.ctx)
 }
 
@@ -77,9 +91,19 @@ func (c *pdClient) GetRegion(ctx context.Context, key []byte) (*metapb.Region, *
 	return region, peer, nil
 }
 
+func (c *pdClient) GetPrevRegion(ctx context.Context, key []byte) (*metapb.Region, *metapb.Peer, error) {
+	region, peer := c.cluster.GetPrevRegionByKey(key)
+	return region, peer, nil
+}
+
 func (c *pdClient) GetRegionByID(ctx context.Context, regionID uint64) (*metapb.Region, *metapb.Peer, error) {
 	region, peer := c.cluster.GetRegionByID(regionID)
 	return region, peer, nil
+}
+
+func (c *pdClient) ScanRegions(ctx context.Context, startKey []byte, endKey []byte, limit int) ([]*metapb.Region, []*metapb.Peer, error) {
+	regions, peers := c.cluster.ScanRegions(startKey, endKey, limit)
+	return regions, peers, nil
 }
 
 func (c *pdClient) GetStore(ctx context.Context, storeID uint64) (*metapb.Store, error) {
@@ -92,5 +116,29 @@ func (c *pdClient) GetStore(ctx context.Context, storeID uint64) (*metapb.Store,
 	return store, nil
 }
 
+func (c *pdClient) GetAllStores(ctx context.Context, opts ...pd.GetStoreOption) ([]*metapb.Store, error) {
+	return c.cluster.GetAllStores(), nil
+}
+
+func (c *pdClient) UpdateGCSafePoint(ctx context.Context, safePoint uint64) (uint64, error) {
+	c.gcSafePointMu.Lock()
+	defer c.gcSafePointMu.Unlock()
+
+	if safePoint > c.gcSafePoint {
+		c.gcSafePoint = safePoint
+	}
+	return c.gcSafePoint, nil
+}
+
 func (c *pdClient) Close() {
 }
+
+func (c *pdClient) ScatterRegion(ctx context.Context, regionID uint64) error {
+	return nil
+}
+
+func (c *pdClient) GetOperator(ctx context.Context, regionID uint64) (*pdpb.GetOperatorResponse, error) {
+	return &pdpb.GetOperatorResponse{Status: pdpb.OperatorStatus_SUCCESS}, nil
+}
+
+func (c *pdClient) GetLeaderAddr() string { return "mockpd" }

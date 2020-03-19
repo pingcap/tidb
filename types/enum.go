@@ -17,7 +17,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/juju/errors"
+	"github.com/pingcap/errors"
 )
 
 // Enum is for MySQL enum type.

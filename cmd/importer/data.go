@@ -15,11 +15,12 @@ package main
 
 import (
 	"fmt"
+	"math/rand"
 	"sync"
 	"time"
-)
 
-var defaultStep int64 = 1
+	"github.com/cznic/mathutil"
+)
 
 type datum struct {
 	sync.Mutex
@@ -28,17 +29,20 @@ type datum struct {
 	minIntValue int64
 	maxIntValue int64
 	timeValue   time.Time
+	remains     uint64
+	repeats     uint64
 	step        int64
+	probability uint32
 
 	init     bool
 	useRange bool
 }
 
 func newDatum() *datum {
-	return &datum{intValue: -1, step: 1}
+	return &datum{step: 1, repeats: 1, remains: 1, probability: 100}
 }
 
-func (d *datum) setInitInt64Value(step int64, min int64, max int64) {
+func (d *datum) setInitInt64Value(min int64, max int64) {
 	d.Lock()
 	defer d.Unlock()
 
@@ -46,46 +50,38 @@ func (d *datum) setInitInt64Value(step int64, min int64, max int64) {
 		return
 	}
 
-	d.step = step
-
-	if min != -1 {
-		d.minIntValue = min
-		d.intValue = min
-	}
-
-	if min < max {
-		d.maxIntValue = max
-		d.useRange = true
+	d.minIntValue = min
+	d.maxIntValue = max
+	d.useRange = true
+	if d.step < 0 {
+		d.intValue = (min + max) / 2
 	}
 
 	d.init = true
 }
 
-func (d *datum) uniqInt64() int64 {
+func (d *datum) updateRemains() {
+	if uint32(rand.Int31n(100))+1 <= 100-d.probability {
+		d.remains -= uint64(rand.Int63n(int64(d.remains))) + 1
+	} else {
+		d.remains--
+	}
+}
+
+func (d *datum) nextInt64() int64 {
 	d.Lock()
 	defer d.Unlock()
 
-	data := d.intValue
 	if d.useRange {
-		if d.intValue+d.step > d.maxIntValue {
-			return data
-		}
+		d.intValue = mathutil.MinInt64(d.intValue, d.maxIntValue)
+		d.intValue = mathutil.MaxInt64(d.intValue, d.minIntValue)
 	}
-
-	d.intValue += d.step
-	return data
+	d.updateRemains()
+	return d.intValue
 }
 
-func (d *datum) uniqFloat64() float64 {
-	data := d.uniqInt64()
-	return float64(data)
-}
-
-func (d *datum) uniqString(n int) string {
-	d.Lock()
-	d.intValue++
-	data := d.intValue
-	d.Unlock()
+func (d *datum) nextString(n int) string {
+	data := d.nextInt64()
 
 	var value []byte
 	for ; ; n-- {
@@ -110,56 +106,48 @@ func (d *datum) uniqString(n int) string {
 	return string(value)
 }
 
-func (d *datum) uniqTime() string {
+func (d *datum) nextTime() string {
 	d.Lock()
 	defer d.Unlock()
 
 	if d.timeValue.IsZero() {
 		d.timeValue = time.Now()
-	} else {
-		d.timeValue = d.timeValue.Add(time.Duration(d.step) * time.Second)
 	}
-
+	d.updateRemains()
 	return fmt.Sprintf("%02d:%02d:%02d", d.timeValue.Hour(), d.timeValue.Minute(), d.timeValue.Second())
 }
 
-func (d *datum) uniqDate() string {
+func (d *datum) nextDate() string {
 	d.Lock()
 	defer d.Unlock()
 
 	if d.timeValue.IsZero() {
 		d.timeValue = time.Now()
-	} else {
-		d.timeValue = d.timeValue.AddDate(0, 0, int(d.step))
 	}
-
+	d.updateRemains()
 	return fmt.Sprintf("%04d-%02d-%02d", d.timeValue.Year(), d.timeValue.Month(), d.timeValue.Day())
 }
 
-func (d *datum) uniqTimestamp() string {
+func (d *datum) nextTimestamp() string {
 	d.Lock()
 	defer d.Unlock()
 
 	if d.timeValue.IsZero() {
 		d.timeValue = time.Now()
-	} else {
-		d.timeValue = d.timeValue.Add(time.Duration(d.step) * time.Second)
 	}
-
+	d.updateRemains()
 	return fmt.Sprintf("%04d-%02d-%02d %02d:%02d:%02d",
 		d.timeValue.Year(), d.timeValue.Month(), d.timeValue.Day(),
 		d.timeValue.Hour(), d.timeValue.Minute(), d.timeValue.Second())
 }
 
-func (d *datum) uniqYear() string {
+func (d *datum) nextYear() string {
 	d.Lock()
 	defer d.Unlock()
 
 	if d.timeValue.IsZero() {
 		d.timeValue = time.Now()
-	} else {
-		d.timeValue = d.timeValue.AddDate(int(d.step), 0, 0)
 	}
-
+	d.updateRemains()
 	return fmt.Sprintf("%04d", d.timeValue.Year())
 }

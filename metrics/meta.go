@@ -28,12 +28,12 @@ var (
 			Subsystem: "autoid",
 			Name:      "operation_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) of handled autoid.",
-			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 22),
+			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 22), // 500us ~ 2097s
 		}, []string{LblType, LblResult})
 
 	GetSchemaDiff    = "get_schema_diff"
 	SetSchemaDiff    = "set_schema_diff"
-	GetDDLJob        = "get_ddl_job"
+	GetDDLJobByIdx   = "get_ddl_job"
 	UpdateDDLJob     = "update_ddl_job"
 	GetHistoryDDLJob = "get_history_ddl_job"
 
@@ -43,11 +43,6 @@ var (
 			Subsystem: "meta",
 			Name:      "operation_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) of tidb meta data operations.",
-			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 22),
+			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 22), // 500us ~ 2097s
 		}, []string{LblType, LblResult})
 )
-
-func init() {
-	prometheus.MustRegister(AutoIDHistogram)
-	prometheus.MustRegister(MetaHistogram)
-}

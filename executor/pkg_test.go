@@ -1,52 +1,22 @@
 package executor
 
 import (
+	"context"
 	"fmt"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/plan"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
-	"golang.org/x/net/context"
 )
 
 var _ = Suite(&pkgTestSuite{})
 
 type pkgTestSuite struct {
-}
-
-type MockExec struct {
-	baseExecutor
-
-	Rows      []types.DatumRow
-	curRowIdx int
-}
-
-func (m *MockExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	chk.Reset()
-	colTypes := m.retTypes()
-	for ; m.curRowIdx < len(m.Rows) && chk.NumRows() < m.maxChunkSize; m.curRowIdx++ {
-		curRow := m.Rows[m.curRowIdx]
-		for i := 0; i < len(curRow); i++ {
-			curDatum := curRow.GetDatum(i, colTypes[i])
-			chk.AppendDatum(i, &curDatum)
-		}
-	}
-	return nil
-}
-
-func (m *MockExec) Close() error {
-	m.curRowIdx = 0
-	return nil
-}
-
-func (m *MockExec) Open(ctx context.Context) error {
-	m.curRowIdx = 0
-	return nil
 }
 
 func (s *pkgTestSuite) TestNestedLoopApply(c *C) {
@@ -56,45 +26,46 @@ func (s *pkgTestSuite) TestNestedLoopApply(c *C) {
 	col1 := &expression.Column{Index: 1, RetType: types.NewFieldType(mysql.TypeLong)}
 	con := &expression.Constant{Value: types.NewDatum(6), RetType: types.NewFieldType(mysql.TypeLong)}
 	outerSchema := expression.NewSchema(col0)
-	outerExec := &MockExec{
-		baseExecutor: newBaseExecutor(sctx, outerSchema, ""),
-		Rows: []types.DatumRow{
-			types.MakeDatums(1),
-			types.MakeDatums(2),
-			types.MakeDatums(3),
-			types.MakeDatums(4),
-			types.MakeDatums(5),
-			types.MakeDatums(6),
-		}}
+	outerExec := buildMockDataSource(mockDataSourceParameters{
+		schema: outerSchema,
+		rows:   6,
+		ctx:    sctx,
+		genDataFunc: func(row int, typ *types.FieldType) interface{} {
+			return int64(row + 1)
+		},
+	})
+	outerExec.prepareChunks()
+
 	innerSchema := expression.NewSchema(col1)
-	innerExec := &MockExec{
-		baseExecutor: newBaseExecutor(sctx, innerSchema, ""),
-		Rows: []types.DatumRow{
-			types.MakeDatums(1),
-			types.MakeDatums(2),
-			types.MakeDatums(3),
-			types.MakeDatums(4),
-			types.MakeDatums(5),
-			types.MakeDatums(6),
-		}}
+	innerExec := buildMockDataSource(mockDataSourceParameters{
+		schema: innerSchema,
+		rows:   6,
+		ctx:    sctx,
+		genDataFunc: func(row int, typ *types.FieldType) interface{} {
+			return int64(row + 1)
+		},
+	})
+	innerExec.prepareChunks()
+
 	outerFilter := expression.NewFunctionInternal(sctx, ast.LT, types.NewFieldType(mysql.TypeTiny), col0, con)
 	innerFilter := outerFilter.Clone()
 	otherFilter := expression.NewFunctionInternal(sctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), col0, col1)
-	generator := newJoinResultGenerator(sctx, plan.InnerJoin, false,
-		make([]types.Datum, innerExec.Schema().Len()), []expression.Expression{otherFilter}, outerExec.retTypes(), innerExec.retTypes())
+	joiner := newJoiner(sctx, plannercore.InnerJoin, false,
+		make([]types.Datum, innerExec.Schema().Len()), []expression.Expression{otherFilter},
+		retTypes(outerExec), retTypes(innerExec), nil)
 	joinSchema := expression.NewSchema(col0, col1)
 	join := &NestedLoopApplyExec{
-		baseExecutor:    newBaseExecutor(sctx, joinSchema, ""),
-		outerExec:       outerExec,
-		innerExec:       innerExec,
-		outerFilter:     []expression.Expression{outerFilter},
-		innerFilter:     []expression.Expression{innerFilter},
-		resultGenerator: generator,
+		baseExecutor: newBaseExecutor(sctx, joinSchema, nil),
+		outerExec:    outerExec,
+		innerExec:    innerExec,
+		outerFilter:  []expression.Expression{outerFilter},
+		innerFilter:  []expression.Expression{innerFilter},
+		joiner:       joiner,
 	}
-	join.innerList = chunk.NewList(innerExec.retTypes(), innerExec.maxChunkSize)
-	join.innerChunk = innerExec.newChunk()
-	join.outerChunk = outerExec.newChunk()
-	joinChk := join.newChunk()
+	join.innerList = chunk.NewList(retTypes(innerExec), innerExec.initCap, innerExec.maxChunkSize)
+	join.innerChunk = newFirstChunk(innerExec)
+	join.outerChunk = newFirstChunk(outerExec)
+	joinChk := newFirstChunk(join)
 	it := chunk.NewIterator4Chunk(joinChk)
 	for rowIdx := 1; ; {
 		err := join.Next(ctx, joinChk)
@@ -107,6 +78,36 @@ func (s *pkgTestSuite) TestNestedLoopApply(c *C) {
 			obtainedResult := fmt.Sprintf("%v %v", row.GetInt64(0), row.GetInt64(1))
 			c.Check(obtainedResult, Equals, correctResult)
 			rowIdx++
+		}
+	}
+}
+
+func (s *pkgTestSuite) TestMoveInfoSchemaToFront(c *C) {
+	dbss := [][]string{
+		{},
+		{"A", "B", "C", "a", "b", "c"},
+		{"A", "B", "C", "INFORMATION_SCHEMA"},
+		{"A", "B", "INFORMATION_SCHEMA", "a"},
+		{"INFORMATION_SCHEMA"},
+		{"A", "B", "C", "INFORMATION_SCHEMA", "a", "b"},
+	}
+	wanted := [][]string{
+		{},
+		{"A", "B", "C", "a", "b", "c"},
+		{"INFORMATION_SCHEMA", "A", "B", "C"},
+		{"INFORMATION_SCHEMA", "A", "B", "a"},
+		{"INFORMATION_SCHEMA"},
+		{"INFORMATION_SCHEMA", "A", "B", "C", "a", "b"},
+	}
+
+	for _, dbs := range dbss {
+		moveInfoSchemaToFront(dbs)
+	}
+
+	for i, dbs := range wanted {
+		c.Check(len(dbss[i]), Equals, len(dbs))
+		for j, db := range dbs {
+			c.Check(dbss[i][j], Equals, db)
 		}
 	}
 }

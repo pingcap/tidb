@@ -14,43 +14,51 @@
 package tikv
 
 import (
-	"github.com/juju/errors"
-	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/parser/terror"
+	mysql "github.com/pingcap/tidb/errno"
 )
 
 var (
 	// ErrBodyMissing response body is missing error
 	ErrBodyMissing = errors.New("response body is missing")
+	// When TiDB is closing and send request to tikv fail, do not retry, return this error.
+	errTiDBShuttingDown = errors.New("tidb server shutting down")
 )
 
-// TiDB decides whether to retry transaction by checking if error message contains
-// string "try again later" literally.
-// In TiClient we use `errors.Annotate(err, txnRetryableMark)` to direct TiDB to
-// restart a transaction.
-// Note that it should be only used if i) the error occurs inside a transaction
-// and ii) the error is not totally unexpected and hopefully will recover soon.
-const txnRetryableMark = "[try again later]"
+// mismatchClusterID represents the message that the cluster ID of the PD client does not match the PD.
+const mismatchClusterID = "mismatch cluster id"
 
 // MySQL error instances.
 var (
-	ErrTiKVServerTimeout  = terror.ClassTiKV.New(mysql.ErrTiKVServerTimeout, mysql.MySQLErrName[mysql.ErrTiKVServerTimeout]+txnRetryableMark)
-	ErrResolveLockTimeout = terror.ClassTiKV.New(mysql.ErrResolveLockTimeout, mysql.MySQLErrName[mysql.ErrResolveLockTimeout]+txnRetryableMark)
-	ErrPDServerTimeout    = terror.ClassTiKV.New(mysql.ErrPDServerTimeout, mysql.MySQLErrName[mysql.ErrPDServerTimeout]+"%v")
-	ErrRegionUnavailable  = terror.ClassTiKV.New(mysql.ErrRegionUnavailable, mysql.MySQLErrName[mysql.ErrRegionUnavailable]+txnRetryableMark)
-	ErrTiKVServerBusy     = terror.ClassTiKV.New(mysql.ErrTiKVServerBusy, mysql.MySQLErrName[mysql.ErrTiKVServerBusy]+txnRetryableMark)
-	ErrGCTooEarly         = terror.ClassTiKV.New(mysql.ErrGCTooEarly, mysql.MySQLErrName[mysql.ErrGCTooEarly])
+	ErrTiKVServerTimeout           = terror.ClassTiKV.New(mysql.ErrTiKVServerTimeout, mysql.MySQLErrName[mysql.ErrTiKVServerTimeout])
+	ErrResolveLockTimeout          = terror.ClassTiKV.New(mysql.ErrResolveLockTimeout, mysql.MySQLErrName[mysql.ErrResolveLockTimeout])
+	ErrPDServerTimeout             = terror.ClassTiKV.New(mysql.ErrPDServerTimeout, mysql.MySQLErrName[mysql.ErrPDServerTimeout])
+	ErrRegionUnavailable           = terror.ClassTiKV.New(mysql.ErrRegionUnavailable, mysql.MySQLErrName[mysql.ErrRegionUnavailable])
+	ErrTiKVServerBusy              = terror.ClassTiKV.New(mysql.ErrTiKVServerBusy, mysql.MySQLErrName[mysql.ErrTiKVServerBusy])
+	ErrGCTooEarly                  = terror.ClassTiKV.New(mysql.ErrGCTooEarly, mysql.MySQLErrName[mysql.ErrGCTooEarly])
+	ErrQueryInterrupted            = terror.ClassTiKV.New(mysql.ErrQueryInterrupted, mysql.MySQLErrName[mysql.ErrQueryInterrupted])
+	ErrLockAcquireFailAndNoWaitSet = terror.ClassTiKV.New(mysql.ErrLockAcquireFailAndNoWaitSet, mysql.MySQLErrName[mysql.ErrLockAcquireFailAndNoWaitSet])
+	ErrLockWaitTimeout             = terror.ClassTiKV.New(mysql.ErrLockWaitTimeout, mysql.MySQLErrName[mysql.ErrLockWaitTimeout])
+	ErrTokenLimit                  = terror.ClassTiKV.New(mysql.ErrTiKVStoreLimit, mysql.MySQLErrName[mysql.ErrTiKVStoreLimit])
+	ErrUnknown                     = terror.ClassTiKV.New(mysql.ErrUnknown, mysql.MySQLErrName[mysql.ErrUnknown])
 )
 
-func init() {
-	tikvMySQLErrCodes := map[terror.ErrCode]uint16{
-		mysql.ErrTiKVServerTimeout:   mysql.ErrTiKVServerTimeout,
-		mysql.ErrResolveLockTimeout:  mysql.ErrResolveLockTimeout,
-		mysql.ErrPDServerTimeout:     mysql.ErrPDServerTimeout,
-		mysql.ErrRegionUnavailable:   mysql.ErrRegionUnavailable,
-		mysql.ErrTiKVServerBusy:      mysql.ErrTiKVServerBusy,
-		mysql.ErrGCTooEarly:          mysql.ErrGCTooEarly,
-		mysql.ErrTruncatedWrongValue: mysql.ErrTruncatedWrongValue,
-	}
-	terror.ErrClassToMySQLCodes[terror.ClassTiKV] = tikvMySQLErrCodes
+// Registers error returned from TiKV.
+var (
+	_ = terror.ClassTiKV.NewStd(mysql.ErrDataOutOfRange)
+	_ = terror.ClassTiKV.NewStd(mysql.ErrTruncatedWrongValue)
+	_ = terror.ClassTiKV.NewStd(mysql.ErrDivisionByZero)
+)
+
+// ErrDeadlock wraps *kvrpcpb.Deadlock to implement the error interface.
+// It also marks if the deadlock is retryable.
+type ErrDeadlock struct {
+	*kvrpcpb.Deadlock
+	IsRetryable bool
+}
+
+func (d *ErrDeadlock) Error() string {
+	return d.Deadlock.String()
 }

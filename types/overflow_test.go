@@ -15,6 +15,7 @@ package types
 
 import (
 	"math"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/testleak"
@@ -68,6 +69,12 @@ func (s *testOverflowSuite) TestAdd(c *C) {
 			c.Assert(err, NotNil)
 		} else {
 			c.Assert(ret, Equals, t.ret)
+		}
+		ret2, err := AddDuration(time.Duration(t.lsh), time.Duration(t.rsh))
+		if t.overflow {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(ret2, Equals, time.Duration(t.ret))
 		}
 	}
 
@@ -305,6 +312,7 @@ func (s *testOverflowSuite) TestDiv(c *C) {
 		{1, -1, 0, true},
 		{math.MaxInt64, math.MinInt64, 0, false},
 		{math.MaxInt64, -1, 0, true},
+		{100, 20, 5, false},
 	}
 
 	for _, t := range tblInt {

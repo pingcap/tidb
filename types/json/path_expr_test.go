@@ -62,3 +62,68 @@ func (s *testJSONSuite) TestValidatePathExpr(c *C) {
 		}
 	}
 }
+
+func (s *testJSONSuite) TestPathExprToString(c *C) {
+	var tests = []struct {
+		exprString string
+	}{
+		{"$.a[1]"},
+		{"$.a[*]"},
+		{"$.*[2]"},
+		{"$**.a[3]"},
+		{`$."\"hello\""`},
+	}
+	for _, tt := range tests {
+		pe, err := ParseJSONPathExpr(tt.exprString)
+		c.Assert(err, IsNil)
+		c.Assert(pe.String(), Equals, tt.exprString)
+	}
+}
+
+func (s *testJSONSuite) TestPushBackOneIndexLeg(c *C) {
+	var tests = []struct {
+		exprString          string
+		index               int
+		expected            string
+		containsAnyAsterisk bool
+	}{
+		{"$", 1, "$[1]", false},
+		{"$.a[1]", 1, "$.a[1][1]", false},
+		{"$.a[1]", -1, "$.a[1][*]", true},
+		{"$.a[*]", 10, "$.a[*][10]", true},
+		{"$.*[2]", 2, "$.*[2][2]", true},
+		{"$**.a[3]", 3, "$**.a[3][3]", true},
+	}
+	for _, tt := range tests {
+		pe, err := ParseJSONPathExpr(tt.exprString)
+		c.Assert(err, IsNil)
+
+		pe = pe.pushBackOneIndexLeg(tt.index)
+		c.Assert(pe.String(), Equals, tt.expected)
+		c.Assert(pe.ContainsAnyAsterisk(), Equals, tt.containsAnyAsterisk)
+	}
+}
+
+func (s *testJSONSuite) TestPushBackOneKeyLeg(c *C) {
+	var tests = []struct {
+		exprString          string
+		key                 string
+		expected            string
+		containsAnyAsterisk bool
+	}{
+		{"$", "aa", "$.aa", false},
+		{"$.a[1]", "aa", "$.a[1].aa", false},
+		{"$.a[1]", "*", "$.a[1].*", true},
+		{"$.a[*]", "k", "$.a[*].k", true},
+		{"$.*[2]", "bb", "$.*[2].bb", true},
+		{"$**.a[3]", "cc", "$**.a[3].cc", true},
+	}
+	for _, tt := range tests {
+		pe, err := ParseJSONPathExpr(tt.exprString)
+		c.Assert(err, IsNil)
+
+		pe = pe.pushBackOneKeyLeg(tt.key)
+		c.Assert(pe.String(), Equals, tt.expected)
+		c.Assert(pe.ContainsAnyAsterisk(), Equals, tt.containsAnyAsterisk)
+	}
+}

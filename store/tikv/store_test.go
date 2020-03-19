@@ -14,48 +14,45 @@
 package tikv
 
 import (
+	"context"
 	"sync"
 	"time"
 
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/pd/pd-client"
+	"github.com/pingcap/kvproto/pkg/pdpb"
+	"github.com/pingcap/pd/v4/client"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockoracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	"golang.org/x/net/context"
 )
 
 var errStopped = errors.New("stopped")
 
 type testStoreSuite struct {
+	testStoreSuiteBase
+}
+
+type testStoreFailedSuite struct {
+	testStoreSuiteBase
+}
+
+type testStoreSuiteBase struct {
 	OneByOneSuite
 	store *tikvStore
 }
 
 var _ = Suite(&testStoreSuite{})
+var _ = SerialSuites(&testStoreFailedSuite{})
 
-func (s *testStoreSuite) SetUpTest(c *C) {
+func (s *testStoreSuiteBase) SetUpTest(c *C) {
 	s.store = NewTestStore(c).(*tikvStore)
 }
 
-func (s *testStoreSuite) TearDownTest(c *C) {
+func (s *testStoreSuiteBase) TearDownTest(c *C) {
 	c.Assert(s.store.Close(), IsNil)
-}
-
-func (s *testStoreSuite) TestParsePath(c *C) {
-	etcdAddrs, disableGC, err := parsePath("tikv://node1:2379,node2:2379")
-	c.Assert(err, IsNil)
-	c.Assert(etcdAddrs, DeepEquals, []string{"node1:2379", "node2:2379"})
-	c.Assert(disableGC, IsFalse)
-
-	_, _, err = parsePath("tikv://node1:2379")
-	c.Assert(err, IsNil)
-	_, disableGC, err = parsePath("tikv://node1:2379?disableGC=true")
-	c.Assert(err, IsNil)
-	c.Assert(disableGC, IsTrue)
 }
 
 func (s *testStoreSuite) TestOracle(c *C) {
@@ -68,6 +65,15 @@ func (s *testStoreSuite) TestOracle(c *C) {
 	t2, err := s.store.getTimestampWithRetry(NewBackoffer(ctx, 100))
 	c.Assert(err, IsNil)
 	c.Assert(t1, Less, t2)
+
+	t1, err = o.GetLowResolutionTimestamp(ctx)
+	c.Assert(err, IsNil)
+	t2, err = o.GetLowResolutionTimestamp(ctx)
+	c.Assert(err, IsNil)
+	c.Assert(t1, Less, t2)
+	f := o.GetLowResolutionTimestampAsync(ctx)
+	c.Assert(f, NotNil)
+	_ = o.UntilExpired(0, 0)
 
 	// Check retry.
 	var wg sync.WaitGroup
@@ -96,6 +102,10 @@ type mockPDClient struct {
 	sync.RWMutex
 	client pd.Client
 	stop   bool
+}
+
+func (c *mockPDClient) ConfigClient() pd.ConfigClient {
+	return nil
 }
 
 func (c *mockPDClient) enable() {
@@ -138,6 +148,16 @@ func (c *mockPDClient) GetRegion(ctx context.Context, key []byte) (*metapb.Regio
 	return c.client.GetRegion(ctx, key)
 }
 
+func (c *mockPDClient) GetPrevRegion(ctx context.Context, key []byte) (*metapb.Region, *metapb.Peer, error) {
+	c.RLock()
+	defer c.RUnlock()
+
+	if c.stop {
+		return nil, nil, errors.Trace(errStopped)
+	}
+	return c.client.GetPrevRegion(ctx, key)
+}
+
 func (c *mockPDClient) GetRegionByID(ctx context.Context, regionID uint64) (*metapb.Region, *metapb.Peer, error) {
 	c.RLock()
 	defer c.RUnlock()
@@ -146,6 +166,16 @@ func (c *mockPDClient) GetRegionByID(ctx context.Context, regionID uint64) (*met
 		return nil, nil, errors.Trace(errStopped)
 	}
 	return c.client.GetRegionByID(ctx, regionID)
+}
+
+func (c *mockPDClient) ScanRegions(ctx context.Context, startKey []byte, endKey []byte, limit int) ([]*metapb.Region, []*metapb.Peer, error) {
+	c.RLock()
+	defer c.RUnlock()
+
+	if c.stop {
+		return nil, nil, errors.Trace(errStopped)
+	}
+	return c.client.ScanRegions(ctx, startKey, endKey, limit)
 }
 
 func (c *mockPDClient) GetStore(ctx context.Context, storeID uint64) (*metapb.Store, error) {
@@ -158,7 +188,31 @@ func (c *mockPDClient) GetStore(ctx context.Context, storeID uint64) (*metapb.St
 	return c.client.GetStore(ctx, storeID)
 }
 
+func (c *mockPDClient) GetAllStores(ctx context.Context, opts ...pd.GetStoreOption) ([]*metapb.Store, error) {
+	c.RLock()
+	defer c.Unlock()
+
+	if c.stop {
+		return nil, errors.Trace(errStopped)
+	}
+	return c.client.GetAllStores(ctx)
+}
+
+func (c *mockPDClient) UpdateGCSafePoint(ctx context.Context, safePoint uint64) (uint64, error) {
+	panic("unimplemented")
+}
+
 func (c *mockPDClient) Close() {}
+
+func (c *mockPDClient) ScatterRegion(ctx context.Context, regionID uint64) error {
+	return nil
+}
+
+func (c *mockPDClient) GetOperator(ctx context.Context, regionID uint64) (*pdpb.GetOperatorResponse, error) {
+	return &pdpb.GetOperatorResponse{Status: pdpb.OperatorStatus_SUCCESS}, nil
+}
+
+func (c *mockPDClient) GetLeaderAddr() string { return "mockpd" }
 
 type checkRequestClient struct {
 	Client
@@ -168,8 +222,8 @@ type checkRequestClient struct {
 func (c *checkRequestClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
 	resp, err := c.Client.SendRequest(ctx, addr, req, timeout)
 	if c.priority != req.Priority {
-		if resp.Get != nil {
-			resp.Get.Error = &pb.KeyError{
+		if resp.Resp != nil {
+			(resp.Resp.(*pb.GetResponse)).Error = &pb.KeyError{
 				Abort: "request check error",
 			}
 		}
@@ -198,20 +252,20 @@ func (s *testStoreSuite) TestRequestPriority(c *C) {
 	c.Assert(err, IsNil)
 	client.priority = pb.CommandPri_Low
 	txn.SetOption(kv.Priority, kv.PriorityLow)
-	_, err = txn.Get([]byte("key"))
+	_, err = txn.Get(context.TODO(), []byte("key"))
 	c.Assert(err, IsNil)
 
 	// A counter example.
 	client.priority = pb.CommandPri_Low
 	txn.SetOption(kv.Priority, kv.PriorityNormal)
-	_, err = txn.Get([]byte("key"))
+	_, err = txn.Get(context.TODO(), []byte("key"))
 	// err is translated to "try again later" by backoffer, so doesn't check error value here.
 	c.Assert(err, NotNil)
 
 	// Cover Seek request.
 	client.priority = pb.CommandPri_High
 	txn.SetOption(kv.Priority, kv.PriorityHigh)
-	iter, err := txn.Seek([]byte("key"))
+	iter, err := txn.Iter([]byte("key"), nil)
 	c.Assert(err, IsNil)
 	for iter.Valid() {
 		c.Assert(iter.Next(), IsNil)

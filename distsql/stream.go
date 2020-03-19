@@ -14,21 +14,26 @@
 package distsql
 
 import (
-	"github.com/juju/errors"
+	"context"
+	"time"
+
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tipb/go-tipb"
-	"golang.org/x/net/context"
 )
 
 // streamResult implements the SelectResult interface.
 type streamResult struct {
+	label   string
+	sqlType string
+
 	resp       kv.Response
 	rowLen     int
 	fieldTypes []*types.FieldType
@@ -44,11 +49,10 @@ func (r *streamResult) Fetch(context.Context) {}
 
 func (r *streamResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
-	maxChunkSize := r.ctx.GetSessionVars().MaxChunkSize
-	for chk.NumRows() < maxChunkSize {
+	for !chk.IsFull() {
 		err := r.readDataIfNecessary(ctx)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if r.curr == nil {
 			return nil
@@ -56,7 +60,7 @@ func (r *streamResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 
 		err = r.flushToChunk(chk)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	}
 	return nil
@@ -64,9 +68,13 @@ func (r *streamResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 
 // readDataFromResponse read the data to result. Returns true means the resp is finished.
 func (r *streamResult) readDataFromResponse(ctx context.Context, resp kv.Response, result *tipb.Chunk) (bool, error) {
+	startTime := time.Now()
 	resultSubset, err := resp.Next(ctx)
+	// TODO: Add a label to distinguish between success or failure.
+	// https://github.com/pingcap/tidb/issues/11397
+	metrics.DistSQLQueryHistgram.WithLabelValues(r.label, r.sqlType).Observe(time.Since(startTime).Seconds())
 	if err != nil {
-		return false, errors.Trace(err)
+		return false, err
 	}
 	if resultSubset == nil {
 		return true, nil
@@ -81,10 +89,8 @@ func (r *streamResult) readDataFromResponse(ctx context.Context, resp kv.Respons
 		return false, errors.Errorf("stream response error: [%d]%s\n", stream.Error.Code, stream.Error.Msg)
 	}
 	for _, warning := range stream.Warnings {
-		r.ctx.GetSessionVars().StmtCtx.AppendWarning(terror.ClassTiKV.New(terror.ErrCode(warning.Code), warning.Msg))
+		r.ctx.GetSessionVars().StmtCtx.AppendWarning(terror.ClassTiKV.Synthesize(terror.ErrCode(warning.Code), warning.Msg))
 	}
-
-	// TODO: Check stream.GetEncodeType() here if we support tipb.EncodeType_TypeArrow some day.
 
 	err = result.Unmarshal(stream.Data)
 	if err != nil {
@@ -92,6 +98,7 @@ func (r *streamResult) readDataFromResponse(ctx context.Context, resp kv.Respons
 	}
 	r.feedback.Update(resultSubset.GetStartKey(), stream.OutputCounts)
 	r.partialCount++
+	r.ctx.GetSessionVars().StmtCtx.MergeExecDetails(resultSubset.GetExecDetails(), nil)
 	return false, nil
 }
 
@@ -104,7 +111,7 @@ func (r *streamResult) readDataIfNecessary(ctx context.Context) error {
 	tmp := new(tipb.Chunk)
 	finish, err := r.readDataFromResponse(ctx, r.resp, tmp)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	if finish {
 		r.curr = nil
@@ -116,20 +123,18 @@ func (r *streamResult) readDataIfNecessary(ctx context.Context) error {
 
 func (r *streamResult) flushToChunk(chk *chunk.Chunk) (err error) {
 	remainRowsData := r.curr.RowsData
-	maxChunkSize := r.ctx.GetSessionVars().MaxChunkSize
-	decoder := codec.NewDecoder(chk, r.ctx.GetSessionVars().GetTimeZone())
-	for chk.NumRows() < maxChunkSize && len(remainRowsData) > 0 {
+	decoder := codec.NewDecoder(chk, r.ctx.GetSessionVars().Location())
+	for !chk.IsFull() && len(remainRowsData) > 0 {
 		for i := 0; i < r.rowLen; i++ {
 			remainRowsData, err = decoder.DecodeOne(remainRowsData, i, r.fieldTypes[i])
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 		}
 	}
+	r.curr.RowsData = remainRowsData
 	if len(remainRowsData) == 0 {
 		r.curr = nil // Current chunk is finished.
-	} else {
-		r.curr.RowsData = remainRowsData
 	}
 	return nil
 }
@@ -139,9 +144,9 @@ func (r *streamResult) NextRaw(ctx context.Context) ([]byte, error) {
 	r.feedback.Invalidate()
 	resultSubset, err := r.resp.Next(ctx)
 	if resultSubset == nil || err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
-	return resultSubset.GetData(), errors.Trace(err)
+	return resultSubset.GetData(), err
 }
 
 func (r *streamResult) Close() error {

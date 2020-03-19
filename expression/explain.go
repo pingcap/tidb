@@ -16,16 +16,27 @@ package expression
 import (
 	"bytes"
 	"fmt"
+	"sort"
+	"strings"
 
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 )
 
 // ExplainInfo implements the Expression interface.
 func (expr *ScalarFunction) ExplainInfo() string {
+	return expr.explainInfo(false)
+}
+
+func (expr *ScalarFunction) explainInfo(normalized bool) string {
 	var buffer bytes.Buffer
 	fmt.Fprintf(&buffer, "%s(", expr.FuncName.L)
 	for i, arg := range expr.GetArgs() {
-		buffer.WriteString(arg.ExplainInfo())
+		if normalized {
+			buffer.WriteString(arg.ExplainNormalizedInfo())
+		} else {
+			buffer.WriteString(arg.ExplainInfo())
+		}
 		if i+1 < len(expr.GetArgs()) {
 			buffer.WriteString(", ")
 		}
@@ -34,40 +45,102 @@ func (expr *ScalarFunction) ExplainInfo() string {
 	return buffer.String()
 }
 
+// ExplainNormalizedInfo implements the Expression interface.
+func (expr *ScalarFunction) ExplainNormalizedInfo() string {
+	return expr.explainInfo(true)
+}
+
 // ExplainInfo implements the Expression interface.
-func (expr *Column) ExplainInfo() string {
-	return expr.String()
+func (col *Column) ExplainInfo() string {
+	return col.String()
+}
+
+// ExplainNormalizedInfo implements the Expression interface.
+func (col *Column) ExplainNormalizedInfo() string {
+	return col.ExplainInfo()
 }
 
 // ExplainInfo implements the Expression interface.
 func (expr *Constant) ExplainInfo() string {
-	dt, err := expr.Eval(nil)
+	dt, err := expr.Eval(chunk.Row{})
 	if err != nil {
-		if expr.Value.Kind() == types.KindNull {
-			return "null"
-		}
 		return "not recognized const vanue"
 	}
-	valStr, err := dt.ToString()
-	if err != nil {
-		if expr.Value.Kind() == types.KindNull {
-			return "null"
-		}
-		return "not recognized const vanue"
+	return expr.format(dt)
+}
+
+// ExplainNormalizedInfo implements the Expression interface.
+func (expr *Constant) ExplainNormalizedInfo() string {
+	return "?"
+}
+
+func (expr *Constant) format(dt types.Datum) string {
+	switch dt.Kind() {
+	case types.KindNull:
+		return "NULL"
+	case types.KindString, types.KindBytes, types.KindMysqlEnum, types.KindMysqlSet,
+		types.KindMysqlJSON, types.KindBinaryLiteral, types.KindMysqlBit:
+		return fmt.Sprintf("\"%v\"", dt.GetValue())
 	}
-	return valStr
+	return fmt.Sprintf("%v", dt.GetValue())
 }
 
 // ExplainExpressionList generates explain information for a list of expressions.
-func ExplainExpressionList(exprs []Expression) []byte {
-	buffer := bytes.NewBufferString("")
+func ExplainExpressionList(exprs []Expression, schema *Schema) string {
+	builder := &strings.Builder{}
 	for i, expr := range exprs {
-		buffer.WriteString(expr.ExplainInfo())
+		switch expr.(type) {
+		case *Column, *CorrelatedColumn:
+			builder.WriteString(expr.String())
+		default:
+			fmt.Fprintf(builder, "%v->%v", expr.String(), schema.Columns[i])
+		}
 		if i+1 < len(exprs) {
+			builder.WriteString(", ")
+		}
+	}
+	return builder.String()
+}
+
+// SortedExplainExpressionList generates explain information for a list of expressions in order.
+// In some scenarios, the expr's order may not be stable when executing multiple times.
+// So we add a sort to make its explain result stable.
+func SortedExplainExpressionList(exprs []Expression) []byte {
+	return sortedExplainExpressionList(exprs, false)
+}
+
+func sortedExplainExpressionList(exprs []Expression, normalized bool) []byte {
+	buffer := bytes.NewBufferString("")
+	exprInfos := make([]string, 0, len(exprs))
+	for _, expr := range exprs {
+		if normalized {
+			exprInfos = append(exprInfos, expr.ExplainNormalizedInfo())
+		} else {
+			exprInfos = append(exprInfos, expr.ExplainInfo())
+		}
+	}
+	sort.Strings(exprInfos)
+	for i, info := range exprInfos {
+		buffer.WriteString(info)
+		if i+1 < len(exprInfos) {
 			buffer.WriteString(", ")
 		}
 	}
 	return buffer.Bytes()
+}
+
+// SortedExplainNormalizedExpressionList is same like SortedExplainExpressionList, but use for generating normalized information.
+func SortedExplainNormalizedExpressionList(exprs []Expression) []byte {
+	return sortedExplainExpressionList(exprs, true)
+}
+
+// SortedExplainNormalizedScalarFuncList is same like SortedExplainExpressionList, but use for generating normalized information.
+func SortedExplainNormalizedScalarFuncList(exprs []*ScalarFunction) []byte {
+	expressions := make([]Expression, len(exprs))
+	for i := range exprs {
+		expressions[i] = exprs[i]
+	}
+	return sortedExplainExpressionList(expressions, true)
 }
 
 // ExplainColumnList generates explain information for a list of columns.

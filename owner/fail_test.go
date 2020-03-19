@@ -10,51 +10,46 @@
 // distributed under the License is distributed on an "AS IS" BASIS,
 // See the License for the specific language governing permissions and
 // limitations under the License.
+// +build !windows
 
 package owner
 
 import (
+	"context"
 	"math"
 	"net"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
-	"github.com/coreos/etcd/clientv3"
-	gofail "github.com/coreos/gofail/runtime"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testleak"
-	"golang.org/x/net/context"
+	"go.etcd.io/etcd/clientv3"
 	"google.golang.org/grpc"
 )
 
+// Ignore this test on the windows platform, because calling unix socket with address in
+// host:port format fails on windows.
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
 	logLevel := os.Getenv("log_level")
-	logutil.InitLogger(&logutil.LogConfig{
-		Level:  logLevel,
-		Format: "highlight",
-	})
+	logutil.InitLogger(logutil.NewLogConfig(logLevel, "", "", logutil.EmptyFileLogConfig, false))
 	TestingT(t)
 }
 
 var _ = Suite(&testSuite{})
 
 type testSuite struct {
-	ln net.Listener
 }
 
 func (s *testSuite) SetUpSuite(c *C) {
-	ln, err := net.Listen("unix", "new_session:12379")
-	c.Assert(err, IsNil)
-	s.ln = ln
 }
 
 func (s *testSuite) TearDownSuite(c *C) {
-	err := s.ln.Close()
-	c.Assert(err, IsNil)
 }
 
 var (
@@ -64,23 +59,59 @@ var (
 )
 
 func (s *testSuite) TestFailNewSession(c *C) {
-	defer testleak.AfterTest(c)()
+	ln, err := net.Listen("unix", "new_session:12379")
+	c.Assert(err, IsNil)
+	srv := grpc.NewServer(grpc.ConnectionTimeout(time.Minute))
+	var stop sync.WaitGroup
+	stop.Add(1)
+	go func() {
+		if err = srv.Serve(ln); err != nil {
+			c.Errorf("can't serve gRPC requests %v", err)
+		}
+		stop.Done()
+	}()
 
-	cli, err := clientv3.New(clientv3.Config{
-		Endpoints:   endpoints,
-		DialTimeout: dialTimeout,
-	})
-	gofail.Enable("github.com/pingcap/tidb/owner/closeClient", `return(true)`)
-	_, err = NewSession(context.Background(), "fail_new_serssion", cli, retryCnt, ManagerSessionTTL)
-	isContextDone := terror.ErrorEqual(grpc.ErrClientConnClosing, err) || terror.ErrorEqual(context.Canceled, err)
-	c.Assert(isContextDone, IsTrue, Commentf("err %v", err))
+	leakFunc := testleak.AfterTest(c)
+	defer func() {
+		srv.Stop()
+		stop.Wait()
+		leakFunc()
+	}()
 
-	cli, err = clientv3.New(clientv3.Config{
-		Endpoints:   endpoints,
-		DialTimeout: dialTimeout,
-	})
-	gofail.Enable("github.com/pingcap/tidb/owner/closeGrpc", `return(true)`)
-	_, err = NewSession(context.Background(), "fail_new_serssion", cli, retryCnt, ManagerSessionTTL)
-	isContextDone = terror.ErrorEqual(grpc.ErrClientConnClosing, err) || terror.ErrorEqual(context.Canceled, err)
-	c.Assert(isContextDone, IsTrue, Commentf("err %v", err))
+	func() {
+		cli, err := clientv3.New(clientv3.Config{
+			Endpoints:   endpoints,
+			DialTimeout: dialTimeout,
+		})
+		c.Assert(err, IsNil)
+		defer func() {
+			if cli != nil {
+				cli.Close()
+			}
+			c.Assert(failpoint.Disable("github.com/pingcap/tidb/owner/closeClient"), IsNil)
+		}()
+		c.Assert(failpoint.Enable("github.com/pingcap/tidb/owner/closeClient", `return(true)`), IsNil)
+		_, err = NewSession(context.Background(), "fail_new_serssion", cli, retryCnt, ManagerSessionTTL)
+		isContextDone := terror.ErrorEqual(grpc.ErrClientConnClosing, err) || terror.ErrorEqual(context.Canceled, err)
+		c.Assert(isContextDone, IsTrue, Commentf("err %v", err))
+	}()
+
+	func() {
+		cli, err := clientv3.New(clientv3.Config{
+			Endpoints:   endpoints,
+			DialTimeout: dialTimeout,
+		})
+		c.Assert(err, IsNil)
+		defer func() {
+			if cli != nil {
+				cli.Close()
+			}
+			c.Assert(failpoint.Disable("github.com/pingcap/tidb/owner/closeGrpc"), IsNil)
+		}()
+		c.Assert(failpoint.Enable("github.com/pingcap/tidb/owner/closeGrpc", `return(true)`), IsNil)
+		_, err = NewSession(context.Background(), "fail_new_serssion", cli, retryCnt, ManagerSessionTTL)
+		isContextDone := terror.ErrorEqual(grpc.ErrClientConnClosing, err) || terror.ErrorEqual(context.Canceled, err)
+		c.Assert(isContextDone, IsTrue, Commentf("err %v", err))
+	}()
+
 }

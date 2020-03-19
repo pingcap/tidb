@@ -18,7 +18,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/juju/errors"
+	"github.com/pingcap/errors"
 )
 
 /*
@@ -117,6 +117,35 @@ func (pe PathExpression) popOneLastLeg() (PathExpression, pathLeg) {
 	return PathExpression{legs: pe.legs[:lastLegIdx]}, lastLeg
 }
 
+// pushBackOneIndexLeg pushback one leg of INDEX type
+func (pe PathExpression) pushBackOneIndexLeg(index int) PathExpression {
+	newPe := PathExpression{
+		legs:  append(pe.legs, pathLeg{typ: pathLegIndex, arrayIndex: index}),
+		flags: pe.flags,
+	}
+	if index == -1 {
+		newPe.flags |= pathExpressionContainsAsterisk
+	}
+	return newPe
+}
+
+// pushBackOneKeyLeg pushback one leg of KEY type
+func (pe PathExpression) pushBackOneKeyLeg(key string) PathExpression {
+	newPe := PathExpression{
+		legs:  append(pe.legs, pathLeg{typ: pathLegKey, dotKey: key}),
+		flags: pe.flags,
+	}
+	if key == "*" {
+		newPe.flags |= pathExpressionContainsAsterisk
+	}
+	return newPe
+}
+
+// ContainsAnyAsterisk returns true if pe contains any asterisk.
+func (pe PathExpression) ContainsAnyAsterisk() bool {
+	return pe.flags.containsAnyAsterisk()
+}
+
 // ParseJSONPathExpr parses a JSON path expression. Returns a PathExpression
 // object which can be used in JSON_EXTRACT, JSON_SET and so on.
 func ParseJSONPathExpr(pathExpr string) (pe PathExpression, err error) {
@@ -124,12 +153,12 @@ func ParseJSONPathExpr(pathExpr string) (pe PathExpression, err error) {
 	// pathExpr[0: dollarIndex), return an ErrInvalidJSONPath error.
 	dollarIndex := strings.Index(pathExpr, "$")
 	if dollarIndex < 0 {
-		err = ErrInvalidJSONPath.GenByArgs(pathExpr)
+		err = ErrInvalidJSONPath.GenWithStackByArgs(pathExpr)
 		return
 	}
 	for i := 0; i < dollarIndex; i++ {
 		if !isBlank(rune(pathExpr[i])) {
-			err = ErrInvalidJSONPath.GenByArgs(pathExpr)
+			err = ErrInvalidJSONPath.GenWithStackByArgs(pathExpr)
 			return
 		}
 	}
@@ -137,7 +166,7 @@ func ParseJSONPathExpr(pathExpr string) (pe PathExpression, err error) {
 	pathExprSuffix := strings.TrimFunc(pathExpr[dollarIndex+1:], isBlank)
 	indices := jsonPathExprLegRe.FindAllStringIndex(pathExprSuffix, -1)
 	if len(indices) == 0 && len(pathExprSuffix) != 0 {
-		err = ErrInvalidJSONPath.GenByArgs(pathExpr)
+		err = ErrInvalidJSONPath.GenWithStackByArgs(pathExpr)
 		return
 	}
 
@@ -151,7 +180,7 @@ func ParseJSONPathExpr(pathExpr string) (pe PathExpression, err error) {
 		// Check all characters between two legs are blank.
 		for i := lastEnd; i < start; i++ {
 			if !isBlank(rune(pathExprSuffix[i])) {
-				err = ErrInvalidJSONPath.GenByArgs(pathExpr)
+				err = ErrInvalidJSONPath.GenWithStackByArgs(pathExpr)
 				return
 			}
 		}
@@ -180,7 +209,7 @@ func ParseJSONPathExpr(pathExpr string) (pe PathExpression, err error) {
 			} else if key[0] == '"' {
 				// We need unquote the origin string.
 				if key, err = unquoteString(key[1 : len(key)-1]); err != nil {
-					err = ErrInvalidJSONPath.GenByArgs(pathExpr)
+					err = ErrInvalidJSONPath.GenWithStackByArgs(pathExpr)
 					return
 				}
 			}
@@ -194,7 +223,7 @@ func ParseJSONPathExpr(pathExpr string) (pe PathExpression, err error) {
 	if len(pe.legs) > 0 {
 		// The last leg of a path expression cannot be '**'.
 		if pe.legs[len(pe.legs)-1].typ == pathLegDoubleAsterisk {
-			err = ErrInvalidJSONPath.GenByArgs(pathExpr)
+			err = ErrInvalidJSONPath.GenWithStackByArgs(pathExpr)
 			return
 		}
 	}
@@ -206,4 +235,28 @@ func isBlank(c rune) bool {
 		return true
 	}
 	return false
+}
+
+func (pe PathExpression) String() string {
+	var s strings.Builder
+
+	s.WriteString("$")
+	for _, leg := range pe.legs {
+		switch leg.typ {
+		case pathLegIndex:
+			if leg.arrayIndex == -1 {
+				s.WriteString("[*]")
+			} else {
+				s.WriteString("[")
+				s.WriteString(strconv.Itoa(leg.arrayIndex))
+				s.WriteString("]")
+			}
+		case pathLegKey:
+			s.WriteString(".")
+			s.WriteString(quoteString(leg.dotKey))
+		case pathLegDoubleAsterisk:
+			s.WriteString("**")
+		}
+	}
+	return s.String()
 }

@@ -14,9 +14,9 @@
 package aggregation
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 )
 
 type countFunction struct {
@@ -24,7 +24,7 @@ type countFunction struct {
 }
 
 // Update implements Aggregation interface.
-func (cf *countFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, row types.Row) error {
+func (cf *countFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, row chunk.Row) error {
 	var datumBuf []types.Datum
 	if cf.HasDistinct {
 		datumBuf = make([]types.Datum, 0, len(cf.Args))
@@ -32,9 +32,9 @@ func (cf *countFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.Stateme
 	for _, a := range cf.Args {
 		value, err := a.Eval(row)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
-		if value.GetValue() == nil {
+		if value.IsNull() {
 			return nil
 		}
 		if cf.Mode == FinalMode || cf.Mode == Partial2Mode {
@@ -47,7 +47,7 @@ func (cf *countFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.Stateme
 	if cf.HasDistinct {
 		d, err := evalCtx.DistinctChecker.Check(datumBuf)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if !d {
 			return nil

@@ -14,35 +14,62 @@
 package executor
 
 import (
-	"time"
+	"context"
+	"crypto/tls"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
-	"golang.org/x/net/context"
+	"github.com/pingcap/tidb/util/stringutil"
 )
 
 var _ = Suite(&testExecSuite{})
+var _ = SerialSuites(&testExecSerialSuite{})
+
+// Note: it's a tricky way to export the `inspectionSummaryRules` and `inspectionRules` for unit test but invisible for normal code
+var (
+	InspectionSummaryRules = inspectionSummaryRules
+	InspectionRules        = inspectionRules
+)
 
 type testExecSuite struct {
 }
 
+type testExecSerialSuite struct {
+}
+
 // mockSessionManager is a mocked session manager which is used for test.
 type mockSessionManager struct {
-	PS []util.ProcessInfo
+	PS []*util.ProcessInfo
 }
 
 // ShowProcessList implements the SessionManager.ShowProcessList interface.
-func (msm *mockSessionManager) ShowProcessList() []util.ProcessInfo {
-	return msm.PS
+func (msm *mockSessionManager) ShowProcessList() map[uint64]*util.ProcessInfo {
+	ret := make(map[uint64]*util.ProcessInfo)
+	for _, item := range msm.PS {
+		ret[item.ID] = item
+	}
+	return ret
+}
+
+func (msm *mockSessionManager) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
+	for _, item := range msm.PS {
+		if item.ID == id {
+			return item, true
+		}
+	}
+	return &util.ProcessInfo{}, false
 }
 
 // Kill implements the SessionManager.Kill interface.
@@ -50,21 +77,24 @@ func (msm *mockSessionManager) Kill(cid uint64, query bool) {
 
 }
 
+func (msm *mockSessionManager) UpdateTLSConfig(cfg *tls.Config) {
+}
+
 func (s *testExecSuite) TestShowProcessList(c *C) {
 	// Compose schema.
-	names := []string{"Id", "User", "Host", "db", "Command", "Time", "State", "Info", "Mem"}
+	names := []string{"Id", "User", "Host", "db", "Command", "Time", "State", "Info"}
 	ftypes := []byte{mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar,
-		mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLong, mysql.TypeVarchar, mysql.TypeString, mysql.TypeLonglong}
+		mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLong, mysql.TypeVarchar, mysql.TypeString}
 	schema := buildSchema(names, ftypes)
 
 	// Compose a mocked session manager.
-	ps := make([]util.ProcessInfo, 0, 1)
-	pi := util.ProcessInfo{
+	ps := make([]*util.ProcessInfo, 0, 1)
+	pi := &util.ProcessInfo{
 		ID:      0,
 		User:    "test",
 		Host:    "127.0.0.1",
 		DB:      "test",
-		Command: "select * from t",
+		Command: 't',
 		State:   1,
 		Info:    "",
 	}
@@ -74,10 +104,11 @@ func (s *testExecSuite) TestShowProcessList(c *C) {
 	}
 	sctx := mock.NewContext()
 	sctx.SetSessionManager(sm)
+	sctx.GetSessionVars().User = &auth.UserIdentity{Username: "test"}
 
 	// Compose executor.
 	e := &ShowExec{
-		baseExecutor: newBaseExecutor(sctx, schema, ""),
+		baseExecutor: newBaseExecutor(sctx, schema, nil),
 		Tp:           ast.ShowProcessList,
 	}
 
@@ -85,7 +116,7 @@ func (s *testExecSuite) TestShowProcessList(c *C) {
 	err := e.Open(ctx)
 	c.Assert(err, IsNil)
 
-	chk := e.newChunk()
+	chk := newFirstChunk(e)
 	it := chunk.NewIterator4Chunk(chk)
 	// Run test and check results.
 	for _, p := range ps {
@@ -106,7 +137,7 @@ func buildSchema(names []string, ftypes []byte) *expression.Schema {
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(names))...)
 	for i := range names {
 		col := &expression.Column{
-			ColName: model.NewCIStr(names[i]),
+			UniqueID: int64(i),
 		}
 		// User varchar as the default return column type.
 		tp := mysql.TypeVarchar
@@ -122,7 +153,7 @@ func buildSchema(names []string, ftypes []byte) *expression.Schema {
 	return schema
 }
 
-func (s *testExecSuite) TestBuildKvRangesForIndexJoin(c *C) {
+func (s *testExecSuite) TestBuildKvRangesForIndexJoinWithoutCwc(c *C) {
 	indexRanges := make([]*ranger.Range, 0, 6)
 	indexRanges = append(indexRanges, generateIndexRange(1, 1, 1, 1, 1))
 	indexRanges = append(indexRanges, generateIndexRange(1, 1, 2, 1, 1))
@@ -131,16 +162,16 @@ func (s *testExecSuite) TestBuildKvRangesForIndexJoin(c *C) {
 	indexRanges = append(indexRanges, generateIndexRange(2, 1, 1, 1, 1))
 	indexRanges = append(indexRanges, generateIndexRange(2, 1, 2, 1, 1))
 
-	joinKeyRows := make([][]types.Datum, 0, 5)
-	joinKeyRows = append(joinKeyRows, generateDatumSlice(1, 1))
-	joinKeyRows = append(joinKeyRows, generateDatumSlice(1, 2))
-	joinKeyRows = append(joinKeyRows, generateDatumSlice(2, 1))
-	joinKeyRows = append(joinKeyRows, generateDatumSlice(2, 2))
-	joinKeyRows = append(joinKeyRows, generateDatumSlice(2, 3))
+	joinKeyRows := make([]*indexJoinLookUpContent, 0, 5)
+	joinKeyRows = append(joinKeyRows, &indexJoinLookUpContent{keys: generateDatumSlice(1, 1)})
+	joinKeyRows = append(joinKeyRows, &indexJoinLookUpContent{keys: generateDatumSlice(1, 2)})
+	joinKeyRows = append(joinKeyRows, &indexJoinLookUpContent{keys: generateDatumSlice(2, 1)})
+	joinKeyRows = append(joinKeyRows, &indexJoinLookUpContent{keys: generateDatumSlice(2, 2)})
+	joinKeyRows = append(joinKeyRows, &indexJoinLookUpContent{keys: generateDatumSlice(2, 3)})
 
 	keyOff2IdxOff := []int{1, 3}
-	sc := &stmtctx.StatementContext{TimeZone: time.Local}
-	kvRanges, err := buildKvRangesForIndexJoin(sc, 0, 0, joinKeyRows, indexRanges, keyOff2IdxOff)
+	ctx := mock.NewContext()
+	kvRanges, err := buildKvRangesForIndexJoin(ctx, 0, 0, joinKeyRows, indexRanges, keyOff2IdxOff, nil)
 	c.Assert(err, IsNil)
 	// Check the kvRanges is in order.
 	for i, kvRange := range kvRanges {
@@ -192,6 +223,11 @@ func (s *testExecSuite) TestGetFieldsFromLine(c *C) {
 			`"\0\b\n\r\t\Z\\\  \c\'\""`,
 			[]string{string([]byte{0, '\b', '\n', '\r', '\t', 26, '\\', ' ', ' ', 'c', '\'', '"'})},
 		},
+		// Test mixed.
+		{
+			`"123",456,"\t7890",abcd`,
+			[]string{"123", "456", "\t7890", "abcd"},
+		},
 	}
 
 	ldInfo := LoadDataInfo{
@@ -208,7 +244,7 @@ func (s *testExecSuite) TestGetFieldsFromLine(c *C) {
 	}
 
 	_, err := ldInfo.getFieldsFromLine([]byte(`1,a string,100.20`))
-	c.Assert(err, NotNil)
+	c.Assert(err, IsNil)
 }
 
 func assertEqualStrings(c *C, got []field, expect []string) {
@@ -216,4 +252,90 @@ func assertEqualStrings(c *C, got []field, expect []string) {
 	for i := 0; i < len(got); i++ {
 		c.Assert(string(got[i].str), Equals, expect[i])
 	}
+}
+
+func (s *testExecSerialSuite) TestSortSpillDisk(c *C) {
+	originCfg := config.GetGlobalConfig()
+	newConf := *originCfg
+	newConf.OOMUseTmpStorage = true
+	newConf.MemQuotaQuery = 1
+	config.StoreGlobalConfig(&newConf)
+	defer config.StoreGlobalConfig(originCfg)
+
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().InitChunkSize = variable.DefMaxChunkSize
+	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(nil, -1)
+	cas := &sortCase{rows: 2048, orderByIdx: []int{0, 1}, ndvs: []int{0, 0}, ctx: ctx}
+	opt := mockDataSourceParameters{
+		schema: expression.NewSchema(cas.columns()...),
+		rows:   cas.rows,
+		ctx:    cas.ctx,
+		ndvs:   cas.ndvs,
+	}
+	dataSource := buildMockDataSource(opt)
+	exec := &SortExec{
+		baseExecutor: newBaseExecutor(cas.ctx, dataSource.schema, stringutil.StringerStr("sort"), dataSource),
+		ByItems:      make([]*core.ByItems, 0, len(cas.orderByIdx)),
+		schema:       dataSource.schema,
+	}
+	for _, idx := range cas.orderByIdx {
+		exec.ByItems = append(exec.ByItems, &core.ByItems{Expr: cas.columns()[idx]})
+	}
+	tmpCtx := context.Background()
+	chk := newFirstChunk(exec)
+	dataSource.prepareChunks()
+	err := exec.Open(tmpCtx)
+	c.Assert(err, IsNil)
+	for {
+		err = exec.Next(tmpCtx, chk)
+		c.Assert(err, IsNil)
+		if chk.NumRows() == 0 {
+			break
+		}
+	}
+	// Test only 1 partition and all data in memory.
+	c.Assert(len(exec.partitionList), Equals, 1)
+	c.Assert(exec.partitionList[0].AlreadySpilled(), Equals, false)
+	c.Assert(exec.partitionList[0].NumRow(), Equals, 2048)
+	err = exec.Close()
+	c.Assert(err, IsNil)
+
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(nil, 1)
+	dataSource.prepareChunks()
+	err = exec.Open(tmpCtx)
+	c.Assert(err, IsNil)
+	for {
+		err = exec.Next(tmpCtx, chk)
+		c.Assert(err, IsNil)
+		if chk.NumRows() == 0 {
+			break
+		}
+	}
+	// Test 2 partitions and all data in disk.
+	c.Assert(len(exec.partitionList), Equals, 2)
+	c.Assert(exec.partitionList[0].AlreadySpilled(), Equals, true)
+	c.Assert(exec.partitionList[1].AlreadySpilled(), Equals, true)
+	c.Assert(exec.partitionList[0].NumRow(), Equals, 1024)
+	c.Assert(exec.partitionList[1].NumRow(), Equals, 1024)
+	err = exec.Close()
+	c.Assert(err, IsNil)
+
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(nil, 24000)
+	dataSource.prepareChunks()
+	err = exec.Open(tmpCtx)
+	c.Assert(err, IsNil)
+	for {
+		err = exec.Next(tmpCtx, chk)
+		c.Assert(err, IsNil)
+		if chk.NumRows() == 0 {
+			break
+		}
+	}
+	// Test only 1 partition but spill disk.
+	c.Assert(len(exec.partitionList), Equals, 1)
+	c.Assert(exec.partitionList[0].AlreadySpilled(), Equals, true)
+	c.Assert(exec.partitionList[0].NumRow(), Equals, 2048)
+	err = exec.Close()
+	c.Assert(err, IsNil)
 }

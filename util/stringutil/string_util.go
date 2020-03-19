@@ -14,10 +14,14 @@
 package stringutil
 
 import (
+	"bytes"
+	"fmt"
 	"strings"
 	"unicode/utf8"
 
-	"github.com/juju/errors"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/util/hack"
 )
 
 // ErrSyntax indicates that a value does not have the right syntax for the target type.
@@ -124,9 +128,12 @@ func Unquote(s string) (t string, err error) {
 }
 
 const (
-	patMatch = iota + 1
-	patOne
-	patAny
+	// PatMatch is the enumeration value for per-character match.
+	PatMatch = iota + 1
+	// PatOne is the enumeration value for '_' match.
+	PatOne
+	// PatAny is the enumeration value for '%' match.
+	PatAny
 )
 
 // CompilePattern handles escapes and wild cards convert pattern characters and
@@ -142,7 +149,7 @@ func CompilePattern(pattern string, escape byte) (patChars, patTypes []byte) {
 		switch c {
 		case escape:
 			lastAny = false
-			tp = patMatch
+			tp = PatMatch
 			if i < len(pattern)-1 {
 				i++
 				c = pattern[i]
@@ -161,21 +168,18 @@ func CompilePattern(pattern string, escape byte) (patChars, patTypes []byte) {
 			}
 		case '_':
 			if lastAny {
-				patChars[patLen-1], patTypes[patLen-1] = c, patOne
-				patChars[patLen], patTypes[patLen] = '%', patAny
-				patLen++
 				continue
 			}
-			tp = patOne
+			tp = PatOne
 		case '%':
 			if lastAny {
 				continue
 			}
 			lastAny = true
-			tp = patAny
+			tp = PatAny
 		default:
 			lastAny = false
-			tp = patMatch
+			tp = PatMatch
 		}
 		patChars[patLen] = c
 		patTypes[patLen] = tp
@@ -186,10 +190,7 @@ func CompilePattern(pattern string, escape byte) (patChars, patTypes []byte) {
 	return
 }
 
-const caseDiff = 'a' - 'A'
-
-// NOTE: Currently tikv's like function is case sensitive, so we keep its behavior here.
-func matchByteCI(a, b byte) bool {
+func matchByte(a, b byte) bool {
 	return a == b
 	// We may reuse below code block when like function go back to case insensitive.
 	/*
@@ -203,34 +204,126 @@ func matchByteCI(a, b byte) bool {
 	*/
 }
 
-// DoMatch matches the string with patChars and patTypes.
-func DoMatch(str string, patChars, patTypes []byte) bool {
-	var sIdx int
+// CompileLike2Regexp convert a like `lhs` to a regular expression
+func CompileLike2Regexp(str string) string {
+	patChars, patTypes := CompilePattern(str, '\\')
+	var result []byte
 	for i := 0; i < len(patChars); i++ {
 		switch patTypes[i] {
-		case patMatch:
-			if sIdx >= len(str) || !matchByteCI(str[sIdx], patChars[i]) {
-				return false
+		case PatMatch:
+			result = append(result, patChars[i])
+		case PatOne:
+			// .*. == .*
+			if !bytes.HasSuffix(result, []byte{'.', '*'}) {
+				result = append(result, '.')
 			}
-			sIdx++
-		case patOne:
-			sIdx++
-			if sIdx > len(str) {
-				return false
+		case PatAny:
+			// ..* == .*
+			if bytes.HasSuffix(result, []byte{'.'}) {
+				result = append(result, '*')
+				continue
 			}
-		case patAny:
-			i++
-			if i == len(patChars) {
-				return true
+			// .*.* == .*
+			if !bytes.HasSuffix(result, []byte{'.', '*'}) {
+				result = append(result, '.')
+				result = append(result, '*')
 			}
-			for sIdx < len(str) {
-				if matchByteCI(patChars[i], str[sIdx]) && DoMatch(str[sIdx:], patChars[i:], patTypes[i:]) {
-					return true
+		}
+	}
+	return string(result)
+}
+
+// DoMatch matches the string with patChars and patTypes.
+// The algorithm has linear time complexity.
+// https://research.swtch.com/glob
+func DoMatch(str string, patChars, patTypes []byte) bool {
+	var sIdx, pIdx, nextSIdx, nextPIdx int
+	for pIdx < len(patChars) || sIdx < len(str) {
+		if pIdx < len(patChars) {
+			switch patTypes[pIdx] {
+			case PatMatch:
+				if sIdx < len(str) && matchByte(str[sIdx], patChars[pIdx]) {
+					pIdx++
+					sIdx++
+					continue
 				}
-				sIdx++
+			case PatOne:
+				if sIdx < len(str) {
+					pIdx++
+					sIdx++
+					continue
+				}
+			case PatAny:
+				// Try to match at sIdx.
+				// If that doesn't work out,
+				// restart at sIdx+1 next.
+				nextPIdx = pIdx
+				nextSIdx = sIdx + 1
+				pIdx++
+				continue
 			}
+		}
+		// Mismatch. Maybe restart.
+		if 0 < nextSIdx && nextSIdx <= len(str) {
+			pIdx = nextPIdx
+			sIdx = nextSIdx
+			continue
+		}
+		return false
+	}
+	// Matched all of pattern to all of name. Success.
+	return true
+}
+
+// IsExactMatch return true if no wildcard character
+func IsExactMatch(patTypes []byte) bool {
+	for _, pt := range patTypes {
+		if pt != PatMatch {
 			return false
 		}
 	}
-	return sIdx == len(str)
+	return true
+}
+
+// Copy deep copies a string.
+func Copy(src string) string {
+	return string(hack.Slice(src))
+}
+
+// StringerFunc defines string func implement fmt.Stringer.
+type StringerFunc func() string
+
+// String implements fmt.Stringer
+func (l StringerFunc) String() string {
+	return l()
+}
+
+// MemoizeStr returns memoized version of stringFunc.
+func MemoizeStr(l func() string) fmt.Stringer {
+	return StringerFunc(func() string {
+		return l()
+	})
+}
+
+// StringerStr defines a alias to normal string.
+// implement fmt.Stringer
+type StringerStr string
+
+// String implements fmt.Stringer
+func (i StringerStr) String() string {
+	return string(i)
+}
+
+// Escape the identifier for pretty-printing.
+// For instance, the identifier "foo `bar`" will become "`foo ``bar```".
+// The sqlMode controls whether to escape with backquotes (`) or double quotes
+// (`"`) depending on whether mysql.ModeANSIQuotes is enabled.
+func Escape(str string, sqlMode mysql.SQLMode) string {
+	var quote string
+	if sqlMode&mysql.ModeANSIQuotes != 0 {
+		quote = `"`
+	} else {
+		quote = "`"
+	}
+	return quote + strings.Replace(str, quote, quote+quote, -1) + quote
 }

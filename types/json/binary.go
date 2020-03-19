@@ -25,8 +25,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/juju/errors"
-	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/util/hack"
 )
 
@@ -169,7 +169,18 @@ func (bj BinaryJSON) GetString() []byte {
 	return bj.Value[lenLen : lenLen+int(strLen)]
 }
 
-func (bj BinaryJSON) getElemCount() int {
+// GetKeys gets the keys of the object
+func (bj BinaryJSON) GetKeys() BinaryJSON {
+	count := bj.GetElemCount()
+	ret := make([]BinaryJSON, 0, count)
+	for i := 0; i < count; i++ {
+		ret = append(ret, CreateBinary(string(bj.objectGetKey(i))))
+	}
+	return buildBinaryArray(ret)
+}
+
+// GetElemCount gets the count of Object or Array.
+func (bj BinaryJSON) GetElemCount() int {
 	return int(endian.Uint32(bj.Value))
 }
 
@@ -184,7 +195,7 @@ func (bj BinaryJSON) objectGetKey(i int) []byte {
 }
 
 func (bj BinaryJSON) objectGetVal(i int) BinaryJSON {
-	elemCount := bj.getElemCount()
+	elemCount := bj.GetElemCount()
 	return bj.valEntryGet(headerSize + elemCount*keyEntrySize + i*valEntrySize)
 }
 
@@ -245,7 +256,7 @@ func (bj BinaryJSON) marshalArrayTo(buf []byte) ([]byte, error) {
 	buf = append(buf, '[')
 	for i := 0; i < elemCount; i++ {
 		if i != 0 {
-			buf = append(buf, ',')
+			buf = append(buf, ", "...)
 		}
 		var err error
 		buf, err = bj.arrayGetElem(i).marshalTo(buf)
@@ -261,10 +272,10 @@ func (bj BinaryJSON) marshalObjTo(buf []byte) ([]byte, error) {
 	buf = append(buf, '{')
 	for i := 0; i < elemCount; i++ {
 		if i != 0 {
-			buf = append(buf, ',')
+			buf = append(buf, ", "...)
 		}
 		buf = marshalStringTo(buf, bj.objectGetKey(i))
-		buf = append(buf, ':')
+		buf = append(buf, ": "...)
 		var err error
 		buf, err = bj.objectGetVal(i).marshalTo(buf)
 		if err != nil {
@@ -281,7 +292,7 @@ func marshalStringTo(buf, s []byte) []byte {
 	start := 0
 	for i := 0; i < len(s); {
 		if b := s[i]; b < utf8.RuneSelf {
-			if htmlSafeSet[b] {
+			if safeSet[b] {
 				i++
 				continue
 			}
@@ -346,23 +357,6 @@ func marshalStringTo(buf, s []byte) []byte {
 	return buf
 }
 
-func (bj BinaryJSON) marshalValueEntryTo(buf []byte, entryOff int) ([]byte, error) {
-	tpCode := bj.Value[entryOff]
-	switch tpCode {
-	case TypeCodeLiteral:
-		buf = marshalLiteralTo(buf, bj.Value[entryOff+1])
-	default:
-		offset := endian.Uint32(bj.Value[entryOff+1:])
-		tmp := BinaryJSON{TypeCode: tpCode, Value: bj.Value[offset:]}
-		var err error
-		buf, err = tmp.marshalTo(buf)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
-	return buf, nil
-}
-
 func marshalLiteralTo(b []byte, litType byte) []byte {
 	switch litType {
 	case LiteralFalse:
@@ -378,11 +372,16 @@ func marshalLiteralTo(b []byte, litType byte) []byte {
 // ParseBinaryFromString parses a json from string.
 func ParseBinaryFromString(s string) (bj BinaryJSON, err error) {
 	if len(s) == 0 {
-		err = ErrInvalidJSONText.GenByArgs("The document is empty")
+		err = ErrInvalidJSONText.GenWithStackByArgs("The document is empty")
 		return
 	}
-	if err = bj.UnmarshalJSON(hack.Slice(s)); err != nil {
-		err = ErrInvalidJSONText.GenByArgs(err)
+	data := hack.Slice(s)
+	if !json.Valid(data) {
+		err = ErrInvalidJSONText.GenWithStackByArgs("The document root must not be followed by other values.")
+		return
+	}
+	if err = bj.UnmarshalJSON(data); err != nil {
+		err = ErrInvalidJSONText.GenWithStackByArgs(err)
 	}
 	return
 }

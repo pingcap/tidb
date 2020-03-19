@@ -4,7 +4,7 @@ CREATE TABLE `tr` (
   `domain_type` tinyint(4) NOT NULL,
   `business_type` tinyint(4) NOT NULL,
   `trade_type` tinyint(4) NOT NULL DEFAULT '1',
-  `trade_time` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `trade_time` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   `trade_status` tinyint(4) NOT NULL DEFAULT '0',
   `trade_pay_status` tinyint(4) NOT NULL DEFAULT '0',
   `delivery_type` tinyint(4) NOT NULL DEFAULT '0',
@@ -24,10 +24,10 @@ CREATE TABLE `tr` (
   `device_identy` varchar(36) NOT NULL,
   `uuid` varchar(32) NOT NULL,
   `status_flag` tinyint(4) NOT NULL,
-  `client_create_time` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `client_create_time` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   `client_update_time` timestamp(3) NULL DEFAULT NULL,
-  `server_create_time` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  `server_update_time` timestamp(3) DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `server_create_time` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `server_update_time` timestamp(3) DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
   `creator_id` bigint(20) DEFAULT NULL,
   `creator_name` varchar(32) DEFAULT NULL,
   `updator_id` bigint(20) DEFAULT NULL,
@@ -68,10 +68,10 @@ CREATE TABLE `p` (
   `device_identy` varchar(36) NOT NULL,
   `uuid` varchar(32) NOT NULL,
   `status_flag` tinyint(4) NOT NULL DEFAULT '1',
-  `client_create_time` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `client_create_time` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   `client_update_time` timestamp(3) NULL DEFAULT NULL,
-  `server_create_time` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  `server_update_time` timestamp(3) DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `server_create_time` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `server_update_time` timestamp(3) DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
   `creator_id` bigint(20) DEFAULT NULL,
   `creator_name` varchar(32) DEFAULT NULL,
   `updator_id` bigint(20) DEFAULT NULL,
@@ -121,10 +121,10 @@ CREATE TABLE `te` (
   `device_identy` varchar(36) NOT NULL,
   `uuid` varchar(32) NOT NULL,
   `status_flag` tinyint(4) NOT NULL,
-  `client_create_time` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `client_create_time` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   `client_update_time` timestamp(3) NULL DEFAULT NULL,
-  `server_create_time` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  `server_update_time` timestamp(3) DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `server_create_time` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `server_update_time` timestamp(3) DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
   `creator_id` bigint(20) DEFAULT NULL,
   `creator_name` varchar(32) DEFAULT NULL,
   `updator_id` bigint(20) DEFAULT NULL,
@@ -171,3 +171,24 @@ WHERE
     te.expect_time BETWEEN '2018-04-23 00:00:00.0' AND '2018-04-23 23:59:59.0'
 ORDER BY te.expect_time asc
 LIMIT 0, 5;
+
+-- test order by constant
+desc select 1 as a from dual order by a limit 1;
+
+-- test order by correlated column
+drop table if exists t1;
+drop table if exists t2;
+create table t1(a bigint, b bigint);
+create table t2(a bigint, b bigint);
+desc select * from t1 where t1.a in (select t2.a as a from t2 where t2.b > t1.b order by t1.b limit 1);
+desc select * from t1 where t1.a in (select a from (select t2.a as a, t1.b as b from t2 where t2.b > t1.b) x order by b limit 1);
+
+-- test ExpectedCnt of join's children
+drop table if exists t;
+create table t(a int not null, index idx(a));
+explain select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 on t1.a = t2.a limit 5;
+explain select /*+ TIDB_INLJ(t2) */ * from t t1 left join t t2 on t1.a = t2.a where t2.a is null limit 5;
+explain select /*+ TIDB_SMJ(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a limit 5;
+explain select /*+ TIDB_SMJ(t1, t2) */ * from t t1 left join t t2 on t1.a = t2.a where t2.a is null limit 5;
+explain select /*+ TIDB_HJ(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a limit 5;
+explain select /*+ TIDB_HJ(t1, t2) */ * from t t1 left join t t2 on t1.a = t2.a where t2.a is null limit 5;

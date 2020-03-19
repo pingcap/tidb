@@ -14,6 +14,7 @@
 package binloginfo_test
 
 import (
+	"context"
 	"net"
 	"os"
 	"strconv"
@@ -21,8 +22,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
+	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
@@ -30,22 +36,21 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testkit"
 	binlog "github.com/pingcap/tipb/go-binlog"
-	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 )
 
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
 	logLevel := os.Getenv("log_level")
-	logutil.InitLogger(&logutil.LogConfig{
-		Level: logLevel,
-	})
+	logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
 	TestingT(t)
 }
 
@@ -81,7 +86,7 @@ type testBinlogSuite struct {
 	unixFile string
 	serv     *grpc.Server
 	pump     *mockBinlogPump
-	client   binlog.PumpClient
+	client   *pumpcli.PumpsClient
 	ddl      ddl.DDL
 }
 
@@ -112,16 +117,16 @@ func (s *testBinlogSuite) SetUpSuite(c *C) {
 	sessionDomain := domain.GetDomain(tk.Se.(sessionctx.Context))
 	s.ddl = sessionDomain.DDL()
 
-	s.client = binlog.NewPumpClient(clientCon)
-	s.ddl.WorkerVars().BinlogClient = s.client
+	s.client = binloginfo.MockPumpsClient(binlog.NewPumpClient(clientCon))
+	s.ddl.SetBinlogClient(s.client)
 }
 
 func (s *testBinlogSuite) TearDownSuite(c *C) {
 	s.ddl.Stop()
 	s.serv.Stop()
 	os.Remove(s.unixFile)
-	s.store.Close()
 	s.domain.Close()
+	s.store.Close()
 }
 
 func (s *testBinlogSuite) TestBinlog(c *C) {
@@ -130,12 +135,12 @@ func (s *testBinlogSuite) TestBinlog(c *C) {
 	tk.Se.GetSessionVars().BinlogClient = s.client
 	pump := s.pump
 	tk.MustExec("drop table if exists local_binlog")
-	ddlQuery := "create table local_binlog (id int primary key, name varchar(10)) shard_row_id_bits=1"
-	binlogDDLQuery := "create table local_binlog (id int primary key, name varchar(10)) /*!90000 shard_row_id_bits=1 */"
+	ddlQuery := "create table local_binlog (id int unique key, name varchar(10)) shard_row_id_bits=1"
+	binlogDDLQuery := "create table local_binlog (id int unique key, name varchar(10)) /*!90000 shard_row_id_bits=1 */"
 	tk.MustExec(ddlQuery)
 	var matched bool // got matched pre DDL and commit DDL
 	for i := 0; i < 10; i++ {
-		preDDL, commitDDL := getLatestDDLBinlog(c, pump, binlogDDLQuery)
+		preDDL, commitDDL, _ := getLatestDDLBinlog(c, pump, binlogDDLQuery)
 		if preDDL != nil && commitDDL != nil {
 			if preDDL.DdlJobId == commitDDL.DdlJobId {
 				c.Assert(commitDDL.StartTs, Equals, preDDL.StartTs)
@@ -153,31 +158,31 @@ func (s *testBinlogSuite) TestBinlog(c *C) {
 	c.Assert(prewriteVal.SchemaVersion, Greater, int64(0))
 	c.Assert(prewriteVal.Mutations[0].TableId, Greater, int64(0))
 	expected := [][]types.Datum{
-		{types.NewIntDatum(1), types.NewStringDatum("abc")},
-		{types.NewIntDatum(2), types.NewStringDatum("cde")},
+		{types.NewIntDatum(1), types.NewCollationStringDatum("abc", mysql.DefaultCollationName, collate.DefaultLen)},
+		{types.NewIntDatum(2), types.NewCollationStringDatum("cde", mysql.DefaultCollationName, collate.DefaultLen)},
 	}
-	gotRows := mutationRowsToRows(c, prewriteVal.Mutations[0].InsertedRows, 0, 2)
+	gotRows := mutationRowsToRows(c, prewriteVal.Mutations[0].InsertedRows, 2, 4)
 	c.Assert(gotRows, DeepEquals, expected)
 
 	tk.MustExec("update local_binlog set name = 'xyz' where id = 2")
 	prewriteVal = getLatestBinlogPrewriteValue(c, pump)
 	oldRow := [][]types.Datum{
-		{types.NewIntDatum(2), types.NewStringDatum("cde")},
+		{types.NewIntDatum(2), types.NewCollationStringDatum("cde", mysql.DefaultCollationName, collate.DefaultLen)},
 	}
 	newRow := [][]types.Datum{
-		{types.NewIntDatum(2), types.NewStringDatum("xyz")},
+		{types.NewIntDatum(2), types.NewCollationStringDatum("xyz", mysql.DefaultCollationName, collate.DefaultLen)},
 	}
 	gotRows = mutationRowsToRows(c, prewriteVal.Mutations[0].UpdatedRows, 1, 3)
 	c.Assert(gotRows, DeepEquals, oldRow)
 
-	gotRows = mutationRowsToRows(c, prewriteVal.Mutations[0].UpdatedRows, 5, 7)
+	gotRows = mutationRowsToRows(c, prewriteVal.Mutations[0].UpdatedRows, 7, 9)
 	c.Assert(gotRows, DeepEquals, newRow)
 
 	tk.MustExec("delete from local_binlog where id = 1")
 	prewriteVal = getLatestBinlogPrewriteValue(c, pump)
 	gotRows = mutationRowsToRows(c, prewriteVal.Mutations[0].DeletedRows, 1, 3)
 	expected = [][]types.Datum{
-		{types.NewIntDatum(1), types.NewStringDatum("abc")},
+		{types.NewIntDatum(1), types.NewCollationStringDatum("abc", mysql.DefaultCollationName, collate.DefaultLen)},
 	}
 	c.Assert(gotRows, DeepEquals, expected)
 
@@ -271,7 +276,8 @@ func (s *testBinlogSuite) TestMaxRecvSize(c *C) {
 		},
 		Client: s.client,
 	}
-	err := info.WriteBinlog(1)
+	binlogWR := info.WriteBinlog(1)
+	err := binlogWR.GetError()
 	c.Assert(err, NotNil)
 	c.Assert(terror.ErrCritical.Equal(err), IsFalse, Commentf("%v", err))
 }
@@ -294,7 +300,7 @@ func getLatestBinlogPrewriteValue(c *C, pump *mockBinlogPump) *binlog.PrewriteVa
 	return preVal
 }
 
-func getLatestDDLBinlog(c *C, pump *mockBinlogPump, ddlQuery string) (preDDL, commitDDL *binlog.Binlog) {
+func getLatestDDLBinlog(c *C, pump *mockBinlogPump, ddlQuery string) (preDDL, commitDDL *binlog.Binlog, offset int) {
 	pump.mu.Lock()
 	for i := len(pump.mu.payloads) - 1; i >= 0; i-- {
 		payload := pump.mu.payloads[i]
@@ -307,6 +313,7 @@ func getLatestDDLBinlog(c *C, pump *mockBinlogPump, ddlQuery string) (preDDL, co
 			preDDL = bin
 		}
 		if preDDL != nil && commitDDL != nil {
+			offset = i
 			break
 		}
 	}
@@ -359,7 +366,7 @@ func mutationRowsToRows(c *C, mutationRows [][]byte, columnValueOffsets ...int) 
 		c.Assert(err, IsNil)
 		for i := range datums {
 			if datums[i].Kind() == types.KindBytes {
-				datums[i].SetBytesAsString(datums[i].GetBytes())
+				datums[i].SetBytesAsString(datums[i].GetBytes(), mysql.DefaultCollationName, collate.DefaultLen)
 			}
 		}
 		row := make([]types.Datum, 0, len(columnValueOffsets))
@@ -371,13 +378,90 @@ func mutationRowsToRows(c *C, mutationRows [][]byte, columnValueOffsets ...int) 
 	return rows
 }
 
+func (s *testBinlogSuite) TestBinlogForSequence(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/mockSyncBinlogCommit", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/mockSyncBinlogCommit"), IsNil)
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	s.pump.mu.Lock()
+	s.pump.mu.payloads = s.pump.mu.payloads[:0]
+	s.pump.mu.Unlock()
+	tk.Se.GetSessionVars().BinlogClient = s.client
+
+	tk.MustExec("drop sequence if exists seq")
+	// the default start = 1, increment = 1.
+	tk.MustExec("create sequence seq cache 3")
+	// trigger the sequence cache allocation.
+	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("1"))
+	sequenceTable := testGetTableByName(c, tk.Se, "test", "seq")
+	tc, ok := sequenceTable.(*tables.TableCommon)
+	c.Assert(ok, Equals, true)
+	_, end, round := tc.GetSequenceCommon().GetSequenceBaseEndRound()
+	c.Assert(end, Equals, int64(3))
+	c.Assert(round, Equals, int64(0))
+
+	// Check the sequence binlog.
+	// Got matched pre DDL and commit DDL.
+	ok = mustGetDDLBinlog(s, "select setval(`test`.`seq`, 3)", c)
+	c.Assert(ok, IsTrue)
+
+	// Invalidate the current sequence cache.
+	tk.MustQuery("select setval(seq, 5)").Check(testkit.Rows("5"))
+	// trigger the next sequence cache allocation.
+	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("6"))
+	_, end, round = tc.GetSequenceCommon().GetSequenceBaseEndRound()
+	c.Assert(end, Equals, int64(8))
+	c.Assert(round, Equals, int64(0))
+	ok = mustGetDDLBinlog(s, "select setval(`test`.`seq`, 8)", c)
+	c.Assert(ok, IsTrue)
+
+	tk.MustExec("create database test2")
+	tk.MustExec("use test2")
+	tk.MustExec("drop sequence if exists seq2")
+	tk.MustExec("create sequence seq2 start 1 increment -2 cache 3 minvalue -10 maxvalue 10 cycle")
+	// trigger the sequence cache allocation.
+	tk.MustQuery("select nextval(seq2)").Check(testkit.Rows("1"))
+	sequenceTable = testGetTableByName(c, tk.Se, "test2", "seq2")
+	tc, ok = sequenceTable.(*tables.TableCommon)
+	c.Assert(ok, Equals, true)
+	_, end, round = tc.GetSequenceCommon().GetSequenceBaseEndRound()
+	c.Assert(end, Equals, int64(-3))
+	c.Assert(round, Equals, int64(0))
+	ok = mustGetDDLBinlog(s, "select setval(`test2`.`seq2`, -3)", c)
+	c.Assert(ok, IsTrue)
+
+	tk.MustQuery("select setval(seq2, -100)").Check(testkit.Rows("-100"))
+	// trigger the sequence cache allocation.
+	tk.MustQuery("select nextval(seq2)").Check(testkit.Rows("10"))
+	_, end, round = tc.GetSequenceCommon().GetSequenceBaseEndRound()
+	c.Assert(end, Equals, int64(6))
+	c.Assert(round, Equals, int64(1))
+	ok = mustGetDDLBinlog(s, "select setval(`test2`.`seq2`, 6)", c)
+	c.Assert(ok, IsTrue)
+
+	// Test dml txn is independent from sequence txn.
+	tk.MustExec("drop sequence if exists seq")
+	tk.MustExec("create sequence seq cache 3")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int default next value for seq)")
+	// sequence txn commit first then the dml txn.
+	tk.MustExec("insert into t values(-1),(default),(-1),(default)")
+	// binlog list like [... ddl prewrite(offset), ddl commit, dml prewrite, dml commit]
+	_, _, offset := getLatestDDLBinlog(c, s.pump, "select setval(`test2`.`seq`, 3)")
+	s.pump.mu.Lock()
+	c.Assert(offset+3, Equals, len(s.pump.mu.payloads)-1)
+	s.pump.mu.Unlock()
+}
+
 // Sometimes this test doesn't clean up fail, let the function name begin with 'Z'
 // so it runs last and would not disrupt other tests.
 func (s *testBinlogSuite) TestZIgnoreError(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.Se.GetSessionVars().BinlogClient = s.client
-	tk.MustExec("drop table if exists ignore_error")
+	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int)")
 
 	binloginfo.SetIgnoreError(true)
@@ -394,4 +478,116 @@ func (s *testBinlogSuite) TestZIgnoreError(c *C) {
 	s.pump.mu.Unlock()
 	binloginfo.DisableSkipBinlogFlag()
 	binloginfo.SetIgnoreError(false)
+}
+
+func (s *testBinlogSuite) TestPartitionedTable(c *C) {
+	// This test checks partitioned table write binlog with table ID, rather than partition ID.
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.Se.GetSessionVars().BinlogClient = s.client
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`create table t (id int) partition by range (id) (
+			partition p0 values less than (1),
+			partition p1 values less than (4),
+			partition p2 values less than (7),
+			partition p3 values less than (10))`)
+	tids := make([]int64, 0, 10)
+	for i := 0; i < 10; i++ {
+		tk.MustExec("insert into t values (?)", i)
+		prewriteVal := getLatestBinlogPrewriteValue(c, s.pump)
+		tids = append(tids, prewriteVal.Mutations[0].TableId)
+	}
+	c.Assert(len(tids), Equals, 10)
+	for i := 1; i < 10; i++ {
+		c.Assert(tids[i], Equals, tids[0])
+	}
+}
+
+func (s *testBinlogSuite) TestDeleteSchema(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE `b1` (`id` int(11) NOT NULL AUTO_INCREMENT, `job_id` varchar(50) NOT NULL, `split_job_id` varchar(30) DEFAULT NULL, PRIMARY KEY (`id`), KEY `b1` (`job_id`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustExec("CREATE TABLE `b2` (`id` int(11) NOT NULL AUTO_INCREMENT, `job_id` varchar(50) NOT NULL, `batch_class` varchar(20) DEFAULT NULL, PRIMARY KEY (`id`), UNIQUE KEY `bu` (`job_id`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4")
+	tk.MustExec("insert into b2 (job_id, batch_class) values (2, 'TEST');")
+	tk.MustExec("insert into b1 (job_id) values (2);")
+
+	// This test cover a bug that the final schema and the binlog row inconsistent.
+	// The final schema of this SQL should be the schema of table b1, rather than the schema of join result.
+	tk.MustExec("delete from b1 where job_id in (select job_id from b2 where batch_class = 'TEST') or split_job_id in (select job_id from b2 where batch_class = 'TEST');")
+	tk.MustExec("delete b1 from b2 right join b1 on b1.job_id = b2.job_id and batch_class = 'TEST';")
+}
+
+func (s *testBinlogSuite) TestAddSpecialComment(c *C) {
+	testCase := []struct {
+		input  string
+		result string
+	}{
+		{
+			"create table t1 (id int ) shard_row_id_bits=2;",
+			"create table t1 (id int ) /*!90000 shard_row_id_bits=2 */ ;",
+		},
+		{
+			"create table t1 (id int ) shard_row_id_bits=2 pre_split_regions=2;",
+			"create table t1 (id int ) /*!90000 shard_row_id_bits=2 pre_split_regions=2 */ ;",
+		},
+		{
+			"create table t1 (id int ) shard_row_id_bits=2     pre_split_regions=2;",
+			"create table t1 (id int ) /*!90000 shard_row_id_bits=2     pre_split_regions=2 */ ;",
+		},
+
+		{
+			"create table t1 (id int ) shard_row_id_bits=2 engine=innodb pre_split_regions=2;",
+			"create table t1 (id int ) /*!90000 shard_row_id_bits=2 pre_split_regions=2 */ engine=innodb ;",
+		},
+		{
+			"create table t1 (id int ) pre_split_regions=2 shard_row_id_bits=2;",
+			"create table t1 (id int ) /*!90000 shard_row_id_bits=2 pre_split_regions=2 */ ;",
+		},
+		{
+			"create table t6 (id int ) shard_row_id_bits=2 shard_row_id_bits=3 pre_split_regions=2;",
+			"create table t6 (id int ) /*!90000 shard_row_id_bits=2 shard_row_id_bits=3 pre_split_regions=2 */ ;",
+		},
+		{
+			"create table t1 (id int primary key auto_random(2));",
+			"create table t1 (id int primary key /*T!30100 auto_random(2) */ );",
+		},
+		{
+			"create table t1 (id int auto_random ( 4 ) primary key);",
+			"create table t1 (id int /*T!30100 auto_random ( 4 ) */ primary key);",
+		},
+		{
+			"create table t1 (id int  auto_random  (   4    ) primary key);",
+			"create table t1 (id int  /*T!30100 auto_random  (   4    ) */ primary key);",
+		},
+	}
+	for _, ca := range testCase {
+		re := binloginfo.AddSpecialComment(ca.input)
+		c.Assert(re, Equals, ca.result)
+	}
+}
+
+func mustGetDDLBinlog(s *testBinlogSuite, ddlQuery string, c *C) (matched bool) {
+	for i := 0; i < 10; i++ {
+		preDDL, commitDDL, _ := getLatestDDLBinlog(c, s.pump, ddlQuery)
+		if preDDL != nil && commitDDL != nil {
+			if preDDL.DdlJobId == commitDDL.DdlJobId {
+				c.Assert(commitDDL.StartTs, Equals, preDDL.StartTs)
+				c.Assert(commitDDL.CommitTs, Greater, commitDDL.StartTs)
+				matched = true
+				break
+			}
+		}
+		time.Sleep(time.Millisecond * 30)
+	}
+	return
+}
+
+func testGetTableByName(c *C, ctx sessionctx.Context, db, table string) table.Table {
+	dom := domain.GetDomain(ctx)
+	// Make sure the table schema is the new schema.
+	err := dom.Reload()
+	c.Assert(err, IsNil)
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(db), model.NewCIStr(table))
+	c.Assert(err, IsNil)
+	return tbl
 }

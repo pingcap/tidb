@@ -18,27 +18,27 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/juju/errors"
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/parser"
-	_ "github.com/pingcap/tidb/plan"
+	_ "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
 	log "github.com/sirupsen/logrus"
 )
 
 type column struct {
-	idx     int
-	name    string
-	data    *datum
-	tp      *types.FieldType
-	comment string
-	min     string
-	max     string
-	step    int64
-	set     []string
+	idx         int
+	name        string
+	data        *datum
+	tp          *types.FieldType
+	comment     string
+	min         string
+	max         string
+	incremental bool
+	set         []string
 
 	table *table
 
@@ -51,10 +51,10 @@ func (col *column) String() string {
 	}
 
 	return fmt.Sprintf("[column]idx: %d, name: %s, tp: %v, min: %s, max: %s, step: %d, set: %v\n",
-		col.idx, col.name, col.tp, col.min, col.max, col.step, col.set)
+		col.idx, col.name, col.tp, col.min, col.max, col.data.step, col.set)
 }
 
-func (col *column) parseRule(kvs []string) {
+func (col *column) parseRule(kvs []string, uniq bool) {
 	if len(kvs) != 2 {
 		return
 	}
@@ -71,7 +71,7 @@ func (col *column) parseRule(kvs []string) {
 		}
 	} else if key == "step" {
 		var err error
-		col.step, err = strconv.ParseInt(value, 10, 64)
+		col.data.step, err = strconv.ParseInt(value, 10, 64)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -80,13 +80,38 @@ func (col *column) parseRule(kvs []string) {
 		for _, field := range fields {
 			col.set = append(col.set, strings.TrimSpace(field))
 		}
+	} else if key == "incremental" {
+		var err error
+		col.incremental, err = strconv.ParseBool(value)
+		if err != nil {
+			log.Fatal(err)
+		}
+	} else if key == "repeats" {
+		repeats, err := strconv.ParseUint(value, 10, 64)
+		if err != nil {
+			log.Fatal(err)
+		}
+		if uniq && repeats > 1 {
+			log.Fatal("cannot repeat more than 1 times on unique columns")
+		}
+		col.data.repeats = repeats
+		col.data.remains = repeats
+	} else if key == "probability" {
+		prob, err := strconv.ParseUint(value, 10, 32)
+		if err != nil {
+			log.Fatal(err)
+		}
+		if prob > 100 || prob == 0 {
+			log.Fatal("probability must be in (0, 100]")
+		}
+		col.data.probability = uint32(prob)
 	}
 }
 
 // parse the data rules.
 // rules like `a int unique comment '[[range=1,10;step=1]]'`,
 // then we will get value from 1,2...10
-func (col *column) parseColumnComment() {
+func (col *column) parseColumnComment(uniq bool) {
 	comment := strings.TrimSpace(col.comment)
 	start := strings.Index(comment, "[[")
 	end := strings.Index(comment, "]]")
@@ -99,7 +124,7 @@ func (col *column) parseColumnComment() {
 	for _, field := range fields {
 		field = strings.TrimSpace(field)
 		kvs := strings.Split(field, "=")
-		col.parseRule(kvs)
+		col.parseRule(kvs, uniq)
 	}
 }
 
@@ -107,7 +132,8 @@ func (col *column) parseColumn(cd *ast.ColumnDef) {
 	col.name = cd.Name.Name.L
 	col.tp = cd.Tp
 	col.parseColumnOptions(cd.Options)
-	col.parseColumnComment()
+	_, uniq := col.table.uniqIndices[col.name]
+	col.parseColumnComment(uniq)
 	col.table.columns = append(col.table.columns, col)
 }
 
@@ -117,7 +143,7 @@ func (col *column) parseColumnOptions(ops []*ast.ColumnOption) {
 		case ast.ColumnOptionPrimaryKey, ast.ColumnOptionUniqKey, ast.ColumnOptionAutoIncrement:
 			col.table.uniqIndices[col.name] = col
 		case ast.ColumnOptionComment:
-			col.comment = op.Expr.GetDatum().GetString()
+			col.comment = op.Expr.(ast.ValueExpr).GetDatumString()
 		}
 	}
 }
@@ -216,7 +242,7 @@ func parseTable(t *table, stmt *ast.CreateTableStmt) error {
 	t.tblInfo = mockTbl
 
 	for i, col := range stmt.Cols {
-		column := &column{idx: i + 1, table: t, step: defaultStep, data: newDatum()}
+		column := &column{idx: i + 1, table: t, data: newDatum()}
 		column.parseColumn(col)
 	}
 
@@ -249,13 +275,14 @@ func parseIndex(table *table, stmt *ast.CreateIndexStmt) error {
 	if table.name != stmt.Table.Name.L {
 		return errors.Errorf("mismatch table name for create index - %s : %s", table.name, stmt.Table.Name.L)
 	}
-
-	for _, indexCol := range stmt.IndexColNames {
+	for _, indexCol := range stmt.IndexPartSpecifications {
 		name := indexCol.Column.Name.L
-		if stmt.Unique {
+		if stmt.KeyType == ast.IndexKeyTypeUnique {
 			table.uniqIndices[name] = table.findCol(table.columns, name)
-		} else {
+		} else if stmt.KeyType == ast.IndexKeyTypeNone {
 			table.indices[name] = table.findCol(table.columns, name)
+		} else {
+			return errors.Errorf("unsupported index type on column %s.%s", table.name, name)
 		}
 	}
 

@@ -13,7 +13,10 @@
 
 package kv
 
-import "bytes"
+import (
+	"bytes"
+	"encoding/hex"
+)
 
 // Key represents high-level Key type.
 type Key []byte
@@ -21,7 +24,7 @@ type Key []byte
 // Next returns the next key in byte-order.
 func (k Key) Next() Key {
 	// add 0x0 to the end of key
-	buf := make([]byte, len([]byte(k))+1)
+	buf := make([]byte, len(k)+1)
 	copy(buf, []byte(k))
 	return buf
 }
@@ -38,7 +41,7 @@ func (k Key) Next() Key {
 // If we seek 'rowkey1' Next, we will get 'rowkey1_column1'.
 // If we seek 'rowkey1' PrefixNext, we will get 'rowkey2'.
 func (k Key) PrefixNext() Key {
-	buf := make([]byte, len([]byte(k)))
+	buf := make([]byte, len(k))
 	copy(buf, []byte(k))
 	var i int
 	for i = len(k) - 1; i >= 0; i-- {
@@ -65,9 +68,16 @@ func (k Key) HasPrefix(prefix Key) bool {
 	return bytes.HasPrefix(k, prefix)
 }
 
-// Clone returns a copy of the Key.
+// Clone returns a deep copy of the Key.
 func (k Key) Clone() Key {
-	return append([]byte(nil), k...)
+	ck := make([]byte, len(k))
+	copy(ck, []byte(k))
+	return ck
+}
+
+// String implements fmt.Stringer interface.
+func (k Key) String() string {
+	return hex.EncodeToString(k)
 }
 
 // KeyRange represents a range where StartKey <= key < EndKey.
@@ -78,19 +88,34 @@ type KeyRange struct {
 
 // IsPoint checks if the key range represents a point.
 func (r *KeyRange) IsPoint() bool {
-	return bytes.Equal(r.StartKey.PrefixNext(), r.EndKey)
-}
+	if len(r.StartKey) != len(r.EndKey) {
+		// Works like
+		//   return bytes.Equal(r.StartKey.Next(), r.EndKey)
 
-// EncodedKey represents encoded key in low-level storage engine.
-type EncodedKey []byte
+		startLen := len(r.StartKey)
+		return startLen+1 == len(r.EndKey) &&
+			r.EndKey[startLen] == 0 &&
+			bytes.Equal(r.StartKey, r.EndKey[:startLen])
+	}
+	// Works like
+	//   return bytes.Equal(r.StartKey.PrefixNext(), r.EndKey)
 
-// Cmp returns the comparison result of two key.
-// The result will be 0 if a==b, -1 if a < b, and +1 if a > b.
-func (k EncodedKey) Cmp(another EncodedKey) int {
-	return bytes.Compare(k, another)
-}
-
-// Next returns the next key in byte-order.
-func (k EncodedKey) Next() EncodedKey {
-	return EncodedKey(bytes.Join([][]byte{k, Key{0}}, nil))
+	i := len(r.StartKey) - 1
+	for ; i >= 0; i-- {
+		if r.StartKey[i] != 255 {
+			break
+		}
+		if r.EndKey[i] != 0 {
+			return false
+		}
+	}
+	if i < 0 {
+		// In case all bytes in StartKey are 255.
+		return false
+	}
+	// The byte at diffIdx in StartKey should be one less than the byte at diffIdx in EndKey.
+	// And bytes in StartKey and EndKey before diffIdx should be equal.
+	diffOneIdx := i
+	return r.StartKey[diffOneIdx]+1 == r.EndKey[diffOneIdx] &&
+		bytes.Equal(r.StartKey[:diffOneIdx], r.EndKey[:diffOneIdx])
 }

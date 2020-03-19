@@ -14,23 +14,33 @@
 package session
 
 import (
-	"github.com/juju/errors"
+	"bytes"
+	"context"
+	"fmt"
+	"strings"
+	"sync/atomic"
+
 	"github.com/opentracing/opentracing-go"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/store/tikv/oracle"
-	"github.com/pingcap/tidb/types"
-	binlog "github.com/pingcap/tipb/go-binlog"
-	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
+	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tipb/go-binlog"
+	"go.uber.org/zap"
 )
 
 // TxnState wraps kv.Transaction to provide a new kv.Transaction.
 // 1. It holds all statement related modification in the buffer before flush to the txn,
 // so if execute statement meets error, the txn won't be made dirty.
-// 2. It's a lazy transaction, that means it's a txnFuture befort StartTS() is really need.
+// 2. It's a lazy transaction, that means it's a txnFuture before StartTS() is really need.
 type TxnState struct {
 	// States of a TxnState should be one of the followings:
 	// Invalid: kv.Transaction == nil && txnFuture == nil
@@ -43,9 +53,9 @@ type TxnState struct {
 	mutations    map[int64]*binlog.TableMutation
 	dirtyTableOP []dirtyTableOperation
 
-	// If StmtCommit meets error (which should not happen, just in case), mark it.
-	// And rollback the whole transaction when it commit.
-	fail error
+	// If doNotCommit is not nil, Commit() will not commit the transaction.
+	// doNotCommit flag may be set when StmtCommit fail.
+	doNotCommit error
 }
 
 func (st *TxnState) init() {
@@ -53,9 +63,22 @@ func (st *TxnState) init() {
 	st.mutations = make(map[int64]*binlog.TableMutation)
 }
 
-// Valid overrides Transaction interface.
+// Size implements the MemBuffer interface.
+func (st *TxnState) Size() int {
+	size := st.buf.Size()
+	if st.Transaction != nil {
+		size += st.Transaction.Size()
+	}
+	return size
+}
+
+// Valid implements the kv.Transaction interface.
 func (st *TxnState) Valid() bool {
 	return st.Transaction != nil && st.Transaction.Valid()
+}
+
+func (st *TxnState) pending() bool {
+	return st.Transaction == nil && st.txnFuture != nil
 }
 
 func (st *TxnState) validOrPending() bool {
@@ -70,6 +93,32 @@ func (st *TxnState) String() string {
 		return "txnFuture"
 	}
 	return "invalid transaction"
+}
+
+// GoString implements the "%#v" format for fmt.Printf.
+func (st *TxnState) GoString() string {
+	var s strings.Builder
+	s.WriteString("Txn{")
+	if st.pending() {
+		s.WriteString("state=pending")
+	} else if st.Valid() {
+		s.WriteString("state=valid")
+		fmt.Fprintf(&s, ", txnStartTS=%d", st.Transaction.StartTS())
+		if len(st.dirtyTableOP) > 0 {
+			fmt.Fprintf(&s, ", len(dirtyTable)=%d, %#v", len(st.dirtyTableOP), st.dirtyTableOP)
+		}
+		if len(st.mutations) > 0 {
+			fmt.Fprintf(&s, ", len(mutations)=%d, %#v", len(st.mutations), st.mutations)
+		}
+		if st.buf != nil && st.buf.Len() != 0 {
+			fmt.Fprintf(&s, ", buf.length: %d, buf.size: %d", st.buf.Len(), st.buf.Size())
+		}
+	} else {
+		s.WriteString("state=invalid")
+	}
+
+	s.WriteString("}")
+	return s.String()
 }
 
 func (st *TxnState) changeInvalidToValid(txn kv.Transaction) {
@@ -93,7 +142,7 @@ func (st *TxnState) changePendingToValid(txnCap int) error {
 	txn, err := future.wait()
 	if err != nil {
 		st.Transaction = nil
-		return errors.Trace(err)
+		return err
 	}
 	txn.SetCap(txnCap)
 	st.Transaction = txn
@@ -111,42 +160,133 @@ type dirtyTableOperation struct {
 	kind   int
 	tid    int64
 	handle int64
-	row    []types.Datum
+}
+
+var hasMockAutoIncIDRetry = int64(0)
+
+func enableMockAutoIncIDRetry() {
+	atomic.StoreInt64(&hasMockAutoIncIDRetry, 1)
+}
+
+func mockAutoIncIDRetry() bool {
+	return atomic.LoadInt64(&hasMockAutoIncIDRetry) == 1
+}
+
+var mockAutoRandIDRetryCount = int64(0)
+
+func needMockAutoRandIDRetry() bool {
+	return atomic.LoadInt64(&mockAutoRandIDRetryCount) > 0
+}
+
+func decreaseMockAutoRandIDRetryCount() {
+	atomic.AddInt64(&mockAutoRandIDRetryCount, -1)
+}
+
+// ResetMockAutoRandIDRetryCount set the number of occurrences of
+// `kv.ErrTxnRetryable` when calling TxnState.Commit().
+func ResetMockAutoRandIDRetryCount(failTimes int64) {
+	atomic.StoreInt64(&mockAutoRandIDRetryCount, failTimes)
 }
 
 // Commit overrides the Transaction interface.
 func (st *TxnState) Commit(ctx context.Context) error {
-	if st.fail != nil {
-		// If any error happen during StmtCommit, don't commit this transaction.
-		err := st.fail
-		st.fail = nil
-		return errors.Trace(err)
+	defer st.reset()
+	if len(st.mutations) != 0 || len(st.dirtyTableOP) != 0 || st.buf.Len() != 0 {
+		logutil.BgLogger().Error("the code should never run here",
+			zap.String("TxnState", st.GoString()),
+			zap.Stack("something must be wrong"))
+		return errors.New("invalid transaction")
 	}
-	return errors.Trace(st.Transaction.Commit(ctx))
+	if st.doNotCommit != nil {
+		if err1 := st.Transaction.Rollback(); err1 != nil {
+			logutil.BgLogger().Error("rollback error", zap.Error(err1))
+		}
+		return errors.Trace(st.doNotCommit)
+	}
+
+	// mockCommitError8942 is used for PR #8942.
+	failpoint.Inject("mockCommitError8942", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(kv.ErrTxnRetryable)
+		}
+	})
+
+	// mockCommitRetryForAutoIncID is used to mock an commit retry for adjustAutoIncrementDatum.
+	failpoint.Inject("mockCommitRetryForAutoIncID", func(val failpoint.Value) {
+		if val.(bool) && !mockAutoIncIDRetry() {
+			enableMockAutoIncIDRetry()
+			failpoint.Return(kv.ErrTxnRetryable)
+		}
+	})
+
+	failpoint.Inject("mockCommitRetryForAutoRandID", func(val failpoint.Value) {
+		if val.(bool) && needMockAutoRandIDRetry() {
+			decreaseMockAutoRandIDRetryCount()
+			failpoint.Return(kv.ErrTxnRetryable)
+		}
+	})
+
+	return st.Transaction.Commit(ctx)
 }
 
 // Rollback overrides the Transaction interface.
 func (st *TxnState) Rollback() error {
-	if st.fail != nil {
-		log.Error(errors.Trace(st.fail))
-		st.fail = nil
-	}
-	return errors.Trace(st.Transaction.Rollback())
+	defer st.reset()
+	return st.Transaction.Rollback()
+}
+
+func (st *TxnState) reset() {
+	st.doNotCommit = nil
+	st.cleanup()
+	st.changeToInvalid()
 }
 
 // Get overrides the Transaction interface.
-func (st *TxnState) Get(k kv.Key) ([]byte, error) {
-	val, err := st.buf.Get(k)
+func (st *TxnState) Get(ctx context.Context, k kv.Key) ([]byte, error) {
+	val, err := st.buf.Get(ctx, k)
 	if kv.IsErrNotFound(err) {
-		val, err = st.Transaction.Get(k)
+		val, err = st.Transaction.Get(ctx, k)
+		if kv.IsErrNotFound(err) {
+			return nil, err
+		}
 	}
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	if len(val) == 0 {
 		return nil, kv.ErrNotExist
 	}
 	return val, nil
+}
+
+// BatchGet overrides the Transaction interface.
+func (st *TxnState) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error) {
+	bufferValues := make([][]byte, len(keys))
+	shrinkKeys := make([]kv.Key, 0, len(keys))
+	for i, key := range keys {
+		val, err := st.buf.Get(ctx, key)
+		if kv.IsErrNotFound(err) {
+			shrinkKeys = append(shrinkKeys, key)
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if len(val) != 0 {
+			bufferValues[i] = val
+		}
+	}
+	storageValues, err := st.Transaction.BatchGet(ctx, shrinkKeys)
+	if err != nil {
+		return nil, err
+	}
+	for i, key := range keys {
+		if bufferValues[i] == nil {
+			continue
+		}
+		storageValues[string(key)] = bufferValues[i]
+	}
+	return storageValues, nil
 }
 
 // Set overrides the Transaction interface.
@@ -159,40 +299,93 @@ func (st *TxnState) Delete(k kv.Key) error {
 	return st.buf.Delete(k)
 }
 
-// Seek overrides the Transaction interface.
-func (st *TxnState) Seek(k kv.Key) (kv.Iterator, error) {
-	bufferIt, err := st.buf.Seek(k)
+// Iter overrides the Transaction interface.
+func (st *TxnState) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
+	bufferIt, err := st.buf.Iter(k, upperBound)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
-	retrieverIt, err := st.Transaction.Seek(k)
+	retrieverIt, err := st.Transaction.Iter(k, upperBound)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	return kv.NewUnionIter(bufferIt, retrieverIt, false)
 }
 
-// SeekReverse overrides the Transaction interface.
-func (st *TxnState) SeekReverse(k kv.Key) (kv.Iterator, error) {
-	bufferIt, err := st.buf.SeekReverse(k)
+// IterReverse overrides the Transaction interface.
+func (st *TxnState) IterReverse(k kv.Key) (kv.Iterator, error) {
+	bufferIt, err := st.buf.IterReverse(k)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
-	retrieverIt, err := st.Transaction.SeekReverse(k)
+	retrieverIt, err := st.Transaction.IterReverse(k)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	return kv.NewUnionIter(bufferIt, retrieverIt, true)
 }
 
 func (st *TxnState) cleanup() {
-	st.buf.Reset()
+	const sz4M = 4 << 20
+	if st.buf.Size() > sz4M {
+		// The memory footprint for the large transaction could be huge here.
+		// Each active session has its own buffer, we should free the buffer to
+		// avoid memory leak.
+		st.buf = kv.NewMemDbBuffer(kv.DefaultTxnMembufCap)
+	} else {
+		st.buf.Reset()
+	}
 	for key := range st.mutations {
 		delete(st.mutations, key)
 	}
 	if st.dirtyTableOP != nil {
-		st.dirtyTableOP = st.dirtyTableOP[:0]
+		empty := dirtyTableOperation{}
+		for i := 0; i < len(st.dirtyTableOP); i++ {
+			st.dirtyTableOP[i] = empty
+		}
+		if len(st.dirtyTableOP) > 256 {
+			// Reduce memory footprint for the large transaction.
+			st.dirtyTableOP = nil
+		} else {
+			st.dirtyTableOP = st.dirtyTableOP[:0]
+		}
 	}
+}
+
+// KeysNeedToLock returns the keys need to be locked.
+func (st *TxnState) KeysNeedToLock() ([]kv.Key, error) {
+	keys := make([]kv.Key, 0, st.buf.Len())
+	if err := kv.WalkMemBuffer(st.buf, func(k kv.Key, v []byte) error {
+		if !keyNeedToLock(k, v) {
+			return nil
+		}
+		// If the key is already locked, it will be deduplicated in LockKeys method later.
+		// The statement MemBuffer will be reused, so we must copy the key here.
+		keys = append(keys, append([]byte{}, k...))
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return keys, nil
+}
+
+func keyNeedToLock(k, v []byte) bool {
+	isTableKey := bytes.HasPrefix(k, tablecodec.TablePrefix())
+	if !isTableKey {
+		// meta key always need to lock.
+		return true
+	}
+	isDelete := len(v) == 0
+	if isDelete {
+		// only need to delete row key.
+		return k[10] == 'r'
+	}
+	if tablecodec.IsUntouchedIndexKValue(k, v) {
+		return false
+	}
+	isNonUniqueIndex := tablecodec.IsIndexKey(k) && len(v) == 1
+	// Put row key and unique index need to lock.
+	return !isNonUniqueIndex
 }
 
 func getBinlogMutation(ctx sessionctx.Context, tableID int64) *binlog.TableMutation {
@@ -217,62 +410,108 @@ func mergeToMutation(m1, m2 *binlog.TableMutation) {
 }
 
 func mergeToDirtyDB(dirtyDB *executor.DirtyDB, op dirtyTableOperation) {
+	dt := dirtyDB.GetDirtyTable(op.tid)
 	switch op.kind {
-	case executor.DirtyTableAddRow:
-		dirtyDB.AddRow(op.tid, op.handle, op.row)
-	case executor.DirtyTableDeleteRow:
-		dirtyDB.DeleteRow(op.tid, op.handle)
-	case executor.DirtyTableTruncate:
-		dirtyDB.TruncateTable(op.tid)
+	case table.DirtyTableAddRow:
+		dt.AddRow(op.handle)
+	case table.DirtyTableDeleteRow:
+		dt.DeleteRow(op.handle)
 	}
+}
+
+type txnFailFuture struct{}
+
+func (txnFailFuture) Wait() (uint64, error) {
+	return 0, errors.New("mock get timestamp fail")
 }
 
 // txnFuture is a promise, which promises to return a txn in future.
 type txnFuture struct {
 	future oracle.Future
 	store  kv.Storage
-	span   opentracing.Span
 }
 
 func (tf *txnFuture) wait() (kv.Transaction, error) {
 	startTS, err := tf.future.Wait()
-	tf.span.Finish()
 	if err == nil {
 		return tf.store.BeginWithStartTS(startTS)
+	} else if config.GetGlobalConfig().Store == "mocktikv" {
+		return nil, err
 	}
 
+	logutil.BgLogger().Warn("wait tso failed", zap.Error(err))
 	// It would retry get timestamp.
 	return tf.store.Begin()
 }
 
 func (s *session) getTxnFuture(ctx context.Context) *txnFuture {
-	span, ctx := opentracing.StartSpanFromContext(ctx, "session.getTxnFuture")
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("session.getTxnFuture", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
+	}
+
 	oracleStore := s.store.GetOracle()
-	tsFuture := oracleStore.GetTimestampAsync(ctx)
-	return &txnFuture{tsFuture, s.store, span}
+	var tsFuture oracle.Future
+	if s.sessionVars.LowResolutionTSO {
+		tsFuture = oracleStore.GetLowResolutionTimestampAsync(ctx)
+	} else {
+		tsFuture = oracleStore.GetTimestampAsync(ctx)
+	}
+	ret := &txnFuture{future: tsFuture, store: s.store}
+	failpoint.InjectContext(ctx, "mockGetTSFail", func() {
+		ret.future = txnFailFuture{}
+	})
+	return ret
+}
+
+// HasDirtyContent checks whether there's dirty update on the given table.
+// Put this function here is to avoid cycle import.
+func (s *session) HasDirtyContent(tid int64) bool {
+	x := s.GetSessionVars().TxnCtx.DirtyDB
+	if x == nil {
+		return false
+	}
+	return !x.(*executor.DirtyDB).GetDirtyTable(tid).IsEmpty()
 }
 
 // StmtCommit implements the sessionctx.Context interface.
-func (s *session) StmtCommit() {
-	if s.txn.fail != nil {
-		return
-	}
-
-	defer s.txn.cleanup()
-	st := &s.txn
-	err := kv.WalkMemBuffer(st.buf, func(k kv.Key, v []byte) error {
-		// gofail: var mockStmtCommitError bool
-		// if mockStmtCommitError {
-		// 	return errors.New("mock stmt commit error")
-		// }
-		if len(v) == 0 {
-			return errors.Trace(st.Transaction.Delete(k))
+func (s *session) StmtCommit(memTracker *memory.Tracker) error {
+	defer func() {
+		// If StmtCommit is called in batch mode, we need to clear the txn size
+		// in memTracker to avoid double-counting. If it's not batch mode, this
+		// work has no effect because that no more data will be appended into
+		// s.txn.
+		if memTracker != nil {
+			memTracker.Consume(int64(-s.txn.Size()))
 		}
-		return errors.Trace(st.Transaction.Set(k, v))
+		s.txn.cleanup()
+	}()
+	st := &s.txn
+	txnSize := st.Transaction.Size()
+	var count int
+	err := kv.WalkMemBuffer(st.buf, func(k kv.Key, v []byte) error {
+		failpoint.Inject("mockStmtCommitError", func(val failpoint.Value) {
+			if val.(bool) {
+				count++
+			}
+		})
+
+		if count > 3 {
+			return errors.New("mock stmt commit error")
+		}
+
+		if len(v) == 0 {
+			return st.Transaction.Delete(k)
+		}
+		return st.Transaction.Set(k, v)
 	})
 	if err != nil {
-		s.txn.fail = errors.Trace(err)
-		return
+		st.doNotCommit = err
+		return err
+	}
+	if memTracker != nil {
+		memTracker.Consume(int64(st.Transaction.Size() - txnSize))
 	}
 
 	// Need to flush binlog.
@@ -287,12 +526,12 @@ func (s *session) StmtCommit() {
 			mergeToDirtyDB(dirtyDB, op)
 		}
 	}
+	return nil
 }
 
 // StmtRollback implements the sessionctx.Context interface.
 func (s *session) StmtRollback() {
 	s.txn.cleanup()
-	return
 }
 
 // StmtGetMutation implements the sessionctx.Context interface.
@@ -304,6 +543,6 @@ func (s *session) StmtGetMutation(tableID int64) *binlog.TableMutation {
 	return st.mutations[tableID]
 }
 
-func (s *session) StmtAddDirtyTableOP(op int, tid int64, handle int64, row []types.Datum) {
-	s.txn.dirtyTableOP = append(s.txn.dirtyTableOP, dirtyTableOperation{op, tid, handle, row})
+func (s *session) StmtAddDirtyTableOP(op int, tid int64, handle int64) {
+	s.txn.dirtyTableOP = append(s.txn.dirtyTableOP, dirtyTableOperation{op, tid, handle})
 }

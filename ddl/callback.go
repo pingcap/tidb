@@ -14,11 +14,28 @@
 package ddl
 
 import (
-	"github.com/pingcap/tidb/model"
-	"golang.org/x/net/context"
+	"context"
+
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/sessionctx"
 )
 
-// Callback is the interface supporting callback function when DDL changed.
+// Interceptor is used for DDL.
+type Interceptor interface {
+	// OnGetInfoSchema is an intercept which is called in the function ddl.GetInfoSchema(). It is used in the tests.
+	OnGetInfoSchema(ctx sessionctx.Context, is infoschema.InfoSchema) infoschema.InfoSchema
+}
+
+// BaseInterceptor implements Interceptor.
+type BaseInterceptor struct{}
+
+// OnGetInfoSchema implements Interceptor.OnGetInfoSchema interface.
+func (bi *BaseInterceptor) OnGetInfoSchema(ctx sessionctx.Context, is infoschema.InfoSchema) infoschema.InfoSchema {
+	return is
+}
+
+// Callback is used for DDL.
 type Callback interface {
 	// OnChanged is called after schema is changed.
 	OnChanged(err error) error

@@ -31,7 +31,7 @@ var (
 			Subsystem: "ddl",
 			Name:      "handle_job_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) of handle jobs",
-			Buckets:   prometheus.ExponentialBuckets(0.01, 2, 20),
+			Buckets:   prometheus.ExponentialBuckets(0.01, 2, 22), // 10ms ~ 12hours
 		}, []string{LblType, LblResult})
 
 	BatchAddIdxHistogram = prometheus.NewHistogramVec(
@@ -40,7 +40,7 @@ var (
 			Subsystem: "ddl",
 			Name:      "batch_add_idx_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) of batch handle data",
-			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20),
+			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 22), // 1ms ~ 1hours
 		}, []string{LblType})
 
 	SyncerInit            = "init"
@@ -53,7 +53,7 @@ var (
 			Subsystem: "ddl",
 			Name:      "deploy_syncer_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) of deploy syncer",
-			Buckets:   prometheus.ExponentialBuckets(0.01, 2, 20),
+			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms ~ 1024s
 		}, []string{LblType, LblResult})
 
 	UpdateSelfVersionHistogram = prometheus.NewHistogramVec(
@@ -62,23 +62,27 @@ var (
 			Subsystem: "ddl",
 			Name:      "update_self_ver_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) of update self version",
-			Buckets:   prometheus.ExponentialBuckets(0.01, 2, 20),
+			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms ~ 1024s
 		}, []string{LblResult})
 
-	OwnerUpdateGlobalVersion   = "update_global_version"
-	OwnerGetGlobalVersion      = "get_global_version"
-	OwnerCheckAllVersions      = "check_all_versions"
-	OwnerHandleSyncerHistogram = prometheus.NewHistogramVec(
+	OwnerUpdateGlobalVersion    = "update_global_version"
+	OwnerGetGlobalVersion       = "get_global_version"
+	OwnerCheckAllVersions       = "check_all_versions"
+	OwnerNotifyCleanExpirePaths = "notify_clean_expire_paths"
+	OwnerCleanExpirePaths       = "clean_expire_paths"
+	OwnerCleanOneExpirePath     = "clean_an_expire_path"
+	OwnerHandleSyncerHistogram  = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "ddl",
 			Name:      "owner_handle_syncer_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) of handle syncer",
-			Buckets:   prometheus.ExponentialBuckets(0.01, 2, 20),
+			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms ~ 1024s
 		}, []string{LblType, LblResult})
 
 	// Metrics for ddl_worker.go.
 	WorkerAddDDLJob         = "add_job"
+	WorkerRunDDLJob         = "run_job"
 	WorkerFinishDDLJob      = "finish_job"
 	WorkerWaitSchemaChanged = "wait_schema_changed"
 	DDLWorkerHistogram      = prometheus.NewHistogramVec(
@@ -87,12 +91,13 @@ var (
 			Subsystem: "ddl",
 			Name:      "worker_operation_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) of ddl worker operations",
-			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20),
-		}, []string{LblType, LblResult})
+			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 22), // 1ms ~ 4096s
+		}, []string{LblType, LblAction, LblResult})
 
 	CreateDDLInstance = "create_ddl_instance"
-	CreateDDLWorker   = "create_ddl_worker"
-	IsDDLOwner        = "is_ddl_owner"
+	CreateDDL         = "create_ddl"
+	StartCleanWork    = "start_clean_work"
+	DDLOwner          = "owner"
 	DDLCounter        = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
@@ -101,24 +106,24 @@ var (
 			Help:      "Counter of creating ddl/worker and isowner.",
 		}, []string{LblType})
 
-	// DDLJobErrCounter is the counter of error occured in ddl job.
-	DDLJobErrCounter = prometheus.NewCounter(
+	AddIndexTotalCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "ddl",
-			Name:      "job_error_total",
-			Help:      "Counter of error occured in ddl job.",
+			Name:      "add_index_total",
+			Help:      "Speed of add index",
+		}, []string{LblType})
+
+	AddIndexProgress = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "ddl",
+			Name:      "add_index_percentage_progress",
+			Help:      "Percentage progress of add index",
 		})
 )
 
-func init() {
-	prometheus.MustRegister(JobsGauge)
-	prometheus.MustRegister(HandleJobHistogram)
-	prometheus.MustRegister(BatchAddIdxHistogram)
-	prometheus.MustRegister(DeploySyncerHistogram)
-	prometheus.MustRegister(UpdateSelfVersionHistogram)
-	prometheus.MustRegister(OwnerHandleSyncerHistogram)
-	prometheus.MustRegister(DDLWorkerHistogram)
-	prometheus.MustRegister(DDLCounter)
-	prometheus.MustRegister(DDLJobErrCounter)
-}
+// Label constants.
+const (
+	LblAction = "action"
+)

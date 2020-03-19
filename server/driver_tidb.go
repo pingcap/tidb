@@ -14,20 +14,25 @@
 package server
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
+	"sync/atomic"
+	"time"
 
-	"github.com/juju/errors"
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/parser/charset"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/chunk"
-	"golang.org/x/net/context"
+	"github.com/pingcap/tidb/util/sqlexec"
 )
 
 // TiDBDriver implements IDriver.
@@ -58,6 +63,7 @@ type TiDBStatement struct {
 	paramsType  []byte
 	ctx         *TiDBContext
 	rs          ResultSet
+	sql         string
 }
 
 // ID implements PreparedStatement ID method.
@@ -66,16 +72,17 @@ func (ts *TiDBStatement) ID() int {
 }
 
 // Execute implements PreparedStatement Execute method.
-func (ts *TiDBStatement) Execute(ctx context.Context, args ...interface{}) (rs ResultSet, err error) {
-	tidbRecordset, err := ts.ctx.session.ExecutePreparedStmt(ctx, ts.id, args...)
+func (ts *TiDBStatement) Execute(ctx context.Context, args []types.Datum) (rs ResultSet, err error) {
+	tidbRecordset, err := ts.ctx.session.ExecutePreparedStmt(ctx, ts.id, args)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	if tidbRecordset == nil {
 		return
 	}
 	rs = &tidbResultSet{
-		recordSet: tidbRecordset,
+		recordSet:    tidbRecordset,
+		preparedStmt: ts.ctx.GetSessionVars().PreparedStmts[ts.id].(*core.CachedPrepareStmt),
 	}
 	return
 }
@@ -85,7 +92,12 @@ func (ts *TiDBStatement) AppendParam(paramID int, data []byte) error {
 	if paramID >= len(ts.boundParams) {
 		return mysql.NewErr(mysql.ErrWrongArguments, "stmt_send_longdata")
 	}
-	ts.boundParams[paramID] = append(ts.boundParams[paramID], data...)
+	// If len(data) is 0, append an empty byte slice to the end to distinguish no data and no parameter.
+	if len(data) == 0 {
+		ts.boundParams[paramID] = []byte{}
+	} else {
+		ts.boundParams[paramID] = append(ts.boundParams[paramID], data...)
+	}
 	return nil
 }
 
@@ -144,7 +156,7 @@ func (ts *TiDBStatement) Close() error {
 	//TODO close at tidb level
 	err := ts.ctx.session.DropPreparedStmt(ts.id)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	delete(ts.ctx.stmts, int(ts.id))
 
@@ -159,12 +171,12 @@ func (ts *TiDBStatement) Close() error {
 func (qd *TiDBDriver) OpenCtx(connID uint64, capability uint32, collation uint8, dbname string, tlsState *tls.ConnectionState) (QueryCtx, error) {
 	se, err := session.CreateSession(qd.store)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	se.SetTLSState(tlsState)
 	err = se.SetCollation(int(collation))
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	se.SetClientCapability(capability)
 	se.SetConnectionID(connID)
@@ -201,14 +213,24 @@ func (tc *TiDBContext) CommitTxn(ctx context.Context) error {
 	return tc.session.CommitTxn(ctx)
 }
 
+// SetProcessInfo implements QueryCtx SetProcessInfo method.
+func (tc *TiDBContext) SetProcessInfo(sql string, t time.Time, command byte, maxExecutionTime uint64) {
+	tc.session.SetProcessInfo(sql, t, command, maxExecutionTime)
+}
+
 // RollbackTxn implements QueryCtx RollbackTxn method.
-func (tc *TiDBContext) RollbackTxn() error {
-	return tc.session.RollbackTxn(context.TODO())
+func (tc *TiDBContext) RollbackTxn() {
+	tc.session.RollbackTxn(context.TODO())
 }
 
 // AffectedRows implements QueryCtx AffectedRows method.
 func (tc *TiDBContext) AffectedRows() uint64 {
 	return tc.session.AffectedRows()
+}
+
+// LastMessage implements QueryCtx LastMessage method.
+func (tc *TiDBContext) LastMessage() string {
+	return tc.session.LastMessage()
 }
 
 // CurrentDB implements QueryCtx CurrentDB method.
@@ -269,7 +291,7 @@ func (tc *TiDBContext) Auth(user *auth.UserIdentity, auth []byte, salt []byte) b
 func (tc *TiDBContext) FieldList(table string) (columns []*ColumnInfo, err error) {
 	fields, err := tc.session.FieldList(table)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	columns = make([]*ColumnInfo, 0, len(fields))
 	for _, f := range fields {
@@ -294,6 +316,7 @@ func (tc *TiDBContext) Prepare(sql string) (statement PreparedStatement, columns
 		return
 	}
 	stmt := &TiDBStatement{
+		sql:         sql,
 		id:          stmtID,
 		numParams:   paramCount,
 		boundParams: make([][]byte, paramCount),
@@ -315,23 +338,34 @@ func (tc *TiDBContext) Prepare(sql string) (statement PreparedStatement, columns
 }
 
 // ShowProcess implements QueryCtx ShowProcess method.
-func (tc *TiDBContext) ShowProcess() util.ProcessInfo {
+func (tc *TiDBContext) ShowProcess() *util.ProcessInfo {
 	return tc.session.ShowProcess()
 }
 
+// SetCommandValue implements QueryCtx SetCommandValue method.
+func (tc *TiDBContext) SetCommandValue(command byte) {
+	tc.session.SetCommandValue(command)
+}
+
+// GetSessionVars return SessionVars.
+func (tc *TiDBContext) GetSessionVars() *variable.SessionVars {
+	return tc.session.GetSessionVars()
+}
+
 type tidbResultSet struct {
-	recordSet ast.RecordSet
-	columns   []*ColumnInfo
-	rows      []chunk.Row
-	closed    bool
+	recordSet    sqlexec.RecordSet
+	columns      []*ColumnInfo
+	rows         []chunk.Row
+	closed       int32
+	preparedStmt *core.CachedPrepareStmt
 }
 
 func (trs *tidbResultSet) NewChunk() *chunk.Chunk {
 	return trs.recordSet.NewChunk()
 }
 
-func (trs *tidbResultSet) Next(ctx context.Context, chk *chunk.Chunk) error {
-	return trs.recordSet.Next(ctx, chk)
+func (trs *tidbResultSet) Next(ctx context.Context, req *chunk.Chunk) error {
+	return trs.recordSet.Next(ctx, req)
 }
 
 func (trs *tidbResultSet) StoreFetchedRows(rows []chunk.Row) {
@@ -346,34 +380,60 @@ func (trs *tidbResultSet) GetFetchedRows() []chunk.Row {
 }
 
 func (trs *tidbResultSet) Close() error {
-	if trs.closed {
+	if !atomic.CompareAndSwapInt32(&trs.closed, 0, 1) {
 		return nil
 	}
-	trs.closed = true
-	return trs.recordSet.Close()
+	err := trs.recordSet.Close()
+	trs.recordSet = nil
+	return err
+}
+
+// OnFetchReturned implements fetchNotifier#OnFetchReturned
+func (trs *tidbResultSet) OnFetchReturned() {
+	if cl, ok := trs.recordSet.(fetchNotifier); ok {
+		cl.OnFetchReturned()
+	}
 }
 
 func (trs *tidbResultSet) Columns() []*ColumnInfo {
+	if trs.columns != nil {
+		return trs.columns
+	}
+	// for prepare statement, try to get cached columnInfo array
+	if trs.preparedStmt != nil {
+		ps := trs.preparedStmt
+		if colInfos, ok := ps.ColumnInfos.([]*ColumnInfo); ok {
+			trs.columns = colInfos
+		}
+	}
 	if trs.columns == nil {
 		fields := trs.recordSet.Fields()
 		for _, v := range fields {
 			trs.columns = append(trs.columns, convertColumnInfo(v))
+		}
+		if trs.preparedStmt != nil {
+			// if ColumnInfo struct has allocated object,
+			// here maybe we need deep copy ColumnInfo to do caching
+			trs.preparedStmt.ColumnInfos = trs.columns
 		}
 	}
 	return trs.columns
 }
 
 func convertColumnInfo(fld *ast.ResultField) (ci *ColumnInfo) {
-	ci = new(ColumnInfo)
-	ci.Name = fld.ColumnAsName.O
-	ci.OrgName = fld.Column.Name.O
-	ci.Table = fld.TableAsName.O
+	ci = &ColumnInfo{
+		Name:    fld.ColumnAsName.O,
+		OrgName: fld.Column.Name.O,
+		Table:   fld.TableAsName.O,
+		Schema:  fld.DBName.O,
+		Flag:    uint16(fld.Column.Flag),
+		Charset: uint16(mysql.CharsetNameToID(fld.Column.Charset)),
+		Type:    fld.Column.Tp,
+	}
+
 	if fld.Table != nil {
 		ci.OrgTable = fld.Table.Name.O
 	}
-	ci.Schema = fld.DBName.O
-	ci.Flag = uint16(fld.Column.Flag)
-	ci.Charset = uint16(mysql.CharsetIDs[fld.Column.Charset])
 	if fld.Column.Flen == types.UnspecifiedLength {
 		ci.ColumnLength = 0
 	} else {
@@ -382,11 +442,11 @@ func convertColumnInfo(fld *ast.ResultField) (ci *ColumnInfo) {
 	if fld.Column.Tp == mysql.TypeNewDecimal {
 		// Consider the negative sign.
 		ci.ColumnLength++
-		if fld.Column.Decimal > types.DefaultFsp {
+		if fld.Column.Decimal > int(types.DefaultFsp) {
 			// Consider the decimal point.
 			ci.ColumnLength++
 		}
-	} else if fld.Column.Tp != mysql.TypeBit && fld.Column.Tp != mysql.TypeTiny {
+	} else if types.IsString(fld.Column.Tp) {
 		// Fix issue #4540.
 		// The flen is a hint, not a precise value, so most client will not use the value.
 		// But we found in rare MySQL client, like Navicat for MySQL(version before 12) will truncate
@@ -397,16 +457,25 @@ func convertColumnInfo(fld *ast.ResultField) (ci *ColumnInfo) {
 		// * gb2312, the multiple is 2
 		// * Utf-8, the multiple is 3
 		// * utf8mb4, the multiple is 4
-		// So the large enough multiple is 4 in here.
-		ci.ColumnLength = ci.ColumnLength * mysql.MaxBytesOfCharacter
+		// We used to check non-string types to avoid the truncation problem in some MySQL
+		// client such as Navicat. Now we only allow string type enter this branch.
+		charsetDesc, err := charset.GetCharsetDesc(fld.Column.Charset)
+		if err != nil {
+			ci.ColumnLength = ci.ColumnLength * 4
+		} else {
+			ci.ColumnLength = ci.ColumnLength * uint32(charsetDesc.Maxlen)
+		}
 	}
 
 	if fld.Column.Decimal == types.UnspecifiedLength {
-		ci.Decimal = mysql.NotFixedDec
+		if fld.Column.Tp == mysql.TypeDuration {
+			ci.Decimal = uint8(types.DefaultFsp)
+		} else {
+			ci.Decimal = mysql.NotFixedDec
+		}
 	} else {
 		ci.Decimal = uint8(fld.Column.Decimal)
 	}
-	ci.Type = fld.Column.Tp
 
 	// Keep things compatible for old clients.
 	// Refer to mysql-server/sql/protocol.cc send_result_set_metadata()

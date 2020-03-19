@@ -14,10 +14,13 @@
 package aggregation
 
 import (
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -49,6 +52,10 @@ func AggFuncToPBExpr(sc *stmtctx.StatementContext, client kv.Client, aggFunc *Ag
 		tp = tipb.ExprType_Agg_BitXor
 	case ast.AggFuncBitAnd:
 		tp = tipb.ExprType_Agg_BitAnd
+	case ast.AggFuncVarPop:
+		tp = tipb.ExprType_VarPop
+	case ast.AggFuncJsonObjectAgg:
+		tp = tipb.ExprType_JsonObjectAgg
 	}
 	if !client.IsRequestTypeSupported(kv.ReqTypeSelect, int64(tp)) {
 		return nil
@@ -62,5 +69,50 @@ func AggFuncToPBExpr(sc *stmtctx.StatementContext, client kv.Client, aggFunc *Ag
 		}
 		children = append(children, pbArg)
 	}
-	return &tipb.Expr{Tp: tp, Children: children}
+	return &tipb.Expr{Tp: tp, Children: children, FieldType: expression.ToPBFieldType(aggFunc.RetTp)}
+}
+
+// PBExprToAggFuncDesc converts pb to aggregate function.
+func PBExprToAggFuncDesc(ctx sessionctx.Context, aggFunc *tipb.Expr, fieldTps []*types.FieldType) (*AggFuncDesc, error) {
+	var name string
+	switch aggFunc.Tp {
+	case tipb.ExprType_Count:
+		name = ast.AggFuncCount
+	case tipb.ExprType_First:
+		name = ast.AggFuncFirstRow
+	case tipb.ExprType_GroupConcat:
+		name = ast.AggFuncGroupConcat
+	case tipb.ExprType_Max:
+		name = ast.AggFuncMax
+	case tipb.ExprType_Min:
+		name = ast.AggFuncMin
+	case tipb.ExprType_Sum:
+		name = ast.AggFuncSum
+	case tipb.ExprType_Avg:
+		name = ast.AggFuncAvg
+	case tipb.ExprType_Agg_BitOr:
+		name = ast.AggFuncBitOr
+	case tipb.ExprType_Agg_BitXor:
+		name = ast.AggFuncBitXor
+	case tipb.ExprType_Agg_BitAnd:
+		name = ast.AggFuncBitAnd
+	default:
+		return nil, errors.Errorf("unknown aggregation function type: %v", aggFunc.Tp)
+	}
+
+	args, err := expression.PBToExprs(aggFunc.Children, fieldTps, ctx.GetSessionVars().StmtCtx)
+	if err != nil {
+		return nil, err
+	}
+	base := baseFuncDesc{
+		Name:  name,
+		Args:  args,
+		RetTp: expression.FieldTypeFromPB(aggFunc.FieldType),
+	}
+	base.WrapCastForAggArgs(ctx)
+	return &AggFuncDesc{
+		baseFuncDesc: base,
+		Mode:         Partial1Mode,
+		HasDistinct:  false,
+	}, nil
 }

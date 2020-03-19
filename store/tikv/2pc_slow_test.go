@@ -17,6 +17,7 @@ package tikv
 
 import . "github.com/pingcap/check"
 
+// TestCommitMultipleRegions tests commit multiple regions.
 // The test takes too long under the race detector.
 func (s *testCommitterSuite) TestCommitMultipleRegions(c *C) {
 	m := make(map[string]string)

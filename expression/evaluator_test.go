@@ -14,52 +14,77 @@
 package expression
 
 import (
+	"sync/atomic"
 	"testing"
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/parser"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/charset"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/charset"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 )
 
+var _ = SerialSuites(&testEvaluatorSerialSuites{})
 var _ = Suite(&testEvaluatorSuite{})
+var _ = Suite(&testVectorizeSuite1{})
+var _ = Suite(&testVectorizeSuite2{})
 
 func TestT(t *testing.T) {
+	testleak.BeforeTest()
+	defer testleak.AfterTestT(t)
+
 	CustomVerboseFlag = true
+	*CustomParallelSuiteFlag = true
 	TestingT(t)
 }
 
-type testEvaluatorSuite struct {
+type testEvaluatorSuiteBase struct {
 	*parser.Parser
 	ctx sessionctx.Context
 }
 
-func (s *testEvaluatorSuite) SetUpSuite(c *C) {
+type testEvaluatorSuite struct {
+	testEvaluatorSuiteBase
+}
+
+type testVectorizeSuite1 struct {
+	testEvaluatorSuiteBase
+}
+
+type testVectorizeSuite2 struct {
+	testEvaluatorSuiteBase
+}
+
+type testEvaluatorSerialSuites struct {
+	testEvaluatorSuiteBase
+}
+
+func (s *testEvaluatorSuiteBase) SetUpSuite(c *C) {
 	s.Parser = parser.New()
 	s.ctx = mock.NewContext()
 	s.ctx.GetSessionVars().StmtCtx.TimeZone = time.Local
+	s.ctx.GetSessionVars().SetSystemVar("max_allowed_packet", "67108864")
 }
 
-func (s *testEvaluatorSuite) TearDownSuite(c *C) {
+func (s *testEvaluatorSuiteBase) TearDownSuite(c *C) {
 }
 
-func (s *testEvaluatorSuite) SetUpTest(c *C) {
-	testleak.BeforeTest()
+func (s *testEvaluatorSuiteBase) SetUpTest(c *C) {
+	s.ctx.GetSessionVars().PlanColumnID = 0
 }
 
-func (s *testEvaluatorSuite) TearDownTest(c *C) {
-	testleak.AfterTest(c)()
+func (s *testEvaluatorSuiteBase) TearDownTest(c *C) {
+	s.ctx.GetSessionVars().StmtCtx.SetWarnings(nil)
 }
 
-func (s *testEvaluatorSuite) kindToFieldType(kind byte) types.FieldType {
+func (s *testEvaluatorSuiteBase) kindToFieldType(kind byte) types.FieldType {
 	ft := types.FieldType{}
 	switch kind {
 	case types.KindNull:
@@ -99,24 +124,30 @@ func (s *testEvaluatorSuite) kindToFieldType(kind byte) types.FieldType {
 		ft.Collate = charset.CollationBin
 	case types.KindMysqlBit:
 		ft.Tp = mysql.TypeBit
+	case types.KindMysqlJSON:
+		ft.Tp = mysql.TypeJSON
 	}
 	return ft
 }
 
-func (s *testEvaluatorSuite) datumsToConstants(datums []types.Datum) []Expression {
+func (s *testEvaluatorSuiteBase) datumsToConstants(datums []types.Datum) []Expression {
 	constants := make([]Expression, 0, len(datums))
 	for _, d := range datums {
 		ft := s.kindToFieldType(d.Kind())
+		if types.IsNonBinaryStr(&ft) {
+			ft.Collate = d.Collation()
+		}
 		ft.Flen, ft.Decimal = types.UnspecifiedLength, types.UnspecifiedLength
 		constants = append(constants, &Constant{Value: d, RetType: &ft})
 	}
 	return constants
 }
 
-func (s *testEvaluatorSuite) primitiveValsToConstants(args []interface{}) []Expression {
+func (s *testEvaluatorSuiteBase) primitiveValsToConstants(args []interface{}) []Expression {
 	cons := s.datumsToConstants(types.MakeDatums(args...))
+	char, col := s.ctx.GetSessionVars().GetCharsetInfo()
 	for i, arg := range args {
-		types.DefaultTypeForValue(arg, cons[i].GetType())
+		types.DefaultTypeForValue(arg, cons[i].GetType(), char, col)
 	}
 	return cons
 }
@@ -131,14 +162,14 @@ func (s *testEvaluatorSuite) TestSleep(c *C) {
 	d := make([]types.Datum, 1)
 	f, err := fc.getFunction(ctx, s.datumsToConstants(d))
 	c.Assert(err, IsNil)
-	ret, isNull, err := f.evalInt(nil)
+	ret, isNull, err := f.evalInt(chunk.Row{})
 	c.Assert(err, IsNil)
-	c.Assert(isNull, IsTrue)
+	c.Assert(isNull, IsFalse)
 	c.Assert(ret, Equals, int64(0))
 	d[0].SetInt64(-1)
 	f, err = fc.getFunction(ctx, s.datumsToConstants(d))
 	c.Assert(err, IsNil)
-	ret, isNull, err = f.evalInt(nil)
+	ret, isNull, err = f.evalInt(chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(isNull, IsFalse)
 	c.Assert(ret, Equals, int64(0))
@@ -148,13 +179,13 @@ func (s *testEvaluatorSuite) TestSleep(c *C) {
 	d[0].SetNull()
 	_, err = fc.getFunction(ctx, s.datumsToConstants(d))
 	c.Assert(err, IsNil)
-	ret, isNull, err = f.evalInt(nil)
+	_, isNull, err = f.evalInt(chunk.Row{})
 	c.Assert(err, NotNil)
 	c.Assert(isNull, IsFalse)
 	d[0].SetFloat64(-2.5)
 	_, err = fc.getFunction(ctx, s.datumsToConstants(d))
 	c.Assert(err, IsNil)
-	ret, isNull, err = f.evalInt(nil)
+	_, isNull, err = f.evalInt(chunk.Row{})
 	c.Assert(err, NotNil)
 	c.Assert(isNull, IsFalse)
 
@@ -163,30 +194,28 @@ func (s *testEvaluatorSuite) TestSleep(c *C) {
 	start := time.Now()
 	f, err = fc.getFunction(ctx, s.datumsToConstants(d))
 	c.Assert(err, IsNil)
-	ret, isNull, err = f.evalInt(nil)
+	ret, isNull, err = f.evalInt(chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(isNull, IsFalse)
 	c.Assert(ret, Equals, int64(0))
 	sub := time.Since(start)
 	c.Assert(sub.Nanoseconds(), GreaterEqual, int64(0.5*1e9))
 
-	// quit when context canceled.
-	// TODO: recover it.
-	// d[0].SetFloat64(2)
-	// f, err = fc.getFunction(ctx, s.datumsToConstants(d))
-	// c.Assert(err, IsNil)
-	// start = time.Now()
-	// go func() {
-	// 	time.Sleep(1 * time.Second)
-	// 	ctx.Cancel()
-	// }()
-	// ret, isNull, err = f.evalInt(nil)
-	// sub = time.Since(start)
-	// c.Assert(err, IsNil)
-	// c.Assert(isNull, IsFalse)
-	// c.Assert(ret, Equals, int64(1))
-	// c.Assert(sub.Nanoseconds(), LessEqual, int64(2*1e9))
-	// c.Assert(sub.Nanoseconds(), GreaterEqual, int64(1*1e9))
+	d[0].SetFloat64(3)
+	f, err = fc.getFunction(ctx, s.datumsToConstants(d))
+	c.Assert(err, IsNil)
+	start = time.Now()
+	go func() {
+		time.Sleep(1 * time.Second)
+		atomic.CompareAndSwapUint32(&ctx.GetSessionVars().Killed, 0, 1)
+	}()
+	ret, isNull, err = f.evalInt(chunk.Row{})
+	sub = time.Since(start)
+	c.Assert(err, IsNil)
+	c.Assert(isNull, IsFalse)
+	c.Assert(ret, Equals, int64(1))
+	c.Assert(sub.Nanoseconds(), LessEqual, int64(2*1e9))
+	c.Assert(sub.Nanoseconds(), GreaterEqual, int64(1*1e9))
 }
 
 func (s *testEvaluatorSuite) TestBinopComparison(c *C) {
@@ -229,7 +258,7 @@ func (s *testEvaluatorSuite) TestBinopComparison(c *C) {
 		fc := funcs[t.op]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(t.lhs, t.rhs)))
 		c.Assert(err, IsNil)
-		v, err := evalBuiltinFunc(f, nil)
+		v, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		val, err := v.ToBool(s.ctx.GetSessionVars().StmtCtx)
 		c.Assert(err, IsNil)
@@ -260,7 +289,7 @@ func (s *testEvaluatorSuite) TestBinopComparison(c *C) {
 		fc := funcs[t.op]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(t.lhs, t.rhs)))
 		c.Assert(err, IsNil)
-		v, err := evalBuiltinFunc(f, nil)
+		v, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		c.Assert(v.Kind(), Equals, types.KindNull)
 	}
@@ -293,7 +322,7 @@ func (s *testEvaluatorSuite) TestBinopLogic(c *C) {
 		fc := funcs[t.op]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(t.lhs, t.rhs)))
 		c.Assert(err, IsNil)
-		v, err := evalBuiltinFunc(f, nil)
+		v, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		switch x := t.ret.(type) {
 		case nil:
@@ -305,7 +334,6 @@ func (s *testEvaluatorSuite) TestBinopLogic(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestBinopBitop(c *C) {
-	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		lhs interface{}
 		op  string
@@ -329,7 +357,7 @@ func (s *testEvaluatorSuite) TestBinopBitop(c *C) {
 		fc := funcs[t.op]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(t.lhs, t.rhs)))
 		c.Assert(err, IsNil)
-		v, err := evalBuiltinFunc(f, nil)
+		v, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 
 		switch x := t.ret.(type) {
@@ -342,7 +370,6 @@ func (s *testEvaluatorSuite) TestBinopBitop(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestBinopNumeric(c *C) {
-	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		lhs interface{}
 		op  string
@@ -379,10 +406,10 @@ func (s *testEvaluatorSuite) TestBinopNumeric(c *C) {
 		{1, ast.Mul, types.NewDecFromInt(1), 1},
 		{uint64(1), ast.Mul, 1, 1},
 		{uint64(1), ast.Mul, uint64(1), 1},
-		{types.Time{Time: types.FromDate(0, 0, 0, 0, 0, 0, 0)}, ast.Mul, 0, 0},
+		{types.NewTime(types.FromDate(0, 0, 0, 0, 0, 0, 0), 0, 0), ast.Mul, 0, 0},
 		{types.ZeroDuration, ast.Mul, 0, 0},
-		{types.Time{Time: types.FromGoTime(time.Now()), Fsp: 0, Type: mysql.TypeDatetime}, ast.Mul, 0, 0},
-		{types.Time{Time: types.FromGoTime(time.Now()), Fsp: 6, Type: mysql.TypeDatetime}, ast.Mul, 0, 0},
+		{types.NewTime(types.FromGoTime(time.Now()), mysql.TypeDatetime, 0), ast.Mul, 0, 0},
+		{types.NewTime(types.FromGoTime(time.Now()), mysql.TypeDatetime, 6), ast.Mul, 0, 0},
 		{types.Duration{Duration: 100000000, Fsp: 6}, ast.Mul, 0, 0},
 
 		// div
@@ -423,7 +450,7 @@ func (s *testEvaluatorSuite) TestBinopNumeric(c *C) {
 		fc := funcs[t.op]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(t.lhs, t.rhs)))
 		c.Assert(err, IsNil)
-		v, err := evalBuiltinFunc(f, nil)
+		v, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		switch v.Kind() {
 		case types.KindNull:
@@ -472,7 +499,7 @@ func (s *testEvaluatorSuite) TestBinopNumeric(c *C) {
 		fc := funcs[t.op]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(t.lhs, t.rhs)))
 		c.Assert(err, IsNil)
-		_, err = evalBuiltinFunc(f, nil)
+		_, err = evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, NotNil)
 	}
 
@@ -482,7 +509,7 @@ func (s *testEvaluatorSuite) TestBinopNumeric(c *C) {
 		fc := funcs[t.op]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(t.lhs, t.rhs)))
 		c.Assert(err, IsNil)
-		v, err := evalBuiltinFunc(f, nil)
+		v, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		c.Assert(v.Kind(), Equals, types.KindNull)
 	}
@@ -494,7 +521,6 @@ func (s *testEvaluatorSuite) TestBinopNumeric(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestExtract(c *C) {
-	defer testleak.AfterTest(c)()
 	str := "2011-11-11 10:10:10.123456"
 	tbl := []struct {
 		Unit   string
@@ -525,7 +551,7 @@ func (s *testEvaluatorSuite) TestExtract(c *C) {
 		fc := funcs[ast.Extract]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(t.Unit, str)))
 		c.Assert(err, IsNil)
-		v, err := evalBuiltinFunc(f, nil)
+		v, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, types.NewDatum(t.Expect))
 	}
@@ -534,73 +560,12 @@ func (s *testEvaluatorSuite) TestExtract(c *C) {
 	fc := funcs[ast.Extract]
 	f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums("SECOND", nil)))
 	c.Assert(err, IsNil)
-	v, err := evalBuiltinFunc(f, nil)
+	v, err := evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(v.Kind(), Equals, types.KindNull)
 }
 
-func (s *testEvaluatorSuite) TestLike(c *C) {
-	defer testleak.AfterTest(c)()
-	tests := []struct {
-		input   string
-		pattern string
-		match   int
-	}{
-		{"a", "", 0},
-		{"a", "a", 1},
-		{"a", "b", 0},
-		{"aA", "Aa", 0},
-		{"aAb", `Aa%`, 0},
-		{"aAb", "aA_", 1},
-	}
-	for _, tt := range tests {
-		fc := funcs[ast.Like]
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tt.input, tt.pattern, 0)))
-		c.Assert(err, IsNil)
-		r, err := evalBuiltinFunc(f, nil)
-		c.Assert(err, IsNil)
-		c.Assert(r, testutil.DatumEquals, types.NewDatum(tt.match))
-	}
-}
-
-func (s *testEvaluatorSuite) TestRegexp(c *C) {
-	defer testleak.AfterTest(c)()
-	tests := []struct {
-		pattern string
-		input   string
-		match   int64
-		err     error
-	}{
-		{"^$", "a", 0, nil},
-		{"a", "a", 1, nil},
-		{"a", "b", 0, nil},
-		{"aA", "aA", 1, nil},
-		{".", "a", 1, nil},
-		{"^.$", "ab", 0, nil},
-		{"..", "b", 0, nil},
-		{".ab", "aab", 1, nil},
-		{".*", "abcd", 1, nil},
-		{"(", "", 0, ErrRegexp},
-		{"(*", "", 0, ErrRegexp},
-		{"[a", "", 0, ErrRegexp},
-		{"\\", "", 0, ErrRegexp},
-	}
-	for _, tt := range tests {
-		fc := funcs[ast.Regexp]
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tt.input, tt.pattern)))
-		c.Assert(err, IsNil)
-		match, err := evalBuiltinFunc(f, nil)
-		if tt.err == nil {
-			c.Assert(err, IsNil)
-			c.Assert(match, testutil.DatumEquals, types.NewDatum(tt.match), Commentf("%v", tt))
-		} else {
-			c.Assert(terror.ErrorEqual(err, tt.err), IsTrue)
-		}
-	}
-}
-
 func (s *testEvaluatorSuite) TestUnaryOp(c *C) {
-	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		arg    interface{}
 		op     string
@@ -637,7 +602,7 @@ func (s *testEvaluatorSuite) TestUnaryOp(c *C) {
 		fc := funcs[t.op]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(t.arg)))
 		c.Assert(err, IsNil)
-		result, err := evalBuiltinFunc(f, nil)
+		result, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		c.Assert(result, testutil.DatumEquals, types.NewDatum(t.result), Commentf("%d", i))
 	}
@@ -649,7 +614,7 @@ func (s *testEvaluatorSuite) TestUnaryOp(c *C) {
 	}{
 		{types.NewDecFromInt(1), ast.UnaryMinus, types.NewDecFromInt(-1)},
 		{types.ZeroDuration, ast.UnaryMinus, new(types.MyDecimal)},
-		{types.Time{Time: types.FromGoTime(time.Date(2009, time.November, 10, 23, 0, 0, 0, time.UTC)), Type: mysql.TypeDatetime, Fsp: 0}, ast.UnaryMinus, types.NewDecFromInt(-20091110230000)},
+		{types.NewTime(types.FromGoTime(time.Date(2009, time.November, 10, 23, 0, 0, 0, time.UTC)), mysql.TypeDatetime, 0), ast.UnaryMinus, types.NewDecFromInt(-20091110230000)},
 	}
 
 	for _, t := range tbl {
@@ -657,7 +622,7 @@ func (s *testEvaluatorSuite) TestUnaryOp(c *C) {
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(t.arg)))
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
-		result, err := evalBuiltinFunc(f, nil)
+		result, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 
 		expect := types.NewDatum(t.result)
@@ -671,17 +636,17 @@ func (s *testEvaluatorSuite) TestMod(c *C) {
 	fc := funcs[ast.Mod]
 	f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(234, 10)))
 	c.Assert(err, IsNil)
-	r, err := evalBuiltinFunc(f, nil)
+	r, err := evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(r, testutil.DatumEquals, types.NewIntDatum(4))
 	f, err = fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(29, 9)))
 	c.Assert(err, IsNil)
-	r, err = evalBuiltinFunc(f, nil)
+	r, err = evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(r, testutil.DatumEquals, types.NewIntDatum(2))
 	f, err = fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(34.5, 3)))
 	c.Assert(err, IsNil)
-	r, err = evalBuiltinFunc(f, nil)
+	r, err = evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(r, testutil.DatumEquals, types.NewDatum(1.5))
 }

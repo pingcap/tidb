@@ -14,6 +14,7 @@
 package session
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"sync"
@@ -21,43 +22,34 @@ import (
 	"testing"
 	"time"
 
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testleak"
-	"golang.org/x/net/context"
-	"google.golang.org/grpc"
 )
 
 func TestT(t *testing.T) {
 	logLevel := os.Getenv("log_level")
-	logutil.InitLogger(&logutil.LogConfig{
-		Level: logLevel,
-	})
+	logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
 	CustomVerboseFlag = true
+	SetSchemaLease(20 * time.Millisecond)
 	TestingT(t)
 }
 
 var _ = Suite(&testMainSuite{})
+var _ = SerialSuites(&testBootstrapSuite{})
 
 type testMainSuite struct {
 	dbName string
 	store  kv.Storage
 	dom    *domain.Domain
-}
-
-type brokenStore struct{}
-
-func (s *brokenStore) Open(schema string) (kv.Storage, error) {
-	return nil, errors.New("try again later")
 }
 
 func (s *testMainSuite) SetUpSuite(c *C) {
@@ -77,71 +69,10 @@ func (s *testMainSuite) TearDownSuite(c *C) {
 	removeStore(c, s.dbName)
 }
 
-// Testcase for arg type.
-func (s *testMainSuite) TestCheckArgs(c *C) {
-	checkArgs(nil, true, false, int8(1), int16(1), int32(1), int64(1), 1,
-		uint8(1), uint16(1), uint32(1), uint64(1), uint(1), float32(1), float64(1),
-		"abc", []byte("abc"), time.Now(), time.Hour, time.Local)
-}
-
-func (s *testMainSuite) TestIsQuery(c *C) {
-	tbl := []struct {
-		sql string
-		ok  bool
-	}{
-		{"/*comment*/ select 1;", true},
-		{"/*comment*/ /*comment*/ select 1;", true},
-		{"select /*comment*/ 1 /*comment*/;", true},
-		{"(select /*comment*/ 1 /*comment*/);", true},
-	}
-	for _, t := range tbl {
-		c.Assert(IsQuery(t.sql), Equals, t.ok, Commentf(t.sql))
-	}
-}
-
-func (s *testMainSuite) TestTrimSQL(c *C) {
-	tbl := []struct {
-		sql    string
-		target string
-	}{
-		{"/*comment*/ select 1; ", "select 1;"},
-		{"/*comment*/ /*comment*/ select 1;", "select 1;"},
-		{"select /*comment*/ 1 /*comment*/;", "select /*comment*/ 1 /*comment*/;"},
-		{"/*comment select 1; ", "/*comment select 1;"},
-	}
-	for _, t := range tbl {
-		c.Assert(trimSQL(t.sql), Equals, t.target, Commentf(t.sql))
-	}
-}
-
-func (s *testMainSuite) TestRetryOpenStore(c *C) {
-	begin := time.Now()
-	RegisterStore("dummy", &brokenStore{})
-	_, err := newStoreWithRetry("dummy://dummy-store", 3)
-	c.Assert(err, NotNil)
-	elapse := time.Since(begin)
-	c.Assert(uint64(elapse), GreaterEqual, uint64(3*time.Second))
-}
-
-func (s *testMainSuite) TestRetryDialPumpClient(c *C) {
-	retryDialPumpClientMustFail := func(binlogSocket string, clientCon *grpc.ClientConn, maxRetries int, dialerOpt grpc.DialOption) (err error) {
-		return util.RunWithRetry(maxRetries, 10, func() (bool, error) {
-			// Assume that it'll always return an error.
-			return true, errors.New("must fail")
-		})
-	}
-	begin := time.Now()
-	err := retryDialPumpClientMustFail("", nil, 3, nil)
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "must fail")
-	elapse := time.Since(begin)
-	c.Assert(uint64(elapse), GreaterEqual, uint64(6*10*time.Millisecond))
-}
-
 func (s *testMainSuite) TestSysSessionPoolGoroutineLeak(c *C) {
 	store, dom := newStoreWithBootstrap(c, s.dbName+"goroutine_leak")
-	defer dom.Close()
 	defer store.Close()
+	defer dom.Close()
 	se, err := createSession(store)
 	c.Assert(err, IsNil)
 
@@ -152,57 +83,24 @@ func (s *testMainSuite) TestSysSessionPoolGoroutineLeak(c *C) {
 	wg.Add(count)
 	for i := 0; i < count; i++ {
 		go func(se *session) {
-			_, _, err := se.ExecRestrictedSQL(se, "select * from mysql.user limit 1")
+			_, _, err := se.ExecRestrictedSQL("select * from mysql.user limit 1")
 			c.Assert(err, IsNil)
 			wg.Done()
 		}(se)
 	}
 	wg.Wait()
-	se.sysSessionPool().Close()
-	c.Assert(se.sysSessionPool().IsClosed(), Equals, true)
 }
 
-func (s *testMainSuite) TestSchemaCheckerSimple(c *C) {
-	lease := 5 * time.Millisecond
-	validator := domain.NewSchemaValidator(lease)
-	checker := &schemaLeaseChecker{SchemaValidator: validator}
+func (s *testMainSuite) TestParseErrorWarn(c *C) {
+	ctx := core.MockContext()
 
-	// Add some schema versions and delta table IDs.
-	ts := uint64(time.Now().UnixNano())
-	validator.Update(ts, 0, 2, []int64{1})
-	validator.Update(ts, 2, 4, []int64{2})
-
-	// checker's schema version is the same as the current schema version.
-	checker.schemaVer = 4
-	err := checker.Check(ts)
+	nodes, err := Parse(ctx, "select /*+ adf */ 1")
 	c.Assert(err, IsNil)
+	c.Assert(len(nodes), Equals, 1)
+	c.Assert(len(ctx.GetSessionVars().StmtCtx.GetWarnings()), Equals, 1)
 
-	// checker's schema version is less than the current schema version, and it doesn't exist in validator's items.
-	// checker's related table ID isn't in validator's changed table IDs.
-	checker.schemaVer = 2
-	checker.relatedTableIDs = []int64{3}
-	err = checker.Check(ts)
-	c.Assert(err, IsNil)
-	// The checker's schema version isn't in validator's items.
-	checker.schemaVer = 1
-	checker.relatedTableIDs = []int64{3}
-	err = checker.Check(ts)
-	c.Assert(terror.ErrorEqual(err, domain.ErrInfoSchemaChanged), IsTrue)
-	// checker's related table ID is in validator's changed table IDs.
-	checker.relatedTableIDs = []int64{2}
-	err = checker.Check(ts)
-	c.Assert(terror.ErrorEqual(err, domain.ErrInfoSchemaChanged), IsTrue)
-
-	// validator's latest schema version is expired.
-	time.Sleep(lease + time.Microsecond)
-	checker.schemaVer = 4
-	checker.relatedTableIDs = []int64{3}
-	err = checker.Check(ts)
-	c.Assert(err, IsNil)
-	nowTS := uint64(time.Now().UnixNano())
-	// Use checker.SchemaValidator.Check instead of checker.Check here because backoff make CI slow.
-	result := checker.SchemaValidator.Check(nowTS, checker.schemaVer, checker.relatedTableIDs)
-	c.Assert(result, Equals, domain.ResultUnknown)
+	_, err = Parse(ctx, "select")
+	c.Assert(err, NotNil)
 }
 
 func newStore(c *C, dbPath string) kv.Storage {
@@ -236,7 +134,7 @@ func removeStore(c *C, dbPath string) {
 	os.RemoveAll(dbPath)
 }
 
-func exec(se Session, sql string, args ...interface{}) (ast.RecordSet, error) {
+func exec(se Session, sql string, args ...interface{}) (sqlexec.RecordSet, error) {
 	ctx := context.Background()
 	if len(args) == 0 {
 		rs, err := se.Execute(ctx, sql)
@@ -249,14 +147,18 @@ func exec(se Session, sql string, args ...interface{}) (ast.RecordSet, error) {
 	if err != nil {
 		return nil, err
 	}
-	rs, err := se.ExecutePreparedStmt(ctx, stmtID, args...)
+	params := make([]types.Datum, len(args))
+	for i := 0; i < len(params); i++ {
+		params[i] = types.NewDatum(args[i])
+	}
+	rs, err := se.ExecutePreparedStmt(ctx, stmtID, params)
 	if err != nil {
 		return nil, err
 	}
 	return rs, nil
 }
 
-func mustExecSQL(c *C, se Session, sql string, args ...interface{}) ast.RecordSet {
+func mustExecSQL(c *C, se Session, sql string, args ...interface{}) sqlexec.RecordSet {
 	rs, err := exec(se, sql, args...)
 	c.Assert(err, IsNil)
 	return rs
@@ -268,5 +170,32 @@ func match(c *C, row []types.Datum, expected ...interface{}) {
 		got := fmt.Sprintf("%v", row[i].GetValue())
 		need := fmt.Sprintf("%v", expected[i])
 		c.Assert(got, Equals, need)
+	}
+}
+
+func (s *testMainSuite) TestKeysNeedLock(c *C) {
+	rowKey := tablecodec.EncodeRowKeyWithHandle(1, 1)
+	indexKey := tablecodec.EncodeIndexSeekKey(1, 1, []byte{1})
+	uniqueValue := make([]byte, 8)
+	uniqueUntouched := append(uniqueValue, '1')
+	nonUniqueVal := []byte{'0'}
+	nonUniqueUntouched := []byte{'1'}
+	var deleteVal []byte
+	rowVal := []byte{'a', 'b', 'c'}
+	tests := []struct {
+		key  []byte
+		val  []byte
+		need bool
+	}{
+		{rowKey, rowVal, true},
+		{rowKey, deleteVal, true},
+		{indexKey, nonUniqueVal, false},
+		{indexKey, nonUniqueUntouched, false},
+		{indexKey, uniqueValue, true},
+		{indexKey, uniqueUntouched, false},
+		{indexKey, deleteVal, false},
+	}
+	for _, tt := range tests {
+		c.Assert(keyNeedToLock(tt.key, tt.val), Equals, tt.need)
 	}
 }

@@ -17,7 +17,11 @@ import (
 	"sync"
 	"time"
 
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 type checkResult int
@@ -39,18 +43,20 @@ type SchemaValidator interface {
 	// which is produced when the oldSchemaVer is updated to the newSchemaVer.
 	Update(leaseGrantTime uint64, oldSchemaVer, newSchemaVer int64, changedTableIDs []int64)
 	// Check is it valid for a transaction to use schemaVer and related tables, at timestamp txnTS.
-	Check(txnTS uint64, schemaVer int64, relatedTableIDs []int64) checkResult
+	Check(txnTS uint64, schemaVer int64, relatedPhysicalTableIDs []int64) checkResult
 	// Stop stops checking the valid of transaction.
 	Stop()
 	// Restart restarts the schema validator after it is stopped.
 	Restart()
 	// Reset resets SchemaValidator to initial state.
 	Reset()
+	// IsStarted indicates whether SchemaValidator is started.
+	IsStarted() bool
 }
 
 type deltaSchemaInfo struct {
-	schemaVersion   int64
-	relatedTableIDs []int64
+	schemaVersion int64
+	relatedIDs    []int64
 }
 
 type schemaValidator struct {
@@ -68,32 +74,49 @@ func NewSchemaValidator(lease time.Duration) SchemaValidator {
 	return &schemaValidator{
 		isStarted:        true,
 		lease:            lease,
-		deltaSchemaInfos: make([]deltaSchemaInfo, 0, maxNumberOfDiffsToLoad),
+		deltaSchemaInfos: make([]deltaSchemaInfo, 0, variable.DefTiDBMaxDeltaSchemaCount),
 	}
 }
 
+func (s *schemaValidator) IsStarted() bool {
+	s.mux.RLock()
+	isStarted := s.isStarted
+	s.mux.RUnlock()
+	return isStarted
+}
+
+func (s *schemaValidator) LatestSchemaVersion() int64 {
+	s.mux.RLock()
+	latestSchemaVer := s.latestSchemaVer
+	s.mux.RUnlock()
+	return latestSchemaVer
+}
+
 func (s *schemaValidator) Stop() {
-	log.Info("[domain-ddl] the schema validator stops")
+	logutil.BgLogger().Info("the schema validator stops")
+	metrics.LoadSchemaCounter.WithLabelValues(metrics.SchemaValidatorStop).Inc()
 	s.mux.Lock()
 	defer s.mux.Unlock()
 	s.isStarted = false
 	s.latestSchemaVer = 0
-	s.deltaSchemaInfos = make([]deltaSchemaInfo, 0, maxNumberOfDiffsToLoad)
+	s.deltaSchemaInfos = s.deltaSchemaInfos[:0]
 }
 
 func (s *schemaValidator) Restart() {
-	log.Info("[domain-ddl] the schema validator restarts")
+	metrics.LoadSchemaCounter.WithLabelValues(metrics.SchemaValidatorRestart).Inc()
+	logutil.BgLogger().Info("the schema validator restarts")
 	s.mux.Lock()
 	defer s.mux.Unlock()
 	s.isStarted = true
 }
 
 func (s *schemaValidator) Reset() {
+	metrics.LoadSchemaCounter.WithLabelValues(metrics.SchemaValidatorReset).Inc()
 	s.mux.Lock()
 	defer s.mux.Unlock()
 	s.isStarted = true
 	s.latestSchemaVer = 0
-	s.deltaSchemaInfos = make([]deltaSchemaInfo, 0, maxNumberOfDiffsToLoad)
+	s.deltaSchemaInfos = s.deltaSchemaInfos[:0]
 }
 
 func (s *schemaValidator) Update(leaseGrantTS uint64, oldVer, currVer int64, changedTableIDs []int64) {
@@ -101,19 +124,20 @@ func (s *schemaValidator) Update(leaseGrantTS uint64, oldVer, currVer int64, cha
 	defer s.mux.Unlock()
 
 	if !s.isStarted {
-		log.Infof("[domain-ddl] the schema validator stopped before updating")
+		logutil.BgLogger().Info("the schema validator stopped before updating")
 		return
 	}
 
 	// Renew the lease.
 	s.latestSchemaVer = currVer
-	leaseGrantTime := extractPhysicalTime(leaseGrantTS)
+	leaseGrantTime := oracle.GetTimeFromTS(leaseGrantTS)
 	leaseExpire := leaseGrantTime.Add(s.lease - time.Millisecond)
 	s.latestSchemaExpire = leaseExpire
 
 	// Update the schema deltaItem information.
 	if currVer != oldVer {
-		log.Debugf("[domain-ddl] update schema validator, old ver %d, curr ver %d, changed IDs %v", oldVer, currVer, changedTableIDs)
+		logutil.BgLogger().Debug("update schema validator", zap.Int64("oldVer", oldVer),
+			zap.Int64("currVer", currVer), zap.Int64s("changedTableIDs", changedTableIDs))
 		s.enqueue(currVer, changedTableIDs)
 	}
 }
@@ -134,16 +158,19 @@ func hasRelatedTableID(relatedTableIDs, updateTableIDs []int64) bool {
 // NOTE, this function should be called under lock!
 func (s *schemaValidator) isRelatedTablesChanged(currVer int64, tableIDs []int64) bool {
 	if len(s.deltaSchemaInfos) == 0 {
-		log.Infof("[domain-ddl] schema change history is empty, checking %d", currVer)
+		metrics.LoadSchemaCounter.WithLabelValues(metrics.SchemaValidatorCacheEmpty).Inc()
+		logutil.BgLogger().Info("schema change history is empty", zap.Int64("currVer", currVer))
 		return true
 	}
 	newerDeltas := s.findNewerDeltas(currVer)
 	if len(newerDeltas) == len(s.deltaSchemaInfos) {
-		log.Infof("[domain-ddl] the schema version %d is much older than the latest version %d", currVer, s.latestSchemaVer)
+		metrics.LoadSchemaCounter.WithLabelValues(metrics.SchemaValidatorCacheMiss).Inc()
+		logutil.BgLogger().Info("the schema version is much older than the latest version", zap.Int64("currVer", currVer),
+			zap.Int64("latestSchemaVer", s.latestSchemaVer), zap.Reflect("deltas", newerDeltas))
 		return true
 	}
 	for _, item := range newerDeltas {
-		if hasRelatedTableID(item.relatedTableIDs, tableIDs) {
+		if hasRelatedTableID(item.relatedIDs, tableIDs) {
 			return true
 		}
 	}
@@ -160,12 +187,12 @@ func (s *schemaValidator) findNewerDeltas(currVer int64) []deltaSchemaInfo {
 }
 
 // Check checks schema validity, returns true if use schemaVer and related tables at txnTS is legal.
-func (s *schemaValidator) Check(txnTS uint64, schemaVer int64, relatedTableIDs []int64) checkResult {
+func (s *schemaValidator) Check(txnTS uint64, schemaVer int64, relatedPhysicalTableIDs []int64) checkResult {
 	s.mux.RLock()
 	defer s.mux.RUnlock()
 	if !s.isStarted {
-		log.Infof("[domain-ddl] the schema validator stopped before checking")
-		return ResultFail
+		logutil.BgLogger().Info("the schema validator stopped before checking")
+		return ResultUnknown
 	}
 	if s.lease == 0 {
 		return ResultSucc
@@ -173,28 +200,76 @@ func (s *schemaValidator) Check(txnTS uint64, schemaVer int64, relatedTableIDs [
 
 	// Schema changed, result decided by whether related tables change.
 	if schemaVer < s.latestSchemaVer {
-		if s.isRelatedTablesChanged(schemaVer, relatedTableIDs) {
+		// The DDL relatedPhysicalTableIDs is empty.
+		if len(relatedPhysicalTableIDs) == 0 {
+			logutil.BgLogger().Info("the related physical table ID is empty", zap.Int64("schemaVer", schemaVer),
+				zap.Int64("latestSchemaVer", s.latestSchemaVer))
+			return ResultFail
+		}
+
+		if s.isRelatedTablesChanged(schemaVer, relatedPhysicalTableIDs) {
 			return ResultFail
 		}
 		return ResultSucc
 	}
 
 	// Schema unchanged, maybe success or the schema validator is unavailable.
-	t := extractPhysicalTime(txnTS)
+	t := oracle.GetTimeFromTS(txnTS)
 	if t.After(s.latestSchemaExpire) {
 		return ResultUnknown
 	}
 	return ResultSucc
 }
 
-func extractPhysicalTime(ts uint64) time.Time {
-	t := int64(ts >> 18) // 18 is for the logical time.
-	return time.Unix(t/1e3, (t%1e3)*1e6)
-}
+func (s *schemaValidator) enqueue(schemaVersion int64, relatedPhysicalTableIDs []int64) {
+	maxCnt := int(variable.GetMaxDeltaSchemaCount())
+	if maxCnt <= 0 {
+		logutil.BgLogger().Info("the schema validator enqueue", zap.Int("delta max count", maxCnt))
+		return
+	}
 
-func (s *schemaValidator) enqueue(schemaVersion int64, relatedTableIDs []int64) {
-	s.deltaSchemaInfos = append(s.deltaSchemaInfos, deltaSchemaInfo{schemaVersion, relatedTableIDs})
-	if len(s.deltaSchemaInfos) > maxNumberOfDiffsToLoad {
+	delta := deltaSchemaInfo{schemaVersion, relatedPhysicalTableIDs}
+	if len(s.deltaSchemaInfos) == 0 {
+		s.deltaSchemaInfos = append(s.deltaSchemaInfos, delta)
+		return
+	}
+
+	lastOffset := len(s.deltaSchemaInfos) - 1
+	// The first item we needn't to merge, because we hope to cover more versions.
+	if lastOffset != 0 && ids(s.deltaSchemaInfos[lastOffset].relatedIDs).containIn(delta.relatedIDs) {
+		s.deltaSchemaInfos[lastOffset] = delta
+	} else {
+		s.deltaSchemaInfos = append(s.deltaSchemaInfos, delta)
+	}
+
+	if len(s.deltaSchemaInfos) > maxCnt {
+		logutil.BgLogger().Info("the schema validator enqueue, queue is too long",
+			zap.Int("delta max count", maxCnt), zap.Int64("remove schema version", s.deltaSchemaInfos[0].schemaVersion))
 		s.deltaSchemaInfos = s.deltaSchemaInfos[1:]
 	}
+}
+
+type ids []int64
+
+// containIn is checks if a is included in b.
+func (a ids) containIn(b []int64) bool {
+	if len(a) > len(b) {
+		return false
+	}
+
+	var isEqual bool
+	for _, i := range a {
+		isEqual = false
+		for _, j := range b {
+			if i == j {
+				isEqual = true
+				break
+			}
+		}
+		if !isEqual {
+			return false
+		}
+	}
+
+	return true
 }

@@ -16,16 +16,15 @@ package expression
 import (
 	"math"
 
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/testutil"
 )
 
 func (s *testEvaluatorSuite) TestUnary(c *C) {
-	defer testleak.AfterTest(c)()
 	cases := []struct {
 		args     interface{}
 		expected interface{}
@@ -47,8 +46,8 @@ func (s *testEvaluatorSuite) TestUnary(c *C) {
 	for _, t := range cases {
 		f, err := newFunctionForTest(s.ctx, ast.UnaryMinus, s.primitiveValsToConstants([]interface{}{t.args})...)
 		c.Assert(err, IsNil)
-		d, err := f.Eval(nil)
-		if t.getErr == false {
+		d, err := f.Eval(chunk.Row{})
+		if !t.getErr {
 			c.Assert(err, IsNil)
 			if !t.overflow {
 				c.Assert(d.GetValue(), Equals, t.expected)
@@ -65,8 +64,6 @@ func (s *testEvaluatorSuite) TestUnary(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestLogicAnd(c *C) {
-	defer testleak.AfterTest(c)()
-
 	sc := s.ctx.GetSessionVars().StmtCtx
 	origin := sc.IgnoreTruncate
 	defer func() {
@@ -85,11 +82,21 @@ func (s *testEvaluatorSuite) TestLogicAnd(c *C) {
 		{[]interface{}{0, 1}, 0, false, false},
 		{[]interface{}{0, 0}, 0, false, false},
 		{[]interface{}{2, -1}, 1, false, false},
+		{[]interface{}{"a", "0"}, 0, false, false},
 		{[]interface{}{"a", "1"}, 0, false, false},
+		{[]interface{}{"1a", "0"}, 0, false, false},
 		{[]interface{}{"1a", "1"}, 1, false, false},
 		{[]interface{}{0, nil}, 0, false, false},
 		{[]interface{}{nil, 0}, 0, false, false},
 		{[]interface{}{nil, 1}, 0, true, false},
+		{[]interface{}{0.001, 0}, 0, false, false},
+		{[]interface{}{0.001, 1}, 1, false, false},
+		{[]interface{}{nil, 0.000}, 0, false, false},
+		{[]interface{}{nil, 0.001}, 0, true, false},
+		{[]interface{}{types.NewDecFromStringForTest("0.000001"), 0}, 0, false, false},
+		{[]interface{}{types.NewDecFromStringForTest("0.000001"), 1}, 1, false, false},
+		{[]interface{}{types.NewDecFromStringForTest("0.000000"), nil}, 0, false, false},
+		{[]interface{}{types.NewDecFromStringForTest("0.000001"), nil}, 0, true, false},
 
 		{[]interface{}{errors.New("must error"), 1}, 0, false, true},
 	}
@@ -97,7 +104,7 @@ func (s *testEvaluatorSuite) TestLogicAnd(c *C) {
 	for _, t := range cases {
 		f, err := newFunctionForTest(s.ctx, ast.LogicAnd, s.primitiveValsToConstants(t.args)...)
 		c.Assert(err, IsNil)
-		d, err := f.Eval(nil)
+		d, err := f.Eval(chunk.Row{})
 		if t.getErr {
 			c.Assert(err, NotNil)
 		} else {
@@ -119,8 +126,6 @@ func (s *testEvaluatorSuite) TestLogicAnd(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestLeftShift(c *C) {
-	defer testleak.AfterTest(c)()
-
 	cases := []struct {
 		args     []interface{}
 		expected uint64
@@ -137,7 +142,7 @@ func (s *testEvaluatorSuite) TestLeftShift(c *C) {
 	for _, t := range cases {
 		f, err := newFunctionForTest(s.ctx, ast.LeftShift, s.primitiveValsToConstants(t.args)...)
 		c.Assert(err, IsNil)
-		d, err := f.Eval(nil)
+		d, err := f.Eval(chunk.Row{})
 		if t.getErr {
 			c.Assert(err, NotNil)
 		} else {
@@ -152,8 +157,6 @@ func (s *testEvaluatorSuite) TestLeftShift(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestRightShift(c *C) {
-	defer testleak.AfterTest(c)()
-
 	cases := []struct {
 		args     []interface{}
 		expected uint64
@@ -170,7 +173,7 @@ func (s *testEvaluatorSuite) TestRightShift(c *C) {
 	for _, t := range cases {
 		f, err := newFunctionForTest(s.ctx, ast.RightShift, s.primitiveValsToConstants(t.args)...)
 		c.Assert(err, IsNil)
-		d, err := f.Eval(nil)
+		d, err := f.Eval(chunk.Row{})
 		if t.getErr {
 			c.Assert(err, NotNil)
 		} else {
@@ -192,8 +195,6 @@ func (s *testEvaluatorSuite) TestRightShift(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestBitXor(c *C) {
-	defer testleak.AfterTest(c)()
-
 	cases := []struct {
 		args     []interface{}
 		expected uint64
@@ -210,7 +211,7 @@ func (s *testEvaluatorSuite) TestBitXor(c *C) {
 	for _, t := range cases {
 		f, err := newFunctionForTest(s.ctx, ast.Xor, s.primitiveValsToConstants(t.args)...)
 		c.Assert(err, IsNil)
-		d, err := f.Eval(nil)
+		d, err := f.Eval(chunk.Row{})
 		if t.getErr {
 			c.Assert(err, NotNil)
 		} else {
@@ -232,8 +233,6 @@ func (s *testEvaluatorSuite) TestBitXor(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestBitOr(c *C) {
-	defer testleak.AfterTest(c)()
-
 	sc := s.ctx.GetSessionVars().StmtCtx
 	origin := sc.IgnoreTruncate
 	defer func() {
@@ -257,7 +256,7 @@ func (s *testEvaluatorSuite) TestBitOr(c *C) {
 	for _, t := range cases {
 		f, err := newFunctionForTest(s.ctx, ast.Or, s.primitiveValsToConstants(t.args)...)
 		c.Assert(err, IsNil)
-		d, err := f.Eval(nil)
+		d, err := f.Eval(chunk.Row{})
 		if t.getErr {
 			c.Assert(err, NotNil)
 		} else {
@@ -279,8 +278,6 @@ func (s *testEvaluatorSuite) TestBitOr(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestLogicOr(c *C) {
-	defer testleak.AfterTest(c)()
-
 	sc := s.ctx.GetSessionVars().StmtCtx
 	origin := sc.IgnoreTruncate
 	defer func() {
@@ -299,11 +296,25 @@ func (s *testEvaluatorSuite) TestLogicOr(c *C) {
 		{[]interface{}{0, 1}, 1, false, false},
 		{[]interface{}{0, 0}, 0, false, false},
 		{[]interface{}{2, -1}, 1, false, false},
+		{[]interface{}{"a", "0"}, 0, false, false},
 		{[]interface{}{"a", "1"}, 1, false, false},
+		{[]interface{}{"1a", "0"}, 1, false, false},
 		{[]interface{}{"1a", "1"}, 1, false, false},
+		{[]interface{}{"0.0a", 0}, 0, false, false},
+		{[]interface{}{"0.0001a", 0}, 1, false, false},
 		{[]interface{}{1, nil}, 1, false, false},
 		{[]interface{}{nil, 1}, 1, false, false},
 		{[]interface{}{nil, 0}, 0, true, false},
+		{[]interface{}{0.000, 0}, 0, false, false},
+		{[]interface{}{0.001, 0}, 1, false, false},
+		{[]interface{}{nil, 0.000}, 0, true, false},
+		{[]interface{}{nil, 0.001}, 1, false, false},
+		{[]interface{}{types.NewDecFromStringForTest("0.000000"), 0}, 0, false, false},
+		{[]interface{}{types.NewDecFromStringForTest("0.000000"), 1}, 1, false, false},
+		{[]interface{}{types.NewDecFromStringForTest("0.000000"), nil}, 0, true, false},
+		{[]interface{}{types.NewDecFromStringForTest("0.000001"), 0}, 1, false, false},
+		{[]interface{}{types.NewDecFromStringForTest("0.000001"), 1}, 1, false, false},
+		{[]interface{}{types.NewDecFromStringForTest("0.000001"), nil}, 1, false, false},
 
 		{[]interface{}{errors.New("must error"), 1}, 0, false, true},
 	}
@@ -311,7 +322,7 @@ func (s *testEvaluatorSuite) TestLogicOr(c *C) {
 	for _, t := range cases {
 		f, err := newFunctionForTest(s.ctx, ast.LogicOr, s.primitiveValsToConstants(t.args)...)
 		c.Assert(err, IsNil)
-		d, err := f.Eval(nil)
+		d, err := f.Eval(chunk.Row{})
 		if t.getErr {
 			c.Assert(err, NotNil)
 		} else {
@@ -333,8 +344,6 @@ func (s *testEvaluatorSuite) TestLogicOr(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestBitAnd(c *C) {
-	defer testleak.AfterTest(c)()
-
 	cases := []struct {
 		args     []interface{}
 		expected int64
@@ -351,7 +360,7 @@ func (s *testEvaluatorSuite) TestBitAnd(c *C) {
 	for _, t := range cases {
 		f, err := newFunctionForTest(s.ctx, ast.And, s.primitiveValsToConstants(t.args)...)
 		c.Assert(err, IsNil)
-		d, err := f.Eval(nil)
+		d, err := f.Eval(chunk.Row{})
 		if t.getErr {
 			c.Assert(err, NotNil)
 		} else {
@@ -373,8 +382,6 @@ func (s *testEvaluatorSuite) TestBitAnd(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestBitNeg(c *C) {
-	defer testleak.AfterTest(c)()
-
 	sc := s.ctx.GetSessionVars().StmtCtx
 	origin := sc.IgnoreTruncate
 	defer func() {
@@ -398,7 +405,7 @@ func (s *testEvaluatorSuite) TestBitNeg(c *C) {
 	for _, t := range cases {
 		f, err := newFunctionForTest(s.ctx, ast.BitNeg, s.primitiveValsToConstants(t.args)...)
 		c.Assert(err, IsNil)
-		d, err := f.Eval(nil)
+		d, err := f.Eval(chunk.Row{})
 		if t.getErr {
 			c.Assert(err, NotNil)
 		} else {
@@ -420,8 +427,6 @@ func (s *testEvaluatorSuite) TestBitNeg(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestUnaryNot(c *C) {
-	defer testleak.AfterTest(c)()
-
 	sc := s.ctx.GetSessionVars().StmtCtx
 	origin := sc.IgnoreTruncate
 	defer func() {
@@ -440,6 +445,9 @@ func (s *testEvaluatorSuite) TestUnaryNot(c *C) {
 		{[]interface{}{123}, 0, false, false},
 		{[]interface{}{-123}, 0, false, false},
 		{[]interface{}{"123"}, 0, false, false},
+		{[]interface{}{float64(0.3)}, 0, false, false},
+		{[]interface{}{"0.3"}, 0, false, false},
+		{[]interface{}{types.NewDecFromFloatForTest(0.3)}, 0, false, false},
 		{[]interface{}{nil}, 0, true, false},
 
 		{[]interface{}{errors.New("must error")}, 0, false, true},
@@ -448,7 +456,7 @@ func (s *testEvaluatorSuite) TestUnaryNot(c *C) {
 	for _, t := range cases {
 		f, err := newFunctionForTest(s.ctx, ast.UnaryNot, s.primitiveValsToConstants(t.args)...)
 		c.Assert(err, IsNil)
-		d, err := f.Eval(nil)
+		d, err := f.Eval(chunk.Row{})
 		if t.getErr {
 			c.Assert(err, NotNil)
 		} else {
@@ -470,7 +478,6 @@ func (s *testEvaluatorSuite) TestUnaryNot(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestIsTrueOrFalse(c *C) {
-	defer testleak.AfterTest(c)()
 	sc := s.ctx.GetSessionVars().StmtCtx
 	origin := sc.IgnoreTruncate
 	defer func() {
@@ -514,6 +521,21 @@ func (s *testEvaluatorSuite) TestIsTrueOrFalse(c *C) {
 			isFalse: 1,
 		},
 		{
+			args:    []interface{}{"0.3"},
+			isTrue:  1,
+			isFalse: 0,
+		},
+		{
+			args:    []interface{}{float64(0.3)},
+			isTrue:  1,
+			isFalse: 0,
+		},
+		{
+			args:    []interface{}{types.NewDecFromFloatForTest(0.3)},
+			isTrue:  1,
+			isFalse: 0,
+		},
+		{
 			args:    []interface{}{nil},
 			isTrue:  0,
 			isFalse: 0,
@@ -525,7 +547,7 @@ func (s *testEvaluatorSuite) TestIsTrueOrFalse(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(isTrueSig, NotNil)
 
-		isTrue, err := evalBuiltinFunc(isTrueSig, nil)
+		isTrue, err := evalBuiltinFunc(isTrueSig, chunk.Row{})
 		c.Assert(err, IsNil)
 		c.Assert(isTrue, testutil.DatumEquals, types.NewDatum(tc.isTrue))
 	}
@@ -535,8 +557,71 @@ func (s *testEvaluatorSuite) TestIsTrueOrFalse(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(isFalseSig, NotNil)
 
-		isFalse, err := evalBuiltinFunc(isFalseSig, nil)
+		isFalse, err := evalBuiltinFunc(isFalseSig, chunk.Row{})
 		c.Assert(err, IsNil)
 		c.Assert(isFalse, testutil.DatumEquals, types.NewDatum(tc.isFalse))
 	}
+}
+
+func (s *testEvaluatorSuite) TestLogicXor(c *C) {
+	sc := s.ctx.GetSessionVars().StmtCtx
+	origin := sc.IgnoreTruncate
+	defer func() {
+		sc.IgnoreTruncate = origin
+	}()
+	sc.IgnoreTruncate = true
+
+	cases := []struct {
+		args     []interface{}
+		expected int64
+		isNil    bool
+		getErr   bool
+	}{
+		{[]interface{}{1, 1}, 0, false, false},
+		{[]interface{}{1, 0}, 1, false, false},
+		{[]interface{}{0, 1}, 1, false, false},
+		{[]interface{}{0, 0}, 0, false, false},
+		{[]interface{}{2, -1}, 0, false, false},
+		{[]interface{}{"a", "0"}, 0, false, false},
+		{[]interface{}{"a", "1"}, 1, false, false},
+		{[]interface{}{"1a", "0"}, 1, false, false},
+		{[]interface{}{"1a", "1"}, 0, false, false},
+		{[]interface{}{0, nil}, 0, true, false},
+		{[]interface{}{nil, 0}, 0, true, false},
+		{[]interface{}{nil, 1}, 0, true, false},
+		{[]interface{}{0.5000, 0.4999}, 1, false, false},
+		{[]interface{}{0.5000, 1.0}, 0, false, false},
+		{[]interface{}{0.4999, 1.0}, 1, false, false},
+		{[]interface{}{nil, 0.000}, 0, true, false},
+		{[]interface{}{nil, 0.001}, 0, true, false},
+		{[]interface{}{types.NewDecFromStringForTest("0.000001"), 0.00001}, 0, false, false},
+		{[]interface{}{types.NewDecFromStringForTest("0.000001"), 1}, 1, false, false},
+		{[]interface{}{types.NewDecFromStringForTest("0.000000"), nil}, 0, true, false},
+		{[]interface{}{types.NewDecFromStringForTest("0.000001"), nil}, 0, true, false},
+
+		{[]interface{}{errors.New("must error"), 1}, 0, false, true},
+	}
+
+	for _, t := range cases {
+		f, err := newFunctionForTest(s.ctx, ast.LogicXor, s.primitiveValsToConstants(t.args)...)
+		c.Assert(err, IsNil)
+		d, err := f.Eval(chunk.Row{})
+		if t.getErr {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			if t.isNil {
+				c.Assert(d.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(d.GetInt64(), Equals, t.expected)
+			}
+		}
+	}
+
+	// Test incorrect parameter count.
+	_, err := newFunctionForTest(s.ctx, ast.LogicXor, Zero)
+	c.Assert(err, NotNil)
+
+	_, err = funcs[ast.LogicXor].getFunction(s.ctx, []Expression{Zero, Zero})
+	c.Assert(err, IsNil)
 }

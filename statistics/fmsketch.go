@@ -16,7 +16,7 @@ package statistics
 import (
 	"hash"
 
-	"github.com/juju/errors"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
@@ -114,7 +114,7 @@ func FMSketchToProto(s *FMSketch) *tipb.FMSketch {
 // FMSketchFromProto converts FMSketch from its protobuf representation.
 func FMSketchFromProto(protoSketch *tipb.FMSketch) *FMSketch {
 	sketch := &FMSketch{
-		hashset: make(map[uint64]bool),
+		hashset: make(map[uint64]bool, len(protoSketch.Hashset)),
 		mask:    protoSketch.Mask,
 	}
 	for _, val := range protoSketch.Hashset {

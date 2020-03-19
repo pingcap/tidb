@@ -16,7 +16,13 @@ package hack
 import (
 	"bytes"
 	"testing"
+
+	. "github.com/pingcap/check"
 )
+
+func TestT(t *testing.T) {
+	TestingT(t)
+}
 
 func TestString(t *testing.T) {
 	b := []byte("hello world")
@@ -45,5 +51,20 @@ func TestByte(t *testing.T) {
 
 	if !bytes.Equal(b, []byte("hello world")) {
 		t.Fatal(string(b))
+	}
+}
+
+func TestMutable(t *testing.T) {
+	a := []byte{'a', 'b', 'c'}
+	b := String(a) // b is a mutable string.
+	c := string(b) // Warn, c is a mutable string
+	if c != "abc" {
+		t.Fatalf("assert fail")
+	}
+
+	// c changed after a is modified
+	a[0] = 's'
+	if c != "sbc" {
+		t.Fatal("test mutable string fail")
 	}
 }

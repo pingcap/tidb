@@ -15,23 +15,21 @@ package aggregation
 
 import (
 	"bytes"
-	"fmt"
 
-	"github.com/juju/errors"
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/charset"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
 // Aggregation stands for aggregate functions.
 type Aggregation interface {
 	// Update during executing.
-	Update(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, row types.Row) error
+	Update(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, row chunk.Row) error
 
 	// GetPartialResult will called by coprocessor to get partial results. For avg function, partial results will return
 	// sum and count values at the same time.
@@ -40,20 +38,11 @@ type Aggregation interface {
 	// GetResult will be called when all data have been processed.
 	GetResult(evalCtx *AggEvaluateContext) types.Datum
 
-	// Create a new AggEvaluateContext for the aggregation function.
+	// CreateContext creates a new AggEvaluateContext for the aggregation function.
 	CreateContext(sc *stmtctx.StatementContext) *AggEvaluateContext
 
-	// Reset the content of the evaluate context.
+	// ResetContext resets the content of the evaluate context.
 	ResetContext(sc *stmtctx.StatementContext, evalCtx *AggEvaluateContext)
-
-	// GetFinalAggFunc constructs the final agg functions, only used in parallel execution.
-	GetFinalAggFunc(idx int) (int, Aggregation)
-
-	// GetArgs gets the args of the aggregate function.
-	GetArgs() []expression.Expression
-
-	// Clone deep copy the Aggregation.
-	Clone() Aggregation
 }
 
 // NewDistAggFunc creates new Aggregate function for mock tikv.
@@ -62,7 +51,7 @@ func NewDistAggFunc(expr *tipb.Expr, fieldTps []*types.FieldType, sc *stmtctx.St
 	for _, child := range expr.Children {
 		arg, err := expression.PBToExpr(child, fieldTps, sc)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		args = append(args, arg)
 	}
@@ -125,11 +114,10 @@ type aggFunction struct {
 }
 
 func newAggFunc(funcName string, args []expression.Expression, hasDistinct bool) aggFunction {
-	return aggFunction{AggFuncDesc: &AggFuncDesc{
-		Name:        funcName,
-		Args:        args,
-		HasDistinct: hasDistinct,
-	}}
+	agg := &AggFuncDesc{HasDistinct: hasDistinct}
+	agg.Name = funcName
+	agg.Args = args
+	return aggFunction{AggFuncDesc: agg}
 }
 
 // CreateContext implements Aggregation interface.
@@ -148,11 +136,11 @@ func (af *aggFunction) ResetContext(sc *stmtctx.StatementContext, evalCtx *AggEv
 	evalCtx.Value.SetNull()
 }
 
-func (af *aggFunction) updateSum(sc *stmtctx.StatementContext, evalCtx *AggEvaluateContext, row types.Row) error {
+func (af *aggFunction) updateSum(sc *stmtctx.StatementContext, evalCtx *AggEvaluateContext, row chunk.Row) error {
 	a := af.Args[0]
 	value, err := a.Eval(row)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	if value.IsNull() {
 		return nil
@@ -160,7 +148,7 @@ func (af *aggFunction) updateSum(sc *stmtctx.StatementContext, evalCtx *AggEvalu
 	if af.HasDistinct {
 		d, err1 := evalCtx.DistinctChecker.Check([]types.Datum{value})
 		if err1 != nil {
-			return errors.Trace(err1)
+			return err1
 		}
 		if !d {
 			return nil
@@ -168,60 +156,10 @@ func (af *aggFunction) updateSum(sc *stmtctx.StatementContext, evalCtx *AggEvalu
 	}
 	evalCtx.Value, err = calculateSum(sc, evalCtx.Value, value)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	evalCtx.Count++
 	return nil
-}
-
-func (af *aggFunction) GetFinalAggFunc(idx int) (_ int, newAggFunc Aggregation) {
-	switch af.Mode {
-	case DedupMode:
-		panic("DedupMode is not supported now.")
-	case Partial1Mode:
-		args := make([]expression.Expression, 0, 2)
-		if NeedCount(af.Name) {
-			args = append(args, &expression.Column{
-				ColName: model.NewCIStr(fmt.Sprintf("col_%d", idx)),
-				Index:   idx,
-				RetType: &types.FieldType{Tp: mysql.TypeLonglong, Flen: 21, Charset: charset.CharsetBin, Collate: charset.CollationBin},
-			})
-			idx++
-		}
-		if NeedValue(af.Name) {
-			args = append(args, &expression.Column{
-				ColName: model.NewCIStr(fmt.Sprintf("col_%d", idx)),
-				Index:   idx,
-				RetType: af.RetTp,
-			})
-			idx++
-			if af.Name == ast.AggFuncGroupConcat {
-				separator := af.Args[len(af.Args)-1]
-				args = append(args, separator.Clone())
-			}
-		}
-		desc := af.AggFuncDesc.Clone()
-		desc.Mode = FinalMode
-		desc.Args = args
-		newAggFunc = desc.GetAggFunc()
-	case Partial2Mode:
-		desc := af.AggFuncDesc.Clone()
-		desc.Mode = FinalMode
-		idx += len(desc.Args)
-		newAggFunc = desc.GetAggFunc()
-	case FinalMode, CompleteMode:
-		panic("GetFinalAggFunc should not be called when aggMode is FinalMode/CompleteMode.")
-	}
-	return idx, newAggFunc
-}
-
-func (af *aggFunction) GetArgs() []expression.Expression {
-	return af.Args
-}
-
-func (af *aggFunction) Clone() Aggregation {
-	desc := af.AggFuncDesc.Clone()
-	return desc.GetAggFunc()
 }
 
 // NeedCount indicates whether the aggregate function should record count.
@@ -248,4 +186,23 @@ func IsAllFirstRow(aggFuncs []*AggFuncDesc) bool {
 		}
 	}
 	return true
+}
+
+// CheckAggPushDown checks whether an agg function can be pushed to storage.
+func CheckAggPushDown(aggFunc *AggFuncDesc, storeType kv.StoreType) bool {
+	switch storeType {
+	case kv.TiFlash:
+		return CheckAggPushFlash(aggFunc)
+	default:
+		return true
+	}
+}
+
+// CheckAggPushFlash checks whether an agg function can be pushed to flash storage.
+func CheckAggPushFlash(aggFunc *AggFuncDesc) bool {
+	switch aggFunc.Name {
+	case ast.AggFuncSum, ast.AggFuncCount, ast.AggFuncMin, ast.AggFuncMax, ast.AggFuncAvg, ast.AggFuncFirstRow:
+		return true
+	}
+	return false
 }

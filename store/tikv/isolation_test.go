@@ -16,17 +16,18 @@
 package tikv
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"sync"
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/terror"
-	"golang.org/x/net/context"
 )
 
+// testIsolationSuite represents test isolation suite.
 // The test suite takes too long under the race detector.
 type testIsolationSuite struct {
 	OneByOneSuite
@@ -71,7 +72,7 @@ func (s *testIsolationSuite) SetWithRetry(c *C, k, v []byte) writeRecord {
 				commitTS: txn.(*tikvTxn).commitTS,
 			}
 		}
-		c.Assert(kv.IsRetryableError(err) || terror.ErrorEqual(err, terror.ErrResultUndetermined), IsTrue)
+		c.Assert(kv.IsTxnRetryableError(err) || terror.ErrorEqual(err, terror.ErrResultUndetermined), IsTrue)
 	}
 }
 
@@ -91,21 +92,21 @@ func (s *testIsolationSuite) GetWithRetry(c *C, k []byte) readRecord {
 		txn, err := s.store.Begin()
 		c.Assert(err, IsNil)
 
-		val, err := txn.Get(k)
+		val, err := txn.Get(context.TODO(), k)
 		if err == nil {
 			return readRecord{
 				startTS: txn.StartTS(),
 				value:   val,
 			}
 		}
-		c.Assert(kv.IsRetryableError(err), IsTrue)
+		c.Assert(kv.IsTxnRetryableError(err), IsTrue)
 	}
 }
 
 func (s *testIsolationSuite) TestWriteWriteConflict(c *C) {
 	const (
 		threadCount  = 10
-		setPerThread = 100
+		setPerThread = 50
 	)
 	var (
 		mu     sync.Mutex
