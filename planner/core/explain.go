@@ -27,14 +27,14 @@ import (
 )
 
 // A plan is dataAccesser means it can access underlying data.
-// Include `PhysicalTableScan`, `PhysicalIndexScan`, `PointGetPlan`, `BatchPointScan`.
+// Include `PhysicalTableScan`, `PhysicalIndexScan`, `PointGetPlan`, `BatchPointScan` and `PhysicalMemTable`.
 // ExplainInfo = AccessObject + OperatorInfo
 type dataAccesser interface {
 
 	// AccessObject return plan's `table`, `partition` and `index`.
 	AccessObject() string
 
-	// OperatorInfo() return other operator information to be explained.
+	// OperatorInfo return other operator information to be explained.
 	OperatorInfo(normalized bool) string
 }
 
@@ -765,12 +765,22 @@ const MetricTableTimeFormat = "2006-01-02 15:04:05.999"
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalMemTable) ExplainInfo() string {
-	explain := "table:" + p.Table.Name.O
-	if p.Extractor != nil {
-		info := p.Extractor.explainInfo(p)
-		if len(info) > 0 {
-			return explain + ", " + info
-		}
+	accessObject, operatorInfo := p.AccessObject(), p.OperatorInfo(false)
+	if len(operatorInfo) == 0 {
+		return accessObject
 	}
-	return explain
+	return accessObject + ", " + operatorInfo
+}
+
+// AccessObject implements dataAccesser interface.
+func (p *PhysicalMemTable) AccessObject() string {
+	return "table:" + p.Table.Name.O
+}
+
+// OperatorInfo implements dataAccesser interface.
+func (p *PhysicalMemTable) OperatorInfo(_ bool) string {
+	if p.Extractor != nil {
+		return p.Extractor.explainInfo(p)
+	}
+	return ""
 }

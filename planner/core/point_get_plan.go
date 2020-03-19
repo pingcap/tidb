@@ -92,20 +92,20 @@ func (p *PointGetPlan) ToPB(ctx sessionctx.Context) (*tipb.Executor, error) {
 
 // ExplainInfo implements Plan interface.
 func (p *PointGetPlan) ExplainInfo() string {
-	accessObject, explainInfo := p.AccessObject(), p.OperatorInfo(false)
-	if len(explainInfo) == 0 {
+	accessObject, operatorInfo := p.AccessObject(), p.OperatorInfo(false)
+	if len(operatorInfo) == 0 {
 		return accessObject
 	}
-	return accessObject + ", " + explainInfo
+	return accessObject + ", " + operatorInfo
 }
 
 // ExplainNormalizedInfo implements Plan interface.
 func (p *PointGetPlan) ExplainNormalizedInfo() string {
-	accessObject, explainInfo := p.AccessObject(), p.OperatorInfo(true)
-	if len(explainInfo) == 0 {
+	accessObject, operatorInfo := p.AccessObject(), p.OperatorInfo(true)
+	if len(operatorInfo) == 0 {
 		return accessObject
 	}
-	return accessObject + ", " + explainInfo
+	return accessObject + ", " + operatorInfo
 }
 
 // AccessObject implements dataAccesser interface.
