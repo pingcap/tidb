@@ -1821,10 +1821,10 @@ func (b *PlanBuilder) getDefaultValue(col *table.Column) (*expression.Constant, 
 		value types.Datum
 		err   error
 	)
-	if !col.DefaultIsExpr {
-		value, err = table.GetColDefaultValue(b.ctx, col.ToInfo())
-	} else {
+	if col.DefaultIsExpr && col.DefaultExpr != nil {
 		value, err = table.EvalColDefaultExpr(b.ctx, col.ToInfo(), col.DefaultExpr)
+	} else {
+		value, err = table.GetColDefaultValue(b.ctx, col.ToInfo())
 	}
 	if err != nil {
 		return nil, err
