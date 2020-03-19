@@ -112,17 +112,20 @@ func (p *PointGetPlan) ExplainNormalizedInfo() string {
 func (p *PointGetPlan) AccessObject() string {
 	buffer := bytes.NewBufferString("")
 	tblName := p.TblInfo.Name.O
-	fmt.Fprintf(buffer, "table:%s, ", tblName)
+	fmt.Fprintf(buffer, "table:%s", tblName)
 	if p.PartitionInfo != nil {
-		fmt.Fprintf(buffer, "partition:%s, ", p.PartitionInfo.Name.L)
+		fmt.Fprintf(buffer, ", partition:%s", p.PartitionInfo.Name.L)
 	}
 	if p.IndexInfo != nil {
-		fmt.Fprintf(buffer, "index:")
-		for _, col := range p.IndexInfo.Columns {
-			buffer.WriteString(col.Name.O + ", ")
+		buffer.WriteString(", index:" + p.IndexInfo.Name.O + "(")
+		for i, idxCol := range p.IndexInfo.Columns {
+			buffer.WriteString(idxCol.Name.O)
+			if i+1 < len(p.IndexInfo.Columns) {
+				buffer.WriteString(", ")
+			}
 		}
+		buffer.WriteString(")")
 	}
-	buffer.Truncate(buffer.Len() - 2)
 	return buffer.String()
 }
 
@@ -255,14 +258,17 @@ func (p *BatchPointGetPlan) ExplainNormalizedInfo() string {
 func (p *BatchPointGetPlan) AccessObject() string {
 	buffer := bytes.NewBufferString("")
 	tblName := p.TblInfo.Name.O
-	fmt.Fprintf(buffer, "table:%s, ", tblName)
+	fmt.Fprintf(buffer, "table:%s", tblName)
 	if p.IndexInfo != nil {
-		fmt.Fprintf(buffer, "index:")
-		for _, col := range p.IndexInfo.Columns {
-			buffer.WriteString(col.Name.O + ", ")
+		buffer.WriteString(", index:" + p.IndexInfo.Name.O + "(")
+		for i, idxCol := range p.IndexInfo.Columns {
+			buffer.WriteString(idxCol.Name.O)
+			if i+1 < len(p.IndexInfo.Columns) {
+				buffer.WriteString(", ")
+			}
 		}
+		buffer.WriteString(")")
 	}
-	buffer.Truncate(buffer.Len() - 2)
 	return buffer.String()
 }
 

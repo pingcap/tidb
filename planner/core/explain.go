@@ -78,13 +78,14 @@ func (p *PhysicalIndexScan) AccessObject() string {
 		}
 	}
 	if len(p.Index.Columns) > 0 {
-		buffer.WriteString(", index:")
+		buffer.WriteString(", index:" + p.Index.Name.O + "(")
 		for i, idxCol := range p.Index.Columns {
 			buffer.WriteString(idxCol.Name.O)
 			if i+1 < len(p.Index.Columns) {
 				buffer.WriteString(", ")
 			}
 		}
+		buffer.WriteString(")")
 	}
 	return buffer.String()
 }
