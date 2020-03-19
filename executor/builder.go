@@ -1457,6 +1457,11 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 					extractor:  v.Extractor.(*plannercore.SlowQueryExtractor),
 				},
 			}
+		case strings.ToLower(infoschema.TableDDLJobs):
+			return &DDLJobsReaderExec{
+				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+				is:           b.is,
+			}
 		}
 	}
 	tb, _ := b.is.TableByID(v.Table.ID)
