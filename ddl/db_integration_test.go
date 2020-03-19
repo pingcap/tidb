@@ -22,7 +22,6 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
@@ -1065,7 +1064,7 @@ func (s *testIntegrationSuite5) TestBackwardCompatibility(c *C) {
 	ticker := time.NewTicker(s.lease)
 	defer ticker.Stop()
 	for range ticker.C {
-		historyJob, err := s.getHistoryDDLJob(job.ID)
+		historyJob, err := getHistoryDDLJob(s.store, job.ID)
 		c.Assert(err, IsNil)
 		if historyJob == nil {
 
@@ -1080,60 +1079,6 @@ func (s *testIntegrationSuite5) TestBackwardCompatibility(c *C) {
 
 	// finished add index
 	tk.MustExec("admin check index t idx_b")
-}
-
-func (s *testIntegrationSuite3) TestDDLErrorCount(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists ddl_error_table, new_ddl_error_table")
-	tk.MustExec("create table ddl_error_table(a int)")
-	is := s.dom.InfoSchema()
-	schemaName := model.NewCIStr("test")
-	tableName := model.NewCIStr("ddl_error_table")
-	schema, ok := is.SchemaByName(schemaName)
-	c.Assert(ok, IsTrue)
-	tbl, err := is.TableByName(schemaName, tableName)
-	c.Assert(err, IsNil)
-
-	newTableName := model.NewCIStr("new_ddl_error_table")
-	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    tbl.Meta().ID,
-		SchemaName: schema.Name.L,
-		Type:       model.ActionRenameTable,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{schema.ID, newTableName},
-	}
-
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockErrEntrySizeTooLarge", `return(true)`), IsNil)
-	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/mockErrEntrySizeTooLarge"), IsNil)
-	}()
-
-	txn, err := s.store.Begin()
-	c.Assert(err, IsNil)
-	t := meta.NewMeta(txn)
-	job.ID, err = t.GenGlobalID()
-	c.Assert(err, IsNil)
-	job.Version = 1
-	job.StartTS = txn.StartTS()
-
-	err = t.EnQueueDDLJob(job)
-	c.Assert(err, IsNil)
-	err = txn.Commit(context.Background())
-	c.Assert(err, IsNil)
-	ticker := time.NewTicker(s.lease)
-	defer ticker.Stop()
-	for range ticker.C {
-		historyJob, err := s.getHistoryDDLJob(job.ID)
-		c.Assert(err, IsNil)
-		if historyJob == nil {
-			continue
-		}
-		c.Assert(historyJob.ErrorCount, Equals, int64(1))
-		kv.ErrEntryTooLarge.Equal(historyJob.Error)
-		break
-	}
 }
 
 func (s *testIntegrationSuite3) TestMultiRegionGetTableEndHandle(c *C) {
@@ -1202,10 +1147,10 @@ func checkGetMaxTableRowID(ctx *testMaxTableRowIDContext, store kv.Storage, expe
 	c.Assert(maxID, Equals, expectMaxID)
 }
 
-func (s *testIntegrationSuite) getHistoryDDLJob(id int64) (*model.Job, error) {
+func getHistoryDDLJob(store kv.Storage, id int64) (*model.Job, error) {
 	var job *model.Job
 
-	err := kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
+	err := kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		var err1 error
 		job, err1 = t.GetHistoryDDLJob(id)
