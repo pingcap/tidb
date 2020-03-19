@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/util/testutil"
 )
 
-var _ = Suite(&testIntegrationSuite{})
+var _ = SerialSuites(&testIntegrationSuite{})
 
 type testIntegrationSuite struct {
 	testData testutil.TestData
