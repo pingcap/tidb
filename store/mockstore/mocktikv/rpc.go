@@ -977,7 +977,7 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	case tikvrpc.CmdRemoveLockObserver:
 		return nil, errors.New("unimplemented")
 	case tikvrpc.CmdPhysicalScanLock:
-		panic("unimplemented")
+		return nil, errors.New("unimplemented")
 	case tikvrpc.CmdCop:
 		r := req.Cop()
 		if err := handler.checkRequestContext(reqCtx); err != nil {
