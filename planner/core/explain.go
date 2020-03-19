@@ -26,11 +26,16 @@ import (
 	"github.com/pingcap/tidb/util/stringutil"
 )
 
+// A plan is dataAccesser means it can access underlying data.
 // Include `PhysicalTableScan`, `PhysicalIndexScan`, `PointGetPlan`, `BatchPointScan`.
-type physicalScan interface {
+// ExplainInfo = AccessObject + OperatorInfo
+type dataAccesser interface {
 
-	// AccessObjectInfo Return plan's accessObject, include `table` and `index`.
-	AccessObjectInfo() string
+	// AccessObject return plan's `table`, `partition` and `index`.
+	AccessObject() string
+
+	// OperatorInfo() return other operator information to be explained.
+	OperatorInfo(normalized bool) string
 }
 
 // ExplainInfo implements Plan interface.
@@ -50,16 +55,16 @@ func (p *PhysicalIndexScan) ExplainID() fmt.Stringer {
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalIndexScan) ExplainInfo() string {
-	return p.explainInfo(false)
+	return p.AccessObject() + ", " + p.OperatorInfo(false)
 }
 
 // ExplainNormalizedInfo implements Plan interface.
 func (p *PhysicalIndexScan) ExplainNormalizedInfo() string {
-	return p.AccessObjectInfo() + ", " + p.explainInfo(true)
+	return p.AccessObject() + ", " + p.OperatorInfo(true)
 }
 
-// AccessObjectInfo implements physicalScan interface.
-func (p *PhysicalIndexScan) AccessObjectInfo() string {
+// AccessObject implements dataAccesser interface.
+func (p *PhysicalIndexScan) AccessObject() string {
 	buffer := bytes.NewBufferString("")
 	tblName := p.Table.Name.O
 	if p.TableAsName != nil && p.TableAsName.O != "" {
@@ -84,7 +89,8 @@ func (p *PhysicalIndexScan) AccessObjectInfo() string {
 	return buffer.String()
 }
 
-func (p *PhysicalIndexScan) explainInfo(normalized bool) string {
+// OperatorInfo implements dataAccesser interface.
+func (p *PhysicalIndexScan) OperatorInfo(normalized bool) string {
 	buffer := bytes.NewBufferString("")
 	if len(p.rangeInfo) > 0 {
 		fmt.Fprintf(buffer, "range: decided by %v, ", p.rangeInfo)
@@ -150,16 +156,16 @@ func (p *PhysicalTableScan) ExplainID() fmt.Stringer {
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalTableScan) ExplainInfo() string {
-	return p.explainInfo(false)
+	return p.AccessObject() + ", " + p.OperatorInfo(false)
 }
 
 // ExplainNormalizedInfo implements Plan interface.
 func (p *PhysicalTableScan) ExplainNormalizedInfo() string {
-	return p.AccessObjectInfo() + ", " + p.explainInfo(true)
+	return p.AccessObject() + ", " + p.OperatorInfo(true)
 }
 
-// AccessObjectInfo implements physicalScan interface.
-func (p *PhysicalTableScan) AccessObjectInfo() string {
+// AccessObject implements dataAccesser interface.
+func (p *PhysicalTableScan) AccessObject() string {
 	buffer := bytes.NewBufferString("")
 	tblName := p.Table.Name.O
 	if p.TableAsName != nil && p.TableAsName.O != "" {
@@ -175,7 +181,8 @@ func (p *PhysicalTableScan) AccessObjectInfo() string {
 	return buffer.String()
 }
 
-func (p *PhysicalTableScan) explainInfo(normalized bool) string {
+// OperatorInfo implements dataAccesser interface.
+func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 	buffer := bytes.NewBufferString("")
 	if p.pkCol != nil {
 		fmt.Fprintf(buffer, "pk col:%s, ", p.pkCol.ExplainInfo())

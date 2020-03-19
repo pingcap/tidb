@@ -90,18 +90,26 @@ func (p *PointGetPlan) ToPB(ctx sessionctx.Context) (*tipb.Executor, error) {
 	return nil, nil
 }
 
-// ExplainInfo returns operator information to be explained.
+// ExplainInfo implements Plan interface.
 func (p *PointGetPlan) ExplainInfo() string {
-	return p.explainInfo(false)
+	accessObject, explainInfo := p.AccessObject(), p.OperatorInfo(false)
+	if len(explainInfo) == 0 {
+		return accessObject
+	}
+	return accessObject + ", " + explainInfo
 }
 
-// ExplainNormalizedInfo returns normalized operator information to be explained.
+// ExplainNormalizedInfo implements Plan interface.
 func (p *PointGetPlan) ExplainNormalizedInfo() string {
-	return p.AccessObjectInfo() + ", " + p.explainInfo(true)
+	accessObject, explainInfo := p.AccessObject(), p.OperatorInfo(true)
+	if len(explainInfo) == 0 {
+		return accessObject
+	}
+	return accessObject + ", " + explainInfo
 }
 
-// AccessObjectInfo implements physicalScan interface.
-func (p *PointGetPlan) AccessObjectInfo() string {
+// AccessObject implements dataAccesser interface.
+func (p *PointGetPlan) AccessObject() string {
 	buffer := bytes.NewBufferString("")
 	tblName := p.TblInfo.Name.O
 	fmt.Fprintf(buffer, "table:%s, ", tblName)
@@ -118,8 +126,8 @@ func (p *PointGetPlan) AccessObjectInfo() string {
 	return buffer.String()
 }
 
-// ExplainInfo returns operator information to be explained.
-func (p *PointGetPlan) explainInfo(normalized bool) string {
+// OperatorInfo implements dataAccesser interface.
+func (p *PointGetPlan) OperatorInfo(normalized bool) string {
 	buffer := bytes.NewBufferString("")
 	if p.IndexInfo == nil {
 		if normalized {
@@ -233,18 +241,18 @@ func (p *BatchPointGetPlan) ToPB(ctx sessionctx.Context) (*tipb.Executor, error)
 	return nil, nil
 }
 
-// ExplainInfo returns operator information to be explained.
+// ExplainInfo implements Plan interface.
 func (p *BatchPointGetPlan) ExplainInfo() string {
-	return p.explainInfo(false)
+	return p.AccessObject() + ", " + p.OperatorInfo(false)
 }
 
-// ExplainNormalizedInfo returns normalized operator information to be explained.
+// ExplainNormalizedInfo implements Plan interface.
 func (p *BatchPointGetPlan) ExplainNormalizedInfo() string {
-	return p.AccessObjectInfo() + ", " + p.explainInfo(true)
+	return p.AccessObject() + ", " + p.OperatorInfo(true)
 }
 
-// AccessObjectInfo implements physicalScan interface.
-func (p *BatchPointGetPlan) AccessObjectInfo() string {
+// AccessObject implements physicalScan interface.
+func (p *BatchPointGetPlan) AccessObject() string {
 	buffer := bytes.NewBufferString("")
 	tblName := p.TblInfo.Name.O
 	fmt.Fprintf(buffer, "table:%s, ", tblName)
@@ -258,7 +266,8 @@ func (p *BatchPointGetPlan) AccessObjectInfo() string {
 	return buffer.String()
 }
 
-func (p *BatchPointGetPlan) explainInfo(normalized bool) string {
+// OperatorInfo implements dataAccesser interface.
+func (p *BatchPointGetPlan) OperatorInfo(normalized bool) string {
 	buffer := bytes.NewBufferString("")
 	if p.IndexInfo == nil {
 		if normalized {

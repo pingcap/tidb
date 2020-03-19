@@ -893,12 +893,13 @@ func (e *Explain) prepareOperatorInfo(p Plan, taskType, driverSide, indent strin
 		estRows = strconv.FormatFloat(si.RowCount, 'f', 2, 64)
 	}
 
-	accessObject := ""
-	if scan, ok := p.(physicalScan); ok {
-		accessObject = scan.AccessObjectInfo()
+	var accessObject, operatorInfo string
+	if plan, ok := p.(dataAccesser); ok {
+		accessObject = plan.AccessObject()
+		operatorInfo = plan.OperatorInfo(false)
+	} else {
+		operatorInfo = p.ExplainInfo()
 	}
-
-	operatorInfo := p.ExplainInfo()
 
 	var row []string
 	if e.Analyze {
