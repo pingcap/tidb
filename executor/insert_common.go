@@ -281,7 +281,7 @@ func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int
 		err = resetErrDataTooLong(colName, rowIdx+1, err)
 	} else if types.ErrOverflow.Equal(err) {
 		err = types.ErrWarnDataOutOfRange.GenWithStackByArgs(colName, rowIdx+1)
-	} else if types.ErrTruncated.Equal(err) || types.ErrTruncatedWrongVal.Equal(err) {
+	} else if types.ErrTruncated.Equal(err) || types.ErrTruncatedWrongVal.Equal(err) || types.ErrWrongValue.Equal(err) {
 		valStr, err1 := val.ToString()
 		if err1 != nil {
 			logutil.BgLogger().Warn("truncate value failed", zap.Error(err1))
@@ -492,26 +492,18 @@ func (e *InsertValues) getRow(ctx context.Context, vals []types.Datum) ([]types.
 	return e.fillRow(ctx, row, hasValue)
 }
 
-func (e *InsertValues) getRowInPlace(ctx context.Context, vals []types.Datum, rowBuf []types.Datum) ([]types.Datum, error) {
-	hasValue := make([]bool, len(e.Table.Cols()))
-	for i, v := range vals {
-		casted, err := table.CastValue(e.ctx, v, e.insertColumns[i].ToInfo())
-		if e.handleErr(nil, &v, 0, err) != nil {
-			return nil, err
-		}
-		offset := e.insertColumns[i].Offset
-		rowBuf[offset] = casted
-		hasValue[offset] = true
-	}
-	return e.fillRow(ctx, rowBuf, hasValue)
-}
-
 // getColDefaultValue gets the column default value.
 func (e *InsertValues) getColDefaultValue(idx int, col *table.Column) (d types.Datum, err error) {
 	if !col.DefaultIsExpr && e.colDefaultVals != nil && e.colDefaultVals[idx].valid {
 		return e.colDefaultVals[idx].val, nil
 	}
-	defaultVal, err := table.GetColDefaultValue(e.ctx, col.ToInfo())
+
+	var defaultVal types.Datum
+	if col.DefaultIsExpr && col.DefaultExpr != nil {
+		defaultVal, err = table.EvalColDefaultExpr(e.ctx, col.ToInfo(), col.DefaultExpr)
+	} else {
+		defaultVal, err = table.GetColDefaultValue(e.ctx, col.ToInfo())
+	}
 	if err != nil {
 		return types.Datum{}, err
 	}
@@ -901,7 +893,7 @@ func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum,
 
 // allocAutoRandomID allocates a random id for primary key column. It assumes tableInfo.AutoRandomBits > 0.
 func (e *InsertValues) allocAutoRandomID(fieldType *types.FieldType) (int64, error) {
-	alloc := e.Table.Allocator(e.ctx, autoid.AutoRandomType)
+	alloc := e.Table.Allocators(e.ctx).Get(autoid.AutoRandomType)
 	tableInfo := e.Table.Meta()
 	_, autoRandomID, err := alloc.Alloc(tableInfo.ID, 1, 1, 1)
 	if err != nil {
@@ -918,7 +910,7 @@ func (e *InsertValues) allocAutoRandomID(fieldType *types.FieldType) (int64, err
 }
 
 func (e *InsertValues) rebaseAutoRandomID(recordID int64, fieldType *types.FieldType) error {
-	alloc := e.Table.Allocator(e.ctx, autoid.AutoRandomType)
+	alloc := e.Table.Allocators(e.ctx).Get(autoid.AutoRandomType)
 	tableInfo := e.Table.Meta()
 
 	typeBitsLength := uint64(mysql.DefaultLengthOfMysqlTypes[fieldType.Tp] * 8)
@@ -996,6 +988,10 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 }
 
 func (e *InsertValues) addRecord(ctx context.Context, row []types.Datum) (int64, error) {
+	return e.addRecordWithAutoIDHint(ctx, row, 0)
+}
+
+func (e *InsertValues) addRecordWithAutoIDHint(ctx context.Context, row []types.Datum, reserveAutoIDCount int) (int64, error) {
 	txn, err := e.ctx.Txn(true)
 	if err != nil {
 		return 0, err
@@ -1003,7 +999,12 @@ func (e *InsertValues) addRecord(ctx context.Context, row []types.Datum) (int64,
 	if !e.ctx.GetSessionVars().ConstraintCheckInPlace {
 		txn.SetOption(kv.PresumeKeyNotExists, nil)
 	}
-	h, err := e.Table.AddRecord(e.ctx, row, table.WithCtx(ctx))
+	var h int64
+	if reserveAutoIDCount > 0 {
+		h, err = e.Table.AddRecord(e.ctx, row, table.WithCtx(ctx), table.WithReserveAutoIDHint(reserveAutoIDCount))
+	} else {
+		h, err = e.Table.AddRecord(e.ctx, row, table.WithCtx(ctx))
+	}
 	txn.DelOption(kv.PresumeKeyNotExists)
 	if err != nil {
 		return 0, err
