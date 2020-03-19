@@ -135,7 +135,7 @@ func doMatchGeneralCI(str string, patWeights []uint16, patTypes []byte) bool {
 }
 
 // Compare implements Collator interface.
-func (gc *generalCICollator) Compare(a, b string, opt CollatorOption) int {
+func (gc *generalCICollator) Compare(a, b string) int {
 	a = truncateTailingSpace(a)
 	b = truncateTailingSpace(b)
 	for len(a) > 0 && len(b) > 0 {
@@ -153,7 +153,7 @@ func (gc *generalCICollator) Compare(a, b string, opt CollatorOption) int {
 }
 
 // Key implements Collator interface.
-func (gc *generalCICollator) Key(str string, opt CollatorOption) []byte {
+func (gc *generalCICollator) Key(str string) []byte {
 	str = truncateTailingSpace(str)
 	buf := make([]byte, 0, len(str))
 	i := 0
