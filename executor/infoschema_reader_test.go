@@ -17,7 +17,6 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
-	"google.golang.org/grpc"
 	"net"
 	"net/http/httptest"
 	"strconv"
@@ -48,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
+	"google.golang.org/grpc"
 )
 
 var _ = Suite(&testInfoschemaTableSuite{})
