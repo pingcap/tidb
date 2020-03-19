@@ -984,7 +984,7 @@ func (thresholdCheckInspection) inspectThreshold3(ctx context.Context, sctx sess
 func (c thresholdCheckInspection) inspectForLeaderDrop(ctx context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
 	condition := filter.timeRange.Condition()
 	threshold := 50.0
-	sql := fmt.Sprintf(`select address,min(value),max(value) from metrics_schema.pd_scheduler_store_status %s and type='leader_count' group by address having max(value)-min(value)>%v`, condition, threshold)
+	sql := fmt.Sprintf(`select address,min(value) as mi,max(value) as mx from metrics_schema.pd_scheduler_store_status %s and type='leader_count' group by address having mx-mi>%v`, condition, threshold)
 	rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithContext(ctx, sql)
 	if err != nil {
 		sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("execute '%s' failed: %v", sql, err))
