@@ -134,6 +134,8 @@ const (
 	TableInspectionSummary = "INSPECTION_SUMMARY"
 	// TableInspectionRules is the string constant of currently implemented inspection and summary rules.
 	TableInspectionRules = "INSPECTION_RULES"
+	// TableDDLJobs is the string constant of DDL job table.
+	TableDDLJobs = "DDL_JOBS"
 )
 
 var tableIDMap = map[string]int64{
@@ -193,6 +195,7 @@ var tableIDMap = map[string]int64{
 	TableMetricTables:                       autoid.InformationSchemaDBID + 54,
 	TableInspectionSummary:                  autoid.InformationSchemaDBID + 55,
 	TableInspectionRules:                    autoid.InformationSchemaDBID + 56,
+	TableDDLJobs:                            autoid.InformationSchemaDBID + 57,
 }
 
 type columnInfo struct {
@@ -981,6 +984,21 @@ var tableMetricSummaryByLabelCols = []columnInfo{
 	{name: "COMMENT", tp: mysql.TypeVarchar, size: 256},
 }
 
+var tableDDLJobsCols = []columnInfo{
+	{name: "JOB_ID", tp: mysql.TypeLonglong, size: 21},
+	{name: "DB_NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "TABLE_NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "JOB_TYPE", tp: mysql.TypeVarchar, size: 64},
+	{name: "SCHEMA_STATE", tp: mysql.TypeVarchar, size: 64},
+	{name: "SCHEMA_ID", tp: mysql.TypeLonglong, size: 21},
+	{name: "TABLE_ID", tp: mysql.TypeLonglong, size: 21},
+	{name: "ROW_COUNT", tp: mysql.TypeLonglong, size: 21},
+	{name: "START_TIME", tp: mysql.TypeVarchar, size: 64},
+	{name: "END_TIME", tp: mysql.TypeVarchar, size: 64},
+	{name: "STATE", tp: mysql.TypeVarchar, size: 64},
+	{name: "QUERY", tp: mysql.TypeVarchar, size: 64},
+}
+
 func dataForTiKVRegionStatus(ctx sessionctx.Context) (records [][]types.Datum, err error) {
 	tikvStore, ok := ctx.GetStore().(tikv.Storage)
 	if !ok {
@@ -1403,6 +1421,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableMetricTables:                       tableMetricTablesCols,
 	TableInspectionSummary:                  tableInspectionSummaryCols,
 	TableInspectionRules:                    tableInspectionRulesCols,
+	TableDDLJobs:                            tableDDLJobsCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
