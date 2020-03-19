@@ -1016,6 +1016,7 @@ func CheckAggCanPushCop(sctx sessionctx.Context, aggFuncs []*aggregation.AggFunc
 	return expression.CanExprsPushDown(sc, groupByItems, client, storeType)
 }
 
+// AggPref stores the preferences of Aggregation.
 type AggPref struct {
 	AggFuncs     []*aggregation.AggFuncDesc
 	GroupByItems []expression.Expression
