@@ -94,8 +94,9 @@ func GetAllAnalyzeJobs() []*AnalyzeJob {
 func (job *AnalyzeJob) Start() {
 	job.Mutex.Lock()
 	job.State = running
-	job.StartTime = time.Now()
-	job.updateTime = time.Now()
+	now := time.Now()
+	job.StartTime = now
+	job.updateTime = now
 	job.Mutex.Unlock()
 }
 
