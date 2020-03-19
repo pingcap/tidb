@@ -223,9 +223,8 @@ func buildMockDataSourceWithIndex(opt mockDataSourceParameters, index []int) *mo
 	return buildMockDataSource(opt)
 }
 
+// aggTestCase has a fixed schema (aggCol Double, groupBy LongLong).
 type aggTestCase struct {
-	// The test table's schema is fixed (aggCol Double, groupBy LongLong).
-
 	execType    string // "hash" or "stream"
 	aggFunc     string // sum, avg, count ....
 	groupByNDV  int    // the number of distinct group-by keys
@@ -499,9 +498,8 @@ func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, funcs int, f
 	return exec
 }
 
+// windowTestCase has a fixed schema (col Double, partitionBy LongLong, rawData VarString(16), col LongLong).
 type windowTestCase struct {
-	// The test table's schema is fixed (col Double, partitionBy LongLong, rawData VarString(16), col LongLong).
-
 	windowFunc       string
 	numFunc          int // The number of windowFuncs. Default: 1.
 	frame            *core.WindowFrame
