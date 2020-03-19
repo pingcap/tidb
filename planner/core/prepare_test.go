@@ -397,23 +397,17 @@ func (s *testPrepareSuite) TestPrepareCacheForPartition(c *C) {
 	c.Assert(err, IsNil)
 	tk := testkit.NewTestKit(c, store)
 	orgEnable := core.PreparedPlanCacheEnabled()
-	orgCapacity := core.PreparedPlanCacheCapacity
-	orgMemGuardRatio := core.PreparedPlanCacheMemoryGuardRatio
-	orgMaxMemory := core.PreparedPlanCacheMaxMemory
 	defer func() {
 		dom.Close()
 		store.Close()
 		core.SetPreparedPlanCache(orgEnable)
-		core.PreparedPlanCacheCapacity = orgCapacity
-		core.PreparedPlanCacheMemoryGuardRatio = orgMemGuardRatio
-		core.PreparedPlanCacheMaxMemory = orgMaxMemory
 	}()
 	core.SetPreparedPlanCache(true)
-	core.PreparedPlanCacheCapacity = 100
-	core.PreparedPlanCacheMemoryGuardRatio = 0.1
-	// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
-	// behavior would not be effected by the uncertain memory utilization.
-	core.PreparedPlanCacheMaxMemory.Store(math.MaxUint64)
+
+	tk.Se, err = session.CreateSession4TestWithOpt(store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
 
 	tk.MustExec("use test")
 	// Test for PointGet and IndexRead.
@@ -471,23 +465,18 @@ func (s *testPrepareSerialSuite) TestConstPropAndPPDWithCache(c *C) {
 	c.Assert(err, IsNil)
 	tk := testkit.NewTestKit(c, store)
 	orgEnable := core.PreparedPlanCacheEnabled()
-	orgCapacity := core.PreparedPlanCacheCapacity
-	orgMemGuardRatio := core.PreparedPlanCacheMemoryGuardRatio
-	orgMaxMemory := core.PreparedPlanCacheMaxMemory
 	defer func() {
 		dom.Close()
 		store.Close()
 		core.SetPreparedPlanCache(orgEnable)
-		core.PreparedPlanCacheCapacity = orgCapacity
-		core.PreparedPlanCacheMemoryGuardRatio = orgMemGuardRatio
-		core.PreparedPlanCacheMaxMemory = orgMaxMemory
 	}()
 	core.SetPreparedPlanCache(true)
-	core.PreparedPlanCacheCapacity = 100
-	core.PreparedPlanCacheMemoryGuardRatio = 0.1
-	// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
-	// behavior would not be effected by the uncertain memory utilization.
-	core.PreparedPlanCacheMaxMemory.Store(math.MaxUint64)
+
+	tk.Se, err = session.CreateSession4TestWithOpt(store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a varchar(8) not null, b varchar(8) not null)")

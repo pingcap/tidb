@@ -37,6 +37,7 @@ import (
 	"net"
 	"net/http"
 	"unsafe"
+
 	// For pprof
 	_ "net/http/pprof"
 	"os"
@@ -51,10 +52,12 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/fastrand"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sys/linux"
 	"github.com/pingcap/tidb/util/timeutil"
@@ -84,12 +87,13 @@ func init() {
 }
 
 var (
-	errUnknownFieldType  = terror.ClassServer.New(mysql.ErrUnknownFieldType, mysql.MySQLErrName[mysql.ErrUnknownFieldType])
-	errInvalidSequence   = terror.ClassServer.New(mysql.ErrInvalidSequence, mysql.MySQLErrName[mysql.ErrInvalidSequence])
-	errInvalidType       = terror.ClassServer.New(mysql.ErrInvalidType, mysql.MySQLErrName[mysql.ErrInvalidType])
-	errNotAllowedCommand = terror.ClassServer.New(mysql.ErrNotAllowedCommand, mysql.MySQLErrName[mysql.ErrNotAllowedCommand])
-	errAccessDenied      = terror.ClassServer.New(mysql.ErrAccessDenied, mysql.MySQLErrName[mysql.ErrAccessDenied])
-	errConCount          = terror.ClassServer.New(mysql.ErrConCount, mysql.MySQLErrName[mysql.ErrConCount])
+	errUnknownFieldType        = terror.ClassServer.New(errno.ErrUnknownFieldType, errno.MySQLErrName[errno.ErrUnknownFieldType])
+	errInvalidSequence         = terror.ClassServer.New(errno.ErrInvalidSequence, errno.MySQLErrName[errno.ErrInvalidSequence])
+	errInvalidType             = terror.ClassServer.New(errno.ErrInvalidType, errno.MySQLErrName[errno.ErrInvalidType])
+	errNotAllowedCommand       = terror.ClassServer.New(errno.ErrNotAllowedCommand, errno.MySQLErrName[errno.ErrNotAllowedCommand])
+	errAccessDenied            = terror.ClassServer.New(errno.ErrAccessDenied, errno.MySQLErrName[errno.ErrAccessDenied])
+	errConCount                = terror.ClassServer.New(errno.ErrConCount, errno.MySQLErrName[errno.ErrConCount])
+	errSecureTransportRequired = terror.ClassServer.New(errno.ErrSecureTransportRequired, errno.MySQLErrName[errno.ErrSecureTransportRequired])
 )
 
 // DefaultCapability is the capability of the server when it is created using the default configuration.
@@ -113,10 +117,8 @@ type Server struct {
 	capability        uint32
 	dom               *domain.Domain
 
-	// stopListenerCh is used when a critical error occurred, we don't want to exit the process, because there may be
-	// a supervisor automatically restart it, then new client connection will be created, but we can't server it.
-	// So we just stop the listener and store to force clients to chose other TiDB servers.
-	stopListenerCh chan struct{}
+	statusAddr     string
+	statusListener net.Listener
 	statusServer   *http.Server
 	grpcServer     *grpc.Server
 }
@@ -158,7 +160,7 @@ func (s *Server) newConn(conn net.Conn) *clientConn {
 		}
 	}
 	cc.setConn(conn)
-	cc.salt = util.RandomBuf(20)
+	cc.salt = fastrand.Buf(20)
 	return cc
 }
 
@@ -206,17 +208,19 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		driver:            driver,
 		concurrentLimiter: NewTokenLimiter(cfg.TokenLimit),
 		clients:           make(map[uint32]*clientConn),
-		stopListenerCh:    make(chan struct{}, 1),
 	}
 
 	tlsConfig, err := util.LoadTLSCertificates(s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert)
 	if err != nil {
 		logutil.BgLogger().Error("secure connection cert/key/ca load fail", zap.Error(err))
-		return nil, err
 	}
-	logutil.BgLogger().Info("secure connection is enabled", zap.Bool("client verification enabled", len(variable.SysVars["ssl_ca"].Value) > 0))
-	setSSLVariable(s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert)
-	atomic.StorePointer(&s.tlsConfig, unsafe.Pointer(tlsConfig))
+	if tlsConfig != nil {
+		setSSLVariable(s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert)
+		atomic.StorePointer(&s.tlsConfig, unsafe.Pointer(tlsConfig))
+		logutil.BgLogger().Info("mysql protocol server secure connection is enabled", zap.Bool("client verification enabled", len(variable.SysVars["ssl_ca"].Value) > 0))
+	} else if cfg.Security.RequireSecureTransport {
+		return nil, errSecureTransportRequired.FastGenByArgs()
+	}
 
 	setSystemTimeZoneVariable()
 
@@ -255,6 +259,9 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		s.listener = pplistener
 	}
 
+	if s.cfg.Status.ReportStatus && err == nil {
+		err = s.listenStatusHTTPServer()
+	}
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -298,11 +305,6 @@ func (s *Server) Run() error {
 			logutil.BgLogger().Error("accept failed", zap.Error(err))
 			return errors.Trace(err)
 		}
-		if s.shouldStopListener() {
-			err = conn.Close()
-			terror.Log(errors.Trace(err))
-			break
-		}
 
 		clientConn := s.newConn(conn)
 
@@ -329,23 +331,6 @@ func (s *Server) Run() error {
 		}
 
 		go s.onConn(clientConn)
-	}
-	err := s.listener.Close()
-	terror.Log(errors.Trace(err))
-	s.listener = nil
-	for {
-		metrics.ServerEventCounter.WithLabelValues(metrics.EventHang).Inc()
-		logutil.BgLogger().Error("listener stopped, waiting for manual kill.")
-		time.Sleep(time.Minute)
-	}
-}
-
-func (s *Server) shouldStopListener() bool {
-	select {
-	case <-s.stopListenerCh:
-		return true
-	default:
-		return false
 	}
 }
 
@@ -380,6 +365,7 @@ func (s *Server) Close() {
 func (s *Server) onConn(conn *clientConn) {
 	ctx := logutil.WithConnID(context.Background(), conn.connectionID)
 	if err := conn.handshake(ctx); err != nil {
+		terror.Log(err)
 		if plugin.IsEnable(plugin.Audit) {
 			conn.ctx.GetSessionVars().ConnectionInfo = conn.connectInfo()
 		}

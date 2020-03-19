@@ -480,17 +480,23 @@ func (s *testSerialSuite) TestRecoverTableByJobID(c *C) {
 	tk.MustExec("insert into t_recover values (1),(2),(3)")
 	tk.MustExec("drop table t_recover")
 
-	rs, err := tk.Exec("admin show ddl jobs")
-	c.Assert(err, IsNil)
-	rows, err := session.GetRows4Test(context.Background(), tk.Se, rs)
-	c.Assert(err, IsNil)
-	row := rows[0]
-	c.Assert(row.GetString(1), Equals, "test_recover")
-	c.Assert(row.GetString(3), Equals, "drop table")
-	jobID := row.GetInt64(0)
+	getDDLJobID := func(table, tp string) int64 {
+		rs, err := tk.Exec("admin show ddl jobs")
+		c.Assert(err, IsNil)
+		rows, err := session.GetRows4Test(context.Background(), tk.Se, rs)
+		c.Assert(err, IsNil)
+		for _, row := range rows {
+			if row.GetString(1) == table && row.GetString(3) == tp {
+				return row.GetInt64(0)
+			}
+		}
+		c.Errorf("can't find %s table of %s", tp, table)
+		return -1
+	}
+	jobID := getDDLJobID("test_recover", "drop table")
 
 	// if GC safe point is not exists in mysql.tidb
-	_, err = tk.Exec(fmt.Sprintf("recover table by job %d", jobID))
+	_, err := tk.Exec(fmt.Sprintf("recover table by job %d", jobID))
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "can not get 'tikv_gc_safe_point'")
 	// set GC safe point
@@ -539,14 +545,7 @@ func (s *testSerialSuite) TestRecoverTableByJobID(c *C) {
 
 	tk.MustExec("delete from t_recover where a > 1")
 	tk.MustExec("drop table t_recover")
-	rs, err = tk.Exec("admin show ddl jobs")
-	c.Assert(err, IsNil)
-	rows, err = session.GetRows4Test(context.Background(), tk.Se, rs)
-	c.Assert(err, IsNil)
-	row = rows[0]
-	c.Assert(row.GetString(1), Equals, "test_recover")
-	c.Assert(row.GetString(3), Equals, "drop table")
-	jobID = row.GetInt64(0)
+	jobID = getDDLJobID("test_recover", "drop table")
 
 	tk.MustExec(fmt.Sprintf("recover table by job %d", jobID))
 
@@ -555,6 +554,14 @@ func (s *testSerialSuite) TestRecoverTableByJobID(c *C) {
 	// check recover table autoID.
 	tk.MustExec("insert into t_recover values (7),(8),(9)")
 	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1", "7", "8", "9"))
+
+	// Test for recover truncate table.
+	tk.MustExec("truncate table t_recover")
+	tk.MustExec("rename table t_recover to t_recover_new")
+	jobID = getDDLJobID("test_recover", "truncate table")
+	tk.MustExec(fmt.Sprintf("recover table by job %d", jobID))
+	tk.MustExec("insert into t_recover values (10)")
+	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1", "7", "8", "9", "10"))
 
 	gcEnable, err := gcutil.CheckGCEnable(tk.Se)
 	c.Assert(err, IsNil)
@@ -881,6 +888,23 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 		assertModifyColType("alter table t modify column a mediumint auto_random(3)")
 		assertModifyColType("alter table t modify column a smallint auto_random(3)")
 	})
+
+	// Test show warnings when create auto_random table.
+	assertShowWarningCorrect := func(sql string, times int) {
+		mustExecAndDrop(sql, func() {
+			note := fmt.Sprintf(autoid.AutoRandomAvailableAllocTimesNote, times)
+			result := fmt.Sprintf("Note|1105|%s", note)
+			tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", result))
+			c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
+		})
+	}
+	assertShowWarningCorrect("create table t (a tinyint unsigned auto_random(6) primary key)", 1)
+	assertShowWarningCorrect("create table t (a tinyint unsigned auto_random(5) primary key)", 3)
+	assertShowWarningCorrect("create table t (a tinyint auto_random(4) primary key)", 7)
+	assertShowWarningCorrect("create table t (a bigint auto_random(62) primary key)", 1)
+	assertShowWarningCorrect("create table t (a bigint unsigned auto_random(61) primary key)", 3)
+	assertShowWarningCorrect("create table t (a int auto_random(30) primary key)", 1)
+	assertShowWarningCorrect("create table t (a int auto_random(29) primary key)", 3)
 
 	// Disallow using it when allow-auto-random is not enabled.
 	config.GetGlobalConfig().Experimental.AllowAutoRandom = false
