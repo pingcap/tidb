@@ -775,6 +775,7 @@ func (c *spaceFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 		return nil, err
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETInt)
+	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	bf.tp.Flen = mysql.MaxBlobWidth
 	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
 	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
@@ -1534,6 +1535,7 @@ func (c *hexFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 	case types.ETInt, types.ETReal, types.ETDecimal:
 		bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETInt)
 		bf.tp.Flen = args[0].GetType().Flen * 2
+		bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 		sig := &builtinHexIntArgSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_HexIntArg)
 		return sig, nil
@@ -2392,7 +2394,7 @@ func (b *builtinFindInSetSig) evalInt(row chunk.Row) (int64, bool, error) {
 	}
 
 	for i, strInSet := range strings.Split(strlist, ",") {
-		if b.ctor.Compare(str, strInSet, collate.NewCollatorOption(0)) == 0 {
+		if b.ctor.Compare(str, strInSet) == 0 {
 			return int64(i + 1), false, nil
 		}
 	}
@@ -2521,7 +2523,7 @@ func (b *builtinFieldStringSig) evalInt(row chunk.Row) (int64, bool, error) {
 		if err != nil {
 			return 0, true, err
 		}
-		if !isNull && b.ctor.Compare(str, stri, collate.NewCollatorOption(0)) == 0 {
+		if !isNull && b.ctor.Compare(str, stri) == 0 {
 			return int64(i), false, nil
 		}
 	}
@@ -3814,5 +3816,5 @@ func (b *builtinWeightStringSig) evalString(row chunk.Row) (string, bool, error)
 	default:
 		return "", false, ErrIncorrectType.GenWithStackByArgs(ast.WeightString, string(b.padding))
 	}
-	return string(ctor.Key(str, collate.CollatorOption{PadLen: b.length})), false, nil
+	return string(ctor.Key(str)), false, nil
 }

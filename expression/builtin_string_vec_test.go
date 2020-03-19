@@ -504,6 +504,16 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 			newRealStringGener(),
 			&numStrGener{*newRangeInt64Gener(-10, 40)},
 		}},
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETDecimal, types.ETInt, types.ETString}, geners: []dataGenerator{
+			newRangeDecimalGener(-10000, 10000, 0.5),
+			newRangeInt64Gener(-10, 40),
+			newNullWrappedGener(0.1, &constStrGener{"en_US"}),
+		}},
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETReal, types.ETInt, types.ETString}, geners: []dataGenerator{
+			newRangeRealGener(-10000, 10000, 0.5),
+			newRangeInt64Gener(-10, 40),
+			newNullWrappedGener(0.1, &constStrGener{"en_US"}),
+		}},
 	},
 }
 

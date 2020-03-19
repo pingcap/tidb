@@ -31,12 +31,14 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
 	"github.com/pingcap/log"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/sysutil"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/infoschema"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
@@ -61,12 +63,52 @@ type memTableRetriever interface {
 // MemTableReaderExec executes memTable information retrieving from the MemTable components
 type MemTableReaderExec struct {
 	baseExecutor
+	table     *model.TableInfo
 	retriever memTableRetriever
+	// cacheRetrieved is used to indicate whether has the parent executor retrieved
+	// from inspection cache in inspection mode.
+	cacheRetrieved bool
+}
+
+func (e *MemTableReaderExec) isInspectionCacheableTable(tblName string) bool {
+	switch tblName {
+	case strings.ToLower(infoschema.TableClusterConfig),
+		strings.ToLower(infoschema.TableClusterInfo),
+		strings.ToLower(infoschema.TableClusterSystemInfo),
+		strings.ToLower(infoschema.TableClusterLoad),
+		strings.ToLower(infoschema.TableClusterHardware):
+		return true
+	default:
+		return false
+	}
 }
 
 // Next implements the Executor Next interface.
 func (e *MemTableReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
-	rows, err := e.retriever.retrieve(ctx, e.ctx)
+	var (
+		rows [][]types.Datum
+		err  error
+	)
+
+	// The `InspectionTableCache` will be assigned in the begin of retrieving` and be
+	// cleaned at the end of retrieving, so nil represents currently in non-inspection mode.
+	if cache, tbl := e.ctx.GetSessionVars().InspectionTableCache, e.table.Name.L; cache != nil &&
+		e.isInspectionCacheableTable(tbl) {
+		// TODO: cached rows will be returned fully, we should refactor this part.
+		if !e.cacheRetrieved {
+			// Obtain data from cache first.
+			cached, found := cache[tbl]
+			if !found {
+				rows, err := e.retriever.retrieve(ctx, e.ctx)
+				cached = variable.TableSnapshot{Rows: rows, Err: err}
+				cache[tbl] = cached
+			}
+			e.cacheRetrieved = true
+			rows, err = cached.Rows, cached.Err
+		}
+	} else {
+		rows, err = e.retriever.retrieve(ctx, e.ctx)
+	}
 	if err != nil {
 		return err
 	}
@@ -138,9 +180,9 @@ func (e *clusterConfigRetriever) retrieve(_ context.Context, sctx sessionctx.Con
 				var url string
 				switch typ {
 				case "pd":
-					url = fmt.Sprintf("http://%s%s", statusAddr, pdapi.Config)
+					url = fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), statusAddr, pdapi.Config)
 				case "tikv", "tidb":
-					url = fmt.Sprintf("http://%s/config", statusAddr)
+					url = fmt.Sprintf("%s://%s/config", util.InternalHTTPSchema(), statusAddr)
 				default:
 					ch <- result{err: errors.Errorf("unknown node type: %s(%s)", typ, address)}
 					return
@@ -152,7 +194,7 @@ func (e *clusterConfigRetriever) retrieve(_ context.Context, sctx sessionctx.Con
 					return
 				}
 				req.Header.Add("PD-Allow-follower-handle", "true")
-				resp, err := http.DefaultClient.Do(req)
+				resp, err := util.InternalHTTPClient().Do(req)
 				if err != nil {
 					ch <- result{err: errors.Trace(err)}
 					return

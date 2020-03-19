@@ -15,6 +15,8 @@ package collate
 
 import (
 	"unicode/utf8"
+
+	"github.com/pingcap/tidb/util/stringutil"
 )
 
 type generalCICollator struct {
@@ -29,8 +31,111 @@ func sign(i int) int {
 	return 0
 }
 
-// Compare implement Collator interface.
-func (gc *generalCICollator) Compare(a, b string, opt CollatorOption) int {
+// compilePatternGeneralCI handles escapes and wild cards, generate pattern weights and types.
+// This function is modified from stringutil.CompilePattern.
+func compilePatternGeneralCI(pattern string, escape byte) (patWeights []uint16, patTypes []byte) {
+	var lastAny bool
+	runes := []rune(pattern)
+	escapeRune := rune(escape)
+	lenRunes := len(runes)
+	patWeights = make([]uint16, lenRunes)
+	patTypes = make([]byte, lenRunes)
+	patLen := 0
+	for i := 0; i < lenRunes; i++ {
+		var tp byte
+		var r = runes[i]
+		switch r {
+		case escapeRune:
+			lastAny = false
+			tp = stringutil.PatMatch
+			if i < lenRunes-1 {
+				i++
+				r = runes[i]
+				if r == escapeRune || r == '_' || r == '%' {
+					// Valid escape.
+				} else {
+					// Invalid escape, fall back to escape byte.
+					// mysql will treat escape character as the origin value even
+					// the escape sequence is invalid in Go or C.
+					// e.g., \m is invalid in Go, but in MySQL we will get "m" for select '\m'.
+					// Following case is correct just for escape \, not for others like +.
+					// TODO: Add more checks for other escapes.
+					i--
+					r = escapeRune
+				}
+			}
+		case '_':
+			if lastAny {
+				continue
+			}
+			tp = stringutil.PatOne
+		case '%':
+			if lastAny {
+				continue
+			}
+			lastAny = true
+			tp = stringutil.PatAny
+		default:
+			lastAny = false
+			tp = stringutil.PatMatch
+		}
+		patWeights[patLen] = convertRune(r)
+		patTypes[patLen] = tp
+		patLen++
+	}
+	patWeights = patWeights[:patLen]
+	patTypes = patTypes[:patLen]
+	return
+}
+
+// doMatchGeneralCI matches the string with patWeights and patTypes.
+// The algorithm has linear time complexity.
+// https://research.swtch.com/glob
+// This function is modified from stringutil.DoMatch.
+func doMatchGeneralCI(str string, patWeights []uint16, patTypes []byte) bool {
+	// TODO(bb7133): it is possible to get the rune one by one to avoid the cost of get them as a whole.
+	runes := []rune(str)
+	lenRunes := len(runes)
+	var rIdx, pIdx, nextRIdx, nextPIdx int
+	for pIdx < len(patWeights) || rIdx < lenRunes {
+		if pIdx < len(patWeights) {
+			switch patTypes[pIdx] {
+			case stringutil.PatMatch:
+				if rIdx < lenRunes && convertRune(runes[rIdx]) == patWeights[pIdx] {
+					pIdx++
+					rIdx++
+					continue
+				}
+			case stringutil.PatOne:
+				if rIdx < len(str) {
+					pIdx++
+					rIdx++
+					continue
+				}
+			case stringutil.PatAny:
+				// Try to match at sIdx.
+				// If that doesn't work out,
+				// restart at sIdx+1 next.
+				nextPIdx = pIdx
+				nextRIdx = rIdx + 1
+				pIdx++
+				continue
+			}
+		}
+		// Mismatch. Maybe restart.
+		if 0 < nextRIdx && nextRIdx <= len(str) {
+			pIdx = nextPIdx
+			rIdx = nextRIdx
+			continue
+		}
+		return false
+	}
+	// Matched all of pattern to all of name. Success.
+	return true
+}
+
+// Compare implements Collator interface.
+func (gc *generalCICollator) Compare(a, b string) int {
 	a = truncateTailingSpace(a)
 	b = truncateTailingSpace(b)
 	for len(a) > 0 && len(b) > 0 {
@@ -47,8 +152,8 @@ func (gc *generalCICollator) Compare(a, b string, opt CollatorOption) int {
 	return sign(len(a) - len(b))
 }
 
-// Key implement Collator interface.
-func (gc *generalCICollator) Key(str string, opt CollatorOption) []byte {
+// Key implements Collator interface.
+func (gc *generalCICollator) Key(str string) []byte {
 	str = truncateTailingSpace(str)
 	buf := make([]byte, 0, len(str))
 	i := 0
@@ -58,6 +163,26 @@ func (gc *generalCICollator) Key(str string, opt CollatorOption) []byte {
 		i++
 	}
 	return buf
+}
+
+// Pattern implements Collator interface.
+func (gc *generalCICollator) Pattern() WildcardPattern {
+	return &ciPattern{}
+}
+
+type ciPattern struct {
+	patChars []uint16
+	patTypes []byte
+}
+
+// Compile implements WildcardPattern interface.
+func (p *ciPattern) Compile(patternStr string, escape byte) {
+	p.patChars, p.patTypes = compilePatternGeneralCI(patternStr, escape)
+}
+
+// Compile implements WildcardPattern interface.
+func (p *ciPattern) DoMatch(str string) bool {
+	return doMatchGeneralCI(str, p.patChars, p.patTypes)
 }
 
 func convertRune(r rune) uint16 {
