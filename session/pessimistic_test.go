@@ -1144,3 +1144,21 @@ func (s *testPessimisticSuite) TestRollbackWakeupBlockedTxn(c *C) {
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/txnExpireRetTTL"), IsNil)
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/getTxnStatusDelay"), IsNil)
 }
+
+func (s *testPessimisticSuite) TestRCSubQuery(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t, t1")
+	tk.MustExec("create table `t` ( `c1` int(11) not null, `c2` int(11) default null, primary key (`c1`) )")
+	tk.MustExec("insert into t values(1, 3)")
+	tk.MustExec("create table `t1` ( `c1` int(11) not null, `c2` int(11) default null, primary key (`c1`) )")
+	tk.MustExec("insert into t1 values(1, 3)")
+	tk.MustExec("set transaction isolation level read committed")
+	tk.MustExec("begin pessimistic")
+
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk2.MustExec("update t1 set c2 = c2 + 1")
+
+	tk.MustQuery("select * from t1 where c1 = (select 1) and 1=1;").Check(testkit.Rows("1 4"))
+	tk.MustQuery("select * from t1 where c1 = (select c1 from t where c1 = 1) and 1=1;").Check(testkit.Rows("1 4"))
+	tk.MustExec("rollback")
+}
