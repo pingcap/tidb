@@ -48,6 +48,8 @@ type stmtSummaryByDigestKey struct {
 	prevDigest string
 	// The digest of the plan of this SQL.
 	planDigest string
+	// Whether statement summary by digest is from internal query.
+	isInternal bool
 	// `hash` is the hash value of this object.
 	hash []byte
 }
@@ -57,11 +59,12 @@ type stmtSummaryByDigestKey struct {
 // `prevSQL` is included in the key To distinguish different transactions.
 func (key *stmtSummaryByDigestKey) Hash() []byte {
 	if len(key.hash) == 0 {
-		key.hash = make([]byte, 0, len(key.schemaName)+len(key.digest)+len(key.prevDigest)+len(key.planDigest))
+		key.hash = make([]byte, 0, len(key.schemaName)+len(key.digest)+len(key.prevDigest)+len(key.planDigest)+5)
 		key.hash = append(key.hash, hack.Slice(key.digest)...)
 		key.hash = append(key.hash, hack.Slice(key.schemaName)...)
 		key.hash = append(key.hash, hack.Slice(key.prevDigest)...)
 		key.hash = append(key.hash, hack.Slice(key.planDigest)...)
+		key.hash = append(key.hash, hack.Slice(strconv.FormatBool(key.isInternal))...)
 	}
 	return key.hash
 }
@@ -121,6 +124,7 @@ type stmtSummaryByDigest struct {
 	stmtType      string
 	normalizedSQL string
 	tableNames    string
+	isInternal    bool
 }
 
 // stmtSummaryByDigestElement is the summary for each type of statements in current interval.
@@ -195,8 +199,6 @@ type stmtSummaryByDigestElement struct {
 	firstSeen time.Time
 	// The last time this type of SQL executes.
 	lastSeen time.Time
-	// Whether is a internal element.
-	isInternal bool
 }
 
 // StmtExecInfo records execution information of each statement.
@@ -264,7 +266,7 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 		if !ssMap.Enabled() {
 			return nil, 0
 		}
-		if !ssMap.EnabledInternal() && sei.IsInternal {
+		if sei.IsInternal && !ssMap.EnabledInternal() {
 			return nil, 0
 		}
 
@@ -280,6 +282,7 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 		if !ok {
 			// Lazy initialize it to release ssMap.mutex ASAP.
 			summary = new(stmtSummaryByDigest)
+			summary.isInternal = sei.IsInternal
 			ssMap.summaryMap.Put(key, summary)
 		} else {
 			summary = value.(*stmtSummaryByDigest)
@@ -307,16 +310,13 @@ func (ssMap *stmtSummaryByDigestMap) ClearInternal() {
 	ssMap.Lock()
 	defer ssMap.Unlock()
 
-	for _, value := range ssMap.summaryMap.Values() {
-		summary := value.(*stmtSummaryByDigest)
-		for ele := summary.history.Front(); ele != summary.history.Back(); {
-			if ele.Value.(*stmtSummaryByDigestElement).isInternal {
-				delElement := ele
-				ele = delElement.Next()
-				summary.history.Remove(delElement)
-			} else {
-				ele = ele.Next()
-			}
+	for _, key := range ssMap.summaryMap.Keys() {
+		summary, ok := ssMap.summaryMap.Get(key)
+		if !ok {
+			continue
+		}
+		if summary.(*stmtSummaryByDigest).isInternal {
+			ssMap.summaryMap.Delete(key)
 		}
 	}
 }
@@ -423,7 +423,7 @@ func (ssMap *stmtSummaryByDigestMap) SetEnabledInternalQuery(value string, inSes
 	globalInternalQueryEnabled := ssMap.sysVars.globalInternalQueryEnabled
 	ssMap.sysVars.Unlock()
 
-	// Clear all summaries once statement summary is disabled.
+	// Clear summaries for internal queries once internal statement summary is disabled.
 	var needClear bool
 	if ssMap.isSet(sessionInternalQueryEnabled) {
 		needClear = !ssMap.isEnabled(sessionInternalQueryEnabled)
@@ -700,7 +700,6 @@ func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64, intervalS
 		firstSeen:    sei.StartTime,
 		lastSeen:     sei.StartTime,
 		backoffTypes: make(map[fmt.Stringer]int),
-		isInternal:   sei.IsInternal,
 	}
 	ssElement.add(sei, intervalSeconds)
 	return ssElement
