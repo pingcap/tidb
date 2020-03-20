@@ -7,3 +7,6 @@ status-port = 10081
 
 [performance]
 stats-lease = "0"
+
+[experimental]
+allow-expression-index = true
