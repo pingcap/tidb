@@ -199,7 +199,7 @@ type StmtExecInfo struct {
 // newStmtSummaryByDigestMap creates an empty stmtSummaryByDigestMap.
 func newStmtSummaryByDigestMap() *stmtSummaryByDigestMap {
 	sysVars := newSysVars()
-	maxStmtCount := uint(sysVars.getVariable(TypeMaxStmtCount))
+	maxStmtCount := uint(sysVars.getVariable(typeMaxStmtCount))
 	return &stmtSummaryByDigestMap{
 		summaryMap: kvcache.NewSimpleLRUCache(maxStmtCount, 0, 0),
 		sysVars:    sysVars,
@@ -352,17 +352,17 @@ func (ssMap *stmtSummaryByDigestMap) GetMoreThanOnceSelect() ([]string, []string
 
 // SetEnabled enables or disables statement summary in global(cluster) or session(server) scope.
 func (ssMap *stmtSummaryByDigestMap) SetEnabled(value string, inSession bool) {
-	ssMap.sysVars.setVariable(TypeEnable, value, inSession)
+	ssMap.sysVars.setVariable(typeEnable, value, inSession)
 
 	// Clear all summaries once statement summary is disabled.
-	if ssMap.sysVars.getVariable(TypeEnable) == 0 {
+	if ssMap.sysVars.getVariable(typeEnable) == 0 {
 		ssMap.Clear()
 	}
 }
 
 // Enabled returns whether statement summary is enabled.
 func (ssMap *stmtSummaryByDigestMap) Enabled() bool {
-	return ssMap.sysVars.getVariable(TypeEnable) > 0
+	return ssMap.sysVars.getVariable(typeEnable) > 0
 }
 
 // SetEnabledInternalQuery enables or disables internal statement summary in global(cluster) or session(server) scope.
@@ -382,28 +382,28 @@ func (ssMap *stmtSummaryByDigestMap) EnabledInternal() bool {
 
 // SetRefreshInterval sets refreshing interval in ssMap.sysVars.
 func (ssMap *stmtSummaryByDigestMap) SetRefreshInterval(value string, inSession bool) {
-	ssMap.sysVars.setVariable(TypeRefreshInterval, value, inSession)
+	ssMap.sysVars.setVariable(typeRefreshInterval, value, inSession)
 }
 
 // refreshInterval gets the refresh interval for summaries.
 func (ssMap *stmtSummaryByDigestMap) refreshInterval() int64 {
-	return ssMap.sysVars.getVariable(TypeRefreshInterval)
+	return ssMap.sysVars.getVariable(typeRefreshInterval)
 }
 
 // SetHistorySize sets the history size for all summaries.
 func (ssMap *stmtSummaryByDigestMap) SetHistorySize(value string, inSession bool) {
-	ssMap.sysVars.setVariable(TypeHistorySize, value, inSession)
+	ssMap.sysVars.setVariable(typeHistorySize, value, inSession)
 }
 
 // historySize gets the history size for summaries.
 func (ssMap *stmtSummaryByDigestMap) historySize() int {
-	return int(ssMap.sysVars.getVariable(TypeHistorySize))
+	return int(ssMap.sysVars.getVariable(typeHistorySize))
 }
 
 // SetHistorySize sets the history size for all summaries.
 func (ssMap *stmtSummaryByDigestMap) SetMaxStmtCount(value string, inSession bool) {
-	ssMap.sysVars.setVariable(TypeMaxStmtCount, value, inSession)
-	capacity := ssMap.sysVars.getVariable(TypeMaxStmtCount)
+	ssMap.sysVars.setVariable(typeMaxStmtCount, value, inSession)
+	capacity := ssMap.sysVars.getVariable(typeMaxStmtCount)
 
 	ssMap.Lock()
 	defer ssMap.Unlock()
@@ -411,16 +411,16 @@ func (ssMap *stmtSummaryByDigestMap) SetMaxStmtCount(value string, inSession boo
 }
 
 func (ssMap *stmtSummaryByDigestMap) maxStmtCount() int {
-	return int(ssMap.sysVars.getVariable(TypeMaxStmtCount))
+	return int(ssMap.sysVars.getVariable(typeMaxStmtCount))
 }
 
 // SetHistorySize sets the history size for all summaries.
 func (ssMap *stmtSummaryByDigestMap) SetMaxSQLLength(value string, inSession bool) {
-	ssMap.sysVars.setVariable(TypeMaxSQLLength, value, inSession)
+	ssMap.sysVars.setVariable(typeMaxSQLLength, value, inSession)
 }
 
 func (ssMap *stmtSummaryByDigestMap) maxSQLLength() int {
-	return int(ssMap.sysVars.getVariable(TypeMaxSQLLength))
+	return int(ssMap.sysVars.getVariable(typeMaxSQLLength))
 }
 
 // newStmtSummaryByDigest creates a stmtSummaryByDigest from StmtExecInfo.

@@ -24,12 +24,12 @@ import (
 )
 
 const (
-	TypeEnable = iota
-	TypeRefreshInterval
-	TypeHistorySize
-	TypeMaxStmtCount
-	TypeMaxSQLLength
-	TypesNum
+	typeEnable = iota
+	typeRefreshInterval
+	typeHistorySize
+	typeMaxStmtCount
+	typeMaxSQLLength
+	typesNum
 )
 
 type systemVars struct {
@@ -46,7 +46,7 @@ type variable struct {
 
 func newSysVars() *systemVars {
 	s := &systemVars{
-		variables: make([]variable, TypesNum),
+		variables: make([]variable, typesNum),
 	}
 	// Initialize these configurations by values in the config file.
 	// They may be overwritten by system variables later.
@@ -75,11 +75,11 @@ func (s *systemVars) setVariable(varType int, valueStr string, isSession bool) {
 
 	var valueInt int64
 	switch varType {
-	case TypeEnable:
+	case typeEnable:
 		valueInt = getBoolFinalVariable(varType, sessionValue, globalValue)
-	case TypeHistorySize, TypeMaxSQLLength:
+	case typeHistorySize, typeMaxSQLLength:
 		valueInt = getIntFinalVariable(varType, sessionValue, globalValue, 0)
-	case TypeRefreshInterval, TypeMaxStmtCount:
+	case typeRefreshInterval, typeMaxStmtCount:
 		valueInt = getIntFinalVariable(varType, sessionValue, globalValue, 1)
 	default:
 		panic(fmt.Sprintf("No such type of variable: %d", varType))
@@ -137,17 +137,17 @@ func getConfigValue(varType int) int64 {
 	var valueInt int64
 	stmtSummaryConfig := config.GetGlobalConfig().StmtSummary
 	switch varType {
-	case TypeEnable:
+	case typeEnable:
 		if stmtSummaryConfig.Enable {
 			valueInt = 1
 		}
-	case TypeRefreshInterval:
+	case typeRefreshInterval:
 		valueInt = int64(stmtSummaryConfig.RefreshInterval)
-	case TypeHistorySize:
+	case typeHistorySize:
 		valueInt = int64(stmtSummaryConfig.HistorySize)
-	case TypeMaxStmtCount:
+	case typeMaxStmtCount:
 		valueInt = int64(stmtSummaryConfig.MaxStmtCount)
-	case TypeMaxSQLLength:
+	case typeMaxSQLLength:
 		valueInt = int64(stmtSummaryConfig.MaxSQLLength)
 	default:
 		panic(fmt.Sprintf("No such type of variable: %d", varType))
