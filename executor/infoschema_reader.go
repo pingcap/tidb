@@ -75,6 +75,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataFromTables(sctx, dbs)
 		case infoschema.TableColumns:
 			e.setDataForColumns(sctx, dbs)
+		case infoschema.TableSequences:
+			e.setDataFromSequences(sctx, dbs)
 		case infoschema.TablePartitions:
 			err = e.setDataFromPartitions(sctx, dbs)
 		case infoschema.TableClusterInfo:
@@ -99,6 +101,10 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			e.setDataForPseudoProfiling(sctx)
 		case infoschema.TableCollationCharacterSetApplicability:
 			e.dataForCollationCharacterSetApplicability()
+		case infoschema.TableProcesslist:
+			e.setDataForProcessList(sctx)
+		case infoschema.ClusterTableProcesslist:
+			err = e.setDataForClusterProcessList(sctx)
 		case infoschema.TableUserPrivileges:
 			e.setDataFromUserPrivileges(sctx)
 		case infoschema.TableTiKVRegionPeers:
@@ -411,6 +417,10 @@ func (e *memtableRetriever) setDataFromTables(ctx sessionctx.Context, schemas []
 			createTime := types.NewTime(types.FromGoTime(table.GetUpdateTime()), createTimeTp, types.DefaultFsp)
 
 			createOptions := ""
+
+			if table.IsSequence() {
+				continue
+			}
 
 			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
 				continue
@@ -978,6 +988,47 @@ func (e *memtableRetriever) setDataFromKeyColumnUsage(ctx sessionctx.Context, sc
 	e.rows = rows
 }
 
+func (e *memtableRetriever) setDataForClusterProcessList(ctx sessionctx.Context) error {
+	e.setDataForProcessList(ctx)
+	rows, err := infoschema.AppendHostInfoToRows(e.rows)
+	if err != nil {
+		return err
+	}
+	e.rows = rows
+	return nil
+}
+
+func (e *memtableRetriever) setDataForProcessList(ctx sessionctx.Context) {
+	sm := ctx.GetSessionManager()
+	if sm == nil {
+		return
+	}
+
+	loginUser := ctx.GetSessionVars().User
+	var hasProcessPriv bool
+	if pm := privilege.GetPrivilegeManager(ctx); pm != nil {
+		if pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, "", "", "", mysql.ProcessPriv) {
+			hasProcessPriv = true
+		}
+	}
+
+	pl := sm.ShowProcessList()
+
+	records := make([][]types.Datum, 0, len(pl))
+	for _, pi := range pl {
+		// If you have the PROCESS privilege, you can see all threads.
+		// Otherwise, you can see only your own threads.
+		if !hasProcessPriv && loginUser != nil && pi.User != loginUser.Username {
+			continue
+		}
+
+		rows := pi.ToRow(ctx.GetSessionVars().StmtCtx.TimeZone)
+		record := types.MakeDatums(rows...)
+		records = append(records, record)
+	}
+	e.rows = records
+}
+
 func (e *memtableRetriever) setDataFromUserPrivileges(ctx sessionctx.Context) {
 	pm := privilege.GetPrivilegeManager(ctx)
 	e.rows = pm.UserPrivilegesTable()
@@ -1349,4 +1400,35 @@ func (e *memtableRetriever) setDataForServersInfo() error {
 	}
 	e.rows = rows
 	return nil
+}
+
+func (e *memtableRetriever) setDataFromSequences(ctx sessionctx.Context, schemas []*model.DBInfo) {
+	checker := privilege.GetPrivilegeManager(ctx)
+	var rows [][]types.Datum
+	for _, schema := range schemas {
+		for _, table := range schema.Tables {
+			if !table.IsSequence() {
+				continue
+			}
+			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
+				continue
+			}
+			record := types.MakeDatums(
+				infoschema.CatalogVal,     // TABLE_CATALOG
+				schema.Name.O,             // TABLE_SCHEMA
+				table.Name.O,              // TABLE_NAME
+				table.Sequence.Cache,      // Cache
+				table.Sequence.CacheValue, // CACHE_VALUE
+				table.Sequence.Cycle,      // CYCLE
+				table.Sequence.Increment,  // INCREMENT
+				table.Sequence.MaxValue,   // MAXVALUE
+				table.Sequence.MinValue,   // MINVALUE
+				table.Sequence.Order,      // ORDER
+				table.Sequence.Start,      // START
+				table.Sequence.Comment,    // COMMENT
+			)
+			rows = append(rows, record)
+		}
+	}
+	e.rows = rows
 }
