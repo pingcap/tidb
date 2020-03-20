@@ -17,6 +17,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/collate"
 )
 
 // conditionChecker checks if this condition can be pushed to index planner.
@@ -39,17 +40,26 @@ func (c *conditionChecker) check(condition expression.Expression) bool {
 }
 
 func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction) bool {
+	_, collation, _ := scalar.CharsetAndCollation(scalar.GetCtx())
 	switch scalar.FuncName.L {
 	case ast.LogicOr, ast.LogicAnd:
 		return c.check(scalar.GetArgs()[0]) && c.check(scalar.GetArgs()[1])
 	case ast.EQ, ast.NE, ast.GE, ast.GT, ast.LE, ast.LT:
 		if _, ok := scalar.GetArgs()[0].(*expression.Constant); ok {
 			if c.checkColumn(scalar.GetArgs()[1]) {
+				// Checks whether the scalar function is calculated use the collation compatible with the column.
+				if scalar.GetArgs()[1].GetType().EvalType() == types.ETString && !collate.CompatibleCollate(scalar.GetArgs()[1].GetType().Collate, collation) {
+					return false
+				}
 				return scalar.FuncName.L != ast.NE || c.length == types.UnspecifiedLength
 			}
 		}
 		if _, ok := scalar.GetArgs()[1].(*expression.Constant); ok {
 			if c.checkColumn(scalar.GetArgs()[0]) {
+				// Checks whether the scalar function is calculated use the collation compatible with the column.
+				if scalar.GetArgs()[0].GetType().EvalType() == types.ETString && !collate.CompatibleCollate(scalar.GetArgs()[0].GetType().Collate, collation) {
+					return false
+				}
 				return scalar.FuncName.L != ast.NE || c.length == types.UnspecifiedLength
 			}
 		}
@@ -68,6 +78,9 @@ func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction
 		return c.check(scalar.GetArgs()[0])
 	case ast.In:
 		if !c.checkColumn(scalar.GetArgs()[0]) {
+			return false
+		}
+		if scalar.GetArgs()[1].GetType().EvalType() == types.ETString && !collate.CompatibleCollate(scalar.GetArgs()[0].GetType().Collate, collation) {
 			return false
 		}
 		for _, v := range scalar.GetArgs()[1:] {
