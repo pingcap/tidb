@@ -367,17 +367,17 @@ func (ssMap *stmtSummaryByDigestMap) Enabled() bool {
 
 // SetEnabledInternalQuery enables or disables internal statement summary in global(cluster) or session(server) scope.
 func (ssMap *stmtSummaryByDigestMap) SetEnabledInternalQuery(value string, inSession bool) {
-	ssMap.sysVars.setVariable(TypeEnableInternalQuery, value, inSession)
+	ssMap.sysVars.setVariable(typeEnableInternalQuery, value, inSession)
 
 	// Clear all summaries once statement summary is disabled.
-	if ssMap.sysVars.getVariable(TypeEnableInternalQuery) == 0 {
+	if ssMap.sysVars.getVariable(typeEnableInternalQuery) == 0 {
 		ssMap.clearInternal()
 	}
 }
 
 // EnabledInternal returns whether internal statement summary is enabled.
 func (ssMap *stmtSummaryByDigestMap) EnabledInternal() bool {
-	return ssMap.sysVars.getVariable(TypeEnableInternalQuery) > 0
+	return ssMap.sysVars.getVariable(typeEnableInternalQuery) > 0
 }
 
 // SetRefreshInterval sets refreshing interval in ssMap.sysVars.
