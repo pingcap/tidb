@@ -341,11 +341,11 @@ func doSleep(secs float64, sessVars *variable.SessionVars) (isKilled bool) {
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
 	timer := time.NewTimer(dur)
-	defer timer.Stop()
 	for {
 		select {
 		case <-ticker.C:
 			if atomic.CompareAndSwapUint32(&sessVars.Killed, 1, 0) {
+				timer.Stop()
 				return true
 			}
 		case <-timer.C:
