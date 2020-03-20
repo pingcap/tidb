@@ -25,6 +25,7 @@ import (
 
 const (
 	typeEnable = iota
+	typeEnableInternalQuery
 	typeRefreshInterval
 	typeHistorySize
 	typeMaxStmtCount
@@ -75,7 +76,7 @@ func (s *systemVars) setVariable(varType int, valueStr string, isSession bool) {
 
 	var valueInt int64
 	switch varType {
-	case typeEnable:
+	case typeEnable, typeEnableInternalQuery:
 		valueInt = getBoolFinalVariable(varType, sessionValue, globalValue)
 	case typeHistorySize, typeMaxSQLLength:
 		valueInt = getIntFinalVariable(varType, sessionValue, globalValue, 0)
@@ -139,6 +140,10 @@ func getConfigValue(varType int) int64 {
 	switch varType {
 	case typeEnable:
 		if stmtSummaryConfig.Enable {
+			valueInt = 1
+		}
+	case typeEnableInternalQuery:
+		if stmtSummaryConfig.EnableInternalQuery {
 			valueInt = 1
 		}
 	case typeRefreshInterval:
