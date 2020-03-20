@@ -431,7 +431,7 @@ func (r *PushAggDownGather) OnTransform(old *memo.ExprIter) (newExprs []*memo.Gr
 	gbyItems := make([]expression.Expression, len(agg.GroupByItems))
 	copy(gbyItems, agg.GroupByItems)
 
-	partialPref, finalPref := plannercore.BuildFinalModeAggregation(agg.SCtx(),
+	partialPref, finalPref, funcMap := plannercore.BuildFinalModeAggregation(agg.SCtx(),
 		&plannercore.AggPref{
 			AggFuncs:     aggFuncs,
 			GroupByItems: gbyItems,
@@ -439,7 +439,7 @@ func (r *PushAggDownGather) OnTransform(old *memo.ExprIter) (newExprs []*memo.Gr
 		})
 	// Remove unnecessary FirstRow.
 	partialPref.AggFuncs =
-		plannercore.RemoveUnnecessaryFirstRow(agg.SCtx(), finalPref.AggFuncs, finalPref.GroupByItems, partialPref.AggFuncs, partialPref.GroupByItems, partialPref.Schema)
+		plannercore.RemoveUnnecessaryFirstRow(agg.SCtx(), finalPref.AggFuncs, finalPref.GroupByItems, partialPref.AggFuncs, partialPref.GroupByItems, partialPref.Schema, funcMap)
 
 	partialAgg := plannercore.LogicalAggregation{
 		AggFuncs:     partialPref.AggFuncs,

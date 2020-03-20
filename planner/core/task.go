@@ -1026,10 +1026,10 @@ type AggPref struct {
 // BuildFinalModeAggregation splits either LogicalAggregation or PhysicalAggregation to finalAgg and partial1Agg,
 // returns the body of finalAgg and the schema of partialAgg.
 func BuildFinalModeAggregation(
-	sctx sessionctx.Context, original *AggPref) (partial, final *AggPref) {
+	sctx sessionctx.Context, original *AggPref) (partial, final *AggPref, funcMap map[*aggregation.AggFuncDesc]*aggregation.AggFuncDesc) {
 
 	// TODO: Refactor the way of constructing aggregation functions.
-
+	funcMap = make(map[*aggregation.AggFuncDesc]*aggregation.AggFuncDesc, len(original.AggFuncs))
 	partial = &AggPref{
 		AggFuncs:     make([]*aggregation.AggFuncDesc, 0, len(original.AggFuncs)),
 		GroupByItems: original.GroupByItems,
@@ -1084,12 +1084,17 @@ func BuildFinalModeAggregation(
 				}
 				if !foundInGroupBy {
 					partial.GroupByItems = append(partial.GroupByItems, distinctArg)
-					gbySchema := &expression.Column{
-						UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
-						RetType:  distinctArg.GetType(),
+					var gbyCol *expression.Column
+					if col, ok := distinctArg.(*expression.Column); ok {
+						gbyCol = col
+					} else {
+						gbyCol = &expression.Column{
+							UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
+							RetType:  distinctArg.GetType(),
+						}
 					}
-					partialGbySchema.Append(gbySchema)
-					args = append(args, gbySchema)
+					partialGbySchema.Append(gbyCol)
+					args = append(args, gbyCol)
 				}
 			}
 			// Just use groupBy items in Schema of partialAgg as arguments,
@@ -1119,6 +1124,7 @@ func BuildFinalModeAggregation(
 			partial.AggFuncs = append(partial.AggFuncs, aggFunc)
 
 			finalAggFunc.Mode = aggregation.FinalMode
+			funcMap[aggFunc] = finalAggFunc
 		}
 
 		finalAggFunc.Args = args
@@ -1134,7 +1140,7 @@ func (p *basePhysicalAgg) newPartialAggregate(copTaskType kv.StoreType) (partial
 	if !CheckAggCanPushCop(p.ctx, p.AggFuncs, p.GroupByItems, copTaskType) {
 		return nil, p.self
 	}
-	partialPref, finalPref := BuildFinalModeAggregation(p.ctx, &AggPref{
+	partialPref, finalPref, funcMap := BuildFinalModeAggregation(p.ctx, &AggPref{
 		AggFuncs:     p.AggFuncs,
 		GroupByItems: p.GroupByItems,
 		Schema:       p.Schema(),
@@ -1142,7 +1148,7 @@ func (p *basePhysicalAgg) newPartialAggregate(copTaskType kv.StoreType) (partial
 	// Remove unnecessary FirstRow.
 	partialPref.AggFuncs = RemoveUnnecessaryFirstRow(p.ctx,
 		finalPref.AggFuncs, finalPref.GroupByItems,
-		partialPref.AggFuncs, partialPref.GroupByItems, partialPref.Schema)
+		partialPref.AggFuncs, partialPref.GroupByItems, partialPref.Schema, funcMap)
 	if copTaskType == kv.TiDB {
 		// For partial agg of TiDB cop task, since TiDB coprocessor reuse the TiDB executor,
 		// and TiDB aggregation executor won't output the group by value,
@@ -1204,16 +1210,22 @@ func RemoveUnnecessaryFirstRow(
 	finalGbyItems []expression.Expression,
 	partialAggFuncs []*aggregation.AggFuncDesc,
 	partialGbyItems []expression.Expression,
-	partialSchema *expression.Schema) []*aggregation.AggFuncDesc {
+	partialSchema *expression.Schema,
+	funcMap map[*aggregation.AggFuncDesc]*aggregation.AggFuncDesc) []*aggregation.AggFuncDesc {
+
 	partialCursor := 0
 	newAggFuncs := make([]*aggregation.AggFuncDesc, 0, len(partialAggFuncs))
-	for i, aggFunc := range partialAggFuncs {
+	for _, aggFunc := range partialAggFuncs {
 		if aggFunc.Name == ast.AggFuncFirstRow {
 			canOptimize := false
 			for j, gbyExpr := range partialGbyItems {
+				if j >= len(finalGbyItems) {
+					// after distinct push, len(partialGbyItems) may larger than len(finalGbyItems)
+					break
+				}
 				if gbyExpr.Equal(sctx, aggFunc.Args[0]) {
 					canOptimize = true
-					finalAggFuncs[i].Args[0] = finalGbyItems[j]
+					funcMap[aggFunc].Args[0] = finalGbyItems[j]
 					break
 				}
 			}
