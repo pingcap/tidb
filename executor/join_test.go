@@ -2072,6 +2072,7 @@ func (s *testSuiteJoinSerial) TestInlineProjection4HashJoinIssue15316(c *C) {
 	))
 	// NOTE: the HashLeftJoin should be kept
 	tk.MustQuery("explain select T.a,T.a,T.c from S join T on T.a = S.a where S.b<T.b order by T.a,T.c;").Check(testkit.Rows(
+<<<<<<< HEAD
 		"Sort_8 12487.50 root  test.t.a:asc, test.t.c:asc",
 		"└─Projection_10 12487.50 root  test.t.a, test.t.a, test.t.c",
 		"  └─HashJoin_11 12487.50 root  inner join, equal:[eq(test.s.a, test.t.a)], other cond:lt(test.s.b, test.t.b)",
@@ -2268,4 +2269,15 @@ func (s *testSuiteJoin3) TestIssue19500(c *C) {
 	tk.MustExec("insert into t3 values (1, 'sweet morse'),(2, 'reverent golick'),(3, 'clever rubin'),(4, 'flamboyant morse');")
 	tk.MustQuery("select (select (select sum(c_int) from t3 where t3.c_str > t2.c_str) from t2 where t2.c_int > t1.c_int order by c_int limit 1) q from t1 order by q;").
 		Check(testkit.Rows("<nil>", "<nil>", "3", "3", "3"))
+=======
+		"Sort_8 12487.50 root test.t.a:asc, test.t.c:asc",
+		"└─Projection_10 12487.50 root test.t.a, test.t.a, test.t.c",
+		"  └─HashLeftJoin_11 12487.50 root inner join, equal:[eq(test.s.a, test.t.a)], other cond:lt(test.s.b, test.t.b)",
+		"    ├─TableReader_17(Build) 9990.00 root data:Selection_16",
+		"    │ └─Selection_16 9990.00 cop[tikv] not(isnull(test.t.b))",
+		"    │   └─TableFullScan_15 10000.00 cop[tikv] table:T, keep order:false, stats:pseudo",
+		"    └─TableReader_14(Probe) 9990.00 root data:Selection_13",
+		"      └─Selection_13 9990.00 cop[tikv] not(isnull(test.s.b))",
+		"        └─TableFullScan_12 10000.00 cop[tikv] table:S, keep order:false, stats:pseudo"))
+>>>>>>> b0ea766... executor: solve bug of copy joined tuples after inline projection (#15411)
 }
