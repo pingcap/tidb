@@ -742,7 +742,7 @@ const (
 	engineLabelTiKV    = "tikv"
 )
 
-// needsGCOperationForStore checks if the store-level quests related to GC needs to be sent to the store. The store-level
+// needsGCOperationForStore checks if the store-level requests related to GC needs to be sent to the store. The store-level
 // requests includes UnsafeDestroyRange, PhysicalScanLock, etc.
 func needsGCOperationForStore(store *metapb.Store) (bool, error) {
 	engineLabel := ""
