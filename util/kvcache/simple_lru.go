@@ -160,7 +160,7 @@ func (l *SimpleLRUCache) Values() []Value {
 	return values
 }
 
-// Keys return all values in cache.
+// Keys return all keys in cache.
 func (l *SimpleLRUCache) Keys() []Key {
 	keys := make([]Key, 0, l.cache.Len())
 	for ele := l.cache.Front(); ele != nil; ele = ele.Next() {
