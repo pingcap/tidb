@@ -1090,7 +1090,7 @@ func (s *testIntegrationSuite5) TestBackwardCompatibility(c *C) {
 	ticker := time.NewTicker(s.lease)
 	defer ticker.Stop()
 	for range ticker.C {
-		historyJob, err := s.getHistoryDDLJob(job.ID)
+		historyJob, err := getHistoryDDLJob(s.store, job.ID)
 		c.Assert(err, IsNil)
 		if historyJob == nil {
 
@@ -1173,10 +1173,10 @@ func checkGetMaxTableRowID(ctx *testMaxTableRowIDContext, store kv.Storage, expe
 	c.Assert(maxID, Equals, expectMaxID)
 }
 
-func (s *testIntegrationSuite) getHistoryDDLJob(id int64) (*model.Job, error) {
+func getHistoryDDLJob(store kv.Storage, id int64) (*model.Job, error) {
 	var job *model.Job
 
-	err := kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
+	err := kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		var err1 error
 		job, err1 = t.GetHistoryDDLJob(id)

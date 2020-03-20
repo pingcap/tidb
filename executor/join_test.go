@@ -1425,7 +1425,7 @@ func (s *testSuiteJoin2) TestNullEmptyAwareSemiJoin(c *C) {
 	}
 	hints := [5]string{
 		"/*+ HASH_JOIN(t1, t2) */",
-		"/*+ SM_JOIN(t1, t2) */",
+		"/*+ MERGE_JOIN(t1, t2) */",
 		"/*+ INL_JOIN(t1, t2) */",
 		"/*+ INL_HASH_JOIN(t1, t2) */",
 		"/*+ INL_MERGE_JOIN(t1, t2) */",

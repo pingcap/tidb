@@ -299,6 +299,21 @@ func (s *testSessionSuite) TestQueryString(c *C) {
 	tk.MustExec("create table mutil1 (a int);create table multi2 (a int)")
 	queryStr := tk.Se.Value(sessionctx.QueryString)
 	c.Assert(queryStr, Equals, "create table multi2 (a int)")
+
+	// Test execution of DDL through the "ExecutePreparedStmt" interface.
+	_, err := tk.Se.Execute(context.Background(), "use test;")
+	c.Assert(err, IsNil)
+	_, err = tk.Se.Execute(context.Background(), "CREATE TABLE t (id bigint PRIMARY KEY, age int)")
+	c.Assert(err, IsNil)
+	_, err = tk.Se.Execute(context.Background(), "show create table t")
+	c.Assert(err, IsNil)
+	id, _, _, err := tk.Se.PrepareStmt("CREATE TABLE t2(id bigint PRIMARY KEY, age int)")
+	c.Assert(err, IsNil)
+	params := []types.Datum{}
+	_, err = tk.Se.ExecutePreparedStmt(context.Background(), id, params)
+	c.Assert(err, IsNil)
+	qs := tk.Se.Value(sessionctx.QueryString)
+	c.Assert(qs.(string), Equals, "CREATE TABLE t2(id bigint PRIMARY KEY, age int)")
 }
 
 func (s *testSessionSuite) TestAffectedRows(c *C) {
@@ -3052,6 +3067,18 @@ func (s *testSessionSuite2) TestStmtHints(c *C) {
 	tk.MustExec("select /*+ USE_TOJA(false), USE_TOJA(true) */ 1;")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 1)
 	c.Assert(tk.Se.GetSessionVars().GetAllowInSubqToJoinAndAgg(), IsTrue)
+
+	// Test USE_CASCADES hint
+	tk.Se.GetSessionVars().SetEnableCascadesPlanner(true)
+	tk.MustExec("select /*+ USE_CASCADES(false) */ 1;")
+	c.Assert(tk.Se.GetSessionVars().GetEnableCascadesPlanner(), IsFalse)
+	tk.Se.GetSessionVars().SetEnableCascadesPlanner(false)
+	tk.MustExec("select /*+ USE_CASCADES(true) */ 1;")
+	c.Assert(tk.Se.GetSessionVars().GetEnableCascadesPlanner(), IsTrue)
+	tk.MustExec("select /*+ USE_CASCADES(false), USE_CASCADES(true) */ 1;")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 1)
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings()[0].Err.Error(), Equals, "USE_CASCADES() is defined more than once, only the last definition takes effect: USE_CASCADES(true)")
+	c.Assert(tk.Se.GetSessionVars().GetEnableCascadesPlanner(), IsTrue)
 
 	// Test READ_CONSISTENT_REPLICA hint
 	tk.Se.GetSessionVars().SetReplicaRead(kv.ReplicaReadLeader)
