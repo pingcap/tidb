@@ -90,6 +90,11 @@ type indexHintInfo struct {
 	dbName    model.CIStr
 	tblName   model.CIStr
 	indexHint *ast.IndexHint
+	// Matched indicates whether this index hint
+	// has been successfully applied to a DataSource.
+	// If an indexHintInfo is not matched after building
+	// a Select statement, we will generate a warning for it.
+	matched bool
 }
 
 type aggHintInfo struct {
@@ -697,9 +702,10 @@ func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tbl ta
 	// Extract comment-style index hint like /*+ INDEX(t, idx1, idx2) */.
 	indexHintsLen := len(indexHints)
 	if hints := b.TableHints(); hints != nil {
-		for _, hint := range hints.indexHintList {
+		for i, hint := range hints.indexHintList {
 			if hint.dbName.L == dbName.L && hint.tblName.L == tblName.L {
 				indexHints = append(indexHints, hint.indexHint)
+				hints.indexHintList[i].matched = true
 			}
 		}
 	}

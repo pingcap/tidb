@@ -2282,12 +2282,23 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 
 func (b *PlanBuilder) popTableHints() {
 	hintInfo := b.tableHintInfo[len(b.tableHintInfo)-1]
+	b.appendUnmatchedIndexHintWarning(hintInfo.indexHintList)
+	b.appendUnmatchedIndexHintWarning(hintInfo.indexMergeHintList)
 	b.appendUnmatchedJoinHintWarning(HintINLJ, TiDBIndexNestedLoopJoin, hintInfo.indexNestedLoopJoinTables.inljTables)
 	b.appendUnmatchedJoinHintWarning(HintINLHJ, "", hintInfo.indexNestedLoopJoinTables.inlhjTables)
 	b.appendUnmatchedJoinHintWarning(HintINLMJ, "", hintInfo.indexNestedLoopJoinTables.inlmjTables)
 	b.appendUnmatchedJoinHintWarning(HintSMJ, TiDBMergeJoin, hintInfo.sortMergeJoinTables)
 	b.appendUnmatchedJoinHintWarning(HintHJ, TiDBHashJoin, hintInfo.hashJoinTables)
 	b.tableHintInfo = b.tableHintInfo[:len(b.tableHintInfo)-1]
+}
+
+func (b *PlanBuilder) appendUnmatchedIndexHintWarning(indexHints []indexHintInfo) {
+	for _, hint := range indexHints {
+		if !hint.matched {
+			errMsg := fmt.Sprintf("IndexHint for table %s is not applicable.", hint.tblName)
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(errMsg))
+		}
+	}
 }
 
 func (b *PlanBuilder) appendUnmatchedJoinHintWarning(joinType string, joinTypeAlias string, hintTables []hintTableInfo) {
@@ -2630,9 +2641,10 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	// extract the IndexMergeHint
 	var indexMergeHints []*ast.IndexHint
 	if hints := b.TableHints(); hints != nil {
-		for _, hint := range hints.indexMergeHintList {
+		for i, hint := range hints.indexMergeHintList {
 			if hint.tblName.L == tblName.L {
 				indexMergeHints = append(indexMergeHints, hint.indexHint)
+				hints.indexMergeHintList[i].matched = true
 			}
 		}
 	}
