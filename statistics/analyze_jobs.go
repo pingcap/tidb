@@ -121,7 +121,7 @@ func (job *AnalyzeJob) Finish(meetError bool) {
 	job.Mutex.Unlock()
 }
 
-func (job *AnalyzeJob) getUpdateTime() time.Time{
+func (job *AnalyzeJob) getUpdateTime() time.Time {
 	job.Mutex.Lock()
 	defer job.Mutex.Unlock()
 	return job.updateTime
