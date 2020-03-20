@@ -879,16 +879,19 @@ func (e *Explain) explainPlanInRowFormat(p Plan, taskType, driverSide, indent st
 		}
 	case *Execute:
 		if x.Plan != nil {
-			err = e.explainPlanInRowFormat(x.Plan, "root", "", childIndent, true)
+			err = e.explainPlanInRowFormat(x.Plan, "root", "", indent, true)
 		}
 	}
 	return
 }
 
 // prepareOperatorInfo generates the following information for every plan:
-// operator id, task type, operator info, and the estemated rows.
-// `estRows` used to be called `count`, see issue/14603.
+// operator id, estimated rows, task type, access object and other operator info.
 func (e *Explain) prepareOperatorInfo(p Plan, taskType, driverSide, indent string, isLastChild bool) {
+	if p.ExplainID().String() == "_0" {
+		return
+	}
+
 	id := texttree.PrettyIdentifier(p.ExplainID().String()+driverSide, indent, isLastChild)
 
 	estRows := "N/A"
