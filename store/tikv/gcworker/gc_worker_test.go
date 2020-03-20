@@ -328,6 +328,36 @@ func (s *testGCWorkerSuite) TestCheckGCMode(c *C) {
 	c.Assert(useDistributedGC, Equals, true)
 }
 
+func (s *testGCWorkerSuite) TestNeedsGCOperationForStore(c *C) {
+	newStore := func(hasEngineLabel bool, engineLabel string) *metapb.Store {
+		store := &metapb.Store{}
+		if hasEngineLabel {
+			store.Labels = []*metapb.StoreLabel{{Key: engineLabelKey, Value: engineLabel}}
+		}
+		return store
+	}
+
+	// TiKV needs to do the store-level GC operations.
+	res, err := needsGCOperationForStore(newStore(false, ""))
+	c.Assert(err, IsNil)
+	c.Assert(res, IsTrue)
+	res, err = needsGCOperationForStore(newStore(true, ""))
+	c.Assert(err, IsNil)
+	c.Assert(res, IsTrue)
+	res, err = needsGCOperationForStore(newStore(true, engineLabelTiKV))
+	c.Assert(err, IsNil)
+	c.Assert(res, IsTrue)
+
+	// TiFlash does not need these operations.
+	res, err = needsGCOperationForStore(newStore(true, engineLabelTiFlash))
+	c.Assert(err, IsNil)
+	c.Assert(res, IsFalse)
+
+	// Throw an error for unknown store types.
+	_, err = needsGCOperationForStore(newStore(true, "invalid"))
+	c.Assert(err, NotNil)
+}
+
 func (s *testGCWorkerSuite) TestResolveLockRangeInfine(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/invalidCacheAndRetry", "return(true)"), IsNil)
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/gcworker/setGcResolveMaxBackoff", "return(1)"), IsNil)
