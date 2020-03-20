@@ -50,6 +50,7 @@ const (
 // AddNewAnalyzeJob adds new analyze job.
 func AddNewAnalyzeJob(job *AnalyzeJob) {
 	analyzeStatus.Lock()
+
 	job.updateTime = time.Now()
 	job.State = pending
 	analyzeStatus.jobs[job] = struct{}{}
@@ -86,7 +87,7 @@ func GetAllAnalyzeJobs() []*AnalyzeJob {
 		jobs = append(jobs, job)
 	}
 	jobs = append(jobs, analyzeStatus.history...)
-	sort.Slice(jobs, func(i int, j int) bool { return jobs[i].updateTime.Before(jobs[j].updateTime) })
+	sort.Slice(jobs, func(i int, j int) bool { return jobs[i].getUpdateTime().Before(jobs[j].getUpdateTime()) })
 	return jobs
 }
 
@@ -118,4 +119,10 @@ func (job *AnalyzeJob) Finish(meetError bool) {
 	}
 	job.updateTime = time.Now()
 	job.Mutex.Unlock()
+}
+
+func (job *AnalyzeJob) getUpdateTime() time.Time{
+	job.Mutex.Lock()
+	defer job.Mutex.Unlock()
+	return job.updateTime
 }
