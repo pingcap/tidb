@@ -292,6 +292,53 @@ func (s *testTableSuite) TestStmtSummaryHistoryTable(c *C) {
 	).Check(testkit.Rows())
 }
 
+// Test events_statements_summary_by_digest_history.
+func (s *testTableSuite) TestStmtSummaryInternalQuery(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b varchar(10), key k(a))")
+
+	// We use the sql binding evolve to check the internal query summary.
+	tk.MustExec("set @@tidb_use_plan_baselines = 1")
+	tk.MustExec("set @@tidb_evolve_plan_baselines = 1")
+	tk.MustExec("create global binding for select * from t where t.a = 1 using select * from t ignore index(k) where t.a = 1")
+	tk.MustExec("set global tidb_enable_stmt_summary = 1")
+	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("1"))
+	defer tk.MustExec("set global tidb_enable_stmt_summary = ''")
+	// Invalidate the cache manually so that tidb_enable_stmt_summary works immediately.
+	s.dom.GetGlobalVarsCache().Disable()
+	// Disable refreshing summary.
+	tk.MustExec("set global tidb_stmt_summary_refresh_interval = 999999999")
+	tk.MustQuery("select @@global.tidb_stmt_summary_refresh_interval").Check(testkit.Rows("999999999"))
+
+	// Test Internal
+
+	// Create a new session to test.
+	tk = testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("select * from t where t.a = 1")
+	tk.MustQuery(`select exec_count, digest_text
+		from performance_schema.events_statements_summary_by_digest
+		where digest_text like "select original_sql , bind_sql , default_db , status%"`).Check(testkit.Rows())
+
+	// Enable internal query and evolve baseline.
+	tk.MustExec("set global tidb_stmt_summary_internal_query = 1")
+	defer tk.MustExec("set global tidb_stmt_summary_internal_query = false")
+
+	// Create a new session to test.
+	tk = testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("admin flush bindings")
+	tk.MustExec("admin evolve bindings")
+
+	tk.MustQuery(`select exec_count, digest_text
+		from performance_schema.events_statements_summary_by_digest
+		where digest_text like "select original_sql , bind_sql , default_db , status%"`).Check(testkit.Rows(
+		"1 select original_sql , bind_sql , default_db , status , create_time , update_time , charset , collation from mysql . bind_info" +
+			" where update_time > ? order by update_time"))
+}
+
 func currentSourceDir() string {
 	_, file, _, _ := runtime.Caller(0)
 	return filepath.Dir(file)
