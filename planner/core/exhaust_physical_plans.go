@@ -1256,7 +1256,7 @@ func (ijHelper *indexJoinBuildHelper) buildTemplateRange(matchedKeyCnt int, eqAn
 
 // tryToGetIndexJoin will get index join by hints. If we can generate a valid index join by hint, the second return value
 // will be true, which means we force to choose this index join. Otherwise we will select a join algorithm with min-cost.
-func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJoins []PhysicalPlan, forced bool) {
+func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJoins []PhysicalPlan, canForced bool) {
 	inljRightOuter := (p.preferJoinType & preferLeftAsINLJInner) > 0
 	inljLeftOuter := (p.preferJoinType & preferRightAsINLJInner) > 0
 	hasINLJHint := inljLeftOuter || inljRightOuter
@@ -1271,10 +1271,30 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 
 	forceLeftOuter := inljLeftOuter || inlhjLeftOuter || inlmjLeftOuter
 	forceRightOuter := inljRightOuter || inlhjRightOuter || inlmjRightOuter
+	needForced := forceLeftOuter || forceRightOuter
 
 	defer func() {
 		// refine error message
-		if !forced && (hasINLJHint || hasINLHJHint || hasINLMJHint) {
+		if !canForced && needForced {
+			if hasINLMJHint && len(indexJoins) > 0 {
+				containIdxMergeJoin := false
+				for _, idxJoin := range indexJoins {
+					if _, ok := idxJoin.(*PhysicalIndexMergeJoin); ok {
+						containIdxMergeJoin = true
+						break
+					}
+				}
+				// Index merge join has more strict conditions than index join and index hash join,
+				// but if we get the index merge join, we can also get the index join and index hash join.
+				// So when we can't satisfy the inl_merge_join hint and we can get the index join, then there must
+				// be another required property(such as nil) satisfy the index merge join. In this case, we should
+				// ignore warning, make the `canForced` true and empty the physical plan results.
+				if !containIdxMergeJoin {
+					canForced = true
+					indexJoins = nil
+					return
+				}
+			}
 			// Construct warning message prefix.
 			var errMsg string
 			switch {
@@ -1377,8 +1397,8 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 
 	canForceLeft := len(forcedLeftOuterJoins) != 0 && forceLeftOuter
 	canForceRight := len(forcedRightOuterJoins) != 0 && forceRightOuter
-	forced = canForceLeft || canForceRight
-	if forced {
+	canForced = canForceLeft || canForceRight
+	if canForced {
 		return append(forcedLeftOuterJoins, forcedRightOuterJoins...), true
 	}
 	return append(allLeftOuterJoins, allRightOuterJoins...), false
