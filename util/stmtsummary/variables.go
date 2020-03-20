@@ -112,22 +112,22 @@ func normalizeEnableValue(value string) int64 {
 }
 
 func getIntFinalVariable(varType int, sessionValue, globalValue string, minValue int64) int64 {
-	valueInt := int64(-1)
+	valueInt := minValue - 1
 	var err error
 	if len(sessionValue) > 0 {
 		valueInt, err = strconv.ParseInt(sessionValue, 10, 64)
 		if err != nil {
-			valueInt = -1
+			valueInt = minValue - 1
 		}
 	}
-	if valueInt < 0 || valueInt < minValue {
+	if valueInt < minValue {
 		valueInt, err = strconv.ParseInt(globalValue, 10, 64)
 		if err != nil {
-			valueInt = -1
+			valueInt = minValue - 1
 		}
 	}
 	// If session and global variables are both '', use the value in config.
-	if valueInt < 0 || valueInt < minValue {
+	if valueInt < minValue {
 		valueInt = getConfigValue(varType)
 	}
 	return valueInt
