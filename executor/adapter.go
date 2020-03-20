@@ -878,7 +878,7 @@ func getPlanDigest(sctx sessionctx.Context, p plannercore.Plan) (normalized, pla
 func (a *ExecStmt) SummaryStmt() {
 	sessVars := a.Ctx.GetSessionVars()
 	// Internal SQLs must also be recorded to keep the consistency of `PrevStmt` and `PrevStmtDigest`.
-	if !stmtsummary.StmtSummaryByDigestMap.Enabled() {
+	if !stmtsummary.StmtSummaryByDigestMap.Enabled() || (!stmtsummary.StmtSummaryByDigestMap.EnabledInternal() && sessVars.InRestrictedSQL) {
 		sessVars.SetPrevStmtDigest("")
 		return
 	}
