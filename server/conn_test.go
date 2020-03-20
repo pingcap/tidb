@@ -448,6 +448,10 @@ func (c *mockTiDBCtx) Execute(ctx context.Context, sql string) ([]ResultSet, err
 	return c.rs, c.err
 }
 
+func (c *mockTiDBCtx) ExecuteInternal(ctx context.Context, sql string) ([]ResultSet, error) {
+	return c.rs, c.err
+}
+
 func (c *mockTiDBCtx) GetSessionVars() *variable.SessionVars {
 	return &variable.SessionVars{}
 }
