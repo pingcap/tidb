@@ -1913,7 +1913,7 @@ func (s *testSuiteJoinSerial) TestInlineProjection4HashJoinIssue15316(c *C) {
 	tk.MustQuery("explain select T.a,T.a,T.c from S join T on T.a = S.a where S.b<T.b order by T.a,T.c;").Check(testkit.Rows(
 		"Sort_8 12487.50 root test.t.a:asc, test.t.c:asc",
 		"└─Projection_10 12487.50 root test.t.a, test.t.a, test.t.c",
-		"  └─HashLeftJoin_11 12487.50 root inner join, equal:[eq(test.s.a, test.t.a)], other cond:lt(test.s.b, test.t.b)",
+		"  └─HashJoin_11 12487.50 root inner join, equal:[eq(test.s.a, test.t.a)], other cond:lt(test.s.b, test.t.b)",
 		"    ├─TableReader_17(Build) 9990.00 root data:Selection_16",
 		"    │ └─Selection_16 9990.00 cop[tikv] not(isnull(test.t.b))",
 		"    │   └─TableFullScan_15 10000.00 cop[tikv] table:T, keep order:false, stats:pseudo",
