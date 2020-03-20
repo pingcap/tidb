@@ -1115,7 +1115,7 @@ func (e *tableStorageStatsRetriever) retrieve(ctx context.Context, sctx sessionc
 		return nil, nil
 	}
 
-	rows, err := e.dataForTableStorageStats(sctx)
+	rows, err := e.setDataForTableStorageStats(sctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1187,16 +1187,14 @@ func (e *tableStorageStatsRetriever) initialize(sctx sessionctx.Context) error {
 
 // pdRegionStats is the json response from PD.
 type pdRegionStats struct {
-	Count            int              `json:"count"`
-	EmptyCount       int              `json:"empty_count"`
-	StorageSize      int64            `json:"storage_size"`
-	StoreLeaderCount map[uint64]int   `json:"store_leader_count"`
-	StorePeerCount   map[uint64]int   `json:"store_peer_count"`
-	StoreLeaderSize  map[uint64]int64 `json:"store_leader_size"`
-	StorePeerSize    map[uint64]int64 `json:"store_peer_size"`
+	Count          int            `json:"count"`
+	EmptyCount     int            `json:"empty_count"`
+	StorageSize    int64          `json:"storage_size"`
+	StorageKeys    int64          `json:"storage_keys"`
+	StorePeerCount map[uint64]int `json:"store_peer_count"`
 }
 
-func (e *tableStorageStatsRetriever) dataForTableStorageStats(ctx sessionctx.Context) ([][]types.Datum, error) {
+func (e *tableStorageStatsRetriever) setDataForTableStorageStats(ctx sessionctx.Context) ([][]types.Datum, error) {
 	rows := make([][]types.Datum, 0, 1024)
 	tikvStore, ok := ctx.GetStore().(tikv.Storage)
 	if !ok {
@@ -1235,11 +1233,20 @@ func (e *tableStorageStatsRetriever) dataForTableStorageStats(ctx sessionctx.Con
 		if err := dec.Decode(&stats); err != nil {
 			return nil, err
 		}
+		peerCount := 0
+		for _, v := range stats.StorePeerCount {
+			peerCount = v
+			break
+		}
 		record := types.MakeDatums(
 			table.db,          // TABLE_SCHEMA
 			table.tb.Name.O,   // TABLE_NAME
 			tableID,           // TABLE_ID
-			stats.StorageSize, //DISK_USAGE
+			peerCount,         // TABLE_PEER_COUNT
+			stats.Count,       // TABLE_REGION_COUNT
+			stats.EmptyCount,  // TABLE_EMPTY_REGION_COUNT
+			stats.StorageSize, // TABLE_SIZE
+			stats.StorageKeys, // TABLE_KEYS
 		)
 		rows = append(rows, record)
 		count++

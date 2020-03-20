@@ -721,3 +721,33 @@ func (s *testInfoschemaClusterTableSuite) TestTiDBClusterInfo(c *C) {
 		"tikv key3.key4.nest4 n-value5",
 	))
 }
+
+func (s *testInfoschemaTableSuite) TestTableStorageStats(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'information_schema' and TABLE_NAME='schemata';").Check(
+		testkit.Rows("schemata"))
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, index idx(a))")
+	tk.MustQuery("select TABLE_NAME, STORAGE_SIZE from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'test' and TABLE_NAME='t';").Check(
+		testkit.Rows("t 1"))
+
+	//test the privilege of new user for information_schema.table_constraints
+	tk.MustExec("create user table_storage_tester")
+	tableStorageTester := testkit.NewTestKit(c, s.store)
+	tableStorageTester.MustExec("use information_schema")
+	c.Assert(tableStorageTester.Se.Auth(&auth.UserIdentity{
+		Username: "table_storage_tester",
+		Hostname: "127.0.0.1",
+	}, nil, nil), IsTrue)
+
+	// Test the privilege.
+	tableStorageTester.MustQuery("select * from TABLE_STORAGE_STATS;").Check([][]interface{}{})
+	tk.MustExec("CREATE ROLE r_stats_meta ;")
+	tk.MustExec("GRANT ALL PRIVILEGES ON mysql.stats_meta TO r_stats_meta;")
+	tk.MustExec("GRANT r_stats_meta TO table_storage_tester;")
+	tableStorageTester.MustExec("set role r_stats_meta")
+	c.Assert(len(tableStorageTester.MustQuery("select * from TABLE_STORAGE_STATS where TABLE_NAME='stats_meta';").Rows()), Greater, 0)
+}

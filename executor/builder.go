@@ -1458,6 +1458,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 		case strings.ToLower(infoschema.TableStorageStats):
 			return &MemTableReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+				table:        v.Table,
 				retriever: &tableStorageStatsRetriever{
 					table:      v.Table,
 					outputCols: v.Columns,
