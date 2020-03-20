@@ -80,13 +80,13 @@ func ClearHistoryJobs() {
 // GetAllAnalyzeJobs gets all analyze jobs.
 func GetAllAnalyzeJobs() []*AnalyzeJob {
 	analyzeStatus.Lock()
+	defer analyzeStatus.Unlock()
 	jobs := make([]*AnalyzeJob, 0, len(analyzeStatus.jobs)+len(analyzeStatus.history))
 	for job := range analyzeStatus.jobs {
 		jobs = append(jobs, job)
 	}
 	jobs = append(jobs, analyzeStatus.history...)
 	sort.Slice(jobs, func(i int, j int) bool { return jobs[i].updateTime.Before(jobs[j].updateTime) })
-	analyzeStatus.Unlock()
 	return jobs
 }
 
