@@ -1276,7 +1276,7 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 	defer func() {
 		// refine error message
 		if !canForced && needForced {
-			if hasINLMJHint && len(indexJoins) > 0 {
+			if hasINLMJHint && len(indexJoins) > 0 && len(prop.Items) > 0 {
 				containIdxMergeJoin := false
 				for _, idxJoin := range indexJoins {
 					if _, ok := idxJoin.(*PhysicalIndexMergeJoin); ok {
