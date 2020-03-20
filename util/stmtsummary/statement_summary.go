@@ -57,7 +57,7 @@ type stmtSummaryByDigestKey struct {
 // `prevSQL` is included in the key To distinguish different transactions.
 func (key *stmtSummaryByDigestKey) Hash() []byte {
 	if len(key.hash) == 0 {
-		key.hash = make([]byte, 0, len(key.schemaName)+len(key.digest)+len(key.prevDigest)+len(key.planDigest)+5)
+		key.hash = make([]byte, 0, len(key.schemaName)+len(key.digest)+len(key.prevDigest)+len(key.planDigest))
 		key.hash = append(key.hash, hack.Slice(key.digest)...)
 		key.hash = append(key.hash, hack.Slice(key.schemaName)...)
 		key.hash = append(key.hash, hack.Slice(key.prevDigest)...)
@@ -302,8 +302,8 @@ func (ssMap *stmtSummaryByDigestMap) Clear() {
 	ssMap.beginTimeForCurInterval = 0
 }
 
-// ClearInternal removes all statement summaries which are internal summaries.
-func (ssMap *stmtSummaryByDigestMap) ClearInternal() {
+// clearInternal removes all statement summaries which are internal summaries.
+func (ssMap *stmtSummaryByDigestMap) clearInternal() {
 	ssMap.Lock()
 	defer ssMap.Unlock()
 
@@ -428,7 +428,7 @@ func (ssMap *stmtSummaryByDigestMap) SetEnabledInternalQuery(value string, inSes
 		needClear = !ssMap.isEnabled(globalInternalQueryEnabled)
 	}
 	if needClear {
-		ssMap.ClearInternal()
+		ssMap.clearInternal()
 	}
 }
 
