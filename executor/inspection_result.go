@@ -532,6 +532,7 @@ func (c thresholdCheckInspection) inspect(ctx context.Context, sctx sessionctx.C
 		c.inspectThreshold1,
 		c.inspectThreshold2,
 		c.inspectThreshold3,
+		c.inspectForLeaderDrop,
 	}
 	var results []inspectionResult
 	for _, inspect := range inspects {
@@ -919,7 +920,7 @@ type checkStoreRegionTooMuch struct{}
 
 func (c checkStoreRegionTooMuch) genSQL(timeRange plannercore.QueryTimeRange) string {
 	condition := timeRange.Condition()
-	return fmt.Sprintf(`select address,value from metrics_schema.pd_scheduler_store_status %s and type='region_count' and value > 20000;`, condition)
+	return fmt.Sprintf(`select address, max(value) from metrics_schema.pd_scheduler_store_status %s and type='region_count' and value > 20000 group by address`, condition)
 }
 
 func (c checkStoreRegionTooMuch) genResult(sql string, row chunk.Row) inspectionResult {
@@ -975,6 +976,54 @@ func (thresholdCheckInspection) inspectThreshold3(ctx context.Context, sctx sess
 		}
 		for _, row := range rows {
 			results = append(results, rule.genResult(sql, row))
+		}
+	}
+	return results
+}
+
+func (c thresholdCheckInspection) inspectForLeaderDrop(ctx context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
+	condition := filter.timeRange.Condition()
+	threshold := 50.0
+	sql := fmt.Sprintf(`select address,min(value) as mi,max(value) as mx from metrics_schema.pd_scheduler_store_status %s and type='leader_count' group by address having mx-mi>%v`, condition, threshold)
+	rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithContext(ctx, sql)
+	if err != nil {
+		sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("execute '%s' failed: %v", sql, err))
+		return nil
+	}
+	var results []inspectionResult
+	for _, row := range rows {
+		address := row.GetString(0)
+		sql := fmt.Sprintf(`select time, value from metrics_schema.pd_scheduler_store_status %s and type='leader_count' and address = '%s' order by time`, condition, address)
+		subRows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithContext(ctx, sql)
+		if err != nil {
+			sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("execute '%s' failed: %v", sql, err))
+			continue
+		}
+		lastValue := float64(0)
+		for i, subRows := range subRows {
+			v := subRows.GetFloat64(1)
+			if i == 0 {
+				lastValue = v
+				continue
+			}
+			if lastValue-v > threshold {
+				level := "warning"
+				if v == 0 {
+					level = "critical"
+				}
+				results = append(results, inspectionResult{
+					tp:       "tikv",
+					instance: address,
+					item:     "leader-drop",
+					actual:   fmt.Sprintf("%.0f", lastValue-v),
+					expected: fmt.Sprintf("<= %.0f", threshold),
+					severity: level,
+					detail:   fmt.Sprintf("%s tikv has too many leader-drop around time %s, leader count from %.0f drop to %.0f", address, subRows.GetTime(0), lastValue, v),
+					degree:   lastValue - v,
+				})
+				break
+			}
+			lastValue = v
 		}
 	}
 	return results
