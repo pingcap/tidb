@@ -39,8 +39,17 @@ func (h *Handle) HandleDDLEvent(t *util.Event) error {
 	case model.ActionAddColumn:
 		ids := getPhysicalIDs(t.TableInfo)
 		for _, id := range ids {
-			if err := h.insertColStats2KV(id, t.ColumnInfo); err != nil {
+			if err := h.insertColStats2KV(id, t.ColumnInfos[0]); err != nil {
 				return err
+			}
+		}
+	case model.ActionAddColumns:
+		ids := getPhysicalIDs(t.TableInfo)
+		for _, id := range ids {
+			for _, columnInfo := range t.ColumnInfos {
+				if err := h.insertColStats2KV(id, columnInfo); err != nil {
+					return err
+				}
 			}
 		}
 	case model.ActionAddTablePartition, model.ActionTruncateTablePartition:

@@ -1963,11 +1963,6 @@ func resolveAlterTableSpec(ctx sessionctx.Context, specs []*ast.AlterTableSpec) 
 		validSpecs = append(validSpecs, spec)
 	}
 
-	if len(validSpecs) > 1 {
-		// Now we only allow one schema changing at the same time.
-		return nil, errRunMultiSchemaChanges
-	}
-
 	// Verify whether the algorithm is supported.
 	for _, spec := range validSpecs {
 		resolvedAlgorithm, err := ResolveAlterAlgorithm(spec, algorithm)
@@ -1987,6 +1982,17 @@ func resolveAlterTableSpec(ctx sessionctx.Context, specs []*ast.AlterTableSpec) 
 	return validSpecs, nil
 }
 
+func isSameTypeMultiSpecs(specs []*ast.AlterTableSpec) bool {
+	specType := specs[0].Tp
+	var count int = 0
+	for _, spec := range specs {
+		if spec.Tp == specType {
+			count++
+		}
+	}
+	return len(specs) == count
+}
+
 func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.AlterTableSpec) (err error) {
 	validSpecs, err := resolveAlterTableSpec(ctx, specs)
 	if err != nil {
@@ -1998,14 +2004,32 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 		return ErrWrongObject.GenWithStackByArgs(ident.Schema, ident.Name, "BASE TABLE")
 	}
 
+	if len(validSpecs) > 1 {
+		if isSameTypeMultiSpecs(validSpecs) {
+			switch validSpecs[0].Tp {
+			case ast.AlterTableAddColumns:
+				err = d.AddSpecsColumn(ctx, ident, validSpecs)
+			default:
+				return errRunMultiSchemaChanges
+			}
+			if err != nil {
+				return errors.Trace(err)
+			}
+			return nil
+		}
+		// Now we only allow one schema changing at the same time(except adding multi-columns).
+		return errRunMultiSchemaChanges
+	}
+
 	for _, spec := range validSpecs {
 		var handledCharsetOrCollate bool
 		switch spec.Tp {
 		case ast.AlterTableAddColumns:
 			if len(spec.NewColumns) != 1 {
-				return errRunMultiSchemaChanges
+				err = d.AddSpecColumns(ctx, ident, spec)
+			} else {
+				err = d.AddColumn(ctx, ident, spec)
 			}
-			err = d.AddColumn(ctx, ident, spec)
 		case ast.AlterTableAddPartitions:
 			err = d.AddTablePartitions(ctx, ident, spec)
 		case ast.AlterTableCoalescePartitions:
@@ -2284,6 +2308,252 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 		Type:       model.ActionAddColumn,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{col, spec.Position, 0},
+	}
+
+	err = d.doDDLJob(ctx, job)
+	// column exists, but if_not_exists flags is true, so we ignore this error.
+	if infoschema.ErrColumnExists.Equal(err) && spec.IfNotExists {
+		ctx.GetSessionVars().StmtCtx.AppendNote(err)
+		return nil
+	}
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+// AddSpecsColumn will add multi new columns to the table, e.g. alter table t add column b int, add column c int
+func (d *ddl) AddSpecsColumn(ctx sessionctx.Context, ti ast.Ident, specs []*ast.AlterTableSpec) error {
+	schema, t, err := d.getSchemaAndTableByIdent(ctx, ti)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	var columns []*table.Column
+	var positions []*ast.ColumnPosition
+	var offsets []int
+
+	// Check all the columns at once
+	if err = checkAddColumnTooManyColumns(len(t.Cols()) + len(specs)); err != nil {
+		return errors.Trace(err)
+	}
+	set := make(map[string]bool)
+	for _, spec := range specs {
+		specNewColumn := spec.NewColumns[0]
+		if set[specNewColumn.Name.Name.O] != true {
+			set[specNewColumn.Name.Name.O] = true
+		} else {
+			return errors.Trace(infoschema.ErrColumnExists.GenWithStackByArgs(specNewColumn.Name.Name.O))
+		}
+	}
+
+	// Check the columns one by one
+	for _, spec := range specs {
+		if len(spec.NewColumns) != 1 {
+			return errRunMultiSchemaChanges
+		}
+		specNewColumn := spec.NewColumns[0]
+		err := checkUnsupportedColumnConstraint(specNewColumn, ti)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		colName := specNewColumn.Name.Name.O
+		if err = checkColumnAttributes(colName, specNewColumn.Tp); err != nil {
+			return errors.Trace(err)
+		}
+		if len(colName) > mysql.MaxColumnNameLength {
+			return ErrTooLongIdent.GenWithStackByArgs(colName)
+		}
+
+		// If new column is a generated column, do validation.
+		// NOTE: we do check whether the column refers other generated
+		// columns occurring later in a table, but we don't handle the col offset.
+		for _, option := range specNewColumn.Options {
+			if option.Tp == ast.ColumnOptionGenerated {
+				if err := checkIllegalFn4GeneratedColumn(specNewColumn.Name.Name.L, option.Expr); err != nil {
+					return errors.Trace(err)
+				}
+
+				if option.Stored {
+					return errUnsupportedOnGeneratedColumn.GenWithStackByArgs("Adding generated stored column through ALTER TABLE")
+				}
+
+				_, dependColNames := findDependedColumnNames(specNewColumn)
+				if err = checkAutoIncrementRef(specNewColumn.Name.Name.L, dependColNames, t.Meta()); err != nil {
+					return errors.Trace(err)
+				}
+				duplicateColNames := make(map[string]struct{}, len(dependColNames))
+				for k := range dependColNames {
+					duplicateColNames[k] = struct{}{}
+				}
+				cols := t.Cols()
+
+				if err = checkDependedColExist(dependColNames, cols); err != nil {
+					return errors.Trace(err)
+				}
+
+				if err = verifyColumnGenerationSingle(duplicateColNames, cols, spec.Position); err != nil {
+					return errors.Trace(err)
+				}
+			}
+		}
+
+		// Check whether added column has existed.
+		col := table.FindCol(t.Cols(), colName)
+		if col != nil {
+			err = infoschema.ErrColumnExists.GenWithStackByArgs(colName)
+			if spec.IfNotExists {
+				ctx.GetSessionVars().StmtCtx.AppendNote(err)
+				return nil
+			}
+			return err
+		}
+
+		// Ignore table constraints now, maybe return error later.
+		// We use length(t.Cols()) as the default offset firstly, we will change the
+		// column's offset later.
+		col, _, err = buildColumnAndConstraint(ctx, len(t.Cols()), specNewColumn, nil, t.Meta().Charset, t.Meta().Collate, schema.Charset, schema.Collate)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		col.OriginDefaultValue, err = generateOriginDefaultValue(col.ToInfo())
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		columns = append(columns, col)
+		positions = append(positions, spec.Position)
+		offsets = append(offsets, 0)
+	}
+
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    t.Meta().ID,
+		SchemaName: schema.Name.L,
+		Type:       model.ActionAddColumns,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{columns, positions, offsets},
+	}
+
+	err = d.doDDLJob(ctx, job)
+	// column exists, but if_not_exists flags is true, so we ignore this error.
+	// if infoschema.ErrColumnExists.Equal(err) && specs[0].IfNotExists {
+	// 	ctx.GetSessionVars().StmtCtx.AppendNote(err)
+	// 	return nil
+	// }
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+// AddSpecColumns will add columns to the table, e.g. alter table t add column(b int, c int)
+func (d *ddl) AddSpecColumns(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTableSpec) error {
+	schema, t, err := d.getSchemaAndTableByIdent(ctx, ti)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	offset := 0
+	var columns []*table.Column
+	var positions []*ast.ColumnPosition
+	var offsets []int
+
+	// Check all the columns at once
+	if err = checkAddColumnTooManyColumns(len(t.Cols()) + len(spec.NewColumns)); err != nil {
+		return errors.Trace(err)
+	}
+	set := make(map[string]bool)
+	for _, specNewColumn := range spec.NewColumns {
+		if set[specNewColumn.Name.Name.O] != true {
+			set[specNewColumn.Name.Name.O] = true
+		} else {
+			return errors.Trace(infoschema.ErrColumnExists.GenWithStackByArgs(specNewColumn.Name.Name.O))
+		}
+	}
+
+	// Check the columns one by one
+	for _, specNewColumn := range spec.NewColumns {
+		err := checkUnsupportedColumnConstraint(specNewColumn, ti)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		colName := specNewColumn.Name.Name.O
+		if err = checkColumnAttributes(colName, specNewColumn.Tp); err != nil {
+			return errors.Trace(err)
+		}
+		if len(colName) > mysql.MaxColumnNameLength {
+			return ErrTooLongIdent.GenWithStackByArgs(colName)
+		}
+
+		// If new column is a generated column, do validation.
+		// NOTE: we do check whether the column refers other generated
+		// columns occurring later in a table, but we don't handle the col offset.
+		for _, option := range specNewColumn.Options {
+			if option.Tp == ast.ColumnOptionGenerated {
+				if err := checkIllegalFn4GeneratedColumn(specNewColumn.Name.Name.L, option.Expr); err != nil {
+					return errors.Trace(err)
+				}
+
+				if option.Stored {
+					return errUnsupportedOnGeneratedColumn.GenWithStackByArgs("Adding generated stored column through ALTER TABLE")
+				}
+
+				_, dependColNames := findDependedColumnNames(specNewColumn)
+				if err = checkAutoIncrementRef(specNewColumn.Name.Name.L, dependColNames, t.Meta()); err != nil {
+					return errors.Trace(err)
+				}
+				duplicateColNames := make(map[string]struct{}, len(dependColNames))
+				for k := range dependColNames {
+					duplicateColNames[k] = struct{}{}
+				}
+				cols := t.Cols()
+
+				if err = checkDependedColExist(dependColNames, cols); err != nil {
+					return errors.Trace(err)
+				}
+
+				if err = verifyColumnGenerationSingle(duplicateColNames, cols, spec.Position); err != nil {
+					return errors.Trace(err)
+				}
+			}
+		}
+
+		// Check whether added column has existed.
+		col := table.FindCol(t.Cols(), colName)
+		if col != nil {
+			err = infoschema.ErrColumnExists.GenWithStackByArgs(colName)
+			if spec.IfNotExists {
+				ctx.GetSessionVars().StmtCtx.AppendNote(err)
+				continue
+			}
+			return err
+		}
+
+		// Ignore table constraints now, maybe return error later.
+		// We use length(t.Cols()) as the default offset firstly, we will change the
+		// column's offset later.
+		col, _, err = buildColumnAndConstraint(ctx, len(t.Cols()), specNewColumn, nil, t.Meta().Charset, t.Meta().Collate, schema.Charset, schema.Collate)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		col.OriginDefaultValue, err = generateOriginDefaultValue(col.ToInfo())
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		columns = append(columns, col)
+		positions = append(positions, spec.Position)
+		offsets = append(offsets, offset)
+		offset++
+	}
+
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    t.Meta().ID,
+		SchemaName: schema.Name.L,
+		Type:       model.ActionAddColumns,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{columns, positions, offsets},
 	}
 
 	err = d.doDDLJob(ctx, job)

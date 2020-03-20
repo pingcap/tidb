@@ -222,9 +222,132 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error)
 
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
-		asyncNotifyEvent(d, &util.Event{Tp: model.ActionAddColumn, TableInfo: tblInfo, ColumnInfo: columnInfo})
+		asyncNotifyEvent(d, &util.Event{Tp: model.ActionAddColumn, TableInfo: tblInfo, ColumnInfos: []*model.ColumnInfo{columnInfo}})
 	default:
 		err = ErrInvalidDDLState.GenWithStackByArgs("column", columnInfo.State)
+	}
+
+	return ver, errors.Trace(err)
+}
+
+func checkAddAndCreateColumnInfos(t *meta.Meta, job *model.Job) (*model.TableInfo, []*model.ColumnInfo, []int, error) {
+	schemaID := job.SchemaID
+	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, schemaID)
+	if err != nil {
+		return nil, nil, nil, errors.Trace(err)
+	}
+	columns := []*model.ColumnInfo{}
+	positions := []*ast.ColumnPosition{}
+	offsets := []int{}
+	err = job.DecodeArgs(&columns, &positions, &offsets)
+	for i := range positions {
+		if positions[i] == nil {
+			positions[i] = &ast.ColumnPosition{}
+		}
+	}
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return nil, nil, nil, errors.Trace(err)
+	}
+
+	var columnInfos []*model.ColumnInfo
+
+	for i, col := range columns {
+		columnInfo := model.FindColumnInfo(tblInfo.Columns, col.Name.L)
+		if columnInfo != nil {
+			columnInfos = append(columnInfos, columnInfo)
+			if columnInfo.State == model.StatePublic {
+				// We already have a column with the same column name.
+				job.State = model.JobStateCancelled
+				return nil, nil, nil, infoschema.ErrColumnExists.GenWithStackByArgs(col.Name)
+			}
+		} else {
+			columnInfo, offset, err := createColumnInfo(tblInfo, col, positions[i])
+			if err != nil {
+				job.State = model.JobStateCancelled
+				return nil, nil, nil, errors.Trace(err)
+			}
+			logutil.BgLogger().Info("[ddl] run add columns job", zap.String("job", job.String()), zap.Reflect("columnInfo", *columnInfo), zap.Int("offset", offsets[i]))
+
+			// Set offset arg to job.
+			if offset != 0 {
+				offsets[i] = offset
+			}
+			if err = checkAddColumnTooManyColumns(len(tblInfo.Columns)); err != nil {
+				job.State = model.JobStateCancelled
+				return nil, nil, nil, errors.Trace(err)
+			}
+			columnInfos = append(columnInfos, columnInfo)
+		}
+	}
+	job.Args = []interface{}{columnInfos, positions, offsets}
+	return tblInfo, columnInfos, offsets, nil
+}
+
+func setColumnsState(columnInfos []*model.ColumnInfo, state model.SchemaState) {
+	for i := range columnInfos {
+		columnInfos[i].State = state
+	}
+}
+
+func onAddColumns(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
+	// Handle the rolling back job.
+	if job.IsRollingback() {
+		ver, err = onDropColumn(t, job)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		return ver, nil
+	}
+
+	failpoint.Inject("errorBeforeDecodeArgs", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(ver, errors.New("occur an error before decode args"))
+		}
+	})
+
+	tblInfo, columnInfos, offsets, err := checkAddAndCreateColumnInfos(t, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	originalState := columnInfos[0].State
+	switch columnInfos[0].State {
+	case model.StateNone:
+		// none -> delete only
+		job.SchemaState = model.StateDeleteOnly
+		setColumnsState(columnInfos, model.StateDeleteOnly)
+		ver, err = updateVersionAndTableInfoWithCheck(t, job, tblInfo, originalState != columnInfos[0].State)
+	case model.StateDeleteOnly:
+		// delete only -> write only
+		job.SchemaState = model.StateWriteOnly
+		setColumnsState(columnInfos, model.StateWriteOnly)
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != columnInfos[0].State)
+	case model.StateWriteOnly:
+		// write only -> reorganization
+		job.SchemaState = model.StateWriteReorganization
+		setColumnsState(columnInfos, model.StateWriteReorganization)
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != columnInfos[0].State)
+	case model.StateWriteReorganization:
+		// reorganization -> public
+		// Adjust table column offsets.
+		oldCols := tblInfo.Columns
+		for i := range offsets {
+			tmpCols := oldCols[:len(oldCols)-len(offsets)+i+1]
+			tblInfo.Columns = tmpCols
+			adjustColumnInfoInAddColumn(tblInfo, offsets[i])
+			oldCols = append(tblInfo.Columns, oldCols[len(oldCols)-len(offsets)+i+1:]...)
+		}
+		setColumnsState(columnInfos, model.StatePublic)
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != columnInfos[0].State)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		// Finish this job.
+		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+		asyncNotifyEvent(d, &util.Event{Tp: model.ActionAddColumns, TableInfo: tblInfo, ColumnInfos: columnInfos})
+	default:
+		err = ErrInvalidDDLState.GenWithStackByArgs("column", columnInfos[0].State)
 	}
 
 	return ver, errors.Trace(err)
