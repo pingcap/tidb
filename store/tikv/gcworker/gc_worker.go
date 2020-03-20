@@ -389,7 +389,7 @@ func (w *GCWorker) getGCConcurrency(ctx context.Context) (int, error) {
 		return w.loadGCConcurrencyWithDefault()
 	}
 
-	stores, err := w.getUpStores(ctx)
+	stores, err := w.getUpStoresForGC(ctx)
 	concurrency := len(stores)
 	if err != nil {
 		logutil.Logger(ctx).Error("[gc worker] failed to get up stores to calculate concurrency. use config.",
@@ -648,7 +648,7 @@ func (w *GCWorker) redoDeleteRanges(ctx context.Context, safePoint uint64, concu
 
 func (w *GCWorker) doUnsafeDestroyRangeRequest(ctx context.Context, startKey []byte, endKey []byte, concurrency int) error {
 	// Get all stores every time deleting a region. So the store list is less probably to be stale.
-	stores, err := w.getUpStores(ctx)
+	stores, err := w.getUpStoresForGC(ctx)
 	if err != nil {
 		logutil.Logger(ctx).Error("[gc worker] delete ranges: got an error while trying to get store list from PD",
 			zap.String("uuid", w.uuid),
@@ -699,7 +699,47 @@ func (w *GCWorker) doUnsafeDestroyRangeRequest(ctx context.Context, startKey []b
 	return errors.Trace(err)
 }
 
-func (w *GCWorker) getUpStores(ctx context.Context) ([]*metapb.Store, error) {
+const (
+	engineLabelKey     = "engine"
+	engineLabelTiFlash = "tiflash"
+	engineLabelTiKV    = "tikv"
+)
+
+// needsGCOperationForStore checks if the store-level requests related to GC needs to be sent to the store. The store-level
+// requests includes UnsafeDestroyRange, PhysicalScanLock, etc.
+func needsGCOperationForStore(store *metapb.Store) (bool, error) {
+	engineLabel := ""
+
+	for _, label := range store.GetLabels() {
+		if label.GetKey() == engineLabelKey {
+			engineLabel = label.GetValue()
+			break
+		}
+	}
+
+	switch engineLabel {
+	case engineLabelTiFlash:
+		// For a TiFlash node, it uses other approach to delete dropped tables, so it's safe to skip sending
+		// UnsafeDestroyRange requests; it has only learner peers and their data must exist in TiKV, so it's safe to
+		// skip physical resolve locks for it.
+		return false, nil
+
+	case "":
+		// If no engine label is set, it should be a TiKV node.
+		fallthrough
+	case engineLabelTiKV:
+		return true, nil
+
+	default:
+		return true, errors.Errorf("unsupported store engine \"%v\" with storeID %v, addr %v",
+			engineLabel,
+			store.GetId(),
+			store.GetAddress())
+	}
+}
+
+// getUpStoresForGC gets the list of stores that needs to be processed during GC.
+func (w *GCWorker) getUpStoresForGC(ctx context.Context) ([]*metapb.Store, error) {
 	stores, err := w.pdClient.GetAllStores(ctx)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -707,13 +747,37 @@ func (w *GCWorker) getUpStores(ctx context.Context) ([]*metapb.Store, error) {
 
 	upStores := make([]*metapb.Store, 0, len(stores))
 	for _, store := range stores {
-		if store.State == metapb.StoreState_Up {
+		if store.State != metapb.StoreState_Up {
+			continue
+		}
+		needsGCOp, err := needsGCOperationForStore(store)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if needsGCOp {
 			upStores = append(upStores, store)
 		}
 	}
 	return upStores, nil
 }
 
+<<<<<<< HEAD
+=======
+func (w *GCWorker) getUpStoresMapForGC(ctx context.Context) (map[uint64]*metapb.Store, error) {
+	stores, err := w.getUpStoresForGC(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	storesMap := make(map[uint64]*metapb.Store, len(stores))
+	for _, store := range stores {
+		storesMap[store.Id] = store
+	}
+
+	return storesMap, nil
+}
+
+>>>>>>> af5ebef... gc_worker: Skip TiFlash nodes when doing UnsafeDestroyRange and Green GC (#15505)
 func (w *GCWorker) loadGCConcurrencyWithDefault() (int, error) {
 	str, err := w.loadValueFromSysTable(gcConcurrencyKey)
 	if err != nil {
@@ -895,7 +959,315 @@ func (w *GCWorker) resolveLocksForRange(
 			bo = tikv.NewBackoffer(ctx, sleep)
 		})
 	}
+<<<<<<< HEAD
 	return regions, nil
+=======
+	return stat, nil
+}
+
+// resolveLocksPhysical uses TiKV's `PhysicalScanLock` to scan stale locks in the cluster and resolve them. It tries to
+// ensure no lock whose ts <= safePoint is left.
+func (w *GCWorker) resolveLocksPhysical(ctx context.Context, safePoint uint64) error {
+	metrics.GCWorkerCounter.WithLabelValues("resolve_locks_physical").Inc()
+	logutil.Logger(ctx).Info("[gc worker] start resolve locks with physical scan locks",
+		zap.String("uuid", w.uuid),
+		zap.Uint64("safePoint", safePoint))
+	startTime := time.Now()
+
+	stores, err := w.getUpStoresMapForGC(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	defer func() {
+		w.removeLockObservers(ctx, safePoint, stores)
+	}()
+
+	err = w.registerLockObservers(ctx, safePoint, stores)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	for retry := 0; retry < 3; retry++ {
+		resolvedStores, err := w.physicalScanAndResolveLocks(ctx, safePoint, stores)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		stores, err = w.getUpStoresMapForGC(ctx)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		checkedStores, err := w.checkLockObservers(ctx, safePoint, stores)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		// Remove clean stores from the set
+		for resolvedStore := range resolvedStores {
+			// Only stores that are both resolved and checked is clean.
+			// For each clean store, remove it from the stores set.
+			if _, ok := checkedStores[resolvedStore]; ok {
+				delete(stores, resolvedStore)
+			}
+		}
+
+		// If there are still dirty stores, continue the loop to clean them again.
+		// Only dirty stores will be scanned in the next loop.
+		if len(stores) == 0 {
+			break
+		}
+	}
+
+	logutil.Logger(ctx).Info("[gc worker] finish resolve locks with physical scan locks",
+		zap.String("uuid", w.uuid),
+		zap.Uint64("safePoint", safePoint),
+		zap.Duration("takes", time.Since(startTime)))
+	metrics.GCHistogram.WithLabelValues("resolve_locks").Observe(time.Since(startTime).Seconds())
+	return nil
+}
+
+func (w *GCWorker) registerLockObservers(ctx context.Context, safePoint uint64, stores map[uint64]*metapb.Store) error {
+	logutil.Logger(ctx).Info("[gc worker] registering lock observers to tikv",
+		zap.String("uuid", w.uuid),
+		zap.Uint64("safePoint", safePoint))
+
+	req := tikvrpc.NewRequest(tikvrpc.CmdRegisterLockObserver, &kvrpcpb.RegisterLockObserverRequest{
+		MaxTs: safePoint,
+	})
+
+	for _, store := range stores {
+		address := store.Address
+
+		resp, err := w.store.GetTiKVClient().SendRequest(ctx, address, req, tikv.AccessLockObserverTimeout)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		errStr := resp.Resp.(*kvrpcpb.RegisterLockObserverResponse).Error
+		if len(errStr) > 0 {
+			return errors.Errorf("register lock observer on store %v returns error: %v", store.Id, errStr)
+		}
+	}
+
+	return nil
+}
+
+// checkLockObservers checks the state of each store's lock observer. If any lock collected by the observers, resolve
+// them. Returns ids of clean stores.
+func (w *GCWorker) checkLockObservers(ctx context.Context, safePoint uint64, stores map[uint64]*metapb.Store) (map[uint64]interface{}, error) {
+	logutil.Logger(ctx).Info("[gc worker] checking lock observers",
+		zap.String("uuid", w.uuid),
+		zap.Uint64("safePoint", safePoint))
+
+	req := tikvrpc.NewRequest(tikvrpc.CmdCheckLockObserver, &kvrpcpb.CheckLockObserverRequest{
+		MaxTs: safePoint,
+	})
+
+	cleanStores := make(map[uint64]interface{}, len(stores))
+
+	// When error occurs, this function doesn't fail immediately, but continues without adding the failed store to
+	// cleanStores set.
+
+	for _, store := range stores {
+		address := store.Address
+
+		resp, err := w.store.GetTiKVClient().SendRequest(ctx, address, req, tikv.AccessLockObserverTimeout)
+		if err != nil {
+			logutil.Logger(ctx).Error("[gc worker] failed to check lock observer for store",
+				zap.String("uuid", w.uuid),
+				zap.Any("store", store),
+				zap.Error(err))
+			continue
+		}
+
+		respInner := resp.Resp.(*kvrpcpb.CheckLockObserverResponse)
+		if len(respInner.Error) > 0 {
+			err = errors.Errorf("check lock observer on store %v returns error: %v", store.Id, respInner.Error)
+			logutil.Logger(ctx).Error("[gc worker] failed to check lock observer for store",
+				zap.String("uuid", w.uuid),
+				zap.Any("store", store),
+				zap.Error(err))
+			continue
+		}
+
+		if len(respInner.Locks) > 0 {
+			// Resolve the observed locks.
+			locks := make([]*tikv.Lock, len(respInner.Locks))
+			for i, lockInfo := range respInner.Locks {
+				locks[i] = tikv.NewLock(lockInfo)
+			}
+			sort.Slice(locks, func(i, j int) bool {
+				return bytes.Compare(locks[i].Key, locks[j].Key) < 0
+			})
+			err = w.resolveLocksAcrossRegions(ctx, locks)
+
+			if err != nil {
+				err = errors.Errorf("check lock observer on store %v returns error: %v", store.Id, respInner.Error)
+				logutil.Logger(ctx).Error("[gc worker] failed to check lock observer for store",
+					zap.String("uuid", w.uuid),
+					zap.Any("store", store),
+					zap.Error(err))
+				continue
+			}
+		}
+
+		if respInner.IsClean {
+			cleanStores[store.Id] = nil
+		} else {
+			logutil.Logger(ctx).Warn("[gc worker] check lock observer: store is not clean",
+				zap.String("uuid", w.uuid),
+				zap.Any("store", store))
+		}
+	}
+
+	return cleanStores, nil
+}
+
+func (w *GCWorker) removeLockObservers(ctx context.Context, safePoint uint64, stores map[uint64]*metapb.Store) {
+	logutil.Logger(ctx).Info("[gc worker] removing lock observers",
+		zap.String("uuid", w.uuid),
+		zap.Uint64("safePoint", safePoint))
+
+	req := tikvrpc.NewRequest(tikvrpc.CmdRemoveLockObserver, &kvrpcpb.RemoveLockObserverRequest{
+		MaxTs: safePoint,
+	})
+
+	for _, store := range stores {
+		address := store.Address
+
+		resp, err := w.store.GetTiKVClient().SendRequest(ctx, address, req, tikv.AccessLockObserverTimeout)
+		if err != nil {
+			logutil.Logger(ctx).Warn("[gc worker] failed to remove lock observer from store",
+				zap.String("uuid", w.uuid),
+				zap.Any("store", store),
+				zap.Error(err))
+			continue
+		}
+
+		errStr := resp.Resp.(*kvrpcpb.RemoveLockObserverResponse).Error
+		if len(errStr) > 0 {
+			err = errors.Errorf("remove lock observer on store %v returns error: %v", store.Id, errStr)
+			logutil.Logger(ctx).Error("[gc worker] failed to remove lock observer from store",
+				zap.String("uuid", w.uuid),
+				zap.Any("store", store),
+				zap.Error(err))
+		}
+	}
+}
+
+// physicalScanAndResolveLocks performs physical scan lock and resolves these locks. Returns successful stores
+func (w *GCWorker) physicalScanAndResolveLocks(ctx context.Context, safePoint uint64, stores map[uint64]*metapb.Store) (map[uint64]interface{}, error) {
+	scanner := newMergeLockScanner(safePoint, w.store.GetTiKVClient(), stores)
+	err := scanner.Start(ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	innerCtx, cancel := context.WithCancel(ctx)
+	wg := &sync.WaitGroup{}
+	defer func() {
+		cancel()
+		wg.Wait()
+	}()
+
+	taskCh := make(chan []*tikv.Lock, len(stores))
+	errCh := make(chan error, len(stores))
+
+	for range stores {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-innerCtx.Done():
+					return
+				case locks, ok := <-taskCh:
+					if !ok {
+						// Closed
+						return
+					}
+					err := w.resolveLocksAcrossRegions(innerCtx, locks)
+					if err != nil {
+						logutil.Logger(innerCtx).Error("resolve locks failed", zap.Error(err))
+						errCh <- err
+					}
+				}
+			}
+		}()
+	}
+
+	for {
+		select {
+		case err := <-errCh:
+			return nil, errors.Trace(err)
+		default:
+		}
+
+		locks := scanner.NextBatch(128)
+		if len(locks) == 0 {
+			break
+		}
+
+		taskCh <- locks
+	}
+
+	close(taskCh)
+	wg.Wait()
+
+	select {
+	case err := <-errCh:
+		return nil, errors.Trace(err)
+	default:
+	}
+
+	return scanner.GetSucceededStores(), nil
+}
+
+func (w *GCWorker) resolveLocksAcrossRegions(ctx context.Context, locks []*tikv.Lock) error {
+	bo := tikv.NewBackoffer(ctx, tikv.GcResolveLockMaxBackoff)
+
+	for {
+		if len(locks) == 0 {
+			break
+		}
+
+		key := locks[0].Key
+		loc, err := w.store.GetRegionCache().LocateKey(bo, key)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		locksInRegion := make([]*tikv.Lock, 0)
+
+		for _, lock := range locks {
+			if loc.Contains(lock.Key) {
+				locksInRegion = append(locksInRegion, lock)
+			} else {
+				break
+			}
+		}
+
+		ok, err := w.store.GetLockResolver().BatchResolveLocks(bo, locksInRegion, loc.Region)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if !ok {
+			err = bo.Backoff(tikv.BoTxnLock, errors.Errorf("remain locks: %d", len(locks)))
+			if err != nil {
+				return errors.Trace(err)
+			}
+			continue
+		}
+
+		// Recreate backoffer for next region
+		bo = tikv.NewBackoffer(ctx, tikv.GcResolveLockMaxBackoff)
+		locks = locks[len(locksInRegion):]
+	}
+
+	return nil
+>>>>>>> af5ebef... gc_worker: Skip TiFlash nodes when doing UnsafeDestroyRange and Green GC (#15505)
 }
 
 func (w *GCWorker) uploadSafePointToPD(ctx context.Context, safePoint uint64) error {
