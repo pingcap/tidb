@@ -50,7 +50,6 @@ const (
 // AddNewAnalyzeJob adds new analyze job.
 func AddNewAnalyzeJob(job *AnalyzeJob) {
 	analyzeStatus.Lock()
-
 	job.updateTime = time.Now()
 	job.State = pending
 	analyzeStatus.jobs[job] = struct{}{}
