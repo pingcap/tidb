@@ -69,7 +69,7 @@ type QueryCtx interface {
 	// Execute executes a SQL statement.
 	Execute(ctx context.Context, sql string) ([]ResultSet, error)
 
-	//  ExecuteInternal executes a internal SQL statement.
+	// ExecuteInternal executes a internal SQL statement.
 	ExecuteInternal(ctx context.Context, sql string) ([]ResultSet, error)
 
 	// SetClientCapability sets client capability flags
