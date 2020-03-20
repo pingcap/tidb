@@ -223,6 +223,12 @@ func (s *testKVSuite) TestBufferLimit(c *C) {
 	c.Assert(err, IsNil)
 	err = buffer.Set([]byte("yz"), make([]byte, 499))
 	c.Assert(err, NotNil) // buffer size limit
+
+	err = buffer.Delete(make([]byte, 499))
+	c.Assert(err, IsNil)
+
+	err = buffer.Delete(make([]byte, 500))
+	c.Assert(err, NotNil)
 }
 
 var opCnt = 100000

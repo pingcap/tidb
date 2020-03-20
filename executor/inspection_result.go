@@ -152,7 +152,13 @@ func (e *inspectionResultRetriever) retrieve(ctx context.Context, sctx sessionct
 			if lhs, rhs := results[i].item, results[j].item; lhs != rhs {
 				return lhs < rhs
 			}
-			return results[i].actual < results[j].actual
+			if results[i].actual != results[j].actual {
+				return results[i].actual < results[j].actual
+			}
+			if lhs, rhs := results[i].tp, results[j].tp; lhs != rhs {
+				return lhs < rhs
+			}
+			return results[i].instance < results[j].instance
 		})
 		for _, result := range results {
 			finalRows = append(finalRows, types.MakeDatums(
@@ -393,7 +399,12 @@ func (currentLoadInspection) inspectCPULoad(sctx sessionctx.Context, filter insp
 	return results
 }
 
-func (criticalErrorInspection) inspect(ctx context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
+func (c criticalErrorInspection) inspect(ctx context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
+	results := c.inspectError(ctx, sctx, filter)
+	results = append(results, c.inspectForServerDown(ctx, sctx, filter)...)
+	return results
+}
+func (criticalErrorInspection) inspectError(ctx context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
 	var rules = []struct {
 		tp   string
 		item string
@@ -459,11 +470,69 @@ func (criticalErrorInspection) inspect(ctx context.Context, sctx sessionctx.Cont
 	return results
 }
 
+func (criticalErrorInspection) inspectForServerDown(ctx context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
+	item := "server-down"
+	if !filter.enable(item) {
+		return nil
+	}
+	condition := filter.timeRange.Condition()
+	sql := fmt.Sprintf(`select t1.job,t1.instance, t2.min_time from
+		(select instance,job from metrics_schema.up %[1]s group by instance,job having max(value)-min(value)>0) as t1 join
+		(select instance,min(time) as min_time from metrics_schema.up %[1]s and value=0 group by instance,job) as t2 on t1.instance=t2.instance order by job`, condition)
+	rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithContext(ctx, sql)
+	if err != nil {
+		sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("execute '%s' failed: %v", sql, err))
+	}
+	var results []inspectionResult
+	for _, row := range rows {
+		if row.Len() < 3 {
+			continue
+		}
+		detail := fmt.Sprintf("%s %s disconnect with prometheus around time '%s'", row.GetString(0), row.GetString(1), row.GetTime(2))
+		result := inspectionResult{
+			tp:       row.GetString(0),
+			instance: row.GetString(1),
+			item:     item,
+			actual:   "",
+			expected: "",
+			severity: "critical",
+			detail:   detail,
+			degree:   10000 + float64(len(results)),
+		}
+		results = append(results, result)
+	}
+	// Check from log.
+	sql = fmt.Sprintf("select type,instance,time from information_schema.cluster_log %s and level = 'info' and message like '%%Welcome to'", condition)
+	rows, _, err = sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithContext(ctx, sql)
+	if err != nil {
+		sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("execute '%s' failed: %v", sql, err))
+	}
+	for _, row := range rows {
+		if row.Len() < 3 {
+			continue
+		}
+		detail := fmt.Sprintf("%s %s restarted at time '%s'", row.GetString(0), row.GetString(1), row.GetString(2))
+		result := inspectionResult{
+			tp:       row.GetString(0),
+			instance: row.GetString(1),
+			item:     item,
+			actual:   "",
+			expected: "",
+			severity: "critical",
+			detail:   detail,
+			degree:   10000 + float64(len(results)),
+		}
+		results = append(results, result)
+	}
+	return results
+}
+
 func (c thresholdCheckInspection) inspect(ctx context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
 	inspects := []func(context.Context, sessionctx.Context, inspectionFilter) []inspectionResult{
 		c.inspectThreshold1,
 		c.inspectThreshold2,
 		c.inspectThreshold3,
+		c.inspectForLeaderDrop,
 	}
 	var results []inspectionResult
 	for _, inspect := range inspects {
@@ -851,7 +920,7 @@ type checkStoreRegionTooMuch struct{}
 
 func (c checkStoreRegionTooMuch) genSQL(timeRange plannercore.QueryTimeRange) string {
 	condition := timeRange.Condition()
-	return fmt.Sprintf(`select address,value from metrics_schema.pd_scheduler_store_status %s and type='region_count' and value > 20000;`, condition)
+	return fmt.Sprintf(`select address, max(value) from metrics_schema.pd_scheduler_store_status %s and type='region_count' and value > 20000 group by address`, condition)
 }
 
 func (c checkStoreRegionTooMuch) genResult(sql string, row chunk.Row) inspectionResult {
@@ -907,6 +976,54 @@ func (thresholdCheckInspection) inspectThreshold3(ctx context.Context, sctx sess
 		}
 		for _, row := range rows {
 			results = append(results, rule.genResult(sql, row))
+		}
+	}
+	return results
+}
+
+func (c thresholdCheckInspection) inspectForLeaderDrop(ctx context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
+	condition := filter.timeRange.Condition()
+	threshold := 50.0
+	sql := fmt.Sprintf(`select address,min(value) as mi,max(value) as mx from metrics_schema.pd_scheduler_store_status %s and type='leader_count' group by address having mx-mi>%v`, condition, threshold)
+	rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithContext(ctx, sql)
+	if err != nil {
+		sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("execute '%s' failed: %v", sql, err))
+		return nil
+	}
+	var results []inspectionResult
+	for _, row := range rows {
+		address := row.GetString(0)
+		sql := fmt.Sprintf(`select time, value from metrics_schema.pd_scheduler_store_status %s and type='leader_count' and address = '%s' order by time`, condition, address)
+		subRows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithContext(ctx, sql)
+		if err != nil {
+			sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("execute '%s' failed: %v", sql, err))
+			continue
+		}
+		lastValue := float64(0)
+		for i, subRows := range subRows {
+			v := subRows.GetFloat64(1)
+			if i == 0 {
+				lastValue = v
+				continue
+			}
+			if lastValue-v > threshold {
+				level := "warning"
+				if v == 0 {
+					level = "critical"
+				}
+				results = append(results, inspectionResult{
+					tp:       "tikv",
+					instance: address,
+					item:     "leader-drop",
+					actual:   fmt.Sprintf("%.0f", lastValue-v),
+					expected: fmt.Sprintf("<= %.0f", threshold),
+					severity: level,
+					detail:   fmt.Sprintf("%s tikv has too many leader-drop around time %s, leader count from %.0f drop to %.0f", address, subRows.GetTime(0), lastValue, v),
+					degree:   lastValue - v,
+				})
+				break
+			}
+			lastValue = v
 		}
 	}
 	return results
