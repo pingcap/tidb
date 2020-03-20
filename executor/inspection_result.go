@@ -279,7 +279,6 @@ func (configInspection) inspectCheckConfig(_ context.Context, sctx sessionctx.Co
 			})
 		}
 	}
-
 	return results
 }
 

@@ -404,6 +404,7 @@ func (helper extractHelper) extractTimeRange(
 				remained = append(remained, expr)
 				continue
 			}
+
 			mysqlTime := timeDatum.GetMysqlTime()
 			timestamp := time.Date(mysqlTime.Year(),
 				time.Month(mysqlTime.Month()),
