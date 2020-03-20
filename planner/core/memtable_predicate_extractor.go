@@ -606,7 +606,17 @@ func (e *ClusterLogTableExtractor) Extract(
 }
 
 func (e *ClusterLogTableExtractor) explainInfo(p *PhysicalMemTable) string {
-	return ""
+	if e.SkipRequest {
+		return "skip_request: true"
+	}
+	startTime, endTime := e.StartTime, e.EndTime
+	st := time.Unix(0, startTime * 1e6)
+	et := time.Unix(0, endTime * 1e6)
+	fmt.Println(st, et)
+	return fmt.Sprintf("Start_time:%v, end_time:%v",
+		st.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format(MetricTableTimeFormat),
+		et.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format(MetricTableTimeFormat),
+	)
 }
 
 // MetricTableExtractor is used to extract some predicates of metrics_schema tables.
