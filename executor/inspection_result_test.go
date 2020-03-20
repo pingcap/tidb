@@ -391,6 +391,8 @@ func (s *inspectionResultSuite) TestThresholdCheckInspection3(c *C) {
 		"pd_scheduler_store_status": {
 			types.MakeDatums(datetime("2020-02-14 05:20:00"), "pd-0", "tikv-0", "0", "leader_score", 100.0),
 			types.MakeDatums(datetime("2020-02-14 05:20:00"), "pd-0", "tikv-1", "1", "leader_score", 50.0),
+			types.MakeDatums(datetime("2020-02-14 05:21:00"), "pd-0", "tikv-0", "0", "leader_score", 99.0),
+			types.MakeDatums(datetime("2020-02-14 05:21:00"), "pd-0", "tikv-1", "1", "leader_score", 51.0),
 			types.MakeDatums(datetime("2020-02-14 05:20:00"), "pd-0", "tikv-0", "0", "region_score", 100.0),
 			types.MakeDatums(datetime("2020-02-14 05:20:00"), "pd-0", "tikv-1", "1", "region_score", 90.0),
 			types.MakeDatums(datetime("2020-02-14 05:20:00"), "pd-0", "tikv-0", "0", "store_available", 100.0),
@@ -426,11 +428,11 @@ func (s *inspectionResultSuite) TestThresholdCheckInspection3(c *C) {
 	result.Check(testkit.Rows(
 		"leader-drop tikv tikv-2 10000 <= 50 tikv-2 tikv has too many leader-drop around time 2020-02-14 05:21:00.000000, leader count from 10000 drop to 0",
 		"leader-drop tikv tikv-0 5000 <= 50 tikv-0 tikv has too many leader-drop around time 2020-02-14 05:21:00.000000, leader count from 10000 drop to 5000",
-		"leader-score-balance tikv tikv-1 50.00% < 5.00% tikv-0 leader_score is 100.00, much more than tikv-1 leader_score 50.00",
+		"leader-score-balance tikv tikv-1 50.00% < 5.00% tikv-0 max leader_score is 100.00, much more than tikv-1 min leader_score 50.00",
 		"region-count tikv tikv-0 20001.00 <= 20000 tikv-0 tikv has too many regions",
 		"region-health pd pd-0 110.00 < 100 the count of extra-perr and learner-peer and pending-peer are 110, it means the scheduling is too frequent or too slow",
-		"region-score-balance tikv tikv-1 10.00% < 5.00% tikv-0 region_score is 100.00, much more than tikv-1 region_score 90.00",
-		"store-available-balance tikv tikv-1 30.00% < 20.00% tikv-0 store_available is 100.00, much more than tikv-1 store_available 70.00"))
+		"region-score-balance tikv tikv-1 10.00% < 5.00% tikv-0 max region_score is 100.00, much more than tikv-1 min region_score 90.00",
+		"store-available-balance tikv tikv-1 30.00% < 20.00% tikv-0 max store_available is 100.00, much more than tikv-1 min store_available 70.00"))
 }
 
 func (s *inspectionResultSuite) TestCriticalErrorInspection(c *C) {
