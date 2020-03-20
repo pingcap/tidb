@@ -48,8 +48,6 @@ type stmtSummaryByDigestKey struct {
 	prevDigest string
 	// The digest of the plan of this SQL.
 	planDigest string
-	// Whether statement summary by digest is from internal query.
-	isInternal bool
 	// `hash` is the hash value of this object.
 	hash []byte
 }
@@ -64,7 +62,6 @@ func (key *stmtSummaryByDigestKey) Hash() []byte {
 		key.hash = append(key.hash, hack.Slice(key.schemaName)...)
 		key.hash = append(key.hash, hack.Slice(key.prevDigest)...)
 		key.hash = append(key.hash, hack.Slice(key.planDigest)...)
-		key.hash = append(key.hash, hack.Slice(strconv.FormatBool(key.isInternal))...)
 	}
 	return key.hash
 }
@@ -282,11 +279,11 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 		if !ok {
 			// Lazy initialize it to release ssMap.mutex ASAP.
 			summary = new(stmtSummaryByDigest)
-			summary.isInternal = sei.IsInternal
 			ssMap.summaryMap.Put(key, summary)
 		} else {
 			summary = value.(*stmtSummaryByDigest)
 		}
+		summary.isInternal = summary.isInternal && sei.IsInternal
 		return summary, beginTime
 	}()
 
