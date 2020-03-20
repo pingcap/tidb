@@ -305,7 +305,7 @@ func (s *testTableSuite) TestStmtSummaryInternalQuery(c *C) {
 	tk.MustExec("create global binding for select * from t where t.a = 1 using select * from t ignore index(k) where t.a = 1")
 	tk.MustExec("set global tidb_enable_stmt_summary = 1")
 	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("1"))
-	defer tk.MustExec("set global tidb_enable_stmt_summary = false")
+	defer tk.MustExec("set global tidb_enable_stmt_summary = ''")
 	// Invalidate the cache manually so that tidb_enable_stmt_summary works immediately.
 	s.dom.GetGlobalVarsCache().Disable()
 	// Disable refreshing summary.
