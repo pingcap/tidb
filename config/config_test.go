@@ -196,6 +196,7 @@ region-cache-ttl=6000
 store-limit=0
 [stmt-summary]
 enable=false
+enable-internal-query=true
 max-stmt-count=1000
 max-sql-length=1024
 refresh-interval=100
@@ -230,6 +231,7 @@ engines = ["tiflash"]
 	c.Assert(conf.DelayCleanTableLock, Equals, uint64(5))
 	c.Assert(conf.SplitRegionMaxNum, Equals, uint64(10000))
 	c.Assert(conf.StmtSummary.Enable, Equals, false)
+	c.Assert(conf.StmtSummary.EnableInternalQuery, Equals, true)
 	c.Assert(conf.StmtSummary.MaxStmtCount, Equals, uint(1000))
 	c.Assert(conf.StmtSummary.MaxSQLLength, Equals, uint(1024))
 	c.Assert(conf.StmtSummary.RefreshInterval, Equals, 100)
