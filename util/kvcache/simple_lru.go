@@ -169,3 +169,17 @@ func (l *SimpleLRUCache) Keys() []Key {
 	}
 	return keys
 }
+
+// SetCapacity sets capacity of the cache.
+func (l *SimpleLRUCache) SetCapacity(capacity uint) {
+	if capacity < 1 {
+		panic("capacity of LRU Cache should be at least 1.")
+	}
+	l.capacity = capacity
+	for l.size > l.capacity {
+		lru := l.cache.Back()
+		l.cache.Remove(lru)
+		delete(l.elements, string(lru.Value.(*cacheEntry).key.Hash()))
+		l.size--
+	}
+}

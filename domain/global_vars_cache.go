@@ -82,6 +82,10 @@ func checkEnableServerGlobalVar(rows []chunk.Row) {
 			stmtsummary.StmtSummaryByDigestMap.SetRefreshInterval(sVal, false)
 		case variable.TiDBStmtSummaryHistorySize:
 			stmtsummary.StmtSummaryByDigestMap.SetHistorySize(sVal, false)
+		case variable.TiDBStmtSummaryMaxStmtCount:
+			stmtsummary.StmtSummaryByDigestMap.SetMaxStmtCount(sVal, false)
+		case variable.TiDBStmtSummaryMaxSQLLength:
+			stmtsummary.StmtSummaryByDigestMap.SetMaxSQLLength(sVal, false)
 		case variable.TiDBCapturePlanBaseline:
 			variable.CapturePlanBaseline.Set(sVal, false)
 		}
