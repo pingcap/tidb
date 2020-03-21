@@ -83,6 +83,7 @@ func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetIn
 		if err != nil {
 			return errors.Trace(err)
 		}
+
 		dbInfo.Charset = charsetInfo.Chs
 		dbInfo.Collate = charsetInfo.Col
 	} else {
@@ -113,7 +114,7 @@ func (d *ddl) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (
 				return ErrConflictingDeclarations.GenWithStackByArgs(toCharset, val.Value)
 			}
 		case ast.DatabaseOptionCollate:
-			info, err := charset.GetCollationByName(val.Value)
+			info, err := collate.GetCollationByName(val.Value)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -346,7 +347,7 @@ func setCharsetCollationFlenDecimal(tp *types.FieldType, specifiedCollates []str
 				// We should derive charset from it's collate specified rather than getting from table and db.
 				// It is handled like mysql's logic, use derived charset to judge conflict with next collate.
 				for _, spc := range specifiedCollates {
-					derivedCollation, err := charset.GetCollationByName(spc)
+					derivedCollation, err := collate.GetCollationByName(spc)
 					if err != nil {
 						return errors.Trace(err)
 					}
@@ -377,7 +378,7 @@ func setCharsetCollationFlenDecimal(tp *types.FieldType, specifiedCollates []str
 			} else {
 				// Both the charset and collate are specified.
 				for _, spc := range specifiedCollates {
-					derivedCollation, err := charset.GetCollationByName(spc)
+					derivedCollation, err := collate.GetCollationByName(spc)
 					if err != nil {
 						return errors.Trace(err)
 					}
@@ -1829,6 +1830,11 @@ func checkCharsetAndCollation(cs string, co string) error {
 	if !charset.ValidCharsetAndCollation(cs, co) {
 		return ErrUnknownCharacterSet.GenWithStackByArgs(cs)
 	}
+	if co != "" {
+		if _, err := collate.GetCollationByName(co); err != nil {
+			return errors.Trace(err)
+		}
+	}
 	return nil
 }
 
@@ -1924,7 +1930,7 @@ func getCharsetAndCollateInTableOption(startIdx int, options []*ast.TableOption)
 				coll = info.DefaultCollation
 			}
 		case ast.TableOptionCollate:
-			info, err := charset.GetCollationByName(opt.StrValue)
+			info, err := collate.GetCollationByName(opt.StrValue)
 			if err != nil {
 				return "", "", err
 			}
