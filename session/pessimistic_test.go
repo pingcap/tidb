@@ -1162,3 +1162,37 @@ func (s *testPessimisticSuite) TestRCSubQuery(c *C) {
 	tk.MustQuery("select * from t1 where c1 = (select c1 from t where c1 = 1) and 1=1;").Check(testkit.Rows("1 4"))
 	tk.MustExec("rollback")
 }
+
+func (s *testPessimisticSuite) TestGenerateColPointGet(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists tu")
+	tk.MustExec("CREATE TABLE `tu`(`x` int, `y` int, `z` int GENERATED ALWAYS AS (x + y) VIRTUAL, PRIMARY KEY (`x`), UNIQUE KEY `idz` (`z`))")
+	tk.MustExec("insert into tu(x, y) values(1, 2);")
+
+	// test point get lock
+	tk.MustExec("begin pessimistic")
+	tk.MustQuery("select * from tu where z = 3 for update").Check(testkit.Rows("1 2 3"))
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk2.MustExec("begin pessimistic")
+	err := tk2.ExecToErr("select * from tu where z = 3 for update nowait")
+	c.Assert(err, NotNil)
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert into tu(x, y) values(2, 2);")
+	err = tk2.ExecToErr("select * from tu where z = 4 for update nowait")
+	c.Assert(err, NotNil)
+
+	// test batch point get lock
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("begin pessimistic")
+	tk.MustQuery("select * from tu where z in (1, 3, 5) for update").Check(testkit.Rows("1 2 3"))
+	tk2.MustExec("begin pessimistic")
+	err = tk2.ExecToErr("select x from tu where z in (3, 7, 9) for update nowait")
+	c.Assert(err, NotNil)
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert into tu(x, y) values(5, 6);")
+	err = tk2.ExecToErr("select * from tu where z = 11 for update nowait")
+	c.Assert(err, NotNil)
+
+	tk.MustExec("commit")
+	tk2.MustExec("commit")
+}

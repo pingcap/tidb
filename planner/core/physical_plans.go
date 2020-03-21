@@ -260,17 +260,18 @@ func (ts *PhysicalTableScan) IsPartition() (bool, int64) {
 }
 
 // ExpandVirtualColumn expands the virtual column's dependent columns to ts's schema and column.
-func (ts *PhysicalTableScan) ExpandVirtualColumn() {
-	for _, col := range ts.schema.Columns {
+func ExpandVirtualColumn(columns *[]*model.ColumnInfo, schema *expression.Schema, colsInfo []*model.ColumnInfo) {
+	schemaColumns := schema.Columns
+	for _, col := range schemaColumns {
 		if col.VirtualExpr == nil {
 			continue
 		}
 
 		baseCols := expression.ExtractDependentColumns(col.VirtualExpr)
 		for _, baseCol := range baseCols {
-			if !ts.schema.Contains(baseCol) {
-				ts.schema.Columns = append(ts.schema.Columns, baseCol)
-				ts.Columns = append(ts.Columns, FindColumnInfoByID(ts.Table.Columns, baseCol.ID))
+			if !schema.Contains(baseCol) {
+				schema.Columns = append(schema.Columns, baseCol)
+				*columns = append(*columns, FindColumnInfoByID(colsInfo, baseCol.ID))
 			}
 		}
 	}

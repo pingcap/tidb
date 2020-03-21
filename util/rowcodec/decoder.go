@@ -54,6 +54,7 @@ type ColInfo struct {
 	Decimal int
 	Elems   []string
 	Collate string
+	GenCol  bool
 }
 
 // DatumMapDecoder decodes the row to datum map.
@@ -219,6 +220,10 @@ func (decoder *ChunkDecoder) DecodeToChunk(rowData []byte, handle int64, chk *ch
 	for colIdx, col := range decoder.columns {
 		if col.ID == decoder.handleColID {
 			chk.AppendInt64(colIdx, handle)
+			continue
+		}
+		if col.GenCol {
+			chk.AppendNull(colIdx)
 			continue
 		}
 
