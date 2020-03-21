@@ -86,7 +86,7 @@ func GetAllAnalyzeJobs() []*AnalyzeJob {
 	}
 	jobs = append(jobs, analyzeStatus.history...)
 	analyzeStatus.Unlock()
-	sort.Slice(jobs, func(i int, j int) bool { return jobs[i].updateTime.Before(jobs[j].updateTime) })
+	sort.Slice(jobs, func(i int, j int) bool { return jobs[i].getUpdateTime().Before(jobs[j].getUpdateTime()) })
 	return jobs
 }
 
@@ -118,4 +118,10 @@ func (job *AnalyzeJob) Finish(meetError bool) {
 	}
 	job.updateTime = time.Now()
 	job.Mutex.Unlock()
+}
+
+func (job *AnalyzeJob) getUpdateTime() time.Time {
+	job.Mutex.Lock()
+	defer job.Mutex.Unlock()
+	return job.updateTime
 }
