@@ -24,10 +24,12 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -200,11 +202,19 @@ func (vt *perfSchemaTable) Type() table.Type {
 }
 
 func (vt *perfSchemaTable) getRows(ctx sessionctx.Context, cols []*table.Column) (fullRows [][]types.Datum, err error) {
+	// Extract user and privilege info (is super user?) here
+	// for statement summary tables' access privilege check
+	user := ctx.GetSessionVars().User
+	isSuper := false
+	if pm := privilege.GetPrivilegeManager(ctx); pm != nil {
+		isSuper = pm.RequestVerificationWithUser("", "", "", mysql.SuperPriv, user)
+	}
+
 	switch vt.meta.Name.O {
 	case tableNameEventsStatementsSummaryByDigest:
-		fullRows = stmtsummary.StmtSummaryByDigestMap.ToCurrentDatum()
+		fullRows = stmtsummary.StmtSummaryByDigestMap.ToCurrentDatum(user, isSuper)
 	case tableNameEventsStatementsSummaryByDigestHistory:
-		fullRows = stmtsummary.StmtSummaryByDigestMap.ToHistoryDatum()
+		fullRows = stmtsummary.StmtSummaryByDigestMap.ToHistoryDatum(user, isSuper)
 	case tableNameTiDBProfileCPU:
 		fullRows, err = (&profile.Collector{}).ProfileGraph("cpu")
 	case tableNameTiDBProfileMemory:
@@ -256,11 +266,19 @@ func (vt *perfSchemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 }
 
 func getClusterMemTableRows(ctx sessionctx.Context, tableName string) (rows [][]types.Datum, err error) {
+	// Extract user and privilege info (is super user?) here
+	// for statement summary tables' access privilege check
+	user := ctx.GetSessionVars().User
+	isSuper := false
+	if pm := privilege.GetPrivilegeManager(ctx); pm != nil {
+		isSuper = pm.RequestVerificationWithUser("", "", "", mysql.SuperPriv, user)
+	}
+
 	switch tableName {
 	case tableNameClusterEventsStatementsSummaryByDigest:
-		rows = stmtsummary.StmtSummaryByDigestMap.ToCurrentDatum()
+		rows = stmtsummary.StmtSummaryByDigestMap.ToCurrentDatum(user, isSuper)
 	case tableNameClusterEventsStatementsSummaryByDigestHistory:
-		rows = stmtsummary.StmtSummaryByDigestMap.ToHistoryDatum()
+		rows = stmtsummary.StmtSummaryByDigestMap.ToHistoryDatum(user, isSuper)
 	default:
 		err = errors.Errorf("unknown cluster table: %v", tableName)
 	}

@@ -27,6 +27,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema/perfschema"
@@ -223,7 +224,7 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 		"\t└─TableScan_9 \tcop \t1000\ttable:t, keep order:false, stats:pseudo"))
 
 	// Disable it in global scope.
-	tk.MustExec("set global tidb_enable_stmt_summary = off")
+	tk.MustExec("set global tidb_enable_stmt_summary = false")
 
 	// Create a new session to test.
 	tk = testkit.NewTestKitWithInit(c, s.store)
@@ -250,6 +251,71 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 		max_prewrite_regions, avg_affected_rows, query_sample_text, plan
 		from performance_schema.events_statements_summary_by_digest`,
 	).Check(testkit.Rows())
+
+	// Create a new session to test
+	tk = testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("set global tidb_enable_stmt_summary = on")
+	tk.MustExec("set global tidb_stmt_summary_history_size = 24")
+
+	// Create a new user to test statements summary table privilege
+	tk.MustExec("create user 'test_user'@'localhost'")
+	tk.MustExec("grant select on *.* to 'test_user'@'localhost'")
+	tk.Se.Auth(&auth.UserIdentity{
+		Username:     "root",
+		Hostname:     "%",
+		AuthUsername: "root",
+		AuthHostname: "%",
+	}, nil, nil)
+	tk.MustExec("select * from t where a=1")
+	result := tk.MustQuery(`select *
+		from performance_schema.events_statements_summary_by_digest
+		where digest_text like 'select * from t%'`,
+	)
+	// Super user can query all reocrds
+	c.Assert(len(result.Rows()), Equals, 1)
+	result = tk.MustQuery(`select *
+		from performance_schema.events_statements_summary_by_digest_history
+		where digest_text like 'select * from t%'`,
+	)
+	c.Assert(len(result.Rows()), Equals, 1)
+	tk.Se.Auth(&auth.UserIdentity{
+		Username:     "test_user",
+		Hostname:     "localhost",
+		AuthUsername: "test_user",
+		AuthHostname: "localhost",
+	}, nil, nil)
+	result = tk.MustQuery(`select *
+		from performance_schema.events_statements_summary_by_digest
+		where digest_text like 'select * from t%'`,
+	)
+	// Ordinary users can not see others' records
+	c.Assert(len(result.Rows()), Equals, 0)
+	result = tk.MustQuery(`select *
+		from performance_schema.events_statements_summary_by_digest_history
+		where digest_text like 'select * from t%'`,
+	)
+	c.Assert(len(result.Rows()), Equals, 0)
+	tk.MustExec("select * from t where a=1")
+	result = tk.MustQuery(`select *
+		from performance_schema.events_statements_summary_by_digest
+		where digest_text like 'select * from t%'`,
+	)
+	c.Assert(len(result.Rows()), Equals, 1)
+	tk.MustExec("select * from t where a=1")
+	result = tk.MustQuery(`select *
+		from performance_schema.events_statements_summary_by_digest_history
+		where digest_text like 'select * from t%'`,
+	)
+	c.Assert(len(result.Rows()), Equals, 1)
+	// use root user to set variables back
+	tk.Se.Auth(&auth.UserIdentity{
+		Username:     "root",
+		Hostname:     "%",
+		AuthUsername: "root",
+		AuthHostname: "%",
+	}, nil, nil)
+	tk.MustExec("set global tidb_enable_stmt_summary = off")
 }
 
 // Test events_statements_summary_by_digest_history.
