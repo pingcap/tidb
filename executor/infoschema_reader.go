@@ -1186,7 +1186,7 @@ func (e *tableStorageStatsRetriever) initialize(sctx sessionctx.Context) error {
 }
 
 // pdRegionStats is the json response from PD.
-type pdRegionStats struct {
+type PdRegionStats struct {
 	Count          int            `json:"count"`
 	EmptyCount     int            `json:"empty_count"`
 	StorageSize    int64          `json:"storage_size"`
@@ -1228,7 +1228,7 @@ func (e *tableStorageStatsRetriever) setDataForTableStorageStats(ctx sessionctx.
 		if err != nil {
 			return nil, err
 		}
-		var stats pdRegionStats
+		var stats PdRegionStats
 		dec := json.NewDecoder(resp.Body)
 		if err := dec.Decode(&stats); err != nil {
 			return nil, err
