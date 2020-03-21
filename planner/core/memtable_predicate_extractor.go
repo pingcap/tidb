@@ -612,9 +612,10 @@ func (e *ClusterLogTableExtractor) explainInfo(p *PhysicalMemTable) string {
 	startTime, endTime := e.StartTime, e.EndTime
 	st := time.Unix(0, startTime*1e6)
 	et := time.Unix(0, endTime*1e6)
-	return fmt.Sprintf("Start_time:%v, end_time:%v",
+	return fmt.Sprintf("Start_time:%v, end_time:%v, node_types:[%s], instances:[%s], log_levels:[%s]",
 		st.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format(MetricTableTimeFormat),
 		et.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format(MetricTableTimeFormat),
+		ExtractStringFromStringSet(e.NodeTypes), ExtractStringFromStringSet(e.Instances), ExtractStringFromStringSet(e.LogLevels),
 	)
 }
 

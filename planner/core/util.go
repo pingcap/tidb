@@ -14,9 +14,11 @@
 package core
 
 import (
+	"fmt"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/set"
 )
 
 // AggregateFuncExtractor visits Expr tree.
@@ -230,4 +232,16 @@ func GetStatsInfo(i interface{}) map[string]uint64 {
 	statsInfos := make(map[string]uint64)
 	statsInfos = CollectPlanStatsVersion(physicalPlan, statsInfos)
 	return statsInfos
+}
+
+// ExtractStringFromStringSet helps extract string info from set.StringSet
+func ExtractStringFromStringSet(set set.StringSet) string {
+	r := ""
+	if len(set) < 1 {
+		return r
+	}
+	for k := range set {
+		r = fmt.Sprintf("%s,%s", r, k)
+	}
+	return r[1:]
 }
