@@ -208,6 +208,8 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 	switch name {
 	case variable.TiDBEnableStmtSummary:
 		stmtsummary.StmtSummaryByDigestMap.SetEnabled(valStr, !v.IsGlobal)
+	case variable.TiDBStmtSummaryInternalQuery:
+		stmtsummary.StmtSummaryByDigestMap.SetEnabledInternalQuery(valStr, !v.IsGlobal)
 	case variable.TiDBStmtSummaryRefreshInterval:
 		stmtsummary.StmtSummaryByDigestMap.SetRefreshInterval(valStr, !v.IsGlobal)
 	case variable.TiDBStmtSummaryHistorySize:
