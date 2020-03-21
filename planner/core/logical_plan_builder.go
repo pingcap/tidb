@@ -55,7 +55,7 @@ const (
 	// TiDBMergeJoin is hint enforce merge join.
 	TiDBMergeJoin = "tidb_smj"
 	// HintSMJ is hint enforce merge join.
-	HintSMJ = "sm_join"
+	HintSMJ = "merge_join"
 	// TiDBIndexNestedLoopJoin is hint enforce index nested loop join.
 	TiDBIndexNestedLoopJoin = "tidb_inlj"
 	// HintINLJ is hint enforce index nested loop join.
@@ -2560,6 +2560,9 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	}
 
 	if tableInfo.IsView() {
+		if b.capFlag&collectUnderlyingViewName != 0 {
+			b.underlyingViewNames.Insert(dbName.L + "." + tn.Name.L)
+		}
 		return b.BuildDataSourceFromView(ctx, dbName, tableInfo)
 	}
 
