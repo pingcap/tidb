@@ -699,7 +699,7 @@ func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tbl ta
 			if path == nil {
 				err := ErrKeyDoesNotExist.GenWithStackByArgs(idxName, tblInfo.Name)
 				// if hint is from comment-style sql hints, we should throw a warning instead of error.
-				if i < indexHintsLen {
+				if i < indexHintsLen || b.ctx.GetSessionVars().HintWarningAsError {
 					return nil, err
 				}
 				b.ctx.GetSessionVars().StmtCtx.AppendWarning(err)

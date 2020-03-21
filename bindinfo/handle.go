@@ -644,10 +644,13 @@ func (h *BindHandle) CaptureBaselines() {
 }
 
 func getHintsForSQL(sctx sessionctx.Context, sql string) (string, error) {
-	oriVals := sctx.GetSessionVars().UsePlanBaselines
+	oriUseBaseline := sctx.GetSessionVars().UsePlanBaselines
 	sctx.GetSessionVars().UsePlanBaselines = false
+	oriWarnAsError := sctx.GetSessionVars().HintWarningAsError
+	sctx.GetSessionVars().HintWarningAsError = true
 	recordSets, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), fmt.Sprintf("explain format='hint' %s", sql))
-	sctx.GetSessionVars().UsePlanBaselines = oriVals
+	sctx.GetSessionVars().UsePlanBaselines = oriUseBaseline
+	sctx.GetSessionVars().HintWarningAsError = oriWarnAsError
 	if len(recordSets) > 0 {
 		defer terror.Log(recordSets[0].Close())
 	}
@@ -755,13 +758,20 @@ func getEvolveParameters(ctx sessionctx.Context) (time.Duration, time.Time, time
 	return time.Duration(maxTime) * time.Second, startTime, endTime, nil
 }
 
-const (
+var (
 	// acceptFactor is the factor to decide should we accept the pending verified plan.
 	// A pending verified plan will be accepted if it performs at least `acceptFactor` times better than the accepted plans.
 	acceptFactor = 1.5
 	// nextVerifyDuration is the duration that we will retry the rejected plans.
 	nextVerifyDuration = 7 * 24 * time.Hour
 )
+
+// SetAcceptFactor is only used for testing.
+func SetAcceptFactor(f float64) (origin float64) {
+	origin = acceptFactor
+	acceptFactor = f
+	return
+}
 
 func (h *BindHandle) getOnePendingVerifyJob() (string, string, Binding) {
 	cache := h.bindInfo.Value.Load().(cache)
@@ -865,6 +875,12 @@ func (h *BindHandle) HandleEvolvePlanTask(sctx sessionctx.Context) error {
 	// since it is still in the bind record. Now we just drop it and if it is actually retryable,
 	// we will hope for that we can capture this evolve task again.
 	if err != nil {
+		logutil.BgLogger().Info("drop invalid binding in evolve",
+			zap.String("original_sql", originalSQL),
+			zap.String("default_db", db),
+			zap.String("bind_sql", binding.BindSQL),
+			zap.String("status", binding.Status),
+			zap.String("drop reason", err.Error()))
 		return h.DropBindRecord(originalSQL, db, &binding)
 	}
 	// If the accepted plan timeouts, it is hard to decide the timeout for verify plan.
@@ -873,8 +889,16 @@ func (h *BindHandle) HandleEvolvePlanTask(sctx sessionctx.Context) error {
 		maxTime = time.Duration(float64(acceptedPlanTime) / acceptFactor)
 	}
 	sctx.GetSessionVars().UsePlanBaselines = false
+	sctx.GetSessionVars().HintWarningAsError = true
 	verifyPlanTime, err := h.getRunningDuration(sctx, db, binding.BindSQL, maxTime)
+	sctx.GetSessionVars().HintWarningAsError = false
 	if err != nil {
+		logutil.BgLogger().Info("drop invalid binding in evolve",
+			zap.String("original_sql", originalSQL),
+			zap.String("default_db", db),
+			zap.String("bind_sql", binding.BindSQL),
+			zap.String("status", binding.Status),
+			zap.String("drop reason", err.Error()))
 		return h.DropBindRecord(originalSQL, db, &binding)
 	}
 	if verifyPlanTime < 0 {

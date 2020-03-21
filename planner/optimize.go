@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 // Optimize does optimization and creates a Plan.
@@ -85,6 +86,8 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	var bestPlanAmongHints plannercore.Plan
 	originHints := bindinfo.CollectHint(stmtNode)
 	// Try to find the best binding.
+	origWarnAsErr := sctx.GetSessionVars().HintWarningAsError
+	sctx.GetSessionVars().HintWarningAsError = true
 	for _, binding := range bindRecord.Bindings {
 		if binding.Status != bindinfo.Using {
 			continue
@@ -95,6 +98,12 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		sctx.GetSessionVars().StmtCtx.StmtHints = curStmtHints
 		plan, _, cost, err := optimize(ctx, sctx, node, is)
 		if err != nil {
+			logutil.Logger(ctx).Info("drop invalid binding",
+				zap.String("original_sql", bindRecord.OriginalSQL),
+				zap.String("default_db", bindRecord.Db),
+				zap.String("bind_sql", binding.BindSQL),
+				zap.String("status", binding.Status),
+				zap.String("drop reason", err.Error()))
 			binding.Status = bindinfo.Invalid
 			handleInvalidBindRecord(ctx, sctx, scope, bindinfo.BindRecord{
 				OriginalSQL: bindRecord.OriginalSQL,
@@ -111,6 +120,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 			bestPlanAmongHints = plan
 		}
 	}
+	sctx.GetSessionVars().HintWarningAsError = origWarnAsErr
 	// If there is already a evolution task, we do not need to handle it again.
 	if sctx.GetSessionVars().EvolvePlanBaselines && binding == nil {
 		handleEvolveTasks(ctx, sctx, bindRecord, stmtNode, bestPlanHint)

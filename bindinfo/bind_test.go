@@ -773,3 +773,63 @@ func (s *testSuite) TestReCreateBindAfterEvolvePlan(c *C) {
 	tk.MustQuery("select * from t where a >= 4 and b >= 1")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idx_b")
 }
+
+func (s *testSuite) TestInvalidBindings(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, index idx_a(a), index idx_b(b))")
+	tk.MustExec("create global binding for select * from t where a > 10 and b > 10 using select /*+ USE_INDEX(t,idx_a) */ * from t where a > 10 and b > 10")
+	// Manufacture a rejected binding by hacking mysql.bind_info.
+	tk.MustExec("insert into mysql.bind_info values('select * from t where a > ? and b > ?', 'select /*+ USE_INDEX(t,idx_b) */ * from t where a > 10 and b > 10', 'test', 'rejected', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '')")
+	tk.MustQuery("select bind_sql, status from mysql.bind_info").Sort().Check(testkit.Rows(
+		"select /*+ USE_INDEX(t,idx_a) */ * from t where a > 10 and b > 10 using",
+		"select /*+ USE_INDEX(t,idx_b) */ * from t where a > 10 and b > 10 rejected",
+	))
+	// Reload cache from mysql.bind_info.
+	s.domain.BindHandle().Clear()
+	c.Assert(s.domain.BindHandle().Update(true), IsNil)
+
+	tk.MustExec("alter table t drop index idx_b")
+	// Make sure getRunningDuration() returns error instead of timeout.
+	origVal := bindinfo.SetAcceptFactor(0.001)
+	tk.MustExec("admin evolve bindings")
+	bindinfo.SetAcceptFactor(origVal)
+	tk.MustQuery("select bind_sql, status from mysql.bind_info").Sort().Check(testkit.Rows(
+		"select /*+ USE_INDEX(t,idx_a) */ * from t where a > 10 and b > 10 using",
+		"select /*+ USE_INDEX(t,idx_b) */ * from t where a > 10 and b > 10 deleted",
+	))
+	rows := tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 1)
+
+	tk.MustExec("alter table t drop index idx_a")
+	tk.MustExec("set session tidb_use_plan_baselines = 1")
+	tk.MustExec("select * from t where a > 10 and b > 10")
+	tk.MustExec("admin flush bindings")
+	tk.MustQuery("select bind_sql, status from mysql.bind_info").Sort().Check(testkit.Rows(
+		"select /*+ USE_INDEX(t,idx_a) */ * from t where a > 10 and b > 10 deleted",
+		"select /*+ USE_INDEX(t,idx_b) */ * from t where a > 10 and b > 10 deleted",
+	))
+	rows = tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 0)
+}
+
+func (s *testSuite) TestCaptureInvalidHints(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	stmtsummary.StmtSummaryByDigestMap.Clear()
+	tk.MustExec(" set @@tidb_capture_plan_baselines = on")
+	defer func() {
+		tk.MustExec(" set @@tidb_capture_plan_baselines = off")
+	}()
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
+	tk.MustExec("select /*+ USE_INDEX(t,b) */ * from t where a > 10")
+	tk.MustExec("select /*+ USE_INDEX(t,b) */ * from t where a > 10")
+	tk.MustExec("admin capture bindings")
+	tk.MustQuery("show global bindings").Check(testkit.Rows())
+}
