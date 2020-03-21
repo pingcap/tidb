@@ -42,3 +42,10 @@ jobs:
       with:
         project: 'https://github.com/pingcap/tidb/projects/41'
         column_name: 'Need Triage'
+    - name: Run issues assignment to Robust test
+      uses: srggrs/assign-one-project-github-action@1.2.0
+      if: |
+        contains(github.event.issue.labels.*.name, 'component/test')
+      with:
+        project: 'https://github.com/pingcap/tidb/projects/32'
+        column_name: 'TODO/Help Wanted'
