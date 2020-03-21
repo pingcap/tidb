@@ -190,7 +190,7 @@ func (ch *pdConfHandler) writeConfig() {
 	}
 }
 
-func (ch *pdConfHandler) updateConfig(newConfContent string, newVersion *configpb.Version) (ok bool) {
+func (ch *pdConfHandler) updateConfig(newConfContent string, newVersion *configpb.Version) (updated bool) {
 	newConf, err := decodeConfig(newConfContent)
 	if err != nil {
 		logutil.Logger(context.Background()).Warn("decode config error", zap.Error(err))
@@ -212,7 +212,7 @@ func (ch *pdConfHandler) updateConfig(newConfContent string, newVersion *configp
 	logutil.Logger(context.Background()).Info("PDConfHandler updates config successfully",
 		zap.String("new_version", newVersion.String()),
 		zap.Any("accepted_conf_items", as), zap.Any("rejected_conf_items", rs))
-	return true
+	return len(as) > 0
 }
 
 func (ch *pdConfHandler) run() {
@@ -253,8 +253,9 @@ func (ch *pdConfHandler) run() {
 				continue
 			}
 
-			ch.updateConfig(newConfContent, version)
-			ch.writeConfig()
+			if ch.updateConfig(newConfContent, version) {
+				ch.writeConfig()
+			}
 		case <-ch.exit:
 			return
 		}
