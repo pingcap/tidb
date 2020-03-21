@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/set"
+	"sort"
 )
 
 // AggregateFuncExtractor visits Expr tree.
@@ -234,13 +235,31 @@ func GetStatsInfo(i interface{}) map[string]uint64 {
 	return statsInfos
 }
 
-// ExtractStringFromStringSet helps extract string info from set.StringSet
-func ExtractStringFromStringSet(set set.StringSet) string {
+// StringList used to sort the string list
+type StringList []string
+
+// Len implement sort.Interface
+func (s StringList) Len() int { return len(s) }
+
+// Swap implement sort.Interface
+func (s StringList) Swap(i, j int) { s[i], s[j] = s[j], s[i] }
+
+// Less implement sort.Interface
+func (s StringList) Less(i, j int) bool { return s[i] < s[j] }
+
+// extractStringFromStringSet helps extract string info from set.StringSet
+func extractStringFromStringSet(set set.StringSet) string {
 	r := ""
 	if len(set) < 1 {
 		return r
 	}
+	l := make([]string, 0, len(set))
 	for k := range set {
+		l = append(l, k)
+	}
+	sl := StringList(l)
+	sort.Sort(sl)
+	for _, k := range sl {
 		r = fmt.Sprintf("%s,%s", r, k)
 	}
 	return r[1:]
