@@ -202,10 +202,10 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 	normalized, digest := parser.NormalizeDigest(prepared.Stmt.Text())
 	preparedObj := &plannercore.CachedPrepareStmt{
-		PreparedAst: prepared,
-		VisitInfos:  destBuilder.GetVisitInfo(),
-		Normalized:  normalized,
-		Digest:      digest,
+		PreparedAst:   prepared,
+		VisitInfos:    destBuilder.GetVisitInfo(),
+		NormalizedSQL: normalized,
+		SQLDigest:     digest,
 	}
 	return vars.AddPreparedStmt(e.ID, preparedObj)
 }
@@ -321,7 +321,7 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
 		stmtCtx := sctx.GetSessionVars().StmtCtx
 		stmt.Text = preparedObj.PreparedAst.Stmt.Text()
 		stmtCtx.OriginalSQL = stmt.Text
-		stmtCtx.InitSQLDigest(preparedObj.Normalized, preparedObj.Digest)
+		stmtCtx.InitSQLDigest(preparedObj.NormalizedSQL, preparedObj.SQLDigest)
 	}
 	return stmt, nil
 }
