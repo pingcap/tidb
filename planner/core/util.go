@@ -15,11 +15,12 @@ package core
 
 import (
 	"bytes"
+	"sort"
+
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/set"
-	"sort"
 )
 
 // AggregateFuncExtractor visits Expr tree.
