@@ -121,11 +121,6 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) 
 				selfUsedCols = append(selfUsedCols, cols...)
 			}
 		}
-		// If all the group by items are pruned, we should add a constant 1 to keep the correctness.
-		// Because `select count(*) from t` is different from `select count(*) from t group by 1`.
-		if len(la.GroupByItems) == 0 {
-			la.GroupByItems = []expression.Expression{expression.One}
-		}
 	}
 	return child.PruneColumns(selfUsedCols)
 }

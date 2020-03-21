@@ -405,6 +405,17 @@ func (s *testSuiteAgg) TestAggregation(c *C) {
 	tk.MustQuery("select sum(b) from t1 group by c order by c;").Check(testkit.Rows("<nil>", "-3", "-2", "-2"))
 	tk.MustQuery("select sum(c) from t1 group by a order by a;").Check(testkit.Rows("<nil>", "-2", "-2", "-3"))
 	tk.MustQuery("select sum(c) from t1 group by b order by b;").Check(testkit.Rows("<nil>", "-3", "-2", "-2"))
+
+	// Test group-by clause is ignored when group by a foldable constant expression.
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int, b int)")
+	tk.MustExec("insert into t1 values (1, 1), (2, 2), (1, 3)")
+	rows := testkit.Rows("3")
+	tk.MustQuery("select count(a) from t1").Check(rows)
+	tk.MustQuery("select count(a) from t1 group by 1-0").Check(rows)
+	tk.MustQuery("select count(a) from t1 group by ((10*10)-99)").Check(rows)
+	tk.MustQuery("select count(a) from t1 group by -2").Check(rows)
+	tk.MustQuery("select count(a) from t1 group by 'a'").Check(rows)
 }
 
 func (s *testSuiteAgg) TestAggPrune(c *C) {

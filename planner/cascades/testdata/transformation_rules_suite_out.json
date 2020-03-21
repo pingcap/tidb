@@ -2001,8 +2001,10 @@
           "Group#0 Schema:[Column#13]",
           "    Projection_3 input:[Group#1], Column#13",
           "Group#1 Schema:[Column#13]",
-          "    Aggregation_2 input:[Group#2], group by:1, funcs:count(case(gt(test.t.a, 10), test.t.b))",
+          "    Aggregation_5 input:[Group#2], funcs:count(test.t.b)",
           "Group#2 Schema:[test.t.a,test.t.b]",
+          "    Selection_4 input:[Group#3], gt(test.t.a, 10)",
+          "Group#3 Schema:[test.t.a,test.t.b]",
           "    DataSource_1 table:t"
         ]
       },
@@ -2034,8 +2036,10 @@
           "Group#0 Schema:[Column#13]",
           "    Projection_3 input:[Group#1], Column#13",
           "Group#1 Schema:[Column#13]",
-          "    Aggregation_2 input:[Group#2], group by:1, funcs:count(case(gt(test.t.a, 10), test.t.b))",
+          "    Aggregation_5 input:[Group#2], funcs:count(test.t.b)",
           "Group#2 Schema:[test.t.a,test.t.b]",
+          "    Selection_4 input:[Group#3], gt(test.t.a, 10)",
+          "Group#3 Schema:[test.t.a,test.t.b]",
           "    DataSource_1 table:t"
         ]
       },

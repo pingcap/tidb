@@ -670,19 +670,19 @@ id	estRows	task	operator info
 Sort_13	2.00	root	Column#3:asc
 └─HashAgg_17	2.00	root	group by:Column#3, funcs:firstrow(Column#6)->Column#3
   └─Union_18	2.00	root	
-    ├─HashAgg_19	1.00	root	group by:1, funcs:firstrow(0)->Column#6, funcs:firstrow(0)->Column#3
-    │ └─TableDual_22	1.00	root	rows:1
-    └─HashAgg_25	1.00	root	group by:1, funcs:firstrow(1)->Column#6, funcs:firstrow(1)->Column#3
-      └─TableDual_28	1.00	root	rows:1
+    ├─StreamAgg_22	1.00	root	funcs:firstrow(0)->Column#6, funcs:firstrow(0)->Column#3
+    │ └─TableDual_27	1.00	root	rows:1
+    └─StreamAgg_32	1.00	root	funcs:firstrow(1)->Column#6, funcs:firstrow(1)->Column#3
+      └─TableDual_37	1.00	root	rows:1
 explain SELECT 0 AS a FROM dual UNION (SELECT 1 AS a FROM dual ORDER BY a);
 id	estRows	task	operator info
 HashAgg_15	2.00	root	group by:Column#3, funcs:firstrow(Column#6)->Column#3
 └─Union_16	2.00	root	
-  ├─HashAgg_17	1.00	root	group by:1, funcs:firstrow(0)->Column#6, funcs:firstrow(0)->Column#3
-  │ └─TableDual_20	1.00	root	rows:1
-  └─StreamAgg_27	1.00	root	group by:Column#1, funcs:firstrow(Column#1)->Column#6, funcs:firstrow(Column#1)->Column#3
-    └─Projection_32	1.00	root	1->Column#1
-      └─TableDual_33	1.00	root	rows:1
+  ├─StreamAgg_20	1.00	root	funcs:firstrow(0)->Column#6, funcs:firstrow(0)->Column#3
+  │ └─TableDual_25	1.00	root	rows:1
+  └─StreamAgg_31	1.00	root	group by:Column#1, funcs:firstrow(Column#1)->Column#6, funcs:firstrow(Column#1)->Column#3
+    └─Projection_36	1.00	root	1->Column#1
+      └─TableDual_37	1.00	root	rows:1
 create table t (i int key, j int, unique key (i, j));
 begin;
 insert into t values (1, 1);
@@ -772,4 +772,34 @@ label = "cop"
 "TableReader_7" -> "Selection_6"
 }
 
+drop table if exists t;
+create table t(a int, b int);
+explain select max(a) from t group by -1;
+id	estRows	task	operator info
+StreamAgg_13	1.00	root	funcs:max(test.t.a)->Column#4
+└─TopN_14	1.00	root	test.t.a:desc, offset:0, count:1
+  └─TableReader_23	1.00	root	data:TopN_22
+    └─TopN_22	1.00	cop[tikv]	test.t.a:desc, offset:0, count:1
+      └─Selection_21	9990.00	cop[tikv]	not(isnull(test.t.a))
+        └─TableFullScan_20	10000.00	cop[tikv]	table:t, keep order:false, stats:pseudo
+drop table if exists t;
+create table t(a int, b int);
+explain select max(a) from t group by (10-9+1);
+id	estRows	task	operator info
+StreamAgg_13	1.00	root	funcs:max(test.t.a)->Column#4
+└─TopN_14	1.00	root	test.t.a:desc, offset:0, count:1
+  └─TableReader_23	1.00	root	data:TopN_22
+    └─TopN_22	1.00	cop[tikv]	test.t.a:desc, offset:0, count:1
+      └─Selection_21	9990.00	cop[tikv]	not(isnull(test.t.a))
+        └─TableFullScan_20	10000.00	cop[tikv]	table:t, keep order:false, stats:pseudo
+drop table if exists t;
+create table t(a int, b int);
+explain select max(a) from t group by 'xyz';
+id	estRows	task	operator info
+StreamAgg_13	1.00	root	funcs:max(test.t.a)->Column#4
+└─TopN_14	1.00	root	test.t.a:desc, offset:0, count:1
+  └─TableReader_23	1.00	root	data:TopN_22
+    └─TopN_22	1.00	cop[tikv]	test.t.a:desc, offset:0, count:1
+      └─Selection_21	9990.00	cop[tikv]	not(isnull(test.t.a))
+        └─TableFullScan_20	10000.00	cop[tikv]	table:t, keep order:false, stats:pseudo
 drop table if exists t;

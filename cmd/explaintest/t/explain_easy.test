@@ -204,3 +204,16 @@ drop table if exists t;
 create table t(a int, b int);
 explain format="dot" select * from t where a < 2;
 drop table if exists t;
+
+# https://github.com/pingcap/tidb/issues/15488
+create table t(a int, b int);
+explain select max(a) from t group by -1;
+drop table if exists t;
+
+create table t(a int, b int);
+explain select max(a) from t group by (10-9+1);
+drop table if exists t;
+
+create table t(a int, b int);
+explain select max(a) from t group by 'xyz';
+drop table if exists t;
