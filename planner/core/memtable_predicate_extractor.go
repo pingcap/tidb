@@ -609,30 +609,31 @@ func (e *ClusterLogTableExtractor) explainInfo(p *PhysicalMemTable) string {
 	if e.SkipRequest {
 		return "skip_request: true"
 	}
-	r := ""
+	r := new(bytes.Buffer)
 	if e.StartTime > 0 {
 		st := time.Unix(0, e.StartTime*1e6)
-		r = r + fmt.Sprintf("start_time:%v, ", st.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format(MetricTableTimeFormat))
+		r.WriteString(fmt.Sprintf("start_time:%v, ", st.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format(MetricTableTimeFormat)))
 	}
 	if e.EndTime < math.MaxInt64 {
 		et := time.Unix(0, e.EndTime*1e6)
-		r = r + fmt.Sprintf("end_time:%v, ", et.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format(MetricTableTimeFormat))
+		r.WriteString(fmt.Sprintf("end_time:%v, ", et.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format(MetricTableTimeFormat)))
 	}
 	if len(e.NodeTypes) > 0 {
-		r = r + fmt.Sprintf("node_types:[%s], ", extractStringFromStringSet(e.Instances))
+		r.WriteString(fmt.Sprintf("node_types:[%s], ", extractStringFromStringSet(e.Instances)))
 	}
 	if len(e.Instances) > 0 {
-		r = r + fmt.Sprintf("instances:[%s], ", extractStringFromStringSet(e.Instances))
+		r.WriteString(fmt.Sprintf("instances:[%s], ", extractStringFromStringSet(e.Instances)))
 	}
 	if len(e.LogLevels) > 0 {
-		r = r + fmt.Sprintf("log_levels:[%s], ", extractStringFromStringSet(e.LogLevels))
+		r.WriteString(fmt.Sprintf("log_levels:[%s], ", extractStringFromStringSet(e.LogLevels)))
 	}
 
 	// remove the last ", " in the message info
-	if len(r) > 2 {
-		return r[:len(r)-2]
+	s := r.String()
+	if len(s) > 2 {
+		return s[:len(s)-2]
 	}
-	return r
+	return s
 }
 
 // MetricTableExtractor is used to extract some predicates of metrics_schema tables.

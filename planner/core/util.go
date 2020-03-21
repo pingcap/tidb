@@ -14,7 +14,7 @@
 package core
 
 import (
-	"fmt"
+	"bytes"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/types"
@@ -249,9 +249,9 @@ func (s StringList) Less(i, j int) bool { return s[i] < s[j] }
 
 // extractStringFromStringSet helps extract string info from set.StringSet
 func extractStringFromStringSet(set set.StringSet) string {
-	r := ""
+	r := new(bytes.Buffer)
 	if len(set) < 1 {
-		return r
+		return r.String()
 	}
 	l := make([]string, 0, len(set))
 	for k := range set {
@@ -260,7 +260,7 @@ func extractStringFromStringSet(set set.StringSet) string {
 	sl := StringList(l)
 	sort.Sort(sl)
 	for _, k := range sl {
-		r = fmt.Sprintf("%s,%s", r, k)
+		r.WriteString("," + k)
 	}
-	return r[1:]
+	return r.String()[1:]
 }
