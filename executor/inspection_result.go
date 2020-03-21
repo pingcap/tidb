@@ -247,6 +247,12 @@ func (configInspection) inspectCheckConfig(_ context.Context, sctx sessionctx.Co
 			value:  "0",
 			detail: "slow-threshold = 0 will record every query to slow log, it may affect performance",
 		},
+		{
+			tp:     "tikv",
+			key:    "raftstore.sync-log",
+			value:  "false",
+			detail: "sync-log should be true to avoid recover region when the machine breaks down",
+		},
 	}
 
 	var results []inspectionResult
@@ -856,13 +862,22 @@ func (c compareStoreStatus) genSQL(timeRange plannercore.QueryTimeRange) string 
 	condition := fmt.Sprintf(`where t1.time>='%[1]s' and t1.time<='%[2]s' and
 		 t2.time>='%[1]s' and t2.time<='%[2]s'`, timeRange.From.Format(plannercore.MetricTableTimeFormat),
 		timeRange.To.Format(plannercore.MetricTableTimeFormat))
-	return fmt.Sprintf(`select t1.address,t1.value,t2.address,t2.value,
-				(t1.value-t2.value)/t1.value as ratio
-				from metrics_schema.pd_scheduler_store_status t1 join metrics_schema.pd_scheduler_store_status t2
-				%s and t1.type='%s' and t1.time = t2.time and
-				t1.type=t2.type and t1.address != t2.address and
-				(t1.value-t2.value)/t1.value>%v and t1.value > 0 group by t1.address,t1.value,t2.address,t2.value order by ratio desc`,
-		condition, c.tp, c.threshold)
+	return fmt.Sprintf(`
+		SELECT t1.address,
+        	max(t1.value),
+        	t2.address,
+        	min(t2.value),
+         	max((t1.value-t2.value)/t1.value) AS ratio
+		FROM metrics_schema.pd_scheduler_store_status t1
+		JOIN metrics_schema.pd_scheduler_store_status t2 %s
+        	AND t1.type='%s'
+        	AND t1.time = t2.time
+        	AND t1.type=t2.type
+        	AND t1.address != t2.address
+        	AND (t1.value-t2.value)/t1.value>%v
+        	AND t1.value > 0
+		GROUP BY  t1.address,t2.address
+		ORDER BY  ratio desc`, condition, c.tp, c.threshold)
 }
 
 func (c compareStoreStatus) genResult(_ string, row chunk.Row) inspectionResult {
@@ -871,7 +886,7 @@ func (c compareStoreStatus) genResult(_ string, row chunk.Row) inspectionResult 
 	addr2 := row.GetString(2)
 	value2 := row.GetFloat64(3)
 	ratio := row.GetFloat64(4)
-	detail := fmt.Sprintf("%v %s is %.2f, much more than %v %s %.2f", addr1, c.tp, value1, addr2, c.tp, value2)
+	detail := fmt.Sprintf("%v max %s is %.2f, much more than %v min %s %.2f", addr1, c.tp, value1, addr2, c.tp, value2)
 	return inspectionResult{
 		tp:       "tikv",
 		instance: addr2,
