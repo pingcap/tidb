@@ -2092,7 +2092,7 @@ func (s *testSchemaSuite) TestCommitWhenSchemaChanged(c *C) {
 	c.Assert(terror.ErrorEqual(err, plannercore.ErrWrongValueCountOnRow), IsTrue, Commentf("err %v", err))
 }
 
-func (s *testSchemaSuite) TestRetrySchemaChangeDebug(c *C) {
+func (s *testSchemaSuite) TestRetrySchemaChangeForEmptyChange(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table t (i int)")
