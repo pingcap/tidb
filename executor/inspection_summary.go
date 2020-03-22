@@ -421,6 +421,7 @@ func (e *inspectionSummaryRetriever) retrieve(ctx context.Context, sctx sessionc
 	failpoint.Inject("mockInspectionResultInfo", func(val failpoint.Value) {
 		if s := val.(string); len(s) > 0 {
 			// erase the error
+			err = nil
 			serversInfo, err = parseFailpointServerInfo(s), nil
 		}
 	})
