@@ -132,7 +132,7 @@ func (e *inspectionResultRetriever) retrieve(ctx context.Context, sctx sessionct
 		}
 	})
 
-	defer func() { sctx.GetSessionVars().InspectionTableCache = nil }()
+	defer func() { sctx.GetSessionVars().ServerInfoTableCache = nil }()
 
 	//serversInfo, err := infoschema.GetClusterServerInfo(sctx)
 	//failpoint.Inject("mockInspectionResultInfo", func(val failpoint.Value) {
