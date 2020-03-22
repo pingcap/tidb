@@ -90,6 +90,37 @@ func testCreateColumn(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo
 	return job
 }
 
+func testCreateColumns(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo,
+	colNames []string, positions []*ast.ColumnPosition, defaultValue interface{}) *model.Job {
+
+	var colInfos []*model.ColumnInfo
+	offsets := make([]int, len(colNames))
+	for _, colName := range colNames {
+		col := &model.ColumnInfo{
+			Name:               model.NewCIStr(colName),
+			Offset:             len(tblInfo.Columns),
+			DefaultValue:       defaultValue,
+			OriginDefaultValue: defaultValue,
+		}
+		col.ID = allocateColumnID(tblInfo)
+		col.FieldType = *types.NewFieldType(mysql.TypeLong)
+		colInfos = append(colInfos, col)
+	}
+
+	job := &model.Job{
+		SchemaID:   dbInfo.ID,
+		TableID:    tblInfo.ID,
+		Type:       model.ActionAddColumns,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{colInfos, positions, offsets},
+	}
+	err := d.doDDLJob(ctx, job)
+	c.Assert(err, IsNil)
+	v := getSchemaVer(c, ctx)
+	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	return job
+}
+
 func buildDropColumnJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, colName string) *model.Job {
 	return &model.Job{
 		SchemaID:   dbInfo.ID,
@@ -822,6 +853,98 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 	d.SetHook(tc)
 
 	job := testCreateColumn(c, ctx, d, s.dbInfo, tblInfo, newColName, &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, defaultColValue)
+
+	testCheckJobDone(c, d, job, true)
+	mu.Lock()
+	hErr := hookErr
+	ok := checkOK
+	mu.Unlock()
+	c.Assert(errors.ErrorStack(hErr), Equals, "")
+	c.Assert(ok, IsTrue)
+
+	err = ctx.NewTxn(context.Background())
+	c.Assert(err, IsNil)
+
+	job = testDropTable(c, ctx, d, s.dbInfo, tblInfo)
+	testCheckJobDone(c, d, job, false)
+
+	txn, err = ctx.Txn(true)
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
+
+	d.Stop()
+}
+
+func (s *testColumnSuite) TestAddColumns(c *C) {
+	d := newDDL(
+		context.Background(),
+		WithStore(s.store),
+		WithLease(testLease),
+	)
+	tblInfo := testTableInfo(c, d, "t", 3)
+	ctx := testNewContext(d)
+
+	err := ctx.NewTxn(context.Background())
+	c.Assert(err, IsNil)
+
+	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
+	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
+
+	oldRow := types.MakeDatums(int64(1), int64(2), int64(3))
+	handle, err := t.AddRecord(ctx, oldRow)
+	c.Assert(err, IsNil)
+
+	txn, err := ctx.Txn(true)
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
+
+	newColNames := []string{"c4,c5,c6"}
+	positions := make([]*ast.ColumnPosition, 3)
+	for i := range positions {
+		positions[i] = &ast.ColumnPosition{Tp: ast.ColumnPositionNone}
+	}
+	defaultColValue := int64(4)
+
+	var mu sync.Mutex
+	var hookErr error
+	checkOK := false
+
+	tc := &TestDDLCallback{}
+	tc.onJobUpdated = func(job *model.Job) {
+		mu.Lock()
+		defer mu.Unlock()
+		if checkOK {
+			return
+		}
+
+		t, err1 := testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
+		if err1 != nil {
+			hookErr = errors.Trace(err1)
+			return
+		}
+		for _, newColName := range newColNames {
+			newCol := table.FindCol(t.(*tables.TableCommon).Columns, newColName)
+			if newCol == nil {
+				return
+			}
+
+			err1 = s.checkAddColumn(newCol.State, d, tblInfo, handle, newCol, oldRow, defaultColValue)
+			if err1 != nil {
+				hookErr = errors.Trace(err1)
+				return
+			}
+
+			if newCol.State == model.StatePublic {
+				checkOK = true
+			}
+		}
+	}
+
+	d.SetHook(tc)
+
+	job := testCreateColumns(c, ctx, d, s.dbInfo, tblInfo, newColNames, positions, defaultColValue)
 
 	testCheckJobDone(c, d, job, true)
 	mu.Lock()
