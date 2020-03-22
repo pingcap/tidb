@@ -429,13 +429,13 @@ func (e *inspectionSummaryRetriever) retrieve(ctx context.Context, sctx sessionc
 	if err != nil {
 		return nil, err
 	}
+	clusterInfo := make(map[string]string)
+	for _, v := range serversInfo {
+		clusterInfo[v.StatusAddr] = v.Address
+	}
 
 	condition := e.timeRange.Condition()
 	var finalRows [][]types.Datum
-	clusterInfo := make(map[string]string)
-	for _, v := range serversInfo {
-		clusterInfo[v.StatusAddr] = clusterInfo[v.Address]
-	}
 	for rule, tables := range inspectionSummaryRules {
 		if !rules.exist(rule) {
 			continue
@@ -500,6 +500,7 @@ func (e *inspectionSummaryRetriever) retrieve(ctx context.Context, sctx sessionc
 					quantile = row.GetFloat64(row.Len() - 1) // quantile will be the last column
 				}
 				//clusterInfo = sctx.GetSessionVars().ClusterAddrInfo
+				// Filter the StatusAddr to instance
 				if _, ok := clusterInfo[instance]; ok {
 					instance = clusterInfo[instance]
 				}

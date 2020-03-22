@@ -62,6 +62,15 @@ func (e *MetricRetriever) retrieve(ctx context.Context, sctx sessionctx.Context)
 		}
 	})
 
+	serversInfo, err := infoschema.GetClusterServerInfo(sctx)
+	if err != nil {
+		return nil, err
+	}
+	clusterInfo := make(map[string]string)
+	for _, v := range serversInfo {
+		clusterInfo[v.StatusAddr] = v.Address
+	}
+
 	tblDef, err := infoschema.GetMetricTableDef(e.table.Name.L)
 	if err != nil {
 		return nil, err
@@ -82,7 +91,7 @@ func (e *MetricRetriever) retrieve(ctx context.Context, sctx sessionctx.Context)
 			}
 			return nil, errors.Errorf("query metric error: %v", err.Error())
 		}
-		partRows := e.genRows(queryValue, quantile)
+		partRows := e.genRows(queryValue, quantile, clusterInfo)
 		totalRows = append(totalRows, partRows...)
 	}
 	return totalRows, nil
@@ -136,14 +145,14 @@ func (e *MetricRetriever) getQueryRange(sctx sessionctx.Context) promQLQueryRang
 	return promQLQueryRange{Start: startTime, End: endTime, Step: step}
 }
 
-func (e *MetricRetriever) genRows(value pmodel.Value, quantile float64) [][]types.Datum {
+func (e *MetricRetriever) genRows(value pmodel.Value, quantile float64, clusterInfo map[string]string) [][]types.Datum {
 	var rows [][]types.Datum
 	switch value.Type() {
 	case pmodel.ValMatrix:
 		matrix := value.(pmodel.Matrix)
 		for _, m := range matrix {
 			for _, v := range m.Values {
-				record := e.genRecord(m.Metric, v, quantile)
+				record := e.genRecord(m.Metric, v, quantile, clusterInfo)
 				rows = append(rows, record)
 			}
 		}
@@ -151,7 +160,7 @@ func (e *MetricRetriever) genRows(value pmodel.Value, quantile float64) [][]type
 	return rows
 }
 
-func (e *MetricRetriever) genRecord(metric pmodel.Metric, pair pmodel.SamplePair, quantile float64) []types.Datum {
+func (e *MetricRetriever) genRecord(metric pmodel.Metric, pair pmodel.SamplePair, quantile float64, clusterInfo map[string]string) []types.Datum {
 	record := make([]types.Datum, 0, 2+len(e.tblDef.Labels)+1)
 	// Record order should keep same with genColumnInfos.
 	record = append(record, types.NewTimeDatum(types.NewTime(
@@ -163,6 +172,13 @@ func (e *MetricRetriever) genRecord(metric pmodel.Metric, pair pmodel.SamplePair
 		v := ""
 		if metric != nil {
 			v = string(metric[pmodel.LabelName(label)])
+		}
+
+		// Filter the StatusAddr to instance
+		if label == "instance" {
+			if _, ok := clusterInfo[v]; ok {
+				v = clusterInfo[v]
+			}
 		}
 		if len(v) == 0 {
 			v = infoschema.GenLabelConditionValues(e.extractor.LabelConditions[strings.ToLower(label)])
@@ -272,6 +288,11 @@ func (e *MetricsSummaryByLabelRetriever) retrieve(ctx context.Context, sctx sess
 		tables = append(tables, name)
 	}
 	sort.Strings(tables)
+
+	//serversInfo, err := infoschema.GetClusterServerInfo(sctx)
+	//if err != nil {
+	//	return nil, err
+	//}
 
 	filter := inspectionFilter{set: e.extractor.MetricsNames}
 	condition := e.timeRange.Condition()
