@@ -15,7 +15,9 @@ package executor
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	binaryJson "github.com/pingcap/tidb/types/json"
 	"sort"
 	"strings"
 	"sync"
@@ -117,6 +119,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataFromSessionVar(sctx)
 		case infoschema.TableTiDBServersInfo:
 			err = e.setDataForServersInfo()
+		case infoschema.TableTiKVStoreStatus:
+			err = e.dataForTiKVStoreStatus(sctx)
 		}
 		if err != nil {
 			return nil, err
@@ -835,6 +839,55 @@ func (e *memtableRetriever) setDataFromViews(ctx sessionctx.Context, schemas []*
 		}
 	}
 	e.rows = rows
+}
+
+func (e *memtableRetriever) dataForTiKVStoreStatus(ctx sessionctx.Context) (err error) {
+	tikvStore, ok := ctx.GetStore().(tikv.Storage)
+	if !ok {
+		return errors.New("Information about TiKV store status can be gotten only when the storage is TiKV")
+	}
+	tikvHelper := &helper.Helper{
+		Store:       tikvStore,
+		RegionCache: tikvStore.GetRegionCache(),
+	}
+	storesStat, err := tikvHelper.GetStoresStat()
+	if err != nil {
+		return err
+	}
+	for _, storeStat := range storesStat.Stores {
+		row := make([]types.Datum, len(infoschema.TableTiKVStoreStatusCols))
+		row[0].SetInt64(storeStat.Store.ID)
+		row[1].SetString(storeStat.Store.Address, mysql.DefaultCollationName)
+		row[2].SetInt64(storeStat.Store.State)
+		row[3].SetString(storeStat.Store.StateName, mysql.DefaultCollationName)
+		data, err := json.Marshal(storeStat.Store.Labels)
+		if err != nil {
+			return err
+		}
+		bj := binaryJson.BinaryJSON{}
+		if err = bj.UnmarshalJSON(data); err != nil {
+			return err
+		}
+		row[4].SetMysqlJSON(bj)
+		row[5].SetString(storeStat.Store.Version, mysql.DefaultCollationName)
+		row[6].SetString(storeStat.Status.Capacity, mysql.DefaultCollationName)
+		row[7].SetString(storeStat.Status.Available, mysql.DefaultCollationName)
+		row[8].SetInt64(storeStat.Status.LeaderCount)
+		row[9].SetFloat64(storeStat.Status.LeaderWeight)
+		row[10].SetFloat64(storeStat.Status.LeaderScore)
+		row[11].SetInt64(storeStat.Status.LeaderSize)
+		row[12].SetInt64(storeStat.Status.RegionCount)
+		row[13].SetFloat64(storeStat.Status.RegionWeight)
+		row[14].SetFloat64(storeStat.Status.RegionScore)
+		row[15].SetInt64(storeStat.Status.RegionSize)
+		startTs := types.NewTime(types.FromGoTime(storeStat.Status.StartTs), mysql.TypeDatetime, types.DefaultFsp)
+		row[16].SetMysqlTime(startTs)
+		lastHeartbeatTs := types.NewTime(types.FromGoTime(storeStat.Status.LastHeartbeatTs), mysql.TypeDatetime, types.DefaultFsp)
+		row[17].SetMysqlTime(lastHeartbeatTs)
+		row[18].SetString(storeStat.Status.Uptime, mysql.DefaultCollationName)
+		e.rows = append(e.rows, row)
+	}
+	return nil
 }
 
 // DDLJobsReaderExec executes DDLJobs information retrieving.
