@@ -16,7 +16,6 @@ package executor_test
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 
 	. "github.com/pingcap/check"
@@ -93,26 +92,6 @@ func (s *inspectionResultSuite) TestInspectionResult(c *C) {
 			types.MakeDatums("pd", "192.168.1.33:1234", "cpu", "cpu", "cpu-logical-cores", "10"),
 		},
 	}
-
-	testServers := s.setupClusterGRPCServer(c)
-	defer func() {
-		for _, s := range testServers {
-			s.server.Stop()
-			c.Assert(os.RemoveAll(s.tmpDir), IsNil, Commentf("remove tmpDir %v failed", s.tmpDir))
-		}
-	}()
-	// mock servers
-	servers := []string{}
-	for _, typ := range []string{"tidb", "tikv", "pd"} {
-		for _, server := range testServers {
-			servers = append(servers, strings.Join([]string{typ, server.address, server.address}, ","))
-		}
-	}
-
-	fpName1 := "github.com/pingcap/tidb/executor/mockInspectionResultInfo"
-	fpExpr := strings.Join(servers, ";")
-	c.Assert(failpoint.Enable(fpName1, fmt.Sprintf(`return("%s")`, fpExpr)), IsNil)
-	defer func() { c.Assert(failpoint.Disable(fpName1), IsNil) }()
 
 	ctx := context.WithValue(context.Background(), "__mockInspectionTables", mockData)
 	fpName := "github.com/pingcap/tidb/executor/mockMergeMockInspectionTables"

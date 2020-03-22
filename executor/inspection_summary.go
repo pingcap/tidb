@@ -16,7 +16,6 @@ package executor
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/failpoint"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -417,20 +416,14 @@ func (e *inspectionSummaryRetriever) retrieve(ctx context.Context, sctx sessionc
 	}
 	e.retrieved = true
 
-	serversInfo, err := infoschema.GetClusterServerInfo(sctx)
-	failpoint.Inject("mockInspectionResultInfo", func(val failpoint.Value) {
-		if s := val.(string); len(s) > 0 {
-			// erase the error
-			err = nil
-			serversInfo, err = parseFailpointServerInfo(s), nil
-		}
-	})
+	sql := "select instance, status_addr from information_schema.cluster_info"
+	rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
 	if err != nil {
-		return nil, err
+		sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("check configuration in reason failed: %v", err))
 	}
-	var m map[string]string
-	for _, v := range serversInfo {
-		m[v.StatusAddr] = v.Address
+	m := make(map[string]string)
+	for _, row := range rows {
+		m[row.GetString(0)] = row.GetString(1)
 	}
 
 	rules := inspectionFilter{set: e.extractor.Rules}
@@ -501,9 +494,12 @@ func (e *inspectionSummaryRetriever) retrieve(ctx context.Context, sctx sessionc
 				if def.Quantile > 0 {
 					quantile = row.GetFloat64(row.Len() - 1) // quantile will be the last column
 				}
+				if _, ok := m[instance]; ok {
+					instance = m[instance]
+				}
 				finalRows = append(finalRows, types.MakeDatums(
 					rule,
-					m[instance],
+					instance,
 					name,
 					strings.Join(labels, ", "),
 					quantile,

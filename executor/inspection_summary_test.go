@@ -15,23 +15,37 @@ package executor_test
 
 import (
 	"context"
-	"fmt"
-	"os"
-	"strings"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-var _ = SerialSuites(&inspectionSummarySuite{&testClusterTableBase{}})
+var _ = SerialSuites(&inspectionSummarySuite{})
 
-type inspectionSummarySuite struct{ *testClusterTableBase }
+type inspectionSummarySuite struct {
+	store kv.Storage
+	dom   *domain.Domain
+}
+
+func (s *inspectionSummarySuite) SetUpSuite(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	s.store = store
+	s.dom = dom
+}
+
+func (s *inspectionSummarySuite) TearDownSuite(c *C) {
+	s.dom.Close()
+	s.store.Close()
+}
 
 func (s *inspectionSummarySuite) TestValidInspectionSummaryRules(c *C) {
 	for rule, tbls := range executor.InspectionSummaryRules {
@@ -48,26 +62,6 @@ func (s *inspectionSummarySuite) TestValidInspectionSummaryRules(c *C) {
 
 func (s *inspectionSummarySuite) TestInspectionSummary(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-
-	testServers := s.setupClusterGRPCServer(c)
-	defer func() {
-		for _, s := range testServers {
-			s.server.Stop()
-			c.Assert(os.RemoveAll(s.tmpDir), IsNil, Commentf("remove tmpDir %v failed", s.tmpDir))
-		}
-	}()
-	// mock servers
-	servers := []string{}
-	for _, typ := range []string{"tidb", "tikv", "pd"} {
-		for _, server := range testServers {
-			servers = append(servers, strings.Join([]string{typ, server.address, server.address}, ","))
-		}
-	}
-
-	fpName1 := "github.com/pingcap/tidb/executor/mockInspectionSummaryInfo"
-	fpExpr := strings.Join(servers, ";")
-	c.Assert(failpoint.Enable(fpName1, fmt.Sprintf(`return("%s")`, fpExpr)), IsNil)
-	defer func() { c.Assert(failpoint.Disable(fpName1), IsNil) }()
 
 	fpName := "github.com/pingcap/tidb/executor/mockMetricsTableData"
 	c.Assert(failpoint.Enable(fpName, "return"), IsNil)
