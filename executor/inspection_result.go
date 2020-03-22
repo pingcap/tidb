@@ -132,31 +132,15 @@ func (e *inspectionResultRetriever) retrieve(ctx context.Context, sctx sessionct
 		}
 	})
 
-	defer func() { sctx.GetSessionVars().ServerInfoTableCache = nil }()
-
-	//serversInfo, err := infoschema.GetClusterServerInfo(sctx)
-	//failpoint.Inject("mockInspectionResultInfo", func(val failpoint.Value) {
-	//	if s := val.(string); len(s) > 0 {
-	//		// erase the error
-	//		err = nil
-	//		serversInfo, err = parseFailpointServerInfo(s), nil
-	//	}
-	//})
-	//if err != nil {
-	//	return nil, err
-	//}
-	m := sctx.GetSessionVars().ServerInfoTableCache
-	//serverInfo := sctx.GetSessionVars().InspectionTableCache[strings.ToLower(infoschema.TableClusterInfo)].Rows
-	//
-	////servers, err := infoschema.GetClusterServerInfo(sctx)
-	////defer func() { sctx.GetSessionVars().ServerInfoTableCache = nil }()
-	////
-	////if err != nil {
-	////	return nil, err
-	////}
-	//for _, v := range serversInfo {
-	//	m[v.StatusAddr] = v.Address
-	//}
+	sql := "select instance, status_addr from information_schema.cluster_info"
+	rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+	if err != nil {
+		sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("check configuration in reason failed: %v", err))
+	}
+	m := make(map[string]string)
+	for _, row := range rows {
+		m[row.GetString(0)] = row.GetString(1)
+	}
 
 	rules := inspectionFilter{set: e.extractor.Rules}
 	items := inspectionFilter{set: e.extractor.Items, timeRange: e.timeRange}
@@ -187,11 +171,14 @@ func (e *inspectionResultRetriever) retrieve(ctx context.Context, sctx sessionct
 			return results[i].instance < results[j].instance
 		})
 		for _, result := range results {
+			if _, ok := m[result.instance]; ok {
+				result.instance = m[result.instance]
+			}
 			finalRows = append(finalRows, types.MakeDatums(
 				name,
 				result.item,
 				result.tp,
-				m[result.instance],
+				result.instance,
 				result.actual,
 				result.expected,
 				result.severity,
