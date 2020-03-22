@@ -610,12 +610,13 @@ func (e *ClusterLogTableExtractor) explainInfo(p *PhysicalMemTable) string {
 		return "skip_request: true"
 	}
 	r := new(bytes.Buffer)
-	if e.StartTime > 0 {
-		st := time.Unix(0, e.StartTime*1e6)
+	st, et := e.GetTimeRange(true)
+	if st > 0 {
+		st := time.Unix(0, st*1e6)
 		r.WriteString(fmt.Sprintf("start_time:%v, ", st.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format(MetricTableTimeFormat)))
 	}
-	if e.EndTime < math.MaxInt64 {
-		et := time.Unix(0, e.EndTime*1e6)
+	if et < math.MaxInt64 {
+		et := time.Unix(0, et*1e6)
 		r.WriteString(fmt.Sprintf("end_time:%v, ", et.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format(MetricTableTimeFormat)))
 	}
 	if len(e.NodeTypes) > 0 {
@@ -634,6 +635,27 @@ func (e *ClusterLogTableExtractor) explainInfo(p *PhysicalMemTable) string {
 		return s[:len(s)-2]
 	}
 	return s
+}
+
+// GetTimeRange extract startTime and endTime
+func (e *ClusterLogTableExtractor) GetTimeRange(isFailpointTestModeSkipCheck bool) (int64, int64) {
+	startTime := e.StartTime
+	endTime := e.EndTime
+	if endTime == 0 {
+		endTime = math.MaxInt64
+	}
+	if !isFailpointTestModeSkipCheck {
+		// Just search the recent half an hour logs if the user doesn't specify the start time
+		const defaultSearchLogDuration = 30 * time.Minute / time.Millisecond
+		if startTime == 0 {
+			if endTime == math.MaxInt64 {
+				startTime = time.Now().UnixNano()/int64(time.Millisecond) - int64(defaultSearchLogDuration)
+			} else {
+				startTime = endTime - int64(defaultSearchLogDuration)
+			}
+		}
+	}
+	return startTime, endTime
 }
 
 // MetricTableExtractor is used to extract some predicates of metrics_schema tables.

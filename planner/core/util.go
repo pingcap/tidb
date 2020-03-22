@@ -236,18 +236,6 @@ func GetStatsInfo(i interface{}) map[string]uint64 {
 	return statsInfos
 }
 
-// StringList used to sort the string list
-type StringList []string
-
-// Len implement sort.Interface
-func (s StringList) Len() int { return len(s) }
-
-// Swap implement sort.Interface
-func (s StringList) Swap(i, j int) { s[i], s[j] = s[j], s[i] }
-
-// Less implement sort.Interface
-func (s StringList) Less(i, j int) bool { return s[i] < s[j] }
-
 // extractStringFromStringSet helps extract string info from set.StringSet
 func extractStringFromStringSet(set set.StringSet) string {
 	r := new(bytes.Buffer)
@@ -258,9 +246,8 @@ func extractStringFromStringSet(set set.StringSet) string {
 	for k := range set {
 		l = append(l, k)
 	}
-	sl := StringList(l)
-	sort.Sort(sl)
-	for _, k := range sl {
+	sort.Strings(l)
+	for _, k := range l {
 		r.WriteString("," + k)
 	}
 	return r.String()[1:]
