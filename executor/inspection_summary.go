@@ -416,7 +416,7 @@ func (e *inspectionSummaryRetriever) retrieve(ctx context.Context, sctx sessionc
 	}
 	e.retrieved = true
 
-	sql := "select instance, status_addr from information_schema.cluster_info"
+	sql := "select instance, status_address from information_schema.cluster_info"
 	rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
 	if err != nil {
 		sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("check configuration in reason failed: %v", err))
