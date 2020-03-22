@@ -16,6 +16,7 @@ package executor_test
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	. "github.com/pingcap/check"
@@ -93,17 +94,25 @@ func (s *inspectionResultSuite) TestInspectionResult(c *C) {
 		},
 	}
 
-	instances := []string{
-		"tidb", "192.168.1.11:1234", "192.168.1.11:1234", "4.0", "a234c",
-		"tidb,192.168.1.12:1234,192.168.1.11:1234,4.0,a234d",
-		"tidb,192.168.1.13:1234,192.168.1.11:1234,4.0,a234e",
-		"tikv,192.168.1.21:1234,192.168.1.21:1234,4.0,c234d",
-		"tikv,192.168.1.22:1234,192.168.1.22:1234,4.0,c234d",
-		"tikv,192.168.1.23:1234,192.168.1.23:1234,4.0,c234e",
-		"pd,192.168.1.31:1234,192.168.1.31:1234,4.0,m234c",
-		"pd,192.168.1.32:1234,192.168.1.32:1234,4.0,m234d",
-		"pd,192.168.1.33:1234,192.168.1.33:1234,4.0,m234e",
+	testServers := s.setupClusterGRPCServer(c)
+	defer func() {
+		for _, s := range testServers {
+			s.server.Stop()
+			c.Assert(os.RemoveAll(s.tmpDir), IsNil, Commentf("remove tmpDir %v failed", s.tmpDir))
+		}
+	}()
+	// mock servers
+	servers := []string{}
+	for _, typ := range []string{"tidb", "tikv", "pd"} {
+		for _, server := range testServers {
+			servers = append(servers, strings.Join([]string{typ, server.address, server.address}, ","))
+		}
 	}
+
+	fpName1 := "github.com/pingcap/tidb/executor/mockInspectionResultInfo"
+	fpExpr := strings.Join(servers, ";")
+	c.Assert(failpoint.Enable(fpName1, fmt.Sprintf(`return("%s")`, fpExpr)), IsNil)
+	defer func() { c.Assert(failpoint.Disable(fpName1), IsNil) }()
 
 	ctx := context.WithValue(context.Background(), "__mockInspectionTables", mockData)
 	fpName := "github.com/pingcap/tidb/executor/mockMergeMockInspectionTables"
@@ -113,11 +122,6 @@ func (s *inspectionResultSuite) TestInspectionResult(c *C) {
 
 	c.Assert(failpoint.Enable(fpName, "return"), IsNil)
 	defer func() { c.Assert(failpoint.Disable(fpName), IsNil) }()
-
-	fpName1 := "github.com/pingcap/tidb/infoschema/mockClusterInfo"
-	fpExpr := `return("` + strings.Join(instances, ";") + `")`
-	c.Assert(failpoint.Enable(fpName1, fpExpr), IsNil)
-	defer func() { c.Assert(failpoint.Disable(fpName1), IsNil) }()
 
 	cases := []struct {
 		sql  string

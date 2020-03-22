@@ -132,13 +132,26 @@ func (e *inspectionResultRetriever) retrieve(ctx context.Context, sctx sessionct
 		}
 	})
 
-	var m map[string]string
-
-	servers, err := infoschema.GetClusterServerInfo(sctx)
+	serversInfo, err := infoschema.GetClusterServerInfo(sctx)
+	failpoint.Inject("mockInspectionResultInfo", func(val failpoint.Value) {
+		if s := val.(string); len(s) > 0 {
+			// erase the error
+			serversInfo, err = parseFailpointServerInfo(s), nil
+		}
+	})
 	if err != nil {
 		return nil, err
 	}
-	for _, v := range servers {
+	var m map[string]string
+	//serverInfo := sctx.GetSessionVars().InspectionTableCache[strings.ToLower(infoschema.TableClusterInfo)].Rows
+	//
+	////servers, err := infoschema.GetClusterServerInfo(sctx)
+	////defer func() { sctx.GetSessionVars().ServerInfoTableCache = nil }()
+	////
+	////if err != nil {
+	////	return nil, err
+	////}
+	for _, v := range serversInfo {
 		m[v.StatusAddr] = v.Address
 	}
 

@@ -417,20 +417,19 @@ func (e *inspectionSummaryRetriever) retrieve(ctx context.Context, sctx sessionc
 	}
 	e.retrieved = true
 
-	isFailpointTestModeSkipCheck := false
 	serversInfo, err := infoschema.GetClusterServerInfo(sctx)
-	failpoint.Inject("mockInspectionSummaryInfo", func(val failpoint.Value) {
-		// erase the error
-		err = nil
+	failpoint.Inject("mockInspectionResultInfo", func(val failpoint.Value) {
 		if s := val.(string); len(s) > 0 {
-			serversInfo = parseFailpointServerInfo(s)
-			isFailpointTestModeSkipCheck = true
-		} else {
-			isFailpointTestModeSkipCheck = false
+			// erase the error
+			serversInfo, err = parseFailpointServerInfo(s), nil
 		}
 	})
 	if err != nil {
 		return nil, err
+	}
+	var m map[string]string
+	for _, v := range serversInfo {
+		m[v.StatusAddr] = v.Address
 	}
 
 	rules := inspectionFilter{set: e.extractor.Rules}
@@ -503,7 +502,7 @@ func (e *inspectionSummaryRetriever) retrieve(ctx context.Context, sctx sessionc
 				}
 				finalRows = append(finalRows, types.MakeDatums(
 					rule,
-					instance,
+					m[instance],
 					name,
 					strings.Join(labels, ", "),
 					quantile,
