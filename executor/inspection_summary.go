@@ -16,6 +16,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/failpoint"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -418,9 +419,23 @@ func (e *inspectionSummaryRetriever) retrieve(ctx context.Context, sctx sessionc
 	rules := inspectionFilter{set: e.extractor.Rules}
 	names := inspectionFilter{set: e.extractor.MetricNames}
 
+	serversInfo, err := infoschema.GetClusterServerInfo(sctx)
+	failpoint.Inject("mockClusterServerInfo", func(val failpoint.Value) {
+		if s := val.(string); len(s) > 0 {
+			// erase the error
+			serversInfo, err = parseFailpointServerInfo(s), nil
+		}
+	})
+	if err != nil {
+		return nil, err
+	}
+
 	condition := e.timeRange.Condition()
 	var finalRows [][]types.Datum
 	clusterInfo := make(map[string]string)
+	for _, v := range serversInfo {
+		clusterInfo[v.StatusAddr] = clusterInfo[v.Address]
+	}
 	for rule, tables := range inspectionSummaryRules {
 		if !rules.exist(rule) {
 			continue
@@ -484,7 +499,7 @@ func (e *inspectionSummaryRetriever) retrieve(ctx context.Context, sctx sessionc
 				if def.Quantile > 0 {
 					quantile = row.GetFloat64(row.Len() - 1) // quantile will be the last column
 				}
-				clusterInfo = sctx.GetSessionVars().ServerInfoTableCache
+				//clusterInfo = sctx.GetSessionVars().ClusterAddrInfo
 				if _, ok := clusterInfo[instance]; ok {
 					instance = clusterInfo[instance]
 				}

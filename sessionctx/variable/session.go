@@ -578,7 +578,7 @@ type SessionVars struct {
 	InspectionTableCache map[string]TableSnapshot
 
 	// ServerInfoTableCache the ServerInfo
-	ServerInfoTableCache map[string]string
+	//ClusterAddrInfo map[string]string
 
 	// RowEncoder is reused in session for encode row data.
 	RowEncoder rowcodec.Encoder
