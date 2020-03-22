@@ -16,6 +16,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/failpoint"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -415,6 +416,22 @@ func (e *inspectionSummaryRetriever) retrieve(ctx context.Context, sctx sessionc
 		return nil, nil
 	}
 	e.retrieved = true
+
+	isFailpointTestModeSkipCheck := false
+	serversInfo, err := infoschema.GetClusterServerInfo(sctx)
+	failpoint.Inject("mockInspectionSummaryInfo", func(val failpoint.Value) {
+		// erase the error
+		err = nil
+		if s := val.(string); len(s) > 0 {
+			serversInfo = parseFailpointServerInfo(s)
+			isFailpointTestModeSkipCheck = true
+		} else {
+			isFailpointTestModeSkipCheck = false
+		}
+	})
+	if err != nil {
+		return nil, err
+	}
 
 	rules := inspectionFilter{set: e.extractor.Rules}
 	names := inspectionFilter{set: e.extractor.MetricNames}
