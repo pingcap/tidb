@@ -415,22 +415,23 @@ func (e *inspectionSummaryRetriever) retrieve(ctx context.Context, sctx sessionc
 		return nil, nil
 	}
 	e.retrieved = true
-
-	sql := "select instance, status_address from information_schema.cluster_info"
-	rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
-	if err != nil {
-		return nil, err
-	}
-	m := make(map[string]string)
-	for _, row := range rows {
-		m[row.GetString(0)] = row.GetString(1)
-	}
+	//
+	//sql := "select instance, status_address from information_schema.cluster_info"
+	//rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+	//if err != nil {
+	//	return nil, err
+	//}
+	//m := make(map[string]string)
+	//for _, row := range rows {
+	//	m[row.GetString(0)] = row.GetString(1)
+	//}
 
 	rules := inspectionFilter{set: e.extractor.Rules}
 	names := inspectionFilter{set: e.extractor.MetricNames}
 
 	condition := e.timeRange.Condition()
 	var finalRows [][]types.Datum
+	m := make(map[string]string)
 	for rule, tables := range inspectionSummaryRules {
 		if !rules.exist(rule) {
 			continue
@@ -497,6 +498,7 @@ func (e *inspectionSummaryRetriever) retrieve(ctx context.Context, sctx sessionc
 				if _, ok := m[instance]; ok {
 					instance = m[instance]
 				}
+				m = sctx.GetSessionVars().ServerInfoTableCache
 				finalRows = append(finalRows, types.MakeDatums(
 					rule,
 					instance,
