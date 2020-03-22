@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/util/admin"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
@@ -909,4 +910,29 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	// Disallow using it when allow-auto-random is not enabled.
 	config.GetGlobalConfig().Experimental.AllowAutoRandom = false
 	assertExperimentDisabled("create table auto_random_table (a int primary key auto_random(3))")
+}
+
+func (s *testSerialSuite) TestModifyingColumn4NewCollations(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database dct")
+	tk.MustExec("use dct")
+	tk.MustExec("create table t(b varchar(10) collate utf8_bin, c varchar(10) collate utf8_general_ci) collate utf8_bin")
+	// Column collation can be changed as long as there is no index defined.
+	tk.MustExec("alter table t modify b varchar(10) collate utf8_general_ci")
+	tk.MustExec("alter table t modify c varchar(10) collate utf8_bin")
+	tk.MustExec("alter table t charset utf8 collate utf8_general_ci")
+	tk.MustExec("alter table t convert to charset utf8 collate utf8_bin")
+	tk.MustExec("alter table t convert to charset utf8 collate utf8_general_ci")
+	tk.MustExec("alter table t modify b varchar(10) collate utf8_bin")
+
+	tk.MustExec("alter table t add index b_idx(b)")
+	tk.MustExec("alter table t add index c_idx(c)")
+	tk.MustGetErrMsg("alter table t modify b varchar(10) collate utf8_general_ci", "[ddl:8200]Unsupported modifying collation of column 'b' from 'utf8_bin' to 'utf8_general_ci' when index is defined on it")
+	tk.MustGetErrMsg("alter table t modify c varchar(10) collate utf8_bin", "[ddl:8200]Unsupported modifying collation of column 'c' from 'utf8_general_ci' to 'utf8_bin' when index is defined on it")
+	tk.MustGetErrMsg("alter table t convert to charset utf8 collate utf8_general_ci", "[ddl:8200]Unsupported converting collation of column 'b' from 'utf8_bin' to 'utf8_general_ci' when index is defined on it")
+	// Change to a compatible collation is allowed.
+	tk.MustExec("alter table t modify c varchar(10) collate utf8mb4_general_ci")
 }

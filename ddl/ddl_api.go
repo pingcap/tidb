@@ -48,6 +48,7 @@ import (
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/domainutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
@@ -142,7 +143,7 @@ func (d *ddl) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (
 	}
 
 	// Check the current TiDB limitations.
-	if err = modifiableCharsetAndCollation(toCharset, toCollate, dbInfo.Charset, dbInfo.Collate); err != nil {
+	if err = modifiableCharsetAndCollation(toCharset, toCollate, dbInfo.Charset, dbInfo.Collate, false); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -2528,10 +2529,17 @@ func (d *ddl) DropColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTa
 }
 
 // modifiableCharsetAndCollation returns error when the charset or collation is not modifiable.
-func modifiableCharsetAndCollation(toCharset, toCollate, origCharset, origCollate string) error {
+// needRewriteCollationData is used when trying to modify the collation of a column, it is true when the column is with
+// index because index of a string column is collation-aware.
+func modifiableCharsetAndCollation(toCharset, toCollate, origCharset, origCollate string, needRewriteCollationData bool) error {
 	if !charset.ValidCharsetAndCollation(toCharset, toCollate) {
 		return ErrUnknownCharacterSet.GenWithStack("Unknown character set: '%s', collation: '%s'", toCharset, toCollate)
 	}
+
+	if needRewriteCollationData && collate.NewCollationEnabled() && !collate.CompatibleCollate(origCollate, toCollate) {
+		return errUnsupportedModifyCollation.GenWithStackByArgs(origCollate, toCollate)
+	}
+
 	if (origCharset == charset.CharsetUTF8 && toCharset == charset.CharsetUTF8MB4) ||
 		(origCharset == charset.CharsetUTF8 && toCharset == charset.CharsetUTF8) ||
 		(origCharset == charset.CharsetUTF8MB4 && toCharset == charset.CharsetUTF8MB4) {
@@ -2554,7 +2562,7 @@ func modifiableCharsetAndCollation(toCharset, toCollate, origCharset, origCollat
 // change or check existing data in the table.
 // It returns true if the two types has the same Charset and Collation, the same sign, both are
 // integer types or string types, and new Flen and Decimal must be greater than or equal to origin.
-func modifiable(origin *types.FieldType, to *types.FieldType) error {
+func modifiable(origin *types.FieldType, to *types.FieldType, needRewriteCollationData bool) error {
 	unsupportedMsg := fmt.Sprintf("type %v not match origin %v", to.CompactStr(), origin.CompactStr())
 	switch origin.Tp {
 	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString,
@@ -2614,7 +2622,7 @@ func modifiable(origin *types.FieldType, to *types.FieldType) error {
 		return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 	}
 
-	err := modifiableCharsetAndCollation(to.Charset, to.Collate, origin.Charset, origin.Collate)
+	err := modifiableCharsetAndCollation(to.Charset, to.Collate, origin.Charset, origin.Collate, needRewriteCollationData)
 	return errors.Trace(err)
 }
 
@@ -2815,7 +2823,11 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		return nil, errors.Trace(err)
 	}
 
-	if err = modifiable(&col.FieldType, &newCol.FieldType); err != nil {
+	if err = modifiable(&col.FieldType, &newCol.FieldType, isColumnWithIndex(col.Name.L, t.Meta().Indices)); err != nil {
+		if strings.Contains(err.Error(), "Unsupported modifying collation") {
+			colErrMsg := "Unsupported modifying collation of column '%s' from '%s' to '%s' when index is defined on it"
+			err = errUnsupportedModifyCollation.GenWithStack(colErrMsg, col.Name.L, col.Collate, newCol.Collate)
+		}
 		return nil, errors.Trace(err)
 	}
 
@@ -3298,7 +3310,7 @@ func checkAlterTableCharset(tblInfo *model.TableInfo, dbInfo *model.DBInfo, toCh
 		}
 	}
 
-	if err = modifiableCharsetAndCollation(toCharset, toCollate, origCharset, origCollate); err != nil {
+	if err = modifiableCharsetAndCollation(toCharset, toCollate, origCharset, origCollate, false); err != nil {
 		return doNothing, err
 	}
 
@@ -3314,7 +3326,11 @@ func checkAlterTableCharset(tblInfo *model.TableInfo, dbInfo *model.DBInfo, toCh
 		if len(col.Charset) == 0 {
 			continue
 		}
-		if err = modifiableCharsetAndCollation(toCharset, toCollate, col.Charset, col.Collate); err != nil {
+		if err = modifiableCharsetAndCollation(toCharset, toCollate, col.Charset, col.Collate, isColumnWithIndex(col.Name.L, tblInfo.Indices)); err != nil {
+			if strings.Contains(err.Error(), "Unsupported modifying collation") {
+				colErrMsg := "Unsupported converting collation of column '%s' from '%s' to '%s' when index is defined on it"
+				err = errUnsupportedModifyCollation.GenWithStack(colErrMsg, col.Name.L, col.Collate, toCollate)
+			}
 			return doNothing, err
 		}
 	}
