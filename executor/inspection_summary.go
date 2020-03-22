@@ -16,10 +16,10 @@ package executor
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/failpoint"
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/infoschema"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -499,7 +499,7 @@ func (e *inspectionSummaryRetriever) retrieve(ctx context.Context, sctx sessionc
 				if def.Quantile > 0 {
 					quantile = row.GetFloat64(row.Len() - 1) // quantile will be the last column
 				}
-				//clusterInfo = sctx.GetSessionVars().ClusterAddrInfo
+
 				// Filter the StatusAddr to instance
 				if _, ok := clusterInfo[instance]; ok {
 					instance = clusterInfo[instance]

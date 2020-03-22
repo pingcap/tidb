@@ -110,7 +110,7 @@ func (s *testMemTableReaderSuite) TestMetricTableData(c *C) {
 		{
 			sql: "select time,instance,quantile,value from tidb_query_duration;",
 			exp: []string{
-				"2019-12-23 20:11:35.000000 127.0.0.1:4000 0.9 0.1",
+				"2019-12-23 20:11:35.000000 127.0.0.1:10080 0.9 0.1",
 			},
 		},
 		{

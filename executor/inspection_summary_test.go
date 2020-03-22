@@ -29,9 +29,6 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-//var _ = SerialSuites(&inspectionSummarySuite{})
-//type testMemTableReaderSuite struct{ *testClusterTableBase }
-
 var _ = SerialSuites(&inspectionSummarySuite{&testClusterTableBase{}})
 
 type inspectionSummarySuite struct{ *testClusterTableBase }

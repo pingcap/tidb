@@ -295,11 +295,6 @@ func (e *MetricsSummaryByLabelRetriever) retrieve(ctx context.Context, sctx sess
 	}
 	sort.Strings(tables)
 
-	//serversInfo, err := infoschema.GetClusterServerInfo(sctx)
-	//if err != nil {
-	//	return nil, err
-	//}
-
 	filter := inspectionFilter{set: e.extractor.MetricsNames}
 	condition := e.timeRange.Condition()
 	for _, name := range tables {
