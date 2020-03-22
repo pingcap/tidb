@@ -2308,3 +2308,102 @@ func (r *PullSelectionUpApply) OnTransform(old *memo.ExprIter) (newExprs []*memo
 	newApplyGroupExpr.SetChildren(outerChildGroup, old.Children[1].GetExpr().Children[0])
 	return []*memo.GroupExpr{newApplyGroupExpr}, false, false, nil
 }
+
+type aggPushDownHelper struct {
+}
+
+func (r *aggPushDownHelper) makeNewAgg(aggFuncs []*aggregation.AggFuncDesc, gbyCols []*expression.Column, oldAgg *plannercore.LogicalAggregation) (error) {
+	agg := plannercore.LogicalAggregation{
+		GroupByItems: expression.Column2Exprs(gbyCols),
+	}.Init(oldAgg.SCtx(), oldAgg.SelectBlockOffset())
+	aggLen := len(aggFuncs) + len(gbyCols)
+	newAggFuncDescs := make([]*aggregation.AggFuncDesc, 0, aggLen)
+	schema := expression.NewSchema(make([]*expression.Column, 0, aggLen)...)
+	for _, aggFunc := range aggFuncs {
+		var newFuncs []*aggregation.AggFuncDesc
+		newFuncs, schema = a.decompose(ctx, aggFunc, schema)
+		newAggFuncDescs = append(newAggFuncDescs, newFuncs...)
+	}
+	for _, gbyCol := range gbyCols {
+		firstRow, err := aggregation.NewAggFuncDesc(agg.SCtx(), ast.AggFuncFirstRow, []expression.Expression{gbyCol}, false)
+		if err != nil {
+			return err
+		}
+		newCol, _ := gbyCol.Clone().(*expression.Column)
+		newCol.RetType = firstRow.RetTp
+		newAggFuncDescs = append(newAggFuncDescs, firstRow)
+		schema.Append(newCol)
+	}
+	agg.AggFuncs = newAggFuncDescs
+	agg.SetSchema(schema)
+	// TODO: Add a Projection if any argument of aggregate funcs or group by items are scalar functions.
+	// agg.buildProjectionIfNecessary()
+	return nil
+}
+
+type PushAggDownJoin struct {
+	baseRule
+	aggPushDownHelper
+}
+
+func NewRulePushAggDownJoin() Transformation {
+	rule := &PushAggDownJoin{}
+	rule.pattern = memo.BuildPattern(
+		memo.OperandAggregation,
+		memo.EngineTiDBOnly,
+		memo.NewPattern(memo.OperandJoin, memo.EngineTiDBOnly),
+	)
+	return rule
+}
+
+// Match implements Transformation interface.
+func (r *PushAggDownJoin) Match(expr *memo.ExprIter) bool {
+	agg := expr.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
+	if agg.IsCompleteModeAgg() {
+		return false
+	}
+	join := expr.Children[0].GetExpr().ExprNode.(*plannercore.LogicalJoin)
+	return plannercore.CheckValidJoin(join)
+}
+
+// OnTransform implements Transformation interface.
+// It will transform `Agg->Gather` to `Agg(Final) -> Gather -> Agg(Partial1)`.
+func (r *PushAggDownJoin) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	agg := old.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
+	join := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalJoin)
+
+	joinLeftChildSchema := old.Children[0].GetExpr().Children[0].Prop.Schema
+
+	valid, leftAggFuncs, rightAggFuncs := plannercore.CollectAggFuncs(agg, joinLeftChildSchema)
+	if !valid {
+		return nil, false, false, nil
+	}
+	rightInvalid := plannercore.CheckAnyCountAndSum(leftAggFuncs)
+	leftInvalid := plannercore.CheckAnyCountAndSum(rightAggFuncs)
+	if !rightInvalid && !leftInvalid {
+		return nil, false, false, nil
+	}
+
+	leftGbyCols, rightGbyCols := plannercore.CollectGbyCols(agg, join, joinLeftChildSchema)
+
+
+	return nil, false, false, nil
+}
+
+// tryToPushDownAgg tries to push down an aggregate function into a join path. If all aggFuncs are first row, we won't
+// process it temporarily. If not, We will add additional group by columns and first row functions. We make a new aggregation operator.
+// If the pushed aggregation is grouped by unique key, it's no need to push it down.
+func (a *PushAggDownJoin) tryToPushDownAgg(aggFuncs []*aggregation.AggFuncDesc, gbyCols []*expression.Column, join *plannercore.LogicalJoin, childGroup memo.Group, agg plannercore.LogicalAggregation) (err error) {
+	if aggregation.IsAllFirstRow(aggFuncs) {
+		return nil
+	}
+
+	tmpSchema := expression.NewSchema(gbyCols...)
+	for _, key := range childGroup.Prop.Schema.Keys {
+		if tmpSchema.ColumnsIndices(key) != nil {
+			return nil
+		}
+	}
+
+
+}
