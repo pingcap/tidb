@@ -281,7 +281,17 @@ func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, processor
 
 // Build builds the ast node to a Plan.
 func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
+<<<<<<< HEAD
 	b.optFlag = flagPrunColumns
+=======
+	b.optFlag |= flagPrunColumns
+	defer func() {
+		// if there is something after flagPrunColumns, do flagPrunColumnsAgain
+		if b.optFlag&flagPrunColumns > 0 && b.optFlag-flagPrunColumns > flagPrunColumns {
+			b.optFlag |= flagPrunColumnsAgain
+		}
+	}()
+>>>>>>> adaf8d2... planner: don't reset optFlag when build DataSource from View (#15547)
 	switch x := node.(type) {
 	case *ast.AdminStmt:
 		return b.buildAdmin(ctx, x)
