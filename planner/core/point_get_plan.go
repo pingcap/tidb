@@ -72,7 +72,7 @@ type nameValuePair struct {
 func (p PointGetPlan) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PointGetPlan {
 	p.basePlan = newBasePlan(ctx, plancodec.TypePointGet, offset)
 	p.stats = stats
-	ExpandVirtualColumn(&p.Columns, p.schema, p.TblInfo.Columns)
+	p.Columns = ExpandVirtualColumn(p.Columns, p.schema, p.TblInfo.Columns)
 	return &p
 }
 

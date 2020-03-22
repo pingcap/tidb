@@ -260,7 +260,8 @@ func (ts *PhysicalTableScan) IsPartition() (bool, int64) {
 }
 
 // ExpandVirtualColumn expands the virtual column's dependent columns to ts's schema and column.
-func ExpandVirtualColumn(columns *[]*model.ColumnInfo, schema *expression.Schema, colsInfo []*model.ColumnInfo) {
+func ExpandVirtualColumn(columns []*model.ColumnInfo, schema *expression.Schema,
+	colsInfo []*model.ColumnInfo) []*model.ColumnInfo {
 	schemaColumns := schema.Columns
 	for _, col := range schemaColumns {
 		if col.VirtualExpr == nil {
@@ -271,10 +272,11 @@ func ExpandVirtualColumn(columns *[]*model.ColumnInfo, schema *expression.Schema
 		for _, baseCol := range baseCols {
 			if !schema.Contains(baseCol) {
 				schema.Columns = append(schema.Columns, baseCol)
-				*columns = append(*columns, FindColumnInfoByID(colsInfo, baseCol.ID))
+				columns = append(columns, FindColumnInfoByID(colsInfo, baseCol.ID))
 			}
 		}
 	}
+	return columns
 }
 
 //SetIsChildOfIndexLookUp is to set the bool if is a child of IndexLookUpReader
