@@ -131,16 +131,6 @@ func (e *inspectionResultRetriever) retrieve(ctx context.Context, sctx sessionct
 			}
 		}
 	})
-	//
-	//sql := "select instance, status_address from information_schema.cluster_info"
-	//rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
-	//if err != nil {
-	//	return nil, err
-	//}
-	//m := make(map[string]string)
-	//for _, row := range rows {
-	//	m[row.GetString(0)] = row.GetString(1)
-	//}
 
 	rules := inspectionFilter{set: e.extractor.Rules}
 	items := inspectionFilter{set: e.extractor.Items, timeRange: e.timeRange}
@@ -170,11 +160,7 @@ func (e *inspectionResultRetriever) retrieve(ctx context.Context, sctx sessionct
 			}
 			return results[i].instance < results[j].instance
 		})
-		m := sctx.GetSessionVars().ServerInfoTableCache
 		for _, result := range results {
-			if _, ok := m[result.instance]; ok {
-				result.instance = m[result.instance]
-			}
 			finalRows = append(finalRows, types.MakeDatums(
 				name,
 				result.item,

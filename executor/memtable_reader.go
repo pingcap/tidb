@@ -290,14 +290,15 @@ func (e *clusterServerInfoRetriever) retrieve(ctx context.Context, sctx sessionc
 	finalRows := make([][]types.Datum, 0, len(serversInfo)*10)
 	for i, srv := range serversInfo {
 		address := srv.Address
+		remote := address
 		if srv.ServerType == "tidb" {
-			address = srv.StatusAddr
+			remote = srv.StatusAddr
 		}
 		wg.Add(1)
-		go func(index int, address, serverTP string) {
+		go func(index int, remote, address, serverTP string) {
 			util.WithRecovery(func() {
 				defer wg.Done()
-				items, err := getServerInfoByGRPC(ctx, address, infoTp)
+				items, err := getServerInfoByGRPC(ctx, remote, infoTp)
 				if err != nil {
 					ch <- result{idx: index, err: err}
 					return
@@ -305,7 +306,7 @@ func (e *clusterServerInfoRetriever) retrieve(ctx context.Context, sctx sessionc
 				partRows := serverInfoItemToRows(items, serverTP, address)
 				ch <- result{idx: index, rows: partRows}
 			}, nil)
-		}(i, address, srv.ServerType)
+		}(i, remote, address, srv.ServerType)
 	}
 	wg.Wait()
 	close(ch)

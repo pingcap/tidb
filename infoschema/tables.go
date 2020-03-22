@@ -1181,11 +1181,6 @@ func GetClusterServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 					GitHash:    parts[4],
 				})
 			}
-			m := make(map[string]string)
-			for _, v := range servers {
-				m[v.StatusAddr] = v.Address
-			}
-			ctx.GetSessionVars().ServerInfoTableCache = m
 			failpoint.Return(servers, nil)
 		}
 	})
@@ -1199,11 +1194,6 @@ func GetClusterServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 		}
 		servers = append(servers, nodes...)
 	}
-	m := make(map[string]string)
-	for _, v := range servers {
-		m[v.StatusAddr] = v.Address
-	}
-	ctx.GetSessionVars().ServerInfoTableCache = m
 	return servers, nil
 }
 
