@@ -132,6 +132,16 @@ func (e *inspectionResultRetriever) retrieve(ctx context.Context, sctx sessionct
 		}
 	})
 
+	var m map[string]string
+
+	servers, err := infoschema.GetClusterServerInfo(sctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, v := range servers {
+		m[v.StatusAddr] = v.Address
+	}
+
 	rules := inspectionFilter{set: e.extractor.Rules}
 	items := inspectionFilter{set: e.extractor.Items, timeRange: e.timeRange}
 	var finalRows [][]types.Datum
@@ -165,7 +175,7 @@ func (e *inspectionResultRetriever) retrieve(ctx context.Context, sctx sessionct
 				name,
 				result.item,
 				result.tp,
-				result.instance,
+				m[result.instance],
 				result.actual,
 				result.expected,
 				result.severity,
