@@ -2099,6 +2099,7 @@ func (s *testSchemaSuite) TestRetrySchemaChangeForEmptyChange(c *C) {
 	tk.MustExec("create table t1 (i int)")
 	tk.MustExec("begin")
 	tk1.MustExec("alter table t add j int")
+	tk.MustExec("update t set i = -i")
 	tk.MustExec("delete from t")
 	tk.MustExec("insert into t1 values (1)")
 	tk.MustExec("commit")
