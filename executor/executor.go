@@ -368,9 +368,9 @@ func (e *DDLJobRetriever) initial(txn kv.Transaction) error {
 func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, checker privilege.Manager) {
 	schemaName := job.SchemaName
 	tableName := ""
-	finishTs := uint64(0)
+	finishTS := uint64(0)
 	if job.BinlogInfo != nil {
-		finishTs = job.BinlogInfo.FinishedTS
+		finishTS = job.BinlogInfo.FinishedTS
 		if job.BinlogInfo.TableInfo != nil {
 			tableName = job.BinlogInfo.TableInfo.Name.L
 		}
@@ -386,8 +386,8 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 		tableName = getTableName(e.is, job.TableID)
 	}
 
-	startTS := ts2Time(job.StartTS)
-	finishTS := ts2Time(finishTs)
+	startTime := ts2Time(job.StartTS)
+	finishTime := ts2Time(finishTS)
 
 	// Check the privilege.
 	if checker != nil && !checker.RequestVerification(e.activeRoles, strings.ToLower(schemaName), strings.ToLower(tableName), "", mysql.AllPrivMask) {
@@ -402,9 +402,9 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 	req.AppendInt64(5, job.SchemaID)
 	req.AppendInt64(6, job.TableID)
 	req.AppendInt64(7, job.RowCount)
-	req.AppendTime(8, startTS)
-	if finishTS != types.ZeroTime {
-		req.AppendTime(9, finishTS)
+	req.AppendTime(8, startTime)
+	if finishTime != types.ZeroTime {
+		req.AppendTime(9, finishTime)
 	} else {
 		req.AppendTime(9, types.ZeroTime)
 	}
