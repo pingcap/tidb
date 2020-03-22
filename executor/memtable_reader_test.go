@@ -61,6 +61,23 @@ func (s *testClusterTableBase) TearDownSuite(c *C) {
 }
 
 func (s *testMemTableReaderSuite) TestMetricTableData(c *C) {
+	testServers := s.setupClusterGRPCServer(c)
+	defer func() {
+		for _, s := range testServers {
+			s.server.Stop()
+			c.Assert(os.RemoveAll(s.tmpDir), IsNil, Commentf("remove tmpDir %v failed", s.tmpDir))
+		}
+	}()
+
+	var servers []string
+	for _, s := range testServers {
+		servers = append(servers, strings.Join([]string{s.typ, s.address, s.address}, ","))
+	}
+	fpName1 := "github.com/pingcap/tidb/executor/mockClusterServerInfo"
+	fpExpr := strings.Join(servers, ";")
+	c.Assert(failpoint.Enable(fpName1, fmt.Sprintf(`return("%s")`, fpExpr)), IsNil)
+	defer func() { c.Assert(failpoint.Disable(fpName1), IsNil) }()
+
 	fpName := "github.com/pingcap/tidb/executor/mockMetricsPromData"
 	c.Assert(failpoint.Enable(fpName, "return"), IsNil)
 	defer func() { c.Assert(failpoint.Disable(fpName), IsNil) }()
@@ -93,20 +110,20 @@ func (s *testMemTableReaderSuite) TestMetricTableData(c *C) {
 		{
 			sql: "select time,instance,quantile,value from tidb_query_duration;",
 			exp: []string{
-				"2019-12-23 20:11:35.000000 127.0.0.1:10080 0.9 0.1",
+				"2019-12-23 20:11:35.000000 127.0.0.1:4000 0.9 0.1",
 			},
 		},
 		{
 			sql: "select time,instance,quantile,value from tidb_query_duration where quantile in (0.85, 0.95);",
 			exp: []string{
-				"2019-12-23 20:11:35.000000 127.0.0.1:10080 0.85 0.1",
-				"2019-12-23 20:11:35.000000 127.0.0.1:10080 0.95 0.1",
+				"2019-12-23 20:11:35.000000 127.0.0.1:4000 0.85 0.1",
+				"2019-12-23 20:11:35.000000 127.0.0.1:4000 0.95 0.1",
 			},
 		},
 		{
 			sql: "select time,instance,quantile,value from tidb_query_duration where quantile=0.5",
 			exp: []string{
-				"2019-12-23 20:11:35.000000 127.0.0.1:10080 0.5 0.1",
+				"2019-12-23 20:11:35.000000 127.0.0.1:4000 0.5 0.1",
 			},
 		},
 	}

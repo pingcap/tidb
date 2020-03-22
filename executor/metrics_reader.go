@@ -63,6 +63,12 @@ func (e *MetricRetriever) retrieve(ctx context.Context, sctx sessionctx.Context)
 	})
 
 	serversInfo, err := infoschema.GetClusterServerInfo(sctx)
+	failpoint.Inject("mockClusterServerInfo", func(val failpoint.Value) {
+		if s := val.(string); len(s) > 0 {
+			// erase the error
+			serversInfo, err = parseFailpointServerInfo(s), nil
+		}
+	})
 	if err != nil {
 		return nil, err
 	}
