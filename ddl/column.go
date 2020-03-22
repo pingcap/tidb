@@ -230,11 +230,11 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error)
 	return ver, errors.Trace(err)
 }
 
-func checkAddAndCreateColumnInfos(t *meta.Meta, job *model.Job) (*model.TableInfo, []*model.ColumnInfo, []int, error) {
+func checkAddAndCreateColumnInfos(t *meta.Meta, job *model.Job) (*model.TableInfo, []*model.ColumnInfo, []*ast.ColumnPosition, []int, error) {
 	schemaID := job.SchemaID
 	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
-		return nil, nil, nil, errors.Trace(err)
+		return nil, nil, nil, nil, errors.Trace(err)
 	}
 	columns := []*model.ColumnInfo{}
 	positions := []*ast.ColumnPosition{}
@@ -247,7 +247,7 @@ func checkAddAndCreateColumnInfos(t *meta.Meta, job *model.Job) (*model.TableInf
 	}
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return nil, nil, nil, errors.Trace(err)
+		return nil, nil, nil, nil, errors.Trace(err)
 	}
 
 	var columnInfos []*model.ColumnInfo
@@ -259,13 +259,13 @@ func checkAddAndCreateColumnInfos(t *meta.Meta, job *model.Job) (*model.TableInf
 			if columnInfo.State == model.StatePublic {
 				// We already have a column with the same column name.
 				job.State = model.JobStateCancelled
-				return nil, nil, nil, infoschema.ErrColumnExists.GenWithStackByArgs(col.Name)
+				return nil, nil, nil, nil, infoschema.ErrColumnExists.GenWithStackByArgs(col.Name)
 			}
 		} else {
 			columnInfo, offset, err := createColumnInfo(tblInfo, col, positions[i])
 			if err != nil {
 				job.State = model.JobStateCancelled
-				return nil, nil, nil, errors.Trace(err)
+				return nil, nil, nil, nil, errors.Trace(err)
 			}
 			logutil.BgLogger().Info("[ddl] run add columns job", zap.String("job", job.String()), zap.Reflect("columnInfo", *columnInfo), zap.Int("offset", offsets[i]))
 
@@ -275,13 +275,13 @@ func checkAddAndCreateColumnInfos(t *meta.Meta, job *model.Job) (*model.TableInf
 			}
 			if err = checkAddColumnTooManyColumns(len(tblInfo.Columns)); err != nil {
 				job.State = model.JobStateCancelled
-				return nil, nil, nil, errors.Trace(err)
+				return nil, nil, nil, nil, errors.Trace(err)
 			}
 			columnInfos = append(columnInfos, columnInfo)
 		}
 	}
 	job.Args = []interface{}{columnInfos, positions, offsets}
-	return tblInfo, columnInfos, offsets, nil
+	return tblInfo, columnInfos, positions, offsets, nil
 }
 
 func setColumnsState(columnInfos []*model.ColumnInfo, state model.SchemaState) {
@@ -306,7 +306,7 @@ func onAddColumns(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error
 		}
 	})
 
-	tblInfo, columnInfos, offsets, err := checkAddAndCreateColumnInfos(t, job)
+	tblInfo, columnInfos, positions, offsets, err := checkAddAndCreateColumnInfos(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -335,6 +335,17 @@ func onAddColumns(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error
 		for i := range offsets {
 			tmpCols := oldCols[:len(oldCols)-len(offsets)+i+1]
 			tblInfo.Columns = tmpCols
+			// For multiple after positions.
+			// e.g. create table t(a int);
+			// alter table t add column b int after a, add column c int after a;
+			// alter table t add column a1 int after a, add column b1 int after b, add column c1 int after c;
+			if positions[i].Tp == ast.ColumnPositionAfter {
+				for j := 0; j < i; j++ {
+					if positions[j].Tp == ast.ColumnPositionAfter && offsets[j] < offsets[i] {
+						offsets[i]++
+					}
+				}
+			}
 			adjustColumnInfoInAddColumn(tblInfo, offsets[i])
 			oldCols = append(tblInfo.Columns, oldCols[len(oldCols)-len(offsets)+i+1:]...)
 		}
