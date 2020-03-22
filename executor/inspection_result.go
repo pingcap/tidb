@@ -132,18 +132,20 @@ func (e *inspectionResultRetriever) retrieve(ctx context.Context, sctx sessionct
 		}
 	})
 
-	serversInfo, err := infoschema.GetClusterServerInfo(sctx)
-	failpoint.Inject("mockInspectionResultInfo", func(val failpoint.Value) {
-		if s := val.(string); len(s) > 0 {
-			// erase the error
-			err = nil
-			serversInfo, err = parseFailpointServerInfo(s), nil
-		}
-	})
-	if err != nil {
-		return nil, err
-	}
-	var m map[string]string
+	defer func() { sctx.GetSessionVars().InspectionTableCache = nil }()
+
+	//serversInfo, err := infoschema.GetClusterServerInfo(sctx)
+	//failpoint.Inject("mockInspectionResultInfo", func(val failpoint.Value) {
+	//	if s := val.(string); len(s) > 0 {
+	//		// erase the error
+	//		err = nil
+	//		serversInfo, err = parseFailpointServerInfo(s), nil
+	//	}
+	//})
+	//if err != nil {
+	//	return nil, err
+	//}
+	m := sctx.GetSessionVars().InspectionTableCache
 	//serverInfo := sctx.GetSessionVars().InspectionTableCache[strings.ToLower(infoschema.TableClusterInfo)].Rows
 	//
 	////servers, err := infoschema.GetClusterServerInfo(sctx)
@@ -152,9 +154,9 @@ func (e *inspectionResultRetriever) retrieve(ctx context.Context, sctx sessionct
 	////if err != nil {
 	////	return nil, err
 	////}
-	for _, v := range serversInfo {
-		m[v.StatusAddr] = v.Address
-	}
+	//for _, v := range serversInfo {
+	//	m[v.StatusAddr] = v.Address
+	//}
 
 	rules := inspectionFilter{set: e.extractor.Rules}
 	items := inspectionFilter{set: e.extractor.Items, timeRange: e.timeRange}

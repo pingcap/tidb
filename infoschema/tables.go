@@ -1171,8 +1171,10 @@ func GetClusterServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 		// there is no extra checks for it. (let the test fail if the expression invalid)
 		if s := val.(string); len(s) > 0 {
 			var servers []ServerInfo
+			var m map[string]string
 			for _, server := range strings.Split(s, ";") {
 				parts := strings.Split(server, ",")
+				m[parts[2]] = parts[1]
 				servers = append(servers, ServerInfo{
 					ServerType: parts[0],
 					Address:    parts[1],
@@ -1181,9 +1183,14 @@ func GetClusterServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 					GitHash:    parts[4],
 				})
 			}
+			ctx.GetSessionVars().ServerInfoTableCache = m
 			failpoint.Return(servers, nil)
 		}
 	})
+
+	if v := ctx.GetSessionVars().ServerInfoTableCache; v != nil {
+		return []ServerInfo{}, nil
+	}
 
 	type retriever func(ctx sessionctx.Context) ([]ServerInfo, error)
 	var servers []ServerInfo
