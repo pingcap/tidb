@@ -36,6 +36,7 @@ func (s *inspectionResultSuite) TestInspectionResult(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
 	mockData := map[string]variable.TableSnapshot{}
+
 	// mock configuration inconsistent
 	mockData[infoschema.TableClusterConfig] = variable.TableSnapshot{
 		Rows: [][]types.Datum{
