@@ -2915,14 +2915,14 @@ func newRowDecoder(ctx sessionctx.Context, schema *expression.Schema, tbl *model
 			isGeneratedCol = true
 		}
 		reqCols[idx] = rowcodec.ColInfo{
-			ID:      col.ID,
-			Tp:      int32(col.RetType.Tp),
-			Flag:    int32(col.RetType.Flag),
-			Flen:    col.RetType.Flen,
-			Decimal: col.RetType.Decimal,
-			Elems:   col.RetType.Elems,
-			Collate: col.GetType().Collate,
-			GenCol:  isGeneratedCol,
+			ID:            col.ID,
+			Tp:            int32(col.RetType.Tp),
+			Flag:          int32(col.RetType.Flag),
+			Flen:          col.RetType.Flen,
+			Decimal:       col.RetType.Decimal,
+			Elems:         col.RetType.Elems,
+			Collate:       col.GetType().Collate,
+			VirtualGenCol: isGeneratedCol,
 		}
 	}
 	defVal := func(i int, chk *chunk.Chunk) error {

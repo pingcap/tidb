@@ -311,6 +311,7 @@ func decodeOldRowValToChunk(e *baseExecutor, tblInfo *model.TableInfo, handle in
 	}
 	decoder := codec.NewDecoder(chk, e.ctx.GetSessionVars().Location())
 	for i, col := range e.schema.Columns {
+		// fill the virtual column value after row calculation
 		if col.VirtualExpr != nil {
 			chk.AppendNull(i)
 			continue
