@@ -294,3 +294,42 @@ func (s *testIntegrationSuite) TestTopNByConstFunc(c *C) {
 		"a",
 	))
 }
+<<<<<<< HEAD
+=======
+
+func (s *testIntegrationSuite) TestSubqueryWithTopN(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int)")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
+func (s *testIntegrationSuite) TestIssue15546(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, pt, vt")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("insert into t values(1, 1)")
+	tk.MustExec("create table pt(a int primary key, b int) partition by range(a) (" +
+		"PARTITION `p0` VALUES LESS THAN (10), PARTITION `p1` VALUES LESS THAN (20), PARTITION `p2` VALUES LESS THAN (30))")
+	tk.MustExec("insert into pt values(1, 1), (11, 11), (21, 21)")
+	tk.MustExec("create definer='root'@'localhost' view vt(a, b) as select a, b from t")
+	tk.MustQuery("select * from pt, vt where pt.a = vt.a").Check(testkit.Rows("1 1 1 1"))
+}
+>>>>>>> adaf8d2... planner: don't reset optFlag when build DataSource from View (#15547)
