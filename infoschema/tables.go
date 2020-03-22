@@ -99,7 +99,8 @@ const (
 	TableTiDBIndexes = "TIDB_INDEXES"
 	// TableTiDBHotRegions is the string constant of infoschema table
 	TableTiDBHotRegions  = "TIDB_HOT_REGIONS"
-	tableTiKVStoreStatus = "TIKV_STORE_STATUS"
+	// TableTiKVStoreStatus is the string constant of infoschema table
+	TableTiKVStoreStatus = "TIKV_STORE_STATUS"
 	// TableAnalyzeStatus is the string constant of Analyze Status
 	TableAnalyzeStatus    = "ANALYZE_STATUS"
 	tableTiKVRegionStatus = "TIKV_REGION_STATUS"
@@ -177,7 +178,7 @@ var tableIDMap = map[string]int64{
 	TableTiDBIndexes:                        autoid.InformationSchemaDBID + 34,
 	TableSlowQuery:                          autoid.InformationSchemaDBID + 35,
 	TableTiDBHotRegions:                     autoid.InformationSchemaDBID + 36,
-	tableTiKVStoreStatus:                    autoid.InformationSchemaDBID + 37,
+	TableTiKVStoreStatus:                    autoid.InformationSchemaDBID + 37,
 	TableAnalyzeStatus:                      autoid.InformationSchemaDBID + 38,
 	tableTiKVRegionStatus:                   autoid.InformationSchemaDBID + 39,
 	TableTiKVRegionPeers:                    autoid.InformationSchemaDBID + 40,
@@ -754,7 +755,8 @@ var TableTiDBHotRegionsCols = []columnInfo{
 	{name: "FLOW_BYTES", tp: mysql.TypeLonglong, size: 21},
 }
 
-var tableTiKVStoreStatusCols = []columnInfo{
+// TableTiKVStoreStatusCols is TiDB kv store status columns.
+var TableTiKVStoreStatusCols = []columnInfo{
 	{name: "STORE_ID", tp: mysql.TypeLonglong, size: 21},
 	{name: "ADDRESS", tp: mysql.TypeVarchar, size: 64},
 	{name: "STORE_STATE", tp: mysql.TypeLonglong, size: 21},
@@ -1071,55 +1073,6 @@ func newTiKVRegionStatusCol(region *helper.RegionInfo, table *helper.TableInfo) 
 	return row
 }
 
-func dataForTiKVStoreStatus(ctx sessionctx.Context) (records [][]types.Datum, err error) {
-	tikvStore, ok := ctx.GetStore().(tikv.Storage)
-	if !ok {
-		return nil, errors.New("Information about TiKV store status can be gotten only when the storage is TiKV")
-	}
-	tikvHelper := &helper.Helper{
-		Store:       tikvStore,
-		RegionCache: tikvStore.GetRegionCache(),
-	}
-	storesStat, err := tikvHelper.GetStoresStat()
-	if err != nil {
-		return nil, err
-	}
-	for _, storeStat := range storesStat.Stores {
-		row := make([]types.Datum, len(tableTiKVStoreStatusCols))
-		row[0].SetInt64(storeStat.Store.ID)
-		row[1].SetString(storeStat.Store.Address, mysql.DefaultCollationName)
-		row[2].SetInt64(storeStat.Store.State)
-		row[3].SetString(storeStat.Store.StateName, mysql.DefaultCollationName)
-		data, err := json.Marshal(storeStat.Store.Labels)
-		if err != nil {
-			return nil, err
-		}
-		bj := binaryJson.BinaryJSON{}
-		if err = bj.UnmarshalJSON(data); err != nil {
-			return nil, err
-		}
-		row[4].SetMysqlJSON(bj)
-		row[5].SetString(storeStat.Store.Version, mysql.DefaultCollationName)
-		row[6].SetString(storeStat.Status.Capacity, mysql.DefaultCollationName)
-		row[7].SetString(storeStat.Status.Available, mysql.DefaultCollationName)
-		row[8].SetInt64(storeStat.Status.LeaderCount)
-		row[9].SetFloat64(storeStat.Status.LeaderWeight)
-		row[10].SetFloat64(storeStat.Status.LeaderScore)
-		row[11].SetInt64(storeStat.Status.LeaderSize)
-		row[12].SetInt64(storeStat.Status.RegionCount)
-		row[13].SetFloat64(storeStat.Status.RegionWeight)
-		row[14].SetFloat64(storeStat.Status.RegionScore)
-		row[15].SetInt64(storeStat.Status.RegionSize)
-		startTs := types.NewTime(types.FromGoTime(storeStat.Status.StartTs), mysql.TypeDatetime, types.DefaultFsp)
-		row[16].SetMysqlTime(startTs)
-		lastHeartbeatTs := types.NewTime(types.FromGoTime(storeStat.Status.LastHeartbeatTs), mysql.TypeDatetime, types.DefaultFsp)
-		row[17].SetMysqlTime(lastHeartbeatTs)
-		row[18].SetString(storeStat.Status.Uptime, mysql.DefaultCollationName)
-		records = append(records, row)
-	}
-	return records, nil
-}
-
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
 // The returned description string may be:
 //  - "NOT_SHARDED": for tables that SHARD_ROW_ID_BITS is not specified.
@@ -1391,7 +1344,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableTiDBIndexes:                        tableTiDBIndexesCols,
 	TableSlowQuery:                          slowQueryCols,
 	TableTiDBHotRegions:                     TableTiDBHotRegionsCols,
-	tableTiKVStoreStatus:                    tableTiKVStoreStatusCols,
+	TableTiKVStoreStatus:                    TableTiKVStoreStatusCols,
 	TableAnalyzeStatus:                      tableAnalyzeStatusCols,
 	tableTiKVRegionStatus:                   tableTiKVRegionStatusCols,
 	TableTiKVRegionPeers:                    TableTiKVRegionPeersCols,
@@ -1466,8 +1419,6 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 	case tableSessionStatus:
 	case tableOptimizerTrace:
 	case tableTableSpaces:
-	case tableTiKVStoreStatus:
-		fullRows, err = dataForTiKVStoreStatus(ctx)
 	case tableTiKVRegionStatus:
 		fullRows, err = dataForTiKVRegionStatus(ctx)
 	case tableTiFlashReplica:
