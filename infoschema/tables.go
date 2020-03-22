@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/helper"
@@ -94,7 +93,8 @@ const (
 	tableTableSpaces     = "TABLESPACES"
 	// TableCollationCharacterSetApplicability is the string constant of infoschema memory table.
 	TableCollationCharacterSetApplicability = "COLLATION_CHARACTER_SET_APPLICABILITY"
-	tableProcesslist                        = "PROCESSLIST"
+	// TableProcesslist is the string constant of infoschema table.
+	TableProcesslist = "PROCESSLIST"
 	// TableTiDBIndexes is the string constant of infoschema table
 	TableTiDBIndexes = "TIDB_INDEXES"
 	// TableTiDBHotRegions is the string constant of infoschema table
@@ -136,6 +136,8 @@ const (
 	TableInspectionRules = "INSPECTION_RULES"
 	// TableDDLJobs is the string constant of DDL job table.
 	TableDDLJobs = "DDL_JOBS"
+	// TableSequences is the string constant of all sequences created by user.
+	TableSequences = "SEQUENCES"
 )
 
 var tableIDMap = map[string]int64{
@@ -171,7 +173,7 @@ var tableIDMap = map[string]int64{
 	tableOptimizerTrace:                     autoid.InformationSchemaDBID + 30,
 	tableTableSpaces:                        autoid.InformationSchemaDBID + 31,
 	TableCollationCharacterSetApplicability: autoid.InformationSchemaDBID + 32,
-	tableProcesslist:                        autoid.InformationSchemaDBID + 33,
+	TableProcesslist:                        autoid.InformationSchemaDBID + 33,
 	TableTiDBIndexes:                        autoid.InformationSchemaDBID + 34,
 	TableSlowQuery:                          autoid.InformationSchemaDBID + 35,
 	TableTiDBHotRegions:                     autoid.InformationSchemaDBID + 36,
@@ -185,7 +187,7 @@ var tableIDMap = map[string]int64{
 	TableClusterLoad:                        autoid.InformationSchemaDBID + 44,
 	tableTiFlashReplica:                     autoid.InformationSchemaDBID + 45,
 	ClusterTableSlowLog:                     autoid.InformationSchemaDBID + 46,
-	clusterTableProcesslist:                 autoid.InformationSchemaDBID + 47,
+	ClusterTableProcesslist:                 autoid.InformationSchemaDBID + 47,
 	TableClusterLog:                         autoid.InformationSchemaDBID + 48,
 	TableClusterHardware:                    autoid.InformationSchemaDBID + 49,
 	TableClusterSystemInfo:                  autoid.InformationSchemaDBID + 50,
@@ -196,6 +198,7 @@ var tableIDMap = map[string]int64{
 	TableInspectionSummary:                  autoid.InformationSchemaDBID + 55,
 	TableInspectionRules:                    autoid.InformationSchemaDBID + 56,
 	TableDDLJobs:                            autoid.InformationSchemaDBID + 57,
+	TableSequences:                          autoid.InformationSchemaDBID + 58,
 }
 
 type columnInfo struct {
@@ -999,6 +1002,21 @@ var tableDDLJobsCols = []columnInfo{
 	{name: "QUERY", tp: mysql.TypeVarchar, size: 64},
 }
 
+var tableSequencesCols = []columnInfo{
+	{name: "TABLE_CATALOG", tp: mysql.TypeVarchar, size: 512, flag: mysql.NotNullFlag},
+	{name: "SEQUENCE_SCHEMA", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
+	{name: "SEQUENCE_NAME", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
+	{name: "CACHE", tp: mysql.TypeTiny, flag: mysql.NotNullFlag},
+	{name: "CACHE_VALUE", tp: mysql.TypeLonglong, size: 21},
+	{name: "CYCLE", tp: mysql.TypeTiny, flag: mysql.NotNullFlag},
+	{name: "INCREMENT", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
+	{name: "MAX_VALUE", tp: mysql.TypeLonglong, size: 21},
+	{name: "MIN_VALUE", tp: mysql.TypeLonglong, size: 21},
+	{name: "ORDER", tp: mysql.TypeTiny, flag: mysql.NotNullFlag},
+	{name: "START", tp: mysql.TypeLonglong, size: 21},
+	{name: "COMMENT", tp: mysql.TypeVarchar, size: 64},
+}
+
 func dataForTiKVRegionStatus(ctx sessionctx.Context) (records [][]types.Datum, err error) {
 	tikvStore, ok := ctx.GetStore().(tikv.Storage)
 	if !ok {
@@ -1100,36 +1118,6 @@ func dataForTiKVStoreStatus(ctx sessionctx.Context) (records [][]types.Datum, er
 		records = append(records, row)
 	}
 	return records, nil
-}
-
-func dataForProcesslist(ctx sessionctx.Context) [][]types.Datum {
-	sm := ctx.GetSessionManager()
-	if sm == nil {
-		return nil
-	}
-
-	loginUser := ctx.GetSessionVars().User
-	var hasProcessPriv bool
-	if pm := privilege.GetPrivilegeManager(ctx); pm != nil {
-		if pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, "", "", "", mysql.ProcessPriv) {
-			hasProcessPriv = true
-		}
-	}
-
-	pl := sm.ShowProcessList()
-	records := make([][]types.Datum, 0, len(pl))
-	for _, pi := range pl {
-		// If you have the PROCESS privilege, you can see all threads.
-		// Otherwise, you can see only your own threads.
-		if !hasProcessPriv && loginUser != nil && pi.User != loginUser.Username {
-			continue
-		}
-
-		rows := pi.ToRow(ctx.GetSessionVars().StmtCtx.TimeZone)
-		record := types.MakeDatums(rows...)
-		records = append(records, record)
-	}
-	return records
 }
 
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
@@ -1399,7 +1387,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	tableOptimizerTrace:                     tableOptimizerTraceCols,
 	tableTableSpaces:                        tableTableSpacesCols,
 	TableCollationCharacterSetApplicability: tableCollationCharacterSetApplicabilityCols,
-	tableProcesslist:                        tableProcesslistCols,
+	TableProcesslist:                        tableProcesslistCols,
 	TableTiDBIndexes:                        tableTiDBIndexesCols,
 	TableSlowQuery:                          slowQueryCols,
 	TableTiDBHotRegions:                     TableTiDBHotRegionsCols,
@@ -1422,6 +1410,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableInspectionSummary:                  tableInspectionSummaryCols,
 	TableInspectionRules:                    tableInspectionRulesCols,
 	TableDDLJobs:                            tableDDLJobsCols,
+	TableSequences:                          tableSequencesCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
@@ -1477,17 +1466,12 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 	case tableSessionStatus:
 	case tableOptimizerTrace:
 	case tableTableSpaces:
-	case tableProcesslist:
-		fullRows = dataForProcesslist(ctx)
 	case tableTiKVStoreStatus:
 		fullRows, err = dataForTiKVStoreStatus(ctx)
 	case tableTiKVRegionStatus:
 		fullRows, err = dataForTiKVRegionStatus(ctx)
 	case tableTiFlashReplica:
 		fullRows = dataForTableTiFlashReplica(ctx, dbs)
-	// Data for cluster processlist memory table.
-	case clusterTableProcesslist:
-		fullRows, err = dataForClusterProcesslist(ctx)
 	}
 	if err != nil {
 		return nil, err

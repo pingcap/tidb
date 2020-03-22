@@ -748,3 +748,9 @@ func (s *testInfoschemaClusterTableSuite) TestTiDBClusterInfo(c *C) {
 		"tikv key3.key4.nest4 n-value5",
 	))
 }
+
+func (s *testInfoschemaTableSuite) TestSequences(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("CREATE SEQUENCE test.seq maxvalue 10000000")
+	tk.MustQuery("SELECT * FROM information_schema.sequences WHERE sequence_schema='test' AND sequence_name='seq'").Check(testkit.Rows("def test seq 1 1000 0 1 10000000 1 0 1 "))
+}
