@@ -610,7 +610,7 @@ func (e *ClusterLogTableExtractor) explainInfo(p *PhysicalMemTable) string {
 		return "skip_request: true"
 	}
 	r := new(bytes.Buffer)
-	st, et := e.GetTimeRange(true)
+	st, et := e.GetTimeRange(false)
 	if st > 0 {
 		st := time.Unix(0, st*1e6)
 		r.WriteString(fmt.Sprintf("start_time:%v, ", st.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format(MetricTableTimeFormat)))

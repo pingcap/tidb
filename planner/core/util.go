@@ -247,8 +247,13 @@ func extractStringFromStringSet(set set.StringSet) string {
 		l = append(l, k)
 	}
 	sort.Strings(l)
-	for _, k := range l {
-		r.WriteString("," + k)
+	for i, k := range l {
+		if i > 0 {
+			r.WriteByte(',')
+		}
+		r.WriteByte('"')
+		r.WriteString(k)
+		r.WriteByte('"')
 	}
-	return r.String()[1:]
+	return r.String()
 }

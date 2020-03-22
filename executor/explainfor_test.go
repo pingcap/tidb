@@ -114,10 +114,6 @@ func (s *testSuite) TestExplainMetricTable(c *C) {
 		"MemTableScan_5 10000.00 root table:up, PromQL:up{}, start_time:2019-12-23 16:10:13, end_time:2019-12-23 16:30:13, step:1m0s"))
 	tk.MustQuery("desc select * from information_schema.cluster_log where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13'").Check(testkit.Rows(
 		"MemTableScan_5 10000.00 root table:CLUSTER_LOG, start_time:2019-12-23 16:10:13, end_time:2019-12-23 16:30:13"))
-	tk.MustQuery("desc select * from information_schema.cluster_log where level in ('warn','error')").Check(testkit.Rows(
-		"MemTableScan_5 10000.00 root table:CLUSTER_LOG, log_levels:[error,warn]"))
-	tk.MustQuery("desc select * from information_schema.cluster_log where time = '2019-03-21 21:26:47'").Check(testkit.Rows(
-		"MemTableScan_5 10000.00 root table:CLUSTER_LOG, start_time:2019-03-21 21:26:47, end_time:2019-03-21 21:26:47"))
-	tk.MustQuery("desc select * from information_schema.cluster_log where time < '2019-03-21 21:26:47'").Check(testkit.Rows(
-		"MemTableScan_5 10000.00 root table:CLUSTER_LOG, end_time:2019-03-21 21:26:46.999"))
+	tk.MustQuery("desc select * from information_schema.cluster_log where level in ('warn','error') and time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13'").Check(testkit.Rows(
+		`MemTableScan_5 10000.00 root table:CLUSTER_LOG, start_time:2019-12-23 16:10:13, end_time:2019-12-23 16:30:13, log_levels:["error","warn"]`))
 }
