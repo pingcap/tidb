@@ -145,7 +145,7 @@ func (e *inspectionResultRetriever) retrieve(ctx context.Context, sctx sessionct
 	//if err != nil {
 	//	return nil, err
 	//}
-	m := sctx.GetSessionVars().InspectionTableCache
+	m := sctx.GetSessionVars().ServerInfoTableCache
 	//serverInfo := sctx.GetSessionVars().InspectionTableCache[strings.ToLower(infoschema.TableClusterInfo)].Rows
 	//
 	////servers, err := infoschema.GetClusterServerInfo(sctx)
