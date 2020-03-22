@@ -116,14 +116,14 @@ func (s *testMemTableReaderSuite) TestMetricTableData(c *C) {
 		{
 			sql: "select time,instance,quantile,value from tidb_query_duration where quantile in (0.85, 0.95);",
 			exp: []string{
-				"2019-12-23 20:11:35.000000 127.0.0.1:4000 0.85 0.1",
-				"2019-12-23 20:11:35.000000 127.0.0.1:4000 0.95 0.1",
+				"2019-12-23 20:11:35.000000 127.0.0.1:10080 0.85 0.1",
+				"2019-12-23 20:11:35.000000 127.0.0.1:10080 0.95 0.1",
 			},
 		},
 		{
 			sql: "select time,instance,quantile,value from tidb_query_duration where quantile=0.5",
 			exp: []string{
-				"2019-12-23 20:11:35.000000 127.0.0.1:4000 0.5 0.1",
+				"2019-12-23 20:11:35.000000 127.0.0.1:10080 0.5 0.1",
 			},
 		},
 	}
