@@ -293,7 +293,7 @@ func setColumnsState(columnInfos []*model.ColumnInfo, state model.SchemaState) {
 func onAddColumns(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	// Handle the rolling back job.
 	if job.IsRollingback() {
-		ver, err = onDropColumn(t, job)
+		ver, err = onDropColumns(t, job)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -351,6 +351,100 @@ func onAddColumns(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error
 	}
 
 	return ver, errors.Trace(err)
+}
+
+func onDropColumns(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	tblInfo, colInfos, delCount, err := checkDropColumns(t, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	originalState := colInfos[0].State
+	switch colInfos[0].State {
+	case model.StatePublic:
+		// public -> write only
+		job.SchemaState = model.StateWriteOnly
+		setColumnsState(colInfos, model.StateWriteOnly)
+		for _, colInfo := range colInfos {
+			// Set this column's offset to the last and reset all following columns' offsets.
+			adjustColumnInfoInDropColumn(tblInfo, colInfo.Offset)
+			// When the dropping column has not-null flag and it hasn't the default value, we can backfill the column value like "add column".
+			// NOTE: If the state of StateWriteOnly can be rollbacked, we'd better reconsider the original default value.
+			// And we need consider the column without not-null flag.
+			if colInfo.OriginDefaultValue == nil && mysql.HasNotNullFlag(colInfo.Flag) {
+				// If the column is timestamp default current_timestamp, and DDL owner is new version TiDB that set column.Version to 1,
+				// then old TiDB update record in the column write only stage will uses the wrong default value of the dropping column.
+				// Because new version of the column default value is UTC time, but old version TiDB will think the default value is the time in system timezone.
+				// But currently will be ok, because we can't cancel the drop column job when the job is running,
+				// so the column will be dropped succeed and client will never see the wrong default value of the dropped column.
+				// More info about this problem, see PR#9115.
+				colInfo.OriginDefaultValue, err = generateOriginDefaultValue(colInfo)
+				if err != nil {
+					return ver, errors.Trace(err)
+				}
+			}
+		}
+		ver, err = updateVersionAndTableInfoWithCheck(t, job, tblInfo, originalState != colInfos[0].State)
+	case model.StateWriteOnly:
+		// write only -> delete only
+		job.SchemaState = model.StateDeleteOnly
+		setColumnsState(colInfos, model.StateDeleteOnly)
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != colInfos[0].State)
+	case model.StateDeleteOnly:
+		// delete only -> reorganization
+		job.SchemaState = model.StateDeleteReorganization
+		setColumnsState(colInfos, model.StateDeleteReorganization)
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != colInfos[0].State)
+	case model.StateDeleteReorganization:
+		// reorganization -> absent
+		// All reorganization jobs are done, drop this column.
+		tblInfo.Columns = tblInfo.Columns[:len(tblInfo.Columns)-delCount]
+		setColumnsState(colInfos, model.StateNone)
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != colInfos[0].State)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+
+		// Finish this job.
+		if job.IsRollingback() {
+			job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
+		} else {
+			job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
+		}
+	default:
+		err = errInvalidDDLJob.GenWithStackByArgs("table", tblInfo.State)
+	}
+	return ver, errors.Trace(err)
+}
+
+func checkDropColumns(t *meta.Meta, job *model.Job) (*model.TableInfo, []*model.ColumnInfo, int, error) {
+	schemaID := job.SchemaID
+	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, schemaID)
+	if err != nil {
+		return nil, nil, 0, errors.Trace(err)
+	}
+
+	var colNames []model.CIStr
+	err = job.DecodeArgs(&colNames)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return nil, nil, 0, errors.Trace(err)
+	}
+
+	var colInfos []*model.ColumnInfo
+	for _, colName := range colNames {
+		colInfo := model.FindColumnInfo(tblInfo.Columns, colName.L)
+		if colInfo == nil || colInfo.Hidden {
+			job.State = model.JobStateCancelled
+			return nil, nil, 0, ErrCantDropFieldOrKey.GenWithStack("column %s doesn't exist", colName)
+		}
+		if err = isDroppableColumn(tblInfo, colName); err != nil {
+			job.State = model.JobStateCancelled
+			return nil, nil, 0, errors.Trace(err)
+		}
+		colInfos = append(colInfos, colInfo)
+	}
+	return tblInfo, colInfos, len(colNames), nil
 }
 
 func onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
