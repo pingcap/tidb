@@ -1972,6 +1972,8 @@ func (b *executorBuilder) constructDAGReq(plans []plannercore.PhysicalPlan) (dag
 	dagReq.TimeZoneName, dagReq.TimeZoneOffset = timeutil.Zone(b.ctx.GetSessionVars().Location())
 	sc := b.ctx.GetSessionVars().StmtCtx
 	dagReq.Flags = sc.PushDownFlags()
+	sqlMode := uint64(b.ctx.GetSessionVars().SQLMode)
+	dagReq.SqlMode = &sqlMode
 	dagReq.Executors, streaming, err = constructDistExec(b.ctx, plans)
 
 	distsql.SetEncodeType(b.ctx, dagReq)
