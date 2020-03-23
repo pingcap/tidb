@@ -219,15 +219,15 @@ CREATE TABLE tu (a INT, b INT, c INT GENERATED ALWAYS AS (a + b) VIRTUAL, primar
 INSERT INTO tu(a, b) VALUES(1, 2);
 EXPLAIN SELECT * FROM tu WHERE c = 1;
 id	estRows	task	access object	operator info
-Point_Get_5	1.00	root	table:tu, index:c	
+Point_Get_5	1.00	root	table:tu, index:uk(c)	
 EXPLAIN SELECT a, c FROM tu WHERE c = 1;
 id	estRows	task	access object	operator info
 Projection_4	1.00	root		test.tu.a, test.tu.c
-└─Point_Get_5	1.00	root	table:tu, index:c	
+└─Point_Get_5	1.00	root	table:tu, index:uk(c)	
 EXPLAIN SELECT * FROM tu WHERE c in(1, 2, 3);
 id	estRows	task	access object	operator info
-Batch_Point_Get_5	3.00	root	table:tu, index:c	keep order:false, desc:false
+Batch_Point_Get_5	3.00	root	table:tu, index:uk(c)	keep order:false, desc:false
 EXPLAIN SELECT c, a FROM tu WHERE c in(1, 2, 3);
 id	estRows	task	access object	operator info
 Projection_4	3.00	root		test.tu.c, test.tu.a
-└─Batch_Point_Get_5	3.00	root	table:tu, index:c	keep order:false, desc:false
+└─Batch_Point_Get_5	3.00	root	table:tu, index:uk(c)	keep order:false, desc:false
