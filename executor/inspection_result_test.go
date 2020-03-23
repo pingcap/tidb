@@ -212,8 +212,8 @@ func (s *inspectionResultSuite) setupForThresholdCheck(c *C, mockData map[string
 
 	ctx := context.WithValue(context.Background(), "__mockInspectionTables", configurations)
 	ctx = context.WithValue(ctx, "__mockMetricsTableData", mockData)
-	ctx = failpoint.WithHook(ctx, func(_ context.Context, fpname2 string) bool {
-		return fpName2 == fpname2 || fpname2 == fpName
+	ctx = failpoint.WithHook(ctx, func(_ context.Context, currName string) bool {
+		return fpName2 == currName || currName == fpName
 	})
 	return ctx
 }
