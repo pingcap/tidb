@@ -1424,6 +1424,11 @@
     "Name": "TestPushdownDistinct",
     "Cases": [
       {
+        "SQL": "select /*+ agg_to_cop(), HASH_AGG() */ a, count(distinct a) from t;",
+        "Best": "TableReader(Table(t)->HashAgg)->HashAgg->Projection",
+        "Warning": ""
+      },
+      {
         "SQL": "select /*+ HASH_AGG() */ avg(b), c, avg(b), count(distinct A, B),  count(distinct A), count(distinct c), sum(b) from t group by c;",
         "Best": "TableReader(Table(t))->Projection->HashAgg->Projection",
         "Warning": ""

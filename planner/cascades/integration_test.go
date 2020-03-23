@@ -176,6 +176,7 @@ func (s *testIntegrationSuite) TestPushdownDistinct(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, c int, index(c))")
 	tk.MustExec("insert into t values (1, 1, 1), (1, 1, 3), (1, 2, 3), (2, 1, 3), (1, 2, NULL);")
+	tk.MustExec("set session sql_mode=''")
 	tk.MustExec("set session tidb_enable_cascades_planner = 1")
 	var input []string
 	var output []struct {

@@ -855,6 +855,7 @@ func (s *testPlanSuite) TestPushdownDistinct(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, c int, index(c))")
 	tk.MustExec("insert into t values (1, 1, 1), (1, 1, 3), (1, 2, 3), (2, 1, 3), (1, 2, NULL);")
+	tk.MustExec("set session sql_mode=''")
 
 	var (
 		input  []string

@@ -459,6 +459,19 @@
     "Name": "TestPushdownDistinct",
     "Cases": [
       {
+        "SQL": "select /*+ agg_to_cop(), HASH_AGG() */ a, count(distinct a) from t;",
+        "Plan": [
+          "Projection_8 1.00 root  test.t.a, Column#5",
+          "└─HashAgg_12 1.00 root  funcs:count(Column#7)->Column#5, funcs:firstrow(Column#8)->test.t.a",
+          "  └─TableReader_13 1.00 root  data:HashAgg_14",
+          "    └─HashAgg_14 1.00 cop[tikv]  funcs:count(test.t.a)->Column#7, funcs:firstrow(test.t.a)->Column#8",
+          "      └─TableFullScan_11 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 5"
+        ]
+      },
+      {
         "SQL": "select /*+ HASH_AGG() */ avg(b), c, avg(b), count(distinct A, B),  count(distinct A), count(distinct c), sum(b) from t group by c;",
         "Plan": [
           "Projection_8 8000.00 root  Column#5, test.t.c, Column#5, Column#6, Column#7, Column#8, Column#9",

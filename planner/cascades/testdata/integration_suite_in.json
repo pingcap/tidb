@@ -50,6 +50,8 @@
   {
     "name": "TestPushdownDistinct",
     "cases": [
+      "select /*+ agg_to_cop(), HASH_AGG() */ a, count(distinct a) from t;",
+
       "select /*+ HASH_AGG() */ avg(b), c, avg(b), count(distinct A, B),  count(distinct A), count(distinct c), sum(b) from t group by c;",
       "select /*+ agg_to_cop(), HASH_AGG() */ avg(b), c, avg(b), count(distinct A, B),  count(distinct A), count(distinct c), sum(b) from t group by c;",
       "select /*+ STREAM_AGG() */ count(distinct c) from t;",
