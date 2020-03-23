@@ -982,7 +982,6 @@ func (s *testSessionSuite) TestLastInsertID(c *C) {
 
 func (s *testSessionSuite) TestPrepareZero(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustExec("set sql_mode = 'ALLOW_INVALID_DATES'")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(v timestamp)")
 	tk.MustExec("prepare s1 from 'insert into t (v) values (?)'")
