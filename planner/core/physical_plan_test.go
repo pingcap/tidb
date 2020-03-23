@@ -842,6 +842,68 @@ func (s *testPlanSuite) TestAggToCopHint(c *C) {
 	}
 }
 
+func (s *testPlanSuite) TestPushdownDistinct(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists ta")
+	tk.MustExec("create table t(a int, b int, c int, index(c))")
+	tk.MustExec("insert into t values (1, 1, 1), (1, 1, 3), (1, 2, 3), (2, 1, 3), (1, 2, NULL);")
+
+	var (
+		input  []string
+		output []struct {
+			SQL     string
+			Best    string
+			Warning string
+		}
+	)
+	s.testData.GetTestCases(c, &input, &output)
+
+	ctx := context.Background()
+	is := domain.GetDomain(tk.Se).InfoSchema()
+	for i, test := range input {
+		comment := Commentf("case:%v sql:%s", i, test)
+		s.testData.OnRecord(func() {
+			output[i].SQL = test
+		})
+		c.Assert(test, Equals, output[i].SQL, comment)
+
+		tk.Se.GetSessionVars().StmtCtx.SetWarnings(nil)
+
+		stmt, err := s.ParseOneStmt(test, "", "")
+		c.Assert(err, IsNil, comment)
+
+		p, _, err := planner.Optimize(ctx, tk.Se, stmt, is)
+		c.Assert(err, IsNil)
+		planString := core.ToString(p)
+		s.testData.OnRecord(func() {
+			output[i].Best = planString
+		})
+		c.Assert(planString, Equals, output[i].Best, comment)
+
+		warnings := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
+		s.testData.OnRecord(func() {
+			if len(warnings) > 0 {
+				output[i].Warning = warnings[0].Err.Error()
+			}
+		})
+		if output[i].Warning == "" {
+			c.Assert(len(warnings), Equals, 0, comment)
+		} else {
+			c.Assert(len(warnings), Equals, 1, comment)
+			c.Assert(warnings[0].Level, Equals, stmtctx.WarnLevelWarning, comment)
+			c.Assert(warnings[0].Err.Error(), Equals, output[i].Warning, comment)
+		}
+	}
+}
+
 func (s *testPlanSuite) TestHintAlias(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()

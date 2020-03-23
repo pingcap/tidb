@@ -533,6 +533,15 @@
     ]
   },
   {
+    "name": "TestPushdownDistinct",
+    "cases": [
+      "select /*+ HASH_AGG() */ avg(b), c, avg(b), count(distinct A, B),  count(distinct A), count(distinct c), sum(b) from t group by c;",
+      "select /*+ agg_to_cop(), HASH_AGG() */ avg(b), c, avg(b), count(distinct A, B),  count(distinct A), count(distinct c), sum(b) from t group by c;",
+      "select /*+ STREAM_AGG() */ count(distinct c) from t;",
+      "select /*+ agg_to_cop(), STREAM_AGG() */ count(distinct c) from t;"
+    ]
+  },
+  {
     "name": "TestDAGPlanBuilderWindow",
     "cases":[
       "select lead(a, 1) over (partition by null) as c from t"
