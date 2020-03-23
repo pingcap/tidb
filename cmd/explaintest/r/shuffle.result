@@ -9,16 +9,16 @@ create index expr_idx on t4((a+b+1));
 set @@session.tidb_window_concurrency = 4;
 set @@session.tidb_shuffle_concurrency = 4;
 explain select * from t1 order by c2;
-id	estRows	task	operator info
-Shuffle_16	10000.00	root	execution info: concurrency:4, fan out:1, splitter:none, merger:merge-sort(test.t1.c2)
-└─Sort_6	2500.00	root	test.t1.c2:asc
-  └─Shuffle_15	2500.00	root	execution info: concurrency:1, fan out:4, splitter:random, merger:none
-    └─TableReader_9	10000.00	root	data:TableFullScan_8
-      └─TableFullScan_8	10000.00	cop[tikv]	table:t1, keep order:false, stats:pseudo
+id	estRows	task	access object	operator info
+Shuffle_16	10000.00	root		execution info: concurrency:4, fan out:1, splitter:none, merger:merge-sort(test.t1.c2)
+└─Sort_6	2500.00	root		test.t1.c2:asc
+  └─Shuffle_15	2500.00	root		execution info: concurrency:1, fan out:4, splitter:random, merger:none
+    └─TableReader_9	10000.00	root		data:TableFullScan_8
+      └─TableFullScan_8	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain select * from t2 order by c2;
-id	estRows	task	operator info
-Shuffle_13	10000.00	root	execution info: concurrency:4, fan out:1, splitter:none, merger:merge-sort(test.t2.c2)
-└─Sort_6	2500.00	root	test.t2.c2:asc
-  └─Shuffle_12	2500.00	root	execution info: concurrency:1, fan out:4, splitter:random, merger:none
-    └─TableReader_9	10000.00	root	data:TableFullScan_8
-      └─TableFullScan_8	10000.00	cop[tikv]	table:t2, keep order:false, stats:pseudo
+id	estRows	task	access object	operator info
+Shuffle_13	10000.00	root		execution info: concurrency:4, fan out:1, splitter:none, merger:merge-sort(test.t2.c2)
+└─Sort_6	2500.00	root		test.t2.c2:asc
+  └─Shuffle_12	2500.00	root		execution info: concurrency:1, fan out:4, splitter:random, merger:none
+    └─TableReader_9	10000.00	root		data:TableFullScan_8
+      └─TableFullScan_8	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
