@@ -2184,6 +2184,16 @@ func (b *PlanBuilder) unfoldWildStar(p LogicalPlan, selectFields []*ast.SelectFi
 	return resultList, nil
 }
 
+func (b *PlanBuilder) pushHintWithoutTableWarning(hint *ast.TableOptimizerHint) {
+	var sb strings.Builder
+	ctx := format.NewRestoreCtx(0, &sb)
+	if err := hint.Restore(ctx); err != nil {
+		return
+	}
+	errMsg := fmt.Sprintf("Hint %s is inapplicable. Please specify the table names in the arguments.", sb.String())
+	b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(errMsg))
+}
+
 func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType nodeType, currentLevel int) {
 	hints = b.hintProcessor.getCurrentStmtHints(hints, nodeType, currentLevel)
 	var (
@@ -2196,15 +2206,35 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 	for _, hint := range hints {
 		switch hint.HintName.L {
 		case TiDBMergeJoin, HintSMJ:
-			sortMergeTables = append(sortMergeTables, tableNames2HintTableInfo(b.ctx, hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
+			if len(hint.Tables) == 0 {
+				b.pushHintWithoutTableWarning(hint)
+			} else {
+				sortMergeTables = append(sortMergeTables, tableNames2HintTableInfo(b.ctx, hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
+			}
 		case TiDBIndexNestedLoopJoin, HintINLJ:
-			INLJTables = append(INLJTables, tableNames2HintTableInfo(b.ctx, hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
+			if len(hint.Tables) == 0 {
+				b.pushHintWithoutTableWarning(hint)
+			} else {
+				INLJTables = append(INLJTables, tableNames2HintTableInfo(b.ctx, hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
+			}
 		case HintINLHJ:
-			INLHJTables = append(INLHJTables, tableNames2HintTableInfo(b.ctx, hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
+			if len(hint.Tables) == 0 {
+				b.pushHintWithoutTableWarning(hint)
+			} else {
+				INLHJTables = append(INLHJTables, tableNames2HintTableInfo(b.ctx, hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
+			}
 		case HintINLMJ:
-			INLMJTables = append(INLMJTables, tableNames2HintTableInfo(b.ctx, hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
+			if len(hint.Tables) == 0 {
+				b.pushHintWithoutTableWarning(hint)
+			} else {
+				INLMJTables = append(INLMJTables, tableNames2HintTableInfo(b.ctx, hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
+			}
 		case TiDBHashJoin, HintHJ:
-			hashJoinTables = append(hashJoinTables, tableNames2HintTableInfo(b.ctx, hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
+			if len(hint.Tables) == 0 {
+				b.pushHintWithoutTableWarning(hint)
+			} else {
+				hashJoinTables = append(hashJoinTables, tableNames2HintTableInfo(b.ctx, hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
+			}
 		case HintHashAgg:
 			aggHints.preferAggType |= preferHashAgg
 		case HintStreamAgg:
@@ -2212,7 +2242,9 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 		case HintAggToCop:
 			aggHints.preferAggToCop = true
 		case HintUseIndex:
-			if len(hint.Tables) != 0 {
+			if len(hint.Tables) == 0 {
+				b.pushHintWithoutTableWarning(hint)
+			} else {
 				dbName := hint.Tables[0].DBName
 				if dbName.L == "" {
 					dbName = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
@@ -2228,7 +2260,9 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 				})
 			}
 		case HintIgnoreIndex:
-			if len(hint.Tables) != 0 {
+			if len(hint.Tables) == 0 {
+				b.pushHintWithoutTableWarning(hint)
+			} else {
 				dbName := hint.Tables[0].DBName
 				if dbName.L == "" {
 					dbName = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
@@ -2251,7 +2285,9 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 				tikvTables = tableNames2HintTableInfo(b.ctx, hint.Tables, b.hintProcessor, nodeType, currentLevel)
 			}
 		case HintIndexMerge:
-			if len(hint.Tables) != 0 {
+			if len(hint.Tables) == 0 {
+				b.pushHintWithoutTableWarning(hint)
+			} else {
 				indexMergeHintList = append(indexMergeHintList, indexHintInfo{
 					tblName: hint.Tables[0].TableName,
 					indexHint: &ast.IndexHint{
