@@ -365,7 +365,7 @@ func (e *DDLJobRetriever) initial(txn kv.Transaction) error {
 	return nil
 }
 
-func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, checker privilege.Manager) error {
+func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, checker privilege.Manager) {
 	schemaName := job.SchemaName
 	tableName := ""
 	finishTS := uint64(0)
@@ -391,7 +391,7 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 
 	// Check the privilege.
 	if checker != nil && !checker.RequestVerification(e.activeRoles, strings.ToLower(schemaName), strings.ToLower(tableName), "", mysql.AllPrivMask) {
-		return nil
+		return
 	}
 
 	req.AppendInt64(0, job.ID)
@@ -409,7 +409,6 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 		req.AppendNull(9)
 	}
 	req.AppendString(10, job.State.String())
-	return nil
 }
 
 func ts2Time(timestamp uint64) types.Time {
