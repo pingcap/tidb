@@ -391,7 +391,7 @@ func (e *MetricsSummaryByLabelRetriever) retrieve(ctx context.Context, sctx sess
 	return totalRows, nil
 }
 
-// Get clusterInfo and set it in InstanceAddrCache.
+// GetInstanceMap get clusterInfoMap and set it in InstanceAddrCache.
 func GetInstanceMap(sctx sessionctx.Context) (map[string]string, error) {
 	clusterInfo := make(map[string]string)
 	serversInfo, err := infoschema.GetClusterServerInfo(sctx)
