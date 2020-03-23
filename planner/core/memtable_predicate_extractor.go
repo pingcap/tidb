@@ -621,7 +621,6 @@ func (e *ClusterLogTableExtractor) explainInfo(p *PhysicalMemTable) string {
 	}
 	if len(e.NodeTypes) > 0 {
 		r.WriteString(fmt.Sprintf("node_types:[%s], ", extractStringFromStringSet(e. NodeTypes)))
-```?
 	}
 	if len(e.Instances) > 0 {
 		r.WriteString(fmt.Sprintf("instances:[%s], ", extractStringFromStringSet(e.Instances)))
