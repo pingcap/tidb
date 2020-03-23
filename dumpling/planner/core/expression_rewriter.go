@@ -999,8 +999,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		if collate.NewCollationEnabled() {
 			var collInfo *charset.Collation
 			// TODO(bb7133): use charset.ValidCharsetAndCollation when its bug is fixed.
-			if collInfo, er.err = charset.GetCollationByName(v.Collate); er.err != nil {
-				er.err = charset.ErrUnknownCollation.GenWithStackByArgs(v.Collate)
+			if collInfo, er.err = collate.GetCollationByName(v.Collate); er.err != nil {
 				break
 			}
 			chs := arg.GetType().Charset
