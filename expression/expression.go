@@ -935,7 +935,7 @@ func canScalarFuncPushDown(scalarFunc *ScalarFunction, pc PbConverter, storeType
 func canExprPushDown(expr Expression, pc PbConverter, storeType kv.StoreType) bool {
 	if storeType == kv.TiFlash {
 		switch {
-		case expr.GetType().Tp == mysql.TypeDuration, expr.GetType().Tp == mysql.TypeJSON, expr.HasCoercibility():
+		case expr.GetType().Tp == mysql.TypeDuration, expr.GetType().Tp == mysql.TypeJSON, expr.Coercibility() == CoercibilityExplicit:
 			return false
 		}
 	}
