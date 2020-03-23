@@ -1135,7 +1135,7 @@ func checkConstraintNames(constraints []*ast.Constraint) error {
 	return nil
 }
 
-// checkInvisibleIndexOnPK check if primary key is invisible index
+// checkInvisibleIndexOnPK check if primary key is invisible index.
 func checkInvisibleIndexOnPK(tblInfo *model.TableInfo) error {
 	pk := getPrimaryKey(tblInfo)
 	if pk != nil && pk.Invisible {

@@ -562,10 +562,13 @@ func (h *BindHandle) CaptureBaselines() {
 }
 
 func getHintsForSQL(sctx sessionctx.Context, sql string) (string, error) {
-	oriVals := sctx.GetSessionVars().UsePlanBaselines
+	originBaseline := sctx.GetSessionVars().UsePlanBaselines
+	originRestrict := sctx.GetSessionVars().InRestrictedSQL
 	sctx.GetSessionVars().UsePlanBaselines = false
+	sctx.GetSessionVars().InRestrictedSQL = false
 	recordSets, err := sctx.(sqlexec.SQLExecutor).Execute(context.TODO(), fmt.Sprintf("explain format='hint' %s", sql))
-	sctx.GetSessionVars().UsePlanBaselines = oriVals
+	sctx.GetSessionVars().InRestrictedSQL = originRestrict
+	sctx.GetSessionVars().UsePlanBaselines = originBaseline
 	if len(recordSets) > 0 {
 		defer terror.Log(recordSets[0].Close())
 	}

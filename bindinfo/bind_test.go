@@ -478,7 +478,7 @@ func (s *testSuite) TestCapturePlanBaseline(c *C) {
 		tk.MustExec(" set @@tidb_capture_plan_baselines = off")
 	}()
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t, t1")
 	tk.MustExec("create table t(a int)")
 	s.domain.BindHandle().CaptureBaselines()
 	tk.MustQuery("show global bindings").Check(testkit.Rows())
@@ -496,6 +496,17 @@ func (s *testSuite) TestCapturePlanBaseline(c *C) {
 	c.Assert(len(rows), Equals, 1)
 	c.Assert(rows[0][0], Equals, "select * from t where a > ?")
 	c.Assert(rows[0][1], Equals, "SELECT /*+ USE_INDEX(@`sel_1` `test`.`t` )*/ * FROM `t` WHERE `a`>10")
+
+	// Capture plan baseline on invisible index.
+	tk.MustExec("create table t1(a int, unique (a) invisible)")
+	tk.MustExec("insert into t1 values (1), (2)")
+	tk.MustQuery("select a from t1 order by a").Check(testkit.Rows("1", "2"))
+	tk.MustQuery("select a from t1 order by a").Check(testkit.Rows("1", "2"))
+	tk.MustExec("admin capture bindings")
+	rows = tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 2)
+	c.Assert(rows[1][0], Equals, "select a from t1 order by a")
+	c.Assert(rows[1][1], Equals, "SELECT /*+ USE_INDEX(@`sel_1` `test`.`t1` )*/ `a` FROM `t1` ORDER BY `a`")
 }
 
 func (s *testSuite) TestUseMultiplyBindings(c *C) {

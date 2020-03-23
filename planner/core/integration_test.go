@@ -548,13 +548,17 @@ func (s *testIntegrationSuite) TestInvisibleIndex(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 
-	// Optimizer cannot see invisible indexes
+	// Optimizer cannot see invisible indexes.
 	tk.MustExec("create table t(a int, b int, unique index i_a (a) invisible, unique index i_b(b))")
 	tk.MustExec("insert into t values (1,2)")
-	// optimizer cannot use invisible indexes
+
+	// Optimizer cannot use invisible indexes.
+	tk.MustQuery("select a from t order by a").Check(testkit.Rows("1"))
 	c.Check(tk.MustUseIndex("select a from t order by a", "i_a"), IsFalse)
+	tk.MustQuery("select a from t where a > 0").Check(testkit.Rows("1"))
 	c.Check(tk.MustUseIndex("select a from t where a > 1", "i_a"), IsFalse)
-	// if use invisible indexes in index hint and sql hint, throw an error
+
+	// If use invisible indexes in index hint and sql hint, throw an error.
 	errStr := "[planner:1176]Key 'i_a' doesn't exist in table 't'"
 	tk.MustGetErrMsg("select * from t use index(i_a)", errStr)
 	tk.MustGetErrMsg("select * from t force index(i_a)", errStr)

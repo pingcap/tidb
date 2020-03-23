@@ -157,6 +157,86 @@ func (s *testPrepareSerialSuite) TestPrepareCacheIndexScan(c *C) {
 	// When executing one statement at the first time, we don't use cache, so we need to execute it at least twice to test the cache.
 	tk.MustQuery("execute stmt1 using @a, @b").Check(testkit.Rows("1 3", "1 3"))
 	tk.MustQuery("execute stmt1 using @a, @b").Check(testkit.Rows("1 3", "1 3"))
+
+	// Prepared plan cache with invisible index
+	cleanHistoryAndEnableStmt := func() {
+		tk.MustExec("set global tidb_enable_stmt_summary = 0") // clean statements history
+		tk.MustExec("set global tidb_enable_stmt_summary = 1")
+	}
+	cleanHistoryAndEnableStmt()
+	defer tk.MustExec("set global tidb_enable_stmt_summary = 0")
+
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t(a int, b int, unique (a), unique (b) invisible)")
+	tk.MustExec("insert into t values(1, 2), (3, 4)")
+
+	tk.MustExec(`prepare stmt2 from "select a from t order by ?"`)
+	tk.MustExec("set @a='a'")
+
+	executeSelectTwice := func() {
+		tk.MustQuery("execute stmt2 using @a").Check(testkit.Rows("1", "3"))
+		tk.MustQuery("execute stmt2 using @a").Check(testkit.Rows("1", "3"))
+	}
+	checkResult := func(expect [][]interface{}) {
+		tk.MustQuery(`select schema_name, table_names, index_names, exec_count
+		from performance_schema.events_statements_summary_by_digest_history
+		where digest_text like 'select a from t order by ?'`,
+		).Check(expect)
+	}
+
+	executeSelectTwice()
+	checkResult(testkit.Rows(
+		"test test.t t:a 2",
+		"test <nil> <nil> 1",
+	))
+
+	tk.MustExec(`alter table t drop index a`)
+	cleanHistoryAndEnableStmt()
+	executeSelectTwice()
+	checkResult(testkit.Rows(
+		"test test.t <nil> 2",
+	))
+
+	tk.MustExec(`alter table t add unique (a) invisible`)
+	cleanHistoryAndEnableStmt()
+	executeSelectTwice()
+	checkResult(testkit.Rows(
+		"test test.t <nil> 2",
+	))
+
+	tk.MustExec(`prepare stmt3 from "select b from t order by ?"`)
+	tk.MustExec("set @b='b'")
+
+	executeSelectTwice = func() {
+		tk.MustQuery("execute stmt3 using @b").Check(testkit.Rows("2", "4"))
+		tk.MustQuery("execute stmt3 using @b").Check(testkit.Rows("2", "4"))
+	}
+	checkResult = func(expect [][]interface{}) {
+		tk.MustQuery(`select schema_name, table_names, index_names, exec_count
+		from performance_schema.events_statements_summary_by_digest_history
+		where digest_text like 'select b from t order by ?'`,
+		).Check(expect)
+	}
+
+	executeSelectTwice()
+	checkResult(testkit.Rows(
+		"test test.t <nil> 2",
+		"test <nil> <nil> 1",
+	))
+
+	tk.MustExec(`alter table t drop index b`)
+	cleanHistoryAndEnableStmt()
+	executeSelectTwice()
+	checkResult(testkit.Rows(
+		"test test.t <nil> 2",
+	))
+
+	tk.MustExec(`alter table t add unique (b)`)
+	cleanHistoryAndEnableStmt()
+	executeSelectTwice()
+	checkResult(testkit.Rows(
+		"test test.t t:b 2",
+	))
 }
 
 func (s *testPlanSerialSuite) TestPrepareCacheDeferredFunction(c *C) {

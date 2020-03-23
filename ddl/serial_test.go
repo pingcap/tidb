@@ -918,7 +918,7 @@ func (s *testSerialSuite) TestInvisibleIndex(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t,t1,t2,t3,t4,t5,t6")
 
-	// The DDL statement related to invisible index
+	// The DDL statement related to invisible index.
 	showIndexes := "select index_name, is_visible from information_schema.statistics where table_schema = 'test' and table_name = 't'"
 	// 1. Create table with invisible index
 	tk.MustExec("create table t (a int, b int, unique (a) invisible)")
