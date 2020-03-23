@@ -996,6 +996,10 @@ var tableStorageStatsCols = []columnInfo{
 	{name: "TABLE_NAME", tp: mysql.TypeVarchar, size: 64},
 	{name: "TABLE_ID", tp: mysql.TypeLonglong, size: 21},
 	{name: "DISK_USAGE", tp: mysql.TypeLonglong, size: 64},
+	{name: "DISK_USAGE", tp: mysql.TypeLonglong, size: 64},
+	{name: "DISK_USAGE", tp: mysql.TypeLonglong, size: 64},
+	{name: "DISK_USAGE", tp: mysql.TypeLonglong, size: 64},
+	{name: "DISK_USAGE", tp: mysql.TypeLonglong, size: 64},
 }
 
 var tableDDLJobsCols = []columnInfo{
