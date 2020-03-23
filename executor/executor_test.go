@@ -1918,6 +1918,35 @@ func (s *testSuiteP1) TestGeneratedColumnRead(c *C) {
 	}
 }
 
+// TestGeneratedColumnRead tests generated columns using point get and batch point get
+func (s *testSuiteP1) TestGeneratedColumnPointGet(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tu")
+	tk.MustExec("CREATE TABLE tu(a int, b int, c int GENERATED ALWAYS AS (a + b) VIRTUAL, d int as (a * b) stored, " +
+		"e int GENERATED ALWAYS as (b * 2) VIRTUAL, PRIMARY KEY (a), UNIQUE KEY ukc (c), unique key ukd(d), key ke(e))")
+	tk.MustExec("insert into tu(a, b) values(1, 2)")
+	tk.MustExec("insert into tu(a, b) values(5, 6)")
+	tk.MustQuery("select * from tu for update").Check(testkit.Rows("1 2 3 2 4", "5 6 11 30 12"))
+	tk.MustQuery("select * from tu where a = 1").Check(testkit.Rows("1 2 3 2 4"))
+	tk.MustQuery("select * from tu where a in (1, 2)").Check(testkit.Rows("1 2 3 2 4"))
+	tk.MustQuery("select * from tu where c in (1, 2, 3)").Check(testkit.Rows("1 2 3 2 4"))
+	tk.MustQuery("select * from tu where c = 3").Check(testkit.Rows("1 2 3 2 4"))
+	tk.MustQuery("select d, e from tu where c = 3").Check(testkit.Rows("2 4"))
+	tk.MustQuery("select * from tu where d in (1, 2, 3)").Check(testkit.Rows("1 2 3 2 4"))
+	tk.MustQuery("select * from tu where d = 2").Check(testkit.Rows("1 2 3 2 4"))
+	tk.MustQuery("select c, d from tu where d = 2").Check(testkit.Rows("3 2"))
+	tk.MustQuery("select d, e from tu where e = 4").Check(testkit.Rows("2 4"))
+	tk.MustQuery("select * from tu where e = 4").Check(testkit.Rows("1 2 3 2 4"))
+	tk.MustExec("update tu set a = a + 1, b = b + 1 where c = 11")
+	tk.MustQuery("select * from tu for update").Check(testkit.Rows("1 2 3 2 4", "6 7 13 42 14"))
+	tk.MustQuery("select * from tu where a = 6").Check(testkit.Rows("6 7 13 42 14"))
+	tk.MustQuery("select * from tu where c in (5, 6, 13)").Check(testkit.Rows("6 7 13 42 14"))
+	tk.MustQuery("select b, c, e, d from tu where c = 13").Check(testkit.Rows("7 13 14 42"))
+	tk.MustQuery("select a, e, d from tu where c in (5, 6, 13)").Check(testkit.Rows("6 14 42"))
+	tk.MustExec("drop table if exists tu")
+}
+
 func (s *testSuiteP2) TestToPBExpr(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
