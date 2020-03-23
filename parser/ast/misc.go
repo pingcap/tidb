@@ -2248,6 +2248,7 @@ const (
 	// backup options
 	BRIEOptionBackupTimeAgo
 	BRIEOptionBackupTS
+	BRIEOptionBackupTSO
 	BRIEOptionLastBackupTS
 	BRIEOptionLastBackupTSO
 	// restore options
@@ -2291,7 +2292,7 @@ func (kind BRIEOptionType) String() string {
 		return "CHECKSUM"
 	case BRIEOptionSendCreds:
 		return "SEND_CREDENTIALS_TO_TIKV"
-	case BRIEOptionBackupTimeAgo, BRIEOptionBackupTS:
+	case BRIEOptionBackupTimeAgo, BRIEOptionBackupTS, BRIEOptionBackupTSO:
 		return "SNAPSHOT"
 	case BRIEOptionLastBackupTS:
 		return "INCREMENTAL UNTIL TIMESTAMP"
@@ -2417,7 +2418,7 @@ func (n *BRIEStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord(opt.Tp.String())
 		ctx.WritePlain(" = ")
 		switch opt.Tp {
-		case BRIEOptionConcurrency, BRIEOptionChecksum, BRIEOptionSendCreds, BRIEOptionOnline, BRIEOptionS3ForcePathStyle, BRIEOptionS3UseAccelerateEndpoint:
+		case BRIEOptionConcurrency, BRIEOptionChecksum, BRIEOptionSendCreds, BRIEOptionOnline, BRIEOptionS3ForcePathStyle, BRIEOptionS3UseAccelerateEndpoint, BRIEOptionBackupTSO:
 			ctx.WritePlainf("%d", opt.UintValue)
 		case BRIEOptionBackupTimeAgo:
 			ctx.WritePlainf("%d ", opt.UintValue/1000)
