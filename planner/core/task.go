@@ -1028,7 +1028,6 @@ type AggPref struct {
 func BuildFinalModeAggregation(
 	sctx sessionctx.Context, original *AggPref) (partial, final *AggPref, funcMap map[*aggregation.AggFuncDesc]*aggregation.AggFuncDesc) {
 
-	// TODO: Refactor the way of constructing aggregation functions.
 	funcMap = make(map[*aggregation.AggFuncDesc]*aggregation.AggFuncDesc, len(original.AggFuncs))
 	partial = &AggPref{
 		AggFuncs:     make([]*aggregation.AggFuncDesc, 0, len(original.AggFuncs)),
@@ -1058,6 +1057,9 @@ func BuildFinalModeAggregation(
 		final.GroupByItems = append(final.GroupByItems, gbyCol)
 	}
 
+	// TODO: Refactor the way of constructing aggregation functions.
+	// This fop loop is ugly, but I do not find a proper way to reconstruct
+	// it right away.
 	for i, aggFunc := range original.AggFuncs {
 		finalAggFunc := &aggregation.AggFuncDesc{HasDistinct: false}
 		finalAggFunc.Name = aggFunc.Name
@@ -1153,11 +1155,11 @@ func (p *basePhysicalAgg) newPartialAggregate(copTaskType kv.StoreType) (partial
 		// For partial agg of TiDB cop task, since TiDB coprocessor reuse the TiDB executor,
 		// and TiDB aggregation executor won't output the group by value,
 		// so we need add `firstrow` aggregation function to output the group by value.
-		aggFuncs, err := genFirstRowAggForGroupBy(p.ctx, p.GroupByItems)
+		aggFuncs, err := genFirstRowAggForGroupBy(p.ctx, partialPref.GroupByItems)
 		if err != nil {
 			return nil, p.self
 		}
-		p.AggFuncs = append(p.AggFuncs, aggFuncs...)
+		partialPref.AggFuncs = append(partialPref.AggFuncs, aggFuncs...)
 	}
 	// finalSchema := p.schema
 	p.AggFuncs = partialPref.AggFuncs
