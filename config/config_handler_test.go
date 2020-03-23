@@ -151,7 +151,6 @@ func (s *testConfigSuite) TestPDConfHandler(c *C) {
 	mockPDConfigClient0.confContent.Store(newContent)
 	tmCh <- time.Now()
 	reloadWg.Wait()
-	c.Assert(ch.GetConfig().Performance.MaxMemory, Equals, uint64(123))
 	ch.Close()
 }
 
