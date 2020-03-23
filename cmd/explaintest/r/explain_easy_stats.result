@@ -60,7 +60,7 @@ explain delete from t1 where t1.c2 = 1;
 id	estRows	task	access object	operator info
 Delete_4	N/A	root		N/A
 └─IndexLookUp_11	0.00	root		
-  ├─IndexRangeScan_9(Build)	0.00	cop[tikv]	table:t1, index:c2	range:[1,1], keep order:false
+  ├─IndexRangeScan_9(Build)	0.00	cop[tikv]	table:t1, index:c2(c2)	range:[1,1], keep order:false
   └─TableRowIDScan_10(Probe)	0.00	cop[tikv]	table:t1	keep order:false
 explain select count(b.c2) from t1 a, t2 b where a.c1 = b.c2 group by a.c1;
 id	estRows	task	access object	operator info

@@ -137,25 +137,25 @@ desc update t set a=1 where a+1 = 3;
 id	estRows	task	access object	operator info
 Update_4	N/A	root		N/A
 └─IndexLookUp_11	10.00	root		
-  ├─IndexRangeScan_9(Build)	10.00	cop[tikv]	table:t, index:c	range:[3,3], keep order:false, stats:pseudo
+  ├─IndexRangeScan_9(Build)	10.00	cop[tikv]	table:t, index:idx_c(c)	range:[3,3], keep order:false, stats:pseudo
   └─TableRowIDScan_10(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 desc update t set a=2, b = 3 where b+a = 3;
 id	estRows	task	access object	operator info
 Update_4	N/A	root		N/A
 └─IndexLookUp_11	10.00	root		
-  ├─IndexRangeScan_9(Build)	10.00	cop[tikv]	table:t, index:e	range:[3,3], keep order:false, stats:pseudo
+  ├─IndexRangeScan_9(Build)	10.00	cop[tikv]	table:t, index:idx_e(e)	range:[3,3], keep order:false, stats:pseudo
   └─TableRowIDScan_10(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 desc delete from t where a+1 = 3;
 id	estRows	task	access object	operator info
 Delete_4	N/A	root		N/A
 └─IndexLookUp_11	10.00	root		
-  ├─IndexRangeScan_9(Build)	10.00	cop[tikv]	table:t, index:c	range:[3,3], keep order:false, stats:pseudo
+  ├─IndexRangeScan_9(Build)	10.00	cop[tikv]	table:t, index:idx_c(c)	range:[3,3], keep order:false, stats:pseudo
   └─TableRowIDScan_10(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 desc delete from t where b+a = 0;
 id	estRows	task	access object	operator info
 Delete_4	N/A	root		N/A
 └─IndexLookUp_11	10.00	root		
-  ├─IndexRangeScan_9(Build)	10.00	cop[tikv]	table:t, index:e	range:[0,0], keep order:false, stats:pseudo
+  ├─IndexRangeScan_9(Build)	10.00	cop[tikv]	table:t, index:idx_e(e)	range:[0,0], keep order:false, stats:pseudo
   └─TableRowIDScan_10(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 alter table t drop index idx_c;
 alter table t drop index idx_e;
@@ -304,23 +304,23 @@ desc update t set a=1 where a+1 = 3;
 id	estRows	task	access object	operator info
 Update_4	N/A	root		N/A
 └─IndexLookUp_11	10.00	root		
-  ├─IndexRangeScan_9(Build)	10.00	cop[tikv]	table:t, index:_V$_expr_idx_c_0	range:[3,3], keep order:false, stats:pseudo
+  ├─IndexRangeScan_9(Build)	10.00	cop[tikv]	table:t, index:expr_idx_c(_V$_expr_idx_c_0)	range:[3,3], keep order:false, stats:pseudo
   └─TableRowIDScan_10(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 desc update t set a=2, b = 3 where b+a = 3;
 id	estRows	task	access object	operator info
 Update_4	N/A	root		N/A
 └─IndexLookUp_11	10.00	root		
-  ├─IndexRangeScan_9(Build)	10.00	cop[tikv]	table:t, index:_V$_expr_idx_e_0	range:[3,3], keep order:false, stats:pseudo
+  ├─IndexRangeScan_9(Build)	10.00	cop[tikv]	table:t, index:expr_idx_e(_V$_expr_idx_e_0)	range:[3,3], keep order:false, stats:pseudo
   └─TableRowIDScan_10(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 desc delete from t where a+1 = 3;
 id	estRows	task	access object	operator info
 Delete_4	N/A	root		N/A
 └─IndexLookUp_11	10.00	root		
-  ├─IndexRangeScan_9(Build)	10.00	cop[tikv]	table:t, index:_V$_expr_idx_c_0	range:[3,3], keep order:false, stats:pseudo
+  ├─IndexRangeScan_9(Build)	10.00	cop[tikv]	table:t, index:expr_idx_c(_V$_expr_idx_c_0)	range:[3,3], keep order:false, stats:pseudo
   └─TableRowIDScan_10(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 desc delete from t where b+a = 0;
 id	estRows	task	access object	operator info
 Delete_4	N/A	root		N/A
 └─IndexLookUp_11	10.00	root		
-  ├─IndexRangeScan_9(Build)	10.00	cop[tikv]	table:t, index:_V$_expr_idx_e_0	range:[0,0], keep order:false, stats:pseudo
+  ├─IndexRangeScan_9(Build)	10.00	cop[tikv]	table:t, index:expr_idx_e(_V$_expr_idx_e_0)	range:[0,0], keep order:false, stats:pseudo
   └─TableRowIDScan_10(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
