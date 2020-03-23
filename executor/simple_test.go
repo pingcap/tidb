@@ -302,6 +302,19 @@ func (s *testSuite3) TestDefaultRole(c *C) {
 	tk.MustExec(dropRoleSQL)
 }
 
+func (s *testSuite3) TestSetDefaultRoleAll(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create user test_all;")
+	se, err := session.CreateSession4Test(s.store)
+	c.Check(err, IsNil)
+	defer se.Close()
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "test_all", Hostname: "localhost"}, nil, nil), IsTrue)
+
+	ctx := context.Background()
+	_, err = se.Execute(ctx, "set default role all to test_all;")
+	c.Assert(err, IsNil)
+}
+
 func (s *testSuite3) TestUser(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	// Make sure user test not in mysql.User.
