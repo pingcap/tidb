@@ -1322,6 +1322,7 @@ type tableStorageStatsRetriever struct {
 	extractor     *plannercore.TableStorageStatsExtractor
 	initialTables []*initialTable
 	curTable      int
+	pdAddress     string
 }
 
 func (e *tableStorageStatsRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
@@ -1405,6 +1406,29 @@ func (e *tableStorageStatsRetriever) initialize(sctx sessionctx.Context) error {
 			}
 		}
 	}
+
+	// Cache the PD address.
+	pdAddr := ""
+	failpoint.Inject("mockClusterPDServerInfo", func(val failpoint.Value) {
+		if s := val.(string); len(s) > 0 {
+			pdAddr = s
+		}
+	})
+	if pdAddr == "" {
+		tikvStore, ok := sctx.GetStore().(tikv.Storage)
+		if !ok {
+			return errors.New("Information about TiKV region status can be gotten only when the storage is TiKV")
+		}
+		etcd, ok := tikvStore.(tikv.EtcdBackend)
+		if !ok {
+			return errors.New("not implemented")
+		}
+		pdAddr = etcd.EtcdAddrs()[0]
+		if pdAddr == "" {
+			return errors.New("pd unavailable")
+		}
+	}
+	e.pdAddress = pdAddr
 	e.initialized = true
 	return nil
 }
@@ -1420,30 +1444,7 @@ type PdRegionStats struct {
 
 func (e *tableStorageStatsRetriever) setDataForTableStorageStats(ctx sessionctx.Context) ([][]types.Datum, error) {
 	rows := make([][]types.Datum, 0, 1024)
-	tikvStore, ok := ctx.GetStore().(tikv.Storage)
-	if !ok {
-		return nil, errors.New("Information about TiKV region status can be gotten only when the storage is TiKV")
-	}
-	var pdAddrs []string
-	etcd, ok := tikvStore.(tikv.EtcdBackend)
-	if !ok {
-		return nil, errors.New("not implemented")
-	}
-	pdAddrs = etcd.EtcdAddrs()
-	if len(pdAddrs) == 0 {
-		failpoint.Inject("mockClusterConfigServerInfo", func(val failpoint.Value) {
-			if s := val.(string); len(s) > 0 {
-				serversInfo := parseFailpointServerInfo(s)
-				for _, v := range serversInfo {
-					if v.ServerType == "pd" {
-						pdAddrs[0] = v.Address
-						break
-					}
-				}
-			}
-		})
-		return nil, errors.New("pd unavailable")
-	}
+
 	count := 0
 	for i := e.curTable; e.curTable < len(e.initialTables) && count < 1024; i++ {
 		table := (e.initialTables)[e.curTable]
@@ -1455,7 +1456,7 @@ func (e *tableStorageStatsRetriever) setDataForTableStorageStats(ctx sessionctx.
 		endKey = codec.EncodeBytes([]byte{}, endKey)
 
 		statURL := fmt.Sprintf("http://%s/pd/api/v1/stats/region?start_key=%s&end_key=%s",
-			pdAddrs[0],
+			e.pdAddress,
 			url.QueryEscape(string(startKey)),
 			url.QueryEscape(string(endKey)))
 

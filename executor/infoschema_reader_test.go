@@ -781,19 +781,15 @@ func (s *testInfoschemaClusterTableSuite) TestTableStorageStats(c *C) {
 	}
 
 	// information_schema.TABLE_STORAGE_STATS
+	pdAddr := mockAddr
+	fpExpr := fmt.Sprintf(`return("%s")`, pdAddr)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/mockClusterPDInfo", fpExpr), IsNil)
+	defer func() { c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/mockClusterPDInfo"), IsNil) }()
+
+	// information_schema.TABLE_STORAGE_STATS
 	tk = testkit.NewTestKit(c, store)
 	tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'information_schema' and TABLE_NAME='schemata';").Check(
 		testkit.Rows("schemata"))
-	//var servers []string
-	//for _, s := range testServers {
-	//	servers = append(servers, strings.Join([]string{s.typ, s.address, s.address}, ","))
-	//}
-	//fpName1 := "github.com/pingcap/tidb/executor/mockClusterServerInfo"
-	//fpExpr := strings.Join(servers, ";")
-	//c.Assert(failpoint.Enable(fpName1, fmt.Sprintf(`return("%s")`, fpExpr)), IsNil)
-	//defer func() { c.Assert(failpoint.Disable(fpName1), IsNil) }()
-
-	//
 	//tk.MustExec("use test")
 	//tk.MustExec("drop table if exists t")
 	//tk.MustExec("create table t (a int, b int, index idx(a))")
