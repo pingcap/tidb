@@ -1393,17 +1393,17 @@
       {
         "SQL": "select /*+ AGG_TO_COP(), HASH_AGG(), USE_INDEX(t) */ sum(a) from ta group by a",
         "Best": "IndexReader(Index(ta.a)[[NULL,+inf]]->HashAgg)->HashAgg",
-        "Warning": "[planner:1815]IndexHint for table t is not applicable."
+        "Warning": "[planner:1815]use_index(test.t) is inapplicable, check whether the table(test.t) exists"
       },
       {
         "SQL": "select /*+ AGG_TO_COP(), USE_INDEX(t) */ sum(b) from ta group by b",
         "Best": "TableReader(Table(ta)->HashAgg)->HashAgg",
-        "Warning": "[planner:1815]IndexHint for table t is not applicable."
+        "Warning": "[planner:1815]use_index(test.t) is inapplicable, check whether the table(test.t) exists"
       },
       {
         "SQL": "select /*+ AGG_TO_COP(), HASH_AGG(), USE_INDEX(t) */ distinct a from ta group by a",
         "Best": "IndexReader(Index(ta.a)[[NULL,+inf]]->HashAgg)->HashAgg",
-        "Warning": "[planner:1815]IndexHint for table t is not applicable."
+        "Warning": "[planner:1815]use_index(test.t) is inapplicable, check whether the table(test.t) exists"
       },
       {
         "SQL": "select /*+ AGG_TO_COP(), HASH_AGG(), HASH_JOIN(t1), USE_INDEX(t1), USE_INDEX(t2) */ sum(t1.a) from ta t1, ta t2 where t1.a = t2.b group by t1.a",
