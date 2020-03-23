@@ -382,22 +382,7 @@ func (e *DDLExec) executeRecoverTable(s *ast.RecoverTableStmt) error {
 	if err != nil {
 		return err
 	}
-	autoIncID, autoRandID, err := e.getTableAutoIDsFromSnapshot(job)
-	if err != nil {
-		return err
-	}
-
-	recoverInfo := &ddl.RecoverInfo{
-		SchemaID:      job.SchemaID,
-		TableInfo:     tblInfo,
-		DropJobID:     job.ID,
-		SnapshotTS:    job.StartTS,
-		CurAutoIncID:  autoIncID,
-		CurAutoRandID: autoRandID,
-	}
-	// Call DDL RecoverTable.
-	err = domain.GetDomain(e.ctx).DDL().RecoverTable(e.ctx, recoverInfo)
-	return err
+	return e.doRecoverOrFlashbackTable(tblInfo, job)
 }
 
 func (e *DDLExec) getTableAutoIDsFromSnapshot(job *model.Job) (autoIncID, autoRandID int64, err error) {
@@ -533,10 +518,20 @@ func (e *DDLExec) executeFlashbackTable(s *ast.FlashBackTableStmt) error {
 	if ok {
 		return infoschema.ErrTableExists.GenWithStack("Table '%-.192s' already been flashback to '%-.192s', can't be flashback repeatedly", s.Table.Name.O, tbl.Meta().Name.O)
 	}
+	return e.doRecoverOrFlashbackTable(tblInfo, job)
+}
 
+func (e *DDLExec) doRecoverOrFlashbackTable(tblInfo *model.TableInfo, job *model.Job) error {
 	autoIncID, autoRandID, err := e.getTableAutoIDsFromSnapshot(job)
 	if err != nil {
 		return err
+	}
+	if tblInfo.TiFlashReplica != nil {
+		replica := *tblInfo.TiFlashReplica
+		// Keep the tiflash replica setting, remove the replica available status.
+		replica.AvailablePartitionIDs = nil
+		replica.Available = false
+		tblInfo.TiFlashReplica = &replica
 	}
 	recoverInfo := &ddl.RecoverInfo{
 		SchemaID:      job.SchemaID,

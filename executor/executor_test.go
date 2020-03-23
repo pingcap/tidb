@@ -4676,6 +4676,20 @@ func (s *testRecoverTable) TestRecoverTable(c *C) {
 	tk.MustExec("insert into t_recover values (10)")
 	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1", "7", "8", "9", "10"))
 
+	// Test for table has tiflash  replica.
+	tk.MustExec("alter table t_recover set tiflash replica 3 location labels 'a','b';")
+	t1 := testGetTableByName(c, tk.Se, "test_recover", "t_recover")
+	// Mock for table replica was available.
+	err = domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, t1.Meta().ID, true)
+	c.Assert(err, IsNil)
+	tk.MustExec("drop table t_recover")
+	tk.MustExec("recover table t_recover")
+	t2 := testGetTableByName(c, tk.Se, "test_recover", "t_recover")
+	c.Assert(t2.Meta().TiFlashReplica.Count, Equals, uint64(3))
+	c.Assert(t2.Meta().TiFlashReplica.LocationLabels, DeepEquals, []string{"a", "b"})
+	c.Assert(t2.Meta().TiFlashReplica.Available, IsFalse)
+	c.Assert(t2.Meta().TiFlashReplica.AvailablePartitionIDs, HasLen, 0)
+
 	gcEnable, err := gcutil.CheckGCEnable(tk.Se)
 	c.Assert(err, IsNil)
 	c.Assert(gcEnable, Equals, false)
@@ -4788,6 +4802,28 @@ func (s *testRecoverTable) TestFlashbackTable(c *C) {
 	// Check flashback table autoID.
 	tk.MustExec("insert into t_p_flashback1 values (6)")
 	tk.MustQuery("select a,_tidb_rowid from t_p_flashback1 order by a;").Check(testkit.Rows("1 1", "2 2", "3 3", "4 5001", "5 5002", "6 10001"))
+
+	// Test for table has tiflash  replica.
+	tk.MustExec("alter table t_p_flashback set tiflash replica 3 location labels 'a','b';")
+	t1 := testGetTableByName(c, tk.Se, "test_flashback", "t_p_flashback")
+	// Mock for all partitions replica was available.
+	partition := t1.Meta().Partition
+	c.Assert(len(partition.Definitions), Equals, 4)
+	err = domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, partition.Definitions[0].ID, true)
+	c.Assert(err, IsNil)
+	err = domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, partition.Definitions[1].ID, true)
+	c.Assert(err, IsNil)
+	err = domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, partition.Definitions[2].ID, true)
+	c.Assert(err, IsNil)
+	err = domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, partition.Definitions[3].ID, true)
+	c.Assert(err, IsNil)
+	tk.MustExec("drop table t_p_flashback")
+	tk.MustExec("flashback table t_p_flashback")
+	t2 := testGetTableByName(c, tk.Se, "test_flashback", "t_p_flashback")
+	c.Assert(t2.Meta().TiFlashReplica.Count, Equals, uint64(3))
+	c.Assert(t2.Meta().TiFlashReplica.LocationLabels, DeepEquals, []string{"a", "b"})
+	c.Assert(t2.Meta().TiFlashReplica.Available, IsFalse)
+	c.Assert(t2.Meta().TiFlashReplica.AvailablePartitionIDs, HasLen, 0)
 }
 
 func (s *testSuiteP2) TestPointGetPreparedPlan(c *C) {
