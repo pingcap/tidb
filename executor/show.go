@@ -54,6 +54,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/format"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -1086,7 +1087,7 @@ func (e *ShowExec) fetchShowCreateDatabase() error {
 }
 
 func (e *ShowExec) fetchShowCollation() error {
-	collations := charset.GetSupportedCollations()
+	collations := collate.GetSupportedCollations()
 	for _, v := range collations {
 		isDefault := ""
 		if v.IsDefault {
