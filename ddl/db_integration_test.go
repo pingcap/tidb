@@ -16,6 +16,7 @@ package ddl_test
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -2223,4 +2224,25 @@ func (s *testIntegrationSuite3) TestCreateTableWithAutoIdCache(c *C) {
 	tk.MustExec("rename table t1 to t;")
 	tk.MustExec("insert into t(b) values(NULL)")
 	tk.MustQuery("select b, _tidb_rowid from t").Check(testkit.Rows("401 402"))
+	tk.MustExec("delete from t")
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t(a int auto_increment key) auto_id_cache 3")
+	tblInfo, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	c.Assert(tblInfo.Meta().AutoIdCache, Equals, int64(3))
+
+	// Test insert batch size(4 here) greater than the customized autoid step(3 here).
+	tk.MustExec("insert into t(a) values(NULL),(NULL),(NULL),(NULL)")
+	tk.MustQuery("select a from t").Check(testkit.Rows("1", "2", "3", "4"))
+	tk.MustExec("delete from t")
+
+	// Invalid the allocator cache, insert will trigger a new cache.
+	tk.MustExec("rename table t to t1;")
+	tk.MustExec("insert into t1(a) values(NULL)")
+	next := tk.MustQuery("select a from t1").Rows()[0][0].(string)
+	nextInt, err := strconv.Atoi(next)
+	c.Assert(err, IsNil)
+	c.Assert(nextInt, Greater, 5)
 }

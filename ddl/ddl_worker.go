@@ -636,7 +636,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	case model.ActionModifyTableComment:
 		ver, err = onModifyTableComment(t, job)
 	case model.ActionModifyTableAutoIdCache:
-		ver, err = onModifyTableAutoIncCache(t, job)
+		ver, err = onModifyTableAutoIDCache(t, job)
 	case model.ActionAddTablePartition:
 		ver, err = onAddTablePartition(d, t, job)
 	case model.ActionModifyTableCharsetAndCollate:

@@ -512,7 +512,7 @@ func onRebaseAutoID(store kv.Storage, t *meta.Meta, job *model.Job) (ver int64, 
 	return ver, nil
 }
 
-func onModifyTableAutoIncCache(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onModifyTableAutoIDCache(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	var cache int64
 	if err := job.DecodeArgs(&cache); err != nil {
 		job.State = model.JobStateCancelled
