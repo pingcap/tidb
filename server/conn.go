@@ -59,7 +59,6 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/sessionctx"
@@ -703,7 +702,6 @@ func (cc *clientConn) Run(ctx context.Context) {
 				zap.String("status", cc.SessionStatusToString()),
 				zap.Stringer("sql", getLastStmtInConn{cc}),
 				zap.String("txn_mode", txnMode),
-				zap.String("err", errStrForLog(err)),
 			)
 			err1 := cc.writeError(err)
 			terror.Log(err1)
@@ -735,14 +733,6 @@ func queryStrForLog(query string) string {
 		return query[:size] + fmt.Sprintf("(len: %d)", len(query))
 	}
 	return query
-}
-
-func errStrForLog(err error) string {
-	if kv.ErrKeyExists.Equal(err) || parser.ErrParse.Equal(err) {
-		// Do not log stack for duplicated entry error.
-		return err.Error()
-	}
-	return errors.ErrorStack(err)
 }
 
 func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
