@@ -734,24 +734,27 @@ func (s *testInfoschemaClusterTableSuite) TestTiDBClusterInfo(c *C) {
 
 func (s *testInfoschemaClusterTableSuite) TestTableStorageStats(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	//err := tk.QueryToErr("select * from information_schema.TABLE_STORAGE_STATS")
-	//c.Assert(err, NotNil)
+	err := tk.QueryToErr("select * from information_schema.TABLE_STORAGE_STATS")
+	c.Assert(err, NotNil)
 	mockAddr := s.mockAddr
 	store := &mockStore{
 		s.store.(tikv.Storage),
 		mockAddr,
 	}
-
+	// information_schema.cluster_info
 	tk = testkit.NewTestKit(c, store)
-	//tidbStatusAddr := fmt.Sprintf(":%d", config.GetGlobalConfig().Status.StatusPort)
-	//row := func(cols ...string) string { return strings.Join(cols, " ") }
-	//tk.MustQuery("select type, instance, status_address, version, git_hash from information_schema.cluster_info").Check(testkit.Rows(
-	//	row("tidb", ":4000", tidbStatusAddr, "5.7.25-TiDB-None", "None"),
-	//	row("pd", mockAddr, mockAddr, "4.0.0-alpha", "mock-pd-githash"),
-	//	row("tikv", "127.0.0.1:20160", mockAddr, "4.0.0-alpha", "mock-tikv-githash"),
-	//))
 	tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'information_schema' and TABLE_NAME='schemata';").Check(
 		testkit.Rows("schemata"))
+	//var servers []string
+	//for _, s := range testServers {
+	//	servers = append(servers, strings.Join([]string{s.typ, s.address, s.address}, ","))
+	//}
+	//fpName1 := "github.com/pingcap/tidb/executor/mockClusterServerInfo"
+	//fpExpr := strings.Join(servers, ";")
+	//c.Assert(failpoint.Enable(fpName1, fmt.Sprintf(`return("%s")`, fpExpr)), IsNil)
+	//defer func() { c.Assert(failpoint.Disable(fpName1), IsNil) }()
+
+
 	//
 	//tk.MustExec("use test")
 	//tk.MustExec("drop table if exists t")

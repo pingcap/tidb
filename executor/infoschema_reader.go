@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/failpoint"
 	"net/http"
 	"net/url"
 	"sort"
@@ -1207,6 +1208,17 @@ func (e *tableStorageStatsRetriever) setDataForTableStorageStats(ctx sessionctx.
 	}
 	pdAddrs = etcd.EtcdAddrs()
 	if len(pdAddrs) == 0 {
+		failpoint.Inject("mockClusterConfigServerInfo", func(val failpoint.Value) {
+			if s := val.(string); len(s) > 0 {
+				serversInfo := parseFailpointServerInfo(s)
+				for _,v := range serversInfo {
+					if v.ServerType == "pd" {
+						pdAddrs[0] = v.Address
+						break
+					}
+				}
+			}
+		})
 		return nil, errors.New("pd unavailable")
 	}
 	count := 0
