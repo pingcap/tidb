@@ -51,6 +51,25 @@ type BatchPointGetExec struct {
 	rowDecoder *rowcodec.ChunkDecoder
 	keepOrder  bool
 	desc       bool
+
+	columns []*model.ColumnInfo
+	// virtualColumnIndex records all the indices of virtual columns and sort them in definition
+	// to make sure we can compute the virtual column in right order.
+	virtualColumnIndex []int
+
+	// virtualColumnRetFieldTypes records the RetFieldTypes of virtual columns.
+	virtualColumnRetFieldTypes []*types.FieldType
+}
+
+// buildVirtualColumnInfo saves virtual column indices and sort them in definition order
+func (e *BatchPointGetExec) buildVirtualColumnInfo() {
+	e.virtualColumnIndex = buildVirtualColumnIndex(e.Schema(), e.columns)
+	if len(e.virtualColumnIndex) > 0 {
+		e.virtualColumnRetFieldTypes = make([]*types.FieldType, len(e.virtualColumnIndex))
+		for i, idx := range e.virtualColumnIndex {
+			e.virtualColumnRetFieldTypes[i] = e.schema.Columns[idx].RetType
+		}
+	}
 }
 
 // Open implements the Executor interface.
@@ -82,6 +101,11 @@ func (e *BatchPointGetExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			return err
 		}
 		e.index++
+	}
+
+	err := FillVirtualColumnValue(e.virtualColumnRetFieldTypes, e.virtualColumnIndex, e.schema, e.columns, e.ctx, req)
+	if err != nil {
+		return err
 	}
 	return nil
 }

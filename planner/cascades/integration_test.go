@@ -55,8 +55,8 @@ func (s *testIntegrationSuite) TestSimpleProjDual(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("set session tidb_enable_cascades_planner = 1")
 	tk.MustQuery("explain select 1").Check(testkit.Rows(
-		"Projection_3 1.00 root 1->Column#1",
-		"└─TableDual_4 1.00 root rows:1",
+		"Projection_3 1.00 root  1->Column#1",
+		"└─TableDual_4 1.00 root  rows:1",
 	))
 	tk.MustQuery("select 1").Check(testkit.Rows(
 		"1",

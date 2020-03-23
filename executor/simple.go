@@ -251,7 +251,12 @@ func (e *SimpleExec) setDefaultRoleAll(s *ast.SetDefaultRoleStmt) error {
 			return ErrCannotUser.GenWithStackByArgs("SET DEFAULT ROLE", user.String())
 		}
 	}
-	sqlExecutor := e.ctx.(sqlexec.SQLExecutor)
+	restrictedCtx, err := e.getSysSession()
+	if err != nil {
+		return err
+	}
+	defer e.releaseSysSession(restrictedCtx)
+	sqlExecutor := restrictedCtx.(sqlexec.SQLExecutor)
 	if _, err := sqlExecutor.Execute(context.Background(), "begin"); err != nil {
 		return err
 	}

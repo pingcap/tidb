@@ -224,17 +224,25 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 func (e *SetExecutor) setCharset(cs, co string) error {
 	var err error
 	if len(co) == 0 {
-		co, err = charset.GetDefaultCollation(cs)
-		if err != nil {
+		if co, err = charset.GetDefaultCollation(cs); err != nil {
 			return err
+		}
+	} else {
+		var coll *charset.Collation
+		if coll, err = charset.GetCollationByName(co); err != nil {
+			return err
+		}
+		if coll.CharsetName != cs {
+			return charset.ErrCollationCharsetMismatch.GenWithStackByArgs(coll.Name, cs)
 		}
 	}
 	sessionVars := e.ctx.GetSessionVars()
 	for _, v := range variable.SetNamesVariables {
-		terror.Log(sessionVars.SetSystemVar(v, cs))
+		if err = sessionVars.SetSystemVar(v, cs); err != nil {
+			return errors.Trace(err)
+		}
 	}
-	terror.Log(sessionVars.SetSystemVar(variable.CollationConnection, co))
-	return nil
+	return errors.Trace(sessionVars.SetSystemVar(variable.CollationConnection, co))
 }
 
 func (e *SetExecutor) getVarValue(v *expression.VarAssignment, sysVar *variable.SysVar) (value types.Datum, err error) {

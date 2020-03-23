@@ -50,10 +50,11 @@ type ColInfo struct {
 	Flag       int32
 	IsPKHandle bool
 
-	Flen    int
-	Decimal int
-	Elems   []string
-	Collate string
+	Flen          int
+	Decimal       int
+	Elems         []string
+	Collate       string
+	VirtualGenCol bool
 }
 
 // DatumMapDecoder decodes the row to datum map.
@@ -219,6 +220,11 @@ func (decoder *ChunkDecoder) DecodeToChunk(rowData []byte, handle int64, chk *ch
 	for colIdx, col := range decoder.columns {
 		if col.ID == decoder.handleColID {
 			chk.AppendInt64(colIdx, handle)
+			continue
+		}
+		// fill the virtual column value after row calculation
+		if col.VirtualGenCol {
+			chk.AppendNull(colIdx)
 			continue
 		}
 

@@ -104,13 +104,15 @@ func (mds *mockDataSource) genColDatums(col int) (results []interface{}) {
 		NDV = mds.p.ndvs[col]
 	}
 	results = make([]interface{}, 0, rows)
-	if mds.p.genDataFunc != nil {
-		for i := 0; i < rows; i++ {
-			results = append(results, mds.p.genDataFunc(i, typ))
-		}
-	} else if NDV == 0 {
-		for i := 0; i < rows; i++ {
-			results = append(results, mds.randDatum(typ))
+	if NDV == 0 {
+		if mds.p.genDataFunc == nil {
+			for i := 0; i < rows; i++ {
+				results = append(results, mds.randDatum(typ))
+			}
+		} else {
+			for i := 0; i < rows; i++ {
+				results = append(results, mds.p.genDataFunc(i, typ))
+			}
 		}
 	} else {
 		datumSet := make(map[string]bool, NDV)
@@ -152,8 +154,11 @@ func (mds *mockDataSource) randDatum(typ *types.FieldType) interface{} {
 	switch typ.Tp {
 	case mysql.TypeLong, mysql.TypeLonglong:
 		return int64(rand.Int())
-	case mysql.TypeDouble:
+	case mysql.TypeDouble, mysql.TypeFloat:
 		return rand.Float64()
+	case mysql.TypeNewDecimal:
+		var d types.MyDecimal
+		return d.FromInt(int64(rand.Int()))
 	case mysql.TypeVarString:
 		buff := make([]byte, 10)
 		rand.Read(buff)
@@ -185,9 +190,9 @@ func (mds *mockDataSource) Next(ctx context.Context, req *chunk.Chunk) error {
 func buildMockDataSource(opt mockDataSourceParameters) *mockDataSource {
 	baseExec := newBaseExecutor(opt.ctx, opt.schema, nil)
 	m := &mockDataSource{baseExec, opt, nil, nil, 0}
-	types := retTypes(m)
-	colData := make([][]interface{}, len(types))
-	for i := 0; i < len(types); i++ {
+	rTypes := retTypes(m)
+	colData := make([][]interface{}, len(rTypes))
+	for i := 0; i < len(rTypes); i++ {
 		colData[i] = m.genColDatums(i)
 	}
 
@@ -199,12 +204,14 @@ func buildMockDataSource(opt mockDataSourceParameters) *mockDataSource {
 	for i := 0; i < m.p.rows; i++ {
 		idx := i / m.maxChunkSize
 		retTypes := retTypes(m)
-		for colIdx := 0; colIdx < len(types); colIdx++ {
+		for colIdx := 0; colIdx < len(rTypes); colIdx++ {
 			switch retTypes[colIdx].Tp {
 			case mysql.TypeLong, mysql.TypeLonglong:
 				m.genData[idx].AppendInt64(colIdx, colData[colIdx][i].(int64))
-			case mysql.TypeDouble:
+			case mysql.TypeDouble, mysql.TypeFloat:
 				m.genData[idx].AppendFloat64(colIdx, colData[colIdx][i].(float64))
+			case mysql.TypeNewDecimal:
+				m.genData[idx].AppendMyDecimal(colIdx, colData[colIdx][i].(*types.MyDecimal))
 			case mysql.TypeVarString:
 				m.genData[idx].AppendString(colIdx, colData[colIdx][i].(string))
 			default:
@@ -509,27 +516,25 @@ type windowTestCase struct {
 	dataSourceSorted bool
 	ctx              sessionctx.Context
 	rawDataSmall     string
-}
-
-func (a windowTestCase) columns() []*expression.Column {
-	return []*expression.Column{
-		{Index: 0, RetType: types.NewFieldType(mysql.TypeDouble)},
-		{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)},
-		{Index: 2, RetType: types.NewFieldType(mysql.TypeVarString)},
-		{Index: 3, RetType: types.NewFieldType(mysql.TypeLonglong)},
-	}
+	columns          []*expression.Column // the columns of mock schema
 }
 
 func (a windowTestCase) String() string {
-	return fmt.Sprintf("(func:%v, numFunc:%v, ndv:%v, rows:%v, sorted:%v, concurrency:%v)",
-		a.windowFunc, a.numFunc, a.ndv, a.rows, a.dataSourceSorted, a.concurrency)
+	return fmt.Sprintf("(func:%v, aggColType:%s, numFunc:%v, ndv:%v, rows:%v, sorted:%v, concurrency:%v)",
+		a.windowFunc, a.columns[0].RetType, a.numFunc, a.ndv, a.rows, a.dataSourceSorted, a.concurrency)
 }
 
 func defaultWindowTestCase() *windowTestCase {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
 	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
-	return &windowTestCase{ast.WindowFuncRowNumber, 1, nil, 1000, 10000000, 1, true, ctx, strings.Repeat("x", 16)}
+	return &windowTestCase{ast.WindowFuncRowNumber, 1, nil, 1000, 10000000, 1, true, ctx, strings.Repeat("x", 16),
+		[]*expression.Column{
+			{Index: 0, RetType: types.NewFieldType(mysql.TypeDouble)},
+			{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)},
+			{Index: 2, RetType: types.NewFieldType(mysql.TypeVarString)},
+			{Index: 3, RetType: types.NewFieldType(mysql.TypeLonglong)},
+		}}
 }
 
 func benchmarkWindowExecWithCase(b *testing.B, casTest *windowTestCase) {
@@ -538,29 +543,19 @@ func benchmarkWindowExecWithCase(b *testing.B, casTest *windowTestCase) {
 		b.Fatal(err)
 	}
 
-	cols := casTest.columns()
+	cols := casTest.columns
 	dataSource := buildMockDataSource(mockDataSourceParameters{
 		schema: expression.NewSchema(cols...),
 		ndvs:   []int{0, casTest.ndv, 0, 0},
 		orders: []bool{false, casTest.dataSourceSorted, false, false},
 		rows:   casTest.rows,
 		ctx:    casTest.ctx,
-		genDataFunc: func(row int, typ *types.FieldType) interface{} {
-			switch typ.Tp {
-			case mysql.TypeLong, mysql.TypeLonglong:
-				return int64(row)
-			case mysql.TypeVarString:
-				return casTest.rawDataSmall
-			default:
-				panic("not implement")
-			}
-		},
 	})
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		b.StopTimer() // prepare a new window-executor
-		childCols := casTest.columns()
+		childCols := casTest.columns
 		schema := expression.NewSchema(childCols...)
 		windowExec := buildWindowExecutor(casTest.ctx, casTest.windowFunc, casTest.numFunc, casTest.frame, dataSource, schema, childCols[1:2], casTest.concurrency, casTest.dataSourceSorted)
 		tmpCtx := context.Background()
@@ -675,33 +670,40 @@ func BenchmarkWindowFunctionsWithFrame(b *testing.B) {
 	}
 }
 
-func BenchmarkWindowFunctionsWithSlidingWindow(b *testing.B) {
+func baseBenchmarkWindowFunctionsWithSlidingWindow(b *testing.B, frameType ast.FrameType) {
 	b.ReportAllocs()
-	windowFuncs := []string{
-		ast.AggFuncCount,
+	windowFuncs := []struct {
+		aggFunc     string
+		aggColTypes byte
+	}{
+		{ast.AggFuncSum, mysql.TypeFloat},
+		{ast.AggFuncSum, mysql.TypeNewDecimal},
+		{ast.AggFuncCount, mysql.TypeLong},
 	}
-	rows := []int{1000, 100000}
-	ndvs := []int{10, 1000}
-	frames := []*core.WindowFrame{
-		{Type: ast.Rows, Start: &core.FrameBound{Type: ast.Preceding, Num: 10}, End: &core.FrameBound{Type: ast.Following, Num: 10}},
-		{Type: ast.Rows, Start: &core.FrameBound{Type: ast.Preceding, Num: 100}, End: &core.FrameBound{Type: ast.Following, Num: 100}},
+	row := 100000
+	ndv := 100
+	frame := &core.WindowFrame{
+		Type:  frameType,
+		Start: &core.FrameBound{Type: ast.Preceding, Num: 10},
+		End:   &core.FrameBound{Type: ast.Following, Num: 10},
 	}
-	for _, row := range rows {
-		for _, ndv := range ndvs {
-			for _, frame := range frames {
-				for _, windowFunc := range windowFuncs {
-					cas := defaultWindowTestCase()
-					cas.rows = row
-					cas.ndv = ndv
-					cas.windowFunc = windowFunc
-					cas.frame = frame
-					b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
-						benchmarkWindowExecWithCase(b, cas)
-					})
-				}
-			}
-		}
+	for _, windowFunc := range windowFuncs {
+		cas := defaultWindowTestCase()
+		cas.ctx.GetSessionVars().WindowingUseHighPrecision = false
+		cas.rows = row
+		cas.ndv = ndv
+		cas.windowFunc = windowFunc.aggFunc
+		cas.frame = frame
+		cas.columns[0].RetType.Tp = windowFunc.aggColTypes
+		b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+			benchmarkWindowExecWithCase(b, cas)
+		})
 	}
+}
+
+func BenchmarkWindowFunctionsWithSlidingWindow(b *testing.B) {
+	baseBenchmarkWindowFunctionsWithSlidingWindow(b, ast.Rows)
+	baseBenchmarkWindowFunctionsWithSlidingWindow(b, ast.Ranges)
 }
 
 type hashJoinTestCase struct {

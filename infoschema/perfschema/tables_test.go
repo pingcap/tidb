@@ -151,7 +151,7 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 		from performance_schema.events_statements_summary_by_digest
 		where digest_text like 'select * from t%'`,
 	).Check(testkit.Rows("select test test.t t:k 1 2 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tIndexLookUp_10\troot\t100\t\n" +
-		"\t├─IndexScan_8 \tcop \t100\ttable:t, index:a, range:[2,2], keep order:false, stats:pseudo\n" +
+		"\t├─IndexScan_8 \tcop \t100\ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
 		"\t└─TableScan_9 \tcop \t100\ttable:t, keep order:false, stats:pseudo"))
 
 	// select ... order by
@@ -171,7 +171,7 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 		from performance_schema.events_statements_summary_by_digest
 		where digest_text like 'select * from t%'`,
 	).Check(testkit.Rows("select test test.t t:k 2 4 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tIndexLookUp_10\troot\t100\t\n" +
-		"\t├─IndexScan_8 \tcop \t100\ttable:t, index:a, range:[2,2], keep order:false, stats:pseudo\n" +
+		"\t├─IndexScan_8 \tcop \t100\ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
 		"\t└─TableScan_9 \tcop \t100\ttable:t, keep order:false, stats:pseudo"))
 
 	// Disable it again.
@@ -220,7 +220,7 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 		from performance_schema.events_statements_summary_by_digest
 		where digest_text like 'select * from t%'`,
 	).Check(testkit.Rows("select test test.t t:k 1 2 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tIndexLookUp_10\troot\t1000\t\n" +
-		"\t├─IndexScan_8 \tcop \t1000\ttable:t, index:a, range:[2,2], keep order:false, stats:pseudo\n" +
+		"\t├─IndexScan_8 \tcop \t1000\ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
 		"\t└─TableScan_9 \tcop \t1000\ttable:t, keep order:false, stats:pseudo"))
 
 	// Disable it in global scope.
@@ -238,7 +238,7 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 		from performance_schema.events_statements_summary_by_digest
 		where digest_text like 'select * from t%'`,
 	).Check(testkit.Rows("select test test.t t:k 2 4 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tIndexLookUp_10\troot\t1000\t\n" +
-		"\t├─IndexScan_8 \tcop \t1000\ttable:t, index:a, range:[2,2], keep order:false, stats:pseudo\n" +
+		"\t├─IndexScan_8 \tcop \t1000\ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
 		"\t└─TableScan_9 \tcop \t1000\ttable:t, keep order:false, stats:pseudo"))
 
 	// Unset session variable.

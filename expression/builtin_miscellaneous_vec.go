@@ -334,20 +334,22 @@ func (b *builtinSleepSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 }
 
 func doSleep(secs float64, sessVars *variable.SessionVars) (isKilled bool) {
+	if secs <= 0.0 {
+		return false
+	}
 	dur := time.Duration(secs * float64(time.Second.Nanoseconds()))
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
-	start := time.Now()
+	timer := time.NewTimer(dur)
 	for {
 		select {
-		case now := <-ticker.C:
+		case <-ticker.C:
 			if atomic.CompareAndSwapUint32(&sessVars.Killed, 1, 0) {
+				timer.Stop()
 				return true
 			}
-
-			if now.Sub(start) > dur {
-				return false
-			}
+		case <-timer.C:
+			return false
 		}
 	}
 }

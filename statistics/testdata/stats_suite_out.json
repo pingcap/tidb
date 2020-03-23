@@ -3,7 +3,7 @@
     "Name": "TestUniqCompEqualEst",
     "Cases": [
       [
-        "Point_Get_5 1.00 root table:t, index:a b"
+        "Point_Get_5 1.00 root table:t, index:PRIMARY(a, b) "
       ]
     ]
   },
@@ -11,48 +11,48 @@
     "Name": "TestColumnIndexNullEstimation",
     "Cases": [
       [
-        "IndexReader_6 4.00 root index:IndexFullScan_5",
-        "└─IndexFullScan_5 4.00 cop[tikv] table:t, index:b, keep order:false"
+        "IndexReader_6 4.00 root  index:IndexFullScan_5",
+        "└─IndexFullScan_5 4.00 cop[tikv] table:t, index:idx_b(b) keep order:false"
       ],
       [
-        "IndexReader_6 1.00 root index:IndexFullScan_5",
-        "└─IndexFullScan_5 1.00 cop[tikv] table:t, index:b, keep order:false"
+        "IndexReader_6 1.00 root  index:IndexFullScan_5",
+        "└─IndexFullScan_5 1.00 cop[tikv] table:t, index:idx_b(b) keep order:false"
       ],
       [
-        "IndexReader_6 4.00 root index:IndexRangeScan_5",
-        "└─IndexRangeScan_5 4.00 cop[tikv] table:t, index:b, range:[NULL,NULL], (3,+inf], keep order:false"
+        "IndexReader_6 4.00 root  index:IndexRangeScan_5",
+        "└─IndexRangeScan_5 4.00 cop[tikv] table:t, index:idx_b(b) range:[NULL,NULL], (3,+inf], keep order:false"
       ],
       [
-        "IndexReader_5 5.00 root index:IndexFullScan_4",
-        "└─IndexFullScan_4 5.00 cop[tikv] table:t, index:b, keep order:false"
+        "IndexReader_5 5.00 root  index:IndexFullScan_4",
+        "└─IndexFullScan_4 5.00 cop[tikv] table:t, index:idx_b(b) keep order:false"
       ],
       [
-        "IndexReader_6 1.00 root index:IndexRangeScan_5",
-        "└─IndexRangeScan_5 1.00 cop[tikv] table:t, index:b, range:[-inf,4), keep order:false"
+        "IndexReader_6 1.00 root  index:IndexRangeScan_5",
+        "└─IndexRangeScan_5 1.00 cop[tikv] table:t, index:idx_b(b) range:[-inf,4), keep order:false"
       ],
       [
-        "TableReader_7 1.00 root data:Selection_6",
-        "└─Selection_6 1.00 cop[tikv] isnull(test.t.a)",
-        "  └─TableFullScan_5 5.00 cop[tikv] table:t, keep order:false"
+        "TableReader_7 1.00 root  data:Selection_6",
+        "└─Selection_6 1.00 cop[tikv]  isnull(test.t.a)",
+        "  └─TableFullScan_5 5.00 cop[tikv] table:t keep order:false"
       ],
       [
-        "TableReader_7 4.00 root data:Selection_6",
-        "└─Selection_6 4.00 cop[tikv] not(isnull(test.t.a))",
-        "  └─TableFullScan_5 5.00 cop[tikv] table:t, keep order:false"
+        "TableReader_7 4.00 root  data:Selection_6",
+        "└─Selection_6 4.00 cop[tikv]  not(isnull(test.t.a))",
+        "  └─TableFullScan_5 5.00 cop[tikv] table:t keep order:false"
       ],
       [
-        "TableReader_7 2.00 root data:Selection_6",
-        "└─Selection_6 2.00 cop[tikv] or(isnull(test.t.a), gt(test.t.a, 3))",
-        "  └─TableFullScan_5 5.00 cop[tikv] table:t, keep order:false"
+        "TableReader_7 2.00 root  data:Selection_6",
+        "└─Selection_6 2.00 cop[tikv]  or(isnull(test.t.a), gt(test.t.a, 3))",
+        "  └─TableFullScan_5 5.00 cop[tikv] table:t keep order:false"
       ],
       [
-        "TableReader_5 5.00 root data:TableFullScan_4",
-        "└─TableFullScan_4 5.00 cop[tikv] table:t, keep order:false"
+        "TableReader_5 5.00 root  data:TableFullScan_4",
+        "└─TableFullScan_4 5.00 cop[tikv] table:t keep order:false"
       ],
       [
-        "TableReader_7 3.00 root data:Selection_6",
-        "└─Selection_6 3.00 cop[tikv] lt(test.t.a, 4)",
-        "  └─TableFullScan_5 5.00 cop[tikv] table:t, keep order:false"
+        "TableReader_7 3.00 root  data:Selection_6",
+        "└─Selection_6 3.00 cop[tikv]  lt(test.t.a, 4)",
+        "  └─TableFullScan_5 5.00 cop[tikv] table:t keep order:false"
       ]
     ]
   },
@@ -60,8 +60,8 @@
     "Name": "TestDiscreteDistribution",
     "Cases": [
       [
-        "IndexReader_6 0.00 root index:IndexRangeScan_5",
-        "└─IndexRangeScan_5 0.00 cop[tikv] table:t, index:a, b, range:[\"tw\" -inf,\"tw\" 0), keep order:false"
+        "IndexReader_6 0.00 root  index:IndexRangeScan_5",
+        "└─IndexRangeScan_5 0.00 cop[tikv] table:t, index:idx(a, b) range:[\"tw\" -inf,\"tw\" 0), keep order:false"
       ]
     ]
   },
@@ -69,13 +69,13 @@
     "Name": "TestPrimaryKeySelectivity",
     "Cases": [
       [
-        "TableReader_7 3333.33 root data:Selection_6",
-        "└─Selection_6 3333.33 cop[tikv] gt(test.t.a, \"t\")",
-        "  └─TableFullScan_5 10000.00 cop[tikv] table:t, keep order:false, stats:pseudo"
+        "TableReader_7 3333.33 root  data:Selection_6",
+        "└─Selection_6 3333.33 cop[tikv]  gt(test.t.a, \"t\")",
+        "  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
       ],
       [
-        "TableReader_6 3333.33 root data:TableRangeScan_5",
-        "└─TableRangeScan_5 3333.33 cop[tikv] table:t, range:(1,+inf], keep order:false, stats:pseudo"
+        "TableReader_6 3333.33 root  data:TableRangeScan_5",
+        "└─TableRangeScan_5 3333.33 cop[tikv] table:t range:(1,+inf], keep order:false, stats:pseudo"
       ]
     ]
   },
@@ -83,8 +83,8 @@
     "Name": "TestSelectCombinedLowBound",
     "Cases": [
       [
-        "IndexReader_6 7.00 root index:IndexRangeScan_5",
-        "└─IndexRangeScan_5 7.00 cop[tikv] table:t, index:kid, pid, range:[1,1], keep order:false"
+        "IndexReader_6 7.00 root  index:IndexRangeScan_5",
+        "└─IndexRangeScan_5 7.00 cop[tikv] table:t, index:kid(kid, pid) range:[1,1], keep order:false"
       ]
     ]
   }
