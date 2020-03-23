@@ -247,6 +247,12 @@ func (configInspection) inspectCheckConfig(_ context.Context, sctx sessionctx.Co
 			value:  "0",
 			detail: "slow-threshold = 0 will record every query to slow log, it may affect performance",
 		},
+		{
+			tp:     "tikv",
+			key:    "raftstore.sync-log",
+			value:  "false",
+			detail: "sync-log should be true to avoid recover region when the machine breaks down",
+		},
 	}
 
 	var results []inspectionResult
