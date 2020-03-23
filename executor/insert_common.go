@@ -898,7 +898,8 @@ func (e *InsertValues) allocAutoRandomID(fieldType *types.FieldType) (int64, err
 	if tables.OverflowShardBits(autoRandomID, tableInfo.AutoRandomBits, typeBitsLength) {
 		return 0, autoid.ErrAutoRandReadFailed
 	}
-	shard := tables.CalcShard(tableInfo.AutoRandomBits, e.ctx.GetSessionVars().TxnCtx.StartTS, typeBitsLength)
+	isSigned := !mysql.HasUnsignedFlag(fieldType.Flag)
+	shard := tables.CalcShard(tableInfo.AutoRandomBits, e.ctx.GetSessionVars().TxnCtx.StartTS, typeBitsLength, isSigned)
 	autoRandomID |= shard
 	return autoRandomID, nil
 }
