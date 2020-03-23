@@ -19,7 +19,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"math"
 	"net/http"
 	"sort"
 	"strings"
@@ -483,13 +482,8 @@ func (e *clusterLogRetriever) initialize(ctx context.Context, sctx sessionctx.Co
 		levels = append(levels, sysutil.ParseLogLevel(l))
 	}
 
-	startTime := e.extractor.StartTime
-	endTime := e.extractor.EndTime
+	startTime, endTime := e.extractor.GetTimeRange(isFailpointTestModeSkipCheck)
 	patterns := e.extractor.Patterns
-
-	if endTime == 0 {
-		endTime = math.MaxInt64
-	}
 
 	// There is no performance issue to check this variable because it will
 	// be eliminated in non-failpoint mode.
@@ -498,16 +492,6 @@ func (e *clusterLogRetriever) initialize(ctx context.Context, sctx sessionctx.Co
 		// in normally SQL. (But in test mode we should relax this limitation)
 		if len(patterns) == 0 && len(levels) == 0 && len(instances) == 0 && len(nodeTypes) == 0 {
 			return nil, errors.New("denied to scan full logs (use `SELECT * FROM cluster_log WHERE message LIKE '%'` explicitly if intentionally)")
-		}
-
-		// Just search the recent half an hour logs if the user doesn't specify the start time
-		const defaultSearchLogDuration = 30 * time.Minute / time.Millisecond
-		if startTime == 0 {
-			if endTime == math.MaxInt64 {
-				startTime = time.Now().UnixNano()/int64(time.Millisecond) - int64(defaultSearchLogDuration)
-			} else {
-				startTime = endTime - int64(defaultSearchLogDuration)
-			}
 		}
 	}
 
