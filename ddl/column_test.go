@@ -946,7 +946,7 @@ func (s *testColumnSuite) TestModifyColumn(c *C) {
 	for _, tt := range tests {
 		ftA := s.colDefStrToFieldType(c, tt.origin)
 		ftB := s.colDefStrToFieldType(c, tt.to)
-		err := modifiable(ftA, ftB, false)
+		err := checkModifyTypes(ftA, ftB, false)
 		if err == nil {
 			c.Assert(tt.err, IsNil)
 		} else {
