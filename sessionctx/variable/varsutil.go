@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/timeutil"
 )
 
@@ -391,6 +392,13 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 			return "1", nil
 		}
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+	case WindowingUseHighPrecision:
+		if strings.EqualFold(value, "OFF") || value == "0" {
+			return "OFF", nil
+		} else if strings.EqualFold(value, "ON") || value == "1" {
+			return "ON", nil
+		}
+		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 	case TiDBSkipUTF8Check, TiDBOptAggPushDown,
 		TiDBOptInSubqToJoinAndAgg, TiDBEnableFastAnalyze,
 		TiDBBatchInsert, TiDBDisableTxnAutoRetry, TiDBEnableStreaming, TiDBEnableChunkRPC,
@@ -692,6 +700,10 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 			return value, errors.Errorf("%v(%d) cannot be smaller than %v or larger than %v", name, v, 10, 60*60*60)
 		}
 		return value, nil
+	case CollationConnection, CollationDatabase, CollationServer:
+		if _, err := collate.GetCollationByName(value); err != nil {
+			return value, errors.Trace(err)
+		}
 	}
 	return value, nil
 }
