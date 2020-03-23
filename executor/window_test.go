@@ -17,6 +17,8 @@ import (
 	"fmt"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/testkit"
+	"strings"
+	"time"
 )
 
 func (s *testSuite7) TestWindowFunctions(c *C) {
@@ -311,8 +313,19 @@ func (s *testSuite7) TestSlidingWindowFunctionsSumDecimal(c *C) {
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("CREATE TABLE t (id DECIMAL, sex CHAR(1));")
-	for i := 0; i < 100000; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t values (%d,'M')", i%10))
+	s1 := time.Now()
+	var builder strings.Builder
+	for i := 0; i < 20; i++ {
+		builder.Reset()
+		fmt.Fprintf(&builder, "insert into t values ")
+		for j := 0; j < 1000; j++ {
+			fmt.Fprintf(&builder, "(%d,'M'),", j%10)
+		}
+		sql := builder.String()
+		tk.MustExec(sql[:len(sql)-1])
 	}
+	s2 := time.Now()
+	fmt.Printf("insert cost: %v\n", s2.Sub(s1))
 	_ = tk.MustQuery("SELECT sex, SUM(id) OVER (PARTITION BY id ROWS BETWEEN 100 PRECEDING and 100 FOLLOWING) FROM t;")
+	fmt.Printf("query cost: %v\n", time.Now().Sub(s2))
 }
