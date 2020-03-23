@@ -16,6 +16,7 @@ package bindinfo
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/util/set"
 	"runtime"
 	"strconv"
 	"strings"
@@ -164,6 +165,70 @@ func (h *BindHandle) Update(fullLoad bool) (err error) {
 			newCache.removeDeletedBindRecord(hash, newRecord)
 		}
 		updateMetrics(metrics.ScopeGlobal, oldRecord, newCache.getBindRecord(hash, meta.OriginalSQL, meta.Db), true)
+	}
+	return nil
+}
+
+// GCBindRecord deletes the deleted binding from global bind record.
+func (h *BindHandle) GCBindRecord() error {
+	sql := "delete from mysql.bind_info where status in (\"" + deleted + "\",\"" + Rejected + "\",\"" + Invalid + "\")"
+	_, _, err := h.sctx.Context.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+	if err != nil {
+		return err
+	}
+
+	rows, _, err := h.sctx.Context.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL("show databases")
+	if err != nil {
+		return err
+	}
+	sql = "delete from mysql.bind_info"
+	dbSet := set.NewStringSet()
+	if len(rows) > 0 {
+		sql += " where default_db not in ("
+		for _, row := range rows {
+			tmpDB := row.GetString(0)
+			dbSet.Insert(tmpDB)
+			sql += "\"" + tmpDB + "\""
+			if row.Idx() != len(rows) - 1 {
+				sql += ","
+			}
+		}
+		sql += ")"
+	}
+	_, _, err = h.sctx.Context.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+	if err != nil {
+		return err
+	}
+
+	h.bindInfo.Lock()
+	newCache := h.bindInfo.Value.Load().(cache).copy()
+	// Do not update UpdateTime here.
+	defer func() {
+		h.bindInfo.Value.Store(newCache)
+		h.bindInfo.Unlock()
+	}()
+	for hash, bindRecords := range newCache {
+		for _, bindRecord := range bindRecords {
+			if !dbSet.Exist(bindRecord.Db) {
+				newCache.removeDeletedBindRecord(hash, bindRecord)
+				continue
+			}
+
+			deleteRecord := &BindRecord{Db: bindRecord.Db, OriginalSQL: bindRecord.OriginalSQL}
+			for _, binding := range bindRecord.Bindings {
+				if binding.Status == deleted || binding.Status == Rejected || binding.Status == Invalid {
+					binding.Status = deleted
+					deleteRecord.Bindings = append(deleteRecord.Bindings, binding)
+				}
+			}
+			newRecord := merge(bindRecord, deleteRecord).removeDeletedBindings()
+			if len(newRecord.Bindings) > 0 {
+				newCache.setBindRecord(hash, newRecord)
+			} else {
+				newCache.removeDeletedBindRecord(hash, newRecord)
+			}
+			updateMetrics(metrics.ScopeGlobal, bindRecord, newCache.getBindRecord(hash, deleteRecord.OriginalSQL, deleteRecord.Db), true)
+		}
 	}
 	return nil
 }

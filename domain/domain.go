@@ -883,6 +883,7 @@ func (do *Domain) globalBindHandleWorkerLoop() {
 		defer do.wg.Done()
 		defer recoverInDomain("globalBindHandleWorkerLoop", false)
 		bindWorkerTicker := time.NewTicker(bindinfo.Lease)
+		bindGCWorkerTicker := time.NewTicker(bindinfo.Lease * 10)
 		defer bindWorkerTicker.Stop()
 		for {
 			select {
@@ -898,6 +899,11 @@ func (do *Domain) globalBindHandleWorkerLoop() {
 					do.bindHandle.CaptureBaselines()
 				}
 				do.bindHandle.SaveEvolveTasksToStore()
+			case <-bindGCWorkerTicker.C:
+				err := do.bindHandle.GCBindRecord()
+				if err != nil {
+					logutil.BgLogger().Error("gc bindinfo failed", zap.Error(err))
+				}
 			}
 		}
 	}()
