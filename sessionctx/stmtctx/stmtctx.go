@@ -188,6 +188,13 @@ func (sc *StatementContext) SQLDigest() (normalized, sqlDigest string) {
 	return sc.digestMemo.normalized, sc.digestMemo.digest
 }
 
+// InitSQLDigest sets the normalized and digest for sql.
+func (sc *StatementContext) InitSQLDigest(normalized, digest string) {
+	sc.digestMemo.Do(func() {
+		sc.digestMemo.normalized, sc.digestMemo.digest = normalized, digest
+	})
+}
+
 // GetPlanDigest gets the normalized plan and plan digest.
 func (sc *StatementContext) GetPlanDigest() (normalized, planDigest string) {
 	return sc.planNormalized, sc.planDigest
