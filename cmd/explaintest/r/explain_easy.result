@@ -57,11 +57,10 @@ Update_2	N/A	root	N/A
 └─Point_Get_1	1.00	root	table:t1, handle:1
 explain delete from t1 where t1.c2 = 1;
 id	estRows	task	operator info
-Delete_5	N/A	root	N/A
-└─SelectLock_7	10.00	root	for update
-  └─IndexLookUp_13	10.00	root	
-    ├─IndexRangeScan_11(Build)	10.00	cop[tikv]	table:t1, index:c2, range:[1,1], keep order:false, stats:pseudo
-    └─TableRowIDScan_12(Probe)	10.00	cop[tikv]	table:t1, keep order:false, stats:pseudo
+Delete_4	N/A	root	N/A
+└─IndexLookUp_11	10.00	root	
+  ├─IndexRangeScan_9(Build)	10.00	cop[tikv]	table:t1, index:c2, range:[1,1], keep order:false, stats:pseudo
+  └─TableRowIDScan_10(Probe)	10.00	cop[tikv]	table:t1, keep order:false, stats:pseudo
 explain select count(b.c2) from t1 a, t2 b where a.c1 = b.c2 group by a.c1;
 id	estRows	task	operator info
 Projection_11	9990.00	root	cast(Column#8, bigint(21) BINARY)->Column#7
