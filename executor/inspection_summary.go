@@ -422,15 +422,14 @@ func (e *inspectionSummaryRetriever) retrieve(ctx context.Context, sctx sessionc
 	// If InstanceAddrCache is nil, set it and release it in the end.
 	clusterInfo := make(map[string]string)
 	if sctx.GetSessionVars().InstanceAddrCache == nil {
-		serversInfo, err := infoschema.GetClusterServerInfo(sctx)
+		var err error
+		clusterInfo, err = GetInstanceMap(sctx)
 		if err != nil {
 			return nil, err
 		}
-		for _, v := range serversInfo {
-			sctx.GetSessionVars().InstanceAddrCache[v.StatusAddr] = v.Address
-		}
+	} else {
+		clusterInfo = sctx.GetSessionVars().InstanceAddrCache
 	}
-	clusterInfo = sctx.GetSessionVars().InstanceAddrCache
 	defer func() { sctx.GetSessionVars().InstanceAddrCache = nil }()
 
 	condition := e.timeRange.Condition()

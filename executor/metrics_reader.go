@@ -62,19 +62,18 @@ func (e *MetricRetriever) retrieve(ctx context.Context, sctx sessionctx.Context)
 		}
 	})
 
-	serversInfo, err := infoschema.GetClusterServerInfo(sctx)
-	failpoint.Inject("mockClusterServerInfo", func(val failpoint.Value) {
-		if s := val.(string); len(s) > 0 {
-			// erase the error
-			serversInfo, err = parseFailpointServerInfo(s), nil
-		}
-	})
-	if err != nil {
-		return nil, err
-	}
+	// Get clusterInfo from global cache.
+	// If InstanceAddrCache is nil, set it and release it in the end.
 	clusterInfo := make(map[string]string)
-	for _, v := range serversInfo {
-		clusterInfo[v.StatusAddr] = v.Address
+	if sctx.GetSessionVars().InstanceAddrCache == nil {
+		var err error
+		clusterInfo, err = GetInstanceMap(sctx)
+		if err != nil {
+			return nil, err
+		}
+		defer func() { sctx.GetSessionVars().InstanceAddrCache = nil }()
+	} else {
+		clusterInfo = sctx.GetSessionVars().InstanceAddrCache
 	}
 
 	tblDef, err := infoschema.GetMetricTableDef(e.table.Name.L)
@@ -295,6 +294,20 @@ func (e *MetricsSummaryByLabelRetriever) retrieve(ctx context.Context, sctx sess
 	}
 	sort.Strings(tables)
 
+	// Get clusterInfo from global cache.
+	// If InstanceAddrCache is nil, set it and release it in the end.
+	clusterInfo := make(map[string]string)
+	if sctx.GetSessionVars().InstanceAddrCache == nil {
+		var err error
+		clusterInfo, err = GetInstanceMap(sctx)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		clusterInfo = sctx.GetSessionVars().InstanceAddrCache
+	}
+	defer func() { sctx.GetSessionVars().InstanceAddrCache = nil }()
+
 	filter := inspectionFilter{set: e.extractor.MetricsNames}
 	condition := e.timeRange.Condition()
 	for _, name := range tables {
@@ -356,6 +369,12 @@ func (e *MetricsSummaryByLabelRetriever) retrieve(ctx context.Context, sctx sess
 			if def.Quantile > 0 {
 				quantile = row.GetFloat64(row.Len() - 1) // quantile will be the last column
 			}
+
+			// Filter the StatusAddr to instance
+			if _, ok := clusterInfo[instance]; ok {
+				instance = clusterInfo[instance]
+			}
+
 			totalRows = append(totalRows, types.MakeDatums(
 				instance,
 				name,
@@ -370,4 +389,18 @@ func (e *MetricsSummaryByLabelRetriever) retrieve(ctx context.Context, sctx sess
 		}
 	}
 	return totalRows, nil
+}
+
+// Get clusterInfo and set it in InstanceAddrCache.
+func GetInstanceMap(sctx sessionctx.Context) (map[string]string, error) {
+	clusterInfo := make(map[string]string)
+	serversInfo, err := infoschema.GetClusterServerInfo(sctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, v := range serversInfo {
+		clusterInfo[v.StatusAddr] = v.Address
+	}
+	sctx.GetSessionVars().InstanceAddrCache = clusterInfo
+	return clusterInfo, nil
 }
