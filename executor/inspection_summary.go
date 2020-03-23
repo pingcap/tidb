@@ -420,7 +420,7 @@ func (e *inspectionSummaryRetriever) retrieve(ctx context.Context, sctx sessionc
 
 	// Get clusterInfo from global cache.
 	// If InstanceAddrCache is nil, set it and release it in the end.
-	clusterInfo := make(map[string]string)
+	var clusterInfo map[string]string
 	if sctx.GetSessionVars().InstanceAddrCache == nil {
 		var err error
 		clusterInfo, err = GetInstanceMap(sctx)
