@@ -894,12 +894,11 @@ func (e *InsertValues) allocAutoRandomID(fieldType *types.FieldType) (int64, err
 		return 0, err
 	}
 
-	typeBitsLength := uint64(mysql.DefaultLengthOfMysqlTypes[fieldType.Tp] * 8)
-	if tables.OverflowShardBits(autoRandomID, tableInfo.AutoRandomBits, typeBitsLength) {
+	layout := autoid.NewAutoRandomIDLayout(fieldType, tableInfo.AutoRandomBits)
+	if tables.OverflowShardBits(autoRandomID, tableInfo.AutoRandomBits, layout.TypeBitsLength, layout.HasSignBit) {
 		return 0, autoid.ErrAutoRandReadFailed
 	}
-	isSigned := !mysql.HasUnsignedFlag(fieldType.Flag)
-	shard := tables.CalcShard(tableInfo.AutoRandomBits, e.ctx.GetSessionVars().TxnCtx.StartTS, typeBitsLength, isSigned)
+	shard := tables.CalcShard(tableInfo.AutoRandomBits, e.ctx.GetSessionVars().TxnCtx.StartTS, layout.TypeBitsLength, layout.HasSignBit)
 	autoRandomID |= shard
 	return autoRandomID, nil
 }
@@ -911,10 +910,8 @@ func (e *InsertValues) rebaseAutoRandomID(recordID int64, fieldType *types.Field
 	alloc := e.Table.Allocators(e.ctx).Get(autoid.AutoRandomType)
 	tableInfo := e.Table.Meta()
 
-	typeBitsLength := uint64(mysql.DefaultLengthOfMysqlTypes[fieldType.Tp] * 8)
-	signBit := uint64(1)
-	mask := (1 << (typeBitsLength - tableInfo.AutoRandomBits - signBit)) - 1
-	autoRandomID := int64(mask) & recordID
+	layout := autoid.NewAutoRandomIDLayout(fieldType, tableInfo.AutoRandomBits)
+	autoRandomID := layout.IncrementalMask() & recordID
 
 	return alloc.Rebase(tableInfo.ID, autoRandomID, true)
 }

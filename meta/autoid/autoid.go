@@ -23,9 +23,11 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -889,4 +891,42 @@ func EncodeIntToCmpUint(v int64) uint64 {
 // DecodeCmpUintToInt decodes the u that encoded by EncodeIntToCmpUint
 func DecodeCmpUintToInt(u uint64) int64 {
 	return int64(u ^ signMask)
+}
+
+// AutoRandomIDLayout is used to calculate the bits length of different section in auto_random id.
+// Layout(64 bits):
+// [zero_padding] [sign_bit] [shard_bits] [incremental_bits]
+// Please always use NewAutoRandomIDLayout() to instantiate.
+type AutoRandomIDLayout struct {
+	FieldType *types.FieldType
+	ShardBits uint64
+	// Derived fields.
+	TypeBitsLength  uint64
+	IncrementalBits uint64
+	HasSignBit      bool
+}
+
+// NewAutoRandomIDLayout create an instance of AutoRandomIDLayout.
+func NewAutoRandomIDLayout(fieldType *types.FieldType, shardBits uint64) *AutoRandomIDLayout {
+	layout := &AutoRandomIDLayout{
+		FieldType: fieldType,
+		ShardBits: shardBits,
+	}
+	layout.TypeBitsLength = uint64(mysql.DefaultLengthOfMysqlTypes[fieldType.Tp] * 8)
+	layout.HasSignBit = !mysql.HasUnsignedFlag(fieldType.Flag)
+	layout.IncrementalBits = layout.TypeBitsLength - shardBits
+	if layout.HasSignBit {
+		layout.IncrementalBits -= 1
+	}
+	return layout
+}
+
+// IncrementalBitsCapacity returns the max capacity of incremental section of the current layout.
+func (l *AutoRandomIDLayout) IncrementalBitsCapacity() uint64 {
+	return uint64(math.Pow(2, float64(l.IncrementalBits)) - 1)
+}
+
+// IncrementalMask returns 00..0[11..1], where [xxx] is the incremental bits.
+func (l *AutoRandomIDLayout) IncrementalMask() int64 {
+	return (1 << l.IncrementalBits) - 1
 }

@@ -907,11 +907,11 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 			c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
 		})
 	}
-	assertShowWarningCorrect("create table t (a tinyint unsigned auto_random(6) primary key)", 1)
-	assertShowWarningCorrect("create table t (a tinyint unsigned auto_random(5) primary key)", 3)
+	assertShowWarningCorrect("create table t (a tinyint unsigned auto_random(6) primary key)", 3)
+	assertShowWarningCorrect("create table t (a tinyint unsigned auto_random(5) primary key)", 7)
 	assertShowWarningCorrect("create table t (a tinyint auto_random(4) primary key)", 7)
 	assertShowWarningCorrect("create table t (a bigint auto_random(62) primary key)", 1)
-	assertShowWarningCorrect("create table t (a bigint unsigned auto_random(61) primary key)", 3)
+	assertShowWarningCorrect("create table t (a bigint unsigned auto_random(61) primary key)", 7)
 	assertShowWarningCorrect("create table t (a int auto_random(30) primary key)", 1)
 	assertShowWarningCorrect("create table t (a int auto_random(29) primary key)", 3)
 

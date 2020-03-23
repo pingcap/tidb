@@ -1030,7 +1030,7 @@ func allocHandleIDs(ctx sessionctx.Context, t table.Table, n uint64) (int64, int
 	}
 	if meta.ShardRowIDBits > 0 {
 		// Use max record ShardRowIDBits to check overflow.
-		if OverflowShardBits(maxID, meta.MaxShardRowIDBits, autoid.RowIDBitLength) {
+		if OverflowShardBits(maxID, meta.MaxShardRowIDBits, autoid.RowIDBitLength, true) {
 			// If overflow, the rowID may be duplicated. For examples,
 			// t.meta.ShardRowIDBits = 4
 			// rowID = 0010111111111111111111111111111111111111111111111111111111111111
@@ -1052,8 +1052,12 @@ func allocHandleIDs(ctx sessionctx.Context, t table.Table, n uint64) (int64, int
 }
 
 // OverflowShardBits checks whether the recordID overflow `1<<(typeBitsLength-shardRowIDBits-1) -1`.
-func OverflowShardBits(recordID int64, shardRowIDBits uint64, typeBitsLength uint64) bool {
-	mask := (1<<shardRowIDBits - 1) << (typeBitsLength - shardRowIDBits - 1)
+func OverflowShardBits(recordID int64, shardRowIDBits uint64, typeBitsLength uint64, reservedSignBit bool) bool {
+	var signBit uint64
+	if reservedSignBit {
+		signBit = 1
+	}
+	mask := (1<<shardRowIDBits - 1) << (typeBitsLength - shardRowIDBits - signBit)
 	return recordID&int64(mask) > 0
 }
 

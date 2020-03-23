@@ -855,9 +855,7 @@ func (s *testAutoRandomSuite) TestAutoRandomBitsData(c *C) {
 
 	// Test overflow.
 	tk.MustExec("create table t (a tinyint primary key auto_random(2), b int)")
-	fieldLength := uint64(mysql.DefaultLengthOfMysqlTypes[mysql.TypeTiny] * 8)
-	const signBit = 1
-	for i := 0; i < (1<<(fieldLength-2-signBit))-1; i++ {
+	for i := 0; i < 31; /* 2^(8-2-1)-1 */ i++ {
 		tk.MustExec(fmt.Sprintf("insert into t (b) values (%d)", i))
 	}
 	_, err = tk.Exec("insert into t (b) values (0)")
