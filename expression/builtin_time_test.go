@@ -2514,6 +2514,7 @@ func (s *testEvaluatorSuite) TestSecToTime(c *C) {
 		{1, types.NewFloat64Datum(-86401.4), "-24:00:01.4"},
 		{5, types.NewFloat64Datum(86401.54321), "24:00:01.54321"},
 		{-1, types.NewFloat64Datum(86401.54321), "24:00:01.543210"},
+		{-1, types.NewFloat64Datum(0.000000001), "00:00:00.000000"},
 		{0, types.NewStringDatum("123.4"), "00:02:03.400000"},
 		{0, types.NewStringDatum("123.4567891"), "00:02:03.456789"},
 		{0, types.NewStringDatum("123"), "00:02:03.000000"},
