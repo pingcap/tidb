@@ -54,7 +54,6 @@ func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema, row, n
 	if err != nil {
 		return err
 	}
-
 	if e.updatedRowKeys == nil {
 		e.updatedRowKeys = make(map[int64]map[int64]bool)
 	}
@@ -172,7 +171,6 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 			if err1 != nil {
 				return 0, err1
 			}
-
 			if err := e.exec(ctx, e.children[0].Schema(), datumRow, newRow); err != nil {
 				return 0, err
 			}
