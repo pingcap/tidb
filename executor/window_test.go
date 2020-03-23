@@ -17,7 +17,6 @@ import (
 	"fmt"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/testkit"
-	"strings"
 )
 
 func (s *testSuite7) TestWindowFunctions(c *C) {
@@ -305,22 +304,4 @@ func baseTestSlidingWindowFunctions(tk *testkit.TestKit) {
 	result.Check(testkit.Rows("M 6", "F 10", "F 14", "F 12", "M 9", "<nil> 21", "<nil> 21"))
 	result = tk.MustQuery("SELECT sex, SUM(id) OVER (ORDER BY id DESC RANGE BETWEEN 1 PRECEDING and 2 FOLLOWING) FROM t;")
 	result.Check(testkit.Rows("<nil> 21", "<nil> 21", "M 12", "F 14", "F 10", "F 6", "M 3"))
-}
-
-func (s *testSuite7) TestSlidingWindowFunctionsSumDecimal(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test;")
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("CREATE TABLE t (id DECIMAL, sex CHAR(1));")
-	var builder strings.Builder
-	for i := 0; i < 10; i++ {
-		builder.Reset()
-		fmt.Fprintf(&builder, "insert into t values ")
-		for j := 0; j < 2000; j++ {
-			fmt.Fprintf(&builder, "(%d,'M'),", j%10)
-		}
-		sql := builder.String()
-		tk.MustExec(sql[:len(sql)-1])
-	}
-	_ = tk.MustQuery("SELECT sex, SUM(id) OVER (PARTITION BY id ROWS BETWEEN 100 PRECEDING and 100 FOLLOWING) FROM t;")
 }
