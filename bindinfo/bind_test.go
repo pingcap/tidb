@@ -496,6 +496,8 @@ func (s *testSuite) TestCapturePlanBaseline(c *C) {
 	c.Assert(len(rows), Equals, 1)
 	c.Assert(rows[0][0], Equals, "select * from t where a > ?")
 	c.Assert(rows[0][1], Equals, "SELECT /*+ USE_INDEX(@`sel_1` `test`.`t` )*/ * FROM `t` WHERE `a`>10")
+	s.cleanBindingEnv(tk)
+	stmtsummary.StmtSummaryByDigestMap.Clear()
 
 	// Capture plan baseline on invisible index.
 	tk.MustExec("create table t1(a int, unique (a) invisible)")
@@ -504,9 +506,9 @@ func (s *testSuite) TestCapturePlanBaseline(c *C) {
 	tk.MustQuery("select a from t1 order by a").Check(testkit.Rows("1", "2"))
 	tk.MustExec("admin capture bindings")
 	rows = tk.MustQuery("show global bindings").Rows()
-	c.Assert(len(rows), Equals, 2)
-	c.Assert(rows[1][0], Equals, "select a from t1 order by a")
-	c.Assert(rows[1][1], Equals, "SELECT /*+ USE_INDEX(@`sel_1` `test`.`t1` )*/ `a` FROM `t1` ORDER BY `a`")
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][0], Equals, "select a from t1 order by a")
+	c.Assert(rows[0][1], Equals, "SELECT /*+ USE_INDEX(@`sel_1` `test`.`t1` )*/ `a` FROM `t1` ORDER BY `a`")
 }
 
 func (s *testSuite) TestUseMultiplyBindings(c *C) {
