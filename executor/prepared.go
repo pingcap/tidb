@@ -136,24 +136,25 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return ErrPrepareMulti
 	}
 	stmt := stmts[0]
+
+	//Try to handle the enable_plan_cache(bool) hint
+	//If there are multiple hints, use the last one, and throw a warning
 	planCacheHit := true
+	hitCount := 0
 	switch stmt.(type) {
 	case *ast.SelectStmt:
-		count := 1
 		for _, hints := range (stmt.(*ast.SelectStmt)).TableHints {
 			if hints.HintName.L == "enable_plan_cache" {
 				planCacheHit = hints.HintData.(bool)
-				count += 1
+				hitCount += 1
 			}
-		}
-		if count > 1 {
-
 		}
 		break
 	case *ast.DeleteStmt:
 		for _, hints := range (stmt.(*ast.DeleteStmt)).TableHints {
 			if hints.HintName.L == "enable_plan_cache" {
 				planCacheHit = hints.HintData.(bool)
+				hitCount += 1
 			}
 		}
 		break
@@ -161,13 +162,22 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		for _, hints := range (stmt.(*ast.UpdateStmt)).TableHints {
 			if hints.HintName.L == "enable_plan_cache" {
 				planCacheHit = hints.HintData.(bool)
+				hitCount += 1
 			}
 		}
+		break
 	}
+
 	err = ResetContextOfStmt(e.ctx, stmt)
 	if err != nil {
 		return err
 	}
+
+	if hitCount > 1 {
+		warn := errors.New("There are multiple ENABLE_PLAN_CACHE hints, only the last one will take effect")
+		e.ctx.GetSessionVars().StmtCtx.AppendWarning(warn)
+	}
+
 	var extractor paramMarkerExtractor
 	stmt.Accept(&extractor)
 
