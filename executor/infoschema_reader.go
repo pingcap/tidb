@@ -17,7 +17,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/pingcap/failpoint"
 	"net/http"
 	"net/url"
 	"sort"
@@ -1402,34 +1401,26 @@ func (e *tableStorageStatsRetriever) initialize(sctx sessionctx.Context) error {
 		} else {
 			for _, schema := range dbs {
 				for _, table := range schema.Tables {
-					e.initialTables = append(e.initialTables, &initialTable{schema.Name.O, table})
+					e.initialTables = append(e.initialTables, &initialTable{schema.Name.L, table})
 				}
 			}
 		}
 	}
 
 	// Cache the PD address.
-	pdAddr := ""
-	failpoint.Inject("mockClusterPDServerInfo", func(val failpoint.Value) {
-		if s := val.(string); len(s) > 0 {
-			pdAddr = s
-		}
-	})
-	if pdAddr == "" {
-		tikvStore, ok := sctx.GetStore().(tikv.Storage)
-		if !ok {
-			return errors.New("Information about TiKV region status can be gotten only when the storage is TiKV")
-		}
-		etcd, ok := tikvStore.(tikv.EtcdBackend)
-		if !ok {
-			return errors.New("not implemented")
-		}
-		pdAddr = etcd.EtcdAddrs()[0]
-		if pdAddr == "" {
-			return errors.New("pd unavailable")
-		}
+	tikvStore, ok := sctx.GetStore().(tikv.Storage)
+	if !ok {
+		return errors.New("Information about TiKV region status can be gotten only when the storage is TiKV")
 	}
-	e.pdAddress = pdAddr
+	etcd, ok := tikvStore.(tikv.EtcdBackend)
+	if !ok {
+		return errors.New("not implemented")
+	}
+	pdAddrs := etcd.EtcdAddrs()
+	if len(pdAddrs) == 0 {
+		return errors.New("pd unavailable")
+	}
+	e.pdAddress = pdAddrs[0]
 	e.initialized = true
 	return nil
 }

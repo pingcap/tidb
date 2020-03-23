@@ -645,7 +645,7 @@ func (s *testInfoschemaClusterTableSuite) setUpMockPDHTTPServer() (*httptest.Ser
 	// TiDB/TiKV config
 	router.Handle("/config", fn.Wrap(mockConfig))
 	// pd region
-	router.Handle(pdapi.Regions, fn.Wrap(func() (*executor.PdRegionStats, error) {
+	router.Handle("/pd/api/v1/stats/region", fn.Wrap(func() (*executor.PdRegionStats, error) {
 		return &executor.PdRegionStats{
 			Count:          1,
 			EmptyCount:     1,
@@ -769,37 +769,21 @@ func (s *testInfoschemaClusterTableSuite) TestTableStorageStats(c *C) {
 	}
 
 	// information_schema.TABLE_STORAGE_STATS
-	pdAddr := mockAddr
-	fpExpr := fmt.Sprintf(`return("%s")`, pdAddr)
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/mockClusterPDInfo", fpExpr), IsNil)
-	defer func() { c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/mockClusterPDInfo"), IsNil) }()
-
-	// information_schema.TABLE_STORAGE_STATS
 	tk = testkit.NewTestKit(c, store)
-	tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'information_schema' and TABLE_NAME='schemata';").Check(
-		testkit.Rows("schemata"))
-	//tk.MustExec("use test")
-	//tk.MustExec("drop table if exists t")
-	//tk.MustExec("create table t (a int, b int, index idx(a))")
-	//tk.MustQuery("select TABLE_NAME, STORAGE_SIZE from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'test' and TABLE_NAME='t';").Check(
-	//	testkit.Rows("t 1"))
-	//
-	////test the privilege of new user for information_schema.table_constraints
-	//tk.MustExec("create user table_storage_tester")
-	//tableStorageTester := testkit.NewTestKit(c, s.store)
-	//tableStorageTester.MustExec("use information_schema")
-	//c.Assert(tableStorageTester.Se.Auth(&auth.UserIdentity{
-	//	Username: "table_storage_tester",
-	//	Hostname: "127.0.0.1",
-	//}, nil, nil), IsTrue)
-	//
-	//// Test the privilege.
-	//tableStorageTester.MustQuery("select * from TABLE_STORAGE_STATS;").Check([][]interface{}{})
-	//tk.MustExec("CREATE ROLE r_stats_meta ;")
-	//tk.MustExec("GRANT ALL PRIVILEGES ON mysql.stats_meta TO r_stats_meta;")
-	//tk.MustExec("GRANT r_stats_meta TO table_storage_tester;")
-	//tableStorageTester.MustExec("set role r_stats_meta")
-	//c.Assert(len(tableStorageTester.MustQuery("select * from TABLE_STORAGE_STATS where TABLE_NAME='stats_meta';").Rows()), Greater, 0)
+	tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'information_schema' and TABLE_NAME='schemata';").Check(testkit.Rows("SCHEMATA"))
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, index idx(a))")
+	tk.MustQuery("select TABLE_NAME, TABLE_SIZE from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'test' and TABLE_NAME='t';").Check(testkit.Rows("t 1"))
+
+	tk.MustExec("create table t1 (a int, b int, index idx(a))")
+	tk.MustQuery("select TABLE_NAME, sum(TABLE_SIZE) from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'test' group by TABLE_NAME;").Sort().Check(testkit.Rows(
+		"t 1",
+		"t1 1",
+	))
+	tk.MustQuery("select TABLE_SCHEMA, sum(TABLE_SIZE) from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'test' group by TABLE_SCHEMA;").Check(testkit.Rows(
+		"test 2",
+	))
 }
 
 func (s *testInfoschemaTableSuite) TestSequences(c *C) {
