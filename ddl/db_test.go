@@ -252,7 +252,8 @@ func (s *testDBSuite2) TestAddUniqueIndexRollback(c *C) {
 	testAddIndexRollback(c, s.store, s.lease, idxName, addIdxSQL, errMsg, hasNullValsInKey)
 }
 
-func (s *testDBSuite6) TestAddExpressionIndexRollback(c *C) {
+func (s *testSerialDBSuite) TestAddExpressionIndexRollback(c *C) {
+	config.GetGlobalConfig().Experimental.AllowsExpressionIndex = true
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test_db")
 	tk.MustExec("drop table if exists t1")

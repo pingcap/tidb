@@ -391,6 +391,8 @@ history-size = 24
 [experimental]
 # enable column attribute `auto_random` to be defined on the primary key column.
 allow-auto-random = false
+# enable creating expression index.
+allow-expression-index = false
 
 # server level isolation read by engines and labels
 [isolation-read]

@@ -496,6 +496,8 @@ type IsolationRead struct {
 type Experimental struct {
 	// Whether enable the syntax like `auto_random(3)` on the primary key column.
 	AllowAutoRandom bool `toml:"allow-auto-random" json:"allow-auto-random"`
+	// Whether enable creating expression index.
+	AllowsExpressionIndex bool `toml:"allow-expression-index" json:"allow-expression-index"`
 }
 
 var defaultConf = Config{
@@ -635,7 +637,8 @@ var defaultConf = Config{
 		Engines: []string{"tikv", "tiflash", "tidb"},
 	},
 	Experimental: Experimental{
-		AllowAutoRandom: false,
+		AllowAutoRandom:       false,
+		AllowsExpressionIndex: false,
 	},
 	EnableDynamicConfig: true,
 }
