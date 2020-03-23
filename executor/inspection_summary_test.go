@@ -66,7 +66,7 @@ func (s *inspectionSummarySuite) TestInspectionSummary(c *C) {
 	for _, s := range testServers {
 		servers = append(servers, strings.Join([]string{s.typ, s.address, s.address}, ",")+",mock-version,mock-githash")
 	}
-	fpName1 := "github.com/pingcap/tidb/executor/mockClusterInfo"
+	fpName1 := "github.com/pingcap/tidb/infoschema/mockClusterInfo"
 	fpExpr := strings.Join(servers, ";")
 	c.Assert(failpoint.Enable(fpName1, fmt.Sprintf(`return("%s")`, fpExpr)), IsNil)
 	defer func() { c.Assert(failpoint.Disable(fpName1), IsNil) }()
