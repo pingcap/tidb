@@ -14,8 +14,9 @@
 package core
 
 import (
-	"bytes"
+	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
@@ -238,22 +239,13 @@ func GetStatsInfo(i interface{}) map[string]uint64 {
 
 // extractStringFromStringSet helps extract string info from set.StringSet
 func extractStringFromStringSet(set set.StringSet) string {
-	r := new(bytes.Buffer)
 	if len(set) < 1 {
-		return r.String()
+		return ""
 	}
 	l := make([]string, 0, len(set))
 	for k := range set {
-		l = append(l, k)
+		l = append(l, fmt.Sprintf(`"%s"`, k))
 	}
 	sort.Strings(l)
-	for i, k := range l {
-		if i > 0 {
-			r.WriteByte(',')
-		}
-		r.WriteByte('"')
-		r.WriteString(k)
-		r.WriteByte('"')
-	}
-	return r.String()
+	return fmt.Sprintf("%s", strings.Join(l, ","))
 }
