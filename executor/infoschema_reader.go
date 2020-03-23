@@ -1434,7 +1434,7 @@ func (e *tableStorageStatsRetriever) initialize(sctx sessionctx.Context) error {
 	return nil
 }
 
-// pdRegionStats is the json response from PD.
+// PdRegionStats is the json response from PD.
 type PdRegionStats struct {
 	Count          int            `json:"count"`
 	EmptyCount     int            `json:"empty_count"`
