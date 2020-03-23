@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/fn"
 	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
@@ -541,6 +542,20 @@ func (s *testInfoschemaTableSuite) TestForServersInfo(c *C) {
 	}
 }
 
+func (s *testInfoschemaTableSuite) TestForTableTiFlashReplica(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	statistics.ClearHistoryJobs()
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, index idx(a))")
+	tk.MustExec("alter table t set tiflash replica 2 location labels 'a','b';")
+	tk.MustQuery("select TABLE_SCHEMA,TABLE_NAME,REPLICA_COUNT,LOCATION_LABELS,AVAILABLE, PROGRESS from information_schema.tiflash_replica").Check(testkit.Rows("test t 2 a,b 0 0"))
+	tbl, err := domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tbl.Meta().TiFlashReplica.Available = true
+	tk.MustQuery("select TABLE_SCHEMA,TABLE_NAME,REPLICA_COUNT,LOCATION_LABELS,AVAILABLE, PROGRESS from information_schema.tiflash_replica").Check(testkit.Rows("test t 2 a,b 1 1"))
+}
+
 var _ = SerialSuites(&testInfoschemaClusterTableSuite{testInfoschemaTableSuite: &testInfoschemaTableSuite{}})
 
 type testInfoschemaClusterTableSuite struct {
@@ -743,4 +758,10 @@ func (s *testInfoschemaClusterTableSuite) TestTiDBClusterInfo(c *C) {
 		"tidb key3.key4.nest4 n-value5",
 		"tikv key3.key4.nest4 n-value5",
 	))
+}
+
+func (s *testInfoschemaTableSuite) TestSequences(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("CREATE SEQUENCE test.seq maxvalue 10000000")
+	tk.MustQuery("SELECT * FROM information_schema.sequences WHERE sequence_schema='test' AND sequence_name='seq'").Check(testkit.Rows("def test seq 1 1000 0 1 10000000 1 0 1 "))
 }

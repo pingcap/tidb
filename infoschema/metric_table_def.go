@@ -3084,4 +3084,14 @@ var MetricTableMap = map[string]MetricTableDef{
 		Labels:  []string{"instance"},
 		Comment: "The total size of snapshot size",
 	},
+	"tikv_config_rocksdb": {
+		PromQL:  "tikv_config_rocksdb{$LABEL_CONDITIONS}",
+		Labels:  []string{"instance", "cf", "name"},
+		Comment: "TiKV rocksdb config value",
+	},
+	"tikv_config_raftstore": {
+		PromQL:  "tikv_config_raftstore{$LABEL_CONDITIONS}",
+		Labels:  []string{"instance", "name"},
+		Comment: "TiKV rocksdb config value",
+	},
 }
