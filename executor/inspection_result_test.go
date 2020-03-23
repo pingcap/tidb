@@ -49,6 +49,7 @@ func (s *inspectionResultSuite) TestInspectionResult(c *C) {
 			types.MakeDatums("tikv", "192.168.3.33:26600", "coprocessor.high", "8"),
 			types.MakeDatums("tikv", "192.168.3.34:26600", "coprocessor.high", "7"),
 			types.MakeDatums("tikv", "192.168.3.35:26600", "coprocessor.high", "7"),
+			types.MakeDatums("tikv", "192.168.3.35:26600", "raftstore.sync-log", "false"),
 			types.MakeDatums("pd", "192.168.3.32:2379", "scheduler.limit", "3"),
 			types.MakeDatums("pd", "192.168.3.33:2379", "scheduler.limit", "3"),
 			types.MakeDatums("pd", "192.168.3.34:2379", "scheduler.limit", "3"),
@@ -111,6 +112,7 @@ func (s *inspectionResultSuite) TestInspectionResult(c *C) {
 				"config ddl.lease tidb inconsistent consistent warning the cluster has different config value of ddl.lease, execute the sql to see more detail: select * from information_schema.cluster_config where type='tidb' and `key`='ddl.lease'",
 				"config log.slow-threshold tidb 0 not 0 warning slow-threshold = 0 will record every query to slow log, it may affect performance",
 				"config log.slow-threshold tidb inconsistent consistent warning the cluster has different config value of log.slow-threshold, execute the sql to see more detail: select * from information_schema.cluster_config where type='tidb' and `key`='log.slow-threshold'",
+				"config raftstore.sync-log tikv false not false warning sync-log should be true to avoid recover region when the machine breaks down",
 				"version git_hash pd inconsistent consistent critical the cluster has 3 different pd versions, execute the sql to see more detail: select * from information_schema.cluster_info where type='pd'",
 				"version git_hash tidb inconsistent consistent critical the cluster has 3 different tidb versions, execute the sql to see more detail: select * from information_schema.cluster_info where type='tidb'",
 				"version git_hash tikv inconsistent consistent critical the cluster has 2 different tikv versions, execute the sql to see more detail: select * from information_schema.cluster_info where type='tikv'",
@@ -130,6 +132,7 @@ func (s *inspectionResultSuite) TestInspectionResult(c *C) {
 				"config ddl.lease tidb inconsistent consistent warning the cluster has different config value of ddl.lease, execute the sql to see more detail: select * from information_schema.cluster_config where type='tidb' and `key`='ddl.lease'",
 				"config log.slow-threshold tidb 0 not 0 warning slow-threshold = 0 will record every query to slow log, it may affect performance",
 				"config log.slow-threshold tidb inconsistent consistent warning the cluster has different config value of log.slow-threshold, execute the sql to see more detail: select * from information_schema.cluster_config where type='tidb' and `key`='log.slow-threshold'",
+				"config raftstore.sync-log tikv false not false warning sync-log should be true to avoid recover region when the machine breaks down",
 			},
 		},
 		{
@@ -391,6 +394,8 @@ func (s *inspectionResultSuite) TestThresholdCheckInspection3(c *C) {
 		"pd_scheduler_store_status": {
 			types.MakeDatums(datetime("2020-02-14 05:20:00"), "pd-0", "tikv-0", "0", "leader_score", 100.0),
 			types.MakeDatums(datetime("2020-02-14 05:20:00"), "pd-0", "tikv-1", "1", "leader_score", 50.0),
+			types.MakeDatums(datetime("2020-02-14 05:21:00"), "pd-0", "tikv-0", "0", "leader_score", 99.0),
+			types.MakeDatums(datetime("2020-02-14 05:21:00"), "pd-0", "tikv-1", "1", "leader_score", 51.0),
 			types.MakeDatums(datetime("2020-02-14 05:20:00"), "pd-0", "tikv-0", "0", "region_score", 100.0),
 			types.MakeDatums(datetime("2020-02-14 05:20:00"), "pd-0", "tikv-1", "1", "region_score", 90.0),
 			types.MakeDatums(datetime("2020-02-14 05:20:00"), "pd-0", "tikv-0", "0", "store_available", 100.0),
@@ -426,11 +431,11 @@ func (s *inspectionResultSuite) TestThresholdCheckInspection3(c *C) {
 	result.Check(testkit.Rows(
 		"leader-drop tikv tikv-2 10000 <= 50 tikv-2 tikv has too many leader-drop around time 2020-02-14 05:21:00.000000, leader count from 10000 drop to 0",
 		"leader-drop tikv tikv-0 5000 <= 50 tikv-0 tikv has too many leader-drop around time 2020-02-14 05:21:00.000000, leader count from 10000 drop to 5000",
-		"leader-score-balance tikv tikv-1 50.00% < 5.00% tikv-0 leader_score is 100.00, much more than tikv-1 leader_score 50.00",
+		"leader-score-balance tikv tikv-1 50.00% < 5.00% tikv-0 max leader_score is 100.00, much more than tikv-1 min leader_score 50.00",
 		"region-count tikv tikv-0 20001.00 <= 20000 tikv-0 tikv has too many regions",
 		"region-health pd pd-0 110.00 < 100 the count of extra-perr and learner-peer and pending-peer are 110, it means the scheduling is too frequent or too slow",
-		"region-score-balance tikv tikv-1 10.00% < 5.00% tikv-0 region_score is 100.00, much more than tikv-1 region_score 90.00",
-		"store-available-balance tikv tikv-1 30.00% < 20.00% tikv-0 store_available is 100.00, much more than tikv-1 store_available 70.00"))
+		"region-score-balance tikv tikv-1 10.00% < 5.00% tikv-0 max region_score is 100.00, much more than tikv-1 min region_score 90.00",
+		"store-available-balance tikv tikv-1 30.00% < 20.00% tikv-0 max store_available is 100.00, much more than tikv-1 min store_available 70.00"))
 }
 
 func (s *inspectionResultSuite) TestCriticalErrorInspection(c *C) {
