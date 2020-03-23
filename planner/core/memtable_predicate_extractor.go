@@ -620,7 +620,8 @@ func (e *ClusterLogTableExtractor) explainInfo(p *PhysicalMemTable) string {
 		r.WriteString(fmt.Sprintf("end_time:%v, ", et.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format(MetricTableTimeFormat)))
 	}
 	if len(e.NodeTypes) > 0 {
-		r.WriteString(fmt.Sprintf("node_types:[%s], ", extractStringFromStringSet(e.Instances)))
+		r.WriteString(fmt.Sprintf("node_types:[%s], ", extractStringFromStringSet(e. NodeTypes)))
+```?
 	}
 	if len(e.Instances) > 0 {
 		r.WriteString(fmt.Sprintf("instances:[%s], ", extractStringFromStringSet(e.Instances)))
