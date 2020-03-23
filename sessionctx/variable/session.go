@@ -577,6 +577,9 @@ type SessionVars struct {
 	// All cached snapshots will be released at the end of retrieving
 	InspectionTableCache map[string]TableSnapshot
 
+	// InstanceAddrCache cache the cluster Instance and statusAddr
+	InstanceAddrCache map[string]string
+
 	// RowEncoder is reused in session for encode row data.
 	RowEncoder rowcodec.Encoder
 

@@ -19,7 +19,6 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/infoschema"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -419,20 +418,32 @@ func (e *inspectionSummaryRetriever) retrieve(ctx context.Context, sctx sessionc
 	rules := inspectionFilter{set: e.extractor.Rules}
 	names := inspectionFilter{set: e.extractor.MetricNames}
 
-	serversInfo, err := infoschema.GetClusterServerInfo(sctx)
-	failpoint.Inject("mockClusterServerInfo", func(val failpoint.Value) {
-		if s := val.(string); len(s) > 0 {
-			// erase the error
-			serversInfo, err = parseFailpointServerInfo(s), nil
+	// Get clusterInfo from global cache.
+	clusterInfo := sctx.GetSessionVars().InstanceAddrCache
+	if clusterInfo == nil {
+		serversInfo, err := infoschema.GetClusterServerInfo(sctx)
+		if err != nil {
+			return nil, err
 		}
-	})
-	if err != nil {
-		return nil, err
+		for _, v := range serversInfo {
+			clusterInfo[v.StatusAddr] = v.Address
+		}
 	}
-	clusterInfo := make(map[string]string)
-	for _, v := range serversInfo {
-		clusterInfo[v.StatusAddr] = v.Address
-	}
+	sctx.GetSessionVars().InstanceAddrCache = clusterInfo
+	defer func() { sctx.GetSessionVars().InstanceAddrCache = nil }()
+	//	failpoint.Inject("mockClusterServerInfo", func(val failpoint.Value) {
+	//	if s := val.(string); len(s) > 0 {
+	//		// erase the error
+	//		serversInfo, err = parseFailpointServerInfo(s), nil
+	//	}
+	//})
+	//if err != nil {
+	//	return nil, err
+	//}
+	//clusterInfo := make(map[string]string)
+	//for _, v := range serversInfo {
+	//	clusterInfo[v.StatusAddr] = v.Address
+	//}
 
 	condition := e.timeRange.Condition()
 	var finalRows [][]types.Datum
