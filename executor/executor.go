@@ -1645,3 +1645,28 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars.StmtCtx = sc
 	return
 }
+
+// FillVirtualColumnValue will calculate the virtual column value by evaluating generated
+// expression using rows from a chunk, and then fill this value into the chunk
+func FillVirtualColumnValue(virtualRetTypes []*types.FieldType, virtualColumnIndex []int,
+	schema *expression.Schema, columns []*model.ColumnInfo, sctx sessionctx.Context, req *chunk.Chunk) error {
+	virCols := chunk.NewChunkWithCapacity(virtualRetTypes, req.Capacity())
+	iter := chunk.NewIterator4Chunk(req)
+	for i, idx := range virtualColumnIndex {
+		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+			datum, err := schema.Columns[idx].EvalVirtualColumn(row)
+			if err != nil {
+				return err
+			}
+			// Because the expression might return different type from
+			// the generated column, we should wrap a CAST on the result.
+			castDatum, err := table.CastValue(sctx, datum, columns[idx])
+			if err != nil {
+				return err
+			}
+			virCols.AppendDatum(i, &castDatum)
+		}
+		req.SetCol(idx, virCols.Column(i))
+	}
+	return nil
+}
