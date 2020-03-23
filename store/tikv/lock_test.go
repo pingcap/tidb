@@ -248,13 +248,13 @@ func (s *testLockSuite) TestTxnHeartBeat(c *C) {
 	s.prewriteTxn(c, txn.(*tikvTxn))
 
 	bo := NewBackoffer(context.Background(), PrewriteMaxBackoff)
-	newTTL, err := sendTxnHeartBeat(bo, s.store, []byte("key"), txn.StartTS(), 666)
+	newTTL, err := sendTxnHeartBeat(bo, s.store, []byte("key"), txn.StartTS(), 6666)
 	c.Assert(err, IsNil)
-	c.Assert(newTTL, Equals, uint64(666))
+	c.Assert(newTTL, Equals, uint64(6666))
 
-	newTTL, err = sendTxnHeartBeat(bo, s.store, []byte("key"), txn.StartTS(), 555)
+	newTTL, err = sendTxnHeartBeat(bo, s.store, []byte("key"), txn.StartTS(), 5555)
 	c.Assert(err, IsNil)
-	c.Assert(newTTL, Equals, uint64(666))
+	c.Assert(newTTL, Equals, uint64(6666))
 
 	lock := s.mustGetLock(c, []byte("key"))
 	status := TxnStatus{ttl: newTTL}
@@ -262,7 +262,7 @@ func (s *testLockSuite) TestTxnHeartBeat(c *C) {
 	err = newLockResolver(s.store).resolveLock(bo, lock, status, cleanRegions)
 	c.Assert(err, IsNil)
 
-	newTTL, err = sendTxnHeartBeat(bo, s.store, []byte("key"), txn.StartTS(), 666)
+	newTTL, err = sendTxnHeartBeat(bo, s.store, []byte("key"), txn.StartTS(), 6666)
 	c.Assert(err, NotNil)
 	c.Assert(newTTL, Equals, uint64(0))
 }
@@ -430,7 +430,7 @@ func (s *testLockSuite) TestLockTTL(c *C) {
 	c.Assert(err, IsNil)
 	txn.Set(kv.Key("key"), []byte("value"))
 	time.Sleep(time.Millisecond)
-	s.prewriteTxnWithTTL(c, txn.(*tikvTxn), 1000)
+	s.prewriteTxnWithTTL(c, txn.(*tikvTxn), 3100)
 	l := s.mustGetLock(c, []byte("key"))
 	c.Assert(l.TTL >= defaultLockTTL, IsTrue)
 
@@ -487,9 +487,6 @@ func (s *testLockSuite) TestNewLockZeroTTL(c *C) {
 
 func init() {
 	// Speed up tests.
-	defaultLockTTL = 3
-	maxLockTTL = 120
-	ttlFactor = 6
 	oracleUpdateInterval = 2
 }
 

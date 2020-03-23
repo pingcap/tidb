@@ -3,15 +3,15 @@
     "Name": "TestHintScope",
     "Cases": [
       {
-        "SQL": "select /*+ SM_JOIN(t1) */ t1.a, t1.b from t t1, (select /*+ INL_JOIN(t3) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+        "SQL": "select /*+ MERGE_JOIN(t1) */ t1.a, t1.b from t t1, (select /*+ INL_JOIN(t3) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
         "Best": "MergeInnerJoin{TableReader(Table(t))->IndexJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t.a,test.t.c)}(test.t.a,test.t.a)->Projection"
       },
       {
-        "SQL": "select /*+ SM_JOIN(test.t1) */ t1.a, t1.b from t t1, (select /*+ INL_JOIN(test.t3) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+        "SQL": "select /*+ MERGE_JOIN(test.t1) */ t1.a, t1.b from t t1, (select /*+ INL_JOIN(test.t3) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
         "Best": "MergeInnerJoin{TableReader(Table(t))->IndexJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t.a,test.t.c)}(test.t.a,test.t.a)->Projection"
       },
       {
-        "SQL": "select /*+ SM_JOIN(t1) */ t1.a, t1.b from t t1, (select /*+ HASH_JOIN(t2) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+        "SQL": "select /*+ MERGE_JOIN(t1) */ t1.a, t1.b from t t1, (select /*+ HASH_JOIN(t2) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
         "Best": "MergeInnerJoin{TableReader(Table(t))->LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t.a,test.t.c)->Sort}(test.t.a,test.t.a)->Projection"
       },
       {
@@ -23,15 +23,15 @@
         "Best": "IndexJoin{TableReader(Table(t))->LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t.a,test.t.c)}(test.t.a,test.t.a)"
       },
       {
-        "SQL": "select /*+ INL_JOIN(t1) */ t1.a, t1.b from t t1, (select /*+ SM_JOIN(t2) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+        "SQL": "select /*+ INL_JOIN(t1) */ t1.a, t1.b from t t1, (select /*+ MERGE_JOIN(t2) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
         "Best": "IndexJoin{TableReader(Table(t))->MergeInnerJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t.a,test.t.c)}(test.t.a,test.t.a)"
       },
       {
-        "SQL": "select /*+ HASH_JOIN(t1) */ t1.a, t1.b from t t1, (select /*+ SM_JOIN(t2) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+        "SQL": "select /*+ HASH_JOIN(t1) */ t1.a, t1.b from t t1, (select /*+ MERGE_JOIN(t2) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
         "Best": "RightHashJoin{TableReader(Table(t))->MergeInnerJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t.a,test.t.c)}(test.t.a,test.t.a)"
       },
       {
-        "SQL": "select /*+ HASH_JOIN(test.t1) */ t1.a, t1.b from t t1, (select /*+ SM_JOIN(test.t2) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+        "SQL": "select /*+ HASH_JOIN(test.t1) */ t1.a, t1.b from t t1, (select /*+ MERGE_JOIN(test.t2) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
         "Best": "RightHashJoin{TableReader(Table(t))->MergeInnerJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t.a,test.t.c)}(test.t.a,test.t.a)"
       },
       {
@@ -39,7 +39,7 @@
         "Best": "RightHashJoin{TableReader(Table(t))->IndexJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t.c,test.t.a)}(test.t.a,test.t.a)"
       },
       {
-        "SQL": "select /*+ SM_JOIN(t1) */ t1.a, t1.b from t t1, (select t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+        "SQL": "select /*+ MERGE_JOIN(t1) */ t1.a, t1.b from t t1, (select t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
         "Best": "MergeInnerJoin{TableReader(Table(t))->MergeInnerJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t.a,test.t.c)}(test.t.a,test.t.a)->Projection"
       },
       {
@@ -51,7 +51,7 @@
         "Best": "RightHashJoin{TableReader(Table(t))->LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t.a,test.t.c)}(test.t.a,test.t.a)"
       },
       {
-        "SQL": "select /*+ HASH_JOIN(@sel_2 t1@sel_2, t2@sel_2), SM_JOIN(@sel_1 t1@sel_1, t2@sel_1) */ * from (select t1.a, t1.b from t t1, t t2 where t1.a = t2.a) t1, t t2 where t1.b = t2.b",
+        "SQL": "select /*+ HASH_JOIN(@sel_2 t1@sel_2, t2@sel_2), MERGE_JOIN(@sel_1 t1@sel_1, t2@sel_1) */ * from (select t1.a, t1.b from t t1, t t2 where t1.a = t2.a) t1, t t2 where t1.b = t2.b",
         "Best": "MergeInnerJoin{LeftHashJoin{TableReader(Table(t))->IndexReader(Index(t.f)[[NULL,+inf]])}(test.t.a,test.t.a)->Sort->TableReader(Table(t))->Sort}(test.t.b,test.t.b)"
       },
       {
@@ -644,12 +644,12 @@
       {
         "SQL": "delete /*+ TIDB_SMJ(t1, t2) */ from t1 using t t1, t t2 where t1.c=t2.c",
         "Best": "MergeInnerJoin{IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))->IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))}(test.t.c,test.t.c)->Delete",
-        "Hints": "USE_INDEX(@`del_1` `test`.`t1` `c_d_e`), USE_INDEX(@`del_1` `test`.`t2` `c_d_e`), SM_JOIN(@`del_1` `test`.`t1`)"
+        "Hints": "USE_INDEX(@`del_1` `test`.`t1` `c_d_e`), USE_INDEX(@`del_1` `test`.`t2` `c_d_e`), MERGE_JOIN(@`del_1` `test`.`t1`)"
       },
       {
         "SQL": "update /*+ TIDB_SMJ(t1, t2) */ t t1, t t2 set t1.a=1, t2.a=1 where t1.a=t2.a",
         "Best": "MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->Update",
-        "Hints": "USE_INDEX(@`upd_1` `test`.`t1` ), USE_INDEX(@`upd_1` `test`.`t2` ), SM_JOIN(@`upd_1` `test`.`t1`)"
+        "Hints": "USE_INDEX(@`upd_1` `test`.`t1` ), USE_INDEX(@`upd_1` `test`.`t2` ), MERGE_JOIN(@`upd_1` `test`.`t1`)"
       },
       {
         "SQL": "update /*+ TIDB_HJ(t1, t2) */ t t1, t t2 set t1.a=1, t2.a=1 where t1.a=t2.a",
@@ -1111,7 +1111,7 @@
     "Cases": [
       {
         "SQL": "SELECT /*+ TIDB_SMJ(t3, t4) */ * from t t1, t t2 where t1.a = t2.a",
-        "Warning": "[planner:1815]There are no matching table names for (t3, t4) in optimizer hint /*+ SM_JOIN(t3, t4) */ or /*+ TIDB_SMJ(t3, t4) */. Maybe you can use the table alias name"
+        "Warning": "[planner:1815]There are no matching table names for (t3, t4) in optimizer hint /*+ MERGE_JOIN(t3, t4) */ or /*+ TIDB_SMJ(t3, t4) */. Maybe you can use the table alias name"
       },
       {
         "SQL": "SELECT /*+ TIDB_HJ(t3, t4) */ * from t t1, t t2 where t1.a = t2.a",
@@ -1127,7 +1127,7 @@
       },
       {
         "SQL": "SELECT /*+ TIDB_SMJ(t3, t4) */ * from t t1, t t2, t t3 where t1.a = t2.a and t2.a = t3.a",
-        "Warning": "[planner:1815]There are no matching table names for (t4) in optimizer hint /*+ SM_JOIN(t3, t4) */ or /*+ TIDB_SMJ(t3, t4) */. Maybe you can use the table alias name"
+        "Warning": "[planner:1815]There are no matching table names for (t4) in optimizer hint /*+ MERGE_JOIN(t3, t4) */ or /*+ TIDB_SMJ(t3, t4) */. Maybe you can use the table alias name"
       }
     ]
   },
@@ -1224,24 +1224,24 @@
     "Name": "TestQueryBlockHint",
     "Cases": [
       {
-        "SQL": "select /*+ SM_JOIN(@sel_1 t1), INL_JOIN(@sel_2 t3) */ t1.a, t1.b from t t1, (select t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+        "SQL": "select /*+ MERGE_JOIN(@sel_1 t1), INL_JOIN(@sel_2 t3) */ t1.a, t1.b from t t1, (select t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
         "Plan": "MergeInnerJoin{TableReader(Table(t))->IndexJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t.a,test.t.c)}(test.t.a,test.t.a)->Projection",
-        "Hints": "USE_INDEX(@`sel_1` `test`.`t1` ), USE_INDEX(@`sel_2` `test`.`t2` ), USE_INDEX(@`sel_2` `test`.`t3` `c_d_e`), INL_JOIN(@`sel_2` `test`.`t3`), SM_JOIN(@`sel_1` `test`.`t1`)"
+        "Hints": "USE_INDEX(@`sel_1` `test`.`t1` ), USE_INDEX(@`sel_2` `test`.`t2` ), USE_INDEX(@`sel_2` `test`.`t3` `c_d_e`), INL_JOIN(@`sel_2` `test`.`t3`), MERGE_JOIN(@`sel_1` `test`.`t1`)"
       },
       {
-        "SQL": "select /*+ SM_JOIN(@sel_1 t1), INL_JOIN(@qb t3) */ t1.a, t1.b from t t1, (select /*+ QB_NAME(qb) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+        "SQL": "select /*+ MERGE_JOIN(@sel_1 t1), INL_JOIN(@qb t3) */ t1.a, t1.b from t t1, (select /*+ QB_NAME(qb) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
         "Plan": "MergeInnerJoin{TableReader(Table(t))->IndexJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t.a,test.t.c)}(test.t.a,test.t.a)->Projection",
-        "Hints": "USE_INDEX(@`sel_1` `test`.`t1` ), USE_INDEX(@`sel_2` `test`.`t2` ), USE_INDEX(@`sel_2` `test`.`t3` `c_d_e`), INL_JOIN(@`sel_2` `test`.`t3`), SM_JOIN(@`sel_1` `test`.`t1`)"
+        "Hints": "USE_INDEX(@`sel_1` `test`.`t1` ), USE_INDEX(@`sel_2` `test`.`t2` ), USE_INDEX(@`sel_2` `test`.`t3` `c_d_e`), INL_JOIN(@`sel_2` `test`.`t3`), MERGE_JOIN(@`sel_1` `test`.`t1`)"
       },
       {
-        "SQL": "select /*+ HASH_JOIN(@sel_1 t1), SM_JOIN(@sel_2 t2) */ t1.a, t1.b from t t1, (select t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+        "SQL": "select /*+ HASH_JOIN(@sel_1 t1), MERGE_JOIN(@sel_2 t2) */ t1.a, t1.b from t t1, (select t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
         "Plan": "RightHashJoin{TableReader(Table(t))->MergeInnerJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t.a,test.t.c)}(test.t.a,test.t.a)",
-        "Hints": "USE_INDEX(@`sel_1` `test`.`t1` ), USE_INDEX(@`sel_2` `test`.`t2` ), USE_INDEX(@`sel_2` `test`.`t3` `c_d_e`), SM_JOIN(@`sel_2` `test`.`t2`), HASH_JOIN(@`sel_1` `test`.`t1`)"
+        "Hints": "USE_INDEX(@`sel_1` `test`.`t1` ), USE_INDEX(@`sel_2` `test`.`t2` ), USE_INDEX(@`sel_2` `test`.`t3` `c_d_e`), MERGE_JOIN(@`sel_2` `test`.`t2`), HASH_JOIN(@`sel_1` `test`.`t1`)"
       },
       {
-        "SQL": "select /*+ HASH_JOIN(@sel_1 t1), SM_JOIN(@qb t2) */ t1.a, t1.b from t t1, (select /*+ QB_NAME(qb) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+        "SQL": "select /*+ HASH_JOIN(@sel_1 t1), MERGE_JOIN(@qb t2) */ t1.a, t1.b from t t1, (select /*+ QB_NAME(qb) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
         "Plan": "RightHashJoin{TableReader(Table(t))->MergeInnerJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t.a,test.t.c)}(test.t.a,test.t.a)",
-        "Hints": "USE_INDEX(@`sel_1` `test`.`t1` ), USE_INDEX(@`sel_2` `test`.`t2` ), USE_INDEX(@`sel_2` `test`.`t3` `c_d_e`), SM_JOIN(@`sel_2` `test`.`t2`), HASH_JOIN(@`sel_1` `test`.`t1`)"
+        "Hints": "USE_INDEX(@`sel_1` `test`.`t1` ), USE_INDEX(@`sel_2` `test`.`t2` ), USE_INDEX(@`sel_2` `test`.`t3` `c_d_e`), MERGE_JOIN(@`sel_2` `test`.`t2`), HASH_JOIN(@`sel_1` `test`.`t1`)"
       },
       {
         "SQL": "select /*+ INL_JOIN(@sel_1 t1), HASH_JOIN(@sel_2 t2) */ t1.a, t1.b from t t1, (select t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
@@ -1274,9 +1274,9 @@
         "Hints": "USE_INDEX(@`sel_1` `test`.`t1` ), USE_INDEX(@`sel_2` `test`.`t1` `f`), USE_INDEX(@`sel_2` `test`.`t2` `f`), HASH_JOIN(@`sel_2` `test`.`t1`), HASH_JOIN(@`sel_1` `test`.`t1`)"
       },
       {
-        "SQL": "select /*+ HASH_JOIN(@sel_2 t1@sel_2, t2@sel_2), SM_JOIN(@sel_1 t1@sel_1, t2@sel_1) */ * from (select t1.a, t1.b from t t1, t t2 where t1.a = t2.a) t1, t t2 where t1.b = t2.b",
+        "SQL": "select /*+ HASH_JOIN(@sel_2 t1@sel_2, t2@sel_2), MERGE_JOIN(@sel_1 t1@sel_1, t2@sel_1) */ * from (select t1.a, t1.b from t t1, t t2 where t1.a = t2.a) t1, t t2 where t1.b = t2.b",
         "Plan": "MergeInnerJoin{LeftHashJoin{TableReader(Table(t))->IndexReader(Index(t.f)[[NULL,+inf]])}(test.t.a,test.t.a)->Sort->TableReader(Table(t))->Sort}(test.t.b,test.t.b)",
-        "Hints": "USE_INDEX(@`sel_2` `test`.`t1` ), USE_INDEX(@`sel_2` `test`.`t2` `f`), HASH_JOIN(@`sel_2` `test`.`t1`), USE_INDEX(@`sel_1` `test`.`t2` ), SM_JOIN(@`sel_1` `test`.`t1`)"
+        "Hints": "USE_INDEX(@`sel_2` `test`.`t1` ), USE_INDEX(@`sel_2` `test`.`t2` `f`), HASH_JOIN(@`sel_2` `test`.`t1`), USE_INDEX(@`sel_1` `test`.`t2` ), MERGE_JOIN(@`sel_1` `test`.`t1`)"
       }
     ]
   },
@@ -1659,6 +1659,15 @@
         "SQL": "select /*+ INL_MERGE_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;",
         "Plan": "IndexMergeJoin{IndexLookUp(Index(t1.idx_a)[[NULL,+inf]]->Sel([not(isnull(test.t1.a))]), Table(t1))->Projection->TableReader(Table(t2)->Sel([not(isnull(test.t2.a))]))}(test.t2.a,test.t1.a)",
         "Hints": "USE_INDEX(@`sel_1` `test`.`t1` `idx_a`), USE_INDEX(@`sel_1` `test`.`t2` )"
+      }
+    ]
+  },
+  {
+    "Name": "TestHintFromDiffDatabase",
+    "Cases": [
+      {
+        "SQL": "select /*+ inl_hash_join(test.t1) */ * from test.t2 join test.t1 on test.t2.a = test.t1.a",
+        "Plan": "IndexHashJoin{IndexReader(Index(t2.idx_a)[[-inf,+inf]])->IndexReader(Index(t1.idx_a)[[NULL,+inf]]->Sel([not(isnull(test.t1.a))]))}(test.t2.a,test.t1.a)"
       }
     ]
   }

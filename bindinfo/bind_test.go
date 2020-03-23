@@ -707,3 +707,26 @@ func (s *testSuite) TestPrivileges(c *C) {
 	rows = tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 0)
 }
+
+func (s *testSuite) TestHintsSetEvolveTask(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, index idx_a(a))")
+	tk.MustExec("create global binding for select * from t where a > 10 using select * from t ignore index(idx_a) where a > 10")
+	tk.MustExec("set @@tidb_evolve_plan_baselines=1")
+	tk.MustQuery("select * from t use index(idx_a) where a > 0")
+	bindHandle := s.domain.BindHandle()
+	bindHandle.SaveEvolveTasksToStore()
+	// Verify the added Binding for evolution contains valid ID and Hint, otherwise, panic may happen.
+	sql, hash := parser.NormalizeDigest("select * from t where a > ?")
+	bindData := bindHandle.GetBindRecord(hash, sql, "test")
+	c.Check(bindData, NotNil)
+	c.Check(bindData.OriginalSQL, Equals, "select * from t where a > ?")
+	c.Assert(len(bindData.Bindings), Equals, 2)
+	bind := bindData.Bindings[1]
+	c.Assert(bind.Status, Equals, bindinfo.PendingVerify)
+	c.Assert(bind.ID, Not(Equals), "")
+	c.Assert(bind.Hint, NotNil)
+}

@@ -1096,3 +1096,69 @@ func (s *testPessimisticSuite) TestBatchPointGetLockIndex(c *C) {
 	tk.MustExec("rollback")
 	tk2.MustExec("rollback")
 }
+
+func (s *testPessimisticSuite) TestBatchPointGetAlreadyLocked(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c1 int, c2 int, c3 int, primary key(c1, c2))")
+	tk.MustExec("insert t values (1, 1, 1), (2, 2, 2)")
+	tk.MustExec("begin pessimistic")
+	tk.MustQuery("select * from t where c1 > 1 for update").Check(testkit.Rows("2 2 2"))
+	tk.MustQuery("select * from t where (c1, c2) in ((2,2)) for update").Check(testkit.Rows("2 2 2"))
+	tk.MustExec("commit")
+}
+
+func (s *testPessimisticSuite) TestRollbackWakeupBlockedTxn(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk2.MustExec("use test")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (c1 int primary key, c2 int, c3 int, unique key uk(c2))")
+	tk.MustExec("insert into t1 values (1, 1, 1)")
+	tk.MustExec("insert into t1 values (5, 5, 5)")
+	tk.MustExec("insert into t1 values (10, 10, 10)")
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/txnExpireRetTTL", "return"), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/getTxnStatusDelay", "return"), IsNil)
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("set innodb_lock_wait_timeout = 1")
+	tk2.MustExec("begin pessimistic")
+	tk.MustExec("update t1 set c3 = c3 + 1")
+	errCh := make(chan error)
+	go func() {
+		var err error
+		defer func() {
+			errCh <- err
+		}()
+		_, err = tk2.Exec("update t1 set c3 = 100 where c1 = 1")
+		if err != nil {
+			return
+		}
+	}()
+	time.Sleep(time.Millisecond * 30)
+	tk.MustExec("rollback")
+	err := <-errCh
+	c.Assert(err, IsNil)
+	tk2.MustExec("rollback")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/txnExpireRetTTL"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/getTxnStatusDelay"), IsNil)
+}
+
+func (s *testPessimisticSuite) TestRCSubQuery(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t, t1")
+	tk.MustExec("create table `t` ( `c1` int(11) not null, `c2` int(11) default null, primary key (`c1`) )")
+	tk.MustExec("insert into t values(1, 3)")
+	tk.MustExec("create table `t1` ( `c1` int(11) not null, `c2` int(11) default null, primary key (`c1`) )")
+	tk.MustExec("insert into t1 values(1, 3)")
+	tk.MustExec("set transaction isolation level read committed")
+	tk.MustExec("begin pessimistic")
+
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk2.MustExec("update t1 set c2 = c2 + 1")
+
+	tk.MustQuery("select * from t1 where c1 = (select 1) and 1=1;").Check(testkit.Rows("1 4"))
+	tk.MustQuery("select * from t1 where c1 = (select c1 from t where c1 = 1) and 1=1;").Check(testkit.Rows("1 4"))
+	tk.MustExec("rollback")
+}

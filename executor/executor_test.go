@@ -88,6 +88,7 @@ func TestT(t *testing.T) {
 	old := config.GetGlobalConfig()
 	new := *old
 	new.Log.SlowThreshold = 30000 // 30s
+	new.Experimental.AllowsExpressionIndex = true
 	config.StoreGlobalConfig(&new)
 
 	testleak.BeforeTest()
@@ -117,7 +118,7 @@ var _ = Suite(&testUpdateSuite{})
 var _ = Suite(&testPointGetSuite{})
 var _ = Suite(&testBatchPointGetSuite{})
 var _ = Suite(&testRecoverTable{})
-var _ = Suite(&testMemTableReaderSuite{})
+var _ = Suite(&testMemTableReaderSuite{&testClusterTableBase{}})
 var _ = SerialSuites(&testFlushSuite{})
 var _ = SerialSuites(&testAutoRandomSuite{&baseTestSuite{}})
 var _ = SerialSuites(&testClusterTableSuite{})
@@ -4596,7 +4597,7 @@ func (s *testRecoverTable) TestRecoverTable(c *C) {
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeAfterDrop))
 	_, err = tk.Exec("recover table t_recover")
 	c.Assert(err, NotNil)
-	c.Assert(strings.Contains(err.Error(), "snapshot is older than GC safe point"), Equals, true)
+	c.Assert(strings.Contains(err.Error(), "Can't find dropped/truncated table 't_recover' in GC safe point"), Equals, true)
 
 	// set GC safe point
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
@@ -4637,6 +4638,13 @@ func (s *testRecoverTable) TestRecoverTable(c *C) {
 	// check recover table autoID.
 	tk.MustExec("insert into t_recover values (7),(8),(9)")
 	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1", "7", "8", "9"))
+
+	// Recover truncate table.
+	tk.MustExec("truncate table t_recover")
+	tk.MustExec("rename table t_recover to t_recover_new")
+	tk.MustExec("recover table t_recover")
+	tk.MustExec("insert into t_recover values (10)")
+	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1", "7", "8", "9", "10"))
 
 	gcEnable, err := gcutil.CheckGCEnable(tk.Se)
 	c.Assert(err, IsNil)
@@ -4682,7 +4690,7 @@ func (s *testRecoverTable) TestFlashbackTable(c *C) {
 
 	// Test flash table with not_exist_table_name name.
 	_, err = tk.Exec("flashback table t_not_exists")
-	c.Assert(err.Error(), Equals, "Can't find dropped table: t_not_exists in ddl history jobs")
+	c.Assert(err.Error(), Equals, "Can't find dropped/truncated table: t_not_exists in DDL history jobs")
 
 	// Test flashback table failed by there is already a new table with the same name.
 	// If there is a new table with the same name, should return failed.

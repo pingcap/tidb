@@ -19,6 +19,7 @@ import (
 	"math"
 	"math/rand"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -34,8 +35,9 @@ import (
 
 type testCommitterSuite struct {
 	OneByOneSuite
-	cluster *mocktikv.Cluster
-	store   *tikvStore
+	cluster   *mocktikv.Cluster
+	store     *tikvStore
+	mvccStore mocktikv.MVCCStore
 }
 
 var _ = SerialSuites(&testCommitterSuite{})
@@ -50,6 +52,7 @@ func (s *testCommitterSuite) SetUpTest(c *C) {
 	mocktikv.BootstrapWithMultiRegions(s.cluster, []byte("a"), []byte("b"), []byte("c"))
 	mvccStore, err := mocktikv.NewMVCCLevelDB("")
 	c.Assert(err, IsNil)
+	s.mvccStore = mvccStore
 	client := mocktikv.NewRPCClient(s.cluster, mvccStore)
 	pdCli := &codecPDClient{mocktikv.NewPDClient(s.cluster)}
 	spkv := NewMockSafePointKV()
@@ -637,11 +640,11 @@ func (s *testCommitterSuite) TestPessimisticLockReturnValues(c *C) {
 	txn.SetOption(kv.Pessimistic, true)
 	lockCtx := &kv.LockCtx{ForUpdateTS: txn.startTS, WaitStartTime: time.Now()}
 	lockCtx.ReturnValues = true
-	lockCtx.Values = map[string][]byte{}
+	lockCtx.Values = map[string]kv.ReturnedValue{}
 	c.Assert(txn.LockKeys(context.Background(), lockCtx, key, key2), IsNil)
 	c.Assert(lockCtx.Values, HasLen, 2)
-	c.Assert(lockCtx.Values[string(key)], BytesEquals, []byte(key))
-	c.Assert(lockCtx.Values[string(key2)], BytesEquals, []byte(key2))
+	c.Assert(lockCtx.Values[string(key)].Value, BytesEquals, []byte(key))
+	c.Assert(lockCtx.Values[string(key2)].Value, BytesEquals, []byte(key2))
 }
 
 // TestElapsedTTL tests that elapsed time is correct even if ts physical time is greater than local time.
@@ -838,4 +841,57 @@ func (c *twoPhaseCommitter) mutationsOfKeys(keys [][]byte) committerMutations {
 		}
 	}
 	return res
+}
+
+func (s *testCommitterSuite) TestCommitDeadLock(c *C) {
+	// Split into two region and let k1 k2 in different regions.
+	s.cluster.SplitKeys(s.mvccStore, kv.Key("z"), kv.Key("a"), 2)
+	k1 := kv.Key("a_deadlock_k1")
+	k2 := kv.Key("y_deadlock_k2")
+
+	region1, _ := s.cluster.GetRegionByKey(k1)
+	region2, _ := s.cluster.GetRegionByKey(k2)
+	c.Assert(region1.Id != region2.Id, IsTrue)
+
+	txn1 := s.begin(c)
+	txn1.Set(k1, []byte("t1"))
+	txn1.Set(k2, []byte("t1"))
+	commit1, err := newTwoPhaseCommitterWithInit(txn1, 1)
+	c.Assert(err, IsNil)
+	commit1.primaryKey = k1
+	commit1.txnSize = 1000 * 1024 * 1024
+	commit1.lockTTL = txnLockTTL(txn1.startTime, commit1.txnSize)
+
+	txn2 := s.begin(c)
+	txn2.Set(k1, []byte("t2"))
+	txn2.Set(k2, []byte("t2"))
+	commit2, err := newTwoPhaseCommitterWithInit(txn2, 2)
+	c.Assert(err, IsNil)
+	commit2.primaryKey = k2
+	commit2.txnSize = 1000 * 1024 * 1024
+	commit2.lockTTL = txnLockTTL(txn1.startTime, commit2.txnSize)
+
+	s.cluster.ScheduleDelay(txn2.startTS, region1.Id, 5*time.Millisecond)
+	s.cluster.ScheduleDelay(txn1.startTS, region2.Id, 5*time.Millisecond)
+
+	// Txn1 prewrites k1, k2 and txn2 prewrites k2, k1, the large txn
+	// protocol run ttlManager and update their TTL, cause dead lock.
+	ch := make(chan error, 2)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		ch <- commit2.execute(context.Background())
+		wg.Done()
+	}()
+	ch <- commit1.execute(context.Background())
+	wg.Wait()
+	close(ch)
+
+	res := 0
+	for e := range ch {
+		if e != nil {
+			res++
+		}
+	}
+	c.Assert(res, Equals, 1)
 }

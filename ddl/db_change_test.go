@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
@@ -90,7 +91,8 @@ func (s *testStateChangeSuiteBase) TearDownSuite(c *C) {
 }
 
 // TestShowCreateTable tests the result of "show create table" when we are running "add index" or "add column".
-func (s *testStateChangeSuite) TestShowCreateTable(c *C) {
+func (s *serialTestStateChangeSuite) TestShowCreateTable(c *C) {
+	config.GetGlobalConfig().Experimental.AllowsExpressionIndex = true
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id int)")
@@ -654,7 +656,7 @@ func (s *testStateChangeSuite) TestShowIndex(c *C) {
 				checkErr = err1
 				break
 			}
-			checkErr = checkResult(result, testkit.Rows("t 0 PRIMARY 1 c1 A 0 <nil> <nil>  BTREE   NULL"))
+			checkErr = checkResult(result, testkit.Rows("t 0 PRIMARY 1 c1 A 0 <nil> <nil>  BTREE   YES NULL"))
 		}
 	}
 
@@ -668,7 +670,10 @@ func (s *testStateChangeSuite) TestShowIndex(c *C) {
 
 	result, err := s.execQuery(tk, showIndexSQL)
 	c.Assert(err, IsNil)
-	err = checkResult(result, testkit.Rows("t 0 PRIMARY 1 c1 A 0 <nil> <nil>  BTREE   NULL", "t 1 c2 1 c2 A 0 <nil> <nil> YES BTREE   NULL"))
+	err = checkResult(result, testkit.Rows(
+		"t 0 PRIMARY 1 c1 A 0 <nil> <nil>  BTREE   YES NULL",
+		"t 1 c2 1 c2 A 0 <nil> <nil> YES BTREE   YES NULL",
+	))
 	c.Assert(err, IsNil)
 	d.(ddl.DDLForTest).SetHook(originalCallback)
 
@@ -692,7 +697,7 @@ func (s *testStateChangeSuite) TestShowIndex(c *C) {
 	c.Assert(err, IsNil)
 	result, err = s.execQuery(tk, "show index from tr;")
 	c.Assert(err, IsNil)
-	err = checkResult(result, testkit.Rows("tr 1 idx1 1 purchased A 0 <nil> <nil> YES BTREE   NULL"))
+	err = checkResult(result, testkit.Rows("tr 1 idx1 1 purchased A 0 <nil> <nil> YES BTREE   YES NULL"))
 	c.Assert(err, IsNil)
 }
 
@@ -773,7 +778,8 @@ func (s *testStateChangeSuite) TestParallelAlterAddIndex(c *C) {
 	s.testControlParallelExecSQL(c, sql1, sql2, f)
 }
 
-func (s *testStateChangeSuite) TestParallelAlterAddExpressionIndex(c *C) {
+func (s *serialTestStateChangeSuite) TestParallelAlterAddExpressionIndex(c *C) {
+	config.GetGlobalConfig().Experimental.AllowsExpressionIndex = true
 	sql1 := "ALTER TABLE t add index expr_index_b((b+1));"
 	sql2 := "CREATE INDEX expr_index_b ON t ((c+1));"
 	f := func(c *C, err1, err2 error) {

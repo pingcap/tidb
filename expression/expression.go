@@ -828,9 +828,9 @@ func canFuncBePushed(sf *ScalarFunction, storeType kv.StoreType) bool {
 		// ast.Minute,
 		// ast.Second,
 		// ast.MicroSecond,
+		// ast.DayName,
 		ast.PeriodAdd,
 		ast.PeriodDiff,
-		ast.DayName,
 		ast.TimestampDiff,
 
 		// encryption functions.

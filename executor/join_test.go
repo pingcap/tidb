@@ -1425,7 +1425,7 @@ func (s *testSuiteJoin2) TestNullEmptyAwareSemiJoin(c *C) {
 	}
 	hints := [5]string{
 		"/*+ HASH_JOIN(t1, t2) */",
-		"/*+ SM_JOIN(t1, t2) */",
+		"/*+ MERGE_JOIN(t1, t2) */",
 		"/*+ INL_JOIN(t1, t2) */",
 		"/*+ INL_HASH_JOIN(t1, t2) */",
 		"/*+ INL_MERGE_JOIN(t1, t2) */",
@@ -1887,4 +1887,37 @@ func (s *testSuiteJoinSerial) TestOuterMatchStatusIssue14742(c *C) {
 		"2 1",
 		"2 1",
 	))
+}
+
+func (s *testSuiteJoinSerial) TestInlineProjection4HashJoinIssue15316(c *C) {
+	// Two necessary factors to reproduce this issue:
+	// (1) taking HashLeftJoin, i.e., letting the probing tuple lay at the left side of joined tuples
+	// (2) the projection only contains a part of columns from the build side, i.e., pruning the same probe side
+	plannercore.ForcedHashLeftJoin4Test = true
+	defer func() { plannercore.ForcedHashLeftJoin4Test = false }()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table S (a int not null, b int, c int);")
+	tk.MustExec("create table T (a int not null, b int, c int);")
+	tk.MustExec("insert into S values (0,1,2),(0,1,null),(0,1,2);")
+	tk.MustExec("insert into T values (0,10,2),(0,10,null),(1,10,2);")
+	tk.MustQuery("select T.a,T.a,T.c from S join T on T.a = S.a where S.b<T.b order by T.a,T.c;").Check(testkit.Rows(
+		"0 0 <nil>",
+		"0 0 <nil>",
+		"0 0 <nil>",
+		"0 0 2",
+		"0 0 2",
+		"0 0 2",
+	))
+	// NOTE: the HashLeftJoin should be kept
+	tk.MustQuery("explain select T.a,T.a,T.c from S join T on T.a = S.a where S.b<T.b order by T.a,T.c;").Check(testkit.Rows(
+		"Sort_8 12487.50 root test.t.a:asc, test.t.c:asc",
+		"└─Projection_10 12487.50 root test.t.a, test.t.a, test.t.c",
+		"  └─HashLeftJoin_11 12487.50 root inner join, equal:[eq(test.s.a, test.t.a)], other cond:lt(test.s.b, test.t.b)",
+		"    ├─TableReader_17(Build) 9990.00 root data:Selection_16",
+		"    │ └─Selection_16 9990.00 cop[tikv] not(isnull(test.t.b))",
+		"    │   └─TableFullScan_15 10000.00 cop[tikv] table:T, keep order:false, stats:pseudo",
+		"    └─TableReader_14(Probe) 9990.00 root data:Selection_13",
+		"      └─Selection_13 9990.00 cop[tikv] not(isnull(test.s.b))",
+		"        └─TableFullScan_12 10000.00 cop[tikv] table:S, keep order:false, stats:pseudo"))
 }
