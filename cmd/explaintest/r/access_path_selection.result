@@ -42,4 +42,3 @@ StreamAgg_28	1.00	root		funcs:count(Column#18)->Column#4
 └─TableReader_29	1.00	root		data:StreamAgg_8
   └─StreamAgg_8	1.00	cop[tikv]		funcs:count(1)->Column#18
     └─TableFullScan_24	10000.00	cop[tikv]	table:access_path_selection	keep order:false, stats:pseudo
-add some random thing to test
