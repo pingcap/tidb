@@ -1284,11 +1284,10 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 						break
 					}
 				}
-				// Index merge join has more strict conditions than index join and index hash join,
-				// but if we get the index merge join, we can also get the index join and index hash join.
-				// So when we can't satisfy the inl_merge_join hint and we can get the index join, then there must
-				// be another required property(such as nil) satisfy the index merge join. In this case, we should
-				// ignore warning, make the `canForced` true and empty the physical plan results.
+				// 1. IndexMergeJoin requires stricter conditions than Index(Hash)Join when the output order is needed.
+				// 2. IndexMergeJoin requires looser conditions than Index(Hash)Join when the output is unordered.
+				// 3. If ordered-Index(Hash)Join can be chosen but ordered-IndexMergeJoin can not be chosen, we can build a plan with an enforced sort on IndexMergeJoin.
+				// 4. Thus we can give up the plans here if IndexMergeJoin is nil when `hasINLMJHint` is true. Because we can make sure that an IndexMeregJoin with enforced sort will be built.
 				if !containIdxMergeJoin {
 					canForced = true
 					indexJoins = nil
