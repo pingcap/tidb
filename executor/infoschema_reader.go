@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -934,7 +935,7 @@ func (e *memtableRetriever) setDataFromCharacterSets() {
 
 func (e *memtableRetriever) setDataFromCollations() {
 	var rows [][]types.Datum
-	collations := charset.GetSupportedCollations()
+	collations := collate.GetSupportedCollations()
 	for _, collation := range collations {
 		isDefault := ""
 		if collation.IsDefault {
@@ -949,7 +950,7 @@ func (e *memtableRetriever) setDataFromCollations() {
 
 func (e *memtableRetriever) dataForCollationCharacterSetApplicability() {
 	var rows [][]types.Datum
-	collations := charset.GetSupportedCollations()
+	collations := collate.GetSupportedCollations()
 	for _, collation := range collations {
 		rows = append(rows,
 			types.MakeDatums(collation.Name, collation.CharsetName),
