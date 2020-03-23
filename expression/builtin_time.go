@@ -5979,9 +5979,13 @@ func (b *builtinSecToTimeSig) evalDuration(row chunk.Row) (types.Duration, bool,
 		second = seconds % 60
 	}
 	secondDemical = float64(second) + demical
+	secStr, err := types.ConvertScientificNotation(fmt.Sprintf("%v", secondDemical))
+	if err != nil {
+		return types.Duration{}, false, err
+	}
 
 	var dur types.Duration
-	dur, err = types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, fmt.Sprintf("%s%02d:%02d:%v", negative, hour, minute, secondDemical), int8(b.tp.Decimal))
+	dur, err = types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, fmt.Sprintf("%s%02d:%02d:%s", negative, hour, minute, secStr), int8(b.tp.Decimal))
 	if err != nil {
 		return types.Duration{}, err != nil, err
 	}

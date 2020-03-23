@@ -1112,9 +1112,16 @@ func (s *testTypeConvertSuite) TestConvertScientificNotation(c *C) {
 		{"123.456e-", "", false},
 		{"123.456e-7.5", "", false},
 		{"123.456e", "", false},
+		{"1E5", "100000", true},
+		{"123E5", "12300000", true},
+		{"1.23E5", "123000", true},
+		{"1E-05", "0.00001", true},
+		{"123E-05", "0.00123", true},
+		{"1.23E-05", "0.0000123", true},
+		{"0.0123E-05", "0.000000123", true},
 	}
 	for _, ca := range cases {
-		result, err := convertScientificNotation(ca.input)
+		result, err := ConvertScientificNotation(ca.input)
 		if !ca.succ {
 			c.Assert(err, NotNil)
 		} else {
