@@ -643,7 +643,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 			return "", nil
 		}
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
-	case TiDBEnableStmtSummary:
+	case TiDBEnableStmtSummary, TiDBStmtSummaryInternalQuery:
 		switch {
 		case strings.EqualFold(value, "ON") || value == "1":
 			return "1", nil

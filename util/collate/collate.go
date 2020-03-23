@@ -47,23 +47,13 @@ func CompatibleCollate(collate1, collate2 string) bool {
 	}
 }
 
-// CollatorOption is the option of collator.
-type CollatorOption struct {
-	PadLen int
-}
-
-// NewCollatorOption creates a new CollatorOption with the specified arguments.
-func NewCollatorOption(padLen int) CollatorOption {
-	return CollatorOption{padLen}
-}
-
 // Collator provides functionality for comparing strings for a given
 // collation order.
 type Collator interface {
 	// Compare returns an integer comparing the two strings. The result will be 0 if a == b, -1 if a < b, and +1 if a > b.
-	Compare(a, b string, opt CollatorOption) int
+	Compare(a, b string) int
 	// Key returns the collate key for str. If the collation is padding, make sure the PadLen >= len(rune[]str) in opt.
-	Key(str string, opt CollatorOption) []byte
+	Key(str string) []byte
 	// Pattern get a collation-aware WildcardPattern.
 	Pattern() WildcardPattern
 }
@@ -152,12 +142,12 @@ type binCollator struct {
 }
 
 // Compare implement Collator interface.
-func (bc *binCollator) Compare(a, b string, opt CollatorOption) int {
+func (bc *binCollator) Compare(a, b string) int {
 	return strings.Compare(a, b)
 }
 
 // Key implement Collator interface.
-func (bc *binCollator) Key(str string, opt CollatorOption) []byte {
+func (bc *binCollator) Key(str string) []byte {
 	return []byte(str)
 }
 
@@ -191,11 +181,11 @@ func truncateTailingSpace(str string) string {
 	return str
 }
 
-func (bpc *binPaddingCollator) Compare(a, b string, opt CollatorOption) int {
+func (bpc *binPaddingCollator) Compare(a, b string) int {
 	return strings.Compare(truncateTailingSpace(a), truncateTailingSpace(b))
 }
 
-func (bpc *binPaddingCollator) Key(str string, opt CollatorOption) []byte {
+func (bpc *binPaddingCollator) Key(str string) []byte {
 	return []byte(truncateTailingSpace(str))
 }
 

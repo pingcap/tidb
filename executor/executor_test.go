@@ -88,6 +88,7 @@ func TestT(t *testing.T) {
 	old := config.GetGlobalConfig()
 	new := *old
 	new.Log.SlowThreshold = 30000 // 30s
+	new.Experimental.AllowsExpressionIndex = true
 	config.StoreGlobalConfig(&new)
 
 	testleak.BeforeTest()
@@ -4637,6 +4638,13 @@ func (s *testRecoverTable) TestRecoverTable(c *C) {
 	// check recover table autoID.
 	tk.MustExec("insert into t_recover values (7),(8),(9)")
 	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1", "7", "8", "9"))
+
+	// Recover truncate table.
+	tk.MustExec("truncate table t_recover")
+	tk.MustExec("rename table t_recover to t_recover_new")
+	tk.MustExec("recover table t_recover")
+	tk.MustExec("insert into t_recover values (10)")
+	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1", "7", "8", "9", "10"))
 
 	gcEnable, err := gcutil.CheckGCEnable(tk.Se)
 	c.Assert(err, IsNil)

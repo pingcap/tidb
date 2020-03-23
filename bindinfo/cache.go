@@ -50,16 +50,16 @@ type Binding struct {
 	Collation  string
 	// Hint is the parsed hints, it is used to bind hints to stmt node.
 	Hint *HintsSet
-	// id is the string form of all hints. It is used to uniquely identify different hints.
+	// ID is the string form of all hints. It is used to uniquely identify different hints.
 	// It would be non-empty only when the status is `Using` or `PendingVerify`.
-	id string
+	ID string
 }
 
 func (b *Binding) isSame(rb *Binding) bool {
-	if b.id != "" && rb.id != "" {
-		return b.id == rb.id
+	if b.ID != "" && rb.ID != "" {
+		return b.ID == rb.ID
 	}
-	// Sometimes we cannot construct `id` because of the changed schema, so we need to compare by bind sql.
+	// Sometimes we cannot construct `ID` because of the changed schema, so we need to compare by bind sql.
 	return b.BindSQL == rb.BindSQL
 }
 
@@ -96,7 +96,7 @@ func (br *BindRecord) HasUsingBinding() bool {
 // FindBinding find bindings in BindRecord.
 func (br *BindRecord) FindBinding(hint string) *Binding {
 	for _, binding := range br.Bindings {
-		if binding.id == hint {
+		if binding.ID == hint {
 			return &binding
 		}
 	}
@@ -106,10 +106,10 @@ func (br *BindRecord) FindBinding(hint string) *Binding {
 func (br *BindRecord) prepareHints(sctx sessionctx.Context) error {
 	p := parser.New()
 	for i, bind := range br.Bindings {
-		if bind.Hint != nil || bind.id != "" || bind.Status == deleted {
+		if (bind.Hint != nil && bind.ID != "") || bind.Status == deleted {
 			continue
 		}
-		stmtNode, err := p.ParseOneStmt(bind.BindSQL, bind.Charset, bind.Collation)
+		hintsSet, err := ParseHintsSet(p, bind.BindSQL, bind.Charset, bind.Collation)
 		if err != nil {
 			return err
 		}
@@ -117,8 +117,8 @@ func (br *BindRecord) prepareHints(sctx sessionctx.Context) error {
 		if err != nil {
 			return err
 		}
-		br.Bindings[i].Hint = CollectHint(stmtNode)
-		br.Bindings[i].id = hints
+		br.Bindings[i].Hint = hintsSet
+		br.Bindings[i].ID = hints
 	}
 	return nil
 }

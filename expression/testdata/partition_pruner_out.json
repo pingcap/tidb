@@ -76,6 +76,20 @@
         "Result": [
           "TableDual_8 0.00 root rows:0"
         ]
+      },
+      {
+        "SQL": "explain select * from t4 where d = '2019-10-07 10:40:00' and a = 1",
+        "Result": [
+          "Point_Get_6 1.00 root table:t4, index:d a, partition:p9"
+        ]
+      },
+      {
+        "SQL": "explain select * from t5 where d = '2019-10-07'",
+        "Result": [
+          "IndexLookUp_11 10.00 root ",
+          "├─IndexRangeScan_9(Build) 10.00 cop[tikv] table:t5, partition:p0, index:d, a, range:[2019-10-07,2019-10-07], keep order:false, stats:pseudo",
+          "└─TableRowIDScan_10(Probe) 10.00 cop[tikv] table:t5, partition:p0, keep order:false, stats:pseudo"
+        ]
       }
     ]
   }

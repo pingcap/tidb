@@ -46,6 +46,7 @@ import (
 	"runtime/pprof"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -1045,7 +1046,7 @@ func insertDataWithCommit(ctx context.Context, prevData,
 }
 
 // processStream process input stream from network
-func processStream(ctx context.Context, cc *clientConn, loadDataInfo *executor.LoadDataInfo) {
+func processStream(ctx context.Context, cc *clientConn, loadDataInfo *executor.LoadDataInfo, wg *sync.WaitGroup) {
 	var err error
 	var shouldBreak bool
 	var prevData, curData []byte
@@ -1061,6 +1062,7 @@ func processStream(ctx context.Context, cc *clientConn, loadDataInfo *executor.L
 		} else {
 			loadDataInfo.CloseTaskQueue()
 		}
+		wg.Done()
 	}()
 	for {
 		curData, err = cc.readPacket()
@@ -1071,6 +1073,7 @@ func processStream(ctx context.Context, cc *clientConn, loadDataInfo *executor.L
 			}
 		}
 		if len(curData) == 0 {
+			loadDataInfo.Drained = true
 			shouldBreak = true
 			if len(prevData) == 0 {
 				break
@@ -1129,8 +1132,27 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 		return err
 	}
 	// processStream process input data, enqueue commit task
-	go processStream(ctx, cc, loadDataInfo)
+	wg := new(sync.WaitGroup)
+	wg.Add(1)
+	go processStream(ctx, cc, loadDataInfo, wg)
 	err = loadDataInfo.CommitWork(ctx)
+	wg.Wait()
+	if err != nil {
+		// drain the data from client conn util empty packet received, otherwise the connection will be reset
+		for !loadDataInfo.Drained {
+			logutil.Logger(ctx).Info("not drained yet, try reading left data from client connection")
+			curData, err1 := cc.readPacket()
+			if err1 != nil {
+				logutil.Logger(ctx).Error("drain reading left data encounter errors", zap.Error(err1))
+				break
+			}
+			if len(curData) == 0 {
+				loadDataInfo.Drained = true
+				logutil.Logger(ctx).Info("draining finished for error", zap.Error(err))
+				break
+			}
+		}
+	}
 	loadDataInfo.SetMessage()
 	return err
 }
