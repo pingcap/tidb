@@ -926,7 +926,7 @@ func (l *AutoRandomIDLayout) IncrementalBitsCapacity() uint64 {
 	return uint64(math.Pow(2, float64(l.IncrementalBits)) - 1)
 }
 
-// IncrementalMask returns 00..0[11..1], where [xxx] is the incremental bits.
+// IncrementalMask returns 00..0[11..1], where [xxx] is the incremental section of the current layout.
 func (l *AutoRandomIDLayout) IncrementalMask() int64 {
 	return (1 << l.IncrementalBits) - 1
 }
