@@ -2560,8 +2560,8 @@ func checkModifyCharsetAndCollation(toCharset, toCollate, origCharset, origColla
 
 // checkModifyTypes checks if the 'origin' type can be modified to 'to' type with out the need to
 // change or check existing data in the table.
-// It returns true if the two types has the same Charset and Collation, the same sign, both are
-// integer types or string types, and new Flen and Decimal must be greater than or equal to origin.
+// It returns error if the two types has incompatible Charset and Collation, different sign, different
+// digital/string types, or length of new Flen and Decimal is less than origin.
 func checkModifyTypes(origin *types.FieldType, to *types.FieldType, needRewriteCollationData bool) error {
 	unsupportedMsg := fmt.Sprintf("type %v not match origin %v", to.CompactStr(), origin.CompactStr())
 	switch origin.Tp {
