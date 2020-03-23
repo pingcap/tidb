@@ -257,9 +257,9 @@
         "Plan": [
           "Projection_18 6400.00 root  Column#3, Column#4",
           "└─Sort_30 6400.00 root  Column#3:asc",
-          "  └─HashAgg_26 6400.00 root  group by:Column#9, funcs:sum(Column#7)->Column#4, funcs:firstrow(Column#9)->Column#3",
+          "  └─HashAgg_26 6400.00 root  group by:Column#7, funcs:sum(Column#8)->Column#4, funcs:firstrow(Column#7)->Column#3",
           "    └─TableReader_27 6400.00 root  data:HashAgg_28",
-          "      └─HashAgg_28 6400.00 cop[tikv]  group by:plus(test.t.a, test.t.b), funcs:sum(test.t.a)->Column#7",
+          "      └─HashAgg_28 6400.00 cop[tikv]  group by:plus(test.t.a, test.t.b), funcs:sum(test.t.a)->Column#8",
           "        └─Selection_23 8000.00 cop[tikv]  gt(plus(test.t.a, test.t.b), 1)",
           "          └─TableFullScan_24 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
@@ -427,9 +427,10 @@
       {
         "SQL": "select count(distinct case when a > 0 and a <= 1000 then b end) from t",
         "Plan": [
-          "HashAgg_10 1.00 root  funcs:count(distinct test.t.b)->Column#3",
-          "└─TableReader_11 250.00 root  data:TableRangeScan_12",
-          "  └─TableRangeScan_12 250.00 cop[tikv] table:t range:(0,1000], keep order:false, stats:pseudo"
+          "HashAgg_15 1.00 root  funcs:count(Column#4)->Column#3",
+          "└─TableReader_16 1.00 root  data:HashAgg_17",
+          "  └─HashAgg_17 1.00 cop[tikv]  funcs:count(test.t.b)->Column#4",
+          "    └─TableRangeScan_14 250.00 cop[tikv] table:t range:(0,1000], keep order:false, stats:pseudo"
         ],
         "Result": [
           "4"
