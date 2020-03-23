@@ -1182,11 +1182,11 @@ func (s *testPessimisticSuite) TestGenerateColPointGet(c *C) {
 		tk2 := testkit.NewTestKitWithInit(c, s.store)
 		tk2.MustExec("begin pessimistic")
 		err := tk2.ExecToErr("select * from tu where z = 3 for update nowait")
-		c.Assert(err, NotNil)
+		c.Assert(terror.ErrorEqual(err, tikv.ErrLockAcquireFailAndNoWaitSet), IsTrue)
 		tk.MustExec("begin pessimistic")
 		tk.MustExec("insert into tu(x, y) values(2, 2);")
 		err = tk2.ExecToErr("select * from tu where z = 4 for update nowait")
-		c.Assert(err, NotNil)
+		c.Assert(terror.ErrorEqual(err, tikv.ErrLockAcquireFailAndNoWaitSet), IsTrue)
 
 		// test batch point get lock
 		tk.MustExec("begin pessimistic")
@@ -1194,11 +1194,11 @@ func (s *testPessimisticSuite) TestGenerateColPointGet(c *C) {
 		tk.MustQuery("select * from tu where z in (1, 3, 5) for update").Check(testkit.Rows("1 2 3"))
 		tk2.MustExec("begin pessimistic")
 		err = tk2.ExecToErr("select x from tu where z in (3, 7, 9) for update nowait")
-		c.Assert(err, NotNil)
+		c.Assert(terror.ErrorEqual(err, tikv.ErrLockAcquireFailAndNoWaitSet), IsTrue)
 		tk.MustExec("begin pessimistic")
 		tk.MustExec("insert into tu(x, y) values(5, 6);")
 		err = tk2.ExecToErr("select * from tu where z = 11 for update nowait")
-		c.Assert(err, NotNil)
+		c.Assert(terror.ErrorEqual(err, tikv.ErrLockAcquireFailAndNoWaitSet), IsTrue)
 
 		tk.MustExec("commit")
 		tk2.MustExec("commit")

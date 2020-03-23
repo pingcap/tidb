@@ -167,11 +167,7 @@ func (p *PointGetPlan) SetChild(i int, child PhysicalPlan) {}
 
 // ResolveIndices resolves the indices for columns. After doing this, the columns can evaluate the rows by their indices.
 func (p *PointGetPlan) ResolveIndices() error {
-	err := resolveIndicesForVirtualColumn(p.schema.Columns, p.schema)
-	if err != nil {
-		return err
-	}
-	return nil
+	return resolveIndicesForVirtualColumn(p.schema.Columns, p.schema)
 }
 
 // OutputNames returns the outputting names of each column.
@@ -297,11 +293,7 @@ func (p *BatchPointGetPlan) SetChild(i int, child PhysicalPlan) {}
 
 // ResolveIndices resolves the indices for columns. After doing this, the columns can evaluate the rows by their indices.
 func (p *BatchPointGetPlan) ResolveIndices() error {
-	err := resolveIndicesForVirtualColumn(p.schema.Columns, p.schema)
-	if err != nil {
-		return err
-	}
-	return nil
+	return resolveIndicesForVirtualColumn(p.schema.Columns, p.schema)
 }
 
 // OutputNames returns the outputting names of each column.
