@@ -741,9 +741,9 @@ func (e *Explain) prepareSchema() error {
 
 	switch {
 	case format == ast.ExplainFormatROW && !e.Analyze:
-		fieldNames = []string{"id", "estRows", "task", "operator info"}
+		fieldNames = []string{"id", "estRows", "task", "access object", "operator info"}
 	case format == ast.ExplainFormatROW && e.Analyze:
-		fieldNames = []string{"id", "estRows", "actRows", "task", "operator info", "execution info", "memory", "disk"}
+		fieldNames = []string{"id", "estRows", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"}
 	case format == ast.ExplainFormatDOT:
 		fieldNames = []string{"dot contents"}
 	case format == ast.ExplainFormatHint:
@@ -860,15 +860,15 @@ func (e *Explain) explainPlanInRowFormat(p Plan, taskType, driverSide, indent st
 		err = e.explainPlanInRowFormat(x.indexPlan, "cop[tikv]", "(Build)", childIndent, false)
 		err = e.explainPlanInRowFormat(x.tablePlan, "cop[tikv]", "(Probe)", childIndent, true)
 	case *PhysicalIndexMergeReader:
-		for i := 0; i < len(x.partialPlans); i++ {
-			if x.tablePlan == nil && i == len(x.partialPlans)-1 {
-				err = e.explainPlanInRowFormat(x.partialPlans[i], "cop[tikv]", "", childIndent, true)
+		for i, pchild := range x.partialPlans {
+			if x.tablePlan != nil || i < len(x.partialPlans)-1 {
+				err = e.explainPlanInRowFormat(pchild, "cop[tikv]", "(Build)", childIndent, false)
 			} else {
-				err = e.explainPlanInRowFormat(x.partialPlans[i], "cop[tikv]", "", childIndent, false)
+				err = e.explainPlanInRowFormat(pchild, "cop[tikv]", "(Probe)", childIndent, true)
 			}
 		}
 		if x.tablePlan != nil {
-			err = e.explainPlanInRowFormat(x.tablePlan, "cop[tikv]", "", childIndent, true)
+			err = e.explainPlanInRowFormat(x.tablePlan, "cop[tikv]", "(Probe)", childIndent, true)
 		}
 	case *Insert:
 		if x.SelectPlan != nil {
@@ -884,40 +884,52 @@ func (e *Explain) explainPlanInRowFormat(p Plan, taskType, driverSide, indent st
 		}
 	case *Execute:
 		if x.Plan != nil {
-			err = e.explainPlanInRowFormat(x.Plan, "root", "", childIndent, true)
+			err = e.explainPlanInRowFormat(x.Plan, "root", "", indent, true)
 		}
 	}
 	return
 }
 
 // prepareOperatorInfo generates the following information for every plan:
-// operator id, task type, operator info, and the estemated rows.
-// `estRows` used to be called `count`, see issue/14603.
+// operator id, estimated rows, task type, access object and other operator info.
 func (e *Explain) prepareOperatorInfo(p Plan, taskType, driverSide, indent string, isLastChild bool) {
-	operatorInfo := p.ExplainInfo()
+	if p.ExplainID().String() == "_0" {
+		return
+	}
+
+	id := texttree.PrettyIdentifier(p.ExplainID().String()+driverSide, indent, isLastChild)
+
 	estRows := "N/A"
 	if si := p.statsInfo(); si != nil {
 		estRows = strconv.FormatFloat(si.RowCount, 'f', 2, 64)
 	}
-	explainID := p.ExplainID().String()
-	row := []string{texttree.PrettyIdentifier(explainID+driverSide, indent, isLastChild), estRows, taskType, operatorInfo}
+
+	var accessObject, operatorInfo string
+	if plan, ok := p.(dataAccesser); ok {
+		accessObject = plan.AccessObject()
+		operatorInfo = plan.OperatorInfo(false)
+	} else {
+		operatorInfo = p.ExplainInfo()
+	}
+
+	var row []string
 	if e.Analyze {
 		runtimeStatsColl := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl
-		// There maybe some mock information for cop task to let runtimeStatsColl.Exists(p.ExplainID()) is true.
-		// So check copTaskExecDetail first and print the real cop task information if it's not empty.
-		var analyzeInfo string
+		explainID := p.ExplainID().String()
+		var actRows, analyzeInfo string
 
-		var actRows int64
+		// There maybe some mock information for cop task to let runtimeStatsColl.Exists(p.ExplainID()) is true.
+		// So check copTaskEkxecDetail first and print the real cop task information if it's not empty.
 		if runtimeStatsColl.ExistsCopStats(explainID) {
 			copstats := runtimeStatsColl.GetCopStats(explainID)
 			analyzeInfo = copstats.String()
-			actRows = copstats.GetActRows()
+			actRows = fmt.Sprint(copstats.GetActRows())
 		} else if runtimeStatsColl.ExistsRootStats(explainID) {
 			rootstats := runtimeStatsColl.GetRootStats(explainID)
 			analyzeInfo = rootstats.String()
-			actRows = rootstats.GetActRows()
+			actRows = fmt.Sprint(rootstats.GetActRows())
 		} else {
-			analyzeInfo = "time:0ns, loops:0, rows:0"
+			analyzeInfo = "time:0ns, loops:0"
 		}
 		switch p.(type) {
 		case *PhysicalTableReader, *PhysicalIndexReader, *PhysicalIndexLookUpReader:
@@ -925,26 +937,22 @@ func (e *Explain) prepareOperatorInfo(p Plan, taskType, driverSide, indent strin
 				analyzeInfo += ", " + s.String()
 			}
 		}
-		row = append(row, analyzeInfo)
 
+		memoryInfo := "N/A"
 		memTracker := e.ctx.GetSessionVars().StmtCtx.MemTracker.SearchTracker(p.ExplainID().String())
 		if memTracker != nil {
-			row = append(row, memTracker.BytesToString(memTracker.MaxConsumed()))
-		} else {
-			row = append(row, "N/A")
+			memoryInfo = memTracker.BytesToString(memTracker.MaxConsumed())
 		}
 
+		diskInfo := "N/A"
 		diskTracker := e.ctx.GetSessionVars().StmtCtx.DiskTracker.SearchTracker(p.ExplainID().String())
 		if diskTracker != nil {
-			row = append(row, diskTracker.BytesToString(diskTracker.MaxConsumed()))
-		} else {
-			row = append(row, "N/A")
+			diskInfo = diskTracker.BytesToString(diskTracker.MaxConsumed())
 		}
 
-		// Put 'actRows'(actual rows) next by 'estRows'(estimate rows).
-		tmp := append([]string{}, row[2:]...)
-		row = append(row[:2], fmt.Sprint(actRows))
-		row = append(row, tmp...)
+		row = []string{id, estRows, actRows, taskType, accessObject, analyzeInfo, operatorInfo, memoryInfo, diskInfo}
+	} else {
+		row = []string{id, estRows, taskType, accessObject, operatorInfo}
 	}
 	e.Rows = append(e.Rows, row)
 }
