@@ -583,6 +583,10 @@ type SessionVars struct {
 	// SequenceState cache all sequence's latest value accessed by lastval() builtins. It's a session scoped
 	// variable, and all public methods of SequenceState are currently-safe.
 	SequenceState *SequenceState
+
+	// WindowingUseHighPrecision determines whether to compute window operations without loss of precision.
+	// see https://dev.mysql.com/doc/refman/8.0/en/window-function-optimization.html for more details.
+	WindowingUseHighPrecision bool
 }
 
 // PreparedParams contains the parameters of the current prepared statement when executing it.
@@ -667,6 +671,7 @@ func NewSessionVars() *SessionVars {
 		MetricSchemaStep:            DefTiDBMetricSchemaStep,
 		MetricSchemaRangeDuration:   DefTiDBMetricSchemaRangeDuration,
 		SequenceState:               NewSequenceState(),
+		WindowingUseHighPrecision:   true,
 	}
 	vars.KVVars = kv.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -1018,6 +1023,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case InnodbLockWaitTimeout:
 		lockWaitSec := tidbOptInt64(val, DefInnodbLockWaitTimeout)
 		s.LockWaitTimeout = int64(lockWaitSec * 1000)
+	case WindowingUseHighPrecision:
+		s.WindowingUseHighPrecision = TiDBOptOn(val)
 	case TiDBSkipUTF8Check:
 		s.SkipUTF8Check = TiDBOptOn(val)
 	case TiDBOptAggPushDown:
