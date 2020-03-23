@@ -16,6 +16,7 @@ package expression
 import (
 	goJSON "encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/util/collate"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -933,7 +934,7 @@ func canScalarFuncPushDown(scalarFunc *ScalarFunction, pc PbConverter, storeType
 }
 
 func canExprPushDown(expr Expression, pc PbConverter, storeType kv.StoreType) bool {
-	if storeType == kv.TiFlash && (expr.GetType().Tp == mysql.TypeDuration || expr.GetType().Tp == mysql.TypeJSON || expr.Coercibility() == CoercibilityExplicit) {
+	if storeType == kv.TiFlash && (expr.GetType().Tp == mysql.TypeDuration || expr.GetType().Tp == mysql.TypeJSON || collate.NewCollationEnabled() == true) {
 		return false
 	}
 	switch x := expr.(type) {
