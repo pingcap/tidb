@@ -58,11 +58,10 @@ Update_2	N/A	root	N/A
 └─Point_Get_1	1.00	root	table:t1, handle:1
 explain delete from t1 where t1.c2 = 1;
 id	estRows	task	operator info
-Delete_5	N/A	root	N/A
-└─SelectLock_7	0.00	root	for update
-  └─IndexLookUp_13	0.00	root	
-    ├─IndexRangeScan_11(Build)	0.00	cop[tikv]	table:t1, index:c2, range:[1,1], keep order:false
-    └─TableRowIDScan_12(Probe)	0.00	cop[tikv]	table:t1, keep order:false
+Delete_4	N/A	root	N/A
+└─IndexLookUp_11	0.00	root	
+  ├─IndexRangeScan_9(Build)	0.00	cop[tikv]	table:t1, index:c2, range:[1,1], keep order:false
+  └─TableRowIDScan_10(Probe)	0.00	cop[tikv]	table:t1, keep order:false
 explain select count(b.c2) from t1 a, t2 b where a.c1 = b.c2 group by a.c1;
 id	estRows	task	operator info
 Projection_11	1985.00	root	cast(Column#8, bigint(21) BINARY)->Column#7
@@ -100,7 +99,7 @@ HashLeftJoin_19	1985.00	root	inner join, equal:[eq(test.t1.c1, test.t2.c2)]
   └─TableFullScan_31	1999.00	cop[tikv]	table:t1, keep order:false
 explain select * from information_schema.columns;
 id	estRows	task	operator info
-MemTableScan_4	10000.00	root	
+MemTableScan_4	10000.00	root	table:COLUMNS
 explain select c2 = (select c2 from t2 where t1.c1 = t2.c1 order by c1 limit 1) from t1;
 id	estRows	task	operator info
 Projection_12	1999.00	root	eq(test.t1.c2, test.t2.c2)->Column#8

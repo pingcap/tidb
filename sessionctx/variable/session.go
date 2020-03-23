@@ -732,6 +732,19 @@ func (s *SessionVars) SetAllowInSubqToJoinAndAgg(val bool) {
 	s.allowInSubqToJoinAndAgg = val
 }
 
+// GetEnableCascadesPlanner get EnableCascadesPlanner from sql hints and SessionVars.EnableCascadesPlanner.
+func (s *SessionVars) GetEnableCascadesPlanner() bool {
+	if s.StmtCtx.HasEnableCascadesPlannerHint {
+		return s.StmtCtx.EnableCascadesPlanner
+	}
+	return s.EnableCascadesPlanner
+}
+
+// SetEnableCascadesPlanner set SessionVars.EnableCascadesPlanner.
+func (s *SessionVars) SetEnableCascadesPlanner(val bool) {
+	s.EnableCascadesPlanner = val
+}
+
 // GetEnableIndexMerge get EnableIndexMerge from SessionVars.enableIndexMerge.
 func (s *SessionVars) GetEnableIndexMerge() bool {
 	return s.enableIndexMerge
@@ -1115,7 +1128,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBEnableChunkRPC:
 		s.EnableChunkRPC = TiDBOptOn(val)
 	case TiDBEnableCascadesPlanner:
-		s.EnableCascadesPlanner = TiDBOptOn(val)
+		s.SetEnableCascadesPlanner(TiDBOptOn(val))
 	case TiDBOptimizerSelectivityLevel:
 		s.OptimizerSelectivityLevel = tidbOptPositiveInt32(val, DefTiDBOptimizerSelectivityLevel)
 	case TiDBEnableTablePartition:

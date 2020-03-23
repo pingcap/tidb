@@ -840,7 +840,7 @@
       {
         "SQL": "select * from information_schema.processlist",
         "Plan": [
-          "MemTableScan_3 10000.00 root "
+          "MemTableScan_3 10000.00 root table:PROCESSLIST"
         ],
         "Result": null
       }

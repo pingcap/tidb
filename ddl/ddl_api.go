@@ -1257,6 +1257,9 @@ func buildTableInfo(ctx sessionctx.Context, tableName model.CIStr, cols []*table
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
+			if constr.Option.Visibility == ast.IndexVisibilityInvisible {
+				idxInfo.Invisible = true
+			}
 			if constr.Option.Tp == model.IndexTypeInvalid {
 				// Use btree as default index type.
 				idxInfo.Tp = model.IndexTypeBtree
@@ -3708,6 +3711,9 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 	hiddenCols, err := buildHiddenColumnInfo(ctx, t, indexPartSpecifications, indexName)
 	if err != nil {
 		return err
+	}
+	if len(hiddenCols) > 0 && !config.GetGlobalConfig().Experimental.AllowsExpressionIndex {
+		return ErrUnsupportedExpressionIndex
 	}
 	if err = checkAddColumnTooManyColumns(len(t.Cols()) + len(hiddenCols)); err != nil {
 		return errors.Trace(err)

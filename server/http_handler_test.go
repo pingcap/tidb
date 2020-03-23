@@ -1134,7 +1134,7 @@ func (ts *HTTPHandlerTestSuite) TestFailpointHandler(c *C) {
 
 	// start server without enabling failpoint integration
 	ts.startServer(c)
-	resp, err := ts.fetchStatus("/failpoints/")
+	resp, err := ts.fetchStatus("/fail/")
 	c.Assert(err, IsNil)
 	c.Assert(resp.StatusCode, Equals, http.StatusNotFound)
 	ts.stopServer(c)
@@ -1142,7 +1142,7 @@ func (ts *HTTPHandlerTestSuite) TestFailpointHandler(c *C) {
 	// enable failpoint integration and start server
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/server/integrateFailpoint", "return"), IsNil)
 	ts.startServer(c)
-	resp, err = ts.fetchStatus("/failpoints/")
+	resp, err = ts.fetchStatus("/fail/")
 	c.Assert(err, IsNil)
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
 	b, err := ioutil.ReadAll(resp.Body)
