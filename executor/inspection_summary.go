@@ -419,31 +419,19 @@ func (e *inspectionSummaryRetriever) retrieve(ctx context.Context, sctx sessionc
 	names := inspectionFilter{set: e.extractor.MetricNames}
 
 	// Get clusterInfo from global cache.
-	clusterInfo := sctx.GetSessionVars().InstanceAddrCache
-	if clusterInfo == nil {
+	// If InstanceAddrCache is nil, set it and release it in the end.
+	clusterInfo := make(map[string]string)
+	if sctx.GetSessionVars().InstanceAddrCache == nil {
 		serversInfo, err := infoschema.GetClusterServerInfo(sctx)
 		if err != nil {
 			return nil, err
 		}
 		for _, v := range serversInfo {
-			clusterInfo[v.StatusAddr] = v.Address
+			sctx.GetSessionVars().InstanceAddrCache[v.StatusAddr] = v.Address
 		}
 	}
-	sctx.GetSessionVars().InstanceAddrCache = clusterInfo
+	clusterInfo = sctx.GetSessionVars().InstanceAddrCache
 	defer func() { sctx.GetSessionVars().InstanceAddrCache = nil }()
-	//	failpoint.Inject("mockClusterServerInfo", func(val failpoint.Value) {
-	//	if s := val.(string); len(s) > 0 {
-	//		// erase the error
-	//		serversInfo, err = parseFailpointServerInfo(s), nil
-	//	}
-	//})
-	//if err != nil {
-	//	return nil, err
-	//}
-	//clusterInfo := make(map[string]string)
-	//for _, v := range serversInfo {
-	//	clusterInfo[v.StatusAddr] = v.Address
-	//}
 
 	condition := e.timeRange.Condition()
 	var finalRows [][]types.Datum
