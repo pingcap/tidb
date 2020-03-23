@@ -403,7 +403,7 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 	req.AppendInt64(6, job.TableID)
 	req.AppendInt64(7, job.RowCount)
 	req.AppendTime(8, startTime)
-	if finishTime != types.ZeroTime {
+	if finishTS > 0 {
 		req.AppendTime(9, finishTime)
 	} else {
 		req.AppendNull(9)
