@@ -305,14 +305,3 @@ func baseTestSlidingWindowFunctions(tk *testkit.TestKit) {
 	result = tk.MustQuery("SELECT sex, SUM(id) OVER (ORDER BY id DESC RANGE BETWEEN 1 PRECEDING and 2 FOLLOWING) FROM t;")
 	result.Check(testkit.Rows("<nil> 21", "<nil> 21", "M 12", "F 14", "F 10", "F 6", "M 3"))
 }
-
-func (s *testSuite7) TestSlidingWindowFunctionsSumDecimal(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test;")
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("CREATE TABLE t (id DECIMAL, sex CHAR(1));")
-	for i := 0; i < 100000; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t values (%d,'M')", i%10))
-	}
-	_ = tk.MustQuery("SELECT sex, SUM(id) OVER (PARTITION BY id ROWS BETWEEN 100 PRECEDING and 100 FOLLOWING) FROM t;")
-}
