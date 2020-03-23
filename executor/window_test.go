@@ -313,14 +313,11 @@ func (s *testSuite7) TestSlidingWindowFunctionsSumDecimal(c *C) {
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("CREATE TABLE t (id DECIMAL, sex CHAR(1));")
 	var builder strings.Builder
-	for i := 0; i < 20; i++ {
-		builder.Reset()
-		fmt.Fprintf(&builder, "insert into t values ")
-		for j := 0; j < 1000; j++ {
-			fmt.Fprintf(&builder, "(%d,'M'),", j%10)
-		}
-		sql := builder.String()
-		tk.MustExec(sql[:len(sql)-1])
+	fmt.Fprintf(&builder, "insert into t values ")
+	for j := 0; j < 20000; j++ {
+		fmt.Fprintf(&builder, "(%d,'M'),", j%10)
 	}
+	sql := builder.String()
+	tk.MustExec(sql[:len(sql)-1])
 	_ = tk.MustQuery("SELECT sex, SUM(id) OVER (PARTITION BY id ROWS BETWEEN 100 PRECEDING and 100 FOLLOWING) FROM t;")
 }
