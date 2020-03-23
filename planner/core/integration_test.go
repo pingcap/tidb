@@ -485,11 +485,11 @@ func (s *testIntegrationSuite) TestIssue15546(c *C) {
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t, pt, vt")
-	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("create table t(a1 int, b1 int)")
 	tk.MustExec("insert into t values(1, 1)")
-	tk.MustExec("create table pt(a int primary key, b int) partition by range(a) (" +
+	tk.MustExec("create table pt(a2 int primary key, b2 int) partition by range(a2) (" +
 		"PARTITION `p0` VALUES LESS THAN (10), PARTITION `p1` VALUES LESS THAN (20), PARTITION `p2` VALUES LESS THAN (30))")
 	tk.MustExec("insert into pt values(1, 1), (11, 11), (21, 21)")
-	tk.MustExec("create definer='root'@'localhost' view vt(a, b) as select a, b from t")
-	tk.MustQuery("select * from pt, vt where pt.a = vt.a").Check(testkit.Rows("1 1 1 1"))
+	tk.MustExec("create definer='root'@'localhost' view vt(a1, b1) as select a1, b1 from t")
+	tk.MustQuery("select * from pt, vt where a2 = a1").Check(testkit.Rows("1 1 1 1"))
 }
