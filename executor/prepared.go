@@ -136,6 +136,34 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return ErrPrepareMulti
 	}
 	stmt := stmts[0]
+	planCacheHit := true
+	switch stmt.(type) {
+	case *ast.SelectStmt:
+		count := 1
+		for _, hints := range (stmt.(*ast.SelectStmt)).TableHints {
+			if hints.HintName.L == "enable_plan_cache" {
+				planCacheHit = hints.HintData.(bool)
+				count += 1
+			}
+		}
+		if count > 1 {
+
+		}
+		break
+	case *ast.DeleteStmt:
+		for _, hints := range (stmt.(*ast.DeleteStmt)).TableHints {
+			if hints.HintName.L == "enable_plan_cache" {
+				planCacheHit = hints.HintData.(bool)
+			}
+		}
+		break
+	case *ast.UpdateStmt:
+		for _, hints := range (stmt.(*ast.UpdateStmt)).TableHints {
+			if hints.HintName.L == "enable_plan_cache" {
+				planCacheHit = hints.HintData.(bool)
+			}
+		}
+	}
 	err = ResetContextOfStmt(e.ctx, stmt)
 	if err != nil {
 		return err
@@ -174,7 +202,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		Params:        sorter.markers,
 		SchemaVersion: e.is.SchemaMetaVersion(),
 	}
-	prepared.UseCache = plannercore.PreparedPlanCacheEnabled() && plannercore.Cacheable(stmt)
+	prepared.UseCache = plannercore.PreparedPlanCacheEnabled() && plannercore.Cacheable(stmt) && planCacheHit
 
 	// We try to build the real statement of preparedStmt.
 	for i := range prepared.Params {
@@ -200,12 +228,9 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		vars.PreparedStmtNameToID[e.name] = e.ID
 	}
 
-	normalized, digest := parser.NormalizeDigest(prepared.Stmt.Text())
 	preparedObj := &plannercore.CachedPrepareStmt{
-		PreparedAst:   prepared,
-		VisitInfos:    destBuilder.GetVisitInfo(),
-		NormalizedSQL: normalized,
-		SQLDigest:     digest,
+		PreparedAst: prepared,
+		VisitInfos:  destBuilder.GetVisitInfo(),
 	}
 	return vars.AddPreparedStmt(e.ID, preparedObj)
 }
@@ -318,10 +343,8 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
 		if !ok {
 			return nil, errors.Errorf("invalid CachedPrepareStmt type")
 		}
-		stmtCtx := sctx.GetSessionVars().StmtCtx
 		stmt.Text = preparedObj.PreparedAst.Stmt.Text()
-		stmtCtx.OriginalSQL = stmt.Text
-		stmtCtx.InitSQLDigest(preparedObj.NormalizedSQL, preparedObj.SQLDigest)
+		sctx.GetSessionVars().StmtCtx.OriginalSQL = stmt.Text
 	}
 	return stmt, nil
 }
