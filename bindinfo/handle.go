@@ -16,7 +16,6 @@ package bindinfo
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/util/set"
 	"runtime"
 	"strconv"
 	"strings"
@@ -38,6 +37,7 @@ import (
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/pingcap/tidb/util/timeutil"
@@ -189,7 +189,7 @@ func (h *BindHandle) GCBindRecord() error {
 			tmpDB := row.GetString(0)
 			dbSet.Insert(tmpDB)
 			sql += "\"" + tmpDB + "\""
-			if row.Idx() != len(rows) - 1 {
+			if row.Idx() != len(rows)-1 {
 				sql += ","
 			}
 		}
