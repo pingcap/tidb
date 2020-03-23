@@ -33,6 +33,7 @@ var (
 	// binCollatorInstance is a singleton used for all collations when newCollationEnabled is false.
 	binCollatorInstance = &binCollator{}
 
+	// ErrUnsupportedCollation is returned when an unsupported collation is specified.
 	ErrUnsupportedCollation = terror.ClassDDL.New(mysql.ErrUnknownCollation, "Unsupported collation when new collation is enabled: '%-.64s'")
 )
 
@@ -183,7 +184,7 @@ func GetCollationByName(name string) (coll *charset.Collation, err error) {
 func GetSupportedCollations() []*charset.Collation {
 	if atomic.LoadInt32(&newCollationEnabled) == 1 {
 		newSupportedCollations := make([]*charset.Collation, 0, len(newCollatorMap))
-		for name, _ := range newCollatorMap {
+		for name := range newCollatorMap {
 			if coll, err := charset.GetCollationByName(name); err != nil {
 				// Should never happens.
 				terror.Log(err)

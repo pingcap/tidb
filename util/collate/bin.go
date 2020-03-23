@@ -1,4 +1,3 @@
-
 // Copyright 2020 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -69,4 +68,3 @@ func (p *binPattern) Compile(patternStr string, escape byte) {
 func (p *binPattern) DoMatch(str string) bool {
 	return stringutil.DoMatch(str, p.patChars, p.patTypes)
 }
-

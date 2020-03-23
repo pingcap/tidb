@@ -83,7 +83,6 @@ func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetIn
 		if err != nil {
 			return errors.Trace(err)
 		}
-
 		dbInfo.Charset = charsetInfo.Chs
 		dbInfo.Collate = charsetInfo.Col
 	} else {

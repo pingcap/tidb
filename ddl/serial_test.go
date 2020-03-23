@@ -949,8 +949,8 @@ func (s *testSerialSuite) TestForbidUnsupportedCollations(c *C) {
 	mustGetUnsupportedCollation("create database ucd charset utf8mb4 collate utf8mb4_unicode_ci", "utf8mb4_unicode_ci")
 	mustGetUnsupportedCollation("create database ucd charset utf8 collate utf8_unicode_ci", "utf8_unicode_ci")
 	tk.MustExec("create database ucd")
-	tk.MustExec("alter database ucd charset utf8mb4 collate utf8mb4_unicode_ci", "utf8mb4_unicode_ci")
-	tk.MustExec("alter database collate utf8mb4_unicode_ci", "utf8mb4_unicode_ci")
+	mustGetUnsupportedCollation("alter database ucd charset utf8mb4 collate utf8mb4_unicode_ci", "utf8mb4_unicode_ci")
+	mustGetUnsupportedCollation("alter database ucd collate utf8mb4_unicode_ci", "utf8mb4_unicode_ci")
 
 	// Test default collation of table.
 	tk.MustExec("use ucd")
@@ -961,8 +961,9 @@ func (s *testSerialSuite) TestForbidUnsupportedCollations(c *C) {
 	mustGetUnsupportedCollation("alter table t convert to charset utf8mb4 collate utf8mb4_unicode_ci", "utf8mb4_unicode_ci")
 
 	// Test collation of columns.
-	mustGetUnsupportedCollation("create table t1(a varchar(20) collate utf8mb4_unicode_ci", "utf8mb4_unicode_ci")
-	mustGetUnsupportedCollation("create table t1(a varchar(20) charset utf8 collate utf8_unicode_ci", "utf8_unicode_ci")
+	mustGetUnsupportedCollation("create table t1(a varchar(20)) collate utf8mb4_unicode_ci", "utf8mb4_unicode_ci")
+	mustGetUnsupportedCollation("create table t1(a varchar(20)) charset utf8 collate utf8_unicode_ci", "utf8_unicode_ci")
+	tk.MustExec("create table t1(a varchar(20))")
 	mustGetUnsupportedCollation("alter table t1 modify a varchar(20) collate utf8mb4_unicode_ci", "utf8mb4_unicode_ci")
 	mustGetUnsupportedCollation("alter table t1 modify a varchar(20) charset utf8 collate utf8_unicode_ci", "utf8_unicode_ci")
 	mustGetUnsupportedCollation("alter table t1 modify a varchar(20) charset utf8 collate utf8_unicode_ci", "utf8_unicode_ci")
