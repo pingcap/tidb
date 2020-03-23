@@ -49,3 +49,10 @@ jobs:
       with:
         project: 'https://github.com/pingcap/tidb/projects/32'
         column_name: 'TODO/Help Wanted'
+    - name: Run issues assignment to project UT Coverage
+      uses: srggrs/assign-one-project-github-action@1.2.0
+      if: |
+        contains(github.event.issue.labels.*.name, 'type/UT-coverage')
+      with:
+        project: 'https://github.com/pingcap/tidb/projects/44'
+        column_name: 'To do'
