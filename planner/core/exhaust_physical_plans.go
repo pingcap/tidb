@@ -1285,7 +1285,7 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 					}
 				}
 				// 1. IndexMergeJoin requires stricter conditions than Index(Hash)Join when the output order is needed.
-				// 2. IndexMergeJoin requires looser conditions than Index(Hash)Join when the output is unordered.
+				// 2. IndexMergeJoin requires the sam conditions with Index(Hash)Join when the output is unordered.
 				// 3. If ordered-Index(Hash)Join can be chosen but ordered-IndexMergeJoin can not be chosen, we can build a plan with an enforced sort on IndexMergeJoin.
 				// 4. Thus we can give up the plans here if IndexMergeJoin is nil when `hasINLMJHint` is true. Because we can make sure that an IndexMeregJoin with enforced sort will be built.
 				if !containIdxMergeJoin {
