@@ -289,6 +289,10 @@ func (p *PhysicalMergeJoin) initCompareFuncs() {
 // TODO: use hint and remove this variable
 var ForceUseOuterBuild4Test = false
 
+// ForcedHashLeftJoin4Test is a test option to force using HashLeftJoin
+// TODO: use hint and remove this variable
+var ForcedHashLeftJoin4Test = false
+
 func (p *LogicalJoin) getHashJoins(prop *property.PhysicalProperty) []PhysicalPlan {
 	if !prop.IsEmpty() { // hash join doesn't promise any orders
 		return nil
@@ -312,8 +316,12 @@ func (p *LogicalJoin) getHashJoins(prop *property.PhysicalProperty) []PhysicalPl
 			joins = append(joins, p.getHashJoin(prop, 0, true))
 		}
 	case InnerJoin:
-		joins = append(joins, p.getHashJoin(prop, 1, false))
-		joins = append(joins, p.getHashJoin(prop, 0, false))
+		if ForcedHashLeftJoin4Test {
+			joins = append(joins, p.getHashJoin(prop, 1, false))
+		} else {
+			joins = append(joins, p.getHashJoin(prop, 1, false))
+			joins = append(joins, p.getHashJoin(prop, 0, false))
+		}
 	}
 	return joins
 }

@@ -59,6 +59,7 @@ type PointGetPlan struct {
 	outputNames        []*types.FieldName
 	LockWaitTime       int64
 	partitionColumnPos int
+	Columns            []*model.ColumnInfo
 }
 
 type nameValuePair struct {
@@ -71,6 +72,7 @@ type nameValuePair struct {
 func (p PointGetPlan) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PointGetPlan {
 	p.basePlan = newBasePlan(ctx, plancodec.TypePointGet, offset)
 	p.stats = stats
+	p.Columns = ExpandVirtualColumn(p.Columns, p.schema, p.TblInfo.Columns)
 	return &p
 }
 
@@ -165,7 +167,7 @@ func (p *PointGetPlan) SetChild(i int, child PhysicalPlan) {}
 
 // ResolveIndices resolves the indices for columns. After doing this, the columns can evaluate the rows by their indices.
 func (p *PointGetPlan) ResolveIndices() error {
-	return nil
+	return resolveIndicesForVirtualColumn(p.schema.Columns, p.schema)
 }
 
 // OutputNames returns the outputting names of each column.
@@ -212,6 +214,7 @@ type BatchPointGetPlan struct {
 	Desc             bool
 	Lock             bool
 	LockWaitTime     int64
+	Columns          []*model.ColumnInfo
 }
 
 // attach2Task makes the current physical plan as the father of task's physicalPlan and updates the cost of
@@ -290,7 +293,7 @@ func (p *BatchPointGetPlan) SetChild(i int, child PhysicalPlan) {}
 
 // ResolveIndices resolves the indices for columns. After doing this, the columns can evaluate the rows by their indices.
 func (p *BatchPointGetPlan) ResolveIndices() error {
-	return nil
+	return resolveIndicesForVirtualColumn(p.schema.Columns, p.schema)
 }
 
 // OutputNames returns the outputting names of each column.
