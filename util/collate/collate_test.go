@@ -45,14 +45,14 @@ type keyTable struct {
 func testCompareTable(table []compareTable, collate string, c *C) {
 	for i, t := range table {
 		comment := Commentf("%d %v %v", i, t.Left, t.Right)
-		c.Assert(GetCollator(collate).Compare(t.Left, t.Right, CollatorOption{}), Equals, t.Expect, comment)
+		c.Assert(GetCollator(collate).Compare(t.Left, t.Right), Equals, t.Expect, comment)
 	}
 }
 
 func testKeyTable(table []keyTable, collate string, c *C) {
 	for i, t := range table {
 		comment := Commentf("%d %s", i, t.Str)
-		c.Assert(GetCollator(collate).Key(t.Str, CollatorOption{}), DeepEquals, t.Expect, comment)
+		c.Assert(GetCollator(collate).Key(t.Str), DeepEquals, t.Expect, comment)
 	}
 }
 

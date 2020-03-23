@@ -1212,7 +1212,7 @@ func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 	tk.MustExec(`insert into t select year("0000-00-00 00:00:00")`)
 	tk.MustExec(`set sql_mode="NO_ZERO_DATE";`) // with zero date
 	tk.MustExec(`insert into t select year("0000-00-00 00:00:00")`)
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1525|Incorrect datetime value: '0000-00-00 00:00:00.000000'"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00.000000'"))
 	tk.MustExec(`set sql_mode="NO_ZERO_DATE,STRICT_TRANS_TABLES";`)
 	_, err = tk.Exec(`insert into t select year("0000-00-00 00:00:00");`)
 	c.Assert(err, NotNil)
@@ -1243,7 +1243,7 @@ func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 	tk.MustExec(`insert into t select month("0000-00-00 00:00:00")`)
 	tk.MustExec(`set sql_mode="NO_ZERO_DATE";`)
 	tk.MustExec(`insert into t select month("0000-00-00 00:00:00")`)
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1525|Incorrect datetime value: '0000-00-00 00:00:00.000000'"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00.000000'"))
 	tk.MustExec(`set sql_mode="NO_ZERO_DATE,STRICT_TRANS_TABLES";`)
 	_, err = tk.Exec(`insert into t select month("0000-00-00 00:00:00");`)
 	c.Assert(err, NotNil)
@@ -1306,8 +1306,8 @@ func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 	result = tk.MustQuery(`select quarter("0000-00-00"), quarter("0000-00-00 00:00:00");`)
 	result.Check(testkit.Rows("<nil> <nil>"))
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
-		"Warning|1525|Incorrect datetime value: '0000-00-00 00:00:00.000000'",
-		"Warning|1525|Incorrect datetime value: '0000-00-00 00:00:00.000000'"))
+		"Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00.000000'",
+		"Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00.000000'"))
 	result = tk.MustQuery(`select quarter(0), quarter(0.0), quarter(0e1), quarter(0.00);`)
 	result.Check(testkit.Rows("0 0 0 0"))
 	tk.MustQuery("show warnings").Check(testkit.Rows())
@@ -1662,12 +1662,12 @@ func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 	result = tk.MustQuery(`SELECT DATE_FORMAT('0000-00-00', '%W %M %e %Y %r %y');`)
 	result.Check(testkit.Rows("<nil>"))
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
-		"Warning|1525|Incorrect datetime value: '0000-00-00 00:00:00.000000'"))
+		"Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00.000000'"))
 	result = tk.MustQuery(`SELECT DATE_FORMAT('0', '%W %M %e %Y %r %y'), DATE_FORMAT('0.0', '%W %M %e %Y %r %y'), DATE_FORMAT(0, 0);`)
 	result.Check(testkit.Rows("<nil> <nil> 0"))
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
-		"Warning|1525|Incorrect time value: '0'",
-		"Warning|1525|Incorrect time value: '0.0'"))
+		"Warning|1292|Incorrect time value: '0'",
+		"Warning|1292|Incorrect time value: '0.0'"))
 	result = tk.MustQuery(`SELECT DATE_FORMAT(0, '%W %M %e %Y %r %y'), DATE_FORMAT(0.0, '%W %M %e %Y %r %y');`)
 	result.Check(testkit.Rows("<nil> <nil>"))
 	tk.MustQuery("show warnings").Check(testkit.Rows())
@@ -1702,23 +1702,23 @@ func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 	tk.MustExec("set sql_mode = 'STRICT_TRANS_TABLES'")
 
 	_, err = tk.Exec("insert into t value(dayOfWeek('0000-00-00'))")
-	c.Assert(types.ErrWrongValue.Equal(err), IsTrue)
+	c.Assert(table.ErrTruncatedWrongValueForField.Equal(err), IsTrue, Commentf("%v", err))
 	_, err = tk.Exec(`update t set a = dayOfWeek("0000-00-00")`)
 	c.Assert(types.ErrWrongValue.Equal(err), IsTrue)
 	_, err = tk.Exec(`delete from t where a = dayOfWeek(123)`)
 	c.Assert(err, IsNil)
 
 	_, err = tk.Exec("insert into t value(dayOfMonth('2017-00-00'))")
-	c.Assert(types.ErrWrongValue.Equal(err), IsTrue)
+	c.Assert(table.ErrTruncatedWrongValueForField.Equal(err), IsTrue)
 	tk.MustExec("insert into t value(dayOfMonth('0000-00-00'))")
 	tk.MustExec(`update t set a = dayOfMonth("0000-00-00")`)
 	tk.MustExec("set sql_mode = 'NO_ZERO_DATE';")
 	tk.MustExec("insert into t value(dayOfMonth('0000-00-00'))")
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1525|Incorrect datetime value: '0000-00-00 00:00:00.000000'"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00.000000'"))
 	tk.MustExec(`update t set a = dayOfMonth("0000-00-00")`)
 	tk.MustExec("set sql_mode = 'NO_ZERO_DATE,STRICT_TRANS_TABLES';")
 	_, err = tk.Exec("insert into t value(dayOfMonth('0000-00-00'))")
-	c.Assert(types.ErrWrongValue.Equal(err), IsTrue)
+	c.Assert(table.ErrTruncatedWrongValueForField.Equal(err), IsTrue)
 	tk.MustExec("insert into t value(0)")
 	_, err = tk.Exec(`update t set a = dayOfMonth("0000-00-00")`)
 	c.Assert(types.ErrWrongValue.Equal(err), IsTrue)
@@ -1726,7 +1726,7 @@ func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 	c.Assert(err, IsNil)
 
 	_, err = tk.Exec("insert into t value(dayOfYear('0000-00-00'))")
-	c.Assert(types.ErrWrongValue.Equal(err), IsTrue)
+	c.Assert(table.ErrTruncatedWrongValueForField.Equal(err), IsTrue)
 	_, err = tk.Exec(`update t set a = dayOfYear("0000-00-00")`)
 	c.Assert(types.ErrWrongValue.Equal(err), IsTrue)
 	_, err = tk.Exec(`delete from t where a = dayOfYear(123)`)
@@ -1803,7 +1803,7 @@ func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 	tk.MustExec(`update t set a = monthname("0000-00-00")`)
 	tk.MustExec("set sql_mode = 'NO_ZERO_DATE'")
 	tk.MustExec("insert into t value(monthname('0000-00-00'))")
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1525|Incorrect datetime value: '0000-00-00 00:00:00.000000'"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00.000000'"))
 	tk.MustExec(`update t set a = monthname("0000-00-00")`)
 	tk.MustExec("set sql_mode = ''")
 	tk.MustExec("insert into t value(monthname('0000-00-00'))")
@@ -1814,7 +1814,7 @@ func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 	c.Assert(err, IsNil)
 	result = tk.MustQuery(`select monthname("2017-12-01"), monthname("0000-00-00"), monthname("0000-01-00"), monthname("0000-01-00 00:00:00")`)
 	result.Check(testkit.Rows("December <nil> January January"))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1525|Incorrect datetime value: '0000-00-00 00:00:00.000000'"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00.000000'"))
 
 	// for dayname
 	tk.MustExec(`drop table if exists t`)
@@ -1823,7 +1823,7 @@ func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 	tk.MustExec("set sql_mode = 'STRICT_TRANS_TABLES'")
 
 	_, err = tk.Exec("insert into t value(dayname('0000-00-00'))")
-	c.Assert(types.ErrWrongValue.Equal(err), IsTrue)
+	c.Assert(table.ErrTruncatedWrongValueForField.Equal(err), IsTrue)
 	_, err = tk.Exec(`update t set a = dayname("0000-00-00")`)
 	c.Assert(types.ErrWrongValue.Equal(err), IsTrue)
 	_, err = tk.Exec(`delete from t where a = dayname(123)`)
@@ -1831,9 +1831,9 @@ func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 	result = tk.MustQuery(`select dayname("2017-12-01"), dayname("0000-00-00"), dayname("0000-01-00"), dayname("0000-01-00 00:00:00")`)
 	result.Check(testkit.Rows("Friday <nil> <nil> <nil>"))
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
-		"Warning|1525|Incorrect datetime value: '0000-00-00 00:00:00.000000'",
-		"Warning|1525|Incorrect datetime value: '0000-01-00 00:00:00.000000'",
-		"Warning|1525|Incorrect datetime value: '0000-01-00 00:00:00.000000'"))
+		"Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00.000000'",
+		"Warning|1292|Incorrect datetime value: '0000-01-00 00:00:00.000000'",
+		"Warning|1292|Incorrect datetime value: '0000-01-00 00:00:00.000000'"))
 
 	// for sec_to_time
 	result = tk.MustQuery("select sec_to_time(NULL)")
@@ -1865,7 +1865,7 @@ func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 	result = tk.MustQuery("select str_to_date('01-01-2017', '%d'), str_to_date('59', '%d-%Y')")
 	// TODO: MySQL returns "<nil> <nil>".
 	result.Check(testkit.Rows("0000-00-01 <nil>"))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1525|Incorrect datetime value: '0000-00-00 00:00:00'"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00'"))
 	result = tk.MustQuery("select str_to_date('2018-6-1', '%Y-%m-%d'), str_to_date('2018-6-1', '%Y-%c-%d'), str_to_date('59:20:1', '%s:%i:%k'), str_to_date('59:20:1', '%s:%i:%l')")
 	result.Check(testkit.Rows("2018-06-01 2018-06-01 01:20:59 01:20:59"))
 
@@ -3427,9 +3427,9 @@ func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
 	tk.MustExec("create table t(a date)")
 	result = tk.MustQuery("desc select a = a from t")
 	result.Check(testkit.Rows(
-		"Projection_3 10000.00 root eq(test.t.a, test.t.a)->Column#3",
-		"└─TableReader_5 10000.00 root data:TableFullScan_4",
-		"  └─TableFullScan_4 10000.00 cop[tikv] table:t, keep order:false, stats:pseudo",
+		"Projection_3 10000.00 root  eq(test.t.a, test.t.a)->Column#3",
+		"└─TableReader_5 10000.00 root  data:TableFullScan_4",
+		"  └─TableFullScan_4 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	))
 
 	// for interval
@@ -3455,14 +3455,14 @@ func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
 	result = tk.MustQuery(`select greatest(cast("2017-01-01" as datetime), "123", "234", cast("2018-01-01" as date)), greatest(cast("2017-01-01" as date), "123", null)`)
 	// todo: MySQL returns "2018-01-01 <nil>"
 	result.Check(testkit.Rows("2018-01-01 00:00:00 <nil>"))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1525|Incorrect time value: '123'", "Warning|1525|Incorrect time value: '234'", "Warning|1525|Incorrect time value: '123'"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Incorrect time value: '123'", "Warning|1292|Incorrect time value: '234'", "Warning|1292|Incorrect time value: '123'"))
 	// for least
 	result = tk.MustQuery(`select least(1, 2, 3), least("a", "b", "c"), least(1.1, 1.2, 1.3), least("123a", 1, 2)`)
 	result.Check(testkit.Rows("1 a 1.1 1"))
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect FLOAT value: '123a'"))
 	result = tk.MustQuery(`select least(cast("2017-01-01" as datetime), "123", "234", cast("2018-01-01" as date)), least(cast("2017-01-01" as date), "123", null)`)
 	result.Check(testkit.Rows("123 <nil>"))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1525|Incorrect time value: '123'", "Warning|1525|Incorrect time value: '234'", "Warning|1525|Incorrect time value: '123'"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Incorrect time value: '123'", "Warning|1292|Incorrect time value: '234'", "Warning|1292|Incorrect time value: '123'"))
 	tk.MustQuery(`select 1 < 17666000000000000000, 1 > 17666000000000000000, 1 = 17666000000000000000`).Check(testkit.Rows("1 0 0"))
 
 	tk.MustExec("drop table if exists t")
@@ -3933,7 +3933,7 @@ func (s *testIntegrationSuite) TestTimeLiteral(c *C) {
 	_, err = tk.Exec("select ADDDATE('2008-01-34', -1);")
 	c.Assert(err, IsNil)
 	tk.MustQuery("Show warnings;").Check(testutil.RowsWithSep("|",
-		"Warning|1525|Incorrect datetime value: '2008-01-34'"))
+		"Warning|1292|Incorrect datetime value: '2008-01-34'"))
 }
 
 func (s *testIntegrationSuite) TestIssue13822(c *C) {
@@ -4381,12 +4381,12 @@ func (s *testIntegrationSuite) TestTiDBDecodePlanFunc(c *C) {
 	defer s.cleanEnv(c)
 	tk.MustQuery("select tidb_decode_plan('')").Check(testkit.Rows(""))
 	tk.MustQuery("select tidb_decode_plan('7APIMAk1XzEzCTAJMQlmdW5jczpjb3VudCgxKQoxCTE3XzE0CTAJMAlpbm5lciBqb2luLCBp" +
-		"AQyQOlRhYmxlUmVhZGVyXzIxLCBlcXVhbDpbZXEoQ29sdW1uIzEsIA0KCDkpIBkXADIVFywxMCldCjIJMzJfMTgFZXhkYXRhOlNlbGVjdGlvbl" +
+		"AQyQOlRhYmxlUmVhZGVyXzIxLCBlcXVhbDpbZXEoQ29sdW1uIzEsIA0KCDkpIBkXADIVFywxMCldCjIJMzFfMTgFZXhkYXRhOlNlbGVjdGlvbl" +
 		"8xNwozCTFfMTcJMQkwCWx0HVlATlVMTCksIG5vdChpc251bGwVHAApUhcAUDIpKQo0CTEwXzE2CTEJMTAwMDAJdAHB2Dp0MSwgcmFuZ2U6Wy1p" +
 		"bmYsK2luZl0sIGtlZXAgb3JkZXI6ZmFsc2UsIHN0YXRzOnBzZXVkbwoFtgAyAZcEMAk6tgAEMjAFtgQyMDq2AAg5LCBmtgAAMFa3AAA5FbcAO" +
 		"T63AAAyzrcA')").Check(testkit.Rows("" +
 		"\tStreamAgg_13        \troot\t1    \tfuncs:count(1)\n" +
-		"\t└─HashLeftJoin_14   \troot\t0    \tinner join, inner:TableReader_21, equal:[eq(Column#1, Column#9) eq(Column#2, Column#10)]\n" +
+		"\t└─HashJoin_14       \troot\t0    \tinner join, inner:TableReader_21, equal:[eq(Column#1, Column#9) eq(Column#2, Column#10)]\n" +
 		"\t  ├─TableReader_18  \troot\t0    \tdata:Selection_17\n" +
 		"\t  │ └─Selection_17  \tcop \t0    \tlt(Column#1, NULL), not(isnull(Column#1)), not(isnull(Column#2))\n" +
 		"\t  │   └─TableScan_16\tcop \t10000\ttable:t1, range:[-inf,+inf], keep order:false, stats:pseudo\n" +
@@ -4890,9 +4890,9 @@ func (s *testIntegrationSuite) TestTimestampDatumEncode(c *C) {
 	tk.MustExec(`create table t (a bigint primary key, b timestamp)`)
 	tk.MustExec(`insert into t values (1, "2019-04-29 11:56:12")`)
 	tk.MustQuery(`explain select * from t where b = (select max(b) from t)`).Check(testkit.Rows(
-		"TableReader_43 10.00 root data:Selection_42",
-		"└─Selection_42 10.00 cop[tikv] eq(test.t.b, 2019-04-29 11:56:12)",
-		"  └─TableFullScan_41 10000.00 cop[tikv] table:t, keep order:false, stats:pseudo",
+		"TableReader_43 10.00 root  data:Selection_42",
+		"└─Selection_42 10.00 cop[tikv]  eq(test.t.b, 2019-04-29 11:56:12)",
+		"  └─TableFullScan_41 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	))
 	tk.MustQuery(`select * from t where b = (select max(b) from t)`).Check(testkit.Rows(`1 2019-04-29 11:56:12`))
 }
@@ -5339,6 +5339,21 @@ func (s *testIntegrationSuite) TestCastStrToInt(c *C) {
 		tk.MustQuery(ca.sql).Check(testkit.Rows(fmt.Sprintf("%v", ca.result)))
 		c.Assert(terror.ErrorEqual(tk.Se.GetSessionVars().StmtCtx.GetWarnings()[0].Err, types.ErrTruncatedWrongVal), IsTrue)
 	}
+}
+
+func (s *testIntegrationSuite) TestValuesForBinaryLiteral(c *C) {
+	// See issue #15310
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table testValuesBinary(id int primary key auto_increment, a bit(1));")
+	tk.MustExec("insert into testValuesBinary values(1,1);")
+	err := tk.ExecToErr("insert into testValuesBinary values(1,1) on duplicate key update id = values(id),a = values(a);")
+	c.Assert(err, IsNil)
+	tk.MustQuery("select a=0 from testValuesBinary;").Check(testkit.Rows("0"))
+	err = tk.ExecToErr("insert into testValuesBinary values(1,0) on duplicate key update id = values(id),a = values(a);")
+	c.Assert(err, IsNil)
+	tk.MustQuery("select a=0 from testValuesBinary;").Check(testkit.Rows("1"))
+	tk.MustExec("drop table testValuesBinary;")
 }
 
 func (s *testIntegrationSuite) TestIssue14159(c *C) {

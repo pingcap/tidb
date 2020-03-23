@@ -159,3 +159,13 @@ func (l *SimpleLRUCache) Values() []Value {
 	}
 	return values
 }
+
+// Keys return all keys in cache.
+func (l *SimpleLRUCache) Keys() []Key {
+	keys := make([]Key, 0, l.cache.Len())
+	for ele := l.cache.Front(); ele != nil; ele = ele.Next() {
+		key := ele.Value.(*cacheEntry).key
+		keys = append(keys, key)
+	}
+	return keys
+}

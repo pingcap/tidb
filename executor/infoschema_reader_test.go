@@ -14,6 +14,7 @@
 package executor_test
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
 	"net"
@@ -27,9 +28,11 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/fn"
 	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/server"
@@ -56,14 +59,17 @@ var _ = SerialSuites(&testInfoschemaTableSerialSuite{})
 
 var _ = SerialSuites(&inspectionSuite{})
 
-type testInfoschemaTableSuite struct {
+type testInfoschemaTableSuiteBase struct {
 	store kv.Storage
 	dom   *domain.Domain
 }
 
+type testInfoschemaTableSuite struct {
+	testInfoschemaTableSuiteBase
+}
+
 type testInfoschemaTableSerialSuite struct {
-	store kv.Storage
-	dom   *domain.Domain
+	testInfoschemaTableSuiteBase
 }
 
 type inspectionSuite struct {
@@ -71,7 +77,7 @@ type inspectionSuite struct {
 	dom   *domain.Domain
 }
 
-func (s *testInfoschemaTableSerialSuite) SetUpSuite(c *C) {
+func (s *testInfoschemaTableSuiteBase) SetUpSuite(c *C) {
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	s.store = store
@@ -82,23 +88,7 @@ func (s *testInfoschemaTableSerialSuite) SetUpSuite(c *C) {
 	config.StoreGlobalConfig(&newConf)
 }
 
-func (s *testInfoschemaTableSerialSuite) TearDownSuite(c *C) {
-	s.dom.Close()
-	s.store.Close()
-}
-
-func (s *testInfoschemaTableSuite) SetUpSuite(c *C) {
-	store, dom, err := newStoreWithBootstrap()
-	c.Assert(err, IsNil)
-	s.store = store
-	s.dom = dom
-	originCfg := config.GetGlobalConfig()
-	newConf := *originCfg
-	newConf.OOMAction = config.OOMActionLog
-	config.StoreGlobalConfig(&newConf)
-}
-
-func (s *testInfoschemaTableSuite) TearDownSuite(c *C) {
+func (s *testInfoschemaTableSuiteBase) TearDownSuite(c *C) {
 	s.dom.Close()
 	s.store.Close()
 }
@@ -159,13 +149,20 @@ func (s *inspectionSuite) TestInspectionTables(c *C) {
 	tk.Se.GetSessionVars().InspectionTableCache = nil
 }
 
+func (s *testInfoschemaTableSuite) TestProfiling(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustQuery("select * from information_schema.profiling").Check(testkit.Rows())
+	tk.MustExec("set @@profiling=1")
+	tk.MustQuery("select * from information_schema.profiling").Check(testkit.Rows("0 0  0 0 0 0 0 0 0 0 0 0 0 0   0"))
+}
+
 func (s *testInfoschemaTableSuite) TestSchemataTables(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustQuery("select * from information_schema.SCHEMATA where schema_name='mysql';").Check(
 		testkit.Rows("def mysql utf8mb4 utf8mb4_bin <nil>"))
 
-	//test the privilege of new user for information_schema.schemata
+	// Test the privilege of new user for information_schema.schemata.
 	tk.MustExec("create user schemata_tester")
 	schemataTester := testkit.NewTestKit(c, s.store)
 	schemataTester.MustExec("use information_schema")
@@ -179,7 +176,7 @@ func (s *testInfoschemaTableSuite) TestSchemataTables(c *C) {
 	schemataTester.MustQuery("select * from information_schema.SCHEMATA where schema_name='INFORMATION_SCHEMA';").Check(
 		testkit.Rows("def INFORMATION_SCHEMA utf8mb4 utf8mb4_bin <nil>"))
 
-	//test the privilege of user with privilege of mysql for information_schema.schemata
+	// Test the privilege of user with privilege of mysql for information_schema.schemata.
 	tk.MustExec("CREATE ROLE r_mysql_priv;")
 	tk.MustExec("GRANT ALL PRIVILEGES ON mysql.* TO r_mysql_priv;")
 	tk.MustExec("GRANT r_mysql_priv TO schemata_tester;")
@@ -233,6 +230,40 @@ func (s *testInfoschemaTableSuite) TestCharacterSetCollations(c *C) {
 
 	tk.MustQuery("select * from information_schema.COLLATION_CHARACTER_SET_APPLICABILITY where COLLATION_NAME='utf8mb4_bin';").Check(
 		testkit.Rows("utf8mb4_bin utf8mb4"))
+}
+
+func (s *testInfoschemaTableSuite) TestDDLJobs(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists test_ddl_jobs")
+	tk.MustQuery("select db_name, job_type from information_schema.DDL_JOBS limit 1").Check(
+		testkit.Rows("test_ddl_jobs create schema"))
+
+	tk.MustExec("use test_ddl_jobs")
+	tk.MustExec("create table t (a int);")
+	tk.MustQuery("select db_name, table_name, job_type from information_schema.DDL_JOBS where table_name = 't'").Check(
+		testkit.Rows("test_ddl_jobs t create table"))
+
+	tk.MustQuery("select job_type from information_schema.DDL_JOBS group by job_type having job_type = 'create table'").Check(
+		testkit.Rows("create table"))
+
+	// Test the privilege of new user for information_schema.DDL_JOBS.
+	tk.MustExec("create user DDL_JOBS_tester")
+	DDLJobsTester := testkit.NewTestKit(c, s.store)
+	DDLJobsTester.MustExec("use information_schema")
+	c.Assert(DDLJobsTester.Se.Auth(&auth.UserIdentity{
+		Username: "DDL_JOBS_tester",
+		Hostname: "127.0.0.1",
+	}, nil, nil), IsTrue)
+
+	// Test the privilege of user for information_schema.ddl_jobs.
+	DDLJobsTester.MustQuery("select DB_NAME, TABLE_NAME from information_schema.DDL_JOBS where DB_NAME = 'test_ddl_jobs' and TABLE_NAME = 't';").Check(
+		[][]interface{}{})
+	tk.MustExec("CREATE ROLE r_priv;")
+	tk.MustExec("GRANT ALL PRIVILEGES ON test_ddl_jobs.* TO r_priv;")
+	tk.MustExec("GRANT r_priv TO DDL_JOBS_tester;")
+	DDLJobsTester.MustExec("set role r_priv")
+	DDLJobsTester.MustQuery("select DB_NAME, TABLE_NAME from information_schema.DDL_JOBS where DB_NAME = 'test_ddl_jobs' and TABLE_NAME = 't';").Check(
+		testkit.Rows("test_ddl_jobs t"))
 }
 
 func (s *testInfoschemaTableSuite) TestKeyColumnUsage(c *C) {
@@ -444,10 +475,79 @@ func (s *testInfoschemaTableSuite) TestTableSessionVar(c *C) {
 	tk.MustQuery("select * from information_schema.SESSION_VARIABLES where VARIABLE_NAME='tidb_retry_limit';").Check(testkit.Rows("tidb_retry_limit 10"))
 }
 
-var _ = SerialSuites(&testInfoschemaClusterTableSuite{testInfoschemaTableSuite: &testInfoschemaTableSuite{}})
+func (s *testInfoschemaTableSuite) TestForAnalyzeStatus(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	statistics.ClearHistoryJobs()
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists analyze_test")
+	tk.MustExec("create table analyze_test (a int, b int, index idx(a))")
+	tk.MustExec("insert into analyze_test values (1,2),(3,4)")
+
+	tk.MustQuery("select distinct TABLE_NAME from information_schema.analyze_status where TABLE_NAME='analyze_test'").Check([][]interface{}{})
+	tk.MustExec("analyze table analyze_test")
+	tk.MustQuery("select distinct TABLE_NAME from information_schema.analyze_status where TABLE_NAME='analyze_test'").Check(testkit.Rows("analyze_test"))
+
+	//test the privilege of new user for information_schema.analyze_status
+	tk.MustExec("create user analyze_tester")
+	analyzeTester := testkit.NewTestKit(c, s.store)
+	analyzeTester.MustExec("use information_schema")
+	c.Assert(analyzeTester.Se.Auth(&auth.UserIdentity{
+		Username: "analyze_tester",
+		Hostname: "127.0.0.1",
+	}, nil, nil), IsTrue)
+	analyzeTester.MustQuery("show analyze status").Check([][]interface{}{})
+	analyzeTester.MustQuery("select * from information_schema.ANALYZE_STATUS;").Check([][]interface{}{})
+
+	//test the privilege of user with privilege of test.t1 for information_schema.analyze_status
+	tk.MustExec("create table t1 (a int, b int, index idx(a))")
+	tk.MustExec("insert into t1 values (1,2),(3,4)")
+	tk.MustExec("analyze table t1")
+	tk.MustExec("CREATE ROLE r_t1 ;")
+	tk.MustExec("GRANT ALL PRIVILEGES ON test.t1 TO r_t1;")
+	tk.MustExec("GRANT r_t1 TO analyze_tester;")
+	analyzeTester.MustExec("set role r_t1")
+	resultT1 := tk.MustQuery("select * from information_schema.analyze_status where TABLE_NAME='t1'").Sort()
+	c.Assert(len(resultT1.Rows()), Greater, 0)
+}
+
+func (s *testInfoschemaTableSuite) TestForServersInfo(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	result := tk.MustQuery("select * from information_schema.TIDB_SERVERS_INFO")
+	c.Assert(len(result.Rows()), Equals, 1)
+
+	serversInfo, err := infosync.GetAllServerInfo(context.Background())
+	c.Assert(err, IsNil)
+	c.Assert(len(serversInfo), Equals, 1)
+
+	for _, info := range serversInfo {
+		c.Assert(result.Rows()[0][0], Equals, info.ID)
+		c.Assert(result.Rows()[0][1], Equals, info.IP)
+		c.Assert(result.Rows()[0][2], Equals, strconv.FormatInt(int64(info.Port), 10))
+		c.Assert(result.Rows()[0][3], Equals, strconv.FormatInt(int64(info.StatusPort), 10))
+		c.Assert(result.Rows()[0][4], Equals, info.Lease)
+		c.Assert(result.Rows()[0][5], Equals, info.Version)
+		c.Assert(result.Rows()[0][6], Equals, info.GitHash)
+	}
+}
+
+func (s *testInfoschemaTableSuite) TestForTableTiFlashReplica(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	statistics.ClearHistoryJobs()
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, index idx(a))")
+	tk.MustExec("alter table t set tiflash replica 2 location labels 'a','b';")
+	tk.MustQuery("select TABLE_SCHEMA,TABLE_NAME,REPLICA_COUNT,LOCATION_LABELS,AVAILABLE, PROGRESS from information_schema.tiflash_replica").Check(testkit.Rows("test t 2 a,b 0 0"))
+	tbl, err := domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tbl.Meta().TiFlashReplica.Available = true
+	tk.MustQuery("select TABLE_SCHEMA,TABLE_NAME,REPLICA_COUNT,LOCATION_LABELS,AVAILABLE, PROGRESS from information_schema.tiflash_replica").Check(testkit.Rows("test t 2 a,b 1 1"))
+}
+
+var _ = SerialSuites(&testInfoschemaClusterTableSuite{testInfoschemaTableSuiteBase: &testInfoschemaTableSuiteBase{}})
 
 type testInfoschemaClusterTableSuite struct {
-	*testInfoschemaTableSuite
+	*testInfoschemaTableSuiteBase
 	rpcserver  *grpc.Server
 	httpServer *httptest.Server
 	mockAddr   string
@@ -456,7 +556,7 @@ type testInfoschemaClusterTableSuite struct {
 }
 
 func (s *testInfoschemaClusterTableSuite) SetUpSuite(c *C) {
-	s.testInfoschemaTableSuite.SetUpSuite(c)
+	s.testInfoschemaTableSuiteBase.SetUpSuite(c)
 	s.rpcserver, s.listenAddr = s.setUpRPCService(c, ":0")
 	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
 	s.startTime = time.Now()
@@ -555,7 +655,7 @@ func (s *testInfoschemaClusterTableSuite) TearDownSuite(c *C) {
 	if s.httpServer != nil {
 		s.httpServer.Close()
 	}
-	s.testInfoschemaTableSuite.TearDownSuite(c)
+	s.testInfoschemaTableSuiteBase.TearDownSuite(c)
 }
 
 type mockSessionManager struct {
@@ -646,4 +746,10 @@ func (s *testInfoschemaClusterTableSuite) TestTiDBClusterInfo(c *C) {
 		"tidb key3.key4.nest4 n-value5",
 		"tikv key3.key4.nest4 n-value5",
 	))
+}
+
+func (s *testInfoschemaTableSuite) TestSequences(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("CREATE SEQUENCE test.seq maxvalue 10000000")
+	tk.MustQuery("SELECT * FROM information_schema.sequences WHERE sequence_schema='test' AND sequence_name='seq'").Check(testkit.Rows("def test seq 1 1000 0 1 10000000 1 0 1 "))
 }

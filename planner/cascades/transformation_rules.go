@@ -77,6 +77,7 @@ var TiDBLayerOptimizationBatch = TransformationRuleBatch{
 		NewRuleEliminateSingleMaxMin(),
 		NewRuleEliminateOuterJoinBelowAggregation(),
 		NewRuleTransformAggregateCaseToSelection(),
+		NewRuleTransformAggToProj(),
 	},
 	memo.OperandLimit: {
 		NewRuleTransformLimitToTopN(),
@@ -2057,6 +2058,63 @@ func (r *TransformAggregateCaseToSelection) isTwoOrThreeArgCase(expr expression.
 		return false
 	}
 	return scalarFunc.FuncName.L == ast.Case && (len(scalarFunc.GetArgs()) == 2 || len(scalarFunc.GetArgs()) == 3)
+}
+
+// TransformAggToProj convert Agg to Proj.
+type TransformAggToProj struct {
+	baseRule
+}
+
+// NewRuleTransformAggToProj creates a new Transformation TransformAggToProj.
+// The pattern of this rule is `Agg`.
+func NewRuleTransformAggToProj() Transformation {
+	rule := &TransformAggToProj{}
+	rule.pattern = memo.BuildPattern(
+		memo.OperandAggregation,
+		memo.EngineTiDBOnly,
+	)
+	return rule
+}
+
+// Match implements Transformation interface.
+func (r *TransformAggToProj) Match(expr *memo.ExprIter) bool {
+	agg := expr.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
+
+	if !agg.IsCompleteModeAgg() {
+		return false
+	}
+
+	for _, af := range agg.AggFuncs {
+		// TODO(issue #9968): same as rule_aggregation_elimination.go -> tryToEliminateAggregation.
+		// waiting for (issue #14616): `nullable` information.
+		if af.Name == ast.AggFuncGroupConcat {
+			return false
+		}
+	}
+
+	childGroup := expr.GetExpr().Children[0]
+	childGroup.BuildKeyInfo()
+	schemaByGroupby := expression.NewSchema(agg.GetGroupByCols()...)
+	for _, key := range childGroup.Prop.Schema.Keys {
+		if schemaByGroupby.ColumnsIndices(key) != nil {
+			return true
+		}
+	}
+
+	return false
+}
+
+// OnTransform implements Transformation interface.
+// This rule tries to convert agg to proj.
+func (r *TransformAggToProj) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	agg := old.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
+	if ok, proj := plannercore.ConvertAggToProj(agg, old.GetExpr().Schema()); ok {
+		newProjExpr := memo.NewGroupExpr(proj)
+		newProjExpr.SetChildren(old.GetExpr().Children...)
+		return []*memo.GroupExpr{newProjExpr}, true, false, nil
+	}
+
+	return nil, false, false, nil
 }
 
 // InjectProjectionBelowTopN injects two Projections below and upon TopN if TopN's ByItems

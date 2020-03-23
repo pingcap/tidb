@@ -332,6 +332,9 @@ const (
 	// TiDBEnableStmtSummary indicates whether the statement summary is enabled.
 	TiDBEnableStmtSummary = "tidb_enable_stmt_summary"
 
+	// TiDBStmtSummaryInternalQuery indicates whether the statement summary contain internal query.
+	TiDBStmtSummaryInternalQuery = "tidb_stmt_summary_internal_query"
+
 	// TiDBStmtSummaryRefreshInterval indicates the refresh interval in seconds for each statement summary.
 	TiDBStmtSummaryRefreshInterval = "tidb_stmt_summary_refresh_interval"
 

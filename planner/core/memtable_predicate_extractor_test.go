@@ -271,6 +271,12 @@ func (s *extractorSuite) TestClusterLogTableExtractor(c *C) {
 			instances: nil,
 		},
 		{
+			// Test for invalid time.
+			sql:       "select * from information_schema.cluster_log where time='2019-10-10 10::10'",
+			nodeTypes: set.NewStringSet(),
+			instances: set.NewStringSet(),
+		},
+		{
 			sql:       "select * from information_schema.cluster_log where type='tikv'",
 			nodeTypes: set.NewStringSet("tikv"),
 			instances: set.NewStringSet(),
@@ -656,7 +662,7 @@ func (s *extractorSuite) TestMetricTableExtractor(c *C) {
 			c.Assert(metricTableExtractor.Quantiles, DeepEquals, ca.quantiles)
 		}
 		if !ca.skipRequest {
-			promQL := plannercore.GetMetricTablePromQL(se, "tidb_query_duration", metricTableExtractor.LabelConditions, metricTableExtractor.Quantiles)
+			promQL := metricTableExtractor.GetMetricTablePromQL(se, "tidb_query_duration")
 			c.Assert(promQL, DeepEquals, ca.promQL, Commentf("SQL: %v", ca.sql))
 			start, end := metricTableExtractor.StartTime, metricTableExtractor.EndTime
 			c.Assert(start.UnixNano() <= end.UnixNano(), IsTrue)

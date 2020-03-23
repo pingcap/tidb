@@ -934,6 +934,23 @@ func (g *formatGener) gen() interface{} {
 	}
 }
 
+type nullWrappedGener struct {
+	nullRation float64
+	inner      dataGenerator
+	randGen    *defaultRandGen
+}
+
+func newNullWrappedGener(nullRation float64, inner dataGenerator) *nullWrappedGener {
+	return &nullWrappedGener{nullRation, inner, newDefaultRandGen()}
+}
+
+func (g *nullWrappedGener) gen() interface{} {
+	if g.randGen.Float64() < g.nullRation {
+		return nil
+	}
+	return g.inner.gen()
+}
+
 type vecExprBenchCase struct {
 	// retEvalType is the EvalType of the expression result.
 	// This field is required.

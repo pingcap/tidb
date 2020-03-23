@@ -73,12 +73,11 @@ var (
 // executorBuilder builds an Executor from a Plan.
 // The InfoSchema must not change during execution.
 type executorBuilder struct {
-	ctx     sessionctx.Context
-	is      infoschema.InfoSchema
-	startTS uint64 // cached when the first time getStartTS() is called
-	// err is set when there is error happened during Executor building process.
-	err     error
-	hasLock bool
+	ctx        sessionctx.Context
+	is         infoschema.InfoSchema
+	snapshotTS uint64 // The consistent snapshot timestamp for the executor to read data.
+	err        error  // err is set when there is error happened during Executor building process.
+	hasLock    bool
 }
 
 func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema) *executorBuilder {
@@ -526,7 +525,7 @@ func (b *executorBuilder) buildChecksumTable(v *plannercore.ChecksumTable) Execu
 		tables:       make(map[int64]*checksumContext),
 		done:         false,
 	}
-	startTs, err := b.getStartTS()
+	startTs, err := b.getSnapshotTS()
 	if err != nil {
 		b.err = err
 		return nil
@@ -565,7 +564,7 @@ func (b *executorBuilder) buildSelectLock(v *plannercore.PhysicalLock) Executor 
 		return nil
 	}
 	// Build 'select for update' using the 'for update' ts.
-	b.startTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
+	b.snapshotTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
 
 	src := b.build(v.Children()[0])
 	if b.err != nil {
@@ -697,7 +696,7 @@ func (b *executorBuilder) buildInsert(v *plannercore.Insert) Executor {
 			return nil
 		}
 	}
-	b.startTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
+	b.snapshotTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
 	selectExec := b.build(v.SelectPlan)
 	if b.err != nil {
 		return nil
@@ -1294,25 +1293,25 @@ func (b *executorBuilder) buildTableDual(v *plannercore.PhysicalTableDual) Execu
 	return e
 }
 
-func (b *executorBuilder) getStartTS() (uint64, error) {
-	if b.startTS != 0 {
+func (b *executorBuilder) getSnapshotTS() (uint64, error) {
+	if b.snapshotTS != 0 {
 		// Return the cached value.
-		return b.startTS, nil
+		return b.snapshotTS, nil
 	}
 
-	startTS := b.ctx.GetSessionVars().SnapshotTS
+	snapshotTS := b.ctx.GetSessionVars().SnapshotTS
 	txn, err := b.ctx.Txn(true)
 	if err != nil {
 		return 0, err
 	}
-	if startTS == 0 {
-		startTS = txn.StartTS()
+	if snapshotTS == 0 {
+		snapshotTS = txn.StartTS()
 	}
-	b.startTS = startTS
-	if b.startTS == 0 {
+	b.snapshotTS = snapshotTS
+	if b.snapshotTS == 0 {
 		return 0, errors.Trace(ErrGetStartTS)
 	}
-	return startTS, nil
+	return snapshotTS, nil
 }
 
 func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executor {
@@ -1423,19 +1422,27 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			strings.ToLower(infoschema.TableTiDBIndexes),
 			strings.ToLower(infoschema.TableViews),
 			strings.ToLower(infoschema.TableTables),
+			strings.ToLower(infoschema.TableColumns),
+			strings.ToLower(infoschema.TableSequences),
 			strings.ToLower(infoschema.TablePartitions),
 			strings.ToLower(infoschema.TableEngines),
 			strings.ToLower(infoschema.TableCollations),
+			strings.ToLower(infoschema.TableAnalyzeStatus),
 			strings.ToLower(infoschema.TableClusterInfo),
+			strings.ToLower(infoschema.TableProfiling),
 			strings.ToLower(infoschema.TableCharacterSets),
 			strings.ToLower(infoschema.TableKeyColumn),
 			strings.ToLower(infoschema.TableUserPrivileges),
 			strings.ToLower(infoschema.TableMetricTables),
 			strings.ToLower(infoschema.TableCollationCharacterSetApplicability),
+			strings.ToLower(infoschema.TableProcesslist),
+			strings.ToLower(infoschema.ClusterTableProcesslist),
 			strings.ToLower(infoschema.TableTiKVRegionPeers),
 			strings.ToLower(infoschema.TableTiDBHotRegions),
 			strings.ToLower(infoschema.TableSessionVar),
-			strings.ToLower(infoschema.TableConstraints):
+			strings.ToLower(infoschema.TableConstraints),
+			strings.ToLower(infoschema.TableTiFlashReplica),
+			strings.ToLower(infoschema.TableTiDBServersInfo):
 			return &MemTableReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 				table:        v.Table,
@@ -1453,6 +1460,11 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 					outputCols: v.Columns,
 					extractor:  v.Extractor.(*plannercore.SlowQueryExtractor),
 				},
+			}
+		case strings.ToLower(infoschema.TableDDLJobs):
+			return &DDLJobsReaderExec{
+				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+				is:           b.is,
 			}
 		}
 	}
@@ -1601,7 +1613,7 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
 	if b.err = b.updateForUpdateTSIfNeeded(v.SelectPlan); b.err != nil {
 		return nil
 	}
-	b.startTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
+	b.snapshotTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
 	selExec := b.build(v.SelectPlan)
 	if b.err != nil {
 		return nil
@@ -1626,7 +1638,7 @@ func (b *executorBuilder) buildDelete(v *plannercore.Delete) Executor {
 	if b.err = b.updateForUpdateTSIfNeeded(v.SelectPlan); b.err != nil {
 		return nil
 	}
-	b.startTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
+	b.snapshotTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
 	selExec := b.build(v.SelectPlan)
 	if b.err != nil {
 		return nil
@@ -1676,6 +1688,9 @@ func (b *executorBuilder) updateForUpdateTSIfNeeded(selectPlan plannercore.Physi
 // refreshForUpdateTSForRC is used to refresh the for-update-ts for reading data at read consistency level in pessimistic transaction.
 // It could use the cached tso from the statement future to avoid get tso many times.
 func (b *executorBuilder) refreshForUpdateTSForRC() error {
+	defer func() {
+		b.snapshotTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
+	}()
 	future := b.ctx.GetSessionVars().TxnCtx.GetStmtFutureForRC()
 	if future == nil {
 		return nil
@@ -1688,11 +1703,7 @@ func (b *executorBuilder) refreshForUpdateTSForRC() error {
 	}
 	b.ctx.GetSessionVars().TxnCtx.SetStmtFutureForRC(nil)
 	// If newForUpdateTS is 0, it will force to get a new for-update-ts from PD.
-	if err := UpdateForUpdateTS(b.ctx, newForUpdateTS); err != nil {
-		return err
-	}
-	b.startTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
-	return nil
+	return UpdateForUpdateTS(b.ctx, newForUpdateTS)
 }
 
 func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeIndexTask, opts map[ast.AnalyzeOptionType]uint64, autoAnalyze string) *analyzeTask {
@@ -2194,7 +2205,7 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		pt := tbl.(table.PartitionedTable)
 		tbl = pt.GetPartition(physicalTableID)
 	}
-	startTS, err := b.getStartTS()
+	startTS, err := b.getSnapshotTS()
 	if err != nil {
 		return nil, err
 	}
@@ -2274,7 +2285,7 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 	} else {
 		physicalTableID = is.Table.ID
 	}
-	startTS, err := b.getStartTS()
+	startTS, err := b.getSnapshotTS()
 	if err != nil {
 		return nil, err
 	}
@@ -2371,7 +2382,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 		pt := tbl.(table.PartitionedTable)
 		tbl = pt.GetPartition(physicalTableID)
 	}
-	startTS, err := b.getStartTS()
+	startTS, err := b.getSnapshotTS()
 	if err != nil {
 		return nil, err
 	}
@@ -2484,7 +2495,7 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 	if err != nil {
 		return nil, err
 	}
-	startTS, err := b.getStartTS()
+	startTS, err := b.getSnapshotTS()
 	if err != nil {
 		return nil, err
 	}
@@ -2603,7 +2614,7 @@ func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Contex
 		colExec := true
 		e.dagPB.CollectExecutionSummaries = &colExec
 	}
-	startTS, err := builder.getStartTS()
+	startTS, err := builder.getSnapshotTS()
 	if err != nil {
 		return nil, err
 	}
@@ -2960,14 +2971,19 @@ func newRowDecoder(ctx sessionctx.Context, schema *expression.Schema, tbl *model
 		if isPK {
 			handleColID = col.ID
 		}
+		isGeneratedCol := false
+		if col.VirtualExpr != nil {
+			isGeneratedCol = true
+		}
 		reqCols[idx] = rowcodec.ColInfo{
-			ID:      col.ID,
-			Tp:      int32(col.RetType.Tp),
-			Flag:    int32(col.RetType.Flag),
-			Flen:    col.RetType.Flen,
-			Decimal: col.RetType.Decimal,
-			Elems:   col.RetType.Elems,
-			Collate: col.GetType().Collate,
+			ID:            col.ID,
+			Tp:            int32(col.RetType.Tp),
+			Flag:          int32(col.RetType.Flag),
+			Flen:          col.RetType.Flen,
+			Decimal:       col.RetType.Decimal,
+			Elems:         col.RetType.Elems,
+			Collate:       col.GetType().Collate,
+			VirtualGenCol: isGeneratedCol,
 		}
 	}
 	defVal := func(i int, chk *chunk.Chunk) error {
@@ -2989,7 +3005,7 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 			return nil
 		}
 	}
-	startTS, err := b.getStartTS()
+	startTS, err := b.getSnapshotTS()
 	if err != nil {
 		b.err = err
 		return nil
@@ -3006,6 +3022,7 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		lock:         plan.Lock,
 		waitTime:     plan.LockWaitTime,
 		partPos:      plan.PartitionColPos,
+		columns:      plan.Columns,
 	}
 	if e.lock {
 		b.hasLock = true
@@ -3030,6 +3047,7 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 	}
 	e.base().initCap = capacity
 	e.base().maxChunkSize = capacity
+	e.buildVirtualColumnInfo()
 	return e
 }
 
