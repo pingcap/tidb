@@ -27,6 +27,7 @@ import (
 )
 
 var _ = Suite(&testIntegrationSuite{})
+var _ = SerialSuites(&testIntegrationSerialSuite{})
 
 type testIntegrationSuite struct {
 	testData testutil.TestData
@@ -51,6 +52,34 @@ func (s *testIntegrationSuite) SetUpTest(c *C) {
 }
 
 func (s *testIntegrationSuite) TearDownTest(c *C) {
+	s.dom.Close()
+	err := s.store.Close()
+	c.Assert(err, IsNil)
+}
+
+type testIntegrationSerialSuite struct {
+	testData testutil.TestData
+	store    kv.Storage
+	dom      *domain.Domain
+}
+
+func (s *testIntegrationSerialSuite) SetUpSuite(c *C) {
+	var err error
+	s.testData, err = testutil.LoadTestSuiteData("testdata", "integration_suite")
+	c.Assert(err, IsNil)
+}
+
+func (s *testIntegrationSerialSuite) TearDownSuite(c *C) {
+	c.Assert(s.testData.GenerateOutputIfNeeded(), IsNil)
+}
+
+func (s *testIntegrationSerialSuite) SetUpTest(c *C) {
+	var err error
+	s.store, s.dom, err = newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+}
+
+func (s *testIntegrationSerialSuite) TearDownTest(c *C) {
 	s.dom.Close()
 	err := s.store.Close()
 	c.Assert(err, IsNil)
@@ -245,7 +274,7 @@ func (s *testIntegrationSuite) TestSimplifyOuterJoinWithCast(c *C) {
 	}
 }
 
-func (s *testIntegrationSuite) TestNoneAccessPathsFoundByIsolationRead(c *C) {
+func (s *testIntegrationSerialSuite) TestNoneAccessPathsFoundByIsolationRead(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("use test")
@@ -274,7 +303,7 @@ func (s *testIntegrationSuite) TestNoneAccessPathsFoundByIsolationRead(c *C) {
 	c.Assert(err.Error(), Equals, "[planner:1815]Internal : Can not find access path matching 'tidb_isolation_read_engines'(value: 'tikv,tiflash') and tidb-server config isolation-read(engines: '[tiflash]'). Available values are 'tikv'.")
 }
 
-func (s *testIntegrationSuite) TestSelPushDownTiFlash(c *C) {
+func (s *testIntegrationSerialSuite) TestSelPushDownTiFlash(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -311,7 +340,7 @@ func (s *testIntegrationSuite) TestSelPushDownTiFlash(c *C) {
 	))
 }
 
-func (s *testIntegrationSuite) TestIssue15110(c *C) {
+func (s *testIntegrationSerialSuite) TestIssue15110(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists crm_rd_150m")
@@ -346,7 +375,7 @@ func (s *testIntegrationSuite) TestIssue15110(c *C) {
 	tk.MustExec("explain SELECT count(*) FROM crm_rd_150m dataset_48 WHERE (CASE WHEN (month(dataset_48.customer_first_date)) <= 30 THEN '新客' ELSE NULL END) IS NOT NULL;")
 }
 
-func (s *testIntegrationSuite) TestReadFromStorageHint(c *C) {
+func (s *testIntegrationSerialSuite) TestReadFromStorageHint(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("use test")
@@ -386,7 +415,7 @@ func (s *testIntegrationSuite) TestReadFromStorageHint(c *C) {
 	}
 }
 
-func (s *testIntegrationSuite) TestReadFromStorageHintAndIsolationRead(c *C) {
+func (s *testIntegrationSerialSuite) TestReadFromStorageHintAndIsolationRead(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("use test")
@@ -623,4 +652,18 @@ func (s *testIntegrationSuite) TestSubqueryWithTopN(c *C) {
 		})
 		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
 	}
+}
+
+func (s *testIntegrationSuite) TestIssue15546(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, pt, vt")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("insert into t values(1, 1)")
+	tk.MustExec("create table pt(a int primary key, b int) partition by range(a) (" +
+		"PARTITION `p0` VALUES LESS THAN (10), PARTITION `p1` VALUES LESS THAN (20), PARTITION `p2` VALUES LESS THAN (30))")
+	tk.MustExec("insert into pt values(1, 1), (11, 11), (21, 21)")
+	tk.MustExec("create definer='root'@'localhost' view vt(a, b) as select a, b from t")
+	tk.MustQuery("select * from pt, vt where pt.a = vt.a").Check(testkit.Rows("1 1 1 1"))
 }

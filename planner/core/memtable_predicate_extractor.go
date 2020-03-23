@@ -400,7 +400,7 @@ func (helper extractHelper) extractTimeRange(
 			timeType := types.NewFieldType(mysql.TypeDatetime)
 			timeType.Decimal = 3
 			timeDatum, err := datums[0].ConvertTo(ctx.GetSessionVars().StmtCtx, timeType)
-			if err != nil {
+			if err != nil || timeDatum.Kind() == types.KindNull {
 				remained = append(remained, expr)
 				continue
 			}

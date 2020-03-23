@@ -178,7 +178,7 @@ func (h *BindHandle) AddBindRecord(sctx sessionctx.Context, record *BindRecord) 
 	br := h.GetBindRecord(parser.DigestNormalized(record.OriginalSQL), record.OriginalSQL, record.Db)
 	var duplicateBinding *Binding
 	if br != nil {
-		binding := br.FindBinding(record.Bindings[0].id)
+		binding := br.FindBinding(record.Bindings[0].ID)
 		if binding != nil {
 			// There is already a binding with status `Using`, `PendingVerify` or `Rejected`, we could directly cancel the job.
 			if record.Bindings[0].Status == PendingVerify {
@@ -191,7 +191,7 @@ func (h *BindHandle) AddBindRecord(sctx sessionctx.Context, record *BindRecord) 
 
 	exec, _ := h.sctx.Context.(sqlexec.SQLExecutor)
 	h.sctx.Lock()
-	_, err = exec.Execute(context.TODO(), "BEGIN")
+	_, err = exec.ExecuteInternal(context.TODO(), "BEGIN")
 	if err != nil {
 		h.sctx.Unlock()
 		return
@@ -199,13 +199,13 @@ func (h *BindHandle) AddBindRecord(sctx sessionctx.Context, record *BindRecord) 
 
 	defer func() {
 		if err != nil {
-			_, err1 := exec.Execute(context.TODO(), "ROLLBACK")
+			_, err1 := exec.ExecuteInternal(context.TODO(), "ROLLBACK")
 			h.sctx.Unlock()
 			terror.Log(err1)
 			return
 		}
 
-		_, err = exec.Execute(context.TODO(), "COMMIT")
+		_, err = exec.ExecuteInternal(context.TODO(), "COMMIT")
 		h.sctx.Unlock()
 		if err != nil {
 			return
@@ -224,7 +224,7 @@ func (h *BindHandle) AddBindRecord(sctx sessionctx.Context, record *BindRecord) 
 	}
 
 	if duplicateBinding != nil {
-		_, err = exec.Execute(context.TODO(), h.deleteBindInfoSQL(record.OriginalSQL, record.Db, duplicateBinding.BindSQL))
+		_, err = exec.ExecuteInternal(context.TODO(), h.deleteBindInfoSQL(record.OriginalSQL, record.Db, duplicateBinding.BindSQL))
 		if err != nil {
 			return err
 		}
@@ -240,7 +240,7 @@ func (h *BindHandle) AddBindRecord(sctx sessionctx.Context, record *BindRecord) 
 		record.Bindings[i].UpdateTime = now
 
 		// insert the BindRecord to the storage.
-		_, err = exec.Execute(context.TODO(), h.insertBindInfoSQL(record.OriginalSQL, record.Db, record.Bindings[i]))
+		_, err = exec.ExecuteInternal(context.TODO(), h.insertBindInfoSQL(record.OriginalSQL, record.Db, record.Bindings[i]))
 		if err != nil {
 			return err
 		}
@@ -253,7 +253,7 @@ func (h *BindHandle) DropBindRecord(originalSQL, db string, binding *Binding) (e
 	h.sctx.Lock()
 	exec, _ := h.sctx.Context.(sqlexec.SQLExecutor)
 
-	_, err = exec.Execute(context.TODO(), "BEGIN")
+	_, err = exec.ExecuteInternal(context.TODO(), "BEGIN")
 	if err != nil {
 		h.sctx.Unlock()
 		return
@@ -261,13 +261,13 @@ func (h *BindHandle) DropBindRecord(originalSQL, db string, binding *Binding) (e
 
 	defer func() {
 		if err != nil {
-			_, err1 := exec.Execute(context.TODO(), "ROLLBACK")
+			_, err1 := exec.ExecuteInternal(context.TODO(), "ROLLBACK")
 			h.sctx.Unlock()
 			terror.Log(err1)
 			return
 		}
 
-		_, err = exec.Execute(context.TODO(), "COMMIT")
+		_, err = exec.ExecuteInternal(context.TODO(), "COMMIT")
 		h.sctx.Unlock()
 		if err != nil {
 			return
@@ -292,7 +292,7 @@ func (h *BindHandle) DropBindRecord(originalSQL, db string, binding *Binding) (e
 		bindSQL = binding.BindSQL
 	}
 
-	_, err = exec.Execute(context.TODO(), h.logicalDeleteBindInfoSQL(originalSQL, db, updateTs, bindSQL))
+	_, err = exec.ExecuteInternal(context.TODO(), h.logicalDeleteBindInfoSQL(originalSQL, db, updateTs, bindSQL))
 	return err
 }
 
@@ -325,7 +325,7 @@ func (tmpMap *tmpBindRecordMap) flushToStore() {
 }
 
 func (tmpMap *tmpBindRecordMap) saveToCache(bindRecord *BindRecord) {
-	key := bindRecord.OriginalSQL + ":" + bindRecord.Db + ":" + bindRecord.Bindings[0].id
+	key := bindRecord.OriginalSQL + ":" + bindRecord.Db + ":" + bindRecord.Bindings[0].ID
 	if _, ok := tmpMap.Load().(map[string]*bindRecordUpdate)[key]; ok {
 		return
 	}
@@ -545,11 +545,16 @@ func (h *BindHandle) CaptureBaselines() {
 			continue
 		}
 		charset, collation := h.sctx.GetSessionVars().GetCharsetInfo()
+		hintsSet, err := ParseHintsSet(parser4Capture, bindSQL, charset, collation)
+		if err != nil {
+			logutil.BgLogger().Debug("parse BindSQL failed", zap.String("SQL", bindSQL), zap.Error(err))
+			continue
+		}
 		binding := Binding{
 			BindSQL:   bindSQL,
 			Status:    Using,
-			Hint:      CollectHint(stmt),
-			id:        hints,
+			Hint:      hintsSet,
+			ID:        hints,
 			Charset:   charset,
 			Collation: collation,
 		}
@@ -562,13 +567,10 @@ func (h *BindHandle) CaptureBaselines() {
 }
 
 func getHintsForSQL(sctx sessionctx.Context, sql string) (string, error) {
-	originBaseline := sctx.GetSessionVars().UsePlanBaselines
-	originRestrict := sctx.GetSessionVars().InRestrictedSQL
+	oriVals := sctx.GetSessionVars().UsePlanBaselines
 	sctx.GetSessionVars().UsePlanBaselines = false
-	sctx.GetSessionVars().InRestrictedSQL = false
 	recordSets, err := sctx.(sqlexec.SQLExecutor).Execute(context.TODO(), fmt.Sprintf("explain format='hint' %s", sql))
-	sctx.GetSessionVars().InRestrictedSQL = originRestrict
-	sctx.GetSessionVars().UsePlanBaselines = originBaseline
+	sctx.GetSessionVars().UsePlanBaselines = oriVals
 	if len(recordSets) > 0 {
 		defer terror.Log(recordSets[0].Close())
 	}
@@ -629,8 +631,7 @@ func (e *paramMarkerChecker) Leave(in ast.Node) (ast.Node, bool) {
 }
 
 // AddEvolvePlanTask adds the evolve plan task into memory cache. It would be flushed to store periodically.
-func (h *BindHandle) AddEvolvePlanTask(originalSQL, DB string, binding Binding, planHint string) {
-	binding.id = planHint
+func (h *BindHandle) AddEvolvePlanTask(originalSQL, DB string, binding Binding) {
 	br := &BindRecord{
 		OriginalSQL: originalSQL,
 		Db:          DB,
@@ -714,7 +715,7 @@ func (h *BindHandle) getOnePendingVerifyJob() (string, string, Binding) {
 func (h *BindHandle) getRunningDuration(sctx sessionctx.Context, db, sql string, maxTime time.Duration) (time.Duration, error) {
 	ctx := context.TODO()
 	if db != "" {
-		_, err := sctx.(sqlexec.SQLExecutor).Execute(ctx, fmt.Sprintf("use `%s`", db))
+		_, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, fmt.Sprintf("use `%s`", db))
 		if err != nil {
 			return 0, err
 		}
@@ -747,7 +748,7 @@ func runSQL(ctx context.Context, sctx sessionctx.Context, sql string, resultChan
 			resultChan <- fmt.Errorf("run sql panicked: %v", string(buf))
 		}
 	}()
-	recordSets, err := sctx.(sqlexec.SQLExecutor).Execute(ctx, sql)
+	recordSets, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql)
 	if err != nil {
 		if len(recordSets) > 0 {
 			terror.Call(recordSets[0].Close)
