@@ -2302,7 +2302,7 @@ func (b *PlanBuilder) appendUnmatchedIndexHintWarning(indexHints []indexHintInfo
 		if !hint.matched {
 			var hintTypeString string
 			if usedForIndexMerge {
-				hintTypeString = "index_merge"
+				hintTypeString = "use_index_merge"
 			} else {
 				hintTypeString = hint.hintTypeString()
 			}
