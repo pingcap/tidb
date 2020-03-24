@@ -46,6 +46,7 @@ import (
 	util2 "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
+	utilparser "github.com/pingcap/tidb/util/parser"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/set"
 
@@ -558,7 +559,7 @@ func (b *PlanBuilder) buildDropBindPlan(v *ast.DropBindingStmt) (Plan, error) {
 		SQLBindOp:    OpSQLBindDrop,
 		NormdOrigSQL: parser.Normalize(v.OriginSel.Text()),
 		IsGlobal:     v.GlobalScope,
-		Db:           getDefaultDB(b.ctx, v.OriginSel),
+		Db:           utilparser.GetDefaultDB(v.OriginSel, b.ctx.GetSessionVars().CurrentDB),
 	}
 	if v.HintedSel != nil {
 		p.BindSQL = v.HintedSel.Text()
@@ -575,40 +576,12 @@ func (b *PlanBuilder) buildCreateBindPlan(v *ast.CreateBindingStmt) (Plan, error
 		BindSQL:      v.HintedSel.Text(),
 		IsGlobal:     v.GlobalScope,
 		BindStmt:     v.HintedSel,
-		Db:           getDefaultDB(b.ctx, v.OriginSel),
+		Db:           utilparser.GetDefaultDB(v.OriginSel, b.ctx.GetSessionVars().CurrentDB),
 		Charset:      charSet,
 		Collation:    collation,
 	}
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
 	return p, nil
-}
-
-func getDefaultDB(ctx sessionctx.Context, sel ast.StmtNode) string {
-	implicitDB := &implicitDatabase{}
-	sel.Accept(implicitDB)
-	if implicitDB.hasImplicit {
-		return ctx.GetSessionVars().CurrentDB
-	}
-	return ""
-}
-
-type implicitDatabase struct {
-	hasImplicit bool
-}
-
-func (i *implicitDatabase) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
-	switch x := in.(type) {
-	case *ast.TableName:
-		if x.Schema.L == "" {
-			i.hasImplicit = true
-		}
-		return in, true
-	}
-	return in, false
-}
-
-func (i *implicitDatabase) Leave(in ast.Node) (out ast.Node, ok bool) {
-	return in, true
 }
 
 // detectSelectAgg detects an aggregate function or GROUP BY clause.
