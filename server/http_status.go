@@ -256,6 +256,7 @@ func (s *Server) startHTTPServer() {
 	fetcher := sqlInfoFetcher{store: tikvHandlerTool.Store}
 	serverMux.HandleFunc("/debug/sub-optimal-plan", fetcher.zipInfoForSQL)
 
+	failpoint.Enable("github.com/pingcap/tidb/server/integrateFailpoint", "return")
 	failpoint.Inject("integrateFailpoint", func() {
 		serverMux.HandleFunc("/fail/", func(w http.ResponseWriter, r *http.Request) {
 			r.URL.Path = strings.TrimPrefix(r.URL.Path, "/fail")
