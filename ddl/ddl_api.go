@@ -2339,7 +2339,7 @@ func (d *ddl) AddColumns(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alte
 	for _, spec := range specs {
 		for _, specNewColumn := range spec.NewColumns {
 			newColumnsCount++
-			if set[specNewColumn.Name.Name.O] != true {
+			if !set[specNewColumn.Name.Name.O] {
 				set[specNewColumn.Name.Name.O] = true
 			} else {
 				return errors.Trace(infoschema.ErrColumnExists.GenWithStackByArgs(specNewColumn.Name.Name.O))
