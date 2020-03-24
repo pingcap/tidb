@@ -40,6 +40,8 @@ import (
 	"crypto/tls"
 	"encoding/binary"
 	"fmt"
+	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"io"
 	"net"
 	"runtime"
@@ -702,6 +704,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 				zap.String("status", cc.SessionStatusToString()),
 				zap.Stringer("sql", getLastStmtInConn{cc}),
 				zap.String("txn_mode", txnMode),
+				zap.String("err", errStrForLog(err)),
 			)
 			err1 := cc.writeError(err)
 			terror.Log(err1)
@@ -733,6 +736,14 @@ func queryStrForLog(query string) string {
 		return query[:size] + fmt.Sprintf("(len: %d)", len(query))
 	}
 	return query
+}
+
+func errStrForLog(err error) string {
+	if kv.ErrKeyExists.Equal(err) || parser.ErrParse.Equal(err) || infoschema.ErrTableNotExists.Equal(err) {
+		// Do not log stack for duplicated entry error.
+		return err.Error()
+	}
+	return errors.ErrorStack(err)
 }
 
 func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
