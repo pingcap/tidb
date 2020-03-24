@@ -2228,20 +2228,71 @@ func checkUnsupportedColumnConstraint(col *ast.ColumnDef, ti ast.Ident) error {
 	return nil
 }
 
-// AddColumn will add a new column to the table.
-func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTableSpec) error {
-	specNewColumn := spec.NewColumns[0]
-
+func checkNewColumn(ctx sessionctx.Context, ti ast.Ident, schema *model.DBInfo, spec *ast.AlterTableSpec, t table.Table, specNewColumn *ast.ColumnDef) (*table.Column, error) {
 	err := checkUnsupportedColumnConstraint(specNewColumn, ti)
 	if err != nil {
-		return errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 
 	colName := specNewColumn.Name.Name.O
 	if err = checkColumnAttributes(colName, specNewColumn.Tp); err != nil {
-		return errors.Trace(err)
+		return nil, errors.Trace(err)
+	}
+	if len(colName) > mysql.MaxColumnNameLength {
+		return nil, ErrTooLongIdent.GenWithStackByArgs(colName)
 	}
 
+	// If new column is a generated column, do validation.
+	// NOTE: we do check whether the column refers other generated
+	// columns occurring later in a table, but we don't handle the col offset.
+	for _, option := range specNewColumn.Options {
+		if option.Tp == ast.ColumnOptionGenerated {
+			if err := checkIllegalFn4GeneratedColumn(specNewColumn.Name.Name.L, option.Expr); err != nil {
+				return nil, errors.Trace(err)
+			}
+
+			if option.Stored {
+				return nil, errUnsupportedOnGeneratedColumn.GenWithStackByArgs("Adding generated stored column through ALTER TABLE")
+			}
+
+			_, dependColNames := findDependedColumnNames(specNewColumn)
+			if err = checkAutoIncrementRef(specNewColumn.Name.Name.L, dependColNames, t.Meta()); err != nil {
+				return nil, errors.Trace(err)
+			}
+			duplicateColNames := make(map[string]struct{}, len(dependColNames))
+			for k := range dependColNames {
+				duplicateColNames[k] = struct{}{}
+			}
+			cols := t.Cols()
+
+			if err = checkDependedColExist(dependColNames, cols); err != nil {
+				return nil, errors.Trace(err)
+			}
+
+			if err = verifyColumnGenerationSingle(duplicateColNames, cols, spec.Position); err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+	}
+
+	// Ignore table constraints now, maybe return error later.
+	// We use length(t.Cols()) as the default offset firstly, we will change the
+	// column's offset later.
+	col, _, err := buildColumnAndConstraint(ctx, len(t.Cols()), specNewColumn, nil, t.Meta().Charset, t.Meta().Collate, schema.Charset, schema.Collate)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	col.OriginDefaultValue, err = generateOriginDefaultValue(col.ToInfo())
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return col, nil
+}
+
+// AddColumn will add a new column to the table.
+func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTableSpec) error {
+	specNewColumn := spec.NewColumns[0]
 	schema, t, err := d.getSchemaAndTableByIdent(ctx, ti)
 	if err != nil {
 		return errors.Trace(err)
@@ -2249,6 +2300,7 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 	if err = checkAddColumnTooManyColumns(len(t.Cols()) + 1); err != nil {
 		return errors.Trace(err)
 	}
+	colName := specNewColumn.Name.Name.O
 	// Check whether added column has existed.
 	col := table.FindCol(t.Cols(), colName)
 	if col != nil {
@@ -2260,52 +2312,7 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 		return err
 	}
 
-	// If new column is a generated column, do validation.
-	// NOTE: we do check whether the column refers other generated
-	// columns occurring later in a table, but we don't handle the col offset.
-	for _, option := range specNewColumn.Options {
-		if option.Tp == ast.ColumnOptionGenerated {
-			if err := checkIllegalFn4GeneratedColumn(specNewColumn.Name.Name.L, option.Expr); err != nil {
-				return errors.Trace(err)
-			}
-
-			if option.Stored {
-				return errUnsupportedOnGeneratedColumn.GenWithStackByArgs("Adding generated stored column through ALTER TABLE")
-			}
-
-			_, dependColNames := findDependedColumnNames(specNewColumn)
-			if err = checkAutoIncrementRef(specNewColumn.Name.Name.L, dependColNames, t.Meta()); err != nil {
-				return errors.Trace(err)
-			}
-			duplicateColNames := make(map[string]struct{}, len(dependColNames))
-			for k := range dependColNames {
-				duplicateColNames[k] = struct{}{}
-			}
-			cols := t.Cols()
-
-			if err = checkDependedColExist(dependColNames, cols); err != nil {
-				return errors.Trace(err)
-			}
-
-			if err = verifyColumnGenerationSingle(duplicateColNames, cols, spec.Position); err != nil {
-				return errors.Trace(err)
-			}
-		}
-	}
-
-	if len(colName) > mysql.MaxColumnNameLength {
-		return ErrTooLongIdent.GenWithStackByArgs(colName)
-	}
-
-	// Ignore table constraints now, maybe return error later.
-	// We use length(t.Cols()) as the default offset firstly, we will change the
-	// column's offset later.
-	col, _, err = buildColumnAndConstraint(ctx, len(t.Cols()), specNewColumn, nil, t.Meta().Charset, t.Meta().Collate, schema.Charset, schema.Collate)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	col.OriginDefaultValue, err = generateOriginDefaultValue(col.ToInfo())
+	col, err = checkNewColumn(ctx, ti, schema, spec, t, specNewColumn)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -2339,7 +2346,7 @@ func (d *ddl) AddColumns(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alte
 	var positions []*ast.ColumnPosition
 	var offsets []int
 
-	// Check all the columns at once
+	// Check all the columns at once.
 	newColumnsCount := 0
 	set := make(map[string]bool)
 	for _, spec := range specs {
@@ -2356,55 +2363,10 @@ func (d *ddl) AddColumns(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alte
 		return errors.Trace(err)
 	}
 
-	// Check the columns one by one
+	// Check the columns one by one.
 	for _, spec := range specs {
 		for _, specNewColumn := range spec.NewColumns {
-			err := checkUnsupportedColumnConstraint(specNewColumn, ti)
-			if err != nil {
-				return errors.Trace(err)
-			}
-
 			colName := specNewColumn.Name.Name.O
-			if err = checkColumnAttributes(colName, specNewColumn.Tp); err != nil {
-				return errors.Trace(err)
-			}
-			if len(colName) > mysql.MaxColumnNameLength {
-				return ErrTooLongIdent.GenWithStackByArgs(colName)
-			}
-
-			// If new column is a generated column, do validation.
-			// NOTE: we do check whether the column refers other generated
-			// columns occurring later in a table, but we don't handle the col offset.
-			for _, option := range specNewColumn.Options {
-				if option.Tp == ast.ColumnOptionGenerated {
-					if err := checkIllegalFn4GeneratedColumn(specNewColumn.Name.Name.L, option.Expr); err != nil {
-						return errors.Trace(err)
-					}
-
-					if option.Stored {
-						return errUnsupportedOnGeneratedColumn.GenWithStackByArgs("Adding generated stored column through ALTER TABLE")
-					}
-
-					_, dependColNames := findDependedColumnNames(specNewColumn)
-					if err = checkAutoIncrementRef(specNewColumn.Name.Name.L, dependColNames, t.Meta()); err != nil {
-						return errors.Trace(err)
-					}
-					duplicateColNames := make(map[string]struct{}, len(dependColNames))
-					for k := range dependColNames {
-						duplicateColNames[k] = struct{}{}
-					}
-					cols := t.Cols()
-
-					if err = checkDependedColExist(dependColNames, cols); err != nil {
-						return errors.Trace(err)
-					}
-
-					if err = verifyColumnGenerationSingle(duplicateColNames, cols, spec.Position); err != nil {
-						return errors.Trace(err)
-					}
-				}
-			}
-
 			// Check whether added column has existed.
 			col := table.FindCol(t.Cols(), colName)
 			if col != nil {
@@ -2416,19 +2378,10 @@ func (d *ddl) AddColumns(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alte
 				return err
 			}
 
-			// Ignore table constraints now, maybe return error later.
-			// We use length(t.Cols()) as the default offset firstly, we will change the
-			// column's offset later.
-			col, _, err = buildColumnAndConstraint(ctx, len(t.Cols()), specNewColumn, nil, t.Meta().Charset, t.Meta().Collate, schema.Charset, schema.Collate)
+			col, err = checkNewColumn(ctx, ti, schema, spec, t, specNewColumn)
 			if err != nil {
 				return errors.Trace(err)
 			}
-
-			col.OriginDefaultValue, err = generateOriginDefaultValue(col.ToInfo())
-			if err != nil {
-				return errors.Trace(err)
-			}
-
 			columns = append(columns, col)
 			positions = append(positions, spec.Position)
 			offsets = append(offsets, 0)
