@@ -44,7 +44,7 @@ oom-use-tmp-storage = true
 
 # Specifies what operation TiDB performs when a single SQL statement exceeds the memory quota specified by mem-quota-query and cannot be spilled over to disk.
 # Valid options: ["log", "cancel"]
-oom-action = "log"
+oom-action = "cancel"
 
 # Enable coprocessor streaming.
 enable-streaming = false
@@ -82,8 +82,8 @@ split-region-max-num = 1000
 enable-dynamic-config = true
 
 # alter-primary-key is used to control alter primary key feature. Default is false, indicate the alter primary key feature is disabled.
-# If it is true, we can add the primary key by "alter table", but we may not be able to drop the primary key.
-# In order to support "drop primary key" operation , this flag must be true and the table does not have the pkIsHandle flag.
+# If it is true, we can add the primary key by "alter table". However, if a table already exists before the switch is turned true and the data type of its primary key column is an integer,
+# the primary key cannot be dropped.
 alter-primary-key = false
 
 # server-version is used to change the version string of TiDB in the following scenarios:
@@ -371,6 +371,8 @@ max-retry-count = 256
 [stmt-summary]
 # enable statement summary.
 enable = true
+# enable statement summary for TiDB internal query, default is false.
+enable-internal-query = false
 
 # max number of statements kept in memory.
 max-stmt-count = 200
@@ -389,6 +391,8 @@ history-size = 24
 [experimental]
 # enable column attribute `auto_random` to be defined on the primary key column.
 allow-auto-random = false
+# enable creating expression index.
+allow-expression-index = false
 
 # server level isolation read by engines and labels
 [isolation-read]

@@ -57,7 +57,7 @@ type testSuite struct {
 func (s *testSuite) SetUpSuite(c *C) {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().StmtCtx = &stmtctx.StatementContext{
-		MemTracker:  memory.NewTracker(stringutil.StringerStr("testSuite"), variable.DefTiDBMemQuotaDistSQL),
+		MemTracker:  memory.NewTracker(stringutil.StringerStr("testSuite"), -1),
 		DiskTracker: disk.NewTracker(stringutil.StringerStr("testSuite"), -1),
 	}
 	ctx.Store = &mock.Store{

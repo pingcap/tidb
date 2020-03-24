@@ -366,12 +366,12 @@ func (s *testSuite2) TestMergeJoin(c *C) {
 	tk.MustExec("create table t(a int)")
 	tk.MustExec("insert into t value(1),(2)")
 	tk.MustQuery("explain select /*+ TIDB_SMJ(t1, t2) */ * from t t1 join t t2 order by t1.a, t2.a").Check(testkit.Rows(
-		"Sort_6 100000000.00 root test.t.a:asc, test.t.a:asc",
-		"└─MergeJoin_9 100000000.00 root inner join",
-		"  ├─TableReader_13(Build) 10000.00 root data:TableFullScan_12",
-		"  │ └─TableFullScan_12 10000.00 cop[tikv] table:t2, keep order:false, stats:pseudo",
-		"  └─TableReader_11(Probe) 10000.00 root data:TableFullScan_10",
-		"    └─TableFullScan_10 10000.00 cop[tikv] table:t1, keep order:false, stats:pseudo",
+		"Sort_6 100000000.00 root  test.t.a:asc, test.t.a:asc",
+		"└─MergeJoin_9 100000000.00 root  inner join",
+		"  ├─TableReader_13(Build) 10000.00 root  data:TableFullScan_12",
+		"  │ └─TableFullScan_12 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+		"  └─TableReader_11(Probe) 10000.00 root  data:TableFullScan_10",
+		"    └─TableFullScan_10 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
 	))
 	tk.MustQuery("select /*+ TIDB_SMJ(t1, t2) */ * from t t1 join t t2 order by t1.a, t2.a").Check(testkit.Rows(
 		"1 1",
@@ -387,12 +387,12 @@ func (s *testSuite2) TestMergeJoin(c *C) {
 	tk.MustExec("create table s(a int, b int)")
 	tk.MustExec("insert into s values(1,1)")
 	tk.MustQuery("explain select /*+ TIDB_SMJ(t, s) */ a in (select a from s where s.b >= t.b) from t").Check(testkit.Rows(
-		"Projection_7 10000.00 root Column#7",
-		"└─MergeJoin_8 10000.00 root left outer semi join, other cond:eq(test.t.a, test.s.a), ge(test.s.b, test.t.b)",
-		"  ├─TableReader_12(Build) 10000.00 root data:TableFullScan_11",
-		"  │ └─TableFullScan_11 10000.00 cop[tikv] table:s, keep order:false, stats:pseudo",
-		"  └─TableReader_10(Probe) 10000.00 root data:TableFullScan_9",
-		"    └─TableFullScan_9 10000.00 cop[tikv] table:t, keep order:false, stats:pseudo",
+		"Projection_7 10000.00 root  Column#7",
+		"└─MergeJoin_8 10000.00 root  left outer semi join, other cond:eq(test.t.a, test.s.a), ge(test.s.b, test.t.b)",
+		"  ├─TableReader_12(Build) 10000.00 root  data:TableFullScan_11",
+		"  │ └─TableFullScan_11 10000.00 cop[tikv] table:s keep order:false, stats:pseudo",
+		"  └─TableReader_10(Probe) 10000.00 root  data:TableFullScan_9",
+		"    └─TableFullScan_9 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	))
 	tk.MustQuery("select /*+ TIDB_SMJ(t, s) */ a in (select a from s where s.b >= t.b) from t").Check(testkit.Rows(
 		"1",
@@ -420,16 +420,16 @@ func (s *testSuite2) TestMergeJoin(c *C) {
 	tk.MustExec("create table s (a int)")
 	tk.MustExec("insert into s values (4), (1), (3), (2)")
 	tk.MustQuery("explain select s1.a1 from (select a as a1 from s order by s.a desc) as s1 join (select a as a2 from s order by s.a desc) as s2 on s1.a1 = s2.a2 order by s1.a1 desc").Check(testkit.Rows(
-		"Projection_27 12487.50 root test.s.a",
-		"└─MergeJoin_28 12487.50 root inner join, left key:test.s.a, right key:test.s.a",
-		"  ├─Sort_31(Build) 9990.00 root test.s.a:desc",
-		"  │ └─TableReader_26 9990.00 root data:Selection_25",
-		"  │   └─Selection_25 9990.00 cop[tikv] not(isnull(test.s.a))",
-		"  │     └─TableFullScan_24 10000.00 cop[tikv] table:s, keep order:false, stats:pseudo",
-		"  └─Sort_29(Probe) 9990.00 root test.s.a:desc",
-		"    └─TableReader_21 9990.00 root data:Selection_20",
-		"      └─Selection_20 9990.00 cop[tikv] not(isnull(test.s.a))",
-		"        └─TableFullScan_19 10000.00 cop[tikv] table:s, keep order:false, stats:pseudo",
+		"Projection_27 12487.50 root  test.s.a",
+		"└─MergeJoin_28 12487.50 root  inner join, left key:test.s.a, right key:test.s.a",
+		"  ├─Sort_31(Build) 9990.00 root  test.s.a:desc",
+		"  │ └─TableReader_26 9990.00 root  data:Selection_25",
+		"  │   └─Selection_25 9990.00 cop[tikv]  not(isnull(test.s.a))",
+		"  │     └─TableFullScan_24 10000.00 cop[tikv] table:s keep order:false, stats:pseudo",
+		"  └─Sort_29(Probe) 9990.00 root  test.s.a:desc",
+		"    └─TableReader_21 9990.00 root  data:Selection_20",
+		"      └─Selection_20 9990.00 cop[tikv]  not(isnull(test.s.a))",
+		"        └─TableFullScan_19 10000.00 cop[tikv] table:s keep order:false, stats:pseudo",
 	))
 	tk.MustQuery("select s1.a1 from (select a as a1 from s order by s.a desc) as s1 join (select a as a2 from s order by s.a desc) as s2 on s1.a1 = s2.a2 order by s1.a1 desc").Check(testkit.Rows(
 		"4", "3", "2", "1"))
@@ -524,24 +524,24 @@ func (s *testSuiteJoin3) TestVectorizedMergeJoin(c *C) {
 		insert("t2", t2)
 
 		tk.MustQuery("explain select /*+ TIDB_SMJ(t1, t2) */ * from t1, t2 where t1.a=t2.a and t1.b>5 and t2.b<5").Check(testkit.Rows(
-			`MergeJoin_7 4150.01 root inner join, left key:test.t1.a, right key:test.t2.a`,
-			`├─Sort_15(Build) 3320.01 root test.t2.a:asc`,
-			`│ └─TableReader_14 3320.01 root data:Selection_13`,
-			`│   └─Selection_13 3320.01 cop[tikv] lt(test.t2.b, 5), not(isnull(test.t2.a))`,
-			`│     └─TableFullScan_12 10000.00 cop[tikv] table:t2, keep order:false, stats:pseudo`,
-			`└─Sort_11(Probe) 3330.00 root test.t1.a:asc`,
-			`  └─TableReader_10 3330.00 root data:Selection_9`,
-			`    └─Selection_9 3330.00 cop[tikv] gt(test.t1.b, 5), not(isnull(test.t1.a))`,
-			`      └─TableFullScan_8 10000.00 cop[tikv] table:t1, keep order:false, stats:pseudo`,
+			`MergeJoin_7 4150.01 root  inner join, left key:test.t1.a, right key:test.t2.a`,
+			`├─Sort_15(Build) 3320.01 root  test.t2.a:asc`,
+			`│ └─TableReader_14 3320.01 root  data:Selection_13`,
+			`│   └─Selection_13 3320.01 cop[tikv]  lt(test.t2.b, 5), not(isnull(test.t2.a))`,
+			`│     └─TableFullScan_12 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo`,
+			`└─Sort_11(Probe) 3330.00 root  test.t1.a:asc`,
+			`  └─TableReader_10 3330.00 root  data:Selection_9`,
+			`    └─Selection_9 3330.00 cop[tikv]  gt(test.t1.b, 5), not(isnull(test.t1.a))`,
+			`      └─TableFullScan_8 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo`,
 		))
 		tk.MustQuery("explain select /*+ TIDB_HJ(t1, t2) */ * from t1, t2 where t1.a=t2.a and t1.b>5 and t2.b<5").Check(testkit.Rows(
-			`HashLeftJoin_7 4150.01 root inner join, inner:TableReader_14, equal:[eq(test.t1.a, test.t2.a)]`,
-			`├─TableReader_14(Build) 3320.01 root data:Selection_13`,
-			`│ └─Selection_13 3320.01 cop[tikv] lt(test.t2.b, 5), not(isnull(test.t2.a))`,
-			`│   └─TableFullScan_12 10000.00 cop[tikv] table:t2, keep order:false, stats:pseudo`,
-			`└─TableReader_11(Probe) 3330.00 root data:Selection_10`,
-			`  └─Selection_10 3330.00 cop[tikv] gt(test.t1.b, 5), not(isnull(test.t1.a))`,
-			`    └─TableFullScan_9 10000.00 cop[tikv] table:t1, keep order:false, stats:pseudo`,
+			`HashJoin_7 4150.01 root  inner join, equal:[eq(test.t1.a, test.t2.a)]`,
+			`├─TableReader_14(Build) 3320.01 root  data:Selection_13`,
+			`│ └─Selection_13 3320.01 cop[tikv]  lt(test.t2.b, 5), not(isnull(test.t2.a))`,
+			`│   └─TableFullScan_12 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo`,
+			`└─TableReader_11(Probe) 3330.00 root  data:Selection_10`,
+			`  └─Selection_10 3330.00 cop[tikv]  gt(test.t1.b, 5), not(isnull(test.t1.a))`,
+			`    └─TableFullScan_9 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo`,
 		))
 
 		r1 := tk.MustQuery("select /*+ TIDB_SMJ(t1, t2) */ * from t1, t2 where t1.a=t2.a and t1.b>5 and t2.b<5").Sort()

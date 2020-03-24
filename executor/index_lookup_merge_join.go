@@ -159,10 +159,10 @@ func (e *IndexLookUpMergeJoin) Open(ctx context.Context) error {
 	// recordSet.Next()
 	// e.dataReaderBuilder.Build() // txn is used again, which is already closed
 	//
-	// The trick here is `getStartTS` will cache start ts in the dataReaderBuilder,
+	// The trick here is `getSnapshotTS` will cache snapshot ts in the dataReaderBuilder,
 	// so even txn is destroyed later, the dataReaderBuilder could still use the
-	// cached start ts to construct DAG.
-	_, err := e.innerMergeCtx.readerBuilder.getStartTS()
+	// cached snapshot ts to construct DAG.
+	_, err := e.innerMergeCtx.readerBuilder.getSnapshotTS()
 	if err != nil {
 		return err
 	}
@@ -171,7 +171,7 @@ func (e *IndexLookUpMergeJoin) Open(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaIndexLookupJoin)
+	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	e.startWorkers(ctx)
 	return nil

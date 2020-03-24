@@ -251,7 +251,12 @@ func (e *SimpleExec) setDefaultRoleAll(s *ast.SetDefaultRoleStmt) error {
 			return ErrCannotUser.GenWithStackByArgs("SET DEFAULT ROLE", user.String())
 		}
 	}
-	sqlExecutor := e.ctx.(sqlexec.SQLExecutor)
+	restrictedCtx, err := e.getSysSession()
+	if err != nil {
+		return err
+	}
+	defer e.releaseSysSession(restrictedCtx)
+	sqlExecutor := restrictedCtx.(sqlexec.SQLExecutor)
 	if _, err := sqlExecutor.Execute(context.Background(), "begin"); err != nil {
 		return err
 	}
@@ -1111,7 +1116,7 @@ func (e *SimpleExec) executeAlterInstance(s *ast.AlterInstanceStmt) error {
 			variable.SysVars["ssl_cert"].Value,
 		)
 		if err != nil {
-			if !s.NoRollbackOnError {
+			if !s.NoRollbackOnError || config.GetGlobalConfig().Security.RequireSecureTransport {
 				return err
 			}
 			logutil.BgLogger().Warn("reload TLS fail but keep working without TLS due to 'no rollback on error'")

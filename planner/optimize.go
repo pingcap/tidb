@@ -165,11 +165,11 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	}
 
 	// Handle the logical plan statement, use cascades planner if enabled.
-	if sctx.GetSessionVars().EnableCascadesPlanner {
+	if sctx.GetSessionVars().GetEnableCascadesPlanner() {
 		finalPlan, cost, err := cascades.DefaultOptimizer.FindBestPlan(sctx, logic)
 		return finalPlan, names, cost, err
 	}
-	finalPlan, cost, err := plannercore.DoOptimize(ctx, builder.GetOptFlag(), logic)
+	finalPlan, cost, err := plannercore.DoOptimize(ctx, sctx, builder.GetOptFlag(), logic)
 	return finalPlan, names, cost, err
 }
 
@@ -240,10 +240,21 @@ func handleEvolveTasks(ctx context.Context, sctx sessionctx.Context, br *bindinf
 	if bindSQL == "" {
 		return
 	}
-	globalHandle := domain.GetDomain(sctx).BindHandle()
 	charset, collation := sctx.GetSessionVars().GetCharsetInfo()
-	binding := bindinfo.Binding{BindSQL: bindSQL, Status: bindinfo.PendingVerify, Charset: charset, Collation: collation}
-	globalHandle.AddEvolvePlanTask(br.OriginalSQL, br.Db, binding, planHint)
+	hintsSet, err := bindinfo.ParseHintsSet(parser.New(), bindSQL, charset, collation)
+	if err != nil {
+		return
+	}
+	binding := bindinfo.Binding{
+		BindSQL:   bindSQL,
+		Status:    bindinfo.PendingVerify,
+		Charset:   charset,
+		Collation: collation,
+		Hint:      hintsSet,
+		ID:        planHint,
+	}
+	globalHandle := domain.GetDomain(sctx).BindHandle()
+	globalHandle.AddEvolvePlanTask(br.OriginalSQL, br.Db, binding)
 }
 
 // useMaxTS returns true when meets following conditions:
@@ -297,8 +308,8 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 	if len(hints) == 0 {
 		return
 	}
-	var memoryQuotaHint, useToJAHint, maxExecutionTime *ast.TableOptimizerHint
-	var memoryQuotaHintCnt, useToJAHintCnt, noIndexMergeHintCnt, readReplicaHintCnt, maxExecutionTimeCnt int
+	var memoryQuotaHint, useToJAHint, useCascadesHint, maxExecutionTime *ast.TableOptimizerHint
+	var memoryQuotaHintCnt, useToJAHintCnt, useCascadesHintCnt, noIndexMergeHintCnt, readReplicaHintCnt, maxExecutionTimeCnt int
 	for _, hint := range hints {
 		switch hint.HintName.L {
 		case "memory_quota":
@@ -307,6 +318,9 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 		case "use_toja":
 			useToJAHint = hint
 			useToJAHintCnt++
+		case "use_cascades":
+			useCascadesHint = hint
+			useCascadesHintCnt++
 		case "no_index_merge":
 			noIndexMergeHintCnt++
 		case "read_consistent_replica":
@@ -343,6 +357,15 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 		}
 		stmtHints.HasAllowInSubqToJoinAndAggHint = true
 		stmtHints.AllowInSubqToJoinAndAgg = useToJAHint.HintData.(bool)
+	}
+	// Handle USE_CASCADES
+	if useCascadesHintCnt != 0 {
+		if useCascadesHintCnt > 1 {
+			warn := errors.Errorf("USE_CASCADES() is defined more than once, only the last definition takes effect: USE_CASCADES(%v)", useCascadesHint.HintData.(bool))
+			warns = append(warns, warn)
+		}
+		stmtHints.HasEnableCascadesPlannerHint = true
+		stmtHints.EnableCascadesPlanner = useCascadesHint.HintData.(bool)
 	}
 	// Handle NO_INDEX_MERGE
 	if noIndexMergeHintCnt != 0 {

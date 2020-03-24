@@ -48,13 +48,13 @@ type ExecDetails struct {
 
 // CommitDetails contains commit detail information.
 type CommitDetails struct {
-	GetCommitTsTime    time.Duration
-	PrewriteTime       time.Duration
-	BinlogPrewriteTime time.Duration
-	CommitTime         time.Duration
-	LocalLatchTime     time.Duration
-	CommitBackoffTime  int64
-	Mu                 struct {
+	GetCommitTsTime        time.Duration
+	PrewriteTime           time.Duration
+	WaitPrewriteBinlogTime time.Duration
+	CommitTime             time.Duration
+	LocalLatchTime         time.Duration
+	CommitBackoffTime      int64
+	Mu                     struct {
 		sync.Mutex
 		BackoffTypes []fmt.Stringer
 	}
@@ -82,8 +82,8 @@ const (
 	ProcessKeysStr = "Process_keys"
 	// PreWriteTimeStr means the time of pre-write.
 	PreWriteTimeStr = "Prewrite_time"
-	// BinlogPrewriteTimeStr means the time of binlog prewrite
-	BinlogPrewriteTimeStr = "Binlog_prewrite_time"
+	// WaitPrewriteBinlogTimeStr means the time of waiting prewrite binlog finished when transaction committing.
+	WaitPrewriteBinlogTimeStr = "Wait_prewrite_binlog_time"
 	// CommitTimeStr means the time of commit.
 	CommitTimeStr = "Commit_time"
 	// GetCommitTSTimeStr means the time of getting commit ts.
@@ -135,8 +135,8 @@ func (d ExecDetails) String() string {
 		if commitDetails.PrewriteTime > 0 {
 			parts = append(parts, PreWriteTimeStr+": "+strconv.FormatFloat(commitDetails.PrewriteTime.Seconds(), 'f', -1, 64))
 		}
-		if commitDetails.BinlogPrewriteTime > 0 {
-			parts = append(parts, BinlogPrewriteTimeStr+": "+strconv.FormatFloat(commitDetails.BinlogPrewriteTime.Seconds(), 'f', -1, 64))
+		if commitDetails.WaitPrewriteBinlogTime > 0 {
+			parts = append(parts, WaitPrewriteBinlogTimeStr+": "+strconv.FormatFloat(commitDetails.WaitPrewriteBinlogTime.Seconds(), 'f', -1, 64))
 		}
 		if commitDetails.CommitTime > 0 {
 			parts = append(parts, CommitTimeStr+": "+strconv.FormatFloat(commitDetails.CommitTime.Seconds(), 'f', -1, 64))
@@ -279,26 +279,25 @@ func (crs *CopRuntimeStats) String() string {
 		return ""
 	}
 
-	var totalRows, totalTasks int64
+	var totalTasks int64
 	var totalIters int32
 	procTimes := make([]time.Duration, 0, 32)
 	for _, instanceStats := range crs.stats {
 		for _, stat := range instanceStats {
 			procTimes = append(procTimes, time.Duration(stat.consume)*time.Nanosecond)
-			totalRows += stat.rows
 			totalIters += stat.loop
 			totalTasks++
 		}
 	}
 
 	if totalTasks == 1 {
-		return fmt.Sprintf("time:%v, loops:%d, rows:%d", procTimes[0], totalIters, totalRows)
+		return fmt.Sprintf("time:%v, loops:%d", procTimes[0], totalIters)
 	}
 
 	n := len(procTimes)
 	sort.Slice(procTimes, func(i, j int) bool { return procTimes[i] < procTimes[j] })
-	return fmt.Sprintf("proc max:%v, min:%v, p80:%v, p95:%v, rows:%v, iters:%v, tasks:%v",
-		procTimes[n-1], procTimes[0], procTimes[n*4/5], procTimes[n*19/20], totalRows, totalIters, totalTasks)
+	return fmt.Sprintf("proc max:%v, min:%v, p80:%v, p95:%v, iters:%v, tasks:%v",
+		procTimes[n-1], procTimes[0], procTimes[n*4/5], procTimes[n*19/20], totalIters, totalTasks)
 }
 
 // ReaderRuntimeStats collects stats for TableReader, IndexReader and IndexLookupReader
@@ -479,7 +478,7 @@ func (e *RuntimeStats) GetActRows() int64 {
 }
 
 func (e *RuntimeStats) String() string {
-	result := fmt.Sprintf("time:%v, loops:%d, rows:%d", time.Duration(e.consume), e.loop, e.rows)
+	result := fmt.Sprintf("time:%v, loops:%d", time.Duration(e.consume), e.loop)
 	if len(e.concurrency) > 0 {
 		for _, concurrency := range e.concurrency {
 			if concurrency.concurrencyNum > 0 {

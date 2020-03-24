@@ -14,8 +14,8 @@
 package core
 
 import (
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	mysql "github.com/pingcap/tidb/errno"
 )
 
 // error definitions.
@@ -29,6 +29,7 @@ var (
 	ErrWrongUsage                      = terror.ClassOptimizer.New(mysql.ErrWrongUsage, mysql.MySQLErrName[mysql.ErrWrongUsage])
 	ErrUnknown                         = terror.ClassOptimizer.New(mysql.ErrUnknown, mysql.MySQLErrName[mysql.ErrUnknown])
 	ErrUnknownTable                    = terror.ClassOptimizer.New(mysql.ErrUnknownTable, mysql.MySQLErrName[mysql.ErrUnknownTable])
+	ErrNoSuchTable                     = terror.ClassOptimizer.New(mysql.ErrNoSuchTable, mysql.MySQLErrName[mysql.ErrNoSuchTable])
 	ErrWrongArguments                  = terror.ClassOptimizer.New(mysql.ErrWrongArguments, mysql.MySQLErrName[mysql.ErrWrongArguments])
 	ErrWrongNumberOfColumnsInSelect    = terror.ClassOptimizer.New(mysql.ErrWrongNumberOfColumnsInSelect, mysql.MySQLErrName[mysql.ErrWrongNumberOfColumnsInSelect])
 	ErrBadGeneratedColumn              = terror.ClassOptimizer.New(mysql.ErrBadGeneratedColumn, mysql.MySQLErrName[mysql.ErrBadGeneratedColumn])

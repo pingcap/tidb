@@ -137,6 +137,15 @@ func (s *testSuite5) TestSetVar(c *C) {
 	c.Assert(charset, Equals, "utf8")
 	c.Assert(collation, Equals, "utf8_bin")
 
+	expectErrMsg := "[ddl:1273]Unknown collation: 'non_exist_collation'"
+	tk.MustGetErrMsg("set names utf8 collate non_exist_collation", expectErrMsg)
+	tk.MustGetErrMsg("set @@session.collation_server='non_exist_collation'", expectErrMsg)
+	tk.MustGetErrMsg("set @@session.collation_database='non_exist_collation'", expectErrMsg)
+	tk.MustGetErrMsg("set @@session.collation_connection='non_exist_collation'", expectErrMsg)
+	tk.MustGetErrMsg("set @@global.collation_server='non_exist_collation'", expectErrMsg)
+	tk.MustGetErrMsg("set @@global.collation_database='non_exist_collation'", expectErrMsg)
+	tk.MustGetErrMsg("set @@global.collation_connection='non_exist_collation'", expectErrMsg)
+
 	tk.MustExec("set character_set_results = NULL")
 	tk.MustQuery("select @@character_set_results").Check(testkit.Rows(""))
 
@@ -546,9 +555,6 @@ func (s *testSuite5) TestValidateSetVar(c *C) {
 	tk.MustQuery("select @@tidb_enable_streaming;").Check(testkit.Rows("1"))
 
 	_, err = tk.Exec("set @@tidb_batch_delete=3;")
-	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))
-
-	_, err = tk.Exec("set @@tidb_mem_quota_mergejoin='tidb';")
 	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))
 
 	tk.MustExec("set @@group_concat_max_len=1")
