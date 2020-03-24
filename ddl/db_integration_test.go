@@ -469,8 +469,8 @@ func (s *testIntegrationSuite5) TestErrnoErrorCode(c *C) {
 	tk.MustGetErrCode(sql, errno.ErrTooLongIdent)
 	sql = "alter table test_error_code_succ add column `a ` int, add column `b ` int;"
 	tk.MustGetErrCode(sql, errno.ErrWrongColumnName)
-	tk.MustExec("create table test_on_update (c1 int, c2 int);")
-	sql = "alter table test_on_update add column cc int, add column c3 int on update current_timestamp;"
+	tk.MustExec("create table test_add_columns_on_update (c1 int, c2 int);")
+	sql = "alter table test_add_columns_on_update add column cc int, add column c3 int on update current_timestamp;"
 	tk.MustGetErrCode(sql, errno.ErrInvalidOnUpdate)
 
 	// drop column
