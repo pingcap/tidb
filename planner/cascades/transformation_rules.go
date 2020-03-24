@@ -2496,17 +2496,17 @@ func (r *PushAggDownJoin) OnTransform(old *memo.ExprIter) (newExprs []*memo.Grou
 		return nil, false, false, nil
 	}
 
+	finalAggExpr := r.doPushAggDownJoin(
+		leftOk, rightOk,
+		leftFinalAggFuncs, leftPartialAggFuncs,
+		rightFinalAggFuncs, rightPartialAggFuncs,
+		leftGbyCols, rightGbyCols,
+		leftAggFuncs, rightAggFuncs,
+		leftPartialAggSchema, rightPartialAggSchema,
+		midJoin, agg,
+		leftChildGroup, rightChildGroup,
+	)
 	if leftOk && rightOk {
-		finalAggExpr1 := r.doPushAggDownJoin(
-			true, true,
-			leftFinalAggFuncs, leftPartialAggFuncs,
-			rightFinalAggFuncs, rightPartialAggFuncs,
-			leftGbyCols, rightGbyCols,
-			leftAggFuncs, rightAggFuncs,
-			leftPartialAggSchema, rightPartialAggSchema,
-			midJoin, agg,
-			leftChildGroup, rightChildGroup,
-		)
 		finalAggExpr2 := r.doPushAggDownJoin(
 			true, false,
 			leftFinalAggFuncs, leftPartialAggFuncs,
@@ -2527,19 +2527,8 @@ func (r *PushAggDownJoin) OnTransform(old *memo.ExprIter) (newExprs []*memo.Grou
 			midJoin, agg,
 			leftChildGroup, rightChildGroup,
 		)
-		return []*memo.GroupExpr{finalAggExpr1, finalAggExpr2, finalAggExpr3}, false, false, nil
+		return []*memo.GroupExpr{finalAggExpr, finalAggExpr2, finalAggExpr3}, false, false, nil
 	}
-
-	finalAggExpr := r.doPushAggDownJoin(
-		leftOk, rightOk,
-		leftFinalAggFuncs, leftPartialAggFuncs,
-		rightFinalAggFuncs, rightPartialAggFuncs,
-		leftGbyCols, rightGbyCols,
-		leftAggFuncs, rightAggFuncs,
-		leftPartialAggSchema, rightPartialAggSchema,
-		midJoin, agg,
-		leftChildGroup, rightChildGroup,
-	)
 	return []*memo.GroupExpr{finalAggExpr}, false, false, nil
 }
 
@@ -2554,19 +2543,29 @@ func (r *PushAggDownJoin) doPushAggDownJoin(
 	agg *plannercore.LogicalAggregation,
 	leftChildGroup, rightChildGroup *memo.Group,
 ) *memo.GroupExpr {
-	leftPartialAgg := r.makePartialAgg(leftOk, leftPartialAggFuncs, leftAggFuncs, leftGbyCols, agg)
-	leftPartialAggExpr := memo.NewGroupExpr(leftPartialAgg)
-	leftPartialAggExpr.SetChildren(leftChildGroup)
-	leftPartialAggGroup := memo.NewGroupWithSchema(leftPartialAggExpr, leftPartialAggSchema)
+	var joinLeftGroup *memo.Group
+	if leftOk {
+		leftPartialAgg := r.makePartialAgg(leftPartialAggFuncs, leftAggFuncs, leftGbyCols, agg)
+		leftPartialAggExpr := memo.NewGroupExpr(leftPartialAgg)
+		leftPartialAggExpr.SetChildren(leftChildGroup)
+		joinLeftGroup = memo.NewGroupWithSchema(leftPartialAggExpr, leftPartialAggSchema)
+	} else {
+		joinLeftGroup = leftChildGroup
+	}
 
-	rightPartialAgg := r.makePartialAgg(rightOk, rightPartialAggFuncs, rightAggFuncs, rightGbyCols, agg)
-	rightPartialAggExpr := memo.NewGroupExpr(rightPartialAgg)
-	rightPartialAggExpr.SetChildren(rightChildGroup)
-	rightPartialAggGroup := memo.NewGroupWithSchema(rightPartialAggExpr, rightPartialAggSchema)
+	var joinRightGroup *memo.Group
+	if rightOk {
+		rightPartialAgg := r.makePartialAgg(rightPartialAggFuncs, rightAggFuncs, rightGbyCols, agg)
+		rightPartialAggExpr := memo.NewGroupExpr(rightPartialAgg)
+		rightPartialAggExpr.SetChildren(rightChildGroup)
+		joinRightGroup = memo.NewGroupWithSchema(rightPartialAggExpr, rightPartialAggSchema)
+	} else {
+		joinRightGroup = rightChildGroup
+	}
 
 	midJoinExpr := memo.NewGroupExpr(midJoin)
-	midJoinExpr.SetChildren(leftPartialAggGroup, rightPartialAggGroup)
-	midJoinGroup :=  memo.NewGroupWithSchema(midJoinExpr, expression.MergeSchema(leftPartialAggSchema, rightPartialAggSchema))
+	midJoinExpr.SetChildren(joinLeftGroup, joinRightGroup)
+	midJoinGroup :=  memo.NewGroupWithSchema(midJoinExpr, expression.MergeSchema(joinLeftGroup.Prop.Schema, joinRightGroup.Prop.Schema))
 
 	finalAgg := r.makeFinalAgg(leftOk, rightOk, leftFinalAggFuncs, leftAggFuncs, rightFinalAggFuncs, rightAggFuncs, agg)
 	finalAggExpr := memo.NewGroupExpr(finalAgg)
@@ -2575,7 +2574,6 @@ func (r *PushAggDownJoin) doPushAggDownJoin(
 }
 
 func (r *PushAggDownJoin) makePartialAgg(
-	ok bool,
 	partialAggFuncs, aggFuncs []*aggregation.AggFuncDesc,
 	gbyCols []*expression.Column,
 	agg *plannercore.LogicalAggregation,
@@ -2587,15 +2585,8 @@ func (r *PushAggDownJoin) makePartialAgg(
 		partialAggGbyItems = expression.Column2Exprs(gbyCols)
 	}
 
-	var partialFuncs []*aggregation.AggFuncDesc
-	if ok {
-		partialFuncs = partialAggFuncs
-	} else {
-		partialFuncs = aggFuncs
-	}
-
 	partialAgg = plannercore.LogicalAggregation{
-		AggFuncs:	  partialFuncs,
+		AggFuncs:	  partialAggFuncs,
 		GroupByItems: partialAggGbyItems,
 	}.Init(agg.SCtx(), agg.SelectBlockOffset())
 	partialAgg.CopyAggHints(agg)
