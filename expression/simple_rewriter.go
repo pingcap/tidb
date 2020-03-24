@@ -275,8 +275,7 @@ func (sr *simpleRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok boo
 		if collate.NewCollationEnabled() {
 			var collInfo *charset.Collation
 			// TODO(bb7133): use charset.ValidCharsetAndCollation when its bug is fixed.
-			if collInfo, sr.err = charset.GetCollationByName(v.Collate); sr.err != nil {
-				sr.err = charset.ErrUnknownCollation.GenWithStackByArgs(v.Collate)
+			if collInfo, sr.err = collate.GetCollationByName(v.Collate); sr.err != nil {
 				break
 			}
 			chs := arg.GetType().Charset
