@@ -271,6 +271,12 @@ func (s *extractorSuite) TestClusterLogTableExtractor(c *C) {
 			instances: nil,
 		},
 		{
+			// Test for invalid time.
+			sql:       "select * from information_schema.cluster_log where time='2019-10-10 10::10'",
+			nodeTypes: set.NewStringSet(),
+			instances: set.NewStringSet(),
+		},
+		{
 			sql:       "select * from information_schema.cluster_log where type='tikv'",
 			nodeTypes: set.NewStringSet("tikv"),
 			instances: set.NewStringSet(),
