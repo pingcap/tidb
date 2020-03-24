@@ -516,7 +516,10 @@
     "cases": [
       "select /*+ INL_JOIN(t1) */ * from t1 join t2 on t1.a = t2.a;",
       "select /*+ INL_HASH_JOIN(t1) */ * from t1 join t2 on t1.a = t2.a;",
-      "select /*+ INL_MERGE_JOIN(t1) */ * from t1 join t2 on t1.a = t2.a;"
+      "select /*+ INL_MERGE_JOIN(t1) */ * from t1 join t2 on t1.a = t2.a;",
+      // Issue 15484
+      "select /*+ inl_merge_join(t2) */ t1.a, t2.a from t t1 left join t t2 use index(g_2) on t1.g=t2.g",
+      "select /*+inl_merge_join(t2)*/ t1.a, t2.a from t t1 left join t t2 use index(g_2) on t1.g=t2.g order by t1.a"
     ]
   },
   {

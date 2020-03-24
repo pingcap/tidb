@@ -3166,7 +3166,7 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 			return nil, err
 		}
 	}
-	if !b.ctx.GetSessionVars().IsAutocommit() || b.ctx.GetSessionVars().InTxn() {
+	if b.ctx.GetSessionVars().TxnCtx.IsPessimistic {
 		if !update.MultipleTable {
 			p = b.buildSelectLock(p, ast.SelectLockForUpdate)
 		}
@@ -3226,7 +3226,40 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 		tblID2table[id], _ = b.is.TableByID(id)
 	}
 	updt.TblColPosInfos, err = buildColumns2Handle(updt.OutputNames(), tblID2Handle, tblID2table, true)
+	if err == nil {
+		err = checkUpdateList(b.ctx, tblID2table, updt)
+	}
 	return updt, err
+}
+
+// GetUpdateColumns gets the columns of updated lists.
+func GetUpdateColumns(ctx sessionctx.Context, orderedList []*expression.Assignment, schemaLen int) ([]bool, error) {
+	assignFlag := make([]bool, schemaLen)
+	for _, v := range orderedList {
+		if !ctx.GetSessionVars().AllowWriteRowID && v.Col.ID == model.ExtraHandleID {
+			return nil, errors.Errorf("insert, update and replace statements for _tidb_rowid are not supported.")
+		}
+		idx := v.Col.Index
+		assignFlag[idx] = true
+	}
+	return assignFlag, nil
+}
+
+func checkUpdateList(ctx sessionctx.Context, tblID2table map[int64]table.Table, updt *Update) error {
+	assignFlags, err := GetUpdateColumns(ctx, updt.OrderedList, updt.SelectPlan.Schema().Len())
+	if err != nil {
+		return err
+	}
+	for _, content := range updt.TblColPosInfos {
+		tbl := tblID2table[content.TblID]
+		flags := assignFlags[content.Start:content.End]
+		for i, col := range tbl.WritableCols() {
+			if flags[i] && col.State != model.StatePublic {
+				return ErrUnknownColumn.GenWithStackByArgs(col.Name, clauseMsg[fieldList])
+			}
+		}
+	}
+	return nil
 }
 
 func (b *PlanBuilder) buildUpdateLists(
@@ -3406,7 +3439,7 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 			return nil, err
 		}
 	}
-	if !b.ctx.GetSessionVars().IsAutocommit() || b.ctx.GetSessionVars().InTxn() {
+	if b.ctx.GetSessionVars().TxnCtx.IsPessimistic {
 		if !delete.IsMultiTable {
 			p = b.buildSelectLock(p, ast.SelectLockForUpdate)
 		}
