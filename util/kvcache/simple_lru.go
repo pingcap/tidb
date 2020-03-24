@@ -174,7 +174,7 @@ func (l *SimpleLRUCache) Keys() []Key {
 // SetCapacity sets capacity of the cache.
 func (l *SimpleLRUCache) SetCapacity(capacity uint) error {
 	if capacity < 1 {
-		return errors.New("capacity of LRU Cache should be at least 1.")
+		return errors.New("capacity of lru cache should be at least 1")
 	}
 	l.capacity = capacity
 	for l.size > l.capacity {

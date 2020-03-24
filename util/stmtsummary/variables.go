@@ -84,7 +84,7 @@ func (s *systemVars) setVariable(varType int, valueStr string, isSession bool) e
 	case typeRefreshInterval, typeMaxStmtCount:
 		valueInt = getIntFinalVariable(varType, sessionValue, globalValue, 1)
 	default:
-		return errors.New(fmt.Sprintf("No such type of variable: %d", varType))
+		return errors.New(fmt.Sprintf("no such type of variable: %d", varType))
 	}
 	atomic.StoreInt64(&v.finalValue, valueInt)
 	return nil
