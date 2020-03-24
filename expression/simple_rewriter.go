@@ -45,16 +45,16 @@ func ParseSimpleExprWithTableInfo(ctx sessionctx.Context, exprStr string, tableI
 	exprStr = "select " + exprStr
 	var stmts []ast.StmtNode
 	var err error
+	var warns []error
 	if p, ok := ctx.(interface {
 		ParseSQL(context.Context, string, string, string) ([]ast.StmtNode, []error, error)
 	}); ok {
-		stmts, _, err = p.ParseSQL(context.Background(), exprStr, "", "")
+		stmts, warns, err = p.ParseSQL(context.Background(), exprStr, "", "")
 	} else {
-		var warns []error
 		stmts, warns, err = parser.New().Parse(exprStr, "", "")
-		for _, warn := range warns {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(util.SyntaxWarn(warn))
-		}
+	}
+	for _, warn := range warns {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(util.SyntaxWarn(warn))
 	}
 
 	if err != nil {
@@ -92,12 +92,13 @@ func RewriteSimpleExprWithTableInfo(ctx sessionctx.Context, tbl *model.TableInfo
 func ParseSimpleExprsWithSchema(ctx sessionctx.Context, exprStr string, schema *Schema) ([]Expression, error) {
 	exprStr = "select " + exprStr
 	stmts, warns, err := parser.New().Parse(exprStr, "", "")
-	for _, warn := range warns {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(util.SyntaxWarn(warn))
-	}
 	if err != nil {
 		return nil, util.SyntaxWarn(err)
 	}
+	for _, warn := range warns {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(util.SyntaxWarn(warn))
+	}
+
 	fields := stmts[0].(*ast.SelectStmt).Fields.Fields
 	exprs := make([]Expression, 0, len(fields))
 	for _, field := range fields {
@@ -116,20 +117,21 @@ func ParseSimpleExprsWithNames(ctx sessionctx.Context, exprStr string, schema *S
 	exprStr = "select " + exprStr
 	var stmts []ast.StmtNode
 	var err error
+	var warns []error
 	if p, ok := ctx.(interface {
 		ParseSQL(context.Context, string, string, string) ([]ast.StmtNode, []error, error)
 	}); ok {
-		stmts, _, err = p.ParseSQL(context.Background(), exprStr, "", "")
+		stmts, warns, err = p.ParseSQL(context.Background(), exprStr, "", "")
 	} else {
-		var warns []error
 		stmts, warns, err = parser.New().Parse(exprStr, "", "")
-		for _, warn := range warns {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(util.SyntaxWarn(warn))
-		}
 	}
 	if err != nil {
 		return nil, util.SyntaxWarn(err)
 	}
+	for _, warn := range warns {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(util.SyntaxWarn(warn))
+	}
+
 	fields := stmts[0].(*ast.SelectStmt).Fields.Fields
 	exprs := make([]Expression, 0, len(fields))
 	for _, field := range fields {
