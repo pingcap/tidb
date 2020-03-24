@@ -704,16 +704,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, TiDBEvolvePlanTaskMaxTime, strconv.Itoa(DefTiDBEvolvePlanTaskMaxTime)},
 	{ScopeGlobal, TiDBEvolvePlanTaskStartTime, DefTiDBEvolvePlanTaskStartTime},
 	{ScopeGlobal, TiDBEvolvePlanTaskEndTime, DefTiDBEvolvePlanTaskEndTime},
-	{ScopeSession, TiDBIsolationReadEngines, func(engines []string) string {
-		ret := ""
-		for i := range engines {
-			ret += engines[i]
-			if i != len(engines)-1 {
-				ret += ","
-			}
-		}
-		return ret
-	}(config.GetGlobalConfig().IsolationRead.Engines)},
+	{ScopeSession, TiDBIsolationReadEngines, strings.Join(config.GetGlobalConfig().IsolationRead.Engines, ", ")},
 	{ScopeGlobal | ScopeSession, TiDBStoreLimit, strconv.FormatInt(atomic.LoadInt64(&config.GetGlobalConfig().TiKVClient.StoreLimit), 10)},
 	{ScopeSession, TiDBMetricSchemaStep, strconv.Itoa(DefTiDBMetricSchemaStep)},
 	{ScopeSession, TiDBMetricSchemaRangeDuration, strconv.Itoa(DefTiDBMetricSchemaRangeDuration)},
