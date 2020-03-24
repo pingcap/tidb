@@ -76,6 +76,8 @@ func checkEnableServerGlobalVar(rows []chunk.Row) {
 		switch row.GetString(0) {
 		case variable.TiDBEnableStmtSummary:
 			stmtsummary.StmtSummaryByDigestMap.SetEnabled(sVal, false)
+		case variable.TiDBStmtSummaryInternalQuery:
+			stmtsummary.StmtSummaryByDigestMap.SetEnabledInternalQuery(sVal, false)
 		case variable.TiDBStmtSummaryRefreshInterval:
 			stmtsummary.StmtSummaryByDigestMap.SetRefreshInterval(sVal, false)
 		case variable.TiDBStmtSummaryHistorySize:
