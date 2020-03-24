@@ -65,7 +65,7 @@ type testIntegrationSerialSuite struct {
 
 func (s *testIntegrationSerialSuite) SetUpSuite(c *C) {
 	var err error
-	s.testData, err = testutil.LoadTestSuiteData("testdata", "integration_suite")
+	s.testData, err = testutil.LoadTestSuiteData("testdata", "integration_serial_suite")
 	c.Assert(err, IsNil)
 }
 
@@ -475,12 +475,19 @@ func (s *testIntegrationSuite) TestIsolationReadTiFlashNotChoosePointGet(c *C) {
 	}
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
-	tk.MustQuery("explain select * from t where t.a = 1").Check(testkit.Rows(
-		"TableReader_6 1.00 root data:TableRangeScan_5",
-		"└─TableRangeScan_5 1.00 cop[tiflash] table:t, range:[1,1], keep order:false, stats:pseudo"))
-	tk.MustQuery("explain select * from t where t.a in (1, 2)").Check(testkit.Rows(
-		"TableReader_6 2.00 root data:TableRangeScan_5",
-		"└─TableRangeScan_5 2.00 cop[tiflash] table:t, range:[1,1], [2,2], keep order:false, stats:pseudo"))
+	var input []string
+	var output []struct {
+		SQL    string
+		Result []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
+	}
 }
 
 func (s *testIntegrationSuite) TestPartitionTableStats(c *C) {
