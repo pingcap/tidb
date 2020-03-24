@@ -137,8 +137,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	stmt := stmts[0]
 
-	//Try to handle the enable_plan_cache(bool) hint
-	//If there are multiple hints, use the last one, and throw a warning
+	// Try to handle the ignore_plan_cache() hint.
 	planCacheHit := true
 	hitCount := 0
 	switch stmt.(type) {
