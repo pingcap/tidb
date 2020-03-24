@@ -664,15 +664,15 @@ func (s *testStmtSummarySuite) TestMaxStmtCount(c *C) {
 	// Test the original value and modify it.
 	maxStmtCount := s.ssMap.maxStmtCount()
 	c.Assert(maxStmtCount, Equals, int(config.GetGlobalConfig().StmtSummary.MaxStmtCount))
-	s.ssMap.SetMaxStmtCount("10", false)
+	c.Assert(s.ssMap.SetMaxStmtCount("10", false), IsNil)
 	c.Assert(s.ssMap.maxStmtCount(), Equals, 10)
 	defer func() {
-		s.ssMap.SetMaxStmtCount("", false)
-		s.ssMap.SetMaxStmtCount("", true)
+		c.Assert(s.ssMap.SetMaxStmtCount("", false), IsNil)
+		c.Assert(s.ssMap.SetMaxStmtCount("", true), IsNil)
 		c.Assert(maxStmtCount, Equals, int(config.GetGlobalConfig().StmtSummary.MaxStmtCount))
 	}()
 
-	// 1000 digests
+	// 100 digests
 	stmtExecInfo1 := generateAnyExecInfo()
 	loops := 100
 	for i := 0; i < loops; i++ {
@@ -696,7 +696,7 @@ func (s *testStmtSummarySuite) TestMaxStmtCount(c *C) {
 	}
 
 	// Change to a bigger value.
-	s.ssMap.SetMaxStmtCount("50", true)
+	c.Assert(s.ssMap.SetMaxStmtCount("50", true), IsNil)
 	for i := 0; i < loops; i++ {
 		stmtExecInfo1.Digest = fmt.Sprintf("digest%d", i)
 		s.ssMap.AddStatement(stmtExecInfo1)
@@ -704,7 +704,7 @@ func (s *testStmtSummarySuite) TestMaxStmtCount(c *C) {
 	c.Assert(sm.Size(), Equals, 50)
 
 	// Change to a smaller value.
-	s.ssMap.SetMaxStmtCount("10", true)
+	c.Assert(s.ssMap.SetMaxStmtCount("10", true), IsNil)
 	for i := 0; i < loops; i++ {
 		stmtExecInfo1.Digest = fmt.Sprintf("digest%d", i)
 		s.ssMap.AddStatement(stmtExecInfo1)
@@ -747,11 +747,11 @@ func (s *testStmtSummarySuite) TestMaxSQLLength(c *C) {
 	ssElement := summary.history.Back().Value.(*stmtSummaryByDigestElement)
 	c.Assert(ssElement.sampleSQL, Equals, expectedSQL)
 
-	s.ssMap.SetMaxSQLLength("100", false)
+	c.Assert(s.ssMap.SetMaxSQLLength("100", false), IsNil)
 	c.Assert(s.ssMap.maxSQLLength(), Equals, 100)
-	s.ssMap.SetMaxSQLLength("10", true)
+	c.Assert(s.ssMap.SetMaxSQLLength("10", true), IsNil)
 	c.Assert(s.ssMap.maxSQLLength(), Equals, 10)
-	s.ssMap.SetMaxSQLLength("", true)
+	c.Assert(s.ssMap.SetMaxSQLLength("", true), IsNil)
 	c.Assert(s.ssMap.maxSQLLength(), Equals, 100)
 }
 
@@ -781,12 +781,12 @@ func (s *testStmtSummarySuite) TestSetMaxStmtCountParallel(c *C) {
 		go addStmtFunc()
 	}
 
-	defer s.ssMap.SetMaxStmtCount("", true)
+	defer c.Assert(s.ssMap.SetMaxStmtCount("", true), IsNil)
 	setStmtCountFunc := func() {
 		defer wg.Done()
 		// Turn down MaxStmtCount one by one.
 		for i := 10; i > 0; i-- {
-			s.ssMap.SetMaxStmtCount(strconv.Itoa(i), true)
+			c.Assert(s.ssMap.SetMaxStmtCount(strconv.Itoa(i), true), IsNil)
 		}
 	}
 	go setStmtCountFunc()

@@ -15,6 +15,7 @@ package stmtsummary
 
 import (
 	"fmt"
+	"github.com/pingcap/errors"
 	"strconv"
 	"strings"
 	"sync"
@@ -61,7 +62,7 @@ func (s *systemVars) getVariable(varType int) int64 {
 	return atomic.LoadInt64(&s.variables[varType].finalValue)
 }
 
-func (s *systemVars) setVariable(varType int, valueStr string, isSession bool) {
+func (s *systemVars) setVariable(varType int, valueStr string, isSession bool) error {
 	s.Lock()
 	defer s.Unlock()
 
@@ -83,9 +84,10 @@ func (s *systemVars) setVariable(varType int, valueStr string, isSession bool) {
 	case typeRefreshInterval, typeMaxStmtCount:
 		valueInt = getIntFinalVariable(varType, sessionValue, globalValue, 1)
 	default:
-		panic(fmt.Sprintf("No such type of variable: %d", varType))
+		return errors.New(fmt.Sprintf("No such type of variable: %d", varType))
 	}
 	atomic.StoreInt64(&v.finalValue, valueInt)
+	return nil
 }
 
 func getBoolFinalVariable(varType int, sessionValue, globalValue string) int64 {
