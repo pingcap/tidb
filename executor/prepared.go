@@ -144,24 +144,24 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	switch stmt.(type) {
 	case *ast.SelectStmt:
 		for _, hints := range (stmt.(*ast.SelectStmt)).TableHints {
-			if hints.HintName.L == "enable_plan_cache" {
-				planCacheHit = hints.HintData.(bool)
+			if hints.HintName.L == "ignore_plan_cache" {
+				planCacheHit = false
 				hitCount += 1
 			}
 		}
 		break
 	case *ast.DeleteStmt:
 		for _, hints := range (stmt.(*ast.DeleteStmt)).TableHints {
-			if hints.HintName.L == "enable_plan_cache" {
-				planCacheHit = hints.HintData.(bool)
+			if hints.HintName.L == "ignore_plan_cache" {
+				planCacheHit = false
 				hitCount += 1
 			}
 		}
 		break
 	case *ast.UpdateStmt:
 		for _, hints := range (stmt.(*ast.UpdateStmt)).TableHints {
-			if hints.HintName.L == "enable_plan_cache" {
-				planCacheHit = hints.HintData.(bool)
+			if hints.HintName.L == "ignore_plan_cache" {
+				planCacheHit = false
 				hitCount += 1
 			}
 		}
