@@ -15,7 +15,6 @@ package infoschema
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"sort"
 	"sync/atomic"
 
@@ -25,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
