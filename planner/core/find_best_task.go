@@ -169,7 +169,15 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty) (bestTas
 		// Next, get the bestTask with enforced prop
 		prop.Items = []property.Item{}
 	}
-	physicalPlans := p.self.exhaustPhysicalPlans(prop)
+	physicalPlans, hasHintUnmatchProp := p.self.exhaustPhysicalPlans(prop)
+	if hasHintUnmatchProp {
+		// If there is a hint in the plan and the hint cannot match the property,
+		// we enforce this property and try to generate the PhysicalPlan again to
+		// make sure the hint can work.
+		prop.Items = []property.Item{}
+		physicalPlans, _ = p.self.exhaustPhysicalPlans(prop)
+		prop.Enforced = true
+	}
 	prop.Items = oldPropCols
 
 	for _, pp := range physicalPlans {
