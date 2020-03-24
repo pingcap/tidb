@@ -2066,8 +2066,16 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 				})
 			}
 		case HintReadFromStorage:
+<<<<<<< HEAD
 			if hint.StoreType.L == HintTiFlash {
 				tiflashTables = tableNames2HintTableInfo(hint.Tables)
+=======
+			switch hint.HintData.(model.CIStr).L {
+			case HintTiFlash:
+				tiflashTables = append(tiflashTables, tableNames2HintTableInfo(b.ctx, hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
+			case HintTiKV:
+				tikvTables = append(tikvTables, tableNames2HintTableInfo(b.ctx, hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
+>>>>>>> a6de0e3...  planner: fix read from storage hint doesn't work for multiple same storages (#15491)
 			}
 			if hint.StoreType.L == HintTiKV {
 				tikvTables = tableNames2HintTableInfo(hint.Tables)
