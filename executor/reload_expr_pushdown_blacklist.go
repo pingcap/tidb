@@ -49,7 +49,7 @@ func LoadExprPushdownBlacklist(ctx sessionctx.Context) (err error) {
 		}
 		newBlacklist[name] = struct{}{}
 	}
-	expression.DefaultExprPushdownBlacklist.Store(newBlacklist)
+	expression.DefaultExprPushDownBlacklist.Store(newBlacklist)
 	return nil
 }
 

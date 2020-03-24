@@ -15,7 +15,7 @@ package table
 
 import (
 	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/mysql"
+	mysql "github.com/pingcap/tidb/errno"
 )
 
 var _ = Suite(&testTableSuite{})

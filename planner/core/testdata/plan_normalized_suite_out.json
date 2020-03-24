@@ -39,7 +39,7 @@
         "SQL": "select * from t1 where b=1",
         "Plan": [
           " IndexLookUp_10 root ",
-          " ├─IndexScan_8  cop  table:t1, index:b, range:[?,?], keep order:false",
+          " ├─IndexScan_8  cop  table:t1, index:b(b), range:[?,?], keep order:false",
           " └─TableScan_9  cop  table:t1, keep order:false"
         ]
       },
@@ -48,14 +48,14 @@
         "Plan": [
           " Projection_4    root plus(test.t1.a, ?), plus(test.t1.b, ?)",
           " └─IndexReader_6 root index:IndexRangeScan_5",
-          "   └─IndexScan_5 cop  table:t1, index:b, range:[?,?], keep order:false"
+          "   └─IndexScan_5 cop  table:t1, index:b(b), range:[?,?], keep order:false"
         ]
       },
       {
         "SQL": "select * from t1 where t1.b > 1 and  t1.a in (select sum(t2.b) from t2 where t2.a=t1.a and t2.b is not null)",
         "Plan": [
           " Projection_10            root test.t1.a, test.t1.b, test.t1.c",
-          " └─Apply_12               root semi join, inner:StreamAgg_34, equal:eq(Column#8, Column#7)",
+          " └─Apply_12               root semi join, equal:eq(Column#8, Column#7)",
           "   ├─Projection_13        root cast(test.t1.a), test.t1.a, test.t1.b, test.t1.c",
           "   │ └─TableReader_16     root data:Selection_15",
           "   │   └─Selection_15     cop  gt(test.t1.b, ?)",
@@ -101,7 +101,7 @@
       {
         "SQL": "SELECT /*+ TIDB_HJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>1;",
         "Plan": [
-          " HashRightJoin_29   root inner join, inner:TableReader_32, equal:eq(test.t1.a, test.t2.a)",
+          " HashJoin_29        root inner join, equal:eq(test.t1.a, test.t2.a)",
           " ├─TableReader_32   root data:Selection_31",
           " │ └─Selection_31   cop  gt(test.t1.c, ?)",
           " │   └─TableScan_30 cop  table:t1, range:[?,?], keep order:false",
@@ -112,7 +112,7 @@
       {
         "SQL": "SELECT /*+ TIDB_HJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>1;",
         "Plan": [
-          " HashRightJoin_29   root inner join, inner:TableReader_32, equal:eq(test.t1.a, test.t2.a)",
+          " HashJoin_29        root inner join, equal:eq(test.t1.a, test.t2.a)",
           " ├─TableReader_32   root data:Selection_31",
           " │ └─Selection_31   cop  gt(test.t1.c, ?)",
           " │   └─TableScan_30 cop  table:t1, range:[?,?], keep order:false",
@@ -170,7 +170,7 @@
         "SQL": "delete from t1 where a>0 and b=1 and c!=2",
         "Plan": [
           " IndexLookUp_12   root ",
-          " ├─IndexScan_9    cop  table:t1, index:b, range:[?,?], keep order:false",
+          " ├─IndexScan_9    cop  table:t1, index:b(b), range:[?,?], keep order:false",
           " └─Selection_11   cop  ne(test.t1.c, ?)",
           "   └─TableScan_10 cop  table:t1, keep order:false"
         ]

@@ -15,6 +15,7 @@ package expression
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -64,4 +65,15 @@ func (s *testCollationSuites) TestCompareString(c *C) {
 		c.Assert(isNull, IsFalse)
 		c.Assert(v, Equals, int64(0))
 	}
+}
+
+func (s *testCollationSuites) TestDeriveCollationFromExprs(c *C) {
+	tInt := types.NewFieldType(mysql.TypeLonglong)
+	ctx := mock.NewContext()
+
+	// no string column
+	chs, coll, flen := DeriveCollationFromExprs(ctx, newColumnWithType(0, tInt), newColumnWithType(0, tInt), newColumnWithType(0, tInt))
+	c.Assert(chs, Equals, charset.CharsetBin)
+	c.Assert(coll, Equals, charset.CollationBin)
+	c.Assert(flen, Equals, types.UnspecifiedLength)
 }

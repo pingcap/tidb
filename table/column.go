@@ -47,6 +47,8 @@ type Column struct {
 	*model.ColumnInfo
 	// If this column is a generated column, the expression will be stored here.
 	GeneratedExpr ast.ExprNode
+	// If this column has default expr value, this expression will be stored here.
+	DefaultExpr ast.ExprNode
 }
 
 // String implements fmt.Stringer interface.
@@ -81,6 +83,7 @@ func FindCol(cols []*Column, name string) *Column {
 func ToColumn(col *model.ColumnInfo) *Column {
 	return &Column{
 		col,
+		nil,
 		nil,
 	}
 }
@@ -377,6 +380,20 @@ func GetColDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo) (types.Da
 		return getColDefaultValue(ctx, col, defaultValue)
 	}
 	return getColDefaultExprValue(ctx, col, defaultValue.(string))
+}
+
+// EvalColDefaultExpr eval default expr node to explicit default value.
+func EvalColDefaultExpr(ctx sessionctx.Context, col *model.ColumnInfo, defaultExpr ast.ExprNode) (types.Datum, error) {
+	d, err := expression.EvalAstExpr(ctx, defaultExpr)
+	if err != nil {
+		return types.Datum{}, err
+	}
+	// Check the evaluated data type by cast.
+	value, err := CastValue(ctx, d, col)
+	if err != nil {
+		return types.Datum{}, err
+	}
+	return value, nil
 }
 
 func getColDefaultExprValue(ctx sessionctx.Context, col *model.ColumnInfo, defaultValue string) (types.Datum, error) {

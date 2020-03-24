@@ -242,14 +242,15 @@ func (l *Log) getDisableErrorStack() bool {
 
 // Security is the security section of the config.
 type Security struct {
-	SkipGrantTable  bool     `toml:"skip-grant-table" json:"skip-grant-table"`
-	SSLCA           string   `toml:"ssl-ca" json:"ssl-ca"`
-	SSLCert         string   `toml:"ssl-cert" json:"ssl-cert"`
-	SSLKey          string   `toml:"ssl-key" json:"ssl-key"`
-	ClusterSSLCA    string   `toml:"cluster-ssl-ca" json:"cluster-ssl-ca"`
-	ClusterSSLCert  string   `toml:"cluster-ssl-cert" json:"cluster-ssl-cert"`
-	ClusterSSLKey   string   `toml:"cluster-ssl-key" json:"cluster-ssl-key"`
-	ClusterVerifyCN []string `toml:"cluster-verify-cn" json:"cluster-verify-cn"`
+	SkipGrantTable         bool     `toml:"skip-grant-table" json:"skip-grant-table"`
+	SSLCA                  string   `toml:"ssl-ca" json:"ssl-ca"`
+	SSLCert                string   `toml:"ssl-cert" json:"ssl-cert"`
+	SSLKey                 string   `toml:"ssl-key" json:"ssl-key"`
+	RequireSecureTransport bool     `toml:"require-secure-transport" json:"require-secure-transport"`
+	ClusterSSLCA           string   `toml:"cluster-ssl-ca" json:"cluster-ssl-ca"`
+	ClusterSSLCert         string   `toml:"cluster-ssl-cert" json:"cluster-ssl-cert"`
+	ClusterSSLKey          string   `toml:"cluster-ssl-key" json:"cluster-ssl-key"`
+	ClusterVerifyCN        []string `toml:"cluster-verify-cn" json:"cluster-verify-cn"`
 }
 
 // The ErrConfigValidationFailed error is used so that external callers can do a type assertion
@@ -282,7 +283,8 @@ func (s *Security) ToTLSConfig() (tlsConfig *tls.Config, err error) {
 			return
 		}
 		tlsConfig = &tls.Config{
-			RootCAs: certPool,
+			RootCAs:   certPool,
+			ClientCAs: certPool,
 		}
 
 		if len(s.ClusterSSLCert) != 0 && len(s.ClusterSSLKey) != 0 {
@@ -471,6 +473,8 @@ type PessimisticTxn struct {
 type StmtSummary struct {
 	// Enable statement summary or not.
 	Enable bool `toml:"enable" json:"enable"`
+	// Enable summary internal query.
+	EnableInternalQuery bool `toml:"enable-internal-query" json:"enable-internal-query"`
 	// The maximum number of statements kept in memory.
 	MaxStmtCount uint `toml:"max-stmt-count" json:"max-stmt-count"`
 	// The maximum length of displayed normalized SQL and sample SQL.
@@ -492,6 +496,8 @@ type IsolationRead struct {
 type Experimental struct {
 	// Whether enable the syntax like `auto_random(3)` on the primary key column.
 	AllowAutoRandom bool `toml:"allow-auto-random" json:"allow-auto-random"`
+	// Whether enable creating expression index.
+	AllowsExpressionIndex bool `toml:"allow-expression-index" json:"allow-expression-index"`
 }
 
 var defaultConf = Config{
@@ -620,17 +626,19 @@ var defaultConf = Config{
 		MaxRetryCount: 256,
 	},
 	StmtSummary: StmtSummary{
-		Enable:          true,
-		MaxStmtCount:    200,
-		MaxSQLLength:    4096,
-		RefreshInterval: 1800,
-		HistorySize:     24,
+		Enable:              true,
+		EnableInternalQuery: false,
+		MaxStmtCount:        200,
+		MaxSQLLength:        4096,
+		RefreshInterval:     1800,
+		HistorySize:         24,
 	},
 	IsolationRead: IsolationRead{
 		Engines: []string{"tikv", "tiflash", "tidb"},
 	},
 	Experimental: Experimental{
-		AllowAutoRandom: false,
+		AllowAutoRandom:       false,
+		AllowsExpressionIndex: false,
 	},
 	EnableDynamicConfig: true,
 }

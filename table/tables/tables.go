@@ -122,6 +122,14 @@ func TableFromMeta(allocs autoid.Allocators, tblInfo *model.TableInfo) (table.Ta
 			}
 			col.GeneratedExpr = expr
 		}
+		// default value is expr.
+		if col.DefaultIsExpr {
+			expr, err := parseExpression(colInfo.DefaultValue.(string))
+			if err != nil {
+				return nil, err
+			}
+			col.DefaultExpr = expr
+		}
 		columns = append(columns, col)
 	}
 
@@ -487,22 +495,21 @@ func (t *TableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 		}
 	}
 	if !hasRecordID {
-		stmtCtx := ctx.GetSessionVars().StmtCtx
-		rows := stmtCtx.RecordRows()
-		if rows > 1 {
-			if stmtCtx.BaseRowID >= stmtCtx.MaxRowID {
-				stmtCtx.BaseRowID, stmtCtx.MaxRowID, err = allocHandleIDs(ctx, t, rows)
-				if err != nil {
-					return 0, err
-				}
-			}
-			stmtCtx.BaseRowID += 1
-			recordID = stmtCtx.BaseRowID
-		} else {
-			recordID, err = AllocHandle(ctx, t)
+		if opt.ReserveAutoID > 0 {
+			// Reserve a batch of auto ID in the statement context.
+			// The reserved ID could be used in the future within this statement, by the
+			// following AddRecord() operation.
+			// Make the IDs continuous benefit for the performance of TiKV.
+			stmtCtx := ctx.GetSessionVars().StmtCtx
+			stmtCtx.BaseRowID, stmtCtx.MaxRowID, err = allocHandleIDs(ctx, t, uint64(opt.ReserveAutoID))
 			if err != nil {
 				return 0, err
 			}
+		}
+
+		recordID, err = AllocHandle(ctx, t)
+		if err != nil {
+			return 0, err
 		}
 	}
 
@@ -1018,7 +1025,18 @@ func GetColDefaultValue(ctx sessionctx.Context, col *table.Column, defaultVals [
 }
 
 // AllocHandle allocate a new handle.
+// A statement could reserve some ID in the statement context, try those ones first.
 func AllocHandle(ctx sessionctx.Context, t table.Table) (int64, error) {
+	if ctx != nil {
+		if stmtCtx := ctx.GetSessionVars().StmtCtx; stmtCtx != nil {
+			// First try to alloc if the statement has reserved auto ID.
+			if stmtCtx.BaseRowID < stmtCtx.MaxRowID {
+				stmtCtx.BaseRowID += 1
+				return stmtCtx.BaseRowID, nil
+			}
+		}
+	}
+
 	_, rowID, err := allocHandleIDs(ctx, t, 1)
 	return rowID, err
 }

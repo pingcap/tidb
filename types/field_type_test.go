@@ -82,12 +82,12 @@ func (s *testFieldTypeSuite) TestFieldType(c *C) {
 	ft = NewFieldType(mysql.TypeVarchar)
 	ft.Flen = 10
 	ft.Flag |= mysql.BinaryFlag
-	c.Assert(ft.String(), Equals, "varchar(10) BINARY")
+	c.Assert(ft.String(), Equals, "varchar(10) BINARY COLLATE utf8mb4_bin")
 
 	ft = NewFieldType(mysql.TypeString)
 	ft.Charset = charset.CollationBin
 	ft.Flag |= mysql.BinaryFlag
-	c.Assert(ft.String(), Equals, "binary(1)")
+	c.Assert(ft.String(), Equals, "binary(1) COLLATE utf8mb4_bin")
 
 	ft = NewFieldType(mysql.TypeEnum)
 	ft.Elems = []string{"a", "b"}

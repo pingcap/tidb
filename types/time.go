@@ -1584,7 +1584,7 @@ func parseDateTimeFromNum(sc *stmtctx.StatementContext, num int64) (Time, error)
 
 	// Check YYMMDD.
 	if num < 70*10000+101 {
-		return t, errors.Trace(ErrWrongValue.GenWithStackByArgs(TimeStr, num))
+		return t, errors.Trace(ErrWrongValue.GenWithStackByArgs(TimeStr, strconv.FormatInt(num, 10)))
 	}
 
 	// Adjust year
@@ -1596,7 +1596,7 @@ func parseDateTimeFromNum(sc *stmtctx.StatementContext, num int64) (Time, error)
 
 	// Check YYYYMMDD.
 	if num < 10000101 {
-		return t, errors.Trace(ErrWrongValue.GenWithStackByArgs(TimeStr, num))
+		return t, errors.Trace(ErrWrongValue.GenWithStackByArgs(TimeStr, strconv.FormatInt(num, 10)))
 	}
 
 	// Adjust hour/min/second.
@@ -1607,7 +1607,7 @@ func parseDateTimeFromNum(sc *stmtctx.StatementContext, num int64) (Time, error)
 
 	// Check MMDDHHMMSS.
 	if num < 101000000 {
-		return t, errors.Trace(ErrWrongValue.GenWithStackByArgs(TimeStr, num))
+		return t, errors.Trace(ErrWrongValue.GenWithStackByArgs(TimeStr, strconv.FormatInt(num, 10)))
 	}
 
 	// Set TypeDatetime type.
@@ -1622,7 +1622,7 @@ func parseDateTimeFromNum(sc *stmtctx.StatementContext, num int64) (Time, error)
 
 	// Check YYYYMMDDHHMMSS.
 	if num < 70*10000000000+101000000 {
-		return t, errors.Trace(ErrWrongValue.GenWithStackByArgs(TimeStr, num))
+		return t, errors.Trace(ErrWrongValue.GenWithStackByArgs(TimeStr, strconv.FormatInt(num, 10)))
 	}
 
 	// Adjust year
@@ -1839,13 +1839,13 @@ func checkDatetimeType(t CoreTime, allowZeroInDate, allowInvalidDate bool) error
 
 	hour, minute, second := t.Hour(), t.Minute(), t.Second()
 	if hour < 0 || hour >= 24 {
-		return errors.Trace(ErrWrongValue.GenWithStackByArgs(TimeStr, hour))
+		return errors.Trace(ErrWrongValue.GenWithStackByArgs(TimeStr, strconv.Itoa(hour)))
 	}
 	if minute < 0 || minute >= 60 {
-		return errors.Trace(ErrWrongValue.GenWithStackByArgs(TimeStr, minute))
+		return errors.Trace(ErrWrongValue.GenWithStackByArgs(TimeStr, strconv.Itoa(minute)))
 	}
 	if second < 0 || second >= 60 {
-		return errors.Trace(ErrWrongValue.GenWithStackByArgs(TimeStr, second))
+		return errors.Trace(ErrWrongValue.GenWithStackByArgs(TimeStr, strconv.Itoa(second)))
 	}
 
 	return nil
@@ -2291,13 +2291,13 @@ func (t Time) convertDateFormat(b rune, buf *bytes.Buffer) error {
 	case 'b':
 		m := t.Month()
 		if m == 0 || m > 12 {
-			return errors.Trace(ErrWrongValue.GenWithStackByArgs(TimeStr, m))
+			return errors.Trace(ErrWrongValue.GenWithStackByArgs(TimeStr, strconv.Itoa(m)))
 		}
 		buf.WriteString(MonthNames[m-1][:3])
 	case 'M':
 		m := t.Month()
 		if m == 0 || m > 12 {
-			return errors.Trace(ErrWrongValue.GenWithStackByArgs(TimeStr, m))
+			return errors.Trace(ErrWrongValue.GenWithStackByArgs(TimeStr, strconv.Itoa(m)))
 		}
 		buf.WriteString(MonthNames[m-1])
 	case 'm':

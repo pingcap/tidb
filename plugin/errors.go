@@ -14,16 +14,16 @@
 package plugin
 
 import (
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/errno"
 )
 
 var (
-	errInvalidPluginID         = terror.ClassPlugin.NewStd(mysql.ErrInvalidPluginID)
-	errInvalidPluginManifest   = terror.ClassPlugin.NewStd(mysql.ErrInvalidPluginManifest)
-	errInvalidPluginName       = terror.ClassPlugin.NewStd(mysql.ErrInvalidPluginName)
-	errInvalidPluginVersion    = terror.ClassPlugin.NewStd(mysql.ErrInvalidPluginVersion)
-	errDuplicatePlugin         = terror.ClassPlugin.NewStd(mysql.ErrDuplicatePlugin)
-	errInvalidPluginSysVarName = terror.ClassPlugin.NewStd(mysql.ErrInvalidPluginSysVarName)
-	errRequireVersionCheckFail = terror.ClassPlugin.NewStd(mysql.ErrRequireVersionCheckFail)
+	errInvalidPluginID         = terror.ClassPlugin.NewStd(errno.ErrInvalidPluginID)
+	errInvalidPluginManifest   = terror.ClassPlugin.NewStd(errno.ErrInvalidPluginManifest)
+	errInvalidPluginName       = terror.ClassPlugin.NewStd(errno.ErrInvalidPluginName)
+	errInvalidPluginVersion    = terror.ClassPlugin.NewStd(errno.ErrInvalidPluginVersion)
+	errDuplicatePlugin         = terror.ClassPlugin.NewStd(errno.ErrDuplicatePlugin)
+	errInvalidPluginSysVarName = terror.ClassPlugin.NewStd(errno.ErrInvalidPluginSysVarName)
+	errRequireVersionCheckFail = terror.ClassPlugin.NewStd(errno.ErrRequireVersionCheckFail)
 )
