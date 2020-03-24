@@ -197,7 +197,7 @@ func EncodeMySQLTime(sc *stmtctx.StatementContext, t types.Time, tp byte, b []by
 
 func encodeString(b []byte, val types.Datum, comparable bool) []byte {
 	if collate.NewCollationEnabled() && comparable {
-		return encodeBytes(b, collate.GetCollator(val.Collation()).Key(val.GetString(), collate.CollatorOption{PadLen: val.Length()}), true)
+		return encodeBytes(b, collate.GetCollator(val.Collation()).Key(val.GetString()), true)
 	}
 	return encodeBytes(b, val.GetBytes(), comparable)
 }
@@ -1187,11 +1187,11 @@ func HashGroupKey(sc *stmtctx.StatementContext, n int, col *chunk.Column, buf []
 // ConvertByCollation converts these bytes according to its collation.
 func ConvertByCollation(raw []byte, tp *types.FieldType) []byte {
 	collator := collate.GetCollator(tp.Collate)
-	return collator.Key(string(hack.String(raw)), collate.NewCollatorOption(tp.Flen))
+	return collator.Key(string(hack.String(raw)))
 }
 
 // ConvertByCollationStr converts this string according to its collation.
 func ConvertByCollationStr(str string, tp *types.FieldType) string {
 	collator := collate.GetCollator(tp.Collate)
-	return string(hack.String(collator.Key(str, collate.NewCollatorOption(tp.Flen))))
+	return string(hack.String(collator.Key(str)))
 }

@@ -14,6 +14,8 @@
 package expression
 
 import (
+	"context"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
@@ -41,10 +43,20 @@ type simpleRewriter struct {
 // The expression string must only reference the column in table Info.
 func ParseSimpleExprWithTableInfo(ctx sessionctx.Context, exprStr string, tableInfo *model.TableInfo) (Expression, error) {
 	exprStr = "select " + exprStr
-	stmts, warns, err := parser.New().Parse(exprStr, "", "")
+	var stmts []ast.StmtNode
+	var err error
+	var warns []error
+	if p, ok := ctx.(interface {
+		ParseSQL(context.Context, string, string, string) ([]ast.StmtNode, []error, error)
+	}); ok {
+		stmts, warns, err = p.ParseSQL(context.Background(), exprStr, "", "")
+	} else {
+		stmts, warns, err = parser.New().Parse(exprStr, "", "")
+	}
 	for _, warn := range warns {
 		ctx.GetSessionVars().StmtCtx.AppendWarning(util.SyntaxWarn(warn))
 	}
+
 	if err != nil {
 		return nil, util.SyntaxError(err)
 	}
@@ -80,12 +92,13 @@ func RewriteSimpleExprWithTableInfo(ctx sessionctx.Context, tbl *model.TableInfo
 func ParseSimpleExprsWithSchema(ctx sessionctx.Context, exprStr string, schema *Schema) ([]Expression, error) {
 	exprStr = "select " + exprStr
 	stmts, warns, err := parser.New().Parse(exprStr, "", "")
-	for _, warn := range warns {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(util.SyntaxWarn(warn))
-	}
 	if err != nil {
 		return nil, util.SyntaxWarn(err)
 	}
+	for _, warn := range warns {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(util.SyntaxWarn(warn))
+	}
+
 	fields := stmts[0].(*ast.SelectStmt).Fields.Fields
 	exprs := make([]Expression, 0, len(fields))
 	for _, field := range fields {
@@ -102,13 +115,23 @@ func ParseSimpleExprsWithSchema(ctx sessionctx.Context, exprStr string, schema *
 // The expression string must only reference the column in the given NameSlice.
 func ParseSimpleExprsWithNames(ctx sessionctx.Context, exprStr string, schema *Schema, names types.NameSlice) ([]Expression, error) {
 	exprStr = "select " + exprStr
-	stmts, warns, err := parser.New().Parse(exprStr, "", "")
-	for _, warn := range warns {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(util.SyntaxWarn(warn))
+	var stmts []ast.StmtNode
+	var err error
+	var warns []error
+	if p, ok := ctx.(interface {
+		ParseSQL(context.Context, string, string, string) ([]ast.StmtNode, []error, error)
+	}); ok {
+		stmts, warns, err = p.ParseSQL(context.Background(), exprStr, "", "")
+	} else {
+		stmts, warns, err = parser.New().Parse(exprStr, "", "")
 	}
 	if err != nil {
 		return nil, util.SyntaxWarn(err)
 	}
+	for _, warn := range warns {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(util.SyntaxWarn(warn))
+	}
+
 	fields := stmts[0].(*ast.SelectStmt).Fields.Fields
 	exprs := make([]Expression, 0, len(fields))
 	for _, field := range fields {
@@ -252,8 +275,7 @@ func (sr *simpleRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok boo
 		if collate.NewCollationEnabled() {
 			var collInfo *charset.Collation
 			// TODO(bb7133): use charset.ValidCharsetAndCollation when its bug is fixed.
-			if collInfo, sr.err = charset.GetCollationByName(v.Collate); sr.err != nil {
-				sr.err = charset.ErrUnknownCollation.GenWithStackByArgs(v.Collate)
+			if collInfo, sr.err = collate.GetCollationByName(v.Collate); sr.err != nil {
 				break
 			}
 			chs := arg.GetType().Charset
