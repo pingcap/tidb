@@ -4967,7 +4967,7 @@ func (s *testIntegrationSuite) TestInvalidEndingStatement(c *C) {
 	assertParseErr(`drop table if exists t"`)
 }
 
-func(s *testIntegrationSuite) TestIssue15613(c *C) {
+func (s *testIntegrationSuite) TestIssue15613(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustQuery("select sec_to_time(1e-4)").Check(testkit.Rows("00:00:00.000100"))
 	tk.MustQuery("select sec_to_time(1e-5)").Check(testkit.Rows("00:00:00.000010"))
