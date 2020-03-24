@@ -462,6 +462,17 @@ func (s *testIntegrationSuite5) TestErrnoErrorCode(c *C) {
 	sql = "create table test_on_update_2(c int on update current_timestamp);"
 	tk.MustGetErrCode(sql, errno.ErrInvalidOnUpdate)
 
+	// add columns
+	sql = "alter table test_error_code_succ add column c1 int, add column c1 int"
+	tk.MustGetErrCode(sql, errno.ErrDupFieldName)
+	sql = "alter table test_error_code_succ add column (aa int, aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa int)"
+	tk.MustGetErrCode(sql, errno.ErrTooLongIdent)
+	sql = "alter table test_error_code_succ add column `a ` int, add column `b ` int;"
+	tk.MustGetErrCode(sql, errno.ErrWrongColumnName)
+	tk.MustExec("create table test_on_update (c1 int, c2 int);")
+	sql = "alter table test_on_update add column cc int, add column c3 int on update current_timestamp;"
+	tk.MustGetErrCode(sql, errno.ErrInvalidOnUpdate)
+
 	// drop column
 	sql = "alter table test_error_code_succ drop c_not_exist"
 	tk.MustGetErrCode(sql, errno.ErrCantDropFieldOrKey)
