@@ -644,7 +644,12 @@ func (s *testSequenceSuite) TestSequenceFunction(c *C) {
 	err = s.tk.QueryToErr("select setval(seq1, 10)")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[schema:1347]'test.seq1' is not SEQUENCE")
-
+	s.tk.MustExec("drop sequence if exists seq")
+	s.tk.MustExec("drop table if exists seq")
+	s.tk.MustExec("drop view if exists seq")
+	s.tk.MustExec("drop sequence if exists seq1")
+	s.tk.MustExec("drop table if exists seq1")
+	s.tk.MustExec("drop view if exists seq1")
 }
 
 func (s *testSequenceSuite) TestInsertSequence(c *C) {
