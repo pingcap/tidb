@@ -16,10 +16,12 @@ package distsql
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
@@ -32,6 +34,10 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
+)
+
+var (
+	errQueryInterrupted = terror.ClassExecutor.NewStd(errno.ErrQueryInterrupted)
 )
 
 var (
@@ -116,7 +122,11 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 		if err := r.selectResp.Error; err != nil {
 			return terror.ClassTiKV.Synthesize(terror.ErrCode(err.Code), err.Msg)
 		}
-		sc := r.ctx.GetSessionVars().StmtCtx
+		sessVars := r.ctx.GetSessionVars()
+		if atomic.CompareAndSwapUint32(&sessVars.Killed, 1, 0) {
+			return errors.Trace(errQueryInterrupted)
+		}
+		sc := sessVars.StmtCtx
 		for _, warning := range r.selectResp.Warnings {
 			sc.AppendWarning(terror.ClassTiKV.Synthesize(terror.ErrCode(warning.Code), warning.Msg))
 		}
