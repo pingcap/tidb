@@ -131,14 +131,15 @@ type Log struct {
 
 // Security is the security section of the config.
 type Security struct {
-	SkipGrantTable  bool     `toml:"skip-grant-table" json:"skip-grant-table"`
-	SSLCA           string   `toml:"ssl-ca" json:"ssl-ca"`
-	SSLCert         string   `toml:"ssl-cert" json:"ssl-cert"`
-	SSLKey          string   `toml:"ssl-key" json:"ssl-key"`
-	ClusterSSLCA    string   `toml:"cluster-ssl-ca" json:"cluster-ssl-ca"`
-	ClusterSSLCert  string   `toml:"cluster-ssl-cert" json:"cluster-ssl-cert"`
-	ClusterSSLKey   string   `toml:"cluster-ssl-key" json:"cluster-ssl-key"`
-	ClusterVerifyCN []string `toml:"cluster-verify-cn" json:"cluster-verify-cn"`
+	SkipGrantTable         bool     `toml:"skip-grant-table" json:"skip-grant-table"`
+	SSLCA                  string   `toml:"ssl-ca" json:"ssl-ca"`
+	SSLCert                string   `toml:"ssl-cert" json:"ssl-cert"`
+	SSLKey                 string   `toml:"ssl-key" json:"ssl-key"`
+	RequireSecureTransport bool     `toml:"require-secure-transport" json:"require-secure-transport"`
+	ClusterSSLCA           string   `toml:"cluster-ssl-ca" json:"cluster-ssl-ca"`
+	ClusterSSLCert         string   `toml:"cluster-ssl-cert" json:"cluster-ssl-cert"`
+	ClusterSSLKey          string   `toml:"cluster-ssl-key" json:"cluster-ssl-key"`
+	ClusterVerifyCN        []string `toml:"cluster-verify-cn" json:"cluster-verify-cn"`
 }
 
 // The ErrConfigValidationFailed error is used so that external callers can do a type assertion

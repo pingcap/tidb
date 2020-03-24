@@ -45,22 +45,18 @@ func TestT(t *testing.T) {
 
 var regression = true
 
-var defaultDSNConfig = mysql.Config{
-	User:   "root",
-	Net:    "tcp",
-	Addr:   "127.0.0.1:4001",
-	DBName: "test",
-	Strict: true,
-}
-
 type configOverrider func(*mysql.Config)
 
 // getDSN generates a DSN string for MySQL connection.
 func getDSN(overriders ...configOverrider) string {
-	var config = defaultDSNConfig
+	config := mysql.NewConfig()
+	config.User = "root"
+	config.Net = "tcp"
+	config.Addr = fmt.Sprintf("127.0.0.1:4001")
+	config.DBName = "test"
 	for _, overrider := range overriders {
 		if overrider != nil {
-			overrider(&config)
+			overrider(config)
 		}
 	}
 	return config.FormatDSN()
@@ -375,7 +371,7 @@ func runTestLoadData(c *C, server *Server) {
 	// support ClientLocalFiles capability
 	runTestsOnNewDB(c, func(config *mysql.Config) {
 		config.AllowAllFiles = true
-		config.Strict = false
+		config.Params = map[string]string{"sql_mode": "''"}
 	}, "LoadData", func(dbt *DBTest) {
 		dbt.mustExec("create table test (a varchar(255), b varchar(255) default 'default value', c int not null auto_increment, primary key(c))")
 		rs, err1 := dbt.db.Exec("load data local infile '/tmp/load_data_test.csv' into table test")
@@ -501,7 +497,7 @@ func runTestLoadData(c *C, server *Server) {
 
 	runTestsOnNewDB(c, func(config *mysql.Config) {
 		config.AllowAllFiles = true
-		config.Strict = false
+		config.Params = map[string]string{"sql_mode": "''"}
 	}, "LoadData", func(dbt *DBTest) {
 		dbt.mustExec("create table test (str varchar(10) default null, i int default null)")
 		_, err1 := dbt.db.Exec(`load data local infile '/tmp/load_data_test.csv' into table test FIELDS TERMINATED BY ',' enclosed by '"'`)
@@ -546,7 +542,7 @@ func runTestLoadData(c *C, server *Server) {
 
 	runTestsOnNewDB(c, func(config *mysql.Config) {
 		config.AllowAllFiles = true
-		config.Strict = false
+		config.Params = map[string]string{"sql_mode": "''"}
 	}, "LoadData", func(dbt *DBTest) {
 		dbt.mustExec("create table test (a date, b date, c date not null, d date)")
 		_, err1 := dbt.db.Exec(`load data local infile '/tmp/load_data_test.csv' into table test FIELDS TERMINATED BY ','`)
@@ -599,7 +595,7 @@ func runTestLoadData(c *C, server *Server) {
 
 	runTestsOnNewDB(c, func(config *mysql.Config) {
 		config.AllowAllFiles = true
-		config.Strict = false
+		config.Params = map[string]string{"sql_mode": "''"}
 	}, "LoadData", func(dbt *DBTest) {
 		dbt.mustExec("create table test (a varchar(20), b varchar(20))")
 		_, err1 := dbt.db.Exec(`load data local infile '/tmp/load_data_test.csv' into table test FIELDS TERMINATED BY ',' enclosed by '"'`)
@@ -643,7 +639,7 @@ func runTestLoadData(c *C, server *Server) {
 
 	runTestsOnNewDB(c, func(config *mysql.Config) {
 		config.AllowAllFiles = true
-		config.Strict = false
+		config.Params = map[string]string{"sql_mode": "''"}
 	}, "LoadData", func(dbt *DBTest) {
 		dbt.mustExec("create table test (id INT NOT NULL PRIMARY KEY,  b INT,  c varchar(10))")
 		_, err1 := dbt.db.Exec(`load data local infile '/tmp/load_data_test.csv' into table test FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '\"' IGNORE 1 LINES`)
