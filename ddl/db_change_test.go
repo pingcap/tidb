@@ -534,9 +534,6 @@ func (s *testStateChangeSuite) TestDeleteOnly(c *C) {
 	s.runTestInSchemaState(c, model.StateDeleteOnly, true, dropColumnSQL, sqls, nil)
 }
 
-<<<<<<< HEAD
-func (s *testStateChangeSuite) runTestInSchemaState(c *C, state model.SchemaState, tableName, alterTableSQL string,
-=======
 func (s *testStateChangeSuite) TestWriteOnlyForDropColumn(c *C) {
 	_, err := s.se.Execute(context.Background(), "use test_db_state")
 	c.Assert(err, IsNil)
@@ -557,8 +554,7 @@ func (s *testStateChangeSuite) TestWriteOnlyForDropColumn(c *C) {
 	s.runTestInSchemaState(c, model.StateWriteOnly, false, dropColumnSQL, sqls, query)
 }
 
-func (s *testStateChangeSuiteBase) runTestInSchemaState(c *C, state model.SchemaState, isOnJobUpdated bool, alterTableSQL string,
->>>>>>> b1ccb30... *: fix updating the column value when the column is dropping and in WriteOnly state (#15539)
+func (s *testStateChangeSuite) runTestInSchemaState(c *C, state model.SchemaState, isOnJobUpdated bool, alterTableSQL string,
 	sqlWithErrs []sqlWithErr, expectQuery *expectQuery) {
 	_, err := s.se.Execute(context.Background(), `create table t (
 	 	c1 varchar(64),

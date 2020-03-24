@@ -2814,27 +2814,11 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 		return nil, err
 	}
 	err = updt.ResolveIndices()
-<<<<<<< HEAD
-	return updt, err
-}
+	if err != nil {
+		return nil, err
+	}
 
-func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.TableName, list []*ast.Assignment, p LogicalPlan) ([]*expression.Assignment, LogicalPlan, error) {
-=======
-	if err != nil {
-		return nil, err
-	}
-	tblID2Handle, err := resolveIndicesForTblID2Handle(b.handleHelper.tailMap(), updt.SelectPlan.Schema())
-	if err != nil {
-		return nil, err
-	}
-	tblID2table := make(map[int64]table.Table, len(tblID2Handle))
-	for id := range tblID2Handle {
-		tblID2table[id], _ = b.is.TableByID(id)
-	}
-	updt.TblColPosInfos, err = buildColumns2Handle(updt.OutputNames(), tblID2Handle, tblID2table, true)
-	if err == nil {
-		err = checkUpdateList(b.ctx, tblID2table, updt)
-	}
+	err = b.checkUpdateList(updt)
 	return updt, err
 }
 
@@ -2851,34 +2835,43 @@ func GetUpdateColumns(ctx sessionctx.Context, orderedList []*expression.Assignme
 	return assignFlag, nil
 }
 
-func checkUpdateList(ctx sessionctx.Context, tblID2table map[int64]table.Table, updt *Update) error {
-	assignFlags, err := GetUpdateColumns(ctx, updt.OrderedList, updt.SelectPlan.Schema().Len())
+func getTableOffset(schema *expression.Schema, handleCol *expression.Column) int {
+	for i, col := range schema.Columns {
+		if col.DBName.L == handleCol.DBName.L && col.TblName.L == handleCol.TblName.L {
+			return i
+		}
+	}
+	panic("Couldn't get column information when do update/delete")
+}
+
+func (b *PlanBuilder) checkUpdateList(updt *Update) error {
+	tblID2table := make(map[int64]table.Table)
+	for id := range updt.SelectPlan.Schema().TblID2Handle {
+		tblID2table[id], _ = b.is.TableByID(id)
+	}
+
+	assignFlags, err := GetUpdateColumns(b.ctx, updt.OrderedList, updt.SelectPlan.Schema().Len())
 	if err != nil {
 		return err
 	}
-	for _, content := range updt.TblColPosInfos {
-		tbl := tblID2table[content.TblID]
-		flags := assignFlags[content.Start:content.End]
-		for i, col := range tbl.WritableCols() {
-			if flags[i] && col.State != model.StatePublic {
-				return ErrUnknownColumn.GenWithStackByArgs(col.Name, clauseMsg[fieldList])
+	schema := updt.SelectPlan.Schema()
+	for id, cols := range schema.TblID2Handle {
+		tbl := tblID2table[id]
+		for _, col := range cols {
+			offset := getTableOffset(schema, col)
+			end := offset + len(tbl.WritableCols())
+			flags := assignFlags[offset:end]
+			for i, col := range tbl.WritableCols() {
+				if flags[i] && col.State != model.StatePublic {
+					return ErrUnknownColumn.GenWithStackByArgs(col.Name, clauseMsg[fieldList])
+				}
 			}
 		}
 	}
 	return nil
 }
 
-func (b *PlanBuilder) buildUpdateLists(
-	ctx context.Context,
-	tableList []*ast.TableName,
-	list []*ast.Assignment,
-	p LogicalPlan,
-) (newList []*expression.Assignment,
-	po LogicalPlan,
-	allAssignmentsAreConstant bool,
-	e error,
-) {
->>>>>>> b1ccb30... *: fix updating the column value when the column is dropping and in WriteOnly state (#15539)
+func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.TableName, list []*ast.Assignment, p LogicalPlan) ([]*expression.Assignment, LogicalPlan, error) {
 	b.curClause = fieldList
 	// modifyColumns indicates which columns are in set list,
 	// and if it is set to `DEFAULT`
