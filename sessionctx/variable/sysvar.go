@@ -708,7 +708,7 @@ var defaultSysVars = []*SysVar{
 		ret := ""
 		for i := range engines {
 			ret += engines[i]
-			if i != len(engines) - 1 {
+			if i != len(engines)-1 {
 				ret += ","
 			}
 		}
