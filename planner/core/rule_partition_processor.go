@@ -15,10 +15,8 @@ package core
 import (
 	"context"
 	"sort"
-	"strconv"
 	"strings"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -98,7 +96,7 @@ func (s *partitionProcessor) rewriteDataSource(lp LogicalPlan) (LogicalPlan, err
 
 // partitionTable is for those tables which implement partition.
 type partitionTable interface {
-	PartitionExpr(ctx sessionctx.Context, columns []*expression.Column, names types.NameSlice) (*tables.PartitionExpr, error)
+	PartitionExpr() (*tables.PartitionExpr, error)
 }
 
 func generateHashPartitionExpr(t table.Table, ctx sessionctx.Context, columns []*expression.Column, names types.NameSlice) (expression.Expression, error) {
@@ -185,11 +183,24 @@ func (lt *lessThanDataInt) length() int {
 	return len(lt.data)
 }
 
-func (lt *lessThanDataInt) compare(ith int, v int64) int {
+func compareUnsigned(v1, v2 int64) int {
+	switch {
+	case uint64(v1) > uint64(v2):
+		return 1
+	case uint64(v1) == uint64(v2):
+		return 0
+	}
+	return -1
+}
+
+func (lt *lessThanDataInt) compare(ith int, v int64, unsigned bool) int {
 	if ith == len(lt.data)-1 {
 		if lt.maxvalue {
 			return 1
 		}
+	}
+	if unsigned {
+		return compareUnsigned(lt.data[ith], v)
 	}
 	switch {
 	case lt.data[ith] > v:
@@ -328,35 +339,22 @@ func (s *partitionProcessor) pruneRangePartition(ds *DataSource, pi *model.Parti
 	result := fullRange(len(pi.Definitions))
 	// Extract the partition column, if the column is not null, it's possible to prune.
 	if col != nil {
-		// TODO: Store LessThanData in the partitionExpr, avoid allocating here.
-		lessThan, err := makeLessThanData(pi)
+		partExpr, err := ds.table.(partitionTable).PartitionExpr()
 		if err != nil {
 			return nil, err
 		}
-		pruner := rangePruner{lessThan, col, fn}
+		pruner := rangePruner{
+			lessThan: lessThanDataInt{
+				data:     partExpr.ForRangePruning.LessThan,
+				maxvalue: partExpr.ForRangePruning.MaxValue,
+			},
+			col:    col,
+			partFn: fn,
+		}
 		result = partitionRangeForCNFExpr(ds.ctx, ds.allConds, &pruner, result)
 	}
 
 	return s.makeUnionAllChildren(ds, pi, result)
-}
-
-// makeLessThanData extracts the less than parts from 'partition p0 less than xx ... partitoin p1 less than ...'
-func makeLessThanData(pi *model.PartitionInfo) (lessThanDataInt, error) {
-	var maxValue bool
-	lessThan := make([]int64, len(pi.Definitions))
-	for i := 0; i < len(pi.Definitions); i++ {
-		if strings.EqualFold(pi.Definitions[i].LessThan[0], "MAXVALUE") {
-			// Use a bool flag instead of math.MaxInt64 to avoid the corner cases.
-			maxValue = true
-		} else {
-			var err error
-			lessThan[i], err = strconv.ParseInt(pi.Definitions[i].LessThan[0], 10, 64)
-			if err != nil {
-				return lessThanDataInt{}, errors.WithStack(err)
-			}
-		}
-	}
-	return lessThanDataInt{lessThan, maxValue}, nil
 }
 
 // makePartitionByFnCol extracts the column and function information in 'partition by ... fn(col)'.
@@ -431,7 +429,9 @@ func (p *rangePruner) partitionRangeForExpr(sctx sessionctx.Context, expr expres
 	if !ok {
 		return 0, 0, false
 	}
-	start, end := pruneUseBinarySearch(p.lessThan, dataForPrune)
+
+	unsigned := mysql.HasUnsignedFlag(p.col.RetType.Flag)
+	start, end := pruneUseBinarySearch(p.lessThan, dataForPrune, unsigned)
 	return start, end, true
 }
 
@@ -556,7 +556,7 @@ func relaxOP(op string) string {
 	return op
 }
 
-func pruneUseBinarySearch(lessThan lessThanDataInt, data dataForPrune) (start int, end int) {
+func pruneUseBinarySearch(lessThan lessThanDataInt, data dataForPrune, unsigned bool) (start int, end int) {
 	length := lessThan.length()
 	switch data.op {
 	case ast.EQ:
@@ -564,21 +564,21 @@ func pruneUseBinarySearch(lessThan lessThanDataInt, data dataForPrune) (start in
 		// col = 14, lessThan = [4 7 11 14 17] => [4, 5)
 		// col = 10, lessThan = [4 7 11 14 17] => [2, 3)
 		// col = 3, lessThan = [4 7 11 14 17] => [0, 1)
-		pos := sort.Search(length, func(i int) bool { return lessThan.compare(i, data.c) > 0 })
+		pos := sort.Search(length, func(i int) bool { return lessThan.compare(i, data.c, unsigned) > 0 })
 		start, end = pos, pos+1
 	case ast.LT:
 		// col < 66, lessThan = [4 7 11 14 17] => [0, 5)
 		// col < 14, lessThan = [4 7 11 14 17] => [0, 4)
 		// col < 10, lessThan = [4 7 11 14 17] => [0, 3)
 		// col < 3, lessThan = [4 7 11 14 17] => [0, 1)
-		pos := sort.Search(length, func(i int) bool { return lessThan.compare(i, data.c) >= 0 })
+		pos := sort.Search(length, func(i int) bool { return lessThan.compare(i, data.c, unsigned) >= 0 })
 		start, end = 0, pos+1
 	case ast.GE:
 		// col >= 66, lessThan = [4 7 11 14 17] => [5, 5)
 		// col >= 14, lessThan = [4 7 11 14 17] => [4, 5)
 		// col >= 10, lessThan = [4 7 11 14 17] => [2, 5)
 		// col >= 3, lessThan = [4 7 11 14 17] => [0, 5)
-		pos := sort.Search(length, func(i int) bool { return lessThan.compare(i, data.c) > 0 })
+		pos := sort.Search(length, func(i int) bool { return lessThan.compare(i, data.c, unsigned) > 0 })
 		start, end = pos, length
 	case ast.GT:
 		// col > 66, lessThan = [4 7 11 14 17] => [5, 5)
@@ -586,14 +586,14 @@ func pruneUseBinarySearch(lessThan lessThanDataInt, data dataForPrune) (start in
 		// col > 10, lessThan = [4 7 11 14 17] => [3, 5)
 		// col > 3, lessThan = [4 7 11 14 17] => [1, 5)
 		// col > 2, lessThan = [4 7 11 14 17] => [0, 5)
-		pos := sort.Search(length, func(i int) bool { return lessThan.compare(i, data.c+1) > 0 })
+		pos := sort.Search(length, func(i int) bool { return lessThan.compare(i, data.c+1, unsigned) > 0 })
 		start, end = pos, length
 	case ast.LE:
 		// col <= 66, lessThan = [4 7 11 14 17] => [0, 6)
 		// col <= 14, lessThan = [4 7 11 14 17] => [0, 5)
 		// col <= 10, lessThan = [4 7 11 14 17] => [0, 3)
 		// col <= 3, lessThan = [4 7 11 14 17] => [0, 1)
-		pos := sort.Search(length, func(i int) bool { return lessThan.compare(i, data.c) > 0 })
+		pos := sort.Search(length, func(i int) bool { return lessThan.compare(i, data.c, unsigned) > 0 })
 		start, end = 0, pos+1
 	case ast.IsNull:
 		start, end = 0, 1
