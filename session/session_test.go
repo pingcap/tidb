@@ -192,8 +192,7 @@ func (s *testSessionSuite) TestQueryString(c *C) {
 	c.Assert(err, IsNil)
 	id, _, _, err := tk.Se.PrepareStmt("CREATE TABLE t2(id bigint PRIMARY KEY, age int)")
 	c.Assert(err, IsNil)
-	params := []types.Datum{}
-	_, err = tk.Se.ExecutePreparedStmt(context.Background(), id, params)
+	_, err = tk.Se.ExecutePreparedStmt(context.Background(), id)
 	c.Assert(err, IsNil)
 	qs := tk.Se.Value(sessionctx.QueryString)
 	c.Assert(qs.(string), Equals, "CREATE TABLE t2(id bigint PRIMARY KEY, age int)")
