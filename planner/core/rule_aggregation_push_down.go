@@ -33,7 +33,7 @@ type aggregationPushDownSolver struct {
 // It's easy to see that max, min, first row is decomposable, no matter whether it's distinct, but sum(distinct) and
 // count(distinct) is not.
 // Currently we don't support avg and concat.
-func isDecomposable(fun *aggregation.AggFuncDesc) bool {
+func (a *aggregationPushDownSolver) isDecomposable(fun *aggregation.AggFuncDesc) bool {
 	switch fun.Name {
 	case ast.AggFuncAvg, ast.AggFuncGroupConcat, ast.AggFuncVarPop, ast.AggFuncJsonObjectAgg:
 		// TODO: Support avg push down.
@@ -47,8 +47,8 @@ func isDecomposable(fun *aggregation.AggFuncDesc) bool {
 	}
 }
 
-// getAggFuncChildIdx gets which children it belongs to, 0 stands for left, 1 stands for right, -1 stands for both.
-func getAggFuncChildIdx(aggFunc *aggregation.AggFuncDesc, schema *expression.Schema) int {
+// GetAggFuncChildIdx gets which children it belongs to, 0 stands for left, 1 stands for right, -1 stands for both.
+func GetAggFuncChildIdx(aggFunc *aggregation.AggFuncDesc, schema *expression.Schema) int {
 	fromLeft, fromRight := false, false
 	var cols []*expression.Column
 	cols = expression.ExtractColumnsFromExpressions(cols, aggFunc.Args, nil)
@@ -67,16 +67,17 @@ func getAggFuncChildIdx(aggFunc *aggregation.AggFuncDesc, schema *expression.Sch
 	return 1
 }
 
-// CollectAggFuncs collects all aggregate functions and splits them into two parts: "leftAggFuncs" and "rightAggFuncs" whose
+// collectAggFuncs collects all aggregate functions and splits them into two parts: "leftAggFuncs" and "rightAggFuncs" whose
 // arguments are all from left child or right child separately. If some aggregate functions have the arguments that have
 // columns both from left and right children, the whole aggregation is forbidden to push down.
-func CollectAggFuncs(agg *LogicalAggregation, leftChildSchema *expression.Schema) (valid bool, leftAggFuncs, rightAggFuncs []*aggregation.AggFuncDesc) {
+func (a *aggregationPushDownSolver) collectAggFuncs(agg *LogicalAggregation, join *LogicalJoin) (valid bool, leftAggFuncs, rightAggFuncs []*aggregation.AggFuncDesc) {
 	valid = true
+	leftChild := join.children[0]
 	for _, aggFunc := range agg.AggFuncs {
-		if !isDecomposable(aggFunc) {
+		if !a.isDecomposable(aggFunc) {
 			return false, nil, nil
 		}
-		index := getAggFuncChildIdx(aggFunc, leftChildSchema)
+		index := GetAggFuncChildIdx(aggFunc, leftChild.Schema())
 		switch index {
 		case 0:
 			leftAggFuncs = append(leftAggFuncs, aggFunc)
@@ -135,7 +136,7 @@ func CollectGbyCols(agg *LogicalAggregation, join *LogicalJoin, joinLeftChildSch
 func (a *aggregationPushDownSolver) splitAggFuncsAndGbyCols(agg *LogicalAggregation, join *LogicalJoin) (valid bool,
 	leftAggFuncs, rightAggFuncs []*aggregation.AggFuncDesc,
 	leftGbyCols, rightGbyCols []*expression.Column) {
-	valid, leftAggFuncs, rightAggFuncs = CollectAggFuncs(agg, join.children[0].Schema())
+	valid, leftAggFuncs, rightAggFuncs = a.collectAggFuncs(agg, join)
 	if !valid {
 		return
 	}
@@ -213,7 +214,7 @@ func (a *aggregationPushDownSolver) tryToPushDownAgg(aggFuncs []*aggregation.Agg
 	}
 	if (childIdx == 0 && join.JoinType == RightOuterJoin) || (childIdx == 1 && join.JoinType == LeftOuterJoin) {
 		var existsDefaultValues bool
-		join.DefaultValues, existsDefaultValues = a.getDefaultValues(agg)
+		join.DefaultValues, existsDefaultValues = GetDefaultValues(agg.AggFuncs, agg.SCtx(), agg.Schema(), agg.children[0].Schema())
 		if !existsDefaultValues {
 			return child, nil
 		}
@@ -221,10 +222,10 @@ func (a *aggregationPushDownSolver) tryToPushDownAgg(aggFuncs []*aggregation.Agg
 	return agg, nil
 }
 
-func (a *aggregationPushDownSolver) getDefaultValues(agg *LogicalAggregation) ([]types.Datum, bool) {
-	defaultValues := make([]types.Datum, 0, agg.Schema().Len())
-	for _, aggFunc := range agg.AggFuncs {
-		value, existsDefaultValue := aggFunc.EvalNullValueInOuterJoin(agg.ctx, agg.children[0].Schema())
+func GetDefaultValues(aggFuncs []*aggregation.AggFuncDesc, sctx sessionctx.Context, aggSchema *expression.Schema, childSchema *expression.Schema) ([]types.Datum, bool) {
+	defaultValues := make([]types.Datum, 0, aggSchema.Len())
+	for _, aggFunc := range aggFuncs {
+		value, existsDefaultValue := aggFunc.EvalNullValueInOuterJoin(sctx, childSchema)
 		if !existsDefaultValue {
 			return nil, false
 		}

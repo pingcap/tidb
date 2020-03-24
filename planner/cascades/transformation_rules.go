@@ -14,6 +14,7 @@
 package cascades
 
 import (
+	"fmt"
 	"math"
 
 	"github.com/pingcap/parser/ast"
@@ -2312,33 +2313,122 @@ func (r *PullSelectionUpApply) OnTransform(old *memo.ExprIter) (newExprs []*memo
 type aggPushDownHelper struct {
 }
 
-func (r *aggPushDownHelper) makeNewAgg(aggFuncs []*aggregation.AggFuncDesc, gbyCols []*expression.Column, oldAgg *plannercore.LogicalAggregation) (error) {
-	agg := plannercore.LogicalAggregation{
-		GroupByItems: expression.Column2Exprs(gbyCols),
-	}.Init(oldAgg.SCtx(), oldAgg.SelectBlockOffset())
-	aggLen := len(aggFuncs) + len(gbyCols)
-	newAggFuncDescs := make([]*aggregation.AggFuncDesc, 0, aggLen)
-	schema := expression.NewSchema(make([]*expression.Column, 0, aggLen)...)
+func (r *aggPushDownHelper) decomposeAggFuncs(
+	aggFuncs []*aggregation.AggFuncDesc,
+	gbyCols []*expression.Column,
+	sctx sessionctx.Context,
+) (
+	finalAggFuncs, partialAggFuncs []*aggregation.AggFuncDesc,
+	partialAggSchema *expression.Schema,
+	err error,
+) {
+	partialAggLen := len(aggFuncs) + len(gbyCols)
+	partialAggSchema = expression.NewSchema(make([]*expression.Column, 0, partialAggLen)...)
+
 	for _, aggFunc := range aggFuncs {
-		var newFuncs []*aggregation.AggFuncDesc
-		newFuncs, schema = a.decompose(ctx, aggFunc, schema)
-		newAggFuncDescs = append(newAggFuncDescs, newFuncs...)
-	}
-	for _, gbyCol := range gbyCols {
-		firstRow, err := aggregation.NewAggFuncDesc(agg.SCtx(), ast.AggFuncFirstRow, []expression.Expression{gbyCol}, false)
+		var finalFuncs, partialFuncs []*aggregation.AggFuncDesc
+		finalFuncs, partialFuncs, partialAggSchema, err = r.decomposeAggFunc(aggFunc, partialAggSchema, sctx)
 		if err != nil {
-			return err
+			return nil, nil, nil, err
+		}
+		finalAggFuncs = append(finalAggFuncs, finalFuncs...)
+		partialAggFuncs = append(partialAggFuncs, partialFuncs...)
+	}
+
+	partialAggFuncs, partialAggSchema, err = r.fillGbyCols(partialAggFuncs, partialAggSchema, gbyCols, sctx)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	return finalAggFuncs, partialAggFuncs, partialAggSchema, nil
+}
+
+func (r *aggPushDownHelper) fillGbyCols(
+	partialAggFuncs []*aggregation.AggFuncDesc,
+	partialAggSchema *expression.Schema,
+	gbyCols []*expression.Column,
+	sctx sessionctx.Context,
+) (
+	[]*aggregation.AggFuncDesc,
+	*expression.Schema,
+	error,
+) {
+	for _, gbyCol := range gbyCols {
+		firstRow, err := aggregation.NewAggFuncDesc(sctx, ast.AggFuncFirstRow, []expression.Expression{gbyCol}, false)
+		if err != nil {
+			return nil, nil, err
 		}
 		newCol, _ := gbyCol.Clone().(*expression.Column)
 		newCol.RetType = firstRow.RetTp
-		newAggFuncDescs = append(newAggFuncDescs, firstRow)
-		schema.Append(newCol)
+		partialAggFuncs = append(partialAggFuncs, firstRow)
+		partialAggSchema.Append(newCol)
 	}
-	agg.AggFuncs = newAggFuncDescs
-	agg.SetSchema(schema)
-	// TODO: Add a Projection if any argument of aggregate funcs or group by items are scalar functions.
-	// agg.buildProjectionIfNecessary()
-	return nil
+	return partialAggFuncs, partialAggSchema, nil
+}
+
+func (r *aggPushDownHelper) allocColumn(sctx sessionctx.Context, retType *types.FieldType) *expression.Column {
+	return &expression.Column{
+		UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
+		RetType:  retType,
+	}
+}
+
+func (r *aggPushDownHelper) decomposeAggFunc(
+	aggFunc *aggregation.AggFuncDesc,
+	partialAggSchema *expression.Schema,
+	sctx sessionctx.Context,
+) (
+	finalFuncs, partialFuncs []*aggregation.AggFuncDesc,
+	_ *expression.Schema,
+	err error,
+) {
+	switch aggFunc.Name {
+	case ast.AggFuncFirstRow, ast.AggFuncMax, ast.AggFuncMin, ast.AggFuncSum:
+		partialFuncs = []*aggregation.AggFuncDesc{aggFunc}
+		partialFuncOutputs := []*expression.Column{r.allocColumn(sctx, aggFunc.RetTp)}
+		partialAggSchema.Append(partialFuncOutputs...)
+
+		finalAggFunc := aggFunc.Clone()
+		finalAggFunc.Args = expression.Column2Exprs(partialFuncOutputs)
+		finalFuncs = []*aggregation.AggFuncDesc{finalAggFunc}
+	case ast.AggFuncCount:
+		partialFuncs = []*aggregation.AggFuncDesc{aggFunc}
+		partialFuncOutputs := []*expression.Column{r.allocColumn(sctx, aggFunc.RetTp)}
+		partialAggSchema.Append(partialFuncOutputs...)
+
+		finalAggFunc := aggFunc.Clone()
+		finalAggFunc.Args = expression.Column2Exprs(partialFuncOutputs)
+		finalAggFunc.Name = ast.AggFuncSum
+		finalFuncs = []*aggregation.AggFuncDesc{finalAggFunc}
+	case ast.AggFuncAvg:
+		partialSum := aggFunc.Clone()
+		partialSum.Name = ast.AggFuncSum
+		partialCount := aggFunc.Clone()
+		partialCount.Name = ast.AggFuncCount
+		partialCount.RetTp = types.NewFieldType(mysql.TypeLong)
+		partialFuncOutputs := []*expression.Column{r.allocColumn(sctx, partialSum.RetTp), r.allocColumn(sctx, partialCount.RetTp)}
+		partialAggSchema.Append(partialFuncOutputs...)
+
+		divArg := expression.NewFunctionInternal(sctx, ast.Div, aggFunc.RetTp, expression.Column2Exprs(partialFuncOutputs)...)
+		finalAggFunc := aggFunc.Clone()
+		finalAggFunc.Name = ast.AggFuncSum
+		finalAggFunc.Args = []expression.Expression{divArg}
+		finalFuncs = []*aggregation.AggFuncDesc{finalAggFunc}
+	default:
+		return nil, nil, nil, fmt.Errorf("unsupport decompose agg func: %s", aggFunc.Name)
+	}
+	return finalFuncs, partialFuncs, partialAggSchema, nil
+}
+
+func (*aggPushDownHelper) isDecomposable(fun *aggregation.AggFuncDesc) bool {
+	switch fun.Name {
+	case ast.AggFuncAvg, ast.AggFuncMax, ast.AggFuncMin, ast.AggFuncFirstRow:
+		return true
+	case ast.AggFuncSum, ast.AggFuncCount:
+		return !fun.HasDistinct
+	default:
+		return false
+	}
 }
 
 type PushAggDownJoin struct {
@@ -2362,48 +2452,235 @@ func (r *PushAggDownJoin) Match(expr *memo.ExprIter) bool {
 	if agg.IsCompleteModeAgg() {
 		return false
 	}
+	for _, aggFunc := range agg.AggFuncs {
+		if !r.isDecomposable(aggFunc) {
+			return false
+		}
+	}
 	join := expr.Children[0].GetExpr().ExprNode.(*plannercore.LogicalJoin)
 	return plannercore.CheckValidJoin(join)
 }
 
 // OnTransform implements Transformation interface.
-// It will transform `Agg->Gather` to `Agg(Final) -> Gather -> Agg(Partial1)`.
 func (r *PushAggDownJoin) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	agg := old.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
 	join := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalJoin)
 
 	joinLeftChildSchema := old.Children[0].GetExpr().Children[0].Prop.Schema
-
-	valid, leftAggFuncs, rightAggFuncs := plannercore.CollectAggFuncs(agg, joinLeftChildSchema)
+	valid, leftAggFuncs, rightAggFuncs := r.collectAggFuncs(agg, joinLeftChildSchema)
 	if !valid {
 		return nil, false, false, nil
 	}
-	rightInvalid := plannercore.CheckAnyCountAndSum(leftAggFuncs)
-	leftInvalid := plannercore.CheckAnyCountAndSum(rightAggFuncs)
-	if !rightInvalid && !leftInvalid {
+	leftGbyCols, rightGbyCols := plannercore.CollectGbyCols(agg, join, joinLeftChildSchema)
+
+	leftChildGroup := old.Children[0].GetExpr().Children[0]
+	var leftOk bool
+	var midJoin *plannercore.LogicalJoin
+	var leftFinalAggFuncs, leftPartialAggFuncs []*aggregation.AggFuncDesc
+	var leftPartialAggSchema *expression.Schema
+	leftOk, leftFinalAggFuncs, midJoin, leftPartialAggFuncs, leftPartialAggSchema, err = r.tryToDecomposeAggFuncs(leftAggFuncs, leftGbyCols, join, 0, leftChildGroup, agg)
+	if err != nil {
+		return nil, false, false, err
+	}
+
+	rightChildGroup := old.Children[0].GetExpr().Children[1]
+	var rightOk bool
+	var rightFinalAggFuncs, rightPartialAggFuncs []*aggregation.AggFuncDesc
+	var rightPartialAggSchema *expression.Schema
+	rightOk, rightFinalAggFuncs, midJoin, rightPartialAggFuncs, rightPartialAggSchema, err = r.tryToDecomposeAggFuncs(rightAggFuncs, rightGbyCols, midJoin, 0, rightChildGroup, agg)
+	if err != nil {
+		return nil, false, false, err
+	}
+
+	if !leftOk && !rightOk {
 		return nil, false, false, nil
 	}
 
-	leftGbyCols, rightGbyCols := plannercore.CollectGbyCols(agg, join, joinLeftChildSchema)
-
-
-	return nil, false, false, nil
-}
-
-// tryToPushDownAgg tries to push down an aggregate function into a join path. If all aggFuncs are first row, we won't
-// process it temporarily. If not, We will add additional group by columns and first row functions. We make a new aggregation operator.
-// If the pushed aggregation is grouped by unique key, it's no need to push it down.
-func (a *PushAggDownJoin) tryToPushDownAgg(aggFuncs []*aggregation.AggFuncDesc, gbyCols []*expression.Column, join *plannercore.LogicalJoin, childGroup memo.Group, agg plannercore.LogicalAggregation) (err error) {
-	if aggregation.IsAllFirstRow(aggFuncs) {
-		return nil
+	if leftOk && rightOk {
+		finalAggExpr1 := r.doPushAggDownJoin(
+			true, true,
+			leftFinalAggFuncs, leftPartialAggFuncs,
+			rightFinalAggFuncs, rightPartialAggFuncs,
+			leftGbyCols, rightGbyCols,
+			leftAggFuncs, rightAggFuncs,
+			leftPartialAggSchema, rightPartialAggSchema,
+			midJoin, agg,
+			leftChildGroup, rightChildGroup,
+		)
+		finalAggExpr2 := r.doPushAggDownJoin(
+			true, false,
+			leftFinalAggFuncs, leftPartialAggFuncs,
+			rightFinalAggFuncs, rightPartialAggFuncs,
+			leftGbyCols, rightGbyCols,
+			leftAggFuncs, rightAggFuncs,
+			leftPartialAggSchema, rightPartialAggSchema,
+			midJoin, agg,
+			leftChildGroup, rightChildGroup,
+		)
+		finalAggExpr3 := r.doPushAggDownJoin(
+			false, true,
+			leftFinalAggFuncs, leftPartialAggFuncs,
+			rightFinalAggFuncs, rightPartialAggFuncs,
+			leftGbyCols, rightGbyCols,
+			leftAggFuncs, rightAggFuncs,
+			leftPartialAggSchema, rightPartialAggSchema,
+			midJoin, agg,
+			leftChildGroup, rightChildGroup,
+		)
+		return []*memo.GroupExpr{finalAggExpr1, finalAggExpr2, finalAggExpr3}, false, false, nil
 	}
 
+	finalAggExpr := r.doPushAggDownJoin(
+		leftOk, rightOk,
+		leftFinalAggFuncs, leftPartialAggFuncs,
+		rightFinalAggFuncs, rightPartialAggFuncs,
+		leftGbyCols, rightGbyCols,
+		leftAggFuncs, rightAggFuncs,
+		leftPartialAggSchema, rightPartialAggSchema,
+		midJoin, agg,
+		leftChildGroup, rightChildGroup,
+	)
+	return []*memo.GroupExpr{finalAggExpr}, false, false, nil
+}
+
+func (r *PushAggDownJoin) doPushAggDownJoin(
+	leftOk, rightOk bool,
+    leftFinalAggFuncs, leftPartialAggFuncs []*aggregation.AggFuncDesc,
+	rightFinalAggFuncs, rightPartialAggFuncs []*aggregation.AggFuncDesc,
+	leftGbyCols, rightGbyCols []*expression.Column,
+	leftAggFuncs, rightAggFuncs []*aggregation.AggFuncDesc,
+	leftPartialAggSchema, rightPartialAggSchema *expression.Schema,
+	midJoin *plannercore.LogicalJoin,
+	agg *plannercore.LogicalAggregation,
+	leftChildGroup, rightChildGroup *memo.Group,
+) *memo.GroupExpr {
+	leftPartialAgg := r.makePartialAgg(leftOk, leftPartialAggFuncs, leftAggFuncs, leftGbyCols, agg)
+	leftPartialAggExpr := memo.NewGroupExpr(leftPartialAgg)
+	leftPartialAggExpr.SetChildren(leftChildGroup)
+	leftPartialAggGroup := memo.NewGroupWithSchema(leftPartialAggExpr, leftPartialAggSchema)
+
+	rightPartialAgg := r.makePartialAgg(rightOk, rightPartialAggFuncs, rightAggFuncs, rightGbyCols, agg)
+	rightPartialAggExpr := memo.NewGroupExpr(rightPartialAgg)
+	rightPartialAggExpr.SetChildren(rightChildGroup)
+	rightPartialAggGroup := memo.NewGroupWithSchema(rightPartialAggExpr, rightPartialAggSchema)
+
+	midJoinExpr := memo.NewGroupExpr(midJoin)
+	midJoinExpr.SetChildren(leftPartialAggGroup, rightPartialAggGroup)
+	midJoinGroup :=  memo.NewGroupWithSchema(midJoinExpr, expression.MergeSchema(leftPartialAggSchema, rightPartialAggSchema))
+
+	finalAgg := r.makeFinalAgg(leftOk, rightOk, leftFinalAggFuncs, leftAggFuncs, rightFinalAggFuncs, rightAggFuncs, agg)
+	finalAggExpr := memo.NewGroupExpr(finalAgg)
+	finalAggExpr.SetChildren(midJoinGroup)
+	return finalAggExpr
+}
+
+func (r *PushAggDownJoin) makePartialAgg(
+	ok bool,
+	partialAggFuncs, aggFuncs []*aggregation.AggFuncDesc,
+	gbyCols []*expression.Column,
+	agg *plannercore.LogicalAggregation,
+) (partialAgg *plannercore.LogicalAggregation) {
+	var partialAggGbyItems []expression.Expression
+	if len(gbyCols) == 0 {
+		partialAggGbyItems = []expression.Expression{expression.Zero}
+	} else {
+		partialAggGbyItems = expression.Column2Exprs(gbyCols)
+	}
+
+	var partialFuncs []*aggregation.AggFuncDesc
+	if ok {
+		partialFuncs = partialAggFuncs
+	} else {
+		partialFuncs = aggFuncs
+	}
+
+	partialAgg = plannercore.LogicalAggregation{
+		AggFuncs:	  partialFuncs,
+		GroupByItems: partialAggGbyItems,
+	}.Init(agg.SCtx(), agg.SelectBlockOffset())
+	partialAgg.CopyAggHints(agg)
+
+	return partialAgg
+}
+
+func (r *PushAggDownJoin) makeFinalAgg(
+	leftOk, rightOk bool,
+	leftFinalAggFuncs, leftAggFuncs, rightFinalAggFuncs, rightAggFuncs []*aggregation.AggFuncDesc,
+	agg *plannercore.LogicalAggregation,
+) (finalAgg *plannercore.LogicalAggregation) {
+	finalAggFunc := make([]*aggregation.AggFuncDesc, len(agg.AggFuncs))
+	if leftOk {
+		finalAggFunc = append(finalAggFunc, leftFinalAggFuncs...)
+	} else {
+		finalAggFunc = append(finalAggFunc, leftAggFuncs...)
+	}
+	if rightOk {
+		finalAggFunc = append(finalAggFunc, rightFinalAggFuncs...)
+	} else {
+		finalAggFunc = append(finalAggFunc, rightAggFuncs...)
+	}
+	finalAgg = plannercore.LogicalAggregation{
+		AggFuncs:     finalAggFunc,
+		GroupByItems: agg.GroupByItems,
+	}.Init(agg.SCtx(), agg.SelectBlockOffset())
+	finalAgg.CopyAggHints(agg)
+	return finalAgg
+}
+
+func (r *PushAggDownJoin) collectAggFuncs(agg *plannercore.LogicalAggregation, joinLeftChildSchema *expression.Schema) (valid bool, leftAggFuncs, rightAggFuncs []*aggregation.AggFuncDesc) {
+	valid = true
+	for _, aggFunc := range agg.AggFuncs {
+		index := plannercore.GetAggFuncChildIdx(aggFunc, joinLeftChildSchema)
+		switch index {
+		case 0:
+			leftAggFuncs = append(leftAggFuncs, aggFunc)
+		case 1:
+			rightAggFuncs = append(rightAggFuncs, aggFunc)
+		default:
+			return false, nil, nil
+		}
+	}
+	return
+}
+
+func (r *PushAggDownJoin) tryToDecomposeAggFuncs(
+	aggFuncs []*aggregation.AggFuncDesc,
+	gbyCols []*expression.Column,
+	join *plannercore.LogicalJoin,
+	childIdx int,
+	childGroup *memo.Group,
+	agg *plannercore.LogicalAggregation,
+) (
+	ok bool,
+	finalAggFuncs []*aggregation.AggFuncDesc,
+	midJoin *plannercore.LogicalJoin,
+	partialAggFuncs []*aggregation.AggFuncDesc,
+	partialAggSchema *expression.Schema,
+	err error,
+) {
 	tmpSchema := expression.NewSchema(gbyCols...)
+	childGroup.BuildKeyInfo()
 	for _, key := range childGroup.Prop.Schema.Keys {
 		if tmpSchema.ColumnsIndices(key) != nil {
-			return nil
+			return false, nil, nil, nil, nil, nil
 		}
 	}
 
+	finalAggFuncs, partialAggFuncs, partialAggSchema, err = r.decomposeAggFuncs(aggFuncs, gbyCols, agg.SCtx())
+	if err != nil {
+		return false, nil, nil, nil, nil, err
+	}
 
+	midJoin = join.Shallow()
+	if (childIdx == 0 && join.JoinType == plannercore.RightOuterJoin) || (childIdx == 1 && join.JoinType == plannercore.LeftOuterJoin) {
+		var existsDefaultValues bool
+		midJoin.DefaultValues, existsDefaultValues = plannercore.GetDefaultValues(partialAggFuncs, agg.SCtx(), partialAggSchema, childGroup.Prop.Schema)
+		if !existsDefaultValues {
+			return false, nil, nil, nil, nil, nil
+		}
+	} else {
+		midJoin = join
+	}
+
+	return true, finalAggFuncs, midJoin, partialAggFuncs, partialAggSchema, nil
 }
