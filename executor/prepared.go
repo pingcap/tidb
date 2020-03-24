@@ -174,7 +174,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 
 	if hitCount > 1 {
-		warn := errors.New("There are multiple ENABLE_PLAN_CACHE hints, only the last one will take effect")
+		warn := errors.New("There are multiple IGNORE_PLAN_CACHE hints, only one will take effect")
 		e.ctx.GetSessionVars().StmtCtx.AppendWarning(warn)
 	}
 
