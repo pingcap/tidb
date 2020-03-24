@@ -473,6 +473,8 @@ type PessimisticTxn struct {
 type StmtSummary struct {
 	// Enable statement summary or not.
 	Enable bool `toml:"enable" json:"enable"`
+	// Enable summary internal query.
+	EnableInternalQuery bool `toml:"enable-internal-query" json:"enable-internal-query"`
 	// The maximum number of statements kept in memory.
 	MaxStmtCount uint `toml:"max-stmt-count" json:"max-stmt-count"`
 	// The maximum length of displayed normalized SQL and sample SQL.
@@ -494,6 +496,8 @@ type IsolationRead struct {
 type Experimental struct {
 	// Whether enable the syntax like `auto_random(3)` on the primary key column.
 	AllowAutoRandom bool `toml:"allow-auto-random" json:"allow-auto-random"`
+	// Whether enable creating expression index.
+	AllowsExpressionIndex bool `toml:"allow-expression-index" json:"allow-expression-index"`
 }
 
 var defaultConf = Config{
@@ -622,17 +626,19 @@ var defaultConf = Config{
 		MaxRetryCount: 256,
 	},
 	StmtSummary: StmtSummary{
-		Enable:          true,
-		MaxStmtCount:    200,
-		MaxSQLLength:    4096,
-		RefreshInterval: 1800,
-		HistorySize:     24,
+		Enable:              true,
+		EnableInternalQuery: false,
+		MaxStmtCount:        200,
+		MaxSQLLength:        4096,
+		RefreshInterval:     1800,
+		HistorySize:         24,
 	},
 	IsolationRead: IsolationRead{
 		Engines: []string{"tikv", "tiflash", "tidb"},
 	},
 	Experimental: Experimental{
-		AllowAutoRandom: false,
+		AllowAutoRandom:       false,
+		AllowsExpressionIndex: false,
 	},
 	EnableDynamicConfig: true,
 }

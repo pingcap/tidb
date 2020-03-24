@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -101,6 +102,10 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			e.setDataForPseudoProfiling(sctx)
 		case infoschema.TableCollationCharacterSetApplicability:
 			e.dataForCollationCharacterSetApplicability()
+		case infoschema.TableProcesslist:
+			e.setDataForProcessList(sctx)
+		case infoschema.ClusterTableProcesslist:
+			err = e.setDataForClusterProcessList(sctx)
 		case infoschema.TableUserPrivileges:
 			e.setDataFromUserPrivileges(sctx)
 		case infoschema.TableTiKVRegionPeers:
@@ -113,6 +118,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataFromSessionVar(sctx)
 		case infoschema.TableTiDBServersInfo:
 			err = e.setDataForServersInfo()
+		case infoschema.TableTiFlashReplica:
+			e.dataForTableTiFlashReplica(sctx, dbs)
 		}
 		if err != nil {
 			return nil, err
@@ -921,7 +928,7 @@ func (e *memtableRetriever) setDataFromCharacterSets() {
 
 func (e *memtableRetriever) setDataFromCollations() {
 	var rows [][]types.Datum
-	collations := charset.GetSupportedCollations()
+	collations := collate.GetSupportedCollations()
 	for _, collation := range collations {
 		isDefault := ""
 		if collation.IsDefault {
@@ -936,7 +943,7 @@ func (e *memtableRetriever) setDataFromCollations() {
 
 func (e *memtableRetriever) dataForCollationCharacterSetApplicability() {
 	var rows [][]types.Datum
-	collations := charset.GetSupportedCollations()
+	collations := collate.GetSupportedCollations()
 	for _, collation := range collations {
 		rows = append(rows,
 			types.MakeDatums(collation.Name, collation.CharsetName),
@@ -982,6 +989,47 @@ func (e *memtableRetriever) setDataFromKeyColumnUsage(ctx sessionctx.Context, sc
 		}
 	}
 	e.rows = rows
+}
+
+func (e *memtableRetriever) setDataForClusterProcessList(ctx sessionctx.Context) error {
+	e.setDataForProcessList(ctx)
+	rows, err := infoschema.AppendHostInfoToRows(e.rows)
+	if err != nil {
+		return err
+	}
+	e.rows = rows
+	return nil
+}
+
+func (e *memtableRetriever) setDataForProcessList(ctx sessionctx.Context) {
+	sm := ctx.GetSessionManager()
+	if sm == nil {
+		return
+	}
+
+	loginUser := ctx.GetSessionVars().User
+	var hasProcessPriv bool
+	if pm := privilege.GetPrivilegeManager(ctx); pm != nil {
+		if pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, "", "", "", mysql.ProcessPriv) {
+			hasProcessPriv = true
+		}
+	}
+
+	pl := sm.ShowProcessList()
+
+	records := make([][]types.Datum, 0, len(pl))
+	for _, pi := range pl {
+		// If you have the PROCESS privilege, you can see all threads.
+		// Otherwise, you can see only your own threads.
+		if !hasProcessPriv && loginUser != nil && pi.User != loginUser.Username {
+			continue
+		}
+
+		rows := pi.ToRow(ctx.GetSessionVars().StmtCtx.TimeZone)
+		record := types.MakeDatums(rows...)
+		records = append(records, record)
+	}
+	e.rows = records
 }
 
 func (e *memtableRetriever) setDataFromUserPrivileges(ctx sessionctx.Context) {
@@ -1386,4 +1434,48 @@ func (e *memtableRetriever) setDataFromSequences(ctx sessionctx.Context, schemas
 		}
 	}
 	e.rows = rows
+}
+
+// dataForTableTiFlashReplica constructs data for table tiflash replica info.
+func (e *memtableRetriever) dataForTableTiFlashReplica(ctx sessionctx.Context, schemas []*model.DBInfo) {
+	var rows [][]types.Datum
+	progressMap, err := infosync.GetTiFlashTableSyncProgress(context.Background())
+	if err != nil {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+	}
+	for _, schema := range schemas {
+		for _, tbl := range schema.Tables {
+			if tbl.TiFlashReplica == nil {
+				continue
+			}
+			progress := 1.0
+			if !tbl.TiFlashReplica.Available {
+				if pi := tbl.GetPartitionInfo(); pi != nil && len(pi.Definitions) > 0 {
+					progress = 0
+					for _, p := range pi.Definitions {
+						if tbl.TiFlashReplica.IsPartitionAvailable(p.ID) {
+							progress += 1
+						} else {
+							progress += progressMap[p.ID]
+						}
+					}
+					progress = progress / float64(len(pi.Definitions))
+				} else {
+					progress = progressMap[tbl.ID]
+				}
+			}
+			record := types.MakeDatums(
+				schema.Name.O,                   // TABLE_SCHEMA
+				tbl.Name.O,                      // TABLE_NAME
+				tbl.ID,                          // TABLE_ID
+				int64(tbl.TiFlashReplica.Count), // REPLICA_COUNT
+				strings.Join(tbl.TiFlashReplica.LocationLabels, ","), // LOCATION_LABELS
+				tbl.TiFlashReplica.Available,                         // AVAILABLE
+				progress,                                             // PROGRESS
+			)
+			rows = append(rows, record)
+		}
+	}
+	e.rows = rows
+	return
 }
