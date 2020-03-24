@@ -412,15 +412,35 @@ func (e *ShowDDLJobsExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	numCurBatch := mathutil.Min(req.Capacity(), len(e.jobs)-e.cursor)
 	for i := e.cursor; i < e.cursor+numCurBatch; i++ {
 		req.AppendInt64(0, e.jobs[i].ID)
-		req.AppendString(1, getSchemaName(e.is, e.jobs[i].SchemaID))
-		req.AppendString(2, getTableName(e.is, e.jobs[i].TableID))
+		schemaName := e.jobs[i].SchemaName
+		tableName := ""
+		finishTS := uint64(0)
+		if e.jobs[i].BinlogInfo != nil {
+			finishTS = e.jobs[i].BinlogInfo.FinishedTS
+			if e.jobs[i].BinlogInfo.TableInfo != nil {
+				tableName = e.jobs[i].BinlogInfo.TableInfo.Name.L
+			}
+			if len(schemaName) == 0 && e.jobs[i].BinlogInfo.DBInfo != nil {
+				schemaName = e.jobs[i].BinlogInfo.DBInfo.Name.L
+			}
+		}
+		// For compatibility, the old version of DDL Job wasn't store the schema name and table name.
+		if len(schemaName) == 0 {
+			schemaName = getSchemaName(e.is, e.jobs[i].SchemaID)
+		}
+		if len(tableName) == 0 {
+			tableName = getTableName(e.is, e.jobs[i].TableID)
+		}
+		req.AppendString(1, schemaName)
+		req.AppendString(2, tableName)
 		req.AppendString(3, e.jobs[i].Type.String())
 		req.AppendString(4, e.jobs[i].SchemaState.String())
 		req.AppendInt64(5, e.jobs[i].SchemaID)
 		req.AppendInt64(6, e.jobs[i].TableID)
 		req.AppendInt64(7, e.jobs[i].RowCount)
 		req.AppendString(8, model.TSConvert2Time(e.jobs[i].StartTS).String())
-		req.AppendString(9, e.jobs[i].State.String())
+		req.AppendString(9, model.TSConvert2Time(finishTS).String())
+		req.AppendString(10, e.jobs[i].State.String())
 	}
 	e.cursor += numCurBatch
 	return nil

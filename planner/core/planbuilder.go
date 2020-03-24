@@ -197,6 +197,9 @@ const (
 	// canExpandAST indicates whether the origin AST can be expanded during plan
 	// building. ONLY used for `CreateViewStmt` now.
 	canExpandAST
+	// collectUnderlyingViewName indicates whether to collect the underlying
+	// view names of a CreateViewStmt during plan building.
+	collectUnderlyingViewName
 )
 
 // PlanBuilder builds Plan from an ast.Node.
@@ -232,6 +235,8 @@ type PlanBuilder struct {
 	hintProcessor *BlockHintProcessor
 	// SelectLock need this information to locate the lock on partitions.
 	partitionedTable []table.PartitionedTable
+	// CreateView needs this information to check whether exists nested view.
+	underlyingViewNames set.StringSet
 }
 
 // GetVisitInfo gets the visitInfo of the PlanBuilder.
@@ -1251,7 +1256,7 @@ func buildCleanupIndexFields() *expression.Schema {
 }
 
 func buildShowDDLJobsFields() *expression.Schema {
-	schema := expression.NewSchema(make([]*expression.Column, 0, 10)...)
+	schema := expression.NewSchema(make([]*expression.Column, 0, 11)...)
 	schema.Append(buildColumn("", "JOB_ID", mysql.TypeLonglong, 4))
 	schema.Append(buildColumn("", "DB_NAME", mysql.TypeVarchar, 64))
 	schema.Append(buildColumn("", "TABLE_NAME", mysql.TypeVarchar, 64))
@@ -1261,6 +1266,7 @@ func buildShowDDLJobsFields() *expression.Schema {
 	schema.Append(buildColumn("", "TABLE_ID", mysql.TypeLonglong, 4))
 	schema.Append(buildColumn("", "ROW_COUNT", mysql.TypeLonglong, 4))
 	schema.Append(buildColumn("", "START_TIME", mysql.TypeVarchar, 64))
+	schema.Append(buildColumn("", "END_TIME", mysql.TypeVarchar, 64))
 	schema.Append(buildColumn("", "STATE", mysql.TypeVarchar, 64))
 	return schema
 }
@@ -2283,12 +2289,18 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 		}
 	case *ast.CreateViewStmt:
 		b.capFlag |= canExpandAST
+		b.capFlag |= collectUnderlyingViewName
 		defer func() {
 			b.capFlag &= ^canExpandAST
+			b.capFlag &= ^collectUnderlyingViewName
 		}()
+		b.underlyingViewNames = set.NewStringSet()
 		plan, err := b.Build(ctx, v.Select)
 		if err != nil {
 			return nil, err
+		}
+		if b.underlyingViewNames.Exist(v.ViewName.Schema.L + "." + v.ViewName.Name.L) {
+			return nil, ErrNoSuchTable.GenWithStackByArgs(v.ViewName.Schema.O, v.ViewName.Name.O)
 		}
 		schema := plan.Schema()
 		if v.Cols == nil {
