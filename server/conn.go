@@ -336,7 +336,7 @@ func parseOldHandshakeResponseBody(ctx context.Context, packet *handshakeRespons
 	defer func() {
 		// Check malformat packet cause out of range is disgusting, but don't panic!
 		if r := recover(); r != nil {
-			logutil.Logger(ctx).Error("handshake panic", zap.ByteString("packetData", data))
+			logutil.Logger(ctx).Error("handshake panic", zap.ByteString("packetData", data), zap.Stack("stack"))
 			err = mysql.ErrMalformPacket
 		}
 	}()
