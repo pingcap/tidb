@@ -182,6 +182,20 @@ func (s *testSessionSuite) TestQueryString(c *C) {
 	tk.MustExec("create table mutil1 (a int);create table multi2 (a int)")
 	queryStr := tk.Se.Value(sessionctx.QueryString)
 	c.Assert(queryStr, Equals, "create table multi2 (a int)")
+
+	// Test execution of DDL through the "ExecutePreparedStmt" interface.
+	_, err := tk.Se.Execute(context.Background(), "use test;")
+	c.Assert(err, IsNil)
+	_, err = tk.Se.Execute(context.Background(), "CREATE TABLE t (id bigint PRIMARY KEY, age int)")
+	c.Assert(err, IsNil)
+	_, err = tk.Se.Execute(context.Background(), "show create table t")
+	c.Assert(err, IsNil)
+	id, _, _, err := tk.Se.PrepareStmt("CREATE TABLE t2(id bigint PRIMARY KEY, age int)")
+	c.Assert(err, IsNil)
+	_, err = tk.Se.ExecutePreparedStmt(context.Background(), id)
+	c.Assert(err, IsNil)
+	qs := tk.Se.Value(sessionctx.QueryString)
+	c.Assert(qs.(string), Equals, "CREATE TABLE t2(id bigint PRIMARY KEY, age int)")
 }
 
 func (s *testSessionSuite) TestAffectedRows(c *C) {
