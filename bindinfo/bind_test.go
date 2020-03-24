@@ -334,7 +334,7 @@ func (s *testSuite) TestGlobalAndSessionBindingBothExist(c *C) {
 	tk.MustExec("drop table if exists t2")
 	tk.MustExec("create table t1(id int)")
 	tk.MustExec("create table t2(id int)")
-	c.Assert(tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "HashLeftJoin"), IsTrue)
+	c.Assert(tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "HashJoin"), IsTrue)
 	c.Assert(tk.HasPlan("SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id", "MergeJoin"), IsTrue)
 
 	tk.MustExec("create global binding for SELECT * from t1,t2 where t1.id = t2.id using SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id")
@@ -345,11 +345,11 @@ func (s *testSuite) TestGlobalAndSessionBindingBothExist(c *C) {
 	metrics.BindUsageCounter.WithLabelValues(metrics.ScopeGlobal).Write(pb)
 	c.Assert(pb.GetCounter().GetValue(), Equals, float64(1))
 	tk.MustExec("set @@tidb_use_plan_baselines = 0")
-	c.Assert(tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "HashLeftJoin"), IsTrue)
+	c.Assert(tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "HashJoin"), IsTrue)
 
 	tk.MustExec("drop global binding for SELECT * from t1,t2 where t1.id = t2.id")
 	tk.MustExec("set @@tidb_use_plan_baselines = 1")
-	c.Assert(tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "HashLeftJoin"), IsTrue)
+	c.Assert(tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "HashJoin"), IsTrue)
 }
 
 func (s *testSuite) TestExplain(c *C) {
@@ -361,7 +361,7 @@ func (s *testSuite) TestExplain(c *C) {
 	tk.MustExec("create table t1(id int)")
 	tk.MustExec("create table t2(id int)")
 
-	c.Assert(tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "HashLeftJoin"), IsTrue)
+	c.Assert(tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "HashJoin"), IsTrue)
 	c.Assert(tk.HasPlan("SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id", "MergeJoin"), IsTrue)
 
 	tk.MustExec("create global binding for SELECT * from t1,t2 where t1.id = t2.id using SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id")
@@ -383,14 +383,14 @@ func (s *testSuite) TestBindingSymbolList(c *C) {
 	// before binding
 	tk.MustQuery("select a, b from t where a = 3 limit 1, 100")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:ia")
-	c.Assert(tk.MustUseIndex("select a, b from t where a = 3 limit 1, 100", "a"), IsTrue)
+	c.Assert(tk.MustUseIndex("select a, b from t where a = 3 limit 1, 100", "ia(a)"), IsTrue)
 
 	tk.MustExec(`create global binding for select a, b from t where a = 1 limit 0, 1 using select a, b from t use index (ib) where a = 1 limit 0, 1`)
 
 	// after binding
 	tk.MustQuery("select a, b from t where a = 3 limit 1, 100")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:ib")
-	c.Assert(tk.MustUseIndex("select a, b from t where a = 3 limit 1, 100", "b"), IsTrue)
+	c.Assert(tk.MustUseIndex("select a, b from t where a = 3 limit 1, 100", "ib(b)"), IsTrue)
 
 	// Normalize
 	sql, hash := parser.NormalizeDigest("select a, b from t where a = 1 limit 0, 1")
