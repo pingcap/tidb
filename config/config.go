@@ -23,6 +23,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -60,21 +61,24 @@ var (
 
 // Config contains configuration options.
 type Config struct {
-	Host             string          `toml:"host" json:"host"`
-	AdvertiseAddress string          `toml:"advertise-address" json:"advertise-address"`
-	Port             uint            `toml:"port" json:"port"`
-	Cors             string          `toml:"cors" json:"cors"`
-	Store            string          `toml:"store" json:"store"`
-	Path             string          `toml:"path" json:"path"`
-	Socket           string          `toml:"socket" json:"socket"`
-	Lease            string          `toml:"lease" json:"lease"`
-	RunDDL           bool            `toml:"run-ddl" json:"run-ddl"`
-	SplitTable       bool            `toml:"split-table" json:"split-table"`
-	TokenLimit       uint            `toml:"token-limit" json:"token-limit"`
-	OOMUseTmpStorage bool            `toml:"oom-use-tmp-storage" json:"oom-use-tmp-storage"`
-	TempStoragePath  string          `toml:"tmp-storage-path" json:"tmp-storage-path"`
-	OOMAction        string          `toml:"oom-action" json:"oom-action"`
-	MemQuotaQuery    int64           `toml:"mem-quota-query" json:"mem-quota-query"`
+	Host             string `toml:"host" json:"host"`
+	AdvertiseAddress string `toml:"advertise-address" json:"advertise-address"`
+	Port             uint   `toml:"port" json:"port"`
+	Cors             string `toml:"cors" json:"cors"`
+	Store            string `toml:"store" json:"store"`
+	Path             string `toml:"path" json:"path"`
+	Socket           string `toml:"socket" json:"socket"`
+	Lease            string `toml:"lease" json:"lease"`
+	RunDDL           bool   `toml:"run-ddl" json:"run-ddl"`
+	SplitTable       bool   `toml:"split-table" json:"split-table"`
+	TokenLimit       uint   `toml:"token-limit" json:"token-limit"`
+	OOMUseTmpStorage bool   `toml:"oom-use-tmp-storage" json:"oom-use-tmp-storage"`
+	TempStoragePath  string `toml:"tmp-storage-path" json:"tmp-storage-path"`
+	OOMAction        string `toml:"oom-action" json:"oom-action"`
+	MemQuotaQuery    int64  `toml:"mem-quota-query" json:"mem-quota-query"`
+	// TempStorageQuota describe the temporary storage Quota during query exector when OOMUseTmpStorage is enabled
+	// see https://github.com/pingcap/tidb/issues/13983 for more detail
+	TempStorageQuota uint            `toml:"temp-storage-quota" json:"temp-storage-quota"` // KiloBytes
 	EnableStreaming  bool            `toml:"enable-streaming" json:"enable-streaming"`
 	EnableBatchDML   bool            `toml:"enable-batch-dml" json:"enable-batch-dml"`
 	TxnLocalLatches  TxnLocalLatches `toml:"txn-local-latches" json:"txn-local-latches"`
@@ -513,6 +517,7 @@ var defaultConf = Config{
 	TokenLimit:                   1000,
 	OOMUseTmpStorage:             true,
 	TempStoragePath:              filepath.Join(os.TempDir(), "tidb", "tmp-storage"),
+	TempStorageQuota:             0,
 	OOMAction:                    OOMActionCancel,
 	MemQuotaQuery:                1 << 30,
 	EnableStreaming:              false,
@@ -838,6 +843,24 @@ func (c *Config) Valid() error {
 	for _, engine := range c.IsolationRead.Engines {
 		if engine != "tidb" && engine != "tikv" && engine != "tiflash" {
 			return fmt.Errorf("type of [isolation-read]engines can't be %v should be one of tidb or tikv or tiflash", engine)
+		}
+	}
+
+	// check capacity and the quota when OOMUseTmpStorage is enabled
+	if c.OOMUseTmpStorage {
+		if c.TempStorageQuota == 0 {
+			// Print warning
+		} else {
+			var stat syscall.Statfs_t
+			err := syscall.Statfs(c.TempStoragePath, &stat)
+			if err != nil {
+				return err
+			}
+			capacityBytes := stat.Bavail * uint64(stat.Bsize)
+			quotaBytes := uint64(c.TempStorageQuota * 1024)
+			if quotaBytes > capacityBytes {
+				return fmt.Errorf("value of [temp-storage-quota] exceeds the capacity of the [temp-storage-path] directory")
+			}
 		}
 	}
 
