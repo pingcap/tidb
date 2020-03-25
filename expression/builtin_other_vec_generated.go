@@ -182,7 +182,7 @@ func (b *builtinInStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 			}
 			arg0 := buf0.GetString(i)
 			arg1 := buf1.GetString(i)
-			compareResult = types.CompareString(arg0, arg1)
+			compareResult = types.CompareString(arg0, arg1, b.collation)
 			if compareResult == 0 {
 				result.SetNull(i, false)
 				r64s[i] = 1

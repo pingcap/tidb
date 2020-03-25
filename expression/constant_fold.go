@@ -34,6 +34,8 @@ func init() {
 // FoldConstant does constant folding optimization on an expression excluding deferred ones.
 func FoldConstant(expr Expression) Expression {
 	e, _ := foldConstant(expr)
+	// keep the original coercibility values after folding
+	e.SetCoercibility(expr.Coercibility())
 	return e
 }
 

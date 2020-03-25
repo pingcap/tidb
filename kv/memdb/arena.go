@@ -32,6 +32,8 @@ func newArenaAddr(idx int, offset uint32) arenaAddr {
 }
 
 const (
+	alignMask = 1<<32 - 8 // 29 bit 1 and 3 bit 0.
+
 	nullBlockOffset = math.MaxUint32
 	maxBlockSize    = 128 << 20
 )
@@ -117,7 +119,9 @@ func (a *arenaBlock) getFrom(offset uint32) []byte {
 }
 
 func (a *arenaBlock) alloc(size int) (uint32, []byte) {
-	offset := a.length
+	// We must align the allocated address for node
+	// to make runtime.checkptrAlignment happy.
+	offset := (a.length + 7) & alignMask
 	newLen := offset + size
 	if newLen > len(a.buf) {
 		return nullBlockOffset, nil

@@ -16,9 +16,9 @@ package set
 // StringSet is a string set.
 type StringSet map[string]struct{}
 
-// NewStringSet builds a float64 set.
+// NewStringSet builds a string set.
 func NewStringSet(ss ...string) StringSet {
-	set := make(StringSet)
+	set := make(StringSet, len(ss))
 	for _, s := range ss {
 		set.Insert(s)
 	}

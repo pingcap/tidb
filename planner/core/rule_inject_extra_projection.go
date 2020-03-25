@@ -49,6 +49,8 @@ func (pe *projInjector) inject(plan PhysicalPlan) PhysicalPlan {
 		plan = InjectProjBelowSort(p, p.ByItems)
 	case *PhysicalTopN:
 		plan = InjectProjBelowSort(p, p.ByItems)
+	case *NominalSort:
+		plan = TurnNominalSortIntoProj(p, p.OnlyColumn, p.ByItems)
 	}
 	return plan
 }
@@ -197,6 +199,67 @@ func InjectProjBelowSort(p PhysicalPlan, orderByItems []*ByItems) PhysicalPlan {
 	bottomProj.SetSchema(expression.NewSchema(bottomProjSchemaCols...))
 	bottomProj.SetChildren(childPlan)
 	p.SetChildren(bottomProj)
+
+	if origChildProj, isChildProj := childPlan.(*PhysicalProjection); isChildProj {
+		refine4NeighbourProj(bottomProj, origChildProj)
+	}
+
+	return topProj
+}
+
+// TurnNominalSortIntoProj will turn nominal sort into two projections. This is to check if the scalar functions will
+// overflow.
+func TurnNominalSortIntoProj(p PhysicalPlan, onlyColumn bool, orderByItems []*ByItems) PhysicalPlan {
+	if onlyColumn {
+		return p.Children()[0]
+	}
+
+	numOrderByItems := len(orderByItems)
+	childPlan := p.Children()[0]
+
+	bottomProjSchemaCols := make([]*expression.Column, 0, len(childPlan.Schema().Columns)+numOrderByItems)
+	bottomProjExprs := make([]expression.Expression, 0, len(childPlan.Schema().Columns)+numOrderByItems)
+	for _, col := range childPlan.Schema().Columns {
+		newCol := col.Clone().(*expression.Column)
+		newCol.Index = childPlan.Schema().ColumnIndex(newCol)
+		bottomProjSchemaCols = append(bottomProjSchemaCols, newCol)
+		bottomProjExprs = append(bottomProjExprs, newCol)
+	}
+
+	for _, item := range orderByItems {
+		itemExpr := item.Expr
+		if _, isScalarFunc := itemExpr.(*expression.ScalarFunction); !isScalarFunc {
+			continue
+		}
+		bottomProjExprs = append(bottomProjExprs, itemExpr)
+		newArg := &expression.Column{
+			UniqueID: p.SCtx().GetSessionVars().AllocPlanColumnID(),
+			RetType:  itemExpr.GetType(),
+			Index:    len(bottomProjSchemaCols),
+		}
+		bottomProjSchemaCols = append(bottomProjSchemaCols, newArg)
+	}
+
+	childProp := p.GetChildReqProps(0).Clone()
+	bottomProj := PhysicalProjection{
+		Exprs:                bottomProjExprs,
+		AvoidColumnEvaluator: false,
+	}.Init(p.SCtx(), childPlan.statsInfo().ScaleByExpectCnt(childProp.ExpectedCnt), p.SelectBlockOffset(), childProp)
+	bottomProj.SetSchema(expression.NewSchema(bottomProjSchemaCols...))
+	bottomProj.SetChildren(childPlan)
+
+	topProjExprs := make([]expression.Expression, 0, childPlan.Schema().Len())
+	for i := range childPlan.Schema().Columns {
+		col := childPlan.Schema().Columns[i].Clone().(*expression.Column)
+		col.Index = i
+		topProjExprs = append(topProjExprs, col)
+	}
+	topProj := PhysicalProjection{
+		Exprs:                topProjExprs,
+		AvoidColumnEvaluator: false,
+	}.Init(p.SCtx(), childPlan.statsInfo().ScaleByExpectCnt(childProp.ExpectedCnt), p.SelectBlockOffset(), childProp)
+	topProj.SetSchema(childPlan.Schema().Clone())
+	topProj.SetChildren(bottomProj)
 
 	if origChildProj, isChildProj := childPlan.(*PhysicalProjection); isChildProj {
 		refine4NeighbourProj(bottomProj, origChildProj)

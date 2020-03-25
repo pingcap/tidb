@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -36,7 +37,7 @@ import (
 
 var (
 	null          = []byte("NULL")
-	taskQueueSize = 64 // the maximum number of pending tasks to commit in queue
+	taskQueueSize = 16 // the maximum number of pending tasks to commit in queue
 )
 
 // LoadDataExec represents a load data executor.
@@ -122,6 +123,7 @@ type LoadDataInfo struct {
 	IgnoreLines uint64
 	Ctx         sessionctx.Context
 	rows        [][]types.Datum
+	Drained     bool
 
 	commitTaskQueue chan CommitTask
 	StopCh          chan struct{}
@@ -263,6 +265,11 @@ func (e *LoadDataInfo) CommitWork(ctx context.Context) error {
 			logutil.Logger(ctx).Error("load data commit work error", zap.Error(err))
 			break
 		}
+		if atomic.CompareAndSwapUint32(&e.Ctx.GetSessionVars().Killed, 1, 0) {
+			logutil.Logger(ctx).Info("load data query interrupted quit data processing")
+			err = ErrQueryInterrupted
+			break
+		}
 	}
 	return err
 }
@@ -271,9 +278,6 @@ func (e *LoadDataInfo) CommitWork(ctx context.Context) error {
 func (e *LoadDataInfo) SetMaxRowsInBatch(limit uint64) {
 	e.maxRowsInBatch = limit
 	e.rows = make([][]types.Datum, 0, limit)
-	for i := 0; uint64(i) < limit; i++ {
-		e.rows = append(e.rows, make([]types.Datum, len(e.Table.Cols())))
-	}
 	e.curBatchCnt = 0
 }
 
@@ -418,7 +422,7 @@ func (e *LoadDataInfo) InsertData(ctx context.Context, prevData, curData []byte)
 		// rowCount will be used in fillRow(), last insert ID will be assigned according to the rowCount = 1.
 		// So should add first here.
 		e.rowCount++
-		e.colsToRow(ctx, cols)
+		e.rows = append(e.rows, e.colsToRow(ctx, cols))
 		e.curBatchCnt++
 		if e.maxRowsInBatch != 0 && e.rowCount%e.maxRowsInBatch == 0 {
 			reachLimit = true
@@ -473,10 +477,11 @@ func (e *LoadDataInfo) colsToRow(ctx context.Context, cols []field) []types.Datu
 		if cols[i].maybeNull && string(cols[i].str) == "N" {
 			e.row[i].SetNull()
 		} else {
-			e.row[i].SetString(string(cols[i].str))
+			e.row[i].SetString(string(cols[i].str), mysql.DefaultCollationName)
 		}
 	}
-	row, err := e.getRowInPlace(ctx, e.row, e.rows[e.curBatchCnt])
+	// a new row buffer will be allocated in getRow
+	row, err := e.getRow(ctx, e.row)
 	if err != nil {
 		e.handleWarning(err)
 		return nil

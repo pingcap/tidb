@@ -24,6 +24,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -81,6 +82,10 @@ type stmtSummaryByDigestMap struct {
 		sessionEnabled string
 		// setInSession indicates whether statement summary has been set in any session.
 		globalEnabled string
+		// sessionInternalQueryEnabled indicates whether internal statement summary is enabled in current server.
+		sessionInternalQueryEnabled string
+		// globalInternalQueryEnabled indicates whether internal statement summary has been set in any session.
+		globalInternalQueryEnabled string
 
 		// These variables indicate the refresh interval of summaries.
 		// They must be > 0.
@@ -117,6 +122,7 @@ type stmtSummaryByDigest struct {
 	stmtType      string
 	normalizedSQL string
 	tableNames    string
+	isInternal    bool
 }
 
 // stmtSummaryByDigestElement is the summary for each type of statements in current interval.
@@ -129,7 +135,6 @@ type stmtSummaryByDigestElement struct {
 	sampleSQL  string
 	prevSQL    string
 	samplePlan string
-	sampleUser string
 	indexNames []string
 	execCount  int64
 	// latency
@@ -183,6 +188,7 @@ type stmtSummaryByDigestElement struct {
 	maxTxnRetry          int
 	sumBackoffTimes      int64
 	backoffTypes         map[fmt.Stringer]int
+	authUsers            map[string]struct{}
 	// other
 	sumMem          int64
 	maxMem          int64
@@ -213,6 +219,7 @@ type StmtExecInfo struct {
 	ExecDetail     *execdetails.ExecDetails
 	MemMax         int64
 	StartTime      time.Time
+	IsInternal     bool
 }
 
 // newStmtSummaryByDigestMap creates an empty stmtSummaryByDigestMap.
@@ -257,6 +264,9 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 		if !ssMap.Enabled() {
 			return nil, 0
 		}
+		if sei.IsInternal && !ssMap.EnabledInternal() {
+			return nil, 0
+		}
 
 		if ssMap.beginTimeForCurInterval+intervalSeconds <= now {
 			// `beginTimeForCurInterval` is a multiple of intervalSeconds, so that when the interval is a multiple
@@ -274,6 +284,7 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 		} else {
 			summary = value.(*stmtSummaryByDigest)
 		}
+		summary.isInternal = summary.isInternal && sei.IsInternal
 		return summary, beginTime
 	}()
 
@@ -292,8 +303,24 @@ func (ssMap *stmtSummaryByDigestMap) Clear() {
 	ssMap.beginTimeForCurInterval = 0
 }
 
+// clearInternal removes all statement summaries which are internal summaries.
+func (ssMap *stmtSummaryByDigestMap) clearInternal() {
+	ssMap.Lock()
+	defer ssMap.Unlock()
+
+	for _, key := range ssMap.summaryMap.Keys() {
+		summary, ok := ssMap.summaryMap.Get(key)
+		if !ok {
+			continue
+		}
+		if summary.(*stmtSummaryByDigest).isInternal {
+			ssMap.summaryMap.Delete(key)
+		}
+	}
+}
+
 // ToCurrentDatum converts current statement summaries to datum.
-func (ssMap *stmtSummaryByDigestMap) ToCurrentDatum() [][]types.Datum {
+func (ssMap *stmtSummaryByDigestMap) ToCurrentDatum(user *auth.UserIdentity, isSuper bool) [][]types.Datum {
 	ssMap.Lock()
 	values := ssMap.summaryMap.Values()
 	beginTime := ssMap.beginTimeForCurInterval
@@ -301,7 +328,7 @@ func (ssMap *stmtSummaryByDigestMap) ToCurrentDatum() [][]types.Datum {
 
 	rows := make([][]types.Datum, 0, len(values))
 	for _, value := range values {
-		record := value.(*stmtSummaryByDigest).toCurrentDatum(beginTime)
+		record := value.(*stmtSummaryByDigest).toCurrentDatum(beginTime, user, isSuper)
 		if record != nil {
 			rows = append(rows, record)
 		}
@@ -310,7 +337,7 @@ func (ssMap *stmtSummaryByDigestMap) ToCurrentDatum() [][]types.Datum {
 }
 
 // ToHistoryDatum converts history statements summaries to datum.
-func (ssMap *stmtSummaryByDigestMap) ToHistoryDatum() [][]types.Datum {
+func (ssMap *stmtSummaryByDigestMap) ToHistoryDatum(user *auth.UserIdentity, isSuper bool) [][]types.Datum {
 	ssMap.Lock()
 	values := ssMap.summaryMap.Values()
 	ssMap.Unlock()
@@ -318,7 +345,7 @@ func (ssMap *stmtSummaryByDigestMap) ToHistoryDatum() [][]types.Datum {
 	historySize := ssMap.historySize()
 	rows := make([][]types.Datum, 0, len(values)*historySize)
 	for _, value := range values {
-		records := value.(*stmtSummaryByDigest).toHistoryDatum(historySize)
+		records := value.(*stmtSummaryByDigest).toHistoryDatum(historySize, user, isSuper)
 		rows = append(rows, records...)
 	}
 	return rows
@@ -341,8 +368,9 @@ func (ssMap *stmtSummaryByDigestMap) GetMoreThanOnceSelect() ([]string, []string
 				if ssbd.history.Len() > 0 {
 					ssElement := ssbd.history.Back().Value.(*stmtSummaryByDigestElement)
 					ssElement.Lock()
-					// Empty sample users means that it is an internal queries.
-					if ssElement.sampleUser != "" && (ssbd.history.Len() > 1 || ssElement.execCount > 1) {
+
+					// Empty auth users means that it is an internal queries.
+					if len(ssElement.authUsers) > 0 && (ssbd.history.Len() > 1 || ssElement.execCount > 1) {
 						schemas = append(schemas, ssbd.schemaName)
 						sqls = append(sqls, ssElement.sampleSQL)
 					}
@@ -380,6 +408,32 @@ func (ssMap *stmtSummaryByDigestMap) SetEnabled(value string, inSession bool) {
 	}
 }
 
+// SetEnabledInternalQuery enables or disables internal statement summary in global(cluster) or session(server) scope.
+func (ssMap *stmtSummaryByDigestMap) SetEnabledInternalQuery(value string, inSession bool) {
+	value = ssMap.normalizeEnableValue(value)
+
+	ssMap.sysVars.Lock()
+	if inSession {
+		ssMap.sysVars.sessionInternalQueryEnabled = value
+	} else {
+		ssMap.sysVars.globalInternalQueryEnabled = value
+	}
+	sessionInternalQueryEnabled := ssMap.sysVars.sessionInternalQueryEnabled
+	globalInternalQueryEnabled := ssMap.sysVars.globalInternalQueryEnabled
+	ssMap.sysVars.Unlock()
+
+	// Clear summaries for internal queries once internal statement summary is disabled.
+	var needClear bool
+	if ssMap.isSet(sessionInternalQueryEnabled) {
+		needClear = !ssMap.isEnabled(sessionInternalQueryEnabled)
+	} else {
+		needClear = !ssMap.isEnabled(globalInternalQueryEnabled)
+	}
+	if needClear {
+		ssMap.clearInternal()
+	}
+}
+
 // Enabled returns whether statement summary is enabled.
 func (ssMap *stmtSummaryByDigestMap) Enabled() bool {
 	ssMap.sysVars.RLock()
@@ -390,6 +444,20 @@ func (ssMap *stmtSummaryByDigestMap) Enabled() bool {
 		enabled = ssMap.isEnabled(ssMap.sysVars.sessionEnabled)
 	} else {
 		enabled = ssMap.isEnabled(ssMap.sysVars.globalEnabled)
+	}
+	return enabled
+}
+
+// EnabledInternal returns whether internal statement summary is enabled.
+func (ssMap *stmtSummaryByDigestMap) EnabledInternal() bool {
+	ssMap.sysVars.RLock()
+	defer ssMap.sysVars.RUnlock()
+
+	var enabled bool
+	if ssMap.isSet(ssMap.sysVars.sessionInternalQueryEnabled) {
+		enabled = ssMap.isEnabled(ssMap.sysVars.sessionInternalQueryEnabled)
+	} else {
+		enabled = ssMap.isEnabled(ssMap.sysVars.globalInternalQueryEnabled)
 	}
 	return enabled
 }
@@ -500,6 +568,10 @@ func (ssbd *stmtSummaryByDigest) init(sei *StmtExecInfo, beginTime int64, interv
 	// Use "," to separate table names to support FIND_IN_SET.
 	var buffer bytes.Buffer
 	for i, value := range sei.StmtCtx.Tables {
+		// In `create database` statement, DB name is not empty but table name is empty.
+		if len(value.Table) == 0 {
+			continue
+		}
 		buffer.WriteString(strings.ToLower(value.DB))
 		buffer.WriteString(".")
 		buffer.WriteString(strings.ToLower(value.Table))
@@ -567,7 +639,7 @@ func (ssbd *stmtSummaryByDigest) add(sei *StmtExecInfo, beginTime int64, interva
 	}
 }
 
-func (ssbd *stmtSummaryByDigest) toCurrentDatum(beginTimeForCurInterval int64) []types.Datum {
+func (ssbd *stmtSummaryByDigest) toCurrentDatum(beginTimeForCurInterval int64, user *auth.UserIdentity, isSuper bool) []types.Datum {
 	var ssElement *stmtSummaryByDigestElement
 
 	ssbd.Lock()
@@ -578,19 +650,29 @@ func (ssbd *stmtSummaryByDigest) toCurrentDatum(beginTimeForCurInterval int64) [
 
 	// `ssElement` is lazy expired, so expired elements could also be read.
 	// `beginTime` won't change since `ssElement` is created, so locking is not needed here.
-	if ssElement == nil || ssElement.beginTime < beginTimeForCurInterval {
+	isAuthed := true
+	if user != nil && !isSuper {
+		_, isAuthed = ssElement.authUsers[user.Username]
+	}
+	if ssElement == nil || ssElement.beginTime < beginTimeForCurInterval || !isAuthed {
 		return nil
 	}
 	return ssElement.toDatum(ssbd)
 }
 
-func (ssbd *stmtSummaryByDigest) toHistoryDatum(historySize int) [][]types.Datum {
+func (ssbd *stmtSummaryByDigest) toHistoryDatum(historySize int, user *auth.UserIdentity, isSuper bool) [][]types.Datum {
 	// Collect all history summaries to an array.
 	ssElements := ssbd.collectHistorySummaries(historySize)
 
 	rows := make([][]types.Datum, 0, len(ssElements))
 	for _, ssElement := range ssElements {
-		rows = append(rows, ssElement.toDatum(ssbd))
+		isAuthed := true
+		if user != nil && !isSuper {
+			_, isAuthed = ssElement.authUsers[user.Username]
+		}
+		if isAuthed {
+			rows = append(rows, ssElement.toDatum(ssbd))
+		}
 	}
 	return rows
 }
@@ -612,7 +694,7 @@ func (ssbd *stmtSummaryByDigest) collectHistorySummaries(historySize int) []*stm
 }
 
 func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64, intervalSeconds int64) *stmtSummaryByDigestElement {
-	// sampleSQL / sampleUser / samplePlan / prevSQL / indexNames store the values shown at the first time,
+	// sampleSQL / authUsers(sampleUser) / samplePlan / prevSQL / indexNames store the values shown at the first time,
 	// because it compacts performance to update every time.
 	ssElement := &stmtSummaryByDigestElement{
 		beginTime: beginTime,
@@ -621,12 +703,12 @@ func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64, intervalS
 		prevSQL: sei.PrevSQL,
 		// samplePlan needs to be decoded so it can't be truncated.
 		samplePlan:   sei.PlanGenerator(),
-		sampleUser:   sei.User,
 		indexNames:   sei.StmtCtx.IndexNames,
 		minLatency:   sei.TotalLatency,
 		firstSeen:    sei.StartTime,
 		lastSeen:     sei.StartTime,
 		backoffTypes: make(map[fmt.Stringer]int),
+		authUsers:    make(map[string]struct{}),
 	}
 	ssElement.add(sei, intervalSeconds)
 	return ssElement
@@ -653,6 +735,11 @@ func (ssElement *stmtSummaryByDigestElement) onExpire(intervalSeconds int64) {
 func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeconds int64) {
 	ssElement.Lock()
 	defer ssElement.Unlock()
+
+	// add user to auth users set
+	if len(sei.User) > 0 {
+		ssElement.authUsers[sei.User] = struct{}{}
+	}
 
 	// refreshInterval may change anytime, update endTime ASAP.
 	ssElement.endTime = ssElement.beginTime + intervalSeconds
@@ -790,6 +877,12 @@ func (ssElement *stmtSummaryByDigestElement) toDatum(ssbd *stmtSummaryByDigest) 
 		plan = ""
 	}
 
+	sampleUser := ""
+	for key := range ssElement.authUsers {
+		sampleUser = key
+		break
+	}
+
 	// Actually, there's a small chance that endTime is out of date, but it's hard to keep it up to date all the time.
 	return types.MakeDatums(
 		types.NewTime(types.FromGoTime(time.Unix(ssElement.beginTime, 0)), mysql.TypeTimestamp, 0),
@@ -800,7 +893,7 @@ func (ssElement *stmtSummaryByDigestElement) toDatum(ssbd *stmtSummaryByDigest) 
 		ssbd.normalizedSQL,
 		convertEmptyToNil(ssbd.tableNames),
 		convertEmptyToNil(strings.Join(ssElement.indexNames, ",")),
-		convertEmptyToNil(ssElement.sampleUser),
+		convertEmptyToNil(sampleUser),
 		ssElement.execCount,
 		int64(ssElement.sumLatency),
 		int64(ssElement.maxLatency),

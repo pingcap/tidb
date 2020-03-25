@@ -630,6 +630,15 @@ func (s *testSuiteAgg) TestIssue13652(c *C) {
 	c.Assert(err.Error(), Equals, "[planner:1055]Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'test.t.a' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by")
 }
 
+func (s *testSuiteAgg) TestIssue14947(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set sql_mode = 'ONLY_FULL_GROUP_BY'")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	tk.MustQuery("select ((+a+1)) as tmp from t group by tmp")
+}
+
 func (s *testSuiteAgg) TestHaving(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
@@ -820,4 +829,18 @@ func (s *testSuiteAgg) TestIssue12759HashAggCalledByApply(c *C) {
 		})
 		tk.MustQuery(tt).Check(testkit.Rows(output[i]...))
 	}
+}
+
+func (s *testSuiteAgg) TestPR15242ShallowCopy(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a json);`)
+	tk.MustExec(`insert into t values ('{"id": 1,"score":23}');`)
+	tk.MustExec(`insert into t values ('{"id": 2,"score":23}');`)
+	tk.MustExec(`insert into t values ('{"id": 1,"score":233}');`)
+	tk.MustExec(`insert into t values ('{"id": 2,"score":233}');`)
+	tk.MustExec(`insert into t values ('{"id": 3,"score":233}');`)
+	tk.Se.GetSessionVars().MaxChunkSize = 2
+	tk.MustQuery(`select max(JSON_EXTRACT(a, '$.score')) as max_score,JSON_EXTRACT(a,'$.id') as id from t group by id order by id;`).Check(testkit.Rows("233 1", "233 2", "233 3"))
+
 }

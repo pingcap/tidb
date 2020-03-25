@@ -50,7 +50,7 @@ func (s *testCoprocessorSuite) TestBuildTasks(c *C) {
 	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "c"), flashReq)
 	c.Assert(err, IsNil)
 	c.Assert(tasks, HasLen, 1)
-	s.taskEqual(c, tasks[0], regionIDs[0], "t\x80\x00\x00\x00\x00\x00\x00\x00_r\x00\x00\x00\x00\x00\x00\x00\x00", "g")
+	s.taskEqual(c, tasks[0], regionIDs[0], "a", "c")
 
 	tasks, err = buildCopTasks(bo, cache, buildCopRanges("g", "n"), req)
 	c.Assert(err, IsNil)
@@ -60,7 +60,7 @@ func (s *testCoprocessorSuite) TestBuildTasks(c *C) {
 	tasks, err = buildCopTasks(bo, cache, buildCopRanges("g", "n"), flashReq)
 	c.Assert(err, IsNil)
 	c.Assert(tasks, HasLen, 1)
-	s.taskEqual(c, tasks[0], regionIDs[1], "t\x80\x00\x00\x00\x00\x00\x00\x00_r\x00\x00\x00\x00\x00\x00\x00\x00", "n")
+	s.taskEqual(c, tasks[0], regionIDs[1], "g", "n")
 
 	tasks, err = buildCopTasks(bo, cache, buildCopRanges("m", "n"), req)
 	c.Assert(err, IsNil)
@@ -70,7 +70,7 @@ func (s *testCoprocessorSuite) TestBuildTasks(c *C) {
 	tasks, err = buildCopTasks(bo, cache, buildCopRanges("m", "n"), flashReq)
 	c.Assert(err, IsNil)
 	c.Assert(tasks, HasLen, 1)
-	s.taskEqual(c, tasks[0], regionIDs[1], "t\x80\x00\x00\x00\x00\x00\x00\x00_r\x00\x00\x00\x00\x00\x00\x00\x00", "n")
+	s.taskEqual(c, tasks[0], regionIDs[1], "m", "n")
 
 	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "k"), req)
 	c.Assert(err, IsNil)
@@ -81,8 +81,8 @@ func (s *testCoprocessorSuite) TestBuildTasks(c *C) {
 	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "k"), flashReq)
 	c.Assert(err, IsNil)
 	c.Assert(tasks, HasLen, 2)
-	s.taskEqual(c, tasks[0], regionIDs[0], "t\x80\x00\x00\x00\x00\x00\x00\x00_r\x00\x00\x00\x00\x00\x00\x00\x00", "g")
-	s.taskEqual(c, tasks[1], regionIDs[1], "t\x80\x00\x00\x00\x00\x00\x00\x00_r\x00\x00\x00\x00\x00\x00\x00\x00", "n")
+	s.taskEqual(c, tasks[0], regionIDs[0], "a", "g")
+	s.taskEqual(c, tasks[1], regionIDs[1], "g", "k")
 
 	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "x"), req)
 	c.Assert(err, IsNil)
@@ -95,10 +95,10 @@ func (s *testCoprocessorSuite) TestBuildTasks(c *C) {
 	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "x"), flashReq)
 	c.Assert(err, IsNil)
 	c.Assert(tasks, HasLen, 4)
-	s.taskEqual(c, tasks[0], regionIDs[0], "t\x80\x00\x00\x00\x00\x00\x00\x00_r\x00\x00\x00\x00\x00\x00\x00\x00", "g")
-	s.taskEqual(c, tasks[1], regionIDs[1], "t\x80\x00\x00\x00\x00\x00\x00\x00_r\x00\x00\x00\x00\x00\x00\x00\x00", "n")
-	s.taskEqual(c, tasks[2], regionIDs[2], "t\x80\x00\x00\x00\x00\x00\x00\x00_r\x00\x00\x00\x00\x00\x00\x00\x00", "t")
-	s.taskEqual(c, tasks[3], regionIDs[3], "t\x80\x00\x00\x00\x00\x00\x00\x00_r\x00\x00\x00\x00\x00\x00\x00\x00", "t\x80\x00\x00\x00\x00\x00\x00\x00_r\xff\xff\xff\xff\xff\xff\xff\xff\x00")
+	s.taskEqual(c, tasks[0], regionIDs[0], "a", "g")
+	s.taskEqual(c, tasks[1], regionIDs[1], "g", "n")
+	s.taskEqual(c, tasks[2], regionIDs[2], "n", "t")
+	s.taskEqual(c, tasks[3], regionIDs[3], "t", "x")
 
 	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "b", "b", "c"), req)
 	c.Assert(err, IsNil)
@@ -108,7 +108,7 @@ func (s *testCoprocessorSuite) TestBuildTasks(c *C) {
 	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "b", "b", "c"), flashReq)
 	c.Assert(err, IsNil)
 	c.Assert(tasks, HasLen, 1)
-	s.taskEqual(c, tasks[0], regionIDs[0], "t\x80\x00\x00\x00\x00\x00\x00\x00_r\x00\x00\x00\x00\x00\x00\x00\x00", "g")
+	s.taskEqual(c, tasks[0], regionIDs[0], "a", "b", "b", "c")
 
 	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "b", "e", "f"), req)
 	c.Assert(err, IsNil)
@@ -118,7 +118,7 @@ func (s *testCoprocessorSuite) TestBuildTasks(c *C) {
 	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "b", "e", "f"), flashReq)
 	c.Assert(err, IsNil)
 	c.Assert(tasks, HasLen, 1)
-	s.taskEqual(c, tasks[0], regionIDs[0], "t\x80\x00\x00\x00\x00\x00\x00\x00_r\x00\x00\x00\x00\x00\x00\x00\x00", "g")
+	s.taskEqual(c, tasks[0], regionIDs[0], "a", "b", "e", "f")
 
 	tasks, err = buildCopTasks(bo, cache, buildCopRanges("g", "n", "o", "p"), req)
 	c.Assert(err, IsNil)
@@ -129,8 +129,8 @@ func (s *testCoprocessorSuite) TestBuildTasks(c *C) {
 	tasks, err = buildCopTasks(bo, cache, buildCopRanges("g", "n", "o", "p"), flashReq)
 	c.Assert(err, IsNil)
 	c.Assert(tasks, HasLen, 2)
-	s.taskEqual(c, tasks[0], regionIDs[1], "t\x80\x00\x00\x00\x00\x00\x00\x00_r\x00\x00\x00\x00\x00\x00\x00\x00", "n")
-	s.taskEqual(c, tasks[1], regionIDs[2], "t\x80\x00\x00\x00\x00\x00\x00\x00_r\x00\x00\x00\x00\x00\x00\x00\x00", "t")
+	s.taskEqual(c, tasks[0], regionIDs[1], "g", "n")
+	s.taskEqual(c, tasks[1], regionIDs[2], "o", "p")
 
 	tasks, err = buildCopTasks(bo, cache, buildCopRanges("h", "k", "m", "p"), req)
 	c.Assert(err, IsNil)
@@ -141,8 +141,8 @@ func (s *testCoprocessorSuite) TestBuildTasks(c *C) {
 	tasks, err = buildCopTasks(bo, cache, buildCopRanges("h", "k", "m", "p"), flashReq)
 	c.Assert(err, IsNil)
 	c.Assert(tasks, HasLen, 2)
-	s.taskEqual(c, tasks[0], regionIDs[1], "t\x80\x00\x00\x00\x00\x00\x00\x00_r\x00\x00\x00\x00\x00\x00\x00\x00", "n")
-	s.taskEqual(c, tasks[1], regionIDs[2], "t\x80\x00\x00\x00\x00\x00\x00\x00_r\x00\x00\x00\x00\x00\x00\x00\x00", "t")
+	s.taskEqual(c, tasks[0], regionIDs[1], "h", "k", "m", "n")
+	s.taskEqual(c, tasks[1], regionIDs[2], "n", "p")
 }
 
 func (s *testCoprocessorSuite) TestSplitRegionRanges(c *C) {

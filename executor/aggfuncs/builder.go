@@ -34,7 +34,7 @@ func Build(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal
 	case ast.AggFuncCount:
 		return buildCount(aggFuncDesc, ordinal)
 	case ast.AggFuncSum:
-		return buildSum(aggFuncDesc, ordinal)
+		return buildSum(ctx, aggFuncDesc, ordinal)
 	case ast.AggFuncAvg:
 		return buildAvg(aggFuncDesc, ordinal)
 	case ast.AggFuncFirstRow:
@@ -134,7 +134,7 @@ func buildCount(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 }
 
 // buildSum builds the AggFunc implementation for function "SUM".
-func buildSum(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+func buildSum(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	base := baseSumAggFunc{
 		baseAggFunc: baseAggFunc{
 			args:    aggFuncDesc.Args,
@@ -155,7 +155,10 @@ func buildSum(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 			if aggFuncDesc.HasDistinct {
 				return &sum4DistinctFloat64{base}
 			}
-			return &sum4Float64{base}
+			if ctx.GetSessionVars().WindowingUseHighPrecision {
+				return &sum4Float64HighPrecision{baseSum4Float64{base}}
+			}
+			return &sum4Float64{baseSum4Float64{base}}
 		}
 	}
 }
@@ -280,7 +283,7 @@ func buildMaxMin(aggFuncDesc *aggregation.AggFuncDesc, ordinal int, isMax bool) 
 		case types.ETDecimal:
 			return &maxMin4Decimal{base}
 		case types.ETString:
-			return &maxMin4String{base}
+			return &maxMin4String{baseMaxMinAggFunc: base, retTp: aggFuncDesc.RetTp}
 		case types.ETDatetime, types.ETTimestamp:
 			return &maxMin4Time{base}
 		case types.ETDuration:

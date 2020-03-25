@@ -97,11 +97,12 @@ type UnionScanExec struct {
 
 	dirty *DirtyTable
 	// usedIndex is the column offsets of the index which Src executor has used.
-	usedIndex  []int
-	desc       bool
-	conditions []expression.Expression
-	columns    []*model.ColumnInfo
-	table      table.Table
+	usedIndex            []int
+	desc                 bool
+	conditions           []expression.Expression
+	conditionsWithVirCol []expression.Expression
+	columns              []*model.ColumnInfo
+	table                table.Table
 	// belowHandleIndex is the handle's position of the below scan plan.
 	belowHandleIndex int
 
@@ -112,6 +113,9 @@ type UnionScanExec struct {
 	cursor4SnapshotRows int
 	snapshotChunkBuffer *chunk.Chunk
 	mutableRow          chunk.MutRow
+	// virtualColumnIndex records all the indices of virtual columns and sort them in definition
+	// to make sure we can compute the virtual column in right order.
+	virtualColumnIndex []int
 }
 
 // Open implements the Executor Open interface.
@@ -125,15 +129,22 @@ func (us *UnionScanExec) Open(ctx context.Context) error {
 func (us *UnionScanExec) open(ctx context.Context) error {
 	var err error
 	reader := us.children[0]
+
+	// If the push-downed condition contains virtual column, we may build a selection upon reader. Since unionScanExec
+	// has already contained condition, we can ignore the selection.
+	if sel, ok := reader.(*SelectionExec); ok {
+		reader = sel.children[0]
+	}
+
+	// 1. select without virtual columns
+	// 2. build virtual columns and select with virtual columns
 	switch x := reader.(type) {
 	case *TableReaderExecutor:
 		us.addedRows, err = buildMemTableReader(us, x).getMemRows()
 	case *IndexReaderExecutor:
-		mIdxReader := buildMemIndexReader(us, x)
-		us.addedRows, err = mIdxReader.getMemRows()
+		us.addedRows, err = buildMemIndexReader(us, x).getMemRows()
 	case *IndexLookUpExecutor:
-		idxLookup := buildMemIndexLookUpReader(us, x)
-		us.addedRows, err = idxLookup.getMemRows()
+		us.addedRows, err = buildMemIndexLookUpReader(us, x).getMemRows()
 	}
 	if err != nil {
 		return err
@@ -156,7 +167,28 @@ func (us *UnionScanExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			return nil
 		}
 		mutableRow.SetDatums(row...)
-		req.AppendRow(mutableRow.ToRow())
+
+		for _, idx := range us.virtualColumnIndex {
+			datum, err := us.schema.Columns[idx].EvalVirtualColumn(mutableRow.ToRow())
+			if err != nil {
+				return err
+			}
+			// Because the expression might return different type from
+			// the generated column, we should wrap a CAST on the result.
+			castDatum, err := table.CastValue(us.ctx, datum, us.columns[idx])
+			if err != nil {
+				return err
+			}
+			mutableRow.SetDatum(idx, castDatum)
+		}
+
+		matched, _, err := expression.EvalBool(us.ctx, us.conditionsWithVirCol, mutableRow.ToRow())
+		if err != nil {
+			return err
+		}
+		if matched {
+			req.AppendRow(mutableRow.ToRow())
+		}
 	}
 	return nil
 }

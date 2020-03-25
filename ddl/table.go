@@ -207,9 +207,10 @@ const (
 func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	schemaID := job.SchemaID
 	tblInfo := &model.TableInfo{}
-	var autoID, dropJobID, recoverTableCheckFlag int64
+	var autoIncID, autoRandID, dropJobID, recoverTableCheckFlag int64
 	var snapshotTS uint64
-	if err = job.DecodeArgs(tblInfo, &autoID, &dropJobID, &snapshotTS, &recoverTableCheckFlag); err != nil {
+	const checkFlagIndexInJobArgs = 4 // The index of `recoverTableCheckFlag` in job arg list.
+	if err = job.DecodeArgs(tblInfo, &autoIncID, &dropJobID, &snapshotTS, &recoverTableCheckFlag, &autoRandID); err != nil {
 		// Invalid arguments, cancel this job.
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -251,9 +252,9 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		// none -> write only
 		// check GC enable and update flag.
 		if gcEnable {
-			job.Args[len(job.Args)-1] = recoverTableCheckFlagEnableGC
+			job.Args[checkFlagIndexInJobArgs] = recoverTableCheckFlagEnableGC
 		} else {
-			job.Args[len(job.Args)-1] = recoverTableCheckFlagDisableGC
+			job.Args[checkFlagIndexInJobArgs] = recoverTableCheckFlagDisableGC
 		}
 
 		job.SchemaState = model.StateWriteOnly
@@ -292,7 +293,7 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 
 		tblInfo.State = model.StatePublic
 		tblInfo.UpdateTS = t.StartTS
-		err = t.CreateTableAndSetAutoID(schemaID, tblInfo, autoID)
+		err = t.CreateTableAndSetAutoID(schemaID, tblInfo, autoIncID, autoRandID)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -452,6 +453,12 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 		}
 	}
 
+	// Clear the tiflash replica available status.
+	if tblInfo.TiFlashReplica != nil {
+		tblInfo.TiFlashReplica.AvailablePartitionIDs = nil
+		tblInfo.TiFlashReplica.Available = false
+	}
+
 	tblInfo.ID = newTableID
 	err = t.CreateTableOrView(schemaID, tblInfo)
 	if err != nil {
@@ -550,7 +557,7 @@ func verifyNoOverflowShardBits(s *sessionPool, tbl table.Table, shardRowIDBits u
 	defer s.put(ctx)
 
 	// Check next global max auto ID first.
-	autoIncID, err := tbl.Allocator(ctx, autoid.RowIDAllocType).NextGlobalAutoID(tbl.Meta().ID)
+	autoIncID, err := tbl.Allocators(ctx).Get(autoid.RowIDAllocType).NextGlobalAutoID(tbl.Meta().ID)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -655,7 +662,8 @@ func onModifyTableComment(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 
 func onModifyTableCharsetAndCollate(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	var toCharset, toCollate string
-	if err := job.DecodeArgs(&toCharset, &toCollate); err != nil {
+	var needsOverwriteCols bool
+	if err := job.DecodeArgs(&toCharset, &toCollate, &needsOverwriteCols); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
@@ -679,14 +687,17 @@ func onModifyTableCharsetAndCollate(t *meta.Meta, job *model.Job) (ver int64, _ 
 
 	tblInfo.Charset = toCharset
 	tblInfo.Collate = toCollate
-	// update column charset.
-	for _, col := range tblInfo.Columns {
-		if field_types.HasCharset(&col.FieldType) {
-			col.Charset = toCharset
-			col.Collate = toCollate
-		} else {
-			col.Charset = charset.CharsetBin
-			col.Collate = charset.CharsetBin
+
+	if needsOverwriteCols {
+		// update column charset.
+		for _, col := range tblInfo.Columns {
+			if field_types.HasCharset(&col.FieldType) {
+				col.Charset = toCharset
+				col.Collate = toCollate
+			} else {
+				col.Charset = charset.CharsetBin
+				col.Collate = charset.CharsetBin
+			}
 		}
 	}
 
@@ -739,9 +750,10 @@ func onUpdateFlashReplicaStatus(t *meta.Meta, job *model.Job) (ver int64, _ erro
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	if tblInfo.TiFlashReplica == nil || (tblInfo.TiFlashReplica.Available == available) ||
+	if tblInfo.TiFlashReplica == nil || (tblInfo.ID == physicalID && tblInfo.TiFlashReplica.Available == available) ||
 		(tblInfo.ID != physicalID && available == tblInfo.TiFlashReplica.IsPartitionAvailable(physicalID)) {
-		return ver, nil
+		job.State = model.JobStateCancelled
+		return ver, errors.Errorf("the replica available status of table %s is already updated", tblInfo.Name.String())
 	}
 
 	if tblInfo.ID == physicalID {

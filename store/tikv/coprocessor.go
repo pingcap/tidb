@@ -27,20 +27,21 @@ import (
 	"unsafe"
 
 	"github.com/cznic/mathutil"
+	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/distsql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
 
@@ -223,13 +224,6 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, req *kv
 	if req.Streaming {
 		cmdType = tikvrpc.CmdCopStream
 	}
-	var tableStart, tableEnd kv.Key
-	if req.StoreType == kv.TiFlash {
-		tableID := tablecodec.DecodeTableID(ranges.at(0).StartKey)
-		fullRange := ranger.FullIntRange(false)
-		keyRange := distsql.TableRangesToKVRanges(tableID, fullRange, nil)
-		tableStart, tableEnd = keyRange[0].StartKey, keyRange[0].EndKey
-	}
 
 	if req.StoreType == kv.TiDB {
 		return buildTiDBMemCopTasks(ranges, req)
@@ -238,44 +232,21 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, req *kv
 	rangesLen := ranges.len()
 	var tasks []*copTask
 	appendTask := func(regionWithRangeInfo *KeyLocation, ranges *copRanges) {
-		if req.StoreType == kv.TiKV {
-			// TiKV will return gRPC error if the message is too large. So we need to limit the length of the ranges slice
-			// to make sure the message can be sent successfully.
-			rLen := ranges.len()
-			for i := 0; i < rLen; {
-				nextI := mathutil.Min(i+rangesPerTask, rLen)
-				tasks = append(tasks, &copTask{
-					region: regionWithRangeInfo.Region,
-					ranges: ranges.slice(i, nextI),
-					// Channel buffer is 2 for handling region split.
-					// In a common case, two region split tasks will not be blocked.
-					respChan:  make(chan *copResponse, 2),
-					cmdType:   cmdType,
-					storeType: req.StoreType,
-				})
-				i = nextI
-			}
-		} else if req.StoreType == kv.TiFlash {
-			left, right := regionWithRangeInfo.StartKey, regionWithRangeInfo.EndKey
-			if bytes.Compare(tableStart, left) >= 0 {
-				left = tableStart
-			}
-			if bytes.Compare(tableEnd, right) <= 0 || len(right) == 0 {
-				right = tableEnd
-			}
-			fullRange := kv.KeyRange{StartKey: left, EndKey: right}
+		// TiKV will return gRPC error if the message is too large. So we need to limit the length of the ranges slice
+		// to make sure the message can be sent successfully.
+		rLen := ranges.len()
+		for i := 0; i < rLen; {
+			nextI := mathutil.Min(i+rangesPerTask, rLen)
 			tasks = append(tasks, &copTask{
 				region: regionWithRangeInfo.Region,
-				// TiFlash only support full range scan for the region, ignore the real ranges
-				// does not affect the correctness because we already merge the access range condition
-				// into filter condition in `getOriginalPhysicalTableScan`
-				ranges: &copRanges{mid: []kv.KeyRange{fullRange}},
+				ranges: ranges.slice(i, nextI),
 				// Channel buffer is 2 for handling region split.
 				// In a common case, two region split tasks will not be blocked.
 				respChan:  make(chan *copResponse, 2),
 				cmdType:   cmdType,
 				storeType: req.StoreType,
 			})
+			i = nextI
 		}
 	}
 
@@ -757,6 +728,10 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	startTime := time.Now()
 	resp, rpcCtx, storeAddr, err := worker.SendReqCtx(bo, req, task.region, ReadTimeoutMedium, task.storeType, task.storeAddr)
 	if err != nil {
+		if task.storeType == kv.TiDB {
+			err = worker.handleTiDBSendReqErr(err, task, ch)
+			return nil, err
+		}
 		return nil, errors.Trace(err)
 	}
 	// Set task.storeAddr field so its task.String() method have the store address information.
@@ -945,7 +920,9 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 			worker.sendToRespCh(resp, ch, true)
 			return nil, nil
 		}
-		if err := bo.Backoff(BoRegionMiss, errors.New(regionErr.String())); err != nil {
+		errStr := fmt.Sprintf("region_id:%v, region_ver:%v, store_type:%s, peer_addr:%s, error:%s",
+			task.region.id, task.region.ver, task.storeType.Name(), task.storeAddr, regionErr.String())
+		if err := bo.Backoff(BoRegionMiss, errors.New(errStr)); err != nil {
 			return nil, errors.Trace(err)
 		}
 		// We may meet RegionError at the first packet, but not during visiting the stream.
@@ -984,7 +961,8 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 		resp.detail = new(execdetails.ExecDetails)
 	}
 	resp.detail.BackoffTime = time.Duration(bo.totalSleep) * time.Millisecond
-	resp.detail.BackoffSleep, resp.detail.BackoffTimes = make(map[string]time.Duration), make(map[string]int)
+	resp.detail.BackoffSleep = make(map[string]time.Duration, len(bo.backoffTimes))
+	resp.detail.BackoffTimes = make(map[string]int, len(bo.backoffTimes))
 	for backoff := range bo.backoffTimes {
 		backoffName := backoff.String()
 		resp.detail.BackoffTimes[backoffName] = bo.backoffTimes[backoff]
@@ -1033,6 +1011,35 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 	}
 	worker.sendToRespCh(resp, ch, true)
 	return nil, nil
+}
+
+func (worker *copIteratorWorker) handleTiDBSendReqErr(err error, task *copTask, ch chan<- *copResponse) error {
+	errCode := errno.ErrUnknown
+	errMsg := err.Error()
+	if terror.ErrorEqual(err, ErrTiKVServerTimeout) {
+		errCode = errno.ErrTiKVServerTimeout
+		errMsg = "TiDB server timeout, address is " + task.storeAddr
+	}
+	selResp := tipb.SelectResponse{
+		Warnings: []*tipb.Error{
+			{
+				Code: int32(errCode),
+				Msg:  errMsg,
+			},
+		},
+	}
+	data, err := proto.Marshal(&selResp)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	resp := &copResponse{
+		pbResp: &coprocessor.Response{
+			Data: data,
+		},
+		detail: &execdetails.ExecDetails{},
+	}
+	worker.sendToRespCh(resp, ch, true)
+	return nil
 }
 
 func (worker *copIteratorWorker) buildCopTasksFromRemain(bo *Backoffer, lastRange *coprocessor.KeyRange, task *copTask) ([]*copTask, error) {

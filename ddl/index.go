@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/config"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -49,7 +50,6 @@ import (
 )
 
 const (
-	maxPrefixLength = 3072
 	// MaxCommentLength is exported for testing.
 	MaxCommentLength = 1024
 )
@@ -78,8 +78,8 @@ func buildIndexColumns(columns []*model.ColumnInfo, indexPartSpecifications []*a
 		sumLength += indexColumnLength
 
 		// The sum of all lengths must be shorter than the max length for prefix.
-		if sumLength > maxPrefixLength {
-			return nil, errors.Trace(errTooLongKey)
+		if sumLength > config.GetGlobalConfig().MaxIndexLength {
+			return nil, errTooLongKey.GenWithStackByArgs(config.GetGlobalConfig().MaxIndexLength)
 		}
 
 		idxParts = append(idxParts, &model.IndexColumn{
@@ -123,8 +123,8 @@ func checkIndexPrefixLength(columns []*model.ColumnInfo, idxColumns []*model.Ind
 		}
 		sumLength += indexColumnLength
 		// The sum of all lengths must be shorter than the max length for prefix.
-		if sumLength > maxPrefixLength {
-			return errors.Trace(errTooLongKey)
+		if sumLength > config.GetGlobalConfig().MaxIndexLength {
+			return errTooLongKey.GenWithStackByArgs(config.GetGlobalConfig().MaxIndexLength)
 		}
 	}
 	return nil
@@ -140,9 +140,14 @@ func checkIndexColumn(col *model.ColumnInfo, ic *ast.IndexPartSpecification) err
 		return errors.Trace(errJSONUsedAsKey.GenWithStackByArgs(col.Name.O))
 	}
 
-	// Length must be specified for BLOB and TEXT column indexes.
-	if types.IsTypeBlob(col.FieldType.Tp) && ic.Length == types.UnspecifiedLength {
-		return errors.Trace(errBlobKeyWithoutLength.GenWithStackByArgs(col.Name.O))
+	// Length must be specified and non-zero for BLOB and TEXT column indexes.
+	if types.IsTypeBlob(col.FieldType.Tp) {
+		if ic.Length == types.UnspecifiedLength {
+			return errors.Trace(errBlobKeyWithoutLength.GenWithStackByArgs(col.Name.O))
+		}
+		if ic.Length == types.ErrorLength {
+			return errors.Trace(errKeyPart0.GenWithStackByArgs(col.Name.O))
+		}
 	}
 
 	// Length can only be specified for specifiable types.
@@ -152,13 +157,19 @@ func checkIndexColumn(col *model.ColumnInfo, ic *ast.IndexPartSpecification) err
 
 	// Key length must be shorter or equal to the column length.
 	if ic.Length != types.UnspecifiedLength &&
-		types.IsTypeChar(col.FieldType.Tp) && col.Flen < ic.Length {
-		return errors.Trace(errIncorrectPrefixKey)
+		types.IsTypeChar(col.FieldType.Tp) {
+		if col.Flen < ic.Length {
+			return errors.Trace(errIncorrectPrefixKey)
+		}
+		// Length must be non-zero for char.
+		if ic.Length == types.ErrorLength {
+			return errors.Trace(errKeyPart0.GenWithStackByArgs(col.Name.O))
+		}
 	}
 
 	// Specified length must be shorter than the max length for prefix.
-	if ic.Length > maxPrefixLength {
-		return errors.Trace(errTooLongKey)
+	if ic.Length > config.GetGlobalConfig().MaxIndexLength {
+		return errTooLongKey.GenWithStackByArgs(config.GetGlobalConfig().MaxIndexLength)
 	}
 	return nil
 }
@@ -424,6 +435,9 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		}
 		if indexOption != nil {
 			indexInfo.Comment = indexOption.Comment
+			if indexOption.Visibility == ast.IndexVisibilityInvisible {
+				indexInfo.Invisible = true
+			}
 			if indexOption.Tp == model.IndexTypeInvalid {
 				// Use btree as default index type.
 				indexInfo.Tp = model.IndexTypeBtree

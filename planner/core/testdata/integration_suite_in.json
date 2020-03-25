@@ -59,26 +59,16 @@
     ]
   },
   {
-    "name": "TestReadFromStorageHint",
+    "name": "TestSubqueryWithTopN",
     "cases": [
-      "desc select avg(a) from t",
-      "desc select /*+ read_from_storage(tiflash[t]) */ avg(a) from t",
-      "desc select /*+ read_from_storage(tiflash[t]) */ sum(a) from t",
-      "desc select /*+ read_from_storage(tiflash[t]) */ sum(a+1) from t",
-      "desc select /*+ read_from_storage(tiflash[t]) */ sum(isnull(a)) from t",
-      "desc select * from tt where (tt.a > 1 and tt.a < 20) or (tt.a >= 30 and tt.a < 55)",
-      "desc select /*+ read_from_storage(tiflash[tt]) */ * from tt where (tt.a > 1 and tt.a < 20) or (tt.a >= 30 and tt.a < 55)",
-      "desc select * from ttt order by ttt.a desc",
-      "desc select /*+ read_from_storage(tiflash[ttt]) */ * from ttt order by ttt.a desc",
-      "desc select /*+ read_from_storage(tiflash[ttt]) */ * from ttt order by ttt.a"
+      "desc select t1.b from t t1 where t1.b in (select t2.a from t t2 order by t1.a+t2.a limit 1)"
     ]
   },
   {
-    "name": "TestReadFromStorageHintAndIsolationRead",
+    "name": "TestIndexJoinTableRange",
     "cases": [
-      "desc select /*+ read_from_storage(tikv[t], tiflash[t]) */ avg(a) from t",
-      "desc select /*+ read_from_storage(tikv[t]) */ avg(a) from t",
-      "desc select /*+ read_from_storage(tiflash[t]) */ avg(a) from t"
+      "desc select /*+ TIDB_INLJ(t2)*/ * from t1, t2 where t1.a = t2.a and t1.b = t2.b",
+      "desc select /*+ TIDB_INLJ(t2)*/ * from t1, t2 where t1.a = t2.a and t1.b = t2.a and t1.b = t2.b"
     ]
   }
 ]

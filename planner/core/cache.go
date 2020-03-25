@@ -14,6 +14,7 @@
 package core
 
 import (
+	"math"
 	"sync/atomic"
 	"time"
 
@@ -33,11 +34,11 @@ var (
 	// Otherwise, preparedPlanCacheEnabledValue's value is 0.
 	preparedPlanCacheEnabledValue int32
 	// PreparedPlanCacheCapacity stores the global config "prepared-plan-cache-capacity".
-	PreparedPlanCacheCapacity uint
+	PreparedPlanCacheCapacity uint = 100
 	// PreparedPlanCacheMemoryGuardRatio stores the global config "prepared-plan-cache-memory-guard-ratio".
-	PreparedPlanCacheMemoryGuardRatio float64
+	PreparedPlanCacheMemoryGuardRatio float64 = 0.1
 	// PreparedPlanCacheMaxMemory stores the max memory size defined in the global config "performance-max-memory".
-	PreparedPlanCacheMaxMemory atomic2.Uint64
+	PreparedPlanCacheMaxMemory atomic2.Uint64 = *atomic2.NewUint64(math.MaxUint64)
 )
 
 const (
@@ -138,8 +139,12 @@ func NewPSTMTPlanCacheValue(plan Plan, names []*types.FieldName) *PSTMTPlanCache
 
 // CachedPrepareStmt store prepared ast from PrepareExec and other related fields
 type CachedPrepareStmt struct {
-	PreparedAst *ast.Prepared
-	VisitInfos  []visitInfo
-	ColumnInfos interface{}
-	Executor    interface{}
+	PreparedAst    *ast.Prepared
+	VisitInfos     []visitInfo
+	ColumnInfos    interface{}
+	Executor       interface{}
+	NormalizedSQL  string
+	NormalizedPlan string
+	SQLDigest      string
+	PlanDigest     string
 }

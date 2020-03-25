@@ -17,6 +17,8 @@ import (
 	"bytes"
 	"math"
 	"unsafe"
+
+	"github.com/pingcap/tidb/util/fastrand"
 )
 
 const (
@@ -39,21 +41,30 @@ type DB struct {
 // This DB is append-only, deleting an entry would remove entry node but not
 // reclaim KV buffer.
 func New(initBlockSize int) *DB {
-	return &DB{
+	db := &DB{
 		height: 1,
-		head:   nodeWithAddr{node: new(node)},
 		arena:  newArenaLocator(initBlockSize),
 	}
+	db.setHeadNode()
+	return db
 }
 
 // Reset resets the DB to initial empty state.
 // Release all blocks except the initial one.
 func (db *DB) Reset() {
 	db.height = 1
-	db.head.node = new(node)
 	db.length = 0
 	db.size = 0
 	db.arena.reset()
+	db.setHeadNode()
+}
+
+func (db *DB) setHeadNode() {
+	n, _ := db.newNode(db.arena, nil, nil, maxHeight)
+	for i := 0; i < maxHeight; i++ {
+		n.setNexts(i, arenaAddr{})
+	}
+	db.head.node = n
 }
 
 // Get gets the value for the given key. It returns nil if the
@@ -96,11 +107,11 @@ func (db *DB) Put(key []byte, v []byte) bool {
 	// We always insert from the base level and up. After you add a node in base level, we cannot
 	// create a node in the level above because it would have discovered the node in the base level.
 	for i := 0; i < height; i++ {
-		x.nexts[i] = next[i].addr
+		x.setNexts(i, next[i].addr)
 		if prev[i].node == nil {
 			prev[i] = db.head
 		}
-		prev[i].nexts[i] = addr
+		prev[i].setNexts(i, addr)
 	}
 
 	x.prev = prev[0].addr
@@ -125,7 +136,7 @@ func (db *DB) prepareOverwrite(next []nodeWithAddr) int {
 	height := int(old.height)
 	for i := 0; i < height; i++ {
 		if next[i].addr == old.addr {
-			next[i].addr = old.nexts[i]
+			next[i].addr = old.nexts(i)
 			if !next[i].addr.isNull() {
 				data := db.arena.getFrom(next[i].addr)
 				next[i].node = (*node)(unsafe.Pointer(&data[0]))
@@ -152,9 +163,9 @@ func (db *DB) Delete(key []byte) bool {
 	}
 
 	for i := int(keyNode.height) - 1; i >= 0; i-- {
-		prev[i].nexts[i] = keyNode.nexts[i]
+		prev[i].setNexts(i, keyNode.nexts(i))
 	}
-	nextAddr := keyNode.nexts[0]
+	nextAddr := keyNode.nexts(0)
 	if !nextAddr.isNull() {
 		nextData := db.arena.getFrom(nextAddr)
 		next := (*node)(unsafe.Pointer(&nextData[0]))
@@ -184,7 +195,7 @@ func (db *DB) Size() int {
 func (db *DB) findSpliceForLevel(arena *arena, key []byte, before nodeWithAddr, level int) (nodeWithAddr, nodeWithAddr, bool) {
 	for {
 		// Assume before.key < key.
-		nextAddr := before.nexts[level]
+		nextAddr := before.nexts(level)
 		if nextAddr.isNull() {
 			return before, nodeWithAddr{}, false
 		}
@@ -207,7 +218,7 @@ func (db *DB) findGreaterEqual(key []byte) (*node, []byte, bool) {
 	for {
 		var nextData []byte
 		var next *node
-		addr := prev.nexts[level]
+		addr := prev.nexts(level)
 		if !addr.isNull() {
 			arena := db.arena
 			nextData = arena.getFrom(addr)
@@ -306,13 +317,9 @@ func (db *DB) newNode(arena *arena, key []byte, v []byte, height int) (*node, ar
 	return node, addr
 }
 
-// fastRand is a fast thread local random function.
-//go:linkname fastRand runtime.fastrand
-func fastRand() uint32
-
 func (db *DB) randomHeight() int {
 	h := 1
-	for h < maxHeight && fastRand() < uint32(math.MaxUint32)/4 {
+	for h < maxHeight && fastrand.Uint32() < uint32(math.MaxUint32)/4 {
 		h++
 	}
 	return h
@@ -329,8 +336,11 @@ type node struct {
 
 	// Addr of previous node at base level.
 	prev arenaAddr
-	// Height of the nexts.
-	nexts [maxHeight]arenaAddr
+
+	// node is a variable length struct.
+	// The nextsBase is the first element of nexts slice,
+	// it act as the base pointer we do pointer arithmetic in `next` and `setNext`.
+	nextsBase arenaAddr
 }
 
 type nodeWithAddr struct {
@@ -352,8 +362,21 @@ func (n *node) getValue(buf []byte) []byte {
 	return buf[nodeLenKeyLen : nodeLenKeyLen+int(n.valLen)]
 }
 
+func (n *node) nexts(level int) arenaAddr {
+	return *n.nextsAddr(level)
+}
+
+func (n *node) setNexts(level int, val arenaAddr) {
+	*n.nextsAddr(level) = val
+}
+
+func (n *node) nextsAddr(idx int) *arenaAddr {
+	offset := uintptr(idx) * unsafe.Sizeof(n.nextsBase)
+	return (*arenaAddr)(unsafe.Pointer(uintptr(unsafe.Pointer(&n.nextsBase)) + offset))
+}
+
 func (db *DB) getNext(n *node, level int) (*node, []byte) {
-	addr := n.nexts[level]
+	addr := n.nexts(level)
 	if addr.isNull() {
 		return nil, nil
 	}

@@ -24,6 +24,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
@@ -46,6 +47,8 @@ type Column struct {
 	*model.ColumnInfo
 	// If this column is a generated column, the expression will be stored here.
 	GeneratedExpr ast.ExprNode
+	// If this column has default expr value, this expression will be stored here.
+	DefaultExpr ast.ExprNode
 }
 
 // String implements fmt.Stringer interface.
@@ -80,6 +83,7 @@ func FindCol(cols []*Column, name string) *Column {
 func ToColumn(col *model.ColumnInfo) *Column {
 	return &Column{
 		col,
+		nil,
 		nil,
 	}
 }
@@ -131,7 +135,7 @@ func truncateTrailingSpaces(v *types.Datum) {
 	}
 	b = b[:length]
 	str := string(hack.String(b))
-	v.SetString(str)
+	v.SetString(str, v.Collation())
 }
 
 // CastValues casts values based on columns type.
@@ -371,7 +375,44 @@ func GetColOriginDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo) (ty
 
 // GetColDefaultValue gets default value of the column.
 func GetColDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo) (types.Datum, error) {
-	return getColDefaultValue(ctx, col, col.GetDefaultValue())
+	defaultValue := col.GetDefaultValue()
+	if !col.DefaultIsExpr {
+		return getColDefaultValue(ctx, col, defaultValue)
+	}
+	return getColDefaultExprValue(ctx, col, defaultValue.(string))
+}
+
+// EvalColDefaultExpr eval default expr node to explicit default value.
+func EvalColDefaultExpr(ctx sessionctx.Context, col *model.ColumnInfo, defaultExpr ast.ExprNode) (types.Datum, error) {
+	d, err := expression.EvalAstExpr(ctx, defaultExpr)
+	if err != nil {
+		return types.Datum{}, err
+	}
+	// Check the evaluated data type by cast.
+	value, err := CastValue(ctx, d, col)
+	if err != nil {
+		return types.Datum{}, err
+	}
+	return value, nil
+}
+
+func getColDefaultExprValue(ctx sessionctx.Context, col *model.ColumnInfo, defaultValue string) (types.Datum, error) {
+	var defaultExpr ast.ExprNode
+	expr := fmt.Sprintf("select %s", defaultValue)
+	stmts, _, err := parser.New().Parse(expr, "", "")
+	if err == nil {
+		defaultExpr = stmts[0].(*ast.SelectStmt).Fields.Fields[0].Expr
+	}
+	d, err := expression.EvalAstExpr(ctx, defaultExpr)
+	if err != nil {
+		return types.Datum{}, err
+	}
+	// Check the evaluated data type by cast.
+	value, err := CastValue(ctx, d, col)
+	if err != nil {
+		return types.Datum{}, err
+	}
+	return value, nil
 }
 
 func getColDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo, defaultVal interface{}) (types.Datum, error) {
@@ -430,7 +471,7 @@ func getColDefaultValueFromNil(ctx sessionctx.Context, col *model.ColumnInfo) (t
 		if err != nil {
 			return types.Datum{}, err
 		}
-		return types.NewMysqlEnumDatum(defEnum), nil
+		return types.NewCollateMysqlEnumDatum(defEnum, col.Collate), nil
 	}
 	if mysql.HasAutoIncrementFlag(col.Flag) {
 		// Auto increment column doesn't has default value and we should not return error.
@@ -469,10 +510,10 @@ func GetZeroValue(col *model.ColumnInfo) types.Datum {
 		if col.Flen > 0 && col.Charset == charset.CharsetBin {
 			d.SetBytes(make([]byte, col.Flen))
 		} else {
-			d.SetString("")
+			d.SetString("", col.Collate)
 		}
 	case mysql.TypeVarString, mysql.TypeVarchar:
-		d.SetString("")
+		d.SetString("", col.Collate)
 	case mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		d.SetBytes([]byte{})
 	case mysql.TypeDuration:
@@ -486,9 +527,9 @@ func GetZeroValue(col *model.ColumnInfo) types.Datum {
 	case mysql.TypeBit:
 		d.SetMysqlBit(types.ZeroBinaryLiteral)
 	case mysql.TypeSet:
-		d.SetMysqlSet(types.Set{})
+		d.SetMysqlSet(types.Set{}, col.Collate)
 	case mysql.TypeEnum:
-		d.SetMysqlEnum(types.Enum{})
+		d.SetMysqlEnum(types.Enum{}, col.Collate)
 	case mysql.TypeJSON:
 		d.SetMysqlJSON(json.CreateBinary(nil))
 	}

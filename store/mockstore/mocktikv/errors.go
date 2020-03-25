@@ -14,6 +14,7 @@
 package mocktikv
 
 import (
+	"encoding/hex"
 	"fmt"
 
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -22,18 +23,19 @@ import (
 // ErrLocked is returned when trying to Read/Write on a locked key. Client should
 // backoff or cleanup the lock then retry.
 type ErrLocked struct {
-	Key      MvccKey
-	Primary  []byte
-	StartTS  uint64
-	TTL      uint64
-	TxnSize  uint64
-	LockType kvrpcpb.Op
+	Key         MvccKey
+	Primary     []byte
+	StartTS     uint64
+	ForUpdateTS uint64
+	TTL         uint64
+	TxnSize     uint64
+	LockType    kvrpcpb.Op
 }
 
 // Error formats the lock to a string.
 func (e *ErrLocked) Error() string {
-	return fmt.Sprintf("key is locked, key: %q, primary: %q, txnStartTS: %v, LockType: %v",
-		e.Key, e.Primary, e.StartTS, e.LockType)
+	return fmt.Sprintf("key is locked, key: %q, primary: %q, txnStartTS: %v, forUpdateTs: %v, LockType: %v",
+		e.Key, e.Primary, e.StartTS, e.ForUpdateTS, e.LockType)
 }
 
 // ErrKeyAlreadyExist is returned when key exists but this key has a constraint that
@@ -66,6 +68,16 @@ type ErrAlreadyCommitted uint64
 
 func (e ErrAlreadyCommitted) Error() string {
 	return "txn already committed"
+}
+
+// ErrAlreadyRollbacked is returned when lock operation meets rollback write record
+type ErrAlreadyRollbacked struct {
+	startTS uint64
+	key     []byte
+}
+
+func (e *ErrAlreadyRollbacked) Error() string {
+	return fmt.Sprintf("txn=%v on key=%s is already rollbacked", e.startTS, hex.EncodeToString(e.key))
 }
 
 // ErrConflict is returned when the commitTS of key in the DB is greater than startTS.

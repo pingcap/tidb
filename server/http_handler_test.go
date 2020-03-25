@@ -15,6 +15,9 @@ package server
 
 import (
 	"bytes"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
@@ -439,7 +442,7 @@ func (ts *HTTPHandlerTestSuite) TestGetTableMVCC(c *C) {
 	info := data.Value.Info
 	c.Assert(info, NotNil)
 	c.Assert(len(info.Writes), Greater, 0)
-	startTs := info.Writes[0].StartTs
+	startTs := info.Writes[2].StartTs
 
 	resp, err = ts.fetchStatus(fmt.Sprintf("/mvcc/txn/%d/tidb/test", startTs))
 	c.Assert(err, IsNil)
@@ -776,7 +779,7 @@ func (ts *HTTPHandlerTestSuite) TestGetSchema(c *C) {
 	var dbs []*model.DBInfo
 	err = decoder.Decode(&dbs)
 	c.Assert(err, IsNil)
-	expects := []string{"information_schema", "inspection_schema", "metric_schema", "mysql", "performance_schema", "test", "tidb"}
+	expects := []string{"information_schema", "metrics_schema", "mysql", "performance_schema", "test", "tidb"}
 	names := make([]string, len(dbs))
 	for i, v := range dbs {
 		names[i] = v.Name.L
@@ -1055,6 +1058,19 @@ func (ts *HTTPHandlerTestSuite) TestDebugZip(c *C) {
 	c.Assert(resp.Body.Close(), IsNil)
 }
 
+func (ts *HTTPHandlerTestSuite) TestCheckCN(c *C) {
+	s := &Server{cfg: &config.Config{Security: config.Security{ClusterVerifyCN: []string{"a ", "b", "c"}}}}
+	tlsConfig := &tls.Config{}
+	s.setCNChecker(tlsConfig)
+	c.Assert(tlsConfig.VerifyPeerCertificate, NotNil)
+	err := tlsConfig.VerifyPeerCertificate(nil, [][]*x509.Certificate{{{Subject: pkix.Name{CommonName: "a"}}}})
+	c.Assert(err, IsNil)
+	err = tlsConfig.VerifyPeerCertificate(nil, [][]*x509.Certificate{{{Subject: pkix.Name{CommonName: "b"}}}})
+	c.Assert(err, IsNil)
+	err = tlsConfig.VerifyPeerCertificate(nil, [][]*x509.Certificate{{{Subject: pkix.Name{CommonName: "d"}}}})
+	c.Assert(err, NotNil)
+}
+
 func (ts *HTTPHandlerTestSuite) TestZipInfoForSQL(c *C) {
 	ts.startServer(c)
 	defer ts.stopServer(c)
@@ -1110,5 +1126,27 @@ func (ts *HTTPHandlerTestSuite) TestZipInfoForSQL(c *C) {
 	b, err = ioutil.ReadAll(resp.Body)
 	c.Assert(err, IsNil)
 	c.Assert(string(b), Equals, "use database non_exists_db failed, err: [schema:1049]Unknown database 'non_exists_db'\n")
+	c.Assert(resp.Body.Close(), IsNil)
+}
+
+func (ts *HTTPHandlerTestSuite) TestFailpointHandler(c *C) {
+	defer ts.stopServer(c)
+
+	// start server without enabling failpoint integration
+	ts.startServer(c)
+	resp, err := ts.fetchStatus("/fail/")
+	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusNotFound)
+	ts.stopServer(c)
+
+	// enable failpoint integration and start server
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/server/integrateFailpoint", "return"), IsNil)
+	ts.startServer(c)
+	resp, err = ts.fetchStatus("/fail/")
+	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+	b, err := ioutil.ReadAll(resp.Body)
+	c.Assert(err, IsNil)
+	c.Assert(strings.Contains(string(b), "github.com/pingcap/tidb/server/integrateFailpoint=return"), IsTrue)
 	c.Assert(resp.Body.Close(), IsNil)
 }

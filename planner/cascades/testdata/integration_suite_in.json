@@ -36,7 +36,15 @@
       "select t1.a, max(t1.b) from t as t1 left join (select * from t) as t2 on t1.a = t2.a and t1.b = 3 group by t1.a order by a",
       "select t1.a, sum(distinct t1.b) from t as t1 left join (select * from t) as t2 on t1.b = t2.b group by t1.a order by a",
       "select t2.a, max(t2.b) from t as t1 right join (select * from t) as t2 on t1.a = t2.a group by t2.a order by a",
-      "select max(a) from t"
+      "select t3.a, max(t3.b) from (select t1.a, t1.b from t as t1 left join t as t2 on t1.b = t2.b) t3 group by t3.a order by a",
+      "select max(a) from t",
+      "select sum(case when a > 0 and a <= 1000 then b else 0 end) from t",
+      "select sum(case when a > 0 then (case when a <= 1000 then b end) else 0 end) from t",
+      "select sum(case when a <= 0 or a > 1000 then 0.0 else b end) from t",
+      "select count(case when a > 0 and a <= 1000 then b end) from t",
+      "select count(case when a <= 0 or a > 1000 then null else b end) from t",
+      "select count(distinct case when a > 0 and a <= 1000 then b end) from t",
+      "select count(b), sum(b), avg(b), b, max(b), min(b), bit_and(b), bit_or(b), bit_xor(b) from t group by a having sum(b) >= 0 and count(b) >= 0 order by b"
     ]
   },
   {
@@ -47,7 +55,9 @@
       "select b from t order by b limit 3",
       "select a from t order by a limit 1 offset 2",
       "select * from ((select a as aa from t t1) union all (select b as aa from t t2)) as t3 order by aa",
-      "select a, b, lag(a,1) over (order by b) from t order by b"
+      "select a, b, lag(a,1) over (order by b) from t order by b",
+      "select * from (select a+1 as c, a+b as d from t) as t1 order by c+d limit 10",
+      "select t1.a, t1.b from t as t1 left join t as t2 on t1.a = t2.a and t1.b = 3 order by a"
     ]
   },
   {
@@ -77,7 +87,8 @@
     "name": "TestApply",
     "cases": [
       "select a = (select a from t2 where t1.b = t2.b order by a limit 1) from t1",
-      "select sum(a), (select t1.a from t1 where t1.a = t2.a limit 1), (select t1.b from t1 where t1.b = t2.b limit 1) from t2"
+      "select sum(a), (select t1.a from t1 where t1.a = t2.a limit 1), (select t1.b from t1 where t1.b = t2.b limit 1) from t2",
+      "select a from t1 where exists(select 1 from t2 where t1.a = t2.a)"
     ]
   },
   {
@@ -96,6 +107,26 @@
       "select a from (select a from t order by a limit 3 offset 5) as t1 order by a limit 3 offset 5",
       "select a from (select a from t where b > 2 order by a, b limit 3 offset 1) as t1 order by a limit 2 offset 1",
       "select * from (select * from t order by a limit 3) as t1 order by a, b limit 5"
+    ]
+  },
+  {
+    "name": "TestCascadePlannerHashedPartTable",
+    "cases": [
+      "select * from pt1"
+    ]
+  },
+  {
+    "name": "TestInlineProjection",
+    "cases": [
+      "select /*+ HASH_JOIN(t1) */ t1.b, t2.b from t1, t2 where t1.a = t2.a;", // TODO: need column pruning again.
+      "select /*+ HASH_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;",
+      "select /*+ HASH_JOIN(t1) */ t1.b, t2.b from t1 left outer join t2 on t1.a = t2.a;",
+      "select /*+ HASH_JOIN(t1) */ t1.b, t2.b from t1 right outer join t2 on t1.a = t2.a;",
+      "select 1 from (select /*+ HASH_JOIN(t1) */ t1.a in (select t2.a from t2) from t1) x;", // TODO: should use hash join
+      "select 1 from (select /*+ HASH_JOIN(t1) */ t1.a not in (select t2.a from t2) from t1) x;", // TODO: should use hash join
+      "select /*+ INL_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;",
+      "select /*+ INL_HASH_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;",
+      "select /*+ INL_MERGE_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;"
     ]
   }
 ]

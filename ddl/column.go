@@ -46,7 +46,7 @@ func adjustColumnInfoInAddColumn(tblInfo *model.TableInfo, offset int) {
 	newCols = append(newCols, oldCols[len(oldCols)-1])
 	newCols = append(newCols, oldCols[offset:len(oldCols)-1]...)
 	// Adjust column offset.
-	offsetChanged := make(map[int]int)
+	offsetChanged := make(map[int]int, len(newCols)-offset-1)
 	for i := offset + 1; i < len(newCols); i++ {
 		offsetChanged[newCols[i].Offset] = i
 		newCols[i].Offset = i
@@ -71,7 +71,7 @@ func adjustColumnInfoInAddColumn(tblInfo *model.TableInfo, offset int) {
 func adjustColumnInfoInDropColumn(tblInfo *model.TableInfo, offset int) {
 	oldCols := tblInfo.Columns
 	// Adjust column offset.
-	offsetChanged := make(map[int]int)
+	offsetChanged := make(map[int]int, len(oldCols)-offset-1)
 	for i := offset + 1; i < len(oldCols); i++ {
 		offsetChanged[oldCols[i].Offset] = i - 1
 		oldCols[i].Offset = i - 1

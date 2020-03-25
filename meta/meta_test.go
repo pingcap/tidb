@@ -207,7 +207,7 @@ func (s *testSuite) TestMeta(c *C) {
 		ID:   3,
 		Name: model.NewCIStr("tbl3"),
 	}
-	err = t.CreateTableAndSetAutoID(1, tbInfo3, 123)
+	err = t.CreateTableAndSetAutoID(1, tbInfo3, 123, 0)
 	c.Assert(err, IsNil)
 	id, err := t.GetAutoTableID(1, tbInfo3.ID)
 	c.Assert(err, IsNil)

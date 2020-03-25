@@ -37,7 +37,7 @@ type Int64Set map[int64]struct{}
 
 // NewInt64Set builds a Int64Set.
 func NewInt64Set(xs ...int64) Int64Set {
-	set := make(Int64Set)
+	set := make(Int64Set, len(xs))
 	for _, x := range xs {
 		set.Insert(x)
 	}

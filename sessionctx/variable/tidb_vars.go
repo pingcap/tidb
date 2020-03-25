@@ -87,13 +87,6 @@ const (
 
 	// The following session variables controls the memory quota during query execution.
 	// "tidb_mem_quota_query":				control the memory quota of a query.
-	// "tidb_mem_quota_hashjoin": 			control the memory quota of "HashJoinExec".
-	// "tidb_mem_quota_mergejoin": 			control the memory quota of "MergeJoinExec".
-	// "tidb_mem_quota_sort":     			control the memory quota of "SortExec".
-	// "tidb_mem_quota_topn":     			control the memory quota of "TopNExec".
-	// "tidb_mem_quota_indexlookupreader":	control the memory quota of "IndexLookUpExecutor".
-	// "tidb_mem_quota_indexlookupjoin":	control the memory quota of "IndexLookUpJoin".
-	// "tidb_mem_quota_nestedloopapply": 	control the memory quota of "NestedLoopApplyExec".
 	TIDBMemQuotaQuery = "tidb_mem_quota_query" // Bytes.
 	// TODO: remove them below sometime, it should have only one Quota(TIDBMemQuotaQuery).
 	TIDBMemQuotaHashJoin          = "tidb_mem_quota_hashjoin"          // Bytes.
@@ -109,18 +102,6 @@ const (
 
 	// tidb_pprof_sql_cpu is used to add label sql label to pprof result.
 	TiDBPProfSQLCPU = "tidb_pprof_sql_cpu"
-
-	// tidb_slow_log_threshold is used to set the slow log threshold in the server.
-	TiDBSlowLogThreshold = "tidb_slow_log_threshold"
-
-	// tidb_record_plan_in_slow_log is used to log the plan of the slow query.
-	TiDBRecordPlanInSlowLog = "tidb_record_plan_in_slow_log"
-
-	// tidb_enable_slow_log enables TiDB to log slow queries.
-	TiDBEnableSlowLog = "tidb_enable_slow_log"
-
-	// tidb_query_log_max_len is used to set the max length of the query in the log.
-	TiDBQueryLogMaxLen = "tidb_query_log_max_len"
 
 	// tidb_retry_limit is the maximum number of retries when committing a transaction.
 	TiDBRetryLimit = "tidb_retry_limit"
@@ -149,9 +130,6 @@ const (
 	// on: always enable table partition.
 	// off: always disable table partition.
 	TiDBEnableTablePartition = "tidb_enable_table_partition"
-
-	// TiDBCheckMb4ValueInUTF8 is used to control whether to enable the check wrong utf8 value.
-	TiDBCheckMb4ValueInUTF8 = "tidb_check_mb4_value_in_utf8"
 
 	// tidb_skip_isolation_level_check is used to control whether to return error when set unsupported transaction
 	// isolation level.
@@ -350,6 +328,9 @@ const (
 
 	// TiDBEnableStmtSummary indicates whether the statement summary is enabled.
 	TiDBEnableStmtSummary = "tidb_enable_stmt_summary"
+
+	// TiDBStmtSummaryInternalQuery indicates whether the statement summary contain internal query.
+	TiDBStmtSummaryInternalQuery = "tidb_stmt_summary_internal_query"
 
 	// TiDBStmtSummaryRefreshInterval indicates the refresh interval in seconds for each statement summary.
 	TiDBStmtSummaryRefreshInterval = "tidb_stmt_summary_refresh_interval"

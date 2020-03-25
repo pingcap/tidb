@@ -18,6 +18,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/util/set"
 )
 
 type metricSchemaSuite struct{}
@@ -30,7 +31,7 @@ func (s *metricSchemaSuite) SetUpSuite(c *C) {
 func (s *metricSchemaSuite) TearDownSuite(c *C) {
 }
 
-func (s *inspectionSuite) TestMetricSchemaDef(c *C) {
+func (s *metricSchemaSuite) TestMetricSchemaDef(c *C) {
 	for name, def := range infoschema.MetricTableMap {
 		if strings.Contains(def.PromQL, "$QUANTILE") || strings.Contains(def.PromQL, "histogram_quantile") {
 			c.Assert(def.Quantile > 0, IsTrue, Commentf("the quantile of metric table %v should > 0", name))
@@ -55,6 +56,10 @@ func (s *inspectionSuite) TestMetricSchemaDef(c *C) {
 		}
 		if name != strings.ToLower(name) {
 			c.Assert(name, Equals, strings.ToLower(name), Commentf("metric table name %v should be lower case", name))
+		}
+		// INSTANCE must be the first label
+		if set.NewStringSet(def.Labels...).Exist("instance") {
+			c.Assert(def.Labels[0], Equals, "instance", Commentf("metrics table %v: expect `instance`is the first label but got %v", name, def.Labels))
 		}
 	}
 }

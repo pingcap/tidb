@@ -111,6 +111,9 @@ func (m *memDbBuffer) Set(k Key, v []byte) error {
 // Delete removes the entry from buffer with provided key.
 func (m *memDbBuffer) Delete(k Key) error {
 	m.db.Put(k, nil)
+	if m.Size() > int(m.bufferSizeLimit) {
+		return ErrTxnTooLarge.GenWithStackByArgs(m.Size())
+	}
 	return nil
 }
 
@@ -181,4 +184,54 @@ func WalkMemBuffer(memBuf MemBuffer, f func(k Key, v []byte) error) error {
 	}
 
 	return nil
+}
+
+// BufferBatchGetter is the type for BatchGet with MemBuffer.
+type BufferBatchGetter struct {
+	buffer   MemBuffer
+	middle   Getter
+	snapshot Snapshot
+}
+
+// NewBufferBatchGetter creates a new BufferBatchGetter.
+func NewBufferBatchGetter(buffer MemBuffer, middleCache Getter, snapshot Snapshot) *BufferBatchGetter {
+	return &BufferBatchGetter{buffer: buffer, middle: middleCache, snapshot: snapshot}
+}
+
+// BatchGet implements the BatchGetter interface.
+func (b *BufferBatchGetter) BatchGet(ctx context.Context, keys []Key) (map[string][]byte, error) {
+	if b.buffer.Len() == 0 {
+		return b.snapshot.BatchGet(ctx, keys)
+	}
+	bufferValues := make([][]byte, len(keys))
+	shrinkKeys := make([]Key, 0, len(keys))
+	for i, key := range keys {
+		val, err := b.buffer.Get(ctx, key)
+		if err == nil {
+			bufferValues[i] = val
+			continue
+		}
+		if !IsErrNotFound(err) {
+			return nil, errors.Trace(err)
+		}
+		if b.middle != nil {
+			val, err = b.middle.Get(ctx, key)
+			if err == nil {
+				bufferValues[i] = val
+				continue
+			}
+		}
+		shrinkKeys = append(shrinkKeys, key)
+	}
+	storageValues, err := b.snapshot.BatchGet(ctx, shrinkKeys)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	for i, key := range keys {
+		if len(bufferValues[i]) == 0 {
+			continue
+		}
+		storageValues[string(key)] = bufferValues[i]
+	}
+	return storageValues, nil
 }

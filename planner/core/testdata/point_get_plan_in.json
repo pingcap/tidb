@@ -1,0 +1,13 @@
+[
+  {
+    "name": "TestCBOPointGet",
+    "cases": [
+      "select * from t where t.a in ('1','2','4') and t.a+1=2 order by t.a desc",
+      "select b, c from t where t.b = 2 and t.c = 2 and t.b+1=3",
+      "select * from t where t.a = '1' and t.b = 4",
+      "select * from t where t.a in ('1','3') and t.d = 3",
+      "select * from t t1 join t t2 on t1.a = t2.a where t1.a = '4' and (t2.b, t2.c) in ((1,1),(2,2))",
+      "select * from t where (t.b, t.c) in ((2,2), (3,3), (4,4)) order by t.b, t.c"
+    ]
+  }
+]

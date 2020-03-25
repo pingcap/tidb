@@ -17,6 +17,7 @@ import (
 	"context"
 	"math"
 	"regexp"
+	"sort"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -270,6 +271,12 @@ func (s *extractorSuite) TestClusterLogTableExtractor(c *C) {
 			instances: nil,
 		},
 		{
+			// Test for invalid time.
+			sql:       "select * from information_schema.cluster_log where time='2019-10-10 10::10'",
+			nodeTypes: set.NewStringSet(),
+			instances: set.NewStringSet(),
+		},
+		{
 			sql:       "select * from information_schema.cluster_log where type='tikv'",
 			nodeTypes: set.NewStringSet("tikv"),
 			instances: set.NewStringSet(),
@@ -512,6 +519,18 @@ func (s *extractorSuite) TestClusterLogTableExtractor(c *C) {
 			level:     set.NewStringSet("debug", "info", "error"),
 			patterns:  []string{".*coprocessor.*", ".*txn=123.*"},
 		},
+		{
+			sql:       "select * from information_schema.cluster_log where (message regexp '.*pd.*' or message regexp '.*tidb.*' or message like '%tikv%')",
+			nodeTypes: set.NewStringSet(),
+			instances: set.NewStringSet(),
+			patterns:  []string{".*pd.*|.*tidb.*|.*tikv.*"},
+		},
+		{
+			sql:       "select * from information_schema.cluster_log where (level = 'debug' or level = 'ERROR')",
+			nodeTypes: set.NewStringSet(),
+			instances: set.NewStringSet(),
+			level:     set.NewStringSet("debug", "error"),
+		},
 	}
 	for _, ca := range cases {
 		logicalMemTable := s.getLogicalMemTable(c, se, parser, ca.sql)
@@ -554,25 +573,25 @@ func (s *extractorSuite) TestMetricTableExtractor(c *C) {
 		promQL             string
 	}{
 		{
-			sql:    "select * from metric_schema.tidb_query_duration",
+			sql:    "select * from metrics_schema.tidb_query_duration",
 			promQL: "histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le,sql_type,instance))",
 		},
 		{
-			sql:    "select * from metric_schema.tidb_query_duration where instance='127.0.0.1:10080'",
+			sql:    "select * from metrics_schema.tidb_query_duration where instance='127.0.0.1:10080'",
 			promQL: `histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{instance="127.0.0.1:10080"}[60s])) by (le,sql_type,instance))`,
 			labelConditions: map[string]set.StringSet{
 				"instance": set.NewStringSet("127.0.0.1:10080"),
 			},
 		},
 		{
-			sql:    "select * from metric_schema.tidb_query_duration where instance='127.0.0.1:10080' or instance='127.0.0.1:10081'",
+			sql:    "select * from metrics_schema.tidb_query_duration where instance='127.0.0.1:10080' or instance='127.0.0.1:10081'",
 			promQL: `histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{instance=~"127.0.0.1:10080|127.0.0.1:10081"}[60s])) by (le,sql_type,instance))`,
 			labelConditions: map[string]set.StringSet{
 				"instance": set.NewStringSet("127.0.0.1:10080", "127.0.0.1:10081"),
 			},
 		},
 		{
-			sql:    "select * from metric_schema.tidb_query_duration where instance='127.0.0.1:10080' and sql_type='general'",
+			sql:    "select * from metrics_schema.tidb_query_duration where instance='127.0.0.1:10080' and sql_type='general'",
 			promQL: `histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{instance="127.0.0.1:10080",sql_type="general"}[60s])) by (le,sql_type,instance))`,
 			labelConditions: map[string]set.StringSet{
 				"instance": set.NewStringSet("127.0.0.1:10080"),
@@ -580,11 +599,11 @@ func (s *extractorSuite) TestMetricTableExtractor(c *C) {
 			},
 		},
 		{
-			sql:    "select * from metric_schema.tidb_query_duration where instance='127.0.0.1:10080' or sql_type='general'",
+			sql:    "select * from metrics_schema.tidb_query_duration where instance='127.0.0.1:10080' or sql_type='general'",
 			promQL: `histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le,sql_type,instance))`,
 		},
 		{
-			sql:    "select * from metric_schema.tidb_query_duration where instance='127.0.0.1:10080' and sql_type='Update' and time='2019-10-10 10:10:10'",
+			sql:    "select * from metrics_schema.tidb_query_duration where instance='127.0.0.1:10080' and sql_type='Update' and time='2019-10-10 10:10:10'",
 			promQL: `histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{instance="127.0.0.1:10080",sql_type="Update"}[60s])) by (le,sql_type,instance))`,
 			labelConditions: map[string]set.StringSet{
 				"instance": set.NewStringSet("127.0.0.1:10080"),
@@ -594,38 +613,38 @@ func (s *extractorSuite) TestMetricTableExtractor(c *C) {
 			endTime:   parseTime(c, "2019-10-10 10:10:10"),
 		},
 		{
-			sql:       "select * from metric_schema.tidb_query_duration where time>'2019-10-10 10:10:10' and time<'2019-10-11 10:10:10'",
+			sql:       "select * from metrics_schema.tidb_query_duration where time>'2019-10-10 10:10:10' and time<'2019-10-11 10:10:10'",
 			promQL:    `histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le,sql_type,instance))`,
 			startTime: parseTime(c, "2019-10-10 10:10:10.001"),
 			endTime:   parseTime(c, "2019-10-11 10:10:09.999"),
 		},
 		{
-			sql:       "select * from metric_schema.tidb_query_duration where time>='2019-10-10 10:10:10'",
+			sql:       "select * from metrics_schema.tidb_query_duration where time>='2019-10-10 10:10:10'",
 			promQL:    `histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le,sql_type,instance))`,
 			startTime: parseTime(c, "2019-10-10 10:10:10"),
 			endTime:   parseTime(c, "2019-10-10 10:20:10"),
 		},
 		{
-			sql:         "select * from metric_schema.tidb_query_duration where time>='2019-10-10 10:10:10' and time<='2019-10-09 10:10:10'",
+			sql:         "select * from metrics_schema.tidb_query_duration where time>='2019-10-10 10:10:10' and time<='2019-10-09 10:10:10'",
 			promQL:      "",
 			startTime:   parseTime(c, "2019-10-10 10:10:10"),
 			endTime:     parseTime(c, "2019-10-09 10:10:10"),
 			skipRequest: true,
 		},
 		{
-			sql:       "select * from metric_schema.tidb_query_duration where time<='2019-10-09 10:10:10'",
+			sql:       "select * from metrics_schema.tidb_query_duration where time<='2019-10-09 10:10:10'",
 			promQL:    "histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le,sql_type,instance))",
 			startTime: parseTime(c, "2019-10-09 10:00:10"),
 			endTime:   parseTime(c, "2019-10-09 10:10:10"),
 		},
 		{
-			sql: "select * from metric_schema.tidb_query_duration where quantile=0.9 or quantile=0.8",
+			sql: "select * from metrics_schema.tidb_query_duration where quantile=0.9 or quantile=0.8",
 			promQL: "histogram_quantile(0.8, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le,sql_type,instance))," +
 				"histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le,sql_type,instance))",
 			quantiles: []float64{0.8, 0.9},
 		},
 		{
-			sql:       "select * from metric_schema.tidb_query_duration where quantile=0",
+			sql:       "select * from metrics_schema.tidb_query_duration where quantile=0",
 			promQL:    "histogram_quantile(0, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le,sql_type,instance))",
 			quantiles: []float64{0},
 		},
@@ -635,13 +654,15 @@ func (s *extractorSuite) TestMetricTableExtractor(c *C) {
 		logicalMemTable := s.getLogicalMemTable(c, se, parser, ca.sql)
 		c.Assert(logicalMemTable.Extractor, NotNil)
 		metricTableExtractor := logicalMemTable.Extractor.(*plannercore.MetricTableExtractor)
-		c.Assert(metricTableExtractor.LabelConditions, DeepEquals, ca.labelConditions, Commentf("SQL: %v", ca.sql))
+		if len(ca.labelConditions) > 0 {
+			c.Assert(metricTableExtractor.LabelConditions, DeepEquals, ca.labelConditions, Commentf("SQL: %v", ca.sql))
+		}
 		c.Assert(metricTableExtractor.SkipRequest, DeepEquals, ca.skipRequest, Commentf("SQL: %v", ca.sql))
 		if len(metricTableExtractor.Quantiles) > 0 {
 			c.Assert(metricTableExtractor.Quantiles, DeepEquals, ca.quantiles)
 		}
 		if !ca.skipRequest {
-			promQL := plannercore.GetMetricTablePromQL(se, "tidb_query_duration", metricTableExtractor.LabelConditions, metricTableExtractor.Quantiles)
+			promQL := metricTableExtractor.GetMetricTablePromQL(se, "tidb_query_duration")
 			c.Assert(promQL, DeepEquals, ca.promQL, Commentf("SQL: %v", ca.sql))
 			start, end := metricTableExtractor.StartTime, metricTableExtractor.EndTime
 			c.Assert(start.UnixNano() <= end.UnixNano(), IsTrue)
@@ -652,6 +673,104 @@ func (s *extractorSuite) TestMetricTableExtractor(c *C) {
 				c.Assert(metricTableExtractor.EndTime, DeepEquals, ca.endTime, Commentf("SQL: %v, end_time: %v", ca.sql, metricTableExtractor.EndTime))
 			}
 		}
+	}
+}
+
+func (s *extractorSuite) TestMetricsSummaryTableExtractor(c *C) {
+	se, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+
+	var cases = []struct {
+		sql         string
+		names       set.StringSet
+		quantiles   []float64
+		skipRequest bool
+	}{
+		{
+			sql: "select * from information_schema.metrics_summary",
+		},
+		{
+			sql:       "select * from information_schema.metrics_summary where quantile='0.999'",
+			quantiles: []float64{0.999},
+		},
+		{
+			sql:       "select * from information_schema.metrics_summary where '0.999'=quantile or quantile='0.95'",
+			quantiles: []float64{0.999, 0.95},
+		},
+		{
+			sql:       "select * from information_schema.metrics_summary where '0.999'=quantile or quantile='0.95' or quantile='0.99'",
+			quantiles: []float64{0.999, 0.95, 0.99},
+		},
+		{
+			sql:       "select * from information_schema.metrics_summary where (quantile='0.95' or quantile='0.99') and (metrics_name='metric_name3' or metrics_name='metric_name1')",
+			quantiles: []float64{0.95, 0.99},
+			names:     set.NewStringSet("metric_name3", "metric_name1"),
+		},
+		{
+			sql:       "select * from information_schema.metrics_summary where quantile in ('0.999', '0.99')",
+			quantiles: []float64{0.999, 0.99},
+		},
+		{
+			sql:       "select * from information_schema.metrics_summary where quantile in ('0.999', '0.99') and metrics_name='metric_name1'",
+			quantiles: []float64{0.999, 0.99},
+			names:     set.NewStringSet("metric_name1"),
+		},
+		{
+			sql:       "select * from information_schema.metrics_summary where quantile in ('0.999', '0.99') and metrics_name in ('metric_name1', 'metric_name2')",
+			quantiles: []float64{0.999, 0.99},
+			names:     set.NewStringSet("metric_name1", "metric_name2"),
+		},
+		{
+			sql:       "select * from information_schema.metrics_summary where quantile='0.999' and metrics_name in ('metric_name1', 'metric_name2')",
+			quantiles: []float64{0.999},
+			names:     set.NewStringSet("metric_name1", "metric_name2"),
+		},
+		{
+			sql:       "select * from information_schema.metrics_summary where quantile='0.999' and metrics_name='metric_NAME3'",
+			quantiles: []float64{0.999},
+			names:     set.NewStringSet("metric_name3"),
+		},
+		{
+			sql:       "select * from information_schema.metrics_summary where quantile='0.999' and quantile in ('0.99', '0.999')",
+			quantiles: []float64{0.999},
+		},
+		{
+			sql:       "select * from information_schema.metrics_summary where quantile in ('0.999', '0.95') and quantile in ('0.99', '0.95')",
+			quantiles: []float64{0.95},
+		},
+		{
+			sql: `select * from information_schema.metrics_summary
+				where metrics_name in ('metric_name1', 'metric_name4')
+				  and metrics_name in ('metric_name5', 'metric_name4')
+				  and quantile in ('0.999', '0.95')
+				  and quantile in ('0.99', '0.95')
+				  and quantile in (0.80, 0.90)`,
+			skipRequest: true,
+		},
+		{
+			sql: `select * from information_schema.metrics_summary
+				where metrics_name in ('metric_name1', 'metric_name4')
+				  and metrics_name in ('metric_name5', 'metric_name4')
+				  and metrics_name in ('metric_name5', 'metric_name1')
+				  and metrics_name in ('metric_name1', 'metric_name3')`,
+			skipRequest: true,
+		},
+	}
+	parser := parser.New()
+	for _, ca := range cases {
+		sort.Float64s(ca.quantiles)
+
+		logicalMemTable := s.getLogicalMemTable(c, se, parser, ca.sql)
+		c.Assert(logicalMemTable.Extractor, NotNil)
+
+		extractor := logicalMemTable.Extractor.(*plannercore.MetricSummaryTableExtractor)
+		if len(ca.quantiles) > 0 {
+			c.Assert(extractor.Quantiles, DeepEquals, ca.quantiles, Commentf("SQL: %v", ca.sql))
+		}
+		if len(ca.names) > 0 {
+			c.Assert(extractor.MetricsNames, DeepEquals, ca.names, Commentf("SQL: %v", ca.sql))
+		}
+		c.Assert(extractor.SkipRequest, Equals, ca.skipRequest, Commentf("SQL: %v", ca.sql))
 	}
 }
 
@@ -741,10 +860,6 @@ func (s *extractorSuite) TestInspectionResultTableExtractor(c *C) {
 			rules: set.NewStringSet("ddl"),
 		},
 		{
-			sql:            "select * from information_schema.inspection_result where rule='ddl' and rule in ('slow_query', 'config')",
-			skipInspection: true,
-		},
-		{
 			sql:   "select * from information_schema.inspection_result where rule in ('ddl', 'config') and rule in ('slow_query', 'config')",
 			rules: set.NewStringSet("config"),
 		},
@@ -795,5 +910,142 @@ func (s *extractorSuite) TestInspectionResultTableExtractor(c *C) {
 			c.Assert(clusterConfigExtractor.Items, DeepEquals, ca.items, Commentf("SQL: %v", ca.sql))
 		}
 		c.Assert(clusterConfigExtractor.SkipInspection, Equals, ca.skipInspection, Commentf("SQL: %v", ca.sql))
+	}
+}
+
+func (s *extractorSuite) TestInspectionSummaryTableExtractor(c *C) {
+	se, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+
+	var cases = []struct {
+		sql            string
+		rules          set.StringSet
+		names          set.StringSet
+		quantiles      set.Float64Set
+		skipInspection bool
+	}{
+		{
+			sql: "select * from information_schema.inspection_summary",
+		},
+		{
+			sql:   "select * from information_schema.inspection_summary where rule='ddl'",
+			rules: set.NewStringSet("ddl"),
+		},
+		{
+			sql:   "select * from information_schema.inspection_summary where 'ddl'=rule or rule='config'",
+			rules: set.NewStringSet("ddl", "config"),
+		},
+		{
+			sql:   "select * from information_schema.inspection_summary where 'ddl'=rule or rule='config' or rule='slow_query'",
+			rules: set.NewStringSet("ddl", "config", "slow_query"),
+		},
+		{
+			sql:   "select * from information_schema.inspection_summary where (rule='config' or rule='slow_query') and (metrics_name='metric_name3' or metrics_name='metric_name1')",
+			rules: set.NewStringSet("config", "slow_query"),
+			names: set.NewStringSet("metric_name3", "metric_name1"),
+		},
+		{
+			sql:   "select * from information_schema.inspection_summary where rule in ('ddl', 'slow_query')",
+			rules: set.NewStringSet("ddl", "slow_query"),
+		},
+		{
+			sql:   "select * from information_schema.inspection_summary where rule in ('ddl', 'slow_query') and metrics_name='metric_name1'",
+			rules: set.NewStringSet("ddl", "slow_query"),
+			names: set.NewStringSet("metric_name1"),
+		},
+		{
+			sql:   "select * from information_schema.inspection_summary where rule in ('ddl', 'slow_query') and metrics_name in ('metric_name1', 'metric_name2')",
+			rules: set.NewStringSet("ddl", "slow_query"),
+			names: set.NewStringSet("metric_name1", "metric_name2"),
+		},
+		{
+			sql:   "select * from information_schema.inspection_summary where rule='ddl' and metrics_name in ('metric_name1', 'metric_name2')",
+			rules: set.NewStringSet("ddl"),
+			names: set.NewStringSet("metric_name1", "metric_name2"),
+		},
+		{
+			sql:   "select * from information_schema.inspection_summary where rule='ddl' and metrics_name='metric_NAME3'",
+			rules: set.NewStringSet("ddl"),
+			names: set.NewStringSet("metric_name3"),
+		},
+		{
+			sql:   "select * from information_schema.inspection_summary where rule='ddl' and rule in ('slow_query', 'ddl')",
+			rules: set.NewStringSet("ddl"),
+		},
+		{
+			sql:   "select * from information_schema.inspection_summary where rule in ('ddl', 'config') and rule in ('slow_query', 'config')",
+			rules: set.NewStringSet("config"),
+		},
+		{
+			sql: `select * from information_schema.inspection_summary
+				where metrics_name in ('metric_name1', 'metric_name4')
+				  and metrics_name in ('metric_name5', 'metric_name4')
+				  and rule in ('ddl', 'config')
+				  and rule in ('slow_query', 'config')
+				  and quantile in (0.80, 0.90)`,
+			rules:     set.NewStringSet("config"),
+			names:     set.NewStringSet("metric_name4"),
+			quantiles: set.NewFloat64Set(0.80, 0.90),
+		},
+		{
+			sql: `select * from information_schema.inspection_summary
+				where metrics_name in ('metric_name1', 'metric_name4')
+				  and metrics_name in ('metric_name5', 'metric_name4')
+				  and metrics_name in ('metric_name5', 'metric_name1')
+				  and metrics_name in ('metric_name1', 'metric_name3')`,
+			skipInspection: true,
+		},
+	}
+	parser := parser.New()
+	for _, ca := range cases {
+		logicalMemTable := s.getLogicalMemTable(c, se, parser, ca.sql)
+		c.Assert(logicalMemTable.Extractor, NotNil)
+
+		clusterConfigExtractor := logicalMemTable.Extractor.(*plannercore.InspectionSummaryTableExtractor)
+		if len(ca.rules) > 0 {
+			c.Assert(clusterConfigExtractor.Rules, DeepEquals, ca.rules, Commentf("SQL: %v", ca.sql))
+		}
+		if len(ca.names) > 0 {
+			c.Assert(clusterConfigExtractor.MetricNames, DeepEquals, ca.names, Commentf("SQL: %v", ca.sql))
+		}
+		c.Assert(clusterConfigExtractor.SkipInspection, Equals, ca.skipInspection, Commentf("SQL: %v", ca.sql))
+	}
+}
+
+func (s *extractorSuite) TestInspectionRuleTableExtractor(c *C) {
+	se, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+
+	var cases = []struct {
+		sql  string
+		tps  set.StringSet
+		skip bool
+	}{
+		{
+			sql: "select * from information_schema.inspection_rules",
+		},
+		{
+			sql: "select * from information_schema.inspection_rules where type='inspection'",
+			tps: set.NewStringSet("inspection"),
+		},
+		{
+			sql: "select * from information_schema.inspection_rules where type='inspection' or type='summary'",
+			tps: set.NewStringSet("inspection", "summary"),
+		},
+		{
+			sql:  "select * from information_schema.inspection_rules where type='inspection' and type='summary'",
+			skip: true,
+		},
+	}
+	parser := parser.New()
+	for _, ca := range cases {
+		logicalMemTable := s.getLogicalMemTable(c, se, parser, ca.sql)
+		c.Assert(logicalMemTable.Extractor, NotNil)
+
+		clusterConfigExtractor := logicalMemTable.Extractor.(*plannercore.InspectionRuleTableExtractor)
+		if len(ca.tps) > 0 {
+			c.Assert(clusterConfigExtractor.Types, DeepEquals, ca.tps, Commentf("SQL: %v", ca.sql))
+		}
+		c.Assert(clusterConfigExtractor.SkipRequest, Equals, ca.skip, Commentf("SQL: %v", ca.sql))
 	}
 }

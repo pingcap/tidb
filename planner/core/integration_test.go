@@ -26,7 +26,8 @@ import (
 	"github.com/pingcap/tidb/util/testutil"
 )
 
-var _ = SerialSuites(&testIntegrationSuite{})
+var _ = Suite(&testIntegrationSuite{})
+var _ = SerialSuites(&testIntegrationSerialSuite{})
 
 type testIntegrationSuite struct {
 	testData testutil.TestData
@@ -51,6 +52,34 @@ func (s *testIntegrationSuite) SetUpTest(c *C) {
 }
 
 func (s *testIntegrationSuite) TearDownTest(c *C) {
+	s.dom.Close()
+	err := s.store.Close()
+	c.Assert(err, IsNil)
+}
+
+type testIntegrationSerialSuite struct {
+	testData testutil.TestData
+	store    kv.Storage
+	dom      *domain.Domain
+}
+
+func (s *testIntegrationSerialSuite) SetUpSuite(c *C) {
+	var err error
+	s.testData, err = testutil.LoadTestSuiteData("testdata", "integration_serial_suite")
+	c.Assert(err, IsNil)
+}
+
+func (s *testIntegrationSerialSuite) TearDownSuite(c *C) {
+	c.Assert(s.testData.GenerateOutputIfNeeded(), IsNil)
+}
+
+func (s *testIntegrationSerialSuite) SetUpTest(c *C) {
+	var err error
+	s.store, s.dom, err = newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+}
+
+func (s *testIntegrationSerialSuite) TearDownTest(c *C) {
 	s.dom.Close()
 	err := s.store.Close()
 	c.Assert(err, IsNil)
@@ -245,7 +274,7 @@ func (s *testIntegrationSuite) TestSimplifyOuterJoinWithCast(c *C) {
 	}
 }
 
-func (s *testIntegrationSuite) TestNoneAccessPathsFoundByIsolationRead(c *C) {
+func (s *testIntegrationSerialSuite) TestNoneAccessPathsFoundByIsolationRead(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("use test")
@@ -259,8 +288,8 @@ func (s *testIntegrationSuite) TestNoneAccessPathsFoundByIsolationRead(c *C) {
 
 	// Don't filter mysql.SystemDB by isolation read.
 	tk.MustQuery("explain select * from mysql.stats_meta").Check(testkit.Rows(
-		"TableReader_5 10000.00 root data:TableScan_4",
-		"└─TableScan_4 10000.00 cop[tikv] table:stats_meta, range:[-inf,+inf], keep order:false, stats:pseudo"))
+		"TableReader_5 10000.00 root  data:TableFullScan_4",
+		"└─TableFullScan_4 10000.00 cop[tikv] table:stats_meta keep order:false, stats:pseudo"))
 
 	_, err = tk.Exec("select * from t")
 	c.Assert(err, NotNil)
@@ -274,7 +303,7 @@ func (s *testIntegrationSuite) TestNoneAccessPathsFoundByIsolationRead(c *C) {
 	c.Assert(err.Error(), Equals, "[planner:1815]Internal : Can not find access path matching 'tidb_isolation_read_engines'(value: 'tikv,tiflash') and tidb-server config isolation-read(engines: '[tiflash]'). Available values are 'tikv'.")
 }
 
-func (s *testIntegrationSuite) TestSelPushDownTiFlash(c *C) {
+func (s *testIntegrationSerialSuite) TestSelPushDownTiFlash(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -295,23 +324,58 @@ func (s *testIntegrationSuite) TestSelPushDownTiFlash(c *C) {
 	}
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
-
-	// All conditions should push tiflash.
-	tk.MustQuery(`explain select * from t where t.a > 1 and t.b = "flash" or t.a + 3 * t.a = 5`).Check(testkit.Rows(
-		"TableReader_7 8000.00 root data:Selection_6",
-		"└─Selection_6 8000.00 cop[tiflash] or(and(gt(test.t.a, 1), eq(test.t.b, \"flash\")), eq(plus(test.t.a, mul(3, test.t.a)), 5))",
-		"  └─TableScan_5 10000.00 cop[tiflash] table:t, range:[-inf,+inf], keep order:false, stats:pseudo",
-	))
-
-	// Part of conditions should push tiflash.
-	tk.MustQuery(`explain select * from t where cast(t.a as float) + 3 = 5.1`).Check(testkit.Rows(
-		"Selection_7 10000.00 root eq(plus(cast(test.t.a), 3), 5.1)",
-		"└─TableReader_6 10000.00 root data:TableScan_5",
-		"  └─TableScan_5 10000.00 cop[tiflash] table:t, range:[-inf,+inf], keep order:false, stats:pseudo",
-	))
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		res := tk.MustQuery(tt)
+		res.Check(testkit.Rows(output[i].Plan...))
+	}
 }
 
-func (s *testIntegrationSuite) TestReadFromStorageHint(c *C) {
+func (s *testIntegrationSerialSuite) TestIssue15110(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists crm_rd_150m")
+	tk.MustExec(`CREATE TABLE crm_rd_150m (
+	product varchar(256) DEFAULT NULL,
+		uks varchar(16) DEFAULT NULL,
+		brand varchar(256) DEFAULT NULL,
+		cin varchar(16) DEFAULT NULL,
+		created_date timestamp NULL DEFAULT NULL,
+		quantity int(11) DEFAULT NULL,
+		amount decimal(11,0) DEFAULT NULL,
+		pl_date timestamp NULL DEFAULT NULL,
+		customer_first_date timestamp NULL DEFAULT NULL,
+		recent_date timestamp NULL DEFAULT NULL
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin;`)
+
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	c.Assert(exists, IsTrue)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "crm_rd_150m" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
+	tk.MustExec("explain SELECT count(*) FROM crm_rd_150m dataset_48 WHERE (CASE WHEN (month(dataset_48.customer_first_date)) <= 30 THEN '新客' ELSE NULL END) IS NOT NULL;")
+}
+
+func (s *testIntegrationSerialSuite) TestReadFromStorageHint(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("use test")
@@ -351,7 +415,7 @@ func (s *testIntegrationSuite) TestReadFromStorageHint(c *C) {
 	}
 }
 
-func (s *testIntegrationSuite) TestReadFromStorageHintAndIsolationRead(c *C) {
+func (s *testIntegrationSerialSuite) TestReadFromStorageHintAndIsolationRead(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("use test")
@@ -505,4 +569,72 @@ func (s *testIntegrationSuite) TestIndexMerge(c *C) {
 		})
 		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
 	}
+}
+
+// for issue #14822
+func (s *testIntegrationSuite) TestIndexJoinTableRange(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int, b int, primary key (a), key idx_t1_b (b))")
+	tk.MustExec("create table t2(a int, b int, primary key (a), key idx_t1_b (b))")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
+func (s *testIntegrationSuite) TestTopNByConstFunc(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustQuery("select max(t.col) from (select 'a' as col union all select '' as col) as t").Check(testkit.Rows(
+		"a",
+	))
+}
+
+func (s *testIntegrationSuite) TestSubqueryWithTopN(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int)")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
+func (s *testIntegrationSuite) TestIssue15546(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, pt, vt")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("insert into t values(1, 1)")
+	tk.MustExec("create table pt(a int primary key, b int) partition by range(a) (" +
+		"PARTITION `p0` VALUES LESS THAN (10), PARTITION `p1` VALUES LESS THAN (20), PARTITION `p2` VALUES LESS THAN (30))")
+	tk.MustExec("insert into pt values(1, 1), (11, 11), (21, 21)")
+	tk.MustExec("create definer='root'@'localhost' view vt(a, b) as select a, b from t")
+	tk.MustQuery("select * from pt, vt where pt.a = vt.a").Check(testkit.Rows("1 1 1 1"))
 }
