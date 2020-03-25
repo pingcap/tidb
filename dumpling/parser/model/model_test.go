@@ -296,6 +296,7 @@ func (testModelSuite) TestString(c *C) {
 		{ActionAddColumn, "add column"},
 		{ActionAddColumns, "add multi-columns"},
 		{ActionDropColumn, "drop column"},
+		{ActionDropColumns, "drop multi-columns"},
 		{ActionModifySchemaCharsetAndCollate, "modify schema charset and collate"},
 	}
 
