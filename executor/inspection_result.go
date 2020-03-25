@@ -188,6 +188,7 @@ func (configInspection) inspectDiffConfig(_ context.Context, sctx sessionctx.Con
 	ignoreConfigKey := []string{
 		// TiDB
 		"port",
+		"status.status-port",
 		"host",
 		"path",
 		"advertise-address",
@@ -196,8 +197,15 @@ func (configInspection) inspectDiffConfig(_ context.Context, sctx sessionctx.Con
 		"log.slow-query-file",
 
 		// PD
+		"advertise-client-urls",
+		"advertise-peer-urls",
+		"client-urls",
 		"data-dir",
 		"log-file",
+		"log.file.filename",
+		"metric.job",
+		"name",
+		"peer-urls",
 
 		// TiKV
 		"server.addr",
