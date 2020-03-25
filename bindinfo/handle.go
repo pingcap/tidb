@@ -112,7 +112,7 @@ func NewBindHandle(ctx sessionctx.Context) *BindHandle {
 	handle.pendingVerifyBindRecordMap.flushFunc = func(record *BindRecord) error {
 		// We do not need the first parameter because it is only use to generate hint,
 		// and we already have the hint.
-		return handle.AddBindRecord(nil, record)
+		return handle.addBindRecord(nil, record)
 	}
 	return handle
 }
@@ -185,15 +185,8 @@ func (h *BindHandle) CreateBindRecord(sctx sessionctx.Context, record *BindRecor
 		return
 	}
 
-	br := h.GetBindRecord(parser.DigestNormalized(record.OriginalSQL), record.OriginalSQL, record.Db)
-	if br != nil {
-		for _, binding := range br.Bindings {
-			_, err = exec.ExecuteInternal(context.TODO(), h.deleteBindInfoSQL(record.OriginalSQL, record.Db, binding.BindSQL))
-			if err != nil {
-				return err
-			}
-		}
-	}
+	normalizedSQL := parser.DigestNormalized(record.OriginalSQL)
+	br := h.GetBindRecord(normalizedSQL, record.OriginalSQL, record.Db)
 
 	defer func() {
 		if err != nil {
@@ -212,16 +205,25 @@ func (h *BindHandle) CreateBindRecord(sctx sessionctx.Context, record *BindRecor
 		// update the BindRecord to the cache.
 		if br != nil {
 			// removeBindRecord locks h.bindinfo, so we needn't involve it between lock and unlock.
-			err = h.removeBindRecord(parser.DigestNormalized(br.OriginalSQL), br)
+			err = h.removeBindRecord(normalizedSQL, br)
 			if err != nil {
 				return
 			}
 		}
 		// Make sure there is only one goroutine writes the cache and use parser.
 		h.bindInfo.Lock()
-		h.appendBindRecord(parser.DigestNormalized(record.OriginalSQL), record)
+		h.appendBindRecord(normalizedSQL, record)
 		h.bindInfo.Unlock()
 	}()
+
+	if br != nil {
+		for _, binding := range br.Bindings {
+			_, err = exec.ExecuteInternal(context.TODO(), h.deleteBindInfoSQL(record.OriginalSQL, record.Db, binding.BindSQL))
+			if err != nil {
+				return err
+			}
+		}
+	}
 
 	txn, err1 := h.sctx.Context.Txn(true)
 	if err1 != nil {
@@ -242,8 +244,8 @@ func (h *BindHandle) CreateBindRecord(sctx sessionctx.Context, record *BindRecor
 	return nil
 }
 
-// AddBindRecord adds a BindRecord to the storage and BindRecord to the cache.
-func (h *BindHandle) AddBindRecord(sctx sessionctx.Context, record *BindRecord) (err error) {
+// addBindRecord adds a BindRecord to the storage and BindRecord to the cache.
+func (h *BindHandle) addBindRecord(sctx sessionctx.Context, record *BindRecord) (err error) {
 	err = record.prepareHints(sctx)
 	if err != nil {
 		return err
@@ -634,7 +636,7 @@ func (h *BindHandle) CaptureBaselines() {
 			Collation: collation,
 		}
 		// We don't need to pass the `sctx` because they are used to generate hints and we already filled hints in.
-		err = h.AddBindRecord(nil, &BindRecord{OriginalSQL: normalizedSQL, Db: dbName, Bindings: []Binding{binding}})
+		err = h.addBindRecord(nil, &BindRecord{OriginalSQL: normalizedSQL, Db: dbName, Bindings: []Binding{binding}})
 		if err != nil {
 			logutil.BgLogger().Info("capture baseline failed", zap.String("SQL", sqls[i]), zap.Error(err))
 		}
@@ -880,7 +882,7 @@ func (h *BindHandle) HandleEvolvePlanTask(sctx sessionctx.Context) error {
 	} else {
 		binding.Status = Using
 	}
-	return h.AddBindRecord(sctx, &BindRecord{OriginalSQL: originalSQL, Db: db, Bindings: []Binding{binding}})
+	return h.addBindRecord(sctx, &BindRecord{OriginalSQL: originalSQL, Db: db, Bindings: []Binding{binding}})
 }
 
 // Clear resets the bind handle. It is used for test.
