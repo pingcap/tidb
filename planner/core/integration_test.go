@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/core"
@@ -293,6 +294,13 @@ func (s *testIntegrationSerialSuite) TestNoneAccessPathsFoundByIsolationRead(c *
 	_, err = tk.Exec("select * from t")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[planner:1815]Internal : Can not find access path matching 'tidb_isolation_read_engines'(value: 'tiflash'). Available values are 'tikv'.")
+
+	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash, tikv'")
+	tk.MustExec("select * from t")
+	config.GetGlobalConfig().IsolationRead.Engines = []string{"tiflash"}
+	defer func() { config.GetGlobalConfig().IsolationRead.Engines = []string{"tikv", "tiflash"} }()
+	// Change instance config doesn't affect isolation read.
+	tk.MustExec("select * from t")
 }
 
 func (s *testIntegrationSerialSuite) TestSelPushDownTiFlash(c *C) {
