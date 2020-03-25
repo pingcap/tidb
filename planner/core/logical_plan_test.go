@@ -2231,6 +2231,10 @@ func (s *testPlanSuite) TestSelectView(c *C) {
 			sql:  "select * from v",
 			best: "DataScan(t)->Projection",
 		},
+		{
+			sql:  "select v.b, v.c, v.d from v",
+			best: "DataScan(t)->Projection",
+		},
 	}
 	ctx := context.TODO()
 	for i, tt := range tests {
