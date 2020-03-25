@@ -589,3 +589,20 @@ func (s *testSuiteJoin3) TestVectorizedMergeJoin(c *C) {
 		runTest(ca.t2, ca.t1)
 	}
 }
+
+func (s *testSuite2) TestMergeJoinWithOtherConditions(c *C) {
+	// more than one inner tuple should be filtered on other conditions
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists R;`)
+	tk.MustExec(`drop table if exists Y;`)
+	tk.MustExec(`create table Y (a int primary key, b int, index id_b(b));`)
+	tk.MustExec(`insert into Y values (0,2),(2,2);`)
+	tk.MustExec(`create table R (a int primary key, b int);`)
+	tk.MustExec(`insert into R values (2,2);`)
+	// the max() limits the required rows at most one
+	// TODO(fangzhuhe): specify Y as the build side using hints
+	tk.MustQuery(`select /*+tidb_smj(R)*/ max(Y.a) from R join Y  on R.a=Y.b where R.b <= Y.a;`).Check(testkit.Rows(
+		`2`,
+	))
+}
