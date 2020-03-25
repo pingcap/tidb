@@ -310,6 +310,8 @@ type Request struct {
 	Cacheable bool
 	// SchemaVer is for any schema-ful storage to validate schema correctness if necessary.
 	SchemaVar int64
+	// CopTaskBatchSize is the max batch size for cop task
+	CopTaskBatchSize int
 }
 
 // ResultSubset represents a result subset from a single storage unit.

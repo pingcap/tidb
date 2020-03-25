@@ -68,6 +68,7 @@ const (
 
 	CmdCop CmdType = 512 + iota
 	CmdCopStream
+	CmdBatchCop
 
 	CmdMvccGetByKey CmdType = 1024 + iota
 	CmdMvccGetByStartTs
@@ -136,6 +137,8 @@ func (t CmdType) String() string {
 		return "Cop"
 	case CmdCopStream:
 		return "CopStream"
+	case CmdBatchCop:
+		return "BatchCop"
 	case CmdMvccGetByKey:
 		return "MvccGetByKey"
 	case CmdMvccGetByStartTs:
@@ -307,6 +310,11 @@ func (req *Request) PhysicalScanLock() *kvrpcpb.PhysicalScanLockRequest {
 // Cop returns coprocessor request in request.
 func (req *Request) Cop() *coprocessor.Request {
 	return req.req.(*coprocessor.Request)
+}
+
+// BatchCop returns coprocessor request in request.
+func (req *Request) BatchCop() *coprocessor.BatchRequest {
+	return req.req.(*coprocessor.BatchRequest)
 }
 
 // MvccGetByKey returns MvccGetByKeyRequest in request.
@@ -495,6 +503,13 @@ type CopStreamResponse struct {
 	Lease                 // Shared by this object and a background goroutine.
 }
 
+type BatchCopStreamResponse struct {
+	tikvpb.Tikv_BatchCoprocessorClient
+	*coprocessor.BatchResponse // The first result of Recv()
+	Timeout               time.Duration
+	Lease                 // Shared by this object and a background goroutine.
+}
+
 // SetContext set the Context field for the given req to the specified ctx.
 func SetContext(req *Request, region *metapb.Region, peer *metapb.Peer) error {
 	ctx := &req.Context
@@ -561,6 +576,8 @@ func SetContext(req *Request, region *metapb.Region, peer *metapb.Peer) error {
 		req.Cop().Context = ctx
 	case CmdCopStream:
 		req.Cop().Context = ctx
+	case CmdBatchCop:
+		req.BatchCop().Context = ctx
 	case CmdMvccGetByKey:
 		req.MvccGetByKey().Context = ctx
 	case CmdMvccGetByStartTs:
@@ -683,6 +700,11 @@ func GenRegionErrorResp(req *Request, e *errorpb.Error) (*Response, error) {
 				RegionError: e,
 			},
 		}
+	case CmdBatchCop:
+		// todo support batch cop
+		p = &coprocessor.BatchResponse{
+			OtherError:           e.Message,
+		}
 	case CmdMvccGetByKey:
 		p = &kvrpcpb.MvccGetByKeyResponse{
 			RegionError: e,
@@ -796,6 +818,12 @@ func CallRPC(ctx context.Context, client tikvpb.TikvClient, req *Request) (*Resp
 		streamClient, err = client.CoprocessorStream(ctx, req.Cop())
 		resp.Resp = &CopStreamResponse{
 			Tikv_CoprocessorStreamClient: streamClient,
+		}
+	case CmdBatchCop:
+		var streamClient tikvpb.Tikv_BatchCoprocessorClient
+		streamClient, err = client.BatchCoprocessor(ctx, req.BatchCop())
+		resp.Resp = &BatchCopStreamResponse{
+			Tikv_BatchCoprocessorClient: streamClient,
 		}
 	case CmdMvccGetByKey:
 		resp.Resp, err = client.MvccGetByKey(ctx, req.MvccGetByKey())

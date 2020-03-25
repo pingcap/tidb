@@ -15,6 +15,7 @@ package tikv
 
 import (
 	"context"
+	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"strconv"
 	"sync/atomic"
 	"time"
@@ -60,6 +61,51 @@ type RegionRequestSender struct {
 	storeAddr    string
 	rpcError     error
 	failStoreIDs map[uint64]struct{}
+}
+
+type RegionBatchRequestSender struct {
+	RegionRequestSender
+}
+
+func NewRegionBatchRequestSender(cache *RegionCache, client Client) *RegionBatchRequestSender {
+	return &RegionBatchRequestSender{RegionRequestSender: RegionRequestSender{regionCache: cache, client: client}}
+}
+
+func (ss *RegionBatchRequestSender) sendReqToAddr(bo *Backoffer, ctxs []copTaskAndRPCContext, req *tikvrpc.Request, timout time.Duration) (resp *tikvrpc.Response, err error) {
+	// use the first ctx to send request
+	ctx := ctxs[0].ctx
+	if e := tikvrpc.SetContext(req, ctx.Meta, ctx.Peer); e != nil {
+		return nil, errors.Trace(e)
+	}
+	for {
+		resp, err = ss.client.SendRequest(bo.ctx, ctx.Addr, req, timout)
+		if err != nil {
+			ss.rpcError = err
+			// todo should all the region need to call onSendFail??
+			e := ss.onSendFail(bo, ctx, err)
+			if e != nil {
+				return nil, errors.Trace(e)
+			}
+			// always return error on send fail
+			return nil, errors.Trace(err)
+		}
+		seed := req.ReplicaReadSeed
+		if batchResponse, isBatchResponse := resp.Resp.(*coprocessor.BatchResponse); isBatchResponse {
+			for idx, s := range batchResponse.RegionStatus {
+				if s.RegionError != nil {
+					// do not retry on region error
+					// todo check check all the region error
+					_, err = ss.onRegionError(bo, ctxs[idx].ctx, &seed, s.RegionError)
+					if err != nil {
+						return nil, errors.Trace(err)
+					}
+				}
+			}
+		} else {
+			return nil, errors.New("Should not happen, batch coprocessor request should receive batch coprocessor response")
+		}
+		return resp, nil
+	}
 }
 
 // NewRegionRequestSender creates a new sender.

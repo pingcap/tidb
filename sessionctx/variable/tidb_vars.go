@@ -225,6 +225,9 @@ const (
 	// TiDBMaxChunkSize is used to control the max chunk size during query execution.
 	TiDBMaxChunkSize = "tidb_max_chunk_size"
 
+	// TiDBCopTaskBatchSize is used to control the max batch size for cop task.
+	TiDBCopTaskBatchSize = "tidb_cop_task_batch_size"
+
 	// TiDBInitChunkSize is used to control the init chunk size during query execution.
 	TiDBInitChunkSize = "tidb_init_chunk_size"
 
@@ -417,6 +420,7 @@ const (
 	DefTiDBHashJoinConcurrency         = 5
 	DefTiDBProjectionConcurrency       = 4
 	DefTiDBOptimizerSelectivityLevel   = 0
+	DefCopTaskBatchSize 			   = 10
 	DefTiDBTxnMode                     = ""
 	DefTiDBRowFormatV1                 = 1
 	DefTiDBRowFormatV2                 = 2
