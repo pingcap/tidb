@@ -32,6 +32,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 // CompareUnorderedStringSlice compare two string slices.
@@ -88,6 +90,9 @@ func (checker *datumEqualsChecker) Check(params []interface{}, names []string) (
 		if v := recover(); v != nil {
 			result = false
 			error = fmt.Sprint(v)
+			logutil.BgLogger().Error("panic in datumEqualsChecker.Check",
+				zap.Reflect("r", v),
+				zap.Stack("stack trace"))
 		}
 	}()
 	paramFirst, ok := params[0].(types.Datum)
