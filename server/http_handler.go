@@ -55,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/pdapi"
 	log "github.com/sirupsen/logrus"
@@ -720,32 +721,108 @@ func (h flashReplicaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 	replicaInfos := make([]*tableFlashReplicaInfo, 0)
 	allDBs := schema.AllSchemas()
 	for _, db := range allDBs {
-		tables := schema.SchemaTables(db.Name)
-		for _, tbl := range tables {
-			tblInfo := tbl.Meta()
-			if tblInfo.TiFlashReplica == nil {
-				continue
-			}
-			if pi := tblInfo.GetPartitionInfo(); pi != nil {
-				for _, p := range pi.Definitions {
-					replicaInfos = append(replicaInfos, &tableFlashReplicaInfo{
-						ID:             p.ID,
-						ReplicaCount:   tblInfo.TiFlashReplica.Count,
-						LocationLabels: tblInfo.TiFlashReplica.LocationLabels,
-						Available:      tblInfo.TiFlashReplica.IsPartitionAvailable(p.ID),
-					})
-				}
-				continue
-			}
-			replicaInfos = append(replicaInfos, &tableFlashReplicaInfo{
-				ID:             tblInfo.ID,
-				ReplicaCount:   tblInfo.TiFlashReplica.Count,
-				LocationLabels: tblInfo.TiFlashReplica.LocationLabels,
-				Available:      tblInfo.TiFlashReplica.Available,
-			})
+		tbls := schema.SchemaTables(db.Name)
+		for _, tbl := range tbls {
+			replicaInfos = h.getTiFlashReplicaInfo(tbl.Meta(), replicaInfos)
 		}
 	}
+	dropedOrTruncateReplicaInfos, err := h.getDropOrTruncateTableTiflash()
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	replicaInfos = append(replicaInfos, dropedOrTruncateReplicaInfos...)
 	writeData(w, replicaInfos)
+}
+
+func (h flashReplicaHandler) getTiFlashReplicaInfo(tblInfo *model.TableInfo, replicaInfos []*tableFlashReplicaInfo) []*tableFlashReplicaInfo {
+	if tblInfo.TiFlashReplica == nil {
+		return replicaInfos
+	}
+	if pi := tblInfo.GetPartitionInfo(); pi != nil {
+		for _, p := range pi.Definitions {
+			replicaInfos = append(replicaInfos, &tableFlashReplicaInfo{
+				ID:             p.ID,
+				ReplicaCount:   tblInfo.TiFlashReplica.Count,
+				LocationLabels: tblInfo.TiFlashReplica.LocationLabels,
+				Available:      tblInfo.TiFlashReplica.IsPartitionAvailable(p.ID),
+			})
+		}
+		return replicaInfos
+	}
+	replicaInfos = append(replicaInfos, &tableFlashReplicaInfo{
+		ID:             tblInfo.ID,
+		ReplicaCount:   tblInfo.TiFlashReplica.Count,
+		LocationLabels: tblInfo.TiFlashReplica.LocationLabels,
+		Available:      tblInfo.TiFlashReplica.Available,
+	})
+	return replicaInfos
+}
+
+func (h flashReplicaHandler) getDropOrTruncateTableTiflash() ([]*tableFlashReplicaInfo, error) {
+	s, err := session.CreateSession(h.Store.(kv.Storage))
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if s != nil {
+		defer s.Close()
+	}
+
+	dom := domain.GetDomain(s)
+	store := dom.Store()
+	txn, err := store.Begin()
+
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	txnMeta := meta.NewMeta(txn)
+
+	iter, err := txnMeta.GetLastHistoryDDLJobsIterator()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	gcSafePoint, err := gcutil.GetGCSafePoint(s)
+	if err != nil {
+		return nil, err
+	}
+	cacheJobs := make([]*model.Job, 0, 32)
+	replicaInfos := make([]*tableFlashReplicaInfo, 0)
+	for {
+		cacheJobs = cacheJobs[:0]
+		cacheJobs, err = iter.GetLastJobs(32, cacheJobs)
+		if len(cacheJobs) == 0 {
+			return replicaInfos, nil
+		}
+		for _, job := range cacheJobs {
+			if job.Type != model.ActionDropTable && job.Type != model.ActionTruncateTable {
+				continue
+			}
+			// Check GC safe point for getting snapshot infoSchema.
+			err = gcutil.ValidateSnapshotWithGCSafePoint(job.StartTS, gcSafePoint)
+			if err != nil {
+				return replicaInfos, nil
+			}
+			if job.BinlogInfo != nil && job.BinlogInfo.TableInfo != nil {
+				replicaInfos = h.getTiFlashReplicaInfo(job.BinlogInfo.TableInfo, replicaInfos)
+				continue
+			}
+			// Get the snapshot infoSchema before drop table.
+			snapInfo, err := dom.GetSnapshotInfoSchema(job.StartTS)
+			if err != nil {
+				return nil, err
+			}
+			// Get table meta from snapshot infoSchema.
+			tbl, ok := snapInfo.TableByID(job.TableID)
+			if !ok {
+				return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(
+					fmt.Sprintf("(Schema ID %d)", job.SchemaID),
+					fmt.Sprintf("(Table ID %d)", job.TableID),
+				)
+			}
+			replicaInfos = h.getTiFlashReplicaInfo(tbl.Meta(), replicaInfos)
+		}
+	}
 }
 
 type tableFlashReplicaStatus struct {
