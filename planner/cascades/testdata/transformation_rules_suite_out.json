@@ -2352,5 +2352,76 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestPushAggDownJoin",
+    "Cases": [
+      {
+        "SQL": "select count(t2.a), avg(t2.a), sum(t2.a), max(t1.b), min(t1.b), t1.b from t as t1 join t as t2 on t1.b = t2.b group by t1.b",
+        "Result": [
+          "Group#0 Schema:[Column#25,Column#26,Column#27,Column#28,Column#29,test.t.b]",
+          "    Projection_5 input:[Group#1], Column#25, Column#26, Column#27, Column#28, Column#29, test.t.b",
+          "Group#1 Schema:[Column#25,Column#26,Column#27,Column#28,Column#29,test.t.b]",
+          "    Aggregation_4 input:[Group#2], group by:test.t.b, funcs:count(test.t.a), avg(test.t.a), sum(test.t.a), max(test.t.b), min(test.t.b), firstrow(test.t.b)",
+          "    Aggregation_12 input:[Group#3], group by:test.t.b, funcs:sum(Column#33), sum(div(Column#34, cast(Column#35))), sum(Column#36), max(test.t.b), min(test.t.b), firstrow(test.t.b)",
+          "    Aggregation_10 input:[Group#4], group by:test.t.b, funcs:count(test.t.a), avg(test.t.a), sum(test.t.a), max(Column#30), min(Column#31), firstrow(Column#32)",
+          "    Aggregation_8 input:[Group#5], group by:test.t.b, funcs:sum(Column#33), sum(div(Column#34, cast(Column#35))), sum(Column#36), max(Column#30), min(Column#31), firstrow(Column#32)",
+          "Group#2 Schema:[test.t.b,test.t.a]",
+          "    Join_3 input:[Group#6,Group#7], inner join, equal:[eq(test.t.b, test.t.b)]",
+          "Group#6 Schema:[test.t.b]",
+          "    DataSource_1 table:t1",
+          "Group#7 Schema:[test.t.a,test.t.b], UniqueKey:[test.t.a]",
+          "    DataSource_2 table:t2",
+          "Group#3 Schema:[test.t.b,Column#33,Column#34,Column#35,Column#36,test.t.b]",
+          "    Join_3 input:[Group#6,Group#8], inner join, equal:[eq(test.t.b, test.t.b)]",
+          "Group#8 Schema:[Column#33,Column#34,Column#35,Column#36,test.t.b]",
+          "    Aggregation_11 input:[Group#7], group by:test.t.b, funcs:count(test.t.a), sum(test.t.a), count(test.t.a), sum(test.t.a), firstrow(test.t.b)",
+          "Group#4 Schema:[Column#30,Column#31,Column#32,test.t.b,test.t.a,test.t.b]",
+          "    Join_3 input:[Group#9,Group#7], inner join, equal:[eq(test.t.b, test.t.b)]",
+          "Group#9 Schema:[Column#30,Column#31,Column#32,test.t.b]",
+          "    Aggregation_9 input:[Group#6], group by:test.t.b, funcs:max(test.t.b), min(test.t.b), firstrow(test.t.b), firstrow(test.t.b)",
+          "Group#5 Schema:[Column#30,Column#31,Column#32,test.t.b,Column#33,Column#34,Column#35,Column#36,test.t.b]",
+          "    Join_3 input:[Group#10,Group#11], inner join, equal:[eq(test.t.b, test.t.b)]",
+          "Group#10 Schema:[Column#30,Column#31,Column#32,test.t.b]",
+          "    Aggregation_6 input:[Group#6], group by:test.t.b, funcs:max(test.t.b), min(test.t.b), firstrow(test.t.b), firstrow(test.t.b)",
+          "Group#11 Schema:[Column#33,Column#34,Column#35,Column#36,test.t.b]",
+          "    Aggregation_7 input:[Group#7], group by:test.t.b, funcs:count(test.t.a), sum(test.t.a), count(test.t.a), sum(test.t.a), firstrow(test.t.b)"
+        ]
+      },
+      {
+        "SQL": "select avg(t2.a), t1.b from t as t1 join t as t2 on t1.b = t2.b group by t1.b order by t1.b",
+        "Result": [
+          "Group#0 Schema:[Column#25,test.t.b]",
+          "    Sort_6 input:[Group#1], test.t.b:asc",
+          "Group#1 Schema:[Column#25,test.t.b]",
+          "    Projection_5 input:[Group#2], Column#25, test.t.b",
+          "Group#2 Schema:[Column#25,test.t.b]",
+          "    Aggregation_4 input:[Group#3], group by:test.t.b, funcs:avg(test.t.a), firstrow(test.t.b)",
+          "    Aggregation_13 input:[Group#4], group by:test.t.b, funcs:sum(div(Column#27, cast(Column#28))), firstrow(test.t.b)",
+          "    Aggregation_11 input:[Group#5], group by:test.t.b, funcs:avg(test.t.a), firstrow(Column#26)",
+          "    Aggregation_9 input:[Group#6], group by:test.t.b, funcs:sum(div(Column#27, cast(Column#28))), firstrow(Column#26)",
+          "Group#3 Schema:[test.t.b,test.t.a]",
+          "    Join_3 input:[Group#7,Group#8], inner join, equal:[eq(test.t.b, test.t.b)]",
+          "Group#7 Schema:[test.t.b]",
+          "    DataSource_1 table:t1",
+          "Group#8 Schema:[test.t.a,test.t.b], UniqueKey:[test.t.a]",
+          "    DataSource_2 table:t2",
+          "Group#4 Schema:[test.t.b,Column#27,Column#28,test.t.b]",
+          "    Join_3 input:[Group#7,Group#9], inner join, equal:[eq(test.t.b, test.t.b)]",
+          "Group#9 Schema:[Column#27,Column#28,test.t.b]",
+          "    Aggregation_12 input:[Group#8], group by:test.t.b, funcs:sum(test.t.a), count(test.t.a), firstrow(test.t.b)",
+          "Group#5 Schema:[Column#26,test.t.b,test.t.a,test.t.b]",
+          "    Join_3 input:[Group#10,Group#8], inner join, equal:[eq(test.t.b, test.t.b)]",
+          "Group#10 Schema:[Column#26,test.t.b]",
+          "    Aggregation_10 input:[Group#7], group by:test.t.b, funcs:firstrow(test.t.b), firstrow(test.t.b)",
+          "Group#6 Schema:[Column#26,test.t.b,Column#27,Column#28,test.t.b]",
+          "    Join_3 input:[Group#11,Group#12], inner join, equal:[eq(test.t.b, test.t.b)]",
+          "Group#11 Schema:[Column#26,test.t.b]",
+          "    Aggregation_7 input:[Group#7], group by:test.t.b, funcs:firstrow(test.t.b), firstrow(test.t.b)",
+          "Group#12 Schema:[Column#27,Column#28,test.t.b]",
+          "    Aggregation_8 input:[Group#8], group by:test.t.b, funcs:sum(test.t.a), count(test.t.a), firstrow(test.t.b)"
+        ]
+      }
+    ]
   }
 ]

@@ -80,7 +80,8 @@
       "select t1.a, t1.b from t1 left join t2 on t1.a = t2.a where t1.a > 2 and t2.b > 200",
       "select t2.a, t2.b from t1 right join t2 on t1.a = t2.a where t1.a > 2 and t2.b > 200",
       "select t1.a, t1.b from t1, t2 where t1.a = t2.a order by t1.a",
-      "select * from t1 join t2 on t1.a = t2.a"
+      "select * from t1 join t2 on t1.a = t2.a",
+      "select count(t2.a), avg(t2.a), sum(t2.a), max(t1.b), min(t1.b), t1.b from t as t1 join t as t2 on t1.b = t2.b group by t1.b order by t1.b"
     ]
   },
   {

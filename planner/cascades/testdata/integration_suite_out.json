@@ -340,9 +340,9 @@
       {
         "SQL": "select t3.a, max(t3.b) from (select t1.a, t1.b from t as t1 left join t as t2 on t1.b = t2.b) t3 group by t3.a order by a",
         "Plan": [
-          "Projection_13 10000.00 root test.t.a, cast(test.t.b, int(11))->Column#5",
-          "└─TableReader_14 10000.00 root data:TableFullScan_15",
-          "  └─TableFullScan_15 10000.00 cop[tikv] table:t1, keep order:true, stats:pseudo"
+          "Projection_18 10000.00 root test.t.a, cast(test.t.b, int(11))->Column#5",
+          "└─TableReader_19 10000.00 root data:TableFullScan_20",
+          "  └─TableFullScan_20 10000.00 cop[tikv] table:t1, keep order:true, stats:pseudo"
         ],
         "Result": [
           "1 11",
@@ -762,6 +762,11 @@
           "2 22 2 222",
           "3 33 3 333"
         ]
+      },
+      {
+        "SQL": "select count(t2.a), avg(t2.a), sum(t2.a), max(t1.b), min(t1.b), t1.b from t as t1 join t as t2 on t1.b = t2.b group by t1.b order by t1.b",
+        "Plan": null,
+        "Result": null
       }
     ]
   },

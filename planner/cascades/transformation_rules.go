@@ -79,6 +79,7 @@ var TiDBLayerOptimizationBatch = TransformationRuleBatch{
 		NewRuleEliminateOuterJoinBelowAggregation(),
 		NewRuleTransformAggregateCaseToSelection(),
 		NewRuleTransformAggToProj(),
+		NewRulePushAggDownJoin(),
 	},
 	memo.OperandLimit: {
 		NewRuleTransformLimitToTopN(),
@@ -2355,6 +2356,7 @@ func (r *aggPushDownHelper) fillGbyCols(
 ) {
 	for _, gbyCol := range gbyCols {
 		firstRow, err := aggregation.NewAggFuncDesc(sctx, ast.AggFuncFirstRow, []expression.Expression{gbyCol}, false)
+		firstRow.Mode = aggregation.CompleteMode
 		if err != nil {
 			return nil, nil, err
 		}
@@ -2406,6 +2408,7 @@ func (r *aggPushDownHelper) decomposeAggFunc(
 		partialCount := aggFunc.Clone()
 		partialCount.Name = ast.AggFuncCount
 		partialCount.RetTp = types.NewFieldType(mysql.TypeLong)
+		partialFuncs = []*aggregation.AggFuncDesc{partialSum, partialCount}
 		partialFuncOutputs := []*expression.Column{r.allocColumn(sctx, partialSum.RetTp), r.allocColumn(sctx, partialCount.RetTp)}
 		partialAggSchema.Append(partialFuncOutputs...)
 
@@ -2448,8 +2451,12 @@ func NewRulePushAggDownJoin() Transformation {
 
 // Match implements Transformation interface.
 func (r *PushAggDownJoin) Match(expr *memo.ExprIter) bool {
+	if expr.GetExpr().HasAppliedRule(r) {
+		return false
+	}
+
 	agg := expr.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
-	if agg.IsCompleteModeAgg() {
+	if !agg.IsCompleteModeAgg() {
 		return false
 	}
 	for _, aggFunc := range agg.AggFuncs {
@@ -2467,7 +2474,7 @@ func (r *PushAggDownJoin) OnTransform(old *memo.ExprIter) (newExprs []*memo.Grou
 	join := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalJoin)
 
 	joinLeftChildSchema := old.Children[0].GetExpr().Children[0].Prop.Schema
-	valid, leftAggFuncs, rightAggFuncs := r.collectAggFuncs(agg, joinLeftChildSchema)
+	valid, leftAggFuncs, rightAggFuncs, funcOrders := r.collectAggFuncs(agg, joinLeftChildSchema)
 	if !valid {
 		return nil, false, false, nil
 	}
@@ -2505,6 +2512,7 @@ func (r *PushAggDownJoin) OnTransform(old *memo.ExprIter) (newExprs []*memo.Grou
 		leftPartialAggSchema, rightPartialAggSchema,
 		midJoin, agg,
 		leftChildGroup, rightChildGroup,
+		funcOrders,
 	)
 	if leftOk && rightOk {
 		finalAggExpr2 := r.doPushAggDownJoin(
@@ -2516,6 +2524,7 @@ func (r *PushAggDownJoin) OnTransform(old *memo.ExprIter) (newExprs []*memo.Grou
 			leftPartialAggSchema, rightPartialAggSchema,
 			midJoin, agg,
 			leftChildGroup, rightChildGroup,
+			funcOrders,
 		)
 		finalAggExpr3 := r.doPushAggDownJoin(
 			false, true,
@@ -2526,6 +2535,7 @@ func (r *PushAggDownJoin) OnTransform(old *memo.ExprIter) (newExprs []*memo.Grou
 			leftPartialAggSchema, rightPartialAggSchema,
 			midJoin, agg,
 			leftChildGroup, rightChildGroup,
+			funcOrders,
 		)
 		return []*memo.GroupExpr{finalAggExpr, finalAggExpr2, finalAggExpr3}, false, false, nil
 	}
@@ -2542,6 +2552,7 @@ func (r *PushAggDownJoin) doPushAggDownJoin(
 	midJoin *plannercore.LogicalJoin,
 	agg *plannercore.LogicalAggregation,
 	leftChildGroup, rightChildGroup *memo.Group,
+	funcOrders []int,
 ) *memo.GroupExpr {
 	var joinLeftGroup *memo.Group
 	if leftOk {
@@ -2567,9 +2578,10 @@ func (r *PushAggDownJoin) doPushAggDownJoin(
 	midJoinExpr.SetChildren(joinLeftGroup, joinRightGroup)
 	midJoinGroup :=  memo.NewGroupWithSchema(midJoinExpr, expression.MergeSchema(joinLeftGroup.Prop.Schema, joinRightGroup.Prop.Schema))
 
-	finalAgg := r.makeFinalAgg(leftOk, rightOk, leftFinalAggFuncs, leftAggFuncs, rightFinalAggFuncs, rightAggFuncs, agg)
+	finalAgg := r.makeFinalAgg(leftOk, rightOk, leftFinalAggFuncs, leftAggFuncs, rightFinalAggFuncs, rightAggFuncs, funcOrders, agg)
 	finalAggExpr := memo.NewGroupExpr(finalAgg)
 	finalAggExpr.SetChildren(midJoinGroup)
+	finalAggExpr.AddAppliedRule(r)
 	return finalAggExpr
 }
 
@@ -2597,38 +2609,62 @@ func (r *PushAggDownJoin) makePartialAgg(
 func (r *PushAggDownJoin) makeFinalAgg(
 	leftOk, rightOk bool,
 	leftFinalAggFuncs, leftAggFuncs, rightFinalAggFuncs, rightAggFuncs []*aggregation.AggFuncDesc,
+	funcOrders []int,
 	agg *plannercore.LogicalAggregation,
 ) (finalAgg *plannercore.LogicalAggregation) {
-	finalAggFunc := make([]*aggregation.AggFuncDesc, len(agg.AggFuncs))
+	var leftFuncs []*aggregation.AggFuncDesc
+	leftPos := 0
 	if leftOk {
-		finalAggFunc = append(finalAggFunc, leftFinalAggFuncs...)
+		leftFuncs = leftFinalAggFuncs
 	} else {
-		finalAggFunc = append(finalAggFunc, leftAggFuncs...)
+		leftFuncs = leftAggFuncs
 	}
+	var rightFuncs []*aggregation.AggFuncDesc
+	rightPos := 0
 	if rightOk {
-		finalAggFunc = append(finalAggFunc, rightFinalAggFuncs...)
+		rightFuncs = rightFinalAggFuncs
 	} else {
-		finalAggFunc = append(finalAggFunc, rightAggFuncs...)
+		rightFuncs = rightAggFuncs
 	}
+
+	finalAggFuncs := make([]*aggregation.AggFuncDesc, 0, len(agg.AggFuncs))
+	for _, funcOrder := range funcOrders {
+		if funcOrder == 0 {
+			finalAggFuncs = append(finalAggFuncs, leftFuncs[leftPos])
+			leftPos++
+		} else {
+			finalAggFuncs = append(finalAggFuncs, rightFuncs[rightPos])
+			rightPos++
+		}
+	}
+
 	finalAgg = plannercore.LogicalAggregation{
-		AggFuncs:     finalAggFunc,
+		AggFuncs:     finalAggFuncs,
 		GroupByItems: agg.GroupByItems,
 	}.Init(agg.SCtx(), agg.SelectBlockOffset())
 	finalAgg.CopyAggHints(agg)
 	return finalAgg
 }
 
-func (r *PushAggDownJoin) collectAggFuncs(agg *plannercore.LogicalAggregation, joinLeftChildSchema *expression.Schema) (valid bool, leftAggFuncs, rightAggFuncs []*aggregation.AggFuncDesc) {
+func (r *PushAggDownJoin) collectAggFuncs(
+	agg *plannercore.LogicalAggregation,
+	joinLeftChildSchema *expression.Schema,
+) (
+	valid bool,
+	leftAggFuncs, rightAggFuncs []*aggregation.AggFuncDesc,
+	funcOrders []int,
+) {
 	valid = true
 	for _, aggFunc := range agg.AggFuncs {
 		index := plannercore.GetAggFuncChildIdx(aggFunc, joinLeftChildSchema)
+		funcOrders = append(funcOrders, index)
 		switch index {
 		case 0:
 			leftAggFuncs = append(leftAggFuncs, aggFunc)
 		case 1:
 			rightAggFuncs = append(rightAggFuncs, aggFunc)
 		default:
-			return false, nil, nil
+			return false, nil, nil, nil
 		}
 	}
 	return
@@ -2649,11 +2685,15 @@ func (r *PushAggDownJoin) tryToDecomposeAggFuncs(
 	partialAggSchema *expression.Schema,
 	err error,
 ) {
+	if len(aggFuncs) == 0 && len(gbyCols) == 0 {
+		return false, nil, join, nil, nil, nil
+	}
+
 	tmpSchema := expression.NewSchema(gbyCols...)
 	childGroup.BuildKeyInfo()
 	for _, key := range childGroup.Prop.Schema.Keys {
 		if tmpSchema.ColumnsIndices(key) != nil {
-			return false, nil, nil, nil, nil, nil
+			return false, nil, join, nil, nil, nil
 		}
 	}
 
@@ -2662,8 +2702,8 @@ func (r *PushAggDownJoin) tryToDecomposeAggFuncs(
 		return false, nil, nil, nil, nil, err
 	}
 
-	midJoin = join.Shallow()
 	if (childIdx == 0 && join.JoinType == plannercore.RightOuterJoin) || (childIdx == 1 && join.JoinType == plannercore.LeftOuterJoin) {
+		midJoin = join.Shallow()
 		var existsDefaultValues bool
 		midJoin.DefaultValues, existsDefaultValues = plannercore.GetDefaultValues(partialAggFuncs, agg.SCtx(), partialAggSchema, childGroup.Prop.Schema)
 		if !existsDefaultValues {
