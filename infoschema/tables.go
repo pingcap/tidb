@@ -122,7 +122,8 @@ const (
 	TableClusterHardware = "CLUSTER_HARDWARE"
 	// TableClusterSystemInfo is the string constant of cluster system info table.
 	TableClusterSystemInfo = "CLUSTER_SYSTEMINFO"
-	tableTiFlashReplica    = "TIFLASH_REPLICA"
+	// TableTiFlashReplica is the string constant of tiflash replica table.
+	TableTiFlashReplica = "TIFLASH_REPLICA"
 	// TableInspectionResult is the string constant of inspection result table.
 	TableInspectionResult = "INSPECTION_RESULT"
 	// TableMetricTables is a table that contains all metrics table definition.
@@ -186,7 +187,7 @@ var tableIDMap = map[string]int64{
 	TableClusterInfo:                        autoid.InformationSchemaDBID + 42,
 	TableClusterConfig:                      autoid.InformationSchemaDBID + 43,
 	TableClusterLoad:                        autoid.InformationSchemaDBID + 44,
-	tableTiFlashReplica:                     autoid.InformationSchemaDBID + 45,
+	TableTiFlashReplica:                     autoid.InformationSchemaDBID + 45,
 	ClusterTableSlowLog:                     autoid.InformationSchemaDBID + 46,
 	ClusterTableProcesslist:                 autoid.InformationSchemaDBID + 47,
 	TableClusterLog:                         autoid.InformationSchemaDBID + 48,
@@ -998,8 +999,8 @@ var tableDDLJobsCols = []columnInfo{
 	{name: "SCHEMA_ID", tp: mysql.TypeLonglong, size: 21},
 	{name: "TABLE_ID", tp: mysql.TypeLonglong, size: 21},
 	{name: "ROW_COUNT", tp: mysql.TypeLonglong, size: 21},
-	{name: "START_TIME", tp: mysql.TypeVarchar, size: 64},
-	{name: "END_TIME", tp: mysql.TypeVarchar, size: 64},
+	{name: "START_TIME", tp: mysql.TypeDatetime, size: 19},
+	{name: "END_TIME", tp: mysql.TypeDatetime, size: 19},
 	{name: "STATE", tp: mysql.TypeVarchar, size: 64},
 	{name: "QUERY", tp: mysql.TypeVarchar, size: 64},
 }
@@ -1260,49 +1261,6 @@ func GetTiKVServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	return servers, nil
 }
 
-// dataForTableTiFlashReplica constructs data for table tiflash replica info.
-func dataForTableTiFlashReplica(ctx sessionctx.Context, schemas []*model.DBInfo) [][]types.Datum {
-	var rows [][]types.Datum
-	progressMap, err := infosync.GetTiFlashTableSyncProgress(context.Background())
-	if err != nil {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(err)
-	}
-	for _, schema := range schemas {
-		for _, tbl := range schema.Tables {
-			if tbl.TiFlashReplica == nil {
-				continue
-			}
-			progress := 1.0
-			if !tbl.TiFlashReplica.Available {
-				if pi := tbl.GetPartitionInfo(); pi != nil && len(pi.Definitions) > 0 {
-					progress = 0
-					for _, p := range pi.Definitions {
-						if tbl.TiFlashReplica.IsPartitionAvailable(p.ID) {
-							progress += 1
-						} else {
-							progress += progressMap[p.ID]
-						}
-					}
-					progress = progress / float64(len(pi.Definitions))
-				} else {
-					progress = progressMap[tbl.ID]
-				}
-			}
-			record := types.MakeDatums(
-				schema.Name.O,                   // TABLE_SCHEMA
-				tbl.Name.O,                      // TABLE_NAME
-				tbl.ID,                          // TABLE_ID
-				int64(tbl.TiFlashReplica.Count), // REPLICA_COUNT
-				strings.Join(tbl.TiFlashReplica.LocationLabels, ","), // LOCATION_LABELS
-				tbl.TiFlashReplica.Available,                         // AVAILABLE
-				progress,                                             // PROGRESS
-			)
-			rows = append(rows, record)
-		}
-	}
-	return rows
-}
-
 var tableNameToColumns = map[string][]columnInfo{
 	TableSchemata:                           schemataCols,
 	TableTables:                             tablesCols,
@@ -1348,7 +1306,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableClusterConfig:                      tableClusterConfigCols,
 	TableClusterLog:                         tableClusterLogCols,
 	TableClusterLoad:                        tableClusterLoadCols,
-	tableTiFlashReplica:                     tableTableTiFlashReplicaCols,
+	TableTiFlashReplica:                     tableTableTiFlashReplicaCols,
 	TableClusterHardware:                    tableClusterHardwareCols,
 	TableClusterSystemInfo:                  tableClusterSystemInfoCols,
 	TableInspectionResult:                   tableInspectionResultCols,
@@ -1416,8 +1374,6 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 	case tableTableSpaces:
 	case tableTiKVStoreStatus:
 		fullRows, err = dataForTiKVStoreStatus(ctx)
-	case tableTiFlashReplica:
-		fullRows = dataForTableTiFlashReplica(ctx, dbs)
 	}
 	if err != nil {
 		return nil, err

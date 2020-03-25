@@ -1892,6 +1892,7 @@ var builtinGlobalVariable = []string{
 	variable.NetWriteTimeout,
 	variable.MaxExecutionTime,
 	variable.InnodbLockWaitTimeout,
+	variable.WindowingUseHighPrecision,
 
 	/* TiDB specific global variables: */
 	variable.TiDBSkipUTF8Check,
@@ -1941,6 +1942,8 @@ var builtinGlobalVariable = []string{
 	variable.TiDBStmtSummaryInternalQuery,
 	variable.TiDBStmtSummaryRefreshInterval,
 	variable.TiDBStmtSummaryHistorySize,
+	variable.TiDBStmtSummaryMaxStmtCount,
+	variable.TiDBStmtSummaryMaxSQLLength,
 	variable.TiDBMaxDeltaSchemaCount,
 	variable.TiDBCapturePlanBaseline,
 	variable.TiDBUsePlanBaselines,
