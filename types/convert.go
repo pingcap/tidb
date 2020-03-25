@@ -216,7 +216,6 @@ func convertScientificNotation(str string) (string, error) {
 		} else if point+int(exp) < len(f)-1 { // 123.456 >> 2 = 12345.6
 			return f[:point] + f[point+1:point+1+int(exp)] + "." + f[point+1+int(exp):], nil
 		}
-
 		// 123.456 >> 5 = 12345600
 		return f[:point] + f[point+1:] + strings.Repeat("0", point+int(exp)-len(f)+1), nil
 	} else { // move point left
@@ -224,7 +223,6 @@ func convertScientificNotation(str string) (string, error) {
 		if int(exp) < point { // 123.456 << 2 = 1.23456
 			return f[:point-int(exp)] + "." + f[point-int(exp):point] + f[point+1:], nil
 		}
-
 		// 123.456 << 5 = 0.00123456
 		return "0." + strings.Repeat("0", int(exp)-point) + f[:point] + f[point+1:], nil
 	}
