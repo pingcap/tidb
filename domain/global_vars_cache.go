@@ -15,7 +15,6 @@ package domain
 
 import (
 	"fmt"
-	"go.uber.org/zap"
 	"sync"
 	"time"
 
@@ -24,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/stmtsummary"
+	"go.uber.org/zap"
 )
 
 // GlobalVariableCache caches global variables.
