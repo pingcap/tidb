@@ -2643,6 +2643,11 @@ func (d *ddl) DropColumns(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alt
 	}
 	tblInfo := t.Meta()
 
+	if len(tblInfo.Columns) == len(specs) {
+		return ErrCantRemoveAllFields.GenWithStack("can't drop all columns in table %s",
+			tblInfo.Name)
+	}
+
 	var colNames []model.CIStr
 	for _, spec := range specs {
 		// Check whether dropped column has existed.
@@ -2652,7 +2657,7 @@ func (d *ddl) DropColumns(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alt
 			err = ErrCantDropFieldOrKey.GenWithStack("column %s doesn't exist", colName)
 			if spec.IfExists {
 				ctx.GetSessionVars().StmtCtx.AppendNote(err)
-				return nil
+				continue
 			}
 			return err
 		}

@@ -341,7 +341,7 @@ func onAddColumns(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error
 			// alter table t add column a1 int after a, add column b1 int after b, add column c1 int after c;
 			if positions[i].Tp == ast.ColumnPositionAfter {
 				for j := 0; j < i; j++ {
-					if positions[j].Tp == ast.ColumnPositionAfter && offsets[j] < offsets[i] {
+					if (positions[j].Tp == ast.ColumnPositionAfter && offsets[j] < offsets[i]) || positions[j].Tp == ast.ColumnPositionFirst {
 						offsets[i]++
 					}
 				}
