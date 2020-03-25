@@ -212,7 +212,10 @@ func (h *BindHandle) CreateBindRecord(sctx sessionctx.Context, record *BindRecor
 		// update the BindRecord to the cache.
 		if br != nil {
 			// removeBindRecord locks h.bindinfo, so we needn't involve it between lock and unlock.
-			h.removeBindRecord(parser.DigestNormalized(br.OriginalSQL), br)
+			err = h.removeBindRecord(parser.DigestNormalized(br.OriginalSQL), br)
+			if err != nil {
+				return
+			}
 		}
 		// Make sure there is only one goroutine writes the cache and use parser.
 		h.bindInfo.Lock()
