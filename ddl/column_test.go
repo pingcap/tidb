@@ -90,9 +90,8 @@ func testCreateColumn(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo
 	return job
 }
 
-func testCreateColumns(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo,
-	colNames []string, positions []*ast.ColumnPosition, defaultValue interface{}) *model.Job {
-
+func buildCreateColumnJobs(dbInfo *model.DBInfo, tblInfo *model.TableInfo, colNames []string,
+	positions []*ast.ColumnPosition, defaultValue interface{}) *model.Job {
 	var colInfos []*model.ColumnInfo
 	offsets := make([]int, len(colNames))
 	for _, colName := range colNames {
@@ -114,6 +113,12 @@ func testCreateColumns(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInf
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{colInfos, positions, offsets},
 	}
+	return job
+}
+
+func testCreateColumns(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo,
+	colNames []string, positions []*ast.ColumnPosition, defaultValue interface{}) *model.Job {
+	job := buildCreateColumnJobs(dbInfo, tblInfo, colNames, positions, defaultValue)
 	err := d.doDDLJob(ctx, job)
 	c.Assert(err, IsNil)
 	v := getSchemaVer(c, ctx)
@@ -133,6 +138,34 @@ func buildDropColumnJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, colName 
 
 func testDropColumn(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, colName string, isError bool) *model.Job {
 	job := buildDropColumnJob(dbInfo, tblInfo, colName)
+	err := d.doDDLJob(ctx, job)
+	if isError {
+		c.Assert(err, NotNil)
+		return nil
+	}
+	c.Assert(errors.ErrorStack(err), Equals, "")
+	v := getSchemaVer(c, ctx)
+	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	return job
+}
+
+func buildDropColumnJobs(dbInfo *model.DBInfo, tblInfo *model.TableInfo, colNames []string) *model.Job {
+	var columnNames []model.CIStr
+	for _, colName := range colNames {
+		columnNames = append(columnNames, model.NewCIStr(colName))
+	}
+	job := &model.Job{
+		SchemaID:   dbInfo.ID,
+		TableID:    tblInfo.ID,
+		Type:       model.ActionDropColumns,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{columnNames},
+	}
+	return job
+}
+
+func testDropColumns(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, colNames []string, isError bool) *model.Job {
+	job := buildDropColumnJobs(dbInfo, tblInfo, colNames)
 	err := d.doDDLJob(ctx, job)
 	if isError {
 		c.Assert(err, NotNil)
@@ -1020,6 +1053,83 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 	d.SetHook(tc)
 
 	job := testDropColumn(c, ctx, d, s.dbInfo, tblInfo, colName, false)
+	testCheckJobDone(c, d, job, false)
+	mu.Lock()
+	hErr := hookErr
+	ok := checkOK
+	mu.Unlock()
+	c.Assert(hErr, IsNil)
+	c.Assert(ok, IsTrue)
+
+	err = ctx.NewTxn(context.Background())
+	c.Assert(err, IsNil)
+
+	job = testDropTable(c, ctx, d, s.dbInfo, tblInfo)
+	testCheckJobDone(c, d, job, false)
+
+	txn, err = ctx.Txn(true)
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
+
+	d.Stop()
+}
+
+func (s *testColumnSuite) TestDropColumns(c *C) {
+	d := newDDL(
+		context.Background(),
+		WithStore(s.store),
+		WithLease(testLease),
+	)
+	tblInfo := testTableInfo(c, d, "t2", 4)
+	ctx := testNewContext(d)
+
+	err := ctx.NewTxn(context.Background())
+	c.Assert(err, IsNil)
+
+	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
+	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
+
+	colNames := []string{"c3", "c4"}
+	defaultColValue := int64(4)
+	row := types.MakeDatums(int64(1), int64(2), int64(3))
+	_, err = t.AddRecord(ctx, append(row, types.NewDatum(defaultColValue)))
+	c.Assert(err, IsNil)
+
+	txn, err := ctx.Txn(true)
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
+
+	checkOK := false
+	var hookErr error
+	var mu sync.Mutex
+
+	tc := &TestDDLCallback{}
+	tc.onJobUpdated = func(job *model.Job) {
+		mu.Lock()
+		defer mu.Unlock()
+		if checkOK {
+			return
+		}
+		t, err1 := testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
+		if err1 != nil {
+			hookErr = errors.Trace(err1)
+			return
+		}
+		for _, colName := range colNames {
+
+			col := table.FindCol(t.(*tables.TableCommon).Columns, colName)
+			if col == nil {
+				checkOK = true
+				return
+			}
+		}
+	}
+
+	d.SetHook(tc)
+
+	job := testDropColumns(c, ctx, d, s.dbInfo, tblInfo, colNames, false)
 	testCheckJobDone(c, d, job, false)
 	mu.Lock()
 	hErr := hookErr

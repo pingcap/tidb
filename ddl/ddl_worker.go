@@ -593,6 +593,8 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		ver, err = onAddColumns(d, t, job)
 	case model.ActionDropColumn:
 		ver, err = onDropColumn(t, job)
+	case model.ActionDropColumns:
+		ver, err = onDropColumns(t, job)
 	case model.ActionModifyColumn:
 		ver, err = w.onModifyColumn(t, job)
 	case model.ActionSetDefaultValue:

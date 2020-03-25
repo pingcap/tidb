@@ -2018,6 +2018,8 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 			switch validSpecs[0].Tp {
 			case ast.AlterTableAddColumns:
 				err = d.AddColumns(ctx, ident, validSpecs)
+			case ast.AlterTableDropColumn:
+				err = d.DropColumns(ctx, ident, validSpecs)
 			default:
 				return errRunMultiSchemaChanges
 			}
@@ -2228,7 +2230,7 @@ func checkUnsupportedColumnConstraint(col *ast.ColumnDef, ti ast.Ident) error {
 	return nil
 }
 
-func checkNewColumn(ctx sessionctx.Context, ti ast.Ident, schema *model.DBInfo, spec *ast.AlterTableSpec, t table.Table, specNewColumn *ast.ColumnDef) (*table.Column, error) {
+func checkAndCreateNewColumn(ctx sessionctx.Context, ti ast.Ident, schema *model.DBInfo, spec *ast.AlterTableSpec, t table.Table, specNewColumn *ast.ColumnDef) (*table.Column, error) {
 	err := checkUnsupportedColumnConstraint(specNewColumn, ti)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -2312,7 +2314,7 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 		return err
 	}
 
-	col, err = checkNewColumn(ctx, ti, schema, spec, t, specNewColumn)
+	col, err = checkAndCreateNewColumn(ctx, ti, schema, spec, t, specNewColumn)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -2348,12 +2350,12 @@ func (d *ddl) AddColumns(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alte
 
 	// Check all the columns at once.
 	newColumnsCount := 0
-	set := make(map[string]bool)
+	addingColumnNames := make(map[string]bool)
 	for _, spec := range specs {
 		for _, specNewColumn := range spec.NewColumns {
 			newColumnsCount++
-			if !set[specNewColumn.Name.Name.O] {
-				set[specNewColumn.Name.Name.O] = true
+			if !addingColumnNames[specNewColumn.Name.Name.O] {
+				addingColumnNames[specNewColumn.Name.Name.O] = true
 			} else {
 				return errors.Trace(infoschema.ErrColumnExists.GenWithStackByArgs(specNewColumn.Name.Name.O))
 			}
@@ -2373,12 +2375,12 @@ func (d *ddl) AddColumns(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alte
 				err = infoschema.ErrColumnExists.GenWithStackByArgs(colName)
 				if spec.IfNotExists {
 					ctx.GetSessionVars().StmtCtx.AppendNote(err)
-					return nil
+					continue
 				}
 				return err
 			}
 
-			col, err = checkNewColumn(ctx, ti, schema, spec, t, specNewColumn)
+			col, err = checkAndCreateNewColumn(ctx, ti, schema, spec, t, specNewColumn)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -2627,6 +2629,55 @@ func (d *ddl) DropColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTa
 	// column not exists, but if_exists flags is true, so we ignore this error.
 	if ErrCantDropFieldOrKey.Equal(err) && spec.IfExists {
 		ctx.GetSessionVars().StmtCtx.AppendNote(err)
+		return nil
+	}
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+// DropColumns will drop multi-columns from the table, now we don't support drop the column with index covered.
+func (d *ddl) DropColumns(ctx sessionctx.Context, ti ast.Ident, specs []*ast.AlterTableSpec) error {
+	schema, t, err := d.getSchemaAndTableByIdent(ctx, ti)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	tblInfo := t.Meta()
+
+	var colNames []model.CIStr
+	for _, spec := range specs {
+		// Check whether dropped column has existed.
+		colName := spec.OldColumnName.Name
+		col := table.FindCol(t.VisibleCols(), colName.L)
+		if col == nil {
+			err = ErrCantDropFieldOrKey.GenWithStack("column %s doesn't exist", colName)
+			if spec.IfExists {
+				ctx.GetSessionVars().StmtCtx.AppendNote(err)
+				return nil
+			}
+			return err
+		}
+
+		if err = isDroppableColumn(tblInfo, colName); err != nil {
+			return errors.Trace(err)
+		}
+		// We don't support dropping column with PK handle covered now.
+		if col.IsPKHandleColumn(tblInfo) {
+			return errUnsupportedPKHandle
+		}
+		colNames = append(colNames, colName)
+	}
+
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    t.Meta().ID,
+		SchemaName: schema.Name.L,
+		Type:       model.ActionDropColumns,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{colNames},
+	}
+
+	err = d.doDDLJob(ctx, job)
+	if err != nil {
 		return nil
 	}
 	err = d.callHookOnChanged(err)
