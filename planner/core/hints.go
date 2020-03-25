@@ -182,8 +182,23 @@ func restoreOptimizerHint(hint *ast.TableOptimizerHint) string {
 	return sb.String()
 }
 
+// RestoreOptimizerHints restores these hints.
+func RestoreOptimizerHints(hints []*ast.TableOptimizerHint) string {
+	hintsStr := make([]string, 0, len(hints))
+	hintsMap := make(map[string]struct{}, len(hints))
+	for _, hint := range hints {
+		hintStr := restoreOptimizerHint(hint)
+		if _, ok := hintsMap[hintStr]; ok {
+			continue
+		}
+		hintsMap[hintStr] = struct{}{}
+		hintsStr = append(hintsStr, hintStr)
+	}
+	return strings.Join(hintsStr, ", ")
+}
+
 // GenHintsFromPhysicalPlan generates hints from physical plan.
-func GenHintsFromPhysicalPlan(p Plan) string {
+func GenHintsFromPhysicalPlan(p Plan) []*ast.TableOptimizerHint {
 	var hints []*ast.TableOptimizerHint
 	switch pp := p.(type) {
 	case *Explain:
@@ -195,11 +210,24 @@ func GenHintsFromPhysicalPlan(p Plan) string {
 	case PhysicalPlan:
 		hints = genHintsFromPhysicalPlan(pp, typeSelect)
 	}
-	hintsStr := make([]string, 0, len(hints))
-	for _, hint := range hints {
-		hintsStr = append(hintsStr, restoreOptimizerHint(hint))
+	return hints
+}
+
+// ExtractTableHintsFromStmtNode extracts table hints from this node.
+func ExtractTableHintsFromStmtNode(node ast.Node) []*ast.TableOptimizerHint {
+	switch x := node.(type) {
+	case *ast.SelectStmt:
+		return x.TableHints
+	case *ast.UpdateStmt:
+		return x.TableHints
+	case *ast.DeleteStmt:
+		return x.TableHints
+	// TODO: support hint for InsertStmt
+	case *ast.ExplainStmt:
+		return ExtractTableHintsFromStmtNode(x.Stmt)
+	default:
+		return nil
 	}
-	return strings.Join(hintsStr, ", ")
 }
 
 func generateQBName(nodeType nodeType, blockOffset int) model.CIStr {

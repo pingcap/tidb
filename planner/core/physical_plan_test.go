@@ -243,10 +243,10 @@ func (s *testPlanSuite) TestDAGPlanBuilderBasePhysicalPlan(c *C) {
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt
 			output[i].Best = core.ToString(p)
-			output[i].Hints = core.GenHintsFromPhysicalPlan(p)
+			output[i].Hints = core.RestoreOptimizerHints(core.GenHintsFromPhysicalPlan(p))
 		})
 		c.Assert(core.ToString(p), Equals, output[i].Best, Commentf("for %s", tt))
-		c.Assert(core.GenHintsFromPhysicalPlan(p), Equals, output[i].Hints, Commentf("for %s", tt))
+		c.Assert(core.RestoreOptimizerHints(core.GenHintsFromPhysicalPlan(p)), Equals, output[i].Hints, Commentf("for %s", tt))
 	}
 }
 
@@ -709,7 +709,7 @@ func (s *testPlanSuite) TestJoinHints(c *C) {
 			if len(warnings) > 0 {
 				output[i].Warning = warnings[0].Err.Error()
 			}
-			output[i].Hints = core.GenHintsFromPhysicalPlan(p)
+			output[i].Hints = core.RestoreOptimizerHints(core.GenHintsFromPhysicalPlan(p))
 		})
 		c.Assert(core.ToString(p), Equals, output[i].Best)
 		if output[i].Warning == "" {
@@ -719,7 +719,7 @@ func (s *testPlanSuite) TestJoinHints(c *C) {
 			c.Assert(warnings[0].Level, Equals, stmtctx.WarnLevelWarning)
 			c.Assert(warnings[0].Err.Error(), Equals, output[i].Warning)
 		}
-		c.Assert(core.GenHintsFromPhysicalPlan(p), Equals, output[i].Hints, comment)
+		c.Assert(core.RestoreOptimizerHints(core.GenHintsFromPhysicalPlan(p)), Equals, output[i].Hints, comment)
 	}
 }
 
@@ -924,7 +924,7 @@ func (s *testPlanSuite) TestIndexHint(c *C) {
 			output[i].SQL = test
 			output[i].Best = core.ToString(p)
 			output[i].HasWarn = len(se.GetSessionVars().StmtCtx.GetWarnings()) > 0
-			output[i].Hints = core.GenHintsFromPhysicalPlan(p)
+			output[i].Hints = core.RestoreOptimizerHints(core.GenHintsFromPhysicalPlan(p))
 		})
 		c.Assert(core.ToString(p), Equals, output[i].Best, comment)
 		warnings := se.GetSessionVars().StmtCtx.GetWarnings()
@@ -933,7 +933,7 @@ func (s *testPlanSuite) TestIndexHint(c *C) {
 		} else {
 			c.Assert(warnings, HasLen, 0, comment)
 		}
-		c.Assert(core.GenHintsFromPhysicalPlan(p), Equals, output[i].Hints, comment)
+		c.Assert(core.RestoreOptimizerHints(core.GenHintsFromPhysicalPlan(p)), Equals, output[i].Hints, comment)
 	}
 }
 
@@ -973,7 +973,7 @@ func (s *testPlanSuite) TestIndexMergeHint(c *C) {
 			output[i].SQL = test
 			output[i].Best = core.ToString(p)
 			output[i].HasWarn = len(se.GetSessionVars().StmtCtx.GetWarnings()) > 0
-			output[i].Hints = core.GenHintsFromPhysicalPlan(p)
+			output[i].Hints = core.RestoreOptimizerHints(core.GenHintsFromPhysicalPlan(p))
 		})
 		c.Assert(core.ToString(p), Equals, output[i].Best, comment)
 		warnings := se.GetSessionVars().StmtCtx.GetWarnings()
@@ -982,7 +982,7 @@ func (s *testPlanSuite) TestIndexMergeHint(c *C) {
 		} else {
 			c.Assert(warnings, HasLen, 0, comment)
 		}
-		c.Assert(core.GenHintsFromPhysicalPlan(p), Equals, output[i].Hints, comment)
+		c.Assert(core.RestoreOptimizerHints(core.GenHintsFromPhysicalPlan(p)), Equals, output[i].Hints, comment)
 	}
 }
 
@@ -1017,10 +1017,10 @@ func (s *testPlanSuite) TestQueryBlockHint(c *C) {
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt
 			output[i].Plan = core.ToString(p)
-			output[i].Hints = core.GenHintsFromPhysicalPlan(p)
+			output[i].Hints = core.RestoreOptimizerHints(core.GenHintsFromPhysicalPlan(p))
 		})
 		c.Assert(core.ToString(p), Equals, output[i].Plan, comment)
-		c.Assert(core.GenHintsFromPhysicalPlan(p), Equals, output[i].Hints, comment)
+		c.Assert(core.RestoreOptimizerHints(core.GenHintsFromPhysicalPlan(p)), Equals, output[i].Hints, comment)
 	}
 }
 
@@ -1062,10 +1062,10 @@ func (s *testPlanSuite) TestInlineProjection(c *C) {
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt
 			output[i].Plan = core.ToString(p)
-			output[i].Hints = core.GenHintsFromPhysicalPlan(p)
+			output[i].Hints = core.RestoreOptimizerHints(core.GenHintsFromPhysicalPlan(p))
 		})
 		c.Assert(core.ToString(p), Equals, output[i].Plan, comment)
-		c.Assert(core.GenHintsFromPhysicalPlan(p), Equals, output[i].Hints, comment)
+		c.Assert(core.RestoreOptimizerHints(core.GenHintsFromPhysicalPlan(p)), Equals, output[i].Hints, comment)
 	}
 }
 

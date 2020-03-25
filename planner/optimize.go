@@ -48,7 +48,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 
 	sctx.PrepareTSFuture(ctx)
 
-	tableHints := extractTableHintsFromStmtNode(node)
+	tableHints := plannercore.ExtractTableHintsFromStmtNode(node)
 	stmtHints, warns := handleStmtHints(tableHints)
 	defer func() {
 		sctx.GetSessionVars().StmtCtx.StmtHints = stmtHints
@@ -73,7 +73,9 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		return bestPlan, names, nil
 	}
 	bestPlanHint := plannercore.GenHintsFromPhysicalPlan(bestPlan)
-	binding := bindRecord.FindBinding(bestPlanHint)
+	bestPlanHint = append(bestPlanHint, tableHints...)
+	bestPlanHintStr := plannercore.RestoreOptimizerHints(bestPlanHint)
+	binding := bindRecord.FindBinding(bestPlanHintStr)
 	// If the best bestPlan is in baselines, just use it.
 	if binding != nil && binding.Status == bindinfo.Using {
 		if sctx.GetSessionVars().UsePlanBaselines {
@@ -113,7 +115,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	}
 	// If there is already a evolution task, we do not need to handle it again.
 	if sctx.GetSessionVars().EvolvePlanBaselines && binding == nil {
-		handleEvolveTasks(ctx, sctx, bindRecord, stmtNode, bestPlanHint)
+		handleEvolveTasks(ctx, sctx, bindRecord, stmtNode, bestPlanHintStr)
 	}
 	// Restore the hint to avoid changing the stmt node.
 	bindinfo.BindHint(stmtNode, originHints)
@@ -286,22 +288,6 @@ func OptimizeExecStmt(ctx context.Context, sctx sessionctx.Context,
 	}
 	err = errors.Errorf("invalid result plan type, should be Execute")
 	return nil, err
-}
-
-func extractTableHintsFromStmtNode(node ast.Node) []*ast.TableOptimizerHint {
-	switch x := node.(type) {
-	case *ast.SelectStmt:
-		return x.TableHints
-	case *ast.UpdateStmt:
-		return x.TableHints
-	case *ast.DeleteStmt:
-		return x.TableHints
-	// TODO: support hint for InsertStmt
-	case *ast.ExplainStmt:
-		return extractTableHintsFromStmtNode(x.Stmt)
-	default:
-		return nil
-	}
 }
 
 func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHints, warns []error) {
