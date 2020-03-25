@@ -67,6 +67,7 @@ const (
 	ActionAlterSequence                 ActionType = 35
 	ActionDropSequence                  ActionType = 36
 	ActionAddColumns                    ActionType = 37
+	ActionDropColumns                   ActionType = 38
 )
 
 const (
@@ -113,6 +114,7 @@ var actionMap = map[ActionType]string{
 	ActionAlterSequence:                 "alter sequence",
 	ActionDropSequence:                  "drop sequence",
 	ActionAddColumns:                    "add multi-columns",
+	ActionDropColumns:                   "drop multi-columns",
 }
 
 // String return current ddl action in string
