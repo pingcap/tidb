@@ -726,7 +726,7 @@ func (h flashReplicaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 			replicaInfos = h.getTiFlashReplicaInfo(tbl.Meta(), replicaInfos)
 		}
 	}
-	dropedOrTruncateReplicaInfos, err := h.getDropOrTruncateTableTiflash()
+	dropedOrTruncateReplicaInfos, err := h.getDropOrTruncateTableTiflash(schema)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -759,7 +759,7 @@ func (h flashReplicaHandler) getTiFlashReplicaInfo(tblInfo *model.TableInfo, rep
 	return replicaInfos
 }
 
-func (h flashReplicaHandler) getDropOrTruncateTableTiflash() ([]*tableFlashReplicaInfo, error) {
+func (h flashReplicaHandler) getDropOrTruncateTableTiflash(currentSchema infoschema.InfoSchema) ([]*tableFlashReplicaInfo, error) {
 	s, err := session.CreateSession(h.Store.(kv.Storage))
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -788,6 +788,7 @@ func (h flashReplicaHandler) getDropOrTruncateTableTiflash() ([]*tableFlashRepli
 	}
 	cacheJobs := make([]*model.Job, 0, 32)
 	replicaInfos := make([]*tableFlashReplicaInfo, 0)
+	uniqueIDMap := make(map[int64]struct{})
 	for {
 		cacheJobs = cacheJobs[:0]
 		cacheJobs, err = iter.GetLastJobs(32, cacheJobs)
@@ -803,10 +804,6 @@ func (h flashReplicaHandler) getDropOrTruncateTableTiflash() ([]*tableFlashRepli
 			if err != nil {
 				return replicaInfos, nil
 			}
-			if job.BinlogInfo != nil && job.BinlogInfo.TableInfo != nil {
-				replicaInfos = h.getTiFlashReplicaInfo(job.BinlogInfo.TableInfo, replicaInfos)
-				continue
-			}
 			// Get the snapshot infoSchema before drop table.
 			snapInfo, err := dom.GetSnapshotInfoSchema(job.StartTS)
 			if err != nil {
@@ -820,6 +817,14 @@ func (h flashReplicaHandler) getDropOrTruncateTableTiflash() ([]*tableFlashRepli
 					fmt.Sprintf("(Table ID %d)", job.TableID),
 				)
 			}
+			// avoid duplicate table id info.
+			if _, ok := currentSchema.TableByID(tbl.Meta().ID); ok {
+				continue
+			}
+			if _, ok := uniqueIDMap[tbl.Meta().ID]; ok {
+				continue
+			}
+			uniqueIDMap[tbl.Meta().ID] = struct{}{}
 			replicaInfos = h.getTiFlashReplicaInfo(tbl.Meta(), replicaInfos)
 		}
 	}
