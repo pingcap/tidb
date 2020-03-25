@@ -92,47 +92,66 @@ func (p *PointGetPlan) ToPB(ctx sessionctx.Context) (*tipb.Executor, error) {
 	return nil, nil
 }
 
-// ExplainInfo returns operator information to be explained.
+// ExplainInfo implements Plan interface.
 func (p *PointGetPlan) ExplainInfo() string {
-	return p.explainInfo(false)
+	accessObject, operatorInfo := p.AccessObject(), p.OperatorInfo(false)
+	if len(operatorInfo) == 0 {
+		return accessObject
+	}
+	return accessObject + ", " + operatorInfo
 }
 
-// ExplainInfo returns operator information to be explained.
-func (p *PointGetPlan) explainInfo(normalized bool) string {
+// ExplainNormalizedInfo implements Plan interface.
+func (p *PointGetPlan) ExplainNormalizedInfo() string {
+	accessObject, operatorInfo := p.AccessObject(), p.OperatorInfo(true)
+	if len(operatorInfo) == 0 {
+		return accessObject
+	}
+	return accessObject + ", " + operatorInfo
+}
+
+// AccessObject implements dataAccesser interface.
+func (p *PointGetPlan) AccessObject() string {
 	buffer := bytes.NewBufferString("")
 	tblName := p.TblInfo.Name.O
 	fmt.Fprintf(buffer, "table:%s", tblName)
-	if p.IndexInfo != nil {
-		fmt.Fprintf(buffer, ", index:")
-		for i, col := range p.IndexInfo.Columns {
-			buffer.WriteString(col.Name.O)
-			if i < len(p.IndexInfo.Columns)-1 {
-				buffer.WriteString(" ")
-			}
-		}
-	} else {
-		if normalized {
-			fmt.Fprintf(buffer, ", handle:?")
-		} else {
-			if p.UnsignedHandle {
-				fmt.Fprintf(buffer, ", handle:%d", uint64(p.Handle))
-			} else {
-				fmt.Fprintf(buffer, ", handle:%d", p.Handle)
-			}
-		}
-	}
-	if p.Lock {
-		fmt.Fprintf(buffer, ", lock")
-	}
 	if p.PartitionInfo != nil {
 		fmt.Fprintf(buffer, ", partition:%s", p.PartitionInfo.Name.L)
+	}
+	if p.IndexInfo != nil {
+		buffer.WriteString(", index:" + p.IndexInfo.Name.O + "(")
+		for i, idxCol := range p.IndexInfo.Columns {
+			buffer.WriteString(idxCol.Name.O)
+			if i+1 < len(p.IndexInfo.Columns) {
+				buffer.WriteString(", ")
+			}
+		}
+		buffer.WriteString(")")
 	}
 	return buffer.String()
 }
 
-// ExplainNormalizedInfo returns normalized operator information to be explained.
-func (p *PointGetPlan) ExplainNormalizedInfo() string {
-	return p.explainInfo(true)
+// OperatorInfo implements dataAccesser interface.
+func (p *PointGetPlan) OperatorInfo(normalized bool) string {
+	buffer := bytes.NewBufferString("")
+	if p.IndexInfo == nil {
+		if normalized {
+			fmt.Fprintf(buffer, "handle:?, ")
+		} else {
+			if p.UnsignedHandle {
+				fmt.Fprintf(buffer, "handle:%d, ", uint64(p.Handle))
+			} else {
+				fmt.Fprintf(buffer, "handle:%d, ", p.Handle)
+			}
+		}
+	}
+	if p.Lock {
+		fmt.Fprintf(buffer, "lock, ")
+	}
+	if buffer.Len() >= 2 {
+		buffer.Truncate(buffer.Len() - 2)
+	}
+	return buffer.String()
 }
 
 // GetChildReqProps gets the required property by child index.
@@ -228,41 +247,53 @@ func (p *BatchPointGetPlan) ToPB(ctx sessionctx.Context) (*tipb.Executor, error)
 	return nil, nil
 }
 
-// ExplainInfo returns operator information to be explained.
+// ExplainInfo implements Plan interface.
 func (p *BatchPointGetPlan) ExplainInfo() string {
-	return p.explainInfo(false)
+	return p.AccessObject() + ", " + p.OperatorInfo(false)
 }
 
-func (p *BatchPointGetPlan) explainInfo(normalized bool) string {
+// ExplainNormalizedInfo implements Plan interface.
+func (p *BatchPointGetPlan) ExplainNormalizedInfo() string {
+	return p.AccessObject() + ", " + p.OperatorInfo(true)
+}
+
+// AccessObject implements physicalScan interface.
+func (p *BatchPointGetPlan) AccessObject() string {
 	buffer := bytes.NewBufferString("")
 	tblName := p.TblInfo.Name.O
 	fmt.Fprintf(buffer, "table:%s", tblName)
 	if p.IndexInfo != nil {
-		fmt.Fprintf(buffer, ", index:")
-		for i, col := range p.IndexInfo.Columns {
-			buffer.WriteString(col.Name.O)
-			if i < len(p.IndexInfo.Columns)-1 {
-				buffer.WriteString(" ")
+		buffer.WriteString(", index:" + p.IndexInfo.Name.O + "(")
+		for i, idxCol := range p.IndexInfo.Columns {
+			buffer.WriteString(idxCol.Name.O)
+			if i+1 < len(p.IndexInfo.Columns) {
+				buffer.WriteString(", ")
 			}
 		}
-	} else {
-		if normalized {
-			fmt.Fprintf(buffer, ", handle:?")
-		} else {
-			fmt.Fprintf(buffer, ", handle:%v", p.Handles)
-		}
-	}
-	fmt.Fprintf(buffer, ", keep order:%v", p.KeepOrder)
-	fmt.Fprintf(buffer, ", desc:%v", p.Desc)
-	if p.Lock {
-		fmt.Fprintf(buffer, ", lock")
+		buffer.WriteString(")")
 	}
 	return buffer.String()
 }
 
-// ExplainNormalizedInfo returns normalized operator information to be explained.
-func (p *BatchPointGetPlan) ExplainNormalizedInfo() string {
-	return p.explainInfo(true)
+// OperatorInfo implements dataAccesser interface.
+func (p *BatchPointGetPlan) OperatorInfo(normalized bool) string {
+	buffer := bytes.NewBufferString("")
+	if p.IndexInfo == nil {
+		if normalized {
+			fmt.Fprintf(buffer, "handle:?, ")
+		} else {
+			fmt.Fprintf(buffer, "handle:%v, ", p.Handles)
+		}
+	}
+	fmt.Fprintf(buffer, "keep order:%v, ", p.KeepOrder)
+	fmt.Fprintf(buffer, "desc:%v, ", p.Desc)
+	if p.Lock {
+		fmt.Fprintf(buffer, "lock, ")
+	}
+	if buffer.Len() >= 2 {
+		buffer.Truncate(buffer.Len() - 2)
+	}
+	return buffer.String()
 }
 
 // GetChildReqProps gets the required property by child index.
@@ -1162,7 +1193,7 @@ func getHashPartitionColumnName(ctx sessionctx.Context, tbl *model.TableInfo) *a
 		return nil
 	}
 	// PartitionExpr don't need columns and names for hash partition.
-	partitionExpr, err := table.(partitionTable).PartitionExpr(ctx, nil, nil)
+	partitionExpr, err := table.(partitionTable).PartitionExpr()
 	if err != nil {
 		return nil
 	}
