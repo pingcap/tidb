@@ -137,44 +137,9 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	stmt := stmts[0]
 
-	// Try to handle the ignore_plan_cache() hint.
-	planCacheHit := true
-	hitCount := 0
-	switch stmt.(type) {
-	case *ast.SelectStmt:
-		for _, hints := range (stmt.(*ast.SelectStmt)).TableHints {
-			if hints.HintName.L == "ignore_plan_cache" {
-				planCacheHit = false
-				hitCount += 1
-			}
-		}
-		break
-	case *ast.DeleteStmt:
-		for _, hints := range (stmt.(*ast.DeleteStmt)).TableHints {
-			if hints.HintName.L == "ignore_plan_cache" {
-				planCacheHit = false
-				hitCount += 1
-			}
-		}
-		break
-	case *ast.UpdateStmt:
-		for _, hints := range (stmt.(*ast.UpdateStmt)).TableHints {
-			if hints.HintName.L == "ignore_plan_cache" {
-				planCacheHit = false
-				hitCount += 1
-			}
-		}
-		break
-	}
-
 	err = ResetContextOfStmt(e.ctx, stmt)
 	if err != nil {
 		return err
-	}
-
-	if hitCount > 1 {
-		warn := errors.New("There are multiple IGNORE_PLAN_CACHE hints, only one will take effect")
-		e.ctx.GetSessionVars().StmtCtx.AppendWarning(warn)
 	}
 
 	var extractor paramMarkerExtractor
@@ -211,7 +176,35 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		Params:        sorter.markers,
 		SchemaVersion: e.is.SchemaMetaVersion(),
 	}
-	prepared.UseCache = plannercore.PreparedPlanCacheEnabled() && plannercore.Cacheable(stmt) && planCacheHit
+
+	//Handle "ignore_plan_cache()" hint
+	//If there are multiple hints, only one will take effect
+	prepared.UseCache = plannercore.PreparedPlanCacheEnabled() && plannercore.Cacheable(stmt)
+	if prepared.UseCache {
+		switch stmt.(type) {
+		case *ast.SelectStmt:
+			for _, hints := range (stmt.(*ast.SelectStmt)).TableHints {
+				if hints.HintName.L == "ignore_plan_cache" {
+					prepared.UseCache = false
+					break
+				}
+			}
+		case *ast.DeleteStmt:
+			for _, hints := range (stmt.(*ast.DeleteStmt)).TableHints {
+				if hints.HintName.L == "ignore_plan_cache" {
+					prepared.UseCache = false
+					break
+				}
+			}
+		case *ast.UpdateStmt:
+			for _, hints := range (stmt.(*ast.UpdateStmt)).TableHints {
+				if hints.HintName.L == "ignore_plan_cache" {
+					prepared.UseCache = false
+					break
+				}
+			}
+		}
+	}
 
 	// We try to build the real statement of preparedStmt.
 	for i := range prepared.Params {
