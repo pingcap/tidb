@@ -724,7 +724,51 @@ func (s *seqTestSuite) TestIndexMergeReaderClose(c *C) {
 	c.Assert(err, NotNil)
 	c.Check(checkGoroutineExists("fetchLoop"), IsFalse)
 	c.Check(checkGoroutineExists("fetchHandles"), IsFalse)
-	c.Check(checkGoroutineExists("waitPartialWorkersAndCloseFetchChan"), IsFalse)
+	c.Check(checkGoroutineExists("pickAndExecTask"), IsFalse)
+}
+
+// TestIndexMergeReaderPanic checks that if there is a panic in IndexMergeReader, the goroutine doesn't
+// leak.
+func (s *seqTestSuite) TestIndexMergeReaderPanic(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int)")
+	tk.MustExec("create index idx1 on t(a)")
+	tk.MustExec("create index idx2 on t(b)")
+
+	// panic in partialIndexWorker
+	fpName := "github.com/pingcap/tidb/executor/indexMergePartialIndexWorkerPanic"
+	c.Assert(failpoint.Enable(fpName, `panic("panic in partial worker")`), IsNil)
+	err := tk.QueryToErr("select /*+ USE_INDEX_MERGE(t, idx1, idx2) */ * from t where a > 10 or b < 100")
+	c.Assert(failpoint.Disable(fpName), IsNil)
+	c.Assert(err, ErrorMatches, ".*failpoint panic: panic in partial worker.*")
+	c.Check(checkGoroutineExists("fetchLoop"), IsFalse)
+	c.Check(checkGoroutineExists("fetchHandles"), IsFalse)
+	c.Check(checkGoroutineExists("pickAndExecTask"), IsFalse)
+
+	// panic in processWorker
+	fpName = "github.com/pingcap/tidb/executor/indexMergeProcessWorkerPanic"
+	c.Assert(failpoint.Enable(fpName, `panic("panic in process worker")`), IsNil)
+	err = tk.QueryToErr("select /*+ USE_INDEX_MERGE(t, idx1, idx2) */ * from t where a > 10 or b < 100")
+	c.Assert(failpoint.Disable(fpName), IsNil)
+	c.Assert(err, ErrorMatches, ".*failpoint panic: panic in process worker.*")
+	c.Check(checkGoroutineExists("fetchLoop"), IsFalse)
+	c.Check(checkGoroutineExists("fetchHandles"), IsFalse)
+	c.Check(checkGoroutineExists("pickAndExecTask"), IsFalse)
+
+	// panic in tableScanWorker
+	fpName = "github.com/pingcap/tidb/executor/indexMergeTableScanWorkerPanic"
+	c.Assert(failpoint.Enable(fpName, `panic("panic in table scan worker")`), IsNil)
+	err = tk.QueryToErr("select /*+ USE_INDEX_MERGE(t, idx1, idx2) */ * from t where a > 10 or b < 100")
+	c.Assert(failpoint.Disable(fpName), IsNil)
+	c.Assert(err, ErrorMatches, ".*failpoint panic: panic in table scan worker.*")
+	c.Check(checkGoroutineExists("pickAndExecTask"), IsFalse)
+	for ntry := 0; checkGoroutineExists("fetchHandles") && ntry < 10; ntry++ {
+		time.Sleep(10 * time.Millisecond)
+	}
+	c.Check(checkGoroutineExists("fetchHandles"), IsFalse)
+	c.Check(checkGoroutineExists("fetchLoop"), IsFalse)
 }
 
 func (s *seqTestSuite) TestParallelHashAggClose(c *C) {
