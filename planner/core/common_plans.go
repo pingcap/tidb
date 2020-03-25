@@ -287,7 +287,6 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 		return nil
 	}
 	var cacheKey kvcache.Key
-	var isRange bool
 	stmtCtx.UseCache = prepared.UseCache
 	if prepared.UseCache {
 		cacheKey = NewPSTMTPlanCacheKey(sctx.GetSessionVars(), e.ExecID, prepared.SchemaVersion)
@@ -305,13 +304,10 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 			if err != nil {
 				return err
 			}
-			if !e.isRangePartition(cachedVal.Plan) {
-				e.names = cachedVal.OutPutNames
-				e.Plan = cachedVal.Plan
-				stmtCtx.SetPlanDigest(preparedStmt.NormalizedPlan, preparedStmt.PlanDigest)
-				return nil
-			}
-			isRange = true
+			e.names = cachedVal.OutPutNames
+			e.Plan = cachedVal.Plan
+			stmtCtx.SetPlanDigest(preparedStmt.NormalizedPlan, preparedStmt.PlanDigest)
+			return nil
 		}
 	}
 	p, names, err := OptimizeAstNode(ctx, sctx, prepared.Stmt, is)
@@ -324,6 +320,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	}
 	e.names = names
 	e.Plan = p
+	isRange := e.isRangePartition(p)
 	_, isTableDual := p.(*PhysicalTableDual)
 	if !isTableDual && prepared.UseCache && !isRange {
 		cached := NewPSTMTPlanCacheValue(p, names)
