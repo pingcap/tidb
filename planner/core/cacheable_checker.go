@@ -20,12 +20,30 @@ import (
 )
 
 // Cacheable checks whether the input ast is cacheable.
+// Handle "ignore_plan_cache()" hint
+// If there are multiple hints, only one will take effect
 func Cacheable(node ast.Node) bool {
-	_, isSelect := node.(*ast.SelectStmt)
-	_, isUpdate := node.(*ast.UpdateStmt)
-	_, isInsert := node.(*ast.InsertStmt)
-	_, isDelete := node.(*ast.DeleteStmt)
-	if !(isSelect || isUpdate || isInsert || isDelete) {
+	switch node.(type) {
+	case *ast.SelectStmt:
+		for _, hints := range (node.(*ast.SelectStmt)).TableHints {
+			if hints.HintName.L == "ignore_plan_cache" {
+				return false
+			}
+		}
+	case *ast.DeleteStmt:
+		for _, hints := range (node.(*ast.DeleteStmt)).TableHints {
+			if hints.HintName.L == "ignore_plan_cache" {
+				return false
+			}
+		}
+	case *ast.UpdateStmt:
+		for _, hints := range (node.(*ast.UpdateStmt)).TableHints {
+			if hints.HintName.L == "ignore_plan_cache" {
+				return false
+			}
+		}
+	case *ast.InsertStmt:
+	default:
 		return false
 	}
 	checker := cacheableChecker{

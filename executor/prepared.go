@@ -179,34 +179,6 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 	prepared.UseCache = plannercore.PreparedPlanCacheEnabled() && plannercore.Cacheable(stmt)
 
-	//Handle "ignore_plan_cache()" hint
-	//If there are multiple hints, only one will take effect
-	if prepared.UseCache {
-		switch stmt.(type) {
-		case *ast.SelectStmt:
-			for _, hints := range (stmt.(*ast.SelectStmt)).TableHints {
-				if hints.HintName.L == "ignore_plan_cache" {
-					prepared.UseCache = false
-					break
-				}
-			}
-		case *ast.DeleteStmt:
-			for _, hints := range (stmt.(*ast.DeleteStmt)).TableHints {
-				if hints.HintName.L == "ignore_plan_cache" {
-					prepared.UseCache = false
-					break
-				}
-			}
-		case *ast.UpdateStmt:
-			for _, hints := range (stmt.(*ast.UpdateStmt)).TableHints {
-				if hints.HintName.L == "ignore_plan_cache" {
-					prepared.UseCache = false
-					break
-				}
-			}
-		}
-	}
-
 	// We try to build the real statement of preparedStmt.
 	for i := range prepared.Params {
 		param := prepared.Params[i].(*driver.ParamMarkerExpr)
