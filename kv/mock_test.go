@@ -15,7 +15,9 @@ package kv
 
 import (
 	"context"
+
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 )
 
 var _ = Suite(testMockSuite{})
@@ -24,7 +26,7 @@ type testMockSuite struct {
 }
 
 func (s testMockSuite) TestInterface(c *C) {
-	storage := NewMockStorage()
+	storage := newMockStorage()
 	storage.GetClient()
 	storage.UUID()
 	version, err := storage.CurrentVersion()
