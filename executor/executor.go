@@ -16,6 +16,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"math"
 	"runtime"
 	"strconv"
 	"strings"
@@ -385,6 +386,9 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 		tableName = getTableName(e.is, job.TableID)
 	}
 
+	startTime := ts2Time(job.StartTS)
+	finishTime := ts2Time(finishTS)
+
 	// Check the privilege.
 	if checker != nil && !checker.RequestVerification(e.activeRoles, strings.ToLower(schemaName), strings.ToLower(tableName), "", mysql.AllPrivMask) {
 		return
@@ -398,13 +402,20 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 	req.AppendInt64(5, job.SchemaID)
 	req.AppendInt64(6, job.TableID)
 	req.AppendInt64(7, job.RowCount)
-	req.AppendString(8, model.TSConvert2Time(job.StartTS).String())
+	req.AppendTime(8, startTime)
 	if finishTS > 0 {
-		req.AppendString(9, model.TSConvert2Time(finishTS).String())
+		req.AppendTime(9, finishTime)
 	} else {
-		req.AppendString(9, "")
+		req.AppendNull(9)
 	}
 	req.AppendString(10, job.State.String())
+}
+
+func ts2Time(timestamp uint64) types.Time {
+	duration := time.Duration(math.Pow10(9-int(types.DefaultFsp))) * time.Nanosecond
+	t := model.TSConvert2Time(timestamp)
+	t.Truncate(duration)
+	return types.NewTime(types.FromGoTime(t), mysql.TypeDatetime, types.DefaultFsp)
 }
 
 // ShowDDLJobQueriesExec represents a show DDL job queries executor.
