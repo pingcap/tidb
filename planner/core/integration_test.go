@@ -254,14 +254,25 @@ func (s *testIntegrationSuite) TestIsolationRead(c *C) {
 
 	_, err = tk.Exec("select * from t")
 	c.Assert(err, NotNil)
+<<<<<<< HEAD
 	c.Assert(err.Error(), Equals, "[planner:1815]Internal : Can not find access path matching 'tidb_isolation_read_engines'(value: 'tiflash') and tidb-server config isolation-read(engines: '[tikv tiflash]'). Available values are 'tikv'.")
+=======
+	c.Assert(err.Error(), Equals, "[planner:1815]Internal : Can not find access path matching 'tidb_isolation_read_engines'(value: 'tiflash'). Available values are 'tikv'.")
+>>>>>>> 4a7d477... session: delete global scope for isolation read (#15625)
 
-	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tikv, tiflash'")
+	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash, tikv'")
+	tk.MustExec("select * from t")
 	config.GetGlobalConfig().IsolationRead.Engines = []string{"tiflash"}
+<<<<<<< HEAD
 	_, err = tk.Exec("select * from t")
 	config.GetGlobalConfig().IsolationRead.Engines = []string{"tikv", "tiflash"}
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[planner:1815]Internal : Can not find access path matching 'tidb_isolation_read_engines'(value: 'tikv,tiflash') and tidb-server config isolation-read(engines: '[tiflash]'). Available values are 'tikv'.")
+=======
+	defer func() { config.GetGlobalConfig().IsolationRead.Engines = []string{"tikv", "tiflash"} }()
+	// Change instance config doesn't affect isolation read.
+	tk.MustExec("select * from t")
+>>>>>>> 4a7d477... session: delete global scope for isolation read (#15625)
 }
 
 func (s *testIntegrationSuite) TestSelPushDownTiFlash(c *C) {
