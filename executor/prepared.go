@@ -177,9 +177,10 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		SchemaVersion: e.is.SchemaMetaVersion(),
 	}
 
+	prepared.UseCache = plannercore.PreparedPlanCacheEnabled() && plannercore.Cacheable(stmt)
+
 	//Handle "ignore_plan_cache()" hint
 	//If there are multiple hints, only one will take effect
-	prepared.UseCache = plannercore.PreparedPlanCacheEnabled() && plannercore.Cacheable(stmt)
 	if prepared.UseCache {
 		switch stmt.(type) {
 		case *ast.SelectStmt:
