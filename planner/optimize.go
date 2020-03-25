@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/bindinfo"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -39,22 +38,13 @@ import (
 // Optimize does optimization and creates a Plan.
 // The node must be prepared first.
 func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (plannercore.Plan, types.NameSlice, error) {
-	_, isolationReadContainTiKV := sctx.GetSessionVars().GetIsolationReadEngines()[kv.TiKV]
-	if isolationReadContainTiKV {
-		cfgIsolationReadContainTiKV := false
-		for _, engine := range config.GetGlobalConfig().IsolationRead.Engines {
-			if engine == kv.TiKV.Name() {
-				cfgIsolationReadContainTiKV = true
+	if _, isolationReadContainTiKV := sctx.GetSessionVars().GetIsolationReadEngines()[kv.TiKV]; isolationReadContainTiKV {
+		fp := plannercore.TryFastPlan(sctx, node)
+		if fp != nil {
+			if !useMaxTS(sctx, fp) {
+				sctx.PrepareTSFuture(ctx)
 			}
-		}
-		if cfgIsolationReadContainTiKV {
-			fp := plannercore.TryFastPlan(sctx, node)
-			if fp != nil {
-				if !useMaxTS(sctx, fp) {
-					sctx.PrepareTSFuture(ctx)
-				}
-				return fp, fp.OutputNames(), nil
-			}
+			return fp, fp.OutputNames(), nil
 		}
 	}
 
