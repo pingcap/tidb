@@ -293,14 +293,14 @@ func (s *testIntegrationSerialSuite) TestNoneAccessPathsFoundByIsolationRead(c *
 
 	_, err = tk.Exec("select * from t")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[planner:1815]Internal : Can not find access path matching 'tidb_isolation_read_engines'(value: 'tiflash') and tidb-server config isolation-read(engines: '[tikv tiflash tidb]'). Available values are 'tikv'.")
+	c.Assert(err.Error(), Equals, "[planner:1815]Internal : Can not find access path matching 'tidb_isolation_read_engines'(value: 'tiflash'). Available values are 'tikv'.")
 
-	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tikv, tiflash'")
+	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash, tikv'")
+	tk.MustExec("select * from t")
 	config.GetGlobalConfig().IsolationRead.Engines = []string{"tiflash"}
-	_, err = tk.Exec("select * from t")
-	config.GetGlobalConfig().IsolationRead.Engines = []string{"tikv", "tiflash", "tidb"}
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[planner:1815]Internal : Can not find access path matching 'tidb_isolation_read_engines'(value: 'tikv,tiflash') and tidb-server config isolation-read(engines: '[tiflash]'). Available values are 'tikv'.")
+	defer func() { config.GetGlobalConfig().IsolationRead.Engines = []string{"tikv", "tiflash"} }()
+	// Change instance config doesn't affect isolation read.
+	tk.MustExec("select * from t")
 }
 
 func (s *testIntegrationSerialSuite) TestSelPushDownTiFlash(c *C) {
@@ -324,20 +324,20 @@ func (s *testIntegrationSerialSuite) TestSelPushDownTiFlash(c *C) {
 	}
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
-
-	// All conditions should push tiflash.
-	tk.MustQuery(`explain select * from t where t.a > 1 and t.b = "flash" or t.a + 3 * t.a = 5`).Check(testkit.Rows(
-		"TableReader_7 8000.00 root  data:Selection_6",
-		"└─Selection_6 8000.00 cop[tiflash]  or(and(gt(test.t.a, 1), eq(test.t.b, \"flash\")), eq(plus(test.t.a, mul(3, test.t.a)), 5))",
-		"  └─TableFullScan_5 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
-	))
-
-	// Part of conditions should push tiflash.
-	tk.MustQuery(`explain select * from t where cast(t.a as float) + 3 = 5.1`).Check(testkit.Rows(
-		"Selection_7 10000.00 root  eq(plus(cast(test.t.a), 3), 5.1)",
-		"└─TableReader_6 10000.00 root  data:TableFullScan_5",
-		"  └─TableFullScan_5 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
-	))
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		res := tk.MustQuery(tt)
+		res.Check(testkit.Rows(output[i].Plan...))
+	}
 }
 
 func (s *testIntegrationSerialSuite) TestIssue15110(c *C) {
@@ -455,7 +455,7 @@ func (s *testIntegrationSerialSuite) TestReadFromStorageHintAndIsolationRead(c *
 	}
 }
 
-func (s *testIntegrationSuite) TestIsolationReadTiFlashNotChoosePointGet(c *C) {
+func (s *testIntegrationSerialSuite) TestIsolationReadTiFlashNotChoosePointGet(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("use test")

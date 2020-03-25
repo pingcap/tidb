@@ -53,13 +53,6 @@
     ]
   },
   {
-    "name": "TestIsolationReadTiFlashNotChoosePointGet",
-    "cases": [
-      "explain select * from t where t.a = 1",
-      "explain select * from t where t.a in (1, 2)"
-    ]
-  },
-  {
     "name": "TestIndexMerge",
     "cases": [
       "explain select /*+ USE_INDEX_MERGE(t, a, b) */ * from t where a = 1 or b = 2"

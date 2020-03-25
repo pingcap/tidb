@@ -193,25 +193,6 @@
     ]
   },
   {
-    "Name": "TestIsolationReadTiFlashNotChoosePointGet",
-    "Cases": [
-      {
-        "SQL": "explain select * from t where t.a = 1",
-        "Result": [
-          "TableReader_6 1.00 root  data:TableRangeScan_5",
-          "└─TableRangeScan_5 1.00 cop[tiflash] table:t range:[1,1], keep order:false, stats:pseudo"
-        ]
-      },
-      {
-        "SQL": "explain select * from t where t.a in (1, 2)",
-        "Result": [
-          "TableReader_6 2.00 root  data:TableRangeScan_5",
-          "└─TableRangeScan_5 2.00 cop[tiflash] table:t range:[1,1], [2,2], keep order:false, stats:pseudo"
-        ]
-      }
-    ]
-  },
-  {
     "Name": "TestIndexMerge",
     "Cases": [
       {
