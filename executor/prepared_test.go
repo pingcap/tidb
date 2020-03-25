@@ -48,7 +48,7 @@ func (s *testSuite1) TestIgnorePlanCache(c *C) {
 	tk.MustExec("insert into t values (1, 1)")
 	tk.MustExec("insert into t values (2, 2)")
 	tk.MustExec("insert into t values (3, 3)")
-	tk.MustExec("prepare mystmt from 'select /*+ IGNORE_PLAN_CACHE() */ * from t where id=?'")
+	tk.MustExec("prepare stmt from 'select /*+ IGNORE_PLAN_CACHE() */ * from t where id=?'")
 	tk.MustExec("set @ignore_plan_doma = 1")
 	tk.MustExec("execute stmt using @ignore_plan_doma")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.UseCache, IsFalse)
