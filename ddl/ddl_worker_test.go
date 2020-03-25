@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/mock"
@@ -458,6 +459,11 @@ func buildCancelJobTests(firstID int64) []testCancelJob {
 		{act: model.ActionAddPrimaryKey, jobIDs: []int64{firstID + 35}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 35)}, cancelState: model.StatePublic},
 		{act: model.ActionDropPrimaryKey, jobIDs: []int64{firstID + 36}, cancelRetErrs: noErrs, cancelState: model.StateWriteOnly},
 		{act: model.ActionDropPrimaryKey, jobIDs: []int64{firstID + 37}, cancelRetErrs: []error{admin.ErrCannotCancelDDLJob.GenWithStackByArgs(firstID + 37)}, cancelState: model.StateDeleteOnly},
+
+		{act: model.ActionAddColumns, jobIDs: []int64{firstID + 38}, cancelRetErrs: noErrs, cancelState: model.StateDeleteOnly},
+		{act: model.ActionAddColumns, jobIDs: []int64{firstID + 39}, cancelRetErrs: noErrs, cancelState: model.StateWriteOnly},
+		{act: model.ActionAddColumns, jobIDs: []int64{firstID + 40}, cancelRetErrs: noErrs, cancelState: model.StateWriteReorganization},
+		{act: model.ActionAddColumns, jobIDs: []int64{firstID + 41}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 41)}, cancelState: model.StatePublic},
 	}
 
 	return tests
@@ -483,28 +489,32 @@ func checkIdxExist(c *C, d *ddl, schemaID int64, tableID int64, idxName string, 
 	c.Assert(found, Equals, expectedExist)
 }
 
-func (s *testDDLSuite) checkAddColumn(c *C, d *ddl, schemaID int64, tableID int64, colName string, success bool) {
+func (s *testDDLSuite) checkAddColumns(c *C, d *ddl, schemaID int64, tableID int64, colNames []string, success bool) {
 	changedTable := testGetTable(c, d, schemaID, tableID)
 	var found bool
-	for _, colInfo := range changedTable.Meta().Columns {
-		if colInfo.Name.O == colName {
-			found = true
-			break
+	for _, colName := range colNames {
+		for _, colInfo := range changedTable.Meta().Columns {
+			if colInfo.Name.O == colName {
+				found = true
+				break
+			}
 		}
+		c.Assert(found, Equals, success)
 	}
-	c.Assert(found, Equals, success)
 }
 
-func (s *testDDLSuite) checkCancelDropColumn(c *C, d *ddl, schemaID int64, tableID int64, colName string, success bool) {
+func (s *testDDLSuite) checkCancelDropColumns(c *C, d *ddl, schemaID int64, tableID int64, colNames []string, success bool) {
 	changedTable := testGetTable(c, d, schemaID, tableID)
-	notFound := true
-	for _, colInfo := range changedTable.Meta().Columns {
-		if colInfo.Name.O == colName {
-			notFound = false
-			break
+	for _, colName := range colNames {
+		notFound := true
+		for _, colInfo := range changedTable.Meta().Columns {
+			if colInfo.Name.O == colName {
+				notFound = false
+				break
+			}
 		}
+		c.Assert(notFound, Equals, success)
 	}
-	c.Assert(notFound, Equals, success)
 }
 
 func (s *testDDLSuite) TestCancelJob(c *C) {
@@ -643,22 +653,22 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	addColumnArgs := []interface{}{col, &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, 0}
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionAddColumn, addColumnArgs, &cancelState)
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
-	s.checkAddColumn(c, d, dbInfo.ID, tblInfo.ID, addingColName, false)
+	s.checkAddColumns(c, d, dbInfo.ID, tblInfo.ID, []string{addingColName}, false)
 
 	updateTest(&tests[5])
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionAddColumn, addColumnArgs, &cancelState)
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
-	s.checkAddColumn(c, d, dbInfo.ID, tblInfo.ID, addingColName, false)
+	s.checkAddColumns(c, d, dbInfo.ID, tblInfo.ID, []string{addingColName}, false)
 
 	updateTest(&tests[6])
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionAddColumn, addColumnArgs, &cancelState)
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
-	s.checkAddColumn(c, d, dbInfo.ID, tblInfo.ID, addingColName, false)
+	s.checkAddColumns(c, d, dbInfo.ID, tblInfo.ID, []string{addingColName}, false)
 
 	updateTest(&tests[7])
 	testAddColumn(c, ctx, d, dbInfo, tblInfo, addColumnArgs)
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
-	s.checkAddColumn(c, d, dbInfo.ID, tblInfo.ID, addingColName, true)
+	s.checkAddColumns(c, d, dbInfo.ID, tblInfo.ID, []string{addingColName}, true)
 
 	// for create table
 	tblInfo1 := testTableInfo(c, d, "t1", 2)
@@ -677,24 +687,24 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	// for drop column.
 	updateTest(&tests[10])
 	dropColName := "c3"
-	s.checkCancelDropColumn(c, d, dbInfo.ID, tblInfo.ID, dropColName, false)
+	s.checkCancelDropColumns(c, d, dbInfo.ID, tblInfo.ID, []string{dropColName}, false)
 	testDropColumn(c, ctx, d, dbInfo, tblInfo, dropColName, false)
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
-	s.checkCancelDropColumn(c, d, dbInfo.ID, tblInfo.ID, dropColName, true)
+	s.checkCancelDropColumns(c, d, dbInfo.ID, tblInfo.ID, []string{dropColName}, true)
 
 	updateTest(&tests[11])
 	dropColName = "c4"
-	s.checkCancelDropColumn(c, d, dbInfo.ID, tblInfo.ID, dropColName, false)
+	s.checkCancelDropColumns(c, d, dbInfo.ID, tblInfo.ID, []string{dropColName}, false)
 	testDropColumn(c, ctx, d, dbInfo, tblInfo, dropColName, false)
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
-	s.checkCancelDropColumn(c, d, dbInfo.ID, tblInfo.ID, dropColName, true)
+	s.checkCancelDropColumns(c, d, dbInfo.ID, tblInfo.ID, []string{dropColName}, true)
 
 	updateTest(&tests[12])
 	dropColName = "c5"
-	s.checkCancelDropColumn(c, d, dbInfo.ID, tblInfo.ID, dropColName, false)
+	s.checkCancelDropColumns(c, d, dbInfo.ID, tblInfo.ID, []string{dropColName}, false)
 	testDropColumn(c, ctx, d, dbInfo, tblInfo, dropColName, false)
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
-	s.checkCancelDropColumn(c, d, dbInfo.ID, tblInfo.ID, dropColName, true)
+	s.checkCancelDropColumns(c, d, dbInfo.ID, tblInfo.ID, []string{dropColName}, true)
 
 	// cancel rebase auto id
 	updateTest(&tests[13])
@@ -858,6 +868,46 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	testDropIndex(c, ctx, d, dbInfo, tblInfo, idxOrigName)
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
 	s.checkDropIdx(c, d, dbInfo.ID, tblInfo.ID, idxOrigName, true)
+
+	// for add columns
+	updateTest(&tests[34])
+	addingColNames := []string{"colA", "colB"}
+	var cols []*table.Column
+	for _, addingColName := range addingColNames {
+		newColumnDef := &ast.ColumnDef{
+			Name:    &ast.ColumnName{Name: model.NewCIStr(addingColName)},
+			Tp:      &types.FieldType{Tp: mysql.TypeLonglong},
+			Options: []*ast.ColumnOption{},
+		}
+		col, _, err := buildColumnAndConstraint(ctx, 0, newColumnDef, nil, mysql.DefaultCharset, "", mysql.DefaultCharset, "")
+		c.Assert(err, IsNil)
+		cols = append(cols, col)
+	}
+	offsets := make([]int, len(cols))
+	positions := make([]*ast.ColumnPosition, len(cols))
+	for i := range positions {
+		positions[i] = &ast.ColumnPosition{Tp: ast.ColumnPositionNone}
+	}
+
+	addColumnArgs = []interface{}{cols, positions, offsets}
+	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionAddColumns, addColumnArgs, &cancelState)
+	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	s.checkAddColumns(c, d, dbInfo.ID, tblInfo.ID, addingColNames, false)
+
+	updateTest(&tests[35])
+	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionAddColumns, addColumnArgs, &cancelState)
+	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	s.checkAddColumns(c, d, dbInfo.ID, tblInfo.ID, addingColNames, false)
+
+	updateTest(&tests[36])
+	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionAddColumns, addColumnArgs, &cancelState)
+	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	s.checkAddColumns(c, d, dbInfo.ID, tblInfo.ID, addingColNames, false)
+
+	updateTest(&tests[37])
+	testAddColumns(c, ctx, d, dbInfo, tblInfo, addColumnArgs)
+	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	s.checkAddColumns(c, d, dbInfo.ID, tblInfo.ID, addingColNames, true)
 }
 
 func (s *testDDLSuite) TestIgnorableSpec(c *C) {
