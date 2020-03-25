@@ -836,6 +836,19 @@ func (b *builtinValuesIntSig) evalInt(_ chunk.Row) (int64, bool, error) {
 		if row.IsNull(b.offset) {
 			return 0, true, nil
 		}
+		// For BinaryLiteral, see issue #15310
+		val := row.GetRaw(b.offset)
+		if len(val) > 8 {
+			return 0, true, errors.New("Session current insert values is too long")
+		}
+		if len(val) < 8 {
+			var binary types.BinaryLiteral = val
+			v, err := binary.ToInt(b.ctx.GetSessionVars().StmtCtx)
+			if err != nil {
+				return 0, true, errors.Trace(err)
+			}
+			return int64(v), false, nil
+		}
 		return row.GetInt64(b.offset), false, nil
 	}
 	return 0, true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", row.Len(), b.offset)

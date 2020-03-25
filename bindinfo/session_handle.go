@@ -55,7 +55,7 @@ func (h *SessionHandle) AddBindRecord(sctx sessionctx.Context, record *BindRecor
 	br := h.GetBindRecord(record.OriginalSQL, record.Db)
 	var duplicateBinding *Binding
 	if br != nil {
-		binding := br.FindBinding(record.Bindings[0].id)
+		binding := br.FindBinding(record.Bindings[0].ID)
 		if binding != nil {
 			duplicateBinding = binding
 		}

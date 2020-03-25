@@ -127,27 +127,24 @@ func NewPSTMTPlanCacheKey(sessionVars *variable.SessionVars, pstmtID uint32, sch
 type PSTMTPlanCacheValue struct {
 	Plan        Plan
 	OutPutNames []*types.FieldName
-	Normalized  string
-	Digest      string
 }
 
 // NewPSTMTPlanCacheValue creates a SQLCacheValue.
 func NewPSTMTPlanCacheValue(plan Plan, names []*types.FieldName) *PSTMTPlanCacheValue {
-	normalized, digest := NormalizePlan(plan)
 	return &PSTMTPlanCacheValue{
 		Plan:        plan,
 		OutPutNames: names,
-		Normalized:  normalized,
-		Digest:      digest,
 	}
 }
 
 // CachedPrepareStmt store prepared ast from PrepareExec and other related fields
 type CachedPrepareStmt struct {
-	PreparedAst *ast.Prepared
-	VisitInfos  []visitInfo
-	ColumnInfos interface{}
-	Executor    interface{}
-	Normalized  string
-	Digest      string
+	PreparedAst    *ast.Prepared
+	VisitInfos     []visitInfo
+	ColumnInfos    interface{}
+	Executor       interface{}
+	NormalizedSQL  string
+	NormalizedPlan string
+	SQLDigest      string
+	PlanDigest     string
 }
