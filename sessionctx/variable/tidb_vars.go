@@ -338,6 +338,12 @@ const (
 	// TiDBStmtSummaryHistorySize indicates the history size of each statement summary.
 	TiDBStmtSummaryHistorySize = "tidb_stmt_summary_history_size"
 
+	// TiDBStmtSummaryMaxStmtCount indicates the max number of statements kept in memory.
+	TiDBStmtSummaryMaxStmtCount = "tidb_stmt_summary_max_stmt_count"
+
+	// TiDBStmtSummaryMaxSQLLength indicates the max length of displayed normalized sql and sample sql.
+	TiDBStmtSummaryMaxSQLLength = "tidb_stmt_summary_max_sql_length"
+
 	// TiDBCapturePlanBaseline indicates whether the capture of plan baselines is enabled.
 	TiDBCapturePlanBaseline = "tidb_capture_plan_baselines"
 
