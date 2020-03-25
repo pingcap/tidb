@@ -115,23 +115,23 @@
         "Warn": null
       },
       {
-        "SQL": "desc select /*+ read_from_storage(tikv[t]) */ * from ttt",
+        "SQL": "desc select /*+ read_from_storage(tikv[t, ttt]) */ * from ttt",
         "Plan": [
-          "TableReader_7 10000.00 root  data:TableFullScan_6",
-          "└─TableFullScan_6 10000.00 cop[tiflash] table:ttt keep order:false, stats:pseudo"
+          "TableReader_5 10000.00 root  data:TableFullScan_4",
+          "└─TableFullScan_4 10000.00 cop[tikv] table:ttt keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "[planner:1815]There are no matching table names for (t) in optimizer hint /*+ READ_FROM_STORAGE(t) */. Maybe you can use the table alias name"
+          "[planner:1815]There are no matching table names for (t) in optimizer hint /*+ READ_FROM_STORAGE(tikv[t, ttt]) */. Maybe you can use the table alias name"
         ]
       },
       {
-        "SQL": "desc select /*+ read_from_storage(tiflash[t], tikv[tt]) */ * from ttt",
+        "SQL": "desc select /*+ read_from_storage(tiflash[t, ttt], tikv[tt]) */ * from ttt",
         "Plan": [
-          "TableReader_7 10000.00 root  data:TableFullScan_6",
-          "└─TableFullScan_6 10000.00 cop[tiflash] table:ttt keep order:false, stats:pseudo"
+          "TableReader_5 10000.00 root  data:TableFullScan_4",
+          "└─TableFullScan_4 10000.00 cop[tiflash] table:ttt keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "[planner:1815]There are no matching table names for (t, tt) in optimizer hint /*+ READ_FROM_STORAGE(t, tt) */. Maybe you can use the table alias name"
+          "[planner:1815]There are no matching table names for (t, tt) in optimizer hint /*+ READ_FROM_STORAGE(tiflash[t, ttt], tikv[tt]) */. Maybe you can use the table alias name"
         ]
       }
     ]
