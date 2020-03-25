@@ -169,6 +169,76 @@ func (h *BindHandle) Update(fullLoad bool) (err error) {
 	return nil
 }
 
+// CreateBindRecord creates a BindRecord to the storage and the cache.
+// It replaces all the exists bindings for the same normalized SQL.
+func (h *BindHandle) CreateBindRecord(sctx sessionctx.Context, record *BindRecord) (err error) {
+	err = record.prepareHints(sctx)
+	if err != nil {
+		return err
+	}
+
+	exec, _ := h.sctx.Context.(sqlexec.SQLExecutor)
+	h.sctx.Lock()
+	_, err = exec.ExecuteInternal(context.TODO(), "BEGIN")
+	if err != nil {
+		h.sctx.Unlock()
+		return
+	}
+
+	br := h.GetBindRecord(parser.DigestNormalized(record.OriginalSQL), record.OriginalSQL, record.Db)
+	if br != nil {
+		for _, binding := range br.Bindings {
+			_, err = exec.ExecuteInternal(context.TODO(), h.deleteBindInfoSQL(record.OriginalSQL, record.Db, binding.BindSQL))
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	defer func() {
+		if err != nil {
+			_, err1 := exec.ExecuteInternal(context.TODO(), "ROLLBACK")
+			h.sctx.Unlock()
+			terror.Log(err1)
+			return
+		}
+
+		_, err = exec.ExecuteInternal(context.TODO(), "COMMIT")
+		h.sctx.Unlock()
+		if err != nil {
+			return
+		}
+
+		// update the BindRecord to the cache.
+		if br != nil {
+			// removeBindRecord locks h.bindinfo, so we needn't involve it between lock and unlock.
+			h.removeBindRecord(parser.DigestNormalized(br.OriginalSQL), br)
+		}
+		// Make sure there is only one goroutine writes the cache and use parser.
+		h.bindInfo.Lock()
+		h.appendBindRecord(parser.DigestNormalized(record.OriginalSQL), record)
+		h.bindInfo.Unlock()
+	}()
+
+	txn, err1 := h.sctx.Context.Txn(true)
+	if err1 != nil {
+		return err1
+	}
+
+	now := types.NewTime(types.FromGoTime(oracle.GetTimeFromTS(txn.StartTS())), mysql.TypeTimestamp, 3)
+	for i := range record.Bindings {
+		record.Bindings[i].CreateTime = now
+		record.Bindings[i].UpdateTime = now
+
+		// insert the BindRecord to the storage.
+		_, err = exec.ExecuteInternal(context.TODO(), h.insertBindInfoSQL(record.OriginalSQL, record.Db, record.Bindings[i]))
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // AddBindRecord adds a BindRecord to the storage and BindRecord to the cache.
 func (h *BindHandle) AddBindRecord(sctx sessionctx.Context, record *BindRecord) (err error) {
 	err = record.prepareHints(sctx)
