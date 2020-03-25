@@ -15,12 +15,12 @@ package stmtsummary
 
 import (
 	"fmt"
-	"github.com/pingcap/errors"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
 )
 
