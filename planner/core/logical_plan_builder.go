@@ -419,16 +419,15 @@ func (p *LogicalJoin) setPreferredJoinType(hintInfo *tableHintInfo) {
 	if hintInfo.ifPreferINLMJ(rhsAlias) {
 		p.preferJoinType |= preferRightAsINLMJInner
 	}
-
-	// set hintInfo for further usage if this hint info can be used.
-	if p.preferJoinType != 0 {
-		p.hintInfo = hintInfo
-	}
-
 	if containDifferentJoinTypes(p.preferJoinType) {
 		errMsg := "Join hints are conflict, you can only specify one type of join"
 		warning := ErrInternal.GenWithStack(errMsg)
 		p.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+		p.preferJoinType = 0
+	}
+	// set hintInfo for further usage if this hint info can be used.
+	if p.preferJoinType != 0 {
+		p.hintInfo = hintInfo
 	}
 }
 
@@ -2248,9 +2247,9 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 		case HintReadFromStorage:
 			switch hint.HintData.(model.CIStr).L {
 			case HintTiFlash:
-				tiflashTables = tableNames2HintTableInfo(b.ctx, hint.Tables, b.hintProcessor, nodeType, currentLevel)
+				tiflashTables = append(tiflashTables, tableNames2HintTableInfo(b.ctx, hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
 			case HintTiKV:
-				tikvTables = tableNames2HintTableInfo(b.ctx, hint.Tables, b.hintProcessor, nodeType, currentLevel)
+				tikvTables = append(tikvTables, tableNames2HintTableInfo(b.ctx, hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
 			}
 		case HintIndexMerge:
 			if len(hint.Tables) != 0 {

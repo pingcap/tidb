@@ -488,7 +488,13 @@ func (s *testSuiteP2) TestAdminShowDDLJobs(c *C) {
 	re = tk.MustQuery("admin show ddl jobs 1 where job_type='create table'")
 	row = re.Rows()[0]
 	c.Assert(row[1], Equals, "test_admin_show_ddl_jobs")
-	c.Assert(row[9], Equals, "")
+	c.Assert(row[9], Equals, "<nil>")
+
+	// Test the START_TIME and END_TIME field.
+	re = tk.MustQuery("admin show ddl jobs where job_type = 'create table' and start_time > str_to_date('20190101','%Y%m%d%H%i%s')")
+	row = re.Rows()[0]
+	c.Assert(row[2], Equals, "t")
+	c.Assert(row[9], Equals, "<nil>")
 }
 
 func (s *testSuiteP2) TestAdminChecksumOfPartitionedTable(c *C) {
@@ -4469,7 +4475,8 @@ func (s *testSuiteP2) TestUnsignedFeedback(c *C) {
 	tk.MustExec("analyze table t")
 	tk.MustQuery("select count(distinct b) from t").Check(testkit.Rows("2"))
 	result := tk.MustQuery("explain analyze select count(distinct b) from t")
-	c.Assert(result.Rows()[2][4], Equals, "table:t, range:[0,+inf], keep order:false")
+	c.Assert(result.Rows()[2][4], Equals, "table:t")
+	c.Assert(result.Rows()[2][6], Equals, "range:[0,+inf], keep order:false")
 }
 
 func (s *testSuite) TestOOMPanicAction(c *C) {
