@@ -1731,6 +1731,8 @@ var builtinGlobalVariable = []string{
 	variable.TiDBEnableStmtSummary,
 	variable.TiDBStmtSummaryRefreshInterval,
 	variable.TiDBStmtSummaryHistorySize,
+	variable.TiDBStmtSummaryMaxStmtCount,
+	variable.TiDBStmtSummaryMaxSQLLength,
 	variable.TiDBMaxDeltaSchemaCount,
 	variable.TiDBStoreLimit,
 }

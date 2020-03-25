@@ -305,6 +305,28 @@ const (
 	// TiDBStmtSummaryHistorySize indicates the history size of each statement summary.
 	TiDBStmtSummaryHistorySize = "tidb_stmt_summary_history_size"
 
+<<<<<<< HEAD
+=======
+	// TiDBStmtSummaryMaxStmtCount indicates the max number of statements kept in memory.
+	TiDBStmtSummaryMaxStmtCount = "tidb_stmt_summary_max_stmt_count"
+
+	// TiDBStmtSummaryMaxSQLLength indicates the max length of displayed normalized sql and sample sql.
+	TiDBStmtSummaryMaxSQLLength = "tidb_stmt_summary_max_sql_length"
+
+	// TiDBCapturePlanBaseline indicates whether the capture of plan baselines is enabled.
+	TiDBCapturePlanBaseline = "tidb_capture_plan_baselines"
+
+	// TiDBUsePlanBaselines indicates whether the use of plan baselines is enabled.
+	TiDBUsePlanBaselines = "tidb_use_plan_baselines"
+
+	// TiDBEvolvePlanBaselines indicates whether the evolution of plan baselines is enabled.
+	TiDBEvolvePlanBaselines = "tidb_evolve_plan_baselines"
+
+	// TiDBIsolationReadEngines indicates the tidb only read from the stores whose engine type is involved in IsolationReadEngines.
+	// Now, only support TiKV and TiFlash.
+	TiDBIsolationReadEngines = "tidb_isolation_read_engines"
+
+>>>>>>> 6905549... *: support more system variables in statement summary (#15508)
 	// TiDBStoreLimit indicates the limit of sending request to a store, 0 means without limit.
 	TiDBStoreLimit = "tidb_store_limit"
 )

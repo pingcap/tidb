@@ -343,7 +343,14 @@ max-retry-count = 256
 
 [stmt-summary]
 # enable statement summary.
+<<<<<<< HEAD
 enable = false
+=======
+enable = true
+
+# enable statement summary for TiDB internal query, default is false.
+enable-internal-query = false
+>>>>>>> 6905549... *: support more system variables in statement summary (#15508)
 
 # max number of statements kept in memory.
 max-stmt-count = 200

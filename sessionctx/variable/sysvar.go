@@ -716,9 +716,25 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, TiDBLowResolutionTSO, "0"},
 	{ScopeSession, TiDBExpensiveQueryTimeThreshold, strconv.Itoa(DefTiDBExpensiveQueryTimeThreshold)},
 	{ScopeSession, TiDBAllowRemoveAutoInc, BoolToIntStr(DefTiDBAllowRemoveAutoInc)},
+<<<<<<< HEAD
 	{ScopeGlobal | ScopeSession, TiDBEnableStmtSummary, BoolToIntStr(config.GetGlobalConfig().StmtSummary.Enable)},
 	{ScopeGlobal | ScopeSession, TiDBStmtSummaryRefreshInterval, strconv.Itoa(config.GetGlobalConfig().StmtSummary.RefreshInterval)},
 	{ScopeGlobal | ScopeSession, TiDBStmtSummaryHistorySize, strconv.Itoa(config.GetGlobalConfig().StmtSummary.HistorySize)},
+=======
+	{ScopeGlobal | ScopeSession, TiDBEnableStmtSummary, ""},
+	{ScopeGlobal | ScopeSession, TiDBStmtSummaryInternalQuery, ""},
+	{ScopeGlobal | ScopeSession, TiDBStmtSummaryRefreshInterval, ""},
+	{ScopeGlobal | ScopeSession, TiDBStmtSummaryHistorySize, ""},
+	{ScopeGlobal | ScopeSession, TiDBStmtSummaryMaxStmtCount, ""},
+	{ScopeGlobal | ScopeSession, TiDBStmtSummaryMaxSQLLength, ""},
+	{ScopeGlobal | ScopeSession, TiDBCapturePlanBaseline, "off"},
+	{ScopeGlobal | ScopeSession, TiDBUsePlanBaselines, boolToOnOff(DefTiDBUsePlanBaselines)},
+	{ScopeGlobal | ScopeSession, TiDBEvolvePlanBaselines, boolToOnOff(DefTiDBEvolvePlanBaselines)},
+	{ScopeGlobal, TiDBEvolvePlanTaskMaxTime, strconv.Itoa(DefTiDBEvolvePlanTaskMaxTime)},
+	{ScopeGlobal, TiDBEvolvePlanTaskStartTime, DefTiDBEvolvePlanTaskStartTime},
+	{ScopeGlobal, TiDBEvolvePlanTaskEndTime, DefTiDBEvolvePlanTaskEndTime},
+	{ScopeGlobal | ScopeSession, TiDBIsolationReadEngines, "tikv,tiflash,tidb"},
+>>>>>>> 6905549... *: support more system variables in statement summary (#15508)
 	{ScopeGlobal | ScopeSession, TiDBStoreLimit, strconv.FormatInt(atomic.LoadInt64(&config.GetGlobalConfig().TiKVClient.StoreLimit), 10)},
 }
 

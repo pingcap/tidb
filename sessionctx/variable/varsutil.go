@@ -621,12 +621,58 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		if value == "" {
 			return "", nil
 		}
-		return checkUInt64SystemVar(name, value, 1, math.MaxUint32, vars)
+		return checkUInt64SystemVar(name, value, 1, math.MaxInt32, vars)
 	case TiDBStmtSummaryHistorySize:
 		if value == "" {
 			return "", nil
 		}
 		return checkUInt64SystemVar(name, value, 0, math.MaxUint8, vars)
+<<<<<<< HEAD
+=======
+	case TiDBStmtSummaryMaxStmtCount:
+		if value == "" {
+			return "", nil
+		}
+		return checkInt64SystemVar(name, value, 1, math.MaxInt16, vars)
+	case TiDBStmtSummaryMaxSQLLength:
+		if value == "" {
+			return "", nil
+		}
+		return checkInt64SystemVar(name, value, 0, math.MaxInt32, vars)
+	case TiDBIsolationReadEngines:
+		engines := strings.Split(value, ",")
+		var formatVal string
+		for i, engine := range engines {
+			engine = strings.TrimSpace(engine)
+			if i != 0 {
+				formatVal += ","
+			}
+			switch {
+			case strings.EqualFold(engine, kv.TiKV.Name()):
+				formatVal += kv.TiKV.Name()
+			case strings.EqualFold(engine, kv.TiFlash.Name()):
+				formatVal += kv.TiFlash.Name()
+			case strings.EqualFold(engine, kv.TiDB.Name()):
+				formatVal += kv.TiDB.Name()
+			default:
+				return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+			}
+		}
+		return formatVal, nil
+	case TiDBMetricSchemaStep, TiDBMetricSchemaRangeDuration:
+		v, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+		}
+		if v < 10 || v > 60*60*60 {
+			return value, errors.Errorf("%v(%d) cannot be smaller than %v or larger than %v", name, v, 10, 60*60*60)
+		}
+		return value, nil
+	case CollationConnection, CollationDatabase, CollationServer:
+		if _, err := collate.GetCollationByName(value); err != nil {
+			return value, errors.Trace(err)
+		}
+>>>>>>> 6905549... *: support more system variables in statement summary (#15508)
 	}
 	return value, nil
 }

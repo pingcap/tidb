@@ -199,11 +199,27 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 
 	switch name {
 	case variable.TiDBEnableStmtSummary:
+<<<<<<< HEAD
 		stmtsummary.StmtSummaryByDigestMap.SetEnabled(valStr, !v.IsGlobal)
+=======
+		return stmtsummary.StmtSummaryByDigestMap.SetEnabled(valStr, !v.IsGlobal)
+	case variable.TiDBStmtSummaryInternalQuery:
+		return stmtsummary.StmtSummaryByDigestMap.SetEnabledInternalQuery(valStr, !v.IsGlobal)
+>>>>>>> 6905549... *: support more system variables in statement summary (#15508)
 	case variable.TiDBStmtSummaryRefreshInterval:
-		stmtsummary.StmtSummaryByDigestMap.SetRefreshInterval(valStr, !v.IsGlobal)
+		return stmtsummary.StmtSummaryByDigestMap.SetRefreshInterval(valStr, !v.IsGlobal)
 	case variable.TiDBStmtSummaryHistorySize:
+<<<<<<< HEAD
 		stmtsummary.StmtSummaryByDigestMap.SetHistorySize(valStr, !v.IsGlobal)
+=======
+		return stmtsummary.StmtSummaryByDigestMap.SetHistorySize(valStr, !v.IsGlobal)
+	case variable.TiDBStmtSummaryMaxStmtCount:
+		return stmtsummary.StmtSummaryByDigestMap.SetMaxStmtCount(valStr, !v.IsGlobal)
+	case variable.TiDBStmtSummaryMaxSQLLength:
+		return stmtsummary.StmtSummaryByDigestMap.SetMaxSQLLength(valStr, !v.IsGlobal)
+	case variable.TiDBCapturePlanBaseline:
+		variable.CapturePlanBaseline.Set(valStr, !v.IsGlobal)
+>>>>>>> 6905549... *: support more system variables in statement summary (#15508)
 	}
 
 	return nil
