@@ -124,6 +124,7 @@ func (s *testConfigSuite) TestPDConfHandler(c *C) {
 	var registerWg, reloadWg, reloadWg2 sync.WaitGroup
 	registerWg.Add(1)
 	reloadWg.Add(1)
+	reloadWg2.Add(1)
 	mockReloadFunc := func(oldConf, newConf *Config) {
 		if cnt == 0 {
 			registerWg.Done()
