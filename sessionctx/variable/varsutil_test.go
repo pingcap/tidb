@@ -371,20 +371,54 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(val, Equals, "leader")
 	c.Assert(v.ReplicaRead, Equals, kv.ReplicaReadLeader)
 
-	SetSessionSystemVar(v, TiDBEnableStmtSummary, types.NewStringDatum("on"))
+	err = SetSessionSystemVar(v, TiDBEnableStmtSummary, types.NewStringDatum("on"))
+	c.Assert(err, IsNil)
 	val, err = GetSessionSystemVar(v, TiDBEnableStmtSummary)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "1")
 
-	SetSessionSystemVar(v, TiDBStmtSummaryRefreshInterval, types.NewStringDatum("10"))
+	err = SetSessionSystemVar(v, TiDBStmtSummaryRefreshInterval, types.NewStringDatum("10"))
+	c.Assert(err, IsNil)
 	val, err = GetSessionSystemVar(v, TiDBStmtSummaryRefreshInterval)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "10")
 
-	SetSessionSystemVar(v, TiDBStmtSummaryHistorySize, types.NewStringDatum("10"))
+	err = SetSessionSystemVar(v, TiDBStmtSummaryHistorySize, types.NewStringDatum("10"))
+	c.Assert(err, IsNil)
 	val, err = GetSessionSystemVar(v, TiDBStmtSummaryHistorySize)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "10")
+
+	err = SetSessionSystemVar(v, TiDBStmtSummaryMaxStmtCount, types.NewStringDatum("10"))
+	c.Assert(err, IsNil)
+	val, err = GetSessionSystemVar(v, TiDBStmtSummaryMaxStmtCount)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "10")
+	err = SetSessionSystemVar(v, TiDBStmtSummaryMaxStmtCount, types.NewStringDatum("0"))
+	c.Assert(err, IsNil)
+	val, err = GetSessionSystemVar(v, TiDBStmtSummaryMaxStmtCount)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "1")
+	err = SetSessionSystemVar(v, TiDBStmtSummaryMaxStmtCount, types.NewStringDatum("1000000"))
+	c.Assert(err, IsNil)
+	val, err = GetSessionSystemVar(v, TiDBStmtSummaryMaxStmtCount)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "32767")
+	err = SetSessionSystemVar(v, TiDBStmtSummaryMaxStmtCount, types.NewStringDatum("a"))
+	c.Assert(err, ErrorMatches, ".*Incorrect argument type to variable 'tidb_stmt_summary_max_stmt_count'")
+
+	err = SetSessionSystemVar(v, TiDBStmtSummaryMaxSQLLength, types.NewStringDatum("10"))
+	c.Assert(err, IsNil)
+	val, err = GetSessionSystemVar(v, TiDBStmtSummaryMaxSQLLength)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "10")
+	err = SetSessionSystemVar(v, TiDBStmtSummaryMaxSQLLength, types.NewStringDatum("-1"))
+	c.Assert(err, IsNil)
+	val, err = GetSessionSystemVar(v, TiDBStmtSummaryMaxSQLLength)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "0")
+	err = SetSessionSystemVar(v, TiDBStmtSummaryMaxSQLLength, types.NewStringDatum("a"))
+	c.Assert(err, ErrorMatches, ".*Incorrect argument type to variable 'tidb_stmt_summary_max_sql_length'")
 }
 
 func (s *testVarsutilSuite) TestValidate(c *C) {
@@ -463,10 +497,17 @@ func (s *testVarsutilSuite) TestValidate(c *C) {
 		{TiDBStmtSummaryRefreshInterval, "", false},
 		{TiDBStmtSummaryHistorySize, "a", true},
 		{TiDBStmtSummaryHistorySize, "", false},
+<<<<<<< HEAD
 		{TiDBIsolationReadEngines, "", true},
 		{TiDBIsolationReadEngines, "tikv", false},
 		{TiDBIsolationReadEngines, "TiKV,tiflash", false},
 		{TiDBIsolationReadEngines, "   tikv,   tiflash  ", false},
+=======
+		{TiDBStmtSummaryMaxStmtCount, "a", true},
+		{TiDBStmtSummaryMaxStmtCount, "", false},
+		{TiDBStmtSummaryMaxSQLLength, "a", true},
+		{TiDBStmtSummaryMaxSQLLength, "", false},
+>>>>>>> 6905549... *: support more system variables in statement summary (#15508)
 	}
 
 	for _, t := range tests {

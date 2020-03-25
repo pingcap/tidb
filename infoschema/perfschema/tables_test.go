@@ -79,12 +79,19 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b varchar(10), key k(a))")
 
+<<<<<<< HEAD
 	// Statement summary is disabled by default.
 	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("0"))
 	tk.MustExec("insert into t values(1, 'a')")
 	tk.MustQuery("select * from performance_schema.events_statements_summary_by_digest").Check(testkit.Rows())
+=======
+	// Clear all statements.
+	tk.MustExec("set session tidb_enable_stmt_summary = 0")
+	tk.MustExec("set session tidb_enable_stmt_summary = ''")
+>>>>>>> 6905549... *: support more system variables in statement summary (#15508)
 
 	tk.MustExec("set global tidb_enable_stmt_summary = 1")
+	defer tk.MustExec("set global tidb_enable_stmt_summary = ''")
 	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("1"))
 
 	// Invalidate the cache manually so that tidb_enable_stmt_summary works immediately.
@@ -174,6 +181,12 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 
 	// Disable it again.
 	tk.MustExec("set global tidb_enable_stmt_summary = false")
+<<<<<<< HEAD
+=======
+	tk.MustExec("set session tidb_enable_stmt_summary = false")
+	defer tk.MustExec("set global tidb_enable_stmt_summary = ''")
+	defer tk.MustExec("set session tidb_enable_stmt_summary = ''")
+>>>>>>> 6905549... *: support more system variables in statement summary (#15508)
 	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("0"))
 
 	// Create a new session to test
@@ -264,7 +277,7 @@ func (s *testTableSuite) TestStmtSummaryHistoryTable(c *C) {
 
 	tk.MustExec("set global tidb_enable_stmt_summary = 1")
 	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("1"))
-	defer tk.MustExec("set global tidb_enable_stmt_summary = false")
+	defer tk.MustExec("set global tidb_enable_stmt_summary = ''")
 
 	// Invalidate the cache manually so that tidb_enable_stmt_summary works immediately.
 	s.dom.GetGlobalVarsCache().Disable()

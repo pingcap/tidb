@@ -654,6 +654,9 @@ func (c *Config) Valid() error {
 		return fmt.Errorf("max-txn-time-use should be greater than 0")
 	}
 
+	if c.StmtSummary.MaxStmtCount <= 0 {
+		return fmt.Errorf("max-stmt-count in [stmt-summary] should be greater than 0")
+	}
 	if c.StmtSummary.HistorySize < 0 {
 		return fmt.Errorf("history-size in [stmt-summary] should be greater than or equal to 0")
 	}
