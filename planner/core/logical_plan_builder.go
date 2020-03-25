@@ -2307,7 +2307,7 @@ func (b *PlanBuilder) appendUnmatchedJoinHintWarning(joinType string, joinTypeAl
 func (b *PlanBuilder) appendUnmatchedStorageHintWarning(tiflashTables, tikvTables []hintTableInfo) {
 	unMatchedTiFlashTables := extractUnmatchedTables(tiflashTables)
 	unMatchedTiKVTables := extractUnmatchedTables(tikvTables)
-	if len(unMatchedTiFlashTables) + len(unMatchedTiKVTables) == 0 {
+	if len(unMatchedTiFlashTables)+len(unMatchedTiKVTables) == 0 {
 		return
 	}
 	errMsg := fmt.Sprintf("There are no matching table names for (%s) in optimizer hint %s. Maybe you can use the table alias name",
