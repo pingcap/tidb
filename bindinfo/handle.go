@@ -217,8 +217,13 @@ func (h *BindHandle) CreateBindRecord(sctx sessionctx.Context, record *BindRecor
 	}()
 
 	if br != nil {
+		txn, err := sctx.Txn(true)
+		if err != nil {
+			return err
+		}
+		updateTs := types.NewTime(types.FromGoTime(oracle.GetTimeFromTS(txn.StartTS())), mysql.TypeTimestamp, 3)
 		for _, binding := range br.Bindings {
-			_, err = exec.ExecuteInternal(context.TODO(), h.deleteBindInfoSQL(record.OriginalSQL, record.Db, binding.BindSQL))
+			_, err = exec.ExecuteInternal(context.TODO(), h.logicalDeleteBindInfoSQL(record.OriginalSQL, record.Db, updateTs, binding.BindSQL))
 			if err != nil {
 				return err
 			}
