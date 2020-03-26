@@ -145,7 +145,7 @@ func (lmb *lazyMemBuffer) Get(ctx context.Context, k Key) ([]byte, error) {
 	return lmb.mb.Get(ctx, k)
 }
 
-const saveToFile = 1024*1024
+const saveToFile = 200*1024*1024
 
 func (lmb *lazyMemBuffer) Set(key Key, value []byte) error {
 	if lmb.mb == nil {

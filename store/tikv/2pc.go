@@ -193,8 +193,8 @@ func (c *committerMutations) subRange(from, to int) committerMutations {
 
 func (c *committerMutations) push(op pb.Op, key []byte, value []byte, isPessimisticLock bool) {
 	c.ops = append(c.ops, op)
-	c.keys = append(c.keys, key)
-	c.values = append(c.values, value)
+	c.keys = append(c.keys, append(key[:0:0], key...))
+	c.values = append(c.values, append(value[:0:0], value...))
 	c.isPessimisticLock = append(c.isPessimisticLock, isPessimisticLock)
 }
 
