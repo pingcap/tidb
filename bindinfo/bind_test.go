@@ -496,6 +496,8 @@ func (s *testSuite) TestCapturePlanBaseline(c *C) {
 	c.Assert(len(rows), Equals, 1)
 	c.Assert(rows[0][0], Equals, "select * from t where a > ?")
 	c.Assert(rows[0][1], Equals, "SELECT /*+ USE_INDEX(@`sel_1` `test`.`t` )*/ * FROM `t` WHERE `a`>10")
+	tk.MustExec("drop global binding for select count(*) from t where a > 10;")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 SQL bindings are captured automatically, please set tidb_capture_plan_baselines to false before deleting"))
 }
 
 func (s *testSuite) TestCaptureBaselinesDefaultDB(c *C) {

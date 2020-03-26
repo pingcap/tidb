@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/domain"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
@@ -70,6 +71,9 @@ func (e *SQLBindExec) dropSQLBind() error {
 	if !e.isGlobal {
 		handle := e.ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
 		return handle.DropBindRecord(e.normdOrigSQL, e.db, bindInfo)
+	}
+	if variable.TiDBOptOn(variable.CapturePlanBaseline.GetVal()) {
+		e.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("SQL bindings are captured automatically, please set tidb_capture_plan_baselines to false before deleting"))
 	}
 	return domain.GetDomain(e.ctx).BindHandle().DropBindRecord(e.normdOrigSQL, e.db, bindInfo)
 }
