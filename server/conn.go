@@ -57,7 +57,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/executor"
-	// "github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/sessionctx"
@@ -734,10 +734,10 @@ func queryStrForLog(query string) string {
 }
 
 func errStrForLog(err error) string {
-	// if kv.ErrKeyExists.Equal(err) || parser.ErrParse.Equal(err) {
-	// 	// Do not log stack for duplicated entry error.
-	// 	return err.Error()
-	// }
+	if kv.ErrKeyExists.Equal(err) || parser.ErrParse.Equal(err) {
+		// Do not log stack for duplicated entry error.
+		return err.Error()
+	}
 	return errors.ErrorStack(err)
 }
 

@@ -475,7 +475,7 @@ func newWriteConflictError(conflict *pb.WriteConflict) error {
 	prettyWriteKey(&buf, conflict.Key)
 	buf.WriteString(" primary=")
 	prettyWriteKey(&buf, conflict.Primary)
-	return kv.ErrWriteConflict.GenWithStackByArgs(conflict.StartTs, conflict.ConflictTs, conflict.ConflictCommitTs, buf.String())
+	return kv.ErrWriteConflict.FastGenByArgs(conflict.StartTs, conflict.ConflictTs, conflict.ConflictCommitTs, buf.String())
 }
 
 func prettyWriteKey(buf *bytes.Buffer, key []byte) {

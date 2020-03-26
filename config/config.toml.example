@@ -32,7 +32,7 @@ split-table = true
 token-limit = 1000
 
 # The maximum memory available for a single SQL statement. Default: 1GB
-mem-quota-query = 107374182400
+mem-quota-query = 1073741824
 
 # Controls whether to enable the temporary storage for some operators when a single SQL statement exceeds the memory quota specified by mem-quota-query.
 oom-use-tmp-storage = true
@@ -119,7 +119,7 @@ format = "text"
 # enable-error-stack = false
 
 # Whether to enable slow query log.
-enable-slow-log = false
+enable-slow-log = true
 
 # Stores slow query log into separated files.
 slow-query-file = "tidb-slow.log"
@@ -212,7 +212,7 @@ cross-join = true
 stats-lease = "3s"
 
 # Run auto analyze worker on this tidb-server.
-run-auto-analyze = false
+run-auto-analyze = true
 
 # Probability to use the query feedback to update stats, 0.0 or 1.0 for always false/true.
 feedback-probability = 0.05
@@ -235,7 +235,7 @@ bind-info-lease = "3s"
 # If using TiKV as the storage, the entry represents a key/value pair.
 # NOTE: If binlog is enabled, this value should be less than 104857600(10M) because this is the maximum size that can be handled by Pumper.
 # If binlog is not enabled, this value should be less than 10737418240(10G).
-txn-total-size-limit = 10737418240
+txn-total-size-limit = 104857600
 
 [proxy-protocol]
 # PROXY protocol acceptable client networks.
@@ -363,7 +363,7 @@ strategy = "range"
 
 [pessimistic-txn]
 # enable pessimistic transaction.
-enable = false
+enable = true
 
 # max retry count for a statement in a pessimistic transaction.
 max-retry-count = 256
