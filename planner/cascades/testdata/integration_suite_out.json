@@ -764,9 +764,44 @@
         ]
       },
       {
-        "SQL": "select count(t2.a), avg(t2.a), sum(t2.a), max(t1.b), min(t1.b), t1.b from t as t1 join t as t2 on t1.b = t2.b group by t1.b order by t1.b",
-        "Plan": null,
-        "Result": null
+        "SQL": "select count(t2.a), sum(t2.a), max(t1.b), min(t1.b), t1.b from t as t1 join t as t2 on t1.b = t2.b group by t1.b order by t1.b",
+        "Plan": [
+          "Sort_271 8000.00 root test.t.b:asc",
+          "└─Projection_104 8000.00 root cast(Column#16, bigint(21) BINARY)->Column#9, cast(Column#17, decimal(65,0) BINARY)->Column#10, cast(Column#13, int(11))->Column#11, cast(Column#14, int(11))->Column#12, cast(Column#15, int(11))->test.t.b",
+          "  └─HashRightJoin_105 8000.00 root inner join, equal:[eq(test.t.b, test.t.b)]",
+          "    ├─HashAgg_108(Build) 8000.00 root group by:test.t.b, funcs:max(test.t.b)->Column#13, funcs:min(test.t.b)->Column#14, funcs:firstrow(test.t.b)->Column#15, funcs:firstrow(test.t.b)->test.t.b",
+          "    │ └─IndexReader_113 10000.00 root index:IndexFullScan_114",
+          "    │   └─IndexFullScan_114 10000.00 cop[tikv] table:t1, index:b, keep order:false, stats:pseudo",
+          "    └─HashAgg_124(Probe) 8000.00 root group by:Column#138, funcs:count(Column#135)->Column#16, funcs:sum(Column#136)->Column#17, funcs:firstrow(Column#137)->test.t.b",
+          "      └─Projection_131 10000.00 root test.t.a, cast(test.t.a, decimal(65,0) BINARY)->Column#136, test.t.b, test.t.b",
+          "        └─IndexReader_129 10000.00 root index:IndexFullScan_130",
+          "          └─IndexFullScan_130 10000.00 cop[tikv] table:t2, index:b, keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1 2 2 2",
+          "1 4 5 5 5",
+          "1 7 8 8 8"
+        ]
+      },
+      {
+        "SQL": "select avg(t2.a), t1.b from t as t1 join t as t2 on t1.b = t2.b group by t1.b order by t1.b",
+        "Plan": [
+          "Sort_273 8000.00 root test.t.b:asc",
+          "└─Projection_104 8000.00 root cast(div(Column#11, cast(Column#12, decimal(20,0) BINARY)), decimal(65,4) BINARY)->Column#9, cast(Column#10, int(11))->test.t.b",
+          "  └─HashRightJoin_105 8000.00 root inner join, equal:[eq(test.t.b, test.t.b)]",
+          "    ├─HashAgg_108(Build) 8000.00 root group by:test.t.b, funcs:firstrow(test.t.b)->Column#10, funcs:firstrow(test.t.b)->test.t.b",
+          "    │ └─IndexReader_113 10000.00 root index:IndexFullScan_114",
+          "    │   └─IndexFullScan_114 10000.00 cop[tikv] table:t1, index:b, keep order:false, stats:pseudo",
+          "    └─HashAgg_124(Probe) 8000.00 root group by:Column#99, funcs:sum(Column#96)->Column#11, funcs:count(Column#97)->Column#12, funcs:firstrow(Column#98)->test.t.b",
+          "      └─Projection_131 10000.00 root cast(test.t.a, decimal(65,4) BINARY)->Column#96, test.t.a, test.t.b, test.t.b",
+          "        └─IndexReader_129 10000.00 root index:IndexFullScan_130",
+          "          └─IndexFullScan_130 10000.00 cop[tikv] table:t2, index:b, keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1.0000 2",
+          "4.0000 5",
+          "7.0000 8"
+        ]
       }
     ]
   },
