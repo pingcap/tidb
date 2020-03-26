@@ -486,6 +486,8 @@ func (s *testIntegrationSuite5) TestErrnoErrorCode(c *C) {
 	tk.MustExec("alter table test_drop_columns add column c2 int first, add column c3 int after c1")
 	sql = "alter table test_drop_columns drop column c1, drop column c2, drop column c3;"
 	tk.MustGetErrCode(sql, errno.ErrCantRemoveAllFields)
+	sql = "alter table test_drop_columns drop column c1, add column c2 int;"
+	tk.MustGetErrCode(sql, errno.ErrUnsupportedDDLOperation)
 	// add index
 	sql = "alter table test_error_code_succ add index idx (c_not_exist)"
 	tk.MustGetErrCode(sql, errno.ErrKeyColumnDoesNotExits)

@@ -472,6 +472,8 @@ func buildCancelJobTests(firstID int64) []testCancelJob {
 		{act: model.ActionAddColumns, jobIDs: []int64{firstID + 41}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 41)}, cancelState: model.StatePublic},
 
 		{act: model.ActionDropColumns, jobIDs: []int64{firstID + 42}, cancelRetErrs: []error{admin.ErrCannotCancelDDLJob.GenWithStackByArgs(firstID + 42)}, cancelState: model.StateDeleteOnly},
+		{act: model.ActionDropColumns, jobIDs: []int64{firstID + 43}, cancelRetErrs: []error{admin.ErrCannotCancelDDLJob.GenWithStackByArgs(firstID + 43)}, cancelState: model.StateWriteOnly},
+		{act: model.ActionDropColumns, jobIDs: []int64{firstID + 44}, cancelRetErrs: []error{admin.ErrCannotCancelDDLJob.GenWithStackByArgs(firstID + 44)}, cancelState: model.StateWriteReorganization},
 	}
 
 	return tests
@@ -513,16 +515,20 @@ func (s *testDDLSuite) checkAddColumns(c *C, d *ddl, schemaID int64, tableID int
 
 func (s *testDDLSuite) checkCancelDropColumns(c *C, d *ddl, schemaID int64, tableID int64, colNames []string, success bool) {
 	changedTable := testGetTable(c, d, schemaID, tableID)
+	notFound := checkColumnsNotFound(changedTable, colNames)
+	c.Assert(notFound, Equals, success)
+}
+
+func checkColumnsNotFound(t table.Table, colNames []string) bool {
+	notFound := true
 	for _, colName := range colNames {
-		notFound := true
-		for _, colInfo := range changedTable.Meta().Columns {
+		for _, colInfo := range t.Meta().Columns {
 			if colInfo.Name.O == colName {
 				notFound = false
-				break
 			}
 		}
-		c.Assert(notFound, Equals, success)
 	}
+	return notFound
 }
 
 func (s *testDDLSuite) TestCancelJob(c *C) {
@@ -540,8 +546,8 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	partitionTblInfo := testTableInfoWithPartition(c, d, "t_partition", 5)
 	// Skip using sessPool. Make sure adding primary key can be successful.
 	partitionTblInfo.Columns[0].Flag |= mysql.NotNullFlag
-	// create table t (c1 int, c2 int, c3 int, c4 int, c5 int, c6 int, c7 int, c8 int);
-	tblInfo := testTableInfo(c, d, "t", 8)
+	// create table t (c1 int, c2 int, c3 int, c4 int, c5 int);
+	tblInfo := testTableInfo(c, d, "t", 5)
 	ctx := testNewContext(d)
 	err := ctx.NewTxn(context.Background())
 	c.Assert(err, IsNil)
@@ -551,9 +557,9 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	tblInfo.AutoIncID = tableAutoID
 	tblInfo.ShardRowIDBits = shardRowIDBits
 	job := testCreateTable(c, ctx, d, dbInfo, tblInfo)
-	// insert t values (1, 2, 3, 4, 5, 6, 7, 8);
+	// insert t values (1, 2, 3, 4, 5);
 	originTable := testGetTable(c, d, dbInfo.ID, tblInfo.ID)
-	row := types.MakeDatums(1, 2, 3, 4, 5, 6, 7, 8)
+	row := types.MakeDatums(1, 2, 3, 4, 5)
 	_, err = originTable.AddRecord(ctx, row)
 	c.Assert(err, IsNil)
 	txn, err := ctx.Txn(true)
@@ -879,7 +885,7 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 
 	// for add columns
 	updateTest(&tests[34])
-	addingColNames := []string{"colA", "colB"}
+	addingColNames := []string{"colA", "colB", "colC", "colD", "colE", "colF"}
 	var cols []*table.Column
 	for _, addingColName := range addingColNames {
 		newColumnDef := &ast.ColumnDef{
@@ -919,7 +925,21 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 
 	// for drop columns
 	updateTest(&tests[38])
-	dropColNames := []string{"c3", "c4"}
+	dropColNames := []string{"colA", "colB"}
+	s.checkCancelDropColumns(c, d, dbInfo.ID, tblInfo.ID, dropColNames, false)
+	testDropColumns(c, ctx, d, dbInfo, tblInfo, dropColNames, false)
+	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	s.checkCancelDropColumns(c, d, dbInfo.ID, tblInfo.ID, dropColNames, true)
+
+	updateTest(&tests[39])
+	dropColNames = []string{"colC", "colD"}
+	s.checkCancelDropColumns(c, d, dbInfo.ID, tblInfo.ID, dropColNames, false)
+	testDropColumns(c, ctx, d, dbInfo, tblInfo, dropColNames, false)
+	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	s.checkCancelDropColumns(c, d, dbInfo.ID, tblInfo.ID, dropColNames, true)
+
+	updateTest(&tests[40])
+	dropColNames = []string{"colE", "colF"}
 	s.checkCancelDropColumns(c, d, dbInfo.ID, tblInfo.ID, dropColNames, false)
 	testDropColumns(c, ctx, d, dbInfo, tblInfo, dropColNames, false)
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
