@@ -904,36 +904,6 @@ func (s *testSuite2) TestIndexLookupJoin(c *C) {
 	tk.MustQuery("select /*+ TIDB_INLJ(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b").Check(testkit.Rows("64"))
 	tk.MustExec("set @@tidb_index_lookup_join_concurrency=1;")
 	tk.MustQuery("select /*+ TIDB_INLJ(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b").Check(testkit.Rows("64"))
-<<<<<<< HEAD
-=======
-
-	tk.MustQuery("desc select /*+ INL_MERGE_JOIN(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b").Check(testkit.Rows(
-		"HashAgg_9 1.00 root  funcs:count(1)->Column#6",
-		"└─IndexMergeJoin_21 64.00 root  inner join, inner:IndexReader_19, outer key:test.t.a, inner key:test.s.a, other cond:lt(test.s.b, test.t.b)",
-		"  ├─TableReader_26(Build) 64.00 root  data:Selection_25",
-		"  │ └─Selection_25 64.00 cop[tikv]  not(isnull(test.t.b))",
-		"  │   └─TableFullScan_24 64.00 cop[tikv] table:t keep order:false",
-		"  └─IndexReader_19(Probe) 1.00 root  index:Selection_18",
-		"    └─Selection_18 1.00 cop[tikv]  not(isnull(test.s.a)), not(isnull(test.s.b))",
-		"      └─IndexRangeScan_17 1.00 cop[tikv] table:s, index:idx(a, b) range: decided by [eq(test.s.a, test.t.a) lt(test.s.b, test.t.b)], keep order:true",
-	))
-	tk.MustQuery("select /*+ INL_MERGE_JOIN(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b").Check(testkit.Rows("64"))
-	tk.MustExec("set @@tidb_index_lookup_join_concurrency=1;")
-	tk.MustQuery("select /*+ INL_MERGE_JOIN(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b").Check(testkit.Rows("64"))
-
-	tk.MustQuery("desc select /*+ INL_HASH_JOIN(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b").Check(testkit.Rows(
-		"HashAgg_9 1.00 root  funcs:count(1)->Column#6",
-		"└─IndexHashJoin_23 64.00 root  inner join, inner:IndexReader_15, outer key:test.t.a, inner key:test.s.a, other cond:lt(test.s.b, test.t.b)",
-		"  ├─TableReader_26(Build) 64.00 root  data:Selection_25",
-		"  │ └─Selection_25 64.00 cop[tikv]  not(isnull(test.t.b))",
-		"  │   └─TableFullScan_24 64.00 cop[tikv] table:t keep order:false",
-		"  └─IndexReader_15(Probe) 1.00 root  index:Selection_14",
-		"    └─Selection_14 1.00 cop[tikv]  not(isnull(test.s.a)), not(isnull(test.s.b))",
-		"      └─IndexRangeScan_13 1.00 cop[tikv] table:s, index:idx(a, b) range: decided by [eq(test.s.a, test.t.a) lt(test.s.b, test.t.b)], keep order:false",
-	))
-	tk.MustQuery("select /*+ INL_HASH_JOIN(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b").Check(testkit.Rows("64"))
-	tk.MustExec("set @@tidb_index_lookup_join_concurrency=1;")
-	tk.MustQuery("select /*+ INL_HASH_JOIN(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b").Check(testkit.Rows("64"))
 
 	// issue15658
 	tk.MustExec("drop table t1, t2")
@@ -944,7 +914,6 @@ func (s *testSuite2) TestIndexLookupJoin(c *C) {
 	tk.MustQuery("select /*+ inl_join(t1)*/ * from t1 join t2 on t2.b=t1.id and t2.a=t1.id;").Check(testkit.Rows("1 1 1"))
 	tk.MustQuery("select /*+ inl_hash_join(t1)*/ * from t1 join t2 on t2.b=t1.id and t2.a=t1.id;").Check(testkit.Rows("1 1 1"))
 	tk.MustQuery("select /*+ inl_merge_join(t1)*/ * from t1 join t2 on t2.b=t1.id and t2.a=t1.id;").Check(testkit.Rows("1 1 1"))
->>>>>>> 6dd8377... executor: check unequal handles when buildTableReader4INLJoin (#15675)
 }
 
 func (s *testSuite2) TestMergejoinOrder(c *C) {
