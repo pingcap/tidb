@@ -1993,13 +1993,12 @@ func resolveAlterTableSpec(ctx sessionctx.Context, specs []*ast.AlterTableSpec) 
 
 func isSameTypeMultiSpecs(specs []*ast.AlterTableSpec) bool {
 	specType := specs[0].Tp
-	var count int = 0
 	for _, spec := range specs {
-		if spec.Tp == specType {
-			count++
+		if spec.Tp != specType {
+			return false
 		}
 	}
-	return len(specs) == count
+	return true
 }
 
 func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.AlterTableSpec) (err error) {
@@ -2363,10 +2362,10 @@ func (d *ddl) AddColumns(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alte
 	if err = checkAddColumnTooManyColumns(len(t.Cols()) + newColumnsCount); err != nil {
 		return errors.Trace(err)
 	}
-	columns := make([]*table.Column, 0)
-	positions := make([]*ast.ColumnPosition, 0)
-	offsets := make([]int, 0)
-
+	columns := make([]*table.Column, newColumnsCount)
+	positions := make([]*ast.ColumnPosition, newColumnsCount)
+	offsets := make([]int, newColumnsCount)
+	index := 0
 	// Check the columns one by one.
 	for _, spec := range specs {
 		for _, specNewColumn := range spec.NewColumns {
@@ -2378,9 +2377,10 @@ func (d *ddl) AddColumns(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alte
 			if col == nil {
 				break
 			}
-			columns = append(columns, col)
-			positions = append(positions, spec.Position)
-			offsets = append(offsets, 0)
+			columns[index] = col
+			positions[index] = spec.Position
+			offsets[index] = 0
+			index++
 		}
 	}
 
