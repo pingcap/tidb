@@ -31,6 +31,7 @@ func SetAffinity(cpus []int) error {
 	return nil
 }
 
+// GetTargetDirectoryCapacity get the capacity (bytes) of directory
 func GetTargetDirectoryCapacity(path string) (uint64, error) {
 	return 0, fmt.Errorf("Get directory capacity not supported in non-linux system yet")
 }

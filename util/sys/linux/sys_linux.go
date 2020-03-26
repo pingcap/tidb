@@ -52,7 +52,7 @@ func SetAffinity(cpus []int) error {
 	return unix.SchedSetaffinity(unix.Getpid(), &cpuSet)
 }
 
-// GetTargetDirectoryCapacity fetch the target directory capacity(byte)
+// GetTargetDirectoryCapacity get the capacity (bytes) of directory
 func GetTargetDirectoryCapacity(path string) (uint64, error) {
 	var stat syscall.Statfs_t
 	err := syscall.Statfs(path, &stat)
