@@ -61,7 +61,7 @@ type Domain struct {
 	store                kv.Storage
 	infoHandle           *infoschema.Handle
 	privHandle           *privileges.Handle
-	bindHandle           atomic.Value // avoid DATA RACE when testing
+	bindHandle           *bindinfo.BindHandle
 	statsHandle          unsafe.Pointer
 	statsLease           time.Duration
 	ddl                  ddl.DDL
@@ -863,11 +863,7 @@ func (do *Domain) PrivilegeHandle() *privileges.Handle {
 
 // BindHandle returns domain's bindHandle.
 func (do *Domain) BindHandle() *bindinfo.BindHandle {
-	i := do.bindHandle.Load()
-	if i == nil { // doing type converting on a nil interface{} would cause panic
-		return nil
-	}
-	return i.(*bindinfo.BindHandle)
+	return do.bindHandle
 }
 
 // LoadBindInfoLoop create a goroutine loads BindInfo in a loop, it should
@@ -875,9 +871,8 @@ func (do *Domain) BindHandle() *bindinfo.BindHandle {
 func (do *Domain) LoadBindInfoLoop(ctxForHandle sessionctx.Context, ctxForEvolve sessionctx.Context) error {
 	ctxForHandle.GetSessionVars().InRestrictedSQL = true
 	ctxForEvolve.GetSessionVars().InRestrictedSQL = true
-	bindHandle := bindinfo.NewBindHandle(ctxForHandle)
-	do.bindHandle.Store(bindHandle)
-	err := bindHandle.Update(true)
+	do.bindHandle = bindinfo.NewBindHandle(ctxForHandle)
+	err := do.bindHandle.Update(true)
 	if err != nil || bindinfo.Lease == 0 {
 		return err
 	}
@@ -899,16 +894,15 @@ func (do *Domain) globalBindHandleWorkerLoop() {
 			case <-do.exit:
 				return
 			case <-bindWorkerTicker.C:
-				bindHandle := do.BindHandle()
-				err := bindHandle.Update(false)
+				err := do.bindHandle.Update(false)
 				if err != nil {
 					logutil.BgLogger().Error("update bindinfo failed", zap.Error(err))
 				}
-				bindHandle.DropInvalidBindRecord()
+				do.bindHandle.DropInvalidBindRecord()
 				if variable.TiDBOptOn(variable.CapturePlanBaseline.GetVal()) {
-					bindHandle.CaptureBaselines()
+					do.bindHandle.CaptureBaselines()
 				}
-				bindHandle.SaveEvolveTasksToStore()
+				do.bindHandle.SaveEvolveTasksToStore()
 			}
 		}
 	}()
@@ -928,7 +922,7 @@ func (do *Domain) handleEvolvePlanTasksLoop(ctx sessionctx.Context) {
 			case <-time.After(bindinfo.Lease):
 			}
 			if owner.IsOwner() {
-				err := do.BindHandle().HandleEvolvePlanTask(ctx)
+				err := do.bindHandle.HandleEvolvePlanTask(ctx)
 				if err != nil {
 					logutil.BgLogger().Info("evolve plan failed", zap.Error(err))
 				}

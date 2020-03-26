@@ -194,33 +194,34 @@ func extractSelectAndNormalizeDigest(stmtNode ast.StmtNode) (*ast.SelectStmt, st
 }
 
 func getBindRecord(ctx sessionctx.Context, stmt ast.StmtNode) (*bindinfo.BindRecord, string) {
+	// When the domain is initializing, the bind will be nil.
+	if ctx.Value(bindinfo.SessionBindInfoKeyType) == nil {
+		return nil, ""
+	}
 	selectStmt, normalizedSQL, hash := extractSelectAndNormalizeDigest(stmt)
 	if selectStmt == nil {
 		return nil, ""
 	}
-
-	// When the domain is initializing or it is a evolve task, the bind will be nil.
-	if ctx.Value(bindinfo.SessionBindInfoKeyType) != nil {
-		sessionHandle := ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
-		bindRecord := sessionHandle.GetBindRecord(normalizedSQL, ctx.GetSessionVars().CurrentDB)
-		if bindRecord == nil {
-			bindRecord = sessionHandle.GetBindRecord(normalizedSQL, "")
-		}
-		if bindRecord != nil && bindRecord.HasUsingBinding() {
+	sessionHandle := ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
+	bindRecord := sessionHandle.GetBindRecord(normalizedSQL, ctx.GetSessionVars().CurrentDB)
+	if bindRecord == nil {
+		bindRecord = sessionHandle.GetBindRecord(normalizedSQL, "")
+	}
+	if bindRecord != nil {
+		if bindRecord.HasUsingBinding() {
 			return bindRecord, metrics.ScopeSession
 		}
+		return nil, ""
 	}
-
-	if globalHandle := domain.GetDomain(ctx).BindHandle(); globalHandle != nil {
-		bindRecord := globalHandle.GetBindRecord(hash, normalizedSQL, ctx.GetSessionVars().CurrentDB)
-		if bindRecord == nil {
-			bindRecord = globalHandle.GetBindRecord(hash, normalizedSQL, "")
-		}
-		if bindRecord != nil && bindRecord.HasUsingBinding() {
-			return bindRecord, metrics.ScopeGlobal
-		}
+	globalHandle := domain.GetDomain(ctx).BindHandle()
+	if globalHandle == nil {
+		return nil, ""
 	}
-	return nil, ""
+	bindRecord = globalHandle.GetBindRecord(hash, normalizedSQL, ctx.GetSessionVars().CurrentDB)
+	if bindRecord == nil {
+		bindRecord = globalHandle.GetBindRecord(hash, normalizedSQL, "")
+	}
+	return bindRecord, metrics.ScopeGlobal
 }
 
 func handleInvalidBindRecord(ctx context.Context, sctx sessionctx.Context, level string, bindRecord bindinfo.BindRecord) {
