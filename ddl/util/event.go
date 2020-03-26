@@ -42,9 +42,7 @@ func (e *Event) String() string {
 		ret += fmt.Sprintf(", Partition IDs: %v", ids)
 	}
 	for _, columnInfo := range e.ColumnInfos {
-		if columnInfo != nil {
-			ret += fmt.Sprintf(", Column ID: %d, Column Name %s", columnInfo.ID, columnInfo.Name)
-		}
+		ret += fmt.Sprintf(", Column ID: %d, Column Name %s", columnInfo.ID, columnInfo.Name)
 	}
 	if e.IndexInfo != nil {
 		ret += fmt.Sprintf(", Index ID: %d, Index Name %s", e.IndexInfo.ID, e.IndexInfo.Name)
