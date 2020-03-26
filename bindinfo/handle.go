@@ -408,10 +408,10 @@ func (tmpMap *tmpBindRecordMap) Add(bindRecord *BindRecord) {
 	}
 	tmpMap.Lock()
 	defer tmpMap.Unlock()
-	newMap := copyBindRecordUpdateMap(tmpMap.Load().(map[string]*bindRecordUpdate))
-	if _, ok := newMap[key]; ok {
+	if _, ok := tmpMap.Load().(map[string]*bindRecordUpdate)[key]; ok {
 		return
 	}
+	newMap := copyBindRecordUpdateMap(tmpMap.Load().(map[string]*bindRecordUpdate))
 	newMap[key] = &bindRecordUpdate{
 		bindRecord: bindRecord,
 	}
