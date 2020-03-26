@@ -240,15 +240,15 @@ func checkAddAndCreateColumnInfos(t *meta.Meta, job *model.Job) (*model.TableInf
 	positions := []*ast.ColumnPosition{}
 	offsets := []int{}
 	err = job.DecodeArgs(&columns, &positions, &offsets)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return nil, nil, nil, nil, errors.Trace(err)
+	}
 	// Should initialize positions[i] when it is nil, otherwise the createColumnInfo function will panic.
 	for i := range positions {
 		if positions[i] == nil {
 			positions[i] = &ast.ColumnPosition{}
 		}
-	}
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return nil, nil, nil, nil, errors.Trace(err)
 	}
 
 	var columnInfos []*model.ColumnInfo

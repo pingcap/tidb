@@ -2237,6 +2237,16 @@ func checkAndCreateNewColumn(ctx sessionctx.Context, ti ast.Ident, schema *model
 	}
 
 	colName := specNewColumn.Name.Name.O
+	// Check whether added column has existed.
+	col := table.FindCol(t.Cols(), colName)
+	if col != nil {
+		err = infoschema.ErrColumnExists.GenWithStackByArgs(colName)
+		if spec.IfNotExists {
+			ctx.GetSessionVars().StmtCtx.AppendNote(err)
+			return nil, nil
+		}
+		return nil, err
+	}
 	if err = checkColumnAttributes(colName, specNewColumn.Tp); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -2280,7 +2290,7 @@ func checkAndCreateNewColumn(ctx sessionctx.Context, ti ast.Ident, schema *model
 	// Ignore table constraints now, maybe return error later.
 	// We use length(t.Cols()) as the default offset firstly, we will change the
 	// column's offset later.
-	col, _, err := buildColumnAndConstraint(ctx, len(t.Cols()), specNewColumn, nil, t.Meta().Charset, t.Meta().Collate, schema.Charset, schema.Collate)
+	col, _, err = buildColumnAndConstraint(ctx, len(t.Cols()), specNewColumn, nil, t.Meta().Charset, t.Meta().Collate, schema.Charset, schema.Collate)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -2302,21 +2312,13 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 	if err = checkAddColumnTooManyColumns(len(t.Cols()) + 1); err != nil {
 		return errors.Trace(err)
 	}
-	colName := specNewColumn.Name.Name.O
-	// Check whether added column has existed.
-	col := table.FindCol(t.Cols(), colName)
-	if col != nil {
-		err = infoschema.ErrColumnExists.GenWithStackByArgs(colName)
-		if spec.IfNotExists {
-			ctx.GetSessionVars().StmtCtx.AppendNote(err)
-			return nil
-		}
-		return err
-	}
-
-	col, err = checkAndCreateNewColumn(ctx, ti, schema, spec, t, specNewColumn)
+	col, err := checkAndCreateNewColumn(ctx, ti, schema, spec, t, specNewColumn)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	// Added column has existed and if_not_exists flag is true.
+	if col == nil {
+		return nil
 	}
 
 	job := &model.Job{
@@ -2344,9 +2346,6 @@ func (d *ddl) AddColumns(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alte
 	if err != nil {
 		return errors.Trace(err)
 	}
-	var columns []*table.Column
-	var positions []*ast.ColumnPosition
-	var offsets []int
 
 	// Check all the columns at once.
 	newColumnsCount := 0
@@ -2354,8 +2353,8 @@ func (d *ddl) AddColumns(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alte
 	for _, spec := range specs {
 		for _, specNewColumn := range spec.NewColumns {
 			newColumnsCount++
-			if !addingColumnNames[specNewColumn.Name.Name.O] {
-				addingColumnNames[specNewColumn.Name.Name.O] = true
+			if !addingColumnNames[specNewColumn.Name.Name.L] {
+				addingColumnNames[specNewColumn.Name.Name.L] = true
 			} else {
 				return errors.Trace(infoschema.ErrColumnExists.GenWithStackByArgs(specNewColumn.Name.Name.O))
 			}
@@ -2364,25 +2363,20 @@ func (d *ddl) AddColumns(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alte
 	if err = checkAddColumnTooManyColumns(len(t.Cols()) + newColumnsCount); err != nil {
 		return errors.Trace(err)
 	}
+	columns := make([]*table.Column, 0)
+	positions := make([]*ast.ColumnPosition, 0)
+	offsets := make([]int, 0)
 
 	// Check the columns one by one.
 	for _, spec := range specs {
 		for _, specNewColumn := range spec.NewColumns {
-			colName := specNewColumn.Name.Name.O
-			// Check whether added column has existed.
-			col := table.FindCol(t.Cols(), colName)
-			if col != nil {
-				err = infoschema.ErrColumnExists.GenWithStackByArgs(colName)
-				if spec.IfNotExists {
-					ctx.GetSessionVars().StmtCtx.AppendNote(err)
-					continue
-				}
-				return err
-			}
-
-			col, err = checkAndCreateNewColumn(ctx, ti, schema, spec, t, specNewColumn)
+			col, err := checkAndCreateNewColumn(ctx, ti, schema, spec, t, specNewColumn)
 			if err != nil {
 				return errors.Trace(err)
+			}
+			// Added column has existed and if_not_exists flag is true.
+			if col == nil {
+				break
 			}
 			columns = append(columns, col)
 			positions = append(positions, spec.Position)
@@ -2643,6 +2637,14 @@ func (d *ddl) DropColumns(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alt
 	}
 	tblInfo := t.Meta()
 
+	dropingColumnNames := make(map[string]bool)
+	for _, spec := range specs {
+		if !dropingColumnNames[spec.OldColumnName.Name.L] {
+			dropingColumnNames[spec.OldColumnName.Name.L] = true
+		} else {
+			return errors.Trace(infoschema.ErrColumnExists.GenWithStackByArgs(spec.OldColumnName.Name.O))
+		}
+	}
 	if len(tblInfo.Columns) == len(specs) {
 		return ErrCantRemoveAllFields.GenWithStack("can't drop all columns in table %s",
 			tblInfo.Name)
@@ -2682,6 +2684,9 @@ func (d *ddl) DropColumns(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alt
 	}
 
 	err = d.doDDLJob(ctx, job)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }

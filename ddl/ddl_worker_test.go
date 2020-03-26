@@ -501,16 +501,8 @@ func checkIdxExist(c *C, d *ddl, schemaID int64, tableID int64, idxName string, 
 
 func (s *testDDLSuite) checkAddColumns(c *C, d *ddl, schemaID int64, tableID int64, colNames []string, success bool) {
 	changedTable := testGetTable(c, d, schemaID, tableID)
-	var found bool
-	for _, colName := range colNames {
-		for _, colInfo := range changedTable.Meta().Columns {
-			if colInfo.Name.O == colName {
-				found = true
-				break
-			}
-		}
-		c.Assert(found, Equals, success)
-	}
+	found := !checkColumnsNotFound(changedTable, colNames)
+	c.Assert(found, Equals, success)
 }
 
 func (s *testDDLSuite) checkCancelDropColumns(c *C, d *ddl, schemaID int64, tableID int64, colNames []string, success bool) {
