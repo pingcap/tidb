@@ -1317,7 +1317,7 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 
 	defer func() {
 		// refine error message
-		// Only when the hint can not match the requried property, we generate warning message.
+		// Only when the hint can not match the required property, we generate warning message.
 		// Otherwise we will enforce the property and try to apply the hint again.
 		if !canForced && needForced && matchProp {
 			// Construct warning message prefix.
