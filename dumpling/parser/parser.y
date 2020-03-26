@@ -8521,6 +8521,12 @@ AdminStmt:
 			Tp: ast.AdminEvolveBindings,
 		}
 	}
+|	"ADMIN" "RELOAD" "BINDINGS"
+	{
+		$$ = &ast.AdminStmt{
+			Tp: ast.AdminReloadBindings,
+		}
+	}
 
 AdminShowSlow:
 	"RECENT" NUM
