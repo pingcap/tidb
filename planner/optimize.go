@@ -111,7 +111,9 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 			bestPlanAmongHints = plan
 		}
 	}
-	// If there is already a evolution task, we do not need to handle it again.
+	// 1. If there is already a evolution task, we do not need to handle it again.
+	// 2. If the origin binding contain `read_from_storage` hint, we should ignore the evolve task.
+	// 3. If the best plan contain TiFlash hint, we should ignore the evolve task.
 	if sctx.GetSessionVars().EvolvePlanBaselines && binding == nil &&
 		!originHints.ContainTableHint(plannercore.HintReadFromStorage) &&
 		!bindRecord.Bindings[0].Hint.ContainTableHint(plannercore.HintReadFromStorage) {
