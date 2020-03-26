@@ -2106,8 +2106,19 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 		return nil, err
 	}
 	handles := make([]int64, 0, len(lookUpContents))
+	var isValidHandle bool
 	for _, content := range lookUpContents {
-		handles = append(handles, content.keys[0].GetInt64())
+		handle := content.keys[0].GetInt64()
+		isValidHandle = true
+		for _, key := range content.keys {
+			if handle != key.GetInt64() {
+				isValidHandle = false
+				break
+			}
+		}
+		if isValidHandle {
+			handles = append(handles, handle)
+		}
 	}
 	return builder.buildTableReaderFromHandles(ctx, e, handles)
 }
