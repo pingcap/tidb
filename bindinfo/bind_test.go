@@ -498,6 +498,33 @@ func (s *testSuite) TestCapturePlanBaseline(c *C) {
 	c.Assert(rows[0][1], Equals, "SELECT /*+ USE_INDEX(@`sel_1` `test`.`t` )*/ * FROM `t` WHERE `a`>10")
 }
 
+func (s *testSuite) TestCaptureBaselinesDefaultDB(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	stmtsummary.StmtSummaryByDigestMap.Clear()
+	tk.MustExec(" set @@tidb_capture_plan_baselines = on")
+	defer func() {
+		tk.MustExec(" set @@tidb_capture_plan_baselines = off")
+	}()
+	tk.MustExec("use test")
+	tk.MustExec("drop database if exists spm")
+	tk.MustExec("create database spm")
+	tk.MustExec("create table spm.t(a int, index idx_a(a))")
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
+	tk.MustExec("select * from spm.t ignore index(idx_a) where a > 10")
+	tk.MustExec("select * from spm.t ignore index(idx_a) where a > 10")
+	tk.MustExec("admin capture bindings")
+	rows := tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 1)
+	// Default DB should be "" when all columns have explicit database name.
+	c.Assert(rows[0][2], Equals, "")
+	c.Assert(rows[0][3], Equals, "using")
+	tk.MustExec("use spm")
+	tk.MustExec("select * from spm.t where a > 10")
+	// Should use TableScan because of the "ignore index" binding.
+	c.Assert(len(tk.Se.GetSessionVars().StmtCtx.IndexNames), Equals, 0)
+}
+
 func (s *testSuite) TestUseMultiplyBindings(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
