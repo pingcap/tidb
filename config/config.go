@@ -124,14 +124,15 @@ type Log struct {
 
 // Security is the security section of the config.
 type Security struct {
-	SkipGrantTable  bool     `toml:"skip-grant-table" json:"skip-grant-table"`
-	SSLCA           string   `toml:"ssl-ca" json:"ssl-ca"`
-	SSLCert         string   `toml:"ssl-cert" json:"ssl-cert"`
-	SSLKey          string   `toml:"ssl-key" json:"ssl-key"`
-	ClusterSSLCA    string   `toml:"cluster-ssl-ca" json:"cluster-ssl-ca"`
-	ClusterSSLCert  string   `toml:"cluster-ssl-cert" json:"cluster-ssl-cert"`
-	ClusterSSLKey   string   `toml:"cluster-ssl-key" json:"cluster-ssl-key"`
-	ClusterVerifyCN []string `toml:"cluster-verify-cn" json:"cluster-verify-cn"`
+	SkipGrantTable         bool     `toml:"skip-grant-table" json:"skip-grant-table"`
+	SSLCA                  string   `toml:"ssl-ca" json:"ssl-ca"`
+	SSLCert                string   `toml:"ssl-cert" json:"ssl-cert"`
+	SSLKey                 string   `toml:"ssl-key" json:"ssl-key"`
+	RequireSecureTransport bool     `toml:"require-secure-transport" json:"require-secure-transport"`
+	ClusterSSLCA           string   `toml:"cluster-ssl-ca" json:"cluster-ssl-ca"`
+	ClusterSSLCert         string   `toml:"cluster-ssl-cert" json:"cluster-ssl-cert"`
+	ClusterSSLKey          string   `toml:"cluster-ssl-key" json:"cluster-ssl-key"`
+	ClusterVerifyCN        []string `toml:"cluster-verify-cn" json:"cluster-verify-cn"`
 }
 
 // The ErrConfigValidationFailed error is used so that external callers can do a type assertion
@@ -148,39 +149,48 @@ func (e *ErrConfigValidationFailed) Error() string {
 }
 
 // ToTLSConfig generates tls's config based on security section of the config.
-func (s *Security) ToTLSConfig() (*tls.Config, error) {
-	var tlsConfig *tls.Config
+func (s *Security) ToTLSConfig() (tlsConfig *tls.Config, err error) {
 	if len(s.ClusterSSLCA) != 0 {
-		var certificates = make([]tls.Certificate, 0)
-		if len(s.ClusterSSLCert) != 0 && len(s.ClusterSSLKey) != 0 {
-			// Load the client certificates from disk
-			certificate, err := tls.LoadX509KeyPair(s.ClusterSSLCert, s.ClusterSSLKey)
-			if err != nil {
-				return nil, errors.Errorf("could not load client key pair: %s", err)
-			}
-			certificates = append(certificates, certificate)
-		}
-
-		// Create a certificate pool from the certificate authority
 		certPool := x509.NewCertPool()
-		ca, err := ioutil.ReadFile(s.ClusterSSLCA)
+		// Create a certificate pool from the certificate authority
+		var ca []byte
+		ca, err = ioutil.ReadFile(s.ClusterSSLCA)
 		if err != nil {
-			return nil, errors.Errorf("could not read ca certificate: %s", err)
+			err = errors.Errorf("could not read ca certificate: %s", err)
+			return
 		}
-
 		// Append the certificates from the CA
 		if !certPool.AppendCertsFromPEM(ca) {
-			return nil, errors.New("failed to append ca certs")
+			err = errors.New("failed to append ca certs")
+			return
+		}
+		tlsConfig = &tls.Config{
+			RootCAs:   certPool,
+			ClientCAs: certPool,
 		}
 
-		tlsConfig = &tls.Config{
-			Certificates: certificates,
-			RootCAs:      certPool,
-			ClientCAs:    certPool,
+		if len(s.ClusterSSLCert) != 0 && len(s.ClusterSSLKey) != 0 {
+			getCert := func() (*tls.Certificate, error) {
+				// Load the client certificates from disk
+				cert, err := tls.LoadX509KeyPair(s.ClusterSSLCert, s.ClusterSSLKey)
+				if err != nil {
+					return nil, errors.Errorf("could not load client key pair: %s", err)
+				}
+				return &cert, nil
+			}
+			// pre-test cert's loading.
+			if _, err = getCert(); err != nil {
+				return
+			}
+			tlsConfig.GetClientCertificate = func(info *tls.CertificateRequestInfo) (certificate *tls.Certificate, err error) {
+				return getCert()
+			}
+			tlsConfig.GetCertificate = func(info *tls.ClientHelloInfo) (certificate *tls.Certificate, err error) {
+				return getCert()
+			}
 		}
 	}
-
-	return tlsConfig, nil
+	return
 }
 
 // Status is the status section of the config.

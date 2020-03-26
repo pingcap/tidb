@@ -246,7 +246,7 @@ func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema) *PlanBuil
 
 // Build builds the ast node to a Plan.
 func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
-	b.optFlag = flagPrunColumns
+	b.optFlag |= flagPrunColumns
 	switch x := node.(type) {
 	case *ast.AdminStmt:
 		return b.buildAdmin(ctx, x)
@@ -2204,6 +2204,7 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 		}
 		schema := plan.Schema()
 		if v.Cols == nil {
+			adjustOverlongViewColname(plan.(LogicalPlan))
 			v.Cols = make([]model.CIStr, len(schema.Columns))
 			for i, col := range schema.Columns {
 				v.Cols[i] = col.ColName
@@ -2212,14 +2213,12 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 		if len(v.Cols) != schema.Len() {
 			return nil, ddl.ErrViewWrongList
 		}
-		if _, ok := plan.(LogicalPlan); ok {
-			if b.ctx.GetSessionVars().User != nil {
-				authErr = ErrTableaccessDenied.GenWithStackByArgs("CREATE VIEW", b.ctx.GetSessionVars().User.Hostname,
-					b.ctx.GetSessionVars().User.Username, v.ViewName.Name.L)
-			}
-			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateViewPriv, v.ViewName.Schema.L,
-				v.ViewName.Name.L, "", authErr)
+		if b.ctx.GetSessionVars().User != nil {
+			authErr = ErrTableaccessDenied.GenWithStackByArgs("CREATE VIEW", b.ctx.GetSessionVars().User.Hostname,
+				b.ctx.GetSessionVars().User.Username, v.ViewName.Name.L)
 		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateViewPriv, v.ViewName.Schema.L,
+			v.ViewName.Name.L, "", authErr)
 		if v.Definer.CurrentUser && b.ctx.GetSessionVars().User != nil {
 			v.Definer = b.ctx.GetSessionVars().User
 		}
@@ -2591,4 +2590,16 @@ func buildChecksumTableSchema() *expression.Schema {
 	schema.Append(buildColumn("", "Total_kvs", mysql.TypeLonglong, 22))
 	schema.Append(buildColumn("", "Total_bytes", mysql.TypeLonglong, 22))
 	return schema
+}
+
+// adjustOverlongViewColname adjusts the overlong outputNames of a view to
+// `new_exp_$off` where `$off` is the offset of the output column, $off starts from 1.
+// There is still some MySQL compatible problems.
+func adjustOverlongViewColname(plan LogicalPlan) {
+	outputCols := plan.Schema().Columns
+	for i := range outputCols {
+		if outputName := outputCols[i].ColName.L; len(outputName) > mysql.MaxColumnNameLength {
+			outputCols[i].ColName = model.NewCIStr(fmt.Sprintf("name_exp_%d", i+1))
+		}
+	}
 }
