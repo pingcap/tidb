@@ -14,9 +14,13 @@ package core
 
 import (
 	"context"
-	"errors"
+	"sort"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
@@ -192,13 +196,20 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 	if pi == nil {
 		return ds, nil
 	}
-	partitionDefs := ds.table.Meta().Partition.Definitions
-	filterConds := ds.allConds
 
 	// Try to locate partition directly for hash partition.
-	if pi.Type == model.PartitionTypeHash && len(filterConds) > 0 {
+	if pi.Type == model.PartitionTypeHash && len(ds.allConds) > 0 {
 		return s.pruneHashPartition(ds, pi)
 	}
+	if pi.Type == model.PartitionTypeRange {
+		if len(pi.Columns) == 0 {
+			return s.pruneRangePartition(ds, pi)
+		}
+	}
+
+	// TODO: Clean up the old code.
+	partitionDefs := ds.table.Meta().Partition.Definitions
+	filterConds := ds.allConds
 
 	var partitionExprs []expression.Expression
 	var col *expression.Column
@@ -342,4 +353,463 @@ func (s *partitionProcessor) findByName(partitionNames []model.CIStr, partitionN
 
 func (*partitionProcessor) name() string {
 	return "partition_processor"
+}
+
+type lessThanData struct {
+	data     []int64
+	maxvalue bool
+}
+
+func (lt *lessThanData) length() int {
+	return len(lt.data)
+}
+
+func (lt *lessThanData) compare(ith int, v int64, unsigned bool) int {
+	if ith == len(lt.data)-1 {
+		if lt.maxvalue {
+			return 1
+		}
+	}
+
+	if unsigned {
+		return compareUnsigned(lt.data[ith], v)
+	}
+
+	switch {
+	case lt.data[ith] > v:
+		return 1
+	case lt.data[ith] == v:
+		return 0
+	}
+	return -1
+}
+
+func compareUnsigned(v1, v2 int64) int {
+	switch {
+	case uint64(v1) > uint64(v2):
+		return 1
+	case uint64(v1) == uint64(v2):
+		return 0
+	}
+	return -1
+}
+
+// partitionRange represents [start, range)
+type partitionRange struct {
+	start int
+	end   int
+}
+
+// partitionRangeOR represents OR(range1, range2, ...)
+type partitionRangeOR []partitionRange
+
+func fullRange(end int) partitionRangeOR {
+	var reduceAllocation [3]partitionRange
+	reduceAllocation[0] = partitionRange{0, end}
+	return reduceAllocation[:1]
+}
+
+func (or partitionRangeOR) intersectionRange(start, end int) partitionRangeOR {
+	// Let M = intersection, U = union, then
+	// a M (b U c) == (a M b) U (a M c)
+	ret := or[:0]
+	for _, r1 := range or {
+		newStart, newEnd := intersectionRange(r1.start, r1.end, start, end)
+		// Exclude the empty one.
+		if newEnd > newStart {
+			ret = append(ret, partitionRange{newStart, newEnd})
+		}
+	}
+	return ret
+}
+
+func (or partitionRangeOR) Len() int {
+	return len(or)
+}
+
+func (or partitionRangeOR) Less(i, j int) bool {
+	return or[i].start < or[j].start
+}
+
+func (or partitionRangeOR) Swap(i, j int) {
+	or[i], or[j] = or[j], or[i]
+}
+
+func (or partitionRangeOR) union(x partitionRangeOR) partitionRangeOR {
+	or = append(or, x...)
+	return or.simplify()
+}
+
+func (or partitionRangeOR) simplify() partitionRangeOR {
+	// Make the ranges order by start.
+	sort.Sort(or)
+	sorted := or
+
+	// Iterate the sorted ranges, merge the adjacent two when their range overlap.
+	// For example, [0, 1), [2, 7), [3, 5), ... => [0, 1), [2, 7) ...
+	res := sorted[:1]
+	for _, curr := range sorted[1:] {
+		last := &res[len(res)-1]
+		if curr.start > last.end {
+			res = append(res, curr)
+		} else {
+			// Merge two.
+			if curr.end > last.end {
+				last.end = curr.end
+			}
+		}
+	}
+	return res
+}
+
+func (or partitionRangeOR) intersection(x partitionRangeOR) partitionRangeOR {
+	if or.Len() == 1 {
+		return x.intersectionRange(or[0].start, or[0].end)
+	}
+	if x.Len() == 1 {
+		return or.intersectionRange(x[0].start, x[0].end)
+	}
+
+	// Rename to x, y where len(x) > len(y)
+	var y partitionRangeOR
+	if or.Len() > x.Len() {
+		x, y = or, x
+	} else {
+		y = or
+	}
+
+	// (a U b) M (c U d) => (x M c) U (x M d), x = (a U b)
+	res := make(partitionRangeOR, 0, len(y))
+	for _, r := range y {
+		// As intersectionRange modify the raw data, we have to make a copy.
+		tmp := make(partitionRangeOR, len(x))
+		copy(tmp, x)
+		tmp = tmp.intersectionRange(r.start, r.end)
+		res = append(res, tmp...)
+	}
+	return res.simplify()
+}
+
+// intersectionRange calculate the intersection of [start, end) and [newStart, newEnd)
+func intersectionRange(start, end, newStart, newEnd int) (int, int) {
+	var s, e int
+	if start > newStart {
+		s = start
+	} else {
+		s = newStart
+	}
+
+	if end < newEnd {
+		e = end
+	} else {
+		e = newEnd
+	}
+	return s, e
+}
+
+func (s *partitionProcessor) pruneRangePartition(ds *DataSource, pi *model.PartitionInfo) (LogicalPlan, error) {
+	pExpr, err := ds.table.(partitionTable).PartitionExpr(ds.ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	lessThan := lessThanData{
+		data:     pExpr.LessThan,
+		maxvalue: pExpr.MaxValue,
+	}
+
+	col, fn, err := makePartitionByFnCol(ds, pi.Expr)
+	if err != nil {
+		return nil, err
+	}
+
+	result := fullRange(len(pi.Definitions))
+	if col != nil {
+		result = partitionRangeForCNFExpr(ds.ctx, ds.allConds, lessThan, col, fn, result)
+	}
+
+	return s.makeUnionAllChildren(ds, pi, result)
+}
+
+type parse interface {
+	ParseSQL(ctx context.Context, sql, charset, collation string) ([]ast.StmtNode, []error, error)
+}
+
+// makePartitionByFnCol extracts the column and function information in 'partition by ... fn(col)'.
+func makePartitionByFnCol(ds *DataSource, partitionExpr string) (*expression.Column, *expression.ScalarFunction, error) {
+	var err error
+	var stmts []ast.StmtNode
+	if p, ok := ds.context().(parse); ok {
+		stmts, _, err = p.ParseSQL(context.Background(), "select "+partitionExpr, "", "")
+	} else {
+		stmts, _, err = parser.New().Parse("select "+partitionExpr, "", "")
+	}
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	fnCol := stmts[0].(*ast.SelectStmt).Fields.Fields[0].Expr
+	schema := expression.NewSchema(ds.TblCols...)
+	partExpr, err := expression.RewriteSimpleExprWithSchema(ds.context(), fnCol, schema)
+	if err != nil {
+		return nil, nil, err
+	}
+	var col *expression.Column
+	var fn *expression.ScalarFunction
+	switch raw := partExpr.(type) {
+	case *expression.ScalarFunction:
+		if _, ok := monotoneIncFuncs[raw.FuncName.L]; ok {
+			fn = raw
+			col = fn.GetArgs()[0].(*expression.Column)
+		}
+	case *expression.Column:
+		col = raw
+	}
+	return col, fn, nil
+}
+
+func partitionRangeForCNFExpr(sctx sessionctx.Context, exprs []expression.Expression, lessThan lessThanData,
+	col *expression.Column, partFn *expression.ScalarFunction, result partitionRangeOR) partitionRangeOR {
+	for i := 0; i < len(exprs); i++ {
+		result = partitionRangeForExpr(sctx, exprs[i], lessThan, col, partFn, result)
+	}
+	return result
+}
+
+// partitionRangeForExpr calculate the partitions for the expression.
+func partitionRangeForExpr(sctx sessionctx.Context, expr expression.Expression, lessThan lessThanData,
+	col *expression.Column, partFn *expression.ScalarFunction, result partitionRangeOR) partitionRangeOR {
+	// Handle AND, OR respectively.
+	if op, ok := expr.(*expression.ScalarFunction); ok {
+		if op.FuncName.L == ast.LogicAnd {
+			return partitionRangeForCNFExpr(sctx, op.GetArgs(), lessThan, col, partFn, result)
+		} else if op.FuncName.L == ast.LogicOr {
+			args := op.GetArgs()
+			newRange := partitionRangeForOrExpr(sctx, args[0], args[1], lessThan, col, partFn)
+			return result.intersection(newRange)
+		}
+	}
+
+	// Handle a single expression.
+	dataForPrune, ok := extractDataForPrune(sctx, expr, col, partFn)
+	if !ok {
+		// Can't prune, return the whole range.
+		return result
+	}
+	unsigned := mysql.HasUnsignedFlag(col.RetType.Flag)
+	start, end := pruneUseBinarySearch(lessThan, dataForPrune, unsigned)
+	return result.intersectionRange(start, end)
+}
+
+// partitionRangeForOrExpr calculate the partitions for or(expr1, expr2)
+func partitionRangeForOrExpr(sctx sessionctx.Context, expr1, expr2 expression.Expression, lessThan lessThanData,
+	col *expression.Column, partFn *expression.ScalarFunction) partitionRangeOR {
+	tmp1 := partitionRangeForExpr(sctx, expr1, lessThan, col, partFn, fullRange(lessThan.length()))
+	tmp2 := partitionRangeForExpr(sctx, expr2, lessThan, col, partFn, fullRange(lessThan.length()))
+	return tmp1.union(tmp2)
+}
+
+// monotoneIncFuncs are those functions that for any x y, if x > y => f(x) > f(y)
+var monotoneIncFuncs = map[string]struct{}{
+	ast.ToDays:        {},
+	ast.UnixTimestamp: {},
+}
+
+// f(x) op const, op is > = <
+type dataForPrune struct {
+	op string
+	c  int64
+}
+
+// extractDataForPrune extracts data from the expression for pruning.
+// The expression should have this form:  'f(x) op const', otherwise it can't be pruned.
+func extractDataForPrune(sctx sessionctx.Context, expr expression.Expression, partCol *expression.Column, partFn *expression.ScalarFunction) (dataForPrune, bool) {
+	var ret dataForPrune
+	op, ok := expr.(*expression.ScalarFunction)
+	if !ok {
+		return ret, false
+	}
+	switch op.FuncName.L {
+	case ast.EQ, ast.LT, ast.GT, ast.LE, ast.GE:
+		ret.op = op.FuncName.L
+	case ast.IsNull:
+		// isnull(col)
+		if arg0, ok := op.GetArgs()[0].(*expression.Column); ok && arg0.ID == partCol.ID {
+			ret.op = ast.IsNull
+			return ret, true
+		}
+		return ret, false
+	default:
+		return ret, false
+	}
+
+	var col *expression.Column
+	var con *expression.Constant
+	if arg0, ok := op.GetArgs()[0].(*expression.Column); ok && arg0.ID == partCol.ID {
+		if arg1, ok := op.GetArgs()[1].(*expression.Constant); ok {
+			col, con = arg0, arg1
+		}
+	} else if arg0, ok := op.GetArgs()[1].(*expression.Column); ok && arg0.ID == partCol.ID {
+		if arg1, ok := op.GetArgs()[0].(*expression.Constant); ok {
+			ret.op = opposite(ret.op)
+			col, con = arg0, arg1
+		}
+	}
+	if col == nil || con == nil {
+		return ret, false
+	}
+
+	// Current expression is 'col op const'
+	var constExpr expression.Expression
+	if partFn != nil {
+		// If the partition expression is fn(col), change constExpr to fn(constExpr).
+		// No 'copy on write' for the expression here, this is a dangerous operation.
+		args := partFn.GetArgs()
+		args[0] = con
+		constExpr = partFn
+		// Sometimes we need to relax the condition, < to <=, > to >=.
+		// For example, the following case doesn't hold:
+		// col < '2020-02-11 17:34:11' => to_days(col) < to_days(2020-02-11 17:34:11)
+		// The correct transform should be:
+		// col < '2020-02-11 17:34:11' => to_days(col) <= to_days(2020-02-11 17:34:11)
+		ret.op = relaxOP(ret.op)
+	} else {
+		// If the partition expression is col, use constExpr.
+		constExpr = con
+	}
+	c, isNull, err := constExpr.EvalInt(sctx, chunk.Row{})
+	if err == nil && !isNull {
+		ret.c = c
+		return ret, true
+	}
+	return ret, false
+}
+
+// opposite turns > to <, >= to <= and so on.
+func opposite(op string) string {
+	switch op {
+	case ast.EQ:
+		return ast.EQ
+	case ast.LT:
+		return ast.GT
+	case ast.GT:
+		return ast.LT
+	case ast.LE:
+		return ast.GE
+	case ast.GE:
+		return ast.LE
+	}
+	panic("invalid input parameter" + op)
+}
+
+// relaxOP relax the op > to >= and < to <=
+// Sometime we need to relax the condition, for example:
+// col < const => f(col) <= const
+// datetime < 2020-02-11 16:18:42 => to_days(datetime) <= to_days(2020-02-11)
+// We can't say:
+// datetime < 2020-02-11 16:18:42 => to_days(datetime) < to_days(2020-02-11)
+func relaxOP(op string) string {
+	switch op {
+	case ast.LT:
+		return ast.LE
+	case ast.GT:
+		return ast.GE
+	}
+	return op
+}
+
+func pruneUseBinarySearch(lessThan lessThanData, data dataForPrune, unsigned bool) (start int, end int) {
+	length := lessThan.length()
+	switch data.op {
+	case ast.EQ:
+		// col = 66, lessThan = [4 7 11 14 17] => [5, 6)
+		// col = 14, lessThan = [4 7 11 14 17] => [4, 5)
+		// col = 10, lessThan = [4 7 11 14 17] => [2, 3)
+		// col = 3, lessThan = [4 7 11 14 17] => [0, 1)
+		pos := sort.Search(length, func(i int) bool { return lessThan.compare(i, data.c, unsigned) > 0 })
+		start, end = pos, pos+1
+	case ast.LT:
+		// col < 66, lessThan = [4 7 11 14 17] => [0, 5)
+		// col < 14, lessThan = [4 7 11 14 17] => [0, 4)
+		// col < 10, lessThan = [4 7 11 14 17] => [0, 3)
+		// col < 3, lessThan = [4 7 11 14 17] => [0, 1)
+		pos := sort.Search(length, func(i int) bool { return lessThan.compare(i, data.c, unsigned) >= 0 })
+		start, end = 0, pos+1
+	case ast.GE:
+		// col >= 66, lessThan = [4 7 11 14 17] => [5, 5)
+		// col >= 14, lessThan = [4 7 11 14 17] => [4, 5)
+		// col >= 10, lessThan = [4 7 11 14 17] => [2, 5)
+		// col >= 3, lessThan = [4 7 11 14 17] => [0, 5)
+		pos := sort.Search(length, func(i int) bool { return lessThan.compare(i, data.c, unsigned) > 0 })
+		start, end = pos, length
+	case ast.GT:
+		// col > 66, lessThan = [4 7 11 14 17] => [5, 5)
+		// col > 14, lessThan = [4 7 11 14 17] => [4, 5)
+		// col > 10, lessThan = [4 7 11 14 17] => [3, 5)
+		// col > 3, lessThan = [4 7 11 14 17] => [1, 5)
+		// col > 2, lessThan = [4 7 11 14 17] => [0, 5)
+		pos := sort.Search(length, func(i int) bool { return lessThan.compare(i, data.c+1, unsigned) > 0 })
+		start, end = pos, length
+	case ast.LE:
+		// col <= 66, lessThan = [4 7 11 14 17] => [0, 6)
+		// col <= 14, lessThan = [4 7 11 14 17] => [0, 5)
+		// col <= 10, lessThan = [4 7 11 14 17] => [0, 3)
+		// col <= 3, lessThan = [4 7 11 14 17] => [0, 1)
+		pos := sort.Search(length, func(i int) bool { return lessThan.compare(i, data.c, unsigned) > 0 })
+		start, end = 0, pos+1
+	case ast.IsNull:
+		start, end = 0, 1
+	default:
+		start, end = 0, length
+	}
+
+	if end > length {
+		end = length
+	}
+	return start, end
+}
+
+func (s *partitionProcessor) makeUnionAllChildren(ds *DataSource, pi *model.PartitionInfo, or partitionRangeOR) (LogicalPlan, error) {
+	var children []LogicalPlan
+	for _, r := range or {
+		for i := r.start; i < r.end; i++ {
+			// This is for `table partition (p0,p1)` syntax, only union the specified partition if has specified partitions.
+			if len(ds.partitionNames) != 0 {
+				if !s.findByName(ds.partitionNames, pi.Definitions[i].Name.L) {
+					continue
+				}
+			}
+
+			// Not a deep copy.
+			newDataSource := *ds
+			newDataSource.baseLogicalPlan = newBaseLogicalPlan(ds.context(), plancodec.TypeTableScan, &newDataSource)
+			newDataSource.isPartition = true
+			newDataSource.physicalTableID = pi.Definitions[i].ID
+			newDataSource.possibleAccessPaths = make([]*accessPath, len(ds.possibleAccessPaths))
+			for i := range ds.possibleAccessPaths {
+				newPath := *ds.possibleAccessPaths[i]
+				newDataSource.possibleAccessPaths[i] = &newPath
+			}
+			// There are many expression nodes in the plan tree use the original datasource
+			// id as FromID. So we set the id of the newDataSource with the original one to
+			// avoid traversing the whole plan tree to update the references.
+			newDataSource.id = ds.id
+			newDataSource.statisticTable = getStatsTable(ds.context(), ds.table.Meta(), pi.Definitions[i].ID)
+			children = append(children, &newDataSource)
+		}
+	}
+
+	if len(children) == 0 {
+		// No result after table pruning.
+		tableDual := LogicalTableDual{RowCount: 0}.Init(ds.context())
+		tableDual.schema = ds.Schema()
+		return tableDual, nil
+	}
+	if len(children) == 1 {
+		// No need for the union all.
+		return children[0], nil
+	}
+	unionAll := LogicalUnionAll{}.Init(ds.context())
+	unionAll.SetChildren(children...)
+	unionAll.SetSchema(ds.schema)
+	return unionAll, nil
 }
