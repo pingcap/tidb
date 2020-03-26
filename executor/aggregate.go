@@ -1128,8 +1128,16 @@ func (e *vecGroupChecker) evalGroupItemsAndResolveGroups(item expression.Express
 			}
 			previousIsNull = isNull
 		}
-		firstRowDatum.SetInt64(vals[0])
-		lastRowDatum.SetInt64(vals[numRows-1])
+		if col.IsNull(0) {
+			firstRowDatum.SetNull()
+		} else {
+			firstRowDatum.SetInt64(vals[0])
+		}
+		if col.IsNull(numRows - 1) {
+			lastRowDatum.SetNull()
+		} else {
+			lastRowDatum.SetInt64(vals[numRows-1])
+		}
 	case types.ETReal:
 		vals := col.Float64s()
 		for i := 1; i < numRows; i++ {
@@ -1144,8 +1152,16 @@ func (e *vecGroupChecker) evalGroupItemsAndResolveGroups(item expression.Express
 			}
 			previousIsNull = isNull
 		}
-		firstRowDatum.SetFloat64(vals[0])
-		lastRowDatum.SetFloat64(vals[numRows-1])
+		if col.IsNull(0) {
+			firstRowDatum.SetNull()
+		} else {
+			firstRowDatum.SetFloat64(vals[0])
+		}
+		if col.IsNull(numRows - 1) {
+			lastRowDatum.SetNull()
+		} else {
+			lastRowDatum.SetFloat64(vals[numRows-1])
+		}
 	case types.ETDecimal:
 		vals := col.Decimals()
 		for i := 1; i < numRows; i++ {
@@ -1160,10 +1176,20 @@ func (e *vecGroupChecker) evalGroupItemsAndResolveGroups(item expression.Express
 			}
 			previousIsNull = isNull
 		}
-		// make a copy to avoid DATA RACE
-		firstDatum, lastDatum := vals[0], vals[numRows-1]
-		firstRowDatum.SetMysqlDecimal(&firstDatum)
-		lastRowDatum.SetMysqlDecimal(&lastDatum)
+		if col.IsNull(0) {
+			firstRowDatum.SetNull()
+		} else {
+			// make a copy to avoid DATA RACE
+			firstDatum := vals[0]
+			firstRowDatum.SetMysqlDecimal(&firstDatum)
+		}
+		if col.IsNull(numRows - 1) {
+			lastRowDatum.SetNull()
+		} else {
+			// make a copy to avoid DATA RACE
+			lastDatum := vals[numRows-1]
+			lastRowDatum.SetMysqlDecimal(&lastDatum)
+		}
 	case types.ETDatetime, types.ETTimestamp:
 		vals := col.Times()
 		for i := 1; i < numRows; i++ {
@@ -1178,8 +1204,16 @@ func (e *vecGroupChecker) evalGroupItemsAndResolveGroups(item expression.Express
 			}
 			previousIsNull = isNull
 		}
-		firstRowDatum.SetMysqlTime(vals[0])
-		lastRowDatum.SetMysqlTime(vals[numRows-1])
+		if col.IsNull(0) {
+			firstRowDatum.SetNull()
+		} else {
+			firstRowDatum.SetMysqlTime(vals[0])
+		}
+		if col.IsNull(numRows - 1) {
+			lastRowDatum.SetNull()
+		} else {
+			lastRowDatum.SetMysqlTime(vals[numRows-1])
+		}
 	case types.ETDuration:
 		vals := col.GoDurations()
 		for i := 1; i < numRows; i++ {
@@ -1194,8 +1228,16 @@ func (e *vecGroupChecker) evalGroupItemsAndResolveGroups(item expression.Express
 			}
 			previousIsNull = isNull
 		}
-		firstRowDatum.SetMysqlDuration(types.Duration{Duration: vals[0], Fsp: int8(item.GetType().Decimal)})
-		lastRowDatum.SetMysqlDuration(types.Duration{Duration: vals[numRows-1], Fsp: int8(item.GetType().Decimal)})
+		if col.IsNull(0) {
+			firstRowDatum.SetNull()
+		} else {
+			firstRowDatum.SetMysqlDuration(types.Duration{Duration: vals[0], Fsp: int8(item.GetType().Decimal)})
+		}
+		if col.IsNull(numRows - 1) {
+			lastRowDatum.SetNull()
+		} else {
+			lastRowDatum.SetMysqlDuration(types.Duration{Duration: vals[numRows-1], Fsp: int8(item.GetType().Decimal)})
+		}
 	case types.ETJson:
 		previousKey := col.GetJSON(0)
 		for i := 1; i < numRows; i++ {
@@ -1209,9 +1251,18 @@ func (e *vecGroupChecker) evalGroupItemsAndResolveGroups(item expression.Express
 			previousKey = key
 			previousIsNull = isNull
 		}
-		// make a copy to avoid DATA RACE
-		firstRowDatum.SetMysqlJSON(col.GetJSON(0).Copy())
-		lastRowDatum.SetMysqlJSON(col.GetJSON(numRows - 1).Copy())
+		if col.IsNull(0) {
+			firstRowDatum.SetNull()
+		} else {
+			// make a copy to avoid DATA RACE
+			firstRowDatum.SetMysqlJSON(col.GetJSON(0).Copy())
+		}
+		if col.IsNull(numRows - 1) {
+			lastRowDatum.SetNull()
+		} else {
+			// make a copy to avoid DATA RACE
+			lastRowDatum.SetMysqlJSON(col.GetJSON(numRows - 1).Copy())
+		}
 	case types.ETString:
 		previousKey := codec.ConvertByCollationStr(col.GetString(0), tp)
 		for i := 1; i < numRows; i++ {
@@ -1225,9 +1276,18 @@ func (e *vecGroupChecker) evalGroupItemsAndResolveGroups(item expression.Express
 			previousKey = key
 			previousIsNull = isNull
 		}
-		// don't use col.GetString since it will cause DATA RACE
-		firstRowDatum.SetString(string(col.GetBytes(0)), tp.Collate)
-		lastRowDatum.SetString(string(col.GetBytes(numRows-1)), tp.Collate)
+		if col.IsNull(0) {
+			firstRowDatum.SetNull()
+		} else {
+			// don't use col.GetString since it will cause DATA RACE
+			firstRowDatum.SetString(string(col.GetBytes(0)), tp.Collate)
+		}
+		if col.IsNull(numRows - 1) {
+			lastRowDatum.SetNull()
+		} else {
+			// don't use col.GetString since it will cause DATA RACE
+			lastRowDatum.SetString(string(col.GetBytes(numRows-1)), tp.Collate)
+		}
 	default:
 		err = errors.New(fmt.Sprintf("invalid eval type %v", eType))
 	}
