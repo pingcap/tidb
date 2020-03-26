@@ -15,9 +15,10 @@ package disk
 
 import (
 	"fmt"
+	"sync"
+
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/stringutil"
-	"sync"
 )
 
 var rowContainerLabel fmt.Stringer = stringutil.StringerStr("RowContainer")

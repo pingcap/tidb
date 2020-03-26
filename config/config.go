@@ -25,14 +25,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pingcap/tidb/util/sys/linux"
-
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
 	zaplog "github.com/pingcap/log"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/sys/linux"
 	tracing "github.com/uber/jaeger-client-go/config"
 	"go.uber.org/zap"
 )
@@ -518,7 +517,7 @@ var defaultConf = Config{
 	TokenLimit:                   1000,
 	OOMUseTmpStorage:             true,
 	TempStoragePath:              filepath.Join(os.TempDir(), "tidb", "tmp-storage"),
-	TempStorageQuota:             0,
+	TempStorageQuota:             -1,
 	OOMAction:                    OOMActionCancel,
 	MemQuotaQuery:                1 << 30,
 	EnableStreaming:              false,
@@ -852,7 +851,7 @@ func (c *Config) Valid() error {
 
 	// check capacity and the quota when OOMUseTmpStorage is enabled
 	if c.OOMUseTmpStorage {
-		if c.TempStorageQuota == 0 {
+		if c.TempStorageQuota < 0 {
 			// print warning
 		} else {
 			capacityByte, err := linux.GetTargetDirectoryCapacity(c.TempStoragePath)

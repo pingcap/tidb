@@ -106,7 +106,7 @@ func (e *SortExec) Open(ctx context.Context) error {
 	if e.memTracker == nil {
 		e.memTracker = memory.NewTracker(e.id, -1)
 		e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
-		e.diskTracker = GlobalDiskUsageTracker
+		e.diskTracker = memory.NewTracker(e.id, -1)
 		e.diskTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.DiskTracker)
 	}
 	e.partitionList = e.partitionList[:0]
@@ -238,6 +238,7 @@ func (e *SortExec) externalSorting(req *chunk.Chunk) (err error) {
 }
 
 func (e *SortExec) fetchRowChunks(ctx context.Context) error {
+	//e.ctx.GetSessionVars().StmtCtx.DiskTracker.AttachTo()
 	fields := retTypes(e)
 	e.rowChunks = chunk.NewRowContainer(fields, e.maxChunkSize)
 	e.rowChunks.GetMemTracker().AttachTo(e.memTracker)

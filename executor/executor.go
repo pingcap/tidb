@@ -1528,6 +1528,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		MemTracker:  memory.NewTracker(stringutil.MemoizeStr(s.Text), vars.MemQuotaQuery),
 		DiskTracker: disk.NewTracker(stringutil.MemoizeStr(s.Text), -1),
 	}
+	sc.DiskTracker.AttachTo(GlobalDiskUsageTracker)
 	switch config.GetGlobalConfig().OOMAction {
 	case config.OOMActionCancel:
 		action := &memory.PanicOnExceed{ConnID: ctx.GetSessionVars().ConnectionID}
