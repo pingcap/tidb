@@ -863,7 +863,11 @@ func (do *Domain) PrivilegeHandle() *privileges.Handle {
 
 // BindHandle returns domain's bindHandle.
 func (do *Domain) BindHandle() *bindinfo.BindHandle {
-	return do.bindHandle.Load().(*bindinfo.BindHandle)
+	i := do.bindHandle.Load()
+	if i == nil { // doing type converting on a nil interface{} would cause panic
+		return nil
+	}
+	return i.(*bindinfo.BindHandle)
 }
 
 // LoadBindInfoLoop create a goroutine loads BindInfo in a loop, it should
