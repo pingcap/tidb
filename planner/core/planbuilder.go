@@ -771,7 +771,7 @@ func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tbl ta
 		available = publicPaths
 	}
 
-	available = removeIgnoredPaths(b.ctx, available, ignored, tblInfo)
+	available = removeIgnoredPaths(available, ignored, tblInfo)
 
 	// If we have got "FORCE" or "USE" index hint but got no available index,
 	// we have to use table scan.
@@ -810,13 +810,13 @@ func (b *PlanBuilder) filterPathByIsolationRead(paths []*util.AccessPath, dbName
 	return paths, err
 }
 
-func removeIgnoredPaths(ctx sessionctx.Context, paths, ignoredPaths []*util.AccessPath, tblInfo *model.TableInfo) []*util.AccessPath {
+func removeIgnoredPaths(paths, ignoredPaths []*util.AccessPath, tblInfo *model.TableInfo) []*util.AccessPath {
 	if len(ignoredPaths) == 0 {
 		return paths
 	}
 	remainedPaths := make([]*util.AccessPath, 0, len(paths))
 	for _, path := range paths {
-		if path.IsTablePath || getPathByIndexName(ignoredPaths, path.Index.Name, tblInfo) == nil || !checkReadEngineHasTiKV(ctx) {
+		if path.IsTablePath || getPathByIndexName(ignoredPaths, path.Index.Name, tblInfo) == nil {
 			remainedPaths = append(remainedPaths, path)
 		}
 	}
