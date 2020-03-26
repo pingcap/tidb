@@ -655,6 +655,21 @@ func (b *PlanBuilder) detectSelectWindow(sel *ast.SelectStmt) bool {
 	return false
 }
 
+func checkReadEngineHasTiKV(ctx sessionctx.Context) bool {
+	cfgIsolationEngines := set.StringSet{}
+	for _, engine := range config.GetGlobalConfig().IsolationRead.Engines {
+		cfgIsolationEngines.Insert(engine)
+	}
+	isolationReadEngines := ctx.GetSessionVars().GetIsolationReadEngines()
+	if _, ok := cfgIsolationEngines[kv.TiKV.Name()]; !ok {
+		return false
+	}
+	if _, ok := isolationReadEngines[kv.TiKV]; !ok {
+		return false
+	}
+	return true
+}
+
 func getPathByIndexName(paths []*util.AccessPath, idxName model.CIStr, tblInfo *model.TableInfo) *util.AccessPath {
 	var tablePath *util.AccessPath
 	for _, path := range paths {
@@ -727,6 +742,9 @@ func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tbl ta
 		}
 		for _, idxName := range hint.IndexNames {
 			path := getPathByIndexName(publicPaths, idxName, tblInfo)
+			if !checkReadEngineHasTiKV(b.ctx) {
+				path = nil
+			}
 			if path == nil {
 				err := ErrKeyDoesNotExist.GenWithStackByArgs(idxName, tblInfo.Name)
 				// if hint is from comment-style sql hints, we should throw a warning instead of error.
@@ -753,7 +771,7 @@ func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tbl ta
 		available = publicPaths
 	}
 
-	available = removeIgnoredPaths(available, ignored, tblInfo)
+	available = removeIgnoredPaths(b.ctx, available, ignored, tblInfo)
 
 	// If we have got "FORCE" or "USE" index hint but got no available index,
 	// we have to use table scan.
@@ -792,13 +810,13 @@ func (b *PlanBuilder) filterPathByIsolationRead(paths []*util.AccessPath, dbName
 	return paths, err
 }
 
-func removeIgnoredPaths(paths, ignoredPaths []*util.AccessPath, tblInfo *model.TableInfo) []*util.AccessPath {
+func removeIgnoredPaths(ctx sessionctx.Context, paths, ignoredPaths []*util.AccessPath, tblInfo *model.TableInfo) []*util.AccessPath {
 	if len(ignoredPaths) == 0 {
 		return paths
 	}
 	remainedPaths := make([]*util.AccessPath, 0, len(paths))
 	for _, path := range paths {
-		if path.IsTablePath || getPathByIndexName(ignoredPaths, path.Index.Name, tblInfo) == nil {
+		if path.IsTablePath || getPathByIndexName(ignoredPaths, path.Index.Name, tblInfo) == nil || !checkReadEngineHasTiKV(ctx) {
 			remainedPaths = append(remainedPaths, path)
 		}
 	}
