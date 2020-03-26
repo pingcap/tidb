@@ -659,6 +659,7 @@ func (s *testSequenceSuite) TestSequenceFunction(c *C) {
 	s.tk.MustExec("create sequence seq increment=-1")
 	s.tk.MustExec("select setval(seq, -10)")
 	s.tk.MustQuery("select setval(seq, -5)").Check(testkit.Rows("NULL"))
+	s.tk.MustExec("drop sequence seq")
 }
 
 func (s *testSequenceSuite) TestInsertSequence(c *C) {
