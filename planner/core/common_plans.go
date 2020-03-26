@@ -252,9 +252,59 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	if err != nil {
 		return nil, err
 	}
+<<<<<<< HEAD
 	_, isTableDual := p.(*PhysicalTableDual)
 	if !isTableDual && prepared.UseCache {
 		sctx.PreparedPlanCache().Put(cacheKey, NewPSTMTPlanCacheValue(p))
+=======
+	e.names = names
+	e.Plan = p
+	isRange := e.isRangePartition(p)
+	_, isTableDual := p.(*PhysicalTableDual)
+	if !isTableDual && prepared.UseCache && !isRange {
+		cached := NewPSTMTPlanCacheValue(p, names)
+		preparedStmt.NormalizedPlan, preparedStmt.PlanDigest = NormalizePlan(p)
+		stmtCtx.SetPlanDigest(preparedStmt.NormalizedPlan, preparedStmt.PlanDigest)
+		sctx.PreparedPlanCache().Put(cacheKey, cached)
+	}
+	return err
+}
+
+// tryCachePointPlan will try to cache point execution plan, there may be some
+// short paths for these executions, currently "point select" and "point update"
+func (e *Execute) tryCachePointPlan(ctx context.Context, sctx sessionctx.Context,
+	preparedStmt *CachedPrepareStmt, is infoschema.InfoSchema, p Plan) error {
+	var (
+		prepared = preparedStmt.PreparedAst
+		ok       bool
+		err      error
+		names    types.NameSlice
+	)
+	switch p.(type) {
+	case *PointGetPlan:
+		ok, err = IsPointGetWithPKOrUniqueKeyByAutoCommit(sctx, p)
+		names = p.OutputNames()
+		if err != nil {
+			return err
+		}
+	case *Update:
+		ok, err = IsPointUpdateByAutoCommit(sctx, p)
+		if err != nil {
+			return err
+		}
+		if ok {
+			// make constant expression store paramMarker
+			sctx.GetSessionVars().StmtCtx.PointExec = true
+			p, names, err = OptimizeAstNode(ctx, sctx, prepared.Stmt, is)
+		}
+	}
+	if ok {
+		// just cache point plan now
+		prepared.CachedPlan = p
+		prepared.CachedNames = names
+		preparedStmt.NormalizedPlan, preparedStmt.PlanDigest = NormalizePlan(p)
+		sctx.GetSessionVars().StmtCtx.SetPlanDigest(preparedStmt.NormalizedPlan, preparedStmt.PlanDigest)
+>>>>>>> ec156a6... plan: do not cache plan for query on range partition table (#15697)
 	}
 	return p, err
 }
@@ -277,6 +327,18 @@ func (e *Execute) rebuildRange(p Plan) error {
 			if err != nil {
 				return err
 			}
+<<<<<<< HEAD
+=======
+			if ts.Table.Partition != nil && ts.Table.Partition.Type == model.PartitionTypeHash {
+				pID, err := rebuildNewTableIDFromTable(e.ctx, ts, sc, pkCol)
+				if err != nil {
+					return err
+				}
+				if pID != -1 {
+					ts.physicalTableID = pID
+				}
+			}
+>>>>>>> ec156a6... plan: do not cache plan for query on range partition table (#15697)
 		} else {
 			ts.Ranges = ranger.FullIntRange(false)
 		}
@@ -286,12 +348,38 @@ func (e *Execute) rebuildRange(p Plan) error {
 		if err != nil {
 			return err
 		}
+<<<<<<< HEAD
+=======
+		if is.Table.Partition != nil && is.Table.Partition.Type == model.PartitionTypeHash {
+			pID, err := rebuildNewTableIDFromIndex(e.ctx, is, sc)
+			if err != nil {
+				return err
+			}
+			if pID != -1 {
+				is.physicalTableID = pID
+			}
+		}
+>>>>>>> ec156a6... plan: do not cache plan for query on range partition table (#15697)
 	case *PhysicalIndexLookUpReader:
 		is := x.IndexPlans[0].(*PhysicalIndexScan)
 		is.Ranges, err = e.buildRangeForIndexScan(sctx, is)
 		if err != nil {
 			return err
 		}
+<<<<<<< HEAD
+=======
+		if is.Table.Partition != nil && is.Table.Partition.Type == model.PartitionTypeHash {
+			pID, err := rebuildNewTableIDFromIndex(e.ctx, is, sc)
+			if err != nil {
+				return err
+			}
+			if pID != -1 {
+				is.physicalTableID = pID
+				tblScan := x.TablePlans[0].(*PhysicalTableScan)
+				tblScan.physicalTableID = pID
+			}
+		}
+>>>>>>> ec156a6... plan: do not cache plan for query on range partition table (#15697)
 	case *PointGetPlan:
 		if x.HandleParam != nil {
 			x.Handle, err = x.HandleParam.Datum.ToInt64(sc)
@@ -327,6 +415,36 @@ func (e *Execute) rebuildRange(p Plan) error {
 		}
 	}
 	return nil
+}
+
+func checkRangePartitionInfo(pi *model.PartitionInfo) bool {
+	if pi != nil && pi.Type == model.PartitionTypeRange {
+		return true
+	}
+	return false
+}
+
+// Prepare plan cache is not support query plan on range partition table.
+func (e *Execute) isRangePartition(p Plan) bool {
+	isRange := false
+	switch x := p.(type) {
+	case *PhysicalTableReader:
+		ts := x.TablePlans[0].(*PhysicalTableScan)
+		return checkRangePartitionInfo(ts.Table.Partition)
+	case *PhysicalIndexLookUpReader:
+		is := x.IndexPlans[0].(*PhysicalIndexScan)
+		return checkRangePartitionInfo(is.Table.Partition)
+	case *PhysicalIndexReader:
+		is := x.IndexPlans[0].(*PhysicalIndexScan)
+		return checkRangePartitionInfo(is.Table.Partition)
+	case PhysicalPlan:
+		for _, child := range x.Children() {
+			if e.isRangePartition(child) {
+				isRange = true
+			}
+		}
+	}
+	return isRange
 }
 
 func (e *Execute) buildRangeForIndexScan(sctx sessionctx.Context, is *PhysicalIndexScan) ([]*ranger.Range, error) {
