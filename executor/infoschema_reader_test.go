@@ -246,6 +246,10 @@ func (s *testInfoschemaTableSuite) TestDDLJobs(c *C) {
 	tk.MustQuery("select job_type from information_schema.DDL_JOBS group by job_type having job_type = 'create table'").Check(
 		testkit.Rows("create table"))
 
+	// Test the START_TIME and END_TIME field.
+	tk.MustQuery("select distinct job_type from information_schema.DDL_JOBS where job_type = 'create table' and start_time > str_to_date('20190101','%Y%m%d%H%i%s')").Check(
+		testkit.Rows("create table"))
+
 	// Test the privilege of new user for information_schema.DDL_JOBS.
 	tk.MustExec("create user DDL_JOBS_tester")
 	DDLJobsTester := testkit.NewTestKit(c, s.store)

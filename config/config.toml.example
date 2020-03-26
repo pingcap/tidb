@@ -371,6 +371,7 @@ max-retry-count = 256
 [stmt-summary]
 # enable statement summary.
 enable = true
+
 # enable statement summary for TiDB internal query, default is false.
 enable-internal-query = false
 

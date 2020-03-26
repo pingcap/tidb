@@ -88,9 +88,9 @@ func (e *SQLBindExec) createSQLBind() error {
 	}
 	if !e.isGlobal {
 		handle := e.ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
-		return handle.AddBindRecord(e.ctx, record)
+		return handle.CreateBindRecord(e.ctx, record)
 	}
-	return domain.GetDomain(e.ctx).BindHandle().AddBindRecord(e.ctx, record)
+	return domain.GetDomain(e.ctx).BindHandle().CreateBindRecord(e.ctx, record)
 }
 
 func (e *SQLBindExec) flushBindings() error {
