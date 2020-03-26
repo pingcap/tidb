@@ -1421,7 +1421,7 @@ func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]P
 	if p.preferJoinType > 0 && !prop.IsEmpty() {
 		// If we reach here, it means we have a hint that doesn't work.
 		// It might be affected by the required property, so we enforce
-		// this property and try the hin again.
+		// this property and try the hint again.
 		return nil, true
 	}
 
