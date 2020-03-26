@@ -386,7 +386,7 @@
       },
       {
         "SQL": "select /*+ TIDB_HJ(t1, t2) */ * from t t1 join t t2 on t1.b = t2.a order by t1.a limit 1",
-        "Best": "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.b,test.t.a)->Sort->Limit"
+        "Best": "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.b,test.t.a)->TopN([test.t.a],0,1)"
       },
       {
         "SQL": "select * from t t1 left join t t2 on t1.b = t2.a where 1 = 1 limit 1",
