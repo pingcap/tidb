@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"os"
 	"testing"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
@@ -498,6 +499,7 @@ func (s *testSuite) TestCapturePlanBaseline(c *C) {
 	c.Assert(rows[0][1], Equals, "SELECT /*+ USE_INDEX(@`sel_1` `test`.`t` )*/ * FROM `t` WHERE `a`>10")
 }
 
+<<<<<<< HEAD
 func (s *testSuite) TestUseMultiplyBindings(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
@@ -513,6 +515,33 @@ func (s *testSuite) TestUseMultiplyBindings(c *C) {
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idx_a")
 	tk.MustQuery("select * from t where a >= 1 and b >= 4 and c = 0;")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idx_b")
+=======
+func (s *testSuite) TestCaptureBaselinesDefaultDB(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	stmtsummary.StmtSummaryByDigestMap.Clear()
+	tk.MustExec(" set @@tidb_capture_plan_baselines = on")
+	defer func() {
+		tk.MustExec(" set @@tidb_capture_plan_baselines = off")
+	}()
+	tk.MustExec("use test")
+	tk.MustExec("drop database if exists spm")
+	tk.MustExec("create database spm")
+	tk.MustExec("create table spm.t(a int, index idx_a(a))")
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
+	tk.MustExec("select * from spm.t ignore index(idx_a) where a > 10")
+	tk.MustExec("select * from spm.t ignore index(idx_a) where a > 10")
+	tk.MustExec("admin capture bindings")
+	rows := tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 1)
+	// Default DB should be "" when all columns have explicit database name.
+	c.Assert(rows[0][2], Equals, "")
+	c.Assert(rows[0][3], Equals, "using")
+	tk.MustExec("use spm")
+	tk.MustExec("select * from spm.t where a > 10")
+	// Should use TableScan because of the "ignore index" binding.
+	c.Assert(len(tk.Se.GetSessionVars().StmtCtx.IndexNames), Equals, 0)
+>>>>>>> 5cf0c3e... bindinfo: clear all bindings when create bind for one normalized SQL (#15669)
 }
 
 func (s *testSuite) TestDropSingleBindings(c *C) {
@@ -526,9 +555,10 @@ func (s *testSuite) TestDropSingleBindings(c *C) {
 	tk.MustExec("create binding for select * from t using select * from t use index(idx_a)")
 	tk.MustExec("create binding for select * from t using select * from t use index(idx_b)")
 	rows := tk.MustQuery("show bindings").Rows()
-	c.Assert(len(rows), Equals, 2)
-	c.Assert(rows[0][1], Equals, "select * from t use index(idx_a)")
-	c.Assert(rows[1][1], Equals, "select * from t use index(idx_b)")
+	// The size of bindings is equal to one. Because for one normalized sql,
+	// the `create binding` clears all the origin bindings.
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][1], Equals, "select * from t use index(idx_b)")
 	tk.MustExec("drop binding for select * from t using select * from t use index(idx_a)")
 	rows = tk.MustQuery("show bindings").Rows()
 	c.Assert(len(rows), Equals, 1)
@@ -543,9 +573,10 @@ func (s *testSuite) TestDropSingleBindings(c *C) {
 	tk.MustExec("create global binding for select * from t using select * from t use index(idx_a)")
 	tk.MustExec("create global binding for select * from t using select * from t use index(idx_b)")
 	rows = tk.MustQuery("show global bindings").Rows()
-	c.Assert(len(rows), Equals, 2)
-	c.Assert(rows[0][1], Equals, "select * from t use index(idx_a)")
-	c.Assert(rows[1][1], Equals, "select * from t use index(idx_b)")
+	// The size of bindings is equal to one. Because for one normalized sql,
+	// the `create binding` clears all the origin bindings.
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][1], Equals, "select * from t use index(idx_b)")
 	tk.MustExec("drop global binding for select * from t using select * from t use index(idx_a)")
 	rows = tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 1)
@@ -627,19 +658,21 @@ func (s *testSuite) TestDuplicateBindings(c *C) {
 	rows := tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 1)
 	createTime := rows[0][4]
+	time.Sleep(1000000)
 	tk.MustExec("create global binding for select * from t using select * from t use index(idx);")
 	rows = tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 1)
-	c.Assert(createTime, Equals, rows[0][4])
+	c.Assert(createTime == rows[0][4], Equals, false)
 
 	tk.MustExec("create session binding for select * from t using select * from t use index(idx);")
 	rows = tk.MustQuery("show session bindings").Rows()
 	c.Assert(len(rows), Equals, 1)
 	createTime = rows[0][4]
+	time.Sleep(1000000)
 	tk.MustExec("create session binding for select * from t using select * from t use index(idx);")
 	rows = tk.MustQuery("show session bindings").Rows()
 	c.Assert(len(rows), Equals, 1)
-	c.Assert(createTime, Equals, rows[0][4])
+	c.Assert(createTime == rows[0][4], Equals, false)
 }
 
 func (s *testSuite) TestStmtHints(c *C) {
@@ -729,4 +762,32 @@ func (s *testSuite) TestHintsSetEvolveTask(c *C) {
 	c.Assert(bind.Status, Equals, bindinfo.PendingVerify)
 	c.Assert(bind.ID, Not(Equals), "")
 	c.Assert(bind.Hint, NotNil)
+}
+
+func (s *testSuite) TestReCreateBindAfterEvolvePlan(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, c int, index idx_a(a), index idx_b(b), index idx_c(c))")
+	tk.MustExec("insert into t values (1,1,1), (2,2,2), (3,3,3), (4,4,4), (5,5,5)")
+	tk.MustExec("analyze table t")
+	tk.MustExec("create global binding for select * from t where a >= 1 and b >= 1 using select * from t use index(idx_a) where a >= 1 and b >= 1")
+	tk.MustExec("set @@tidb_evolve_plan_baselines=1")
+
+	// It cannot choose table path although it has lowest cost.
+	tk.MustQuery("select * from t where a >= 0 and b >= 0")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idx_a")
+
+	tk.MustExec("admin flush bindings")
+	rows := tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 2)
+	c.Assert(rows[1][1], Equals, "SELECT /*+ USE_INDEX(@`sel_1` `test`.`t` )*/ * FROM `test`.`t` WHERE `a`>=0 AND `b`>=0")
+	c.Assert(rows[1][3], Equals, "pending verify")
+
+	tk.MustExec("create global binding for select * from t where a >= 1 and b >= 1 using select * from t use index(idx_b) where a >= 1 and b >= 1")
+	rows = tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 1)
+	tk.MustQuery("select * from t where a >= 4 and b >= 1")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idx_b")
 }

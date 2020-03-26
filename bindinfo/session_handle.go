@@ -39,34 +39,21 @@ func NewSessionBindHandle(parser *parser.Parser) *SessionHandle {
 // appendBindRecord adds the BindRecord to the cache, all the stale bindMetas are
 // removed from the cache after this operation.
 func (h *SessionHandle) appendBindRecord(hash string, meta *BindRecord) {
-	// Make sure there is only one goroutine writes the cache.
 	oldRecord := h.ch.getBindRecord(hash, meta.OriginalSQL, meta.Db)
-	newRecord := merge(oldRecord, meta)
-	h.ch.setBindRecord(hash, newRecord)
-	updateMetrics(metrics.ScopeSession, oldRecord, newRecord, false)
+	h.ch.setBindRecord(hash, meta)
+	updateMetrics(metrics.ScopeSession, oldRecord, meta, false)
 }
 
-// AddBindRecord new a BindRecord with BindMeta, add it to the cache.
-func (h *SessionHandle) AddBindRecord(sctx sessionctx.Context, record *BindRecord) error {
-	err := record.prepareHints(sctx)
+// CreateBindRecord creates a BindRecord to the cache.
+// It replaces all the exists bindings for the same normalized SQL.
+func (h *SessionHandle) CreateBindRecord(sctx sessionctx.Context, record *BindRecord) (err error) {
+	err = record.prepareHints(sctx)
 	if err != nil {
 		return err
 	}
-	br := h.GetBindRecord(record.OriginalSQL, record.Db)
-	var duplicateBinding *Binding
-	if br != nil {
-		binding := br.FindBinding(record.Bindings[0].ID)
-		if binding != nil {
-			duplicateBinding = binding
-		}
-	}
 	now := types.NewTime(types.FromGoTime(time.Now().In(sctx.GetSessionVars().StmtCtx.TimeZone)), mysql.TypeTimestamp, 3)
 	for i := range record.Bindings {
-		if duplicateBinding != nil {
-			record.Bindings[i].CreateTime = duplicateBinding.CreateTime
-		} else {
-			record.Bindings[i].CreateTime = now
-		}
+		record.Bindings[i].CreateTime = now
 		record.Bindings[i].UpdateTime = now
 	}
 
