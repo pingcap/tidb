@@ -1763,11 +1763,10 @@ func (la *LogicalAggregation) exhaustPhysicalPlans(prop *property.PhysicalProper
 		}
 		if len(hashAggs) > 0 {
 			return hashAggs, false
-		} else {
-			errMsg := "Optimizer Hint HASH_AGG is inapplicable"
-			warning := ErrInternal.GenWithStack(errMsg)
-			la.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
 		}
+		errMsg := "Optimizer Hint HASH_AGG is inapplicable"
+		warning := ErrInternal.GenWithStack(errMsg)
+		la.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
 	}
 
 	streamAggs, matchProp := la.getStreamAggs(prop)
@@ -1777,11 +1776,10 @@ func (la *LogicalAggregation) exhaustPhysicalPlans(prop *property.PhysicalProper
 		}
 		if len(streamAggs) > 0 {
 			return streamAggs, false
-		} else {
-			errMsg := "Optimizer Hint STREAM_AGG is inapplicable"
-			warning := ErrInternal.GenWithStack(errMsg)
-			la.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
 		}
+		errMsg := "Optimizer Hint STREAM_AGG is inapplicable"
+		warning := ErrInternal.GenWithStack(errMsg)
+		la.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
 	}
 
 	aggs := make([]PhysicalPlan, 0, len(hashAggs)+len(streamAggs))
