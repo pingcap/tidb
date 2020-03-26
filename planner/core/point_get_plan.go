@@ -677,12 +677,7 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 
 	pairs := make([]nameValuePair, 0, 4)
 	pairs, isTableDual := getNameValuePairs(ctx.GetSessionVars().StmtCtx, tbl, tblAlias, pairs, selStmt.Where)
-	if isTableDual {
-		p := newPointGetPlan(ctx, tblName.Schema.O, schema, tbl, names)
-		p.IsTableDual = true
-		return p
-	}
-	if pairs == nil {
+	if pairs == nil && !isTableDual {
 		return nil
 	}
 
@@ -697,6 +692,12 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 
 	handlePair, fieldType := findPKHandle(tbl, pairs)
 	if handlePair.value.Kind() != types.KindNull && len(pairs) == 1 {
+		if isTableDual {
+			p := newPointGetPlan(ctx, tblName.Schema.O, schema, tbl, names)
+			p.IsTableDual = true
+			return p
+		}
+
 		p := newPointGetPlan(ctx, dbName, schema, tbl, names)
 		p.Handle = handlePair.value.GetInt64()
 		p.UnsignedHandle = mysql.HasUnsignedFlag(fieldType.Flag)
@@ -712,6 +713,12 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 		if idxInfo.State != model.StatePublic {
 			continue
 		}
+		if isTableDual {
+			p := newPointGetPlan(ctx, tblName.Schema.O, schema, tbl, names)
+			p.IsTableDual = true
+			return p
+		}
+
 		idxValues, idxValueParams := getIndexValues(idxInfo, pairs)
 		if idxValues == nil {
 			continue
@@ -889,6 +896,10 @@ func getNameValuePairs(stmtCtx *stmtctx.StatementContext, tbl *model.TableInfo, 
 		if d.IsNull() {
 			return nil, false
 		}
+		// Views' columns have no FieldType.
+		if tbl.IsView() {
+			return nil, false
+		}
 		if colName.Name.Table.L != "" && colName.Name.Table.L != tblName.L {
 			return nil, false
 		}
@@ -900,7 +911,7 @@ func getNameValuePairs(stmtCtx *stmtctx.StatementContext, tbl *model.TableInfo, 
 		dVal, err := d.ConvertTo(stmtCtx, &col.FieldType)
 		if err != nil {
 			if terror.ErrorEqual(types.ErrOverflow, err) {
-				return nil, true
+				return append(nvPairs, nameValuePair{colName: colName.Name.Name.L, value: dVal, param: param}), true
 			}
 			// Some scenarios cast to int with error, but we may use this value in point get.
 			if !terror.ErrorEqual(types.ErrTruncatedWrongVal, err) {
@@ -912,7 +923,8 @@ func getNameValuePairs(stmtCtx *stmtctx.StatementContext, tbl *model.TableInfo, 
 		if err != nil {
 			return nil, false
 		} else if cmp != 0 {
-			return nil, true
+			// return nil, true
+			return append(nvPairs, nameValuePair{colName: colName.Name.Name.L, value: dVal, param: param}), true
 		}
 
 		return append(nvPairs, nameValuePair{colName: colName.Name.Name.L, value: dVal, param: param}), false
