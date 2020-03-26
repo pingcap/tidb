@@ -14,8 +14,13 @@
 package disk
 
 import (
+	"fmt"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/stringutil"
+	"sync"
 )
+
+var rowContainerLabel fmt.Stringer = stringutil.StringerStr("RowContainer")
 
 // Tracker is used to track the disk usage during query execution.
 type Tracker = memory.Tracker
@@ -24,3 +29,43 @@ type Tracker = memory.Tracker
 //	1. "label" is the label used in the usage string.
 //	2. "bytesLimit <= 0" means no limit.
 var NewTracker = memory.NewTracker
+
+func NewGlobalDisTracker(bytesLimit int64) *Tracker {
+	return NewTracker(rowContainerLabel, bytesLimit)
+}
+
+// PanicOnExceed panics when storage usage exceeds storage quota.
+type PanicOnExceed struct {
+	mutex   sync.Mutex // For synchronization.
+	acted   bool
+	ConnID  uint64
+	logHook func(uint64)
+}
+
+// SetLogHook sets a hook for PanicOnExceed.
+func (a *PanicOnExceed) SetLogHook(hook func(uint64)) {
+	a.logHook = hook
+}
+
+// Action panics when storage usage exceeds storage quota.
+func (a *PanicOnExceed) Action(t *Tracker) {
+	a.mutex.Lock()
+	if a.acted {
+		a.mutex.Unlock()
+		return
+	}
+	a.acted = true
+	a.mutex.Unlock()
+	if a.logHook != nil {
+		a.logHook(a.ConnID)
+	}
+	panic(PanicStorageExceed + fmt.Sprintf("[conn_id=%d]", a.ConnID))
+}
+
+// SetFallback sets a fallback action.
+func (a *PanicOnExceed) SetFallback(memory.ActionOnExceed) {}
+
+const (
+	// PanicMemoryExceed represents the panic message when out of storage quota.
+	PanicStorageExceed string = "Out Of Storage Quota!"
+)

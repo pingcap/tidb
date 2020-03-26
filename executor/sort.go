@@ -20,6 +20,7 @@ import (
 	"sort"
 
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/types"
@@ -105,7 +106,7 @@ func (e *SortExec) Open(ctx context.Context) error {
 	if e.memTracker == nil {
 		e.memTracker = memory.NewTracker(e.id, -1)
 		e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
-		e.diskTracker = memory.NewTracker(e.id, -1)
+		e.diskTracker = GlobalDiskUsageTracker
 		e.diskTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.DiskTracker)
 	}
 	e.partitionList = e.partitionList[:0]
@@ -241,6 +242,8 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 	e.rowChunks = chunk.NewRowContainer(fields, e.maxChunkSize)
 	e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
 	e.rowChunks.GetMemTracker().SetLabel(rowChunksLabel)
+	e.rowChunks.GetDiskTracker().AttachTo(e.diskTracker)
+	e.rowChunks.GetDiskTracker().SetLabel(rowChunksLabel)
 	var onExceededCallback func(rowContainer *chunk.RowContainer)
 	if config.GetGlobalConfig().OOMUseTmpStorage {
 		e.spillAction = e.rowChunks.ActionSpill()
@@ -249,6 +252,9 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 			e.generatePartition()
 		}
 		e.rowChunks.SetOnExceededCallback(onExceededCallback)
+		action := &disk.PanicOnExceed{ConnID: e.ctx.GetSessionVars().ConnectionID}
+		action.SetLogHook(domain.GetDomain(e.ctx).ExpensiveQueryHandle().LogOnQueryExceedQuota)
+		e.diskTracker.SetActionOnExceed(action)
 	}
 	for {
 		chk := newFirstChunk(e.children[0])
@@ -269,6 +275,8 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 			e.rowChunks.GetMemTracker().SetLabel(rowChunksLabel)
 			e.rowChunks.SetOnExceededCallback(onExceededCallback)
 			e.spillAction.ResetOnceAndSetRowContainer(e.rowChunks)
+			e.rowChunks.GetDiskTracker().AttachTo(e.diskTracker)
+			e.rowChunks.GetDiskTracker().SetLabel(rowChunksLabel)
 		}
 	}
 	if e.rowChunks.NumRow() > 0 {
