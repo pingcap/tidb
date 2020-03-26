@@ -23,8 +23,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
+
+	"github.com/pingcap/tidb/util/sys/linux"
 
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
@@ -77,8 +78,8 @@ type Config struct {
 	OOMAction        string `toml:"oom-action" json:"oom-action"`
 	MemQuotaQuery    int64  `toml:"mem-quota-query" json:"mem-quota-query"`
 	// TempStorageQuota describe the temporary storage Quota during query exector when OOMUseTmpStorage is enabled
-	// see https://github.com/pingcap/tidb/issues/13983 for more detail
-	TempStorageQuota uint            `toml:"temp-storage-quota" json:"temp-storage-quota"` // KiloBytes
+	// If the quota exceed the capacity of the TempStoragePath, the tidb-server would exit with fatal error
+	TempStorageQuota uint64          `toml:"temp-storage-quota" json:"temp-storage-quota"` // Bytes
 	EnableStreaming  bool            `toml:"enable-streaming" json:"enable-streaming"`
 	EnableBatchDML   bool            `toml:"enable-batch-dml" json:"enable-batch-dml"`
 	TxnLocalLatches  TxnLocalLatches `toml:"txn-local-latches" json:"txn-local-latches"`
@@ -849,16 +850,17 @@ func (c *Config) Valid() error {
 	// check capacity and the quota when OOMUseTmpStorage is enabled
 	if c.OOMUseTmpStorage {
 		if c.TempStorageQuota == 0 {
-			// Print warning
+			// print warning
 		} else {
-			var stat syscall.Statfs_t
-			err := syscall.Statfs(c.TempStoragePath, &stat)
+			capacityByte, err := linux.GetTargetDirectoryCapacity(c.TempStoragePath)
 			if err != nil {
-				return err
+				if err.Error() == "Get directory capacity not supported in non-linux system yet" {
+					// print warning
+				} else {
+					return err
+				}
 			}
-			capacityBytes := stat.Bavail * uint64(stat.Bsize)
-			quotaBytes := uint64(c.TempStorageQuota * 1024)
-			if quotaBytes > capacityBytes {
+			if capacityByte > c.TempStorageQuota {
 				return fmt.Errorf("value of [temp-storage-quota] exceeds the capacity of the [temp-storage-path] directory")
 			}
 		}

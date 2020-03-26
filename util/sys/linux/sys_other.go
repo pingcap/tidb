@@ -14,7 +14,10 @@
 
 package linux
 
-import "runtime"
+import (
+	"fmt"
+	"runtime"
+)
 
 // OSVersion returns version info of operation system.
 // for non-linux system will only return os and arch info.
@@ -26,4 +29,8 @@ func OSVersion() (osVersion string, err error) {
 // SetAffinity sets cpu affinity.
 func SetAffinity(cpus []int) error {
 	return nil
+}
+
+func GetTargetDirectoryCapacity(path string) (uint64, error) {
+	return 0, fmt.Errorf("Get directory capacity not supported in non-linux system yet")
 }
