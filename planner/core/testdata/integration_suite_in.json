@@ -76,7 +76,7 @@
     "cases": [
       "desc select /*+ INL_JOIN(t2) */ * from t t1, t t2 where t1.a = t2.b order by t2.a",
       "desc select /*+ INL_HASH_JOIN(t2) */ * from t t1, t t2 where t1.a = t2.b order by t2.a",
-      "desc select /*+ INL_MERGE_JOIN(t2) */ * from t t1, t t2 where t1.a = t2.b order by t2.a",
+      "desc select /*+ INL_MERGE_JOIN(t2)*/ t1.a, t2.a from t t1, t t2 ,t t3 where t1.a = t2.a and t3.a=t2.a",
       "desc select * from t t1, (select /*+ HASH_AGG() */ b, max(a) from t t2 group by b) t2 where t1.b = t2.b order by t1.b"
     ]
   }

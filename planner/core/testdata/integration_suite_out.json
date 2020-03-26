@@ -285,15 +285,16 @@
         "Warnings": []
       },
       {
-        "SQL": "desc select /*+ INL_MERGE_JOIN(t2) */ * from t t1, t t2 where t1.a = t2.b order by t2.a",
+        "SQL": "desc select /*+ INL_MERGE_JOIN(t2)*/ t1.a, t2.a from t t1, t t2 ,t t3 where t1.a = t2.a and t3.a=t2.a",
         "Plan": [
-          "Sort_7 12487.50 root  test.t.a:asc",
-          "└─IndexMergeJoin_19 12487.50 root  inner join, inner:IndexReader_17, outer key:test.t.a, inner key:test.t.b",
-          "  ├─TableReader_23(Build) 10000.00 root  data:TableFullScan_22",
-          "  │ └─TableFullScan_22 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "  └─IndexReader_17(Probe) 1.25 root  index:Selection_16",
-          "    └─Selection_16 1.25 cop[tikv]  not(isnull(test.t.b))",
-          "      └─IndexRangeScan_15 1.25 cop[tikv] table:t2, index:b(b) range: decided by [eq(test.t.b, test.t.a)], keep order:true, stats:pseudo"
+          "HashJoin_21 15625.00 root  inner join, equal:[eq(test.t.a, test.t.a)]",
+          "├─TableReader_60(Build) 10000.00 root  data:TableFullScan_59",
+          "│ └─TableFullScan_59 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "└─IndexMergeJoin_56(Probe) 12500.00 root  inner join, inner:TableReader_54, outer key:test.t.a, inner key:test.t.a",
+          "  ├─TableReader_45(Build) 10000.00 root  data:TableFullScan_44",
+          "  │ └─TableFullScan_44 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "  └─TableReader_54(Probe) 1.00 root  data:TableRangeScan_53",
+          "    └─TableRangeScan_53 1.00 cop[tikv] table:t2 range: decided by [test.t.a], keep order:true, stats:pseudo"
         ],
         "Warnings": []
       },
