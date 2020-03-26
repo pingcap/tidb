@@ -240,6 +240,7 @@ func checkAddAndCreateColumnInfos(t *meta.Meta, job *model.Job) (*model.TableInf
 	positions := []*ast.ColumnPosition{}
 	offsets := []int{}
 	err = job.DecodeArgs(&columns, &positions, &offsets)
+	// Should initialize positions[i] when it is nil, otherwise the createColumnInfo function will panic.
 	for i := range positions {
 		if positions[i] == nil {
 			positions[i] = &ast.ColumnPosition{}
@@ -335,10 +336,11 @@ func onAddColumns(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error
 		for i := range offsets {
 			tmpCols := oldCols[:len(oldCols)-len(offsets)+i+1]
 			tblInfo.Columns = tmpCols
-			// For multiple after positions.
+			// For multiple columns with after position, should adjust offsets.
 			// e.g. create table t(a int);
 			// alter table t add column b int after a, add column c int after a;
 			// alter table t add column a1 int after a, add column b1 int after b, add column c1 int after c;
+			// alter table t add column a1 int after a, add column b1 int first;
 			if positions[i].Tp == ast.ColumnPositionAfter {
 				for j := 0; j < i; j++ {
 					if (positions[j].Tp == ast.ColumnPositionAfter && offsets[j] < offsets[i]) || positions[j].Tp == ast.ColumnPositionFirst {
@@ -377,22 +379,9 @@ func onDropColumns(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		job.SchemaState = model.StateWriteOnly
 		setColumnsState(colInfos, model.StateWriteOnly)
 		for _, colInfo := range colInfos {
-			// Set this column's offset to the last and reset all following columns' offsets.
-			adjustColumnInfoInDropColumn(tblInfo, colInfo.Offset)
-			// When the dropping column has not-null flag and it hasn't the default value, we can backfill the column value like "add column".
-			// NOTE: If the state of StateWriteOnly can be rollbacked, we'd better reconsider the original default value.
-			// And we need consider the column without not-null flag.
-			if colInfo.OriginDefaultValue == nil && mysql.HasNotNullFlag(colInfo.Flag) {
-				// If the column is timestamp default current_timestamp, and DDL owner is new version TiDB that set column.Version to 1,
-				// then old TiDB update record in the column write only stage will uses the wrong default value of the dropping column.
-				// Because new version of the column default value is UTC time, but old version TiDB will think the default value is the time in system timezone.
-				// But currently will be ok, because we can't cancel the drop column job when the job is running,
-				// so the column will be dropped succeed and client will never see the wrong default value of the dropped column.
-				// More info about this problem, see PR#9115.
-				colInfo.OriginDefaultValue, err = generateOriginDefaultValue(colInfo)
-				if err != nil {
-					return ver, errors.Trace(err)
-				}
+			err = checkDropColumnForStatePublic(tblInfo, colInfo)
+			if err != nil {
+				return ver, errors.Trace(err)
 			}
 		}
 		ver, err = updateVersionAndTableInfoWithCheck(t, job, tblInfo, originalState != colInfos[0].State)
@@ -458,6 +447,27 @@ func checkDropColumns(t *meta.Meta, job *model.Job) (*model.TableInfo, []*model.
 	return tblInfo, colInfos, len(colNames), nil
 }
 
+func checkDropColumnForStatePublic(tblInfo *model.TableInfo, colInfo *model.ColumnInfo) (err error) {
+	// Set this column's offset to the last and reset all following columns' offsets.
+	adjustColumnInfoInDropColumn(tblInfo, colInfo.Offset)
+	// When the dropping column has not-null flag and it hasn't the default value, we can backfill the column value like "add column".
+	// NOTE: If the state of StateWriteOnly can be rollbacked, we'd better reconsider the original default value.
+	// And we need consider the column without not-null flag.
+	if colInfo.OriginDefaultValue == nil && mysql.HasNotNullFlag(colInfo.Flag) {
+		// If the column is timestamp default current_timestamp, and DDL owner is new version TiDB that set column.Version to 1,
+		// then old TiDB update record in the column write only stage will uses the wrong default value of the dropping column.
+		// Because new version of the column default value is UTC time, but old version TiDB will think the default value is the time in system timezone.
+		// But currently will be ok, because we can't cancel the drop column job when the job is running,
+		// so the column will be dropped succeed and client will never see the wrong default value of the dropped column.
+		// More info about this problem, see PR#9115.
+		colInfo.OriginDefaultValue, err = generateOriginDefaultValue(colInfo)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	tblInfo, colInfo, err := checkDropColumn(t, job)
 	if err != nil {
@@ -470,22 +480,9 @@ func onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		// public -> write only
 		job.SchemaState = model.StateWriteOnly
 		colInfo.State = model.StateWriteOnly
-		// Set this column's offset to the last and reset all following columns' offsets.
-		adjustColumnInfoInDropColumn(tblInfo, colInfo.Offset)
-		// When the dropping column has not-null flag and it hasn't the default value, we can backfill the column value like "add column".
-		// NOTE: If the state of StateWriteOnly can be rollbacked, we'd better reconsider the original default value.
-		// And we need consider the column without not-null flag.
-		if colInfo.OriginDefaultValue == nil && mysql.HasNotNullFlag(colInfo.Flag) {
-			// If the column is timestamp default current_timestamp, and DDL owner is new version TiDB that set column.Version to 1,
-			// then old TiDB update record in the column write only stage will uses the wrong default value of the dropping column.
-			// Because new version of the column default value is UTC time, but old version TiDB will think the default value is the time in system timezone.
-			// But currently will be ok, because we can't cancel the drop column job when the job is running,
-			// so the column will be dropped succeed and client will never see the wrong default value of the dropped column.
-			// More info about this problem, see PR#9115.
-			colInfo.OriginDefaultValue, err = generateOriginDefaultValue(colInfo)
-			if err != nil {
-				return ver, errors.Trace(err)
-			}
+		err = checkDropColumnForStatePublic(tblInfo, colInfo)
+		if err != nil {
+			return ver, errors.Trace(err)
 		}
 		ver, err = updateVersionAndTableInfoWithCheck(t, job, tblInfo, originalState != colInfo.State)
 	case model.StateWriteOnly:
