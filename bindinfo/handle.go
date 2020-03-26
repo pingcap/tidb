@@ -216,26 +216,21 @@ func (h *BindHandle) CreateBindRecord(sctx sessionctx.Context, record *BindRecor
 		h.bindInfo.Unlock()
 	}()
 
+	txn, err1 := h.sctx.Context.Txn(true)
+	if err1 != nil {
+		return err1
+	}
+	now := types.NewTime(types.FromGoTime(oracle.GetTimeFromTS(txn.StartTS())), mysql.TypeTimestamp, 3)
+
 	if br != nil {
-		txn, err1 := sctx.Txn(true)
-		if err1 != nil {
-			return err1
-		}
-		updateTs := types.NewTime(types.FromGoTime(oracle.GetTimeFromTS(txn.StartTS())), mysql.TypeTimestamp, 3)
 		for _, binding := range br.Bindings {
-			_, err1 = exec.ExecuteInternal(context.TODO(), h.logicalDeleteBindInfoSQL(record.OriginalSQL, record.Db, updateTs, binding.BindSQL))
+			_, err1 = exec.ExecuteInternal(context.TODO(), h.logicalDeleteBindInfoSQL(record.OriginalSQL, record.Db, now, binding.BindSQL))
 			if err != nil {
 				return err1
 			}
 		}
 	}
 
-	txn, err1 := h.sctx.Context.Txn(true)
-	if err1 != nil {
-		return err1
-	}
-
-	now := types.NewTime(types.FromGoTime(oracle.GetTimeFromTS(txn.StartTS())), mysql.TypeTimestamp, 3)
 	for i := range record.Bindings {
 		record.Bindings[i].CreateTime = now
 		record.Bindings[i].UpdateTime = now
