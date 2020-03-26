@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -54,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
@@ -769,16 +771,8 @@ func (h flashReplicaHandler) getDropOrTruncateTableTiflash(currentSchema infosch
 		defer s.Close()
 	}
 
-	dom := domain.GetDomain(s)
-	store := dom.Store()
+	store := domain.GetDomain(s).Store()
 	txn, err := store.Begin()
-
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	txnMeta := meta.NewMeta(txn)
-
-	iter, err := txnMeta.GetLastHistoryDDLJobsIterator()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -786,48 +780,35 @@ func (h flashReplicaHandler) getDropOrTruncateTableTiflash(currentSchema infosch
 	if err != nil {
 		return nil, err
 	}
-	cacheJobs := make([]*model.Job, 0, 32)
 	replicaInfos := make([]*tableFlashReplicaInfo, 0)
 	uniqueIDMap := make(map[int64]struct{})
-	for {
-		cacheJobs = cacheJobs[:0]
-		cacheJobs, err = iter.GetLastJobs(32, cacheJobs)
-		if len(cacheJobs) == 0 {
+	handleJobAndTableInfo := func(job *model.Job, tblInfo *model.TableInfo) (bool, error) {
+		// avoid duplicate table id info.
+		if _, ok := currentSchema.TableByID(tblInfo.ID); ok {
+			return false, nil
+		}
+		if _, ok := uniqueIDMap[tblInfo.ID]; ok {
+			return false, nil
+		}
+		uniqueIDMap[tblInfo.ID] = struct{}{}
+		replicaInfos = h.getTiFlashReplicaInfo(tblInfo, replicaInfos)
+		return false, nil
+	}
+	dom := domain.GetDomain(s)
+	fn := func(jobs []*model.Job) (bool, error) {
+		return executor.GetDropOrTruncateTableInfoFromJobs(jobs, gcSafePoint, dom, handleJobAndTableInfo)
+	}
+
+	err = admin.IterAllDDLJobs(txn, fn)
+	if err != nil {
+		if terror.ErrorEqual(variable.ErrSnapshotTooOld, err) {
+			// The err indicate that current ddl job and remain ddl jobs was been deleted by gc,
+			// just ignore the error and return directly.
 			return replicaInfos, nil
 		}
-		for _, job := range cacheJobs {
-			if job.Type != model.ActionDropTable && job.Type != model.ActionTruncateTable {
-				continue
-			}
-			// Check GC safe point for getting snapshot infoSchema.
-			err = gcutil.ValidateSnapshotWithGCSafePoint(job.StartTS, gcSafePoint)
-			if err != nil {
-				return replicaInfos, nil
-			}
-			// Get the snapshot infoSchema before drop table.
-			snapInfo, err := dom.GetSnapshotInfoSchema(job.StartTS)
-			if err != nil {
-				return nil, err
-			}
-			// Get table meta from snapshot infoSchema.
-			tbl, ok := snapInfo.TableByID(job.TableID)
-			if !ok {
-				return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(
-					fmt.Sprintf("(Schema ID %d)", job.SchemaID),
-					fmt.Sprintf("(Table ID %d)", job.TableID),
-				)
-			}
-			// avoid duplicate table id info.
-			if _, ok := currentSchema.TableByID(tbl.Meta().ID); ok {
-				continue
-			}
-			if _, ok := uniqueIDMap[tbl.Meta().ID]; ok {
-				continue
-			}
-			uniqueIDMap[tbl.Meta().ID] = struct{}{}
-			replicaInfos = h.getTiFlashReplicaInfo(tbl.Meta(), replicaInfos)
-		}
+		return nil, err
 	}
+	return replicaInfos, nil
 }
 
 type tableFlashReplicaStatus struct {
