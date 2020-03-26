@@ -247,17 +247,11 @@ func handleEvolveTasks(ctx context.Context, sctx sessionctx.Context, br *bindinf
 		return
 	}
 	charset, collation := sctx.GetSessionVars().GetCharsetInfo()
-	hintsSet, err := bindinfo.ParseHintsSet(parser.New(), bindSQL, charset, collation)
-	if err != nil {
-		return
-	}
 	binding := bindinfo.Binding{
 		BindSQL:   bindSQL,
 		Status:    bindinfo.PendingVerify,
 		Charset:   charset,
 		Collation: collation,
-		Hint:      hintsSet,
-		ID:        planHint,
 	}
 	globalHandle := domain.GetDomain(sctx).BindHandle()
 	globalHandle.AddEvolvePlanTask(br.OriginalSQL, br.Db, binding)
