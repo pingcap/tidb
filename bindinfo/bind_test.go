@@ -849,7 +849,7 @@ func (s *testSuite) TestBindingWithIsolationRead(c *C) {
 	tk.MustExec("set @@tidb_use_plan_baselines = 1")
 	rows := tk.MustQuery("explain select * from t where a >= 11 and b >= 11").Rows()
 	c.Assert(rows[len(rows)-1][2], Equals, "cop[tikv]")
-	// Even if we build a binding use index for SQL, but after we set the isolation read for TiFlash, it choose TiFlash instead of index of tikv
+	// Even if we build a binding use index for SQL, but after we set the isolation read for TiFlash, it choose TiFlash instead of index of TiKV.
 	tk.MustExec("set @@tidb_isolation_read_engines = \"tiflash\"")
 	rows = tk.MustQuery("explain select * from t where a >= 11 and b >= 11").Rows()
 	c.Assert(rows[len(rows)-1][2], Equals, "cop[tiflash]")
