@@ -329,7 +329,7 @@ func (p *LogicalJoin) getHashJoins(prop *property.PhysicalProperty) (joins []Phy
 			joins = append(joins, p.getHashJoin(prop, 0, false))
 		}
 	}
-	return joins
+	return joins, true
 }
 
 func (p *LogicalJoin) getHashJoin(prop *property.PhysicalProperty, innerIdx int, useOuterToBuild bool) *PhysicalHashJoin {
@@ -1307,31 +1307,19 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 	// but we cannot generate IndexHashJoin because of the required property, we set `XXXHashJoinMatchProp` = false.
 	// And we will enforce a sort above the join and try to get the IndexHashJoin again.
 	// Because IndexJoin and IndexHashJoin can satisfy the same property, so we use the variable `xxxxHashJoinMatchProp` for them.
-	// IndexMergeJoin has stricter condition, so it uses a separate variable.
+	// IndexMergeJoin has stricter condition, so it uses a separate variable `xxxxMergeJoinMatchProp`.
+	//
+	// In fact, we can simply check whether `prop.IsEmpty` when a hint is inapplicable, then enforce that property and try to apply
+	// the hint again. But this may introduce some useless search. For example, if the join's inner child is not DataSource, it cannot
+	// use IndexJoin whatever the required property is empty or not.
 	leftOuterHashJoinMatchProp, rightOuterHashJoinMatchProp := true, true
 	leftOuterMergeJoinMatchProp, rightOuterMergeJoinMatchProp := true, true
 
 	defer func() {
 		// refine error message
-		if !canForced && needForced {
-			//if hasINLMJHint && len(indexJoins) > 0 && len(prop.Items) > 0 {
-			//	containIdxMergeJoin := false
-			//	for _, idxJoin := range indexJoins {
-			//		if _, ok := idxJoin.(*PhysicalIndexMergeJoin); ok {
-			//			containIdxMergeJoin = true
-			//			break
-			//		}
-			//	}
-			//	// 1. IndexMergeJoin requires stricter conditions than Index(Hash)Join when the output order is needed.
-			//	// 2. IndexMergeJoin requires the same conditions with Index(Hash)Join when the output is unordered.
-			//	// 3. If ordered-Index(Hash)Join can be chosen but ordered-IndexMergeJoin can not be chosen, we can build a plan with an enforced sort on IndexMergeJoin.
-			//	// 4. Thus we can give up the plans here if IndexMergeJoin is nil when `hasINLMJHint` is true. Because we can make sure that an IndexMeregJoin with enforced sort will be built.
-			//	if !containIdxMergeJoin {
-			//		canForced = true
-			//		indexJoins = nil
-			//		return
-			//	}
-			//}
+		// Only when the hint can not match the requried property, we generate warning message.
+		// Otherwise we will enforce the property and try to apply the hint again.
+		if !canForced && needForced && matchProp {
 			// Construct warning message prefix.
 			var errMsg string
 			switch {
@@ -1483,8 +1471,8 @@ func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]P
 	joins := make([]PhysicalPlan, 0, 5)
 	joins = append(joins, mergeJoins...)
 
-	indexJoins, forced, matchProp := p.tryToGetIndexJoin(prop)
-	if !matchProp {
+	indexJoins, forced, hintMatchProp := p.tryToGetIndexJoin(prop)
+	if !hintMatchProp {
 		return nil, true
 	}
 	if forced {
