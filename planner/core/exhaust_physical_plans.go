@@ -1587,12 +1587,12 @@ func (la *LogicalAggregation) getEnforcedStreamAggs(prop *property.PhysicalPrope
 	}
 
 	taskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopDoubleReadTaskType}
+	if la.hasDistinct() && !la.ctx.GetSessionVars().AllowDistinctAggPushDown {
+		// Only push distinct to cop with explicit hint AGG_TO_COP()
+		// TODO: remove this logic after the cost estimation of distinct pushdown is implemented.
+		taskTypes = nil
+	}
 	if !la.aggHints.preferAggToCop {
-		if la.hasDistinct() {
-			// Only push distinct to cop with explicit hint AGG_TO_COP()
-			// TODO: remove this logic after the cost estimation of distinct pushdown is implemented.
-			taskTypes = nil
-		}
 		taskTypes = append(taskTypes, property.RootTaskType)
 	}
 	for _, taskTp := range taskTypes {
@@ -1639,12 +1639,12 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 		// The table read of "CopDoubleReadTaskType" can't promises the sort
 		// property that the stream aggregation required, no need to consider.
 		taskTypes := []property.TaskType{property.CopSingleReadTaskType}
+		if la.hasDistinct() && !la.ctx.GetSessionVars().AllowDistinctAggPushDown {
+			// Only push distinct to cop with explicit hint AGG_TO_COP()
+			// TODO: remove this logic after the cost estimation of distinct pushdown is implemented.
+			taskTypes = nil
+		}
 		if !la.aggHints.preferAggToCop {
-			if la.hasDistinct() {
-				// Only push distinct to cop with explicit hint AGG_TO_COP()
-				// TODO: remove this logic after the cost estimation of distinct pushdown is implemented.
-				taskTypes = nil
-			}
 			taskTypes = append(taskTypes, property.RootTaskType)
 		}
 		for _, taskTp := range taskTypes {
@@ -1674,12 +1674,12 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 	}
 	hashAggs := make([]PhysicalPlan, 0, len(wholeTaskTypes))
 	taskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopDoubleReadTaskType}
+	if la.hasDistinct() && !la.ctx.GetSessionVars().AllowDistinctAggPushDown {
+		// Only push distinct to cop with explicit hint AGG_TO_COP()
+		// TODO: remove this logic after the cost estimation of distinct pushdown is implemented.
+		taskTypes = nil
+	}
 	if !la.aggHints.preferAggToCop {
-		if la.hasDistinct() {
-			// Only push distinct to cop with explicit hint AGG_TO_COP()
-			// TODO: remove this logic after the cost estimation of distinct pushdown is implemented.
-			taskTypes = nil
-		}
 		taskTypes = append(taskTypes, property.RootTaskType)
 	}
 	for _, taskTp := range taskTypes {

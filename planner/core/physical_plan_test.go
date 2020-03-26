@@ -842,8 +842,45 @@ func (s *testPlanSuite) TestAggToCopHint(c *C) {
 	}
 }
 
-func (s *testPlanSuite) TestPushdownDistinct(c *C) {
+func (s *testPlanSuite) TestPushdownDistinctEnable(c *C) {
 	defer testleak.AfterTest(c)()
+	var (
+		input  []string
+		output []struct {
+			SQL     string
+			Best    string
+			Warning string
+		}
+	)
+	s.testData.GetTestCases(c, &input, &output)
+	vars := []string{
+		"set @@session.tidb_distinct_agg_push_down = 1",
+	}
+	s.doTestPushdownDistinct(c, vars, input, output)
+}
+
+func (s *testPlanSuite) TestPushdownDistinctDisable(c *C) {
+	defer testleak.AfterTest(c)()
+	var (
+		input  []string
+		output []struct {
+			SQL     string
+			Best    string
+			Warning string
+		}
+	)
+	s.testData.GetTestCases(c, &input, &output)
+	vars := []string{
+		"set @@session.tidb_distinct_agg_push_down = 0",
+	}
+	s.doTestPushdownDistinct(c, vars, input, output)
+}
+
+func (s *testPlanSuite) doTestPushdownDistinct(c *C, vars, input []string, output []struct {
+	SQL     string
+	Best    string
+	Warning string
+}) {
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	defer func() {
@@ -857,15 +894,9 @@ func (s *testPlanSuite) TestPushdownDistinct(c *C) {
 	tk.MustExec("insert into t values (1, 1, 1), (1, 1, 3), (1, 2, 3), (2, 1, 3), (1, 2, NULL);")
 	tk.MustExec("set session sql_mode=''")
 
-	var (
-		input  []string
-		output []struct {
-			SQL     string
-			Best    string
-			Warning string
-		}
-	)
-	s.testData.GetTestCases(c, &input, &output)
+	for _, v := range vars {
+		tk.MustExec(v)
+	}
 
 	ctx := context.Background()
 	is := domain.GetDomain(tk.Se).InfoSchema()

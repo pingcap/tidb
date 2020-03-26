@@ -155,6 +155,10 @@ const (
 
 // TiDB system variable names that both in session and global scope.
 const (
+
+	// tidb_opt_distinct_agg_push_down is used to decide whether agg with distinct should be pushed to tikv/tiflash.
+	TiDBOptDistinctAggPushDown = "tidb_distinct_agg_push_down"
+
 	// tidb_build_stats_concurrency is used to speed up the ANALYZE statement, when a table has multiple indices,
 	// those indices can be scanned concurrently, with the cost of higher system performance impact.
 	TiDBBuildStatsConcurrency = "tidb_build_stats_concurrency"
@@ -385,6 +389,7 @@ const (
 	DefChecksumTableConcurrency        = 4
 	DefSkipUTF8Check                   = false
 	DefOptAggPushDown                  = false
+	DefOptDistinctAggPushDown          = false
 	DefOptWriteRowID                   = false
 	DefOptCorrelationThreshold         = 0.9
 	DefOptCorrelationExpFactor         = 1

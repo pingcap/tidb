@@ -1421,11 +1421,31 @@
     ]
   },
   {
-    "Name": "TestPushdownDistinct",
+    "Name": "TestPushdownDistinctEnable",
     "Cases": [
       {
-        "SQL": "select /*+ agg_to_cop(), HASH_AGG() */ a, count(distinct a) from t;",
+        "SQL": "select /*+ HASH_AGG() */ a, count(distinct a) from t;",
         "Best": "TableReader(Table(t)->HashAgg)->HashAgg->Projection",
+        "Warning": ""
+      },
+      {
+        "SQL": "select /*+ HASH_AGG() */ avg(b), c, avg(b), count(distinct A, B),  count(distinct A), count(distinct c), sum(b) from t group by c;",
+        "Best": "TableReader(Table(t)->HashAgg)->HashAgg->Projection",
+        "Warning": ""
+      },
+      {
+        "SQL": "select /*+ STREAM_AGG() */ count(distinct c) from t;",
+        "Best": "IndexReader(Index(t.c)[[NULL,+inf]]->StreamAgg)->StreamAgg",
+        "Warning": ""
+      }
+    ]
+  },
+  {
+    "Name": "TestPushdownDistinctDisable",
+    "Cases": [
+      {
+        "SQL": "select /*+ HASH_AGG() */ a, count(distinct a) from t;",
+        "Best": "TableReader(Table(t))->HashAgg->Projection",
         "Warning": ""
       },
       {
@@ -1434,18 +1454,8 @@
         "Warning": ""
       },
       {
-        "SQL": "select /*+ agg_to_cop(), HASH_AGG() */ avg(b), c, avg(b), count(distinct A, B),  count(distinct A), count(distinct c), sum(b) from t group by c;",
-        "Best": "TableReader(Table(t)->HashAgg)->HashAgg->Projection",
-        "Warning": ""
-      },
-      {
         "SQL": "select /*+ STREAM_AGG() */ count(distinct c) from t;",
         "Best": "IndexReader(Index(t.c)[[NULL,+inf]])->StreamAgg",
-        "Warning": ""
-      },
-      {
-        "SQL": "select /*+ agg_to_cop(), STREAM_AGG() */ count(distinct c) from t;",
-        "Best": "IndexReader(Index(t.c)[[NULL,+inf]]->StreamAgg)->StreamAgg",
         "Warning": ""
       }
     ]
