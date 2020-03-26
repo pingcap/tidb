@@ -1435,10 +1435,13 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			strings.ToLower(infoschema.TableUserPrivileges),
 			strings.ToLower(infoschema.TableMetricTables),
 			strings.ToLower(infoschema.TableCollationCharacterSetApplicability),
+			strings.ToLower(infoschema.TableProcesslist),
+			strings.ToLower(infoschema.ClusterTableProcesslist),
 			strings.ToLower(infoschema.TableTiKVRegionPeers),
 			strings.ToLower(infoschema.TableTiDBHotRegions),
 			strings.ToLower(infoschema.TableSessionVar),
 			strings.ToLower(infoschema.TableConstraints),
+			strings.ToLower(infoschema.TableTiFlashReplica),
 			strings.ToLower(infoschema.TableTiDBServersInfo):
 			return &MemTableReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
@@ -2600,8 +2603,19 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 		return nil, err
 	}
 	handles := make([]int64, 0, len(lookUpContents))
+	var isValidHandle bool
 	for _, content := range lookUpContents {
-		handles = append(handles, content.keys[0].GetInt64())
+		handle := content.keys[0].GetInt64()
+		isValidHandle = true
+		for _, key := range content.keys {
+			if handle != key.GetInt64() {
+				isValidHandle = false
+				break
+			}
+		}
+		if isValidHandle {
+			handles = append(handles, handle)
+		}
 	}
 	return builder.buildTableReaderFromHandles(ctx, e, handles)
 }
@@ -2908,14 +2922,19 @@ func newRowDecoder(ctx sessionctx.Context, schema *expression.Schema, tbl *model
 		if isPK {
 			handleColID = col.ID
 		}
+		isGeneratedCol := false
+		if col.VirtualExpr != nil {
+			isGeneratedCol = true
+		}
 		reqCols[idx] = rowcodec.ColInfo{
-			ID:      col.ID,
-			Tp:      int32(col.RetType.Tp),
-			Flag:    int32(col.RetType.Flag),
-			Flen:    col.RetType.Flen,
-			Decimal: col.RetType.Decimal,
-			Elems:   col.RetType.Elems,
-			Collate: col.GetType().Collate,
+			ID:            col.ID,
+			Tp:            int32(col.RetType.Tp),
+			Flag:          int32(col.RetType.Flag),
+			Flen:          col.RetType.Flen,
+			Decimal:       col.RetType.Decimal,
+			Elems:         col.RetType.Elems,
+			Collate:       col.GetType().Collate,
+			VirtualGenCol: isGeneratedCol,
 		}
 	}
 	defVal := func(i int, chk *chunk.Chunk) error {
@@ -2954,6 +2973,7 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		lock:         plan.Lock,
 		waitTime:     plan.LockWaitTime,
 		partPos:      plan.PartitionColPos,
+		columns:      plan.Columns,
 	}
 	if e.lock {
 		b.hasLock = true
@@ -2978,6 +2998,7 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 	}
 	e.base().initCap = capacity
 	e.base().maxChunkSize = capacity
+	e.buildVirtualColumnInfo()
 	return e
 }
 

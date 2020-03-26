@@ -27,6 +27,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema/perfschema"
@@ -88,7 +89,12 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b varchar(10), key k(a))")
 
+	// Clear all statements.
+	tk.MustExec("set session tidb_enable_stmt_summary = 0")
+	tk.MustExec("set session tidb_enable_stmt_summary = ''")
+
 	tk.MustExec("set global tidb_enable_stmt_summary = 1")
+	defer tk.MustExec("set global tidb_enable_stmt_summary = ''")
 	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("1"))
 
 	// Invalidate the cache manually so that tidb_enable_stmt_summary works immediately.
@@ -150,7 +156,7 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 		from performance_schema.events_statements_summary_by_digest
 		where digest_text like 'select * from t%'`,
 	).Check(testkit.Rows("select test test.t t:k 1 2 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tIndexLookUp_10\troot\t100\t\n" +
-		"\t├─IndexScan_8 \tcop \t100\ttable:t, index:a, range:[2,2], keep order:false, stats:pseudo\n" +
+		"\t├─IndexScan_8 \tcop \t100\ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
 		"\t└─TableScan_9 \tcop \t100\ttable:t, keep order:false, stats:pseudo"))
 
 	// select ... order by
@@ -170,14 +176,14 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 		from performance_schema.events_statements_summary_by_digest
 		where digest_text like 'select * from t%'`,
 	).Check(testkit.Rows("select test test.t t:k 2 4 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tIndexLookUp_10\troot\t100\t\n" +
-		"\t├─IndexScan_8 \tcop \t100\ttable:t, index:a, range:[2,2], keep order:false, stats:pseudo\n" +
+		"\t├─IndexScan_8 \tcop \t100\ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
 		"\t└─TableScan_9 \tcop \t100\ttable:t, keep order:false, stats:pseudo"))
 
 	// Disable it again.
 	tk.MustExec("set global tidb_enable_stmt_summary = false")
 	tk.MustExec("set session tidb_enable_stmt_summary = false")
-	defer tk.MustExec("set global tidb_enable_stmt_summary = 1")
-	defer tk.MustExec("set session tidb_enable_stmt_summary = 1")
+	defer tk.MustExec("set global tidb_enable_stmt_summary = ''")
+	defer tk.MustExec("set session tidb_enable_stmt_summary = ''")
 	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("0"))
 
 	// Create a new session to test
@@ -219,11 +225,11 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 		from performance_schema.events_statements_summary_by_digest
 		where digest_text like 'select * from t%'`,
 	).Check(testkit.Rows("select test test.t t:k 1 2 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tIndexLookUp_10\troot\t1000\t\n" +
-		"\t├─IndexScan_8 \tcop \t1000\ttable:t, index:a, range:[2,2], keep order:false, stats:pseudo\n" +
+		"\t├─IndexScan_8 \tcop \t1000\ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
 		"\t└─TableScan_9 \tcop \t1000\ttable:t, keep order:false, stats:pseudo"))
 
 	// Disable it in global scope.
-	tk.MustExec("set global tidb_enable_stmt_summary = off")
+	tk.MustExec("set global tidb_enable_stmt_summary = false")
 
 	// Create a new session to test.
 	tk = testkit.NewTestKitWithInit(c, s.store)
@@ -237,7 +243,7 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 		from performance_schema.events_statements_summary_by_digest
 		where digest_text like 'select * from t%'`,
 	).Check(testkit.Rows("select test test.t t:k 2 4 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tIndexLookUp_10\troot\t1000\t\n" +
-		"\t├─IndexScan_8 \tcop \t1000\ttable:t, index:a, range:[2,2], keep order:false, stats:pseudo\n" +
+		"\t├─IndexScan_8 \tcop \t1000\ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
 		"\t└─TableScan_9 \tcop \t1000\ttable:t, keep order:false, stats:pseudo"))
 
 	// Unset session variable.
@@ -250,6 +256,71 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 		max_prewrite_regions, avg_affected_rows, query_sample_text, plan
 		from performance_schema.events_statements_summary_by_digest`,
 	).Check(testkit.Rows())
+
+	// Create a new session to test
+	tk = testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("set global tidb_enable_stmt_summary = on")
+	tk.MustExec("set global tidb_stmt_summary_history_size = 24")
+
+	// Create a new user to test statements summary table privilege
+	tk.MustExec("create user 'test_user'@'localhost'")
+	tk.MustExec("grant select on *.* to 'test_user'@'localhost'")
+	tk.Se.Auth(&auth.UserIdentity{
+		Username:     "root",
+		Hostname:     "%",
+		AuthUsername: "root",
+		AuthHostname: "%",
+	}, nil, nil)
+	tk.MustExec("select * from t where a=1")
+	result := tk.MustQuery(`select *
+		from performance_schema.events_statements_summary_by_digest
+		where digest_text like 'select * from t%'`,
+	)
+	// Super user can query all reocrds
+	c.Assert(len(result.Rows()), Equals, 1)
+	result = tk.MustQuery(`select *
+		from performance_schema.events_statements_summary_by_digest_history
+		where digest_text like 'select * from t%'`,
+	)
+	c.Assert(len(result.Rows()), Equals, 1)
+	tk.Se.Auth(&auth.UserIdentity{
+		Username:     "test_user",
+		Hostname:     "localhost",
+		AuthUsername: "test_user",
+		AuthHostname: "localhost",
+	}, nil, nil)
+	result = tk.MustQuery(`select *
+		from performance_schema.events_statements_summary_by_digest
+		where digest_text like 'select * from t%'`,
+	)
+	// Ordinary users can not see others' records
+	c.Assert(len(result.Rows()), Equals, 0)
+	result = tk.MustQuery(`select *
+		from performance_schema.events_statements_summary_by_digest_history
+		where digest_text like 'select * from t%'`,
+	)
+	c.Assert(len(result.Rows()), Equals, 0)
+	tk.MustExec("select * from t where a=1")
+	result = tk.MustQuery(`select *
+		from performance_schema.events_statements_summary_by_digest
+		where digest_text like 'select * from t%'`,
+	)
+	c.Assert(len(result.Rows()), Equals, 1)
+	tk.MustExec("select * from t where a=1")
+	result = tk.MustQuery(`select *
+		from performance_schema.events_statements_summary_by_digest_history
+		where digest_text like 'select * from t%'`,
+	)
+	c.Assert(len(result.Rows()), Equals, 1)
+	// use root user to set variables back
+	tk.Se.Auth(&auth.UserIdentity{
+		Username:     "root",
+		Hostname:     "%",
+		AuthUsername: "root",
+		AuthHostname: "%",
+	}, nil, nil)
+	tk.MustExec("set global tidb_enable_stmt_summary = off")
 }
 
 // Test events_statements_summary_by_digest_history.
@@ -261,7 +332,7 @@ func (s *testTableSuite) TestStmtSummaryHistoryTable(c *C) {
 
 	tk.MustExec("set global tidb_enable_stmt_summary = 1")
 	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("1"))
-	defer tk.MustExec("set global tidb_enable_stmt_summary = false")
+	defer tk.MustExec("set global tidb_enable_stmt_summary = ''")
 
 	// Invalidate the cache manually so that tidb_enable_stmt_summary works immediately.
 	s.dom.GetGlobalVarsCache().Disable()
@@ -290,6 +361,53 @@ func (s *testTableSuite) TestStmtSummaryHistoryTable(c *C) {
 		max_prewrite_regions, avg_affected_rows, query_sample_text, plan
 		from performance_schema.events_statements_summary_by_digest_history`,
 	).Check(testkit.Rows())
+}
+
+// Test events_statements_summary_by_digest_history.
+func (s *testTableSuite) TestStmtSummaryInternalQuery(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b varchar(10), key k(a))")
+
+	// We use the sql binding evolve to check the internal query summary.
+	tk.MustExec("set @@tidb_use_plan_baselines = 1")
+	tk.MustExec("set @@tidb_evolve_plan_baselines = 1")
+	tk.MustExec("create global binding for select * from t where t.a = 1 using select * from t ignore index(k) where t.a = 1")
+	tk.MustExec("set global tidb_enable_stmt_summary = 1")
+	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("1"))
+	defer tk.MustExec("set global tidb_enable_stmt_summary = ''")
+	// Invalidate the cache manually so that tidb_enable_stmt_summary works immediately.
+	s.dom.GetGlobalVarsCache().Disable()
+	// Disable refreshing summary.
+	tk.MustExec("set global tidb_stmt_summary_refresh_interval = 999999999")
+	tk.MustQuery("select @@global.tidb_stmt_summary_refresh_interval").Check(testkit.Rows("999999999"))
+
+	// Test Internal
+
+	// Create a new session to test.
+	tk = testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("select * from t where t.a = 1")
+	tk.MustQuery(`select exec_count, digest_text
+		from performance_schema.events_statements_summary_by_digest
+		where digest_text like "select original_sql , bind_sql , default_db , status%"`).Check(testkit.Rows())
+
+	// Enable internal query and evolve baseline.
+	tk.MustExec("set global tidb_stmt_summary_internal_query = 1")
+	defer tk.MustExec("set global tidb_stmt_summary_internal_query = false")
+
+	// Create a new session to test.
+	tk = testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("admin flush bindings")
+	tk.MustExec("admin evolve bindings")
+
+	tk.MustQuery(`select exec_count, digest_text
+		from performance_schema.events_statements_summary_by_digest
+		where digest_text like "select original_sql , bind_sql , default_db , status%"`).Check(testkit.Rows(
+		"1 select original_sql , bind_sql , default_db , status , create_time , update_time , charset , collation from mysql . bind_info" +
+			" where update_time > ? order by update_time"))
 }
 
 func currentSourceDir() string {
