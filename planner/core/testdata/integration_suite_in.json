@@ -70,5 +70,15 @@
       "desc select /*+ TIDB_INLJ(t2)*/ * from t1, t2 where t1.a = t2.a and t1.b = t2.b",
       "desc select /*+ TIDB_INLJ(t2)*/ * from t1, t2 where t1.a = t2.a and t1.b = t2.a and t1.b = t2.b"
     ]
+  },
+  {
+    "name": "TestHintWithRequiredProperty",
+    "cases": [
+      "desc select /*+ INL_JOIN(t2) */ * from t t1, t t2 where t1.a = t2.b order by t2.a",
+      "desc select /*+ INL_HASH_JOIN(t2) */ * from t t1, t t2 where t1.a = t2.b order by t2.a",
+      "desc select /*+ INL_MERGE_JOIN(t2)*/ t1.a, t2.a from t t1, t t2 ,t t3 where t1.a = t2.a and t3.a=t2.a",
+      "desc select * from t t1, (select /*+ HASH_AGG() */ b, max(a) from t t2 group by b) t2 where t1.b = t2.b order by t1.b",
+      "desc select /*+ INL_HASH_JOIN(t2) */ distinct t2.a from t t1 join t t2 on t1.a = t2.a"
+    ]
   }
 ]

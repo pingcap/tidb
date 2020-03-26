@@ -638,3 +638,34 @@ func (s *testIntegrationSuite) TestIssue15546(c *C) {
 	tk.MustExec("create definer='root'@'localhost' view vt(a, b) as select a, b from t")
 	tk.MustQuery("select * from pt, vt where pt.a = vt.a").Check(testkit.Rows("1 1 1 1"))
 }
+
+func (s *testIntegrationSuite) TestHintWithRequiredProperty(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int primary key, b int, key b(b))")
+	var input []string
+	var output []struct {
+		SQL      string
+		Plan     []string
+		Warnings []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+			warnings := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
+			output[i].Warnings = make([]string, len(warnings))
+			for j, warning := range warnings {
+				output[i].Warnings[j] = warning.Err.Error()
+			}
+		})
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+		warnings := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
+		c.Assert(len(warnings), Equals, len(output[i].Warnings))
+		for j, warning := range warnings {
+			c.Assert(output[i].Warnings[j], Equals, warning.Err.Error())
+		}
+	}
+}
