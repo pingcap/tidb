@@ -755,6 +755,7 @@ func (e *SelectLockExec) Open(ctx context.Context) error {
 		return err
 	}
 
+<<<<<<< HEAD
 	txnCtx := e.ctx.GetSessionVars().TxnCtx
 	for id := range e.Schema().TblID2Handle {
 		// This operation is only for schema validator check.
@@ -762,6 +763,9 @@ func (e *SelectLockExec) Open(ctx context.Context) error {
 	}
 
 	if len(e.Schema().TblID2Handle) > 0 && len(e.partitionedTable) > 0 {
+=======
+	if len(e.tblID2Handle) > 0 && len(e.partitionedTable) > 0 {
+>>>>>>> a888c6d... *: add the tid to the schema-change related tables only when keys need to be locked (#15698)
 		e.tblID2Table = make(map[int64]table.PartitionedTable, len(e.partitionedTable))
 		for id := range e.Schema().TblID2Handle {
 			for _, p := range e.partitionedTable {
@@ -814,6 +818,20 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return nil
 	}
 	lockWaitTime := e.ctx.GetSessionVars().LockWaitTimeout
+<<<<<<< HEAD
+=======
+	if e.Lock == ast.SelectLockForUpdateNoWait {
+		lockWaitTime = kv.LockNoWait
+	}
+
+	if len(e.keys) > 0 {
+		// This operation is only for schema validator check.
+		for id := range e.tblID2Handle {
+			e.ctx.GetSessionVars().TxnCtx.UpdateDeltaForTable(id, 0, 0, map[int64]int64{})
+		}
+	}
+
+>>>>>>> a888c6d... *: add the tid to the schema-change related tables only when keys need to be locked (#15698)
 	return doLockKeys(ctx, e.ctx, newLockCtx(e.ctx.GetSessionVars(), lockWaitTime), e.keys...)
 }
 
