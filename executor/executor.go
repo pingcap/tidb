@@ -846,12 +846,6 @@ func (e *SelectLockExec) Open(ctx context.Context) error {
 		return err
 	}
 
-	txnCtx := e.ctx.GetSessionVars().TxnCtx
-	for id := range e.tblID2Handle {
-		// This operation is only for schema validator check.
-		txnCtx.UpdateDeltaForTable(id, 0, 0, map[int64]int64{})
-	}
-
 	if len(e.tblID2Handle) > 0 && len(e.partitionedTable) > 0 {
 		e.tblID2Table = make(map[int64]table.PartitionedTable, len(e.partitionedTable))
 		for id := range e.tblID2Handle {
@@ -903,6 +897,14 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if e.Lock == ast.SelectLockForUpdateNoWait {
 		lockWaitTime = kv.LockNoWait
 	}
+
+	if len(e.keys) > 0 {
+		// This operation is only for schema validator check.
+		for id := range e.tblID2Handle {
+			e.ctx.GetSessionVars().TxnCtx.UpdateDeltaForTable(id, 0, 0, map[int64]int64{})
+		}
+	}
+
 	return doLockKeys(ctx, e.ctx, newLockCtx(e.ctx.GetSessionVars(), lockWaitTime), e.keys...)
 }
 
