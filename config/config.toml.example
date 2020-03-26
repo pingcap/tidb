@@ -104,8 +104,8 @@ repair-mode = false
 # In repair mode, repairing table which is not in repair list will get wrong database or wrong table error.
 repair-table-list = []
 
-# The maximum permitted number of simultaneous client connections.
-max-server-connections = 4096
+# The maximum permitted number of simultaneous client connections. When the value is 0, the number of connections is unlimited.
+max-server-connections = 0
 
 # Whether new collations are enabled, as indicated by its name, this configuration entry take effect ONLY when a TiDB cluster bootstraps for the first time.
 new_collations_enabled_on_first_bootstrap = false
@@ -376,6 +376,7 @@ max-retry-count = 256
 [stmt-summary]
 # enable statement summary.
 enable = true
+
 # enable statement summary for TiDB internal query, default is false.
 enable-internal-query = false
 
