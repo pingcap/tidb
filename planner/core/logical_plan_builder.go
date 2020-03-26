@@ -2429,7 +2429,7 @@ func (b *PlanBuilder) buildProjUponView(ctx context.Context, dbName model.CIStr,
 		}
 		projSchema.Append(&expression.Column{
 			UniqueID:    b.ctx.GetSessionVars().AllocPlanColumnID(),
-			TblName:     col.TblName,
+			TblName:     tableInfo.Name,
 			OrigTblName: col.OrigTblName,
 			ColName:     columnInfo[i].Name,
 			OrigColName: origColName,
