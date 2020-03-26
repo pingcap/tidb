@@ -1935,6 +1935,28 @@ func (s *testSchemaSuite) TestCommitWhenSchemaChanged(c *C) {
 	c.Assert(terror.ErrorEqual(err, plannercore.ErrWrongValueCountOnRow), IsTrue, Commentf("err %v", err))
 }
 
+func (s *testSchemaSuite) TestRetrySchemaChangeForEmptyChange(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t (i int)")
+	tk.MustExec("create table t1 (i int)")
+	tk.MustExec("begin")
+	tk1.MustExec("alter table t add j int")
+	tk.MustExec("select * from t for update")
+	tk.MustExec("update t set i = -i")
+	tk.MustExec("delete from t")
+	tk.MustExec("insert into t1 values (1)")
+	tk.MustExec("commit")
+
+	tk.MustExec("begin pessimistic")
+	tk1.MustExec("alter table t add k int")
+	tk.MustExec("select * from t for update")
+	tk.MustExec("update t set i = -i")
+	tk.MustExec("delete from t")
+	tk.MustExec("insert into t1 values (1)")
+	tk.MustExec("commit")
+}
+
 func (s *testSchemaSuite) TestRetrySchemaChange(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
