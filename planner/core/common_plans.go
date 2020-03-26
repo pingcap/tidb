@@ -253,7 +253,8 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 		return nil, err
 	}
 	_, isTableDual := p.(*PhysicalTableDual)
-	if !isTableDual && prepared.UseCache {
+	isPartition := e.isPartition(p)
+	if !isTableDual && prepared.UseCache && ! isPartition {
 		sctx.PreparedPlanCache().Put(cacheKey, NewPSTMTPlanCacheValue(p))
 	}
 	return p, err
@@ -327,6 +328,36 @@ func (e *Execute) rebuildRange(p Plan) error {
 		}
 	}
 	return nil
+}
+
+func checkPartitionInfo(pi *model.PartitionInfo) bool {
+	if pi != nil {
+		return true
+	}
+	return false
+}
+
+// Prepare plan cache is not support query plan on range partition table.
+func (e *Execute) isPartition(p Plan) bool {
+	isRange := false
+	switch x := p.(type) {
+	case *PhysicalTableReader:
+		ts := x.TablePlans[0].(*PhysicalTableScan)
+		return checkPartitionInfo(ts.Table.Partition)
+	case *PhysicalIndexLookUpReader:
+		is := x.IndexPlans[0].(*PhysicalIndexScan)
+		return checkPartitionInfo(is.Table.Partition)
+	case *PhysicalIndexReader:
+		is := x.IndexPlans[0].(*PhysicalIndexScan)
+		return checkPartitionInfo(is.Table.Partition)
+	case PhysicalPlan:
+		for _, child := range x.Children() {
+			if e.isPartition(child) {
+				isRange = true
+			}
+		}
+	}
+	return isRange
 }
 
 func (e *Execute) buildRangeForIndexScan(sctx sessionctx.Context, is *PhysicalIndexScan) ([]*ranger.Range, error) {
