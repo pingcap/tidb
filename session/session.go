@@ -431,7 +431,7 @@ func (s *session) doCommit(ctx context.Context) error {
 	// Set this option for 2 phase commit to validate schema lease.
 	s.txn.SetOption(kv.SchemaChecker, domain.NewSchemaChecker(domain.GetDomain(s), s.sessionVars.TxnCtx.SchemaVersion, physicalTableIDs))
 
-	return s.txn.Commit(sessionctx.SetCommitCtx(ctx, s))
+	return s.txn.Commit(sessionctx.SetCtxConnID(ctx, s))
 }
 
 func (s *session) doCommitWithRetry(ctx context.Context) error {

@@ -816,7 +816,7 @@ func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
 		if err != nil {
 			return err
 		}
-		err = txn.Commit(sessionctx.SetCommitCtx(context.Background(), e.ctx))
+		err = txn.Commit(sessionctx.SetCtxConnID(context.Background(), e.ctx))
 		if err != nil {
 			return err
 		}
