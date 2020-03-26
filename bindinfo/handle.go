@@ -16,7 +16,6 @@ package bindinfo
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/kv"
 	"runtime"
 	"strconv"
 	"strings"
@@ -30,6 +29,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"

@@ -15,7 +15,6 @@ package core
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/kv"
 	"strconv"
 	"strings"
 
@@ -23,6 +22,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/format"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
