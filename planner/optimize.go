@@ -112,7 +112,9 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		}
 	}
 	// If there is already a evolution task, we do not need to handle it again.
-	if sctx.GetSessionVars().EvolvePlanBaselines && binding == nil {
+	if sctx.GetSessionVars().EvolvePlanBaselines && binding == nil &&
+		!originHints.ContainTableHint(plannercore.HintReadFromStorage) &&
+		!bindRecord.Bindings[0].Hint.ContainTableHint(plannercore.HintReadFromStorage) {
 		handleEvolveTasks(ctx, sctx, bindRecord, stmtNode, bestPlanHint)
 	}
 	// Restore the hint to avoid changing the stmt node.

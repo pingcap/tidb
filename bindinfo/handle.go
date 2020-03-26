@@ -16,6 +16,7 @@ package bindinfo
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/kv"
 	"runtime"
 	"strconv"
 	"strings"
@@ -536,7 +537,11 @@ func (h *BindHandle) CaptureBaselines() {
 		}
 		h.sctx.Lock()
 		h.sctx.GetSessionVars().CurrentDB = schemas[i]
+		oriIsolationRead := h.sctx.GetSessionVars().IsolationReadEngines
+		// TODO: support all engines plan hint in capture baselines.
+		h.sctx.GetSessionVars().IsolationReadEngines = map[kv.StoreType]struct{}{kv.TiKV: {}}
 		hints, err := getHintsForSQL(h.sctx.Context, sqls[i])
+		h.sctx.GetSessionVars().IsolationReadEngines = oriIsolationRead
 		h.sctx.Unlock()
 		if err != nil {
 			logutil.BgLogger().Info("generate hints failed", zap.String("SQL", sqls[i]), zap.Error(err))
