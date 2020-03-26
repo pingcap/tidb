@@ -2027,7 +2027,6 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 			}
 			return nil
 		}
-		// Now we only allow one schema changing at the same time(except adding multi-columns).
 		return errRunMultiSchemaChanges
 	}
 
