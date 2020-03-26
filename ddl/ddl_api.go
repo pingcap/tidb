@@ -2682,9 +2682,6 @@ func (d *ddl) DropColumns(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alt
 	}
 
 	err = d.doDDLJob(ctx, job)
-	if err != nil {
-		return nil
-	}
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }
