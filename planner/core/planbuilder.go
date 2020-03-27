@@ -656,15 +656,9 @@ func (b *PlanBuilder) detectSelectWindow(sel *ast.SelectStmt) bool {
 }
 
 func checkReadEngineHasTiKV(ctx sessionctx.Context) bool {
-	globalHasTiKV := false
-	for _, engine := range config.GetGlobalConfig().IsolationRead.Engines {
-		if engine == kv.TiKV.Name() {
-			globalHasTiKV = true
-		}
-	}
 	isolationReadEngines := ctx.GetSessionVars().GetIsolationReadEngines()
-	_, sessionHasTiKV := isolationReadEngines[kv.TiKV]
-	return globalHasTiKV && sessionHasTiKV
+	_, ok := isolationReadEngines[kv.TiKV]
+	return ok
 }
 
 func getPathByIndexName(paths []*util.AccessPath, idxName model.CIStr, tblInfo *model.TableInfo) *util.AccessPath {
