@@ -636,7 +636,7 @@ func (h *BindHandle) CaptureBaselines() {
 			Collation: collation,
 		}
 		// We don't need to pass the `sctx` because they are used to generate hints and we already filled hints in.
-		err = h.addBindRecord(nil, &BindRecord{OriginalSQL: normalizedSQL, Db: schemas[i], Bindings: []Binding{binding}})
+		err = h.addBindRecord(nil, &BindRecord{OriginalSQL: normalizedSQL, Db: dbName, Bindings: []Binding{binding}})
 		if err != nil {
 			logutil.BgLogger().Info("capture baseline failed", zap.String("SQL", sqls[i]), zap.Error(err))
 		}
