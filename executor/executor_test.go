@@ -4503,6 +4503,7 @@ func (s *testSuite) TestOOMPanicAction(c *C) {
 	s.domain.ExpensiveQueryHandle().SetSessionManager(sm)
 	orgAction := config.GetGlobalConfig().OOMAction
 	setOOMAction(config.OOMActionCancel)
+	setOOMUseTmpStorage(false)
 	defer func() {
 		setOOMAction(orgAction)
 	}()
@@ -4557,6 +4558,13 @@ func setOOMAction(action string) {
 	old := config.GetGlobalConfig()
 	newConf := *old
 	newConf.OOMAction = action
+	config.StoreGlobalConfig(&newConf)
+}
+
+func setOOMUseTmpStorage(isEnable bool) {
+	old := config.GetGlobalConfig()
+	newConf := *old
+	newConf.OOMUseTmpStorage = isEnable
 	config.StoreGlobalConfig(&newConf)
 }
 

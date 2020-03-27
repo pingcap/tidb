@@ -52,7 +52,8 @@ type Tracker struct {
 	bytesLimit     int64        // bytesLimit <= 0 means no limit.
 	maxConsumed    int64        // max number of bytes consumed during execution.
 	parent         *Tracker     // The parent memory tracker.
-	overrideAction *bool        // overrideAction indicates whether the tracker would override actionOnExceed during Consume
+	overrideAction uint32       // overrideAction indicates whether the tracker would override actionOnExceed during Consume
+
 }
 
 // NewTracker creates a memory tracker.
@@ -60,11 +61,11 @@ type Tracker struct {
 //	2. "bytesLimit <= 0" means no limit.
 func NewTracker(label fmt.Stringer, bytesLimit int64) *Tracker {
 	t := &Tracker{
-		label:      label,
-		bytesLimit: bytesLimit,
+		label:          label,
+		bytesLimit:     bytesLimit,
+		overrideAction: 0,
 	}
 	t.actionMu.actionOnExceed = &LogOnExceed{}
-	t.overrideAction = nil
 	return t
 }
 
@@ -191,11 +192,16 @@ func (t *Tracker) Consume(bytes int64) {
 		}
 	}
 	if rootExceed != nil {
-		rootExceed.actionMu.Lock()
-		defer rootExceed.actionMu.Unlock()
-		if t.overrideAction != nil && *t.overrideAction && t.actionMu.actionOnExceed != nil {
-			t.actionMu.actionOnExceed.Action(t)
+		or := atomic.LoadUint32(&t.overrideAction)
+		if or > 0 {
+			t.actionMu.Lock()
+			defer t.actionMu.Unlock()
+			if t.actionMu.actionOnExceed != nil {
+				t.actionMu.actionOnExceed.Action(t)
+			}
 		} else {
+			rootExceed.actionMu.Lock()
+			defer rootExceed.actionMu.Unlock()
 			if rootExceed.actionMu.actionOnExceed != nil {
 				rootExceed.actionMu.actionOnExceed.Action(rootExceed)
 			}
@@ -274,5 +280,10 @@ func (t *Tracker) BytesToString(numBytes int64) string {
 
 // SetOverriderAction set whether enable or disable overrideAction
 func (t *Tracker) SetOverriderAction(isEnabled bool) {
-	t.overrideAction = &isEnabled
+	now := atomic.LoadUint32(&t.overrideAction)
+	if isEnabled {
+		atomic.CompareAndSwapUint32(&t.overrideAction, now, 1)
+	} else {
+		atomic.CompareAndSwapUint32(&t.overrideAction, now, 0)
+	}
 }
