@@ -847,10 +847,45 @@ func (s *testSuiteAgg) TestPR15242ShallowCopy(c *C) {
 
 func (s *testSuiteAgg) TestIssue15690(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.Se.GetSessionVars().MaxChunkSize = 2
+	// check for INT type
 	tk.MustExec(`drop table if exists t;`)
 	tk.MustExec(`create table t(a int);`)
 	tk.MustExec(`insert into t values(null),(null);`)
 	tk.MustExec(`insert into t values(0),(2),(2),(4),(8);`)
-	tk.Se.GetSessionVars().MaxChunkSize = 2
 	tk.MustQuery(`select /*+ stream_agg() */ distinct * from t;`).Check(testkit.Rows("<nil>", "0", "2", "4", "8"))
+
+	// check for FLOAT type
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a float);`)
+	tk.MustExec(`insert into t values(null),(null),(null),(null);`)
+	tk.MustExec(`insert into t values(1.1),(1.1);`)
+	tk.MustQuery(`select /*+ stream_agg() */ distinct * from t;`).Check(testkit.Rows("<nil>", "1.1"))
+
+	// check for DECIMAL type
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a decimal(5,1));`)
+	tk.MustExec(`insert into t values(null),(null),(null);`)
+	tk.MustExec(`insert into t values(1.1),(2.2),(2.2);`)
+	tk.MustQuery(`select /*+ stream_agg() */ distinct * from t;`).Check(testkit.Rows("<nil>", "1.1", "2.2"))
+
+	// check for DATETIME type
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a datetime);`)
+	tk.MustExec(`insert into t values(null);`)
+	tk.MustExec(`insert into t values("2019-03-20 21:50:00"),("2019-03-20 21:50:01"), ("2019-03-20 21:50:00");`)
+	tk.MustQuery(`select /*+ stream_agg() */ distinct * from t;`).Check(testkit.Rows("<nil>", "2019-03-20 21:50:00", "2019-03-20 21:50:01"))
+
+	// check for JSON type
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a json);`)
+	tk.MustExec(`insert into t values(null),(null),(null),(null);`)
+	tk.MustQuery(`select /*+ stream_agg() */ distinct * from t;`).Check(testkit.Rows("<nil>"))
+
+	// check for char type
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a char);`)
+	tk.MustExec(`insert into t values(null),(null),(null),(null);`)
+	tk.MustExec(`insert into t values('a'),('b');`)
+	tk.MustQuery(`select /*+ stream_agg() */ distinct * from t;`).Check(testkit.Rows("<nil>", "a", "b"))
 }

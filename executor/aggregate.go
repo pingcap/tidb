@@ -1239,16 +1239,27 @@ func (e *vecGroupChecker) evalGroupItemsAndResolveGroups(item expression.Express
 			lastRowDatum.SetMysqlDuration(types.Duration{Duration: vals[numRows-1], Fsp: int8(item.GetType().Decimal)})
 		}
 	case types.ETJson:
-		previousKey := col.GetJSON(0)
+		var previousKey, key json.BinaryJSON
+		if !previousIsNull {
+			previousKey = col.GetJSON(0)
+		}
 		for i := 1; i < numRows; i++ {
-			key := col.GetJSON(i)
 			isNull := col.IsNull(i)
+			if !isNull {
+				key = col.GetJSON(i)
+			}
 			if e.sameGroup[i] {
-				if isNull != previousIsNull || json.CompareBinary(previousKey, key) != 0 {
+				if isNull == previousIsNull {
+					if !isNull && json.CompareBinary(previousKey, key) != 0 {
+						e.sameGroup[i] = false
+					}
+				} else {
 					e.sameGroup[i] = false
 				}
 			}
-			previousKey = key
+			if !isNull {
+				previousKey = key
+			}
 			previousIsNull = isNull
 		}
 		if col.IsNull(0) {

@@ -711,7 +711,7 @@ func (s *testExecSuite) TestMergeJoinRequiredRows(c *C) {
 	}
 }
 
-func genTestChunk4VecGroupChecker(chkRows []int, sameNum int) (expr []expression.Expression, inputs []*chunk.Chunk) {
+func genTestChunk4VecGroupChecker(chkRows []int, sameNum int, haveNull bool) (expr []expression.Expression, inputs []*chunk.Chunk) {
 	chkNum := len(chkRows)
 	inputs = make([]*chunk.Chunk, chkNum)
 	fts := make([]*types.FieldType, 1)
@@ -721,7 +721,12 @@ func genTestChunk4VecGroupChecker(chkRows []int, sameNum int) (expr []expression
 	}
 
 	cnt := 0
-	val := 0
+	var val int64
+	if haveNull {
+		val = -1
+	} else {
+		val = 0
+	}
 	for i := 0; i < chkNum; i++ {
 		col := inputs[i].Column(0)
 		col.ResizeInt64(chkRows[i], false)
@@ -731,7 +736,11 @@ func genTestChunk4VecGroupChecker(chkRows []int, sameNum int) (expr []expression
 				val++
 				cnt = 0
 			}
-			i64s[j] = int64(val)
+			if val == -1 {
+				col.SetNull(j, true)
+			} else {
+				i64s[j] = val
+			}
 			cnt++
 		}
 	}
@@ -750,36 +759,55 @@ func (s *testExecSuite) TestVecGroupChecker(c *C) {
 		expectedGroups int
 		expectedFlag   []bool
 		sameNum        int
+		haveNull       bool
 	}{
 		{
 			chunkRows:      []int{1024, 1},
 			expectedGroups: 1025,
 			expectedFlag:   []bool{false, false},
 			sameNum:        1,
+			haveNull:       false,
 		},
 		{
 			chunkRows:      []int{1024, 1},
 			expectedGroups: 1,
 			expectedFlag:   []bool{false, true},
 			sameNum:        1025,
+			haveNull:       false,
 		},
 		{
 			chunkRows:      []int{1, 1},
 			expectedGroups: 1,
 			expectedFlag:   []bool{false, true},
 			sameNum:        2,
+			haveNull:       false,
 		},
 		{
 			chunkRows:      []int{1, 1},
 			expectedGroups: 2,
 			expectedFlag:   []bool{false, false},
 			sameNum:        1,
+			haveNull:       false,
+		},
+		{
+			chunkRows:      []int{2, 2},
+			expectedGroups: 2,
+			expectedFlag:   []bool{false, false},
+			sameNum:        2,
+			haveNull:       true,
+		},
+		{
+			chunkRows:      []int{2, 2},
+			expectedGroups: 1,
+			expectedFlag:   []bool{false, true},
+			sameNum:        4,
+			haveNull:       true,
 		},
 	}
 
 	ctx := mock.NewContext()
 	for _, testCase := range testCases {
-		expr, inputChks := genTestChunk4VecGroupChecker(testCase.chunkRows, testCase.sameNum)
+		expr, inputChks := genTestChunk4VecGroupChecker(testCase.chunkRows, testCase.sameNum, testCase.haveNull)
 		groupChecker := newVecGroupChecker(ctx, expr)
 		groupNum := 0
 		for i, inputChk := range inputChks {
