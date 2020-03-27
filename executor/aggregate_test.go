@@ -346,10 +346,11 @@ func (s *testSuiteAgg) TestAggregation(c *C) {
 	tk.MustQuery("select group_concat(a), group_concat(distinct a) from t").Check(testkit.Rows("<nil> <nil>"))
 	tk.MustExec("insert into t value(1, null), (null, 1), (1, 2), (3, 4)")
 	tk.MustQuery("select group_concat(a, b), group_concat(distinct a,b) from t").Check(testkit.Rows("12,34 12,34"))
+	tk.MustExec("set @@session.tidb_opt_distinct_agg_push_down = 0")
 	tk.MustQuery("select count(distinct a) from t;").Check(testkit.Rows("2"))
-	tk.MustExec("set @@session.tidb_distinct_agg_push_down = 1")
+	tk.MustExec("set @@session.tidb_opt_distinct_agg_push_down = 1")
 	tk.MustQuery("select count(distinct a) from t;").Check(testkit.Rows("2"))
-	tk.MustExec("set @@session.tidb_distinct_agg_push_down = 0")
+	tk.MustExec("set @@session.tidb_opt_distinct_agg_push_down = 0")
 
 	tk.MustExec("drop table t")
 	tk.MustExec("create table t(a decimal(10, 4))")
