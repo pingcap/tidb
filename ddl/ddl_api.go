@@ -2346,41 +2346,52 @@ func (d *ddl) AddColumns(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alte
 	}
 
 	// Check all the columns at once.
-	newColumnsCount := 0
 	addingColumnNames := make(map[string]bool)
+	dupColumnNames := make(map[string]bool)
 	for _, spec := range specs {
 		for _, specNewColumn := range spec.NewColumns {
-			newColumnsCount++
 			if !addingColumnNames[specNewColumn.Name.Name.L] {
 				addingColumnNames[specNewColumn.Name.Name.L] = true
 			} else {
+				if spec.IfNotExists {
+					dupColumnNames[specNewColumn.Name.Name.L] = true
+					continue
+				}
 				return errors.Trace(infoschema.ErrColumnExists.GenWithStackByArgs(specNewColumn.Name.Name.O))
 			}
 		}
 	}
-	if err = checkAddColumnTooManyColumns(len(t.Cols()) + newColumnsCount); err != nil {
-		return errors.Trace(err)
-	}
-	columns := make([]*table.Column, newColumnsCount)
-	positions := make([]*ast.ColumnPosition, newColumnsCount)
-	offsets := make([]int, newColumnsCount)
-	index := 0
+	columns := make([]*table.Column, 0)
+	positions := make([]*ast.ColumnPosition, 0)
+	offsets := make([]int, 0)
+	newColumnsCount := 0
 	// Check the columns one by one.
 	for _, spec := range specs {
 		for _, specNewColumn := range spec.NewColumns {
+			if spec.IfNotExists && dupColumnNames[specNewColumn.Name.Name.L] {
+				err = infoschema.ErrColumnExists.GenWithStackByArgs(specNewColumn.Name.Name.O)
+				ctx.GetSessionVars().StmtCtx.AppendNote(err)
+				continue
+			}
 			col, err := checkAndCreateNewColumn(ctx, ti, schema, spec, t, specNewColumn)
 			if err != nil {
 				return errors.Trace(err)
 			}
 			// Added column has existed and if_not_exists flag is true.
-			if col == nil {
-				break
+			if col == nil && spec.IfNotExists {
+				continue
 			}
-			columns[index] = col
-			positions[index] = spec.Position
-			offsets[index] = 0
-			index++
+			columns = append(columns, col)
+			positions = append(positions, spec.Position)
+			offsets = append(offsets, 0)
+			newColumnsCount++
 		}
+	}
+	if newColumnsCount == 0 {
+		return nil
+	}
+	if err = checkAddColumnTooManyColumns(len(t.Cols()) + newColumnsCount); err != nil {
+		return errors.Trace(err)
 	}
 
 	job := &model.Job{
@@ -2625,27 +2636,42 @@ func (d *ddl) DropColumns(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alt
 	tblInfo := t.Meta()
 
 	dropingColumnNames := make(map[string]bool)
+	dupColumnNames := make(map[string]bool)
 	for _, spec := range specs {
 		if !dropingColumnNames[spec.OldColumnName.Name.L] {
 			dropingColumnNames[spec.OldColumnName.Name.L] = true
 		} else {
-			return errors.Trace(infoschema.ErrColumnExists.GenWithStackByArgs(spec.OldColumnName.Name.O))
+			if spec.IfExists {
+				dupColumnNames[spec.OldColumnName.Name.L] = true
+				continue
+			}
+			return errors.Trace(ErrCantDropFieldOrKey.GenWithStack("column %s doesn't exist", spec.OldColumnName.Name.O))
 		}
-	}
-	if len(tblInfo.Columns) == len(specs) {
-		return ErrCantRemoveAllFields.GenWithStack("can't drop all columns in table %s",
-			tblInfo.Name)
 	}
 
 	var colNames []model.CIStr
 	for _, spec := range specs {
+		if spec.IfExists && dupColumnNames[spec.OldColumnName.Name.L] {
+			err = ErrCantDropFieldOrKey.GenWithStack("column %s doesn't exist", spec.OldColumnName.Name.L)
+			ctx.GetSessionVars().StmtCtx.AppendNote(err)
+			continue
+		}
 		isDropable, err := checkIsDroppableColumn(ctx, t, spec)
 		if err != nil {
 			return err
 		}
-		if isDropable {
-			colNames = append(colNames, spec.OldColumnName.Name)
+		// Column can't drop and if_exists flag is true.
+		if !isDropable && spec.IfExists {
+			continue
 		}
+		colNames = append(colNames, spec.OldColumnName.Name)
+	}
+	if len(colNames) == 0 {
+		return nil
+	}
+	if len(tblInfo.Columns) == len(colNames) {
+		return ErrCantRemoveAllFields.GenWithStack("can't drop all columns in table %s",
+			tblInfo.Name)
 	}
 
 	job := &model.Job{

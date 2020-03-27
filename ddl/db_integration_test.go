@@ -357,6 +357,46 @@ func (s *testIntegrationSuite1) TestIssue4432(c *C) {
 	tk.MustExec("drop table tx")
 }
 
+func (s *testIntegrationSuite1) TestIssue5092(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t_issue_5092 (a int)")
+	tk.MustExec("alter table t_issue_5092 add column (b int, c int)")
+	tk.MustExec("alter table t_issue_5092 add column if not exists (b int, c int)")
+	tk.MustExec("alter table t_issue_5092 add column b1 int after b, add column c1 int after c")
+	// The following two statements are consistent with MariaDB.
+	tk.MustGetErrCode("alter table t_issue_5092 add column if not exists d int, add column d int", errno.ErrDupFieldName)
+	tk.MustExec("alter table t_issue_5092 add column d int, add column if not exists d int")
+	tk.MustExec("alter table t_issue_5092 add column if not exists (d int, e int), add column f int")
+	tk.MustExec("alter table t_issue_5092 add column b2 int after b1, add column c2 int first")
+	tk.MustExec("drop table t_issue_5092")
+
+	tk.MustExec("create table t_issue_5092 (a int default 1)")
+	tk.MustExec("alter table t_issue_5092 add column (b int default 2, c int default 3)")
+	tk.MustExec("alter table t_issue_5092 add column b1 int default 22 after b, add column c1 int default 33 after c")
+	tk.MustExec("insert into t_issue_5092 value ()")
+	tk.MustQuery("select * from t_issue_5092").Check(testkit.Rows("1 2 22 3 33"))
+	tk.MustExec("alter table t_issue_5092 add column d int default 4 after c1, add column aa int default 0 first")
+	tk.MustQuery("select * from t_issue_5092").Check(testkit.Rows("0 1 2 22 3 33 4"))
+	tk.MustExec("drop table t_issue_5092")
+
+	tk.MustExec("create table t_issue_5092 (a int)")
+	tk.MustExec("alter table t_issue_5092 add column (b int, c int)")
+	tk.MustExec("alter table t_issue_5092 drop column b,drop column c")
+	tk.MustGetErrCode("alter table t_issue_5092 drop column c, drop column c", errno.ErrCantDropFieldOrKey)
+	tk.MustExec("alter table t_issue_5092 drop column if exists b,drop column if exists c")
+	tk.MustGetErrCode("alter table t_issue_5092 drop column g, drop column d", errno.ErrCantDropFieldOrKey)
+	tk.MustExec("drop table t_issue_5092")
+
+	tk.MustExec("create table t_issue_5092 (a int)")
+	tk.MustExec("alter table t_issue_5092 add column (b int, c int)")
+	tk.MustGetErrCode("alter table t_issue_5092 drop column if exists a, drop column b, drop column c", errno.ErrCantRemoveAllFields)
+	tk.MustGetErrCode("alter table t_issue_5092 drop column if exists c, drop column c", errno.ErrCantDropFieldOrKey)
+	tk.MustExec("alter table t_issue_5092 drop column c, drop column if exists c")
+	tk.MustExec("drop table t_issue_5092")
+}
+
 func (s *testIntegrationSuite5) TestErrnoErrorCode(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test_db")
@@ -489,7 +529,7 @@ func (s *testIntegrationSuite5) TestErrnoErrorCode(c *C) {
 	sql = "alter table test_drop_columns drop column c1, add column c2 int;"
 	tk.MustGetErrCode(sql, errno.ErrUnsupportedDDLOperation)
 	sql = "alter table test_drop_columns drop column c1, drop column c1;"
-	tk.MustGetErrCode(sql, errno.ErrDupFieldName)
+	tk.MustGetErrCode(sql, errno.ErrCantDropFieldOrKey)
 	// add index
 	sql = "alter table test_error_code_succ add index idx (c_not_exist)"
 	tk.MustGetErrCode(sql, errno.ErrKeyColumnDoesNotExits)
