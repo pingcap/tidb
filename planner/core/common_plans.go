@@ -320,8 +320,9 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	}
 	e.names = names
 	e.Plan = p
+	isRange := e.isRangePartition(p)
 	_, isTableDual := p.(*PhysicalTableDual)
-	if !isTableDual && prepared.UseCache {
+	if !isTableDual && prepared.UseCache && !isRange {
 		cached := NewPSTMTPlanCacheValue(p, names)
 		preparedStmt.NormalizedPlan, preparedStmt.PlanDigest = NormalizePlan(p)
 		stmtCtx.SetPlanDigest(preparedStmt.NormalizedPlan, preparedStmt.PlanDigest)
@@ -386,7 +387,7 @@ func (e *Execute) rebuildRange(p Plan) error {
 			if err != nil {
 				return err
 			}
-			if ts.Table.Partition != nil {
+			if ts.Table.Partition != nil && ts.Table.Partition.Type == model.PartitionTypeHash {
 				pID, err := rebuildNewTableIDFromTable(e.ctx, ts, sc, pkCol)
 				if err != nil {
 					return err
@@ -404,7 +405,7 @@ func (e *Execute) rebuildRange(p Plan) error {
 		if err != nil {
 			return err
 		}
-		if is.Table.Partition != nil {
+		if is.Table.Partition != nil && is.Table.Partition.Type == model.PartitionTypeHash {
 			pID, err := rebuildNewTableIDFromIndex(e.ctx, is, sc)
 			if err != nil {
 				return err
@@ -419,7 +420,7 @@ func (e *Execute) rebuildRange(p Plan) error {
 		if err != nil {
 			return err
 		}
-		if is.Table.Partition != nil {
+		if is.Table.Partition != nil && is.Table.Partition.Type == model.PartitionTypeHash {
 			pID, err := rebuildNewTableIDFromIndex(e.ctx, is, sc)
 			if err != nil {
 				return err
@@ -496,6 +497,36 @@ func (e *Execute) rebuildRange(p Plan) error {
 	return nil
 }
 
+func checkRangePartitionInfo(pi *model.PartitionInfo) bool {
+	if pi != nil && pi.Type == model.PartitionTypeRange {
+		return true
+	}
+	return false
+}
+
+// Prepare plan cache is not support query plan on range partition table.
+func (e *Execute) isRangePartition(p Plan) bool {
+	isRange := false
+	switch x := p.(type) {
+	case *PhysicalTableReader:
+		ts := x.TablePlans[0].(*PhysicalTableScan)
+		return checkRangePartitionInfo(ts.Table.Partition)
+	case *PhysicalIndexLookUpReader:
+		is := x.IndexPlans[0].(*PhysicalIndexScan)
+		return checkRangePartitionInfo(is.Table.Partition)
+	case *PhysicalIndexReader:
+		is := x.IndexPlans[0].(*PhysicalIndexScan)
+		return checkRangePartitionInfo(is.Table.Partition)
+	case PhysicalPlan:
+		for _, child := range x.Children() {
+			if e.isRangePartition(child) {
+				isRange = true
+			}
+		}
+	}
+	return isRange
+}
+
 func (e *Execute) buildRangeForIndexScan(sctx sessionctx.Context, is *PhysicalIndexScan) ([]*ranger.Range, error) {
 	if len(is.IdxCols) == 0 {
 		return ranger.FullRange(), nil
@@ -535,6 +566,8 @@ const (
 	OpCaptureBindings
 	// OpEvolveBindings is used to evolve plan binding.
 	OpEvolveBindings
+	// OpReloadBindings is used to reload plan binding.
+	OpReloadBindings
 )
 
 // SQLBindPlan represents a plan for SQL bind.

@@ -121,16 +121,19 @@ func (s *testConfigSuite) TestPDConfHandler(c *C) {
 		return tmCh
 	}
 	cnt := 0
-	var registerWg, reloadWg sync.WaitGroup
+	var registerWg, reloadWg, reloadWg2 sync.WaitGroup
 	registerWg.Add(1)
 	reloadWg.Add(1)
+	reloadWg2.Add(1)
 	mockReloadFunc := func(oldConf, newConf *Config) {
 		if cnt == 0 {
 			registerWg.Done()
-		} else {
+		} else if cnt == 1 {
 			c.Assert(oldConf.Performance.MaxMemory, Equals, uint64(233))
 			c.Assert(newConf.Performance.MaxMemory, Equals, uint64(123))
 			reloadWg.Done()
+		} else {
+			reloadWg2.Done()
 		}
 		cnt++
 	}
@@ -151,6 +154,9 @@ func (s *testConfigSuite) TestPDConfHandler(c *C) {
 	mockPDConfigClient0.confContent.Store(newContent)
 	tmCh <- time.Now()
 	reloadWg.Wait()
+
+	tmCh <- time.Now() // wait for another reloading to ensure the global config has been updated
+	reloadWg2.Wait()
 	c.Assert(ch.GetConfig().Performance.MaxMemory, Equals, uint64(123))
 	ch.Close()
 }
