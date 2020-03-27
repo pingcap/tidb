@@ -74,6 +74,32 @@
         "Warn": null
       },
       {
+        "SQL": "desc select /*+ READ_FROM_STORAGE(TIKV[t1], TIKV[t2]) */ * from t t1, t t2 where t1.a = t2.a",
+        "Plan": [
+          "HashJoin_37 12487.50 root  inner join, equal:[eq(test.t.a, test.t.a)]",
+          "├─TableReader_55(Build) 9990.00 root  data:Selection_54",
+          "│ └─Selection_54 9990.00 cop[tikv]  not(isnull(test.t.a))",
+          "│   └─TableFullScan_53 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader_49(Probe) 9990.00 root  data:Selection_48",
+          "  └─Selection_48 9990.00 cop[tikv]  not(isnull(test.t.a))",
+          "    └─TableFullScan_47 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "desc select /*+ READ_FROM_STORAGE(TIKV[t1], TIFLASH[t2]) */ * from t t1, t t2 where t1.a = t2.a",
+        "Plan": [
+          "HashJoin_23 12487.50 root  inner join, equal:[eq(test.t.a, test.t.a)]",
+          "├─TableReader_31(Build) 9990.00 root  data:Selection_30",
+          "│ └─Selection_30 9990.00 cop[tiflash]  not(isnull(test.t.a))",
+          "│   └─TableFullScan_29 10000.00 cop[tiflash] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader_34(Probe) 9990.00 root  data:Selection_33",
+          "  └─Selection_33 9990.00 cop[tikv]  not(isnull(test.t.a))",
+          "    └─TableFullScan_32 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
         "SQL": "desc select * from tt where (tt.a > 1 and tt.a < 20) or (tt.a >= 30 and tt.a < 55)",
         "Plan": [
           "TableReader_8 44.00 root  data:TableRangeScan_7",
@@ -151,6 +177,25 @@
         ],
         "Warn": [
           "[planner:1815]No available path for table test.t with the store type tiflash of the hint /*+ read_from_storage */, please check the status of the table replica and variable value of tidb_isolation_read_engines(map[0:{}])"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestIsolationReadTiFlashNotChoosePointGet",
+    "Cases": [
+      {
+        "SQL": "explain select * from t where t.a = 1",
+        "Result": [
+          "TableReader_6 1.00 root  data:TableRangeScan_5",
+          "└─TableRangeScan_5 1.00 cop[tiflash] table:t range:[1,1], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select * from t where t.a in (1, 2)",
+        "Result": [
+          "TableReader_6 2.00 root  data:TableRangeScan_5",
+          "└─TableRangeScan_5 2.00 cop[tiflash] table:t range:[1,1], [2,2], keep order:false, stats:pseudo"
         ]
       }
     ]

@@ -80,5 +80,17 @@
       "desc select * from t t1, (select /*+ HASH_AGG() */ b, max(a) from t t2 group by b) t2 where t1.b = t2.b order by t1.b",
       "desc select /*+ INL_HASH_JOIN(t2) */ distinct t2.a from t t1 join t t2 on t1.a = t2.a"
     ]
+  },
+  {
+    "name": "TestIndexHintWarning",
+    "cases": [
+      "select /*+ USE_INDEX(t1, j) */ * from t1",
+      "select /*+ IGNORE_INDEX(t1, j) */ * from t1",
+      "select /*+ USE_INDEX(t2, a, b, c) */ * from t1",
+      "select /*+ USE_INDEX(t2) */ * from t1",
+      "select /*+ USE_INDEX(t1, a), USE_INDEX(t2, a), USE_INDEX(t3, a) */ * from t1, t2 where t1.a=t2.a",
+      "select /*+ USE_INDEX(t3, a), USE_INDEX(t4, b), IGNORE_INDEX(t3, a) */ * from t1, t2 where t1.a=t2.a",
+      "select /*+ USE_INDEX_MERGE(t3, a, b, d) */ * from t1"
+    ]
   }
 ]

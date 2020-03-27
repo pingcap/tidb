@@ -14,6 +14,8 @@
       "desc select /*+ read_from_storage(tiflash[t]) */ sum(a) from t",
       "desc select /*+ read_from_storage(tiflash[t]) */ sum(a+1) from t",
       "desc select /*+ read_from_storage(tiflash[t]) */ sum(isnull(a)) from t",
+      "desc select /*+ READ_FROM_STORAGE(TIKV[t1], TIKV[t2]) */ * from t t1, t t2 where t1.a = t2.a",
+      "desc select /*+ READ_FROM_STORAGE(TIKV[t1], TIFLASH[t2]) */ * from t t1, t t2 where t1.a = t2.a",
       "desc select * from tt where (tt.a > 1 and tt.a < 20) or (tt.a >= 30 and tt.a < 55)",
       "desc select /*+ read_from_storage(tiflash[tt]) */ * from tt where (tt.a > 1 and tt.a < 20) or (tt.a >= 30 and tt.a < 55)",
       "desc select * from ttt order by ttt.a desc",
@@ -27,6 +29,13 @@
       "desc select /*+ read_from_storage(tikv[t], tiflash[t]) */ avg(a) from t",
       "desc select /*+ read_from_storage(tikv[t]) */ avg(a) from t",
       "desc select /*+ read_from_storage(tiflash[t]) */ avg(a) from t"
+    ]
+  },
+  {
+    "name": "TestIsolationReadTiFlashNotChoosePointGet",
+    "cases": [
+      "explain select * from t where t.a = 1",
+      "explain select * from t where t.a in (1, 2)"
     ]
   }
 ]
