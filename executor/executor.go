@@ -945,7 +945,7 @@ func doLockKeys(ctx context.Context, se sessionctx.Context, lockCtx *kv.LockCtx,
 	if err != nil {
 		return err
 	}
-	return txn.LockKeys(context.WithValue(ctx, sessionctx.ConnID, se.GetSessionVars().ConnectionID), lockCtx, keys...)
+	return txn.LockKeys(ctx, lockCtx, keys...)
 }
 
 // LimitExec represents limit executor
