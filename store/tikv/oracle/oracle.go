@@ -50,7 +50,7 @@ func ComposeTS(physical, logical int64) uint64 {
 			newPhyTs := origPhyTS + int64(valInt)
 			origTS := uint64((physical << physicalShiftBits) + logical)
 			newTS := uint64((newPhyTs << physicalShiftBits) + logical)
-			logutil.BgLogger().Info("[for debug] changed", zap.Uint64("origTS", origTS),
+			logutil.BgLogger().Warn("ComposeTS failpoint", zap.Uint64("origTS", origTS),
 				zap.Int("valInt", valInt), zap.Uint64("ts", newTS))
 			failpoint.Return(newTS)
 		}

@@ -464,6 +464,7 @@ func (c *twoPhaseCommitter) doActionOnMutations(bo *Backoffer, action twoPhaseCo
 	_, actionIsCommit := action.(actionCommit)
 	_, actionIsCleanup := action.(actionCleanup)
 	_, actionIsPessimiticLock := action.(actionPessimisticLock)
+
 	failpoint.Inject("skipKeyReturnOK", func(val failpoint.Value) {
 		valStr, ok := val.(string)
 		if ok && c.connID > 0 {
@@ -487,6 +488,7 @@ func (c *twoPhaseCommitter) doActionOnMutations(bo *Backoffer, action twoPhaseCo
 			failpoint.Return(nil)
 		}
 	})
+
 	if firstIsPrimary && (actionIsCommit || actionIsCleanup || actionIsPessimiticLock) {
 		// primary should be committed/cleanup/pessimistically locked first
 		err = c.doActionOnBatches(bo, action, batches[:1])
@@ -1219,6 +1221,10 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 		err = errors.Errorf("conn %d txn takes too much time, txnStartTS: %d, comm: %d",
 			c.connID, c.startTS, c.commitTS)
 		return err
+	}
+
+	if c.connID > 0 {
+		failpoint.Inject("beforeCommit", func() {})
 	}
 
 	start = time.Now()
