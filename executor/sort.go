@@ -249,6 +249,7 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 			e.generatePartition()
 		}
 		e.rowChunks.SetOnExceededCallback(onExceededCallback)
+		e.memTracker.SetOverriderAction(true)
 	}
 	for {
 		chk := newFirstChunk(e.children[0])
