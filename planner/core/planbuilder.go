@@ -724,7 +724,8 @@ func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tbl ta
 
 		if !isolationReadEnginesHasTiKV {
 			if hint.IndexNames != nil {
-				err := errors.New("TiDB doesn't support index in the isolation read engines")
+				engineVals, _ := b.ctx.GetSessionVars().GetSystemVar(variable.TiDBIsolationReadEngines)
+				err := errors.New(fmt.Sprintf("TiDB doesn't support index in the isolation read engines(value: '%v')", engineVals))
 				if i < indexHintsLen {
 					return nil, err
 				}
