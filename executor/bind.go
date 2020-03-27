@@ -73,7 +73,7 @@ func (e *SQLBindExec) dropSQLBind() error {
 		return handle.DropBindRecord(e.normdOrigSQL, e.db, bindInfo)
 	}
 	if variable.TiDBOptOn(variable.CapturePlanBaseline.GetVal()) {
-		e.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("SQL bindings are captured automatically, please set tidb_capture_plan_baselines to false before deleting"))
+		e.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("This global binding might be captured back, to forbid that, please set global tidb_capture_plan_baselines=false"))
 	}
 	return domain.GetDomain(e.ctx).BindHandle().DropBindRecord(e.normdOrigSQL, e.db, bindInfo)
 }
