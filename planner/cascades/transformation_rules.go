@@ -432,7 +432,7 @@ func (r *PushAggDownGather) OnTransform(old *memo.ExprIter) (newExprs []*memo.Gr
 	copy(gbyItems, agg.GroupByItems)
 
 	partialPref, finalPref, funcMap := plannercore.BuildFinalModeAggregation(agg.SCtx(),
-		&plannercore.AggPref{
+		&plannercore.AggInfo{
 			AggFuncs:     aggFuncs,
 			GroupByItems: gbyItems,
 			Schema:       aggSchema,

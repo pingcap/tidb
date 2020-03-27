@@ -1016,8 +1016,8 @@ func CheckAggCanPushCop(sctx sessionctx.Context, aggFuncs []*aggregation.AggFunc
 	return expression.CanExprsPushDown(sc, groupByItems, client, storeType)
 }
 
-// AggPref stores the preferences of Aggregation.
-type AggPref struct {
+// AggInfo stores the information of an Aggregation.
+type AggInfo struct {
 	AggFuncs     []*aggregation.AggFuncDesc
 	GroupByItems []expression.Expression
 	Schema       *expression.Schema
@@ -1026,16 +1026,16 @@ type AggPref struct {
 // BuildFinalModeAggregation splits either LogicalAggregation or PhysicalAggregation to finalAgg and partial1Agg,
 // returns the body of finalAgg and the schema of partialAgg.
 func BuildFinalModeAggregation(
-	sctx sessionctx.Context, original *AggPref) (partial, final *AggPref, funcMap map[*aggregation.AggFuncDesc]*aggregation.AggFuncDesc) {
+	sctx sessionctx.Context, original *AggInfo) (partial, final *AggInfo, funcMap map[*aggregation.AggFuncDesc]*aggregation.AggFuncDesc) {
 
 	funcMap = make(map[*aggregation.AggFuncDesc]*aggregation.AggFuncDesc, len(original.AggFuncs))
-	partial = &AggPref{
+	partial = &AggInfo{
 		AggFuncs:     make([]*aggregation.AggFuncDesc, 0, len(original.AggFuncs)),
 		GroupByItems: original.GroupByItems,
 		Schema:       expression.NewSchema(),
 	}
 	partialCursor := 0
-	final = &AggPref{
+	final = &AggInfo{
 		AggFuncs:     make([]*aggregation.AggFuncDesc, len(original.AggFuncs)),
 		GroupByItems: make([]expression.Expression, 0, len(original.GroupByItems)),
 		Schema:       original.Schema,
@@ -1142,7 +1142,7 @@ func (p *basePhysicalAgg) newPartialAggregate(copTaskType kv.StoreType) (partial
 	if !CheckAggCanPushCop(p.ctx, p.AggFuncs, p.GroupByItems, copTaskType) {
 		return nil, p.self
 	}
-	partialPref, finalPref, funcMap := BuildFinalModeAggregation(p.ctx, &AggPref{
+	partialPref, finalPref, funcMap := BuildFinalModeAggregation(p.ctx, &AggInfo{
 		AggFuncs:     p.AggFuncs,
 		GroupByItems: p.GroupByItems,
 		Schema:       p.Schema(),
