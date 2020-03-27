@@ -26,19 +26,19 @@ func Cacheable(node ast.Node) bool {
 	switch node.(type) {
 	case *ast.SelectStmt:
 		for _, hints := range (node.(*ast.SelectStmt)).TableHints {
-			if hints.HintName.L == "ignore_plan_cache" {
+			if hints.HintName.L == HintIgnorePlanCache {
 				return false
 			}
 		}
 	case *ast.DeleteStmt:
 		for _, hints := range (node.(*ast.DeleteStmt)).TableHints {
-			if hints.HintName.L == "ignore_plan_cache" {
+			if hints.HintName.L == HintIgnorePlanCache {
 				return false
 			}
 		}
 	case *ast.UpdateStmt:
 		for _, hints := range (node.(*ast.UpdateStmt)).TableHints {
-			if hints.HintName.L == "ignore_plan_cache" {
+			if hints.HintName.L == HintIgnorePlanCache {
 				return false
 			}
 		}
