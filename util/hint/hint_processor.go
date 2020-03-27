@@ -232,11 +232,15 @@ const (
 	defaultSelectBlockPrefix = "sel_"
 )
 
+// NodeType indicates if the node is for SELECT / UPDATE / DELETE.
 type NodeType int
 
 const (
+	// TypeUpdate for Update.
 	TypeUpdate NodeType = iota
+	// TypeDelete for DELETE.
 	TypeDelete
+	// TypeSelect for SELECT.
 	TypeSelect
 )
 
