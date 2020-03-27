@@ -201,10 +201,7 @@ func buildAvg(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordi
 		case mysql.TypeNewDecimal:
 			return &avgPartial4Decimal{baseAvgDecimal{base}}
 		case mysql.TypeDouble:
-			if ctx.GetSessionVars().WindowingUseHighPrecision {
-				return &avgPartial4Float64HighPrecision{baseAvgFloat64{base}}
-			}
-			return &avgPartial4Float64{avgPartial4Float64HighPrecision{baseAvgFloat64{base}}}
+			return &avgPartial4Float64{baseAvgFloat64{base}}
 		}
 	}
 	return nil

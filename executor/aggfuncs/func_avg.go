@@ -112,11 +112,6 @@ func (e *avgOriginal4Decimal) Slide(sctx sessionctx.Context, rows []chunk.Row, l
 		if isNull {
 			continue
 		}
-		if p.count == 0 {
-			p.sum = *input
-			p.count = 1
-			continue
-		}
 		newSum := new(types.MyDecimal)
 		err = types.DecimalAdd(&p.sum, input, newSum)
 		if err != nil {
@@ -174,62 +169,6 @@ func (e *avgPartial4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 		}
 		p.sum = *newSum
 		p.count += inputCount
-	}
-	return nil
-}
-
-func (e *avgPartial4Decimal) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
-	p := (*partialResult4AvgDecimal)(pr)
-	for i := uint64(0); i < shiftEnd; i++ {
-		input, isNull, err := e.args[1].EvalDecimal(sctx, rows[lastEnd+i])
-		if err != nil {
-			return err
-		}
-		if isNull {
-			continue
-		}
-		inputCount, isNull, err := e.args[0].EvalInt(sctx, rows[lastEnd+i])
-		if err != nil {
-			return err
-		}
-		if isNull {
-			continue
-		}
-		if p.count == 0 {
-			p.sum = *input
-			p.count = inputCount
-			continue
-		}
-		newSum := new(types.MyDecimal)
-		err = types.DecimalAdd(&p.sum, input, newSum)
-		if err != nil {
-			return err
-		}
-		p.sum = *newSum
-		p.count += inputCount
-	}
-	for i := uint64(0); i < shiftStart; i++ {
-		input, isNull, err := e.args[1].EvalDecimal(sctx, rows[lastStart+i])
-		if err != nil {
-			return err
-		}
-		if isNull {
-			continue
-		}
-		inputCount, isNull, err := e.args[0].EvalInt(sctx, rows[lastStart+i])
-		if err != nil {
-			return err
-		}
-		if isNull {
-			continue
-		}
-		newSum := new(types.MyDecimal)
-		err = types.DecimalSub(&p.sum, input, newSum)
-		if err != nil {
-			return err
-		}
-		p.sum = *newSum
-		p.count -= inputCount
 	}
 	return nil
 }
@@ -414,11 +353,11 @@ func (e *avgOriginal4Float64) Slide(sctx sessionctx.Context, rows []chunk.Row, l
 	return nil
 }
 
-type avgPartial4Float64HighPrecision struct {
+type avgPartial4Float64 struct {
 	baseAvgFloat64
 }
 
-func (e *avgPartial4Float64HighPrecision) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
+func (e *avgPartial4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
 	p := (*partialResult4AvgFloat64)(pr)
 	for _, row := range rowsInGroup {
 		inputSum, isNull, err := e.args[1].EvalReal(sctx, row)
@@ -442,55 +381,10 @@ func (e *avgPartial4Float64HighPrecision) UpdatePartialResult(sctx sessionctx.Co
 	return nil
 }
 
-func (e *avgPartial4Float64HighPrecision) MergePartialResult(sctx sessionctx.Context, src PartialResult, dst PartialResult) error {
+func (e *avgPartial4Float64) MergePartialResult(sctx sessionctx.Context, src PartialResult, dst PartialResult) error {
 	p1, p2 := (*partialResult4AvgFloat64)(src), (*partialResult4AvgFloat64)(dst)
 	p2.sum += p1.sum
 	p2.count += p1.count
-	return nil
-}
-
-type avgPartial4Float64 struct {
-	avgPartial4Float64HighPrecision
-}
-
-func (e *avgPartial4Float64) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
-	p := (*partialResult4AvgFloat64)(pr)
-	for i := uint64(0); i < shiftEnd; i++ {
-		input, isNull, err := e.args[1].EvalReal(sctx, rows[lastEnd+i])
-		if err != nil {
-			return err
-		}
-		if isNull {
-			continue
-		}
-		inputCount, isNull, err := e.args[0].EvalInt(sctx, rows[lastEnd+i])
-		if err != nil {
-			return err
-		}
-		if isNull {
-			continue
-		}
-		p.sum += input
-		p.count += inputCount
-	}
-	for i := uint64(0); i < shiftStart; i++ {
-		input, isNull, err := e.args[1].EvalReal(sctx, rows[lastStart+i])
-		if err != nil {
-			return err
-		}
-		if isNull {
-			continue
-		}
-		inputCount, isNull, err := e.args[0].EvalInt(sctx, rows[lastStart+i])
-		if err != nil {
-			return err
-		}
-		if isNull {
-			continue
-		}
-		p.sum -= input
-		p.count -= inputCount
-	}
 	return nil
 }
 
