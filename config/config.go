@@ -695,15 +695,11 @@ func InitializeConfig(confPath string, configCheck, configStrict bool, reloadFun
 		if err = cfg.Load(confPath); err != nil {
 			// Unused config item error turns to warnings.
 			if tmp, ok := err.(*ErrConfigValidationFailed); ok {
-				if isAllDeprecatedConfigItems(tmp.UndecodedItems) {
-					fmt.Fprintln(os.Stderr, err.Error())
-					err = nil
-				}
 				// This block is to accommodate an interim situation where strict config checking
 				// is not the default behavior of TiDB. The warning message must be deferred until
 				// logging has been set up. After strict config checking is the default behavior,
 				// This should all be removed.
-				if !configCheck && !configStrict {
+				if (!configCheck && !configStrict) || isAllDeprecatedConfigItems(tmp.UndecodedItems) {
 					fmt.Fprintln(os.Stderr, err.Error())
 					err = nil
 				}
