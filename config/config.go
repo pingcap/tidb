@@ -78,7 +78,7 @@ type Config struct {
 	MemQuotaQuery    int64  `toml:"mem-quota-query" json:"mem-quota-query"`
 	// TempStorageQuota describe the temporary storage Quota during query exector when OOMUseTmpStorage is enabled
 	// If the quota exceed the capacity of the TempStoragePath, the tidb-server would exit with fatal error
-	TempStorageQuota uint64          `toml:"temp-storage-quota" json:"temp-storage-quota"` // Bytes
+	TempStorageQuota int64           `toml:"temp-storage-quota" json:"temp-storage-quota"` // Bytes
 	EnableStreaming  bool            `toml:"enable-streaming" json:"enable-streaming"`
 	EnableBatchDML   bool            `toml:"enable-batch-dml" json:"enable-batch-dml"`
 	TxnLocalLatches  TxnLocalLatches `toml:"txn-local-latches" json:"txn-local-latches"`
@@ -862,7 +862,7 @@ func (c *Config) Valid() error {
 					return err
 				}
 			}
-			if capacityByte > c.TempStorageQuota {
+			if int64(capacityByte) > c.TempStorageQuota {
 				return fmt.Errorf("value of [temp-storage-quota] exceeds the capacity of the [temp-storage-path] directory")
 			}
 		}
