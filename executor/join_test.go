@@ -1186,6 +1186,16 @@ func (s *testSuiteJoin1) TestIndexLookupJoin(c *C) {
 	tk.MustQuery("select /*+ INL_HASH_JOIN(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b").Check(testkit.Rows("64"))
 	tk.MustExec("set @@tidb_index_lookup_join_concurrency=1;")
 	tk.MustQuery("select /*+ INL_HASH_JOIN(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b").Check(testkit.Rows("64"))
+
+	// issue15658
+	tk.MustExec("drop table t1, t2")
+	tk.MustExec("create table t1(id int primary key)")
+	tk.MustExec("create table t2(a int, b int)")
+	tk.MustExec("insert into t1 values(1)")
+	tk.MustExec("insert into t2 values(1,1),(2,1)")
+	tk.MustQuery("select /*+ inl_join(t1)*/ * from t1 join t2 on t2.b=t1.id and t2.a=t1.id;").Check(testkit.Rows("1 1 1"))
+	tk.MustQuery("select /*+ inl_hash_join(t1)*/ * from t1 join t2 on t2.b=t1.id and t2.a=t1.id;").Check(testkit.Rows("1 1 1"))
+	tk.MustQuery("select /*+ inl_merge_join(t1)*/ * from t1 join t2 on t2.b=t1.id and t2.a=t1.id;").Check(testkit.Rows("1 1 1"))
 }
 
 func (s *testSuiteJoin1) TestIndexNestedLoopHashJoin(c *C) {
@@ -1220,6 +1230,19 @@ func (s *testSuiteJoin1) TestIndexNestedLoopHashJoin(c *C) {
 	for i, row := range rs.Rows() {
 		c.Assert(row[0].(string), Equals, fmt.Sprintf("%d", i))
 	}
+}
+
+func (s *testSuiteJoin3) TestIssue15686(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, k;")
+	tk.MustExec("create table k (a int, pk int primary key, index(a));")
+	tk.MustExec("create table t (a int, pk int primary key, index(a));")
+	tk.MustExec("insert into k values(0,8),(0,23),(1,21),(1,33),(1,52),(2,17),(2,34),(2,39),(2,40),(2,66),(2,67),(3,9),(3,25),(3,41),(3,48),(4,4),(4,11),(4,15),(4,26),(4,27),(4,31),(4,35),(4,45),(4,47),(4,49);")
+	tk.MustExec("insert into t values(3,4),(3,5),(3,27),(3,29),(3,57),(3,58),(3,79),(3,84),(3,92),(3,95);")
+	tk.MustQuery("select /*+ inl_join(t) */ count(*) from k left join t on k.a = t.a and k.pk > t.pk;").Check(testkit.Rows("33"))
+	tk.MustQuery("select /*+ inl_hash_join(t) */ count(*) from k left join t on k.a = t.a and k.pk > t.pk;").Check(testkit.Rows("33"))
+	tk.MustQuery("select /*+ inl_merge_join(t) */ count(*) from k left join t on k.a = t.a and k.pk > t.pk;").Check(testkit.Rows("33"))
 }
 
 func (s *testSuiteJoin3) TestIssue13449(c *C) {
@@ -1826,35 +1849,35 @@ func (s *testSuiteJoin1) TestIssue13177(c *C) {
 	tk.MustExec("create table t2(a varchar(20), b int, c int, primary key(a, b))")
 	tk.MustExec("insert into t1 values(\"abcd\", 1, 1), (\"bacd\", 2, 2), (\"cbad\", 3, 3)")
 	tk.MustExec("insert into t2 values(\"bcd\", 1, 1), (\"acd\", 2, 2), (\"bad\", 3, 3)")
-	tk.MustQuery("select /*+ inl_join(t1, t2) */ * from t1 join t2 on substr(t1.a, 2, 4) = t2.a and t1.b = t2.b where t1.c between 1 and 5").Check(testkit.Rows(
+	tk.MustQuery("select /*+ inl_join(t1, t2) */ * from t1 join t2 on substr(t1.a, 2, 4) = t2.a and t1.b = t2.b where t1.c between 1 and 5").Sort().Check(testkit.Rows(
 		"abcd 1 1 bcd 1 1",
 		"bacd 2 2 acd 2 2",
 		"cbad 3 3 bad 3 3",
 	))
-	tk.MustQuery("select /*+ inl_hash_join(t1, t2) */ * from t1 join t2 on substr(t1.a, 2, 4) = t2.a and t1.b = t2.b where t1.c between 1 and 5").Check(testkit.Rows(
+	tk.MustQuery("select /*+ inl_hash_join(t1, t2) */ * from t1 join t2 on substr(t1.a, 2, 4) = t2.a and t1.b = t2.b where t1.c between 1 and 5").Sort().Check(testkit.Rows(
 		"abcd 1 1 bcd 1 1",
 		"bacd 2 2 acd 2 2",
 		"cbad 3 3 bad 3 3",
 	))
-	tk.MustQuery("select /*+ inl_merge_join(t1, t2) */ * from t1 join t2 on substr(t1.a, 2, 4) = t2.a and t1.b = t2.b where t1.c between 1 and 5").Check(testkit.Rows(
+	tk.MustQuery("select /*+ inl_merge_join(t1, t2) */ * from t1 join t2 on substr(t1.a, 2, 4) = t2.a and t1.b = t2.b where t1.c between 1 and 5").Sort().Check(testkit.Rows(
+		"abcd 1 1 bcd 1 1",
 		"bacd 2 2 acd 2 2",
 		"cbad 3 3 bad 3 3",
-		"abcd 1 1 bcd 1 1",
 	))
-	tk.MustQuery("select /*+ inl_join(t1, t2) */ t1.* from t1 join t2 on substr(t1.a, 2, 4) = t2.a and t1.b = t2.b where t1.c between 1 and 5").Check(testkit.Rows(
+	tk.MustQuery("select /*+ inl_join(t1, t2) */ t1.* from t1 join t2 on substr(t1.a, 2, 4) = t2.a and t1.b = t2.b where t1.c between 1 and 5").Sort().Check(testkit.Rows(
 		"abcd 1 1",
 		"bacd 2 2",
 		"cbad 3 3",
 	))
-	tk.MustQuery("select /*+ inl_hash_join(t1, t2) */ t1.* from t1 join t2 on substr(t1.a, 2, 4) = t2.a and t1.b = t2.b where t1.c between 1 and 5").Check(testkit.Rows(
+	tk.MustQuery("select /*+ inl_hash_join(t1, t2) */ t1.* from t1 join t2 on substr(t1.a, 2, 4) = t2.a and t1.b = t2.b where t1.c between 1 and 5").Sort().Check(testkit.Rows(
+		"abcd 1 1",
 		"bacd 2 2",
 		"cbad 3 3",
-		"abcd 1 1",
 	))
-	tk.MustQuery("select /*+ inl_merge_join(t1, t2) */ t1.* from t1 join t2 on substr(t1.a, 2, 4) = t2.a and t1.b = t2.b where t1.c between 1 and 5").Check(testkit.Rows(
+	tk.MustQuery("select /*+ inl_merge_join(t1, t2) */ t1.* from t1 join t2 on substr(t1.a, 2, 4) = t2.a and t1.b = t2.b where t1.c between 1 and 5").Sort().Check(testkit.Rows(
+		"abcd 1 1",
 		"bacd 2 2",
 		"cbad 3 3",
-		"abcd 1 1",
 	))
 }
 
