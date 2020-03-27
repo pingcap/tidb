@@ -637,11 +637,6 @@ func (b *PlanBuilder) filterPathByIsolationRead(paths []*accessPath, dbName mode
 		}
 		if _, ok := isolationReadEngines[paths[i].storeType]; !ok {
 			paths = append(paths[:i], paths[i+1:]...)
-<<<<<<< HEAD
-		} else if _, ok := cfgIsolationEngines[paths[i].storeType.Name()]; !ok {
-			paths = append(paths[:i], paths[i+1:]...)
-=======
->>>>>>> 4a7d477... session: delete global scope for isolation read (#15625)
 		}
 	}
 	var err error
