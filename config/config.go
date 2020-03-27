@@ -77,7 +77,7 @@ type Config struct {
 	MemQuotaQuery    int64           `toml:"mem-quota-query" json:"mem-quota-query"`
 	EnableStreaming  bool            `toml:"enable-streaming" json:"enable-streaming"`
 	EnableBatchDML   bool            `toml:"enable-batch-dml" json:"enable-batch-dml"`
-	TxnLocalLatches  TxnLocalLatches `toml:"txn-local-latches" json:"txn-local-latches"`
+	TxnLocalLatches  TxnLocalLatches `toml:"-" json:"-"`
 	// Set sys variable lower-case-table-names, ref: https://dev.mysql.com/doc/refman/5.7/en/identifier-case-sensitivity.html.
 	// TODO: We actually only support mode 2, which keeps the original case, but the comparison is case-insensitive.
 	LowerCaseTableNames int               `toml:"lower-case-table-names" json:"lower-case-table-names"`
@@ -347,8 +347,8 @@ type PlanCache struct {
 
 // TxnLocalLatches is the TxnLocalLatches section of the config.
 type TxnLocalLatches struct {
-	Enabled  bool `toml:"enabled" json:"enabled"`
-	Capacity uint `toml:"capacity" json:"capacity"`
+	Enabled  bool `toml:"-" json:"-"`
+	Capacity uint `toml:"-" json:"-"`
 }
 
 // PreparedPlanCache is the PreparedPlanCache section of the config.
@@ -529,7 +529,7 @@ var defaultConf = Config{
 	MaxServerConnections:         0,
 	TxnLocalLatches: TxnLocalLatches{
 		Enabled:  false,
-		Capacity: 2048000,
+		Capacity: 0,
 	},
 	LowerCaseTableNames: 2,
 	ServerVersion:       "",
