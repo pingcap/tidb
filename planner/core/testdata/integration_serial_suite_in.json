@@ -30,5 +30,12 @@
       "desc select /*+ read_from_storage(tikv[t]) */ avg(a) from t",
       "desc select /*+ read_from_storage(tiflash[t]) */ avg(a) from t"
     ]
+  },
+  {
+    "name": "TestIsolationReadTiFlashNotChoosePointGet",
+    "cases": [
+      "explain select * from t where t.a = 1",
+      "explain select * from t where t.a in (1, 2)"
+    ]
   }
 ]
