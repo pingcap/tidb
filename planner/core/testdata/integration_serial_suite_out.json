@@ -220,18 +220,21 @@
         "Warn": null
       },
       {
-        "SQL": "explain select * from t use index(idx);",
-        "Plan": null,
-        "Warn": null
+        "SQL": "explain select /*+ use_index(t, idx)*/ * from t",
+        "Plan": [
+          "TableReader_5 10000.00 root  data:TableFullScan_4",
+          "└─TableFullScan_4 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ],
+        "Warn": [
+          "TiDB doesn't support index in the isolation read engines(value: 'tiflash')"
+        ]
       },
       {
-        "SQL": "",
-        "Plan": null,
-        "Warn": null
-      },
-      {
-        "SQL": "",
-        "Plan": null,
+        "SQL": "explain select /*+ use_index(t)*/ * from t",
+        "Plan": [
+          "TableReader_5 10000.00 root  data:TableFullScan_4",
+          "└─TableFullScan_4 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ],
         "Warn": null
       }
     ]
