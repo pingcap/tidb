@@ -37,6 +37,7 @@ import (
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
+	utilparser "github.com/pingcap/tidb/util/parser"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/pingcap/tidb/util/timeutil"
@@ -529,7 +530,8 @@ func (h *BindHandle) CaptureBaselines() {
 			continue
 		}
 		normalizedSQL, digiest := parser.NormalizeDigest(sqls[i])
-		if r := h.GetBindRecord(digiest, normalizedSQL, schemas[i]); r != nil && r.HasUsingBinding() {
+		dbName := utilparser.GetDefaultDB(stmt, schemas[i])
+		if r := h.GetBindRecord(digiest, normalizedSQL, dbName); r != nil && r.HasUsingBinding() {
 			continue
 		}
 		h.sctx.Lock()
@@ -559,7 +561,7 @@ func (h *BindHandle) CaptureBaselines() {
 			Collation: collation,
 		}
 		// We don't need to pass the `sctx` because they are used to generate hints and we already filled hints in.
-		err = h.AddBindRecord(nil, &BindRecord{OriginalSQL: normalizedSQL, Db: schemas[i], Bindings: []Binding{binding}})
+		err = h.AddBindRecord(nil, &BindRecord{OriginalSQL: normalizedSQL, Db: dbName, Bindings: []Binding{binding}})
 		if err != nil {
 			logutil.BgLogger().Info("capture baseline failed", zap.String("SQL", sqls[i]), zap.Error(err))
 		}
