@@ -43,6 +43,7 @@
     "cases": [
       "explain select * from t",
       "explain select * from t use index();",
+      "explain select * from t use index(idx);",
       "explain select /*+ use_index(t, idx)*/ * from t",
       "explain select /*+ use_index(t)*/ * from t"
     ]

@@ -655,12 +655,6 @@ func (b *PlanBuilder) detectSelectWindow(sel *ast.SelectStmt) bool {
 	return false
 }
 
-func checkReadEngineHasTiKV(ctx sessionctx.Context) bool {
-	isolationReadEngines := ctx.GetSessionVars().GetIsolationReadEngines()
-	_, ok := isolationReadEngines[kv.TiKV]
-	return ok
-}
-
 func getPathByIndexName(paths []*util.AccessPath, idxName model.CIStr, tblInfo *model.TableInfo) *util.AccessPath {
 	var tablePath *util.AccessPath
 	for _, path := range paths {
@@ -714,7 +708,7 @@ func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tbl ta
 		}
 	}
 
-	isolationReadEnginesHasTiKV := checkReadEngineHasTiKV(b.ctx)
+	_, isolationReadEnginesHasTiKV := b.ctx.GetSessionVars().GetIsolationReadEngines()[kv.TiKV]
 	for i, hint := range indexHints {
 		if hint.HintScope != ast.HintForScan {
 			continue
