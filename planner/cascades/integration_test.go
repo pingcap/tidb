@@ -171,28 +171,62 @@ func (s *testIntegrationSuite) TestAggregation(c *C) {
 	}
 }
 
-func (s *testIntegrationSuite) TestPushdownDistinct(c *C) {
+func (s *testIntegrationSuite) TestPushdownDistinctEnable(c *C) {
+	var (
+		input  []string
+		output []struct {
+			SQL    string
+			Plan   []string
+			Result []string
+		}
+	)
+	s.testData.GetTestCases(c, &input, &output)
+	vars := []string{
+		"set @@session.tidb_distinct_agg_push_down = 1",
+	}
+	s.doTestPushdownDistinct(c, vars, input, output)
+}
+
+func (s *testIntegrationSuite) TestPushdownDistinctDisable(c *C) {
+	var (
+		input  []string
+		output []struct {
+			SQL    string
+			Plan   []string
+			Result []string
+		}
+	)
+	s.testData.GetTestCases(c, &input, &output)
+	vars := []string{
+		"set @@session.tidb_distinct_agg_push_down = 0",
+	}
+	s.doTestPushdownDistinct(c, vars, input, output)
+}
+
+func (s *testIntegrationSuite) doTestPushdownDistinct(c *C, vars, input []string, output []struct {
+	SQL    string
+	Plan   []string
+	Result []string
+}) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, c int, index(c))")
 	tk.MustExec("insert into t values (1, 1, 1), (1, 1, 3), (1, 2, 3), (2, 1, 3), (1, 2, NULL);")
 	tk.MustExec("set session sql_mode=''")
 	tk.MustExec("set session tidb_enable_cascades_planner = 1")
-	var input []string
-	var output []struct {
-		SQL    string
-		Plan   []string
-		Result []string
+
+	for _, v := range vars {
+		tk.MustExec(v)
 	}
-	s.testData.GetTestCases(c, &input, &output)
-	for i, sql := range input {
+
+	for i, ts := range input {
 		s.testData.OnRecord(func() {
-			output[i].SQL = sql
-			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + sql).Rows())
-			output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(sql).Sort().Rows())
+			output[i].SQL = ts
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + ts).Rows())
+			output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(ts).Sort().Rows())
 		})
-		tk.MustQuery("explain " + sql).Check(testkit.Rows(output[i].Plan...))
-		tk.MustQuery(sql).Sort().Check(testkit.Rows(output[i].Result...))
+		tk.MustQuery("explain " + ts).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery(ts).Sort().Check(testkit.Rows(output[i].Result...))
 	}
 }
 

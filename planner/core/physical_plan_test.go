@@ -847,9 +847,9 @@ func (s *testPlanSuite) TestPushdownDistinctEnable(c *C) {
 	var (
 		input  []string
 		output []struct {
-			SQL     string
-			Best    string
-			Warning string
+			SQL    string
+			Plan   []string
+			Result []string
 		}
 	)
 	s.testData.GetTestCases(c, &input, &output)
@@ -864,9 +864,9 @@ func (s *testPlanSuite) TestPushdownDistinctDisable(c *C) {
 	var (
 		input  []string
 		output []struct {
-			SQL     string
-			Best    string
-			Warning string
+			SQL    string
+			Plan   []string
+			Result []string
 		}
 	)
 	s.testData.GetTestCases(c, &input, &output)
@@ -877,9 +877,9 @@ func (s *testPlanSuite) TestPushdownDistinctDisable(c *C) {
 }
 
 func (s *testPlanSuite) doTestPushdownDistinct(c *C, vars, input []string, output []struct {
-	SQL     string
-	Best    string
-	Warning string
+	SQL    string
+	Plan   []string
+	Result []string
 }) {
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
@@ -898,41 +898,14 @@ func (s *testPlanSuite) doTestPushdownDistinct(c *C, vars, input []string, outpu
 		tk.MustExec(v)
 	}
 
-	ctx := context.Background()
-	is := domain.GetDomain(tk.Se).InfoSchema()
-	for i, test := range input {
-		comment := Commentf("case:%v sql:%s", i, test)
+	for i, ts := range input {
 		s.testData.OnRecord(func() {
-			output[i].SQL = test
+			output[i].SQL = ts
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + ts).Rows())
+			output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(ts).Sort().Rows())
 		})
-		c.Assert(test, Equals, output[i].SQL, comment)
-
-		tk.Se.GetSessionVars().StmtCtx.SetWarnings(nil)
-
-		stmt, err := s.ParseOneStmt(test, "", "")
-		c.Assert(err, IsNil, comment)
-
-		p, _, err := planner.Optimize(ctx, tk.Se, stmt, is)
-		c.Assert(err, IsNil)
-		planString := core.ToString(p)
-		s.testData.OnRecord(func() {
-			output[i].Best = planString
-		})
-		c.Assert(planString, Equals, output[i].Best, comment)
-
-		warnings := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
-		s.testData.OnRecord(func() {
-			if len(warnings) > 0 {
-				output[i].Warning = warnings[0].Err.Error()
-			}
-		})
-		if output[i].Warning == "" {
-			c.Assert(len(warnings), Equals, 0, comment)
-		} else {
-			c.Assert(len(warnings), Equals, 1, comment)
-			c.Assert(warnings[0].Level, Equals, stmtctx.WarnLevelWarning, comment)
-			c.Assert(warnings[0].Err.Error(), Equals, output[i].Warning, comment)
-		}
+		tk.MustQuery("explain " + ts).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery(ts).Sort().Check(testkit.Rows(output[i].Result...))
 	}
 }
 
