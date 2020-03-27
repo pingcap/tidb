@@ -2588,26 +2588,14 @@ func (d *ddl) DropColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTa
 		return errors.Trace(err)
 	}
 
-	// Check whether dropped column has existed.
-	colName := spec.OldColumnName.Name
-	col := table.FindCol(t.VisibleCols(), colName.L)
-	if col == nil {
-		err = ErrCantDropFieldOrKey.GenWithStack("column %s doesn't exist", colName)
-		if spec.IfExists {
-			ctx.GetSessionVars().StmtCtx.AppendNote(err)
-			return nil
-		}
+	isDropable, err := checkIsDroppableColumn(ctx, t, spec)
+	if err != nil {
 		return err
 	}
-
-	tblInfo := t.Meta()
-	if err = isDroppableColumn(tblInfo, colName); err != nil {
-		return errors.Trace(err)
+	if !isDropable {
+		return nil
 	}
-	// We don't support dropping column with PK handle covered now.
-	if col.IsPKHandleColumn(tblInfo) {
-		return errUnsupportedPKHandle
-	}
+	colName := spec.OldColumnName.Name
 
 	job := &model.Job{
 		SchemaID:   schema.ID,
@@ -2651,26 +2639,13 @@ func (d *ddl) DropColumns(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alt
 
 	var colNames []model.CIStr
 	for _, spec := range specs {
-		// Check whether dropped column has existed.
-		colName := spec.OldColumnName.Name
-		col := table.FindCol(t.VisibleCols(), colName.L)
-		if col == nil {
-			err = ErrCantDropFieldOrKey.GenWithStack("column %s doesn't exist", colName)
-			if spec.IfExists {
-				ctx.GetSessionVars().StmtCtx.AppendNote(err)
-				continue
-			}
+		isDropable, err := checkIsDroppableColumn(ctx, t, spec)
+		if err != nil {
 			return err
 		}
-
-		if err = isDroppableColumn(tblInfo, colName); err != nil {
-			return errors.Trace(err)
+		if isDropable {
+			colNames = append(colNames, spec.OldColumnName.Name)
 		}
-		// We don't support dropping column with PK handle covered now.
-		if col.IsPKHandleColumn(tblInfo) {
-			return errUnsupportedPKHandle
-		}
-		colNames = append(colNames, colName)
 	}
 
 	job := &model.Job{
@@ -2688,6 +2663,30 @@ func (d *ddl) DropColumns(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alt
 	}
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
+}
+
+func checkIsDroppableColumn(ctx sessionctx.Context, t table.Table, spec *ast.AlterTableSpec) (isDrapable bool, err error) {
+	tblInfo := t.Meta()
+	// Check whether dropped column has existed.
+	colName := spec.OldColumnName.Name
+	col := table.FindCol(t.VisibleCols(), colName.L)
+	if col == nil {
+		err = ErrCantDropFieldOrKey.GenWithStack("column %s doesn't exist", colName)
+		if spec.IfExists {
+			ctx.GetSessionVars().StmtCtx.AppendNote(err)
+			return false, nil
+		}
+		return false, err
+	}
+
+	if err = isDroppableColumn(tblInfo, colName); err != nil {
+		return false, errors.Trace(err)
+	}
+	// We don't support dropping column with PK handle covered now.
+	if col.IsPKHandleColumn(tblInfo) {
+		return false, errUnsupportedPKHandle
+	}
+	return true, nil
 }
 
 // checkModifyCharsetAndCollation returns error when the charset or collation is not modifiable.
