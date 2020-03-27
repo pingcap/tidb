@@ -132,54 +132,9 @@ func (p *LogicalShowDDLJobs) findBestTask(prop *property.PhysicalProperty) (task
 	return &rootTask{p: pShow}, nil
 }
 
-// findBestTask implements LogicalPlan interface.
-func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty) (bestTask task, err error) {
-	// If p is an inner plan in an IndexJoin, the IndexJoin will generate an inner plan by itself,
-	// and set inner child prop nil, so here we do nothing.
-	if prop == nil {
-		return nil, nil
-	}
-	// Look up the task with this prop in the task map.
-	// It's used to reduce double counting.
-	bestTask = p.getTask(prop)
-	if bestTask != nil {
-		return bestTask, nil
-	}
-
-	if prop.TaskTp != property.RootTaskType {
-		// Currently all plan cannot totally push down.
-		p.storeTask(prop, invalidTask)
-		return invalidTask, nil
-	}
-
-	bestTask = invalidTask
+func (p *baseLogicalPlan) getBestTask(physicalPlans []PhysicalPlan, prop *property.PhysicalProperty) (task, error) {
+	var bestTask task = invalidTask
 	childTasks := make([]task, 0, len(p.children))
-
-	// If prop.enforced is true, cols of prop as parameter in exhaustPhysicalPlans should be nil
-	// And reset it for enforcing task prop and storing map<prop,task>
-	oldPropCols := prop.Items
-	if prop.Enforced {
-		// First, get the bestTask without enforced prop
-		prop.Enforced = false
-		bestTask, err = p.findBestTask(prop)
-		if err != nil {
-			return nil, err
-		}
-		prop.Enforced = true
-		// Next, get the bestTask with enforced prop
-		prop.Items = []property.Item{}
-	}
-	physicalPlans, hintFitsProp := p.self.exhaustPhysicalPlans(prop)
-	if !hintFitsProp {
-		// If there is a hint in the plan and the hint cannot satisfy the property,
-		// we enforce this property and try to generate the PhysicalPlan again to
-		// make sure the hint can work.
-		prop.Items = []property.Item{}
-		physicalPlans, _ = p.self.exhaustPhysicalPlans(prop)
-		prop.Enforced = true
-	}
-	prop.Items = oldPropCols
-
 	for _, pp := range physicalPlans {
 		// find best child tasks firstly.
 		childTasks = childTasks[:0]
@@ -217,7 +172,72 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty) (bestTas
 			bestTask = curTask
 		}
 	}
+	return bestTask, nil
+}
 
+// findBestTask implements LogicalPlan interface.
+func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty) (bestTask task, err error) {
+	// If p is an inner plan in an IndexJoin, the IndexJoin will generate an inner plan by itself,
+	// and set inner child prop nil, so here we do nothing.
+	if prop == nil {
+		return nil, nil
+	}
+	// Look up the task with this prop in the task map.
+	// It's used to reduce double counting.
+	bestTask = p.getTask(prop)
+	if bestTask != nil {
+		return bestTask, nil
+	}
+
+	if prop.TaskTp != property.RootTaskType {
+		// Currently all plan cannot totally push down.
+		p.storeTask(prop, invalidTask)
+		return invalidTask, nil
+	}
+
+	bestTask = invalidTask
+
+	// prop should be read only because its cached hashcode might be not consistent
+	// when it is changed. So we clone a new one for the temporary changes.
+	newProp := prop.Clone()
+	newProp.Enforced = prop.Enforced
+	if prop.Enforced {
+		// First, we get the best task with the enforced sort.
+		newProp.Items = []property.Item{}
+		physicalPlans, _ := p.self.exhaustPhysicalPlans(newProp)
+		newProp.Items = prop.Items
+		bestTask, err = p.getBestTask(physicalPlans, newProp)
+		if err != nil {
+			return nil, err
+		}
+		newProp.Enforced = false
+	}
+	// Maybe the plan can satisfy the required property,
+	// so we try to get the task without the enforced sort here.
+	physicalPlans, hintFitsProp := p.self.exhaustPhysicalPlans(newProp)
+	if !hintFitsProp {
+		// If there is a hint in the plan and the hint cannot satisfy the property,
+		// we enforce this property and try to generate the PhysicalPlan again to
+		// make sure the hint can work.
+		if prop.Enforced {
+			// If the property has been already enforced, we don't need to generate a
+			// task with enforced sort again.
+			physicalPlans = nil
+		} else {
+			// Otherwise, we will enforce a sort and try the hint again.
+			newProp.Items = []property.Item{}
+			physicalPlans, _ = p.self.exhaustPhysicalPlans(newProp)
+			newProp.Items = prop.Items
+			newProp.Enforced = true
+		}
+	}
+	curTask, err := p.getBestTask(physicalPlans, newProp)
+	if err != nil {
+		return nil, err
+	}
+	if curTask.cost() < bestTask.cost() {
+		bestTask = curTask
+	}
 	p.storeTask(prop, bestTask)
 	return bestTask, nil
 }
