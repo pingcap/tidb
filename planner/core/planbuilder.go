@@ -76,6 +76,36 @@ type hintTableInfo struct {
 type indexHintInfo struct {
 	tblName   model.CIStr
 	indexHint *ast.IndexHint
+	// Matched indicates whether this index hint
+	// has been successfully applied to a DataSource.
+	// If an indexHintInfo is not matched after building
+	// a Select statement, we will generate a warning for it.
+	matched bool
+}
+
+func (hint *indexHintInfo) hintTypeString() string {
+	switch hint.indexHint.HintType {
+	case ast.HintUse:
+		return "use_index"
+	case ast.HintIgnore:
+		return "ignore_index"
+	case ast.HintForce:
+		return "force_index"
+	}
+	return ""
+}
+
+// indexString formats the indexHint as dbName.tableName[, indexNames].
+func (hint *indexHintInfo) indexString() string {
+	var indexListString string
+	indexList := make([]string, len(hint.indexHint.IndexNames))
+	for i := range hint.indexHint.IndexNames {
+		indexList[i] = hint.indexHint.IndexNames[i].L
+	}
+	if len(indexList) > 0 {
+		indexListString = fmt.Sprintf(", %s", strings.Join(indexList, ", "))
+	}
+	return fmt.Sprintf("%s.%s%s", hint.dbName, hint.tblName, indexListString)
 }
 
 type aggHintInfo struct {
@@ -557,9 +587,15 @@ func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tblInf
 	// Extract comment-style index hint like /*+ INDEX(t, idx1, idx2) */.
 	indexHintsLen := len(indexHints)
 	if hints := b.TableHints(); hints != nil {
+<<<<<<< HEAD
 		for _, hint := range hints.indexHintList {
 			if hint.tblName == tblName {
+=======
+		for i, hint := range hints.indexHintList {
+			if hint.dbName.L == dbName.L && hint.tblName.L == tblName.L {
+>>>>>>> dd14172... planner: add warning when the table name of indexHint cannot be found (#15517)
 				indexHints = append(indexHints, hint.indexHint)
+				hints.indexHintList[i].matched = true
 			}
 		}
 	}
