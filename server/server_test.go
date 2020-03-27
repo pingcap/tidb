@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	tmysql "github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/printer"
@@ -104,16 +105,14 @@ func (cli *testServerClient) formStatus(path string, data url.Values) (*http.Res
 
 // getDSN generates a DSN string for MySQL connection.
 func (cli *testServerClient) getDSN(overriders ...configOverrider) string {
-	var config = mysql.Config{
-		User:   "root",
-		Net:    "tcp",
-		Addr:   fmt.Sprintf("127.0.0.1:%d", cli.port),
-		DBName: "test",
-		Strict: true,
-	}
+	config := mysql.NewConfig()
+	config.User = "root"
+	config.Net = "tcp"
+	config.Addr = fmt.Sprintf("127.0.0.1:%d", cli.port)
+	config.DBName = "test"
 	for _, overrider := range overriders {
 		if overrider != nil {
-			overrider(&config)
+			overrider(config)
 		}
 	}
 	return config.FormatDSN()
@@ -144,6 +143,9 @@ func (cli *testServerClient) runTestsOnNewDB(c *C, overrider configOverrider, db
 	defer db.Close()
 
 	_, err = db.Exec(fmt.Sprintf("DROP DATABASE IF EXISTS `%s`;", dbName))
+	if err != nil {
+		fmt.Println(err)
+	}
 	c.Assert(err, IsNil, Commentf("Error drop database %s: %s", dbName, err))
 
 	_, err = db.Exec(fmt.Sprintf("CREATE DATABASE `%s`;", dbName))
@@ -403,7 +405,7 @@ func (cli *testServerClient) runTestPreparedTimestamp(t *C) {
 func (cli *testServerClient) runTestLoadDataWithSelectIntoOutfile(c *C, server *Server) {
 	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
 		config.AllowAllFiles = true
-		config.Strict = false
+		config.Params = map[string]string{"sql_mode": "''"}
 	}, "SelectIntoOutfile", func(dbt *DBTest) {
 		dbt.mustExec("create table t (i int, r real, d decimal(10, 5), s varchar(100), dt datetime, ts timestamp, j json)")
 		dbt.mustExec("insert into t values (1, 1.1, 0.1, 'a', '2000-01-01', '01:01:01', '[1]')")
@@ -475,7 +477,7 @@ func (cli *testServerClient) runTestLoadData(c *C, server *Server) {
 	// support ClientLocalFiles capability
 	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
 		config.AllowAllFiles = true
-		config.Strict = false
+		config.Params = map[string]string{"sql_mode": "''"}
 	}, "LoadData", func(dbt *DBTest) {
 		dbt.mustExec("set @@tidb_dml_batch_size = 3")
 		dbt.mustExec("create table test (a varchar(255), b varchar(255) default 'default value', c int not null auto_increment, primary key(c))")
@@ -606,7 +608,7 @@ func (cli *testServerClient) runTestLoadData(c *C, server *Server) {
 
 	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
 		config.AllowAllFiles = true
-		config.Strict = false
+		config.Params = map[string]string{"sql_mode": "''"}
 	}, "LoadData", func(dbt *DBTest) {
 		dbt.mustExec("create table test (str varchar(10) default null, i int default null)")
 		dbt.mustExec("set @@tidb_dml_batch_size = 3")
@@ -652,7 +654,7 @@ func (cli *testServerClient) runTestLoadData(c *C, server *Server) {
 
 	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
 		config.AllowAllFiles = true
-		config.Strict = false
+		config.Params = map[string]string{"sql_mode": "''"}
 	}, "LoadData", func(dbt *DBTest) {
 		dbt.mustExec("create table test (a date, b date, c date not null, d date)")
 		dbt.mustExec("set @@tidb_dml_batch_size = 3")
@@ -706,7 +708,7 @@ func (cli *testServerClient) runTestLoadData(c *C, server *Server) {
 
 	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
 		config.AllowAllFiles = true
-		config.Strict = false
+		config.Params = map[string]string{"sql_mode": "''"}
 	}, "LoadData", func(dbt *DBTest) {
 		dbt.mustExec("create table test (a varchar(20), b varchar(20))")
 		dbt.mustExec("set @@tidb_dml_batch_size = 3")
@@ -751,7 +753,6 @@ func (cli *testServerClient) runTestLoadData(c *C, server *Server) {
 
 	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
 		config.AllowAllFiles = true
-		config.Strict = false
 	}, "LoadData", func(dbt *DBTest) {
 		dbt.mustExec("create table test (id INT NOT NULL PRIMARY KEY,  b INT,  c varchar(10))")
 		dbt.mustExec("set @@tidb_dml_batch_size = 3")
@@ -782,7 +783,7 @@ func (cli *testServerClient) runTestLoadData(c *C, server *Server) {
 		dbt.mustExec("set @@tidb_dml_batch_size = 3")
 		_, err = dbt.db.Exec("load data local infile '/tmp/load_data_test.csv' into table test")
 		dbt.Assert(err, NotNil)
-		checkErrorCode(c, err, tmysql.ErrNotAllowedCommand)
+		checkErrorCode(c, err, errno.ErrNotAllowedCommand)
 	})
 	server.capability |= tmysql.ClientLocalFiles
 
@@ -803,7 +804,7 @@ func (cli *testServerClient) runTestLoadData(c *C, server *Server) {
 
 	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
 		config.AllowAllFiles = true
-		config.Strict = false
+		config.Params = map[string]string{"sql_mode": "''"}
 	}, "LoadData", func(dbt *DBTest) {
 		dbt.mustExec("drop table if exists pn")
 		dbt.mustExec("create table pn (c1 int, c2 int)")
@@ -842,7 +843,7 @@ func (cli *testServerClient) runTestLoadData(c *C, server *Server) {
 func (cli *testServerClient) runTestConcurrentUpdate(c *C) {
 	dbName := "Concurrent"
 	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
-		config.Strict = false
+		config.Params = map[string]string{"sql_mode": "''"}
 	}, dbName, func(dbt *DBTest) {
 		dbt.mustExec("drop table if exists test2")
 		dbt.mustExec("create table test2 (a int, b int)")
@@ -881,50 +882,50 @@ func (cli *testServerClient) runTestErrorCode(c *C) {
 		_, err = txn1.Exec("insert into test values(1)")
 		c.Assert(err, IsNil)
 		err = txn1.Commit()
-		checkErrorCode(c, err, tmysql.ErrDupEntry)
+		checkErrorCode(c, err, errno.ErrDupEntry)
 
 		// Schema errors
 		txn2, err := dbt.db.Begin()
 		c.Assert(err, IsNil)
 		_, err = txn2.Exec("use db_not_exists;")
-		checkErrorCode(c, err, tmysql.ErrBadDB)
+		checkErrorCode(c, err, errno.ErrBadDB)
 		_, err = txn2.Exec("select * from tbl_not_exists;")
-		checkErrorCode(c, err, tmysql.ErrNoSuchTable)
+		checkErrorCode(c, err, errno.ErrNoSuchTable)
 		_, err = txn2.Exec("create database test;")
 		// Make tests stable. Some times the error may be the ErrInfoSchemaChanged.
-		checkErrorCode(c, err, tmysql.ErrDBCreateExists, tmysql.ErrInfoSchemaChanged)
+		checkErrorCode(c, err, errno.ErrDBCreateExists, errno.ErrInfoSchemaChanged)
 		_, err = txn2.Exec("create database aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;")
-		checkErrorCode(c, err, tmysql.ErrTooLongIdent, tmysql.ErrInfoSchemaChanged)
+		checkErrorCode(c, err, errno.ErrTooLongIdent, errno.ErrInfoSchemaChanged)
 		_, err = txn2.Exec("create table test (c int);")
-		checkErrorCode(c, err, tmysql.ErrTableExists, tmysql.ErrInfoSchemaChanged)
+		checkErrorCode(c, err, errno.ErrTableExists, errno.ErrInfoSchemaChanged)
 		_, err = txn2.Exec("drop table unknown_table;")
-		checkErrorCode(c, err, tmysql.ErrBadTable, tmysql.ErrInfoSchemaChanged)
+		checkErrorCode(c, err, errno.ErrBadTable, errno.ErrInfoSchemaChanged)
 		_, err = txn2.Exec("drop database unknown_db;")
-		checkErrorCode(c, err, tmysql.ErrDBDropExists, tmysql.ErrInfoSchemaChanged)
+		checkErrorCode(c, err, errno.ErrDBDropExists, errno.ErrInfoSchemaChanged)
 		_, err = txn2.Exec("create table aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa (a int);")
-		checkErrorCode(c, err, tmysql.ErrTooLongIdent, tmysql.ErrInfoSchemaChanged)
+		checkErrorCode(c, err, errno.ErrTooLongIdent, errno.ErrInfoSchemaChanged)
 		_, err = txn2.Exec("create table long_column_table (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa int);")
-		checkErrorCode(c, err, tmysql.ErrTooLongIdent, tmysql.ErrInfoSchemaChanged)
+		checkErrorCode(c, err, errno.ErrTooLongIdent, errno.ErrInfoSchemaChanged)
 		_, err = txn2.Exec("alter table test add aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa int;")
-		checkErrorCode(c, err, tmysql.ErrTooLongIdent, tmysql.ErrInfoSchemaChanged)
+		checkErrorCode(c, err, errno.ErrTooLongIdent, errno.ErrInfoSchemaChanged)
 
 		// Optimizer errors
 		_, err = txn2.Exec("select *, * from test;")
-		checkErrorCode(c, err, tmysql.ErrInvalidWildCard)
+		checkErrorCode(c, err, errno.ErrInvalidWildCard)
 		_, err = txn2.Exec("select row(1, 2) > 1;")
-		checkErrorCode(c, err, tmysql.ErrOperandColumns)
+		checkErrorCode(c, err, errno.ErrOperandColumns)
 		_, err = txn2.Exec("select * from test order by row(c, c);")
-		checkErrorCode(c, err, tmysql.ErrOperandColumns)
+		checkErrorCode(c, err, errno.ErrOperandColumns)
 
 		// Variable errors
 		_, err = txn2.Exec("select @@unknown_sys_var;")
-		checkErrorCode(c, err, tmysql.ErrUnknownSystemVariable)
+		checkErrorCode(c, err, errno.ErrUnknownSystemVariable)
 		_, err = txn2.Exec("set @@unknown_sys_var='1';")
-		checkErrorCode(c, err, tmysql.ErrUnknownSystemVariable)
+		checkErrorCode(c, err, errno.ErrUnknownSystemVariable)
 
 		// Expression errors
 		_, err = txn2.Exec("select greatest(2);")
-		checkErrorCode(c, err, tmysql.ErrWrongParamcountToNativeFct)
+		checkErrorCode(c, err, errno.ErrWrongParamcountToNativeFct)
 	})
 }
 
@@ -1067,7 +1068,7 @@ func (cli *testServerClient) runTestDBNameEscape(c *C) {
 
 func (cli *testServerClient) runTestResultFieldTableIsNull(c *C) {
 	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
-		config.Strict = false
+		config.Params = map[string]string{"sql_mode": "''"}
 	}, "ResultFieldTableIsNull", func(dbt *DBTest) {
 		dbt.mustExec("drop table if exists test;")
 		dbt.mustExec("create table test (c int);")

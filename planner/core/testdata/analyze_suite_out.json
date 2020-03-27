@@ -8,10 +8,10 @@
           "EXPLAIN SELECT * FROM t WHERE b = 2 ORDER BY a limit 1;"
         ],
         "Plan": [
-          "TopN_8 1.00 root test.t.a:asc, offset:0, count:1",
-          "└─IndexReader_16 1.00 root index:TopN_15",
-          "  └─TopN_15 1.00 cop[tikv] test.t.a:asc, offset:0, count:1",
-          "    └─IndexRangeScan_14 10.00 cop[tikv] table:t, index:b, c, range:[2,2], keep order:false, stats:pseudo"
+          "TopN_8 1.00 root  test.t.a:asc, offset:0, count:1",
+          "└─IndexReader_16 1.00 root  index:TopN_15",
+          "  └─TopN_15 1.00 cop[tikv]  test.t.a:asc, offset:0, count:1",
+          "    └─IndexRangeScan_14 10.00 cop[tikv] table:t, index:idx_bc(b, c) range:[2,2], keep order:false, stats:pseudo"
         ]
       },
       {
@@ -21,10 +21,10 @@
           "EXPLAIN SELECT * FROM t WHERE b = 2 ORDER BY a limit 1"
         ],
         "Plan": [
-          "TopN_8 1.00 root test.t.a:asc, offset:0, count:1",
-          "└─IndexReader_16 1.00 root index:TopN_15",
-          "  └─TopN_15 1.00 cop[tikv] test.t.a:asc, offset:0, count:1",
-          "    └─IndexRangeScan_14 6.00 cop[tikv] table:t, index:b, c, range:[2,2], keep order:false"
+          "TopN_8 1.00 root  test.t.a:asc, offset:0, count:1",
+          "└─IndexReader_16 1.00 root  index:TopN_15",
+          "  └─TopN_15 1.00 cop[tikv]  test.t.a:asc, offset:0, count:1",
+          "    └─IndexRangeScan_14 6.00 cop[tikv] table:t, index:idx_bc(b, c) range:[2,2], keep order:false"
         ]
       },
       {
@@ -35,10 +35,10 @@
           "EXPLAIN SELECT * FROM t WHERE b <= 6 ORDER BY a limit 1"
         ],
         "Plan": [
-          "TopN_8 1.00 root test.t.a:asc, offset:0, count:1",
-          "└─IndexReader_16 1.00 root index:TopN_15",
-          "  └─TopN_15 1.00 cop[tikv] test.t.a:asc, offset:0, count:1",
-          "    └─IndexRangeScan_14 6.00 cop[tikv] table:t, index:b, c, range:[-inf,6], keep order:false"
+          "TopN_8 1.00 root  test.t.a:asc, offset:0, count:1",
+          "└─IndexReader_16 1.00 root  index:TopN_15",
+          "  └─TopN_15 1.00 cop[tikv]  test.t.a:asc, offset:0, count:1",
+          "    └─IndexRangeScan_14 6.00 cop[tikv] table:t, index:idx_bc(b, c) range:[-inf,6], keep order:false"
         ]
       },
       {
@@ -46,14 +46,14 @@
           "EXPLAIN SELECT *, t1.a IN (SELECT t2.b FROM t t2) FROM t t1 WHERE t1.b <= 6 ORDER BY t1.a limit 1"
         ],
         "Plan": [
-          "Limit_17 1.00 root offset:0, count:1",
-          "└─IndexMergeJoin_70 1.00 root left outer semi join, inner:IndexReader_68, outer key:test.t.a, inner key:test.t.b",
-          "  ├─TopN_29(Build) 1.00 root test.t.a:asc, offset:0, count:1",
-          "  │ └─IndexReader_37 1.00 root index:TopN_36",
-          "  │   └─TopN_36 1.00 cop[tikv] test.t.a:asc, offset:0, count:1",
-          "  │     └─IndexRangeScan_35 6.00 cop[tikv] table:t1, index:b, c, range:[-inf,6], keep order:false",
-          "  └─IndexReader_68(Probe) 1.04 root index:IndexRangeScan_67",
-          "    └─IndexRangeScan_67 1.04 cop[tikv] table:t2, index:b, c, range: decided by [eq(test.t.b, test.t.a)], keep order:true"
+          "Limit_17 1.00 root  offset:0, count:1",
+          "└─IndexMergeJoin_70 1.00 root  left outer semi join, inner:IndexReader_68, outer key:test.t.a, inner key:test.t.b",
+          "  ├─TopN_29(Build) 1.00 root  test.t.a:asc, offset:0, count:1",
+          "  │ └─IndexReader_37 1.00 root  index:TopN_36",
+          "  │   └─TopN_36 1.00 cop[tikv]  test.t.a:asc, offset:0, count:1",
+          "  │     └─IndexRangeScan_35 6.00 cop[tikv] table:t1, index:idx_bc(b, c) range:[-inf,6], keep order:false",
+          "  └─IndexReader_68(Probe) 1.04 root  index:IndexRangeScan_67",
+          "    └─IndexRangeScan_67 1.04 cop[tikv] table:t2, index:idx_bc(b, c) range: decided by [eq(test.t.b, test.t.a)], keep order:true"
         ]
       },
       {
@@ -64,10 +64,10 @@
           "EXPLAIN SELECT * FROM t WHERE b = 1 ORDER BY a desc limit 1"
         ],
         "Plan": [
-          "TopN_8 1.00 root test.t.a:desc, offset:0, count:1",
-          "└─IndexReader_16 1.00 root index:TopN_15",
-          "  └─TopN_15 1.00 cop[tikv] test.t.a:desc, offset:0, count:1",
-          "    └─IndexRangeScan_14 6.00 cop[tikv] table:t, index:b, c, range:[1,1], keep order:false"
+          "TopN_8 1.00 root  test.t.a:desc, offset:0, count:1",
+          "└─IndexReader_16 1.00 root  index:TopN_15",
+          "  └─TopN_15 1.00 cop[tikv]  test.t.a:desc, offset:0, count:1",
+          "    └─IndexRangeScan_14 6.00 cop[tikv] table:t, index:idx_bc(b, c) range:[1,1], keep order:false"
         ]
       },
       {
@@ -78,11 +78,11 @@
           "EXPLAIN SELECT * FROM t WHERE b = 2 ORDER BY a limit 1"
         ],
         "Plan": [
-          "Limit_11 1.00 root offset:0, count:1",
-          "└─TableReader_22 1.00 root data:Limit_21",
-          "  └─Limit_21 1.00 cop[tikv] offset:0, count:1",
-          "    └─Selection_20 1.00 cop[tikv] eq(test.t.b, 2)",
-          "      └─TableFullScan_19 4.17 cop[tikv] table:t, keep order:true"
+          "Limit_11 1.00 root  offset:0, count:1",
+          "└─TableReader_22 1.00 root  data:Limit_21",
+          "  └─Limit_21 1.00 cop[tikv]  offset:0, count:1",
+          "    └─Selection_20 1.00 cop[tikv]  eq(test.t.b, 2)",
+          "      └─TableFullScan_19 4.17 cop[tikv] table:t keep order:true"
         ]
       },
       {
@@ -91,10 +91,10 @@
           "EXPLAIN SELECT * FROM t WHERE b = 2 ORDER BY a limit 1"
         ],
         "Plan": [
-          "TopN_8 1.00 root test.t.a:asc, offset:0, count:1",
-          "└─IndexReader_16 1.00 root index:TopN_15",
-          "  └─TopN_15 1.00 cop[tikv] test.t.a:asc, offset:0, count:1",
-          "    └─IndexRangeScan_14 6.00 cop[tikv] table:t, index:b, c, range:[2,2], keep order:false"
+          "TopN_8 1.00 root  test.t.a:asc, offset:0, count:1",
+          "└─IndexReader_16 1.00 root  index:TopN_15",
+          "  └─TopN_15 1.00 cop[tikv]  test.t.a:asc, offset:0, count:1",
+          "    └─IndexRangeScan_14 6.00 cop[tikv] table:t, index:idx_bc(b, c) range:[2,2], keep order:false"
         ]
       },
       {
@@ -106,11 +106,11 @@
           "EXPLAIN SELECT * FROM t WHERE b = 2 and a > 0 ORDER BY a limit 1"
         ],
         "Plan": [
-          "TopN_8 1.00 root test.t.a:asc, offset:0, count:1",
-          "└─IndexReader_19 1.00 root index:TopN_18",
-          "  └─TopN_18 1.00 cop[tikv] test.t.a:asc, offset:0, count:1",
-          "    └─Selection_17 6.00 cop[tikv] gt(test.t.a, 0)",
-          "      └─IndexRangeScan_16 6.00 cop[tikv] table:t, index:b, c, range:[2,2], keep order:false"
+          "TopN_8 1.00 root  test.t.a:asc, offset:0, count:1",
+          "└─IndexReader_19 1.00 root  index:TopN_18",
+          "  └─TopN_18 1.00 cop[tikv]  test.t.a:asc, offset:0, count:1",
+          "    └─Selection_17 6.00 cop[tikv]  gt(test.t.a, 0)",
+          "      └─IndexRangeScan_16 6.00 cop[tikv] table:t, index:idx_bc(b, c) range:[2,2], keep order:false"
         ]
       },
       {
@@ -122,12 +122,12 @@
           "EXPLAIN SELECT a FROM t WHERE b = 2 and c > 0 ORDER BY a limit 1"
         ],
         "Plan": [
-          "Projection_7 1.00 root test.t.a",
-          "└─TopN_8 1.00 root test.t.a:asc, offset:0, count:1",
-          "  └─IndexReader_17 1.00 root index:TopN_16",
-          "    └─TopN_16 1.00 cop[tikv] test.t.a:asc, offset:0, count:1",
-          "      └─Selection_15 6.00 cop[tikv] gt(test.t.c, 0)",
-          "        └─IndexRangeScan_14 6.00 cop[tikv] table:t, index:b, d, a, c, range:[2,2], keep order:false"
+          "Projection_7 1.00 root  test.t.a",
+          "└─TopN_8 1.00 root  test.t.a:asc, offset:0, count:1",
+          "  └─IndexReader_17 1.00 root  index:TopN_16",
+          "    └─TopN_16 1.00 cop[tikv]  test.t.a:asc, offset:0, count:1",
+          "      └─Selection_15 6.00 cop[tikv]  gt(test.t.c, 0)",
+          "        └─IndexRangeScan_14 6.00 cop[tikv] table:t, index:idx(b, d, a, c) range:[2,2], keep order:false"
         ]
       }
     ]
@@ -142,13 +142,13 @@
           "explain select /*+ TIDB_INLJ(t2) */ * from t1 join t2 on t2.a=t1.a and t2.b>t1.b-1 and t2.b<t1.b+1 and t2.c=t1.c"
         ],
         "Plan": [
-          "IndexJoin_9 12475.01 root inner join, inner:IndexReader_8, outer key:test.t1.a, inner key:test.t2.a, other cond:eq(test.t1.c, test.t2.c), gt(test.t2.b, minus(test.t1.b, 1)), lt(test.t2.b, plus(test.t1.b, 1))",
-          "├─TableReader_19(Build) 9980.01 root data:Selection_18",
-          "│ └─Selection_18 9980.01 cop[tikv] not(isnull(test.t1.a)), not(isnull(test.t1.c))",
-          "│   └─TableFullScan_17 10000.00 cop[tikv] table:t1, keep order:false, stats:pseudo",
-          "└─IndexReader_8(Probe) 1.25 root index:Selection_7",
-          "  └─Selection_7 1.25 cop[tikv] not(isnull(test.t2.a)), not(isnull(test.t2.c))",
-          "    └─IndexRangeScan_6 1.25 cop[tikv] table:t2, index:a, b, c, range: decided by [eq(test.t2.a, test.t1.a) gt(test.t2.b, minus(test.t1.b, 1)) lt(test.t2.b, plus(test.t1.b, 1))], keep order:false, stats:pseudo"
+          "IndexJoin_9 12475.01 root  inner join, inner:IndexReader_8, outer key:test.t1.a, inner key:test.t2.a, other cond:eq(test.t1.c, test.t2.c), gt(test.t2.b, minus(test.t1.b, 1)), lt(test.t2.b, plus(test.t1.b, 1))",
+          "├─TableReader_19(Build) 9980.01 root  data:Selection_18",
+          "│ └─Selection_18 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.c))",
+          "│   └─TableFullScan_17 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─IndexReader_8(Probe) 1.25 root  index:Selection_7",
+          "  └─Selection_7 1.25 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.c))",
+          "    └─IndexRangeScan_6 1.25 cop[tikv] table:t2, index:idx(a, b, c) range: decided by [eq(test.t2.a, test.t1.a) gt(test.t2.b, minus(test.t1.b, 1)) lt(test.t2.b, plus(test.t1.b, 1))], keep order:false, stats:pseudo"
         ]
       },
       {
@@ -157,14 +157,14 @@
           "explain select * from t t1 join t t2 where t1.b = t2.b and t2.b is null"
         ],
         "Plan": [
-          "Projection_7 0.00 root test.t.a, test.t.b, test.t.a, test.t.b",
-          "└─HashRightJoin_9 0.00 root inner join, inner:TableReader_12, equal:[eq(test.t.b, test.t.b)]",
-          "  ├─TableReader_12(Build) 0.00 root data:Selection_11",
-          "  │ └─Selection_11 0.00 cop[tikv] isnull(test.t.b), not(isnull(test.t.b))",
-          "  │   └─TableFullScan_10 10000.00 cop[tikv] table:t2, keep order:false, stats:pseudo",
-          "  └─TableReader_18(Probe) 9990.00 root data:Selection_17",
-          "    └─Selection_17 9990.00 cop[tikv] not(isnull(test.t.b))",
-          "      └─TableFullScan_16 10000.00 cop[tikv] table:t1, keep order:false, stats:pseudo"
+          "Projection_7 0.00 root  test.t.a, test.t.b, test.t.a, test.t.b",
+          "└─HashJoin_9 0.00 root  inner join, equal:[eq(test.t.b, test.t.b)]",
+          "  ├─TableReader_12(Build) 0.00 root  data:Selection_11",
+          "  │ └─Selection_11 0.00 cop[tikv]  isnull(test.t.b), not(isnull(test.t.b))",
+          "  │   └─TableFullScan_10 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─TableReader_18(Probe) 9990.00 root  data:Selection_17",
+          "    └─Selection_17 9990.00 cop[tikv]  not(isnull(test.t.b))",
+          "      └─TableFullScan_16 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ]
       }
     ]
@@ -173,20 +173,19 @@
     "Name": "TestTiFlashCostModel",
     "Cases": [
       [
-        "TableReader_7 10000.00 root data:TableFullScan_6",
-        "└─TableFullScan_6 10000.00 cop[tiflash] table:t, keep order:false, stats:pseudo"
+        "TableReader_7 10000.00 root  data:TableFullScan_6",
+        "└─TableFullScan_6 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
       ],
       [
-        "TableReader_5 10000.00 root data:TableFullScan_4",
-        "└─TableFullScan_4 10000.00 cop[tikv] table:t, keep order:false, stats:pseudo"
+        "TableReader_5 10000.00 root  data:TableFullScan_4",
+        "└─TableFullScan_4 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
       ],
       [
-        "TableReader_6 2.00 root data:TableRangeScan_5",
-        "└─TableRangeScan_5 2.00 cop[tikv] table:t, range:[1,1], [2,2], keep order:false, stats:pseudo"
+        "Batch_Point_Get_5 2.00 root table:t handle:[1 2], keep order:false, desc:false"
       ],
       [
-        "TableReader_6 2.00 root data:TableRangeScan_5",
-        "└─TableRangeScan_5 2.00 cop[tiflash] table:t, range:[1,1], [2,2], keep order:false, stats:pseudo"
+        "TableReader_6 2.00 root  data:TableRangeScan_5",
+        "└─TableRangeScan_5 2.00 cop[tiflash] table:t range:[1,1], [2,2], keep order:false, stats:pseudo"
       ]
     ]
   },
@@ -194,45 +193,45 @@
     "Name": "TestStraightJoin",
     "Cases": [
       [
-        "HashLeftJoin_10 10000000000000000.00 root CARTESIAN inner join, inner:TableReader_23",
-        "├─TableReader_23(Build) 10000.00 root data:TableFullScan_22",
-        "│ └─TableFullScan_22 10000.00 cop[tikv] table:t4, keep order:false, stats:pseudo",
-        "└─HashLeftJoin_12(Probe) 1000000000000.00 root CARTESIAN inner join, inner:TableReader_21",
-        "  ├─TableReader_21(Build) 10000.00 root data:TableFullScan_20",
-        "  │ └─TableFullScan_20 10000.00 cop[tikv] table:t3, keep order:false, stats:pseudo",
-        "  └─HashLeftJoin_14(Probe) 100000000.00 root CARTESIAN inner join, inner:TableReader_19",
-        "    ├─TableReader_19(Build) 10000.00 root data:TableFullScan_18",
-        "    │ └─TableFullScan_18 10000.00 cop[tikv] table:t2, keep order:false, stats:pseudo",
-        "    └─TableReader_17(Probe) 10000.00 root data:TableFullScan_16",
-        "      └─TableFullScan_16 10000.00 cop[tikv] table:t1, keep order:false, stats:pseudo"
+        "HashJoin_10 10000000000000000.00 root  CARTESIAN inner join",
+        "├─TableReader_23(Build) 10000.00 root  data:TableFullScan_22",
+        "│ └─TableFullScan_22 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
+        "└─HashJoin_12(Probe) 1000000000000.00 root  CARTESIAN inner join",
+        "  ├─TableReader_21(Build) 10000.00 root  data:TableFullScan_20",
+        "  │ └─TableFullScan_20 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+        "  └─HashJoin_14(Probe) 100000000.00 root  CARTESIAN inner join",
+        "    ├─TableReader_19(Build) 10000.00 root  data:TableFullScan_18",
+        "    │ └─TableFullScan_18 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+        "    └─TableReader_17(Probe) 10000.00 root  data:TableFullScan_16",
+        "      └─TableFullScan_16 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
       ],
       [
-        "HashLeftJoin_10 10000000000000000.00 root CARTESIAN inner join, inner:TableReader_23",
-        "├─TableReader_23(Build) 10000.00 root data:TableFullScan_22",
-        "│ └─TableFullScan_22 10000.00 cop[tikv] table:t4, keep order:false, stats:pseudo",
-        "└─HashLeftJoin_12(Probe) 1000000000000.00 root CARTESIAN inner join, inner:TableReader_21",
-        "  ├─TableReader_21(Build) 10000.00 root data:TableFullScan_20",
-        "  │ └─TableFullScan_20 10000.00 cop[tikv] table:t3, keep order:false, stats:pseudo",
-        "  └─HashLeftJoin_14(Probe) 100000000.00 root CARTESIAN inner join, inner:TableReader_19",
-        "    ├─TableReader_19(Build) 10000.00 root data:TableFullScan_18",
-        "    │ └─TableFullScan_18 10000.00 cop[tikv] table:t2, keep order:false, stats:pseudo",
-        "    └─TableReader_17(Probe) 10000.00 root data:TableFullScan_16",
-        "      └─TableFullScan_16 10000.00 cop[tikv] table:t1, keep order:false, stats:pseudo"
+        "HashJoin_10 10000000000000000.00 root  CARTESIAN inner join",
+        "├─TableReader_23(Build) 10000.00 root  data:TableFullScan_22",
+        "│ └─TableFullScan_22 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
+        "└─HashJoin_12(Probe) 1000000000000.00 root  CARTESIAN inner join",
+        "  ├─TableReader_21(Build) 10000.00 root  data:TableFullScan_20",
+        "  │ └─TableFullScan_20 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+        "  └─HashJoin_14(Probe) 100000000.00 root  CARTESIAN inner join",
+        "    ├─TableReader_19(Build) 10000.00 root  data:TableFullScan_18",
+        "    │ └─TableFullScan_18 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+        "    └─TableReader_17(Probe) 10000.00 root  data:TableFullScan_16",
+        "      └─TableFullScan_16 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
       ],
       [
-        "HashLeftJoin_11 1248750000000.00 root inner join, inner:TableReader_26, equal:[eq(test.t1.a, test.t4.a)]",
-        "├─TableReader_26(Build) 9990.00 root data:Selection_25",
-        "│ └─Selection_25 9990.00 cop[tikv] not(isnull(test.t4.a))",
-        "│   └─TableFullScan_24 10000.00 cop[tikv] table:t4, keep order:false, stats:pseudo",
-        "└─HashLeftJoin_13(Probe) 999000000000.00 root CARTESIAN inner join, inner:TableReader_23",
-        "  ├─TableReader_23(Build) 10000.00 root data:TableFullScan_22",
-        "  │ └─TableFullScan_22 10000.00 cop[tikv] table:t3, keep order:false, stats:pseudo",
-        "  └─HashRightJoin_16(Probe) 99900000.00 root CARTESIAN inner join, inner:TableReader_19",
-        "    ├─TableReader_19(Build) 9990.00 root data:Selection_18",
-        "    │ └─Selection_18 9990.00 cop[tikv] not(isnull(test.t1.a))",
-        "    │   └─TableFullScan_17 10000.00 cop[tikv] table:t1, keep order:false, stats:pseudo",
-        "    └─TableReader_21(Probe) 10000.00 root data:TableFullScan_20",
-        "      └─TableFullScan_20 10000.00 cop[tikv] table:t2, keep order:false, stats:pseudo"
+        "HashJoin_11 1248750000000.00 root  inner join, equal:[eq(test.t1.a, test.t4.a)]",
+        "├─TableReader_26(Build) 9990.00 root  data:Selection_25",
+        "│ └─Selection_25 9990.00 cop[tikv]  not(isnull(test.t4.a))",
+        "│   └─TableFullScan_24 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
+        "└─HashJoin_13(Probe) 999000000000.00 root  CARTESIAN inner join",
+        "  ├─TableReader_23(Build) 10000.00 root  data:TableFullScan_22",
+        "  │ └─TableFullScan_22 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+        "  └─HashJoin_16(Probe) 99900000.00 root  CARTESIAN inner join",
+        "    ├─TableReader_19(Build) 9990.00 root  data:Selection_18",
+        "    │ └─Selection_18 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+        "    │   └─TableFullScan_17 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+        "    └─TableReader_21(Probe) 10000.00 root  data:TableFullScan_20",
+        "      └─TableFullScan_20 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
       ]
     ]
   },
@@ -240,24 +239,24 @@
     "Name": "TestNullCount",
     "Cases": [
       [
-        "TableReader_7 2.00 root data:Selection_6",
-        "└─Selection_6 2.00 cop[tikv] isnull(test.t.a)",
-        "  └─TableFullScan_5 2.00 cop[tikv] table:t, keep order:false"
+        "TableReader_7 2.00 root  data:Selection_6",
+        "└─Selection_6 2.00 cop[tikv]  isnull(test.t.a)",
+        "  └─TableFullScan_5 2.00 cop[tikv] table:t keep order:false"
       ],
       [
-        "IndexLookUp_7 2.00 root ",
-        "├─IndexFullScan_5(Build) 2.00 cop[tikv] table:t, index:a, keep order:false",
-        "└─TableRowIDScan_6(Probe) 2.00 cop[tikv] table:t, keep order:false"
+        "IndexLookUp_7 2.00 root  ",
+        "├─IndexFullScan_5(Build) 2.00 cop[tikv] table:t, index:idx(a) keep order:false",
+        "└─TableRowIDScan_6(Probe) 2.00 cop[tikv] table:t keep order:false"
       ],
       [
-        "TableReader_7 0.00 root data:Selection_6",
-        "└─Selection_6 0.00 cop[tikv] eq(test.t.b, 1)",
-        "  └─TableFullScan_5 2.00 cop[tikv] table:t, keep order:false"
+        "TableReader_7 0.00 root  data:Selection_6",
+        "└─Selection_6 0.00 cop[tikv]  eq(test.t.b, 1)",
+        "  └─TableFullScan_5 2.00 cop[tikv] table:t keep order:false"
       ],
       [
-        "TableReader_7 0.00 root data:Selection_6",
-        "└─Selection_6 0.00 cop[tikv] lt(test.t.b, 1)",
-        "  └─TableFullScan_5 2.00 cop[tikv] table:t, keep order:false"
+        "TableReader_7 0.00 root  data:Selection_6",
+        "└─Selection_6 0.00 cop[tikv]  lt(test.t.b, 1)",
+        "  └─TableFullScan_5 2.00 cop[tikv] table:t keep order:false"
       ]
     ]
   },
@@ -265,29 +264,29 @@
     "Name": "TestCorrelatedEstimation",
     "Cases": [
       [
-        "Projection_11 10.00 root Column#14",
-        "└─Apply_13 10.00 root CARTESIAN left outer semi join, inner:StreamAgg_22, other cond:eq(test.t.c, Column#13)",
-        "  ├─TableReader_15(Build) 10.00 root data:TableFullScan_14",
-        "  │ └─TableFullScan_14 10.00 cop[tikv] table:t, keep order:false",
-        "  └─StreamAgg_22(Probe) 1.00 root funcs:count(1)->Column#13",
-        "    └─HashLeftJoin_23 1.00 root inner join, inner:TableReader_33, equal:[eq(test.t.a, test.t.a)]",
-        "      ├─TableReader_33(Build) 1.00 root data:Selection_32",
-        "      │ └─Selection_32 1.00 cop[tikv] eq(test.t.a, test.t.a), not(isnull(test.t.a))",
-        "      │   └─TableFullScan_31 10.00 cop[tikv] table:t1, keep order:false",
-        "      └─TableReader_27(Probe) 1.00 root data:Selection_26",
-        "        └─Selection_26 1.00 cop[tikv] eq(test.t.a, test.t.a), not(isnull(test.t.a))",
-        "          └─TableFullScan_25 10.00 cop[tikv] table:s, keep order:false"
+        "Projection_11 10.00 root  Column#14",
+        "└─Apply_13 10.00 root  CARTESIAN left outer semi join, other cond:eq(test.t.c, Column#13)",
+        "  ├─TableReader_15(Build) 10.00 root  data:TableFullScan_14",
+        "  │ └─TableFullScan_14 10.00 cop[tikv] table:t keep order:false",
+        "  └─StreamAgg_22(Probe) 1.00 root  funcs:count(1)->Column#13",
+        "    └─HashJoin_23 1.00 root  inner join, equal:[eq(test.t.a, test.t.a)]",
+        "      ├─TableReader_33(Build) 1.00 root  data:Selection_32",
+        "      │ └─Selection_32 1.00 cop[tikv]  eq(test.t.a, test.t.a), not(isnull(test.t.a))",
+        "      │   └─TableFullScan_31 10.00 cop[tikv] table:t1 keep order:false",
+        "      └─TableReader_27(Probe) 1.00 root  data:Selection_26",
+        "        └─Selection_26 1.00 cop[tikv]  eq(test.t.a, test.t.a), not(isnull(test.t.a))",
+        "          └─TableFullScan_25 10.00 cop[tikv] table:s keep order:false"
       ],
       [
-        "Projection_8 10.00 root Column#9",
-        "└─Apply_10 10.00 root CARTESIAN left outer join, inner:MaxOneRow_15",
-        "  ├─TableReader_12(Build) 10.00 root data:TableFullScan_11",
-        "  │ └─TableFullScan_11 10.00 cop[tikv] table:t, keep order:false",
-        "  └─MaxOneRow_15(Probe) 1.00 root ",
-        "    └─Projection_16 0.10 root concat(cast(test.t.a, var_string(20)), ,, cast(test.t.b, var_string(20)))->Column#9",
-        "      └─IndexReader_19 0.10 root index:Selection_18",
-        "        └─Selection_18 0.10 cop[tikv] eq(test.t.a, test.t.a)",
-        "          └─IndexRangeScan_17 1.00 cop[tikv] table:t1, index:c, b, a, range: decided by [eq(test.t.c, test.t.c)], keep order:false"
+        "Projection_8 10.00 root  Column#9",
+        "└─Apply_10 10.00 root  CARTESIAN left outer join",
+        "  ├─TableReader_12(Build) 10.00 root  data:TableFullScan_11",
+        "  │ └─TableFullScan_11 10.00 cop[tikv] table:t keep order:false",
+        "  └─MaxOneRow_15(Probe) 1.00 root  ",
+        "    └─Projection_16 0.10 root  concat(cast(test.t.a, var_string(20)), ,, cast(test.t.b, var_string(20)))->Column#9",
+        "      └─IndexReader_19 0.10 root  index:Selection_18",
+        "        └─Selection_18 0.10 cop[tikv]  eq(test.t.a, test.t.a)",
+        "          └─IndexRangeScan_17 1.00 cop[tikv] table:t1, index:idx(c, b, a) range: decided by [eq(test.t.c, test.t.c)], keep order:false"
       ]
     ]
   },

@@ -19,11 +19,13 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hack"
 )
 
@@ -146,7 +148,11 @@ func (s *testEvaluatorSuite) TestAESDecrypt(c *C) {
 		c.Assert(err, IsNil)
 		str, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
-		c.Assert(str, DeepEquals, types.NewDatum(tt.origin))
+		if tt.origin == nil {
+			c.Assert(str.IsNull(), IsTrue)
+			continue
+		}
+		c.Assert(str, DeepEquals, types.NewCollationStringDatum(tt.origin.(string), charset.CollationBin, collate.DefaultLen))
 	}
 	variable.SetSessionSystemVar(s.ctx.GetSessionVars(), variable.BlockEncryptionMode, types.NewDatum("aes-128-ecb"))
 	s.testNullInput(c, ast.AesDecrypt)
@@ -373,7 +379,11 @@ func (s *testEvaluatorSuite) TestCompress(c *C) {
 		c.Assert(err, IsNil, Commentf("%v", test))
 		out, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil, Commentf("%v", test))
-		c.Assert(out, DeepEquals, types.NewDatum(test.expect), Commentf("%v", test))
+		if test.expect == nil {
+			c.Assert(out.IsNull(), IsTrue, Commentf("%v", test))
+			continue
+		}
+		c.Assert(out, DeepEquals, types.NewCollationStringDatum(test.expect.(string), charset.CollationBin, collate.DefaultLen), Commentf("%v", test))
 	}
 }
 
@@ -403,7 +413,11 @@ func (s *testEvaluatorSuite) TestUncompress(c *C) {
 		c.Assert(err, IsNil, Commentf("%v", test))
 		out, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil, Commentf("%v", test))
-		c.Assert(out, DeepEquals, types.NewDatum(test.expect), Commentf("%v", test))
+		if test.expect == nil {
+			c.Assert(out.IsNull(), IsTrue, Commentf("%v", test))
+			continue
+		}
+		c.Assert(out, DeepEquals, types.NewCollationStringDatum(test.expect.(string), charset.CollationBin, collate.DefaultLen), Commentf("%v", test))
 	}
 }
 

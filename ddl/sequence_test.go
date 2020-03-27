@@ -19,9 +19,9 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/ddl"
+	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/testkit"
@@ -34,6 +34,7 @@ type testSequenceSuite struct{ *testDBSuite }
 func (s *testSequenceSuite) TestCreateSequence(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test")
+	s.tk.MustExec("drop sequence if exists seq")
 	s.tk.MustGetErrCode("create sequence `seq  `", mysql.ErrWrongTableName)
 
 	// increment should not be set as 0.
@@ -614,6 +615,41 @@ func (s *testSequenceSuite) TestSequenceFunction(c *C) {
 	s.tk.MustQuery("select nextval(seq)").Check(testkit.Rows("9223372036854775806"))
 	s.tk.MustQuery("select setval(seq, -9223372036854775800)").Check(testkit.Rows("-9223372036854775800"))
 	s.tk.MustQuery("select nextval(seq)").Check(testkit.Rows("-9223372036854775802"))
+
+	// Test sequence function with wrong object name.
+	s.tk.MustExec("drop sequence if exists seq")
+	s.tk.MustExec("drop table if exists seq")
+	s.tk.MustExec("drop view if exists seq")
+	s.tk.MustExec("drop sequence if exists seq1")
+	s.tk.MustExec("drop table if exists seq1")
+	s.tk.MustExec("drop view if exists seq1")
+	s.tk.MustExec("create table seq(a int)")
+	err = s.tk.QueryToErr("select nextval(seq)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[schema:1347]'test.seq' is not SEQUENCE")
+	err = s.tk.QueryToErr("select lastval(seq)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[schema:1347]'test.seq' is not SEQUENCE")
+	err = s.tk.QueryToErr("select setval(seq, 10)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[schema:1347]'test.seq' is not SEQUENCE")
+
+	s.tk.MustExec("create view seq1 as select * from seq")
+	err = s.tk.QueryToErr("select nextval(seq1)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[schema:1347]'test.seq1' is not SEQUENCE")
+	err = s.tk.QueryToErr("select lastval(seq1)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[schema:1347]'test.seq1' is not SEQUENCE")
+	err = s.tk.QueryToErr("select setval(seq1, 10)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[schema:1347]'test.seq1' is not SEQUENCE")
+	s.tk.MustExec("drop sequence if exists seq")
+	s.tk.MustExec("drop table if exists seq")
+	s.tk.MustExec("drop view if exists seq")
+	s.tk.MustExec("drop sequence if exists seq1")
+	s.tk.MustExec("drop table if exists seq1")
+	s.tk.MustExec("drop view if exists seq1")
 }
 
 func (s *testSequenceSuite) TestInsertSequence(c *C) {
@@ -659,7 +695,7 @@ func (s *testSequenceSuite) TestInsertSequence(c *C) {
 	s.tk.MustExec("insert into t values(lastval(seq)),(-1),(nextval(seq))")
 	s.tk.MustQuery("select * from t").Check(testkit.Rows("13", "-1", "14"))
 	s.tk.MustExec("delete from t")
-	s.tk.MustExec("select setval(seq, 100)")
+	s.tk.MustQuery("select setval(seq, 100)").Check(testkit.Rows("100"))
 	s.tk.MustExec("insert into t values(lastval(seq)),(-1),(nextval(seq))")
 	s.tk.MustQuery("select * from t").Check(testkit.Rows("14", "-1", "101"))
 
@@ -679,7 +715,94 @@ func (s *testSequenceSuite) TestInsertSequence(c *C) {
 
 	// test sequence run out (overflow MaxInt64).
 	setSQL := "select setval(seq," + strconv.FormatInt(model.DefaultPositiveSequenceMaxValue+1, 10) + ")"
-	s.tk.MustExec(setSQL)
+	s.tk.MustQuery(setSQL).Check(testkit.Rows("9223372036854775807"))
 	err := s.tk.QueryToErr("select nextval(seq)")
 	c.Assert(err.Error(), Equals, "[table:4135]Sequence 'test.seq' has run out")
+}
+
+func (s *testSequenceSuite) TestUnflodSequence(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test")
+	// test insert into select from.
+	s.tk.MustExec("drop sequence if exists seq")
+	s.tk.MustExec("drop table if exists t1,t2,t3")
+	s.tk.MustExec("create sequence seq")
+	s.tk.MustExec("create table t1 (a int)")
+	s.tk.MustExec("create table t2 (a int, b int)")
+	s.tk.MustExec("create table t3 (a int, b int, c int)")
+	s.tk.MustExec("insert into t1 values(-1),(-1),(-1)")
+	// test sequence function unfold.
+	s.tk.MustQuery("select nextval(seq), a from t1").Check(testkit.Rows("1 -1", "2 -1", "3 -1"))
+	s.tk.MustExec("insert into t2 select nextval(seq), a from t1")
+	s.tk.MustQuery("select * from t2").Check(testkit.Rows("4 -1", "5 -1", "6 -1"))
+	s.tk.MustExec("delete from t2")
+
+	// if lastval is folded, the first result should be always 6.
+	s.tk.MustQuery("select lastval(seq), nextval(seq), a from t1").Check(testkit.Rows("6 7 -1", "7 8 -1", "8 9 -1"))
+	s.tk.MustExec("insert into t3 select lastval(seq), nextval(seq), a from t1")
+	s.tk.MustQuery("select * from t3").Check(testkit.Rows("9 10 -1", "10 11 -1", "11 12 -1"))
+	s.tk.MustExec("delete from t3")
+
+	// if setval is folded, the result should be "101 100 -1"...
+	s.tk.MustQuery("select nextval(seq), setval(seq,100), a from t1").Check(testkit.Rows("13 100 -1", "101 <nil> -1", "102 <nil> -1"))
+	s.tk.MustExec("insert into t3 select nextval(seq), setval(seq,200), a from t1")
+	s.tk.MustQuery("select * from t3").Check(testkit.Rows("103 200 -1", "201 <nil> -1", "202 <nil> -1"))
+	s.tk.MustExec("delete from t3")
+
+	// lastval should be evaluated after nextval in each row.
+	s.tk.MustQuery("select nextval(seq), lastval(seq), a from t1").Check(testkit.Rows("203 203 -1", "204 204 -1", "205 205 -1"))
+	s.tk.MustExec("insert into t3 select nextval(seq), lastval(seq), a from t1")
+	s.tk.MustQuery("select * from t3").Check(testkit.Rows("206 206 -1", "207 207 -1", "208 208 -1"))
+	s.tk.MustExec("delete from t3")
+
+	// double nextval should be also evaluated in each row.
+	s.tk.MustQuery("select nextval(seq), nextval(seq), a from t1").Check(testkit.Rows("209 210 -1", "211 212 -1", "213 214 -1"))
+	s.tk.MustExec("insert into t3 select nextval(seq), nextval(seq), a from t1")
+	s.tk.MustQuery("select * from t3").Check(testkit.Rows("215 216 -1", "217 218 -1", "219 220 -1"))
+	s.tk.MustExec("delete from t3")
+
+	s.tk.MustQuery("select nextval(seq)+lastval(seq), a from t1").Check(testkit.Rows("442 -1", "444 -1", "446 -1"))
+	s.tk.MustExec("insert into t2 select nextval(seq)+lastval(seq), a from t1")
+	s.tk.MustQuery("select * from t2").Check(testkit.Rows("448 -1", "450 -1", "452 -1"))
+	s.tk.MustExec("delete from t2")
+
+	// sub-query contain sequence function.
+	s.tk.MustQuery("select nextval(seq), b from (select nextval(seq) as b, a from t1) t2").Check(testkit.Rows("227 228", "229 230", "231 232"))
+	s.tk.MustExec("insert into t2 select nextval(seq), b from (select nextval(seq) as b, a from t1) t2")
+	s.tk.MustQuery("select * from t2").Check(testkit.Rows("233 234", "235 236", "237 238"))
+	s.tk.MustExec("delete from t2")
+
+	// For union operator like select1 union select2, select1 and select2 will be executed parallelly,
+	// so sequence function in both select are evaluated without order. Besides, the upper union operator
+	// will gather results through multi worker goroutine parallelly leading the results unordered.
+	// Cases like:
+	// `select nextval(seq), a from t1 union select lastval(seq), a from t2`
+	// `select nextval(seq), a from t1 union select nextval(seq), a from t2`
+	// The executing order of nextval and lastval is implicit, don't make any assumptions on it.
+}
+
+// before this PR:
+// single insert consume: 50.498672ms
+// after this PR:
+// single insert consume: 33.213615ms
+// Notice: use go test -check.b Benchmarkxxx to test it.
+func (s *testSequenceSuite) BenchmarkInsertCacheDefaultExpr(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test")
+	s.tk.MustExec("drop sequence if exists seq")
+	s.tk.MustExec("drop table if exists t")
+	s.tk.MustExec("create sequence seq")
+	s.tk.MustExec("create table t(a int default next value for seq)")
+	sql := "insert into t values "
+	for i := 0; i < 1000; i++ {
+		if i == 0 {
+			sql += "()"
+		} else {
+			sql += ",()"
+		}
+	}
+	c.ResetTimer()
+	for i := 0; i < c.N; i++ {
+		s.tk.MustExec(sql)
+	}
 }

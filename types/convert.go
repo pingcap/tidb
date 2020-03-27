@@ -264,7 +264,7 @@ func convertDecimalStrToUint(sc *stmtctx.StatementContext, str string, upperBoun
 
 	val, err := strconv.ParseUint(intStr, 10, 64)
 	if err != nil {
-		return val, err
+		return val, errors.Trace(err)
 	}
 	return val + round, nil
 }
@@ -630,7 +630,7 @@ func getValidFloatPrefix(sc *stmtctx.StatementContext, s string) (valid string, 
 		sawDot   bool
 		sawDigit bool
 		validLen int
-		eIdx     int
+		eIdx     = -1
 	)
 	for i := 0; i < len(s); i++ {
 		c := s[i]
@@ -650,7 +650,7 @@ func getValidFloatPrefix(sc *stmtctx.StatementContext, s string) (valid string, 
 			if !sawDigit { // "+.e"
 				break
 			}
-			if eIdx != 0 { // "1e5e"
+			if eIdx != -1 { // "1e5e"
 				break
 			}
 			eIdx = i

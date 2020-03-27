@@ -622,14 +622,17 @@ func sendBatchRequest(
 	failpoint.InjectContext(ctx, "sendIdleHeartbeatReq", func() {
 		entry.heartbeat = true
 	})
-	ctx1, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
 	select {
 	case batchConn.batchCommandsCh <- entry:
-	case <-ctx1.Done():
+	case <-ctx.Done():
 		logutil.BgLogger().Warn("send request is cancelled",
-			zap.String("to", addr), zap.String("cause", ctx1.Err().Error()))
-		return nil, errors.Trace(ctx1.Err())
+			zap.String("to", addr), zap.String("cause", ctx.Err().Error()))
+		return nil, errors.Trace(ctx.Err())
+	case <-timer.C:
+		return nil, context.DeadlineExceeded
 	}
 
 	select {
@@ -638,11 +641,13 @@ func sendBatchRequest(
 			return nil, errors.Trace(entry.err)
 		}
 		return tikvrpc.FromBatchCommandsResponse(res)
-	case <-ctx1.Done():
+	case <-ctx.Done():
 		atomic.StoreInt32(&entry.canceled, 1)
 		logutil.BgLogger().Warn("wait response is cancelled",
-			zap.String("to", addr), zap.String("cause", ctx1.Err().Error()))
-		return nil, errors.Trace(ctx1.Err())
+			zap.String("to", addr), zap.String("cause", ctx.Err().Error()))
+		return nil, errors.Trace(ctx.Err())
+	case <-timer.C:
+		return nil, context.DeadlineExceeded
 	}
 }
 

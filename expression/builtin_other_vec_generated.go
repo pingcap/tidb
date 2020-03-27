@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 )
 
 func (b *builtinInIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
@@ -154,6 +155,7 @@ func (b *builtinInStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 	var compareResult int
 	args := b.args
 	if len(b.hashSet) != 0 {
+		collator := collate.GetCollator(b.collation)
 		args = b.nonConstArgs
 		for i := 0; i < n; i++ {
 			if buf0.IsNull(i) {
@@ -161,7 +163,7 @@ func (b *builtinInStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 				continue
 			}
 			arg0 := buf0.GetString(i)
-			if _, ok := b.hashSet[arg0]; ok {
+			if _, ok := b.hashSet[string(collator.Key(arg0))]; ok {
 				r64s[i] = 1
 				result.SetNull(i, false)
 			}
@@ -182,8 +184,7 @@ func (b *builtinInStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 			}
 			arg0 := buf0.GetString(i)
 			arg1 := buf1.GetString(i)
-			_, collation, flen := b.CharsetAndCollation(b.ctx)
-			compareResult = types.CompareString(arg0, arg1, collation, flen)
+			compareResult = types.CompareString(arg0, arg1, b.collation)
 			if compareResult == 0 {
 				result.SetNull(i, false)
 				r64s[i] = 1

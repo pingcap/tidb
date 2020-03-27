@@ -59,6 +59,8 @@ var (
 	_ functionClass = &nextValFunctionClass{}
 	_ functionClass = &lastValFunctionClass{}
 	_ functionClass = &setValFunctionClass{}
+	_ functionClass = &formatBytesFunctionClass{}
+	_ functionClass = &formatNanoTimeFunctionClass{}
 )
 
 var (
@@ -76,6 +78,8 @@ var (
 	_ builtinFunc = &builtinNextValSig{}
 	_ builtinFunc = &builtinLastValSig{}
 	_ builtinFunc = &builtinSetValSig{}
+	_ builtinFunc = &builtinFormatBytesSig{}
+	_ builtinFunc = &builtinFormatNanoTimeSig{}
 )
 
 type databaseFunctionClass struct {
@@ -87,6 +91,7 @@ func (c *databaseFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		return nil, err
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString)
+	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	bf.tp.Flen = 64
 	sig := &builtinDatabaseSig{bf}
 	return sig, nil
@@ -153,6 +158,7 @@ func (c *currentUserFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 		return nil, err
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString)
+	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	bf.tp.Flen = 64
 	sig := &builtinCurrentUserSig{bf}
 	return sig, nil
@@ -236,6 +242,7 @@ func (c *userFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 		return nil, err
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString)
+	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	bf.tp.Flen = 64
 	sig := &builtinUserSig{bf}
 	return sig, nil
@@ -368,6 +375,7 @@ func (c *versionFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 		return nil, err
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString)
+	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	bf.tp.Flen = 64
 	sig := &builtinVersionSig{bf}
 	return sig, nil
@@ -398,6 +406,7 @@ func (c *tidbVersionFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 		return nil, err
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString)
+	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	bf.tp.Flen = len(printer.GetTiDBInfo())
 	sig := &builtinTiDBVersionSig{bf}
 	return sig, nil
@@ -903,4 +912,72 @@ func getSchemaAndSequence(sequenceName string) (string, string) {
 		return "", res[0]
 	}
 	return res[0], res[1]
+}
+
+type formatBytesFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *formatBytesFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETReal)
+	bf.tp.Flag |= mysql.UnsignedFlag
+	sig := &builtinFormatBytesSig{bf}
+	return sig, nil
+}
+
+type builtinFormatBytesSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinFormatBytesSig) Clone() builtinFunc {
+	newSig := &builtinFormatBytesSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// formatBytes evals a builtinFormatBytesSig.
+// See https://dev.mysql.com/doc/refman/8.0/en/performance-schema-functions.html#function_format-bytes
+func (b *builtinFormatBytesSig) evalString(row chunk.Row) (string, bool, error) {
+	val, isNull, err := b.args[0].EvalReal(b.ctx, row)
+	if isNull || err != nil {
+		return "", isNull, err
+	}
+	return GetFormatBytes(val), false, nil
+}
+
+type formatNanoTimeFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *formatNanoTimeFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETReal)
+	bf.tp.Flag |= mysql.UnsignedFlag
+	sig := &builtinFormatNanoTimeSig{bf}
+	return sig, nil
+}
+
+type builtinFormatNanoTimeSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinFormatNanoTimeSig) Clone() builtinFunc {
+	newSig := &builtinFormatNanoTimeSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// formatNanoTime evals a builtinFormatNanoTimeSig, as time unit in TiDB is always nanosecond, not picosecond.
+// See https://dev.mysql.com/doc/refman/8.0/en/performance-schema-functions.html#function_format-pico-time
+func (b *builtinFormatNanoTimeSig) evalString(row chunk.Row) (string, bool, error) {
+	val, isNull, err := b.args[0].EvalReal(b.ctx, row)
+	if isNull || err != nil {
+		return "", isNull, err
+	}
+	return GetFormatNanoTime(val), false, nil
 }

@@ -270,7 +270,7 @@ func buildColumnRange(accessConditions []expression.Expression, sc *stmtctx.Stat
 				ran.HighExclude = false
 			}
 		}
-		ranges, err = unionRanges(sc, ranges)
+		ranges, err = UnionRanges(sc, ranges)
 		if err != nil {
 			return nil, err
 		}
@@ -340,7 +340,7 @@ func buildCNFIndexRange(sc *stmtctx.StatementContext, cols []*expression.Column,
 	// Take prefix index into consideration.
 	if hasPrefix(lengths) {
 		if fixPrefixColRange(ranges, lengths, newTp) {
-			ranges, err = unionRanges(sc, ranges)
+			ranges, err = UnionRanges(sc, ranges)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -356,7 +356,11 @@ type sortRange struct {
 	encodedEnd    []byte
 }
 
-func unionRanges(sc *stmtctx.StatementContext, ranges []*Range) ([]*Range, error) {
+// UnionRanges sorts `ranges`, union adjacent ones if possible.
+// For two intervals [a, b], [c, d], we have guaranteed that a <= c. If b >= c. Then two intervals are overlapped.
+// And this two can be merged as [a, max(b, d)].
+// Otherwise they aren't overlapped.
+func UnionRanges(sc *stmtctx.StatementContext, ranges []*Range) ([]*Range, error) {
 	if len(ranges) == 0 {
 		return nil, nil
 	}
@@ -384,9 +388,6 @@ func unionRanges(sc *stmtctx.StatementContext, ranges []*Range) ([]*Range, error
 	ranges = ranges[:0]
 	lastRange := objects[0]
 	for i := 1; i < len(objects); i++ {
-		// For two intervals [a, b], [c, d], we have guaranteed that a >= c. If b >= c. Then two intervals are overlapped.
-		// And this two can be merged as [a, max(b, d)].
-		// Otherwise they aren't overlapped.
 		if bytes.Compare(lastRange.encodedEnd, objects[i].encodedStart) >= 0 {
 			if bytes.Compare(lastRange.encodedEnd, objects[i].encodedEnd) < 0 {
 				lastRange.encodedEnd = objects[i].encodedEnd
@@ -488,7 +489,7 @@ func newFieldType(tp *types.FieldType) *types.FieldType {
 	// To avoid data truncate error.
 	case mysql.TypeFloat, mysql.TypeDouble, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob,
 		mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString:
-		newTp := types.NewFieldType(tp.Tp)
+		newTp := types.NewFieldTypeWithCollation(tp.Tp, tp.Collate, types.UnspecifiedLength)
 		newTp.Charset = tp.Charset
 		return newTp
 	default:

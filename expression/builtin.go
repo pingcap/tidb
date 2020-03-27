@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -49,6 +50,7 @@ type baseBuiltinFunc struct {
 	ctx          sessionctx.Context
 	tp           *types.FieldType
 	pbCode       tipb.ScalarFuncSig
+	ctor         collate.Collator
 
 	childrenVectorized bool
 	childrenReversed   bool
@@ -76,11 +78,20 @@ func (b *baseBuiltinFunc) setPbCode(c tipb.ScalarFuncSig) {
 	b.pbCode = c
 }
 
+func (b *baseBuiltinFunc) setCollator(ctor collate.Collator) {
+	b.ctor = ctor
+}
+
+func (b *baseBuiltinFunc) collator() collate.Collator {
+	return b.ctor
+}
+
 func newBaseBuiltinFunc(ctx sessionctx.Context, args []Expression) baseBuiltinFunc {
 	if ctx == nil {
 		panic("ctx should not be nil")
 	}
-	return baseBuiltinFunc{
+	derivedCharset, derivedCollate, derivedFlen := DeriveCollationFromExprs(ctx, args...)
+	bf := baseBuiltinFunc{
 		bufAllocator:           newLocalSliceBuffer(len(args)),
 		childrenVectorizedOnce: new(sync.Once),
 		childrenReversedOnce:   new(sync.Once),
@@ -89,6 +100,9 @@ func newBaseBuiltinFunc(ctx sessionctx.Context, args []Expression) baseBuiltinFu
 		ctx:  ctx,
 		tp:   types.NewFieldType(mysql.TypeUnspecified),
 	}
+	bf.SetCharsetAndCollation(derivedCharset, derivedCollate, derivedFlen)
+	bf.setCollator(collate.GetCollator(derivedCollate))
+	return bf
 }
 
 // newBaseBuiltinFuncWithTp creates a built-in function signature with specified types of arguments and the return type of the function.
@@ -201,6 +215,7 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, args []Expression, retType
 		tp:   fieldType,
 	}
 	bf.SetCharsetAndCollation(derivedCharset, derivedCollate, derivedFlen)
+	bf.setCollator(collate.GetCollator(derivedCollate))
 	return bf
 }
 
@@ -345,6 +360,7 @@ func (b *baseBuiltinFunc) cloneFrom(from *baseBuiltinFunc) {
 	b.bufAllocator = newLocalSliceBuffer(len(b.args))
 	b.childrenVectorizedOnce = new(sync.Once)
 	b.childrenReversedOnce = new(sync.Once)
+	b.ctor = from.ctor
 }
 
 func (b *baseBuiltinFunc) Clone() builtinFunc {
@@ -452,6 +468,10 @@ type builtinFunc interface {
 	setPbCode(tipb.ScalarFuncSig)
 	// PbCode returns PbCode of this signature.
 	PbCode() tipb.ScalarFuncSig
+	// setCollator sets collator for signature.
+	setCollator(ctor collate.Collator)
+	// collator returns collator of this signature.
+	collator() collate.Collator
 	// metadata returns the metadata of a function.
 	// metadata means some functions contain extra inner fields which will not
 	// contain in `tipb.Expr.children` but must be pushed down to coprocessor
@@ -665,6 +685,10 @@ var funcs = map[string]functionClass{
 	ast.RowCount:     &rowCountFunctionClass{baseFunctionClass{ast.RowCount, 0, 0}},
 	ast.SessionUser:  &userFunctionClass{baseFunctionClass{ast.SessionUser, 0, 0}},
 	ast.SystemUser:   &userFunctionClass{baseFunctionClass{ast.SystemUser, 0, 0}},
+
+	// See https://dev.mysql.com/doc/refman/8.0/en/performance-schema-functions.html
+	ast.FormatBytes:    &formatBytesFunctionClass{baseFunctionClass{ast.FormatBytes, 1, 1}},
+	ast.FormatNanoTime: &formatNanoTimeFunctionClass{baseFunctionClass{ast.FormatNanoTime, 1, 1}},
 
 	// control functions
 	ast.If:     &ifFunctionClass{baseFunctionClass{ast.If, 3, 3}},

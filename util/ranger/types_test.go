@@ -162,15 +162,15 @@ func (s *testRangeSuite) TestIsFullRange(c *C) {
 		},
 		{
 			ran: ranger.Range{
-				LowVal:  []types.Datum{*nullDatum.Copy()},
+				LowVal:  []types.Datum{*nullDatum.Clone()},
 				HighVal: []types.Datum{types.NewUintDatum(math.MaxUint64)},
 			},
 			isFullRange: true,
 		},
 		{
 			ran: ranger.Range{
-				LowVal:  []types.Datum{*nullDatum.Copy()},
-				HighVal: []types.Datum{*nullDatum.Copy()},
+				LowVal:  []types.Datum{*nullDatum.Clone()},
+				HighVal: []types.Datum{*nullDatum.Clone()},
 			},
 			isFullRange: true,
 		},

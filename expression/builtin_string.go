@@ -284,7 +284,7 @@ func (c *concatFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
 	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 
 	sig := &builtinConcatSig{bf, maxAllowedPacket}
@@ -363,7 +363,7 @@ func (c *concatWSFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
 	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 
 	sig := &builtinConcatWSSig{bf, maxAllowedPacket}
@@ -609,7 +609,7 @@ func (c *repeatFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
 	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 	sig := &builtinRepeatSig{bf, maxAllowedPacket}
 	return sig, nil
@@ -775,11 +775,12 @@ func (c *spaceFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 		return nil, err
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETInt)
+	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	bf.tp.Flen = mysql.MaxBlobWidth
 	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
 	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 	sig := &builtinSpaceSig{bf, maxAllowedPacket}
 	sig.setPbCode(tipb.ScalarFuncSig_Space)
@@ -928,8 +929,7 @@ func (b *builtinStrcmpSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
-	_, collation, flen := b.CharsetAndCollation(b.ctx)
-	res := types.CompareString(left, right, collation, flen)
+	res := types.CompareString(left, right, b.collation)
 	return int64(res), false, nil
 }
 
@@ -1535,6 +1535,7 @@ func (c *hexFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 	case types.ETInt, types.ETReal, types.ETDecimal:
 		bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETInt)
 		bf.tp.Flen = args[0].GetType().Flen * 2
+		bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 		sig := &builtinHexIntArgSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_HexIntArg)
 		return sig, nil
@@ -1920,7 +1921,7 @@ func (c *lpadFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
 	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 
 	if types.IsBinaryStr(args[0].GetType()) || types.IsBinaryStr(args[2].GetType()) {
@@ -2050,7 +2051,7 @@ func (c *rpadFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
 	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 
 	if types.IsBinaryStr(args[0].GetType()) || types.IsBinaryStr(args[2].GetType()) {
@@ -2393,7 +2394,7 @@ func (b *builtinFindInSetSig) evalInt(row chunk.Row) (int64, bool, error) {
 	}
 
 	for i, strInSet := range strings.Split(strlist, ",") {
-		if str == strInSet {
+		if b.ctor.Compare(str, strInSet) == 0 {
 			return int64(i + 1), false, nil
 		}
 	}
@@ -2522,7 +2523,7 @@ func (b *builtinFieldStringSig) evalInt(row chunk.Row) (int64, bool, error) {
 		if err != nil {
 			return 0, true, err
 		}
-		if !isNull && str == stri {
+		if !isNull && b.ctor.Compare(str, stri) == 0 {
 			return int64(i), false, nil
 		}
 	}
@@ -2691,7 +2692,7 @@ func (b *builtinOctStringSig) evalString(row chunk.Row) (string, bool, error) {
 	if err != nil {
 		numError, ok := err.(*strconv.NumError)
 		if !ok || numError.Err != strconv.ErrRange {
-			return "", true, err
+			return "", true, errors.Trace(err)
 		}
 		overflow = true
 	}
@@ -3285,7 +3286,7 @@ func (c *fromBase64FunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
 	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 
 	types.SetBinChsClnFlag(bf.tp)
@@ -3359,7 +3360,7 @@ func (c *toBase64FunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
 	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 
 	sig := &builtinToBase64Sig{bf, maxAllowedPacket}
@@ -3460,7 +3461,7 @@ func (c *insertFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
 	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 
 	if types.IsBinaryStr(args[0].GetType()) {
@@ -3815,5 +3816,5 @@ func (b *builtinWeightStringSig) evalString(row chunk.Row) (string, bool, error)
 	default:
 		return "", false, ErrIncorrectType.GenWithStackByArgs(ast.WeightString, string(b.padding))
 	}
-	return string(ctor.Key(str, collate.CollatorOption{PadLen: b.length})), false, nil
+	return string(ctor.Key(str)), false, nil
 }

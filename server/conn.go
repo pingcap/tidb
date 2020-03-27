@@ -46,6 +46,7 @@ import (
 	"runtime/pprof"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -56,7 +57,9 @@ import (
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/plugin"
@@ -334,7 +337,7 @@ func parseOldHandshakeResponseBody(ctx context.Context, packet *handshakeRespons
 	defer func() {
 		// Check malformat packet cause out of range is disgusting, but don't panic!
 		if r := recover(); r != nil {
-			logutil.Logger(ctx).Error("handshake panic", zap.ByteString("packetData", data))
+			logutil.Logger(ctx).Error("handshake panic", zap.ByteString("packetData", data), zap.Stack("stack"))
 			err = mysql.ErrMalformPacket
 		}
 	}()
@@ -521,6 +524,8 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 				return err
 			}
 		}
+	} else if config.GetGlobalConfig().Security.RequireSecureTransport {
+		return errSecureTransportRequired.FastGenByArgs()
 	}
 
 	// Read the remaining part of the packet.
@@ -686,13 +691,8 @@ func (cc *clientConn) Run(ctx context.Context) {
 				logutil.Logger(ctx).Error("result undetermined, close this connection", zap.Error(err))
 				return
 			} else if terror.ErrCritical.Equal(err) {
-				logutil.Logger(ctx).Error("critical error, stop the server listener", zap.Error(err))
 				metrics.CriticalErrorCounter.Add(1)
-				select {
-				case cc.server.stopListenerCh <- struct{}{}:
-				default:
-				}
-				return
+				logutil.Logger(ctx).Fatal("critical error, stop the server", zap.Error(err))
 			}
 			var txnMode string
 			if cc.ctx != nil {
@@ -739,7 +739,7 @@ func queryStrForLog(query string) string {
 }
 
 func errStrForLog(err error) string {
-	if kv.ErrKeyExists.Equal(err) || parser.ErrParse.Equal(err) {
+	if kv.ErrKeyExists.Equal(err) || parser.ErrParse.Equal(err) || infoschema.ErrTableNotExists.Equal(err) {
 		// Do not log stack for duplicated entry error.
 		return err.Error()
 	}
@@ -1047,7 +1047,7 @@ func insertDataWithCommit(ctx context.Context, prevData,
 }
 
 // processStream process input stream from network
-func processStream(ctx context.Context, cc *clientConn, loadDataInfo *executor.LoadDataInfo) {
+func processStream(ctx context.Context, cc *clientConn, loadDataInfo *executor.LoadDataInfo, wg *sync.WaitGroup) {
 	var err error
 	var shouldBreak bool
 	var prevData, curData []byte
@@ -1063,6 +1063,7 @@ func processStream(ctx context.Context, cc *clientConn, loadDataInfo *executor.L
 		} else {
 			loadDataInfo.CloseTaskQueue()
 		}
+		wg.Done()
 	}()
 	for {
 		curData, err = cc.readPacket()
@@ -1073,6 +1074,7 @@ func processStream(ctx context.Context, cc *clientConn, loadDataInfo *executor.L
 			}
 		}
 		if len(curData) == 0 {
+			loadDataInfo.Drained = true
 			shouldBreak = true
 			if len(prevData) == 0 {
 				break
@@ -1124,13 +1126,34 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 	loadDataInfo.InitQueues()
 	loadDataInfo.SetMaxRowsInBatch(uint64(loadDataInfo.Ctx.GetSessionVars().DMLBatchSize))
 	loadDataInfo.StartStopWatcher()
+	// let stop watcher goroutine quit
+	defer loadDataInfo.ForceQuit()
 	err = loadDataInfo.Ctx.NewTxn(ctx)
 	if err != nil {
 		return err
 	}
 	// processStream process input data, enqueue commit task
-	go processStream(ctx, cc, loadDataInfo)
+	wg := new(sync.WaitGroup)
+	wg.Add(1)
+	go processStream(ctx, cc, loadDataInfo, wg)
 	err = loadDataInfo.CommitWork(ctx)
+	wg.Wait()
+	if err != nil {
+		// drain the data from client conn util empty packet received, otherwise the connection will be reset
+		for !loadDataInfo.Drained {
+			logutil.Logger(ctx).Info("not drained yet, try reading left data from client connection")
+			curData, err1 := cc.readPacket()
+			if err1 != nil {
+				logutil.Logger(ctx).Error("drain reading left data encounter errors", zap.Error(err1))
+				break
+			}
+			if len(curData) == 0 {
+				loadDataInfo.Drained = true
+				logutil.Logger(ctx).Info("draining finished for error", zap.Error(err))
+				break
+			}
+		}
+	}
 	loadDataInfo.SetMessage()
 	return err
 }

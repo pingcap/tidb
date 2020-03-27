@@ -54,6 +54,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/format"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -371,6 +372,8 @@ func (e *ShowExec) fetchShowTables() error {
 		tableNames = append(tableNames, v.Meta().Name.O)
 		if v.Meta().IsView() {
 			tableTypes[v.Meta().Name.O] = "VIEW"
+		} else if v.Meta().IsSequence() {
+			tableTypes[v.Meta().Name.O] = "SEQUENCE"
 		} else {
 			tableTypes[v.Meta().Name.O] = "BASE TABLE"
 		}
@@ -547,6 +550,7 @@ func (e *ShowExec) fetchShowIndex() error {
 			"BTREE",          // Index_type
 			"",               // Comment
 			"",               // Index_comment
+			"YES",            // Index_visible
 			"NULL",           // Expression
 		})
 	}
@@ -560,14 +564,22 @@ func (e *ShowExec) fetchShowIndex() error {
 			if idx.Meta().Unique {
 				nonUniq = 0
 			}
+
 			var subPart interface{}
 			if col.Length != types.UnspecifiedLength {
 				subPart = col.Length
 			}
+
 			nullVal := "YES"
 			if idx.Meta().Name.O == mysql.PrimaryKeyName {
 				nullVal = ""
 			}
+
+			visible := "YES"
+			if idx.Meta().Invisible {
+				visible = "NO"
+			}
+
 			colName := col.Name.O
 			expression := "NULL"
 			tblCol := tb.Meta().Columns[col.Offset]
@@ -575,6 +587,7 @@ func (e *ShowExec) fetchShowIndex() error {
 				colName = "NULL"
 				expression = fmt.Sprintf("(%s)", tblCol.GeneratedExprString)
 			}
+
 			e.appendRow([]interface{}{
 				tb.Meta().Name.O,       // Table
 				nonUniq,                // Non_unique
@@ -589,6 +602,7 @@ func (e *ShowExec) fetchShowIndex() error {
 				idx.Meta().Tp.String(), // Index_type
 				"",                     // Comment
 				idx.Meta().Comment,     // Index_comment
+				visible,                // Index_visible
 				expression,             // Expression
 			})
 		}
@@ -698,6 +712,10 @@ func getDefaultCollate(charsetName string) string {
 func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.TableInfo, allocator autoid.Allocator, buf *bytes.Buffer) (err error) {
 	if tableInfo.IsView() {
 		fetchShowCreateTable4View(ctx, tableInfo, buf)
+		return nil
+	}
+	if tableInfo.IsSequence() {
+		ConstructResultOfShowCreateSequence(ctx, tableInfo, buf)
 		return nil
 	}
 
@@ -846,6 +864,9 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 			cols = append(cols, colInfo)
 		}
 		fmt.Fprintf(buf, "(%s)", strings.Join(cols, ","))
+		if idxInfo.Invisible {
+			fmt.Fprintf(buf, ` /*!80000 INVISIBLE */`)
+		}
 		if i != len(publicIndices)-1 {
 			buf.WriteString(",\n")
 		}
@@ -943,7 +964,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	}
 
 	tableInfo := tb.Meta()
-	allocator := tb.Allocator(e.ctx, autoid.RowIDAllocType)
+	allocator := tb.Allocators(e.ctx).Get(autoid.RowIDAllocType)
 	var buf bytes.Buffer
 	// TODO: let the result more like MySQL.
 	if err = ConstructResultOfShowCreateTable(e.ctx, tableInfo, allocator, &buf); err != nil {
@@ -1066,7 +1087,7 @@ func (e *ShowExec) fetchShowCreateDatabase() error {
 }
 
 func (e *ShowExec) fetchShowCollation() error {
-	collations := charset.GetSupportedCollations()
+	collations := collate.GetSupportedCollations()
 	for _, v := range collations {
 		isDefault := ""
 		if v.IsDefault {
@@ -1142,6 +1163,19 @@ func (e *ShowExec) fetchShowGrants() error {
 	checker := privilege.GetPrivilegeManager(e.ctx)
 	if checker == nil {
 		return errors.New("miss privilege checker")
+	}
+	sessVars := e.ctx.GetSessionVars()
+	if !e.User.CurrentUser {
+		userName := sessVars.User.AuthUsername
+		hostName := sessVars.User.AuthHostname
+		// Show grant user requires the SELECT privilege on mysql schema.
+		// Ref https://dev.mysql.com/doc/refman/8.0/en/show-grants.html
+		if userName != e.User.Username || hostName != e.User.Hostname {
+			activeRoles := sessVars.ActiveRoles
+			if !checker.RequestVerification(activeRoles, mysql.SystemDB, "", "", mysql.SelectPriv) {
+				return ErrDBaccessDenied.GenWithStackByArgs(userName, hostName, mysql.SystemDB)
+			}
+		}
 	}
 	for _, r := range e.Roles {
 		if r.Hostname == "" {

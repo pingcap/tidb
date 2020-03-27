@@ -25,7 +25,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/configpb"
-	"github.com/pingcap/pd/client"
+	"github.com/pingcap/pd/v4/client"
 )
 
 type mockPDConfigClient struct {
@@ -116,23 +116,47 @@ func (s *testConfigSuite) TestPDConfHandler(c *C) {
 	ch.Close()
 
 	// update log level
-	wg := sync.WaitGroup{}
-	wg.Add(1)
-	mockReloadFunc := func(oldConf, newConf *Config) {
-		c.Assert(oldConf.Performance.MaxMemory, Equals, uint64(233))
-		c.Assert(newConf.Performance.MaxMemory, Equals, uint64(123))
-		wg.Done()
+	tmCh := make(chan time.Time)
+	tmAfter := func(d time.Duration) <-chan time.Time {
+		return tmCh
 	}
+	cnt := 0
+	var registerWg, reloadWg, reloadWg2 sync.WaitGroup
+	registerWg.Add(1)
+	reloadWg.Add(1)
+	reloadWg2.Add(1)
+	mockReloadFunc := func(oldConf, newConf *Config) {
+		if cnt == 0 {
+			registerWg.Done()
+		} else if cnt == 1 {
+			c.Assert(oldConf.Performance.MaxMemory, Equals, uint64(233))
+			c.Assert(newConf.Performance.MaxMemory, Equals, uint64(123))
+			reloadWg.Done()
+		} else {
+			reloadWg2.Done()
+		}
+		cnt++
+	}
+
 	conf.Performance.MaxMemory = 233
+	content, _ = encodeConfig(&conf)
+	mockPDConfigClient0.confContent.Store(content)
 	ch, err = newPDConfHandler(confPath, &conf, mockReloadFunc, newMockPDConfigClient)
 	c.Assert(err, IsNil)
-	ch.interval = time.Second
+	ch.timeAfter = tmAfter
+
+	ch.Start()
+	registerWg.Wait() // wait for register
+
 	newConf := conf
 	newConf.Performance.MaxMemory = 123
 	newContent, _ := encodeConfig(&newConf)
 	mockPDConfigClient0.confContent.Store(newContent)
-	ch.Start()
-	wg.Wait()
+	tmCh <- time.Now()
+	reloadWg.Wait()
+
+	tmCh <- time.Now() // wait for another reloading to ensure the global config has been updated
+	reloadWg2.Wait()
 	c.Assert(ch.GetConfig().Performance.MaxMemory, Equals, uint64(123))
 	ch.Close()
 }

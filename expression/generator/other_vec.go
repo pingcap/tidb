@@ -51,6 +51,7 @@ const builtinOtherImports = `import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 )
 `
 
@@ -107,8 +108,7 @@ var builtinInTmpl = template.Must(template.New("builtinInTmpl").Parse(`
 	{{- else if eq .Input.TypeName "JSON" -}}
 		compareResult = json.CompareBinary(arg0, arg1)
 	{{- else if eq .Input.TypeName "String" -}}
-		_, collation, flen := b.CharsetAndCollation(b.ctx)
-		compareResult = types.CompareString(arg0, arg1, collation, flen)
+		compareResult = types.CompareString(arg0, arg1, b.collation)
 	{{- else -}}
 		compareResult = types.Compare{{ .Input.TypeNameInColumn }}(arg0, arg1)
 	{{- end -}}
@@ -117,6 +117,7 @@ var builtinInTmpl = template.Must(template.New("builtinInTmpl").Parse(`
 {{ range . }}
 {{ $InputInt := (eq .Input.TypeName "Int") }}
 {{ $InputJSON := (eq .Input.TypeName "JSON")}}
+{{ $InputString := (eq .Input.TypeName "String") }}
 {{ $InputFixed := ( .Input.Fixed ) }}
 {{ $UseHashKey := ( or (eq .Input.TypeName "Decimal") (eq .Input.TypeName "JSON") )}}
 func (b *{{.SigName}}) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
@@ -145,6 +146,9 @@ func (b *{{.SigName}}) vecEvalInt(input *chunk.Chunk, result *chunk.Column) erro
 	args := b.args
 	{{- if not $InputJSON}}
 	if len(b.hashSet) != 0 {
+		{{- if $InputString }}
+			collator := collate.GetCollator(b.collation)
+		{{- end }}
 		args = b.nonConstArgs
 		for i := 0; i < n; i++ {
 			if buf0.IsNull(i) {
@@ -176,6 +180,11 @@ func (b *{{.SigName}}) vecEvalInt(input *chunk.Chunk, result *chunk.Column) erro
 						return err
 					}
 					if _, ok := b.hashSet[string(key)]; ok {
+						r64s[i] = 1
+						result.SetNull(i, false)
+					}
+				{{- else if $InputString }}
+					if _, ok := b.hashSet[string(collator.Key(arg0))]; ok {
 						r64s[i] = 1
 						result.SetNull(i, false)
 					}

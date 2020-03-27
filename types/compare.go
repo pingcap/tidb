@@ -114,8 +114,8 @@ func CompareFloat64(x, y float64) int {
 }
 
 // CompareString returns an integer comparing the string x to y with the specified collation and length.
-func CompareString(x, y, collation string, length int) int {
-	return collate.GetCollator(collation).Compare(x, y, collate.NewCollatorOption(length))
+func CompareString(x, y, collation string) int {
+	return collate.GetCollator(collation).Compare(x, y)
 }
 
 // CompareDuration returns an integer comparing the duration x to y.

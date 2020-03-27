@@ -179,7 +179,8 @@ type LogicalPlan interface {
 	// exhaustPhysicalPlans generates all possible plans that can match the required property.
 	exhaustPhysicalPlans(*property.PhysicalProperty) []PhysicalPlan
 
-	extractCorrelatedCols() []*expression.CorrelatedColumn
+	// ExtractCorrelatedCols extracts correlated columns inside the LogicalPlan.
+	ExtractCorrelatedCols() []*expression.CorrelatedColumn
 
 	// MaxOneRow means whether this operator only returns max one row.
 	MaxOneRow() bool
@@ -346,12 +347,8 @@ func newBasePhysicalPlan(ctx sessionctx.Context, tp string, self PhysicalPlan, o
 	}
 }
 
-func (p *baseLogicalPlan) extractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := make([]*expression.CorrelatedColumn, 0, len(p.children))
-	for _, child := range p.children {
-		corCols = append(corCols, child.extractCorrelatedCols()...)
-	}
-	return corCols
+func (p *baseLogicalPlan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
+	return nil
 }
 
 // PruneColumns implements LogicalPlan interface.

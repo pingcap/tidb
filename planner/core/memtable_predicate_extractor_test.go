@@ -271,6 +271,12 @@ func (s *extractorSuite) TestClusterLogTableExtractor(c *C) {
 			instances: nil,
 		},
 		{
+			// Test for invalid time.
+			sql:       "select * from information_schema.cluster_log where time='2019-10-10 10::10'",
+			nodeTypes: set.NewStringSet(),
+			instances: set.NewStringSet(),
+		},
+		{
 			sql:       "select * from information_schema.cluster_log where type='tikv'",
 			nodeTypes: set.NewStringSet("tikv"),
 			instances: set.NewStringSet(),
@@ -513,6 +519,18 @@ func (s *extractorSuite) TestClusterLogTableExtractor(c *C) {
 			level:     set.NewStringSet("debug", "info", "error"),
 			patterns:  []string{".*coprocessor.*", ".*txn=123.*"},
 		},
+		{
+			sql:       "select * from information_schema.cluster_log where (message regexp '.*pd.*' or message regexp '.*tidb.*' or message like '%tikv%')",
+			nodeTypes: set.NewStringSet(),
+			instances: set.NewStringSet(),
+			patterns:  []string{".*pd.*|.*tidb.*|.*tikv.*"},
+		},
+		{
+			sql:       "select * from information_schema.cluster_log where (level = 'debug' or level = 'ERROR')",
+			nodeTypes: set.NewStringSet(),
+			instances: set.NewStringSet(),
+			level:     set.NewStringSet("debug", "error"),
+		},
 	}
 	for _, ca := range cases {
 		logicalMemTable := s.getLogicalMemTable(c, se, parser, ca.sql)
@@ -644,7 +662,7 @@ func (s *extractorSuite) TestMetricTableExtractor(c *C) {
 			c.Assert(metricTableExtractor.Quantiles, DeepEquals, ca.quantiles)
 		}
 		if !ca.skipRequest {
-			promQL := plannercore.GetMetricTablePromQL(se, "tidb_query_duration", metricTableExtractor.LabelConditions, metricTableExtractor.Quantiles)
+			promQL := metricTableExtractor.GetMetricTablePromQL(se, "tidb_query_duration")
 			c.Assert(promQL, DeepEquals, ca.promQL, Commentf("SQL: %v", ca.sql))
 			start, end := metricTableExtractor.StartTime, metricTableExtractor.EndTime
 			c.Assert(start.UnixNano() <= end.UnixNano(), IsTrue)
@@ -991,5 +1009,43 @@ func (s *extractorSuite) TestInspectionSummaryTableExtractor(c *C) {
 			c.Assert(clusterConfigExtractor.MetricNames, DeepEquals, ca.names, Commentf("SQL: %v", ca.sql))
 		}
 		c.Assert(clusterConfigExtractor.SkipInspection, Equals, ca.skipInspection, Commentf("SQL: %v", ca.sql))
+	}
+}
+
+func (s *extractorSuite) TestInspectionRuleTableExtractor(c *C) {
+	se, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+
+	var cases = []struct {
+		sql  string
+		tps  set.StringSet
+		skip bool
+	}{
+		{
+			sql: "select * from information_schema.inspection_rules",
+		},
+		{
+			sql: "select * from information_schema.inspection_rules where type='inspection'",
+			tps: set.NewStringSet("inspection"),
+		},
+		{
+			sql: "select * from information_schema.inspection_rules where type='inspection' or type='summary'",
+			tps: set.NewStringSet("inspection", "summary"),
+		},
+		{
+			sql:  "select * from information_schema.inspection_rules where type='inspection' and type='summary'",
+			skip: true,
+		},
+	}
+	parser := parser.New()
+	for _, ca := range cases {
+		logicalMemTable := s.getLogicalMemTable(c, se, parser, ca.sql)
+		c.Assert(logicalMemTable.Extractor, NotNil)
+
+		clusterConfigExtractor := logicalMemTable.Extractor.(*plannercore.InspectionRuleTableExtractor)
+		if len(ca.tps) > 0 {
+			c.Assert(clusterConfigExtractor.Types, DeepEquals, ca.tps, Commentf("SQL: %v", ca.sql))
+		}
+		c.Assert(clusterConfigExtractor.SkipRequest, Equals, ca.skip, Commentf("SQL: %v", ca.sql))
 	}
 }

@@ -65,7 +65,7 @@ func (s *testUnitTestSuit) TestIndexJoinAnalyzeLookUpFilters(c *C) {
 	})
 	dsSchema.Append(&expression.Column{
 		UniqueID: s.ctx.GetSessionVars().AllocPlanColumnID(),
-		RetType:  types.NewFieldType(mysql.TypeVarchar),
+		RetType:  types.NewFieldTypeWithCollation(mysql.TypeVarchar, mysql.DefaultCollationName, types.UnspecifiedLength),
 	})
 	dsNames = append(dsNames, &types.FieldName{
 		ColName: model.NewCIStr("c"),
@@ -104,7 +104,7 @@ func (s *testUnitTestSuit) TestIndexJoinAnalyzeLookUpFilters(c *C) {
 	})
 	outerChildSchema.Append(&expression.Column{
 		UniqueID: s.ctx.GetSessionVars().AllocPlanColumnID(),
-		RetType:  types.NewFieldType(mysql.TypeVarchar),
+		RetType:  types.NewFieldTypeWithCollation(mysql.TypeVarchar, mysql.DefaultCollationName, types.UnspecifiedLength),
 	})
 	outerChildNames = append(outerChildNames, &types.FieldName{
 		ColName: model.NewCIStr("g"),
@@ -247,9 +247,9 @@ func (s *testUnitTestSuit) TestIndexJoinAnalyzeLookUpFilters(c *C) {
 		helper := &indexJoinBuildHelper{join: joinNode, lastColManager: nil}
 		_, err = helper.analyzeLookUpFilters(path, dataSourceNode, tt.innerKeys)
 		c.Assert(err, IsNil)
+		c.Assert(fmt.Sprintf("%v", helper.chosenAccess), Equals, tt.accesses)
 		c.Assert(fmt.Sprintf("%v", helper.chosenRanges), Equals, tt.ranges, Commentf("test case: #%v", i))
 		c.Assert(fmt.Sprintf("%v", helper.idxOff2KeyOff), Equals, tt.idxOff2KeyOff)
-		c.Assert(fmt.Sprintf("%v", helper.chosenAccess), Equals, tt.accesses)
 		c.Assert(fmt.Sprintf("%v", helper.chosenRemained), Equals, tt.remained)
 		c.Assert(fmt.Sprintf("%v", helper.lastColManager), Equals, tt.compareFilters)
 	}

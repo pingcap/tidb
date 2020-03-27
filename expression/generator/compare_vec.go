@@ -78,9 +78,6 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEvalInt(in
 	arg0 := buf0.{{ .type.TypeNameInColumn }}s()
 	arg1 := buf1.{{ .type.TypeNameInColumn }}s()
 {{- end }}
-{{- if eq .type.ETName "String" }}
-	_, collation, flen := b.CharsetAndCollation(b.ctx)
-{{- end }}
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf0, buf1)
 	i64s := result.Int64s()
@@ -93,7 +90,7 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEvalInt(in
 {{- else if eq .type.ETName "Real" }}
 		val := types.CompareFloat64(arg0[i], arg1[i])
 {{- else if eq .type.ETName "String" }}
-		val := types.CompareString(buf0.GetString(i), buf1.GetString(i), collation, flen)
+		val := types.CompareString(buf0.GetString(i), buf1.GetString(i), b.collation)
 {{- else if eq .type.ETName "Duration" }}
 		val := types.CompareDuration(arg0[i], arg1[i])
 {{- else if eq .type.ETName "Datetime" }}
@@ -139,9 +136,6 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEvalInt(in
 	arg0 := buf0.{{ .type.TypeNameInColumn }}s()
 	arg1 := buf1.{{ .type.TypeNameInColumn }}s()
 {{- end }}
-{{- if eq .type.ETName "String" }}
-	_, collation, flen := b.CharsetAndCollation(b.ctx)
-{{- end }}
 	result.ResizeInt64(n, false)
 	i64s := result.Int64s()
 	for i := 0; i < n; i++ {
@@ -157,7 +151,7 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEvalInt(in
 {{- else if eq .type.ETName "Real" }}
 		case types.CompareFloat64(arg0[i], arg1[i]) == 0:
 {{- else if eq .type.ETName "String" }}
-		case types.CompareString(buf0.GetString(i), buf1.GetString(i), collation, flen) == 0:
+		case types.CompareString(buf0.GetString(i), buf1.GetString(i), b.collation) == 0:
 {{- else if eq .type.ETName "Duration" }}
 		case types.CompareDuration(arg0[i], arg1[i]) == 0:
 {{- else if eq .type.ETName "Datetime" }}

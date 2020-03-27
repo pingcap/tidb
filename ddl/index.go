@@ -79,7 +79,7 @@ func buildIndexColumns(columns []*model.ColumnInfo, indexPartSpecifications []*a
 
 		// The sum of all lengths must be shorter than the max length for prefix.
 		if sumLength > config.GetGlobalConfig().MaxIndexLength {
-			return nil, errors.Trace(errTooLongKey)
+			return nil, errTooLongKey.GenWithStackByArgs(config.GetGlobalConfig().MaxIndexLength)
 		}
 
 		idxParts = append(idxParts, &model.IndexColumn{
@@ -124,7 +124,7 @@ func checkIndexPrefixLength(columns []*model.ColumnInfo, idxColumns []*model.Ind
 		sumLength += indexColumnLength
 		// The sum of all lengths must be shorter than the max length for prefix.
 		if sumLength > config.GetGlobalConfig().MaxIndexLength {
-			return errors.Trace(errTooLongKey)
+			return errTooLongKey.GenWithStackByArgs(config.GetGlobalConfig().MaxIndexLength)
 		}
 	}
 	return nil
@@ -169,7 +169,7 @@ func checkIndexColumn(col *model.ColumnInfo, ic *ast.IndexPartSpecification) err
 
 	// Specified length must be shorter than the max length for prefix.
 	if ic.Length > config.GetGlobalConfig().MaxIndexLength {
-		return errors.Trace(errTooLongKey)
+		return errTooLongKey.GenWithStackByArgs(config.GetGlobalConfig().MaxIndexLength)
 	}
 	return nil
 }
@@ -435,6 +435,9 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		}
 		if indexOption != nil {
 			indexInfo.Comment = indexOption.Comment
+			if indexOption.Visibility == ast.IndexVisibilityInvisible {
+				indexInfo.Invisible = true
+			}
 			if indexOption.Tp == model.IndexTypeInvalid {
 				// Use btree as default index type.
 				indexInfo.Tp = model.IndexTypeBtree

@@ -15,7 +15,6 @@ package statistics
 
 import (
 	"context"
-	"math/rand"
 	"sort"
 
 	"github.com/pingcap/errors"
@@ -25,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/fastrand"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/spaolacci/murmur3"
@@ -162,13 +162,15 @@ func (c *SampleCollector) collect(sc *stmtctx.StatementContext, d types.Datum) e
 	// to the underlying slice, GC can't free them which lead to memory leak eventually.
 	// TODO: Refactor the proto to avoid copying here.
 	if len(c.Samples) < int(c.MaxSampleSize) {
-		newItem := &SampleItem{Value: types.CloneDatum(d)}
+		newItem := &SampleItem{}
+		d.Copy(&newItem.Value)
 		c.Samples = append(c.Samples, newItem)
 	} else {
-		shouldAdd := rand.Int63n(c.seenValues) < c.MaxSampleSize
+		shouldAdd := int64(fastrand.Uint64N(uint64(c.seenValues))) < c.MaxSampleSize
 		if shouldAdd {
-			idx := rand.Intn(int(c.MaxSampleSize))
-			newItem := &SampleItem{Value: types.CloneDatum(d)}
+			idx := int(fastrand.Uint32N(uint32(c.MaxSampleSize)))
+			newItem := &SampleItem{}
+			d.Copy(&newItem.Value)
 			// To keep the order of the elements, we use delete and append, not direct replacement.
 			c.Samples = append(c.Samples[:idx], c.Samples[idx+1:]...)
 			c.Samples = append(c.Samples, newItem)

@@ -879,8 +879,7 @@ func (s *testPrivilegeSuite) TestAnalyzeTable(c *C) {
 
 }
 
-func (s *testPrivilegeSuite) TestInformationSchema(c *C) {
-
+func (s *testPrivilegeSuite) TestSystemSchema(c *C) {
 	// This test tests no privilege check for INFORMATION_SCHEMA database.
 	se := newSession(c, s.store, s.dbName)
 	mustExec(c, se, `CREATE USER 'u1'@'localhost';`)
@@ -892,6 +891,24 @@ func (s *testPrivilegeSuite) TestInformationSchema(c *C) {
 	_, err = se.Execute(context.Background(), "drop table information_schema.tables")
 	c.Assert(strings.Contains(err.Error(), "denied to user"), IsTrue)
 	_, err = se.Execute(context.Background(), "update information_schema.tables set table_name = 'tst' where table_name = 'mysql'")
+	c.Assert(strings.Contains(err.Error(), "privilege check fail"), IsTrue)
+
+	// Test performance_schema.
+	mustExec(c, se, `select * from performance_schema.events_statements_summary_by_digest`)
+	_, err = se.Execute(context.Background(), "drop table performance_schema.events_statements_summary_by_digest")
+	c.Assert(strings.Contains(err.Error(), "denied to user"), IsTrue)
+	_, err = se.Execute(context.Background(), "update performance_schema.events_statements_summary_by_digest set table_names = 'tst'")
+	c.Assert(strings.Contains(err.Error(), "privilege check fail"), IsTrue)
+	_, err = se.Execute(context.Background(), "delete from performance_schema.events_statements_summary_by_digest")
+	c.Assert(strings.Contains(err.Error(), "privilege check fail"), IsTrue)
+
+	// Test metric_schema.
+	mustExec(c, se, `select * from metrics_schema.tidb_query_duration`)
+	_, err = se.Execute(context.Background(), "drop table metrics_schema.tidb_query_duration")
+	c.Assert(strings.Contains(err.Error(), "denied to user"), IsTrue)
+	_, err = se.Execute(context.Background(), "update metrics_schema.tidb_query_duration set instance = 'tst'")
+	c.Assert(strings.Contains(err.Error(), "privilege check fail"), IsTrue)
+	_, err = se.Execute(context.Background(), "delete from metrics_schema.tidb_query_duration")
 	c.Assert(strings.Contains(err.Error(), "privilege check fail"), IsTrue)
 }
 
