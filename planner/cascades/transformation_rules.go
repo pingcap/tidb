@@ -391,9 +391,19 @@ func NewRulePushAggDownGather() Transformation {
 
 // Match implements Transformation interface.
 func (r *PushAggDownGather) Match(expr *memo.ExprIter) bool {
+	if expr.GetExpr().HasAppliedRule(r) {
+		return false
+	}
 	agg := expr.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
 	for _, aggFunc := range agg.AggFuncs {
 		if aggFunc.Mode != aggregation.CompleteMode {
+			return false
+		}
+	}
+	if agg.HasDistinct() {
+		// TODO: remove this logic after the cost estimation of distinct pushdown is implemented.
+		// If AllowDistinctAggPushDown is set to true, we should not consider RootTask.
+		if !agg.SCtx().GetSessionVars().AllowDistinctAggPushDown {
 			return false
 		}
 	}
@@ -451,6 +461,7 @@ func (r *PushAggDownGather) OnTransform(old *memo.ExprIter) (newExprs []*memo.Gr
 	gatherGroup := memo.NewGroupWithSchema(gatherExpr, partialPref.Schema)
 	finalAggExpr := memo.NewGroupExpr(finalAgg)
 	finalAggExpr.SetChildren(gatherGroup)
+	finalAggExpr.AddAppliedRule(r)
 	// We don't erase the old complete mode Aggregation because
 	// this transformation would not always be better.
 	return []*memo.GroupExpr{finalAggExpr}, false, false, nil

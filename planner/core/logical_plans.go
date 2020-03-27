@@ -312,7 +312,8 @@ type LogicalAggregation struct {
 	inputCount         float64 // inputCount is the input count of this plan.
 }
 
-func (la *LogicalAggregation) hasDistinct() bool {
+// HasDistinct shows whether LogicalAggregation has functions with distinct.
+func (la *LogicalAggregation) HasDistinct() bool {
 	for _, aggFunc := range la.AggFuncs {
 		if aggFunc.HasDistinct {
 			return true

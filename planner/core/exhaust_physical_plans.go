@@ -1587,7 +1587,7 @@ func (la *LogicalAggregation) getEnforcedStreamAggs(prop *property.PhysicalPrope
 	}
 
 	taskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopDoubleReadTaskType}
-	if la.hasDistinct() {
+	if la.HasDistinct() {
 		// TODO: remove this logic after the cost estimation of distinct pushdown is implemented.
 		// If AllowDistinctAggPushDown is set to true, we should not consider RootTask.
 		if !la.ctx.GetSessionVars().AllowDistinctAggPushDown {
@@ -1640,7 +1640,7 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 		// The table read of "CopDoubleReadTaskType" can't promises the sort
 		// property that the stream aggregation required, no need to consider.
 		taskTypes := []property.TaskType{property.CopSingleReadTaskType}
-		if la.hasDistinct() {
+		if la.HasDistinct() {
 			// TODO: remove this logic after the cost estimation of distinct pushdown is implemented.
 			// If AllowDistinctAggPushDown is set to true, we should not consider RootTask.
 			if !la.ctx.GetSessionVars().AllowDistinctAggPushDown {
@@ -1676,7 +1676,7 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 	}
 	hashAggs := make([]PhysicalPlan, 0, len(wholeTaskTypes))
 	taskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopDoubleReadTaskType}
-	if la.hasDistinct() {
+	if la.HasDistinct() {
 		// TODO: remove this logic after the cost estimation of distinct pushdown is implemented.
 		// If AllowDistinctAggPushDown is set to true, we should not consider RootTask.
 		if !la.ctx.GetSessionVars().AllowDistinctAggPushDown {
