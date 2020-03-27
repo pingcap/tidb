@@ -766,7 +766,7 @@ func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tbl ta
 			}
 		} else {
 			if hint.IndexNames == nil && hint.HintType != ast.HintIgnore {
-				err := errors.New("TiDB doesn't support index in the isolation read engines.")
+				err := errors.New("TiDB doesn't support index in the isolation read engines")
 				if i < indexHintsLen {
 					return nil, err
 				}
