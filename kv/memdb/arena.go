@@ -1,4 +1,4 @@
-// Copyright 2019 PingCAP, Inc.
+// Copyright 2020 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -13,7 +13,10 @@
 
 package memdb
 
-import "math"
+import (
+	"math"
+	"unsafe"
+)
 
 type arenaAddr struct {
 	blockIdx    uint32
@@ -44,11 +47,47 @@ type arena struct {
 	blocks    []arenaBlock
 }
 
+type arenaSnapshot struct {
+	blocks        int
+	availIdx      int
+	offsetInBlock int
+}
+
 func newArenaLocator(initBlockSize int) *arena {
 	return &arena{
 		blockSize: initBlockSize,
 		blocks:    []arenaBlock{newArenaBlock(initBlockSize)},
 	}
+}
+
+func (a *arena) snapshot() arenaSnapshot {
+	return arenaSnapshot{
+		blocks:        len(a.blocks),
+		availIdx:      a.availIdx,
+		offsetInBlock: a.blocks[a.availIdx].length,
+	}
+}
+
+func (a *arena) revert(snap arenaSnapshot) {
+	a.availIdx = snap.availIdx
+	a.blocks[a.availIdx].length = snap.offsetInBlock
+	for i := snap.blocks; i < len(a.blocks); i++ {
+		a.blocks[i] = arenaBlock{}
+	}
+	a.blocks = a.blocks[:snap.blocks]
+}
+
+func (a *arena) newNode(key []byte, v []byte, height int) (*node, arenaAddr) {
+	// The base level is already allocated in the node struct.
+	nodeSize := nodeHeaderSize + height*8 + 8 + len(key) + len(v)
+	addr, data := a.alloc(nodeSize)
+	node := (*node)(unsafe.Pointer(&data[0]))
+	node.keyLen = uint16(len(key))
+	node.height = uint16(height)
+	node.valLen = uint32(len(v))
+	copy(data[node.nodeLen():], key)
+	copy(data[node.nodeLen()+int(node.keyLen):], v)
+	return node, addr
 }
 
 func (a *arena) getFrom(addr arenaAddr) []byte {
