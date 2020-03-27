@@ -37,5 +37,14 @@
       "explain select * from t where t.a = 1",
       "explain select * from t where t.a in (1, 2)"
     ]
+  },
+  {
+    "name": "TestIsolationReadTiFlashUseIndexHint",
+    "cases": [
+      "explain select * from t",
+      "explain select * from t use index();",
+      "explain select /*+ use_index(t, idx)*/ * from t",
+      "explain select /*+ use_index(t)*/ * from t"
+    ]
   }
 ]
