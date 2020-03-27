@@ -673,6 +673,29 @@ func (s *testSuite) TestStmtHints(c *C) {
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.MaxExecutionTime, Equals, uint64(0))
 }
 
+func (s *testSuite) TestReloadBindings(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, index idx(a))")
+	tk.MustExec("create global binding for select * from t using select * from t use index(idx)")
+	rows := tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 1)
+	rows = tk.MustQuery("select * from mysql.bind_info").Rows()
+	c.Assert(len(rows), Equals, 1)
+	tk.MustExec("truncate table mysql.bind_info")
+	c.Assert(s.domain.BindHandle().Update(false), IsNil)
+	rows = tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(s.domain.BindHandle().Update(true), IsNil)
+	rows = tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 1)
+	tk.MustExec("admin reload bindings")
+	rows = tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 0)
+}
+
 func (s *testSuite) TestDefaultDB(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
