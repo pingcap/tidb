@@ -1161,20 +1161,16 @@ func (p *basePhysicalAgg) newPartialAggregate(copTaskType kv.StoreType) (partial
 		}
 		partialPref.AggFuncs = append(partialPref.AggFuncs, aggFuncs...)
 	}
-	// finalSchema := p.schema
 	p.AggFuncs = partialPref.AggFuncs
 	p.GroupByItems = partialPref.GroupByItems
 	p.schema = partialPref.Schema
 	partialAgg := p.self
 	// Create physical "final" aggregation.
-	prop := &property.PhysicalProperty{
-		ExpectedCnt: math.MaxFloat64,
-	}
 	if p.tp == plancodec.TypeStreamAgg {
 		finalAgg := basePhysicalAgg{
 			AggFuncs:     finalPref.AggFuncs,
 			GroupByItems: finalPref.GroupByItems,
-		}.initForStream(p.ctx, p.stats, p.blockOffset, prop)
+		}.initForStream(p.ctx, p.stats, p.blockOffset)
 		finalAgg.schema = finalPref.Schema
 		return partialAgg, finalAgg
 	}
@@ -1182,7 +1178,7 @@ func (p *basePhysicalAgg) newPartialAggregate(copTaskType kv.StoreType) (partial
 	finalAgg := basePhysicalAgg{
 		AggFuncs:     finalPref.AggFuncs,
 		GroupByItems: finalPref.GroupByItems,
-	}.initForHash(p.ctx, p.stats, p.blockOffset, prop)
+	}.initForHash(p.ctx, p.stats, p.blockOffset)
 	finalAgg.schema = finalPref.Schema
 	return partialAgg, finalAgg
 }
