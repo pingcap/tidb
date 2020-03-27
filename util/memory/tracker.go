@@ -52,7 +52,7 @@ type Tracker struct {
 	bytesLimit     int64        // bytesLimit <= 0 means no limit.
 	maxConsumed    int64        // max number of bytes consumed during execution.
 	parent         *Tracker     // The parent memory tracker.
-	overrideAction bool         // overrideAction indicates whether the tracker would override actionOnExceed during Consume
+	overrideAction *bool        // overrideAction indicates whether the tracker would override actionOnExceed during Consume
 }
 
 // NewTracker creates a memory tracker.
@@ -64,7 +64,7 @@ func NewTracker(label fmt.Stringer, bytesLimit int64) *Tracker {
 		bytesLimit: bytesLimit,
 	}
 	t.actionMu.actionOnExceed = &LogOnExceed{}
-	t.overrideAction = false
+	t.overrideAction = nil
 	return t
 }
 
@@ -193,7 +193,7 @@ func (t *Tracker) Consume(bytes int64) {
 	if rootExceed != nil {
 		rootExceed.actionMu.Lock()
 		defer rootExceed.actionMu.Unlock()
-		if t.overrideAction && t.actionMu.actionOnExceed != nil {
+		if t.overrideAction != nil && *t.overrideAction && t.actionMu.actionOnExceed != nil {
 			t.actionMu.actionOnExceed.Action(t)
 		} else {
 			if rootExceed.actionMu.actionOnExceed != nil {
@@ -272,7 +272,7 @@ func (t *Tracker) BytesToString(numBytes int64) string {
 	return fmt.Sprintf("%v Bytes", numBytes)
 }
 
-// SetOverriderAction
+// SetOverriderAction set whether enable or disable overrideAction
 func (t *Tracker) SetOverriderAction(isEnabled bool) {
-	t.overrideAction = isEnabled
+	t.overrideAction = &isEnabled
 }
