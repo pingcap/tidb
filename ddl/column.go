@@ -332,10 +332,10 @@ func onAddColumns(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error
 	case model.StateWriteReorganization:
 		// reorganization -> public
 		// Adjust table column offsets.
-		oldCols := tblInfo.Columns
+		oldCols := tblInfo.Columns[:len(tblInfo.Columns)-len(offsets)]
+		newCols := tblInfo.Columns[len(tblInfo.Columns)-len(offsets):]
+		tblInfo.Columns = oldCols
 		for i := range offsets {
-			tmpCols := oldCols[:len(oldCols)-len(offsets)+i+1]
-			tblInfo.Columns = tmpCols
 			// For multiple columns with after position, should adjust offsets.
 			// e.g. create table t(a int);
 			// alter table t add column b int after a, add column c int after a;
@@ -348,8 +348,8 @@ func onAddColumns(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error
 					}
 				}
 			}
+			tblInfo.Columns = append(tblInfo.Columns, newCols[i])
 			adjustColumnInfoInAddColumn(tblInfo, offsets[i])
-			oldCols = append(tblInfo.Columns, oldCols[len(oldCols)-len(offsets)+i+1:]...)
 		}
 		setColumnsState(columnInfos, model.StatePublic)
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != columnInfos[0].State)
