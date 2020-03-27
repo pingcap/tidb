@@ -59,14 +59,17 @@ var _ = SerialSuites(&testInfoschemaTableSerialSuite{})
 
 var _ = SerialSuites(&inspectionSuite{})
 
-type testInfoschemaTableSuite struct {
+type testInfoschemaTableSuiteBase struct {
 	store kv.Storage
 	dom   *domain.Domain
 }
 
+type testInfoschemaTableSuite struct {
+	testInfoschemaTableSuiteBase
+}
+
 type testInfoschemaTableSerialSuite struct {
-	store kv.Storage
-	dom   *domain.Domain
+	testInfoschemaTableSuiteBase
 }
 
 type inspectionSuite struct {
@@ -74,7 +77,7 @@ type inspectionSuite struct {
 	dom   *domain.Domain
 }
 
-func (s *testInfoschemaTableSerialSuite) SetUpSuite(c *C) {
+func (s *testInfoschemaTableSuiteBase) SetUpSuite(c *C) {
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	s.store = store
@@ -85,22 +88,7 @@ func (s *testInfoschemaTableSerialSuite) SetUpSuite(c *C) {
 	config.StoreGlobalConfig(&newConf)
 }
 
-func (s *testInfoschemaTableSerialSuite) TearDownSuite(c *C) {
-	s.dom.Close()
-	s.store.Close()
-}
-func (s *testInfoschemaTableSuite) SetUpSuite(c *C) {
-	store, dom, err := newStoreWithBootstrap()
-	c.Assert(err, IsNil)
-	s.store = store
-	s.dom = dom
-	originCfg := config.GetGlobalConfig()
-	newConf := *originCfg
-	newConf.OOMAction = config.OOMActionLog
-	config.StoreGlobalConfig(&newConf)
-}
-
-func (s *testInfoschemaTableSuite) TearDownSuite(c *C) {
+func (s *testInfoschemaTableSuiteBase) TearDownSuite(c *C) {
 	s.dom.Close()
 	s.store.Close()
 }
@@ -256,6 +244,10 @@ func (s *testInfoschemaTableSuite) TestDDLJobs(c *C) {
 		testkit.Rows("test_ddl_jobs t create table"))
 
 	tk.MustQuery("select job_type from information_schema.DDL_JOBS group by job_type having job_type = 'create table'").Check(
+		testkit.Rows("create table"))
+
+	// Test the START_TIME and END_TIME field.
+	tk.MustQuery("select distinct job_type from information_schema.DDL_JOBS where job_type = 'create table' and start_time > str_to_date('20190101','%Y%m%d%H%i%s')").Check(
 		testkit.Rows("create table"))
 
 	// Test the privilege of new user for information_schema.DDL_JOBS.
@@ -556,10 +548,10 @@ func (s *testInfoschemaTableSuite) TestForTableTiFlashReplica(c *C) {
 	tk.MustQuery("select TABLE_SCHEMA,TABLE_NAME,REPLICA_COUNT,LOCATION_LABELS,AVAILABLE, PROGRESS from information_schema.tiflash_replica").Check(testkit.Rows("test t 2 a,b 1 1"))
 }
 
-var _ = SerialSuites(&testInfoschemaClusterTableSuite{testInfoschemaTableSuite: &testInfoschemaTableSuite{}})
+var _ = SerialSuites(&testInfoschemaClusterTableSuite{testInfoschemaTableSuiteBase: &testInfoschemaTableSuiteBase{}})
 
 type testInfoschemaClusterTableSuite struct {
-	*testInfoschemaTableSuite
+	*testInfoschemaTableSuiteBase
 	rpcserver  *grpc.Server
 	httpServer *httptest.Server
 	mockAddr   string
@@ -568,7 +560,7 @@ type testInfoschemaClusterTableSuite struct {
 }
 
 func (s *testInfoschemaClusterTableSuite) SetUpSuite(c *C) {
-	s.testInfoschemaTableSuite.SetUpSuite(c)
+	s.testInfoschemaTableSuiteBase.SetUpSuite(c)
 	s.rpcserver, s.listenAddr = s.setUpRPCService(c, ":0")
 	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
 	s.startTime = time.Now()
@@ -667,7 +659,7 @@ func (s *testInfoschemaClusterTableSuite) TearDownSuite(c *C) {
 	if s.httpServer != nil {
 		s.httpServer.Close()
 	}
-	s.testInfoschemaTableSuite.TearDownSuite(c)
+	s.testInfoschemaTableSuiteBase.TearDownSuite(c)
 }
 
 type mockSessionManager struct {
