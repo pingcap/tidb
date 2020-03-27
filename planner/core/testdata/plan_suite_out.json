@@ -102,13 +102,13 @@
       {
         "SQL": "select /*+ USE_INDEX(t, c_d_e) */ * from t t1",
         "Best": "TableReader(Table(t))",
-        "HasWarn": false,
+        "HasWarn": true,
         "Hints": "USE_INDEX(@`sel_1` `test`.`t1` )"
       },
       {
         "SQL": "select /*+ IGNORE_INDEX(t, c_d_e) */ t1.c from t t1 order by t1.c",
         "Best": "IndexReader(Index(t.c_d_e)[[NULL,+inf]])",
-        "HasWarn": false,
+        "HasWarn": true,
         "Hints": "USE_INDEX(@`sel_1` `test`.`t1` `c_d_e`)"
       },
       {
@@ -205,6 +205,18 @@
         "Best": "IndexMergeReader(PartialPlans->[Table(t), Index(t.f_g)[(2,+inf]]], TablePlan->Table(t))",
         "HasWarn": false,
         "Hints": "USE_INDEX_MERGE(@`sel_1` `t` `PRIMARY`, `f_g`)"
+      },
+      {
+        "SQL": "select /*+ NO_INDEX_MERGE(), USE_INDEX_MERGE(t, primary, f_g, c_d_e) */ * from t where a < 1 or f > 2",
+        "Best": "TableReader(Table(t)->Sel([or(lt(test.t.a, 1), gt(test.t.f, 2))]))",
+        "HasWarn": true,
+        "Hints": "USE_INDEX(@`sel_1` `test`.`t` )"
+      },
+      {
+        "SQL": "select /*+ USE_INDEX_MERGE(t1, c_d_e, f_g) */ * from t where c < 1 or f > 2",
+        "Best": "TableReader(Table(t)->Sel([or(lt(test.t.c, 1), gt(test.t.f, 2))]))",
+        "HasWarn": true,
+        "Hints": "USE_INDEX(@`sel_1` `test`.`t` )"
       },
       {
         "SQL": "select /*+ NO_INDEX_MERGE(), USE_INDEX_MERGE(t, primary, f_g, c_d_e) */ * from t where a < 1 or f > 2",
@@ -1401,17 +1413,17 @@
       {
         "SQL": "select /*+ AGG_TO_COP(), HASH_AGG(), USE_INDEX(t) */ sum(a) from ta group by a",
         "Best": "IndexReader(Index(ta.a)[[NULL,+inf]]->HashAgg)->HashAgg",
-        "Warning": ""
+        "Warning": "[planner:1815]use_index(test.t) is inapplicable, check whether the table(test.t) exists"
       },
       {
         "SQL": "select /*+ AGG_TO_COP(), USE_INDEX(t) */ sum(b) from ta group by b",
         "Best": "TableReader(Table(ta)->HashAgg)->HashAgg",
-        "Warning": ""
+        "Warning": "[planner:1815]use_index(test.t) is inapplicable, check whether the table(test.t) exists"
       },
       {
         "SQL": "select /*+ AGG_TO_COP(), HASH_AGG(), USE_INDEX(t) */ distinct a from ta group by a",
         "Best": "IndexReader(Index(ta.a)[[NULL,+inf]]->HashAgg)->HashAgg",
-        "Warning": ""
+        "Warning": "[planner:1815]use_index(test.t) is inapplicable, check whether the table(test.t) exists"
       },
       {
         "SQL": "select /*+ AGG_TO_COP(), HASH_AGG(), HASH_JOIN(t1), USE_INDEX(t1), USE_INDEX(t2) */ sum(t1.a) from ta t1, ta t2 where t1.a = t2.b group by t1.a",
