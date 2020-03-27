@@ -656,18 +656,15 @@ func (b *PlanBuilder) detectSelectWindow(sel *ast.SelectStmt) bool {
 }
 
 func checkReadEngineHasTiKV(ctx sessionctx.Context) bool {
-	cfgIsolationEngines := set.StringSet{}
+	globalHasTiKV := false
 	for _, engine := range config.GetGlobalConfig().IsolationRead.Engines {
-		cfgIsolationEngines.Insert(engine)
+		if engine == kv.TiKV.Name() {
+			globalHasTiKV = true
+		}
 	}
 	isolationReadEngines := ctx.GetSessionVars().GetIsolationReadEngines()
-	if _, ok := cfgIsolationEngines[kv.TiKV.Name()]; !ok {
-		return false
-	}
-	if _, ok := isolationReadEngines[kv.TiKV]; !ok {
-		return false
-	}
-	return true
+	_, sessionHasTiKV := isolationReadEngines[kv.TiKV]
+	return globalHasTiKV && sessionHasTiKV
 }
 
 func getPathByIndexName(paths []*util.AccessPath, idxName model.CIStr, tblInfo *model.TableInfo) *util.AccessPath {
@@ -765,7 +762,7 @@ func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tbl ta
 				available = append(available, path)
 			}
 		} else {
-			if hint.IndexNames == nil && hint.HintType != ast.HintIgnore {
+			if hint.IndexNames != nil {
 				err := errors.New("TiDB doesn't support index in the isolation read engines")
 				if i < indexHintsLen {
 					return nil, err
