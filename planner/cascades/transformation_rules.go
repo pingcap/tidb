@@ -415,18 +415,8 @@ func (r *PushAggDownGather) OnTransform(old *memo.ExprIter) (newExprs []*memo.Gr
 	// The old Aggregation should stay unchanged for other transformation.
 	// So we build a new LogicalAggregation for the partialAgg.
 	aggFuncs := make([]*aggregation.AggFuncDesc, len(agg.AggFuncs))
-	for i, aggFunc := range agg.AggFuncs {
-		newAggFunc := &aggregation.AggFuncDesc{
-			HasDistinct: false,
-			Mode:        aggregation.Partial1Mode,
-		}
-		newAggFunc.Name = aggFunc.Name
-		newAggFunc.RetTp = aggFunc.RetTp
-		// The args will be changed below, so that we have to build a new slice for it.
-		newArgs := make([]expression.Expression, len(aggFunc.Args))
-		copy(newArgs, aggFunc.Args)
-		newAggFunc.Args = newArgs
-		aggFuncs[i] = newAggFunc
+	for i := range agg.AggFuncs {
+		aggFuncs[i] = agg.AggFuncs[i].Clone()
 	}
 	gbyItems := make([]expression.Expression, len(agg.GroupByItems))
 	copy(gbyItems, agg.GroupByItems)
