@@ -179,9 +179,8 @@ type LogicalPlan interface {
 	// exhaustPhysicalPlans generates all possible plans that can match the required property.
 	// It will return:
 	// 1. All possible plans that can match the required property.
-	// 2. Whether there is a hint that cannot satisfy the required property. If so
-	//    we should enforce the property in advance.
-	exhaustPhysicalPlans(*property.PhysicalProperty) (physicalPlans []PhysicalPlan, hasUnmatchedHint bool)
+	// 2. Whether the SQL hint can satisfy the required property. Return true if there is no hint.
+	exhaustPhysicalPlans(*property.PhysicalProperty) (physicalPlans []PhysicalPlan, hintFitsProp bool)
 
 	// ExtractCorrelatedCols extracts correlated columns inside the LogicalPlan.
 	ExtractCorrelatedCols() []*expression.CorrelatedColumn
