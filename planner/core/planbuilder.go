@@ -91,6 +91,36 @@ type indexHintInfo struct {
 	dbName    model.CIStr
 	tblName   model.CIStr
 	indexHint *ast.IndexHint
+	// Matched indicates whether this index hint
+	// has been successfully applied to a DataSource.
+	// If an indexHintInfo is not matched after building
+	// a Select statement, we will generate a warning for it.
+	matched bool
+}
+
+func (hint *indexHintInfo) hintTypeString() string {
+	switch hint.indexHint.HintType {
+	case ast.HintUse:
+		return "use_index"
+	case ast.HintIgnore:
+		return "ignore_index"
+	case ast.HintForce:
+		return "force_index"
+	}
+	return ""
+}
+
+// indexString formats the indexHint as dbName.tableName[, indexNames].
+func (hint *indexHintInfo) indexString() string {
+	var indexListString string
+	indexList := make([]string, len(hint.indexHint.IndexNames))
+	for i := range hint.indexHint.IndexNames {
+		indexList[i] = hint.indexHint.IndexNames[i].L
+	}
+	if len(indexList) > 0 {
+		indexListString = fmt.Sprintf(", %s", strings.Join(indexList, ", "))
+	}
+	return fmt.Sprintf("%s.%s%s", hint.dbName, hint.tblName, indexListString)
 }
 
 type aggHintInfo struct {
@@ -670,9 +700,10 @@ func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tbl ta
 	// Extract comment-style index hint like /*+ INDEX(t, idx1, idx2) */.
 	indexHintsLen := len(indexHints)
 	if hints := b.TableHints(); hints != nil {
-		for _, hint := range hints.indexHintList {
+		for i, hint := range hints.indexHintList {
 			if hint.dbName.L == dbName.L && hint.tblName.L == tblName.L {
 				indexHints = append(indexHints, hint.indexHint)
+				hints.indexHintList[i].matched = true
 			}
 		}
 	}
@@ -737,10 +768,6 @@ func (b *PlanBuilder) filterPathByIsolationRead(paths []*util.AccessPath, dbName
 	if dbName.L == mysql.SystemDB {
 		return paths, nil
 	}
-	cfgIsolationEngines := set.StringSet{}
-	for _, engine := range config.GetGlobalConfig().IsolationRead.Engines {
-		cfgIsolationEngines.Insert(engine)
-	}
 	isolationReadEngines := b.ctx.GetSessionVars().GetIsolationReadEngines()
 	availableEngine := map[kv.StoreType]struct{}{}
 	var availableEngineStr string
@@ -754,16 +781,13 @@ func (b *PlanBuilder) filterPathByIsolationRead(paths []*util.AccessPath, dbName
 		}
 		if _, ok := isolationReadEngines[paths[i].StoreType]; !ok {
 			paths = append(paths[:i], paths[i+1:]...)
-		} else if _, ok := cfgIsolationEngines[paths[i].StoreType.Name()]; !ok {
-			paths = append(paths[:i], paths[i+1:]...)
 		}
 	}
 	var err error
 	if len(paths) == 0 {
 		engineVals, _ := b.ctx.GetSessionVars().GetSystemVar(variable.TiDBIsolationReadEngines)
-		err = ErrInternal.GenWithStackByArgs(fmt.Sprintf("Can not find access path matching '%v'(value: '%v') "+
-			"and tidb-server config isolation-read(engines: '%v'). Available values are '%v'.",
-			variable.TiDBIsolationReadEngines, engineVals, config.GetGlobalConfig().IsolationRead.Engines, availableEngineStr))
+		err = ErrInternal.GenWithStackByArgs(fmt.Sprintf("Can not find access path matching '%v'(value: '%v'). Available values are '%v'.",
+			variable.TiDBIsolationReadEngines, engineVals, availableEngineStr))
 	}
 	return paths, err
 }
@@ -922,6 +946,8 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (Plan, 
 		return &SQLBindPlan{SQLBindOp: OpCaptureBindings}, nil
 	case ast.AdminEvolveBindings:
 		return &SQLBindPlan{SQLBindOp: OpEvolveBindings}, nil
+	case ast.AdminReloadBindings:
+		return &SQLBindPlan{SQLBindOp: OpReloadBindings}, nil
 	default:
 		return nil, ErrUnsupportedType.GenWithStack("Unsupported ast.AdminStmt(%T) for buildAdmin", as)
 	}
