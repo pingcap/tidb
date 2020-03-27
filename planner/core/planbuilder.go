@@ -723,6 +723,7 @@ func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tbl ta
 		}
 	}
 
+	isolationReadEnginesHasTiKV := checkReadEngineHasTiKV(b.ctx)
 	for i, hint := range indexHints {
 		if hint.HintScope != ast.HintForScan {
 			continue
@@ -733,37 +734,44 @@ func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tbl ta
 		// It is syntactically valid to omit index_list for USE INDEX, which means “use no indexes”.
 		// Omitting index_list for FORCE INDEX or IGNORE INDEX is a syntax error.
 		// See https://dev.mysql.com/doc/refman/8.0/en/index-hints.html.
-		if hint.IndexNames == nil && hint.HintType != ast.HintIgnore {
-			if path := getTablePath(publicPaths); path != nil {
+		if isolationReadEnginesHasTiKV {
+			if hint.IndexNames == nil && hint.HintType != ast.HintIgnore {
+				if path := getTablePath(publicPaths); path != nil {
+					hasUseOrForce = true
+					path.Forced = true
+					available = append(available, path)
+				}
+			}
+			for _, idxName := range hint.IndexNames {
+				path := getPathByIndexName(publicPaths, idxName, tblInfo)
+				if path == nil {
+					err := ErrKeyDoesNotExist.GenWithStackByArgs(idxName, tblInfo.Name)
+					// if hint is from comment-style sql hints, we should throw a warning instead of error.
+					if i < indexHintsLen {
+						return nil, err
+					}
+					b.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+					continue
+				}
+				if hint.HintType == ast.HintIgnore {
+					// Collect all the ignored index hints.
+					ignored = append(ignored, path)
+					continue
+				}
+				// Currently we don't distinguish between "FORCE" and "USE" because
+				// our cost estimation is not reliable.
 				hasUseOrForce = true
 				path.Forced = true
 				available = append(available, path)
 			}
-		}
-		for _, idxName := range hint.IndexNames {
-			path := getPathByIndexName(publicPaths, idxName, tblInfo)
-			if !checkReadEngineHasTiKV(b.ctx) {
-				path = nil
-			}
-			if path == nil {
-				err := ErrKeyDoesNotExist.GenWithStackByArgs(idxName, tblInfo.Name)
-				// if hint is from comment-style sql hints, we should throw a warning instead of error.
+		} else {
+			if hint.IndexNames != nil {
+				err := errors.New("TiDB doesn't support index in the isolation read engines.")
 				if i < indexHintsLen {
 					return nil, err
 				}
 				b.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
-				continue
 			}
-			if hint.HintType == ast.HintIgnore {
-				// Collect all the ignored index hints.
-				ignored = append(ignored, path)
-				continue
-			}
-			// Currently we don't distinguish between "FORCE" and "USE" because
-			// our cost estimation is not reliable.
-			hasUseOrForce = true
-			path.Forced = true
-			available = append(available, path)
 		}
 	}
 
