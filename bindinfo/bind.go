@@ -32,6 +32,18 @@ func (hs *HintsSet) GetFirstTableHints() []*ast.TableOptimizerHint {
 	return nil
 }
 
+// ContainTableHint means check whether the table hint set contain a hint.
+func (hs *HintsSet) ContainTableHint(hint string) bool {
+	for _, tableHintsForBlock := range hs.tableHints {
+		for _, tableHint := range tableHintsForBlock {
+			if tableHint.HintName.String() == hint {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 type hintProcessor struct {
 	*HintsSet
 	// bindHint2Ast indicates the behavior of the processor, `true` for bind hint to ast, `false` for extract hint from ast.
