@@ -14,9 +14,12 @@
 package cascades_test
 
 import (
+	"fmt"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
@@ -182,7 +185,7 @@ func (s *testIntegrationSuite) TestPushdownDistinctEnable(c *C) {
 	)
 	s.testData.GetTestCases(c, &input, &output)
 	vars := []string{
-		"set @@session.tidb_distinct_agg_push_down = 1",
+		fmt.Sprintf("set @@session.%s = 1", variable.TiDBOptDistinctAggPushDown),
 	}
 	s.doTestPushdownDistinct(c, vars, input, output)
 }
@@ -198,7 +201,7 @@ func (s *testIntegrationSuite) TestPushdownDistinctDisable(c *C) {
 	)
 	s.testData.GetTestCases(c, &input, &output)
 	vars := []string{
-		"set @@session.tidb_distinct_agg_push_down = 0",
+		fmt.Sprintf("set @@session.%s = 0", variable.TiDBOptDistinctAggPushDown),
 	}
 	s.doTestPushdownDistinct(c, vars, input, output)
 }
@@ -213,6 +216,8 @@ func (s *testIntegrationSuite) doTestPushdownDistinct(c *C, vars, input []string
 	tk.MustExec("create table t(a int, b int, c int, index(c))")
 	tk.MustExec("insert into t values (1, 1, 1), (1, 1, 3), (1, 2, 3), (2, 1, 3), (1, 2, NULL);")
 	tk.MustExec("set session sql_mode=''")
+	tk.MustExec(fmt.Sprintf("set session %s=1", variable.TiDBHashAggPartialConcurrency))
+	tk.MustExec(fmt.Sprintf("set session %s=1", variable.TiDBHashAggFinalConcurrency))
 	tk.MustExec("set session tidb_enable_cascades_planner = 1")
 
 	for _, v := range vars {
