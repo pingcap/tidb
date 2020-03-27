@@ -26,10 +26,88 @@ import (
 
 // Optimize does optimization and creates a Plan.
 // The node must be prepared first.
+<<<<<<< HEAD
 func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (plannercore.Plan, error) {
 	fp := plannercore.TryFastPlan(sctx, node)
 	if fp != nil {
 		return fp, nil
+=======
+func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (plannercore.Plan, types.NameSlice, error) {
+	if _, isolationReadContainTiKV := sctx.GetSessionVars().GetIsolationReadEngines()[kv.TiKV]; isolationReadContainTiKV {
+		fp := plannercore.TryFastPlan(sctx, node)
+		if fp != nil {
+			if !useMaxTS(sctx, fp) {
+				sctx.PrepareTSFuture(ctx)
+			}
+			return fp, fp.OutputNames(), nil
+		}
+	}
+
+	sctx.PrepareTSFuture(ctx)
+
+	tableHints := extractTableHintsFromStmtNode(node)
+	stmtHints, warns := handleStmtHints(tableHints)
+	defer func() {
+		sctx.GetSessionVars().StmtCtx.StmtHints = stmtHints
+		for _, warn := range warns {
+			sctx.GetSessionVars().StmtCtx.AppendWarning(warn)
+		}
+	}()
+	sctx.GetSessionVars().StmtCtx.StmtHints = stmtHints
+	bestPlan, names, _, err := optimize(ctx, sctx, node, is)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !(sctx.GetSessionVars().UsePlanBaselines || sctx.GetSessionVars().EvolvePlanBaselines) {
+		return bestPlan, names, nil
+	}
+	stmtNode, ok := node.(ast.StmtNode)
+	if !ok {
+		return bestPlan, names, nil
+	}
+	bindRecord, scope := getBindRecord(sctx, stmtNode)
+	if bindRecord == nil {
+		return bestPlan, names, nil
+	}
+	bestPlanHint := plannercore.GenHintsFromPhysicalPlan(bestPlan)
+	binding := bindRecord.FindBinding(bestPlanHint)
+	// If the best bestPlan is in baselines, just use it.
+	if binding != nil && binding.Status == bindinfo.Using {
+		if sctx.GetSessionVars().UsePlanBaselines {
+			stmtHints, warns = handleStmtHints(binding.Hint.GetFirstTableHints())
+		}
+		return bestPlan, names, nil
+	}
+	bestCostAmongHints := math.MaxFloat64
+	var bestPlanAmongHints plannercore.Plan
+	originHints := bindinfo.CollectHint(stmtNode)
+	// Try to find the best binding.
+	for _, binding := range bindRecord.Bindings {
+		if binding.Status != bindinfo.Using {
+			continue
+		}
+		metrics.BindUsageCounter.WithLabelValues(scope).Inc()
+		bindinfo.BindHint(stmtNode, binding.Hint)
+		curStmtHints, curWarns := handleStmtHints(binding.Hint.GetFirstTableHints())
+		sctx.GetSessionVars().StmtCtx.StmtHints = curStmtHints
+		plan, _, cost, err := optimize(ctx, sctx, node, is)
+		if err != nil {
+			binding.Status = bindinfo.Invalid
+			handleInvalidBindRecord(ctx, sctx, scope, bindinfo.BindRecord{
+				OriginalSQL: bindRecord.OriginalSQL,
+				Db:          bindRecord.Db,
+				Bindings:    []bindinfo.Binding{binding},
+			})
+			continue
+		}
+		if cost < bestCostAmongHints {
+			if sctx.GetSessionVars().UsePlanBaselines {
+				stmtHints, warns = curStmtHints, curWarns
+			}
+			bestCostAmongHints = cost
+			bestPlanAmongHints = plan
+		}
+>>>>>>> c1e44a7... planner: don't choose point get when none tikv in isolation read (#15147)
 	}
 
 	// build logical plan
