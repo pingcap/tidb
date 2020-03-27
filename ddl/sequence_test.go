@@ -723,7 +723,7 @@ func (s *testSequenceSuite) TestInsertSequence(c *C) {
 	s.tk.MustExec("insert into t (id) values(-1),(default)")
 	s.tk.MustQuery("select * from t").Check(testkit.Rows("-1 0", "4 5"))
 
-	// test sequence run out (overflow MaxInt64).
+	// test sequence run out (overflows MaxInt64).
 	setSQL := "select setval(seq," + strconv.FormatInt(model.DefaultPositiveSequenceMaxValue+1, 10) + ")"
 	s.tk.MustQuery(setSQL).Check(testkit.Rows("9223372036854775807"))
 	err := s.tk.QueryToErr("select nextval(seq)")
