@@ -457,6 +457,11 @@ func (cc *clientConn) connectInfo() *variable.ConnectionInfo {
 }
 
 func (s *Server) checkConnectionCount() error {
+	// When the value of MaxServerConnections is 0, the number of connections is unlimited.
+	if int(s.cfg.MaxServerConnections) == 0 {
+		return nil
+	}
+
 	s.rwlock.RLock()
 	conns := len(s.clients)
 	s.rwlock.RUnlock()
