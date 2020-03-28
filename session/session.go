@@ -1453,8 +1453,11 @@ func (s *session) Auth(user *auth.UserIdentity, authentication []byte, salt []by
 		s.sessionVars.ActiveRoles = pm.GetDefaultRoles(user.AuthUsername, user.AuthHostname)
 		return true
 	} else if user.Hostname == variable.DefHostname {
+<<<<<<< HEAD
 		logutil.Logger(context.Background()).Error("user connection verification failed",
 			zap.Stringer("user", user))
+=======
+>>>>>>> e42c825... server, session: refine mysql handshake error log (#15731)
 		return false
 	}
 
@@ -1472,9 +1475,12 @@ func (s *session) Auth(user *auth.UserIdentity, authentication []byte, salt []by
 			return true
 		}
 	}
+<<<<<<< HEAD
 
 	logutil.Logger(context.Background()).Error("user connection verification failed",
 		zap.Stringer("user", user))
+=======
+>>>>>>> e42c825... server, session: refine mysql handshake error log (#15731)
 	return false
 }
 
