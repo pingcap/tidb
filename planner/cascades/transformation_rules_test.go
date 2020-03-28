@@ -407,10 +407,11 @@ func (s *testTransformationRuleSuite) TestTransformAggToProj(c *C) {
 	testGroupToString(input, output, s, c)
 }
 
-func (s *testTransformationRuleSuite) TestPushAggDownJoin(c *C) {
+func (s *testTransformationRuleSuite) TestDecorrelate(c *C) {
 	s.optimizer.ResetTransformationRules(map[memo.Operand][]Transformation{
-		memo.OperandAggregation: {
-			NewRulePushAggDownJoin(),
+		memo.OperandApply: {
+			NewRulePullSelectionUpApply(),
+			NewRuleTransformApplyToJoin(),
 		},
 	})
 	defer func() {
@@ -425,11 +426,10 @@ func (s *testTransformationRuleSuite) TestPushAggDownJoin(c *C) {
 	testGroupToString(input, output, s, c)
 }
 
-func (s *testTransformationRuleSuite) TestDecorrelate(c *C) {
+func (s *testTransformationRuleSuite) TestPushAggDownJoin(c *C) {
 	s.optimizer.ResetTransformationRules(map[memo.Operand][]Transformation{
-		memo.OperandApply: {
-			NewRulePullSelectionUpApply(),
-			NewRuleTransformApplyToJoin(),
+		memo.OperandAggregation: {
+			NewRulePushAggDownJoin(),
 		},
 	})
 	defer func() {
