@@ -357,10 +357,68 @@ func (b *builtinJSONQuoteSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 }
 
 func (b *builtinJSONSearchSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinJSONSearchSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Column) error {
+	nr := input.NumRows()
+	jsonBuf, err := b.bufAllocator.get(types.ETJson, nr)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(jsonBuf)
+	if err := b.args[0].VecEvalJSON(b.ctx, input, jsonBuf); err != nil {
+		return err
+	}
+	typeBuf, err := b.bufAllocator.get(types.ETString, nr)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(typeBuf)
+	if err := b.args[1].VecEvalString(b.ctx, input, typeBuf); err != nil {
+		return err
+	}
+	searchBuf, err := b.bufAllocator.get(types.ETString, nr)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(searchBuf)
+	if err := b.args[2].VecEvalString(b.ctx, input, searchBuf); err != nil {
+		return err
+	}
+
+	result.ReserveJSON(nr)
+
+	if len(b.args) >= 4 {
+		escapeBuf, err := b.bufAllocator.get(types.ETString, nr)
+		if err != nil {
+			return err
+		}
+		defer b.bufAllocator.put(escapeBuf)
+		if err := b.args[3].VecEvalString(b.ctx, input, escapeBuf); err != nil {
+			return nil
+		}
+		if len(b.args) >= 5 {
+			pathBufs := make([]*chunk.Column, (len(b.args) - 4))
+			for i := 5; i < len(b.args); i++ {
+				index := i - 5
+				pathBufs[index], err = b.bufAllocator.get(types.ETJson, nr)
+				if err != nil {
+					return err
+				}
+				defer b.bufAllocator.put(pathBufs[index])
+				if err := b.args[i].VecEvalJSON(b.ctx, input, pathBufs[index]); err != nil {
+					return err
+				}
+			}
+
+		}
+
+	} else {
+		for i := 0; i < nr; i++ {
+
+		}
+	}
 	return errors.Errorf("not implemented")
 }
 
