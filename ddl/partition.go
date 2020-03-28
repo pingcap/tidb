@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/format"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/opcode"
@@ -90,7 +91,10 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.CreateTableStmt) (*m
 	}
 	if s.Partition.Expr != nil {
 		buf := new(bytes.Buffer)
-		s.Partition.Expr.Format(buf)
+		restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, buf)
+		if err := s.Partition.Expr.Restore(restoreCtx); err != nil {
+			return nil, err
+		}
 		pi.Expr = buf.String()
 	} else if s.Partition.ColumnNames != nil {
 		// TODO: Support multiple columns for 'PARTITION BY RANGE COLUMNS'.
