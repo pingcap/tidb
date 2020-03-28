@@ -967,17 +967,11 @@ func (s *testColumnSuite) colDefStrToFieldType(c *C, str string) *types.FieldTyp
 
 func (s *testColumnSuite) TestFieldCase(c *C) {
 	var fields = []string{"field", "Field"}
-	var colDefs = make([]*ast.ColumnDef, len(fields))
-	colObjects := make([]interface{}, 0, len(fields))
+	colObjects := make([]*model.ColumnInfo, len(fields))
 	for i, name := range fields {
-		colDefs[i] = &ast.ColumnDef{
-			Name: &ast.ColumnName{
-				Schema: model.NewCIStr("TestSchema"),
-				Table:  model.NewCIStr("TestTable"),
-				Name:   model.NewCIStr(name),
-			},
+		colObjects[i] = &model.ColumnInfo{
+			Name: model.NewCIStr(name),
 		}
-		colObjects = append(colObjects, colDefs[i])
 	}
 	err := checkDuplicateColumn(colObjects)
 	c.Assert(err.Error(), Equals, infoschema.ErrColumnExists.GenWithStackByArgs("Field").Error())
