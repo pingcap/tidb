@@ -1098,6 +1098,29 @@ func (s *testPessimisticSuite) TestBatchPointGetLockIndex(c *C) {
 	tk2.MustExec("rollback")
 }
 
+func (s *testPessimisticSuite) TestLockGotKeysInRC(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+	tk.MustExec("set tx_isolation = 'READ-COMMITTED'")
+	tk2.MustExec("set tx_isolation = 'READ-COMMITTED'")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (c1 int primary key, c2 int, c3 int, unique key uk(c2))")
+	tk.MustExec("insert into t1 values (1, 1, 1)")
+	tk.MustExec("insert into t1 values (5, 5, 5)")
+	tk.MustExec("insert into t1 values (10, 10, 10)")
+	tk.MustExec("begin pessimistic")
+	tk.MustQuery("select * from t1 where c1 in (2, 3) for update").Check(testkit.Rows())
+	tk.MustQuery("select * from t1 where c2 in (2, 3) for update").Check(testkit.Rows())
+	tk2.MustExec("begin pessimistic")
+	tk2.MustExec("insert into t1 values(2, 2, 2)")
+	tk2.MustExec("select * from t1 where c1 = 3 for update nowait")
+	tk2.MustExec("select * from t1 where c2 = 3 for update nowait")
+	tk.MustExec("rollback")
+	tk2.MustExec("rollback")
+}
+
 func (s *testPessimisticSuite) TestBatchPointGetAlreadyLocked(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t")
