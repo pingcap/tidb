@@ -83,6 +83,7 @@
       "select * from t1 join t2 on t1.a = t2.a",
       "select avg(t2.a), count(t2.a), sum(t2.a), max(t1.b), min(t1.b), t1.b from t as t1 join t as t2 on t1.b = t2.b group by t1.b order by t1.b",
       "select avg(t2.a), count(t2.a), sum(t2.a), max(t1.b), min(t1.b) from t as t1 join t as t2 order by t1.b",
+      "select count(distinct t2.a), sum(distinct t2.a), avg(t1.b), max(t1.b), min(t1.b) from t as t1 join t as t2 order by t1.b",
       "select avg(t1.a), count(t1.a), sum(t1.a), max(t1.b), min(t1.b), t1.b from t as t1 join t as t2 on t1.b = t2.b group by t1.b order by t1.b"
     ]
   },

@@ -217,8 +217,7 @@
       "select avg(t2.a), max(t1.b), min(t1.b), t1.b from t as t1 right join t as t2 on t1.b = t2.b group by t1.b order by t1.b",
       "select avg(t2.a), count(t2.a), max(t2.a), sum(distinct t1.b), min(t1.b), t1.b from t as t1 join t as t2 on t1.b = t2.b group by t1.b order by t1.b",
       "select avg(t2.a), count(distinct t2.a), max(t2.a), sum(t1.b), min(t1.b), t1.b from t as t1 join t as t2 on t1.b = t2.b group by t1.b order by t1.b",
-      "select group_concat(t2.a), sum(t1.b) from t as t1 join t as t2 on t1.b = t2.b group by t1.b order by t1.b",
-      "select sum(t2.a)/count(t2.a), count(t2.a), sum(t2.a), max(t1.b), min(t1.b) from t as t1 join t as t2 order by t1.b"
+      "select group_concat(t2.a), sum(t1.b) from t as t1 join t as t2 on t1.b = t2.b group by t1.b order by t1.b"
     ]
   }
 ]

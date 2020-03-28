@@ -2278,36 +2278,43 @@ func (r *InjectProjectionBelowAgg) OnTransform(old *memo.ExprIter) (newExprs []*
 
 	for _, f := range copyFuncs {
 		for i, arg := range f.Args {
-			if _, isCnst := arg.(*expression.Constant); isCnst {
+			switch expr := arg.(type) {
+			case *expression.Constant:
 				continue
-			}
-			projExprs = append(projExprs, arg)
-			var newArg *expression.Column
-			if col, isCol := arg.(*expression.Column); isCol {
-				newArg = col
-			} else {
-				newArg = &expression.Column{
+			case *expression.Column:
+				projExprs = append(projExprs, expr)
+				projSchemaCols = append(projSchemaCols, expr)
+				f.Args[i] = expr
+			default:
+				projExprs = append(projExprs, expr)
+				newArg := &expression.Column{
 					UniqueID: agg.SCtx().GetSessionVars().AllocPlanColumnID(),
 					RetType:  arg.GetType(),
 				}
+				projSchemaCols = append(projSchemaCols, newArg)
+				f.Args[i] = newArg
 			}
-			projSchemaCols = append(projSchemaCols, newArg)
-			f.Args[i] = newArg
 		}
 	}
 
 	newGroupByItems := make([]expression.Expression, len(agg.GroupByItems))
 	for i, item := range agg.GroupByItems {
-		if _, isCnst := item.(*expression.Constant); isCnst {
-			continue
+		switch expr := item.(type) {
+		case *expression.Constant:
+			newGroupByItems[i] = expr
+		case *expression.Column:
+			newGroupByItems[i] = expr
+			projExprs = append(projExprs, expr)
+			projSchemaCols = append(projSchemaCols, expr)
+		default:
+			projExprs = append(projExprs, expr)
+			newArg := &expression.Column{
+				UniqueID: agg.SCtx().GetSessionVars().AllocPlanColumnID(),
+				RetType:  item.GetType(),
+			}
+			projSchemaCols = append(projSchemaCols, newArg)
+			newGroupByItems[i] = newArg
 		}
-		projExprs = append(projExprs, item)
-		newArg := &expression.Column{
-			UniqueID: agg.SCtx().GetSessionVars().AllocPlanColumnID(),
-			RetType:  item.GetType(),
-		}
-		projSchemaCols = append(projSchemaCols, newArg)
-		newGroupByItems[i] = newArg
 	}
 
 	// Construct GroupExpr, Group (Agg -> Proj -> Child).
@@ -2327,6 +2334,8 @@ func (r *InjectProjectionBelowAgg) OnTransform(old *memo.ExprIter) (newExprs []*
 	newAgg.CopyAggHints(agg)
 	newAggExpr := memo.NewGroupExpr(newAgg)
 	newAggExpr.SetChildren(projGroup)
+	println("==================")
+	println(len(newGroupByItems))
 
 	return []*memo.GroupExpr{newAggExpr}, true, false, nil
 }
@@ -2429,6 +2438,7 @@ func (r *PullSelectionUpApply) OnTransform(old *memo.ExprIter) (newExprs []*memo
 type aggPushDownHelper struct {
 }
 
+// tryToDecomposeAggFuncsdecompose aggFuncs to finalAggFuncs and partialAggFuncs.
 func (r *aggPushDownHelper) decomposeAggFuncs(
 	aggFuncs []*aggregation.AggFuncDesc,
 	gbyCols []*expression.Column,
@@ -2459,6 +2469,7 @@ func (r *aggPushDownHelper) decomposeAggFuncs(
 	return finalAggFuncs, partialAggFuncs, partialAggSchema, nil
 }
 
+// fillGbyCols add firstrow(gbyCol)s to partialAggFuncs.
 func (r *aggPushDownHelper) fillGbyCols(
 	partialAggFuncs []*aggregation.AggFuncDesc,
 	partialAggSchema *expression.Schema,
@@ -2490,10 +2501,16 @@ func (r *aggPushDownHelper) allocColumn(sctx sessionctx.Context, retType *types.
 	}
 }
 
-const aggFuncAggDecomposeFlag = "$_agg_decompose_flag"
+// it is not an actual aggFunc.
+// it used to generate div(sum(sum_a), sum(count_a)) for avg(a).
+const aggFuncAggDecomposeFlag = "$_avg_decompose_flag"
 
+// decomposeProjExpr will transform `Agg` to `Proj->Agg`.
+// such as it will `Agg($_avg_decompose_flag(sum_a, count_a))` to `Proj(sum_sum_a / sum_count_a) -> Agg(sum(sum_a), sum(count_a))`.
 func (r *aggPushDownHelper) decomposeProjExpr(aggSchema *expression.Schema, aggExpr *memo.GroupExpr) *memo.GroupExpr {
 	agg := aggExpr.ExprNode.(*plannercore.LogicalAggregation)
+	println("-----------------")
+	println(len(agg.GroupByItems))
 	decompose := false
 	realAggFuncNum := 0
 	for _, aggFunc := range agg.AggFuncs {
@@ -2553,6 +2570,10 @@ func (r *aggPushDownHelper) decomposeProjExpr(aggSchema *expression.Schema, aggE
 	return projExpr
 }
 
+// decomposeAggFunc decompose aggFunc to finalAggFunc and partialAggFunc.
+// for firstrow, max, min, sum, aggFunc = aggFunc(aggFunc_a) -> aggFunc(a).
+// for count, count(a) = count(count_a) -> count(a).
+// for avg, avg(a) = sum(sum_a) / sum(count_a) -> sum(a), count(a).
 func (r *aggPushDownHelper) decomposeAggFunc(
 	aggFunc *aggregation.AggFuncDesc,
 	partialAggSchema *expression.Schema,
@@ -2593,6 +2614,8 @@ func (r *aggPushDownHelper) decomposeAggFunc(
 		partialAggSchema.Append(partialFuncOutputs...)
 
 		finalAggFunc := aggFunc.Clone()
+		// aggFuncAggDecomposeFlag is not an actual aggFunc.
+		// it used to generate div(sum(sum_a), sum(count_a))) in `decomposeProjExpr`.
 		finalAggFunc.Name = aggFuncAggDecomposeFlag
 		finalAggFunc.Args = expression.Column2Exprs(partialFuncOutputs)
 		finalFuncs = []*aggregation.AggFuncDesc{finalAggFunc}
@@ -2602,8 +2625,16 @@ func (r *aggPushDownHelper) decomposeAggFunc(
 	return finalFuncs, partialFuncs, partialAggSchema, nil
 }
 
+// isDecomposable checks if an aggregate function is decomposable. An aggregation function $F$ is decomposable
+// if there exist aggregation functions F_1 and F_2 such that F(S_1 union all S_2) = F_2(F_1(S_1),F_1(S_2)),
+// where S_1 and S_2 are two sets of values. We call S_1 and S_2 partial groups.
+// It's easy to see that max, min, first row is decomposable, no matter whether it's distinct, but sum(distinct) and
+// count(distinct) is not.
+// avg can decomposed to sum and count.
+// Currently we don't support concat.
 func (*aggPushDownHelper) isDecomposable(fun *aggregation.AggFuncDesc) bool {
 	switch fun.Name {
+	// ToDo support ast.AggFuncGroupConcat
 	case ast.AggFuncAvg, ast.AggFuncMax, ast.AggFuncMin, ast.AggFuncFirstRow:
 		return true
 	case ast.AggFuncSum, ast.AggFuncCount:
@@ -2613,11 +2644,25 @@ func (*aggPushDownHelper) isDecomposable(fun *aggregation.AggFuncDesc) bool {
 	}
 }
 
+// checkAnyCountAndSumWithoutDistinct check if there exist count or sum functions whose HasDistinct = false.
+func (*aggPushDownHelper) checkAnyCountAndSumWithoutDistinct(aggFuncs []*aggregation.AggFuncDesc) bool {
+	for _, fun := range aggFuncs {
+		if (fun.Name == ast.AggFuncSum || fun.Name == ast.AggFuncCount) && !fun.HasDistinct {
+			return true
+		}
+	}
+	return false
+}
+
+// PushAggDownJoin splits Aggregation to two Agg: finalAgg and partialAgg(modes are all CompleteMode),
+// and pushed the partialAgg down to the child of join.
 type PushAggDownJoin struct {
 	baseRule
 	aggPushDownHelper
 }
 
+// NewRulePushAggDownJoin creates a new Transformation PushAggDownJoin.
+// The pattern of this rule is: `Aggregation -> Join`.
 func NewRulePushAggDownJoin() Transformation {
 	rule := &PushAggDownJoin{}
 	rule.pattern = memo.BuildPattern(
@@ -2652,6 +2697,10 @@ func (r *PushAggDownJoin) Match(expr *memo.ExprIter) bool {
 }
 
 // OnTransform implements Transformation interface.
+// It will transform `Agg->Join` to `Agg -> Join -> Agg`.
+// It will transform `Agg->Join` to:
+//   `Agg -> Join -> Agg` or
+//   `Proj->Agg -> Join -> Agg`
 func (r *PushAggDownJoin) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	agg := old.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
 	join := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalJoin)
@@ -2700,6 +2749,10 @@ func (r *PushAggDownJoin) OnTransform(old *memo.ExprIter) (newExprs []*memo.Grou
 	return finalAggExprs, false, false, nil
 }
 
+// doPushAggDownJoin will transform `Agg->Join` to
+// `finalAgg -> Join -> leftAgg, rightAgg` or
+// `finalAgg -> Join -> leftJoinChild, rightAgg` or
+// `finalAgg -> Join -> leftAgg, rightJoinChild` or
 func (r *PushAggDownJoin) doPushAggDownJoin(
 	leftOk, rightOk bool,
 	leftFinalAggFuncs, leftPartialAggFuncs []*aggregation.AggFuncDesc,
@@ -2857,6 +2910,9 @@ func (r *PushAggDownJoin) makeFinalAgg(
 	return finalAgg
 }
 
+// collectAggFuncs collects all aggregate functions and splits them into two parts: "leftAggFuncs" and "rightAggFuncs" whose
+// arguments are all from left child or right child separately. If some aggregate functions have the arguments that have
+// columns both from left and right children, the whole aggregation is forbidden to push down.
 func (r *PushAggDownJoin) collectAggFuncs(
 	agg *plannercore.LogicalAggregation,
 	joinLeftChildSchema *expression.Schema,
@@ -2868,6 +2924,7 @@ func (r *PushAggDownJoin) collectAggFuncs(
 	valid = true
 	for _, aggFunc := range agg.AggFuncs {
 		index := plannercore.GetAggFuncChildIdx(aggFunc, joinLeftChildSchema)
+		// funcOrders record the order of aggFunc used to generate final Agg
 		funcOrders = append(funcOrders, index)
 		switch index {
 		case 0:
@@ -2881,6 +2938,7 @@ func (r *PushAggDownJoin) collectAggFuncs(
 	return
 }
 
+// tryToDecomposeAggFuncs try to decompose aggFuncs to finalAggFuncs and partialAggFuncs.
 func (r *PushAggDownJoin) tryToDecomposeAggFuncs(
 	aggFuncs, otherAggFuncs []*aggregation.AggFuncDesc,
 	gbyCols []*expression.Column,
@@ -2906,10 +2964,13 @@ func (r *PushAggDownJoin) tryToDecomposeAggFuncs(
 		}
 	}
 
-	if plannercore.CheckAnyCountAndSum(otherAggFuncs) {
+	// if otherAggFuncs contains count or sum function whose HasDistinct = false, we can't push aggFuncs down join,
+	// because partial agg will affect the row of join, and then affect the result of count or sum.
+	if r.checkAnyCountAndSumWithoutDistinct(otherAggFuncs) {
 		return false, nil, join, nil, nil, nil
 	}
 
+	// if gbyCols are all unique keys, it's no need to push it down.
 	tmpSchema := expression.NewSchema(gbyCols...)
 	childGroup.BuildKeyInfo()
 	for _, key := range childGroup.Prop.Schema.Keys {

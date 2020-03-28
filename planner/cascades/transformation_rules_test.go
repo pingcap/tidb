@@ -431,6 +431,10 @@ func (s *testTransformationRuleSuite) TestPushAggDownJoin(c *C) {
 		memo.OperandAggregation: {
 			NewRulePushAggDownJoin(),
 		},
+	}, map[memo.Operand][]Transformation{
+		memo.OperandAggregation: {
+			NewRuleInjectProjectionBelowAgg(),
+		},
 	})
 	defer func() {
 		s.optimizer.ResetTransformationRules(DefaultRuleBatches...)
