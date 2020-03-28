@@ -222,6 +222,8 @@ func (a *aggregationPushDownSolver) tryToPushDownAgg(aggFuncs []*aggregation.Agg
 	return agg, nil
 }
 
+// GetDefaultValues gets the null values when the aggregation is upon an outer join,
+// and the aggregation function's input is null.
 func GetDefaultValues(aggFuncs []*aggregation.AggFuncDesc, sctx sessionctx.Context, aggSchema *expression.Schema, childSchema *expression.Schema) ([]types.Datum, bool) {
 	defaultValues := make([]types.Datum, 0, aggSchema.Len())
 	for _, aggFunc := range aggFuncs {
