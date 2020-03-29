@@ -715,7 +715,7 @@ func (s *testSerialSuite) TestCancelJobByErrorCountLimit(c *C) {
 
 	_, err = tk.Exec("create table t (a int)")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
+	c.Assert(err.Error(), Equals, "[ddl:-1][Cancelled DDL job] mock do job error")
 }
 
 func (s *testSerialSuite) TestCanceledJobTakeTime(c *C) {
