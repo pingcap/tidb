@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/storeutil"
@@ -557,8 +558,8 @@ type SessionVars struct {
 	// replicaRead is used for reading data from replicas, only follower is supported at this time.
 	replicaRead kv.ReplicaReadType
 
-	// isolationReadEngines is used to isolation read, tidb only read from the stores whose engine type is in the engines.
-	isolationReadEngines map[kv.StoreType]struct{}
+	// IsolationReadEngines is used to isolation read, tidb only read from the stores whose engine type is in the engines.
+	IsolationReadEngines map[kv.StoreType]struct{}
 
 	PlannerSelectBlockAsName []ast.HintTable
 
@@ -583,6 +584,10 @@ type SessionVars struct {
 	// SequenceState cache all sequence's latest value accessed by lastval() builtins. It's a session scoped
 	// variable, and all public methods of SequenceState are currently-safe.
 	SequenceState *SequenceState
+
+	// WindowingUseHighPrecision determines whether to compute window operations without loss of precision.
+	// see https://dev.mysql.com/doc/refman/8.0/en/window-function-optimization.html for more details.
+	WindowingUseHighPrecision bool
 }
 
 // PreparedParams contains the parameters of the current prepared statement when executing it.
@@ -662,11 +667,12 @@ func NewSessionVars() *SessionVars {
 		AllowRemoveAutoInc:          DefTiDBAllowRemoveAutoInc,
 		UsePlanBaselines:            DefTiDBUsePlanBaselines,
 		EvolvePlanBaselines:         DefTiDBEvolvePlanBaselines,
-		isolationReadEngines:        map[kv.StoreType]struct{}{kv.TiKV: {}, kv.TiFlash: {}, kv.TiDB: {}},
+		IsolationReadEngines:        map[kv.StoreType]struct{}{kv.TiKV: {}, kv.TiFlash: {}, kv.TiDB: {}},
 		LockWaitTimeout:             DefInnodbLockWaitTimeout * 1000,
 		MetricSchemaStep:            DefTiDBMetricSchemaStep,
 		MetricSchemaRangeDuration:   DefTiDBMetricSchemaRangeDuration,
 		SequenceState:               NewSequenceState(),
+		WindowingUseHighPrecision:   true,
 	}
 	vars.KVVars = kv.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -780,7 +786,7 @@ func (s *SessionVars) GetSplitRegionTimeout() time.Duration {
 
 // GetIsolationReadEngines gets isolation read engines.
 func (s *SessionVars) GetIsolationReadEngines() map[kv.StoreType]struct{} {
-	return s.isolationReadEngines
+	return s.IsolationReadEngines
 }
 
 // CleanBuffers cleans the temporary bufs
@@ -1018,6 +1024,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case InnodbLockWaitTimeout:
 		lockWaitSec := tidbOptInt64(val, DefInnodbLockWaitTimeout)
 		s.LockWaitTimeout = int64(lockWaitSec * 1000)
+	case WindowingUseHighPrecision:
+		s.WindowingUseHighPrecision = TiDBOptOn(val)
 	case TiDBSkipUTF8Check:
 		s.SkipUTF8Check = TiDBOptOn(val)
 	case TiDBOptAggPushDown:
@@ -1186,15 +1194,15 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBEvolvePlanBaselines:
 		s.EvolvePlanBaselines = TiDBOptOn(val)
 	case TiDBIsolationReadEngines:
-		s.isolationReadEngines = make(map[kv.StoreType]struct{})
+		s.IsolationReadEngines = make(map[kv.StoreType]struct{})
 		for _, engine := range strings.Split(val, ",") {
 			switch engine {
 			case kv.TiKV.Name():
-				s.isolationReadEngines[kv.TiKV] = struct{}{}
+				s.IsolationReadEngines[kv.TiKV] = struct{}{}
 			case kv.TiFlash.Name():
-				s.isolationReadEngines[kv.TiFlash] = struct{}{}
+				s.IsolationReadEngines[kv.TiFlash] = struct{}{}
 			case kv.TiDB.Name():
-				s.isolationReadEngines[kv.TiDB] = struct{}{}
+				s.IsolationReadEngines[kv.TiDB] = struct{}{}
 			}
 		}
 	case TiDBStoreLimit:
@@ -1203,6 +1211,10 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.MetricSchemaStep = tidbOptInt64(val, DefTiDBMetricSchemaStep)
 	case TiDBMetricSchemaRangeDuration:
 		s.MetricSchemaRangeDuration = tidbOptInt64(val, DefTiDBMetricSchemaRangeDuration)
+	case CollationConnection, CollationDatabase, CollationServer:
+		if _, err := collate.GetCollationByName(val); err != nil {
+			return errors.Trace(err)
+		}
 	}
 	s.systems[name] = val
 	return nil

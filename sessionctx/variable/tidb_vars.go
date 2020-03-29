@@ -329,11 +329,20 @@ const (
 	// TiDBEnableStmtSummary indicates whether the statement summary is enabled.
 	TiDBEnableStmtSummary = "tidb_enable_stmt_summary"
 
+	// TiDBStmtSummaryInternalQuery indicates whether the statement summary contain internal query.
+	TiDBStmtSummaryInternalQuery = "tidb_stmt_summary_internal_query"
+
 	// TiDBStmtSummaryRefreshInterval indicates the refresh interval in seconds for each statement summary.
 	TiDBStmtSummaryRefreshInterval = "tidb_stmt_summary_refresh_interval"
 
 	// TiDBStmtSummaryHistorySize indicates the history size of each statement summary.
 	TiDBStmtSummaryHistorySize = "tidb_stmt_summary_history_size"
+
+	// TiDBStmtSummaryMaxStmtCount indicates the max number of statements kept in memory.
+	TiDBStmtSummaryMaxStmtCount = "tidb_stmt_summary_max_stmt_count"
+
+	// TiDBStmtSummaryMaxSQLLength indicates the max length of displayed normalized sql and sample sql.
+	TiDBStmtSummaryMaxSQLLength = "tidb_stmt_summary_max_sql_length"
 
 	// TiDBCapturePlanBaseline indicates whether the capture of plan baselines is enabled.
 	TiDBCapturePlanBaseline = "tidb_capture_plan_baselines"
