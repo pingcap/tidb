@@ -894,3 +894,43 @@ func (s *testCommitterSuite) TestCommitDeadLock(c *C) {
 	}
 	c.Assert(res, Equals, 1)
 }
+
+// TestPushPessimisticLock tests that push forward the minCommiTS of pessimistic locks.
+func (s *testCommitterSuite) TestPushPessimisticLock(c *C) {
+	// k1 is the primary key.
+	k1, k2 := kv.Key("a"), kv.Key("b")
+	ctx := context.Background()
+
+	txn1 := s.begin(c)
+	txn1.SetOption(kv.Pessimistic, true)
+	lockCtx := &kv.LockCtx{ForUpdateTS: txn1.startTS, WaitStartTime: time.Now()}
+	err := txn1.LockKeys(context.Background(), lockCtx, k1, k2)
+	c.Assert(err, IsNil)
+
+	txn1.Set(k2, []byte("v2"))
+	err = txn1.committer.initKeysAndMutations()
+	c.Assert(err, IsNil)
+	// Strip the prewrite of the primary key.
+	txn1.committer.mutations = txn1.committer.mutations.subRange(1, 2)
+	c.Assert(err, IsNil)
+	err = txn1.committer.prewriteMutations(NewBackoffer(ctx, PrewriteMaxBackoff), txn1.committer.mutations)
+	c.Assert(err, IsNil)
+	// The primary lock is a pessimistic lock and the secondary lock is a optimistic lock.
+	lock1 := s.getLockInfo(c, k1)
+	c.Assert(lock1.LockType, Equals, kvrpcpb.Op_PessimisticLock)
+	c.Assert(lock1.PrimaryLock, BytesEquals, []byte(k1))
+	lock2 := s.getLockInfo(c, k2)
+	c.Assert(lock2.LockType, Equals, kvrpcpb.Op_Put)
+	c.Assert(lock2.PrimaryLock, BytesEquals, []byte(k1))
+
+	txn2 := s.begin(c)
+	start := time.Now()
+	_, err = txn2.Get(ctx, k2)
+	elapsed := time.Since(start)
+	// The optimistic lock shouldn't block reads.
+	c.Assert(elapsed, Less, 50*time.Millisecond)
+	c.Assert(kv.IsErrNotFound(err), IsTrue)
+
+	txn1.Rollback()
+	txn2.Rollback()
+}
