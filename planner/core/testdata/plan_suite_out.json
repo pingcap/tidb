@@ -1475,13 +1475,13 @@
       {
         "SQL": "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by t1.a+1",
         "Plan": [
-          "Projection_24 12487.50 root test.t.a",
-          "└─Projection_23 12487.50 root test.t.a, plus(test.t.a, 1)->Column#7",
-          "  └─MergeJoin_21 12487.50 root inner join, left key:test.t.a, right key:test.t.b",
-          "    ├─IndexReader_15(Build) 9990.00 root index:IndexFullScan_14",
-          "    │ └─IndexFullScan_14 9990.00 cop[tikv] table:t2, index:b, keep order:true, stats:pseudo",
-          "    └─IndexReader_13(Probe) 9990.00 root index:IndexFullScan_12",
-          "      └─IndexFullScan_12 9990.00 cop[tikv] table:t1, index:a, keep order:true, stats:pseudo"
+          "Projection_24 12487.50 root  test.t.a",
+          "└─Projection_23 12487.50 root  test.t.a, plus(test.t.a, 1)->Column#7",
+          "  └─MergeJoin_21 12487.50 root  inner join, left key:test.t.a, right key:test.t.b",
+          "    ├─IndexReader_15(Build) 9990.00 root  index:IndexFullScan_14",
+          "    │ └─IndexFullScan_14 9990.00 cop[tikv] table:t2, index:idx_b(b) keep order:true, stats:pseudo",
+          "    └─IndexReader_13(Probe) 9990.00 root  index:IndexFullScan_12",
+          "      └─IndexFullScan_12 9990.00 cop[tikv] table:t1, index:idx_a(a) keep order:true, stats:pseudo"
         ],
         "Result": [
           "1",
