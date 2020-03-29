@@ -313,8 +313,6 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 
 		if job.Error == nil {
 			job.Error = toTError(err)
-		} else {
-			job.Error = toTError(job.Error.GenWithStack("[%s] %s", toTError(err).ToSQLError().Message, job.Error.ToSQLError().Message))
 		}
 		job.ErrorCount++
 	}
