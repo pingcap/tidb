@@ -492,7 +492,7 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 
 		if historyJob.Error != nil {
 			if historyJob.State == model.JobStateRollbackDone && !historyJob.Error.Equal(errCancelledDDLJob) {
-				historyJob.Error = terror.ClassDDL.New(errCancelledDDLJob.Code(),
+				historyJob.Error = historyJob.Error.Class().New(historyJob.Error.Code(),
 					fmt.Sprintf("current error msg: %s, original error msg: %s",
 						errCancelledDDLJob.ToSQLError().Message, historyJob.Error.ToSQLError().Message))
 			}
