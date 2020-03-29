@@ -261,7 +261,7 @@ func (is *infoSchema) SequenceByName(schema, sequence model.CIStr) (util.Sequenc
 		return nil, err
 	}
 	if !tbl.Meta().IsSequence() {
-		return nil, err
+		return nil, ErrWrongObject.GenWithStackByArgs(schema, sequence, "SEQUENCE")
 	}
 	return tbl.(util.SequenceTable), nil
 }
