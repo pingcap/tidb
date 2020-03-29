@@ -148,7 +148,7 @@ disable-error-stack = false
 
 func (s *testConfigSuite) TestConfig(c *C) {
 	conf := new(Config)
-	conf.TempStoragePath = filepath.Join(os.TempDir(), tempStorageDirName, "tidb", "tmp-storage")
+	conf.TempStoragePath = tempStorageDirName
 	conf.Binlog.Enable = true
 	conf.Binlog.IgnoreError = true
 	conf.Binlog.Strategy = "hash"

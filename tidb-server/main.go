@@ -433,6 +433,7 @@ func overrideConfig(cfg *config.Config) {
 		p, err = strconv.Atoi(*port)
 		terror.MustNil(err)
 		cfg.Port = uint(p)
+		cfg.UpdateTempStoragePath()
 	}
 	if actualFlags[nmCors] {
 		fmt.Println(cors)
@@ -500,6 +501,7 @@ func overrideConfig(cfg *config.Config) {
 		p, err = strconv.Atoi(*statusPort)
 		terror.MustNil(err)
 		cfg.Status.StatusPort = uint(p)
+		cfg.UpdateTempStoragePath()
 	}
 	if actualFlags[nmMetricsAddr] {
 		cfg.Status.MetricsAddr = *metricsAddr
