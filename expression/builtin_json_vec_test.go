@@ -93,7 +93,14 @@ var vecBuiltinJSONCases = map[string][]vecExprBenchCase{
 	ast.JSONSet: {
 		{retEvalType: types.ETJson, childrenTypes: []types.EvalType{types.ETJson, types.ETString, types.ETJson, types.ETString, types.ETJson}, geners: []dataGenerator{nil, &constStrGener{"$.key"}, nil, &constStrGener{"$.aaa"}, nil}},
 	},
-	ast.JSONSearch: {},
+	ast.JSONSearch: {
+		{retEvalType: types.ETJson, childrenTypes: []types.EvalType{types.ETJson, types.ETString, types.ETString}, geners: []dataGenerator{&constJSONGener{"[\"abc\", [{\"k\": \"10\"}, \"def\"], {\"x\":\"abc\"}, {\"y\":\"bcd\"}]"}, &constStrGener{"one"}, &constStrGener{"abc"}}},
+		{retEvalType: types.ETJson, childrenTypes: []types.EvalType{types.ETJson, types.ETString, types.ETString}, geners: []dataGenerator{&constJSONGener{"[\"abc\", [{\"k\": \"10\"}, \"def\"], {\"x\":\"abc\"}, {\"y\":\"bcd\"}]"}, &constStrGener{"all"}, &constStrGener{"abc"}}},
+		{retEvalType: types.ETJson, childrenTypes: []types.EvalType{types.ETJson, types.ETString, types.ETString}, geners: []dataGenerator{&constJSONGener{"[\"abc\", [{\"k\": \"10\"}, \"def\"], {\"x\":\"abc\"}, {\"y\":\"bcd\"}]"}, &constStrGener{"all"}, &constStrGener{"%a%"}}},
+		{retEvalType: types.ETJson, childrenTypes: []types.EvalType{types.ETJson, types.ETString, types.ETString, types.ETString, types.ETString}, geners: []dataGenerator{&constJSONGener{"[\"abc\", [{\"k\": \"10\"}, \"def\"], {\"x\":\"abc\"}, {\"y\":\"bcd\"}]"}, &constStrGener{"all"}, &constStrGener{"%a%"}, new(constStrGener), &constStrGener{"$"}}},
+		{retEvalType: types.ETJson, childrenTypes: []types.EvalType{types.ETJson, types.ETString, types.ETString, types.ETString}, geners: []dataGenerator{&constJSONGener{"[\"abc\", [{\"k\": \"10\"}, \"def\"], {\"x\":\"abc\"}, {\"y\":\"bcd\"}]"}, &constStrGener{"all"}, &constStrGener{"%a%"}, new(constStrGener)}},
+		{retEvalType: types.ETJson, childrenTypes: []types.EvalType{types.ETJson, types.ETString, types.ETString, types.ETString, types.ETString}, geners: []dataGenerator{&constJSONGener{"[\"abc\", [{\"k\": \"10\"}, \"def\"], {\"x\":\"abc\"}, {\"y\":\"bcd\"}]"}, &constStrGener{"all"}, &constStrGener{"%a%"}, &constStrGener{""}, &constStrGener{"$"}}},
+	},
 	ast.JSONReplace: {
 		{retEvalType: types.ETJson, childrenTypes: []types.EvalType{types.ETJson, types.ETString, types.ETJson}, geners: []dataGenerator{nil, &constStrGener{"$.key"}, nil}},
 	},

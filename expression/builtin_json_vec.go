@@ -389,7 +389,6 @@ func (b *builtinJSONSearchSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Col
 	}
 
 	result.ReserveJSON(nr)
-	// search := func()
 
 	if len(b.args) >= 4 {
 		escapeBuf, err := b.bufAllocator.get(types.ETString, nr)
@@ -402,14 +401,14 @@ func (b *builtinJSONSearchSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Col
 		}
 		if len(b.args) >= 5 {
 			pathBufs := make([]*chunk.Column, (len(b.args) - 4))
-			for i := 5; i < len(b.args); i++ {
-				index := i - 5
-				pathBufs[index], err = b.bufAllocator.get(types.ETJson, nr)
+			for i := 4; i < len(b.args); i++ {
+				index := i - 4
+				pathBufs[index], err = b.bufAllocator.get(types.ETString, nr)
 				if err != nil {
 					return err
 				}
 				defer b.bufAllocator.put(pathBufs[index])
-				if err := b.args[i].VecEvalJSON(b.ctx, input, pathBufs[index]); err != nil {
+				if err := b.args[i].VecEvalString(b.ctx, input, pathBufs[index]); err != nil {
 					return err
 				}
 			}
@@ -423,13 +422,15 @@ func (b *builtinJSONSearchSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Col
 					return json.ErrInvalidJSONContainsPathType
 				}
 				escape := byte('\\')
-				escapeStr := escapeBuf.GetString(i)
-				if len(escapeStr) == 0 {
-					escape = byte('\\')
-				} else if len(escapeStr) == 1 {
-					escape = byte(escapeStr[0])
-				} else {
-					return errIncorrectArgs.GenWithStackByArgs("ESCAPE")
+				if !escapeBuf.IsNull(i) {
+					escapeStr := escapeBuf.GetString(i)
+					if len(escapeStr) == 0 {
+						escape = byte('\\')
+					} else if len(escapeStr) == 1 {
+						escape = byte(escapeStr[0])
+					} else {
+						return errIncorrectArgs.GenWithStackByArgs("ESCAPE")
+					}
 				}
 				patChars, patTypes := stringutil.CompilePattern(searchBuf.GetString(i), escape)
 
@@ -471,13 +472,16 @@ func (b *builtinJSONSearchSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Col
 					return json.ErrInvalidJSONContainsPathType
 				}
 				escape := byte('\\')
-				escapeStr := escapeBuf.GetString(i)
-				if len(escapeStr) == 0 {
-					escape = byte('\\')
-				} else if len(escapeStr) == 1 {
-					escape = byte(escapeStr[0])
-				} else {
-					return errIncorrectArgs.GenWithStackByArgs("ESCAPE")
+				isNull := escapeBuf.IsNull(i)
+				if !isNull {
+					escapeStr := escapeBuf.GetString(i)
+					if len(escapeStr) == 0 {
+						escape = byte('\\')
+					} else if len(escapeStr) == 1 {
+						escape = byte(escapeStr[0])
+					} else {
+						return errIncorrectArgs.GenWithStackByArgs("ESCAPE")
+					}
 				}
 				patChars, patTypes := stringutil.CompilePattern(searchBuf.GetString(i), escape)
 
