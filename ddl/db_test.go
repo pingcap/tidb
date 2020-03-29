@@ -3259,7 +3259,7 @@ func (s *testDBSuite1) TestModifyColumnNullToNotNull(c *C) {
 	_, err := s.tk.Exec("alter table t1 change c2 c2 int not null;")
 	c.Assert(checkErr, IsNil)
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:1138]Invalid use of NULL value")
+	c.Assert(err.Error(), Equals, "[ddl:1138]current error msg: Cancelled DDL job, original error msg: Invalid use of NULL value")
 	s.tk.MustQuery("select * from t1").Check(testkit.Rows("<nil> <nil>"))
 
 	// Check insert error when column has PreventNullInsertFlag.
@@ -3558,7 +3558,7 @@ func (s *testDBSuite5) TestAddIndexForGeneratedColumn(c *C) {
 	s.tk.MustExec("insert into t values()")
 	s.tk.MustExec("ALTER TABLE t ADD COLUMN y1 year as (y + 2)")
 	_, err := s.tk.Exec("ALTER TABLE t ADD INDEX idx_y(y1)")
-	c.Assert(err.Error(), Equals, "[ddl:8202]Cannot decode index value, because cannot convert datum from unsigned bigint to type year.")
+	c.Assert(err.Error(), Equals, "[ddl:8202]current error msg: Cancelled DDL job, original error msg: Cannot decode index value, because cannot convert datum from unsigned bigint to type year.")
 
 	t := s.testGetTable(c, "t")
 	for _, idx := range t.Indices() {
