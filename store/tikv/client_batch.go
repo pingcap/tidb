@@ -372,12 +372,13 @@ func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient, tikvTransport
 				panic("batchRecvLoop receives a unknown response")
 			}
 			entry := value.(*batchCommandsEntry)
-			logutil.Eventf(entry.ctx, "receive %T response with other %d batched requests from %s", responses[i].GetCmd(), len(responses), c.target)
+
 			failpoint.InjectContext(entry.ctx, "forceReturnIdleHeartbeatResp", func() {
 				if entry.heartbeat {
 					entry.res <- responses[i]
 				}
 			})
+
 			if atomic.LoadInt32(&entry.canceled) == 0 && !entry.heartbeat {
 				// Put the response only if the request is not canceled.
 				entry.res <- responses[i]
