@@ -16,6 +16,7 @@ package config
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -44,6 +45,10 @@ const (
 	DefMaxIndexLength = 3072
 	// DefMaxOfMaxIndexLength is the maximum index length(in bytes) for TiDB v3.0.7 and previous version.
 	DefMaxOfMaxIndexLength = 3072 * 4
+	// DefPort is the default port of TiDB
+	DefPort = 4000
+	// DefStatusPort is the default status port of TiBD
+	DefStatusPort = 10080
 )
 
 // Valid config maps
@@ -56,6 +61,8 @@ var (
 	CheckTableBeforeDrop = false
 	// checkBeforeDropLDFlag is a go build flag.
 	checkBeforeDropLDFlag = "None"
+	// tempStorageDirName is the temporary storage dir name by base64 encoding a string `port/statusPort`
+	tempStorageDirName = base64.URLEncoding.EncodeToString([]byte(fmt.Sprintf("%v/%v", DefPort, DefStatusPort)))
 )
 
 // Config contains configuration options.
@@ -499,7 +506,7 @@ type Experimental struct {
 var defaultConf = Config{
 	Host:                         "0.0.0.0",
 	AdvertiseAddress:             "",
-	Port:                         4000,
+	Port:                         DefPort,
 	Cors:                         "",
 	Store:                        "mocktikv",
 	Path:                         "/tmp/tidb",
@@ -508,7 +515,7 @@ var defaultConf = Config{
 	Lease:                        "45s",
 	TokenLimit:                   1000,
 	OOMUseTmpStorage:             true,
-	TempStoragePath:              filepath.Join(os.TempDir(), "tidb", "tmp-storage"),
+	TempStoragePath:              filepath.Join(os.TempDir(), tempStorageDirName, "tidb", "tmp-storage"),
 	OOMAction:                    OOMActionCancel,
 	MemQuotaQuery:                1 << 30,
 	EnableStreaming:              false,
@@ -547,7 +554,7 @@ var defaultConf = Config{
 	Status: Status{
 		ReportStatus:    true,
 		StatusHost:      "0.0.0.0",
-		StatusPort:      10080,
+		StatusPort:      DefStatusPort,
 		MetricsInterval: 15,
 		RecordQPSbyDB:   false,
 	},
