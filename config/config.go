@@ -140,7 +140,7 @@ func (c *Config) UpdateTempStoragePath() {
 
 func encodeDefTempStorageDir(port, statusPort uint) string {
 	dirName := base64.URLEncoding.EncodeToString([]byte(fmt.Sprintf("%v/%v", port, statusPort)))
-	return filepath.Join(os.TempDir(), dirName, "tidb", "tmp-storage")
+	return filepath.Join(os.TempDir(), "tidb", dirName, "tmp-storage")
 }
 
 // nullableBool defaults unset bool options to unset instead of false, which enables us to know if the user has set 2
