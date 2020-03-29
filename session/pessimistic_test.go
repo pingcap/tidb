@@ -1113,6 +1113,8 @@ func (s *testPessimisticSuite) TestLockGotKeysInRC(c *C) {
 	tk.MustExec("begin pessimistic")
 	tk.MustQuery("select * from t1 where c1 in (2, 3) for update").Check(testkit.Rows())
 	tk.MustQuery("select * from t1 where c2 in (2, 3) for update").Check(testkit.Rows())
+	tk.MustQuery("select * from t1 where c1 = 2 for update").Check(testkit.Rows())
+	tk.MustQuery("select * from t1 where c2 = 2 for update").Check(testkit.Rows())
 	tk2.MustExec("begin pessimistic")
 	tk2.MustExec("insert into t1 values(2, 2, 2)")
 	tk2.MustExec("select * from t1 where c1 = 3 for update nowait")
