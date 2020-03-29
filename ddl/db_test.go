@@ -231,7 +231,7 @@ func (s *testDBSuite5) TestAddPrimaryKeyRollback1(c *C) {
 	hasNullValsInKey := false
 	idxName := "PRIMARY"
 	addIdxSQL := "alter table t1 add primary key c3_index (c3);"
-	errMsg := "[kv:1062]Duplicate entry '' for key 'PRIMARY'"
+	errMsg := "[kv:1062]current error msg: Cancelled DDL job, original error msg: current error msg: Cancelled DDL job, original error msg: Duplicate entry '' for key 'PRIMARY'"
 	testAddIndexRollback(c, s.store, s.lease, idxName, addIdxSQL, errMsg, hasNullValsInKey)
 }
 
@@ -240,7 +240,7 @@ func (s *testDBSuite1) TestAddPrimaryKeyRollback2(c *C) {
 	hasNullValsInKey := true
 	idxName := "PRIMARY"
 	addIdxSQL := "alter table t1 add primary key c3_index (c3);"
-	errMsg := "[ddl:1138]Invalid use of NULL value"
+	errMsg := "[ddl:1138]current error msg: Cancelled DDL job, original error msg: Invalid use of NULL value"
 	testAddIndexRollback(c, s.store, s.lease, idxName, addIdxSQL, errMsg, hasNullValsInKey)
 }
 
@@ -248,7 +248,7 @@ func (s *testDBSuite2) TestAddUniqueIndexRollback(c *C) {
 	hasNullValsInKey := false
 	idxName := "c3_index"
 	addIdxSQL := "create unique index c3_index on t1 (c3)"
-	errMsg := "[kv:1062]Duplicate entry '' for key 'c3_index'"
+	errMsg := "[kv:1062]current error msg: Cancelled DDL job, original error msg: Duplicate entry '' for key 'c3_index'"
 	testAddIndexRollback(c, s.store, s.lease, idxName, addIdxSQL, errMsg, hasNullValsInKey)
 }
 
