@@ -102,13 +102,13 @@
       {
         "SQL": "select /*+ USE_INDEX(t, c_d_e) */ * from t t1",
         "Best": "TableReader(Table(t))",
-        "HasWarn": false,
+        "HasWarn": true,
         "Hints": "USE_INDEX(@`sel_1` `test`.`t1` )"
       },
       {
         "SQL": "select /*+ IGNORE_INDEX(t, c_d_e) */ t1.c from t t1 order by t1.c",
         "Best": "IndexReader(Index(t.c_d_e)[[NULL,+inf]])",
-        "HasWarn": false,
+        "HasWarn": true,
         "Hints": "USE_INDEX(@`sel_1` `test`.`t1` `c_d_e`)"
       },
       {
@@ -211,6 +211,24 @@
         "Best": "TableReader(Table(t)->Sel([or(lt(test.t.a, 1), gt(test.t.f, 2))]))",
         "HasWarn": true,
         "Hints": "USE_INDEX(@`sel_1` `test`.`t` )"
+      },
+      {
+        "SQL": "select /*+ USE_INDEX_MERGE(t1, c_d_e, f_g) */ * from t where c < 1 or f > 2",
+        "Best": "TableReader(Table(t)->Sel([or(lt(test.t.c, 1), gt(test.t.f, 2))]))",
+        "HasWarn": true,
+        "Hints": "USE_INDEX(@`sel_1` `test`.`t` )"
+      },
+      {
+        "SQL": "select /*+ NO_INDEX_MERGE(), USE_INDEX_MERGE(t, primary, f_g, c_d_e) */ * from t where a < 1 or f > 2",
+        "Best": "TableReader(Table(t)->Sel([or(lt(test.t.a, 1), gt(test.t.f, 2))]))",
+        "HasWarn": true,
+        "Hints": "USE_INDEX(@`sel_1` `test`.`t` )"
+      },
+      {
+        "SQL": "select /*+ USE_INDEX_MERGE(t) USE_INDEX_MERGE(t) */ * from t where c < 1 or f > 2",
+        "Best": "IndexMergeReader(PartialPlans->[Index(t.c_d_e)[[-inf,1)], Index(t.f_g)[(2,+inf]]], TablePlan->Table(t))",
+        "HasWarn": false,
+        "Hints": "USE_INDEX_MERGE(@`sel_1` `t` `c_d_e`, `f_g`)"
       }
     ]
   },
@@ -1289,13 +1307,13 @@
           "explain select /*+ TIDB_INLJ(t2) */ * from t t1, t t2 where t1.a = t2.a"
         ],
         "Plan": [
-          "IndexJoin_12 12500.00 root inner join, inner:UnionScan_11, outer key:test.t.a, inner key:test.t.a",
-          "├─UnionScan_15(Build) 10000.00 root ",
-          "│ └─TableReader_17 10000.00 root data:TableFullScan_16",
-          "│   └─TableFullScan_16 10000.00 cop[tikv] table:t1, keep order:false, stats:pseudo",
-          "└─UnionScan_11(Probe) 1.00 root ",
-          "  └─TableReader_10 1.00 root data:TableRangeScan_9",
-          "    └─TableRangeScan_9 1.00 cop[tikv] table:t2, range: decided by [test.t.a], keep order:false, stats:pseudo"
+          "IndexJoin_12 12500.00 root  inner join, inner:UnionScan_11, outer key:test.t.a, inner key:test.t.a",
+          "├─UnionScan_15(Build) 10000.00 root  ",
+          "│ └─TableReader_17 10000.00 root  data:TableFullScan_16",
+          "│   └─TableFullScan_16 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─UnionScan_11(Probe) 1.00 root  ",
+          "  └─TableReader_10 1.00 root  data:TableRangeScan_9",
+          "    └─TableRangeScan_9 1.00 cop[tikv] table:t2 range: decided by [test.t.a], keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1304,14 +1322,14 @@
           "explain select /*+ TIDB_INLJ(t2) */ * from t t1, t t2 where t1.a = t2.b"
         ],
         "Plan": [
-          "HashLeftJoin_15 12487.50 root inner join, equal:[eq(test.t.a, test.t.b)]",
-          "├─UnionScan_17(Build) 9990.00 root not(isnull(test.t.b))",
-          "│ └─TableReader_20 9990.00 root data:Selection_19",
-          "│   └─Selection_19 9990.00 cop[tikv] not(isnull(test.t.b))",
-          "│     └─TableFullScan_18 10000.00 cop[tikv] table:t2, keep order:false, stats:pseudo",
-          "└─UnionScan_21(Probe) 10000.00 root ",
-          "  └─TableReader_23 10000.00 root data:TableFullScan_22",
-          "    └─TableFullScan_22 10000.00 cop[tikv] table:t1, keep order:false, stats:pseudo"
+          "HashJoin_15 12487.50 root  inner join, equal:[eq(test.t.a, test.t.b)]",
+          "├─UnionScan_17(Build) 9990.00 root  not(isnull(test.t.b))",
+          "│ └─TableReader_20 9990.00 root  data:Selection_19",
+          "│   └─Selection_19 9990.00 cop[tikv]  not(isnull(test.t.b))",
+          "│     └─TableFullScan_18 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─UnionScan_21(Probe) 10000.00 root  ",
+          "  └─TableReader_23 10000.00 root  data:TableFullScan_22",
+          "    └─TableFullScan_22 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1320,14 +1338,14 @@
           "explain select /*+ TIDB_INLJ(t2) */ t1.a , t2.b from t t1, t t2 where t1.a = t2.b"
         ],
         "Plan": [
-          "HashLeftJoin_15 12487.50 root inner join, equal:[eq(test.t.a, test.t.b)]",
-          "├─UnionScan_17(Build) 9990.00 root not(isnull(test.t.b))",
-          "│ └─TableReader_20 9990.00 root data:Selection_19",
-          "│   └─Selection_19 9990.00 cop[tikv] not(isnull(test.t.b))",
-          "│     └─TableFullScan_18 10000.00 cop[tikv] table:t2, keep order:false, stats:pseudo",
-          "└─UnionScan_21(Probe) 10000.00 root ",
-          "  └─TableReader_23 10000.00 root data:TableFullScan_22",
-          "    └─TableFullScan_22 10000.00 cop[tikv] table:t1, keep order:false, stats:pseudo"
+          "HashJoin_15 12487.50 root  inner join, equal:[eq(test.t.a, test.t.b)]",
+          "├─UnionScan_17(Build) 9990.00 root  not(isnull(test.t.b))",
+          "│ └─TableReader_20 9990.00 root  data:Selection_19",
+          "│   └─Selection_19 9990.00 cop[tikv]  not(isnull(test.t.b))",
+          "│     └─TableFullScan_18 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─UnionScan_21(Probe) 10000.00 root  ",
+          "  └─TableReader_23 10000.00 root  data:TableFullScan_22",
+          "    └─TableFullScan_22 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1336,21 +1354,21 @@
           "explain select /*+ TIDB_INLJ(t2) */ * from tt t1, tt t2 where t1.a = t2.a"
         ],
         "Plan": [
-          "HashLeftJoin_19 25000.00 root inner join, equal:[eq(test.tt.a, test.tt.a)]",
-          "├─Union_28(Build) 20000.00 root ",
-          "│ ├─UnionScan_29 10000.00 root ",
-          "│ │ └─TableReader_31 10000.00 root data:TableFullScan_30",
-          "│ │   └─TableFullScan_30 10000.00 cop[tikv] table:t2, partition:p0, keep order:false, stats:pseudo",
-          "│ └─UnionScan_32 10000.00 root ",
-          "│   └─TableReader_34 10000.00 root data:TableFullScan_33",
-          "│     └─TableFullScan_33 10000.00 cop[tikv] table:t2, partition:p1, keep order:false, stats:pseudo",
-          "└─Union_21(Probe) 20000.00 root ",
-          "  ├─UnionScan_22 10000.00 root ",
-          "  │ └─TableReader_24 10000.00 root data:TableFullScan_23",
-          "  │   └─TableFullScan_23 10000.00 cop[tikv] table:t1, partition:p0, keep order:false, stats:pseudo",
-          "  └─UnionScan_25 10000.00 root ",
-          "    └─TableReader_27 10000.00 root data:TableFullScan_26",
-          "      └─TableFullScan_26 10000.00 cop[tikv] table:t1, partition:p1, keep order:false, stats:pseudo"
+          "HashJoin_19 25000.00 root  inner join, equal:[eq(test.tt.a, test.tt.a)]",
+          "├─Union_28(Build) 20000.00 root  ",
+          "│ ├─UnionScan_29 10000.00 root  ",
+          "│ │ └─TableReader_31 10000.00 root  data:TableFullScan_30",
+          "│ │   └─TableFullScan_30 10000.00 cop[tikv] table:t2, partition:p0 keep order:false, stats:pseudo",
+          "│ └─UnionScan_32 10000.00 root  ",
+          "│   └─TableReader_34 10000.00 root  data:TableFullScan_33",
+          "│     └─TableFullScan_33 10000.00 cop[tikv] table:t2, partition:p1 keep order:false, stats:pseudo",
+          "└─Union_21(Probe) 20000.00 root  ",
+          "  ├─UnionScan_22 10000.00 root  ",
+          "  │ └─TableReader_24 10000.00 root  data:TableFullScan_23",
+          "  │   └─TableFullScan_23 10000.00 cop[tikv] table:t1, partition:p0 keep order:false, stats:pseudo",
+          "  └─UnionScan_25 10000.00 root  ",
+          "    └─TableReader_27 10000.00 root  data:TableFullScan_26",
+          "      └─TableFullScan_26 10000.00 cop[tikv] table:t1, partition:p1 keep order:false, stats:pseudo"
         ]
       }
     ]
@@ -1378,6 +1396,14 @@
       {
         "SQL": "select /*+ INL_MERGE_JOIN(t1) */ * from t1 join t2 on t1.a = t2.a;",
         "Plan": "IndexMergeJoin{IndexLookUp(Index(t1.idx_a)[[NULL,+inf]]->Sel([not(isnull(test.t1.a))]), Table(t1))->Projection->TableReader(Table(t2)->Sel([not(isnull(test.t2.a))]))}(test.t2.a,test.t1.a)"
+      },
+      {
+        "SQL": "select /*+ inl_merge_join(t2) */ t1.a, t2.a from t t1 left join t t2 use index(g_2) on t1.g=t2.g",
+        "Plan": "IndexMergeJoin{IndexReader(Index(t.g_3)[[NULL,+inf]])->IndexReader(Index(t.g_2)[[NULL,+inf]]->Sel([not(isnull(test.t.g))]))}(test.t.g,test.t.g)"
+      },
+      {
+        "SQL": "select /*+inl_merge_join(t2)*/ t1.a, t2.a from t t1 left join t t2 use index(g_2) on t1.g=t2.g order by t1.a",
+        "Plan": "IndexMergeJoin{IndexReader(Index(t.g_3)[[NULL,+inf]])->IndexReader(Index(t.g_2)[[NULL,+inf]]->Sel([not(isnull(test.t.g))]))}(test.t.g,test.t.g)->Sort"
       }
     ]
   },
@@ -1387,17 +1413,17 @@
       {
         "SQL": "select /*+ AGG_TO_COP(), HASH_AGG(), USE_INDEX(t) */ sum(a) from ta group by a",
         "Best": "IndexReader(Index(ta.a)[[NULL,+inf]]->HashAgg)->HashAgg",
-        "Warning": ""
+        "Warning": "[planner:1815]use_index(test.t) is inapplicable, check whether the table(test.t) exists"
       },
       {
         "SQL": "select /*+ AGG_TO_COP(), USE_INDEX(t) */ sum(b) from ta group by b",
         "Best": "TableReader(Table(ta)->HashAgg)->HashAgg",
-        "Warning": ""
+        "Warning": "[planner:1815]use_index(test.t) is inapplicable, check whether the table(test.t) exists"
       },
       {
         "SQL": "select /*+ AGG_TO_COP(), HASH_AGG(), USE_INDEX(t) */ distinct a from ta group by a",
         "Best": "IndexReader(Index(ta.a)[[NULL,+inf]]->HashAgg)->HashAgg",
-        "Warning": ""
+        "Warning": "[planner:1815]use_index(test.t) is inapplicable, check whether the table(test.t) exists"
       },
       {
         "SQL": "select /*+ AGG_TO_COP(), HASH_AGG(), HASH_JOIN(t1), USE_INDEX(t1), USE_INDEX(t2) */ sum(t1.a) from ta t1, ta t2 where t1.a = t2.b group by t1.a",

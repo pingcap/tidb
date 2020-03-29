@@ -67,4 +67,6 @@ var (
 	ErrUserAlreadyExists = terror.ClassSchema.New(mysql.ErrUserAlreadyExists, mysql.MySQLErrName[mysql.ErrUserAlreadyExists])
 	// ErrTableLocked returns when the table was locked by other session.
 	ErrTableLocked = terror.ClassSchema.New(mysql.ErrTableLocked, mysql.MySQLErrName[mysql.ErrTableLocked])
+	// ErrWrongObject returns when the table/view/sequence is not the expected object.
+	ErrWrongObject = terror.ClassSchema.New(mysql.ErrWrongObject, mysql.MySQLErrName[mysql.ErrWrongObject])
 )

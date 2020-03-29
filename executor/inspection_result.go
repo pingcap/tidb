@@ -188,6 +188,7 @@ func (configInspection) inspectDiffConfig(_ context.Context, sctx sessionctx.Con
 	ignoreConfigKey := []string{
 		// TiDB
 		"port",
+		"status.status-port",
 		"host",
 		"path",
 		"advertise-address",
@@ -196,8 +197,15 @@ func (configInspection) inspectDiffConfig(_ context.Context, sctx sessionctx.Con
 		"log.slow-query-file",
 
 		// PD
+		"advertise-client-urls",
+		"advertise-peer-urls",
+		"client-urls",
 		"data-dir",
 		"log-file",
+		"log.file.filename",
+		"metric.job",
+		"name",
+		"peer-urls",
 
 		// TiKV
 		"server.addr",
@@ -246,6 +254,12 @@ func (configInspection) inspectCheckConfig(_ context.Context, sctx sessionctx.Co
 			key:    "log.slow-threshold",
 			value:  "0",
 			detail: "slow-threshold = 0 will record every query to slow log, it may affect performance",
+		},
+		{
+			tp:     "tikv",
+			key:    "raftstore.sync-log",
+			value:  "false",
+			detail: "sync-log should be true to avoid recover region when the machine breaks down",
 		},
 	}
 
@@ -532,6 +546,7 @@ func (c thresholdCheckInspection) inspect(ctx context.Context, sctx sessionctx.C
 		c.inspectThreshold1,
 		c.inspectThreshold2,
 		c.inspectThreshold3,
+		c.inspectForLeaderDrop,
 	}
 	var results []inspectionResult
 	for _, inspect := range inspects {
@@ -623,10 +638,11 @@ func (thresholdCheckInspection) inspectThreshold1(ctx context.Context, sctx sess
 
 		var sql string
 		if len(rule.configKey) > 0 {
-			sql = fmt.Sprintf("select t1.instance, t1.cpu, t2.threshold, t2.value from "+
-				"(select instance, max(value) as cpu from metrics_schema.tikv_thread_cpu %[4]s and name like '%[1]s' group by instance) as t1,"+
-				"(select value * %[2]f as threshold, value from information_schema.cluster_config where type='tikv' and `key` = '%[3]s' limit 1) as t2 "+
-				"where t1.cpu > t2.threshold;", rule.component, rule.threshold, rule.configKey, condition)
+			sql = fmt.Sprintf("select t2.instance, t1.cpu, (t2.value * %[2]f) as threshold, t2.value from "+
+				"(select instance as status_address, max(value) as cpu from metrics_schema.tikv_thread_cpu %[4]s and name like '%[1]s' group by instance) as t1 join "+
+				"(select instance, value from information_schema.cluster_config where type='tikv' and `key` = '%[3]s') as t2 join "+
+				"(select instance,status_address from information_schema.cluster_info where type='tikv') as t3 "+
+				"on t1.status_address=t3.status_address and t2.instance=t3.instance where t1.cpu > (t2.value * %[2]f)", rule.component, rule.threshold, rule.configKey, condition)
 		} else {
 			sql = fmt.Sprintf("select t1.instance, t1.cpu, %[2]f from "+
 				"(select instance, max(value) as cpu from metrics_schema.tikv_thread_cpu %[3]s and name like '%[1]s' group by instance) as t1 "+
@@ -855,13 +871,22 @@ func (c compareStoreStatus) genSQL(timeRange plannercore.QueryTimeRange) string 
 	condition := fmt.Sprintf(`where t1.time>='%[1]s' and t1.time<='%[2]s' and
 		 t2.time>='%[1]s' and t2.time<='%[2]s'`, timeRange.From.Format(plannercore.MetricTableTimeFormat),
 		timeRange.To.Format(plannercore.MetricTableTimeFormat))
-	return fmt.Sprintf(`select t1.address,t1.value,t2.address,t2.value,
-				(t1.value-t2.value)/t1.value as ratio
-				from metrics_schema.pd_scheduler_store_status t1 join metrics_schema.pd_scheduler_store_status t2
-				%s and t1.type='%s' and t1.time = t2.time and
-				t1.type=t2.type and t1.address != t2.address and
-				(t1.value-t2.value)/t1.value>%v and t1.value > 0 group by t1.address,t1.value,t2.address,t2.value order by ratio desc`,
-		condition, c.tp, c.threshold)
+	return fmt.Sprintf(`
+		SELECT t1.address,
+        	max(t1.value),
+        	t2.address,
+        	min(t2.value),
+         	max((t1.value-t2.value)/t1.value) AS ratio
+		FROM metrics_schema.pd_scheduler_store_status t1
+		JOIN metrics_schema.pd_scheduler_store_status t2 %s
+        	AND t1.type='%s'
+        	AND t1.time = t2.time
+        	AND t1.type=t2.type
+        	AND t1.address != t2.address
+        	AND (t1.value-t2.value)/t1.value>%v
+        	AND t1.value > 0
+		GROUP BY  t1.address,t2.address
+		ORDER BY  ratio desc`, condition, c.tp, c.threshold)
 }
 
 func (c compareStoreStatus) genResult(_ string, row chunk.Row) inspectionResult {
@@ -870,7 +895,7 @@ func (c compareStoreStatus) genResult(_ string, row chunk.Row) inspectionResult 
 	addr2 := row.GetString(2)
 	value2 := row.GetFloat64(3)
 	ratio := row.GetFloat64(4)
-	detail := fmt.Sprintf("%v %s is %.2f, much more than %v %s %.2f", addr1, c.tp, value1, addr2, c.tp, value2)
+	detail := fmt.Sprintf("%v max %s is %.2f, much more than %v min %s %.2f", addr1, c.tp, value1, addr2, c.tp, value2)
 	return inspectionResult{
 		tp:       "tikv",
 		instance: addr2,
@@ -919,7 +944,7 @@ type checkStoreRegionTooMuch struct{}
 
 func (c checkStoreRegionTooMuch) genSQL(timeRange plannercore.QueryTimeRange) string {
 	condition := timeRange.Condition()
-	return fmt.Sprintf(`select address,value from metrics_schema.pd_scheduler_store_status %s and type='region_count' and value > 20000;`, condition)
+	return fmt.Sprintf(`select address, max(value) from metrics_schema.pd_scheduler_store_status %s and type='region_count' and value > 20000 group by address`, condition)
 }
 
 func (c checkStoreRegionTooMuch) genResult(sql string, row chunk.Row) inspectionResult {
@@ -975,6 +1000,54 @@ func (thresholdCheckInspection) inspectThreshold3(ctx context.Context, sctx sess
 		}
 		for _, row := range rows {
 			results = append(results, rule.genResult(sql, row))
+		}
+	}
+	return results
+}
+
+func (c thresholdCheckInspection) inspectForLeaderDrop(ctx context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
+	condition := filter.timeRange.Condition()
+	threshold := 50.0
+	sql := fmt.Sprintf(`select address,min(value) as mi,max(value) as mx from metrics_schema.pd_scheduler_store_status %s and type='leader_count' group by address having mx-mi>%v`, condition, threshold)
+	rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithContext(ctx, sql)
+	if err != nil {
+		sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("execute '%s' failed: %v", sql, err))
+		return nil
+	}
+	var results []inspectionResult
+	for _, row := range rows {
+		address := row.GetString(0)
+		sql := fmt.Sprintf(`select time, value from metrics_schema.pd_scheduler_store_status %s and type='leader_count' and address = '%s' order by time`, condition, address)
+		subRows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithContext(ctx, sql)
+		if err != nil {
+			sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("execute '%s' failed: %v", sql, err))
+			continue
+		}
+		lastValue := float64(0)
+		for i, subRows := range subRows {
+			v := subRows.GetFloat64(1)
+			if i == 0 {
+				lastValue = v
+				continue
+			}
+			if lastValue-v > threshold {
+				level := "warning"
+				if v == 0 {
+					level = "critical"
+				}
+				results = append(results, inspectionResult{
+					tp:       "tikv",
+					instance: address,
+					item:     "leader-drop",
+					actual:   fmt.Sprintf("%.0f", lastValue-v),
+					expected: fmt.Sprintf("<= %.0f", threshold),
+					severity: level,
+					detail:   fmt.Sprintf("%s tikv has too many leader-drop around time %s, leader count from %.0f drop to %.0f", address, subRows.GetTime(0), lastValue, v),
+					degree:   lastValue - v,
+				})
+				break
+			}
+			lastValue = v
 		}
 	}
 	return results
