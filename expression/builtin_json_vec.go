@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -388,6 +389,7 @@ func (b *builtinJSONSearchSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Col
 	}
 
 	result.ReserveJSON(nr)
+	// search := func()
 
 	if len(b.args) >= 4 {
 		escapeBuf, err := b.bufAllocator.get(types.ETString, nr)
@@ -411,15 +413,122 @@ func (b *builtinJSONSearchSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Col
 					return err
 				}
 			}
+			for i := 0; i < nr; i++ {
+				if jsonBuf.IsNull(i) {
+					result.AppendNull()
+					continue
+				}
+				containType := strings.ToLower(typeBuf.GetString(i))
+				if containType != json.ContainsPathAll && containType != json.ContainsPathOne {
+					return json.ErrInvalidJSONContainsPathType
+				}
+				escape := byte('\\')
+				escapeStr := escapeBuf.GetString(i)
+				if len(escapeStr) == 0 {
+					escape = byte('\\')
+				} else if len(escapeStr) == 1 {
+					escape = byte(escapeStr[0])
+				} else {
+					return errIncorrectArgs.GenWithStackByArgs("ESCAPE")
+				}
+				patChars, patTypes := stringutil.CompilePattern(searchBuf.GetString(i), escape)
 
+				resultItem := make([]interface{}, 0)
+				walkFn := func(fullpath json.PathExpression, bj json.BinaryJSON) (stop bool, err error) {
+					if bj.TypeCode == json.TypeCodeString && stringutil.DoMatch(string(bj.GetString()), patChars, patTypes) {
+						resultItem = append(resultItem, fullpath.String())
+						if containType == json.ContainsPathOne {
+							return true, nil
+						}
+					}
+					return false, nil
+				}
+				pathExprs := make([]json.PathExpression, 0, len(b.args)-4)
+				for j := 0; j < len(b.args)-4; j++ {
+					if pathBufs[j].IsNull(i) {
+						break
+					}
+					pathExpr, err := json.ParseJSONPathExpr(pathBufs[j].GetString(i))
+					if err != nil {
+						return json.ErrInvalidJSONPath.GenWithStackByArgs(pathBufs[j].GetString(i))
+					}
+					pathExprs = append(pathExprs, pathExpr)
+				}
+				err := jsonBuf.GetJSON(i).Walk(walkFn, pathExprs...)
+				if err != nil {
+					return err
+				}
+				result.AppendJSON(json.CreateBinary(resultItem))
+			}
+		} else {
+			for i := 0; i < nr; i++ {
+				if jsonBuf.IsNull(i) {
+					result.AppendNull()
+					continue
+				}
+				containType := strings.ToLower(typeBuf.GetString(i))
+				if containType != json.ContainsPathAll && containType != json.ContainsPathOne {
+					return json.ErrInvalidJSONContainsPathType
+				}
+				escape := byte('\\')
+				escapeStr := escapeBuf.GetString(i)
+				if len(escapeStr) == 0 {
+					escape = byte('\\')
+				} else if len(escapeStr) == 1 {
+					escape = byte(escapeStr[0])
+				} else {
+					return errIncorrectArgs.GenWithStackByArgs("ESCAPE")
+				}
+				patChars, patTypes := stringutil.CompilePattern(searchBuf.GetString(i), escape)
+
+				resultItem := make([]interface{}, 0)
+				walkFn := func(fullpath json.PathExpression, bj json.BinaryJSON) (stop bool, err error) {
+					if bj.TypeCode == json.TypeCodeString && stringutil.DoMatch(string(bj.GetString()), patChars, patTypes) {
+						resultItem = append(resultItem, fullpath.String())
+						if containType == json.ContainsPathOne {
+							return true, nil
+						}
+					}
+					return false, nil
+				}
+				err := jsonBuf.GetJSON(i).Walk(walkFn)
+				if err != nil {
+					return err
+				}
+				result.AppendJSON(json.CreateBinary(resultItem))
+			}
 		}
-
 	} else {
 		for i := 0; i < nr; i++ {
+			if jsonBuf.IsNull(i) {
+				result.AppendNull()
+				continue
+			}
+			containType := strings.ToLower(typeBuf.GetString(i))
+			if containType != json.ContainsPathAll && containType != json.ContainsPathOne {
+				return json.ErrInvalidJSONContainsPathType
+			}
+			escape := byte('\\')
+			patChars, patTypes := stringutil.CompilePattern(searchBuf.GetString(i), escape)
 
+			resultItem := make([]interface{}, 0)
+			walkFn := func(fullpath json.PathExpression, bj json.BinaryJSON) (stop bool, err error) {
+				if bj.TypeCode == json.TypeCodeString && stringutil.DoMatch(string(bj.GetString()), patChars, patTypes) {
+					resultItem = append(resultItem, fullpath.String())
+					if containType == json.ContainsPathOne {
+						return true, nil
+					}
+				}
+				return false, nil
+			}
+			err := jsonBuf.GetJSON(i).Walk(walkFn)
+			if err != nil {
+				return err
+			}
+			result.AppendJSON(json.CreateBinary(resultItem))
 		}
 	}
-	return errors.Errorf("not implemented")
+	return nil
 }
 
 func (b *builtinJSONSetSig) vectorized() bool {
@@ -452,7 +561,7 @@ func (b *builtinJSONObjectSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Col
 	for i := 0; i < len(b.args); i++ {
 		if i&1 == 0 {
 			if argBuffers[i], err = b.bufAllocator.get(types.ETString, nr); err != nil {
-				return err
+				return nil
 			}
 			defer func(buf *chunk.Column) {
 				b.bufAllocator.put(buf)
