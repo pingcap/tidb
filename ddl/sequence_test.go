@@ -806,3 +806,61 @@ func (s *testSequenceSuite) BenchmarkInsertCacheDefaultExpr(c *C) {
 		s.tk.MustExec(sql)
 	}
 }
+
+func (s *testSequenceSuite) TestSequenceFunctionPrivilege(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test")
+
+	// Test sequence function privilege.
+	s.tk.MustExec("drop sequence if exists seq")
+	s.tk.MustExec("create sequence seq")
+	s.tk.MustExec("create user if not exists myuser@localhost")
+	s.tk.MustExec("flush privileges")
+
+	tk1 := testkit.NewTestKit(c, s.store)
+	se, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "myuser", Hostname: "localhost"}, nil, nil), IsTrue)
+	tk1.Se = se
+
+	// grant the myuser the create access to the sequence.
+	s.tk.MustExec("grant create, insert on test.* to 'myuser'@'localhost'")
+	s.tk.MustExec("flush privileges")
+
+	// SELECT privilege required to use nextval.
+	tk1.MustExec("use test")
+	err = tk1.QueryToErr("select nextval(seq)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[expression:1142]SELECT command denied to user 'myuser'@'localhost' for table 'seq'")
+
+	tk1.MustExec("create table t(a int default next value for seq)")
+	_, err = tk1.Exec("insert into t values()")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[expression:1142]SELECT command denied to user 'myuser'@'localhost' for table 'seq'")
+
+	// SELECT privilege required to use lastval.
+	tk1.MustExec("use test")
+	err = tk1.QueryToErr("select lastval(seq)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[expression:1142]SELECT command denied to user 'myuser'@'localhost' for table 'seq'")
+
+	// UPDATE privilege required to use setval.
+	tk1.MustExec("use test")
+	err = tk1.QueryToErr("select setval(seq, 10)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[expression:1142]UPDATE command denied to user 'myuser'@'localhost' for table 'seq'")
+
+	// grant the myuser the SELECT & UPDATE access to sequence seq.
+	s.tk.MustExec("grant SELECT, UPDATE on test.seq to 'myuser'@'localhost'")
+	s.tk.MustExec("flush privileges")
+
+	// SELECT privilege required to use nextval.
+	tk1.MustQuery("select nextval(seq)").Check(testkit.Rows("1"))
+	tk1.MustQuery("select lastval(seq)").Check(testkit.Rows("1"))
+	tk1.MustQuery("select setval(seq, 10)").Check(testkit.Rows("10"))
+	tk1.MustExec("insert into t values()")
+
+	s.tk.MustExec("drop table t")
+	s.tk.MustExec("drop sequence seq")
+	s.tk.MustExec("drop user myuser@localhost")
+}
