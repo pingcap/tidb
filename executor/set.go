@@ -207,13 +207,17 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 
 	switch name {
 	case variable.TiDBEnableStmtSummary:
-		stmtsummary.StmtSummaryByDigestMap.SetEnabled(valStr, !v.IsGlobal)
+		return stmtsummary.StmtSummaryByDigestMap.SetEnabled(valStr, !v.IsGlobal)
 	case variable.TiDBStmtSummaryInternalQuery:
-		stmtsummary.StmtSummaryByDigestMap.SetEnabledInternalQuery(valStr, !v.IsGlobal)
+		return stmtsummary.StmtSummaryByDigestMap.SetEnabledInternalQuery(valStr, !v.IsGlobal)
 	case variable.TiDBStmtSummaryRefreshInterval:
-		stmtsummary.StmtSummaryByDigestMap.SetRefreshInterval(valStr, !v.IsGlobal)
+		return stmtsummary.StmtSummaryByDigestMap.SetRefreshInterval(valStr, !v.IsGlobal)
 	case variable.TiDBStmtSummaryHistorySize:
-		stmtsummary.StmtSummaryByDigestMap.SetHistorySize(valStr, !v.IsGlobal)
+		return stmtsummary.StmtSummaryByDigestMap.SetHistorySize(valStr, !v.IsGlobal)
+	case variable.TiDBStmtSummaryMaxStmtCount:
+		return stmtsummary.StmtSummaryByDigestMap.SetMaxStmtCount(valStr, !v.IsGlobal)
+	case variable.TiDBStmtSummaryMaxSQLLength:
+		return stmtsummary.StmtSummaryByDigestMap.SetMaxSQLLength(valStr, !v.IsGlobal)
 	case variable.TiDBCapturePlanBaseline:
 		variable.CapturePlanBaseline.Set(valStr, !v.IsGlobal)
 	}

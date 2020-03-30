@@ -118,7 +118,7 @@ func (s *testPartitionPruningSuite) TestPruneUseBinarySearch(c *C) {
 	}
 
 	for i, ca := range cases {
-		start, end := pruneUseBinarySearch(lessThan, ca.input)
+		start, end := pruneUseBinarySearch(lessThan, ca.input, false)
 		c.Assert(ca.result.start, Equals, start, Commentf("fail = %d", i))
 		c.Assert(ca.result.end, Equals, end, Commentf("fail = %d", i))
 	}
