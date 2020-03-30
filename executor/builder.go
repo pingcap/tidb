@@ -649,7 +649,8 @@ func (b *executorBuilder) buildShow(v *plannercore.PhysicalShow) Executor {
 		// Note: "show grants" result are different from "show grants for current_user",
 		// The former determine privileges with roles, while the later doesn't.
 		vars := e.ctx.GetSessionVars()
-		e.User = vars.User
+		e.User.Username = vars.User.AuthUsername
+		e.User.Hostname = vars.User.AuthHostname
 		e.Roles = vars.ActiveRoles
 	}
 	if e.Tp == ast.ShowMasterStatus {

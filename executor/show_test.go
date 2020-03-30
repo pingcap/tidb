@@ -150,6 +150,14 @@ func (s *testSuite5) TestShowGrantsPrivilege(c *C) {
 	tk1.Se = se
 	err = tk1.QueryToErr("show grants for root")
 	c.Assert(err.Error(), Equals, executor.ErrDBaccessDenied.GenWithStackByArgs("show_grants", "%", mysql.SystemDB).Error())
+	// Test show grants for user with auth host name `%`.
+	tk2 := testkit.NewTestKit(c, s.store)
+	se2, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "show_grants", Hostname: "127.0.0.1"}, nil, nil), IsTrue)
+	tk2.Se = se2
+	err = tk2.QueryToErr("show grants")
+	c.Assert(err, IsNil)
 }
 
 func (s *testSuite5) TestIssue3641(c *C) {
