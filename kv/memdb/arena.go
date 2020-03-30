@@ -57,22 +57,27 @@ type arenaSnapshot struct {
 func newArenaLocator(initBlockSize int) *arena {
 	return &arena{
 		blockSize: initBlockSize,
-		blocks:    []arenaBlock{newArenaBlock(initBlockSize)},
+		availIdx:  -1,
 	}
 }
 
 func (a *arena) snapshot() arenaSnapshot {
-	return arenaSnapshot{
-		blockSize:     a.blockSize,
-		blocks:        len(a.blocks),
-		availIdx:      a.availIdx,
-		offsetInBlock: a.blocks[a.availIdx].length,
+	snap := arenaSnapshot{
+		blockSize: a.blockSize,
+		blocks:    len(a.blocks),
+		availIdx:  a.availIdx,
 	}
+	if a.availIdx >= 0 {
+		snap.offsetInBlock = a.blocks[a.availIdx].length
+	}
+	return snap
 }
 
 func (a *arena) revert(snap arenaSnapshot) {
 	a.availIdx = snap.availIdx
-	a.blocks[a.availIdx].length = snap.offsetInBlock
+	if a.availIdx >= 0 {
+		a.blocks[a.availIdx].length = snap.offsetInBlock
+	}
 	for i := snap.blocks; i < len(a.blocks); i++ {
 		a.blocks[i] = arenaBlock{}
 	}
@@ -108,18 +113,22 @@ func (a *arena) alloc(size int) (arenaAddr, []byte) {
 		return addr, blk.buf
 	}
 
+	if a.availIdx < 0 {
+		a.enlarge(size, a.blockSize)
+	}
+
 	addr, data := a.allocInBlock(a.availIdx, size)
 	if !addr.isNull() {
 		return addr, data
 	}
 
-	a.enlarge(size)
+	a.enlarge(size, a.blockSize<<1)
 	return a.allocInBlock(a.availIdx, size)
 }
 
-func (a *arena) enlarge(size int) {
-	a.blockSize <<= 1
-	for a.blockSize <= size {
+func (a *arena) enlarge(allocSize, blockSize int) {
+	a.blockSize = blockSize
+	for a.blockSize <= allocSize {
 		a.blockSize <<= 1
 	}
 	// Size always less than maxBlockSize.

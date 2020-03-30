@@ -43,7 +43,7 @@ func NewBufferStore(r Retriever, cap int) *BufferStore {
 	}
 	return &BufferStore{
 		r:         r,
-		MemBuffer: &lazyMemBuffer{cap: cap},
+		MemBuffer: NewMemDbBuffer(cap),
 	}
 }
 
