@@ -2030,10 +2030,14 @@ var MetricTableMap = map[string]MetricTableDef{
 		PromQL: `node_memory_MemAvailable_bytes{$LABEL_CONDITIONS}`,
 		Labels: []string{"instance"},
 	},
-	"node_total_memory_swap": {
-		PromQL:  `node_memory_SwapTotal_bytes{$LABEL_CONDITIONS}`,
+	"node_memory_usage": {
+		PromQL: `100* (1-(node_memory_MemAvailable_bytes{$LABEL_CONDITIONS}/node_memory_MemTotal_bytes{$LABEL_CONDITIONS}))`,
+		Labels: []string{"instance"},
+	},
+	"node_memory_swap_used": {
+		PromQL:  `node_memory_SwapTotal_bytes{$LABEL_CONDITIONS} - node_memory_SwapFree_bytes{$LABEL_CONDITIONS}`,
 		Labels:  []string{"instance"},
-		Comment: "node total memory swap",
+		Comment: "node swap memory used bytes",
 	},
 	"node_uptime": {
 		PromQL:  `node_time_seconds{$LABEL_CONDITIONS} - node_boot_time_seconds{$LABEL_CONDITIONS}`,
