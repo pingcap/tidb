@@ -824,6 +824,7 @@ func (s *testSequenceSuite) TestSequenceFunctionPrivilege(c *C) {
 	// Test sequence function privilege.
 	s.tk.MustExec("drop sequence if exists seq")
 	s.tk.MustExec("create sequence seq")
+	s.tk.MustExec("drop table if exists t")
 	s.tk.MustExec("create table t(a int default next value for seq)")
 	s.tk.MustExec("create user if not exists myuser@localhost")
 	s.tk.MustExec("flush privileges")
