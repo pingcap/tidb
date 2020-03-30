@@ -1453,8 +1453,6 @@ func (s *session) Auth(user *auth.UserIdentity, authentication []byte, salt []by
 		s.sessionVars.ActiveRoles = pm.GetDefaultRoles(user.AuthUsername, user.AuthHostname)
 		return true
 	} else if user.Hostname == variable.DefHostname {
-		logutil.Logger(context.Background()).Error("user connection verification failed",
-			zap.Stringer("user", user))
 		return false
 	}
 
@@ -1472,9 +1470,6 @@ func (s *session) Auth(user *auth.UserIdentity, authentication []byte, salt []by
 			return true
 		}
 	}
-
-	logutil.Logger(context.Background()).Error("user connection verification failed",
-		zap.Stringer("user", user))
 	return false
 }
 
