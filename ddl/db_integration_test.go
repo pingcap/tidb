@@ -1835,10 +1835,6 @@ func (s *testIntegrationSuite4) TestDropAutoIncrementIndex(c *C) {
 	tk.MustExec("create table t1 (a int(11) not null auto_increment, b int(11), c bigint, unique key (a, b, c))")
 	dropIndexSQL = "alter table t1 drop index a"
 	tk.MustGetErrCode(dropIndexSQL, errno.ErrWrongAutoKey)
-
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t1 (a int(11) not null auto_increment key, b int(11), c bigint, unique key (a, b, c))")
-	tk.MustExec("alter table t1 drop index a")
 }
 
 func (s *testIntegrationSuite4) TestInsertIntoGeneratedColumnWithDefaultExpr(c *C) {
