@@ -1449,21 +1449,21 @@ func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) []Ph
 
 func (p *LogicalJoin) tryToGetBroadCastJoin(prop * property.PhysicalProperty) []PhysicalPlan {
 	child0, ok0 := p.children[0].(*DataSource)
-	if (!ok0) {
-		return nil;
+	if !ok0 {
+		return nil
 	}
 	child1, ok1 := p.children[1].(*DataSource)
-	if (!ok1) {
-		return nil;
+	if !ok1 {
+		return nil
 	}
 	if !prop.IsEmpty() {
-		return nil;
+		return nil
 	}
-	if (prop.TaskTp != property.RootTaskType && prop.TaskTp != property.CopTiflashTaskType) {
+	if prop.TaskTp != property.RootTaskType && prop.TaskTp != property.CopTiflashTaskType {
 		return nil
 	}
 
-	if (p.JoinType != InnerJoin || len(p.LeftConditions) != 0 || len(p.RightConditions) != 0) {
+	if p.JoinType != InnerJoin || len(p.LeftConditions) != 0 || len(p.RightConditions) != 0 {
 		return nil
 	}
 
@@ -1477,17 +1477,17 @@ func (p *LogicalJoin) tryToGetBroadCastJoin(prop * property.PhysicalProperty) []
 		RightJoinKeys: rkeys,
 	}
 	if child0.stats.Count() < child1.stats.Count() {
-		baseJoin.InnerChildIdx = 0;
+		baseJoin.InnerChildIdx = 0
 	} else {
-		baseJoin.InnerChildIdx = 1;
+		baseJoin.InnerChildIdx = 1
 	}
 	childrenReqProps := make([]*property.PhysicalProperty, 2)
-	childrenReqProps[baseJoin.InnerChildIdx] = &property.PhysicalProperty{TaskTp: property.CopSingleReadTaskType}
+	childrenReqProps[baseJoin.InnerChildIdx] = &property.PhysicalProperty{TaskTp: property.CopTiflashTaskType}
 	childrenReqProps[1-baseJoin.InnerChildIdx] = &property.PhysicalProperty{TaskTp: property.CopTiflashTaskType}
 	join := PhysicalBroadCastJoin {
 		basePhysicalJoin: baseJoin,
 	}.Init(p.ctx, p.stats, p.blockOffset, childrenReqProps...)
-	results := make([]PhysicalPlan, 0, 1);
+	results := make([]PhysicalPlan, 0, 1)
 	results = append(results, join)
 	return results
 }
