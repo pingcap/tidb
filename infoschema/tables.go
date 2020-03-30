@@ -1290,7 +1290,6 @@ func GetTiKVServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	if !ok {
 		return nil, errors.Errorf("%T is not an TiKV store instance", store)
 	}
-
 	pdClient := tikvStore.GetRegionCache().PDClient()
 	if pdClient == nil {
 		return nil, errors.New("pd unavailable")
