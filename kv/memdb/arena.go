@@ -48,6 +48,7 @@ type arena struct {
 }
 
 type arenaSnapshot struct {
+	blockSize     int
 	blocks        int
 	availIdx      int
 	offsetInBlock int
@@ -62,6 +63,7 @@ func newArenaLocator(initBlockSize int) *arena {
 
 func (a *arena) snapshot() arenaSnapshot {
 	return arenaSnapshot{
+		blockSize:     a.blockSize,
 		blocks:        len(a.blocks),
 		availIdx:      a.availIdx,
 		offsetInBlock: a.blocks[a.availIdx].length,
@@ -75,6 +77,7 @@ func (a *arena) revert(snap arenaSnapshot) {
 		a.blocks[i] = arenaBlock{}
 	}
 	a.blocks = a.blocks[:snap.blocks]
+	a.blockSize = snap.blockSize
 }
 
 func (a *arena) newNode(key []byte, v []byte, height int) (*node, arenaAddr) {
