@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/timeutil"
 )
 
@@ -391,6 +392,13 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 			return "1", nil
 		}
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+	case WindowingUseHighPrecision:
+		if strings.EqualFold(value, "OFF") || value == "0" {
+			return "OFF", nil
+		} else if strings.EqualFold(value, "ON") || value == "1" {
+			return "ON", nil
+		}
+		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 	case TiDBSkipUTF8Check, TiDBOptAggPushDown,
 		TiDBOptInSubqToJoinAndAgg, TiDBEnableFastAnalyze,
 		TiDBBatchInsert, TiDBDisableTxnAutoRetry, TiDBEnableStreaming, TiDBEnableChunkRPC,
@@ -643,7 +651,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 			return "", nil
 		}
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
-	case TiDBEnableStmtSummary:
+	case TiDBEnableStmtSummary, TiDBStmtSummaryInternalQuery:
 		switch {
 		case strings.EqualFold(value, "ON") || value == "1":
 			return "1", nil
@@ -657,12 +665,22 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		if value == "" {
 			return "", nil
 		}
-		return checkUInt64SystemVar(name, value, 1, math.MaxUint32, vars)
+		return checkUInt64SystemVar(name, value, 1, math.MaxInt32, vars)
 	case TiDBStmtSummaryHistorySize:
 		if value == "" {
 			return "", nil
 		}
 		return checkUInt64SystemVar(name, value, 0, math.MaxUint8, vars)
+	case TiDBStmtSummaryMaxStmtCount:
+		if value == "" {
+			return "", nil
+		}
+		return checkInt64SystemVar(name, value, 1, math.MaxInt16, vars)
+	case TiDBStmtSummaryMaxSQLLength:
+		if value == "" {
+			return "", nil
+		}
+		return checkInt64SystemVar(name, value, 0, math.MaxInt32, vars)
 	case TiDBIsolationReadEngines:
 		engines := strings.Split(value, ",")
 		var formatVal string
@@ -692,6 +710,10 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 			return value, errors.Errorf("%v(%d) cannot be smaller than %v or larger than %v", name, v, 10, 60*60*60)
 		}
 		return value, nil
+	case CollationConnection, CollationDatabase, CollationServer:
+		if _, err := collate.GetCollationByName(value); err != nil {
+			return value, errors.Trace(err)
+		}
 	}
 	return value, nil
 }

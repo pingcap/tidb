@@ -605,6 +605,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, ErrorCount, "0"},
 	{ScopeGlobal | ScopeSession, "information_schema_stats_expiry", "86400"},
 	{ScopeGlobal, "thread_pool_size", "16"},
+	{ScopeGlobal | ScopeSession, WindowingUseHighPrecision, "ON"},
 	/* TiDB specific variables */
 	{ScopeSession, TiDBSnapshot, ""},
 	{ScopeSession, TiDBOptAggPushDown, BoolToIntStr(DefOptAggPushDown)},
@@ -693,9 +694,12 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, TiDBEnableNoopFuncs, BoolToIntStr(DefTiDBEnableNoopFuncs)},
 	{ScopeSession, TiDBReplicaRead, "leader"},
 	{ScopeSession, TiDBAllowRemoveAutoInc, BoolToIntStr(DefTiDBAllowRemoveAutoInc)},
-	{ScopeGlobal | ScopeSession, TiDBEnableStmtSummary, BoolToIntStr(config.GetGlobalConfig().StmtSummary.Enable)},
-	{ScopeGlobal | ScopeSession, TiDBStmtSummaryRefreshInterval, strconv.Itoa(config.GetGlobalConfig().StmtSummary.RefreshInterval)},
-	{ScopeGlobal | ScopeSession, TiDBStmtSummaryHistorySize, strconv.Itoa(config.GetGlobalConfig().StmtSummary.HistorySize)},
+	{ScopeGlobal | ScopeSession, TiDBEnableStmtSummary, ""},
+	{ScopeGlobal | ScopeSession, TiDBStmtSummaryInternalQuery, ""},
+	{ScopeGlobal | ScopeSession, TiDBStmtSummaryRefreshInterval, ""},
+	{ScopeGlobal | ScopeSession, TiDBStmtSummaryHistorySize, ""},
+	{ScopeGlobal | ScopeSession, TiDBStmtSummaryMaxStmtCount, ""},
+	{ScopeGlobal | ScopeSession, TiDBStmtSummaryMaxSQLLength, ""},
 	{ScopeGlobal | ScopeSession, TiDBCapturePlanBaseline, "off"},
 	{ScopeGlobal | ScopeSession, TiDBUsePlanBaselines, boolToOnOff(DefTiDBUsePlanBaselines)},
 	{ScopeGlobal | ScopeSession, TiDBEvolvePlanBaselines, boolToOnOff(DefTiDBEvolvePlanBaselines)},
@@ -965,6 +969,8 @@ const (
 	NetWriteTimeout = "net_write_timeout"
 	// ThreadPoolSize is the name of 'thread_pool_size' variable.
 	ThreadPoolSize = "thread_pool_size"
+	// WindowingUseHighPrecision is the name of 'windowing_use_high_precision' system variable.
+	WindowingUseHighPrecision = "windowing_use_high_precision"
 )
 
 // GlobalVarAccessor is the interface for accessing global scope system and status variables.

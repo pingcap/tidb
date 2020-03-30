@@ -77,7 +77,7 @@ type Config struct {
 	MemQuotaQuery    int64           `toml:"mem-quota-query" json:"mem-quota-query"`
 	EnableStreaming  bool            `toml:"enable-streaming" json:"enable-streaming"`
 	EnableBatchDML   bool            `toml:"enable-batch-dml" json:"enable-batch-dml"`
-	TxnLocalLatches  TxnLocalLatches `toml:"txn-local-latches" json:"txn-local-latches"`
+	TxnLocalLatches  TxnLocalLatches `toml:"-" json:"-"`
 	// Set sys variable lower-case-table-names, ref: https://dev.mysql.com/doc/refman/5.7/en/identifier-case-sensitivity.html.
 	// TODO: We actually only support mode 2, which keeps the original case, but the comparison is case-insensitive.
 	LowerCaseTableNames int               `toml:"lower-case-table-names" json:"lower-case-table-names"`
@@ -347,8 +347,8 @@ type PlanCache struct {
 
 // TxnLocalLatches is the TxnLocalLatches section of the config.
 type TxnLocalLatches struct {
-	Enabled  bool `toml:"enabled" json:"enabled"`
-	Capacity uint `toml:"capacity" json:"capacity"`
+	Enabled  bool `toml:"-" json:"-"`
+	Capacity uint `toml:"-" json:"-"`
 }
 
 // PreparedPlanCache is the PreparedPlanCache section of the config.
@@ -473,6 +473,8 @@ type PessimisticTxn struct {
 type StmtSummary struct {
 	// Enable statement summary or not.
 	Enable bool `toml:"enable" json:"enable"`
+	// Enable summary internal query.
+	EnableInternalQuery bool `toml:"enable-internal-query" json:"enable-internal-query"`
 	// The maximum number of statements kept in memory.
 	MaxStmtCount uint `toml:"max-stmt-count" json:"max-stmt-count"`
 	// The maximum length of displayed normalized SQL and sample SQL.
@@ -494,6 +496,8 @@ type IsolationRead struct {
 type Experimental struct {
 	// Whether enable the syntax like `auto_random(3)` on the primary key column.
 	AllowAutoRandom bool `toml:"allow-auto-random" json:"allow-auto-random"`
+	// Whether enable creating expression index.
+	AllowsExpressionIndex bool `toml:"allow-expression-index" json:"allow-expression-index"`
 }
 
 var defaultConf = Config{
@@ -522,10 +526,10 @@ var defaultConf = Config{
 	SplitRegionMaxNum:            1000,
 	RepairMode:                   false,
 	RepairTableList:              []string{},
-	MaxServerConnections:         4096,
+	MaxServerConnections:         0,
 	TxnLocalLatches: TxnLocalLatches{
 		Enabled:  false,
-		Capacity: 2048000,
+		Capacity: 0,
 	},
 	LowerCaseTableNames: 2,
 	ServerVersion:       "",
@@ -622,17 +626,19 @@ var defaultConf = Config{
 		MaxRetryCount: 256,
 	},
 	StmtSummary: StmtSummary{
-		Enable:          true,
-		MaxStmtCount:    200,
-		MaxSQLLength:    4096,
-		RefreshInterval: 1800,
-		HistorySize:     24,
+		Enable:              true,
+		EnableInternalQuery: false,
+		MaxStmtCount:        200,
+		MaxSQLLength:        4096,
+		RefreshInterval:     1800,
+		HistorySize:         24,
 	},
 	IsolationRead: IsolationRead{
 		Engines: []string{"tikv", "tiflash", "tidb"},
 	},
 	Experimental: Experimental{
-		AllowAutoRandom: false,
+		AllowAutoRandom:       false,
+		AllowsExpressionIndex: false,
 	},
 	EnableDynamicConfig: true,
 }
@@ -662,8 +668,11 @@ func StoreGlobalConfig(config *Config) {
 }
 
 var deprecatedConfig = map[string]struct{}{
-	"pessimistic-txn.ttl": {},
-	"log.file.log-rotate": {},
+	"pessimistic-txn.ttl":        {},
+	"log.file.log-rotate":        {},
+	"txn-local-latches":          {},
+	"txn-local-latches.enabled":  {},
+	"txn-local-latches.capacity": {},
 }
 
 func isAllDeprecatedConfigItems(items []string) bool {
@@ -686,15 +695,11 @@ func InitializeConfig(confPath string, configCheck, configStrict bool, reloadFun
 		if err = cfg.Load(confPath); err != nil {
 			// Unused config item error turns to warnings.
 			if tmp, ok := err.(*ErrConfigValidationFailed); ok {
-				if isAllDeprecatedConfigItems(tmp.UndecodedItems) {
-					fmt.Fprintln(os.Stderr, err.Error())
-					err = nil
-				}
 				// This block is to accommodate an interim situation where strict config checking
 				// is not the default behavior of TiDB. The warning message must be deferred until
 				// logging has been set up. After strict config checking is the default behavior,
 				// This should all be removed.
-				if !configCheck && !configStrict {
+				if (!configCheck && !configStrict) || isAllDeprecatedConfigItems(tmp.UndecodedItems) {
 					fmt.Fprintln(os.Stderr, err.Error())
 					err = nil
 				}
@@ -813,6 +818,9 @@ func (c *Config) Valid() error {
 		return fmt.Errorf("txn-total-size-limit should be less than %d", 10<<30)
 	}
 
+	if c.StmtSummary.MaxStmtCount <= 0 {
+		return fmt.Errorf("max-stmt-count in [stmt-summary] should be greater than 0")
+	}
 	if c.StmtSummary.HistorySize < 0 {
 		return fmt.Errorf("history-size in [stmt-summary] should be greater than or equal to 0")
 	}
