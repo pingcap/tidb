@@ -1152,11 +1152,13 @@ func (s *testPlanSuite) TestIndexJoinHint(c *C) {
 	ctx := context.Background()
 	_, err = se.Execute(ctx, "use test")
 	c.Assert(err, IsNil)
-	_, err = se.Execute(ctx, `drop table if exists test.t1, test.t2;`)
+	_, err = se.Execute(ctx, `drop table if exists test.t1, test.t2, test.t;`)
 	c.Assert(err, IsNil)
 	_, err = se.Execute(ctx, `create table test.t1(a bigint, b bigint, index idx_a(a), index idx_b(b));`)
 	c.Assert(err, IsNil)
 	_, err = se.Execute(ctx, `create table test.t2(a bigint, b bigint, index idx_a(a), index idx_b(b));`)
+	c.Assert(err, IsNil)
+	_, err = se.Execute(ctx, "CREATE TABLE `t` ( `a` bigint(20) NOT NULL, `b` tinyint(1) DEFAULT NULL, `c` datetime DEFAULT NULL, `d` int(10) unsigned DEFAULT NULL, `e` varchar(20) DEFAULT NULL, `f` double DEFAULT NULL, `g` decimal(30,5) DEFAULT NULL, `h` float DEFAULT NULL, `i` date DEFAULT NULL, `j` timestamp NULL DEFAULT NULL, PRIMARY KEY (`a`), UNIQUE KEY `b` (`b`), KEY `c` (`c`,`d`,`e`), KEY `f` (`f`), KEY `g` (`g`,`h`), KEY `g_2` (`g`), UNIQUE KEY `g_3` (`g`), KEY `i` (`i`) );")
 	c.Assert(err, IsNil)
 	var input []string
 	var output []struct {

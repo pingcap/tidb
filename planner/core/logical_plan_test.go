@@ -1557,3 +1557,23 @@ func (s *testPlanSuite) TestUpdateEQCond(c *C) {
 		c.Assert(ToString(p), Equals, tt.best, comment)
 	}
 }
+
+func (s *testPlanSuite) TestConflictedJoinTypeHints(c *C) {
+	defer testleak.AfterTest(c)()
+	sql := "select /*+ INL_JOIN(t1) HASH_JOIN(t1) */ * from t t1, t t2 where t1.e = t2.e"
+	ctx := context.TODO()
+	stmt, err := s.ParseOneStmt(sql, "", "")
+	c.Assert(err, IsNil)
+	Preprocess(s.ctx, stmt, s.is)
+	builder := NewPlanBuilder(MockContext(), s.is, &BlockHintProcessor{})
+	p, err := builder.Build(ctx, stmt)
+	c.Assert(err, IsNil)
+	p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
+	c.Assert(err, IsNil)
+	proj, ok := p.(*LogicalProjection)
+	c.Assert(ok, IsTrue)
+	join, ok := proj.Children()[0].(*LogicalJoin)
+	c.Assert(ok, IsTrue)
+	c.Assert(join.hintInfo, IsNil)
+	c.Assert(join.preferJoinType, Equals, uint(0))
+}

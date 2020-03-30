@@ -46,6 +46,7 @@ import (
 	util2 "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
+	utilparser "github.com/pingcap/tidb/util/parser"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/set"
 
@@ -397,7 +398,7 @@ func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, processor
 
 // Build builds the ast node to a Plan.
 func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
-	b.optFlag = flagPrunColumns
+	b.optFlag |= flagPrunColumns
 	defer func() {
 		// if there is something after flagPrunColumns, do flagPrunColumnsAgain
 		if b.optFlag&flagPrunColumns > 0 && b.optFlag-flagPrunColumns > flagPrunColumns {
@@ -558,7 +559,7 @@ func (b *PlanBuilder) buildDropBindPlan(v *ast.DropBindingStmt) (Plan, error) {
 		SQLBindOp:    OpSQLBindDrop,
 		NormdOrigSQL: parser.Normalize(v.OriginSel.Text()),
 		IsGlobal:     v.GlobalScope,
-		Db:           getDefaultDB(b.ctx, v.OriginSel),
+		Db:           utilparser.GetDefaultDB(v.OriginSel, b.ctx.GetSessionVars().CurrentDB),
 	}
 	if v.HintedSel != nil {
 		p.BindSQL = v.HintedSel.Text()
@@ -575,40 +576,12 @@ func (b *PlanBuilder) buildCreateBindPlan(v *ast.CreateBindingStmt) (Plan, error
 		BindSQL:      v.HintedSel.Text(),
 		IsGlobal:     v.GlobalScope,
 		BindStmt:     v.HintedSel,
-		Db:           getDefaultDB(b.ctx, v.OriginSel),
+		Db:           utilparser.GetDefaultDB(v.OriginSel, b.ctx.GetSessionVars().CurrentDB),
 		Charset:      charSet,
 		Collation:    collation,
 	}
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
 	return p, nil
-}
-
-func getDefaultDB(ctx sessionctx.Context, sel ast.StmtNode) string {
-	implicitDB := &implicitDatabase{}
-	sel.Accept(implicitDB)
-	if implicitDB.hasImplicit {
-		return ctx.GetSessionVars().CurrentDB
-	}
-	return ""
-}
-
-type implicitDatabase struct {
-	hasImplicit bool
-}
-
-func (i *implicitDatabase) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
-	switch x := in.(type) {
-	case *ast.TableName:
-		if x.Schema.L == "" {
-			i.hasImplicit = true
-		}
-		return in, true
-	}
-	return in, false
-}
-
-func (i *implicitDatabase) Leave(in ast.Node) (out ast.Node, ok bool) {
-	return in, true
 }
 
 // detectSelectAgg detects an aggregate function or GROUP BY clause.
@@ -1476,8 +1449,8 @@ func buildShowDDLJobsFields() (*expression.Schema, types.NameSlice) {
 	schema.Append(buildColumnWithName("", "SCHEMA_ID", mysql.TypeLonglong, 4))
 	schema.Append(buildColumnWithName("", "TABLE_ID", mysql.TypeLonglong, 4))
 	schema.Append(buildColumnWithName("", "ROW_COUNT", mysql.TypeLonglong, 4))
-	schema.Append(buildColumnWithName("", "START_TIME", mysql.TypeVarchar, 64))
-	schema.Append(buildColumnWithName("", "END_TIME", mysql.TypeVarchar, 64))
+	schema.Append(buildColumnWithName("", "START_TIME", mysql.TypeDatetime, 19))
+	schema.Append(buildColumnWithName("", "END_TIME", mysql.TypeDatetime, 19))
 	schema.Append(buildColumnWithName("", "STATE", mysql.TypeVarchar, 64))
 	return schema.col2Schema(), schema.names
 }
@@ -1817,7 +1790,15 @@ func collectVisitInfoFromGrantStmt(sctx sessionctx.Context, vi []visitInfo, stmt
 }
 
 func (b *PlanBuilder) getDefaultValue(col *table.Column) (*expression.Constant, error) {
-	value, err := table.GetColDefaultValue(b.ctx, col.ToInfo())
+	var (
+		value types.Datum
+		err   error
+	)
+	if col.DefaultIsExpr && col.DefaultExpr != nil {
+		value, err = table.EvalColDefaultExpr(b.ctx, col.ToInfo(), col.DefaultExpr)
+	} else {
+		value, err = table.GetColDefaultValue(b.ctx, col.ToInfo())
+	}
 	if err != nil {
 		return nil, err
 	}
