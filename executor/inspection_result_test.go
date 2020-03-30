@@ -626,12 +626,12 @@ func (s *inspectionResultSuite) TestNodeLoadInspection(c *C) {
 	result := tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute inspect SQL failed"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0), Commentf("unexpected warnings: %+v", tk.Se.GetSessionVars().StmtCtx.GetWarnings()))
 	result.Check(testkit.Rows(
-		"cpu-load1  node-0 28.1 < 28.0 cpu-load1 should less than (cpu_logical_cores * 0.7)",
-		"cpu-load15  node-1 14.1 < 14.0 cpu-load15 should less than (cpu_logical_cores * 0.7)",
-		"cpu-load15  node-0 30.0 < 28.0 cpu-load15 should less than (cpu_logical_cores * 0.7)",
-		"cpu-load5  node-1 14.1 < 14.0 cpu-load5 should less than (cpu_logical_cores * 0.7)",
-		"disk-usage  node-0 80.0% < 70% the disk-usage of /dev/nvme0 is too high",
-		"swap-memory-used  node-1 1.0 0 ",
-		"virtual-memory-usage  node-0 80.0% < 70% the memory-usage of node-0 is too high",
+		"cpu-load1 node node-0 28.1 < 28.0 cpu-load1 should less than (cpu_logical_cores * 0.7)",
+		"cpu-load15 node node-1 14.1 < 14.0 cpu-load15 should less than (cpu_logical_cores * 0.7)",
+		"cpu-load15 node node-0 30.0 < 28.0 cpu-load15 should less than (cpu_logical_cores * 0.7)",
+		"cpu-load5 node node-1 14.1 < 14.0 cpu-load5 should less than (cpu_logical_cores * 0.7)",
+		"disk-usage node node-0 80.0% < 70% the disk-usage of /dev/nvme0 is too high",
+		"swap-memory-used node node-1 1.0 0 ",
+		"virtual-memory-usage node node-0 80.0% < 70% the memory-usage of node-0 is too high",
 	))
 }

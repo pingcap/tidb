@@ -337,7 +337,7 @@ func (inspectVirtualMemUsage) genSQL(timeRange plannercore.QueryTimeRange) strin
 
 func (i inspectVirtualMemUsage) genResult(sql string, row chunk.Row) inspectionResult {
 	return inspectionResult{
-		tp:       "",
+		tp:       "node",
 		instance: row.GetString(0),
 		item:     i.getItem(),
 		actual:   fmt.Sprintf("%.1f%%", row.GetFloat64(1)),
@@ -361,7 +361,7 @@ func (inspectSwapMemoryUsed) genSQL(timeRange plannercore.QueryTimeRange) string
 
 func (i inspectSwapMemoryUsed) genResult(sql string, row chunk.Row) inspectionResult {
 	return inspectionResult{
-		tp:       "",
+		tp:       "node",
 		instance: row.GetString(0),
 		item:     i.getItem(),
 		actual:   fmt.Sprintf("%.1f", row.GetFloat64(1)),
@@ -383,7 +383,7 @@ func (inspectDiskUsage) genSQL(timeRange plannercore.QueryTimeRange) string {
 
 func (i inspectDiskUsage) genResult(sql string, row chunk.Row) inspectionResult {
 	return inspectionResult{
-		tp:       "",
+		tp:       "node",
 		instance: row.GetString(0),
 		item:     i.getItem(),
 		actual:   fmt.Sprintf("%.1f%%", row.GetFloat64(2)),
@@ -412,7 +412,7 @@ func (i inspectCPULoad) genSQL(timeRange plannercore.QueryTimeRange) string {
 
 func (i inspectCPULoad) genResult(sql string, row chunk.Row) inspectionResult {
 	return inspectionResult{
-		tp:       "",
+		tp:       "node",
 		instance: row.GetString(0),
 		item:     "cpu-" + i.item,
 		actual:   fmt.Sprintf("%.1f", row.GetFloat64(1)),
