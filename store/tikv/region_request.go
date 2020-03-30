@@ -141,6 +141,10 @@ func (s *RegionRequestSender) SendReqCtx(
 			if bo.vars != nil && bo.vars.Hook != nil {
 				bo.vars.Hook("callBackofferHook", bo.vars)
 			}
+		case "requestTiDBStoreError":
+			if sType == kv.TiDB {
+				failpoint.Return(nil, nil, ErrTiKVServerTimeout)
+			}
 		}
 	})
 

@@ -13,7 +13,10 @@
 
 package bindinfo
 
-import "github.com/pingcap/parser/ast"
+import (
+	"github.com/pingcap/parser"
+	"github.com/pingcap/parser/ast"
+)
 
 // HintsSet contains all hints of a query.
 type HintsSet struct {
@@ -27,6 +30,18 @@ func (hs *HintsSet) GetFirstTableHints() []*ast.TableOptimizerHint {
 		return hs.tableHints[0]
 	}
 	return nil
+}
+
+// ContainTableHint means check whether the table hint set contain a hint.
+func (hs *HintsSet) ContainTableHint(hint string) bool {
+	for _, tableHintsForBlock := range hs.tableHints {
+		for _, tableHint := range tableHintsForBlock {
+			if tableHint.HintName.String() == hint {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 type hintProcessor struct {
@@ -81,4 +96,13 @@ func BindHint(stmt ast.StmtNode, hintsSet *HintsSet) ast.StmtNode {
 	hp := hintProcessor{HintsSet: hintsSet, bindHint2Ast: true}
 	stmt.Accept(&hp)
 	return stmt
+}
+
+// ParseHintsSet parses a SQL string and collect HintsSet.
+func ParseHintsSet(p *parser.Parser, sql, charset, collation string) (*HintsSet, error) {
+	stmtNode, err := p.ParseOneStmt(sql, charset, collation)
+	if err != nil {
+		return nil, err
+	}
+	return CollectHint(stmtNode), nil
 }

@@ -490,15 +490,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err
 					break
 				}
 			}
-			// TODO: we ignore generate column now, because there are some errors happened when point get on generate columns
-			hasGenerateCol := false
-			for _, colInfo := range ds.Columns {
-				if colInfo.IsGenerated() {
-					hasGenerateCol = true
-					break
-				}
-			}
-			if allRangeIsPoint && !hasGenerateCol {
+			if allRangeIsPoint {
 				var pointGetTask task
 				if len(path.Ranges) == 1 {
 					pointGetTask = ds.convertToPointGet(prop, candidate)
@@ -746,7 +738,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 			physicalTableID: ds.physicalTableID,
 		}.Init(ds.ctx, is.blockOffset)
 		ts.SetSchema(ds.schema.Clone())
-		ts.ExpandVirtualColumn()
+		ts.Columns = ExpandVirtualColumn(ts.Columns, ts.schema, ts.Table.Columns)
 		cop.tablePlan = ts
 	}
 	cop.cst = cost
@@ -1139,6 +1131,7 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 		TblInfo:      ds.TableInfo(),
 		outputNames:  ds.OutputNames(),
 		LockWaitTime: ds.ctx.GetSessionVars().LockWaitTimeout,
+		Columns:      ds.Columns,
 	}.Init(ds.ctx, ds.stats.ScaleByExpectCnt(1.0), ds.blockOffset)
 	var partitionInfo *model.PartitionDefinition
 	if ds.isPartition {
@@ -1209,6 +1202,7 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 		ctx:       ds.ctx,
 		TblInfo:   ds.TableInfo(),
 		KeepOrder: !prop.IsEmpty(),
+		Columns:   ds.Columns,
 	}.Init(ds.ctx, ds.stats.ScaleByExpectCnt(float64(len(candidate.path.Ranges))), ds.schema.Clone(), ds.names, ds.blockOffset)
 	if batchPointGetPlan.KeepOrder {
 		batchPointGetPlan.Desc = prop.Items[0].Desc

@@ -48,10 +48,8 @@ const (
 	TypeTopN = "TopN"
 	// TypeLimit is the type of Limit.
 	TypeLimit = "Limit"
-	// TypeHashLeftJoin is the type of left hash join.
-	TypeHashLeftJoin = "HashLeftJoin"
-	// TypeHashRightJoin is the type of right hash join.
-	TypeHashRightJoin = "HashRightJoin"
+	// TypeHashJoin is the type of hash join.
+	TypeHashJoin = "HashJoin"
 	// TypeHashRightJoin is the type of right hash join.
 	TypeBroadcastJoin = "TypeBroadcastJoin"
 	// TypeMergeJoin is the type of merge join.
@@ -124,8 +122,7 @@ const (
 	typeSortID
 	typeTopNID
 	typeLimitID
-	typeHashLeftJoinID
-	typeHashRightJoinID
+	typeHashJoinID
 	typeMergeJoinID
 	typeIndexJoinID
 	typeIndexMergeJoinID
@@ -186,10 +183,8 @@ func TypeStringToPhysicalID(tp string) int {
 		return typeTopNID
 	case TypeLimit:
 		return typeLimitID
-	case TypeHashLeftJoin:
-		return typeHashLeftJoinID
-	case TypeHashRightJoin:
-		return typeHashRightJoinID
+	case TypeHashJoin:
+		return typeHashJoinID
 	case TypeMergeJoin:
 		return typeMergeJoinID
 	case TypeIndexJoin:
@@ -276,10 +271,8 @@ func PhysicalIDToTypeString(id int) string {
 		return TypeTopN
 	case typeLimitID:
 		return TypeLimit
-	case typeHashLeftJoinID:
-		return TypeHashLeftJoin
-	case typeHashRightJoinID:
-		return TypeHashRightJoin
+	case typeHashJoinID:
+		return TypeHashJoin
 	case typeMergeJoinID:
 		return TypeMergeJoin
 	case typeIndexJoinID:

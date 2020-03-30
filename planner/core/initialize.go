@@ -304,10 +304,7 @@ func (p PhysicalMemTable) Init(ctx sessionctx.Context, stats *property.StatsInfo
 
 // Init initializes PhysicalHashJoin.
 func (p PhysicalHashJoin) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalHashJoin {
-	tp := plancodec.TypeHashRightJoin
-	if p.InnerChildIdx == 1 {
-		tp = plancodec.TypeHashLeftJoin
-	}
+	tp := plancodec.TypeHashJoin
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, tp, &p, offset)
 	p.childrenReqProps = props
 	p.stats = stats
@@ -460,6 +457,7 @@ func (p BatchPointGetPlan) Init(ctx sessionctx.Context, stats *property.StatsInf
 	p.schema = schema
 	p.names = names
 	p.stats = stats
+	p.Columns = ExpandVirtualColumn(p.Columns, p.schema, p.TblInfo.Columns)
 	return &p
 }
 

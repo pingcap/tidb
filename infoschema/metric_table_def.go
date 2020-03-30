@@ -2134,12 +2134,12 @@ var MetricTableMap = map[string]MetricTableDef{
 	"node_disk_write_latency": {
 		PromQL:  `(rate(node_disk_write_time_seconds_total{$LABEL_CONDITIONS}[$RANGE_DURATION])/ rate(node_disk_writes_completed_total{$LABEL_CONDITIONS}[$RANGE_DURATION]))`,
 		Labels:  []string{"instance", "device"},
-		Comment: "node disk write latency(ms)",
+		Comment: "node disk write latency",
 	},
 	"node_disk_read_latency": {
 		PromQL:  `(rate(node_disk_read_time_seconds_total{$LABEL_CONDITIONS}[$RANGE_DURATION])/ rate(node_disk_reads_completed_total{$LABEL_CONDITIONS}[$RANGE_DURATION]))`,
 		Labels:  []string{"instance", "device"},
-		Comment: "node disk read latency(ms)",
+		Comment: "node disk read latency",
 	},
 	"node_disk_throughput": {
 		PromQL:  `irate(node_disk_read_bytes_total{$LABEL_CONDITIONS}[$RANGE_DURATION]) + irate(node_disk_written_bytes_total{$LABEL_CONDITIONS}[$RANGE_DURATION])`,
@@ -3083,5 +3083,15 @@ var MetricTableMap = map[string]MetricTableDef{
 		PromQL:  "sum(increase(tikv_snapshot_size_sum{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance)",
 		Labels:  []string{"instance"},
 		Comment: "The total size of snapshot size",
+	},
+	"tikv_config_rocksdb": {
+		PromQL:  "tikv_config_rocksdb{$LABEL_CONDITIONS}",
+		Labels:  []string{"instance", "cf", "name"},
+		Comment: "TiKV rocksdb config value",
+	},
+	"tikv_config_raftstore": {
+		PromQL:  "tikv_config_raftstore{$LABEL_CONDITIONS}",
+		Labels:  []string{"instance", "name"},
+		Comment: "TiKV rocksdb config value",
 	},
 }
