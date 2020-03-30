@@ -207,13 +207,13 @@ func (e *HashJoinExec) fetchProbeSideChunks(ctx context.Context) {
 				e.finished.Store(true)
 				return
 			}
-			jobFinished, buildErr := e.wait4BuildSide()
+			emptyBuild, buildErr := e.wait4BuildSide()
 			if buildErr != nil {
 				e.joinResultCh <- &hashjoinWorkerResult{
 					err: buildErr,
 				}
 				return
-			} else if jobFinished {
+			} else if emptyBuild {
 				return
 			}
 			hasWaitedForBuild = true
@@ -227,7 +227,7 @@ func (e *HashJoinExec) fetchProbeSideChunks(ctx context.Context) {
 	}
 }
 
-func (e *HashJoinExec) wait4BuildSide() (finished bool, err error) {
+func (e *HashJoinExec) wait4BuildSide() (emptyBuild bool, err error) {
 	select {
 	case <-e.closeCh:
 		return true, nil
