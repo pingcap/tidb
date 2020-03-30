@@ -5930,3 +5930,15 @@ func (s *testIntegrationSerialSuite) TestCollateDDL(c *C) {
 	tk.MustExec("use t;")
 	tk.MustExec("drop database t;")
 }
+
+func (s *testIntegrationSuite) TestNegativeZeroForHashJoin(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("CREATE TABLE t0(c0 float);")
+	tk.MustExec("CREATE TABLE t1(c0 float);")
+	tk.MustExec("INSERT INTO t1(c0) VALUES (0);")
+	tk.MustExec("INSERT INTO t0(c0) VALUES (0);")
+	tk.MustQuery("SELECT t1.c0 FROM t1, t0 WHERE t0.c0=-t1.c0;").Check(testkit.Rows("0"))
+	tk.MustExec("drop TABLE t0;")
+	tk.MustExec("drop table t1;")
+}
