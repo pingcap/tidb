@@ -486,7 +486,59 @@
         ]
       },
       {
+        "SQL": "select /*+ STREAM_AGG() */ count(distinct c) from t group by c;",
+        "Plan": [
+          "HashAgg_17 8000.00 root  group by:test.t.c, funcs:count(distinct test.t.c)->Column#5",
+          "└─IndexReader_18 8000.00 root  index:HashAgg_19",
+          "  └─HashAgg_19 8000.00 cop[tikv]  group by:test.t.c, ",
+          "    └─IndexFullScan_16 10000.00 cop[tikv] table:t, index:c(c) keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "0",
+          "1",
+          "1"
+        ]
+      },
+      {
         "SQL": "select /*+ STREAM_AGG() */ count(distinct c) from t;",
+        "Plan": [
+          "HashAgg_17 1.00 root  funcs:count(distinct test.t.c)->Column#5",
+          "└─IndexReader_18 8000.00 root  index:HashAgg_19",
+          "  └─HashAgg_19 8000.00 cop[tikv]  group by:test.t.c, ",
+          "    └─IndexFullScan_16 10000.00 cop[tikv] table:t, index:c(c) keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "2"
+        ]
+      },
+      {
+        "SQL": "select /*+ HASH_AGG() */ count(distinct c) from t;",
+        "Plan": [
+          "HashAgg_17 1.00 root  funcs:count(distinct test.t.c)->Column#5",
+          "└─IndexReader_18 8000.00 root  index:HashAgg_19",
+          "  └─HashAgg_19 8000.00 cop[tikv]  group by:test.t.c, ",
+          "    └─IndexFullScan_16 10000.00 cop[tikv] table:t, index:c(c) keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "2"
+        ]
+      },
+      {
+        "SQL": "select count(distinct c) from t group by c;",
+        "Plan": [
+          "HashAgg_17 8000.00 root  group by:test.t.c, funcs:count(distinct test.t.c)->Column#5",
+          "└─IndexReader_18 8000.00 root  index:HashAgg_19",
+          "  └─HashAgg_19 8000.00 cop[tikv]  group by:test.t.c, ",
+          "    └─IndexFullScan_16 10000.00 cop[tikv] table:t, index:c(c) keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "0",
+          "1",
+          "1"
+        ]
+      },
+      {
+        "SQL": "select count(distinct c) from t;",
         "Plan": [
           "HashAgg_17 1.00 root  funcs:count(distinct test.t.c)->Column#5",
           "└─IndexReader_18 8000.00 root  index:HashAgg_19",
@@ -530,6 +582,19 @@
         ]
       },
       {
+        "SQL": "select /*+ STREAM_AGG(), AGG_TO_COP() */ count(distinct c) from t group by c;",
+        "Plan": [
+          "HashAgg_8 8000.00 root  group by:test.t.c, funcs:count(distinct test.t.c)->Column#5",
+          "└─IndexReader_11 10000.00 root  index:IndexFullScan_12",
+          "  └─IndexFullScan_12 10000.00 cop[tikv] table:t, index:c(c) keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "0",
+          "1",
+          "1"
+        ]
+      },
+      {
         "SQL": "select /*+ STREAM_AGG(), AGG_TO_COP() */ count(distinct c) from t;",
         "Plan": [
           "HashAgg_8 1.00 root  funcs:count(distinct test.t.c)->Column#5",
@@ -538,6 +603,30 @@
         ],
         "Result": [
           "2"
+        ]
+      },
+      {
+        "SQL": "select /*+ HASH_AGG(), AGG_TO_COP() */ count(distinct c) from t;",
+        "Plan": [
+          "HashAgg_8 1.00 root  funcs:count(distinct test.t.c)->Column#5",
+          "└─IndexReader_11 10000.00 root  index:IndexFullScan_12",
+          "  └─IndexFullScan_12 10000.00 cop[tikv] table:t, index:c(c) keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "2"
+        ]
+      },
+      {
+        "SQL": "select /*+ AGG_TO_COP() */ count(distinct c) from t group by c;",
+        "Plan": [
+          "HashAgg_8 8000.00 root  group by:test.t.c, funcs:count(distinct test.t.c)->Column#5",
+          "└─IndexReader_11 10000.00 root  index:IndexFullScan_12",
+          "  └─IndexFullScan_12 10000.00 cop[tikv] table:t, index:c(c) keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "0",
+          "1",
+          "1"
         ]
       }
     ]

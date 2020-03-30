@@ -1452,12 +1452,63 @@
         ]
       },
       {
+        "SQL": "select /*+ STREAM_AGG() */ count(distinct c) from t group by c;",
+        "Plan": [
+          "StreamAgg_11 8000.00 root  group by:test.t.c, funcs:count(distinct test.t.c)->Column#5",
+          "└─IndexReader_12 8000.00 root  index:StreamAgg_7",
+          "  └─StreamAgg_7 8000.00 cop[tikv]  group by:test.t.c, ",
+          "    └─IndexFullScan_10 10000.00 cop[tikv] table:t, index:c(c) keep order:true, stats:pseudo"
+        ],
+        "Result": [
+          "0",
+          "1",
+          "1"
+        ]
+      },
+      {
         "SQL": "select /*+ STREAM_AGG() */ count(distinct c) from t;",
         "Plan": [
-          "StreamAgg_12 1.00 root  funcs:count(distinct test.t.c)->Column#5",
-          "└─IndexReader_13 1.00 root  index:StreamAgg_7",
-          "  └─StreamAgg_7 1.00 cop[tikv]  group by:test.t.c, ",
-          "    └─IndexFullScan_11 10000.00 cop[tikv] table:t, index:c(c) keep order:false, stats:pseudo"
+          "StreamAgg_7 1.00 root  funcs:count(distinct test.t.c)->Column#5",
+          "└─IndexReader_11 10000.00 root  index:IndexFullScan_10",
+          "  └─IndexFullScan_10 10000.00 cop[tikv] table:t, index:c(c) keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "2"
+        ]
+      },
+      {
+        "SQL": "select /*+ HASH_AGG() */ count(distinct c) from t;",
+        "Plan": [
+          "HashAgg_9 1.00 root  funcs:count(distinct test.t.c)->Column#5",
+          "└─IndexReader_10 1.00 root  index:HashAgg_5",
+          "  └─HashAgg_5 1.00 cop[tikv]  group by:test.t.c, ",
+          "    └─IndexFullScan_8 10000.00 cop[tikv] table:t, index:c(c) keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "2"
+        ]
+      },
+      {
+        "SQL": "select count(distinct c) from t group by c;",
+        "Plan": [
+          "HashAgg_10 8000.00 root  group by:test.t.c, funcs:count(distinct test.t.c)->Column#5",
+          "└─IndexReader_11 8000.00 root  index:HashAgg_5",
+          "  └─HashAgg_5 8000.00 cop[tikv]  group by:test.t.c, ",
+          "    └─IndexFullScan_9 10000.00 cop[tikv] table:t, index:c(c) keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "0",
+          "1",
+          "1"
+        ]
+      },
+      {
+        "SQL": "select count(distinct c) from t;",
+        "Plan": [
+          "HashAgg_9 1.00 root  funcs:count(distinct test.t.c)->Column#5",
+          "└─IndexReader_10 1.00 root  index:HashAgg_5",
+          "  └─HashAgg_5 1.00 cop[tikv]  group by:test.t.c, ",
+          "    └─IndexFullScan_8 10000.00 cop[tikv] table:t, index:c(c) keep order:false, stats:pseudo"
         ],
         "Result": [
           "2"
@@ -1496,6 +1547,19 @@
         ]
       },
       {
+        "SQL": "select /*+ STREAM_AGG(), AGG_TO_COP() */ count(distinct c) from t group by c;",
+        "Plan": [
+          "StreamAgg_6 8000.00 root  group by:test.t.c, funcs:count(distinct test.t.c)->Column#5",
+          "└─IndexReader_9 10000.00 root  index:IndexFullScan_8",
+          "  └─IndexFullScan_8 10000.00 cop[tikv] table:t, index:c(c) keep order:true, stats:pseudo"
+        ],
+        "Result": [
+          "0",
+          "1",
+          "1"
+        ]
+      },
+      {
         "SQL": "select /*+ STREAM_AGG(), AGG_TO_COP() */ count(distinct c) from t;",
         "Plan": [
           "StreamAgg_6 1.00 root  funcs:count(distinct test.t.c)->Column#5",
@@ -1504,6 +1568,30 @@
         ],
         "Result": [
           "2"
+        ]
+      },
+      {
+        "SQL": "select /*+ HASH_AGG(), AGG_TO_COP() */ count(distinct c) from t;",
+        "Plan": [
+          "HashAgg_5 1.00 root  funcs:count(distinct test.t.c)->Column#5",
+          "└─IndexReader_9 10000.00 root  index:IndexFullScan_8",
+          "  └─IndexFullScan_8 10000.00 cop[tikv] table:t, index:c(c) keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "2"
+        ]
+      },
+      {
+        "SQL": "select /*+ AGG_TO_COP() */ count(distinct c) from t group by c;",
+        "Plan": [
+          "StreamAgg_6 8000.00 root  group by:test.t.c, funcs:count(distinct test.t.c)->Column#5",
+          "└─IndexReader_12 10000.00 root  index:IndexFullScan_11",
+          "  └─IndexFullScan_11 10000.00 cop[tikv] table:t, index:c(c) keep order:true, stats:pseudo"
+        ],
+        "Result": [
+          "0",
+          "1",
+          "1"
         ]
       }
     ]
