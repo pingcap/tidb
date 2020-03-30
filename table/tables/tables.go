@@ -1378,6 +1378,12 @@ func (t *TableCommon) SetSequenceVal(ctx interface{}, newVal int64, dbName, seqN
 			return 0, false, err
 		}
 	}
+	// Record the current end after setval succeed.
+	// Consider the following case.
+	// create sequence seq
+	// setval(seq, 100) setval(seq, 50)
+	// Because no cache (base, end keep 0), so the second setval won't return NULL.
+	t.sequence.base, t.sequence.end = newVal, newVal
 	return newVal, false, nil
 }
 
