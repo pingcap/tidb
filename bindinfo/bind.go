@@ -14,8 +14,13 @@
 package bindinfo
 
 import (
+	"strings"
+
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/format"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 // HintsSet contains all hints of a query.
@@ -30,6 +35,50 @@ func (hs *HintsSet) GetFirstTableHints() []*ast.TableOptimizerHint {
 		return hs.tableHints[0]
 	}
 	return nil
+}
+
+// RestoreTableOptimizerHint returns string format of TableOptimizerHint.
+func RestoreTableOptimizerHint(hint *ast.TableOptimizerHint) string {
+	var sb strings.Builder
+	ctx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
+	err := hint.Restore(ctx)
+	// There won't be any error for optimizer hint.
+	if err != nil {
+		logutil.BgLogger().Debug("restore TableOptimizerHint failed", zap.Error(err))
+	}
+	return sb.String()
+}
+
+// RestoreIndexHint returns string format of IndexHint.
+func RestoreIndexHint(hint *ast.IndexHint) (string, error) {
+	var sb strings.Builder
+	ctx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
+	err := hint.Restore(ctx)
+	if err != nil {
+		logutil.BgLogger().Debug("restore IndexHint failed", zap.Error(err))
+		return "", err
+	}
+	return sb.String(), nil
+}
+
+// Restore returns the string format of HintsSet.
+func (hs *HintsSet) Restore() (string, error) {
+	hintsStr := make([]string, 0, len(hs.tableHints)+len(hs.indexHints))
+	for _, tblHints := range hs.tableHints {
+		for _, tblHint := range tblHints {
+			hintsStr = append(hintsStr, RestoreTableOptimizerHint(tblHint))
+		}
+	}
+	for _, idxHints := range hs.indexHints {
+		for _, idxHint := range idxHints {
+			str, err := RestoreIndexHint(idxHint)
+			if err != nil {
+				return "", err
+			}
+			hintsStr = append(hintsStr, str)
+		}
+	}
+	return strings.Join(hintsStr, ", "), nil
 }
 
 type hintProcessor struct {
