@@ -47,11 +47,11 @@ type Tracker struct {
 		actionOnExceed ActionOnExceed
 	}
 
-	label          fmt.Stringer // Label of this "Tracker".
-	bytesConsumed  int64        // Consumed bytes.
-	bytesLimit     int64        // bytesLimit <= 0 means no limit.
-	maxConsumed    int64        // max number of bytes consumed during execution.
-	parent         *Tracker     // The parent memory tracker.
+	label         fmt.Stringer // Label of this "Tracker".
+	bytesConsumed int64        // Consumed bytes.
+	bytesLimit    int64        // bytesLimit <= 0 means no limit.
+	maxConsumed   int64        // max number of bytes consumed during execution.
+	parent        *Tracker     // The parent memory tracker.
 
 }
 
@@ -60,8 +60,8 @@ type Tracker struct {
 //	2. "bytesLimit <= 0" means no limit.
 func NewTracker(label fmt.Stringer, bytesLimit int64) *Tracker {
 	t := &Tracker{
-		label:          label,
-		bytesLimit:     bytesLimit,
+		label:      label,
+		bytesLimit: bytesLimit,
 	}
 	t.actionMu.actionOnExceed = &LogOnExceed{}
 	return t
