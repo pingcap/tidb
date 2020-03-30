@@ -1102,9 +1102,12 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 	stmtNodes, warns, err := s.ParseSQL(ctx, sql, charsetInfo, collation)
 	if err != nil {
 		s.rollbackOnError(ctx)
-		logutil.Logger(ctx).Warn("parse SQL failed",
-			zap.Error(err),
-			zap.String("SQL", sql))
+
+		// Only print log message when this SQL is from the user.
+		// Mute the warning for internal SQLs.
+		if !s.sessionVars.InRestrictedSQL {
+			logutil.Logger(ctx).Warn("parse SQL failed", zap.Error(err), zap.String("SQL", sql))
+		}
 		return nil, util.SyntaxError(err)
 	}
 	durParse := time.Since(parseStartTime)
@@ -1130,9 +1133,12 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		stmt, err := compiler.Compile(ctx, stmtNode)
 		if err != nil {
 			s.rollbackOnError(ctx)
-			logutil.Logger(ctx).Warn("compile SQL failed",
-				zap.Error(err),
-				zap.String("SQL", sql))
+
+			// Only print log message when this SQL is from the user.
+			// Mute the warning for internal SQLs.
+			if !s.sessionVars.InRestrictedSQL {
+				logutil.Logger(ctx).Warn("compile SQL failed", zap.Error(err), zap.String("SQL", sql))
+			}
 			return nil, err
 		}
 		durCompile := time.Since(s.sessionVars.StartTime)
@@ -1499,8 +1505,6 @@ func (s *session) Auth(user *auth.UserIdentity, authentication []byte, salt []by
 		s.sessionVars.ActiveRoles = pm.GetDefaultRoles(user.AuthUsername, user.AuthHostname)
 		return true
 	} else if user.Hostname == variable.DefHostname {
-		logutil.BgLogger().Error("user connection verification failed",
-			zap.Stringer("user", user))
 		return false
 	}
 
@@ -1518,9 +1522,6 @@ func (s *session) Auth(user *auth.UserIdentity, authentication []byte, salt []by
 			return true
 		}
 	}
-
-	logutil.BgLogger().Error("user connection verification failed",
-		zap.Stringer("user", user))
 	return false
 }
 
@@ -1681,6 +1682,22 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	dom := domain.GetDomain(se)
 	dom.InitExpensiveQueryHandle()
 
+	se2, err := createSession(store)
+	if err != nil {
+		return nil, err
+	}
+	se3, err := createSession(store)
+	if err != nil {
+		return nil, err
+	}
+	// We should make the load bind-info loop before other loops which has internal SQL.
+	// Because the internal SQL may access the global bind-info handler. As the result, the data race occurs here as the
+	// LoadBindInfoLoop inits global bind-info handler.
+	err = dom.LoadBindInfoLoop(se2, se3)
+	if err != nil {
+		return nil, err
+	}
+
 	if !config.GetGlobalConfig().Security.SkipGrantTable {
 		err = dom.LoadPrivilegeLoop(se)
 		if err != nil {
@@ -1710,18 +1727,6 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		return nil, err
 	}
 	err = dom.UpdateTableStatsLoop(se1)
-	if err != nil {
-		return nil, err
-	}
-	se2, err := createSession(store)
-	if err != nil {
-		return nil, err
-	}
-	se3, err := createSession(store)
-	if err != nil {
-		return nil, err
-	}
-	err = dom.LoadBindInfoLoop(se2, se3)
 	if err != nil {
 		return nil, err
 	}
@@ -1792,6 +1797,9 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 	s.sessionVars.GlobalVarsAccessor = s
 	s.sessionVars.BinlogClient = binloginfo.GetPumpsClient()
 	s.txn.init()
+
+	sessionBindHandle := bindinfo.NewSessionBindHandle(s.parser)
+	s.SetValue(bindinfo.SessionBindInfoKeyType, sessionBindHandle)
 	return s, nil
 }
 
