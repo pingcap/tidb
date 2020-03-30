@@ -101,8 +101,9 @@ const (
 	TableTiDBHotRegions  = "TIDB_HOT_REGIONS"
 	tableTiKVStoreStatus = "TIKV_STORE_STATUS"
 	// TableAnalyzeStatus is the string constant of Analyze Status
-	TableAnalyzeStatus    = "ANALYZE_STATUS"
-	tableTiKVRegionStatus = "TIKV_REGION_STATUS"
+	TableAnalyzeStatus = "ANALYZE_STATUS"
+	// TableTiKVRegionStatus is the string constant of infoschema table
+	TableTiKVRegionStatus = "TIKV_REGION_STATUS"
 	// TableTiKVRegionPeers is the string constant of infoschema table
 	TableTiKVRegionPeers = "TIKV_REGION_PEERS"
 	// TableTiDBServersInfo is the string constant of TiDB server information table.
@@ -180,7 +181,7 @@ var tableIDMap = map[string]int64{
 	TableTiDBHotRegions:                     autoid.InformationSchemaDBID + 36,
 	tableTiKVStoreStatus:                    autoid.InformationSchemaDBID + 37,
 	TableAnalyzeStatus:                      autoid.InformationSchemaDBID + 38,
-	tableTiKVRegionStatus:                   autoid.InformationSchemaDBID + 39,
+	TableTiKVRegionStatus:                   autoid.InformationSchemaDBID + 39,
 	TableTiKVRegionPeers:                    autoid.InformationSchemaDBID + 40,
 	TableTiDBServersInfo:                    autoid.InformationSchemaDBID + 41,
 	TableClusterInfo:                        autoid.InformationSchemaDBID + 42,
@@ -787,7 +788,8 @@ var tableAnalyzeStatusCols = []columnInfo{
 	{name: "STATE", tp: mysql.TypeVarchar, size: 64},
 }
 
-var tableTiKVRegionStatusCols = []columnInfo{
+// TableTiKVRegionStatusCols is TiKV region status mem table columns.
+var TableTiKVRegionStatusCols = []columnInfo{
 	{name: "REGION_ID", tp: mysql.TypeLonglong, size: 21},
 	{name: "START_KEY", tp: mysql.TypeBlob, size: types.UnspecifiedLength},
 	{name: "END_KEY", tp: mysql.TypeBlob, size: types.UnspecifiedLength},
@@ -1016,60 +1018,6 @@ var tableSequencesCols = []columnInfo{
 	{name: "ORDER", tp: mysql.TypeTiny, flag: mysql.NotNullFlag},
 	{name: "START", tp: mysql.TypeLonglong, size: 21},
 	{name: "COMMENT", tp: mysql.TypeVarchar, size: 64},
-}
-
-func dataForTiKVRegionStatus(ctx sessionctx.Context) (records [][]types.Datum, err error) {
-	tikvStore, ok := ctx.GetStore().(tikv.Storage)
-	if !ok {
-		return nil, errors.New("Information about TiKV region status can be gotten only when the storage is TiKV")
-	}
-	tikvHelper := &helper.Helper{
-		Store:       tikvStore,
-		RegionCache: tikvStore.GetRegionCache(),
-	}
-	regionsInfo, err := tikvHelper.GetRegionsInfo()
-	if err != nil {
-		return nil, err
-	}
-	allSchemas := ctx.GetSessionVars().TxnCtx.InfoSchema.(InfoSchema).AllSchemas()
-	tableInfos := tikvHelper.GetRegionsTableInfo(regionsInfo, allSchemas)
-	for _, region := range regionsInfo.Regions {
-		tableList := tableInfos[region.ID]
-		if len(tableList) == 0 {
-			records = append(records, newTiKVRegionStatusCol(&region, nil))
-		}
-		for _, table := range tableList {
-			row := newTiKVRegionStatusCol(&region, &table)
-			records = append(records, row)
-		}
-	}
-	return records, nil
-}
-
-func newTiKVRegionStatusCol(region *helper.RegionInfo, table *helper.TableInfo) []types.Datum {
-	row := make([]types.Datum, len(tableTiKVRegionStatusCols))
-	row[0].SetInt64(region.ID)
-	row[1].SetString(region.StartKey, mysql.DefaultCollationName)
-	row[2].SetString(region.EndKey, mysql.DefaultCollationName)
-	if table != nil {
-		row[3].SetInt64(table.Table.ID)
-		row[4].SetString(table.DB.Name.O, mysql.DefaultCollationName)
-		row[5].SetString(table.Table.Name.O, mysql.DefaultCollationName)
-		if table.IsIndex {
-			row[6].SetInt64(1)
-			row[7].SetInt64(table.Index.ID)
-			row[8].SetString(table.Index.Name.O, mysql.DefaultCollationName)
-		} else {
-			row[6].SetInt64(0)
-		}
-	}
-	row[9].SetInt64(region.Epoch.ConfVer)
-	row[10].SetInt64(region.Epoch.Version)
-	row[11].SetInt64(region.WrittenBytes)
-	row[12].SetInt64(region.ReadBytes)
-	row[13].SetInt64(region.ApproximateSize)
-	row[14].SetInt64(region.ApproximateKeys)
-	return row
 }
 
 func dataForTiKVStoreStatus(ctx sessionctx.Context) (records [][]types.Datum, err error) {
@@ -1351,7 +1299,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableTiDBHotRegions:                     TableTiDBHotRegionsCols,
 	tableTiKVStoreStatus:                    tableTiKVStoreStatusCols,
 	TableAnalyzeStatus:                      tableAnalyzeStatusCols,
-	tableTiKVRegionStatus:                   tableTiKVRegionStatusCols,
+	TableTiKVRegionStatus:                   TableTiKVRegionStatusCols,
 	TableTiKVRegionPeers:                    TableTiKVRegionPeersCols,
 	TableTiDBServersInfo:                    tableTiDBServersInfoCols,
 	TableClusterInfo:                        tableClusterInfoCols,
@@ -1426,8 +1374,6 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 	case tableTableSpaces:
 	case tableTiKVStoreStatus:
 		fullRows, err = dataForTiKVStoreStatus(ctx)
-	case tableTiKVRegionStatus:
-		fullRows, err = dataForTiKVRegionStatus(ctx)
 	}
 	if err != nil {
 		return nil, err
