@@ -1295,10 +1295,15 @@ func (t *TableCommon) GetSequenceNextVal(ctx interface{}, dbName, seqName string
 		if err1 != nil {
 			return err1
 		}
-		seq.base, seq.end, seq.round, err1 = sequenceAlloc.AllocSeqCache(t.tableID)
+		var base, end, round int64
+		base, end, round, err1 = sequenceAlloc.AllocSeqCache(t.tableID)
 		if err1 != nil {
 			return err1
 		}
+		// Only update local cache when alloc succeed.
+		seq.base = base
+		seq.end = end
+		seq.round = round
 		// write sequence binlog to the pumpClient.
 		if ctx.(sessionctx.Context).GetSessionVars().BinlogClient != nil {
 			err = writeSequenceUpdateValueBinlog(ctx.(sessionctx.Context), dbName, seqName, seq.end)
@@ -1367,15 +1372,17 @@ func (t *TableCommon) SetSequenceVal(ctx interface{}, newVal int64, dbName, seqN
 	if err != nil {
 		return 0, false, err
 	}
-	err = sequenceAlloc.Rebase(t.tableID, newVal, false)
+	res, alreadySatisfied, err := sequenceAlloc.RebaseSeq(t.tableID, newVal)
 	if err != nil {
 		return 0, false, err
 	}
-	// write sequence binlog to the pumpClient.
-	if ctx.(sessionctx.Context).GetSessionVars().BinlogClient != nil {
-		err = writeSequenceUpdateValueBinlog(ctx.(sessionctx.Context), dbName, seqName, seq.end)
-		if err != nil {
-			return 0, false, err
+	if !alreadySatisfied {
+		// write sequence binlog to the pumpClient.
+		if ctx.(sessionctx.Context).GetSessionVars().BinlogClient != nil {
+			err = writeSequenceUpdateValueBinlog(ctx.(sessionctx.Context), dbName, seqName, seq.end)
+			if err != nil {
+				return 0, false, err
+			}
 		}
 	}
 	// Record the current end after setval succeed.
@@ -1384,7 +1391,7 @@ func (t *TableCommon) SetSequenceVal(ctx interface{}, newVal int64, dbName, seqN
 	// setval(seq, 100) setval(seq, 50)
 	// Because no cache (base, end keep 0), so the second setval won't return NULL.
 	t.sequence.base, t.sequence.end = newVal, newVal
-	return newVal, false, nil
+	return res, alreadySatisfied, nil
 }
 
 // getOffset is used in under GetSequenceNextVal & SetSequenceVal, which mu is locked.

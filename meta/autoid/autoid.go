@@ -97,6 +97,10 @@ type Allocator interface {
 	// If allocIDs is true, it will allocate some IDs and save to the cache.
 	// If allocIDs is false, it will not allocate IDs.
 	Rebase(tableID, newBase int64, allocIDs bool) error
+
+	// RebaseSeq rebases the sequence value in number axis with tableID and the new base value.
+	RebaseSeq(table, newBase int64) (int64, bool, error)
+
 	// Base return the current base of Allocator.
 	Base() int64
 	// End is only used for test.
@@ -270,8 +274,9 @@ func (alloc *allocator) rebase4Signed(tableID, requiredBase int64, allocIDs bool
 }
 
 // rebase4Sequence won't alloc batch immediately, cause it won't cache value in allocator.
-func (alloc *allocator) rebase4Sequence(tableID, requiredBase int64) error {
+func (alloc *allocator) rebase4Sequence(tableID, requiredBase int64) (int64, bool, error) {
 	startTime := time.Now()
+	alreadySatisfied := false
 	err := kv.RunInNewTxn(alloc.store, true, func(txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		currentEnd, err := getAutoIDByAllocType(m, alloc.dbID, tableID, alloc.allocType)
@@ -281,11 +286,13 @@ func (alloc *allocator) rebase4Sequence(tableID, requiredBase int64) error {
 		if alloc.sequence.Increment > 0 {
 			if currentEnd >= requiredBase {
 				// Required base satisfied, we don't need to update KV.
+				alreadySatisfied = true
 				return nil
 			}
 		} else {
 			if currentEnd <= requiredBase {
 				// Required base satisfied, we don't need to update KV.
+				alreadySatisfied = true
 				return nil
 			}
 		}
@@ -299,9 +306,12 @@ func (alloc *allocator) rebase4Sequence(tableID, requiredBase int64) error {
 	// TODO: sequence metrics
 	metrics.AutoIDHistogram.WithLabelValues(metrics.TableAutoIDRebase, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	if err != nil {
-		return err
+		return 0, false, err
 	}
-	return nil
+	if alreadySatisfied {
+		return 0, true, nil
+	}
+	return requiredBase, false, nil
 }
 
 // Rebase implements autoid.Allocator Rebase interface.
@@ -315,13 +325,26 @@ func (alloc *allocator) Rebase(tableID, requiredBase int64, allocIDs bool) error
 	alloc.mu.Lock()
 	defer alloc.mu.Unlock()
 
-	if alloc.allocType == SequenceType {
-		return alloc.rebase4Sequence(tableID, requiredBase)
-	}
 	if alloc.isUnsigned {
 		return alloc.rebase4Unsigned(tableID, uint64(requiredBase), allocIDs)
 	}
 	return alloc.rebase4Signed(tableID, requiredBase, allocIDs)
+}
+
+// Rebase implements autoid.Allocator RebaseSeq interface.
+// the return value is quite same as expression function, bool means whether it should be NULL,
+// here it will be used in setval expression function (true meaning the set value has been satisfied, return NULL).
+// case1:When requiredBase is satisfied with current value, it will return (0, true, nil),
+// case2:When requiredBase is successfully set in, it will return (requiredBase, false, nil).
+// If some error occurs in the process, return it immediately.
+func (alloc *allocator) RebaseSeq(tableID, requiredBase int64) (int64, bool, error) {
+	if tableID == 0 {
+		return 0, false, errInvalidTableID.GenWithStack("Invalid tableID")
+	}
+
+	alloc.mu.Lock()
+	defer alloc.mu.Unlock()
+	return alloc.rebase4Sequence(tableID, requiredBase)
 }
 
 func (alloc *allocator) GetType() AllocatorType {
