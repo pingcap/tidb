@@ -136,10 +136,12 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return ErrPrepareMulti
 	}
 	stmt := stmts[0]
+
 	err = ResetContextOfStmt(e.ctx, stmt)
 	if err != nil {
 		return err
 	}
+
 	var extractor paramMarkerExtractor
 	stmt.Accept(&extractor)
 
@@ -174,6 +176,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		Params:        sorter.markers,
 		SchemaVersion: e.is.SchemaMetaVersion(),
 	}
+
 	prepared.UseCache = plannercore.PreparedPlanCacheEnabled() && plannercore.Cacheable(stmt)
 
 	// We try to build the real statement of preparedStmt.

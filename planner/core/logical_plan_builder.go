@@ -88,6 +88,8 @@ const (
 	HintIndexMerge = "use_index_merge"
 	// HintTimeRange is a hint to specify the time range for metrics summary tables
 	HintTimeRange = "time_range"
+	// HintIgnorePlanCache is a hint to enforce ignoring plan cache
+	HintIgnorePlanCache = "ignore_plan_cache"
 )
 
 const (
