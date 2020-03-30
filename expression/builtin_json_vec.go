@@ -479,11 +479,11 @@ func (b *builtinJSONSearchSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Col
 			}
 			containType := strings.ToLower(typeBuf.GetString(i))
 			escape := byte('\\')
-			resultItem, err := jsonBuf.GetJSON(i).Search(containType, searchBuf.GetString(i), escape, nil)
+			bj, err := jsonBuf.GetJSON(i).Search(containType, searchBuf.GetString(i), escape, nil)
 			if err != nil {
 				return err
 			}
-			result.AppendJSON(resultItem)
+			result.AppendJSON(bj)
 		}
 	}
 	return nil

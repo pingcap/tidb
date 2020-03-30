@@ -891,8 +891,8 @@ func (bj BinaryJSON) Search(containType string, search string, escape byte, path
 	patChars, patTypes := stringutil.CompilePattern(search, escape)
 
 	result := make([]interface{}, 0)
-	walkFn := func(fullpath PathExpression, bj1 BinaryJSON) (stop bool, err error) {
-		if bj1.TypeCode == TypeCodeString && stringutil.DoMatch(string(bj1.GetString()), patChars, patTypes) {
+	walkFn := func(fullpath PathExpression, bj BinaryJSON) (stop bool, err error) {
+		if bj.TypeCode == TypeCodeString && stringutil.DoMatch(string(bj.GetString()), patChars, patTypes) {
 			result = append(result, fullpath.String())
 			if containType == ContainsPathOne {
 				return true, nil
