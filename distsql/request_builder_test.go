@@ -18,6 +18,11 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
+<<<<<<< HEAD
+=======
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/infoschema"
+>>>>>>> 1637c42... distsql: fix wrong schema version when snapshot has been set (#15258)
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -587,3 +592,88 @@ func (s *testSuite) TestRequestBuilder7(c *C) {
 
 	c.Assert(actual, DeepEquals, expect)
 }
+<<<<<<< HEAD
+=======
+
+func (s *testSuite) TestRequestBuilder8(c *C) {
+	sv := variable.NewSessionVars()
+	sv.SnapshotInfoschema = infoschema.MockInfoSchemaWithSchemaVer(nil, 10000)
+	actual, err := (&RequestBuilder{}).
+		SetFromSessionVars(sv).
+		Build()
+	c.Assert(err, IsNil)
+	expect := &kv.Request{
+		Tp:             0,
+		StartTs:        0x0,
+		Data:           []uint8(nil),
+		Concurrency:    15,
+		IsolationLevel: 0,
+		Priority:       0,
+		MemTracker:     (*memory.Tracker)(nil),
+		ReplicaRead:    0x1,
+		SchemaVar:      10000,
+	}
+	c.Assert(actual, DeepEquals, expect)
+}
+
+func (s *testSuite) TestTableRangesToKVRangesWithFbs(c *C) {
+	ranges := []*ranger.Range{
+		{
+			LowVal:  []types.Datum{types.NewIntDatum(1)},
+			HighVal: []types.Datum{types.NewIntDatum(4)},
+		},
+	}
+	hist := statistics.NewHistogram(1, 30, 30, 0, types.NewFieldType(mysql.TypeLonglong), chunk.InitialCapacity, 0)
+	for i := 0; i < 10; i++ {
+		hist.Bounds.AppendInt64(0, int64(i))
+		hist.Bounds.AppendInt64(0, int64(i+2))
+		hist.Buckets = append(hist.Buckets, statistics.Bucket{Repeat: 10, Count: int64(i + 30)})
+	}
+	fb := statistics.NewQueryFeedback(0, hist, 0, false)
+	lower, upper := types.NewIntDatum(2), types.NewIntDatum(3)
+	fb.Feedback = []statistics.Feedback{
+		{Lower: &lower, Upper: &upper, Count: 1, Repeat: 1},
+	}
+	actual := TableRangesToKVRanges(0, ranges, fb)
+	expect := []kv.KeyRange{
+		{
+			StartKey: kv.Key{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			EndKey:   kv.Key{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x5},
+		},
+	}
+	for i := 0; i < len(actual); i++ {
+		c.Assert(actual[i], DeepEquals, expect[i])
+	}
+}
+
+func (s *testSuite) TestIndexRangesToKVRangesWithFbs(c *C) {
+	ranges := []*ranger.Range{
+		{
+			LowVal:  []types.Datum{types.NewIntDatum(1)},
+			HighVal: []types.Datum{types.NewIntDatum(4)},
+		},
+	}
+	hist := statistics.NewHistogram(1, 30, 30, 0, types.NewFieldType(mysql.TypeLonglong), chunk.InitialCapacity, 0)
+	for i := 0; i < 10; i++ {
+		hist.Bounds.AppendInt64(0, int64(i))
+		hist.Bounds.AppendInt64(0, int64(i+2))
+		hist.Buckets = append(hist.Buckets, statistics.Bucket{Repeat: 10, Count: int64(i + 30)})
+	}
+	fb := statistics.NewQueryFeedback(0, hist, 0, false)
+	lower, upper := types.NewIntDatum(2), types.NewIntDatum(3)
+	fb.Feedback = []statistics.Feedback{
+		{Lower: &lower, Upper: &upper, Count: 1, Repeat: 1},
+	}
+	actual, err := IndexRangesToKVRanges(new(stmtctx.StatementContext), 0, 0, ranges, fb)
+	c.Assert(err, IsNil)
+	expect := []kv.KeyRange{
+		{
+			StartKey: kv.Key{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x5f, 0x69, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x3, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			EndKey:   kv.Key{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x5f, 0x69, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x3, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x5},
+		},
+	}
+	for i := 0; i < len(actual); i++ {
+		c.Assert(actual[i], DeepEquals, expect[i])
+	}
+}
+>>>>>>> 1637c42... distsql: fix wrong schema version when snapshot has been set (#15258)
