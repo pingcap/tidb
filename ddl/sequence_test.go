@@ -850,13 +850,11 @@ func (s *testSequenceSuite) TestSequenceFunctionPrivilege(c *C) {
 	c.Assert(err.Error(), Equals, "[expression:1142]INSERT command denied to user 'myuser'@'localhost' for table 'seq'")
 
 	// SELECT privilege required to use lastval.
-	tk1.MustExec("use test")
 	err = tk1.QueryToErr("select lastval(seq)")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[expression:1142]SELECT command denied to user 'myuser'@'localhost' for table 'seq'")
 
 	// INSERT privilege required to use setval.
-	tk1.MustExec("use test")
 	err = tk1.QueryToErr("select setval(seq, 10)")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[expression:1142]INSERT command denied to user 'myuser'@'localhost' for table 'seq'")
