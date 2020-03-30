@@ -17,8 +17,6 @@ import (
 	"bytes"
 	"crypto/tls"
 	"fmt"
-	"github.com/pingcap/tidb/util/collate"
-	"github.com/pingcap/tidb/util/stringutil"
 	"math"
 	"sort"
 	"strconv"
@@ -46,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/storeutil"
+	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/timeutil"
 )
 
