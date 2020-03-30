@@ -38,12 +38,14 @@ import (
 // Optimize does optimization and creates a Plan.
 // The node must be prepared first.
 func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (plannercore.Plan, types.NameSlice, error) {
-	fp := plannercore.TryFastPlan(sctx, node)
-	if fp != nil {
-		if !useMaxTS(sctx, fp) {
-			sctx.PrepareTSFuture(ctx)
+	if _, isolationReadContainTiKV := sctx.GetSessionVars().GetIsolationReadEngines()[kv.TiKV]; isolationReadContainTiKV {
+		fp := plannercore.TryFastPlan(sctx, node)
+		if fp != nil {
+			if !useMaxTS(sctx, fp) {
+				sctx.PrepareTSFuture(ctx)
+			}
+			return fp, fp.OutputNames(), nil
 		}
-		return fp, fp.OutputNames(), nil
 	}
 
 	sctx.PrepareTSFuture(ctx)
@@ -113,8 +115,12 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 			bestPlanAmongHints = plan
 		}
 	}
-	// If there is already a evolution task, we do not need to handle it again.
-	if sctx.GetSessionVars().EvolvePlanBaselines && binding == nil {
+	// 1. If there is already a evolution task, we do not need to handle it again.
+	// 2. If the origin binding contain `read_from_storage` hint, we should ignore the evolve task.
+	// 3. If the best plan contain TiFlash hint, we should ignore the evolve task.
+	if sctx.GetSessionVars().EvolvePlanBaselines && binding == nil &&
+		!originHints.ContainTableHint(plannercore.HintReadFromStorage) &&
+		!bindRecord.Bindings[0].Hint.ContainTableHint(plannercore.HintReadFromStorage) {
 		handleEvolveTasks(ctx, sctx, bindRecord, stmtNode, bestPlanHintStr)
 	}
 	// Restore the hint to avoid changing the stmt node.
@@ -216,6 +222,9 @@ func getBindRecord(ctx sessionctx.Context, stmt ast.StmtNode) (*bindinfo.BindRec
 		return nil, ""
 	}
 	globalHandle := domain.GetDomain(ctx).BindHandle()
+	if globalHandle == nil {
+		return nil, ""
+	}
 	bindRecord = globalHandle.GetBindRecord(hash, normalizedSQL, ctx.GetSessionVars().CurrentDB)
 	if bindRecord == nil {
 		bindRecord = globalHandle.GetBindRecord(hash, normalizedSQL, "")
@@ -243,17 +252,11 @@ func handleEvolveTasks(ctx context.Context, sctx sessionctx.Context, br *bindinf
 		return
 	}
 	charset, collation := sctx.GetSessionVars().GetCharsetInfo()
-	hintsSet, err := bindinfo.ParseHintsSet(parser.New(), bindSQL, charset, collation)
-	if err != nil {
-		return
-	}
 	binding := bindinfo.Binding{
 		BindSQL:   bindSQL,
 		Status:    bindinfo.PendingVerify,
 		Charset:   charset,
 		Collation: collation,
-		Hint:      hintsSet,
-		ID:        planHint,
 	}
 	globalHandle := domain.GetDomain(sctx).BindHandle()
 	globalHandle.AddEvolvePlanTask(br.OriginalSQL, br.Db, binding)
