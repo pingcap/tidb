@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/util/stringutil"
 )
 
 // Type returns type of BinaryJSON as string.
@@ -877,6 +878,40 @@ func (bj BinaryJSON) GetElemDepth() int {
 		return maxDepth + 1
 	default:
 		return 1
+	}
+}
+
+// Search for JSON_Search
+// rules referenced by MySQL JSON_SEARCH function
+// [https://dev.mysql.com/doc/refman/5.7/en/json-search-functions.html#function_json-search]
+func (bj BinaryJSON) Search(containType string, search string, escape byte, pathExpres []PathExpression) (res BinaryJSON, err error) {
+	if containType != ContainsPathOne && containType != ContainsPathAll {
+		return res, ErrInvalidJSONPath
+	}
+	patChars, patTypes := stringutil.CompilePattern(search, escape)
+
+	result := make([]interface{}, 0)
+	walkFn := func(fullpath PathExpression, bj BinaryJSON) (stop bool, err error) {
+		if bj.TypeCode == TypeCodeString && stringutil.DoMatch(string(bj.GetString()), patChars, patTypes) {
+			result = append(result, fullpath.String())
+			if containType == ContainsPathOne {
+				return true, nil
+			}
+		}
+		return false, nil
+	}
+	if pathExpres != nil && len(pathExpres) != 0 {
+		err := bj.Walk(walkFn, pathExpres...)
+		if err != nil {
+			return res, err
+		}
+		return CreateBinary(result), nil
+	} else {
+		err := bj.Walk(walkFn)
+		if err != nil {
+			return res, err
+		}
+		return CreateBinary(result), nil
 	}
 }
 
