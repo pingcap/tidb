@@ -75,8 +75,16 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		return bestPlan, names, nil
 	}
 	bestPlanHint := plannercore.GenHintsFromPhysicalPlan(bestPlan)
-	bestPlanHint = append(bestPlanHint, tableHints...)
+	if len(bindRecord.Bindings) > 0 {
+		orgBinding := bindRecord.Bindings[0] // the first is the original binding
+		for _, tbHint := range tableHints { // consider table hints which contained by the original binding
+			if orgBinding.Hint.ContainTableHint(tbHint.HintName.String()) {
+				bestPlanHint = append(bestPlanHint, tbHint)
+			}
+		}
+	}
 	bestPlanHintStr := plannercore.RestoreOptimizerHints(bestPlanHint)
+
 	binding := bindRecord.FindBinding(bestPlanHintStr)
 	// If the best bestPlan is in baselines, just use it.
 	if binding != nil && binding.Status == bindinfo.Using {
