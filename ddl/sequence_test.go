@@ -824,6 +824,7 @@ func (s *testSequenceSuite) TestSequenceFunctionPrivilege(c *C) {
 	// Test sequence function privilege.
 	s.tk.MustExec("drop sequence if exists seq")
 	s.tk.MustExec("create sequence seq")
+	s.tk.MustExec("create table t(a int default next value for seq)")
 	s.tk.MustExec("create user if not exists myuser@localhost")
 	s.tk.MustExec("flush privileges")
 
@@ -834,19 +835,18 @@ func (s *testSequenceSuite) TestSequenceFunctionPrivilege(c *C) {
 	tk1.Se = se
 
 	// grant the myuser the create access to the sequence.
-	s.tk.MustExec("grant create, insert on test.* to 'myuser'@'localhost'")
+	s.tk.MustExec("grant insert on test.t to 'myuser'@'localhost'")
 	s.tk.MustExec("flush privileges")
 
-	// SELECT privilege required to use nextval.
+	// INSERT privilege required to use nextval.
 	tk1.MustExec("use test")
 	err = tk1.QueryToErr("select nextval(seq)")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[expression:1142]SELECT command denied to user 'myuser'@'localhost' for table 'seq'")
+	c.Assert(err.Error(), Equals, "[expression:1142]INSERT command denied to user 'myuser'@'localhost' for table 'seq'")
 
-	tk1.MustExec("create table t(a int default next value for seq)")
 	_, err = tk1.Exec("insert into t values()")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[expression:1142]SELECT command denied to user 'myuser'@'localhost' for table 'seq'")
+	c.Assert(err.Error(), Equals, "[expression:1142]INSERT command denied to user 'myuser'@'localhost' for table 'seq'")
 
 	// SELECT privilege required to use lastval.
 	tk1.MustExec("use test")
@@ -854,14 +854,14 @@ func (s *testSequenceSuite) TestSequenceFunctionPrivilege(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[expression:1142]SELECT command denied to user 'myuser'@'localhost' for table 'seq'")
 
-	// UPDATE privilege required to use setval.
+	// INSERT privilege required to use setval.
 	tk1.MustExec("use test")
 	err = tk1.QueryToErr("select setval(seq, 10)")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[expression:1142]UPDATE command denied to user 'myuser'@'localhost' for table 'seq'")
+	c.Assert(err.Error(), Equals, "[expression:1142]INSERT command denied to user 'myuser'@'localhost' for table 'seq'")
 
 	// grant the myuser the SELECT & UPDATE access to sequence seq.
-	s.tk.MustExec("grant SELECT, UPDATE on test.seq to 'myuser'@'localhost'")
+	s.tk.MustExec("grant SELECT, INSERT on test.seq to 'myuser'@'localhost'")
 	s.tk.MustExec("flush privileges")
 
 	// SELECT privilege required to use nextval.

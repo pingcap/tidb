@@ -815,8 +815,8 @@ func (b *builtinNextValSig) evalInt(row chunk.Row) (int64, bool, error) {
 	// Do the privilege check.
 	checker := privilege.GetPrivilegeManager(b.ctx)
 	user := b.ctx.GetSessionVars().User
-	if checker != nil && !checker.RequestVerification(b.ctx.GetSessionVars().ActiveRoles, db, seq, "", mysql.SelectPriv) {
-		return 0, false, errSequenceAccessDenied.GenWithStackByArgs("SELECT", user.AuthUsername, user.AuthHostname, seq)
+	if checker != nil && !checker.RequestVerification(b.ctx.GetSessionVars().ActiveRoles, db, seq, "", mysql.InsertPriv) {
+		return 0, false, errSequenceAccessDenied.GenWithStackByArgs("INSERT", user.AuthUsername, user.AuthHostname, seq)
 	}
 	nextVal, err := sequence.GetSequenceNextVal(b.ctx, db, seq)
 	if err != nil {
@@ -915,8 +915,8 @@ func (b *builtinSetValSig) evalInt(row chunk.Row) (int64, bool, error) {
 	// Do the privilege check.
 	checker := privilege.GetPrivilegeManager(b.ctx)
 	user := b.ctx.GetSessionVars().User
-	if checker != nil && !checker.RequestVerification(b.ctx.GetSessionVars().ActiveRoles, db, seq, "", mysql.UpdatePriv) {
-		return 0, false, errSequenceAccessDenied.GenWithStackByArgs("UPDATE", user.AuthUsername, user.AuthHostname, seq)
+	if checker != nil && !checker.RequestVerification(b.ctx.GetSessionVars().ActiveRoles, db, seq, "", mysql.InsertPriv) {
+		return 0, false, errSequenceAccessDenied.GenWithStackByArgs("INSERT", user.AuthUsername, user.AuthHostname, seq)
 	}
 	setValue, isNull, err := b.args[1].EvalInt(b.ctx, row)
 	if isNull || err != nil {
