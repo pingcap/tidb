@@ -884,9 +884,9 @@ func (bj BinaryJSON) GetElemDepth() int {
 // Search for JSON_Search
 // rules referenced by MySQL JSON_SEARCH function
 // [https://dev.mysql.com/doc/refman/5.7/en/json-search-functions.html#function_json-search]
-func (bj BinaryJSON) Search(containType string, search string, escape byte, pathExpres []PathExpression) (res BinaryJSON, err error) {
+func (bj BinaryJSON) Search(containType string, search string, escape byte, pathExpres []PathExpression) (res BinaryJSON, isNull bool, err error) {
 	if containType != ContainsPathOne && containType != ContainsPathAll {
-		return res, ErrInvalidJSONPath
+		return res, true, ErrInvalidJSONPath
 	}
 	patChars, patTypes := stringutil.CompilePattern(search, escape)
 
@@ -903,21 +903,21 @@ func (bj BinaryJSON) Search(containType string, search string, escape byte, path
 	if pathExpres != nil && len(pathExpres) != 0 {
 		err := bj.Walk(walkFn, pathExpres...)
 		if err != nil {
-			return res, err
+			return res, true, err
 		}
 	} else {
 		err := bj.Walk(walkFn)
 		if err != nil {
-			return res, err
+			return res, true, err
 		}
 	}
 	switch len(result) {
 	case 0:
-		return res, nil
+		return res, true, nil
 	case 1:
-		return CreateBinary(result[0]), nil
+		return CreateBinary(result[0]), false, nil
 	default:
-		return CreateBinary(result), nil
+		return CreateBinary(result), false, nil
 	}
 
 }

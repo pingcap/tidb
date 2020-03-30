@@ -412,7 +412,7 @@ func (b *builtinJSONSearchSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Col
 				}
 			}
 			for i := 0; i < nr; i++ {
-				if jsonBuf.IsNull(i) {
+				if jsonBuf.IsNull(i) || searchBuf.IsNull(i) || typeBuf.IsNull(i) {
 					result.AppendNull()
 					continue
 				}
@@ -439,7 +439,7 @@ func (b *builtinJSONSearchSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Col
 					}
 					pathExprs = append(pathExprs, pathExpr)
 				}
-				bj, err := jsonBuf.GetJSON(i).Search(containType, searchBuf.GetString(i), escape, pathExprs)
+				bj, _, err := jsonBuf.GetJSON(i).Search(containType, searchBuf.GetString(i), escape, pathExprs)
 				if err != nil {
 					return err
 				}
@@ -447,14 +447,13 @@ func (b *builtinJSONSearchSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Col
 			}
 		} else {
 			for i := 0; i < nr; i++ {
-				if jsonBuf.IsNull(i) {
+				if jsonBuf.IsNull(i) || searchBuf.IsNull(i) || typeBuf.IsNull(i) {
 					result.AppendNull()
 					continue
 				}
 				containType := strings.ToLower(typeBuf.GetString(i))
 				escape := byte('\\')
-				isNull := escapeBuf.IsNull(i)
-				if !isNull {
+				if !escapeBuf.IsNull(i) {
 					escapeStr := escapeBuf.GetString(i)
 					if len(escapeStr) == 0 {
 						escape = byte('\\')
@@ -464,7 +463,7 @@ func (b *builtinJSONSearchSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Col
 						return errIncorrectArgs.GenWithStackByArgs("ESCAPE")
 					}
 				}
-				bj, err := jsonBuf.GetJSON(i).Search(containType, searchBuf.GetString(i), escape, nil)
+				bj, _, err := jsonBuf.GetJSON(i).Search(containType, searchBuf.GetString(i), escape, nil)
 				if err != nil {
 					return err
 				}
@@ -473,13 +472,13 @@ func (b *builtinJSONSearchSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Col
 		}
 	} else {
 		for i := 0; i < nr; i++ {
-			if jsonBuf.IsNull(i) {
+			if jsonBuf.IsNull(i) || searchBuf.IsNull(i) || typeBuf.IsNull(i) {
 				result.AppendNull()
 				continue
 			}
 			containType := strings.ToLower(typeBuf.GetString(i))
 			escape := byte('\\')
-			bj, err := jsonBuf.GetJSON(i).Search(containType, searchBuf.GetString(i), escape, nil)
+			bj, _, err := jsonBuf.GetJSON(i).Search(containType, searchBuf.GetString(i), escape, nil)
 			if err != nil {
 				return err
 			}
@@ -519,7 +518,7 @@ func (b *builtinJSONObjectSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Col
 	for i := 0; i < len(b.args); i++ {
 		if i&1 == 0 {
 			if argBuffers[i], err = b.bufAllocator.get(types.ETString, nr); err != nil {
-				return nil
+				return err
 			}
 			defer func(buf *chunk.Column) {
 				b.bufAllocator.put(buf)
