@@ -82,7 +82,7 @@ type (
 	// version in the cluster
 	versionInspection struct{ inspectionName }
 
-	// nodeLoadInspection is used to check the current load of memory/disk/cpu
+	// nodeLoadInspection is used to check the node load of memory/disk/cpu
 	// have reached a high-level threshold
 	nodeLoadInspection struct{ inspectionName }
 
