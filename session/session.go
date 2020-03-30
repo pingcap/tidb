@@ -1336,10 +1336,13 @@ func (s *session) DropPreparedStmt(stmtID uint32) error {
 }
 
 func (s *session) Txn(active bool) (kv.Transaction, error) {
-	if !s.txn.validOrPending() && active {
+	if !active {
+		return &s.txn, nil
+	}
+	if !s.txn.validOrPending() {
 		return &s.txn, errors.AddStack(kv.ErrInvalidTxn)
 	}
-	if s.txn.pending() && active {
+	if s.txn.pending() {
 		// Transaction is lazy initialized.
 		// PrepareTxnCtx is called to get a tso future, makes s.txn a pending txn,
 		// If Txn() is called later, wait for the future to get a valid txn.
