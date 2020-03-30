@@ -154,7 +154,7 @@ func (s *testSuite5) TestShowGrantsPrivilege(c *C) {
 	tk2 := testkit.NewTestKit(c, s.store)
 	se2, err := session.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
-	c.Assert(se2.Auth(&auth.UserIdentity{Username: "show_grants", Hostname: "127.0.0.1", AuthUsername:"show_grants", AuthHostname:"%"}, nil, nil), IsTrue)
+	c.Assert(se2.Auth(&auth.UserIdentity{Username: "show_grants", Hostname: "127.0.0.1", AuthUsername: "show_grants", AuthHostname: "%"}, nil, nil), IsTrue)
 	tk2.Se = se2
 	err = tk2.QueryToErr("show grants")
 	c.Assert(err, IsNil)
