@@ -337,12 +337,6 @@ region-cache-ttl = 600
 # default 0 means shutting off store limit.
 store-limit = 0
 
-[txn-local-latches]
-# Enable local latches for transactions. Enable it when
-# there are lots of conflicts between transactions.
-enabled = false
-capacity = 2048000
-
 [binlog]
 # enable to write binlog.
 # NOTE: If binlog is enabled, txn-total-size-limit should be less than 104857600(10M).
