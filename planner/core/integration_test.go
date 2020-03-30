@@ -27,6 +27,7 @@ import (
 )
 
 var _ = Suite(&testIntegrationSuite{})
+var _ = SerialSuites(&testIntegrationSerialSuite{})
 
 type testIntegrationSuite struct {
 	testData testutil.TestData
@@ -51,6 +52,34 @@ func (s *testIntegrationSuite) SetUpTest(c *C) {
 }
 
 func (s *testIntegrationSuite) TearDownTest(c *C) {
+	s.dom.Close()
+	err := s.store.Close()
+	c.Assert(err, IsNil)
+}
+
+type testIntegrationSerialSuite struct {
+	testData testutil.TestData
+	store    kv.Storage
+	dom      *domain.Domain
+}
+
+func (s *testIntegrationSerialSuite) SetUpSuite(c *C) {
+	var err error
+	s.testData, err = testutil.LoadTestSuiteData("testdata", "integration_serial_suite")
+	c.Assert(err, IsNil)
+}
+
+func (s *testIntegrationSerialSuite) TearDownSuite(c *C) {
+	c.Assert(s.testData.GenerateOutputIfNeeded(), IsNil)
+}
+
+func (s *testIntegrationSerialSuite) SetUpTest(c *C) {
+	var err error
+	s.store, s.dom, err = newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+}
+
+func (s *testIntegrationSerialSuite) TearDownTest(c *C) {
 	s.dom.Close()
 	err := s.store.Close()
 	c.Assert(err, IsNil)
@@ -264,7 +293,7 @@ func (s *testIntegrationSuite) TestIsolationRead(c *C) {
 	c.Assert(err.Error(), Equals, "[planner:1815]Internal : Can not find access path matching 'tidb_isolation_read_engines'(value: 'tikv,tiflash') and tidb-server config isolation-read(engines: '[tiflash]'). Available values are 'tikv'.")
 }
 
-func (s *testIntegrationSuite) TestSelPushDownTiFlash(c *C) {
+func (s *testIntegrationSerialSuite) TestSelPushDownTiFlash(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -286,19 +315,19 @@ func (s *testIntegrationSuite) TestSelPushDownTiFlash(c *C) {
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
 
-	// All conditions should push tiflash.
-	tk.MustQuery(`explain select * from t where t.a > 1 and t.b = "flash" or t.a + 3 * t.a = 5`).Check(testkit.Rows(
-		"TableReader_7 8000.00 root data:Selection_6",
-		"└─Selection_6 8000.00 cop[tiflash] or(and(gt(test.t.a, 1), eq(test.t.b, \"flash\")), eq(plus(test.t.a, mul(3, test.t.a)), 5))",
-		"  └─TableScan_5 10000.00 cop[tiflash] table:t, range:[-inf,+inf], keep order:false, stats:pseudo",
-	))
-
-	// Part of conditions should push tiflash.
-	tk.MustQuery(`explain select * from t where cast(t.a as decimal(30, 5)) + 3 = 5.1`).Check(testkit.Rows(
-		"Selection_5 8000.00 root eq(plus(cast(test.t.a), 3), 5.1)",
-		"└─TableReader_7 10000.00 root data:TableScan_6",
-		"  └─TableScan_6 10000.00 cop[tiflash] table:t, range:[-inf,+inf], keep order:false, stats:pseudo",
-	))
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+	}
 }
 
 func (s *testIntegrationSuite) TestIssue15110(c *C) {
@@ -336,7 +365,7 @@ func (s *testIntegrationSuite) TestIssue15110(c *C) {
 	tk.MustExec("explain SELECT count(*) FROM crm_rd_150m dataset_48 WHERE (CASE WHEN (month(dataset_48.customer_first_date)) <= 30 THEN '新客' ELSE NULL END) IS NOT NULL;")
 }
 
-func (s *testIntegrationSuite) TestReadFromStorageHint(c *C) {
+func (s *testIntegrationSerialSuite) TestReadFromStorageHint(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("use test")
@@ -376,7 +405,7 @@ func (s *testIntegrationSuite) TestReadFromStorageHint(c *C) {
 	}
 }
 
-func (s *testIntegrationSuite) TestReadFromStorageHintAndIsolationRead(c *C) {
+func (s *testIntegrationSerialSuite) TestReadFromStorageHintAndIsolationRead(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("use test")

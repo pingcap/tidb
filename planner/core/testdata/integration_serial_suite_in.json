@@ -3,7 +3,7 @@
     "name": "TestSelPushDownTiFlash",
     "cases": [
       "explain select * from t where t.a > 1 and t.b = \"flash\" or t.a + 3 * t.a = 5",
-      "explain select * from t where cast(t.a as float) + 3 = 5.1"
+      "explain select * from t where cast(t.a as decimal(30,10)) + 3 = 5.1"
     ]
   },
   {
