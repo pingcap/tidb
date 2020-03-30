@@ -4508,3 +4508,18 @@ func (s *testIntegrationSuite) TestIssue12301(c *C) {
 	tk.MustExec("insert into t values (123456789012, 123456789012)")
 	tk.MustQuery("select * from t where d = i").Check(testkit.Rows("123456789012 123456789012"))
 }
+
+func (s *testIntegrationSuite) TestValuesForBinaryLiteral(c *C) {
+	// See issue #15310
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table testValuesBinary(id int primary key auto_increment, a bit(1));")
+	tk.MustExec("insert into testValuesBinary values(1,1);")
+	err := tk.ExecToErr("insert into testValuesBinary values(1,1) on duplicate key update id = values(id),a = values(a);")
+	c.Assert(err, IsNil)
+	tk.MustQuery("select a=0 from testValuesBinary;").Check(testkit.Rows("0"))
+	err = tk.ExecToErr("insert into testValuesBinary values(1,0) on duplicate key update id = values(id),a = values(a);")
+	c.Assert(err, IsNil)
+	tk.MustQuery("select a=0 from testValuesBinary;").Check(testkit.Rows("1"))
+	tk.MustExec("drop table testValuesBinary;")
+}
