@@ -389,7 +389,7 @@ func (b *builtinJSONSearchSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Col
 
 	result.ReserveJSON(nr)
 
-	if len(b.args) >= 4 {
+	if len(b.args) >= 5 {
 		escapeBuf, err := b.bufAllocator.get(types.ETString, nr)
 		if err != nil {
 			return err
@@ -398,77 +398,83 @@ func (b *builtinJSONSearchSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Col
 		if err := b.args[3].VecEvalString(b.ctx, input, escapeBuf); err != nil {
 			return nil
 		}
-		if len(b.args) >= 5 {
-			pathBufs := make([]*chunk.Column, (len(b.args) - 4))
-			for i := 4; i < len(b.args); i++ {
-				index := i - 4
-				pathBufs[index], err = b.bufAllocator.get(types.ETString, nr)
-				if err != nil {
-					return err
-				}
-				defer b.bufAllocator.put(pathBufs[index])
-				if err := b.args[i].VecEvalString(b.ctx, input, pathBufs[index]); err != nil {
-					return err
+		pathBufs := make([]*chunk.Column, (len(b.args) - 4))
+		for i := 4; i < len(b.args); i++ {
+			index := i - 4
+			pathBufs[index], err = b.bufAllocator.get(types.ETString, nr)
+			if err != nil {
+				return err
+			}
+			defer b.bufAllocator.put(pathBufs[index])
+			if err := b.args[i].VecEvalString(b.ctx, input, pathBufs[index]); err != nil {
+				return err
+			}
+		}
+		for i := 0; i < nr; i++ {
+			if jsonBuf.IsNull(i) || searchBuf.IsNull(i) || typeBuf.IsNull(i) {
+				result.AppendNull()
+				continue
+			}
+			containType := strings.ToLower(typeBuf.GetString(i))
+			escape := byte('\\')
+			if !escapeBuf.IsNull(i) {
+				escapeStr := escapeBuf.GetString(i)
+				if len(escapeStr) == 0 {
+					escape = byte('\\')
+				} else if len(escapeStr) == 1 {
+					escape = byte(escapeStr[0])
+				} else {
+					return errIncorrectArgs.GenWithStackByArgs("ESCAPE")
 				}
 			}
-			for i := 0; i < nr; i++ {
-				if jsonBuf.IsNull(i) || searchBuf.IsNull(i) || typeBuf.IsNull(i) {
-					result.AppendNull()
-					continue
+			pathExprs := make([]json.PathExpression, 0, len(b.args)-4)
+			for j := 0; j < len(b.args)-4; j++ {
+				if pathBufs[j].IsNull(i) {
+					break
 				}
-				containType := strings.ToLower(typeBuf.GetString(i))
-				escape := byte('\\')
-				if !escapeBuf.IsNull(i) {
-					escapeStr := escapeBuf.GetString(i)
-					if len(escapeStr) == 0 {
-						escape = byte('\\')
-					} else if len(escapeStr) == 1 {
-						escape = byte(escapeStr[0])
-					} else {
-						return errIncorrectArgs.GenWithStackByArgs("ESCAPE")
-					}
-				}
-				pathExprs := make([]json.PathExpression, 0, len(b.args)-4)
-				for j := 0; j < len(b.args)-4; j++ {
-					if pathBufs[j].IsNull(i) {
-						break
-					}
-					pathExpr, err := json.ParseJSONPathExpr(pathBufs[j].GetString(i))
-					if err != nil {
-						return json.ErrInvalidJSONPath.GenWithStackByArgs(pathBufs[j].GetString(i))
-					}
-					pathExprs = append(pathExprs, pathExpr)
-				}
-				bj, _, err := jsonBuf.GetJSON(i).Search(containType, searchBuf.GetString(i), escape, pathExprs)
+				pathExpr, err := json.ParseJSONPathExpr(pathBufs[j].GetString(i))
 				if err != nil {
-					return err
+					return json.ErrInvalidJSONPath.GenWithStackByArgs(pathBufs[j].GetString(i))
 				}
-				result.AppendJSON(bj)
+				pathExprs = append(pathExprs, pathExpr)
 			}
-		} else {
-			for i := 0; i < nr; i++ {
-				if jsonBuf.IsNull(i) || searchBuf.IsNull(i) || typeBuf.IsNull(i) {
-					result.AppendNull()
-					continue
-				}
-				containType := strings.ToLower(typeBuf.GetString(i))
-				escape := byte('\\')
-				if !escapeBuf.IsNull(i) {
-					escapeStr := escapeBuf.GetString(i)
-					if len(escapeStr) == 0 {
-						escape = byte('\\')
-					} else if len(escapeStr) == 1 {
-						escape = byte(escapeStr[0])
-					} else {
-						return errIncorrectArgs.GenWithStackByArgs("ESCAPE")
-					}
-				}
-				bj, _, err := jsonBuf.GetJSON(i).Search(containType, searchBuf.GetString(i), escape, nil)
-				if err != nil {
-					return err
-				}
-				result.AppendJSON(bj)
+			bj, _, err := jsonBuf.GetJSON(i).Search(containType, searchBuf.GetString(i), escape, pathExprs)
+			if err != nil {
+				return err
 			}
+			result.AppendJSON(bj)
+		}
+	} else if len(b.args) == 4 {
+		escapeBuf, err := b.bufAllocator.get(types.ETString, nr)
+		if err != nil {
+			return err
+		}
+		if err := b.args[3].VecEvalString(b.ctx, input, escapeBuf); err != nil {
+			return nil
+		}
+		defer b.bufAllocator.put(escapeBuf)
+		for i := 0; i < nr; i++ {
+			if jsonBuf.IsNull(i) || searchBuf.IsNull(i) || typeBuf.IsNull(i) {
+				result.AppendNull()
+				continue
+			}
+			containType := strings.ToLower(typeBuf.GetString(i))
+			escape := byte('\\')
+			if !escapeBuf.IsNull(i) {
+				escapeStr := escapeBuf.GetString(i)
+				if len(escapeStr) == 0 {
+					escape = byte('\\')
+				} else if len(escapeStr) == 1 {
+					escape = byte(escapeStr[0])
+				} else {
+					return errIncorrectArgs.GenWithStackByArgs("ESCAPE")
+				}
+			}
+			bj, _, err := jsonBuf.GetJSON(i).Search(containType, searchBuf.GetString(i), escape, nil)
+			if err != nil {
+				return err
+			}
+			result.AppendJSON(bj)
 		}
 	} else {
 		for i := 0; i < nr; i++ {
