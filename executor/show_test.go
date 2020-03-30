@@ -156,8 +156,7 @@ func (s *testSuite5) TestShowGrantsPrivilege(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(se2.Auth(&auth.UserIdentity{Username: "show_grants", Hostname: "127.0.0.1", AuthUsername: "show_grants", AuthHostname: "%"}, nil, nil), IsTrue)
 	tk2.Se = se2
-	err = tk2.QueryToErr("show grants")
-	c.Assert(err, IsNil)
+	tk2.MustQuery("show grants")
 }
 
 func (s *testSuite5) TestIssue3641(c *C) {
