@@ -310,6 +310,7 @@ func encodeHashChunkRowIdx(sc *stmtctx.StatementContext, row chunk.Row, tp *type
 	case mysql.TypeFloat:
 		flag = floatFlag
 		f := float64(row.GetFloat32(idx))
+		// For negative zero
 		if f == 0 {
 			f = 0
 		}
@@ -317,6 +318,7 @@ func encodeHashChunkRowIdx(sc *stmtctx.StatementContext, row chunk.Row, tp *type
 	case mysql.TypeDouble:
 		flag = floatFlag
 		f := row.GetFloat64(idx)
+		// For negative zero
 		if f == 0 {
 			f = 0
 		}
@@ -424,6 +426,7 @@ func HashChunkSelected(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk
 			} else {
 				buf[0] = floatFlag
 				d := float64(f)
+				// For negative zero
 				if d == 0 {
 					d = 0
 				}
@@ -446,6 +449,7 @@ func HashChunkSelected(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk
 				isNull[i] = true
 			} else {
 				buf[0] = floatFlag
+				// For negative zero
 				if f == 0 {
 					f = 0
 				}
