@@ -650,6 +650,16 @@ func (s *testSequenceSuite) TestSequenceFunction(c *C) {
 	s.tk.MustExec("drop sequence if exists seq1")
 	s.tk.MustExec("drop table if exists seq1")
 	s.tk.MustExec("drop view if exists seq1")
+
+	// test a bug found in ticase.
+	s.tk.MustExec("create sequence seq")
+	s.tk.MustQuery("select setval(seq, 10)").Check(testkit.Rows("10"))
+	s.tk.MustQuery("select setval(seq, 5)").Check(testkit.Rows("<nil>"))
+	s.tk.MustExec("drop sequence seq")
+	s.tk.MustExec("create sequence seq increment=-1")
+	s.tk.MustQuery("select setval(seq, -10)").Check(testkit.Rows("-10"))
+	s.tk.MustQuery("select setval(seq, -5)").Check(testkit.Rows("<nil>"))
+	s.tk.MustExec("drop sequence seq")
 }
 
 func (s *testSequenceSuite) TestInsertSequence(c *C) {
@@ -713,7 +723,7 @@ func (s *testSequenceSuite) TestInsertSequence(c *C) {
 	s.tk.MustExec("insert into t (id) values(-1),(default)")
 	s.tk.MustQuery("select * from t").Check(testkit.Rows("-1 0", "4 5"))
 
-	// test sequence run out (overflow MaxInt64).
+	// test sequence run out (overflows MaxInt64).
 	setSQL := "select setval(seq," + strconv.FormatInt(model.DefaultPositiveSequenceMaxValue+1, 10) + ")"
 	s.tk.MustQuery(setSQL).Check(testkit.Rows("9223372036854775807"))
 	err := s.tk.QueryToErr("select nextval(seq)")
