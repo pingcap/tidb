@@ -19,7 +19,6 @@ import (
 
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain/infosync"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 )
@@ -30,13 +29,13 @@ import (
 const (
 	// ClusterTableSlowLog is the string constant of cluster slow query memory table.
 	ClusterTableSlowLog     = "CLUSTER_SLOW_QUERY"
-	clusterTableProcesslist = "CLUSTER_PROCESSLIST"
+	ClusterTableProcesslist = "CLUSTER_PROCESSLIST"
 )
 
 // memTableToClusterTables means add memory table to cluster table.
 var memTableToClusterTables = map[string]string{
 	TableSlowQuery:   ClusterTableSlowLog,
-	tableProcesslist: clusterTableProcesslist,
+	TableProcesslist: ClusterTableProcesslist,
 }
 
 func init() {
@@ -70,11 +69,6 @@ func isClusterTableByName(dbName, tableName string) bool {
 		}
 	}
 	return false
-}
-
-func dataForClusterProcesslist(ctx sessionctx.Context) (rows [][]types.Datum, err error) {
-	rows = dataForProcesslist(ctx)
-	return AppendHostInfoToRows(rows)
 }
 
 // AppendHostInfoToRows appends host info to the rows.

@@ -901,6 +901,7 @@ const (
 	ErrInvalidJSONContainsPathType                                  = 3150
 	ErrJSONUsedAsKey                                                = 3152
 	ErrJSONDocumentNULLKey                                          = 3158
+	ErrSecureTransportRequired                                      = 3159
 	ErrBadUser                                                      = 3162
 	ErrUserAlreadyExists                                            = 3163
 	ErrInvalidJSONPathArrayCell                                     = 3165
@@ -1070,12 +1071,13 @@ const (
 	ErrColumnTypeUnsupportedNextValue = 8228
 
 	// TiKV/PD errors.
-	ErrPDServerTimeout    = 9001
-	ErrTiKVServerTimeout  = 9002
-	ErrTiKVServerBusy     = 9003
-	ErrResolveLockTimeout = 9004
-	ErrRegionUnavailable  = 9005
-	ErrGCTooEarly         = 9006
-	ErrWriteConflict      = 9007
-	ErrTiKVStoreLimit     = 9008
+	ErrPDServerTimeout        = 9001
+	ErrTiKVServerTimeout      = 9002
+	ErrTiKVServerBusy         = 9003
+	ErrResolveLockTimeout     = 9004
+	ErrRegionUnavailable      = 9005
+	ErrGCTooEarly             = 9006
+	ErrWriteConflict          = 9007
+	ErrTiKVStoreLimit         = 9008
+	ErrPrometheusAddrIsNotSet = 9009
 )

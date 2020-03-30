@@ -55,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
@@ -179,6 +180,7 @@ func (s stats) Stats(vars *variable.SessionVars) (map[string]interface{}, error)
 }
 
 func (s *seqTestSuite) TestShow(c *C) {
+	config.GetGlobalConfig().Experimental.AllowsExpressionIndex = true
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -279,6 +281,28 @@ func (s *seqTestSuite) TestShow(c *C) {
 		c.Check(r, Equals, expectedRow[i])
 	}
 
+	// test SHOW CREATE TABLE with invisible index
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`create table t (
+		a int,
+		b int,
+		c int UNIQUE KEY,
+		d int UNIQUE KEY,
+		index (b) invisible,
+		index (d) invisible)`)
+	excepted :=
+		"t CREATE TABLE `t` (\n" +
+			"  `a` int(11) DEFAULT NULL,\n" +
+			"  `b` int(11) DEFAULT NULL,\n" +
+			"  `c` int(11) DEFAULT NULL,\n" +
+			"  `d` int(11) DEFAULT NULL,\n" +
+			"  KEY `b` (`b`) /*!80000 INVISIBLE */,\n" +
+			"  KEY `d` (`d`) /*!80000 INVISIBLE */,\n" +
+			"  UNIQUE KEY `c` (`c`),\n" +
+			"  UNIQUE KEY `d_2` (`d`)\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+	tk.MustQuery("show create table t").Check(testkit.Rows(excepted))
+
 	testSQL = "SHOW VARIABLES LIKE 'character_set_results';"
 	result = tk.MustQuery(testSQL)
 	c.Check(result.Rows(), HasLen, 1)
@@ -292,19 +316,23 @@ func (s *seqTestSuite) TestShow(c *C) {
 	tk.MustExec(`create index idx5 using hash on show_index (id) using btree comment 'idx';`)
 	tk.MustExec(`create index idx6 using hash on show_index (id);`)
 	tk.MustExec(`create index idx7 on show_index (id);`)
+	tk.MustExec(`create index idx8 on show_index (id) visible;`)
+	tk.MustExec(`create index idx9 on show_index (id) invisible;`)
 	tk.MustExec(`create index expr_idx on show_index ((id*2+1))`)
 	testSQL = "SHOW index from show_index;"
 	tk.MustQuery(testSQL).Check(testutil.RowsWithSep("|",
-		"show_index|0|PRIMARY|1|id|A|0|<nil>|<nil>||BTREE| |NULL",
-		"show_index|1|cIdx|1|c|A|0|<nil>|<nil>|YES|HASH||index_comment_for_cIdx|NULL",
-		"show_index|1|idx1|1|id|A|0|<nil>|<nil>|YES|HASH| |NULL",
-		"show_index|1|idx2|1|id|A|0|<nil>|<nil>|YES|BTREE||idx|NULL",
-		"show_index|1|idx3|1|id|A|0|<nil>|<nil>|YES|HASH||idx|NULL",
-		"show_index|1|idx4|1|id|A|0|<nil>|<nil>|YES|BTREE||idx|NULL",
-		"show_index|1|idx5|1|id|A|0|<nil>|<nil>|YES|BTREE||idx|NULL",
-		"show_index|1|idx6|1|id|A|0|<nil>|<nil>|YES|HASH| |NULL",
-		"show_index|1|idx7|1|id|A|0|<nil>|<nil>|YES|BTREE| |NULL",
-		"show_index|1|expr_idx|1|NULL|A|0|<nil>|<nil>|YES|BTREE| |(`id` * 2 + 1)",
+		"show_index|0|PRIMARY|1|id|A|0|<nil>|<nil>||BTREE| |YES|NULL",
+		"show_index|1|cIdx|1|c|A|0|<nil>|<nil>|YES|HASH||index_comment_for_cIdx|YES|NULL",
+		"show_index|1|idx1|1|id|A|0|<nil>|<nil>|YES|HASH| |YES|NULL",
+		"show_index|1|idx2|1|id|A|0|<nil>|<nil>|YES|BTREE||idx|YES|NULL",
+		"show_index|1|idx3|1|id|A|0|<nil>|<nil>|YES|HASH||idx|YES|NULL",
+		"show_index|1|idx4|1|id|A|0|<nil>|<nil>|YES|BTREE||idx|YES|NULL",
+		"show_index|1|idx5|1|id|A|0|<nil>|<nil>|YES|BTREE||idx|YES|NULL",
+		"show_index|1|idx6|1|id|A|0|<nil>|<nil>|YES|HASH| |YES|NULL",
+		"show_index|1|idx7|1|id|A|0|<nil>|<nil>|YES|BTREE| |YES|NULL",
+		"show_index|1|idx8|1|id|A|0|<nil>|<nil>|YES|BTREE| |YES|NULL",
+		"show_index|1|idx9|1|id|A|0|<nil>|<nil>|YES|BTREE| |NO|NULL",
+		"show_index|1|expr_idx|1|NULL|A|0|<nil>|<nil>|YES|BTREE| |YES|(`id` * 2 + 1)",
 	))
 
 	// For show like with escape
@@ -1165,6 +1193,44 @@ func (s *seqTestSuite1) TestCoprocessorPriority(c *C) {
 	cli.mu.Lock()
 	cli.mu.checkPrio = false
 	cli.mu.Unlock()
+}
+
+func (s *seqTestSuite) TestShowForNewCollations(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	tk := testkit.NewTestKit(c, s.store)
+	expectRows := testkit.Rows(
+		"ascii_bin ascii 65 Yes Yes 1",
+		"binary binary 63 Yes Yes 1",
+		"latin1_bin latin1 47 Yes Yes 1",
+		"utf8_bin utf8 83 Yes Yes 1",
+		"utf8_general_ci utf8 33  Yes 1",
+		"utf8mb4_bin utf8mb4 46 Yes Yes 1",
+		"utf8mb4_general_ci utf8mb4 45  Yes 1",
+	)
+	tk.MustQuery("show collation").Check(expectRows)
+	tk.MustQuery("select * from information_schema.COLLATIONS").Check(expectRows)
+}
+
+func (s *seqTestSuite) TestForbidUnsupportedCollations(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	tk := testkit.NewTestKit(c, s.store)
+	mustGetUnsupportedCollation := func(sql string, coll string) {
+		tk.MustGetErrMsg(sql, fmt.Sprintf("[ddl:1273]Unsupported collation when new collation is enabled: '%s'", coll))
+	}
+
+	mustGetUnsupportedCollation("select 'a' collate utf8_unicode_ci", "utf8_unicode_ci")
+	mustGetUnsupportedCollation("select cast('a' as char) collate utf8_unicode_ci", "utf8_unicode_ci")
+	mustGetUnsupportedCollation("set names utf8 collate utf8_unicode_ci", "utf8_unicode_ci")
+	mustGetUnsupportedCollation("set session collation_server = 'utf8_unicode_ci'", "utf8_unicode_ci")
+	mustGetUnsupportedCollation("set session collation_database = 'utf8_unicode_ci'", "utf8_unicode_ci")
+	mustGetUnsupportedCollation("set session collation_connection = 'utf8_unicode_ci'", "utf8_unicode_ci")
+	mustGetUnsupportedCollation("set global collation_server = 'utf8_unicode_ci'", "utf8_unicode_ci")
+	mustGetUnsupportedCollation("set global collation_database = 'utf8_unicode_ci'", "utf8_unicode_ci")
+	mustGetUnsupportedCollation("set global collation_connection = 'utf8_unicode_ci'", "utf8_unicode_ci")
 }
 
 func (s *seqTestSuite) TestAutoIncIDInRetry(c *C) {

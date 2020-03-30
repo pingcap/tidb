@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
@@ -242,6 +243,7 @@ type builtinInStringSig struct {
 func (b *builtinInStringSig) buildHashMapForConstArgs(ctx sessionctx.Context) error {
 	b.nonConstArgs = []Expression{b.args[0]}
 	b.hashSet = set.NewStringSet()
+	collator := collate.GetCollator(b.collation)
 	for i := 1; i < len(b.args); i++ {
 		if b.args[i].ConstItem(b.ctx.GetSessionVars().StmtCtx) {
 			val, isNull, err := b.args[i].EvalString(ctx, chunk.Row{})
@@ -252,7 +254,7 @@ func (b *builtinInStringSig) buildHashMapForConstArgs(ctx sessionctx.Context) er
 				b.hasNull = true
 				continue
 			}
-			b.hashSet.Insert(val)
+			b.hashSet.Insert(string(collator.Key(val)))
 		} else {
 			b.nonConstArgs = append(b.nonConstArgs, b.args[i])
 		}
@@ -280,9 +282,10 @@ func (b *builtinInStringSig) evalInt(row chunk.Row) (int64, bool, error) {
 	}
 
 	args := b.args
+	collator := collate.GetCollator(b.collation)
 	if len(b.hashSet) != 0 {
 		args = b.nonConstArgs
-		if b.hashSet.Exist(arg0) {
+		if b.hashSet.Exist(string(collator.Key(arg0))) {
 			return 1, false, nil
 		}
 	}
@@ -297,7 +300,7 @@ func (b *builtinInStringSig) evalInt(row chunk.Row) (int64, bool, error) {
 			hasNull = true
 			continue
 		}
-		if arg0 == evaledArg {
+		if types.CompareString(arg0, evaledArg, b.collation) == 0 {
 			return 1, false, nil
 		}
 	}
@@ -796,6 +799,19 @@ func (b *builtinValuesIntSig) evalInt(_ chunk.Row) (int64, bool, error) {
 	if b.offset < row.Len() {
 		if row.IsNull(b.offset) {
 			return 0, true, nil
+		}
+		// For BinaryLiteral, see issue #15310
+		val := row.GetRaw(b.offset)
+		if len(val) > 8 {
+			return 0, true, errors.New("Session current insert values is too long")
+		}
+		if len(val) < 8 {
+			var binary types.BinaryLiteral = val
+			v, err := binary.ToInt(b.ctx.GetSessionVars().StmtCtx)
+			if err != nil {
+				return 0, true, errors.Trace(err)
+			}
+			return int64(v), false, nil
 		}
 		return row.GetInt64(b.offset), false, nil
 	}
