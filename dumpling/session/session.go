@@ -1790,6 +1790,9 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 	s.sessionVars.GlobalVarsAccessor = s
 	s.sessionVars.BinlogClient = binloginfo.GetPumpsClient()
 	s.txn.init()
+
+	sessionBindHandle := bindinfo.NewSessionBindHandle(s.parser)
+	s.SetValue(bindinfo.SessionBindInfoKeyType, sessionBindHandle)
 	return s, nil
 }
 
