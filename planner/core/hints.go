@@ -20,11 +20,10 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/format"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/bindinfo"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
 )
 
 // BlockHintProcessor processes hints at different level of sql statement.
@@ -157,29 +156,13 @@ func (p *BlockHintProcessor) getCurrentStmtHints(hints []*ast.TableOptimizerHint
 		}
 		offset := p.getHintOffset(hint.QBName, nodeType, currentOffset)
 		if offset < 0 || !p.checkTableQBName(hint.Tables, nodeType) {
-			var sb strings.Builder
-			ctx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
-			err := hint.Restore(ctx)
-			// There won't be any error for optimizer hint.
-			if err == nil {
-				p.Ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New(fmt.Sprintf("Hint %s is ignored due to unknown query block name", sb.String())))
-			}
+			hintStr := bindinfo.RestoreTableOptimizerHint(hint)
+			p.Ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New(fmt.Sprintf("Hint %s is ignored due to unknown query block name", hintStr)))
 			continue
 		}
 		p.QbHints[offset] = append(p.QbHints[offset], hint)
 	}
 	return p.QbHints[currentOffset]
-}
-
-func restoreOptimizerHint(hint *ast.TableOptimizerHint) string {
-	var sb strings.Builder
-	ctx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
-	err := hint.Restore(ctx)
-	// There won't be any error for optimizer hint.
-	if err != nil {
-		logutil.BgLogger().Warn("restore hint failed", zap.Error(err))
-	}
-	return sb.String()
 }
 
 // GenHintsFromPhysicalPlan generates hints from physical plan.
@@ -197,7 +180,7 @@ func GenHintsFromPhysicalPlan(p Plan) string {
 	}
 	hintsStr := make([]string, 0, len(hints))
 	for _, hint := range hints {
-		hintsStr = append(hintsStr, restoreOptimizerHint(hint))
+		hintsStr = append(hintsStr, bindinfo.RestoreTableOptimizerHint(hint))
 	}
 	return strings.Join(hintsStr, ", ")
 }
@@ -284,6 +267,14 @@ func genHintsFromPhysicalPlan(p PhysicalPlan, nodeType nodeType) (res []*ast.Tab
 			HintName: model.NewCIStr(HintUseIndex),
 			Tables:   []ast.HintTable{{DBName: tbl.DBName, TableName: getTableName(tbl.Table.Name, tbl.TableAsName)}},
 		})
+		if tbl.StoreType == kv.TiFlash {
+			res = append(res, &ast.TableOptimizerHint{
+				QBName:   generateQBName(nodeType, pp.blockOffset),
+				HintName: model.NewCIStr(HintReadFromStorage),
+				HintData: model.NewCIStr(kv.TiFlash.Name()),
+				Tables:   []ast.HintTable{{DBName: tbl.DBName, TableName: getTableName(tbl.Table.Name, tbl.TableAsName)}},
+			})
+		}
 	case *PhysicalIndexLookUpReader:
 		index := pp.IndexPlans[0].(*PhysicalIndexScan)
 		res = append(res, &ast.TableOptimizerHint{

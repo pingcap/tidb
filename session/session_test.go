@@ -299,6 +299,21 @@ func (s *testSessionSuite) TestQueryString(c *C) {
 	tk.MustExec("create table mutil1 (a int);create table multi2 (a int)")
 	queryStr := tk.Se.Value(sessionctx.QueryString)
 	c.Assert(queryStr, Equals, "create table multi2 (a int)")
+
+	// Test execution of DDL through the "ExecutePreparedStmt" interface.
+	_, err := tk.Se.Execute(context.Background(), "use test;")
+	c.Assert(err, IsNil)
+	_, err = tk.Se.Execute(context.Background(), "CREATE TABLE t (id bigint PRIMARY KEY, age int)")
+	c.Assert(err, IsNil)
+	_, err = tk.Se.Execute(context.Background(), "show create table t")
+	c.Assert(err, IsNil)
+	id, _, _, err := tk.Se.PrepareStmt("CREATE TABLE t2(id bigint PRIMARY KEY, age int)")
+	c.Assert(err, IsNil)
+	params := []types.Datum{}
+	_, err = tk.Se.ExecutePreparedStmt(context.Background(), id, params)
+	c.Assert(err, IsNil)
+	qs := tk.Se.Value(sessionctx.QueryString)
+	c.Assert(qs.(string), Equals, "CREATE TABLE t2(id bigint PRIMARY KEY, age int)")
 }
 
 func (s *testSessionSuite) TestAffectedRows(c *C) {
@@ -2075,6 +2090,28 @@ func (s *testSchemaSuite) TestCommitWhenSchemaChanged(c *C) {
 	tk1.MustExec("insert into t values (4, 4)")
 	_, err := tk1.Exec("commit")
 	c.Assert(terror.ErrorEqual(err, plannercore.ErrWrongValueCountOnRow), IsTrue, Commentf("err %v", err))
+}
+
+func (s *testSchemaSuite) TestRetrySchemaChangeForEmptyChange(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t (i int)")
+	tk.MustExec("create table t1 (i int)")
+	tk.MustExec("begin")
+	tk1.MustExec("alter table t add j int")
+	tk.MustExec("select * from t for update")
+	tk.MustExec("update t set i = -i")
+	tk.MustExec("delete from t")
+	tk.MustExec("insert into t1 values (1)")
+	tk.MustExec("commit")
+
+	tk.MustExec("begin pessimistic")
+	tk1.MustExec("alter table t add k int")
+	tk.MustExec("select * from t for update")
+	tk.MustExec("update t set i = -i")
+	tk.MustExec("delete from t")
+	tk.MustExec("insert into t1 values (1)")
+	tk.MustExec("commit")
 }
 
 func (s *testSchemaSuite) TestRetrySchemaChange(c *C) {

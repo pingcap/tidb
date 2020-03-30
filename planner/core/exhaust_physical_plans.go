@@ -289,6 +289,10 @@ func (p *PhysicalMergeJoin) initCompareFuncs() {
 // TODO: use hint and remove this variable
 var ForceUseOuterBuild4Test = false
 
+// ForcedHashLeftJoin4Test is a test option to force using HashLeftJoin
+// TODO: use hint and remove this variable
+var ForcedHashLeftJoin4Test = false
+
 func (p *LogicalJoin) getHashJoins(prop *property.PhysicalProperty) []PhysicalPlan {
 	if !prop.IsEmpty() { // hash join doesn't promise any orders
 		return nil
@@ -312,8 +316,12 @@ func (p *LogicalJoin) getHashJoins(prop *property.PhysicalProperty) []PhysicalPl
 			joins = append(joins, p.getHashJoin(prop, 0, true))
 		}
 	case InnerJoin:
-		joins = append(joins, p.getHashJoin(prop, 1, false))
-		joins = append(joins, p.getHashJoin(prop, 0, false))
+		if ForcedHashLeftJoin4Test {
+			joins = append(joins, p.getHashJoin(prop, 1, false))
+		} else {
+			joins = append(joins, p.getHashJoin(prop, 1, false))
+			joins = append(joins, p.getHashJoin(prop, 0, false))
+		}
 	}
 	return joins
 }
@@ -1256,7 +1264,7 @@ func (ijHelper *indexJoinBuildHelper) buildTemplateRange(matchedKeyCnt int, eqAn
 
 // tryToGetIndexJoin will get index join by hints. If we can generate a valid index join by hint, the second return value
 // will be true, which means we force to choose this index join. Otherwise we will select a join algorithm with min-cost.
-func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJoins []PhysicalPlan, forced bool) {
+func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJoins []PhysicalPlan, canForced bool) {
 	inljRightOuter := (p.preferJoinType & preferLeftAsINLJInner) > 0
 	inljLeftOuter := (p.preferJoinType & preferRightAsINLJInner) > 0
 	hasINLJHint := inljLeftOuter || inljRightOuter
@@ -1271,10 +1279,29 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 
 	forceLeftOuter := inljLeftOuter || inlhjLeftOuter || inlmjLeftOuter
 	forceRightOuter := inljRightOuter || inlhjRightOuter || inlmjRightOuter
+	needForced := forceLeftOuter || forceRightOuter
 
 	defer func() {
 		// refine error message
-		if !forced && (hasINLJHint || hasINLHJHint || hasINLMJHint) {
+		if !canForced && needForced {
+			if hasINLMJHint && len(indexJoins) > 0 && len(prop.Items) > 0 {
+				containIdxMergeJoin := false
+				for _, idxJoin := range indexJoins {
+					if _, ok := idxJoin.(*PhysicalIndexMergeJoin); ok {
+						containIdxMergeJoin = true
+						break
+					}
+				}
+				// 1. IndexMergeJoin requires stricter conditions than Index(Hash)Join when the output order is needed.
+				// 2. IndexMergeJoin requires the same conditions with Index(Hash)Join when the output is unordered.
+				// 3. If ordered-Index(Hash)Join can be chosen but ordered-IndexMergeJoin can not be chosen, we can build a plan with an enforced sort on IndexMergeJoin.
+				// 4. Thus we can give up the plans here if IndexMergeJoin is nil when `hasINLMJHint` is true. Because we can make sure that an IndexMeregJoin with enforced sort will be built.
+				if !containIdxMergeJoin {
+					canForced = true
+					indexJoins = nil
+					return
+				}
+			}
 			// Construct warning message prefix.
 			var errMsg string
 			switch {
@@ -1377,8 +1404,8 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 
 	canForceLeft := len(forcedLeftOuterJoins) != 0 && forceLeftOuter
 	canForceRight := len(forcedRightOuterJoins) != 0 && forceRightOuter
-	forced = canForceLeft || canForceRight
-	if forced {
+	canForced = canForceLeft || canForceRight
+	if canForced {
 		return append(forcedLeftOuterJoins, forcedRightOuterJoins...), true
 	}
 	return append(allLeftOuterJoins, allRightOuterJoins...), false
