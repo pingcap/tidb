@@ -77,7 +77,7 @@ type Config struct {
 	MemQuotaQuery    int64           `toml:"mem-quota-query" json:"mem-quota-query"`
 	EnableStreaming  bool            `toml:"enable-streaming" json:"enable-streaming"`
 	EnableBatchDML   bool            `toml:"enable-batch-dml" json:"enable-batch-dml"`
-	TxnLocalLatches  TxnLocalLatches `toml:"txn-local-latches" json:"txn-local-latches"`
+	TxnLocalLatches  TxnLocalLatches `toml:"-" json:"-"`
 	// Set sys variable lower-case-table-names, ref: https://dev.mysql.com/doc/refman/5.7/en/identifier-case-sensitivity.html.
 	// TODO: We actually only support mode 2, which keeps the original case, but the comparison is case-insensitive.
 	LowerCaseTableNames int               `toml:"lower-case-table-names" json:"lower-case-table-names"`
@@ -347,8 +347,8 @@ type PlanCache struct {
 
 // TxnLocalLatches is the TxnLocalLatches section of the config.
 type TxnLocalLatches struct {
-	Enabled  bool `toml:"enabled" json:"enabled"`
-	Capacity uint `toml:"capacity" json:"capacity"`
+	Enabled  bool `toml:"-" json:"-"`
+	Capacity uint `toml:"-" json:"-"`
 }
 
 // PreparedPlanCache is the PreparedPlanCache section of the config.
@@ -529,7 +529,7 @@ var defaultConf = Config{
 	MaxServerConnections:         0,
 	TxnLocalLatches: TxnLocalLatches{
 		Enabled:  false,
-		Capacity: 2048000,
+		Capacity: 0,
 	},
 	LowerCaseTableNames: 2,
 	ServerVersion:       "",
@@ -668,8 +668,11 @@ func StoreGlobalConfig(config *Config) {
 }
 
 var deprecatedConfig = map[string]struct{}{
-	"pessimistic-txn.ttl": {},
-	"log.file.log-rotate": {},
+	"pessimistic-txn.ttl":        {},
+	"log.file.log-rotate":        {},
+	"txn-local-latches":          {},
+	"txn-local-latches.enabled":  {},
+	"txn-local-latches.capacity": {},
 }
 
 func isAllDeprecatedConfigItems(items []string) bool {
@@ -692,15 +695,11 @@ func InitializeConfig(confPath string, configCheck, configStrict bool, reloadFun
 		if err = cfg.Load(confPath); err != nil {
 			// Unused config item error turns to warnings.
 			if tmp, ok := err.(*ErrConfigValidationFailed); ok {
-				if isAllDeprecatedConfigItems(tmp.UndecodedItems) {
-					fmt.Fprintln(os.Stderr, err.Error())
-					err = nil
-				}
 				// This block is to accommodate an interim situation where strict config checking
 				// is not the default behavior of TiDB. The warning message must be deferred until
 				// logging has been set up. After strict config checking is the default behavior,
 				// This should all be removed.
-				if !configCheck && !configStrict {
+				if (!configCheck && !configStrict) || isAllDeprecatedConfigItems(tmp.UndecodedItems) {
 					fmt.Fprintln(os.Stderr, err.Error())
 					err = nil
 				}
@@ -819,6 +818,9 @@ func (c *Config) Valid() error {
 		return fmt.Errorf("txn-total-size-limit should be less than %d", 10<<30)
 	}
 
+	if c.StmtSummary.MaxStmtCount <= 0 {
+		return fmt.Errorf("max-stmt-count in [stmt-summary] should be greater than 0")
+	}
 	if c.StmtSummary.HistorySize < 0 {
 		return fmt.Errorf("history-size in [stmt-summary] should be greater than or equal to 0")
 	}
