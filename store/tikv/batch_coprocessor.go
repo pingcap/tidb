@@ -119,7 +119,7 @@ func buildBatchCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, re
 				ranges: ranges.slice(i, nextI),
 				// Channel buffer is 2 for handling region split.
 				// In a common case, two region split tasks will not be blocked.
-				respChan:  make(chan *copResponse, 1024),
+				respChan:  make(chan *copResponse),
 				cmdType:   cmdType,
 				storeType: req.StoreType,
 			})
@@ -146,7 +146,7 @@ func buildBatchCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, re
 			batchCop.regionTaskMap[task.region.id] = task
 		} else {
 			batchTask := &batchCopTask {
-				respChan : make(chan * batchCopResponse, 10),
+				respChan : make(chan * batchCopResponse, 2048),
 				storeAddr: rpcCtx.Addr,
 				cmdType : task.cmdType,
 				regionTaskMap: make(map[uint64]*copTask),

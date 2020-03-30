@@ -202,6 +202,11 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 		SetMemTracker(e.memTracker).
 		SetStoreType(e.storeType).
 		Build()
+	for _, p := range e.plans {
+		if len(p.Children()) > 1 {
+			kvReq.CopTaskBatch = true
+		}
+	}
 	if err != nil {
 		return nil, err
 	}
