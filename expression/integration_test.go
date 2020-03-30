@@ -4967,6 +4967,14 @@ func (s *testIntegrationSuite) TestInvalidEndingStatement(c *C) {
 	assertParseErr(`drop table if exists t"`)
 }
 
+func (s *testIntegrationSuite) TestIssue15613(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustQuery("select sec_to_time(1e-4)").Check(testkit.Rows("00:00:00.000100"))
+	tk.MustQuery("select sec_to_time(1e-5)").Check(testkit.Rows("00:00:00.000010"))
+	tk.MustQuery("select sec_to_time(1e-6)").Check(testkit.Rows("00:00:00.000001"))
+	tk.MustQuery("select sec_to_time(1e-7)").Check(testkit.Rows("00:00:00.000000"))
+}
+
 func (s *testIntegrationSuite) TestIssue10675(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -5898,4 +5906,13 @@ func (s *testIntegrationSerialSuite) TestCollateSubQuery(c *C) {
 	tk.MustQuery("select id from t_bin where exists (select 1 from t where t_bin.v=t.v) order by id").Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7"))
 	tk.MustQuery("select id from t where not exists (select 1 from t_bin where t_bin.v=t.v) order by id").Check(testkit.Rows())
 	tk.MustQuery("select id from t_bin where not exists (select 1 from t where t_bin.v=t.v) order by id").Check(testkit.Rows())
+}
+
+func (s *testIntegrationSerialSuite) TestCollateDDL(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database t;")
+	tk.MustExec("use t;")
+	tk.MustExec("drop database t;")
 }

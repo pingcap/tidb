@@ -171,6 +171,7 @@ unrecognized-option-test = true
 	c.Assert(f.Sync(), IsNil)
 
 	c.Assert(conf.Load(configFile), ErrorMatches, "(?:.|\n)*unknown configuration option(?:.|\n)*")
+	c.Assert(conf.MaxServerConnections, Equals, uint32(0))
 
 	f.Truncate(0)
 	f.Seek(0, 0)
