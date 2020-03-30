@@ -52,7 +52,6 @@ type Tracker struct {
 	bytesLimit    int64        // bytesLimit <= 0 means no limit.
 	maxConsumed   int64        // max number of bytes consumed during execution.
 	parent        *Tracker     // The parent memory tracker.
-
 }
 
 // NewTracker creates a memory tracker.
@@ -171,6 +170,7 @@ func (t *Tracker) ReplaceChild(oldChild, newChild *Tracker) {
 
 // Consume is used to consume a memory usage. "bytes" can be a negative value,
 // which means this is a memory release operation. When memory usage of a tracker
+// exceeds its bytesLimit, the tracker calls its action, so does each of its ancestors.
 func (t *Tracker) Consume(bytes int64) {
 	var rootExceed *Tracker
 	for tracker := t; tracker != nil; tracker = tracker.parent {
