@@ -905,14 +905,21 @@ func (bj BinaryJSON) Search(containType string, search string, escape byte, path
 		if err != nil {
 			return res, err
 		}
-		return CreateBinary(result), nil
 	} else {
 		err := bj.Walk(walkFn)
 		if err != nil {
 			return res, err
 		}
+	}
+	switch len(result) {
+	case 0:
+		return res, nil
+	case 1:
+		return CreateBinary(result[0]), nil
+	default:
 		return CreateBinary(result), nil
 	}
+
 }
 
 // extractCallbackFn: the type of CALLBACK function for extractToCallback
