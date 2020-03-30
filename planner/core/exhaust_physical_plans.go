@@ -1611,6 +1611,19 @@ func (la *LogicalAggregation) getEnforcedStreamAggs(prop *property.PhysicalPrope
 	return enforcedAggs
 }
 
+func (la *LogicalAggregation) distinctArgsMeetsProperty() bool {
+	for _, aggFunc := range la.AggFuncs {
+		if aggFunc.HasDistinct {
+			for _, distinctArg := range aggFunc.Args {
+				if !expression.Contains(la.GroupByItems, distinctArg) {
+					return false
+				}
+			}
+		}
+	}
+	return true
+}
+
 func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []PhysicalPlan {
 	all, desc := prop.AllSameOrder()
 	if !all {
@@ -1645,6 +1658,10 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 			// If AllowDistinctAggPushDown is set to true, we should not consider RootTask.
 			if !la.ctx.GetSessionVars().AllowDistinctAggPushDown {
 				taskTypes = []property.TaskType{property.RootTaskType}
+			} else {
+				if !la.distinctArgsMeetsProperty() {
+					continue
+				}
 			}
 		} else if !la.aggHints.preferAggToCop {
 			taskTypes = append(taskTypes, property.RootTaskType)

@@ -1145,8 +1145,11 @@ func (p *basePhysicalAgg) newPartialAggregate(copTaskType kv.StoreType) (partial
 	partialPref, finalPref, funcMap := BuildFinalModeAggregation(p.ctx, &AggInfo{
 		AggFuncs:     p.AggFuncs,
 		GroupByItems: p.GroupByItems,
-		Schema:       p.Schema(),
+		Schema:       p.Schema().Clone(),
 	})
+	if p.tp == plancodec.TypeStreamAgg && len(partialPref.GroupByItems) != len(finalPref.GroupByItems) {
+		return nil, p.self
+	}
 	// Remove unnecessary FirstRow.
 	partialPref.AggFuncs = RemoveUnnecessaryFirstRow(p.ctx,
 		finalPref.AggFuncs, finalPref.GroupByItems,
