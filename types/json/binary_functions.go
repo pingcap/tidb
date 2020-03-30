@@ -900,7 +900,7 @@ func (bj BinaryJSON) Search(containType string, search string, escape byte, path
 		}
 		return false, nil
 	}
-	if pathExpres != nil && len(pathExpres) != 0 {
+	if len(pathExpres) != 0 {
 		err := bj.Walk(walkFn, pathExpres...)
 		if err != nil {
 			return res, true, err
