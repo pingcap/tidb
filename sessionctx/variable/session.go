@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/storeutil"
 	"github.com/pingcap/tidb/util/timeutil"
@@ -1214,6 +1215,41 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case CollationConnection, CollationDatabase, CollationServer:
 		if _, err := collate.GetCollationByName(val); err != nil {
 			return errors.Trace(err)
+		}
+	case TiDBSlowLogThreshold:
+		conf := config.GetGlobalConfig()
+		if !conf.EnableDynamicConfig {
+			atomic.StoreUint64(&config.GetGlobalConfig().Log.SlowThreshold, uint64(tidbOptInt64(val, logutil.DefaultSlowThreshold)))
+		} else {
+			s.StmtCtx.AppendWarning(errors.Errorf("cannot update %s when enabling dynamic configs", TiDBSlowLogThreshold))
+		}
+	case TiDBRecordPlanInSlowLog:
+		conf := config.GetGlobalConfig()
+		if !conf.EnableDynamicConfig {
+			atomic.StoreUint32(&config.GetGlobalConfig().Log.RecordPlanInSlowLog, uint32(tidbOptInt64(val, logutil.DefaultRecordPlanInSlowLog)))
+		} else {
+			s.StmtCtx.AppendWarning(errors.Errorf("cannot update %s when enabling dynamic configs", TiDBRecordPlanInSlowLog))
+		}
+	case TiDBEnableSlowLog:
+		conf := config.GetGlobalConfig()
+		if !conf.EnableDynamicConfig {
+			config.GetGlobalConfig().Log.EnableSlowLog = TiDBOptOn(val)
+		} else {
+			s.StmtCtx.AppendWarning(errors.Errorf("cannot update %s when enabling dynamic configs", TiDBEnableSlowLog))
+		}
+	case TiDBQueryLogMaxLen:
+		conf := config.GetGlobalConfig()
+		if !conf.EnableDynamicConfig {
+			atomic.StoreUint64(&config.GetGlobalConfig().Log.QueryLogMaxLen, uint64(tidbOptInt64(val, logutil.DefaultQueryLogMaxLen)))
+		} else {
+			s.StmtCtx.AppendWarning(errors.Errorf("cannot update %s when enabling dynamic configs", TiDBQueryLogMaxLen))
+		}
+	case TiDBCheckMb4ValueInUTF8:
+		conf := config.GetGlobalConfig()
+		if !conf.EnableDynamicConfig {
+			config.GetGlobalConfig().CheckMb4ValueInUTF8 = TiDBOptOn(val)
+		} else {
+			s.StmtCtx.AppendWarning(errors.Errorf("cannot update %s when enabling dynamic configs", TiDBCheckMb4ValueInUTF8))
 		}
 	}
 	s.systems[name] = val
