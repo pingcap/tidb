@@ -20,8 +20,8 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
@@ -36,7 +36,7 @@ import (
 )
 
 var (
-	errQueryInterrupted = terror.ClassExecutor.NewStd(errno.ErrQueryInterrupted)
+	errQueryInterrupted = terror.ClassExecutor.New(mysql.ErrQueryInterrupted, mysql.MySQLErrName[mysql.ErrQueryInterrupted])
 )
 
 var (
@@ -111,7 +111,6 @@ func (r *selectResult) fetch(ctx context.Context) {
 		var result resultWithErr
 		resultSubset, err := r.resp.Next(ctx)
 		if err != nil {
-<<<<<<< HEAD
 			result.err = err
 		} else if resultSubset == nil {
 			// If the result is drained, the resultSubset would be nil
@@ -119,29 +118,6 @@ func (r *selectResult) fetch(ctx context.Context) {
 		} else {
 			result.result = resultSubset
 			r.memConsume(int64(resultSubset.MemSize()))
-=======
-			return errors.Trace(err)
-		}
-		r.selectRespSize = r.selectResp.Size()
-		r.memConsume(int64(r.selectRespSize))
-		if err := r.selectResp.Error; err != nil {
-			return terror.ClassTiKV.Synthesize(terror.ErrCode(err.Code), err.Msg)
-		}
-		sessVars := r.ctx.GetSessionVars()
-		if atomic.CompareAndSwapUint32(&sessVars.Killed, 1, 0) {
-			return errors.Trace(errQueryInterrupted)
-		}
-		sc := sessVars.StmtCtx
-		for _, warning := range r.selectResp.Warnings {
-			sc.AppendWarning(terror.ClassTiKV.Synthesize(terror.ErrCode(warning.Code), warning.Msg))
-		}
-		r.updateCopRuntimeStats(resultSubset.GetExecDetails(), resultSubset.RespTime())
-		r.feedback.Update(resultSubset.GetStartKey(), r.selectResp.OutputCounts)
-		r.partialCount++
-		sc.MergeExecDetails(resultSubset.GetExecDetails(), nil)
-		if len(r.selectResp.Chunks) != 0 {
-			break
->>>>>>> 00dc69c... distsql: check the killed flag in the distsql package (#15592)
 		}
 
 		select {
@@ -218,7 +194,11 @@ func (r *selectResult) getSelectResp() error {
 		if err := r.selectResp.Error; err != nil {
 			return terror.ClassTiKV.New(terror.ErrCode(err.Code), err.Msg)
 		}
-		sc := r.ctx.GetSessionVars().StmtCtx
+		sessVars := r.ctx.GetSessionVars()
+		if atomic.CompareAndSwapUint32(&sessVars.Killed, 1, 0) {
+			return errors.Trace(errQueryInterrupted)
+		}
+		sc := sessVars.StmtCtx
 		for _, warning := range r.selectResp.Warnings {
 			sc.AppendWarning(terror.ClassTiKV.New(terror.ErrCode(warning.Code), warning.Msg))
 		}
