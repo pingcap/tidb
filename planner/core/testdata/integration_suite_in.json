@@ -72,8 +72,7 @@
       "select /*+ USE_INDEX(t2, a, b, c) */ * from t1",
       "select /*+ USE_INDEX(t2) */ * from t1",
       "select /*+ USE_INDEX(t1, a), USE_INDEX(t2, a), USE_INDEX(t3, a) */ * from t1, t2 where t1.a=t2.a",
-      "select /*+ USE_INDEX(t3, a), USE_INDEX(t4, b), IGNORE_INDEX(t3, a) */ * from t1, t2 where t1.a=t2.a",
-      "select /*+ USE_INDEX_MERGE(t3, a, b, d) */ * from t1"
+      "select /*+ USE_INDEX(t3, a), USE_INDEX(t4, b), IGNORE_INDEX(t3, a) */ * from t1, t2 where t1.a=t2.a"
     ]
   }
 ]

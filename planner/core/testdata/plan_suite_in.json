@@ -12,9 +12,6 @@
       // use TablePath when the hint only contains table.
       "select /*+ USE_INDEX(t) */ f from t where f > 10",
       // there will be a warning instead of error when index not exist
-<<<<<<< HEAD
-      "select /*+ USE_INDEX(t, no_such_index) */ * from t"
-=======
       "select /*+ USE_INDEX(t, no_such_index) */ * from t",
       "select /*+ IGNORE_INDEX(t, no_such_index) */ * from t",
       // use both use_index and ignore_index, same as index hints in sql.
@@ -22,19 +19,6 @@
       "select /*+ USE_INDEX(t, f), IGNORE_INDEX(t, f) */ c from t order by c",
       "select /*+ USE_INDEX(t, c_d_e), IGNORE_INDEX(t, c_d_e) */ c from t order by c",
       "select /*+ USE_INDEX(t, c_d_e, f), IGNORE_INDEX(t, c_d_e) */ c from t order by c"
-    ]
-  },
-  {
-    "name": "TestIndexMergeHint",
-    "cases": [
-      "select /*+ USE_INDEX_MERGE(t, c_d_e, f_g) */ * from t where c < 1 or f > 2",
-      "select /*+ USE_INDEX_MERGE(t, primary, f_g) */ * from t where a < 1 or f > 2",
-      "select /*+ USE_INDEX_MERGE(t, primary, f_g, c_d_e) */ * from t where a < 1 or f > 2",
-      "select /*+ NO_INDEX_MERGE(), USE_INDEX_MERGE(t, primary, f_g, c_d_e) */ * from t where a < 1 or f > 2",
-      "select /*+ USE_INDEX_MERGE(t1, c_d_e, f_g) */ * from t where c < 1 or f > 2",
-      "select /*+ NO_INDEX_MERGE(), USE_INDEX_MERGE(t, primary, f_g, c_d_e) */ * from t where a < 1 or f > 2",
-      "select /*+ USE_INDEX_MERGE(t) USE_INDEX_MERGE(t) */ * from t where c < 1 or f > 2"
->>>>>>> dd14172... planner: add warning when the table name of indexHint cannot be found (#15517)
     ]
   },
   {

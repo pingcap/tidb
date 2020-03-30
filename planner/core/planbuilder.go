@@ -105,7 +105,7 @@ func (hint *indexHintInfo) indexString() string {
 	if len(indexList) > 0 {
 		indexListString = fmt.Sprintf(", %s", strings.Join(indexList, ", "))
 	}
-	return fmt.Sprintf("%s.%s%s", hint.dbName, hint.tblName, indexListString)
+	return fmt.Sprintf("%s%s", hint.tblName, indexListString)
 }
 
 type aggHintInfo struct {
@@ -587,13 +587,8 @@ func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tblInf
 	// Extract comment-style index hint like /*+ INDEX(t, idx1, idx2) */.
 	indexHintsLen := len(indexHints)
 	if hints := b.TableHints(); hints != nil {
-<<<<<<< HEAD
-		for _, hint := range hints.indexHintList {
-			if hint.tblName == tblName {
-=======
 		for i, hint := range hints.indexHintList {
-			if hint.dbName.L == dbName.L && hint.tblName.L == tblName.L {
->>>>>>> dd14172... planner: add warning when the table name of indexHint cannot be found (#15517)
+			if hint.tblName == tblName {
 				indexHints = append(indexHints, hint.indexHint)
 				hints.indexHintList[i].matched = true
 			}

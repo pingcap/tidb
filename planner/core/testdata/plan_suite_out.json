@@ -1,167 +1,68 @@
 [
   {
     "Name": "TestIndexHint",
-<<<<<<< HEAD
-    "Cases": null
-=======
     "Cases": [
       {
         "SQL": "select /*+ USE_INDEX(t, c_d_e) */ * from t",
         "Best": "IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))",
-        "HasWarn": false,
-        "Hints": "USE_INDEX(@`sel_1` `test`.`t` `c_d_e`)"
-      },
-      {
-        "SQL": "select /*+ USE_INDEX(test.t, c_d_e) */ * from t",
-        "Best": "IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))",
-        "HasWarn": false,
-        "Hints": "USE_INDEX(@`sel_1` `test`.`t` `c_d_e`)"
-      },
-      {
-        "SQL": "select /*+ IGNORE_INDEX(t, c_d_e) */ c from t order by c",
-        "Best": "TableReader(Table(t))->Sort",
-        "HasWarn": false,
-        "Hints": "USE_INDEX(@`sel_1` `test`.`t` )"
-      },
-      {
-        "SQL": "select /*+ IGNORE_INDEX(test.t, c_d_e) */ c from t order by c",
-        "Best": "TableReader(Table(t))->Sort",
-        "HasWarn": false,
-        "Hints": "USE_INDEX(@`sel_1` `test`.`t` )"
+        "HasWarn": false
       },
       {
         "SQL": "select /*+ USE_INDEX(t, c_d_e) */ * from t t1",
         "Best": "TableReader(Table(t))",
-        "HasWarn": true,
-        "Hints": "USE_INDEX(@`sel_1` `test`.`t1` )"
-      },
-      {
-        "SQL": "select /*+ IGNORE_INDEX(t, c_d_e) */ t1.c from t t1 order by t1.c",
-        "Best": "IndexReader(Index(t.c_d_e)[[NULL,+inf]])",
-        "HasWarn": true,
-        "Hints": "USE_INDEX(@`sel_1` `test`.`t1` `c_d_e`)"
+        "HasWarn": true
       },
       {
         "SQL": "select /*+ USE_INDEX(t1, c_d_e) */ * from t t1",
         "Best": "IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))",
-        "HasWarn": false,
-        "Hints": "USE_INDEX(@`sel_1` `test`.`t1` `c_d_e`)"
-      },
-      {
-        "SQL": "select /*+ IGNORE_INDEX(t1, c_d_e) */ t1.c from t t1 order by t1.c",
-        "Best": "TableReader(Table(t))->Sort",
-        "HasWarn": false,
-        "Hints": "USE_INDEX(@`sel_1` `test`.`t1` )"
+        "HasWarn": false
       },
       {
         "SQL": "select /*+ USE_INDEX(t1, c_d_e), USE_INDEX(t2, f) */ * from t t1, t t2 where t1.a = t2.b",
-        "Best": "LeftHashJoin{IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))->IndexLookUp(Index(t.f)[[NULL,+inf]], Table(t))}(test.t.a,test.t.b)",
-        "HasWarn": false,
-        "Hints": "USE_INDEX(@`sel_1` `test`.`t1` `c_d_e`), USE_INDEX(@`sel_1` `test`.`t2` `f`), HASH_JOIN(@`sel_1` `test`.`t1`)"
-      },
-      {
-        "SQL": "select /*+ IGNORE_INDEX(t1, c_d_e), IGNORE_INDEX(t2, f), HASH_JOIN(t1) */ * from t t1, t t2 where t1.a = t2.b",
-        "Best": "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.b)",
-        "HasWarn": false,
-        "Hints": "USE_INDEX(@`sel_1` `test`.`t1` ), USE_INDEX(@`sel_1` `test`.`t2` ), HASH_JOIN(@`sel_1` `test`.`t1`)"
+        "Best": "LeftHashJoin{IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))->IndexLookUp(Index(t.f)[[NULL,+inf]], Table(t))}(test.t1.a,test.t2.b)",
+        "HasWarn": false
       },
       {
         "SQL": "select /*+ USE_INDEX(t, c_d_e, f, g) */ * from t order by f",
         "Best": "IndexLookUp(Index(t.f)[[NULL,+inf]], Table(t))",
-        "HasWarn": false,
-        "Hints": "USE_INDEX(@`sel_1` `test`.`t` `f`)"
+        "HasWarn": false
       },
       {
         "SQL": "select /*+ USE_INDEX(t) */ f from t where f > 10",
         "Best": "TableReader(Table(t)->Sel([gt(test.t.f, 10)]))",
-        "HasWarn": false,
-        "Hints": "USE_INDEX(@`sel_1` `test`.`t` )"
+        "HasWarn": false
       },
       {
         "SQL": "select /*+ USE_INDEX(t, no_such_index) */ * from t",
         "Best": "TableReader(Table(t))",
-        "HasWarn": true,
-        "Hints": "USE_INDEX(@`sel_1` `test`.`t` )"
+        "HasWarn": true
       },
       {
         "SQL": "select /*+ IGNORE_INDEX(t, no_such_index) */ * from t",
         "Best": "TableReader(Table(t))",
-        "HasWarn": true,
-        "Hints": "USE_INDEX(@`sel_1` `test`.`t` )"
+        "HasWarn": true
       },
       {
         "SQL": "select /*+ USE_INDEX(t, c_d_e), IGNORE_INDEX(t, f) */ c from t order by c",
         "Best": "IndexReader(Index(t.c_d_e)[[NULL,+inf]])",
-        "HasWarn": false,
-        "Hints": "USE_INDEX(@`sel_1` `test`.`t` `c_d_e`)"
+        "HasWarn": false
       },
       {
         "SQL": "select /*+ USE_INDEX(t, f), IGNORE_INDEX(t, f) */ c from t order by c",
         "Best": "TableReader(Table(t))->Sort",
-        "HasWarn": false,
-        "Hints": "USE_INDEX(@`sel_1` `test`.`t` )"
+        "HasWarn": false
       },
       {
         "SQL": "select /*+ USE_INDEX(t, c_d_e), IGNORE_INDEX(t, c_d_e) */ c from t order by c",
         "Best": "TableReader(Table(t))->Sort",
-        "HasWarn": false,
-        "Hints": "USE_INDEX(@`sel_1` `test`.`t` )"
+        "HasWarn": false
       },
       {
         "SQL": "select /*+ USE_INDEX(t, c_d_e, f), IGNORE_INDEX(t, c_d_e) */ c from t order by c",
         "Best": "IndexLookUp(Index(t.f)[[NULL,+inf]], Table(t))->Sort",
-        "HasWarn": false,
-        "Hints": "USE_INDEX(@`sel_1` `test`.`t` `f`)"
+        "HasWarn": false
       }
     ]
-  },
-  {
-    "Name": "TestIndexMergeHint",
-    "Cases": [
-      {
-        "SQL": "select /*+ USE_INDEX_MERGE(t, c_d_e, f_g) */ * from t where c < 1 or f > 2",
-        "Best": "IndexMergeReader(PartialPlans->[Index(t.c_d_e)[[-inf,1)], Index(t.f_g)[(2,+inf]]], TablePlan->Table(t))",
-        "HasWarn": false,
-        "Hints": "USE_INDEX_MERGE(@`sel_1` `t` `c_d_e`, `f_g`)"
-      },
-      {
-        "SQL": "select /*+ USE_INDEX_MERGE(t, primary, f_g) */ * from t where a < 1 or f > 2",
-        "Best": "IndexMergeReader(PartialPlans->[Table(t), Index(t.f_g)[(2,+inf]]], TablePlan->Table(t))",
-        "HasWarn": false,
-        "Hints": "USE_INDEX_MERGE(@`sel_1` `t` `PRIMARY`, `f_g`)"
-      },
-      {
-        "SQL": "select /*+ USE_INDEX_MERGE(t, primary, f_g, c_d_e) */ * from t where a < 1 or f > 2",
-        "Best": "IndexMergeReader(PartialPlans->[Table(t), Index(t.f_g)[(2,+inf]]], TablePlan->Table(t))",
-        "HasWarn": false,
-        "Hints": "USE_INDEX_MERGE(@`sel_1` `t` `PRIMARY`, `f_g`)"
-      },
-      {
-        "SQL": "select /*+ NO_INDEX_MERGE(), USE_INDEX_MERGE(t, primary, f_g, c_d_e) */ * from t where a < 1 or f > 2",
-        "Best": "TableReader(Table(t)->Sel([or(lt(test.t.a, 1), gt(test.t.f, 2))]))",
-        "HasWarn": true,
-        "Hints": "USE_INDEX(@`sel_1` `test`.`t` )"
-      },
-      {
-        "SQL": "select /*+ USE_INDEX_MERGE(t1, c_d_e, f_g) */ * from t where c < 1 or f > 2",
-        "Best": "TableReader(Table(t)->Sel([or(lt(test.t.c, 1), gt(test.t.f, 2))]))",
-        "HasWarn": true,
-        "Hints": "USE_INDEX(@`sel_1` `test`.`t` )"
-      },
-      {
-        "SQL": "select /*+ NO_INDEX_MERGE(), USE_INDEX_MERGE(t, primary, f_g, c_d_e) */ * from t where a < 1 or f > 2",
-        "Best": "TableReader(Table(t)->Sel([or(lt(test.t.a, 1), gt(test.t.f, 2))]))",
-        "HasWarn": true,
-        "Hints": "USE_INDEX(@`sel_1` `test`.`t` )"
-      },
-      {
-        "SQL": "select /*+ USE_INDEX_MERGE(t) USE_INDEX_MERGE(t) */ * from t where c < 1 or f > 2",
-        "Best": "IndexMergeReader(PartialPlans->[Index(t.c_d_e)[[-inf,1)], Index(t.f_g)[(2,+inf]]], TablePlan->Table(t))",
-        "HasWarn": false,
-        "Hints": "USE_INDEX_MERGE(@`sel_1` `t` `c_d_e`, `f_g`)"
-      }
-    ]
->>>>>>> dd14172... planner: add warning when the table name of indexHint cannot be found (#15517)
   },
   {
     "Name": "TestDAGPlanBuilderSimpleCase",
@@ -1170,326 +1071,7 @@
     "Cases": [
       {
         "SQL": "select t1.a, (select count(t2.a) from t t2 where t2.g in (select t3.d from t t3 where t3.c = t1.a)) as agg_col from t t1;",
-<<<<<<< HEAD
         "Best": "Apply{IndexReader(Index(t.f)[[NULL,+inf]])->IndexJoin{IndexReader(Index(t.c_d_e)[[NULL,+inf]]->HashAgg)->HashAgg->IndexReader(Index(t.g)[[NULL,+inf]])}(test.t3.d,test.t2.g)}->HashAgg"
-=======
-        "Best": "Apply{IndexReader(Index(t.f)[[NULL,+inf]])->IndexMergeJoin{IndexReader(Index(t.c_d_e)[[NULL,+inf]]->HashAgg)->HashAgg->IndexReader(Index(t.g)[[NULL,+inf]])}(test.t.d,test.t.g)}->HashAgg"
-      }
-    ]
-  },
-  {
-    "Name": "TestIndexJoinHint",
-    "Cases": [
-      {
-        "SQL": "select /*+ INL_JOIN(t1) */ * from t1 join t2 on t1.a = t2.a;",
-        "Plan": "IndexJoin{IndexLookUp(Index(t1.idx_a)[[NULL,+inf]]->Sel([not(isnull(test.t1.a))]), Table(t1))->TableReader(Table(t2)->Sel([not(isnull(test.t2.a))]))}(test.t2.a,test.t1.a)"
-      },
-      {
-        "SQL": "select /*+ INL_HASH_JOIN(t1) */ * from t1 join t2 on t1.a = t2.a;",
-        "Plan": "IndexHashJoin{IndexLookUp(Index(t1.idx_a)[[NULL,+inf]]->Sel([not(isnull(test.t1.a))]), Table(t1))->TableReader(Table(t2)->Sel([not(isnull(test.t2.a))]))}(test.t2.a,test.t1.a)"
-      },
-      {
-        "SQL": "select /*+ INL_MERGE_JOIN(t1) */ * from t1 join t2 on t1.a = t2.a;",
-        "Plan": "IndexMergeJoin{IndexLookUp(Index(t1.idx_a)[[NULL,+inf]]->Sel([not(isnull(test.t1.a))]), Table(t1))->Projection->TableReader(Table(t2)->Sel([not(isnull(test.t2.a))]))}(test.t2.a,test.t1.a)"
-      },
-      {
-        "SQL": "select /*+ inl_merge_join(t2) */ t1.a, t2.a from t t1 left join t t2 use index(g_2) on t1.g=t2.g",
-        "Plan": "IndexMergeJoin{IndexReader(Index(t.g_3)[[NULL,+inf]])->IndexReader(Index(t.g_2)[[NULL,+inf]]->Sel([not(isnull(test.t.g))]))}(test.t.g,test.t.g)"
-      },
-      {
-        "SQL": "select /*+inl_merge_join(t2)*/ t1.a, t2.a from t t1 left join t t2 use index(g_2) on t1.g=t2.g order by t1.a",
-        "Plan": "IndexMergeJoin{IndexReader(Index(t.g_3)[[NULL,+inf]])->IndexReader(Index(t.g_2)[[NULL,+inf]]->Sel([not(isnull(test.t.g))]))}(test.t.g,test.t.g)->Sort"
-      }
-    ]
-  },
-  {
-    "Name": "TestAggToCopHint",
-    "Cases": [
-      {
-        "SQL": "select /*+ AGG_TO_COP(), HASH_AGG(), USE_INDEX(t) */ sum(a) from ta group by a",
-        "Best": "IndexReader(Index(ta.a)[[NULL,+inf]]->HashAgg)->HashAgg",
-        "Warning": "[planner:1815]use_index(test.t) is inapplicable, check whether the table(test.t) exists"
-      },
-      {
-        "SQL": "select /*+ AGG_TO_COP(), USE_INDEX(t) */ sum(b) from ta group by b",
-        "Best": "TableReader(Table(ta)->HashAgg)->HashAgg",
-        "Warning": "[planner:1815]use_index(test.t) is inapplicable, check whether the table(test.t) exists"
-      },
-      {
-        "SQL": "select /*+ AGG_TO_COP(), HASH_AGG(), USE_INDEX(t) */ distinct a from ta group by a",
-        "Best": "IndexReader(Index(ta.a)[[NULL,+inf]]->HashAgg)->HashAgg",
-        "Warning": "[planner:1815]use_index(test.t) is inapplicable, check whether the table(test.t) exists"
-      },
-      {
-        "SQL": "select /*+ AGG_TO_COP(), HASH_AGG(), HASH_JOIN(t1), USE_INDEX(t1), USE_INDEX(t2) */ sum(t1.a) from ta t1, ta t2 where t1.a = t2.b group by t1.a",
-        "Best": "LeftHashJoin{TableReader(Table(ta)->Sel([not(isnull(test.ta.a))]))->TableReader(Table(ta)->Sel([not(isnull(test.ta.b))]))}(test.ta.a,test.ta.b)->Projection->HashAgg",
-        "Warning": "[planner:1815]Optimizer Hint AGG_TO_COP is inapplicable"
-      }
-    ]
-  },
-  {
-    "Name": "TestDAGPlanBuilderWindow",
-    "Cases": [
-      {
-        "SQL": "select lead(a, 1) over (partition by null) as c from t",
-        "Best": "IndexReader(Index(t.f)[[NULL,+inf]])->Window(lead(test.t.a, 1)->Column#14 over())->Projection"
-      }
-    ]
-  },
-  {
-    "Name": "TestDAGPlanBuilderWindowParallel",
-    "Cases": [
-      {
-        "SQL": "select lead(a, 1) over (partition by null) as c from t",
-        "Best": "IndexReader(Index(t.f)[[NULL,+inf]])->Window(lead(test.t.a, 1)->Column#14 over())->Projection"
-      },
-      {
-        "SQL": "select lead(a, 1) over (partition by b) as c from t",
-        "Best": "TableReader(Table(t))->Sort->Window(lead(test.t.a, 1)->Column#14 over(partition by test.t.b))->Partition(execution info: concurrency:4, data source:TableReader_10)->Projection"
-      }
-    ]
-  },
-  {
-    "Name": "TestNominalSort",
-    "Cases": [
-      {
-        "SQL": "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by t1.a",
-        "Plan": [
-          "Projection_20 12487.50 root  test.t.a",
-          "└─MergeJoin_21 12487.50 root  inner join, left key:test.t.a, right key:test.t.b",
-          "  ├─IndexReader_15(Build) 9990.00 root  index:IndexFullScan_14",
-          "  │ └─IndexFullScan_14 9990.00 cop[tikv] table:t2, index:idx_b(b) keep order:true, stats:pseudo",
-          "  └─IndexReader_13(Probe) 9990.00 root  index:IndexFullScan_12",
-          "    └─IndexFullScan_12 9990.00 cop[tikv] table:t1, index:idx_a(a) keep order:true, stats:pseudo"
-        ],
-        "Result": [
-          "1",
-          "1",
-          "2"
-        ]
-      },
-      {
-        "SQL": "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by t1.a+1",
-        "Plan": [
-          "Projection_24 12487.50 root  test.t.a",
-          "└─Projection_23 12487.50 root  test.t.a, plus(test.t.a, 1)->Column#7",
-          "  └─Projection_20 12487.50 root  test.t.a",
-          "    └─MergeJoin_21 12487.50 root  inner join, left key:test.t.a, right key:test.t.b",
-          "      ├─IndexReader_15(Build) 9990.00 root  index:IndexFullScan_14",
-          "      │ └─IndexFullScan_14 9990.00 cop[tikv] table:t2, index:idx_b(b) keep order:true, stats:pseudo",
-          "      └─IndexReader_13(Probe) 9990.00 root  index:IndexFullScan_12",
-          "        └─IndexFullScan_12 9990.00 cop[tikv] table:t1, index:idx_a(a) keep order:true, stats:pseudo"
-        ],
-        "Result": [
-          "1",
-          "1",
-          "2"
-        ]
-      },
-      {
-        "SQL": "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by t1.a-1",
-        "Plan": [
-          "Projection_24 12487.50 root  test.t.a",
-          "└─Projection_23 12487.50 root  test.t.a, minus(test.t.a, 1)->Column#7",
-          "  └─Projection_20 12487.50 root  test.t.a",
-          "    └─MergeJoin_21 12487.50 root  inner join, left key:test.t.a, right key:test.t.b",
-          "      ├─IndexReader_15(Build) 9990.00 root  index:IndexFullScan_14",
-          "      │ └─IndexFullScan_14 9990.00 cop[tikv] table:t2, index:idx_b(b) keep order:true, stats:pseudo",
-          "      └─IndexReader_13(Probe) 9990.00 root  index:IndexFullScan_12",
-          "        └─IndexFullScan_12 9990.00 cop[tikv] table:t1, index:idx_a(a) keep order:true, stats:pseudo"
-        ],
-        "Result": [
-          "1",
-          "1",
-          "2"
-        ]
-      },
-      {
-        "SQL": "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by -t1.a",
-        "Plan": [
-          "Projection_32 12487.50 root  test.t.a",
-          "└─Projection_31 12487.50 root  test.t.a, unaryminus(test.t.a)->Column#7",
-          "  └─Projection_20 12487.50 root  test.t.a",
-          "    └─MergeJoin_21 12487.50 root  inner join, left key:test.t.a, right key:test.t.b",
-          "      ├─IndexReader_26(Build) 9990.00 root  index:IndexFullScan_25",
-          "      │ └─IndexFullScan_25 9990.00 cop[tikv] table:t2, index:idx_b(b) keep order:true, desc, stats:pseudo",
-          "      └─IndexReader_24(Probe) 9990.00 root  index:IndexFullScan_23",
-          "        └─IndexFullScan_23 9990.00 cop[tikv] table:t1, index:idx_a(a) keep order:true, desc, stats:pseudo"
-        ],
-        "Result": [
-          "2",
-          "1",
-          "1"
-        ]
-      },
-      {
-        "SQL": "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by -t1.a+3",
-        "Plan": [
-          "Projection_32 12487.50 root  test.t.a",
-          "└─Projection_31 12487.50 root  test.t.a, plus(unaryminus(test.t.a), 3)->Column#7",
-          "  └─Projection_20 12487.50 root  test.t.a",
-          "    └─MergeJoin_21 12487.50 root  inner join, left key:test.t.a, right key:test.t.b",
-          "      ├─IndexReader_26(Build) 9990.00 root  index:IndexFullScan_25",
-          "      │ └─IndexFullScan_25 9990.00 cop[tikv] table:t2, index:idx_b(b) keep order:true, desc, stats:pseudo",
-          "      └─IndexReader_24(Probe) 9990.00 root  index:IndexFullScan_23",
-          "        └─IndexFullScan_23 9990.00 cop[tikv] table:t1, index:idx_a(a) keep order:true, desc, stats:pseudo"
-        ],
-        "Result": [
-          "2",
-          "1",
-          "1"
-        ]
-      },
-      {
-        "SQL": "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by 1+t1.a",
-        "Plan": [
-          "Projection_24 12487.50 root  test.t.a",
-          "└─Projection_23 12487.50 root  test.t.a, plus(1, test.t.a)->Column#7",
-          "  └─Projection_20 12487.50 root  test.t.a",
-          "    └─MergeJoin_21 12487.50 root  inner join, left key:test.t.a, right key:test.t.b",
-          "      ├─IndexReader_15(Build) 9990.00 root  index:IndexFullScan_14",
-          "      │ └─IndexFullScan_14 9990.00 cop[tikv] table:t2, index:idx_b(b) keep order:true, stats:pseudo",
-          "      └─IndexReader_13(Probe) 9990.00 root  index:IndexFullScan_12",
-          "        └─IndexFullScan_12 9990.00 cop[tikv] table:t1, index:idx_a(a) keep order:true, stats:pseudo"
-        ],
-        "Result": [
-          "1",
-          "1",
-          "2"
-        ]
-      },
-      {
-        "SQL": "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by 1-t1.a",
-        "Plan": [
-          "Projection_32 12487.50 root  test.t.a",
-          "└─Projection_31 12487.50 root  test.t.a, minus(1, test.t.a)->Column#7",
-          "  └─Projection_20 12487.50 root  test.t.a",
-          "    └─MergeJoin_21 12487.50 root  inner join, left key:test.t.a, right key:test.t.b",
-          "      ├─IndexReader_26(Build) 9990.00 root  index:IndexFullScan_25",
-          "      │ └─IndexFullScan_25 9990.00 cop[tikv] table:t2, index:idx_b(b) keep order:true, desc, stats:pseudo",
-          "      └─IndexReader_24(Probe) 9990.00 root  index:IndexFullScan_23",
-          "        └─IndexFullScan_23 9990.00 cop[tikv] table:t1, index:idx_a(a) keep order:true, desc, stats:pseudo"
-        ],
-        "Result": [
-          "2",
-          "1",
-          "1"
-        ]
-      },
-      {
-        "SQL": "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by 1-t1.a+3",
-        "Plan": [
-          "Projection_32 12487.50 root  test.t.a",
-          "└─Projection_31 12487.50 root  test.t.a, plus(minus(1, test.t.a), 3)->Column#7",
-          "  └─Projection_20 12487.50 root  test.t.a",
-          "    └─MergeJoin_21 12487.50 root  inner join, left key:test.t.a, right key:test.t.b",
-          "      ├─IndexReader_26(Build) 9990.00 root  index:IndexFullScan_25",
-          "      │ └─IndexFullScan_25 9990.00 cop[tikv] table:t2, index:idx_b(b) keep order:true, desc, stats:pseudo",
-          "      └─IndexReader_24(Probe) 9990.00 root  index:IndexFullScan_23",
-          "        └─IndexFullScan_23 9990.00 cop[tikv] table:t1, index:idx_a(a) keep order:true, desc, stats:pseudo"
-        ],
-        "Result": [
-          "2",
-          "1",
-          "1"
-        ]
-      },
-      {
-        "SQL": "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by 1+t1.a+3",
-        "Plan": [
-          "Projection_24 12487.50 root  test.t.a",
-          "└─Projection_23 12487.50 root  test.t.a, plus(plus(1, test.t.a), 3)->Column#7",
-          "  └─Projection_20 12487.50 root  test.t.a",
-          "    └─MergeJoin_21 12487.50 root  inner join, left key:test.t.a, right key:test.t.b",
-          "      ├─IndexReader_15(Build) 9990.00 root  index:IndexFullScan_14",
-          "      │ └─IndexFullScan_14 9990.00 cop[tikv] table:t2, index:idx_b(b) keep order:true, stats:pseudo",
-          "      └─IndexReader_13(Probe) 9990.00 root  index:IndexFullScan_12",
-          "        └─IndexFullScan_12 9990.00 cop[tikv] table:t1, index:idx_a(a) keep order:true, stats:pseudo"
-        ],
-        "Result": [
-          "1",
-          "1",
-          "2"
-        ]
-      },
-      {
-        "SQL": "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by 3*t1.a",
-        "Plan": [
-          "Projection_19 12487.50 root  test.t.a",
-          "└─Sort_7 12487.50 root  Column#7:asc",
-          "  └─Projection_20 12487.50 root  test.t.a, mul(3, test.t.a)->Column#7",
-          "    └─Projection_8 12487.50 root  test.t.a",
-          "      └─MergeJoin_9 12487.50 root  inner join, left key:test.t.a, right key:test.t.b",
-          "        ├─IndexReader_14(Build) 9990.00 root  index:IndexFullScan_13",
-          "        │ └─IndexFullScan_13 9990.00 cop[tikv] table:t2, index:idx_b(b) keep order:true, stats:pseudo",
-          "        └─IndexReader_12(Probe) 9990.00 root  index:IndexFullScan_11",
-          "          └─IndexFullScan_11 9990.00 cop[tikv] table:t1, index:idx_a(a) keep order:true, stats:pseudo"
-        ],
-        "Result": [
-          "1",
-          "1",
-          "2"
-        ]
-      }
-    ]
-  },
-  {
-    "Name": "TestInlineProjection",
-    "Cases": [
-      {
-        "SQL": "select /*+ HASH_JOIN(t1) */ t1.b, t2.b from t1, t2 where t1.a = t2.a;",
-        "Plan": "LeftHashJoin{TableReader(Table(t1)->Sel([not(isnull(test.t1.a))]))->TableReader(Table(t2)->Sel([not(isnull(test.t2.a))]))}(test.t1.a,test.t2.a)",
-        "Hints": "USE_INDEX(@`sel_1` `test`.`t1` ), USE_INDEX(@`sel_1` `test`.`t2` ), HASH_JOIN(@`sel_1` `test`.`t1`)"
-      },
-      {
-        "SQL": "select /*+ HASH_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;",
-        "Plan": "LeftHashJoin{TableReader(Table(t1)->Sel([not(isnull(test.t1.a))]))->TableReader(Table(t2)->Sel([not(isnull(test.t2.a))]))}(test.t1.a,test.t2.a)",
-        "Hints": "USE_INDEX(@`sel_1` `test`.`t1` ), USE_INDEX(@`sel_1` `test`.`t2` ), HASH_JOIN(@`sel_1` `test`.`t1`)"
-      },
-      {
-        "SQL": "select /*+ HASH_JOIN(t1) */ t1.b, t2.b from t1 left outer join t2 on t1.a = t2.a;",
-        "Plan": "LeftHashJoin{TableReader(Table(t1))->TableReader(Table(t2)->Sel([not(isnull(test.t2.a))]))}(test.t1.a,test.t2.a)",
-        "Hints": "USE_INDEX(@`sel_1` `test`.`t1` ), USE_INDEX(@`sel_1` `test`.`t2` ), HASH_JOIN(@`sel_1` `test`.`t1`)"
-      },
-      {
-        "SQL": "select /*+ HASH_JOIN(t1) */ t1.b, t2.b from t1 right outer join t2 on t1.a = t2.a;",
-        "Plan": "RightHashJoin{TableReader(Table(t1)->Sel([not(isnull(test.t1.a))]))->TableReader(Table(t2))}(test.t1.a,test.t2.a)",
-        "Hints": "USE_INDEX(@`sel_1` `test`.`t1` ), USE_INDEX(@`sel_1` `test`.`t2` ), HASH_JOIN(@`sel_1` `test`.`t1`)"
-      },
-      {
-        "SQL": "select 1 from (select /*+ HASH_JOIN(t1) */ t1.a in (select t2.a from t2) from t1) x;",
-        "Plan": "LeftHashJoin{IndexReader(Index(t1.idx_a)[[NULL,+inf]])->IndexReader(Index(t2.idx_a)[[NULL,+inf]])}->Projection",
-        "Hints": "USE_INDEX(@`sel_2` `test`.`t1` `idx_a`), USE_INDEX(@`sel_3` `test`.`t2` `idx_a`), HASH_JOIN(@`sel_2` `test`.`t1`)"
-      },
-      {
-        "SQL": "select 1 from (select /*+ HASH_JOIN(t1) */ t1.a not in (select t2.a from t2) from t1) x;",
-        "Plan": "LeftHashJoin{IndexReader(Index(t1.idx_a)[[NULL,+inf]])->IndexReader(Index(t2.idx_a)[[NULL,+inf]])}->Projection",
-        "Hints": "USE_INDEX(@`sel_2` `test`.`t1` `idx_a`), USE_INDEX(@`sel_3` `test`.`t2` `idx_a`), HASH_JOIN(@`sel_2` `test`.`t1`)"
-      },
-      {
-        "SQL": "select /*+ INL_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;",
-        "Plan": "IndexJoin{IndexLookUp(Index(t1.idx_a)[[NULL,+inf]]->Sel([not(isnull(test.t1.a))]), Table(t1))->TableReader(Table(t2)->Sel([not(isnull(test.t2.a))]))}(test.t2.a,test.t1.a)",
-        "Hints": "USE_INDEX(@`sel_1` `test`.`t1` `idx_a`), USE_INDEX(@`sel_1` `test`.`t2` ), INL_JOIN(@`sel_1` `test`.`t1`)"
-      },
-      {
-        "SQL": "select /*+ INL_HASH_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;",
-        "Plan": "IndexHashJoin{IndexLookUp(Index(t1.idx_a)[[NULL,+inf]]->Sel([not(isnull(test.t1.a))]), Table(t1))->TableReader(Table(t2)->Sel([not(isnull(test.t2.a))]))}(test.t2.a,test.t1.a)",
-        "Hints": "USE_INDEX(@`sel_1` `test`.`t1` `idx_a`), USE_INDEX(@`sel_1` `test`.`t2` ), INL_HASH_JOIN(@`sel_1` )"
-      },
-      {
-        "SQL": "select /*+ INL_MERGE_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;",
-        "Plan": "IndexMergeJoin{IndexLookUp(Index(t1.idx_a)[[NULL,+inf]]->Sel([not(isnull(test.t1.a))]), Table(t1))->Projection->TableReader(Table(t2)->Sel([not(isnull(test.t2.a))]))}(test.t2.a,test.t1.a)",
-        "Hints": "USE_INDEX(@`sel_1` `test`.`t1` `idx_a`), USE_INDEX(@`sel_1` `test`.`t2` )"
-      }
-    ]
-  },
-  {
-    "Name": "TestHintFromDiffDatabase",
-    "Cases": [
-      {
-        "SQL": "select /*+ inl_hash_join(test.t1) */ * from test.t2 join test.t1 on test.t2.a = test.t1.a",
-        "Plan": "IndexHashJoin{IndexReader(Index(t2.idx_a)[[-inf,+inf]])->IndexReader(Index(t1.idx_a)[[NULL,+inf]]->Sel([not(isnull(test.t1.a))]))}(test.t2.a,test.t1.a)"
->>>>>>> dd14172... planner: add warning when the table name of indexHint cannot be found (#15517)
       }
     ]
   }
