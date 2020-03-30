@@ -1679,6 +1679,19 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	dom := domain.GetDomain(se)
 	dom.InitExpensiveQueryHandle()
 
+	se2, err := createSession(store)
+	if err != nil {
+		return nil, err
+	}
+	se3, err := createSession(store)
+	if err != nil {
+		return nil, err
+	}
+	err = dom.LoadBindInfoLoop(se2, se3)
+	if err != nil {
+		return nil, err
+	}
+
 	if !config.GetGlobalConfig().Security.SkipGrantTable {
 		err = dom.LoadPrivilegeLoop(se)
 		if err != nil {
@@ -1703,18 +1716,6 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		return nil, err
 	}
 
-	se2, err := createSession(store)
-	if err != nil {
-		return nil, err
-	}
-	se3, err := createSession(store)
-	if err != nil {
-		return nil, err
-	}
-	err = dom.LoadBindInfoLoop(se2, se3)
-	if err != nil {
-		return nil, err
-	}
 	se1, err := createSession(store)
 	if err != nil {
 		return nil, err
