@@ -32,6 +32,10 @@ func (s IntSet) Insert(val int) {
 	s[val] = struct{}{}
 }
 
+func (s IntSet) Count() int {
+	return len(s)
+}
+
 // Int64Set is a int64 set.
 type Int64Set map[int64]struct{}
 
@@ -53,4 +57,8 @@ func (s Int64Set) Exist(val int64) bool {
 // Insert inserts `val` into `s`.
 func (s Int64Set) Insert(val int64) {
 	s[val] = struct{}{}
+}
+
+func (s Int64Set) Count() int {
+	return len(s)
 }

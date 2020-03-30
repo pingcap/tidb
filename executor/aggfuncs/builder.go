@@ -110,6 +110,7 @@ func buildCount(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 			// TODO: because Time and JSON does not have `hashcode()` or similar method
 			// so they're in exception for now.
 			// TODO: add hashCode method for all evaluate types (Decimal, Time, Duration, JSON).
+			// https://github.com/pingcap/tidb/issues/15857
 			switch aggFuncDesc.Args[0].GetType().EvalType() {
 			case types.ETInt:
 				return &countOriginalWithDistinct4Int{baseCount{base}}

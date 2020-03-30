@@ -29,7 +29,6 @@ import (
 )
 
 type partialResult4CountDistinctInt struct {
-	partialResult4Count
 	valSet set.Int64Set
 }
 
@@ -39,20 +38,18 @@ type countOriginalWithDistinct4Int struct {
 
 func (e *countOriginalWithDistinct4Int) AllocPartialResult() PartialResult {
 	return PartialResult(&partialResult4CountDistinctInt{
-		partialResult4Count: 0,
-		valSet:              set.NewInt64Set(),
+		valSet: set.NewInt64Set(),
 	})
 }
 
 func (e *countOriginalWithDistinct4Int) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4CountDistinctInt)(pr)
-	p.partialResult4Count = 0
 	p.valSet = set.NewInt64Set()
 }
 
 func (e *countOriginalWithDistinct4Int) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4CountDistinctInt)(pr)
-	chk.AppendInt64(e.ordinal, p.partialResult4Count)
+	chk.AppendInt64(e.ordinal, int64(p.valSet.Count()))
 	return nil
 }
 
@@ -71,15 +68,12 @@ func (e *countOriginalWithDistinct4Int) UpdatePartialResult(sctx sessionctx.Cont
 			continue
 		}
 		p.valSet.Insert(input)
-
-		p.partialResult4Count++
 	}
 
 	return nil
 }
 
 type partialResult4CountDistinctReal struct {
-	partialResult4Count
 	valSet set.Float64Set
 }
 
@@ -89,20 +83,18 @@ type countOriginalWithDistinct4Real struct {
 
 func (e *countOriginalWithDistinct4Real) AllocPartialResult() PartialResult {
 	return PartialResult(&partialResult4CountDistinctReal{
-		partialResult4Count: 0,
-		valSet:              set.NewFloat64Set(),
+		valSet: set.NewFloat64Set(),
 	})
 }
 
 func (e *countOriginalWithDistinct4Real) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4CountDistinctReal)(pr)
-	p.partialResult4Count = 0
 	p.valSet = set.NewFloat64Set()
 }
 
 func (e *countOriginalWithDistinct4Real) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4CountDistinctReal)(pr)
-	chk.AppendInt64(e.ordinal, p.partialResult4Count)
+	chk.AppendInt64(e.ordinal, int64(p.valSet.Count()))
 	return nil
 }
 
@@ -121,15 +113,12 @@ func (e *countOriginalWithDistinct4Real) UpdatePartialResult(sctx sessionctx.Con
 			continue
 		}
 		p.valSet.Insert(input)
-
-		p.partialResult4Count++
 	}
 
 	return nil
 }
 
 type partialResult4CountDistinctDecimal struct {
-	partialResult4Count
 	valSet set.StringSet
 }
 
@@ -139,20 +128,18 @@ type countOriginalWithDistinct4Decimal struct {
 
 func (e *countOriginalWithDistinct4Decimal) AllocPartialResult() PartialResult {
 	return PartialResult(&partialResult4CountDistinctDecimal{
-		partialResult4Count: 0,
-		valSet:              set.NewStringSet(),
+		valSet: set.NewStringSet(),
 	})
 }
 
 func (e *countOriginalWithDistinct4Decimal) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4CountDistinctDecimal)(pr)
-	p.partialResult4Count = 0
 	p.valSet = set.NewStringSet()
 }
 
 func (e *countOriginalWithDistinct4Decimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4CountDistinctDecimal)(pr)
-	chk.AppendInt64(e.ordinal, p.partialResult4Count)
+	chk.AppendInt64(e.ordinal, int64(p.valSet.Count()))
 	return nil
 }
 
@@ -176,15 +163,12 @@ func (e *countOriginalWithDistinct4Decimal) UpdatePartialResult(sctx sessionctx.
 			continue
 		}
 		p.valSet.Insert(decStr)
-
-		p.partialResult4Count++
 	}
 
 	return nil
 }
 
 type partialResult4CountDistinctDuration struct {
-	partialResult4Count
 	valSet set.Int64Set
 }
 
@@ -194,20 +178,18 @@ type countOriginalWithDistinct4Duration struct {
 
 func (e *countOriginalWithDistinct4Duration) AllocPartialResult() PartialResult {
 	return PartialResult(&partialResult4CountDistinctDuration{
-		partialResult4Count: 0,
-		valSet:              set.NewInt64Set(),
+		valSet: set.NewInt64Set(),
 	})
 }
 
 func (e *countOriginalWithDistinct4Duration) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4CountDistinctDuration)(pr)
-	p.partialResult4Count = 0
 	p.valSet = set.NewInt64Set()
 }
 
 func (e *countOriginalWithDistinct4Duration) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4CountDistinctDuration)(pr)
-	chk.AppendInt64(e.ordinal, p.partialResult4Count)
+	chk.AppendInt64(e.ordinal, int64(p.valSet.Count()))
 	return nil
 }
 
@@ -227,15 +209,12 @@ func (e *countOriginalWithDistinct4Duration) UpdatePartialResult(sctx sessionctx
 			continue
 		}
 		p.valSet.Insert(int64(input.Duration))
-
-		p.partialResult4Count++
 	}
 
 	return nil
 }
 
 type partialResult4CountDistinctString struct {
-	partialResult4Count
 	valSet set.StringSet
 }
 
@@ -245,20 +224,18 @@ type countOriginalWithDistinct4String struct {
 
 func (e *countOriginalWithDistinct4String) AllocPartialResult() PartialResult {
 	return PartialResult(&partialResult4CountDistinctString{
-		partialResult4Count: 0,
-		valSet:              set.NewStringSet(),
+		valSet: set.NewStringSet(),
 	})
 }
 
 func (e *countOriginalWithDistinct4String) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4CountDistinctString)(pr)
-	p.partialResult4Count = 0
 	p.valSet = set.NewStringSet()
 }
 
 func (e *countOriginalWithDistinct4String) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4CountDistinctString)(pr)
-	chk.AppendInt64(e.ordinal, p.partialResult4Count)
+	chk.AppendInt64(e.ordinal, int64(p.valSet.Count()))
 	return nil
 }
 
@@ -278,8 +255,6 @@ func (e *countOriginalWithDistinct4String) UpdatePartialResult(sctx sessionctx.C
 			continue
 		}
 		p.valSet.Insert(input)
-
-		p.partialResult4Count++
 	}
 
 	return nil
@@ -290,27 +265,23 @@ type countOriginalWithDistinct struct {
 }
 
 type partialResult4CountWithDistinct struct {
-	count int64
-
 	valSet set.StringSet
 }
 
 func (e *countOriginalWithDistinct) AllocPartialResult() PartialResult {
 	return PartialResult(&partialResult4CountWithDistinct{
-		count:  0,
 		valSet: set.NewStringSet(),
 	})
 }
 
 func (e *countOriginalWithDistinct) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4CountWithDistinct)(pr)
-	p.count = 0
 	p.valSet = set.NewStringSet()
 }
 
 func (e *countOriginalWithDistinct) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4CountWithDistinct)(pr)
-	chk.AppendInt64(e.ordinal, p.count)
+	chk.AppendInt64(e.ordinal, int64(p.valSet.Count()))
 	return nil
 }
 
@@ -340,7 +311,6 @@ func (e *countOriginalWithDistinct) UpdatePartialResult(sctx sessionctx.Context,
 			continue
 		}
 		p.valSet.Insert(encodedString)
-		p.count++
 	}
 
 	return nil

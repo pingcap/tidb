@@ -35,3 +35,7 @@ func (s Float64Set) Exist(val float64) bool {
 func (s Float64Set) Insert(val float64) {
 	s[val] = struct{}{}
 }
+
+func (s Float64Set) Count() int {
+	return len(s)
+}
