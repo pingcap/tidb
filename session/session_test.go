@@ -2092,6 +2092,29 @@ func (s *testSchemaSuite) TestCommitWhenSchemaChanged(c *C) {
 	c.Assert(terror.ErrorEqual(err, plannercore.ErrWrongValueCountOnRow), IsTrue, Commentf("err %v", err))
 }
 
+func (s *testSchemaSuite) TestUpdateLockOptimistic(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t (i int)")
+	tk.MustExec("insert into t values (1)")
+
+	tk.MustExec("begin optimistic")
+	tk1.MustExec("begin optimistic")
+	tk1.MustExec("update t set i = i")
+	tk.MustQuery("select * from t for update").Check(testkit.Rows("1"))
+	tk1.MustExec("commit")
+	err := tk.ExecToErr("commit")
+	c.Assert(kv.ErrWriteConflict.Equal(err), IsTrue, Commentf("err: %v", err))
+
+	tk.MustExec("begin optimistic")
+	tk1.MustExec("begin optimistic")
+	tk1.MustQuery("select * from t for update").Check(testkit.Rows("1"))
+	tk.MustQuery("select * from t for update").Check(testkit.Rows("1"))
+	tk1.MustExec("commit")
+	err = tk.ExecToErr("commit")
+	c.Assert(kv.ErrWriteConflict.Equal(err), IsTrue, Commentf("err: %v", err))
+}
+
 func (s *testSchemaSuite) TestRetrySchemaChangeForEmptyChange(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
@@ -2099,7 +2122,7 @@ func (s *testSchemaSuite) TestRetrySchemaChangeForEmptyChange(c *C) {
 	tk.MustExec("create table t1 (i int)")
 	tk.MustExec("begin")
 	tk1.MustExec("alter table t add j int")
-	tk.MustExec("select * from t for update")
+	tk.MustQuery("select * from t for update").Check(testkit.Rows())
 	tk.MustExec("update t set i = -i")
 	tk.MustExec("delete from t")
 	tk.MustExec("insert into t1 values (1)")
@@ -2107,7 +2130,7 @@ func (s *testSchemaSuite) TestRetrySchemaChangeForEmptyChange(c *C) {
 
 	tk.MustExec("begin pessimistic")
 	tk1.MustExec("alter table t add k int")
-	tk.MustExec("select * from t for update")
+	tk.MustQuery("select * from t for update").Check(testkit.Rows())
 	tk.MustExec("update t set i = -i")
 	tk.MustExec("delete from t")
 	tk.MustExec("insert into t1 values (1)")
