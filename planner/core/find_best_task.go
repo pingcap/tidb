@@ -168,7 +168,7 @@ func (p *baseLogicalPlan) getBestTask(physicalPlans []PhysicalPlan, prop *proper
 		}
 
 		// get the most efficient one.
-		if curTask.cost() < bestTask.cost() {
+		if curTask.cost() < bestTask.cost() || (bestTask.invalid() && !curTask.invalid()) {
 			bestTask = curTask
 		}
 	}
@@ -235,7 +235,7 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty) (bestTas
 	if err != nil {
 		return nil, err
 	}
-	if curTask.cost() < bestTask.cost() {
+	if curTask.cost() < bestTask.cost() || (bestTask.invalid() && !curTask.invalid()) {
 		bestTask = curTask
 	}
 	p.storeTask(prop, bestTask)
