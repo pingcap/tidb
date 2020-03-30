@@ -72,5 +72,20 @@
       "explain select /*+ use_index(t, idx)*/ * from t",
       "explain select /*+ use_index(t)*/ * from t"
     ]
+  },
+  {
+    "name": "TestHintWithoutTableWarning",
+    "cases": [
+      "select /*+ TIDB_SMJ() */ * from t1, t2 where t1.a=t2.a",
+      "select /*+ MERGE_JOIN() */ * from t1, t2 where t1.a=t2.a",
+      "select /*+ INL_JOIN() */ * from t1, t2 where t1.a=t2.a",
+      "select /*+ TIDB_INLJ() */ * from t1, t2 where t1.a=t2.a",
+      "select /*+ INL_HASH_JOIN() */ * from t1, t2 where t1.a=t2.a",
+      "select /*+ INL_MERGE_JOIN() */ * from t1, t2 where t1.a=t2.a",
+      "select /*+ HASH_JOIN() */ * from t1, t2 where t1.a=t2.a",
+      "select /*+ USE_INDEX() */ * from t1, t2 where t1.a=t2.a",
+      "select /*+ IGNORE_INDEX() */ * from t1, t2 where t1.a=t2.a",
+      "select /*+ USE_INDEX_MERGE() */ * from t1, t2 where t1.a=t2.a"
+    ]
   }
 ]
