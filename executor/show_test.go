@@ -650,7 +650,7 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 		""+
 			"binary_collate CREATE TABLE `binary_collate` (\n"+
 			"  `a` varbinary(10) DEFAULT NULL\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=binary",  // binary collate is ignored
+			") ENGINE=InnoDB DEFAULT CHARSET=binary", // binary collate is ignored
 	))
 	tk.MustExec(`drop table if exists binary_collate`)
 	tk.MustExec(`create table binary_collate(a varchar(10)) default charset=binary collate=binary;`)
@@ -658,7 +658,7 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 		""+
 			"binary_collate CREATE TABLE `binary_collate` (\n"+
 			"  `a` varbinary(10) DEFAULT NULL\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=binary",  // binary collate is ignored
+			") ENGINE=InnoDB DEFAULT CHARSET=binary", // binary collate is ignored
 	))
 	tk.MustExec(`drop table if exists binary_collate`)
 	tk.MustExec(`create table binary_collate(a varchar(10)) default charset=utf8mb4 collate=utf8mb4_bin;`)
@@ -666,7 +666,7 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 		""+
 			"binary_collate CREATE TABLE `binary_collate` (\n"+
 			"  `a` varchar(10) DEFAULT NULL\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",  // non-binary collate is kept.
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin", // non-binary collate is kept.
 	))
 }
 
