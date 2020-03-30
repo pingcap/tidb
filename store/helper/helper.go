@@ -29,6 +29,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
@@ -717,4 +718,13 @@ func (h *Helper) GetStoresStat() (*StoresStat, error) {
 		return nil, errors.Trace(err)
 	}
 	return &storesStat, nil
+}
+
+// GetStoresStat gets the TiKV store information by accessing PD's api.
+func (h *Helper) GetAllStores() ([]*metapb.Store, error) {
+	pdClient := h.RegionCache.PDClient()
+	if pdClient == nil {
+		return nil, errors.New("pd unavailable")
+	}
+	return pdClient.GetAllStores(context.Background())
 }
