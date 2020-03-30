@@ -32,6 +32,7 @@ func (s IntSet) Insert(val int) {
 	s[val] = struct{}{}
 }
 
+// Count returns the number in Set s.
 func (s IntSet) Count() int {
 	return len(s)
 }
@@ -59,6 +60,7 @@ func (s Int64Set) Insert(val int64) {
 	s[val] = struct{}{}
 }
 
+// Count returns the number in Set s.
 func (s Int64Set) Count() int {
 	return len(s)
 }

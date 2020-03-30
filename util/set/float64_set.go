@@ -36,6 +36,7 @@ func (s Float64Set) Insert(val float64) {
 	s[val] = struct{}{}
 }
 
+// Count returns the number in Set s.
 func (s Float64Set) Count() int {
 	return len(s)
 }
