@@ -116,8 +116,11 @@ type Server struct {
 	clients           map[uint32]*clientConn
 	capability        uint32
 	dom               *domain.Domain
-	statusServer      *http.Server
-	grpcServer        *grpc.Server
+
+	statusAddr     string
+	statusListener net.Listener
+	statusServer   *http.Server
+	grpcServer     *grpc.Server
 }
 
 // ConnectionCount gets current connection count.
@@ -256,6 +259,9 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		s.listener = pplistener
 	}
 
+	if s.cfg.Status.ReportStatus && err == nil {
+		err = s.listenStatusHTTPServer()
+	}
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -359,7 +365,6 @@ func (s *Server) Close() {
 func (s *Server) onConn(conn *clientConn) {
 	ctx := logutil.WithConnID(context.Background(), conn.connectionID)
 	if err := conn.handshake(ctx); err != nil {
-		terror.Log(err)
 		if plugin.IsEnable(plugin.Audit) {
 			conn.ctx.GetSessionVars().ConnectionInfo = conn.connectInfo()
 		}
@@ -452,6 +457,11 @@ func (cc *clientConn) connectInfo() *variable.ConnectionInfo {
 }
 
 func (s *Server) checkConnectionCount() error {
+	// When the value of MaxServerConnections is 0, the number of connections is unlimited.
+	if int(s.cfg.MaxServerConnections) == 0 {
+		return nil
+	}
+
 	s.rwlock.RLock()
 	conns := len(s.clients)
 	s.rwlock.RUnlock()

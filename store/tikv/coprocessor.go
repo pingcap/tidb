@@ -27,17 +27,21 @@ import (
 	"unsafe"
 
 	"github.com/cznic/mathutil"
+	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
 
@@ -724,6 +728,10 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	startTime := time.Now()
 	resp, rpcCtx, storeAddr, err := worker.SendReqCtx(bo, req, task.region, ReadTimeoutMedium, task.storeType, task.storeAddr)
 	if err != nil {
+		if task.storeType == kv.TiDB {
+			err = worker.handleTiDBSendReqErr(err, task, ch)
+			return nil, err
+		}
 		return nil, errors.Trace(err)
 	}
 	// Set task.storeAddr field so its task.String() method have the store address information.
@@ -912,7 +920,9 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 			worker.sendToRespCh(resp, ch, true)
 			return nil, nil
 		}
-		if err := bo.Backoff(BoRegionMiss, errors.New(regionErr.String())); err != nil {
+		errStr := fmt.Sprintf("region_id:%v, region_ver:%v, store_type:%s, peer_addr:%s, error:%s",
+			task.region.id, task.region.ver, task.storeType.Name(), task.storeAddr, regionErr.String())
+		if err := bo.Backoff(BoRegionMiss, errors.New(errStr)); err != nil {
 			return nil, errors.Trace(err)
 		}
 		// We may meet RegionError at the first packet, but not during visiting the stream.
@@ -1001,6 +1011,35 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 	}
 	worker.sendToRespCh(resp, ch, true)
 	return nil, nil
+}
+
+func (worker *copIteratorWorker) handleTiDBSendReqErr(err error, task *copTask, ch chan<- *copResponse) error {
+	errCode := errno.ErrUnknown
+	errMsg := err.Error()
+	if terror.ErrorEqual(err, ErrTiKVServerTimeout) {
+		errCode = errno.ErrTiKVServerTimeout
+		errMsg = "TiDB server timeout, address is " + task.storeAddr
+	}
+	selResp := tipb.SelectResponse{
+		Warnings: []*tipb.Error{
+			{
+				Code: int32(errCode),
+				Msg:  errMsg,
+			},
+		},
+	}
+	data, err := proto.Marshal(&selResp)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	resp := &copResponse{
+		pbResp: &coprocessor.Response{
+			Data: data,
+		},
+		detail: &execdetails.ExecDetails{},
+	}
+	worker.sendToRespCh(resp, ch, true)
+	return nil
 }
 
 func (worker *copIteratorWorker) buildCopTasksFromRemain(bo *Backoffer, lastRange *coprocessor.KeyRange, task *copTask) ([]*copTask, error) {

@@ -34,6 +34,7 @@ type testSequenceSuite struct{ *testDBSuite }
 func (s *testSequenceSuite) TestCreateSequence(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test")
+	s.tk.MustExec("drop sequence if exists seq")
 	s.tk.MustGetErrCode("create sequence `seq  `", mysql.ErrWrongTableName)
 
 	// increment should not be set as 0.
@@ -614,6 +615,51 @@ func (s *testSequenceSuite) TestSequenceFunction(c *C) {
 	s.tk.MustQuery("select nextval(seq)").Check(testkit.Rows("9223372036854775806"))
 	s.tk.MustQuery("select setval(seq, -9223372036854775800)").Check(testkit.Rows("-9223372036854775800"))
 	s.tk.MustQuery("select nextval(seq)").Check(testkit.Rows("-9223372036854775802"))
+
+	// Test sequence function with wrong object name.
+	s.tk.MustExec("drop sequence if exists seq")
+	s.tk.MustExec("drop table if exists seq")
+	s.tk.MustExec("drop view if exists seq")
+	s.tk.MustExec("drop sequence if exists seq1")
+	s.tk.MustExec("drop table if exists seq1")
+	s.tk.MustExec("drop view if exists seq1")
+	s.tk.MustExec("create table seq(a int)")
+	err = s.tk.QueryToErr("select nextval(seq)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[schema:1347]'test.seq' is not SEQUENCE")
+	err = s.tk.QueryToErr("select lastval(seq)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[schema:1347]'test.seq' is not SEQUENCE")
+	err = s.tk.QueryToErr("select setval(seq, 10)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[schema:1347]'test.seq' is not SEQUENCE")
+
+	s.tk.MustExec("create view seq1 as select * from seq")
+	err = s.tk.QueryToErr("select nextval(seq1)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[schema:1347]'test.seq1' is not SEQUENCE")
+	err = s.tk.QueryToErr("select lastval(seq1)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[schema:1347]'test.seq1' is not SEQUENCE")
+	err = s.tk.QueryToErr("select setval(seq1, 10)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[schema:1347]'test.seq1' is not SEQUENCE")
+	s.tk.MustExec("drop sequence if exists seq")
+	s.tk.MustExec("drop table if exists seq")
+	s.tk.MustExec("drop view if exists seq")
+	s.tk.MustExec("drop sequence if exists seq1")
+	s.tk.MustExec("drop table if exists seq1")
+	s.tk.MustExec("drop view if exists seq1")
+
+	// test a bug found in ticase.
+	s.tk.MustExec("create sequence seq")
+	s.tk.MustQuery("select setval(seq, 10)").Check(testkit.Rows("10"))
+	s.tk.MustQuery("select setval(seq, 5)").Check(testkit.Rows("<nil>"))
+	s.tk.MustExec("drop sequence seq")
+	s.tk.MustExec("create sequence seq increment=-1")
+	s.tk.MustQuery("select setval(seq, -10)").Check(testkit.Rows("-10"))
+	s.tk.MustQuery("select setval(seq, -5)").Check(testkit.Rows("<nil>"))
+	s.tk.MustExec("drop sequence seq")
 }
 
 func (s *testSequenceSuite) TestInsertSequence(c *C) {
@@ -677,7 +723,7 @@ func (s *testSequenceSuite) TestInsertSequence(c *C) {
 	s.tk.MustExec("insert into t (id) values(-1),(default)")
 	s.tk.MustQuery("select * from t").Check(testkit.Rows("-1 0", "4 5"))
 
-	// test sequence run out (overflow MaxInt64).
+	// test sequence run out (overflows MaxInt64).
 	setSQL := "select setval(seq," + strconv.FormatInt(model.DefaultPositiveSequenceMaxValue+1, 10) + ")"
 	s.tk.MustQuery(setSQL).Check(testkit.Rows("9223372036854775807"))
 	err := s.tk.QueryToErr("select nextval(seq)")
@@ -743,4 +789,30 @@ func (s *testSequenceSuite) TestUnflodSequence(c *C) {
 	// `select nextval(seq), a from t1 union select lastval(seq), a from t2`
 	// `select nextval(seq), a from t1 union select nextval(seq), a from t2`
 	// The executing order of nextval and lastval is implicit, don't make any assumptions on it.
+}
+
+// before this PR:
+// single insert consume: 50.498672ms
+// after this PR:
+// single insert consume: 33.213615ms
+// Notice: use go test -check.b Benchmarkxxx to test it.
+func (s *testSequenceSuite) BenchmarkInsertCacheDefaultExpr(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test")
+	s.tk.MustExec("drop sequence if exists seq")
+	s.tk.MustExec("drop table if exists t")
+	s.tk.MustExec("create sequence seq")
+	s.tk.MustExec("create table t(a int default next value for seq)")
+	sql := "insert into t values "
+	for i := 0; i < 1000; i++ {
+		if i == 0 {
+			sql += "()"
+		} else {
+			sql += ",()"
+		}
+	}
+	c.ResetTimer()
+	for i := 0; i < c.N; i++ {
+		s.tk.MustExec(sql)
+	}
 }

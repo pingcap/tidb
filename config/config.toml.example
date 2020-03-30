@@ -77,13 +77,9 @@ delay-clean-table-lock = 0
 # Maximum number of the splitting region, which is used by the split region statement.
 split-region-max-num = 1000
 
-# enable the TiDB to fetch configs from PD and update itself during runtime.
-# see https://github.com/pingcap/tidb/pull/13660 for more details.
-enable-dynamic-config = true
-
 # alter-primary-key is used to control alter primary key feature. Default is false, indicate the alter primary key feature is disabled.
-# If it is true, we can add the primary key by "alter table", but we may not be able to drop the primary key.
-# In order to support "drop primary key" operation , this flag must be true and the table does not have the pkIsHandle flag.
+# If it is true, we can add the primary key by "alter table". However, if a table already exists before the switch is turned true and the data type of its primary key column is an integer,
+# the primary key cannot be dropped.
 alter-primary-key = false
 
 # server-version is used to change the version string of TiDB in the following scenarios:
@@ -99,8 +95,8 @@ repair-mode = false
 # In repair mode, repairing table which is not in repair list will get wrong database or wrong table error.
 repair-table-list = []
 
-# The maximum permitted number of simultaneous client connections.
-max-server-connections = 4096
+# The maximum permitted number of simultaneous client connections. When the value is 0, the number of connections is unlimited.
+max-server-connections = 0
 
 # Whether new collations are enabled, as indicated by its name, this configuration entry take effect ONLY when a TiDB cluster bootstraps for the first time.
 new_collations_enabled_on_first_bootstrap = false
@@ -337,12 +333,6 @@ region-cache-ttl = 600
 # default 0 means shutting off store limit.
 store-limit = 0
 
-[txn-local-latches]
-# Enable local latches for transactions. Enable it when
-# there are lots of conflicts between transactions.
-enabled = false
-capacity = 2048000
-
 [binlog]
 # enable to write binlog.
 # NOTE: If binlog is enabled, txn-total-size-limit should be less than 104857600(10M).
@@ -372,6 +362,9 @@ max-retry-count = 256
 # enable statement summary.
 enable = true
 
+# enable statement summary for TiDB internal query, default is false.
+enable-internal-query = false
+
 # max number of statements kept in memory.
 max-stmt-count = 200
 
@@ -389,6 +382,8 @@ history-size = 24
 [experimental]
 # enable column attribute `auto_random` to be defined on the primary key column.
 allow-auto-random = false
+# enable creating expression index.
+allow-expression-index = false
 
 # server level isolation read by engines and labels
 [isolation-read]

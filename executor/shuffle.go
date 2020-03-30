@@ -207,7 +207,7 @@ func (e *ShuffleExec) Next(ctx context.Context, req *chunk.Chunk) error {
 func recoveryShuffleExec(output chan *shuffleOutput, r interface{}) {
 	err := errors.Errorf("%v", r)
 	output <- &shuffleOutput{err: errors.Errorf("%v", r)}
-	logutil.BgLogger().Error("shuffle panicked", zap.Error(err))
+	logutil.BgLogger().Error("shuffle panicked", zap.Error(err), zap.Stack("stack"))
 }
 
 func (e *ShuffleExec) fetchDataAndSplit(ctx context.Context) {

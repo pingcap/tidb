@@ -251,6 +251,13 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
+	sctx.SetValue(sessionctx.QueryString, s.OriginText())
+	if _, ok := s.(*executor.ExecStmt).StmtNode.(ast.DDLNode); ok {
+		sctx.SetValue(sessionctx.LastExecuteDDL, true)
+	} else {
+		sctx.ClearValue(sessionctx.LastExecuteDDL)
+	}
+
 	se := sctx.(*session)
 	sessVars := se.GetSessionVars()
 	// Save origTxnCtx here to avoid it reset in the transaction retry.

@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
@@ -251,7 +252,8 @@ func (s *testDBSuite2) TestAddUniqueIndexRollback(c *C) {
 	testAddIndexRollback(c, s.store, s.lease, idxName, addIdxSQL, errMsg, hasNullValsInKey)
 }
 
-func (s *testDBSuite6) TestAddExpressionIndexRollback(c *C) {
+func (s *testSerialDBSuite) TestAddExpressionIndexRollback(c *C) {
+	config.GetGlobalConfig().Experimental.AllowsExpressionIndex = true
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test_db")
 	tk.MustExec("drop table if exists t1")
@@ -4476,6 +4478,61 @@ func (s *testDBSuite6) TestAlterOrderBy(c *C) {
 	s.tk.MustExec("alter table ob order by c")
 	c.Assert(s.tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
 	s.tk.MustExec("drop table if exists ob")
+}
+
+func (s *testSerialDBSuite) TestDDLJobErrorCount(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists ddl_error_table, new_ddl_error_table")
+	tk.MustExec("create table ddl_error_table(a int)")
+	is := s.dom.InfoSchema()
+	schemaName := model.NewCIStr("test")
+	tableName := model.NewCIStr("ddl_error_table")
+	schema, ok := is.SchemaByName(schemaName)
+	c.Assert(ok, IsTrue)
+	tbl, err := is.TableByName(schemaName, tableName)
+	c.Assert(err, IsNil)
+
+	newTableName := model.NewCIStr("new_ddl_error_table")
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    tbl.Meta().ID,
+		SchemaName: schema.Name.L,
+		Type:       model.ActionRenameTable,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{schema.ID, newTableName},
+	}
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockErrEntrySizeTooLarge", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/mockErrEntrySizeTooLarge"), IsNil)
+	}()
+
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	t := meta.NewMeta(txn)
+	job.ID, err = t.GenGlobalID()
+	c.Assert(err, IsNil)
+	job.Version = 1
+	job.StartTS = txn.StartTS()
+
+	err = t.EnQueueDDLJob(job)
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
+
+	ticker := time.NewTicker(s.lease)
+	defer ticker.Stop()
+	for range ticker.C {
+		historyJob, err := getHistoryDDLJob(s.store, job.ID)
+		c.Assert(err, IsNil)
+		if historyJob == nil {
+			continue
+		}
+		c.Assert(historyJob.ErrorCount, Equals, int64(1))
+		kv.ErrEntryTooLarge.Equal(historyJob.Error)
+		break
+	}
 }
 
 func init() {

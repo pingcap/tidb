@@ -197,7 +197,7 @@ func EncodeMySQLTime(sc *stmtctx.StatementContext, t types.Time, tp byte, b []by
 
 func encodeString(b []byte, val types.Datum, comparable bool) []byte {
 	if collate.NewCollationEnabled() && comparable {
-		return encodeBytes(b, collate.GetCollator(val.Collation()).Key(val.GetString(), collate.CollatorOption{PadLen: val.Length()}), true)
+		return encodeBytes(b, collate.GetCollator(val.Collation()).Key(val.GetString()), true)
 	}
 	return encodeBytes(b, val.GetBytes(), comparable)
 }
@@ -310,10 +310,21 @@ func encodeHashChunkRowIdx(sc *stmtctx.StatementContext, row chunk.Row, tp *type
 	case mysql.TypeFloat:
 		flag = floatFlag
 		f := float64(row.GetFloat32(idx))
+		// For negative zero. In memory, 0 is [0, 0, 0, 0, 0, 0, 0, 0] and -0 is [0, 0, 0, 0, 0, 0, 0, 128].
+		// It makes -0's hash val different from 0's.
+		if f == 0 {
+			f = 0
+		}
 		b = (*[unsafe.Sizeof(f)]byte)(unsafe.Pointer(&f))[:]
 	case mysql.TypeDouble:
 		flag = floatFlag
-		b = row.GetRaw(idx)
+		f := row.GetFloat64(idx)
+		// For negative zero. In memory, 0 is [0, 0, 0, 0, 0, 0, 0, 0] and -0 is [0, 0, 0, 0, 0, 0, 0, 128].
+		// It makes -0's hash val different from 0's.
+		if f == 0 {
+			f = 0
+		}
+		b = (*[unsafe.Sizeof(f)]byte)(unsafe.Pointer(&f))[:]
 	case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		flag = compactBytesFlag
 		b = row.GetBytes(idx)
@@ -417,6 +428,11 @@ func HashChunkSelected(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk
 			} else {
 				buf[0] = floatFlag
 				d := float64(f)
+				// For negative zero. In memory, 0 is [0, 0, 0, 0, 0, 0, 0, 0] and -0 is [0, 0, 0, 0, 0, 0, 0, 128].
+				// It makes -0's hash val different from 0's.
+				if d == 0 {
+					d = 0
+				}
 				b = (*[sizeFloat64]byte)(unsafe.Pointer(&d))[:]
 			}
 
@@ -436,6 +452,11 @@ func HashChunkSelected(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk
 				isNull[i] = true
 			} else {
 				buf[0] = floatFlag
+				// For negative zero. In memory, 0 is [0, 0, 0, 0, 0, 0, 0, 0] and -0 is [0, 0, 0, 0, 0, 0, 0, 128].
+				// It makes -0's hash val different from 0's.
+				if f == 0 {
+					f = 0
+				}
 				b = (*[sizeFloat64]byte)(unsafe.Pointer(&f))[:]
 			}
 
@@ -1187,11 +1208,11 @@ func HashGroupKey(sc *stmtctx.StatementContext, n int, col *chunk.Column, buf []
 // ConvertByCollation converts these bytes according to its collation.
 func ConvertByCollation(raw []byte, tp *types.FieldType) []byte {
 	collator := collate.GetCollator(tp.Collate)
-	return collator.Key(string(hack.String(raw)), collate.NewCollatorOption(tp.Flen))
+	return collator.Key(string(hack.String(raw)))
 }
 
 // ConvertByCollationStr converts this string according to its collation.
 func ConvertByCollationStr(str string, tp *types.FieldType) string {
 	collator := collate.GetCollator(tp.Collate)
-	return string(hack.String(collator.Key(str, collate.NewCollatorOption(tp.Flen))))
+	return string(hack.String(collator.Key(str)))
 }
