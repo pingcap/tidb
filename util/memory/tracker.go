@@ -52,7 +52,6 @@ type Tracker struct {
 	bytesLimit     int64        // bytesLimit <= 0 means no limit.
 	maxConsumed    int64        // max number of bytes consumed during execution.
 	parent         *Tracker     // The parent memory tracker.
-	overrideAction uint32       // overrideAction indicates whether the tracker would override actionOnExceed during Consume
 
 }
 
@@ -63,7 +62,6 @@ func NewTracker(label fmt.Stringer, bytesLimit int64) *Tracker {
 	t := &Tracker{
 		label:          label,
 		bytesLimit:     bytesLimit,
-		overrideAction: 0,
 	}
 	t.actionMu.actionOnExceed = &LogOnExceed{}
 	return t
@@ -173,8 +171,6 @@ func (t *Tracker) ReplaceChild(oldChild, newChild *Tracker) {
 
 // Consume is used to consume a memory usage. "bytes" can be a negative value,
 // which means this is a memory release operation. When memory usage of a tracker
-// exceeds its bytesLimit, the tracker calls its action, so does each of its ancestors
-// If the tracker's overrideAction is enabled, its action would be executed instead of its ancestors's.
 func (t *Tracker) Consume(bytes int64) {
 	var rootExceed *Tracker
 	for tracker := t; tracker != nil; tracker = tracker.parent {
@@ -192,19 +188,10 @@ func (t *Tracker) Consume(bytes int64) {
 		}
 	}
 	if rootExceed != nil {
-		or := atomic.LoadUint32(&t.overrideAction)
-		if or > 0 {
-			t.actionMu.Lock()
-			defer t.actionMu.Unlock()
-			if t.actionMu.actionOnExceed != nil {
-				t.actionMu.actionOnExceed.Action(t)
-			}
-		} else {
-			rootExceed.actionMu.Lock()
-			defer rootExceed.actionMu.Unlock()
-			if rootExceed.actionMu.actionOnExceed != nil {
-				rootExceed.actionMu.actionOnExceed.Action(rootExceed)
-			}
+		rootExceed.actionMu.Lock()
+		defer rootExceed.actionMu.Unlock()
+		if rootExceed.actionMu.actionOnExceed != nil {
+			rootExceed.actionMu.actionOnExceed.Action(rootExceed)
 		}
 	}
 }
@@ -276,14 +263,4 @@ func (t *Tracker) BytesToString(numBytes int64) string {
 	}
 
 	return fmt.Sprintf("%v Bytes", numBytes)
-}
-
-// SetOverriderAction set whether enable or disable overrideAction
-func (t *Tracker) SetOverriderAction(isEnabled bool) {
-	now := atomic.LoadUint32(&t.overrideAction)
-	if isEnabled {
-		atomic.CompareAndSwapUint32(&t.overrideAction, now, 1)
-	} else {
-		atomic.CompareAndSwapUint32(&t.overrideAction, now, 0)
-	}
 }

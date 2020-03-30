@@ -249,7 +249,7 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 			e.generatePartition()
 		}
 		e.rowChunks.SetOnExceededCallback(onExceededCallback)
-		e.memTracker.SetOverriderAction(true)
+		e.rowChunks.GetDiskTracker().AttachTo(e.diskTracker)
 	}
 	for {
 		chk := newFirstChunk(e.children[0])
@@ -265,11 +265,24 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 			return err
 		}
 		if e.rowChunks.AlreadySpilled() {
+			oldRowContainer := e.rowChunks
 			e.rowChunks = chunk.NewRowContainer(retTypes(e), e.maxChunkSize)
-			e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
+			// Succeed the former rowContainer Disk Usage
+			e.rowChunks.GetDiskTracker().Consume(oldRowContainer.GetDiskTracker().BytesConsumed())
 			e.rowChunks.GetMemTracker().SetLabel(rowChunksLabel)
 			e.rowChunks.SetOnExceededCallback(onExceededCallback)
 			e.spillAction.ResetOnceAndSetRowContainer(e.rowChunks)
+			if config.GetGlobalConfig().OOMUseTmpStorage {
+				e.spillAction = e.rowChunks.ActionSpill()
+				e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(e.spillAction)
+				onExceededCallback = func(rowContainer *chunk.RowContainer) {
+					e.generatePartition()
+				}
+				e.rowChunks.SetOnExceededCallback(onExceededCallback)
+			}
+			// Attach and ReplaceChild would re-trigger the Consume, so we need to left them at last
+			e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
+			e.diskTracker.ReplaceChild(oldRowContainer.GetDiskTracker(), e.rowChunks.GetDiskTracker())
 		}
 	}
 	if e.rowChunks.NumRow() > 0 {
