@@ -251,12 +251,11 @@ func checkAddAndCreateColumnInfos(t *meta.Meta, job *model.Job) (*model.TableInf
 		}
 	}
 
-	var columnInfos []*model.ColumnInfo
-
+	columnInfos := make([]*model.ColumnInfo, len(columns))
 	for i, col := range columns {
 		columnInfo := model.FindColumnInfo(tblInfo.Columns, col.Name.L)
 		if columnInfo != nil {
-			columnInfos = append(columnInfos, columnInfo)
+			columnInfos[i] = columnInfo
 			if columnInfo.State == model.StatePublic {
 				// We already have a column with the same column name.
 				job.State = model.JobStateCancelled
@@ -271,14 +270,12 @@ func checkAddAndCreateColumnInfos(t *meta.Meta, job *model.Job) (*model.TableInf
 			logutil.BgLogger().Info("[ddl] run add columns job", zap.String("job", job.String()), zap.Reflect("columnInfo", *columnInfo), zap.Int("offset", offsets[i]))
 
 			// Set offset arg to job.
-			if offset != 0 {
-				offsets[i] = offset
-			}
+			offsets[i] = offset
 			if err = checkAddColumnTooManyColumns(len(tblInfo.Columns)); err != nil {
 				job.State = model.JobStateCancelled
 				return nil, nil, nil, nil, errors.Trace(err)
 			}
-			columnInfos = append(columnInfos, columnInfo)
+			columnInfos[i] = columnInfo
 		}
 	}
 	job.Args = []interface{}{columnInfos, positions, offsets}

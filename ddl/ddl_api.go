@@ -2352,18 +2352,17 @@ func (d *ddl) AddColumns(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alte
 		for _, specNewColumn := range spec.NewColumns {
 			if !addingColumnNames[specNewColumn.Name.Name.L] {
 				addingColumnNames[specNewColumn.Name.Name.L] = true
-			} else {
-				if spec.IfNotExists {
-					dupColumnNames[specNewColumn.Name.Name.L] = true
-					continue
-				}
+				continue
+			}
+			if !spec.IfNotExists {
 				return errors.Trace(infoschema.ErrColumnExists.GenWithStackByArgs(specNewColumn.Name.Name.O))
 			}
+			dupColumnNames[specNewColumn.Name.Name.L] = true
 		}
 	}
-	columns := make([]*table.Column, 0)
-	positions := make([]*ast.ColumnPosition, 0)
-	offsets := make([]int, 0)
+	columns := make([]*table.Column, len(addingColumnNames))
+	positions := make([]*ast.ColumnPosition, len(addingColumnNames))
+	offsets := make([]int, len(addingColumnNames))
 	newColumnsCount := 0
 	// Check the columns one by one.
 	for _, spec := range specs {
@@ -2381,15 +2380,19 @@ func (d *ddl) AddColumns(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alte
 			if col == nil && spec.IfNotExists {
 				continue
 			}
-			columns = append(columns, col)
-			positions = append(positions, spec.Position)
-			offsets = append(offsets, 0)
+			columns[newColumnsCount] = col
+			positions[newColumnsCount] = spec.Position
+			offsets[newColumnsCount] = 0
 			newColumnsCount++
 		}
 	}
 	if newColumnsCount == 0 {
 		return nil
 	}
+	// Since the newColumnsCount can be less than len(addingColumnNames)
+	columns = columns[:newColumnsCount]
+	positions = positions[:newColumnsCount]
+	offsets = offsets[:newColumnsCount]
 	if err = checkAddColumnTooManyColumns(len(t.Cols()) + newColumnsCount); err != nil {
 		return errors.Trace(err)
 	}
