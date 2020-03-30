@@ -1702,15 +1702,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	se1, err := createSession(store)
-	if err != nil {
-		return nil, err
-	}
-	err = dom.UpdateTableStatsLoop(se1)
-	if err != nil {
-		return nil, err
-	}
+	
 	se2, err := createSession(store)
 	if err != nil {
 		return nil, err
@@ -1720,6 +1712,14 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		return nil, err
 	}
 	err = dom.LoadBindInfoLoop(se2, se3)
+	se1, err := createSession(store)
+	if err != nil {
+		return nil, err
+	}
+	err = dom.UpdateTableStatsLoop(se1)
+	if err != nil {
+		return nil, err
+	}
 	if err != nil {
 		return nil, err
 	}
