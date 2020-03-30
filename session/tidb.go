@@ -287,16 +287,12 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 		}
 
 		// Handle the stmt commit/rollback.
-		if txn, err1 := sctx.Txn(false); err1 == nil {
-			if txn.Valid() {
-				if err != nil {
-					sctx.StmtRollback()
-				} else {
-					err = sctx.StmtCommit(sctx.GetSessionVars().StmtCtx.MemTracker)
-				}
+		if se.txn.Valid() {
+			if err != nil {
+				sctx.StmtRollback()
+			} else {
+				err = sctx.StmtCommit(sctx.GetSessionVars().StmtCtx.MemTracker)
 			}
-		} else {
-			logutil.BgLogger().Error("get txn failed", zap.Error(err1))
 		}
 	}
 	err = finishStmt(ctx, sctx, se, sessVars, err, s)
