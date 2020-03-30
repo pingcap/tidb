@@ -20,13 +20,10 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/format"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
 )
 
 // BlockHintProcessor processes hints at different level of sql statement.
@@ -168,23 +165,12 @@ func (p *BlockHintProcessor) getCurrentStmtHints(hints []*ast.TableOptimizerHint
 	return p.QbHints[currentOffset]
 }
 
-func restoreOptimizerHint(hint *ast.TableOptimizerHint) string {
-	var sb strings.Builder
-	ctx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
-	err := hint.Restore(ctx)
-	// There won't be any error for optimizer hint.
-	if err != nil {
-		logutil.BgLogger().Warn("restore hint failed", zap.Error(err))
-	}
-	return sb.String()
-}
-
 // RestoreOptimizerHints restores these hints.
 func RestoreOptimizerHints(hints []*ast.TableOptimizerHint) string {
 	hintsStr := make([]string, 0, len(hints))
 	hintsMap := make(map[string]struct{}, len(hints))
 	for _, hint := range hints {
-		hintStr := restoreOptimizerHint(hint)
+		hintStr := bindinfo.RestoreTableOptimizerHint(hint)
 		if _, ok := hintsMap[hintStr]; ok {
 			continue
 		}
