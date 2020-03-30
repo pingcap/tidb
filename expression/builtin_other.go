@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
@@ -703,12 +702,7 @@ func (b *builtinSetVarSig) evalString(row chunk.Row) (res string, isNull bool, e
 
 	varName = strings.ToLower(varName)
 	sessionVars.UsersLock.Lock()
-	if len(datum.Collation()) > 0 {
-		sessionVars.Users[varName] = types.NewCollationStringDatum(stringutil.Copy(res), datum.Collation(), collate.DefaultLen)
-	} else {
-		_, collation := sessionVars.GetCharsetInfo()
-		sessionVars.Users[varName] = types.NewCollationStringDatum(stringutil.Copy(res), collation, collate.DefaultLen)
-	}
+	sessionVars.SetUserVar(varName, stringutil.Copy(res), datum.Collation())
 	sessionVars.UsersLock.Unlock()
 	return res, false, nil
 }

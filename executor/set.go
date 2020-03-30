@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/stmtsummary"
@@ -94,12 +93,7 @@ func (e *SetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 					return err1
 				}
 
-				if len(value.Collation()) > 0 {
-					sessionVars.Users[name] = types.NewCollationStringDatum(stringutil.Copy(svalue), value.Collation(), collate.DefaultLen)
-				} else {
-					_, collation := sessionVars.GetCharsetInfo()
-					sessionVars.Users[name] = types.NewCollationStringDatum(stringutil.Copy(svalue), collation, collate.DefaultLen)
-				}
+				sessionVars.SetUserVar(name, stringutil.Copy(svalue), value.Collation())
 			}
 			continue
 		}
