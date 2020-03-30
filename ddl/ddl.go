@@ -113,11 +113,13 @@ type DDL interface {
 	DropSequence(ctx sessionctx.Context, tableIdent ast.Ident, ifExists bool) (err error)
 
 	// CreateSchemaWithInfo creates a database (schema) given its database info.
+	//
 	// If `tryRetainID` is true, this method will try to keep the database ID specified in
-	//  the `info` rather than generating new ones. This is just a hint though, if the ID collides
-	//  with an existing database a new ID will always be used.
+	// the `info` rather than generating new ones. This is just a hint though, if the ID collides
+	// with an existing database a new ID will always be used.
+	//
 	// WARNING: the DDL owns the `info` after calling this function, and will modify its fields
-	//  in-place. If you want to keep using `info`, please call Clone() first.
+	// in-place. If you want to keep using `info`, please call Clone() first.
 	CreateSchemaWithInfo(
 		ctx sessionctx.Context,
 		info *model.DBInfo,
@@ -125,11 +127,13 @@ type DDL interface {
 		tryRetainID bool) error
 
 	// CreateTableWithInfo creates a table, view or sequence given its table info.
+	//
 	// If `tryRetainID` is true, this method will try to keep the table ID specified in the `info`
-	//  rather than generating new ones. This is just a hint though, if the ID collides
-	//  with an existing database a new ID will always be used.
+	// rather than generating new ones. This is just a hint though, if the ID collides with an
+	// existing table a new ID will always be used.
+	//
 	// WARNING: the DDL owns the `info` after calling this function, and will modify its fields
-	//  in-place. If you want to keep using `info`, please call Clone() first.
+	// in-place. If you want to keep using `info`, please call Clone() first.
 	CreateTableWithInfo(
 		ctx sessionctx.Context,
 		schema model.CIStr,
