@@ -88,6 +88,8 @@ const (
 	HintIndexMerge = "use_index_merge"
 	// HintTimeRange is a hint to specify the time range for metrics summary tables
 	HintTimeRange = "time_range"
+	// HintIgnorePlanCache is a hint to enforce ignoring plan cache
+	HintIgnorePlanCache = "ignore_plan_cache"
 )
 
 const (
@@ -417,16 +419,15 @@ func (p *LogicalJoin) setPreferredJoinType(hintInfo *tableHintInfo) {
 	if hintInfo.ifPreferINLMJ(rhsAlias) {
 		p.preferJoinType |= preferRightAsINLMJInner
 	}
-
-	// set hintInfo for further usage if this hint info can be used.
-	if p.preferJoinType != 0 {
-		p.hintInfo = hintInfo
-	}
-
 	if containDifferentJoinTypes(p.preferJoinType) {
 		errMsg := "Join hints are conflict, you can only specify one type of join"
 		warning := ErrInternal.GenWithStack(errMsg)
 		p.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+		p.preferJoinType = 0
+	}
+	// set hintInfo for further usage if this hint info can be used.
+	if p.preferJoinType != 0 {
+		p.hintInfo = hintInfo
 	}
 }
 
@@ -2280,15 +2281,18 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 		case HintReadFromStorage:
 			switch hint.HintData.(model.CIStr).L {
 			case HintTiFlash:
-				tiflashTables = tableNames2HintTableInfo(b.ctx, hint.Tables, b.hintProcessor, nodeType, currentLevel)
+				tiflashTables = append(tiflashTables, tableNames2HintTableInfo(b.ctx, hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
 			case HintTiKV:
-				tikvTables = tableNames2HintTableInfo(b.ctx, hint.Tables, b.hintProcessor, nodeType, currentLevel)
+				tikvTables = append(tikvTables, tableNames2HintTableInfo(b.ctx, hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
 			}
 		case HintIndexMerge:
-			if len(hint.Tables) == 0 {
-				b.pushHintWithoutTableWarning(hint)
-			} else {
+			if len(hint.Tables) != 0 {
+				dbName := hint.Tables[0].DBName
+				if dbName.L == "" {
+					dbName = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
+				}
 				indexMergeHintList = append(indexMergeHintList, indexHintInfo{
+					dbName:  dbName,
 					tblName: hint.Tables[0].TableName,
 					indexHint: &ast.IndexHint{
 						IndexNames: hint.Indexes,
@@ -2318,12 +2322,34 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 
 func (b *PlanBuilder) popTableHints() {
 	hintInfo := b.tableHintInfo[len(b.tableHintInfo)-1]
+	b.appendUnmatchedIndexHintWarning(hintInfo.indexHintList, false)
+	b.appendUnmatchedIndexHintWarning(hintInfo.indexMergeHintList, true)
 	b.appendUnmatchedJoinHintWarning(HintINLJ, TiDBIndexNestedLoopJoin, hintInfo.indexNestedLoopJoinTables.inljTables)
 	b.appendUnmatchedJoinHintWarning(HintINLHJ, "", hintInfo.indexNestedLoopJoinTables.inlhjTables)
 	b.appendUnmatchedJoinHintWarning(HintINLMJ, "", hintInfo.indexNestedLoopJoinTables.inlmjTables)
 	b.appendUnmatchedJoinHintWarning(HintSMJ, TiDBMergeJoin, hintInfo.sortMergeJoinTables)
 	b.appendUnmatchedJoinHintWarning(HintHJ, TiDBHashJoin, hintInfo.hashJoinTables)
 	b.tableHintInfo = b.tableHintInfo[:len(b.tableHintInfo)-1]
+}
+
+func (b *PlanBuilder) appendUnmatchedIndexHintWarning(indexHints []indexHintInfo, usedForIndexMerge bool) {
+	for _, hint := range indexHints {
+		if !hint.matched {
+			var hintTypeString string
+			if usedForIndexMerge {
+				hintTypeString = "use_index_merge"
+			} else {
+				hintTypeString = hint.hintTypeString()
+			}
+			errMsg := fmt.Sprintf("%s(%s) is inapplicable, check whether the table(%s.%s) exists",
+				hintTypeString,
+				hint.indexString(),
+				hint.dbName,
+				hint.tblName,
+			)
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(errMsg))
+		}
+	}
 }
 
 func (b *PlanBuilder) appendUnmatchedJoinHintWarning(joinType string, joinTypeAlias string, hintTables []hintTableInfo) {
@@ -2666,9 +2692,10 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	// extract the IndexMergeHint
 	var indexMergeHints []*ast.IndexHint
 	if hints := b.TableHints(); hints != nil {
-		for _, hint := range hints.indexMergeHintList {
+		for i, hint := range hints.indexMergeHintList {
 			if hint.tblName.L == tblName.L {
 				indexMergeHints = append(indexMergeHints, hint.indexHint)
+				hints.indexMergeHintList[i].matched = true
 			}
 		}
 	}

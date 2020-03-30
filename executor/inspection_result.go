@@ -188,6 +188,7 @@ func (configInspection) inspectDiffConfig(_ context.Context, sctx sessionctx.Con
 	ignoreConfigKey := []string{
 		// TiDB
 		"port",
+		"status.status-port",
 		"host",
 		"path",
 		"advertise-address",
@@ -196,8 +197,15 @@ func (configInspection) inspectDiffConfig(_ context.Context, sctx sessionctx.Con
 		"log.slow-query-file",
 
 		// PD
+		"advertise-client-urls",
+		"advertise-peer-urls",
+		"client-urls",
 		"data-dir",
 		"log-file",
+		"log.file.filename",
+		"metric.job",
+		"name",
+		"peer-urls",
 
 		// TiKV
 		"server.addr",
@@ -630,10 +638,11 @@ func (thresholdCheckInspection) inspectThreshold1(ctx context.Context, sctx sess
 
 		var sql string
 		if len(rule.configKey) > 0 {
-			sql = fmt.Sprintf("select t1.instance, t1.cpu, t2.threshold, t2.value from "+
-				"(select instance, max(value) as cpu from metrics_schema.tikv_thread_cpu %[4]s and name like '%[1]s' group by instance) as t1,"+
-				"(select value * %[2]f as threshold, value from information_schema.cluster_config where type='tikv' and `key` = '%[3]s' limit 1) as t2 "+
-				"where t1.cpu > t2.threshold;", rule.component, rule.threshold, rule.configKey, condition)
+			sql = fmt.Sprintf("select t2.instance, t1.cpu, (t2.value * %[2]f) as threshold, t2.value from "+
+				"(select instance as status_address, max(value) as cpu from metrics_schema.tikv_thread_cpu %[4]s and name like '%[1]s' group by instance) as t1 join "+
+				"(select instance, value from information_schema.cluster_config where type='tikv' and `key` = '%[3]s') as t2 join "+
+				"(select instance,status_address from information_schema.cluster_info where type='tikv') as t3 "+
+				"on t1.status_address=t3.status_address and t2.instance=t3.instance where t1.cpu > (t2.value * %[2]f)", rule.component, rule.threshold, rule.configKey, condition)
 		} else {
 			sql = fmt.Sprintf("select t1.instance, t1.cpu, %[2]f from "+
 				"(select instance, max(value) as cpu from metrics_schema.tikv_thread_cpu %[3]s and name like '%[1]s' group by instance) as t1 "+

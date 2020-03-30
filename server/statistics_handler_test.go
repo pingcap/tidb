@@ -85,8 +85,8 @@ func (ds *testDumpStatsSuite) stopServer(c *C) {
 
 func (ds *testDumpStatsSuite) TestDumpStatsAPI(c *C) {
 	ds.startServer(c)
+	defer ds.stopServer(c)
 	ds.prepareData(c)
-	defer ds.server.Close()
 
 	router := mux.NewRouter()
 	router.Handle("/stats/dump/{db}/{table}", ds.sh)
