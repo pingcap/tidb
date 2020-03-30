@@ -20,12 +20,12 @@ import (
 )
 
 type batchCopTask struct {
-	respChan chan *batchCopResponse
+	respChan  chan *batchCopResponse
 	storeAddr string
-	cmdType tikvrpc.CmdType
+	cmdType   tikvrpc.CmdType
 
 	regionTaskMap map[uint64]*copTask
-	copTasks []copTaskAndRPCContext
+	copTasks      []copTaskAndRPCContext
 }
 
 type batchCopResponse struct {
@@ -36,7 +36,6 @@ type batchCopResponse struct {
 	respSize int64
 	respTime time.Duration
 }
-
 
 // GetData implements the kv.ResultSubset GetData interface.
 func (rs *batchCopResponse) GetData() []byte {
@@ -76,7 +75,6 @@ func (rs *batchCopResponse) MemSize() int64 {
 func (rs *batchCopResponse) RespTime() time.Duration {
 	return rs.respTime
 }
-
 
 type copTaskAndRPCContext struct {
 	task *copTask
@@ -145,12 +143,12 @@ func buildBatchCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, re
 			batchCop.copTasks = append(batchCop.copTasks, copTaskAndRPCContext{task: task, ctx: rpcCtx})
 			batchCop.regionTaskMap[task.region.id] = task
 		} else {
-			batchTask := &batchCopTask {
-				respChan : make(chan * batchCopResponse, 2048),
-				storeAddr: rpcCtx.Addr,
-				cmdType : task.cmdType,
+			batchTask := &batchCopTask{
+				respChan:      make(chan *batchCopResponse, 2048),
+				storeAddr:     rpcCtx.Addr,
+				cmdType:       task.cmdType,
 				regionTaskMap: make(map[uint64]*copTask),
-				copTasks : []copTaskAndRPCContext{{task, rpcCtx}} ,
+				copTasks:      []copTaskAndRPCContext{{task, rpcCtx}},
 			}
 			batchTask.regionTaskMap[task.region.id] = task
 			storeTaskMap[rpcCtx.Addr] = batchTask
@@ -240,10 +238,9 @@ type batchCopIterator struct {
 	// There are two cases we need to close the `finishCh` channel, one is when context is done, the other one is
 	// when the Close is called. we use atomic.CompareAndSwap `closed` to to make sure the channel is not closed twice.
 	closed uint32
-
 }
 
-func (b * batchCopIterator) run(ctx context.Context) {
+func (b *batchCopIterator) run(ctx context.Context) {
 	for _, task := range b.tasks {
 		b.wg.Add(1)
 		bo := NewBackoffer(ctx, copNextMaxBackoff).WithVars(b.vars)
@@ -304,7 +301,6 @@ func (it *batchCopIterator) Close() error {
 	return nil
 }
 
-
 func (b *batchCopIterator) handleTask(ctx context.Context, bo *Backoffer, task *batchCopTask) {
 	logutil.BgLogger().Debug("handle batch task")
 	tasks := []*batchCopTask{task}
@@ -312,29 +308,29 @@ func (b *batchCopIterator) handleTask(ctx context.Context, bo *Backoffer, task *
 	for idx < len(tasks) {
 		ret, err := b.handleTaskOnce(ctx, bo, task)
 		if err != nil {
-			resp := &batchCopResponse{err : errors.Trace(err)}
+			resp := &batchCopResponse{err: errors.Trace(err)}
 			b.sendToRespCh(resp)
 		} else {
 			tasks = append(tasks, ret...)
 		}
-		idx ++
+		idx++
 	}
 	close(task.respChan)
-	b.wg.Done();
+	b.wg.Done()
 }
 
-func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo * Backoffer, task *batchCopTask)([]*batchCopTask, error){
+func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *Backoffer, task *batchCopTask) ([]*batchCopTask, error) {
 	logutil.BgLogger().Debug("handle batch task once")
 	sender := NewRegionBatchRequestSender(b.store.regionCache, b.store.client)
 	var regionInfos []*coprocessor.RegionInfo
 	for _, task := range task.copTasks {
 		regionInfos = append(regionInfos, &coprocessor.RegionInfo{
-			RegionId:             task.task.region.id,
-			RegionEpoch:          &metapb.RegionEpoch{
-				ConfVer:              task.task.region.confVer,
-				Version:              task.task.region.ver,
+			RegionId: task.task.region.id,
+			RegionEpoch: &metapb.RegionEpoch{
+				ConfVer: task.task.region.confVer,
+				Version: task.task.region.ver,
 			},
-			Ranges:               task.task.ranges.toPBRanges(),
+			Ranges: task.task.ranges.toPBRanges(),
 		})
 	}
 
@@ -363,8 +359,18 @@ func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo * Backoffer, t
 	return b.handleStreamedBatchCopResponse(ctx, bo, resp.Resp.(*tikvrpc.BatchCopStreamResponse), task)
 }
 func (b *batchCopIterator) handleStreamedBatchCopResponse(ctx context.Context, bo *Backoffer, response *tikvrpc.BatchCopStreamResponse, task *batchCopTask) (totalRetTask []*batchCopTask, err error) {
+	defer response.Close()
+	resp := response.BatchResponse
+	if resp == nil {
+		// streaming request returns io.EOF, so the first Response is nil.
+		return nil, nil
+	}
 	for {
-		resp, err := response.Recv()
+		remainedTasks, err := b.handleBatchCopResponse(bo, resp, task)
+		if err != nil || len(remainedTasks) != 0 {
+			return remainedTasks, errors.Trace(err)
+		}
+		resp, err = response.Recv()
 		if err != nil {
 			if errors.Cause(err) == io.EOF {
 				return nil, nil
@@ -382,15 +388,10 @@ func (b *batchCopIterator) handleStreamedBatchCopResponse(ctx context.Context, b
 			}
 			return nil, errors.Trace(err)
 		}
-
-		remainedTasks, err := b.handleBatchCopResponse(ctx, bo, resp, task)
-		if err != nil || len(remainedTasks) != 0 {
-			return remainedTasks, errors.Trace(err)
-		}
 	}
 }
 
-func (b *batchCopIterator) handleBatchCopResponse(ctx context.Context, bo *Backoffer, response *coprocessor.BatchResponse, task *batchCopTask) (totalRetTask []*batchCopTask, err error) {
+func (b *batchCopIterator) handleBatchCopResponse(bo *Backoffer, response *coprocessor.BatchResponse, task *batchCopTask) (totalRetTask []*batchCopTask, err error) {
 	for _, status := range response.RegionStatus {
 		id := status.RegionId
 		if status.RegionError != nil {
@@ -431,7 +432,7 @@ func (b *batchCopIterator) handleBatchCopResponse(ctx context.Context, bo *Backo
 	}
 
 	b.sendToRespCh(&batchCopResponse{
-		pbResp:   response,
+		pbResp: response,
 	})
 
 	return totalRetTask, nil

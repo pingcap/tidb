@@ -420,7 +420,7 @@ const (
 	DefTiDBHashJoinConcurrency         = 5
 	DefTiDBProjectionConcurrency       = 4
 	DefTiDBOptimizerSelectivityLevel   = 0
-	DefCopTaskBatchSize 			   = 10
+	DefCopTaskBatchSize                = 10
 	DefTiDBTxnMode                     = ""
 	DefTiDBRowFormatV1                 = 1
 	DefTiDBRowFormatV2                 = 2
