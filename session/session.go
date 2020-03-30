@@ -1712,14 +1712,14 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		return nil, err
 	}
 	err = dom.LoadBindInfoLoop(se2, se3)
+	if err != nil {
+		return nil, err
+	}
 	se1, err := createSession(store)
 	if err != nil {
 		return nil, err
 	}
 	err = dom.UpdateTableStatsLoop(se1)
-	if err != nil {
-		return nil, err
-	}
 	if err != nil {
 		return nil, err
 	}
