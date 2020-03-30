@@ -2150,7 +2150,7 @@ var MetricTableMap = map[string]MetricTableDef{
 		Labels:  []string{"instance", "device"},
 		Comment: "Units is byte",
 	},
-	"node_filesystem_space_used": {
+	"node_disk_usage": {
 		PromQL:  `((node_filesystem_size_bytes{$LABEL_CONDITIONS} - node_filesystem_avail_bytes{$LABEL_CONDITIONS}) / node_filesystem_size_bytes{$LABEL_CONDITIONS}) * 100`,
 		Labels:  []string{"instance", "device"},
 		Comment: "Filesystem used space. If is > 80% then is Critical.",

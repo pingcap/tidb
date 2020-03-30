@@ -377,7 +377,7 @@ func (inspectSwapMemoryUsed) getItem() string {
 type inspectDiskUsage struct{}
 
 func (inspectDiskUsage) genSQL(timeRange plannercore.QueryTimeRange) string {
-	sql := fmt.Sprintf("select instance, device, max(value) as max_usage from metrics_schema.node_filesystem_space_used %v and device like '/%%' group by instance, device having max_usage >= 70", timeRange.Condition())
+	sql := fmt.Sprintf("select instance, device, max(value) as max_usage from metrics_schema.node_disk_usage %v and device like '/%%' group by instance, device having max_usage >= 70", timeRange.Condition())
 	return sql
 }
 
@@ -394,7 +394,7 @@ func (i inspectDiskUsage) genResult(sql string, row chunk.Row) inspectionResult 
 }
 
 func (inspectDiskUsage) getItem() string {
-	return "disk-usag"
+	return "disk-usage"
 }
 
 type inspectCPULoad struct {
