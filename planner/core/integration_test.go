@@ -745,16 +745,3 @@ func (s *testIntegrationSuite) TestIssue15546(c *C) {
 	tk.MustExec("create definer='root'@'localhost' view vt(a, b) as select a, b from t")
 	tk.MustQuery("select * from pt, vt where pt.a = vt.a").Check(testkit.Rows("1 1 1 1"))
 }
-
-func (s *testIntegrationSuite) TestEnforcedMergeJoinWithConflictedCollation(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1, t2")
-	tk.MustExec("create table t1(a int, b varchar(5) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci)")
-	tk.MustExec("create table t2(a int, b varchar(5) CHARACTER SET binary)")
-	tk.MustExec("insert into t1 values(0, 'a'), (1, 'b')")
-	tk.MustExec("insert into t2 values(0, 'a'), (1, 'b')")
-	tk.MustQuery("select /*+ merge_join(t1, t2) */ * from t1, t2 where t1.b = t2.b").Check(testkit.Rows(
-		"0 a 0 a", "1 b 1 b"))
-}
