@@ -192,6 +192,37 @@ func restore2JoinHint(hintType string, hintTables []hintTableInfo) string {
 	return buffer.String()
 }
 
+func restore2StorageHint(tiflashTables, tikvTables []hintTableInfo) string {
+	buffer := bytes.NewBufferString("/*+ ")
+	buffer.WriteString(strings.ToUpper(HintReadFromStorage))
+	buffer.WriteString("(")
+	if len(tiflashTables) > 0 {
+		buffer.WriteString("tiflash[")
+		for i, table := range tiflashTables {
+			buffer.WriteString(table.tblName.L)
+			if i < len(tiflashTables)-1 {
+				buffer.WriteString(", ")
+			}
+		}
+		buffer.WriteString("]")
+		if len(tikvTables) > 0 {
+			buffer.WriteString(", ")
+		}
+	}
+	if len(tikvTables) > 0 {
+		buffer.WriteString("tikv[")
+		for i, table := range tikvTables {
+			buffer.WriteString(table.tblName.L)
+			if i < len(tikvTables)-1 {
+				buffer.WriteString(", ")
+			}
+		}
+		buffer.WriteString("]")
+	}
+	buffer.WriteString(") */")
+	return buffer.String()
+}
+
 func extractUnmatchedTables(hintTables []hintTableInfo) []string {
 	var tableNames []string
 	for _, table := range hintTables {
@@ -1463,8 +1494,8 @@ func buildShowDDLJobsFields() (*expression.Schema, types.NameSlice) {
 	schema.Append(buildColumnWithName("", "SCHEMA_ID", mysql.TypeLonglong, 4))
 	schema.Append(buildColumnWithName("", "TABLE_ID", mysql.TypeLonglong, 4))
 	schema.Append(buildColumnWithName("", "ROW_COUNT", mysql.TypeLonglong, 4))
-	schema.Append(buildColumnWithName("", "START_TIME", mysql.TypeVarchar, 64))
-	schema.Append(buildColumnWithName("", "END_TIME", mysql.TypeVarchar, 64))
+	schema.Append(buildColumnWithName("", "START_TIME", mysql.TypeDatetime, 19))
+	schema.Append(buildColumnWithName("", "END_TIME", mysql.TypeDatetime, 19))
 	schema.Append(buildColumnWithName("", "STATE", mysql.TypeVarchar, 64))
 	return schema.col2Schema(), schema.names
 }
