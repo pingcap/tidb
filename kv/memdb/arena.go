@@ -148,6 +148,11 @@ func (a *arena) allocInBlock(idx, size int) (arenaAddr, []byte) {
 }
 
 func (a *arena) reset() {
+	if a.availIdx < 0 {
+		a.blocks = nil
+		return
+	}
+
 	a.availIdx = 0
 	a.blockSize = len(a.blocks[0].buf)
 	a.blocks = []arenaBlock{a.blocks[0]}

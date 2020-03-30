@@ -76,6 +76,7 @@ func (s testMemDBSuite) TestIterator(c *C) {
 
 func (s testMemDBSuite) TestReset(c *C) {
 	p := New(4 * 1024)
+	p.Reset()
 	s.deriveAndFill(0, 10000, 0, &p.root).Flush()
 	p.Reset()
 	c.Check(p.Get([]byte{0}), IsNil)
