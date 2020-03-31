@@ -445,17 +445,17 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 	case tipb.ScalarFuncSig_BitNegSig:
 		f = &builtinBitNegSig{base}
 	case tipb.ScalarFuncSig_IntIsTrue:
-		f = &builtinIntIsTrueSig{base, false}
+		f = &builtinIntIsTrueSig{base, true}
 	case tipb.ScalarFuncSig_RealIsTrue:
-		f = &builtinRealIsTrueSig{base, false}
+		f = &builtinRealIsTrueSig{base, true}
 	case tipb.ScalarFuncSig_DecimalIsTrue:
-		f = &builtinDecimalIsTrueSig{base, false}
+		f = &builtinDecimalIsTrueSig{base, true}
 	case tipb.ScalarFuncSig_IntIsFalse:
-		f = &builtinIntIsFalseSig{base, false}
+		f = &builtinIntIsFalseSig{base, true}
 	case tipb.ScalarFuncSig_RealIsFalse:
-		f = &builtinRealIsFalseSig{base, false}
+		f = &builtinRealIsFalseSig{base, true}
 	case tipb.ScalarFuncSig_DecimalIsFalse:
-		f = &builtinDecimalIsFalseSig{base, false}
+		f = &builtinDecimalIsFalseSig{base, true}
 	case tipb.ScalarFuncSig_LeftShift:
 		f = &builtinLeftShiftSig{base}
 	case tipb.ScalarFuncSig_RightShift:
