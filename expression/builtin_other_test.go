@@ -172,7 +172,9 @@ func (s *testEvaluatorSuite) TestSetVar(c *C) {
 			c.Assert(ok, Equals, true)
 			val, ok := tc.res.(string)
 			c.Assert(ok, Equals, true)
-			c.Assert(s.ctx.GetSessionVars().Users[key], Equals, val)
+			sessionVar, ok := s.ctx.GetSessionVars().Users[key]
+			c.Assert(ok, Equals, true)
+			c.Assert(sessionVar.GetString(), Equals, val)
 		}
 	}
 }
@@ -189,7 +191,7 @@ func (s *testEvaluatorSuite) TestGetVar(c *C) {
 		{"c", ""},
 	}
 	for _, kv := range sessionVars {
-		s.ctx.GetSessionVars().Users[kv.key] = kv.val
+		s.ctx.GetSessionVars().Users[kv.key] = types.NewStringDatum(kv.val)
 	}
 
 	testCases := []struct {
@@ -282,5 +284,7 @@ func (s *testEvaluatorSuite) TestSetVarFromColumn(c *C) {
 	sessionVars := s.ctx.GetSessionVars()
 	sessionVars.UsersLock.RLock()
 	defer sessionVars.UsersLock.RUnlock()
-	c.Assert(sessionVars.Users["a"], Equals, "a")
+	sessionVar, ok := sessionVars.Users["a"]
+	c.Assert(ok, Equals, true)
+	c.Assert(sessionVar.GetString(), Equals, "a")
 }
