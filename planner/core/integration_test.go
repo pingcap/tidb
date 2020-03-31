@@ -438,14 +438,8 @@ func (s *testIntegrationSerialSuite) TestIsolationReadTiFlashNotChoosePointGet(c
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
 	var input []string
 	var output []struct {
-		<<<<<<< HEAD
 		SQL    string
 		Result []string
-		=======
-		SQL  string
-		Plan []string
-		Warn []string
-		>>>>>>> origin/release-3.1
 	}
 	s.testData.GetTestCases(c, &input, &output)
 	for i, tt := range input {
