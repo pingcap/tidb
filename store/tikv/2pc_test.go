@@ -928,7 +928,7 @@ func (s *testCommitterSuite) TestPushPessimisticLock(c *C) {
 	_, err = txn2.Get(ctx, k2)
 	elapsed := time.Since(start)
 	// The optimistic lock shouldn't block reads.
-	c.Assert(elapsed, Less, 50*time.Millisecond)
+	c.Assert(elapsed, Less, 500*time.Millisecond)
 	c.Assert(kv.IsErrNotFound(err), IsTrue)
 
 	txn1.Rollback()
