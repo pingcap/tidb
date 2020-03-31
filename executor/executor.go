@@ -928,6 +928,7 @@ func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64) *kv.LockCtx {
 		PessimisticLockWaited: &seVars.StmtCtx.PessimisticLockWaited,
 		LockKeysDuration:      &seVars.StmtCtx.LockKeysDuration,
 		LockKeysCount:         &seVars.StmtCtx.LockKeysCount,
+		LockExpired:           &seVars.TxnCtx.LockExpire,
 	}
 }
 
@@ -945,7 +946,7 @@ func doLockKeys(ctx context.Context, se sessionctx.Context, lockCtx *kv.LockCtx,
 	if err != nil {
 		return err
 	}
-	return txn.LockKeys(ctx, lockCtx, keys...)
+	return txn.LockKeys(sessionctx.SetCommitCtx(ctx, se), lockCtx, keys...)
 }
 
 // LimitExec represents limit executor

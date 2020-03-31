@@ -77,10 +77,6 @@ delay-clean-table-lock = 0
 # Maximum number of the splitting region, which is used by the split region statement.
 split-region-max-num = 1000
 
-# enable the TiDB to fetch configs from PD and update itself during runtime.
-# see https://github.com/pingcap/tidb/pull/13660 for more details.
-enable-dynamic-config = true
-
 # alter-primary-key is used to control alter primary key feature. Default is false, indicate the alter primary key feature is disabled.
 # If it is true, we can add the primary key by "alter table". However, if a table already exists before the switch is turned true and the data type of its primary key column is an integer,
 # the primary key cannot be dropped.
@@ -336,12 +332,6 @@ region-cache-ttl = 600
 # If a store has been up to the limit, it will return error for the successive request in same store.
 # default 0 means shutting off store limit.
 store-limit = 0
-
-[txn-local-latches]
-# Enable local latches for transactions. Enable it when
-# there are lots of conflicts between transactions.
-enabled = false
-capacity = 2048000
 
 [binlog]
 # enable to write binlog.
