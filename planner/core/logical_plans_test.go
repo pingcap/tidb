@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -166,14 +167,23 @@ func (s *testUnitTestSuit) TestIndexPathSplitCorColCond(c *C) {
 			access:     "[eq(Column#1, Column#5) eq(Column#2, Column#5) eq(Column#3, col1)]",
 			remained:   "[]",
 		},
+		{
+			expr: "col3 = CHAR(1 COLLATE 'binary')",
+			corColIDs: []int64{},
+			idxColIDs: []int64{3},
+			idxColLens: []int{types.UnspecifiedLength},
+			access: "[]",
+			remained: "[eq(Column#3, \x01)]",
+		},
 	}
+	collate.SetNewCollationEnabledForTest(true)
 	for _, tt := range testCases {
 		comment := Commentf("failed at case:\nexpr: %v\ncorColIDs: %v\nidxColIDs: %v\nidxColLens: %v\naccess: %v\nremained: %v\n", tt.expr, tt.corColIDs, tt.idxColIDs, tt.idxColLens, tt.access, tt.remained)
 		filters, err := expression.ParseSimpleExprsWithNames(s.ctx, tt.expr, totalSchema, names)
+		c.Assert(err, IsNil, comment)
 		if sf, ok := filters[0].(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicAnd {
 			filters = expression.FlattenCNFConditions(sf)
 		}
-		c.Assert(err, IsNil, comment)
 		trueFilters := make([]expression.Expression, 0, len(filters))
 		idMap := make(map[int64]struct{})
 		for _, id := range tt.corColIDs {
@@ -191,8 +201,9 @@ func (s *testUnitTestSuit) TestIndexPathSplitCorColCond(c *C) {
 			IdxColLens:   tt.idxColLens,
 		}
 
-		access, remained := path.SplitCorColAccessCondFromFilters(path.EqCondCount)
+		access, remained := path.SplitCorColAccessCondFromFilters(s.ctx, path.EqCondCount)
 		c.Assert(fmt.Sprintf("%s", access), Equals, tt.access, comment)
 		c.Assert(fmt.Sprintf("%s", remained), Equals, tt.remained, comment)
 	}
+	collate.SetNewCollationEnabledForTest(false)
 }
