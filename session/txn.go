@@ -65,7 +65,11 @@ func (st *TxnState) init() {
 
 // Size implements the MemBuffer interface.
 func (st *TxnState) Size() int {
-	return st.buf.Size()
+	size := st.buf.Size()
+	if st.Transaction != nil {
+		size += st.Transaction.Size()
+	}
+	return size
 }
 
 // Valid implements the kv.Transaction interface.
@@ -191,7 +195,7 @@ func (st *TxnState) Commit(ctx context.Context) error {
 		logutil.BgLogger().Error("the code should never run here",
 			zap.String("TxnState", st.GoString()),
 			zap.Stack("something must be wrong"))
-		return errors.New("invalid transaction")
+		return errors.Trace(kv.ErrInvalidTxn)
 	}
 	if st.doNotCommit != nil {
 		if err1 := st.Transaction.Rollback(); err1 != nil {

@@ -22,8 +22,8 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx"
@@ -110,12 +110,21 @@ type RecordIterFunc func(h int64, rec []types.Datum, cols []*Column) (more bool,
 // AddRecordOpt contains the options will be used when adding a record.
 type AddRecordOpt struct {
 	CreateIdxOpt
-	IsUpdate bool
+	IsUpdate      bool
+	ReserveAutoID int
 }
 
 // AddRecordOption is defined for the AddRecord() method of the Table interface.
 type AddRecordOption interface {
 	ApplyOn(*AddRecordOpt)
+}
+
+// WithReserveAutoIDHint tells the AddRecord operation to reserve a batch of auto ID in the stmtctx.
+type WithReserveAutoIDHint int
+
+// ApplyOn implements the AddRecordOption interface.
+func (n WithReserveAutoIDHint) ApplyOn(opt *AddRecordOpt) {
+	opt.ReserveAutoID = int(n)
 }
 
 // ApplyOn implements the AddRecordOption interface, so any CreateIdxOptFunc
@@ -265,14 +274,3 @@ var TableFromMeta func(allocators autoid.Allocators, tblInfo *model.TableInfo) (
 
 // MockTableFromMeta only serves for test.
 var MockTableFromMeta func(tableInfo *model.TableInfo) Table
-
-// Slice is used for table sorting.
-type Slice []Table
-
-func (s Slice) Len() int { return len(s) }
-
-func (s Slice) Less(i, j int) bool {
-	return s[i].Meta().Name.O < s[j].Meta().Name.O
-}
-
-func (s Slice) Swap(i, j int) { s[i], s[j] = s[j], s[i] }

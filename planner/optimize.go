@@ -38,12 +38,14 @@ import (
 // Optimize does optimization and creates a Plan.
 // The node must be prepared first.
 func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (plannercore.Plan, types.NameSlice, error) {
-	fp := plannercore.TryFastPlan(sctx, node)
-	if fp != nil {
-		if !useMaxTS(sctx, fp) {
-			sctx.PrepareTSFuture(ctx)
+	if _, isolationReadContainTiKV := sctx.GetSessionVars().GetIsolationReadEngines()[kv.TiKV]; isolationReadContainTiKV {
+		fp := plannercore.TryFastPlan(sctx, node)
+		if fp != nil {
+			if !useMaxTS(sctx, fp) {
+				sctx.PrepareTSFuture(ctx)
+			}
+			return fp, fp.OutputNames(), nil
 		}
-		return fp, fp.OutputNames(), nil
 	}
 
 	sctx.PrepareTSFuture(ctx)
@@ -111,8 +113,12 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 			bestPlanAmongHints = plan
 		}
 	}
-	// If there is already a evolution task, we do not need to handle it again.
-	if sctx.GetSessionVars().EvolvePlanBaselines && binding == nil {
+	// 1. If there is already a evolution task, we do not need to handle it again.
+	// 2. If the origin binding contain `read_from_storage` hint, we should ignore the evolve task.
+	// 3. If the best plan contain TiFlash hint, we should ignore the evolve task.
+	if sctx.GetSessionVars().EvolvePlanBaselines && binding == nil &&
+		!originHints.ContainTableHint(plannercore.HintReadFromStorage) &&
+		!bindRecord.Bindings[0].Hint.ContainTableHint(plannercore.HintReadFromStorage) {
 		handleEvolveTasks(ctx, sctx, bindRecord, stmtNode, bestPlanHint)
 	}
 	// Restore the hint to avoid changing the stmt node.
@@ -165,11 +171,11 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	}
 
 	// Handle the logical plan statement, use cascades planner if enabled.
-	if sctx.GetSessionVars().EnableCascadesPlanner {
+	if sctx.GetSessionVars().GetEnableCascadesPlanner() {
 		finalPlan, cost, err := cascades.DefaultOptimizer.FindBestPlan(sctx, logic)
 		return finalPlan, names, cost, err
 	}
-	finalPlan, cost, err := plannercore.DoOptimize(ctx, builder.GetOptFlag(), logic)
+	finalPlan, cost, err := plannercore.DoOptimize(ctx, sctx, builder.GetOptFlag(), logic)
 	return finalPlan, names, cost, err
 }
 
@@ -214,6 +220,9 @@ func getBindRecord(ctx sessionctx.Context, stmt ast.StmtNode) (*bindinfo.BindRec
 		return nil, ""
 	}
 	globalHandle := domain.GetDomain(ctx).BindHandle()
+	if globalHandle == nil {
+		return nil, ""
+	}
 	bindRecord = globalHandle.GetBindRecord(hash, normalizedSQL, ctx.GetSessionVars().CurrentDB)
 	if bindRecord == nil {
 		bindRecord = globalHandle.GetBindRecord(hash, normalizedSQL, "")
@@ -240,10 +249,15 @@ func handleEvolveTasks(ctx context.Context, sctx sessionctx.Context, br *bindinf
 	if bindSQL == "" {
 		return
 	}
-	globalHandle := domain.GetDomain(sctx).BindHandle()
 	charset, collation := sctx.GetSessionVars().GetCharsetInfo()
-	binding := bindinfo.Binding{BindSQL: bindSQL, Status: bindinfo.PendingVerify, Charset: charset, Collation: collation}
-	globalHandle.AddEvolvePlanTask(br.OriginalSQL, br.Db, binding, planHint)
+	binding := bindinfo.Binding{
+		BindSQL:   bindSQL,
+		Status:    bindinfo.PendingVerify,
+		Charset:   charset,
+		Collation: collation,
+	}
+	globalHandle := domain.GetDomain(sctx).BindHandle()
+	globalHandle.AddEvolvePlanTask(br.OriginalSQL, br.Db, binding)
 }
 
 // useMaxTS returns true when meets following conditions:
@@ -297,8 +311,8 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 	if len(hints) == 0 {
 		return
 	}
-	var memoryQuotaHint, useToJAHint, maxExecutionTime *ast.TableOptimizerHint
-	var memoryQuotaHintCnt, useToJAHintCnt, noIndexMergeHintCnt, readReplicaHintCnt, maxExecutionTimeCnt int
+	var memoryQuotaHint, useToJAHint, useCascadesHint, maxExecutionTime *ast.TableOptimizerHint
+	var memoryQuotaHintCnt, useToJAHintCnt, useCascadesHintCnt, noIndexMergeHintCnt, readReplicaHintCnt, maxExecutionTimeCnt int
 	for _, hint := range hints {
 		switch hint.HintName.L {
 		case "memory_quota":
@@ -307,6 +321,9 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 		case "use_toja":
 			useToJAHint = hint
 			useToJAHintCnt++
+		case "use_cascades":
+			useCascadesHint = hint
+			useCascadesHintCnt++
 		case "no_index_merge":
 			noIndexMergeHintCnt++
 		case "read_consistent_replica":
@@ -343,6 +360,15 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 		}
 		stmtHints.HasAllowInSubqToJoinAndAggHint = true
 		stmtHints.AllowInSubqToJoinAndAgg = useToJAHint.HintData.(bool)
+	}
+	// Handle USE_CASCADES
+	if useCascadesHintCnt != 0 {
+		if useCascadesHintCnt > 1 {
+			warn := errors.Errorf("USE_CASCADES() is defined more than once, only the last definition takes effect: USE_CASCADES(%v)", useCascadesHint.HintData.(bool))
+			warns = append(warns, warn)
+		}
+		stmtHints.HasEnableCascadesPlannerHint = true
+		stmtHints.EnableCascadesPlanner = useCascadesHint.HintData.(bool)
 	}
 	// Handle NO_INDEX_MERGE
 	if noIndexMergeHintCnt != 0 {

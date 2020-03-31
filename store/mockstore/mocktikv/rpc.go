@@ -304,6 +304,9 @@ func (h *rpcHandler) handleKvScan(req *kvrpcpb.ScanRequest) *kvrpcpb.ScanRespons
 }
 
 func (h *rpcHandler) handleKvPrewrite(req *kvrpcpb.PrewriteRequest) *kvrpcpb.PrewriteResponse {
+	regionID := req.Context.RegionId
+	h.cluster.handleDelay(req.StartVersion, regionID)
+
 	for _, m := range req.Mutations {
 		if !h.checkKeyInRegion(m.Key) {
 			panic("KvPrewrite: key not in region")
@@ -968,13 +971,13 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	case tikvrpc.CmdUnsafeDestroyRange:
 		panic("unimplemented")
 	case tikvrpc.CmdRegisterLockObserver:
-		panic("unimplemented")
+		return nil, errors.New("unimplemented")
 	case tikvrpc.CmdCheckLockObserver:
-		panic("unimplemented")
+		return nil, errors.New("unimplemented")
 	case tikvrpc.CmdRemoveLockObserver:
-		panic("unimplemented")
+		return nil, errors.New("unimplemented")
 	case tikvrpc.CmdPhysicalScanLock:
-		panic("unimplemented")
+		return nil, errors.New("unimplemented")
 	case tikvrpc.CmdCop:
 		r := req.Cop()
 		if err := handler.checkRequestContext(reqCtx); err != nil {

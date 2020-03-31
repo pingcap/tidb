@@ -708,7 +708,7 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 			StoreType: ts.StoreType,
 		}.Init(ctx, t.tablePlan.SelectBlockOffset())
 		p.stats = t.tablePlan.statsInfo()
-		ts.ExpandVirtualColumn()
+		ts.Columns = ExpandVirtualColumn(ts.Columns, ts.schema, ts.Table.Columns)
 		newTask.p = p
 	}
 
@@ -840,13 +840,16 @@ func (p *PhysicalTopN) GetCost(count float64, isRoot bool) float64 {
 }
 
 // canPushDown checks if this topN can be pushed down. If each of the expression can be converted to pb, it can be pushed.
-func (p *PhysicalTopN) canPushDown() bool {
+func (p *PhysicalTopN) canPushDown(cop *copTask) bool {
 	exprs := make([]expression.Expression, 0, len(p.ByItems))
 	for _, item := range p.ByItems {
 		exprs = append(exprs, item.Expr)
 	}
-	_, _, remained := expression.ExpressionsToPB(p.ctx.GetSessionVars().StmtCtx, exprs, p.ctx.GetClient())
-	return len(remained) == 0
+	storeType := kv.TiKV
+	if tableScan, ok := cop.tablePlan.(*PhysicalTableScan); ok {
+		storeType = tableScan.StoreType
+	}
+	return expression.CanExprsPushDown(p.ctx.GetSessionVars().StmtCtx, exprs, p.ctx.GetClient(), storeType)
 }
 
 func (p *PhysicalTopN) allColsFromSchema(schema *expression.Schema) bool {
@@ -916,7 +919,7 @@ func (p *PhysicalTopN) getPushedDownTopN(childPlan PhysicalPlan) *PhysicalTopN {
 func (p *PhysicalTopN) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	inputCount := t.count()
-	if copTask, ok := t.(*copTask); ok && p.canPushDown() && len(copTask.rootTaskConds) == 0 {
+	if copTask, ok := t.(*copTask); ok && p.canPushDown(copTask) && len(copTask.rootTaskConds) == 0 {
 		// If all columns in topN are from index plan, we push it to index plan, otherwise we finish the index plan and
 		// push it to table plan.
 		var pushedDownTopN *PhysicalTopN
@@ -989,34 +992,28 @@ func (sel *PhysicalSelection) attach2Task(tasks ...task) task {
 
 // CheckAggCanPushCop checks whether the aggFuncs and groupByItems can
 // be pushed down to coprocessor.
-func CheckAggCanPushCop(sctx sessionctx.Context, aggFuncs []*aggregation.AggFuncDesc, groupByItems []expression.Expression, copToFlash bool) bool {
+func CheckAggCanPushCop(sctx sessionctx.Context, aggFuncs []*aggregation.AggFuncDesc, groupByItems []expression.Expression, storeType kv.StoreType) bool {
 	sc := sctx.GetSessionVars().StmtCtx
 	client := sctx.GetClient()
 	for _, aggFunc := range aggFuncs {
 		if expression.ContainVirtualColumn(aggFunc.Args) {
 			return false
 		}
-		if copToFlash {
-			if !aggregation.CheckAggPushFlash(aggFunc) {
-				return false
-			}
-			if _, remain := expression.CheckExprPushFlash(append(aggFunc.Args, groupByItems...)); len(remain) > 0 {
-				return false
-			}
-		}
 		pb := aggregation.AggFuncToPBExpr(sc, client, aggFunc)
 		if pb == nil {
+			return false
+		}
+		if !aggregation.CheckAggPushDown(aggFunc, storeType) {
+			return false
+		}
+		if !expression.CanExprsPushDown(sc, aggFunc.Args, client, storeType) {
 			return false
 		}
 	}
 	if expression.ContainVirtualColumn(groupByItems) {
 		return false
 	}
-	_, _, remained := expression.ExpressionsToPB(sc, groupByItems, client)
-	if len(remained) > 0 {
-		return false
-	}
-	return true
+	return expression.CanExprsPushDown(sc, groupByItems, client, storeType)
 }
 
 // BuildFinalModeAggregation splits either LogicalAggregation or PhysicalAggregation to finalAgg and partial1Agg,
@@ -1077,7 +1074,7 @@ func BuildFinalModeAggregation(
 
 func (p *basePhysicalAgg) newPartialAggregate(copTaskType kv.StoreType) (partial, final PhysicalPlan) {
 	// Check if this aggregation can push down.
-	if !CheckAggCanPushCop(p.ctx, p.AggFuncs, p.GroupByItems, copTaskType == kv.TiFlash) {
+	if !CheckAggCanPushCop(p.ctx, p.AggFuncs, p.GroupByItems, copTaskType) {
 		return nil, p.self
 	}
 	finalAggFuncs, finalGbyItems, partialSchema := BuildFinalModeAggregation(p.ctx, p.AggFuncs, p.GroupByItems, p.schema)

@@ -17,6 +17,8 @@ import (
 	"bytes"
 	"math"
 	"unsafe"
+
+	"github.com/pingcap/tidb/util/fastrand"
 )
 
 const (
@@ -315,13 +317,9 @@ func (db *DB) newNode(arena *arena, key []byte, v []byte, height int) (*node, ar
 	return node, addr
 }
 
-// fastRand is a fast thread local random function.
-//go:linkname fastRand runtime.fastrand
-func fastRand() uint32
-
 func (db *DB) randomHeight() int {
 	h := 1
-	for h < maxHeight && fastRand() < uint32(math.MaxUint32)/4 {
+	for h < maxHeight && fastrand.Uint32() < uint32(math.MaxUint32)/4 {
 		h++
 	}
 	return h

@@ -67,6 +67,13 @@ func EncodeBytes(b []byte, data []byte) []byte {
 	return result
 }
 
+// EncodedBytesLength returns the length of data after encoded
+func EncodedBytesLength(dataLen int) int {
+	mod := dataLen % encGroupSize
+	padCount := encGroupSize - mod
+	return dataLen + padCount + 1 + dataLen/encGroupSize
+}
+
 func decodeBytes(b []byte, buf []byte, reverse bool) ([]byte, []byte, error) {
 	if buf == nil {
 		buf = make([]byte, 0, len(b))

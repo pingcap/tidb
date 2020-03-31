@@ -41,19 +41,21 @@ import (
 	"google.golang.org/grpc"
 )
 
-type testMemTableReaderSuite struct {
+type testMemTableReaderSuite struct{ *testClusterTableBase }
+
+type testClusterTableBase struct {
 	store kv.Storage
 	dom   *domain.Domain
 }
 
-func (s *testMemTableReaderSuite) SetUpSuite(c *C) {
+func (s *testClusterTableBase) SetUpSuite(c *C) {
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	s.store = store
 	s.dom = dom
 }
 
-func (s *testMemTableReaderSuite) TearDownSuite(c *C) {
+func (s *testClusterTableBase) TearDownSuite(c *C) {
 	s.dom.Close()
 	s.store.Close()
 }
@@ -413,19 +415,20 @@ func (s *testMemTableReaderSuite) TestTiDBClusterConfig(c *C) {
 	}
 }
 
-func (s *testMemTableReaderSuite) writeTmpFile(c *C, dir, filename string, lines []string) {
+func (s *testClusterTableBase) writeTmpFile(c *C, dir, filename string, lines []string) {
 	err := ioutil.WriteFile(filepath.Join(dir, filename), []byte(strings.Join(lines, "\n")), os.ModePerm)
 	c.Assert(err, IsNil, Commentf("write tmp file %s failed", filename))
 }
 
-func (s *testMemTableReaderSuite) TestTiDBClusterLog(c *C) {
-	type testServer struct {
-		typ     string
-		server  *grpc.Server
-		address string
-		tmpDir  string
-		logFile string
-	}
+type testServer struct {
+	typ     string
+	server  *grpc.Server
+	address string
+	tmpDir  string
+	logFile string
+}
+
+func (s *testClusterTableBase) setupClusterGRPCServer(c *C) map[string]*testServer {
 	// tp => testServer
 	testServers := map[string]*testServer{}
 
@@ -455,7 +458,11 @@ func (s *testMemTableReaderSuite) TestTiDBClusterLog(c *C) {
 			}
 		}()
 	}
+	return testServers
+}
 
+func (s *testMemTableReaderSuite) TestTiDBClusterLog(c *C) {
+	testServers := s.setupClusterGRPCServer(c)
 	defer func() {
 		for _, s := range testServers {
 			s.server.Stop()
@@ -814,6 +821,18 @@ func (s *testMemTableReaderSuite) TestTiDBClusterLog(c *C) {
 				"message regexp '.*x.*'",
 			},
 			expected: [][]string{},
+		},
+		{
+			conditions: []string{
+				"level='critical'",
+				"(message regexp '.*pd.*' or message regexp '.*tidb.*')",
+			},
+			expected: [][]string{
+				{"2019/08/26 06:19:17.011", "tidb", "CRITICAL", "[test log message tidb 5, foo]"},
+				{"2019/08/26 06:22:17.011", "pd", "CRITICAL", "[test log message pd 5, foo]"},
+				{"2019/08/26 06:25:17.011", "tidb", "critical", "[test log message tidb 14, bar]"},
+				{"2019/08/26 06:27:17.011", "pd", "critical", "[test log message pd 14, bar]"},
+			},
 		},
 	}
 

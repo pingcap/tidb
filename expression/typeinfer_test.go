@@ -24,6 +24,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/testkit"
@@ -124,9 +125,12 @@ func (s *testInferTypeSuite) TestInferType(c *C) {
 	tests = append(tests, s.createTestCase4JSONFuncs()...)
 	tests = append(tests, s.createTestCase4MiscellaneousFunc()...)
 
+	sctx := testKit.Se.(sessionctx.Context)
+	c.Assert(sctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, mysql.DefaultCharset), IsNil)
+	c.Assert(sctx.GetSessionVars().SetSystemVar(variable.CollationConnection, mysql.DefaultCollationName), IsNil)
+
 	ctx := context.Background()
 	for _, tt := range tests {
-		sctx := testKit.Se.(sessionctx.Context)
 		sql := "select " + tt.sql + " from t"
 		comment := Commentf("for %s", sql)
 		stmt, err := s.ParseOneStmt(sql, "", "")

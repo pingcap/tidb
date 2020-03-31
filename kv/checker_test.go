@@ -14,17 +14,11 @@
 package kv_test
 
 import (
-	"testing"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
 )
 
 type checkerSuite struct{}
-
-func TestIsRequestTypeSupported(t *testing.T) {
-	TestingT(t)
-}
 
 var _ = Suite(&checkerSuite{})
 

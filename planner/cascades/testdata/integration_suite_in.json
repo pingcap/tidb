@@ -43,7 +43,8 @@
       "select sum(case when a <= 0 or a > 1000 then 0.0 else b end) from t",
       "select count(case when a > 0 and a <= 1000 then b end) from t",
       "select count(case when a <= 0 or a > 1000 then null else b end) from t",
-      "select count(distinct case when a > 0 and a <= 1000 then b end) from t"
+      "select count(distinct case when a > 0 and a <= 1000 then b end) from t",
+      "select count(b), sum(b), avg(b), b, max(b), min(b), bit_and(b), bit_or(b), bit_xor(b) from t group by a having sum(b) >= 0 and count(b) >= 0 order by b"
     ]
   },
   {
@@ -86,7 +87,8 @@
     "name": "TestApply",
     "cases": [
       "select a = (select a from t2 where t1.b = t2.b order by a limit 1) from t1",
-      "select sum(a), (select t1.a from t1 where t1.a = t2.a limit 1), (select t1.b from t1 where t1.b = t2.b limit 1) from t2"
+      "select sum(a), (select t1.a from t1 where t1.a = t2.a limit 1), (select t1.b from t1 where t1.b = t2.b limit 1) from t2",
+      "select a from t1 where exists(select 1 from t2 where t1.a = t2.a)"
     ]
   },
   {

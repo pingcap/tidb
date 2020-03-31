@@ -53,6 +53,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/pdapi"
@@ -1013,8 +1014,8 @@ func (h tableHandler) addScatterSchedule(startKey, endKey []byte, name string) e
 	if err != nil {
 		return err
 	}
-	scheduleURL := fmt.Sprintf("http://%s/pd/api/v1/schedulers", pdAddrs[0])
-	resp, err := http.Post(scheduleURL, "application/json", bytes.NewBuffer(v))
+	scheduleURL := fmt.Sprintf("%s://%s/pd/api/v1/schedulers", util.InternalHTTPSchema(), pdAddrs[0])
+	resp, err := util.InternalHTTPClient().Post(scheduleURL, "application/json", bytes.NewBuffer(v))
 	if err != nil {
 		return err
 	}
@@ -1029,12 +1030,12 @@ func (h tableHandler) deleteScatterSchedule(name string) error {
 	if err != nil {
 		return err
 	}
-	scheduleURL := fmt.Sprintf("http://%s/pd/api/v1/schedulers/scatter-range-%s", pdAddrs[0], name)
+	scheduleURL := fmt.Sprintf("%s://%s/pd/api/v1/schedulers/scatter-range-%s", util.InternalHTTPSchema(), pdAddrs[0], name)
 	req, err := http.NewRequest(http.MethodDelete, scheduleURL, nil)
 	if err != nil {
 		return err
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := util.InternalHTTPClient().Do(req)
 	if err != nil {
 		return err
 	}
@@ -1202,12 +1203,13 @@ func (h tableHandler) handleDiskUsageRequest(schema infoschema.InfoSchema, tbl t
 	startKey = codec.EncodeBytes([]byte{}, startKey)
 	endKey = codec.EncodeBytes([]byte{}, endKey)
 
-	statURL := fmt.Sprintf("http://%s/pd/api/v1/stats/region?start_key=%s&end_key=%s",
+	statURL := fmt.Sprintf("%s://%s/pd/api/v1/stats/region?start_key=%s&end_key=%s",
+		util.InternalHTTPSchema(),
 		pdAddrs[0],
 		url.QueryEscape(string(startKey)),
 		url.QueryEscape(string(endKey)))
 
-	resp, err := http.Get(statURL)
+	resp, err := util.InternalHTTPClient().Get(statURL)
 	if err != nil {
 		writeError(w, err)
 		return

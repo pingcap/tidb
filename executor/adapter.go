@@ -290,7 +290,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 			}
 			lockKeysCnt := a.Ctx.GetSessionVars().StmtCtx.LockKeysCount
 			if lockKeysCnt > 0 {
-				metrics.StatementLockKeysCount.Add(float64(lockKeysCnt))
+				metrics.StatementLockKeysCount.Observe(float64(lockKeysCnt))
 			}
 			return
 		}
@@ -579,7 +579,7 @@ func UpdateForUpdateTS(seCtx sessionctx.Context, newForUpdateTS uint64) error {
 		return err
 	}
 	if !txn.Valid() {
-		return kv.ErrInvalidTxn
+		return errors.Trace(kv.ErrInvalidTxn)
 	}
 	if newForUpdateTS == 0 {
 		version, err := seCtx.GetStore().CurrentVersion()
@@ -682,6 +682,7 @@ type pessimisticTxn interface {
 // buildExecutor build a executor from plan, prepared statement may need additional procedure.
 func (a *ExecStmt) buildExecutor() (Executor, error) {
 	ctx := a.Ctx
+	stmtCtx := ctx.GetSessionVars().StmtCtx
 	if _, ok := a.Plan.(*plannercore.Execute); !ok {
 		// Do not sync transaction for Execute statement, because the real optimization work is done in
 		// "ExecuteExec.Build".
@@ -701,7 +702,6 @@ func (a *ExecStmt) buildExecutor() (Executor, error) {
 			return nil, err
 		}
 
-		stmtCtx := ctx.GetSessionVars().StmtCtx
 		if stmtPri := stmtCtx.Priority; stmtPri == mysql.NoPriority {
 			switch {
 			case useMaxTS:
@@ -735,7 +735,7 @@ func (a *ExecStmt) buildExecutor() (Executor, error) {
 		}
 		e = executorExec.stmtExec
 	}
-	a.isSelectForUpdate = b.isSelectForUpdate
+	a.isSelectForUpdate = b.hasLock && (!stmtCtx.InDeleteStmt && !stmtCtx.InUpdateStmt)
 	return e, nil
 }
 
@@ -878,7 +878,7 @@ func getPlanDigest(sctx sessionctx.Context, p plannercore.Plan) (normalized, pla
 func (a *ExecStmt) SummaryStmt() {
 	sessVars := a.Ctx.GetSessionVars()
 	// Internal SQLs must also be recorded to keep the consistency of `PrevStmt` and `PrevStmtDigest`.
-	if !stmtsummary.StmtSummaryByDigestMap.Enabled() {
+	if !stmtsummary.StmtSummaryByDigestMap.Enabled() || (sessVars.InRestrictedSQL && !stmtsummary.StmtSummaryByDigestMap.EnabledInternal()) {
 		sessVars.SetPrevStmtDigest("")
 		return
 	}
@@ -942,5 +942,6 @@ func (a *ExecStmt) SummaryStmt() {
 		ExecDetail:     &execDetail,
 		MemMax:         memMax,
 		StartTime:      sessVars.StartTime,
+		IsInternal:     sessVars.InRestrictedSQL,
 	})
 }

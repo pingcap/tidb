@@ -34,7 +34,7 @@ func Build(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal
 	case ast.AggFuncCount:
 		return buildCount(aggFuncDesc, ordinal)
 	case ast.AggFuncSum:
-		return buildSum(aggFuncDesc, ordinal)
+		return buildSum(ctx, aggFuncDesc, ordinal)
 	case ast.AggFuncAvg:
 		return buildAvg(aggFuncDesc, ordinal)
 	case ast.AggFuncFirstRow:
@@ -153,7 +153,7 @@ func buildCount(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 }
 
 // buildSum builds the AggFunc implementation for function "SUM".
-func buildSum(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+func buildSum(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	base := baseSumAggFunc{
 		baseAggFunc: baseAggFunc{
 			args:    aggFuncDesc.Args,
@@ -174,7 +174,10 @@ func buildSum(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 			if aggFuncDesc.HasDistinct {
 				return &sum4DistinctFloat64{base}
 			}
-			return &sum4Float64{base}
+			if ctx.GetSessionVars().WindowingUseHighPrecision {
+				return &sum4Float64HighPrecision{baseSum4Float64{base}}
+			}
+			return &sum4Float64{baseSum4Float64{base}}
 		}
 	}
 }

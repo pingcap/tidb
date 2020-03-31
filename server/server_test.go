@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	tmysql "github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/printer"
@@ -782,7 +783,7 @@ func (cli *testServerClient) runTestLoadData(c *C, server *Server) {
 		dbt.mustExec("set @@tidb_dml_batch_size = 3")
 		_, err = dbt.db.Exec("load data local infile '/tmp/load_data_test.csv' into table test")
 		dbt.Assert(err, NotNil)
-		checkErrorCode(c, err, tmysql.ErrNotAllowedCommand)
+		checkErrorCode(c, err, errno.ErrNotAllowedCommand)
 	})
 	server.capability |= tmysql.ClientLocalFiles
 
@@ -881,50 +882,50 @@ func (cli *testServerClient) runTestErrorCode(c *C) {
 		_, err = txn1.Exec("insert into test values(1)")
 		c.Assert(err, IsNil)
 		err = txn1.Commit()
-		checkErrorCode(c, err, tmysql.ErrDupEntry)
+		checkErrorCode(c, err, errno.ErrDupEntry)
 
 		// Schema errors
 		txn2, err := dbt.db.Begin()
 		c.Assert(err, IsNil)
 		_, err = txn2.Exec("use db_not_exists;")
-		checkErrorCode(c, err, tmysql.ErrBadDB)
+		checkErrorCode(c, err, errno.ErrBadDB)
 		_, err = txn2.Exec("select * from tbl_not_exists;")
-		checkErrorCode(c, err, tmysql.ErrNoSuchTable)
+		checkErrorCode(c, err, errno.ErrNoSuchTable)
 		_, err = txn2.Exec("create database test;")
 		// Make tests stable. Some times the error may be the ErrInfoSchemaChanged.
-		checkErrorCode(c, err, tmysql.ErrDBCreateExists, tmysql.ErrInfoSchemaChanged)
+		checkErrorCode(c, err, errno.ErrDBCreateExists, errno.ErrInfoSchemaChanged)
 		_, err = txn2.Exec("create database aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;")
-		checkErrorCode(c, err, tmysql.ErrTooLongIdent, tmysql.ErrInfoSchemaChanged)
+		checkErrorCode(c, err, errno.ErrTooLongIdent, errno.ErrInfoSchemaChanged)
 		_, err = txn2.Exec("create table test (c int);")
-		checkErrorCode(c, err, tmysql.ErrTableExists, tmysql.ErrInfoSchemaChanged)
+		checkErrorCode(c, err, errno.ErrTableExists, errno.ErrInfoSchemaChanged)
 		_, err = txn2.Exec("drop table unknown_table;")
-		checkErrorCode(c, err, tmysql.ErrBadTable, tmysql.ErrInfoSchemaChanged)
+		checkErrorCode(c, err, errno.ErrBadTable, errno.ErrInfoSchemaChanged)
 		_, err = txn2.Exec("drop database unknown_db;")
-		checkErrorCode(c, err, tmysql.ErrDBDropExists, tmysql.ErrInfoSchemaChanged)
+		checkErrorCode(c, err, errno.ErrDBDropExists, errno.ErrInfoSchemaChanged)
 		_, err = txn2.Exec("create table aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa (a int);")
-		checkErrorCode(c, err, tmysql.ErrTooLongIdent, tmysql.ErrInfoSchemaChanged)
+		checkErrorCode(c, err, errno.ErrTooLongIdent, errno.ErrInfoSchemaChanged)
 		_, err = txn2.Exec("create table long_column_table (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa int);")
-		checkErrorCode(c, err, tmysql.ErrTooLongIdent, tmysql.ErrInfoSchemaChanged)
+		checkErrorCode(c, err, errno.ErrTooLongIdent, errno.ErrInfoSchemaChanged)
 		_, err = txn2.Exec("alter table test add aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa int;")
-		checkErrorCode(c, err, tmysql.ErrTooLongIdent, tmysql.ErrInfoSchemaChanged)
+		checkErrorCode(c, err, errno.ErrTooLongIdent, errno.ErrInfoSchemaChanged)
 
 		// Optimizer errors
 		_, err = txn2.Exec("select *, * from test;")
-		checkErrorCode(c, err, tmysql.ErrInvalidWildCard)
+		checkErrorCode(c, err, errno.ErrInvalidWildCard)
 		_, err = txn2.Exec("select row(1, 2) > 1;")
-		checkErrorCode(c, err, tmysql.ErrOperandColumns)
+		checkErrorCode(c, err, errno.ErrOperandColumns)
 		_, err = txn2.Exec("select * from test order by row(c, c);")
-		checkErrorCode(c, err, tmysql.ErrOperandColumns)
+		checkErrorCode(c, err, errno.ErrOperandColumns)
 
 		// Variable errors
 		_, err = txn2.Exec("select @@unknown_sys_var;")
-		checkErrorCode(c, err, tmysql.ErrUnknownSystemVariable)
+		checkErrorCode(c, err, errno.ErrUnknownSystemVariable)
 		_, err = txn2.Exec("set @@unknown_sys_var='1';")
-		checkErrorCode(c, err, tmysql.ErrUnknownSystemVariable)
+		checkErrorCode(c, err, errno.ErrUnknownSystemVariable)
 
 		// Expression errors
 		_, err = txn2.Exec("select greatest(2);")
-		checkErrorCode(c, err, tmysql.ErrWrongParamcountToNativeFct)
+		checkErrorCode(c, err, errno.ErrWrongParamcountToNativeFct)
 	})
 }
 

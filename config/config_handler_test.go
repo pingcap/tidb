@@ -25,7 +25,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/configpb"
-	"github.com/pingcap/pd/v4/client"
+	pd "github.com/pingcap/pd/v4/client"
 )
 
 type mockPDConfigClient struct {
@@ -116,23 +116,47 @@ func (s *testConfigSuite) TestPDConfHandler(c *C) {
 	ch.Close()
 
 	// update log level
-	wg := sync.WaitGroup{}
-	wg.Add(1)
-	mockReloadFunc := func(oldConf, newConf *Config) {
-		c.Assert(oldConf.Performance.MaxMemory, Equals, uint64(233))
-		c.Assert(newConf.Performance.MaxMemory, Equals, uint64(123))
-		wg.Done()
+	tmCh := make(chan time.Time)
+	tmAfter := func(d time.Duration) <-chan time.Time {
+		return tmCh
 	}
+	cnt := 0
+	var registerWg, reloadWg, reloadWg2 sync.WaitGroup
+	registerWg.Add(1)
+	reloadWg.Add(1)
+	reloadWg2.Add(1)
+	mockReloadFunc := func(oldConf, newConf *Config) {
+		if cnt == 0 {
+			registerWg.Done()
+		} else if cnt == 1 {
+			c.Assert(oldConf.Performance.MaxMemory, Equals, uint64(233))
+			c.Assert(newConf.Performance.MaxMemory, Equals, uint64(123))
+			reloadWg.Done()
+		} else {
+			reloadWg2.Done()
+		}
+		cnt++
+	}
+
 	conf.Performance.MaxMemory = 233
+	content, _ = encodeConfig(&conf)
+	mockPDConfigClient0.confContent.Store(content)
 	ch, err = newPDConfHandler(confPath, &conf, mockReloadFunc, newMockPDConfigClient)
 	c.Assert(err, IsNil)
-	ch.interval = time.Second
+	ch.timeAfter = tmAfter
+
+	ch.Start()
+	registerWg.Wait() // wait for register
+
 	newConf := conf
 	newConf.Performance.MaxMemory = 123
 	newContent, _ := encodeConfig(&newConf)
 	mockPDConfigClient0.confContent.Store(newContent)
-	ch.Start()
-	wg.Wait()
+	tmCh <- time.Now()
+	reloadWg.Wait()
+
+	tmCh <- time.Now() // wait for another reloading to ensure the global config has been updated
+	reloadWg2.Wait()
 	c.Assert(ch.GetConfig().Performance.MaxMemory, Equals, uint64(123))
 	ch.Close()
 }
@@ -177,11 +201,12 @@ func (s *testConfigSuite) TestDynamicConfigItems(c *C) {
 	reloadWg.Add(1)
 	mockReloadFunc := func(oldConf, newConf *Config) {
 		if cnt == 0 { // register
+			defer registerWg.Done()
 			newContent, err := encodeConfig(newConf)
 			c.Assert(err, IsNil)
 			c.Assert(newContent, Equals, initContent) // no change now
-			registerWg.Done()
 		} else if cnt == 1 {
+			defer reloadWg.Done()
 			c.Assert(newConf.Performance.MaxProcs, Equals, uint(2333))
 			c.Assert(newConf.Performance.MaxMemory, Equals, uint64(2333))
 			c.Assert(newConf.Performance.CrossJoin, Equals, false)
@@ -199,12 +224,12 @@ func (s *testConfigSuite) TestDynamicConfigItems(c *C) {
 			c.Assert(newConf.Log.ExpensiveThreshold, Equals, uint(2333))
 			c.Assert(newConf.CheckMb4ValueInUTF8, Equals, false)
 			c.Assert(newConf.EnableStreaming, Equals, true)
-			c.Assert(newConf.TxnLocalLatches.Capacity, Equals, uint(2333))
+			c.Assert(newConf.TxnLocalLatches.Enabled, Equals, false)
+			c.Assert(newConf.TxnLocalLatches.Capacity, Equals, uint(0))
 			c.Assert(newConf.PreparedPlanCache.Enabled, Equals, true)
 			c.Assert(newConf.CompatibleKillQuery, Equals, true)
 			c.Assert(newConf.TreatOldVersionUTF8AsUTF8MB4, Equals, true)
 			c.Assert(newConf.OpenTracing.Enable, Equals, true)
-			reloadWg.Done()
 		}
 		cnt++
 	}
@@ -235,6 +260,7 @@ func (s *testConfigSuite) TestDynamicConfigItems(c *C) {
 	newConf.Log.ExpensiveThreshold = 2333
 	newConf.CheckMb4ValueInUTF8 = false
 	newConf.EnableStreaming = true
+	newConf.TxnLocalLatches.Enabled = true
 	newConf.TxnLocalLatches.Capacity = 2333
 	newConf.PreparedPlanCache.Enabled = true
 	newConf.CompatibleKillQuery = true

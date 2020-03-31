@@ -55,7 +55,7 @@ const (
 	// TiDBMergeJoin is hint enforce merge join.
 	TiDBMergeJoin = "tidb_smj"
 	// HintSMJ is hint enforce merge join.
-	HintSMJ = "sm_join"
+	HintSMJ = "merge_join"
 	// TiDBIndexNestedLoopJoin is hint enforce index nested loop join.
 	TiDBIndexNestedLoopJoin = "tidb_inlj"
 	// HintINLJ is hint enforce index nested loop join.
@@ -88,6 +88,8 @@ const (
 	HintIndexMerge = "use_index_merge"
 	// HintTimeRange is a hint to specify the time range for metrics summary tables
 	HintTimeRange = "time_range"
+	// HintIgnorePlanCache is a hint to enforce ignoring plan cache
+	HintIgnorePlanCache = "ignore_plan_cache"
 )
 
 const (
@@ -417,16 +419,15 @@ func (p *LogicalJoin) setPreferredJoinType(hintInfo *tableHintInfo) {
 	if hintInfo.ifPreferINLMJ(rhsAlias) {
 		p.preferJoinType |= preferRightAsINLMJInner
 	}
-
-	// set hintInfo for further usage if this hint info can be used.
-	if p.preferJoinType != 0 {
-		p.hintInfo = hintInfo
-	}
-
 	if containDifferentJoinTypes(p.preferJoinType) {
 		errMsg := "Join hints are conflict, you can only specify one type of join"
 		warning := ErrInternal.GenWithStack(errMsg)
 		p.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+		p.preferJoinType = 0
+	}
+	// set hintInfo for further usage if this hint info can be used.
+	if p.preferJoinType != 0 {
+		p.hintInfo = hintInfo
 	}
 }
 
@@ -2184,6 +2185,16 @@ func (b *PlanBuilder) unfoldWildStar(p LogicalPlan, selectFields []*ast.SelectFi
 	return resultList, nil
 }
 
+func (b *PlanBuilder) pushHintWithoutTableWarning(hint *ast.TableOptimizerHint) {
+	var sb strings.Builder
+	ctx := format.NewRestoreCtx(0, &sb)
+	if err := hint.Restore(ctx); err != nil {
+		return
+	}
+	errMsg := fmt.Sprintf("Hint %s is inapplicable. Please specify the table names in the arguments.", sb.String())
+	b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(errMsg))
+}
+
 func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType nodeType, currentLevel int) {
 	hints = b.hintProcessor.getCurrentStmtHints(hints, nodeType, currentLevel)
 	var (
@@ -2194,6 +2205,16 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 		timeRangeHint                                                         ast.HintTimeRange
 	)
 	for _, hint := range hints {
+		// Set warning for the hint that requires the table name.
+		switch hint.HintName.L {
+		case TiDBMergeJoin, HintSMJ, TiDBIndexNestedLoopJoin, HintINLJ, HintINLHJ, HintINLMJ,
+			TiDBHashJoin, HintHJ, HintUseIndex, HintIgnoreIndex, HintIndexMerge:
+			if len(hint.Tables) == 0 {
+				b.pushHintWithoutTableWarning(hint)
+				continue
+			}
+		}
+
 		switch hint.HintName.L {
 		case TiDBMergeJoin, HintSMJ:
 			sortMergeTables = append(sortMergeTables, tableNames2HintTableInfo(b.ctx, hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
@@ -2212,55 +2233,54 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 		case HintAggToCop:
 			aggHints.preferAggToCop = true
 		case HintUseIndex:
-			if len(hint.Tables) != 0 {
-				dbName := hint.Tables[0].DBName
-				if dbName.L == "" {
-					dbName = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
-				}
-				indexHintList = append(indexHintList, indexHintInfo{
-					dbName:  dbName,
-					tblName: hint.Tables[0].TableName,
-					indexHint: &ast.IndexHint{
-						IndexNames: hint.Indexes,
-						HintType:   ast.HintUse,
-						HintScope:  ast.HintForScan,
-					},
-				})
+			dbName := hint.Tables[0].DBName
+			if dbName.L == "" {
+				dbName = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
 			}
+			indexHintList = append(indexHintList, indexHintInfo{
+				dbName:  dbName,
+				tblName: hint.Tables[0].TableName,
+				indexHint: &ast.IndexHint{
+					IndexNames: hint.Indexes,
+					HintType:   ast.HintUse,
+					HintScope:  ast.HintForScan,
+				},
+			})
 		case HintIgnoreIndex:
-			if len(hint.Tables) != 0 {
-				dbName := hint.Tables[0].DBName
-				if dbName.L == "" {
-					dbName = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
-				}
-				indexHintList = append(indexHintList, indexHintInfo{
-					dbName:  dbName,
-					tblName: hint.Tables[0].TableName,
-					indexHint: &ast.IndexHint{
-						IndexNames: hint.Indexes,
-						HintType:   ast.HintIgnore,
-						HintScope:  ast.HintForScan,
-					},
-				})
+			dbName := hint.Tables[0].DBName
+			if dbName.L == "" {
+				dbName = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
 			}
+			indexHintList = append(indexHintList, indexHintInfo{
+				dbName:  dbName,
+				tblName: hint.Tables[0].TableName,
+				indexHint: &ast.IndexHint{
+					IndexNames: hint.Indexes,
+					HintType:   ast.HintIgnore,
+					HintScope:  ast.HintForScan,
+				},
+			})
 		case HintReadFromStorage:
 			switch hint.HintData.(model.CIStr).L {
 			case HintTiFlash:
-				tiflashTables = tableNames2HintTableInfo(b.ctx, hint.Tables, b.hintProcessor, nodeType, currentLevel)
+				tiflashTables = append(tiflashTables, tableNames2HintTableInfo(b.ctx, hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
 			case HintTiKV:
-				tikvTables = tableNames2HintTableInfo(b.ctx, hint.Tables, b.hintProcessor, nodeType, currentLevel)
+				tikvTables = append(tikvTables, tableNames2HintTableInfo(b.ctx, hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
 			}
 		case HintIndexMerge:
-			if len(hint.Tables) != 0 {
-				indexMergeHintList = append(indexMergeHintList, indexHintInfo{
-					tblName: hint.Tables[0].TableName,
-					indexHint: &ast.IndexHint{
-						IndexNames: hint.Indexes,
-						HintType:   ast.HintUse,
-						HintScope:  ast.HintForScan,
-					},
-				})
+			dbName := hint.Tables[0].DBName
+			if dbName.L == "" {
+				dbName = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
 			}
+			indexMergeHintList = append(indexMergeHintList, indexHintInfo{
+				dbName:  dbName,
+				tblName: hint.Tables[0].TableName,
+				indexHint: &ast.IndexHint{
+					IndexNames: hint.Indexes,
+					HintType:   ast.HintUse,
+					HintScope:  ast.HintForScan,
+				},
+			})
 		case HintTimeRange:
 			timeRangeHint = hint.HintData.(ast.HintTimeRange)
 		default:
@@ -2282,12 +2302,35 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 
 func (b *PlanBuilder) popTableHints() {
 	hintInfo := b.tableHintInfo[len(b.tableHintInfo)-1]
+	b.appendUnmatchedIndexHintWarning(hintInfo.indexHintList, false)
+	b.appendUnmatchedIndexHintWarning(hintInfo.indexMergeHintList, true)
 	b.appendUnmatchedJoinHintWarning(HintINLJ, TiDBIndexNestedLoopJoin, hintInfo.indexNestedLoopJoinTables.inljTables)
 	b.appendUnmatchedJoinHintWarning(HintINLHJ, "", hintInfo.indexNestedLoopJoinTables.inlhjTables)
 	b.appendUnmatchedJoinHintWarning(HintINLMJ, "", hintInfo.indexNestedLoopJoinTables.inlmjTables)
 	b.appendUnmatchedJoinHintWarning(HintSMJ, TiDBMergeJoin, hintInfo.sortMergeJoinTables)
 	b.appendUnmatchedJoinHintWarning(HintHJ, TiDBHashJoin, hintInfo.hashJoinTables)
+	b.appendUnmatchedStorageHintWarning(hintInfo.tiflashTables, hintInfo.tikvTables)
 	b.tableHintInfo = b.tableHintInfo[:len(b.tableHintInfo)-1]
+}
+
+func (b *PlanBuilder) appendUnmatchedIndexHintWarning(indexHints []indexHintInfo, usedForIndexMerge bool) {
+	for _, hint := range indexHints {
+		if !hint.matched {
+			var hintTypeString string
+			if usedForIndexMerge {
+				hintTypeString = "use_index_merge"
+			} else {
+				hintTypeString = hint.hintTypeString()
+			}
+			errMsg := fmt.Sprintf("%s(%s) is inapplicable, check whether the table(%s.%s) exists",
+				hintTypeString,
+				hint.indexString(),
+				hint.dbName,
+				hint.tblName,
+			)
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(errMsg))
+		}
+	}
 }
 
 func (b *PlanBuilder) appendUnmatchedJoinHintWarning(joinType string, joinTypeAlias string, hintTables []hintTableInfo) {
@@ -2301,6 +2344,18 @@ func (b *PlanBuilder) appendUnmatchedJoinHintWarning(joinType string, joinTypeAl
 
 	errMsg := fmt.Sprintf("There are no matching table names for (%s) in optimizer hint %s%s. Maybe you can use the table alias name",
 		strings.Join(unMatchedTables, ", "), restore2JoinHint(joinType, hintTables), joinTypeAlias)
+	b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(errMsg))
+}
+
+func (b *PlanBuilder) appendUnmatchedStorageHintWarning(tiflashTables, tikvTables []hintTableInfo) {
+	unMatchedTiFlashTables := extractUnmatchedTables(tiflashTables)
+	unMatchedTiKVTables := extractUnmatchedTables(tikvTables)
+	if len(unMatchedTiFlashTables)+len(unMatchedTiKVTables) == 0 {
+		return
+	}
+	errMsg := fmt.Sprintf("There are no matching table names for (%s) in optimizer hint %s. Maybe you can use the table alias name",
+		strings.Join(append(unMatchedTiFlashTables, unMatchedTiKVTables...), ", "),
+		restore2StorageHint(tiflashTables, tikvTables))
 	b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(errMsg))
 }
 
@@ -2560,6 +2615,9 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	}
 
 	if tableInfo.IsView() {
+		if b.capFlag&collectUnderlyingViewName != 0 {
+			b.underlyingViewNames.Insert(dbName.L + "." + tn.Name.L)
+		}
 		return b.BuildDataSourceFromView(ctx, dbName, tableInfo)
 	}
 
@@ -2627,9 +2685,10 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	// extract the IndexMergeHint
 	var indexMergeHints []*ast.IndexHint
 	if hints := b.TableHints(); hints != nil {
-		for _, hint := range hints.indexMergeHintList {
+		for i, hint := range hints.indexMergeHintList {
 			if hint.tblName.L == tblName.L {
 				indexMergeHints = append(indexMergeHints, hint.indexHint)
+				hints.indexMergeHintList[i].matched = true
 			}
 		}
 	}
@@ -2924,7 +2983,7 @@ func (b *PlanBuilder) buildProjUponView(ctx context.Context, dbName model.CIStr,
 			OrigTblName: name.OrigTblName,
 			ColName:     columnInfo[i].Name,
 			OrigColName: origColName,
-			DBName:      name.DBName,
+			DBName:      dbName,
 		})
 		projSchema.Append(&expression.Column{
 			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
@@ -3163,6 +3222,11 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 			return nil, err
 		}
 	}
+	if b.ctx.GetSessionVars().TxnCtx.IsPessimistic {
+		if !update.MultipleTable {
+			p = b.buildSelectLock(p, ast.SelectLockForUpdate)
+		}
+	}
 
 	if update.Order != nil {
 		p, err = b.buildSort(ctx, p, update.Order.Items, nil, nil)
@@ -3201,7 +3265,7 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 	updt.names = p.OutputNames()
 	// We cannot apply projection elimination when building the subplan, because
 	// columns in orderedList cannot be resolved.
-	updt.SelectPlan, _, err = DoOptimize(ctx, b.optFlag&^flagEliminateProjection, p)
+	updt.SelectPlan, _, err = DoOptimize(ctx, b.ctx, b.optFlag&^flagEliminateProjection, p)
 	if err != nil {
 		return nil, err
 	}
@@ -3218,7 +3282,40 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 		tblID2table[id], _ = b.is.TableByID(id)
 	}
 	updt.TblColPosInfos, err = buildColumns2Handle(updt.OutputNames(), tblID2Handle, tblID2table, true)
+	if err == nil {
+		err = checkUpdateList(b.ctx, tblID2table, updt)
+	}
 	return updt, err
+}
+
+// GetUpdateColumns gets the columns of updated lists.
+func GetUpdateColumns(ctx sessionctx.Context, orderedList []*expression.Assignment, schemaLen int) ([]bool, error) {
+	assignFlag := make([]bool, schemaLen)
+	for _, v := range orderedList {
+		if !ctx.GetSessionVars().AllowWriteRowID && v.Col.ID == model.ExtraHandleID {
+			return nil, errors.Errorf("insert, update and replace statements for _tidb_rowid are not supported.")
+		}
+		idx := v.Col.Index
+		assignFlag[idx] = true
+	}
+	return assignFlag, nil
+}
+
+func checkUpdateList(ctx sessionctx.Context, tblID2table map[int64]table.Table, updt *Update) error {
+	assignFlags, err := GetUpdateColumns(ctx, updt.OrderedList, updt.SelectPlan.Schema().Len())
+	if err != nil {
+		return err
+	}
+	for _, content := range updt.TblColPosInfos {
+		tbl := tblID2table[content.TblID]
+		flags := assignFlags[content.Start:content.End]
+		for i, col := range tbl.WritableCols() {
+			if flags[i] && col.State != model.StatePublic {
+				return ErrUnknownColumn.GenWithStackByArgs(col.Name, clauseMsg[fieldList])
+			}
+		}
+	}
+	return nil
 }
 
 func (b *PlanBuilder) buildUpdateLists(
@@ -3398,6 +3495,11 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 			return nil, err
 		}
 	}
+	if b.ctx.GetSessionVars().TxnCtx.IsPessimistic {
+		if !delete.IsMultiTable {
+			p = b.buildSelectLock(p, ast.SelectLockForUpdate)
+		}
+	}
 
 	if delete.Order != nil {
 		p, err = b.buildSort(ctx, p, delete.Order.Items, nil, nil)
@@ -3424,7 +3526,7 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 	}.Init(b.ctx)
 
 	del.names = p.OutputNames()
-	del.SelectPlan, _, err = DoOptimize(ctx, b.optFlag, p)
+	del.SelectPlan, _, err = DoOptimize(ctx, b.ctx, b.optFlag, p)
 	if err != nil {
 		return nil, err
 	}
@@ -3819,6 +3921,9 @@ func (b *PlanBuilder) buildWindowFunctionFrame(ctx context.Context, spec *ast.Wi
 
 func (b *PlanBuilder) checkWindowFuncArgs(ctx context.Context, p LogicalPlan, windowFuncExprs []*ast.WindowFuncExpr, windowAggMap map[*ast.AggregateFuncExpr]int) error {
 	for _, windowFuncExpr := range windowFuncExprs {
+		if strings.ToLower(windowFuncExpr.F) == ast.AggFuncGroupConcat {
+			return ErrNotSupportedYet.GenWithStackByArgs("group_concat as window function")
+		}
 		args, err := b.buildArgs4WindowFunc(ctx, p, windowFuncExpr.Args, windowAggMap)
 		if err != nil {
 			return err

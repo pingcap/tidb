@@ -264,7 +264,9 @@
       "SELECT SUM(a) OVER w AS 'sum' FROM t WINDOW w AS (ROWS BETWEEN CURRENT ROW AND 1 PRECEDING )",
       "SELECT SUM(a) OVER w AS 'sum' FROM t WINDOW w AS (ROWS BETWEEN 1 FOLLOWING AND 1 PRECEDING )",
       // Test issue 11943
-      "SELECT ROW_NUMBER() OVER (partition by b) + a FROM t"
+      "SELECT ROW_NUMBER() OVER (partition by b) + a FROM t",
+      // Test issue 10996
+      "SELECT GROUP_CONCAT(a) OVER () FROM t"
     ]
   },
   {

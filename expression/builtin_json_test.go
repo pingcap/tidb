@@ -951,3 +951,45 @@ func (s *testEvaluatorSuite) TestJSONValid(c *C) {
 		c.Assert(d, testutil.DatumEquals, t["Expected"][0])
 	}
 }
+
+func (s *testEvaluatorSuite) TestJSONStorageSize(c *C) {
+	fc := funcs[ast.JSONStorageSize]
+	tbl := []struct {
+		input    []interface{}
+		expected interface{}
+		success  bool
+	}{
+		// Tests scalar arguments
+		{[]interface{}{`null`}, 4, true},
+		{[]interface{}{`true`}, 4, true},
+		{[]interface{}{`1`}, 1, true},
+		{[]interface{}{`"1"`}, 3, true},
+		// Tests nil arguments
+		{[]interface{}{nil}, nil, true},
+		// Tests valid json documents
+		{[]interface{}{`{}`}, 2, true},
+		{[]interface{}{`{"a":1}`}, 8, true},
+		{[]interface{}{`[{"a":{"a":1},"b":2}]`}, 25, true},
+		{[]interface{}{`{"a": 1000, "b": "wxyz", "c": "[1, 3, 5, 7]"}`}, 45, true},
+		// Tests invalid json documents
+		{[]interface{}{`[{"a":1]`}, 0, false},
+		{[]interface{}{`[{a":1]`}, 0, false},
+	}
+	for _, t := range tbl {
+		args := types.MakeDatums(t.input...)
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(args))
+		c.Assert(err, IsNil)
+		d, err := evalBuiltinFunc(f, chunk.Row{})
+		if t.success {
+			c.Assert(err, IsNil)
+
+			if t.expected == nil {
+				c.Assert(d.IsNull(), IsTrue)
+			} else {
+				c.Assert(d.GetInt64(), Equals, int64(t.expected.(int)))
+			}
+		} else {
+			c.Assert(err, NotNil)
+		}
+	}
+}

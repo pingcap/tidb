@@ -46,6 +46,7 @@ import (
 	util2 "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
+	utilparser "github.com/pingcap/tidb/util/parser"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/set"
 
@@ -90,6 +91,36 @@ type indexHintInfo struct {
 	dbName    model.CIStr
 	tblName   model.CIStr
 	indexHint *ast.IndexHint
+	// Matched indicates whether this index hint
+	// has been successfully applied to a DataSource.
+	// If an indexHintInfo is not matched after building
+	// a Select statement, we will generate a warning for it.
+	matched bool
+}
+
+func (hint *indexHintInfo) hintTypeString() string {
+	switch hint.indexHint.HintType {
+	case ast.HintUse:
+		return "use_index"
+	case ast.HintIgnore:
+		return "ignore_index"
+	case ast.HintForce:
+		return "force_index"
+	}
+	return ""
+}
+
+// indexString formats the indexHint as dbName.tableName[, indexNames].
+func (hint *indexHintInfo) indexString() string {
+	var indexListString string
+	indexList := make([]string, len(hint.indexHint.IndexNames))
+	for i := range hint.indexHint.IndexNames {
+		indexList[i] = hint.indexHint.IndexNames[i].L
+	}
+	if len(indexList) > 0 {
+		indexListString = fmt.Sprintf(", %s", strings.Join(indexList, ", "))
+	}
+	return fmt.Sprintf("%s.%s%s", hint.dbName, hint.tblName, indexListString)
 }
 
 type aggHintInfo struct {
@@ -115,7 +146,7 @@ func tableNames2HintTableInfo(ctx sessionctx.Context, hintTables []ast.HintTable
 	hintTableInfos := make([]hintTableInfo, len(hintTables))
 	defaultDBName := model.NewCIStr(ctx.GetSessionVars().CurrentDB)
 	for i, hintTable := range hintTables {
-		tableInfo := hintTableInfo{tblName: hintTable.TableName, selectOffset: p.getHintOffset(hintTable.QBName, nodeType, currentOffset)}
+		tableInfo := hintTableInfo{dbName: hintTable.DBName, tblName: hintTable.TableName, selectOffset: p.getHintOffset(hintTable.QBName, nodeType, currentOffset)}
 		if tableInfo.dbName.L == "" {
 			tableInfo.dbName = defaultDBName
 		}
@@ -191,6 +222,37 @@ func restore2JoinHint(hintType string, hintTables []hintTableInfo) string {
 	return buffer.String()
 }
 
+func restore2StorageHint(tiflashTables, tikvTables []hintTableInfo) string {
+	buffer := bytes.NewBufferString("/*+ ")
+	buffer.WriteString(strings.ToUpper(HintReadFromStorage))
+	buffer.WriteString("(")
+	if len(tiflashTables) > 0 {
+		buffer.WriteString("tiflash[")
+		for i, table := range tiflashTables {
+			buffer.WriteString(table.tblName.L)
+			if i < len(tiflashTables)-1 {
+				buffer.WriteString(", ")
+			}
+		}
+		buffer.WriteString("]")
+		if len(tikvTables) > 0 {
+			buffer.WriteString(", ")
+		}
+	}
+	if len(tikvTables) > 0 {
+		buffer.WriteString("tikv[")
+		for i, table := range tikvTables {
+			buffer.WriteString(table.tblName.L)
+			if i < len(tikvTables)-1 {
+				buffer.WriteString(", ")
+			}
+		}
+		buffer.WriteString("]")
+	}
+	buffer.WriteString(") */")
+	return buffer.String()
+}
+
 func extractUnmatchedTables(hintTables []hintTableInfo) []string {
 	var tableNames []string
 	for _, table := range hintTables {
@@ -235,6 +297,9 @@ const (
 	// canExpandAST indicates whether the origin AST can be expanded during plan
 	// building. ONLY used for `CreateViewStmt` now.
 	canExpandAST
+	// collectUnderlyingViewName indicates whether to collect the underlying
+	// view names of a CreateViewStmt during plan building.
+	collectUnderlyingViewName
 )
 
 // PlanBuilder builds Plan from an ast.Node.
@@ -284,6 +349,8 @@ type PlanBuilder struct {
 
 	// SelectLock need this information to locate the lock on partitions.
 	partitionedTable []table.PartitionedTable
+	// CreateView needs this information to check whether exists nested view.
+	underlyingViewNames set.StringSet
 }
 
 type handleColHelper struct {
@@ -392,7 +459,7 @@ func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, processor
 
 // Build builds the ast node to a Plan.
 func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
-	b.optFlag = flagPrunColumns
+	b.optFlag |= flagPrunColumns
 	defer func() {
 		// if there is something after flagPrunColumns, do flagPrunColumnsAgain
 		if b.optFlag&flagPrunColumns > 0 && b.optFlag-flagPrunColumns > flagPrunColumns {
@@ -553,7 +620,7 @@ func (b *PlanBuilder) buildDropBindPlan(v *ast.DropBindingStmt) (Plan, error) {
 		SQLBindOp:    OpSQLBindDrop,
 		NormdOrigSQL: parser.Normalize(v.OriginSel.Text()),
 		IsGlobal:     v.GlobalScope,
-		Db:           getDefaultDB(b.ctx, v.OriginSel),
+		Db:           utilparser.GetDefaultDB(v.OriginSel, b.ctx.GetSessionVars().CurrentDB),
 	}
 	if v.HintedSel != nil {
 		p.BindSQL = v.HintedSel.Text()
@@ -570,40 +637,12 @@ func (b *PlanBuilder) buildCreateBindPlan(v *ast.CreateBindingStmt) (Plan, error
 		BindSQL:      v.HintedSel.Text(),
 		IsGlobal:     v.GlobalScope,
 		BindStmt:     v.HintedSel,
-		Db:           getDefaultDB(b.ctx, v.OriginSel),
+		Db:           utilparser.GetDefaultDB(v.OriginSel, b.ctx.GetSessionVars().CurrentDB),
 		Charset:      charSet,
 		Collation:    collation,
 	}
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
 	return p, nil
-}
-
-func getDefaultDB(ctx sessionctx.Context, sel ast.StmtNode) string {
-	implicitDB := &implicitDatabase{}
-	sel.Accept(implicitDB)
-	if implicitDB.hasImplicit {
-		return ctx.GetSessionVars().CurrentDB
-	}
-	return ""
-}
-
-type implicitDatabase struct {
-	hasImplicit bool
-}
-
-func (i *implicitDatabase) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
-	switch x := in.(type) {
-	case *ast.TableName:
-		if x.Schema.L == "" {
-			i.hasImplicit = true
-		}
-		return in, true
-	}
-	return in, false
-}
-
-func (i *implicitDatabase) Leave(in ast.Node) (out ast.Node, ok bool) {
-	return in, true
 }
 
 // detectSelectAgg detects an aggregate function or GROUP BY clause.
@@ -692,13 +731,15 @@ func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tbl ta
 	// Extract comment-style index hint like /*+ INDEX(t, idx1, idx2) */.
 	indexHintsLen := len(indexHints)
 	if hints := b.TableHints(); hints != nil {
-		for _, hint := range hints.indexHintList {
+		for i, hint := range hints.indexHintList {
 			if hint.dbName.L == dbName.L && hint.tblName.L == tblName.L {
 				indexHints = append(indexHints, hint.indexHint)
+				hints.indexHintList[i].matched = true
 			}
 		}
 	}
 
+	_, isolationReadEnginesHasTiKV := b.ctx.GetSessionVars().GetIsolationReadEngines()[kv.TiKV]
 	for i, hint := range indexHints {
 		if hint.HintScope != ast.HintForScan {
 			continue
@@ -706,6 +747,17 @@ func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tbl ta
 
 		hasScanHint = true
 
+		if !isolationReadEnginesHasTiKV {
+			if hint.IndexNames != nil {
+				engineVals, _ := b.ctx.GetSessionVars().GetSystemVar(variable.TiDBIsolationReadEngines)
+				err := errors.New(fmt.Sprintf("TiDB doesn't support index in the isolation read engines(value: '%v')", engineVals))
+				if i < indexHintsLen {
+					return nil, err
+				}
+				b.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			}
+			continue
+		}
 		// It is syntactically valid to omit index_list for USE INDEX, which means “use no indexes”.
 		// Omitting index_list for FORCE INDEX or IGNORE INDEX is a syntax error.
 		// See https://dev.mysql.com/doc/refman/8.0/en/index-hints.html.
@@ -759,10 +811,6 @@ func (b *PlanBuilder) filterPathByIsolationRead(paths []*util.AccessPath, dbName
 	if dbName.L == mysql.SystemDB {
 		return paths, nil
 	}
-	cfgIsolationEngines := set.StringSet{}
-	for _, engine := range config.GetGlobalConfig().IsolationRead.Engines {
-		cfgIsolationEngines.Insert(engine)
-	}
 	isolationReadEngines := b.ctx.GetSessionVars().GetIsolationReadEngines()
 	availableEngine := map[kv.StoreType]struct{}{}
 	var availableEngineStr string
@@ -776,16 +824,13 @@ func (b *PlanBuilder) filterPathByIsolationRead(paths []*util.AccessPath, dbName
 		}
 		if _, ok := isolationReadEngines[paths[i].StoreType]; !ok {
 			paths = append(paths[:i], paths[i+1:]...)
-		} else if _, ok := cfgIsolationEngines[paths[i].StoreType.Name()]; !ok {
-			paths = append(paths[:i], paths[i+1:]...)
 		}
 	}
 	var err error
 	if len(paths) == 0 {
 		engineVals, _ := b.ctx.GetSessionVars().GetSystemVar(variable.TiDBIsolationReadEngines)
-		err = ErrInternal.GenWithStackByArgs(fmt.Sprintf("Can not find access path matching '%v'(value: '%v') "+
-			"and tidb-server config isolation-read(engines: '%v'). Available values are '%v'.",
-			variable.TiDBIsolationReadEngines, engineVals, config.GetGlobalConfig().IsolationRead.Engines, availableEngineStr))
+		err = ErrInternal.GenWithStackByArgs(fmt.Sprintf("Can not find access path matching '%v'(value: '%v'). Available values are '%v'.",
+			variable.TiDBIsolationReadEngines, engineVals, availableEngineStr))
 	}
 	return paths, err
 }
@@ -819,7 +864,7 @@ func (b *PlanBuilder) buildPrepare(x *ast.PrepareStmt) Plan {
 	}
 	if x.SQLVar != nil {
 		if v, ok := b.ctx.GetSessionVars().Users[x.SQLVar.Name]; ok {
-			p.SQLText = v
+			p.SQLText = v.GetString()
 		} else {
 			p.SQLText = "NULL"
 		}
@@ -944,6 +989,8 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (Plan, 
 		return &SQLBindPlan{SQLBindOp: OpCaptureBindings}, nil
 	case ast.AdminEvolveBindings:
 		return &SQLBindPlan{SQLBindOp: OpEvolveBindings}, nil
+	case ast.AdminReloadBindings:
+		return &SQLBindPlan{SQLBindOp: OpReloadBindings}, nil
 	default:
 		return nil, ErrUnsupportedType.GenWithStack("Unsupported ast.AdminStmt(%T) for buildAdmin", as)
 	}
@@ -1471,8 +1518,8 @@ func buildShowDDLJobsFields() (*expression.Schema, types.NameSlice) {
 	schema.Append(buildColumnWithName("", "SCHEMA_ID", mysql.TypeLonglong, 4))
 	schema.Append(buildColumnWithName("", "TABLE_ID", mysql.TypeLonglong, 4))
 	schema.Append(buildColumnWithName("", "ROW_COUNT", mysql.TypeLonglong, 4))
-	schema.Append(buildColumnWithName("", "START_TIME", mysql.TypeVarchar, 64))
-	schema.Append(buildColumnWithName("", "END_TIME", mysql.TypeVarchar, 64))
+	schema.Append(buildColumnWithName("", "START_TIME", mysql.TypeDatetime, 19))
+	schema.Append(buildColumnWithName("", "END_TIME", mysql.TypeDatetime, 19))
 	schema.Append(buildColumnWithName("", "STATE", mysql.TypeVarchar, 64))
 	return schema.col2Schema(), schema.names
 }
@@ -1617,6 +1664,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 		},
 	}.Init(b.ctx)
 	isView := false
+	isSequence := false
 	switch show.Tp {
 	case ast.ShowTables, ast.ShowTableStatus:
 		if p.DBName == "" {
@@ -1631,12 +1679,18 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AllPrivMask, show.Table.Schema.L, show.Table.Name.L, "", err)
 		if table, err := b.is.TableByName(show.Table.Schema, show.Table.Name); err == nil {
 			isView = table.Meta().IsView()
+			isSequence = table.Meta().IsSequence()
 		}
 	case ast.ShowCreateView:
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("SHOW VIEW")
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShowViewPriv, show.Table.Schema.L, show.Table.Name.L, "", err)
+	case ast.ShowTableNextRowId:
+		p := &ShowNextRowID{TableName: show.Table}
+		p.setSchemaAndNames(buildShowNextRowID())
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, show.Table.Schema.L, show.Table.Name.L, "", ErrPrivilegeCheckFail)
+		return p, nil
 	}
-	schema, names := buildShowSchema(show, isView)
+	schema, names := buildShowSchema(show, isView, isSequence)
 	p.SetSchema(schema)
 	p.names = names
 	for _, col := range p.schema.Columns {
@@ -1805,7 +1859,15 @@ func collectVisitInfoFromGrantStmt(sctx sessionctx.Context, vi []visitInfo, stmt
 }
 
 func (b *PlanBuilder) getDefaultValue(col *table.Column) (*expression.Constant, error) {
-	value, err := table.GetColDefaultValue(b.ctx, col.ToInfo())
+	var (
+		value types.Datum
+		err   error
+	)
+	if col.DefaultIsExpr && col.DefaultExpr != nil {
+		value, err = table.EvalColDefaultExpr(b.ctx, col.ToInfo(), col.DefaultExpr)
+	} else {
+		value, err = table.GetColDefaultValue(b.ctx, col.ToInfo())
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -2200,7 +2262,7 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 	}
 
 	names := selectPlan.OutputNames()
-	insertPlan.SelectPlan, _, err = DoOptimize(ctx, b.optFlag, selectPlan.(LogicalPlan))
+	insertPlan.SelectPlan, _, err = DoOptimize(ctx, b.ctx, b.optFlag, selectPlan.(LogicalPlan))
 	if err != nil {
 		return err
 	}
@@ -2547,12 +2609,18 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 		}
 	case *ast.CreateViewStmt:
 		b.capFlag |= canExpandAST
+		b.capFlag |= collectUnderlyingViewName
 		defer func() {
 			b.capFlag &= ^canExpandAST
+			b.capFlag &= ^collectUnderlyingViewName
 		}()
+		b.underlyingViewNames = set.NewStringSet()
 		plan, err := b.Build(ctx, v.Select)
 		if err != nil {
 			return nil, err
+		}
+		if b.underlyingViewNames.Exist(v.ViewName.Schema.L + "." + v.ViewName.Name.L) {
+			return nil, ErrNoSuchTable.GenWithStackByArgs(v.ViewName.Schema.O, v.ViewName.Name.O)
 		}
 		schema := plan.Schema()
 		names := plan.OutputNames()
@@ -2835,7 +2903,7 @@ func buildShowWarningsSchema() (*expression.Schema, types.NameSlice) {
 }
 
 // buildShowSchema builds column info for ShowStmt including column name and type.
-func buildShowSchema(s *ast.ShowStmt, isView bool) (schema *expression.Schema, outputNames []*types.FieldName) {
+func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *expression.Schema, outputNames []*types.FieldName) {
 	var names []string
 	var ftypes []byte
 	switch s.Tp {
@@ -2882,10 +2950,12 @@ func buildShowSchema(s *ast.ShowStmt, isView bool) (schema *expression.Schema, o
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong,
 			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong}
 	case ast.ShowCreateTable, ast.ShowCreateSequence:
-		if !isView {
-			names = []string{"Table", "Create Table"}
-		} else {
+		if isSequence {
+			names = []string{"Sequence", "Create Sequence"}
+		} else if isView {
 			names = []string{"View", "Create View", "character_set_client", "collation_connection"}
+		} else {
+			names = []string{"Table", "Create Table"}
 		}
 	case ast.ShowCreateUser:
 		if s.User != nil {
@@ -2908,10 +2978,11 @@ func buildShowSchema(s *ast.ShowStmt, isView bool) (schema *expression.Schema, o
 	case ast.ShowIndex:
 		names = []string{"Table", "Non_unique", "Key_name", "Seq_in_index",
 			"Column_name", "Collation", "Cardinality", "Sub_part", "Packed",
-			"Null", "Index_type", "Comment", "Index_comment", "Expression"}
+			"Null", "Index_type", "Comment", "Index_comment", "Visible", "Expression"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeLonglong,
 			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeLonglong,
-			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar}
+			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar,
+			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar}
 	case ast.ShowPlugins:
 		names = []string{"Name", "Status", "Type", "Library", "License", "Version"}
 		ftypes = []byte{
