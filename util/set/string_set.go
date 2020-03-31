@@ -31,3 +31,22 @@ func (s StringSet) Exist(val string) bool {
 func (s StringSet) Insert(val string) {
 	s[val] = struct{}{}
 }
+<<<<<<< HEAD
+=======
+
+// Intersection returns the intersection of two sets
+func (s StringSet) Intersection(rhs StringSet) StringSet {
+	newSet := NewStringSet()
+	for elt := range s {
+		if rhs.Exist(elt) {
+			newSet.Insert(elt)
+		}
+	}
+	return newSet
+}
+
+// Count returns the number in Set s.
+func (s StringSet) Count() int {
+	return len(s)
+}
+>>>>>>> 5192c26... executor: optimize count distinct with single column (#15323)
