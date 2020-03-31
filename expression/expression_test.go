@@ -91,6 +91,20 @@ func (s *testEvaluatorSuite) TestConstItem(c *C) {
 	c.Assert(sf.ConstItem(s.ctx.GetSessionVars().StmtCtx), Equals, true)
 }
 
+func (s *testEvaluatorSuite) TestVectorizable(c *C) {
+	exprs := make([]Expression, 0, 4)
+	sf := newFunction(ast.Rand)
+	column := &Column{
+		UniqueID: 0,
+		RetType:  types.NewFieldType(mysql.TypeLonglong),
+	}
+	exprs = append(exprs, sf)
+	exprs = append(exprs, One)
+	exprs = append(exprs, Null)
+	exprs = append(exprs, column)
+	c.Assert(Vectorizable(exprs), Equals, true)
+}
+
 type testTableBuilder struct {
 	tableName   string
 	columnNames []string
