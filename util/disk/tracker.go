@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/util/stringutil"
 )
 
-var rowContainerLabel fmt.Stringer = stringutil.StringerStr("RowContainer")
+var globalStorageLabel fmt.Stringer = stringutil.StringerStr("GlobalStorageLabel")
 
 // Tracker is used to track the disk usage during query execution.
 type Tracker = memory.Tracker
@@ -32,24 +32,23 @@ type Tracker = memory.Tracker
 var NewTracker = memory.NewTracker
 
 func NewGlobalDisTracker(bytesLimit int64) *Tracker {
-	return NewTracker(rowContainerLabel, bytesLimit)
+	return NewTracker(globalStorageLabel, bytesLimit)
 }
 
-// PanicOnExceed panics when storage usage exceeds storage quota.
-type PanicOnExceed struct {
+// GlobalPanicOnExceed panics when GlobalDisTracker storage usage exceeds storage quota.
+type GlobalPanicOnExceed struct {
 	mutex   sync.Mutex // For synchronization.
 	acted   bool
-	ConnID  uint64
 	logHook func(uint64)
 }
 
 // SetLogHook sets a hook for PanicOnExceed.
-func (a *PanicOnExceed) SetLogHook(hook func(uint64)) {
+func (a *GlobalPanicOnExceed) SetLogHook(hook func(uint64)) {
 	a.logHook = hook
 }
 
 // Action panics when storage usage exceeds storage quota.
-func (a *PanicOnExceed) Action(t *Tracker) {
+func (a *GlobalPanicOnExceed) Action(t *Tracker) {
 	a.mutex.Lock()
 	if a.acted {
 		a.mutex.Unlock()
@@ -58,15 +57,15 @@ func (a *PanicOnExceed) Action(t *Tracker) {
 	a.acted = true
 	a.mutex.Unlock()
 	if a.logHook != nil {
-		a.logHook(a.ConnID)
+		//a.logHook(a.ConnID)
 	}
-	panic(PanicStorageExceed + fmt.Sprintf("[conn_id=%d]", a.ConnID))
+	panic(GlobalPanicStorageExceed)
 }
 
 // SetFallback sets a fallback action.
-func (a *PanicOnExceed) SetFallback(memory.ActionOnExceed) {}
+func (a *GlobalPanicOnExceed) SetFallback(memory.ActionOnExceed) {}
 
 const (
-	// PanicMemoryExceed represents the panic message when out of storage quota.
-	PanicStorageExceed string = "Out Of Storage Quota!"
+	// GlobalPanicStorageExceed represents the panic message when out of storage quota.
+	GlobalPanicStorageExceed string = "Out Of Global Storage Quota!"
 )

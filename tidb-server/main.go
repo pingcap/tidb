@@ -530,7 +530,9 @@ func setGlobalVars() {
 	tikv.RegionCacheTTLSec = int64(cfg.TiKVClient.RegionCacheTTL)
 	domainutil.RepairInfo.SetRepairMode(cfg.RepairMode)
 	domainutil.RepairInfo.SetRepairTableList(cfg.RepairTableList)
-	executor.GlobalDiskUsageTracker = disk.NewGlobalDisTracker(int64(cfg.TempStorageQuota))
+	executor.GlobalDiskUsageTracker = disk.NewGlobalDisTracker(cfg.TempStorageQuota)
+	action := &disk.GlobalPanicOnExceed{}
+	executor.GlobalDiskUsageTracker.SetActionOnExceed(action)
 }
 
 func setupLog() {

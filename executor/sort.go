@@ -20,7 +20,6 @@ import (
 	"sort"
 
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/types"
@@ -243,8 +242,6 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 	e.rowChunks = chunk.NewRowContainer(fields, e.maxChunkSize)
 	e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
 	e.rowChunks.GetMemTracker().SetLabel(rowChunksLabel)
-	e.rowChunks.GetDiskTracker().AttachTo(e.diskTracker)
-	e.rowChunks.GetDiskTracker().SetLabel(rowChunksLabel)
 	var onExceededCallback func(rowContainer *chunk.RowContainer)
 	if config.GetGlobalConfig().OOMUseTmpStorage {
 		e.spillAction = e.rowChunks.ActionSpill()
@@ -253,9 +250,8 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 			e.generatePartition()
 		}
 		e.rowChunks.SetOnExceededCallback(onExceededCallback)
-		action := &disk.PanicOnExceed{ConnID: e.ctx.GetSessionVars().ConnectionID}
-		action.SetLogHook(domain.GetDomain(e.ctx).ExpensiveQueryHandle().LogOnQueryExceedQuota)
-		e.diskTracker.SetActionOnExceed(action)
+		e.rowChunks.GetDiskTracker().AttachTo(e.diskTracker)
+		e.rowChunks.GetDiskTracker().SetLabel(rowChunksLabel)
 	}
 	for {
 		chk := newFirstChunk(e.children[0])
