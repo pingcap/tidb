@@ -362,12 +362,26 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 		if len(path.Ranges) == 0 && !ds.ctx.GetSessionVars().StmtCtx.UseCache {
 			return []*candidatePath{{path: path}}
 		}
-		if path.StoreType != kv.TiFlash && prop.TaskTp == property.CopTiflashTaskType {
+		if path.StoreType != kv.TiFlash && (prop.TaskTp == property.CopTiFlashLocalReadTaskType || prop.TaskTp == property.CopTiFlashGlobalReadTaskType) {
 			continue
 		}
 		var currentCandidate *candidatePath
 		if path.IsTablePath {
-			currentCandidate = ds.getTableCandidate(path, prop)
+			if path.StoreType == kv.TiFlash {
+				if path.IsRemoteRead && prop.TaskTp == property.CopTiFlashGlobalReadTaskType {
+					currentCandidate = ds.getTableCandidate(path, prop)
+				}
+				if !path.IsRemoteRead && prop.TaskTp != property.CopTiFlashGlobalReadTaskType {
+					currentCandidate = ds.getTableCandidate(path, prop)
+				}
+			} else {
+				if !path.IsRemoteRead {
+					currentCandidate = ds.getTableCandidate(path, prop)
+				}
+			}
+			if currentCandidate == nil {
+				continue
+			}
 		} else {
 			coveredByIdx := isCoveringIndex(ds.schema.Columns, path.FullIdxCols, path.FullIdxColLens, ds.tableInfo.PKIsHandle)
 			if len(path.AccessConds) > 0 || !prop.IsEmpty() || path.Forced || coveredByIdx {
@@ -1097,7 +1111,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		cst:               cost,
 	}
 	if ts.StoreType == kv.TiFlash {
-		if prop.TaskTp != property.CopTiflashTaskType && prop.TaskTp != property.RootTaskType {
+		if prop.TaskTp != property.CopTiFlashLocalReadTaskType && prop.TaskTp != property.RootTaskType && prop.TaskTp != property.CopTiFlashGlobalReadTaskType {
 			logutil.BgLogger().Error("invalid task:", zap.String("type", prop.TaskTp.String()))
 			return invalidTask, nil
 		}
@@ -1282,6 +1296,7 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 		AccessCondition: path.AccessConds,
 		filterCondition: path.TableFilters,
 		StoreType:       path.StoreType,
+		IsGlobalRead:    path.IsRemoteRead,
 	}.Init(ds.ctx, ds.blockOffset)
 	ts.SetSchema(ds.schema.Clone())
 	if ts.Table.PKIsHandle {

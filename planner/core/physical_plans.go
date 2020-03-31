@@ -265,6 +265,8 @@ type PhysicalTableScan struct {
 
 	StoreType kv.StoreType
 
+	IsGlobalRead bool
+
 	// The table scan may be a partition, rather than a real table.
 	isPartition bool
 	// KeepOrder is true, if sort data by scanning pkcol,
