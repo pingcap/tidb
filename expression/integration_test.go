@@ -5745,6 +5745,20 @@ func (s *testIntegrationSerialSuite) TestCollateMergeJoin2(c *C) {
 		testkit.Rows("1 a a", "2 À À", "3 á á", "4 à à", "5 b b", "6 c c", "7    "))
 }
 
+func (s *testIntegrationSerialSuite) TestCollateIndexMergeJoin(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a varchar(5) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci, b varchar(5) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci, key(a), key(b))")
+	tk.MustExec("insert into t values ('a', 'x'), ('x', 'À'), ('á', 'x'), ('à', 'à'), ('à', 'x')")
+
+	tk.MustExec("set tidb_enable_index_merge=1")
+	tk.MustQuery("select /*+ USE_INDEX_MERGE(t, a, b) */ * from t where a = 'a' or b = 'a'").Sort().Check(
+		testkit.Rows("a x", "x À", "à x", "à à", "á x"))
+}
+
 func (s *testIntegrationSerialSuite) prepare4Collation(c *C, hasIndex bool) *testkit.TestKit {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("USE test")
