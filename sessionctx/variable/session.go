@@ -979,6 +979,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBReplicaRead:
 		if strings.EqualFold(val, "follower") {
 			s.ReplicaRead = kv.ReplicaReadFollower
+		} else if strings.EqualFold(val, "leader-and-follower") {
+			s.ReplicaRead = kv.ReplicaReadMixed
 		} else if strings.EqualFold(val, "leader") || len(val) == 0 {
 			s.ReplicaRead = kv.ReplicaReadLeader
 		}

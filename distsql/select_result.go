@@ -16,9 +16,11 @@ package distsql
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
@@ -31,6 +33,10 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
+)
+
+var (
+	errQueryInterrupted = terror.ClassExecutor.New(mysql.ErrQueryInterrupted, mysql.MySQLErrName[mysql.ErrQueryInterrupted])
 )
 
 var (
@@ -188,7 +194,11 @@ func (r *selectResult) getSelectResp() error {
 		if err := r.selectResp.Error; err != nil {
 			return terror.ClassTiKV.New(terror.ErrCode(err.Code), err.Msg)
 		}
-		sc := r.ctx.GetSessionVars().StmtCtx
+		sessVars := r.ctx.GetSessionVars()
+		if atomic.CompareAndSwapUint32(&sessVars.Killed, 1, 0) {
+			return errors.Trace(errQueryInterrupted)
+		}
+		sc := sessVars.StmtCtx
 		for _, warning := range r.selectResp.Warnings {
 			sc.AppendWarning(terror.ClassTiKV.New(terror.ErrCode(warning.Code), warning.Msg))
 		}
