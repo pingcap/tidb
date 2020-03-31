@@ -21,6 +21,22 @@ import (
 	utilhint "github.com/pingcap/tidb/util/hint"
 )
 
+// GenHintsFromPhysicalPlan generates hints from physical plan.
+func GenHintsFromPhysicalPlan(p Plan) []*ast.TableOptimizerHint {
+	var hints []*ast.TableOptimizerHint
+	switch pp := p.(type) {
+	case *Explain:
+		return GenHintsFromPhysicalPlan(pp.TargetPlan)
+	case *Update:
+		hints = genHintsFromPhysicalPlan(pp.SelectPlan, utilhint.TypeUpdate)
+	case *Delete:
+		hints = genHintsFromPhysicalPlan(pp.SelectPlan, utilhint.TypeDelete)
+	case PhysicalPlan:
+		hints = genHintsFromPhysicalPlan(pp, utilhint.TypeSelect)
+	}
+	return hints
+}
+
 func getTableName(tblName model.CIStr, asName *model.CIStr) model.CIStr {
 	if asName != nil && asName.L != "" {
 		return *asName
