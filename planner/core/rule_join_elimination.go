@@ -122,7 +122,7 @@ func (o *outerJoinEliminator) isInnerJoinKeysContainUniqueKey(innerPlan LogicalP
 // check whether one of index sets is contained by inner join index
 func (o *outerJoinEliminator) isInnerJoinKeysContainIndex(innerPlan LogicalPlan, joinKeys *expression.Schema) (bool, error) {
 	ds, ok := innerPlan.(*DataSource)
-	if !ok || joinKeys.Len() == 0 {
+	if !ok {
 		return false, nil
 	}
 	for _, path := range ds.possibleAccessPaths {
@@ -130,6 +130,9 @@ func (o *outerJoinEliminator) isInnerJoinKeysContainIndex(innerPlan LogicalPlan,
 			continue
 		}
 		if !path.Index.Unique {
+			continue
+		}
+		if path.IdxCols == nil || len(path.IdxCols) == 0 {
 			continue
 		}
 		joinKeysContainIndex := true

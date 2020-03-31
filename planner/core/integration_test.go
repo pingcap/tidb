@@ -794,4 +794,12 @@ func (s *testIntegrationSuite) TestIssue15846(c *C) {
 	tk.MustExec("INSERT INTO t1(c0) VALUES (0);")
 	tk.MustExec("INSERT INTO t0(t0) VALUES (NULL), (NULL);")
 	tk.MustQuery("SELECT t1.c0 FROM t1 LEFT JOIN t0 ON 1;").Check(testkit.Rows("0", "0"))
+
+	tk.MustExec("drop table if exists t0, t1")
+	tk.MustExec("CREATE TABLE t0(t0 INT);")
+	tk.MustExec("CREATE TABLE t1(c0 FLOAT);")
+	tk.MustExec("create unique index idx on t0(t0);")
+	tk.MustExec("INSERT INTO t1(c0) VALUES (0);")
+	tk.MustExec("INSERT INTO t0(t0) VALUES (NULL), (NULL);")
+	tk.MustQuery("SELECT t1.c0 FROM t1 LEFT JOIN t0 ON 1;").Check(testkit.Rows("0", "0"))
 }
