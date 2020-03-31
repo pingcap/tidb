@@ -228,9 +228,10 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		keys[i] = key
 	}
 
-	// Fetch all values.
 	var values map[string][]byte
-	if e.lock {
+	rc := e.ctx.GetSessionVars().IsPessimisticReadConsistency()
+	// Lock keys (include exists and non-exists keys) before fetch all values for Repeatable Read Isolation.
+	if e.lock && !rc {
 		lockKeys := make([]kv.Key, len(keys), len(keys)+len(indexKeys))
 		copy(lockKeys, keys)
 		for _, idxKey := range indexKeys {
@@ -250,6 +251,10 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		return err
 	}
 	handles := make([]int64, 0, len(values))
+	var existKeys []kv.Key
+	if e.lock && rc {
+		existKeys = make([]kv.Key, 0, len(values))
+	}
 	e.values = make([][]byte, 0, len(values))
 	for i, key := range keys {
 		val := values[string(key)]
@@ -262,6 +267,16 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		}
 		e.values = append(e.values, val)
 		handles = append(handles, e.handles[i])
+		if e.lock && rc {
+			existKeys = append(existKeys, key)
+		}
+	}
+	// Lock exists keys only for Read Committed Isolation.
+	if e.lock && rc {
+		err = e.lockKeys(ctx, existKeys)
+		if err != nil {
+			return err
+		}
 	}
 	e.handles = handles
 	return nil
