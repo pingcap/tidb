@@ -364,74 +364,106 @@ func (s testMemDBSuite) TestRandom(c *C) {
 
 	rand.Shuffle(cnt, func(i, j int) { keys[i], keys[j] = keys[j], keys[i] })
 
-	check := func() {
-		c.Check(p1.Len(), Equals, p2.Len())
-		c.Check(p1.Size(), Equals, p2.Size())
-
-		it1 := p1.NewIterator()
-		it1.SeekToFirst()
-
-		it2 := p2.NewIterator(nil)
-
-		var prevKey, prevVal []byte
-		for it2.First(); it2.Valid(); it2.Next() {
-			c.Check(it1.Key(), BytesEquals, it2.Key())
-			c.Check(it1.Value(), BytesEquals, it2.Value())
-
-			it := p1.NewIterator()
-			it.Seek(it2.Key())
-			c.Check(it.Key(), BytesEquals, it2.Key())
-			c.Check(it.Value(), BytesEquals, it2.Value())
-
-			it.SeekForPrev(it2.Key())
-			c.Check(it.Key(), BytesEquals, it2.Key())
-			c.Check(it.Value(), BytesEquals, it2.Value())
-
-			if prevKey != nil {
-				it.SeekForExclusivePrev(it2.Key())
-				c.Check(it.Key(), BytesEquals, prevKey)
-				c.Check(it.Value(), BytesEquals, prevVal)
-			}
-
-			it1.Next()
-			prevKey = it2.Key()
-			prevVal = it2.Value()
-		}
-
-		it1.SeekToLast()
-		for it2.Last(); it2.Valid(); it2.Prev() {
-			c.Check(it1.Key(), BytesEquals, it2.Key())
-			c.Check(it1.Value(), BytesEquals, it2.Value())
-			it1.Prev()
-		}
-	}
-
 	for _, k := range keys {
 		newValue := make([]byte, rand.Intn(19)+1)
 		rand.Read(newValue)
 		p1.Put(k, newValue)
 		_ = p2.Put(k, newValue)
 	}
-	check()
+	s.checkConsist(c, p1, p2)
+}
 
-	// This case try to ensure `Sandbox.merge` can work properly on random keys.
-	for i := range keys {
-		if rand.Intn(4) <= 2 {
-			continue
+func (s testMemDBSuite) TestRandomDerive(c *C) {
+	s.testRandomDeriveRecur(c, NewSandbox(4*1024), memdb.New(comparer.DefaultComparer, 4*1024), 0)
+}
+
+func (s testMemDBSuite) testRandomDeriveRecur(c *C, sb *Sandbox, db *memdb.DB, depth int) {
+	var keys [][]byte
+	if rand.Float64() < 0.5 {
+		start, end := rand.Intn(512), rand.Intn(512)+512
+		cnt := end - start
+		keys = make([][]byte, cnt)
+		for i := range keys {
+			keys[i] = make([]byte, 8)
+			binary.BigEndian.PutUint64(keys[i], uint64(start+i))
 		}
-		keys[i] = make([]byte, rand.Intn(19)+1)
-		rand.Read(keys[i])
+	} else {
+		keys = make([][]byte, rand.Intn(512)+512)
+		for i := range keys {
+			keys[i] = make([]byte, rand.Intn(19)+1)
+			rand.Read(keys[i])
+		}
 	}
 
-	sb := p1.Derive()
-	for _, k := range keys {
-		newValue := make([]byte, rand.Intn(19)+1)
-		rand.Read(newValue)
-		sb.Put(k, newValue)
-		_ = p2.Put(k, newValue)
+	vals := make([][]byte, len(keys))
+	for i := range vals {
+		vals[i] = make([]byte, rand.Intn(255)+1)
+		rand.Read(vals[i])
 	}
-	sb.Flush()
-	check()
+
+	sbBuf := sb.Derive()
+	dbBuf := memdb.New(comparer.DefaultComparer, 4*1024)
+	for i := range keys {
+		sbBuf.Put(keys[i], vals[i])
+		_ = dbBuf.Put(keys[i], vals[i])
+	}
+
+	if depth < 1000 {
+		s.testRandomDeriveRecur(c, sbBuf, dbBuf, depth+1)
+	}
+
+	if rand.Float64() < 0.3 && depth > 0 {
+		sbBuf.Discard()
+	} else {
+		sbBuf.Flush()
+		it := dbBuf.NewIterator(nil)
+		for it.First(); it.Valid(); it.Next() {
+			_ = db.Put(it.Key(), it.Value())
+		}
+	}
+	s.checkConsist(c, sb, db)
+}
+
+func (s testMemDBSuite) checkConsist(c *C, p1 *Sandbox, p2 *memdb.DB) {
+	c.Check(p1.Len(), Equals, p2.Len())
+	c.Check(p1.Size(), Equals, p2.Size())
+
+	it1 := p1.NewIterator()
+	it1.SeekToFirst()
+
+	it2 := p2.NewIterator(nil)
+
+	var prevKey, prevVal []byte
+	for it2.First(); it2.Valid(); it2.Next() {
+		c.Check(it1.Key(), BytesEquals, it2.Key())
+		c.Check(it1.Value(), BytesEquals, it2.Value())
+
+		it := p1.NewIterator()
+		it.Seek(it2.Key())
+		c.Check(it.Key(), BytesEquals, it2.Key())
+		c.Check(it.Value(), BytesEquals, it2.Value())
+
+		it.SeekForPrev(it2.Key())
+		c.Check(it.Key(), BytesEquals, it2.Key())
+		c.Check(it.Value(), BytesEquals, it2.Value())
+
+		if prevKey != nil {
+			it.SeekForExclusivePrev(it2.Key())
+			c.Check(it.Key(), BytesEquals, prevKey)
+			c.Check(it.Value(), BytesEquals, prevVal)
+		}
+
+		it1.Next()
+		prevKey = it2.Key()
+		prevVal = it2.Value()
+	}
+
+	it1.SeekToLast()
+	for it2.Last(); it2.Valid(); it2.Prev() {
+		c.Check(it1.Key(), BytesEquals, it2.Key())
+		c.Check(it1.Value(), BytesEquals, it2.Value())
+		it1.Prev()
+	}
 }
 
 func (s testMemDBSuite) fillDB(cnt int) *Sandbox {
