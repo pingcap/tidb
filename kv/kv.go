@@ -89,13 +89,14 @@ const (
 	ReplicaReadLeader ReplicaReadType = 1 << iota
 	// ReplicaReadFollower stands for 'read from follower'.
 	ReplicaReadFollower
-	// ReplicaReadLearner stands for 'read from learner'.
-	ReplicaReadLearner
+	// ReplicaReadMixed stands for 'read from leader and follower and learner'.
+	ReplicaReadMixed
 )
 
 // IsFollowerRead checks if leader is going to be used to read data.
 func (r ReplicaReadType) IsFollowerRead() bool {
-	return r == ReplicaReadFollower
+	// In some cases the default value is 0, which should be treated as `ReplicaReadLeader`.
+	return r != ReplicaReadLeader && r != 0
 }
 
 // Those limits is enforced to make sure the transaction can be well handled by TiKV.

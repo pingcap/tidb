@@ -1,0 +1,176 @@
+[
+  {
+    "Name": "TestReadFromStorageHint",
+    "Cases": [
+      {
+        "SQL": "desc select avg(a) from t",
+        "Plan": [
+          "StreamAgg_20 1.00 root funcs:avg(col_0, col_1)",
+          "└─TableReader_21 1.00 root data:StreamAgg_8",
+          "  └─StreamAgg_8 1.00 cop[tiflash] funcs:count(test.t.a), sum(test.t.a)",
+          "    └─TableScan_18 10000.00 cop[tiflash] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "desc select /*+ read_from_storage(tiflash[t]) */ avg(a) from t",
+        "Plan": [
+          "StreamAgg_16 1.00 root funcs:avg(col_0, col_1)",
+          "└─TableReader_17 1.00 root data:StreamAgg_8",
+          "  └─StreamAgg_8 1.00 cop[tiflash] funcs:count(test.t.a), sum(test.t.a)",
+          "    └─TableScan_15 10000.00 cop[tiflash] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "desc select /*+ read_from_storage(tiflash[t]) */ sum(a) from t",
+        "Plan": [
+          "StreamAgg_16 1.00 root funcs:sum(col_0)",
+          "└─TableReader_17 1.00 root data:StreamAgg_8",
+          "  └─StreamAgg_8 1.00 cop[tiflash] funcs:sum(test.t.a)",
+          "    └─TableScan_15 10000.00 cop[tiflash] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "desc select /*+ read_from_storage(tiflash[t]) */ sum(a+1) from t",
+        "Plan": [
+          "StreamAgg_16 1.00 root funcs:sum(col_0)",
+          "└─TableReader_17 1.00 root data:StreamAgg_8",
+          "  └─StreamAgg_8 1.00 cop[tiflash] funcs:sum(plus(test.t.a, 1))",
+          "    └─TableScan_15 10000.00 cop[tiflash] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "desc select /*+ read_from_storage(tiflash[t]) */ sum(isnull(a)) from t",
+        "Plan": [
+          "StreamAgg_16 1.00 root funcs:sum(col_0)",
+          "└─TableReader_17 1.00 root data:StreamAgg_8",
+          "  └─StreamAgg_8 1.00 cop[tiflash] funcs:sum(isnull(test.t.a))",
+          "    └─TableScan_15 10000.00 cop[tiflash] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "desc select * from tt where (tt.a > 1 and tt.a < 20) or (tt.a >= 30 and tt.a < 55)",
+        "Plan": [
+          "TableReader_8 44.00 root data:TableScan_7",
+          "└─TableScan_7 44.00 cop[tiflash] table:tt, range:(1,20), [30,55), keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "desc select /*+ read_from_storage(tiflash[tt]) */ * from tt where (tt.a > 1 and tt.a < 20) or (tt.a >= 30 and tt.a < 55)",
+        "Plan": [
+          "TableReader_6 44.00 root data:TableScan_5",
+          "└─TableScan_5 44.00 cop[tiflash] table:tt, range:(1,20), [30,55), keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "desc select * from ttt order by ttt.a desc",
+        "Plan": [
+          "TableReader_13 10000.00 root data:TableScan_12",
+          "└─TableScan_12 10000.00 cop[tikv] table:ttt, range:[-inf,+inf], keep order:true, desc, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "desc select /*+ read_from_storage(tiflash[ttt]) */ * from ttt order by ttt.a desc",
+        "Plan": [
+          "Sort_4 10000.00 root test.ttt.a:desc",
+          "└─TableReader_8 10000.00 root data:TableScan_7",
+          "  └─TableScan_7 10000.00 cop[tiflash] table:ttt, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "desc select /*+ read_from_storage(tiflash[ttt]) */ * from ttt order by ttt.a",
+        "Plan": [
+          "TableReader_11 10000.00 root data:TableScan_10",
+          "└─TableScan_10 10000.00 cop[tiflash] table:ttt, range:[-inf,+inf], keep order:true, stats:pseudo"
+        ],
+        "Warn": null
+      }
+    ]
+  },
+  {
+    "Name": "TestReadFromStorageHintAndIsolationRead",
+    "Cases": [
+      {
+        "SQL": "desc select /*+ read_from_storage(tikv[t], tiflash[t]) */ avg(a) from t",
+        "Plan": [
+          "StreamAgg_16 1.00 root funcs:avg(col_0, col_1)",
+          "└─IndexReader_17 1.00 root index:StreamAgg_8",
+          "  └─StreamAgg_8 1.00 cop[tikv] funcs:avg(test.t.a)",
+          "    └─IndexScan_15 10000.00 cop[tikv] table:t, index:a, range:[NULL,+inf], keep order:false, stats:pseudo"
+        ],
+        "Warn": [
+          "[planner:1815]Storage hints are conflict, you can only specify one storage type of table t"
+        ]
+      },
+      {
+        "SQL": "desc select /*+ read_from_storage(tikv[t]) */ avg(a) from t",
+        "Plan": [
+          "StreamAgg_16 1.00 root funcs:avg(col_0, col_1)",
+          "└─IndexReader_17 1.00 root index:StreamAgg_8",
+          "  └─StreamAgg_8 1.00 cop[tikv] funcs:avg(test.t.a)",
+          "    └─IndexScan_15 10000.00 cop[tikv] table:t, index:a, range:[NULL,+inf], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "desc select /*+ read_from_storage(tiflash[t]) */ avg(a) from t",
+        "Plan": [
+          "StreamAgg_16 1.00 root funcs:avg(col_0, col_1)",
+          "└─IndexReader_17 1.00 root index:StreamAgg_8",
+          "  └─StreamAgg_8 1.00 cop[tikv] funcs:avg(test.t.a)",
+          "    └─IndexScan_15 10000.00 cop[tikv] table:t, index:a, range:[NULL,+inf], keep order:false, stats:pseudo"
+        ],
+        "Warn": [
+          "[planner:1815]No available path for table test.t with the store type tiflash of the hint /*+ read_from_storage */, please check the status of the table replica and variable value of tidb_isolation_read_engines(map[0:{}])"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestIsolationReadTiFlashUseIndexHint",
+    "Cases": [
+      {
+        "SQL": "explain select * from t",
+        "Plan": [
+          "TableReader_5 10000.00 root data:TableScan_4",
+          "└─TableScan_4 10000.00 cop[tiflash] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain select * from t use index();",
+        "Plan": [
+          "TableReader_5 10000.00 root data:TableScan_4",
+          "└─TableScan_4 10000.00 cop[tiflash] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain select /*+ use_index(t, idx)*/ * from t",
+        "Plan": [
+          "TableReader_5 10000.00 root data:TableScan_4",
+          "└─TableScan_4 10000.00 cop[tiflash] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ],
+        "Warn": [
+          "TiDB doesn't support index in the isolation read engines(value: 'tiflash')"
+        ]
+      },
+      {
+        "SQL": "explain select /*+ use_index(t)*/ * from t",
+        "Plan": [
+          "TableReader_5 10000.00 root data:TableScan_4",
+          "└─TableScan_4 10000.00 cop[tiflash] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      }
+    ]
+  }
+]
