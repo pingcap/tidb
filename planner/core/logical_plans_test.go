@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/util/testleak"
 )
 
-var _ = Suite(&testUnitTestSuit{})
+var _ = SerialSuites(&testUnitTestSuit{})
 
 type testUnitTestSuit struct {
 	ctx sessionctx.Context
