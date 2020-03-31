@@ -959,6 +959,7 @@ func datumsForTest(sc *stmtctx.StatementContext) ([]types.Datum, []*types.FieldT
 		value interface{}
 		tp    *types.FieldType
 	}{
+		{nil, types.NewFieldType(mysql.TypeNull)},
 		{nil, types.NewFieldType(mysql.TypeLonglong)},
 		{int64(1), types.NewFieldType(mysql.TypeTiny)},
 		{int64(1), types.NewFieldType(mysql.TypeShort)},
@@ -1103,6 +1104,7 @@ func (s *testCodecSuite) TestHashChunkRow(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(e, IsTrue)
 
+	testHashChunkRowEqual(c, nil, nil, true)
 	testHashChunkRowEqual(c, uint64(1), int64(1), true)
 	testHashChunkRowEqual(c, uint64(18446744073709551615), int64(-1), false)
 
@@ -1175,34 +1177,37 @@ func (s *testCodecSuite) TestHashChunkColumns(c *C) {
 	rowHash := []hash.Hash64{fnv.New64(), fnv.New64(), fnv.New64()}
 
 	// Test hash value of the first `Null` column
-	c.Assert(chk.GetRow(0).IsNull(0), Equals, true)
-	err1 := HashChunkColumns(sc, vecHash, chk, tps[0], 0, buf, hasNull)
-	err2 := HashChunkRow(sc, rowHash[0], chk.GetRow(0), tps, colIdx[0:1], buf)
-	err3 := HashChunkRow(sc, rowHash[1], chk.GetRow(1), tps, colIdx[0:1], buf)
-	err4 := HashChunkRow(sc, rowHash[2], chk.GetRow(2), tps, colIdx[0:1], buf)
-	c.Assert(err1, IsNil)
-	c.Assert(err2, IsNil)
-	c.Assert(err3, IsNil)
-	c.Assert(err4, IsNil)
+	for i := 0; i < 2; i++ {
+		c.Assert(chk.GetRow(0).IsNull(i), Equals, true)
+		err1 := HashChunkColumns(sc, vecHash, chk, tps[i], i, buf, hasNull)
+		err2 := HashChunkRow(sc, rowHash[0], chk.GetRow(0), tps, colIdx[i:i+1], buf)
+		err3 := HashChunkRow(sc, rowHash[1], chk.GetRow(1), tps, colIdx[i:i+1], buf)
+		err4 := HashChunkRow(sc, rowHash[2], chk.GetRow(2), tps, colIdx[i:i+1], buf)
+		c.Assert(err1, IsNil)
+		c.Assert(err2, IsNil)
+		c.Assert(err3, IsNil)
+		c.Assert(err4, IsNil)
 
-	c.Assert(hasNull[0], Equals, true)
-	c.Assert(hasNull[1], Equals, true)
-	c.Assert(hasNull[2], Equals, true)
-	c.Assert(vecHash[0].Sum64(), Equals, rowHash[0].Sum64())
-	c.Assert(vecHash[1].Sum64(), Equals, rowHash[1].Sum64())
-	c.Assert(vecHash[2].Sum64(), Equals, rowHash[2].Sum64())
+		c.Assert(hasNull[0], Equals, true)
+		c.Assert(hasNull[1], Equals, true)
+		c.Assert(hasNull[2], Equals, true)
+		c.Assert(vecHash[0].Sum64(), Equals, rowHash[0].Sum64())
+		c.Assert(vecHash[1].Sum64(), Equals, rowHash[1].Sum64())
+		c.Assert(vecHash[2].Sum64(), Equals, rowHash[2].Sum64())
+
+	}
 
 	// Test hash value of every single column that is not `Null`
-	for i := 1; i < len(tps); i++ {
+	for i := 2; i < len(tps); i++ {
 		hasNull = []bool{false, false, false}
 		vecHash = []hash.Hash64{fnv.New64(), fnv.New64(), fnv.New64()}
 		rowHash = []hash.Hash64{fnv.New64(), fnv.New64(), fnv.New64()}
 
 		c.Assert(chk.GetRow(0).IsNull(i), Equals, false)
-		err1 = HashChunkColumns(sc, vecHash, chk, tps[i], i, buf, hasNull)
-		err2 = HashChunkRow(sc, rowHash[0], chk.GetRow(0), tps, colIdx[i:i+1], buf)
-		err3 = HashChunkRow(sc, rowHash[1], chk.GetRow(1), tps, colIdx[i:i+1], buf)
-		err4 = HashChunkRow(sc, rowHash[2], chk.GetRow(2), tps, colIdx[i:i+1], buf)
+		err1 := HashChunkColumns(sc, vecHash, chk, tps[i], i, buf, hasNull)
+		err2 := HashChunkRow(sc, rowHash[0], chk.GetRow(0), tps, colIdx[i:i+1], buf)
+		err3 := HashChunkRow(sc, rowHash[1], chk.GetRow(1), tps, colIdx[i:i+1], buf)
+		err4 := HashChunkRow(sc, rowHash[2], chk.GetRow(2), tps, colIdx[i:i+1], buf)
 		c.Assert(err1, IsNil)
 		c.Assert(err2, IsNil)
 		c.Assert(err3, IsNil)
