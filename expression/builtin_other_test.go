@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hack"
 )
 
@@ -124,6 +125,22 @@ func (s *testEvaluatorSuite) TestInFunc(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(d.GetValue(), Equals, tc.res, Commentf("%v", types.MakeDatums(tc.args)))
 	}
+	collate.SetNewCollationEnabledForTest(true)
+	strD1 := types.NewCollationStringDatum("a", "utf8_general_ci", 0)
+	strD2 := types.NewCollationStringDatum("Á", "utf8_general_ci", 0)
+	fn, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{strD1, strD2}))
+	c.Assert(err, IsNil)
+	d, isNull, err := fn.evalInt(chunk.Row{})
+	c.Assert(isNull, IsFalse)
+	c.Assert(err, IsNil)
+	c.Assert(d, Equals, int64(1), Commentf("%v, %v", strD1, strD2))
+	chk1 := chunk.NewChunkWithCapacity(nil, 1)
+	chk1.SetNumVirtualRows(1)
+	chk2 := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeTiny)}, 1)
+	err = fn.vecEvalInt(chk1, chk2.Column(0))
+	c.Assert(err, IsNil)
+	c.Assert(chk2.Column(0).GetInt64(0), Equals, int64(1))
+	collate.SetNewCollationEnabledForTest(false)
 }
 
 func (s *testEvaluatorSuite) TestRowFunc(c *C) {
