@@ -8241,6 +8241,10 @@ CollationName:
 		}
 		$$ = info.Name
 	}
+|	binaryType
+	{
+		$$ = charset.CollationBin
+	}
 
 VariableAssignmentList:
 	{
