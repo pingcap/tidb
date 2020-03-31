@@ -516,8 +516,8 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 	// If the rate limit is too high, tikv will report service is busy.
 	// If the rate limit is too low, we can't full utilize the tikv's throughput.
 	// TODO: Find a self-adaptive way to control the rate limit here.
-	if rateLim > 32 {
-		rateLim = 32
+	if rateLim > 16 {
+		rateLim = 16
 	}
 	batchExecutor := newBatchExecutor(rateLim, c, action, bo)
 	err := batchExecutor.process(batches)
@@ -627,7 +627,7 @@ func (actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, bat
 			if err1 != nil {
 				return errors.Trace(err1)
 			}
-			logutil.BgLogger().Warn("prewrite encounters lock",
+			logutil.BgLogger().Info("prewrite encounters lock",
 				zap.Uint64("conn", c.connID),
 				zap.Stringer("lock", lock))
 			locks = append(locks, lock)
