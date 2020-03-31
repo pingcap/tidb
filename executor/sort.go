@@ -277,7 +277,7 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 				}
 				e.rowChunks.SetOnExceededCallback(onExceededCallback)
 			}
-			// Attach and ReplaceChild would re-trigger the Consume, so we need to left them at last
+			// AttachTo would re-trigger the Consume, so we need to leave it at last
 			e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
 			e.rowChunks.GetDiskTracker().AttachTo(e.diskTracker)
 		}
