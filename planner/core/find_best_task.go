@@ -194,6 +194,12 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty) (bestTas
 		// combine best child tasks with parent physical plan.
 		curTask := pp.attach2Task(childTasks...)
 
+		if prop.TaskTp == property.CopTiFlashLocalReadTaskType || prop.TaskTp == property.CopTiFlashGlobalReadTaskType {
+			if _, ok := curTask.(*copTask); !ok {
+				continue
+			}
+		}
+
 		// enforce curTask property
 		if prop.Enforced {
 			curTask = enforceProperty(prop, curTask, p.basePlan.ctx)
@@ -1121,6 +1127,9 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		copTask.keepOrder = true
 	}
 	ts.addPushedDownSelection(copTask, ds.stats.ScaleByExpectCnt(prop.ExpectedCnt))
+	if (prop.TaskTp == property.CopTiFlashGlobalReadTaskType || prop.TaskTp == property.CopTiFlashLocalReadTaskType) && len(copTask.rootTaskConds) != 0 {
+		return invalidTask, nil
+	}
 	if prop.TaskTp == property.RootTaskType {
 		task = finishCopTask(ds.ctx, task)
 	} else if _, ok := task.(*rootTask); ok {
