@@ -5459,6 +5459,15 @@ func (s *testIntegrationSuite) TestCollation(c *C) {
 	tk.MustQuery("select collation('a')").Check(testkit.Rows("utf8mb4_bin"))
 	tk.MustExec("set names utf8mb4 collate utf8mb4_general_ci")
 	tk.MustQuery("select collation('a')").Check(testkit.Rows("utf8mb4_general_ci"))
+
+	tk.MustExec("set names utf8mb4 collate utf8mb4_general_ci")
+	tk.MustExec("set @test_collate_var = 'a'")
+	tk.MustQuery("select collation(@test_collate_var)").Check(testkit.Rows("utf8mb4_general_ci"))
+	tk.MustExec("set names utf8mb4 collate utf8mb4_general_ci")
+	tk.MustExec("set @test_collate_var = 1")
+	tk.MustQuery("select collation(@test_collate_var)").Check(testkit.Rows("utf8mb4_general_ci"))
+	tk.MustExec("set @test_collate_var = concat(\"a\", \"b\" collate utf8mb4_bin)")
+	tk.MustQuery("select collation(@test_collate_var)").Check(testkit.Rows("utf8mb4_bin"))
 }
 
 func (s *testIntegrationSuite) TestCoercibility(c *C) {
