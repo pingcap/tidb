@@ -195,7 +195,7 @@ func (st *TxnState) Commit(ctx context.Context) error {
 		logutil.BgLogger().Error("the code should never run here",
 			zap.String("TxnState", st.GoString()),
 			zap.Stack("something must be wrong"))
-		return errors.New("invalid transaction")
+		return errors.Trace(kv.ErrInvalidTxn)
 	}
 	if st.doNotCommit != nil {
 		if err1 := st.Transaction.Rollback(); err1 != nil {

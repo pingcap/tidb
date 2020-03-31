@@ -640,7 +640,7 @@ var defaultConf = Config{
 		AllowAutoRandom:       false,
 		AllowsExpressionIndex: false,
 	},
-	EnableDynamicConfig: true,
+	EnableDynamicConfig: false,
 }
 
 var (
