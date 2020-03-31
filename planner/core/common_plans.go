@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/util/hint"
 	"strconv"
 	"strings"
 
@@ -814,8 +815,8 @@ func (e *Explain) RenderResult() error {
 		e.prepareDotInfo(e.TargetPlan.(PhysicalPlan))
 	case ast.ExplainFormatHint:
 		hints := GenHintsFromPhysicalPlan(e.TargetPlan)
-		hints = append(hints, ExtractTableHintsFromStmtNode(e.ExecStmt)...)
-		e.Rows = append(e.Rows, []string{RestoreOptimizerHints(hints)})
+		hints = append(hints, hint.ExtractTableHintsFromStmtNode(e.ExecStmt)...)
+		e.Rows = append(e.Rows, []string{hint.RestoreOptimizerHints(hints)})
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}

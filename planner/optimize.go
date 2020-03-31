@@ -51,7 +51,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 
 	sctx.PrepareTSFuture(ctx)
 
-	tableHints := plannercore.ExtractTableHintsFromStmtNode(node)
+	tableHints := hint.ExtractTableHintsFromStmtNode(node)
 	stmtHints, warns := handleStmtHints(tableHints)
 	defer func() {
 		sctx.GetSessionVars().StmtCtx.StmtHints = stmtHints
@@ -84,7 +84,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 			}
 		}
 	}
-	bestPlanHintStr := plannercore.RestoreOptimizerHints(bestPlanHint)
+	bestPlanHintStr := hint.RestoreOptimizerHints(bestPlanHint)
 
 	binding := bindRecord.FindBinding(bestPlanHintStr)
 	// If the best bestPlan is in baselines, just use it.
