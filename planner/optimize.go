@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/logutil"
 )
 
@@ -95,14 +96,14 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	}
 	bestCostAmongHints := math.MaxFloat64
 	var bestPlanAmongHints plannercore.Plan
-	originHints := bindinfo.CollectHint(stmtNode)
+	originHints := hint.CollectHint(stmtNode)
 	// Try to find the best binding.
 	for _, binding := range bindRecord.Bindings {
 		if binding.Status != bindinfo.Using {
 			continue
 		}
 		metrics.BindUsageCounter.WithLabelValues(scope).Inc()
-		bindinfo.BindHint(stmtNode, binding.Hint)
+		hint.BindHint(stmtNode, binding.Hint)
 		curStmtHints, curWarns := handleStmtHints(binding.Hint.GetFirstTableHints())
 		sctx.GetSessionVars().StmtCtx.StmtHints = curStmtHints
 		plan, _, cost, err := optimize(ctx, sctx, node, is)
@@ -132,7 +133,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		handleEvolveTasks(ctx, sctx, bindRecord, stmtNode, bestPlanHintStr)
 	}
 	// Restore the hint to avoid changing the stmt node.
-	bindinfo.BindHint(stmtNode, originHints)
+	hint.BindHint(stmtNode, originHints)
 	if sctx.GetSessionVars().UsePlanBaselines && bestPlanAmongHints != nil {
 		return bestPlanAmongHints, names, nil
 	}
@@ -143,7 +144,7 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	// build logical plan
 	sctx.GetSessionVars().PlanID = 0
 	sctx.GetSessionVars().PlanColumnID = 0
-	hintProcessor := &plannercore.BlockHintProcessor{Ctx: sctx}
+	hintProcessor := &hint.BlockHintProcessor{Ctx: sctx}
 	node.Accept(hintProcessor)
 	builder := plannercore.NewPlanBuilder(sctx, is, hintProcessor)
 	p, err := builder.Build(ctx, node)
