@@ -214,6 +214,9 @@ func getBindRecord(ctx sessionctx.Context, stmt ast.StmtNode) (*bindinfo.BindRec
 		return nil, ""
 	}
 	globalHandle := domain.GetDomain(ctx).BindHandle()
+	if globalHandle == nil {
+		return nil, ""
+	}
 	bindRecord = globalHandle.GetBindRecord(hash, normalizedSQL, ctx.GetSessionVars().CurrentDB)
 	if bindRecord == nil {
 		bindRecord = globalHandle.GetBindRecord(hash, normalizedSQL, "")
@@ -241,17 +244,11 @@ func handleEvolveTasks(ctx context.Context, sctx sessionctx.Context, br *bindinf
 		return
 	}
 	charset, collation := sctx.GetSessionVars().GetCharsetInfo()
-	hintsSet, err := bindinfo.ParseHintsSet(parser.New(), bindSQL, charset, collation)
-	if err != nil {
-		return
-	}
 	binding := bindinfo.Binding{
 		BindSQL:   bindSQL,
 		Status:    bindinfo.PendingVerify,
 		Charset:   charset,
 		Collation: collation,
-		Hint:      hintsSet,
-		ID:        planHint,
 	}
 	globalHandle := domain.GetDomain(sctx).BindHandle()
 	globalHandle.AddEvolvePlanTask(br.OriginalSQL, br.Db, binding)

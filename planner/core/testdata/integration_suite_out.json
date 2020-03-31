@@ -342,6 +342,45 @@
     ]
   },
   {
+    "Name": "TestIsolationReadTiFlashUseIndexHint",
+    "Cases": [
+      {
+        "SQL": "explain select * from t",
+        "Plan": [
+          "TableReader_5 10000.00 root  data:TableFullScan_4",
+          "└─TableFullScan_4 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain select * from t use index();",
+        "Plan": [
+          "TableReader_5 10000.00 root  data:TableFullScan_4",
+          "└─TableFullScan_4 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain select /*+ use_index(t, idx)*/ * from t",
+        "Plan": [
+          "TableReader_5 10000.00 root  data:TableFullScan_4",
+          "└─TableFullScan_4 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ],
+        "Warn": [
+          "TiDB doesn't support index in the isolation read engines(value: 'tiflash')"
+        ]
+      },
+      {
+        "SQL": "explain select /*+ use_index(t)*/ * from t",
+        "Plan": [
+          "TableReader_5 10000.00 root  data:TableFullScan_4",
+          "└─TableFullScan_4 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      }
+    ]
+  },
+  {
     "Name": "TestSubqueryWithTopN",
     "Cases": [
       {
@@ -386,6 +425,55 @@
           "└─TableReader_11(Probe) 1.00 root  data:Selection_10",
           "  └─Selection_10 1.00 cop[tikv]  not(isnull(test.t2.b))",
           "    └─TableRangeScan_9 1.00 cop[tikv] table:t2 range: decided by [test.t1.a test.t1.b], keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestIndexHintWarning",
+    "Cases": [
+      {
+        "SQL": "select /*+ USE_INDEX(t1, j) */ * from t1",
+        "Warnings": [
+          "[planner:1176]Key 'j' doesn't exist in table 't1'"
+        ]
+      },
+      {
+        "SQL": "select /*+ IGNORE_INDEX(t1, j) */ * from t1",
+        "Warnings": [
+          "[planner:1176]Key 'j' doesn't exist in table 't1'"
+        ]
+      },
+      {
+        "SQL": "select /*+ USE_INDEX(t2, a, b, c) */ * from t1",
+        "Warnings": [
+          "[planner:1815]use_index(test.t2, a, b, c) is inapplicable, check whether the table(test.t2) exists"
+        ]
+      },
+      {
+        "SQL": "select /*+ USE_INDEX(t2) */ * from t1",
+        "Warnings": [
+          "[planner:1815]use_index(test.t2) is inapplicable, check whether the table(test.t2) exists"
+        ]
+      },
+      {
+        "SQL": "select /*+ USE_INDEX(t1, a), USE_INDEX(t2, a), USE_INDEX(t3, a) */ * from t1, t2 where t1.a=t2.a",
+        "Warnings": [
+          "[planner:1815]use_index(test.t3, a) is inapplicable, check whether the table(test.t3) exists"
+        ]
+      },
+      {
+        "SQL": "select /*+ USE_INDEX(t3, a), USE_INDEX(t4, b), IGNORE_INDEX(t3, a) */ * from t1, t2 where t1.a=t2.a",
+        "Warnings": [
+          "[planner:1815]use_index(test.t3, a) is inapplicable, check whether the table(test.t3) exists",
+          "[planner:1815]use_index(test.t4, b) is inapplicable, check whether the table(test.t4) exists",
+          "[planner:1815]ignore_index(test.t3, a) is inapplicable, check whether the table(test.t3) exists"
+        ]
+      },
+      {
+        "SQL": "select /*+ USE_INDEX_MERGE(t3, a, b, d) */ * from t1",
+        "Warnings": [
+          "[planner:1815]use_index_merge(test.t3, a, b, d) is inapplicable, check whether the table(test.t3) exists"
         ]
       }
     ]

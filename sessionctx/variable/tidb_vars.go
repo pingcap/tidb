@@ -151,6 +151,21 @@ const (
 	TiDBEvolvePlanTaskStartTime = "tidb_evolve_plan_task_start_time"
 	// TiDBEvolvePlanTaskEndTime is the end time of evolution task.
 	TiDBEvolvePlanTaskEndTime = "tidb_evolve_plan_task_end_time"
+
+	// tidb_slow_log_threshold is used to set the slow log threshold in the server.
+	TiDBSlowLogThreshold = "tidb_slow_log_threshold"
+
+	// tidb_record_plan_in_slow_log is used to log the plan of the slow query.
+	TiDBRecordPlanInSlowLog = "tidb_record_plan_in_slow_log"
+
+	// tidb_enable_slow_log enables TiDB to log slow queries.
+	TiDBEnableSlowLog = "tidb_enable_slow_log"
+
+	// tidb_query_log_max_len is used to set the max length of the query in the log.
+	TiDBQueryLogMaxLen = "tidb_query_log_max_len"
+
+	// TiDBCheckMb4ValueInUTF8 is used to control whether to enable the check wrong utf8 value.
+	TiDBCheckMb4ValueInUTF8 = "tidb_check_mb4_value_in_utf8"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -337,6 +352,12 @@ const (
 
 	// TiDBStmtSummaryHistorySize indicates the history size of each statement summary.
 	TiDBStmtSummaryHistorySize = "tidb_stmt_summary_history_size"
+
+	// TiDBStmtSummaryMaxStmtCount indicates the max number of statements kept in memory.
+	TiDBStmtSummaryMaxStmtCount = "tidb_stmt_summary_max_stmt_count"
+
+	// TiDBStmtSummaryMaxSQLLength indicates the max length of displayed normalized sql and sample sql.
+	TiDBStmtSummaryMaxSQLLength = "tidb_stmt_summary_max_sql_length"
 
 	// TiDBCapturePlanBaseline indicates whether the capture of plan baselines is enabled.
 	TiDBCapturePlanBaseline = "tidb_capture_plan_baselines"

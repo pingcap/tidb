@@ -15,7 +15,6 @@ package executor
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -32,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/stmtsummary"
+	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
 )
 
@@ -92,7 +92,8 @@ func (e *SetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 				if err1 != nil {
 					return err1
 				}
-				sessionVars.Users[name] = fmt.Sprintf("%v", svalue)
+
+				sessionVars.SetUserVar(name, stringutil.Copy(svalue), value.Collation())
 			}
 			continue
 		}
@@ -207,13 +208,17 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 
 	switch name {
 	case variable.TiDBEnableStmtSummary:
-		stmtsummary.StmtSummaryByDigestMap.SetEnabled(valStr, !v.IsGlobal)
+		return stmtsummary.StmtSummaryByDigestMap.SetEnabled(valStr, !v.IsGlobal)
 	case variable.TiDBStmtSummaryInternalQuery:
-		stmtsummary.StmtSummaryByDigestMap.SetEnabledInternalQuery(valStr, !v.IsGlobal)
+		return stmtsummary.StmtSummaryByDigestMap.SetEnabledInternalQuery(valStr, !v.IsGlobal)
 	case variable.TiDBStmtSummaryRefreshInterval:
-		stmtsummary.StmtSummaryByDigestMap.SetRefreshInterval(valStr, !v.IsGlobal)
+		return stmtsummary.StmtSummaryByDigestMap.SetRefreshInterval(valStr, !v.IsGlobal)
 	case variable.TiDBStmtSummaryHistorySize:
-		stmtsummary.StmtSummaryByDigestMap.SetHistorySize(valStr, !v.IsGlobal)
+		return stmtsummary.StmtSummaryByDigestMap.SetHistorySize(valStr, !v.IsGlobal)
+	case variable.TiDBStmtSummaryMaxStmtCount:
+		return stmtsummary.StmtSummaryByDigestMap.SetMaxStmtCount(valStr, !v.IsGlobal)
+	case variable.TiDBStmtSummaryMaxSQLLength:
+		return stmtsummary.StmtSummaryByDigestMap.SetMaxSQLLength(valStr, !v.IsGlobal)
 	case variable.TiDBCapturePlanBaseline:
 		variable.CapturePlanBaseline.Set(valStr, !v.IsGlobal)
 	}
