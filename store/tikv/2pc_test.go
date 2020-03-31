@@ -999,6 +999,8 @@ func (s *testCommitterSuite) TestResolveMixed(c *C) {
 	err = txn2.LockKeys(context.Background(), lockCtx, pessimisticLockKey)
 	c.Assert(err, IsNil)
 
-	txn1.Rollback()
-	txn2.Rollback()
+	err = txn1.Rollback()
+	c.Assert(err, IsNil)
+	err = txn2.Rollback()
+	c.Assert(err, IsNil)
 }
