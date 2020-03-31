@@ -14,7 +14,6 @@
 package binloginfo
 
 import (
-	driver "github.com/pingcap/tidb/types/parser_driver"
 	"math"
 	"regexp"
 	"strings"
@@ -30,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-binlog"
 	"go.uber.org/zap"
