@@ -86,6 +86,7 @@ var (
 	_ Executor = &TopNExec{}
 	_ Executor = &UnionExec{}
 
+	// GlobalDiskUsageTracker is the ancestor of all the Executors' disk tracker
 	GlobalDiskUsageTracker *disk.Tracker
 )
 

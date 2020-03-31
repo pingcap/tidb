@@ -31,6 +31,7 @@ type Tracker = memory.Tracker
 //	2. "bytesLimit <= 0" means no limit.
 var NewTracker = memory.NewTracker
 
+// NewGlobalDisTracker create GlobalDisTracker
 func NewGlobalDisTracker(bytesLimit int64) *Tracker {
 	return NewTracker(globalStorageLabel, bytesLimit)
 }
