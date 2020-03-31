@@ -222,6 +222,37 @@ func restore2JoinHint(hintType string, hintTables []hintTableInfo) string {
 	return buffer.String()
 }
 
+func restore2StorageHint(tiflashTables, tikvTables []hintTableInfo) string {
+	buffer := bytes.NewBufferString("/*+ ")
+	buffer.WriteString(strings.ToUpper(HintReadFromStorage))
+	buffer.WriteString("(")
+	if len(tiflashTables) > 0 {
+		buffer.WriteString("tiflash[")
+		for i, table := range tiflashTables {
+			buffer.WriteString(table.tblName.L)
+			if i < len(tiflashTables)-1 {
+				buffer.WriteString(", ")
+			}
+		}
+		buffer.WriteString("]")
+		if len(tikvTables) > 0 {
+			buffer.WriteString(", ")
+		}
+	}
+	if len(tikvTables) > 0 {
+		buffer.WriteString("tikv[")
+		for i, table := range tikvTables {
+			buffer.WriteString(table.tblName.L)
+			if i < len(tikvTables)-1 {
+				buffer.WriteString(", ")
+			}
+		}
+		buffer.WriteString("]")
+	}
+	buffer.WriteString(") */")
+	return buffer.String()
+}
+
 func extractUnmatchedTables(hintTables []hintTableInfo) []string {
 	var tableNames []string
 	for _, table := range hintTables {
@@ -833,7 +864,7 @@ func (b *PlanBuilder) buildPrepare(x *ast.PrepareStmt) Plan {
 	}
 	if x.SQLVar != nil {
 		if v, ok := b.ctx.GetSessionVars().Users[x.SQLVar.Name]; ok {
-			p.SQLText = v
+			p.SQLText = v.GetString()
 		} else {
 			p.SQLText = "NULL"
 		}
