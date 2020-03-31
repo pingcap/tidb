@@ -711,6 +711,18 @@ func (s *testIntegrationSuite) TestIssue15546(c *C) {
 	tk.MustQuery("select * from pt, vt where pt.a = vt.a").Check(testkit.Rows("1 1 1 1"))
 }
 
+func (s *testIntegrationSuite) TestIssue15813(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t0, t1")
+	tk.MustExec("create table t0(c0 int primary key)")
+	tk.MustExec("create table t1(c0 int primary key)")
+	tk.MustExec("CREATE INDEX i0 ON t0(c0)")
+	tk.MustExec("CREATE INDEX i0 ON t1(c0)")
+	tk.MustQuery("select /*+ MERGE_JOIN(t0, t1) */ * from t0, t1 where t0.c0 = t1.c0").Check(testkit.Rows())
+}
+
 func (s *testIntegrationSuite) TestHintWithoutTableWarning(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
