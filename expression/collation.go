@@ -113,14 +113,14 @@ var (
 	}
 
 	// collationPriority is the priority when infer the result collation, the priority of collation a > b iff collationPriority[a] > collationPriority[b]
-	collationPriority = map[string]int {
-		charset.CollationASCII: 0,
-		charset.CollationLatin1: 1,
-		"utf8_general_ci": 2,
-		charset.CollationUTF8: 3,
-		"utf8mb4_general_ci": 4,
+	collationPriority = map[string]int{
+		charset.CollationASCII:   0,
+		charset.CollationLatin1:  1,
+		"utf8_general_ci":        2,
+		charset.CollationUTF8:    3,
+		"utf8mb4_general_ci":     4,
 		charset.CollationUTF8MB4: 5,
-		charset.CollationBin: 6,
+		charset.CollationBin:     6,
 	}
 )
 
@@ -198,4 +198,3 @@ func DeriveCollationFromExprs(ctx sessionctx.Context, exprs ...Expression) (dstC
 	}
 	return
 }
-
