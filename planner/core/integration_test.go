@@ -315,19 +315,19 @@ func (s *testIntegrationSerialSuite) TestSelPushDownTiFlash(c *C) {
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
 
-	// All conditions should push tiflash.
-	tk.MustQuery(`explain select * from t where t.a > 1 and t.b = "flash" or t.a + 3 * t.a = 5`).Check(testkit.Rows(
-		"TableReader_7 8000.00 root data:Selection_6",
-		"└─Selection_6 8000.00 cop[tiflash] or(and(gt(test.t.a, 1), eq(test.t.b, \"flash\")), eq(plus(test.t.a, mul(3, test.t.a)), 5))",
-		"  └─TableScan_5 10000.00 cop[tiflash] table:t, range:[-inf,+inf], keep order:false, stats:pseudo",
-	))
-
-	// Part of conditions should push tiflash.
-	tk.MustQuery(`explain select * from t where cast(t.a as decimal(30, 5)) + 3 = 5.1`).Check(testkit.Rows(
-		"Selection_5 8000.00 root eq(plus(cast(test.t.a), 3), 5.1)",
-		"└─TableReader_7 10000.00 root data:TableScan_6",
-		"  └─TableScan_6 10000.00 cop[tiflash] table:t, range:[-inf,+inf], keep order:false, stats:pseudo",
-	))
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+	}
 }
 
 func (s *testIntegrationSerialSuite) TestIssue15110(c *C) {
