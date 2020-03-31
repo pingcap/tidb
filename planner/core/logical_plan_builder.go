@@ -48,6 +48,7 @@ import (
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	util2 "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	utilhint "github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/plancodec"
 )
 
@@ -2195,8 +2196,8 @@ func (b *PlanBuilder) pushHintWithoutTableWarning(hint *ast.TableOptimizerHint) 
 	b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(errMsg))
 }
 
-func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType nodeType, currentLevel int) {
-	hints = b.hintProcessor.getCurrentStmtHints(hints, nodeType, currentLevel)
+func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType utilhint.NodeType, currentLevel int) {
+	hints = b.hintProcessor.GetCurrentStmtHints(hints, nodeType, currentLevel)
 	var (
 		sortMergeTables, INLJTables, INLHJTables, INLMJTables, hashJoinTables []hintTableInfo
 		indexHintList, indexMergeHintList                                     []indexHintInfo
@@ -2369,7 +2370,7 @@ func (b *PlanBuilder) TableHints() *tableHintInfo {
 
 func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p LogicalPlan, err error) {
 	b.pushSelectOffset(sel.QueryBlockOffset)
-	b.pushTableHints(sel.TableHints, typeSelect, sel.QueryBlockOffset)
+	b.pushTableHints(sel.TableHints, utilhint.TypeSelect, sel.QueryBlockOffset)
 	defer func() {
 		b.popSelectOffset()
 		// table hints are only visible in the current SELECT statement.
@@ -3177,7 +3178,7 @@ func buildColumns2Handle(
 
 func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (Plan, error) {
 	b.pushSelectOffset(0)
-	b.pushTableHints(update.TableHints, typeUpdate, 0)
+	b.pushTableHints(update.TableHints, utilhint.TypeUpdate, 0)
 	defer func() {
 		b.popSelectOffset()
 		// table hints are only visible in the current UPDATE statement.
@@ -3473,7 +3474,7 @@ func extractDefaultExpr(node ast.ExprNode) *ast.DefaultExpr {
 
 func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (Plan, error) {
 	b.pushSelectOffset(0)
-	b.pushTableHints(delete.TableHints, typeDelete, 0)
+	b.pushTableHints(delete.TableHints, utilhint.TypeDelete, 0)
 	defer func() {
 		b.popSelectOffset()
 		// table hints are only visible in the current DELETE statement.
