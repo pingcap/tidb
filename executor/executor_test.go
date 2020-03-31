@@ -122,6 +122,7 @@ var _ = Suite(&testMemTableReaderSuite{&testClusterTableBase{}})
 var _ = SerialSuites(&testFlushSuite{})
 var _ = SerialSuites(&testAutoRandomSuite{&baseTestSuite{}})
 var _ = SerialSuites(&testClusterTableSuite{})
+var _ = SerialSuites(&testSuite10{&baseTestSuite{}})
 
 type testSuite struct{ *baseTestSuite }
 type testSuiteP1 struct{ *baseTestSuite }
@@ -3602,6 +3603,17 @@ func (s *testSuite3) TestIndexJoinTableDualPanic(c *C) {
 		Check(testkit.Rows("1 a"))
 }
 
+func (s *testSuite3) TestSortLeftJoinWithNullColumnInRightChildPanic(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int)")
+	tk.MustExec("create table t2(a int)")
+	tk.MustExec("insert into t1(a) select 1;")
+	tk.MustQuery("select b.n from t1 left join (select a as a, null as n from t2) b on b.a = t1.a order by t1.a").
+		Check(testkit.Rows("<nil>"))
+}
+
 func (s *testSuiteP1) TestUnionAutoSignedCast(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -5349,4 +5361,13 @@ select 6;`
 		sql = fmt.Sprintf(cas.sql, "cluster_slow_query")
 		tk.MustQuery(sql).Check(testutil.RowsWithSep("|", cas.result...))
 	}
+}
+
+func (s *testSuite1) TestIssue15718(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists tt;")
+	tk.MustExec("create table tt(a decimal(10, 0), b varchar(1), c time);")
+	tk.MustExec("insert into tt values(0, '2', null), (7, null, '1122'), (NULL, 'w', null), (NULL, '2', '3344'), (NULL, NULL, '0'), (7, 'f', '33');")
+	tk.MustQuery("select a and b as d, a or c as e from tt;").Check(testkit.Rows("0 <nil>", "<nil> 1", "0 <nil>", "<nil> 1", "<nil> <nil>", "0 1"))
 }
