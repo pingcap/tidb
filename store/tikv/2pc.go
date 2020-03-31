@@ -465,6 +465,31 @@ func (c *twoPhaseCommitter) doActionOnMutations(bo *Backoffer, action twoPhaseCo
 	_, actionIsCommit := action.(actionCommit)
 	_, actionIsCleanup := action.(actionCleanup)
 	_, actionIsPessimiticLock := action.(actionPessimisticLock)
+
+	failpoint.Inject("skipKeyReturnOK", func(val failpoint.Value) {
+		valStr, ok := val.(string)
+		if ok && c.connID > 0 {
+			if firstIsPrimary && actionIsPessimiticLock {
+				logutil.Logger(bo.ctx).Warn("pessimisticLock failpoint", zap.String("valStr", valStr))
+				switch valStr {
+				case "pessimisticLockSkipPrimary":
+					err = c.doActionOnBatches(bo, action, batches)
+					failpoint.Return(err)
+				case "pessimisticLockSkipSecondary":
+					err = c.doActionOnBatches(bo, action, batches[:1])
+					failpoint.Return(err)
+				}
+			}
+		}
+	})
+	failpoint.Inject("pessimisticRollbackDoNth", func() {
+		_, actionIsPessimisticRollback := action.(actionPessimisticRollback)
+		if actionIsPessimisticRollback && c.connID > 0 {
+			logutil.Logger(bo.ctx).Warn("pessimisticRollbackDoNth failpoint")
+			failpoint.Return(nil)
+		}
+	})
+
 	if firstIsPrimary && (actionIsCommit || actionIsCleanup || actionIsPessimiticLock) {
 		// primary should be committed/cleanup/pessimistically locked first
 		err = c.doActionOnBatches(bo, action, batches[:1])
@@ -1202,6 +1227,10 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 		err = errors.Errorf("conn %d txn takes too much time, txnStartTS: %d, comm: %d",
 			c.connID, c.startTS, c.commitTS)
 		return err
+	}
+
+	if c.connID > 0 {
+		failpoint.Inject("beforeCommit", func() {})
 	}
 
 	start = time.Now()
