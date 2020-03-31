@@ -1531,7 +1531,7 @@ func (d *ddl) CreateTableWithInfo(
 	}
 
 	var oldViewTblID int64
-	if is.TableExists(schema.Name, tbInfo.Name) {
+	if oldTable, err := is.TableByName(schema.Name, tbInfo.Name); err == nil {
 		err = infoschema.ErrTableExists.GenWithStackByArgs(ast.Ident{Schema: schema.Name, Name: tbInfo.Name})
 		switch onExist {
 		case OnExistIgnore:
@@ -1540,10 +1540,6 @@ func (d *ddl) CreateTableWithInfo(
 		case OnExistReplace:
 			// only CREATE OR REPLACE VIEW is supported at the moment.
 			if tbInfo.View != nil {
-				oldTable, err := is.TableByName(dbName, tbInfo.Name)
-				if err != nil {
-					return err // logic error, a table exists but can't be found :|
-				}
 				if oldTable.Meta().IsView() {
 					oldViewTblID = oldTable.Meta().ID
 					break
