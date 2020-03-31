@@ -840,7 +840,7 @@ func runSQL(ctx context.Context, sctx sessionctx.Context, sql string, resultChan
 
 // HandleEvolvePlanTask tries to evolve one plan task.
 // It only handle one tasks once because we want each task could use the latest parameters.
-func (h *BindHandle) HandleEvolvePlanTask(sctx sessionctx.Context) error {
+func (h *BindHandle) HandleEvolvePlanTask(sctx sessionctx.Context, adminEvolve bool) error {
 	originalSQL, db, binding := h.getOnePendingVerifyJob()
 	if originalSQL == "" {
 		return nil
@@ -849,7 +849,7 @@ func (h *BindHandle) HandleEvolvePlanTask(sctx sessionctx.Context) error {
 	if err != nil {
 		return err
 	}
-	if maxTime == 0 || !timeutil.WithinDayTimePeriod(startTime, endTime, time.Now()) {
+	if maxTime == 0 || (!timeutil.WithinDayTimePeriod(startTime, endTime, time.Now()) && !adminEvolve) {
 		return nil
 	}
 	sctx.GetSessionVars().UsePlanBaselines = true
