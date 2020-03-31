@@ -139,7 +139,7 @@ func (s *testSuite2) TestShowErrors(c *C) {
 	tk.MustQuery("show errors").Check(testutil.RowsWithSep("|", "Error|1050|Table 'test.show_errors' already exists"))
 }
 
-func (s *testSuite5) TestShowGrantsPrivilege(c *C) {
+func (s *testSuite2) TestShowGrantsPrivilege(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create user show_grants")
 	tk.MustExec("show grants for show_grants")
