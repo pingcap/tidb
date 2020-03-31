@@ -24,6 +24,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
@@ -595,6 +596,31 @@ func (s *testSuite) TestAddEvolveTasks(c *C) {
 	c.Assert(status == "using" || status == "rejected", IsTrue)
 }
 
+func (s *testSuite) TestRuntimeHintsInEvolveTasks(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@tidb_evolve_plan_baselines=1")
+	tk.MustExec("create table t(a int, b int, c int, index idx_a(a), index idx_b(b), index idx_c(c))")
+
+	// these runtime hints which don't be contained by the original binding should be ignored
+	tk.MustExec("create global binding for select * from t where a >= 1 and b >= 1 and c = 0 using select * from t use index(idx_a) where a >= 1 and b >= 1 and c = 0")
+	tk.MustQuery("select /*+ MAX_EXECUTION_TIME(5000) */* from t where a >= 4 and b >= 1 and c = 0")
+	tk.MustExec("admin flush bindings")
+	rows := tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 2)
+	c.Assert(rows[1][1], Equals, "SELECT /*+ USE_INDEX(@`sel_1` `test`.`t` `idx_c`)*/ * FROM `test`.`t` WHERE `a`>=4 AND `b`>=1 AND `c`=0") // MAX_EXECUTION_TIME is ignored
+
+	s.cleanBindingEnv(tk)
+	tk.MustExec("create global binding for select * from t where a >= 1 and b >= 1 and c = 0 using select /*+ MAX_EXECUTION_TIME(5000) */* from t use index(idx_a) where a >= 1 and b >= 1 and c = 0")
+	tk.MustQuery("select /*+ MAX_EXECUTION_TIME(5000) */* from t where a >= 4 and b >= 1 and c = 0")
+	tk.MustExec("admin flush bindings")
+	rows = tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 2)
+	c.Assert(rows[1][1], Equals, "SELECT /*+ USE_INDEX(@`sel_1` `test`.`t` `idx_c`), MAX_EXECUTION_TIME(5000)*/ * FROM `test`.`t` WHERE `a`>=4 AND `b`>=1 AND `c`=0")
+}
+
 func (s *testSuite) TestBindingCache(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
@@ -718,6 +744,37 @@ func (s *testSuite) TestDefaultDB(c *C) {
 	tk.MustQuery("show session bindings").Check(testkit.Rows())
 }
 
+func (s *testSuite) TestEvolveInvalidBindings(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, index idx_a(a))")
+	tk.MustExec("create global binding for select * from t where a > 10 using select /*+ USE_INDEX(t) */ * from t where a > 10")
+	// Manufacture a rejected binding by hacking mysql.bind_info.
+	tk.MustExec("insert into mysql.bind_info values('select * from t where a > ?', 'select /*+ USE_INDEX(t,idx_a) */ * from t where a > 10', 'test', 'rejected', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '')")
+	tk.MustQuery("select bind_sql, status from mysql.bind_info").Sort().Check(testkit.Rows(
+		"select /*+ USE_INDEX(t) */ * from t where a > 10 using",
+		"select /*+ USE_INDEX(t,idx_a) */ * from t where a > 10 rejected",
+	))
+	// Reload cache from mysql.bind_info.
+	s.domain.BindHandle().Clear()
+	c.Assert(s.domain.BindHandle().Update(true), IsNil)
+
+	tk.MustExec("alter table t drop index idx_a")
+	tk.MustExec("admin evolve bindings")
+	c.Assert(s.domain.BindHandle().Update(false), IsNil)
+	rows := tk.MustQuery("show global bindings").Sort().Rows()
+	c.Assert(len(rows), Equals, 2)
+	// Make sure this "using" binding is not overrided.
+	c.Assert(rows[0][1], Equals, "select /*+ USE_INDEX(t) */ * from t where a > 10")
+	status := rows[0][3].(string)
+	c.Assert(status == "using", IsTrue)
+	c.Assert(rows[1][1], Equals, "select /*+ USE_INDEX(t,idx_a) */ * from t where a > 10")
+	status = rows[1][3].(string)
+	c.Assert(status == "using" || status == "rejected", IsTrue)
+}
+
 func (s *testSuite) TestOutdatedInfoSchema(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
@@ -767,6 +824,114 @@ func (s *testSuite) TestHintsSetEvolveTask(c *C) {
 	c.Assert(bind.Status, Equals, bindinfo.PendingVerify)
 	c.Assert(bind.ID, Not(Equals), "")
 	c.Assert(bind.Hint, NotNil)
+}
+
+func (s *testSuite) TestCapturePlanBaselineIgnoreTiFlash(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	stmtsummary.StmtSummaryByDigestMap.Clear()
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, key(a), key(b))")
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
+	tk.MustExec("select * from t")
+	tk.MustExec("select * from t")
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	c.Assert(exists, IsTrue)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+	// Here the plan is the TiFlash plan.
+	rows := tk.MustQuery("explain select * from t").Rows()
+	c.Assert(fmt.Sprintf("%v", rows[len(rows)-1][2]), Equals, "cop[tiflash]")
+
+	tk.MustQuery("show global bindings").Check(testkit.Rows())
+	tk.MustExec("admin capture bindings")
+	// Don't have the TiFlash plan even we have TiFlash replica.
+	rows = tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][0], Equals, "select * from t")
+	c.Assert(rows[0][1], Equals, "SELECT /*+ USE_INDEX(@`sel_1` `test`.`t` )*/ * FROM `t`")
+}
+
+func (s *testSuite) TestNotEvolvePlanForReadStorageHint(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, index idx_a(a), index idx_b(b))")
+	tk.MustExec("insert into t values (1,1), (2,2), (3,3), (4,4), (5,5), (6,6), (7,7), (8,8), (9,9), (10,10)")
+	tk.MustExec("analyze table t")
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	c.Assert(exists, IsTrue)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	// Make sure the best plan of the SQL is use TiKV index.
+	rows := tk.MustQuery("explain select * from t where a >= 11 and b >= 11").Rows()
+	c.Assert(fmt.Sprintf("%v", rows[len(rows)-1][2]), Equals, "cop[tikv]")
+
+	tk.MustExec("create global binding for select * from t where a >= 1 and b >= 1 using select /*+ read_from_storage(tiflash[t]) */ * from t where a >= 1 and b >= 1")
+	tk.MustExec("set @@tidb_evolve_plan_baselines=1")
+
+	// Even if index of TiKV has lower cost, it chooses TiFlash.
+	rows = tk.MustQuery("explain select * from t where a >= 11 and b >= 11").Rows()
+	c.Assert(fmt.Sprintf("%v", rows[len(rows)-1][2]), Equals, "cop[tiflash]")
+
+	tk.MustExec("admin flush bindings")
+	rows = tk.MustQuery("show global bindings").Rows()
+	// None evolve task, because of the origin binding is a read_from_storage binding.
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][1], Equals, "select /*+ read_from_storage(tiflash[t]) */ * from t where a >= 1 and b >= 1")
+	c.Assert(rows[0][3], Equals, "using")
+}
+
+func (s *testSuite) TestBindingWithIsolationRead(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, index idx_a(a), index idx_b(b))")
+	tk.MustExec("insert into t values (1,1), (2,2), (3,3), (4,4), (5,5), (6,6), (7,7), (8,8), (9,9), (10,10)")
+	tk.MustExec("analyze table t")
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	c.Assert(exists, IsTrue)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+	tk.MustExec("create global binding for select * from t where a >= 1 and b >= 1 using select * from t use index(idx_a) where a >= 1 and b >= 1")
+	tk.MustExec("set @@tidb_use_plan_baselines = 1")
+	rows := tk.MustQuery("explain select * from t where a >= 11 and b >= 11").Rows()
+	c.Assert(rows[len(rows)-1][2], Equals, "cop[tikv]")
+	// Even if we build a binding use index for SQL, but after we set the isolation read for TiFlash, it choose TiFlash instead of index of TiKV.
+	tk.MustExec("set @@tidb_isolation_read_engines = \"tiflash\"")
+	rows = tk.MustQuery("explain select * from t where a >= 11 and b >= 11").Rows()
+	c.Assert(rows[len(rows)-1][2], Equals, "cop[tiflash]")
 }
 
 func (s *testSuite) TestReCreateBindAfterEvolvePlan(c *C) {
