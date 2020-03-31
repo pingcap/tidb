@@ -354,7 +354,7 @@ func (s *testFastAnalyze) TestFastAnalyze(c *C) {
 func (s *testSuite1) TestIssue15751(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t0")
 	tk.MustExec("CREATE TABLE t0(c0 INT, c1 INT, PRIMARY KEY(c0, c1))")
 	tk.MustExec("INSERT INTO t0 VALUES (0, 0)")
 	tk.MustExec("set @@tidb_enable_fast_analyze=1")
