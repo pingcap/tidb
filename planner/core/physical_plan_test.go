@@ -15,7 +15,6 @@ package core_test
 
 import (
 	"context"
-	"github.com/pingcap/tidb/util/hint"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
@@ -30,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
