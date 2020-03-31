@@ -168,12 +168,12 @@ func (s *testUnitTestSuit) TestIndexPathSplitCorColCond(c *C) {
 			remained:   "[]",
 		},
 		{
-			expr: "col3 = CHAR(1 COLLATE 'binary')",
-			corColIDs: []int64{},
-			idxColIDs: []int64{3},
+			expr:       "col3 = CHAR(1 COLLATE 'binary')",
+			corColIDs:  []int64{},
+			idxColIDs:  []int64{3},
 			idxColLens: []int{types.UnspecifiedLength},
-			access: "[]",
-			remained: "[eq(Column#3, \x01)]",
+			access:     "[]",
+			remained:   "[eq(Column#3, \x01)]",
 		},
 	}
 	collate.SetNewCollationEnabledForTest(true)
