@@ -199,17 +199,13 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty) (bestTas
 	// prop should be read only because its cached hashcode might be not consistent
 	// when it is changed. So we clone a new one for the temporary changes.
 	newProp := prop.Clone()
-	newProp.Enforced = false
+	newProp.Enforced = prop.Enforced
+	var plansFitsProp, plansNeedEnforce []PhysicalPlan
+	var hintWorksWithProp bool
 	// Maybe the plan can satisfy the required property,
 	// so we try to get the task without the enforced sort first.
-	physicalPlans, hintFitsProp := p.self.exhaustPhysicalPlans(newProp)
-	bestTask, err = p.enumeratePhysicalPlans4Task(physicalPlans, newProp)
-	if err != nil {
-		return nil, err
-	}
-
-	newProp.Enforced = prop.Enforced
-	if !hintFitsProp {
+	plansFitsProp, hintWorksWithProp = p.self.exhaustPhysicalPlans(newProp)
+	if !hintWorksWithProp && !newProp.IsEmpty() {
 		// If there is a hint in the plan and the hint cannot satisfy the property,
 		// we enforce this property and try to generate the PhysicalPlan again to
 		// make sure the hint can work.
@@ -220,15 +216,28 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty) (bestTas
 		// Then, we use the empty property to get physicalPlans and
 		// try to get the task with a enforced sort.
 		newProp.Items = []property.Item{}
-		physicalPlans, _ := p.self.exhaustPhysicalPlans(newProp)
+		var hintCanWork bool
+		plansNeedEnforce, hintCanWork = p.self.exhaustPhysicalPlans(newProp)
+		if hintCanWork && !hintWorksWithProp {
+			// If the hint can work with the empty property, but cannot work with
+			// the required property, we give `plansFitProp` to make sure the hint
+			// can work.
+			plansFitsProp = nil
+		}
 		newProp.Items = prop.Items
-		curTask, err := p.enumeratePhysicalPlans4Task(physicalPlans, newProp)
-		if err != nil {
-			return nil, err
-		}
-		if curTask.cost() < bestTask.cost() || (bestTask.invalid() && !curTask.invalid()) {
-			bestTask = curTask
-		}
+	}
+
+	newProp.Enforced = false
+	if bestTask, err = p.enumeratePhysicalPlans4Task(plansFitsProp, newProp); err != nil {
+		return nil, err
+	}
+	newProp.Enforced = true
+	curTask, err := p.enumeratePhysicalPlans4Task(plansNeedEnforce, newProp)
+	if err != nil {
+		return nil, err
+	}
+	if curTask.cost() < bestTask.cost() || (bestTask.invalid() && !curTask.invalid()) {
+		bestTask = curTask
 	}
 
 	p.storeTask(prop, bestTask)

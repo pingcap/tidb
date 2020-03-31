@@ -1401,7 +1401,7 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 // If the hint is not figured, we will pick all candidates.
 func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool) {
 	mergeJoins := p.GetMergeJoin(prop, p.schema, p.Stats(), p.children[0].statsInfo(), p.children[1].statsInfo())
-	if (p.preferJoinType & preferMergeJoin) > 0 {
+	if (p.preferJoinType&preferMergeJoin) > 0 && len(mergeJoins) > 0 {
 		return mergeJoins, true
 	}
 	joins := make([]PhysicalPlan, 0, 5)
@@ -1414,18 +1414,17 @@ func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]P
 	joins = append(joins, indexJoins...)
 
 	hashJoins := p.getHashJoins(prop)
-	if (p.preferJoinType & preferHashJoin) > 0 {
+	if (p.preferJoinType&preferHashJoin) > 0 && len(hashJoins) > 0 {
 		return hashJoins, true
 	}
+	joins = append(joins, hashJoins...)
 
-	if p.preferJoinType > 0 && !prop.IsEmpty() {
+	if p.preferJoinType > 0 {
 		// If we reach here, it means we have a hint that doesn't work.
 		// It might be affected by the required property, so we enforce
 		// this property and try the hint again.
-		return nil, false
+		return joins, false
 	}
-
-	joins = append(joins, hashJoins...)
 	return joins, true
 }
 
@@ -1704,22 +1703,17 @@ func (la *LogicalAggregation) exhaustPhysicalPlans(prop *property.PhysicalProper
 		return streamAggs, true
 	}
 
-	if (preferStream || preferHash) && !prop.IsEmpty() {
-		// If we have a hint which can not satisfy the required property,
-		// we enforce this property and try the hint again.
-		return nil, false
-	}
+	aggs := make([]PhysicalPlan, 0, len(hashAggs)+len(streamAggs))
+	aggs = append(aggs, hashAggs...)
+	aggs = append(aggs, streamAggs...)
 
-	if streamAggs == nil && preferStream {
+	if streamAggs == nil && preferStream && !prop.IsEmpty() {
 		errMsg := "Optimizer Hint STREAM_AGG is inapplicable"
 		warning := ErrInternal.GenWithStack(errMsg)
 		la.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
 	}
 
-	aggs := make([]PhysicalPlan, 0, len(hashAggs)+len(streamAggs))
-	aggs = append(aggs, hashAggs...)
-	aggs = append(aggs, streamAggs...)
-	return aggs, true
+	return aggs, !(preferStream || preferHash)
 }
 
 func (p *LogicalSelection) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool) {

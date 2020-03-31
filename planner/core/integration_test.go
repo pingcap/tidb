@@ -711,7 +711,7 @@ func (s *testIntegrationSuite) TestHintWithRequiredProperty(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int primary key, b int, key b(b))")
+	tk.MustExec("create table t(a int primary key, b int, c int, key b(b))")
 	var input []string
 	var output []struct {
 		SQL      string
