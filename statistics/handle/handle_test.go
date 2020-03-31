@@ -20,6 +20,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
@@ -433,6 +434,11 @@ func (s *testStatsSuite) TestLoadStats(c *C) {
 	stat = h.GetTableStats(tableInfo)
 	hg = stat.Columns[tableInfo.Columns[2].ID].Histogram
 	c.Assert(hg.Len(), Greater, 0)
+	// Following test tests whether the LoadNeededHistograms would panic.
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/statistics/handle/mockGetStatsReaderFail", `return(true)`), IsNil)
+	err = h.LoadNeededHistograms()
+	c.Assert(err, NotNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/statistics/handle/mockGetStatsReaderFail"), IsNil)
 }
 
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
