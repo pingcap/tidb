@@ -455,6 +455,9 @@ func (a *ExecStmt) handlePessimisticSelectForUpdate(ctx context.Context, e Execu
 }
 
 func (a *ExecStmt) runPessimisticSelectForUpdate(ctx context.Context, e Executor) (sqlexec.RecordSet, error) {
+	defer func() {
+		terror.Log(e.Close())
+	}()
 	var rows []chunk.Row
 	var err error
 	req := newFirstChunk(e)
