@@ -213,6 +213,7 @@ type LockCtx struct {
 	ReturnValues          bool
 	Values                map[string]ReturnedValue
 	ValuesLock            sync.Mutex
+	LockExpired           *uint32
 }
 
 // ReturnedValue pairs the Value and AlreadyLocked flag for PessimisticLock return values result.
