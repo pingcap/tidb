@@ -698,7 +698,7 @@ func checkConflictValue(iter *Iterator, m *kvrpcpb.Mutation, forUpdateTS uint64,
 	}
 
 	// Note that it's a write conflict here, even if the value is a rollback one, or a op_lock record
-	if dec.value.commitTS >= forUpdateTS {
+	if dec.value.commitTS > forUpdateTS {
 		return nil, &ErrConflict{
 			StartTS:          forUpdateTS,
 			ConflictTS:       dec.value.startTS,
