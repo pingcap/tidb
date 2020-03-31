@@ -43,21 +43,18 @@ const (
 
 type arena struct {
 	blockSize int
-	availIdx  int
 	blocks    []arenaBlock
 }
 
 type arenaSnapshot struct {
 	blockSize     int
 	blocks        int
-	availIdx      int
 	offsetInBlock int
 }
 
 func newArenaLocator(initBlockSize int) *arena {
 	return &arena{
 		blockSize: initBlockSize,
-		availIdx:  -1,
 	}
 }
 
@@ -65,23 +62,21 @@ func (a *arena) snapshot() arenaSnapshot {
 	snap := arenaSnapshot{
 		blockSize: a.blockSize,
 		blocks:    len(a.blocks),
-		availIdx:  a.availIdx,
 	}
-	if a.availIdx >= 0 {
-		snap.offsetInBlock = a.blocks[a.availIdx].length
+	if len(a.blocks) > 0 {
+		snap.offsetInBlock = a.blocks[len(a.blocks)-1].length
 	}
 	return snap
 }
 
 func (a *arena) revert(snap arenaSnapshot) {
-	a.availIdx = snap.availIdx
-	if a.availIdx >= 0 {
-		a.blocks[a.availIdx].length = snap.offsetInBlock
-	}
 	for i := snap.blocks; i < len(a.blocks); i++ {
 		a.blocks[i] = arenaBlock{}
 	}
 	a.blocks = a.blocks[:snap.blocks]
+	if len(a.blocks) > 0 {
+		a.blocks[len(a.blocks)-1].length = snap.offsetInBlock
+	}
 	a.blockSize = snap.blockSize
 }
 
@@ -103,27 +98,21 @@ func (a *arena) getFrom(addr arenaAddr) []byte {
 }
 
 func (a *arena) alloc(size int) (arenaAddr, []byte) {
-	if size >= maxBlockSize {
-		// Use a separate block to store entry which size larger than specified block size.
-		blk := newArenaBlock(size)
-		blk.length = size
-		a.blocks = append(a.blocks, blk)
-
-		addr := newArenaAddr(len(a.blocks)-1, 0)
-		return addr, blk.buf
+	if size > maxBlockSize {
+		panic("alloc size is larger than max block size")
 	}
 
-	if a.availIdx < 0 {
+	if len(a.blocks) == 0 {
 		a.enlarge(size, a.blockSize)
 	}
 
-	addr, data := a.allocInBlock(a.availIdx, size)
+	addr, data := a.allocInLastBlock(size)
 	if !addr.isNull() {
 		return addr, data
 	}
 
 	a.enlarge(size, a.blockSize<<1)
-	return a.allocInBlock(a.availIdx, size)
+	return a.allocInLastBlock(size)
 }
 
 func (a *arena) enlarge(allocSize, blockSize int) {
@@ -131,15 +120,15 @@ func (a *arena) enlarge(allocSize, blockSize int) {
 	for a.blockSize <= allocSize {
 		a.blockSize <<= 1
 	}
-	// Size always less than maxBlockSize.
+	// Size will never larger than maxBlockSize.
 	if a.blockSize > maxBlockSize {
 		a.blockSize = maxBlockSize
 	}
 	a.blocks = append(a.blocks, newArenaBlock(a.blockSize))
-	a.availIdx = int(uint32(len(a.blocks) - 1))
 }
 
-func (a *arena) allocInBlock(idx, size int) (arenaAddr, []byte) {
+func (a *arena) allocInLastBlock(size int) (arenaAddr, []byte) {
+	idx := len(a.blocks) - 1
 	offset, data := a.blocks[idx].alloc(size)
 	if offset == nullBlockOffset {
 		return arenaAddr{}, nil
@@ -148,12 +137,10 @@ func (a *arena) allocInBlock(idx, size int) (arenaAddr, []byte) {
 }
 
 func (a *arena) reset() {
-	if a.availIdx < 0 {
-		a.blocks = nil
+	if len(a.blocks) == 0 {
 		return
 	}
 
-	a.availIdx = 0
 	a.blockSize = len(a.blocks[0].buf)
 	a.blocks = []arenaBlock{a.blocks[0]}
 	a.blocks[0].reset()

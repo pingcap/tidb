@@ -86,7 +86,6 @@ func (s testMemDBSuite) TestReset(c *C) {
 	key := []byte{0}
 	p.Put(key, key)
 	c.Check(p.Get(key), BytesEquals, key)
-	c.Check(p.root.arena.availIdx, Equals, 0)
 
 	it := p.NewIterator()
 	it.SeekToFirst()
