@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
@@ -909,8 +908,8 @@ func (e *SlowQueryExtractor) explainInfo(p *PhysicalMemTable) string {
 		return fmt.Sprintf("slowQueryFile:%v, enable:%v, start_time:%v, end_time:%v",
 			slowQueryFile,
 			true,
-			startTime.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format(logutil.OldSlowLogTimeFormat),
-			endTime.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format(logutil.OldSlowLogTimeFormat),
+			startTime.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format(MetricTableTimeFormat),
+			endTime.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format(MetricTableTimeFormat),
 		)
 	}
 	return fmt.Sprintf("slowQueryFile:%v, enable:%v", slowQueryFile, false)

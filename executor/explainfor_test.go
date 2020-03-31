@@ -122,9 +122,9 @@ func (s *testSuite) TestExplainSlowQuery(c *C) {
 	defer os.Remove(slowLogFileName)
 
 	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.slow_query where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13'")).Check(testkit.Rows(
-		"MemTableScan_5 10000.00 root table:SLOW_QUERY, slowQueryFile:tidb-slow.log, enable:true, start_time:2019-12-23-16:10:13 +0000, end_time:2019-12-23-16:30:13 +0000"))
+		"MemTableScan_5 10000.00 root table:SLOW_QUERY, slowQueryFile:tidb-slow.log, enable:true, start_time:2019-12-23-16:10:13, end_time:2019-12-23-16:30:13"))
 	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.slow_query where time >= '2019-12-23 16:10:13'")).Check(testkit.Rows(
-		"MemTableScan_5 10000.00 root table:SLOW_QUERY, slowQueryFile:tidb-slow.log, enable:true, start_time:2019-12-23-16:10:13 +0000, end_time:2019-12-24-16:10:13 +0000"))
+		"MemTableScan_5 10000.00 root table:SLOW_QUERY, slowQueryFile:tidb-slow.log, enable:true, start_time:2019-12-23-16:10:13, end_time:2019-12-24-16:10:13"))
 	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.slow_query")).Check(testkit.Rows(
 		"MemTableScan_4 10000.00 root table:SLOW_QUERY, slowQueryFile:tidb-slow.log, enable:false"))
 
