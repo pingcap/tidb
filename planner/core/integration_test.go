@@ -65,7 +65,7 @@ type testIntegrationSerialSuite struct {
 
 func (s *testIntegrationSerialSuite) SetUpSuite(c *C) {
 	var err error
-	s.testData, err = testutil.LoadTestSuiteData("testdata", "integration_suite")
+	s.testData, err = testutil.LoadTestSuiteData("testdata", "integration_serial_suite")
 	c.Assert(err, IsNil)
 }
 
@@ -243,7 +243,6 @@ func (s *testIntegrationSuite) TestPpdWithSetVar(c *C) {
 	tk.MustQuery("select t01.c1,t01.c2,t01.c3 from (select t1.*,@c3:=@c3+1 as c3 from (select t.*,@c3:=0 from t order by t.c1)t1)t01 where t01.c3=2 and t01.c2='d'").Check(testkit.Rows("2 d 2"))
 }
 
-<<<<<<< HEAD
 func (s *testIntegrationSuite) TestBitColErrorMessage(c *C) {
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
@@ -252,10 +251,6 @@ func (s *testIntegrationSuite) TestBitColErrorMessage(c *C) {
 		dom.Close()
 		store.Close()
 	}()
-=======
-func (s *testIntegrationSerialSuite) TestNoneAccessPathsFoundByIsolationRead(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
->>>>>>> a29c1a1... test: fix data race in `TestNoneAccessPathsFoundByIsolationRea… (#15482)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists bit_col_t")
