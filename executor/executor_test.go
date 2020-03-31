@@ -5362,3 +5362,12 @@ select 6;`
 		tk.MustQuery(sql).Check(testutil.RowsWithSep("|", cas.result...))
 	}
 }
+
+func (s *testSuite1) TestIssue15718(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists tt;")
+	tk.MustExec("create table tt(a decimal(10, 0), b varchar(1), c time);")
+	tk.MustExec("insert into tt values(0, '2', null), (7, null, '1122'), (NULL, 'w', null), (NULL, '2', '3344'), (NULL, NULL, '0'), (7, 'f', '33');")
+	tk.MustQuery("select a and b as d, a or c as e from tt;").Check(testkit.Rows("0 <nil>", "<nil> 1", "0 <nil>", "<nil> 1", "<nil> <nil>", "0 1"))
+}
