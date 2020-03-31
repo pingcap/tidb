@@ -350,7 +350,7 @@ func startWithSlash(s *Scanner) (tok int, pos Pos, lit string) {
 	case '!': // '/*!' MySQL-specific comments
 		// See http://dev.mysql.com/doc/refman/5.7/en/comments.html
 		// in '/*!', which we always recognize regardless of version.
-		_ = s.scanVersionDigits(5, 5)
+		s.scanVersionDigits(5, 5)
 		s.inBangComment = true
 		return s.scan()
 
@@ -360,9 +360,9 @@ func startWithSlash(s *Scanner) (tok int, pos Pos, lit string) {
 			break
 		}
 		s.r.inc()
-		// in '/*T!', try to consume the 5 to 6 digit version string.
-		commentVersion := s.scanVersionDigits(5, 6)
-		if commentVersion <= CommentCodeCurrentVersion {
+		// in '/*T!', try to match the pattern '/*T![feature1,feature2,...]'.
+		features := s.scanFeatureIDs()
+		if SpecialCommentsController.ContainsAll(features) {
 			s.inBangComment = true
 			return s.scan()
 		}
@@ -748,21 +748,65 @@ func (s *Scanner) scanDigits() string {
 
 // scanVersionDigits scans for `min` to `max` digits (range inclusive) used in
 // `/*!12345 ... */` comments.
-func (s *Scanner) scanVersionDigits(min, max int) (version CommentCodeVersion) {
+func (s *Scanner) scanVersionDigits(min, max int) {
 	pos := s.r.pos()
 	for i := 0; i < max; i++ {
 		ch := s.r.peek()
 		if isDigit(ch) {
-			version = version*10 + CommentCodeVersion(ch-'0')
 			s.r.inc()
 		} else if i < min {
 			s.r.p = pos
-			return CommentCodeNoVersion
+			return
 		} else {
 			break
 		}
 	}
-	return
+}
+
+func (s *Scanner) scanFeatureIDs() (featureIDs []string) {
+	pos := s.r.pos()
+	const init, expectChar, obtainChar = 0, 1, 2
+	state := init
+	var b strings.Builder
+	for !s.r.eof() {
+		ch := s.r.peek()
+		s.r.inc()
+		switch state {
+		case init:
+			if ch == '[' {
+				state = expectChar
+				break
+			}
+			s.r.p = pos
+			return nil
+		case expectChar:
+			if isIdentChar(ch) {
+				b.WriteRune(ch)
+				state = obtainChar
+				break
+			}
+			s.r.p = pos
+			return nil
+		case obtainChar:
+			if isIdentChar(ch) {
+				b.WriteRune(ch)
+				state = obtainChar
+				break
+			} else if ch == ',' {
+				featureIDs = append(featureIDs, b.String())
+				b.Reset()
+				state = expectChar
+				break
+			} else if ch == ']' {
+				featureIDs = append(featureIDs, b.String())
+				return featureIDs
+			}
+			s.r.p = pos
+			return nil
+		}
+	}
+	s.r.p = pos
+	return nil
 }
 
 func (s *Scanner) lastErrorAsWarn() {
