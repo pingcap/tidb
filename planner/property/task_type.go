@@ -28,7 +28,13 @@ const (
 	// coprocessor layer.
 	CopDoubleReadTaskType
 
-	CopTiflashTaskType
+	// CopTiFlashLocalReadTaskType stands for flash coprocessor that read data locally,
+	// and only a part of the data is read in one cop task
+	CopTiFlashLocalReadTaskType
+
+	// CopTiFlashGlobalReadTaskType stands for flash coprocessor that read data globally
+	// and all the data of given table will be read in one cop task
+	CopTiFlashGlobalReadTaskType
 )
 
 // String implements fmt.Stringer interface.
@@ -40,8 +46,10 @@ func (t TaskType) String() string {
 		return "copSingleReadTask"
 	case CopDoubleReadTaskType:
 		return "copDoubleReadTask"
-	case CopTiflashTaskType:
-		return "copTiflashTaskType"
+	case CopTiFlashLocalReadTaskType:
+		return "copTiFlashLocalReadTask"
+	case CopTiFlashGlobalReadTaskType:
+		return "copTiFlashGlobalReadTask"
 	}
 	return "UnknownTaskType"
 }

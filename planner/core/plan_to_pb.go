@@ -137,8 +137,8 @@ func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context, storeType kv.StoreType)
 	if p.isPartition {
 		tsExec.TableId = p.physicalTableID
 	}
-	if storeType == kv.TiFlash && p.StoreType == kv.TiKV {
-		tsExec.NextReadEngine = tipb.EngineType_TiKV
+	if storeType == kv.TiFlash && p.IsGlobalRead {
+		tsExec.NextReadEngine = tipb.EngineType_TiFlash
 		ranges := distsql.TableRangesToKVRanges(tsExec.TableId, p.Ranges, nil)
 		for _, keyRange := range ranges {
 			tsExec.Ranges = append(tsExec.Ranges, tipb.KeyRange{Low:keyRange.StartKey, High:keyRange.EndKey})

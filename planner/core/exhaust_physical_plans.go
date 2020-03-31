@@ -1459,11 +1459,11 @@ func (p *LogicalJoin) tryToGetBroadCastJoin(prop * property.PhysicalProperty) []
 	if !prop.IsEmpty() {
 		return nil
 	}
-	if prop.TaskTp != property.RootTaskType && prop.TaskTp != property.CopTiflashTaskType {
+	if prop.TaskTp != property.RootTaskType && prop.TaskTp != property.CopTiFlashLocalReadTaskType && prop.TaskTp != property.CopTiFlashGlobalReadTaskType {
 		return nil
 	}
 
-	if p.JoinType != InnerJoin || len(p.LeftConditions) != 0 || len(p.RightConditions) != 0 {
+	if p.JoinType != InnerJoin || len(p.LeftConditions) != 0 || len(p.RightConditions) != 0 || len(p.OtherConditions) != 0 {
 		return nil
 	}
 
@@ -1482,8 +1482,12 @@ func (p *LogicalJoin) tryToGetBroadCastJoin(prop * property.PhysicalProperty) []
 		baseJoin.InnerChildIdx = 1
 	}
 	childrenReqProps := make([]*property.PhysicalProperty, 2)
-	childrenReqProps[baseJoin.InnerChildIdx] = &property.PhysicalProperty{TaskTp: property.CopTiflashTaskType}
-	childrenReqProps[1-baseJoin.InnerChildIdx] = &property.PhysicalProperty{TaskTp: property.CopTiflashTaskType}
+	childrenReqProps[baseJoin.InnerChildIdx] = &property.PhysicalProperty{TaskTp: property.CopTiFlashGlobalReadTaskType}
+	if prop.TaskTp == property.CopTiFlashGlobalReadTaskType {
+		childrenReqProps[1-baseJoin.InnerChildIdx] = &property.PhysicalProperty{TaskTp: property.CopTiFlashGlobalReadTaskType}
+	} else {
+		childrenReqProps[1-baseJoin.InnerChildIdx] = &property.PhysicalProperty{TaskTp: property.CopTiFlashLocalReadTaskType}
+	}
 	join := PhysicalBroadCastJoin {
 		basePhysicalJoin: baseJoin,
 	}.Init(p.ctx, p.stats, p.blockOffset, childrenReqProps...)
@@ -1718,7 +1722,7 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 		return nil
 	}
 	hashAggs := make([]PhysicalPlan, 0, len(wholeTaskTypes))
-	taskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopDoubleReadTaskType, property.CopTiflashTaskType}
+	taskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopDoubleReadTaskType, property.CopTiFlashLocalReadTaskType, property.CopTiFlashGlobalReadTaskType}
 	if !la.aggHints.preferAggToCop {
 		taskTypes = append(taskTypes, property.RootTaskType)
 	}
