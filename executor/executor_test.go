@@ -3259,9 +3259,6 @@ func (s *testSuite3) TestIndexJoinTableDualPanic(c *C) {
 		Check(testkit.Rows("1 a"))
 }
 
-<<<<<<< HEAD
-func (s *testSuite3) TestUnionAutoSignedCast(c *C) {
-=======
 func (s *testSuite3) TestSortLeftJoinWithNullColumnInRightChildPanic(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -3273,8 +3270,7 @@ func (s *testSuite3) TestSortLeftJoinWithNullColumnInRightChildPanic(c *C) {
 		Check(testkit.Rows("<nil>"))
 }
 
-func (s *testSuiteP1) TestUnionAutoSignedCast(c *C) {
->>>>>>> 01db67b... chunk: make `mysql.TypeNull` be judged as fixedLen (#15512)
+func (s *testSuite3) TestUnionAutoSignedCast(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1,t2")
