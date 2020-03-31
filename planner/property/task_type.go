@@ -49,7 +49,7 @@ func (t TaskType) String() string {
 	case CopTiFlashLocalReadTaskType:
 		return "copTiFlashLocalReadTask"
 	case CopTiFlashGlobalReadTaskType:
-		return "copTiFlashRemoteReadTask"
+		return "copTiFlashGlobalReadTask"
 	}
 	return "UnknownTaskType"
 }

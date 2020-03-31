@@ -368,14 +368,14 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 		var currentCandidate *candidatePath
 		if path.IsTablePath {
 			if path.StoreType == kv.TiFlash {
-				if path.IsRemoteRead && prop.TaskTp == property.CopTiFlashGlobalReadTaskType {
+				if path.IsGlobalRead && prop.TaskTp == property.CopTiFlashGlobalReadTaskType {
 					currentCandidate = ds.getTableCandidate(path, prop)
 				}
-				if !path.IsRemoteRead && prop.TaskTp != property.CopTiFlashGlobalReadTaskType {
+				if !path.IsGlobalRead && prop.TaskTp != property.CopTiFlashGlobalReadTaskType {
 					currentCandidate = ds.getTableCandidate(path, prop)
 				}
 			} else {
-				if !path.IsRemoteRead {
+				if !path.IsGlobalRead {
 					currentCandidate = ds.getTableCandidate(path, prop)
 				}
 			}
@@ -1296,7 +1296,7 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 		AccessCondition: path.AccessConds,
 		filterCondition: path.TableFilters,
 		StoreType:       path.StoreType,
-		IsGlobalRead:    path.IsRemoteRead,
+		IsGlobalRead:    path.IsGlobalRead,
 	}.Init(ds.ctx, ds.blockOffset)
 	ts.SetSchema(ds.schema.Clone())
 	if ts.Table.PKIsHandle {
