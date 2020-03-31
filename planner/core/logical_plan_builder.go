@@ -2835,13 +2835,14 @@ func GetUpdateColumns(ctx sessionctx.Context, orderedList []*expression.Assignme
 	return assignFlag, nil
 }
 
-func getTableOffset(schema *expression.Schema, handleCol *expression.Column) int {
+func getTableOffset(schema *expression.Schema, handleCol *expression.Column) (int, error) {
 	for i, col := range schema.Columns {
 		if col.DBName.L == handleCol.DBName.L && col.TblName.L == handleCol.TblName.L {
-			return i
+			return i, nil
 		}
 	}
-	panic("Couldn't get column information when do update/delete")
+
+	return -1, errors.Errorf("Couldn't get column information when do update")
 }
 
 func (b *PlanBuilder) checkUpdateList(updt *Update) error {
@@ -2858,7 +2859,10 @@ func (b *PlanBuilder) checkUpdateList(updt *Update) error {
 	for id, cols := range schema.TblID2Handle {
 		tbl := tblID2table[id]
 		for _, col := range cols {
-			offset := getTableOffset(schema, col)
+			offset, err := getTableOffset(schema, col)
+			if err != nil {
+				return err
+			}
 			end := offset + len(tbl.WritableCols())
 			flags := assignFlags[offset:end]
 			for i, col := range tbl.WritableCols() {
