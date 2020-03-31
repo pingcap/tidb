@@ -269,14 +269,6 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 			e.rowChunks.GetMemTracker().SetLabel(rowChunksLabel)
 			e.rowChunks.SetOnExceededCallback(onExceededCallback)
 			e.spillAction.ResetOnceAndSetRowContainer(e.rowChunks)
-			if config.GetGlobalConfig().OOMUseTmpStorage {
-				e.spillAction = e.rowChunks.ActionSpill()
-				e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(e.spillAction)
-				onExceededCallback = func(rowContainer *chunk.RowContainer) {
-					e.generatePartition()
-				}
-				e.rowChunks.SetOnExceededCallback(onExceededCallback)
-			}
 			// AttachTo would re-trigger the Consume, so we need to leave it at last
 			e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
 			e.rowChunks.GetDiskTracker().AttachTo(e.diskTracker)
