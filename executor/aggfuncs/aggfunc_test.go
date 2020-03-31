@@ -70,6 +70,15 @@ type aggTest struct {
 	results  []types.Datum
 }
 
+type multiArgsAggTest struct {
+	dataTypes []*types.FieldType
+	retType   *types.FieldType
+	numRows   int
+	dataGens  []func(i int) types.Datum
+	funcName  string
+	results   []types.Datum
+}
+
 func (s *testSuite) testMergePartialResult(c *C, p aggTest) {
 	srcChk := chunk.NewChunkWithCapacity([]*types.FieldType{p.dataType}, p.numRows)
 	for i := 0; i < p.numRows; i++ {
@@ -148,6 +157,33 @@ func buildAggTesterWithFieldType(funcName string, ft *types.FieldType, numRows i
 		pt.results = append(pt.results, types.NewDatum(result))
 	}
 	return pt
+}
+
+// for multiple args in aggfuncs such as json_objectagg(c1, c2)
+func buildMultiArgsAggTester(funcName string, tps []byte, rt byte, numRows int, results ...interface{}) multiArgsAggTest {
+	fts := make([]*types.FieldType, len(tps))
+	for i := 0; i < len(tps); i++ {
+		fts[i] = types.NewFieldType(tps[i])
+	}
+	return buildMultiArgsAggTesterWithFieldType(funcName, fts, types.NewFieldType(rt), numRows, results...)
+}
+
+func buildMultiArgsAggTesterWithFieldType(funcName string, fts []*types.FieldType, rt *types.FieldType, numRows int, results ...interface{}) multiArgsAggTest {
+	dataGens := make([]func(i int) types.Datum, len(fts))
+	for i := 0; i < len(fts); i++ {
+		dataGens[i] = getDataGenFunc(fts[i])
+	}
+	mt := multiArgsAggTest{
+		dataTypes: fts,
+		retType:   rt,
+		numRows:   numRows,
+		funcName:  funcName,
+		dataGens:  dataGens,
+	}
+	for _, result := range results {
+		mt.results = append(mt.results, types.NewDatum(result))
+	}
+	return mt
 }
 
 func getDataGenFunc(ft *types.FieldType) func(i int) types.Datum {
@@ -250,8 +286,6 @@ func (s *testSuite) testAggFunc(c *C, p aggTest) {
 	c.Assert(err, IsNil)
 	c.Assert(result, Equals, 0)
 }
-<<<<<<< HEAD
-=======
 
 func (s *testSuite) testMultiArgsAggFunc(c *C, p multiArgsAggTest) {
 	srcChk := chunk.NewChunkWithCapacity(p.dataTypes, p.numRows)
@@ -414,4 +448,3 @@ func (s *testSuite) baseBenchmarkAggFunc(b *testing.B,
 		b.StartTimer()
 	}
 }
->>>>>>> 5192c26... executor: optimize count distinct with single column (#15323)

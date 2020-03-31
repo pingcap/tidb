@@ -265,23 +265,27 @@ type countOriginalWithDistinct struct {
 }
 
 type partialResult4CountWithDistinct struct {
+	count int64
+
 	valSet set.StringSet
 }
 
 func (e *countOriginalWithDistinct) AllocPartialResult() PartialResult {
 	return PartialResult(&partialResult4CountWithDistinct{
+		count:  0,
 		valSet: set.NewStringSet(),
 	})
 }
 
 func (e *countOriginalWithDistinct) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4CountWithDistinct)(pr)
+	p.count = 0
 	p.valSet = set.NewStringSet()
 }
 
 func (e *countOriginalWithDistinct) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4CountWithDistinct)(pr)
-	chk.AppendInt64(e.ordinal, int64(p.valSet.Count()))
+	chk.AppendInt64(e.ordinal, p.count)
 	return nil
 }
 
@@ -311,6 +315,7 @@ func (e *countOriginalWithDistinct) UpdatePartialResult(sctx sessionctx.Context,
 			continue
 		}
 		p.valSet.Insert(encodedString)
+		p.count++
 	}
 
 	return nil
@@ -370,7 +375,7 @@ func (e *countOriginalWithDistinct) evalAndEncode(
 		if err != nil || isNull {
 			break
 		}
-		encodedBytes = codec.EncodeCompactBytes(encodedBytes, hack.Slice(val))
+		encodedBytes = codec.EncodeBytes(encodedBytes, hack.Slice(val))
 	default:
 		return nil, false, errors.Errorf("unsupported column type for encode %d", tp)
 	}
@@ -398,15 +403,15 @@ func appendDecimal(encodedBytes []byte, val *types.MyDecimal) ([]byte, error) {
 }
 
 func writeTime(buf []byte, t types.Time) {
-	binary.BigEndian.PutUint16(buf, uint16(t.Year()))
-	buf[2] = uint8(t.Month())
-	buf[3] = uint8(t.Day())
-	buf[4] = uint8(t.Hour())
-	buf[5] = uint8(t.Minute())
-	buf[6] = uint8(t.Second())
-	binary.BigEndian.PutUint32(buf[8:], uint32(t.Microsecond()))
-	buf[12] = t.Type()
-	buf[13] = uint8(t.Fsp())
+	binary.BigEndian.PutUint16(buf, uint16(t.Time.Year()))
+	buf[2] = uint8(t.Time.Month())
+	buf[3] = uint8(t.Time.Day())
+	buf[4] = uint8(t.Time.Hour())
+	buf[5] = uint8(t.Time.Minute())
+	buf[6] = uint8(t.Time.Second())
+	binary.BigEndian.PutUint32(buf[8:], uint32(t.Time.Microsecond()))
+	buf[12] = t.Type
+	buf[13] = uint8(t.Fsp)
 }
 
 func appendTime(encodedBytes, buf []byte, val types.Time) []byte {
