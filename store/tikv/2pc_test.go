@@ -945,37 +945,40 @@ func (s *testCommitterSuite) TestResolveMixed(c *C) {
 
 	// pk is the primary lock of txn1
 	pk := kv.Key("pk")
-
-	secondaryLocks := make([]kv.Key, 0, bigTxnThreshold)
+	secondaryLockkeys := make([]kv.Key, 0, bigTxnThreshold)
 	for i := 0; i < bigTxnThreshold; i++ {
 		optimisticLock := kv.Key(fmt.Sprintf("optimisticLockKey%d", i))
-		secondaryLocks = append(secondaryLocks, optimisticLock)
+		secondaryLockkeys = append(secondaryLockkeys, optimisticLock)
 	}
-
 	pessimisticLockKey := kv.Key("pessimisticLockKey")
 
-	// make the optimistic and pessimistic lock left with primary not found
+	// make the optimistic and pessimistic lock left with primary lock not found
 	txn1 := s.begin(c)
 	txn1.SetOption(kv.Pessimistic, true)
 	// lock the primary key
 	lockCtx := &kv.LockCtx{ForUpdateTS: txn1.startTS, WaitStartTime: time.Now()}
 	err := txn1.LockKeys(context.Background(), lockCtx, pk)
 	c.Assert(err, IsNil)
-
-	// lock the pessimistic keys
-	err = txn1.LockKeys(context.Background(), lockCtx, pessimisticLockKey)
-	c.Assert(err, IsNil)
-
 	// lock the optimistic keys
 	for i := 0; i < bigTxnThreshold; i++ {
-		txn1.Set(secondaryLocks[i], []byte(fmt.Sprintf("v%d", i)))
+		txn1.Set(secondaryLockkeys[i], []byte(fmt.Sprintf("v%d", i)))
 	}
 	err = txn1.committer.initKeysAndMutations()
 	c.Assert(err, IsNil)
 	err = txn1.committer.prewriteMutations(NewBackoffer(ctx, PrewriteMaxBackoff), txn1.committer.mutations)
 	c.Assert(err, IsNil)
+	// lock the pessimistic keys
+	err = txn1.LockKeys(context.Background(), lockCtx, pessimisticLockKey)
+	c.Assert(err, IsNil)
+	lock1 := s.getLockInfo(c, pessimisticLockKey)
+	c.Assert(lock1.LockType, Equals, kvrpcpb.Op_PessimisticLock)
+	c.Assert(lock1.PrimaryLock, BytesEquals, []byte(pk))
+	optimisticLockKey := secondaryLockkeys[0]
+	lock2 := s.getLockInfo(c, optimisticLockKey)
+	c.Assert(lock2.LockType, Equals, kvrpcpb.Op_Put)
+	c.Assert(lock2.PrimaryLock, BytesEquals, []byte(pk))
 
-	// Stop txn ttl manager and remove primary key, make the other keys left behind
+	// stop txn ttl manager and remove primary key, make the other keys left behind
 	bo := NewBackoffer(context.Background(), pessimisticLockMaxBackoff)
 	txn1.committer.ttlManager.close()
 	err = txn1.committer.pessimisticRollbackMutations(bo, committerMutations{keys: [][]byte{pk}})
@@ -984,8 +987,7 @@ func (s *testCommitterSuite) TestResolveMixed(c *C) {
 	// try to resolve the left optimistic locks, use clean whole region
 	cleanTxns := make(map[RegionVerID]struct{})
 	time.Sleep(time.Duration(atomic.LoadUint64(&ManagedLockTTL)) * time.Millisecond)
-	optimisticLock := secondaryLocks[0]
-	optimisticLockInfo := s.getLockInfo(c, optimisticLock)
+	optimisticLockInfo := s.getLockInfo(c, optimisticLockKey)
 	lock := NewLock(optimisticLockInfo)
 	err = s.store.lockResolver.resolveLock(NewBackoffer(ctx, pessimisticLockMaxBackoff), lock, TxnStatus{}, cleanTxns)
 	c.Assert(err, IsNil)
@@ -993,7 +995,7 @@ func (s *testCommitterSuite) TestResolveMixed(c *C) {
 	// txn2 tries to lock the pessimisticLockKey, the lock should has been resolved in clean whole region resolve
 	txn2 := s.begin(c)
 	txn2.SetOption(kv.Pessimistic, true)
-	lockCtx = &kv.LockCtx{ForUpdateTS: txn2.startTS, WaitStartTime: time.Now()}
+	lockCtx = &kv.LockCtx{ForUpdateTS: txn2.startTS, WaitStartTime: time.Now(), LockWaitTime: kv.LockNoWait}
 	err = txn2.LockKeys(context.Background(), lockCtx, pessimisticLockKey)
 	c.Assert(err, IsNil)
 
