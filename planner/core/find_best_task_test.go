@@ -37,7 +37,6 @@ type mockDataSource struct {
 	baseLogicalPlan
 }
 
-// Init initili
 func (ds mockDataSource) Init(ctx sessionctx.Context) *mockDataSource {
 	ds.baseLogicalPlan = newBaseLogicalPlan(ctx, "mockDS", &ds, 0)
 	return &ds
