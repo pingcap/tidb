@@ -875,7 +875,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 	buf.WriteString("\n")
 
 	buf.WriteString(") ENGINE=InnoDB")
-	// Because we only support case sensitive utf8_bin collate, we need to explicitly set the default charset and collation
+	// We need to explicitly set the default charset and collation
 	// to make it work on MySQL server which has default collate utf8_general_ci.
 	if len(tblCollate) == 0 || tblCollate == "binary" {
 		// If we can not find default collate for the given charset,
