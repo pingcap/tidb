@@ -1,18 +1,5 @@
 [
   {
-    "name": "TestPushLimitDownIndexLookUpReader",
-    "cases": [
-      // Limit should be pushed down into IndexLookUpReader, row count of IndexLookUpReader and TableScan should be 1.00.
-      "explain select * from tbl use index(idx_b_c) where b > 1 limit 2,1",
-      // Projection atop IndexLookUpReader, Limit should be pushed down into IndexLookUpReader, and Projection should have row count 1.00 as well.
-      "explain select * from tbl use index(idx_b_c) where b > 1 order by b desc limit 2,1",
-      // Limit should be pushed down into IndexLookUpReader when Selection on top of IndexScan.
-      "explain select * from tbl use index(idx_b_c) where b > 1 and c > 1 limit 2,1",
-      // Limit should NOT be pushed down into IndexLookUpReader when Selection on top of TableScan.
-      "explain select * from tbl use index(idx_b_c) where b > 1 and a > 1 limit 2,1"
-    ]
-  },
-  {
     "name": "TestIsFromUnixtimeNullRejective",
     "cases": [
       // fix #12385
@@ -39,38 +26,6 @@
       "select * from t order by a",
       "explain select * from t order by a limit 3",
       "select * from t order by a limit 3"
-    ]
-  },
-  {
-    "name": "TestReadFromStorageHint",
-    "cases": [
-      "desc select avg(a) from t",
-      "desc select /*+ read_from_storage(tiflash[t]) */ avg(a) from t",
-      "desc select /*+ read_from_storage(tiflash[t]) */ sum(a) from t",
-      "desc select /*+ read_from_storage(tiflash[t]) */ sum(a+1) from t",
-      "desc select /*+ read_from_storage(tiflash[t]) */ sum(isnull(a)) from t",
-      "desc select * from tt where (tt.a > 1 and tt.a < 20) or (tt.a >= 30 and tt.a < 55)",
-      "desc select /*+ read_from_storage(tiflash[tt]) */ * from tt where (tt.a > 1 and tt.a < 20) or (tt.a >= 30 and tt.a < 55)",
-      "desc select * from ttt order by ttt.a desc",
-      "desc select /*+ read_from_storage(tiflash[ttt]) */ * from ttt order by ttt.a desc",
-      "desc select /*+ read_from_storage(tiflash[ttt]) */ * from ttt order by ttt.a"
-    ]
-  },
-  {
-    "name": "TestReadFromStorageHintAndIsolationRead",
-    "cases": [
-      "desc select /*+ read_from_storage(tikv[t], tiflash[t]) */ avg(a) from t",
-      "desc select /*+ read_from_storage(tikv[t]) */ avg(a) from t",
-      "desc select /*+ read_from_storage(tiflash[t]) */ avg(a) from t"
-    ]
-  },
-  {
-    "name": "TestIsolationReadTiFlashUseIndexHint",
-    "cases": [
-      "explain select * from t",
-      "explain select * from t use index();",
-      "explain select /*+ use_index(t, idx)*/ * from t",
-      "explain select /*+ use_index(t)*/ * from t"
     ]
   }
 ]
