@@ -15,9 +15,9 @@ package planner
 
 import (
 	"context"
-
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/cascades"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege"
@@ -27,9 +27,11 @@ import (
 // Optimize does optimization and creates a Plan.
 // The node must be prepared first.
 func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (plannercore.Plan, error) {
-	fp := plannercore.TryFastPlan(sctx, node)
-	if fp != nil {
-		return fp, nil
+	if _, containTiKV := sctx.GetSessionVars().GetIsolationReadEngines()[kv.TiKV]; containTiKV {
+		fp := plannercore.TryFastPlan(sctx, node)
+		if fp != nil {
+			return fp, nil
+		}
 	}
 
 	// build logical plan

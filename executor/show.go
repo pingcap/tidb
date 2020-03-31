@@ -1101,6 +1101,19 @@ func (e *ShowExec) fetchShowGrants() error {
 	if checker == nil {
 		return errors.New("miss privilege checker")
 	}
+	sessVars := e.ctx.GetSessionVars()
+	if !e.User.CurrentUser {
+		userName := sessVars.User.AuthUsername
+		hostName := sessVars.User.AuthHostname
+		// Show grant user requires the SELECT privilege on mysql schema.
+		// Ref https://dev.mysql.com/doc/refman/8.0/en/show-grants.html
+		if userName != e.User.Username || hostName != e.User.Hostname {
+			activeRoles := sessVars.ActiveRoles
+			if !checker.RequestVerification(activeRoles, mysql.SystemDB, "", "", mysql.SelectPriv) {
+				return ErrDBaccessDenied.GenWithStackByArgs(userName, hostName, mysql.SystemDB)
+			}
+		}
+	}
 	for _, r := range e.Roles {
 		if r.Hostname == "" {
 			r.Hostname = "%"
