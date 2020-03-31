@@ -166,17 +166,12 @@ func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *Req
 	builder.Request.IsolationLevel = builder.getIsolationLevel()
 	builder.Request.NotFillCache = sv.StmtCtx.NotFillCache
 	builder.Request.Priority = builder.getKVPriority(sv)
-<<<<<<< HEAD
 	builder.Request.ReplicaRead = sv.ReplicaRead
-	builder.Request.SchemaVar = sv.TxnCtx.SchemaVersion
-=======
-	builder.Request.ReplicaRead = sv.GetReplicaRead()
 	if sv.SnapshotInfoschema != nil {
 		builder.Request.SchemaVar = infoschema.GetInfoSchemaBySessionVars(sv).SchemaMetaVersion()
 	} else {
 		builder.Request.SchemaVar = sv.TxnCtx.SchemaVersion
 	}
->>>>>>> 1637c42... distsql: fix wrong schema version when snapshot has been set (#15258)
 	return builder
 }
 
