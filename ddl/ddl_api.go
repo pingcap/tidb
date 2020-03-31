@@ -3057,6 +3057,7 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 
 	job := &model.Job{
 		SchemaID:   schema.ID,
+		SchemaName: schema.Name.L,
 		TableID:    tb.Meta().ID,
 		Type:       model.ActionSetTiFlashReplica,
 		BinlogInfo: &model.HistoryInfo{},
@@ -3091,6 +3092,7 @@ func (d *ddl) UpdateTableReplicaInfo(ctx sessionctx.Context, physicalID int64, a
 
 	job := &model.Job{
 		SchemaID:   db.ID,
+		SchemaName: db.Name.L,
 		TableID:    tbInfo.ID,
 		Type:       model.ActionUpdateTiFlashReplicaStatus,
 		BinlogInfo: &model.HistoryInfo{},
@@ -3412,6 +3414,7 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 	sqlMode := ctx.GetSessionVars().SQLMode
 	job := &model.Job{
 		SchemaID:   schema.ID,
+		SchemaName: schema.Name.L,
 		TableID:    t.Meta().ID,
 		Type:       model.ActionAddPrimaryKey,
 		BinlogInfo: &model.HistoryInfo{},
