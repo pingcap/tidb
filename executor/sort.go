@@ -265,10 +265,7 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 			return err
 		}
 		if e.rowChunks.AlreadySpilled() {
-			oldRowContainer := e.rowChunks
 			e.rowChunks = chunk.NewRowContainer(retTypes(e), e.maxChunkSize)
-			// Succeed the former rowContainer Disk Usage
-			e.rowChunks.GetDiskTracker().Consume(oldRowContainer.GetDiskTracker().BytesConsumed())
 			e.rowChunks.GetMemTracker().SetLabel(rowChunksLabel)
 			e.rowChunks.SetOnExceededCallback(onExceededCallback)
 			e.spillAction.ResetOnceAndSetRowContainer(e.rowChunks)
@@ -282,7 +279,7 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 			}
 			// Attach and ReplaceChild would re-trigger the Consume, so we need to left them at last
 			e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
-			e.diskTracker.ReplaceChild(oldRowContainer.GetDiskTracker(), e.rowChunks.GetDiskTracker())
+			e.rowChunks.GetDiskTracker().AttachTo(e.diskTracker)
 		}
 	}
 	if e.rowChunks.NumRow() > 0 {
