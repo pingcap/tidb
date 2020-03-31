@@ -1301,7 +1301,6 @@ func checkTableInfoValidExtra(tbInfo *model.TableInfo) error {
 	}
 
 	// FIXME: perform checkConstraintNames
-
 	if err := checkCharsetAndCollation(tbInfo.Charset, tbInfo.Collate); err != nil {
 		return errors.Trace(err)
 	}
@@ -1549,7 +1548,7 @@ func (d *ddl) CreateTableWithInfo(
 					oldViewTblID = oldTable.Meta().ID
 					break
 				}
-				// the object to replace isn't a view.
+				// The object to replace isn't a view.
 				return ErrWrongObject.GenWithStackByArgs(dbName, tbInfo.Name, "VIEW")
 			}
 			return err
@@ -1558,7 +1557,7 @@ func (d *ddl) CreateTableWithInfo(
 		}
 	}
 
-	// FIXME implement `tryRetainID`
+	// FIXME: Implement `tryRetainID`
 	if err := d.assignTableID(tbInfo); err != nil {
 		return errors.Trace(err)
 	}
@@ -1611,7 +1610,7 @@ func (d *ddl) CreateTableWithInfo(
 	return errors.Trace(err)
 }
 
-// do pre-split and scatter.
+// preSplitAndScatter performs pre-split and scatter of the table's regions.
 func (d *ddl) preSplitAndScatter(ctx sessionctx.Context, tbInfo *model.TableInfo) {
 	sp, ok := d.store.(kv.SplittableStore)
 	if !ok || atomic.LoadUint32(&EnableSplitTableRegion) == 0 {
