@@ -42,6 +42,53 @@ func (hs *HintsSet) GetFirstTableHints() []*ast.TableOptimizerHint {
 	return nil
 }
 
+<<<<<<< HEAD
+=======
+// ContainTableHint checks whether the table hint set contains a hint.
+func (hs *HintsSet) ContainTableHint(hint string) bool {
+	for _, tableHintsForBlock := range hs.tableHints {
+		for _, tableHint := range tableHintsForBlock {
+			if tableHint.HintName.String() == hint {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// ExtractTableHintsFromStmtNode extracts table hints from this node.
+func ExtractTableHintsFromStmtNode(node ast.Node) []*ast.TableOptimizerHint {
+	switch x := node.(type) {
+	case *ast.SelectStmt:
+		return x.TableHints
+	case *ast.UpdateStmt:
+		return x.TableHints
+	case *ast.DeleteStmt:
+		return x.TableHints
+	// TODO: support hint for InsertStmt
+	case *ast.ExplainStmt:
+		return ExtractTableHintsFromStmtNode(x.Stmt)
+	default:
+		return nil
+	}
+}
+
+// RestoreOptimizerHints restores these hints.
+func RestoreOptimizerHints(hints []*ast.TableOptimizerHint) string {
+	hintsStr := make([]string, 0, len(hints))
+	hintsMap := make(map[string]struct{}, len(hints))
+	for _, hint := range hints {
+		hintStr := RestoreTableOptimizerHint(hint)
+		if _, ok := hintsMap[hintStr]; ok {
+			continue
+		}
+		hintsMap[hintStr] = struct{}{}
+		hintsStr = append(hintsStr, hintStr)
+	}
+	return strings.Join(hintsStr, ", ")
+}
+
+>>>>>>> 746c88a... bindinfo, planner: make evolve tasks consider runtime hints instead of ignoring them (#15668)
 // RestoreTableOptimizerHint returns string format of TableOptimizerHint.
 func RestoreTableOptimizerHint(hint *ast.TableOptimizerHint) string {
 	var sb strings.Builder

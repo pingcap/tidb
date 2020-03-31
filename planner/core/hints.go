@@ -14,8 +14,6 @@
 package core
 
 import (
-	"strings"
-
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
@@ -23,7 +21,7 @@ import (
 )
 
 // GenHintsFromPhysicalPlan generates hints from physical plan.
-func GenHintsFromPhysicalPlan(p Plan) string {
+func GenHintsFromPhysicalPlan(p Plan) []*ast.TableOptimizerHint {
 	var hints []*ast.TableOptimizerHint
 	switch pp := p.(type) {
 	case *Explain:
@@ -35,11 +33,7 @@ func GenHintsFromPhysicalPlan(p Plan) string {
 	case PhysicalPlan:
 		hints = genHintsFromPhysicalPlan(pp, utilhint.TypeSelect)
 	}
-	hintsStr := make([]string, 0, len(hints))
-	for _, hint := range hints {
-		hintsStr = append(hintsStr, utilhint.RestoreTableOptimizerHint(hint))
-	}
-	return strings.Join(hintsStr, ", ")
+	return hints
 }
 
 func getTableName(tblName model.CIStr, asName *model.CIStr) model.CIStr {
