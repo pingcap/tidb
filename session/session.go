@@ -598,7 +598,12 @@ func (s *session) isTxnRetryableError(err error) bool {
 }
 
 func (s *session) checkTxnAborted(stmt sqlexec.Statement) error {
-	if s.txn.doNotCommit == nil {
+	var err error
+	if s.txn.doNotCommit != nil {
+		err = errors.New("current transaction is aborted, commands ignored until end of transaction block:" + s.txn.doNotCommit.Error())
+	} else if atomic.LoadUint32(&s.GetSessionVars().TxnCtx.LockExpire) > 0 {
+		err = tikv.ErrLockExpire
+	} else {
 		return nil
 	}
 	// If the transaction is aborted, the following statements do not need to execute, except `commit` and `rollback`,
@@ -609,7 +614,7 @@ func (s *session) checkTxnAborted(stmt sqlexec.Statement) error {
 	if _, ok := stmt.(*executor.ExecStmt).StmtNode.(*ast.RollbackStmt); ok {
 		return nil
 	}
-	return errors.New("current transaction is aborted, commands ignored until end of transaction block:" + s.txn.doNotCommit.Error())
+	return err
 }
 
 func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
@@ -1336,10 +1341,13 @@ func (s *session) DropPreparedStmt(stmtID uint32) error {
 }
 
 func (s *session) Txn(active bool) (kv.Transaction, error) {
-	if !s.txn.validOrPending() && active {
+	if !active {
+		return &s.txn, nil
+	}
+	if !s.txn.validOrPending() {
 		return &s.txn, errors.AddStack(kv.ErrInvalidTxn)
 	}
-	if s.txn.pending() && active {
+	if s.txn.pending() {
 		// Transaction is lazy initialized.
 		// PrepareTxnCtx is called to get a tso future, makes s.txn a pending txn,
 		// If Txn() is called later, wait for the future to get a valid txn.
@@ -1679,6 +1687,22 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	dom := domain.GetDomain(se)
 	dom.InitExpensiveQueryHandle()
 
+	se2, err := createSession(store)
+	if err != nil {
+		return nil, err
+	}
+	se3, err := createSession(store)
+	if err != nil {
+		return nil, err
+	}
+	// We should make the load bind-info loop before other loops which has internal SQL.
+	// Because the internal SQL may access the global bind-info handler. As the result, the data race occurs here as the
+	// LoadBindInfoLoop inits global bind-info handler.
+	err = dom.LoadBindInfoLoop(se2, se3)
+	if err != nil {
+		return nil, err
+	}
+
 	if !config.GetGlobalConfig().Security.SkipGrantTable {
 		err = dom.LoadPrivilegeLoop(se)
 		if err != nil {
@@ -1708,18 +1732,6 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		return nil, err
 	}
 	err = dom.UpdateTableStatsLoop(se1)
-	if err != nil {
-		return nil, err
-	}
-	se2, err := createSession(store)
-	if err != nil {
-		return nil, err
-	}
-	se3, err := createSession(store)
-	if err != nil {
-		return nil, err
-	}
-	err = dom.LoadBindInfoLoop(se2, se3)
 	if err != nil {
 		return nil, err
 	}
@@ -1790,6 +1802,9 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 	s.sessionVars.GlobalVarsAccessor = s
 	s.sessionVars.BinlogClient = binloginfo.GetPumpsClient()
 	s.txn.init()
+
+	sessionBindHandle := bindinfo.NewSessionBindHandle(s.parser)
+	s.SetValue(bindinfo.SessionBindInfoKeyType, sessionBindHandle)
 	return s, nil
 }
 
