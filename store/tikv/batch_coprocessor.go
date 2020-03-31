@@ -99,7 +99,7 @@ func getFlashRPCContextWithRetry(bo *Backoffer, task *copTask, cache *RegionCach
 
 func buildBatchCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, req *kv.Request) ([]*batchCopTask, error) {
 	if req.StoreType != kv.TiFlash {
-		return nil, errors.New("store type must be tiflash !")
+		return nil, errors.New("store type must be tiflash")
 	}
 
 	start := time.Now()
@@ -170,7 +170,7 @@ func buildBatchCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, re
 
 }
 
-func (c *CopClient) SendBatch(ctx context.Context, req *kv.Request, vars *kv.Variables) kv.Response {
+func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *kv.Variables) kv.Response {
 	ctx = context.WithValue(ctx, txnStartKey, req.StartTs)
 	bo := NewBackoffer(ctx, copBuildTaskMaxBackoff).WithVars(vars)
 	tasks, err := buildBatchCopTasks(bo, c.store.regionCache, &copRanges{mid: req.KeyRanges}, req)
@@ -293,11 +293,12 @@ func (b *batchCopIterator) recvFromRespCh(ctx context.Context) (resp *batchCopRe
 	return
 }
 
-func (it *batchCopIterator) Close() error {
-	if atomic.CompareAndSwapUint32(&it.closed, 0, 1) {
-		close(it.finishCh)
+// Close releases the resource.
+func (b *batchCopIterator) Close() error {
+	if atomic.CompareAndSwapUint32(&b.closed, 0, 1) {
+		close(b.finishCh)
 	}
-	it.wg.Wait()
+	b.wg.Wait()
 	return nil
 }
 

@@ -62,10 +62,12 @@ type RegionRequestSender struct {
 	failStoreIDs map[uint64]struct{}
 }
 
+// RegionBatchRequestSender sends BatchCop requests to TiFlash server streamingly.
 type RegionBatchRequestSender struct {
 	RegionRequestSender
 }
 
+// NewRegionBatchRequestSender creates a RegionBatchRequestSender object.
 func NewRegionBatchRequestSender(cache *RegionCache, client Client) *RegionBatchRequestSender {
 	return &RegionBatchRequestSender{RegionRequestSender: RegionRequestSender{regionCache: cache, client: client}}
 }

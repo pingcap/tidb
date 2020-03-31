@@ -506,6 +506,7 @@ type CopStreamResponse struct {
 	Lease                 // Shared by this object and a background goroutine.
 }
 
+// BatchCopStreamResponse comprises the BatchCoprocessorClient , the first result and timeout detector.
 type BatchCopStreamResponse struct {
 	tikvpb.Tikv_BatchCoprocessorClient
 	*coprocessor.BatchResponse

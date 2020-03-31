@@ -58,7 +58,7 @@ type CopClient struct {
 func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variables) kv.Response {
 	if req.StoreType == kv.TiFlash && req.BatchCop {
 		logutil.BgLogger().Info("send batch requests")
-		return c.SendBatch(ctx, req, vars)
+		return c.sendBatch(ctx, req, vars)
 	}
 	ctx = context.WithValue(ctx, txnStartKey, req.StartTs)
 	bo := NewBackoffer(ctx, copBuildTaskMaxBackoff).WithVars(vars)

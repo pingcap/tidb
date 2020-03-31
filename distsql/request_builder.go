@@ -137,6 +137,7 @@ func (builder *RequestBuilder) SetStoreType(storeType kv.StoreType) *RequestBuil
 	return builder
 }
 
+// SetAllowBatchCop sets `BatchCop` property.
 func (builder *RequestBuilder) SetAllowBatchCop(batchCop bool) *RequestBuilder {
 	builder.Request.BatchCop = batchCop
 	return builder
