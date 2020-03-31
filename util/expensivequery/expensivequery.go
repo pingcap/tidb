@@ -78,8 +78,8 @@ func (eqh *Handle) Run() {
 	}
 }
 
-// LogOnQueryExceedQuota prints a log when memory/storage usage of connID is out of memory/storage quota.
-func (eqh *Handle) LogOnQueryExceedQuota(connID uint64) {
+// LogOnQueryExceedMemQuota prints a log when memory usage of connID is out of memory quota.
+func (eqh *Handle) LogOnQueryExceedMemQuota(connID uint64) {
 	if log.GetLevel() > zapcore.WarnLevel {
 		return
 	}

@@ -38,15 +38,12 @@ func NewGlobalDisTracker(bytesLimit int64) *Tracker {
 
 // GlobalPanicOnExceed panics when GlobalDisTracker storage usage exceeds storage quota.
 type GlobalPanicOnExceed struct {
-	mutex   sync.Mutex // For synchronization.
-	acted   bool
-	logHook func(uint64)
+	mutex sync.Mutex // For synchronization.
+	acted bool
 }
 
 // SetLogHook sets a hook for PanicOnExceed.
-func (a *GlobalPanicOnExceed) SetLogHook(hook func(uint64)) {
-	a.logHook = hook
-}
+func (a *GlobalPanicOnExceed) SetLogHook(hook func(uint64)) {}
 
 // Action panics when storage usage exceeds storage quota.
 func (a *GlobalPanicOnExceed) Action(t *Tracker) {
@@ -57,9 +54,6 @@ func (a *GlobalPanicOnExceed) Action(t *Tracker) {
 	}
 	a.acted = true
 	a.mutex.Unlock()
-	if a.logHook != nil {
-		//a.logHook(a.ConnID)
-	}
 	panic(GlobalPanicStorageExceed)
 }
 
