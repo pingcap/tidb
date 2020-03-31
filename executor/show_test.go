@@ -159,7 +159,7 @@ func (s *testSuite2) TestShowGrantsPrivilege(c *C) {
 	tk2.MustQuery("show grants")
 }
 
-func (s *testSuite5) TestIssue3641(c *C) {
+func (s *testSuite2) TestIssue3641(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	_, err := tk.Exec("show tables;")
 	c.Assert(err.Error(), Equals, plannercore.ErrNoDB.Error())
