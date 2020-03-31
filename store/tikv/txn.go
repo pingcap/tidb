@@ -395,7 +395,7 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 			return err
 		}
 		if assignedPrimaryKey {
-			txn.committer.ttlManager.run(txn.committer, lockCtx.Killed)
+			txn.committer.ttlManager.run(txn.committer, lockCtx)
 		}
 	}
 	txn.mu.Lock()

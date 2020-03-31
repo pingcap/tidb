@@ -20,7 +20,9 @@
       "desc select /*+ read_from_storage(tiflash[tt]) */ * from tt where (tt.a > 1 and tt.a < 20) or (tt.a >= 30 and tt.a < 55)",
       "desc select * from ttt order by ttt.a desc",
       "desc select /*+ read_from_storage(tiflash[ttt]) */ * from ttt order by ttt.a desc",
-      "desc select /*+ read_from_storage(tiflash[ttt]) */ * from ttt order by ttt.a"
+      "desc select /*+ read_from_storage(tiflash[ttt]) */ * from ttt order by ttt.a",
+      "desc select /*+ read_from_storage(tikv[t, ttt]) */ * from ttt",
+      "desc select /*+ read_from_storage(tiflash[t, ttt], tikv[tt]) */ * from ttt"
     ]
   },
   {
@@ -29,6 +31,22 @@
       "desc select /*+ read_from_storage(tikv[t], tiflash[t]) */ avg(a) from t",
       "desc select /*+ read_from_storage(tikv[t]) */ avg(a) from t",
       "desc select /*+ read_from_storage(tiflash[t]) */ avg(a) from t"
+    ]
+  },
+  {
+    "name": "TestIsolationReadTiFlashNotChoosePointGet",
+    "cases": [
+      "explain select * from t where t.a = 1",
+      "explain select * from t where t.a in (1, 2)"
+    ]
+  },
+  {
+    "name": "TestIsolationReadTiFlashUseIndexHint",
+    "cases": [
+      "explain select * from t",
+      "explain select * from t use index();",
+      "explain select /*+ use_index(t, idx)*/ * from t",
+      "explain select /*+ use_index(t)*/ * from t"
     ]
   }
 ]
