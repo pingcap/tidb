@@ -303,5 +303,70 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestHintWithoutTableWarning",
+    "Cases": [
+      {
+        "SQL": "select /*+ TIDB_SMJ() */ * from t1, t2 where t1.a=t2.a",
+        "Warnings": [
+          "[planner:1815]Hint TIDB_SMJ() is inapplicable. Please specify the table names in the arguments."
+        ]
+      },
+      {
+        "SQL": "select /*+ MERGE_JOIN() */ * from t1, t2 where t1.a=t2.a",
+        "Warnings": [
+          "[planner:1815]Hint MERGE_JOIN() is inapplicable. Please specify the table names in the arguments."
+        ]
+      },
+      {
+        "SQL": "select /*+ INL_JOIN() */ * from t1, t2 where t1.a=t2.a",
+        "Warnings": [
+          "[planner:1815]Hint INL_JOIN() is inapplicable. Please specify the table names in the arguments."
+        ]
+      },
+      {
+        "SQL": "select /*+ TIDB_INLJ() */ * from t1, t2 where t1.a=t2.a",
+        "Warnings": [
+          "[planner:1815]Hint TIDB_INLJ() is inapplicable. Please specify the table names in the arguments."
+        ]
+      },
+      {
+        "SQL": "select /*+ INL_HASH_JOIN() */ * from t1, t2 where t1.a=t2.a",
+        "Warnings": [
+          "[planner:1815]Hint INL_HASH_JOIN() is inapplicable. Please specify the table names in the arguments."
+        ]
+      },
+      {
+        "SQL": "select /*+ INL_MERGE_JOIN() */ * from t1, t2 where t1.a=t2.a",
+        "Warnings": [
+          "[planner:1815]Hint INL_MERGE_JOIN() is inapplicable. Please specify the table names in the arguments."
+        ]
+      },
+      {
+        "SQL": "select /*+ HASH_JOIN() */ * from t1, t2 where t1.a=t2.a",
+        "Warnings": [
+          "[planner:1815]Hint HASH_JOIN() is inapplicable. Please specify the table names in the arguments."
+        ]
+      },
+      {
+        "SQL": "select /*+ USE_INDEX() */ * from t1, t2 where t1.a=t2.a",
+        "Warnings": [
+          "[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:8064]Optimizer hint syntax error at line 1 column 22 near \") */\" "
+        ]
+      },
+      {
+        "SQL": "select /*+ IGNORE_INDEX() */ * from t1, t2 where t1.a=t2.a",
+        "Warnings": [
+          "[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:8064]Optimizer hint syntax error at line 1 column 25 near \") */\" "
+        ]
+      },
+      {
+        "SQL": "select /*+ USE_INDEX_MERGE() */ * from t1, t2 where t1.a=t2.a",
+        "Warnings": [
+          "[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:8064]Optimizer hint syntax error at line 1 column 28 near \") */\" "
+        ]
+      }
+    ]
   }
 ]

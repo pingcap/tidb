@@ -50,8 +50,7 @@ type Binding struct {
 	Collation  string
 	// Hint is the parsed hints, it is used to bind hints to stmt node.
 	Hint *HintsSet
-	// ID is the string form of all hints. It is used to uniquely identify different hints.
-	// It would be non-empty only when the status is `Using` or `PendingVerify`.
+	// ID is the string form of Hint. It would be non-empty only when the status is `Using` or `PendingVerify`.
 	ID string
 }
 
@@ -103,22 +102,30 @@ func (br *BindRecord) FindBinding(hint string) *Binding {
 	return nil
 }
 
+// prepareHints builds ID and Hint for BindRecord. If sctx is not nil, we check if
+// the BindSQL is still valid.
 func (br *BindRecord) prepareHints(sctx sessionctx.Context) error {
 	p := parser.New()
 	for i, bind := range br.Bindings {
 		if (bind.Hint != nil && bind.ID != "") || bind.Status == deleted {
 			continue
 		}
+		if sctx != nil {
+			_, err := getHintsForSQL(sctx, bind.BindSQL)
+			if err != nil {
+				return err
+			}
+		}
 		hintsSet, err := ParseHintsSet(p, bind.BindSQL, bind.Charset, bind.Collation)
 		if err != nil {
 			return err
 		}
-		hints, err := getHintsForSQL(sctx, bind.BindSQL)
+		hintsStr, err := hintsSet.Restore()
 		if err != nil {
 			return err
 		}
 		br.Bindings[i].Hint = hintsSet
-		br.Bindings[i].ID = hints
+		br.Bindings[i].ID = hintsStr
 	}
 	return nil
 }

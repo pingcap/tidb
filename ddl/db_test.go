@@ -68,6 +68,7 @@ var _ = Suite(&testDBSuite3{&testDBSuite{}})
 var _ = Suite(&testDBSuite4{&testDBSuite{}})
 var _ = Suite(&testDBSuite5{&testDBSuite{}})
 var _ = Suite(&testDBSuite6{&testDBSuite{}})
+var _ = Suite(&testDBSuite7{&testDBSuite{}})
 var _ = SerialSuites(&testSerialDBSuite{&testDBSuite{}})
 
 const defaultBatchSize = 1024
@@ -136,6 +137,7 @@ type testDBSuite3 struct{ *testDBSuite }
 type testDBSuite4 struct{ *testDBSuite }
 type testDBSuite5 struct{ *testDBSuite }
 type testDBSuite6 struct{ *testDBSuite }
+type testDBSuite7 struct{ *testDBSuite }
 type testSerialDBSuite struct{ *testDBSuite }
 
 func (s *testDBSuite4) TestAddIndexWithPK(c *C) {
@@ -2022,6 +2024,17 @@ func (s *testDBSuite5) TestRenameColumn(c *C) {
 
 	s.mustExec(c, "drop view test_rename_column_view")
 	s.tk.MustExec("drop table test_rename_column")
+}
+
+func (s *testDBSuite7) TestSelectInViewFromAnotherDB(c *C) {
+	_, _ = s.s.Execute(context.Background(), "create database test_db2")
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use " + s.schemaName)
+	s.tk.MustExec("create table t(a int)")
+	s.tk.MustExec("use test_db2")
+	s.tk.MustExec("create sql security invoker view v as select * from " + s.schemaName + ".t")
+	s.tk.MustExec("use " + s.schemaName)
+	s.tk.MustExec("select test_db2.v.a from test_db2.v")
 }
 
 func (s *testDBSuite) mustExec(c *C, query string, args ...interface{}) {
