@@ -133,7 +133,7 @@ func rollingbackAddColumns(t *meta.Meta, job *model.Job) (ver int64, err error) 
 		return ver, errors.Trace(err)
 	}
 
-	var colNames []model.CIStr
+	colNames := make([]model.CIStr, len(columnInfos))
 	originalState := columnInfos[0].State
 	for i, columnInfo := range columnInfos {
 		if columnInfo == nil {
@@ -141,7 +141,7 @@ func rollingbackAddColumns(t *meta.Meta, job *model.Job) (ver int64, err error) 
 			return ver, errCancelledDDLJob
 		}
 		columnInfos[i].State = model.StateDeleteOnly
-		colNames = append(colNames, columnInfo.Name)
+		colNames[i] = columnInfo.Name
 	}
 
 	job.SchemaState = model.StateDeleteOnly

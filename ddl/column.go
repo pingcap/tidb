@@ -428,8 +428,8 @@ func checkDropColumns(t *meta.Meta, job *model.Job) (*model.TableInfo, []*model.
 		return nil, nil, 0, errors.Trace(err)
 	}
 
-	var colInfos []*model.ColumnInfo
-	for _, colName := range colNames {
+	colInfos := make([]*model.ColumnInfo, len(colNames))
+	for i, colName := range colNames {
 		colInfo := model.FindColumnInfo(tblInfo.Columns, colName.L)
 		if colInfo == nil || colInfo.Hidden {
 			job.State = model.JobStateCancelled
@@ -439,7 +439,7 @@ func checkDropColumns(t *meta.Meta, job *model.Job) (*model.TableInfo, []*model.
 			job.State = model.JobStateCancelled
 			return nil, nil, 0, errors.Trace(err)
 		}
-		colInfos = append(colInfos, colInfo)
+		colInfos[i] = colInfo
 	}
 	return tblInfo, colInfos, len(colNames), nil
 }

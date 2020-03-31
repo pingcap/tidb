@@ -878,8 +878,8 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	// for add columns
 	updateTest(&tests[34])
 	addingColNames := []string{"colA", "colB", "colC", "colD", "colE", "colF"}
-	var cols []*table.Column
-	for _, addingColName := range addingColNames {
+	cols := make([]*table.Column, len(addingColNames))
+	for i, addingColName := range addingColNames {
 		newColumnDef := &ast.ColumnDef{
 			Name:    &ast.ColumnName{Name: model.NewCIStr(addingColName)},
 			Tp:      &types.FieldType{Tp: mysql.TypeLonglong},
@@ -887,7 +887,7 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 		}
 		col, _, err := buildColumnAndConstraint(ctx, 0, newColumnDef, nil, mysql.DefaultCharset, "", mysql.DefaultCharset, "")
 		c.Assert(err, IsNil)
-		cols = append(cols, col)
+		cols[i] = col
 	}
 	offsets := make([]int, len(cols))
 	positions := make([]*ast.ColumnPosition, len(cols))

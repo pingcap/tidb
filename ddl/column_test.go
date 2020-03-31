@@ -90,11 +90,11 @@ func testCreateColumn(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo
 	return job
 }
 
-func buildCreateColumnJobs(dbInfo *model.DBInfo, tblInfo *model.TableInfo, colNames []string,
+func buildCreateColumnsJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, colNames []string,
 	positions []*ast.ColumnPosition, defaultValue interface{}) *model.Job {
-	var colInfos []*model.ColumnInfo
+	colInfos := make([]*model.ColumnInfo, len(colNames))
 	offsets := make([]int, len(colNames))
-	for _, colName := range colNames {
+	for i, colName := range colNames {
 		col := &model.ColumnInfo{
 			Name:               model.NewCIStr(colName),
 			Offset:             len(tblInfo.Columns),
@@ -103,7 +103,7 @@ func buildCreateColumnJobs(dbInfo *model.DBInfo, tblInfo *model.TableInfo, colNa
 		}
 		col.ID = allocateColumnID(tblInfo)
 		col.FieldType = *types.NewFieldType(mysql.TypeLong)
-		colInfos = append(colInfos, col)
+		colInfos[i] = col
 	}
 
 	job := &model.Job{
@@ -118,7 +118,7 @@ func buildCreateColumnJobs(dbInfo *model.DBInfo, tblInfo *model.TableInfo, colNa
 
 func testCreateColumns(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo,
 	colNames []string, positions []*ast.ColumnPosition, defaultValue interface{}) *model.Job {
-	job := buildCreateColumnJobs(dbInfo, tblInfo, colNames, positions, defaultValue)
+	job := buildCreateColumnsJob(dbInfo, tblInfo, colNames, positions, defaultValue)
 	err := d.doDDLJob(ctx, job)
 	c.Assert(err, IsNil)
 	v := getSchemaVer(c, ctx)
@@ -149,10 +149,10 @@ func testDropColumn(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, 
 	return job
 }
 
-func buildDropColumnJobs(dbInfo *model.DBInfo, tblInfo *model.TableInfo, colNames []string) *model.Job {
-	var columnNames []model.CIStr
-	for _, colName := range colNames {
-		columnNames = append(columnNames, model.NewCIStr(colName))
+func buildDropColumnsJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, colNames []string) *model.Job {
+	columnNames := make([]model.CIStr, len(colNames))
+	for i, colName := range colNames {
+		columnNames[i] = model.NewCIStr(colName)
 	}
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
@@ -165,7 +165,7 @@ func buildDropColumnJobs(dbInfo *model.DBInfo, tblInfo *model.TableInfo, colName
 }
 
 func testDropColumns(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, colNames []string, isError bool) *model.Job {
-	job := buildDropColumnJobs(dbInfo, tblInfo, colNames)
+	job := buildDropColumnsJob(dbInfo, tblInfo, colNames)
 	err := d.doDDLJob(ctx, job)
 	if isError {
 		c.Assert(err, NotNil)
