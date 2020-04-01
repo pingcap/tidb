@@ -225,6 +225,11 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty) (bestTas
 			// can work.
 			plansFitsProp = nil
 		}
+		if !hintCanWork && !hintWorksWithProp && !prop.Enforced {
+			// If the original property is not enforced and hint cannot
+			// work anyway, we give up `plansNeedEnforce` for efficiency,
+			plansNeedEnforce = nil
+		}
 		newProp.Items = prop.Items
 		newProp.ExpectedCnt = prop.ExpectedCnt
 	}
