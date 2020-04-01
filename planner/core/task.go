@@ -1222,6 +1222,12 @@ func RemoveUnnecessaryFirstRow(
 			for j, gbyExpr := range partialGbyItems {
 				if j >= len(finalGbyItems) {
 					// after distinct push, len(partialGbyItems) may larger than len(finalGbyItems)
+					// for example,
+					// select /*+ HASH_AGG() */ a, count(distinct a) from t;
+					// will generate to,
+					//   HashAgg root  funcs:count(distinct a), funcs:firstrow(a)"
+					//     HashAgg cop  group by:a, funcs:firstrow(a)->Column#6"
+					// the firstrow in root task can not be removed.
 					break
 				}
 				if gbyExpr.Equal(sctx, aggFunc.Args[0]) {

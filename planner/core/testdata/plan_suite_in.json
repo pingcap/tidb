@@ -537,7 +537,7 @@
   {
     "name": "TestPushdownDistinctEnable",
     "cases": [
-      "select /*+ HASH_AGG() */ a, count(distinct a) from t;",
+      "select /*+ HASH_AGG() */ a, count(distinct a) from t;", // firstrow(a) cannot be removed.
       "select /*+ HASH_AGG() */ avg(b), c, avg(b), count(distinct A, B),  count(distinct A), count(distinct c), sum(b) from t group by c;",
       "select /*+ STREAM_AGG() */ count(distinct c) from t group by c;", // can push down
       "select /*+ STREAM_AGG() */ count(distinct c) from t;", // can not push down because c is not in group by
