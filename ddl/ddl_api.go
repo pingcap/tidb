@@ -3239,7 +3239,7 @@ func (d *ddl) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast.Iden
 			return errors.Trace(err)
 		}
 	}
-	doNothing, err := checkAlterTableCharset(tb.Meta(), schema, toCharset, toCollate)
+	doNothing, err := checkAlterTableCharset(tb.Meta(), schema, toCharset, toCollate, needsOverwriteCols)
 	if err != nil {
 		return err
 	}
@@ -3333,7 +3333,7 @@ func (d *ddl) UpdateTableReplicaInfo(ctx sessionctx.Context, physicalID int64, a
 // This function returns 2 variable:
 // doNothing: if doNothing is true, means no need to change any more, because the target charset is same with the charset of table.
 // err: if err is not nil, means it is not possible to change table charset to target charset.
-func checkAlterTableCharset(tblInfo *model.TableInfo, dbInfo *model.DBInfo, toCharset, toCollate string) (doNothing bool, err error) {
+func checkAlterTableCharset(tblInfo *model.TableInfo, dbInfo *model.DBInfo, toCharset, toCollate string, needsOverwriteCols bool) (doNothing bool, err error) {
 	origCharset := tblInfo.Charset
 	origCollate := tblInfo.Collate
 	// Old version schema charset maybe modified when load schema if TreatOldVersionUTF8AsUTF8MB4 was enable.
@@ -3366,6 +3366,10 @@ func checkAlterTableCharset(tblInfo *model.TableInfo, dbInfo *model.DBInfo, toCh
 
 	if err = checkModifyCharsetAndCollation(toCharset, toCollate, origCharset, origCollate, false); err != nil {
 		return doNothing, err
+	}
+	if !needsOverwriteCols {
+		// If we don't change the charset and collation of columns, skip the next checks.
+		return doNothing, nil
 	}
 
 	for _, col := range tblInfo.Columns {
