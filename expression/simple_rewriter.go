@@ -271,7 +271,7 @@ func (sr *simpleRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok boo
 			RetType: types.NewFieldType(mysql.TypeVarchar),
 		})
 	case *ast.SetCollationExpr:
-		arg := sr.pop()
+		arg := sr.stack[len(sr.stack)-1]
 		if collate.NewCollationEnabled() {
 			var collInfo *charset.Collation
 			// TODO(bb7133): use charset.ValidCharsetAndCollation when its bug is fixed.
@@ -290,11 +290,11 @@ func (sr *simpleRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok boo
 			exprType := arg.GetType().Clone()
 			exprType.Collate = v.Collate
 			casted := BuildCastFunction(sr.ctx, arg, exprType)
+			sr.pop()
 			sr.push(casted)
 		} else {
 			// For constant and scalar function, we can set its collate directly.
 			arg.GetType().Collate = v.Collate
-			sr.push(arg)
 		}
 		sr.stack[len(sr.stack)-1].SetCoercibility(CoercibilityExplicit)
 	default:
