@@ -1016,7 +1016,11 @@ func (s *testSuiteJoin1) TestIssue5278(c *C) {
 func (s *testSuiteJoin1) TestIssue15850JoinNullValue(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustQuery("SELECT * FROM (select null) v NATURAL LEFT JOIN (select null) v1;").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("SELECT /*+ HASH_JOIN(v) */ * FROM (select null) v NATURAL LEFT JOIN (select null) v1;").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("SELECT /*+ MERGE_JOIN(v) */ * FROM (select null) v NATURAL LEFT JOIN (select null) v1;").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("SELECT /*+ INL_JOIN */ * FROM (select null) v NATURAL LEFT JOIN (select null) v1;").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("SELECT /*+ INL_HASH_JOIN */ * FROM (select null) v NATURAL LEFT JOIN (select null) v1;").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("SELECT /*+ INL_MERGE_JOIN */ * FROM (select null) v NATURAL LEFT JOIN (select null) v1;").Check(testkit.Rows("<nil>"))
 
 	tk.MustExec("drop table if exists t0;")
 	tk.MustExec("drop view if exists v0;")
