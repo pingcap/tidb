@@ -197,6 +197,7 @@ func (configInspection) inspectDiffConfig(_ context.Context, sctx sessionctx.Con
 		"status.status-port",
 		"log.file.filename",
 		"log.slow-query-file",
+		"tmp-storage-path",
 
 		// PD
 		"advertise-client-urls",
