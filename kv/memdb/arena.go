@@ -1,4 +1,4 @@
-// Copyright 2019 PingCAP, Inc.
+// Copyright 2020 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -13,7 +13,10 @@
 
 package memdb
 
-import "math"
+import (
+	"math"
+	"unsafe"
+)
 
 type arenaAddr struct {
 	blockIdx    uint32
@@ -40,15 +43,54 @@ const (
 
 type arena struct {
 	blockSize int
-	availIdx  int
 	blocks    []arenaBlock
+}
+
+type arenaSnapshot struct {
+	blockSize     int
+	blocks        int
+	offsetInBlock int
 }
 
 func newArenaLocator(initBlockSize int) *arena {
 	return &arena{
 		blockSize: initBlockSize,
-		blocks:    []arenaBlock{newArenaBlock(initBlockSize)},
 	}
+}
+
+func (a *arena) snapshot() arenaSnapshot {
+	snap := arenaSnapshot{
+		blockSize: a.blockSize,
+		blocks:    len(a.blocks),
+	}
+	if len(a.blocks) > 0 {
+		snap.offsetInBlock = a.blocks[len(a.blocks)-1].length
+	}
+	return snap
+}
+
+func (a *arena) revert(snap arenaSnapshot) {
+	for i := snap.blocks; i < len(a.blocks); i++ {
+		a.blocks[i] = arenaBlock{}
+	}
+	a.blocks = a.blocks[:snap.blocks]
+	if len(a.blocks) > 0 {
+		a.blocks[len(a.blocks)-1].length = snap.offsetInBlock
+	}
+	a.blockSize = snap.blockSize
+}
+
+func (a *arena) newNode(key []byte, v []byte, height int) (*node, arenaAddr) {
+	// The base level is already allocated in the node struct.
+	nodeSize := nodeHeaderSize + height*8 + 8 + len(key) + len(v)
+	addr, data := a.alloc(nodeSize)
+	node := (*node)(unsafe.Pointer(&data[0]))
+	node.keyLen = uint16(len(key))
+	node.height = uint16(height)
+	node.valLen = uint32(len(v))
+	copy(data[node.nodeLen():], key)
+	copy(data[node.nodeLen()+int(node.keyLen):], v)
+	return node, addr
 }
 
 func (a *arena) getFrom(addr arenaAddr) []byte {
@@ -56,39 +98,37 @@ func (a *arena) getFrom(addr arenaAddr) []byte {
 }
 
 func (a *arena) alloc(size int) (arenaAddr, []byte) {
-	if size >= maxBlockSize {
-		// Use a separate block to store entry which size larger than specified block size.
-		blk := newArenaBlock(size)
-		blk.length = size
-		a.blocks = append(a.blocks, blk)
-
-		addr := newArenaAddr(len(a.blocks)-1, 0)
-		return addr, blk.buf
+	if size > maxBlockSize {
+		panic("alloc size is larger than max block size")
 	}
 
-	addr, data := a.allocInBlock(a.availIdx, size)
+	if len(a.blocks) == 0 {
+		a.enlarge(size, a.blockSize)
+	}
+
+	addr, data := a.allocInLastBlock(size)
 	if !addr.isNull() {
 		return addr, data
 	}
 
-	a.enlarge(size)
-	return a.allocInBlock(a.availIdx, size)
+	a.enlarge(size, a.blockSize<<1)
+	return a.allocInLastBlock(size)
 }
 
-func (a *arena) enlarge(size int) {
-	a.blockSize <<= 1
-	for a.blockSize <= size {
+func (a *arena) enlarge(allocSize, blockSize int) {
+	a.blockSize = blockSize
+	for a.blockSize <= allocSize {
 		a.blockSize <<= 1
 	}
-	// Size always less than maxBlockSize.
+	// Size will never larger than maxBlockSize.
 	if a.blockSize > maxBlockSize {
 		a.blockSize = maxBlockSize
 	}
 	a.blocks = append(a.blocks, newArenaBlock(a.blockSize))
-	a.availIdx = int(uint32(len(a.blocks) - 1))
 }
 
-func (a *arena) allocInBlock(idx, size int) (arenaAddr, []byte) {
+func (a *arena) allocInLastBlock(size int) (arenaAddr, []byte) {
+	idx := len(a.blocks) - 1
 	offset, data := a.blocks[idx].alloc(size)
 	if offset == nullBlockOffset {
 		return arenaAddr{}, nil
@@ -97,7 +137,10 @@ func (a *arena) allocInBlock(idx, size int) (arenaAddr, []byte) {
 }
 
 func (a *arena) reset() {
-	a.availIdx = 0
+	if len(a.blocks) == 0 {
+		return
+	}
+
 	a.blockSize = len(a.blocks[0].buf)
 	a.blocks = []arenaBlock{a.blocks[0]}
 	a.blocks[0].reset()
