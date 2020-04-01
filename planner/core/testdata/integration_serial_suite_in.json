@@ -26,11 +26,27 @@
     ]
   },
   {
+    "name": "TestIsolationReadTiFlashUseIndexHint",
+    "cases": [
+      "explain select * from t",
+      "explain select * from t use index();",
+      "explain select /*+ use_index(t, idx)*/ * from t",
+      "explain select /*+ use_index(t)*/ * from t"
+    ]
+  },
+  {
     "name": "TestReadFromStorageHintAndIsolationRead",
     "cases": [
       "desc select /*+ read_from_storage(tikv[t], tiflash[t]) */ avg(a) from t",
       "desc select /*+ read_from_storage(tikv[t]) */ avg(a) from t",
       "desc select /*+ read_from_storage(tiflash[t]) */ avg(a) from t"
+    ]
+  },
+  {
+    "name": "TestIsolationReadTiFlashNotChoosePointGet",
+    "cases": [
+      "explain select * from t where t.a = 1",
+      "explain select * from t where t.a in (1, 2)"
     ]
   }
 ]
