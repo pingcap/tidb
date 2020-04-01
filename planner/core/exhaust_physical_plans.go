@@ -19,6 +19,7 @@ import (
 	"math"
 	"sort"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -601,6 +602,11 @@ func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 	}
 	joins = make([]PhysicalPlan, 0, 3)
 	innerTask := p.constructInnerTableScanTask(ds, pkCol, outerJoinKeys, us, false, false, avgInnerRowCnt)
+	failpoint.Inject("MockOnlyEnableIndexHashJoin", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(p.constructIndexHashJoin(prop, outerIdx, innerTask, nil, keyOff2IdxOff, nil, nil))
+		}
+	})
 	joins = append(joins, p.constructIndexJoin(prop, outerIdx, innerTask, nil, keyOff2IdxOff, nil, nil)...)
 	// The index merge join's inner plan is different from index join, so we
 	// should construct another inner plan for it.
@@ -657,7 +663,11 @@ func (p *LogicalJoin) buildIndexJoinInner2IndexScan(
 		}
 	}
 	innerTask := p.constructInnerIndexScanTask(ds, helper.chosenPath, helper.chosenRemained, outerJoinKeys, us, rangeInfo, false, false, avgInnerRowCnt, maxOneRow)
-
+	failpoint.Inject("MockOnlyEnableIndexHashJoin", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(p.constructIndexHashJoin(prop, outerIdx, innerTask, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager))
+		}
+	})
 	joins = append(joins, p.constructIndexJoin(prop, outerIdx, innerTask, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager)...)
 	// The index merge join's inner plan is different from index join, so we
 	// should construct another inner plan for it.
@@ -1422,6 +1432,13 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 // If the hint is not matched, it will get other candidates.
 // If the hint is not figured, we will pick all candidates.
 func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
+	failpoint.Inject("MockOnlyEnableIndexHashJoin", func(val failpoint.Value) {
+		if val.(bool) {
+			indexJoins, _ := p.tryToGetIndexJoin(prop)
+			failpoint.Return(indexJoins)
+		}
+	})
+
 	mergeJoins := p.GetMergeJoin(prop, p.schema, p.Stats(), p.children[0].statsInfo(), p.children[1].statsInfo())
 	if (p.preferJoinType & preferMergeJoin) > 0 {
 		return mergeJoins
@@ -1789,7 +1806,8 @@ func (ls *LogicalSort) getNominalSort(reqProp *property.PhysicalProperty) *Nomin
 		return nil
 	}
 	prop.ExpectedCnt = reqProp.ExpectedCnt
-	ps := NominalSort{OnlyColumn: onlyColumn, ByItems: ls.ByItems}.Init(ls.ctx, ls.blockOffset, prop)
+	ps := NominalSort{OnlyColumn: onlyColumn, ByItems: ls.ByItems}.Init(
+		ls.ctx, ls.stats.ScaleByExpectCnt(prop.ExpectedCnt), ls.blockOffset, prop)
 	return ps
 }
 
