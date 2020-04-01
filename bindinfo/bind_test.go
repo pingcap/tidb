@@ -341,16 +341,34 @@ func (s *testSuite) TestGlobalAndSessionBindingBothExist(c *C) {
 
 	tk.MustExec("create global binding for SELECT * from t1,t2 where t1.id = t2.id using SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id")
 
+	// Test bindingUsage, which indicates how many times the binding is used.
 	metrics.BindUsageCounter.Reset()
 	c.Assert(tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "MergeJoin"), IsTrue)
 	pb := &dto.Metric{}
 	metrics.BindUsageCounter.WithLabelValues(metrics.ScopeGlobal).Write(pb)
 	c.Assert(pb.GetCounter().GetValue(), Equals, float64(1))
+
+	// Test 'tidb_use_plan_baselines'
 	tk.MustExec("set @@tidb_use_plan_baselines = 0")
 	c.Assert(tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "HashJoin"), IsTrue)
-
-	tk.MustExec("drop global binding for SELECT * from t1,t2 where t1.id = t2.id")
 	tk.MustExec("set @@tidb_use_plan_baselines = 1")
+
+	// Test 'drop global binding'
+	c.Assert(tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "MergeJoin"), IsTrue)
+	tk.MustExec("drop global binding for SELECT * from t1,t2 where t1.id = t2.id")
+	c.Assert(tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "HashJoin"), IsTrue)
+
+	// Test the case when global and session binding both exist
+	tk.MustExec("create global binding for SELECT * from t1,t2 where t1.id = t2.id using SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id")
+	c.Assert(tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "MergeJoin"), IsTrue)
+	tk.MustExec("create binding for SELECT * from t1,t2 where t1.id = t2.id using SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id")
+	c.Assert(tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "MergeJoin"), IsTrue)
+	tk.MustExec("drop global binding for SELECT * from t1,t2 where t1.id = t2.id")
+	c.Assert(tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "MergeJoin"), IsTrue)
+	tk.MustExec("create global binding for SELECT * from t1,t2 where t1.id = t2.id using SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id")
+	tk.MustExec("drop binding for SELECT * from t1,t2 where t1.id = t2.id")
+	c.Assert(tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "HashJoin"), IsTrue)
+	tk.MustExec("drop global binding for SELECT * from t1,t2 where t1.id = t2.id")
 	c.Assert(tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "HashJoin"), IsTrue)
 }
 
