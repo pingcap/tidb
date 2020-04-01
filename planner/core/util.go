@@ -19,7 +19,9 @@ import (
 	"strings"
 
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/set"
 )
@@ -248,4 +250,19 @@ func extractStringFromStringSet(set set.StringSet) string {
 	}
 	sort.Strings(l)
 	return fmt.Sprintf("%s", strings.Join(l, ","))
+}
+
+func tableHasDirtyContent(ctx sessionctx.Context, tableInfo *model.TableInfo) bool {
+	pi := tableInfo.GetPartitionInfo()
+	if pi == nil {
+		return ctx.HasDirtyContent(tableInfo.ID)
+	}
+	// Currently, we add UnionScan on every partition even though only one partition's data is changed.
+	// This is limited by current implementation of Partition Prune. It'll be updated once we modify that part.
+	for _, partition := range pi.Definitions {
+		if ctx.HasDirtyContent(partition.ID) {
+			return true
+		}
+	}
+	return false
 }
