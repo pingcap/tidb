@@ -339,6 +339,7 @@ func startWithSlash(s *Scanner) (tok int, pos Pos, lit string) {
 	s.r.inc()
 	if s.r.peek() != '*' {
 		tok = int('/')
+		lit = "/"
 		return
 	}
 
