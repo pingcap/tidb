@@ -1274,6 +1274,7 @@ func (s *testSuiteJoin1) TestIndexNestedLoopHashJoin(c *C) {
 		"    └─Selection_26(Probe) 3.00 cop[tikv]  not(isnull(test.t.l_suppkey))",
 		"      └─TableRowIDScan_25 3.00 cop[tikv] table:l2 keep order:false"))
 	tk.MustQuery("select count(*) from t l1 where exists ( select * from t l2 where l2.l_orderkey = l1.l_orderkey and l2.l_suppkey <> l1.l_suppkey );").Check(testkit.Rows("9"))
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/planner/core/MockOnlyEnableIndexHashJoin"), IsNil)
 }
 
 func (s *testSuiteJoin3) TestIssue15686(c *C) {
