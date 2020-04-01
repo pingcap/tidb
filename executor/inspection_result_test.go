@@ -674,9 +674,7 @@ func (s *inspectionResultSuite) TestConfigCheckOfStorageBlockCacheSize(c *C) {
 	ctx := s.setupForInspection(c, mockData, configurations)
 	defer s.tearDownForInspection(c)
 
-	rs, err := tk.Se.Execute(ctx, "select * from metrics_schema.node_total_memory")
-	//rs, err = tk.Se.Execute(ctx, "select * from metrics_schema.node_total_memory")
-	rs, err = tk.Se.Execute(ctx, "select  /*+ time_range('2020-02-14 04:20:00','2020-02-14 05:23:00') */ * from information_schema.inspection_result where rule='config' and item='storage.block-cache.capacity' order by value")
+	rs, err := tk.Se.Execute(ctx, "select  /*+ time_range('2020-02-14 04:20:00','2020-02-14 05:23:00') */ * from information_schema.inspection_result where rule='config' and item='storage.block-cache.capacity' order by value")
 	c.Assert(err, IsNil)
 	result := tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute inspect SQL failed"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0), Commentf("unexpected warnings: %+v", tk.Se.GetSessionVars().StmtCtx.GetWarnings()))
