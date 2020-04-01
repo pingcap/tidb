@@ -466,6 +466,9 @@ func (s *testEvaluatorSuite) TestUnaryNot(c *C) {
 		{[]interface{}{123}, 0, false, false},
 		{[]interface{}{-123}, 0, false, false},
 		{[]interface{}{"123"}, 0, false, false},
+		{[]interface{}{float64(0.3)}, 0, false, false},
+		{[]interface{}{"0.3"}, 0, false, false},
+		{[]interface{}{types.NewDecFromFloatForTest(0.3)}, 0, false, false},
 		{[]interface{}{nil}, 0, true, false},
 
 		{[]interface{}{errors.New("must error")}, 0, false, true},
@@ -538,6 +541,21 @@ func (s *testEvaluatorSuite) TestIsTrueOrFalse(c *C) {
 			args:    []interface{}{""},
 			isTrue:  0,
 			isFalse: 1,
+		},
+		{
+			args:    []interface{}{"0.3"},
+			isTrue:  1,
+			isFalse: 0,
+		},
+		{
+			args:    []interface{}{float64(0.3)},
+			isTrue:  1,
+			isFalse: 0,
+		},
+		{
+			args:    []interface{}{types.NewDecFromFloatForTest(0.3)},
+			isTrue:  1,
+			isFalse: 0,
 		},
 		{
 			args:    []interface{}{nil},

@@ -122,7 +122,6 @@ func (s *testStatisticsSuite) TestCMSketchCoding(c *C) {
 	}
 	bytes, err := encodeCMSketch(lSketch)
 	c.Assert(err, IsNil)
-	c.Assert(len(bytes), Equals, 61457)
 	rSketch, err := decodeCMSketch(bytes)
 	c.Assert(err, IsNil)
 	c.Assert(lSketch.Equal(rSketch), IsTrue)
