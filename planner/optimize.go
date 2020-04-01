@@ -51,7 +51,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 
 	sctx.PrepareTSFuture(ctx)
 
-	tableHints := extractTableHintsFromStmtNode(node)
+	tableHints := hint.ExtractTableHintsFromStmtNode(node)
 	stmtHints, warns := handleStmtHints(tableHints)
 	defer func() {
 		sctx.GetSessionVars().StmtCtx.StmtHints = stmtHints
@@ -76,7 +76,17 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		return bestPlan, names, nil
 	}
 	bestPlanHint := plannercore.GenHintsFromPhysicalPlan(bestPlan)
-	binding := bindRecord.FindBinding(bestPlanHint)
+	if len(bindRecord.Bindings) > 0 {
+		orgBinding := bindRecord.Bindings[0] // the first is the original binding
+		for _, tbHint := range tableHints {  // consider table hints which contained by the original binding
+			if orgBinding.Hint.ContainTableHint(tbHint.HintName.String()) {
+				bestPlanHint = append(bestPlanHint, tbHint)
+			}
+		}
+	}
+	bestPlanHintStr := hint.RestoreOptimizerHints(bestPlanHint)
+
+	binding := bindRecord.FindBinding(bestPlanHintStr)
 	// If the best bestPlan is in baselines, just use it.
 	if binding != nil && binding.Status == bindinfo.Using {
 		if sctx.GetSessionVars().UsePlanBaselines {
@@ -120,7 +130,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	if sctx.GetSessionVars().EvolvePlanBaselines && binding == nil &&
 		!originHints.ContainTableHint(plannercore.HintReadFromStorage) &&
 		!bindRecord.Bindings[0].Hint.ContainTableHint(plannercore.HintReadFromStorage) {
-		handleEvolveTasks(ctx, sctx, bindRecord, stmtNode, bestPlanHint)
+		handleEvolveTasks(ctx, sctx, bindRecord, stmtNode, bestPlanHintStr)
 	}
 	// Restore the hint to avoid changing the stmt node.
 	hint.BindHint(stmtNode, originHints)
@@ -290,22 +300,6 @@ func OptimizeExecStmt(ctx context.Context, sctx sessionctx.Context,
 	}
 	err = errors.Errorf("invalid result plan type, should be Execute")
 	return nil, err
-}
-
-func extractTableHintsFromStmtNode(node ast.Node) []*ast.TableOptimizerHint {
-	switch x := node.(type) {
-	case *ast.SelectStmt:
-		return x.TableHints
-	case *ast.UpdateStmt:
-		return x.TableHints
-	case *ast.DeleteStmt:
-		return x.TableHints
-	// TODO: support hint for InsertStmt
-	case *ast.ExplainStmt:
-		return extractTableHintsFromStmtNode(x.Stmt)
-	default:
-		return nil
-	}
 }
 
 func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHints, warns []error) {
