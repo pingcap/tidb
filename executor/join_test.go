@@ -20,6 +20,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
@@ -1198,7 +1199,7 @@ func (s *testSuiteJoin1) TestIndexLookupJoin(c *C) {
 	tk.MustQuery("select /*+ inl_merge_join(t1)*/ * from t1 join t2 on t2.b=t1.id and t2.a=t1.id;").Check(testkit.Rows("1 1 1"))
 }
 
-func (s *testSuiteJoin1) TestIndexNestedLoopHashJoin(c *C) {
+func (s *testSuiteJoinSerial) TestIndexNestedLoopHashJoin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_init_chunk_size=2")
@@ -1230,6 +1231,51 @@ func (s *testSuiteJoin1) TestIndexNestedLoopHashJoin(c *C) {
 	for i, row := range rs.Rows() {
 		c.Assert(row[0].(string), Equals, fmt.Sprintf("%d", i))
 	}
+
+	// index hash join with semi join
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/planner/core/MockOnlyEnableIndexHashJoin", "return(true)"), IsNil)
+	tk.MustExec("drop table t")
+	tk.MustExec("CREATE TABLE `t` (	`l_orderkey` int(11) NOT NULL,`l_linenumber` int(11) NOT NULL,`l_partkey` int(11) DEFAULT NULL,`l_suppkey` int(11) DEFAULT NULL,PRIMARY KEY (`l_orderkey`,`l_linenumber`))")
+	tk.MustExec(`insert into t values(0,0,0,0);`)
+	tk.MustExec(`insert into t values(0,1,0,1);`)
+	tk.MustExec(`insert into t values(0,2,0,0);`)
+	tk.MustExec(`insert into t values(1,0,1,0);`)
+	tk.MustExec(`insert into t values(1,1,1,1);`)
+	tk.MustExec(`insert into t values(1,2,1,0);`)
+	tk.MustExec(`insert into t values(2,0,0,0);`)
+	tk.MustExec(`insert into t values(2,1,0,1);`)
+	tk.MustExec(`insert into t values(2,2,0,0);`)
+
+	tk.MustExec("analyze table t")
+
+	// test semi join
+	tk.Se.GetSessionVars().InitChunkSize = 2
+	tk.Se.GetSessionVars().MaxChunkSize = 2
+	tk.MustExec("set @@tidb_index_join_batch_size=2")
+	tk.MustQuery("desc select * from t l1 where exists ( select * from t l2 where l2.l_orderkey = l1.l_orderkey and l2.l_suppkey <> l1.l_suppkey ) order by `l_orderkey`,`l_linenumber`;").Check(testkit.Rows(
+		"Sort_9 7.20 root  test.t.l_orderkey:asc, test.t.l_linenumber:asc",
+		"└─IndexHashJoin_17 7.20 root  semi join, inner:IndexLookUp_15, outer key:test.t.l_orderkey, inner key:test.t.l_orderkey, other cond:ne(test.t.l_suppkey, test.t.l_suppkey)",
+		"  ├─TableReader_20(Build) 9.00 root  data:Selection_19",
+		"  │ └─Selection_19 9.00 cop[tikv]  not(isnull(test.t.l_suppkey))",
+		"  │   └─TableFullScan_18 9.00 cop[tikv] table:l1 keep order:false",
+		"  └─IndexLookUp_15(Probe) 3.00 root  ",
+		"    ├─IndexRangeScan_12(Build) 3.00 cop[tikv] table:l2, index:PRIMARY(l_orderkey, l_linenumber) range: decided by [eq(test.t.l_orderkey, test.t.l_orderkey)], keep order:false",
+		"    └─Selection_14(Probe) 3.00 cop[tikv]  not(isnull(test.t.l_suppkey))",
+		"      └─TableRowIDScan_13 3.00 cop[tikv] table:l2 keep order:false"))
+	tk.MustQuery("select * from t l1 where exists ( select * from t l2 where l2.l_orderkey = l1.l_orderkey and l2.l_suppkey <> l1.l_suppkey )order by `l_orderkey`,`l_linenumber`;").Check(testkit.Rows("0 0 0 0", "0 1 0 1", "0 2 0 0", "1 0 1 0", "1 1 1 1", "1 2 1 0", "2 0 0 0", "2 1 0 1", "2 2 0 0"))
+	tk.MustQuery("desc select count(*) from t l1 where exists ( select * from t l2 where l2.l_orderkey = l1.l_orderkey and l2.l_suppkey <> l1.l_suppkey );").Check(testkit.Rows(
+		"StreamAgg_14 1.00 root  funcs:count(1)->Column#11",
+		"└─IndexHashJoin_29 7.20 root  semi join, inner:IndexLookUp_27, outer key:test.t.l_orderkey, inner key:test.t.l_orderkey, other cond:ne(test.t.l_suppkey, test.t.l_suppkey)",
+		"  ├─TableReader_23(Build) 9.00 root  data:Selection_22",
+		"  │ └─Selection_22 9.00 cop[tikv]  not(isnull(test.t.l_suppkey))",
+		"  │   └─TableFullScan_21 9.00 cop[tikv] table:l1 keep order:false",
+		"  └─IndexLookUp_27(Probe) 3.00 root  ",
+		"    ├─IndexRangeScan_24(Build) 3.00 cop[tikv] table:l2, index:PRIMARY(l_orderkey, l_linenumber) range: decided by [eq(test.t.l_orderkey, test.t.l_orderkey)], keep order:false",
+		"    └─Selection_26(Probe) 3.00 cop[tikv]  not(isnull(test.t.l_suppkey))",
+		"      └─TableRowIDScan_25 3.00 cop[tikv] table:l2 keep order:false"))
+	tk.MustQuery("select count(*) from t l1 where exists ( select * from t l2 where l2.l_orderkey = l1.l_orderkey and l2.l_suppkey <> l1.l_suppkey );").Check(testkit.Rows("9"))
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/planner/core/MockOnlyEnableIndexHashJoin"), IsNil)
+	tk.MustExec("DROP TABLE IF EXISTS t, s")
 }
 
 func (s *testSuiteJoin3) TestIssue15686(c *C) {
