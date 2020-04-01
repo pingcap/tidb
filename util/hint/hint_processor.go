@@ -86,6 +86,8 @@ func RestoreOptimizerHints(hints []*ast.TableOptimizerHint) string {
 	return strings.Join(hintsStr, ", ")
 }
 
+=======
+>>>>>>> 7f4b1ce2bd563f2138931b2ad3b28765123781cc
 // RestoreTableOptimizerHint returns string format of TableOptimizerHint.
 func RestoreTableOptimizerHint(hint *ast.TableOptimizerHint) string {
 	var sb strings.Builder
