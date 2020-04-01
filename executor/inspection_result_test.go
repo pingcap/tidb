@@ -632,6 +632,6 @@ func (s *inspectionResultSuite) TestNodeLoadInspection(c *C) {
 		"cpu-load5 node node-1 14.1 < 14.0 cpu-load5 should less than (cpu_logical_cores * 0.7)",
 		"disk-usage node node-0 80.0% < 70% the disk-usage of /dev/nvme0 is too high",
 		"swap-memory-used node node-1 1.0 0 ",
-		"virtual-memory-usage node node-0 80.0% < 70% the memory-usage of node-0 is too high",
+		"virtual-memory-usage node node-0 80.0% < 70% the memory-usage is too high",
 	))
 }

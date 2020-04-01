@@ -343,7 +343,7 @@ func (i inspectVirtualMemUsage) genResult(sql string, row chunk.Row) inspectionR
 		actual:   fmt.Sprintf("%.1f%%", row.GetFloat64(1)),
 		expected: "< 70%",
 		severity: "warning",
-		detail:   "the memory-usage of " + row.GetString(0) + " is too high",
+		detail:   "the memory-usage is too high",
 	}
 }
 
