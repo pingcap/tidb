@@ -92,7 +92,7 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.CreateTableStmt) (*m
 	}
 	if s.Partition.Expr != nil {
 		buf := new(bytes.Buffer)
-		restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, buf)
+		restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags|format.RestoreSpacesAroundBinaryOperation, buf)
 		if err := s.Partition.Expr.Restore(restoreCtx); err != nil {
 			return nil, err
 		}
