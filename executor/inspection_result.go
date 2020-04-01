@@ -345,7 +345,7 @@ func (c configInspection) checkTiKVBlockCacheSizeConfig(ctx context.Context, sct
 					ipToCount[ip], ip)
 				results = append(results, inspectionResult{
 					tp:       "tikv",
-					instance: "",
+					instance: ip,
 					item:     item,
 					actual:   fmt.Sprintf("%v", blockSize),
 					expected: fmt.Sprintf("< %.0f", memorySize*0.45),
