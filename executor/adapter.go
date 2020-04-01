@@ -877,7 +877,7 @@ func (a *ExecStmt) SummaryStmt() {
 		sessVars.SetPrevStmtDigest("")
 		return
 	}
-	if !stmtsummary.NeedRecord(a.StmtNode) {
+	if !stmtsummary.CheckNeedRecord(a.StmtNode) {
 		return
 	}
 	stmtCtx := sessVars.StmtCtx

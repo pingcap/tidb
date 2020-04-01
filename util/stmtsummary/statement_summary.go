@@ -886,8 +886,8 @@ func convertEmptyToNil(str string) interface{} {
 	return str
 }
 
-// NeedRecord judges whether this type of statement should be summarized.
-func NeedRecord(stmtNode ast.StmtNode) bool {
+// CheckNeedRecord judges whether this type of statement should be summarized.
+func CheckNeedRecord(stmtNode ast.StmtNode) bool {
 	switch stmtNode.(type) {
 	case ast.DMLNode, ast.DDLNode:
 		return true
