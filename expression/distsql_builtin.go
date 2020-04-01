@@ -320,8 +320,12 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 	case tipb.ScalarFuncSig_BitNegSig:
 		f = &builtinBitNegSig{base}
 
-	case tipb.ScalarFuncSig_UnaryNot:
-		f = &builtinUnaryNotSig{base}
+	case tipb.ScalarFuncSig_UnaryNotReal:
+		f = &builtinUnaryNotRealSig{base}
+	case tipb.ScalarFuncSig_UnaryNotDecimal:
+		f = &builtinUnaryNotDecimalSig{base}
+	case tipb.ScalarFuncSig_UnaryNotInt:
+		f = &builtinUnaryNotIntSig{base}
 	case tipb.ScalarFuncSig_UnaryMinusInt:
 		f = &builtinUnaryMinusIntSig{base}
 	case tipb.ScalarFuncSig_UnaryMinusReal:
