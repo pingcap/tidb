@@ -127,17 +127,14 @@ func (m *memDbBuffer) NewBuffer() MemBuffer {
 	return &memDbBuffer{
 		sandbox:         m.sandbox.Derive(),
 		entrySizeLimit:  TxnEntrySizeLimit,
-		bufferSizeLimit: atomic.LoadUint64(&TxnTotalSizeLimit),
+		bufferSizeLimit: m.bufferSizeLimit - uint64(m.sandbox.Size()),
 	}
 }
 
-func (m *memDbBuffer) Flush() (n int, err error) {
-	n = m.sandbox.Flush()
-	sz := m.sandbox.GetParent().Size()
-	if sz > int(m.bufferSizeLimit) {
-		err = ErrTxnTooLarge.GenWithStackByArgs(sz)
-	}
-	return n, err
+func (m *memDbBuffer) Flush() (int, error) {
+	// There is no need to check size limit,
+	// because the size limit is maintain when derive this buffer.
+	return m.sandbox.Flush(), nil
 }
 
 func (m *memDbBuffer) Discard() {
