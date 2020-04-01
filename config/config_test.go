@@ -171,6 +171,7 @@ unrecognized-option-test = true
 	c.Assert(f.Sync(), IsNil)
 
 	c.Assert(conf.Load(configFile), ErrorMatches, "(?:.|\n)*unknown configuration option(?:.|\n)*")
+	c.Assert(conf.MaxServerConnections, Equals, uint32(0))
 
 	f.Truncate(0)
 	f.Seek(0, 0)
@@ -197,12 +198,14 @@ region-cache-ttl=6000
 store-limit=0
 [stmt-summary]
 enable=false
+enable-internal-query=true
 max-stmt-count=1000
 max-sql-length=1024
 refresh-interval=100
 history-size=100
 [experimental]
 allow-auto-random = true
+allow-expression-index = true
 [isolation-read]
 engines = ["tiflash"]
 `)
@@ -231,6 +234,7 @@ engines = ["tiflash"]
 	c.Assert(conf.DelayCleanTableLock, Equals, uint64(5))
 	c.Assert(conf.SplitRegionMaxNum, Equals, uint64(10000))
 	c.Assert(conf.StmtSummary.Enable, Equals, false)
+	c.Assert(conf.StmtSummary.EnableInternalQuery, Equals, true)
 	c.Assert(conf.StmtSummary.MaxStmtCount, Equals, uint(1000))
 	c.Assert(conf.StmtSummary.MaxSQLLength, Equals, uint(1024))
 	c.Assert(conf.StmtSummary.RefreshInterval, Equals, 100)
@@ -239,6 +243,7 @@ engines = ["tiflash"]
 	c.Assert(conf.RepairMode, Equals, true)
 	c.Assert(conf.MaxServerConnections, Equals, uint32(200))
 	c.Assert(conf.MemQuotaQuery, Equals, int64(10000))
+	c.Assert(conf.Experimental.AllowsExpressionIndex, IsTrue)
 	c.Assert(conf.Experimental.AllowAutoRandom, IsTrue)
 	c.Assert(conf.IsolationRead.Engines, DeepEquals, []string{"tiflash"})
 	c.Assert(conf.MaxIndexLength, Equals, 3080)

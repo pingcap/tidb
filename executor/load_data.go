@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -122,6 +123,7 @@ type LoadDataInfo struct {
 	IgnoreLines uint64
 	Ctx         sessionctx.Context
 	rows        [][]types.Datum
+	Drained     bool
 
 	commitTaskQueue chan CommitTask
 	StopCh          chan struct{}
@@ -261,6 +263,11 @@ func (e *LoadDataInfo) CommitWork(ctx context.Context) error {
 		}
 		if err != nil {
 			logutil.Logger(ctx).Error("load data commit work error", zap.Error(err))
+			break
+		}
+		if atomic.CompareAndSwapUint32(&e.Ctx.GetSessionVars().Killed, 1, 0) {
+			logutil.Logger(ctx).Info("load data query interrupted quit data processing")
+			err = ErrQueryInterrupted
 			break
 		}
 	}
