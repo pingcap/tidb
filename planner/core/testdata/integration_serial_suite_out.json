@@ -1,5 +1,26 @@
 [
   {
+    "Name": "TestSelPushDownTiFlash",
+    "Cases": [
+      {
+        "SQL": "explain select * from t where t.a > 1 and t.b = \"flash\" or t.a + 3 * t.a = 5",
+        "Plan": [
+          "TableReader_7 8000.00 root data:Selection_6",
+          "└─Selection_6 8000.00 cop[tiflash] or(and(gt(test.t.a, 1), eq(test.t.b, \"flash\")), eq(plus(test.t.a, mul(3, test.t.a)), 5))",
+          "  └─TableScan_5 10000.00 cop[tiflash] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select * from t where cast(t.a as decimal(40,10)) + 3 = 5.1",
+        "Plan": [
+          "Selection_5 8000.00 root eq(plus(cast(test.t.a), 3), 5.1)",
+          "└─TableReader_7 10000.00 root data:TableScan_6",
+          "  └─TableScan_6 10000.00 cop[tiflash] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  },
+  {
     "Name": "TestReadFromStorageHint",
     "Cases": [
       {
@@ -49,6 +70,32 @@
           "└─TableReader_17 1.00 root data:StreamAgg_8",
           "  └─StreamAgg_8 1.00 cop[tiflash] funcs:sum(isnull(test.t.a))",
           "    └─TableScan_15 10000.00 cop[tiflash] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "desc select /*+ READ_FROM_STORAGE(TIKV[t1], TIKV[t2]) */ * from t t1, t t2 where t1.a = t2.a",
+        "Plan": [
+          "HashLeftJoin_19 12487.50 root inner join, inner:TableReader_40, equal:[eq(test.t1.a, test.t2.a)]",
+          "├─TableReader_34 9990.00 root data:Selection_33",
+          "│ └─Selection_33 9990.00 cop[tiflash] not(isnull(test.t1.a))",
+          "│   └─TableScan_32 10000.00 cop[tiflash] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "└─TableReader_40 9990.00 root data:Selection_39",
+          "  └─Selection_39 9990.00 cop[tikv] not(isnull(test.t2.a))",
+          "    └─TableScan_38 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "desc select /*+ READ_FROM_STORAGE(TIKV[t1], TIFLASH[t2]) */ * from t t1, t t2 where t1.a = t2.a",
+        "Plan": [
+          "HashLeftJoin_14 12487.50 root inner join, inner:TableReader_22, equal:[eq(test.t1.a, test.t2.a)]",
+          "├─TableReader_25 9990.00 root data:Selection_24",
+          "│ └─Selection_24 9990.00 cop[tikv] not(isnull(test.t1.a))",
+          "│   └─TableScan_23 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "└─TableReader_22 9990.00 root data:Selection_21",
+          "  └─Selection_21 9990.00 cop[tiflash] not(isnull(test.t2.a))",
+          "    └─TableScan_20 10000.00 cop[tiflash] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -130,6 +177,25 @@
         ],
         "Warn": [
           "[planner:1815]No available path for table test.t with the store type tiflash of the hint /*+ read_from_storage */, please check the status of the table replica and variable value of tidb_isolation_read_engines(map[0:{}])"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestIsolationReadTiFlashNotChoosePointGet",
+    "Cases": [
+      {
+        "SQL": "explain select * from t where t.a = 1",
+        "Result": [
+          "TableReader_6 1.00 root data:TableScan_5",
+          "└─TableScan_5 1.00 cop[tiflash] table:t, range:[1,1], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select * from t where t.a in (1, 2)",
+        "Result": [
+          "TableReader_6 2.00 root data:TableScan_5",
+          "└─TableScan_5 2.00 cop[tiflash] table:t, range:[1,1], [2,2], keep order:false, stats:pseudo"
         ]
       }
     ]
