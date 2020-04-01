@@ -1324,7 +1324,6 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 	case tableSessionStatus:
 	case tableOptimizerTrace:
 	case tableTableSpaces:
-		fullRows, err = dataForTiKVRegionStatus(ctx)
 	}
 	if err != nil {
 		return nil, err
