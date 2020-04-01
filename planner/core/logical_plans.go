@@ -262,8 +262,56 @@ type LogicalAggregation struct {
 	inputCount         float64 // inputCount is the input count of this plan.
 }
 
+<<<<<<< HEAD
 func (la *LogicalAggregation) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := la.baseLogicalPlan.extractCorrelatedCols()
+=======
+// HasDistinct shows whether LogicalAggregation has functions with distinct.
+func (la *LogicalAggregation) HasDistinct() bool {
+	for _, aggFunc := range la.AggFuncs {
+		if aggFunc.HasDistinct {
+			return true
+		}
+	}
+	return false
+}
+
+// CopyAggHints copies the aggHints from another LogicalAggregation.
+func (la *LogicalAggregation) CopyAggHints(agg *LogicalAggregation) {
+	// TODO: Copy the hint may make the un-applicable hint throw the
+	// same warning message more than once. We'd better add a flag for
+	// `HaveThrownWarningMessage` to avoid this. Besides, finalAgg and
+	// partialAgg (in cascades planner) should share the same hint, instead
+	// of a copy.
+	la.aggHints = agg.aggHints
+}
+
+// IsPartialModeAgg returns if all of the AggFuncs are partialMode.
+func (la *LogicalAggregation) IsPartialModeAgg() bool {
+	// Since all of the AggFunc share the same AggMode, we only need to check the first one.
+	return la.AggFuncs[0].Mode == aggregation.Partial1Mode
+}
+
+// IsCompleteModeAgg returns if all of the AggFuncs are CompleteMode.
+func (la *LogicalAggregation) IsCompleteModeAgg() bool {
+	// Since all of the AggFunc share the same AggMode, we only need to check the first one.
+	return la.AggFuncs[0].Mode == aggregation.CompleteMode
+}
+
+// GetGroupByCols returns the groupByCols. If the groupByCols haven't be collected,
+// this method would collect them at first. If the GroupByItems have been changed,
+// we should explicitly collect GroupByColumns before this method.
+func (la *LogicalAggregation) GetGroupByCols() []*expression.Column {
+	if la.groupByCols == nil {
+		la.collectGroupByColumns()
+	}
+	return la.groupByCols
+}
+
+// ExtractCorrelatedCols implements LogicalPlan interface.
+func (la *LogicalAggregation) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
+	corCols := make([]*expression.CorrelatedColumn, 0, len(la.GroupByItems)+len(la.AggFuncs))
+>>>>>>> 4eb9ca3... planner: push aggregation functions with distinct to cop (#15500)
 	for _, expr := range la.GroupByItems {
 		corCols = append(corCols, expression.ExtractCorColumns(expr)...)
 	}

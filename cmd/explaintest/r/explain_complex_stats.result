@@ -148,6 +148,7 @@ Projection_10	170.34	root	test.gad.id, test.sdk.id, test.gad.aid, test.gad.cm, t
       └─Selection_16	0.25	cop[tikv]	eq(test.sdk.bm, 0), eq(test.sdk.pt, "ios"), gt(test.sdk.t, 1477971479), not(isnull(test.sdk.mac)), not(isnull(test.sdk.t))
         └─TableScan_15	1.00	cop[tikv]	table:sdk, keep order:false
 explain SELECT cm, p1, p2, p3, p4, p5, p6_md5, p7_md5, count(1) as click_pv, count(DISTINCT ip) as click_ip FROM st WHERE (t between 1478188800 and 1478275200) and aid='cn.sbkcq' and pt='android' GROUP BY cm, p1, p2, p3, p4, p5, p6_md5, p7_md5;
+<<<<<<< HEAD
 id	count	task	operator info
 Projection_5	39.28	root	test.st.cm, test.st.p1, test.st.p2, test.st.p3, test.st.p4, test.st.p5, test.st.p6_md5, test.st.p7_md5, 3_col_0, 3_col_1
 └─HashAgg_7	39.28	root	group by:test.st.cm, test.st.p1, test.st.p2, test.st.p3, test.st.p4, test.st.p5, test.st.p6_md5, test.st.p7_md5, funcs:count(1), count(distinct test.st.ip), firstrow(test.st.cm), firstrow(test.st.p1), firstrow(test.st.p2), firstrow(test.st.p3), firstrow(test.st.p4), firstrow(test.st.p5), firstrow(test.st.p6_md5), firstrow(test.st.p7_md5)
@@ -155,6 +156,15 @@ Projection_5	39.28	root	test.st.cm, test.st.p1, test.st.p2, test.st.p3, test.st.
     ├─IndexScan_12	160.23	cop[tikv]	table:st, index:t, range:[1478188800,1478275200], keep order:false
     └─Selection_14	39.38	cop[tikv]	eq(test.st.aid, "cn.sbkcq"), eq(test.st.pt, "android")
       └─TableScan_13	160.23	cop[tikv]	table:st, keep order:false
+=======
+id	estRows	task	access object	operator info
+Projection_5	39.28	root		test.st.cm, test.st.p1, test.st.p2, test.st.p3, test.st.p4, test.st.p5, test.st.p6_md5, test.st.p7_md5, Column#20, Column#21
+└─HashAgg_6	39.28	root		group by:test.st.cm, test.st.p1, test.st.p2, test.st.p3, test.st.p4, test.st.p5, test.st.p6_md5, test.st.p7_md5, funcs:count(1)->Column#20, funcs:count(distinct test.st.ip)->Column#21, funcs:firstrow(test.st.cm)->test.st.cm, funcs:firstrow(test.st.p1)->test.st.p1, funcs:firstrow(test.st.p2)->test.st.p2, funcs:firstrow(test.st.p3)->test.st.p3, funcs:firstrow(test.st.p4)->test.st.p4, funcs:firstrow(test.st.p5)->test.st.p5, funcs:firstrow(test.st.p6_md5)->test.st.p6_md5, funcs:firstrow(test.st.p7_md5)->test.st.p7_md5
+  └─IndexLookUp_13	39.38	root		
+    ├─IndexRangeScan_10(Build)	160.23	cop[tikv]	table:st, index:t(t)	range:[1478188800,1478275200], keep order:false
+    └─Selection_12(Probe)	39.38	cop[tikv]		eq(test.st.aid, "cn.sbkcq"), eq(test.st.pt, "android")
+      └─TableRowIDScan_11	160.23	cop[tikv]	table:st	keep order:false
+>>>>>>> 4eb9ca3... planner: push aggregation functions with distinct to cop (#15500)
 explain select dt.id as id, dt.aid as aid, dt.pt as pt, dt.dic as dic, dt.cm as cm, rr.gid as gid, rr.acd as acd, rr.t as t,dt.p1 as p1, dt.p2 as p2, dt.p3 as p3, dt.p4 as p4, dt.p5 as p5, dt.p6_md5 as p6, dt.p7_md5 as p7 from dt dt join rr rr on (rr.pt = 'ios' and rr.t > 1478185592 and dt.aid = rr.aid and dt.dic = rr.dic) where dt.pt = 'ios' and dt.t > 1478185592 and dt.bm = 0 limit 2000;
 id	count	task	operator info
 Projection_10	428.32	root	test.dt.id, test.dt.aid, test.dt.pt, test.dt.dic, test.dt.cm, test.rr.gid, test.rr.acd, test.rr.t, test.dt.p1, test.dt.p2, test.dt.p3, test.dt.p4, test.dt.p5, test.dt.p6_md5, test.dt.p7_md5
@@ -168,6 +178,7 @@ Projection_10	428.32	root	test.dt.id, test.dt.aid, test.dt.pt, test.dt.dic, test
       └─Selection_17	0.48	cop[tikv]	eq(test.rr.pt, "ios"), gt(test.rr.t, 1478185592)
         └─TableScan_16	1.00	cop[tikv]	table:rr, keep order:false
 explain select pc,cr,count(DISTINCT uid) as pay_users,count(oid) as pay_times,sum(am) as am from pp where ps=2  and ppt>=1478188800 and ppt<1478275200  and pi in ('510017','520017') and uid in ('18089709','18090780') group by pc,cr;
+<<<<<<< HEAD
 id	count	task	operator info
 Projection_5	207.86	root	test.pp.pc, test.pp.cr, 3_col_0, 3_col_1, 3_col_2
 └─HashAgg_7	207.86	root	group by:test.pp.cr, test.pp.pc, funcs:count(distinct test.pp.uid), count(test.pp.oid), sum(test.pp.am), firstrow(test.pp.pc), firstrow(test.pp.cr)
@@ -175,6 +186,15 @@ Projection_5	207.86	root	test.pp.pc, test.pp.cr, 3_col_0, 3_col_1, 3_col_2
     ├─IndexScan_15	627.00	cop[tikv]	table:pp, index:ps, range:[2,2], keep order:false
     └─Selection_17	207.86	cop[tikv]	ge(test.pp.ppt, 1478188800), in(test.pp.pi, 510017, 520017), in(test.pp.uid, 18089709, 18090780), lt(test.pp.ppt, 1478275200)
       └─TableScan_16	627.00	cop[tikv]	table:pp, keep order:false
+=======
+id	estRows	task	access object	operator info
+Projection_5	207.86	root		test.pp.pc, test.pp.cr, Column#22, Column#23, Column#24
+└─HashAgg_6	207.86	root		group by:test.pp.cr, test.pp.pc, funcs:count(distinct test.pp.uid)->Column#22, funcs:count(test.pp.oid)->Column#23, funcs:sum(test.pp.am)->Column#24, funcs:firstrow(test.pp.pc)->test.pp.pc, funcs:firstrow(test.pp.cr)->test.pp.cr
+  └─IndexLookUp_17	207.86	root		
+    ├─IndexRangeScan_14(Build)	627.00	cop[tikv]	table:pp, index:ps(ps)	range:[2,2], keep order:false
+    └─Selection_16(Probe)	207.86	cop[tikv]		ge(test.pp.ppt, 1478188800), in(test.pp.pi, 510017, 520017), in(test.pp.uid, 18089709, 18090780), lt(test.pp.ppt, 1478275200)
+      └─TableRowIDScan_15	627.00	cop[tikv]	table:pp	keep order:false
+>>>>>>> 4eb9ca3... planner: push aggregation functions with distinct to cop (#15500)
 drop table if exists tbl_001;
 CREATE TABLE tbl_001 (a int, b int);
 load stats 's/explain_complex_stats_tbl_001.json';

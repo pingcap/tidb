@@ -746,6 +746,7 @@ func (p *basePhysicalAgg) newPartialAggregate(storeType kv.StoreType) (partial, 
 		return nil, p.self
 	}
 
+<<<<<<< HEAD
 	finalSchema := p.schema
 	partialSchema := expression.NewSchema()
 	p.schema = partialSchema
@@ -803,10 +804,172 @@ func (p *basePhysicalAgg) newPartialAggregate(storeType kv.StoreType) (partial, 
 			GroupByItems: groupByItems,
 		}.initForStream(p.ctx, p.stats)
 		finalAgg.schema = finalSchema
+=======
+// AggInfo stores the information of an Aggregation.
+type AggInfo struct {
+	AggFuncs     []*aggregation.AggFuncDesc
+	GroupByItems []expression.Expression
+	Schema       *expression.Schema
+}
+
+// BuildFinalModeAggregation splits either LogicalAggregation or PhysicalAggregation to finalAgg and partial1Agg,
+// returns the body of finalAgg and the schema of partialAgg.
+func BuildFinalModeAggregation(
+	sctx sessionctx.Context, original *AggInfo) (partial, final *AggInfo, funcMap map[*aggregation.AggFuncDesc]*aggregation.AggFuncDesc) {
+
+	funcMap = make(map[*aggregation.AggFuncDesc]*aggregation.AggFuncDesc, len(original.AggFuncs))
+	partial = &AggInfo{
+		AggFuncs:     make([]*aggregation.AggFuncDesc, 0, len(original.AggFuncs)),
+		GroupByItems: original.GroupByItems,
+		Schema:       expression.NewSchema(),
+	}
+	partialCursor := 0
+	final = &AggInfo{
+		AggFuncs:     make([]*aggregation.AggFuncDesc, len(original.AggFuncs)),
+		GroupByItems: make([]expression.Expression, 0, len(original.GroupByItems)),
+		Schema:       original.Schema,
+	}
+
+	partialGbySchema := expression.NewSchema()
+	// add group by columns
+	for _, gbyExpr := range partial.GroupByItems {
+		var gbyCol *expression.Column
+		if col, ok := gbyExpr.(*expression.Column); ok {
+			gbyCol = col
+		} else {
+			gbyCol = &expression.Column{
+				UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
+				RetType:  gbyExpr.GetType(),
+			}
+		}
+		partialGbySchema.Append(gbyCol)
+		final.GroupByItems = append(final.GroupByItems, gbyCol)
+	}
+
+	// TODO: Refactor the way of constructing aggregation functions.
+	// This fop loop is ugly, but I do not find a proper way to reconstruct
+	// it right away.
+	for i, aggFunc := range original.AggFuncs {
+		finalAggFunc := &aggregation.AggFuncDesc{HasDistinct: false}
+		finalAggFunc.Name = aggFunc.Name
+		args := make([]expression.Expression, 0, len(aggFunc.Args))
+		if aggFunc.HasDistinct {
+			/*
+				eg: SELECT COUNT(DISTINCT a), SUM(b) FROM t GROUP BY c
+
+				change from
+					[root] group by: c, funcs:count(distinct a), funcs:sum(b)
+				to
+					[root] group by: c, funcs:count(distinct a), funcs:sum(b)
+						[cop]: group by: c, a
+			*/
+			for _, distinctArg := range aggFunc.Args {
+				// 1. add all args to partial.GroupByItems
+				foundInGroupBy := false
+				for j, gbyExpr := range partial.GroupByItems {
+					if gbyExpr.Equal(sctx, distinctArg) {
+						foundInGroupBy = true
+						args = append(args, partialGbySchema.Columns[j])
+						break
+					}
+				}
+				if !foundInGroupBy {
+					partial.GroupByItems = append(partial.GroupByItems, distinctArg)
+					var gbyCol *expression.Column
+					if col, ok := distinctArg.(*expression.Column); ok {
+						gbyCol = col
+					} else {
+						gbyCol = &expression.Column{
+							UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
+							RetType:  distinctArg.GetType(),
+						}
+					}
+					partialGbySchema.Append(gbyCol)
+					args = append(args, gbyCol)
+				}
+			}
+			// Just use groupBy items in Schema of partialAgg as arguments,
+			// no need to spawn FirstRow function.
+
+			finalAggFunc.HasDistinct = true
+			finalAggFunc.Mode = aggregation.CompleteMode
+		} else {
+			if aggregation.NeedCount(finalAggFunc.Name) {
+				ft := types.NewFieldType(mysql.TypeLonglong)
+				ft.Flen, ft.Charset, ft.Collate = 21, charset.CharsetBin, charset.CollationBin
+				partial.Schema.Append(&expression.Column{
+					UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
+					RetType:  ft,
+				})
+				args = append(args, partial.Schema.Columns[partialCursor])
+				partialCursor++
+			}
+			if aggregation.NeedValue(finalAggFunc.Name) {
+				partial.Schema.Append(&expression.Column{
+					UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
+					RetType:  original.Schema.Columns[i].GetType(),
+				})
+				args = append(args, partial.Schema.Columns[partialCursor])
+				partialCursor++
+			}
+			partial.AggFuncs = append(partial.AggFuncs, aggFunc)
+
+			finalAggFunc.Mode = aggregation.FinalMode
+			funcMap[aggFunc] = finalAggFunc
+		}
+
+		finalAggFunc.Args = args
+		finalAggFunc.RetTp = aggFunc.RetTp
+		final.AggFuncs[i] = finalAggFunc
+	}
+	partial.Schema.Append(partialGbySchema.Columns...)
+	return
+}
+
+func (p *basePhysicalAgg) newPartialAggregate(copTaskType kv.StoreType) (partial, final PhysicalPlan) {
+	// Check if this aggregation can push down.
+	if !CheckAggCanPushCop(p.ctx, p.AggFuncs, p.GroupByItems, copTaskType) {
+		return nil, p.self
+	}
+	partialPref, finalPref, funcMap := BuildFinalModeAggregation(p.ctx, &AggInfo{
+		AggFuncs:     p.AggFuncs,
+		GroupByItems: p.GroupByItems,
+		Schema:       p.Schema().Clone(),
+	})
+	if p.tp == plancodec.TypeStreamAgg && len(partialPref.GroupByItems) != len(finalPref.GroupByItems) {
+		return nil, p.self
+	}
+	// Remove unnecessary FirstRow.
+	partialPref.AggFuncs = RemoveUnnecessaryFirstRow(p.ctx,
+		finalPref.AggFuncs, finalPref.GroupByItems,
+		partialPref.AggFuncs, partialPref.GroupByItems, partialPref.Schema, funcMap)
+	if copTaskType == kv.TiDB {
+		// For partial agg of TiDB cop task, since TiDB coprocessor reuse the TiDB executor,
+		// and TiDB aggregation executor won't output the group by value,
+		// so we need add `firstrow` aggregation function to output the group by value.
+		aggFuncs, err := genFirstRowAggForGroupBy(p.ctx, partialPref.GroupByItems)
+		if err != nil {
+			return nil, p.self
+		}
+		partialPref.AggFuncs = append(partialPref.AggFuncs, aggFuncs...)
+	}
+	p.AggFuncs = partialPref.AggFuncs
+	p.GroupByItems = partialPref.GroupByItems
+	p.schema = partialPref.Schema
+	partialAgg := p.self
+	// Create physical "final" aggregation.
+	if p.tp == plancodec.TypeStreamAgg {
+		finalAgg := basePhysicalAgg{
+			AggFuncs:     finalPref.AggFuncs,
+			GroupByItems: finalPref.GroupByItems,
+		}.initForStream(p.ctx, p.stats, p.blockOffset)
+		finalAgg.schema = finalPref.Schema
+>>>>>>> 4eb9ca3... planner: push aggregation functions with distinct to cop (#15500)
 		return partialAgg, finalAgg
 	}
 
 	finalAgg := basePhysicalAgg{
+<<<<<<< HEAD
 		AggFuncs:     finalAggFuncs,
 		GroupByItems: groupByItems,
 	}.initForHash(p.ctx, p.stats)
@@ -814,6 +977,81 @@ func (p *basePhysicalAgg) newPartialAggregate(storeType kv.StoreType) (partial, 
 	return partialAgg, finalAgg
 }
 
+=======
+		AggFuncs:     finalPref.AggFuncs,
+		GroupByItems: finalPref.GroupByItems,
+	}.initForHash(p.ctx, p.stats, p.blockOffset)
+	finalAgg.schema = finalPref.Schema
+	return partialAgg, finalAgg
+}
+
+func genFirstRowAggForGroupBy(ctx sessionctx.Context, groupByItems []expression.Expression) ([]*aggregation.AggFuncDesc, error) {
+	aggFuncs := make([]*aggregation.AggFuncDesc, 0, len(groupByItems))
+	for _, groupBy := range groupByItems {
+		agg, err := aggregation.NewAggFuncDesc(ctx, ast.AggFuncFirstRow, []expression.Expression{groupBy}, false)
+		if err != nil {
+			return nil, err
+		}
+		aggFuncs = append(aggFuncs, agg)
+	}
+	return aggFuncs, nil
+}
+
+// RemoveUnnecessaryFirstRow removes unnecessary FirstRow of the aggregation. This function can be
+// used for both LogicalAggregation and PhysicalAggregation.
+// When the select column is same with the group by key, the column can be removed and gets value from the group by key.
+// e.g
+// select a, count(b) from t group by a;
+// The schema is [firstrow(a), count(b), a]. The column firstrow(a) is unnecessary.
+// Can optimize the schema to [count(b), a] , and change the index to get value.
+func RemoveUnnecessaryFirstRow(
+	sctx sessionctx.Context,
+	finalAggFuncs []*aggregation.AggFuncDesc,
+	finalGbyItems []expression.Expression,
+	partialAggFuncs []*aggregation.AggFuncDesc,
+	partialGbyItems []expression.Expression,
+	partialSchema *expression.Schema,
+	funcMap map[*aggregation.AggFuncDesc]*aggregation.AggFuncDesc) []*aggregation.AggFuncDesc {
+
+	partialCursor := 0
+	newAggFuncs := make([]*aggregation.AggFuncDesc, 0, len(partialAggFuncs))
+	for _, aggFunc := range partialAggFuncs {
+		if aggFunc.Name == ast.AggFuncFirstRow {
+			canOptimize := false
+			for j, gbyExpr := range partialGbyItems {
+				if j >= len(finalGbyItems) {
+					// after distinct push, len(partialGbyItems) may larger than len(finalGbyItems)
+					// for example,
+					// select /*+ HASH_AGG() */ a, count(distinct a) from t;
+					// will generate to,
+					//   HashAgg root  funcs:count(distinct a), funcs:firstrow(a)"
+					//     HashAgg cop  group by:a, funcs:firstrow(a)->Column#6"
+					// the firstrow in root task can not be removed.
+					break
+				}
+				if gbyExpr.Equal(sctx, aggFunc.Args[0]) {
+					canOptimize = true
+					funcMap[aggFunc].Args[0] = finalGbyItems[j]
+					break
+				}
+			}
+			if canOptimize {
+				partialSchema.Columns = append(partialSchema.Columns[:partialCursor], partialSchema.Columns[partialCursor+1:]...)
+				continue
+			}
+		}
+		if aggregation.NeedCount(aggFunc.Name) {
+			partialCursor++
+		}
+		if aggregation.NeedValue(aggFunc.Name) {
+			partialCursor++
+		}
+		newAggFuncs = append(newAggFuncs, aggFunc)
+	}
+	return newAggFuncs
+}
+
+>>>>>>> 4eb9ca3... planner: push aggregation functions with distinct to cop (#15500)
 func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	inputRows := t.count()

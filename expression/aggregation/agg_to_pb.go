@@ -24,7 +24,7 @@ import (
 // AggFuncToPBExpr converts aggregate function to pb.
 func AggFuncToPBExpr(sc *stmtctx.StatementContext, client kv.Client, aggFunc *AggFuncDesc) *tipb.Expr {
 	if aggFunc.HasDistinct {
-		return nil
+		// do nothing and ignore aggFunc.HasDistinct
 	}
 	pc := expression.NewPBConverter(client, sc)
 	var tp tipb.ExprType

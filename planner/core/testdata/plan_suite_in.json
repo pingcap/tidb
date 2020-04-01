@@ -429,5 +429,100 @@
     "cases": [
       "select t1.a, (select count(t2.a) from t t2 where t2.g in (select t3.d from t t3 where t3.c = t1.a)) as agg_col from t t1;"
     ]
+<<<<<<< HEAD
+=======
+  },
+  {
+    "name": "TestIndexJoinHint",
+    "cases": [
+      "select /*+ INL_JOIN(t1) */ * from t1 join t2 on t1.a = t2.a;",
+      "select /*+ INL_HASH_JOIN(t1) */ * from t1 join t2 on t1.a = t2.a;",
+      "select /*+ INL_MERGE_JOIN(t1) */ * from t1 join t2 on t1.a = t2.a;",
+      // Issue 15484
+      "select /*+ inl_merge_join(t2) */ t1.a, t2.a from t t1 left join t t2 use index(g_2) on t1.g=t2.g",
+      "select /*+inl_merge_join(t2)*/ t1.a, t2.a from t t1 left join t t2 use index(g_2) on t1.g=t2.g order by t1.a"
+    ]
+  },
+  {
+    "name": "TestAggToCopHint",
+    "cases": [
+      "select /*+ AGG_TO_COP(), HASH_AGG(), USE_INDEX(t) */ sum(a) from ta group by a",
+      "select /*+ AGG_TO_COP(), USE_INDEX(t) */ sum(b) from ta group by b",
+      "select /*+ AGG_TO_COP(), HASH_AGG(), USE_INDEX(t) */ distinct a from ta group by a",
+      "select /*+ AGG_TO_COP(), HASH_AGG(), HASH_JOIN(t1), USE_INDEX(t1), USE_INDEX(t2) */ sum(t1.a) from ta t1, ta t2 where t1.a = t2.b group by t1.a"
+    ]
+  },
+  {
+    "name": "TestPushdownDistinctEnable",
+    "cases": [
+      "select /*+ HASH_AGG() */ a, count(distinct a) from t;", // firstrow(a) cannot be removed.
+      "select /*+ HASH_AGG() */ avg(b), c, avg(b), count(distinct A, B),  count(distinct A), count(distinct c), sum(b) from t group by c;",
+      "select /*+ STREAM_AGG() */ count(distinct c) from t group by c;", // can push down
+      "select /*+ STREAM_AGG() */ count(distinct c) from t;", // can not push down because c is not in group by
+      "select /*+ HASH_AGG() */ count(distinct c) from t;", // can push down
+      "select count(distinct c) from t group by c;",
+      "select count(distinct c) from t;" // should not use streamAgg because c is not in group by
+    ]
+  },
+  {
+    "name": "TestPushdownDistinctDisable",
+    "cases": [
+      // do not pushdown even AGG_TO_COP is specified.
+      "select /*+ HASH_AGG(), AGG_TO_COP() */ a, count(distinct a) from t;",
+      "select /*+ HASH_AGG(), AGG_TO_COP() */ avg(b), c, avg(b), count(distinct A, B),  count(distinct A), count(distinct c), sum(b) from t group by c;",
+      "select /*+ STREAM_AGG(), AGG_TO_COP() */ count(distinct c) from t group by c;",
+      "select /*+ STREAM_AGG(), AGG_TO_COP() */ count(distinct c) from t;",
+      "select /*+ HASH_AGG(), AGG_TO_COP() */ count(distinct c) from t;",
+      "select /*+ AGG_TO_COP() */ count(distinct c) from t group by c;"
+    ]
+  },
+  {
+    "name": "TestDAGPlanBuilderWindow",
+    "cases":[
+      "select lead(a, 1) over (partition by null) as c from t"
+    ]
+  },
+  {
+    "name": "TestDAGPlanBuilderWindowParallel",
+    "cases":[
+      "select lead(a, 1) over (partition by null) as c from t",
+      "select lead(a, 1) over (partition by b) as c from t"
+    ]
+  },
+  {
+    "name": "TestNominalSort",
+    "cases": [
+      "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by t1.a",
+      "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by t1.a+1",
+      "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by t1.a-1",
+      "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by -t1.a",
+      "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by -t1.a+3",
+      "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by 1+t1.a",
+      "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by 1-t1.a",
+      "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by 1-t1.a+3",
+      "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by 1+t1.a+3",
+      "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by 3*t1.a"
+    ]
+  },
+  {
+    "name": "TestInlineProjection",
+    "cases":[
+      "select /*+ HASH_JOIN(t1) */ t1.b, t2.b from t1, t2 where t1.a = t2.a;",
+      "select /*+ HASH_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;",
+      "select /*+ HASH_JOIN(t1) */ t1.b, t2.b from t1 left outer join t2 on t1.a = t2.a;",
+      "select /*+ HASH_JOIN(t1) */ t1.b, t2.b from t1 right outer join t2 on t1.a = t2.a;",
+      "select 1 from (select /*+ HASH_JOIN(t1) */ t1.a in (select t2.a from t2) from t1) x;",
+      "select 1 from (select /*+ HASH_JOIN(t1) */ t1.a not in (select t2.a from t2) from t1) x;",
+      "select /*+ INL_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;",
+      "select /*+ INL_HASH_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;",
+      "select /*+ INL_MERGE_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;"
+    ]
+  },
+  {
+    "name": "TestHintFromDiffDatabase",
+    "cases": [
+      "select /*+ inl_hash_join(test.t1) */ * from test.t2 join test.t1 on test.t2.a = test.t1.a"
+    ]
+>>>>>>> 4eb9ca3... planner: push aggregation functions with distinct to cop (#15500)
   }
 ]

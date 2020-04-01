@@ -30,6 +30,42 @@ var _ = Suite(&testSessionSuite{})
 type testSessionSuite struct {
 }
 
+<<<<<<< HEAD
+=======
+func (*testSessionSuite) TestSetSystemVariable(c *C) {
+	v := variable.NewSessionVars()
+	v.GlobalVarsAccessor = variable.NewMockGlobalAccessor()
+	v.TimeZone = time.UTC
+	tests := []struct {
+		key   string
+		value interface{}
+		err   bool
+	}{
+		{variable.TxnIsolation, "SERIALIZABLE", true},
+		{variable.TimeZone, "xyz", true},
+		{variable.TiDBOptAggPushDown, "1", false},
+		{variable.TiDBOptDistinctAggPushDown, "1", false},
+		{variable.TIDBMemQuotaQuery, "1024", false},
+		{variable.TIDBMemQuotaHashJoin, "1024", false},
+		{variable.TIDBMemQuotaMergeJoin, "1024", false},
+		{variable.TIDBMemQuotaSort, "1024", false},
+		{variable.TIDBMemQuotaTopn, "1024", false},
+		{variable.TIDBMemQuotaIndexLookupReader, "1024", false},
+		{variable.TIDBMemQuotaIndexLookupJoin, "1024", false},
+		{variable.TIDBMemQuotaNestedLoopApply, "1024", false},
+		{variable.TiDBEnableStmtSummary, "1", false},
+	}
+	for _, t := range tests {
+		err := variable.SetSessionSystemVar(v, t.key, types.NewDatum(t.value))
+		if t.err {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+		}
+	}
+}
+
+>>>>>>> 4eb9ca3... planner: push aggregation functions with distinct to cop (#15500)
 func (*testSessionSuite) TestSession(c *C) {
 	ctx := mock.NewContext()
 
