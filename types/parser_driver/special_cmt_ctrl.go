@@ -20,23 +20,35 @@ import (
 	"github.com/pingcap/parser"
 )
 
+// To add new features that needs to be downgrade-compatible,
+// 1. Define a featureID below and make sure it is unique.
+//    For example, `const FeatureIDMyFea = "my_fea"`.
+// 2. Register the new featureID in init().
+//    Only the registered parser can parse the comment annotated with `my_fea`.
+//    Now, the parser treats `/*T![my_fea] what_ever */` and `what_ever` equivalent.
+//    In other word, the parser in old-version TiDB will ignores these comments.
+// 3. [optional] Add a pattern into FeatureIDPatterns.
+//    This is only required if the new feature is contained in DDL,
+//    and we want to comment out this part of SQL in binlog.
 func init() {
-	parser.SpecialCommentsController.Register(FeatureIDAutoRandom)
+	parser.SpecialCommentsController.Register(string(FeatureIDAutoRandom))
 }
 
 // SpecialCommentVersionPrefix is the prefix of TiDB executable comments.
 const SpecialCommentVersionPrefix = `/*T!`
 
 // BuildSpecialCommentPrefix returns the prefix of `featureID` special comment.
-func BuildSpecialCommentPrefix(featureID string) string {
+func BuildSpecialCommentPrefix(featureID featureID) string {
 	return fmt.Sprintf("%s[%s]", SpecialCommentVersionPrefix, featureID)
 }
 
+type featureID string
+
 const (
-	FeatureIDAutoRandom = "auto_rand"
+	FeatureIDAutoRandom featureID = "auto_rand"
 )
 
 // FeatureIDPatterns is used to record special comments patterns.
-var FeatureIDPatterns = map[string]*regexp.Regexp{
+var FeatureIDPatterns = map[featureID]*regexp.Regexp{
 	FeatureIDAutoRandom: regexp.MustCompile(`AUTO_RANDOM\s*\(\s*\d+\s*\)\s*`),
 }
