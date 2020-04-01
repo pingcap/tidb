@@ -449,7 +449,7 @@ func (s *testSerialSuite) TestCancelAddIndexPanic(c *C) {
 	}
 	c.Assert(checkErr, IsNil)
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:8214]current error msg: Cancelled DDL job, original error msg: Cancelled DDL job")
+	c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
 }
 
 func (s *testSerialSuite) TestRecoverTableByJobID(c *C) {

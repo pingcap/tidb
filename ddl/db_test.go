@@ -430,7 +430,7 @@ LOOP:
 		case err := <-done:
 			c.Assert(checkErr, IsNil)
 			c.Assert(err, NotNil)
-			c.Assert(err.Error(), Equals, "[ddl:8214]current error msg: Cancelled DDL job, original error msg: Cancelled DDL job")
+			c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
 			break LOOP
 		case <-ticker.C:
 			if times >= 10 {
@@ -509,7 +509,7 @@ func (s *testDBSuite4) TestCancelAddIndex1(c *C) {
 	}
 	c.Assert(checkErr, IsNil)
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:8214]current error msg: Cancelled DDL job, original error msg: Cancelled DDL job")
+	c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
 
 	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
 	t := s.testGetTable(c, "t")
@@ -610,7 +610,7 @@ func testCancelDropIndex(c *C, store kv.Storage, d ddl.DDL, idxName, addIdxSQL, 
 		if testCase.cancelSucc {
 			c.Assert(checkErr, IsNil)
 			c.Assert(err, NotNil)
-			c.Assert(err.Error(), Equals, "[ddl:8214]current error msg: Cancelled DDL job, original error msg: Cancelled DDL job")
+			c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
 			c.Assert(indexInfo, NotNil)
 			c.Assert(indexInfo.State, Equals, model.StatePublic)
 		} else {
@@ -668,7 +668,7 @@ func (s *testDBSuite5) TestCancelTruncateTable(c *C) {
 	_, err := s.tk.Exec("truncate table t")
 	c.Assert(checkErr, IsNil)
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:8214]current error msg: Cancelled DDL job, original error msg: Cancelled DDL job")
+	c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
 	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
 }
 
@@ -721,7 +721,7 @@ func (s *testDBSuite1) TestCancelRenameIndex(c *C) {
 	}
 	c.Assert(checkErr, IsNil)
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:8214]current error msg: Cancelled DDL job, original error msg: Cancelled DDL job")
+	c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
 	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
 	t := s.testGetTable(c, "t")
 	for _, idx := range t.Indices() {
@@ -811,7 +811,7 @@ func (s *testDBSuite2) TestCancelDropTableAndSchema(c *C) {
 		if testCase.cancelSucc {
 			c.Assert(checkErr, IsNil)
 			c.Assert(err, NotNil)
-			c.Assert(err.Error(), Equals, "[ddl:8214]current error msg: Cancelled DDL job, original error msg: Cancelled DDL job")
+			c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
 			s.mustExec(c, "insert into t values (?, ?)", i, i)
 		} else {
 			c.Assert(err, IsNil)
@@ -1370,7 +1370,7 @@ func (s *testDBSuite3) TestCancelDropColumn(c *C) {
 			c.Assert(checkErr, IsNil)
 			c.Assert(col1, NotNil)
 			c.Assert(col1.Name.L, Equals, "c3")
-			c.Assert(err1.Error(), Equals, "[ddl:8214]current error msg: Cancelled DDL job, original error msg: Cancelled DDL job")
+			c.Assert(err1.Error(), Equals, "[ddl:8214]Cancelled DDL job")
 		} else {
 			c.Assert(col1, IsNil)
 			c.Assert(err1, IsNil)
@@ -3201,7 +3201,7 @@ LOOP:
 		select {
 		case err := <-done:
 			c.Assert(err, NotNil)
-			c.Assert(err.Error(), Equals, "[ddl:8214]current error msg: Cancelled DDL job, original error msg: Cancelled DDL job")
+			c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
 			break LOOP
 		case <-ticker.C:
 			s.mustExec(c, "insert into t1(c2) values (null);")

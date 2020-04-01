@@ -1301,7 +1301,7 @@ LOOP:
 		case err := <-done:
 			c.Assert(checkErr, IsNil)
 			c.Assert(err, NotNil)
-			c.Assert(err.Error(), Equals, "[ddl:8214]current error msg: Cancelled DDL job, original error msg: Cancelled DDL job")
+			c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
 			break LOOP
 		case <-ticker.C:
 			if times >= 10 {
