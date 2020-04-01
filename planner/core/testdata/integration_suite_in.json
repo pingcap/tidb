@@ -59,38 +59,6 @@
     ]
   },
   {
-    "name": "TestReadFromStorageHint",
-    "cases": [
-      "desc select avg(a) from t",
-      "desc select /*+ read_from_storage(tiflash[t]) */ avg(a) from t",
-      "desc select /*+ read_from_storage(tiflash[t]) */ sum(a) from t",
-      "desc select /*+ read_from_storage(tiflash[t]) */ sum(a+1) from t",
-      "desc select /*+ read_from_storage(tiflash[t]) */ sum(isnull(a)) from t",
-      "desc select * from tt where (tt.a > 1 and tt.a < 20) or (tt.a >= 30 and tt.a < 55)",
-      "desc select /*+ read_from_storage(tiflash[tt]) */ * from tt where (tt.a > 1 and tt.a < 20) or (tt.a >= 30 and tt.a < 55)",
-      "desc select * from ttt order by ttt.a desc",
-      "desc select /*+ read_from_storage(tiflash[ttt]) */ * from ttt order by ttt.a desc",
-      "desc select /*+ read_from_storage(tiflash[ttt]) */ * from ttt order by ttt.a"
-    ]
-  },
-  {
-    "name": "TestReadFromStorageHintAndIsolationRead",
-    "cases": [
-      "desc select /*+ read_from_storage(tikv[t], tiflash[t]) */ avg(a) from t",
-      "desc select /*+ read_from_storage(tikv[t]) */ avg(a) from t",
-      "desc select /*+ read_from_storage(tiflash[t]) */ avg(a) from t"
-    ]
-  },
-  {
-    "name": "TestIsolationReadTiFlashUseIndexHint",
-    "cases": [
-      "explain select * from t",
-      "explain select * from t use index();",
-      "explain select /*+ use_index(t, idx)*/ * from t",
-      "explain select /*+ use_index(t)*/ * from t"
-    ]
-  },
-  {
     "name": "TestSubqueryWithTopN",
     "cases": [
       "desc select t1.b from t t1 where t1.b in (select t2.a from t t2 order by t1.a+t2.a limit 1)"
@@ -101,6 +69,33 @@
     "cases": [
       "desc select /*+ TIDB_INLJ(t2)*/ * from t1, t2 where t1.a = t2.a and t1.b = t2.b",
       "desc select /*+ TIDB_INLJ(t2)*/ * from t1, t2 where t1.a = t2.a and t1.b = t2.a and t1.b = t2.b"
+    ]
+  },
+  {
+    "name": "TestIndexHintWarning",
+    "cases": [
+      "select /*+ USE_INDEX(t1, j) */ * from t1",
+      "select /*+ IGNORE_INDEX(t1, j) */ * from t1",
+      "select /*+ USE_INDEX(t2, a, b, c) */ * from t1",
+      "select /*+ USE_INDEX(t2) */ * from t1",
+      "select /*+ USE_INDEX(t1, a), USE_INDEX(t2, a), USE_INDEX(t3, a) */ * from t1, t2 where t1.a=t2.a",
+      "select /*+ USE_INDEX(t3, a), USE_INDEX(t4, b), IGNORE_INDEX(t3, a) */ * from t1, t2 where t1.a=t2.a",
+      "select /*+ USE_INDEX_MERGE(t3, a, b, d) */ * from t1"
+    ]
+  },
+  {
+    "name": "TestHintWithoutTableWarning",
+    "cases": [
+      "select /*+ TIDB_SMJ() */ * from t1, t2 where t1.a=t2.a",
+      "select /*+ MERGE_JOIN() */ * from t1, t2 where t1.a=t2.a",
+      "select /*+ INL_JOIN() */ * from t1, t2 where t1.a=t2.a",
+      "select /*+ TIDB_INLJ() */ * from t1, t2 where t1.a=t2.a",
+      "select /*+ INL_HASH_JOIN() */ * from t1, t2 where t1.a=t2.a",
+      "select /*+ INL_MERGE_JOIN() */ * from t1, t2 where t1.a=t2.a",
+      "select /*+ HASH_JOIN() */ * from t1, t2 where t1.a=t2.a",
+      "select /*+ USE_INDEX() */ * from t1, t2 where t1.a=t2.a",
+      "select /*+ IGNORE_INDEX() */ * from t1, t2 where t1.a=t2.a",
+      "select /*+ USE_INDEX_MERGE() */ * from t1, t2 where t1.a=t2.a"
     ]
   }
 ]

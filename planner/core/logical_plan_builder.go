@@ -48,6 +48,7 @@ import (
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	util2 "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	utilhint "github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/plancodec"
 )
 
@@ -2185,8 +2186,18 @@ func (b *PlanBuilder) unfoldWildStar(p LogicalPlan, selectFields []*ast.SelectFi
 	return resultList, nil
 }
 
-func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType nodeType, currentLevel int) {
-	hints = b.hintProcessor.getCurrentStmtHints(hints, nodeType, currentLevel)
+func (b *PlanBuilder) pushHintWithoutTableWarning(hint *ast.TableOptimizerHint) {
+	var sb strings.Builder
+	ctx := format.NewRestoreCtx(0, &sb)
+	if err := hint.Restore(ctx); err != nil {
+		return
+	}
+	errMsg := fmt.Sprintf("Hint %s is inapplicable. Please specify the table names in the arguments.", sb.String())
+	b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(errMsg))
+}
+
+func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType utilhint.NodeType, currentLevel int) {
+	hints = b.hintProcessor.GetCurrentStmtHints(hints, nodeType, currentLevel)
 	var (
 		sortMergeTables, INLJTables, INLHJTables, INLMJTables, hashJoinTables []hintTableInfo
 		indexHintList, indexMergeHintList                                     []indexHintInfo
@@ -2195,6 +2206,16 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 		timeRangeHint                                                         ast.HintTimeRange
 	)
 	for _, hint := range hints {
+		// Set warning for the hint that requires the table name.
+		switch hint.HintName.L {
+		case TiDBMergeJoin, HintSMJ, TiDBIndexNestedLoopJoin, HintINLJ, HintINLHJ, HintINLMJ,
+			TiDBHashJoin, HintHJ, HintUseIndex, HintIgnoreIndex, HintIndexMerge:
+			if len(hint.Tables) == 0 {
+				b.pushHintWithoutTableWarning(hint)
+				continue
+			}
+		}
+
 		switch hint.HintName.L {
 		case TiDBMergeJoin, HintSMJ:
 			sortMergeTables = append(sortMergeTables, tableNames2HintTableInfo(b.ctx, hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
@@ -2213,37 +2234,33 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 		case HintAggToCop:
 			aggHints.preferAggToCop = true
 		case HintUseIndex:
-			if len(hint.Tables) != 0 {
-				dbName := hint.Tables[0].DBName
-				if dbName.L == "" {
-					dbName = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
-				}
-				indexHintList = append(indexHintList, indexHintInfo{
-					dbName:  dbName,
-					tblName: hint.Tables[0].TableName,
-					indexHint: &ast.IndexHint{
-						IndexNames: hint.Indexes,
-						HintType:   ast.HintUse,
-						HintScope:  ast.HintForScan,
-					},
-				})
+			dbName := hint.Tables[0].DBName
+			if dbName.L == "" {
+				dbName = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
 			}
+			indexHintList = append(indexHintList, indexHintInfo{
+				dbName:  dbName,
+				tblName: hint.Tables[0].TableName,
+				indexHint: &ast.IndexHint{
+					IndexNames: hint.Indexes,
+					HintType:   ast.HintUse,
+					HintScope:  ast.HintForScan,
+				},
+			})
 		case HintIgnoreIndex:
-			if len(hint.Tables) != 0 {
-				dbName := hint.Tables[0].DBName
-				if dbName.L == "" {
-					dbName = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
-				}
-				indexHintList = append(indexHintList, indexHintInfo{
-					dbName:  dbName,
-					tblName: hint.Tables[0].TableName,
-					indexHint: &ast.IndexHint{
-						IndexNames: hint.Indexes,
-						HintType:   ast.HintIgnore,
-						HintScope:  ast.HintForScan,
-					},
-				})
+			dbName := hint.Tables[0].DBName
+			if dbName.L == "" {
+				dbName = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
 			}
+			indexHintList = append(indexHintList, indexHintInfo{
+				dbName:  dbName,
+				tblName: hint.Tables[0].TableName,
+				indexHint: &ast.IndexHint{
+					IndexNames: hint.Indexes,
+					HintType:   ast.HintIgnore,
+					HintScope:  ast.HintForScan,
+				},
+			})
 		case HintReadFromStorage:
 			switch hint.HintData.(model.CIStr).L {
 			case HintTiFlash:
@@ -2252,16 +2269,19 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 				tikvTables = append(tikvTables, tableNames2HintTableInfo(b.ctx, hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
 			}
 		case HintIndexMerge:
-			if len(hint.Tables) != 0 {
-				indexMergeHintList = append(indexMergeHintList, indexHintInfo{
-					tblName: hint.Tables[0].TableName,
-					indexHint: &ast.IndexHint{
-						IndexNames: hint.Indexes,
-						HintType:   ast.HintUse,
-						HintScope:  ast.HintForScan,
-					},
-				})
+			dbName := hint.Tables[0].DBName
+			if dbName.L == "" {
+				dbName = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
 			}
+			indexMergeHintList = append(indexMergeHintList, indexHintInfo{
+				dbName:  dbName,
+				tblName: hint.Tables[0].TableName,
+				indexHint: &ast.IndexHint{
+					IndexNames: hint.Indexes,
+					HintType:   ast.HintUse,
+					HintScope:  ast.HintForScan,
+				},
+			})
 		case HintTimeRange:
 			timeRangeHint = hint.HintData.(ast.HintTimeRange)
 		default:
@@ -2283,6 +2303,8 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 
 func (b *PlanBuilder) popTableHints() {
 	hintInfo := b.tableHintInfo[len(b.tableHintInfo)-1]
+	b.appendUnmatchedIndexHintWarning(hintInfo.indexHintList, false)
+	b.appendUnmatchedIndexHintWarning(hintInfo.indexMergeHintList, true)
 	b.appendUnmatchedJoinHintWarning(HintINLJ, TiDBIndexNestedLoopJoin, hintInfo.indexNestedLoopJoinTables.inljTables)
 	b.appendUnmatchedJoinHintWarning(HintINLHJ, "", hintInfo.indexNestedLoopJoinTables.inlhjTables)
 	b.appendUnmatchedJoinHintWarning(HintINLMJ, "", hintInfo.indexNestedLoopJoinTables.inlmjTables)
@@ -2290,6 +2312,26 @@ func (b *PlanBuilder) popTableHints() {
 	b.appendUnmatchedJoinHintWarning(HintHJ, TiDBHashJoin, hintInfo.hashJoinTables)
 	b.appendUnmatchedStorageHintWarning(hintInfo.tiflashTables, hintInfo.tikvTables)
 	b.tableHintInfo = b.tableHintInfo[:len(b.tableHintInfo)-1]
+}
+
+func (b *PlanBuilder) appendUnmatchedIndexHintWarning(indexHints []indexHintInfo, usedForIndexMerge bool) {
+	for _, hint := range indexHints {
+		if !hint.matched {
+			var hintTypeString string
+			if usedForIndexMerge {
+				hintTypeString = "use_index_merge"
+			} else {
+				hintTypeString = hint.hintTypeString()
+			}
+			errMsg := fmt.Sprintf("%s(%s) is inapplicable, check whether the table(%s.%s) exists",
+				hintTypeString,
+				hint.indexString(),
+				hint.dbName,
+				hint.tblName,
+			)
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(errMsg))
+		}
+	}
 }
 
 func (b *PlanBuilder) appendUnmatchedJoinHintWarning(joinType string, joinTypeAlias string, hintTables []hintTableInfo) {
@@ -2328,7 +2370,7 @@ func (b *PlanBuilder) TableHints() *tableHintInfo {
 
 func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p LogicalPlan, err error) {
 	b.pushSelectOffset(sel.QueryBlockOffset)
-	b.pushTableHints(sel.TableHints, typeSelect, sel.QueryBlockOffset)
+	b.pushTableHints(sel.TableHints, utilhint.TypeSelect, sel.QueryBlockOffset)
 	defer func() {
 		b.popSelectOffset()
 		// table hints are only visible in the current SELECT statement.
@@ -2553,8 +2595,9 @@ func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) 
 
 func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, asName *model.CIStr) (LogicalPlan, error) {
 	dbName := tn.Schema
+	sessionVars := b.ctx.GetSessionVars()
 	if dbName.L == "" {
-		dbName = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
+		dbName = model.NewCIStr(sessionVars.CurrentDB)
 	}
 
 	tbl, err := b.is.TableByName(dbName, tn.Name)
@@ -2564,8 +2607,8 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 
 	tableInfo := tbl.Meta()
 	var authErr error
-	if b.ctx.GetSessionVars().User != nil {
-		authErr = ErrTableaccessDenied.FastGenByArgs("SELECT", b.ctx.GetSessionVars().User.Username, b.ctx.GetSessionVars().User.Hostname, tableInfo.Name.L)
+	if sessionVars.User != nil {
+		authErr = ErrTableaccessDenied.FastGenByArgs("SELECT", sessionVars.User.Username, sessionVars.User.Hostname, tableInfo.Name.L)
 	}
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName.L, tableInfo.Name.L, "", authErr)
 
@@ -2644,9 +2687,10 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	// extract the IndexMergeHint
 	var indexMergeHints []*ast.IndexHint
 	if hints := b.TableHints(); hints != nil {
-		for _, hint := range hints.indexMergeHintList {
+		for i, hint := range hints.indexMergeHintList {
 			if hint.tblName.L == tblName.L {
 				indexMergeHints = append(indexMergeHints, hint.indexHint)
+				hints.indexMergeHintList[i].matched = true
 			}
 		}
 	}
@@ -2678,7 +2722,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			Hidden:      col.Hidden,
 		})
 		newCol := &expression.Column{
-			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
+			UniqueID: sessionVars.AllocPlanColumnID(),
 			ID:       col.ID,
 			RetType:  &col.FieldType,
 			OrigName: names[i].String(),
@@ -2725,27 +2769,16 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	}
 
 	var result LogicalPlan = ds
-
-	needUS := false
-	if pi := tableInfo.GetPartitionInfo(); pi == nil {
-		if b.ctx.HasDirtyContent(tableInfo.ID) {
-			needUS = true
-		}
-	} else {
-		// Currently, we'll add a UnionScan on every partition even though only one partition's data is changed.
-		// This is limited by current implementation of Partition Prune. It'll updated once we modify that part.
-		for _, partition := range pi.Definitions {
-			if b.ctx.HasDirtyContent(partition.ID) {
-				needUS = true
-				break
-			}
-		}
-	}
-	if needUS {
+	dirty := tableHasDirtyContent(b.ctx, tableInfo)
+	if dirty {
 		us := LogicalUnionScan{handleCol: handleCol}.Init(b.ctx, b.getSelectOffset())
 		us.SetChildren(ds)
 		result = us
 	}
+	if sessionVars.StmtCtx.TblInfo2UnionScan == nil {
+		sessionVars.StmtCtx.TblInfo2UnionScan = make(map[*model.TableInfo]bool)
+	}
+	sessionVars.StmtCtx.TblInfo2UnionScan[tableInfo] = dirty
 
 	for i, colExpr := range ds.Schema().Columns {
 		var expr expression.Expression
@@ -3135,7 +3168,7 @@ func buildColumns2Handle(
 
 func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (Plan, error) {
 	b.pushSelectOffset(0)
-	b.pushTableHints(update.TableHints, typeUpdate, 0)
+	b.pushTableHints(update.TableHints, utilhint.TypeUpdate, 0)
 	defer func() {
 		b.popSelectOffset()
 		// table hints are only visible in the current UPDATE statement.
@@ -3431,7 +3464,7 @@ func extractDefaultExpr(node ast.ExprNode) *ast.DefaultExpr {
 
 func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (Plan, error) {
 	b.pushSelectOffset(0)
-	b.pushTableHints(delete.TableHints, typeDelete, 0)
+	b.pushTableHints(delete.TableHints, utilhint.TypeDelete, 0)
 	defer func() {
 		b.popSelectOffset()
 		// table hints are only visible in the current DELETE statement.
