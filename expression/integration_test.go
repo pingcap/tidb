@@ -5459,6 +5459,15 @@ func (s *testIntegrationSuite) TestCollation(c *C) {
 	tk.MustQuery("select collation('a')").Check(testkit.Rows("utf8mb4_bin"))
 	tk.MustExec("set names utf8mb4 collate utf8mb4_general_ci")
 	tk.MustQuery("select collation('a')").Check(testkit.Rows("utf8mb4_general_ci"))
+
+	tk.MustExec("set names utf8mb4 collate utf8mb4_general_ci")
+	tk.MustExec("set @test_collate_var = 'a'")
+	tk.MustQuery("select collation(@test_collate_var)").Check(testkit.Rows("utf8mb4_general_ci"))
+	tk.MustExec("set names utf8mb4 collate utf8mb4_general_ci")
+	tk.MustExec("set @test_collate_var = 1")
+	tk.MustQuery("select collation(@test_collate_var)").Check(testkit.Rows("utf8mb4_general_ci"))
+	tk.MustExec("set @test_collate_var = concat(\"a\", \"b\" collate utf8mb4_bin)")
+	tk.MustQuery("select collation(@test_collate_var)").Check(testkit.Rows("utf8mb4_bin"))
 }
 
 func (s *testIntegrationSuite) TestCoercibility(c *C) {
@@ -5915,4 +5924,16 @@ func (s *testIntegrationSerialSuite) TestCollateDDL(c *C) {
 	tk.MustExec("create database t;")
 	tk.MustExec("use t;")
 	tk.MustExec("drop database t;")
+}
+
+func (s *testIntegrationSuite) TestNegativeZeroForHashJoin(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("CREATE TABLE t0(c0 float);")
+	tk.MustExec("CREATE TABLE t1(c0 float);")
+	tk.MustExec("INSERT INTO t1(c0) VALUES (0);")
+	tk.MustExec("INSERT INTO t0(c0) VALUES (0);")
+	tk.MustQuery("SELECT t1.c0 FROM t1, t0 WHERE t0.c0=-t1.c0;").Check(testkit.Rows("0"))
+	tk.MustExec("drop TABLE t0;")
+	tk.MustExec("drop table t1;")
 }
