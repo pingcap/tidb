@@ -162,7 +162,11 @@ func (sb *Sandbox) Discard() {
 	}
 
 	sb.head = headNode{}
+	sb.height = 1
+	sb.length = 0
+	sb.size = 0
 	sb.arena.revert(sb.arenaSnap)
+	sb.arena = nil
 }
 
 // Len returns the number of entries in the DB.
@@ -355,7 +359,18 @@ func (sb *Sandbox) merge(new *Sandbox) int {
 		nextNodeData []byte
 	)
 
+	newCnt := new.length
+	sb.length += newCnt
+	sb.size += new.size
+
 	head := new.getHead()
+	if sb.Len() < new.Len() {
+		sb.head, new.head = new.head, sb.head
+		sb.height = new.height
+		sb.length = new.length
+		sb.size = new.size
+	}
+
 	newNodeAddr = head.nexts(0)
 	newNode, newNodeData = head.getNext(arena, 0)
 
@@ -404,9 +419,7 @@ func (sb *Sandbox) merge(new *Sandbox) int {
 		newNode, newNodeAddr, newNodeData = nextNode, nextNodeAddr, nextNodeData
 	}
 
-	sb.length += new.length
-	sb.size += new.size
-	return new.length
+	return newCnt
 }
 
 type mergeState struct {
