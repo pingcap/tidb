@@ -207,7 +207,8 @@ func (r *Region) needReload() bool {
 
 // RegionCache caches Regions loaded from PD.
 type RegionCache struct {
-	pdClient pd.Client
+	pdClient      pd.Client
+	storeLiveness *StoreLiveness
 
 	mu struct {
 		sync.RWMutex                         // mutex protect cached region
@@ -224,9 +225,10 @@ type RegionCache struct {
 }
 
 // NewRegionCache creates a RegionCache.
-func NewRegionCache(pdClient pd.Client) *RegionCache {
+func NewRegionCache(pdClient pd.Client, storeLiveness *StoreLiveness) *RegionCache {
 	c := &RegionCache{
-		pdClient: pdClient,
+		pdClient:      pdClient,
+		storeLiveness: storeLiveness,
 	}
 	c.mu.regions = make(map[RegionVerID]*Region)
 	c.mu.sorted = btree.New(btreeDegree)
@@ -523,8 +525,8 @@ func (c *RegionCache) findRegionByKey(bo *Backoffer, key []byte, isEndKey bool) 
 	return r, nil
 }
 
-// OnSendFail handles send request fail logic.
-func (c *RegionCache) OnSendFail(bo *Backoffer, ctx *RPCContext, scheduleReload bool, err error) {
+// OnStoreDown handles send request fail and store down logic.
+func (c *RegionCache) OnStoreDown(bo *Backoffer, ctx *RPCContext, scheduleReload bool, err error) {
 	tikvRegionCacheCounterWithSendFail.Inc()
 	r := c.getCachedRegionWithRLock(ctx.Region)
 	if r != nil {

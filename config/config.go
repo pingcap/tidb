@@ -44,6 +44,8 @@ const (
 	DefMaxIndexLength = 3072
 	// DefMaxOfMaxIndexLength is the maximum index length(in bytes) for TiDB v3.0.7 and previous version.
 	DefMaxOfMaxIndexLength = 3072 * 4
+	// DefStoreLivenessTimeout is the default value for store liveness timeout.
+	DefStoreLivenessTimeout = 50 * time.Millisecond
 )
 
 // Valid config maps
@@ -425,6 +427,8 @@ type TiKVClient struct {
 	// If a store has been up to the limit, it will return error for successive request to
 	// prevent the store occupying too much token in dispatching level.
 	StoreLimit int64 `toml:"store-limit" json:"store-limit"`
+	// StoreLivenessTimeout in nanosecond is the timeout for store liveness check request.
+	StoreLivenessTimeout time.Duration `toml:"store-aliveness-timeout" json:"store-aliveness-timeout"`
 
 	CoprCache CoprocessorCache `toml:"copr-cache" json:"copr-cache"`
 }
@@ -599,8 +603,9 @@ var defaultConf = Config{
 
 		EnableChunkRPC: true,
 
-		RegionCacheTTL: 600,
-		StoreLimit:     0,
+		RegionCacheTTL:       600,
+		StoreLimit:           0,
+		StoreLivenessTimeout: DefStoreLivenessTimeout,
 
 		CoprCache: CoprocessorCache{
 			// WARNING: Currently Coprocessor Cache may lead to inconsistent result. Do not open it.

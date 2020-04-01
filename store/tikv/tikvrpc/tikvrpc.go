@@ -157,8 +157,9 @@ type Request struct {
 	Type CmdType
 	req  interface{}
 	kvrpcpb.Context
-	ReplicaReadSeed uint32
-	StoreTp         kv.StoreType
+	ReplicaReadSeed  uint32
+	StoreTp          kv.StoreType
+	ByPassSuperBatch bool
 }
 
 // NewRequest returns new kv rpc request.

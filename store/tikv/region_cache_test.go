@@ -52,7 +52,7 @@ func (s *testRegionCacheSuite) SetUpTest(c *C) {
 	s.peer1 = peerIDs[0]
 	s.peer2 = peerIDs[1]
 	pdCli := &codecPDClient{mocktikv.NewPDClient(s.cluster)}
-	s.cache = NewRegionCache(pdCli)
+	s.cache = NewRegionCache(pdCli, nil)
 	s.bo = NewBackoffer(context.Background(), 5000)
 }
 
@@ -304,7 +304,7 @@ func (s *testRegionCacheSuite) TestSendFailedButLeaderNotChange(c *C) {
 	c.Assert(ctxFollower1.Peer.Id, Equals, ctxFollower2.Peer.Id)
 
 	// send fail leader switch to 2
-	s.cache.OnSendFail(s.bo, ctx, false, nil)
+	s.cache.OnStoreDown(s.bo, ctx, false, nil)
 	ctx, err = s.cache.GetTiKVRPCContext(s.bo, loc.Region, kv.ReplicaReadLeader, 0)
 	c.Assert(err, IsNil)
 	c.Assert(ctx.Peer.Id, Equals, s.peer2)
@@ -384,7 +384,7 @@ func (s *testRegionCacheSuite) TestSendFailedInHibernateRegion(c *C) {
 	c.Assert(ctxFollower1.Peer.Id, Equals, ctxFollower2.Peer.Id)
 
 	// send fail leader switch to 2
-	s.cache.OnSendFail(s.bo, ctx, false, nil)
+	s.cache.OnStoreDown(s.bo, ctx, false, nil)
 	ctx, err = s.cache.GetTiKVRPCContext(s.bo, loc.Region, kv.ReplicaReadLeader, 0)
 	c.Assert(err, IsNil)
 	c.Assert(ctx.Peer.Id, Equals, s.peer2)
@@ -473,7 +473,7 @@ func (s *testRegionCacheSuite) TestSendFailInvalidateRegionsInSameStore(c *C) {
 	// Send fail on region1
 	ctx, _ := s.cache.GetTiKVRPCContext(s.bo, loc1.Region, kv.ReplicaReadLeader, 0)
 	s.checkCache(c, 2)
-	s.cache.OnSendFail(s.bo, ctx, false, errors.New("test error"))
+	s.cache.OnStoreDown(s.bo, ctx, false, errors.New("test error"))
 
 	// Get region2 cache will get nil then reload.
 	ctx2, err := s.cache.GetTiKVRPCContext(s.bo, loc2.Region, kv.ReplicaReadLeader, 0)
@@ -515,7 +515,7 @@ func (s *testRegionCacheSuite) TestSendFailedInMultipleNode(c *C) {
 	c.Assert(ctxFollower1.Peer.Id, Equals, ctxFollower2.Peer.Id)
 
 	// send fail leader switch to 2
-	s.cache.OnSendFail(s.bo, ctx, false, nil)
+	s.cache.OnStoreDown(s.bo, ctx, false, nil)
 	ctx, err = s.cache.GetTiKVRPCContext(s.bo, loc.Region, kv.ReplicaReadLeader, 0)
 	c.Assert(err, IsNil)
 	c.Assert(ctx.Peer.Id, Equals, s.peer2)
@@ -538,7 +538,7 @@ func (s *testRegionCacheSuite) TestSendFailedInMultipleNode(c *C) {
 	c.Assert(ctxFollower1.Peer.Id, Not(Equals), ctxFollower2.Peer.Id)
 
 	// send 2 fail leader switch to 3
-	s.cache.OnSendFail(s.bo, ctx, false, nil)
+	s.cache.OnStoreDown(s.bo, ctx, false, nil)
 	ctx, err = s.cache.GetTiKVRPCContext(s.bo, loc.Region, kv.ReplicaReadLeader, 0)
 	c.Assert(err, IsNil)
 	c.Assert(ctx.Peer.Id, Equals, peer3)
@@ -654,7 +654,7 @@ func (s *testRegionCacheSuite) TestReconnect(c *C) {
 func (s *testRegionCacheSuite) TestRegionEpochAheadOfTiKV(c *C) {
 	// Create a separated region cache to do this test.
 	pdCli := &codecPDClient{mocktikv.NewPDClient(s.cluster)}
-	cache := NewRegionCache(pdCli)
+	cache := NewRegionCache(pdCli, nil)
 	defer cache.Close()
 
 	region := createSampleRegion([]byte("k1"), []byte("k2"))
@@ -705,7 +705,7 @@ func (s *testRegionCacheSuite) TestUpdateStoreAddr(c *C) {
 
 	client := &RawKVClient{
 		clusterID:   0,
-		regionCache: NewRegionCache(mocktikv.NewPDClient(s.cluster)),
+		regionCache: NewRegionCache(mocktikv.NewPDClient(s.cluster), nil),
 		rpcClient:   mocktikv.NewRPCClient(s.cluster, mvccStore),
 	}
 	defer client.Close()
@@ -730,7 +730,7 @@ func (s *testRegionCacheSuite) TestReplaceAddrWithNewStore(c *C) {
 
 	client := &RawKVClient{
 		clusterID:   0,
-		regionCache: NewRegionCache(mocktikv.NewPDClient(s.cluster)),
+		regionCache: NewRegionCache(mocktikv.NewPDClient(s.cluster), nil),
 		rpcClient:   mocktikv.NewRPCClient(s.cluster, mvccStore),
 	}
 	defer client.Close()
@@ -759,7 +759,7 @@ func (s *testRegionCacheSuite) TestReplaceNewAddrAndOldOfflineImmediately(c *C) 
 
 	client := &RawKVClient{
 		clusterID:   0,
-		regionCache: NewRegionCache(mocktikv.NewPDClient(s.cluster)),
+		regionCache: NewRegionCache(mocktikv.NewPDClient(s.cluster), nil),
 		rpcClient:   mocktikv.NewRPCClient(s.cluster, mvccStore),
 	}
 	defer client.Close()
@@ -938,7 +938,7 @@ func (s *testRegionCacheSuite) TestFollowerReadFallback(c *C) {
 	c.Assert(ctxFollower1.Peer.Id, Not(Equals), ctxFollower2.Peer.Id)
 
 	// send fail on store2, next follower read is going to fallback to store3
-	s.cache.OnSendFail(s.bo, ctxFollower1, false, errors.New("test error"))
+	s.cache.OnStoreDown(s.bo, ctxFollower1, false, errors.New("test error"))
 	ctx, err = s.cache.GetTiKVRPCContext(s.bo, loc.Region, kv.ReplicaReadFollower, 0)
 	c.Assert(err, IsNil)
 	c.Assert(ctx.Peer.Id, Equals, peer3)
@@ -973,7 +973,7 @@ func (s *testRegionCacheSuite) TestMixedReadFallback(c *C) {
 	c.Assert(ctxFollower3.Peer.Id, Equals, peer3)
 
 	// send fail on store2, next follower read is going to fallback to store3
-	s.cache.OnSendFail(s.bo, ctxFollower1, false, errors.New("test error"))
+	s.cache.OnStoreDown(s.bo, ctxFollower1, false, errors.New("test error"))
 	ctx, err = s.cache.GetTiKVRPCContext(s.bo, loc.Region, kv.ReplicaReadMixed, 0)
 	c.Assert(err, IsNil)
 	c.Assert(ctx.Peer.Id, Equals, s.peer2)
@@ -1078,7 +1078,7 @@ func BenchmarkOnRequestFail(b *testing.B) {
 	*/
 	regionCnt, storeCount := 998, 3
 	cluster := createClusterWithStoresAndRegions(regionCnt, storeCount)
-	cache := NewRegionCache(mocktikv.NewPDClient(cluster))
+	cache := NewRegionCache(mocktikv.NewPDClient(cluster), nil)
 	defer cache.Close()
 	loadRegionsToCache(cache, regionCnt)
 	bo := NewBackoffer(context.Background(), 1)

@@ -249,8 +249,8 @@ func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err err
 		}
 	}
 
-	if ctx.Meta != nil {
-		s.regionCache.OnSendFail(bo, ctx, s.needReloadRegion(ctx), err)
+	if ctx.Meta != nil && !s.regionCache.storeLiveness.IsAlive(ctx.Addr) {
+		s.regionCache.OnStoreDown(bo, ctx, s.needReloadRegion(ctx), err)
 	}
 
 	// Retry on send request failure when it's not canceled.
