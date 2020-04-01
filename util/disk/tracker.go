@@ -47,7 +47,7 @@ func (a *GlobalPanicOnExceed) SetLogHook(hook func(uint64)) {}
 // Action panics when storage usage exceeds storage quota.
 func (a *GlobalPanicOnExceed) Action(t *Tracker) {
 	a.mutex.Lock()
-	a.mutex.Unlock()
+	defer a.mutex.Unlock()
 	panic(GlobalPanicStorageExceed)
 }
 
