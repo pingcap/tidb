@@ -1176,7 +1176,7 @@ func (s *testCodecSuite) TestHashChunkColumns(c *C) {
 	vecHash := []hash.Hash64{fnv.New64(), fnv.New64(), fnv.New64()}
 	rowHash := []hash.Hash64{fnv.New64(), fnv.New64(), fnv.New64()}
 
-	// Test hash value of the first `Null` column
+	// Test hash value of the first two `Null` columns
 	for i := 0; i < 2; i++ {
 		c.Assert(chk.GetRow(0).IsNull(i), Equals, true)
 		err1 := HashChunkColumns(sc, vecHash, chk, tps[i], i, buf, hasNull)
