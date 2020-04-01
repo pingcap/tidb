@@ -16,12 +16,12 @@ package executor
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/errors"
 	"math"
 	"sort"
 	"strconv"
 	"strings"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/infoschema"
 	plannercore "github.com/pingcap/tidb/planner/core"
