@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/parser"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
@@ -137,9 +138,10 @@ type StatementContext struct {
 	PessimisticLockWaited int32
 	LockKeysDuration      time.Duration
 	// planNormalized use for cache the normalized plan, avoid duplicate builds.
-	planNormalized string
-	planDigest     string
-	LockKeysCount  int32
+	planNormalized    string
+	planDigest        string
+	LockKeysCount     int32
+	TblInfo2UnionScan map[*model.TableInfo]bool
 }
 
 // GetNowTsCached getter for nowTs, if not set get now time and cache it
