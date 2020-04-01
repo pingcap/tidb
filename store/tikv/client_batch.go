@@ -16,6 +16,7 @@ package tikv
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"sync"
 	"sync/atomic"
@@ -348,7 +349,11 @@ func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient, tikvTransport
 				// There shouldn't be any unknown responses because if the old entries
 				// are cleaned by `failPendingRequests`, the stream must be re-created
 				// so that old responses will be never received.
-				panic("batchRecvLoop receives a unknown response")
+				msg := fmt.Sprintf(
+					"batchRecvLoop receives a response with unknown ID: %d, resp: %v",
+					requestID, responses[i],
+				)
+				panic(msg)
 			}
 			entry := value.(*batchCommandsEntry)
 			logutil.Eventf(entry.ctx, "receive %T response with other %d batched requests from %s", responses[i].GetCmd(), len(responses), c.target)
