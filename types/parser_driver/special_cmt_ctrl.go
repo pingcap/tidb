@@ -51,5 +51,5 @@ const (
 
 // FeatureIDPatterns is used to record special comments patterns.
 var FeatureIDPatterns = map[featureID]*regexp.Regexp{
-	FeatureIDAutoRandom: regexp.MustCompile(`AUTO_RANDOM\s*\(\s*\d+\s*\)\s*`),
+	FeatureIDAutoRandom: regexp.MustCompile(`(?i)AUTO_RANDOM\s*(\(\s*\d+\s*\))?\s*`),
 }
