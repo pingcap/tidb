@@ -298,8 +298,6 @@ func (s *testSuite1) TestFastAnalyze(c *C) {
 		"test t2  a 0 1 2 1 18446744073709551615 18446744073709551615"))
 }
 
-<<<<<<< HEAD
-=======
 func (s *testSuite1) TestIssue15751(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -321,7 +319,6 @@ func (s *testSuite1) TestIssue15752(c *C) {
 	tk.MustExec("ANALYZE TABLE t0 INDEX i0")
 }
 
->>>>>>> 5d846cf... statistic: fix error when fast analyze on only indexes (#15889)
 func (s *testSuite1) TestAnalyzeIncremental(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
