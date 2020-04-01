@@ -214,14 +214,14 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty) (bestTas
 
 	if newProp.Enforced {
 		// Then, we use the empty property to get physicalPlans and
-		// try to get the task with a enforced sort.
+		// try to get the task with an enforced sort.
 		newProp.Items = []property.Item{}
 		newProp.ExpectedCnt = math.MaxFloat64
 		var hintCanWork bool
 		plansNeedEnforce, hintCanWork = p.self.exhaustPhysicalPlans(newProp)
 		if hintCanWork && !hintWorksWithProp {
 			// If the hint can work with the empty property, but cannot work with
-			// the required property, we give `plansFitProp` to make sure the hint
+			// the required property, we give up `plansFitProp` to make sure the hint
 			// can work.
 			plansFitsProp = nil
 		}
