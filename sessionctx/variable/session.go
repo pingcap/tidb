@@ -42,8 +42,10 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/storeutil"
+	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/timeutil"
 )
 
@@ -154,6 +156,7 @@ type TransactionContext struct {
 	CouldRetry     bool
 	IsPessimistic  bool
 	Isolation      string
+	LockExpire     uint32
 }
 
 // AddUnchangedRowKey adds an unchanged row key in update statement for pessimistic lock.
@@ -299,7 +302,7 @@ type SessionVars struct {
 	// UsersLock is a lock for user defined variables.
 	UsersLock sync.RWMutex
 	// Users are user defined variables.
-	Users map[string]string
+	Users map[string]types.Datum
 	// systems variables, don't modify it directly, use GetSystemVar/SetSystemVar method.
 	systems map[string]string
 	// SysWarningCount is the system variable "warning_count", because it is on the hot path, so we extract it from the systems
@@ -561,8 +564,8 @@ type SessionVars struct {
 	// replicaRead is used for reading data from replicas, only follower is supported at this time.
 	replicaRead kv.ReplicaReadType
 
-	// isolationReadEngines is used to isolation read, tidb only read from the stores whose engine type is in the engines.
-	isolationReadEngines map[kv.StoreType]struct{}
+	// IsolationReadEngines is used to isolation read, tidb only read from the stores whose engine type is in the engines.
+	IsolationReadEngines map[kv.StoreType]struct{}
 
 	PlannerSelectBlockAsName []ast.HintTable
 
@@ -626,7 +629,7 @@ type ConnectionInfo struct {
 // NewSessionVars creates a session vars object.
 func NewSessionVars() *SessionVars {
 	vars := &SessionVars{
-		Users:                       make(map[string]string),
+		Users:                       make(map[string]types.Datum),
 		systems:                     make(map[string]string),
 		PreparedStmts:               make(map[uint32]interface{}),
 		PreparedStmtNameToID:        make(map[string]uint32),
@@ -670,7 +673,7 @@ func NewSessionVars() *SessionVars {
 		AllowRemoveAutoInc:          DefTiDBAllowRemoveAutoInc,
 		UsePlanBaselines:            DefTiDBUsePlanBaselines,
 		EvolvePlanBaselines:         DefTiDBEvolvePlanBaselines,
-		isolationReadEngines:        map[kv.StoreType]struct{}{kv.TiKV: {}, kv.TiFlash: {}, kv.TiDB: {}},
+		IsolationReadEngines:        map[kv.StoreType]struct{}{kv.TiKV: {}, kv.TiFlash: {}, kv.TiDB: {}},
 		LockWaitTimeout:             DefInnodbLockWaitTimeout * 1000,
 		MetricSchemaStep:            DefTiDBMetricSchemaStep,
 		MetricSchemaRangeDuration:   DefTiDBMetricSchemaRangeDuration,
@@ -789,7 +792,7 @@ func (s *SessionVars) GetSplitRegionTimeout() time.Duration {
 
 // GetIsolationReadEngines gets isolation read engines.
 func (s *SessionVars) GetIsolationReadEngines() map[kv.StoreType]struct{} {
-	return s.isolationReadEngines
+	return s.IsolationReadEngines
 }
 
 // CleanBuffers cleans the temporary bufs
@@ -816,6 +819,16 @@ func (s *SessionVars) GetCharsetInfo() (charset, collation string) {
 	charset = s.systems[CharacterSetConnection]
 	collation = s.systems[CollationConnection]
 	return
+}
+
+// SetUserVar set the value and collation for user defined variable.
+func (s *SessionVars) SetUserVar(varName string, svalue string, collation string) {
+	if len(collation) > 0 {
+		s.Users[varName] = types.NewCollationStringDatum(stringutil.Copy(svalue), collation, collate.DefaultLen)
+	} else {
+		_, collation = s.GetCharsetInfo()
+		s.Users[varName] = types.NewCollationStringDatum(stringutil.Copy(svalue), collation, collate.DefaultLen)
+	}
 }
 
 // SetLastInsertID saves the last insert id to the session context.
@@ -1199,15 +1212,15 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBEvolvePlanBaselines:
 		s.EvolvePlanBaselines = TiDBOptOn(val)
 	case TiDBIsolationReadEngines:
-		s.isolationReadEngines = make(map[kv.StoreType]struct{})
+		s.IsolationReadEngines = make(map[kv.StoreType]struct{})
 		for _, engine := range strings.Split(val, ",") {
 			switch engine {
 			case kv.TiKV.Name():
-				s.isolationReadEngines[kv.TiKV] = struct{}{}
+				s.IsolationReadEngines[kv.TiKV] = struct{}{}
 			case kv.TiFlash.Name():
-				s.isolationReadEngines[kv.TiFlash] = struct{}{}
+				s.IsolationReadEngines[kv.TiFlash] = struct{}{}
 			case kv.TiDB.Name():
-				s.isolationReadEngines[kv.TiDB] = struct{}{}
+				s.IsolationReadEngines[kv.TiDB] = struct{}{}
 			}
 		}
 	case TiDBStoreLimit:
@@ -1219,6 +1232,41 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case CollationConnection, CollationDatabase, CollationServer:
 		if _, err := collate.GetCollationByName(val); err != nil {
 			return errors.Trace(err)
+		}
+	case TiDBSlowLogThreshold:
+		conf := config.GetGlobalConfig()
+		if !conf.EnableDynamicConfig {
+			atomic.StoreUint64(&config.GetGlobalConfig().Log.SlowThreshold, uint64(tidbOptInt64(val, logutil.DefaultSlowThreshold)))
+		} else {
+			s.StmtCtx.AppendWarning(errors.Errorf("cannot update %s when enabling dynamic configs", TiDBSlowLogThreshold))
+		}
+	case TiDBRecordPlanInSlowLog:
+		conf := config.GetGlobalConfig()
+		if !conf.EnableDynamicConfig {
+			atomic.StoreUint32(&config.GetGlobalConfig().Log.RecordPlanInSlowLog, uint32(tidbOptInt64(val, logutil.DefaultRecordPlanInSlowLog)))
+		} else {
+			s.StmtCtx.AppendWarning(errors.Errorf("cannot update %s when enabling dynamic configs", TiDBRecordPlanInSlowLog))
+		}
+	case TiDBEnableSlowLog:
+		conf := config.GetGlobalConfig()
+		if !conf.EnableDynamicConfig {
+			config.GetGlobalConfig().Log.EnableSlowLog = TiDBOptOn(val)
+		} else {
+			s.StmtCtx.AppendWarning(errors.Errorf("cannot update %s when enabling dynamic configs", TiDBEnableSlowLog))
+		}
+	case TiDBQueryLogMaxLen:
+		conf := config.GetGlobalConfig()
+		if !conf.EnableDynamicConfig {
+			atomic.StoreUint64(&config.GetGlobalConfig().Log.QueryLogMaxLen, uint64(tidbOptInt64(val, logutil.DefaultQueryLogMaxLen)))
+		} else {
+			s.StmtCtx.AppendWarning(errors.Errorf("cannot update %s when enabling dynamic configs", TiDBQueryLogMaxLen))
+		}
+	case TiDBCheckMb4ValueInUTF8:
+		conf := config.GetGlobalConfig()
+		if !conf.EnableDynamicConfig {
+			config.GetGlobalConfig().CheckMb4ValueInUTF8 = TiDBOptOn(val)
+		} else {
+			s.StmtCtx.AppendWarning(errors.Errorf("cannot update %s when enabling dynamic configs", TiDBCheckMb4ValueInUTF8))
 		}
 	}
 	s.systems[name] = val
