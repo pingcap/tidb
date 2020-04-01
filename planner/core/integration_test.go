@@ -789,3 +789,11 @@ func (s *testIntegrationSuite) TestHintWithoutTableWarning(c *C) {
 		}
 	}
 }
+
+func (s *testIntegrationSuite) TestIssue15858(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int primary key)")
+	tk.MustExec("select * from t t1, (select a from t order by a+1) t2 where t1.a = t2.a")
+}
