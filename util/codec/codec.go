@@ -268,6 +268,20 @@ func encodeHashChunkRow(sc *stmtctx.StatementContext, b []byte, row chunk.Row, a
 		default:
 			return nil, errors.Errorf("unsupport column type for encode %d", allTypes[i].Tp)
 		}
+<<<<<<< HEAD
+=======
+	case mysql.TypeNull:
+		for i := 0; i < rows; i++ {
+			if sel != nil && !sel[i] {
+				continue
+			}
+			isNull[i] = true
+			buf[0] = NilFlag
+			_, _ = h[i].Write(buf)
+		}
+	default:
+		return errors.Errorf("unsupport column type for encode %d", tp.Tp)
+>>>>>>> dec9371... executor: fix building hash table with TypeNull when join (#15913)
 	}
 	return b, errors.Trace(err)
 }

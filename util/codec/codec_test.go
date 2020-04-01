@@ -929,6 +929,7 @@ func datumsForTest(sc *stmtctx.StatementContext) ([]types.Datum, []*types.FieldT
 		value interface{}
 		tp    *types.FieldType
 	}{
+		{nil, types.NewFieldType(mysql.TypeNull)},
 		{nil, types.NewFieldType(mysql.TypeLonglong)},
 		{int64(1), types.NewFieldType(mysql.TypeTiny)},
 		{int64(1), types.NewFieldType(mysql.TypeShort)},
@@ -1021,5 +1022,131 @@ func (s *testCodecSuite) TestHashChunkRow(c *C) {
 
 	c.Assert(err1, IsNil)
 	c.Assert(err2, IsNil)
+<<<<<<< HEAD
 	c.Assert(b1, BytesEquals, b2)
+=======
+	c.Assert(sum1, Equals, sum2)
+	e, err := EqualChunkRow(sc,
+		chk.GetRow(0), tps, colIdx,
+		chk.GetRow(0), tps, colIdx)
+	c.Assert(err, IsNil)
+	c.Assert(e, IsTrue)
+
+	testHashChunkRowEqual(c, nil, nil, true)
+	testHashChunkRowEqual(c, uint64(1), int64(1), true)
+	testHashChunkRowEqual(c, uint64(18446744073709551615), int64(-1), false)
+
+	dec1 := types.NewDecFromStringForTest("1.1")
+	dec2 := types.NewDecFromStringForTest("01.100")
+	testHashChunkRowEqual(c, dec1, dec2, true)
+	dec1 = types.NewDecFromStringForTest("1.1")
+	dec2 = types.NewDecFromStringForTest("01.200")
+	testHashChunkRowEqual(c, dec1, dec2, false)
+
+	testHashChunkRowEqual(c, float32(1.0), float64(1.0), true)
+	testHashChunkRowEqual(c, float32(1.0), float64(1.1), false)
+
+	testHashChunkRowEqual(c, "x", []byte("x"), true)
+	testHashChunkRowEqual(c, "x", []byte("y"), false)
+}
+
+func (s *testCodecSuite) TestValueSizeOfSignedInt(c *C) {
+	testCase := []int64{64, 8192, 1048576, 134217728, 17179869184, 2199023255552, 281474976710656, 36028797018963968, 4611686018427387904}
+	var b []byte
+	for _, v := range testCase {
+		b := encodeSignedInt(b[:0], v-10, false)
+		c.Assert(len(b), Equals, valueSizeOfSignedInt(v-10))
+
+		b = encodeSignedInt(b[:0], v, false)
+		c.Assert(len(b), Equals, valueSizeOfSignedInt(v))
+
+		b = encodeSignedInt(b[:0], v+10, false)
+		c.Assert(len(b), Equals, valueSizeOfSignedInt(v+10))
+
+		// Test for negative value.
+		b = encodeSignedInt(b[:0], 0-v, false)
+		c.Assert(len(b), Equals, valueSizeOfSignedInt(0-v))
+
+		b = encodeSignedInt(b[:0], 0-v+10, false)
+		c.Assert(len(b), Equals, valueSizeOfSignedInt(0-v+10))
+
+		b = encodeSignedInt(b[:0], 0-v-10, false)
+		c.Assert(len(b), Equals, valueSizeOfSignedInt(0-v-10))
+	}
+}
+
+func (s *testCodecSuite) TestValueSizeOfUnsignedInt(c *C) {
+	testCase := []uint64{128, 16384, 2097152, 268435456, 34359738368, 4398046511104, 562949953421312, 72057594037927936, 9223372036854775808}
+	var b []byte
+	for _, v := range testCase {
+		b := encodeUnsignedInt(b[:0], v-10, false)
+		c.Assert(len(b), Equals, valueSizeOfUnsignedInt(v-10))
+
+		b = encodeUnsignedInt(b[:0], v, false)
+		c.Assert(len(b), Equals, valueSizeOfUnsignedInt(v))
+
+		b = encodeUnsignedInt(b[:0], v+10, false)
+		c.Assert(len(b), Equals, valueSizeOfUnsignedInt(v+10))
+	}
+}
+
+func (s *testCodecSuite) TestHashChunkColumns(c *C) {
+	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	buf := make([]byte, 1)
+	datums, tps := datumsForTest(sc)
+	chk := chunkForTest(c, sc, datums, tps, 3)
+
+	colIdx := make([]int, len(tps))
+	for i := 0; i < len(tps); i++ {
+		colIdx[i] = i
+	}
+	hasNull := []bool{false, false, false}
+	vecHash := []hash.Hash64{fnv.New64(), fnv.New64(), fnv.New64()}
+	rowHash := []hash.Hash64{fnv.New64(), fnv.New64(), fnv.New64()}
+
+	// Test hash value of the first two `Null` columns
+	for i := 0; i < 2; i++ {
+		c.Assert(chk.GetRow(0).IsNull(i), Equals, true)
+		err1 := HashChunkColumns(sc, vecHash, chk, tps[i], i, buf, hasNull)
+		err2 := HashChunkRow(sc, rowHash[0], chk.GetRow(0), tps, colIdx[i:i+1], buf)
+		err3 := HashChunkRow(sc, rowHash[1], chk.GetRow(1), tps, colIdx[i:i+1], buf)
+		err4 := HashChunkRow(sc, rowHash[2], chk.GetRow(2), tps, colIdx[i:i+1], buf)
+		c.Assert(err1, IsNil)
+		c.Assert(err2, IsNil)
+		c.Assert(err3, IsNil)
+		c.Assert(err4, IsNil)
+
+		c.Assert(hasNull[0], Equals, true)
+		c.Assert(hasNull[1], Equals, true)
+		c.Assert(hasNull[2], Equals, true)
+		c.Assert(vecHash[0].Sum64(), Equals, rowHash[0].Sum64())
+		c.Assert(vecHash[1].Sum64(), Equals, rowHash[1].Sum64())
+		c.Assert(vecHash[2].Sum64(), Equals, rowHash[2].Sum64())
+
+	}
+
+	// Test hash value of every single column that is not `Null`
+	for i := 2; i < len(tps); i++ {
+		hasNull = []bool{false, false, false}
+		vecHash = []hash.Hash64{fnv.New64(), fnv.New64(), fnv.New64()}
+		rowHash = []hash.Hash64{fnv.New64(), fnv.New64(), fnv.New64()}
+
+		c.Assert(chk.GetRow(0).IsNull(i), Equals, false)
+		err1 := HashChunkColumns(sc, vecHash, chk, tps[i], i, buf, hasNull)
+		err2 := HashChunkRow(sc, rowHash[0], chk.GetRow(0), tps, colIdx[i:i+1], buf)
+		err3 := HashChunkRow(sc, rowHash[1], chk.GetRow(1), tps, colIdx[i:i+1], buf)
+		err4 := HashChunkRow(sc, rowHash[2], chk.GetRow(2), tps, colIdx[i:i+1], buf)
+		c.Assert(err1, IsNil)
+		c.Assert(err2, IsNil)
+		c.Assert(err3, IsNil)
+		c.Assert(err4, IsNil)
+
+		c.Assert(hasNull[0], Equals, false)
+		c.Assert(hasNull[1], Equals, false)
+		c.Assert(hasNull[2], Equals, false)
+		c.Assert(vecHash[0].Sum64(), Equals, rowHash[0].Sum64())
+		c.Assert(vecHash[1].Sum64(), Equals, rowHash[1].Sum64())
+		c.Assert(vecHash[2].Sum64(), Equals, rowHash[2].Sum64())
+	}
+>>>>>>> dec9371... executor: fix building hash table with TypeNull when join (#15913)
 }
