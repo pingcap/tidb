@@ -752,7 +752,7 @@ func (ds *DataSource) fillIndexPath(path *util.AccessPath, conds []expression.Ex
 func (ds *DataSource) deriveIndexPathStats(path *util.AccessPath, conds []expression.Expression, isIm bool) bool {
 	sc := ds.ctx.GetSessionVars().StmtCtx
 	if path.EqOrInCondCount == len(path.AccessConds) {
-		accesses, remained := path.SplitCorColAccessCondFromFilters(path.EqOrInCondCount)
+		accesses, remained := path.SplitCorColAccessCondFromFilters(ds.ctx, path.EqOrInCondCount)
 		path.AccessConds = append(path.AccessConds, accesses...)
 		path.TableFilters = remained
 		if len(accesses) > 0 && ds.statisticTable.Pseudo {
