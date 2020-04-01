@@ -445,6 +445,90 @@ func onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	return ver, errors.Trace(err)
 }
 
+<<<<<<< HEAD
+=======
+func checkDropIndex(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.IndexInfo, error) {
+	schemaID := job.SchemaID
+	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, schemaID)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+
+	var indexName model.CIStr
+	if err = job.DecodeArgs(&indexName); err != nil {
+		job.State = model.JobStateCancelled
+		return nil, nil, errors.Trace(err)
+	}
+
+	indexInfo := tblInfo.FindIndexByName(indexName.L)
+	if indexInfo == nil {
+		job.State = model.JobStateCancelled
+		return nil, nil, ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
+	}
+
+	// Double check for drop index on auto_increment column.
+	err = checkDropIndexOnAutoIncrementColumn(tblInfo, indexInfo)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return nil, nil, autoid.ErrWrongAutoKey
+	}
+
+	return tblInfo, indexInfo, nil
+}
+
+func checkDropIndexOnAutoIncrementColumn(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) error {
+	cols := tblInfo.Columns
+	for _, idxCol := range indexInfo.Columns {
+		flag := cols[idxCol.Offset].Flag
+		if !mysql.HasAutoIncrementFlag(flag) {
+			continue
+		}
+		// check the count of index on auto_increment column.
+		count := 0
+		for _, idx := range tblInfo.Indices {
+			for _, c := range idx.Columns {
+				if c.Name.L == idxCol.Name.L {
+					count++
+					break
+				}
+			}
+		}
+		if tblInfo.PKIsHandle && mysql.HasPriKeyFlag(flag) {
+			count++
+		}
+		if count < 2 {
+			return autoid.ErrWrongAutoKey
+		}
+	}
+	return nil
+}
+
+func checkRenameIndex(t *meta.Meta, job *model.Job) (*model.TableInfo, model.CIStr, model.CIStr, error) {
+	var from, to model.CIStr
+	schemaID := job.SchemaID
+	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, schemaID)
+	if err != nil {
+		return nil, from, to, errors.Trace(err)
+	}
+
+	if err := job.DecodeArgs(&from, &to); err != nil {
+		job.State = model.JobStateCancelled
+		return nil, from, to, errors.Trace(err)
+	}
+
+	// Double check. See function `RenameIndex` in ddl_api.go
+	duplicate, err := validateRenameIndex(from, to, tblInfo)
+	if duplicate {
+		return nil, from, to, nil
+	}
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return nil, from, to, errors.Trace(err)
+	}
+	return tblInfo, from, to, errors.Trace(err)
+}
+
+>>>>>>> 664d5bb... ddl: fix drop index failed when index contain auto_increment column and the auto_increment column is primary key (#15861)
 const (
 	// DefaultTaskHandleCnt is default batch size of adding indices.
 	DefaultTaskHandleCnt = 128
