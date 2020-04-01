@@ -1199,7 +1199,7 @@ func (s *testSuiteJoin1) TestIndexLookupJoin(c *C) {
 	tk.MustQuery("select /*+ inl_merge_join(t1)*/ * from t1 join t2 on t2.b=t1.id and t2.a=t1.id;").Check(testkit.Rows("1 1 1"))
 }
 
-func (s *testSuiteJoin1) TestIndexNestedLoopHashJoin(c *C) {
+func (s *testSuiteJoinSerial) TestIndexNestedLoopHashJoin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_init_chunk_size=2")
@@ -1275,6 +1275,7 @@ func (s *testSuiteJoin1) TestIndexNestedLoopHashJoin(c *C) {
 		"      └─TableRowIDScan_25 3.00 cop[tikv] table:l2 keep order:false"))
 	tk.MustQuery("select count(*) from t l1 where exists ( select * from t l2 where l2.l_orderkey = l1.l_orderkey and l2.l_suppkey <> l1.l_suppkey );").Check(testkit.Rows("9"))
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/planner/core/MockOnlyEnableIndexHashJoin"), IsNil)
+	tk.MustExec("DROP TABLE IF EXISTS t, s")
 }
 
 func (s *testSuiteJoin3) TestIssue15686(c *C) {
