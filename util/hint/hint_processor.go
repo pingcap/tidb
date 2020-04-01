@@ -42,8 +42,6 @@ func (hs *HintsSet) GetFirstTableHints() []*ast.TableOptimizerHint {
 	return nil
 }
 
-<<<<<<< HEAD
-=======
 // ContainTableHint checks whether the table hint set contains a hint.
 func (hs *HintsSet) ContainTableHint(hint string) bool {
 	for _, tableHintsForBlock := range hs.tableHints {
@@ -88,7 +86,6 @@ func RestoreOptimizerHints(hints []*ast.TableOptimizerHint) string {
 	return strings.Join(hintsStr, ", ")
 }
 
->>>>>>> 746c88a... bindinfo, planner: make evolve tasks consider runtime hints instead of ignoring them (#15668)
 // RestoreTableOptimizerHint returns string format of TableOptimizerHint.
 func RestoreTableOptimizerHint(hint *ast.TableOptimizerHint) string {
 	var sb strings.Builder
