@@ -40,6 +40,8 @@ func (s *testEvaluatorSuite) TestCaseWhen(c *C) {
 		{[]interface{}{nil, 1, false, 2, 3}, 3},
 		{[]interface{}{1, jsonInt.GetMysqlJSON(), nil}, 3},
 		{[]interface{}{0, jsonInt.GetMysqlJSON(), nil}, nil},
+		{[]interface{}{0.1, 1, 2}, 1},
+		{[]interface{}{0.0, 1, 0.1, 2}, 2},
 	}
 	fc := funcs[ast.Case]
 	for _, t := range tbl {
