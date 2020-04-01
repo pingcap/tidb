@@ -16,8 +16,10 @@ package executor
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/errors"
 	"math"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/pingcap/failpoint"
@@ -241,7 +243,7 @@ func (configInspection) inspectDiffConfig(_ context.Context, sctx sessionctx.Con
 	return results
 }
 
-func (configInspection) inspectCheckConfig(_ context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
+func (c configInspection) inspectCheckConfig(_ context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
 	// check the configuration in reason.
 	cases := []struct {
 		tp     string
@@ -287,7 +289,99 @@ func (configInspection) inspectCheckConfig(_ context.Context, sctx sessionctx.Co
 			})
 		}
 	}
+	results = append(results, c.checkTiKVBlockCacheSizeConfig(sctx, filter)...)
 	return results
+}
+
+func (c configInspection) checkTiKVBlockCacheSizeConfig(sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
+	if !filter.enable("storage.block-cache.capacity") {
+		return nil
+	}
+	sql := "select instance,value from information_schema.cluster_config where type='tikv' and `key` = 'storage.block-cache.capacity'"
+	rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+	if err != nil {
+		sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("check configuration in reason failed: %v", err))
+	}
+	extractIP := func(addr string) string {
+		if idx := strings.Index(addr, ":"); idx > -1 {
+			return addr[0:idx]
+		}
+		return addr
+	}
+
+	ipToBlockSize := make(map[string]uint64)
+	ipToCount := make(map[string]int)
+	for _, row := range rows {
+		ip := extractIP(row.GetString(0))
+		size, err := c.convertReadableSizeToByteSize(row.GetString(1))
+		if err != nil {
+			sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("check TiKV block-cache configuration in reason failed: %v", err))
+			return nil
+		}
+		ipToBlockSize[ip] += size
+		ipToCount[ip]++
+	}
+
+	sql = "select instance, value from metrics_schema.node_total_memory where time=now()"
+	rows, _, err = sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+	if err != nil {
+		sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("check configuration in reason failed: %v", err))
+	}
+	ipToMemorySize := make(map[string]float64)
+	for _, row := range rows {
+		ip := extractIP(row.GetString(0))
+		size := row.GetFloat64(1)
+		ipToMemorySize[ip] += size
+	}
+
+	var results []inspectionResult
+	for ip, blockSize := range ipToBlockSize {
+		if memorySize, ok := ipToMemorySize[ip]; ok {
+			if float64(blockSize) > memorySize*0.45 {
+				detail := fmt.Sprintf("There are %v TiKV server in %v node, the total 'storage.block-cache.capacity' of TiKV is more than (0.45 * total node memory)",
+					ipToCount[ip], ip)
+				results = append(results, inspectionResult{
+					tp:       "tikv",
+					instance: "",
+					item:     "storage.block-cache.capacity",
+					actual:   fmt.Sprintf("%v", blockSize),
+					expected: fmt.Sprintf("< %.0f", memorySize*0.45),
+					severity: "warning",
+					detail:   detail,
+				})
+			}
+		}
+	}
+	return results
+}
+
+func (configInspection) convertReadableSizeToByteSize(sizeStr string) (uint64, error) {
+	const KB = uint64(1024)
+	const MB = KB * 1024
+	const GB = MB * 1024
+	const TB = GB * 1024
+	const PB = TB * 1024
+
+	rate := uint64(1)
+	if strings.HasSuffix(sizeStr, "KiB") {
+		rate = KB
+	} else if strings.HasSuffix(sizeStr, "MiB") {
+		rate = MB
+	} else if strings.HasSuffix(sizeStr, "GiB") {
+		rate = GB
+	} else if strings.HasSuffix(sizeStr, "TiB") {
+		rate = TB
+	} else if strings.HasSuffix(sizeStr, "PiB") {
+		rate = PB
+	}
+	if rate != 1 {
+		sizeStr = sizeStr[:len(sizeStr)-3]
+	}
+	size, err := strconv.Atoi(sizeStr)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	return uint64(size) * rate, nil
 }
 
 func (versionInspection) inspect(_ context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {

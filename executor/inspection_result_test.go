@@ -210,6 +210,10 @@ func (s *inspectionResultSuite) setupForThresholdCheck(c *C, mockData map[string
 			types.MakeDatums("tikv", "tikv-0", "readpool.storage.normal-concurrency", "4"),
 			types.MakeDatums("tikv", "tikv-0", "server.grpc-concurrency", "8"),
 			types.MakeDatums("tikv", "tikv-0", "storage.scheduler-worker-pool-size", "6"),
+			types.MakeDatums("tikv", "192.168.3.33:26600", "storage.block-cache.capacity", "10GiB"),
+			types.MakeDatums("tikv", "192.168.3.33:26700", "storage.block-cache.capacity", "10GiB"),
+			types.MakeDatums("tikv", "192.168.3.34:26600", "storage.block-cache.capacity", "20GiB"),
+			types.MakeDatums("tikv", "192.168.3.35:26700", "storage.block-cache.capacity", "10GiB"),
 		},
 	}
 	// mock cluster information
@@ -582,4 +586,32 @@ func (s *inspectionResultSuite) TestCriticalErrorInspection(c *C) {
 		"scheduler-is-busy tikv-0 1.00(db1, type1, stage1) the total number of errors about 'scheduler-is-busy' is too many",
 		"tikv_engine_write_stall tikv-0 1.00(kv) the total number of errors about 'tikv_engine_write_stall' is too many",
 	))
+}
+
+func (s *inspectionResultSuite) TestConfigCheckOfStorageBlockCacheSize(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	datetime := func(s string) types.Time {
+		t, err := types.ParseTime(tk.Se.GetSessionVars().StmtCtx, s, mysql.TypeDatetime, types.MaxFsp)
+		c.Assert(err, IsNil)
+		return t
+	}
+
+	mockData := map[string][][]types.Datum{
+		"node_total_memory": {
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "192.168.3.33:26600", 50.0*1024*1024*1024),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "192.168.3.34:26600", 50.0*1024*1024*1024),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "192.168.3.35:26600", 50.0*1024*1024*1024),
+		},
+	}
+
+	ctx := s.setupForThresholdCheck(c, mockData)
+	defer s.tearDownForThresholdCheck(c)
+
+	rs, err := tk.Se.Execute(ctx, "select * from information_schema.cluster_config")
+	//rs, err := tk.Se.Execute(ctx, "select * from metrics_schema.node_total_memory")
+	//rs, err := tk.Se.Execute(ctx, "select /*+ time_range('2020-02-12 10:35:00','2020-02-12 10:37:00') */ item, type, instance, value, reference, details from information_schema.inspection_result where rule='config' and item='storage.block-cache.capacity' order by item")
+	c.Assert(err, IsNil)
+	result := tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute inspect SQL failed"))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0), Commentf("unexpected warnings: %+v", tk.Se.GetSessionVars().StmtCtx.GetWarnings()))
+	result.Check(testkit.Rows())
 }
