@@ -1146,6 +1146,16 @@ func (r *RegionVerID) GetID() uint64 {
 	return r.id
 }
 
+// GetVer returns the version of the region's epoch
+func (r *RegionVerID) GetVer() uint64 {
+	return r.ver
+}
+
+// GetConfVer returns the conf ver of the region's epoch
+func (r *RegionVerID) GetConfVer() uint64 {
+	return r.confVer
+}
+
 // VerID returns the Region's RegionVerID.
 func (r *Region) VerID() RegionVerID {
 	return RegionVerID{
