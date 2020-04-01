@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -24,7 +25,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/configpb"
-	"github.com/pingcap/pd/client"
+	"github.com/pingcap/pd/v4/client"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -35,32 +36,44 @@ type ConfHandler interface {
 	Start()
 	Close()
 	GetConfig() *Config // read only
+	SetConfig(conf *Config) error
 }
 
 // ConfReloadFunc is used to reload the config to make it work.
 type ConfReloadFunc func(oldConf, newConf *Config)
 
 // NewConfHandler creates a new ConfHandler according to the local config.
-func NewConfHandler(localConf *Config, reloadFunc ConfReloadFunc) (ConfHandler, error) {
-	switch defaultConf.Store {
-	case "tikv":
-		return newPDConfHandler(localConf, reloadFunc, nil)
-	default:
-		return &constantConfHandler{localConf}, nil
+func NewConfHandler(confPath string, localConf *Config, reloadFunc ConfReloadFunc,
+	newPDCliFunc func([]string, pd.SecurityOption) (pd.ConfigClient, error), // for test
+) (ConfHandler, error) {
+	if strings.ToLower(localConf.Store) == "tikv" && localConf.EnableDynamicConfig {
+		return newPDConfHandler(confPath, localConf, reloadFunc, newPDCliFunc)
 	}
+	cch := new(constantConfHandler)
+	cch.curConf.Store(localConf)
+	return cch, nil
 }
 
-// constantConfHandler is used in local or debug environment.
-// It always returns the constant config initialized at the beginning.
+// constantConfHandler is used when EnableDynamicConfig is false.
+// The conf in it will always be the configuration that initialized when TiDB is started.
 type constantConfHandler struct {
-	conf *Config
+	curConf atomic.Value
 }
 
 func (cch *constantConfHandler) Start() {}
 
 func (cch *constantConfHandler) Close() {}
 
-func (cch *constantConfHandler) GetConfig() *Config { return cch.conf }
+func (cch *constantConfHandler) GetConfig() *Config { return cch.curConf.Load().(*Config) }
+
+func (cch *constantConfHandler) SetConfig(conf *Config) error {
+	cch.curConf.Store(conf)
+	return nil
+}
+
+var (
+	unspecifiedVersion = new(configpb.Version)
+)
 
 const (
 	pdConfHandlerRefreshInterval = 30 * time.Second
@@ -76,12 +89,18 @@ type pdConfHandler struct {
 	exit       chan struct{}
 	pdConfCli  pd.ConfigClient
 	reloadFunc func(oldConf, newConf *Config)
+	registered bool
+	confPath   string
+
+	// attributes for test
+	timeAfter func(d time.Duration) <-chan time.Time
 }
 
-func newPDConfHandler(localConf *Config, reloadFunc ConfReloadFunc,
+func newPDConfHandler(confPath string, localConf *Config, reloadFunc ConfReloadFunc,
 	newPDCliFunc func([]string, pd.SecurityOption) (pd.ConfigClient, error), // for test
 ) (*pdConfHandler, error) {
-	addresses, _, err := ParsePath(localConf.Path)
+	fullPath := fmt.Sprintf("%s://%s", localConf.Store, localConf.Path)
+	addresses, _, err := ParsePath(fullPath)
 	if err != nil {
 		return nil, err
 	}
@@ -102,44 +121,17 @@ func newPDConfHandler(localConf *Config, reloadFunc ConfReloadFunc,
 	if err != nil {
 		return nil, err
 	}
-	confContent, err := encodeConfig(localConf)
-	if err != nil {
-		return nil, err
-	}
-
-	// register to PD and get the new default config.
-	// see https://github.com/pingcap/tidb/pull/13660 for more details.
-	// suppose port and security config items cannot be change online.
-	status, version, conf, err := pdCli.Create(context.Background(), new(configpb.Version), tidbComponentName, id, confContent)
-	if err != nil {
-		logutil.Logger(context.Background()).Warn("register the config to PD error, local config will be used", zap.Error(err))
-	} else if status.Code != configpb.StatusCode_OK && status.Code != configpb.StatusCode_WRONG_VERSION {
-		logutil.Logger(context.Background()).Warn("invalid status when registering the config to PD", zap.String("code", status.Code.String()), zap.String("errmsg", status.Message))
-		conf = ""
-	}
-
-	tmpConf := *localConf // use the local config if the remote config is invalid
-	newConf := &tmpConf
-	if conf != "" {
-		newConf, err = decodeConfig(conf)
-		if err != nil {
-			logutil.Logger(context.Background()).Warn("decode remote config error", zap.Error(err))
-			newConf = &tmpConf
-		} else if err := newConf.Valid(); err != nil {
-			logutil.Logger(context.Background()).Warn("invalid remote config", zap.Error(err))
-			newConf = &tmpConf
-		}
-	}
-
 	ch := &pdConfHandler{
 		id:         id,
-		version:    version,
+		version:    unspecifiedVersion,
 		interval:   pdConfHandlerRefreshInterval,
 		exit:       make(chan struct{}),
 		pdConfCli:  pdCli,
 		reloadFunc: reloadFunc,
+		registered: false,
+		confPath:   confPath,
 	}
-	ch.curConf.Store(newConf)
+	ch.curConf.Store(localConf) // use the local config at first
 	return ch, nil
 }
 
@@ -158,6 +150,71 @@ func (ch *pdConfHandler) GetConfig() *Config {
 	return ch.curConf.Load().(*Config)
 }
 
+func (ch *pdConfHandler) SetConfig(conf *Config) error {
+	return errors.New("PDConfHandler only support to update the config from PD whereas forbid to modify it locally")
+}
+
+func (ch *pdConfHandler) register() {
+	// register to PD and get the new default config.
+	// see https://github.com/pingcap/tidb/pull/13660 for more details.
+	// suppose port and security config items cannot be change online.
+	confContent, err := encodeConfig(ch.curConf.Load().(*Config))
+	if err != nil {
+		logutil.Logger(context.Background()).Warn("encode config error when registering", zap.Error(err))
+		return
+	}
+
+	status, version, conf, err := ch.pdConfCli.Create(context.Background(), new(configpb.Version), tidbComponentName, ch.id, confContent)
+	if err != nil {
+		logutil.Logger(context.Background()).Warn("RPC to PD error when registering", zap.Error(err))
+		return
+	} else if status.Code != configpb.StatusCode_OK && status.Code != configpb.StatusCode_WRONG_VERSION {
+		logutil.Logger(context.Background()).Warn("invalid status when registering", zap.String("code", status.Code.String()), zap.String("errmsg", status.Message))
+		return
+	}
+
+	if ch.updateConfig(conf, version) {
+		ch.registered = true
+		logutil.Logger(context.Background()).Info("PDConfHandler register successfully")
+		ch.writeConfig()
+	}
+}
+
+func (ch *pdConfHandler) writeConfig() {
+	if ch.confPath == "" { // for test
+		return
+	}
+	conf := ch.curConf.Load().(*Config)
+	if err := atomicWriteConfig(conf, ch.confPath); err != nil {
+		logutil.Logger(context.Background()).Warn("write config to disk error", zap.Error(err))
+	}
+}
+
+func (ch *pdConfHandler) updateConfig(newConfContent string, newVersion *configpb.Version) (updated bool) {
+	newConf, err := decodeConfig(newConfContent)
+	if err != nil {
+		logutil.Logger(context.Background()).Warn("decode config error", zap.Error(err))
+		return false
+	} else if err := newConf.Valid(); err != nil {
+		logutil.Logger(context.Background()).Warn("invalid remote config", zap.Error(err))
+		return false
+	}
+	oldConf := ch.curConf.Load().(*Config)
+	mergedConf, err := CloneConf(oldConf)
+	if err != nil {
+		logutil.Logger(context.Background()).Warn("clone config error", zap.Error(err))
+		return false
+	}
+	as, rs := MergeConfigItems(mergedConf, newConf)
+	ch.reloadFunc(oldConf, mergedConf)
+	ch.curConf.Store(mergedConf)
+	ch.version = newVersion
+	logutil.Logger(context.Background()).Info("PDConfHandler updates config successfully",
+		zap.String("new_version", newVersion.String()),
+		zap.Any("accepted_conf_items", as), zap.Any("rejected_conf_items", rs))
+	return len(as) > 0
+}
+
 func (ch *pdConfHandler) run() {
 	defer func() {
 		if r := recover(); r != nil {
@@ -168,9 +225,18 @@ func (ch *pdConfHandler) run() {
 		ch.wg.Done()
 	}()
 
+	ch.register() // the first time to register
+	if ch.timeAfter == nil {
+		ch.timeAfter = time.After
+	}
 	for {
 		select {
-		case <-time.After(ch.interval):
+		case <-ch.timeAfter(ch.interval):
+			if !ch.registered {
+				ch.register()
+				continue
+			}
+
 			// fetch new config from PD
 			status, version, newConfContent, err := ch.pdConfCli.Get(context.Background(), ch.version, tidbComponentName, ch.id)
 			if err != nil {
@@ -186,21 +252,10 @@ func (ch *pdConfHandler) run() {
 					zap.Int("code", int(status.Code)), zap.String("message", status.Message))
 				continue
 			}
-			newConf, err := decodeConfig(newConfContent)
-			if err != nil {
-				logutil.Logger(context.Background()).Error("PDConfHandler decode config error", zap.Error(err))
-				continue
-			}
-			if err := newConf.Valid(); err != nil {
-				logutil.Logger(context.Background()).Error("PDConfHandler invalid config", zap.Error(err))
-				continue
-			}
 
-			ch.reloadFunc(ch.curConf.Load().(*Config), newConf)
-			ch.curConf.Store(newConf)
-			logutil.Logger(context.Background()).Info("PDConfHandler update config successfully",
-				zap.String("fromVersion", ch.version.String()), zap.String("toVersion", version.String()))
-			ch.version = version
+			if ch.updateConfig(newConfContent, version) {
+				ch.writeConfig()
+			}
 		case <-ch.exit:
 			return
 		}

@@ -6,39 +6,39 @@ KEY `IDX_b` (`b`),
 KEY `IDX_ab` (`a`, `b`)
 );
 explain select a from access_path_selection where a < 3;
-id	count	task	operator info
-IndexReader_6	3323.33	root	index:IndexScan_5
-└─IndexScan_5	3323.33	cop[tikv]	table:access_path_selection, index:a, range:[-inf,3), keep order:false, stats:pseudo
+id	estRows	task	access object	operator info
+IndexReader_6	3323.33	root		index:IndexRangeScan_5
+└─IndexRangeScan_5	3323.33	cop[tikv]	table:access_path_selection, index:IDX_a(a)	range:[-inf,3), keep order:false, stats:pseudo
 explain select a, b from access_path_selection where a < 3;
-id	count	task	operator info
-IndexReader_6	3323.33	root	index:IndexScan_5
-└─IndexScan_5	3323.33	cop[tikv]	table:access_path_selection, index:a, b, range:[-inf,3), keep order:false, stats:pseudo
+id	estRows	task	access object	operator info
+IndexReader_6	3323.33	root		index:IndexRangeScan_5
+└─IndexRangeScan_5	3323.33	cop[tikv]	table:access_path_selection, index:IDX_ab(a, b)	range:[-inf,3), keep order:false, stats:pseudo
 explain select a, b from access_path_selection where b < 3;
-id	count	task	operator info
-TableReader_7	3323.33	root	data:Selection_6
-└─Selection_6	3323.33	cop[tikv]	lt(test.access_path_selection.b, 3)
-  └─TableScan_5	10000.00	cop[tikv]	table:access_path_selection, range:[-inf,+inf], keep order:false, stats:pseudo
+id	estRows	task	access object	operator info
+TableReader_7	3323.33	root		data:Selection_6
+└─Selection_6	3323.33	cop[tikv]		lt(test.access_path_selection.b, 3)
+  └─TableFullScan_5	10000.00	cop[tikv]	table:access_path_selection	keep order:false, stats:pseudo
 explain select a, b from access_path_selection where a < 3 and b < 3;
-id	count	task	operator info
-IndexReader_11	1104.45	root	index:Selection_10
-└─Selection_10	1104.45	cop[tikv]	lt(test.access_path_selection.b, 3)
-  └─IndexScan_9	3323.33	cop[tikv]	table:access_path_selection, index:a, b, range:[-inf,3), keep order:false, stats:pseudo
+id	estRows	task	access object	operator info
+IndexReader_11	1104.45	root		index:Selection_10
+└─Selection_10	1104.45	cop[tikv]		lt(test.access_path_selection.b, 3)
+  └─IndexRangeScan_9	3323.33	cop[tikv]	table:access_path_selection, index:IDX_ab(a, b)	range:[-inf,3), keep order:false, stats:pseudo
 explain select a, b from access_path_selection where a > 10 order by _tidb_rowid;
-id	count	task	operator info
-Projection_6	3333.33	root	test.access_path_selection.a, test.access_path_selection.b
-└─TableReader_13	3333.33	root	data:Selection_12
-  └─Selection_12	3333.33	cop[tikv]	gt(test.access_path_selection.a, 10)
-    └─TableScan_11	10000.00	cop[tikv]	table:access_path_selection, range:[-inf,+inf], keep order:true, stats:pseudo
+id	estRows	task	access object	operator info
+Projection_6	3333.33	root		test.access_path_selection.a, test.access_path_selection.b
+└─TableReader_13	3333.33	root		data:Selection_12
+  └─Selection_12	3333.33	cop[tikv]		gt(test.access_path_selection.a, 10)
+    └─TableFullScan_11	10000.00	cop[tikv]	table:access_path_selection	keep order:true, stats:pseudo
 explain select max(_tidb_rowid) from access_path_selection;
-id	count	task	operator info
-StreamAgg_13	1.00	root	funcs:max(test.access_path_selection._tidb_rowid)->Column#4
-└─Limit_17	1.00	root	offset:0, count:1
-  └─TableReader_27	1.00	root	data:Limit_26
-    └─Limit_26	1.00	cop[tikv]	offset:0, count:1
-      └─TableScan_25	1.25	cop[tikv]	table:access_path_selection, range:[-inf,+inf], keep order:true, desc, stats:pseudo
+id	estRows	task	access object	operator info
+StreamAgg_13	1.00	root		funcs:max(test.access_path_selection._tidb_rowid)->Column#4
+└─Limit_17	1.00	root		offset:0, count:1
+  └─TableReader_27	1.00	root		data:Limit_26
+    └─Limit_26	1.00	cop[tikv]		offset:0, count:1
+      └─TableFullScan_25	1.25	cop[tikv]	table:access_path_selection	keep order:true, desc, stats:pseudo
 explain select count(1) from access_path_selection;
-id	count	task	operator info
-StreamAgg_28	1.00	root	funcs:count(Column#18)->Column#4
-└─TableReader_29	1.00	root	data:StreamAgg_8
-  └─StreamAgg_8	1.00	cop[tikv]	funcs:count(1)->Column#18
-    └─TableScan_24	10000.00	cop[tikv]	table:access_path_selection, range:[-inf,+inf], keep order:false, stats:pseudo
+id	estRows	task	access object	operator info
+StreamAgg_28	1.00	root		funcs:count(Column#18)->Column#4
+└─TableReader_29	1.00	root		data:StreamAgg_8
+  └─StreamAgg_8	1.00	cop[tikv]		funcs:count(1)->Column#18
+    └─TableFullScan_24	10000.00	cop[tikv]	table:access_path_selection	keep order:false, stats:pseudo

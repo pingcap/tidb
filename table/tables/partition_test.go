@@ -19,14 +19,11 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -129,7 +126,7 @@ PARTITION BY RANGE ( id ) (
 	_, err = tb.AddRecord(ts.se, types.MakeDatums(22))
 	c.Assert(err, IsNil) // Insert into maxvalue partition.
 
-	createTable3 := `create table test.t3 (id int) partition by range (id) 
+	createTable3 := `create table test.t3 (id int) partition by range (id)
 	(
        partition p0 values less than (10)
 	)`
@@ -266,26 +263,15 @@ func (ts *testSuite) TestGeneratePartitionExpr(c *C) {
 	tbl, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
 	type partitionExpr interface {
-		PartitionExpr(ctx sessionctx.Context, columns []*expression.Column, names types.NameSlice) (*tables.PartitionExpr, error)
+		PartitionExpr() (*tables.PartitionExpr, error)
 	}
-	ctx := mock.NewContext()
-	columns, names := expression.ColumnInfos2ColumnsAndNames(ctx, model.NewCIStr("test"), tbl.Meta().Name, tbl.Meta().Columns)
-	pe, err := tbl.(partitionExpr).PartitionExpr(ctx, columns, names)
+	pe, err := tbl.(partitionExpr).PartitionExpr()
 	c.Assert(err, IsNil)
-	c.Assert(pe.Column.ID, Equals, int64(1))
 
-	ranges := []string{
-		"or(lt(test.t1.id, 4), isnull(test.t1.id))",
-		"and(lt(test.t1.id, 7), ge(test.t1.id, 4))",
-		"and(1, ge(test.t1.id, 7))",
-	}
 	upperBounds := []string{
-		"lt(test.t1.id, 4)",
-		"lt(test.t1.id, 7)",
+		"lt(t1.id, 4)",
+		"lt(t1.id, 7)",
 		"1",
-	}
-	for i, expr := range pe.Ranges {
-		c.Assert(expr.String(), Equals, ranges[i])
 	}
 	for i, expr := range pe.UpperBounds {
 		c.Assert(expr.String(), Equals, upperBounds[i])
@@ -313,7 +299,7 @@ func (ts *testSuite) TestTimeZoneChange(c *C) {
 	tk.MustExec("use test")
 	createTable := `CREATE TABLE timezone_test (
 	id int(11) NOT NULL,
-	creation_dt timestamp DEFAULT CURRENT_TIMESTAMP ) PARTITION BY RANGE ( unix_timestamp(creation_dt) )
+	creation_dt timestamp DEFAULT CURRENT_TIMESTAMP ) PARTITION BY RANGE ( ` + "UNIX_TIMESTAMP(`creation_dt`)" + ` )
 ( PARTITION p5 VALUES LESS THAN ( UNIX_TIMESTAMP('2020-01-03 15:10:00') ),
 	PARTITION p6 VALUES LESS THAN ( UNIX_TIMESTAMP('2020-01-03 15:15:00') ),
 	PARTITION p7 VALUES LESS THAN ( UNIX_TIMESTAMP('2020-01-03 15:20:00') ),
@@ -325,12 +311,12 @@ func (ts *testSuite) TestTimeZoneChange(c *C) {
 		"  `id` int(11) NOT NULL,\n" +
 		"  `creation_dt` timestamp DEFAULT CURRENT_TIMESTAMP\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
-		"PARTITION BY RANGE ( unix_timestamp(`creation_dt`) ) (\n" +
-		"  PARTITION p5 VALUES LESS THAN (1578035400),\n" +
-		"  PARTITION p6 VALUES LESS THAN (1578035700),\n" +
-		"  PARTITION p7 VALUES LESS THAN (1578036000),\n" +
-		"  PARTITION p8 VALUES LESS THAN (1578036300),\n" +
-		"  PARTITION p9 VALUES LESS THAN (MAXVALUE)\n)"))
+		"PARTITION BY RANGE ( UNIX_TIMESTAMP(`creation_dt`) ) (\n" +
+		"  PARTITION `p5` VALUES LESS THAN (1578035400),\n" +
+		"  PARTITION `p6` VALUES LESS THAN (1578035700),\n" +
+		"  PARTITION `p7` VALUES LESS THAN (1578036000),\n" +
+		"  PARTITION `p8` VALUES LESS THAN (1578036300),\n" +
+		"  PARTITION `p9` VALUES LESS THAN (MAXVALUE)\n)"))
 	tk.MustExec("DROP TABLE timezone_test")
 
 	// Note that the result of "show create table" varies with time_zone.
@@ -340,12 +326,12 @@ func (ts *testSuite) TestTimeZoneChange(c *C) {
 		"  `id` int(11) NOT NULL,\n" +
 		"  `creation_dt` timestamp DEFAULT CURRENT_TIMESTAMP\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
-		"PARTITION BY RANGE ( unix_timestamp(`creation_dt`) ) (\n" +
-		"  PARTITION p5 VALUES LESS THAN (1578064200),\n" +
-		"  PARTITION p6 VALUES LESS THAN (1578064500),\n" +
-		"  PARTITION p7 VALUES LESS THAN (1578064800),\n" +
-		"  PARTITION p8 VALUES LESS THAN (1578065100),\n" +
-		"  PARTITION p9 VALUES LESS THAN (MAXVALUE)\n)"))
+		"PARTITION BY RANGE ( UNIX_TIMESTAMP(`creation_dt`) ) (\n" +
+		"  PARTITION `p5` VALUES LESS THAN (1578064200),\n" +
+		"  PARTITION `p6` VALUES LESS THAN (1578064500),\n" +
+		"  PARTITION `p7` VALUES LESS THAN (1578064800),\n" +
+		"  PARTITION `p8` VALUES LESS THAN (1578065100),\n" +
+		"  PARTITION `p9` VALUES LESS THAN (MAXVALUE)\n)"))
 
 	// Change time zone and insert data, check the data locates in the correct partition.
 	tk.MustExec("SET @@time_zone = 'Asia/Shanghai'")
@@ -376,4 +362,38 @@ func (ts *testSuite) TestCreatePartitionTableNotSupport(c *C) {
 	c.Assert(ddl.ErrPartitionFunctionIsNotAllowed.Equal(err), IsTrue)
 	_, err = tk.Exec(`create table t7 (a int) partition by range (-(select * from t)) (partition p1 values less than (1));`)
 	c.Assert(ddl.ErrPartitionFunctionIsNotAllowed.Equal(err), IsTrue)
+}
+
+func (ts *testSuite) TestIntUint(c *C) {
+	tk := testkit.NewTestKitWithInit(c, ts.store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t_uint (id bigint unsigned) partition by range (id) (
+partition p0 values less than (4294967293),
+partition p1 values less than (4294967296),
+partition p2 values less than (484467440737095),
+partition p3 values less than (18446744073709551614))`)
+	tk.MustExec("insert into t_uint values (1)")
+	tk.MustExec("insert into t_uint values (4294967294)")
+	tk.MustExec("insert into t_uint values (4294967295)")
+	tk.MustExec("insert into t_uint values (18446744073709551613)")
+	tk.MustQuery("select * from t_uint where id > 484467440737095").Check(testkit.Rows("18446744073709551613"))
+	tk.MustQuery("select * from t_uint where id = 4294967295").Check(testkit.Rows("4294967295"))
+	tk.MustQuery("select * from t_uint where id < 4294967294").Check(testkit.Rows("1"))
+	tk.MustQuery("select * from t_uint where id >= 4294967293 order by id").Check(testkit.Rows("4294967294", "4294967295", "18446744073709551613"))
+
+	tk.MustExec(`create table t_int (id bigint signed) partition by range (id) (
+partition p0 values less than (-4294967293),
+partition p1 values less than (-12345),
+partition p2 values less than (0),
+partition p3 values less than (484467440737095),
+partition p4 values less than (9223372036854775806))`)
+	tk.MustExec("insert into t_int values (-9223372036854775803)")
+	tk.MustExec("insert into t_int values (-429496729312)")
+	tk.MustExec("insert into t_int values (-1)")
+	tk.MustExec("insert into t_int values (4294967295)")
+	tk.MustExec("insert into t_int values (9223372036854775805)")
+	tk.MustQuery("select * from t_int where id > 484467440737095").Check(testkit.Rows("9223372036854775805"))
+	tk.MustQuery("select * from t_int where id = 4294967295").Check(testkit.Rows("4294967295"))
+	tk.MustQuery("select * from t_int where id = -4294967294").Check(testkit.Rows())
+	tk.MustQuery("select * from t_int where id < -12345 order by id desc").Check(testkit.Rows("-429496729312", "-9223372036854775803"))
 }

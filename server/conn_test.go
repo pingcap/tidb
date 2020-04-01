@@ -345,7 +345,7 @@ func (ts *ConnTestSuite) TestDispatch(c *C) {
 	}
 }
 
-func (ts *ConnTestSuite) testGetSessionVarsWaitTimeout(c *C) {
+func (ts *ConnTestSuite) TestGetSessionVarsWaitTimeout(c *C) {
 	c.Parallel()
 	se, err := session.CreateSession4Test(ts.store)
 	c.Assert(err, IsNil)
@@ -360,7 +360,7 @@ func (ts *ConnTestSuite) testGetSessionVarsWaitTimeout(c *C) {
 		},
 		ctx: tc,
 	}
-	c.Assert(cc.getSessionVarsWaitTimeout(context.Background()), Equals, 28800)
+	c.Assert(cc.getSessionVarsWaitTimeout(context.Background()), Equals, uint64(0))
 }
 
 func mapIdentical(m1, m2 map[string]string) bool {
@@ -445,6 +445,10 @@ type mockTiDBCtx struct {
 }
 
 func (c *mockTiDBCtx) Execute(ctx context.Context, sql string) ([]ResultSet, error) {
+	return c.rs, c.err
+}
+
+func (c *mockTiDBCtx) ExecuteInternal(ctx context.Context, sql string) ([]ResultSet, error) {
 	return c.rs, c.err
 }
 

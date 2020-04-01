@@ -301,7 +301,7 @@ func getValue(iter *Iterator, key []byte, startTS uint64, isoLevel kvrpcpb.Isola
 		}
 
 		value := &dec2.value
-		if value.valueType == typeRollback {
+		if value.valueType == typeRollback || value.valueType == typeLock {
 			continue
 		}
 		// Read the first committed value that can be seen at startTS.
@@ -466,17 +466,38 @@ func reverse(values []mvccValue) {
 	}
 }
 
+type lockCtx struct {
+	startTS     uint64
+	forUpdateTS uint64
+	primary     []byte
+	ttl         uint64
+	minCommitTs uint64
+
+	returnValues bool
+	values       [][]byte
+}
+
 // PessimisticLock writes the pessimistic lock.
-func (mvcc *MVCCLevelDB) PessimisticLock(mutations []*kvrpcpb.Mutation, primary []byte, startTS,
-	forUpdateTS uint64, ttl uint64, lockWaitTime int64) []error {
+func (mvcc *MVCCLevelDB) PessimisticLock(req *kvrpcpb.PessimisticLockRequest) *kvrpcpb.PessimisticLockResponse {
+	resp := &kvrpcpb.PessimisticLockResponse{}
 	mvcc.mu.Lock()
 	defer mvcc.mu.Unlock()
+	mutations := req.Mutations
+	lCtx := &lockCtx{
+		startTS:      req.StartVersion,
+		forUpdateTS:  req.ForUpdateTs,
+		primary:      req.PrimaryLock,
+		ttl:          req.LockTtl,
+		minCommitTs:  req.MinCommitTs,
+		returnValues: req.ReturnValues,
+	}
+	lockWaitTime := req.WaitTimeout
 
 	anyError := false
 	batch := &leveldb.Batch{}
 	errs := make([]error, 0, len(mutations))
 	for _, m := range mutations {
-		err := mvcc.pessimisticLockMutation(batch, m, startTS, forUpdateTS, primary, ttl)
+		err := mvcc.pessimisticLockMutation(batch, m, lCtx)
 		errs = append(errs, err)
 		if err != nil {
 			anyError = true
@@ -488,16 +509,26 @@ func (mvcc *MVCCLevelDB) PessimisticLock(mutations []*kvrpcpb.Mutation, primary 
 		}
 	}
 	if anyError {
-		return errs
+		if lockWaitTime != kv.LockNoWait {
+			// TODO: remove this when implement sever side wait.
+			simulateServerSideWaitLock(errs)
+		}
+		resp.Errors = convertToKeyErrors(errs)
+		return resp
 	}
 	if err := mvcc.db.Write(batch, nil); err != nil {
-		return []error{err}
+		resp.Errors = convertToKeyErrors([]error{err})
+		return resp
 	}
-
-	return errs
+	if req.ReturnValues {
+		resp.Values = lCtx.values
+	}
+	return resp
 }
 
-func (mvcc *MVCCLevelDB) pessimisticLockMutation(batch *leveldb.Batch, mutation *kvrpcpb.Mutation, startTS, forUpdateTS uint64, primary []byte, ttl uint64) error {
+func (mvcc *MVCCLevelDB) pessimisticLockMutation(batch *leveldb.Batch, mutation *kvrpcpb.Mutation, lctx *lockCtx) error {
+	startTS := lctx.startTS
+	forUpdateTS := lctx.forUpdateTS
 	startKey := mvccEncode(mutation.Key, lockVer)
 	iter := newIterator(mvcc.db, &util.Range{
 		Start: startKey,
@@ -525,16 +556,24 @@ func (mvcc *MVCCLevelDB) pessimisticLockMutation(batch *leveldb.Batch, mutation 
 		}
 		return nil
 	}
-	if err = checkConflictValue(iter, mutation, forUpdateTS); err != nil {
+
+	// For pessimisticLockMutation, check the correspond rollback record, there may be rollbackLock
+	// operation between startTS and forUpdateTS
+	val, err := checkConflictValue(iter, mutation, forUpdateTS, startTS, true)
+	if err != nil {
 		return err
+	}
+	if lctx.returnValues {
+		lctx.values = append(lctx.values, val)
 	}
 
 	lock := mvccLock{
 		startTS:     startTS,
-		primary:     primary,
+		primary:     lctx.primary,
 		op:          kvrpcpb.Op_PessimisticLock,
-		ttl:         ttl,
+		ttl:         lctx.ttl,
 		forUpdateTS: forUpdateTS,
+		minCommitTS: lctx.minCommitTs,
 	}
 	writeKey := mvccEncode(mutation.Key, lockVer)
 	writeValue, err := lock.MarshalBinary()
@@ -612,7 +651,8 @@ func (mvcc *MVCCLevelDB) Prewrite(req *kvrpcpb.PrewriteRequest) []error {
 		// If the operation is Insert, check if key is exists at first.
 		var err error
 		// no need to check insert values for pessimistic transaction.
-		if m.GetOp() == kvrpcpb.Op_Insert && forUpdateTS == 0 {
+		op := m.GetOp()
+		if (op == kvrpcpb.Op_Insert || op == kvrpcpb.Op_CheckNotExists) && forUpdateTS == 0 {
 			v, err := mvcc.getValue(m.Key, startTS, kvrpcpb.IsolationLevel_SI, req.Context.ResolvedLocks)
 			if err != nil {
 				errs = append(errs, err)
@@ -627,6 +667,9 @@ func (mvcc *MVCCLevelDB) Prewrite(req *kvrpcpb.PrewriteRequest) []error {
 				anyError = true
 				continue
 			}
+		}
+		if op == kvrpcpb.Op_CheckNotExists {
+			continue
 		}
 		isPessimisticLock := len(req.IsPessimisticLock) > 0 && req.IsPessimisticLock[i]
 		err = prewriteMutation(mvcc.db, batch, m, startTS, primary, ttl, txnSize, isPessimisticLock, minCommitTS)
@@ -645,45 +688,81 @@ func (mvcc *MVCCLevelDB) Prewrite(req *kvrpcpb.PrewriteRequest) []error {
 	return errs
 }
 
-func checkConflictValue(iter *Iterator, m *kvrpcpb.Mutation, startTS uint64) error {
-	dec := valueDecoder{
+func checkConflictValue(iter *Iterator, m *kvrpcpb.Mutation, forUpdateTS uint64, startTS uint64, getVal bool) ([]byte, error) {
+	dec := &valueDecoder{
 		expectKey: m.Key,
 	}
 	ok, err := dec.Decode(iter)
 	if err != nil {
-		return errors.Trace(err)
+		return nil, errors.Trace(err)
+	}
+	if !ok {
+		return nil, nil
 	}
 
-	// Note that it's a write conflict here, even if the value is a rollback one.
-	if dec.value.commitTS >= startTS {
-		return &ErrConflict{
-			StartTS:          startTS,
+	// Note that it's a write conflict here, even if the value is a rollback one, or a op_lock record
+	if dec.value.commitTS > forUpdateTS {
+		return nil, &ErrConflict{
+			StartTS:          forUpdateTS,
 			ConflictTS:       dec.value.startTS,
 			ConflictCommitTS: dec.value.commitTS,
 			Key:              m.Key,
 		}
 	}
 
-	if m.Assertion == kvrpcpb.Assertion_NotExist {
-		for ok {
+	needGetVal := getVal
+	needCheckAssertion := m.Assertion == kvrpcpb.Assertion_NotExist
+	needCheckRollback := true
+	var retVal []byte
+	// do the check or get operations within one iteration to make CI faster
+	for ok {
+		if needCheckRollback {
 			if dec.value.valueType == typeRollback {
-				ok, err = dec.Decode(iter)
-				if err != nil {
-					return errors.Trace(err)
+				if dec.value.commitTS == startTS {
+					logutil.BgLogger().Warn("rollback value found",
+						zap.Uint64("txnID", startTS),
+						zap.Int32("rollbacked.valueType", int32(dec.value.valueType)),
+						zap.Uint64("rollbacked.startTS", dec.value.startTS),
+						zap.Uint64("rollbacked.commitTS", dec.value.commitTS))
+					return nil, &ErrAlreadyRollbacked{
+						startTS: startTS,
+						key:     m.Key,
+					}
 				}
-			} else if dec.value.valueType == typeDelete {
-				break
-			} else {
+			}
+			if dec.value.commitTS < startTS {
+				needCheckRollback = false
+			}
+		}
+		if needCheckAssertion {
+			if dec.value.valueType == typePut || dec.value.valueType == typeLock {
 				if m.Op == kvrpcpb.Op_PessimisticLock {
-					return &ErrKeyAlreadyExist{
+					return nil, &ErrKeyAlreadyExist{
 						Key: m.Key,
 					}
 				}
-				break
+			} else if dec.value.valueType == typeDelete {
+				needCheckAssertion = false
 			}
 		}
+		if needGetVal {
+			if dec.value.valueType == typeDelete || dec.value.valueType == typePut {
+				retVal = dec.value.value
+				needGetVal = false
+			}
+		}
+		if !needCheckAssertion && !needGetVal && !needCheckRollback {
+			break
+		}
+		ok, err = dec.Decode(iter)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
-	return nil
+	if getVal {
+		return retVal, nil
+	}
+	return nil, nil
 }
 
 func prewriteMutation(db *leveldb.DB, batch *leveldb.Batch,
@@ -721,11 +800,15 @@ func prewriteMutation(db *leveldb.DB, batch *leveldb.Batch,
 			// Maybe ttlManager has already set the lock TTL, don't decrease it.
 			ttl = dec.lock.ttl
 		}
+		if minCommitTS < dec.lock.minCommitTS {
+			// The minCommitTS has been pushed forward.
+			minCommitTS = dec.lock.minCommitTS
+		}
 	} else {
 		if isPessimisticLock {
 			return ErrAbort("pessimistic lock not found")
 		}
-		err = checkConflictValue(iter, mutation, startTS)
+		_, err = checkConflictValue(iter, mutation, startTS, startTS, false)
 		if err != nil {
 			return err
 		}
@@ -821,26 +904,26 @@ func commitKey(db *leveldb.DB, batch *leveldb.Batch, key []byte, startTS, commit
 }
 
 func commitLock(batch *leveldb.Batch, lock mvccLock, key []byte, startTS, commitTS uint64) error {
-	if lock.op != kvrpcpb.Op_Lock {
-		var valueType mvccValueType
-		if lock.op == kvrpcpb.Op_Put {
-			valueType = typePut
-		} else {
-			valueType = typeDelete
-		}
-		value := mvccValue{
-			valueType: valueType,
-			startTS:   startTS,
-			commitTS:  commitTS,
-			value:     lock.value,
-		}
-		writeKey := mvccEncode(key, commitTS)
-		writeValue, err := value.MarshalBinary()
-		if err != nil {
-			return errors.Trace(err)
-		}
-		batch.Put(writeKey, writeValue)
+	var valueType mvccValueType
+	if lock.op == kvrpcpb.Op_Put {
+		valueType = typePut
+	} else if lock.op == kvrpcpb.Op_Lock {
+		valueType = typeLock
+	} else {
+		valueType = typeDelete
 	}
+	value := mvccValue{
+		valueType: valueType,
+		startTS:   startTS,
+		commitTS:  commitTS,
+		value:     lock.value,
+	}
+	writeKey := mvccEncode(key, commitTS)
+	writeValue, err := value.MarshalBinary()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	batch.Put(writeKey, writeValue)
 	batch.Delete(mvccEncode(key, lockVer))
 	return nil
 }
@@ -917,7 +1000,7 @@ func rollbackKey(db *leveldb.DB, batch *leveldb.Batch, key []byte, startTS uint6
 	return nil
 }
 
-func rollbackLock(batch *leveldb.Batch, key []byte, startTS uint64) error {
+func writeRollback(batch *leveldb.Batch, key []byte, startTS uint64) error {
 	tomb := mvccValue{
 		valueType: typeRollback,
 		startTS:   startTS,
@@ -929,6 +1012,14 @@ func rollbackLock(batch *leveldb.Batch, key []byte, startTS uint64) error {
 		return errors.Trace(err)
 	}
 	batch.Put(writeKey, writeValue)
+	return nil
+}
+
+func rollbackLock(batch *leveldb.Batch, key []byte, startTS uint64) error {
+	err := writeRollback(batch, key, startTS)
+	if err != nil {
+		return err
+	}
 	batch.Delete(mvccEncode(key, lockVer))
 	return nil
 }
@@ -1128,8 +1219,12 @@ func (mvcc *MVCCLevelDB) CheckTxnStatus(primaryKey []byte, lockTS, callerStartTS
 	// written before the primary lock.
 
 	if rollbackIfNotExist {
+		// Write rollback record, but not delete the lock on the primary key. There may exist lock which has
+		// different lock.startTS with input lockTS, for example the primary key could be already
+		// locked by the caller transaction, deleting this key will mistakenly delete the lock on
+		// primary key, see case TestSingleStatementRollback in session_test suite for example
 		batch := &leveldb.Batch{}
-		if err1 := rollbackLock(batch, primaryKey, lockTS); err1 != nil {
+		if err1 := writeRollback(batch, primaryKey, lockTS); err1 != nil {
 			err = errors.Trace(err1)
 			return
 		}
@@ -1563,6 +1658,7 @@ var valueTypeOpMap = [...]kvrpcpb.Op{
 	typePut:      kvrpcpb.Op_Put,
 	typeDelete:   kvrpcpb.Op_Del,
 	typeRollback: kvrpcpb.Op_Rollback,
+	typeLock:     kvrpcpb.Op_Lock,
 }
 
 // MvccGetByKey implements the MVCCDebugger interface.

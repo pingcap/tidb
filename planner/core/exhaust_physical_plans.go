@@ -85,7 +85,7 @@ func (p *LogicalJoin) moveEqualToOtherConditions(offsets []int) []expression.Exp
 
 	// Construct otherConds, which is composed of the original other conditions
 	// and the remained unused equal conditions.
-	numOtherConds := len(p.OtherConditions) + len(p.EqualConditions) - len(offsets)
+	numOtherConds := len(p.OtherConditions) + len(p.EqualConditions) - len(usedEqConds)
 	otherConds := make([]expression.Expression, len(p.OtherConditions), numOtherConds)
 	copy(otherConds, p.OtherConditions)
 	for eqCondIdx := range p.EqualConditions {
@@ -121,8 +121,23 @@ func (p *PhysicalMergeJoin) tryToGetChildReqProp(prop *property.PhysicalProperty
 	return []*property.PhysicalProperty{lProp, rProp}, true
 }
 
+func (p *LogicalJoin) checkJoinKeyCollation(leftKeys, rightKeys []*expression.Column) bool {
+	// if a left key and its corresponding right key have different collation, don't use MergeJoin since
+	// the their children may sort their records in different ways
+	for i := range leftKeys {
+		lt := leftKeys[i].RetType
+		rt := rightKeys[i].RetType
+		if (lt.EvalType() == types.ETString && rt.EvalType() == types.ETString) &&
+			(leftKeys[i].RetType.Charset != rightKeys[i].RetType.Charset ||
+				leftKeys[i].RetType.Collate != rightKeys[i].RetType.Collate) {
+			return false
+		}
+	}
+	return true
+}
+
 // GetMergeJoin convert the logical join to physical merge join based on the physical property.
-func (p *LogicalJoin) GetMergeJoin(prop *property.PhysicalProperty, schema *expression.Schema) []PhysicalPlan {
+func (p *LogicalJoin) GetMergeJoin(prop *property.PhysicalProperty, schema *expression.Schema, statsInfo *property.StatsInfo, leftStatsInfo *property.StatsInfo, rightStatsInfo *property.StatsInfo) []PhysicalPlan {
 	joins := make([]PhysicalPlan, 0, len(p.leftProperties)+1)
 	// The leftProperties caches all the possible properties that are provided by its children.
 	leftJoinKeys, rightJoinKeys := p.GetJoinKeys()
@@ -142,6 +157,9 @@ func (p *LogicalJoin) GetMergeJoin(prop *property.PhysicalProperty, schema *expr
 
 		leftKeys = leftKeys[:prefixLen]
 		rightKeys = rightKeys[:prefixLen]
+		if !p.checkJoinKeyCollation(leftKeys, rightKeys) {
+			continue
+		}
 		offsets = offsets[:prefixLen]
 		baseJoin := basePhysicalJoin{
 			JoinType:        p.JoinType,
@@ -151,16 +169,16 @@ func (p *LogicalJoin) GetMergeJoin(prop *property.PhysicalProperty, schema *expr
 			LeftJoinKeys:    leftKeys,
 			RightJoinKeys:   rightKeys,
 		}
-		mergeJoin := PhysicalMergeJoin{basePhysicalJoin: baseJoin}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset)
+		mergeJoin := PhysicalMergeJoin{basePhysicalJoin: baseJoin}.Init(p.ctx, statsInfo.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset)
 		mergeJoin.SetSchema(schema)
 		mergeJoin.OtherConditions = p.moveEqualToOtherConditions(offsets)
 		mergeJoin.initCompareFuncs()
 		if reqProps, ok := mergeJoin.tryToGetChildReqProp(prop); ok {
 			// Adjust expected count for children nodes.
-			if prop.ExpectedCnt < p.stats.RowCount {
-				expCntScale := prop.ExpectedCnt / p.stats.RowCount
-				reqProps[0].ExpectedCnt = p.children[0].statsInfo().RowCount * expCntScale
-				reqProps[1].ExpectedCnt = p.children[1].statsInfo().RowCount * expCntScale
+			if prop.ExpectedCnt < statsInfo.RowCount {
+				expCntScale := prop.ExpectedCnt / statsInfo.RowCount
+				reqProps[0].ExpectedCnt = leftStatsInfo.RowCount * expCntScale
+				reqProps[1].ExpectedCnt = rightStatsInfo.RowCount * expCntScale
 			}
 			mergeJoin.childrenReqProps = reqProps
 			_, desc := prop.AllSameOrder()
@@ -171,7 +189,7 @@ func (p *LogicalJoin) GetMergeJoin(prop *property.PhysicalProperty, schema *expr
 	// If TiDB_SMJ hint is existed, it should consider enforce merge join,
 	// because we can't trust lhsChildProperty completely.
 	if (p.preferJoinType & preferMergeJoin) > 0 {
-		joins = append(joins, p.getEnforcedMergeJoin(prop)...)
+		joins = append(joins, p.getEnforcedMergeJoin(prop, schema, statsInfo)...)
 	}
 
 	return joins
@@ -199,7 +217,7 @@ func getNewJoinKeysByOffsets(oldJoinKeys []*expression.Column, offsets []int) []
 	return newKeys
 }
 
-func (p *LogicalJoin) getEnforcedMergeJoin(prop *property.PhysicalProperty) []PhysicalPlan {
+func (p *LogicalJoin) getEnforcedMergeJoin(prop *property.PhysicalProperty, schema *expression.Schema, statsInfo *property.StatsInfo) []PhysicalPlan {
 	// Check whether SMJ can satisfy the required property
 	leftJoinKeys, rightJoinKeys := p.GetJoinKeys()
 	offsets := make([]int, 0, len(leftJoinKeys))
@@ -239,6 +257,15 @@ func (p *LogicalJoin) getEnforcedMergeJoin(prop *property.PhysicalProperty) []Ph
 	// Generate the enforced sort merge join
 	leftKeys := getNewJoinKeysByOffsets(leftJoinKeys, offsets)
 	rightKeys := getNewJoinKeysByOffsets(rightJoinKeys, offsets)
+	otherConditions := make([]expression.Expression, len(p.OtherConditions), len(p.OtherConditions)+len(p.EqualConditions))
+	copy(otherConditions, p.OtherConditions)
+	if !p.checkJoinKeyCollation(leftKeys, rightKeys) {
+		// if the join keys' collation are conflicted, we use the empty join key
+		// and move EqualConditions to OtherConditions.
+		leftKeys = nil
+		rightKeys = nil
+		otherConditions = append(otherConditions, expression.ScalarFuncs2Exprs(p.EqualConditions)...)
+	}
 	lProp := property.NewPhysicalProperty(property.RootTaskType, leftKeys, desc, math.MaxFloat64, true)
 	rProp := property.NewPhysicalProperty(property.RootTaskType, rightKeys, desc, math.MaxFloat64, true)
 	baseJoin := basePhysicalJoin{
@@ -248,10 +275,10 @@ func (p *LogicalJoin) getEnforcedMergeJoin(prop *property.PhysicalProperty) []Ph
 		DefaultValues:   p.DefaultValues,
 		LeftJoinKeys:    leftKeys,
 		RightJoinKeys:   rightKeys,
-		OtherConditions: p.OtherConditions,
+		OtherConditions: otherConditions,
 	}
-	enforcedPhysicalMergeJoin := PhysicalMergeJoin{basePhysicalJoin: baseJoin, Desc: desc}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset)
-	enforcedPhysicalMergeJoin.SetSchema(p.schema)
+	enforcedPhysicalMergeJoin := PhysicalMergeJoin{basePhysicalJoin: baseJoin, Desc: desc}.Init(p.ctx, statsInfo.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset)
+	enforcedPhysicalMergeJoin.SetSchema(schema)
 	enforcedPhysicalMergeJoin.childrenReqProps = []*property.PhysicalProperty{lProp, rProp}
 	enforcedPhysicalMergeJoin.initCompareFuncs()
 	return []PhysicalPlan{enforcedPhysicalMergeJoin}
@@ -260,9 +287,17 @@ func (p *LogicalJoin) getEnforcedMergeJoin(prop *property.PhysicalProperty) []Ph
 func (p *PhysicalMergeJoin) initCompareFuncs() {
 	p.CompareFuncs = make([]expression.CompareFunc, 0, len(p.LeftJoinKeys))
 	for i := range p.LeftJoinKeys {
-		p.CompareFuncs = append(p.CompareFuncs, expression.GetCmpFunction(p.LeftJoinKeys[i], p.RightJoinKeys[i]))
+		p.CompareFuncs = append(p.CompareFuncs, expression.GetCmpFunction(p.ctx, p.LeftJoinKeys[i], p.RightJoinKeys[i]))
 	}
 }
+
+// ForceUseOuterBuild4Test is a test option to control forcing use outer input as build.
+// TODO: use hint and remove this variable
+var ForceUseOuterBuild4Test = false
+
+// ForcedHashLeftJoin4Test is a test option to force using HashLeftJoin
+// TODO: use hint and remove this variable
+var ForcedHashLeftJoin4Test = false
 
 func (p *LogicalJoin) getHashJoins(prop *property.PhysicalProperty) []PhysicalPlan {
 	if !prop.IsEmpty() { // hash join doesn't promise any orders
@@ -273,14 +308,26 @@ func (p *LogicalJoin) getHashJoins(prop *property.PhysicalProperty) []PhysicalPl
 	case SemiJoin, AntiSemiJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
 		joins = append(joins, p.getHashJoin(prop, 1, false))
 	case LeftOuterJoin:
-		joins = append(joins, p.getHashJoin(prop, 1, false))
-		joins = append(joins, p.getHashJoin(prop, 1, true))
+		if ForceUseOuterBuild4Test {
+			joins = append(joins, p.getHashJoin(prop, 1, true))
+		} else {
+			joins = append(joins, p.getHashJoin(prop, 1, false))
+			joins = append(joins, p.getHashJoin(prop, 1, true))
+		}
 	case RightOuterJoin:
-		joins = append(joins, p.getHashJoin(prop, 0, false))
-		joins = append(joins, p.getHashJoin(prop, 0, true))
+		if ForceUseOuterBuild4Test {
+			joins = append(joins, p.getHashJoin(prop, 0, true))
+		} else {
+			joins = append(joins, p.getHashJoin(prop, 0, false))
+			joins = append(joins, p.getHashJoin(prop, 0, true))
+		}
 	case InnerJoin:
-		joins = append(joins, p.getHashJoin(prop, 1, false))
-		joins = append(joins, p.getHashJoin(prop, 0, false))
+		if ForcedHashLeftJoin4Test {
+			joins = append(joins, p.getHashJoin(prop, 1, false))
+		} else {
+			joins = append(joins, p.getHashJoin(prop, 1, false))
+			joins = append(joins, p.getHashJoin(prop, 0, false))
+		}
 	}
 	return joins
 }
@@ -395,7 +442,7 @@ func (p *LogicalJoin) constructIndexMergeJoin(
 		keyOff2KeyOffOrderByIdx := make([]int, len(join.OuterJoinKeys))
 		keyOffMapList := make([]int, len(join.KeyOff2IdxOff))
 		copy(keyOffMapList, join.KeyOff2IdxOff)
-		keyOffMap := make(map[int]int)
+		keyOffMap := make(map[int]int, len(keyOffMapList))
 		for i, idxOff := range keyOffMapList {
 			keyOffMap[idxOff] = i
 		}
@@ -412,8 +459,8 @@ func (p *LogicalJoin) constructIndexMergeJoin(
 			if isOuterKeysPrefix && !prop.Items[i].Col.Equal(nil, join.OuterJoinKeys[keyOff2KeyOffOrderByIdx[i]]) {
 				isOuterKeysPrefix = false
 			}
-			compareFuncs = append(compareFuncs, expression.GetCmpFunction(join.OuterJoinKeys[i], join.InnerJoinKeys[i]))
-			outerCompareFuncs = append(outerCompareFuncs, expression.GetCmpFunction(join.OuterJoinKeys[i], join.OuterJoinKeys[i]))
+			compareFuncs = append(compareFuncs, expression.GetCmpFunction(p.ctx, join.OuterJoinKeys[i], join.InnerJoinKeys[i]))
+			outerCompareFuncs = append(outerCompareFuncs, expression.GetCmpFunction(p.ctx, join.OuterJoinKeys[i], join.OuterJoinKeys[i]))
 		}
 		// canKeepOuterOrder means whether the prop items are the prefix of the outer join keys.
 		canKeepOuterOrder := len(prop.Items) <= len(join.OuterJoinKeys)
@@ -536,6 +583,7 @@ func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 		return nil
 	}
 	keyOff2IdxOff := make([]int, len(innerJoinKeys))
+	newOuterJoinKeys := make([]*expression.Column, 0)
 	pkMatched := false
 	for i, key := range innerJoinKeys {
 		if !key.Equal(nil, pkCol) {
@@ -544,7 +592,10 @@ func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 		}
 		pkMatched = true
 		keyOff2IdxOff[i] = 0
+		// Add to newOuterJoinKeys only if conditions contain inner primary key. For issue #14822.
+		newOuterJoinKeys = append(newOuterJoinKeys, outerJoinKeys[i])
 	}
+	outerJoinKeys = newOuterJoinKeys
 	if !pkMatched {
 		return nil
 	}
@@ -1219,7 +1270,7 @@ func (ijHelper *indexJoinBuildHelper) buildTemplateRange(matchedKeyCnt int, eqAn
 
 // tryToGetIndexJoin will get index join by hints. If we can generate a valid index join by hint, the second return value
 // will be true, which means we force to choose this index join. Otherwise we will select a join algorithm with min-cost.
-func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJoins []PhysicalPlan, forced bool) {
+func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJoins []PhysicalPlan, canForced bool) {
 	inljRightOuter := (p.preferJoinType & preferLeftAsINLJInner) > 0
 	inljLeftOuter := (p.preferJoinType & preferRightAsINLJInner) > 0
 	hasINLJHint := inljLeftOuter || inljRightOuter
@@ -1234,10 +1285,29 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 
 	forceLeftOuter := inljLeftOuter || inlhjLeftOuter || inlmjLeftOuter
 	forceRightOuter := inljRightOuter || inlhjRightOuter || inlmjRightOuter
+	needForced := forceLeftOuter || forceRightOuter
 
 	defer func() {
 		// refine error message
-		if !forced && (hasINLJHint || hasINLHJHint || hasINLMJHint) {
+		if !canForced && needForced {
+			if hasINLMJHint && len(indexJoins) > 0 && len(prop.Items) > 0 {
+				containIdxMergeJoin := false
+				for _, idxJoin := range indexJoins {
+					if _, ok := idxJoin.(*PhysicalIndexMergeJoin); ok {
+						containIdxMergeJoin = true
+						break
+					}
+				}
+				// 1. IndexMergeJoin requires stricter conditions than Index(Hash)Join when the output order is needed.
+				// 2. IndexMergeJoin requires the same conditions with Index(Hash)Join when the output is unordered.
+				// 3. If ordered-Index(Hash)Join can be chosen but ordered-IndexMergeJoin can not be chosen, we can build a plan with an enforced sort on IndexMergeJoin.
+				// 4. Thus we can give up the plans here if IndexMergeJoin is nil when `hasINLMJHint` is true. Because we can make sure that an IndexMeregJoin with enforced sort will be built.
+				if !containIdxMergeJoin {
+					canForced = true
+					indexJoins = nil
+					return
+				}
+			}
 			// Construct warning message prefix.
 			var errMsg string
 			switch {
@@ -1340,8 +1410,8 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 
 	canForceLeft := len(forcedLeftOuterJoins) != 0 && forceLeftOuter
 	canForceRight := len(forcedRightOuterJoins) != 0 && forceRightOuter
-	forced = canForceLeft || canForceRight
-	if forced {
+	canForced = canForceLeft || canForceRight
+	if canForced {
 		return append(forcedLeftOuterJoins, forcedRightOuterJoins...), true
 	}
 	return append(allLeftOuterJoins, allRightOuterJoins...), false
@@ -1352,7 +1422,7 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 // If the hint is not matched, it will get other candidates.
 // If the hint is not figured, we will pick all candidates.
 func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
-	mergeJoins := p.GetMergeJoin(prop, p.schema)
+	mergeJoins := p.GetMergeJoin(prop, p.schema, p.Stats(), p.children[0].statsInfo(), p.children[1].statsInfo())
 	if (p.preferJoinType & preferMergeJoin) > 0 {
 		return mergeJoins
 	}
@@ -1687,8 +1757,9 @@ func (p *LogicalLimit) exhaustPhysicalPlans(prop *property.PhysicalProperty) []P
 func (p *LogicalLock) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
 	childProp := prop.Clone()
 	lock := PhysicalLock{
-		Lock:         p.Lock,
-		TblID2Handle: p.tblID2Handle,
+		Lock:             p.Lock,
+		TblID2Handle:     p.tblID2Handle,
+		PartitionedTable: p.partitionedTable,
 	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
 	return []PhysicalPlan{lock}
 }
@@ -1713,12 +1784,12 @@ func (ls *LogicalSort) getPhysicalSort(prop *property.PhysicalProperty) *Physica
 }
 
 func (ls *LogicalSort) getNominalSort(reqProp *property.PhysicalProperty) *NominalSort {
-	prop, canPass := GetPropByOrderByItems(ls.ByItems)
+	prop, canPass, onlyColumn := GetPropByOrderByItemsContainScalarFunc(ls.ByItems)
 	if !canPass {
 		return nil
 	}
 	prop.ExpectedCnt = reqProp.ExpectedCnt
-	ps := NominalSort{}.Init(ls.ctx, ls.blockOffset, prop)
+	ps := NominalSort{OnlyColumn: onlyColumn, ByItems: ls.ByItems}.Init(ls.ctx, ls.blockOffset, prop)
 	return ps
 }
 

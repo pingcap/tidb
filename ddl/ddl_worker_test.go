@@ -34,13 +34,15 @@ import (
 )
 
 var _ = Suite(&testDDLSuite{})
+var _ = Suite(&testDDLSerialSuite{})
 
 type testDDLSuite struct{}
+type testDDLSerialSuite struct{}
 
 const testLease = 5 * time.Millisecond
 
-func (s *testDDLSuite) SetUpSuite(c *C) {
-	WaitTimeWhenErrorOccured = 1 * time.Microsecond
+func (s *testDDLSerialSuite) SetUpSuite(c *C) {
+	SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
 
 	// We hope that this test is serially executed. So put it here.
 	s.testRunWorker(c)
@@ -66,7 +68,7 @@ func (s *testDDLSuite) TestCheckOwner(c *C) {
 }
 
 // testRunWorker tests no job is handled when the value of RunWorker is false.
-func (s *testDDLSuite) testRunWorker(c *C) {
+func (s *testDDLSerialSuite) testRunWorker(c *C) {
 	store := testCreateStore(c, "test_run_worker")
 	defer store.Close()
 
@@ -948,6 +950,13 @@ func (s *testDDLSuite) TestBuildJobDependence(c *C) {
 	})
 }
 
+func addDDLJob(c *C, d *ddl, job *model.Job) {
+	task := &limitJobTask{job, make(chan error)}
+	d.limitJobCh <- task
+	err := <-task.err
+	c.Assert(err, IsNil)
+}
+
 func (s *testDDLSuite) TestParallelDDL(c *C) {
 	store := testCreateStore(c, "test_parallel_ddl")
 	defer store.Close()
@@ -1068,27 +1077,27 @@ func (s *testDDLSuite) TestParallelDDL(c *C) {
 		/     11	/	 	2			/		2		/	add index	 /
 	*/
 	job1 := buildCreateIdxJob(dbInfo1, tblInfo1, false, "db1_idx1", "c1")
-	d.addDDLJob(ctx, job1)
+	addDDLJob(c, d, job1)
 	job2 := buildCreateColumnJob(dbInfo1, tblInfo1, "c3", &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, nil)
-	d.addDDLJob(ctx, job2)
+	addDDLJob(c, d, job2)
 	job3 := buildCreateIdxJob(dbInfo1, tblInfo1, false, "db1_idx2", "c3")
-	d.addDDLJob(ctx, job3)
+	addDDLJob(c, d, job3)
 	job4 := buildDropColumnJob(dbInfo1, tblInfo2, "c3")
-	d.addDDLJob(ctx, job4)
+	addDDLJob(c, d, job4)
 	job5 := buildDropIdxJob(dbInfo1, tblInfo1, "db1_idx1")
-	d.addDDLJob(ctx, job5)
+	addDDLJob(c, d, job5)
 	job6 := buildCreateIdxJob(dbInfo1, tblInfo2, false, "db2_idx1", "c2")
-	d.addDDLJob(ctx, job6)
+	addDDLJob(c, d, job6)
 	job7 := buildDropColumnJob(dbInfo2, tblInfo3, "c4")
-	d.addDDLJob(ctx, job7)
+	addDDLJob(c, d, job7)
 	job8 := buildRebaseAutoIDJobJob(dbInfo2, tblInfo3, 1024)
-	d.addDDLJob(ctx, job8)
+	addDDLJob(c, d, job8)
 	job9 := buildCreateIdxJob(dbInfo1, tblInfo1, false, "db1_idx3", "c2")
-	d.addDDLJob(ctx, job9)
+	addDDLJob(c, d, job9)
 	job10 := buildDropSchemaJob(dbInfo2)
-	d.addDDLJob(ctx, job10)
+	addDDLJob(c, d, job10)
 	job11 := buildCreateIdxJob(dbInfo2, tblInfo3, false, "db3_idx1", "c2")
-	d.addDDLJob(ctx, job11)
+	addDDLJob(c, d, job11)
 	// TODO: add rename table job
 
 	// check results.

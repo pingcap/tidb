@@ -145,7 +145,7 @@ func (p *Plugin) validate(ctx context.Context, tiPlugins *plugins) error {
 func Load(ctx context.Context, cfg Config) (err error) {
 	tiPlugins := &plugins{
 		plugins:      make(map[Kind][]Plugin),
-		versions:     make(map[string]uint16),
+		versions:     make(map[string]uint16, len(cfg.EnvVersion)),
 		dyingPlugins: make([]Plugin, 0),
 	}
 

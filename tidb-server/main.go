@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/pd/client"
+	"github.com/pingcap/pd/v4/client"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/gcworker"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/domainutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
@@ -68,33 +69,34 @@ import (
 
 // Flag Names
 const (
-	nmVersion          = "V"
-	nmConfig           = "config"
-	nmConfigCheck      = "config-check"
-	nmConfigStrict     = "config-strict"
-	nmStore            = "store"
-	nmStorePath        = "path"
-	nmHost             = "host"
-	nmAdvertiseAddress = "advertise-address"
-	nmPort             = "P"
-	nmCors             = "cors"
-	nmSocket           = "socket"
-	nmEnableBinlog     = "enable-binlog"
-	nmRunDDL           = "run-ddl"
-	nmLogLevel         = "L"
-	nmLogFile          = "log-file"
-	nmLogSlowQuery     = "log-slow-query"
-	nmReportStatus     = "report-status"
-	nmStatusHost       = "status-host"
-	nmStatusPort       = "status"
-	nmMetricsAddr      = "metrics-addr"
-	nmMetricsInterval  = "metrics-interval"
-	nmDdlLease         = "lease"
-	nmTokenLimit       = "token-limit"
-	nmPluginDir        = "plugin-dir"
-	nmPluginLoad       = "plugin-load"
-	nmRepairMode       = "repair-mode"
-	nmRepairList       = "repair-list"
+	nmVersion                = "V"
+	nmConfig                 = "config"
+	nmConfigCheck            = "config-check"
+	nmConfigStrict           = "config-strict"
+	nmStore                  = "store"
+	nmStorePath              = "path"
+	nmHost                   = "host"
+	nmAdvertiseAddress       = "advertise-address"
+	nmPort                   = "P"
+	nmCors                   = "cors"
+	nmSocket                 = "socket"
+	nmEnableBinlog           = "enable-binlog"
+	nmRunDDL                 = "run-ddl"
+	nmLogLevel               = "L"
+	nmLogFile                = "log-file"
+	nmLogSlowQuery           = "log-slow-query"
+	nmReportStatus           = "report-status"
+	nmStatusHost             = "status-host"
+	nmStatusPort             = "status"
+	nmMetricsAddr            = "metrics-addr"
+	nmMetricsInterval        = "metrics-interval"
+	nmDdlLease               = "lease"
+	nmTokenLimit             = "token-limit"
+	nmPluginDir              = "plugin-dir"
+	nmPluginLoad             = "plugin-load"
+	nmRepairMode             = "repair-mode"
+	nmRepairList             = "repair-list"
+	nmRequireSecureTransport = "require-secure-transport"
 
 	nmProxyProtocolNetworks      = "proxy-protocol-networks"
 	nmProxyProtocolHeaderTimeout = "proxy-protocol-header-timeout"
@@ -124,6 +126,7 @@ var (
 	affinityCPU      = flag.String(nmAffinityCPU, "", "affinity cpu (cpu-no. separated by comma, e.g. 1,2,3)")
 	repairMode       = flagBoolean(nmRepairMode, false, "enable admin repair mode")
 	repairList       = flag.String(nmRepairList, "", "admin repair table list")
+	requireTLS       = flag.Bool(nmRequireSecureTransport, false, "require client use secure transport")
 
 	// Log
 	logLevel     = flag.String(nmLogLevel, "info", "log level: info, debug, warn, error, fatal")
@@ -143,7 +146,6 @@ var (
 )
 
 var (
-	cfg      *config.Config
 	storage  kv.Storage
 	dom      *domain.Domain
 	svr      *server.Server
@@ -158,25 +160,10 @@ func main() {
 	}
 	registerStores()
 	registerMetrics()
-	configWarning := loadConfig()
-	overrideConfig()
-	if err := cfg.Valid(); err != nil {
-		fmt.Fprintln(os.Stderr, "invalid config", err)
-		os.Exit(1)
-	}
-	if *configCheck {
-		fmt.Println("config check successful")
-		os.Exit(0)
-	}
+	config.InitializeConfig(*configPath, *configCheck, *configStrict, reloadConfig, overrideConfig)
 	setGlobalVars()
 	setCPUAffinity()
 	setupLog()
-	// If configStrict had been specified, and there had been an error, the server would already
-	// have exited by now. If configWarning is not an empty string, write it to the log now that
-	// it's been properly set up.
-	if configWarning != "" {
-		log.Warn(configWarning)
-	}
 	setupTracing() // Should before createServer and after setup config.
 	printInfo()
 	setupBinlogClient()
@@ -238,6 +225,7 @@ func registerMetrics() {
 }
 
 func createStoreAndDomain() {
+	cfg := config.GetGlobalConfig()
 	fullPath := fmt.Sprintf("%s://%s", cfg.Store, cfg.Path)
 	var err error
 	storage, err = kvstore.New(fullPath)
@@ -248,6 +236,7 @@ func createStoreAndDomain() {
 }
 
 func setupBinlogClient() {
+	cfg := config.GetGlobalConfig()
 	if !cfg.Binlog.Enable {
 		return
 	}
@@ -312,6 +301,7 @@ func prometheusPushClient(addr string, interval time.Duration) {
 }
 
 func instanceName() string {
+	cfg := config.GetGlobalConfig()
 	hostname, err := os.Hostname()
 	if err != nil {
 		return "unknown"
@@ -340,62 +330,6 @@ func flagBoolean(name string, defaultVal bool, usage string) *bool {
 	return flag.Bool(name, defaultVal, usage)
 }
 
-var deprecatedConfig = map[string]struct{}{
-	"pessimistic-txn.ttl": {},
-	"log.rotate":          {},
-}
-
-func isDeprecatedConfigItem(items []string) bool {
-	for _, item := range items {
-		if _, ok := deprecatedConfig[item]; !ok {
-			return false
-		}
-	}
-	return true
-}
-
-func loadConfig() string {
-	cfg = config.GetGlobalConfig()
-	if *configPath != "" {
-		// Not all config items are supported now.
-		config.SetConfReloader(*configPath, reloadConfig, hotReloadConfigItems...)
-
-		err := cfg.Load(*configPath)
-		if err == nil {
-			return ""
-		}
-
-		// Unused config item erro turns to warnings.
-		if tmp, ok := err.(*config.ErrConfigValidationFailed); ok {
-			if isDeprecatedConfigItem(tmp.UndecodedItems) {
-				return err.Error()
-			}
-			// This block is to accommodate an interim situation where strict config checking
-			// is not the default behavior of TiDB. The warning message must be deferred until
-			// logging has been set up. After strict config checking is the default behavior,
-			// This should all be removed.
-			if !*configCheck && !*configStrict {
-				return err.Error()
-			}
-		}
-
-		terror.MustNil(err)
-	} else {
-		// configCheck should have the config file specified.
-		if *configCheck {
-			fmt.Fprintln(os.Stderr, "config check failed", errors.New("no config file specified for config-check"))
-			os.Exit(1)
-		}
-	}
-	return ""
-}
-
-// hotReloadConfigItems lists all config items which support hot-reload.
-var hotReloadConfigItems = []string{"Performance.MaxProcs", "Performance.MaxMemory", "Performance.CrossJoin",
-	"Performance.FeedbackProbability", "Performance.QueryFeedbackLimit", "Performance.PseudoEstimateRatio",
-	"OOMUseTmpStorage", "OOMAction", "MemQuotaQuery", "StmtSummary.MaxStmtCount", "StmtSummary.MaxSQLLength", "Log.QueryLogMaxLen",
-	"TiKVClient.EnableChunkRPC", "TiKVClient.StoreLimit"}
-
 func reloadConfig(nc, c *config.Config) {
 	// Just a part of config items need to be reload explicitly.
 	// Some of them like OOMAction are always used by getting from global config directly
@@ -417,12 +351,25 @@ func reloadConfig(nc, c *config.Config) {
 	if nc.Performance.PseudoEstimateRatio != c.Performance.PseudoEstimateRatio {
 		statistics.RatioOfPseudoEstimate.Store(nc.Performance.PseudoEstimateRatio)
 	}
+	if nc.Performance.MaxProcs != c.Performance.MaxProcs {
+		runtime.GOMAXPROCS(int(nc.Performance.MaxProcs))
+	}
 	if nc.TiKVClient.StoreLimit != c.TiKVClient.StoreLimit {
 		storeutil.StoreLimit.Store(nc.TiKVClient.StoreLimit)
 	}
+
+	if nc.PreparedPlanCache.Enabled != c.PreparedPlanCache.Enabled {
+		plannercore.SetPreparedPlanCache(nc.PreparedPlanCache.Enabled)
+	}
+	if nc.Log.Level != c.Log.Level {
+		if err := logutil.SetLevel(nc.Log.Level); err != nil {
+			logutil.BgLogger().Error("update log level error", zap.Error(err))
+		}
+	}
 }
 
-func overrideConfig() {
+// overrideConfig considers command arguments and overrides some config items in the Config.
+func overrideConfig(cfg *config.Config) {
 	actualFlags := make(map[string]bool)
 	flag.Visit(func(f *flag.Flag) {
 		actualFlags[f.Name] = true
@@ -476,6 +423,9 @@ func overrideConfig() {
 	if actualFlags[nmPluginDir] {
 		cfg.Plugin.Dir = *pluginDir
 	}
+	if actualFlags[nmRequireSecureTransport] {
+		cfg.Security.RequireSecureTransport = *requireTLS
+	}
 	if actualFlags[nmRepairMode] {
 		cfg.RepairMode = *repairMode
 	}
@@ -526,6 +476,7 @@ func overrideConfig() {
 }
 
 func setGlobalVars() {
+	cfg := config.GetGlobalConfig()
 	ddlLeaseDuration := parseDuration(cfg.Lease)
 	session.SetSchemaLease(ddlLeaseDuration)
 	runtime.GOMAXPROCS(int(cfg.Performance.MaxProcs))
@@ -580,6 +531,7 @@ func setGlobalVars() {
 }
 
 func setupLog() {
+	cfg := config.GetGlobalConfig()
 	err := logutil.InitZapLogger(cfg.Log.ToLogConfig())
 	terror.MustNil(err)
 
@@ -595,6 +547,8 @@ func setupLog() {
 	} else {
 		grpclog.SetLoggerV2(grpclog.NewLoggerV2(ioutil.Discard, ioutil.Discard, os.Stderr))
 	}
+	// trigger internal http(s) client init.
+	util.InternalHTTPClient()
 }
 
 func printInfo() {
@@ -606,6 +560,7 @@ func printInfo() {
 }
 
 func createServer() {
+	cfg := config.GetGlobalConfig()
 	driver := server.NewTiDBDriver(storage)
 	var err error
 	svr, err = server.NewServer(cfg, driver)
@@ -624,6 +579,7 @@ func serverShutdown(isgraceful bool) {
 }
 
 func setupMetrics() {
+	cfg := config.GetGlobalConfig()
 	// Enable the mutex profile, 1/10 of mutex blocking event sampling.
 	runtime.SetMutexProfileFraction(10)
 	systimeErrHandler := func() {
@@ -644,6 +600,7 @@ func setupMetrics() {
 }
 
 func setupTracing() {
+	cfg := config.GetGlobalConfig()
 	tracingCfg := cfg.OpenTracing.ToTracingConfig()
 	tracingCfg.ServiceName = "TiDB"
 	tracer, _, err := tracingCfg.NewTracer()

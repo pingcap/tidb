@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/types"
@@ -70,6 +71,18 @@ func (d *ddl) generalWorker() *worker {
 // It only starts the original workers.
 func (d *ddl) restartWorkers(ctx context.Context) {
 	d.quitCh = make(chan struct{})
+
+	d.wg.Add(1)
+	go func() {
+		defer d.wg.Done()
+		util.WithRecovery(
+			func() { d.limitDDLJobs() },
+			func(r interface{}) {
+				logutil.BgLogger().Error("[ddl] DDL add batch DDL jobs meet panic",
+					zap.String("ID", d.uuid), zap.Reflect("r", r), zap.Stack("stack trace"))
+				metrics.PanicCounter.WithLabelValues(metrics.LabelDDL).Inc()
+			})
+	}()
 	if !RunWorker {
 		return
 	}

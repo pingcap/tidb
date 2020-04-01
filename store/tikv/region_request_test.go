@@ -340,8 +340,8 @@ func (s *mockTikvGrpcServer) CheckLockObserver(context.Context, *kvrpcpb.CheckLo
 func (s *mockTikvGrpcServer) RemoveLockObserver(context.Context, *kvrpcpb.RemoveLockObserverRequest) (*kvrpcpb.RemoveLockObserverResponse, error) {
 	return nil, errors.New("unreachable")
 }
-func (s *mockTikvGrpcServer) PhysicalScanLock(*kvrpcpb.PhysicalScanLockRequest, tikvpb.Tikv_PhysicalScanLockServer) error {
-	return errors.New("unreachable")
+func (s *mockTikvGrpcServer) PhysicalScanLock(context.Context, *kvrpcpb.PhysicalScanLockRequest) (*kvrpcpb.PhysicalScanLockResponse, error) {
+	return nil, errors.New("unreachable")
 }
 func (s *mockTikvGrpcServer) Coprocessor(context.Context, *coprocessor.Request) (*coprocessor.Response, error) {
 	return nil, errors.New("unreachable")

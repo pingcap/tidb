@@ -5,103 +5,93 @@
       {
         "SQL": "explain select * from t1 where id = 7 and a = 6",
         "Result": [
-          "TableReader_8 0.00 root data:Selection_7",
-          "└─Selection_7 0.00 cop[tikv] eq(test_partition.t1.a, 6)",
-          "  └─TableScan_6 1.00 cop[tikv] table:t1, partition:p7, range:[7,7], keep order:false, stats:pseudo"
+          "Selection_7 0.00 root  eq(test_partition.t1.a, 6)",
+          "└─Point_Get_6 1.00 root table:t1, partition:p7 handle:7"
         ]
       },
       {
         "SQL": "explain select * from t3 where id = 9 and a = 1",
         "Result": [
-          "Point_Get_1 1.00 root table:t3, index:id a, partition:p9"
+          "Point_Get_1 1.00 root table:t3, partition:p9, index:PRIMARY(id, a) "
         ]
       },
       {
         "SQL": "explain select * from t2 where id = 9 and a = -110",
         "Result": [
-          "IndexLookUp_8 1.00 root ",
-          "├─IndexScan_6 1.00 cop[tikv] table:t2, partition:p1, index:id, a, range:[9 -110,9 -110], keep order:false, stats:pseudo",
-          "└─TableScan_7 1.00 cop[tikv] table:t2, partition:p1, keep order:false, stats:pseudo"
+          "Point_Get_6 1.00 root table:t2, partition:p1, index:PRIMARY(id, a) "
         ]
       },
       {
         "SQL": "explain select * from t1 where id = -17",
         "Result": [
-          "TableReader_7 1.00 root data:TableScan_6",
-          "└─TableScan_6 1.00 cop[tikv] table:t1, partition:p7, range:[-17,-17], keep order:false, stats:pseudo"
+          "Point_Get_6 1.00 root table:t1, partition:p7 handle:-17"
         ]
       },
       {
         "SQL": "explain select * from t2 where id = a and a = b and b = 2",
         "Result": [
-          "TableReader_8 8.00 root data:Selection_7",
-          "└─Selection_7 8.00 cop[tikv] eq(test_partition.t2.a, test_partition.t2.b), eq(test_partition.t2.b, 2), eq(test_partition.t2.id, test_partition.t2.a)",
-          "  └─TableScan_6 10000.00 cop[tikv] table:t2, partition:p4, range:[-inf,+inf], keep order:false, stats:pseudo"
+          "TableReader_8 8.00 root  data:Selection_7",
+          "└─Selection_7 8.00 cop[tikv]  eq(test_partition.t2.a, test_partition.t2.b), eq(test_partition.t2.b, 2), eq(test_partition.t2.id, test_partition.t2.a)",
+          "  └─TableFullScan_6 10000.00 cop[tikv] table:t2, partition:p4 keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "explain select * from t1 join t2 on (t1.id = t2.id) where t1.id = 5 and t2.a = 7",
         "Result": [
-          "HashLeftJoin_10 1.00 root CARTESIAN inner join, inner:IndexLookUp_16",
-          "├─TableReader_13 1.00 root data:TableScan_12",
-          "│ └─TableScan_12 1.00 cop[tikv] table:t1, partition:p5, range:[5,5], keep order:false, stats:pseudo",
-          "└─IndexLookUp_16 1.00 root ",
-          "  ├─IndexScan_14 1.00 cop[tikv] table:t2, partition:p2, index:id, a, range:[5 7,5 7], keep order:false, stats:pseudo",
-          "  └─TableScan_15 1.00 cop[tikv] table:t2, partition:p2, keep order:false, stats:pseudo"
+          "HashJoin_10 1.00 root  CARTESIAN inner join",
+          "├─Point_Get_13(Build) 1.00 root table:t2, partition:p2, index:PRIMARY(id, a) ",
+          "└─Point_Get_12(Probe) 1.00 root table:t1, partition:p5 handle:5"
         ]
       },
       {
         "SQL": "explain select * from t1 left join t2 on t1.id = 1 and t2.a = 2 where t2.id = 7",
         "Result": [
-          "HashLeftJoin_9 1.00 root CARTESIAN inner join, inner:IndexLookUp_15",
-          "├─TableReader_12 1.00 root data:TableScan_11",
-          "│ └─TableScan_11 1.00 cop[tikv] table:t1, partition:p1, range:[1,1], keep order:false, stats:pseudo",
-          "└─IndexLookUp_15 1.00 root ",
-          "  ├─IndexScan_13 1.00 cop[tikv] table:t2, partition:p9, index:id, a, range:[7 2,7 2], keep order:false, stats:pseudo",
-          "  └─TableScan_14 1.00 cop[tikv] table:t2, partition:p9, keep order:false, stats:pseudo"
+          "HashJoin_9 1.00 root  CARTESIAN inner join",
+          "├─Point_Get_12(Build) 1.00 root table:t2, partition:p9, index:PRIMARY(id, a) ",
+          "└─Point_Get_11(Probe) 1.00 root table:t1, partition:p1 handle:1"
         ]
       },
       {
         "SQL": "explain select * from t2 join t1 on t1.id = t2.id and t2.a = t1.id and t2.id = 12",
         "Result": [
-          "HashLeftJoin_9 1.00 root CARTESIAN inner join, inner:TableReader_15",
-          "├─IndexLookUp_13 1.00 root ",
-          "│ ├─IndexScan_11 1.00 cop[tikv] table:t2, partition:p4, index:id, a, range:[12 12,12 12], keep order:false, stats:pseudo",
-          "│ └─TableScan_12 1.00 cop[tikv] table:t2, partition:p4, keep order:false, stats:pseudo",
-          "└─TableReader_15 1.00 root data:TableScan_14",
-          "  └─TableScan_14 1.00 cop[tikv] table:t1, partition:p2, range:[12,12], keep order:false, stats:pseudo"
+          "HashJoin_9 1.00 root  CARTESIAN inner join",
+          "├─Point_Get_12(Build) 1.00 root table:t1, partition:p2 handle:12",
+          "└─Point_Get_11(Probe) 1.00 root table:t2, partition:p4, index:PRIMARY(id, a) "
         ]
       },
       {
         "SQL": "explain select * from t1 left join t2 on true where t1.a = 1 and false",
         "Result": [
-          "TableDual_8 0.00 root rows:0"
+          "TableDual_8 0.00 root  rows:0"
         ]
       },
       {
         "SQL": "explain select * from t1 left join t2 on true where t1.a = 1 and null",
         "Result": [
-          "TableDual_8 0.00 root rows:0"
+          "TableDual_8 0.00 root  rows:0"
         ]
       },
       {
         "SQL": "explain select * from t1 left join t2 on true where t1.a = null",
         "Result": [
-          "TableDual_8 0.00 root rows:0"
+          "TableDual_8 0.00 root  rows:0"
         ]
       },
       {
-        "SQL": "explain select * from t1 where t1.a > 7 and t1.a < 3",
+        "SQL": "explain select * from t4 where d = '2019-10-07 10:40:00' and a = 1",
         "Result": [
-          "TableDual_6 0.00 root rows:0"
+          "Point_Get_6 1.00 root table:t4, partition:p9, index:PRIMARY(d, a) "
         ]
       },
       {
-        "SQL": "explain select * from t1 where t1.a between 7 and 3",
+        "SQL": "explain select * from t5 where d = '2019-10-07'",
         "Result": [
-          "TableDual_6 0.00 root rows:0"
+          "IndexLookUp_11 10.00 root  ",
+          "├─IndexRangeScan_9(Build) 10.00 cop[tikv] table:t5, partition:p0, index:PRIMARY(d, a) range:[2019-10-07,2019-10-07], keep order:false, stats:pseudo",
+          "└─TableRowIDScan_10(Probe) 10.00 cop[tikv] table:t5, partition:p0 keep order:false, stats:pseudo"
         ]
       }
     ]
   }
 ]
+

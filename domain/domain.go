@@ -27,12 +27,12 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/infoschema/perfschema"
 	"github.com/pingcap/tidb/kv"
@@ -456,6 +456,31 @@ func (do *Domain) infoSyncerKeeper() {
 	}
 }
 
+func (do *Domain) topologySyncerKeeper() {
+	defer do.wg.Done()
+	defer recoverInDomain("topologySyncerKeeper", false)
+	ticker := time.NewTicker(infosync.TopologyTimeToRefresh)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			err := do.info.StoreTopologyInfo(context.Background())
+			if err != nil {
+				logutil.BgLogger().Error("refresh topology in loop failed", zap.Error(err))
+			}
+		case <-do.info.TopologyDone():
+			logutil.BgLogger().Info("server topology syncer need to restart")
+			if err := do.info.RestartTopology(context.Background()); err != nil {
+				logutil.BgLogger().Error("server restart failed", zap.Error(err))
+			}
+			logutil.BgLogger().Info("server topology syncer restarted")
+		case <-do.exit:
+			return
+		}
+	}
+}
+
 func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 	defer do.wg.Done()
 	// Lease renewal can run at any frequency.
@@ -528,7 +553,7 @@ func (do *Domain) mustRestartSyncer() error {
 			return err
 		}
 		time.Sleep(time.Second)
-		logutil.BgLogger().Info("restart the schema syncer failed", zap.Error(err))
+		logutil.BgLogger().Error("restart the schema syncer failed", zap.Error(err))
 	}
 }
 
@@ -623,7 +648,12 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 	if ebd, ok := do.store.(tikv.EtcdBackend); ok {
 		if addrs := ebd.EtcdAddrs(); addrs != nil {
 			cfg := config.GetGlobalConfig()
+			// silence etcd warn log, when domain closed, it won't randomly print warn log
+			// see details at the issue https://github.com/pingcap/tidb/issues/15479
+			etcdLogCfg := zap.NewProductionConfig()
+			etcdLogCfg.Level = zap.NewAtomicLevelAt(zap.ErrorLevel)
 			cli, err := clientv3.New(clientv3.Config{
+				LogConfig:        &etcdLogCfg,
 				Endpoints:        addrs,
 				AutoSyncInterval: 30 * time.Second,
 				DialTimeout:      5 * time.Second,
@@ -700,6 +730,10 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 
 	do.wg.Add(1)
 	go do.infoSyncerKeeper()
+
+	do.wg.Add(1)
+	go do.topologySyncerKeeper()
+
 	return nil
 }
 
@@ -888,7 +922,7 @@ func (do *Domain) handleEvolvePlanTasksLoop(ctx sessionctx.Context) {
 			case <-time.After(bindinfo.Lease):
 			}
 			if owner.IsOwner() {
-				err := do.bindHandle.HandleEvolvePlanTask(ctx)
+				err := do.bindHandle.HandleEvolvePlanTask(ctx, false)
 				if err != nil {
 					logutil.BgLogger().Info("evolve plan failed", zap.Error(err))
 				}
@@ -1129,8 +1163,8 @@ func recoverInDomain(funcName string, quit bool) {
 
 var (
 	// ErrInfoSchemaExpired returns the error that information schema is out of date.
-	ErrInfoSchemaExpired = terror.ClassDomain.New(mysql.ErrInfoSchemaExpired, mysql.MySQLErrName[mysql.ErrInfoSchemaExpired])
+	ErrInfoSchemaExpired = terror.ClassDomain.New(errno.ErrInfoSchemaExpired, errno.MySQLErrName[errno.ErrInfoSchemaExpired])
 	// ErrInfoSchemaChanged returns the error that information schema is changed.
-	ErrInfoSchemaChanged = terror.ClassDomain.New(mysql.ErrInfoSchemaChanged,
-		mysql.MySQLErrName[mysql.ErrInfoSchemaChanged]+". "+kv.TxnRetryableMark)
+	ErrInfoSchemaChanged = terror.ClassDomain.New(errno.ErrInfoSchemaChanged,
+		errno.MySQLErrName[errno.ErrInfoSchemaChanged]+". "+kv.TxnRetryableMark)
 )

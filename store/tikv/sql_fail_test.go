@@ -54,7 +54,7 @@ func (s *testSQLSuiteBase) SetUpSuite(c *C) {
 	s.store = NewTestStore(c).(Storage)
 	// actual this is better done in `OneByOneSuite.SetUpSuite`, but this would cause circle dependency
 	if *WithTiKV {
-		session.ResetForWithTiKVTest()
+		session.ResetStoreForWithTiKVTest(s.store)
 	}
 
 	s.dom, err = session.BootstrapSession(s.store)

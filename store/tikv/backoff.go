@@ -17,7 +17,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"math/rand"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -26,6 +25,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/util/fastrand"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
@@ -91,12 +91,12 @@ func NewBackoffFn(base, cap, jitter int) func(ctx context.Context, maxSleepMs in
 			sleep = expo(base, cap, attempts)
 		case FullJitter:
 			v := expo(base, cap, attempts)
-			sleep = rand.Intn(v)
+			sleep = int(fastrand.Uint32N(uint32(v)))
 		case EqualJitter:
 			v := expo(base, cap, attempts)
-			sleep = v/2 + rand.Intn(v/2)
+			sleep = v/2 + int(fastrand.Uint32N(uint32(v/2)))
 		case DecorrJitter:
-			sleep = int(math.Min(float64(cap), float64(base+rand.Intn(lastSleep*3-base))))
+			sleep = int(math.Min(float64(cap), float64(base+int(fastrand.Uint32N(uint32(lastSleep*3-base))))))
 		}
 		logutil.BgLogger().Debug("backoff",
 			zap.Int("base", base),
@@ -218,8 +218,8 @@ const (
 	scatterRegionBackoff           = 20000
 	waitScatterRegionFinishBackoff = 120000
 	locateRegionMaxBackoff         = 20000
-	pessimisticLockMaxBackoff      = 10000
-	pessimisticRollbackMaxBackoff  = 10000
+	pessimisticLockMaxBackoff      = 20000
+	pessimisticRollbackMaxBackoff  = 20000
 )
 
 var (
@@ -343,7 +343,7 @@ func (b *Backoffer) BackoffWithMaxSleep(typ backoffType, maxSleepMs int, err err
 	if ts := b.ctx.Value(txnStartKey); ts != nil {
 		startTs = ts
 	}
-	logutil.BgLogger().Debug("retry later",
+	logutil.Logger(b.ctx).Debug("retry later",
 		zap.Error(err),
 		zap.Int("totalSleep", b.totalSleep),
 		zap.Int("maxSleep", b.maxSleep),

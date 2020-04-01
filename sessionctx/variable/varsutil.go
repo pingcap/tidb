@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/timeutil"
 )
 
@@ -133,20 +134,20 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 		return string(j), true, nil
 	case TiDBForcePriority:
 		return mysql.Priority2Str[mysql.PriorityEnum(atomic.LoadInt32(&ForcePriority))], true, nil
+	case TiDBDDLSlowOprThreshold:
+		return strconv.FormatUint(uint64(atomic.LoadUint32(&DDLSlowOprThreshold)), 10), true, nil
+	case PluginDir:
+		return config.GetGlobalConfig().Plugin.Dir, true, nil
+	case PluginLoad:
+		return config.GetGlobalConfig().Plugin.Load, true, nil
 	case TiDBSlowLogThreshold:
 		return strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().Log.SlowThreshold), 10), true, nil
 	case TiDBRecordPlanInSlowLog:
 		return strconv.FormatUint(uint64(atomic.LoadUint32(&config.GetGlobalConfig().Log.RecordPlanInSlowLog)), 10), true, nil
 	case TiDBEnableSlowLog:
-		return strconv.FormatUint(uint64(atomic.LoadUint32(&config.GetGlobalConfig().Log.EnableSlowLog)), 10), true, nil
-	case TiDBDDLSlowOprThreshold:
-		return strconv.FormatUint(uint64(atomic.LoadUint32(&DDLSlowOprThreshold)), 10), true, nil
+		return BoolToIntStr(config.GetGlobalConfig().Log.EnableSlowLog), true, nil
 	case TiDBQueryLogMaxLen:
 		return strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().Log.QueryLogMaxLen), 10), true, nil
-	case PluginDir:
-		return config.GetGlobalConfig().Plugin.Dir, true, nil
-	case PluginLoad:
-		return config.GetGlobalConfig().Plugin.Load, true, nil
 	case TiDBCheckMb4ValueInUTF8:
 		return BoolToIntStr(config.GetGlobalConfig().CheckMb4ValueInUTF8), true, nil
 	}
@@ -401,12 +402,20 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 			return "1", nil
 		}
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+	case WindowingUseHighPrecision:
+		if strings.EqualFold(value, "OFF") || value == "0" {
+			return "OFF", nil
+		} else if strings.EqualFold(value, "ON") || value == "1" {
+			return "ON", nil
+		}
+		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 	case TiDBSkipUTF8Check, TiDBOptAggPushDown,
 		TiDBOptInSubqToJoinAndAgg, TiDBEnableFastAnalyze,
 		TiDBBatchInsert, TiDBDisableTxnAutoRetry, TiDBEnableStreaming, TiDBEnableChunkRPC,
 		TiDBBatchDelete, TiDBBatchCommit, TiDBEnableCascadesPlanner, TiDBEnableWindowFunction, TiDBPProfSQLCPU,
-		TiDBCheckMb4ValueInUTF8, TiDBLowResolutionTSO, TiDBEnableIndexMerge, TiDBEnableNoopFuncs, TiDBEnableSlowLog,
-		TiDBScatterRegion, TiDBGeneralLog, TiDBConstraintCheckInPlace, TiDBEnableVectorizedExpression, TiDBRecordPlanInSlowLog:
+		TiDBLowResolutionTSO, TiDBEnableIndexMerge, TiDBEnableNoopFuncs,
+		TiDBCheckMb4ValueInUTF8, TiDBEnableSlowLog, TiDBRecordPlanInSlowLog,
+		TiDBScatterRegion, TiDBGeneralLog, TiDBConstraintCheckInPlace, TiDBEnableVectorizedExpression:
 		fallthrough
 	case GeneralLog, AvoidTemporalUpgrade, BigTables, CheckProxyUsers, LogBin,
 		CoreFile, EndMakersInJSON, SQLLogBin, OfflineMode, PseudoSlaveMode, LowPriorityUpdates,
@@ -617,6 +626,8 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 	case TiDBReplicaRead:
 		if strings.EqualFold(value, "follower") {
 			return "follower", nil
+		} else if strings.EqualFold(value, "leader-and-follower") {
+			return "leader-and-follower", nil
 		} else if strings.EqualFold(value, "leader") || len(value) == 0 {
 			return "leader", nil
 		}
@@ -653,7 +664,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 			return "", nil
 		}
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
-	case TiDBEnableStmtSummary:
+	case TiDBEnableStmtSummary, TiDBStmtSummaryInternalQuery:
 		switch {
 		case strings.EqualFold(value, "ON") || value == "1":
 			return "1", nil
@@ -667,12 +678,22 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		if value == "" {
 			return "", nil
 		}
-		return checkUInt64SystemVar(name, value, 1, math.MaxUint32, vars)
+		return checkUInt64SystemVar(name, value, 1, math.MaxInt32, vars)
 	case TiDBStmtSummaryHistorySize:
 		if value == "" {
 			return "", nil
 		}
 		return checkUInt64SystemVar(name, value, 0, math.MaxUint8, vars)
+	case TiDBStmtSummaryMaxStmtCount:
+		if value == "" {
+			return "", nil
+		}
+		return checkInt64SystemVar(name, value, 1, math.MaxInt16, vars)
+	case TiDBStmtSummaryMaxSQLLength:
+		if value == "" {
+			return "", nil
+		}
+		return checkInt64SystemVar(name, value, 0, math.MaxInt32, vars)
 	case TiDBIsolationReadEngines:
 		engines := strings.Split(value, ",")
 		var formatVal string
@@ -702,6 +723,10 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 			return value, errors.Errorf("%v(%d) cannot be smaller than %v or larger than %v", name, v, 10, 60*60*60)
 		}
 		return value, nil
+	case CollationConnection, CollationDatabase, CollationServer:
+		if _, err := collate.GetCollationByName(value); err != nil {
+			return value, errors.Trace(err)
+		}
 	}
 	return value, nil
 }
@@ -787,8 +812,7 @@ func setSnapshotTS(s *SessionVars, sVal string) error {
 		return err
 	}
 
-	// TODO: Consider time_zone variable.
-	t1, err := t.GoTime(time.Local)
+	t1, err := t.GoTime(s.TimeZone)
 	s.SnapshotTS = GoTimeToTS(t1)
 	return err
 }

@@ -38,7 +38,7 @@ func (c *Column) AppendMyDecimal(dec *types.MyDecimal) {
 
 func (c *Column) appendNameValue(name string, val uint64) {
 	var buf [8]byte
-	*(*uint64)(unsafe.Pointer(&buf[0])) = val
+	copy(buf[:], (*[8]byte)(unsafe.Pointer(&val))[:])
 	c.data = append(c.data, buf[:]...)
 	c.data = append(c.data, name...)
 	c.finishAppendVar()
@@ -567,7 +567,9 @@ func (c *Column) getNameValue(rowID int) (string, uint64) {
 	if start == end {
 		return "", 0
 	}
-	return string(hack.String(c.data[start+8 : end])), *(*uint64)(unsafe.Pointer(&c.data[start]))
+	var val uint64
+	copy((*[8]byte)(unsafe.Pointer(&val))[:], c.data[start:])
+	return string(hack.String(c.data[start+8 : end])), val
 }
 
 // GetRaw returns the underlying raw bytes in the specific row.

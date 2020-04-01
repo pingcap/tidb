@@ -15,6 +15,7 @@ package kv
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/pingcap/tidb/config"
@@ -93,13 +94,14 @@ const (
 	ReplicaReadLeader ReplicaReadType = 1 << iota
 	// ReplicaReadFollower stands for 'read from follower'.
 	ReplicaReadFollower
-	// ReplicaReadLearner stands for 'read from learner'.
-	ReplicaReadLearner
+	// ReplicaReadMixed stands for 'read from leader and follower and learner'.
+	ReplicaReadMixed
 )
 
 // IsFollowerRead checks if leader is going to be used to read data.
 func (r ReplicaReadType) IsFollowerRead() bool {
-	return r == ReplicaReadFollower
+	// In some cases the default value is 0, which should be treated as `ReplicaReadLeader`.
+	return r != ReplicaReadLeader && r != 0
 }
 
 // Those limits is enforced to make sure the transaction can be well handled by TiKV.
@@ -110,11 +112,16 @@ var (
 	TxnTotalSizeLimit uint64 = config.DefTxnTotalSizeLimit
 )
 
-// Retriever is the interface wraps the basic Get and Seek methods.
-type Retriever interface {
+// Getter is the interface for the Get method.
+type Getter interface {
 	// Get gets the value for key k from kv store.
 	// If corresponding kv pair does not exist, it returns nil and ErrNotExist.
 	Get(ctx context.Context, k Key) ([]byte, error)
+}
+
+// Retriever is the interface wraps the basic Get and Seek methods.
+type Retriever interface {
+	Getter
 	// Iter creates an Iterator positioned on the first entry that k <= entry's key.
 	// If such entry is not found, it returns an invalid Iterator with no error.
 	// It yields only keys that < upperBound. If upperBound is nil, it means the upperBound is unbounded.
@@ -183,6 +190,8 @@ type Transaction interface {
 	Valid() bool
 	// GetMemBuffer return the MemBuffer binding to this transaction.
 	GetMemBuffer() MemBuffer
+	// GetSnapshot returns the Snapshot binding to this transaction.
+	GetSnapshot() Snapshot
 	// SetVars sets variables to the transaction.
 	SetVars(vars *Variables)
 	// BatchGet gets kv from the memory buffer of statement and transaction, and the kv storage.
@@ -201,6 +210,16 @@ type LockCtx struct {
 	PessimisticLockWaited *int32
 	LockKeysDuration      *time.Duration
 	LockKeysCount         *int32
+	ReturnValues          bool
+	Values                map[string]ReturnedValue
+	ValuesLock            sync.Mutex
+	LockExpired           *uint32
+}
+
+// ReturnedValue pairs the Value and AlreadyLocked flag for PessimisticLock return values result.
+type ReturnedValue struct {
+	Value         []byte
+	AlreadyLocked bool
 }
 
 // Client is used to send request to KV layer.
@@ -239,6 +258,8 @@ const (
 	TiFlash
 	// TiDB means the type of a store is TiDB.
 	TiDB
+	// UnSpecified means the store type is unknown
+	UnSpecified = 255
 )
 
 // Name returns the name of store type.
@@ -247,8 +268,10 @@ func (t StoreType) Name() string {
 		return "tiflash"
 	} else if t == TiDB {
 		return "tidb"
+	} else if t == TiKV {
+		return "tikv"
 	}
-	return "tikv"
+	return "unspecified"
 }
 
 // Request represents a kv request.
@@ -324,6 +347,12 @@ type Snapshot interface {
 	SetOption(opt Option, val interface{})
 	// DelOption deletes an option.
 	DelOption(opt Option)
+}
+
+// BatchGetter is the interface for BatchGet.
+type BatchGetter interface {
+	// BatchGet gets a batch of values.
+	BatchGet(ctx context.Context, keys []Key) (map[string][]byte, error)
 }
 
 // Driver is the interface that must be implemented by a KV storage.
