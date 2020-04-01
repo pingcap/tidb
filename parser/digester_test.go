@@ -51,6 +51,7 @@ func (s *testSQLDigestSuite) TestNormalize(c *C) {
 		{"select * from t ignore index(", "select * from t ignore index"},
 		{"select /*+ ", "select "},
 		{"select * from 🥳", "select * from"},
+		{"select 1 / 2", "select ? / ?"},
 	}
 	for _, test := range tests {
 		normalized := parser.Normalize(test.input)
