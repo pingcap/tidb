@@ -308,6 +308,7 @@ func (s *testSuite1) TestIssue15751(c *C) {
 	tk.MustExec("ANALYZE TABLE t0")
 }
 
+<<<<<<< HEAD
 func (s *testSuite1) TestIssue15752(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -319,6 +320,8 @@ func (s *testSuite1) TestIssue15752(c *C) {
 	tk.MustExec("ANALYZE TABLE t0 INDEX i0")
 }
 
+=======
+>>>>>>> 312891b... statistics: fix panic when merge topn (#15845)
 func (s *testSuite1) TestAnalyzeIncremental(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
