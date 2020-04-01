@@ -1186,9 +1186,7 @@ func HashGroupKey(sc *stmtctx.StatementContext, n int, col *chunk.Column, buf []
 				buf[i] = append(buf[i], NilFlag)
 			} else {
 				buf[i] = append(buf[i], jsonFlag)
-				j := col.GetJSON(i)
-				buf[i] = append(buf[i], j.TypeCode)
-				buf[i] = append(buf[i], j.Value...)
+				buf[i] = col.GetJSON(i).HashValue(buf[i])
 			}
 		}
 	case types.ETString:

@@ -406,6 +406,29 @@ func (bj *BinaryJSON) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// HashValue encode json value, if value type is int64 Will convert to float64
+// Only use in the aggregate executor
+func (bj BinaryJSON) HashValue(buf []byte) []byte {
+	switch bj.TypeCode {
+	case TypeCodeInt64:
+		buf = appendBinaryFloat64(buf, float64(bj.GetInt64()))
+	case TypeCodeArray:
+		elemCount := int(endian.Uint32(bj.Value))
+		for i := 0; i < elemCount; i++ {
+			buf = bj.arrayGetElem(i).HashValue(buf)
+		}
+	case TypeCodeObject:
+		elemCount := int(endian.Uint32(bj.Value))
+		for i := 0; i < elemCount; i++ {
+			buf = append(buf, bj.objectGetKey(i)...)
+			buf = bj.objectGetVal(i).HashValue(buf)
+		}
+	default:
+		buf = append(buf, bj.Value...)
+	}
+	return buf
+}
+
 // CreateBinary creates a BinaryJSON from interface.
 func CreateBinary(in interface{}) BinaryJSON {
 	typeCode, buf, err := appendBinary(nil, in)
