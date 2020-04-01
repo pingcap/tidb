@@ -57,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/format"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
 )
@@ -448,7 +449,7 @@ func (e *ShowExec) fetchShowColumns(ctx context.Context) error {
 	if tb.Meta().IsView() {
 		// Because view's undertable's column could change or recreate, so view's column type may change overtime.
 		// To avoid this situation we need to generate a logical plan and extract current column types from Schema.
-		planBuilder := plannercore.NewPlanBuilder(e.ctx, e.is, &plannercore.BlockHintProcessor{})
+		planBuilder := plannercore.NewPlanBuilder(e.ctx, e.is, &hint.BlockHintProcessor{})
 		viewLogicalPlan, err := planBuilder.BuildDataSourceFromView(ctx, e.DBName, tb.Meta())
 		if err != nil {
 			return err
