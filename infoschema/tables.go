@@ -215,11 +215,9 @@ type columnInfo struct {
 func buildColumnInfo(col columnInfo) *model.ColumnInfo {
 	mCharset := charset.CharsetBin
 	mCollation := charset.CharsetBin
-	mFlag := mysql.UnsignedFlag
 	if col.tp == mysql.TypeVarchar || col.tp == mysql.TypeBlob {
 		mCharset = charset.CharsetUTF8MB4
 		mCollation = charset.CollationUTF8MB4
-		mFlag = col.flag
 	}
 	fieldType := types.FieldType{
 		Charset: mCharset,
@@ -227,7 +225,7 @@ func buildColumnInfo(col columnInfo) *model.ColumnInfo {
 		Tp:      col.tp,
 		Flen:    col.size,
 		Decimal: col.decimal,
-		Flag:    mFlag,
+		Flag:    col.flag,
 	}
 	return &model.ColumnInfo{
 		Name:         model.NewCIStr(col.name),
