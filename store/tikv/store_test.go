@@ -276,15 +276,16 @@ func (s *testStoreSuite) TestRequestPriority(c *C) {
 
 func (s *testStoreSuite) TestOracleChangeByFailpoint(c *C) {
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/oracle/changeTSFromPD"), IsNil)
+		failpoint.Disable("github.com/pingcap/tidb/store/tikv/oracle/changeTSFromPD")
 	}()
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/oracle/changeTSFromPD",
-		"1*return(10000)"), IsNil)
+		"return(10000)"), IsNil)
 	o := &mockoracle.MockOracle{}
 	s.store.oracle = o
 	ctx := context.Background()
 	t1, err := s.store.getTimestampWithRetry(NewBackoffer(ctx, 100))
 	c.Assert(err, IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/oracle/changeTSFromPD"), IsNil)
 	t2, err := s.store.getTimestampWithRetry(NewBackoffer(ctx, 100))
 	c.Assert(err, IsNil)
 	c.Assert(t1, Greater, t2)

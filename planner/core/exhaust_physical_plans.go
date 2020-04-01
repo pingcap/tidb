@@ -85,7 +85,7 @@ func (p *LogicalJoin) moveEqualToOtherConditions(offsets []int) []expression.Exp
 
 	// Construct otherConds, which is composed of the original other conditions
 	// and the remained unused equal conditions.
-	numOtherConds := len(p.OtherConditions) + len(p.EqualConditions) - len(offsets)
+	numOtherConds := len(p.OtherConditions) + len(p.EqualConditions) - len(usedEqConds)
 	otherConds := make([]expression.Expression, len(p.OtherConditions), numOtherConds)
 	copy(otherConds, p.OtherConditions)
 	for eqCondIdx := range p.EqualConditions {
@@ -257,8 +257,14 @@ func (p *LogicalJoin) getEnforcedMergeJoin(prop *property.PhysicalProperty, sche
 	// Generate the enforced sort merge join
 	leftKeys := getNewJoinKeysByOffsets(leftJoinKeys, offsets)
 	rightKeys := getNewJoinKeysByOffsets(rightJoinKeys, offsets)
+	otherConditions := make([]expression.Expression, len(p.OtherConditions), len(p.OtherConditions)+len(p.EqualConditions))
+	copy(otherConditions, p.OtherConditions)
 	if !p.checkJoinKeyCollation(leftKeys, rightKeys) {
-		return nil
+		// if the join keys' collation are conflicted, we use the empty join key
+		// and move EqualConditions to OtherConditions.
+		leftKeys = nil
+		rightKeys = nil
+		otherConditions = append(otherConditions, expression.ScalarFuncs2Exprs(p.EqualConditions)...)
 	}
 	lProp := property.NewPhysicalProperty(property.RootTaskType, leftKeys, desc, math.MaxFloat64, true)
 	rProp := property.NewPhysicalProperty(property.RootTaskType, rightKeys, desc, math.MaxFloat64, true)
@@ -269,7 +275,7 @@ func (p *LogicalJoin) getEnforcedMergeJoin(prop *property.PhysicalProperty, sche
 		DefaultValues:   p.DefaultValues,
 		LeftJoinKeys:    leftKeys,
 		RightJoinKeys:   rightKeys,
-		OtherConditions: p.OtherConditions,
+		OtherConditions: otherConditions,
 	}
 	enforcedPhysicalMergeJoin := PhysicalMergeJoin{basePhysicalJoin: baseJoin, Desc: desc}.Init(p.ctx, statsInfo.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset)
 	enforcedPhysicalMergeJoin.SetSchema(schema)
