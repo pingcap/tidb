@@ -134,16 +134,6 @@ func (a *arena) allocInLastBlock(size int) (arenaAddr, []byte) {
 	return newArenaAddr(idx, offset), data
 }
 
-func (a *arena) reset() {
-	if len(a.blocks) == 0 {
-		return
-	}
-
-	a.blockSize = len(a.blocks[0].buf)
-	a.blocks = []arenaBlock{a.blocks[0]}
-	a.blocks[0].reset()
-}
-
 type arenaBlock struct {
 	buf    []byte
 	length int
@@ -169,8 +159,4 @@ func (a *arenaBlock) alloc(size int) (uint32, []byte) {
 	}
 	a.length = newLen
 	return uint32(offset), a.buf[offset : offset+size]
-}
-
-func (a *arenaBlock) reset() {
-	a.length = 0
 }
