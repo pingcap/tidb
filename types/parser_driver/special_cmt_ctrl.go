@@ -45,6 +45,7 @@ func BuildSpecialCommentPrefix(featureID featureID) string {
 type featureID string
 
 const (
+	// FeatureIDAutoRandom is the `auto_random` feature.
 	FeatureIDAutoRandom featureID = "auto_rand"
 )
 
