@@ -18,6 +18,7 @@ import (
 
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	utilhint "github.com/pingcap/tidb/util/hint"
 )
@@ -115,6 +116,14 @@ func genHintsFromPhysicalPlan(p PhysicalPlan, nodeType utilhint.NodeType) (res [
 			HintName: model.NewCIStr(HintUseIndex),
 			Tables:   []ast.HintTable{{DBName: tbl.DBName, TableName: getTableName(tbl.Table.Name, tbl.TableAsName)}},
 		})
+		if tbl.StoreType == kv.TiFlash {
+			res = append(res, &ast.TableOptimizerHint{
+				QBName:   utilhint.GenerateQBName(nodeType, pp.blockOffset),
+				HintName: model.NewCIStr(HintReadFromStorage),
+				HintData: model.NewCIStr(kv.TiFlash.Name()),
+				Tables:   []ast.HintTable{{DBName: tbl.DBName, TableName: getTableName(tbl.Table.Name, tbl.TableAsName)}},
+			})
+		}
 	case *PhysicalIndexLookUpReader:
 		index := pp.IndexPlans[0].(*PhysicalIndexScan)
 		res = append(res, &ast.TableOptimizerHint{
