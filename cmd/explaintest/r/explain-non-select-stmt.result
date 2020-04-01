@@ -2,30 +2,28 @@ use test;
 drop table if exists t;
 create table t(a bigint, b bigint);
 explain insert into t values(1, 1);
-id	estRows	task	operator info
-Insert_1	N/A	root	N/A
+id	estRows	task	access object	operator info
+Insert_1	N/A	root		N/A
 explain insert into t select * from t;
-id	estRows	task	operator info
-Insert_1	N/A	root	N/A
-└─TableReader_7	10000.00	root	data:TableFullScan_6
-  └─TableFullScan_6	10000.00	cop[tikv]	table:t, keep order:false, stats:pseudo
+id	estRows	task	access object	operator info
+Insert_1	N/A	root		N/A
+└─TableReader_7	10000.00	root		data:TableFullScan_6
+  └─TableFullScan_6	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain delete from t where a > 100;
-id	estRows	task	operator info
-Delete_5	N/A	root	N/A
-└─SelectLock_7	3333.33	root	for update
-  └─TableReader_10	3333.33	root	data:Selection_9
-    └─Selection_9	3333.33	cop[tikv]	gt(test.t.a, 100)
-      └─TableFullScan_8	10000.00	cop[tikv]	table:t, keep order:false, stats:pseudo
+id	estRows	task	access object	operator info
+Delete_4	N/A	root		N/A
+└─TableReader_8	3333.33	root		data:Selection_7
+  └─Selection_7	3333.33	cop[tikv]		gt(test.t.a, 100)
+    └─TableFullScan_6	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain update t set b = 100 where a = 200;
-id	estRows	task	operator info
-Update_5	N/A	root	N/A
-└─SelectLock_7	10.00	root	for update
-  └─TableReader_10	10.00	root	data:Selection_9
-    └─Selection_9	10.00	cop[tikv]	eq(test.t.a, 200)
-      └─TableFullScan_8	10000.00	cop[tikv]	table:t, keep order:false, stats:pseudo
+id	estRows	task	access object	operator info
+Update_4	N/A	root		N/A
+└─TableReader_8	10.00	root		data:Selection_7
+  └─Selection_7	10.00	cop[tikv]		eq(test.t.a, 200)
+    └─TableFullScan_6	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain replace into t select a, 100 from t;
-id	estRows	task	operator info
-Insert_1	N/A	root	N/A
-└─Projection_5	10000.00	root	test.t.a, 100->Column#6
-  └─TableReader_7	10000.00	root	data:TableFullScan_6
-    └─TableFullScan_6	10000.00	cop[tikv]	table:t, keep order:false, stats:pseudo
+id	estRows	task	access object	operator info
+Insert_1	N/A	root		N/A
+└─Projection_5	10000.00	root		test.t.a, 100->Column#6
+  └─TableReader_7	10000.00	root		data:TableFullScan_6
+    └─TableFullScan_6	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo

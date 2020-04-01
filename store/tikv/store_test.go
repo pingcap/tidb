@@ -20,6 +20,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
@@ -271,4 +272,20 @@ func (s *testStoreSuite) TestRequestPriority(c *C) {
 		c.Assert(iter.Next(), IsNil)
 	}
 	iter.Close()
+}
+
+func (s *testStoreSuite) TestOracleChangeByFailpoint(c *C) {
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/oracle/changeTSFromPD"), IsNil)
+	}()
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/oracle/changeTSFromPD",
+		"1*return(10000)"), IsNil)
+	o := &mockoracle.MockOracle{}
+	s.store.oracle = o
+	ctx := context.Background()
+	t1, err := s.store.getTimestampWithRetry(NewBackoffer(ctx, 100))
+	c.Assert(err, IsNil)
+	t2, err := s.store.getTimestampWithRetry(NewBackoffer(ctx, 100))
+	c.Assert(err, IsNil)
+	c.Assert(t1, Greater, t2)
 }

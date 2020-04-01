@@ -51,6 +51,25 @@ type BatchPointGetExec struct {
 	rowDecoder *rowcodec.ChunkDecoder
 	keepOrder  bool
 	desc       bool
+
+	columns []*model.ColumnInfo
+	// virtualColumnIndex records all the indices of virtual columns and sort them in definition
+	// to make sure we can compute the virtual column in right order.
+	virtualColumnIndex []int
+
+	// virtualColumnRetFieldTypes records the RetFieldTypes of virtual columns.
+	virtualColumnRetFieldTypes []*types.FieldType
+}
+
+// buildVirtualColumnInfo saves virtual column indices and sort them in definition order
+func (e *BatchPointGetExec) buildVirtualColumnInfo() {
+	e.virtualColumnIndex = buildVirtualColumnIndex(e.Schema(), e.columns)
+	if len(e.virtualColumnIndex) > 0 {
+		e.virtualColumnRetFieldTypes = make([]*types.FieldType, len(e.virtualColumnIndex))
+		for i, idx := range e.virtualColumnIndex {
+			e.virtualColumnRetFieldTypes[i] = e.schema.Columns[idx].RetType
+		}
+	}
 }
 
 // Open implements the Executor interface.
@@ -82,6 +101,11 @@ func (e *BatchPointGetExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			return err
 		}
 		e.index++
+	}
+
+	err := FillVirtualColumnValue(e.virtualColumnRetFieldTypes, e.virtualColumnIndex, e.schema, e.columns, e.ctx, req)
+	if err != nil {
+		return err
 	}
 	return nil
 }
@@ -204,9 +228,10 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		keys[i] = key
 	}
 
-	// Fetch all values.
 	var values map[string][]byte
-	if e.lock {
+	rc := e.ctx.GetSessionVars().IsPessimisticReadConsistency()
+	// Lock keys (include exists and non-exists keys) before fetch all values for Repeatable Read Isolation.
+	if e.lock && !rc {
 		lockKeys := make([]kv.Key, len(keys), len(keys)+len(indexKeys))
 		copy(lockKeys, keys)
 		for _, idxKey := range indexKeys {
@@ -226,6 +251,10 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		return err
 	}
 	handles := make([]int64, 0, len(values))
+	var existKeys []kv.Key
+	if e.lock && rc {
+		existKeys = make([]kv.Key, 0, len(values))
+	}
 	e.values = make([][]byte, 0, len(values))
 	for i, key := range keys {
 		val := values[string(key)]
@@ -238,6 +267,16 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		}
 		e.values = append(e.values, val)
 		handles = append(handles, e.handles[i])
+		if e.lock && rc {
+			existKeys = append(existKeys, key)
+		}
+	}
+	// Lock exists keys only for Read Committed Isolation.
+	if e.lock && rc {
+		err = e.lockKeys(ctx, existKeys)
+		if err != nil {
+			return err
+		}
 	}
 	e.handles = handles
 	return nil
