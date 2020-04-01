@@ -535,6 +535,30 @@
     ]
   },
   {
+    "name": "TestPushdownDistinctEnable",
+    "cases": [
+      "select /*+ HASH_AGG() */ a, count(distinct a) from t;", // firstrow(a) cannot be removed.
+      "select /*+ HASH_AGG() */ avg(b), c, avg(b), count(distinct A, B),  count(distinct A), count(distinct c), sum(b) from t group by c;",
+      "select /*+ STREAM_AGG() */ count(distinct c) from t group by c;", // can push down
+      "select /*+ STREAM_AGG() */ count(distinct c) from t;", // can not push down because c is not in group by
+      "select /*+ HASH_AGG() */ count(distinct c) from t;", // can push down
+      "select count(distinct c) from t group by c;",
+      "select count(distinct c) from t;" // should not use streamAgg because c is not in group by
+    ]
+  },
+  {
+    "name": "TestPushdownDistinctDisable",
+    "cases": [
+      // do not pushdown even AGG_TO_COP is specified.
+      "select /*+ HASH_AGG(), AGG_TO_COP() */ a, count(distinct a) from t;",
+      "select /*+ HASH_AGG(), AGG_TO_COP() */ avg(b), c, avg(b), count(distinct A, B),  count(distinct A), count(distinct c), sum(b) from t group by c;",
+      "select /*+ STREAM_AGG(), AGG_TO_COP() */ count(distinct c) from t group by c;",
+      "select /*+ STREAM_AGG(), AGG_TO_COP() */ count(distinct c) from t;",
+      "select /*+ HASH_AGG(), AGG_TO_COP() */ count(distinct c) from t;",
+      "select /*+ AGG_TO_COP() */ count(distinct c) from t group by c;"
+    ]
+  },
+  {
     "name": "TestDAGPlanBuilderWindow",
     "cases":[
       "select lead(a, 1) over (partition by null) as c from t"

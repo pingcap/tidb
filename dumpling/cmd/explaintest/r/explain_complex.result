@@ -143,11 +143,11 @@ Projection_10	0.00	root		test.st.id, test.dd.id, test.st.aid, test.st.cm, test.d
 explain SELECT cm, p1, p2, p3, p4, p5, p6_md5, p7_md5, count(1) as click_pv, count(DISTINCT ip) as click_ip FROM st WHERE (t between 1478188800 and 1478275200) and aid='cn.sbkcq' and pt='android' GROUP BY cm, p1, p2, p3, p4, p5, p6_md5, p7_md5;
 id	estRows	task	access object	operator info
 Projection_5	1.00	root		test.st.cm, test.st.p1, test.st.p2, test.st.p3, test.st.p4, test.st.p5, test.st.p6_md5, test.st.p7_md5, Column#20, Column#21
-└─HashAgg_7	1.00	root		group by:test.st.cm, test.st.p1, test.st.p2, test.st.p3, test.st.p4, test.st.p5, test.st.p6_md5, test.st.p7_md5, funcs:count(1)->Column#20, funcs:count(distinct test.st.ip)->Column#21, funcs:firstrow(test.st.cm)->test.st.cm, funcs:firstrow(test.st.p1)->test.st.p1, funcs:firstrow(test.st.p2)->test.st.p2, funcs:firstrow(test.st.p3)->test.st.p3, funcs:firstrow(test.st.p4)->test.st.p4, funcs:firstrow(test.st.p5)->test.st.p5, funcs:firstrow(test.st.p6_md5)->test.st.p6_md5, funcs:firstrow(test.st.p7_md5)->test.st.p7_md5
-  └─IndexLookUp_15	0.00	root		
-    ├─IndexRangeScan_12(Build)	250.00	cop[tikv]	table:st, index:t(t)	range:[1478188800,1478275200], keep order:false, stats:pseudo
-    └─Selection_14(Probe)	0.00	cop[tikv]		eq(test.st.aid, "cn.sbkcq"), eq(test.st.pt, "android")
-      └─TableRowIDScan_13	250.00	cop[tikv]	table:st	keep order:false, stats:pseudo
+└─HashAgg_6	1.00	root		group by:test.st.cm, test.st.p1, test.st.p2, test.st.p3, test.st.p4, test.st.p5, test.st.p6_md5, test.st.p7_md5, funcs:count(1)->Column#20, funcs:count(distinct test.st.ip)->Column#21, funcs:firstrow(test.st.cm)->test.st.cm, funcs:firstrow(test.st.p1)->test.st.p1, funcs:firstrow(test.st.p2)->test.st.p2, funcs:firstrow(test.st.p3)->test.st.p3, funcs:firstrow(test.st.p4)->test.st.p4, funcs:firstrow(test.st.p5)->test.st.p5, funcs:firstrow(test.st.p6_md5)->test.st.p6_md5, funcs:firstrow(test.st.p7_md5)->test.st.p7_md5
+  └─IndexLookUp_13	0.00	root		
+    ├─IndexRangeScan_10(Build)	250.00	cop[tikv]	table:st, index:t(t)	range:[1478188800,1478275200], keep order:false, stats:pseudo
+    └─Selection_12(Probe)	0.00	cop[tikv]		eq(test.st.aid, "cn.sbkcq"), eq(test.st.pt, "android")
+      └─TableRowIDScan_11	250.00	cop[tikv]	table:st	keep order:false, stats:pseudo
 explain select dt.id as id, dt.aid as aid, dt.pt as pt, dt.dic as dic, dt.cm as cm, rr.gid as gid, rr.acd as acd, rr.t as t,dt.p1 as p1, dt.p2 as p2, dt.p3 as p3, dt.p4 as p4, dt.p5 as p5, dt.p6_md5 as p6, dt.p7_md5 as p7 from dt dt join rr rr on (rr.pt = 'ios' and rr.t > 1478185592 and dt.aid = rr.aid and dt.dic = rr.dic) where dt.pt = 'ios' and dt.t > 1478185592 and dt.bm = 0 limit 2000;
 id	estRows	task	access object	operator info
 Projection_10	0.00	root		test.dt.id, test.dt.aid, test.dt.pt, test.dt.dic, test.dt.cm, test.rr.gid, test.rr.acd, test.rr.t, test.dt.p1, test.dt.p2, test.dt.p3, test.dt.p4, test.dt.p5, test.dt.p6_md5, test.dt.p7_md5
@@ -164,7 +164,7 @@ Projection_10	0.00	root		test.dt.id, test.dt.aid, test.dt.pt, test.dt.dic, test.
 explain select pc,cr,count(DISTINCT uid) as pay_users,count(oid) as pay_times,sum(am) as am from pp where ps=2  and ppt>=1478188800 and ppt<1478275200  and pi in ('510017','520017') and uid in ('18089709','18090780') group by pc,cr;
 id	estRows	task	access object	operator info
 Projection_5	1.00	root		test.pp.pc, test.pp.cr, Column#22, Column#23, Column#24
-└─HashAgg_7	1.00	root		group by:test.pp.cr, test.pp.pc, funcs:count(distinct test.pp.uid)->Column#22, funcs:count(test.pp.oid)->Column#23, funcs:sum(test.pp.am)->Column#24, funcs:firstrow(test.pp.pc)->test.pp.pc, funcs:firstrow(test.pp.cr)->test.pp.cr
+└─HashAgg_6	1.00	root		group by:test.pp.cr, test.pp.pc, funcs:count(distinct test.pp.uid)->Column#22, funcs:count(test.pp.oid)->Column#23, funcs:sum(test.pp.am)->Column#24, funcs:firstrow(test.pp.pc)->test.pp.pc, funcs:firstrow(test.pp.cr)->test.pp.cr
   └─IndexLookUp_21	0.00	root		
     ├─IndexRangeScan_18(Build)	0.40	cop[tikv]	table:pp, index:sp(uid, pi)	range:[18089709 510017,18089709 510017], [18089709 520017,18089709 520017], [18090780 510017,18090780 510017], [18090780 520017,18090780 520017], keep order:false, stats:pseudo
     └─Selection_20(Probe)	0.00	cop[tikv]		eq(test.pp.ps, 2), ge(test.pp.ppt, 1478188800), lt(test.pp.ppt, 1478275200)
