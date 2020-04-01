@@ -4967,6 +4967,14 @@ func (s *testIntegrationSuite) TestInvalidEndingStatement(c *C) {
 	assertParseErr(`drop table if exists t"`)
 }
 
+func (s *testIntegrationSuite) TestIssue15613(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustQuery("select sec_to_time(1e-4)").Check(testkit.Rows("00:00:00.000100"))
+	tk.MustQuery("select sec_to_time(1e-5)").Check(testkit.Rows("00:00:00.000010"))
+	tk.MustQuery("select sec_to_time(1e-6)").Check(testkit.Rows("00:00:00.000001"))
+	tk.MustQuery("select sec_to_time(1e-7)").Check(testkit.Rows("00:00:00.000000"))
+}
+
 func (s *testIntegrationSuite) TestIssue10675(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -5473,6 +5481,15 @@ func (s *testIntegrationSuite) TestCollation(c *C) {
 	tk.MustQuery("select collation('a')").Check(testkit.Rows("utf8mb4_bin"))
 	tk.MustExec("set names utf8mb4 collate utf8mb4_general_ci")
 	tk.MustQuery("select collation('a')").Check(testkit.Rows("utf8mb4_general_ci"))
+
+	tk.MustExec("set names utf8mb4 collate utf8mb4_general_ci")
+	tk.MustExec("set @test_collate_var = 'a'")
+	tk.MustQuery("select collation(@test_collate_var)").Check(testkit.Rows("utf8mb4_general_ci"))
+	tk.MustExec("set names utf8mb4 collate utf8mb4_general_ci")
+	tk.MustExec("set @test_collate_var = 1")
+	tk.MustQuery("select collation(@test_collate_var)").Check(testkit.Rows("utf8mb4_general_ci"))
+	tk.MustExec("set @test_collate_var = concat(\"a\", \"b\" collate utf8mb4_bin)")
+	tk.MustQuery("select collation(@test_collate_var)").Check(testkit.Rows("utf8mb4_bin"))
 }
 
 func (s *testIntegrationSuite) TestCoercibility(c *C) {
@@ -5744,10 +5761,22 @@ func (s *testIntegrationSerialSuite) TestCollateMergeJoin2(c *C) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
 	tk := s.prepare4Join2(c)
-	err := tk.ExecToErr("select /*+ TIDB_SMJ(t1, t2) */ * from t1, t2 where t1.v=t2.v order by t1.id")
-	c.Assert(strings.Contains(err.Error(), "Can't find a proper physical plan for this query"), IsTrue)
-	tk.MustQuery("select * from t1, t2 where t1.v=t2.v order by t1.id").Check(
+	tk.MustQuery("select /*+ TIDB_SMJ(t1, t2) */ * from t1, t2 where t1.v=t2.v order by t1.id").Check(
 		testkit.Rows("1 a a", "2 À À", "3 á á", "4 à à", "5 b b", "6 c c", "7    "))
+}
+
+func (s *testIntegrationSerialSuite) TestCollateIndexMergeJoin(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a varchar(5) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci, b varchar(5) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci, key(a), key(b))")
+	tk.MustExec("insert into t values ('a', 'x'), ('x', 'À'), ('á', 'x'), ('à', 'à'), ('à', 'x')")
+
+	tk.MustExec("set tidb_enable_index_merge=1")
+	tk.MustQuery("select /*+ USE_INDEX_MERGE(t, a, b) */ * from t where a = 'a' or b = 'a'").Sort().Check(
+		testkit.Rows("a x", "x À", "à x", "à à", "á x"))
 }
 
 func (s *testIntegrationSerialSuite) prepare4Collation(c *C, hasIndex bool) *testkit.TestKit {
@@ -5920,4 +5949,25 @@ func (s *testIntegrationSerialSuite) TestCollateSubQuery(c *C) {
 	tk.MustQuery("select id from t_bin where exists (select 1 from t where t_bin.v=t.v) order by id").Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7"))
 	tk.MustQuery("select id from t where not exists (select 1 from t_bin where t_bin.v=t.v) order by id").Check(testkit.Rows())
 	tk.MustQuery("select id from t_bin where not exists (select 1 from t where t_bin.v=t.v) order by id").Check(testkit.Rows())
+}
+
+func (s *testIntegrationSerialSuite) TestCollateDDL(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database t;")
+	tk.MustExec("use t;")
+	tk.MustExec("drop database t;")
+}
+
+func (s *testIntegrationSuite) TestNegativeZeroForHashJoin(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("CREATE TABLE t0(c0 float);")
+	tk.MustExec("CREATE TABLE t1(c0 float);")
+	tk.MustExec("INSERT INTO t1(c0) VALUES (0);")
+	tk.MustExec("INSERT INTO t0(c0) VALUES (0);")
+	tk.MustQuery("SELECT t1.c0 FROM t1, t0 WHERE t0.c0=-t1.c0;").Check(testkit.Rows("0"))
+	tk.MustExec("drop TABLE t0;")
+	tk.MustExec("drop table t1;")
 }

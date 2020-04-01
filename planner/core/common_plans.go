@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/math"
 	"github.com/pingcap/tidb/util/ranger"
@@ -813,7 +814,9 @@ func (e *Explain) RenderResult() error {
 	case ast.ExplainFormatDOT:
 		e.prepareDotInfo(e.TargetPlan.(PhysicalPlan))
 	case ast.ExplainFormatHint:
-		e.Rows = append(e.Rows, []string{GenHintsFromPhysicalPlan(e.TargetPlan)})
+		hints := GenHintsFromPhysicalPlan(e.TargetPlan)
+		hints = append(hints, hint.ExtractTableHintsFromStmtNode(e.ExecStmt)...)
+		e.Rows = append(e.Rows, []string{hint.RestoreOptimizerHints(hints)})
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}
