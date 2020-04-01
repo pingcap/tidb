@@ -152,6 +152,14 @@ func (s *testSerialSuite) TestPrimaryKey(c *C) {
 	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported drop primary key when alter-primary-key is false")
 }
 
+func (s *testSerialSuite) TestDropAutoIncrementIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int(11) not null auto_increment key, b int(11), c bigint, unique key (a, b, c))")
+	tk.MustExec("alter table t1 drop index a")
+}
+
 func (s *testSerialSuite) TestMultiRegionGetTableEndHandle(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("drop database if exists test_get_endhandle")
@@ -935,6 +943,11 @@ func (s *testSerialSuite) TestModifyingColumn4NewCollations(c *C) {
 	tk.MustGetErrMsg("alter table t convert to charset utf8 collate utf8_general_ci", "[ddl:8200]Unsupported converting collation of column 'b' from 'utf8_bin' to 'utf8_general_ci' when index is defined on it.")
 	// Change to a compatible collation is allowed.
 	tk.MustExec("alter table t modify c varchar(10) collate utf8mb4_general_ci")
+	// Change the default collation of table is allowed.
+	tk.MustExec("alter table t collate utf8mb4_general_ci")
+	tk.MustExec("alter table t charset utf8mb4 collate utf8mb4_bin")
+	// Change the default collation of database is allowed.
+	tk.MustExec("alter database dct charset utf8mb4 collate utf8mb4_general_ci")
 }
 
 func (s *testSerialSuite) TestForbidUnsupportedCollations(c *C) {

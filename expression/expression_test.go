@@ -91,6 +91,51 @@ func (s *testEvaluatorSuite) TestConstItem(c *C) {
 	c.Assert(sf.ConstItem(s.ctx.GetSessionVars().StmtCtx), Equals, true)
 }
 
+func (s *testEvaluatorSuite) TestVectorizable(c *C) {
+	exprs := make([]Expression, 0, 4)
+	sf := newFunction(ast.Rand)
+	column := &Column{
+		UniqueID: 0,
+		RetType:  types.NewFieldType(mysql.TypeLonglong),
+	}
+	exprs = append(exprs, sf)
+	exprs = append(exprs, One)
+	exprs = append(exprs, Null)
+	exprs = append(exprs, column)
+	c.Assert(Vectorizable(exprs), Equals, true)
+
+	column0 := &Column{
+		UniqueID: 1,
+		RetType:  types.NewFieldType(mysql.TypeString),
+	}
+	column1 := &Column{
+		UniqueID: 2,
+		RetType:  types.NewFieldType(mysql.TypeString),
+	}
+	column2 := &Column{
+		UniqueID: 3,
+		RetType:  types.NewFieldType(mysql.TypeLonglong),
+	}
+	exprs = exprs[:0]
+	sf = newFunction(ast.SetVar, column0, column1)
+	exprs = append(exprs, sf)
+	c.Assert(Vectorizable(exprs), Equals, false)
+
+	exprs = exprs[:0]
+	sf = newFunction(ast.GetVar, column0)
+	exprs = append(exprs, sf)
+	c.Assert(Vectorizable(exprs), Equals, false)
+
+	exprs = exprs[:0]
+	sf = newFunction(ast.NextVal, column0)
+	exprs = append(exprs, sf)
+	sf = newFunction(ast.LastVal, column0)
+	exprs = append(exprs, sf)
+	sf = newFunction(ast.SetVal, column1, column2)
+	exprs = append(exprs, sf)
+	c.Assert(Vectorizable(exprs), Equals, false)
+}
+
 type testTableBuilder struct {
 	tableName   string
 	columnNames []string
