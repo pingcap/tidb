@@ -745,3 +745,47 @@ func (s *testIntegrationSuite) TestIssue15546(c *C) {
 	tk.MustExec("create definer='root'@'localhost' view vt(a, b) as select a, b from t")
 	tk.MustQuery("select * from pt, vt where pt.a = vt.a").Check(testkit.Rows("1 1 1 1"))
 }
+
+func (s *testIntegrationSuite) TestIssue15813(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t0, t1")
+	tk.MustExec("create table t0(c0 int primary key)")
+	tk.MustExec("create table t1(c0 int primary key)")
+	tk.MustExec("CREATE INDEX i0 ON t0(c0)")
+	tk.MustExec("CREATE INDEX i0 ON t1(c0)")
+	tk.MustQuery("select /*+ MERGE_JOIN(t0, t1) */ * from t0, t1 where t0.c0 = t1.c0").Check(testkit.Rows())
+}
+
+func (s *testIntegrationSuite) TestHintWithoutTableWarning(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int, b int, c int, key a(a))")
+	tk.MustExec("create table t2(a int, b int, c int, key a(a))")
+	var input []string
+	var output []struct {
+		SQL      string
+		Warnings []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			tk.MustQuery(tt)
+			warns := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
+			output[i].Warnings = make([]string, len(warns))
+			for j := range warns {
+				output[i].Warnings[j] = warns[j].Err.Error()
+			}
+		})
+		tk.MustQuery(tt)
+		warns := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
+		c.Assert(len(warns), Equals, len(output[i].Warnings))
+		for j := range warns {
+			c.Assert(warns[j].Level, Equals, stmtctx.WarnLevelWarning)
+			c.Assert(warns[j].Err.Error(), Equals, output[i].Warnings[j])
+		}
+	}
+}
