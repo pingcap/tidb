@@ -106,6 +106,15 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 	// Create a new session to test.
 	tk = testkit.NewTestKitWithInit(c, s.store)
 
+	// Test USE, SET, EXPLAIN
+	tk.MustExec("use test")
+	tk.MustExec("explain select 1")
+	tk.MustExec("explain analyze select 1")
+	tk.MustQuery(`select stmt_type, digest_text
+		from performance_schema.events_statements_summary_by_digest
+		where stmt_type in ('use', 'set', 'explain')`,
+	).Check(testkit.Rows("explain explain analyze select ?"))
+
 	// Test INSERT
 	tk.MustExec("insert into t values(1, 'a')")
 	tk.MustExec("insert into t    values(2, 'b')")

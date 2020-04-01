@@ -23,6 +23,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -883,4 +884,19 @@ func convertEmptyToNil(str string) interface{} {
 		return nil
 	}
 	return str
+}
+
+// NeedRecord judges whether this type of statement should be summarized.
+func NeedRecord(stmtType string, stmtNode ast.StmtNode) bool {
+	switch stmtType {
+	case "Use", "Begin", "Set", "other":
+		return false
+	case "Explain":
+		if explainNode, ok := stmtNode.(*ast.ExplainStmt); ok {
+			return explainNode.Analyze
+		}
+		return false
+	default:
+		return true
+	}
 }

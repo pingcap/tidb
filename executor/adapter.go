@@ -878,6 +878,9 @@ func (a *ExecStmt) SummaryStmt() {
 		return
 	}
 	stmtCtx := sessVars.StmtCtx
+	if !stmtsummary.NeedRecord(stmtCtx.StmtType, a.StmtNode) {
+		return
+	}
 	normalizedSQL, digest := stmtCtx.SQLDigest()
 	costTime := time.Since(sessVars.StartTime)
 
