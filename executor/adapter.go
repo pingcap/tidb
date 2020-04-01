@@ -877,10 +877,10 @@ func (a *ExecStmt) SummaryStmt() {
 		sessVars.SetPrevStmtDigest("")
 		return
 	}
-	stmtCtx := sessVars.StmtCtx
-	if !stmtsummary.NeedRecord(stmtCtx.StmtType, a.StmtNode) {
+	if !stmtsummary.NeedRecord(a.StmtNode) {
 		return
 	}
+	stmtCtx := sessVars.StmtCtx
 	normalizedSQL, digest := stmtCtx.SQLDigest()
 	costTime := time.Since(sessVars.StartTime)
 

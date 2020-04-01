@@ -887,16 +887,17 @@ func convertEmptyToNil(str string) interface{} {
 }
 
 // NeedRecord judges whether this type of statement should be summarized.
-func NeedRecord(stmtType string, stmtNode ast.StmtNode) bool {
-	switch stmtType {
-	case "Use", "Begin", "Set", "other":
+func NeedRecord(stmtNode ast.StmtNode) bool {
+	switch stmtNode.(type) {
+	case ast.DMLNode, ast.DDLNode:
+		return true
+	case *ast.BeginStmt, *ast.DeallocateStmt, *ast.FlushStmt, *ast.SetConfigStmt, *ast.SetDefaultRoleStmt,
+		*ast.SetPwdStmt, *ast.SetRoleStmt, *ast.SetStmt, *ast.UseStmt:
 		return false
-	case "Explain":
-		if explainNode, ok := stmtNode.(*ast.ExplainStmt); ok {
-			return explainNode.Analyze
-		}
-		return false
+	case *ast.ExplainStmt:
+		return stmtNode.(*ast.ExplainStmt).Analyze
 	default:
+		// For statements that not considered so far or supported afterwards, just record them.
 		return true
 	}
 }
