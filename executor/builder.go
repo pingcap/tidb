@@ -650,6 +650,8 @@ func (b *executorBuilder) buildShow(v *plannercore.PhysicalShow) Executor {
 		// The former determine privileges with roles, while the later doesn't.
 		vars := e.ctx.GetSessionVars()
 		e.User = vars.User
+		e.User.Hostname = vars.User.AuthHostname
+		e.User.Username = vars.User.AuthUsername
 		e.Roles = vars.ActiveRoles
 	}
 	if e.Tp == ast.ShowMasterStatus {
@@ -1040,6 +1042,17 @@ func (b *executorBuilder) buildMergeJoin(v *plannercore.PhysicalMergeJoin) Execu
 	return e
 }
 
+func (b *executorBuilder) buildSideEstCount(v *plannercore.PhysicalHashJoin) float64 {
+	buildSide := v.Children()[v.InnerChildIdx]
+	if v.UseOuterToBuild {
+		buildSide = v.Children()[1-v.InnerChildIdx]
+	}
+	if buildSide.Stats().HistColl == nil || buildSide.Stats().HistColl.Pseudo {
+		return 0.0
+	}
+	return buildSide.StatsCount()
+}
+
 func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executor {
 	leftExec := b.build(v.Children()[0])
 	if b.err != nil {
@@ -1052,12 +1065,11 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 	}
 
 	e := &HashJoinExec{
-		baseExecutor:      newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), leftExec, rightExec),
-		concurrency:       v.Concurrency,
-		joinType:          v.JoinType,
-		isOuterJoin:       v.JoinType.IsOuterJoin(),
-		buildSideEstCount: v.Children()[v.InnerChildIdx].StatsCount(),
-		useOuterToBuild:   v.UseOuterToBuild,
+		baseExecutor:    newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), leftExec, rightExec),
+		concurrency:     v.Concurrency,
+		joinType:        v.JoinType,
+		isOuterJoin:     v.JoinType.IsOuterJoin(),
+		useOuterToBuild: v.UseOuterToBuild,
 	}
 	defaultValues := v.DefaultValues
 	lhsTypes, rhsTypes := retTypes(leftExec), retTypes(rightExec)
@@ -1086,7 +1098,6 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 
 	if v.UseOuterToBuild {
 		// update the buildSideEstCount due to changing the build side
-		e.buildSideEstCount = v.Children()[1-v.InnerChildIdx].StatsCount()
 		if v.InnerChildIdx == 1 {
 			e.buildSideExec, e.buildKeys = leftExec, v.LeftJoinKeys
 			e.probeSideExec, e.probeKeys = rightExec, v.RightJoinKeys
@@ -1115,6 +1126,7 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 			defaultValues = make([]types.Datum, e.buildSideExec.Schema().Len())
 		}
 	}
+	e.buildSideEstCount = b.buildSideEstCount(v)
 	childrenUsedSchema := markChildrenUsedCols(v.Schema(), v.Children()[0].Schema(), v.Children()[1].Schema())
 	e.joiners = make([]joiner, e.concurrency)
 	for i := uint(0); i < e.concurrency; i++ {
@@ -1437,12 +1449,14 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			strings.ToLower(infoschema.TableCollationCharacterSetApplicability),
 			strings.ToLower(infoschema.TableProcesslist),
 			strings.ToLower(infoschema.ClusterTableProcesslist),
+			strings.ToLower(infoschema.TableTiKVRegionStatus),
 			strings.ToLower(infoschema.TableTiKVRegionPeers),
 			strings.ToLower(infoschema.TableTiDBHotRegions),
 			strings.ToLower(infoschema.TableSessionVar),
 			strings.ToLower(infoschema.TableConstraints),
 			strings.ToLower(infoschema.TableTiFlashReplica),
-			strings.ToLower(infoschema.TableTiDBServersInfo):
+			strings.ToLower(infoschema.TableTiDBServersInfo),
+			strings.ToLower(infoschema.TableTiKVStoreStatus):
 			return &MemTableReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 				table:        v.Table,
@@ -2603,8 +2617,19 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 		return nil, err
 	}
 	handles := make([]int64, 0, len(lookUpContents))
+	var isValidHandle bool
 	for _, content := range lookUpContents {
-		handles = append(handles, content.keys[0].GetInt64())
+		handle := content.keys[0].GetInt64()
+		isValidHandle = true
+		for _, key := range content.keys {
+			if handle != key.GetInt64() {
+				isValidHandle = false
+				break
+			}
+		}
+		if isValidHandle {
+			handles = append(handles, handle)
+		}
 	}
 	return builder.buildTableReaderFromHandles(ctx, e, handles)
 }
@@ -2702,10 +2727,11 @@ func (builder *dataReaderBuilder) buildProjectionForIndexJoin(ctx context.Contex
 
 // buildKvRangesForIndexJoin builds kv ranges for index join when the inner plan is index scan plan.
 func buildKvRangesForIndexJoin(ctx sessionctx.Context, tableID, indexID int64, lookUpContents []*indexJoinLookUpContent,
-	ranges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager) ([]kv.KeyRange, error) {
+	ranges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager) (_ []kv.KeyRange, err error) {
 	kvRanges := make([]kv.KeyRange, 0, len(ranges)*len(lookUpContents))
 	lastPos := len(ranges[0].LowVal) - 1
 	sc := ctx.GetSessionVars().StmtCtx
+	tmpDatumRanges := make([]*ranger.Range, 0, len(lookUpContents))
 	for _, content := range lookUpContents {
 		for _, ran := range ranges {
 			for keyOff, idxOff := range keyOff2IdxOff {
@@ -2713,54 +2739,41 @@ func buildKvRangesForIndexJoin(ctx sessionctx.Context, tableID, indexID int64, l
 				ran.HighVal[idxOff] = content.keys[keyOff]
 			}
 		}
-		if cwc != nil {
-			nextColRanges, err := cwc.BuildRangesByRow(ctx, content.row)
+		if cwc == nil {
+			tmpKvRanges, err := distsql.IndexRangesToKVRanges(sc, tableID, indexID, ranges, nil)
 			if err != nil {
 				return nil, err
 			}
-			for _, nextColRan := range nextColRanges {
-				for _, ran := range ranges {
-					ran.LowVal[lastPos] = nextColRan.LowVal[0]
-					ran.HighVal[lastPos] = nextColRan.HighVal[0]
-					ran.LowExclude = nextColRan.LowExclude
-					ran.HighExclude = nextColRan.HighExclude
-				}
-				tmpKvRanges, err := distsql.IndexRangesToKVRanges(sc, tableID, indexID, ranges, nil)
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-				kvRanges = append(kvRanges, tmpKvRanges...)
-			}
+			kvRanges = append(kvRanges, tmpKvRanges...)
 			continue
 		}
-
-		tmpKvRanges, err := distsql.IndexRangesToKVRanges(sc, tableID, indexID, ranges, nil)
+		nextColRanges, err := cwc.BuildRangesByRow(ctx, content.row)
 		if err != nil {
 			return nil, err
 		}
-		kvRanges = append(kvRanges, tmpKvRanges...)
-	}
-	// Sort and merge the overlapped ranges.
-	sort.Slice(kvRanges, func(i, j int) bool {
-		return bytes.Compare(kvRanges[i].StartKey, kvRanges[j].StartKey) < 0
-	})
-	if cwc != nil {
-		// If cwc is not nil, we need to merge the overlapped ranges here.
-		mergedKeyRanges := make([]kv.KeyRange, 0, len(kvRanges))
-		for i := range kvRanges {
-			if len(mergedKeyRanges) == 0 {
-				mergedKeyRanges = append(mergedKeyRanges, kvRanges[i])
-				continue
-			}
-			if bytes.Compare(kvRanges[i].StartKey, mergedKeyRanges[len(mergedKeyRanges)-1].EndKey) <= 0 {
-				mergedKeyRanges[len(mergedKeyRanges)-1].EndKey = kvRanges[i].EndKey
-			} else {
-				mergedKeyRanges = append(mergedKeyRanges, kvRanges[i])
+		for _, nextColRan := range nextColRanges {
+			for _, ran := range ranges {
+				ran.LowVal[lastPos] = nextColRan.LowVal[0]
+				ran.HighVal[lastPos] = nextColRan.HighVal[0]
+				ran.LowExclude = nextColRan.LowExclude
+				ran.HighExclude = nextColRan.HighExclude
+				tmpDatumRanges = append(tmpDatumRanges, ran.Clone())
 			}
 		}
-		return mergedKeyRanges, nil
 	}
-	return kvRanges, nil
+
+	if cwc == nil {
+		sort.Slice(kvRanges, func(i, j int) bool {
+			return bytes.Compare(kvRanges[i].StartKey, kvRanges[j].StartKey) < 0
+		})
+		return kvRanges, nil
+	}
+
+	tmpDatumRanges, err = ranger.UnionRanges(ctx.GetSessionVars().StmtCtx, tmpDatumRanges)
+	if err != nil {
+		return nil, err
+	}
+	return distsql.IndexRangesToKVRanges(ctx.GetSessionVars().StmtCtx, tableID, indexID, tmpDatumRanges, nil)
 }
 
 func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) *WindowExec {

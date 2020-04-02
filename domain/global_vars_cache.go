@@ -14,13 +14,16 @@
 package domain
 
 import (
+	"fmt"
 	"sync"
 	"time"
 
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/stmtsummary"
+	"go.uber.org/zap"
 )
 
 // GlobalVariableCache caches global variables.
@@ -73,17 +76,25 @@ func checkEnableServerGlobalVar(rows []chunk.Row) {
 		if !row.IsNull(1) {
 			sVal = row.GetString(1)
 		}
+		var err error
 		switch row.GetString(0) {
 		case variable.TiDBEnableStmtSummary:
-			stmtsummary.StmtSummaryByDigestMap.SetEnabled(sVal, false)
+			err = stmtsummary.StmtSummaryByDigestMap.SetEnabled(sVal, false)
 		case variable.TiDBStmtSummaryInternalQuery:
-			stmtsummary.StmtSummaryByDigestMap.SetEnabledInternalQuery(sVal, false)
+			err = stmtsummary.StmtSummaryByDigestMap.SetEnabledInternalQuery(sVal, false)
 		case variable.TiDBStmtSummaryRefreshInterval:
-			stmtsummary.StmtSummaryByDigestMap.SetRefreshInterval(sVal, false)
+			err = stmtsummary.StmtSummaryByDigestMap.SetRefreshInterval(sVal, false)
 		case variable.TiDBStmtSummaryHistorySize:
-			stmtsummary.StmtSummaryByDigestMap.SetHistorySize(sVal, false)
+			err = stmtsummary.StmtSummaryByDigestMap.SetHistorySize(sVal, false)
+		case variable.TiDBStmtSummaryMaxStmtCount:
+			err = stmtsummary.StmtSummaryByDigestMap.SetMaxStmtCount(sVal, false)
+		case variable.TiDBStmtSummaryMaxSQLLength:
+			err = stmtsummary.StmtSummaryByDigestMap.SetMaxSQLLength(sVal, false)
 		case variable.TiDBCapturePlanBaseline:
 			variable.CapturePlanBaseline.Set(sVal, false)
+		}
+		if err != nil {
+			logutil.BgLogger().Error(fmt.Sprintf("load global variable %s error", row.GetString(0)), zap.Error(err))
 		}
 	}
 }

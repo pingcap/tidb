@@ -2030,10 +2030,14 @@ var MetricTableMap = map[string]MetricTableDef{
 		PromQL: `node_memory_MemAvailable_bytes{$LABEL_CONDITIONS}`,
 		Labels: []string{"instance"},
 	},
-	"node_total_memory_swap": {
-		PromQL:  `node_memory_SwapTotal_bytes{$LABEL_CONDITIONS}`,
+	"node_memory_usage": {
+		PromQL: `100* (1-(node_memory_MemAvailable_bytes{$LABEL_CONDITIONS}/node_memory_MemTotal_bytes{$LABEL_CONDITIONS}))`,
+		Labels: []string{"instance"},
+	},
+	"node_memory_swap_used": {
+		PromQL:  `node_memory_SwapTotal_bytes{$LABEL_CONDITIONS} - node_memory_SwapFree_bytes{$LABEL_CONDITIONS}`,
 		Labels:  []string{"instance"},
-		Comment: "node total memory swap",
+		Comment: "bytes used of node swap memory",
 	},
 	"node_uptime": {
 		PromQL:  `node_time_seconds{$LABEL_CONDITIONS} - node_boot_time_seconds{$LABEL_CONDITIONS}`,
@@ -2134,19 +2138,19 @@ var MetricTableMap = map[string]MetricTableDef{
 	"node_disk_write_latency": {
 		PromQL:  `(rate(node_disk_write_time_seconds_total{$LABEL_CONDITIONS}[$RANGE_DURATION])/ rate(node_disk_writes_completed_total{$LABEL_CONDITIONS}[$RANGE_DURATION]))`,
 		Labels:  []string{"instance", "device"},
-		Comment: "node disk write latency(ms)",
+		Comment: "node disk write latency",
 	},
 	"node_disk_read_latency": {
 		PromQL:  `(rate(node_disk_read_time_seconds_total{$LABEL_CONDITIONS}[$RANGE_DURATION])/ rate(node_disk_reads_completed_total{$LABEL_CONDITIONS}[$RANGE_DURATION]))`,
 		Labels:  []string{"instance", "device"},
-		Comment: "node disk read latency(ms)",
+		Comment: "node disk read latency",
 	},
 	"node_disk_throughput": {
 		PromQL:  `irate(node_disk_read_bytes_total{$LABEL_CONDITIONS}[$RANGE_DURATION]) + irate(node_disk_written_bytes_total{$LABEL_CONDITIONS}[$RANGE_DURATION])`,
 		Labels:  []string{"instance", "device"},
 		Comment: "Units is byte",
 	},
-	"node_filesystem_space_used": {
+	"node_disk_usage": {
 		PromQL:  `((node_filesystem_size_bytes{$LABEL_CONDITIONS} - node_filesystem_avail_bytes{$LABEL_CONDITIONS}) / node_filesystem_size_bytes{$LABEL_CONDITIONS}) * 100`,
 		Labels:  []string{"instance", "device"},
 		Comment: "Filesystem used space. If is > 80% then is Critical.",
