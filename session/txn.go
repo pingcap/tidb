@@ -98,7 +98,7 @@ func (st *TxnState) Size() int {
 	return size
 }
 
-// NewBuffer returns a new child write buffer.
+// NewStagingBuffer returns a new child write buffer.
 func (st *TxnState) NewStagingBuffer() kv.MemBuffer {
 	st.initStmtBuf()
 	return st.stmtBuf.NewStagingBuffer()
