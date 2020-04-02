@@ -193,6 +193,7 @@ func (c *currentRoleFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 		return nil, err
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString)
+	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	bf.tp.Flen = 64
 	sig := &builtinCurrentRoleSig{bf}
 	return sig, nil
