@@ -82,9 +82,9 @@ type (
 	// version in the cluster
 	versionInspection struct{ inspectionName }
 
-	// currentLoadInspection is used to check the current load of memory/disk/cpu
+	// nodeLoadInspection is used to check the node load of memory/disk/cpu
 	// have reached a high-level threshold
-	currentLoadInspection struct{ inspectionName }
+	nodeLoadInspection struct{ inspectionName }
 
 	// criticalErrorInspection is used to check are there some critical errors
 	// occurred in the past
@@ -97,7 +97,7 @@ type (
 var inspectionRules = []inspectionRule{
 	&configInspection{inspectionName: "config"},
 	&versionInspection{inspectionName: "version"},
-	&currentLoadInspection{inspectionName: "current-load"},
+	&nodeLoadInspection{inspectionName: "node-load"},
 	&criticalErrorInspection{inspectionName: "critical-error"},
 	&thresholdCheckInspection{inspectionName: "threshold-check"},
 }
@@ -188,6 +188,7 @@ func (configInspection) inspectDiffConfig(_ context.Context, sctx sessionctx.Con
 	ignoreConfigKey := []string{
 		// TiDB
 		"port",
+		"status.status-port",
 		"host",
 		"path",
 		"advertise-address",
@@ -196,8 +197,15 @@ func (configInspection) inspectDiffConfig(_ context.Context, sctx sessionctx.Con
 		"log.slow-query-file",
 
 		// PD
+		"advertise-client-urls",
+		"advertise-peer-urls",
+		"client-urls",
 		"data-dir",
 		"log-file",
+		"log.file.filename",
+		"metric.job",
+		"name",
+		"peer-urls",
 
 		// TiKV
 		"server.addr",
@@ -308,101 +316,114 @@ func (versionInspection) inspect(_ context.Context, sctx sessionctx.Context, fil
 	return results
 }
 
-func (c currentLoadInspection) inspect(_ context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
-	var commonResult = func(item, expected string, row chunk.Row) inspectionResult {
-		return inspectionResult{
-			tp:       row.GetString(0),
-			instance: row.GetString(1),
-			item:     item,
-			actual:   row.GetString(2),
-			expected: expected,
-			severity: "warning",
-		}
+func (c nodeLoadInspection) inspect(ctx context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
+	var rules = []ruleChecker{
+		inspectCPULoad{item: "load1", tbl: "node_load1"},
+		inspectCPULoad{item: "load5", tbl: "node_load5"},
+		inspectCPULoad{item: "load15", tbl: "node_load15"},
+		inspectVirtualMemUsage{},
+		inspectSwapMemoryUsed{},
+		inspectDiskUsage{},
 	}
-	var diskResult = func(item, expected string, row chunk.Row) inspectionResult {
-		return inspectionResult{
-			tp:       row.GetString(0),
-			instance: row.GetString(1),
-			item:     item,
-			actual:   row.GetString(3),
-			expected: expected,
-			severity: "warning",
-			detail: fmt.Sprintf("current disk-usage is too high, execute the sql to see more detail: select * from information_schema.cluster_hardware where type='%s' and instance='%s' and device_type='disk' and device_name='%s'",
-				row.GetString(0), row.GetString(1), row.GetString(2)),
-		}
-	}
-	var rules = []struct {
-		item     string
-		sql      string
-		expected string
-		result   func(string, string, chunk.Row) inspectionResult
-	}{
-		{
-			"virtual-memory-usage",
-			"select type, instance, value from information_schema.cluster_load where device_type='memory' and device_name='virtual' and name='used-percent' and value > 0.7",
-			"< 0.7",
-			commonResult,
-		},
-		{
-			"swap-memory-usage",
-			"select type, instance, value from information_schema.cluster_load where device_type='memory' and device_name='swap' and name='used-percent' and value > 0",
-			"0",
-			commonResult,
-		},
-		{
-			"disk-usage",
-			"select type, instance, device_name, value from information_schema.cluster_hardware where device_type='disk' and name='used-percent' and value > 70",
-			"< 70",
-			diskResult,
-		},
-	}
-
-	var results []inspectionResult
-	for _, rule := range rules {
-		if filter.enable(rule.item) {
-			rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(rule.sql)
-			if err != nil {
-				sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("check load %s failed: %v", rule.item, err))
-				continue
-			}
-			for _, row := range rows {
-				results = append(results, rule.result(rule.item, rule.expected, row))
-			}
-		}
-	}
-	results = append(results, c.inspectCPULoad(sctx, filter)...)
-	return results
+	return checkRules(ctx, sctx, filter, rules)
 }
 
-func (currentLoadInspection) inspectCPULoad(sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
-	var results []inspectionResult
-	for _, item := range []string{"load1", "load5", "load15"} {
-		if !filter.enable(item) {
-			continue
-		}
-		sql := fmt.Sprintf(`select t1.*, 0.7 * t2.cpu_core from
-				(select type, instance, value from information_schema.cluster_load where device_type='cpu' and device_name='cpu' and name='%s') as t1 join
-				(select type,instance, max(value) as cpu_core from information_schema.CLUSTER_HARDWARE where DEVICE_TYPE='cpu' and name='cpu-logical-cores' group by type,instance) as t2
-				where t2.instance = t1.instance and t1.type=t2.type and t1.value > 0.7 * t2.cpu_core;`, item)
-		rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
-		if err != nil {
-			sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("check load %s failed: %v", item, err))
-			continue
-		}
-		for _, row := range rows {
-			result := inspectionResult{
-				tp:       row.GetString(0),
-				instance: row.GetString(1),
-				item:     "cpu-" + item,
-				actual:   row.GetString(2),
-				expected: fmt.Sprintf("< %.1f", row.GetFloat64(3)),
-				severity: "warning",
-				detail:   "cpu-" + item + " should less than (cpu_logical_cores * 0.7)",
-			}
-			results = append(results, result)
-		}
+type inspectVirtualMemUsage struct{}
+
+func (inspectVirtualMemUsage) genSQL(timeRange plannercore.QueryTimeRange) string {
+	sql := fmt.Sprintf("select instance, max(value) as max_usage from metrics_schema.node_memory_usage %s group by instance having max_usage >= 70", timeRange.Condition())
+	return sql
+}
+
+func (i inspectVirtualMemUsage) genResult(sql string, row chunk.Row) inspectionResult {
+	return inspectionResult{
+		tp:       "node",
+		instance: row.GetString(0),
+		item:     i.getItem(),
+		actual:   fmt.Sprintf("%.1f%%", row.GetFloat64(1)),
+		expected: "< 70%",
+		severity: "warning",
+		detail:   "the memory-usage is too high",
 	}
-	return results
+}
+
+func (inspectVirtualMemUsage) getItem() string {
+	return "virtual-memory-usage"
+}
+
+type inspectSwapMemoryUsed struct{}
+
+func (inspectSwapMemoryUsed) genSQL(timeRange plannercore.QueryTimeRange) string {
+	sql := fmt.Sprintf("select instance, max(value) as max_used from metrics_schema.node_memory_swap_used %s group by instance having max_used > 0", timeRange.Condition())
+	fmt.Println(sql)
+	return sql
+}
+
+func (i inspectSwapMemoryUsed) genResult(sql string, row chunk.Row) inspectionResult {
+	return inspectionResult{
+		tp:       "node",
+		instance: row.GetString(0),
+		item:     i.getItem(),
+		actual:   fmt.Sprintf("%.1f", row.GetFloat64(1)),
+		expected: "0",
+		severity: "warning",
+	}
+}
+
+func (inspectSwapMemoryUsed) getItem() string {
+	return "swap-memory-used"
+}
+
+type inspectDiskUsage struct{}
+
+func (inspectDiskUsage) genSQL(timeRange plannercore.QueryTimeRange) string {
+	sql := fmt.Sprintf("select instance, device, max(value) as max_usage from metrics_schema.node_disk_usage %v and device like '/%%' group by instance, device having max_usage >= 70", timeRange.Condition())
+	return sql
+}
+
+func (i inspectDiskUsage) genResult(sql string, row chunk.Row) inspectionResult {
+	return inspectionResult{
+		tp:       "node",
+		instance: row.GetString(0),
+		item:     i.getItem(),
+		actual:   fmt.Sprintf("%.1f%%", row.GetFloat64(2)),
+		expected: "< 70%",
+		severity: "warning",
+		detail:   "the disk-usage of " + row.GetString(1) + " is too high",
+	}
+}
+
+func (inspectDiskUsage) getItem() string {
+	return "disk-usage"
+}
+
+type inspectCPULoad struct {
+	item string
+	tbl  string
+}
+
+func (i inspectCPULoad) genSQL(timeRange plannercore.QueryTimeRange) string {
+	sql := fmt.Sprintf(`select t1.instance, t1.max_load , 0.7*t2.cpu_count from
+			(select instance,max(value) as max_load  from metrics_schema.%[1]s %[2]s group by instance) as t1 join
+			(select instance,max(value) as cpu_count from metrics_schema.node_virtual_cpus %[2]s group by instance) as t2
+			on t1.instance=t2.instance where t1.max_load>(0.7*t2.cpu_count);`, i.tbl, timeRange.Condition())
+	return sql
+}
+
+func (i inspectCPULoad) genResult(sql string, row chunk.Row) inspectionResult {
+	return inspectionResult{
+		tp:       "node",
+		instance: row.GetString(0),
+		item:     "cpu-" + i.item,
+		actual:   fmt.Sprintf("%.1f", row.GetFloat64(1)),
+		expected: fmt.Sprintf("< %.1f", row.GetFloat64(2)),
+		severity: "warning",
+		detail:   i.getItem() + " should less than (cpu_logical_cores * 0.7)",
+	}
+}
+
+func (i inspectCPULoad) getItem() string {
+	return "cpu-" + i.item
 }
 
 func (c criticalErrorInspection) inspect(ctx context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
@@ -630,10 +651,11 @@ func (thresholdCheckInspection) inspectThreshold1(ctx context.Context, sctx sess
 
 		var sql string
 		if len(rule.configKey) > 0 {
-			sql = fmt.Sprintf("select t1.instance, t1.cpu, t2.threshold, t2.value from "+
-				"(select instance, max(value) as cpu from metrics_schema.tikv_thread_cpu %[4]s and name like '%[1]s' group by instance) as t1,"+
-				"(select value * %[2]f as threshold, value from information_schema.cluster_config where type='tikv' and `key` = '%[3]s' limit 1) as t2 "+
-				"where t1.cpu > t2.threshold;", rule.component, rule.threshold, rule.configKey, condition)
+			sql = fmt.Sprintf("select t2.instance, t1.cpu, (t2.value * %[2]f) as threshold, t2.value from "+
+				"(select instance as status_address, max(value) as cpu from metrics_schema.tikv_thread_cpu %[4]s and name like '%[1]s' group by instance) as t1 join "+
+				"(select instance, value from information_schema.cluster_config where type='tikv' and `key` = '%[3]s') as t2 join "+
+				"(select instance,status_address from information_schema.cluster_info where type='tikv') as t3 "+
+				"on t1.status_address=t3.status_address and t2.instance=t3.instance where t1.cpu > (t2.value * %[2]f)", rule.component, rule.threshold, rule.configKey, condition)
 		} else {
 			sql = fmt.Sprintf("select t1.instance, t1.cpu, %[2]f from "+
 				"(select instance, max(value) as cpu from metrics_schema.tikv_thread_cpu %[3]s and name like '%[1]s' group by instance) as t1 "+
@@ -846,7 +868,7 @@ func (thresholdCheckInspection) inspectThreshold2(ctx context.Context, sctx sess
 	return results
 }
 
-type thresholdCheckRule interface {
+type ruleChecker interface {
 	genSQL(timeRange plannercore.QueryTimeRange) string
 	genResult(sql string, row chunk.Row) inspectionResult
 	getItem() string
@@ -958,7 +980,7 @@ func (c checkStoreRegionTooMuch) getItem() string {
 }
 
 func (thresholdCheckInspection) inspectThreshold3(ctx context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
-	var rules = []thresholdCheckRule{
+	var rules = []ruleChecker{
 		compareStoreStatus{
 			item:      "leader-score-balance",
 			tp:        "leader_score",
@@ -977,7 +999,10 @@ func (thresholdCheckInspection) inspectThreshold3(ctx context.Context, sctx sess
 		checkRegionHealth{},
 		checkStoreRegionTooMuch{},
 	}
+	return checkRules(ctx, sctx, filter, rules)
+}
 
+func checkRules(ctx context.Context, sctx sessionctx.Context, filter inspectionFilter, rules []ruleChecker) []inspectionResult {
 	var results []inspectionResult
 	for _, rule := range rules {
 		if !filter.enable(rule.getItem()) {
