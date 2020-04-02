@@ -35,4 +35,5 @@ func TestGetTargetDirectoryCapacity(t *testing.T) {
 	if r < 1 {
 		t.Fatalf("couldn't get capacity")
 	}
+	//TODO: check the value of r with `df` in linux
 }
