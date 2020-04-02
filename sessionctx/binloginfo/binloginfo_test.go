@@ -469,6 +469,7 @@ func (s *testBinlogSuite) TestAddSpecialComment(c *C) {
 		},
 		{
 			"create table t1 (id int primary key auto_random(2));",
+<<<<<<< HEAD
 			"create table t1 (id int primary key /*T!40000 auto_random(2) */ );",
 		},
 		{
@@ -478,6 +479,17 @@ func (s *testBinlogSuite) TestAddSpecialComment(c *C) {
 		{
 			"create table t1 (id int  auto_random  (   4    ) primary key);",
 			"create table t1 (id int  /*T!40000 auto_random  (   4    ) */ primary key);",
+=======
+			"create table t1 (id int primary key /*T![auto_rand] auto_random(2) */ );",
+		},
+		{
+			"create table t1 (id int auto_random ( 4 ) primary key);",
+			"create table t1 (id int /*T![auto_rand] auto_random ( 4 ) */ primary key);",
+		},
+		{
+			"create table t1 (id int  auto_random  (   4    ) primary key);",
+			"create table t1 (id int  /*T![auto_rand] auto_random  (   4    ) */ primary key);",
+>>>>>>> ff47c8d... parser: apply feature-ids special comments to auto_random (#15412)
 		},
 	}
 	for _, ca := range testCase {
