@@ -10,11 +10,29 @@
 // distributed under the License is distributed on an "AS IS" BASIS,
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// +build !linux,!windows,!darwin
 
-package storage
+package storage_test
 
-// GetTargetDirectoryCapacity get the capacity (bytes) of directory
-func GetTargetDirectoryCapacity(path string) (uint64, bool, error) {
-	return 0, false, nil
+import (
+	"testing"
+
+	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/util/sys/storage"
+)
+
+func TestT(t *testing.T) {
+	TestingT(t)
+}
+
+func TestGetTargetDirectoryCapacity(t *testing.T) {
+	r, s, err := storage.GetTargetDirectoryCapacity(".")
+	if err != nil {
+		t.Fatal(t)
+	}
+	if !s {
+		t.Fatalf("should test on the supported os")
+	}
+	if r < 1 {
+		t.Fatalf("couldn't get capacity")
+	}
 }
