@@ -97,22 +97,25 @@ func adjustColumnInfoInDropColumn(tblInfo *model.TableInfo, offset int) {
 	tblInfo.Columns = newCols
 }
 
-func createColumnInfo(tblInfo *model.TableInfo, colInfo *model.ColumnInfo, pos *ast.ColumnPosition) (*model.ColumnInfo, int, error) {
+func createColumnInfo(tblInfo *model.TableInfo, colInfo *model.ColumnInfo, pos *ast.ColumnPosition) (*model.ColumnInfo, *ast.ColumnPosition, int, error) {
 	// Check column name duplicate.
 	cols := tblInfo.Columns
-	position := len(cols)
-
-	// Get column position.
+	offset := len(cols)
+	// Should initialize pos when it is nil.
+	if pos == nil {
+		pos = &ast.ColumnPosition{}
+	}
+	// Get column offset.
 	if pos.Tp == ast.ColumnPositionFirst {
-		position = 0
+		offset = 0
 	} else if pos.Tp == ast.ColumnPositionAfter {
 		c := model.FindColumnInfo(cols, pos.RelativeColumn.Name.L)
 		if c == nil {
-			return nil, 0, infoschema.ErrColumnNotExists.GenWithStackByArgs(pos.RelativeColumn, tblInfo.Name)
+			return nil, pos, 0, infoschema.ErrColumnNotExists.GenWithStackByArgs(pos.RelativeColumn, tblInfo.Name)
 		}
 
-		// Insert position is after the mentioned column.
-		position = c.Offset + 1
+		// Insert offset is after the mentioned column.
+		offset = c.Offset + 1
 	}
 	colInfo.ID = allocateColumnID(tblInfo)
 	colInfo.State = model.StateNone
@@ -121,13 +124,13 @@ func createColumnInfo(tblInfo *model.TableInfo, colInfo *model.ColumnInfo, pos *
 	colInfo.Offset = len(cols)
 
 	// Append the column info to the end of the tblInfo.Columns.
-	// It will reorder to the right position in "Columns" when it state change to public.
+	// It will reorder to the right offset in "Columns" when it state change to public.
 	newCols := make([]*model.ColumnInfo, 0, len(cols)+1)
 	newCols = append(newCols, cols...)
 	newCols = append(newCols, colInfo)
 
 	tblInfo.Columns = newCols
-	return colInfo, position, nil
+	return colInfo, pos, offset, nil
 }
 
 func checkAddColumn(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.ColumnInfo, *model.ColumnInfo, *ast.ColumnPosition, int, error) {
@@ -177,7 +180,7 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error)
 		return ver, errors.Trace(err)
 	}
 	if columnInfo == nil {
-		columnInfo, offset, err = createColumnInfo(tblInfo, col, pos)
+		columnInfo, _, offset, err = createColumnInfo(tblInfo, col, pos)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
@@ -244,12 +247,6 @@ func checkAddAndCreateColumnInfos(t *meta.Meta, job *model.Job) (*model.TableInf
 		job.State = model.JobStateCancelled
 		return nil, nil, nil, nil, errors.Trace(err)
 	}
-	// Should initialize positions[i] when it is nil, otherwise the createColumnInfo function will panic.
-	for i := range positions {
-		if positions[i] == nil {
-			positions[i] = &ast.ColumnPosition{}
-		}
-	}
 
 	columnInfos := make([]*model.ColumnInfo, len(columns))
 	for i, col := range columns {
@@ -262,13 +259,13 @@ func checkAddAndCreateColumnInfos(t *meta.Meta, job *model.Job) (*model.TableInf
 				return nil, nil, nil, nil, infoschema.ErrColumnExists.GenWithStackByArgs(col.Name)
 			}
 		} else {
-			columnInfo, offset, err := createColumnInfo(tblInfo, col, positions[i])
+			columnInfo, pos, offset, err := createColumnInfo(tblInfo, col, positions[i])
 			if err != nil {
 				job.State = model.JobStateCancelled
 				return nil, nil, nil, nil, errors.Trace(err)
 			}
 			logutil.BgLogger().Info("[ddl] run add columns job", zap.String("job", job.String()), zap.Reflect("columnInfo", *columnInfo), zap.Int("offset", offsets[i]))
-
+			positions[i] = pos
 			// Set offset arg to job.
 			offsets[i] = offset
 			if err = checkAddColumnTooManyColumns(len(tblInfo.Columns)); err != nil {

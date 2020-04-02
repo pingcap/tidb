@@ -1445,19 +1445,9 @@ func (s *testDBSuite3) TestCancelDropColumns(c *C) {
 			s.mustExec(c, "alter table test_drop_column add column c3 int, add column c4 int")
 		}
 		_, err1 = s.tk.Exec("alter table test_drop_column drop column c3, drop column c4")
-		var col3 *table.Column
-		var col4 *table.Column
 		t := s.testGetTable(c, "test_drop_column")
-		for _, col := range t.Cols() {
-			if strings.EqualFold(col.Name.L, "c3") {
-				col3 = col
-				continue
-			}
-			if strings.EqualFold(col.Name.L, "c4") {
-				col4 = col
-				continue
-			}
-		}
+		col3 := table.FindCol(t.Cols(), "c3")
+		col4 := table.FindCol(t.Cols(), "c4")
 		if testCase.cancelSucc {
 			c.Assert(checkErr, IsNil)
 			c.Assert(col3, NotNil)

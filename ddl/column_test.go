@@ -987,17 +987,8 @@ func (s *testColumnSuite) TestAddColumns(c *C) {
 	c.Assert(errors.ErrorStack(hErr), Equals, "")
 	c.Assert(ok, IsTrue)
 
-	err = ctx.NewTxn(context.Background())
-	c.Assert(err, IsNil)
-
 	job = testDropTable(c, ctx, d, s.dbInfo, tblInfo)
 	testCheckJobDone(c, d, job, false)
-
-	txn, err = ctx.Txn(true)
-	c.Assert(err, IsNil)
-	err = txn.Commit(context.Background())
-	c.Assert(err, IsNil)
-
 	d.Stop()
 }
 
@@ -1118,7 +1109,6 @@ func (s *testColumnSuite) TestDropColumns(c *C) {
 			return
 		}
 		for _, colName := range colNames {
-
 			col := table.FindCol(t.(*tables.TableCommon).Columns, colName)
 			if col == nil {
 				checkOK = true
@@ -1138,17 +1128,8 @@ func (s *testColumnSuite) TestDropColumns(c *C) {
 	c.Assert(hErr, IsNil)
 	c.Assert(ok, IsTrue)
 
-	err = ctx.NewTxn(context.Background())
-	c.Assert(err, IsNil)
-
 	job = testDropTable(c, ctx, d, s.dbInfo, tblInfo)
 	testCheckJobDone(c, d, job, false)
-
-	txn, err = ctx.Txn(true)
-	c.Assert(err, IsNil)
-	err = txn.Commit(context.Background())
-	c.Assert(err, IsNil)
-
 	d.Stop()
 }
 
