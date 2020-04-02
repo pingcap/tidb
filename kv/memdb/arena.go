@@ -91,6 +91,12 @@ func (a *arena) newNode(key []byte, v []byte, height int) (*node, arenaAddr) {
 	return node, addr
 }
 
+func (a *arena) newHead() *node {
+	n, _ := a.newNode(nil, nil, maxHeight)
+	n.setNexts(0, arenaAddr{})
+	return n
+}
+
 func (a *arena) getFrom(addr arenaAddr) []byte {
 	return a.blocks[addr.blockIdx-1].getFrom(addr.blockOffset)
 }

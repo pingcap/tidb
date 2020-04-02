@@ -31,7 +31,7 @@ const (
 type Sandbox struct {
 	frozen bool
 	done   bool
-	head   headNode
+	head   nodeWithAddr
 	parent *Sandbox
 	arena  *arena
 	height int
@@ -44,10 +44,11 @@ type Sandbox struct {
 // NewSandbox create a new Sandbox.
 func NewSandbox() *Sandbox {
 	arena := newArenaLocator()
+	snap := arena.snapshot()
 	return &Sandbox{
 		height:    1,
 		arena:     arena,
-		arenaSnap: arena.snapshot(),
+		arenaSnap: snap,
 	}
 }
 
@@ -66,7 +67,11 @@ func (sb *Sandbox) Put(key, value []byte) {
 		panic("cannot write to a sandbox when it has forked a new sanbox")
 	}
 
-	head := sb.getHead()
+	if sb.head.node == nil {
+		sb.head.node = sb.arena.newHead()
+	}
+
+	head := sb.head
 	arena := sb.arena
 	lsHeight := sb.height
 	var prev [maxHeight + 1]nodeWithAddr
@@ -116,11 +121,12 @@ func (sb *Sandbox) Derive() *Sandbox {
 		panic("cannot start second sandbox")
 	}
 	sb.frozen = true
+	snap := sb.arena.snapshot()
 	new := &Sandbox{
 		parent:    sb,
 		height:    1,
 		arena:     sb.arena,
-		arenaSnap: sb.arena.snapshot(),
+		arenaSnap: snap,
 	}
 	return new
 }
@@ -161,12 +167,15 @@ func (sb *Sandbox) Discard() {
 		panic("root sandbox is freezed")
 	}
 
-	sb.head = headNode{}
+	sb.head.node = nil
 	sb.height = 1
 	sb.length = 0
 	sb.size = 0
 	sb.arena.revert(sb.arenaSnap)
-	sb.arena = nil
+	if sb.parent != nil {
+		// nil out arena to pervent data corruption caused by bug
+		sb.arena = nil
+	}
 }
 
 // Len returns the number of entries in the DB.
@@ -203,11 +212,6 @@ func (sb *Sandbox) prepareOverwrite(next []nodeWithAddr) int {
 	return height
 }
 
-func (sb *Sandbox) getHead() nodeWithAddr {
-	head := (*node)(unsafe.Pointer(&sb.head))
-	return nodeWithAddr{node: head}
-}
-
 func (sb *Sandbox) randomHeight() int {
 	h := 1
 	for h < maxHeight && fastrand.Uint32() < uint32(math.MaxUint32)/4 {
@@ -240,7 +244,7 @@ func (sb *Sandbox) findSpliceForLevel(key []byte, before nodeWithAddr, level int
 }
 
 func (sb *Sandbox) findGreaterEqual(key []byte) (*node, []byte, bool) {
-	head := sb.getHead()
+	head := sb.head
 	prev := head.node
 	level := sb.height - 1
 	arena := sb.arena
@@ -276,7 +280,7 @@ func (sb *Sandbox) findGreaterEqual(key []byte) (*node, []byte, bool) {
 
 func (sb *Sandbox) findLess(key []byte, allowEqual bool) (*node, []byte, bool) {
 	var prevData []byte
-	head := sb.getHead()
+	head := sb.head
 	prev := head.node
 	level := sb.height - 1
 	arena := sb.arena
@@ -315,7 +319,7 @@ func (sb *Sandbox) findLess(key []byte, allowEqual bool) (*node, []byte, bool) {
 // will NEVER return the head nodes.
 func (sb *Sandbox) findLast() (*node, []byte) {
 	var nodeData []byte
-	head := sb.getHead()
+	head := sb.head
 	node := head.node
 	level := sb.height - 1
 	arena := sb.arena
@@ -341,7 +345,7 @@ func (sb *Sandbox) merge(new *Sandbox) int {
 	var ms mergeState
 	arena := sb.arena
 
-	if sb.head.nexts[0].isNull() {
+	if sb.head.nexts(0).isNull() {
 		// current skip-list is empty, overwite head node using the new list's head.
 		sb.head = new.head
 		sb.height = new.height
@@ -363,9 +367,9 @@ func (sb *Sandbox) merge(new *Sandbox) int {
 	sb.length += newCnt
 	sb.size += new.size
 
-	head := new.getHead()
+	head := new.head
 	if sb.Len() < new.Len() {
-		sb.head, new.head = new.head, sb.head
+		sb.head, head = head, sb.head
 		sb.height = new.height
 		sb.length = new.length
 		sb.size = new.size
@@ -434,7 +438,7 @@ type mergeState struct {
 }
 
 func (ms *mergeState) calculateRecomputeHeight(key []byte, sb *Sandbox) int {
-	head := sb.getHead()
+	head := sb.head
 	listHeight := sb.height
 	arena := sb.arena
 
@@ -498,15 +502,6 @@ type node struct {
 	nextsBase arenaAddr
 }
 
-type headNode struct {
-	nodeHeader
-
-	// Addr of previous node at base level.
-	prev arenaAddr
-
-	nexts [maxHeight]arenaAddr
-}
-
 type nodeWithAddr struct {
 	*node
 	addr arenaAddr
@@ -527,6 +522,9 @@ func (n *node) getValue(buf []byte) []byte {
 }
 
 func (n *node) nexts(level int) arenaAddr {
+	if n == nil {
+		return arenaAddr{}
+	}
 	return *n.nextsAddr(level)
 }
 

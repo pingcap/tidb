@@ -75,7 +75,7 @@ func (it *Iterator) SeekForExclusivePrev(target []byte) {
 
 // SeekToFirst locates the iterator to the first entry.
 func (it *Iterator) SeekToFirst() {
-	head := it.sb.getHead()
+	head := it.sb.head
 	node, nodeData := head.getNext(it.sb.arena, 0)
 	it.updateState(node, nodeData)
 }
