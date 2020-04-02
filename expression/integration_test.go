@@ -5761,9 +5761,7 @@ func (s *testIntegrationSerialSuite) TestCollateMergeJoin2(c *C) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
 	tk := s.prepare4Join2(c)
-	err := tk.ExecToErr("select /*+ TIDB_SMJ(t1, t2) */ * from t1, t2 where t1.v=t2.v order by t1.id")
-	c.Assert(strings.Contains(err.Error(), "Can't find a proper physical plan for this query"), IsTrue)
-	tk.MustQuery("select * from t1, t2 where t1.v=t2.v order by t1.id").Check(
+	tk.MustQuery("select /*+ TIDB_SMJ(t1, t2) */ * from t1, t2 where t1.v=t2.v order by t1.id").Check(
 		testkit.Rows("1 a a", "2 À À", "3 á á", "4 à à", "5 b b", "6 c c", "7    "))
 }
 
