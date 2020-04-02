@@ -2433,16 +2433,8 @@ func (b *PlanBuilder) buildProjUponView(ctx context.Context, dbName model.CIStr,
 			OrigTblName: col.OrigTblName,
 			ColName:     columnInfo[i].Name,
 			OrigColName: origColName,
-<<<<<<< HEAD
-			DBName:      col.DBName,
-			RetType:     col.GetType(),
-=======
 			DBName:      dbName,
-		})
-		projSchema.Append(&expression.Column{
-			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
-			RetType:  cols[i].GetType(),
->>>>>>> d0ca931... planner: Fix the 'Unknown column' error when select from view… (#15621)
+			RetType:     col.GetType(),
 		})
 		projExprs = append(projExprs, col)
 	}
