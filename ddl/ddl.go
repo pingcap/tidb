@@ -65,6 +65,20 @@ const (
 	PartitionCountLimit = 1024
 )
 
+// OnExist specifies what to do when a new object has a name collision.
+type OnExist uint8
+
+const (
+	// OnExistError throws an error on name collision.
+	OnExistError OnExist = iota
+	// OnExistIgnore skips creating the new object.
+	OnExistIgnore
+	// OnExistReplace replaces the old object by the new object. This is only
+	// supported by VIEWs at the moment. For other object types, this is
+	// equivalent to OnExistError.
+	OnExistReplace
+)
+
 var (
 	// TableColumnCountLimit is limit of the number of columns in a table.
 	// It's exported for testing.
@@ -248,7 +262,6 @@ type DDL interface {
 	DropSchema(ctx sessionctx.Context, schema model.CIStr) error
 	CreateTable(ctx sessionctx.Context, stmt *ast.CreateTableStmt) error
 	CreateView(ctx sessionctx.Context, stmt *ast.CreateViewStmt) error
-	CreateTableWithLike(ctx sessionctx.Context, ident, referIdent ast.Ident, ifNotExists bool) error
 	DropTable(ctx sessionctx.Context, tableIdent ast.Ident) (err error)
 	RecoverTable(ctx sessionctx.Context, recoverInfo *RecoverInfo) (err error)
 	DropView(ctx sessionctx.Context, tableIdent ast.Ident) (err error)
@@ -262,6 +275,35 @@ type DDL interface {
 	UnlockTables(ctx sessionctx.Context, lockedTables []model.TableLockTpInfo) error
 	CleanupTableLock(ctx sessionctx.Context, tables []*ast.TableName) error
 	UpdateTableReplicaInfo(ctx sessionctx.Context, physicalID int64, available bool) error
+
+	// CreateSchemaWithInfo creates a database (schema) given its database info.
+	//
+	// If `tryRetainID` is true, this method will try to keep the database ID specified in
+	// the `info` rather than generating new ones. This is just a hint though, if the ID collides
+	// with an existing database a new ID will always be used.
+	//
+	// WARNING: the DDL owns the `info` after calling this function, and will modify its fields
+	// in-place. If you want to keep using `info`, please call Clone() first.
+	CreateSchemaWithInfo(
+		ctx sessionctx.Context,
+		info *model.DBInfo,
+		onExist OnExist,
+		tryRetainID bool) error
+
+	// CreateTableWithInfo creates a table, view or sequence given its table info.
+	//
+	// If `tryRetainID` is true, this method will try to keep the table ID specified in the `info`
+	// rather than generating new ones. This is just a hint though, if the ID collides with an
+	// existing table a new ID will always be used.
+	//
+	// WARNING: the DDL owns the `info` after calling this function, and will modify its fields
+	// in-place. If you want to keep using `info`, please call Clone() first.
+	CreateTableWithInfo(
+		ctx sessionctx.Context,
+		schema model.CIStr,
+		info *model.TableInfo,
+		onExist OnExist,
+		tryRetainID bool) error
 
 	// GetLease returns current schema lease time.
 	GetLease() time.Duration
