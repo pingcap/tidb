@@ -45,7 +45,7 @@ oom-use-tmp-storage = true
 # Specifies the maximum use of temporary storage (bytes) for all active queries when `oom-use-tmp-storage` is enabled.
 # If the `temp-storage-quota` exceeds the capacity of the temporary storage directory, tidb-server would return an error and exit.
 # The default value of temp-storage-quota is under 0 which means tidb-server wouldn't check the capacity.
-temp-storage-quota = 0
+temp-storage-quota = -1
 
 # Specifies what operation TiDB performs when a single SQL statement exceeds the memory quota specified by mem-quota-query and cannot be spilled over to disk.
 # Valid options: ["log", "cancel"]
