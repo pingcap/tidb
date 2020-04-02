@@ -554,7 +554,7 @@ func (s *testSuite) TestOnlyFullGroupBy(c *C) {
 	c.Assert(terror.ErrorEqual(err, plannercore.ErrAmbiguous), IsTrue, Commentf("err %v", err))
 }
 
-func (s *testSuite1) TestIssue14947(c *C) {
+func (s *testSuite) TestIssue14947(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("set sql_mode = 'ONLY_FULL_GROUP_BY'")
@@ -563,7 +563,7 @@ func (s *testSuite1) TestIssue14947(c *C) {
 	tk.MustQuery("select ((+a+1)) as tmp from t group by tmp")
 }
 
-func (s *testSuite1) TestHaving(c *C) {
+func (s *testSuite) TestHaving(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
 	tk.MustExec("set sql_mode = 'STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION'")
@@ -595,7 +595,7 @@ func (s *testSuite) TestAggEliminator(c *C) {
 	tk.MustQuery("select min(a), min(a) from t").Check(testkit.Rows("<nil> <nil>"))
 	tk.MustExec("insert into t values(1, -1), (2, -2), (3, 1), (4, NULL)")
 	tk.MustQuery("select max(a) from t").Check(testkit.Rows("4"))
-	tk.MustQuery("select min(b) from t").Check(testkit.executor / aggregate_test.goRows("-2"))
+	tk.MustQuery("select min(b) from t").Check(testkit.Rows("-2"))
 	tk.MustQuery("select max(b*b) from t").Check(testkit.Rows("4"))
 	tk.MustQuery("select min(b*b) from t").Check(testkit.Rows("1"))
 	tk.MustQuery("select group_concat(b, b) from t group by a").Check(testkit.Rows("-1-1", "-2-2", "11", "<nil>"))
