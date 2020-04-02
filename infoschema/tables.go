@@ -1112,7 +1112,7 @@ func GetTiDBServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 			ServerType:     "tidb",
 			Address:        fmt.Sprintf("%s:%d", node.IP, node.Port),
 			StatusAddr:     fmt.Sprintf("%s:%d", node.IP, node.StatusPort),
-			Version:        node.Version,
+			Version:        node.Version[strings.LastIndex(node.Version,"TiDB-") + len("TiDB-"):],
 			GitHash:        node.GitHash,
 			StartTimestamp: node.StartTimestamp,
 		})
