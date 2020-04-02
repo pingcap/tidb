@@ -756,4 +756,9 @@ func (s *testInfoschemaTableSuite) TestSequences(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("CREATE SEQUENCE test.seq maxvalue 10000000")
 	tk.MustQuery("SELECT * FROM information_schema.sequences WHERE sequence_schema='test' AND sequence_name='seq'").Check(testkit.Rows("def test seq 1 1000 0 1 10000000 1 0 1 "))
+	tk.MustExec("DROP SEQUENCE test.seq")
+	tk.MustExec("CREATE SEQUENCE test.seq start = -1 minvalue -1 maxvalue 10 increment 1 cache 10")
+	tk.MustQuery("SELECT * FROM information_schema.sequences WHERE sequence_schema='test' AND sequence_name='seq'").Check(testkit.Rows("def test seq 1 10 0 1 10 -1 0 -1 "))
+	tk.MustExec("CREATE SEQUENCE test.seq2 start = -9 minvalue -10 maxvalue 10 increment -1 cache 15")
+	tk.MustQuery("SELECT * FROM information_schema.sequences WHERE sequence_schema='test' AND sequence_name='seq2'").Check(testkit.Rows("def test seq2 1 15 0 -1 10 -10 0 -9 "))
 }
