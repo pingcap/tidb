@@ -1125,6 +1125,7 @@ func FormatVersion(TiDBVersion string) string {
 	if nodeVersion[0] == 'v' {
 		nodeVersion = nodeVersion[1:]
 	}
+
 	nodeVersions := strings.Split(nodeVersion, "-")
 	if len(nodeVersions) == 1 {
 		version = nodeVersions[0]
