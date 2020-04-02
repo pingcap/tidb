@@ -1208,12 +1208,12 @@ func GetTiDBServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	var servers []ServerInfo
 	var version string
 	for _, node := range tidbNodes {
-		nodeVersion := node.Version[strings.LastIndex(node.Version,"TiDB-") + len("TiDB-"):]
-		nodeVersions := strings.Split(nodeVersion,"-")
+		nodeVersion := node.Version[strings.LastIndex(node.Version, "TiDB-")+len("TiDB-"):]
+		nodeVersions := strings.Split(nodeVersion, "-")
 		if len(nodeVersions) == 1 {
 			version = nodeVersions[0]
 		} else if len(nodeVersions) >= 2 {
-			version = fmt.Sprintf("%s-%s",nodeVersions[0],nodeVersions[1])
+			version = fmt.Sprintf("%s-%s", nodeVersions[0], nodeVersions[1])
 		}
 		servers = append(servers, ServerInfo{
 			ServerType:     "tidb",
