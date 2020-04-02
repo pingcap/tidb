@@ -14,9 +14,7 @@
 
 package linux
 
-import (
-	"runtime"
-)
+import "runtime"
 
 // OSVersion returns version info of operation system.
 // for non-linux system will only return os and arch info.
