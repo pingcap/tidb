@@ -17,6 +17,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"github.com/pingcap/tidb/executor"
 	"io/ioutil"
 	"os"
 	"runtime"
@@ -36,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -53,7 +53,6 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/gcworker"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/domainutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
@@ -530,9 +529,7 @@ func setGlobalVars() {
 	tikv.RegionCacheTTLSec = int64(cfg.TiKVClient.RegionCacheTTL)
 	domainutil.RepairInfo.SetRepairMode(cfg.RepairMode)
 	domainutil.RepairInfo.SetRepairTableList(cfg.RepairTableList)
-	executor.GlobalDiskUsageTracker = disk.NewGlobalDisTracker(cfg.TempStorageQuota)
-	action := &disk.GlobalPanicOnExceed{}
-	executor.GlobalDiskUsageTracker.SetActionOnExceed(action)
+	executor.GlobalDiskUsageTracker.SetBytesLimit(config.GetGlobalConfig().TempStorageQuota)
 }
 
 func setupLog() {

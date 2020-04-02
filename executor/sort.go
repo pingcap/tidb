@@ -237,7 +237,6 @@ func (e *SortExec) externalSorting(req *chunk.Chunk) (err error) {
 }
 
 func (e *SortExec) fetchRowChunks(ctx context.Context) error {
-	//e.ctx.GetSessionVars().StmtCtx.DiskTracker.AttachTo()
 	fields := retTypes(e)
 	e.rowChunks = chunk.NewRowContainer(fields, e.maxChunkSize)
 	e.rowChunks.GetMemTracker().AttachTo(e.memTracker)

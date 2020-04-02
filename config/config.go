@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/sys/linux"
+	"github.com/pingcap/tidb/util/sys/storage"
 	tracing "github.com/uber/jaeger-client-go/config"
 	"go.uber.org/zap"
 )
@@ -851,18 +851,15 @@ func (c *Config) Valid() error {
 	// check capacity and the quota when OOMUseTmpStorage is enabled
 	if c.OOMUseTmpStorage {
 		if c.TempStorageQuota < 0 {
-			// print warning
+			// means unlimited, do nothing
 		} else {
-			capacityByte, err := linux.GetTargetDirectoryCapacity(c.TempStoragePath)
-			if err != nil {
-				if err.Error() == "Get directory capacity not supported in non-linux system yet" {
-					// print warning
-				} else {
-					return err
-				}
-			}
-			if int64(capacityByte) > c.TempStorageQuota {
-				return fmt.Errorf("value of [temp-storage-quota] exceeds the capacity of the [temp-storage-path] directory")
+			capacityByte, supported, err := storage.GetTargetDirectoryCapacity(c.TempStoragePath)
+			if !supported {
+				// no supported os to get capacity
+			} else if err != nil {
+				return err
+			} else if capacityByte > uint64(c.TempStorageQuota) {
+				return fmt.Errorf("value of [temp-storage-quota](%d byte) exceeds the capacity(%d byte) of the [%s] directory", c.TempStorageQuota, capacityByte, c.TempStoragePath)
 			}
 		}
 	}

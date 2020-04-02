@@ -10,22 +10,19 @@
 // distributed under the License is distributed on an "AS IS" BASIS,
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// +build !linux
+// +build darwin
 
-package linux
+package storage
 
-import (
-	"runtime"
-)
+import "syscall"
 
-// OSVersion returns version info of operation system.
-// for non-linux system will only return os and arch info.
-func OSVersion() (osVersion string, err error) {
-	osVersion = runtime.GOOS + "." + runtime.GOARCH
-	return
-}
-
-// SetAffinity sets cpu affinity.
-func SetAffinity(cpus []int) error {
-	return nil
+// GetTargetDirectoryCapacity get the capacity (bytes) of directory
+func GetTargetDirectoryCapacity(path string) (uint64, bool, error) {
+	var stat syscall.Statfs_t
+	err := syscall.Statfs(path, &stat)
+	if err != nil {
+		return 0, true, err
+	}
+	c := stat.Bavail * uint64(stat.Bsize)
+	return c, true, nil
 }

@@ -14,14 +14,10 @@
 package disk
 
 import (
-	"fmt"
 	"sync"
 
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/stringutil"
 )
-
-var globalStorageLabel fmt.Stringer = stringutil.StringerStr("GlobalStorageLabel")
 
 // Tracker is used to track the disk usage during query execution.
 type Tracker = memory.Tracker
@@ -30,11 +26,6 @@ type Tracker = memory.Tracker
 //	1. "label" is the label used in the usage string.
 //	2. "bytesLimit <= 0" means no limit.
 var NewTracker = memory.NewTracker
-
-// NewGlobalDisTracker create GlobalDisTracker
-func NewGlobalDisTracker(bytesLimit int64) *Tracker {
-	return NewTracker(globalStorageLabel, bytesLimit)
-}
 
 // GlobalPanicOnExceed panics when GlobalDisTracker storage usage exceeds storage quota.
 type GlobalPanicOnExceed struct {

@@ -101,6 +101,12 @@ type baseExecutor struct {
 	runtimeStats  *execdetails.RuntimeStats
 }
 
+func init() {
+	GlobalDiskUsageTracker = disk.NewTracker(stringutil.StringerStr("GlobalStorageLabel"), -1)
+	action := &disk.GlobalPanicOnExceed{}
+	GlobalDiskUsageTracker.SetActionOnExceed(action)
+}
+
 // base returns the baseExecutor of an executor, don't override this method!
 func (e *baseExecutor) base() *baseExecutor {
 	return e
