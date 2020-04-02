@@ -10,6 +10,7 @@
 // distributed under the License is distributed on an "AS IS" BASIS,
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
 // +build linux darwin
 
 package storage
@@ -17,12 +18,12 @@ package storage
 import "syscall"
 
 // GetTargetDirectoryCapacity get the capacity (bytes) of directory
-func GetTargetDirectoryCapacity(path string) (uint64, bool, error) {
+func GetTargetDirectoryCapacity(path string) (uint64, error) {
 	var stat syscall.Statfs_t
 	err := syscall.Statfs(path, &stat)
 	if err != nil {
-		return 0, true, err
+		return 0, err
 	}
 	c := stat.Bavail * uint64(stat.Bsize)
-	return c, true, nil
+	return c, nil
 }

@@ -853,10 +853,8 @@ func (c *Config) Valid() error {
 		if c.TempStorageQuota < 0 {
 			// means unlimited, do nothing
 		} else {
-			capacityByte, supported, err := storage.GetTargetDirectoryCapacity(c.TempStoragePath)
-			if !supported {
-				// no supported os to get capacity
-			} else if err != nil {
+			capacityByte, err := storage.GetTargetDirectoryCapacity(c.TempStoragePath)
+			if err != nil {
 				return err
 			} else if capacityByte > uint64(c.TempStorageQuota) {
 				return fmt.Errorf("value of [temp-storage-quota](%d byte) exceeds the capacity(%d byte) of the [%s] directory", c.TempStorageQuota, capacityByte, c.TempStoragePath)

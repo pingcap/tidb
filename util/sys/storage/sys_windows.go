@@ -10,6 +10,7 @@
 // distributed under the License is distributed on an "AS IS" BASIS,
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
 // +build windows
 
 package storage
@@ -20,11 +21,14 @@ import (
 )
 
 // GetTargetDirectoryCapacity get the capacity (bytes) of directory
-func GetTargetDirectoryCapacity(path string) (uint64, bool, error) {
+func GetTargetDirectoryCapacity(path string) (uint64, error) {
 	h := syscall.MustLoadDLL("kernel32.dll")
 	c := h.MustFindProc("GetDiskFreeSpaceExW")
 	var freeBytes int64
 	_, _, err := c.Call(uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr(path))),
 		uintptr(unsafe.Pointer(&freeBytes)))
-	return uint64(freeBytes), true, err
+	if err != nil {
+		return 0, err
+	}
+	return uint64(freeBytes), nil
 }
