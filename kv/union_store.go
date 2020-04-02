@@ -152,8 +152,8 @@ func (us *unionStore) GetMemBuffer() MemBuffer {
 	return us.BufferStore.MemBuffer
 }
 
-func (us *unionStore) NewBuffer() MemBuffer {
-	return us.BufferStore.NewBuffer()
+func (us *unionStore) NewStagingBuffer() MemBuffer {
+	return us.BufferStore.NewStagingBuffer()
 }
 
 func (us *unionStore) Flush() (int, error) {

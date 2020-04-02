@@ -123,7 +123,7 @@ func (m *memDbBuffer) Len() int {
 	return m.sandbox.Len()
 }
 
-func (m *memDbBuffer) NewBuffer() MemBuffer {
+func (m *memDbBuffer) NewStagingBuffer() MemBuffer {
 	return &memDbBuffer{
 		sandbox:         m.sandbox.Derive(),
 		entrySizeLimit:  TxnEntrySizeLimit,

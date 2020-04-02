@@ -157,13 +157,13 @@ type MemBuffer interface {
 	Size() int
 	// Len returns the number of entries in the DB.
 	Len() int
-	// NewBuffer returns a new write buffer,
+	// NewStagingBuffer returns a new write buffer,
 	// modifications in the returned buffer will not influence this buffer
 	// until you call Flush, or you can use Discard to discard all of them.
 	//
 	// Note: you cannot modify this MemBuffer until the child buffer finished,
 	// otherwise the Set operation will panic.
-	NewBuffer() MemBuffer
+	NewStagingBuffer() MemBuffer
 	// Flush flushes all kvs in this buffer to parrent buffer.
 	Flush() (int, error)
 	// Discard discads all kvs in this buffer.

@@ -316,11 +316,11 @@ func (t *TableCommon) UpdateRecord(ctx sessionctx.Context, h int64, oldData, new
 		return err
 	}
 
-	bs := kv.NewBufferStoreFrom(txn)
-	defer bs.Discard()
+	execBuf := kv.NewStagingBufferStore(txn)
+	defer execBuf.Discard()
 
 	// rebuild index
-	err = t.rebuildIndices(ctx, bs, h, touched, oldData, newData)
+	err = t.rebuildIndices(ctx, execBuf, h, touched, oldData, newData)
 	if err != nil {
 		return err
 	}
@@ -364,10 +364,10 @@ func (t *TableCommon) UpdateRecord(ctx sessionctx.Context, h int64, oldData, new
 	if err != nil {
 		return err
 	}
-	if err = bs.Set(key, value); err != nil {
+	if err = execBuf.Set(key, value); err != nil {
 		return err
 	}
-	if _, err := bs.Flush(); err != nil {
+	if _, err := execBuf.Flush(); err != nil {
 		return err
 	}
 	ctx.StmtAddDirtyTableOP(table.DirtyTableDeleteRow, t.physicalTableID, h)
@@ -501,8 +501,8 @@ func (t *TableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 	if err != nil {
 		return 0, err
 	}
-	bs := kv.NewBufferStoreFrom(txn)
-	defer bs.Discard()
+	execBuf := kv.NewStagingBufferStore(txn)
+	defer execBuf.Discard()
 	sessVars := ctx.GetSessionVars()
 
 	var createIdxOpts []table.CreateIdxOptFunc
@@ -515,7 +515,7 @@ func (t *TableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 		}
 	}
 	// Insert new entries into indices.
-	h, err := t.addIndices(ctx, recordID, r, bs, createIdxOpts)
+	h, err := t.addIndices(ctx, recordID, r, execBuf, createIdxOpts)
 	if err != nil {
 		return h, err
 	}
@@ -559,11 +559,11 @@ func (t *TableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 		return 0, err
 	}
 	value := writeBufs.RowValBuf
-	if err = bs.Set(key, value); err != nil {
+	if err = execBuf.Set(key, value); err != nil {
 		return 0, err
 	}
 
-	if _, err := bs.Flush(); err != nil {
+	if _, err := execBuf.Flush(); err != nil {
 		return 0, err
 	}
 	ctx.StmtAddDirtyTableOP(table.DirtyTableAddRow, t.physicalTableID, recordID)

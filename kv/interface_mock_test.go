@@ -105,7 +105,7 @@ func (t *mockTxn) GetSnapshot() Snapshot {
 	return nil
 }
 
-func (t *mockTxn) NewBuffer() MemBuffer {
+func (t *mockTxn) NewStagingBuffer() MemBuffer {
 	return nil
 }
 

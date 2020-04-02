@@ -162,7 +162,14 @@ func (sb *Sandbox) Discard() {
 	}
 
 	sb.head = headNode{}
+	sb.height = 1
+	sb.length = 0
+	sb.size = 0
 	sb.arena.revert(sb.arenaSnap)
+	if sb.parent != nil {
+		// nil out arena to pervent data corruption by accident.
+		sb.arena = nil
+	}
 }
 
 // Len returns the number of entries in the DB.

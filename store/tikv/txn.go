@@ -107,12 +107,14 @@ func (txn *tikvTxn) SetVars(vars *kv.Variables) {
 	txn.snapshot.vars = vars
 }
 
-type tikvTxnBuffer struct {
+// tikvTxnStagingBuffer is the staging buffer returned to tikvTxn user.
+// Because tikvTxn needs to maintain dirty state when Flush staging data into txn.
+type tikvTxnStagingBuffer struct {
 	kv.MemBuffer
 	txn *tikvTxn
 }
 
-func (buf *tikvTxnBuffer) Flush() (int, error) {
+func (buf *tikvTxnStagingBuffer) Flush() (int, error) {
 	cnt, err := buf.MemBuffer.Flush()
 	if cnt != 0 {
 		buf.txn.dirty = true
@@ -120,9 +122,9 @@ func (buf *tikvTxnBuffer) Flush() (int, error) {
 	return cnt, err
 }
 
-func (txn *tikvTxn) NewBuffer() kv.MemBuffer {
-	return &tikvTxnBuffer{
-		MemBuffer: txn.us.NewBuffer(),
+func (txn *tikvTxn) NewStagingBuffer() kv.MemBuffer {
+	return &tikvTxnStagingBuffer{
+		MemBuffer: txn.us.NewStagingBuffer(),
 		txn:       txn,
 	}
 }

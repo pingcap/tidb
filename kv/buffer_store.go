@@ -37,11 +37,11 @@ func NewBufferStore(r Retriever) *BufferStore {
 	}
 }
 
-// NewBufferStoreFrom returns a BufferStore with buffer derived from the buffer.
-func NewBufferStoreFrom(buf MemBuffer) *BufferStore {
+// NewStagingBufferStore returns a BufferStore with buffer derived from the buffer.
+func NewStagingBufferStore(buf MemBuffer) *BufferStore {
 	return &BufferStore{
 		r:         buf,
-		MemBuffer: buf.NewBuffer(),
+		MemBuffer: buf.NewStagingBuffer(),
 	}
 }
 
