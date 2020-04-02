@@ -233,7 +233,7 @@ func (s *testDBSuite5) TestAddPrimaryKeyRollback1(c *C) {
 	hasNullValsInKey := false
 	idxName := "PRIMARY"
 	addIdxSQL := "alter table t1 add primary key c3_index (c3);"
-	errMsg := "[kv:1062]Duplicate entry '' for key 'PRIMARY'"
+	errMsg := "[kv:1062]current error msg: Cancelled DDL job, original error msg: Duplicate entry '' for key 'PRIMARY'"
 	testAddIndexRollback(c, s.store, s.lease, idxName, addIdxSQL, errMsg, hasNullValsInKey)
 }
 
@@ -242,7 +242,7 @@ func (s *testDBSuite1) TestAddPrimaryKeyRollback2(c *C) {
 	hasNullValsInKey := true
 	idxName := "PRIMARY"
 	addIdxSQL := "alter table t1 add primary key c3_index (c3);"
-	errMsg := "[ddl:1138]Invalid use of NULL value"
+	errMsg := "[ddl:1138]current error msg: Cancelled DDL job, original error msg: Invalid use of NULL value"
 	testAddIndexRollback(c, s.store, s.lease, idxName, addIdxSQL, errMsg, hasNullValsInKey)
 }
 
@@ -250,7 +250,7 @@ func (s *testDBSuite2) TestAddUniqueIndexRollback(c *C) {
 	hasNullValsInKey := false
 	idxName := "c3_index"
 	addIdxSQL := "create unique index c3_index on t1 (c3)"
-	errMsg := "[kv:1062]Duplicate entry '' for key 'c3_index'"
+	errMsg := "[kv:1062]current error msg: Cancelled DDL job, original error msg: Duplicate entry '' for key 'c3_index'"
 	testAddIndexRollback(c, s.store, s.lease, idxName, addIdxSQL, errMsg, hasNullValsInKey)
 }
 
@@ -278,7 +278,7 @@ func (s *testSerialDBSuite) TestAddExpressionIndexRollback(c *C) {
 	}
 	d.(ddl.DDLForTest).SetHook(hook)
 
-	tk.MustGetErrMsg("alter table t1 add index expr_idx ((pow(c1, c2)));", "[ddl:8202]Cannot decode index value, because [types:1690]DOUBLE value is out of range in 'pow(160, 160)'")
+	tk.MustGetErrMsg("alter table t1 add index expr_idx ((pow(c1, c2)));", "[ddl:8202]current error msg: Cancelled DDL job, original error msg: Cannot decode index value, because [types:1690]DOUBLE value is out of range in 'pow(160, 160)'")
 	c.Assert(checkErr, IsNil)
 	tk.MustQuery("select * from t1;").Check(testkit.Rows("20 20 20", "80 80 80", "160 160 160"))
 }
@@ -1804,7 +1804,7 @@ func (s *testDBSuite6) TestDropColumn(c *C) {
 	s.tk.MustExec("create table t1 (a int,b int) partition by hash(a) partitions 4;")
 	_, err := s.tk.Exec("alter table t1 drop column a")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[expression:1054]Unknown column 'a' in 'expression'")
+	c.Assert(err.Error(), Equals, "[expression:1054]current error msg: Cancelled DDL job, original error msg: Unknown column 'a' in 'expression'")
 
 	s.tk.MustExec("drop database drop_col_db")
 }
@@ -3272,7 +3272,7 @@ func (s *testDBSuite1) TestModifyColumnNullToNotNull(c *C) {
 	_, err := s.tk.Exec("alter table t1 change c2 c2 int not null;")
 	c.Assert(checkErr, IsNil)
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:1138]Invalid use of NULL value")
+	c.Assert(err.Error(), Equals, "[ddl:1138]current error msg: Cancelled DDL job, original error msg: Invalid use of NULL value")
 	s.tk.MustQuery("select * from t1").Check(testkit.Rows("<nil> <nil>"))
 
 	// Check insert error when column has PreventNullInsertFlag.
@@ -3571,7 +3571,7 @@ func (s *testDBSuite5) TestAddIndexForGeneratedColumn(c *C) {
 	s.tk.MustExec("insert into t values()")
 	s.tk.MustExec("ALTER TABLE t ADD COLUMN y1 year as (y + 2)")
 	_, err := s.tk.Exec("ALTER TABLE t ADD INDEX idx_y(y1)")
-	c.Assert(err.Error(), Equals, "[ddl:8202]Cannot decode index value, because cannot convert datum from unsigned bigint to type year.")
+	c.Assert(err.Error(), Equals, "[ddl:8202]current error msg: Cancelled DDL job, original error msg: Cannot decode index value, because cannot convert datum from unsigned bigint to type year.")
 
 	t := s.testGetTable(c, "t")
 	for _, idx := range t.Indices() {
@@ -4464,7 +4464,7 @@ func (s *testDBSuite2) TestDDLWithInvalidTableInfo(c *C) {
 	// Test drop partition column.
 	_, err = tk.Exec("alter table t drop column a;")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[expression:1054]Unknown column 'a' in 'expression'")
+	c.Assert(err.Error(), Equals, "[expression:1054]current error msg: Cancelled DDL job, original error msg: Unknown column 'a' in 'expression'")
 	// Test modify column with invalid expression.
 	_, err = tk.Exec("alter table t modify column c int GENERATED ALWAYS AS ((case when (a = 0) then 0when (a > 0) then (b / a) end));")
 	c.Assert(err, NotNil)
