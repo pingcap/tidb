@@ -601,7 +601,7 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 			"  KEY `IDX_RoundId` (`ROUND_ID`),\n"+
 			"  KEY `IDX_UserId_EndTime` (`USER_ID`,`END_TIME`)\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin AUTO_INCREMENT=505488\n"+
-			"PARTITION BY RANGE ( month(`end_time`) ) (\n"+
+			"PARTITION BY RANGE ( MONTH(`end_time`) ) (\n"+
 			"  PARTITION `p1` VALUES LESS THAN (2),\n"+
 			"  PARTITION `p2` VALUES LESS THAN (3),\n"+
 			"  PARTITION `p3` VALUES LESS THAN (4),\n"+
