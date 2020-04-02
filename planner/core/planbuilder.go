@@ -45,6 +45,7 @@ import (
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	util2 "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/logutil"
 	utilparser "github.com/pingcap/tidb/util/parser"
 	"github.com/pingcap/tidb/util/ranger"
@@ -139,14 +140,14 @@ func (tr *QueryTimeRange) Condition() string {
 	return fmt.Sprintf("where time>='%s' and time<='%s'", tr.From.Format(MetricTableTimeFormat), tr.To.Format(MetricTableTimeFormat))
 }
 
-func tableNames2HintTableInfo(ctx sessionctx.Context, hintTables []ast.HintTable, p *BlockHintProcessor, nodeType nodeType, currentOffset int) []hintTableInfo {
+func tableNames2HintTableInfo(ctx sessionctx.Context, hintTables []ast.HintTable, p *hint.BlockHintProcessor, nodeType hint.NodeType, currentOffset int) []hintTableInfo {
 	if len(hintTables) == 0 {
 		return nil
 	}
 	hintTableInfos := make([]hintTableInfo, len(hintTables))
 	defaultDBName := model.NewCIStr(ctx.GetSessionVars().CurrentDB)
 	for i, hintTable := range hintTables {
-		tableInfo := hintTableInfo{dbName: hintTable.DBName, tblName: hintTable.TableName, selectOffset: p.getHintOffset(hintTable.QBName, nodeType, currentOffset)}
+		tableInfo := hintTableInfo{dbName: hintTable.DBName, tblName: hintTable.TableName, selectOffset: p.GetHintOffset(hintTable.QBName, nodeType, currentOffset)}
 		if tableInfo.dbName.L == "" {
 			tableInfo.dbName = defaultDBName
 		}
@@ -217,6 +218,37 @@ func restore2JoinHint(hintType string, hintTables []hintTableInfo) string {
 		if i < len(hintTables)-1 {
 			buffer.WriteString(", ")
 		}
+	}
+	buffer.WriteString(") */")
+	return buffer.String()
+}
+
+func restore2StorageHint(tiflashTables, tikvTables []hintTableInfo) string {
+	buffer := bytes.NewBufferString("/*+ ")
+	buffer.WriteString(strings.ToUpper(HintReadFromStorage))
+	buffer.WriteString("(")
+	if len(tiflashTables) > 0 {
+		buffer.WriteString("tiflash[")
+		for i, table := range tiflashTables {
+			buffer.WriteString(table.tblName.L)
+			if i < len(tiflashTables)-1 {
+				buffer.WriteString(", ")
+			}
+		}
+		buffer.WriteString("]")
+		if len(tikvTables) > 0 {
+			buffer.WriteString(", ")
+		}
+	}
+	if len(tikvTables) > 0 {
+		buffer.WriteString("tikv[")
+		for i, table := range tikvTables {
+			buffer.WriteString(table.tblName.L)
+			if i < len(tikvTables)-1 {
+				buffer.WriteString(", ")
+			}
+		}
+		buffer.WriteString("]")
 	}
 	buffer.WriteString(") */")
 	return buffer.String()
@@ -312,7 +344,7 @@ type PlanBuilder struct {
 	//   If we meet a subquery, it's clearly that it's a independent problem so we just pop one map out when we finish building the subquery.
 	handleHelper *handleColHelper
 
-	hintProcessor *BlockHintProcessor
+	hintProcessor *hint.BlockHintProcessor
 	// selectOffset is the offsets of current processing select stmts.
 	selectOffset []int
 
@@ -411,7 +443,7 @@ func (b *PlanBuilder) popSelectOffset() {
 }
 
 // NewPlanBuilder creates a new PlanBuilder.
-func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, processor *BlockHintProcessor) *PlanBuilder {
+func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, processor *hint.BlockHintProcessor) *PlanBuilder {
 	if processor == nil {
 		sctx.GetSessionVars().PlannerSelectBlockAsName = nil
 	} else {
@@ -833,7 +865,7 @@ func (b *PlanBuilder) buildPrepare(x *ast.PrepareStmt) Plan {
 	}
 	if x.SQLVar != nil {
 		if v, ok := b.ctx.GetSessionVars().Users[x.SQLVar.Name]; ok {
-			p.SQLText = v
+			p.SQLText = v.GetString()
 		} else {
 			p.SQLText = "NULL"
 		}

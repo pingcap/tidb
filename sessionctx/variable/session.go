@@ -42,8 +42,10 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/storeutil"
+	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/timeutil"
 )
 
@@ -154,6 +156,7 @@ type TransactionContext struct {
 	CouldRetry     bool
 	IsPessimistic  bool
 	Isolation      string
+	LockExpire     uint32
 }
 
 // AddUnchangedRowKey adds an unchanged row key in update statement for pessimistic lock.
@@ -299,7 +302,7 @@ type SessionVars struct {
 	// UsersLock is a lock for user defined variables.
 	UsersLock sync.RWMutex
 	// Users are user defined variables.
-	Users map[string]string
+	Users map[string]types.Datum
 	// systems variables, don't modify it directly, use GetSystemVar/SetSystemVar method.
 	systems map[string]string
 	// SysWarningCount is the system variable "warning_count", because it is on the hot path, so we extract it from the systems
@@ -384,6 +387,9 @@ type SessionVars struct {
 
 	// AllowAggPushDown can be set to false to forbid aggregation push down.
 	AllowAggPushDown bool
+
+	// AllowDistinctAggPushDown can be set true to allow agg with distinct push down to tikv/tiflash.
+	AllowDistinctAggPushDown bool
 
 	// AllowWriteRowID can be set to false to forbid write data to _tidb_rowid.
 	// This variable is currently not recommended to be turned on.
@@ -623,7 +629,7 @@ type ConnectionInfo struct {
 // NewSessionVars creates a session vars object.
 func NewSessionVars() *SessionVars {
 	vars := &SessionVars{
-		Users:                       make(map[string]string),
+		Users:                       make(map[string]types.Datum),
 		systems:                     make(map[string]string),
 		PreparedStmts:               make(map[uint32]interface{}),
 		PreparedStmtNameToID:        make(map[string]uint32),
@@ -813,6 +819,16 @@ func (s *SessionVars) GetCharsetInfo() (charset, collation string) {
 	charset = s.systems[CharacterSetConnection]
 	collation = s.systems[CollationConnection]
 	return
+}
+
+// SetUserVar set the value and collation for user defined variable.
+func (s *SessionVars) SetUserVar(varName string, svalue string, collation string) {
+	if len(collation) > 0 {
+		s.Users[varName] = types.NewCollationStringDatum(stringutil.Copy(svalue), collation, collate.DefaultLen)
+	} else {
+		_, collation = s.GetCharsetInfo()
+		s.Users[varName] = types.NewCollationStringDatum(stringutil.Copy(svalue), collation, collate.DefaultLen)
+	}
 }
 
 // SetLastInsertID saves the last insert id to the session context.
@@ -1030,6 +1046,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.SkipUTF8Check = TiDBOptOn(val)
 	case TiDBOptAggPushDown:
 		s.AllowAggPushDown = TiDBOptOn(val)
+	case TiDBOptDistinctAggPushDown:
+		s.AllowDistinctAggPushDown = TiDBOptOn(val)
 	case TiDBOptWriteRowID:
 		s.AllowWriteRowID = TiDBOptOn(val)
 	case TiDBOptInSubqToJoinAndAgg:
@@ -1214,6 +1232,41 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case CollationConnection, CollationDatabase, CollationServer:
 		if _, err := collate.GetCollationByName(val); err != nil {
 			return errors.Trace(err)
+		}
+	case TiDBSlowLogThreshold:
+		conf := config.GetGlobalConfig()
+		if !conf.EnableDynamicConfig {
+			atomic.StoreUint64(&config.GetGlobalConfig().Log.SlowThreshold, uint64(tidbOptInt64(val, logutil.DefaultSlowThreshold)))
+		} else {
+			s.StmtCtx.AppendWarning(errors.Errorf("cannot update %s when enabling dynamic configs", TiDBSlowLogThreshold))
+		}
+	case TiDBRecordPlanInSlowLog:
+		conf := config.GetGlobalConfig()
+		if !conf.EnableDynamicConfig {
+			atomic.StoreUint32(&config.GetGlobalConfig().Log.RecordPlanInSlowLog, uint32(tidbOptInt64(val, logutil.DefaultRecordPlanInSlowLog)))
+		} else {
+			s.StmtCtx.AppendWarning(errors.Errorf("cannot update %s when enabling dynamic configs", TiDBRecordPlanInSlowLog))
+		}
+	case TiDBEnableSlowLog:
+		conf := config.GetGlobalConfig()
+		if !conf.EnableDynamicConfig {
+			config.GetGlobalConfig().Log.EnableSlowLog = TiDBOptOn(val)
+		} else {
+			s.StmtCtx.AppendWarning(errors.Errorf("cannot update %s when enabling dynamic configs", TiDBEnableSlowLog))
+		}
+	case TiDBQueryLogMaxLen:
+		conf := config.GetGlobalConfig()
+		if !conf.EnableDynamicConfig {
+			atomic.StoreUint64(&config.GetGlobalConfig().Log.QueryLogMaxLen, uint64(tidbOptInt64(val, logutil.DefaultQueryLogMaxLen)))
+		} else {
+			s.StmtCtx.AppendWarning(errors.Errorf("cannot update %s when enabling dynamic configs", TiDBQueryLogMaxLen))
+		}
+	case TiDBCheckMb4ValueInUTF8:
+		conf := config.GetGlobalConfig()
+		if !conf.EnableDynamicConfig {
+			config.GetGlobalConfig().CheckMb4ValueInUTF8 = TiDBOptOn(val)
+		} else {
+			s.StmtCtx.AppendWarning(errors.Errorf("cannot update %s when enabling dynamic configs", TiDBCheckMb4ValueInUTF8))
 		}
 	}
 	s.systems[name] = val
