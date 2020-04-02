@@ -15,6 +15,7 @@ package statistics
 
 import (
 	"math"
+	"math/bits"
 	"sort"
 
 	"github.com/pingcap/errors"
@@ -351,7 +352,7 @@ func GetUsableSetsByGreedy(nodes []*StatsNode) (newBlocks []*StatsNode) {
 				marked[i] = true
 				continue
 			}
-			bits := bitCount(curMask)
+			bits := bits.OnesCount64(uint64(curMask))
 			// This set cannot cover any thing, just skip it.
 			if bits == 0 {
 				marked[i] = true
@@ -376,15 +377,4 @@ func GetUsableSetsByGreedy(nodes []*StatsNode) (newBlocks []*StatsNode) {
 		marked[bestID] = true
 	}
 	return
-}
-
-// bitCount is the number of bit `1` in the binary representation of number x.
-func bitCount(x int64) int {
-	ret := 0
-	// x -= x & -x, remove the lowest bit of the x.
-	// e.g. result will be 2 if x is 3.
-	for ; x > 0; x -= x & -x {
-		ret++
-	}
-	return ret
 }
