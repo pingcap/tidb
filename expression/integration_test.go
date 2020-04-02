@@ -5968,7 +5968,9 @@ func (s *testIntegrationSuite) TestIssue15986(c *C) {
 	tk.MustExec("INSERT INTO t0 VALUES (0)")
 	tk.MustQuery("SELECT t0.c0 FROM t0 WHERE CHAR(204355900);").Check(testkit.Rows("0"))
 	tk.MustQuery("SELECT t0.c0 FROM t0 WHERE not CHAR(204355900);").Check(testkit.Rows())
-	// If the number does not exceed the range of float64, it will be converted to true.
+	tk.MustQuery("SELECT t0.c0 FROM t0 WHERE '.0';").Check(testkit.Rows())
+	tk.MustQuery("SELECT t0.c0 FROM t0 WHERE not '.0';").Check(testkit.Rows("0"))
+	// If the number does not exceed the range of float64 and its value is not 0, it will be converted to true.
 	tk.MustQuery("select * from t0 where '.000000000000000000000000000000000000000000000000000000" +
 		"00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000" +
 		"00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000" +
