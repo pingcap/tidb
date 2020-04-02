@@ -132,7 +132,7 @@ func (o *outerJoinEliminator) isInnerJoinKeysContainIndex(innerPlan LogicalPlan,
 		if !path.Index.Unique {
 			continue
 		}
-		if path.IdxCols == nil || len(path.IdxCols) == 0 {
+		if len(path.IdxCols) == 0 {
 			continue
 		}
 		joinKeysContainIndex := true
