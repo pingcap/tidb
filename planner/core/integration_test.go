@@ -629,7 +629,7 @@ func (s *testIntegrationSuite) TestIndexMerge(c *C) {
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b int, unique index(a), unique index(b))")
+	tk.MustExec("create table t(a int, b int, c int, unique index(a), unique index(b), primary key(c))")
 
 	var input []string
 	var output []struct {
