@@ -2383,20 +2383,12 @@ func (d *ddl) AddColumns(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alte
 			columns = append(columns, col)
 			positions = append(positions, spec.Position)
 			offsets = append(offsets, 0)
-
-			// columns[newColumnsCount] = col
-			// positions[newColumnsCount] = spec.Position
-			// offsets[newColumnsCount] = 0
 			newColumnsCount++
 		}
 	}
 	if newColumnsCount == 0 {
 		return nil
 	}
-	// Since the newColumnsCount can be less than len(addingColumnNames)
-	// columns = columns[:newColumnsCount]
-	// positions = positions[:newColumnsCount]
-	// offsets = offsets[:newColumnsCount]
 	if err = checkAddColumnTooManyColumns(len(t.Cols()) + newColumnsCount); err != nil {
 		return errors.Trace(err)
 	}
