@@ -76,16 +76,25 @@ func (st *TxnState) Size() int {
 
 // NewBuffer returns a new child write buffer.
 func (st *TxnState) NewBuffer() kv.MemBuffer {
+	if st.buf == nil {
+		st.buf = st.Transaction.NewBuffer()
+	}
 	return st.buf.NewBuffer()
 }
 
 // Flush flushes all staging kvs into parent buffer.
 func (st *TxnState) Flush() (int, error) {
+	if st.buf == nil {
+		return 0, nil
+	}
 	return st.buf.Flush()
 }
 
 // Discard discards all staging kvs.
 func (st *TxnState) Discard() {
+	if st.buf == nil {
+		return
+	}
 	st.buf.Discard()
 }
 
@@ -140,7 +149,6 @@ func (st *TxnState) GoString() string {
 
 func (st *TxnState) changeInvalidToValid(txn kv.Transaction) {
 	st.Transaction = txn
-	st.buf = txn.NewBuffer()
 	st.txnFuture = nil
 }
 
@@ -163,7 +171,6 @@ func (st *TxnState) changePendingToValid() error {
 		return err
 	}
 	st.Transaction = txn
-	st.buf = txn.NewBuffer()
 	return nil
 }
 
@@ -210,7 +217,7 @@ func ResetMockAutoRandIDRetryCount(failTimes int64) {
 // Commit overrides the Transaction interface.
 func (st *TxnState) Commit(ctx context.Context) error {
 	defer st.reset()
-	if len(st.mutations) != 0 || len(st.dirtyTableOP) != 0 || st.buf.Len() != 0 {
+	if len(st.mutations) != 0 || len(st.dirtyTableOP) != 0 || (st.buf != nil && st.buf.Len() != 0) {
 		logutil.BgLogger().Error("the code should never run here",
 			zap.String("TxnState", st.GoString()),
 			zap.Stack("something must be wrong"))
@@ -261,9 +268,11 @@ func (st *TxnState) reset() {
 }
 
 // Get overrides the Transaction interface.
-func (st *TxnState) Get(ctx context.Context, k kv.Key) ([]byte, error) {
-	val, err := st.buf.Get(ctx, k)
-	if kv.IsErrNotFound(err) {
+func (st *TxnState) Get(ctx context.Context, k kv.Key) (val []byte, err error) {
+	if st.buf != nil {
+		val, err = st.buf.Get(ctx, k)
+	}
+	if st.buf == nil || kv.IsErrNotFound(err) {
 		val, err = st.Transaction.Get(ctx, k)
 		if kv.IsErrNotFound(err) {
 			return nil, err
@@ -282,17 +291,19 @@ func (st *TxnState) Get(ctx context.Context, k kv.Key) ([]byte, error) {
 func (st *TxnState) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error) {
 	bufferValues := make([][]byte, len(keys))
 	shrinkKeys := make([]kv.Key, 0, len(keys))
-	for i, key := range keys {
-		val, err := st.buf.Get(ctx, key)
-		if kv.IsErrNotFound(err) {
-			shrinkKeys = append(shrinkKeys, key)
-			continue
-		}
-		if err != nil {
-			return nil, err
-		}
-		if len(val) != 0 {
-			bufferValues[i] = val
+	if st.buf != nil {
+		for i, key := range keys {
+			val, err := st.buf.Get(ctx, key)
+			if kv.IsErrNotFound(err) {
+				shrinkKeys = append(shrinkKeys, key)
+				continue
+			}
+			if err != nil {
+				return nil, err
+			}
+			if len(val) != 0 {
+				bufferValues[i] = val
+			}
 		}
 	}
 	storageValues, err := st.Transaction.BatchGet(ctx, shrinkKeys)
@@ -310,21 +321,30 @@ func (st *TxnState) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]b
 
 // Set overrides the Transaction interface.
 func (st *TxnState) Set(k kv.Key, v []byte) error {
+	if st.buf == nil {
+		st.buf = st.Transaction.NewBuffer()
+	}
 	return st.buf.Set(k, v)
 }
 
 // Delete overrides the Transaction interface.
 func (st *TxnState) Delete(k kv.Key) error {
+	if st.buf == nil {
+		st.buf = st.Transaction.NewBuffer()
+	}
 	return st.buf.Delete(k)
 }
 
 // Iter overrides the Transaction interface.
-func (st *TxnState) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
-	bufferIt, err := st.buf.Iter(k, upperBound)
+func (st *TxnState) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {	
+	retrieverIt, err := st.Transaction.Iter(k, upperBound)
 	if err != nil {
 		return nil, err
 	}
-	retrieverIt, err := st.Transaction.Iter(k, upperBound)
+	if st.buf == nil {
+		return retrieverIt, nil
+	}
+	bufferIt, err := st.buf.Iter(k, upperBound)
 	if err != nil {
 		return nil, err
 	}
@@ -333,11 +353,14 @@ func (st *TxnState) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
 
 // IterReverse overrides the Transaction interface.
 func (st *TxnState) IterReverse(k kv.Key) (kv.Iterator, error) {
-	bufferIt, err := st.buf.IterReverse(k)
+	retrieverIt, err := st.Transaction.IterReverse(k)
 	if err != nil {
 		return nil, err
 	}
-	retrieverIt, err := st.Transaction.IterReverse(k)
+	if st.buf == nil {
+		return retrieverIt, nil
+	}
+	bufferIt, err := st.buf.IterReverse(k)
 	if err != nil {
 		return nil, err
 	}
@@ -347,6 +370,7 @@ func (st *TxnState) IterReverse(k kv.Key) (kv.Iterator, error) {
 func (st *TxnState) cleanup() {
 	if st.buf != nil {
 		st.Discard()
+		st.buf = nil
 	}
 	if st.Transaction != nil {
 		st.buf = st.Transaction.NewBuffer()
@@ -370,6 +394,9 @@ func (st *TxnState) cleanup() {
 
 // KeysNeedToLock returns the keys need to be locked.
 func (st *TxnState) KeysNeedToLock() ([]kv.Key, error) {
+	if st.buf == nil {
+		return nil, nil
+	}
 	keys := make([]kv.Key, 0, st.buf.Len())
 	if err := kv.WalkMemBuffer(st.buf, func(k kv.Key, v []byte) error {
 		if !keyNeedToLock(k, v) {
