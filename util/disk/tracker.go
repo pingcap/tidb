@@ -14,8 +14,6 @@
 package disk
 
 import (
-	"sync"
-
 	"github.com/pingcap/tidb/util/memory"
 )
 
@@ -26,26 +24,3 @@ type Tracker = memory.Tracker
 //	1. "label" is the label used in the usage string.
 //	2. "bytesLimit <= 0" means no limit.
 var NewTracker = memory.NewTracker
-
-// GlobalPanicOnExceed panics when GlobalDisTracker storage usage exceeds storage quota.
-type GlobalPanicOnExceed struct {
-	mutex sync.Mutex // For synchronization.
-}
-
-// SetLogHook sets a hook for PanicOnExceed.
-func (a *GlobalPanicOnExceed) SetLogHook(hook func(uint64)) {}
-
-// Action panics when storage usage exceeds storage quota.
-func (a *GlobalPanicOnExceed) Action(t *Tracker) {
-	a.mutex.Lock()
-	defer a.mutex.Unlock()
-	panic(GlobalPanicStorageExceed)
-}
-
-// SetFallback sets a fallback action.
-func (a *GlobalPanicOnExceed) SetFallback(memory.ActionOnExceed) {}
-
-const (
-	// GlobalPanicStorageExceed represents the panic message when out of storage quota.
-	GlobalPanicStorageExceed string = "Out Of Global Storage Quota!"
-)

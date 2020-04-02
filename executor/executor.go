@@ -101,9 +101,32 @@ type baseExecutor struct {
 	runtimeStats  *execdetails.RuntimeStats
 }
 
+// GlobalPanicOnExceed panics when GlobalDisTracker storage usage exceeds storage quota.
+type globalPanicOnExceed struct {
+	mutex sync.Mutex // For synchronization.
+}
+
+// SetLogHook sets a hook for PanicOnExceed.
+func (a *globalPanicOnExceed) SetLogHook(hook func(uint64)) {}
+
+// Action panics when storage usage exceeds storage quota.
+func (a *globalPanicOnExceed) Action(t *memory.Tracker) {
+	a.mutex.Lock()
+	defer a.mutex.Unlock()
+	panic(GlobalPanicStorageExceed)
+}
+
+// SetFallback sets a fallback action.
+func (a *globalPanicOnExceed) SetFallback(memory.ActionOnExceed) {}
+
+const (
+	// GlobalPanicStorageExceed represents the panic message when out of storage quota.
+	GlobalPanicStorageExceed string = "Out Of Global Storage Quota!"
+)
+
 func init() {
 	GlobalDiskUsageTracker = disk.NewTracker(stringutil.StringerStr("GlobalStorageLabel"), -1)
-	action := &disk.GlobalPanicOnExceed{}
+	action := &globalPanicOnExceed{}
 	GlobalDiskUsageTracker.SetActionOnExceed(action)
 }
 
