@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -65,7 +66,7 @@ type testIntegrationSerialSuite struct {
 
 func (s *testIntegrationSerialSuite) SetUpSuite(c *C) {
 	var err error
-	s.testData, err = testutil.LoadTestSuiteData("testdata", "integration_suite")
+	s.testData, err = testutil.LoadTestSuiteData("testdata", "integration_serial_suite")
 	c.Assert(err, IsNil)
 }
 
@@ -288,19 +289,19 @@ func (s *testIntegrationSerialSuite) TestNoneAccessPathsFoundByIsolationRead(c *
 
 	// Don't filter mysql.SystemDB by isolation read.
 	tk.MustQuery("explain select * from mysql.stats_meta").Check(testkit.Rows(
-		"TableReader_5 10000.00 root data:TableFullScan_4",
-		"└─TableFullScan_4 10000.00 cop[tikv] table:stats_meta, keep order:false, stats:pseudo"))
+		"TableReader_5 10000.00 root  data:TableFullScan_4",
+		"└─TableFullScan_4 10000.00 cop[tikv] table:stats_meta keep order:false, stats:pseudo"))
 
 	_, err = tk.Exec("select * from t")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[planner:1815]Internal : Can not find access path matching 'tidb_isolation_read_engines'(value: 'tiflash') and tidb-server config isolation-read(engines: '[tikv tiflash tidb]'). Available values are 'tikv'.")
+	c.Assert(err.Error(), Equals, "[planner:1815]Internal : Can not find access path matching 'tidb_isolation_read_engines'(value: 'tiflash'). Available values are 'tikv'.")
 
-	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tikv, tiflash'")
+	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash, tikv'")
+	tk.MustExec("select * from t")
 	config.GetGlobalConfig().IsolationRead.Engines = []string{"tiflash"}
-	_, err = tk.Exec("select * from t")
-	config.GetGlobalConfig().IsolationRead.Engines = []string{"tikv", "tiflash", "tidb"}
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[planner:1815]Internal : Can not find access path matching 'tidb_isolation_read_engines'(value: 'tikv,tiflash') and tidb-server config isolation-read(engines: '[tiflash]'). Available values are 'tikv'.")
+	defer func() { config.GetGlobalConfig().IsolationRead.Engines = []string{"tikv", "tiflash"} }()
+	// Change instance config doesn't affect isolation read.
+	tk.MustExec("select * from t")
 }
 
 func (s *testIntegrationSerialSuite) TestSelPushDownTiFlash(c *C) {
@@ -324,20 +325,20 @@ func (s *testIntegrationSerialSuite) TestSelPushDownTiFlash(c *C) {
 	}
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
-
-	// All conditions should push tiflash.
-	tk.MustQuery(`explain select * from t where t.a > 1 and t.b = "flash" or t.a + 3 * t.a = 5`).Check(testkit.Rows(
-		"TableReader_7 8000.00 root data:Selection_6",
-		"└─Selection_6 8000.00 cop[tiflash] or(and(gt(test.t.a, 1), eq(test.t.b, \"flash\")), eq(plus(test.t.a, mul(3, test.t.a)), 5))",
-		"  └─TableFullScan_5 10000.00 cop[tiflash] table:t, keep order:false, stats:pseudo",
-	))
-
-	// Part of conditions should push tiflash.
-	tk.MustQuery(`explain select * from t where cast(t.a as float) + 3 = 5.1`).Check(testkit.Rows(
-		"Selection_7 10000.00 root eq(plus(cast(test.t.a), 3), 5.1)",
-		"└─TableReader_6 10000.00 root data:TableFullScan_5",
-		"  └─TableFullScan_5 10000.00 cop[tiflash] table:t, keep order:false, stats:pseudo",
-	))
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		res := tk.MustQuery(tt)
+		res.Check(testkit.Rows(output[i].Plan...))
+	}
 }
 
 func (s *testIntegrationSerialSuite) TestIssue15110(c *C) {
@@ -444,6 +445,80 @@ func (s *testIntegrationSerialSuite) TestReadFromStorageHintAndIsolationRead(c *
 	s.testData.GetTestCases(c, &input, &output)
 	for i, tt := range input {
 		tk.Se.GetSessionVars().StmtCtx.SetWarnings(nil)
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+			output[i].Warn = s.testData.ConvertSQLWarnToStrings(tk.Se.GetSessionVars().StmtCtx.GetWarnings())
+		})
+		res := tk.MustQuery(tt)
+		res.Check(testkit.Rows(output[i].Plan...))
+		c.Assert(s.testData.ConvertSQLWarnToStrings(tk.Se.GetSessionVars().StmtCtx.GetWarnings()), DeepEquals, output[i].Warn)
+	}
+}
+
+func (s *testIntegrationSerialSuite) TestIsolationReadTiFlashNotChoosePointGet(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, primary key (a))")
+
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	c.Assert(exists, IsTrue)
+	for _, tblInfo := range db.Tables {
+		tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+			Count:     1,
+			Available: true,
+		}
+	}
+
+	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
+	var input []string
+	var output []struct {
+		SQL    string
+		Result []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
+	}
+}
+
+func (s *testIntegrationSerialSuite) TestIsolationReadTiFlashUseIndexHint(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, index idx(a));")
+
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	c.Assert(exists, IsTrue)
+	for _, tblInfo := range db.Tables {
+		tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+			Count:     1,
+			Available: true,
+		}
+	}
+
+	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+		Warn []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt
 			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
@@ -623,4 +698,102 @@ func (s *testIntegrationSuite) TestSubqueryWithTopN(c *C) {
 		})
 		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
 	}
+}
+
+func (s *testIntegrationSuite) TestIndexHintWarning(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int, b int, c int, key a(a))")
+	tk.MustExec("create table t2(a int, b int, c int, key a(a))")
+	var input []string
+	var output []struct {
+		SQL      string
+		Warnings []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			tk.MustQuery(tt)
+			warns := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
+			output[i].Warnings = make([]string, len(warns))
+			for j := range warns {
+				output[i].Warnings[j] = warns[j].Err.Error()
+			}
+		})
+		tk.MustQuery(tt)
+		warns := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
+		c.Assert(len(warns), Equals, len(output[i].Warnings))
+		for j := range warns {
+			c.Assert(warns[j].Level, Equals, stmtctx.WarnLevelWarning)
+			c.Assert(warns[j].Err.Error(), Equals, output[i].Warnings[j])
+		}
+	}
+}
+
+func (s *testIntegrationSuite) TestIssue15546(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, pt, vt")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("insert into t values(1, 1)")
+	tk.MustExec("create table pt(a int primary key, b int) partition by range(a) (" +
+		"PARTITION `p0` VALUES LESS THAN (10), PARTITION `p1` VALUES LESS THAN (20), PARTITION `p2` VALUES LESS THAN (30))")
+	tk.MustExec("insert into pt values(1, 1), (11, 11), (21, 21)")
+	tk.MustExec("create definer='root'@'localhost' view vt(a, b) as select a, b from t")
+	tk.MustQuery("select * from pt, vt where pt.a = vt.a").Check(testkit.Rows("1 1 1 1"))
+}
+
+func (s *testIntegrationSuite) TestIssue15813(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t0, t1")
+	tk.MustExec("create table t0(c0 int primary key)")
+	tk.MustExec("create table t1(c0 int primary key)")
+	tk.MustExec("CREATE INDEX i0 ON t0(c0)")
+	tk.MustExec("CREATE INDEX i0 ON t1(c0)")
+	tk.MustQuery("select /*+ MERGE_JOIN(t0, t1) */ * from t0, t1 where t0.c0 = t1.c0").Check(testkit.Rows())
+}
+
+func (s *testIntegrationSuite) TestHintWithoutTableWarning(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int, b int, c int, key a(a))")
+	tk.MustExec("create table t2(a int, b int, c int, key a(a))")
+	var input []string
+	var output []struct {
+		SQL      string
+		Warnings []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			tk.MustQuery(tt)
+			warns := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
+			output[i].Warnings = make([]string, len(warns))
+			for j := range warns {
+				output[i].Warnings[j] = warns[j].Err.Error()
+			}
+		})
+		tk.MustQuery(tt)
+		warns := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
+		c.Assert(len(warns), Equals, len(output[i].Warnings))
+		for j := range warns {
+			c.Assert(warns[j].Level, Equals, stmtctx.WarnLevelWarning)
+			c.Assert(warns[j].Err.Error(), Equals, output[i].Warnings[j])
+		}
+	}
+}
+
+func (s *testIntegrationSuite) TestIssue15858(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int primary key)")
+	tk.MustExec("select * from t t1, (select a from t order by a+1) t2 where t1.a = t2.a")
 }

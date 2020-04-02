@@ -43,6 +43,8 @@ func (s *inspectionResultSuite) TestInspectionResult(c *C) {
 			types.MakeDatums("tidb", "192.168.3.23:4000", "ddl.lease", "2"),
 			types.MakeDatums("tidb", "192.168.3.24:4000", "ddl.lease", "1"),
 			types.MakeDatums("tidb", "192.168.3.25:4000", "ddl.lease", "1"),
+			types.MakeDatums("tidb", "192.168.3.24:4000", "status.status-port", "10080"),
+			types.MakeDatums("tidb", "192.168.3.25:4000", "status.status-port", "10081"),
 			types.MakeDatums("tidb", "192.168.3.24:4000", "log.slow-threshold", "0"),
 			types.MakeDatums("tidb", "192.168.3.25:4000", "log.slow-threshold", "1"),
 			types.MakeDatums("tikv", "192.168.3.32:26600", "coprocessor.high", "8"),
@@ -54,6 +56,20 @@ func (s *inspectionResultSuite) TestInspectionResult(c *C) {
 			types.MakeDatums("pd", "192.168.3.33:2379", "scheduler.limit", "3"),
 			types.MakeDatums("pd", "192.168.3.34:2379", "scheduler.limit", "3"),
 			types.MakeDatums("pd", "192.168.3.35:2379", "scheduler.limit", "3"),
+			types.MakeDatums("pd", "192.168.3.34:2379", "advertise-client-urls", "0"),
+			types.MakeDatums("pd", "192.168.3.35:2379", "advertise-client-urls", "1"),
+			types.MakeDatums("pd", "192.168.3.34:2379", "advertise-peer-urls", "0"),
+			types.MakeDatums("pd", "192.168.3.35:2379", "advertise-peer-urls", "1"),
+			types.MakeDatums("pd", "192.168.3.34:2379", "client-urls", "0"),
+			types.MakeDatums("pd", "192.168.3.35:2379", "client-urls", "1"),
+			types.MakeDatums("pd", "192.168.3.34:2379", "log.file.filename", "0"),
+			types.MakeDatums("pd", "192.168.3.35:2379", "log.file.filename", "1"),
+			types.MakeDatums("pd", "192.168.3.34:2379", "metric.job", "0"),
+			types.MakeDatums("pd", "192.168.3.35:2379", "metric.job", "1"),
+			types.MakeDatums("pd", "192.168.3.34:2379", "name", "0"),
+			types.MakeDatums("pd", "192.168.3.35:2379", "name", "1"),
+			types.MakeDatums("pd", "192.168.3.34:2379", "peer-urls", "0"),
+			types.MakeDatums("pd", "192.168.3.35:2379", "peer-urls", "1"),
 		},
 	}
 	// mock version inconsistent
@@ -68,18 +84,6 @@ func (s *inspectionResultSuite) TestInspectionResult(c *C) {
 			types.MakeDatums("pd", "192.168.1.31:1234", "192.168.1.31:1234", "4.0", "m234c"),
 			types.MakeDatums("pd", "192.168.1.32:1234", "192.168.1.32:1234", "4.0", "m234d"),
 			types.MakeDatums("pd", "192.168.1.33:1234", "192.168.1.33:1234", "4.0", "m234e"),
-		},
-	}
-	// mock load
-	mockData[infoschema.TableClusterLoad] = variable.TableSnapshot{
-		Rows: [][]types.Datum{
-			types.MakeDatums("tidb", "192.168.1.11:1234", "memory", "virtual", "used-percent", "0.8"),
-			types.MakeDatums("tidb", "192.168.1.12:1234", "memory", "virtual", "used-percent", "0.6"),
-			types.MakeDatums("tidb", "192.168.1.13:1234", "memory", "swap", "used-percent", "0"),
-			types.MakeDatums("tikv", "192.168.1.21:1234", "memory", "swap", "used-percent", "0.6"),
-			types.MakeDatums("pd", "192.168.1.31:1234", "cpu", "cpu", "load1", "1.0"),
-			types.MakeDatums("pd", "192.168.1.32:1234", "cpu", "cpu", "load5", "2.0"),
-			types.MakeDatums("pd", "192.168.1.33:1234", "cpu", "cpu", "load15", "8.0"),
 		},
 	}
 	mockData[infoschema.TableClusterHardware] = variable.TableSnapshot{
@@ -142,16 +146,6 @@ func (s *inspectionResultSuite) TestInspectionResult(c *C) {
 				"version git_hash tidb inconsistent consistent critical the cluster has 3 different tidb versions, execute the sql to see more detail: select * from information_schema.cluster_info where type='tidb'",
 			},
 		},
-		{
-			sql: "select rule, item, type, instance, value, reference, severity, details from information_schema.inspection_result where rule='current-load'",
-			rows: []string{
-				"current-load cpu-load1 pd 192.168.1.31:1234 1.0 < 0.7 warning cpu-load1 should less than (cpu_logical_cores * 0.7)",
-				"current-load cpu-load15 pd 192.168.1.33:1234 8.0 < 7.0 warning cpu-load15 should less than (cpu_logical_cores * 0.7)",
-				"current-load disk-usage tikv 192.168.1.22:1234 80 < 70 warning current disk-usage is too high, execute the sql to see more detail: select * from information_schema.cluster_hardware where type='tikv' and instance='192.168.1.22:1234' and device_type='disk' and device_name='sda'",
-				"current-load swap-memory-usage tikv 192.168.1.21:1234 0.6 0 warning ",
-				"current-load virtual-memory-usage tidb 192.168.1.11:1234 0.8 < 0.7 warning ",
-			},
-		},
 	}
 
 	for _, cs := range cases {
@@ -170,8 +164,15 @@ func (s *inspectionResultSuite) parseTime(c *C, se session.Session, str string) 
 	return t
 }
 
-func (s *inspectionResultSuite) TestThresholdCheckInspection(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func (s *inspectionResultSuite) tearDownForThresholdCheck(c *C) {
+	fpName := "github.com/pingcap/tidb/executor/mockMergeMockInspectionTables"
+	c.Assert(failpoint.Disable(fpName), IsNil)
+
+	fpName2 := "github.com/pingcap/tidb/executor/mockMetricsTableData"
+	c.Assert(failpoint.Disable(fpName2), IsNil)
+}
+
+func (s *inspectionResultSuite) setupForThresholdCheck(c *C, mockData map[string][][]types.Datum) context.Context {
 	// mock tikv configuration.
 	configurations := map[string]variable.TableSnapshot{}
 	configurations[infoschema.TableClusterConfig] = variable.TableSnapshot{
@@ -181,6 +182,7 @@ func (s *inspectionResultSuite) TestThresholdCheckInspection(c *C) {
 			types.MakeDatums("tikv", "tikv-0", "readpool.coprocessor.high-concurrency", "4"),
 			types.MakeDatums("tikv", "tikv-0", "readpool.coprocessor.low-concurrency", "4"),
 			types.MakeDatums("tikv", "tikv-0", "readpool.coprocessor.normal-concurrency", "4"),
+			types.MakeDatums("tikv", "tikv-1", "readpool.coprocessor.normal-concurrency", "8"),
 			types.MakeDatums("tikv", "tikv-0", "readpool.storage.high-concurrency", "4"),
 			types.MakeDatums("tikv", "tikv-0", "readpool.storage.low-concurrency", "4"),
 			types.MakeDatums("tikv", "tikv-0", "readpool.storage.normal-concurrency", "4"),
@@ -188,6 +190,30 @@ func (s *inspectionResultSuite) TestThresholdCheckInspection(c *C) {
 			types.MakeDatums("tikv", "tikv-0", "storage.scheduler-worker-pool-size", "6"),
 		},
 	}
+	// mock cluster information
+	configurations[infoschema.TableClusterInfo] = variable.TableSnapshot{
+		Rows: [][]types.Datum{
+			types.MakeDatums("tikv", "tikv-0", "tikv-0", "4.0", "a234c", "", ""),
+			types.MakeDatums("tikv", "tikv-1", "tikv-1", "4.0", "a234c", "", ""),
+		},
+	}
+	fpName := "github.com/pingcap/tidb/executor/mockMergeMockInspectionTables"
+	c.Assert(failpoint.Enable(fpName, "return"), IsNil)
+
+	// Mock for metric table data.
+	fpName2 := "github.com/pingcap/tidb/executor/mockMetricsTableData"
+	c.Assert(failpoint.Enable(fpName2, "return"), IsNil)
+
+	ctx := context.WithValue(context.Background(), "__mockInspectionTables", configurations)
+	ctx = context.WithValue(ctx, "__mockMetricsTableData", mockData)
+	ctx = failpoint.WithHook(ctx, func(_ context.Context, currName string) bool {
+		return fpName2 == currName || currName == fpName
+	})
+	return ctx
+}
+
+func (s *inspectionResultSuite) TestThresholdCheckInspection(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
 	datetime := func(str string) types.Time {
 		return s.parseTime(c, tk.Se, str)
 	}
@@ -196,6 +222,7 @@ func (s *inspectionResultSuite) TestThresholdCheckInspection(c *C) {
 		// columns: time, instance, name, value
 		"tikv_thread_cpu": {
 			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "cop_normal0", 10.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-1", "cop_normal0", 10.0),
 			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "cop_normal1", 10.0),
 			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "cop_high1", 10.0),
 			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "cop_low1", 10.0),
@@ -225,20 +252,8 @@ func (s *inspectionResultSuite) TestThresholdCheckInspection(c *C) {
 		"pd_region_health":                    {},
 	}
 
-	fpName := "github.com/pingcap/tidb/executor/mockMergeMockInspectionTables"
-	c.Assert(failpoint.Enable(fpName, "return"), IsNil)
-	defer func() { c.Assert(failpoint.Disable(fpName), IsNil) }()
-
-	// Mock for metric table data.
-	fpName2 := "github.com/pingcap/tidb/executor/mockMetricsTableData"
-	c.Assert(failpoint.Enable(fpName2, "return"), IsNil)
-	defer func() { c.Assert(failpoint.Disable(fpName2), IsNil) }()
-
-	ctx := context.WithValue(context.Background(), "__mockInspectionTables", configurations)
-	ctx = context.WithValue(ctx, "__mockMetricsTableData", mockData)
-	ctx = failpoint.WithHook(ctx, func(_ context.Context, fpname2 string) bool {
-		return fpName2 == fpname2 || fpname2 == fpName
-	})
+	ctx := s.setupForThresholdCheck(c, mockData)
+	defer s.tearDownForThresholdCheck(c)
 
 	rs, err := tk.Se.Execute(ctx, "select  /*+ time_range('2020-02-12 10:35:00','2020-02-12 10:37:00') */ item, type, instance, value, reference, details from information_schema.inspection_result where rule='threshold-check' order by item")
 	c.Assert(err, IsNil)
@@ -249,6 +264,7 @@ func (s *inspectionResultSuite) TestThresholdCheckInspection(c *C) {
 		"coprocessor-high-cpu tikv tikv-0 10.00 < 3.60, config: readpool.coprocessor.high-concurrency=4 the 'coprocessor-high-cpu' max cpu-usage of tikv-0 tikv is too high",
 		"coprocessor-low-cpu tikv tikv-0 10.00 < 3.60, config: readpool.coprocessor.low-concurrency=4 the 'coprocessor-low-cpu' max cpu-usage of tikv-0 tikv is too high",
 		"coprocessor-normal-cpu tikv tikv-0 10.00 < 3.60, config: readpool.coprocessor.normal-concurrency=4 the 'coprocessor-normal-cpu' max cpu-usage of tikv-0 tikv is too high",
+		"coprocessor-normal-cpu tikv tikv-1 10.00 < 7.20, config: readpool.coprocessor.normal-concurrency=8 the 'coprocessor-normal-cpu' max cpu-usage of tikv-1 tikv is too high",
 		"grpc-cpu tikv tikv-0 10.00 < 7.20, config: server.grpc-concurrency=8 the 'grpc-cpu' max cpu-usage of tikv-0 tikv is too high",
 		"raftstore-cpu tikv tikv-0 10.00 < 1.60, config: raftstore.store-pool-size=2 the 'raftstore-cpu' max cpu-usage of tikv-0 tikv is too high",
 		"scheduler-worker-cpu tikv tikv-0 10.00 < 5.10, config: storage.scheduler-worker-pool-size=6 the 'scheduler-worker-cpu' max cpu-usage of tikv-0 tikv is too high",
@@ -275,11 +291,7 @@ func (s *inspectionResultSuite) TestThresholdCheckInspection(c *C) {
 		types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "split_check", 0.5),
 	}
 
-	ctx = context.WithValue(context.Background(), "__mockInspectionTables", configurations)
 	ctx = context.WithValue(ctx, "__mockMetricsTableData", mockData)
-	ctx = failpoint.WithHook(ctx, func(_ context.Context, fpname2 string) bool {
-		return fpName2 == fpname2 || fpname2 == fpName
-	})
 	rs, err = tk.Se.Execute(ctx, "select item, type, instance, value, reference from information_schema.inspection_result where rule='threshold-check' order by item")
 	c.Assert(err, IsNil)
 	result = tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute inspect SQL failed"))
@@ -289,11 +301,6 @@ func (s *inspectionResultSuite) TestThresholdCheckInspection(c *C) {
 
 func (s *inspectionResultSuite) TestThresholdCheckInspection2(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	// Mock for metric table data.
-	fpName := "github.com/pingcap/tidb/executor/mockMetricsTableData"
-	c.Assert(failpoint.Enable(fpName, "return"), IsNil)
-	defer func() { c.Assert(failpoint.Disable(fpName), IsNil) }()
-
 	datetime := func(s string) types.Time {
 		t, err := types.ParseTime(tk.Se.GetSessionVars().StmtCtx, s, mysql.TypeDatetime, types.MaxFsp)
 		c.Assert(err, IsNil)
@@ -349,10 +356,8 @@ func (s *inspectionResultSuite) TestThresholdCheckInspection2(c *C) {
 		"pd_region_health":          {},
 	}
 
-	ctx := context.WithValue(context.Background(), "__mockMetricsTableData", mockData)
-	ctx = failpoint.WithHook(ctx, func(_ context.Context, fpname string) bool {
-		return fpname == fpName
-	})
+	ctx := s.setupForThresholdCheck(c, mockData)
+	defer s.tearDownForThresholdCheck(c)
 
 	rs, err := tk.Se.Execute(ctx, "select /*+ time_range('2020-02-12 10:35:00','2020-02-12 10:37:00') */ item, type, instance, value, reference, details from information_schema.inspection_result where rule='threshold-check' order by item")
 	c.Assert(err, IsNil)
@@ -378,11 +383,6 @@ func (s *inspectionResultSuite) TestThresholdCheckInspection2(c *C) {
 
 func (s *inspectionResultSuite) TestThresholdCheckInspection3(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	// Mock for metric table data.
-	fpName := "github.com/pingcap/tidb/executor/mockMetricsTableData"
-	c.Assert(failpoint.Enable(fpName, "return"), IsNil)
-	defer func() { c.Assert(failpoint.Disable(fpName), IsNil) }()
-
 	datetime := func(s string) types.Time {
 		t, err := types.ParseTime(tk.Se.GetSessionVars().StmtCtx, s, mysql.TypeDatetime, types.MaxFsp)
 		c.Assert(err, IsNil)
@@ -416,10 +416,8 @@ func (s *inspectionResultSuite) TestThresholdCheckInspection3(c *C) {
 		},
 	}
 
-	ctx := context.WithValue(context.Background(), "__mockMetricsTableData", mockData)
-	ctx = failpoint.WithHook(ctx, func(_ context.Context, fpname string) bool {
-		return fpname == fpName
-	})
+	ctx := s.setupForThresholdCheck(c, mockData)
+	defer s.tearDownForThresholdCheck(c)
 
 	rs, err := tk.Se.Execute(ctx, `select /*+ time_range('2020-02-14 04:20:00','2020-02-14 05:23:00') */
 		item, type, instance, value, reference, details from information_schema.inspection_result
@@ -561,5 +559,79 @@ func (s *inspectionResultSuite) TestCriticalErrorInspection(c *C) {
 		"panic-count tidb-1 1.00 the total number of errors about 'panic-count' is too many",
 		"scheduler-is-busy tikv-0 1.00(db1, type1, stage1) the total number of errors about 'scheduler-is-busy' is too many",
 		"tikv_engine_write_stall tikv-0 1.00(kv) the total number of errors about 'tikv_engine_write_stall' is too many",
+	))
+}
+
+func (s *inspectionResultSuite) TestNodeLoadInspection(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	datetime := func(s string) types.Time {
+		t, err := types.ParseTime(tk.Se.GetSessionVars().StmtCtx, s, mysql.TypeDatetime, types.MaxFsp)
+		c.Assert(err, IsNil)
+		return t
+	}
+
+	// construct some mock abnormal data
+	mockData := map[string][][]types.Datum{
+		// columns: time, instance, value
+		"node_load1": {
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "node-0", 28.1),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "node-1", 13.0),
+			types.MakeDatums(datetime("2020-02-14 05:21:00"), "node-0", 10.0),
+		},
+		// columns: time, instance, value
+		"node_load5": {
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "node-0", 27.9),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "node-1", 14.1),
+			types.MakeDatums(datetime("2020-02-14 05:21:00"), "node-0", 0.0),
+		},
+		// columns: time, instance, value
+		"node_load15": {
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "node-0", 30.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "node-1", 14.1),
+			types.MakeDatums(datetime("2020-02-14 05:21:00"), "node-0", 20.0),
+		},
+		// columns: time, instance, value
+		"node_virtual_cpus": {
+			types.MakeDatums(datetime("2020-02-14 05:21:00"), "node-0", 40.0),
+			types.MakeDatums(datetime("2020-02-14 05:21:00"), "node-1", 20.0),
+		},
+		// columns: time, instance, value
+		"node_memory_usage": {
+			types.MakeDatums(datetime("2020-02-14 05:21:00"), "node-0", 80.0),
+			types.MakeDatums(datetime("2020-02-14 05:21:00"), "node-1", 60.0),
+			types.MakeDatums(datetime("2020-02-14 05:22:00"), "node-0", 60.0),
+		},
+		// columns: time, instance, value
+		"node_memory_swap_used": {
+			types.MakeDatums(datetime("2020-02-14 05:21:00"), "node-0", 0.0),
+			types.MakeDatums(datetime("2020-02-14 05:21:00"), "node-1", 1.0),
+			types.MakeDatums(datetime("2020-02-14 05:22:00"), "node-1", 0.0),
+		},
+		// columns: time, instance, device, value
+		"node_disk_usage": {
+			types.MakeDatums(datetime("2020-02-14 05:21:00"), "node-0", "/dev/nvme0", 80.0),
+			types.MakeDatums(datetime("2020-02-14 05:22:00"), "node-0", "/dev/nvme0", 50.0),
+			types.MakeDatums(datetime("2020-02-14 05:21:00"), "node-0", "tmpfs", 80.0),
+			types.MakeDatums(datetime("2020-02-14 05:22:00"), "node-0", "tmpfs", 50.0),
+		},
+	}
+
+	ctx := s.setupForThresholdCheck(c, mockData)
+	defer s.tearDownForThresholdCheck(c)
+
+	rs, err := tk.Se.Execute(ctx, `select /*+ time_range('2020-02-14 04:20:00','2020-02-14 05:23:00') */
+		item, type, instance, value, reference, details from information_schema.inspection_result
+		where rule='node-load' order by item, value`)
+	c.Assert(err, IsNil)
+	result := tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute inspect SQL failed"))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0), Commentf("unexpected warnings: %+v", tk.Se.GetSessionVars().StmtCtx.GetWarnings()))
+	result.Check(testkit.Rows(
+		"cpu-load1 node node-0 28.1 < 28.0 cpu-load1 should less than (cpu_logical_cores * 0.7)",
+		"cpu-load15 node node-1 14.1 < 14.0 cpu-load15 should less than (cpu_logical_cores * 0.7)",
+		"cpu-load15 node node-0 30.0 < 28.0 cpu-load15 should less than (cpu_logical_cores * 0.7)",
+		"cpu-load5 node node-1 14.1 < 14.0 cpu-load5 should less than (cpu_logical_cores * 0.7)",
+		"disk-usage node node-0 80.0% < 70% the disk-usage of /dev/nvme0 is too high",
+		"swap-memory-used node node-1 1.0 0 ",
+		"virtual-memory-usage node node-0 80.0% < 70% the memory-usage is too high",
 	))
 }

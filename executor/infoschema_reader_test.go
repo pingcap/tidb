@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/fn"
 	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
@@ -58,14 +59,17 @@ var _ = SerialSuites(&testInfoschemaTableSerialSuite{})
 
 var _ = SerialSuites(&inspectionSuite{})
 
-type testInfoschemaTableSuite struct {
+type testInfoschemaTableSuiteBase struct {
 	store kv.Storage
 	dom   *domain.Domain
 }
 
+type testInfoschemaTableSuite struct {
+	testInfoschemaTableSuiteBase
+}
+
 type testInfoschemaTableSerialSuite struct {
-	store kv.Storage
-	dom   *domain.Domain
+	testInfoschemaTableSuiteBase
 }
 
 type inspectionSuite struct {
@@ -73,7 +77,7 @@ type inspectionSuite struct {
 	dom   *domain.Domain
 }
 
-func (s *testInfoschemaTableSerialSuite) SetUpSuite(c *C) {
+func (s *testInfoschemaTableSuiteBase) SetUpSuite(c *C) {
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	s.store = store
@@ -84,22 +88,7 @@ func (s *testInfoschemaTableSerialSuite) SetUpSuite(c *C) {
 	config.StoreGlobalConfig(&newConf)
 }
 
-func (s *testInfoschemaTableSerialSuite) TearDownSuite(c *C) {
-	s.dom.Close()
-	s.store.Close()
-}
-func (s *testInfoschemaTableSuite) SetUpSuite(c *C) {
-	store, dom, err := newStoreWithBootstrap()
-	c.Assert(err, IsNil)
-	s.store = store
-	s.dom = dom
-	originCfg := config.GetGlobalConfig()
-	newConf := *originCfg
-	newConf.OOMAction = config.OOMActionLog
-	config.StoreGlobalConfig(&newConf)
-}
-
-func (s *testInfoschemaTableSuite) TearDownSuite(c *C) {
+func (s *testInfoschemaTableSuiteBase) TearDownSuite(c *C) {
 	s.dom.Close()
 	s.store.Close()
 }
@@ -255,6 +244,10 @@ func (s *testInfoschemaTableSuite) TestDDLJobs(c *C) {
 		testkit.Rows("test_ddl_jobs t create table"))
 
 	tk.MustQuery("select job_type from information_schema.DDL_JOBS group by job_type having job_type = 'create table'").Check(
+		testkit.Rows("create table"))
+
+	// Test the START_TIME and END_TIME field.
+	tk.MustQuery("select distinct job_type from information_schema.DDL_JOBS where job_type = 'create table' and start_time > str_to_date('20190101','%Y%m%d%H%i%s')").Check(
 		testkit.Rows("create table"))
 
 	// Test the privilege of new user for information_schema.DDL_JOBS.
@@ -541,10 +534,24 @@ func (s *testInfoschemaTableSuite) TestForServersInfo(c *C) {
 	}
 }
 
-var _ = SerialSuites(&testInfoschemaClusterTableSuite{testInfoschemaTableSuite: &testInfoschemaTableSuite{}})
+func (s *testInfoschemaTableSuite) TestForTableTiFlashReplica(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	statistics.ClearHistoryJobs()
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, index idx(a))")
+	tk.MustExec("alter table t set tiflash replica 2 location labels 'a','b';")
+	tk.MustQuery("select TABLE_SCHEMA,TABLE_NAME,REPLICA_COUNT,LOCATION_LABELS,AVAILABLE, PROGRESS from information_schema.tiflash_replica").Check(testkit.Rows("test t 2 a,b 0 0"))
+	tbl, err := domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tbl.Meta().TiFlashReplica.Available = true
+	tk.MustQuery("select TABLE_SCHEMA,TABLE_NAME,REPLICA_COUNT,LOCATION_LABELS,AVAILABLE, PROGRESS from information_schema.tiflash_replica").Check(testkit.Rows("test t 2 a,b 1 1"))
+}
+
+var _ = SerialSuites(&testInfoschemaClusterTableSuite{testInfoschemaTableSuiteBase: &testInfoschemaTableSuiteBase{}})
 
 type testInfoschemaClusterTableSuite struct {
-	*testInfoschemaTableSuite
+	*testInfoschemaTableSuiteBase
 	rpcserver  *grpc.Server
 	httpServer *httptest.Server
 	mockAddr   string
@@ -553,7 +560,7 @@ type testInfoschemaClusterTableSuite struct {
 }
 
 func (s *testInfoschemaClusterTableSuite) SetUpSuite(c *C) {
-	s.testInfoschemaTableSuite.SetUpSuite(c)
+	s.testInfoschemaTableSuiteBase.SetUpSuite(c)
 	s.rpcserver, s.listenAddr = s.setUpRPCService(c, ":0")
 	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
 	s.startTime = time.Now()
@@ -652,7 +659,7 @@ func (s *testInfoschemaClusterTableSuite) TearDownSuite(c *C) {
 	if s.httpServer != nil {
 		s.httpServer.Close()
 	}
-	s.testInfoschemaTableSuite.TearDownSuite(c)
+	s.testInfoschemaTableSuiteBase.TearDownSuite(c)
 }
 
 type mockSessionManager struct {
@@ -749,4 +756,9 @@ func (s *testInfoschemaTableSuite) TestSequences(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("CREATE SEQUENCE test.seq maxvalue 10000000")
 	tk.MustQuery("SELECT * FROM information_schema.sequences WHERE sequence_schema='test' AND sequence_name='seq'").Check(testkit.Rows("def test seq 1 1000 0 1 10000000 1 0 1 "))
+	tk.MustExec("DROP SEQUENCE test.seq")
+	tk.MustExec("CREATE SEQUENCE test.seq start = -1 minvalue -1 maxvalue 10 increment 1 cache 10")
+	tk.MustQuery("SELECT * FROM information_schema.sequences WHERE sequence_schema='test' AND sequence_name='seq'").Check(testkit.Rows("def test seq 1 10 0 1 10 -1 0 -1 "))
+	tk.MustExec("CREATE SEQUENCE test.seq2 start = -9 minvalue -10 maxvalue 10 increment -1 cache 15")
+	tk.MustQuery("SELECT * FROM information_schema.sequences WHERE sequence_schema='test' AND sequence_name='seq2'").Check(testkit.Rows("def test seq2 1 15 0 -1 10 -10 0 -9 "))
 }

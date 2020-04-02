@@ -334,14 +334,14 @@ func (s *testFastAnalyze) TestFastAnalyze(c *C) {
 	tk.MustExec("insert into t1 values (1,1),(1,1),(1,2),(1,2)")
 	tk.MustExec("analyze table t1")
 	tk.MustQuery("explain select a from t1 where a = 1").Check(testkit.Rows(
-		"IndexReader_6 4.00 root index:IndexRangeScan_5",
-		"└─IndexRangeScan_5 4.00 cop[tikv] table:t1, index:a, b, range:[1,1], keep order:false"))
+		"IndexReader_6 4.00 root  index:IndexRangeScan_5",
+		"└─IndexRangeScan_5 4.00 cop[tikv] table:t1, index:idx(a, b) range:[1,1], keep order:false"))
 	tk.MustQuery("explain select a, b from t1 where a = 1 and b = 1").Check(testkit.Rows(
-		"IndexReader_6 2.00 root index:IndexRangeScan_5",
-		"└─IndexRangeScan_5 2.00 cop[tikv] table:t1, index:a, b, range:[1 1,1 1], keep order:false"))
+		"IndexReader_6 2.00 root  index:IndexRangeScan_5",
+		"└─IndexRangeScan_5 2.00 cop[tikv] table:t1, index:idx(a, b) range:[1 1,1 1], keep order:false"))
 	tk.MustQuery("explain select a, b from t1 where a = 1 and b = 2").Check(testkit.Rows(
-		"IndexReader_6 2.00 root index:IndexRangeScan_5",
-		"└─IndexRangeScan_5 2.00 cop[tikv] table:t1, index:a, b, range:[1 2,1 2], keep order:false"))
+		"IndexReader_6 2.00 root  index:IndexRangeScan_5",
+		"└─IndexRangeScan_5 2.00 cop[tikv] table:t1, index:idx(a, b) range:[1 2,1 2], keep order:false"))
 
 	tk.MustExec("create table t2 (a bigint unsigned, primary key(a))")
 	tk.MustExec("insert into t2 values (0), (18446744073709551615)")
@@ -349,6 +349,27 @@ func (s *testFastAnalyze) TestFastAnalyze(c *C) {
 	tk.MustQuery("show stats_buckets where table_name = 't2'").Check(testkit.Rows(
 		"test t2  a 0 0 1 1 0 0",
 		"test t2  a 0 1 2 1 18446744073709551615 18446744073709551615"))
+}
+
+func (s *testSuite1) TestIssue15751(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t0")
+	tk.MustExec("CREATE TABLE t0(c0 INT, c1 INT, PRIMARY KEY(c0, c1))")
+	tk.MustExec("INSERT INTO t0 VALUES (0, 0)")
+	tk.MustExec("set @@tidb_enable_fast_analyze=1")
+	tk.MustExec("ANALYZE TABLE t0")
+}
+
+func (s *testSuite1) TestIssue15752(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t0")
+	tk.MustExec("CREATE TABLE t0(c0 INT)")
+	tk.MustExec("INSERT INTO t0 VALUES (0)")
+	tk.MustExec("CREATE INDEX i0 ON t0(c0)")
+	tk.MustExec("set @@tidb_enable_fast_analyze=1")
+	tk.MustExec("ANALYZE TABLE t0 INDEX i0")
 }
 
 func (s *testSuite1) TestAnalyzeIncremental(c *C) {
