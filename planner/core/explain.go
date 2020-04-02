@@ -213,6 +213,9 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 	if p.stats.StatsVersion == statistics.PseudoVersion && !normalized {
 		buffer.WriteString("stats:pseudo, ")
 	}
+	if p.IsGlobalRead {
+		buffer.WriteString("global read, ")
+	}
 	buffer.Truncate(buffer.Len() - 2)
 	return buffer.String()
 }

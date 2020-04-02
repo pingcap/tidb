@@ -37,6 +37,9 @@ import (
 )
 
 func (p *LogicalUnionScan) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
+	if prop.IsFlashOnlyProp() {
+		return nil
+	}
 	childProp := prop.Clone()
 	us := PhysicalUnionScan{
 		Conditions: p.conditions,
@@ -1416,11 +1419,23 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 // If the hint is not matched, it will get other candidates.
 // If the hint is not figured, we will pick all candidates.
 func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
+	joins := make([]PhysicalPlan, 0, 5)
+	if p.ctx.GetSessionVars().AllowBCJ {
+		broadCastJoins := p.tryToGetBroadCastJoin(prop)
+		if (p.preferJoinType & preferBCJoin) > 0 {
+			logutil.BgLogger().Info("prefer bc join", zap.Int("bc count", len(broadCastJoins)))
+			return broadCastJoins
+		}
+		joins = append(joins, broadCastJoins...)
+	}
+	if prop.IsFlashOnlyProp() {
+		return joins
+	}
+
 	mergeJoins := p.GetMergeJoin(prop, p.schema, p.Stats(), p.children[0].statsInfo(), p.children[1].statsInfo())
 	if (p.preferJoinType & preferMergeJoin) > 0 {
 		return mergeJoins
 	}
-	joins := make([]PhysicalPlan, 0, 5)
 	joins = append(joins, mergeJoins...)
 
 	indexJoins, forced := p.tryToGetIndexJoin(prop)
@@ -1435,31 +1450,25 @@ func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) []Ph
 		return hashJoins
 	}
 	joins = append(joins, hashJoins...)
-
-	if p.ctx.GetSessionVars().AllowBCJ {
-		broadCastJoins := p.tryToGetBroadCastJoin(prop)
-		joins = append(joins, broadCastJoins...)
-		if (p.preferJoinType & preferBCJoin) > 0 {
-			logutil.BgLogger().Info("prefer bc join", zap.Int("bc count", len(broadCastJoins)))
-			return broadCastJoins
-		}
-	}
 	return joins
 }
 
+func getAllDataSourceRowCount(plan LogicalPlan) int64 {
+	if ds, ok := plan.(*DataSource); ok {
+		return ds.statsInfo().Count()
+	}
+	ret := int64(0)
+	for _, child := range plan.Children() {
+		ret += getAllDataSourceRowCount(child)
+	}
+	return ret
+}
+
 func (p *LogicalJoin) tryToGetBroadCastJoin(prop * property.PhysicalProperty) []PhysicalPlan {
-	child0, ok0 := p.children[0].(*DataSource)
-	if !ok0 {
-		return nil
-	}
-	child1, ok1 := p.children[1].(*DataSource)
-	if !ok1 {
-		return nil
-	}
 	if !prop.IsEmpty() {
 		return nil
 	}
-	if prop.TaskTp != property.RootTaskType && prop.TaskTp != property.CopTiFlashLocalReadTaskType && prop.TaskTp != property.CopTiFlashGlobalReadTaskType {
+	if prop.TaskTp != property.RootTaskType && !prop.IsFlashOnlyProp() {
 		return nil
 	}
 
@@ -1476,20 +1485,28 @@ func (p *LogicalJoin) tryToGetBroadCastJoin(prop * property.PhysicalProperty) []
 		LeftJoinKeys: lkeys,
 		RightJoinKeys: rkeys,
 	}
-	if child0.stats.Count() < child1.stats.Count() {
+	// todo: currently, build side is the one has less rowcont and global read side
+	//  is the one has less datasource row count(which mean less remote read), need
+	//  to use cbo to decide the build side and global read side
+	if p.children[0].statsInfo().Count() < p.children[1].statsInfo().Count() {
 		baseJoin.InnerChildIdx = 0
 	} else {
 		baseJoin.InnerChildIdx = 1
 	}
+	globalIndex := baseJoin.InnerChildIdx
+	if prop.TaskTp != property.CopTiFlashGlobalReadTaskType && getAllDataSourceRowCount(p.children[globalIndex]) > getAllDataSourceRowCount(p.children[1 - globalIndex]) {
+		globalIndex = 1 - globalIndex
+	}
 	childrenReqProps := make([]*property.PhysicalProperty, 2)
-	childrenReqProps[baseJoin.InnerChildIdx] = &property.PhysicalProperty{TaskTp: property.CopTiFlashGlobalReadTaskType}
+	childrenReqProps[globalIndex] = &property.PhysicalProperty{TaskTp: property.CopTiFlashGlobalReadTaskType}
 	if prop.TaskTp == property.CopTiFlashGlobalReadTaskType {
-		childrenReqProps[1-baseJoin.InnerChildIdx] = &property.PhysicalProperty{TaskTp: property.CopTiFlashGlobalReadTaskType}
+		childrenReqProps[1-globalIndex] = &property.PhysicalProperty{TaskTp: property.CopTiFlashGlobalReadTaskType}
 	} else {
-		childrenReqProps[1-baseJoin.InnerChildIdx] = &property.PhysicalProperty{TaskTp: property.CopTiFlashLocalReadTaskType}
+		childrenReqProps[1-globalIndex] = &property.PhysicalProperty{TaskTp: property.CopTiFlashLocalReadTaskType}
 	}
 	join := PhysicalBroadCastJoin {
 		basePhysicalJoin: baseJoin,
+		globalChildIndex: globalIndex,
 	}.Init(p.ctx, p.stats, p.blockOffset, childrenReqProps...)
 	results := make([]PhysicalPlan, 0, 1)
 	results = append(results, join)
@@ -1500,6 +1517,9 @@ func (p *LogicalJoin) tryToGetBroadCastJoin(prop * property.PhysicalProperty) []
 // When a sort column will be replaced by scalar function, we refuse it.
 // When a sort column will be replaced by a constant, we just remove it.
 func (p *LogicalProjection) TryToGetChildProp(prop *property.PhysicalProperty) (*property.PhysicalProperty, bool) {
+	if prop.IsFlashOnlyProp() {
+		return nil, false
+	}
 	newProp := &property.PhysicalProperty{TaskTp: property.RootTaskType, ExpectedCnt: prop.ExpectedCnt}
 	newCols := make([]property.Item, 0, len(prop.Items))
 	for _, col := range prop.Items {
@@ -1529,9 +1549,10 @@ func (p *LogicalProjection) exhaustPhysicalPlans(prop *property.PhysicalProperty
 	return []PhysicalPlan{proj}
 }
 
-func (lt *LogicalTopN) getPhysTopN() []PhysicalPlan {
-	ret := make([]PhysicalPlan, 0, 3)
-	for _, tp := range wholeTaskTypes {
+func (lt *LogicalTopN) getPhysTopN(prop *property.PhysicalProperty) []PhysicalPlan {
+	allTaskTypes := prop.GetAllPossibleChildTaskTypes()
+	ret := make([]PhysicalPlan, 0, len(allTaskTypes))
+	for _, tp := range allTaskTypes {
 		resultProp := &property.PhysicalProperty{TaskTp: tp, ExpectedCnt: math.MaxFloat64}
 		topN := PhysicalTopN{
 			ByItems: lt.ByItems,
@@ -1543,14 +1564,15 @@ func (lt *LogicalTopN) getPhysTopN() []PhysicalPlan {
 	return ret
 }
 
-func (lt *LogicalTopN) getPhysLimits() []PhysicalPlan {
-	prop, canPass := GetPropByOrderByItems(lt.ByItems)
+func (lt *LogicalTopN) getPhysLimits(prop *property.PhysicalProperty) []PhysicalPlan {
+	p, canPass := GetPropByOrderByItems(lt.ByItems)
 	if !canPass {
 		return nil
 	}
+	allTaskTypes := prop.GetAllPossibleChildTaskTypes()
 	ret := make([]PhysicalPlan, 0, 3)
-	for _, tp := range wholeTaskTypes {
-		resultProp := &property.PhysicalProperty{TaskTp: tp, ExpectedCnt: float64(lt.Count + lt.Offset), Items: prop.Items}
+	for _, tp := range allTaskTypes {
+		resultProp := &property.PhysicalProperty{TaskTp: tp, ExpectedCnt: float64(lt.Count + lt.Offset), Items: p.Items}
 		limit := PhysicalLimit{
 			Count:  lt.Count,
 			Offset: lt.Offset,
@@ -1562,7 +1584,7 @@ func (lt *LogicalTopN) getPhysLimits() []PhysicalPlan {
 
 // MatchItems checks if this prop's columns can match by items totally.
 func MatchItems(p *property.PhysicalProperty, items []*ByItems) bool {
-	if len(items) < len(p.Items) {
+	if len(items) < len(p.Items) || p.IsFlashOnlyProp() {
 		return false
 	}
 	for i, col := range p.Items {
@@ -1576,7 +1598,7 @@ func MatchItems(p *property.PhysicalProperty, items []*ByItems) bool {
 
 func (lt *LogicalTopN) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
 	if MatchItems(prop, lt.ByItems) {
-		return append(lt.getPhysTopN(), lt.getPhysLimits()...)
+		return append(lt.getPhysTopN(prop), lt.getPhysLimits(prop)...)
 	}
 	return nil
 }
@@ -1587,7 +1609,7 @@ func (la *LogicalApply) GetHashJoin(prop *property.PhysicalProperty) *PhysicalHa
 }
 
 func (la *LogicalApply) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
-	if !prop.AllColsFromSchema(la.children[0].Schema()) { // for convenient, we don't pass through any prop
+	if !prop.AllColsFromSchema(la.children[0].Schema()) || prop.IsFlashOnlyProp() { // for convenient, we don't pass through any prop
 		return nil
 	}
 	join := la.GetHashJoin(prop)
@@ -1604,6 +1626,9 @@ func (la *LogicalApply) exhaustPhysicalPlans(prop *property.PhysicalProperty) []
 }
 
 func (p *LogicalWindow) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
+	if prop.IsFlashOnlyProp() {
+		return nil
+	}
 	var byItems []property.Item
 	byItems = append(byItems, p.PartitionBy...)
 	byItems = append(byItems, p.OrderBy...)
@@ -1637,8 +1662,12 @@ func (la *LogicalAggregation) canPushToCop() bool {
 }
 
 func (la *LogicalAggregation) getEnforcedStreamAggs(prop *property.PhysicalProperty) []PhysicalPlan {
+	if prop.IsFlashOnlyProp() {
+		return nil
+	}
 	_, desc := prop.AllSameOrder()
-	enforcedAggs := make([]PhysicalPlan, 0, len(wholeTaskTypes))
+	allTaskTypes := prop.GetAllPossibleChildTaskTypes()
+	enforcedAggs := make([]PhysicalPlan, 0, len(allTaskTypes))
 	childProp := &property.PhysicalProperty{
 		ExpectedCnt: math.Max(prop.ExpectedCnt*la.inputCount/la.stats.RowCount, prop.ExpectedCnt),
 		Enforced:    true,
@@ -1665,6 +1694,10 @@ func (la *LogicalAggregation) getEnforcedStreamAggs(prop *property.PhysicalPrope
 }
 
 func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []PhysicalPlan {
+	// todo support CopTiFlash task type in stream agg
+	if prop.IsFlashOnlyProp() {
+		return nil
+	}
 	all, desc := prop.AllSameOrder()
 	if !all {
 		return nil
@@ -1680,7 +1713,8 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 		return nil
 	}
 
-	streamAggs := make([]PhysicalPlan, 0, len(la.possibleProperties)*(len(wholeTaskTypes)-1)+len(wholeTaskTypes))
+	allTaskTypes := prop.GetAllPossibleChildTaskTypes()
+	streamAggs := make([]PhysicalPlan, 0, len(la.possibleProperties)*(len(allTaskTypes)-1)+len(allTaskTypes))
 	childProp := &property.PhysicalProperty{
 		ExpectedCnt: math.Max(prop.ExpectedCnt*la.inputCount/la.stats.RowCount, prop.ExpectedCnt),
 	}
@@ -1721,10 +1755,13 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 	if !prop.IsEmpty() {
 		return nil
 	}
-	hashAggs := make([]PhysicalPlan, 0, len(wholeTaskTypes))
-	taskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopDoubleReadTaskType, property.CopTiFlashLocalReadTaskType, property.CopTiFlashGlobalReadTaskType}
+	hashAggs := make([]PhysicalPlan, 0, len(prop.GetAllPossibleChildTaskTypes()))
+	taskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopDoubleReadTaskType, property.CopTiFlashLocalReadTaskType}
 	if !la.aggHints.preferAggToCop {
 		taskTypes = append(taskTypes, property.RootTaskType)
+	}
+	if prop.IsFlashOnlyProp() {
+		taskTypes = []property.TaskType{prop.TaskTp}
 	}
 	for _, taskTp := range taskTypes {
 		agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, TaskTp: taskTp})
@@ -1795,8 +1832,9 @@ func (p *LogicalLimit) exhaustPhysicalPlans(prop *property.PhysicalProperty) []P
 	if !prop.IsEmpty() {
 		return nil
 	}
-	ret := make([]PhysicalPlan, 0, len(wholeTaskTypes))
-	for _, tp := range wholeTaskTypes {
+	allTaskTypes := prop.GetAllPossibleChildTaskTypes()
+	ret := make([]PhysicalPlan, 0, len(allTaskTypes))
+	for _, tp := range allTaskTypes {
 		resultProp := &property.PhysicalProperty{TaskTp: tp, ExpectedCnt: float64(p.Count + p.Offset)}
 		limit := PhysicalLimit{
 			Offset: p.Offset,
@@ -1808,6 +1846,9 @@ func (p *LogicalLimit) exhaustPhysicalPlans(prop *property.PhysicalProperty) []P
 }
 
 func (p *LogicalLock) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
+	if prop.IsFlashOnlyProp() {
+		return nil
+	}
 	childProp := prop.Clone()
 	lock := PhysicalLock{
 		Lock:             p.Lock,
@@ -1819,7 +1860,7 @@ func (p *LogicalLock) exhaustPhysicalPlans(prop *property.PhysicalProperty) []Ph
 
 func (p *LogicalUnionAll) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
 	// TODO: UnionAll can not pass any order, but we can change it to sort merge to keep order.
-	if !prop.IsEmpty() {
+	if !prop.IsEmpty() || prop.IsFlashOnlyProp() {
 		return nil
 	}
 	chReqProps := make([]*property.PhysicalProperty, 0, len(p.children))
@@ -1860,7 +1901,7 @@ func (ls *LogicalSort) exhaustPhysicalPlans(prop *property.PhysicalProperty) []P
 }
 
 func (p *LogicalMaxOneRow) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
-	if !prop.IsEmpty() {
+	if !prop.IsEmpty() || prop.IsFlashOnlyProp() {
 		return nil
 	}
 	mor := PhysicalMaxOneRow{}.Init(p.ctx, p.stats, p.blockOffset, &property.PhysicalProperty{ExpectedCnt: 2})

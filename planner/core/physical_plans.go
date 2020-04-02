@@ -87,7 +87,7 @@ func (p *PhysicalTableReader) GetTableScan() *PhysicalTableScan {
 			curPlan = curPlan.Children()[0]
 		} else {
 			join := curPlan.(*PhysicalBroadCastJoin)
-			curPlan = join.children[1-join.InnerChildIdx]
+			curPlan = join.children[1-join.globalChildIndex]
 		}
 	}
 }
@@ -438,6 +438,7 @@ type PhysicalMergeJoin struct {
 
 type PhysicalBroadCastJoin struct {
 	basePhysicalJoin
+	globalChildIndex int
 }
 
 // PhysicalLock is the physical operator of lock, which is used for `select ... for update` clause.
