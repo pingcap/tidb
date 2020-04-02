@@ -867,3 +867,12 @@ func (s *testTableSuite) TestSelectHiddenColumn(c *C) {
 	colInfo[2].Hidden = true
 	tk.MustQuery("select count(*) from INFORMATION_SCHEMA.COLUMNS where table_name = 'hidden'").Check(testkit.Rows("0"))
 }
+
+func (s *testTableSuite) TestFormatVersion(c *C) {
+	versions := []string{"5.7.25-TiDB-v4.0.0-beta-446-g5268094af", "5.7.25-TiDB-None", "5.7.25-TiDB-v4.0.1"}
+	res := []string{"4.0.0-beta", "None", "4.0.1"}
+	for i, v := range versions {
+		version := infoschema.FormatVersion(v)
+		c.Assert(version, Equals, res[i])
+	}
+}

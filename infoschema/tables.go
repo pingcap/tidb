@@ -1206,25 +1206,33 @@ func GetTiDBServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	}
 
 	var servers []ServerInfo
-	var version string
 	for _, node := range tidbNodes {
-		nodeVersion := node.Version[strings.LastIndex(node.Version, "TiDB-")+len("TiDB-"):]
-		nodeVersions := strings.Split(nodeVersion, "-")
-		if len(nodeVersions) == 1 {
-			version = nodeVersions[0]
-		} else if len(nodeVersions) >= 2 {
-			version = fmt.Sprintf("%s-%s", nodeVersions[0], nodeVersions[1])
-		}
 		servers = append(servers, ServerInfo{
 			ServerType:     "tidb",
 			Address:        fmt.Sprintf("%s:%d", node.IP, node.Port),
 			StatusAddr:     fmt.Sprintf("%s:%d", node.IP, node.StatusPort),
-			Version:        version,
+			Version:        FormatVersion(node.Version),
 			GitHash:        node.GitHash,
 			StartTimestamp: node.StartTimestamp,
 		})
 	}
 	return servers, nil
+}
+
+// FormatVersion make TiDBVersion consistent to TiKV and PD.
+func FormatVersion(TiDBVersion string) string {
+	var version string
+	nodeVersion := TiDBVersion[strings.LastIndex(TiDBVersion, "TiDB-")+len("TiDB-"):]
+	if nodeVersion[0] == 'v' {
+		nodeVersion = nodeVersion[1:]
+	}
+	nodeVersions := strings.Split(nodeVersion, "-")
+	if len(nodeVersions) == 1 {
+		version = nodeVersions[0]
+	} else if len(nodeVersions) >= 2 {
+		version = fmt.Sprintf("%s-%s", nodeVersions[0], nodeVersions[1])
+	}
+	return version
 }
 
 // GetPDServerInfo returns all PD nodes information of cluster
