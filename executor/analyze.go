@@ -842,7 +842,7 @@ func (e *AnalyzeFastExec) updateCollectorSamples(sValue []byte, sKey kv.Key, sam
 	for j, idxInfo := range e.idxsInfo {
 		idxVals := make([]types.Datum, 0, len(idxInfo.Columns))
 		for _, idxCol := range idxInfo.Columns {
-			for _, colInfo := range e.colsInfo {
+			for _, colInfo := range e.tblInfo.Columns {
 				if colInfo.Name == idxCol.Name {
 					v, err := e.getValueByInfo(colInfo, values)
 					if err != nil {
