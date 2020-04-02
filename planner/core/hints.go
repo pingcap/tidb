@@ -14,16 +14,15 @@
 package core
 
 import (
-	"strings"
-
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	utilhint "github.com/pingcap/tidb/util/hint"
 )
 
 // GenHintsFromPhysicalPlan generates hints from physical plan.
-func GenHintsFromPhysicalPlan(p Plan) string {
+func GenHintsFromPhysicalPlan(p Plan) []*ast.TableOptimizerHint {
 	var hints []*ast.TableOptimizerHint
 	switch pp := p.(type) {
 	case *Explain:
@@ -35,11 +34,7 @@ func GenHintsFromPhysicalPlan(p Plan) string {
 	case PhysicalPlan:
 		hints = genHintsFromPhysicalPlan(pp, utilhint.TypeSelect)
 	}
-	hintsStr := make([]string, 0, len(hints))
-	for _, hint := range hints {
-		hintsStr = append(hintsStr, utilhint.RestoreTableOptimizerHint(hint))
-	}
-	return strings.Join(hintsStr, ", ")
+	return hints
 }
 
 func getTableName(tblName model.CIStr, asName *model.CIStr) model.CIStr {
@@ -115,6 +110,14 @@ func genHintsFromPhysicalPlan(p PhysicalPlan, nodeType utilhint.NodeType) (res [
 			HintName: model.NewCIStr(HintUseIndex),
 			Tables:   []ast.HintTable{{DBName: tbl.DBName, TableName: getTableName(tbl.Table.Name, tbl.TableAsName)}},
 		})
+		if tbl.StoreType == kv.TiFlash {
+			res = append(res, &ast.TableOptimizerHint{
+				QBName:   utilhint.GenerateQBName(nodeType, pp.blockOffset),
+				HintName: model.NewCIStr(HintReadFromStorage),
+				HintData: model.NewCIStr(kv.TiFlash.Name()),
+				Tables:   []ast.HintTable{{DBName: tbl.DBName, TableName: getTableName(tbl.Table.Name, tbl.TableAsName)}},
+			})
+		}
 	case *PhysicalIndexLookUpReader:
 		index := pp.IndexPlans[0].(*PhysicalIndexScan)
 		res = append(res, &ast.TableOptimizerHint{

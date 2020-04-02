@@ -248,7 +248,7 @@ func (sr *simpleRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok boo
 			RetType: types.NewFieldType(mysql.TypeVarchar),
 		})
 	case *ast.SetCollationExpr:
-		arg := sr.pop()
+		arg := sr.stack[len(sr.stack)-1]
 		if collate.NewCollationEnabled() {
 			var collInfo *charset.Collation
 			// TODO(bb7133): use charset.ValidCharsetAndCollation when its bug is fixed.
