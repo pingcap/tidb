@@ -389,8 +389,8 @@ type SessionVars struct {
 	// This variable is currently not recommended to be turned on.
 	AllowWriteRowID bool
 
-	// AllowBatchCop means if we can push batch coprocessor to tiflash. default value is 1, means to push in case of aggregation and join.
-	// value is set to 2 , which means to force to push in any case. value is set to 0 means never push.
+	// AllowBatchCop means if we should send batch coprocessor to TiFlash. Default value is 1, means to use batch cop in case of aggregation and join.
+	// If value is set to 2 , which means to force to send batch cop for any query. Value is set to 0 means never use batch cop.
 	AllowBatchCop int
 
 	// CorrelationThreshold is the guard to enable row count estimation using column order correlation.
@@ -1067,7 +1067,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBIndexJoinBatchSize:
 		s.IndexJoinBatchSize = tidbOptPositiveInt32(val, DefIndexJoinBatchSize)
 	case TiDBAllowBatchCop:
-		s.AllowBatchCop = tidbOptPositiveInt32(val, DefAllowBatchCop)
+		s.AllowBatchCop = tidbOptPositiveInt32(val, DefTiDBAllowBatchCop)
 	case TiDBIndexLookupSize:
 		s.IndexLookupSize = tidbOptPositiveInt32(val, DefIndexLookupSize)
 	case TiDBHashJoinConcurrency:

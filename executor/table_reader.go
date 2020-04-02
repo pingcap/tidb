@@ -88,7 +88,7 @@ type TableReaderExecutor struct {
 	virtualColumnIndex []int
 	// virtualColumnRetFieldTypes records the RetFieldTypes of virtual columns.
 	virtualColumnRetFieldTypes []*types.FieldType
-
+	// batchCop indicates whether use super batch coprocessor request, only works for TiFlash engine.
 	batchCop bool
 }
 

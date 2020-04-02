@@ -16,8 +16,6 @@ package tikvrpc
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
 	"sync/atomic"
 	"time"
 
@@ -316,7 +314,6 @@ func (req *Request) Cop() *coprocessor.Request {
 
 // BatchCop returns coprocessor request in request.
 func (req *Request) BatchCop() *coprocessor.BatchRequest {
-	logutil.BgLogger().Debug("convert batch cop")
 	return req.req.(*coprocessor.BatchRequest)
 }
 
@@ -704,11 +701,6 @@ func GenRegionErrorResp(req *Request, e *errorpb.Error) (*Response, error) {
 				RegionError: e,
 			},
 		}
-	case CmdBatchCop:
-		// todo support batch cop
-		p = &coprocessor.BatchResponse{
-			OtherError: e.Message,
-		}
 	case CmdMvccGetByKey:
 		p = &kvrpcpb.MvccGetByKeyResponse{
 			RegionError: e,
@@ -826,7 +818,6 @@ func CallRPC(ctx context.Context, client tikvpb.TikvClient, req *Request) (*Resp
 	case CmdBatchCop:
 		var streamClient tikvpb.Tikv_BatchCoprocessorClient
 		streamClient, err = client.BatchCoprocessor(ctx, req.BatchCop())
-		logutil.BgLogger().Info("send batch cop", zap.Error(err))
 		resp.Resp = &BatchCopStreamResponse{
 			Tikv_BatchCoprocessorClient: streamClient,
 		}

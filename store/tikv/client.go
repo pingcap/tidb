@@ -16,7 +16,6 @@ package tikv
 
 import (
 	"context"
-	"go.uber.org/zap"
 	"io"
 	"math"
 	"strconv"
@@ -350,9 +349,7 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	client := tikvpb.NewTikvClient(clientConn)
 
 	if req.Type == tikvrpc.CmdBatchCop {
-		logutil.BgLogger().Debug("send query to ", zap.String("store addr", addr))
 		return c.getBatchCopStreamResponse(ctx, client, req, timeout, connArray)
-
 	}
 
 	if req.Type == tikvrpc.CmdCopStream {
@@ -427,7 +424,7 @@ func (c *rpcClient) getBatchCopStreamResponse(ctx context.Context, client tikvpb
 		if errors.Cause(err) != io.EOF {
 			return nil, errors.Trace(err)
 		}
-		logutil.BgLogger().Debug("copstream returns nothing for the request.")
+		logutil.BgLogger().Debug("batch copstream returns nothing for the request.")
 	}
 	copStream.BatchResponse = first
 	return resp, nil

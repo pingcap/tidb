@@ -62,7 +62,7 @@ type RegionRequestSender struct {
 	failStoreIDs map[uint64]struct{}
 }
 
-// RegionBatchRequestSender sends BatchCop requests to TiFlash server streamingly.
+// RegionBatchRequestSender sends BatchCop requests to TiFlash server by stream way.
 type RegionBatchRequestSender struct {
 	RegionRequestSender
 }
@@ -72,29 +72,25 @@ func NewRegionBatchRequestSender(cache *RegionCache, client Client) *RegionBatch
 	return &RegionBatchRequestSender{RegionRequestSender: RegionRequestSender{regionCache: cache, client: client}}
 }
 
-func (ss *RegionBatchRequestSender) sendReqToAddr(bo *Backoffer, ctxs []copTaskAndRPCContext, req *tikvrpc.Request, timout time.Duration) (resp *tikvrpc.Response, err error) {
-	// use the first ctx to send request
+func (ss *RegionBatchRequestSender) sendReqToAddr(bo *Backoffer, ctxs []copTaskAndRPCContext, req *tikvrpc.Request, timout time.Duration) (resp *tikvrpc.Response, retry bool, err error) {
+	// use the first ctx to send request, because every ctx has same address.
 	ctx := ctxs[0].ctx
 	if e := tikvrpc.SetContext(req, ctx.Meta, ctx.Peer); e != nil {
-		return nil, errors.Trace(e)
+		return nil, false, errors.Trace(e)
 	}
-	for {
-		logutil.BgLogger().Debug("begin send")
-		resp, err = ss.client.SendRequest(bo.ctx, ctx.Addr, req, timout)
-		logutil.BgLogger().Debug("end send")
-		if err != nil {
-			ss.rpcError = err
-			// todo should all the region need to call onSendFail??
-			e := ss.onSendFail(bo, ctx, err)
+	resp, err = ss.client.SendRequest(bo.ctx, ctx.Addr, req, timout)
+	if err != nil {
+		ss.rpcError = err
+		for _, failedCtx := range ctxs {
+			e := ss.onSendFail(bo, failedCtx.ctx, err)
 			if e != nil {
-				return nil, errors.Trace(e)
+				return nil, false, errors.Trace(e)
 			}
-			// always return error on send fail
-			return nil, errors.Trace(err)
 		}
-		logutil.BgLogger().Debug("no error")
-		return resp, nil
+		return nil, true, nil
 	}
+	// We don't need to process region error or lock error. Because TiFlash will retry by itself.
+	return
 }
 
 // NewRegionRequestSender creates a new sender.
