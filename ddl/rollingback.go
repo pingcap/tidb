@@ -311,7 +311,9 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 			logutil.Logger(w.logCtx).Info("[ddl] the DDL job is cancelled normally", zap.String("job", job.String()), zap.Error(err))
 		}
 
-		job.Error = toTError(err)
+		if job.Error == nil {
+			job.Error = toTError(err)
+		}
 		job.ErrorCount++
 	}
 	return
