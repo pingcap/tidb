@@ -27,7 +27,7 @@ type Tracker = memory.Tracker
 //	2. "bytesLimit <= 0" means no limit.
 var NewTracker = memory.NewTracker
 
-// GlobalPanicOnExceed panics when GlobalDisTracker storage usage exceeds storage quota.
+// GlobalPanicOnExceed panics when GlobalDiskTracker storage usage exceeds storage quota.
 type GlobalPanicOnExceed struct {
 	mutex sync.Mutex // For synchronization.
 }
