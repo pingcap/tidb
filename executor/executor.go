@@ -928,6 +928,7 @@ func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64) *kv.LockCtx {
 		PessimisticLockWaited: &seVars.StmtCtx.PessimisticLockWaited,
 		LockKeysDuration:      &seVars.StmtCtx.LockKeysDuration,
 		LockKeysCount:         &seVars.StmtCtx.LockKeysCount,
+		LockExpired:           &seVars.TxnCtx.LockExpire,
 	}
 }
 
