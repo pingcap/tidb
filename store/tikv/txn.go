@@ -335,6 +335,7 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 	}
 	txn.mu.Unlock()
 	if len(keys) == 0 {
+		lockCtx.AlreadyLocked = true
 		return nil
 	}
 	if txn.IsPessimistic() && lockCtx.ForUpdateTS > 0 {

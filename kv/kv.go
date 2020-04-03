@@ -214,6 +214,14 @@ type LockCtx struct {
 	Values                map[string]ReturnedValue
 	ValuesLock            sync.Mutex
 	LockExpired           *uint32
+
+	// Force lock even if there are write conflict error, the latest value will be returned.
+	Force bool
+
+	// Response value for force lock.
+	AlreadyLocked bool
+	Value         []byte
+	ValueCommitTS uint64
 }
 
 // ReturnedValue pairs the Value and AlreadyLocked flag for PessimisticLock return values result.

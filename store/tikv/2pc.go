@@ -786,6 +786,7 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 		WaitTimeout:  action.LockWaitTime,
 		ReturnValues: action.ReturnValues,
 		MinCommitTs:  c.forUpdateTS + 1,
+		Force:        action.Force,
 	}, pb.Context{Priority: c.priority, SyncLog: c.syncLog})
 	lockWaitStartTime := action.WaitStartTime
 	for {
@@ -824,7 +825,10 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 		lockResp := resp.Resp.(*pb.PessimisticLockResponse)
 		keyErrs := lockResp.GetErrors()
 		if len(keyErrs) == 0 {
-			if action.ReturnValues {
+			if action.Force {
+				action.Value = lockResp.Value
+				action.ValueCommitTS = lockResp.CommitTs
+			} else if action.ReturnValues {
 				action.ValuesLock.Lock()
 				for i, mutation := range mutations {
 					action.Values[string(mutation.Key)] = kv.ReturnedValue{Value: lockResp.Values[i]}

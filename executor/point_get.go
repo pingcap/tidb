@@ -15,10 +15,10 @@ package executor
 
 import (
 	"context"
-
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/table"
@@ -189,20 +189,30 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 			failpoint.InjectContext(ctx, "pointGetRepeatableReadTest-step2", nil)
 		})
 	}
+	failpoint.Inject("beforeGetHandle", func() {})
 
 	key := tablecodec.EncodeRowKeyWithHandle(tblID, e.handle)
-	val, err := e.getAndLock(ctx, key)
+	useForceLock := e.lock && e.ctx.GetSessionVars().TxnCtx.IsPessimistic
+	val, err := e.getAndLock(ctx, key, useForceLock, req)
 	if err != nil {
 		return err
 	}
-	if len(val) == 0 {
-		if e.idxInfo != nil {
-			return kv.ErrNotExist.GenWithStack("inconsistent extra index %s, handle %d not found in table",
-				e.idxInfo.Name.O, e.handle)
+	// useForceLock will also decode row to chunk, for pessimistic transactions only
+	if !useForceLock {
+		if len(val) == 0 {
+			if e.idxInfo != nil {
+				return kv.ErrNotExist.GenWithStack("inconsistent extra index %s, handle %d not found in table",
+					e.idxInfo.Name.O, e.handle)
+			}
+			return nil
 		}
-		return nil
+		return e.fillChunkRow(val, req)
 	}
-	err = decodeRowValToChunk(e.base(), e.tblInfo, e.handle, val, req, e.rowDecoder)
+	return nil
+}
+
+func (e *PointGetExecutor) fillChunkRow(val []byte, req *chunk.Chunk) error {
+	err := decodeRowValToChunk(e.base(), e.tblInfo, e.handle, val, req, e.rowDecoder)
 	if err != nil {
 		return err
 	}
@@ -215,7 +225,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
-func (e *PointGetExecutor) getAndLock(ctx context.Context, key kv.Key) (val []byte, err error) {
+func (e *PointGetExecutor) getAndLock(ctx context.Context, key kv.Key, useForceLock bool, chk *chunk.Chunk) (val []byte, err error) {
 	if e.ctx.GetSessionVars().IsPessimisticReadConsistency() {
 		// Lock the got keys in RC isolation.
 		val, err = e.get(ctx, key)
@@ -225,7 +235,9 @@ func (e *PointGetExecutor) getAndLock(ctx context.Context, key kv.Key) (val []by
 		if err != nil {
 			return nil, err
 		}
-		err = e.lockKeyIfNeeded(ctx, key)
+	}
+	if useForceLock {
+		err = e.forceLockKey(ctx, key, chk)
 		if err != nil {
 			return nil, err
 		}
@@ -236,11 +248,118 @@ func (e *PointGetExecutor) getAndLock(ctx context.Context, key kv.Key) (val []by
 	if err != nil {
 		return nil, err
 	}
-	val, err = e.get(ctx, key)
-	if err != nil && !kv.ErrNotExist.Equal(err) {
-		return nil, err
+	if !e.ctx.GetSessionVars().IsPessimisticReadConsistency() {
+		val, err = e.get(ctx, key)
+		if err != nil && !kv.ErrNotExist.Equal(err) {
+			return nil, err
+		}
 	}
 	return val, nil
+}
+
+func (e *PointGetExecutor) checkUniqueIndex(key []byte, chk *chunk.Chunk) error {
+	indexValues := make([]types.Datum, 0, 4)
+	for _, idxCol := range e.idxInfo.Columns {
+		colIdx := -1
+		colID := e.tblInfo.Columns[idxCol.Offset].ID
+		var schemaCol *expression.Column
+		for idx, colInSchema := range e.Schema().Columns {
+			if colInSchema.ID == colID {
+				colIdx = idx
+				schemaCol = colInSchema
+				break
+			}
+		}
+		if schemaCol != nil {
+			val := chk.GetRow(0).GetDatum(colIdx, schemaCol.RetType)
+			indexValues = append(indexValues, val)
+		}
+	}
+	conflictErr := kv.ErrWriteConflict.FastGenByArgs(e.startTS, 0, 0, key)
+	if len(indexValues) != len(e.idxVals) {
+		return conflictErr
+	}
+	for i, readlVal := range indexValues {
+		cmpRes, err := readlVal.CompareDatum(e.ctx.GetSessionVars().StmtCtx, &e.idxVals[i])
+		if err != nil {
+			return conflictErr
+		}
+		if cmpRes != 0 {
+			return conflictErr
+		}
+	}
+	return nil
+}
+
+// forceLockKey will try to lock the key even if the key value commitTS greater than forUpdateTS, and the
+// key will be locked and the value will be returned, some checks are needed to ensure the index and row
+// key consistency
+func (e *PointGetExecutor) forceLockKey(ctx context.Context, key []byte, chk *chunk.Chunk) error {
+	if e.ctx.GetSessionVars().IsPessimisticReadConsistency() {
+		// Lock the got keys in RC isolation.
+		_, err := e.get(ctx, key)
+		if kv.ErrNotExist.Equal(err) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+	}
+	seVars := e.ctx.GetSessionVars()
+	lockCtx := newLockCtx(seVars, e.lockWaitTime)
+	lockCtx.Force = true
+	err := doLockKeys(ctx, e.ctx, lockCtx, key)
+	if err != nil {
+		return err
+	}
+	// key is already locked, get the value from cache
+	if lockCtx.AlreadyLocked {
+		var val []byte
+		val, err = e.get(ctx, key)
+		if err != nil && !kv.ErrNotExist.Equal(err) {
+			return err
+		}
+		if len(val) == 0 {
+			return nil
+		}
+		return e.fillChunkRow(val, chk)
+	}
+	valReturned := lockCtx.Value
+	if e.idxKey != nil {
+		// check consistency
+		// The key is deleted after we get the handle from the unique index.
+		if len(lockCtx.Value) == 0 {
+			return kv.ErrWriteConflict.FastGenByArgs(e.startTS, 0, 0, key)
+		}
+		err = e.fillChunkRow(valReturned, chk)
+		if err != nil {
+			return err
+		}
+		// check the decoded index column value
+		err = e.checkUniqueIndex(key, chk)
+		if err != nil {
+			return err
+		}
+	} else {
+		if len(valReturned) > 0 {
+			err = e.fillChunkRow(valReturned, chk)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	// all checks passed, update the lock cache and forUpdateTS
+	if lockCtx.ValueCommitTS > e.ctx.GetSessionVars().TxnCtx.GetForUpdateTS() {
+		err = UpdateForUpdateTS(e.ctx, lockCtx.ValueCommitTS)
+		if err != nil {
+			return err
+		}
+	}
+	seVars.TxnCtx.SetPessimisticLockCache(kv.Key(key), valReturned)
+	if e.idxKey != nil {
+		seVars.TxnCtx.SetPessimisticLockCache(e.idxKey, e.handleVal)
+	}
+	return nil
 }
 
 func (e *PointGetExecutor) lockKeyIfNeeded(ctx context.Context, key []byte) error {

@@ -1255,3 +1255,106 @@ func (s *testPessimisticSuite) TestTxnWithExpiredPessimisticLocks(c *C) {
 	tk.MustExec("update t1 set c2 = c2 + 1")
 	tk.MustExec("rollback")
 }
+
+func (s *testPessimisticSuite) TestForceLockForPointGet(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (c1 int primary key, c2 int, c3 int, unique key uk(c2))")
+	defer tk.MustExec("drop table if exists t1")
+	tk.MustExec("insert into t1 values (1, 1, 1)")
+	tk.MustExec("insert into t1 values (5, 5, 5)")
+
+	// use input handle key
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("update t1 set c3 = c3 + 1 where c1 = 1")
+	tk.MustQuery("select * from t1 where c1 = 1 for update").Check(testkit.Rows("1 1 2"))
+	tk.MustExec("commit")
+
+	// use unique index key
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("update t1 set c3 = c3 + 1 where c1 = 1")
+	tk.MustQuery("select * from t1 where c2 = 1 for update").Check(testkit.Rows("1 1 3"))
+	tk.MustExec("commit")
+
+	// use unique index key, delete this row between get index value and force lock operation
+	tk.MustExec("set innodb_lock_wait_timeout = 1")
+	for _, mode := range []string{"delete", "update", "update_local_uk_not_change", "update_local_uk_change"} {
+		tk.MustExec("begin pessimistic")
+		errCh := make(chan error)
+		fpName := "github.com/pingcap/tidb/executor/beforeGetHandle"
+		c.Assert(failpoint.Enable(fpName, "pause"), IsNil)
+		defer failpoint.Disable(fpName)
+		go func() {
+			var err error
+			defer func() {
+				errCh <- err
+			}()
+			time.Sleep(200 * time.Millisecond)
+			if mode == "delete" {
+				_, err = tk2.Exec("delete from t1 where c1 < 2")
+			} else if mode == "update" {
+				_, err = tk2.Exec("update t1 set c1 = 10, c2 = 10 where c1 < 2")
+			} else if mode == "update_local_uk_not_change" {
+				_, err = tk2.Exec("update t1 set c3 = 100 where c1 < 2")
+			} else if mode == "update_local_uk_change" {
+				_, err = tk2.Exec("update t1 set c2 = 10086 where c1 < 2")
+			}
+			if err != nil {
+				return
+			}
+			err = failpoint.Disable(fpName)
+			if err != nil {
+				return
+			}
+		}()
+		if mode == "delete" || mode == "update" {
+			tk.MustQuery("select * from t1 where c2 = 1 for update").Check(nil)
+			err := <-errCh
+			c.Assert(err, IsNil)
+			tk.MustExec("commit")
+			tk.MustExec("begin pessimistic")
+			tk.MustQuery("select * from t1 where c2 in (1, 2) for update").Check(nil)
+			tk.MustExec("commit")
+		} else if mode == "update_local_uk_not_change" {
+			tk.MustQuery("select * from t1 where c2 = 1 for update").Check(testkit.Rows("1 1 100"))
+			err := <-errCh
+			c.Assert(err, IsNil)
+			tk.MustExec("commit")
+			tk.MustExec("begin pessimistic")
+			tk.MustQuery("select * from t1 where c2 in (1, 2) for update").Check(testkit.Rows("1 1 100"))
+			tk.MustExec("commit")
+		} else if mode == "update_local_uk_change" {
+			tk.MustQuery("select * from t1 where c2 = 1 for update").Check(nil)
+			err := <-errCh
+			c.Assert(err, IsNil)
+			tk.MustExec("commit")
+			tk.MustExec("begin pessimistic")
+			tk.MustQuery("select * from t1 where c2 in (1, 2) for update").Check(nil)
+			tk.MustQuery("select * from t1 where c2 = 10086 for update").Check(testkit.Rows("1 10086 3"))
+			tk.MustQuery("select * from t1 where c2 in (10086, 10087) for update").Check(testkit.Rows("1 10086 3"))
+			tk.MustExec("commit")
+		}
+		if mode == "delete" {
+			tk2.MustExec("begin")
+			tk2.MustQuery("select * from t1 for update").Check(testkit.Rows("5 5 5"))
+			tk2.MustExec("commit")
+		} else if mode == "update" {
+			tk2.MustExec("begin")
+			tk2.MustQuery("select * from t1 for update").Check(testkit.Rows("5 5 5", "10 10 3"))
+			tk2.MustExec("commit")
+		} else if mode == "update_local_uk_not_change" {
+			tk2.MustExec("begin")
+			tk2.MustQuery("select * from t1 for update").Check(testkit.Rows("1 1 100", "5 5 5", "10 10 3"))
+			tk2.MustExec("delete from t1 where c1 = 1")
+			tk2.MustExec("commit")
+		} else if mode == "update_local_uk_change" {
+			tk2.MustExec("begin")
+			tk2.MustQuery("select * from t1 for update").Check(testkit.Rows("1 10086 3", "5 5 5", "10 10 3"))
+			tk2.MustExec("delete from t1 where c1 = 1")
+			tk2.MustExec("commit")
+		}
+		tk2.MustExec("insert into t1 values(1, 1, 3)")
+	}
+}

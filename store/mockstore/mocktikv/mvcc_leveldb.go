@@ -475,11 +475,18 @@ type lockCtx struct {
 
 	returnValues bool
 	values       [][]byte
+	forceLock    bool
+	forceValue   *mvccValue
 }
 
 // PessimisticLock writes the pessimistic lock.
 func (mvcc *MVCCLevelDB) PessimisticLock(req *kvrpcpb.PessimisticLockRequest) *kvrpcpb.PessimisticLockResponse {
 	resp := &kvrpcpb.PessimisticLockResponse{}
+	if req.Force && (len(req.Mutations) != 1 || req.ReturnValues) {
+		err := errors.New("Force lock with invalid input param")
+		resp.Errors = convertToKeyErrors([]error{err})
+		return resp
+	}
 	mvcc.mu.Lock()
 	defer mvcc.mu.Unlock()
 	mutations := req.Mutations
@@ -490,6 +497,7 @@ func (mvcc *MVCCLevelDB) PessimisticLock(req *kvrpcpb.PessimisticLockRequest) *k
 		ttl:          req.LockTtl,
 		minCommitTs:  req.MinCommitTs,
 		returnValues: req.ReturnValues,
+		forceLock:    req.Force,
 	}
 	lockWaitTime := req.WaitTimeout
 
@@ -520,8 +528,15 @@ func (mvcc *MVCCLevelDB) PessimisticLock(req *kvrpcpb.PessimisticLockRequest) *k
 		resp.Errors = convertToKeyErrors([]error{err})
 		return resp
 	}
-	if req.ReturnValues {
-		resp.Values = lCtx.values
+	if req.Force {
+		if lCtx.forceValue != nil {
+			resp.CommitTs = lCtx.forceValue.commitTS
+			resp.Value = lCtx.forceValue.value
+		}
+	} else {
+		if req.ReturnValues {
+			resp.Values = lCtx.values
+		}
 	}
 	return resp
 }
@@ -559,12 +574,16 @@ func (mvcc *MVCCLevelDB) pessimisticLockMutation(batch *leveldb.Batch, mutation 
 
 	// For pessimisticLockMutation, check the correspond rollback record, there may be rollbackLock
 	// operation between startTS and forUpdateTS
-	val, err := checkConflictValue(iter, mutation, forUpdateTS, startTS, true)
+	mvccVal, err := checkConflictValue(iter, mutation, forUpdateTS, startTS, true, lctx.forceLock)
 	if err != nil {
 		return err
 	}
-	if lctx.returnValues {
-		lctx.values = append(lctx.values, val)
+	if lctx.forceLock {
+		lctx.forceValue = mvccVal
+	} else {
+		if lctx.returnValues {
+			lctx.values = append(lctx.values, mvccVal.value)
+		}
 	}
 
 	lock := mvccLock{
@@ -688,7 +707,8 @@ func (mvcc *MVCCLevelDB) Prewrite(req *kvrpcpb.PrewriteRequest) []error {
 	return errs
 }
 
-func checkConflictValue(iter *Iterator, m *kvrpcpb.Mutation, forUpdateTS uint64, startTS uint64, getVal bool) ([]byte, error) {
+func checkConflictValue(iter *Iterator, m *kvrpcpb.Mutation, forUpdateTS uint64, startTS uint64, getVal bool, forceLock bool) (*mvccValue, error) {
+	retVal := &mvccValue{}
 	dec := &valueDecoder{
 		expectKey: m.Key,
 	}
@@ -697,23 +717,24 @@ func checkConflictValue(iter *Iterator, m *kvrpcpb.Mutation, forUpdateTS uint64,
 		return nil, errors.Trace(err)
 	}
 	if !ok {
-		return nil, nil
+		return retVal, nil
 	}
 
 	// Note that it's a write conflict here, even if the value is a rollback one, or a op_lock record
 	if dec.value.commitTS > forUpdateTS {
-		return nil, &ErrConflict{
-			StartTS:          forUpdateTS,
-			ConflictTS:       dec.value.startTS,
-			ConflictCommitTS: dec.value.commitTS,
-			Key:              m.Key,
+		if !forceLock {
+			return nil, &ErrConflict{
+				StartTS:          forUpdateTS,
+				ConflictTS:       dec.value.startTS,
+				ConflictCommitTS: dec.value.commitTS,
+				Key:              m.Key,
+			}
 		}
 	}
 
 	needGetVal := getVal
 	needCheckAssertion := m.Assertion == kvrpcpb.Assertion_NotExist
 	needCheckRollback := true
-	var retVal []byte
 	// do the check or get operations within one iteration to make CI faster
 	for ok {
 		if needCheckRollback {
@@ -747,7 +768,8 @@ func checkConflictValue(iter *Iterator, m *kvrpcpb.Mutation, forUpdateTS uint64,
 		}
 		if needGetVal {
 			if dec.value.valueType == typeDelete || dec.value.valueType == typePut {
-				retVal = dec.value.value
+				retVal.value = dec.value.value
+				retVal.commitTS = dec.value.commitTS
 				needGetVal = false
 			}
 		}
@@ -762,7 +784,7 @@ func checkConflictValue(iter *Iterator, m *kvrpcpb.Mutation, forUpdateTS uint64,
 	if getVal {
 		return retVal, nil
 	}
-	return nil, nil
+	return retVal, nil
 }
 
 func prewriteMutation(db *leveldb.DB, batch *leveldb.Batch,
@@ -808,7 +830,7 @@ func prewriteMutation(db *leveldb.DB, batch *leveldb.Batch,
 		if isPessimisticLock {
 			return ErrAbort("pessimistic lock not found")
 		}
-		_, err = checkConflictValue(iter, mutation, startTS, startTS, false)
+		_, err = checkConflictValue(iter, mutation, startTS, startTS, false, false)
 		if err != nil {
 			return err
 		}
