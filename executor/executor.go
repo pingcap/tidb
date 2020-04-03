@@ -113,15 +113,15 @@ func (a *globalPanicOnExceed) SetLogHook(hook func(uint64)) {}
 func (a *globalPanicOnExceed) Action(t *memory.Tracker) {
 	a.mutex.Lock()
 	defer a.mutex.Unlock()
-	panic(GlobalPanicStorageExceed)
+	panic(globalPanicStorageExceed)
 }
 
 // SetFallback sets a fallback action.
 func (a *globalPanicOnExceed) SetFallback(memory.ActionOnExceed) {}
 
 const (
-	// GlobalPanicStorageExceed represents the panic message when out of storage quota.
-	GlobalPanicStorageExceed string = "Out Of Global Storage Quota!"
+	// globalPanicStorageExceed represents the panic message when out of storage quota.
+	globalPanicStorageExceed string = "Out Of Global Storage Quota!"
 )
 
 func init() {
