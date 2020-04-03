@@ -11481,14 +11481,20 @@ SequenceOption:
 |	"ORDER"
 	{
 		$$ = &ast.SequenceOption{Tp: ast.SequenceOrder}
+		yylex.AppendError(yylex.Errorf("TiDB Sequence doesn't support ORDER option, ORDER will be parsed but ignored."))
+		parser.lastErrorAsWarn()
 	}
 |	"NOORDER"
 	{
 		$$ = &ast.SequenceOption{Tp: ast.SequenceNoOrder}
+		yylex.AppendError(yylex.Errorf("TiDB Sequence doesn't support ORDER option, NOORDER will be parsed but ignored."))
+		parser.lastErrorAsWarn()
 	}
 |	"NO" "ORDER"
 	{
 		$$ = &ast.SequenceOption{Tp: ast.SequenceNoOrder}
+		yylex.AppendError(yylex.Errorf("TiDB Sequence doesn't support ORDER option, NO ORDER will be parsed but ignored."))
+		parser.lastErrorAsWarn()
 	}
 
 SignedNum:
@@ -11515,7 +11521,7 @@ DropSequenceStmt:
 		}
 	}
 
-/********************************************************************
+/*******************************************************************
  * Index Advisor Statement
  *
  * INDEX ADVISE
