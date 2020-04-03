@@ -635,6 +635,15 @@ func HashChunkSelected(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk
 			_, _ = h[i].Write(buf)
 			_, _ = h[i].Write(b)
 		}
+	case mysql.TypeNull:
+		for i := 0; i < rows; i++ {
+			if sel != nil && !sel[i] {
+				continue
+			}
+			isNull[i] = true
+			buf[0] = NilFlag
+			_, _ = h[i].Write(buf)
+		}
 	default:
 		return errors.Errorf("unsupport column type for encode %d", tp.Tp)
 	}
