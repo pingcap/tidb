@@ -14,7 +14,6 @@
 package ddl_test
 
 import (
-	"github.com/pingcap/tidb/util/testutil"
 	"strconv"
 
 	. "github.com/pingcap/check"
@@ -26,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testutil"
 )
 
 var _ = Suite(&testSequenceSuite{&testDBSuite{}})
