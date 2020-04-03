@@ -167,18 +167,23 @@ te.expect_time BETWEEN '2018-04-23 00:00:00.0' AND '2018-04-23 23:59:59.0'
 ORDER BY te.expect_time asc
 LIMIT 0, 5;
 id	estRows	task	access object	operator info
-TopN_15	0.00	root		test.te.expect_time:asc, offset:0, count:5
-└─IndexMergeJoin_31	0.00	root		inner join, inner:Projection_29, outer key:test.tr.id, inner key:test.te.trade_id
-  ├─IndexLookUp_78(Build)	0.00	root		
-  │ ├─Selection_76(Build)	0.00	cop[tikv]		eq(test.tr.business_type, 18), eq(test.tr.trade_type, 1)
-  │ │ └─IndexRangeScan_74	10.00	cop[tikv]	table:tr, index:idx_shop_identy_trade_status_business_type(shop_identy, trade_status, business_type, trade_pay_status, trade_type, delivery_type, source, biz_date)	range:[810094178,810094178], keep order:false, stats:pseudo
-  │ └─Selection_77(Probe)	0.00	cop[tikv]		eq(test.tr.brand_identy, 32314), eq(test.tr.domain_type, 2)
-  │   └─TableRowIDScan_75	0.00	cop[tikv]	table:tr	keep order:false, stats:pseudo
-  └─Projection_29(Probe)	1.25	root		test.te.trade_id, test.te.expect_time
-    └─IndexLookUp_28	1.25	root		
-      ├─IndexRangeScan_25(Build)	50.00	cop[tikv]	table:te, index:idx_trade_id(trade_id)	range: decided by [eq(test.te.trade_id, test.tr.id)], keep order:true, stats:pseudo
-      └─Selection_27(Probe)	1.25	cop[tikv]		ge(test.te.expect_time, 2018-04-23 00:00:00.000000), le(test.te.expect_time, 2018-04-23 23:59:59.000000)
-        └─TableRowIDScan_26	50.00	cop[tikv]	table:te	keep order:false, stats:pseudo
+Limit_19	0.00	root		offset:0, count:5
+└─IndexJoin_118	0.00	root		left outer join, inner:IndexReader_117, outer key:test.tr.id, inner key:test.p.relate_id
+  ├─TopN_127(Build)	0.00	root		test.te.expect_time:asc, offset:0, count:5
+  │ └─IndexMergeJoin_51	0.00	root		inner join, inner:Projection_49, outer key:test.tr.id, inner key:test.te.trade_id
+  │   ├─IndexLookUp_98(Build)	0.00	root		
+  │   │ ├─Selection_96(Build)	0.00	cop[tikv]		eq(test.tr.business_type, 18), eq(test.tr.trade_type, 1)
+  │   │ │ └─IndexRangeScan_94	10.00	cop[tikv]	table:tr, index:idx_shop_identy_trade_status_business_type(shop_identy, trade_status, business_type, trade_pay_status, trade_type, delivery_type, source, biz_date)	range:[810094178,810094178], keep order:false, stats:pseudo
+  │   │ └─Selection_97(Probe)	0.00	cop[tikv]		eq(test.tr.brand_identy, 32314), eq(test.tr.domain_type, 2)
+  │   │   └─TableRowIDScan_95	0.00	cop[tikv]	table:tr	keep order:false, stats:pseudo
+  │   └─Projection_49(Probe)	1.25	root		test.te.trade_id, test.te.expect_time
+  │     └─IndexLookUp_48	1.25	root		
+  │       ├─IndexRangeScan_45(Build)	50.00	cop[tikv]	table:te, index:idx_trade_id(trade_id)	range: decided by [eq(test.te.trade_id, test.tr.id)], keep order:true, stats:pseudo
+  │       └─Selection_47(Probe)	1.25	cop[tikv]		ge(test.te.expect_time, 2018-04-23 00:00:00.000000), le(test.te.expect_time, 2018-04-23 23:59:59.000000)
+  │         └─TableRowIDScan_46	50.00	cop[tikv]	table:te	keep order:false, stats:pseudo
+  └─IndexReader_117(Probe)	1.25	root		index:Selection_116
+    └─Selection_116	1.25	cop[tikv]		not(isnull(test.p.relate_id))
+      └─IndexRangeScan_115	1.25	cop[tikv]	table:p, index:payment_relate_id(relate_id)	range: decided by [eq(test.p.relate_id, test.tr.id)], keep order:false, stats:pseudo
 desc select 1 as a from dual order by a limit 1;
 id	estRows	task	access object	operator info
 Projection_6	1.00	root		1->Column#1

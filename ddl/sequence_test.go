@@ -650,6 +650,16 @@ func (s *testSequenceSuite) TestSequenceFunction(c *C) {
 	s.tk.MustExec("drop sequence if exists seq1")
 	s.tk.MustExec("drop table if exists seq1")
 	s.tk.MustExec("drop view if exists seq1")
+
+	// test a bug found in ticase.
+	s.tk.MustExec("create sequence seq")
+	s.tk.MustQuery("select setval(seq, 10)").Check(testkit.Rows("10"))
+	s.tk.MustQuery("select setval(seq, 5)").Check(testkit.Rows("<nil>"))
+	s.tk.MustExec("drop sequence seq")
+	s.tk.MustExec("create sequence seq increment=-1")
+	s.tk.MustQuery("select setval(seq, -10)").Check(testkit.Rows("-10"))
+	s.tk.MustQuery("select setval(seq, -5)").Check(testkit.Rows("<nil>"))
+	s.tk.MustExec("drop sequence seq")
 }
 
 func (s *testSequenceSuite) TestInsertSequence(c *C) {
@@ -713,7 +723,7 @@ func (s *testSequenceSuite) TestInsertSequence(c *C) {
 	s.tk.MustExec("insert into t (id) values(-1),(default)")
 	s.tk.MustQuery("select * from t").Check(testkit.Rows("-1 0", "4 5"))
 
-	// test sequence run out (overflow MaxInt64).
+	// test sequence run out (overflows MaxInt64).
 	setSQL := "select setval(seq," + strconv.FormatInt(model.DefaultPositiveSequenceMaxValue+1, 10) + ")"
 	s.tk.MustQuery(setSQL).Check(testkit.Rows("9223372036854775807"))
 	err := s.tk.QueryToErr("select nextval(seq)")
@@ -805,4 +815,62 @@ func (s *testSequenceSuite) BenchmarkInsertCacheDefaultExpr(c *C) {
 	for i := 0; i < c.N; i++ {
 		s.tk.MustExec(sql)
 	}
+}
+
+func (s *testSequenceSuite) TestSequenceFunctionPrivilege(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test")
+
+	// Test sequence function privilege.
+	s.tk.MustExec("drop sequence if exists seq")
+	s.tk.MustExec("create sequence seq")
+	s.tk.MustExec("drop table if exists t")
+	s.tk.MustExec("create table t(a int default next value for seq)")
+	s.tk.MustExec("drop user if exists myuser@localhost")
+	s.tk.MustExec("create user myuser@localhost")
+	s.tk.MustExec("flush privileges")
+
+	tk1 := testkit.NewTestKit(c, s.store)
+	se, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "myuser", Hostname: "localhost"}, nil, nil), IsTrue)
+	tk1.Se = se
+
+	// grant the myuser the create access to the sequence.
+	s.tk.MustExec("grant insert on test.t to 'myuser'@'localhost'")
+	s.tk.MustExec("flush privileges")
+
+	// INSERT privilege required to use nextval.
+	tk1.MustExec("use test")
+	err = tk1.QueryToErr("select nextval(seq)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[expression:1142]INSERT command denied to user 'myuser'@'localhost' for table 'seq'")
+
+	_, err = tk1.Exec("insert into t values()")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[expression:1142]INSERT command denied to user 'myuser'@'localhost' for table 'seq'")
+
+	// SELECT privilege required to use lastval.
+	err = tk1.QueryToErr("select lastval(seq)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[expression:1142]SELECT command denied to user 'myuser'@'localhost' for table 'seq'")
+
+	// INSERT privilege required to use setval.
+	err = tk1.QueryToErr("select setval(seq, 10)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[expression:1142]INSERT command denied to user 'myuser'@'localhost' for table 'seq'")
+
+	// grant the myuser the SELECT & UPDATE access to sequence seq.
+	s.tk.MustExec("grant SELECT, INSERT on test.seq to 'myuser'@'localhost'")
+	s.tk.MustExec("flush privileges")
+
+	// SELECT privilege required to use nextval.
+	tk1.MustQuery("select nextval(seq)").Check(testkit.Rows("1"))
+	tk1.MustQuery("select lastval(seq)").Check(testkit.Rows("1"))
+	tk1.MustQuery("select setval(seq, 10)").Check(testkit.Rows("10"))
+	tk1.MustExec("insert into t values()")
+
+	s.tk.MustExec("drop table t")
+	s.tk.MustExec("drop sequence seq")
+	s.tk.MustExec("drop user myuser@localhost")
 }
