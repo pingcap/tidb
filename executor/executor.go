@@ -1551,6 +1551,9 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.InExplainStmt = true
 		s = explainStmt.Stmt
 	}
+	if _, ok := s.(*ast.ExplainForStmt); ok {
+		sc.InExplainStmt = true
+	}
 	// TODO: Many same bool variables here.
 	// We should set only two variables (
 	// IgnoreErr and StrictSQLMode) to avoid setting the same bool variables and
