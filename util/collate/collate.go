@@ -216,6 +216,8 @@ func init() {
 	newCollatorMap = make(map[string]Collator)
 	newCollatorIDMap = make(map[int]Collator)
 
+	atomic.StoreInt32(&newCollationEnabled, 1)
+
 	newCollatorMap["binary"] = &binCollator{}
 	newCollatorIDMap[int(mysql.CollationNames["binary"])] = &binCollator{}
 	newCollatorMap["ascii_bin"] = &binPaddingCollator{}
