@@ -150,6 +150,8 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 		return strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().Log.QueryLogMaxLen), 10), true, nil
 	case TiDBCheckMb4ValueInUTF8:
 		return BoolToIntStr(config.GetGlobalConfig().CheckMb4ValueInUTF8), true, nil
+	case TiDBCapturePlanBaseline:
+		return CapturePlanBaseline.GetVal(), true, nil
 	}
 	sVal, ok := s.GetSystemVar(key)
 	if ok {
