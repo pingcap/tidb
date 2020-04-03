@@ -101,7 +101,7 @@ type baseExecutor struct {
 	runtimeStats  *execdetails.RuntimeStats
 }
 
-// GlobalPanicOnExceed panics when GlobalDisTracker storage usage exceeds storage quota.
+// globalPanicOnExceed panics when GlobalDisTracker storage usage exceeds storage quota.
 type globalPanicOnExceed struct {
 	mutex sync.Mutex // For synchronization.
 }
