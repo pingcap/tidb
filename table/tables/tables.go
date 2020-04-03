@@ -1377,7 +1377,7 @@ func (t *TableCommon) SetSequenceVal(ctx interface{}, newVal int64, dbName, seqN
 		return 0, false, err
 	}
 	if !alreadySatisfied {
-		// write sequence binlog to the pumpClient.
+		// Write sequence binlog to the pumpClient.
 		if ctx.(sessionctx.Context).GetSessionVars().BinlogClient != nil {
 			err = writeSequenceUpdateValueBinlog(ctx.(sessionctx.Context), dbName, seqName, seq.end)
 			if err != nil {

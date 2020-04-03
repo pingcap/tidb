@@ -311,7 +311,7 @@ func (alloc *allocator) rebase4Sequence(tableID, requiredBase int64) (int64, boo
 	if alreadySatisfied {
 		return 0, true, nil
 	}
-	return requiredBase, false, nil
+	return requiredBase, false, err
 }
 
 // Rebase implements autoid.Allocator Rebase interface.
@@ -332,7 +332,7 @@ func (alloc *allocator) Rebase(tableID, requiredBase int64, allocIDs bool) error
 }
 
 // Rebase implements autoid.Allocator RebaseSeq interface.
-// the return value is quite same as expression function, bool means whether it should be NULL,
+// The return value is quite same as expression function, bool means whether it should be NULL,
 // here it will be used in setval expression function (true meaning the set value has been satisfied, return NULL).
 // case1:When requiredBase is satisfied with current value, it will return (0, true, nil),
 // case2:When requiredBase is successfully set in, it will return (requiredBase, false, nil).
