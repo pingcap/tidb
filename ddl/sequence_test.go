@@ -14,6 +14,7 @@
 package ddl_test
 
 import (
+	"github.com/pingcap/tidb/util/testutil"
 	"strconv"
 
 	. "github.com/pingcap/check"
@@ -59,6 +60,23 @@ func (s *testSequenceSuite) TestCreateSequence(c *C) {
 
 	// test unsupported table option in sequence.
 	s.tk.MustGetErrCode("create sequence seq CHARSET=utf8", mysql.ErrSequenceUnsupportedTableOption)
+
+	// test temporary and order warning.
+	s.tk.MustExec("create temporary sequence seq")
+	s.tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1064|You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 25 near \"sequence seq\"TiDB doesn't support TEMPORARY TABLE, TEMPORARY will be parsed but ignored. "))
+	s.tk.MustExec("drop sequence if exists seq")
+
+	s.tk.MustExec("create sequence seq order")
+	s.tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1064|You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 25 near \"\"TiDB Sequence doesn't support ORDER option, ORDER will be parsed but ignored. "))
+	s.tk.MustExec("drop sequence if exists seq")
+
+	s.tk.MustExec("create sequence seq no order")
+	s.tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1064|You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 28 near \"\"TiDB Sequence doesn't support ORDER option, NO ORDER will be parsed but ignored. "))
+	s.tk.MustExec("drop sequence if exists seq")
+
+	s.tk.MustExec("create sequence seq noorder")
+	s.tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1064|You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 27 near \"\"TiDB Sequence doesn't support ORDER option, NOORDER will be parsed but ignored. "))
+	s.tk.MustExec("drop sequence if exists seq")
 
 	_, err := s.tk.Exec("create sequence seq comment=\"test\"")
 	c.Assert(err, IsNil)
