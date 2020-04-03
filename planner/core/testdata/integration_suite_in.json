@@ -1,18 +1,5 @@
 [
   {
-    "name": "TestPushLimitDownIndexLookUpReader",
-    "cases": [
-      // Limit should be pushed down into IndexLookUpReader, row count of IndexLookUpReader and TableScan should be 1.00.
-      "explain select * from tbl use index(idx_b_c) where b > 1 limit 2,1",
-      // Projection atop IndexLookUpReader, Limit should be pushed down into IndexLookUpReader, and Projection should have row count 1.00 as well.
-      "explain select * from tbl use index(idx_b_c) where b > 1 order by b desc limit 2,1",
-      // Limit should be pushed down into IndexLookUpReader when Selection on top of IndexScan.
-      "explain select * from tbl use index(idx_b_c) where b > 1 and c > 1 limit 2,1",
-      // Limit should NOT be pushed down into IndexLookUpReader when Selection on top of TableScan.
-      "explain select * from tbl use index(idx_b_c) where b > 1 and a > 1 limit 2,1"
-    ]
-  },
-  {
     "name": "TestIsFromUnixtimeNullRejective",
     "cases": [
       // fix #12385

@@ -595,6 +595,7 @@ func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tblInf
 		}
 	}
 
+	_, isolationReadEnginesHasTiKV := b.ctx.GetSessionVars().GetIsolationReadEngines()[kv.TiKV]
 	for i, hint := range indexHints {
 		if hint.HintScope != ast.HintForScan {
 			continue
@@ -602,6 +603,17 @@ func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tblInf
 
 		hasScanHint = true
 
+		if !isolationReadEnginesHasTiKV {
+			if hint.IndexNames != nil {
+				engineVals, _ := b.ctx.GetSessionVars().GetSystemVar(variable.TiDBIsolationReadEngines)
+				err := errors.New(fmt.Sprintf("TiDB doesn't support index in the isolation read engines(value: '%v')", engineVals))
+				if i < indexHintsLen {
+					return nil, err
+				}
+				b.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			}
+			continue
+		}
 		// It is syntactically valid to omit index_list for USE INDEX, which means “use no indexes”.
 		// Omitting index_list for FORCE INDEX or IGNORE INDEX is a syntax error.
 		// See https://dev.mysql.com/doc/refman/8.0/en/index-hints.html.
@@ -655,10 +667,6 @@ func (b *PlanBuilder) filterPathByIsolationRead(paths []*accessPath, dbName mode
 	if dbName.L == mysql.SystemDB || dbName.L == "information_schema" || dbName.L == "performance_schema" {
 		return paths, nil
 	}
-	cfgIsolationEngines := set.StringSet{}
-	for _, engine := range config.GetGlobalConfig().IsolationRead.Engines {
-		cfgIsolationEngines.Insert(engine)
-	}
 	isolationReadEngines := b.ctx.GetSessionVars().GetIsolationReadEngines()
 	availableEngine := map[kv.StoreType]struct{}{}
 	var availableEngineStr string
@@ -672,16 +680,13 @@ func (b *PlanBuilder) filterPathByIsolationRead(paths []*accessPath, dbName mode
 		}
 		if _, ok := isolationReadEngines[paths[i].storeType]; !ok {
 			paths = append(paths[:i], paths[i+1:]...)
-		} else if _, ok := cfgIsolationEngines[paths[i].storeType.Name()]; !ok {
-			paths = append(paths[:i], paths[i+1:]...)
 		}
 	}
 	var err error
 	if len(paths) == 0 {
 		engineVals, _ := b.ctx.GetSessionVars().GetSystemVar(variable.TiDBIsolationReadEngines)
-		err = ErrInternal.GenWithStackByArgs(fmt.Sprintf("Can not find access path matching '%v'(value: '%v') "+
-			"and tidb-server config isolation-read(engines: '%v'). Available values are '%v'.",
-			variable.TiDBIsolationReadEngines, engineVals, config.GetGlobalConfig().IsolationRead.Engines, availableEngineStr))
+		err = ErrInternal.GenWithStackByArgs(fmt.Sprintf("Can not find access path matching '%v'(value: '%v'). Available values are '%v'.",
+			variable.TiDBIsolationReadEngines, engineVals, availableEngineStr))
 	}
 	return paths, err
 }
