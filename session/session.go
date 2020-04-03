@@ -598,7 +598,12 @@ func (s *session) isTxnRetryableError(err error) bool {
 }
 
 func (s *session) checkTxnAborted(stmt sqlexec.Statement) error {
-	if s.txn.doNotCommit == nil {
+	var err error
+	if s.txn.doNotCommit != nil {
+		err = errors.New("current transaction is aborted, commands ignored until end of transaction block:" + s.txn.doNotCommit.Error())
+	} else if atomic.LoadUint32(&s.GetSessionVars().TxnCtx.LockExpire) > 0 {
+		err = tikv.ErrLockExpire
+	} else {
 		return nil
 	}
 	// If the transaction is aborted, the following statements do not need to execute, except `commit` and `rollback`,
@@ -609,7 +614,7 @@ func (s *session) checkTxnAborted(stmt sqlexec.Statement) error {
 	if _, ok := stmt.(*executor.ExecStmt).StmtNode.(*ast.RollbackStmt); ok {
 		return nil
 	}
-	return errors.New("current transaction is aborted, commands ignored until end of transaction block:" + s.txn.doNotCommit.Error())
+	return err
 }
 
 func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
