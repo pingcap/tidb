@@ -42,6 +42,8 @@ import (
 	"go.uber.org/zap"
 )
 
+const knobSwitch = "2pcKnobs"
+
 type twoPhaseCommitAction interface {
 	handleSingleBatch(*twoPhaseCommitter, *Backoffer, batchMutations) error
 	tiKVTxnRegionsNumHistogram() prometheus.Observer
@@ -158,6 +160,11 @@ type twoPhaseCommitter struct {
 	regionTxnSize map[uint64]int
 	// Used by pessimistic transaction and large transaction.
 	ttlManager
+
+	testingKnobs struct {
+		secondaryCommitDoneWg sync.WaitGroup
+		sendCommitReq         func(bo *Backoffer, req *tikvrpc.Request, batch batchMutations) (*tikvrpc.Response, error, bool)
+	}
 }
 
 type committerMutations struct {
@@ -503,7 +510,16 @@ func (c *twoPhaseCommitter) doActionOnMutations(bo *Backoffer, action twoPhaseCo
 		// The backoffer instance is created outside of the goroutine to avoid
 		// potential data race in unit test since `CommitMaxBackoff` will be updated
 		// by test suites.
-		secondaryBo := NewBackoffer(context.Background(), CommitMaxBackoff).WithVars(c.txn.vars)
+		failpoint.Inject(knobSwitch, func() {
+			c.testingKnobs.secondaryCommitDoneWg.Add(1)
+		})
+		secondaryBo := &Backoffer{
+			ctx:        context.Background(),
+			maxSleep:   bo.maxSleep,
+			totalSleep: bo.totalSleep,
+			errors:     bo.errors,
+			vars:       bo.vars,
+		}
 		go func() {
 			e := c.doActionOnBatches(secondaryBo, action, batches)
 			if e != nil {
@@ -513,6 +529,9 @@ func (c *twoPhaseCommitter) doActionOnMutations(bo *Backoffer, action twoPhaseCo
 					zap.Error(e))
 				tikvSecondaryLockCleanupFailureCounterCommit.Inc()
 			}
+			failpoint.Inject(knobSwitch, func() {
+				c.testingKnobs.secondaryCommitDoneWg.Done()
+			})
 		}()
 	} else {
 		err = c.doActionOnBatches(bo, action, batches)
@@ -971,18 +990,7 @@ func (actionCommit) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch
 		CommitVersion: c.commitTS,
 	}, pb.Context{Priority: c.priority, SyncLog: c.syncLog})
 
-	sender := NewRegionRequestSender(c.store.regionCache, c.store.client)
-	resp, err := sender.SendReq(bo, req, batch.region, readTimeoutShort)
-
-	// If we fail to receive response for the request that commits primary key, it will be undetermined whether this
-	// transaction has been successfully committed.
-	// Under this circumstance,  we can not declare the commit is complete (may lead to data lost), nor can we throw
-	// an error (may lead to the duplicated key error when upper level restarts the transaction). Currently the best
-	// solution is to populate this error and let upper layer drop the connection to the corresponding mysql client.
-	if batch.isPrimary && sender.rpcError != nil {
-		c.setUndeterminedErr(errors.Trace(sender.rpcError))
-	}
-
+	resp, err := c.sendReq(bo, req, batch)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1062,6 +1070,30 @@ func (actionCommit) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch
 	// We mark transaction's status committed when we receive the first success response.
 	c.mu.committed = true
 	return nil
+}
+
+func (c *twoPhaseCommitter) sendReq(bo *Backoffer, req *tikvrpc.Request, batch batchMutations) (*tikvrpc.Response, error) {
+	failpoint.Inject(knobSwitch, func() {
+		if c.testingKnobs.sendCommitReq != nil {
+			resp, err, skip := c.testingKnobs.sendCommitReq(bo, req, batch)
+			if !skip {
+				failpoint.Return(resp, err)
+			}
+		}
+	})
+
+	sender := NewRegionRequestSender(c.store.regionCache, c.store.client)
+	resp, err := sender.SendReq(bo, req, batch.region, readTimeoutShort)
+
+	// If we fail to receive response for the request that commits primary key, it will be undetermined whether this
+	// transaction has been successfully committed.
+	// Under this circumstance,  we can not declare the commit is complete (may lead to data lost), nor can we throw
+	// an error (may lead to the duplicated key error when upper level restarts the transaction). Currently the best
+	// solution is to populate this error and let upper layer drop the connection to the corresponding mysql client.
+	if batch.isPrimary && sender.rpcError != nil {
+		c.setUndeterminedErr(errors.Trace(sender.rpcError))
+	}
+	return resp, err
 }
 
 func (actionCleanup) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch batchMutations) error {
