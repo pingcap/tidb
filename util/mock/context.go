@@ -174,7 +174,6 @@ func (c *Context) InitTxnWithStartTS(startTS uint64) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		txn.SetCap(kv.DefaultTxnMembufCap)
 		c.txn.Transaction = txn
 	}
 	return nil
