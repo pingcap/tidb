@@ -619,9 +619,9 @@ func generateOriginDefaultValue(col *model.ColumnInfo) (interface{}, error) {
 	return odValue, nil
 }
 
-func findColumnInIndexCols(c string, cols []*ast.IndexColName) bool {
+func findColumnInIndexCols(c string, cols []*model.IndexColumn) bool {
 	for _, c1 := range cols {
-		if c == c1.Column.Name.L {
+		if c == c1.Name.L {
 			return true
 		}
 	}

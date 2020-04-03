@@ -845,6 +845,41 @@ func (s *testRegionCacheSuite) TestFollowerReadFallback(c *C) {
 	c.Assert(ctx.Peer.Id, Equals, peer3)
 }
 
+func (s *testRegionCacheSuite) TestMixedReadFallback(c *C) {
+	// 3 nodes and no.1 is leader.
+	store3 := s.cluster.AllocID()
+	peer3 := s.cluster.AllocID()
+	s.cluster.AddStore(store3, s.storeAddr(store3))
+	s.cluster.AddPeer(s.region1, store3, peer3)
+	s.cluster.ChangeLeader(s.region1, s.peer1)
+
+	loc, err := s.cache.LocateKey(s.bo, []byte("a"))
+	c.Assert(err, IsNil)
+	ctx, err := s.cache.GetTiKVRPCContext(s.bo, loc.Region, kv.ReplicaReadLeader, 0)
+	c.Assert(err, IsNil)
+	c.Assert(ctx.Peer.Id, Equals, s.peer1)
+	c.Assert(len(ctx.Meta.Peers), Equals, 3)
+
+	// verify follower to be store1, store2 and store3
+	ctxFollower1, err := s.cache.GetTiKVRPCContext(s.bo, loc.Region, kv.ReplicaReadMixed, 0)
+	c.Assert(err, IsNil)
+	c.Assert(ctxFollower1.Peer.Id, Equals, s.peer1)
+
+	ctxFollower2, err := s.cache.GetTiKVRPCContext(s.bo, loc.Region, kv.ReplicaReadMixed, 1)
+	c.Assert(err, IsNil)
+	c.Assert(ctxFollower2.Peer.Id, Equals, s.peer2)
+
+	ctxFollower3, err := s.cache.GetTiKVRPCContext(s.bo, loc.Region, kv.ReplicaReadMixed, 2)
+	c.Assert(err, IsNil)
+	c.Assert(ctxFollower3.Peer.Id, Equals, peer3)
+
+	// send fail on store2, next follower read is going to fallback to store3
+	s.cache.OnSendFail(s.bo, ctxFollower1, false, errors.New("test error"))
+	ctx, err = s.cache.GetTiKVRPCContext(s.bo, loc.Region, kv.ReplicaReadMixed, 0)
+	c.Assert(err, IsNil)
+	c.Assert(ctx.Peer.Id, Equals, s.peer2)
+}
+
 func (s *testRegionCacheSuite) TestFollowerMeetEpochNotMatch(c *C) {
 	// 3 nodes and no.1 is region1 leader.
 	store3 := s.cluster.AllocID()
@@ -866,6 +901,33 @@ func (s *testRegionCacheSuite) TestFollowerMeetEpochNotMatch(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(ctxFollower1.Peer.Id, Equals, s.peer2)
 	c.Assert(ctxFollower1.Store.storeID, Equals, s.store2)
+
+	regionErr := &errorpb.Error{EpochNotMatch: &errorpb.EpochNotMatch{}}
+	reqSend.onRegionError(s.bo, ctxFollower1, &followReqSeed, regionErr)
+	c.Assert(followReqSeed, Equals, uint32(1))
+}
+
+func (s *testRegionCacheSuite) TestMixedMeetEpochNotMatch(c *C) {
+	// 3 nodes and no.1 is region1 leader.
+	store3 := s.cluster.AllocID()
+	peer3 := s.cluster.AllocID()
+	s.cluster.AddStore(store3, s.storeAddr(store3))
+	s.cluster.AddPeer(s.region1, store3, peer3)
+	s.cluster.ChangeLeader(s.region1, s.peer1)
+
+	// Check the two regions.
+	loc1, err := s.cache.LocateKey(s.bo, []byte("a"))
+	c.Assert(err, IsNil)
+	c.Assert(loc1.Region.id, Equals, s.region1)
+
+	reqSend := NewRegionRequestSender(s.cache, nil)
+
+	// follower read failed on store1
+	followReqSeed := uint32(0)
+	ctxFollower1, err := s.cache.GetTiKVRPCContext(s.bo, loc1.Region, kv.ReplicaReadMixed, followReqSeed)
+	c.Assert(err, IsNil)
+	c.Assert(ctxFollower1.Peer.Id, Equals, s.peer1)
+	c.Assert(ctxFollower1.Store.storeID, Equals, s.store1)
 
 	regionErr := &errorpb.Error{EpochNotMatch: &errorpb.EpochNotMatch{}}
 	reqSend.onRegionError(s.bo, ctxFollower1, &followReqSeed, regionErr)
