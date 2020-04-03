@@ -18,6 +18,8 @@ import (
 	"context"
 	"math"
 	"math/rand"
+	"reflect"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -26,12 +28,20 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 )
+
+var testKnobSwitch string
+
+func init() {
+	pkg := reflect.TypeOf(twoPhaseCommitter{}).PkgPath()
+	testKnobSwitch = pkg + "/" + knobSwitch
+}
 
 type testCommitterSuite struct {
 	OneByOneSuite
@@ -481,6 +491,65 @@ func (s *testCommitterSuite) TestPrewriteTxnSize(c *C) {
 	for i := byte(100); i < 120; i++ {
 		lock := s.getLockInfo(c, []byte{i})
 		c.Assert(int(lock.TxnSize), Equals, 20)
+	}
+}
+
+func (s *testCommitterSuite) TestCommitRetryLimit(c *C) {
+	c.Assert(failpoint.Enable(testKnobSwitch, `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable(testKnobSwitch), IsNil)
+	}()
+
+	// prepare regions.
+	region, _ := s.cluster.GetRegionByKey([]byte{50})
+	oldRegionID := region.Id
+	for i := byte(50); i < 70; i++ {
+		newRegionID := s.cluster.AllocID()
+		newPeerID := s.cluster.AllocID()
+		s.cluster.Split(oldRegionID, newRegionID, []byte{i}, []uint64{newPeerID}, newPeerID)
+		oldRegionID = newRegionID
+	}
+	txn := s.begin(c)
+	var val [1024]byte
+	for i := byte(50); i < 70; i++ {
+		err := txn.Set([]byte{i}, val[:])
+		c.Assert(err, IsNil)
+	}
+
+	committer, err := newTwoPhaseCommitterWithInit(txn, 1)
+	c.Assert(err, IsNil)
+	ctx := context.Background()
+	err = committer.prewriteMutations(NewBackoffer(ctx, PrewriteMaxBackoff), committer.mutations)
+	c.Assert(err, IsNil)
+	committer.commitTS = txn.StartTS() + 1
+
+	// mock kv store has down or busy and always returns deadline exceed in batch client for secondary keys.
+	// so region cache will return a region error to trigger outside retry.
+	committer.testingKnobs.sendCommitReq = func(bo *Backoffer, req *tikvrpc.Request, batch batchMutations) (response *tikvrpc.Response, err error, skip bool) {
+		if !batch.isPrimary {
+			response, err = tikvrpc.GenRegionErrorResp(req, &errorpb.Error{EpochNotMatch: &errorpb.EpochNotMatch{}})
+			return
+		}
+		skip = true
+		return
+	}
+	c.Assert(committer.commitMutations(NewBackoffer(ctx, CommitMaxBackoff), committer.mutations), IsNil)
+
+	// wait secondary keys goroutines(include retry guys) done.
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+	doneCh := make(chan struct{})
+	go func() {
+		committer.testingKnobs.secondaryCommitDoneWg.Wait()
+		close(doneCh)
+	}()
+	for {
+		select {
+		case <-ticker.C:
+			fmt.Println(runtime.NumGoroutine())
+		case <-doneCh:
+			return
+		}
 	}
 }
 
