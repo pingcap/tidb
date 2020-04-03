@@ -15,6 +15,8 @@ package statistics
 
 import (
 	"math"
+	"math/bits"
+	"sort"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
@@ -48,6 +50,32 @@ const (
 	pkType
 	colType
 )
+
+func compareType(l, r int) int {
+	if l == r {
+		return 0
+	}
+	if l == colType {
+		return -1
+	}
+	if l == pkType {
+		return 1
+	}
+	if r == colType {
+		return 1
+	}
+	return -1
+}
+
+// MockExprSet is only used for test.
+func MockExprSet(id int64, m int64, num int) *exprSet {
+	return &exprSet{ID: id, mask: m, numCols: num}
+}
+
+// MockExprSetSlice is only used for test.
+func MockExprSetSlice(l int) []*exprSet {
+	return make([]*exprSet, l)
+}
 
 const unknownColumnID = math.MinInt64
 
@@ -201,7 +229,7 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 			sets = append(sets, &exprSet{tp: indexType, ID: id, mask: maskCovered, ranges: ranges, numCols: len(idxInfo.Info.Columns), partCover: partCover})
 		}
 	}
-	sets = getUsableSetsByGreedy(sets)
+	sets = GetUsableSetsByGreedy(sets)
 	// Initialize the mask with the full set.
 	mask := (int64(1) << uint(len(remainedExprs))) - 1
 	for _, set := range sets {
@@ -271,17 +299,32 @@ func getMaskAndRanges(ctx sessionctx.Context, exprs []expression.Expression, ran
 	return mask, ranges, false, nil
 }
 
-// getUsableSetsByGreedy will select the indices and pk used for calculate selectivity by greedy algorithm.
-func getUsableSetsByGreedy(sets []*exprSet) (newBlocks []*exprSet) {
+// GetUsableSetsByGreedy will select the indices and pk used for calculate selectivity by greedy algorithm.
+func GetUsableSetsByGreedy(sets []*exprSet) (newBlocks []*exprSet) {
+	sort.Slice(sets, func(i int, j int) bool {
+		if r := compareType(sets[i].tp, sets[j].tp); r != 0 {
+			return r < 0
+		}
+		return sets[i].ID < sets[j].ID
+	})
+	marked := make([]bool, len(sets))
 	mask := int64(math.MaxInt64)
 	for {
 		// Choose the index that covers most.
-		bestID, bestCount, bestTp, bestNumCols := -1, 0, colType, 0
+		bestID, bestCount, bestTp, bestNumCols, bestMask := -1, 0, colType, 0, int64(0)
 		for i, set := range sets {
-			set.mask &= mask
-			bits := popCount(set.mask)
+			if marked[i] {
+				continue
+			}
+			curMask := set.mask & mask
+			if curMask != set.mask {
+				marked[i] = true
+				continue
+			}
+			bits := bits.OnesCount64(uint64(curMask))
 			// This set cannot cover any thing, just skip it.
 			if bits == 0 {
+				marked[i] = true
 				continue
 			}
 			// We greedy select the stats info based on:
@@ -289,7 +332,7 @@ func getUsableSetsByGreedy(sets []*exprSet) (newBlocks []*exprSet) {
 			// (2): The number of expression that it covers, the more the better.
 			// (3): The number of columns that it contains, the less the better.
 			if (bestTp == colType && set.tp != colType) || bestCount < bits || (bestCount == bits && bestNumCols > set.numCols) {
-				bestID, bestCount, bestTp, bestNumCols = i, bits, set.tp, set.numCols
+				bestID, bestCount, bestTp, bestNumCols, bestMask = i, bits, set.tp, set.numCols, curMask
 			}
 		}
 		if bestCount == 0 {
@@ -297,22 +340,10 @@ func getUsableSetsByGreedy(sets []*exprSet) (newBlocks []*exprSet) {
 		}
 
 		// update the mask, remove the bit that sets[bestID].mask has.
-		mask &^= sets[bestID].mask
+		mask &^= bestMask
 
 		newBlocks = append(newBlocks, sets[bestID])
-		// remove the chosen one
-		sets = append(sets[:bestID], sets[bestID+1:]...)
+		marked[bestID] = true
 	}
 	return
-}
-
-// popCount is the digit sum of the binary representation of the number x.
-func popCount(x int64) int {
-	ret := 0
-	// x -= x & -x, remove the lowest bit of the x.
-	// e.g. result will be 2 if x is 3.
-	for ; x > 0; x -= x & -x {
-		ret++
-	}
-	return ret
 }
