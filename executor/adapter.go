@@ -128,6 +128,7 @@ func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		a.lastErr = err
 		return err
 	}
+	a.stmt.Ctx.GetSessionVars().StmtCtx.DiskTracker.DeAttach()
 	numRows := req.NumRows()
 	if numRows == 0 {
 		if a.stmt != nil {
