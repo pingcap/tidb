@@ -18060,14 +18060,20 @@ yynewstate:
 	case 2062:
 		{
 			parser.yyVAL.item = &ast.SequenceOption{Tp: ast.SequenceOrder}
+			yylex.AppendError(yylex.Errorf("TiDB Sequence doesn't support ORDER option, ORDER will be parsed but ignored."))
+			parser.lastErrorAsWarn()
 		}
 	case 2063:
 		{
 			parser.yyVAL.item = &ast.SequenceOption{Tp: ast.SequenceNoOrder}
+			yylex.AppendError(yylex.Errorf("TiDB Sequence doesn't support ORDER option, NOORDER will be parsed but ignored."))
+			parser.lastErrorAsWarn()
 		}
 	case 2064:
 		{
 			parser.yyVAL.item = &ast.SequenceOption{Tp: ast.SequenceNoOrder}
+			yylex.AppendError(yylex.Errorf("TiDB Sequence doesn't support ORDER option, NO ORDER will be parsed but ignored."))
+			parser.lastErrorAsWarn()
 		}
 	case 2065:
 		{
