@@ -897,14 +897,14 @@ func (s *testStateChangeSuite) TestParallelDropColumn(c *C) {
 	s.testControlParallelExecSQL(c, sql, sql, f)
 }
 
-// func (s *testStateChangeSuite) TestParallelDropColumns(c *C) {
-// 	sql := "ALTER TABLE t drop COLUMN c, drop COLUMN d;"
-// 	f := func(c *C, err1, err2 error) {
-// 		c.Assert(err1, IsNil)
-// 		c.Assert(err2.Error(), Equals, "[ddl:1091]column c doesn't exist")
-// 	}
-// 	s.testControlParallelExecSQL(c, sql, sql, f)
-// }
+func (s *testStateChangeSuite) TestParallelDropColumns(c *C) {
+	sql := "ALTER TABLE t drop COLUMN b, drop COLUMN c;"
+	f := func(c *C, err1, err2 error) {
+		c.Assert(err1, IsNil)
+		c.Assert(err2.Error(), Equals, "[ddl:1091]column b doesn't exist")
+	}
+	s.testControlParallelExecSQL(c, sql, sql, f)
+}
 
 func (s *testStateChangeSuite) TestParallelDropIndex(c *C) {
 	sql1 := "alter table t drop index idx1 ;"
