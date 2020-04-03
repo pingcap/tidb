@@ -1433,6 +1433,207 @@
     ]
   },
   {
+    "Name": "TestPushdownDistinctEnable",
+    "Cases": [
+      {
+        "SQL": "select /*+ HASH_AGG() */ avg(distinct a) from t;",
+        "Plan": [
+          "HashAgg_8 1.00 root  funcs:avg(distinct Column#6)->Column#5",
+          "└─Projection_10 1.00 root  cast(test.t.a, decimal(65,4) BINARY)->Column#6",
+          "  └─TableReader_9 1.00 root  data:HashAgg_5",
+          "    └─HashAgg_5 1.00 cop[tikv]  group by:test.t.a, ",
+          "      └─TableFullScan_7 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1.5000"
+        ]
+      },
+      {
+        "SQL": "select /*+ HASH_AGG() */ a, count(distinct a) from t;",
+        "Plan": [
+          "Projection_4 1.00 root  test.t.a, Column#5",
+          "└─HashAgg_8 1.00 root  funcs:count(distinct test.t.a)->Column#5, funcs:firstrow(Column#6)->test.t.a",
+          "  └─TableReader_9 1.00 root  data:HashAgg_5",
+          "    └─HashAgg_5 1.00 cop[tikv]  group by:test.t.a, funcs:firstrow(test.t.a)->Column#6",
+          "      └─TableFullScan_7 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 2"
+        ]
+      },
+      {
+        "SQL": "select /*+ HASH_AGG() */ avg(b), c, avg(b), count(distinct A, B),  count(distinct A), count(distinct c), sum(b) from t group by c;",
+        "Plan": [
+          "Projection_4 8000.00 root  Column#5, test.t.c, Column#5, Column#6, Column#7, Column#8, Column#9",
+          "└─HashAgg_8 8000.00 root  group by:test.t.c, funcs:avg(Column#10, Column#11)->Column#5, funcs:count(distinct test.t.a, test.t.b)->Column#6, funcs:count(distinct test.t.a)->Column#7, funcs:count(distinct test.t.c)->Column#8, funcs:sum(Column#12)->Column#9, funcs:firstrow(test.t.c)->test.t.c",
+          "  └─TableReader_9 8000.00 root  data:HashAgg_5",
+          "    └─HashAgg_5 8000.00 cop[tikv]  group by:test.t.a, test.t.b, test.t.c, funcs:count(test.t.b)->Column#10, funcs:sum(test.t.b)->Column#11, funcs:sum(test.t.b)->Column#12",
+          "      └─TableFullScan_7 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1.0000 1 1.0000 1 1 1 1",
+          "1.3333 3 1.3333 3 2 1 4",
+          "2.0000 <nil> 2.0000 1 1 0 2"
+        ]
+      },
+      {
+        "SQL": "select /*+ STREAM_AGG() */ count(distinct c) from t group by c;",
+        "Plan": [
+          "StreamAgg_11 8000.00 root  group by:test.t.c, funcs:count(distinct test.t.c)->Column#5",
+          "└─IndexReader_12 8000.00 root  index:StreamAgg_7",
+          "  └─StreamAgg_7 8000.00 cop[tikv]  group by:test.t.c, ",
+          "    └─IndexFullScan_10 10000.00 cop[tikv] table:t, index:c(c) keep order:true, stats:pseudo"
+        ],
+        "Result": [
+          "0",
+          "1",
+          "1"
+        ]
+      },
+      {
+        "SQL": "select /*+ STREAM_AGG() */ count(distinct c) from t;",
+        "Plan": [
+          "StreamAgg_7 1.00 root  funcs:count(distinct test.t.c)->Column#5",
+          "└─IndexReader_11 10000.00 root  index:IndexFullScan_10",
+          "  └─IndexFullScan_10 10000.00 cop[tikv] table:t, index:c(c) keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "2"
+        ]
+      },
+      {
+        "SQL": "select /*+ HASH_AGG() */ count(distinct c) from t;",
+        "Plan": [
+          "HashAgg_9 1.00 root  funcs:count(distinct test.t.c)->Column#5",
+          "└─IndexReader_10 1.00 root  index:HashAgg_5",
+          "  └─HashAgg_5 1.00 cop[tikv]  group by:test.t.c, ",
+          "    └─IndexFullScan_8 10000.00 cop[tikv] table:t, index:c(c) keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "2"
+        ]
+      },
+      {
+        "SQL": "select count(distinct c) from t group by c;",
+        "Plan": [
+          "HashAgg_10 8000.00 root  group by:test.t.c, funcs:count(distinct test.t.c)->Column#5",
+          "└─IndexReader_11 8000.00 root  index:HashAgg_5",
+          "  └─HashAgg_5 8000.00 cop[tikv]  group by:test.t.c, ",
+          "    └─IndexFullScan_9 10000.00 cop[tikv] table:t, index:c(c) keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "0",
+          "1",
+          "1"
+        ]
+      },
+      {
+        "SQL": "select count(distinct c) from t;",
+        "Plan": [
+          "HashAgg_9 1.00 root  funcs:count(distinct test.t.c)->Column#5",
+          "└─IndexReader_10 1.00 root  index:HashAgg_5",
+          "  └─HashAgg_5 1.00 cop[tikv]  group by:test.t.c, ",
+          "    └─IndexFullScan_8 10000.00 cop[tikv] table:t, index:c(c) keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "2"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestPushdownDistinctDisable",
+    "Cases": [
+      {
+        "SQL": "select /*+ HASH_AGG(), AGG_TO_COP() */ avg(distinct a) from t;",
+        "Plan": [
+          "HashAgg_5 1.00 root  funcs:avg(distinct Column#6)->Column#5",
+          "└─Projection_8 10000.00 root  cast(test.t.a, decimal(65,4) BINARY)->Column#6",
+          "  └─TableReader_7 10000.00 root  data:TableFullScan_6",
+          "    └─TableFullScan_6 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1.5000"
+        ]
+      },
+      {
+        "SQL": "select /*+ HASH_AGG(), AGG_TO_COP() */ a, count(distinct a) from t;",
+        "Plan": [
+          "Projection_4 1.00 root  test.t.a, Column#5",
+          "└─HashAgg_5 1.00 root  funcs:count(distinct test.t.a)->Column#5, funcs:firstrow(test.t.a)->test.t.a",
+          "  └─TableReader_7 10000.00 root  data:TableFullScan_6",
+          "    └─TableFullScan_6 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 2"
+        ]
+      },
+      {
+        "SQL": "select /*+ HASH_AGG(), AGG_TO_COP() */ avg(b), c, avg(b), count(distinct A, B),  count(distinct A), count(distinct c), sum(b) from t group by c;",
+        "Plan": [
+          "Projection_4 8000.00 root  Column#5, test.t.c, Column#5, Column#6, Column#7, Column#8, Column#9",
+          "└─HashAgg_5 8000.00 root  group by:Column#17, funcs:avg(Column#10)->Column#5, funcs:count(distinct Column#11, Column#12)->Column#6, funcs:count(distinct Column#13)->Column#7, funcs:count(distinct Column#14)->Column#8, funcs:sum(Column#15)->Column#9, funcs:firstrow(Column#16)->test.t.c",
+          "  └─Projection_8 10000.00 root  cast(test.t.b, decimal(65,4) BINARY)->Column#10, test.t.a, test.t.b, test.t.a, test.t.c, cast(test.t.b, decimal(65,0) BINARY)->Column#15, test.t.c, test.t.c",
+          "    └─TableReader_7 10000.00 root  data:TableFullScan_6",
+          "      └─TableFullScan_6 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1.0000 1 1.0000 1 1 1 1",
+          "1.3333 3 1.3333 3 2 1 4",
+          "2.0000 <nil> 2.0000 1 1 0 2"
+        ]
+      },
+      {
+        "SQL": "select /*+ STREAM_AGG(), AGG_TO_COP() */ count(distinct c) from t group by c;",
+        "Plan": [
+          "StreamAgg_6 8000.00 root  group by:test.t.c, funcs:count(distinct test.t.c)->Column#5",
+          "└─IndexReader_9 10000.00 root  index:IndexFullScan_8",
+          "  └─IndexFullScan_8 10000.00 cop[tikv] table:t, index:c(c) keep order:true, stats:pseudo"
+        ],
+        "Result": [
+          "0",
+          "1",
+          "1"
+        ]
+      },
+      {
+        "SQL": "select /*+ STREAM_AGG(), AGG_TO_COP() */ count(distinct c) from t;",
+        "Plan": [
+          "StreamAgg_6 1.00 root  funcs:count(distinct test.t.c)->Column#5",
+          "└─IndexReader_11 10000.00 root  index:IndexFullScan_10",
+          "  └─IndexFullScan_10 10000.00 cop[tikv] table:t, index:c(c) keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "2"
+        ]
+      },
+      {
+        "SQL": "select /*+ HASH_AGG(), AGG_TO_COP() */ count(distinct c) from t;",
+        "Plan": [
+          "HashAgg_5 1.00 root  funcs:count(distinct test.t.c)->Column#5",
+          "└─IndexReader_9 10000.00 root  index:IndexFullScan_8",
+          "  └─IndexFullScan_8 10000.00 cop[tikv] table:t, index:c(c) keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "2"
+        ]
+      },
+      {
+        "SQL": "select /*+ AGG_TO_COP() */ count(distinct c) from t group by c;",
+        "Plan": [
+          "StreamAgg_6 8000.00 root  group by:test.t.c, funcs:count(distinct test.t.c)->Column#5",
+          "└─IndexReader_12 10000.00 root  index:IndexFullScan_11",
+          "  └─IndexFullScan_11 10000.00 cop[tikv] table:t, index:c(c) keep order:true, stats:pseudo"
+        ],
+        "Result": [
+          "0",
+          "1",
+          "1"
+        ]
+      }
+    ]
+  },
+  {
     "Name": "TestDAGPlanBuilderWindow",
     "Cases": [
       {
