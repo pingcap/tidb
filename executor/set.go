@@ -220,7 +220,7 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 	case variable.TiDBStmtSummaryMaxSQLLength:
 		return stmtsummary.StmtSummaryByDigestMap.SetMaxSQLLength(valStr, !v.IsGlobal)
 	case variable.TiDBCapturePlanBaseline:
-		variable.CapturePlanBaseline.Set(valStr, !v.IsGlobal)
+		variable.CapturePlanBaseline.Set(strings.ToLower(valStr), !v.IsGlobal)
 	}
 
 	return nil
