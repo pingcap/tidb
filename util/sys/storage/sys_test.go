@@ -16,8 +16,13 @@ package storage_test
 import (
 	"testing"
 
+	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/sys/storage"
 )
+
+func TestT(t *testing.T) {
+	TestingT(t)
+}
 
 func TestGetTargetDirectoryCapacity(t *testing.T) {
 	r, err := storage.GetTargetDirectoryCapacity(".")
