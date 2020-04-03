@@ -1419,6 +1419,9 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 // If the hint is not matched, it will get other candidates.
 // If the hint is not figured, we will pick all candidates.
 func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
+	if prop.IsFlashOnlyProp() && ((p.preferJoinType & preferMergeJoin) > 0 || (p.preferJoinType & preferHashJoin) > 0) {
+		return nil
+	}
 	joins := make([]PhysicalPlan, 0, 5)
 	if p.ctx.GetSessionVars().AllowBCJ {
 		broadCastJoins := p.tryToGetBroadCastJoin(prop)
