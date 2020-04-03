@@ -117,7 +117,7 @@ func (br *BindRecord) prepareHints(sctx sessionctx.Context) error {
 				return err
 			}
 		}
-		hintsSet, err := hint.ParseHintsSet(p, bind.BindSQL, bind.Charset, bind.Collation)
+		hintsSet, err := hint.ParseHintsSet(p, bind.BindSQL, bind.Charset, bind.Collation, br.Db)
 		if err != nil {
 			return err
 		}
