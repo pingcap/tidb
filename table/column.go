@@ -45,9 +45,9 @@ import (
 // Column provides meta data describing a table column.
 type Column struct {
 	*model.ColumnInfo
-	// If this column is a generated column, the expression will be stored here.
+	// GeneratedExpr stores the expression of a generated column.
 	GeneratedExpr ast.ExprNode
-	// If this column has default expr value, this expression will be stored here.
+	// DefaultExpr stores the default expr value of a column if it has one.
 	DefaultExpr ast.ExprNode
 }
 

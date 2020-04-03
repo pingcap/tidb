@@ -879,7 +879,7 @@ func ProduceFloatWithSpecifiedTp(f float64, target *FieldType, sc *stmtctx.State
 			return f, errors.Trace(err)
 		}
 	}
-	if mysql.HasUnsignedFlag(target.Flag) && f < 0 {
+	if mysql.HasUnsignedFlag(target.Flag) && f < 0 && sc.ShouldClipToZero() {
 		return 0, overflow(f, target.Tp)
 	}
 	return f, nil

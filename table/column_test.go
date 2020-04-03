@@ -291,6 +291,19 @@ func (t *testTableSuite) TestCastValue(c *C) {
 	c.Assert(err, NotNil)
 }
 
+func (t *testTableSuite) TestCastOverflow(c *C) {
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().StmtCtx.InInsertStmt = true
+	colInfo := model.ColumnInfo{
+		FieldType: *types.NewFieldType(mysql.TypeFloat),
+		State:     model.StatePublic,
+	}
+	colInfo.Flag |= mysql.UnsignedFlag
+	val, err := CastValue(ctx, types.NewIntDatum(-1), &colInfo)
+	c.Assert(types.ErrOverflow.Equal(err), IsTrue)
+	c.Assert(val.GetFloat32(), Equals, float32(0))
+}
+
 func (t *testTableSuite) TestGetDefaultValue(c *C) {
 	ctx := mock.NewContext()
 	zeroTimestamp := types.ZeroTimestamp
