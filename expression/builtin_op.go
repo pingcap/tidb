@@ -53,7 +53,9 @@ var (
 	_ builtinFunc = &builtinRealIsNullSig{}
 	_ builtinFunc = &builtinStringIsNullSig{}
 	_ builtinFunc = &builtinTimeIsNullSig{}
-	_ builtinFunc = &builtinUnaryNotSig{}
+	_ builtinFunc = &builtinUnaryNotRealSig{}
+	_ builtinFunc = &builtinUnaryNotDecimalSig{}
+	_ builtinFunc = &builtinUnaryNotIntSig{}
 )
 
 type logicAndFunctionClass struct {
@@ -408,8 +410,10 @@ func (c *isTrueOrFalseFunctionClass) getFunction(ctx sessionctx.Context, args []
 	}
 
 	argTp := args[0].GetType().EvalType()
-	if argTp != types.ETReal && argTp != types.ETDecimal {
+	if argTp == types.ETTimestamp || argTp == types.ETDatetime || argTp == types.ETDuration {
 		argTp = types.ETInt
+	} else if argTp == types.ETJson || argTp == types.ETString {
+		argTp = types.ETReal
 	}
 
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, argTp)
@@ -428,6 +432,8 @@ func (c *isTrueOrFalseFunctionClass) getFunction(ctx sessionctx.Context, args []
 		case types.ETInt:
 			sig = &builtinIntIsTrueSig{bf, c.keepNull}
 			sig.setPbCode(tipb.ScalarFuncSig_IntIsTrue)
+		default:
+			return nil, errors.Errorf("unexpected types.EvalType %v", argTp)
 		}
 	case opcode.IsFalsity:
 		switch argTp {
@@ -440,6 +446,8 @@ func (c *isTrueOrFalseFunctionClass) getFunction(ctx sessionctx.Context, args []
 		case types.ETInt:
 			sig = &builtinIntIsFalseSig{bf, c.keepNull}
 			sig.setPbCode(tipb.ScalarFuncSig_IntIsFalse)
+		default:
+			return nil, errors.Errorf("unexpected types.EvalType %v", argTp)
 		}
 	}
 	return sig, nil
@@ -637,33 +645,94 @@ func (c *unaryNotFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		return nil, err
 	}
 
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETInt)
+	argTp := args[0].GetType().EvalType()
+	if argTp == types.ETTimestamp || argTp == types.ETDatetime || argTp == types.ETDuration {
+		argTp = types.ETInt
+	} else if argTp == types.ETJson || argTp == types.ETString {
+		argTp = types.ETReal
+	}
+
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, argTp)
 	bf.tp.Flen = 1
 
-	sig := &builtinUnaryNotSig{bf}
-	sig.setPbCode(tipb.ScalarFuncSig_UnaryNot)
+	var sig builtinFunc
+	switch argTp {
+	case types.ETReal:
+		sig = &builtinUnaryNotRealSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_UnaryNotReal)
+	case types.ETDecimal:
+		sig = &builtinUnaryNotDecimalSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_UnaryNotDecimal)
+	case types.ETInt:
+		sig = &builtinUnaryNotIntSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_UnaryNotInt)
+	default:
+		return nil, errors.Errorf("unexpected types.EvalType %v", argTp)
+	}
 	return sig, nil
 }
 
-type builtinUnaryNotSig struct {
+type builtinUnaryNotRealSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinUnaryNotSig) Clone() builtinFunc {
-	newSig := &builtinUnaryNotSig{}
+func (b *builtinUnaryNotRealSig) Clone() builtinFunc {
+	newSig := &builtinUnaryNotRealSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
 }
 
-func (b *builtinUnaryNotSig) evalInt(row chunk.Row) (int64, bool, error) {
+func (b *builtinUnaryNotRealSig) evalInt(row chunk.Row) (int64, bool, error) {
+	arg, isNull, err := b.args[0].EvalReal(b.ctx, row)
+	if isNull || err != nil {
+		return 0, true, err
+	}
+	if arg == 0 {
+		return 1, false, nil
+	}
+	return 0, false, nil
+}
+
+type builtinUnaryNotDecimalSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinUnaryNotDecimalSig) Clone() builtinFunc {
+	newSig := &builtinUnaryNotDecimalSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinUnaryNotDecimalSig) evalInt(row chunk.Row) (int64, bool, error) {
+	arg, isNull, err := b.args[0].EvalDecimal(b.ctx, row)
+	if isNull || err != nil {
+		return 0, true, err
+	}
+	if arg.IsZero() {
+		return 1, false, nil
+	}
+	return 0, false, nil
+}
+
+type builtinUnaryNotIntSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinUnaryNotIntSig) Clone() builtinFunc {
+	newSig := &builtinUnaryNotIntSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinUnaryNotIntSig) evalInt(row chunk.Row) (int64, bool, error) {
 	arg, isNull, err := b.args[0].EvalInt(b.ctx, row)
 	if isNull || err != nil {
-		return 0, isNull, err
+		return 0, true, err
 	}
-	if arg != 0 {
-		return 0, false, nil
+	if arg == 0 {
+		return 1, false, nil
 	}
-	return 1, false, nil
+	return 0, false, nil
 }
 
 type unaryMinusFunctionClass struct {

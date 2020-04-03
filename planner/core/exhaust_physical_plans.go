@@ -81,7 +81,7 @@ func (p *LogicalJoin) moveEqualToOtherConditions(offsets []int) []expression.Exp
 
 	// Construct otherConds, which is composed of the original other conditions
 	// and the remained unused equal conditions.
-	numOtherConds := len(p.OtherConditions) + len(p.EqualConditions) - len(offsets)
+	numOtherConds := len(p.OtherConditions) + len(p.EqualConditions) - len(usedEqConds)
 	otherConds := make([]expression.Expression, len(p.OtherConditions), numOtherConds)
 	copy(otherConds, p.OtherConditions)
 	for eqCondIdx := range p.EqualConditions {
