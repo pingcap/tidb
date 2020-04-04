@@ -45,6 +45,9 @@ const (
 	// tidb_opt_agg_push_down is used to enable/disable the optimizer rule of aggregation push down.
 	TiDBOptAggPushDown = "tidb_opt_agg_push_down"
 
+	// tidb_opt_distinct_agg_push_down is used to decide whether agg with distinct should be pushed to tikv/tiflash.
+	TiDBOptDistinctAggPushDown = "tidb_opt_distinct_agg_push_down"
+
 	// tidb_opt_write_row_id is used to enable/disable the operations of insert、replace and update to _tidb_rowid.
 	TiDBOptWriteRowID = "tidb_opt_write_row_id"
 
@@ -151,6 +154,21 @@ const (
 	TiDBEvolvePlanTaskStartTime = "tidb_evolve_plan_task_start_time"
 	// TiDBEvolvePlanTaskEndTime is the end time of evolution task.
 	TiDBEvolvePlanTaskEndTime = "tidb_evolve_plan_task_end_time"
+
+	// tidb_slow_log_threshold is used to set the slow log threshold in the server.
+	TiDBSlowLogThreshold = "tidb_slow_log_threshold"
+
+	// tidb_record_plan_in_slow_log is used to log the plan of the slow query.
+	TiDBRecordPlanInSlowLog = "tidb_record_plan_in_slow_log"
+
+	// tidb_enable_slow_log enables TiDB to log slow queries.
+	TiDBEnableSlowLog = "tidb_enable_slow_log"
+
+	// tidb_query_log_max_len is used to set the max length of the query in the log.
+	TiDBQueryLogMaxLen = "tidb_query_log_max_len"
+
+	// TiDBCheckMb4ValueInUTF8 is used to control whether to enable the check wrong utf8 value.
+	TiDBCheckMb4ValueInUTF8 = "tidb_check_mb4_value_in_utf8"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -385,6 +403,7 @@ const (
 	DefChecksumTableConcurrency        = 4
 	DefSkipUTF8Check                   = false
 	DefOptAggPushDown                  = false
+	DefOptDistinctAggPushDown          = false
 	DefOptWriteRowID                   = false
 	DefOptCorrelationThreshold         = 0.9
 	DefOptCorrelationExpFactor         = 1
