@@ -346,7 +346,6 @@ func (s *Server) Close() {
 func (s *Server) onConn(conn *clientConn) {
 	ctx := logutil.WithConnID(context.Background(), conn.connectionID)
 	if err := conn.handshake(ctx); err != nil {
-		terror.Log(err)
 		if plugin.IsEnable(plugin.Audit) {
 			conn.ctx.GetSessionVars().ConnectionInfo = conn.connectInfo()
 		}
