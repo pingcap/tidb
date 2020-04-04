@@ -87,8 +87,6 @@ func (agg *TiDBHashAggImpl) CalcCost(outCount float64, children ...memo.Implemen
 func (agg *TiDBHashAggImpl) AttachChildren(children ...memo.Implementation) memo.Implementation {
 	hashAgg := agg.plan.(*plannercore.PhysicalHashAgg)
 	hashAgg.SetChildren(children[0].GetPlan())
-	// Inject extraProjection if the AggFuncs or GroupByItems contain ScalarFunction.
-	plannercore.InjectProjBelowAgg(hashAgg, hashAgg.AggFuncs, hashAgg.GroupByItems)
 	return agg
 }
 

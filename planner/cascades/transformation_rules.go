@@ -138,6 +138,9 @@ var PostTransformationBatch = TransformationRuleBatch{
 		NewRuleEliminateProjection(),
 		NewRuleMergeAdjacentProjection(),
 	},
+	memo.OperandAggregation: {
+		NewRuleInjectProjectionBelowAgg(),
+	},
 	memo.OperandTopN: {
 		NewRuleInjectProjectionBelowTopN(),
 	},
@@ -2212,6 +2215,122 @@ func (r *InjectProjectionBelowTopN) OnTransform(old *memo.ExprIter) (newExprs []
 	topProjGroupExpr := memo.NewGroupExpr(topProj)
 	topProjGroupExpr.SetChildren(topNGroup)
 	return []*memo.GroupExpr{topProjGroupExpr}, true, false, nil
+}
+
+// InjectProjectionBelowAgg injects Projection below Agg if Agg's AggFuncDesc.Args or
+// Agg's GroupByItem contain ScalarFunctions.
+type InjectProjectionBelowAgg struct {
+	baseRule
+}
+
+// NewRuleInjectProjectionBelowAgg creates a new Transformation NewRuleInjectProjectionBelowAgg.
+// It will extract the ScalarFunctions of `AggFuncDesc` and `GroupByItems` into a Projection and injects it below Agg.
+// The reason why we need this rule is that, AggExecutor in TiDB does not support ScalarFunction
+// as `AggFuncDesc.Arg` and `GroupByItem`. So we have to use a Projection to calculate the ScalarFunctions in advance.
+// The pattern of this rule is: a single Aggregation.
+func NewRuleInjectProjectionBelowAgg() Transformation {
+	rule := &InjectProjectionBelowAgg{}
+	rule.pattern = memo.BuildPattern(
+		memo.OperandAggregation,
+		memo.EngineTiDBOnly,
+	)
+	return rule
+}
+
+// Match implements Transformation interface.
+func (r *InjectProjectionBelowAgg) Match(expr *memo.ExprIter) bool {
+	agg := expr.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
+	return agg.IsCompleteModeAgg()
+}
+
+// OnTransform implements Transformation interface.
+// It will convert `Agg -> X` to `Agg -> Proj -> X`.
+func (r *InjectProjectionBelowAgg) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	agg := old.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
+
+	hasScalarFunc := false
+	copyFuncs := make([]*aggregation.AggFuncDesc, 0, len(agg.AggFuncs))
+	for _, aggFunc := range agg.AggFuncs {
+		copyFunc := aggFunc.Clone()
+		//WrapCastForAggArgs will modify AggFunc, so we should clone AggFunc.
+		copyFunc.WrapCastForAggArgs(agg.SCtx())
+		copyFuncs = append(copyFuncs, copyFunc)
+		for _, arg := range copyFunc.Args {
+			_, isScalarFunc := arg.(*expression.ScalarFunction)
+			hasScalarFunc = hasScalarFunc || isScalarFunc
+		}
+	}
+
+	for i := 0; !hasScalarFunc && i < len(agg.GroupByItems); i++ {
+		_, isScalarFunc := agg.GroupByItems[i].(*expression.ScalarFunction)
+		hasScalarFunc = hasScalarFunc || isScalarFunc
+	}
+	if !hasScalarFunc {
+		return nil, false, false, nil
+	}
+
+	projSchemaCols := make([]*expression.Column, 0, len(copyFuncs)+len(agg.GroupByItems))
+	projExprs := make([]expression.Expression, 0, cap(projSchemaCols))
+
+	for _, f := range copyFuncs {
+		for i, arg := range f.Args {
+			switch expr := arg.(type) {
+			case *expression.Constant:
+				continue
+			case *expression.Column:
+				projExprs = append(projExprs, expr)
+				projSchemaCols = append(projSchemaCols, expr)
+			default:
+				projExprs = append(projExprs, expr)
+				newArg := &expression.Column{
+					UniqueID: agg.SCtx().GetSessionVars().AllocPlanColumnID(),
+					RetType:  arg.GetType(),
+				}
+				projSchemaCols = append(projSchemaCols, newArg)
+				f.Args[i] = newArg
+			}
+		}
+	}
+
+	newGroupByItems := make([]expression.Expression, len(agg.GroupByItems))
+	for i, item := range agg.GroupByItems {
+		switch expr := item.(type) {
+		case *expression.Constant:
+			newGroupByItems[i] = expr
+		case *expression.Column:
+			newGroupByItems[i] = expr
+			projExprs = append(projExprs, expr)
+			projSchemaCols = append(projSchemaCols, expr)
+		default:
+			projExprs = append(projExprs, expr)
+			newArg := &expression.Column{
+				UniqueID: agg.SCtx().GetSessionVars().AllocPlanColumnID(),
+				RetType:  item.GetType(),
+			}
+			projSchemaCols = append(projSchemaCols, newArg)
+			newGroupByItems[i] = newArg
+		}
+	}
+
+	// Construct GroupExpr, Group (Agg -> Proj -> Child).
+	proj := plannercore.LogicalProjection{
+		Exprs: projExprs,
+	}.Init(agg.SCtx(), agg.SelectBlockOffset())
+	projSchema := expression.NewSchema(projSchemaCols...)
+	proj.SetSchema(projSchema)
+	projExpr := memo.NewGroupExpr(proj)
+	projExpr.SetChildren(old.GetExpr().Children[0])
+	projGroup := memo.NewGroupWithSchema(projExpr, projSchema)
+
+	newAgg := plannercore.LogicalAggregation{
+		AggFuncs:     copyFuncs,
+		GroupByItems: newGroupByItems,
+	}.Init(agg.SCtx(), agg.SelectBlockOffset())
+	newAgg.CopyAggHints(agg)
+	newAggExpr := memo.NewGroupExpr(newAgg)
+	newAggExpr.SetChildren(projGroup)
+
+	return []*memo.GroupExpr{newAggExpr}, true, false, nil
 }
 
 // TransformApplyToJoin transforms a LogicalApply to LogicalJoin if it's
