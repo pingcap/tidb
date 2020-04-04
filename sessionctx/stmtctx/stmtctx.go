@@ -143,6 +143,7 @@ type StatementContext struct {
 	PessimisticLockWaited int32
 	LockKeysDuration      time.Duration
 	LockKeysCount         int32
+	TblInfo2UnionScan     map[*model.TableInfo]bool
 }
 
 // StmtHints are SessionVars related sql hints.
