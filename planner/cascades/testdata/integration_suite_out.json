@@ -453,18 +453,19 @@
         ]
       },
       {
-        "SQL": "select max(a), min(b), avg(a / b) from t group by (a+b)",
+        "SQL": "select group_concat(a, b), min(b), avg(a / b), a from t group by (a+b), a order by a",
         "Plan": [
-          "HashAgg_10 8000.00 root  group by:Column#12, funcs:max(test.t.a)->Column#3, funcs:min(test.t.b)->Column#4, funcs:avg(Column#11)->Column#5",
-          "└─Projection_11 10000.00 root  test.t.a, test.t.b, div(cast(test.t.a, decimal(20,0) BINARY), cast(test.t.b, decimal(20,0) BINARY))->Column#11, plus(test.t.a, test.t.b)->Column#12",
-          "  └─TableReader_12 10000.00 root  data:TableFullScan_13",
-          "    └─TableFullScan_13 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "Sort_15 8000.00 root  test.t.a:asc",
+          "└─HashAgg_11 8000.00 root  group by:Column#9, test.t.a, funcs:group_concat(Column#6, Column#7, \",\")->Column#3, funcs:min(test.t.b)->Column#4, funcs:avg(Column#8)->Column#5, funcs:firstrow(test.t.a)->test.t.a",
+          "  └─Projection_12 10000.00 root  cast(test.t.a, var_string(20))->Column#6, cast(test.t.b, var_string(20))->Column#7, test.t.b, div(cast(test.t.a, decimal(20,0) BINARY), cast(test.t.b, decimal(20,0) BINARY))->Column#8, test.t.a, plus(test.t.a, test.t.b)->Column#9, test.t.a",
+          "    └─TableReader_13 10000.00 root  data:TableFullScan_14",
+          "      └─TableFullScan_14 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Result": [
-          "2 22 0.09090909",
-          "3 33 0.09090909",
-          "4 44 0.09090909",
-          "1 11 0.09090909"
+          "111 11 0.09090909 1",
+          "222 22 0.09090909 2",
+          "333 33 0.09090909 3",
+          "444 44 0.09090909 4"
         ]
       }
     ]
