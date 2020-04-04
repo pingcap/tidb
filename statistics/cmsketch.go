@@ -345,7 +345,7 @@ func (c *CMSketch) MergeCMSketch(rc *CMSketch, numTopN uint32) error {
 	if c.depth != rc.depth || c.width != rc.width {
 		return errors.New("Dimensions of Count-Min Sketch should be the same")
 	}
-	if c.topN != nil || rc.topN != nil {
+	if len(c.topN) > 0 || len(rc.topN) > 0 {
 		c.mergeTopN(c.topN, rc.topN, numTopN, false)
 	}
 	c.count += rc.count
@@ -369,7 +369,7 @@ func (c *CMSketch) MergeCMSketch4IncrementalAnalyze(rc *CMSketch, numTopN uint32
 	if c.depth != rc.depth || c.width != rc.width {
 		return errors.New("Dimensions of Count-Min Sketch should be the same")
 	}
-	if c.topN != nil || rc.topN != nil {
+	if len(c.topN) > 0 || len(rc.topN) > 0 {
 		c.mergeTopN(c.topN, rc.topN, numTopN, true)
 	}
 	for i := range c.table {
