@@ -90,7 +90,9 @@ func TestT(t *testing.T) {
 	new.Log.SlowThreshold = 30000 // 30s
 	new.Experimental.AllowsExpressionIndex = true
 	config.StoreGlobalConfig(&new)
-
+	tmpDir := config.GetGlobalConfig().TempStoragePath
+	_ = os.RemoveAll(tmpDir) // clean the uncleared temp file during the last run.
+	_ = os.MkdirAll(tmpDir, 0755)
 	testleak.BeforeTest()
 	TestingT(t)
 	testleak.AfterTestT(t)()
