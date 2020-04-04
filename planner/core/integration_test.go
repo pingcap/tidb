@@ -703,8 +703,8 @@ func (s *testIntegrationSuite) TestIndexHintWarning(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
-	tk.MustExec("create table t1(a int, b int, c int, key a(a))")
-	tk.MustExec("create table t2(a int, b int, c int, key a(a))")
+	tk.MustExec("create table t1(a int, b int, c int, key a(a), key b(b))")
+	tk.MustExec("create table t2(a int, b int, c int, key a(a), key b(b))")
 	var input []string
 	var output []struct {
 		SQL      string
