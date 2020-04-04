@@ -36,7 +36,7 @@ func Build(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal
 	case ast.AggFuncSum:
 		return buildSum(ctx, aggFuncDesc, ordinal)
 	case ast.AggFuncAvg:
-		return buildAvg(aggFuncDesc, ordinal)
+		return buildAvg(ctx, aggFuncDesc, ordinal)
 	case ast.AggFuncFirstRow:
 		return buildFirstRow(aggFuncDesc, ordinal)
 	case ast.AggFuncMax:
@@ -183,7 +183,7 @@ func buildSum(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordi
 }
 
 // buildAvg builds the AggFunc implementation for function "AVG".
-func buildAvg(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+func buildAvg(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	base := baseAggFunc{
 		args:    aggFuncDesc.Args,
 		ordinal: ordinal,
@@ -207,7 +207,10 @@ func buildAvg(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 			if aggFuncDesc.HasDistinct {
 				return &avgOriginal4DistinctFloat64{base}
 			}
-			return &avgOriginal4Float64{baseAvgFloat64{base}}
+			if ctx.GetSessionVars().WindowingUseHighPrecision {
+				return &avgOriginal4Float64HighPrecision{baseAvgFloat64{base}}
+			}
+			return &avgOriginal4Float64{avgOriginal4Float64HighPrecision{baseAvgFloat64{base}}}
 		}
 
 	// Build avg functions which consume the partial result of other avg
