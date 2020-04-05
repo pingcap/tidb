@@ -1749,10 +1749,6 @@ func TimeFromDays(num int64) Time {
 
 func checkDateType(t CoreTime, allowZeroInDate, allowInvalidDate bool) error {
 	year, month, day := t.Year(), t.Month(), t.Day()
-	if year == 0 && month == 0 && day == 0 {
-		return nil
-	}
-
 	if !allowZeroInDate && (month == 0 || day == 0) {
 		return ErrWrongValue.GenWithStackByArgs(DateTimeStr, fmt.Sprintf("%04d-%02d-%02d", year, month, day))
 	}

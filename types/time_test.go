@@ -873,6 +873,7 @@ func (s *testTimeSuite) TestConvert(c *C) {
 
 func (s *testTimeSuite) TestCompare(c *C) {
 	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+	sc.IgnoreZeroInDate = true
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Arg1 string
@@ -890,7 +891,7 @@ func (s *testTimeSuite) TestCompare(c *C) {
 		v1, err := types.ParseTime(sc, t.Arg1, mysql.TypeDatetime, types.MaxFsp)
 		c.Assert(err, IsNil)
 
-		ret, err := v1.CompareString(nil, t.Arg2)
+		ret, err := v1.CompareString(sc, t.Arg2)
 		c.Assert(err, IsNil)
 		c.Assert(ret, Equals, t.Ret)
 	}

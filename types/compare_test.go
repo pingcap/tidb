@@ -153,6 +153,7 @@ func (s *testCompareSuite) TestCompare(c *C) {
 func compareForTest(a, b interface{}) (int, error) {
 	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = true
+	sc.IgnoreZeroInDate = true
 	aDatum := NewDatum(a)
 	bDatum := NewDatum(b)
 	return aDatum.CompareDatum(sc, &bDatum)
