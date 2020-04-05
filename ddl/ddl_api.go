@@ -464,10 +464,14 @@ func checkColumnDefaultValue(ctx sessionctx.Context, col *table.Column, value in
 		// In strict SQL mode or default value is not an empty string.
 		return hasDefaultValue, value, errBlobCantHaveDefault.GenWithStackByArgs(col.Name.O)
 	}
-	if value != nil && ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() &&
-		ctx.GetSessionVars().SQLMode.HasStrictMode() && types.IsTypeTime(col.Tp) {
+	sessVars := ctx.GetSessionVars()
+	if value != nil && sessVars.SQLMode.HasNoZeroDateMode() &&
+		sessVars.SQLMode.HasStrictMode() && types.IsTypeTime(col.Tp) {
 		if vv, ok := value.(string); ok {
+			origVal := sessVars.StmtCtx.IgnoreZeroInDate
+			sessVars.StmtCtx.IgnoreZeroInDate = true
 			timeValue, err := expression.GetTimeValue(ctx, vv, col.Tp, int8(col.Decimal))
+			sessVars.StmtCtx.IgnoreZeroInDate = origVal
 			if err != nil {
 				return hasDefaultValue, value, errors.Trace(err)
 			}
