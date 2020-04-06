@@ -719,6 +719,8 @@ func NewSessionVars() *SessionVars {
 	}
 	terror.Log(vars.SetSystemVar(TiDBEnableStreaming, enableStreaming))
 
+	vars.AllowBatchCop = DefTiDBAllowBatchCop
+
 	var enableChunkRPC string
 	if config.GetGlobalConfig().TiKVClient.EnableChunkRPC {
 		enableChunkRPC = "1"
@@ -1067,7 +1069,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBIndexJoinBatchSize:
 		s.IndexJoinBatchSize = tidbOptPositiveInt32(val, DefIndexJoinBatchSize)
 	case TiDBAllowBatchCop:
-		s.AllowBatchCop = tidbOptPositiveInt32(val, DefTiDBAllowBatchCop)
+		s.AllowBatchCop = int(tidbOptInt64(val, DefTiDBAllowBatchCop))
 	case TiDBIndexLookupSize:
 		s.IndexLookupSize = tidbOptPositiveInt32(val, DefIndexLookupSize)
 	case TiDBHashJoinConcurrency:
