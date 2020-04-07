@@ -109,10 +109,10 @@ Projection_7	53.00	root		test.dt.ds, test.dt.p1, test.dt.p2, test.dt.p3, test.dt
 └─Sort_8	53.00	root		test.dt.ds2:desc
   └─HashAgg_16	53.00	root		group by:test.dt.ds, test.dt.p1, test.dt.p2, test.dt.p3, test.dt.p4, test.dt.p5, test.dt.p6_md5, test.dt.p7_md5, funcs:count(Column#32)->Column#21, funcs:firstrow(test.dt.ds)->test.dt.ds, funcs:firstrow(Column#34)->test.dt.ds2, funcs:firstrow(test.dt.p1)->test.dt.p1, funcs:firstrow(test.dt.p2)->test.dt.p2, funcs:firstrow(test.dt.p3)->test.dt.p3, funcs:firstrow(test.dt.p4)->test.dt.p4, funcs:firstrow(test.dt.p5)->test.dt.p5, funcs:firstrow(test.dt.p6_md5)->test.dt.p6_md5, funcs:firstrow(test.dt.p7_md5)->test.dt.p7_md5
     └─IndexLookUp_17	53.00	root		
-      ├─IndexRangeScan_13(Build)	2650.00	cop[tikv]	table:dt, index:cmi(cm)	range:[1062,1062], [1086,1086], [1423,1423], [1424,1424], [1425,1425], [1426,1426], [1427,1427], [1428,1428], [1429,1429], [1430,1430], [1431,1431], [1432,1432], [1433,1433], [1434,1434], [1435,1435], [1436,1436], [1437,1437], [1438,1438], [1439,1439], [1440,1440], [1441,1441], [1442,1442], [1443,1443], [1444,1444], [1445,1445], [1446,1446], [1447,1447], [1448,1448], [1449,1449], [1450,1450], [1451,1451], [1452,1452], [1488,1488], [1489,1489], [1490,1490], [1491,1491], [1492,1492], [1493,1493], [1494,1494], [1495,1495], [1496,1496], [1497,1497], [1550,1550], [1551,1551], [1552,1552], [1553,1553], [1554,1554], [1555,1555], [1556,1556], [1557,1557], [1558,1558], [1559,1559], [1597,1597], [1598,1598], [1599,1599], [1600,1600], [1601,1601], [1602,1602], [1603,1603], [1604,1604], [1605,1605], [1606,1606], [1607,1607], [1608,1608], [1609,1609], [1610,1610], [1611,1611], [1612,1612], [1613,1613], [1614,1614], [1615,1615], [1616,1616], [1623,1623], [1624,1624], [1625,1625], [1626,1626], [1627,1627], [1628,1628], [1629,1629], [1630,1630], [1631,1631], [1632,1632], [1709,1709], [1719,1719], [1720,1720], [1843,1843], [2813,2813], [2814,2814], [2815,2815], [2816,2816], [2817,2817], [2818,2818], [2819,2819], [2820,2820], [2821,2821], [2822,2822], [2823,2823], [2824,2824], [2825,2825], [2826,2826], [2827,2827], [2828,2828], [2829,2829], [2830,2830], [2831,2831], [2832,2832], [2833,2833], [2834,2834], [2835,2835], [2836,2836], [2837,2837], [2838,2838], [2839,2839], [2840,2840], [2841,2841], [2842,2842], [2843,2843], [2844,2844], [2845,2845], [2846,2846], [2847,2847], [2848,2848], [2849,2849], [2850,2850], [2851,2851], [2852,2852], [2853,2853], [2854,2854], [2855,2855], [2856,2856], [2857,2857], [2858,2858], [2859,2859], [2860,2860], [2861,2861], [2862,2862], [2863,2863], [2864,2864], [2865,2865], [2866,2866], [2867,2867], [2868,2868], [2869,2869], [2870,2870], [2871,2871], [2872,2872], [3139,3139], [3140,3140], [3141,3141], [3142,3142], [3143,3143], [3144,3144], [3145,3145], [3146,3146], [3147,3147], [3148,3148], [3149,3149], [3150,3150], [3151,3151], [3152,3152], [3153,3153], [3154,3154], [3155,3155], [3156,3156], [3157,3157], [3158,3158], [3386,3386], [3387,3387], [3388,3388], [3389,3389], [3390,3390], [3391,3391], [3392,3392], [3393,3393], [3394,3394], [3395,3395], [3664,3664], [3665,3665], [3666,3666], [3667,3667], [3668,3668], [3670,3670], [3671,3671], [3672,3672], [3673,3673], [3674,3674], [3676,3676], [3677,3677], [3678,3678], [3679,3679], [3680,3680], [3681,3681], [3682,3682], [3683,3683], [3684,3684], [3685,3685], [3686,3686], [3687,3687], [3688,3688], [3689,3689], [3690,3690], [3691,3691], [3692,3692], [3693,3693], [3694,3694], [3695,3695], [3696,3696], [3697,3697], [3698,3698], [3699,3699], [3700,3700], [3701,3701], [3702,3702], [3703,3703], [3704,3704], [3705,3705], [3706,3706], [3707,3707], [3708,3708], [3709,3709], [3710,3710], [3711,3711], [3712,3712], [3713,3713], [3714,3714], [3715,3715], [3960,3960], [3961,3961], [3962,3962], [3963,3963], [3964,3964], [3965,3965], [3966,3966], [3967,3967], [3968,3968], [3978,3978], [3979,3979], [3980,3980], [3981,3981], [3982,3982], [3983,3983], [3984,3984], [3985,3985], [3986,3986], [3987,3987], [4208,4208], [4209,4209], [4210,4210], [4211,4211], [4212,4212], [4304,4304], [4305,4305], [4306,4306], [4307,4307], [4308,4308], [4866,4866], [4867,4867], [4868,4868], [4869,4869], [4870,4870], [4871,4871], [4872,4872], [4873,4873], [4874,4874], [4875,4875], keep order:false, stats:pseudo
+      ├─IndexRangeScan_13(Build)	0.00	cop[tikv]	table:dt, index:cmi(cm)	range:[1062,1062], [1086,1086], [1423,1423], [1424,1424], [1425,1425], [1426,1426], [1427,1427], [1428,1428], [1429,1429], [1430,1430], [1431,1431], [1432,1432], [1433,1433], [1434,1434], [1435,1435], [1436,1436], [1437,1437], [1438,1438], [1439,1439], [1440,1440], [1441,1441], [1442,1442], [1443,1443], [1444,1444], [1445,1445], [1446,1446], [1447,1447], [1448,1448], [1449,1449], [1450,1450], [1451,1451], [1452,1452], [1488,1488], [1489,1489], [1490,1490], [1491,1491], [1492,1492], [1493,1493], [1494,1494], [1495,1495], [1496,1496], [1497,1497], [1550,1550], [1551,1551], [1552,1552], [1553,1553], [1554,1554], [1555,1555], [1556,1556], [1557,1557], [1558,1558], [1559,1559], [1597,1597], [1598,1598], [1599,1599], [1600,1600], [1601,1601], [1602,1602], [1603,1603], [1604,1604], [1605,1605], [1606,1606], [1607,1607], [1608,1608], [1609,1609], [1610,1610], [1611,1611], [1612,1612], [1613,1613], [1614,1614], [1615,1615], [1616,1616], [1623,1623], [1624,1624], [1625,1625], [1626,1626], [1627,1627], [1628,1628], [1629,1629], [1630,1630], [1631,1631], [1632,1632], [1709,1709], [1719,1719], [1720,1720], [1843,1843], [2813,2813], [2814,2814], [2815,2815], [2816,2816], [2817,2817], [2818,2818], [2819,2819], [2820,2820], [2821,2821], [2822,2822], [2823,2823], [2824,2824], [2825,2825], [2826,2826], [2827,2827], [2828,2828], [2829,2829], [2830,2830], [2831,2831], [2832,2832], [2833,2833], [2834,2834], [2835,2835], [2836,2836], [2837,2837], [2838,2838], [2839,2839], [2840,2840], [2841,2841], [2842,2842], [2843,2843], [2844,2844], [2845,2845], [2846,2846], [2847,2847], [2848,2848], [2849,2849], [2850,2850], [2851,2851], [2852,2852], [2853,2853], [2854,2854], [2855,2855], [2856,2856], [2857,2857], [2858,2858], [2859,2859], [2860,2860], [2861,2861], [2862,2862], [2863,2863], [2864,2864], [2865,2865], [2866,2866], [2867,2867], [2868,2868], [2869,2869], [2870,2870], [2871,2871], [2872,2872], [3139,3139], [3140,3140], [3141,3141], [3142,3142], [3143,3143], [3144,3144], [3145,3145], [3146,3146], [3147,3147], [3148,3148], [3149,3149], [3150,3150], [3151,3151], [3152,3152], [3153,3153], [3154,3154], [3155,3155], [3156,3156], [3157,3157], [3158,3158], [3386,3386], [3387,3387], [3388,3388], [3389,3389], [3390,3390], [3391,3391], [3392,3392], [3393,3393], [3394,3394], [3395,3395], [3664,3664], [3665,3665], [3666,3666], [3667,3667], [3668,3668], [3670,3670], [3671,3671], [3672,3672], [3673,3673], [3674,3674], [3676,3676], [3677,3677], [3678,3678], [3679,3679], [3680,3680], [3681,3681], [3682,3682], [3683,3683], [3684,3684], [3685,3685], [3686,3686], [3687,3687], [3688,3688], [3689,3689], [3690,3690], [3691,3691], [3692,3692], [3693,3693], [3694,3694], [3695,3695], [3696,3696], [3697,3697], [3698,3698], [3699,3699], [3700,3700], [3701,3701], [3702,3702], [3703,3703], [3704,3704], [3705,3705], [3706,3706], [3707,3707], [3708,3708], [3709,3709], [3710,3710], [3711,3711], [3712,3712], [3713,3713], [3714,3714], [3715,3715], [3960,3960], [3961,3961], [3962,3962], [3963,3963], [3964,3964], [3965,3965], [3966,3966], [3967,3967], [3968,3968], [3978,3978], [3979,3979], [3980,3980], [3981,3981], [3982,3982], [3983,3983], [3984,3984], [3985,3985], [3986,3986], [3987,3987], [4208,4208], [4209,4209], [4210,4210], [4211,4211], [4212,4212], [4304,4304], [4305,4305], [4306,4306], [4307,4307], [4308,4308], [4866,4866], [4867,4867], [4868,4868], [4869,4869], [4870,4870], [4871,4871], [4872,4872], [4873,4873], [4874,4874], [4875,4875], keep order:false, stats:pseudo
       └─HashAgg_11(Probe)	53.00	cop[tikv]		group by:test.dt.ds, test.dt.p1, test.dt.p2, test.dt.p3, test.dt.p4, test.dt.p5, test.dt.p6_md5, test.dt.p7_md5, funcs:count(test.dt.dic)->Column#32, funcs:firstrow(test.dt.ds2)->Column#34
-        └─Selection_15	66.25	cop[tikv]		ge(test.dt.ds, 2016-09-01 00:00:00.000000), le(test.dt.ds, 2016-11-03 00:00:00.000000)
-          └─TableRowIDScan_14	2650.00	cop[tikv]	table:dt	keep order:false, stats:pseudo
+        └─Selection_15	0.00	cop[tikv]		ge(test.dt.ds, 2016-09-01 00:00:00.000000), le(test.dt.ds, 2016-11-03 00:00:00.000000)
+          └─TableRowIDScan_14	0.00	cop[tikv]	table:dt	keep order:false, stats:pseudo
 explain select gad.id as gid,sdk.id as sid,gad.aid as aid,gad.cm as cm,sdk.dic as dic,sdk.ip as ip, sdk.t as t, gad.p1 as p1, gad.p2 as p2, gad.p3 as p3, gad.p4 as p4, gad.p5 as p5, gad.p6_md5 as p6, gad.p7_md5 as p7, gad.ext as ext, gad.t as gtime from st gad join (select id, aid, pt, dic, ip, t from dd where pt = 'android' and bm = 0 and t > 1478143908) sdk on  gad.aid = sdk.aid and gad.ip = sdk.ip and sdk.t > gad.t where gad.t > 1478143908 and gad.pt = 'android' group by gad.aid, sdk.dic limit 2500;
 id	estRows	task	access object	operator info
 Projection_13	1.00	root		test.st.id, test.dd.id, test.st.aid, test.st.cm, test.dd.dic, test.dd.ip, test.dd.t, test.st.p1, test.st.p2, test.st.p3, test.st.p4, test.st.p5, test.st.p6_md5, test.st.p7_md5, test.st.ext, test.st.t
@@ -120,55 +120,55 @@ Projection_13	1.00	root		test.st.id, test.dd.id, test.st.aid, test.st.cm, test.d
   └─HashAgg_19	1.00	root		group by:test.dd.dic, test.st.aid, funcs:firstrow(test.st.id)->test.st.id, funcs:firstrow(test.st.aid)->test.st.aid, funcs:firstrow(test.st.cm)->test.st.cm, funcs:firstrow(test.st.p1)->test.st.p1, funcs:firstrow(test.st.p2)->test.st.p2, funcs:firstrow(test.st.p3)->test.st.p3, funcs:firstrow(test.st.p4)->test.st.p4, funcs:firstrow(test.st.p5)->test.st.p5, funcs:firstrow(test.st.p6_md5)->test.st.p6_md5, funcs:firstrow(test.st.p7_md5)->test.st.p7_md5, funcs:firstrow(test.st.ext)->test.st.ext, funcs:firstrow(test.st.t)->test.st.t, funcs:firstrow(test.dd.id)->test.dd.id, funcs:firstrow(test.dd.dic)->test.dd.dic, funcs:firstrow(test.dd.ip)->test.dd.ip, funcs:firstrow(test.dd.t)->test.dd.t
     └─HashJoin_34	0.00	root		inner join, equal:[eq(test.dd.aid, test.st.aid) eq(test.dd.ip, test.st.ip)], other cond:gt(test.dd.t, test.st.t)
       ├─IndexLookUp_52(Build)	0.00	root		
-      │ ├─IndexRangeScan_49(Build)	3333.33	cop[tikv]	table:dd, index:t(t)	range:(1478143908,+inf], keep order:false, stats:pseudo
+      │ ├─IndexRangeScan_49(Build)	0.00	cop[tikv]	table:dd, index:t(t)	range:(1478143908,+inf], keep order:false, stats:pseudo
       │ └─Selection_51(Probe)	0.00	cop[tikv]		eq(test.dd.bm, 0), eq(test.dd.pt, "android"), not(isnull(test.dd.ip))
-      │   └─TableRowIDScan_50	3333.33	cop[tikv]	table:dd	keep order:false, stats:pseudo
-      └─IndexLookUp_41(Probe)	3.33	root		
-        ├─IndexRangeScan_38(Build)	3333.33	cop[tikv]	table:gad, index:t(t)	range:(1478143908,+inf], keep order:false, stats:pseudo
-        └─Selection_40(Probe)	3.33	cop[tikv]		eq(test.st.pt, "android"), not(isnull(test.st.ip))
-          └─TableRowIDScan_39	3333.33	cop[tikv]	table:gad	keep order:false, stats:pseudo
+      │   └─TableRowIDScan_50	0.00	cop[tikv]	table:dd	keep order:false, stats:pseudo
+      └─IndexLookUp_41(Probe)	0.00	root		
+        ├─IndexRangeScan_38(Build)	0.00	cop[tikv]	table:gad, index:t(t)	range:(1478143908,+inf], keep order:false, stats:pseudo
+        └─Selection_40(Probe)	0.00	cop[tikv]		eq(test.st.pt, "android"), not(isnull(test.st.ip))
+          └─TableRowIDScan_39	0.00	cop[tikv]	table:gad	keep order:false, stats:pseudo
 explain select gad.id as gid,sdk.id as sid,gad.aid as aid,gad.cm as cm,sdk.dic as dic,sdk.ip as ip, sdk.t as t, gad.p1 as p1, gad.p2 as p2, gad.p3 as p3, gad.p4 as p4, gad.p5 as p5, gad.p6_md5 as p6, gad.p7_md5 as p7, gad.ext as ext from st gad join dd sdk on gad.aid = sdk.aid and gad.dic = sdk.mac and gad.t < sdk.t where gad.t > 1477971479 and gad.bm = 0 and gad.pt = 'ios' and gad.dit = 'mac' and sdk.t > 1477971479 and sdk.bm = 0 and sdk.pt = 'ios' limit 3000;
 id	estRows	task	access object	operator info
 Projection_10	0.00	root		test.st.id, test.dd.id, test.st.aid, test.st.cm, test.dd.dic, test.dd.ip, test.dd.t, test.st.p1, test.st.p2, test.st.p3, test.st.p4, test.st.p5, test.st.p6_md5, test.st.p7_md5, test.st.ext
 └─Limit_13	0.00	root		offset:0, count:3000
   └─IndexMergeJoin_24	0.00	root		inner join, inner:IndexLookUp_22, outer key:test.st.aid, inner key:test.dd.aid, other cond:eq(test.st.dic, test.dd.mac), lt(test.st.t, test.dd.t)
     ├─IndexLookUp_35(Build)	0.00	root		
-    │ ├─IndexRangeScan_32(Build)	3333.33	cop[tikv]	table:gad, index:t(t)	range:(1477971479,+inf], keep order:false, stats:pseudo
+    │ ├─IndexRangeScan_32(Build)	0.00	cop[tikv]	table:gad, index:t(t)	range:(1477971479,+inf], keep order:false, stats:pseudo
     │ └─Selection_34(Probe)	0.00	cop[tikv]		eq(test.st.bm, 0), eq(test.st.dit, "mac"), eq(test.st.pt, "ios"), not(isnull(test.st.dic))
-    │   └─TableRowIDScan_33	3333.33	cop[tikv]	table:gad	keep order:false, stats:pseudo
+    │   └─TableRowIDScan_33	0.00	cop[tikv]	table:gad	keep order:false, stats:pseudo
     └─IndexLookUp_22(Probe)	0.00	root		
-      ├─IndexRangeScan_19(Build)	10000.00	cop[tikv]	table:sdk, index:aid(aid, dic)	range: decided by [eq(test.dd.aid, test.st.aid)], keep order:true, stats:pseudo
+      ├─IndexRangeScan_19(Build)	0.00	cop[tikv]	table:sdk, index:aid(aid, dic)	range: decided by [eq(test.dd.aid, test.st.aid)], keep order:true, stats:pseudo
       └─Selection_21(Probe)	0.00	cop[tikv]		eq(test.dd.bm, 0), eq(test.dd.pt, "ios"), gt(test.dd.t, 1477971479), not(isnull(test.dd.mac)), not(isnull(test.dd.t))
-        └─TableRowIDScan_20	10000.00	cop[tikv]	table:sdk	keep order:false, stats:pseudo
+        └─TableRowIDScan_20	0.00	cop[tikv]	table:sdk	keep order:false, stats:pseudo
 explain SELECT cm, p1, p2, p3, p4, p5, p6_md5, p7_md5, count(1) as click_pv, count(DISTINCT ip) as click_ip FROM st WHERE (t between 1478188800 and 1478275200) and aid='cn.sbkcq' and pt='android' GROUP BY cm, p1, p2, p3, p4, p5, p6_md5, p7_md5;
 id	estRows	task	access object	operator info
 Projection_5	1.00	root		test.st.cm, test.st.p1, test.st.p2, test.st.p3, test.st.p4, test.st.p5, test.st.p6_md5, test.st.p7_md5, Column#20, Column#21
 └─HashAgg_7	1.00	root		group by:test.st.cm, test.st.p1, test.st.p2, test.st.p3, test.st.p4, test.st.p5, test.st.p6_md5, test.st.p7_md5, funcs:count(1)->Column#20, funcs:count(distinct test.st.ip)->Column#21, funcs:firstrow(test.st.cm)->test.st.cm, funcs:firstrow(test.st.p1)->test.st.p1, funcs:firstrow(test.st.p2)->test.st.p2, funcs:firstrow(test.st.p3)->test.st.p3, funcs:firstrow(test.st.p4)->test.st.p4, funcs:firstrow(test.st.p5)->test.st.p5, funcs:firstrow(test.st.p6_md5)->test.st.p6_md5, funcs:firstrow(test.st.p7_md5)->test.st.p7_md5
   └─IndexLookUp_15	0.00	root		
-    ├─IndexRangeScan_12(Build)	250.00	cop[tikv]	table:st, index:t(t)	range:[1478188800,1478275200], keep order:false, stats:pseudo
+    ├─IndexRangeScan_12(Build)	0.00	cop[tikv]	table:st, index:t(t)	range:[1478188800,1478275200], keep order:false, stats:pseudo
     └─Selection_14(Probe)	0.00	cop[tikv]		eq(test.st.aid, "cn.sbkcq"), eq(test.st.pt, "android")
-      └─TableRowIDScan_13	250.00	cop[tikv]	table:st	keep order:false, stats:pseudo
+      └─TableRowIDScan_13	0.00	cop[tikv]	table:st	keep order:false, stats:pseudo
 explain select dt.id as id, dt.aid as aid, dt.pt as pt, dt.dic as dic, dt.cm as cm, rr.gid as gid, rr.acd as acd, rr.t as t,dt.p1 as p1, dt.p2 as p2, dt.p3 as p3, dt.p4 as p4, dt.p5 as p5, dt.p6_md5 as p6, dt.p7_md5 as p7 from dt dt join rr rr on (rr.pt = 'ios' and rr.t > 1478185592 and dt.aid = rr.aid and dt.dic = rr.dic) where dt.pt = 'ios' and dt.t > 1478185592 and dt.bm = 0 limit 2000;
 id	estRows	task	access object	operator info
 Projection_10	0.00	root		test.dt.id, test.dt.aid, test.dt.pt, test.dt.dic, test.dt.cm, test.rr.gid, test.rr.acd, test.rr.t, test.dt.p1, test.dt.p2, test.dt.p3, test.dt.p4, test.dt.p5, test.dt.p6_md5, test.dt.p7_md5
 └─Limit_13	0.00	root		offset:0, count:2000
   └─IndexMergeJoin_41	0.00	root		inner join, inner:IndexLookUp_39, outer key:test.rr.aid, test.rr.dic, inner key:test.dt.aid, test.dt.dic
-    ├─TableReader_61(Build)	3.33	root		data:Selection_60
-    │ └─Selection_60	3.33	cop[tikv]		eq(test.rr.pt, "ios"), gt(test.rr.t, 1478185592)
-    │   └─TableFullScan_59	10000.00	cop[tikv]	table:rr	keep order:false, stats:pseudo
+    ├─TableReader_61(Build)	0.00	root		data:Selection_60
+    │ └─Selection_60	0.00	cop[tikv]		eq(test.rr.pt, "ios"), gt(test.rr.t, 1478185592)
+    │   └─TableFullScan_59	0.00	cop[tikv]	table:rr	keep order:false, stats:pseudo
     └─IndexLookUp_39(Probe)	0.00	root		
-      ├─Selection_37(Build)	1.00	cop[tikv]		not(isnull(test.dt.dic))
-      │ └─IndexRangeScan_35	1.00	cop[tikv]	table:dt, index:aid(aid, dic)	range: decided by [eq(test.dt.aid, test.rr.aid) eq(test.dt.dic, test.rr.dic)], keep order:true, stats:pseudo
+      ├─Selection_37(Build)	0.00	cop[tikv]		not(isnull(test.dt.dic))
+      │ └─IndexRangeScan_35	0.00	cop[tikv]	table:dt, index:aid(aid, dic)	range: decided by [eq(test.dt.aid, test.rr.aid) eq(test.dt.dic, test.rr.dic)], keep order:true, stats:pseudo
       └─Selection_38(Probe)	0.00	cop[tikv]		eq(test.dt.bm, 0), eq(test.dt.pt, "ios"), gt(test.dt.t, 1478185592)
-        └─TableRowIDScan_36	1.00	cop[tikv]	table:dt	keep order:false, stats:pseudo
+        └─TableRowIDScan_36	0.00	cop[tikv]	table:dt	keep order:false, stats:pseudo
 explain select pc,cr,count(DISTINCT uid) as pay_users,count(oid) as pay_times,sum(am) as am from pp where ps=2  and ppt>=1478188800 and ppt<1478275200  and pi in ('510017','520017') and uid in ('18089709','18090780') group by pc,cr;
 id	estRows	task	access object	operator info
 Projection_5	1.00	root		test.pp.pc, test.pp.cr, Column#22, Column#23, Column#24
 └─HashAgg_7	1.00	root		group by:test.pp.cr, test.pp.pc, funcs:count(distinct test.pp.uid)->Column#22, funcs:count(test.pp.oid)->Column#23, funcs:sum(test.pp.am)->Column#24, funcs:firstrow(test.pp.pc)->test.pp.pc, funcs:firstrow(test.pp.cr)->test.pp.cr
   └─IndexLookUp_21	0.00	root		
-    ├─IndexRangeScan_18(Build)	0.40	cop[tikv]	table:pp, index:sp(uid, pi)	range:[18089709 510017,18089709 510017], [18089709 520017,18089709 520017], [18090780 510017,18090780 510017], [18090780 520017,18090780 520017], keep order:false, stats:pseudo
+    ├─IndexRangeScan_18(Build)	0.00	cop[tikv]	table:pp, index:sp(uid, pi)	range:[18089709 510017,18089709 510017], [18089709 520017,18089709 520017], [18090780 510017,18090780 510017], [18090780 520017,18090780 520017], keep order:false, stats:pseudo
     └─Selection_20(Probe)	0.00	cop[tikv]		eq(test.pp.ps, 2), ge(test.pp.ppt, 1478188800), lt(test.pp.ppt, 1478275200)
-      └─TableRowIDScan_19	0.40	cop[tikv]	table:pp	keep order:false, stats:pseudo
+      └─TableRowIDScan_19	0.00	cop[tikv]	table:pp	keep order:false, stats:pseudo
 CREATE TABLE `tbl_001` (`a` int, `b` int);
 CREATE TABLE `tbl_002` (`a` int, `b` int);
 CREATE TABLE `tbl_003` (`a` int, `b` int);
@@ -183,24 +183,24 @@ id	estRows	task	access object	operator info
 HashAgg_34	72000.00	root		group by:Column#32, funcs:sum(Column#31)->Column#30
 └─Projection_63	90000.00	root		cast(Column#28, decimal(65,0) BINARY)->Column#31, Column#29
   └─Union_35	90000.00	root		
-    ├─TableReader_38	10000.00	root		data:TableFullScan_37
-    │ └─TableFullScan_37	10000.00	cop[tikv]	table:tbl_001	keep order:false, stats:pseudo
-    ├─TableReader_41	10000.00	root		data:TableFullScan_40
-    │ └─TableFullScan_40	10000.00	cop[tikv]	table:tbl_002	keep order:false, stats:pseudo
-    ├─TableReader_44	10000.00	root		data:TableFullScan_43
-    │ └─TableFullScan_43	10000.00	cop[tikv]	table:tbl_003	keep order:false, stats:pseudo
-    ├─TableReader_47	10000.00	root		data:TableFullScan_46
-    │ └─TableFullScan_46	10000.00	cop[tikv]	table:tbl_004	keep order:false, stats:pseudo
-    ├─TableReader_50	10000.00	root		data:TableFullScan_49
-    │ └─TableFullScan_49	10000.00	cop[tikv]	table:tbl_005	keep order:false, stats:pseudo
-    ├─TableReader_53	10000.00	root		data:TableFullScan_52
-    │ └─TableFullScan_52	10000.00	cop[tikv]	table:tbl_006	keep order:false, stats:pseudo
-    ├─TableReader_56	10000.00	root		data:TableFullScan_55
-    │ └─TableFullScan_55	10000.00	cop[tikv]	table:tbl_007	keep order:false, stats:pseudo
-    ├─TableReader_59	10000.00	root		data:TableFullScan_58
-    │ └─TableFullScan_58	10000.00	cop[tikv]	table:tbl_008	keep order:false, stats:pseudo
-    └─TableReader_62	10000.00	root		data:TableFullScan_61
-      └─TableFullScan_61	10000.00	cop[tikv]	table:tbl_009	keep order:false, stats:pseudo
+    ├─TableReader_38	0.00	root		data:TableFullScan_37
+    │ └─TableFullScan_37	0.00	cop[tikv]	table:tbl_001	keep order:false, stats:pseudo
+    ├─TableReader_41	0.00	root		data:TableFullScan_40
+    │ └─TableFullScan_40	0.00	cop[tikv]	table:tbl_002	keep order:false, stats:pseudo
+    ├─TableReader_44	0.00	root		data:TableFullScan_43
+    │ └─TableFullScan_43	0.00	cop[tikv]	table:tbl_003	keep order:false, stats:pseudo
+    ├─TableReader_47	0.00	root		data:TableFullScan_46
+    │ └─TableFullScan_46	0.00	cop[tikv]	table:tbl_004	keep order:false, stats:pseudo
+    ├─TableReader_50	0.00	root		data:TableFullScan_49
+    │ └─TableFullScan_49	0.00	cop[tikv]	table:tbl_005	keep order:false, stats:pseudo
+    ├─TableReader_53	0.00	root		data:TableFullScan_52
+    │ └─TableFullScan_52	0.00	cop[tikv]	table:tbl_006	keep order:false, stats:pseudo
+    ├─TableReader_56	0.00	root		data:TableFullScan_55
+    │ └─TableFullScan_55	0.00	cop[tikv]	table:tbl_007	keep order:false, stats:pseudo
+    ├─TableReader_59	0.00	root		data:TableFullScan_58
+    │ └─TableFullScan_58	0.00	cop[tikv]	table:tbl_008	keep order:false, stats:pseudo
+    └─TableReader_62	0.00	root		data:TableFullScan_61
+      └─TableFullScan_61	0.00	cop[tikv]	table:tbl_009	keep order:false, stats:pseudo
 CREATE TABLE org_department (
 id int(11) NOT NULL AUTO_INCREMENT,
 ctx int(11) DEFAULT '0' COMMENT 'organization id',
@@ -248,15 +248,15 @@ Sort_10	1.00	root		test.org_department.left_value:asc
   └─Selection_22	0.01	root		or(eq(test.org_employee_position.user_id, 62), or(eq(test.org_department.id, 20), eq(test.org_department.id, 20)))
     └─HashJoin_24	0.02	root		left outer join, equal:[eq(test.org_position.id, test.org_employee_position.position_id)]
       ├─IndexMergeJoin_40(Build)	0.01	root		left outer join, inner:IndexLookUp_38, outer key:test.org_department.id, inner key:test.org_position.department_id
-      │ ├─IndexLookUp_62(Build)	0.01	root		
-      │ │ ├─IndexRangeScan_59(Build)	10.00	cop[tikv]	table:d, index:org_department_ctx_index(ctx)	range:[1,1], keep order:false, stats:pseudo
-      │ │ └─Selection_61(Probe)	0.01	cop[tikv]		eq(test.org_department.status, 1000)
-      │ │   └─TableRowIDScan_60	10.00	cop[tikv]	table:d	keep order:false, stats:pseudo
-      │ └─IndexLookUp_38(Probe)	1.25	root		
-      │   ├─Selection_36(Build)	1250.00	cop[tikv]		not(isnull(test.org_position.department_id))
-      │   │ └─IndexRangeScan_34	1251.25	cop[tikv]	table:p, index:org_position_department_id_index(department_id)	range: decided by [eq(test.org_position.department_id, test.org_department.id)], keep order:true, stats:pseudo
-      │   └─Selection_37(Probe)	1.25	cop[tikv]		eq(test.org_position.status, 1000)
-      │     └─TableRowIDScan_35	1250.00	cop[tikv]	table:p	keep order:false, stats:pseudo
-      └─TableReader_72(Probe)	9.99	root		data:Selection_71
-        └─Selection_71	9.99	cop[tikv]		eq(test.org_employee_position.status, 1000), not(isnull(test.org_employee_position.position_id))
-          └─TableFullScan_70	10000.00	cop[tikv]	table:ep	keep order:false, stats:pseudo
+      │ ├─IndexLookUp_62(Build)	0.00	root		
+      │ │ ├─IndexRangeScan_59(Build)	0.00	cop[tikv]	table:d, index:org_department_ctx_index(ctx)	range:[1,1], keep order:false, stats:pseudo
+      │ │ └─Selection_61(Probe)	0.00	cop[tikv]		eq(test.org_department.status, 1000)
+      │ │   └─TableRowIDScan_60	0.00	cop[tikv]	table:d	keep order:false, stats:pseudo
+      │ └─IndexLookUp_38(Probe)	0.00	root		
+      │   ├─Selection_36(Build)	0.00	cop[tikv]		not(isnull(test.org_position.department_id))
+      │   │ └─IndexRangeScan_34	0.00	cop[tikv]	table:p, index:org_position_department_id_index(department_id)	range: decided by [eq(test.org_position.department_id, test.org_department.id)], keep order:true, stats:pseudo
+      │   └─Selection_37(Probe)	0.00	cop[tikv]		eq(test.org_position.status, 1000)
+      │     └─TableRowIDScan_35	0.00	cop[tikv]	table:p	keep order:false, stats:pseudo
+      └─TableReader_72(Probe)	0.00	root		data:Selection_71
+        └─Selection_71	0.00	cop[tikv]		eq(test.org_employee_position.status, 1000), not(isnull(test.org_employee_position.position_id))
+          └─TableFullScan_70	0.00	cop[tikv]	table:ep	keep order:false, stats:pseudo

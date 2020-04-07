@@ -121,14 +121,15 @@ func (s *testAnalyzeSuite) TestCBOWithoutAnalyze(c *C) {
 	testKit.MustExec("insert into t2 values (1), (2), (3), (4), (5), (6)")
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
+	testKit.MustExec("analyze table t1, t2")
 	testKit.MustQuery("explain select * from t1, t2 where t1.a = t2.a").Check(testkit.Rows(
-		"HashJoin_8 7.49 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
-		"├─TableReader_15(Build) 5.99 root  data:Selection_14",
-		"│ └─Selection_14 5.99 cop[tikv]  not(isnull(test.t2.a))",
-		"│   └─TableFullScan_13 6.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-		"└─TableReader_12(Probe) 5.99 root  data:Selection_11",
-		"  └─Selection_11 5.99 cop[tikv]  not(isnull(test.t1.a))",
-		"    └─TableFullScan_10 6.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+		"HashJoin_8 6.00 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+		"├─TableReader_15(Build) 6.00 root  data:Selection_14",
+		"│ └─Selection_14 6.00 cop[tikv]  not(isnull(test.t2.a))",
+		"│   └─TableFullScan_13 6.00 cop[tikv] table:t2 keep order:false",
+		"└─TableReader_12(Probe) 6.00 root  data:Selection_11",
+		"  └─Selection_11 6.00 cop[tikv]  not(isnull(test.t1.a))",
+		"    └─TableFullScan_10 6.00 cop[tikv] table:t1 keep order:false",
 	))
 	testKit.MustQuery("explain format = 'hint' select * from t1, t2 where t1.a = t2.a").Check(testkit.Rows(
 		"USE_INDEX(@`sel_1` `test`.`t1` ), USE_INDEX(@`sel_1` `test`.`t2` ), HASH_JOIN(@`sel_1` `test`.`t1`)"))
@@ -411,9 +412,9 @@ func (s *testAnalyzeSuite) TestOutdatedAnalyze(c *C) {
 	))
 	statistics.RatioOfPseudoEstimate.Store(0.7)
 	testKit.MustQuery("explain select * from t where a <= 5 and b <= 5").Check(testkit.Rows(
-		"TableReader_7 8.84 root  data:Selection_6",
-		"└─Selection_6 8.84 cop[tikv]  le(test.t.a, 5), le(test.t.b, 5)",
-		"  └─TableFullScan_5 80.00 cop[tikv] table:t keep order:false, stats:pseudo",
+		"TableReader_7 0.00 root  data:Selection_6",
+		"└─Selection_6 0.00 cop[tikv]  le(test.t.a, 5), le(test.t.b, 5)",
+		"  └─TableFullScan_5 0.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	))
 }
 

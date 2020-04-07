@@ -10,3 +10,7 @@ stats-lease = "0"
 
 [experimental]
 allow-expression-index = true
+
+[log]
+# Log level: debug, info, warn, error, fatal.
+level = "info"

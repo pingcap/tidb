@@ -934,7 +934,11 @@ func (e *Explain) prepareOperatorInfo(p Plan, taskType, driverSide, indent strin
 
 	estRows := "N/A"
 	if si := p.statsInfo(); si != nil {
-		estRows = strconv.FormatFloat(si.RowCount, 'f', 2, 64)
+		if si.HistColl != nil && si.HistColl.Pseudo {
+			estRows = "0.00"
+		} else {
+			estRows = strconv.FormatFloat(si.RowCount, 'f', 2, 64)
+		}
 	}
 
 	var accessObject, operatorInfo string

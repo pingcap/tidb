@@ -1937,10 +1937,10 @@ func (s *testSuiteJoinSerial) TestInlineProjection4HashJoinIssue15316(c *C) {
 		"Sort_8 12487.50 root  test.t.a:asc, test.t.c:asc",
 		"└─Projection_10 12487.50 root  test.t.a, test.t.a, test.t.c",
 		"  └─HashJoin_11 12487.50 root  inner join, equal:[eq(test.s.a, test.t.a)], other cond:lt(test.s.b, test.t.b)",
-		"    ├─TableReader_17(Build) 9990.00 root  data:Selection_16",
-		"    │ └─Selection_16 9990.00 cop[tikv]  not(isnull(test.t.b))",
-		"    │   └─TableFullScan_15 10000.00 cop[tikv] table:T keep order:false, stats:pseudo",
-		"    └─TableReader_14(Probe) 9990.00 root  data:Selection_13",
-		"      └─Selection_13 9990.00 cop[tikv]  not(isnull(test.s.b))",
-		"        └─TableFullScan_12 10000.00 cop[tikv] table:S keep order:false, stats:pseudo"))
+		"    ├─TableReader_17(Build) 0.00 root  data:Selection_16",
+		"    │ └─Selection_16 0.00 cop[tikv]  not(isnull(test.t.b))",
+		"    │   └─TableFullScan_15 0.00 cop[tikv] table:T keep order:false, stats:pseudo",
+		"    └─TableReader_14(Probe) 0.00 root  data:Selection_13",
+		"      └─Selection_13 0.00 cop[tikv]  not(isnull(test.s.b))",
+		"        └─TableFullScan_12 0.00 cop[tikv] table:S keep order:false, stats:pseudo"))
 }

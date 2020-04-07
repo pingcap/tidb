@@ -2545,6 +2545,7 @@ func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) 
 
 	var statsTbl *statistics.Table
 	if pid != tblInfo.ID {
+		//todo: check it here
 		statsTbl = statsHandle.GetPartitionStats(tblInfo, pid)
 	} else {
 		statsTbl = statsHandle.GetTableStats(tblInfo)

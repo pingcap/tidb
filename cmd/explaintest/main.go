@@ -508,6 +508,7 @@ func (t *tester) executeStmt(query string) error {
 		// TODO: rows affected and last insert id
 		_, err := t.tx.Exec(query)
 		if err != nil {
+			fmt.Println("error = ", query)
 			return errors.Trace(err)
 		}
 	}

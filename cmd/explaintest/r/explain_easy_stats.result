@@ -99,7 +99,7 @@ HashJoin_19	1985.00	root		inner join, equal:[eq(test.t1.c1, test.t2.c2)]
   └─TableFullScan_31	1999.00	cop[tikv]	table:t1	keep order:false
 explain select * from information_schema.columns;
 id	estRows	task	access object	operator info
-MemTableScan_4	10000.00	root	table:COLUMNS	
+MemTableScan_4	0.00	root	table:COLUMNS	
 explain select c2 = (select c2 from t2 where t1.c1 = t2.c1 order by c1 limit 1) from t1;
 id	estRows	task	access object	operator info
 Projection_12	1999.00	root		eq(test.t1.c2, test.t2.c2)->Column#8

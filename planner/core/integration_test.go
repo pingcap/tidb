@@ -289,8 +289,8 @@ func (s *testIntegrationSerialSuite) TestNoneAccessPathsFoundByIsolationRead(c *
 
 	// Don't filter mysql.SystemDB by isolation read.
 	tk.MustQuery("explain select * from mysql.stats_meta").Check(testkit.Rows(
-		"TableReader_5 10000.00 root  data:TableFullScan_4",
-		"└─TableFullScan_4 10000.00 cop[tikv] table:stats_meta keep order:false, stats:pseudo"))
+		"TableReader_5 0.00 root  data:TableFullScan_4",
+		"└─TableFullScan_4 0.00 cop[tikv] table:stats_meta keep order:false, stats:pseudo"))
 
 	_, err = tk.Exec("select * from t")
 	c.Assert(err, NotNil)
