@@ -147,48 +147,8 @@ func (s *partitionProcessor) pruneHashPartition(ds *DataSource, pi *model.Partit
 		pl := &newDataSource
 		return pl, nil
 	}
-	// If can not hit partition by FastLocateHashPartition, try to prune all partition.
-	sctx := ds.context()
-	filterConds = expression.PropagateConstant(sctx, filterConds)
-	filterConds = solver.Solve(sctx, filterConds)
-	alwaysFalse := false
-	if len(filterConds) == 1 {
-		// Constant false.
-		if con, ok := filterConds[0].(*expression.Constant); ok && con.DeferredExpr == nil {
-			ret, _, err := expression.EvalBool(sctx, expression.CNFExprs{con}, chunk.Row{})
-			if err == nil && ret == false {
-				alwaysFalse = true
-			}
-		}
-	}
-	if alwaysFalse {
-		tableDual := LogicalTableDual{RowCount: 0}.Init(ds.context())
-		tableDual.schema = ds.Schema()
-		return tableDual, nil
-	}
-	children := make([]LogicalPlan, 0, len(pi.Definitions))
-	for i := 0; i < len(pi.Definitions); i++ {
-		// Not a deep copy.
-		newDataSource := *ds
-		newDataSource.baseLogicalPlan = newBaseLogicalPlan(ds.context(), plancodec.TypeTableScan, &newDataSource)
-		newDataSource.isPartition = true
-		newDataSource.physicalTableID = pi.Definitions[i].ID
-		newDataSource.possibleAccessPaths = make([]*accessPath, len(ds.possibleAccessPaths))
-		for i := range ds.possibleAccessPaths {
-			newPath := *ds.possibleAccessPaths[i]
-			newDataSource.possibleAccessPaths[i] = &newPath
-		}
-		// There are many expression nodes in the plan tree use the original datasource
-		// id as FromID. So we set the id of the newDataSource with the original one to
-		// avoid traversing the whole plan tree to update the references.
-		newDataSource.id = ds.id
-		newDataSource.statisticTable = getStatsTable(ds.context(), ds.table.Meta(), pi.Definitions[i].ID)
-		children = append(children, &newDataSource)
-	}
-	unionAll := LogicalUnionAll{}.Init(ds.context())
-	unionAll.SetChildren(children...)
-	unionAll.SetSchema(ds.schema)
-	return unionAll, nil
+
+	return s.makeUnionAllChildren(ds, pi, fullRange(len(pi.Definitions)))
 }
 
 func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
