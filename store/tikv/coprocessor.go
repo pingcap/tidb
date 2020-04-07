@@ -46,6 +46,7 @@ import (
 )
 
 var tikvTxnRegionsNumHistogramWithCoprocessor = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues("coprocessor")
+var tikvTxnRegionsNumHistogramWithBatchCoprocessor = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues("batch_coprocessor")
 
 // CopClient is coprocessor client.
 type CopClient struct {
@@ -57,7 +58,7 @@ type CopClient struct {
 // Send builds the request and gets the coprocessor iterator response.
 func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variables) kv.Response {
 	if req.StoreType == kv.TiFlash && req.BatchCop {
-		logutil.BgLogger().Info("send batch requests")
+		logutil.BgLogger().Debug("send batch requests")
 		return c.sendBatch(ctx, req, vars)
 	}
 	ctx = context.WithValue(ctx, txnStartKey, req.StartTs)

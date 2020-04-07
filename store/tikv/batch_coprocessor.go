@@ -98,22 +98,6 @@ type copTaskAndRPCContext struct {
 	ctx  *RPCContext
 }
 
-func getFlashRPCContextWithRetry(bo *Backoffer, task *copTask, cache *RegionCache) (*RPCContext, error) {
-	for {
-		ctx, err := cache.GetTiFlashRPCContext(bo, task.region)
-		if err != nil {
-			return nil, err
-		}
-		if ctx != nil {
-			return ctx, nil
-		}
-
-		if err = bo.Backoff(BoRegionMiss, errors.New("failed to get flash rpc context")); err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
-}
-
 func buildBatchCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, req *kv.Request) ([]*batchCopTask, error) {
 	if req.StoreType != kv.TiFlash {
 		return nil, errors.New("store type must be tiflash")
@@ -122,60 +106,72 @@ func buildBatchCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, re
 	start := time.Now()
 	const cmdType = tikvrpc.CmdBatchCop
 	rangesLen := ranges.len()
-	var tasks []*copTask
-	appendTask := func(regionWithRangeInfo *KeyLocation, ranges *copRanges) {
-		tasks = append(tasks, &copTask{
-			region:    regionWithRangeInfo.Region,
-			ranges:    ranges,
-			cmdType:   cmdType,
-			storeType: req.StoreType,
-		})
-	}
+	for {
+		var tasks []*copTask
+		appendTask := func(regionWithRangeInfo *KeyLocation, ranges *copRanges) {
+			tasks = append(tasks, &copTask{
+				region:    regionWithRangeInfo.Region,
+				ranges:    ranges,
+				cmdType:   cmdType,
+				storeType: req.StoreType,
+			})
+		}
 
-	err := splitRanges(bo, cache, ranges, appendTask)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	var batchTasks []*batchCopTask
-
-	storeTaskMap := make(map[string]*batchCopTask)
-
-	for _, task := range tasks {
-		rpcCtx, err := getFlashRPCContextWithRetry(bo, task, cache)
+		err := splitRanges(bo, cache, ranges, appendTask)
 		if err != nil {
-			return nil, err
+			return nil, errors.Trace(err)
 		}
-		if batchCop, ok := storeTaskMap[rpcCtx.Addr]; ok {
-			batchCop.copTasks = append(batchCop.copTasks, copTaskAndRPCContext{task: task, ctx: rpcCtx})
-			batchCop.regionTaskMap[task.region.id] = task
-		} else {
-			batchTask := &batchCopTask{
-				storeAddr:     rpcCtx.Addr,
-				cmdType:       cmdType,
-				regionTaskMap: make(map[uint64]*copTask),
-				copTasks:      []copTaskAndRPCContext{{task, rpcCtx}},
+
+		var batchTasks []*batchCopTask
+
+		storeTaskMap := make(map[string]*batchCopTask)
+		needRetry := false
+		for _, task := range tasks {
+			rpcCtx, err := cache.GetTiFlashRPCContext(bo, task.region)
+			if err != nil {
+				return nil, err
 			}
-			batchTask.regionTaskMap[task.region.id] = task
-			storeTaskMap[rpcCtx.Addr] = batchTask
+			// If the region is not found in cache, it must be out
+			// of date and already be cleaned up. We should retry and generate new tasks.
+			if rpcCtx == nil {
+				needRetry = true
+			}
+			if batchCop, ok := storeTaskMap[rpcCtx.Addr]; ok {
+				batchCop.copTasks = append(batchCop.copTasks, copTaskAndRPCContext{task: task, ctx: rpcCtx})
+				batchCop.regionTaskMap[task.region.id] = task
+			} else {
+				batchTask := &batchCopTask{
+					storeAddr:     rpcCtx.Addr,
+					cmdType:       cmdType,
+					regionTaskMap: make(map[uint64]*copTask),
+					copTasks:      []copTaskAndRPCContext{{task, rpcCtx}},
+				}
+				batchTask.regionTaskMap[task.region.id] = task
+				storeTaskMap[rpcCtx.Addr] = batchTask
+			}
 		}
-	}
+		if needRetry {
+			continue
+		}
+		for _, task := range storeTaskMap {
+			batchTasks = append(batchTasks, task)
+		}
 
-	for _, task := range storeTaskMap {
-		batchTasks = append(batchTasks, task)
+		if elapsed := time.Since(start); elapsed > time.Millisecond*500 {
+			logutil.BgLogger().Warn("buildBatchCopTasks takes too much time",
+				zap.Duration("elapsed", elapsed),
+				zap.Int("range len", rangesLen),
+				zap.Int("task len", len(batchTasks)))
+		}
+		tikvTxnRegionsNumHistogramWithBatchCoprocessor.Observe(float64(len(batchTasks)))
+		return batchTasks, nil
 	}
-
-	if elapsed := time.Since(start); elapsed > time.Millisecond*500 {
-		logutil.BgLogger().Warn("buildCopTasks takes too much time",
-			zap.Duration("elapsed", elapsed),
-			zap.Int("range len", rangesLen),
-			zap.Int("task len", len(batchTasks)))
-	}
-	tikvTxnRegionsNumHistogramWithCoprocessor.Observe(float64(len(batchTasks)))
-	return batchTasks, nil
 }
 
 func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *kv.Variables) kv.Response {
+	if req.KeepOrder || req.Desc {
+		return copErrorResponse{errors.New("batch coprocessor cannot prove keep order or desc property")}
+	}
 	ctx = context.WithValue(ctx, txnStartKey, req.StartTs)
 	bo := NewBackoffer(ctx, copBuildTaskMaxBackoff).WithVars(vars)
 	tasks, err := buildBatchCopTasks(bo, c.store.regionCache, &copRanges{mid: req.KeyRanges}, req)
@@ -293,8 +289,7 @@ func (b *batchCopIterator) Close() error {
 func (b *batchCopIterator) handleTask(ctx context.Context, bo *Backoffer, task *batchCopTask) {
 	logutil.BgLogger().Debug("handle batch task")
 	tasks := []*batchCopTask{task}
-	idx := 0
-	for idx < len(tasks) {
+	for idx := 0; idx < len(tasks); idx++ {
 		ret, err := b.handleTaskOnce(ctx, bo, task)
 		if err != nil {
 			resp := &batchCopResponse{err: errors.Trace(err)}
@@ -302,7 +297,6 @@ func (b *batchCopIterator) handleTask(ctx context.Context, bo *Backoffer, task *
 		} else {
 			tasks = append(tasks, ret...)
 		}
-		idx++
 	}
 	b.wg.Done()
 }
