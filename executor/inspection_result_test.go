@@ -96,14 +96,19 @@ func (s *inspectionResultSuite) TestInspectionResult(c *C) {
 		},
 	}
 
-	ctx := context.WithValue(context.Background(), "__mockInspectionTables", mockData)
-	fpName := "github.com/pingcap/tidb/executor/mockMergeMockInspectionTables"
-	ctx = failpoint.WithHook(ctx, func(_ context.Context, fpname string) bool {
-		return fpname == fpName
-	})
-
-	c.Assert(failpoint.Enable(fpName, "return"), IsNil)
-	defer func() { c.Assert(failpoint.Disable(fpName), IsNil) }()
+	datetime := func(str string) types.Time {
+		return s.parseTime(c, tk.Se, str)
+	}
+	// construct some mock abnormal data
+	mockMetric := map[string][][]types.Datum{
+		"node_total_memory": {
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "192.168.3.33:26600", 50.0*1024*1024*1024),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "192.168.3.34:26600", 50.0*1024*1024*1024),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "192.168.3.35:26600", 50.0*1024*1024*1024),
+		},
+	}
+	ctx := s.setupForMockMetricAndConfig(c, mockMetric, mockData)
+	defer s.tearDownForMockMetricAndConfig(c)
 
 	cases := []struct {
 		sql  string
@@ -172,34 +177,36 @@ func (s *inspectionResultSuite) tearDownForMockMetricAndConfig(c *C) {
 	c.Assert(failpoint.Disable(fpName2), IsNil)
 }
 
-func (s *inspectionResultSuite) setupForMockMetricAndConfig(c *C, mockData map[string][][]types.Datum) context.Context {
+func (s *inspectionResultSuite) setupForMockMetricAndConfig(c *C, mockData map[string][][]types.Datum, configurations map[string]variable.TableSnapshot) context.Context {
 	// mock tikv configuration.
-	configurations := map[string]variable.TableSnapshot{}
-	configurations[infoschema.TableClusterConfig] = variable.TableSnapshot{
-		Rows: [][]types.Datum{
-			types.MakeDatums("tikv", "tikv-0", "raftstore.apply-pool-size", "2"),
-			types.MakeDatums("tikv", "tikv-0", "raftstore.store-pool-size", "2"),
-			types.MakeDatums("tikv", "tikv-0", "readpool.coprocessor.high-concurrency", "4"),
-			types.MakeDatums("tikv", "tikv-0", "readpool.coprocessor.low-concurrency", "4"),
-			types.MakeDatums("tikv", "tikv-0", "readpool.coprocessor.normal-concurrency", "4"),
-			types.MakeDatums("tikv", "tikv-1", "readpool.coprocessor.normal-concurrency", "8"),
-			types.MakeDatums("tikv", "tikv-0", "readpool.storage.high-concurrency", "4"),
-			types.MakeDatums("tikv", "tikv-0", "readpool.storage.low-concurrency", "4"),
-			types.MakeDatums("tikv", "tikv-0", "readpool.storage.normal-concurrency", "4"),
-			types.MakeDatums("tikv", "tikv-0", "server.grpc-concurrency", "8"),
-			types.MakeDatums("tikv", "tikv-0", "storage.scheduler-worker-pool-size", "6"),
-		},
-	}
-	// mock cluster information
-	configurations[infoschema.TableClusterInfo] = variable.TableSnapshot{
-		Rows: [][]types.Datum{
-			types.MakeDatums("pd", "pd-0", "pd-0", "4.0", "a234c", "", ""),
-			types.MakeDatums("tidb", "tidb-0", "tidb-0s", "4.0", "a234c", "", ""),
-			types.MakeDatums("tidb", "tidb-1", "tidb-1s", "4.0", "a234c", "", ""),
-			types.MakeDatums("tikv", "tikv-0", "tikv-0s", "4.0", "a234c", "", ""),
-			types.MakeDatums("tikv", "tikv-1", "tikv-1s", "4.0", "a234c", "", ""),
-			types.MakeDatums("tikv", "tikv-2", "tikv-2s", "4.0", "a234c", "", ""),
-		},
+	if configurations == nil {
+		configurations = map[string]variable.TableSnapshot{}
+		configurations[infoschema.TableClusterConfig] = variable.TableSnapshot{
+			Rows: [][]types.Datum{
+				types.MakeDatums("tikv", "tikv-0", "raftstore.apply-pool-size", "2"),
+				types.MakeDatums("tikv", "tikv-0", "raftstore.store-pool-size", "2"),
+				types.MakeDatums("tikv", "tikv-0", "readpool.coprocessor.high-concurrency", "4"),
+				types.MakeDatums("tikv", "tikv-0", "readpool.coprocessor.low-concurrency", "4"),
+				types.MakeDatums("tikv", "tikv-0", "readpool.coprocessor.normal-concurrency", "4"),
+				types.MakeDatums("tikv", "tikv-1", "readpool.coprocessor.normal-concurrency", "8"),
+				types.MakeDatums("tikv", "tikv-0", "readpool.storage.high-concurrency", "4"),
+				types.MakeDatums("tikv", "tikv-0", "readpool.storage.low-concurrency", "4"),
+				types.MakeDatums("tikv", "tikv-0", "readpool.storage.normal-concurrency", "4"),
+				types.MakeDatums("tikv", "tikv-0", "server.grpc-concurrency", "8"),
+				types.MakeDatums("tikv", "tikv-0", "storage.scheduler-worker-pool-size", "6"),
+			},
+		}
+		// mock cluster information
+		configurations[infoschema.TableClusterInfo] = variable.TableSnapshot{
+			Rows: [][]types.Datum{
+				types.MakeDatums("pd", "pd-0", "pd-0", "4.0", "a234c", "", ""),
+				types.MakeDatums("tidb", "tidb-0", "tidb-0s", "4.0", "a234c", "", ""),
+				types.MakeDatums("tidb", "tidb-1", "tidb-1s", "4.0", "a234c", "", ""),
+				types.MakeDatums("tikv", "tikv-0", "tikv-0s", "4.0", "a234c", "", ""),
+				types.MakeDatums("tikv", "tikv-1", "tikv-1s", "4.0", "a234c", "", ""),
+				types.MakeDatums("tikv", "tikv-2", "tikv-2s", "4.0", "a234c", "", ""),
+			},
+		}
 	}
 	fpName := "github.com/pingcap/tidb/executor/mockMergeMockInspectionTables"
 	c.Assert(failpoint.Enable(fpName, "return"), IsNil)
@@ -259,7 +266,7 @@ func (s *inspectionResultSuite) TestThresholdCheckInspection(c *C) {
 		"pd_region_health":                    {},
 	}
 
-	ctx := s.setupForMockMetricAndConfig(c, mockData)
+	ctx := s.setupForMockMetricAndConfig(c, mockData, nil)
 	defer s.tearDownForMockMetricAndConfig(c)
 
 	rs, err := tk.Se.Execute(ctx, "select /*+ time_range('2020-02-12 10:35:00','2020-02-12 10:37:00') */ item, type, instance,status_address, value, reference, details from information_schema.inspection_result where rule='threshold-check' order by item")
@@ -363,7 +370,7 @@ func (s *inspectionResultSuite) TestThresholdCheckInspection2(c *C) {
 		"pd_region_health":          {},
 	}
 
-	ctx := s.setupForMockMetricAndConfig(c, mockData)
+	ctx := s.setupForMockMetricAndConfig(c, mockData, nil)
 	defer s.tearDownForMockMetricAndConfig(c)
 
 	rs, err := tk.Se.Execute(ctx, "select /*+ time_range('2020-02-12 10:35:00','2020-02-12 10:37:00') */ item, type, instance, status_address, value, reference, details from information_schema.inspection_result where rule='threshold-check' order by item")
@@ -423,7 +430,7 @@ func (s *inspectionResultSuite) TestThresholdCheckInspection3(c *C) {
 		},
 	}
 
-	ctx := s.setupForMockMetricAndConfig(c, mockData)
+	ctx := s.setupForMockMetricAndConfig(c, mockData, nil)
 	defer s.tearDownForMockMetricAndConfig(c)
 
 	rs, err := tk.Se.Execute(ctx, `select /*+ time_range('2020-02-14 04:20:00','2020-02-14 05:23:00') */
@@ -529,7 +536,7 @@ func (s *inspectionResultSuite) TestCriticalErrorInspection(c *C) {
 		},
 	}
 
-	ctx := s.setupForMockMetricAndConfig(c, mockData)
+	ctx := s.setupForMockMetricAndConfig(c, mockData, nil)
 	defer s.tearDownForMockMetricAndConfig(c)
 
 	rs, err := tk.Se.Execute(ctx, "select /*+ time_range('2020-02-12 10:35:00','2020-02-12 10:37:00') */ item, instance,status_address, value, details from information_schema.inspection_result where rule='critical-error'")
@@ -617,7 +624,7 @@ func (s *inspectionResultSuite) TestNodeLoadInspection(c *C) {
 		},
 	}
 
-	ctx := s.setupForMockMetricAndConfig(c, mockData)
+	ctx := s.setupForMockMetricAndConfig(c, mockData, nil)
 	defer s.tearDownForMockMetricAndConfig(c)
 
 	rs, err := tk.Se.Execute(ctx, `select /*+ time_range('2020-02-14 04:20:00','2020-02-14 05:23:00') */
@@ -634,5 +641,45 @@ func (s *inspectionResultSuite) TestNodeLoadInspection(c *C) {
 		"disk-usage node node-0 80.0% < 70% the disk-usage of /dev/nvme0 is too high",
 		"swap-memory-used node node-1 1.0 0 ",
 		"virtual-memory-usage node node-0 80.0% < 70% the memory-usage is too high",
+	))
+}
+
+func (s *inspectionResultSuite) TestConfigCheckOfStorageBlockCacheSize(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	datetime := func(s string) types.Time {
+		t, err := types.ParseTime(tk.Se.GetSessionVars().StmtCtx, s, mysql.TypeDatetime, types.MaxFsp)
+		c.Assert(err, IsNil)
+		return t
+	}
+
+	configurations := map[string]variable.TableSnapshot{}
+	configurations[infoschema.TableClusterConfig] = variable.TableSnapshot{
+		Rows: [][]types.Datum{
+			types.MakeDatums("tikv", "192.168.3.33:26600", "storage.block-cache.capacity", "10GiB"),
+			types.MakeDatums("tikv", "192.168.3.33:26700", "storage.block-cache.capacity", "20GiB"),
+			types.MakeDatums("tikv", "192.168.3.34:26600", "storage.block-cache.capacity", "1TiB"),
+			types.MakeDatums("tikv", "192.168.3.35:26700", "storage.block-cache.capacity", "20GiB"),
+		},
+	}
+
+	// construct some mock abnormal data
+	mockData := map[string][][]types.Datum{
+		"node_total_memory": {
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "192.168.3.33:26600", 50.0*1024*1024*1024),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "192.168.3.34:26600", 50.0*1024*1024*1024),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "192.168.3.35:26600", 50.0*1024*1024*1024),
+		},
+	}
+
+	ctx := s.setupForMockMetricAndConfig(c, mockData, configurations)
+	defer s.tearDownForMockMetricAndConfig(c)
+
+	rs, err := tk.Se.Execute(ctx, "select  /*+ time_range('2020-02-14 04:20:00','2020-02-14 05:23:00') */ * from information_schema.inspection_result where rule='config' and item='storage.block-cache.capacity' order by value")
+	c.Assert(err, IsNil)
+	result := tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute inspect SQL failed"))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0), Commentf("unexpected warnings: %+v", tk.Se.GetSessionVars().StmtCtx.GetWarnings()))
+	result.Check(testkit.Rows(
+		"config storage.block-cache.capacity tikv 192.168.3.34  1099511627776 < 24159191040 warning There are 1 TiKV server in 192.168.3.34 node, the total 'storage.block-cache.capacity' of TiKV is more than (0.45 * total node memory)",
+		"config storage.block-cache.capacity tikv 192.168.3.33  32212254720 < 24159191040 warning There are 2 TiKV server in 192.168.3.33 node, the total 'storage.block-cache.capacity' of TiKV is more than (0.45 * total node memory)",
 	))
 }
