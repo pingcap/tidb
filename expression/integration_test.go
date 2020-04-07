@@ -5971,3 +5971,12 @@ func (s *testIntegrationSuite) TestNegativeZeroForHashJoin(c *C) {
 	tk.MustExec("drop TABLE t0;")
 	tk.MustExec("drop table t1;")
 }
+
+func (s *testIntegrationSuite) TestIssue15725(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t values(2)")
+	tk.MustQuery("select * from t where (not not a) = a").Check(testkit.Rows())
+	tk.MustQuery("select * from t where (not not not not a) = a").Check(testkit.Rows())
+}

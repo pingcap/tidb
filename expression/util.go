@@ -336,6 +336,18 @@ func timeZone2Duration(tz string) time.Duration {
 	return time.Duration(sign) * (time.Duration(h)*time.Hour + time.Duration(m)*time.Minute)
 }
 
+var opsCanBePushedDownNot = map[string]struct{}{
+	ast.LT:       {},
+	ast.GE:       {},
+	ast.GT:       {},
+	ast.LE:       {},
+	ast.EQ:       {},
+	ast.NE:       {},
+	ast.UnaryNot: {},
+	ast.LogicAnd: {},
+	ast.LogicOr:  {},
+}
+
 var oppositeOp = map[string]string{
 	ast.LT:       ast.GE,
 	ast.GE:       ast.LT,
@@ -369,12 +381,30 @@ func pushNotAcrossArgs(ctx sessionctx.Context, exprs []Expression, not bool) ([]
 	return newExprs, flag
 }
 
-// pushNotAcrossExpr try to eliminate the NOT expr in expression tree. It will records whether there's already NOT pushed.
-func pushNotAcrossExpr(ctx sessionctx.Context, expr Expression, not bool) (Expression, bool) {
+// pushNotAcrossExpr try to eliminate the NOT expr in expression tree.
+// Input `not` indicates whether there's a `NOT` be pushed down.
+// Output `changed` indicates whether the output expression differs from the
+// input `expr` because of the pushed-down-not.
+func pushNotAcrossExpr(ctx sessionctx.Context, expr Expression, not bool) (_ Expression, changed bool) {
 	if f, ok := expr.(*ScalarFunction); ok {
 		switch f.FuncName.L {
 		case ast.UnaryNot:
-			return pushNotAcrossExpr(f.GetCtx(), f.GetArgs()[0], !not)
+			var childExpr Expression
+			// UnaryNot only returns 0/1/NULL, thus we should not eliminate the innermost NOT.
+			switch child := f.GetArgs()[0].(type) {
+			case *ScalarFunction:
+				if _, isCmpOrLogicOp := opsCanBePushedDownNot[child.FuncName.L]; !isCmpOrLogicOp {
+					return expr, false
+				}
+				childExpr, changed = pushNotAcrossExpr(f.GetCtx(), f.GetArgs()[0], !not)
+				if !changed && !not {
+					return expr, false
+				} else {
+					return childExpr, true
+				}
+			case *Column:
+				return expr, false
+			}
 		case ast.LT, ast.GE, ast.GT, ast.LE, ast.EQ, ast.NE:
 			if not {
 				return NewFunctionInternal(f.GetCtx(), oppositeOp[f.FuncName.L], f.GetType(), f.GetArgs()...), true
