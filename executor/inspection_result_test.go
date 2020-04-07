@@ -107,8 +107,9 @@ func (s *inspectionResultSuite) TestInspectionResult(c *C) {
 			types.MakeDatums(datetime("2020-02-14 05:20:00"), "192.168.3.35:26600", 50.0*1024*1024*1024),
 		},
 	}
-	ctx := s.setupForMockMetricAndConfig(c, mockMetric, mockData)
-	defer s.tearDownForMockMetricAndConfig(c)
+
+	ctx := s.setupForInspection(c, mockMetric, mockData)
+	defer s.tearDownForInspection(c)
 
 	cases := []struct {
 		sql  string
@@ -169,7 +170,7 @@ func (s *inspectionResultSuite) parseTime(c *C, se session.Session, str string) 
 	return t
 }
 
-func (s *inspectionResultSuite) tearDownForMockMetricAndConfig(c *C) {
+func (s *inspectionResultSuite) tearDownForInspection(c *C) {
 	fpName := "github.com/pingcap/tidb/executor/mockMergeMockInspectionTables"
 	c.Assert(failpoint.Disable(fpName), IsNil)
 
@@ -177,7 +178,7 @@ func (s *inspectionResultSuite) tearDownForMockMetricAndConfig(c *C) {
 	c.Assert(failpoint.Disable(fpName2), IsNil)
 }
 
-func (s *inspectionResultSuite) setupForMockMetricAndConfig(c *C, mockData map[string][][]types.Datum, configurations map[string]variable.TableSnapshot) context.Context {
+func (s *inspectionResultSuite) setupForInspection(c *C, mockData map[string][][]types.Datum, configurations map[string]variable.TableSnapshot) context.Context {
 	// mock tikv configuration.
 	if configurations == nil {
 		configurations = map[string]variable.TableSnapshot{}
@@ -266,8 +267,8 @@ func (s *inspectionResultSuite) TestThresholdCheckInspection(c *C) {
 		"pd_region_health":                    {},
 	}
 
-	ctx := s.setupForMockMetricAndConfig(c, mockData, nil)
-	defer s.tearDownForMockMetricAndConfig(c)
+	ctx := s.setupForInspection(c, mockData, nil)
+	defer s.tearDownForInspection(c)
 
 	rs, err := tk.Se.Execute(ctx, "select /*+ time_range('2020-02-12 10:35:00','2020-02-12 10:37:00') */ item, type, instance,status_address, value, reference, details from information_schema.inspection_result where rule='threshold-check' order by item")
 	c.Assert(err, IsNil)
@@ -370,8 +371,8 @@ func (s *inspectionResultSuite) TestThresholdCheckInspection2(c *C) {
 		"pd_region_health":          {},
 	}
 
-	ctx := s.setupForMockMetricAndConfig(c, mockData, nil)
-	defer s.tearDownForMockMetricAndConfig(c)
+	ctx := s.setupForInspection(c, mockData, nil)
+	defer s.tearDownForInspection(c)
 
 	rs, err := tk.Se.Execute(ctx, "select /*+ time_range('2020-02-12 10:35:00','2020-02-12 10:37:00') */ item, type, instance, status_address, value, reference, details from information_schema.inspection_result where rule='threshold-check' order by item")
 	c.Assert(err, IsNil)
@@ -430,8 +431,8 @@ func (s *inspectionResultSuite) TestThresholdCheckInspection3(c *C) {
 		},
 	}
 
-	ctx := s.setupForMockMetricAndConfig(c, mockData, nil)
-	defer s.tearDownForMockMetricAndConfig(c)
+	ctx := s.setupForInspection(c, mockData, nil)
+	defer s.tearDownForInspection(c)
 
 	rs, err := tk.Se.Execute(ctx, `select /*+ time_range('2020-02-14 04:20:00','2020-02-14 05:23:00') */
 		item, type, instance,status_address, value, reference, details from information_schema.inspection_result
@@ -536,8 +537,8 @@ func (s *inspectionResultSuite) TestCriticalErrorInspection(c *C) {
 		},
 	}
 
-	ctx := s.setupForMockMetricAndConfig(c, mockData, nil)
-	defer s.tearDownForMockMetricAndConfig(c)
+	ctx := s.setupForInspection(c, mockData, nil)
+	defer s.tearDownForInspection(c)
 
 	rs, err := tk.Se.Execute(ctx, "select /*+ time_range('2020-02-12 10:35:00','2020-02-12 10:37:00') */ item, instance,status_address, value, details from information_schema.inspection_result where rule='critical-error'")
 	c.Assert(err, IsNil)
@@ -624,8 +625,8 @@ func (s *inspectionResultSuite) TestNodeLoadInspection(c *C) {
 		},
 	}
 
-	ctx := s.setupForMockMetricAndConfig(c, mockData, nil)
-	defer s.tearDownForMockMetricAndConfig(c)
+	ctx := s.setupForInspection(c, mockData, nil)
+	defer s.tearDownForInspection(c)
 
 	rs, err := tk.Se.Execute(ctx, `select /*+ time_range('2020-02-14 04:20:00','2020-02-14 05:23:00') */
 		item, type, instance, value, reference, details from information_schema.inspection_result
@@ -671,8 +672,8 @@ func (s *inspectionResultSuite) TestConfigCheckOfStorageBlockCacheSize(c *C) {
 		},
 	}
 
-	ctx := s.setupForMockMetricAndConfig(c, mockData, configurations)
-	defer s.tearDownForMockMetricAndConfig(c)
+	ctx := s.setupForInspection(c, mockData, configurations)
+	defer s.tearDownForInspection(c)
 
 	rs, err := tk.Se.Execute(ctx, "select  /*+ time_range('2020-02-14 04:20:00','2020-02-14 05:23:00') */ * from information_schema.inspection_result where rule='config' and item='storage.block-cache.capacity' order by value")
 	c.Assert(err, IsNil)
