@@ -242,8 +242,6 @@ func (b *batchCopIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 		ok     bool
 		closed bool
 	)
-	// If data order matters, response should be returned in the same order as copTask slice.
-	// Otherwise all responses are returned from a single channel.
 
 	// Get next fetched resp from chan
 	resp, ok, closed = b.recvFromRespCh(ctx)
@@ -294,6 +292,7 @@ func (b *batchCopIterator) handleTask(ctx context.Context, bo *Backoffer, task *
 		if err != nil {
 			resp := &batchCopResponse{err: errors.Trace(err)}
 			b.sendToRespCh(resp)
+			return
 		} else {
 			tasks = append(tasks, ret...)
 		}
@@ -353,29 +352,29 @@ func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *Backoffer, ta
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return b.handleStreamedBatchCopResponse(ctx, bo, resp.Resp.(*tikvrpc.BatchCopStreamResponse), task)
+	return nil, b.handleStreamedBatchCopResponse(ctx, bo, resp.Resp.(*tikvrpc.BatchCopStreamResponse), task)
 }
 
-func (b *batchCopIterator) handleStreamedBatchCopResponse(ctx context.Context, bo *Backoffer, response *tikvrpc.BatchCopStreamResponse, task *batchCopTask) (totalRetTask []*batchCopTask, err error) {
+func (b *batchCopIterator) handleStreamedBatchCopResponse(ctx context.Context, bo *Backoffer, response *tikvrpc.BatchCopStreamResponse, task *batchCopTask) (err error) {
 	defer response.Close()
 	resp := response.BatchResponse
 	if resp == nil {
 		// streaming request returns io.EOF, so the first Response is nil.
-		return nil, nil
+		return
 	}
 	for {
-		remainedTasks, err := b.handleBatchCopResponse(bo, resp, task)
-		if err != nil || len(remainedTasks) != 0 {
-			return remainedTasks, errors.Trace(err)
+		err = b.handleBatchCopResponse(bo, resp, task)
+		if err != nil {
+			return errors.Trace(err)
 		}
 		resp, err = response.Recv()
 		if err != nil {
 			if errors.Cause(err) == io.EOF {
-				return nil, nil
+				return
 			}
 
 			if err1 := bo.Backoff(boTiKVRPC, errors.Errorf("recv stream response error: %v, task store addr: %s", err, task.storeAddr)); err1 != nil {
-				return nil, errors.Trace(err)
+				return errors.Trace(err)
 			}
 
 			// No coprocessor.Response for network error, rebuild task based on the last success one.
@@ -384,26 +383,26 @@ func (b *batchCopIterator) handleStreamedBatchCopResponse(ctx context.Context, b
 			} else {
 				logutil.BgLogger().Info("stream unknown error", zap.Error(err))
 			}
-			return nil, errors.Trace(err)
+			return errors.Trace(err)
 		}
 	}
 }
 
-func (b *batchCopIterator) handleBatchCopResponse(bo *Backoffer, response *coprocessor.BatchResponse, task *batchCopTask) (totalRetTask []*batchCopTask, err error) {
+func (b *batchCopIterator) handleBatchCopResponse(bo *Backoffer, response *coprocessor.BatchResponse, task *batchCopTask) (err error) {
 	if otherErr := response.GetOtherError(); otherErr != "" {
-		err := errors.Errorf("other error: %s", otherErr)
+		err = errors.Errorf("other error: %s", otherErr)
 		logutil.BgLogger().Warn("other error",
 			zap.Uint64("txnStartTS", b.req.StartTs),
 			zap.String("storeAddr", task.storeAddr),
 			zap.Error(err))
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
 
 	b.sendToRespCh(&batchCopResponse{
 		pbResp: response,
 	})
 
-	return totalRetTask, nil
+	return
 }
 
 func (b *batchCopIterator) sendToRespCh(resp *batchCopResponse) (exit bool) {
