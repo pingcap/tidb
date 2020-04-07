@@ -266,16 +266,28 @@ func (ds *DataSource) generateAndPruneIndexMergePath(needPrune bool) {
 // DeriveStats implements LogicalPlan DeriveStats interface.
 func (ts *LogicalTableScan) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (_ *property.StatsInfo, err error) {
 	// PushDownNot here can convert query 'not (a != 1)' to 'a = 1'.
-	for i, expr := range ts.AccessConds {
+	for i, expr := range ts.AllConds {
 		// TODO The expressions may be shared by TableScan and several IndexScans, there would be redundant
 		// `PushDownNot` function call in multiple `DeriveStats` then.
-		ts.AccessConds[i] = expression.PushDownNot(ts.ctx, expr)
+		ts.AllConds[i] = expression.PushDownNot(ts.ctx, expr)
 	}
-	ts.stats = ts.Source.deriveStatsByFilter(ts.AccessConds, nil)
+	ts.stats = ts.Source.deriveStatsByFilter(ts.AllConds, nil)
 	sc := ts.SCtx().GetSessionVars().StmtCtx
+
 	// ts.Handle could be nil if PK is Handle, and PK column has been pruned.
 	if ts.Handle != nil {
+		ts.AccessConds, ts.FilterConds = ranger.DetachCondsForColumn(ts.SCtx(), ts.AllConds, ts.Handle)
 		ts.Ranges, err = ranger.BuildTableRange(ts.AccessConds, sc, ts.Handle.RetType)
+		if err != nil {
+			return nil, err
+		}
+		ts.CountAfterAccess, err = ts.Source.statisticTable.GetRowCountByIntColumnRanges(sc, ts.Handle.ID, ts.Ranges)
+		// If the `CountAfterAccess` is less than `stats.RowCount`, there must be some inconsistent stats info.
+		// We prefer the `stats.RowCount` because it could use more stats info to calculate the selectivity.
+		if ts.CountAfterAccess < ts.stats.RowCount {
+			ts.CountAfterAccess = math.Min(ts.stats.RowCount/SelectionFactor, float64(ts.Source.statisticTable.Count))
+		}
+		// TODO: Handle conditions with CorrelatedColumn.
 	} else {
 		isUnsigned := false
 		if ts.Source.tableInfo.PKIsHandle {
@@ -284,22 +296,21 @@ func (ts *LogicalTableScan) DeriveStats(childStats []*property.StatsInfo, selfSc
 			}
 		}
 		ts.Ranges = ranger.FullIntRange(isUnsigned)
-	}
-	if err != nil {
-		return nil, err
+		ts.CountAfterAccess = ts.Source.tableStats.RowCount
+		ts.FilterConds = ts.AllConds
 	}
 	return ts.stats, nil
 }
 
 // DeriveStats implements LogicalPlan DeriveStats interface.
 func (is *LogicalIndexScan) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (*property.StatsInfo, error) {
-	for i, expr := range is.AccessConds {
-		is.AccessConds[i] = expression.PushDownNot(is.ctx, expr)
+	for i, expr := range is.AllConds {
+		is.AllConds[i] = expression.PushDownNot(is.ctx, expr)
 	}
-	is.stats = is.Source.deriveStatsByFilter(is.AccessConds, nil)
-	if len(is.AccessConds) == 0 {
-		is.Ranges = ranger.FullRange()
-	}
+	is.stats = is.Source.deriveStatsByFilter(is.AllConds, nil)
+	is.Ranges = ranger.FullRange()
+	is.CountAfterAccess = float64(is.Source.statisticTable.Count)
+
 	is.IdxCols, is.IdxColLens = expression.IndexInfo2PrefixCols(is.Columns, selfSchema.Columns, is.Index)
 	is.FullIdxCols, is.FullIdxColLens = expression.IndexInfo2Cols(is.Columns, selfSchema.Columns, is.Index)
 	if !is.Index.Unique && !is.Index.Primary && len(is.Index.Columns) == len(is.IdxCols) {
@@ -308,6 +319,25 @@ func (is *LogicalIndexScan) DeriveStats(childStats []*property.StatsInfo, selfSc
 			is.IdxCols = append(is.IdxCols, handleCol)
 			is.IdxColLens = append(is.IdxColLens, types.UnspecifiedLength)
 		}
+	}
+
+	if len(is.IdxCols) != 0 {
+		res, err := ranger.DetachCondAndBuildRangeForIndex(is.SCtx(), is.AllConds, is.IdxCols, is.IdxColLens)
+		if err != nil {
+			return nil, err
+		}
+		is.Ranges = res.Ranges
+		is.AccessConds = res.AccessConds
+		is.FilterConds = res.RemainedConds
+		is.EqCondCount = res.EqCondCount
+		is.EqOrInCondCount = res.EqOrInCount
+		// TODO: `res` still has an unused field: IsDNFCond.
+		is.CountAfterAccess, err = is.Source.tableStats.HistColl.GetRowCountByIndexRanges(is.SCtx().GetSessionVars().StmtCtx, is.Index.ID, is.Ranges)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		is.FilterConds = is.AllConds
 	}
 	return is.stats, nil
 }

@@ -154,5 +154,15 @@
       "select /*+ INL_HASH_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;",
       "select /*+ INL_MERGE_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;"
     ]
+  },
+  {
+    "name": "TestTiKVSelectionStats",
+    "cases": [
+      "select * from t where pk > 2 and b < 5",
+      "select * from t where pk > 2 and b < 5 limit 1",
+      "select a, b from t where a = 0 and b < 2",
+      "select a, b from t where a < 1 and b < 2",
+      "select a, b from t where a < 1 and b < 2 limit 1"
+    ]
   }
 ]

@@ -103,10 +103,9 @@ type TableScanImpl struct {
 }
 
 // NewTableScanImpl creates a new table scan Implementation.
-func NewTableScanImpl(ts *plannercore.PhysicalTableScan, cols []*expression.Column, hists *statistics.HistColl) *TableScanImpl {
-	base := baseImpl{plan: ts}
+func NewTableScanImpl(plan plannercore.PhysicalPlan, cols []*expression.Column, hists *statistics.HistColl) *TableScanImpl {
 	impl := &TableScanImpl{
-		baseImpl:    base,
+		baseImpl:    baseImpl{plan: plan},
 		tblColHists: hists,
 		tblCols:     cols,
 	}
@@ -115,14 +114,30 @@ func NewTableScanImpl(ts *plannercore.PhysicalTableScan, cols []*expression.Colu
 
 // CalcCost calculates the cost of the table scan Implementation.
 func (impl *TableScanImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
-	ts := impl.plan.(*plannercore.PhysicalTableScan)
-	width := impl.tblColHists.GetTableAvgRowSize(impl.plan.SCtx(), impl.tblCols, kv.TiKV, true)
-	sessVars := ts.SCtx().GetSessionVars()
-	impl.cost = outCount * sessVars.ScanFactor * width
-	if ts.Desc {
-		impl.cost = outCount * sessVars.DescScanFactor * width
+	selCost := 0.0
+	tsCost := 0.0
+	sessVars := impl.plan.SCtx().GetSessionVars()
+	var ts *plannercore.PhysicalTableScan
+	if sel, ok := impl.plan.(*plannercore.PhysicalSelection); ok {
+		selCost = sel.StatsCount() * sessVars.CopCPUFactor
+		ts = sel.Children()[0].(*plannercore.PhysicalTableScan)
+	} else {
+		ts = impl.plan.(*plannercore.PhysicalTableScan)
 	}
+
+	width := impl.tblColHists.GetTableAvgRowSize(impl.plan.SCtx(), impl.tblCols, kv.TiKV, true)
+	tsCost = ts.StatsCount() * sessVars.ScanFactor * width
+	if ts.Desc {
+		tsCost = ts.StatsCount() * sessVars.DescScanFactor * width
+	}
+	tsCost += float64(len(ts.Ranges)) * sessVars.SeekFactor
+	impl.cost = tsCost + selCost
 	return impl.cost
+}
+
+// AttachChildren implements Implementation interface.
+func (impl *TableScanImpl) AttachChildren(children ...memo.Implementation) memo.Implementation {
+	return impl
 }
 
 // IndexReaderImpl is the implementation of PhysicalIndexReader.
@@ -168,20 +183,33 @@ type IndexScanImpl struct {
 
 // CalcCost implements Implementation interface.
 func (impl *IndexScanImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
-	is := impl.plan.(*plannercore.PhysicalIndexScan)
-	sessVars := is.SCtx().GetSessionVars()
-	rowSize := impl.tblColHists.GetIndexAvgRowSize(is.SCtx(), is.Schema().Columns, is.Index.Unique)
-	cost := outCount * rowSize * sessVars.ScanFactor
-	if is.Desc {
-		cost = outCount * rowSize * sessVars.DescScanFactor
+	selCost := 0.0
+	isCost := 0.0
+	sessVars := impl.plan.SCtx().GetSessionVars()
+	var is *plannercore.PhysicalIndexScan
+	if sel, ok := impl.plan.(*plannercore.PhysicalSelection); ok {
+		selCost = sel.StatsCount() * sessVars.CopCPUFactor
+		is = sel.Children()[0].(*plannercore.PhysicalIndexScan)
+	} else {
+		is = impl.plan.(*plannercore.PhysicalIndexScan)
 	}
-	cost += float64(len(is.Ranges)) * sessVars.SeekFactor
-	impl.cost = cost
+	rowSize := impl.tblColHists.GetIndexAvgRowSize(is.SCtx(), is.Schema().Columns, is.Index.Unique)
+	isCost = is.StatsCount() * rowSize * sessVars.ScanFactor
+	if is.Desc {
+		isCost = is.StatsCount() * rowSize * sessVars.DescScanFactor
+	}
+	isCost += float64(len(is.Ranges)) * sessVars.SeekFactor
+	impl.cost = selCost + isCost
 	return impl.cost
 }
 
+// AttachChildren implements Implementation interface.
+func (impl *IndexScanImpl) AttachChildren(children ...memo.Implementation) memo.Implementation {
+	return impl
+}
+
 // NewIndexScanImpl creates a new IndexScan Implementation.
-func NewIndexScanImpl(scan *plannercore.PhysicalIndexScan, tblColHists *statistics.HistColl) *IndexScanImpl {
+func NewIndexScanImpl(scan plannercore.PhysicalPlan, tblColHists *statistics.HistColl) *IndexScanImpl {
 	return &IndexScanImpl{
 		baseImpl:    baseImpl{plan: scan},
 		tblColHists: tblColHists,

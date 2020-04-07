@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/planner/memo"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/set"
 )
 
@@ -166,48 +165,27 @@ type PushSelDownTableScan struct {
 // The pattern of this rule is: `Selection -> TableScan`
 func NewRulePushSelDownTableScan() Transformation {
 	rule := &PushSelDownTableScan{}
-	ts := memo.NewPattern(memo.OperandTableScan, memo.EngineTiKVOrTiFlash)
-	p := memo.BuildPattern(memo.OperandSelection, memo.EngineTiKVOrTiFlash, ts)
-	rule.pattern = p
+	rule.pattern = memo.BuildPattern(
+		memo.OperandSelection,
+		memo.EngineTiKVOnly,
+		memo.NewPattern(memo.OperandTableScan, memo.EngineTiKVOnly),
+	)
 	return rule
 }
 
 // OnTransform implements Transformation interface.
-//
-// It transforms `sel -> ts` to one of the following new exprs:
-// 1. `newSel -> newTS`
-// 2. `newTS`
-//
-// Filters of the old `sel` operator are removed if they are used to calculate
-// the key ranges of the `ts` operator.
+// It transforms `Selection -> TableScan` to `TableScan` with the conditions inside it.
 func (r *PushSelDownTableScan) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	sel := old.GetExpr().ExprNode.(*plannercore.LogicalSelection)
 	ts := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalTableScan)
-	if ts.Handle == nil {
-		return nil, false, false, nil
-	}
-	accesses, remained := ranger.DetachCondsForColumn(ts.SCtx(), sel.Conditions, ts.Handle)
-	if accesses == nil {
-		return nil, false, false, nil
-	}
+	newConds := append(ts.AllConds.Shallow(), sel.Conditions...)
 	newTblScan := plannercore.LogicalTableScan{
-		Source:      ts.Source,
-		Handle:      ts.Handle,
-		AccessConds: ts.AccessConds.Shallow(),
+		Source:   ts.Source,
+		Handle:   ts.Handle,
+		AllConds: newConds,
 	}.Init(ts.SCtx(), ts.SelectBlockOffset())
-	newTblScan.AccessConds = append(newTblScan.AccessConds, accesses...)
-	tblScanExpr := memo.NewGroupExpr(newTblScan)
-	if len(remained) == 0 {
-		// `sel -> ts` is transformed to `newTS`.
-		return []*memo.GroupExpr{tblScanExpr}, true, false, nil
-	}
-	schema := old.GetExpr().Group.Prop.Schema
-	tblScanGroup := memo.NewGroupWithSchema(tblScanExpr, schema)
-	newSel := plannercore.LogicalSelection{Conditions: remained}.Init(sel.SCtx(), sel.SelectBlockOffset())
-	selExpr := memo.NewGroupExpr(newSel)
-	selExpr.Children = append(selExpr.Children, tblScanGroup)
-	// `sel -> ts` is transformed to `newSel ->newTS`.
-	return []*memo.GroupExpr{selExpr}, true, false, nil
+	newTblScanExpr := memo.NewGroupExpr(newTblScan)
+	return []*memo.GroupExpr{newTblScanExpr}, true, false, nil
 }
 
 // PushSelDownIndexScan pushes a Selection down to IndexScan.
@@ -229,66 +207,24 @@ func NewRulePushSelDownIndexScan() Transformation {
 
 // OnTransform implements Transformation interface.
 // It will transform `Selection -> IndexScan` to:
-//   `IndexScan(with a new access range)` or
-//   `Selection -> IndexScan(with a new access range)`
-//	 or just keep the two GroupExprs unchanged.
+//   `IndexScan(with the filter conditions)`.
 func (r *PushSelDownIndexScan) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	sel := old.GetExpr().ExprNode.(*plannercore.LogicalSelection)
 	is := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalIndexScan)
-	if len(is.IdxCols) == 0 {
-		return nil, false, false, nil
-	}
-	conditions := sel.Conditions
-	if is.AccessConds != nil {
-		// If we have already pushed some conditions down here,
-		// we merge old AccessConds with new conditions,
-		// to make sure this rule can be applied more than once.
-		conditions = make([]expression.Expression, len(sel.Conditions)+len(is.AccessConds))
-		copy(conditions, sel.Conditions)
-		copy(conditions[len(sel.Conditions):], is.AccessConds)
-	}
-	res, err := ranger.DetachCondAndBuildRangeForIndex(is.SCtx(), conditions, is.IdxCols, is.IdxColLens)
-	if err != nil {
-		return nil, false, false, err
-	}
-	if len(res.AccessConds) == len(is.AccessConds) {
-		// There is no condition can be pushed down as range,
-		// or the pushed down conditions are the same with before.
-		sameConds := true
-		for i := range res.AccessConds {
-			if !res.AccessConds[i].Equal(is.SCtx(), is.AccessConds[i]) {
-				sameConds = false
-				break
-			}
-		}
-		if sameConds {
-			return nil, false, false, nil
-		}
-	}
-	// TODO: `res` still has some unused fields: EqOrInCount, IsDNFCond.
+	newConds := append(is.AllConds.Shallow(), sel.Conditions...)
 	newIs := plannercore.LogicalIndexScan{
 		Source:         is.Source,
 		IsDoubleRead:   is.IsDoubleRead,
-		EqCondCount:    res.EqCondCount,
-		AccessConds:    res.AccessConds,
-		Ranges:         res.Ranges,
 		Index:          is.Index,
 		Columns:        is.Columns,
 		FullIdxCols:    is.FullIdxCols,
 		FullIdxColLens: is.FullIdxColLens,
 		IdxCols:        is.IdxCols,
 		IdxColLens:     is.IdxColLens,
+		AllConds:       newConds,
 	}.Init(is.SCtx(), is.SelectBlockOffset())
-	isExpr := memo.NewGroupExpr(newIs)
-
-	if len(res.RemainedConds) == 0 {
-		return []*memo.GroupExpr{isExpr}, true, false, nil
-	}
-	isGroup := memo.NewGroupWithSchema(isExpr, old.Children[0].GetExpr().Group.Prop.Schema)
-	newSel := plannercore.LogicalSelection{Conditions: res.RemainedConds}.Init(sel.SCtx(), sel.SelectBlockOffset())
-	selExpr := memo.NewGroupExpr(newSel)
-	selExpr.SetChildren(isGroup)
-	return []*memo.GroupExpr{selExpr}, true, false, nil
+	newIsExpr := memo.NewGroupExpr(newIs)
+	return []*memo.GroupExpr{newIsExpr}, true, false, nil
 }
 
 // PushSelDownTiKVSingleGather pushes the selection down to child of TiKVSingleGather.

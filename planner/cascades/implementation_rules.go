@@ -201,12 +201,15 @@ func (r *ImplTableScan) Match(expr *memo.GroupExpr, prop *property.PhysicalPrope
 func (r *ImplTableScan) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
 	logicProp := expr.Group.Prop
 	logicalScan := expr.ExprNode.(*plannercore.LogicalTableScan)
-	ts := logicalScan.GetPhysicalScan(logicProp.Schema, logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt))
+	ts, sel := logicalScan.GetPhysicalScan(logicProp.Schema, logicProp.Stats, reqProp)
 	if !reqProp.IsEmpty() {
 		ts.KeepOrder = true
 		ts.Desc = reqProp.Items[0].Desc
 	}
 	tblCols, tblColHists := logicalScan.Source.TblCols, logicalScan.Source.TblColHists
+	if sel != nil {
+		return []memo.Implementation{impl.NewTableScanImpl(sel, tblCols, tblColHists)}, nil
+	}
 	return []memo.Implementation{impl.NewTableScanImpl(ts, tblCols, tblColHists)}, nil
 }
 
@@ -223,12 +226,15 @@ func (r *ImplIndexScan) Match(expr *memo.GroupExpr, prop *property.PhysicalPrope
 // OnImplement implements ImplementationRule OnImplement interface.
 func (r *ImplIndexScan) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
 	logicalScan := expr.ExprNode.(*plannercore.LogicalIndexScan)
-	is := logicalScan.GetPhysicalIndexScan(expr.Group.Prop.Schema, expr.Group.Prop.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt))
+	is, sel := logicalScan.GetPhysicalIndexScan(expr.Group.Prop.Schema, expr.Group.Prop.Stats, reqProp)
 	if !reqProp.IsEmpty() {
 		is.KeepOrder = true
 		if reqProp.Items[0].Desc {
 			is.Desc = true
 		}
+	}
+	if sel != nil {
+		return []memo.Implementation{impl.NewIndexScanImpl(sel, logicalScan.Source.TblColHists)}, nil
 	}
 	return []memo.Implementation{impl.NewIndexScanImpl(is, logicalScan.Source.TblColHists)}, nil
 }

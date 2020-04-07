@@ -1029,7 +1029,7 @@ func (ds *DataSource) crossEstimateRowCount(path *util.AccessPath, expectedCnt f
 }
 
 // GetPhysicalScan returns PhysicalTableScan for the LogicalTableScan.
-func (s *LogicalTableScan) GetPhysicalScan(schema *expression.Schema, stats *property.StatsInfo) *PhysicalTableScan {
+func (s *LogicalTableScan) GetPhysicalScan(schema *expression.Schema, stats *property.StatsInfo, prop *property.PhysicalProperty) (*PhysicalTableScan, *PhysicalSelection) {
 	ds := s.Source
 	ts := PhysicalTableScan{
 		Table:           ds.tableInfo,
@@ -1041,7 +1041,6 @@ func (s *LogicalTableScan) GetPhysicalScan(schema *expression.Schema, stats *pro
 		Ranges:          s.Ranges,
 		AccessCondition: s.AccessConds,
 	}.Init(s.ctx, s.blockOffset)
-	ts.stats = stats
 	ts.SetSchema(schema.Clone())
 	if ts.Table.PKIsHandle {
 		if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {
@@ -1050,11 +1049,23 @@ func (s *LogicalTableScan) GetPhysicalScan(schema *expression.Schema, stats *pro
 			}
 		}
 	}
-	return ts
+	rowCount := s.CountAfterAccess
+	if prop.ExpectedCnt < stats.RowCount {
+		selectivity := stats.RowCount / s.CountAfterAccess
+		rowCount = math.Min(prop.ExpectedCnt/selectivity, rowCount)
+	}
+	// TODO: Estimate row count using ds.crossEstimateRowCount().
+	ts.stats = ds.tableStats.ScaleByExpectCnt(rowCount)
+	if len(s.FilterConds) == 0 {
+		return ts, nil
+	}
+	sel := PhysicalSelection{Conditions: s.FilterConds}.Init(s.ctx, stats.ScaleByExpectCnt(prop.ExpectedCnt), s.blockOffset)
+	sel.SetChildren(ts)
+	return ts, sel
 }
 
 // GetPhysicalIndexScan returns PhysicalIndexScan for the logical IndexScan.
-func (s *LogicalIndexScan) GetPhysicalIndexScan(schema *expression.Schema, stats *property.StatsInfo) *PhysicalIndexScan {
+func (s *LogicalIndexScan) GetPhysicalIndexScan(schema *expression.Schema, stats *property.StatsInfo, prop *property.PhysicalProperty) (*PhysicalIndexScan, *PhysicalSelection) {
 	ds := s.Source
 	is := PhysicalIndexScan{
 		Table:            ds.tableInfo,
@@ -1070,9 +1081,22 @@ func (s *LogicalIndexScan) GetPhysicalIndexScan(schema *expression.Schema, stats
 		isPartition:      ds.isPartition,
 		physicalTableID:  ds.physicalTableID,
 	}.Init(ds.ctx, ds.blockOffset)
-	is.stats = stats
 	is.initSchema(s.Index, s.FullIdxCols, s.IsDoubleRead)
-	return is
+	rowCount := s.CountAfterAccess
+	// Only use expectedCnt when it's smaller than the count we calculated.
+	// e.g. IndexScan(count1)->After Filter(count2). The `ds.stats.RowCount` is count2. count1 is the one we need to calculate
+	// If expectedCnt and count2 are both zero and we go into the below `if` block, the count1 will be set to zero though it's shouldn't be.
+	if prop.ExpectedCnt < stats.RowCount {
+		selectivity := stats.RowCount / s.CountAfterAccess
+		rowCount = math.Min(prop.ExpectedCnt/selectivity, rowCount)
+	}
+	is.stats = ds.tableStats.ScaleByExpectCnt(rowCount)
+	if len(s.FilterConds) == 0 {
+		return is, nil
+	}
+	sel := PhysicalSelection{Conditions: s.FilterConds}.Init(s.ctx, stats.ScaleByExpectCnt(prop.ExpectedCnt), s.blockOffset)
+	sel.SetChildren(is)
+	return is, sel
 }
 
 // convertToTableScan converts the DataSource to table scan.

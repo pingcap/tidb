@@ -529,10 +529,20 @@ type TiKVSingleGather struct {
 // LogicalTableScan is the logical table scan operator for TiKV.
 type LogicalTableScan struct {
 	logicalSchemaProducer
-	Source      *DataSource
-	Handle      *expression.Column
+	Source *DataSource
+	Handle *expression.Column
+	// AllConds are the pushed down filter conditions.
+	// AllConds will be split to `AccessConds` and `FilterConds` when derive stats.
+	// `AccessConds` will be converted to ranges, while `FilterConds` will
+	// be converted to a `PhysicalSelection`.
+	AllConds expression.CNFExprs
+	// AccessConds are conditions that will be converted to ranges.
 	AccessConds expression.CNFExprs
-	Ranges      []*ranger.Range
+	// FilterConds are conditions that will be converted to a `PhysicalSelection`.
+	FilterConds expression.CNFExprs
+	// CountAfterAccess is the row count after considering the `AccessConds`.
+	CountAfterAccess float64
+	Ranges           []*ranger.Range
 }
 
 // LogicalIndexScan is the logical index scan operator for TiKV.
@@ -542,9 +552,20 @@ type LogicalIndexScan struct {
 	Source       *DataSource
 	IsDoubleRead bool
 
-	EqCondCount int
+	EqCondCount     int
+	EqOrInCondCount int
+	// AllConds are the pushed down filter conditions.
+	// AllConds will be split to `AccessConds` and `FilterConds`.
+	// `AccessConds` will be converted to ranges, while `FilterConds` will
+	// be converted to a `PhysicalSelection`.
+	AllConds expression.CNFExprs
+	// AccessConds are conditions that will be converted to ranges.
 	AccessConds expression.CNFExprs
-	Ranges      []*ranger.Range
+	// FilterConds are conditions that will be converted to a `PhysicalSelection`.
+	FilterConds expression.CNFExprs
+	// CountAfterAccess is the row count after considering the `AccessConds`.
+	CountAfterAccess float64
+	Ranges           []*ranger.Range
 
 	Index          *model.IndexInfo
 	Columns        []*model.ColumnInfo
