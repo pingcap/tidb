@@ -104,7 +104,7 @@ func (s *inspectionSummarySuite) TestInspectionSummary(c *C) {
 		"query-summary tikv-0 tidb_query_duration Select 0.99 0 0 0 The quantile of TiDB query durations(second)",
 		"query-summary tikv-1 tidb_query_duration Update 0.99 2 1 3 The quantile of TiDB query durations(second)",
 		"query-summary tikv-2 tidb_query_duration Delete 0.99 5 5 5 The quantile of TiDB query durations(second)",
-		"query-summary tidb-0 tidb_qps Query, Error <nil> 1 1 1 TiDB TiDB query processing numbers per second",
+		"query-summary tidb-0 tidb_qps Query, Error <nil> 1 1 1 TiDB query processing numbers per second",
 		"query-summary tidb-0 tidb_qps Query, OK <nil> 0 0 0 TiDB query processing numbers per second",
 		"query-summary tidb-1 tidb_qps Quit, Error <nil> 7 5 9 TiDB query processing numbers per second",
 	))
