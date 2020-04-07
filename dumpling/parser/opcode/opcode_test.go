@@ -24,13 +24,11 @@ func TestT(t *testing.T) {
 		t.Fatalf("invalid op code")
 	}
 
-	if len(Ops) != len(opsLiteral) {
-		t.Error("inconsistent count ops and opsliteral")
-	}
 	var buf bytes.Buffer
-	for op := range Ops {
+	for i := range ops {
+		op := Op(i)
 		op.Format(&buf)
-		if buf.String() != opsLiteral[op] {
+		if buf.String() != ops[op].literal {
 			t.Error("format op fail", op)
 		}
 		buf.Reset()
