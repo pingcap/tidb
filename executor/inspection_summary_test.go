@@ -96,8 +96,7 @@ func (s *inspectionSummarySuite) TestInspectionSummary(c *C) {
 		return fpName == fpname
 	})
 
-	// Test for select * from information_schema.inspection_summary without specify rules.
-	rs, err := tk.Se.Execute(ctx, "select * from information_schema.inspection_summary where metrics_name in ('tidb_qps', 'tidb_query_duration')")
+	rs, err := tk.Se.Execute(ctx, "select * from information_schema.inspection_summary where rule='query-summary' and metrics_name in ('tidb_qps', 'tidb_query_duration')")
 	c.Assert(err, IsNil)
 	result := tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute inspect SQL failed"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0), Commentf("unexpected warnings: %+v", tk.Se.GetSessionVars().StmtCtx.GetWarnings()))
@@ -105,6 +104,17 @@ func (s *inspectionSummarySuite) TestInspectionSummary(c *C) {
 		"query-summary tikv-0 tidb_query_duration Select 0.99 0 0 0 The quantile of TiDB query durations(second)",
 		"query-summary tikv-1 tidb_query_duration Update 0.99 2 1 3 The quantile of TiDB query durations(second)",
 		"query-summary tikv-2 tidb_query_duration Delete 0.99 5 5 5 The quantile of TiDB query durations(second)",
+		"query-summary tidb-0 tidb_qps Query, Error <nil> 1 1 1 TiDB query processing numbers per second",
+		"query-summary tidb-0 tidb_qps Query, OK <nil> 0 0 0 TiDB query processing numbers per second",
+		"query-summary tidb-1 tidb_qps Quit, Error <nil> 7 5 9 TiDB query processing numbers per second",
+	))
+
+	// Test for select * from information_schema.inspection_summary without specify rules.
+	rs, err = tk.Se.Execute(ctx, "select * from information_schema.inspection_summary where metrics_name = 'tidb_qps'")
+	c.Assert(err, IsNil)
+	result = tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute inspect SQL failed"))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0), Commentf("unexpected warnings: %+v", tk.Se.GetSessionVars().StmtCtx.GetWarnings()))
+	result.Check(testkit.Rows(
 		"query-summary tidb-0 tidb_qps Query, Error <nil> 1 1 1 TiDB query processing numbers per second",
 		"query-summary tidb-0 tidb_qps Query, OK <nil> 0 0 0 TiDB query processing numbers per second",
 		"query-summary tidb-1 tidb_qps Quit, Error <nil> 7 5 9 TiDB query processing numbers per second",
