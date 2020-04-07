@@ -269,6 +269,17 @@ func timeZone2Duration(tz string) time.Duration {
 	return time.Duration(sign) * (time.Duration(h)*time.Hour + time.Duration(m)*time.Minute)
 }
 
+var opsCanBePushedDownNot = map[string]struct{}{
+	ast.LT:       {},
+	ast.GE:       {},
+	ast.GT:       {},
+	ast.LE:       {},
+	ast.EQ:       {},
+	ast.NE:       {},
+	ast.LogicAnd: {},
+	ast.LogicOr:  {},
+}
+
 var oppositeOp = map[string]string{
 	ast.LT: ast.GE,
 	ast.GE: ast.LT,
@@ -302,6 +313,15 @@ func PushDownNot(ctx sessionctx.Context, expr Expression, not bool) Expression {
 	if f, ok := expr.(*ScalarFunction); ok {
 		switch f.FuncName.L {
 		case ast.UnaryNot:
+			// UnaryNot only returns 0/1/NULL, thus we should not eliminate the innermost NOT.
+			if childFunc, isScalarFunc := f.GetArgs()[0].(*ScalarFunction); isScalarFunc {
+				if _, isCmpOrLogicOp := opsCanBePushedDownNot[childFunc.FuncName.L]; !isCmpOrLogicOp {
+					return expr
+				}
+			}
+			if _, isCol := f.GetArgs()[0].(*Column); isCol {
+				return expr
+			}
 			return PushDownNot(f.GetCtx(), f.GetArgs()[0], !not)
 		case ast.LT, ast.GE, ast.GT, ast.LE, ast.EQ, ast.NE:
 			if not {

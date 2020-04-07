@@ -4918,3 +4918,11 @@ func (s *testIntegrationSuite) TestValuesForBinaryLiteral(c *C) {
 	tk.MustQuery("select a=0 from testValuesBinary;").Check(testkit.Rows("1"))
 	tk.MustExec("drop table testValuesBinary;")
 }
+
+func (s *testIntegrationSuite) TestIssue15725(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t values(2)")
+	tk.MustQuery("select * from t where (not not a) = a").Check(testkit.Rows())
+}
