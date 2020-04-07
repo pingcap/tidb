@@ -471,6 +471,7 @@ type lockCtx struct {
 	forUpdateTS uint64
 	primary     []byte
 	ttl         uint64
+	minCommitTs uint64
 
 	returnValues bool
 	values       [][]byte
@@ -487,6 +488,7 @@ func (mvcc *MVCCLevelDB) PessimisticLock(req *kvrpcpb.PessimisticLockRequest) *k
 		forUpdateTS:  req.ForUpdateTs,
 		primary:      req.PrimaryLock,
 		ttl:          req.LockTtl,
+		minCommitTs:  req.MinCommitTs,
 		returnValues: req.ReturnValues,
 	}
 	lockWaitTime := req.WaitTimeout
@@ -571,6 +573,7 @@ func (mvcc *MVCCLevelDB) pessimisticLockMutation(batch *leveldb.Batch, mutation 
 		op:          kvrpcpb.Op_PessimisticLock,
 		ttl:         lctx.ttl,
 		forUpdateTS: forUpdateTS,
+		minCommitTS: lctx.minCommitTs,
 	}
 	writeKey := mvccEncode(mutation.Key, lockVer)
 	writeValue, err := lock.MarshalBinary()
@@ -796,6 +799,10 @@ func prewriteMutation(db *leveldb.DB, batch *leveldb.Batch,
 		if ttl < dec.lock.ttl {
 			// Maybe ttlManager has already set the lock TTL, don't decrease it.
 			ttl = dec.lock.ttl
+		}
+		if minCommitTS < dec.lock.minCommitTS {
+			// The minCommitTS has been pushed forward.
+			minCommitTS = dec.lock.minCommitTS
 		}
 	} else {
 		if isPessimisticLock {
