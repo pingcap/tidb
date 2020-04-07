@@ -185,8 +185,8 @@ func (p *PhysicalTableScan) AccessObject() string {
 // OperatorInfo implements dataAccesser interface.
 func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 	buffer := bytes.NewBufferString("")
-	if p.pkCol != nil {
-		fmt.Fprintf(buffer, "pk col:%s, ", p.pkCol.ExplainInfo())
+	if p.HandleCol != nil {
+		fmt.Fprintf(buffer, "pk col:%s, ", p.HandleCol.ExplainInfo())
 	}
 	if len(p.rangeDecidedBy) > 0 {
 		fmt.Fprintf(buffer, "range: decided by %v, ", p.rangeDecidedBy)

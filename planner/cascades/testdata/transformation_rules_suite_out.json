@@ -14,9 +14,7 @@
           "Group#3 Schema:[test.t.a,test.t.b]",
           "    TiKVSingleGather_8 input:[Group#4], table:t1",
           "Group#4 Schema:[test.t.a,test.t.b]",
-          "    Selection_9 input:[Group#5], gt(test.t.b, 10)",
-          "Group#5 Schema:[test.t.a,test.t.b]",
-          "    TableScan_7 table:t1, pk col:test.t.a"
+          "    TableScan_10 table:t1, pk col:test.t.a"
         ]
       },
       {
@@ -31,7 +29,7 @@
           "Group#3 Schema:[test.t.a,test.t.b]",
           "    TiKVSingleGather_8 input:[Group#4], table:t1",
           "Group#4 Schema:[test.t.a,test.t.b]",
-          "    TableScan_10 table:t1, pk col:test.t.a, cond:[gt(test.t.a, 10)]"
+          "    TableScan_10 table:t1, pk col:test.t.a"
         ]
       },
       {
@@ -44,9 +42,7 @@
           "Group#2 Schema:[test.t.a,test.t.b]",
           "    TiKVSingleGather_7 input:[Group#3], table:t1",
           "Group#3 Schema:[test.t.a,test.t.b]",
-          "    Selection_8 input:[Group#4], eq(test.t.b, 1), gt(plus(test.t.a, test.t.b), 10)",
-          "Group#4 Schema:[test.t.a,test.t.b]",
-          "    TableScan_6 table:t1, pk col:test.t.a"
+          "    TableScan_9 table:t1, pk col:test.t.a"
         ]
       },
       {
@@ -76,7 +72,7 @@
           "Group#3 Schema:[test.t.a,test.t.b]",
           "    TiKVSingleGather_8 input:[Group#4], table:t1",
           "Group#4 Schema:[test.t.a,test.t.b]",
-          "    TableScan_10 table:t1, pk col:test.t.a, cond:[gt(test.t.a, 10)]"
+          "    TableScan_10 table:t1, pk col:test.t.a"
         ]
       },
       {
@@ -89,7 +85,7 @@
           "Group#2 Schema:[test.t.a,test.t.b]",
           "    TiKVSingleGather_8 input:[Group#3], table:t",
           "Group#3 Schema:[test.t.a,test.t.b]",
-          "    TableScan_10 table:t, pk col:test.t.a, cond:[gt(test.t.a, 1)]"
+          "    TableScan_10 table:t, pk col:test.t.a"
         ]
       },
       {
@@ -106,7 +102,7 @@
           "Group#4 Schema:[test.t.a,test.t.b]",
           "    TiKVSingleGather_10 input:[Group#5], table:t",
           "Group#5 Schema:[test.t.a,test.t.b]",
-          "    TableScan_12 table:t, pk col:test.t.a, cond:[gt(test.t.a, 1)]"
+          "    TableScan_12 table:t, pk col:test.t.a"
         ]
       },
       {
@@ -119,15 +115,11 @@
           "Group#2 Schema:[test.t.a,test.t.b]",
           "    TiKVSingleGather_9 input:[Group#4], table:t1",
           "Group#4 Schema:[test.t.a,test.t.b]",
-          "    Selection_12 input:[Group#5], gt(test.t.a, test.t.b), gt(test.t.b, 10)",
-          "Group#5 Schema:[test.t.a,test.t.b]",
-          "    TableScan_11 table:t1, pk col:test.t.a, cond:[gt(test.t.a, 10)]",
+          "    TableScan_11 table:t1, pk col:test.t.a",
           "Group#3 Schema:[test.t.a,test.t.b]",
-          "    TiKVSingleGather_14 input:[Group#6], table:t2",
-          "Group#6 Schema:[test.t.a,test.t.b]",
-          "    Selection_17 input:[Group#7], gt(test.t.a, test.t.b), gt(test.t.b, 10)",
-          "Group#7 Schema:[test.t.a,test.t.b]",
-          "    TableScan_16 table:t2, pk col:test.t.a, cond:[gt(test.t.a, 10)]"
+          "    TiKVSingleGather_13 input:[Group#5], table:t2",
+          "Group#5 Schema:[test.t.a,test.t.b]",
+          "    TableScan_15 table:t2, pk col:test.t.a"
         ]
       },
       {
@@ -149,13 +141,11 @@
           "    TiKVSingleGather_7 input:[Group#3], table:t, index:f",
           "    TiKVSingleGather_9 input:[Group#4], table:t, index:f_g",
           "Group#2 Schema:[test.t.a,test.t.f]",
-          "    Selection_10 input:[Group#5], gt(test.t.f, 1)",
-          "Group#5 Schema:[test.t.a,test.t.f]",
-          "    TableScan_4 table:t, pk col:test.t.a",
+          "    TableScan_13 table:t, pk col:test.t.a",
           "Group#3 Schema:[test.t.a,test.t.f]",
-          "    IndexScan_13 table:t, index:f, cond:[gt(test.t.f, 1)]",
+          "    IndexScan_14 table:t, index:f",
           "Group#4 Schema:[test.t.a,test.t.f]",
-          "    IndexScan_14 table:t, index:f, g, cond:[gt(test.t.f, 1)]"
+          "    IndexScan_15 table:t, index:f, g"
         ]
       },
       {
@@ -169,11 +159,9 @@
           "    TiKVSingleGather_9 input:[Group#3], table:t",
           "    TiKVSingleGather_17 input:[Group#4], table:t, index:f_g",
           "Group#3 Schema:[test.t.a,test.t.f,test.t.g]",
-          "    Selection_18 input:[Group#5], eq(test.t.f, 1), gt(test.t.g, 1)",
-          "Group#5 Schema:[test.t.a,test.t.f,test.t.g]",
-          "    TableScan_8 table:t, pk col:test.t.a",
+          "    TableScan_20 table:t, pk col:test.t.a",
           "Group#4 Schema:[test.t.a,test.t.f,test.t.g]",
-          "    IndexScan_20 table:t, index:f, g, cond:[eq(test.t.f, 1) gt(test.t.g, 1)]"
+          "    IndexScan_21 table:t, index:f, g"
         ]
       },
       {
@@ -185,13 +173,9 @@
           "    TiKVSingleGather_5 input:[Group#2], table:t",
           "    TiKVSingleGather_13 input:[Group#3], table:t, index:f_g",
           "Group#2 Schema:[test.t.a,test.t.f,test.t.g]",
-          "    Selection_14 input:[Group#4], gt(test.t.f, 1), gt(test.t.g, 1)",
-          "Group#4 Schema:[test.t.a,test.t.f,test.t.g]",
-          "    TableScan_4 table:t, pk col:test.t.a",
+          "    TableScan_16 table:t, pk col:test.t.a",
           "Group#3 Schema:[test.t.a,test.t.f,test.t.g]",
-          "    Selection_17 input:[Group#5], gt(test.t.g, 1)",
-          "Group#5 Schema:[test.t.a,test.t.f,test.t.g]",
-          "    IndexScan_16 table:t, index:f, g, cond:[gt(test.t.f, 1)]"
+          "    IndexScan_17 table:t, index:f, g"
         ]
       },
       {
@@ -217,7 +201,7 @@
           "Group#5 Schema:[test.t.a,test.t.b]",
           "    TiKVSingleGather_15 input:[Group#6], table:t",
           "Group#6 Schema:[test.t.a,test.t.b]",
-          "    TableScan_17 table:t, pk col:test.t.a, cond:[gt(test.t.a, 1)]",
+          "    TableScan_17 table:t, pk col:test.t.a",
           "Group#3 Schema:[Column#25,Column#26]",
           "    Projection_7 input:[Group#7], test.t.c, test.t.d",
           "Group#7 Schema:[test.t.c,test.t.d]",
@@ -226,11 +210,9 @@
           "    TiKVSingleGather_19 input:[Group#9], table:t",
           "    TiKVSingleGather_21 input:[Group#10], table:t, index:c_d_e",
           "Group#9 Schema:[test.t.c,test.t.d]",
-          "    Selection_22 input:[Group#11], gt(test.t.c, 1)",
-          "Group#11 Schema:[test.t.c,test.t.d]",
-          "    TableScan_18 table:t",
+          "    TableScan_24 table:t",
           "Group#10 Schema:[test.t.c,test.t.d]",
-          "    IndexScan_24 table:t, index:c, d, e, cond:[gt(test.t.c, 1)]"
+          "    IndexScan_25 table:t, index:c, d, e"
         ]
       },
       {
@@ -251,9 +233,7 @@
           "Group#6 Schema:[test.t.a,test.t.b]",
           "    TiKVSingleGather_14 input:[Group#7], table:t",
           "Group#7 Schema:[test.t.a,test.t.b]",
-          "    Selection_15 input:[Group#8], gt(test.t.b, 10)",
-          "Group#8 Schema:[test.t.a,test.t.b]",
-          "    TableScan_13 table:t, pk col:test.t.a"
+          "    TableScan_16 table:t, pk col:test.t.a"
         ]
       },
       {
@@ -266,9 +246,7 @@
           "Group#2 Schema:[test.t.b,test.t.c]",
           "    TiKVSingleGather_9 input:[Group#3], table:t",
           "Group#3 Schema:[test.t.b,test.t.c]",
-          "    Selection_13 input:[Group#4], gt(test.t.b, 1), gt(test.t.b, 2), gt(test.t.c, 1), gt(test.t.c, 2)",
-          "Group#4 Schema:[test.t.b,test.t.c]",
-          "    TableScan_8 table:t"
+          "    TableScan_14 table:t"
         ]
       }
     ]
