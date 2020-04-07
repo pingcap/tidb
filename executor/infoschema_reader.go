@@ -1015,15 +1015,21 @@ func (e *memtableRetriever) dataForTiDBClusterInfo(ctx sessionctx.Context) error
 	}
 	rows := make([][]types.Datum, 0, len(servers))
 	for _, server := range servers {
-		startTime := time.Unix(server.StartTimestamp, 0)
+		startTimeStr := ""
+		upTimeStr := ""
+		if server.StartTimestamp > 0 {
+			startTime := time.Unix(server.StartTimestamp, 0)
+			startTimeStr = startTime.Format(time.RFC3339)
+			upTimeStr = time.Since(startTime).String()
+		}
 		row := types.MakeDatums(
 			server.ServerType,
 			server.Address,
 			server.StatusAddr,
 			server.Version,
 			server.GitHash,
-			startTime.Format(time.RFC3339),
-			time.Since(startTime).String(),
+			startTimeStr,
+			upTimeStr,
 		)
 		rows = append(rows, row)
 	}
@@ -1534,7 +1540,6 @@ func (e *memtableRetriever) setDataFromSequences(ctx sessionctx.Context, schemas
 				table.Sequence.Increment,  // INCREMENT
 				table.Sequence.MaxValue,   // MAXVALUE
 				table.Sequence.MinValue,   // MINVALUE
-				table.Sequence.Order,      // ORDER
 				table.Sequence.Start,      // START
 				table.Sequence.Comment,    // COMMENT
 			)
