@@ -4922,7 +4922,9 @@ func (s *testIntegrationSuite) TestValuesForBinaryLiteral(c *C) {
 func (s *testIntegrationSuite) TestIssue15725(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
 	tk.MustExec("insert into t values(2)")
 	tk.MustQuery("select * from t where (not not a) = a").Check(testkit.Rows())
+	tk.MustQuery("select * from t where (not not not not a) = a").Check(testkit.Rows())
 }

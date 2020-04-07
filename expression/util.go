@@ -269,24 +269,33 @@ func timeZone2Duration(tz string) time.Duration {
 	return time.Duration(sign) * (time.Duration(h)*time.Hour + time.Duration(m)*time.Minute)
 }
 
-var opsCanBePushedDownNot = map[string]struct{}{
-	ast.LT:       {},
-	ast.GE:       {},
-	ast.GT:       {},
-	ast.LE:       {},
-	ast.EQ:       {},
-	ast.NE:       {},
-	ast.LogicAnd: {},
-	ast.LogicOr:  {},
+var logicalOps = map[string]struct{}{
+	ast.LT:        {},
+	ast.GE:        {},
+	ast.GT:        {},
+	ast.LE:        {},
+	ast.EQ:        {},
+	ast.NE:        {},
+	ast.UnaryNot:  {},
+	ast.LogicAnd:  {},
+	ast.LogicOr:   {},
+	ast.LogicXor:  {},
+	ast.In:        {},
+	ast.IsNull:    {},
+	ast.IsTruth:   {},
+	ast.IsFalsity: {},
+	ast.Like:      {},
 }
 
 var oppositeOp = map[string]string{
-	ast.LT: ast.GE,
-	ast.GE: ast.LT,
-	ast.GT: ast.LE,
-	ast.LE: ast.GT,
-	ast.EQ: ast.NE,
-	ast.NE: ast.EQ,
+	ast.LT:       ast.GE,
+	ast.GE:       ast.LT,
+	ast.GT:       ast.LE,
+	ast.LE:       ast.GT,
+	ast.EQ:       ast.NE,
+	ast.NE:       ast.EQ,
+	ast.LogicOr:  ast.LogicAnd,
+	ast.LogicAnd: ast.LogicOr,
 }
 
 // a op b is equal to b symmetricOp a
@@ -300,55 +309,80 @@ var symmetricOp = map[opcode.Op]opcode.Op{
 	opcode.NullEQ: opcode.NullEQ,
 }
 
-func doPushDownNot(ctx sessionctx.Context, exprs []Expression, not bool) []Expression {
+func pushNotAcrossArgs(ctx sessionctx.Context, exprs []Expression, not bool) ([]Expression, bool) {
 	newExprs := make([]Expression, 0, len(exprs))
+	flag := false
 	for _, expr := range exprs {
-		newExprs = append(newExprs, PushDownNot(ctx, expr, not))
+		newExpr, changed := pushNotAcrossExpr(ctx, expr, not)
+		flag = changed || flag
+		newExprs = append(newExprs, newExpr)
 	}
-	return newExprs
+	return newExprs, flag
 }
 
-// PushDownNot pushes the `not` function down to the expression's arguments.
-func PushDownNot(ctx sessionctx.Context, expr Expression, not bool) Expression {
+// pushNotAcrossExpr try to eliminate the NOT expr in expression tree.
+// Input `not` indicates whether there's a `NOT` be pushed down.
+// Output `changed` indicates whether the output expression differs from the
+// input `expr` because of the pushed-down-not.
+func pushNotAcrossExpr(ctx sessionctx.Context, expr Expression, not bool) (_ Expression, changed bool) {
 	if f, ok := expr.(*ScalarFunction); ok {
 		switch f.FuncName.L {
 		case ast.UnaryNot:
-			// UnaryNot only returns 0/1/NULL, thus we should not eliminate the innermost NOT.
-			if childFunc, isScalarFunc := f.GetArgs()[0].(*ScalarFunction); isScalarFunc {
-				if _, isCmpOrLogicOp := opsCanBePushedDownNot[childFunc.FuncName.L]; !isCmpOrLogicOp {
-					return expr
+			var childExpr Expression
+			// UnaryNot only returns 0/1/NULL, thus we should not eliminate the
+			// innermost NOT if the arg is not a logical operator.
+			switch child := f.GetArgs()[0].(type) {
+			case *ScalarFunction:
+				if _, isLogicalOp := logicalOps[child.FuncName.L]; !isLogicalOp {
+					return expr, false
 				}
+				childExpr, changed = pushNotAcrossExpr(f.GetCtx(), f.GetArgs()[0], !not)
+				if !changed && !not {
+					return expr, false
+				} else {
+					return childExpr, true
+				}
+			case *Column:
+				return expr, false
 			}
-			if _, isCol := f.GetArgs()[0].(*Column); isCol {
-				return expr
-			}
-			return PushDownNot(f.GetCtx(), f.GetArgs()[0], !not)
 		case ast.LT, ast.GE, ast.GT, ast.LE, ast.EQ, ast.NE:
 			if not {
-				return NewFunctionInternal(f.GetCtx(), oppositeOp[f.FuncName.L], f.GetType(), f.GetArgs()...)
+				return NewFunctionInternal(f.GetCtx(), oppositeOp[f.FuncName.L], f.GetType(), f.GetArgs()...), true
 			}
-			newArgs := doPushDownNot(f.GetCtx(), f.GetArgs(), false)
-			return NewFunctionInternal(f.GetCtx(), f.FuncName.L, f.GetType(), newArgs...)
-		case ast.LogicAnd:
+			newArgs, changed := pushNotAcrossArgs(f.GetCtx(), f.GetArgs(), false)
+			if !changed {
+				return f, false
+			}
+			return NewFunctionInternal(f.GetCtx(), f.FuncName.L, f.GetType(), newArgs...), true
+		case ast.LogicAnd, ast.LogicOr:
+			var (
+				newArgs []Expression
+				changed bool
+			)
+			funcName := f.FuncName.L
 			if not {
-				newArgs := doPushDownNot(f.GetCtx(), f.GetArgs(), true)
-				return NewFunctionInternal(f.GetCtx(), ast.LogicOr, f.GetType(), newArgs...)
+				newArgs, _ = pushNotAcrossArgs(f.GetCtx(), f.GetArgs(), true)
+				funcName = oppositeOp[f.FuncName.L]
+				changed = true
+			} else {
+				newArgs, changed = pushNotAcrossArgs(f.GetCtx(), f.GetArgs(), false)
 			}
-			newArgs := doPushDownNot(f.GetCtx(), f.GetArgs(), false)
-			return NewFunctionInternal(f.GetCtx(), f.FuncName.L, f.GetType(), newArgs...)
-		case ast.LogicOr:
-			if not {
-				newArgs := doPushDownNot(f.GetCtx(), f.GetArgs(), true)
-				return NewFunctionInternal(f.GetCtx(), ast.LogicAnd, f.GetType(), newArgs...)
+			if !changed {
+				return f, false
 			}
-			newArgs := doPushDownNot(f.GetCtx(), f.GetArgs(), false)
-			return NewFunctionInternal(f.GetCtx(), f.FuncName.L, f.GetType(), newArgs...)
+			return NewFunctionInternal(f.GetCtx(), funcName, f.GetType(), newArgs...), true
 		}
 	}
 	if not {
 		expr = NewFunctionInternal(ctx, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), expr)
 	}
-	return expr
+	return expr, not
+}
+
+// PushDownNot pushes the `not` function down to the expression's arguments.
+func PushDownNot(ctx sessionctx.Context, expr Expression) Expression {
+	newExpr, _ := pushNotAcrossExpr(ctx, expr, false)
+	return newExpr
 }
 
 // Contains tests if `exprs` contains `e`.
