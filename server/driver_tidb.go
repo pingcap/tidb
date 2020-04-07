@@ -243,7 +243,7 @@ func (tc *TiDBContext) WarningCount() uint16 {
 	return tc.session.GetSessionVars().StmtCtx.WarningCount()
 }
 
-// Execute implements QueryCtx Execute method.
+// ExecuteStmt implements QueryCtx interface.
 func (tc *TiDBContext) ExecuteStmt(ctx context.Context, stmt ast.StmtNode) (ResultSet, error) {
 	rs, err := tc.session.ExecuteStmt(ctx, stmt)
 	if err != nil {
