@@ -14,10 +14,8 @@
 package opcode
 
 import (
-	"fmt"
 	"io"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/format"
 )
 
@@ -58,93 +56,185 @@ const (
 	IsFalsity
 )
 
-// Ops maps opcode to string.
-var Ops = map[Op]string{
-	LogicAnd:   "and",
-	LogicOr:    "or",
-	LogicXor:   "xor",
-	LeftShift:  "leftshift",
-	RightShift: "rightshift",
-	GE:         "ge",
-	LE:         "le",
-	EQ:         "eq",
-	NE:         "ne",
-	LT:         "lt",
-	GT:         "gt",
-	Plus:       "plus",
-	Minus:      "minus",
-	And:        "bitand",
-	Or:         "bitor",
-	Mod:        "mod",
-	Xor:        "bitxor",
-	Div:        "div",
-	Mul:        "mul",
-	Not:        "not",
-	BitNeg:     "bitneg",
-	IntDiv:     "intdiv",
-	NullEQ:     "nulleq",
-	In:         "in",
-	Like:       "like",
-	Case:       "case",
-	Regexp:     "regexp",
-	IsNull:     "isnull",
-	IsTruth:    "istrue",
-	IsFalsity:  "isfalse",
+var ops = [...]struct {
+	name      string
+	literal   string
+	isKeyword bool
+}{
+	LogicAnd: {
+		name:      "and",
+		literal:   "AND",
+		isKeyword: true,
+	},
+	LogicOr: {
+		name:      "or",
+		literal:   "OR",
+		isKeyword: true,
+	},
+	LogicXor: {
+		name:      "xor",
+		literal:   "XOR",
+		isKeyword: true,
+	},
+	LeftShift: {
+		name:      "leftshift",
+		literal:   "<<",
+		isKeyword: false,
+	},
+	RightShift: {
+		name:      "rightshift",
+		literal:   ">>",
+		isKeyword: false,
+	},
+	GE: {
+		name:      "ge",
+		literal:   ">=",
+		isKeyword: false,
+	},
+	LE: {
+		name:      "le",
+		literal:   "<=",
+		isKeyword: false,
+	},
+	EQ: {
+		name:      "eq",
+		literal:   "=",
+		isKeyword: false,
+	},
+	NE: {
+		name:      "ne",
+		literal:   "!=", // perhaps should use `<>` here
+		isKeyword: false,
+	},
+	LT: {
+		name:      "lt",
+		literal:   "<",
+		isKeyword: false,
+	},
+	GT: {
+		name:      "gt",
+		literal:   ">",
+		isKeyword: false,
+	},
+	Plus: {
+		name:      "plus",
+		literal:   "+",
+		isKeyword: false,
+	},
+	Minus: {
+		name:      "minus",
+		literal:   "-",
+		isKeyword: false,
+	},
+	And: {
+		name:      "bitand",
+		literal:   "&",
+		isKeyword: false,
+	},
+	Or: {
+		name:      "bitor",
+		literal:   "|",
+		isKeyword: false,
+	},
+	Mod: {
+		name:      "mod",
+		literal:   "%",
+		isKeyword: false,
+	},
+	Xor: {
+		name:      "bitxor",
+		literal:   "^",
+		isKeyword: false,
+	},
+	Div: {
+		name:      "div",
+		literal:   "/",
+		isKeyword: false,
+	},
+	Mul: {
+		name:      "mul",
+		literal:   "*",
+		isKeyword: false,
+	},
+	Not: {
+		name:      "not",
+		literal:   "!", // perhaps should use `NOT` here.
+		isKeyword: false,
+	},
+	BitNeg: {
+		name:      "bitneg",
+		literal:   "~",
+		isKeyword: false,
+	},
+	IntDiv: {
+		name:      "intdiv",
+		literal:   "DIV",
+		isKeyword: true,
+	},
+	NullEQ: {
+		name:      "nulleq",
+		literal:   "<=>",
+		isKeyword: false,
+	},
+	In: {
+		name:      "in",
+		literal:   "IN",
+		isKeyword: true,
+	},
+	Like: {
+		name:      "like",
+		literal:   "LIKE",
+		isKeyword: true,
+	},
+	Case: {
+		name:      "case",
+		literal:   "CASE",
+		isKeyword: true,
+	},
+	Regexp: {
+		name:      "regexp",
+		literal:   "REGEXP",
+		isKeyword: true,
+	},
+	IsNull: {
+		name:      "isnull",
+		literal:   "IS NULL",
+		isKeyword: true,
+	},
+	IsTruth: {
+		name:      "istrue",
+		literal:   "IS TRUE",
+		isKeyword: true,
+	},
+	IsFalsity: {
+		name:      "isfalse",
+		literal:   "IS FALSE",
+		isKeyword: true,
+	},
 }
 
 // String implements Stringer interface.
 func (o Op) String() string {
-	str, ok := Ops[o]
-	if !ok {
-		panic(fmt.Sprintf("%d", o))
-	}
-
-	return str
-}
-
-var opsLiteral = map[Op]string{
-	LogicAnd:   " AND ",
-	LogicOr:    " OR ",
-	LogicXor:   " XOR ",
-	LeftShift:  "<<",
-	RightShift: ">>",
-	GE:         ">=",
-	LE:         "<=",
-	EQ:         "=",
-	NE:         "!=",
-	LT:         "<",
-	GT:         ">",
-	Plus:       "+",
-	Minus:      "-",
-	And:        "&",
-	Or:         "|",
-	Mod:        "%",
-	Xor:        "^",
-	Div:        "/",
-	Mul:        "*",
-	Not:        "!",
-	BitNeg:     "~",
-	IntDiv:     "DIV",
-	NullEQ:     "<=>",
-	In:         "IN",
-	Like:       "LIKE",
-	Case:       "CASE",
-	Regexp:     "REGEXP",
-	IsNull:     "IS NULL",
-	IsTruth:    "IS TRUE",
-	IsFalsity:  "IS FALSE",
+	return ops[o].name
 }
 
 // Format the ExprNode into a Writer.
 func (o Op) Format(w io.Writer) {
-	fmt.Fprintf(w, "%s", opsLiteral[o])
+	io.WriteString(w, ops[o].literal)
+}
+
+// IsKeyword returns whether the operator is a keyword.
+func (o Op) IsKeyword() bool {
+	return ops[o].isKeyword
 }
 
 // Restore the Op into a Writer
 func (o Op) Restore(ctx *format.RestoreCtx) error {
-	if v, ok := opsLiteral[o]; ok {
-		ctx.WriteKeyWord(v)
-		return nil
+	info := &ops[o]
+	if info.isKeyword {
+		ctx.WriteKeyWord(info.literal)
+	} else {
+		ctx.WritePlain(info.literal)
 	}
-	return errors.Errorf("Invalid opcode type %d during restoring AST to SQL text", o)
+	return nil
 }

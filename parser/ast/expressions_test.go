@@ -109,6 +109,8 @@ func (tc *testExpressionsSuite) TestUnaryOperationExprRestore(c *C) {
 		{"--1", "--1"},
 		{"-+1", "-+1"},
 		{"-1", "-1"},
+		{"not true", "!TRUE"},
+		{"~3", "~3"},
 	}
 	extractNodeFunc := func(node Node) Node {
 		return node.(*SelectStmt).Fields.Fields[0].Expr
@@ -194,6 +196,16 @@ func (tc *testExpressionsSuite) TestBinaryOperationExpr(c *C) {
 		{"3-5", "3-5"},
 		{"a<>5", "`a`!=5"},
 		{"a=1", "`a`=1"},
+		{"a mod 2", "`a`%2"},
+		{"a div 2", "`a` DIV 2"},
+		{"true and true", "TRUE AND TRUE"},
+		{"false or false", "FALSE OR FALSE"},
+		{"true xor false", "TRUE XOR FALSE"},
+		{"3 & 4", "3&4"},
+		{"5 | 6", "5|6"},
+		{"7 ^ 8", "7^8"},
+		{"9 << 10", "9<<10"},
+		{"11 >> 12", "11>>12"},
 	}
 	extractNodeFunc := func(node Node) Node {
 		return node.(*SelectStmt).Fields.Fields[0].Expr
