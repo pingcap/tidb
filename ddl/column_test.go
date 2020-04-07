@@ -94,6 +94,7 @@ func buildCreateColumnsJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, colNa
 	positions []*ast.ColumnPosition, defaultValue interface{}) *model.Job {
 	colInfos := make([]*model.ColumnInfo, len(colNames))
 	offsets := make([]int, len(colNames))
+	ifNotExists := make([]bool, len(colNames))
 	for i, colName := range colNames {
 		col := &model.ColumnInfo{
 			Name:               model.NewCIStr(colName),
@@ -111,7 +112,7 @@ func buildCreateColumnsJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, colNa
 		TableID:    tblInfo.ID,
 		Type:       model.ActionAddColumns,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{colInfos, positions, offsets},
+		Args:       []interface{}{colInfos, positions, offsets, ifNotExists},
 	}
 	return job
 }
@@ -151,6 +152,7 @@ func testDropColumn(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, 
 
 func buildDropColumnsJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, colNames []string) *model.Job {
 	columnNames := make([]model.CIStr, len(colNames))
+	ifExists := make([]bool, len(colNames))
 	for i, colName := range colNames {
 		columnNames[i] = model.NewCIStr(colName)
 	}
@@ -159,7 +161,7 @@ func buildDropColumnsJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, colName
 		TableID:    tblInfo.ID,
 		Type:       model.ActionDropColumns,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{columnNames},
+		Args:       []interface{}{columnNames, ifExists},
 	}
 	return job
 }

@@ -319,7 +319,7 @@ func (s *testDDLSuite) TestColumnError(c *C) {
 	doDDLJobErr(c, -1, tblInfo.ID, model.ActionDropColumns, []interface{}{col, pos, 0}, ctx, d)
 	doDDLJobErr(c, dbInfo.ID, -1, model.ActionDropColumns, []interface{}{col, pos, 0}, ctx, d)
 	doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionDropColumns, []interface{}{0}, ctx, d)
-	doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionDropColumns, []interface{}{[]model.CIStr{model.NewCIStr("c5"), model.NewCIStr("c6")}}, ctx, d)
+	doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionDropColumns, []interface{}{[]model.CIStr{model.NewCIStr("c5"), model.NewCIStr("c6")}, make([]bool, 2)}, ctx, d)
 }
 
 func testCheckOwner(c *C, d *ddl, expectedVal bool) {
@@ -894,8 +894,9 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	for i := range positions {
 		positions[i] = &ast.ColumnPosition{Tp: ast.ColumnPositionNone}
 	}
+	ifNotExists := make([]bool, len(cols))
 
-	addColumnArgs = []interface{}{cols, positions, offsets}
+	addColumnArgs = []interface{}{cols, positions, offsets, ifNotExists}
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionAddColumns, addColumnArgs, &cancelState)
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
 	s.checkAddColumns(c, d, dbInfo.ID, tblInfo.ID, addingColNames, false)

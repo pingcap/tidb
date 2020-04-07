@@ -233,50 +233,48 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error)
 	return ver, errors.Trace(err)
 }
 
-func checkAddAndCreateColumnInfos(t *meta.Meta, job *model.Job) (*model.TableInfo, []*model.ColumnInfo, []*ast.ColumnPosition, []int, error) {
+func checkAddColumns(t *meta.Meta, job *model.Job) (*model.TableInfo, []*model.ColumnInfo, []*model.ColumnInfo, []*ast.ColumnPosition, []int, []bool, error) {
 	schemaID := job.SchemaID
 	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
-		return nil, nil, nil, nil, errors.Trace(err)
+		return nil, nil, nil, nil, nil, nil, errors.Trace(err)
 	}
 	columns := []*model.ColumnInfo{}
 	positions := []*ast.ColumnPosition{}
 	offsets := []int{}
-	err = job.DecodeArgs(&columns, &positions, &offsets)
+	ifNotExists := []bool{}
+	err = job.DecodeArgs(&columns, &positions, &offsets, &ifNotExists)
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return nil, nil, nil, nil, errors.Trace(err)
+		return nil, nil, nil, nil, nil, nil, errors.Trace(err)
 	}
 
-	columnInfos := make([]*model.ColumnInfo, len(columns))
+	columnInfos := make([]*model.ColumnInfo, 0, len(columns))
+	newColumns := make([]*model.ColumnInfo, 0, len(columns))
+	newPositions := make([]*ast.ColumnPosition, 0, len(columns))
+	newOffsets := make([]int, 0, len(columns))
+	newIfNotExists := make([]bool, 0, len(columns))
 	for i, col := range columns {
 		columnInfo := model.FindColumnInfo(tblInfo.Columns, col.Name.L)
 		if columnInfo != nil {
-			columnInfos[i] = columnInfo
 			if columnInfo.State == model.StatePublic {
 				// We already have a column with the same column name.
+				if ifNotExists[i] {
+					// TODO: Should return a warning.
+					logutil.BgLogger().Warn(fmt.Sprintf("Duplicate column name %s", col.Name))
+					continue
+				}
 				job.State = model.JobStateCancelled
-				return nil, nil, nil, nil, infoschema.ErrColumnExists.GenWithStackByArgs(col.Name)
+				return nil, nil, nil, nil, nil, nil, infoschema.ErrColumnExists.GenWithStackByArgs(col.Name)
 			}
-		} else {
-			columnInfo, pos, offset, err := createColumnInfo(tblInfo, col, positions[i])
-			if err != nil {
-				job.State = model.JobStateCancelled
-				return nil, nil, nil, nil, errors.Trace(err)
-			}
-			logutil.BgLogger().Info("[ddl] run add columns job", zap.String("job", job.String()), zap.Reflect("columnInfo", *columnInfo), zap.Int("offset", offsets[i]))
-			positions[i] = pos
-			// Set offset arg to job.
-			offsets[i] = offset
-			if err = checkAddColumnTooManyColumns(len(tblInfo.Columns)); err != nil {
-				job.State = model.JobStateCancelled
-				return nil, nil, nil, nil, errors.Trace(err)
-			}
-			columnInfos[i] = columnInfo
+			columnInfos = append(columnInfos, columnInfo)
 		}
+		newColumns = append(newColumns, columns[i])
+		newPositions = append(newPositions, positions[i])
+		newOffsets = append(newOffsets, offsets[i])
+		newIfNotExists = append(newIfNotExists, ifNotExists[i])
 	}
-	job.Args = []interface{}{columnInfos, positions, offsets}
-	return tblInfo, columnInfos, positions, offsets, nil
+	return tblInfo, columnInfos, newColumns, newPositions, newOffsets, newIfNotExists, nil
 }
 
 func setColumnsState(columnInfos []*model.ColumnInfo, state model.SchemaState) {
@@ -301,9 +299,32 @@ func onAddColumns(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error
 		}
 	})
 
-	tblInfo, columnInfos, positions, offsets, err := checkAddAndCreateColumnInfos(t, job)
+	tblInfo, columnInfos, columns, positions, offsets, ifNotExists, err := checkAddColumns(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
+	}
+	if len(columnInfos) == 0 {
+		if len(columns) == 0 {
+			job.State = model.JobStateCancelled
+			return ver, nil
+		}
+		for i := range columns {
+			columnInfo, pos, offset, err := createColumnInfo(tblInfo, columns[i], positions[i])
+			if err != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(err)
+			}
+			logutil.BgLogger().Info("[ddl] run add columns job", zap.String("job", job.String()), zap.Reflect("columnInfo", *columnInfo), zap.Int("offset", offset))
+			positions[i] = pos
+			// Set offset arg to job.
+			offsets[i] = offset
+			if err = checkAddColumnTooManyColumns(len(tblInfo.Columns)); err != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(err)
+			}
+			columnInfos = append(columnInfos, columnInfo)
+		}
+		job.Args = []interface{}{columnInfos, positions, offsets, ifNotExists}
 	}
 
 	originalState := columnInfos[0].State
@@ -365,6 +386,10 @@ func onDropColumns(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
+	if len(colInfos) == 0 {
+		job.State = model.JobStateCancelled
+		return ver, nil
+	}
 
 	originalState := colInfos[0].State
 	switch colInfos[0].State {
@@ -419,16 +444,24 @@ func checkDropColumns(t *meta.Meta, job *model.Job) (*model.TableInfo, []*model.
 	}
 
 	var colNames []model.CIStr
-	err = job.DecodeArgs(&colNames)
+	var ifExists []bool
+	err = job.DecodeArgs(&colNames, &ifExists)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return nil, nil, 0, errors.Trace(err)
 	}
 
-	colInfos := make([]*model.ColumnInfo, len(colNames))
+	newColNames := make([]model.CIStr, 0, len(colNames))
+	colInfos := make([]*model.ColumnInfo, 0, len(colNames))
+	newIfExists := make([]bool, 0, len(colNames))
 	for i, colName := range colNames {
 		colInfo := model.FindColumnInfo(tblInfo.Columns, colName.L)
 		if colInfo == nil || colInfo.Hidden {
+			if ifExists[i] {
+				// TODO: Should return a warning.
+				logutil.BgLogger().Warn(fmt.Sprintf("column %s doesn't exist", colName))
+				continue
+			}
 			job.State = model.JobStateCancelled
 			return nil, nil, 0, ErrCantDropFieldOrKey.GenWithStack("column %s doesn't exist", colName)
 		}
@@ -436,9 +469,12 @@ func checkDropColumns(t *meta.Meta, job *model.Job) (*model.TableInfo, []*model.
 			job.State = model.JobStateCancelled
 			return nil, nil, 0, errors.Trace(err)
 		}
-		colInfos[i] = colInfo
+		newColNames = append(newColNames, colName)
+		newIfExists = append(newIfExists, ifExists[i])
+		colInfos = append(colInfos, colInfo)
 	}
-	return tblInfo, colInfos, len(colNames), nil
+	job.Args = []interface{}{newColNames, newIfExists}
+	return tblInfo, colInfos, len(colInfos), nil
 }
 
 func checkDropColumnForStatePublic(tblInfo *model.TableInfo, colInfo *model.ColumnInfo) (err error) {

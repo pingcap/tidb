@@ -2363,6 +2363,7 @@ func (d *ddl) AddColumns(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alte
 	columns := make([]*table.Column, 0, len(addingColumnNames))
 	positions := make([]*ast.ColumnPosition, 0, len(addingColumnNames))
 	offsets := make([]int, 0, len(addingColumnNames))
+	ifNotExists := make([]bool, 0, len(addingColumnNames))
 	newColumnsCount := 0
 	// Check the columns one by one.
 	for _, spec := range specs {
@@ -2383,6 +2384,7 @@ func (d *ddl) AddColumns(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alte
 			columns = append(columns, col)
 			positions = append(positions, spec.Position)
 			offsets = append(offsets, 0)
+			ifNotExists = append(ifNotExists, spec.IfNotExists)
 			newColumnsCount++
 		}
 	}
@@ -2399,7 +2401,7 @@ func (d *ddl) AddColumns(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alte
 		SchemaName: schema.Name.L,
 		Type:       model.ActionAddColumns,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{columns, positions, offsets},
+		Args:       []interface{}{columns, positions, offsets, ifNotExists},
 	}
 
 	err = d.doDDLJob(ctx, job)
@@ -2648,7 +2650,8 @@ func (d *ddl) DropColumns(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alt
 		}
 	}
 
-	var colNames []model.CIStr
+	ifExists := make([]bool, 0, len(specs))
+	colNames := make([]model.CIStr, 0, len(specs))
 	for _, spec := range specs {
 		if spec.IfExists && dupColumnNames[spec.OldColumnName.Name.L] {
 			err = ErrCantDropFieldOrKey.GenWithStack("column %s doesn't exist", spec.OldColumnName.Name.L)
@@ -2664,6 +2667,7 @@ func (d *ddl) DropColumns(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alt
 			continue
 		}
 		colNames = append(colNames, spec.OldColumnName.Name)
+		ifExists = append(ifExists, spec.IfExists)
 	}
 	if len(colNames) == 0 {
 		return nil
@@ -2679,7 +2683,7 @@ func (d *ddl) DropColumns(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alt
 		SchemaName: schema.Name.L,
 		Type:       model.ActionDropColumns,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{colNames},
+		Args:       []interface{}{colNames, ifExists},
 	}
 
 	err = d.doDDLJob(ctx, job)

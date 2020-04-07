@@ -906,6 +906,15 @@ func (s *testStateChangeSuite) TestParallelDropColumns(c *C) {
 	s.testControlParallelExecSQL(c, sql, sql, f)
 }
 
+func (s *testStateChangeSuite) TestParallelDropIfExistsColumns(c *C) {
+	sql := "ALTER TABLE t drop COLUMN if exists b, drop COLUMN if exists c;"
+	f := func(c *C, err1, err2 error) {
+		c.Assert(err1, IsNil)
+		c.Assert(err2, IsNil)
+	}
+	s.testControlParallelExecSQL(c, sql, sql, f)
+}
+
 func (s *testStateChangeSuite) TestParallelDropIndex(c *C) {
 	sql1 := "alter table t drop index idx1 ;"
 	sql2 := "alter table t drop index idx2 ;"
@@ -1144,7 +1153,7 @@ func (s *testStateChangeSuite) TestDDLIfNotExists(c *C) {
 	s.testParallelExecSQL(c, "alter table test_not_exists add column if not exists b int")
 
 	// ADD COLUMNS
-	// s.testParallelExecSQL(c, "alter table test_not_exists add column if not exists (c11 int, d11 int)")
+	s.testParallelExecSQL(c, "alter table test_not_exists add column if not exists (c11 int, d11 int)")
 
 	// ADD INDEX
 	s.testParallelExecSQL(c, "alter table test_not_exists add index if not exists idx_b (b)")
@@ -1163,7 +1172,7 @@ func (s *testStateChangeSuite) TestDDLIfExists(c *C) {
 	c.Assert(err, IsNil)
 
 	// DROP COLUMNS
-	// s.testParallelExecSQL(c, "alter table test_exists drop column if exists c11, drop column if exists d11")
+	s.testParallelExecSQL(c, "alter table test_exists drop column if exists c, drop column if exists d")
 
 	// DROP COLUMN
 	s.testParallelExecSQL(c, "alter table test_exists drop column if exists b") // only `a` exists now
