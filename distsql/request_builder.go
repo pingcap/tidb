@@ -17,6 +17,7 @@ import (
 	"math"
 
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -166,7 +167,11 @@ func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *Req
 	builder.Request.NotFillCache = sv.StmtCtx.NotFillCache
 	builder.Request.Priority = builder.getKVPriority(sv)
 	builder.Request.ReplicaRead = sv.ReplicaRead
-	builder.Request.SchemaVar = sv.TxnCtx.SchemaVersion
+	if sv.SnapshotInfoschema != nil {
+		builder.Request.SchemaVar = infoschema.GetInfoSchemaBySessionVars(sv).SchemaMetaVersion()
+	} else {
+		builder.Request.SchemaVar = sv.TxnCtx.SchemaVersion
+	}
 	return builder
 }
 

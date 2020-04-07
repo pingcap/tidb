@@ -308,6 +308,27 @@ func (s *testSuite1) TestFastAnalyze(c *C) {
 		"test t2  a 0 1 2 1 18446744073709551615 18446744073709551615"))
 }
 
+func (s *testSuite1) TestIssue15751(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t0")
+	tk.MustExec("CREATE TABLE t0(c0 INT, c1 INT, PRIMARY KEY(c0, c1))")
+	tk.MustExec("INSERT INTO t0 VALUES (0, 0)")
+	tk.MustExec("set @@tidb_enable_fast_analyze=1")
+	tk.MustExec("ANALYZE TABLE t0")
+}
+
+func (s *testSuite1) TestIssue15752(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t0")
+	tk.MustExec("CREATE TABLE t0(c0 INT)")
+	tk.MustExec("INSERT INTO t0 VALUES (0)")
+	tk.MustExec("CREATE INDEX i0 ON t0(c0)")
+	tk.MustExec("set @@tidb_enable_fast_analyze=1")
+	tk.MustExec("ANALYZE TABLE t0 INDEX i0")
+}
+
 func (s *testSuite1) TestAnalyzeIncremental(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
