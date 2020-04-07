@@ -422,8 +422,10 @@ func (e *inspectionSummaryRetriever) retrieve(ctx context.Context, sctx sessionc
 	condition := e.timeRange.Condition()
 	var finalRows [][]types.Datum
 	for rule, tables := range inspectionSummaryRules {
-		if !rules.exist(rule) {
-			continue
+		if len(rules.set) != 0 {
+			if !rules.set.Exist(rule) {
+				continue
+			}
 		}
 		for _, name := range tables {
 			if !names.enable(name) {
@@ -435,6 +437,7 @@ func (e *inspectionSummaryRetriever) retrieve(ctx context.Context, sctx sessionc
 				continue
 			}
 			cols := def.Labels
+			comment := def.Comment
 			cond := condition
 			if def.Quantile > 0 {
 				cols = append(cols, "quantile")
@@ -493,6 +496,7 @@ func (e *inspectionSummaryRetriever) retrieve(ctx context.Context, sctx sessionc
 					row.GetFloat64(0), // avg
 					row.GetFloat64(1), // min
 					row.GetFloat64(2), // max
+					comment,
 				))
 			}
 		}
