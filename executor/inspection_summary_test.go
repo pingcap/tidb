@@ -75,19 +75,19 @@ func (s *inspectionSummarySuite) TestInspectionSummary(c *C) {
 
 	// construct some mock data
 	mockData := map[string][][]types.Datum{
-		// columns: time, instance, type, result, value
+		// columns: time, instance, type, result, value, comment
 		"tidb_qps": {
-			types.MakeDatums(datetime("2020-02-12 10:35:00"), "tidb-0", "Query", "OK", 0.0, "TiDB query processing numbers per second"),
-			types.MakeDatums(datetime("2020-02-12 10:36:00"), "tidb-0", "Query", "Error", 1.0, "TiDB query processing numbers per second"),
-			types.MakeDatums(datetime("2020-02-12 10:37:00"), "tidb-1", "Quit", "Error", 5.0, "TiDB query processing numbers per second"),
-			types.MakeDatums(datetime("2020-02-12 10:37:00"), "tidb-1", "Quit", "Error", 9.0, "TiDB query processing numbers per second"),
+			types.MakeDatums(datetime("2020-02-12 10:35:00"), "tidb-0", "Query", "OK", 0.0, "tidb_qps_comment"),
+			types.MakeDatums(datetime("2020-02-12 10:36:00"), "tidb-0", "Query", "Error", 1.0, "tidb_qps_comment"),
+			types.MakeDatums(datetime("2020-02-12 10:37:00"), "tidb-1", "Quit", "Error", 5.0, "tidb_qps_comment"),
+			types.MakeDatums(datetime("2020-02-12 10:37:00"), "tidb-1", "Quit", "Error", 9.0, "tidb_qps_comment"),
 		},
-		// columns: time, instance, sql_type, quantile, value
+		// columns: time, instance, sql_type, quantile, value, comment
 		"tidb_query_duration": {
-			types.MakeDatums(datetime("2020-02-12 10:35:00"), "tikv-0", "Select", 0.99, 0.0, "The quantile of TiDB query durations(second)"),
-			types.MakeDatums(datetime("2020-02-12 10:36:00"), "tikv-1", "Update", 0.99, 1.0, "The quantile of TiDB query durations(second)"),
-			types.MakeDatums(datetime("2020-02-12 10:36:00"), "tikv-1", "Update", 0.99, 3.0, "The quantile of TiDB query durations(second)"),
-			types.MakeDatums(datetime("2020-02-12 10:37:00"), "tikv-2", "Delete", 0.99, 5.0, "The quantile of TiDB query durations(second)"),
+			types.MakeDatums(datetime("2020-02-12 10:35:00"), "tikv-0", "Select", 0.99, 0.0, "tidb_query_duration_comment"),
+			types.MakeDatums(datetime("2020-02-12 10:36:00"), "tikv-1", "Update", 0.99, 1.0, "tidb_query_duration_comment"),
+			types.MakeDatums(datetime("2020-02-12 10:36:00"), "tikv-1", "Update", 0.99, 3.0, "tidb_query_duration_comment"),
+			types.MakeDatums(datetime("2020-02-12 10:37:00"), "tikv-2", "Delete", 0.99, 5.0, "tidb_query_duration_comment"),
 		},
 	}
 
@@ -101,11 +101,11 @@ func (s *inspectionSummarySuite) TestInspectionSummary(c *C) {
 	result := tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute inspect SQL failed"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0), Commentf("unexpected warnings: %+v", tk.Se.GetSessionVars().StmtCtx.GetWarnings()))
 	result.Check(testkit.Rows(
-		"query-summary tikv-0 tidb_query_duration Select 0.99 0 0 0 The quantile of TiDB query durations(second)",
-		"query-summary tikv-1 tidb_query_duration Update 0.99 2 1 3 The quantile of TiDB query durations(second)",
-		"query-summary tikv-2 tidb_query_duration Delete 0.99 5 5 5 The quantile of TiDB query durations(second)",
-		"query-summary tidb-0 tidb_qps Query, Error <nil> 1 1 1 TiDB query processing numbers per second",
-		"query-summary tidb-0 tidb_qps Query, OK <nil> 0 0 0 TiDB query processing numbers per second",
-		"query-summary tidb-1 tidb_qps Quit, Error <nil> 7 5 9 TiDB query processing numbers per second",
+		"query-summary tikv-0 tidb_query_duration Select 0.99 0 0 0 tidb_query_duration_comment",
+		"query-summary tikv-1 tidb_query_duration Update 0.99 2 1 3 tidb_query_duration_comment",
+		"query-summary tikv-2 tidb_query_duration Delete 0.99 5 5 5 tidb_query_duration_comment",
+		"query-summary tidb-0 tidb_qps Query, Error <nil> 1 1 1 TiDB tidb_qps_comment",
+		"query-summary tidb-0 tidb_qps Query, OK <nil> 0 0 0 tidb_qps_comment",
+		"query-summary tidb-1 tidb_qps Quit, Error <nil> 7 5 9 tidb_qps_comment",
 	))
 }
