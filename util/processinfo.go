@@ -16,6 +16,7 @@ package util
 import (
 	"crypto/tls"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/pingcap/parser/mysql"
@@ -66,7 +67,7 @@ func (pi *ProcessInfo) ToRowForShow(full bool) []interface{} {
 		db,
 		mysql.Command2Str[pi.Command],
 		t,
-		fmt.Sprintf("%d", pi.State),
+		serverStatus2Str(pi.State),
 		info,
 	}
 }
@@ -87,6 +88,53 @@ func (pi *ProcessInfo) ToRow(tz *time.Location) []interface{} {
 		bytesConsumed = pi.StmtCtx.MemTracker.BytesConsumed()
 	}
 	return append(pi.ToRowForShow(true), bytesConsumed, pi.txnStartTs(tz))
+}
+
+// ascServerStatus is a slice of all defined server status in ascending order.
+var ascServerStatus = []uint16{
+	mysql.ServerStatusInTrans,
+	mysql.ServerStatusAutocommit,
+	mysql.ServerMoreResultsExists,
+	mysql.ServerStatusNoGoodIndexUsed,
+	mysql.ServerStatusNoIndexUsed,
+	mysql.ServerStatusCursorExists,
+	mysql.ServerStatusLastRowSend,
+	mysql.ServerStatusDBDropped,
+	mysql.ServerStatusNoBackslashEscaped,
+	mysql.ServerStatusMetadataChanged,
+	mysql.ServerStatusWasSlow,
+	mysql.ServerPSOutParams,
+}
+
+// mapServerStatus2Str is the map for server status to string.
+var mapServerStatus2Str = map[uint16]string{
+	mysql.ServerStatusInTrans:            "in transaction",
+	mysql.ServerStatusAutocommit:         "autocommit",
+	mysql.ServerMoreResultsExists:        "more results exists",
+	mysql.ServerStatusNoGoodIndexUsed:    "no goods index used",
+	mysql.ServerStatusNoIndexUsed:        "no index used",
+	mysql.ServerStatusCursorExists:       "cursor exists",
+	mysql.ServerStatusLastRowSend:        "last row send",
+	mysql.ServerStatusDBDropped:          "db dropped",
+	mysql.ServerStatusNoBackslashEscaped: "no backslash escaped",
+	mysql.ServerStatusMetadataChanged:    "metadata changed",
+	mysql.ServerStatusWasSlow:            "was slow",
+	mysql.ServerPSOutParams:              "ps out params",
+}
+
+// serverStatus2Str convert server status to string.
+// Param state is a bit-field. (e.g. 0x0003 = "in transaction; autocommit").
+func serverStatus2Str(state uint16) string {
+	// l collect server status strings.
+	var l []string
+	// check each defined server status, if match, append to collector.
+	for _, s := range ascServerStatus {
+		if state&s == 0 {
+			continue
+		}
+		l = append(l, mapServerStatus2Str[s])
+	}
+	return strings.Join(l, "; ")
 }
 
 // SessionManager is an interface for session manage. Show processlist and

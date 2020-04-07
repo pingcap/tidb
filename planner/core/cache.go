@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
@@ -125,29 +126,32 @@ func NewPSTMTPlanCacheKey(sessionVars *variable.SessionVars, pstmtID uint32, sch
 
 // PSTMTPlanCacheValue stores the cached Statement and StmtNode.
 type PSTMTPlanCacheValue struct {
-	Plan        Plan
-	OutPutNames []*types.FieldName
-	Normalized  string
-	Digest      string
+	Plan              Plan
+	OutPutNames       []*types.FieldName
+	TblInfo2UnionScan map[*model.TableInfo]bool
 }
 
 // NewPSTMTPlanCacheValue creates a SQLCacheValue.
-func NewPSTMTPlanCacheValue(plan Plan, names []*types.FieldName) *PSTMTPlanCacheValue {
-	normalized, digest := NormalizePlan(plan)
+func NewPSTMTPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*model.TableInfo]bool) *PSTMTPlanCacheValue {
+	dstMap := make(map[*model.TableInfo]bool)
+	for k, v := range srcMap {
+		dstMap[k] = v
+	}
 	return &PSTMTPlanCacheValue{
-		Plan:        plan,
-		OutPutNames: names,
-		Normalized:  normalized,
-		Digest:      digest,
+		Plan:              plan,
+		OutPutNames:       names,
+		TblInfo2UnionScan: dstMap,
 	}
 }
 
 // CachedPrepareStmt store prepared ast from PrepareExec and other related fields
 type CachedPrepareStmt struct {
-	PreparedAst *ast.Prepared
-	VisitInfos  []visitInfo
-	ColumnInfos interface{}
-	Executor    interface{}
-	Normalized  string
-	Digest      string
+	PreparedAst    *ast.Prepared
+	VisitInfos     []visitInfo
+	ColumnInfos    interface{}
+	Executor       interface{}
+	NormalizedSQL  string
+	NormalizedPlan string
+	SQLDigest      string
+	PlanDigest     string
 }
