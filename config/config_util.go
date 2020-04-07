@@ -14,6 +14,7 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -22,6 +23,7 @@ import (
 	"reflect"
 	"time"
 
+	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
 )
 
@@ -111,4 +113,22 @@ func atomicWriteConfig(c *Config, confPath string) (err error) {
 		return errors.Trace(err)
 	}
 	return errors.Trace(os.Rename(tmpConfPath, confPath))
+}
+
+// ConfReloadFunc is used to reload the config to make it work.
+type ConfReloadFunc func(oldConf, newConf *Config)
+
+func encodeConfig(conf *Config) (string, error) {
+	confBuf := bytes.NewBuffer(nil)
+	te := toml.NewEncoder(confBuf)
+	if err := te.Encode(conf); err != nil {
+		return "", errors.New("encode config error=" + err.Error())
+	}
+	return confBuf.String(), nil
+}
+
+func decodeConfig(content string) (*Config, error) {
+	c := new(Config)
+	_, err := toml.Decode(content, c)
+	return c, err
 }
