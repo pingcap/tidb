@@ -406,9 +406,8 @@ func pushNotAcrossExpr(ctx sessionctx.Context, expr Expression, not bool) (_ Exp
 				childExpr, changed = pushNotAcrossExpr(f.GetCtx(), f.GetArgs()[0], !not)
 				if !changed && !not {
 					return expr, false
-				} else {
-					return childExpr, true
 				}
+				return childExpr, true
 			case *Column:
 				return expr, false
 			}
