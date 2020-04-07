@@ -1119,19 +1119,26 @@ func GetTiDBServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 }
 
 // FormatVersion make TiDBVersion consistent to TiKV and PD.
+// The default TiDBVersion is 5.7.25-TiDB-${TiDBReleaseVersion}.
 func FormatVersion(TiDBVersion string) string {
-	var version string
-	nodeVersion := TiDBVersion[strings.LastIndex(TiDBVersion, "TiDB-")+len("TiDB-"):]
-	if nodeVersion[0] == 'v' {
-		nodeVersion = nodeVersion[1:]
+	var version,nodeVersion string
+
+	// The user hasn't set the config 'ServerVersion',so the TiDBVersion would like "5.7.25-TiDB-TiDBReleaseVersion".
+	if TiDBVersion == fmt.Sprintf("5.7.25-TiDB-%s",mysql.TiDBReleaseVersion) {
+		nodeVersion = TiDBVersion[strings.LastIndex(TiDBVersion, "TiDB-")+len("TiDB-"):]
+		if nodeVersion[0] == 'v' {
+			nodeVersion = nodeVersion[1:]
+		}
+		nodeVersions := strings.Split(nodeVersion, "-")
+		if len(nodeVersions) == 1 {
+			version = nodeVersions[0]
+		} else if len(nodeVersions) >= 2 {
+			version = fmt.Sprintf("%s-%s", nodeVersions[0], nodeVersions[1])
+		}
+	} else { // The user has already set the config 'ServerVersion',it would be a complex scene, so just use the 'ServerVersion' as version.
+		version = TiDBVersion
 	}
 
-	nodeVersions := strings.Split(nodeVersion, "-")
-	if len(nodeVersions) == 1 {
-		version = nodeVersions[0]
-	} else if len(nodeVersions) >= 2 {
-		version = fmt.Sprintf("%s-%s", nodeVersions[0], nodeVersions[1])
-	}
 	return version
 }
 
