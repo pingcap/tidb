@@ -19,7 +19,6 @@ import (
 	"math"
 	"math/rand"
 	"reflect"
-	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -536,21 +535,7 @@ func (s *testCommitterSuite) TestCommitRetryLimit(c *C) {
 	c.Assert(committer.commitMutations(NewBackoffer(ctx, CommitMaxBackoff), committer.mutations), IsNil)
 
 	// wait secondary keys goroutines(include retry guys) done.
-	ticker := time.NewTicker(1 * time.Second)
-	defer ticker.Stop()
-	doneCh := make(chan struct{})
-	go func() {
-		committer.testingKnobs.secondaryCommitDoneWg.Wait()
-		close(doneCh)
-	}()
-	for {
-		select {
-		case <-ticker.C:
-			fmt.Println(runtime.NumGoroutine())
-		case <-doneCh:
-			return
-		}
-	}
+	committer.testingKnobs.secondaryCommitDoneWg.Wait()
 }
 
 func (s *testCommitterSuite) TestRejectCommitTS(c *C) {
