@@ -1121,10 +1121,10 @@ func GetTiDBServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 // FormatVersion make TiDBVersion consistent to TiKV and PD.
 // The default TiDBVersion is 5.7.25-TiDB-${TiDBReleaseVersion}.
 func FormatVersion(TiDBVersion string) string {
-	var version,nodeVersion string
+	var version, nodeVersion string
 
 	// The user hasn't set the config 'ServerVersion',so the TiDBVersion would like "5.7.25-TiDB-TiDBReleaseVersion".
-	if TiDBVersion == fmt.Sprintf("5.7.25-TiDB-%s",mysql.TiDBReleaseVersion) {
+	if TiDBVersion == fmt.Sprintf("5.7.25-TiDB-%s", mysql.TiDBReleaseVersion) {
 		nodeVersion = TiDBVersion[strings.LastIndex(TiDBVersion, "TiDB-")+len("TiDB-"):]
 		if nodeVersion[0] == 'v' {
 			nodeVersion = nodeVersion[1:]
