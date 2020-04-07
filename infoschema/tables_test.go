@@ -854,8 +854,9 @@ func (s *testTableSuite) TestSelectHiddenColumn(c *C) {
 }
 
 func (s *testTableSuite) TestFormatVersion(c *C) {
-	versions := []string{"5.7.25-TiDB-v4.0.0-beta-446-g5268094af", "5.7.25-TiDB-None", "5.7.25-TiDB-v4.0.1", "8.0.18", "5.7.27-TiDB"}
-	res := []string{"4.0.0-beta", "None", "4.0.1", "8.0.18", "5.7.27-TiDB"}
+	// If not set the serverVersion, it would be "5.7.25-TiDB-None" in UT.
+	versions := []string{"5.7.25-TiDB-None", "8.0.18", "5.7.27-TiDB"}
+	res := []string{"None", "8.0.18", "5.7.27-TiDB"}
 	for i, v := range versions {
 		version := infoschema.FormatVersion(v)
 		c.Assert(version, Equals, res[i])
