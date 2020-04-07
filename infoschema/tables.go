@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -215,11 +214,9 @@ type columnInfo struct {
 func buildColumnInfo(col columnInfo) *model.ColumnInfo {
 	mCharset := charset.CharsetBin
 	mCollation := charset.CharsetBin
-	mFlag := mysql.UnsignedFlag
 	if col.tp == mysql.TypeVarchar || col.tp == mysql.TypeBlob {
 		mCharset = charset.CharsetUTF8MB4
 		mCollation = charset.CollationUTF8MB4
-		mFlag = col.flag
 	}
 	fieldType := types.FieldType{
 		Charset: mCharset,
@@ -227,7 +224,7 @@ func buildColumnInfo(col columnInfo) *model.ColumnInfo {
 		Tp:      col.tp,
 		Flen:    col.size,
 		Decimal: col.decimal,
-		Flag:    mFlag,
+		Flag:    col.flag,
 	}
 	return &model.ColumnInfo{
 		Name:         model.NewCIStr(col.name),
@@ -668,7 +665,7 @@ var tableCollationCharacterSetApplicabilityCols = []columnInfo{
 }
 
 var tableProcesslistCols = []columnInfo{
-	{name: "ID", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag, deflt: 0},
+	{name: "ID", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag | mysql.UnsignedFlag, deflt: 0},
 	{name: "USER", tp: mysql.TypeVarchar, size: 16, flag: mysql.NotNullFlag, deflt: ""},
 	{name: "HOST", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag, deflt: ""},
 	{name: "DB", tp: mysql.TypeVarchar, size: 64},
@@ -676,7 +673,7 @@ var tableProcesslistCols = []columnInfo{
 	{name: "TIME", tp: mysql.TypeLong, size: 7, flag: mysql.NotNullFlag, deflt: 0},
 	{name: "STATE", tp: mysql.TypeVarchar, size: 7},
 	{name: "INFO", tp: mysql.TypeString, size: 512},
-	{name: "MEM", tp: mysql.TypeLonglong, size: 21},
+	{name: "MEM", tp: mysql.TypeLonglong, size: 21, flag: mysql.UnsignedFlag},
 	{name: "TxnStart", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag, deflt: ""},
 }
 
@@ -1191,24 +1188,24 @@ func GetTiKVServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	if !ok {
 		return nil, errors.Errorf("%T is not an TiKV store instance", store)
 	}
-	tikvHelper := &helper.Helper{
-		Store:       tikvStore,
-		RegionCache: tikvStore.GetRegionCache(),
+	pdClient := tikvStore.GetRegionCache().PDClient()
+	if pdClient == nil {
+		return nil, errors.New("pd unavailable")
 	}
-
-	storesStat, err := tikvHelper.GetStoresStat()
+	stores, err := pdClient.GetAllStores(context.Background())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	var servers []ServerInfo
-	for _, storeStat := range storesStat.Stores {
+	for _, store := range stores {
+		tp := tikv.GetStoreTypeByMeta(store).Name()
 		servers = append(servers, ServerInfo{
-			ServerType:     "tikv",
-			Address:        storeStat.Store.Address,
-			StatusAddr:     storeStat.Store.StatusAddress,
-			Version:        storeStat.Store.Version,
-			GitHash:        storeStat.Store.GitHash,
-			StartTimestamp: storeStat.Store.StartTimestamp,
+			ServerType:     tp,
+			Address:        store.Address,
+			StatusAddr:     store.StatusAddress,
+			Version:        store.Version,
+			GitHash:        store.GitHash,
+			StartTimestamp: store.StartTimestamp,
 		})
 	}
 	return servers, nil
