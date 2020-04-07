@@ -1058,7 +1058,7 @@ func (s *LogicalTableScan) GetPhysicalScan(schema *expression.Schema, stats *pro
 		rowCount = math.Min(prop.ExpectedCnt/selectivity, rowCount)
 	}
 	// TODO: Estimate row count using ds.crossEstimateRowCount().
-	ts.stats = ds.tableStats.ScaleByExpectCnt(rowCount)
+	ts.stats = ds.TableStats.ScaleByExpectCnt(rowCount)
 	if len(s.FilterConds) == 0 {
 		return ts, nil
 	}
@@ -1093,7 +1093,7 @@ func (s *LogicalIndexScan) GetPhysicalIndexScan(schema *expression.Schema, stats
 		selectivity := stats.RowCount / s.CountAfterAccess
 		rowCount = math.Min(prop.ExpectedCnt/selectivity, rowCount)
 	}
-	is.stats = ds.tableStats.ScaleByExpectCnt(rowCount)
+	is.stats = ds.TableStats.ScaleByExpectCnt(rowCount)
 	if len(s.FilterConds) == 0 {
 		return is, nil
 	}

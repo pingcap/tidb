@@ -296,7 +296,7 @@ func (ts *LogicalTableScan) DeriveStats(childStats []*property.StatsInfo, selfSc
 			}
 		}
 		ts.Ranges = ranger.FullIntRange(isUnsigned)
-		ts.CountAfterAccess = ts.Source.tableStats.RowCount
+		ts.CountAfterAccess = ts.Source.TableStats.RowCount
 		ts.FilterConds = ts.AllConds
 	}
 	return ts.stats, nil
@@ -332,7 +332,7 @@ func (is *LogicalIndexScan) DeriveStats(childStats []*property.StatsInfo, selfSc
 		is.EqCondCount = res.EqCondCount
 		is.EqOrInCondCount = res.EqOrInCount
 		// TODO: `res` still has an unused field: IsDNFCond.
-		is.CountAfterAccess, err = is.Source.tableStats.HistColl.GetRowCountByIndexRanges(is.SCtx().GetSessionVars().StmtCtx, is.Index.ID, is.Ranges)
+		is.CountAfterAccess, err = is.Source.TableStats.HistColl.GetRowCountByIndexRanges(is.SCtx().GetSessionVars().StmtCtx, is.Index.ID, is.Ranges)
 		if err != nil {
 			return nil, err
 		}
