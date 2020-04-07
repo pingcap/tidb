@@ -5971,3 +5971,14 @@ func (s *testIntegrationSuite) TestNegativeZeroForHashJoin(c *C) {
 	tk.MustExec("drop TABLE t0;")
 	tk.MustExec("drop table t1;")
 }
+
+func (s *testIntegrationSuite) TestIssue15990(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("CREATE TABLE t0(c0 TEXT(10));")
+	tk.MustExec("INSERT INTO t0(c0) VALUES (1);")
+	tk.MustQuery("SELECT * FROM t0 WHERE ('a' != t0.c0) AND t0.c0;").Check(testkit.Rows("1"))
+	tk.MustExec("CREATE INDEX i0 ON t0(c0(10));")
+	tk.MustQuery("SELECT * FROM t0 WHERE ('a' != t0.c0) AND t0.c0;").Check(testkit.Rows("1"))
+	tk.MustExec("drop table t0;")
+}
