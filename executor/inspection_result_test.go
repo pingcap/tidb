@@ -617,8 +617,8 @@ func (s *inspectionResultSuite) TestNodeLoadInspection(c *C) {
 		},
 	}
 
-	ctx := s.setupForThresholdCheck(c, mockData)
-	defer s.tearDownForThresholdCheck(c)
+	ctx := s.setupForMockMetricAndConfig(c, mockData)
+	defer s.tearDownForMockMetricAndConfig(c)
 
 	rs, err := tk.Se.Execute(ctx, `select /*+ time_range('2020-02-14 04:20:00','2020-02-14 05:23:00') */
 		item, type, instance, value, reference, details from information_schema.inspection_result
