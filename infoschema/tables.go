@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -1014,7 +1013,6 @@ var tableSequencesCols = []columnInfo{
 	{name: "INCREMENT", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
 	{name: "MAX_VALUE", tp: mysql.TypeLonglong, size: 21},
 	{name: "MIN_VALUE", tp: mysql.TypeLonglong, size: 21},
-	{name: "ORDER", tp: mysql.TypeTiny, flag: mysql.NotNullFlag},
 	{name: "START", tp: mysql.TypeLonglong, size: 21},
 	{name: "COMMENT", tp: mysql.TypeVarchar, size: 64},
 }
@@ -1188,24 +1186,24 @@ func GetTiKVServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	if !ok {
 		return nil, errors.Errorf("%T is not an TiKV store instance", store)
 	}
-	tikvHelper := &helper.Helper{
-		Store:       tikvStore,
-		RegionCache: tikvStore.GetRegionCache(),
+	pdClient := tikvStore.GetRegionCache().PDClient()
+	if pdClient == nil {
+		return nil, errors.New("pd unavailable")
 	}
-
-	storesStat, err := tikvHelper.GetStoresStat()
+	stores, err := pdClient.GetAllStores(context.Background())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	var servers []ServerInfo
-	for _, storeStat := range storesStat.Stores {
+	for _, store := range stores {
+		tp := tikv.GetStoreTypeByMeta(store).Name()
 		servers = append(servers, ServerInfo{
-			ServerType:     "tikv",
-			Address:        storeStat.Store.Address,
-			StatusAddr:     storeStat.Store.StatusAddress,
-			Version:        storeStat.Store.Version,
-			GitHash:        storeStat.Store.GitHash,
-			StartTimestamp: storeStat.Store.StartTimestamp,
+			ServerType:     tp,
+			Address:        store.Address,
+			StatusAddr:     store.StatusAddress,
+			Version:        store.Version,
+			GitHash:        store.GitHash,
+			StartTimestamp: store.StartTimestamp,
 		})
 	}
 	return servers, nil
