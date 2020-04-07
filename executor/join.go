@@ -53,6 +53,11 @@ type HashJoinExec struct {
 	probeTypes        []*types.FieldType
 	buildTypes        []*types.FieldType
 
+	// matchedRows[i] is used to store the matched rows in probe phase for join worker i.
+	matchedRows [][]chunk.Row
+	// matchedRtrs[i] is used to store the matched rows' pointer in probe phase for join worker i.
+	matchedPtrs [][]chunk.RowPtr
+
 	// concurrency is the number of partition, build and join workers.
 	concurrency   uint
 	rowContainer  *hashRowContainer
@@ -160,6 +165,9 @@ func (e *HashJoinExec) Open(ctx context.Context) error {
 
 	e.diskTracker = disk.NewTracker(e.id, -1)
 	e.diskTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.DiskTracker)
+
+	e.matchedRows = make([][]chunk.Row, e.concurrency)
+	e.matchedPtrs = make([][]chunk.RowPtr, e.concurrency)
 
 	e.closeCh = make(chan struct{})
 	e.finished.Store(false)
@@ -486,13 +494,13 @@ func (e *HashJoinExec) runJoinWorker(workerID uint, probeKeyColIdx []int) {
 
 func (e *HashJoinExec) joinMatchedProbeSideRow2ChunkForOuterHashJoin(workerID uint, probeKey uint64, probeSideRow chunk.Row, hCtx *hashContext,
 	joinResult *hashjoinWorkerResult) (bool, *hashjoinWorkerResult) {
-	err := e.rowContainer.GetMatchedRowsAndPtrs(workerID, probeKey, probeSideRow, hCtx)
+	err := e.rowContainer.GetMatchedRowsAndPtrs(e.matchedRows[workerID], e.matchedPtrs[workerID], probeKey, probeSideRow, hCtx)
 	if err != nil {
 		joinResult.err = err
 		return false, joinResult
 	}
-	buildSideRows := e.rowContainer.matchedRows[workerID]
-	rowsPtrs := e.rowContainer.matchedPtrs[workerID]
+	buildSideRows := e.matchedRows[workerID]
+	rowsPtrs := e.matchedPtrs[workerID]
 	if len(buildSideRows) == 0 {
 		return true, joinResult
 	}
@@ -524,12 +532,12 @@ func (e *HashJoinExec) joinMatchedProbeSideRow2ChunkForOuterHashJoin(workerID ui
 }
 func (e *HashJoinExec) joinMatchedProbeSideRow2Chunk(workerID uint, probeKey uint64, probeSideRow chunk.Row, hCtx *hashContext,
 	joinResult *hashjoinWorkerResult) (bool, *hashjoinWorkerResult) {
-	err := e.rowContainer.GetMatchedRowsAndPtrs(workerID, probeKey, probeSideRow, hCtx)
+	err := e.rowContainer.GetMatchedRowsAndPtrs(e.matchedRows[workerID], e.matchedPtrs[workerID], probeKey, probeSideRow, hCtx)
 	if err != nil {
 		joinResult.err = err
 		return false, joinResult
 	}
-	buildSideRows := e.rowContainer.matchedRows[workerID]
+	buildSideRows := e.matchedRows[workerID]
 	if len(buildSideRows) == 0 {
 		e.joiners[workerID].onMissMatch(false, probeSideRow, joinResult.chk)
 		return true, joinResult
@@ -720,7 +728,7 @@ func (e *HashJoinExec) buildHashTableForList(buildSideResultCh <-chan *chunk.Chu
 	}
 	var err error
 	var selected []bool
-	e.rowContainer = newHashRowContainer(e.concurrency, e.ctx, int(e.buildSideEstCount), hCtx)
+	e.rowContainer = newHashRowContainer(e.ctx, int(e.buildSideEstCount), hCtx)
 	e.rowContainer.GetMemTracker().AttachTo(e.memTracker)
 	e.rowContainer.GetMemTracker().SetLabel(buildSideResultLabel)
 	e.rowContainer.GetDiskTracker().AttachTo(e.diskTracker)

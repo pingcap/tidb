@@ -150,7 +150,7 @@ func (s *pkgTestSuite) testHashRowContainer(c *C, hashFunc func() hash.Hash64, s
 	for i := 0; i < numRows; i++ {
 		hCtx.hashVals = append(hCtx.hashVals, hashFunc())
 	}
-	rowContainer := newHashRowContainer(1, sctx, 0, hCtx)
+	rowContainer := newHashRowContainer(sctx, 0, hCtx)
 	tracker := rowContainer.GetMemTracker()
 	tracker.SetLabel(buildSideResultLabel)
 	if spill {
@@ -179,9 +179,10 @@ func (s *pkgTestSuite) testHashRowContainer(c *C, hashFunc func() hash.Hash64, s
 	}
 	probeCtx.hasNull = make([]bool, 1)
 	probeCtx.hashVals = append(hCtx.hashVals, hashFunc())
-	err = rowContainer.GetMatchedRowsAndPtrs(0, hCtx.hashVals[1].Sum64(), probeRow, probeCtx)
+	var matched []chunk.Row
+	var matchedPtrs []chunk.RowPtr
+	err = rowContainer.GetMatchedRowsAndPtrs(matched, matchedPtrs, hCtx.hashVals[1].Sum64(), probeRow, probeCtx)
 	c.Assert(err, IsNil)
-	matched := rowContainer.matchedRows[0]
 	c.Assert(len(matched), Equals, 2)
 	c.Assert(matched[0].GetDatumRow(colTypes), DeepEquals, chk0.GetRow(1).GetDatumRow(colTypes))
 	c.Assert(matched[1].GetDatumRow(colTypes), DeepEquals, chk1.GetRow(1).GetDatumRow(colTypes))
