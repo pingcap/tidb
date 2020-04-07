@@ -1290,7 +1290,7 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 			err = cc.writeResultset(ctx, rs, false, status, 0)
 
 			// Do remember to close it to avoid resource leak!
-			rs.Close()
+			terror.Call(rs.Close)
 
 			if err != nil {
 				break
