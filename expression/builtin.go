@@ -395,6 +395,36 @@ func newBaseBuiltinCastFunc(builtinFunc baseBuiltinFunc, inUnion bool) baseBuilt
 	}
 }
 
+// baseBuiltinIsTrueOrFalseFunc will be contained in every struct that implement isTrue/ isFalse builtinFunc.
+type baseBuiltinIsTrueOrFalseFunc struct {
+	baseBuiltinFunc
+
+	// keepNull indicates how this function treats a null input parameter.
+	// If keepNull is true and the input parameter is null, the function will return null.
+	// If keepNull is false, the null input parameter will be cast to 0.
+	keepNull bool
+}
+
+// metadata returns the metadata of cast functions
+func (b *baseBuiltinIsTrueOrFalseFunc) metadata() proto.Message {
+	args := &tipb.KeepNullMetadata{
+		KeepNull: b.keepNull,
+	}
+	return args
+}
+
+func (b *baseBuiltinIsTrueOrFalseFunc) cloneFrom(from *baseBuiltinIsTrueOrFalseFunc) {
+	b.baseBuiltinFunc.cloneFrom(&from.baseBuiltinFunc)
+	b.keepNull = from.keepNull
+}
+
+func newBaseBuiltinIsTrueOrFalseFunc(builtinFunc baseBuiltinFunc, keepNull bool) baseBuiltinIsTrueOrFalseFunc {
+	return baseBuiltinIsTrueOrFalseFunc{
+		baseBuiltinFunc: builtinFunc,
+		keepNull:        keepNull,
+	}
+}
+
 // vecBuiltinFunc contains all vectorized methods for a builtin function.
 type vecBuiltinFunc interface {
 	// vectorized returns if this builtin function itself supports vectorized evaluation.
