@@ -227,7 +227,7 @@ func (p *PhysicalTableScan) haveCorCol() bool {
 }
 
 func (p *PhysicalTableScan) isFullScan() bool {
-	if len(p.rangeDecidedBy) > 0 || p.haveCorCol() {
+	if len(p.RangeDecidedBy) > 0 || p.haveCorCol() {
 		return false
 	}
 	for _, ran := range p.Ranges {
