@@ -615,7 +615,6 @@ const (
 type SequenceInfo struct {
 	Start      int64  `json:"sequence_start"`
 	Cache      bool   `json:"sequence_cache"`
-	Order      bool   `json:"sequence_order"`
 	Cycle      bool   `json:"sequence_cycle"`
 	MinValue   int64  `json:"sequence_min_value"`
 	MaxValue   int64  `json:"sequence_max_value"`

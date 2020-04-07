@@ -449,7 +449,6 @@ var tokenMap = map[string]int{
 	"NOMAXVALUE":                 nomaxvalue,
 	"NOMINVALUE":                 nominvalue,
 	"NONE":                       none,
-	"NOORDER":                    noorder,
 	"NOT":                        not,
 	"NOW":                        now,
 	"NOWAIT":                     nowait,
