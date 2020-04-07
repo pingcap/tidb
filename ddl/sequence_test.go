@@ -72,7 +72,6 @@ func (s *testSequenceSuite) TestCreateSequence(c *C) {
 	c.Assert(sequenceTable.Meta().Sequence.Cache, Equals, true)
 	c.Assert(sequenceTable.Meta().Sequence.CacheValue, Equals, model.DefaultSequenceCacheValue)
 	c.Assert(sequenceTable.Meta().Sequence.Cycle, Equals, false)
-	c.Assert(sequenceTable.Meta().Sequence.Order, Equals, false)
 
 	// Test create privilege.
 	s.tk.MustExec("create user myuser@localhost")
@@ -659,6 +658,30 @@ func (s *testSequenceSuite) TestSequenceFunction(c *C) {
 	s.tk.MustExec("create sequence seq increment=-1")
 	s.tk.MustQuery("select setval(seq, -10)").Check(testkit.Rows("-10"))
 	s.tk.MustQuery("select setval(seq, -5)").Check(testkit.Rows("<nil>"))
+	s.tk.MustExec("drop sequence seq")
+
+	// test the current value already satisfied setval in other session.
+	s.tk.MustExec("create sequence seq")
+	s.tk.MustQuery("select setval(seq, 100)").Check(testkit.Rows("100"))
+	se, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.Se = se
+	tk1.MustExec("use test")
+	tk1.MustQuery("select setval(seq, 50)").Check(testkit.Rows("<nil>"))
+	tk1.MustQuery("select nextval(seq)").Check(testkit.Rows("101"))
+	tk1.MustQuery("select setval(seq, 100)").Check(testkit.Rows("<nil>"))
+	tk1.MustQuery("select setval(seq, 101)").Check(testkit.Rows("<nil>"))
+	tk1.MustQuery("select setval(seq, 102)").Check(testkit.Rows("102"))
+	s.tk.MustExec("drop sequence seq")
+
+	s.tk.MustExec("create sequence seq increment=-1")
+	s.tk.MustQuery("select setval(seq, -100)").Check(testkit.Rows("-100"))
+	tk1.MustQuery("select setval(seq, -50)").Check(testkit.Rows("<nil>"))
+	tk1.MustQuery("select nextval(seq)").Check(testkit.Rows("-101"))
+	tk1.MustQuery("select setval(seq, -100)").Check(testkit.Rows("<nil>"))
+	tk1.MustQuery("select setval(seq, -101)").Check(testkit.Rows("<nil>"))
+	tk1.MustQuery("select setval(seq, -102)").Check(testkit.Rows("-102"))
 	s.tk.MustExec("drop sequence seq")
 }
 
