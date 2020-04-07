@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -25,8 +26,10 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tipb/go-tipb"
+	"go.uber.org/zap"
 )
 
 // PbTypeToFieldType converts tipb.FieldType to FieldType
@@ -41,19 +44,27 @@ func PbTypeToFieldType(tp *tipb.FieldType) *types.FieldType {
 	}
 }
 
-func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *tipb.FieldType, args []Expression) (f builtinFunc, e error) {
+func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *tipb.FieldType, metadata []byte, args []Expression) (f builtinFunc, e error) {
 	fieldTp := PbTypeToFieldType(tp)
 	base := newBaseBuiltinFunc(ctx, args)
 	base.tp = fieldTp
+	var message proto.Message
+	if len(metadata) != 0 {
+		err := proto.Unmarshal(metadata, message)
+		if err != nil {
+			logutil.BgLogger().Error("decode metadata", zap.Any("metadata", metadata), zap.Error(err))
+			return nil, nil
+		}
+	}
 	switch sigCode {
 	case tipb.ScalarFuncSig_CastIntAsInt:
-		f = &builtinCastIntAsIntSig{newBaseBuiltinCastFunc(base, false)}
+		f = &builtinCastIntAsIntSig{newBaseBuiltinCastFunc(base, message.(*tipb.InUnionMetadata).InUnion)}
 	case tipb.ScalarFuncSig_CastIntAsReal:
-		f = &builtinCastIntAsRealSig{newBaseBuiltinCastFunc(base, false)}
+		f = &builtinCastIntAsRealSig{newBaseBuiltinCastFunc(base, message.(*tipb.InUnionMetadata).InUnion)}
 	case tipb.ScalarFuncSig_CastIntAsString:
 		f = &builtinCastIntAsStringSig{base}
 	case tipb.ScalarFuncSig_CastIntAsDecimal:
-		f = &builtinCastIntAsDecimalSig{newBaseBuiltinCastFunc(base, false)}
+		f = &builtinCastIntAsDecimalSig{newBaseBuiltinCastFunc(base, message.(*tipb.InUnionMetadata).InUnion)}
 	case tipb.ScalarFuncSig_CastIntAsTime:
 		f = &builtinCastIntAsTimeSig{base}
 	case tipb.ScalarFuncSig_CastIntAsDuration:
@@ -61,13 +72,13 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 	case tipb.ScalarFuncSig_CastIntAsJson:
 		f = &builtinCastIntAsJSONSig{base}
 	case tipb.ScalarFuncSig_CastRealAsInt:
-		f = &builtinCastRealAsIntSig{newBaseBuiltinCastFunc(base, false)}
+		f = &builtinCastRealAsIntSig{newBaseBuiltinCastFunc(base, message.(*tipb.InUnionMetadata).InUnion)}
 	case tipb.ScalarFuncSig_CastRealAsReal:
-		f = &builtinCastRealAsRealSig{newBaseBuiltinCastFunc(base, false)}
+		f = &builtinCastRealAsRealSig{newBaseBuiltinCastFunc(base, message.(*tipb.InUnionMetadata).InUnion)}
 	case tipb.ScalarFuncSig_CastRealAsString:
 		f = &builtinCastRealAsStringSig{base}
 	case tipb.ScalarFuncSig_CastRealAsDecimal:
-		f = &builtinCastRealAsDecimalSig{newBaseBuiltinCastFunc(base, false)}
+		f = &builtinCastRealAsDecimalSig{newBaseBuiltinCastFunc(base, message.(*tipb.InUnionMetadata).InUnion)}
 	case tipb.ScalarFuncSig_CastRealAsTime:
 		f = &builtinCastRealAsTimeSig{base}
 	case tipb.ScalarFuncSig_CastRealAsDuration:
@@ -75,13 +86,13 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 	case tipb.ScalarFuncSig_CastRealAsJson:
 		f = &builtinCastRealAsJSONSig{base}
 	case tipb.ScalarFuncSig_CastDecimalAsInt:
-		f = &builtinCastDecimalAsIntSig{newBaseBuiltinCastFunc(base, false)}
+		f = &builtinCastDecimalAsIntSig{newBaseBuiltinCastFunc(base, message.(*tipb.InUnionMetadata).InUnion)}
 	case tipb.ScalarFuncSig_CastDecimalAsReal:
-		f = &builtinCastDecimalAsRealSig{newBaseBuiltinCastFunc(base, false)}
+		f = &builtinCastDecimalAsRealSig{newBaseBuiltinCastFunc(base, message.(*tipb.InUnionMetadata).InUnion)}
 	case tipb.ScalarFuncSig_CastDecimalAsString:
 		f = &builtinCastDecimalAsStringSig{base}
 	case tipb.ScalarFuncSig_CastDecimalAsDecimal:
-		f = &builtinCastDecimalAsDecimalSig{newBaseBuiltinCastFunc(base, false)}
+		f = &builtinCastDecimalAsDecimalSig{newBaseBuiltinCastFunc(base, message.(*tipb.InUnionMetadata).InUnion)}
 	case tipb.ScalarFuncSig_CastDecimalAsTime:
 		f = &builtinCastDecimalAsTimeSig{base}
 	case tipb.ScalarFuncSig_CastDecimalAsDuration:
@@ -89,13 +100,13 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 	case tipb.ScalarFuncSig_CastDecimalAsJson:
 		f = &builtinCastDecimalAsJSONSig{base}
 	case tipb.ScalarFuncSig_CastStringAsInt:
-		f = &builtinCastStringAsIntSig{newBaseBuiltinCastFunc(base, false)}
+		f = &builtinCastStringAsIntSig{newBaseBuiltinCastFunc(base, message.(*tipb.InUnionMetadata).InUnion)}
 	case tipb.ScalarFuncSig_CastStringAsReal:
-		f = &builtinCastStringAsRealSig{newBaseBuiltinCastFunc(base, false)}
+		f = &builtinCastStringAsRealSig{newBaseBuiltinCastFunc(base, message.(*tipb.InUnionMetadata).InUnion)}
 	case tipb.ScalarFuncSig_CastStringAsString:
 		f = &builtinCastStringAsStringSig{base}
 	case tipb.ScalarFuncSig_CastStringAsDecimal:
-		f = &builtinCastStringAsDecimalSig{newBaseBuiltinCastFunc(base, false)}
+		f = &builtinCastStringAsDecimalSig{newBaseBuiltinCastFunc(base, message.(*tipb.InUnionMetadata).InUnion)}
 	case tipb.ScalarFuncSig_CastStringAsTime:
 		f = &builtinCastStringAsTimeSig{base}
 	case tipb.ScalarFuncSig_CastStringAsDuration:
@@ -103,13 +114,13 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 	case tipb.ScalarFuncSig_CastStringAsJson:
 		f = &builtinCastStringAsJSONSig{base}
 	case tipb.ScalarFuncSig_CastTimeAsInt:
-		f = &builtinCastTimeAsIntSig{newBaseBuiltinCastFunc(base, false)}
+		f = &builtinCastTimeAsIntSig{newBaseBuiltinCastFunc(base, message.(*tipb.InUnionMetadata).InUnion)}
 	case tipb.ScalarFuncSig_CastTimeAsReal:
-		f = &builtinCastTimeAsRealSig{newBaseBuiltinCastFunc(base, false)}
+		f = &builtinCastTimeAsRealSig{newBaseBuiltinCastFunc(base, message.(*tipb.InUnionMetadata).InUnion)}
 	case tipb.ScalarFuncSig_CastTimeAsString:
 		f = &builtinCastTimeAsStringSig{base}
 	case tipb.ScalarFuncSig_CastTimeAsDecimal:
-		f = &builtinCastTimeAsDecimalSig{newBaseBuiltinCastFunc(base, false)}
+		f = &builtinCastTimeAsDecimalSig{newBaseBuiltinCastFunc(base, message.(*tipb.InUnionMetadata).InUnion)}
 	case tipb.ScalarFuncSig_CastTimeAsTime:
 		f = &builtinCastTimeAsTimeSig{base}
 	case tipb.ScalarFuncSig_CastTimeAsDuration:
@@ -117,13 +128,13 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 	case tipb.ScalarFuncSig_CastTimeAsJson:
 		f = &builtinCastTimeAsJSONSig{base}
 	case tipb.ScalarFuncSig_CastDurationAsInt:
-		f = &builtinCastDurationAsIntSig{newBaseBuiltinCastFunc(base, false)}
+		f = &builtinCastDurationAsIntSig{newBaseBuiltinCastFunc(base, message.(*tipb.InUnionMetadata).InUnion)}
 	case tipb.ScalarFuncSig_CastDurationAsReal:
-		f = &builtinCastDurationAsRealSig{newBaseBuiltinCastFunc(base, false)}
+		f = &builtinCastDurationAsRealSig{newBaseBuiltinCastFunc(base, message.(*tipb.InUnionMetadata).InUnion)}
 	case tipb.ScalarFuncSig_CastDurationAsString:
 		f = &builtinCastDurationAsStringSig{base}
 	case tipb.ScalarFuncSig_CastDurationAsDecimal:
-		f = &builtinCastDurationAsDecimalSig{newBaseBuiltinCastFunc(base, false)}
+		f = &builtinCastDurationAsDecimalSig{newBaseBuiltinCastFunc(base, message.(*tipb.InUnionMetadata).InUnion)}
 	case tipb.ScalarFuncSig_CastDurationAsTime:
 		f = &builtinCastDurationAsTimeSig{base}
 	case tipb.ScalarFuncSig_CastDurationAsDuration:
@@ -131,13 +142,13 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 	case tipb.ScalarFuncSig_CastDurationAsJson:
 		f = &builtinCastDurationAsJSONSig{base}
 	case tipb.ScalarFuncSig_CastJsonAsInt:
-		f = &builtinCastJSONAsIntSig{newBaseBuiltinCastFunc(base, false)}
+		f = &builtinCastJSONAsIntSig{newBaseBuiltinCastFunc(base, message.(*tipb.InUnionMetadata).InUnion)}
 	case tipb.ScalarFuncSig_CastJsonAsReal:
-		f = &builtinCastJSONAsRealSig{newBaseBuiltinCastFunc(base, false)}
+		f = &builtinCastJSONAsRealSig{newBaseBuiltinCastFunc(base, message.(*tipb.InUnionMetadata).InUnion)}
 	case tipb.ScalarFuncSig_CastJsonAsString:
 		f = &builtinCastJSONAsStringSig{base}
 	case tipb.ScalarFuncSig_CastJsonAsDecimal:
-		f = &builtinCastJSONAsDecimalSig{newBaseBuiltinCastFunc(base, false)}
+		f = &builtinCastJSONAsDecimalSig{newBaseBuiltinCastFunc(base, message.(*tipb.InUnionMetadata).InUnion)}
 	case tipb.ScalarFuncSig_CastJsonAsTime:
 		f = &builtinCastJSONAsTimeSig{base}
 	case tipb.ScalarFuncSig_CastJsonAsDuration:
@@ -445,17 +456,17 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 	case tipb.ScalarFuncSig_BitNegSig:
 		f = &builtinBitNegSig{base}
 	case tipb.ScalarFuncSig_IntIsTrue:
-		f = &builtinIntIsTrueSig{newBaseBuiltinIsTrueOrFalseFunc(base, false)}
+		f = &builtinIntIsTrueSig{newBaseBuiltinIsTrueOrFalseFunc(base, message.(*tipb.KeepNullMetadata).KeepNull)}
 	case tipb.ScalarFuncSig_RealIsTrue:
-		f = &builtinRealIsTrueSig{newBaseBuiltinIsTrueOrFalseFunc(base, false)}
+		f = &builtinRealIsTrueSig{newBaseBuiltinIsTrueOrFalseFunc(base, message.(*tipb.KeepNullMetadata).KeepNull)}
 	case tipb.ScalarFuncSig_DecimalIsTrue:
-		f = &builtinDecimalIsTrueSig{newBaseBuiltinIsTrueOrFalseFunc(base, false)}
+		f = &builtinDecimalIsTrueSig{newBaseBuiltinIsTrueOrFalseFunc(base, message.(*tipb.KeepNullMetadata).KeepNull)}
 	case tipb.ScalarFuncSig_IntIsFalse:
-		f = &builtinIntIsFalseSig{newBaseBuiltinIsTrueOrFalseFunc(base, false)}
+		f = &builtinIntIsFalseSig{newBaseBuiltinIsTrueOrFalseFunc(base, message.(*tipb.KeepNullMetadata).KeepNull)}
 	case tipb.ScalarFuncSig_RealIsFalse:
-		f = &builtinRealIsFalseSig{newBaseBuiltinIsTrueOrFalseFunc(base, false)}
+		f = &builtinRealIsFalseSig{newBaseBuiltinIsTrueOrFalseFunc(base, message.(*tipb.KeepNullMetadata).KeepNull)}
 	case tipb.ScalarFuncSig_DecimalIsFalse:
-		f = &builtinDecimalIsFalseSig{newBaseBuiltinIsTrueOrFalseFunc(base, false)}
+		f = &builtinDecimalIsFalseSig{newBaseBuiltinIsTrueOrFalseFunc(base, message.(*tipb.KeepNullMetadata).KeepNull)}
 	case tipb.ScalarFuncSig_LeftShift:
 		f = &builtinLeftShiftSig{base}
 	case tipb.ScalarFuncSig_RightShift:
@@ -1026,10 +1037,10 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 	return f, nil
 }
 
-func newDistSQLFunctionBySig(sc *stmtctx.StatementContext, sigCode tipb.ScalarFuncSig, tp *tipb.FieldType, args []Expression) (Expression, error) {
+func newDistSQLFunctionBySig(sc *stmtctx.StatementContext, sigCode tipb.ScalarFuncSig, tp *tipb.FieldType, metadata []byte, args []Expression) (Expression, error) {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().StmtCtx = sc
-	f, err := getSignatureByPB(ctx, sigCode, tp, args)
+	f, err := getSignatureByPB(ctx, sigCode, tp, metadata, args)
 	if err != nil {
 		return nil, err
 	}
@@ -1111,7 +1122,7 @@ func PBToExpr(expr *tipb.Expr, tps []*types.FieldType, sc *stmtctx.StatementCont
 		}
 		args = append(args, arg)
 	}
-	sf, err := newDistSQLFunctionBySig(sc, expr.Sig, expr.FieldType, args)
+	sf, err := newDistSQLFunctionBySig(sc, expr.Sig, expr.FieldType, expr.Val, args)
 	if err != nil {
 		return nil, err
 	}
