@@ -16,12 +16,14 @@ package stmtsummary
 import (
 	"container/list"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -79,7 +81,6 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 		sampleSQL:            stmtExecInfo1.OriginalSQL,
 		samplePlan:           stmtExecInfo1.PlanGenerator(),
 		indexNames:           stmtExecInfo1.StmtCtx.IndexNames,
-		sampleUser:           stmtExecInfo1.User,
 		execCount:            1,
 		sumLatency:           stmtExecInfo1.TotalLatency,
 		maxLatency:           stmtExecInfo1.TotalLatency,
@@ -424,7 +425,6 @@ func matchStmtSummaryByDigest(first, second *stmtSummaryByDigest) bool {
 			ssElement1.sampleSQL != ssElement2.sampleSQL ||
 			ssElement1.samplePlan != ssElement2.samplePlan ||
 			ssElement1.prevSQL != ssElement2.prevSQL ||
-			ssElement1.sampleUser != ssElement2.sampleUser ||
 			ssElement1.execCount != ssElement2.execCount ||
 			ssElement1.sumLatency != ssElement2.sumLatency ||
 			ssElement1.maxLatency != ssElement2.maxLatency ||
@@ -583,7 +583,7 @@ func (s *testStmtSummarySuite) TestToDatum(c *C) {
 
 	stmtExecInfo1 := generateAnyExecInfo()
 	s.ssMap.AddStatement(stmtExecInfo1)
-	datums := s.ssMap.ToCurrentDatum()
+	datums := s.ssMap.ToCurrentDatum(nil, true)
 	c.Assert(len(datums), Equals, 1)
 	n := types.NewTime(types.FromGoTime(time.Unix(s.ssMap.beginTimeForCurInterval, 0)), mysql.TypeTimestamp, types.DefaultFsp)
 	e := types.NewTime(types.FromGoTime(time.Unix(s.ssMap.beginTimeForCurInterval+1800, 0)), mysql.TypeTimestamp, types.DefaultFsp)
@@ -613,7 +613,7 @@ func (s *testStmtSummarySuite) TestToDatum(c *C) {
 		t, t, stmtExecInfo1.OriginalSQL, stmtExecInfo1.PrevSQL, "plan_digest", ""}
 	match(c, datums[0], expectedDatum...)
 
-	datums = s.ssMap.ToHistoryDatum()
+	datums = s.ssMap.ToHistoryDatum(nil, true)
 	c.Assert(len(datums), Equals, 1)
 	match(c, datums[0], expectedDatum...)
 }
@@ -641,7 +641,7 @@ func (s *testStmtSummarySuite) TestAddStatementParallel(c *C) {
 		}
 
 		// There would be 32 summaries.
-		datums := s.ssMap.ToCurrentDatum()
+		datums := s.ssMap.ToCurrentDatum(nil, true)
 		c.Assert(len(datums), Equals, loops)
 	}
 
@@ -650,7 +650,7 @@ func (s *testStmtSummarySuite) TestAddStatementParallel(c *C) {
 	}
 	wg.Wait()
 
-	datums := s.ssMap.ToCurrentDatum()
+	datums := s.ssMap.ToCurrentDatum(nil, true)
 	c.Assert(len(datums), Equals, loops)
 }
 
@@ -661,11 +661,20 @@ func (s *testStmtSummarySuite) TestMaxStmtCount(c *C) {
 	// to disable expiration
 	s.ssMap.beginTimeForCurInterval = now + 60
 
-	stmtExecInfo1 := generateAnyExecInfo()
-	maxStmtCount := config.GetGlobalConfig().StmtSummary.MaxStmtCount
+	// Test the original value and modify it.
+	maxStmtCount := s.ssMap.maxStmtCount()
+	c.Assert(maxStmtCount, Equals, int(config.GetGlobalConfig().StmtSummary.MaxStmtCount))
+	c.Assert(s.ssMap.SetMaxStmtCount("10", false), IsNil)
+	c.Assert(s.ssMap.maxStmtCount(), Equals, 10)
+	defer func() {
+		c.Assert(s.ssMap.SetMaxStmtCount("", false), IsNil)
+		c.Assert(s.ssMap.SetMaxStmtCount("", true), IsNil)
+		c.Assert(maxStmtCount, Equals, int(config.GetGlobalConfig().StmtSummary.MaxStmtCount))
+	}()
 
-	// 1000 digests
-	loops := int(maxStmtCount) * 10
+	// 100 digests
+	stmtExecInfo1 := generateAnyExecInfo()
+	loops := 100
 	for i := 0; i < loops; i++ {
 		stmtExecInfo1.Digest = fmt.Sprintf("digest%d", i)
 		s.ssMap.AddStatement(stmtExecInfo1)
@@ -673,10 +682,10 @@ func (s *testStmtSummarySuite) TestMaxStmtCount(c *C) {
 
 	// Summary count should be MaxStmtCount.
 	sm := s.ssMap.summaryMap
-	c.Assert(sm.Size(), Equals, int(maxStmtCount))
+	c.Assert(sm.Size(), Equals, 10)
 
 	// LRU cache should work.
-	for i := loops - int(maxStmtCount); i < loops; i++ {
+	for i := loops - 10; i < loops; i++ {
 		key := &stmtSummaryByDigestKey{
 			schemaName: stmtExecInfo1.SchemaName,
 			digest:     fmt.Sprintf("digest%d", i),
@@ -685,6 +694,22 @@ func (s *testStmtSummarySuite) TestMaxStmtCount(c *C) {
 		_, ok := sm.Get(key)
 		c.Assert(ok, IsTrue)
 	}
+
+	// Change to a bigger value.
+	c.Assert(s.ssMap.SetMaxStmtCount("50", true), IsNil)
+	for i := 0; i < loops; i++ {
+		stmtExecInfo1.Digest = fmt.Sprintf("digest%d", i)
+		s.ssMap.AddStatement(stmtExecInfo1)
+	}
+	c.Assert(sm.Size(), Equals, 50)
+
+	// Change to a smaller value.
+	c.Assert(s.ssMap.SetMaxStmtCount("10", true), IsNil)
+	for i := 0; i < loops; i++ {
+		stmtExecInfo1.Digest = fmt.Sprintf("digest%d", i)
+		s.ssMap.AddStatement(stmtExecInfo1)
+	}
+	c.Assert(sm.Size(), Equals, 10)
 }
 
 // Test max length of normalized and sample SQL.
@@ -694,9 +719,12 @@ func (s *testStmtSummarySuite) TestMaxSQLLength(c *C) {
 	// to disable expiration
 	s.ssMap.beginTimeForCurInterval = now + 60
 
+	// Test the original value and modify it.
+	maxSQLLength := s.ssMap.maxSQLLength()
+	c.Assert(maxSQLLength, Equals, int(config.GetGlobalConfig().StmtSummary.MaxSQLLength))
+
 	// Create a long SQL
-	maxSQLLength := config.GetGlobalConfig().StmtSummary.MaxSQLLength
-	length := int(maxSQLLength) * 10
+	length := maxSQLLength * 10
 	str := strings.Repeat("a", length)
 
 	stmtExecInfo1 := generateAnyExecInfo()
@@ -713,11 +741,60 @@ func (s *testStmtSummarySuite) TestMaxSQLLength(c *C) {
 	value, ok := s.ssMap.summaryMap.Get(key)
 	c.Assert(ok, IsTrue)
 
-	expectedSQL := fmt.Sprintf("%s(len:%d)", strings.Repeat("a", int(maxSQLLength)), length)
+	expectedSQL := fmt.Sprintf("%s(len:%d)", strings.Repeat("a", maxSQLLength), length)
 	summary := value.(*stmtSummaryByDigest)
 	c.Assert(summary.normalizedSQL, Equals, expectedSQL)
 	ssElement := summary.history.Back().Value.(*stmtSummaryByDigestElement)
 	c.Assert(ssElement.sampleSQL, Equals, expectedSQL)
+
+	c.Assert(s.ssMap.SetMaxSQLLength("100", false), IsNil)
+	c.Assert(s.ssMap.maxSQLLength(), Equals, 100)
+	c.Assert(s.ssMap.SetMaxSQLLength("10", true), IsNil)
+	c.Assert(s.ssMap.maxSQLLength(), Equals, 10)
+	c.Assert(s.ssMap.SetMaxSQLLength("", true), IsNil)
+	c.Assert(s.ssMap.maxSQLLength(), Equals, 100)
+}
+
+// Test AddStatement and SetMaxStmtCount parallel.
+func (s *testStmtSummarySuite) TestSetMaxStmtCountParallel(c *C) {
+	s.ssMap.Clear()
+	now := time.Now().Unix()
+	// to disable expiration
+	s.ssMap.beginTimeForCurInterval = now + 60
+
+	threads := 8
+	loops := 20
+	wg := sync.WaitGroup{}
+	wg.Add(threads + 1)
+
+	addStmtFunc := func() {
+		defer wg.Done()
+		stmtExecInfo1 := generateAnyExecInfo()
+
+		// Add 32 times with different digest.
+		for i := 0; i < loops; i++ {
+			stmtExecInfo1.Digest = fmt.Sprintf("digest%d", i)
+			s.ssMap.AddStatement(stmtExecInfo1)
+		}
+	}
+	for i := 0; i < threads; i++ {
+		go addStmtFunc()
+	}
+
+	defer c.Assert(s.ssMap.SetMaxStmtCount("", true), IsNil)
+	setStmtCountFunc := func() {
+		defer wg.Done()
+		// Turn down MaxStmtCount one by one.
+		for i := 10; i > 0; i-- {
+			c.Assert(s.ssMap.SetMaxStmtCount(strconv.Itoa(i), true), IsNil)
+		}
+	}
+	go setStmtCountFunc()
+
+	wg.Wait()
+
+	datums := s.ssMap.ToCurrentDatum(nil, true)
+	c.Assert(len(datums), Equals, 1)
 }
 
 // Test setting EnableStmtSummary to 0.
@@ -731,14 +808,14 @@ func (s *testStmtSummarySuite) TestDisableStmtSummary(c *C) {
 
 	stmtExecInfo1 := generateAnyExecInfo()
 	s.ssMap.AddStatement(stmtExecInfo1)
-	datums := s.ssMap.ToCurrentDatum()
+	datums := s.ssMap.ToCurrentDatum(nil, true)
 	c.Assert(len(datums), Equals, 0)
 
 	// Set true in session scope, it will overwrite global scope.
 	s.ssMap.SetEnabled("1", true)
 
 	s.ssMap.AddStatement(stmtExecInfo1)
-	datums = s.ssMap.ToCurrentDatum()
+	datums = s.ssMap.ToCurrentDatum(nil, true)
 	c.Assert(len(datums), Equals, 1)
 
 	// Set false in global scope, it shouldn't work.
@@ -750,22 +827,22 @@ func (s *testStmtSummarySuite) TestDisableStmtSummary(c *C) {
 	stmtExecInfo2.NormalizedSQL = "normalized_sql2"
 	stmtExecInfo2.Digest = "digest2"
 	s.ssMap.AddStatement(stmtExecInfo2)
-	datums = s.ssMap.ToCurrentDatum()
+	datums = s.ssMap.ToCurrentDatum(nil, true)
 	c.Assert(len(datums), Equals, 2)
 
 	// Unset in session scope.
 	s.ssMap.SetEnabled("", true)
 	s.ssMap.beginTimeForCurInterval = now + 60
 	s.ssMap.AddStatement(stmtExecInfo2)
-	datums = s.ssMap.ToCurrentDatum()
+	datums = s.ssMap.ToCurrentDatum(nil, true)
 	c.Assert(len(datums), Equals, 0)
 
 	// Unset in global scope.
 	s.ssMap.SetEnabled("", false)
 	s.ssMap.beginTimeForCurInterval = now + 60
 	s.ssMap.AddStatement(stmtExecInfo1)
-	datums = s.ssMap.ToCurrentDatum()
-	c.Assert(len(datums), Equals, 0)
+	datums = s.ssMap.ToCurrentDatum(nil, true)
+	c.Assert(len(datums), Equals, 1)
 
 	// Set back.
 	s.ssMap.SetEnabled("1", false)
@@ -790,7 +867,7 @@ func (s *testStmtSummarySuite) TestEnableSummaryParallel(c *C) {
 			s.ssMap.SetEnabled(fmt.Sprintf("%d", i%2), false)
 			s.ssMap.AddStatement(stmtExecInfo1)
 			// Try to read it.
-			s.ssMap.ToHistoryDatum()
+			s.ssMap.ToHistoryDatum(nil, true)
 		}
 		s.ssMap.SetEnabled("1", false)
 	}
@@ -917,11 +994,11 @@ func (s *testStmtSummarySuite) TestSummaryHistory(c *C) {
 			c.Assert(ssElement.beginTime, Equals, now+20)
 		}
 	}
-	datum := s.ssMap.ToHistoryDatum()
+	datum := s.ssMap.ToHistoryDatum(nil, true)
 	c.Assert(len(datum), Equals, 10)
 
 	s.ssMap.SetHistorySize("5", false)
-	datum = s.ssMap.ToHistoryDatum()
+	datum = s.ssMap.ToHistoryDatum(nil, true)
 	c.Assert(len(datum), Equals, 5)
 }
 
@@ -1026,4 +1103,33 @@ func (s *testStmtSummarySuite) TestPointGet(c *C) {
 
 	s.ssMap.AddStatement(stmtExecInfo1)
 	c.Assert(ssElement.execCount, Equals, int64(2))
+}
+
+func (s *testStmtSummarySuite) TestAccessPrivilege(c *C) {
+	s.ssMap.Clear()
+
+	loops := 32
+	stmtExecInfo1 := generateAnyExecInfo()
+
+	for i := 0; i < loops; i++ {
+		stmtExecInfo1.Digest = fmt.Sprintf("digest%d", i)
+		s.ssMap.AddStatement(stmtExecInfo1)
+	}
+
+	user := &auth.UserIdentity{Username: "user"}
+	badUser := &auth.UserIdentity{Username: "bad_user"}
+
+	datums := s.ssMap.ToCurrentDatum(user, false)
+	c.Assert(len(datums), Equals, loops)
+	datums = s.ssMap.ToCurrentDatum(badUser, false)
+	c.Assert(len(datums), Equals, 0)
+	datums = s.ssMap.ToCurrentDatum(badUser, true)
+	c.Assert(len(datums), Equals, loops)
+
+	datums = s.ssMap.ToHistoryDatum(user, false)
+	c.Assert(len(datums), Equals, loops)
+	datums = s.ssMap.ToHistoryDatum(badUser, false)
+	c.Assert(len(datums), Equals, 0)
+	datums = s.ssMap.ToHistoryDatum(badUser, true)
+	c.Assert(len(datums), Equals, loops)
 }

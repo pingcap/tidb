@@ -435,6 +435,9 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		}
 		if indexOption != nil {
 			indexInfo.Comment = indexOption.Comment
+			if indexOption.Visibility == ast.IndexVisibilityInvisible {
+				indexInfo.Invisible = true
+			}
 			if indexOption.Tp == model.IndexTypeInvalid {
 				// Use btree as default index type.
 				indexInfo.Tp = model.IndexTypeBtree
@@ -660,7 +663,8 @@ func checkDropIndex(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.Inde
 func checkDropIndexOnAutoIncrementColumn(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) error {
 	cols := tblInfo.Columns
 	for _, idxCol := range indexInfo.Columns {
-		if !mysql.HasAutoIncrementFlag(cols[idxCol.Offset].Flag) {
+		flag := cols[idxCol.Offset].Flag
+		if !mysql.HasAutoIncrementFlag(flag) {
 			continue
 		}
 		// check the count of index on auto_increment column.
@@ -672,6 +676,9 @@ func checkDropIndexOnAutoIncrementColumn(tblInfo *model.TableInfo, indexInfo *mo
 					break
 				}
 			}
+		}
+		if tblInfo.PKIsHandle && mysql.HasPriKeyFlag(flag) {
+			count++
 		}
 		if count < 2 {
 			return autoid.ErrWrongAutoKey

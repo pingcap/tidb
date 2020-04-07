@@ -112,11 +112,16 @@ var (
 	TxnTotalSizeLimit uint64 = config.DefTxnTotalSizeLimit
 )
 
-// Retriever is the interface wraps the basic Get and Seek methods.
-type Retriever interface {
+// Getter is the interface for the Get method.
+type Getter interface {
 	// Get gets the value for key k from kv store.
 	// If corresponding kv pair does not exist, it returns nil and ErrNotExist.
 	Get(ctx context.Context, k Key) ([]byte, error)
+}
+
+// Retriever is the interface wraps the basic Get and Seek methods.
+type Retriever interface {
+	Getter
 	// Iter creates an Iterator positioned on the first entry that k <= entry's key.
 	// If such entry is not found, it returns an invalid Iterator with no error.
 	// It yields only keys that < upperBound. If upperBound is nil, it means the upperBound is unbounded.
@@ -152,11 +157,17 @@ type MemBuffer interface {
 	Size() int
 	// Len returns the number of entries in the DB.
 	Len() int
-	// Reset cleanup the MemBuffer
-	Reset()
-	// SetCap sets the MemBuffer capability, to reduce memory allocations.
-	// Please call it before you use the MemBuffer, otherwise it will not works.
-	SetCap(cap int)
+	// NewStagingBuffer returns a new write buffer,
+	// modifications in the returned buffer will not influence this buffer
+	// until you call Flush, or you can use Discard to discard all of them.
+	//
+	// Note: you cannot modify this MemBuffer until the child buffer finished,
+	// otherwise the Set operation will panic.
+	NewStagingBuffer() MemBuffer
+	// Flush flushes all kvs in this buffer to parrent buffer.
+	Flush() (int, error)
+	// Discard discads all kvs in this buffer.
+	Discard()
 }
 
 // Transaction defines the interface for operations inside a Transaction.
@@ -185,6 +196,8 @@ type Transaction interface {
 	Valid() bool
 	// GetMemBuffer return the MemBuffer binding to this transaction.
 	GetMemBuffer() MemBuffer
+	// GetSnapshot returns the Snapshot binding to this transaction.
+	GetSnapshot() Snapshot
 	// SetVars sets variables to the transaction.
 	SetVars(vars *Variables)
 	// BatchGet gets kv from the memory buffer of statement and transaction, and the kv storage.
@@ -204,8 +217,15 @@ type LockCtx struct {
 	LockKeysDuration      *time.Duration
 	LockKeysCount         *int32
 	ReturnValues          bool
-	Values                map[string][]byte
+	Values                map[string]ReturnedValue
 	ValuesLock            sync.Mutex
+	LockExpired           *uint32
+}
+
+// ReturnedValue pairs the Value and AlreadyLocked flag for PessimisticLock return values result.
+type ReturnedValue struct {
+	Value         []byte
+	AlreadyLocked bool
 }
 
 // Client is used to send request to KV layer.

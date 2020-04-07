@@ -377,11 +377,13 @@ func (ds *DataSource) generateIndexMergeOrPaths() {
 
 // isInIndexMergeHints checks whether current index or primary key is in IndexMerge hints.
 func (ds *DataSource) isInIndexMergeHints(name string) bool {
-	if ds.indexMergeHints == nil ||
-		(len(ds.indexMergeHints) == 1 && ds.indexMergeHints[0].IndexNames == nil) {
+	if ds.indexMergeHints == nil {
 		return true
 	}
 	for _, hint := range ds.indexMergeHints {
+		if hint.IndexNames == nil {
+			return true
+		}
 		for _, index := range hint.IndexNames {
 			if name == index.L {
 				return true

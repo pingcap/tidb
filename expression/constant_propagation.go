@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/disjointset"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -63,28 +64,47 @@ func (s *basePropConstSolver) tryToUpdateEQList(col *Column, con *Constant) (boo
 	return true, false
 }
 
+func validEqualCondHelper(ctx sessionctx.Context, eq *ScalarFunction, colIsLeft bool) (*Column, *Constant) {
+	var col *Column
+	var con *Constant
+	colOk := false
+	conOk := false
+	if colIsLeft {
+		col, colOk = eq.GetArgs()[0].(*Column)
+	} else {
+		col, colOk = eq.GetArgs()[1].(*Column)
+	}
+	if !colOk {
+		return nil, nil
+	}
+	if colIsLeft {
+		con, conOk = eq.GetArgs()[1].(*Constant)
+	} else {
+		con, conOk = eq.GetArgs()[0].(*Constant)
+	}
+	if !conOk {
+		return nil, nil
+	}
+	if ContainMutableConst(ctx, []Expression{con}) {
+		return nil, nil
+	}
+	if !collate.CompatibleCollate(col.GetType().Collate, con.GetType().Collate) {
+		return nil, nil
+	}
+	return col, con
+}
+
 // validEqualCond checks if the cond is an expression like [column eq constant].
 func validEqualCond(ctx sessionctx.Context, cond Expression) (*Column, *Constant) {
 	if eq, ok := cond.(*ScalarFunction); ok {
 		if eq.FuncName.L != ast.EQ {
 			return nil, nil
 		}
-		if col, colOk := eq.GetArgs()[0].(*Column); colOk {
-			if con, conOk := eq.GetArgs()[1].(*Constant); conOk {
-				if ContainMutableConst(ctx, []Expression{con}) {
-					return nil, nil
-				}
-				return col, con
-			}
+		col, con := validEqualCondHelper(ctx, eq, true)
+		if col == nil {
+			return validEqualCondHelper(ctx, eq, false)
 		}
-		if col, colOk := eq.GetArgs()[1].(*Column); colOk {
-			if con, conOk := eq.GetArgs()[0].(*Constant); conOk {
-				if ContainMutableConst(ctx, []Expression{con}) {
-					return nil, nil
-				}
-				return col, con
-			}
-		}
+		return col, con
 	}
 	return nil, nil
 }
@@ -114,6 +134,10 @@ func tryToReplaceCond(ctx sessionctx.Context, src *Column, tgt *Column, cond Exp
 	}
 	for idx, expr := range sf.GetArgs() {
 		if src.Equal(nil, expr) {
+			_, coll, _ := cond.CharsetAndCollation(ctx)
+			if !collate.CompatibleCollate(tgt.GetType().Collate, coll) {
+				continue
+			}
 			replaced = true
 			if args == nil {
 				args = make([]Expression, len(sf.GetArgs()))
@@ -166,6 +190,20 @@ func (s *propConstSolver) propagateConstantEQ() {
 		}
 		for i, cond := range s.conditions {
 			if !visited[i] {
+				// Make sure the collations of the argument are equal.
+				if sf, ok := cond.(*ScalarFunction); ok && len(sf.GetArgs()) > 1 {
+					baseCollation := sf.GetArgs()[0].GetType().Collate
+					skip := false
+					for _, arg := range sf.GetArgs() {
+						if !collate.CompatibleCollate(arg.GetType().Collate, baseCollation) {
+							skip = true
+							break
+						}
+					}
+					if skip {
+						continue
+					}
+				}
 				s.conditions[i] = ColumnSubstitute(cond, NewSchema(cols...), cons)
 			}
 		}
@@ -197,7 +235,7 @@ func (s *propConstSolver) propagateColumnEQ() {
 		if fun, ok := s.conditions[i].(*ScalarFunction); ok && fun.FuncName.L == ast.EQ {
 			lCol, lOk := fun.GetArgs()[0].(*Column)
 			rCol, rOk := fun.GetArgs()[1].(*Column)
-			if lOk && rOk {
+			if lOk && rOk && collate.CompatibleCollate(lCol.GetType().Collate, rCol.GetType().Collate) {
 				lID := s.getColID(lCol)
 				rID := s.getColID(rCol)
 				s.unionSet.Union(lID, rID)
@@ -444,7 +482,7 @@ func (s *propOuterJoinConstSolver) validColEqualCond(cond Expression) (*Column, 
 	if fun, ok := cond.(*ScalarFunction); ok && fun.FuncName.L == ast.EQ {
 		lCol, lOk := fun.GetArgs()[0].(*Column)
 		rCol, rOk := fun.GetArgs()[1].(*Column)
-		if lOk && rOk {
+		if lOk && rOk && collate.CompatibleCollate(lCol.GetType().Collate, rCol.GetType().Collate) {
 			return s.colsFromOuterAndInner(lCol, rCol)
 		}
 	}

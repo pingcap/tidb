@@ -34,6 +34,7 @@ import (
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
@@ -136,10 +137,12 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return ErrPrepareMulti
 	}
 	stmt := stmts[0]
+
 	err = ResetContextOfStmt(e.ctx, stmt)
 	if err != nil {
 		return err
 	}
+
 	var extractor paramMarkerExtractor
 	stmt.Accept(&extractor)
 
@@ -174,6 +177,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		Params:        sorter.markers,
 		SchemaVersion: e.is.SchemaMetaVersion(),
 	}
+
 	prepared.UseCache = plannercore.PreparedPlanCacheEnabled() && plannercore.Cacheable(stmt)
 
 	// We try to build the real statement of preparedStmt.
@@ -185,7 +189,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	var p plannercore.Plan
 	e.ctx.GetSessionVars().PlanID = 0
 	e.ctx.GetSessionVars().PlanColumnID = 0
-	destBuilder := plannercore.NewPlanBuilder(e.ctx, e.is, &plannercore.BlockHintProcessor{})
+	destBuilder := plannercore.NewPlanBuilder(e.ctx, e.is, &hint.BlockHintProcessor{})
 	p, err = destBuilder.Build(ctx, stmt)
 	if err != nil {
 		return err
@@ -200,9 +204,12 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		vars.PreparedStmtNameToID[e.name] = e.ID
 	}
 
+	normalized, digest := parser.NormalizeDigest(prepared.Stmt.Text())
 	preparedObj := &plannercore.CachedPrepareStmt{
-		PreparedAst: prepared,
-		VisitInfos:  destBuilder.GetVisitInfo(),
+		PreparedAst:   prepared,
+		VisitInfos:    destBuilder.GetVisitInfo(),
+		NormalizedSQL: normalized,
+		SQLDigest:     digest,
 	}
 	return vars.AddPreparedStmt(e.ID, preparedObj)
 }
@@ -315,8 +322,10 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
 		if !ok {
 			return nil, errors.Errorf("invalid CachedPrepareStmt type")
 		}
+		stmtCtx := sctx.GetSessionVars().StmtCtx
 		stmt.Text = preparedObj.PreparedAst.Stmt.Text()
-		sctx.GetSessionVars().StmtCtx.OriginalSQL = stmt.Text
+		stmtCtx.OriginalSQL = stmt.Text
+		stmtCtx.InitSQLDigest(preparedObj.NormalizedSQL, preparedObj.SQLDigest)
 	}
 	return stmt, nil
 }

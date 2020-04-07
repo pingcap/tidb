@@ -107,14 +107,34 @@ func (txn *tikvTxn) SetVars(vars *kv.Variables) {
 	txn.snapshot.vars = vars
 }
 
-// SetCap sets the transaction's MemBuffer capability, to reduce memory allocations.
-func (txn *tikvTxn) SetCap(cap int) {
-	txn.us.SetCap(cap)
+// tikvTxnStagingBuffer is the staging buffer returned to tikvTxn user.
+// Because tikvTxn needs to maintain dirty state when Flush staging data into txn.
+type tikvTxnStagingBuffer struct {
+	kv.MemBuffer
+	txn *tikvTxn
 }
 
-// Reset reset tikvTxn's membuf.
-func (txn *tikvTxn) Reset() {
-	txn.us.Reset()
+func (buf *tikvTxnStagingBuffer) Flush() (int, error) {
+	cnt, err := buf.MemBuffer.Flush()
+	if cnt != 0 {
+		buf.txn.dirty = true
+	}
+	return cnt, err
+}
+
+func (txn *tikvTxn) NewStagingBuffer() kv.MemBuffer {
+	return &tikvTxnStagingBuffer{
+		MemBuffer: txn.us.NewStagingBuffer(),
+		txn:       txn,
+	}
+}
+
+func (txn *tikvTxn) Flush() (int, error) {
+	return txn.us.Flush()
+}
+
+func (txn *tikvTxn) Discard() {
+	txn.us.Discard()
 }
 
 // Get implements transaction interface.
@@ -136,7 +156,7 @@ func (txn *tikvTxn) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]b
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
-	return kv.NewBufferBatchGetter(txn.GetMemBuffer(), txn.snapshot).BatchGet(ctx, keys)
+	return kv.NewBufferBatchGetter(txn.GetMemBuffer(), nil, txn.snapshot).BatchGet(ctx, keys)
 }
 
 func (txn *tikvTxn) Set(k kv.Key, v []byte) error {
@@ -327,6 +347,10 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 	for _, key := range keysInput {
 		if _, ok := txn.lockedMap[string(key)]; !ok {
 			keys = append(keys, key)
+		} else if lockCtx.ReturnValues {
+			// An already locked key can not return values, we add an entry to let the caller get the value
+			// in other ways.
+			lockCtx.Values[string(key)] = kv.ReturnedValue{AlreadyLocked: true}
 		}
 	}
 	txn.mu.Unlock()
@@ -391,7 +415,7 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 			return err
 		}
 		if assignedPrimaryKey {
-			txn.committer.ttlManager.run(txn.committer, lockCtx.Killed)
+			txn.committer.ttlManager.run(txn.committer, lockCtx)
 		}
 	}
 	txn.mu.Lock()
@@ -459,4 +483,8 @@ func (txn *tikvTxn) Size() int {
 
 func (txn *tikvTxn) GetMemBuffer() kv.MemBuffer {
 	return txn.us.GetMemBuffer()
+}
+
+func (txn *tikvTxn) GetSnapshot() kv.Snapshot {
+	return txn.snapshot
 }

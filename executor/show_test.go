@@ -139,6 +139,26 @@ func (s *testSuite5) TestShowErrors(c *C) {
 	tk.MustQuery("show errors").Check(testutil.RowsWithSep("|", "Error|1050|Table 'test.show_errors' already exists"))
 }
 
+func (s *testSuite5) TestShowGrantsPrivilege(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create user show_grants")
+	tk.MustExec("show grants for show_grants")
+	tk1 := testkit.NewTestKit(c, s.store)
+	se, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "show_grants", Hostname: "%"}, nil, nil), IsTrue)
+	tk1.Se = se
+	err = tk1.QueryToErr("show grants for root")
+	c.Assert(err.Error(), Equals, executor.ErrDBaccessDenied.GenWithStackByArgs("show_grants", "%", mysql.SystemDB).Error())
+	// Test show grants for user with auth host name `%`.
+	tk2 := testkit.NewTestKit(c, s.store)
+	se2, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	c.Assert(se2.Auth(&auth.UserIdentity{Username: "show_grants", Hostname: "127.0.0.1", AuthUsername: "show_grants", AuthHostname: "%"}, nil, nil), IsTrue)
+	tk2.Se = se2
+	tk2.MustQuery("show grants")
+}
+
 func (s *testSuite5) TestIssue3641(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	_, err := tk.Exec("show tables;")
@@ -156,7 +176,7 @@ func (s *testSuite5) TestIssue10549(c *C) {
 	tk.MustExec("GRANT 'app_developer' TO 'dev';")
 	tk.MustExec("SET DEFAULT ROLE app_developer TO 'dev';")
 
-	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "dev", Hostname: "localhost", AuthUsername: "dev", AuthHostname: "localhost"}, nil, nil), IsTrue)
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "dev", Hostname: "%", AuthUsername: "dev", AuthHostname: "%"}, nil, nil), IsTrue)
 	tk.MustQuery("SHOW DATABASES;").Check(testkit.Rows("INFORMATION_SCHEMA", "newdb"))
 	tk.MustQuery("SHOW GRANTS;").Check(testkit.Rows("GRANT USAGE ON *.* TO 'dev'@'%'", "GRANT ALL PRIVILEGES ON newdb.* TO 'dev'@'%'", "GRANT 'app_developer'@'%' TO 'dev'@'%'"))
 	tk.MustQuery("SHOW GRANTS FOR CURRENT_USER").Check(testkit.Rows("GRANT USAGE ON *.* TO 'dev'@'%'", "GRANT 'app_developer'@'%' TO 'dev'@'%'"))
@@ -581,7 +601,7 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 			"  KEY `IDX_RoundId` (`ROUND_ID`),\n"+
 			"  KEY `IDX_UserId_EndTime` (`USER_ID`,`END_TIME`)\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin AUTO_INCREMENT=505488\n"+
-			"PARTITION BY RANGE ( month(`end_time`) ) (\n"+
+			"PARTITION BY RANGE ( MONTH(`end_time`) ) (\n"+
 			"  PARTITION `p1` VALUES LESS THAN (2),\n"+
 			"  PARTITION `p2` VALUES LESS THAN (3),\n"+
 			"  PARTITION `p3` VALUES LESS THAN (4),\n"+
@@ -643,7 +663,7 @@ func (s *testAutoRandomSuite) TestShowCreateTableAutoRandom(c *C) {
 	tk.MustQuery("show create table `auto_random_tbl1`").Check(testutil.RowsWithSep("|",
 		""+
 			"auto_random_tbl1 CREATE TABLE `auto_random_tbl1` (\n"+
-			"  `a` bigint(20) NOT NULL /*T!30100 AUTO_RANDOM(3) */,\n"+
+			"  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(3) */,\n"+
 			"  `b` varchar(255) DEFAULT NULL,\n"+
 			"  PRIMARY KEY (`a`)\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
@@ -654,18 +674,18 @@ func (s *testAutoRandomSuite) TestShowCreateTableAutoRandom(c *C) {
 	tk.MustQuery("show create table auto_random_tbl2").Check(testutil.RowsWithSep("|",
 		""+
 			"auto_random_tbl2 CREATE TABLE `auto_random_tbl2` (\n"+
-			"  `a` bigint(20) NOT NULL /*T!30100 AUTO_RANDOM(5) */,\n"+
+			"  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(5) */,\n"+
 			"  `b` char(1) DEFAULT NULL,\n"+
 			"  PRIMARY KEY (`a`)\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 
 	// Special version comment can be shown in TiDB with new version.
-	tk.MustExec("create table auto_random_tbl3 (a bigint /*T!30100 auto_random */ primary key)")
+	tk.MustExec("create table auto_random_tbl3 (a bigint /*T![auto_rand] auto_random */ primary key)")
 	tk.MustQuery("show create table auto_random_tbl3").Check(testutil.RowsWithSep("|",
 		""+
 			"auto_random_tbl3 CREATE TABLE `auto_random_tbl3` (\n"+
-			"  `a` bigint(20) NOT NULL /*T!30100 AUTO_RANDOM(5) */,\n"+
+			"  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(5) */,\n"+
 			"  PRIMARY KEY (`a`)\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))

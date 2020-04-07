@@ -5,78 +5,93 @@
       {
         "SQL": "explain select * from t1 where id = 7 and a = 6",
         "Result": [
-          "Selection_7 0.00 root eq(test_partition.t1.a, 6)",
-          "└─Point_Get_6 1.00 root table:t1, handle:7, partition:p7"
+          "Selection_7 0.00 root  eq(test_partition.t1.a, 6)",
+          "└─Point_Get_6 1.00 root table:t1, partition:p7 handle:7"
         ]
       },
       {
         "SQL": "explain select * from t3 where id = 9 and a = 1",
         "Result": [
-          "Point_Get_1 1.00 root table:t3, index:id a, partition:p9"
+          "Point_Get_1 1.00 root table:t3, partition:p9, index:PRIMARY(id, a) "
         ]
       },
       {
         "SQL": "explain select * from t2 where id = 9 and a = -110",
         "Result": [
-          "Point_Get_6 1.00 root table:t2, index:id a, partition:p1"
+          "Point_Get_6 1.00 root table:t2, partition:p1, index:PRIMARY(id, a) "
         ]
       },
       {
         "SQL": "explain select * from t1 where id = -17",
         "Result": [
-          "Point_Get_6 1.00 root table:t1, handle:-17, partition:p7"
+          "Point_Get_6 1.00 root table:t1, partition:p7 handle:-17"
         ]
       },
       {
         "SQL": "explain select * from t2 where id = a and a = b and b = 2",
         "Result": [
-          "TableReader_8 8.00 root data:Selection_7",
-          "└─Selection_7 8.00 cop[tikv] eq(test_partition.t2.a, test_partition.t2.b), eq(test_partition.t2.b, 2), eq(test_partition.t2.id, test_partition.t2.a)",
-          "  └─TableFullScan_6 10000.00 cop[tikv] table:t2, partition:p4, keep order:false, stats:pseudo"
+          "TableReader_8 8.00 root  data:Selection_7",
+          "└─Selection_7 8.00 cop[tikv]  eq(test_partition.t2.a, test_partition.t2.b), eq(test_partition.t2.b, 2), eq(test_partition.t2.id, test_partition.t2.a)",
+          "  └─TableFullScan_6 10000.00 cop[tikv] table:t2, partition:p4 keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "explain select * from t1 join t2 on (t1.id = t2.id) where t1.id = 5 and t2.a = 7",
         "Result": [
-          "HashLeftJoin_10 1.00 root CARTESIAN inner join",
-          "├─Point_Get_13(Build) 1.00 root table:t2, index:id a, partition:p2",
-          "└─Point_Get_12(Probe) 1.00 root table:t1, handle:5, partition:p5"
+          "HashJoin_10 1.00 root  CARTESIAN inner join",
+          "├─Point_Get_13(Build) 1.00 root table:t2, partition:p2, index:PRIMARY(id, a) ",
+          "└─Point_Get_12(Probe) 1.00 root table:t1, partition:p5 handle:5"
         ]
       },
       {
         "SQL": "explain select * from t1 left join t2 on t1.id = 1 and t2.a = 2 where t2.id = 7",
         "Result": [
-          "HashLeftJoin_9 1.00 root CARTESIAN inner join",
-          "├─Point_Get_12(Build) 1.00 root table:t2, index:id a, partition:p9",
-          "└─Point_Get_11(Probe) 1.00 root table:t1, handle:1, partition:p1"
+          "HashJoin_9 1.00 root  CARTESIAN inner join",
+          "├─Point_Get_12(Build) 1.00 root table:t2, partition:p9, index:PRIMARY(id, a) ",
+          "└─Point_Get_11(Probe) 1.00 root table:t1, partition:p1 handle:1"
         ]
       },
       {
         "SQL": "explain select * from t2 join t1 on t1.id = t2.id and t2.a = t1.id and t2.id = 12",
         "Result": [
-          "HashLeftJoin_9 1.00 root CARTESIAN inner join",
-          "├─Point_Get_12(Build) 1.00 root table:t1, handle:12, partition:p2",
-          "└─Point_Get_11(Probe) 1.00 root table:t2, index:id a, partition:p4"
+          "HashJoin_9 1.00 root  CARTESIAN inner join",
+          "├─Point_Get_12(Build) 1.00 root table:t1, partition:p2 handle:12",
+          "└─Point_Get_11(Probe) 1.00 root table:t2, partition:p4, index:PRIMARY(id, a) "
         ]
       },
       {
         "SQL": "explain select * from t1 left join t2 on true where t1.a = 1 and false",
         "Result": [
-          "TableDual_8 0.00 root rows:0"
+          "TableDual_8 0.00 root  rows:0"
         ]
       },
       {
         "SQL": "explain select * from t1 left join t2 on true where t1.a = 1 and null",
         "Result": [
-          "TableDual_8 0.00 root rows:0"
+          "TableDual_8 0.00 root  rows:0"
         ]
       },
       {
         "SQL": "explain select * from t1 left join t2 on true where t1.a = null",
         "Result": [
-          "TableDual_8 0.00 root rows:0"
+          "TableDual_8 0.00 root  rows:0"
+        ]
+      },
+      {
+        "SQL": "explain select * from t4 where d = '2019-10-07 10:40:00' and a = 1",
+        "Result": [
+          "Point_Get_6 1.00 root table:t4, partition:p9, index:PRIMARY(d, a) "
+        ]
+      },
+      {
+        "SQL": "explain select * from t5 where d = '2019-10-07'",
+        "Result": [
+          "IndexLookUp_11 10.00 root  ",
+          "├─IndexRangeScan_9(Build) 10.00 cop[tikv] table:t5, partition:p0, index:PRIMARY(d, a) range:[2019-10-07,2019-10-07], keep order:false, stats:pseudo",
+          "└─TableRowIDScan_10(Probe) 10.00 cop[tikv] table:t5, partition:p0 keep order:false, stats:pseudo"
         ]
       }
     ]
   }
 ]
+
