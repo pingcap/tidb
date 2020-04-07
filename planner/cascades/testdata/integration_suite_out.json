@@ -458,6 +458,19 @@
     "Name": "TestPushdownDistinctEnable",
     "Cases": [
       {
+        "SQL": "select /*+ HASH_AGG() */ avg(distinct a) from t;",
+        "Plan": [
+          "HashAgg_12 1.00 root  funcs:avg(distinct Column#8)->Column#5",
+          "└─Projection_15 8000.00 root  cast(test.t.a, decimal(65,4) BINARY)->Column#8",
+          "  └─TableReader_13 8000.00 root  data:HashAgg_14",
+          "    └─HashAgg_14 8000.00 cop[tikv]  group by:test.t.a, ",
+          "      └─TableFullScan_10 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1.5000"
+        ]
+      },
+      {
         "SQL": "select /*+ HASH_AGG() */ a, count(distinct a) from t;",
         "Plan": [
           "Projection_8 1.00 root  test.t.a, Column#5",
@@ -554,6 +567,18 @@
   {
     "Name": "TestPushdownDistinctDisable",
     "Cases": [
+      {
+        "SQL": "select /*+ HASH_AGG(), AGG_TO_COP() */ avg(distinct a) from t;",
+        "Plan": [
+          "HashAgg_6 1.00 root  funcs:avg(distinct Column#7)->Column#5",
+          "└─Projection_9 10000.00 root  cast(test.t.a, decimal(65,4) BINARY)->Column#7",
+          "  └─TableReader_7 10000.00 root  data:TableFullScan_8",
+          "    └─TableFullScan_8 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1.5000"
+        ]
+      },
       {
         "SQL": "select /*+ HASH_AGG(), AGG_TO_COP() */ a, count(distinct a) from t;",
         "Plan": [
