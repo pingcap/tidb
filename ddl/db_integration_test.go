@@ -2245,4 +2245,16 @@ func (s *testIntegrationSuite3) TestCreateTableWithAutoIdCache(c *C) {
 	nextInt, err := strconv.Atoi(next)
 	c.Assert(err, IsNil)
 	c.Assert(nextInt, Greater, 5)
+
+	// Test auto_id_cache overflows int64.
+	tk.MustExec("drop table if exists t;")
+	_, err = tk.Exec("create table t(a int) auto_id_cache = 9223372036854775808")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "table option auto_id_cache overflows int64")
+
+	tk.MustExec("create table t(a int) auto_id_cache = 9223372036854775807")
+	_, err = tk.Exec("alter table t auto_id_cache = 9223372036854775808")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "table option auto_id_cache overflows int64")
+
 }
