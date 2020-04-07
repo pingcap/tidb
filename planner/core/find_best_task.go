@@ -332,7 +332,7 @@ func (ds *DataSource) getIndexCandidate(path *util.AccessPath, prop *property.Ph
 	if !prop.IsEmpty() && all {
 		for i, col := range path.IdxCols {
 			if col.Equal(nil, prop.Items[0].Col) {
-				candidate.isMatchProp = matchIndicesProp(path.IdxCols[i:], path.IdxColLens[i:], prop.Items)
+				candidate.isMatchProp = MatchIndicesProp(path.IdxCols[i:], path.IdxColLens[i:], prop.Items)
 				break
 			} else if i >= path.EqCondCount {
 				break
@@ -372,7 +372,7 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 				// 1. This path's access cond is not nil.
 				// 2. We have a non-empty prop to match.
 				// 3. This index is forced to choose.
-				// 4. The needed columns are all covered by index columns(and handleCol).
+				// 4. The needed columns are all covered by index columns(and HandleCol).
 				currentCandidate = ds.getIndexCandidate(path, prop, coveredByIdx)
 			} else {
 				continue
@@ -690,9 +690,10 @@ func isCoveringIndex(columns, indexColumns []*expression.Column, idxColLens []in
 	return true
 }
 
+// AppendExtraHandleCol is to deal with the situation:
 // If there is a table reader which needs to keep order, we should append a pk to table scan.
-func (ts *PhysicalTableScan) appendExtraHandleCol(ds *DataSource) (*expression.Column, bool) {
-	handleCol := ds.handleCol
+func (ts *PhysicalTableScan) AppendExtraHandleCol(ds *DataSource) (*expression.Column, bool) {
+	handleCol := ds.HandleCol
 	if handleCol != nil {
 		return handleCol, false
 	}
@@ -740,7 +741,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 	task = cop
 	if candidate.isMatchProp {
 		if cop.tablePlan != nil {
-			col, isNew := cop.tablePlan.(*PhysicalTableScan).appendExtraHandleCol(ds)
+			col, isNew := cop.tablePlan.(*PhysicalTableScan).AppendExtraHandleCol(ds)
 			cop.extraHandleCol = col
 			cop.doubleReadNeedProj = isNew
 		}
@@ -853,7 +854,8 @@ func SplitSelCondsWithVirtualColumn(conds []expression.Expression) ([]expression
 	return conds, filterConds
 }
 
-func matchIndicesProp(idxCols []*expression.Column, colLens []int, propItems []property.Item) bool {
+// MatchIndicesProp checks whether the columns of the index match the property items.
+func MatchIndicesProp(idxCols []*expression.Column, colLens []int, propItems []property.Item) bool {
 	if len(idxCols) < len(propItems) {
 		return false
 	}
@@ -1038,6 +1040,7 @@ func (s *LogicalTableScan) GetPhysicalScan(schema *expression.Schema, stats *pro
 		DBName:          ds.DBName,
 		isPartition:     ds.isPartition,
 		physicalTableID: ds.physicalTableID,
+		HandleCol:       ds.getHandleCol(),
 		Ranges:          s.Ranges,
 		AccessCondition: s.AccessConds,
 	}.Init(s.ctx, s.blockOffset)
@@ -1332,9 +1335,9 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 	if ts.StoreType == kv.TiKV {
 		rowSize = ds.TblColHists.GetTableAvgRowSize(ds.ctx, ds.TblCols, ts.StoreType, true)
 	} else {
-		// If `ds.handleCol` is nil, then the schema of tableScan doesn't have handle column.
+		// If `ds.HandleCol` is nil, then the schema of tableScan doesn't have handle column.
 		// This logic can be ensured in column pruning.
-		rowSize = ds.TblColHists.GetTableAvgRowSize(ds.ctx, ts.Schema().Columns, ts.StoreType, ds.handleCol != nil)
+		rowSize = ds.TblColHists.GetTableAvgRowSize(ds.ctx, ts.Schema().Columns, ts.StoreType, ds.HandleCol != nil)
 	}
 	sessVars := ds.ctx.GetSessionVars()
 	cost := rowCount * rowSize * sessVars.ScanFactor

@@ -45,6 +45,12 @@ func (sg TiKVSingleGather) Init(ctx sessionctx.Context, offset int) *TiKVSingleG
 	return &sg
 }
 
+// Init initializes TiKVDoubleGather.
+func (dg TiKVDoubleGather) Init(ctx sessionctx.Context, offset int) *TiKVDoubleGather {
+	dg.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeTiKVDoubleGather, &dg, offset)
+	return &dg
+}
+
 // Init initializes LogicalTableScan.
 func (ts LogicalTableScan) Init(ctx sessionctx.Context, offset int) *LogicalTableScan {
 	ts.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeTableScan, &ts, offset)
@@ -361,9 +367,9 @@ func (p PhysicalUnionScan) Init(ctx sessionctx.Context, stats *property.StatsInf
 // Init initializes PhysicalIndexLookUpReader.
 func (p PhysicalIndexLookUpReader) Init(ctx sessionctx.Context, offset int) *PhysicalIndexLookUpReader {
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeIndexLookUp, &p, offset)
-	p.TablePlans = flattenPushDownPlan(p.tablePlan)
-	p.IndexPlans = flattenPushDownPlan(p.indexPlan)
-	p.schema = p.tablePlan.Schema()
+	p.TablePlans = FlattenPushDownPlan(p.TablePlan)
+	p.IndexPlans = FlattenPushDownPlan(p.IndexPlan)
+	p.schema = p.TablePlan.Schema()
 	return &p
 }
 
@@ -382,11 +388,11 @@ func (p PhysicalIndexMergeReader) Init(ctx sessionctx.Context, offset int) *Phys
 	}
 	p.PartialPlans = make([][]PhysicalPlan, 0, len(p.partialPlans))
 	for _, partialPlan := range p.partialPlans {
-		tempPlans := flattenPushDownPlan(partialPlan)
+		tempPlans := FlattenPushDownPlan(partialPlan)
 		p.PartialPlans = append(p.PartialPlans, tempPlans)
 	}
 	if p.tablePlan != nil {
-		p.TablePlans = flattenPushDownPlan(p.tablePlan)
+		p.TablePlans = FlattenPushDownPlan(p.tablePlan)
 		p.schema = p.tablePlan.Schema()
 	} else {
 		switch p.PartialPlans[0][0].(type) {
@@ -404,7 +410,7 @@ func (p PhysicalIndexMergeReader) Init(ctx sessionctx.Context, offset int) *Phys
 func (p PhysicalTableReader) Init(ctx sessionctx.Context, offset int) *PhysicalTableReader {
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeTableReader, &p, offset)
 	if p.tablePlan != nil {
-		p.TablePlans = flattenPushDownPlan(p.tablePlan)
+		p.TablePlans = FlattenPushDownPlan(p.tablePlan)
 		p.schema = p.tablePlan.Schema()
 	}
 	return &p
@@ -453,8 +459,8 @@ func (p BatchPointGetPlan) Init(ctx sessionctx.Context, stats *property.StatsInf
 	return &p
 }
 
-// flattenPushDownPlan converts a plan tree to a list, whose head is the leaf node like table scan.
-func flattenPushDownPlan(p PhysicalPlan) []PhysicalPlan {
+// FlattenPushDownPlan converts a plan tree to a list, whose head is the leaf node like table scan.
+func FlattenPushDownPlan(p PhysicalPlan) []PhysicalPlan {
 	plans := make([]PhysicalPlan, 0, 5)
 	for {
 		plans = append(plans, p)

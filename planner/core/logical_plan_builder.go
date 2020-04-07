@@ -2779,7 +2779,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		ds.TblCols = append(ds.TblCols, handleCol)
 	}
 	if handleCol != nil {
-		ds.handleCol = handleCol
+		ds.HandleCol = handleCol
 		handleMap := make(map[int64][]*expression.Column)
 		handleMap[tableInfo.ID] = []*expression.Column{handleCol}
 		b.handleHelper.pushMap(handleMap)

@@ -850,7 +850,7 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		ts.schema = is.dataSourceSchema.Clone()
 		// If inner cop task need keep order, the extraHandleCol should be set.
 		if cop.keepOrder {
-			cop.extraHandleCol, cop.doubleReadNeedProj = ts.appendExtraHandleCol(ds)
+			cop.extraHandleCol, cop.doubleReadNeedProj = ts.AppendExtraHandleCol(ds)
 		}
 		cop.tablePlan = ts
 	}

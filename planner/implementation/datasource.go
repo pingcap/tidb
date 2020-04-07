@@ -16,6 +16,7 @@ package implementation
 import (
 	"math"
 
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -214,4 +215,97 @@ func NewIndexScanImpl(scan plannercore.PhysicalPlan, tblColHists *statistics.His
 		baseImpl:    baseImpl{plan: scan},
 		tblColHists: tblColHists,
 	}
+}
+
+// IndexLookUpReaderImpl is the Implementation of PhysicalIndexLookUpReader.
+type IndexLookUpReaderImpl struct {
+	baseImpl
+
+	KeepOrder   bool
+	tblColHists *statistics.HistColl
+	extraProj   *plannercore.PhysicalProjection
+}
+
+// NewIndexLookUpReaderImpl creates a new table reader Implementation.
+func NewIndexLookUpReaderImpl(reader plannercore.PhysicalPlan, hists *statistics.HistColl, proj *plannercore.PhysicalProjection) *IndexLookUpReaderImpl {
+	base := baseImpl{plan: reader}
+	impl := &IndexLookUpReaderImpl{
+		baseImpl:    base,
+		tblColHists: hists,
+		extraProj:   proj,
+	}
+	return impl
+}
+
+// CalcCost calculates the cost of the table reader Implementation.
+func (impl *IndexLookUpReaderImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
+	var reader *plannercore.PhysicalIndexLookUpReader
+	if impl.extraProj != nil {
+		impl.cost += impl.extraProj.GetCost(impl.extraProj.Stats().RowCount)
+		reader = impl.extraProj.Children()[0].(*plannercore.PhysicalIndexLookUpReader)
+	} else {
+		reader = impl.plan.(*plannercore.PhysicalIndexLookUpReader)
+	}
+	reader.IndexPlan, reader.TablePlan = children[0].GetPlan(), children[1].GetPlan()
+	// Add cost of building table reader executors. Handles are extracted in batch style,
+	// each handle is a range, the CPU cost of building copTasks should be:
+	// (indexRows / batchSize) * batchSize * CPUFactor
+	// Since we don't know the number of copTasks built, ignore these network cost now.
+	sessVars := reader.SCtx().GetSessionVars()
+	// Add children cost.
+	impl.cost += (children[0].GetCost() + children[1].GetCost()) / float64(sessVars.DistSQLScanConcurrency)
+	indexRows := reader.IndexPlan.Stats().RowCount
+	impl.cost += indexRows * sessVars.CPUFactor
+	// Add cost of worker goroutines in index lookup.
+	numTblWorkers := float64(sessVars.IndexLookupConcurrency)
+	impl.cost += (numTblWorkers + 1) * sessVars.ConcurrencyFactor
+	// When building table reader executor for each batch, we would sort the handles. CPU
+	// cost of sort is:
+	// CPUFactor * batchSize * Log2(batchSize) * (indexRows / batchSize)
+	indexLookupSize := float64(sessVars.IndexLookupSize)
+	batchSize := math.Min(indexLookupSize, indexRows)
+	if batchSize > 2 {
+		sortCPUCost := (indexRows * math.Log2(batchSize) * sessVars.CPUFactor) / numTblWorkers
+		impl.cost += sortCPUCost
+	}
+	// Also, we need to sort the retrieved rows if index lookup reader is expected to return
+	// ordered results. Note that row count of these two sorts can be different, if there are
+	// operators above table scan.
+	tableRows := reader.TablePlan.Stats().RowCount
+	selectivity := tableRows / indexRows
+	batchSize = math.Min(indexLookupSize*selectivity, tableRows)
+	if impl.KeepOrder && batchSize > 2 {
+		sortCPUCost := (tableRows * math.Log2(batchSize) * sessVars.CPUFactor) / numTblWorkers
+		impl.cost += sortCPUCost
+	}
+	return impl.cost
+}
+
+// ScaleCostLimit implements Implementation interface.
+func (impl *IndexLookUpReaderImpl) ScaleCostLimit(costLimit float64) float64 {
+	sessVars := impl.plan.SCtx().GetSessionVars()
+	copIterWorkers := float64(sessVars.DistSQLScanConcurrency)
+	if math.MaxFloat64/copIterWorkers < costLimit {
+		return math.MaxFloat64
+	}
+	return costLimit * copIterWorkers
+}
+
+// AttachChildren implements Implementation AttachChildren interface.
+func (impl *IndexLookUpReaderImpl) AttachChildren(children ...memo.Implementation) memo.Implementation {
+	reader := impl.plan.(*plannercore.PhysicalIndexLookUpReader)
+	reader.TablePlans = plannercore.FlattenPushDownPlan(reader.TablePlan)
+	tableScan := reader.TablePlans[len(reader.TablePlans)-1].(*plannercore.PhysicalTableScan)
+	if tableScan.Schema().ColumnIndex(tableScan.HandleCol) == -1 {
+		tableScan.Schema().Append(tableScan.HandleCol)
+		if tableScan.HandleCol.ID == model.ExtraHandleID {
+			tableScan.Columns = append(tableScan.Columns, model.NewExtraHandleColInfo())
+		}
+	}
+	reader.IndexPlans = plannercore.FlattenPushDownPlan(reader.IndexPlan)
+	if impl.extraProj != nil {
+		impl.extraProj.SetChildren(reader)
+		impl.plan = impl.extraProj
+	}
+	return impl
 }

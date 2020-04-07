@@ -905,8 +905,8 @@ func (e *Explain) explainPlanInRowFormat(p Plan, taskType, driverSide, indent st
 	case *PhysicalIndexReader:
 		err = e.explainPlanInRowFormat(x.indexPlan, "cop[tikv]", "", childIndent, true)
 	case *PhysicalIndexLookUpReader:
-		err = e.explainPlanInRowFormat(x.indexPlan, "cop[tikv]", "(Build)", childIndent, false)
-		err = e.explainPlanInRowFormat(x.tablePlan, "cop[tikv]", "(Probe)", childIndent, true)
+		err = e.explainPlanInRowFormat(x.IndexPlan, "cop[tikv]", "(Build)", childIndent, false)
+		err = e.explainPlanInRowFormat(x.TablePlan, "cop[tikv]", "(Probe)", childIndent, true)
 	case *PhysicalIndexMergeReader:
 		for i, pchild := range x.partialPlans {
 			if x.tablePlan != nil || i < len(x.partialPlans)-1 {
@@ -1041,10 +1041,10 @@ func (e *Explain) prepareTaskDot(p PhysicalPlan, taskTp string, buffer *bytes.Bu
 			pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.indexPlan.ExplainID()))
 			copTasks = append(copTasks, copPlan.indexPlan)
 		case *PhysicalIndexLookUpReader:
-			pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.tablePlan.ExplainID()))
-			pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.indexPlan.ExplainID()))
-			copTasks = append(copTasks, copPlan.tablePlan)
-			copTasks = append(copTasks, copPlan.indexPlan)
+			pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.TablePlan.ExplainID()))
+			pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.IndexPlan.ExplainID()))
+			copTasks = append(copTasks, copPlan.TablePlan)
+			copTasks = append(copTasks, copPlan.IndexPlan)
 		case *PhysicalIndexMergeReader:
 			for i := 0; i < len(copPlan.partialPlans); i++ {
 				pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.partialPlans[i].ExplainID()))

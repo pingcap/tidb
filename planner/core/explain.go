@@ -724,8 +724,8 @@ func (p *LogicalLimit) ExplainInfo() string {
 // ExplainInfo implements Plan interface.
 func (p *LogicalTableScan) ExplainInfo() string {
 	buffer := bytes.NewBufferString(p.Source.ExplainInfo())
-	if p.Source.handleCol != nil {
-		fmt.Fprintf(buffer, ", pk col:%s", p.Source.handleCol.ExplainInfo())
+	if p.Handle != nil {
+		fmt.Fprintf(buffer, ", pk col:%s", p.Handle.ExplainInfo())
 	}
 	if len(p.AccessConds) > 0 {
 		fmt.Fprintf(buffer, ", cond:%v", p.AccessConds)
@@ -734,9 +734,9 @@ func (p *LogicalTableScan) ExplainInfo() string {
 }
 
 // ExplainInfo implements Plan interface.
-func (p *LogicalIndexScan) ExplainInfo() string {
-	buffer := bytes.NewBufferString(p.Source.ExplainInfo())
-	index := p.Index
+func (is *LogicalIndexScan) ExplainInfo() string {
+	buffer := bytes.NewBufferString(is.Source.ExplainInfo())
+	index := is.Index
 	if len(index.Columns) > 0 {
 		buffer.WriteString(", index:")
 		for i, idxCol := range index.Columns {
@@ -746,23 +746,30 @@ func (p *LogicalIndexScan) ExplainInfo() string {
 			}
 		}
 	}
-	if len(p.AccessConds) > 0 {
-		fmt.Fprintf(buffer, ", cond:%v", p.AccessConds)
+	if len(is.AccessConds) > 0 {
+		fmt.Fprintf(buffer, ", cond:%v", is.AccessConds)
 	}
 	return buffer.String()
 }
 
 // ExplainInfo implements Plan interface.
-func (p *TiKVSingleGather) ExplainInfo() string {
-	buffer := bytes.NewBufferString(p.Source.ExplainInfo())
-	if p.IsIndexGather {
-		buffer.WriteString(", index:" + p.Index.Name.String())
+func (sg *TiKVSingleGather) ExplainInfo() string {
+	buffer := bytes.NewBufferString(sg.Source.ExplainInfo())
+	if sg.IsIndexGather {
+		buffer.WriteString(", index:" + sg.Index.Name.String())
 	}
 	return buffer.String()
 }
 
 // MetricTableTimeFormat is the time format for metric table explain and format.
 const MetricTableTimeFormat = "2006-01-02 15:04:05.999"
+
+// ExplainInfo implements Plan interface.
+func (dg *TiKVDoubleGather) ExplainInfo() string {
+	buffer := bytes.NewBufferString(dg.Source.ExplainInfo())
+	buffer.WriteString(", index:" + dg.index.Name.String())
+	return buffer.String()
+}
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalMemTable) ExplainInfo() string {

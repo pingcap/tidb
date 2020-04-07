@@ -617,11 +617,11 @@ func buildIndexLookUpTask(ctx sessionctx.Context, t *copTask) *rootTask {
 	newTask := &rootTask{cst: t.cst}
 	sessVars := ctx.GetSessionVars()
 	p := PhysicalIndexLookUpReader{
-		tablePlan:      t.tablePlan,
-		indexPlan:      t.indexPlan,
+		TablePlan:      t.tablePlan,
+		IndexPlan:      t.indexPlan,
 		ExtraHandleCol: t.extraHandleCol,
 	}.Init(ctx, t.tablePlan.SelectBlockOffset())
-	setTableScanToTableRowIDScan(p.tablePlan)
+	setTableScanToTableRowIDScan(p.TablePlan)
 	p.stats = t.tablePlan.statsInfo()
 	// Add cost of building table reader executors. Handles are extracted in batch style,
 	// each handle is a range, the CPU cost of building copTasks should be:
@@ -799,8 +799,8 @@ func (p *PhysicalLimit) sinkIntoIndexLookUp(t task) bool {
 			return false
 		}
 	}
-	// We can sink Limit into IndexLookUpReader only if tablePlan contains no Selection.
-	ts, isTableScan := reader.tablePlan.(*PhysicalTableScan)
+	// We can sink Limit into IndexLookUpReader only if TablePlan contains no Selection.
+	ts, isTableScan := reader.TablePlan.(*PhysicalTableScan)
 	if !isTableScan {
 		return false
 	}

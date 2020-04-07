@@ -73,8 +73,8 @@ func (pn *planEncoder) encodePlan(p PhysicalPlan, isRoot bool, depth int) {
 	case *PhysicalIndexReader:
 		pn.encodePlan(copPlan.indexPlan, false, depth)
 	case *PhysicalIndexLookUpReader:
-		pn.encodePlan(copPlan.indexPlan, false, depth)
-		pn.encodePlan(copPlan.tablePlan, false, depth)
+		pn.encodePlan(copPlan.IndexPlan, false, depth)
+		pn.encodePlan(copPlan.TablePlan, false, depth)
 	case *PhysicalIndexMergeReader:
 		for _, p := range copPlan.partialPlans {
 			pn.encodePlan(p, false, depth)
@@ -139,8 +139,8 @@ func (d *planDigester) normalizePlan(p PhysicalPlan, isRoot bool, depth int) {
 	case *PhysicalIndexReader:
 		d.normalizePlan(x.indexPlan, false, depth)
 	case *PhysicalIndexLookUpReader:
-		d.normalizePlan(x.indexPlan, false, depth)
-		d.normalizePlan(x.tablePlan, false, depth)
+		d.normalizePlan(x.IndexPlan, false, depth)
+		d.normalizePlan(x.TablePlan, false, depth)
 	case *PhysicalIndexMergeReader:
 		for _, p := range x.partialPlans {
 			d.normalizePlan(p, false, depth)

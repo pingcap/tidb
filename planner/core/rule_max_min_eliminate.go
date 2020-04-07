@@ -65,7 +65,7 @@ func (a *maxMinEliminator) checkColCanUseIndex(plan LogicalPlan, col *expression
 				// Since table path can contain accessConds of at most one column,
 				// we only need to check if all of the conditions can be pushed down as accessConds
 				// and `col` is the handle column.
-				if p.handleCol != nil && col.Equal(nil, p.handleCol) {
+				if p.HandleCol != nil && col.Equal(nil, p.HandleCol) {
 					if _, filterConds := ranger.DetachCondsForColumn(p.ctx, conditions, col); len(filterConds) != 0 {
 						return false
 					}

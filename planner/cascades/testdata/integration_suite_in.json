@@ -110,6 +110,15 @@
     ]
   },
   {
+    "name": "TestDoubleRead",
+    "cases": [
+      "select a, b from t order by t.a",
+      "select a, b from t order by t.b",
+      "select a, b, c from t order by t.b, t.c",
+      "select a, b, c from t order by t.c, t.b"
+    ]
+  },
+  {
     "name": "TestApply",
     "cases": [
       "select a = (select a from t2 where t1.b = t2.b order by a limit 1) from t1",

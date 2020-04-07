@@ -715,3 +715,13 @@ func (p *LogicalWindow) DeriveStats(childStats []*property.StatsInfo, selfSchema
 	}
 	return p.stats, nil
 }
+
+// DeriveStats implement LogicalPlan DeriveStats interface.
+func (p *TiKVDoubleGather) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (*property.StatsInfo, error) {
+	if len(childStats) != 2 {
+		err := ErrInternal.GenWithStack("There are no enough children stats during deriving stats for TiKVDoubleGather.")
+		return nil, err
+	}
+	p.stats = childStats[1]
+	return p.stats, nil
+}

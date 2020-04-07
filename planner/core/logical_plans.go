@@ -42,6 +42,7 @@ var (
 	_ LogicalPlan = &LogicalTableDual{}
 	_ LogicalPlan = &DataSource{}
 	_ LogicalPlan = &TiKVSingleGather{}
+	_ LogicalPlan = &TiKVDoubleGather{}
 	_ LogicalPlan = &LogicalTableScan{}
 	_ LogicalPlan = &LogicalIndexScan{}
 	_ LogicalPlan = &LogicalUnionAll{}
@@ -492,9 +493,9 @@ type DataSource struct {
 	physicalTableID int64
 	partitionNames  []model.CIStr
 
-	// handleCol represents the handle column for the datasource, either the
+	// HandleCol represents the handle column for the datasource, either the
 	// int primary key column or extra handle column.
-	handleCol *expression.Column
+	HandleCol *expression.Column
 	// TblCols contains the original columns of table before being pruned, and it
 	// is used for estimating table scan cost.
 	TblCols []*expression.Column
@@ -518,12 +519,25 @@ func (ds *DataSource) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 // tuples from TiKV regions.
 type TiKVSingleGather struct {
 	logicalSchemaProducer
+
 	Source *DataSource
 	// IsIndexGather marks if this TiKVSingleGather gathers tuples from an IndexScan.
 	// in implementation phase, we need this flag to determine whether to generate
 	// PhysicalTableReader or PhysicalIndexReader.
 	IsIndexGather bool
 	Index         *model.IndexInfo
+}
+
+// TiKVDoubleGather is a leaf logical operator of TiDB layer to gather
+// tuples from TiKV regions. It is for index lookup read.
+type TiKVDoubleGather struct {
+	logicalSchemaProducer
+
+	Source       *DataSource
+	IndexCols    []*expression.Column
+	IndexColLens []int
+	index        *model.IndexInfo
+	HandleCol    *expression.Column
 }
 
 // LogicalTableScan is the logical table scan operator for TiKV.
@@ -576,17 +590,17 @@ type LogicalIndexScan struct {
 }
 
 // MatchIndexProp checks if the indexScan can match the required property.
-func (p *LogicalIndexScan) MatchIndexProp(prop *property.PhysicalProperty) (match bool) {
+func (is *LogicalIndexScan) MatchIndexProp(prop *property.PhysicalProperty) (match bool) {
 	if prop.IsEmpty() {
 		return true
 	}
 	if all, _ := prop.AllSameOrder(); !all {
 		return false
 	}
-	for i, col := range p.IdxCols {
+	for i, col := range is.IdxCols {
 		if col.Equal(nil, prop.Items[0].Col) {
-			return matchIndicesProp(p.IdxCols[i:], p.IdxColLens[i:], prop.Items)
-		} else if i >= p.EqCondCount {
+			return MatchIndicesProp(is.IdxCols[i:], is.IdxColLens[i:], prop.Items)
+		} else if i >= is.EqCondCount {
 			break
 		}
 	}
@@ -638,6 +652,59 @@ func (ds *DataSource) buildIndexGather(path *util.AccessPath) LogicalPlan {
 	return sg
 }
 
+func (is *LogicalIndexScan) initSchema(isDoubleRead bool) {
+	indexCols := make([]*expression.Column, len(is.IdxCols), len(is.IdxCols)+1)
+	copy(indexCols, is.IdxCols)
+	for i, col := range is.Columns {
+		if (mysql.HasPriKeyFlag(col.Flag) && is.Source.tableInfo.PKIsHandle) || col.ID == model.ExtraHandleID {
+			indexCols = append(indexCols, is.Source.schema.Columns[i])
+			break
+		}
+	}
+
+	if isDoubleRead && len(indexCols) == len(is.IdxCols) {
+		indexCols = append(indexCols, is.Source.getHandleCol())
+	}
+	is.SetSchema(expression.NewSchema(indexCols...))
+}
+
+func (ds *DataSource) buildIndexLookupGather(path *util.AccessPath) LogicalPlan {
+	idxReaderCols := make([]*model.ColumnInfo, 0, len(path.Index.Columns))
+	for _, idxCol := range path.Index.Columns {
+		for _, tblCol := range ds.Columns {
+			if idxCol.Name.L == tblCol.Name.L {
+				idxReaderCols = append(idxReaderCols, tblCol)
+				break
+			}
+		}
+	}
+	is := LogicalIndexScan{
+		Source:         ds,
+		IsDoubleRead:   true,
+		Columns:        idxReaderCols,
+		Index:          path.Index,
+		IdxCols:        path.IdxCols,
+		IdxColLens:     path.IdxColLens,
+		FullIdxCols:    path.FullIdxCols,
+		FullIdxColLens: path.FullIdxColLens,
+		Ranges:         ranger.FullRange(),
+	}.Init(ds.ctx, ds.blockOffset)
+	is.initSchema(true)
+
+	ts := LogicalTableScan{Source: ds, Handle: ds.getHandleCol()}.Init(ds.ctx, ds.blockOffset)
+	ts.SetSchema(ds.Schema())
+	dg := TiKVDoubleGather{
+		Source:       ds,
+		IndexCols:    path.IdxCols,
+		IndexColLens: path.IdxColLens,
+		index:        path.Index,
+		HandleCol:    ds.getHandleCol(),
+	}.Init(ds.ctx, ds.blockOffset)
+	dg.SetSchema(ds.Schema())
+	dg.SetChildren(is, ts)
+	return dg
+}
+
 // Convert2Gathers builds logical TiKVSingleGathers from DataSource.
 func (ds *DataSource) Convert2Gathers() (gathers []LogicalPlan) {
 	tg := ds.buildTableGather()
@@ -649,8 +716,9 @@ func (ds *DataSource) Convert2Gathers() (gathers []LogicalPlan) {
 			// If index columns can cover all of the needed columns, we can use a IndexGather + IndexScan.
 			if isCoveringIndex(ds.schema.Columns, path.FullIdxCols, path.FullIdxColLens, ds.tableInfo.PKIsHandle) {
 				gathers = append(gathers, ds.buildIndexGather(path))
+			} else if len(path.IdxCols) > 0 {
+				gathers = append(gathers, ds.buildIndexLookupGather(path))
 			}
-			// TODO: If index columns can not cover the schema, use IndexLookUpGather.
 		}
 	}
 	return gathers
@@ -864,31 +932,31 @@ func (ds *DataSource) getPKIsHandleCol() *expression.Column {
 	return getPKIsHandleColFromSchema(ds.Columns, ds.schema, ds.tableInfo.PKIsHandle)
 }
 
-func (p *LogicalIndexScan) getPKIsHandleCol(schema *expression.Schema) *expression.Column {
+func (is *LogicalIndexScan) getPKIsHandleCol(schema *expression.Schema) *expression.Column {
 	// We cannot use p.Source.getPKIsHandleCol() here,
 	// Because we may re-prune p.Columns and p.schema during the transformation.
 	// That will make p.Columns different from p.Source.Columns.
-	return getPKIsHandleColFromSchema(p.Columns, schema, p.Source.tableInfo.PKIsHandle)
+	return getPKIsHandleColFromSchema(is.Columns, schema, is.Source.tableInfo.PKIsHandle)
 }
 
 func (ds *DataSource) getHandleCol() *expression.Column {
-	if ds.handleCol != nil {
-		return ds.handleCol
+	if ds.HandleCol != nil {
+		return ds.HandleCol
 	}
 
 	if !ds.tableInfo.PKIsHandle {
-		ds.handleCol = ds.newExtraHandleSchemaCol()
-		return ds.handleCol
+		ds.HandleCol = ds.newExtraHandleSchemaCol()
+		return ds.HandleCol
 	}
 
 	for i, col := range ds.Columns {
 		if mysql.HasPriKeyFlag(col.Flag) {
-			ds.handleCol = ds.schema.Columns[i]
+			ds.HandleCol = ds.schema.Columns[i]
 			break
 		}
 	}
 
-	return ds.handleCol
+	return ds.HandleCol
 }
 
 // TableInfo returns the *TableInfo of data source.

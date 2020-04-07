@@ -222,8 +222,8 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) error {
 		handleCol     *expression.Column
 		handleColInfo *model.ColumnInfo
 	)
-	if ds.handleCol != nil {
-		handleCol = ds.handleCol
+	if ds.HandleCol != nil {
+		handleCol = ds.HandleCol
 		handleColInfo = ds.Columns[ds.schema.ColumnIndex(handleCol)]
 	}
 	originSchemaColumns := ds.schema.Columns
@@ -248,8 +248,8 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) error {
 		ds.Columns = append(ds.Columns, handleColInfo)
 		ds.schema.Append(handleCol)
 	}
-	if ds.handleCol != nil && ds.schema.ColumnIndex(ds.handleCol) == -1 {
-		ds.handleCol = nil
+	if ds.HandleCol != nil && ds.schema.ColumnIndex(ds.HandleCol) == -1 {
+		ds.HandleCol = nil
 	}
 	return nil
 }

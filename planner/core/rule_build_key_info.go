@@ -283,7 +283,12 @@ func (is *LogicalIndexScan) BuildKeyInfo(selfSchema *expression.Schema, childSch
 }
 
 // BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
-func (tg *TiKVSingleGather) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
+func (sg *TiKVSingleGather) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
+	selfSchema.Keys = childSchema[0].Keys
+}
+
+// BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
+func (dg *TiKVDoubleGather) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
 	selfSchema.Keys = childSchema[0].Keys
 }
 

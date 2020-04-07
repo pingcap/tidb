@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/ranger"
 )
 
@@ -64,7 +65,7 @@ var (
 type PhysicalTableReader struct {
 	physicalSchemaProducer
 
-	// TablePlans flats the tablePlan to construct executor pb.
+	// TablePlans flats the TablePlan to construct executor pb.
 	TablePlans []PhysicalPlan
 	tablePlan  PhysicalPlan
 
@@ -90,17 +91,27 @@ func (sg *TiKVSingleGather) GetPhysicalIndexReader(schema *expression.Schema, st
 	return reader
 }
 
+// GetPhysicalIndexLookUpReader returns PhysicalIndexReader for logical TiKVDoubleGather.
+func (dg *TiKVDoubleGather) GetPhysicalIndexLookUpReader(schema *expression.Schema, stats *property.StatsInfo, props ...*property.PhysicalProperty) *PhysicalIndexLookUpReader {
+	reader := PhysicalIndexLookUpReader{}
+	reader.basePhysicalPlan = newBasePhysicalPlan(dg.ctx, plancodec.TypeIndexLookUp, &reader, dg.blockOffset)
+	reader.stats = stats
+	reader.SetSchema(schema.Clone())
+	reader.childrenReqProps = props
+	return &reader
+}
+
 // SetChildren overrides PhysicalPlan SetChildren interface.
 func (p *PhysicalTableReader) SetChildren(children ...PhysicalPlan) {
 	p.tablePlan = children[0]
-	p.TablePlans = flattenPushDownPlan(p.tablePlan)
+	p.TablePlans = FlattenPushDownPlan(p.tablePlan)
 }
 
 // PhysicalIndexReader is the index reader in tidb.
 type PhysicalIndexReader struct {
 	physicalSchemaProducer
 
-	// IndexPlans flats the indexPlan to construct executor pb.
+	// IndexPlans flats the IndexPlan to construct executor pb.
 	IndexPlans []PhysicalPlan
 	indexPlan  PhysicalPlan
 
@@ -111,7 +122,7 @@ type PhysicalIndexReader struct {
 // SetSchema overrides PhysicalPlan SetSchema interface.
 func (p *PhysicalIndexReader) SetSchema(_ *expression.Schema) {
 	if p.indexPlan != nil {
-		p.IndexPlans = flattenPushDownPlan(p.indexPlan)
+		p.IndexPlans = FlattenPushDownPlan(p.indexPlan)
 		switch p.indexPlan.(type) {
 		case *PhysicalHashAgg, *PhysicalStreamAgg:
 			p.schema = p.indexPlan.Schema()
@@ -139,12 +150,12 @@ type PushedDownLimit struct {
 type PhysicalIndexLookUpReader struct {
 	physicalSchemaProducer
 
-	// IndexPlans flats the indexPlan to construct executor pb.
+	// IndexPlans flats the IndexPlan to construct executor pb.
 	IndexPlans []PhysicalPlan
-	// TablePlans flats the tablePlan to construct executor pb.
+	// TablePlans flats the TablePlan to construct executor pb.
 	TablePlans []PhysicalPlan
-	indexPlan  PhysicalPlan
-	tablePlan  PhysicalPlan
+	IndexPlan  PhysicalPlan
+	TablePlan  PhysicalPlan
 
 	ExtraHandleCol *expression.Column
 	// PushedLimit is used to avoid unnecessary table scan tasks of IndexLookUpReader.
@@ -224,11 +235,11 @@ type PhysicalTableScan struct {
 	AccessCondition []expression.Expression
 	filterCondition []expression.Expression
 
-	Table   *model.TableInfo
-	Columns []*model.ColumnInfo
-	DBName  model.CIStr
-	Ranges  []*ranger.Range
-	pkCol   *expression.Column
+	Table     *model.TableInfo
+	Columns   []*model.ColumnInfo
+	DBName    model.CIStr
+	Ranges    []*ranger.Range
+	HandleCol *expression.Column
 
 	TableAsName *model.CIStr
 
@@ -618,9 +629,9 @@ func CollectPlanStatsVersion(plan PhysicalPlan, statsInfos map[string]uint64) ma
 	case *PhysicalIndexReader:
 		statsInfos = CollectPlanStatsVersion(copPlan.indexPlan, statsInfos)
 	case *PhysicalIndexLookUpReader:
-		// For index loop up, only the indexPlan is necessary,
-		// because they use the same stats and we do not set the stats info for tablePlan.
-		statsInfos = CollectPlanStatsVersion(copPlan.indexPlan, statsInfos)
+		// For index loop up, only the IndexPlan is necessary,
+		// because they use the same stats and we do not set the stats info for TablePlan.
+		statsInfos = CollectPlanStatsVersion(copPlan.IndexPlan, statsInfos)
 	case *PhysicalIndexScan:
 		statsInfos[copPlan.Table.Name.O] = copPlan.stats.StatsVersion
 	case *PhysicalTableScan:
