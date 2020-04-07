@@ -20,10 +20,11 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
-	"github.com/pingcap/pd/client"
+	"github.com/pingcap/pd/v4/client"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockoracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -271,4 +272,21 @@ func (s *testStoreSuite) TestRequestPriority(c *C) {
 		c.Assert(iter.Next(), IsNil)
 	}
 	iter.Close()
+}
+
+func (s *testStoreSuite) TestOracleChangeByFailpoint(c *C) {
+	defer func() {
+		failpoint.Disable("github.com/pingcap/tidb/store/tikv/oracle/changeTSFromPD")
+	}()
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/oracle/changeTSFromPD",
+		"return(10000)"), IsNil)
+	o := &mockoracle.MockOracle{}
+	s.store.oracle = o
+	ctx := context.Background()
+	t1, err := s.store.getTimestampWithRetry(NewBackoffer(ctx, 100))
+	c.Assert(err, IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/oracle/changeTSFromPD"), IsNil)
+	t2, err := s.store.getTimestampWithRetry(NewBackoffer(ctx, 100))
+	c.Assert(err, IsNil)
+	c.Assert(t1, Greater, t2)
 }

@@ -24,6 +24,9 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/ddl"
@@ -33,8 +36,11 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testkit"
 	binlog "github.com/pingcap/tipb/go-binlog"
@@ -134,7 +140,7 @@ func (s *testBinlogSuite) TestBinlog(c *C) {
 	tk.MustExec(ddlQuery)
 	var matched bool // got matched pre DDL and commit DDL
 	for i := 0; i < 10; i++ {
-		preDDL, commitDDL := getLatestDDLBinlog(c, pump, binlogDDLQuery)
+		preDDL, commitDDL, _ := getLatestDDLBinlog(c, pump, binlogDDLQuery)
 		if preDDL != nil && commitDDL != nil {
 			if preDDL.DdlJobId == commitDDL.DdlJobId {
 				c.Assert(commitDDL.StartTs, Equals, preDDL.StartTs)
@@ -152,8 +158,8 @@ func (s *testBinlogSuite) TestBinlog(c *C) {
 	c.Assert(prewriteVal.SchemaVersion, Greater, int64(0))
 	c.Assert(prewriteVal.Mutations[0].TableId, Greater, int64(0))
 	expected := [][]types.Datum{
-		{types.NewIntDatum(1), types.NewStringDatum("abc")},
-		{types.NewIntDatum(2), types.NewStringDatum("cde")},
+		{types.NewIntDatum(1), types.NewCollationStringDatum("abc", mysql.DefaultCollationName, collate.DefaultLen)},
+		{types.NewIntDatum(2), types.NewCollationStringDatum("cde", mysql.DefaultCollationName, collate.DefaultLen)},
 	}
 	gotRows := mutationRowsToRows(c, prewriteVal.Mutations[0].InsertedRows, 2, 4)
 	c.Assert(gotRows, DeepEquals, expected)
@@ -161,10 +167,10 @@ func (s *testBinlogSuite) TestBinlog(c *C) {
 	tk.MustExec("update local_binlog set name = 'xyz' where id = 2")
 	prewriteVal = getLatestBinlogPrewriteValue(c, pump)
 	oldRow := [][]types.Datum{
-		{types.NewIntDatum(2), types.NewStringDatum("cde")},
+		{types.NewIntDatum(2), types.NewCollationStringDatum("cde", mysql.DefaultCollationName, collate.DefaultLen)},
 	}
 	newRow := [][]types.Datum{
-		{types.NewIntDatum(2), types.NewStringDatum("xyz")},
+		{types.NewIntDatum(2), types.NewCollationStringDatum("xyz", mysql.DefaultCollationName, collate.DefaultLen)},
 	}
 	gotRows = mutationRowsToRows(c, prewriteVal.Mutations[0].UpdatedRows, 1, 3)
 	c.Assert(gotRows, DeepEquals, oldRow)
@@ -176,7 +182,7 @@ func (s *testBinlogSuite) TestBinlog(c *C) {
 	prewriteVal = getLatestBinlogPrewriteValue(c, pump)
 	gotRows = mutationRowsToRows(c, prewriteVal.Mutations[0].DeletedRows, 1, 3)
 	expected = [][]types.Datum{
-		{types.NewIntDatum(1), types.NewStringDatum("abc")},
+		{types.NewIntDatum(1), types.NewCollationStringDatum("abc", mysql.DefaultCollationName, collate.DefaultLen)},
 	}
 	c.Assert(gotRows, DeepEquals, expected)
 
@@ -294,7 +300,7 @@ func getLatestBinlogPrewriteValue(c *C, pump *mockBinlogPump) *binlog.PrewriteVa
 	return preVal
 }
 
-func getLatestDDLBinlog(c *C, pump *mockBinlogPump, ddlQuery string) (preDDL, commitDDL *binlog.Binlog) {
+func getLatestDDLBinlog(c *C, pump *mockBinlogPump, ddlQuery string) (preDDL, commitDDL *binlog.Binlog, offset int) {
 	pump.mu.Lock()
 	for i := len(pump.mu.payloads) - 1; i >= 0; i-- {
 		payload := pump.mu.payloads[i]
@@ -307,6 +313,7 @@ func getLatestDDLBinlog(c *C, pump *mockBinlogPump, ddlQuery string) (preDDL, co
 			preDDL = bin
 		}
 		if preDDL != nil && commitDDL != nil {
+			offset = i
 			break
 		}
 	}
@@ -359,7 +366,7 @@ func mutationRowsToRows(c *C, mutationRows [][]byte, columnValueOffsets ...int) 
 		c.Assert(err, IsNil)
 		for i := range datums {
 			if datums[i].Kind() == types.KindBytes {
-				datums[i].SetBytesAsString(datums[i].GetBytes())
+				datums[i].SetBytesAsString(datums[i].GetBytes(), mysql.DefaultCollationName, collate.DefaultLen)
 			}
 		}
 		row := make([]types.Datum, 0, len(columnValueOffsets))
@@ -369,6 +376,83 @@ func mutationRowsToRows(c *C, mutationRows [][]byte, columnValueOffsets ...int) 
 		rows = append(rows, row)
 	}
 	return rows
+}
+
+func (s *testBinlogSuite) TestBinlogForSequence(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/mockSyncBinlogCommit", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/mockSyncBinlogCommit"), IsNil)
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	s.pump.mu.Lock()
+	s.pump.mu.payloads = s.pump.mu.payloads[:0]
+	s.pump.mu.Unlock()
+	tk.Se.GetSessionVars().BinlogClient = s.client
+
+	tk.MustExec("drop sequence if exists seq")
+	// the default start = 1, increment = 1.
+	tk.MustExec("create sequence seq cache 3")
+	// trigger the sequence cache allocation.
+	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("1"))
+	sequenceTable := testGetTableByName(c, tk.Se, "test", "seq")
+	tc, ok := sequenceTable.(*tables.TableCommon)
+	c.Assert(ok, Equals, true)
+	_, end, round := tc.GetSequenceCommon().GetSequenceBaseEndRound()
+	c.Assert(end, Equals, int64(3))
+	c.Assert(round, Equals, int64(0))
+
+	// Check the sequence binlog.
+	// Got matched pre DDL and commit DDL.
+	ok = mustGetDDLBinlog(s, "select setval(`test`.`seq`, 3)", c)
+	c.Assert(ok, IsTrue)
+
+	// Invalidate the current sequence cache.
+	tk.MustQuery("select setval(seq, 5)").Check(testkit.Rows("5"))
+	// trigger the next sequence cache allocation.
+	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("6"))
+	_, end, round = tc.GetSequenceCommon().GetSequenceBaseEndRound()
+	c.Assert(end, Equals, int64(8))
+	c.Assert(round, Equals, int64(0))
+	ok = mustGetDDLBinlog(s, "select setval(`test`.`seq`, 8)", c)
+	c.Assert(ok, IsTrue)
+
+	tk.MustExec("create database test2")
+	tk.MustExec("use test2")
+	tk.MustExec("drop sequence if exists seq2")
+	tk.MustExec("create sequence seq2 start 1 increment -2 cache 3 minvalue -10 maxvalue 10 cycle")
+	// trigger the sequence cache allocation.
+	tk.MustQuery("select nextval(seq2)").Check(testkit.Rows("1"))
+	sequenceTable = testGetTableByName(c, tk.Se, "test2", "seq2")
+	tc, ok = sequenceTable.(*tables.TableCommon)
+	c.Assert(ok, Equals, true)
+	_, end, round = tc.GetSequenceCommon().GetSequenceBaseEndRound()
+	c.Assert(end, Equals, int64(-3))
+	c.Assert(round, Equals, int64(0))
+	ok = mustGetDDLBinlog(s, "select setval(`test2`.`seq2`, -3)", c)
+	c.Assert(ok, IsTrue)
+
+	tk.MustQuery("select setval(seq2, -100)").Check(testkit.Rows("-100"))
+	// trigger the sequence cache allocation.
+	tk.MustQuery("select nextval(seq2)").Check(testkit.Rows("10"))
+	_, end, round = tc.GetSequenceCommon().GetSequenceBaseEndRound()
+	c.Assert(end, Equals, int64(6))
+	c.Assert(round, Equals, int64(1))
+	ok = mustGetDDLBinlog(s, "select setval(`test2`.`seq2`, 6)", c)
+	c.Assert(ok, IsTrue)
+
+	// Test dml txn is independent from sequence txn.
+	tk.MustExec("drop sequence if exists seq")
+	tk.MustExec("create sequence seq cache 3")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int default next value for seq)")
+	// sequence txn commit first then the dml txn.
+	tk.MustExec("insert into t values(-1),(default),(-1),(default)")
+	// binlog list like [... ddl prewrite(offset), ddl commit, dml prewrite, dml commit]
+	_, _, offset := getLatestDDLBinlog(c, s.pump, "select setval(`test2`.`seq`, 3)")
+	s.pump.mu.Lock()
+	c.Assert(offset+3, Equals, len(s.pump.mu.payloads)-1)
+	s.pump.mu.Unlock()
 }
 
 // Sometimes this test doesn't clean up fail, let the function name begin with 'Z'
@@ -465,19 +549,45 @@ func (s *testBinlogSuite) TestAddSpecialComment(c *C) {
 		},
 		{
 			"create table t1 (id int primary key auto_random(2));",
-			"create table t1 (id int primary key /*T!40000 auto_random(2) */ );",
+			"create table t1 (id int primary key /*T![auto_rand] auto_random(2) */ );",
 		},
 		{
 			"create table t1 (id int auto_random ( 4 ) primary key);",
-			"create table t1 (id int /*T!40000 auto_random ( 4 ) */ primary key);",
+			"create table t1 (id int /*T![auto_rand] auto_random ( 4 ) */ primary key);",
 		},
 		{
 			"create table t1 (id int  auto_random  (   4    ) primary key);",
-			"create table t1 (id int  /*T!40000 auto_random  (   4    ) */ primary key);",
+			"create table t1 (id int  /*T![auto_rand] auto_random  (   4    ) */ primary key);",
 		},
 	}
 	for _, ca := range testCase {
 		re := binloginfo.AddSpecialComment(ca.input)
 		c.Assert(re, Equals, ca.result)
 	}
+}
+
+func mustGetDDLBinlog(s *testBinlogSuite, ddlQuery string, c *C) (matched bool) {
+	for i := 0; i < 10; i++ {
+		preDDL, commitDDL, _ := getLatestDDLBinlog(c, s.pump, ddlQuery)
+		if preDDL != nil && commitDDL != nil {
+			if preDDL.DdlJobId == commitDDL.DdlJobId {
+				c.Assert(commitDDL.StartTs, Equals, preDDL.StartTs)
+				c.Assert(commitDDL.CommitTs, Greater, commitDDL.StartTs)
+				matched = true
+				break
+			}
+		}
+		time.Sleep(time.Millisecond * 30)
+	}
+	return
+}
+
+func testGetTableByName(c *C, ctx sessionctx.Context, db, table string) table.Table {
+	dom := domain.GetDomain(ctx)
+	// Make sure the table schema is the new schema.
+	err := dom.Reload()
+	c.Assert(err, IsNil)
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(db), model.NewCIStr(table))
+	c.Assert(err, IsNil)
+	return tbl
 }

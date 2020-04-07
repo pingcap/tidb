@@ -26,6 +26,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
@@ -1513,7 +1514,7 @@ func padZeroForBinaryType(s string, tp *types.FieldType, ctx sessionctx.Context)
 		valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
 		maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
 		if err != nil {
-			return "", false, err
+			return "", false, errors.Trace(err)
 		}
 		if uint64(flen) > maxAllowedPacket {
 			sc.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("cast_as_binary", maxAllowedPacket))

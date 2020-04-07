@@ -19,7 +19,6 @@ import (
 	"math"
 	"net"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -117,17 +116,12 @@ func (b *builtinSleepSig) evalInt(row chunk.Row) (int64, bool, error) {
 	}
 
 	sessVars := b.ctx.GetSessionVars()
-	if isNull {
-		if sessVars.StrictSQLMode {
-			return 0, true, errIncorrectArgs.GenWithStackByArgs("sleep")
-		}
-		return 0, true, nil
-	}
-	// processing argument is negative
-	if val < 0 {
+	if isNull || val < 0 {
 		if sessVars.StrictSQLMode {
 			return 0, false, errIncorrectArgs.GenWithStackByArgs("sleep")
 		}
+		err := errIncorrectArgs.GenWithStackByArgs("sleep")
+		sessVars.StmtCtx.AppendWarning(err)
 		return 0, false, nil
 	}
 
@@ -135,22 +129,8 @@ func (b *builtinSleepSig) evalInt(row chunk.Row) (int64, bool, error) {
 		return 0, false, errIncorrectArgs.GenWithStackByArgs("sleep")
 	}
 
-	dur := time.Duration(val * float64(time.Second.Nanoseconds()))
-	ticker := time.NewTicker(10 * time.Millisecond)
-	defer ticker.Stop()
-	start := time.Now()
-	finish := false
-	for !finish {
-		select {
-		case now := <-ticker.C:
-			if now.Sub(start) > dur {
-				finish = true
-			}
-		default:
-			if atomic.CompareAndSwapUint32(&sessVars.Killed, 1, 0) {
-				return 1, false, nil
-			}
-		}
+	if isKilled := doSleep(val, sessVars); isKilled {
+		return 1, false, nil
 	}
 
 	return 0, false, nil
@@ -466,6 +446,7 @@ func (c *inetNtoaFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		return nil, err
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETInt)
+	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	bf.tp.Flen = 93
 	bf.tp.Decimal = 0
 	sig := &builtinInetNtoaSig{bf}
@@ -583,6 +564,7 @@ func (c *inet6NtoaFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 		return nil, err
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
+	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	bf.tp.Flen = 117
 	bf.tp.Decimal = 0
 	sig := &builtinInet6NtoaSig{bf}
@@ -985,6 +967,7 @@ func (c *uuidFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 		return nil, err
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString)
+	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	bf.tp.Flen = 36
 	sig := &builtinUUIDSig{bf}
 	return sig, nil

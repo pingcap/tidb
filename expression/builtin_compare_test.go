@@ -45,7 +45,7 @@ func (s *testEvaluatorSuite) TestCompareFunctionWithRefine(c *C) {
 		{"a >= '1.1'", "ge(a, 2)"},
 		{"a = '1.1'", "0"},
 		{"a <=> '1.1'", "0"},
-		{"a != '1.1'", "ne(cast(a), 1.1)"},
+		{"a != '1.1'", "ne(cast(a, double BINARY), 1.1)"},
 		{"'1' < a", "lt(1, a)"},
 		{"'1' <= a", "le(1, a)"},
 		{"'1' > a", "gt(1, a)"},
@@ -59,7 +59,7 @@ func (s *testEvaluatorSuite) TestCompareFunctionWithRefine(c *C) {
 		{"'1.1' >= a", "ge(1, a)"},
 		{"'1.1' = a", "0"},
 		{"'1.1' <=> a", "0"},
-		{"'1.1' != a", "ne(1.1, cast(a))"},
+		{"'1.1' != a", "ne(1.1, cast(a, double BINARY))"},
 		{"'123456789123456711111189' = a", "0"},
 		{"123456789123456789.12345 = a", "0"},
 		{"123456789123456789123456789.12345 > a", "1"},
@@ -68,7 +68,7 @@ func (s *testEvaluatorSuite) TestCompareFunctionWithRefine(c *C) {
 		{"-123456789123456789123456789.12345 < a", "1"},
 		// This cast can not be eliminated,
 		// since converting "aaaa" to an int will cause DataTruncate error.
-		{"'aaaa'=a", "eq(cast(aaaa), cast(a))"},
+		{"'aaaa'=a", "eq(cast(aaaa, double BINARY), cast(a, double BINARY))"},
 	}
 	cols, names := ColumnInfos2ColumnsAndNames(s.ctx, model.NewCIStr(""), tblInfo.Name, tblInfo.Columns)
 	schema := NewSchema(cols...)

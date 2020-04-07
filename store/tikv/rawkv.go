@@ -20,7 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/pd/client"
+	"github.com/pingcap/pd/v4/client"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -280,9 +280,9 @@ func (c *RawKVClient) DeleteRange(startKey []byte, endKey []byte) error {
 
 // Scan queries continuous kv pairs in range [startKey, endKey), up to limit pairs.
 // If endKey is empty, it means unbounded.
-// If you want to exclude the startKey or include the endKey, append a '\0' to the key. For example, to scan
+// If you want to exclude the startKey or include the endKey, push a '\0' to the key. For example, to scan
 // (startKey, endKey], you can write:
-// `Scan(append(startKey, '\0'), append(endKey, '\0'), limit)`.
+// `Scan(push(startKey, '\0'), push(endKey, '\0'), limit)`.
 func (c *RawKVClient) Scan(startKey, endKey []byte, limit int) (keys [][]byte, values [][]byte, err error) {
 	start := time.Now()
 	defer func() { tikvRawkvCmdHistogramWithRawScan.Observe(time.Since(start).Seconds()) }()
@@ -320,9 +320,9 @@ func (c *RawKVClient) Scan(startKey, endKey []byte, limit int) (keys [][]byte, v
 // ReverseScan queries continuous kv pairs in range [endKey, startKey), up to limit pairs.
 // Direction is different from Scan, upper to lower.
 // If endKey is empty, it means unbounded.
-// If you want to include the startKey or exclude the endKey, append a '\0' to the key. For example, to scan
+// If you want to include the startKey or exclude the endKey, push a '\0' to the key. For example, to scan
 // (endKey, startKey], you can write:
-// `ReverseScan(append(startKey, '\0'), append(endKey, '\0'), limit)`.
+// `ReverseScan(push(startKey, '\0'), push(endKey, '\0'), limit)`.
 // It doesn't support Scanning from "", because locating the last Region is not yet implemented.
 func (c *RawKVClient) ReverseScan(startKey, endKey []byte, limit int) (keys [][]byte, values [][]byte, err error) {
 	start := time.Now()
@@ -540,7 +540,7 @@ func (c *RawKVClient) sendDeleteRangeReq(startKey []byte, endKey []byte) (*tikvr
 }
 
 func (c *RawKVClient) sendBatchPut(bo *Backoffer, keys, values [][]byte) error {
-	keyToValue := make(map[string][]byte)
+	keyToValue := make(map[string][]byte, len(keys))
 	for i, key := range keys {
 		keyToValue[string(key)] = values[i]
 	}

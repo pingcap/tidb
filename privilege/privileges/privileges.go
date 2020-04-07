@@ -20,6 +20,8 @@ import (
 
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/infoschema/perfschema"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
@@ -51,15 +53,30 @@ func (p *UserPrivileges) RequestVerification(activeRoles []*auth.RoleIdentity, d
 		return true
 	}
 
-	// Skip check for INFORMATION_SCHEMA database.
+	// Skip check for system databases.
 	// See https://dev.mysql.com/doc/refman/5.7/en/information-schema.html
-	if strings.EqualFold(db, "INFORMATION_SCHEMA") {
+	dbLowerName := strings.ToLower(db)
+	switch dbLowerName {
+	case util.InformationSchemaName.L:
 		switch priv {
 		case mysql.CreatePriv, mysql.AlterPriv, mysql.DropPriv, mysql.IndexPriv, mysql.CreateViewPriv,
 			mysql.InsertPriv, mysql.UpdatePriv, mysql.DeletePriv:
 			return false
 		}
 		return true
+	// We should be very careful of limiting privileges, so ignore `mysql` for now.
+	case util.PerformanceSchemaName.L, util.MetricSchemaName.L:
+		// CREATE and DROP privileges are not limited in the older versions, so ignore them now.
+		// User may have created some tables in these schema, but predefined tables can't be altered or modified.
+		if (dbLowerName == util.PerformanceSchemaName.L && perfschema.IsPredefinedTable(table)) ||
+			(dbLowerName == util.MetricSchemaName.L && infoschema.IsMetricTable(table)) {
+			switch priv {
+			case mysql.AlterPriv, mysql.DropPriv, mysql.IndexPriv, mysql.InsertPriv, mysql.UpdatePriv, mysql.DeletePriv:
+				return false
+			case mysql.SelectPriv:
+				return true
+			}
+		}
 	}
 
 	mysqlPriv := p.Handle.Get()
@@ -95,7 +112,7 @@ func (p *UserPrivileges) GetEncodedPassword(user, host string) string {
 			zap.String("user", user), zap.String("host", host))
 		return ""
 	}
-	pwd := record.Password
+	pwd := record.AuthenticationString
 	if len(pwd) != 0 && len(pwd) != mysql.PWDHashLen+1 {
 		logutil.BgLogger().Error("user password from system DB not like sha1sum", zap.String("user", user))
 		return ""
@@ -167,7 +184,7 @@ func (p *UserPrivileges) ConnectionVerification(user, host string, authenticatio
 		return
 	}
 
-	pwd := record.Password
+	pwd := record.AuthenticationString
 	if len(pwd) != 0 && len(pwd) != mysql.PWDHashLen+1 {
 		logutil.BgLogger().Error("user password from system DB not like sha1sum", zap.String("user", user))
 		return
@@ -211,7 +228,7 @@ const (
 
 func (p *UserPrivileges) checkSSL(priv *globalPrivRecord, tlsState *tls.ConnectionState) bool {
 	if priv.Broken {
-		logutil.BgLogger().Debug("ssl check failure, due to broken global_priv record",
+		logutil.BgLogger().Info("ssl check failure, due to broken global_priv record",
 			zap.String("user", priv.User), zap.String("host", priv.Host))
 		return false
 	}
@@ -221,13 +238,13 @@ func (p *UserPrivileges) checkSSL(priv *globalPrivRecord, tlsState *tls.Connecti
 	case SslTypeAny:
 		r := tlsState != nil
 		if !r {
-			logutil.BgLogger().Debug("ssl check failure, require ssl but not use ssl",
+			logutil.BgLogger().Info("ssl check failure, require ssl but not use ssl",
 				zap.String("user", priv.User), zap.String("host", priv.Host))
 		}
 		return r
 	case SslTypeX509:
 		if tlsState == nil {
-			logutil.BgLogger().Debug("ssl check failure, require x509 but not use ssl",
+			logutil.BgLogger().Info("ssl check failure, require x509 but not use ssl",
 				zap.String("user", priv.User), zap.String("host", priv.Host))
 			return false
 		}
@@ -239,18 +256,18 @@ func (p *UserPrivileges) checkSSL(priv *globalPrivRecord, tlsState *tls.Connecti
 			}
 		}
 		if !hasCert {
-			logutil.BgLogger().Debug("ssl check failure, require x509 but no verified cert",
+			logutil.BgLogger().Info("ssl check failure, require x509 but no verified cert",
 				zap.String("user", priv.User), zap.String("host", priv.Host))
 		}
 		return hasCert
 	case SslTypeSpecified:
 		if tlsState == nil {
-			logutil.BgLogger().Debug("ssl check failure, require subject/issuer/cipher but not use ssl",
+			logutil.BgLogger().Info("ssl check failure, require subject/issuer/cipher but not use ssl",
 				zap.String("user", priv.User), zap.String("host", priv.Host))
 			return false
 		}
 		if len(priv.Priv.SSLCipher) > 0 && priv.Priv.SSLCipher != util.TLSCipher2String(tlsState.CipherSuite) {
-			logutil.BgLogger().Debug("ssl check failure for cipher", zap.String("user", priv.User), zap.String("host", priv.Host),
+			logutil.BgLogger().Info("ssl check failure for cipher", zap.String("user", priv.User), zap.String("host", priv.Host),
 				zap.String("require", priv.Priv.SSLCipher), zap.String("given", util.TLSCipher2String(tlsState.CipherSuite)))
 			return false
 		}
@@ -270,7 +287,7 @@ func (p *UserPrivileges) checkSSL(priv *globalPrivRecord, tlsState *tls.Connecti
 					matchIssuer = pass
 				} else if matchIssuer == notCheck {
 					matchIssuer = fail
-					logutil.BgLogger().Debug("ssl check failure for issuer", zap.String("user", priv.User), zap.String("host", priv.Host),
+					logutil.BgLogger().Info("ssl check failure for issuer", zap.String("user", priv.User), zap.String("host", priv.Host),
 						zap.String("require", priv.Priv.X509Issuer), zap.String("given", given))
 				}
 			}
@@ -280,7 +297,7 @@ func (p *UserPrivileges) checkSSL(priv *globalPrivRecord, tlsState *tls.Connecti
 					matchSubject = pass
 				} else if matchSubject == notCheck {
 					matchSubject = fail
-					logutil.BgLogger().Debug("ssl check failure for subject", zap.String("user", priv.User), zap.String("host", priv.Host),
+					logutil.BgLogger().Info("ssl check failure for subject", zap.String("user", priv.User), zap.String("host", priv.Host),
 						zap.String("require", priv.Priv.X509Subject), zap.String("given", given))
 				}
 			}
@@ -288,7 +305,7 @@ func (p *UserPrivileges) checkSSL(priv *globalPrivRecord, tlsState *tls.Connecti
 		}
 		checkResult := hasCert && matchIssuer != fail && matchSubject != fail
 		if !checkResult && !hasCert {
-			logutil.BgLogger().Debug("ssl check failure, require issuer/subject but no verified cert",
+			logutil.BgLogger().Info("ssl check failure, require issuer/subject but no verified cert",
 				zap.String("user", priv.User), zap.String("host", priv.Host))
 		}
 		return checkResult

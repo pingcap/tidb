@@ -14,6 +14,7 @@
 package executor_test
 
 import (
+	"crypto/tls"
 	"fmt"
 
 	. "github.com/pingcap/check"
@@ -51,6 +52,9 @@ func (msm *mockSessionManager1) Kill(cid uint64, query bool) {
 
 }
 
+func (msm *mockSessionManager1) UpdateTLSConfig(cfg *tls.Config) {
+}
+
 func (s *testSuite) TestExplainFor(c *C) {
 	tkRoot := testkit.NewTestKitWithInit(c, s.store)
 	tkUser := testkit.NewTestKitWithInit(c, s.store)
@@ -66,8 +70,8 @@ func (s *testSuite) TestExplainFor(c *C) {
 	tkRoot.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 	tkUser.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 	tkRoot.MustQuery(fmt.Sprintf("explain for connection %d", tkRootProcess.ID)).Check(testkit.Rows(
-		"TableReader_5 10000.00 root data:TableScan_4",
-		"└─TableScan_4 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"TableReader_5 10000.00 root  data:TableFullScan_4",
+		"└─TableFullScan_4 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
 	))
 	err := tkUser.ExecToErr(fmt.Sprintf("explain for connection %d", tkRootProcess.ID))
 	c.Check(core.ErrAccessDenied.Equal(err), IsTrue)
@@ -104,8 +108,14 @@ func (s *testSuite) TestIssue11124(c *C) {
 
 func (s *testSuite) TestExplainMetricTable(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustQuery(fmt.Sprintf("desc select * from METRIC_SCHEMA.tidb_query_duration where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13' ")).Check(testkit.Rows(
-		"MemTableScan_5 10000.00 root PromQL:histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le,sql_type,instance)), start_time:2019-12-23 16:10:13, end_time:2019-12-23 16:30:13, step:1m0s"))
-	tk.MustQuery(fmt.Sprintf("desc select * from METRIC_SCHEMA.up where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13' ")).Check(testkit.Rows(
-		"MemTableScan_5 10000.00 root PromQL:up{}, start_time:2019-12-23 16:10:13, end_time:2019-12-23 16:30:13, step:1m0s"))
+	tk.MustQuery(fmt.Sprintf("desc select * from METRICS_SCHEMA.tidb_query_duration where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13' ")).Check(testkit.Rows(
+		"MemTableScan_5 10000.00 root table:tidb_query_duration PromQL:histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le,sql_type,instance)), start_time:2019-12-23 16:10:13, end_time:2019-12-23 16:30:13, step:1m0s"))
+	tk.MustQuery(fmt.Sprintf("desc select * from METRICS_SCHEMA.up where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13' ")).Check(testkit.Rows(
+		"MemTableScan_5 10000.00 root table:up PromQL:up{}, start_time:2019-12-23 16:10:13, end_time:2019-12-23 16:30:13, step:1m0s"))
+	tk.MustQuery("desc select * from information_schema.cluster_log where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13'").Check(testkit.Rows(
+		"MemTableScan_5 10000.00 root table:CLUSTER_LOG start_time:2019-12-23 16:10:13, end_time:2019-12-23 16:30:13"))
+	tk.MustQuery("desc select * from information_schema.cluster_log where level in ('warn','error') and time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13'").Check(testkit.Rows(
+		`MemTableScan_5 10000.00 root table:CLUSTER_LOG start_time:2019-12-23 16:10:13, end_time:2019-12-23 16:30:13, log_levels:["error","warn"]`))
+	tk.MustQuery("desc select * from information_schema.cluster_log where type in ('high_cpu_1','high_memory_1') and time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13'").Check(testkit.Rows(
+		`MemTableScan_5 10000.00 root table:CLUSTER_LOG start_time:2019-12-23 16:10:13, end_time:2019-12-23 16:30:13, node_types:["high_cpu_1","high_memory_1"]`))
 }

@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -284,15 +285,16 @@ func (sc statsCache) update(tables []*statistics.Table, deletedIDs []int64, newV
 func (h *Handle) LoadNeededHistograms() (err error) {
 	cols := statistics.HistogramNeededColumns.AllCols()
 	reader, err := h.getStatsReader(nil)
+	if err != nil {
+		return err
+	}
+
 	defer func() {
 		err1 := h.releaseStatsReader(reader)
 		if err1 != nil && err == nil {
 			err = err1
 		}
 	}()
-	if err != nil {
-		return err
-	}
 
 	for _, col := range cols {
 		statsCache := h.statsCache.Load().(statsCache)
@@ -396,7 +398,8 @@ func (h *Handle) indexStatsFromStorage(reader *statsReader, row chunk.Row, table
 			if err != nil {
 				return errors.Trace(err)
 			}
-			idx = &statistics.Index{Histogram: *hg, CMSketch: cms, Info: idxInfo, ErrorRate: errorRate, StatsVer: row.GetInt64(7), Flag: flag, LastAnalyzePos: *lastAnalyzePos.Copy()}
+			idx = &statistics.Index{Histogram: *hg, CMSketch: cms, Info: idxInfo, ErrorRate: errorRate, StatsVer: row.GetInt64(7), Flag: flag}
+			lastAnalyzePos.Copy(&idx.LastAnalyzePos)
 		}
 		break
 	}
@@ -444,15 +447,15 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 				return errors.Trace(err)
 			}
 			col = &statistics.Column{
-				PhysicalID:     table.PhysicalID,
-				Histogram:      *statistics.NewHistogram(histID, distinct, nullCount, histVer, &colInfo.FieldType, 0, totColSize),
-				Info:           colInfo,
-				Count:          count + nullCount,
-				ErrorRate:      errorRate,
-				IsHandle:       tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag),
-				Flag:           flag,
-				LastAnalyzePos: *lastAnalyzePos.Copy(),
+				PhysicalID: table.PhysicalID,
+				Histogram:  *statistics.NewHistogram(histID, distinct, nullCount, histVer, &colInfo.FieldType, 0, totColSize),
+				Info:       colInfo,
+				Count:      count + nullCount,
+				ErrorRate:  errorRate,
+				IsHandle:   tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag),
+				Flag:       flag,
 			}
+			lastAnalyzePos.Copy(&col.LastAnalyzePos)
 			col.Histogram.Correlation = correlation
 			break
 		}
@@ -466,16 +469,16 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 				return errors.Trace(err)
 			}
 			col = &statistics.Column{
-				PhysicalID:     table.PhysicalID,
-				Histogram:      *hg,
-				Info:           colInfo,
-				CMSketch:       cms,
-				Count:          int64(hg.TotalRowCount()),
-				ErrorRate:      errorRate,
-				IsHandle:       tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag),
-				Flag:           flag,
-				LastAnalyzePos: *lastAnalyzePos.Copy(),
+				PhysicalID: table.PhysicalID,
+				Histogram:  *hg,
+				Info:       colInfo,
+				CMSketch:   cms,
+				Count:      int64(hg.TotalRowCount()),
+				ErrorRate:  errorRate,
+				IsHandle:   tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag),
+				Flag:       flag,
 			}
+			lastAnalyzePos.Copy(&col.LastAnalyzePos)
 			break
 		}
 		if col.TotColSize != totColSize {
@@ -499,15 +502,15 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 // tableStatsFromStorage loads table stats info from storage.
 func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, physicalID int64, loadAll bool, historyStatsExec sqlexec.RestrictedSQLExecutor) (_ *statistics.Table, err error) {
 	reader, err := h.getStatsReader(historyStatsExec)
+	if err != nil {
+		return nil, err
+	}
 	defer func() {
 		err1 := h.releaseStatsReader(reader)
 		if err == nil && err1 != nil {
 			err = err1
 		}
 	}()
-	if err != nil {
-		return nil, err
-	}
 	table, ok := h.statsCache.Load().(statsCache).tables[physicalID]
 	// If table stats is pseudo, we also need to copy it, since we will use the column stats when
 	// the average error rate of it is small.
@@ -744,6 +747,11 @@ func (sr *statsReader) isHistory() bool {
 }
 
 func (h *Handle) getStatsReader(history sqlexec.RestrictedSQLExecutor) (*statsReader, error) {
+	failpoint.Inject("mockGetStatsReaderFail", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(nil, errors.New("gofail genStatsReader error"))
+		}
+	})
 	if history != nil {
 		return &statsReader{history: history}, nil
 	}

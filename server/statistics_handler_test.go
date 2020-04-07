@@ -85,8 +85,8 @@ func (ds *testDumpStatsSuite) stopServer(c *C) {
 
 func (ds *testDumpStatsSuite) TestDumpStatsAPI(c *C) {
 	ds.startServer(c)
+	defer ds.stopServer(c)
 	ds.prepareData(c)
-	defer ds.server.Close()
 
 	router := mux.NewRouter()
 	router.Handle("/stats/dump/{db}/{table}", ds.sh)
@@ -213,7 +213,7 @@ func (ds *testDumpStatsSuite) checkCorrelation(c *C) {
 func (ds *testDumpStatsSuite) checkData(c *C, path string) {
 	db, err := sql.Open("mysql", ds.getDSN(func(config *mysql.Config) {
 		config.AllowAllFiles = true
-		config.Strict = false
+		config.Params = map[string]string{"sql_mode": "''"}
 	}))
 	c.Assert(err, IsNil, Commentf("Error connecting"))
 	dbt := &DBTest{c, db}

@@ -20,9 +20,11 @@ import (
 	"math"
 	"net"
 	"strings"
+	"sync/atomic"
+	"time"
 
 	"github.com/google/uuid"
-	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
@@ -281,11 +283,75 @@ func (b *builtinNameConstTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk.
 }
 
 func (b *builtinSleepSig) vectorized() bool {
-	return false
+	return true
 }
 
+// vecEvalInt evals a builtinSleepSig in a vectorized manner.
+// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_sleep
 func (b *builtinSleepSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETReal, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+
+	err = b.args[0].VecEvalReal(b.ctx, input, buf)
+	if err != nil {
+		return err
+	}
+
+	result.ResizeInt64(n, false)
+	i64s := result.Int64s()
+
+	for i := 0; i < n; i++ {
+		isNull := buf.IsNull(i)
+		val := buf.GetFloat64(i)
+
+		sessVars := b.ctx.GetSessionVars()
+		if isNull || val < 0 {
+			if sessVars.StrictSQLMode {
+				return errIncorrectArgs.GenWithStackByArgs("sleep")
+			}
+			err := errIncorrectArgs.GenWithStackByArgs("sleep")
+			sessVars.StmtCtx.AppendWarning(err)
+			continue
+		}
+
+		if val > math.MaxFloat64/float64(time.Second.Nanoseconds()) {
+			return errIncorrectArgs.GenWithStackByArgs("sleep")
+		}
+
+		if isKilled := doSleep(val, sessVars); isKilled {
+			for j := i; j < n; j++ {
+				i64s[j] = 1
+			}
+			return nil
+		}
+	}
+
+	return nil
+}
+
+func doSleep(secs float64, sessVars *variable.SessionVars) (isKilled bool) {
+	if secs <= 0.0 {
+		return false
+	}
+	dur := time.Duration(secs * float64(time.Second.Nanoseconds()))
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	timer := time.NewTimer(dur)
+	for {
+		select {
+		case <-ticker.C:
+			if atomic.CompareAndSwapUint32(&sessVars.Killed, 1, 0) {
+				timer.Stop()
+				return true
+			}
+		case <-timer.C:
+			return false
+		}
+	}
 }
 
 func (b *builtinIsIPv4MappedSig) vectorized() bool {

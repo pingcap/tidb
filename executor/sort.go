@@ -103,7 +103,7 @@ func (e *SortExec) Open(ctx context.Context) error {
 
 	// To avoid duplicated initialization for TopNExec.
 	if e.memTracker == nil {
-		e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaSort)
+		e.memTracker = memory.NewTracker(e.id, -1)
 		e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 		e.diskTracker = memory.NewTracker(e.id, -1)
 		e.diskTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.DiskTracker)
@@ -249,6 +249,8 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 			e.generatePartition()
 		}
 		e.rowChunks.SetOnExceededCallback(onExceededCallback)
+		e.rowChunks.GetDiskTracker().AttachTo(e.diskTracker)
+		e.rowChunks.GetDiskTracker().SetLabel(rowChunksLabel)
 	}
 	for {
 		chk := newFirstChunk(e.children[0])
@@ -269,6 +271,8 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 			e.rowChunks.GetMemTracker().SetLabel(rowChunksLabel)
 			e.rowChunks.SetOnExceededCallback(onExceededCallback)
 			e.spillAction.ResetOnceAndSetRowContainer(e.rowChunks)
+			e.rowChunks.GetDiskTracker().AttachTo(e.diskTracker)
+			e.rowChunks.GetDiskTracker().SetLabel(rowChunksLabel)
 		}
 	}
 	if e.rowChunks.NumRow() > 0 {
@@ -386,7 +390,7 @@ func (h *topNChunkHeap) Swap(i, j int) {
 
 // Open implements the Executor Open interface.
 func (e *TopNExec) Open(ctx context.Context) error {
-	e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaTopn)
+	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	return e.SortExec.Open(ctx)
 }

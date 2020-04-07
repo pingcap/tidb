@@ -305,9 +305,11 @@ func (a *aggregationPushDownSolver) pushAggCrossUnion(agg *LogicalAggregation, u
 	// this will cause error during executor phase.
 	for _, key := range unionChild.Schema().Keys {
 		if tmpSchema.ColumnsIndices(key) != nil {
-			proj := a.convertAggToProj(newAgg)
-			proj.SetChildren(unionChild)
-			return proj
+			if ok, proj := ConvertAggToProj(newAgg, newAgg.schema); ok {
+				proj.SetChildren(unionChild)
+				return proj
+			}
+			break
 		}
 	}
 	newAgg.SetChildren(unionChild)

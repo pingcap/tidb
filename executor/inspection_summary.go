@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/meta"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
@@ -34,6 +33,7 @@ type inspectionSummaryRetriever struct {
 	retrieved bool
 	table     *model.TableInfo
 	extractor *plannercore.InspectionSummaryTableExtractor
+	timeRange plannercore.QueryTimeRange
 }
 
 // inspectionSummaryRules is used to maintain
@@ -46,9 +46,9 @@ var inspectionSummaryRules = map[string][]string{
 		"tidb_ops_internal",
 		"tidb_ops_statement",
 		"tidb_failed_query_opm",
-		"tidb_slow_query_time",
-		"tidb_slow_query_cop_wait_time",
-		"tidb_slow_query_cop_process_time",
+		"tidb_slow_query_duration",
+		"tidb_slow_query_cop_wait_duration",
+		"tidb_slow_query_cop_process_duration",
 	},
 	"wait-events": {
 		"tidb_get_token_duration",
@@ -73,20 +73,17 @@ var inspectionSummaryRules = map[string][]string{
 		"pd_client_cmd_duration",
 		"tikv_grpc_messge_duration",
 		"tikv_average_grpc_messge_duration",
-		"tikv_channel_full_total",
+		"tikv_channel_full",
 		"tikv_scheduler_is_busy",
 		"tikv_coprocessor_is_busy",
 		"tikv_engine_write_stall",
 		"tikv_apply_log_avg_duration",
 		"tikv_apply_log_duration",
-		"tikv_apply_log_duration_per_server",
 		"tikv_append_log_avg_duration",
 		"tikv_append_log_duration",
-		"tikv_append_log_duration_per_server",
 		"tikv_commit_log_avg_duration",
 		"tikv_commit_log_duration",
-		"tikv_commit_log_duration_per_server",
-		"tikv_process_duration_per_server",
+		"tikv_process_duration",
 		"tikv_propose_wait_duration",
 		"tikv_propose_avg_wait_duration",
 		"tikv_apply_wait_duration",
@@ -171,14 +168,13 @@ var inspectionSummaryRules = map[string][]string{
 		"tikv_cop_request_duration",
 		"tikv_cop_request_durations",
 		"tikv_cop_scan_details",
-		"tikv_cop_total_dag_executors",
-		"tikv_cop_total_dag_requests",
-		"tikv_cop_total_kv_cursor_operations",
-		"tikv_cop_total_request_errors",
-		"tikv_cop_total_requests",
-		"tikv_cop_total_response_size",
+		"tikv_cop_dag_executors_ops",
+		"tikv_cop_dag_requests_ops",
+		"tikv_cop_scan_keys_num",
+		"tikv_cop_requests_ops",
+		"tikv_cop_total_response_size_per_seconds",
 		"tikv_cop_total_rocksdb_perf_statistics",
-		"tikv_channel_full_total",
+		"tikv_channel_full",
 		"tikv_engine_avg_get_duration",
 		"tikv_engine_avg_seek_duration",
 		"tikv_handle_snapshot_duration",
@@ -239,19 +235,16 @@ var inspectionSummaryRules = map[string][]string{
 		"tikv_scheduler_pending_commands",
 		"tikv_scheduler_priority_commands",
 		"tikv_scheduler_scan_details",
-		"tikv_scheduler_stage_total",
+		"tikv_scheduler_stage",
 		"tikv_scheduler_writing_bytes",
 		"tikv_propose_avg_wait_duration",
 		"tikv_propose_wait_duration",
 		"tikv_append_log_avg_duration",
-		"tikv_append_log_duration_per_server",
 		"tikv_append_log_duration",
 		"tikv_commit_log_avg_duration",
-		"tikv_commit_log_duration_per_server",
 		"tikv_commit_log_duration",
 		"tikv_apply_avg_wait_duration",
 		"tikv_apply_log_avg_duration",
-		"tikv_apply_log_duration_per_server",
 		"tikv_apply_log_duration",
 		"tikv_apply_wait_duration",
 		"tikv_engine_wal_sync_operations",
@@ -291,8 +284,6 @@ var inspectionSummaryRules = map[string][]string{
 		"tidb_gc_delete_range_task_status",
 		"tidb_gc_duration",
 		"tidb_gc_fail_opm",
-		"tidb_gc_interval",
-		"tidb_gc_lifetime",
 		"tidb_gc_push_task_duration",
 		"tidb_gc_too_many_locks_opm",
 		"tidb_gc_worker_action_opm",
@@ -307,7 +298,7 @@ var inspectionSummaryRules = map[string][]string{
 		"tikv_gc_tasks_avg_duration",
 		"tikv_gc_tasks_duration",
 		"tikv_gc_too_busy",
-		"tikv_gc_total_tasks",
+		"tikv_gc_tasks_ops",
 	},
 	"rocksdb": {
 		"tikv_compaction_duration",
@@ -355,7 +346,7 @@ var inspectionSummaryRules = map[string][]string{
 		"tikv_engine_write_stall",
 	},
 	"pd": {
-		"pd_balance_region_movement",
+		"pd_scheduler_balance_region",
 		"pd_balance_scheduler_status",
 		"pd_checker_event_count",
 		"pd_client_cmd_duration",
@@ -366,17 +357,16 @@ var inspectionSummaryRules = map[string][]string{
 		"pd_grpc_completed_commands_rate",
 		"pd_handle_request_duration",
 		"pd_handle_request_ops",
-		"pd_handle_requests_duration_avg",
-		"pd_handle_requests_duration",
+		"pd_handle_request_duration_avg",
 		"pd_handle_transactions_duration",
 		"pd_handle_transactions_rate",
 		"pd_hotspot_status",
 		"pd_label_distribution",
 		"pd_operator_finish_duration",
 		"pd_operator_step_finish_duration",
-		"pd_peer_round_trip_time_seconds",
+		"pd_peer_round_trip_duration",
 		"pd_region_health",
-		"pd_region_heartbeat_latency",
+		"pd_region_heartbeat_duration",
 		"pd_region_label_isolation_level",
 		"pd_region_syncer_status",
 		"pd_role",
@@ -399,17 +389,14 @@ var inspectionSummaryRules = map[string][]string{
 		"tikv_approximate_region_size_histogram",
 		"tikv_approximate_region_size",
 		"tikv_append_log_avg_duration",
-		"tikv_append_log_duration_per_server",
 		"tikv_append_log_duration",
 		"tikv_commit_log_avg_duration",
-		"tikv_commit_log_duration_per_server",
 		"tikv_commit_log_duration",
 		"tikv_apply_avg_wait_duration",
 		"tikv_apply_log_avg_duration",
-		"tikv_apply_log_duration_per_server",
 		"tikv_apply_log_duration",
 		"tikv_apply_wait_duration",
-		"tikv_process_duration_per_server",
+		"tikv_process_duration",
 		"tikv_process_handled",
 		"tikv_propose_avg_wait_duration",
 		"tikv_propose_wait_duration",
@@ -419,7 +406,7 @@ var inspectionSummaryRules = map[string][]string{
 		"tikv_raft_message_batch_size",
 		"tikv_raft_proposals_per_ready",
 		"tikv_raft_proposals",
-		"tikv_raft_sent_messages_per_server",
+		"tikv_raft_sent_messages",
 	},
 }
 
@@ -429,24 +416,26 @@ func (e *inspectionSummaryRetriever) retrieve(ctx context.Context, sctx sessionc
 	}
 	e.retrieved = true
 
-	rules := inspectionFilter{e.extractor.Rules}
-	names := inspectionFilter{e.extractor.MetricNames}
+	rules := inspectionFilter{set: e.extractor.Rules}
+	names := inspectionFilter{set: e.extractor.MetricNames}
+
+	condition := e.timeRange.Condition()
 	var finalRows [][]types.Datum
-	// TODO: support specify time range via SQL hint
 	for rule, tables := range inspectionSummaryRules {
-		if !rules.Exist(rule) {
+		if !rules.exist(rule) {
 			continue
 		}
 		for _, name := range tables {
 			if !names.enable(name) {
 				continue
 			}
-			def, ok := infoschema.MetricTableMap[name]
-			if !ok {
-				return nil, meta.ErrTableNotExists
+			def, found := infoschema.MetricTableMap[name]
+			if !found {
+				sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("metrics table: %s not found", name))
+				continue
 			}
 			cols := def.Labels
-			cond := ""
+			cond := condition
 			if def.Quantile > 0 {
 				cols = append(cols, "quantile")
 				if len(e.extractor.Quantiles) > 0 {
@@ -454,14 +443,14 @@ func (e *inspectionSummaryRetriever) retrieve(ctx context.Context, sctx sessionc
 					for i, q := range e.extractor.Quantiles {
 						qs[i] = fmt.Sprintf("%f", q)
 					}
-					cond = "where quantile in (" + strings.Join(qs, ",") + ")"
+					cond += " and quantile in (" + strings.Join(qs, ",") + ")"
 				} else {
-					cond = "where quantile=0.99"
+					cond += " and quantile=0.99"
 				}
 			}
 			var sql string
 			if len(cols) > 0 {
-				sql = fmt.Sprintf("select avg(value),min(value),max(value), `%s` from `%s`.`%s` %s group by `%[1]s` order by `%[1]s`",
+				sql = fmt.Sprintf("select avg(value),min(value),max(value),`%s` from `%s`.`%s` %s group by `%[1]s` order by `%[1]s`",
 					strings.Join(cols, "`,`"), util.MetricSchemaName.L, name, cond)
 			} else {
 				sql = fmt.Sprintf("select avg(value),min(value),max(value) from `%s`.`%s` %s",
@@ -491,7 +480,7 @@ func (e *inspectionSummaryRetriever) retrieve(ctx context.Context, sctx sessionc
 					}
 					labels = append(labels, val)
 				}
-				var quantile float64
+				var quantile interface{}
 				if def.Quantile > 0 {
 					quantile = row.GetFloat64(row.Len() - 1) // quantile will be the last column
 				}

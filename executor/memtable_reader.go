@@ -19,7 +19,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"math"
 	"net/http"
 	"sort"
 	"strings"
@@ -31,12 +30,14 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
 	"github.com/pingcap/log"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/sysutil"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/infoschema"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
@@ -61,12 +62,52 @@ type memTableRetriever interface {
 // MemTableReaderExec executes memTable information retrieving from the MemTable components
 type MemTableReaderExec struct {
 	baseExecutor
+	table     *model.TableInfo
 	retriever memTableRetriever
+	// cacheRetrieved is used to indicate whether has the parent executor retrieved
+	// from inspection cache in inspection mode.
+	cacheRetrieved bool
+}
+
+func (e *MemTableReaderExec) isInspectionCacheableTable(tblName string) bool {
+	switch tblName {
+	case strings.ToLower(infoschema.TableClusterConfig),
+		strings.ToLower(infoschema.TableClusterInfo),
+		strings.ToLower(infoschema.TableClusterSystemInfo),
+		strings.ToLower(infoschema.TableClusterLoad),
+		strings.ToLower(infoschema.TableClusterHardware):
+		return true
+	default:
+		return false
+	}
 }
 
 // Next implements the Executor Next interface.
 func (e *MemTableReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
-	rows, err := e.retriever.retrieve(ctx, e.ctx)
+	var (
+		rows [][]types.Datum
+		err  error
+	)
+
+	// The `InspectionTableCache` will be assigned in the begin of retrieving` and be
+	// cleaned at the end of retrieving, so nil represents currently in non-inspection mode.
+	if cache, tbl := e.ctx.GetSessionVars().InspectionTableCache, e.table.Name.L; cache != nil &&
+		e.isInspectionCacheableTable(tbl) {
+		// TODO: cached rows will be returned fully, we should refactor this part.
+		if !e.cacheRetrieved {
+			// Obtain data from cache first.
+			cached, found := cache[tbl]
+			if !found {
+				rows, err := e.retriever.retrieve(ctx, e.ctx)
+				cached = variable.TableSnapshot{Rows: rows, Err: err}
+				cache[tbl] = cached
+			}
+			e.cacheRetrieved = true
+			rows, err = cached.Rows, cached.Err
+		}
+	} else {
+		rows, err = e.retriever.retrieve(ctx, e.ctx)
+	}
 	if err != nil {
 		return err
 	}
@@ -138,9 +179,9 @@ func (e *clusterConfigRetriever) retrieve(_ context.Context, sctx sessionctx.Con
 				var url string
 				switch typ {
 				case "pd":
-					url = fmt.Sprintf("http://%s%s", statusAddr, pdapi.Config)
+					url = fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), statusAddr, pdapi.Config)
 				case "tikv", "tidb":
-					url = fmt.Sprintf("http://%s/config", statusAddr)
+					url = fmt.Sprintf("%s://%s/config", util.InternalHTTPSchema(), statusAddr)
 				default:
 					ch <- result{err: errors.Errorf("unknown node type: %s(%s)", typ, address)}
 					return
@@ -152,7 +193,7 @@ func (e *clusterConfigRetriever) retrieve(_ context.Context, sctx sessionctx.Con
 					return
 				}
 				req.Header.Add("PD-Allow-follower-handle", "true")
-				resp, err := http.DefaultClient.Do(req)
+				resp, err := util.InternalHTTPClient().Do(req)
 				if err != nil {
 					ch <- result{err: errors.Trace(err)}
 					return
@@ -248,14 +289,15 @@ func (e *clusterServerInfoRetriever) retrieve(ctx context.Context, sctx sessionc
 	finalRows := make([][]types.Datum, 0, len(serversInfo)*10)
 	for i, srv := range serversInfo {
 		address := srv.Address
+		remote := address
 		if srv.ServerType == "tidb" {
-			address = srv.StatusAddr
+			remote = srv.StatusAddr
 		}
 		wg.Add(1)
-		go func(index int, address, serverTP string) {
+		go func(index int, remote, address, serverTP string) {
 			util.WithRecovery(func() {
 				defer wg.Done()
-				items, err := getServerInfoByGRPC(ctx, address, infoTp)
+				items, err := getServerInfoByGRPC(ctx, remote, infoTp)
 				if err != nil {
 					ch <- result{idx: index, err: err}
 					return
@@ -263,7 +305,7 @@ func (e *clusterServerInfoRetriever) retrieve(ctx context.Context, sctx sessionc
 				partRows := serverInfoItemToRows(items, serverTP, address)
 				ch <- result{idx: index, rows: partRows}
 			}, nil)
-		}(i, address, srv.ServerType)
+		}(i, remote, address, srv.ServerType)
 	}
 	wg.Wait()
 	close(ch)
@@ -415,7 +457,7 @@ func (h *logResponseHeap) Pop() interface{} {
 	return x
 }
 
-func (e *clusterLogRetriever) startRetrieving(ctx context.Context, sctx sessionctx.Context) ([]chan logStreamResult, error) {
+func (e *clusterLogRetriever) initialize(ctx context.Context, sctx sessionctx.Context) ([]chan logStreamResult, error) {
 	isFailpointTestModeSkipCheck := false
 	serversInfo, err := infoschema.GetClusterServerInfo(sctx)
 	failpoint.Inject("mockClusterLogServerInfo", func(val failpoint.Value) {
@@ -436,29 +478,13 @@ func (e *clusterLogRetriever) startRetrieving(ctx context.Context, sctx sessionc
 	nodeTypes := e.extractor.NodeTypes
 	serversInfo = filterClusterServerInfo(serversInfo, nodeTypes, instances)
 
-	// gRPC options
-	opt := grpc.WithInsecure()
-	security := config.GetGlobalConfig().Security
-	if len(security.ClusterSSLCA) != 0 {
-		tlsConfig, err := security.ToTLSConfig()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		opt = grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig))
-	}
-
 	var levels []diagnosticspb.LogLevel
 	for l := range e.extractor.LogLevels {
 		levels = append(levels, sysutil.ParseLogLevel(l))
 	}
 
-	startTime := e.extractor.StartTime
-	endTime := e.extractor.EndTime
+	startTime, endTime := e.extractor.GetTimeRange(isFailpointTestModeSkipCheck)
 	patterns := e.extractor.Patterns
-
-	if endTime == 0 {
-		endTime = math.MaxInt64
-	}
 
 	// There is no performance issue to check this variable because it will
 	// be eliminated in non-failpoint mode.
@@ -468,16 +494,6 @@ func (e *clusterLogRetriever) startRetrieving(ctx context.Context, sctx sessionc
 		if len(patterns) == 0 && len(levels) == 0 && len(instances) == 0 && len(nodeTypes) == 0 {
 			return nil, errors.New("denied to scan full logs (use `SELECT * FROM cluster_log WHERE message LIKE '%'` explicitly if intentionally)")
 		}
-
-		// Just search the recent half an hour logs if the user doesn't specify the start time
-		const defaultSearchLogDuration = 30 * time.Minute / time.Millisecond
-		if startTime == 0 {
-			if endTime == math.MaxInt64 {
-				startTime = time.Now().UnixNano()/int64(time.Millisecond) - int64(defaultSearchLogDuration)
-			} else {
-				startTime = endTime - int64(defaultSearchLogDuration)
-			}
-		}
 	}
 
 	req := &diagnosticspb.SearchLogRequest{
@@ -485,6 +501,25 @@ func (e *clusterLogRetriever) startRetrieving(ctx context.Context, sctx sessionc
 		EndTime:   endTime,
 		Levels:    levels,
 		Patterns:  patterns,
+	}
+
+	return e.startRetrieving(ctx, sctx, serversInfo, req)
+}
+
+func (e *clusterLogRetriever) startRetrieving(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	serversInfo []infoschema.ServerInfo,
+	req *diagnosticspb.SearchLogRequest) ([]chan logStreamResult, error) {
+	// gRPC options
+	opt := grpc.WithInsecure()
+	security := config.GetGlobalConfig().Security
+	if len(security.ClusterSSLCA) != 0 {
+		tlsConfig, err := security.ToTLSConfig()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		opt = grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig))
 	}
 
 	// The retrieve progress may be abort
@@ -506,7 +541,7 @@ func (e *clusterLogRetriever) startRetrieving(ctx context.Context, sctx sessionc
 			util.WithRecovery(func() {
 				defer close(ch)
 
-				// The TiDB provide diagnostics service via status address
+				// The TiDB provides diagnostics service via status address
 				remote := address
 				if serverType == "tidb" {
 					remote = statusAddr
@@ -531,10 +566,19 @@ func (e *clusterLogRetriever) startRetrieving(ctx context.Context, sctx sessionc
 						return
 					}
 					if err != nil {
-						ch <- logStreamResult{addr: address, typ: serverType, err: err}
+						select {
+						case ch <- logStreamResult{addr: address, typ: serverType, err: err}:
+						case <-ctx.Done():
+						}
 						return
 					}
-					ch <- logStreamResult{next: ch, addr: address, typ: serverType, messages: res.Messages}
+
+					result := logStreamResult{next: ch, addr: address, typ: serverType, messages: res.Messages}
+					select {
+					case ch <- result:
+					case <-ctx.Done():
+						return
+					}
 				}
 			}, nil)
 		}(ch, typ, address, statusAddr)
@@ -550,7 +594,7 @@ func (e *clusterLogRetriever) retrieve(ctx context.Context, sctx sessionctx.Cont
 
 	if !e.retrieving {
 		e.retrieving = true
-		results, err := e.startRetrieving(ctx, sctx)
+		results, err := e.initialize(ctx, sctx)
 		if err != nil {
 			e.isDrained = true
 			return nil, err
@@ -600,7 +644,7 @@ func (e *clusterLogRetriever) retrieve(ctx context.Context, sctx sessionctx.Cont
 		}
 	}
 
-	// All stream are draied
+	// All streams are drained
 	e.isDrained = e.heap.Len() == 0
 
 	return finalRows, nil

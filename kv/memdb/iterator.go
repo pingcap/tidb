@@ -1,4 +1,4 @@
-// Copyright 2019 PingCAP, Inc.
+// Copyright 2020 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -13,20 +13,22 @@
 
 package memdb
 
-import "unsafe"
+import (
+	"unsafe"
+)
 
 // Iterator iterates the entries in the DB.
 type Iterator struct {
-	db   *DB
+	sb   *Sandbox
 	curr *node
 	key  []byte
 	val  []byte
 }
 
 // NewIterator returns a new Iterator for the lock store.
-func (db *DB) NewIterator() Iterator {
+func (sb *Sandbox) NewIterator() Iterator {
 	return Iterator{
-		db: db,
+		sb: sb,
 	}
 }
 
@@ -45,7 +47,7 @@ func (it *Iterator) Value() []byte {
 
 // Next moves the iterator to the next entry.
 func (it *Iterator) Next() {
-	it.changeToAddr(it.curr.nexts[0])
+	it.changeToAddr(it.curr.nexts(0))
 }
 
 // Prev moves the iterator to the previous entry.
@@ -55,31 +57,32 @@ func (it *Iterator) Prev() {
 
 // Seek locates the iterator to the first entry with a key >= seekKey.
 func (it *Iterator) Seek(seekKey []byte) {
-	node, nodeData, _ := it.db.findGreaterEqual(seekKey) // find >=.
+	node, nodeData, _ := it.sb.findGreaterEqual(seekKey) // find >=.
 	it.updateState(node, nodeData)
 }
 
 // SeekForPrev locates the iterator to the last entry with key <= target.
 func (it *Iterator) SeekForPrev(target []byte) {
-	node, nodeData, _ := it.db.findLess(target, true) // find <=.
+	node, nodeData, _ := it.sb.findLess(target, true) // find <=.
 	it.updateState(node, nodeData)
 }
 
 // SeekForExclusivePrev locates the iterator to the last entry with key < target.
 func (it *Iterator) SeekForExclusivePrev(target []byte) {
-	node, nodeData, _ := it.db.findLess(target, false)
+	node, nodeData, _ := it.sb.findLess(target, false)
 	it.updateState(node, nodeData)
 }
 
 // SeekToFirst locates the iterator to the first entry.
 func (it *Iterator) SeekToFirst() {
-	node, nodeData := it.db.getNext(it.db.head.node, 0)
+	head := it.sb.getHead()
+	node, nodeData := head.getNext(it.sb.arena, 0)
 	it.updateState(node, nodeData)
 }
 
 // SeekToLast locates the iterator to the last entry.
 func (it *Iterator) SeekToLast() {
-	node, nodeData := it.db.findLast()
+	node, nodeData := it.sb.findLast()
 	it.updateState(node, nodeData)
 }
 
@@ -95,7 +98,7 @@ func (it *Iterator) changeToAddr(addr arenaAddr) {
 	var data []byte
 	var n *node
 	if !addr.isNull() {
-		data = it.db.arena.getFrom(addr)
+		data = it.sb.arena.getFrom(addr)
 		n = (*node)(unsafe.Pointer(&data[0]))
 	}
 	it.updateState(n, data)

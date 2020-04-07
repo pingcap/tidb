@@ -37,10 +37,10 @@ func (p *basePhysicalPlan) StatsCount() float64 {
 func (p *LogicalTableDual) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (*property.StatsInfo, error) {
 	profile := &property.StatsInfo{
 		RowCount:    float64(p.RowCount),
-		Cardinality: make([]float64, selfSchema.Len()),
+		Cardinality: make(map[int64]float64, selfSchema.Len()),
 	}
-	for i := range profile.Cardinality {
-		profile.Cardinality[i] = float64(p.RowCount)
+	for _, col := range selfSchema.Columns {
+		profile.Cardinality[col.UniqueID] = float64(p.RowCount)
 	}
 	p.stats = profile
 	return p.stats, nil
@@ -51,12 +51,12 @@ func (p *LogicalMemTable) DeriveStats(childStats []*property.StatsInfo, selfSche
 	statsTable := statistics.PseudoTable(p.TableInfo)
 	stats := &property.StatsInfo{
 		RowCount:     float64(statsTable.Count),
-		Cardinality:  make([]float64, len(p.TableInfo.Columns)),
+		Cardinality:  make(map[int64]float64, len(p.TableInfo.Columns)),
 		HistColl:     statsTable.GenerateHistCollFromColumnInfo(p.TableInfo.Columns, p.schema.Columns),
 		StatsVersion: statistics.PseudoVersion,
 	}
-	for i := range p.TableInfo.Columns {
-		stats.Cardinality[i] = float64(statsTable.Count)
+	for _, col := range selfSchema.Columns {
+		stats.Cardinality[col.UniqueID] = float64(statsTable.Count)
 	}
 	p.stats = stats
 	return p.stats, nil
@@ -65,17 +65,17 @@ func (p *LogicalMemTable) DeriveStats(childStats []*property.StatsInfo, selfSche
 // DeriveStats implement LogicalPlan DeriveStats interface.
 func (p *LogicalShow) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (*property.StatsInfo, error) {
 	// A fake count, just to avoid panic now.
-	p.stats = getFakeStats(selfSchema.Len())
+	p.stats = getFakeStats(selfSchema)
 	return p.stats, nil
 }
 
-func getFakeStats(length int) *property.StatsInfo {
+func getFakeStats(schema *expression.Schema) *property.StatsInfo {
 	profile := &property.StatsInfo{
 		RowCount:    1,
-		Cardinality: make([]float64, length),
+		Cardinality: make(map[int64]float64, schema.Len()),
 	}
-	for i := range profile.Cardinality {
-		profile.Cardinality[i] = 1
+	for _, col := range schema.Columns {
+		profile.Cardinality[col.UniqueID] = 1
 	}
 	return profile
 }
@@ -83,7 +83,7 @@ func getFakeStats(length int) *property.StatsInfo {
 // DeriveStats implement LogicalPlan DeriveStats interface.
 func (p *LogicalShowDDLJobs) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (*property.StatsInfo, error) {
 	// A fake count, just to avoid panic now.
-	p.stats = getFakeStats(selfSchema.Len())
+	p.stats = getFakeStats(selfSchema)
 	return p.stats, nil
 }
 
@@ -116,10 +116,10 @@ func (p *baseLogicalPlan) DeriveStats(childStats []*property.StatsInfo, selfSche
 	}
 	profile := &property.StatsInfo{
 		RowCount:    float64(1),
-		Cardinality: make([]float64, selfSchema.Len()),
+		Cardinality: make(map[int64]float64, selfSchema.Len()),
 	}
-	for i := range profile.Cardinality {
-		profile.Cardinality[i] = float64(1)
+	for _, col := range selfSchema.Columns {
+		profile.Cardinality[col.UniqueID] = 1
 	}
 	p.stats = profile
 	return profile, nil
@@ -142,17 +142,20 @@ func (ds *DataSource) initStats() {
 	if ds.TableStats != nil {
 		return
 	}
+	if ds.statisticTable == nil {
+		ds.statisticTable = getStatsTable(ds.ctx, ds.tableInfo, ds.table.Meta().ID)
+	}
 	tableStats := &property.StatsInfo{
 		RowCount:     float64(ds.statisticTable.Count),
-		Cardinality:  make([]float64, len(ds.Columns)),
+		Cardinality:  make(map[int64]float64, ds.schema.Len()),
 		HistColl:     ds.statisticTable.GenerateHistCollFromColumnInfo(ds.Columns, ds.schema.Columns),
 		StatsVersion: ds.statisticTable.Version,
 	}
 	if ds.statisticTable.Pseudo {
 		tableStats.StatsVersion = statistics.PseudoVersion
 	}
-	for i, col := range ds.Columns {
-		tableStats.Cardinality[i] = ds.getColumnNDV(col.ID)
+	for _, col := range ds.schema.Columns {
+		tableStats.Cardinality[col.UniqueID] = ds.getColumnNDV(col.ID)
 	}
 	ds.TableStats = tableStats
 	ds.TblColHists = ds.statisticTable.ID2UniqueID(ds.TblCols)
@@ -344,11 +347,13 @@ func (ds *DataSource) generateIndexMergeOrPaths() {
 
 // isInIndexMergeHints checks whether current index or primary key is in IndexMerge hints.
 func (ds *DataSource) isInIndexMergeHints(name string) bool {
-	if ds.indexMergeHints == nil ||
-		(len(ds.indexMergeHints) == 1 && ds.indexMergeHints[0].IndexNames == nil) {
+	if ds.indexMergeHints == nil {
 		return true
 	}
 	for _, hint := range ds.indexMergeHints {
+		if hint.IndexNames == nil {
+			return true
+		}
 		for _, index := range hint.IndexNames {
 			if name == index.L {
 				return true
@@ -458,12 +463,12 @@ func (p *LogicalSelection) DeriveStats(childStats []*property.StatsInfo, selfSch
 // DeriveStats implement LogicalPlan DeriveStats interface.
 func (p *LogicalUnionAll) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (*property.StatsInfo, error) {
 	p.stats = &property.StatsInfo{
-		Cardinality: make([]float64, selfSchema.Len()),
+		Cardinality: make(map[int64]float64, selfSchema.Len()),
 	}
 	for _, childProfile := range childStats {
 		p.stats.RowCount += childProfile.RowCount
-		for i := range p.stats.Cardinality {
-			p.stats.Cardinality[i] += childProfile.Cardinality[i]
+		for _, col := range selfSchema.Columns {
+			p.stats.Cardinality[col.UniqueID] += childProfile.Cardinality[col.UniqueID]
 		}
 	}
 	return p.stats, nil
@@ -472,10 +477,10 @@ func (p *LogicalUnionAll) DeriveStats(childStats []*property.StatsInfo, selfSche
 func deriveLimitStats(childProfile *property.StatsInfo, limitCount float64) *property.StatsInfo {
 	stats := &property.StatsInfo{
 		RowCount:    math.Min(limitCount, childProfile.RowCount),
-		Cardinality: make([]float64, len(childProfile.Cardinality)),
+		Cardinality: make(map[int64]float64, len(childProfile.Cardinality)),
 	}
-	for i := range stats.Cardinality {
-		stats.Cardinality[i] = math.Min(childProfile.Cardinality[i], stats.RowCount)
+	for id, c := range childProfile.Cardinality {
+		stats.Cardinality[id] = math.Min(c, stats.RowCount)
 	}
 	return stats
 }
@@ -503,7 +508,8 @@ func getCardinality(cols []*expression.Column, schema *expression.Schema, profil
 	}
 	for _, idx := range indices {
 		// It is a very elementary estimation.
-		cardinality = math.Max(cardinality, profile.Cardinality[idx])
+		col := schema.Columns[idx]
+		cardinality = math.Max(cardinality, profile.Cardinality[col.UniqueID])
 	}
 	return cardinality
 }
@@ -513,11 +519,11 @@ func (p *LogicalProjection) DeriveStats(childStats []*property.StatsInfo, selfSc
 	childProfile := childStats[0]
 	p.stats = &property.StatsInfo{
 		RowCount:    childProfile.RowCount,
-		Cardinality: make([]float64, len(p.Exprs)),
+		Cardinality: make(map[int64]float64, len(p.Exprs)),
 	}
 	for i, expr := range p.Exprs {
 		cols := expression.ExtractColumns(expr)
-		p.stats.Cardinality[i] = getCardinality(cols, childSchema[0], childProfile)
+		p.stats.Cardinality[selfSchema.Columns[i].UniqueID] = getCardinality(cols, childSchema[0], childProfile)
 	}
 	return p.stats, nil
 }
@@ -533,11 +539,11 @@ func (la *LogicalAggregation) DeriveStats(childStats []*property.StatsInfo, self
 	cardinality := getCardinality(gbyCols, childSchema[0], childProfile)
 	la.stats = &property.StatsInfo{
 		RowCount:    cardinality,
-		Cardinality: make([]float64, selfSchema.Len()),
+		Cardinality: make(map[int64]float64, selfSchema.Len()),
 	}
 	// We cannot estimate the Cardinality for every output, so we use a conservative strategy.
-	for i := range la.stats.Cardinality {
-		la.stats.Cardinality[i] = cardinality
+	for _, col := range selfSchema.Columns {
+		la.stats.Cardinality[col.UniqueID] = cardinality
 	}
 	la.inputCount = childProfile.RowCount
 	return la.stats, nil
@@ -566,20 +572,22 @@ func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 	if p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin {
 		p.stats = &property.StatsInfo{
 			RowCount:    leftProfile.RowCount * SelectionFactor,
-			Cardinality: make([]float64, len(leftProfile.Cardinality)),
+			Cardinality: make(map[int64]float64, len(leftProfile.Cardinality)),
 		}
-		for i := range p.stats.Cardinality {
-			p.stats.Cardinality[i] = leftProfile.Cardinality[i] * SelectionFactor
+		for id, c := range leftProfile.Cardinality {
+			p.stats.Cardinality[id] = c * SelectionFactor
 		}
 		return p.stats, nil
 	}
 	if p.JoinType == LeftOuterSemiJoin || p.JoinType == AntiLeftOuterSemiJoin {
 		p.stats = &property.StatsInfo{
 			RowCount:    leftProfile.RowCount,
-			Cardinality: make([]float64, selfSchema.Len()),
+			Cardinality: make(map[int64]float64, selfSchema.Len()),
 		}
-		copy(p.stats.Cardinality, leftProfile.Cardinality)
-		p.stats.Cardinality[len(p.stats.Cardinality)-1] = 2.0
+		for id, c := range leftProfile.Cardinality {
+			p.stats.Cardinality[id] = c
+		}
+		p.stats.Cardinality[selfSchema.Columns[selfSchema.Len()-1].UniqueID] = 2.0
 		return p.stats, nil
 	}
 	count := p.EqualCondOutCnt
@@ -588,11 +596,12 @@ func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 	} else if p.JoinType == RightOuterJoin {
 		count = math.Max(count, rightProfile.RowCount)
 	}
-	cardinality := make([]float64, 0, selfSchema.Len())
-	cardinality = append(cardinality, leftProfile.Cardinality...)
-	cardinality = append(cardinality, rightProfile.Cardinality...)
-	for i := range cardinality {
-		cardinality[i] = math.Min(cardinality[i], count)
+	cardinality := make(map[int64]float64, selfSchema.Len())
+	for id, c := range leftProfile.Cardinality {
+		cardinality[id] = math.Min(c, count)
+	}
+	for id, c := range rightProfile.Cardinality {
+		cardinality[id] = math.Min(c, count)
 	}
 	p.stats = &property.StatsInfo{
 		RowCount:    count,
@@ -626,34 +635,36 @@ func (la *LogicalApply) DeriveStats(childStats []*property.StatsInfo, selfSchema
 	leftProfile := childStats[0]
 	la.stats = &property.StatsInfo{
 		RowCount:    leftProfile.RowCount,
-		Cardinality: make([]float64, selfSchema.Len()),
+		Cardinality: make(map[int64]float64, selfSchema.Len()),
 	}
-	copy(la.stats.Cardinality, leftProfile.Cardinality)
+	for id, c := range leftProfile.Cardinality {
+		la.stats.Cardinality[id] = c
+	}
 	if la.JoinType == LeftOuterSemiJoin || la.JoinType == AntiLeftOuterSemiJoin {
-		la.stats.Cardinality[len(la.stats.Cardinality)-1] = 2.0
+		la.stats.Cardinality[selfSchema.Columns[selfSchema.Len()-1].UniqueID] = 2.0
 	} else {
 		for i := childSchema[0].Len(); i < selfSchema.Len(); i++ {
-			la.stats.Cardinality[i] = leftProfile.RowCount
+			la.stats.Cardinality[selfSchema.Columns[i].UniqueID] = leftProfile.RowCount
 		}
 	}
 	return la.stats, nil
 }
 
 // Exists and MaxOneRow produce at most one row, so we set the RowCount of stats one.
-func getSingletonStats(len int) *property.StatsInfo {
+func getSingletonStats(schema *expression.Schema) *property.StatsInfo {
 	ret := &property.StatsInfo{
 		RowCount:    1.0,
-		Cardinality: make([]float64, len),
+		Cardinality: make(map[int64]float64, schema.Len()),
 	}
-	for i := 0; i < len; i++ {
-		ret.Cardinality[i] = 1
+	for _, col := range schema.Columns {
+		ret.Cardinality[col.UniqueID] = 1
 	}
 	return ret
 }
 
 // DeriveStats implement LogicalPlan DeriveStats interface.
 func (p *LogicalMaxOneRow) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (*property.StatsInfo, error) {
-	p.stats = getSingletonStats(selfSchema.Len())
+	p.stats = getSingletonStats(selfSchema)
 	return p.stats, nil
 }
 
@@ -662,15 +673,15 @@ func (p *LogicalWindow) DeriveStats(childStats []*property.StatsInfo, selfSchema
 	childProfile := childStats[0]
 	p.stats = &property.StatsInfo{
 		RowCount:    childProfile.RowCount,
-		Cardinality: make([]float64, selfSchema.Len()),
+		Cardinality: make(map[int64]float64, selfSchema.Len()),
 	}
 	childLen := selfSchema.Len() - len(p.WindowFuncDescs)
 	for i := 0; i < childLen; i++ {
-		colIdx := childSchema[0].ColumnIndex(selfSchema.Columns[i])
-		p.stats.Cardinality[i] = childProfile.Cardinality[colIdx]
+		id := selfSchema.Columns[i].UniqueID
+		p.stats.Cardinality[id] = childProfile.Cardinality[id]
 	}
 	for i := childLen; i < selfSchema.Len(); i++ {
-		p.stats.Cardinality[i] = childProfile.RowCount
+		p.stats.Cardinality[selfSchema.Columns[i].UniqueID] = childProfile.RowCount
 	}
 	return p.stats, nil
 }

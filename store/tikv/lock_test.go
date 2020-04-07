@@ -14,7 +14,6 @@
 package tikv
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"math"
@@ -61,20 +60,16 @@ func (s *testLockSuite) lockKey(c *C, key, value, primaryKey, primaryValue []byt
 	c.Assert(err, IsNil)
 	tpc, err := newTwoPhaseCommitterWithInit(txn, 0)
 	c.Assert(err, IsNil)
-	if bytes.Equal(key, primaryKey) {
-		tpc.keys = [][]byte{primaryKey}
-	} else {
-		tpc.keys = [][]byte{primaryKey, key}
-	}
+	tpc.primaryKey = primaryKey
 
 	ctx := context.Background()
-	err = tpc.prewriteKeys(NewBackoffer(ctx, PrewriteMaxBackoff), tpc.keys)
+	err = tpc.prewriteMutations(NewBackoffer(ctx, PrewriteMaxBackoff), tpc.mutations)
 	c.Assert(err, IsNil)
 
 	if commitPrimary {
 		tpc.commitTS, err = s.store.oracle.GetTimestamp(ctx)
 		c.Assert(err, IsNil)
-		err = tpc.commitKeys(NewBackoffer(ctx, CommitMaxBackoff), [][]byte{primaryKey})
+		err = tpc.commitMutations(NewBackoffer(ctx, CommitMaxBackoff), tpc.mutationsOfKeys([][]byte{primaryKey}))
 		c.Assert(err, IsNil)
 	}
 	return txn.startTS, tpc.commitTS
@@ -253,13 +248,13 @@ func (s *testLockSuite) TestTxnHeartBeat(c *C) {
 	s.prewriteTxn(c, txn.(*tikvTxn))
 
 	bo := NewBackoffer(context.Background(), PrewriteMaxBackoff)
-	newTTL, err := sendTxnHeartBeat(bo, s.store, []byte("key"), txn.StartTS(), 666)
+	newTTL, err := sendTxnHeartBeat(bo, s.store, []byte("key"), txn.StartTS(), 6666)
 	c.Assert(err, IsNil)
-	c.Assert(newTTL, Equals, uint64(666))
+	c.Assert(newTTL, Equals, uint64(6666))
 
-	newTTL, err = sendTxnHeartBeat(bo, s.store, []byte("key"), txn.StartTS(), 555)
+	newTTL, err = sendTxnHeartBeat(bo, s.store, []byte("key"), txn.StartTS(), 5555)
 	c.Assert(err, IsNil)
-	c.Assert(newTTL, Equals, uint64(666))
+	c.Assert(newTTL, Equals, uint64(6666))
 
 	lock := s.mustGetLock(c, []byte("key"))
 	status := TxnStatus{ttl: newTTL}
@@ -267,7 +262,7 @@ func (s *testLockSuite) TestTxnHeartBeat(c *C) {
 	err = newLockResolver(s.store).resolveLock(bo, lock, status, cleanRegions)
 	c.Assert(err, IsNil)
 
-	newTTL, err = sendTxnHeartBeat(bo, s.store, []byte("key"), txn.StartTS(), 666)
+	newTTL, err = sendTxnHeartBeat(bo, s.store, []byte("key"), txn.StartTS(), 6666)
 	c.Assert(err, NotNil)
 	c.Assert(newTTL, Equals, uint64(0))
 }
@@ -335,7 +330,7 @@ func (s *testLockSuite) TestCheckTxnStatusNoWait(c *C) {
 
 	// Only prewrite the secondary key to simulate a concurrent prewrite case:
 	// prewrite secondary regions success and prewrite the primary region is pending.
-	err = committer.prewriteKeys(NewBackoffer(context.Background(), PrewriteMaxBackoff), [][]byte{[]byte("second")})
+	err = committer.prewriteMutations(NewBackoffer(context.Background(), PrewriteMaxBackoff), committer.mutationsOfKeys([][]byte{[]byte("second")}))
 	c.Assert(err, IsNil)
 
 	oracle := s.store.GetOracle()
@@ -352,7 +347,7 @@ func (s *testLockSuite) TestCheckTxnStatusNoWait(c *C) {
 
 	errCh := make(chan error)
 	go func() {
-		errCh <- committer.prewriteKeys(NewBackoffer(context.Background(), PrewriteMaxBackoff), [][]byte{[]byte("key")})
+		errCh <- committer.prewriteMutations(NewBackoffer(context.Background(), PrewriteMaxBackoff), committer.mutationsOfKeys([][]byte{[]byte("key")}))
 	}()
 
 	lock := &Lock{
@@ -366,7 +361,7 @@ func (s *testLockSuite) TestCheckTxnStatusNoWait(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(status.ttl, Greater, uint64(0))
 	c.Assert(<-errCh, IsNil)
-	c.Assert(committer.cleanupKeys(bo, committer.keys), IsNil)
+	c.Assert(committer.cleanupMutations(bo, committer.mutations), IsNil)
 
 	// Call getTxnStatusFromLock to cover TxnNotFound and retry timeout.
 	startTS, err := oracle.GetTimestamp(context.Background())
@@ -395,7 +390,7 @@ func (s *testLockSuite) prewriteTxnWithTTL(c *C, txn *tikvTxn, ttl uint64) {
 		elapsed := time.Since(txn.startTime) / time.Millisecond
 		committer.lockTTL = uint64(elapsed) + ttl
 	}
-	err = committer.prewriteKeys(NewBackoffer(context.Background(), PrewriteMaxBackoff), committer.keys)
+	err = committer.prewriteMutations(NewBackoffer(context.Background(), PrewriteMaxBackoff), committer.mutations)
 	c.Assert(err, IsNil)
 }
 
@@ -435,7 +430,7 @@ func (s *testLockSuite) TestLockTTL(c *C) {
 	c.Assert(err, IsNil)
 	txn.Set(kv.Key("key"), []byte("value"))
 	time.Sleep(time.Millisecond)
-	s.prewriteTxnWithTTL(c, txn.(*tikvTxn), 1000)
+	s.prewriteTxnWithTTL(c, txn.(*tikvTxn), 3100)
 	l := s.mustGetLock(c, []byte("key"))
 	c.Assert(l.TTL >= defaultLockTTL, IsTrue)
 
@@ -492,9 +487,6 @@ func (s *testLockSuite) TestNewLockZeroTTL(c *C) {
 
 func init() {
 	// Speed up tests.
-	defaultLockTTL = 3
-	maxLockTTL = 120
-	ttlFactor = 6
 	oracleUpdateInterval = 2
 }
 

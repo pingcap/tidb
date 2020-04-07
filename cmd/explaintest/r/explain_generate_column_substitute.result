@@ -7,53 +7,53 @@ alter table t add index idx_c(c);
 alter table t add index idx_e(e);
 set @@sql_mode=""
 desc select * from t where a+1=3;
-id	count	task	operator info
-IndexLookUp_10	10.00	root	
-├─IndexScan_8	10.00	cop[tikv]	table:t, index:c, range:[3,3], keep order:false, stats:pseudo
-└─TableScan_9	10.00	cop[tikv]	table:t, keep order:false, stats:pseudo
+id	estRows	task	access object	operator info
+IndexLookUp_10	10.00	root		
+├─IndexRangeScan_8(Build)	10.00	cop[tikv]	table:t, index:idx_c(c)	range:[3,3], keep order:false, stats:pseudo
+└─TableRowIDScan_9(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t where a+1=3;
 a	b	c	e
 2	2.1	3	4.1
 desc select a+1 from t where a+1=3;
-id	count	task	operator info
-IndexReader_6	10.00	root	index:IndexScan_5
-└─IndexScan_5	10.00	cop[tikv]	table:t, index:c, range:[3,3], keep order:false, stats:pseudo
+id	estRows	task	access object	operator info
+IndexReader_6	10.00	root		index:IndexRangeScan_5
+└─IndexRangeScan_5	10.00	cop[tikv]	table:t, index:idx_c(c)	range:[3,3], keep order:false, stats:pseudo
 select a+1 from t where a+1=3;
 a+1
 3
 desc select c from t where a+1=3;
-id	count	task	operator info
-IndexReader_6	10.00	root	index:IndexScan_5
-└─IndexScan_5	10.00	cop[tikv]	table:t, index:c, range:[3,3], keep order:false, stats:pseudo
+id	estRows	task	access object	operator info
+IndexReader_6	10.00	root		index:IndexRangeScan_5
+└─IndexRangeScan_5	10.00	cop[tikv]	table:t, index:idx_c(c)	range:[3,3], keep order:false, stats:pseudo
 select c from t where a+1=3;
 c
 3
 desc select * from t where b+a=3;
-id	count	task	operator info
-IndexLookUp_10	10.00	root	
-├─IndexScan_8	10.00	cop[tikv]	table:t, index:e, range:[3,3], keep order:false, stats:pseudo
-└─TableScan_9	10.00	cop[tikv]	table:t, keep order:false, stats:pseudo
+id	estRows	task	access object	operator info
+IndexLookUp_10	10.00	root		
+├─IndexRangeScan_8(Build)	10.00	cop[tikv]	table:t, index:idx_e(e)	range:[3,3], keep order:false, stats:pseudo
+└─TableRowIDScan_9(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t where b+a=3;
 a	b	c	e
 1	2	2	3
 desc select b+a from t where b+a=3;
-id	count	task	operator info
-IndexReader_6	10.00	root	index:IndexScan_5
-└─IndexScan_5	10.00	cop[tikv]	table:t, index:e, range:[3,3], keep order:false, stats:pseudo
+id	estRows	task	access object	operator info
+IndexReader_6	10.00	root		index:IndexRangeScan_5
+└─IndexRangeScan_5	10.00	cop[tikv]	table:t, index:idx_e(e)	range:[3,3], keep order:false, stats:pseudo
 select b+a from t where b+a=3;
 b+a
 3
 desc select e from t where b+a=3;
-id	count	task	operator info
-IndexReader_6	10.00	root	index:IndexScan_5
-└─IndexScan_5	10.00	cop[tikv]	table:t, index:e, range:[3,3], keep order:false, stats:pseudo
+id	estRows	task	access object	operator info
+IndexReader_6	10.00	root		index:IndexRangeScan_5
+└─IndexRangeScan_5	10.00	cop[tikv]	table:t, index:idx_e(e)	range:[3,3], keep order:false, stats:pseudo
 select e from t where b+a=3;
 e
 3
 desc select a+1 from t where a+1 in (1, 2, 3);
-id	count	task	operator info
-IndexReader_6	30.00	root	index:IndexScan_5
-└─IndexScan_5	30.00	cop[tikv]	table:t, index:c, range:[1,1], [2,2], [3,3], keep order:false, stats:pseudo
+id	estRows	task	access object	operator info
+IndexReader_6	30.00	root		index:IndexRangeScan_5
+└─IndexRangeScan_5	30.00	cop[tikv]	table:t, index:idx_c(c)	range:[1,1], [2,2], [3,3], keep order:false, stats:pseudo
 select a+1 from t where a+1 in (1, 2, 3);
 a+1
 1
@@ -61,10 +61,10 @@ a+1
 2
 3
 desc select * from t where a+1 in (1, 2, 3);
-id	count	task	operator info
-IndexLookUp_10	30.00	root	
-├─IndexScan_8	30.00	cop[tikv]	table:t, index:c, range:[1,1], [2,2], [3,3], keep order:false, stats:pseudo
-└─TableScan_9	30.00	cop[tikv]	table:t, keep order:false, stats:pseudo
+id	estRows	task	access object	operator info
+IndexLookUp_10	30.00	root		
+├─IndexRangeScan_8(Build)	30.00	cop[tikv]	table:t, index:idx_c(c)	range:[1,1], [2,2], [3,3], keep order:false, stats:pseudo
+└─TableRowIDScan_9(Probe)	30.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t where a+1 in (1, 2, 3);
 a	b	c	e
 1	2	2	3
@@ -72,9 +72,9 @@ a	b	c	e
 0	0	1	0
 0	0	1	0
 desc select a+1 from t where a+1 between 1 and 4;
-id	count	task	operator info
-IndexReader_6	250.00	root	index:IndexScan_5
-└─IndexScan_5	250.00	cop[tikv]	table:t, index:c, range:[1,4], keep order:false, stats:pseudo
+id	estRows	task	access object	operator info
+IndexReader_6	250.00	root		index:IndexRangeScan_5
+└─IndexRangeScan_5	250.00	cop[tikv]	table:t, index:idx_c(c)	range:[1,4], keep order:false, stats:pseudo
 select a+1 from t where a+1 between 1 and 4;
 a+1
 1
@@ -82,10 +82,10 @@ a+1
 2
 3
 desc select * from t where a+1 between 1 and 4;
-id	count	task	operator info
-IndexLookUp_10	250.00	root	
-├─IndexScan_8	250.00	cop[tikv]	table:t, index:c, range:[1,4], keep order:false, stats:pseudo
-└─TableScan_9	250.00	cop[tikv]	table:t, keep order:false, stats:pseudo
+id	estRows	task	access object	operator info
+IndexLookUp_10	250.00	root		
+├─IndexRangeScan_8(Build)	250.00	cop[tikv]	table:t, index:idx_c(c)	range:[1,4], keep order:false, stats:pseudo
+└─TableRowIDScan_9(Probe)	250.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t where a+1 between 1 and 4;
 a	b	c	e
 1	2	2	3
@@ -93,11 +93,11 @@ a	b	c	e
 0	0	1	0
 0	0	1	0
 desc select * from t order by a+1;
-id	count	task	operator info
-Projection_13	10000.00	root	test.t.a, test.t.b, test.t.c, test.t.e
-└─IndexLookUp_12	10000.00	root	
-  ├─IndexScan_10	10000.00	cop[tikv]	table:t, index:c, range:[NULL,+inf], keep order:true, stats:pseudo
-  └─TableScan_11	10000.00	cop[tikv]	table:t, keep order:false, stats:pseudo
+id	estRows	task	access object	operator info
+Projection_13	10000.00	root		test.t.a, test.t.b, test.t.c, test.t.e
+└─IndexLookUp_12	10000.00	root		
+  ├─IndexFullScan_10(Build)	10000.00	cop[tikv]	table:t, index:idx_c(c)	keep order:true, stats:pseudo
+  └─TableRowIDScan_11(Probe)	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t order by a+1;
 a	b	c	e
 -1	-2	0	-3
@@ -108,9 +108,9 @@ a	b	c	e
 5	3	6	8
 5	-1	6	4
 desc select a+1 from t order by a+1;
-id	count	task	operator info
-IndexReader_13	10000.00	root	index:IndexScan_12
-└─IndexScan_12	10000.00	cop[tikv]	table:t, index:c, range:[NULL,+inf], keep order:true, stats:pseudo
+id	estRows	task	access object	operator info
+IndexReader_13	10000.00	root		index:IndexFullScan_12
+└─IndexFullScan_12	10000.00	cop[tikv]	table:t, index:idx_c(c)	keep order:true, stats:pseudo
 select a+1 from t order by a+1;
 a+1
 0
@@ -121,9 +121,9 @@ a+1
 6
 6
 desc select b+a from t order by b+a;
-id	count	task	operator info
-IndexReader_13	10000.00	root	index:IndexScan_12
-└─IndexScan_12	10000.00	cop[tikv]	table:t, index:e, range:[NULL,+inf], keep order:true, stats:pseudo
+id	estRows	task	access object	operator info
+IndexReader_13	10000.00	root		index:IndexFullScan_12
+└─IndexFullScan_12	10000.00	cop[tikv]	table:t, index:idx_e(e)	keep order:true, stats:pseudo
 select b+a from t order by b+a;
 b+a
 -3
@@ -134,29 +134,29 @@ b+a
 4.1
 8
 desc update t set a=1 where a+1 = 3;
-id	count	task	operator info
-Update_4	N/A	root	N/A
-└─IndexLookUp_11	10.00	root	
-  ├─IndexScan_9	10.00	cop[tikv]	table:t, index:c, range:[3,3], keep order:false, stats:pseudo
-  └─TableScan_10	10.00	cop[tikv]	table:t, keep order:false, stats:pseudo
+id	estRows	task	access object	operator info
+Update_4	N/A	root		N/A
+└─IndexLookUp_11	10.00	root		
+  ├─IndexRangeScan_9(Build)	10.00	cop[tikv]	table:t, index:idx_c(c)	range:[3,3], keep order:false, stats:pseudo
+  └─TableRowIDScan_10(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 desc update t set a=2, b = 3 where b+a = 3;
-id	count	task	operator info
-Update_4	N/A	root	N/A
-└─IndexLookUp_11	10.00	root	
-  ├─IndexScan_9	10.00	cop[tikv]	table:t, index:e, range:[3,3], keep order:false, stats:pseudo
-  └─TableScan_10	10.00	cop[tikv]	table:t, keep order:false, stats:pseudo
+id	estRows	task	access object	operator info
+Update_4	N/A	root		N/A
+└─IndexLookUp_11	10.00	root		
+  ├─IndexRangeScan_9(Build)	10.00	cop[tikv]	table:t, index:idx_e(e)	range:[3,3], keep order:false, stats:pseudo
+  └─TableRowIDScan_10(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 desc delete from t where a+1 = 3;
-id	count	task	operator info
-Delete_4	N/A	root	N/A
-└─IndexLookUp_11	10.00	root	
-  ├─IndexScan_9	10.00	cop[tikv]	table:t, index:c, range:[3,3], keep order:false, stats:pseudo
-  └─TableScan_10	10.00	cop[tikv]	table:t, keep order:false, stats:pseudo
+id	estRows	task	access object	operator info
+Delete_4	N/A	root		N/A
+└─IndexLookUp_11	10.00	root		
+  ├─IndexRangeScan_9(Build)	10.00	cop[tikv]	table:t, index:idx_c(c)	range:[3,3], keep order:false, stats:pseudo
+  └─TableRowIDScan_10(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 desc delete from t where b+a = 0;
-id	count	task	operator info
-Delete_4	N/A	root	N/A
-└─IndexLookUp_11	10.00	root	
-  ├─IndexScan_9	10.00	cop[tikv]	table:t, index:e, range:[0,0], keep order:false, stats:pseudo
-  └─TableScan_10	10.00	cop[tikv]	table:t, keep order:false, stats:pseudo
+id	estRows	task	access object	operator info
+Delete_4	N/A	root		N/A
+└─IndexLookUp_11	10.00	root		
+  ├─IndexRangeScan_9(Build)	10.00	cop[tikv]	table:t, index:idx_e(e)	range:[0,0], keep order:false, stats:pseudo
+  └─TableRowIDScan_10(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 alter table t drop index idx_c;
 alter table t drop index idx_e;
 alter table t add index expr_idx_c((a+1));
@@ -165,59 +165,59 @@ truncate table t;
 insert into t values (1, 2.0, default, default), (2, 2.1, default, default), (5, 3.0, default, default),
 (5, -1.0, default, default), (0, 0.0, default, default), (-1, -2.0, default, default), (0, 0, default, default);
 desc select * from t where a+1=3;
-id	count	task	operator info
-Projection_4	10.00	root	test.t.a, test.t.b, test.t.c, test.t.e
-└─IndexLookUp_10	10.00	root	
-  ├─IndexScan_8	10.00	cop[tikv]	table:t, index:_V$_expr_idx_c_0, range:[3,3], keep order:false, stats:pseudo
-  └─TableScan_9	10.00	cop[tikv]	table:t, keep order:false, stats:pseudo
+id	estRows	task	access object	operator info
+Projection_4	10.00	root		test.t.a, test.t.b, test.t.c, test.t.e
+└─IndexLookUp_10	10.00	root		
+  ├─IndexRangeScan_8(Build)	10.00	cop[tikv]	table:t, index:expr_idx_c(_V$_expr_idx_c_0)	range:[3,3], keep order:false, stats:pseudo
+  └─TableRowIDScan_9(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t where a+1=3;
 a	b	c	e
 2	2.1	3	4.1
 desc select a+1 from t where a+1=3;
-id	count	task	operator info
-IndexReader_6	10.00	root	index:IndexScan_5
-└─IndexScan_5	10.00	cop[tikv]	table:t, index:_V$_expr_idx_c_0, range:[3,3], keep order:false, stats:pseudo
+id	estRows	task	access object	operator info
+IndexReader_6	10.00	root		index:IndexRangeScan_5
+└─IndexRangeScan_5	10.00	cop[tikv]	table:t, index:expr_idx_c(_V$_expr_idx_c_0)	range:[3,3], keep order:false, stats:pseudo
 select a+1 from t where a+1=3;
 a+1
 3
 desc select c from t where a+1=3;
-id	count	task	operator info
-Projection_4	10.00	root	test.t.c
-└─IndexLookUp_10	10.00	root	
-  ├─IndexScan_8	10.00	cop[tikv]	table:t, index:_V$_expr_idx_c_0, range:[3,3], keep order:false, stats:pseudo
-  └─TableScan_9	10.00	cop[tikv]	table:t, keep order:false, stats:pseudo
+id	estRows	task	access object	operator info
+Projection_4	10.00	root		test.t.c
+└─IndexLookUp_10	10.00	root		
+  ├─IndexRangeScan_8(Build)	10.00	cop[tikv]	table:t, index:expr_idx_c(_V$_expr_idx_c_0)	range:[3,3], keep order:false, stats:pseudo
+  └─TableRowIDScan_9(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select c from t where a+1=3;
 c
 3
 desc select * from t where b+a=3;
-id	count	task	operator info
-Projection_4	10.00	root	test.t.a, test.t.b, test.t.c, test.t.e
-└─IndexLookUp_10	10.00	root	
-  ├─IndexScan_8	10.00	cop[tikv]	table:t, index:_V$_expr_idx_e_0, range:[3,3], keep order:false, stats:pseudo
-  └─TableScan_9	10.00	cop[tikv]	table:t, keep order:false, stats:pseudo
+id	estRows	task	access object	operator info
+Projection_4	10.00	root		test.t.a, test.t.b, test.t.c, test.t.e
+└─IndexLookUp_10	10.00	root		
+  ├─IndexRangeScan_8(Build)	10.00	cop[tikv]	table:t, index:expr_idx_e(_V$_expr_idx_e_0)	range:[3,3], keep order:false, stats:pseudo
+  └─TableRowIDScan_9(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t where b+a=3;
 a	b	c	e
 1	2	2	3
 desc select b+a from t where b+a=3;
-id	count	task	operator info
-IndexReader_6	10.00	root	index:IndexScan_5
-└─IndexScan_5	10.00	cop[tikv]	table:t, index:_V$_expr_idx_e_0, range:[3,3], keep order:false, stats:pseudo
+id	estRows	task	access object	operator info
+IndexReader_6	10.00	root		index:IndexRangeScan_5
+└─IndexRangeScan_5	10.00	cop[tikv]	table:t, index:expr_idx_e(_V$_expr_idx_e_0)	range:[3,3], keep order:false, stats:pseudo
 select b+a from t where b+a=3;
 b+a
 3
 desc select e from t where b+a=3;
-id	count	task	operator info
-Projection_4	10.00	root	test.t.e
-└─IndexLookUp_10	10.00	root	
-  ├─IndexScan_8	10.00	cop[tikv]	table:t, index:_V$_expr_idx_e_0, range:[3,3], keep order:false, stats:pseudo
-  └─TableScan_9	10.00	cop[tikv]	table:t, keep order:false, stats:pseudo
+id	estRows	task	access object	operator info
+Projection_4	10.00	root		test.t.e
+└─IndexLookUp_10	10.00	root		
+  ├─IndexRangeScan_8(Build)	10.00	cop[tikv]	table:t, index:expr_idx_e(_V$_expr_idx_e_0)	range:[3,3], keep order:false, stats:pseudo
+  └─TableRowIDScan_9(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select e from t where b+a=3;
 e
 3
 desc select a+1 from t where a+1 in (1, 2, 3);
-id	count	task	operator info
-IndexReader_6	30.00	root	index:IndexScan_5
-└─IndexScan_5	30.00	cop[tikv]	table:t, index:_V$_expr_idx_c_0, range:[1,1], [2,2], [3,3], keep order:false, stats:pseudo
+id	estRows	task	access object	operator info
+IndexReader_6	30.00	root		index:IndexRangeScan_5
+└─IndexRangeScan_5	30.00	cop[tikv]	table:t, index:expr_idx_c(_V$_expr_idx_c_0)	range:[1,1], [2,2], [3,3], keep order:false, stats:pseudo
 select a+1 from t where a+1 in (1, 2, 3);
 a+1
 1
@@ -225,11 +225,11 @@ a+1
 2
 3
 desc select * from t where a+1 in (1, 2, 3);
-id	count	task	operator info
-Projection_4	30.00	root	test.t.a, test.t.b, test.t.c, test.t.e
-└─IndexLookUp_10	30.00	root	
-  ├─IndexScan_8	30.00	cop[tikv]	table:t, index:_V$_expr_idx_c_0, range:[1,1], [2,2], [3,3], keep order:false, stats:pseudo
-  └─TableScan_9	30.00	cop[tikv]	table:t, keep order:false, stats:pseudo
+id	estRows	task	access object	operator info
+Projection_4	30.00	root		test.t.a, test.t.b, test.t.c, test.t.e
+└─IndexLookUp_10	30.00	root		
+  ├─IndexRangeScan_8(Build)	30.00	cop[tikv]	table:t, index:expr_idx_c(_V$_expr_idx_c_0)	range:[1,1], [2,2], [3,3], keep order:false, stats:pseudo
+  └─TableRowIDScan_9(Probe)	30.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t where a+1 in (1, 2, 3);
 a	b	c	e
 1	2	2	3
@@ -237,9 +237,9 @@ a	b	c	e
 0	0	1	0
 0	0	1	0
 desc select a+1 from t where a+1 between 1 and 4;
-id	count	task	operator info
-IndexReader_6	250.00	root	index:IndexScan_5
-└─IndexScan_5	250.00	cop[tikv]	table:t, index:_V$_expr_idx_c_0, range:[1,4], keep order:false, stats:pseudo
+id	estRows	task	access object	operator info
+IndexReader_6	250.00	root		index:IndexRangeScan_5
+└─IndexRangeScan_5	250.00	cop[tikv]	table:t, index:expr_idx_c(_V$_expr_idx_c_0)	range:[1,4], keep order:false, stats:pseudo
 select a+1 from t where a+1 between 1 and 4;
 a+1
 1
@@ -247,11 +247,11 @@ a+1
 2
 3
 desc select * from t where a+1 between 1 and 4;
-id	count	task	operator info
-Projection_4	250.00	root	test.t.a, test.t.b, test.t.c, test.t.e
-└─IndexLookUp_10	250.00	root	
-  ├─IndexScan_8	250.00	cop[tikv]	table:t, index:_V$_expr_idx_c_0, range:[1,4], keep order:false, stats:pseudo
-  └─TableScan_9	250.00	cop[tikv]	table:t, keep order:false, stats:pseudo
+id	estRows	task	access object	operator info
+Projection_4	250.00	root		test.t.a, test.t.b, test.t.c, test.t.e
+└─IndexLookUp_10	250.00	root		
+  ├─IndexRangeScan_8(Build)	250.00	cop[tikv]	table:t, index:expr_idx_c(_V$_expr_idx_c_0)	range:[1,4], keep order:false, stats:pseudo
+  └─TableRowIDScan_9(Probe)	250.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t where a+1 between 1 and 4;
 a	b	c	e
 1	2	2	3
@@ -259,12 +259,12 @@ a	b	c	e
 0	0	1	0
 0	0	1	0
 desc select * from t order by a+1;
-id	count	task	operator info
-Projection_5	10000.00	root	test.t.a, test.t.b, test.t.c, test.t.e
-└─Projection_13	10000.00	root	test.t.a, test.t.b, test.t.c, test.t.e, EMPTY_NAME
-  └─IndexLookUp_12	10000.00	root	
-    ├─IndexScan_10	10000.00	cop[tikv]	table:t, index:_V$_expr_idx_c_0, range:[NULL,+inf], keep order:true, stats:pseudo
-    └─TableScan_11	10000.00	cop[tikv]	table:t, keep order:false, stats:pseudo
+id	estRows	task	access object	operator info
+Projection_5	10000.00	root		test.t.a, test.t.b, test.t.c, test.t.e
+└─Projection_13	10000.00	root		test.t.a, test.t.b, test.t.c, test.t.e, EMPTY_NAME
+  └─IndexLookUp_12	10000.00	root		
+    ├─IndexFullScan_10(Build)	10000.00	cop[tikv]	table:t, index:expr_idx_c(_V$_expr_idx_c_0)	keep order:true, stats:pseudo
+    └─TableRowIDScan_11(Probe)	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t order by a+1;
 a	b	c	e
 -1	-2	0	-3
@@ -275,9 +275,9 @@ a	b	c	e
 5	3	6	8
 5	-1	6	4
 desc select a+1 from t order by a+1;
-id	count	task	operator info
-IndexReader_13	10000.00	root	index:IndexScan_12
-└─IndexScan_12	10000.00	cop[tikv]	table:t, index:_V$_expr_idx_c_0, range:[NULL,+inf], keep order:true, stats:pseudo
+id	estRows	task	access object	operator info
+IndexReader_13	10000.00	root		index:IndexFullScan_12
+└─IndexFullScan_12	10000.00	cop[tikv]	table:t, index:expr_idx_c(_V$_expr_idx_c_0)	keep order:true, stats:pseudo
 select a+1 from t order by a+1;
 a+1
 0
@@ -288,9 +288,9 @@ a+1
 6
 6
 desc select b+a from t order by b+a;
-id	count	task	operator info
-IndexReader_13	10000.00	root	index:IndexScan_12
-└─IndexScan_12	10000.00	cop[tikv]	table:t, index:_V$_expr_idx_e_0, range:[NULL,+inf], keep order:true, stats:pseudo
+id	estRows	task	access object	operator info
+IndexReader_13	10000.00	root		index:IndexFullScan_12
+└─IndexFullScan_12	10000.00	cop[tikv]	table:t, index:expr_idx_e(_V$_expr_idx_e_0)	keep order:true, stats:pseudo
 select b+a from t order by b+a;
 b+a
 -3
@@ -301,26 +301,26 @@ b+a
 4.1
 8
 desc update t set a=1 where a+1 = 3;
-id	count	task	operator info
-Update_4	N/A	root	N/A
-└─IndexLookUp_11	10.00	root	
-  ├─IndexScan_9	10.00	cop[tikv]	table:t, index:_V$_expr_idx_c_0, range:[3,3], keep order:false, stats:pseudo
-  └─TableScan_10	10.00	cop[tikv]	table:t, keep order:false, stats:pseudo
+id	estRows	task	access object	operator info
+Update_4	N/A	root		N/A
+└─IndexLookUp_11	10.00	root		
+  ├─IndexRangeScan_9(Build)	10.00	cop[tikv]	table:t, index:expr_idx_c(_V$_expr_idx_c_0)	range:[3,3], keep order:false, stats:pseudo
+  └─TableRowIDScan_10(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 desc update t set a=2, b = 3 where b+a = 3;
-id	count	task	operator info
-Update_4	N/A	root	N/A
-└─IndexLookUp_11	10.00	root	
-  ├─IndexScan_9	10.00	cop[tikv]	table:t, index:_V$_expr_idx_e_0, range:[3,3], keep order:false, stats:pseudo
-  └─TableScan_10	10.00	cop[tikv]	table:t, keep order:false, stats:pseudo
+id	estRows	task	access object	operator info
+Update_4	N/A	root		N/A
+└─IndexLookUp_11	10.00	root		
+  ├─IndexRangeScan_9(Build)	10.00	cop[tikv]	table:t, index:expr_idx_e(_V$_expr_idx_e_0)	range:[3,3], keep order:false, stats:pseudo
+  └─TableRowIDScan_10(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 desc delete from t where a+1 = 3;
-id	count	task	operator info
-Delete_4	N/A	root	N/A
-└─IndexLookUp_11	10.00	root	
-  ├─IndexScan_9	10.00	cop[tikv]	table:t, index:_V$_expr_idx_c_0, range:[3,3], keep order:false, stats:pseudo
-  └─TableScan_10	10.00	cop[tikv]	table:t, keep order:false, stats:pseudo
+id	estRows	task	access object	operator info
+Delete_4	N/A	root		N/A
+└─IndexLookUp_11	10.00	root		
+  ├─IndexRangeScan_9(Build)	10.00	cop[tikv]	table:t, index:expr_idx_c(_V$_expr_idx_c_0)	range:[3,3], keep order:false, stats:pseudo
+  └─TableRowIDScan_10(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 desc delete from t where b+a = 0;
-id	count	task	operator info
-Delete_4	N/A	root	N/A
-└─IndexLookUp_11	10.00	root	
-  ├─IndexScan_9	10.00	cop[tikv]	table:t, index:_V$_expr_idx_e_0, range:[0,0], keep order:false, stats:pseudo
-  └─TableScan_10	10.00	cop[tikv]	table:t, keep order:false, stats:pseudo
+id	estRows	task	access object	operator info
+Delete_4	N/A	root		N/A
+└─IndexLookUp_11	10.00	root		
+  ├─IndexRangeScan_9(Build)	10.00	cop[tikv]	table:t, index:expr_idx_e(_V$_expr_idx_e_0)	range:[0,0], keep order:false, stats:pseudo
+  └─TableRowIDScan_10(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo

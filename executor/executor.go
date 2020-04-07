@@ -16,8 +16,10 @@ package executor
 import (
 	"context"
 	"fmt"
+	"math"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -26,6 +28,7 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -38,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -127,16 +131,6 @@ func (e *baseExecutor) Schema() *expression.Schema {
 		return expression.NewSchema()
 	}
 	return e.schema
-}
-
-// markChildrenUsedCols compares each child with the output schema, and mark
-// each column of the child is used by output or not.
-func (e *baseExecutor) markChildrenUsedCols() (childrenUsed [][]bool) {
-	for _, child := range e.children {
-		used := expression.GetUsedList(e.schema.Columns, child.Schema())
-		childrenUsed = append(childrenUsed, used)
-	}
-	return
 }
 
 // newFirstChunk creates a new chunk to buffer current executor's result.
@@ -276,7 +270,7 @@ func (e *ShowNextRowIDExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			break
 		}
 	}
-	nextGlobalID, err := tbl.Allocator(e.ctx, autoid.RowIDAllocType).NextGlobalAutoID(tbl.Meta().ID)
+	nextGlobalID, err := tbl.Allocators(e.ctx).Get(autoid.RowIDAllocType).NextGlobalAutoID(tbl.Meta().ID)
 	if err != nil {
 		return err
 	}
@@ -339,14 +333,89 @@ func (e *ShowDDLExec) Next(ctx context.Context, req *chunk.Chunk) error {
 // ShowDDLJobsExec represent a show DDL jobs executor.
 type ShowDDLJobsExec struct {
 	baseExecutor
+	DDLJobRetriever
 
-	cursor         int
+	jobNumber int
+	is        infoschema.InfoSchema
+	done      bool
+}
+
+// DDLJobRetriever retrieve the DDLJobs.
+type DDLJobRetriever struct {
 	runningJobs    []*model.Job
 	historyJobIter *meta.LastJobIterator
-	cacheJobs      []*model.Job
-	jobNumber      int
+	cursor         int
 	is             infoschema.InfoSchema
-	done           bool
+	activeRoles    []*auth.RoleIdentity
+	cacheJobs      []*model.Job
+}
+
+func (e *DDLJobRetriever) initial(txn kv.Transaction) error {
+	jobs, err := admin.GetDDLJobs(txn)
+	if err != nil {
+		return err
+	}
+	m := meta.NewMeta(txn)
+	e.historyJobIter, err = m.GetLastHistoryDDLJobsIterator()
+	if err != nil {
+		return err
+	}
+	e.runningJobs = jobs
+	e.cursor = 0
+	return nil
+}
+
+func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, checker privilege.Manager) {
+	schemaName := job.SchemaName
+	tableName := ""
+	finishTS := uint64(0)
+	if job.BinlogInfo != nil {
+		finishTS = job.BinlogInfo.FinishedTS
+		if job.BinlogInfo.TableInfo != nil {
+			tableName = job.BinlogInfo.TableInfo.Name.L
+		}
+		if len(schemaName) == 0 && job.BinlogInfo.DBInfo != nil {
+			schemaName = job.BinlogInfo.DBInfo.Name.L
+		}
+	}
+	// For compatibility, the old version of DDL Job wasn't store the schema name and table name.
+	if len(schemaName) == 0 {
+		schemaName = getSchemaName(e.is, job.SchemaID)
+	}
+	if len(tableName) == 0 {
+		tableName = getTableName(e.is, job.TableID)
+	}
+
+	startTime := ts2Time(job.StartTS)
+	finishTime := ts2Time(finishTS)
+
+	// Check the privilege.
+	if checker != nil && !checker.RequestVerification(e.activeRoles, strings.ToLower(schemaName), strings.ToLower(tableName), "", mysql.AllPrivMask) {
+		return
+	}
+
+	req.AppendInt64(0, job.ID)
+	req.AppendString(1, schemaName)
+	req.AppendString(2, tableName)
+	req.AppendString(3, job.Type.String())
+	req.AppendString(4, job.SchemaState.String())
+	req.AppendInt64(5, job.SchemaID)
+	req.AppendInt64(6, job.TableID)
+	req.AppendInt64(7, job.RowCount)
+	req.AppendTime(8, startTime)
+	if finishTS > 0 {
+		req.AppendTime(9, finishTime)
+	} else {
+		req.AppendNull(9)
+	}
+	req.AppendString(10, job.State.String())
+}
+
+func ts2Time(timestamp uint64) types.Time {
+	duration := time.Duration(math.Pow10(9-int(types.DefaultFsp))) * time.Nanosecond
+	t := model.TSConvert2Time(timestamp)
+	t.Truncate(duration)
+	return types.NewTime(types.FromGoTime(t), mysql.TypeDatetime, types.DefaultFsp)
 }
 
 // ShowDDLJobQueriesExec represents a show DDL job queries executor.
@@ -414,21 +483,14 @@ func (e *ShowDDLJobsExec) Open(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	jobs, err := admin.GetDDLJobs(txn)
-	if err != nil {
-		return err
-	}
+	e.DDLJobRetriever.is = e.is
 	if e.jobNumber == 0 {
 		e.jobNumber = admin.DefNumHistoryJobs
 	}
-
-	m := meta.NewMeta(txn)
-	e.historyJobIter, err = m.GetLastHistoryDDLJobsIterator()
+	err = e.DDLJobRetriever.initial(txn)
 	if err != nil {
 		return err
 	}
-	e.runningJobs = append(e.runningJobs, jobs...)
-	e.cursor = 0
 	return nil
 }
 
@@ -439,17 +501,19 @@ func (e *ShowDDLJobsExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return nil
 	}
 	count := 0
+
 	// Append running ddl jobs.
 	if e.cursor < len(e.runningJobs) {
 		numCurBatch := mathutil.Min(req.Capacity(), len(e.runningJobs)-e.cursor)
 		for i := e.cursor; i < e.cursor+numCurBatch; i++ {
-			e.appendJobToChunk(req, e.runningJobs[i])
+			e.appendJobToChunk(req, e.runningJobs[i], nil)
 		}
 		e.cursor += numCurBatch
 		count += numCurBatch
 	}
-	var err error
+
 	// Append history ddl jobs.
+	var err error
 	if count < req.Capacity() {
 		num := req.Capacity() - count
 		remainNum := e.jobNumber - (e.cursor - len(e.runningJobs))
@@ -459,48 +523,11 @@ func (e *ShowDDLJobsExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			return err
 		}
 		for _, job := range e.cacheJobs {
-			e.appendJobToChunk(req, job)
+			e.appendJobToChunk(req, job, nil)
 		}
 		e.cursor += len(e.cacheJobs)
 	}
 	return nil
-}
-
-func (e *ShowDDLJobsExec) appendJobToChunk(req *chunk.Chunk, job *model.Job) {
-	req.AppendInt64(0, job.ID)
-	schemaName := job.SchemaName
-	tableName := ""
-	finishTS := uint64(0)
-	if job.BinlogInfo != nil {
-		finishTS = job.BinlogInfo.FinishedTS
-		if job.BinlogInfo.TableInfo != nil {
-			tableName = job.BinlogInfo.TableInfo.Name.L
-		}
-		if len(schemaName) == 0 && job.BinlogInfo.DBInfo != nil {
-			schemaName = job.BinlogInfo.DBInfo.Name.L
-		}
-	}
-	// For compatibility, the old version of DDL Job wasn't store the schema name and table name.
-	if len(schemaName) == 0 {
-		schemaName = getSchemaName(e.is, job.SchemaID)
-	}
-	if len(tableName) == 0 {
-		tableName = getTableName(e.is, job.TableID)
-	}
-	req.AppendString(1, schemaName)
-	req.AppendString(2, tableName)
-	req.AppendString(3, job.Type.String())
-	req.AppendString(4, job.SchemaState.String())
-	req.AppendInt64(5, job.SchemaID)
-	req.AppendInt64(6, job.TableID)
-	req.AppendInt64(7, job.RowCount)
-	req.AppendString(8, model.TSConvert2Time(job.StartTS).String())
-	if finishTS > 0 {
-		req.AppendString(9, model.TSConvert2Time(finishTS).String())
-	} else {
-		req.AppendString(9, "")
-	}
-	req.AppendString(10, job.State.String())
 }
 
 func getSchemaName(is infoschema.InfoSchema, id int64) string {
@@ -817,7 +844,11 @@ type SelectLockExec struct {
 	Lock ast.SelectLockType
 	keys []kv.Key
 
-	tblID2Handle map[int64][]*expression.Column
+	tblID2Handle     map[int64][]*expression.Column
+	partitionedTable []table.PartitionedTable
+
+	// tblID2Table is cached to reduce cost.
+	tblID2Table map[int64]table.PartitionedTable
 }
 
 // Open implements the Executor Open interface.
@@ -826,11 +857,17 @@ func (e *SelectLockExec) Open(ctx context.Context) error {
 		return err
 	}
 
-	txnCtx := e.ctx.GetSessionVars().TxnCtx
-	for id := range e.tblID2Handle {
-		// This operation is only for schema validator check.
-		txnCtx.UpdateDeltaForTable(id, 0, 0, map[int64]int64{})
+	if len(e.tblID2Handle) > 0 && len(e.partitionedTable) > 0 {
+		e.tblID2Table = make(map[int64]table.PartitionedTable, len(e.partitionedTable))
+		for id := range e.tblID2Handle {
+			for _, p := range e.partitionedTable {
+				if id == p.Meta().ID {
+					e.tblID2Table[id] = p
+				}
+			}
+		}
 	}
+
 	return nil
 }
 
@@ -845,12 +882,23 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if len(e.tblID2Handle) == 0 || (e.Lock != ast.SelectLockForUpdate && e.Lock != ast.SelectLockForUpdateNoWait) {
 		return nil
 	}
-	if req.NumRows() != 0 {
+
+	if req.NumRows() > 0 {
 		iter := chunk.NewIterator4Chunk(req)
-		for id, cols := range e.tblID2Handle {
-			for _, col := range cols {
-				for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-					e.keys = append(e.keys, tablecodec.EncodeRowKeyWithHandle(id, row.GetInt64(col.Index)))
+		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+			for id, cols := range e.tblID2Handle {
+				physicalID := id
+				if pt, ok := e.tblID2Table[id]; ok {
+					// On a partitioned table, we have to use physical ID to encode the lock key!
+					p, err := pt.GetPartitionByRow(e.ctx, row.GetDatumRow(e.base().retFieldTypes))
+					if err != nil {
+						return err
+					}
+					physicalID = p.GetPhysicalID()
+				}
+
+				for _, col := range cols {
+					e.keys = append(e.keys, tablecodec.EncodeRowKeyWithHandle(physicalID, row.GetInt64(col.Index)))
 				}
 			}
 		}
@@ -860,6 +908,14 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if e.Lock == ast.SelectLockForUpdateNoWait {
 		lockWaitTime = kv.LockNoWait
 	}
+
+	if len(e.keys) > 0 {
+		// This operation is only for schema validator check.
+		for id := range e.tblID2Handle {
+			e.ctx.GetSessionVars().TxnCtx.UpdateDeltaForTable(id, 0, 0, map[int64]int64{})
+		}
+	}
+
 	return doLockKeys(ctx, e.ctx, newLockCtx(e.ctx.GetSessionVars(), lockWaitTime), e.keys...)
 }
 
@@ -872,6 +928,7 @@ func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64) *kv.LockCtx {
 		PessimisticLockWaited: &seVars.StmtCtx.PessimisticLockWaited,
 		LockKeysDuration:      &seVars.StmtCtx.LockKeysDuration,
 		LockKeysCount:         &seVars.StmtCtx.LockKeysCount,
+		LockExpired:           &seVars.TxnCtx.LockExpire,
 	}
 }
 
@@ -880,13 +937,16 @@ func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64) *kv.LockCtx {
 // locked by others. used for (select for update nowait) situation
 // except 0 means alwaysWait 1 means nowait
 func doLockKeys(ctx context.Context, se sessionctx.Context, lockCtx *kv.LockCtx, keys ...kv.Key) error {
-	se.GetSessionVars().TxnCtx.ForUpdate = true
+	sctx := se.GetSessionVars().StmtCtx
+	if !sctx.InUpdateStmt && !sctx.InDeleteStmt {
+		se.GetSessionVars().TxnCtx.ForUpdate = true
+	}
 	// Lock keys only once when finished fetching all results.
 	txn, err := se.Txn(true)
 	if err != nil {
 		return err
 	}
-	return txn.LockKeys(ctx, lockCtx, keys...)
+	return txn.LockKeys(sessionctx.SetCommitCtx(ctx, se), lockCtx, keys...)
 }
 
 // LimitExec represents limit executor
@@ -1582,9 +1642,35 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	} else if vars.StmtCtx.InSelectStmt {
 		sc.PrevAffectedRows = -1
 	}
+	sc.TblInfo2UnionScan = make(map[*model.TableInfo]bool)
 	errCount, warnCount := vars.StmtCtx.NumErrorWarnings()
 	vars.SysErrorCount = errCount
 	vars.SysWarningCount = warnCount
 	vars.StmtCtx = sc
 	return
+}
+
+// FillVirtualColumnValue will calculate the virtual column value by evaluating generated
+// expression using rows from a chunk, and then fill this value into the chunk
+func FillVirtualColumnValue(virtualRetTypes []*types.FieldType, virtualColumnIndex []int,
+	schema *expression.Schema, columns []*model.ColumnInfo, sctx sessionctx.Context, req *chunk.Chunk) error {
+	virCols := chunk.NewChunkWithCapacity(virtualRetTypes, req.Capacity())
+	iter := chunk.NewIterator4Chunk(req)
+	for i, idx := range virtualColumnIndex {
+		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+			datum, err := schema.Columns[idx].EvalVirtualColumn(row)
+			if err != nil {
+				return err
+			}
+			// Because the expression might return different type from
+			// the generated column, we should wrap a CAST on the result.
+			castDatum, err := table.CastValue(sctx, datum, columns[idx])
+			if err != nil {
+				return err
+			}
+			virCols.AppendDatum(i, &castDatum)
+		}
+		req.SetCol(idx, virCols.Column(i))
+	}
+	return nil
 }
