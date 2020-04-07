@@ -24,6 +24,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -664,7 +665,7 @@ var defaultConf = Config{
 }
 
 var (
-	globalConfHandler ConfHandler
+	globalConf atomic.Value
 )
 
 // NewConfig creates a new config instance with default value.
@@ -677,14 +678,12 @@ func NewConfig() *Config {
 // It should store configuration from command line and configuration file.
 // Other parts of the system can read the global configuration use this function.
 func GetGlobalConfig() *Config {
-	return globalConfHandler.GetConfig()
+	return globalConf.Load().(*Config)
 }
 
 // StoreGlobalConfig stores a new config to the globalConf. It mostly uses in the test to avoid some data races.
 func StoreGlobalConfig(config *Config) {
-	if err := globalConfHandler.SetConfig(config); err != nil {
-		logutil.BgLogger().Error("update the global config error", zap.Error(err))
-	}
+	globalConf.Store(config)
 }
 
 var deprecatedConfig = map[string]struct{}{
@@ -750,10 +749,7 @@ func InitializeConfig(confPath string, configCheck, configStrict bool, reloadFun
 		fmt.Println("config check successful")
 		os.Exit(0)
 	}
-
-	globalConfHandler, err = NewConfHandler(confPath, cfg, reloadFunc, nil)
-	terror.MustNil(err)
-	globalConfHandler.Start()
+	StoreGlobalConfig(cfg)
 }
 
 // Load loads config options from a toml file.
@@ -910,9 +906,7 @@ func (t *OpenTracing) ToTracingConfig() *tracing.Configuration {
 
 func init() {
 	conf := defaultConf
-	cch := new(constantConfHandler)
-	cch.curConf.Store(&conf)
-	globalConfHandler = cch
+	StoreGlobalConfig(&conf)
 	if checkBeforeDropLDFlag == "1" {
 		CheckTableBeforeDrop = true
 	}
