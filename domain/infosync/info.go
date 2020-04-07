@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
@@ -608,5 +609,12 @@ func getServerInfo(id string) *ServerInfo {
 	}
 	info.Version = mysql.ServerVersion
 	info.GitHash = printer.TiDBGitHash
+
+	failpoint.Inject("mockServerInfo", func(val failpoint.Value) {
+		if val.(bool) {
+			info.StartTimestamp = 1282967700000
+		}
+	})
+
 	return info
 }
