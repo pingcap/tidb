@@ -679,6 +679,8 @@ func baseBenchmarkWindowFunctionsWithSlidingWindow(b *testing.B, frameType ast.F
 		{ast.AggFuncSum, mysql.TypeFloat},
 		{ast.AggFuncSum, mysql.TypeNewDecimal},
 		{ast.AggFuncCount, mysql.TypeLong},
+		{ast.AggFuncAvg, mysql.TypeFloat},
+		{ast.AggFuncAvg, mysql.TypeNewDecimal},
 	}
 	row := 100000
 	ndv := 100
