@@ -1071,7 +1071,7 @@ const (
 	ErrColumnTypeUnsupportedNextValue = 8228
 	ErrLockExpire                     = 8229
 
-	// TiKV/PD errors.
+	// TiKV/TiFlash/PD errors.
 	ErrPDServerTimeout        = 9001
 	ErrTiKVServerTimeout      = 9002
 	ErrTiKVServerBusy         = 9003
@@ -1081,4 +1081,6 @@ const (
 	ErrWriteConflict          = 9007
 	ErrTiKVStoreLimit         = 9008
 	ErrPrometheusAddrIsNotSet = 9009
+	ErrTiFlashServerTimeout   = 9010
+	ErrTiFlashServerBusy      = 9011
 )

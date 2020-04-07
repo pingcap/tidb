@@ -1072,6 +1072,8 @@ var MySQLErrName = map[uint16]string{
 	ErrPDServerTimeout:        "PD server timeout",
 	ErrTiKVServerTimeout:      "TiKV server timeout",
 	ErrTiKVServerBusy:         "TiKV server is busy",
+	ErrTiFlashServerTimeout:   "TiFlash server timeout",
+	ErrTiFlashServerBusy:      "TiFlash server is busy",
 	ErrResolveLockTimeout:     "Resolve lock timeout",
 	ErrRegionUnavailable:      "Region is unavailable",
 	ErrGCTooEarly:             "GC life time is shorter than transaction duration, transaction starts at %v, GC safe point is %v",

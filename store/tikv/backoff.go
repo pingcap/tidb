@@ -44,19 +44,20 @@ const (
 )
 
 var (
-	tikvBackoffHistogramRPC          = metrics.TiKVBackoffHistogram.WithLabelValues("tikvRPC")
-	tikvBackoffHistogramLock         = metrics.TiKVBackoffHistogram.WithLabelValues("txnLock")
-	tikvBackoffHistogramLockFast     = metrics.TiKVBackoffHistogram.WithLabelValues("tikvLockFast")
-	tikvBackoffHistogramPD           = metrics.TiKVBackoffHistogram.WithLabelValues("pdRPC")
-	tikvBackoffHistogramRegionMiss   = metrics.TiKVBackoffHistogram.WithLabelValues("regionMiss")
-	tikvBackoffHistogramUpdateLeader = metrics.TiKVBackoffHistogram.WithLabelValues("updateLeader")
-	tikvBackoffHistogramServerBusy   = metrics.TiKVBackoffHistogram.WithLabelValues("serverBusy")
-	tikvBackoffHistogramEmpty        = metrics.TiKVBackoffHistogram.WithLabelValues("")
+	tikvBackoffHistogramRPC           = metrics.TiKVBackoffHistogram.WithLabelValues("tikvRPC")
+	tikvBackoffHistogramLock          = metrics.TiKVBackoffHistogram.WithLabelValues("txnLock")
+	tikvBackoffHistogramLockFast      = metrics.TiKVBackoffHistogram.WithLabelValues("tikvLockFast")
+	tikvBackoffHistogramPD            = metrics.TiKVBackoffHistogram.WithLabelValues("pdRPC")
+	tikvBackoffHistogramRegionMiss    = metrics.TiKVBackoffHistogram.WithLabelValues("regionMiss")
+	tikvBackoffHistogramUpdateLeader  = metrics.TiKVBackoffHistogram.WithLabelValues("updateLeader")
+	tikvBackoffHistogramServerBusy    = metrics.TiKVBackoffHistogram.WithLabelValues("tikvServerBusy")
+	tikvBackoffHistogramEmpty         = metrics.TiKVBackoffHistogram.WithLabelValues("")
 )
 
 func (t backoffType) metric() prometheus.Observer {
 	switch t {
-	case boTiKVRPC:
+	// TODO: distinguish tikv and tiflash in metrics
+	case boTiKVRPC, boTiFlashRPC:
 		return tikvBackoffHistogramRPC
 	case BoTxnLock:
 		return tikvBackoffHistogramLock
@@ -68,7 +69,7 @@ func (t backoffType) metric() prometheus.Observer {
 		return tikvBackoffHistogramRegionMiss
 	case BoUpdateLeader:
 		return tikvBackoffHistogramUpdateLeader
-	case boServerBusy:
+	case boTiKVServerBusy, boTiFlashServerBusy:
 		return tikvBackoffHistogramServerBusy
 	}
 	return tikvBackoffHistogramEmpty
@@ -127,12 +128,14 @@ type backoffType int
 // Back off types.
 const (
 	boTiKVRPC backoffType = iota
+	boTiFlashRPC
 	BoTxnLock
 	boTxnLockFast
 	BoPDRPC
 	BoRegionMiss
 	BoUpdateLeader
-	boServerBusy
+	boTiKVServerBusy
+	boTiFlashServerBusy
 	boTxnNotFound
 )
 
@@ -141,7 +144,7 @@ func (t backoffType) createFn(vars *kv.Variables) func(context.Context, int) int
 		vars.Hook(t.String(), vars)
 	}
 	switch t {
-	case boTiKVRPC:
+	case boTiKVRPC, boTiFlashRPC:
 		return NewBackoffFn(100, 2000, EqualJitter)
 	case BoTxnLock:
 		return NewBackoffFn(200, 3000, EqualJitter)
@@ -156,7 +159,7 @@ func (t backoffType) createFn(vars *kv.Variables) func(context.Context, int) int
 		return NewBackoffFn(2, 500, NoJitter)
 	case BoUpdateLeader:
 		return NewBackoffFn(1, 10, NoJitter)
-	case boServerBusy:
+	case boTiKVServerBusy, boTiFlashServerBusy:
 		return NewBackoffFn(2000, 10000, EqualJitter)
 	}
 	return nil
@@ -166,6 +169,8 @@ func (t backoffType) String() string {
 	switch t {
 	case boTiKVRPC:
 		return "tikvRPC"
+	case boTiFlashRPC:
+		return "tiflashRPC"
 	case BoTxnLock:
 		return "txnLock"
 	case boTxnLockFast:
@@ -176,8 +181,10 @@ func (t backoffType) String() string {
 		return "regionMiss"
 	case BoUpdateLeader:
 		return "updateLeader"
-	case boServerBusy:
-		return "serverBusy"
+	case boTiKVServerBusy:
+		return "tikvServerBusy"
+	case boTiFlashServerBusy:
+		return "tiflashServerBusy"
 	case boTxnNotFound:
 		return "txnNotFound"
 	}
@@ -188,14 +195,18 @@ func (t backoffType) TError() error {
 	switch t {
 	case boTiKVRPC:
 		return ErrTiKVServerTimeout
+	case boTiFlashRPC:
+		return ErrTiFlashServerTimeout
 	case BoTxnLock, boTxnLockFast, boTxnNotFound:
 		return ErrResolveLockTimeout
 	case BoPDRPC:
 		return ErrPDServerTimeout
 	case BoRegionMiss, BoUpdateLeader:
 		return ErrRegionUnavailable
-	case boServerBusy:
+	case boTiKVServerBusy:
 		return ErrTiKVServerBusy
+	case boTiFlashServerBusy:
+		return ErrTiFlashServerBusy
 	}
 	return ErrUnknown
 }
