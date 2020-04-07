@@ -119,7 +119,7 @@ func (ds *DataSource) deriveStatsByFilter(conds expression.CNFExprs) {
 func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo) (*property.StatsInfo, error) {
 	// PushDownNot here can convert query 'not (a != 1)' to 'a = 1'.
 	for i, expr := range ds.pushedDownConds {
-		ds.pushedDownConds[i] = expression.PushDownNot(nil, expr, false)
+		ds.pushedDownConds[i] = expression.PushDownNot(nil, expr)
 	}
 	ds.deriveStatsByFilter(ds.pushedDownConds)
 	for _, path := range ds.possibleAccessPaths {
