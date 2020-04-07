@@ -58,39 +58,54 @@ import (
 
 const expressionIndexPrefix = "_V$"
 
-func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt) (err error) {
-	is := d.GetInfoSchemaWithInterceptor(ctx)
-	_, ok := is.SchemaByName(schema)
-	if ok {
-		return infoschema.ErrDatabaseExists.GenWithStackByArgs(schema)
-	}
-
-	if err = checkTooLongSchema(schema); err != nil {
-		return errors.Trace(err)
-	}
-
-	genIDs, err := d.genGlobalIDs(1)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	schemaID := genIDs[0]
-	dbInfo := &model.DBInfo{
-		Name: schema,
-	}
-
+func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt) error {
+	dbInfo := &model.DBInfo{Name: schema}
 	if charsetInfo != nil {
-		err = checkCharsetAndCollation(charsetInfo.Chs, charsetInfo.Col)
-		if err != nil {
-			return errors.Trace(err)
-		}
 		dbInfo.Charset = charsetInfo.Chs
 		dbInfo.Collate = charsetInfo.Col
 	} else {
 		dbInfo.Charset, dbInfo.Collate = charset.GetDefaultCharsetAndCollate()
 	}
+	return d.CreateSchemaWithInfo(ctx, dbInfo, OnExistError, false /*tryRetainID*/)
+}
+
+func (d *ddl) CreateSchemaWithInfo(
+	ctx sessionctx.Context,
+	dbInfo *model.DBInfo,
+	onExist OnExist,
+	tryRetainID bool,
+) error {
+	is := d.GetInfoSchemaWithInterceptor(ctx)
+	_, ok := is.SchemaByName(dbInfo.Name)
+	if ok {
+		err := infoschema.ErrDatabaseExists.GenWithStackByArgs(dbInfo.Name)
+		switch onExist {
+		case OnExistIgnore:
+			ctx.GetSessionVars().StmtCtx.AppendNote(err)
+			return nil
+		case OnExistError, OnExistReplace:
+			// FIXME: can we implement MariaDB's CREATE OR REPLACE SCHEMA?
+			return err
+		}
+	}
+
+	if err := checkTooLongSchema(dbInfo.Name); err != nil {
+		return errors.Trace(err)
+	}
+
+	if err := checkCharsetAndCollation(dbInfo.Charset, dbInfo.Collate); err != nil {
+		return errors.Trace(err)
+	}
+
+	// FIXME: support `tryRetainID`.
+	genIDs, err := d.genGlobalIDs(1)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	dbInfo.ID = genIDs[0]
 
 	job := &model.Job{
-		SchemaID:   schemaID,
+		SchemaID:   dbInfo.ID,
 		SchemaName: dbInfo.Name.L,
 		Type:       model.ActionCreateSchema,
 		BinlogInfo: &model.HistoryInfo{},
@@ -101,6 +116,7 @@ func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetIn
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }
+
 func (d *ddl) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (err error) {
 	// Resolve target charset and collation from options.
 	var toCharset, toCollate string
@@ -916,18 +932,10 @@ func checkColumnValueConstraint(col *table.Column) error {
 	return nil
 }
 
-func checkDuplicateColumn(cols []interface{}) error {
+func checkDuplicateColumn(cols []*model.ColumnInfo) error {
 	colNames := set.StringSet{}
-	colName := model.NewCIStr("")
 	for _, col := range cols {
-		switch x := col.(type) {
-		case *ast.ColumnDef:
-			colName = x.Name.Name
-		case model.CIStr:
-			colName = x
-		default:
-			colName.O, colName.L = "", ""
-		}
+		colName := col.Name
 		if colNames.Exist(colName.L) {
 			return infoschema.ErrColumnExists.GenWithStackByArgs(colName.O)
 		}
@@ -993,17 +1001,9 @@ func checkGeneratedColumn(colDefs []*ast.ColumnDef) error {
 	return nil
 }
 
-func checkTooLongColumn(cols []interface{}) error {
-	var colName string
+func checkTooLongColumn(cols []*model.ColumnInfo) error {
 	for _, col := range cols {
-		switch x := col.(type) {
-		case *ast.ColumnDef:
-			colName = x.Name.Name.O
-		case model.CIStr:
-			colName = x.O
-		default:
-			colName = ""
-		}
+		colName := col.Name.O
 		if len(colName) > mysql.MaxColumnNameLength {
 			return ErrTooLongIdent.GenWithStackByArgs(colName)
 		}
@@ -1011,7 +1011,7 @@ func checkTooLongColumn(cols []interface{}) error {
 	return nil
 }
 
-func checkTooManyColumns(colDefs []*ast.ColumnDef) error {
+func checkTooManyColumns(colDefs []*model.ColumnInfo) error {
 	if uint32(len(colDefs)) > atomic.LoadUint32(&TableColumnCountLimit) {
 		return errTooManyFields
 	}
@@ -1019,9 +1019,9 @@ func checkTooManyColumns(colDefs []*ast.ColumnDef) error {
 }
 
 // checkColumnsAttributes checks attributes for multiple columns.
-func checkColumnsAttributes(colDefs []*ast.ColumnDef) error {
+func checkColumnsAttributes(colDefs []*model.ColumnInfo) error {
 	for _, colDef := range colDefs {
-		if err := checkColumnAttributes(colDef.Name.OrigColName(), colDef.Tp); err != nil {
+		if err := checkColumnAttributes(colDef.Name.O, &colDef.FieldType); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -1277,6 +1277,73 @@ func buildTableInfo(ctx sessionctx.Context, tableName model.CIStr, cols []*table
 	return
 }
 
+// checkTableInfoValidExtra is like checkTableInfoValid, but also assumes the
+// table info comes from untrusted source and performs further checks such as
+// name length and column count.
+// (checkTableInfoValid is also used in repairing objects which don't perform
+// these checks. Perhaps the two functions should be merged together regardless?)
+func checkTableInfoValidExtra(tbInfo *model.TableInfo) error {
+	if err := checkTooLongTable(tbInfo.Name); err != nil {
+		return err
+	}
+
+	if err := checkDuplicateColumn(tbInfo.Columns); err != nil {
+		return err
+	}
+	if err := checkTooLongColumn(tbInfo.Columns); err != nil {
+		return err
+	}
+	if err := checkTooManyColumns(tbInfo.Columns); err != nil {
+		return errors.Trace(err)
+	}
+	if err := checkColumnsAttributes(tbInfo.Columns); err != nil {
+		return errors.Trace(err)
+	}
+
+	// FIXME: perform checkConstraintNames
+	if err := checkCharsetAndCollation(tbInfo.Charset, tbInfo.Collate); err != nil {
+		return errors.Trace(err)
+	}
+
+	oldState := tbInfo.State
+	tbInfo.State = model.StatePublic
+	err := checkTableInfoValid(tbInfo)
+	tbInfo.State = oldState
+	return err
+}
+
+func checkTableInfoValidWithStmt(ctx sessionctx.Context, tbInfo *model.TableInfo, s *ast.CreateTableStmt) error {
+	// All of these rely on the AST structure of expressions, which were
+	// lost in the model (got serialized into strings).
+	if err := checkGeneratedColumn(s.Cols); err != nil {
+		return errors.Trace(err)
+	}
+	if s.Partition != nil {
+		err := checkPartitionExprValid(ctx, tbInfo, s.Partition.Expr)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		pi := tbInfo.Partition
+		if pi != nil {
+			switch pi.Type {
+			case model.PartitionTypeRange:
+				err = checkPartitionByRange(ctx, tbInfo, s)
+			case model.PartitionTypeHash:
+				err = checkPartitionByHash(ctx, tbInfo, s)
+			}
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+
+		if err = checkRangePartitioningKeysConstraints(ctx, s, tbInfo); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
 // checkTableInfoValid uses to check table info valid. This is used to validate table info.
 func checkTableInfoValid(tblInfo *model.TableInfo) error {
 	_, err := tables.TableFromMeta(nil, tblInfo)
@@ -1323,32 +1390,22 @@ func BuildTableInfoFromAST(s *ast.CreateTableStmt) (*model.TableInfo, error) {
 // buildTableInfoWithCheck builds model.TableInfo from a SQL statement.
 // Note: TableID and PartitionIDs are left as uninitialized value.
 func buildTableInfoWithCheck(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCharset, dbCollate string) (*model.TableInfo, error) {
-	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
+	tbInfo, err := buildTableInfoWithStmt(ctx, s, dbCharset, dbCollate)
+	if err != nil {
+		return nil, err
+	}
+	if err = checkTableInfoValidExtra(tbInfo); err != nil {
+		return nil, err
+	}
+	if err = checkTableInfoValidWithStmt(ctx, tbInfo, s); err != nil {
+		return nil, err
+	}
+	return tbInfo, nil
+}
+
+// buildTableInfoWithStmt builds model.TableInfo from a SQL statement without validity check
+func buildTableInfoWithStmt(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCharset, dbCollate string) (*model.TableInfo, error) {
 	colDefs := s.Cols
-	colObjects := make([]interface{}, 0, len(colDefs))
-	for _, col := range colDefs {
-		colObjects = append(colObjects, col)
-	}
-	if err := checkTooLongTable(ident.Name); err != nil {
-		return nil, errors.Trace(err)
-	}
-	if err := checkDuplicateColumn(colObjects); err != nil {
-		return nil, errors.Trace(err)
-	}
-	if err := checkGeneratedColumn(colDefs); err != nil {
-		return nil, errors.Trace(err)
-	}
-	if err := checkTooLongColumn(colObjects); err != nil {
-		return nil, errors.Trace(err)
-	}
-	if err := checkTooManyColumns(colDefs); err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	if err := checkColumnsAttributes(colDefs); err != nil {
-		return nil, errors.Trace(err)
-	}
-
 	tableCharset, tableCollate, err := getCharsetAndCollateInTableOption(0, s.Options)
 	if err != nil {
 		return nil, err
@@ -1359,14 +1416,13 @@ func buildTableInfoWithCheck(ctx sessionctx.Context, s *ast.CreateTableStmt, dbC
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-
 	err = checkConstraintNames(newConstraints)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	var tbInfo *model.TableInfo
-	tbInfo, err = buildTableInfo(ctx, ident.Name, cols, newConstraints)
+	tbInfo, err = buildTableInfo(ctx, s.Table.Name, cols, newConstraints)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1377,30 +1433,9 @@ func buildTableInfoWithCheck(ctx sessionctx.Context, s *ast.CreateTableStmt, dbC
 		return nil, errors.Trace(err)
 	}
 
-	if s.Partition != nil {
-		err := checkPartitionExprValid(ctx, tbInfo, s.Partition.Expr)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		pi, err := buildTablePartitionInfo(ctx, s)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if pi != nil {
-			switch pi.Type {
-			case model.PartitionTypeRange:
-				err = checkPartitionByRange(ctx, tbInfo, pi, cols, s)
-			case model.PartitionTypeHash:
-				err = checkPartitionByHash(ctx, pi, s, cols, tbInfo)
-			}
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			if err = checkRangePartitioningKeysConstraints(ctx, s, tbInfo, newConstraints); err != nil {
-				return nil, errors.Trace(err)
-			}
-			tbInfo.Partition = pi
-		}
+	tbInfo.Partition, err = buildTablePartitionInfo(ctx, s)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 
 	if err = handleTableOptions(s.Options, tbInfo); err != nil {
@@ -1408,10 +1443,6 @@ func buildTableInfoWithCheck(ctx sessionctx.Context, s *ast.CreateTableStmt, dbC
 	}
 
 	if err = resolveDefaultTableCharsetAndCollation(tbInfo, dbCharset, dbCollate); err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	if err = checkCharsetAndCollation(tbInfo.Charset, tbInfo.Collate); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -1462,26 +1493,67 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 			return infoschema.ErrTableNotExists.GenWithStackByArgs(referIdent.Schema, referIdent.Name)
 		}
 	}
-	if is.TableExists(ident.Schema, ident.Name) {
-		err = infoschema.ErrTableExists.GenWithStackByArgs(ident)
-		if s.IfNotExists {
-			ctx.GetSessionVars().StmtCtx.AppendNote(err)
-			return nil
-		}
-		return err
-	}
 
 	// build tableInfo
 	var tbInfo *model.TableInfo
 	if s.ReferTable != nil {
 		tbInfo = buildTableInfoWithLike(ident, referTbl.Meta())
 	} else {
-		tbInfo, err = buildTableInfoWithCheck(ctx, s, schema.Charset, schema.Collate)
+		tbInfo, err = buildTableInfoWithStmt(ctx, s, schema.Charset, schema.Collate)
 	}
-
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	if err = checkTableInfoValidWithStmt(ctx, tbInfo, s); err != nil {
+		return err
+	}
+
+	onExist := OnExistError
+	if s.IfNotExists {
+		onExist = OnExistIgnore
+	}
+
+	return d.CreateTableWithInfo(ctx, schema.Name, tbInfo, onExist, false /*tryRetainID*/)
+}
+
+func (d *ddl) CreateTableWithInfo(
+	ctx sessionctx.Context,
+	dbName model.CIStr,
+	tbInfo *model.TableInfo,
+	onExist OnExist,
+	tryRetainID bool,
+) (err error) {
+	is := d.GetInfoSchemaWithInterceptor(ctx)
+	schema, ok := is.SchemaByName(dbName)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName)
+	}
+
+	var oldViewTblID int64
+	if oldTable, err := is.TableByName(schema.Name, tbInfo.Name); err == nil {
+		err = infoschema.ErrTableExists.GenWithStackByArgs(ast.Ident{Schema: schema.Name, Name: tbInfo.Name})
+		switch onExist {
+		case OnExistIgnore:
+			ctx.GetSessionVars().StmtCtx.AppendNote(err)
+			return nil
+		case OnExistReplace:
+			// only CREATE OR REPLACE VIEW is supported at the moment.
+			if tbInfo.View != nil {
+				if oldTable.Meta().IsView() {
+					oldViewTblID = oldTable.Meta().ID
+					break
+				}
+				// The object to replace isn't a view.
+				return ErrWrongObject.GenWithStackByArgs(dbName, tbInfo.Name, "VIEW")
+			}
+			return err
+		default:
+			return err
+		}
+	}
+
+	// FIXME: Implement `tryRetainID`
 	if err := d.assignTableID(tbInfo); err != nil {
 		return errors.Trace(err)
 	}
@@ -1489,50 +1561,40 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 		return errors.Trace(err)
 	}
 
-	tbInfo.State = model.StatePublic
-	err = checkTableInfoValid(tbInfo)
-	if err != nil {
+	if err := checkTableInfoValidExtra(tbInfo); err != nil {
 		return err
 	}
-	tbInfo.State = model.StateNone
+
+	var actionType model.ActionType
+	args := []interface{}{tbInfo}
+	switch {
+	case tbInfo.View != nil:
+		actionType = model.ActionCreateView
+		args = append(args, onExist == OnExistReplace, oldViewTblID)
+	case tbInfo.Sequence != nil:
+		actionType = model.ActionCreateSequence
+	default:
+		actionType = model.ActionCreateTable
+	}
 
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    tbInfo.ID,
 		SchemaName: schema.Name.L,
-		Type:       model.ActionCreateTable,
+		Type:       actionType,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{tbInfo},
+		Args:       args,
 	}
 
 	err = d.doDDLJob(ctx, job)
-	if err == nil {
-		// do pre-split and scatter.
-		sp, ok := d.store.(kv.SplittableStore)
-		if ok && atomic.LoadUint32(&EnableSplitTableRegion) != 0 {
-			var (
-				preSplit      func()
-				scatterRegion bool
-			)
-			val, err := variable.GetGlobalSystemVar(ctx.GetSessionVars(), variable.TiDBScatterRegion)
-			if err != nil {
-				logutil.BgLogger().Warn("[ddl] won't scatter region", zap.Error(err))
-			} else {
-				scatterRegion = variable.TiDBOptOn(val)
-			}
-			pi := tbInfo.GetPartitionInfo()
-			if pi != nil {
-				preSplit = func() { splitPartitionTableRegion(sp, pi, scatterRegion) }
-			} else {
-				preSplit = func() { splitTableRegion(sp, tbInfo, scatterRegion) }
-			}
-			if scatterRegion {
-				preSplit()
-			} else {
-				go preSplit()
-			}
+	if err != nil {
+		// table exists, but if_not_exists flags is true, so we ignore this error.
+		if onExist == OnExistIgnore && infoschema.ErrTableExists.Equal(err) {
+			ctx.GetSessionVars().StmtCtx.AppendNote(err)
+			err = nil
 		}
-
+	} else if actionType == model.ActionCreateTable {
+		d.preSplitAndScatter(ctx, tbInfo)
 		if tbInfo.AutoIncID > 1 {
 			// Default tableAutoIncID base is 0.
 			// If the first ID is expected to greater than 1, we need to do rebase.
@@ -1540,13 +1602,37 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 		}
 	}
 
-	// table exists, but if_not_exists flags is true, so we ignore this error.
-	if infoschema.ErrTableExists.Equal(err) && s.IfNotExists {
-		ctx.GetSessionVars().StmtCtx.AppendNote(err)
-		return nil
-	}
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
+}
+
+// preSplitAndScatter performs pre-split and scatter of the table's regions.
+func (d *ddl) preSplitAndScatter(ctx sessionctx.Context, tbInfo *model.TableInfo) {
+	sp, ok := d.store.(kv.SplittableStore)
+	if !ok || atomic.LoadUint32(&EnableSplitTableRegion) == 0 {
+		return
+	}
+	var (
+		preSplit      func()
+		scatterRegion bool
+	)
+	val, err := variable.GetGlobalSystemVar(ctx.GetSessionVars(), variable.TiDBScatterRegion)
+	if err != nil {
+		logutil.BgLogger().Warn("[ddl] won't scatter region", zap.Error(err))
+	} else {
+		scatterRegion = variable.TiDBOptOn(val)
+	}
+	pi := tbInfo.GetPartitionInfo()
+	if pi != nil {
+		preSplit = func() { splitPartitionTableRegion(sp, pi, scatterRegion) }
+	} else {
+		preSplit = func() { splitTableRegion(sp, tbInfo, scatterRegion) }
+	}
+	if scatterRegion {
+		preSplit()
+	} else {
+		go preSplit()
+	}
 }
 
 func (d *ddl) RecoverTable(ctx sessionctx.Context, recoverInfo *RecoverInfo) (err error) {
@@ -1580,36 +1666,12 @@ func (d *ddl) RecoverTable(ctx sessionctx.Context, recoverInfo *RecoverInfo) (er
 }
 
 func (d *ddl) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) (err error) {
-	ident := ast.Ident{Name: s.ViewName.Name, Schema: s.ViewName.Schema}
-	is := d.GetInfoSchemaWithInterceptor(ctx)
-	schema, ok := is.SchemaByName(ident.Schema)
-	if !ok {
-		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
-	}
-	oldView, err := is.TableByName(ident.Schema, ident.Name)
-	if err == nil && !s.OrReplace {
-		return infoschema.ErrTableExists.GenWithStackByArgs(ident)
-	}
-
-	var oldViewTblID int64
-	if oldView != nil {
-		if !oldView.Meta().IsView() {
-			return ErrWrongObject.GenWithStackByArgs(ident.Schema, ident.Name, "VIEW")
-		}
-		oldViewTblID = oldView.Meta().ID
-	}
-
-	if err = checkTooLongTable(ident.Name); err != nil {
-		return err
-	}
 	viewInfo, err := buildViewInfo(ctx, s)
 	if err != nil {
 		return err
 	}
 
 	cols := make([]*table.Column, len(s.Cols))
-	colObjects := make([]interface{}, 0, len(s.Cols))
-
 	for i, v := range s.Cols {
 		cols[i] = table.ToColumn(&model.ColumnInfo{
 			Name:   v,
@@ -1617,46 +1679,27 @@ func (d *ddl) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) (err err
 			Offset: i,
 			State:  model.StatePublic,
 		})
-		colObjects = append(colObjects, v)
 	}
 
-	if err = checkTooLongColumn(colObjects); err != nil {
-		return err
-	}
-	if err = checkDuplicateColumn(colObjects); err != nil {
-		return err
-	}
-
-	tbInfo, err := buildTableInfo(ctx, ident.Name, cols, nil)
+	tbInfo, err := buildTableInfo(ctx, s.ViewName.Name, cols, nil)
 	if err != nil {
-		return err
-	}
-	if err := d.assignTableID(tbInfo); err != nil {
 		return err
 	}
 	tbInfo.View = viewInfo
 
-	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    tbInfo.ID,
-		SchemaName: schema.Name.L,
-		Type:       model.ActionCreateView,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{tbInfo, s.OrReplace, oldViewTblID},
-	}
 	if v, ok := ctx.GetSessionVars().GetSystemVar("character_set_client"); ok {
 		tbInfo.Charset = v
 	}
 	if v, ok := ctx.GetSessionVars().GetSystemVar("collation_connection"); ok {
 		tbInfo.Collate = v
 	}
-	err = checkCharsetAndCollation(tbInfo.Charset, tbInfo.Collate)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	err = d.doDDLJob(ctx, job)
 
-	return d.callHookOnChanged(err)
+	onExist := OnExistError
+	if s.OrReplace {
+		onExist = OnExistReplace
+	}
+
+	return d.CreateTableWithInfo(ctx, s.ViewName.Schema, tbInfo, onExist, false /*tryRetainID*/)
 }
 
 func buildViewInfo(ctx sessionctx.Context, s *ast.CreateViewStmt) (*model.ViewInfo, error) {
@@ -1671,7 +1714,8 @@ func buildViewInfo(ctx sessionctx.Context, s *ast.CreateViewStmt) (*model.ViewIn
 		Security: s.Security, SelectStmt: sb.String(), CheckOption: s.CheckOption, Cols: nil}, nil
 }
 
-func checkPartitionByHash(ctx sessionctx.Context, pi *model.PartitionInfo, s *ast.CreateTableStmt, cols []*table.Column, tbInfo *model.TableInfo) error {
+func checkPartitionByHash(ctx sessionctx.Context, tbInfo *model.TableInfo, s *ast.CreateTableStmt) error {
+	pi := tbInfo.Partition
 	if err := checkAddPartitionTooManyPartitions(pi.Num); err != nil {
 		return err
 	}
@@ -1681,10 +1725,12 @@ func checkPartitionByHash(ctx sessionctx.Context, pi *model.PartitionInfo, s *as
 	if err := checkPartitionFuncValid(ctx, tbInfo, s.Partition.Expr); err != nil {
 		return err
 	}
-	return checkPartitionFuncType(ctx, s, cols, tbInfo)
+	return checkPartitionFuncType(ctx, s, tbInfo)
 }
 
-func checkPartitionByRange(ctx sessionctx.Context, tbInfo *model.TableInfo, pi *model.PartitionInfo, cols []*table.Column, s *ast.CreateTableStmt) error {
+// checkPartitionByRange checks validity of a "BY RANGE" partition.
+func checkPartitionByRange(ctx sessionctx.Context, tbInfo *model.TableInfo, s *ast.CreateTableStmt) error {
+	pi := tbInfo.Partition
 	if err := checkPartitionNameUnique(pi); err != nil {
 		return err
 	}
@@ -1698,7 +1744,7 @@ func checkPartitionByRange(ctx sessionctx.Context, tbInfo *model.TableInfo, pi *
 	}
 
 	if len(pi.Columns) == 0 {
-		if err := checkCreatePartitionValue(ctx, tbInfo, pi, cols); err != nil {
+		if err := checkCreatePartitionValue(ctx, tbInfo); err != nil {
 			return err
 		}
 
@@ -1710,28 +1756,28 @@ func checkPartitionByRange(ctx sessionctx.Context, tbInfo *model.TableInfo, pi *
 		if err := checkPartitionFuncValid(ctx, tbInfo, s.Partition.Expr); err != nil {
 			return err
 		}
-		return checkPartitionFuncType(ctx, s, cols, tbInfo)
+		return checkPartitionFuncType(ctx, s, tbInfo)
 	}
 
 	// Check for range columns partition.
-	if err := checkRangeColumnsPartitionType(tbInfo, pi.Columns); err != nil {
+	if err := checkRangeColumnsPartitionType(tbInfo); err != nil {
 		return err
 	}
 
 	if s != nil {
 		for _, def := range s.Partition.Definitions {
 			exprs := def.Clause.(*ast.PartitionDefinitionClauseLessThan).Exprs
-			if err := checkRangeColumnsTypeAndValuesMatch(ctx, tbInfo, pi.Columns, exprs); err != nil {
+			if err := checkRangeColumnsTypeAndValuesMatch(ctx, tbInfo, exprs); err != nil {
 				return err
 			}
 		}
 	}
 
-	return checkRangeColumnsPartitionValue(ctx, tbInfo, pi)
+	return checkRangeColumnsPartitionValue(ctx, tbInfo)
 }
 
-func checkRangeColumnsPartitionType(tbInfo *model.TableInfo, columns []model.CIStr) error {
-	for _, col := range columns {
+func checkRangeColumnsPartitionType(tbInfo *model.TableInfo) error {
+	for _, col := range tbInfo.Partition.Columns {
 		colInfo := getColumnInfoByName(tbInfo, col.L)
 		if colInfo == nil {
 			return errors.Trace(ErrFieldNotFoundPart)
@@ -1752,8 +1798,9 @@ func checkRangeColumnsPartitionType(tbInfo *model.TableInfo, columns []model.CIS
 	return nil
 }
 
-func checkRangeColumnsPartitionValue(ctx sessionctx.Context, tbInfo *model.TableInfo, pi *model.PartitionInfo) error {
+func checkRangeColumnsPartitionValue(ctx sessionctx.Context, tbInfo *model.TableInfo) error {
 	// Range columns partition key supports multiple data types with integer、datetime、string.
+	pi := tbInfo.Partition
 	defs := pi.Definitions
 	if len(defs) < 1 {
 		return ast.ErrPartitionsMustBeDefined.GenWithStackByArgs("RANGE")
@@ -2439,7 +2486,9 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 	// old partitions to check all partitions is strictly increasing.
 	tmp := *partInfo
 	tmp.Definitions = append(pi.Definitions, tmp.Definitions...)
-	err = checkPartitionByRange(ctx, meta, &tmp, t.Cols(), nil)
+	meta.Partition = &tmp
+	err = checkPartitionByRange(ctx, meta, nil)
+	meta.Partition = pi
 	if err != nil {
 		if ErrSameNamePartition.Equal(err) && spec.IfNotExists {
 			ctx.GetSessionVars().StmtCtx.AppendNote(err)
@@ -3375,7 +3424,7 @@ func (d *ddl) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast.Iden
 			return errors.Trace(err)
 		}
 	}
-	doNothing, err := checkAlterTableCharset(tb.Meta(), schema, toCharset, toCollate)
+	doNothing, err := checkAlterTableCharset(tb.Meta(), schema, toCharset, toCollate, needsOverwriteCols)
 	if err != nil {
 		return err
 	}
@@ -3469,7 +3518,7 @@ func (d *ddl) UpdateTableReplicaInfo(ctx sessionctx.Context, physicalID int64, a
 // This function returns 2 variable:
 // doNothing: if doNothing is true, means no need to change any more, because the target charset is same with the charset of table.
 // err: if err is not nil, means it is not possible to change table charset to target charset.
-func checkAlterTableCharset(tblInfo *model.TableInfo, dbInfo *model.DBInfo, toCharset, toCollate string) (doNothing bool, err error) {
+func checkAlterTableCharset(tblInfo *model.TableInfo, dbInfo *model.DBInfo, toCharset, toCollate string, needsOverwriteCols bool) (doNothing bool, err error) {
 	origCharset := tblInfo.Charset
 	origCollate := tblInfo.Collate
 	// Old version schema charset maybe modified when load schema if TreatOldVersionUTF8AsUTF8MB4 was enable.
@@ -3502,6 +3551,10 @@ func checkAlterTableCharset(tblInfo *model.TableInfo, dbInfo *model.DBInfo, toCh
 
 	if err = checkModifyCharsetAndCollation(toCharset, toCollate, origCharset, origCollate, false); err != nil {
 		return doNothing, err
+	}
+	if !needsOverwriteCols {
+		// If we don't change the charset and collation of columns, skip the next checks.
+		return doNothing, nil
 	}
 
 	for _, col := range tblInfo.Columns {
@@ -3772,7 +3825,7 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 	// to job queue, the fail path logic is super fast.
 	// After DDL job is put to the queue, and if the check fail, TiDB will run the DDL cancel logic.
 	// The recover step causes DDL wait a few seconds, makes the unit test painfully slow.
-	_, err = buildIndexColumns(tblInfo.Columns, indexPartSpecifications)
+	indexColumns, err := buildIndexColumns(tblInfo.Columns, indexPartSpecifications)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -3781,7 +3834,7 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 	}
 
 	if tblInfo.GetPartitionInfo() != nil {
-		if err := checkPartitionKeysConstraint(tblInfo.GetPartitionInfo(), indexPartSpecifications, tblInfo, true); err != nil {
+		if err := checkPartitionKeysConstraint(tblInfo.GetPartitionInfo(), indexColumns, tblInfo, true); err != nil {
 			return err
 		}
 	}
@@ -3930,12 +3983,12 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 	// to job queue, the fail path logic is super fast.
 	// After DDL job is put to the queue, and if the check fail, TiDB will run the DDL cancel logic.
 	// The recover step causes DDL wait a few seconds, makes the unit test painfully slow.
-	_, err = buildIndexColumns(append(tblInfo.Columns, hiddenCols...), indexPartSpecifications)
+	indexColumns, err := buildIndexColumns(append(tblInfo.Columns, hiddenCols...), indexPartSpecifications)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	if unique && tblInfo.GetPartitionInfo() != nil {
-		if err := checkPartitionKeysConstraint(tblInfo.GetPartitionInfo(), indexPartSpecifications, tblInfo, false); err != nil {
+		if err := checkPartitionKeysConstraint(tblInfo.GetPartitionInfo(), indexColumns, tblInfo, false); err != nil {
 			return err
 		}
 	}
@@ -4238,7 +4291,7 @@ func buildPartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, d *ddl, s
 		// For RANGE partition only VALUES LESS THAN should be possible.
 		clause := def.Clause.(*ast.PartitionDefinitionClauseLessThan)
 		if len(part.Columns) > 0 {
-			if err := checkRangeColumnsTypeAndValuesMatch(ctx, meta, part.Columns, clause.Exprs); err != nil {
+			if err := checkRangeColumnsTypeAndValuesMatch(ctx, meta, clause.Exprs); err != nil {
 				return nil, err
 			}
 		}
@@ -4261,11 +4314,12 @@ func buildPartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, d *ddl, s
 	return part, nil
 }
 
-func checkRangeColumnsTypeAndValuesMatch(ctx sessionctx.Context, meta *model.TableInfo, colNames []model.CIStr, exprs []ast.ExprNode) error {
+func checkRangeColumnsTypeAndValuesMatch(ctx sessionctx.Context, meta *model.TableInfo, exprs []ast.ExprNode) error {
 	// Validate() has already checked len(colNames) = len(exprs)
 	// create table ... partition by range columns (cols)
 	// partition p0 values less than (expr)
 	// check the type of cols[i] and expr is consistent.
+	colNames := meta.Partition.Columns
 	for i, colExpr := range exprs {
 		if _, ok := colExpr.(*ast.MaxValueExpr); ok {
 			continue
@@ -4560,23 +4614,6 @@ func (d *ddl) OrderByColumns(ctx sessionctx.Context, ident ast.Ident) error {
 
 func (d *ddl) CreateSequence(ctx sessionctx.Context, stmt *ast.CreateSequenceStmt) error {
 	ident := ast.Ident{Name: stmt.Name.Name, Schema: stmt.Name.Schema}
-	is := d.GetInfoSchemaWithInterceptor(ctx)
-	schema, ok := is.SchemaByName(ident.Schema)
-	if !ok {
-		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
-	}
-	ok = is.TableExists(ident.Schema, ident.Name)
-	if ok {
-		if stmt.IfNotExists {
-			ctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrTableExists.GenWithStackByArgs(ident))
-			return nil
-		}
-		// TODO: refine the error.
-		return infoschema.ErrTableExists.GenWithStackByArgs(ident)
-	}
-	if err := checkTooLongTable(ident.Name); err != nil {
-		return err
-	}
 	sequenceInfo, err := buildSequenceInfo(stmt, ident)
 	if err != nil {
 		return err
@@ -4586,28 +4623,14 @@ func (d *ddl) CreateSequence(ctx sessionctx.Context, stmt *ast.CreateSequenceStm
 	if err != nil {
 		return err
 	}
-	if err := d.assignTableID(tbInfo); err != nil {
-		return err
-	}
 	tbInfo.Sequence = sequenceInfo
 
-	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    tbInfo.ID,
-		SchemaName: schema.Name.L,
-		Type:       model.ActionCreateSequence,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{tbInfo},
+	onExist := OnExistError
+	if stmt.IfNotExists {
+		onExist = OnExistIgnore
 	}
 
-	err = d.doDDLJob(ctx, job)
-	// If the same name sequence exists, but IfNotExists flag is true, then we should ignore the error.
-	if infoschema.ErrTableExists.Equal(err) && stmt.IfNotExists {
-		ctx.GetSessionVars().StmtCtx.AppendNote(err)
-		return nil
-	}
-	err = d.callHookOnChanged(err)
-	return errors.Trace(err)
+	return d.CreateTableWithInfo(ctx, ident.Schema, tbInfo, onExist, false /*tryRetainID*/)
 }
 
 func (d *ddl) DropSequence(ctx sessionctx.Context, ti ast.Ident, ifExists bool) (err error) {

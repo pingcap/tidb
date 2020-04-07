@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/hint"
 )
 
 const (
@@ -49,7 +50,7 @@ type Binding struct {
 	Charset    string
 	Collation  string
 	// Hint is the parsed hints, it is used to bind hints to stmt node.
-	Hint *HintsSet
+	Hint *hint.HintsSet
 	// ID is the string form of Hint. It would be non-empty only when the status is `Using` or `PendingVerify`.
 	ID string
 }
@@ -116,7 +117,7 @@ func (br *BindRecord) prepareHints(sctx sessionctx.Context) error {
 				return err
 			}
 		}
-		hintsSet, err := ParseHintsSet(p, bind.BindSQL, bind.Charset, bind.Collation)
+		hintsSet, err := hint.ParseHintsSet(p, bind.BindSQL, bind.Charset, bind.Collation, br.Db)
 		if err != nil {
 			return err
 		}
