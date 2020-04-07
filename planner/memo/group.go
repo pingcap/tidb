@@ -215,6 +215,11 @@ func (g *Group) GetFirstElem(operand Operand) *list.Element {
 	return g.FirstExpr[operand]
 }
 
+// GetFirstGroupExpr returns the first GroupExpr of the Equivalents.
+func (g *Group) GetFirstGroupExpr() *GroupExpr {
+	return g.Equivalents.Front().Value.(*GroupExpr)
+}
+
 // GetImpl returns the best Implementation satisfy the physical property.
 func (g *Group) GetImpl(prop *property.PhysicalProperty) Implementation {
 	key := prop.HashCode()

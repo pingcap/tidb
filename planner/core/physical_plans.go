@@ -249,7 +249,7 @@ type PhysicalTableScan struct {
 
 	physicalTableID int64
 
-	rangeDecidedBy []*expression.Column
+	RangeDecidedBy []*expression.Column
 
 	// HandleIdx is the index of handle, which is only used for admin check table.
 	HandleIdx int
@@ -293,6 +293,11 @@ func ExpandVirtualColumn(columns []*model.ColumnInfo, schema *expression.Schema,
 //SetIsChildOfIndexLookUp is to set the bool if is a child of IndexLookUpReader
 func (ts *PhysicalTableScan) SetIsChildOfIndexLookUp(isIsChildOfIndexLookUp bool) {
 	ts.isChildOfIndexLookUp = isIsChildOfIndexLookUp
+}
+
+// SetStats sets the stats of PhysicalTabelScan.
+func (ts *PhysicalTableScan) SetStats(stats *property.StatsInfo) {
+	ts.stats = stats
 }
 
 // PhysicalProjection is the physical operator of projection.
@@ -389,6 +394,31 @@ type PhysicalIndexJoin struct {
 	//      need to be evaluated after we fetch the data of t1.
 	// This struct stores them and evaluate them to ranges.
 	CompareFilters *ColWithCmpFuncManager
+}
+
+// NewPhysicalIndexJoin creates a PhysicalIndexJoin.
+func NewPhysicalIndexJoin(
+	p *LogicalJoin, outerIdx int, newStats *property.StatsInfo, reqProp []*property.PhysicalProperty,
+	innerKeys []*expression.Column, outerKeys []*expression.Column, keyOff2IdxOff []int, innerTask task,
+	newOtherConds []expression.Expression, ranges []*ranger.Range, cmpFilter *ColWithCmpFuncManager) *PhysicalIndexJoin {
+	baseJoin := basePhysicalJoin{
+		InnerChildIdx:   1 - outerIdx,
+		LeftConditions:  p.LeftConditions,
+		RightConditions: p.RightConditions,
+		OtherConditions: newOtherConds,
+		JoinType:        p.JoinType,
+		OuterJoinKeys:   outerKeys,
+		InnerJoinKeys:   innerKeys,
+		DefaultValues:   p.DefaultValues,
+	}
+	indexJoin := PhysicalIndexJoin{
+		basePhysicalJoin: baseJoin,
+		innerTask:        innerTask,
+		KeyOff2IdxOff:    keyOff2IdxOff,
+		Ranges:           ranges,
+		CompareFilters:   cmpFilter,
+	}.Init(p.ctx, newStats, p.blockOffset, reqProp...)
+	return indexJoin
 }
 
 // PhysicalIndexMergeJoin represents the plan of index look up merge join.

@@ -552,7 +552,7 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 	}
 	var avgInnerRowCnt float64
 	if outerChild.statsInfo().RowCount > 0 {
-		avgInnerRowCnt = p.equalCondOutCnt / outerChild.statsInfo().RowCount
+		avgInnerRowCnt = p.EqualCondOutCnt / outerChild.statsInfo().RowCount
 	}
 	joins = p.buildIndexJoinInner2TableScan(prop, ds, innerJoinKeys, outerJoinKeys, outerIdx, us, avgInnerRowCnt)
 	if joins != nil {
@@ -745,7 +745,7 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 		DBName:          ds.DBName,
 		filterCondition: ds.pushedDownConds,
 		Ranges:          ranges,
-		rangeDecidedBy:  outerJoinKeys,
+		RangeDecidedBy:  outerJoinKeys,
 		KeepOrder:       keepOrder,
 		Desc:            desc,
 	}.Init(ds.ctx, ds.blockOffset)
@@ -757,7 +757,7 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 	countAfterAccess := rowCount
 	if len(ts.filterCondition) > 0 {
 		var err error
-		selectivity, _, err = ds.tableStats.HistColl.Selectivity(ds.ctx, ts.filterCondition, ds.possibleAccessPaths)
+		selectivity, _, err = ds.TableStats.HistColl.Selectivity(ds.ctx, ts.filterCondition, ds.possibleAccessPaths)
 		if err != nil || selectivity <= 0 {
 			logutil.BgLogger().Debug("unexpected selectivity, use selection factor", zap.Float64("selectivity", selectivity), zap.String("table", ts.TableAsName.L))
 			selectivity = SelectionFactor
@@ -864,7 +864,7 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 	// if it is the second case, HashJoin should always be cheaper than IndexJoin then, so we set row count of inner task
 	// to table size, to simply make it more expensive.
 	if rowCount <= 0 {
-		rowCount = ds.tableStats.RowCount
+		rowCount = ds.TableStats.RowCount
 	}
 	if maxOneRow {
 		// Theoretically, this line is unnecessary because row count estimation of join should guarantee rowCount is not larger
@@ -880,7 +880,7 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 	}
 	// Assume equal conditions used by index join and other conditions are independent.
 	if len(tblConds) > 0 {
-		selectivity, _, err := ds.tableStats.HistColl.Selectivity(ds.ctx, tblConds, ds.possibleAccessPaths)
+		selectivity, _, err := ds.TableStats.HistColl.Selectivity(ds.ctx, tblConds, ds.possibleAccessPaths)
 		if err != nil || selectivity <= 0 {
 			logutil.BgLogger().Debug("unexpected selectivity, use selection factor", zap.Float64("selectivity", selectivity), zap.String("table", ds.TableAsName.L))
 			selectivity = SelectionFactor
@@ -895,7 +895,7 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		tmpPath.CountAfterAccess = cnt
 	}
 	if len(indexConds) > 0 {
-		selectivity, _, err := ds.tableStats.HistColl.Selectivity(ds.ctx, indexConds, ds.possibleAccessPaths)
+		selectivity, _, err := ds.TableStats.HistColl.Selectivity(ds.ctx, indexConds, ds.possibleAccessPaths)
 		if err != nil || selectivity <= 0 {
 			logutil.BgLogger().Debug("unexpected selectivity, use selection factor", zap.Float64("selectivity", selectivity), zap.String("table", ds.TableAsName.L))
 			selectivity = SelectionFactor
@@ -906,11 +906,11 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		}
 		tmpPath.CountAfterAccess = cnt
 	}
-	is.stats = ds.tableStats.ScaleByExpectCnt(tmpPath.CountAfterAccess)
+	is.stats = ds.TableStats.ScaleByExpectCnt(tmpPath.CountAfterAccess)
 	rowSize := is.indexScanRowSize(path.Index, ds, true)
 	sessVars := ds.ctx.GetSessionVars()
 	cop.cst = tmpPath.CountAfterAccess * rowSize * sessVars.ScanFactor
-	finalStats := ds.tableStats.ScaleByExpectCnt(rowCount)
+	finalStats := ds.TableStats.ScaleByExpectCnt(rowCount)
 	is.addPushedDownSelection(cop, ds, tmpPath, finalStats)
 	t := finishCopTask(ds.ctx, cop).(*rootTask)
 	reader := t.p

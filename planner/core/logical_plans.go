@@ -148,8 +148,8 @@ type LogicalJoin struct {
 	redundantSchema *expression.Schema
 	redundantNames  types.NameSlice
 
-	// equalCondOutCnt indicates the estimated count of joined rows after evaluating `EqualConditions`.
-	equalCondOutCnt float64
+	// EqualCondOutCnt indicates the estimated count of joined rows after evaluating `EqualConditions`.
+	EqualCondOutCnt float64
 }
 
 // Shallow shallow copies a LogicalJoin struct.
@@ -483,7 +483,7 @@ type DataSource struct {
 	allConds []expression.Expression
 
 	statisticTable *statistics.Table
-	tableStats     *property.StatsInfo
+	TableStats     *property.StatsInfo
 
 	// possibleAccessPaths stores all the possible access path for physical plan, including table scan.
 	possibleAccessPaths []*util.AccessPath
@@ -504,6 +504,11 @@ type DataSource struct {
 	TblColHists *statistics.HistColl
 	//preferStoreType means the DataSource is enforced to which storage.
 	preferStoreType int
+}
+
+// GetAccessPaths returns all of the possibleAccessPaths.
+func (ds *DataSource) GetAccessPaths() []*util.AccessPath {
+	return ds.possibleAccessPaths
 }
 
 // ExtractCorrelatedCols implements LogicalPlan interface.
@@ -833,7 +838,7 @@ func (ds *DataSource) fillIndexPath(path *util.AccessPath, conds []expression.Ex
 		path.EqCondCount = res.EqCondCount
 		path.EqOrInCondCount = res.EqOrInCount
 		path.IsDNFCond = res.IsDNFCond
-		path.CountAfterAccess, err = ds.tableStats.HistColl.GetRowCountByIndexRanges(sc, path.Index.ID, path.Ranges)
+		path.CountAfterAccess, err = ds.TableStats.HistColl.GetRowCountByIndexRanges(sc, path.Index.ID, path.Ranges)
 		if err != nil {
 			return err
 		}
@@ -876,7 +881,7 @@ func (ds *DataSource) deriveIndexPathStats(path *util.AccessPath, conds []expres
 		path.CountAfterAccess = math.Min(ds.stats.RowCount/SelectionFactor, float64(ds.statisticTable.Count))
 	}
 	if path.IndexFilters != nil {
-		selectivity, _, err := ds.tableStats.HistColl.Selectivity(ds.ctx, path.IndexFilters, nil)
+		selectivity, _, err := ds.TableStats.HistColl.Selectivity(ds.ctx, path.IndexFilters, nil)
 		if err != nil {
 			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
 			selectivity = SelectionFactor

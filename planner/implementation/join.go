@@ -72,3 +72,41 @@ func (impl *MergeJoinImpl) AttachChildren(children ...memo.Implementation) memo.
 func NewMergeJoinImpl(mergeJoin *plannercore.PhysicalMergeJoin) *MergeJoinImpl {
 	return &MergeJoinImpl{baseImpl{plan: mergeJoin}}
 }
+
+// IndexLookUpJoinImpl is the implementation of IndexLookUpJoin(or IndexJoin).
+type IndexLookUpJoinImpl struct {
+	baseImpl
+
+	InnerImpl memo.Implementation
+	OuterIdx  int
+}
+
+// CalcCost implements Implementation CalcCost interface.
+func (impl *IndexLookUpJoinImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
+	outerChild := children[0]
+	innerChild := impl.InnerImpl
+	indexJoin := impl.plan.(*plannercore.PhysicalIndexJoin)
+	impl.cost = indexJoin.GetCost(
+		outerChild.GetPlan().Stats().RowCount, innerChild.GetPlan().Stats().RowCount,
+		outerChild.GetCost(), innerChild.GetCost())
+	return impl.cost
+}
+
+// AttachChildren implements Implementation AttachChildren interface.
+func (impl *IndexLookUpJoinImpl) AttachChildren(children ...memo.Implementation) memo.Implementation {
+	outerChild := children[0].GetPlan()
+	innerChild := impl.InnerImpl.GetPlan()
+	join := impl.plan.(*plannercore.PhysicalIndexJoin)
+	if impl.OuterIdx == 0 {
+		join.SetChildren(outerChild, innerChild)
+	} else {
+		join.SetChildren(innerChild, outerChild)
+	}
+	join.SetSchema(plannercore.BuildPhysicalJoinSchema(join.JoinType, join))
+	return impl
+}
+
+// NewIndexLookUpJoinImpl creates a new IndexLookUpJoinImpl.
+func NewIndexLookUpJoinImpl(join *plannercore.PhysicalIndexJoin, innerImpl memo.Implementation, outerIdx int) *IndexLookUpJoinImpl {
+	return &IndexLookUpJoinImpl{baseImpl{plan: join}, innerImpl, outerIdx}
+}

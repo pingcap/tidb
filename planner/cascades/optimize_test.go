@@ -67,6 +67,8 @@ func (s *testCascadesSuite) TestImplGroupZeroCost(c *C) {
 	prop := &property.PhysicalProperty{
 		ExpectedCnt: math.MaxFloat64,
 	}
+	err = s.optimizer.fillGroupStats(rootGroup)
+	c.Assert(err, IsNil)
 	impl, err := s.optimizer.implGroup(rootGroup, prop, 0.0)
 	c.Assert(impl, IsNil)
 	c.Assert(err, IsNil)

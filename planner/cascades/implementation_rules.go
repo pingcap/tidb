@@ -16,11 +16,13 @@ package cascades
 import (
 	"math"
 
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	impl "github.com/pingcap/tidb/planner/implementation"
 	"github.com/pingcap/tidb/planner/memo"
 	"github.com/pingcap/tidb/planner/property"
+	"github.com/pingcap/tidb/util/ranger"
 )
 
 // ImplementationRule defines the interface for implementation rules.
@@ -77,6 +79,7 @@ var defaultImplementationMap = map[memo.Operand][]ImplementationRule{
 		&ImplHashJoinBuildLeft{},
 		&ImplHashJoinBuildRight{},
 		&ImplMergeJoin{},
+		&ImplIndexJoin{},
 	},
 	memo.OperandUnionAll: {
 		&ImplUnionAll{},
@@ -664,4 +667,243 @@ func (w *ImplWindow) OnImplement(expr *memo.GroupExpr, reqProp *property.Physica
 	)
 	physicalWindow.SetSchema(expr.Group.Prop.Schema)
 	return []memo.Implementation{impl.NewWindowImpl(physicalWindow)}, nil
+}
+
+// ImplIndexJoin implements LogicalJoin to PhysicalIndexJoin, PhysicalIndexHashJoin and
+// PhysicalIndexMergeJoin.
+type ImplIndexJoin struct {
+}
+
+// Match implements ImplementationRule Match interface.
+func (r *ImplIndexJoin) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
+	all, _ := prop.AllSameOrder()
+	return all
+}
+
+// OnImplement implements ImplementationRule OnImplement interface.
+func (r *ImplIndexJoin) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
+	join := expr.ExprNode.(*plannercore.LogicalJoin)
+	var supportLeftOuter, supportRightOuter bool
+	switch join.JoinType {
+	case plannercore.SemiJoin, plannercore.AntiSemiJoin, plannercore.LeftOuterSemiJoin,
+		plannercore.AntiLeftOuterSemiJoin, plannercore.LeftOuterJoin:
+		supportLeftOuter = true
+	case plannercore.RightOuterJoin:
+		supportRightOuter = true
+	case plannercore.InnerJoin:
+		supportLeftOuter, supportRightOuter = true, true
+	}
+
+	impls := make([]memo.Implementation, 0)
+	if supportLeftOuter {
+		impls = append(impls, r.getIndexJoinByOuterIdx(expr, reqProp, 0)...)
+	}
+
+	if supportRightOuter {
+		impls = append(impls, r.getIndexJoinByOuterIdx(expr, reqProp, 1)...)
+	}
+	return impls, nil
+}
+
+func (r *ImplIndexJoin) getIndexJoinByOuterIdx(expr *memo.GroupExpr, prop *property.PhysicalProperty, outerIdx int) []memo.Implementation {
+	join := expr.ExprNode.(*plannercore.LogicalJoin)
+	outerChildGroup, innerChildGroup := expr.Children[outerIdx], expr.Children[1-outerIdx]
+	if !prop.AllColsFromSchema(outerChildGroup.Prop.Schema) {
+		return nil
+	}
+	var outerJoinKeys, innerJoinKeys []*expression.Column
+	if outerIdx == 0 {
+		outerJoinKeys, innerJoinKeys = join.GetJoinKeys()
+	} else {
+		innerJoinKeys, outerJoinKeys = join.GetJoinKeys()
+	}
+	// TODO: Handle UnionScan when we support it in cascades planner.
+	var avgInnerRowCnt float64
+	if outerChildGroup.Prop.Stats.RowCount > 0 {
+		avgInnerRowCnt = join.EqualCondOutCnt / outerChildGroup.Prop.Stats.RowCount
+	}
+
+	indexJoins := r.buildIndexJoinInner2TableScan(expr, prop, innerChildGroup, innerJoinKeys, outerJoinKeys, outerIdx, avgInnerRowCnt)
+	// TODO: Support use IndexPath to build IndexJoin.
+	return indexJoins
+}
+
+func (r *ImplIndexJoin) buildIndexJoinInner2TableScan(
+	joinExpr *memo.GroupExpr, prop *property.PhysicalProperty, innerGroup *memo.Group,
+	innerJoinKeys []*expression.Column, outerJoinKeys []*expression.Column,
+	outerIdx int, avgInnerRowCnt float64) []memo.Implementation {
+	// Step 1: Find the InnerSide TableReader(TiKVSingleGather without index).
+	var tableGatherExpr *memo.GroupExpr
+	for iter := innerGroup.Equivalents.Front(); iter != nil; iter = iter.Next() {
+		expr := iter.Value.(*memo.GroupExpr)
+		gather, ok := expr.ExprNode.(*plannercore.TiKVSingleGather)
+		if !ok {
+			continue
+		}
+		if !gather.IsIndexGather {
+			// Notice: we assume there is only ONE TiKVSingleGather for LogicalTableScan.
+			tableGatherExpr = expr
+			break
+		}
+	}
+	if tableGatherExpr == nil {
+		return nil
+	}
+	// Step 2: Check whether the HandleColumn of LogicalTableScan is a JoinKey.
+	tableScanExpr := r.findLeafGroupExpr(tableGatherExpr)
+	tableScan := tableScanExpr.ExprNode.(*plannercore.LogicalTableScan)
+	pkCol := tableScan.Handle
+	if pkCol == nil {
+		return nil
+	}
+	keyOff2IdxOff := make([]int, len(innerJoinKeys))
+	pkMatched := false
+	for i, key := range innerJoinKeys {
+		if !key.Equal(nil, pkCol) {
+			keyOff2IdxOff[i] = -1
+			continue
+		}
+		pkMatched = true
+		keyOff2IdxOff[i] = 0
+	}
+	if !pkMatched {
+		return nil
+	}
+	// Step 3: Build InnerSide Implementation.
+	innerImpl := r.constructInnerTableScan(tableGatherExpr, tableScanExpr, outerJoinKeys, false, false, avgInnerRowCnt)
+
+	// Step 4: Build IndexJoin Implementation.
+	indexJoinImpl := r.constructIndexJoin(
+		joinExpr, prop, outerIdx, innerImpl,
+		innerJoinKeys, outerJoinKeys, nil,
+		keyOff2IdxOff, nil, nil)
+	// TODO: Support IndexHashJoin & IndexMergeJoin.
+
+	return []memo.Implementation{indexJoinImpl}
+}
+
+func (r *ImplIndexJoin) findLeafGroupExpr(expr *memo.GroupExpr) *memo.GroupExpr {
+	if len(expr.Children) == 0 {
+		return expr
+	}
+	return r.findLeafGroupExpr(expr.Children[0].Equivalents.Front().Value.(*memo.GroupExpr))
+}
+
+func (r *ImplIndexJoin) constructIndexJoin(
+	joinExpr *memo.GroupExpr, prop *property.PhysicalProperty, outerIdx int, innerImpl memo.Implementation,
+	innerKeys []*expression.Column, outerKeys []*expression.Column, ranges []*ranger.Range,
+	keyOff2IdxOff []int, idxColLens []int, cmpFilter *plannercore.ColWithCmpFuncManager) memo.Implementation {
+	join := joinExpr.ExprNode.(*plannercore.LogicalJoin)
+	chReqProps := make([]*property.PhysicalProperty, 2)
+	chReqProps[outerIdx] = &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, Items: prop.Items}
+	joinStats := joinExpr.Group.Prop.Stats
+	if prop.ExpectedCnt < joinStats.RowCount {
+		expCntScale := prop.ExpectedCnt / joinStats.RowCount
+		chReqProps[outerIdx].ExpectedCnt = joinExpr.Children[outerIdx].Prop.Stats.RowCount * expCntScale
+	}
+	newInnerKeys := make([]*expression.Column, 0, len(innerKeys))
+	newOuterKeys := make([]*expression.Column, 0, len(outerKeys))
+	newKeyOff := make([]int, 0, len(keyOff2IdxOff))
+	newOtherConds := make([]expression.Expression, len(join.OtherConditions), len(join.OtherConditions)+len(join.EqualConditions))
+	copy(newOtherConds, join.OtherConditions)
+	for keyOff, idxOff := range keyOff2IdxOff {
+		if keyOff2IdxOff[keyOff] < 0 {
+			newOtherConds = append(newOtherConds, join.EqualConditions[keyOff])
+			continue
+		}
+		newInnerKeys = append(newInnerKeys, innerKeys[keyOff])
+		newOuterKeys = append(newOuterKeys, outerKeys[keyOff])
+		newKeyOff = append(newKeyOff, idxOff)
+	}
+	indexJoin := plannercore.NewPhysicalIndexJoin(
+		join, outerIdx, joinStats.ScaleByExpectCnt(prop.ExpectedCnt), chReqProps,
+		newInnerKeys, newOuterKeys, newKeyOff, nil, newOtherConds,
+		ranges, nil)
+	indexJoin.IdxColLens = idxColLens
+	indexJoin.SetSchema(joinExpr.Schema())
+	return impl.NewIndexLookUpJoinImpl(indexJoin, innerImpl, outerIdx)
+}
+
+func (r *ImplIndexJoin) constructInnerTableScan(
+	tableGatherExpr *memo.GroupExpr, tableScanExpr *memo.GroupExpr,
+	outerJoinKeys []*expression.Column, keepOrder bool,
+	desc bool, rowCount float64) memo.Implementation {
+	gather := tableGatherExpr.ExprNode.(*plannercore.TiKVSingleGather)
+	logicalTS := tableScanExpr.ExprNode.(*plannercore.LogicalTableScan)
+	pk := logicalTS.Handle
+	ranges := ranger.FullIntRange(mysql.HasUnsignedFlag(pk.RetType.Flag))
+	ds := logicalTS.Source
+	physicalTS := plannercore.PhysicalTableScan{
+		Table:          ds.TableInfo(),
+		Columns:        ds.Columns,
+		TableAsName:    ds.TableAsName,
+		DBName:         ds.DBName,
+		Ranges:         ranges,
+		RangeDecidedBy: outerJoinKeys,
+		KeepOrder:      keepOrder,
+		Desc:           desc,
+	}.Init(logicalTS.SCtx(), logicalTS.SelectBlockOffset())
+	physicalTS.SetSchema(tableScanExpr.Schema().Clone())
+
+	filterConditions := r.getAllFilterConditions(tableGatherExpr)
+	if rowCount <= 0 {
+		rowCount = float64(1)
+	}
+	selectivity := float64(1)
+	countAfterAccess := rowCount
+	if len(filterConditions) > 0 {
+		var err error
+		selectivity, _, err = ds.TableStats.HistColl.Selectivity(ds.SCtx(), filterConditions, ds.GetAccessPaths())
+		if err != nil || selectivity < 0 {
+			selectivity = plannercore.SelectionFactor
+		}
+		// rowCount is computed from result row count of join, which has already accounted the filters on DataSource,
+		// i.e, rowCount equals to `countAfterAccess * selectivity`.
+		countAfterAccess = rowCount / selectivity
+	}
+	stats := &property.StatsInfo{
+		// TableScan as inner child of IndexJoin can return at most 1 tuple for each outer row.
+		RowCount:     math.Min(1.0, countAfterAccess),
+		StatsVersion: tableScanExpr.Group.Prop.Stats.StatsVersion,
+		// Cardinality would not be used in cost computation of IndexJoin, set leave it as default nil.
+	}
+	physicalTS.SetStats(stats)
+
+	sessVars := ds.SCtx().GetSessionVars()
+	rowSize := ds.TblColHists.GetTableAvgRowSize(physicalTS.SCtx(), ds.TblCols, physicalTS.StoreType, true)
+	cost := sessVars.ScanFactor * rowSize * stats.RowCount
+
+	var copImpl memo.Implementation
+	if len(filterConditions) > 0 {
+		sel := plannercore.PhysicalSelection{
+			Conditions: filterConditions,
+		}.Init(logicalTS.SCtx(), stats.Scale(selectivity), logicalTS.SelectBlockOffset())
+		cost += stats.RowCount * sessVars.CopCPUFactor
+		sel.SetChildren(physicalTS)
+		selImpl := impl.NewTiKVSelectionImpl(sel)
+		selImpl.SetCost(cost)
+		copImpl = selImpl
+	} else {
+		tsImpl := impl.NewTableScanImpl(physicalTS, nil, nil)
+		tsImpl.SetCost(cost)
+		copImpl = tsImpl
+	}
+	reader := gather.GetPhysicalTableReader(tableGatherExpr.Schema(), copImpl.GetPlan().Stats(), nil)
+	readerImpl := impl.NewTableReaderImpl(reader, ds.TblColHists)
+	readerImpl.CalcCost(countAfterAccess, copImpl)
+	readerImpl.AttachChildren(copImpl)
+	return readerImpl
+}
+
+func (r *ImplIndexJoin) getAllFilterConditions(expr *memo.GroupExpr) []expression.Expression {
+	switch plan := expr.ExprNode.(type) {
+	case *plannercore.TiKVSingleGather:
+		return r.getAllFilterConditions(expr.Children[0].GetFirstGroupExpr())
+	case *plannercore.LogicalSelection:
+		return append(plan.Conditions, r.getAllFilterConditions(expr.Children[0].GetFirstGroupExpr())...)
+	case *plannercore.LogicalTableScan:
+		return plan.AccessConds
+	default:
+		return nil
+	}
 }

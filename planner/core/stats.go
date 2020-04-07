@@ -139,7 +139,7 @@ func (ds *DataSource) getColumnNDV(colID int64) (ndv float64) {
 }
 
 func (ds *DataSource) initStats() {
-	if ds.tableStats != nil {
+	if ds.TableStats != nil {
 		return
 	}
 	if ds.statisticTable == nil {
@@ -157,18 +157,18 @@ func (ds *DataSource) initStats() {
 	for _, col := range ds.schema.Columns {
 		tableStats.Cardinality[col.UniqueID] = ds.getColumnNDV(col.ID)
 	}
-	ds.tableStats = tableStats
+	ds.TableStats = tableStats
 	ds.TblColHists = ds.statisticTable.ID2UniqueID(ds.TblCols)
 }
 
 func (ds *DataSource) deriveStatsByFilter(conds expression.CNFExprs, filledPaths []*util.AccessPath) *property.StatsInfo {
 	ds.initStats()
-	selectivity, nodes, err := ds.tableStats.HistColl.Selectivity(ds.ctx, conds, filledPaths)
+	selectivity, nodes, err := ds.TableStats.HistColl.Selectivity(ds.ctx, conds, filledPaths)
 	if err != nil {
 		logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))
 		selectivity = SelectionFactor
 	}
-	stats := ds.tableStats.Scale(selectivity)
+	stats := ds.TableStats.Scale(selectivity)
 	if ds.ctx.GetSessionVars().OptimizerSelectivityLevel >= 1 {
 		stats.HistColl = stats.HistColl.NewHistCollBySelectivity(ds.ctx.GetSessionVars().StmtCtx, nodes)
 	}
@@ -598,7 +598,7 @@ func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 		leftSchema:    childSchema[0],
 		rightSchema:   childSchema[1],
 	}
-	p.equalCondOutCnt = helper.estimate()
+	p.EqualCondOutCnt = helper.estimate()
 	if p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin {
 		p.stats = &property.StatsInfo{
 			RowCount:    leftProfile.RowCount * SelectionFactor,
@@ -620,7 +620,7 @@ func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 		p.stats.Cardinality[selfSchema.Columns[selfSchema.Len()-1].UniqueID] = 2.0
 		return p.stats, nil
 	}
-	count := p.equalCondOutCnt
+	count := p.EqualCondOutCnt
 	if p.JoinType == LeftOuterJoin {
 		count = math.Max(count, leftProfile.RowCount)
 	} else if p.JoinType == RightOuterJoin {

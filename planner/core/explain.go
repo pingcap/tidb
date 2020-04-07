@@ -188,8 +188,8 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 	if p.HandleCol != nil {
 		fmt.Fprintf(buffer, "pk col:%s, ", p.HandleCol.ExplainInfo())
 	}
-	if len(p.rangeDecidedBy) > 0 {
-		fmt.Fprintf(buffer, "range: decided by %v, ", p.rangeDecidedBy)
+	if len(p.RangeDecidedBy) > 0 {
+		fmt.Fprintf(buffer, ", range: decided by %v", p.RangeDecidedBy)
 	} else if p.haveCorCol() {
 		if normalized {
 			fmt.Fprintf(buffer, "range: decided by %s, ", expression.SortedExplainNormalizedExpressionList(p.AccessCondition))
@@ -227,7 +227,7 @@ func (p *PhysicalTableScan) haveCorCol() bool {
 }
 
 func (p *PhysicalTableScan) isFullScan() bool {
-	if len(p.rangeDecidedBy) > 0 || p.haveCorCol() {
+	if len(p.RangeDecidedBy) > 0 || p.haveCorCol() {
 		return false
 	}
 	for _, ran := range p.Ranges {
