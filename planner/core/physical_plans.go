@@ -528,6 +528,15 @@ type PhysicalStreamAgg struct {
 	basePhysicalAgg
 }
 
+// NewPhysicalStreamAgg creates a new PhysicalStreamAgg from a LogicalAggregation.
+func NewPhysicalStreamAgg(la *LogicalAggregation, newStats *property.StatsInfo, prop *property.PhysicalProperty, childProp *property.PhysicalProperty) *PhysicalStreamAgg {
+	agg := basePhysicalAgg{
+		GroupByItems: la.GroupByItems,
+		AggFuncs:     la.AggFuncs,
+	}.initForStream(la.ctx, newStats.ScaleByExpectCnt(prop.ExpectedCnt), la.blockOffset, childProp)
+	return agg
+}
+
 // PhysicalSort is the physical operator of sort, which implements a memory sort.
 type PhysicalSort struct {
 	basePhysicalPlan

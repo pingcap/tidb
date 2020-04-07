@@ -18,6 +18,7 @@ import (
 
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/expression/aggregation"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	impl "github.com/pingcap/tidb/planner/implementation"
 	"github.com/pingcap/tidb/planner/memo"
@@ -67,6 +68,7 @@ var defaultImplementationMap = map[memo.Operand][]ImplementationRule{
 	},
 	memo.OperandAggregation: {
 		&ImplHashAgg{},
+		&ImplStreamAgg{},
 	},
 	memo.OperandLimit: {
 		&ImplLimit{},
@@ -366,8 +368,9 @@ type ImplHashAgg struct {
 
 // Match implements ImplementationRule Match interface.
 func (r *ImplHashAgg) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
-	// TODO: deal with the hints when we have implemented StreamAgg.
-	return prop.IsEmpty()
+	la := expr.ExprNode.(*plannercore.LogicalAggregation)
+	preferHash, preferStream := la.ResetHintIfConflicted()
+	return prop.IsEmpty() && (preferHash || !preferStream)
 }
 
 // OnImplement implements ImplementationRule OnImplement interface.
@@ -387,6 +390,89 @@ func (r *ImplHashAgg) OnImplement(expr *memo.GroupExpr, reqProp *property.Physic
 	default:
 		return nil, plannercore.ErrInternal.GenWithStack("Unsupported EngineType '%s' for HashAggregation.", expr.Group.EngineType.String())
 	}
+}
+
+// ImplStreamAgg is the implementation rule which implements LogicalAggregation
+// to PhysicalStreamAgg.
+type ImplStreamAgg struct {
+}
+
+// Match implements ImplementationRule Match interface.
+func (r *ImplStreamAgg) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
+	la := expr.ExprNode.(*plannercore.LogicalAggregation)
+	all, _ := prop.AllSameOrder()
+	if !all {
+		return false
+	}
+
+	for _, aggFunc := range la.AggFuncs {
+		if aggFunc.Mode == aggregation.FinalMode {
+			return false
+		}
+	}
+
+	// group by a + b is not interested in any order.
+	if len(la.GetGroupByCols()) != len(la.GroupByItems) {
+		return false
+	}
+
+	return true
+}
+
+// OnImplement implements ImplementationRule OnImplement interface.
+func (r *ImplStreamAgg) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
+	switch expr.Group.EngineType {
+	case memo.EngineTiDB:
+		var newStreamAggImpl = func(agg *plannercore.PhysicalStreamAgg) memo.Implementation { return impl.NewTiDBStreamAggImpl(agg) }
+		return r.getStreamAggImpls(expr, reqProp, newStreamAggImpl), nil
+	case memo.EngineTiKV:
+		var newStreamAggImpl = func(agg *plannercore.PhysicalStreamAgg) memo.Implementation { return impl.NewTiKVStreamAggImpl(agg) }
+		return r.getStreamAggImpls(expr, reqProp, newStreamAggImpl), nil
+	default:
+		return nil, plannercore.ErrInternal.GenWithStack("Unsupported EngineType '%s' for StreamAggregation.", expr.Group.EngineType.String())
+	}
+}
+
+func (r *ImplStreamAgg) getStreamAggImpls(expr *memo.GroupExpr, reqProp *property.PhysicalProperty, newStreamAggImpl func(*plannercore.PhysicalStreamAgg) memo.Implementation) []memo.Implementation {
+	la := expr.ExprNode.(*plannercore.LogicalAggregation)
+	physicalStreamAggs := r.getImplForStreamAgg(la, reqProp, expr.Schema(), expr.Group.Prop.Stats, expr.Children[0].Prop.Stats)
+
+	streamAggImpls := make([]memo.Implementation, 0, len(physicalStreamAggs))
+	for _, physicalPlan := range physicalStreamAggs {
+		physicalStreamAgg := physicalPlan.(*plannercore.PhysicalStreamAgg)
+		streamAggImpls = append(streamAggImpls, newStreamAggImpl(physicalStreamAgg))
+	}
+
+	return streamAggImpls
+}
+
+func (r *ImplStreamAgg) getImplForStreamAgg(la *plannercore.LogicalAggregation, prop *property.PhysicalProperty, schema *expression.Schema, statsInfo *property.StatsInfo, childStatsInfo *property.StatsInfo) []plannercore.PhysicalPlan {
+	childProp := &property.PhysicalProperty{
+		ExpectedCnt: math.Max(prop.ExpectedCnt*childStatsInfo.RowCount/statsInfo.RowCount, prop.ExpectedCnt),
+	}
+	_, desc := prop.AllSameOrder()
+
+	streamAggs := make([]plannercore.PhysicalPlan, 0, len(la.GetPossibleProperties()))
+	for _, possibleChildProperty := range la.GetPossibleProperties() {
+		childProp.Items = property.ItemsFromCols(possibleChildProperty[:len(la.GetGroupByCols())], desc)
+		if !prop.IsPrefix(childProp) {
+			continue
+		}
+
+		agg := plannercore.NewPhysicalStreamAgg(la, statsInfo, prop, childProp.Clone())
+		agg.SetSchema(schema.Clone())
+		streamAggs = append(streamAggs, agg)
+	}
+
+	// If STREAM_AGG hint is existed, it should consider enforce stream aggregation,
+	// because we can't trust possibleChildProperty completely.
+	if la.IsPreferStream() {
+		childProp.Items = property.ItemsFromCols(la.GetGroupByCols(), desc)
+		childProp.Enforced = true
+		// It's ok to not clone.
+		streamAggs = append(streamAggs, plannercore.NewPhysicalStreamAgg(la, statsInfo, prop, childProp))
+	}
+	return streamAggs
 }
 
 // ImplLimit is the implementation rule which implements LogicalLimit
