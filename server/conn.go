@@ -1274,6 +1274,11 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 			break
 		}
 
+		status := cc.ctx.Status()
+		if i != len(stmts)-1 {
+			status |= mysql.ServerMoreResultsExists
+		}
+
 		if rs != nil {
 			connStatus := atomic.LoadInt32(&cc.status)
 			if connStatus == connStatusShutdown || connStatus == connStatusWaitShutdown {
@@ -1282,10 +1287,6 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 				break
 			}
 
-			status := uint16(0)
-			if i != len(stmts)-1 {
-				status |= mysql.ServerMoreResultsExists
-			}
 			err = cc.writeResultset(ctx, rs, false, status, 0)
 
 			// Do remember to close it to avoid resource leak!
@@ -1295,7 +1296,7 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 				break
 			}
 		} else {
-			if err = cc.handleQuerySpecial(ctx); err != nil {
+			if err = cc.handleQuerySpecial(ctx, status); err != nil {
 				break
 			}
 		}
@@ -1307,7 +1308,7 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	return err
 }
 
-func (cc *clientConn) handleQuerySpecial(ctx context.Context) error {
+func (cc *clientConn) handleQuerySpecial(ctx context.Context, status uint16) error {
 	loadDataInfo := cc.ctx.Value(executor.LoadDataVarKey)
 	if loadDataInfo != nil {
 		defer cc.ctx.SetValue(executor.LoadDataVarKey, nil)
@@ -1331,7 +1332,7 @@ func (cc *clientConn) handleQuerySpecial(ctx context.Context) error {
 			return err
 		}
 	}
-	return cc.writeOK()
+	return cc.writeOkWith(cc.ctx.LastMessage(), cc.ctx.AffectedRows(), cc.ctx.LastInsertID(), status, cc.ctx.WarningCount())
 }
 
 // handleFieldList returns the field list for a table.
