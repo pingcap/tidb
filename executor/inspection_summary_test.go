@@ -75,14 +75,14 @@ func (s *inspectionSummarySuite) TestInspectionSummary(c *C) {
 
 	// construct some mock data
 	mockData := map[string][][]types.Datum{
-		// columns: time, instance, type, result, value, comment
+		// columns: time, instance, type, result, value
 		"tidb_qps": {
 			types.MakeDatums(datetime("2020-02-12 10:35:00"), "tidb-0", "Query", "OK", 0.0),
 			types.MakeDatums(datetime("2020-02-12 10:36:00"), "tidb-0", "Query", "Error", 1.0),
 			types.MakeDatums(datetime("2020-02-12 10:37:00"), "tidb-1", "Quit", "Error", 5.0),
 			types.MakeDatums(datetime("2020-02-12 10:37:00"), "tidb-1", "Quit", "Error", 9.0),
 		},
-		// columns: time, instance, sql_type, quantile, value, comment
+		// columns: time, instance, sql_type, quantile, value
 		"tidb_query_duration": {
 			types.MakeDatums(datetime("2020-02-12 10:35:00"), "tikv-0", "Select", 0.99, 0.0),
 			types.MakeDatums(datetime("2020-02-12 10:36:00"), "tikv-1", "Update", 0.99, 1.0),
