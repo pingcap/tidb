@@ -72,7 +72,6 @@ func (s *testSequenceSuite) TestCreateSequence(c *C) {
 	c.Assert(sequenceTable.Meta().Sequence.Cache, Equals, true)
 	c.Assert(sequenceTable.Meta().Sequence.CacheValue, Equals, model.DefaultSequenceCacheValue)
 	c.Assert(sequenceTable.Meta().Sequence.Cycle, Equals, false)
-	c.Assert(sequenceTable.Meta().Sequence.Order, Equals, false)
 
 	// Test create privilege.
 	s.tk.MustExec("create user myuser@localhost")
