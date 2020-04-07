@@ -34,6 +34,7 @@ import (
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/stringutil"
 )
 
@@ -49,7 +50,7 @@ func evalAstExpr(sctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error
 	if sctx.GetSessionVars().TxnCtx.InfoSchema != nil {
 		is = sctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema)
 	}
-	b := NewPlanBuilder(sctx, is, &BlockHintProcessor{})
+	b := NewPlanBuilder(sctx, is, &hint.BlockHintProcessor{})
 	fakePlan := LogicalTableDual{}.Init(sctx, 0)
 	newExpr, _, err := b.rewrite(context.TODO(), expr, fakePlan, nil, true)
 	if err != nil {
@@ -999,8 +1000,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		if collate.NewCollationEnabled() {
 			var collInfo *charset.Collation
 			// TODO(bb7133): use charset.ValidCharsetAndCollation when its bug is fixed.
-			if collInfo, er.err = charset.GetCollationByName(v.Collate); er.err != nil {
-				er.err = charset.ErrUnknownCollation.GenWithStackByArgs(v.Collate)
+			if collInfo, er.err = collate.GetCollationByName(v.Collate); er.err != nil {
 				break
 			}
 			chs := arg.GetType().Charset

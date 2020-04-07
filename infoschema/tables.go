@@ -32,14 +32,11 @@ import (
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
-	binaryJson "github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/pdapi"
@@ -94,15 +91,18 @@ const (
 	tableTableSpaces     = "TABLESPACES"
 	// TableCollationCharacterSetApplicability is the string constant of infoschema memory table.
 	TableCollationCharacterSetApplicability = "COLLATION_CHARACTER_SET_APPLICABILITY"
-	tableProcesslist                        = "PROCESSLIST"
+	// TableProcesslist is the string constant of infoschema table.
+	TableProcesslist = "PROCESSLIST"
 	// TableTiDBIndexes is the string constant of infoschema table
 	TableTiDBIndexes = "TIDB_INDEXES"
 	// TableTiDBHotRegions is the string constant of infoschema table
-	TableTiDBHotRegions  = "TIDB_HOT_REGIONS"
-	tableTiKVStoreStatus = "TIKV_STORE_STATUS"
+	TableTiDBHotRegions = "TIDB_HOT_REGIONS"
+	// TableTiKVStoreStatus is the string constant of infoschema table
+	TableTiKVStoreStatus = "TIKV_STORE_STATUS"
 	// TableAnalyzeStatus is the string constant of Analyze Status
-	TableAnalyzeStatus    = "ANALYZE_STATUS"
-	tableTiKVRegionStatus = "TIKV_REGION_STATUS"
+	TableAnalyzeStatus = "ANALYZE_STATUS"
+	// TableTiKVRegionStatus is the string constant of infoschema table
+	TableTiKVRegionStatus = "TIKV_REGION_STATUS"
 	// TableTiKVRegionPeers is the string constant of infoschema table
 	TableTiKVRegionPeers = "TIKV_REGION_PEERS"
 	// TableTiDBServersInfo is the string constant of TiDB server information table.
@@ -121,7 +121,8 @@ const (
 	TableClusterHardware = "CLUSTER_HARDWARE"
 	// TableClusterSystemInfo is the string constant of cluster system info table.
 	TableClusterSystemInfo = "CLUSTER_SYSTEMINFO"
-	tableTiFlashReplica    = "TIFLASH_REPLICA"
+	// TableTiFlashReplica is the string constant of tiflash replica table.
+	TableTiFlashReplica = "TIFLASH_REPLICA"
 	// TableInspectionResult is the string constant of inspection result table.
 	TableInspectionResult = "INSPECTION_RESULT"
 	// TableMetricTables is a table that contains all metrics table definition.
@@ -134,6 +135,10 @@ const (
 	TableInspectionSummary = "INSPECTION_SUMMARY"
 	// TableInspectionRules is the string constant of currently implemented inspection and summary rules.
 	TableInspectionRules = "INSPECTION_RULES"
+	// TableDDLJobs is the string constant of DDL job table.
+	TableDDLJobs = "DDL_JOBS"
+	// TableSequences is the string constant of all sequences created by user.
+	TableSequences = "SEQUENCES"
 )
 
 var tableIDMap = map[string]int64{
@@ -169,21 +174,21 @@ var tableIDMap = map[string]int64{
 	tableOptimizerTrace:                     autoid.InformationSchemaDBID + 30,
 	tableTableSpaces:                        autoid.InformationSchemaDBID + 31,
 	TableCollationCharacterSetApplicability: autoid.InformationSchemaDBID + 32,
-	tableProcesslist:                        autoid.InformationSchemaDBID + 33,
+	TableProcesslist:                        autoid.InformationSchemaDBID + 33,
 	TableTiDBIndexes:                        autoid.InformationSchemaDBID + 34,
 	TableSlowQuery:                          autoid.InformationSchemaDBID + 35,
 	TableTiDBHotRegions:                     autoid.InformationSchemaDBID + 36,
-	tableTiKVStoreStatus:                    autoid.InformationSchemaDBID + 37,
+	TableTiKVStoreStatus:                    autoid.InformationSchemaDBID + 37,
 	TableAnalyzeStatus:                      autoid.InformationSchemaDBID + 38,
-	tableTiKVRegionStatus:                   autoid.InformationSchemaDBID + 39,
+	TableTiKVRegionStatus:                   autoid.InformationSchemaDBID + 39,
 	TableTiKVRegionPeers:                    autoid.InformationSchemaDBID + 40,
 	TableTiDBServersInfo:                    autoid.InformationSchemaDBID + 41,
 	TableClusterInfo:                        autoid.InformationSchemaDBID + 42,
 	TableClusterConfig:                      autoid.InformationSchemaDBID + 43,
 	TableClusterLoad:                        autoid.InformationSchemaDBID + 44,
-	tableTiFlashReplica:                     autoid.InformationSchemaDBID + 45,
+	TableTiFlashReplica:                     autoid.InformationSchemaDBID + 45,
 	ClusterTableSlowLog:                     autoid.InformationSchemaDBID + 46,
-	clusterTableProcesslist:                 autoid.InformationSchemaDBID + 47,
+	ClusterTableProcesslist:                 autoid.InformationSchemaDBID + 47,
 	TableClusterLog:                         autoid.InformationSchemaDBID + 48,
 	TableClusterHardware:                    autoid.InformationSchemaDBID + 49,
 	TableClusterSystemInfo:                  autoid.InformationSchemaDBID + 50,
@@ -193,6 +198,8 @@ var tableIDMap = map[string]int64{
 	TableMetricTables:                       autoid.InformationSchemaDBID + 54,
 	TableInspectionSummary:                  autoid.InformationSchemaDBID + 55,
 	TableInspectionRules:                    autoid.InformationSchemaDBID + 56,
+	TableDDLJobs:                            autoid.InformationSchemaDBID + 57,
+	TableSequences:                          autoid.InformationSchemaDBID + 58,
 }
 
 type columnInfo struct {
@@ -207,11 +214,9 @@ type columnInfo struct {
 func buildColumnInfo(col columnInfo) *model.ColumnInfo {
 	mCharset := charset.CharsetBin
 	mCollation := charset.CharsetBin
-	mFlag := mysql.UnsignedFlag
 	if col.tp == mysql.TypeVarchar || col.tp == mysql.TypeBlob {
 		mCharset = charset.CharsetUTF8MB4
 		mCollation = charset.CollationUTF8MB4
-		mFlag = col.flag
 	}
 	fieldType := types.FieldType{
 		Charset: mCharset,
@@ -219,7 +224,7 @@ func buildColumnInfo(col columnInfo) *model.ColumnInfo {
 		Tp:      col.tp,
 		Flen:    col.size,
 		Decimal: col.decimal,
-		Flag:    mFlag,
+		Flag:    col.flag,
 	}
 	return &model.ColumnInfo{
 		Name:         model.NewCIStr(col.name),
@@ -660,7 +665,7 @@ var tableCollationCharacterSetApplicabilityCols = []columnInfo{
 }
 
 var tableProcesslistCols = []columnInfo{
-	{name: "ID", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag, deflt: 0},
+	{name: "ID", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag | mysql.UnsignedFlag, deflt: 0},
 	{name: "USER", tp: mysql.TypeVarchar, size: 16, flag: mysql.NotNullFlag, deflt: ""},
 	{name: "HOST", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag, deflt: ""},
 	{name: "DB", tp: mysql.TypeVarchar, size: 64},
@@ -668,7 +673,7 @@ var tableProcesslistCols = []columnInfo{
 	{name: "TIME", tp: mysql.TypeLong, size: 7, flag: mysql.NotNullFlag, deflt: 0},
 	{name: "STATE", tp: mysql.TypeVarchar, size: 7},
 	{name: "INFO", tp: mysql.TypeString, size: 512},
-	{name: "MEM", tp: mysql.TypeLonglong, size: 21},
+	{name: "MEM", tp: mysql.TypeLonglong, size: 21, flag: mysql.UnsignedFlag},
 	{name: "TxnStart", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag, deflt: ""},
 }
 
@@ -748,7 +753,8 @@ var TableTiDBHotRegionsCols = []columnInfo{
 	{name: "FLOW_BYTES", tp: mysql.TypeLonglong, size: 21},
 }
 
-var tableTiKVStoreStatusCols = []columnInfo{
+// TableTiKVStoreStatusCols is TiDB kv store status columns.
+var TableTiKVStoreStatusCols = []columnInfo{
 	{name: "STORE_ID", tp: mysql.TypeLonglong, size: 21},
 	{name: "ADDRESS", tp: mysql.TypeVarchar, size: 64},
 	{name: "STORE_STATE", tp: mysql.TypeLonglong, size: 21},
@@ -780,7 +786,8 @@ var tableAnalyzeStatusCols = []columnInfo{
 	{name: "STATE", tp: mysql.TypeVarchar, size: 64},
 }
 
-var tableTiKVRegionStatusCols = []columnInfo{
+// TableTiKVRegionStatusCols is TiKV region status mem table columns.
+var TableTiKVRegionStatusCols = []columnInfo{
 	{name: "REGION_ID", tp: mysql.TypeLonglong, size: 21},
 	{name: "START_KEY", tp: mysql.TypeBlob, size: types.UnspecifiedLength},
 	{name: "END_KEY", tp: mysql.TypeBlob, size: types.UnspecifiedLength},
@@ -981,137 +988,33 @@ var tableMetricSummaryByLabelCols = []columnInfo{
 	{name: "COMMENT", tp: mysql.TypeVarchar, size: 256},
 }
 
-func dataForTiKVRegionStatus(ctx sessionctx.Context) (records [][]types.Datum, err error) {
-	tikvStore, ok := ctx.GetStore().(tikv.Storage)
-	if !ok {
-		return nil, errors.New("Information about TiKV region status can be gotten only when the storage is TiKV")
-	}
-	tikvHelper := &helper.Helper{
-		Store:       tikvStore,
-		RegionCache: tikvStore.GetRegionCache(),
-	}
-	regionsInfo, err := tikvHelper.GetRegionsInfo()
-	if err != nil {
-		return nil, err
-	}
-	allSchemas := ctx.GetSessionVars().TxnCtx.InfoSchema.(InfoSchema).AllSchemas()
-	tableInfos := tikvHelper.GetRegionsTableInfo(regionsInfo, allSchemas)
-	for _, region := range regionsInfo.Regions {
-		tableList := tableInfos[region.ID]
-		if len(tableList) == 0 {
-			records = append(records, newTiKVRegionStatusCol(&region, nil))
-		}
-		for _, table := range tableList {
-			row := newTiKVRegionStatusCol(&region, &table)
-			records = append(records, row)
-		}
-	}
-	return records, nil
+var tableDDLJobsCols = []columnInfo{
+	{name: "JOB_ID", tp: mysql.TypeLonglong, size: 21},
+	{name: "DB_NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "TABLE_NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "JOB_TYPE", tp: mysql.TypeVarchar, size: 64},
+	{name: "SCHEMA_STATE", tp: mysql.TypeVarchar, size: 64},
+	{name: "SCHEMA_ID", tp: mysql.TypeLonglong, size: 21},
+	{name: "TABLE_ID", tp: mysql.TypeLonglong, size: 21},
+	{name: "ROW_COUNT", tp: mysql.TypeLonglong, size: 21},
+	{name: "START_TIME", tp: mysql.TypeDatetime, size: 19},
+	{name: "END_TIME", tp: mysql.TypeDatetime, size: 19},
+	{name: "STATE", tp: mysql.TypeVarchar, size: 64},
+	{name: "QUERY", tp: mysql.TypeVarchar, size: 64},
 }
 
-func newTiKVRegionStatusCol(region *helper.RegionInfo, table *helper.TableInfo) []types.Datum {
-	row := make([]types.Datum, len(tableTiKVRegionStatusCols))
-	row[0].SetInt64(region.ID)
-	row[1].SetString(region.StartKey, mysql.DefaultCollationName)
-	row[2].SetString(region.EndKey, mysql.DefaultCollationName)
-	if table != nil {
-		row[3].SetInt64(table.Table.ID)
-		row[4].SetString(table.DB.Name.O, mysql.DefaultCollationName)
-		row[5].SetString(table.Table.Name.O, mysql.DefaultCollationName)
-		if table.IsIndex {
-			row[6].SetInt64(1)
-			row[7].SetInt64(table.Index.ID)
-			row[8].SetString(table.Index.Name.O, mysql.DefaultCollationName)
-		} else {
-			row[6].SetInt64(0)
-		}
-	}
-	row[9].SetInt64(region.Epoch.ConfVer)
-	row[10].SetInt64(region.Epoch.Version)
-	row[11].SetInt64(region.WrittenBytes)
-	row[12].SetInt64(region.ReadBytes)
-	row[13].SetInt64(region.ApproximateSize)
-	row[14].SetInt64(region.ApproximateKeys)
-	return row
-}
-
-func dataForTiKVStoreStatus(ctx sessionctx.Context) (records [][]types.Datum, err error) {
-	tikvStore, ok := ctx.GetStore().(tikv.Storage)
-	if !ok {
-		return nil, errors.New("Information about TiKV store status can be gotten only when the storage is TiKV")
-	}
-	tikvHelper := &helper.Helper{
-		Store:       tikvStore,
-		RegionCache: tikvStore.GetRegionCache(),
-	}
-	storesStat, err := tikvHelper.GetStoresStat()
-	if err != nil {
-		return nil, err
-	}
-	for _, storeStat := range storesStat.Stores {
-		row := make([]types.Datum, len(tableTiKVStoreStatusCols))
-		row[0].SetInt64(storeStat.Store.ID)
-		row[1].SetString(storeStat.Store.Address, mysql.DefaultCollationName)
-		row[2].SetInt64(storeStat.Store.State)
-		row[3].SetString(storeStat.Store.StateName, mysql.DefaultCollationName)
-		data, err := json.Marshal(storeStat.Store.Labels)
-		if err != nil {
-			return nil, err
-		}
-		bj := binaryJson.BinaryJSON{}
-		if err = bj.UnmarshalJSON(data); err != nil {
-			return nil, err
-		}
-		row[4].SetMysqlJSON(bj)
-		row[5].SetString(storeStat.Store.Version, mysql.DefaultCollationName)
-		row[6].SetString(storeStat.Status.Capacity, mysql.DefaultCollationName)
-		row[7].SetString(storeStat.Status.Available, mysql.DefaultCollationName)
-		row[8].SetInt64(storeStat.Status.LeaderCount)
-		row[9].SetFloat64(storeStat.Status.LeaderWeight)
-		row[10].SetFloat64(storeStat.Status.LeaderScore)
-		row[11].SetInt64(storeStat.Status.LeaderSize)
-		row[12].SetInt64(storeStat.Status.RegionCount)
-		row[13].SetFloat64(storeStat.Status.RegionWeight)
-		row[14].SetFloat64(storeStat.Status.RegionScore)
-		row[15].SetInt64(storeStat.Status.RegionSize)
-		startTs := types.NewTime(types.FromGoTime(storeStat.Status.StartTs), mysql.TypeDatetime, types.DefaultFsp)
-		row[16].SetMysqlTime(startTs)
-		lastHeartbeatTs := types.NewTime(types.FromGoTime(storeStat.Status.LastHeartbeatTs), mysql.TypeDatetime, types.DefaultFsp)
-		row[17].SetMysqlTime(lastHeartbeatTs)
-		row[18].SetString(storeStat.Status.Uptime, mysql.DefaultCollationName)
-		records = append(records, row)
-	}
-	return records, nil
-}
-
-func dataForProcesslist(ctx sessionctx.Context) [][]types.Datum {
-	sm := ctx.GetSessionManager()
-	if sm == nil {
-		return nil
-	}
-
-	loginUser := ctx.GetSessionVars().User
-	var hasProcessPriv bool
-	if pm := privilege.GetPrivilegeManager(ctx); pm != nil {
-		if pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, "", "", "", mysql.ProcessPriv) {
-			hasProcessPriv = true
-		}
-	}
-
-	pl := sm.ShowProcessList()
-	records := make([][]types.Datum, 0, len(pl))
-	for _, pi := range pl {
-		// If you have the PROCESS privilege, you can see all threads.
-		// Otherwise, you can see only your own threads.
-		if !hasProcessPriv && loginUser != nil && pi.User != loginUser.Username {
-			continue
-		}
-
-		rows := pi.ToRow(ctx.GetSessionVars().StmtCtx.TimeZone)
-		record := types.MakeDatums(rows...)
-		records = append(records, record)
-	}
-	return records
+var tableSequencesCols = []columnInfo{
+	{name: "TABLE_CATALOG", tp: mysql.TypeVarchar, size: 512, flag: mysql.NotNullFlag},
+	{name: "SEQUENCE_SCHEMA", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
+	{name: "SEQUENCE_NAME", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
+	{name: "CACHE", tp: mysql.TypeTiny, flag: mysql.NotNullFlag},
+	{name: "CACHE_VALUE", tp: mysql.TypeLonglong, size: 21},
+	{name: "CYCLE", tp: mysql.TypeTiny, flag: mysql.NotNullFlag},
+	{name: "INCREMENT", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
+	{name: "MAX_VALUE", tp: mysql.TypeLonglong, size: 21},
+	{name: "MIN_VALUE", tp: mysql.TypeLonglong, size: 21},
+	{name: "START", tp: mysql.TypeLonglong, size: 21},
+	{name: "COMMENT", tp: mysql.TypeVarchar, size: 64},
 }
 
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
@@ -1283,70 +1186,27 @@ func GetTiKVServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	if !ok {
 		return nil, errors.Errorf("%T is not an TiKV store instance", store)
 	}
-	tikvHelper := &helper.Helper{
-		Store:       tikvStore,
-		RegionCache: tikvStore.GetRegionCache(),
+	pdClient := tikvStore.GetRegionCache().PDClient()
+	if pdClient == nil {
+		return nil, errors.New("pd unavailable")
 	}
-
-	storesStat, err := tikvHelper.GetStoresStat()
+	stores, err := pdClient.GetAllStores(context.Background())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	var servers []ServerInfo
-	for _, storeStat := range storesStat.Stores {
+	for _, store := range stores {
+		tp := tikv.GetStoreTypeByMeta(store).Name()
 		servers = append(servers, ServerInfo{
-			ServerType:     "tikv",
-			Address:        storeStat.Store.Address,
-			StatusAddr:     storeStat.Store.StatusAddress,
-			Version:        storeStat.Store.Version,
-			GitHash:        storeStat.Store.GitHash,
-			StartTimestamp: storeStat.Store.StartTimestamp,
+			ServerType:     tp,
+			Address:        store.Address,
+			StatusAddr:     store.StatusAddress,
+			Version:        store.Version,
+			GitHash:        store.GitHash,
+			StartTimestamp: store.StartTimestamp,
 		})
 	}
 	return servers, nil
-}
-
-// dataForTableTiFlashReplica constructs data for table tiflash replica info.
-func dataForTableTiFlashReplica(ctx sessionctx.Context, schemas []*model.DBInfo) [][]types.Datum {
-	var rows [][]types.Datum
-	progressMap, err := infosync.GetTiFlashTableSyncProgress(context.Background())
-	if err != nil {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(err)
-	}
-	for _, schema := range schemas {
-		for _, tbl := range schema.Tables {
-			if tbl.TiFlashReplica == nil {
-				continue
-			}
-			progress := 1.0
-			if !tbl.TiFlashReplica.Available {
-				if pi := tbl.GetPartitionInfo(); pi != nil && len(pi.Definitions) > 0 {
-					progress = 0
-					for _, p := range pi.Definitions {
-						if tbl.TiFlashReplica.IsPartitionAvailable(p.ID) {
-							progress += 1
-						} else {
-							progress += progressMap[p.ID]
-						}
-					}
-					progress = progress / float64(len(pi.Definitions))
-				} else {
-					progress = progressMap[tbl.ID]
-				}
-			}
-			record := types.MakeDatums(
-				schema.Name.O,                   // TABLE_SCHEMA
-				tbl.Name.O,                      // TABLE_NAME
-				tbl.ID,                          // TABLE_ID
-				int64(tbl.TiFlashReplica.Count), // REPLICA_COUNT
-				strings.Join(tbl.TiFlashReplica.LocationLabels, ","), // LOCATION_LABELS
-				tbl.TiFlashReplica.Available,                         // AVAILABLE
-				progress,                                             // PROGRESS
-			)
-			rows = append(rows, record)
-		}
-	}
-	return rows
 }
 
 var tableNameToColumns = map[string][]columnInfo{
@@ -1381,20 +1241,20 @@ var tableNameToColumns = map[string][]columnInfo{
 	tableOptimizerTrace:                     tableOptimizerTraceCols,
 	tableTableSpaces:                        tableTableSpacesCols,
 	TableCollationCharacterSetApplicability: tableCollationCharacterSetApplicabilityCols,
-	tableProcesslist:                        tableProcesslistCols,
+	TableProcesslist:                        tableProcesslistCols,
 	TableTiDBIndexes:                        tableTiDBIndexesCols,
 	TableSlowQuery:                          slowQueryCols,
 	TableTiDBHotRegions:                     TableTiDBHotRegionsCols,
-	tableTiKVStoreStatus:                    tableTiKVStoreStatusCols,
+	TableTiKVStoreStatus:                    TableTiKVStoreStatusCols,
 	TableAnalyzeStatus:                      tableAnalyzeStatusCols,
-	tableTiKVRegionStatus:                   tableTiKVRegionStatusCols,
+	TableTiKVRegionStatus:                   TableTiKVRegionStatusCols,
 	TableTiKVRegionPeers:                    TableTiKVRegionPeersCols,
 	TableTiDBServersInfo:                    tableTiDBServersInfoCols,
 	TableClusterInfo:                        tableClusterInfoCols,
 	TableClusterConfig:                      tableClusterConfigCols,
 	TableClusterLog:                         tableClusterLogCols,
 	TableClusterLoad:                        tableClusterLoadCols,
-	tableTiFlashReplica:                     tableTableTiFlashReplicaCols,
+	TableTiFlashReplica:                     tableTableTiFlashReplicaCols,
 	TableClusterHardware:                    tableClusterHardwareCols,
 	TableClusterSystemInfo:                  tableClusterSystemInfoCols,
 	TableInspectionResult:                   tableInspectionResultCols,
@@ -1403,6 +1263,8 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableMetricTables:                       tableMetricTablesCols,
 	TableInspectionSummary:                  tableInspectionSummaryCols,
 	TableInspectionRules:                    tableInspectionRulesCols,
+	TableDDLJobs:                            tableDDLJobsCols,
+	TableSequences:                          tableSequencesCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
@@ -1458,17 +1320,6 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 	case tableSessionStatus:
 	case tableOptimizerTrace:
 	case tableTableSpaces:
-	case tableProcesslist:
-		fullRows = dataForProcesslist(ctx)
-	case tableTiKVStoreStatus:
-		fullRows, err = dataForTiKVStoreStatus(ctx)
-	case tableTiKVRegionStatus:
-		fullRows, err = dataForTiKVRegionStatus(ctx)
-	case tableTiFlashReplica:
-		fullRows = dataForTableTiFlashReplica(ctx, dbs)
-	// Data for cluster processlist memory table.
-	case clusterTableProcesslist:
-		fullRows, err = dataForClusterProcesslist(ctx)
 	}
 	if err != nil {
 		return nil, err

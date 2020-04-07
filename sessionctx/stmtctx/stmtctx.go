@@ -143,6 +143,7 @@ type StatementContext struct {
 	PessimisticLockWaited int32
 	LockKeysDuration      time.Duration
 	LockKeysCount         int32
+	TblInfo2UnionScan     map[*model.TableInfo]bool
 }
 
 // StmtHints are SessionVars related sql hints.
@@ -186,6 +187,13 @@ func (sc *StatementContext) SQLDigest() (normalized, sqlDigest string) {
 		sc.digestMemo.normalized, sc.digestMemo.digest = parser.NormalizeDigest(sc.OriginalSQL)
 	})
 	return sc.digestMemo.normalized, sc.digestMemo.digest
+}
+
+// InitSQLDigest sets the normalized and digest for sql.
+func (sc *StatementContext) InitSQLDigest(normalized, digest string) {
+	sc.digestMemo.Do(func() {
+		sc.digestMemo.normalized, sc.digestMemo.digest = normalized, digest
+	})
 }
 
 // GetPlanDigest gets the normalized plan and plan digest.

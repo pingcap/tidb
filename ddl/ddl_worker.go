@@ -283,6 +283,7 @@ func (w *worker) handleUpdateJobError(t *meta.Meta, job *model.Job, err error) e
 		// Reduce this txn entry size.
 		job.BinlogInfo.Clean()
 		job.Error = toTError(err)
+		job.ErrorCount++
 		job.SchemaState = model.StateNone
 		job.State = model.JobStateCancelled
 		err = w.finishDDLJob(t, job)
@@ -293,6 +294,11 @@ func (w *worker) handleUpdateJobError(t *meta.Meta, job *model.Job, err error) e
 // updateDDLJob updates the DDL job information.
 // Every time we enter another state except final state, we must call this function.
 func (w *worker) updateDDLJob(t *meta.Meta, job *model.Job, meetErr bool) error {
+	failpoint.Inject("mockErrEntrySizeTooLarge", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(kv.ErrEntryTooLarge)
+		}
+	})
 	updateRawArgs := true
 	// If there is an error when running job and the RawArgs hasn't been decoded by DecodeArgs,
 	// so we shouldn't replace RawArgs with the marshaling Args.
@@ -463,7 +469,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 				}
 			})
 			if job.IsCancelled() {
-				txn.Reset()
+				txn.Discard()
 				err = w.finishDDLJob(t, job)
 				return errors.Trace(err)
 			}
@@ -505,12 +511,26 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 	}
 }
 
+func skipWriteBinlog(job *model.Job) bool {
+	switch job.Type {
+	// ActionUpdateTiFlashReplicaStatus is a TiDB internal DDL,
+	// it's used to update table's TiFlash replica available status.
+	case model.ActionUpdateTiFlashReplicaStatus:
+		return true
+	}
+
+	return false
+}
+
 func writeBinlog(binlogCli *pumpcli.PumpsClient, txn kv.Transaction, job *model.Job) {
 	if job.IsDone() || job.IsRollbackDone() ||
 		// When this column is in the "delete only" and "delete reorg" states, the binlog of "drop column" has not been written yet,
 		// but the column has been removed from the binlog of the write operation.
 		// So we add this binlog to enable downstream components to handle DML correctly in this schema state.
 		(job.Type == model.ActionDropColumn && job.SchemaState == model.StateDeleteOnly) {
+		if skipWriteBinlog(job) {
+			return
+		}
 		binloginfo.SetDDLBinlog(binlogCli, txn, job.ID, int32(job.SchemaState), job.Query)
 	}
 }
