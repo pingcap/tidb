@@ -447,7 +447,6 @@ import (
 	nomaxvalue              "NOMAXVALUE"
 	nominvalue              "NOMINVALUE"
 	none                    "NONE"
-	noorder                 "NOORDER"
 	nowait                  "NOWAIT"
 	nulls                   "NULLS"
 	offset                  "OFFSET"
@@ -5148,7 +5147,6 @@ UnReservedKeyword:
 |	"CACHE"
 |	"CYCLE"
 |	"NOCYCLE"
-|	"NOORDER"
 |	"SEQUENCE"
 |	"MAX_MINUTES"
 |	"MAX_IDXNUM"
@@ -11382,18 +11380,16 @@ LoadStatsStmt:
  *	[ START [ WITH | = ] start ]
  *	[ CACHE [=] cache | NOCACHE | NO CACHE]
  *	[ CYCLE | NOCYCLE | NO CYCLE]
- *	[ ORDER | NOORDER | NO ORDER]
  *	[table_options]
  ********************************************************************************************/
 CreateSequenceStmt:
-	"CREATE" OptTemporary "SEQUENCE" IfNotExists TableName CreateSequenceOptionListOpt CreateTableOptionListOpt
+	"CREATE" "SEQUENCE" IfNotExists TableName CreateSequenceOptionListOpt CreateTableOptionListOpt
 	{
 		$$ = &ast.CreateSequenceStmt{
-			IsTemporary: $2.(bool),
-			IfNotExists: $4.(bool),
-			Name:        $5.(*ast.TableName),
-			SeqOptions:  $6.([]*ast.SequenceOption),
-			TblOptions:  $7.([]*ast.TableOption),
+			IfNotExists: $3.(bool),
+			Name:        $4.(*ast.TableName),
+			SeqOptions:  $5.([]*ast.SequenceOption),
+			TblOptions:  $6.([]*ast.TableOption),
 		}
 	}
 
@@ -11478,24 +11474,6 @@ SequenceOption:
 	{
 		$$ = &ast.SequenceOption{Tp: ast.SequenceNoCycle}
 	}
-|	"ORDER"
-	{
-		$$ = &ast.SequenceOption{Tp: ast.SequenceOrder}
-		yylex.AppendError(yylex.Errorf("TiDB Sequence doesn't support ORDER option, ORDER will be parsed but ignored."))
-		parser.lastErrorAsWarn()
-	}
-|	"NOORDER"
-	{
-		$$ = &ast.SequenceOption{Tp: ast.SequenceNoOrder}
-		yylex.AppendError(yylex.Errorf("TiDB Sequence doesn't support ORDER option, NOORDER will be parsed but ignored."))
-		parser.lastErrorAsWarn()
-	}
-|	"NO" "ORDER"
-	{
-		$$ = &ast.SequenceOption{Tp: ast.SequenceNoOrder}
-		yylex.AppendError(yylex.Errorf("TiDB Sequence doesn't support ORDER option, NO ORDER will be parsed but ignored."))
-		parser.lastErrorAsWarn()
-	}
 
 SignedNum:
 	NUM
@@ -11512,12 +11490,11 @@ SignedNum:
 	}
 
 DropSequenceStmt:
-	"DROP" OptTemporary "SEQUENCE" IfExists TableNameList
+	"DROP" "SEQUENCE" IfExists TableNameList
 	{
 		$$ = &ast.DropSequenceStmt{
-			IsTemporary: $2.(bool),
-			IfExists:    $4.(bool),
-			Sequences:   $5.([]*ast.TableName),
+			IfExists:  $3.(bool),
+			Sequences: $4.([]*ast.TableName),
 		}
 	}
 
