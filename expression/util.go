@@ -336,16 +336,22 @@ func timeZone2Duration(tz string) time.Duration {
 	return time.Duration(sign) * (time.Duration(h)*time.Hour + time.Duration(m)*time.Minute)
 }
 
-var opsCanBePushedDownNot = map[string]struct{}{
-	ast.LT:       {},
-	ast.GE:       {},
-	ast.GT:       {},
-	ast.LE:       {},
-	ast.EQ:       {},
-	ast.NE:       {},
-	ast.UnaryNot: {},
-	ast.LogicAnd: {},
-	ast.LogicOr:  {},
+var logicalOps = map[string]struct{}{
+	ast.LT:        {},
+	ast.GE:        {},
+	ast.GT:        {},
+	ast.LE:        {},
+	ast.EQ:        {},
+	ast.NE:        {},
+	ast.UnaryNot:  {},
+	ast.LogicAnd:  {},
+	ast.LogicOr:   {},
+	ast.LogicXor:  {},
+	ast.In:        {},
+	ast.IsNull:    {},
+	ast.IsTruth:   {},
+	ast.IsFalsity: {},
+	ast.Like:      {},
 }
 
 var oppositeOp = map[string]string{
@@ -390,10 +396,11 @@ func pushNotAcrossExpr(ctx sessionctx.Context, expr Expression, not bool) (_ Exp
 		switch f.FuncName.L {
 		case ast.UnaryNot:
 			var childExpr Expression
-			// UnaryNot only returns 0/1/NULL, thus we should not eliminate the innermost NOT.
+			// UnaryNot only returns 0/1/NULL, thus we should not eliminate the
+			// innermost NOT if the arg is not a logical operator.
 			switch child := f.GetArgs()[0].(type) {
 			case *ScalarFunction:
-				if _, isCmpOrLogicOp := opsCanBePushedDownNot[child.FuncName.L]; !isCmpOrLogicOp {
+				if _, isLogicalOp := logicalOps[child.FuncName.L]; !isLogicalOp {
 					return expr, false
 				}
 				childExpr, changed = pushNotAcrossExpr(f.GetCtx(), f.GetArgs()[0], !not)
