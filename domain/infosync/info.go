@@ -301,6 +301,7 @@ type topologyInfo struct {
 	ServerVersionInfo
 	StatusPort uint   `json:"status_port"`
 	BinaryPath string `json:"binary_path"`
+	StartTimestamp int64 `json:"start_timestamp"`
 }
 
 func (is *InfoSyncer) getTopologyInfo() topologyInfo {
@@ -315,6 +316,7 @@ func (is *InfoSyncer) getTopologyInfo() topologyInfo {
 		},
 		StatusPort: is.info.StatusPort,
 		BinaryPath: s,
+		StartTimestamp: is.info.StartTimestamp,
 	}
 }
 
