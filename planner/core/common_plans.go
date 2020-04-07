@@ -254,7 +254,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	}
 	_, isTableDual := p.(*PhysicalTableDual)
 	isPartition := e.isPartition(p)
-	if !isTableDual && prepared.UseCache && ! isPartition {
+	if !isTableDual && prepared.UseCache && !isPartition {
 		sctx.PreparedPlanCache().Put(cacheKey, NewPSTMTPlanCacheValue(p))
 	}
 	return p, err
