@@ -377,7 +377,7 @@ func (configInspection) convertReadableSizeToByteSize(sizeStr string) (uint64, e
 	} else if strings.HasSuffix(sizeStr, "PiB") {
 		rate = PB
 	}
-	if rate != 1 {
+	if rate != 1 && len(sizeStr) > 3 {
 		sizeStr = sizeStr[:len(sizeStr)-3]
 	}
 	size, err := strconv.Atoi(sizeStr)
