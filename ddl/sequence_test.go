@@ -235,7 +235,7 @@ func (s *testSequenceSuite) TestShowCreateSequence(c *C) {
 	// Test show create sequence with a normal table.
 	s.tk.MustExec("drop sequence if exists seq")
 	s.tk.MustExec("create table seq (a int)")
-	_, err = s.tk.Exec("show create sequence seq")
+	err = s.tk.QueryToErr("show create sequence seq")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[executor:1347]'test.seq' is not SEQUENCE")
 	s.tk.MustExec("drop table if exists seq")
