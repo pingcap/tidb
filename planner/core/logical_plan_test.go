@@ -51,7 +51,9 @@ type testPlanSuite struct {
 func (s *testPlanSuite) SetUpSuite(c *C) {
 	s.is = infoschema.MockInfoSchema([]*model.TableInfo{MockSignedTable(), MockView()})
 	s.ctx = MockContext()
+	s.ctx.GetSessionVars().EnableWindowFunction = true
 	s.Parser = parser.New()
+	s.Parser.EnableWindowFunc(true)
 }
 
 func (s *testPlanSuite) TestPredicatePushDown(c *C) {
