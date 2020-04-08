@@ -316,7 +316,6 @@ func onAddColumns(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error
 			}
 			logutil.BgLogger().Info("[ddl] run add columns job", zap.String("job", job.String()), zap.Reflect("columnInfo", *columnInfo), zap.Int("offset", offset))
 			positions[i] = pos
-			// Set offset arg to job.
 			offsets[i] = offset
 			if err = checkAddColumnTooManyColumns(len(tblInfo.Columns)); err != nil {
 				job.State = model.JobStateCancelled
@@ -324,6 +323,7 @@ func onAddColumns(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error
 			}
 			columnInfos = append(columnInfos, columnInfo)
 		}
+		// Set arg to job.
 		job.Args = []interface{}{columnInfos, positions, offsets, ifNotExists}
 	}
 
