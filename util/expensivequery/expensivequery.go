@@ -55,11 +55,8 @@ func (eqh *Handle) Run() {
 	// use 100ms as tickInterval temply, may use given interval or use defined variable later
 	tickInterval := time.Millisecond * time.Duration(100)
 	ticker := time.NewTicker(tickInterval)
-<<<<<<< HEAD
-=======
 	defer ticker.Stop()
 	sm := eqh.sm.Load().(util.SessionManager)
->>>>>>> 8666a6f... util: refine expensive query log during bootstrap (#14181)
 	for {
 		select {
 		case <-ticker.C:
