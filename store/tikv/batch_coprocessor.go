@@ -246,7 +246,6 @@ func (b *batchCopIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 	}
 
 	if resp.err != nil {
-		logutil.BgLogger().Debug("meets error!")
 		return nil, errors.Trace(resp.err)
 	}
 
@@ -289,7 +288,7 @@ func (b *batchCopIterator) handleTask(ctx context.Context, bo *Backoffer, task *
 		if err != nil {
 			resp := &batchCopResponse{err: errors.Trace(err)}
 			b.sendToRespCh(resp)
-			return
+			break
 		} else {
 			tasks = append(tasks, ret...)
 		}
@@ -367,7 +366,7 @@ func (b *batchCopIterator) handleStreamedBatchCopResponse(ctx context.Context, b
 		resp, err = response.Recv()
 		if err != nil {
 			if errors.Cause(err) == io.EOF {
-				return
+				return nil
 			}
 
 			if err1 := bo.Backoff(boTiKVRPC, errors.Errorf("recv stream response error: %v, task store addr: %s", err, task.storeAddr)); err1 != nil {
