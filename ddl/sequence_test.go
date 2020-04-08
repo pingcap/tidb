@@ -683,6 +683,19 @@ func (s *testSequenceSuite) TestSequenceFunction(c *C) {
 	tk1.MustQuery("select setval(seq, -101)").Check(testkit.Rows("<nil>"))
 	tk1.MustQuery("select setval(seq, -102)").Check(testkit.Rows("-102"))
 	s.tk.MustExec("drop sequence seq")
+
+	// test the sequence name preprocess.
+	s.tk.MustExec("create sequence seq")
+	s.tk.MustExec("create table t(a int)")
+	s.tk.MustExec("insert into t values(1),(2)")
+	s.tk.MustQuery("select nextval(seq), t.a from t").Check(testkit.Rows("1 1", "2 2"))
+	_, err = s.tk.Exec("select nextval(t), t.a from t")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[schema:1347]'test.t' is not SEQUENCE")
+	_, err = s.tk.Exec("select nextval(seq), nextval(t), t.a from t")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[schema:1347]'test.t' is not SEQUENCE")
+	s.tk.MustQuery("select nextval(seq)").Check(testkit.Rows("3"))
 }
 
 func (s *testSequenceSuite) TestInsertSequence(c *C) {

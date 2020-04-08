@@ -850,7 +850,7 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 	dbInfo, _ := p.is.SchemaByName(tn.Schema)
 	// tableName should be checked as sequence object.
 	if p.flag&inSequenceFunction > 0 {
-		if !table.Meta().IsSequence() {
+		if !tableInfo.IsSequence() {
 			p.err = infoschema.ErrWrongObject.GenWithStackByArgs(dbInfo.Name.O, tableInfo.Name.O, "SEQUENCE")
 			return
 		}
