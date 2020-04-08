@@ -123,7 +123,6 @@ func buildBatchCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, re
 		storeTaskMap := make(map[string]*batchCopTask)
 		needRetry := false
 		for _, task := range tasks {
-			storeTaskMap := make(map[string]*batchCopTask)
 			rpcCtx, err := cache.GetTiFlashRPCContext(bo, task.region)
 			if err != nil {
 				return nil, err
@@ -247,6 +246,7 @@ func (b *batchCopIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 	}
 
 	if resp.err != nil {
+		logutil.BgLogger().Debug("meets error!")
 		return nil, errors.Trace(resp.err)
 	}
 
