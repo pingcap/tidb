@@ -215,7 +215,7 @@ func (s *testIntegrationSuite9) TestCreateTableWithPartition(c *C) {
 			  partition p0 values less than (to_seconds('2004-01-01')),
 			  partition p1 values less than (to_seconds('2005-01-01')));`)
 	tk.MustQuery("show create table t26").Check(
-		testkit.Rows("t26 CREATE TABLE `t26` (\n  `a` date DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\nPARTITION BY RANGE ( to_seconds(`a`) ) (\n  PARTITION p0 VALUES LESS THAN (63240134400),\n  PARTITION p1 VALUES LESS THAN (63271756800)\n)"))
+		testkit.Rows("t26 CREATE TABLE `t26` (\n  `a` date DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\nPARTITION BY RANGE ( TO_SECONDS(`a`) ) (\n  PARTITION p0 VALUES LESS THAN (63240134400),\n  PARTITION p1 VALUES LESS THAN (63271756800)\n)"))
 	tk.MustExec(`create table t27 (a bigint unsigned not null)
 		  partition by range(a) (
 		  partition p0 values less than (10),
@@ -445,7 +445,7 @@ func (s *testIntegrationSuite5) TestAlterTableAddPartition(c *C) {
 	part := tbl.Meta().Partition
 	c.Assert(part.Type, Equals, model.PartitionTypeRange)
 
-	c.Assert(part.Expr, Equals, "year(`hired`)")
+	c.Assert(part.Expr, Equals, "YEAR(`hired`)")
 	c.Assert(part.Definitions, HasLen, 5)
 	c.Assert(part.Definitions[0].LessThan[0], Equals, "1991")
 	c.Assert(part.Definitions[0].Name, Equals, model.NewCIStr("p1"))

@@ -619,6 +619,8 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 	case TiDBReplicaRead:
 		if strings.EqualFold(value, "follower") {
 			return "follower", nil
+		} else if strings.EqualFold(value, "leader-and-follower") {
+			return "leader-and-follower", nil
 		} else if strings.EqualFold(value, "leader") || len(value) == 0 {
 			return "leader", nil
 		}
