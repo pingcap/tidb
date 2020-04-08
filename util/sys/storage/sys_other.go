@@ -11,26 +11,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tikvrpc
+// +build !linux,!windows,!darwin
 
-import (
-	"testing"
+package storage
 
-	. "github.com/pingcap/check"
-	"github.com/pingcap/kvproto/pkg/tikvpb"
-)
+import "math"
 
-func TestT(t *testing.T) {
-	TestingT(t)
-}
-
-type testBatchCommand struct{}
-
-var _ = Suite(&testBatchCommand{})
-
-func (s *testBatchCommand) TestBatchResponse(c *C) {
-	resp := &tikvpb.BatchCommandsResponse_Response{}
-	batchResp, err := FromBatchCommandsResponse(resp)
-	c.Assert(batchResp == nil, IsTrue)
-	c.Assert(err != nil, IsTrue)
+// GetTargetDirectoryCapacity get the capacity (bytes) of directory
+func GetTargetDirectoryCapacity(path string) (uint64, error) {
+	return math.MaxInt64, nil
 }
