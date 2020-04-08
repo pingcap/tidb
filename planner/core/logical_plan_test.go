@@ -2331,6 +2331,10 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 			result: "[planner:3581]A window which depends on another cannot define partitioning.",
 		},
 		{
+			sql:    "SELECT FIRST_VALUE(a) RESPECT NULLS OVER (w1 PARTITION BY b ORDER BY b ASC, a DESC ROWS 2 PRECEDING) AS 'first_value', a, b FROM ( SELECT a, b FROM `t` ) as t WINDOW w1 AS (PARTITION BY b ORDER BY b ASC, a ASC );",
+			result: "[planner:3581]A window which depends on another cannot define partitioning.",
+		},
+		{
 			sql:    "select sum(a) over(w) from t window w as (rows between 1 preceding AND 1 following)",
 			result: "[planner:3582]Window 'w' has a frame definition, so cannot be referenced by another window.",
 		},
