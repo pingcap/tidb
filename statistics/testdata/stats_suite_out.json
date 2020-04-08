@@ -69,13 +69,13 @@
     "Name": "TestPrimaryKeySelectivity",
     "Cases": [
       [
-        "TableReader_7 3333.33 root  data:Selection_6",
-        "└─Selection_6 3333.33 cop[tikv]  gt(test.t.a, \"t\")",
-        "  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        "TableReader_7 0.00 root  data:Selection_6",
+        "└─Selection_6 0.00 cop[tikv]  gt(test.t.a, \"t\")",
+        "  └─TableFullScan_5 0.00 cop[tikv] table:t keep order:false, stats:pseudo"
       ],
       [
-        "TableReader_6 3333.33 root  data:TableRangeScan_5",
-        "└─TableRangeScan_5 3333.33 cop[tikv] table:t range:(1,+inf], keep order:false, stats:pseudo"
+        "TableReader_6 0.00 root  data:TableRangeScan_5",
+        "└─TableRangeScan_5 0.00 cop[tikv] table:t range:(1,+inf], keep order:false, stats:pseudo"
       ]
     ]
   },

@@ -1818,12 +1818,12 @@ func (s *testSuiteJoinSerial) TestOuterTableBuildHashTableIsuse13933(c *C) {
 	tk.MustExec("insert into s values (1,2),(2,1),(11,11)")
 	tk.MustQuery("select * from t left join s on s.a > t.a").Sort().Check(testkit.Rows("1 2 11 11", "1 2 2 1", "11 11 <nil> <nil>"))
 	tk.MustQuery("explain select * from t left join s on s.a > t.a").Check(testkit.Rows(
-		"HashJoin_6 99900000.00 root  CARTESIAN left outer join, other cond:gt(test.s.a, test.t.a)",
-		"├─TableReader_8(Build) 10000.00 root  data:TableFullScan_7",
-		"│ └─TableFullScan_7 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
-		"└─TableReader_11(Probe) 9990.00 root  data:Selection_10",
-		"  └─Selection_10 9990.00 cop[tikv]  not(isnull(test.s.a))",
-		"    └─TableFullScan_9 10000.00 cop[tikv] table:s keep order:false, stats:pseudo"))
+		"HashJoin_6 0.00 root  CARTESIAN left outer join, other cond:gt(test.s.a, test.t.a)",
+		"├─TableReader_8(Build) 0.00 root  data:TableFullScan_7",
+		"│ └─TableFullScan_7 0.00 cop[tikv] table:t keep order:false, stats:pseudo",
+		"└─TableReader_11(Probe) 0.00 root  data:Selection_10",
+		"  └─Selection_10 0.00 cop[tikv]  not(isnull(test.s.a))",
+		"    └─TableFullScan_9 0.00 cop[tikv] table:s keep order:false, stats:pseudo"))
 	tk.MustExec("drop table if exists t, s")
 	tk.MustExec("Create table s (a int, b int, key(b))")
 	tk.MustExec("Create table t (a int, b int, key(b))")
@@ -1832,8 +1832,8 @@ func (s *testSuiteJoinSerial) TestOuterTableBuildHashTableIsuse13933(c *C) {
 	tk.MustQuery("select /*+ INL_HASH_JOIN(s)*/ * from t left join s on s.b=t.b and s.a < t.a;").Sort().Check(testkit.Rows("1 2 <nil> <nil>", "11 2 1 2", "5 2 1 2"))
 	tk.MustQuery("explain select /*+ INL_HASH_JOIN(s)*/ * from t left join s on s.b=t.b and s.a < t.a;").Check(testkit.Rows(
 		"IndexHashJoin_22 12475.01 root  left outer join, inner:IndexLookUp_11, outer key:test.t.b, inner key:test.s.b, other cond:lt(test.s.a, test.t.a)",
-		"├─TableReader_24(Build) 10000.00 root  data:TableFullScan_23",
-		"│ └─TableFullScan_23 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+		"├─TableReader_24(Build) 0.00 root  data:TableFullScan_23",
+		"│ └─TableFullScan_23 0.00 cop[tikv] table:t keep order:false, stats:pseudo",
 		"└─IndexLookUp_11(Probe) 1.25 root  ",
 		"  ├─Selection_9(Build) 1.25 cop[tikv]  not(isnull(test.s.b))",
 		"  │ └─IndexRangeScan_7 1.25 cop[tikv] table:s, index:b(b) range: decided by [eq(test.s.b, test.t.b)], keep order:false, stats:pseudo",

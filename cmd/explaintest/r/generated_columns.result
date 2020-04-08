@@ -9,9 +9,9 @@ KEY (city)
 EXPLAIN SELECT name, id FROM person WHERE city = 'Beijing';
 id	estRows	task	access object	operator info
 Projection_4	10.00	root		test.person.name, test.person.id
-└─IndexLookUp_10	10.00	root		
-  ├─IndexRangeScan_8(Build)	10.00	cop[tikv]	table:person, index:city(city)	range:["Beijing","Beijing"], keep order:false, stats:pseudo
-  └─TableRowIDScan_9(Probe)	10.00	cop[tikv]	table:person	keep order:false, stats:pseudo
+└─IndexLookUp_10	0.00	root		
+  ├─IndexRangeScan_8(Build)	0.00	cop[tikv]	table:person, index:city(city)	range:["Beijing","Beijing"], keep order:false, stats:pseudo
+  └─TableRowIDScan_9(Probe)	0.00	cop[tikv]	table:person	keep order:false, stats:pseudo
 DROP TABLE IF EXISTS `sgc`;
 CREATE TABLE `sgc` (
 `j1` JSON DEFAULT NULL,
@@ -24,22 +24,22 @@ KEY `idx_a_b` (`a`,`b`)
 );
 EXPLAIN SELECT a FROM sgc where a < 3;
 id	estRows	task	access object	operator info
-IndexReader_6	3323.33	root		index:IndexRangeScan_5
-└─IndexRangeScan_5	3323.33	cop[tikv]	table:sgc, index:idx_a(a)	range:[-inf,3), keep order:false, stats:pseudo
+IndexReader_6	0.00	root		index:IndexRangeScan_5
+└─IndexRangeScan_5	0.00	cop[tikv]	table:sgc, index:idx_a(a)	range:[-inf,3), keep order:false, stats:pseudo
 EXPLAIN SELECT a, b FROM sgc where a < 3;
 id	estRows	task	access object	operator info
-IndexReader_6	3323.33	root		index:IndexRangeScan_5
-└─IndexRangeScan_5	3323.33	cop[tikv]	table:sgc, index:idx_a_b(a, b)	range:[-inf,3), keep order:false, stats:pseudo
+IndexReader_6	0.00	root		index:IndexRangeScan_5
+└─IndexRangeScan_5	0.00	cop[tikv]	table:sgc, index:idx_a_b(a, b)	range:[-inf,3), keep order:false, stats:pseudo
 EXPLAIN SELECT a, b from sgc where b < 3;
 id	estRows	task	access object	operator info
-IndexReader_13	3323.33	root		index:Selection_12
-└─Selection_12	3323.33	cop[tikv]		lt(test.sgc.b, 3)
-  └─IndexFullScan_11	10000.00	cop[tikv]	table:sgc, index:idx_a_b(a, b)	keep order:false, stats:pseudo
+IndexReader_13	0.00	root		index:Selection_12
+└─Selection_12	0.00	cop[tikv]		lt(test.sgc.b, 3)
+  └─IndexFullScan_11	0.00	cop[tikv]	table:sgc, index:idx_a_b(a, b)	keep order:false, stats:pseudo
 EXPLAIN SELECT a, b from sgc where a < 3 and b < 3;
 id	estRows	task	access object	operator info
-IndexReader_11	1104.45	root		index:Selection_10
-└─Selection_10	1104.45	cop[tikv]		lt(test.sgc.b, 3)
-  └─IndexRangeScan_9	3323.33	cop[tikv]	table:sgc, index:idx_a_b(a, b)	range:[-inf,3), keep order:false, stats:pseudo
+IndexReader_11	0.00	root		index:Selection_10
+└─Selection_10	0.00	cop[tikv]		lt(test.sgc.b, 3)
+  └─IndexRangeScan_9	0.00	cop[tikv]	table:sgc, index:idx_a_b(a, b)	range:[-inf,3), keep order:false, stats:pseudo
 DROP TABLE IF EXISTS sgc1,
 sgc2;
 CREATE TABLE `sgc1` (
@@ -105,59 +105,59 @@ PARTITION max VALUES LESS THAN MAXVALUE);
 EXPLAIN SELECT * FROM sgc3 WHERE a <= 1;
 id	estRows	task	access object	operator info
 Union_8	6646.67	root		
-├─TableReader_11	3323.33	root		data:Selection_10
-│ └─Selection_10	3323.33	cop[tikv]		le(test.sgc3.a, 1)
-│   └─TableFullScan_9	10000.00	cop[tikv]	table:sgc3, partition:p0	keep order:false, stats:pseudo
-└─TableReader_14	3323.33	root		data:Selection_13
-  └─Selection_13	3323.33	cop[tikv]		le(test.sgc3.a, 1)
-    └─TableFullScan_12	10000.00	cop[tikv]	table:sgc3, partition:p1	keep order:false, stats:pseudo
+├─TableReader_11	0.00	root		data:Selection_10
+│ └─Selection_10	0.00	cop[tikv]		le(test.sgc3.a, 1)
+│   └─TableFullScan_9	0.00	cop[tikv]	table:sgc3, partition:p0	keep order:false, stats:pseudo
+└─TableReader_14	0.00	root		data:Selection_13
+  └─Selection_13	0.00	cop[tikv]		le(test.sgc3.a, 1)
+    └─TableFullScan_12	0.00	cop[tikv]	table:sgc3, partition:p1	keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM sgc3 WHERE a < 7;
 id	estRows	task	access object	operator info
 Union_13	23263.33	root		
-├─TableReader_16	3323.33	root		data:Selection_15
-│ └─Selection_15	3323.33	cop[tikv]		lt(test.sgc3.a, 7)
-│   └─TableFullScan_14	10000.00	cop[tikv]	table:sgc3, partition:p0	keep order:false, stats:pseudo
-├─TableReader_19	3323.33	root		data:Selection_18
-│ └─Selection_18	3323.33	cop[tikv]		lt(test.sgc3.a, 7)
-│   └─TableFullScan_17	10000.00	cop[tikv]	table:sgc3, partition:p1	keep order:false, stats:pseudo
-├─TableReader_22	3323.33	root		data:Selection_21
-│ └─Selection_21	3323.33	cop[tikv]		lt(test.sgc3.a, 7)
-│   └─TableFullScan_20	10000.00	cop[tikv]	table:sgc3, partition:p2	keep order:false, stats:pseudo
-├─TableReader_25	3323.33	root		data:Selection_24
-│ └─Selection_24	3323.33	cop[tikv]		lt(test.sgc3.a, 7)
-│   └─TableFullScan_23	10000.00	cop[tikv]	table:sgc3, partition:p3	keep order:false, stats:pseudo
-├─TableReader_28	3323.33	root		data:Selection_27
-│ └─Selection_27	3323.33	cop[tikv]		lt(test.sgc3.a, 7)
-│   └─TableFullScan_26	10000.00	cop[tikv]	table:sgc3, partition:p4	keep order:false, stats:pseudo
-├─TableReader_31	3323.33	root		data:Selection_30
-│ └─Selection_30	3323.33	cop[tikv]		lt(test.sgc3.a, 7)
-│   └─TableFullScan_29	10000.00	cop[tikv]	table:sgc3, partition:p5	keep order:false, stats:pseudo
-└─TableReader_34	3323.33	root		data:Selection_33
-  └─Selection_33	3323.33	cop[tikv]		lt(test.sgc3.a, 7)
-    └─TableFullScan_32	10000.00	cop[tikv]	table:sgc3, partition:max	keep order:false, stats:pseudo
+├─TableReader_16	0.00	root		data:Selection_15
+│ └─Selection_15	0.00	cop[tikv]		lt(test.sgc3.a, 7)
+│   └─TableFullScan_14	0.00	cop[tikv]	table:sgc3, partition:p0	keep order:false, stats:pseudo
+├─TableReader_19	0.00	root		data:Selection_18
+│ └─Selection_18	0.00	cop[tikv]		lt(test.sgc3.a, 7)
+│   └─TableFullScan_17	0.00	cop[tikv]	table:sgc3, partition:p1	keep order:false, stats:pseudo
+├─TableReader_22	0.00	root		data:Selection_21
+│ └─Selection_21	0.00	cop[tikv]		lt(test.sgc3.a, 7)
+│   └─TableFullScan_20	0.00	cop[tikv]	table:sgc3, partition:p2	keep order:false, stats:pseudo
+├─TableReader_25	0.00	root		data:Selection_24
+│ └─Selection_24	0.00	cop[tikv]		lt(test.sgc3.a, 7)
+│   └─TableFullScan_23	0.00	cop[tikv]	table:sgc3, partition:p3	keep order:false, stats:pseudo
+├─TableReader_28	0.00	root		data:Selection_27
+│ └─Selection_27	0.00	cop[tikv]		lt(test.sgc3.a, 7)
+│   └─TableFullScan_26	0.00	cop[tikv]	table:sgc3, partition:p4	keep order:false, stats:pseudo
+├─TableReader_31	0.00	root		data:Selection_30
+│ └─Selection_30	0.00	cop[tikv]		lt(test.sgc3.a, 7)
+│   └─TableFullScan_29	0.00	cop[tikv]	table:sgc3, partition:p5	keep order:false, stats:pseudo
+└─TableReader_34	0.00	root		data:Selection_33
+  └─Selection_33	0.00	cop[tikv]		lt(test.sgc3.a, 7)
+    └─TableFullScan_32	0.00	cop[tikv]	table:sgc3, partition:max	keep order:false, stats:pseudo
 DROP TABLE IF EXISTS t1;
 CREATE TABLE t1(a INT, b INT AS (a+1) VIRTUAL, c INT AS (b+1) VIRTUAL, d INT AS (c+1) VIRTUAL, KEY(b), INDEX IDX(c, d));
 INSERT INTO t1 (a) VALUES (0);
 EXPLAIN SELECT b FROM t1 WHERE b=1;
 id	estRows	task	access object	operator info
-IndexReader_6	10.00	root		index:IndexRangeScan_5
-└─IndexRangeScan_5	10.00	cop[tikv]	table:t1, index:b(b)	range:[1,1], keep order:false, stats:pseudo
+IndexReader_6	0.00	root		index:IndexRangeScan_5
+└─IndexRangeScan_5	0.00	cop[tikv]	table:t1, index:b(b)	range:[1,1], keep order:false, stats:pseudo
 EXPLAIN SELECT b, c, d FROM t1 WHERE b=1;
 id	estRows	task	access object	operator info
 Projection_4	10.00	root		test.t1.b, test.t1.c, test.t1.d
-└─IndexLookUp_10	10.00	root		
-  ├─IndexRangeScan_8(Build)	10.00	cop[tikv]	table:t1, index:b(b)	range:[1,1], keep order:false, stats:pseudo
-  └─TableRowIDScan_9(Probe)	10.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─IndexLookUp_10	0.00	root		
+  ├─IndexRangeScan_8(Build)	0.00	cop[tikv]	table:t1, index:b(b)	range:[1,1], keep order:false, stats:pseudo
+  └─TableRowIDScan_9(Probe)	0.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b=1;
 id	estRows	task	access object	operator info
-IndexLookUp_10	10.00	root		
-├─IndexRangeScan_8(Build)	10.00	cop[tikv]	table:t1, index:b(b)	range:[1,1], keep order:false, stats:pseudo
-└─TableRowIDScan_9(Probe)	10.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+IndexLookUp_10	0.00	root		
+├─IndexRangeScan_8(Build)	0.00	cop[tikv]	table:t1, index:b(b)	range:[1,1], keep order:false, stats:pseudo
+└─TableRowIDScan_9(Probe)	0.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 EXPLAIN SELECT c FROM t1 WHERE c=2 AND d=3;
 id	estRows	task	access object	operator info
 Projection_4	0.10	root		test.t1.c
-└─IndexReader_6	0.10	root		index:IndexRangeScan_5
-  └─IndexRangeScan_5	0.10	cop[tikv]	table:t1, index:IDX(c, d)	range:[2 3,2 3], keep order:false, stats:pseudo
+└─IndexReader_6	0.00	root		index:IndexRangeScan_5
+  └─IndexRangeScan_5	0.00	cop[tikv]	table:t1, index:IDX(c, d)	range:[2 3,2 3], keep order:false, stats:pseudo
 DROP TABLE IF EXISTS person;
 CREATE TABLE person (
 id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -169,9 +169,9 @@ INSERT INTO person (name, address_info) VALUES ("John", CAST('{"city_no": 1}' AS
 EXPLAIN SELECT name FROM person where city_no=1;
 id	estRows	task	access object	operator info
 Projection_4	10.00	root		test.person.name
-└─IndexLookUp_10	10.00	root		
-  ├─IndexRangeScan_8(Build)	10.00	cop[tikv]	table:person, index:city_no(city_no)	range:[1,1], keep order:false, stats:pseudo
-  └─TableRowIDScan_9(Probe)	10.00	cop[tikv]	table:person	keep order:false, stats:pseudo
+└─IndexLookUp_10	0.00	root		
+  ├─IndexRangeScan_8(Build)	0.00	cop[tikv]	table:person, index:city_no(city_no)	range:[1,1], keep order:false, stats:pseudo
+  └─TableRowIDScan_9(Probe)	0.00	cop[tikv]	table:person	keep order:false, stats:pseudo
 DROP TABLE IF EXISTS t1;
 CREATE TABLE t1 (a INT,
 b INT GENERATED ALWAYS AS (-a) VIRTUAL,
@@ -181,53 +181,53 @@ INSERT INTO t1 (a) VALUES (2), (1), (1), (3), (NULL);
 EXPLAIN SELECT sum(a) FROM t1 GROUP BY b;
 id	estRows	task	access object	operator info
 HashAgg_5	8000.00	root		group by:Column#7, funcs:sum(Column#6)->Column#5
-└─Projection_12	10000.00	root		cast(test.t1.a, decimal(65,0) BINARY)->Column#6, test.t1.b
-  └─TableReader_9	10000.00	root		data:TableFullScan_8
-    └─TableFullScan_8	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─Projection_12	0.00	root		cast(test.t1.a, decimal(65,0) BINARY)->Column#6, test.t1.b
+  └─TableReader_9	0.00	root		data:TableFullScan_8
+    └─TableFullScan_8	0.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 EXPLAIN SELECT sum(a) FROM t1 GROUP BY c;
 id	estRows	task	access object	operator info
 HashAgg_11	8000.00	root		group by:test.t1.c, funcs:sum(Column#6)->Column#5
 └─TableReader_12	8000.00	root		data:HashAgg_5
   └─HashAgg_5	8000.00	cop[tikv]		group by:test.t1.c, funcs:sum(test.t1.a)->Column#6
-    └─TableFullScan_10	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+    └─TableFullScan_10	0.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 EXPLAIN SELECT sum(b) FROM t1 GROUP BY a;
 id	estRows	task	access object	operator info
 HashAgg_5	8000.00	root		group by:Column#7, funcs:sum(Column#6)->Column#5
-└─Projection_12	10000.00	root		cast(test.t1.b, decimal(65,0) BINARY)->Column#6, test.t1.a
-  └─TableReader_9	10000.00	root		data:TableFullScan_8
-    └─TableFullScan_8	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─Projection_12	0.00	root		cast(test.t1.b, decimal(65,0) BINARY)->Column#6, test.t1.a
+  └─TableReader_9	0.00	root		data:TableFullScan_8
+    └─TableFullScan_8	0.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 EXPLAIN SELECT sum(b) FROM t1 GROUP BY c;
 id	estRows	task	access object	operator info
 HashAgg_5	8000.00	root		group by:Column#9, funcs:sum(Column#8)->Column#5
-└─Projection_18	10000.00	root		cast(test.t1.b, decimal(65,0) BINARY)->Column#8, test.t1.c
-  └─TableReader_11	10000.00	root		data:TableFullScan_10
-    └─TableFullScan_10	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─Projection_18	0.00	root		cast(test.t1.b, decimal(65,0) BINARY)->Column#8, test.t1.c
+  └─TableReader_11	0.00	root		data:TableFullScan_10
+    └─TableFullScan_10	0.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 EXPLAIN SELECT sum(c) FROM t1 GROUP BY a;
 id	estRows	task	access object	operator info
 HashAgg_9	8000.00	root		group by:test.t1.a, funcs:sum(Column#6)->Column#5
 └─TableReader_10	8000.00	root		data:HashAgg_5
   └─HashAgg_5	8000.00	cop[tikv]		group by:test.t1.a, funcs:sum(test.t1.c)->Column#6
-    └─TableFullScan_8	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+    └─TableFullScan_8	0.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 EXPLAIN SELECT sum(c) FROM t1 GROUP BY b;
 id	estRows	task	access object	operator info
 HashAgg_5	8000.00	root		group by:Column#7, funcs:sum(Column#6)->Column#5
-└─Projection_12	10000.00	root		cast(test.t1.c, decimal(65,0) BINARY)->Column#6, test.t1.b
-  └─TableReader_9	10000.00	root		data:TableFullScan_8
-    └─TableFullScan_8	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─Projection_12	0.00	root		cast(test.t1.c, decimal(65,0) BINARY)->Column#6, test.t1.b
+  └─TableReader_9	0.00	root		data:TableFullScan_8
+    └─TableFullScan_8	0.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 DROP TABLE IF EXISTS tu;
 CREATE TABLE tu (a INT, b INT, c INT GENERATED ALWAYS AS (a + b) VIRTUAL, primary key (a), unique key uk(c));
 INSERT INTO tu(a, b) VALUES(1, 2);
 EXPLAIN SELECT * FROM tu WHERE c = 1;
 id	estRows	task	access object	operator info
-Point_Get_5	1.00	root	table:tu, index:uk(c)	
+Point_Get_5	0.00	root	table:tu, index:uk(c)	
 EXPLAIN SELECT a, c FROM tu WHERE c = 1;
 id	estRows	task	access object	operator info
 Projection_4	1.00	root		test.tu.a, test.tu.c
-└─Point_Get_5	1.00	root	table:tu, index:uk(c)	
+└─Point_Get_5	0.00	root	table:tu, index:uk(c)	
 EXPLAIN SELECT * FROM tu WHERE c in(1, 2, 3);
 id	estRows	task	access object	operator info
-Batch_Point_Get_5	3.00	root	table:tu, index:uk(c)	keep order:false, desc:false
+Batch_Point_Get_5	0.00	root	table:tu, index:uk(c)	keep order:false, desc:false
 EXPLAIN SELECT c, a FROM tu WHERE c in(1, 2, 3);
 id	estRows	task	access object	operator info
 Projection_4	3.00	root		test.tu.c, test.tu.a
-└─Batch_Point_Get_5	3.00	root	table:tu, index:uk(c)	keep order:false, desc:false
+└─Batch_Point_Get_5	0.00	root	table:tu, index:uk(c)	keep order:false, desc:false

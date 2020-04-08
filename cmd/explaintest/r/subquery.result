@@ -7,10 +7,10 @@ set session tidb_hashagg_final_concurrency = 1;
 explain select * from t1 where t1.a in (select t1.b + t2.b from t2);
 id	estRows	task	access object	operator info
 HashJoin_8	8000.00	root		CARTESIAN semi join, other cond:eq(test.t1.a, plus(test.t1.b, test.t2.b))
-├─TableReader_12(Build)	10000.00	root		data:TableFullScan_11
-│ └─TableFullScan_11	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-└─TableReader_10(Probe)	10000.00	root		data:TableFullScan_9
-  └─TableFullScan_9	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+├─TableReader_12(Build)	0.00	root		data:TableFullScan_11
+│ └─TableFullScan_11	0.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─TableReader_10(Probe)	0.00	root		data:TableFullScan_9
+  └─TableFullScan_9	0.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 drop table if exists t;
 create table t(a int primary key, b int, c int, d int, index idx(b,c,d));
 insert into t values(1,1,1,1),(2,2,2,2),(3,2,2,2),(4,2,2,2),(5,2,2,2);
@@ -36,8 +36,8 @@ HashJoin_12	7992.00	root		inner join, equal:[eq(test.t.b, test.t.b) eq(test.t.c,
 │ └─HashAgg_23	7992.00	root		group by:test.t.b, funcs:max(Column#10)->Column#9, funcs:firstrow(test.t.b)->test.t.b
 │   └─TableReader_24	7992.00	root		data:HashAgg_18
 │     └─HashAgg_18	7992.00	cop[tikv]		group by:test.t.b, funcs:max(test.t.a)->Column#10
-│       └─Selection_22	9990.00	cop[tikv]		not(isnull(test.t.b))
-│         └─TableFullScan_21	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-└─TableReader_16(Probe)	9970.03	root		data:Selection_15
-  └─Selection_15	9970.03	cop[tikv]		not(isnull(test.t.a)), not(isnull(test.t.b)), not(isnull(test.t.c))
-    └─TableFullScan_14	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+│       └─Selection_22	0.00	cop[tikv]		not(isnull(test.t.b))
+│         └─TableFullScan_21	0.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─TableReader_16(Probe)	0.00	root		data:Selection_15
+  └─Selection_15	0.00	cop[tikv]		not(isnull(test.t.a)), not(isnull(test.t.b)), not(isnull(test.t.c))
+    └─TableFullScan_14	0.00	cop[tikv]	table:t1	keep order:false, stats:pseudo

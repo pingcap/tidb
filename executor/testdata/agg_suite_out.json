@@ -3,11 +3,11 @@
     "Name": "TestInjectProjBelowTopN",
     "Cases": [
       [
-        "Projection_10 10000.00 root  test.t.i",
-        "└─Sort_4 10000.00 root  Column#3:asc",
-        "  └─Projection_11 10000.00 root  test.t.i, plus(test.t.i, 1)->Column#3",
-        "    └─TableReader_8 10000.00 root  data:TableFullScan_7",
-        "      └─TableFullScan_7 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        "Projection_10 0.00 root  test.t.i",
+        "└─Sort_4 0.00 root  Column#3:asc",
+        "  └─Projection_11 0.00 root  test.t.i, plus(test.t.i, 1)->Column#3",
+        "    └─TableReader_8 0.00 root  data:TableFullScan_7",
+        "      └─TableFullScan_7 0.00 cop[tikv] table:t keep order:false, stats:pseudo"
       ],
       [
         "1",
@@ -26,7 +26,7 @@
         "  └─Projection_16 2.00 root  test.t.i, plus(test.t.i, 1)->Column#3",
         "    └─TableReader_12 2.00 root  data:TopN_11",
         "      └─TopN_11 2.00 cop[tikv]  plus(test.t.i, 1):asc, offset:0, count:2",
-        "        └─TableFullScan_10 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        "        └─TableFullScan_10 0.00 cop[tikv] table:t keep order:false, stats:pseudo"
       ],
       [
         "1",

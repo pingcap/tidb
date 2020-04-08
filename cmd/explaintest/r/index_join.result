@@ -33,10 +33,10 @@ set @@tidb_opt_insubq_to_join_and_agg=0;
 explain select /*+ TIDB_INLJ(t2@sel_2) */ * from t1 where t1.a in (select t2.a from t2);
 id	estRows	task	access object	operator info
 IndexJoin_10	8000.00	root		semi join, inner:IndexReader_9, outer key:test.t1.a, inner key:test.t2.a
-├─TableReader_18(Build)	10000.00	root		data:TableFullScan_17
-│ └─TableFullScan_17	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-└─IndexReader_9(Probe)	1.25	root		index:IndexRangeScan_8
-  └─IndexRangeScan_8	1.25	cop[tikv]	table:t2, index:a(a)	range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo
+├─TableReader_18(Build)	0.00	root		data:TableFullScan_17
+│ └─TableFullScan_17	0.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─IndexReader_9(Probe)	0.00	root		index:IndexRangeScan_8
+  └─IndexRangeScan_8	0.00	cop[tikv]	table:t2, index:a(a)	range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message
 set @@tidb_opt_insubq_to_join_and_agg=1;
@@ -47,8 +47,8 @@ explain select /*+ TIDB_INLJ(t1) */ * from t1 where t1.a in (select t2.a from t2
 id	estRows	task	access object	operator info
 IndexJoin_13	10000.00	root		inner join, inner:IndexLookUp_12, outer key:test.t2.a, inner key:test.t1.a
 ├─StreamAgg_26(Build)	8000.00	root		group by:test.t2.a, funcs:firstrow(test.t2.a)->test.t2.a
-│ └─IndexReader_39	10000.00	root		index:IndexFullScan_38
-│   └─IndexFullScan_38	10000.00	cop[tikv]	table:t2, index:a(a)	keep order:true, stats:pseudo
-└─IndexLookUp_12(Probe)	1.25	root		
-  ├─IndexRangeScan_10(Build)	1.25	cop[tikv]	table:t1, index:a(a)	range: decided by [eq(test.t1.a, test.t2.a)], keep order:false, stats:pseudo
-  └─TableRowIDScan_11(Probe)	1.25	cop[tikv]	table:t1	keep order:false, stats:pseudo
+│ └─IndexReader_39	0.00	root		index:IndexFullScan_38
+│   └─IndexFullScan_38	0.00	cop[tikv]	table:t2, index:a(a)	keep order:true, stats:pseudo
+└─IndexLookUp_12(Probe)	0.00	root		
+  ├─IndexRangeScan_10(Build)	0.00	cop[tikv]	table:t1, index:a(a)	range: decided by [eq(test.t1.a, test.t2.a)], keep order:false, stats:pseudo
+  └─TableRowIDScan_11(Probe)	0.00	cop[tikv]	table:t1	keep order:false, stats:pseudo

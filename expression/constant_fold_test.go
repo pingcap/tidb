@@ -25,9 +25,9 @@ func (s *testIntegrationSuite) TestFoldIfNull(c *C) {
 	tk.MustExec(`create table t(a bigint, b bigint);`)
 	tk.MustExec(`insert into t values(1, 1);`)
 	tk.MustQuery(`desc select ifnull("aaaa", a) from t;`).Check(testkit.Rows(
-		`Projection_3 10000.00 root  aaaa->Column#4`,
-		`└─TableReader_5 10000.00 root  data:TableFullScan_4`,
-		`  └─TableFullScan_4 10000.00 cop[tikv] table:t keep order:false, stats:pseudo`,
+		`Projection_3 0.00 root  aaaa->Column#4`,
+		`└─TableReader_5 0.00 root  data:TableFullScan_4`,
+		`  └─TableFullScan_4 0.00 cop[tikv] table:t keep order:false, stats:pseudo`,
 	))
 	tk.MustQuery(`show warnings;`).Check(testkit.Rows())
 	tk.MustQuery(`select ifnull("aaaa", a) from t;`).Check(testkit.Rows("aaaa"))
