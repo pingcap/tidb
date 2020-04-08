@@ -86,7 +86,7 @@ alter-primary-key = false
 # 1. the server version returned by builtin-function `VERSION()`.
 # 2. the server version filled in handshake packets of MySQL Connection Protocol, see https://dev.mysql.com/doc/internals/en/connection-phase-packets.html#packet-Protocol::Handshake for more details.
 # if server-version = "", the default value(original TiDB version string) is used.
-server-version = "123"
+server-version = ""
 
 # repair mode is used to repair the broken table meta in TiKV in extreme cases.
 repair-mode = false
