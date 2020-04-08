@@ -99,10 +99,6 @@ type copTaskAndRPCContext struct {
 }
 
 func buildBatchCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, req *kv.Request) ([]*batchCopTask, error) {
-	if req.StoreType != kv.TiFlash {
-		return nil, errors.New("store type must be tiflash")
-	}
-
 	start := time.Now()
 	const cmdType = tikvrpc.CmdBatchCop
 	rangesLen := ranges.len()
@@ -127,6 +123,7 @@ func buildBatchCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, re
 		storeTaskMap := make(map[string]*batchCopTask)
 		needRetry := false
 		for _, task := range tasks {
+			storeTaskMap := make(map[string]*batchCopTask)
 			rpcCtx, err := cache.GetTiFlashRPCContext(bo, task.region)
 			if err != nil {
 				return nil, err
@@ -135,6 +132,7 @@ func buildBatchCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, re
 			// of date and already be cleaned up. We should retry and generate new tasks.
 			if rpcCtx == nil {
 				needRetry = true
+				break
 			}
 			if batchCop, ok := storeTaskMap[rpcCtx.Addr]; ok {
 				batchCop.copTasks = append(batchCop.copTasks, copTaskAndRPCContext{task: task, ctx: rpcCtx})
@@ -179,12 +177,11 @@ func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *kv.Var
 		return copErrorResponse{err}
 	}
 	it := &batchCopIterator{
-		store:           c.store,
-		req:             req,
-		finishCh:        make(chan struct{}),
-		vars:            vars,
-		memTracker:      req.MemTracker,
-		replicaReadSeed: c.replicaReadSeed,
+		store:      c.store,
+		req:        req,
+		finishCh:   make(chan struct{}),
+		vars:       vars,
+		memTracker: req.MemTracker,
 		clientHelper: clientHelper{
 			LockResolver:      c.store.lockResolver,
 			RegionCache:       c.store.regionCache,
@@ -334,7 +331,7 @@ func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *Backoffer, ta
 		Regions:   regionInfos,
 	}
 
-	req := tikvrpc.NewReplicaReadRequest(task.cmdType, &copReq, b.req.ReplicaRead, b.replicaReadSeed, kvrpcpb.Context{
+	req := tikvrpc.NewRequest(task.cmdType, &copReq, kvrpcpb.Context{
 		IsolationLevel: pbIsolationLevel(b.req.IsolationLevel),
 		Priority:       kvPriorityToCommandPri(b.req.Priority),
 		NotFillCache:   b.req.NotFillCache,

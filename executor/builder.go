@@ -2196,7 +2196,7 @@ func containsLimit(execs []*tipb.Executor) bool {
 // When allow batch cop is 1, only agg / topN uses batch cop.
 // When allow batch cop is 2, every query uses batch cop.
 func (e *TableReaderExecutor) setBatchCop(v *plannercore.PhysicalTableReader) {
-	if e.storeType != kv.TiFlash {
+	if e.storeType != kv.TiFlash || e.keepOrder {
 		return
 	}
 	switch e.ctx.GetSessionVars().AllowBatchCop {
