@@ -44,8 +44,8 @@ import (
 
 var planCacheCounter = metrics.PlanCacheCounter.WithLabelValues("prepare")
 
-var planCacheHintMiss = errors.New("Hit plan cache: False")
-var planCacheHintGot = errors.New("Hit plan cache: True")
+var planCacheHintMiss error
+var planCacheHintGot error
 
 // ShowDDL is for showing DDL information.
 type ShowDDL struct {
@@ -267,6 +267,12 @@ func (e *Execute) checkPreparedPriv(ctx context.Context, sctx sessionctx.Context
 }
 
 func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, preparedStmt *CachedPrepareStmt) error {
+	if planCacheHintMiss == nil {
+		planCacheHintMiss = errors.New("Hit plan cache: True")
+	}
+	if planCacheHintGot == nil {
+		planCacheHintGot = errors.New("Hit plan cache: False")
+	}
 	stmtCtx := sctx.GetSessionVars().StmtCtx
 	prepared := preparedStmt.PreparedAst
 	if prepared.CachedPlan != nil {
