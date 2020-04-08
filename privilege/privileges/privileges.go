@@ -96,14 +96,8 @@ func (p *UserPrivileges) ConnectionVerification(user, host string, authenticatio
 	// empty password
 	if len(pwd) == 0 && len(authentication) == 0 {
 		p.user = user
-<<<<<<< HEAD
-		p.host = host
-		return true
-=======
 		p.host = h
-		success = true
-		return
->>>>>>> d473f2d... privilege: add `authHost` and use `authHost` to verificate (#13544)
+		return true
 	}
 
 	if len(pwd) == 0 || len(authentication) == 0 {
@@ -121,14 +115,8 @@ func (p *UserPrivileges) ConnectionVerification(user, host string, authenticatio
 	}
 
 	p.user = user
-<<<<<<< HEAD
-	p.host = host
-	return true
-=======
 	p.host = h
-	success = true
-	return
->>>>>>> d473f2d... privilege: add `authHost` and use `authHost` to verificate (#13544)
+	return true
 }
 
 // DBIsVisible implements the Manager interface.

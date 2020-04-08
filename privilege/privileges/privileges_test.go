@@ -14,6 +14,7 @@
 package privileges_test
 
 import (
+	"bytes"
 	"fmt"
 	"strings"
 	"testing"
@@ -336,15 +337,6 @@ func (s *testPrivilegeSuite) TestAdminCommand(c *C) {
 	c.Assert(err, IsNil)
 }
 
-<<<<<<< HEAD
-=======
-func (s *testPrivilegeSuite) TestGetEncodedPassword(c *C) {
-	se := newSession(c, s.store, s.dbName)
-	mustExec(c, se, `CREATE USER 'test_encode_u'@'localhost' identified by 'root';`)
-	pc := privilege.GetPrivilegeManager(se)
-	c.Assert(pc.GetEncodedPassword("test_encode_u", "localhost"), Equals, "*81F5E21E35407D884A6CD4A731AEBFB6AF209E1B")
-}
-
 func (s *testPrivilegeSuite) TestAuthHost(c *C) {
 	rootSe := newSession(c, s.store, s.dbName)
 	se := newSession(c, s.store, s.dbName)
@@ -363,55 +355,6 @@ func (s *testPrivilegeSuite) TestAuthHost(c *C) {
 	mustExec(c, rootSe, "DROP USER 'test_auth_host'@'%';")
 }
 
-func (s *testPrivilegeSuite) TestDefaultRoles(c *C) {
-	rootSe := newSession(c, s.store, s.dbName)
-	mustExec(c, rootSe, `CREATE USER 'testdefault'@'localhost';`)
-	mustExec(c, rootSe, `CREATE ROLE 'testdefault_r1'@'localhost', 'testdefault_r2'@'localhost';`)
-	mustExec(c, rootSe, `GRANT 'testdefault_r1'@'localhost', 'testdefault_r2'@'localhost' TO 'testdefault'@'localhost';`)
-
-	se := newSession(c, s.store, s.dbName)
-	pc := privilege.GetPrivilegeManager(se)
-
-	ret := pc.GetDefaultRoles("testdefault", "localhost")
-	c.Assert(len(ret), Equals, 0)
-
-	mustExec(c, rootSe, `SET DEFAULT ROLE ALL TO 'testdefault'@'localhost';`)
-	mustExec(c, rootSe, `flush privileges;`)
-	ret = pc.GetDefaultRoles("testdefault", "localhost")
-	c.Assert(len(ret), Equals, 2)
-
-	mustExec(c, rootSe, `SET DEFAULT ROLE NONE TO 'testdefault'@'localhost';`)
-	mustExec(c, rootSe, `flush privileges;`)
-	ret = pc.GetDefaultRoles("testdefault", "localhost")
-	c.Assert(len(ret), Equals, 0)
-}
-
-func (s *testPrivilegeSuite) TestUserTableConsistency(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("create user superadmin")
-	tk.MustExec("grant all privileges on *.* to 'superadmin'")
-
-	// GrantPriv is not in AllGlobalPrivs any more, see pingcap/parser#581
-	c.Assert(len(mysql.Priv2UserCol), Equals, len(mysql.AllGlobalPrivs)+1)
-
-	var buf bytes.Buffer
-	var res bytes.Buffer
-	buf.WriteString("select ")
-	i := 0
-	for _, priv := range mysql.AllGlobalPrivs {
-		if i != 0 {
-			buf.WriteString(", ")
-			res.WriteString(" ")
-		}
-		buf.WriteString(mysql.Priv2UserCol[priv])
-		res.WriteString("Y")
-		i++
-	}
-	buf.WriteString(" from mysql.user where user = 'superadmin'")
-	tk.MustQuery(buf.String()).Check(testkit.Rows(res.String()))
-}
-
->>>>>>> d473f2d... privilege: add `authHost` and use `authHost` to verificate (#13544)
 func mustExec(c *C, se session.Session, sql string) {
 	_, err := se.Execute(context.Background(), sql)
 	c.Assert(err, IsNil)
