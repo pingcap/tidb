@@ -4428,8 +4428,6 @@ func (s *testSuite1) TestPartitionHashCode(c *C) {
 	}
 	wg.Wait()
 }
-<<<<<<< HEAD
-=======
 
 func (s *testSuite1) TestAlterDefaultValue(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -4592,4 +4590,3 @@ func (s *testSuite1) TestIssue15767(c *C) {
 	tk.MustExec("insert into t select * from t;")
 	tk.MustQuery("select b, count(*) from ( select b from t order by a limit 20 offset 2) as s group by b order by b;").Check(testkit.Rows("a 6", "c 7", "s 7"))
 }
->>>>>>> 6a45a7d... mocktikv: avoid sorting multiple times with unstable order (#15898)
