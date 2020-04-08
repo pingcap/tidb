@@ -261,7 +261,7 @@ func checkAddColumns(t *meta.Meta, job *model.Job) (*model.TableInfo, []*model.C
 				// We already have a column with the same column name.
 				if ifNotExists[i] {
 					// TODO: Should return a warning.
-					logutil.BgLogger().Warn(fmt.Sprintf("Duplicate column name %s", col.Name))
+					logutil.BgLogger().Warn("[ddl] check add columns, duplicate column", zap.Stringer("col", col.Name))
 					continue
 				}
 				job.State = model.JobStateCancelled
