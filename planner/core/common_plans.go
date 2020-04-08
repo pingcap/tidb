@@ -348,7 +348,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 		note := errors.New("Hit plan cache: True")
 		sctx.GetSessionVars().StmtCtx.AppendNote(note)
 	} else {
-		note := errors.New("Hit plan cache: False c2")
+		note := errors.New("Hit plan cache: False")
 		sctx.GetSessionVars().StmtCtx.AppendNote(note)
 	}
 	return err
