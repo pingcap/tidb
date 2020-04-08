@@ -14,7 +14,6 @@
 package privileges_test
 
 import (
-	"bytes"
 	"fmt"
 	"strings"
 	"testing"
