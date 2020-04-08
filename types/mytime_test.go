@@ -15,6 +15,7 @@ package types
 
 import (
 	. "github.com/pingcap/check"
+	"time"
 )
 
 type testMyTimeSuite struct{}
@@ -228,8 +229,6 @@ func (s *testMyTimeSuite) TestGetLastDay(c *C) {
 		c.Assert(day, Equals, t.expectedDay)
 	}
 }
-<<<<<<< HEAD
-=======
 
 func (s *testMyTimeSuite) TestgetFixDays(c *C) {
 	tests := []struct {
@@ -287,4 +286,3 @@ func (s *testMyTimeSuite) TestWeekday(c *C) {
 		c.Check(weekday.String(), Equals, tt.Expect)
 	}
 }
->>>>>>> d98fb74... types: fix incorrect `weekday` for `ALLOW_INVALID_DATES` mode (#10864)
