@@ -664,7 +664,7 @@ var defaultConf = Config{
 		AllowsExpressionIndex: false,
 	},
 	EnableDynamicConfig:        false,
-	EnableCollectExecutionInfo: true,
+	EnableCollectExecutionInfo: false,
 }
 
 var (
