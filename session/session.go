@@ -973,12 +973,6 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 }
 
 func (s *session) executeStatement(ctx context.Context, connID uint64, stmtNode ast.StmtNode, stmt sqlexec.Statement, recordSets []sqlexec.RecordSet, inMulitQuery bool) ([]sqlexec.RecordSet, error) {
-	s.SetValue(sessionctx.QueryString, stmt.OriginText())
-	if _, ok := stmtNode.(ast.DDLNode); ok {
-		s.SetValue(sessionctx.LastExecuteDDL, true)
-	} else {
-		s.ClearValue(sessionctx.LastExecuteDDL)
-	}
 	logStmt(stmtNode, s.sessionVars)
 	startTime := time.Now()
 	recordSet, err := runStmt(ctx, s, stmt)
@@ -1383,8 +1377,6 @@ func (s *session) Auth(user *auth.UserIdentity, authentication []byte, salt []by
 		s.sessionVars.ActiveRoles = pm.GetDefaultRoles(user.AuthUsername, user.AuthHostname)
 		return true
 	} else if user.Hostname == variable.DefHostname {
-		logutil.Logger(context.Background()).Error("user connection verification failed",
-			zap.Stringer("user", user))
 		return false
 	}
 
@@ -1402,9 +1394,6 @@ func (s *session) Auth(user *auth.UserIdentity, authentication []byte, salt []by
 			return true
 		}
 	}
-
-	logutil.Logger(context.Background()).Error("user connection verification failed",
-		zap.Stringer("user", user))
 	return false
 }
 
