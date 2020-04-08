@@ -15,7 +15,14 @@ package planner
 
 import (
 	"context"
-	"math"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/opcode"
+	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/statistics"
+	driver "github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/util/ranger"
+	"strconv"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -71,13 +78,18 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	if !ok {
 		return bestPlan, names, nil
 	}
-	bindRecord, scope := getBindRecord(sctx, stmtNode)
+	bindRecord, scope, selectivity := getBindRecordAndSelectivity(sctx, stmtNode)
 	if bindRecord == nil {
 		return bestPlan, names, nil
 	}
+	bucketID := int64(selectivity * float64(sctx.GetSessionVars().SPMSpaceNumber))
+	if bucketID >= sctx.GetSessionVars().SPMSpaceNumber {
+		bucketID = sctx.GetSessionVars().SPMSpaceNumber - 1
+	}
+
 	bestPlanHint := plannercore.GenHintsFromPhysicalPlan(bestPlan)
-	if len(bindRecord.Bindings) > 0 {
-		orgBinding := bindRecord.Bindings[0] // the first is the original binding
+	if bindRecord.NormalizedBinding != nil {
+		orgBinding := bindRecord.NormalizedBinding // the first is the original binding
 		for _, tbHint := range tableHints {  // consider table hints which contained by the original binding
 			if orgBinding.Hint.ContainTableHint(tbHint.HintName.String()) {
 				bestPlanHint = append(bestPlanHint, tbHint)
@@ -86,50 +98,71 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	}
 	bestPlanHintStr := hint.RestoreOptimizerHints(bestPlanHint)
 
-	binding := bindRecord.FindBinding(bestPlanHintStr)
 	// If the best bestPlan is in baselines, just use it.
-	if binding != nil && binding.Status == bindinfo.Using {
+	baseline := bindRecord.FindBaseline(bucketID)
+	if baseline != nil && baseline.Status == bindinfo.Using &&
+		baseline.ID == bestPlanHintStr+"$BucketID="+strconv.FormatInt(baseline.BucketID, 10) {
 		if sctx.GetSessionVars().UsePlanBaselines {
-			stmtHints, warns = handleStmtHints(binding.Hint.GetFirstTableHints())
+			stmtHints, warns = handleStmtHints(baseline.Hint.GetFirstTableHints())
 		}
 		return bestPlan, names, nil
 	}
-	bestCostAmongHints := math.MaxFloat64
+
 	var bestPlanAmongHints plannercore.Plan
 	originHints := hint.CollectHint(stmtNode)
 	// Try to find the best binding.
-	for _, binding := range bindRecord.Bindings {
-		if binding.Status != bindinfo.Using {
-			continue
-		}
+	useBaseline := false
+	if baseline != nil && baseline.Status == bindinfo.Using && !baseline.Fixed {
 		metrics.BindUsageCounter.WithLabelValues(scope).Inc()
-		hint.BindHint(stmtNode, binding.Hint)
-		curStmtHints, curWarns := handleStmtHints(binding.Hint.GetFirstTableHints())
+		hint.BindHint(stmtNode, baseline.Hint)
+		curStmtHints, curWarns := handleStmtHints(baseline.Hint.GetFirstTableHints())
 		sctx.GetSessionVars().StmtCtx.StmtHints = curStmtHints
-		plan, _, cost, err := optimize(ctx, sctx, node, is)
+		plan, _, _, err := optimize(ctx, sctx, node, is)
 		if err != nil {
-			binding.Status = bindinfo.Invalid
+			baseline.Status = bindinfo.Invalid
 			handleInvalidBindRecord(ctx, sctx, scope, bindinfo.BindRecord{
 				OriginalSQL: bindRecord.OriginalSQL,
 				Db:          bindRecord.Db,
-				Bindings:    []bindinfo.Binding{binding},
+				Baselines:   map[int64]*bindinfo.Binding{bucketID: baseline},
 			})
-			continue
-		}
-		if cost < bestCostAmongHints {
+		} else {
 			if sctx.GetSessionVars().UsePlanBaselines {
 				stmtHints, warns = curStmtHints, curWarns
 			}
-			bestCostAmongHints = cost
+			useBaseline = true
 			bestPlanAmongHints = plan
+		}
+	}
+	// If none baseline aims at selectivity bucket or baseline is invalid. We use the normalized binding instead.
+	if !useBaseline {
+		binding := bindRecord.NormalizedBinding
+		if binding != nil && binding.Status == bindinfo.Using {
+			metrics.BindUsageCounter.WithLabelValues(scope).Inc()
+			hint.BindHint(stmtNode, binding.Hint)
+			curStmtHints, curWarns := handleStmtHints(binding.Hint.GetFirstTableHints())
+			sctx.GetSessionVars().StmtCtx.StmtHints = curStmtHints
+			plan, _, _, err := optimize(ctx, sctx, node, is)
+			if err != nil {
+				binding.Status = bindinfo.Invalid
+				handleInvalidBindRecord(ctx, sctx, scope, bindinfo.BindRecord{
+					OriginalSQL:       bindRecord.OriginalSQL,
+					Db:                bindRecord.Db,
+					NormalizedBinding: binding,
+				})
+			} else {
+				if sctx.GetSessionVars().UsePlanBaselines {
+					stmtHints, warns = curStmtHints, curWarns
+				}
+				bestPlanAmongHints = plan
+			}
 		}
 	}
 	// 1. If there is already a evolution task, we do not need to handle it again.
 	// 2. If the origin binding contain `read_from_storage` hint, we should ignore the evolve task.
 	// 3. If the best plan contain TiFlash hint, we should ignore the evolve task.
-	if sctx.GetSessionVars().EvolvePlanBaselines && binding == nil &&
+	if sctx.GetSessionVars().EvolvePlanBaselines && baseline == nil &&
 		!originHints.ContainTableHint(plannercore.HintReadFromStorage) &&
-		!bindRecord.Bindings[0].Hint.ContainTableHint(plannercore.HintReadFromStorage) {
+		!bindRecord.GetFirstBinding().Hint.ContainTableHint(plannercore.HintReadFromStorage) {
 		handleEvolveTasks(ctx, sctx, bindRecord, stmtNode, bestPlanHintStr)
 	}
 	// Restore the hint to avoid changing the stmt node.
@@ -210,14 +243,108 @@ func extractSelectAndNormalizeDigest(stmtNode ast.StmtNode) (*ast.SelectStmt, st
 	return nil, "", ""
 }
 
-func getBindRecord(ctx sessionctx.Context, stmt ast.StmtNode) (*bindinfo.BindRecord, string) {
+func extractSelectivity(ctx sessionctx.Context, sel *ast.SelectStmt) float64 {
+	if sel.From == nil || sel.From.TableRefs == nil {
+		return 0
+	}
+	// TODO: consider multiple join and subquery
+	var tables []*model.TableInfo
+	if leftTbl, ok := sel.From.TableRefs.Left.(*ast.TableSource); ok {
+		if tblName, ok := leftTbl.Source.(*ast.TableName); ok && tblName.TableInfo != nil {
+			tables = append(tables, tblName.TableInfo)
+		}
+	}
+	if sel.From.TableRefs.Right != nil {
+		if rightTbl, ok := sel.From.TableRefs.Right.(*ast.TableSource); ok {
+			if tblName, ok := rightTbl.Source.(*ast.TableName); ok && tblName.TableInfo != nil {
+				tables = append(tables, tblName.TableInfo)
+			}
+		}
+	}
+	// TODO: consider the subquery where conditions
+	conditions := plannercore.SplitWhere(sel.Where)
+	if len(conditions) == 0 {
+		return 0
+	}
+	if len(tables) == 0 {
+		return 0
+	}
+	for _, cond := range conditions {
+		if _, ok := cond.(*ast.BinaryOperationExpr); !ok {
+			continue
+		}
+		compareExpr := cond.(*ast.BinaryOperationExpr)
+		if compareExpr.Op != opcode.GE && compareExpr.Op != opcode.LE && compareExpr.Op != opcode.EQ &&
+			compareExpr.Op != opcode.GT && compareExpr.Op != opcode.LT {
+			continue
+		}
+		var constant *expression.Constant
+		var columnName *ast.ColumnName
+		switch v := compareExpr.L.(type) {
+		case *driver.ValueExpr:
+			constant = &expression.Constant{Value: v.Datum, RetType: &v.Type}
+		case *ast.ColumnNameExpr:
+			columnName = v.Name
+		}
+		switch v := compareExpr.R.(type) {
+		case *driver.ValueExpr:
+			constant = &expression.Constant{Value: v.Datum, RetType: &v.Type}
+		case *ast.ColumnNameExpr:
+			columnName = v.Name
+		}
+		if constant == nil || columnName == nil {
+			continue
+		}
+		for _, tblInfo := range tables {
+			var statisticsColumn *statistics.Column
+			var col *model.ColumnInfo
+			var statsTbl *statistics.Table
+			for _, colInfo := range tblInfo.Columns {
+				if colInfo.Name.L == columnName.Name.L {
+					statsTbl = plannercore.GetStatsTable(ctx, tblInfo, tblInfo.ID)
+					statisticsColumn = statsTbl.ColumnByName(colInfo.Name.L)
+					col = colInfo
+					break
+				}
+			}
+			if statisticsColumn == nil || col == nil || statsTbl == nil {
+				continue
+			}
+			ranExpr := expression.NewFunctionInternal(ctx, compareExpr.Op.String(), types.NewFieldType(mysql.TypeTiny), &expression.Column{
+				RetType:  &col.FieldType,
+				ID:       col.ID,
+				UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
+				Index:    col.Offset,
+				OrigName: col.Name.L,
+				IsHidden: col.Hidden,
+			}, constant)
+
+			// We ignore error here, because there may be some truncate here.
+			ran, err := ranger.BuildColumnRange([]expression.Expression{ranExpr}, ctx.GetSessionVars().StmtCtx, statisticsColumn.Tp, types.UnspecifiedLength)
+			if err != nil {
+				// do nothing, to avoid error check
+			}
+			if len(ran) == 0 {
+				return -1
+			}
+			evaluatedCount, err := statisticsColumn.GetColumnRowCount(ctx.GetSessionVars().StmtCtx, ran, statsTbl.ModifyCount, tblInfo.PKIsHandle)
+			if err != nil {
+				return -1
+			}
+			return evaluatedCount / float64(statsTbl.Count)
+		}
+	}
+	return 0
+}
+
+func getBindRecordAndSelectivity(ctx sessionctx.Context, stmt ast.StmtNode) (*bindinfo.BindRecord, string, float64) {
 	// When the domain is initializing, the bind will be nil.
 	if ctx.Value(bindinfo.SessionBindInfoKeyType) == nil {
-		return nil, ""
+		return nil, "", -1
 	}
 	selectStmt, normalizedSQL, hash := extractSelectAndNormalizeDigest(stmt)
 	if selectStmt == nil {
-		return nil, ""
+		return nil, "", -1
 	}
 	sessionHandle := ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
 	bindRecord := sessionHandle.GetBindRecord(normalizedSQL, ctx.GetSessionVars().CurrentDB)
@@ -226,24 +353,24 @@ func getBindRecord(ctx sessionctx.Context, stmt ast.StmtNode) (*bindinfo.BindRec
 	}
 	if bindRecord != nil {
 		if bindRecord.HasUsingBinding() {
-			return bindRecord, metrics.ScopeSession
+			return bindRecord, metrics.ScopeSession, extractSelectivity(ctx, selectStmt)
 		}
-		return nil, ""
+		return nil, "", -1
 	}
 	globalHandle := domain.GetDomain(ctx).BindHandle()
 	if globalHandle == nil {
-		return nil, ""
+		return nil, "", -1
 	}
 	bindRecord = globalHandle.GetBindRecord(hash, normalizedSQL, ctx.GetSessionVars().CurrentDB)
 	if bindRecord == nil {
 		bindRecord = globalHandle.GetBindRecord(hash, normalizedSQL, "")
 	}
-	return bindRecord, metrics.ScopeGlobal
+	return bindRecord, metrics.ScopeGlobal, extractSelectivity(ctx, selectStmt)
 }
 
 func handleInvalidBindRecord(ctx context.Context, sctx sessionctx.Context, level string, bindRecord bindinfo.BindRecord) {
 	sessionHandle := sctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
-	err := sessionHandle.DropBindRecord(bindRecord.OriginalSQL, bindRecord.Db, &bindRecord.Bindings[0])
+	err := sessionHandle.DropBindRecord(bindRecord.OriginalSQL, bindRecord.Db, bindRecord.GetFirstBinding())
 	if err != nil {
 		logutil.Logger(ctx).Info("drop session bindings failed")
 	}

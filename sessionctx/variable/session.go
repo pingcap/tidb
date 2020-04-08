@@ -549,6 +549,12 @@ type SessionVars struct {
 	// EvolvePlanBaselines indicates whether we will evolve the plan baselines.
 	EvolvePlanBaselines bool
 
+	// SPMSpaceNumber indicates the number of parameter partitions of one normalized SQL in SQL plan management.
+	SPMSpaceNumber int64
+
+	// BaselineAcceptFactor indicates the factor for baseline evolve accepting.
+	BaselineAcceptFactor float64
+
 	// Unexported fields should be accessed and set through interfaces like GetReplicaRead() and SetReplicaRead().
 
 	// allowInSubqToJoinAndAgg can be set to false to forbid rewriting the semi join to inner join with agg.
@@ -669,6 +675,8 @@ func NewSessionVars() *SessionVars {
 		AllowRemoveAutoInc:          DefTiDBAllowRemoveAutoInc,
 		UsePlanBaselines:            DefTiDBUsePlanBaselines,
 		EvolvePlanBaselines:         DefTiDBEvolvePlanBaselines,
+		SPMSpaceNumber:              DefTiDBSPMSpaceNumber,
+		BaselineAcceptFactor:        DefTiDBBaselineAcceptFactor,
 		IsolationReadEngines:        map[kv.StoreType]struct{}{kv.TiKV: {}, kv.TiFlash: {}, kv.TiDB: {}},
 		LockWaitTimeout:             DefInnodbLockWaitTimeout * 1000,
 		MetricSchemaStep:            DefTiDBMetricSchemaStep,
@@ -1207,6 +1215,10 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.UsePlanBaselines = TiDBOptOn(val)
 	case TiDBEvolvePlanBaselines:
 		s.EvolvePlanBaselines = TiDBOptOn(val)
+	case TiDBSPMSpaceNumber:
+		s.SPMSpaceNumber = tidbOptInt64(val, DefTiDBSPMSpaceNumber)
+	case TiDBBaselineAcceptFactor:
+		s.BaselineAcceptFactor = tidbOptFloat64(val, DefTiDBBaselineAcceptFactor)
 	case TiDBIsolationReadEngines:
 		s.IsolationReadEngines = make(map[kv.StoreType]struct{})
 		for _, engine := range strings.Split(val, ",") {

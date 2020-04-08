@@ -150,6 +150,9 @@ const (
 	// TiDBEvolvePlanTaskMaxTime controls the max time of a single evolution task.
 	TiDBEvolvePlanTaskMaxTime = "tidb_evolve_plan_task_max_time"
 
+	// TiDBBaselineReVerifyHours controls the duration of a baseline which need to be re-verified
+	TiDBBaselineReVerifyHours = "tidb_baseline_re_verify_hours"
+
 	// TiDBEvolvePlanTaskStartTime is the start time of evolution task.
 	TiDBEvolvePlanTaskStartTime = "tidb_evolve_plan_task_start_time"
 	// TiDBEvolvePlanTaskEndTime is the end time of evolution task.
@@ -371,6 +374,12 @@ const (
 	// TiDBEvolvePlanBaselines indicates whether the evolution of plan baselines is enabled.
 	TiDBEvolvePlanBaselines = "tidb_evolve_plan_baselines"
 
+	// TiDBSPMSpaceNumber indicates the number of parameter partitions of one normalized SQL in SQL plan management.
+	TiDBSPMSpaceNumber = "tidb_spm_space_number"
+
+	// TiDBBaselineAcceptFactor indicates the factor of baseline evolve accepting.
+	TiDBBaselineAcceptFactor = "tidb_baseline_accept_factor"
+
 	// TiDBIsolationReadEngines indicates the tidb only read from the stores whose engine type is involved in IsolationReadEngines.
 	// Now, only support TiKV and TiFlash.
 	TiDBIsolationReadEngines = "tidb_isolation_read_engines"
@@ -468,7 +477,10 @@ const (
 	DefTiDBAllowRemoveAutoInc          = false
 	DefTiDBUsePlanBaselines            = true
 	DefTiDBEvolvePlanBaselines         = false
+	DefTiDBSPMSpaceNumber              = 16
+	DefTiDBBaselineAcceptFactor        = 1.0
 	DefTiDBEvolvePlanTaskMaxTime       = 600 // 600s
+	DefTiDBBaselineReVerifyHours       = 7 * 24
 	DefTiDBEvolvePlanTaskStartTime     = "00:00 +0000"
 	DefTiDBEvolvePlanTaskEndTime       = "23:59 +0000"
 	DefInnodbLockWaitTimeout           = 50 // 50s

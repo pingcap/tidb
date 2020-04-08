@@ -900,7 +900,7 @@ func (do *Domain) globalBindHandleWorkerLoop() {
 				}
 				do.bindHandle.DropInvalidBindRecord()
 				if variable.TiDBOptOn(variable.CapturePlanBaseline.GetVal()) {
-					do.bindHandle.CaptureBaselines()
+					do.bindHandle.CaptureNormalizedBinding()
 				}
 				do.bindHandle.SaveEvolveTasksToStore()
 			}

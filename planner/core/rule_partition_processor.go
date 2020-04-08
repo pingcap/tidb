@@ -134,7 +134,7 @@ func (s *partitionProcessor) pruneHashPartition(ds *DataSource, pi *model.Partit
 		// id as FromID. So we set the id of the newDataSource with the original one to
 		// avoid traversing the whole plan tree to update the references.
 		newDataSource.id = ds.id
-		newDataSource.statisticTable = getStatsTable(ds.SCtx(), ds.table.Meta(), pi.Definitions[idx].ID)
+		newDataSource.statisticTable = GetStatsTable(ds.SCtx(), ds.table.Meta(), pi.Definitions[idx].ID)
 		pl := &newDataSource
 		return pl, nil
 	}
@@ -631,7 +631,7 @@ func (s *partitionProcessor) makeUnionAllChildren(ds *DataSource, pi *model.Part
 			// id as FromID. So we set the id of the newDataSource with the original one to
 			// avoid traversing the whole plan tree to update the references.
 			newDataSource.id = ds.id
-			newDataSource.statisticTable = getStatsTable(ds.SCtx(), ds.table.Meta(), pi.Definitions[i].ID)
+			newDataSource.statisticTable = GetStatsTable(ds.SCtx(), ds.table.Meta(), pi.Definitions[i].ID)
 			children = append(children, &newDataSource)
 		}
 	}

@@ -131,7 +131,7 @@ func (s *testSuite) TestBindParse(c *C) {
 	bindData := bindHandle.GetBindRecord(hash, sql, "test")
 	c.Check(bindData, NotNil)
 	c.Check(bindData.OriginalSQL, Equals, "select * from t")
-	bind := bindData.Bindings[0]
+	bind := bindData.GetFirstBinding()
 	c.Check(bind.BindSQL, Equals, "select * from t use index(index_t)")
 	c.Check(bindData.Db, Equals, "test")
 	c.Check(bind.Status, Equals, "using")
@@ -179,7 +179,7 @@ func (s *testSuite) TestGlobalBinding(c *C) {
 	bindData := s.domain.BindHandle().GetBindRecord(hash, sql, "test")
 	c.Check(bindData, NotNil)
 	c.Check(bindData.OriginalSQL, Equals, "select * from t where i > ?")
-	bind := bindData.Bindings[0]
+	bind := bindData.GetFirstBinding()
 	c.Check(bind.BindSQL, Equals, "select * from t use index(index_t) where i>99")
 	c.Check(bindData.Db, Equals, "test")
 	c.Check(bind.Status, Equals, "using")
@@ -212,7 +212,7 @@ func (s *testSuite) TestGlobalBinding(c *C) {
 	bindData = bindHandle.GetBindRecord(hash, sql, "test")
 	c.Check(bindData, NotNil)
 	c.Check(bindData.OriginalSQL, Equals, "select * from t where i > ?")
-	bind = bindData.Bindings[0]
+	bind = bindData.GetFirstBinding()
 	c.Check(bind.BindSQL, Equals, "select * from t use index(index_t) where i>99")
 	c.Check(bindData.Db, Equals, "test")
 	c.Check(bind.Status, Equals, "using")
@@ -283,7 +283,7 @@ func (s *testSuite) TestSessionBinding(c *C) {
 	bindData := handle.GetBindRecord("select * from t where i > ?", "test")
 	c.Check(bindData, NotNil)
 	c.Check(bindData.OriginalSQL, Equals, "select * from t where i > ?")
-	bind := bindData.Bindings[0]
+	bind := bindData.GetFirstBinding()
 	c.Check(bind.BindSQL, Equals, "select * from t use index(index_t) where i>99")
 	c.Check(bindData.Db, Equals, "test")
 	c.Check(bind.Status, Equals, "using")
@@ -320,7 +320,7 @@ func (s *testSuite) TestSessionBinding(c *C) {
 	bindData = handle.GetBindRecord("select * from t where i > ?", "test")
 	c.Check(bindData, NotNil)
 	c.Check(bindData.OriginalSQL, Equals, "select * from t where i > ?")
-	c.Check(len(bindData.Bindings), Equals, 0)
+	c.Check(bindData.NormalizedBinding, Equals, nil)
 
 	metrics.BindTotalGauge.WithLabelValues(metrics.ScopeSession, bindinfo.Using).Write(pb)
 	c.Assert(pb.GetGauge().GetValue(), Equals, float64(0))
@@ -400,7 +400,7 @@ func (s *testSuite) TestBindingSymbolList(c *C) {
 	bindData := s.domain.BindHandle().GetBindRecord(hash, sql, "test")
 	c.Assert(bindData, NotNil)
 	c.Check(bindData.OriginalSQL, Equals, "select a , b from t where a = ? limit ...")
-	bind := bindData.Bindings[0]
+	bind := bindData.GetFirstBinding()
 	c.Check(bind.BindSQL, Equals, "select a, b from t use index (ib) where a = 1 limit 0, 1")
 	c.Check(bindData.Db, Equals, "test")
 	c.Check(bind.Status, Equals, "using")
@@ -428,7 +428,7 @@ func (s *testSuite) TestErrorBind(c *C) {
 	bindData := s.domain.BindHandle().GetBindRecord(hash, sql, "test")
 	c.Check(bindData, NotNil)
 	c.Check(bindData.OriginalSQL, Equals, "select * from t where i > ?")
-	bind := bindData.Bindings[0]
+	bind := bindData.GetFirstBinding()
 	c.Check(bind.BindSQL, Equals, "select * from t use index(index_t) where i>100")
 	c.Check(bindData.Db, Equals, "test")
 	c.Check(bind.Status, Equals, "using")
@@ -482,7 +482,7 @@ func (s *testSuite) TestCapturePlanBaseline(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
-	s.domain.BindHandle().CaptureBaselines()
+	s.domain.BindHandle().CaptureNormalizedBinding()
 	tk.MustQuery("show global bindings").Check(testkit.Rows())
 	tk.MustExec("select count(*) from t where a > 10")
 	tk.MustExec("select count(*) from t where a > 10")
@@ -866,11 +866,13 @@ func (s *testSuite) TestHintsSetEvolveTask(c *C) {
 	bindData := bindHandle.GetBindRecord(hash, sql, "test")
 	c.Check(bindData, NotNil)
 	c.Check(bindData.OriginalSQL, Equals, "select * from t where a > ?")
-	c.Assert(len(bindData.Bindings), Equals, 2)
-	bind := bindData.Bindings[1]
-	c.Assert(bind.Status, Equals, bindinfo.PendingVerify)
-	c.Assert(bind.ID, Not(Equals), "")
-	c.Assert(bind.Hint, NotNil)
+	c.Assert(bindData.NormalizedBinding, NotNil)
+	c.Assert(len(bindData.Baselines), Equals, 1)
+	for _, baseline := range bindData.Baselines {
+		c.Assert(baseline.Status, Equals, bindinfo.PendingVerify)
+		c.Assert(baseline.ID, Not(Equals), "")
+		c.Assert(baseline.Hint, NotNil)
+	}
 }
 
 func (s *testSuite) TestHintsSetID(c *C) {
@@ -886,8 +888,8 @@ func (s *testSuite) TestHintsSetID(c *C) {
 	bindData := bindHandle.GetBindRecord(hash, sql, "test")
 	c.Check(bindData, NotNil)
 	c.Check(bindData.OriginalSQL, Equals, "select * from t where a > ?")
-	c.Assert(len(bindData.Bindings), Equals, 1)
-	bind := bindData.Bindings[0]
+	c.Assert(bindData.NormalizedBinding, NotNil)
+	bind := bindData.GetFirstBinding()
 	c.Assert(bind.ID, Equals, "use_index(@`sel_1` `test`.`t` `idx_a`)")
 
 	s.cleanBindingEnv(tk)
@@ -895,8 +897,8 @@ func (s *testSuite) TestHintsSetID(c *C) {
 	bindData = bindHandle.GetBindRecord(hash, sql, "test")
 	c.Check(bindData, NotNil)
 	c.Check(bindData.OriginalSQL, Equals, "select * from t where a > ?")
-	c.Assert(len(bindData.Bindings), Equals, 1)
-	bind = bindData.Bindings[0]
+	c.Assert(bindData.NormalizedBinding, NotNil)
+	bind = bindData.GetFirstBinding()
 	c.Assert(bind.ID, Equals, "use_index(@`sel_1` `test`.`t` `idx_a`)")
 
 	s.cleanBindingEnv(tk)
@@ -904,8 +906,8 @@ func (s *testSuite) TestHintsSetID(c *C) {
 	bindData = bindHandle.GetBindRecord(hash, sql, "test")
 	c.Check(bindData, NotNil)
 	c.Check(bindData.OriginalSQL, Equals, "select * from t where a > ?")
-	c.Assert(len(bindData.Bindings), Equals, 1)
-	bind = bindData.Bindings[0]
+	c.Assert(bindData.NormalizedBinding, NotNil)
+	bind = bindData.GetFirstBinding()
 	c.Assert(bind.ID, Equals, "use_index(@`sel_1` `test`.`t` `idx_a`)")
 
 	s.cleanBindingEnv(tk)
@@ -913,8 +915,8 @@ func (s *testSuite) TestHintsSetID(c *C) {
 	bindData = bindHandle.GetBindRecord(hash, sql, "test")
 	c.Check(bindData, NotNil)
 	c.Check(bindData.OriginalSQL, Equals, "select * from t where a > ?")
-	c.Assert(len(bindData.Bindings), Equals, 1)
-	bind = bindData.Bindings[0]
+	c.Assert(bindData.NormalizedBinding, NotNil)
+	bind = bindData.GetFirstBinding()
 	c.Assert(bind.ID, Equals, "use_index(@`sel_1` `test`.`t` `idx_a`)")
 
 	s.cleanBindingEnv(tk)
@@ -922,8 +924,8 @@ func (s *testSuite) TestHintsSetID(c *C) {
 	bindData = bindHandle.GetBindRecord(hash, sql, "test")
 	c.Check(bindData, NotNil)
 	c.Check(bindData.OriginalSQL, Equals, "select * from t where a > ?")
-	c.Assert(len(bindData.Bindings), Equals, 1)
-	bind = bindData.Bindings[0]
+	c.Assert(bindData.NormalizedBinding, NotNil)
+	bind = bindData.GetFirstBinding()
 	c.Assert(bind.ID, Equals, "use_index(@`sel_1` `test`.`t` `idx_a`)")
 }
 

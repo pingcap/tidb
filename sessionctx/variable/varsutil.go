@@ -545,7 +545,8 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		TiDBRetryLimit,
 		TiDBSlowLogThreshold,
 		TiDBQueryLogMaxLen,
-		TiDBEvolvePlanTaskMaxTime:
+		TiDBEvolvePlanTaskMaxTime,
+		TiDBBaselineReVerifyHours:
 		_, err := strconv.ParseInt(value, 10, 64)
 		if err != nil {
 			return value, ErrWrongValueForVar.GenWithStackByArgs(name)

@@ -38,6 +38,16 @@ const (
 	Rejected = "rejected"
 )
 
+// BindType is the type of binding.
+type BindType int64
+
+const (
+	// NormalizedBind means normalized binding.
+	NormalizedBind = iota
+	// Baseline means evolution binding.
+	Baseline
+)
+
 // Binding stores the basic bind hint info.
 type Binding struct {
 	BindSQL string
@@ -49,6 +59,9 @@ type Binding struct {
 	UpdateTime types.Time
 	Charset    string
 	Collation  string
+	BindType   BindType
+	BucketID   int64
+	Fixed      bool
 	// Hint is the parsed hints, it is used to bind hints to stmt node.
 	Hint *hint.HintsSet
 	// ID is the string form of Hint. It would be non-empty only when the status is `Using` or `PendingVerify`.
@@ -80,53 +93,81 @@ type BindRecord struct {
 	OriginalSQL string
 	Db          string
 
-	Bindings []Binding
+	NormalizedBinding *Binding
+	Baselines         map[int64]*Binding
+}
+
+// GetFirstBinding return the first binding for a record.
+func (br *BindRecord) GetFirstBinding() *Binding {
+	if br.NormalizedBinding != nil {
+		return br.NormalizedBinding
+	}
+	for _, bind := range br.Baselines {
+		return bind
+	}
+	return nil
 }
 
 // HasUsingBinding checks if there are any using bindings in bind record.
 func (br *BindRecord) HasUsingBinding() bool {
-	for _, binding := range br.Bindings {
-		if binding.Status == Using {
-			return true
-		}
-	}
-	return false
+	return br.NormalizedBinding.Status == Using
 }
 
 // FindBinding find bindings in BindRecord.
-func (br *BindRecord) FindBinding(hint string) *Binding {
-	for _, binding := range br.Bindings {
-		if binding.ID == hint {
-			return &binding
+func (br *BindRecord) FindBinding(hint string, bindType BindType, bucketID int64) *Binding {
+	if bindType == NormalizedBind {
+		if br.NormalizedBinding.ID == hint {
+			return br.NormalizedBinding
+		}
+		return nil
+	}
+	if baseline, ok := br.Baselines[bucketID]; ok && baseline.ID == hint {
+		return baseline
+	}
+	return nil
+}
+
+// FindBaseline find baseline in BindRecord.
+func (br *BindRecord) FindBaseline(bucketID int64) *Binding {
+	return br.Baselines[bucketID]
+}
+
+func (br *BindRecord) prepareHintsForBinding(sctx sessionctx.Context, bind *Binding, p *parser.Parser) error {
+	if (bind.Hint != nil && bind.ID != "") || bind.Status == deleted {
+		return nil
+	}
+	if sctx != nil {
+		_, err := getHintsForSQL(sctx, bind.BindSQL)
+		if err != nil {
+			return err
 		}
 	}
+	hintsSet, err := hint.ParseHintsSet(p, bind.BindSQL, bind.Charset, bind.Collation, br.Db)
+	if err != nil {
+		return err
+	}
+	hintsStr, err := hintsSet.Restore()
+	if err != nil {
+		return err
+	}
+	bind.Hint = hintsSet
+	bind.ID = hintsStr
 	return nil
 }
 
 // prepareHints builds ID and Hint for BindRecord. If sctx is not nil, we check if
 // the BindSQL is still valid.
-func (br *BindRecord) prepareHints(sctx sessionctx.Context) error {
+func (br *BindRecord) prepareHints(sctx sessionctx.Context) (err error) {
 	p := parser.New()
-	for i, bind := range br.Bindings {
-		if (bind.Hint != nil && bind.ID != "") || bind.Status == deleted {
-			continue
-		}
-		if sctx != nil {
-			_, err := getHintsForSQL(sctx, bind.BindSQL)
-			if err != nil {
-				return err
-			}
-		}
-		hintsSet, err := hint.ParseHintsSet(p, bind.BindSQL, bind.Charset, bind.Collation, br.Db)
+	err = br.prepareHintsForBinding(sctx, br.NormalizedBinding, p)
+	if err != nil {
+		return err
+	}
+	for i := range br.Baselines {
+		err = br.prepareHintsForBinding(sctx, br.Baselines[i], p)
 		if err != nil {
 			return err
 		}
-		hintsStr, err := hintsSet.Restore()
-		if err != nil {
-			return err
-		}
-		br.Bindings[i].Hint = hintsSet
-		br.Bindings[i].ID = hintsStr
 	}
 	return nil
 }
@@ -140,46 +181,38 @@ func merge(lBindRecord, rBindRecord *BindRecord) *BindRecord {
 		return lBindRecord
 	}
 	result := lBindRecord.shallowCopy()
-	for _, rbind := range rBindRecord.Bindings {
-		found := false
-		for j, lbind := range lBindRecord.Bindings {
-			if lbind.isSame(&rbind) {
-				found = true
-				if rbind.UpdateTime.Compare(lbind.UpdateTime) >= 0 {
-					result.Bindings[j] = rbind
-				}
-				break
-			}
-		}
-		if !found {
-			result.Bindings = append(result.Bindings, rbind)
+	if rBindRecord.NormalizedBinding.UpdateTime.Compare(lBindRecord.NormalizedBinding.UpdateTime) > 0 {
+		result.NormalizedBinding = rBindRecord.NormalizedBinding
+	}
+	for bucketID, rBaseline := range rBindRecord.Baselines {
+		lBaseline, found := lBindRecord.Baselines[bucketID]
+		if !found || rBaseline.UpdateTime.Compare(lBaseline.UpdateTime) >= 0 {
+			result.Baselines[bucketID] = rBaseline
 		}
 	}
 	return result
 }
 
-func (br *BindRecord) remove(deleted *BindRecord) *BindRecord {
+func (br *BindRecord) remove(del *BindRecord) *BindRecord {
 	// Delete all bindings.
-	if len(deleted.Bindings) == 0 {
+	if del.NormalizedBinding != nil && del.NormalizedBinding.isSame(br.NormalizedBinding) {
 		return &BindRecord{OriginalSQL: br.OriginalSQL, Db: br.Db}
 	}
 	result := br.shallowCopy()
-	for _, deletedBind := range deleted.Bindings {
-		for i, bind := range result.Bindings {
-			if bind.isSame(&deletedBind) {
-				result.Bindings = append(result.Bindings[:i], result.Bindings[i+1:]...)
-				break
-			}
+	for bucketID, deletedBaseline := range del.Baselines {
+		baseline, found := result.Baselines[bucketID]
+		if found && baseline.isSame(deletedBaseline) {
+			delete(result.Baselines, bucketID)
 		}
 	}
 	return result
 }
 
 func (br *BindRecord) removeDeletedBindings() *BindRecord {
-	result := BindRecord{OriginalSQL: br.OriginalSQL, Db: br.Db, Bindings: make([]Binding, 0, len(br.Bindings))}
-	for _, binding := range br.Bindings {
-		if binding.Status != deleted {
-			result.Bindings = append(result.Bindings, binding)
+	result := BindRecord{OriginalSQL: br.OriginalSQL, Db: br.Db, NormalizedBinding: br.NormalizedBinding}
+	for idx, baseline := range br.Baselines {
+		if baseline.Status != deleted {
+			result.Baselines[idx] = baseline
 		}
 	}
 	return &result
@@ -188,11 +221,15 @@ func (br *BindRecord) removeDeletedBindings() *BindRecord {
 // shallowCopy shallow copies the BindRecord.
 func (br *BindRecord) shallowCopy() *BindRecord {
 	result := BindRecord{
-		OriginalSQL: br.OriginalSQL,
-		Db:          br.Db,
-		Bindings:    make([]Binding, len(br.Bindings)),
+		OriginalSQL:       br.OriginalSQL,
+		Db:                br.Db,
+		NormalizedBinding: br.NormalizedBinding,
+		Baselines:         make(map[int64]*Binding, len(br.Baselines)),
 	}
-	copy(result.Bindings, br.Bindings)
+	for i, baseline := range br.Baselines {
+		newBaseline := *baseline
+		result.Baselines[i] = &newBaseline
+	}
 	return &result
 }
 
@@ -214,16 +251,16 @@ func (br *BindRecord) metrics() ([]float64, []int) {
 	}
 	commonLength := float64(len(br.OriginalSQL) + len(br.Db))
 	// We treat it as deleted if there are no bindings. It could only occur in session handles.
-	if len(br.Bindings) == 0 {
+	if br.NormalizedBinding == nil {
 		sizes[statusIndex[deleted]] = commonLength
 		count[statusIndex[deleted]] = 1
 		return sizes, count
 	}
 	// Make the common length counted in the first binding.
-	sizes[statusIndex[br.Bindings[0].Status]] = commonLength
-	for _, binding := range br.Bindings {
-		sizes[statusIndex[binding.Status]] += binding.size()
-		count[statusIndex[binding.Status]]++
+	sizes[statusIndex[br.NormalizedBinding.Status]] = commonLength
+	for _, baseline := range br.Baselines {
+		sizes[statusIndex[baseline.Status]] += baseline.size()
+		count[statusIndex[baseline.Status]]++
 	}
 	return sizes, count
 }

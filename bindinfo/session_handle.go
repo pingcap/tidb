@@ -52,10 +52,8 @@ func (h *SessionHandle) CreateBindRecord(sctx sessionctx.Context, record *BindRe
 		return err
 	}
 	now := types.NewTime(types.FromGoTime(time.Now().In(sctx.GetSessionVars().StmtCtx.TimeZone)), mysql.TypeTimestamp, 3)
-	for i := range record.Bindings {
-		record.Bindings[i].CreateTime = now
-		record.Bindings[i].UpdateTime = now
-	}
+	record.NormalizedBinding.CreateTime = now
+	record.NormalizedBinding.UpdateTime = now
 
 	// update the BindMeta to the cache.
 	h.appendBindRecord(parser.DigestNormalized(record.OriginalSQL), record)
@@ -68,7 +66,7 @@ func (h *SessionHandle) DropBindRecord(originalSQL, db string, binding *Binding)
 	var newRecord *BindRecord
 	record := &BindRecord{OriginalSQL: originalSQL, Db: db}
 	if binding != nil {
-		record.Bindings = append(record.Bindings, *binding)
+		record.NormalizedBinding = binding
 	}
 	if oldRecord != nil {
 		newRecord = oldRecord.remove(record)

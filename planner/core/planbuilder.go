@@ -1627,20 +1627,20 @@ func (cwn *columnsWithNames) col2Schema() *expression.Schema {
 	return expression.NewSchema(cwn.cols...)
 }
 
-// splitWhere split a where expression to a list of AND conditions.
-func splitWhere(where ast.ExprNode) []ast.ExprNode {
+// SplitWhere split a where expression to a list of AND conditions.
+func SplitWhere(where ast.ExprNode) []ast.ExprNode {
 	var conditions []ast.ExprNode
 	switch x := where.(type) {
 	case nil:
 	case *ast.BinaryOperationExpr:
 		if x.Op == opcode.LogicAnd {
-			conditions = append(conditions, splitWhere(x.L)...)
-			conditions = append(conditions, splitWhere(x.R)...)
+			conditions = append(conditions, SplitWhere(x.L)...)
+			conditions = append(conditions, SplitWhere(x.R)...)
 		} else {
 			conditions = append(conditions, x)
 		}
 	case *ast.ParenthesesExpr:
-		conditions = append(conditions, splitWhere(x.Expr)...)
+		conditions = append(conditions, SplitWhere(x.Expr)...)
 	default:
 		conditions = append(conditions, where)
 	}
@@ -3021,8 +3021,8 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 		names = []string{"Privilege", "Context", "Comment"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar}
 	case ast.ShowBindings:
-		names = []string{"Original_sql", "Bind_sql", "Default_db", "Status", "Create_time", "Update_time", "Charset", "Collation"}
-		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeVarchar, mysql.TypeVarchar}
+		names = []string{"Original_sql", "Bind_sql", "Default_db", "Status", "Create_time", "Update_time", "Charset", "Collation", "Bind_type", "Bucket_id", "Fixed"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeLonglong}
 	case ast.ShowAnalyzeStatus:
 		names = []string{"Table_schema", "Table_name", "Partition_name", "Job_info", "Processed_rows", "Start_time", "State"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeDatetime, mysql.TypeVarchar}

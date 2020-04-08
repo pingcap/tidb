@@ -84,9 +84,9 @@ func (e *SQLBindExec) createSQLBind() error {
 		Status:    bindinfo.Using,
 	}
 	record := &bindinfo.BindRecord{
-		OriginalSQL: e.normdOrigSQL,
-		Db:          e.db,
-		Bindings:    []bindinfo.Binding{bindInfo},
+		OriginalSQL:       e.normdOrigSQL,
+		Db:                e.db,
+		NormalizedBinding: &bindInfo,
 	}
 	if !e.isGlobal {
 		handle := e.ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
@@ -100,7 +100,7 @@ func (e *SQLBindExec) flushBindings() error {
 }
 
 func (e *SQLBindExec) captureBindings() {
-	domain.GetDomain(e.ctx).BindHandle().CaptureBaselines()
+	domain.GetDomain(e.ctx).BindHandle().CaptureNormalizedBinding()
 }
 
 func (e *SQLBindExec) evolveBindings() error {

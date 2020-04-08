@@ -241,10 +241,10 @@ func (e *ShowExec) fetchShowBind() error {
 	} else {
 		bindRecords = domain.GetDomain(e.ctx).BindHandle().GetAllBindRecord()
 	}
-	parser := parser.New()
+	p := parser.New()
 	for _, bindData := range bindRecords {
-		for _, hint := range bindData.Bindings {
-			stmt, err := parser.ParseOneStmt(hint.BindSQL, hint.Charset, hint.Collation)
+		appendBind := func(binding *bindinfo.Binding) error {
+			stmt, err := p.ParseOneStmt(binding.BindSQL, binding.Charset, binding.Collation)
 			if err != nil {
 				return err
 			}
@@ -257,18 +257,32 @@ func (e *ShowExec) fetchShowBind() error {
 			}
 			stmt.Accept(&checker)
 			if !checker.ok {
-				continue
+				return nil
 			}
 			e.appendRow([]interface{}{
 				bindData.OriginalSQL,
-				hint.BindSQL,
+				binding.BindSQL,
 				bindData.Db,
-				hint.Status,
-				hint.CreateTime,
-				hint.UpdateTime,
-				hint.Charset,
-				hint.Collation,
+				binding.Status,
+				binding.CreateTime,
+				binding.UpdateTime,
+				binding.Charset,
+				binding.Collation,
+				int64(binding.BindType),
+				binding.BucketID,
+				binding.Fixed,
 			})
+			return nil
+		}
+		err := appendBind(bindData.NormalizedBinding)
+		if err != nil {
+			return err
+		}
+		for _, baseline := range bindData.Baselines {
+			err := appendBind(baseline)
+			if err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -1362,6 +1376,12 @@ func (e *ShowExec) appendRow(row []interface{}) {
 			e.result.AppendFloat32(i, x)
 		case string:
 			e.result.AppendString(i, x)
+		case bool:
+			if x {
+				e.result.AppendInt64(i, 1)
+			} else {
+				e.result.AppendInt64(i, 0)
+			}
 		case []byte:
 			e.result.AppendBytes(i, x)
 		case types.BinaryLiteral:

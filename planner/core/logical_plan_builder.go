@@ -720,7 +720,7 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p LogicalPlan, where a
 		b.curClause = whereClause
 	}
 
-	conditions := splitWhere(where)
+	conditions := SplitWhere(where)
 	expressions := make([]expression.Expression, 0, len(conditions))
 	selection := LogicalSelection{}.Init(b.ctx, b.getSelectOffset())
 	for _, cond := range conditions {
@@ -1787,7 +1787,7 @@ func buildFuncDependCol(p LogicalPlan, cond ast.ExprNode) (*types.FieldName, *ty
 }
 
 func buildWhereFuncDepend(p LogicalPlan, where ast.ExprNode) map[*types.FieldName]*types.FieldName {
-	whereConditions := splitWhere(where)
+	whereConditions := SplitWhere(where)
 	colDependMap := make(map[*types.FieldName]*types.FieldName, 2*len(whereConditions))
 	for _, cond := range whereConditions {
 		lCol, rCol := buildFuncDependCol(p, cond)
@@ -1806,7 +1806,7 @@ func buildJoinFuncDepend(p LogicalPlan, from ast.ResultSetNode) map[*types.Field
 		if x.On == nil {
 			return nil
 		}
-		onConditions := splitWhere(x.On.Expr)
+		onConditions := SplitWhere(x.On.Expr)
 		colDependMap := make(map[*types.FieldName]*types.FieldName, len(onConditions))
 		for _, cond := range onConditions {
 			lCol, rCol := buildFuncDependCol(p, cond)
@@ -2558,12 +2558,12 @@ func (ds *DataSource) newExtraHandleSchemaCol() *expression.Column {
 	}
 }
 
-// getStatsTable gets statistics information for a table specified by "tableID".
+// GetStatsTable gets statistics information for a table specified by "tableID".
 // A pseudo statistics table is returned in any of the following scenario:
 // 1. tidb-server started and statistics handle has not been initialized.
 // 2. table row count from statistics is zero.
 // 3. statistics is outdated.
-func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) *statistics.Table {
+func GetStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) *statistics.Table {
 	statsHandle := domain.GetDomain(ctx).StatsHandle()
 
 	// 1. tidb-server started and statistics handle has not been initialized.
@@ -2681,7 +2681,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	}
 	var statisticTable *statistics.Table
 	if _, ok := tbl.(table.PartitionedTable); !ok {
-		statisticTable = getStatsTable(b.ctx, tbl.Meta(), tbl.Meta().ID)
+		statisticTable = GetStatsTable(b.ctx, tbl.Meta(), tbl.Meta().ID)
 	}
 
 	// extract the IndexMergeHint

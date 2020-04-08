@@ -143,7 +143,7 @@ func (ds *DataSource) initStats() {
 		return
 	}
 	if ds.statisticTable == nil {
-		ds.statisticTable = getStatsTable(ds.ctx, ds.tableInfo, ds.table.Meta().ID)
+		ds.statisticTable = GetStatsTable(ds.ctx, ds.tableInfo, ds.table.Meta().ID)
 	}
 	tableStats := &property.StatsInfo{
 		RowCount:     float64(ds.statisticTable.Count),
