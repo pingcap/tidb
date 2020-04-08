@@ -935,6 +935,7 @@ var tableInspectionResultCols = []columnInfo{
 	{name: "ITEM", tp: mysql.TypeVarchar, size: 64},
 	{name: "TYPE", tp: mysql.TypeVarchar, size: 64},
 	{name: "INSTANCE", tp: mysql.TypeVarchar, size: 64},
+	{name: "STATUS_ADDRESS", tp: mysql.TypeVarchar, size: 64},
 	{name: "VALUE", tp: mysql.TypeVarchar, size: 64},
 	{name: "REFERENCE", tp: mysql.TypeVarchar, size: 64},
 	{name: "SEVERITY", tp: mysql.TypeVarchar, size: 64},
