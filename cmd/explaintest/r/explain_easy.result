@@ -530,38 +530,6 @@ TableReader_7	1.00	root	data:Selection_6
 └─Selection_6	1.00	cop	eq(test.t.b, 1000-01-01 00:00:00.000000)
   └─TableScan_5	3.00	cop	table:t, range:[-inf,+inf], keep order:false
 drop table t;
-<<<<<<< HEAD
-=======
-create table t(a int);
-insert into t values (1),(2),(2),(2),(9),(9),(9),(10);
-analyze table t with 1 buckets;
-explain select * from t where a >= 3 and a <= 8;
-id	count	task	operator info
-TableReader_7	0.00	root	data:Selection_6
-└─Selection_6	0.00	cop	ge(Column#1, 3), le(Column#1, 8)
-  └─TableScan_5	8.00	cop	table:t, range:[-inf,+inf], keep order:false
-drop table t;
-create table t(a int, b int, index idx_ab(a, b));
-explain select a, b from t where a in (1) order by b;
-id	count	task	operator info
-IndexReader_12	10.00	root	index:IndexScan_11
-└─IndexScan_11	10.00	cop	table:t, index:a, b, range:[1,1], keep order:true, stats:pseudo
-explain select a, b from t where a = 1 order by b;
-id	count	task	operator info
-IndexReader_12	10.00	root	index:IndexScan_11
-└─IndexScan_11	10.00	cop	table:t, index:a, b, range:[1,1], keep order:true, stats:pseudo
-drop table if exists t;
-create table t(a int, b int);
-explain select a, b from (select a, b, avg(b) over (partition by a)as avg_b from t) as tt where a > 10 and b < 10 and a > avg_b;
-id	count	task	operator info
-Projection_8	2666.67	root	Column#1, Column#2
-└─Selection_9	2666.67	root	gt(cast(Column#1), Column#7), lt(Column#2, 10)
-  └─Window_10	3333.33	root	avg(cast(Column#2)) over(partition by Column#1)
-    └─Sort_14	3333.33	root	Column#1:asc
-      └─TableReader_13	3333.33	root	data:Selection_12
-        └─Selection_12	3333.33	cop	gt(Column#1, 10)
-          └─TableScan_11	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
-drop table if exists t;
 create table t(a int, b int);
 explain format="dot" select * from t where a < 2;
 dot contents
@@ -583,4 +551,3 @@ label = "cop"
 }
 
 drop table if exists t;
->>>>>>> 96d4b1f... planner: display cop tasks when explain format is "dot" (#12225)
