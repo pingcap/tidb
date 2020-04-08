@@ -322,7 +322,7 @@ func (s *testCacheSuite) TestDBIsVisible(c *C) {
 	err = p.LoadAll(se)
 	c.Assert(err, IsNil)
 
-	mustExec(c, se, `INSERT INTO mysql.user (Host, User, Super_priv) VALUES ("%", "testvisdb", "Y", "Y")`)
+	mustExec(c, se, `INSERT INTO mysql.user (Host, User, Super_priv) VALUES ("%", "testvisdb", "Y")`)
 	err = p.LoadUserTable(se)
 	c.Assert(err, IsNil)
 	isVisible := p.DBIsVisible("testvisdb", "%", "visdb")
