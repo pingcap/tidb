@@ -554,6 +554,20 @@ func (s *testSuite) TestOnlyFullGroupBy(c *C) {
 	c.Assert(terror.ErrorEqual(err, plannercore.ErrAmbiguous), IsTrue, Commentf("err %v", err))
 }
 
+func (s *testSuite) TestIssue13652(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set sql_mode = 'ONLY_FULL_GROUP_BY'")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a real)")
+	tk.MustQuery("select a from t group by (a)")
+	tk.MustQuery("select a from t group by ((a))")
+	tk.MustQuery("select a from t group by +a")
+	tk.MustQuery("select a from t group by ((+a))")
+	_, err := tk.Exec("select a from t group by (-a)")
+	c.Assert(err.Error(), Equals, "[planner:1055]Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'test.t.a' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by")
+}
+
 func (s *testSuite) TestHaving(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
