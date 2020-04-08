@@ -384,12 +384,14 @@ func (r *PushAggDownGather) OnTransform(old *memo.ExprIter) (newExprs []*memo.Gr
 		AggFuncs:     partialPref.AggFuncs,
 		GroupByItems: partialPref.GroupByItems,
 	}.Init(agg.SCtx(), agg.SelectBlockOffset())
+	partialAgg.GetGroupByCols()
 	partialAgg.CopyAggHints(agg)
 
 	finalAgg := plannercore.LogicalAggregation{
 		AggFuncs:     finalPref.AggFuncs,
 		GroupByItems: finalPref.GroupByItems,
 	}.Init(agg.SCtx(), agg.SelectBlockOffset())
+	finalAgg.GetGroupByCols()
 	finalAgg.CopyAggHints(agg)
 
 	partialAggExpr := memo.NewGroupExpr(partialAgg)
@@ -1400,7 +1402,7 @@ func (r *MergeAggregationProjection) OnTransform(old *memo.ExprIter) (newExprs [
 		GroupByItems: groupByItems,
 		AggFuncs:     aggFuncs,
 	}.Init(oldAgg.SCtx(), oldAgg.SelectBlockOffset())
-
+	newAgg.GetGroupByCols()
 	newAggExpr := memo.NewGroupExpr(newAgg)
 	newAggExpr.SetChildren(old.Children[0].GetExpr().Children...)
 	return []*memo.GroupExpr{newAggExpr}, false, false, nil
@@ -1927,6 +1929,7 @@ func (r *TransformAggregateCaseToSelection) OnTransform(old *memo.ExprIter) (new
 		AggFuncs:     newAggFuncs,
 		GroupByItems: agg.GroupByItems,
 	}.Init(agg.SCtx(), agg.SelectBlockOffset())
+	newAgg.GetGroupByCols()
 	newAgg.CopyAggHints(agg)
 	newAggExpr := memo.NewGroupExpr(newAgg)
 	newAggExpr.SetChildren(newSelGroup)
@@ -2269,6 +2272,7 @@ func (r *InjectProjectionBelowAgg) OnTransform(old *memo.ExprIter) (newExprs []*
 		AggFuncs:     copyFuncs,
 		GroupByItems: newGroupByItems,
 	}.Init(agg.SCtx(), agg.SelectBlockOffset())
+	newAgg.GetGroupByCols()
 	newAgg.CopyAggHints(agg)
 	newAggExpr := memo.NewGroupExpr(newAgg)
 	newAggExpr.SetChildren(projGroup)

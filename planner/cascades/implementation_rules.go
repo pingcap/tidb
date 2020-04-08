@@ -18,7 +18,6 @@ import (
 
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/expression/aggregation"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	impl "github.com/pingcap/tidb/planner/implementation"
 	"github.com/pingcap/tidb/planner/memo"
@@ -405,11 +404,11 @@ func (r *ImplStreamAgg) Match(expr *memo.GroupExpr, prop *property.PhysicalPrope
 		return false
 	}
 
-	for _, aggFunc := range la.AggFuncs {
-		if aggFunc.Mode == aggregation.FinalMode {
-			return false
-		}
-	}
+	//for _, aggFunc := range la.AggFuncs {
+	//	if aggFunc.Mode == aggregation.FinalMode {
+	//		return false
+	//	}
+	//}
 
 	// group by a + b is not interested in any order.
 	if len(la.GetGroupByCols()) != len(la.GroupByItems) {

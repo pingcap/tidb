@@ -22,8 +22,6 @@ func (agg *TiDBHashAggImpl) CalcCost(outCount float64, children ...memo.Implemen
 func (agg *TiDBHashAggImpl) AttachChildren(children ...memo.Implementation) memo.Implementation {
 	hashAgg := agg.plan.(*plannercore.PhysicalHashAgg)
 	hashAgg.SetChildren(children[0].GetPlan())
-	// Inject extraProjection if the AggFuncs or GroupByItems contain ScalarFunction.
-	plannercore.InjectProjBelowAgg(hashAgg, hashAgg.AggFuncs, hashAgg.GroupByItems)
 	return agg
 }
 
@@ -72,8 +70,6 @@ func NewTiDBStreamAggImpl(agg *plannercore.PhysicalStreamAgg) *TiDBStreamAggImpl
 func (agg *TiDBStreamAggImpl) AttachChildren(children ...memo.Implementation) memo.Implementation {
 	streamAgg := agg.plan.(*plannercore.PhysicalStreamAgg)
 	streamAgg.SetChildren(children[0].GetPlan())
-	// Inject extraProjection if the AggFuncs or GroupByItems contain ScalarFunction.
-	plannercore.InjectProjBelowAgg(streamAgg, streamAgg.AggFuncs, streamAgg.GroupByItems)
 	return agg
 }
 
