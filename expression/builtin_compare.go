@@ -1073,7 +1073,6 @@ func tryToConvertConstantInt(ctx sessionctx.Context, targetFieldType *types.Fiel
 				Value:        dt,
 				RetType:      targetFieldType,
 				DeferredExpr: con.DeferredExpr,
-				ParamMarker:  con.ParamMarker,
 			}, true
 		}
 		return con, false
@@ -1110,7 +1109,6 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldT
 				Value:        intDatum,
 				RetType:      &targetFieldType,
 				DeferredExpr: con.DeferredExpr,
-				ParamMarker:  con.ParamMarker,
 			}, true
 		}
 		return con, false

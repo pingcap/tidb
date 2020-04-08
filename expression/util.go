@@ -633,7 +633,7 @@ func ContainLazyConst(exprs []Expression) bool {
 	for _, expr := range exprs {
 		switch v := expr.(type) {
 		case *Constant:
-			if v.ParamMarker != nil || v.DeferredExpr != nil {
+			if v.DeferredExpr != nil {
 				return true
 			}
 		case *ScalarFunction:
