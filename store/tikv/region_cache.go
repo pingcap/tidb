@@ -308,14 +308,6 @@ type RPCContext struct {
 	Addr    string
 }
 
-// GetStoreID returns StoreID.
-func (c *RPCContext) GetStoreID() uint64 {
-	if c.Store != nil {
-		return c.Store.storeID
-	}
-	return 0
-}
-
 func (c *RPCContext) String() string {
 	return fmt.Sprintf("region ID: %d, meta: %s, peer: %s, addr: %s, idx: %d",
 		c.Region.GetID(), c.Meta, c.Peer, c.Addr, c.PeerIdx)
@@ -464,17 +456,6 @@ func (c *RegionCache) LocateKey(bo *Backoffer, key []byte) (*KeyLocation, error)
 		StartKey: r.StartKey(),
 		EndKey:   r.EndKey(),
 	}, nil
-}
-
-func (c *RegionCache) loadAndInsertRegion(bo *Backoffer, key []byte) (*Region, error) {
-	r, err := c.loadRegion(bo, key, false)
-	if err != nil {
-		return nil, err
-	}
-	c.mu.Lock()
-	c.insertRegionToCache(r)
-	c.mu.Unlock()
-	return r, nil
 }
 
 // LocateEndKey searches for the region and range that the key is located.
