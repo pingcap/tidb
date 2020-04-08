@@ -499,3 +499,29 @@ func (s *testIntegrationSuite) TestTiKVSelectionStats(c *C) {
 		tk.MustQuery(sql).Check(testkit.Rows(output[i].Result...))
 	}
 }
+
+func (s *testIntegrationSuite) TestDecorrelate(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int primary key, b int)")
+	tk.MustExec("create table t2(a int primary key, b int)")
+	tk.MustExec("insert into t1 values (1, 11), (4, 44), (2, 22), (3, 33)")
+	tk.MustExec("insert into t2 values (1, 11), (2, 22), (3, 33)")
+	tk.MustExec("set session tidb_enable_cascades_planner = 1")
+	var input []string
+	var output []struct {
+		SQL    string
+		Plan   []string
+		Result []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, sql := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = sql
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + sql).Rows())
+			output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(sql).Rows())
+		})
+		tk.MustQuery("explain " + sql).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery(sql).Check(testkit.Rows(output[i].Result...))
+	}
+}

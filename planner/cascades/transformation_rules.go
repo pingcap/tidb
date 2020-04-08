@@ -100,6 +100,10 @@ var TiDBLayerOptimizationBatch = TransformationRuleBatch{
 	memo.OperandApply: {
 		NewRuleTransformApplyToJoin(),
 		NewRulePullSelectionUpApply(),
+		NewRulePullAggregationUpApply(),
+	},
+	memo.OperandMaxOneRow: {
+		NewRuleEliminateMaxOneRow(),
 	},
 }
 
@@ -987,10 +991,9 @@ func (r *EliminateProjection) OnTransform(old *memo.ExprIter) (newExprs []*memo.
 	// Promote the children group's expression.
 	finalGroupExprs := make([]*memo.GroupExpr, 0, child.Group.Equivalents.Len())
 	for elem := child.Group.Equivalents.Front(); elem != nil; elem = elem.Next() {
-		childExpr := elem.Value.(*memo.GroupExpr)
-		copyChildExpr := memo.NewGroupExpr(childExpr.ExprNode)
-		copyChildExpr.SetChildren(childExpr.Children...)
-		finalGroupExprs = append(finalGroupExprs, copyChildExpr)
+		oldExpr := elem.Value.(*memo.GroupExpr)
+		newExpr := oldExpr.Clone()
+		finalGroupExprs = append(finalGroupExprs, newExpr)
 	}
 	return finalGroupExprs, true, false, nil
 }
@@ -1708,10 +1711,10 @@ func (r *PushLimitDownTiKVSingleGather) OnTransform(old *memo.ExprIter) (newExpr
 	gather := old.Children[0].GetExpr().ExprNode.(*plannercore.TiKVSingleGather)
 	childGroup := old.Children[0].GetExpr().Children[0]
 
-	particalLimit := plannercore.LogicalLimit{
+	partialLimit := plannercore.LogicalLimit{
 		Count: limit.Count + limit.Offset,
 	}.Init(limit.SCtx(), limit.SelectBlockOffset())
-	partialLimitExpr := memo.NewGroupExpr(particalLimit)
+	partialLimitExpr := memo.NewGroupExpr(partialLimit)
 	partialLimitExpr.SetChildren(childGroup)
 	partialLimitGroup := memo.NewGroupWithSchema(partialLimitExpr, limitSchema).SetEngineType(childGroup.EngineType)
 
@@ -2373,4 +2376,150 @@ func (r *PullSelectionUpApply) OnTransform(old *memo.ExprIter) (newExprs []*memo
 	newApplyGroupExpr := memo.NewGroupExpr(newApply)
 	newApplyGroupExpr.SetChildren(outerChildGroup, old.Children[1].GetExpr().Children[0])
 	return []*memo.GroupExpr{newApplyGroupExpr}, false, false, nil
+}
+
+// EliminateMaxOneRow eliminates MaxOneRow if its child can ensure the max one
+// row property.
+type EliminateMaxOneRow struct {
+	baseRule
+}
+
+// NewRuleEliminateMaxOneRow creates a new Transformation EliminateMaxOneRow.
+// The pattern of this rule is: `MaxOneRow`.
+func NewRuleEliminateMaxOneRow() Transformation {
+	rule := &EliminateMaxOneRow{}
+	rule.pattern = memo.NewPattern(memo.OperandMaxOneRow, memo.EngineTiDBOnly)
+	return rule
+}
+
+// Match implements Transformation interface.
+func (r *EliminateMaxOneRow) Match(expr *memo.ExprIter) bool {
+	// TODO: Split `BuildKeyInfo` into `BuildKeyInfo` and `BuildMaxOneRowInfo`.
+	expr.GetExpr().Children[0].BuildKeyInfo()
+	return expr.GetExpr().Children[0].Prop.MaxOneRow
+}
+
+// OnTransform implements Transformation interface.
+// This rule will eliminate the LogicalMaxOneRule.
+func (r *EliminateMaxOneRow) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	childGroup := old.GetExpr().Children[0]
+	// Return childGroup's exprs.
+	finalGroupExprs := make([]*memo.GroupExpr, 0, childGroup.Equivalents.Len())
+	for elem := childGroup.Equivalents.Front(); elem != nil; elem = elem.Next() {
+		oldExpr := elem.Value.(*memo.GroupExpr)
+		newExpr := oldExpr.Clone()
+		finalGroupExprs = append(finalGroupExprs, newExpr)
+	}
+	return finalGroupExprs, true, false, nil
+}
+
+// PullAggregationUpApply pulls inner side Aggregation up Apply.
+type PullAggregationUpApply struct {
+	baseRule
+}
+
+// NewRulePullAggregationUpApply creates a new Transformation PullAggregationUpApply.
+// The pattern of this rule is: `Apply -> (Any, Aggregation)`.
+func NewRulePullAggregationUpApply() Transformation {
+	rule := &PullAggregationUpApply{}
+	rule.pattern = memo.BuildPattern(
+		memo.OperandApply, memo.EngineTiDBOnly,
+		memo.NewPattern(memo.OperandAny, memo.EngineTiDBOnly),         // outer child
+		memo.NewPattern(memo.OperandAggregation, memo.EngineTiDBOnly), // inner child
+	)
+	return rule
+}
+
+// Match implements Transformation interface.
+func (r *PullAggregationUpApply) Match(expr *memo.ExprIter) bool {
+	applyExpr := expr.GetExpr()
+	apply := applyExpr.ExprNode.(*plannercore.LogicalApply)
+	aggExpr := expr.Children[1].GetExpr()
+	agg := aggExpr.ExprNode.(*plannercore.LogicalAggregation)
+
+	if apply.JoinType != plannercore.InnerJoin && apply.JoinType != plannercore.LeftOuterJoin {
+		return false
+	}
+	if len(apply.EqualConditions)+len(apply.LeftConditions)+len(apply.RightConditions)+len(apply.OtherConditions) > 0 {
+		return false
+	}
+	// The outer side must have unique key.
+	if applyExpr.Group.BuildKeyInfo(); len(expr.Children[0].Prop.Schema.Keys) == 0 {
+		return false
+	}
+
+	// Aggregation must be a scalar aggregation.
+	if len(agg.GroupByItems) > 0 {
+		return false
+	}
+	// To avoid `Count Bug`, we need to ensure `AggFunc(null)=AggFunc(empty set)`.
+	// TODO: If we meet AggFunc like `count(1)`, we could rewrite it as `count(a not null column)`.
+	for _, f := range agg.AggFuncs {
+		for _, arg := range f.Args {
+			expr := expression.EvaluateExprWithNull(agg.SCtx(), aggExpr.Children[0].Prop.Schema, arg)
+			if con, ok := expr.(*expression.Constant); !ok || !con.Value.IsNull() {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// OnTransform implements Transformation interface.
+// This rule will transform `Apply -> (Outer, Aggregation -> Inner)` to
+// `Aggregation -> Apply[LeftOuterJoin] -> (Outer, Inner)`.
+func (r *PullAggregationUpApply) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	applyExpr := old.GetExpr()
+	apply := applyExpr.ExprNode.(*plannercore.LogicalApply)
+	aggExpr := old.Children[1].GetExpr()
+	agg := aggExpr.ExprNode.(*plannercore.LogicalAggregation)
+	outerGroup := old.Children[0].Group
+
+	newApply := plannercore.LogicalApply{
+		LogicalJoin: *(apply.Shallow()),
+		CorCols:     nil,
+	}.Init(apply.SCtx(), apply.SelectBlockOffset())
+	newApply.JoinType = plannercore.LeftOuterJoin
+
+	newAgg := plannercore.LogicalAggregation{
+		AggFuncs:     nil,
+		GroupByItems: nil,
+	}.Init(agg.SCtx(), agg.SelectBlockOffset())
+
+	// Any of the unique key could be used as GroupByItems.
+	// But in consideration of the execution efficiency, we choose the shortest one.
+	shortestKey := outerGroup.Prop.Schema.Keys[0]
+	for _, key := range outerGroup.Prop.Schema.Keys {
+		if len(key) < len(shortestKey) {
+			shortestKey = key
+		}
+	}
+	newAgg.GroupByItems = expression.Column2Exprs(shortestKey)
+
+	newAggFuncs := make([]*aggregation.AggFuncDesc, 0, applyExpr.Schema().Len())
+	outerColsInSchema := make([]*expression.Column, 0, outerGroup.Prop.Schema.Len())
+	for i, col := range outerGroup.Prop.Schema.Columns {
+		first, err := aggregation.NewAggFuncDesc(agg.SCtx(), ast.AggFuncFirstRow, []expression.Expression{col}, false)
+		if err != nil {
+			return nil, false, false, err
+		}
+		newAggFuncs = append(newAggFuncs, first)
+
+		outerCol, _ := outerGroup.Prop.Schema.Columns[i].Clone().(*expression.Column)
+		outerCol.RetType = first.RetTp
+		outerColsInSchema = append(outerColsInSchema, outerCol)
+	}
+	for _, aggFunc := range agg.AggFuncs {
+		newAggFuncs = append(newAggFuncs, aggFunc.Clone())
+	}
+	newAgg.AggFuncs = newAggFuncs
+
+	newSchema := expression.MergeSchema(expression.NewSchema(outerColsInSchema...), aggExpr.Children[0].Prop.Schema)
+	newApplyExpr := memo.NewGroupExpr(newApply)
+	newApplyExpr.SetChildren(outerGroup, aggExpr.Children[0])
+	newApplyGroup := memo.NewGroupWithSchema(newApplyExpr, newSchema)
+
+	newAggExpr := memo.NewGroupExpr(newAgg)
+	newAggExpr.SetChildren(newApplyGroup)
+	return []*memo.GroupExpr{newAggExpr}, true, false, nil
 }

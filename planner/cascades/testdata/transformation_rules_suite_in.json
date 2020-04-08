@@ -203,7 +203,11 @@
   {
     "name": "TestDecorrelate",
     "cases": [
-      "select a from t t1 where exists (select 1 from t t2 where t1.a = t2.b)"
+      "select a from t t1 where exists (select 1 from t t2 where t1.a = t2.b)",
+      "select t1.a, (select t2.b from t t2 where t2.a = t1.a limit 1) from t t1",
+      "select t1.a, (select count(1) from t t2 where t2.a > t1.a) from t t1",
+      "select t1.a, (select count(t2.b) from t t2 where t2.a > t1.a) from t t1",
+      "select t1.a from t t1 where (1, 1) > (select count(t2.b), sum(t2.a) from t t2 where t2.a > t1.a)"
     ]
   },
   {

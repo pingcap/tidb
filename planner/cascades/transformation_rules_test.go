@@ -412,6 +412,13 @@ func (s *testTransformationRuleSuite) TestDecorrelate(c *C) {
 		memo.OperandApply: {
 			NewRulePullSelectionUpApply(),
 			NewRuleTransformApplyToJoin(),
+			NewRulePullAggregationUpApply(),
+		},
+		memo.OperandMaxOneRow: {
+			NewRuleEliminateMaxOneRow(),
+		},
+		memo.OperandProjection: {
+			NewRuleEliminateProjection(),
 		},
 	})
 	defer func() {
