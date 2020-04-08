@@ -86,6 +86,7 @@ func (p *UserPrivileges) ConnectionVerification(user, host string, authenticatio
 			zap.String("user", user), zap.String("host", host))
 		return false
 	}
+	h := record.Host
 
 	pwd := record.Password
 	if len(pwd) != 0 && len(pwd) != mysql.PWDHashLen+1 {
