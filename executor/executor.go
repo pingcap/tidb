@@ -1562,16 +1562,13 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			sc.Priority = opts.Priority
 			sc.NotFillCache = !opts.SQLCache
 		}
-<<<<<<< HEAD
 		sc.CastStrToIntStrict = true
-=======
 	case *ast.UnionStmt:
 		sc.InSelectStmt = true
 		sc.OverflowAsWarning = true
 		sc.TruncateAsWarning = true
 		sc.IgnoreZeroInDate = true
 		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
->>>>>>> 96d96ce... executor: fix unexpected error in union stmt. (#16073)
 	case *ast.ShowStmt:
 		sc.IgnoreTruncate = true
 		sc.IgnoreZeroInDate = true
