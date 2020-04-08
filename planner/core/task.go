@@ -571,6 +571,8 @@ func (p *PhysicalBroadCastJoin) GetCost(lCnt, rCnt float64) float64 {
 func (p *PhysicalBroadCastJoin) attach2Task(tasks ...task) task {
 	lTask, lok := tasks[0].(*copTask)
 	rTask, rok := tasks[1].(*copTask)
+	lGlobalRead := p.childrenReqProps[0].TaskTp == property.CopTiFlashGlobalReadTaskType
+	rGlobalRead := p.childrenReqProps[1].TaskTp == property.CopTiFlashGlobalReadTaskType
 	if !lok || !rok || (lTask.getStoreType() != kv.TiFlash && rTask.getStoreType() != kv.TiFlash) {
 		return invalidTask
 	}
@@ -582,24 +584,30 @@ func (p *PhysicalBroadCastJoin) attach2Task(tasks ...task) task {
 	if !rTask.indexPlanFinished {
 		rTask.finishIndexPlan()
 	}
-	copTaskNumber := int32(1)
-	copClient, ok := p.ctx.GetClient().(*tikv.CopClient)
-	if ok {
-		copTaskNumber = copClient.GetBatchCopTaskNumber()
+
+	lCost := lTask.cost()
+	rCost := rTask.cost()
+	if !(lGlobalRead && rGlobalRead) {
+		// the cost model for top level broadcast join is
+		// globalReadSideCost * copTaskNumber + localReadSideCost + broadcast operator cost
+		// because for broadcast join, the global side is executed in every copTask.
+		copTaskNumber := int32(1)
+		copClient, ok := p.ctx.GetClient().(*tikv.CopClient)
+		if ok {
+			copTaskNumber = copClient.GetBatchCopTaskNumber()
+		}
+		if lGlobalRead {
+			lCost = lCost * float64(copTaskNumber)
+		} else {
+			rCost = rCost * float64(copTaskNumber)
+		}
 	}
 
-	buildSideCost, probeSideCost := lTask.cost(), rTask.cost()
-	if p.InnerChildIdx == 1 {
-		buildSideCost, probeSideCost = rTask.cost(), lTask.cost()
-	}
 	task := & copTask {
 		tblColHists: rTask.tblColHists,
 		indexPlanFinished: true,
 		tablePlan: p,
-		// the cost model for broadcast join is
-		// buildSideCost * copTaskNumber + probeSizeCost + broadcast operator cost
-		// because for broadcast join, the build side is executed in every copTask.
-		cst: buildSideCost * float64(copTaskNumber) + probeSideCost + p.GetCost(lTask.count(), rTask.count()),
+		cst:  lCost + rCost + p.GetCost(lTask.count(), rTask.count()),
 	}
 	logutil.BgLogger().Info("bc join cost", zap.Float64("bc cost", task.cst))
 	return task
