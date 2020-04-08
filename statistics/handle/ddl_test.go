@@ -162,6 +162,17 @@ func (s *testStatsSuite) TestDDLHistogram(c *C) {
 	c.Assert(statsTbl.Pseudo, IsFalse)
 	c.Check(statsTbl.Columns[tableInfo.Columns[5].ID].AvgColSize(statsTbl.Count, false), Equals, 3.0)
 
+	testKit.MustExec("alter table t add column c6 varchar(15) DEFAULT '123', add column c7 varchar(15) DEFAULT '123'")
+	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	c.Assert(err, IsNil)
+	is = do.InfoSchema()
+	c.Assert(h.Update(is), IsNil)
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo = tbl.Meta()
+	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
+	c.Assert(statsTbl.Pseudo, IsFalse)
+
 	testKit.MustExec("create index i on t(c2, c1)")
 	testKit.MustExec("analyze table t")
 	rs := testKit.MustQuery("select count(*) from mysql.stats_histograms where table_id = ? and hist_id = 1 and is_index =1", tableInfo.ID)
