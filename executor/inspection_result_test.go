@@ -200,8 +200,12 @@ func (s *inspectionResultSuite) setupForInspection(c *C, mockData map[string][][
 		// mock cluster information
 		configurations[infoschema.TableClusterInfo] = variable.TableSnapshot{
 			Rows: [][]types.Datum{
-				types.MakeDatums("tikv", "tikv-0", "tikv-0", "4.0", "a234c", "", ""),
-				types.MakeDatums("tikv", "tikv-1", "tikv-1", "4.0", "a234c", "", ""),
+				types.MakeDatums("pd", "pd-0", "pd-0", "4.0", "a234c", "", ""),
+				types.MakeDatums("tidb", "tidb-0", "tidb-0s", "4.0", "a234c", "", ""),
+				types.MakeDatums("tidb", "tidb-1", "tidb-1s", "4.0", "a234c", "", ""),
+				types.MakeDatums("tikv", "tikv-0", "tikv-0s", "4.0", "a234c", "", ""),
+				types.MakeDatums("tikv", "tikv-1", "tikv-1s", "4.0", "a234c", "", ""),
+				types.MakeDatums("tikv", "tikv-2", "tikv-2s", "4.0", "a234c", "", ""),
 			},
 		}
 	}
@@ -229,19 +233,22 @@ func (s *inspectionResultSuite) TestThresholdCheckInspection(c *C) {
 	mockData := map[string][][]types.Datum{
 		// columns: time, instance, name, value
 		"tikv_thread_cpu": {
-			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "cop_normal0", 10.0),
-			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-1", "cop_normal0", 10.0),
-			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "cop_normal1", 10.0),
-			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "cop_high1", 10.0),
-			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "cop_low1", 10.0),
-			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "grpc_1", 10.0),
-			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "raftstore_1", 10.0),
-			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "apply_0", 10.0),
-			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "store_read_norm1", 10.0),
-			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "store_read_high2", 10.0),
-			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "store_read_low0", 10.0),
-			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "sched_2", 10.0),
-			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "split_check", 10.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0s", "cop_normal0", 10.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0s", "cop_normal1", 10.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-1s", "cop_normal0", 10.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0s", "cop_high1", 10.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0s", "cop_high2", 10.0),
+			types.MakeDatums(datetime("2020-02-14 05:21:00"), "tikv-0s", "cop_high1", 5.0),
+			types.MakeDatums(datetime("2020-02-14 05:22:00"), "tikv-0s", "cop_high1", 1.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0s", "cop_low1", 10.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0s", "grpc_1", 10.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0s", "raftstore_1", 10.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0s", "apply_0", 10.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0s", "store_read_norm1", 10.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0s", "store_read_high2", 10.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0s", "store_read_low0", 10.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0s", "sched_2", 10.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0s", "split_check", 10.0),
 		},
 		"pd_tso_wait_duration":                {},
 		"tidb_get_token_duration":             {},
@@ -263,48 +270,48 @@ func (s *inspectionResultSuite) TestThresholdCheckInspection(c *C) {
 	ctx := s.setupForInspection(c, mockData, nil)
 	defer s.tearDownForInspection(c)
 
-	rs, err := tk.Se.Execute(ctx, "select  /*+ time_range('2020-02-12 10:35:00','2020-02-12 10:37:00') */ item, type, instance, value, reference, details from information_schema.inspection_result where rule='threshold-check' order by item")
+	rs, err := tk.Se.Execute(ctx, "select /*+ time_range('2020-02-12 10:35:00','2020-02-12 10:37:00') */ item, type, instance,status_address, value, reference, details from information_schema.inspection_result where rule='threshold-check' order by item")
 	c.Assert(err, IsNil)
 	result := tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute inspect SQL failed"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0), Commentf("unexpected warnings: %+v", tk.Se.GetSessionVars().StmtCtx.GetWarnings()))
 	result.Check(testkit.Rows(
-		"apply-cpu tikv tikv-0 10.00 < 1.60, config: raftstore.apply-pool-size=2 the 'apply-cpu' max cpu-usage of tikv-0 tikv is too high",
-		"coprocessor-high-cpu tikv tikv-0 10.00 < 3.60, config: readpool.coprocessor.high-concurrency=4 the 'coprocessor-high-cpu' max cpu-usage of tikv-0 tikv is too high",
-		"coprocessor-low-cpu tikv tikv-0 10.00 < 3.60, config: readpool.coprocessor.low-concurrency=4 the 'coprocessor-low-cpu' max cpu-usage of tikv-0 tikv is too high",
-		"coprocessor-normal-cpu tikv tikv-0 10.00 < 3.60, config: readpool.coprocessor.normal-concurrency=4 the 'coprocessor-normal-cpu' max cpu-usage of tikv-0 tikv is too high",
-		"coprocessor-normal-cpu tikv tikv-1 10.00 < 7.20, config: readpool.coprocessor.normal-concurrency=8 the 'coprocessor-normal-cpu' max cpu-usage of tikv-1 tikv is too high",
-		"grpc-cpu tikv tikv-0 10.00 < 7.20, config: server.grpc-concurrency=8 the 'grpc-cpu' max cpu-usage of tikv-0 tikv is too high",
-		"raftstore-cpu tikv tikv-0 10.00 < 1.60, config: raftstore.store-pool-size=2 the 'raftstore-cpu' max cpu-usage of tikv-0 tikv is too high",
-		"scheduler-worker-cpu tikv tikv-0 10.00 < 5.10, config: storage.scheduler-worker-pool-size=6 the 'scheduler-worker-cpu' max cpu-usage of tikv-0 tikv is too high",
-		"split-check-cpu tikv tikv-0 10.00 < 0.00 the 'split-check-cpu' max cpu-usage of tikv-0 tikv is too high",
-		"storage-readpool-high-cpu tikv tikv-0 10.00 < 3.60, config: readpool.storage.high-concurrency=4 the 'storage-readpool-high-cpu' max cpu-usage of tikv-0 tikv is too high",
-		"storage-readpool-low-cpu tikv tikv-0 10.00 < 3.60, config: readpool.storage.low-concurrency=4 the 'storage-readpool-low-cpu' max cpu-usage of tikv-0 tikv is too high",
-		"storage-readpool-normal-cpu tikv tikv-0 10.00 < 3.60, config: readpool.storage.normal-concurrency=4 the 'storage-readpool-normal-cpu' max cpu-usage of tikv-0 tikv is too high",
+		"apply-cpu tikv tikv-0 tikv-0s 10.00 < 1.60, config: raftstore.apply-pool-size=2 the 'apply-cpu' max cpu-usage of tikv-0s tikv is too high",
+		"coprocessor-high-cpu tikv tikv-0 tikv-0s 20.00 < 3.60, config: readpool.coprocessor.high-concurrency=4 the 'coprocessor-high-cpu' max cpu-usage of tikv-0s tikv is too high",
+		"coprocessor-low-cpu tikv tikv-0 tikv-0s 10.00 < 3.60, config: readpool.coprocessor.low-concurrency=4 the 'coprocessor-low-cpu' max cpu-usage of tikv-0s tikv is too high",
+		"coprocessor-normal-cpu tikv tikv-0 tikv-0s 20.00 < 3.60, config: readpool.coprocessor.normal-concurrency=4 the 'coprocessor-normal-cpu' max cpu-usage of tikv-0s tikv is too high",
+		"coprocessor-normal-cpu tikv tikv-1 tikv-1s 10.00 < 7.20, config: readpool.coprocessor.normal-concurrency=8 the 'coprocessor-normal-cpu' max cpu-usage of tikv-1s tikv is too high",
+		"grpc-cpu tikv tikv-0 tikv-0s 10.00 < 7.20, config: server.grpc-concurrency=8 the 'grpc-cpu' max cpu-usage of tikv-0s tikv is too high",
+		"raftstore-cpu tikv tikv-0 tikv-0s 10.00 < 1.60, config: raftstore.store-pool-size=2 the 'raftstore-cpu' max cpu-usage of tikv-0s tikv is too high",
+		"scheduler-worker-cpu tikv tikv-0 tikv-0s 10.00 < 5.10, config: storage.scheduler-worker-pool-size=6 the 'scheduler-worker-cpu' max cpu-usage of tikv-0s tikv is too high",
+		"split-check-cpu tikv tikv-0 tikv-0s 10.00 < 0.00 the 'split-check-cpu' max cpu-usage of tikv-0s tikv is too high",
+		"storage-readpool-high-cpu tikv tikv-0 tikv-0s 10.00 < 3.60, config: readpool.storage.high-concurrency=4 the 'storage-readpool-high-cpu' max cpu-usage of tikv-0s tikv is too high",
+		"storage-readpool-low-cpu tikv tikv-0 tikv-0s 10.00 < 3.60, config: readpool.storage.low-concurrency=4 the 'storage-readpool-low-cpu' max cpu-usage of tikv-0s tikv is too high",
+		"storage-readpool-normal-cpu tikv tikv-0 tikv-0s 10.00 < 3.60, config: readpool.storage.normal-concurrency=4 the 'storage-readpool-normal-cpu' max cpu-usage of tikv-0s tikv is too high",
 	))
 
 	// construct some mock normal data
 	mockData["tikv_thread_cpu"] = [][]types.Datum{
 		// columns: time, instance, name, value
-		types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "cop_normal0", 1.0),
-		types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "cop_high1", 0.1),
-		types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "cop_low1", 1.0),
-		types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "grpc_1", 7.21),
-		types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "grpc_2", 0.21),
-		types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "raftstore_1", 1.0),
-		types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "apply_0", 1.0),
-		types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "store_read_norm1", 1.0),
-		types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "store_read_high2", 1.0),
-		types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "store_read_low0", 1.0),
-		types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "sched_2", 0.3),
-		types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "split_check", 0.5),
+		types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0s", "cop_normal0", 1.0),
+		types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0s", "cop_high1", 0.1),
+		types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0s", "cop_low1", 1.0),
+		types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0s", "grpc_1", 7.21),
+		types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0s", "grpc_2", 0.21),
+		types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0s", "raftstore_1", 1.0),
+		types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0s", "apply_0", 1.0),
+		types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0s", "store_read_norm1", 1.0),
+		types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0s", "store_read_high2", 1.0),
+		types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0s", "store_read_low0", 1.0),
+		types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0s", "sched_2", 0.3),
+		types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0s", "split_check", 0.5),
 	}
 
 	ctx = context.WithValue(ctx, "__mockMetricsTableData", mockData)
-	rs, err = tk.Se.Execute(ctx, "select item, type, instance, value, reference from information_schema.inspection_result where rule='threshold-check' order by item")
+	rs, err = tk.Se.Execute(ctx, "select /*+ time_range('2020-02-12 10:35:00','2020-02-12 10:37:00') */ item, type, instance,status_address, value, reference from information_schema.inspection_result where rule='threshold-check' order by item")
 	c.Assert(err, IsNil)
 	result = tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute inspect SQL failed"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0), Commentf("unexpected warnings: %+v", tk.Se.GetSessionVars().StmtCtx.GetWarnings()))
-	result.Check(testkit.Rows("grpc-cpu tikv tikv-0 7.21 < 7.20, config: server.grpc-concurrency=8"))
+	result.Check(testkit.Rows("grpc-cpu tikv tikv-0 tikv-0s 7.42 < 7.20, config: server.grpc-concurrency=8"))
 }
 
 func (s *inspectionResultSuite) TestThresholdCheckInspection2(c *C) {
@@ -321,43 +328,43 @@ func (s *inspectionResultSuite) TestThresholdCheckInspection2(c *C) {
 			types.MakeDatums(datetime("2020-02-14 05:20:00"), "pd-0", 0.999, 0.06),
 		},
 		"tidb_get_token_duration": {
-			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tidb-0", 0.999, 0.02*10e5),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tidb-0s", 0.999, 0.02*10e5),
 		},
 		"tidb_load_schema_duration": {
-			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tidb-0", 0.99, 2.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tidb-0s", 0.99, 2.0),
 		},
 		"tikv_scheduler_command_duration": {
-			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "get", 0.99, 2.0),
-			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "write", 0.99, 5.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0s", "get", 0.99, 2.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0s", "write", 0.99, 5.0),
 		},
 		"tikv_handle_snapshot_duration": {
-			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "gen", 0.999, 40.0),
-			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "read", 0.999, 10.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0s", "gen", 0.999, 40.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0s", "read", 0.999, 10.0),
 		},
 		"tikv_storage_async_request_duration": {
-			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "write", 0.999, 0.2),
-			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "snapshot", 0.999, 0.06),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0s", "write", 0.999, 0.2),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0s", "snapshot", 0.999, 0.06),
 		},
 		"tikv_engine_write_duration": {
-			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "write_max", "kv", 0.2*10e5),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0s", "write_max", "kv", 0.2*10e5),
 		},
 		"tikv_engine_max_get_duration": {
-			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "get_max", "kv", 0.06*10e5),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0s", "get_max", "kv", 0.06*10e5),
 		},
 		"tikv_engine_max_seek_duration": {
-			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "seek_max", "raft", 0.06*10e5),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0s", "seek_max", "raft", 0.06*10e5),
 		},
 		"tikv_scheduler_pending_commands": {
-			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", 1001.0),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0s", 1001.0),
 		},
 		"tikv_block_index_cache_hit": {
-			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "kv", 0.94),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0s", "kv", 0.94),
 		},
 		"tikv_block_data_cache_hit": {
-			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "kv", 0.79),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0s", "kv", 0.79),
 		},
 		"tikv_block_filter_cache_hit": {
-			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0", "kv", 0.93),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0s", "kv", 0.93),
 		},
 		"tikv_thread_cpu":           {},
 		"pd_scheduler_store_status": {},
@@ -367,25 +374,25 @@ func (s *inspectionResultSuite) TestThresholdCheckInspection2(c *C) {
 	ctx := s.setupForInspection(c, mockData, nil)
 	defer s.tearDownForInspection(c)
 
-	rs, err := tk.Se.Execute(ctx, "select /*+ time_range('2020-02-12 10:35:00','2020-02-12 10:37:00') */ item, type, instance, value, reference, details from information_schema.inspection_result where rule='threshold-check' order by item")
+	rs, err := tk.Se.Execute(ctx, "select /*+ time_range('2020-02-12 10:35:00','2020-02-12 10:37:00') */ item, type, instance, status_address, value, reference, details from information_schema.inspection_result where rule='threshold-check' order by item")
 	c.Assert(err, IsNil)
 	result := tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute inspect SQL failed"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0), Commentf("unexpected warnings: %+v", tk.Se.GetSessionVars().StmtCtx.GetWarnings()))
 	result.Check(testkit.Rows(
-		"data-block-cache-hit tikv tikv-0 0.790 > 0.800 min data-block-cache-hit rate of tikv-0 tikv is too low",
-		"filter-block-cache-hit tikv tikv-0 0.930 > 0.950 min filter-block-cache-hit rate of tikv-0 tikv is too low",
-		"get-token-duration tidb tidb-0 0.020 < 0.001 max duration of tidb-0 tidb get-token-duration is too slow",
-		"handle-snapshot-duration tikv tikv-0 40.000 < 30.000 max duration of tikv-0 tikv handle-snapshot-duration is too slow",
-		"index-block-cache-hit tikv tikv-0 0.940 > 0.950 min index-block-cache-hit rate of tikv-0 tikv is too low",
-		"load-schema-duration tidb tidb-0 2.000 < 1.000 max duration of tidb-0 tidb load-schema-duration is too slow",
-		"rocksdb-get-duration tikv tikv-0 0.060 < 0.050 max duration of tikv-0 tikv rocksdb-get-duration is too slow",
-		"rocksdb-seek-duration tikv tikv-0 0.060 < 0.050 max duration of tikv-0 tikv rocksdb-seek-duration is too slow",
-		"rocksdb-write-duration tikv tikv-0 0.200 < 0.100 max duration of tikv-0 tikv rocksdb-write-duration is too slow",
-		"scheduler-cmd-duration tikv tikv-0 5.000 < 0.100 max duration of tikv-0 tikv scheduler-cmd-duration is too slow",
-		"scheduler-pending-cmd-count tikv tikv-0 1001.000 < 1000.000  tikv-0 tikv scheduler has too many pending commands",
-		"storage-snapshot-duration tikv tikv-0 0.060 < 0.050 max duration of tikv-0 tikv storage-snapshot-duration is too slow",
-		"storage-write-duration tikv tikv-0 0.200 < 0.100 max duration of tikv-0 tikv storage-write-duration is too slow",
-		"tso-duration tidb pd-0 0.060 < 0.050 max duration of pd-0 tidb tso-duration is too slow",
+		"data-block-cache-hit tikv tikv-0 tikv-0s 0.790 > 0.800 min data-block-cache-hit rate of tikv-0s tikv is too low",
+		"filter-block-cache-hit tikv tikv-0 tikv-0s 0.930 > 0.950 min filter-block-cache-hit rate of tikv-0s tikv is too low",
+		"get-token-duration tidb tidb-0 tidb-0s 0.020 < 0.001 max duration of tidb-0s tidb get-token-duration is too slow",
+		"handle-snapshot-duration tikv tikv-0 tikv-0s 40.000 < 30.000 max duration of tikv-0s tikv handle-snapshot-duration is too slow",
+		"index-block-cache-hit tikv tikv-0 tikv-0s 0.940 > 0.950 min index-block-cache-hit rate of tikv-0s tikv is too low",
+		"load-schema-duration tidb tidb-0 tidb-0s 2.000 < 1.000 max duration of tidb-0s tidb load-schema-duration is too slow",
+		"rocksdb-get-duration tikv tikv-0 tikv-0s 0.060 < 0.050 max duration of tikv-0s tikv rocksdb-get-duration is too slow",
+		"rocksdb-seek-duration tikv tikv-0 tikv-0s 0.060 < 0.050 max duration of tikv-0s tikv rocksdb-seek-duration is too slow",
+		"rocksdb-write-duration tikv tikv-0 tikv-0s 0.200 < 0.100 max duration of tikv-0s tikv rocksdb-write-duration is too slow",
+		"scheduler-cmd-duration tikv tikv-0 tikv-0s 5.000 < 0.100 max duration of tikv-0s tikv scheduler-cmd-duration is too slow",
+		"scheduler-pending-cmd-count tikv tikv-0 tikv-0s 1001.000 < 1000.000  tikv-0s tikv scheduler has too many pending commands",
+		"storage-snapshot-duration tikv tikv-0 tikv-0s 0.060 < 0.050 max duration of tikv-0s tikv storage-snapshot-duration is too slow",
+		"storage-write-duration tikv tikv-0 tikv-0s 0.200 < 0.100 max duration of tikv-0s tikv storage-write-duration is too slow",
+		"tso-duration tidb pd-0 pd-0 0.060 < 0.050 max duration of pd-0 tidb tso-duration is too slow",
 	))
 }
 
@@ -428,20 +435,20 @@ func (s *inspectionResultSuite) TestThresholdCheckInspection3(c *C) {
 	defer s.tearDownForInspection(c)
 
 	rs, err := tk.Se.Execute(ctx, `select /*+ time_range('2020-02-14 04:20:00','2020-02-14 05:23:00') */
-		item, type, instance, value, reference, details from information_schema.inspection_result
+		item, type, instance,status_address, value, reference, details from information_schema.inspection_result
 		where rule='threshold-check' and item in ('leader-score-balance','region-score-balance','region-count','region-health','store-available-balance','leader-drop')
 		order by item`)
 	c.Assert(err, IsNil)
 	result := tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute inspect SQL failed"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0), Commentf("unexpected warnings: %+v", tk.Se.GetSessionVars().StmtCtx.GetWarnings()))
 	result.Check(testkit.Rows(
-		"leader-drop tikv tikv-2 10000 <= 50 tikv-2 tikv has too many leader-drop around time 2020-02-14 05:21:00.000000, leader count from 10000 drop to 0",
-		"leader-drop tikv tikv-0 5000 <= 50 tikv-0 tikv has too many leader-drop around time 2020-02-14 05:21:00.000000, leader count from 10000 drop to 5000",
-		"leader-score-balance tikv tikv-1 50.00% < 5.00% tikv-0 max leader_score is 100.00, much more than tikv-1 min leader_score 50.00",
-		"region-count tikv tikv-0 20001.00 <= 20000 tikv-0 tikv has too many regions",
-		"region-health pd pd-0 110.00 < 100 the count of extra-perr and learner-peer and pending-peer are 110, it means the scheduling is too frequent or too slow",
-		"region-score-balance tikv tikv-1 10.00% < 5.00% tikv-0 max region_score is 100.00, much more than tikv-1 min region_score 90.00",
-		"store-available-balance tikv tikv-1 30.00% < 20.00% tikv-0 max store_available is 100.00, much more than tikv-1 min store_available 70.00"))
+		"leader-drop tikv tikv-2 tikv-2s 10000 <= 50 tikv-2 tikv has too many leader-drop around time 2020-02-14 05:21:00.000000, leader count from 10000 drop to 0",
+		"leader-drop tikv tikv-0 tikv-0s 5000 <= 50 tikv-0 tikv has too many leader-drop around time 2020-02-14 05:21:00.000000, leader count from 10000 drop to 5000",
+		"leader-score-balance tikv tikv-1 tikv-1s 50.00% < 5.00% tikv-0 max leader_score is 100.00, much more than tikv-1 min leader_score 50.00",
+		"region-count tikv tikv-0 tikv-0s 20001.00 <= 20000 tikv-0 tikv has too many regions",
+		"region-health pd pd-0 pd-0 110.00 < 100 the count of extra-perr and learner-peer and pending-peer are 110, it means the scheduling is too frequent or too slow",
+		"region-score-balance tikv tikv-1 tikv-1s 10.00% < 5.00% tikv-0 max region_score is 100.00, much more than tikv-1 min region_score 90.00",
+		"store-available-balance tikv tikv-1 tikv-1s 30.00% < 20.00% tikv-0 max store_available is 100.00, much more than tikv-1 min store_available 70.00"))
 }
 
 func (s *inspectionResultSuite) TestCriticalErrorInspection(c *C) {
@@ -463,10 +470,6 @@ func (s *inspectionResultSuite) TestCriticalErrorInspection(c *C) {
 	c.Assert(failpoint.Enable(fpName2, fmt.Sprintf(`return("%s")`, fpExpr)), IsNil)
 	defer func() { c.Assert(failpoint.Disable(fpName2), IsNil) }()
 
-	fpName := "github.com/pingcap/tidb/executor/mockMetricsTableData"
-	c.Assert(failpoint.Enable(fpName, "return"), IsNil)
-	defer func() { c.Assert(failpoint.Disable(fpName), IsNil) }()
-
 	datetime := func(str string) types.Time {
 		return s.parseTime(c, tk.Se, str)
 	}
@@ -475,98 +478,96 @@ func (s *inspectionResultSuite) TestCriticalErrorInspection(c *C) {
 	mockData := map[string][][]types.Datum{
 		// columns: time, instance, type, value
 		"tikv_critical_error_total_count": {
-			types.MakeDatums(datetime("2020-02-12 10:35:00"), "tikv-0", "type1", 0.0),
-			types.MakeDatums(datetime("2020-02-12 10:36:00"), "tikv-1", "type1", 1.0),
-			types.MakeDatums(datetime("2020-02-12 10:37:00"), "tikv-2", "type2", 5.0),
+			types.MakeDatums(datetime("2020-02-12 10:35:00"), "tikv-0s", "type1", 0.0),
+			types.MakeDatums(datetime("2020-02-12 10:36:00"), "tikv-1s", "type1", 1.0),
+			types.MakeDatums(datetime("2020-02-12 10:37:00"), "tikv-2s", "type2", 5.0),
 		},
 		// columns: time, instance, value
 		"tidb_panic_count_total_count": {
-			types.MakeDatums(datetime("2020-02-12 10:35:00"), "tidb-0", 4.0),
-			types.MakeDatums(datetime("2020-02-12 10:36:00"), "tidb-0", 0.0),
-			types.MakeDatums(datetime("2020-02-12 10:37:00"), "tidb-1", 1.0),
+			types.MakeDatums(datetime("2020-02-12 10:35:00"), "tidb-0s", 4.0),
+			types.MakeDatums(datetime("2020-02-12 10:36:00"), "tidb-0s", 0.0),
+			types.MakeDatums(datetime("2020-02-12 10:37:00"), "tidb-1s", 1.0),
 		},
 		// columns: time, instance, value
 		"tidb_binlog_error_total_count": {
-			types.MakeDatums(datetime("2020-02-12 10:35:00"), "tidb-1", 4.0),
-			types.MakeDatums(datetime("2020-02-12 10:36:00"), "tidb-2", 0.0),
-			types.MakeDatums(datetime("2020-02-12 10:37:00"), "tidb-3", 1.0),
+			types.MakeDatums(datetime("2020-02-12 10:35:00"), "tidb-1s", 4.0),
+			types.MakeDatums(datetime("2020-02-12 10:36:00"), "tidb-2s", 0.0),
+			types.MakeDatums(datetime("2020-02-12 10:37:00"), "tidb-3s", 1.0),
 		},
 		// columns: time, instance, db, type, stage, value
 		"tikv_scheduler_is_busy_total_count": {
-			types.MakeDatums(datetime("2020-02-12 10:35:00"), "tikv-0", "db1", "type1", "stage1", 1.0),
-			types.MakeDatums(datetime("2020-02-12 10:36:00"), "tikv-0", "db2", "type1", "stage2", 2.0),
-			types.MakeDatums(datetime("2020-02-12 10:37:00"), "tikv-1", "db1", "type2", "stage1", 3.0),
-			types.MakeDatums(datetime("2020-02-12 10:38:00"), "tikv-0", "db1", "type1", "stage2", 4.0),
-			types.MakeDatums(datetime("2020-02-12 10:39:00"), "tikv-0", "db2", "type1", "stage1", 5.0),
-			types.MakeDatums(datetime("2020-02-12 10:40:00"), "tikv-1", "db1", "type2", "stage2", 6.0),
+			types.MakeDatums(datetime("2020-02-12 10:35:00"), "tikv-0s", "db1", "type1", "stage1", 1.0),
+			types.MakeDatums(datetime("2020-02-12 10:36:00"), "tikv-0s", "db2", "type1", "stage2", 2.0),
+			types.MakeDatums(datetime("2020-02-12 10:37:00"), "tikv-1s", "db1", "type2", "stage1", 3.0),
+			types.MakeDatums(datetime("2020-02-12 10:38:00"), "tikv-0s", "db1", "type1", "stage2", 4.0),
+			types.MakeDatums(datetime("2020-02-12 10:39:00"), "tikv-0s", "db2", "type1", "stage1", 5.0),
+			types.MakeDatums(datetime("2020-02-12 10:40:00"), "tikv-1s", "db1", "type2", "stage2", 6.0),
 		},
 		// columns: time, instance, db, value
 		"tikv_coprocessor_is_busy_total_count": {
-			types.MakeDatums(datetime("2020-02-12 10:35:00"), "tikv-0", "db1", 1.0),
-			types.MakeDatums(datetime("2020-02-12 10:36:00"), "tikv-0", "db2", 2.0),
-			types.MakeDatums(datetime("2020-02-12 10:37:00"), "tikv-1", "db1", 3.0),
-			types.MakeDatums(datetime("2020-02-12 10:38:00"), "tikv-0", "db1", 4.0),
-			types.MakeDatums(datetime("2020-02-12 10:39:00"), "tikv-0", "db2", 5.0),
-			types.MakeDatums(datetime("2020-02-12 10:40:00"), "tikv-1", "db1", 6.0),
+			types.MakeDatums(datetime("2020-02-12 10:35:00"), "tikv-0s", "db1", 1.0),
+			types.MakeDatums(datetime("2020-02-12 10:36:00"), "tikv-0s", "db2", 2.0),
+			types.MakeDatums(datetime("2020-02-12 10:37:00"), "tikv-1s", "db1", 3.0),
+			types.MakeDatums(datetime("2020-02-12 10:38:00"), "tikv-0s", "db1", 4.0),
+			types.MakeDatums(datetime("2020-02-12 10:39:00"), "tikv-0s", "db2", 5.0),
+			types.MakeDatums(datetime("2020-02-12 10:40:00"), "tikv-1s", "db1", 6.0),
 		},
 		// columns: time, instance, db, type, value
 		"tikv_channel_full_total_count": {
-			types.MakeDatums(datetime("2020-02-12 10:35:00"), "tikv-0", "db1", "type1", 1.0),
-			types.MakeDatums(datetime("2020-02-12 10:36:00"), "tikv-0", "db2", "type1", 2.0),
-			types.MakeDatums(datetime("2020-02-12 10:37:00"), "tikv-1", "db1", "type2", 3.0),
-			types.MakeDatums(datetime("2020-02-12 10:38:00"), "tikv-0", "db1", "type1", 4.0),
-			types.MakeDatums(datetime("2020-02-12 10:39:00"), "tikv-0", "db2", "type1", 5.0),
-			types.MakeDatums(datetime("2020-02-12 10:40:00"), "tikv-1", "db1", "type2", 6.0),
+			types.MakeDatums(datetime("2020-02-12 10:35:00"), "tikv-0s", "db1", "type1", 1.0),
+			types.MakeDatums(datetime("2020-02-12 10:36:00"), "tikv-0s", "db2", "type1", 2.0),
+			types.MakeDatums(datetime("2020-02-12 10:37:00"), "tikv-1s", "db1", "type2", 3.0),
+			types.MakeDatums(datetime("2020-02-12 10:38:00"), "tikv-0s", "db1", "type1", 4.0),
+			types.MakeDatums(datetime("2020-02-12 10:39:00"), "tikv-0s", "db2", "type1", 5.0),
+			types.MakeDatums(datetime("2020-02-12 10:40:00"), "tikv-1s", "db1", "type2", 6.0),
 		},
 		// columns: time, instance, db, value
 		"tikv_engine_write_stall": {
-			types.MakeDatums(datetime("2020-02-12 10:35:00"), "tikv-0", "kv", 1.0),
-			types.MakeDatums(datetime("2020-02-12 10:36:00"), "tikv-0", "raft", 2.0),
-			types.MakeDatums(datetime("2020-02-12 10:37:00"), "tikv-1", "reason3", 3.0),
+			types.MakeDatums(datetime("2020-02-12 10:35:00"), "tikv-0s", "kv", 1.0),
+			types.MakeDatums(datetime("2020-02-12 10:36:00"), "tikv-0s", "raft", 2.0),
+			types.MakeDatums(datetime("2020-02-12 10:37:00"), "tikv-1s", "reason3", 3.0),
 		},
 		// columns: time, instance, job, value
 		"up": {
-			types.MakeDatums(datetime("2020-02-12 10:35:00"), "tikv-0", "tikv", 1.0),
-			types.MakeDatums(datetime("2020-02-12 10:36:00"), "tikv-0", "tikv", 0.0),
-			types.MakeDatums(datetime("2020-02-12 10:37:00"), "tidb-0", "tidb", 0.0),
-			types.MakeDatums(datetime("2020-02-12 10:37:00"), "tidb-1", "tidb", 0.0),
-			types.MakeDatums(datetime("2020-02-12 10:38:00"), "tidb-1", "tidb", 1.0),
+			types.MakeDatums(datetime("2020-02-12 10:35:00"), "tikv-0s", "tikv", 1.0),
+			types.MakeDatums(datetime("2020-02-12 10:36:00"), "tikv-0s", "tikv", 0.0),
+			types.MakeDatums(datetime("2020-02-12 10:37:00"), "tidb-0s", "tidb", 0.0),
+			types.MakeDatums(datetime("2020-02-12 10:37:00"), "tidb-1s", "tidb", 0.0),
+			types.MakeDatums(datetime("2020-02-12 10:38:00"), "tidb-1s", "tidb", 1.0),
 		},
 	}
 
-	ctx := context.WithValue(context.Background(), "__mockMetricsTableData", mockData)
-	ctx = failpoint.WithHook(ctx, func(_ context.Context, fpname string) bool {
-		return fpname == fpName
-	})
+	ctx := s.setupForInspection(c, mockData, nil)
+	defer s.tearDownForInspection(c)
 
-	rs, err := tk.Se.Execute(ctx, "select /*+ time_range('2020-02-12 10:35:00','2020-02-12 10:37:00') */ item, instance, value, details from information_schema.inspection_result where rule='critical-error'")
+	rs, err := tk.Se.Execute(ctx, "select /*+ time_range('2020-02-12 10:35:00','2020-02-12 10:37:00') */ item, instance,status_address, value, details from information_schema.inspection_result where rule='critical-error'")
 	c.Assert(err, IsNil)
 	result := tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute inspect SQL failed"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0), Commentf("unexpected warnings: %+v", tk.Se.GetSessionVars().StmtCtx.GetWarnings()))
 	result.Check(testkit.Rows(
-		"server-down tikv-0  tikv tikv-0 disconnect with prometheus around time '2020-02-12 10:36:00.000000'",
-		"server-down tidb-1  tidb tidb-1 disconnect with prometheus around time '2020-02-12 10:37:00.000000'",
-		"channel-is-full tikv-1 9.00(db1, type2) the total number of errors about 'channel-is-full' is too many",
-		"coprocessor-is-busy tikv-1 9.00(db1) the total number of errors about 'coprocessor-is-busy' is too many",
-		"channel-is-full tikv-0 7.00(db2, type1) the total number of errors about 'channel-is-full' is too many",
-		"coprocessor-is-busy tikv-0 7.00(db2) the total number of errors about 'coprocessor-is-busy' is too many",
-		"scheduler-is-busy tikv-1 6.00(db1, type2, stage2) the total number of errors about 'scheduler-is-busy' is too many",
-		"channel-is-full tikv-0 5.00(db1, type1) the total number of errors about 'channel-is-full' is too many",
-		"coprocessor-is-busy tikv-0 5.00(db1) the total number of errors about 'coprocessor-is-busy' is too many",
-		"critical-error tikv-2 5.00(type2) the total number of errors about 'critical-error' is too many",
-		"scheduler-is-busy tikv-0 5.00(db2, type1, stage1) the total number of errors about 'scheduler-is-busy' is too many",
-		"binlog-error tidb-1 4.00 the total number of errors about 'binlog-error' is too many",
-		"panic-count tidb-0 4.00 the total number of errors about 'panic-count' is too many",
-		"scheduler-is-busy tikv-0 4.00(db1, type1, stage2) the total number of errors about 'scheduler-is-busy' is too many",
-		"scheduler-is-busy tikv-1 3.00(db1, type2, stage1) the total number of errors about 'scheduler-is-busy' is too many",
-		"tikv_engine_write_stall tikv-1 3.00(reason3) the total number of errors about 'tikv_engine_write_stall' is too many",
-		"scheduler-is-busy tikv-0 2.00(db2, type1, stage2) the total number of errors about 'scheduler-is-busy' is too many",
-		"tikv_engine_write_stall tikv-0 2.00(raft) the total number of errors about 'tikv_engine_write_stall' is too many",
-		"binlog-error tidb-3 1.00 the total number of errors about 'binlog-error' is too many",
-		"critical-error tikv-1 1.00(type1) the total number of errors about 'critical-error' is too many",
-		"panic-count tidb-1 1.00 the total number of errors about 'panic-count' is too many",
-		"scheduler-is-busy tikv-0 1.00(db1, type1, stage1) the total number of errors about 'scheduler-is-busy' is too many",
-		"tikv_engine_write_stall tikv-0 1.00(kv) the total number of errors about 'tikv_engine_write_stall' is too many",
+		"server-down tikv-0 tikv-0s  tikv tikv-0s disconnect with prometheus around time '2020-02-12 10:36:00.000000'",
+		"server-down tidb-1 tidb-1s  tidb tidb-1s disconnect with prometheus around time '2020-02-12 10:37:00.000000'",
+		"channel-is-full tikv-1 tikv-1s 9.00(db1, type2) the total number of errors about 'channel-is-full' is too many",
+		"coprocessor-is-busy tikv-1 tikv-1s 9.00(db1) the total number of errors about 'coprocessor-is-busy' is too many",
+		"channel-is-full tikv-0 tikv-0s 7.00(db2, type1) the total number of errors about 'channel-is-full' is too many",
+		"coprocessor-is-busy tikv-0 tikv-0s 7.00(db2) the total number of errors about 'coprocessor-is-busy' is too many",
+		"scheduler-is-busy tikv-1 tikv-1s 6.00(db1, type2, stage2) the total number of errors about 'scheduler-is-busy' is too many",
+		"channel-is-full tikv-0 tikv-0s 5.00(db1, type1) the total number of errors about 'channel-is-full' is too many",
+		"coprocessor-is-busy tikv-0 tikv-0s 5.00(db1) the total number of errors about 'coprocessor-is-busy' is too many",
+		"critical-error tikv-2 tikv-2s 5.00(type2) the total number of errors about 'critical-error' is too many",
+		"scheduler-is-busy tikv-0 tikv-0s 5.00(db2, type1, stage1) the total number of errors about 'scheduler-is-busy' is too many",
+		"binlog-error tidb-1 tidb-1s 4.00 the total number of errors about 'binlog-error' is too many",
+		"panic-count tidb-0 tidb-0s 4.00 the total number of errors about 'panic-count' is too many",
+		"scheduler-is-busy tikv-0 tikv-0s 4.00(db1, type1, stage2) the total number of errors about 'scheduler-is-busy' is too many",
+		"scheduler-is-busy tikv-1 tikv-1s 3.00(db1, type2, stage1) the total number of errors about 'scheduler-is-busy' is too many",
+		"tikv_engine_write_stall tikv-1 tikv-1s 3.00(reason3) the total number of errors about 'tikv_engine_write_stall' is too many",
+		"scheduler-is-busy tikv-0 tikv-0s 2.00(db2, type1, stage2) the total number of errors about 'scheduler-is-busy' is too many",
+		"tikv_engine_write_stall tikv-0 tikv-0s 2.00(raft) the total number of errors about 'tikv_engine_write_stall' is too many",
+		"binlog-error  tidb-3s 1.00 the total number of errors about 'binlog-error' is too many",
+		"critical-error tikv-1 tikv-1s 1.00(type1) the total number of errors about 'critical-error' is too many",
+		"panic-count tidb-1 tidb-1s 1.00 the total number of errors about 'panic-count' is too many",
+		"scheduler-is-busy tikv-0 tikv-0s 1.00(db1, type1, stage1) the total number of errors about 'scheduler-is-busy' is too many",
+		"tikv_engine_write_stall tikv-0 tikv-0s 1.00(kv) the total number of errors about 'tikv_engine_write_stall' is too many",
 	))
 }
 
@@ -679,7 +680,7 @@ func (s *inspectionResultSuite) TestConfigCheckOfStorageBlockCacheSize(c *C) {
 	result := tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute inspect SQL failed"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0), Commentf("unexpected warnings: %+v", tk.Se.GetSessionVars().StmtCtx.GetWarnings()))
 	result.Check(testkit.Rows(
-		"config storage.block-cache.capacity tikv 192.168.3.34 1099511627776 < 24159191040 warning There are 1 TiKV server in 192.168.3.34 node, the total 'storage.block-cache.capacity' of TiKV is more than (0.45 * total node memory)",
-		"config storage.block-cache.capacity tikv 192.168.3.33 32212254720 < 24159191040 warning There are 2 TiKV server in 192.168.3.33 node, the total 'storage.block-cache.capacity' of TiKV is more than (0.45 * total node memory)",
+		"config storage.block-cache.capacity tikv 192.168.3.34  1099511627776 < 24159191040 warning There are 1 TiKV server in 192.168.3.34 node, the total 'storage.block-cache.capacity' of TiKV is more than (0.45 * total node memory)",
+		"config storage.block-cache.capacity tikv 192.168.3.33  32212254720 < 24159191040 warning There are 2 TiKV server in 192.168.3.33 node, the total 'storage.block-cache.capacity' of TiKV is more than (0.45 * total node memory)",
 	))
 }
