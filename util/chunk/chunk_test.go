@@ -536,6 +536,7 @@ func (s *testChunkSuite) TestChunkMemoryUsage(c *check.C) {
 	initCap := 10
 	chk := NewChunkWithCapacity(fieldTypes, initCap)
 
+	sizeTime := int(unsafe.Sizeof(types.ZeroTime))
 	//cap(c.nullBitmap) + cap(c.offsets)*4 + cap(c.data) + cap(c.elemBuf)
 	colUsage := make([]int, len(fieldTypes))
 	colUsage[0] = (initCap+7)>>3 + 0 + initCap*4 + 4
