@@ -237,6 +237,8 @@ bind-info-lease = "3s"
 # If binlog is not enabled, this value should be less than 10737418240(10G).
 txn-total-size-limit = 104857600
 
+two-phase-concurrency-limit = 4
+
 [proxy-protocol]
 # PROXY protocol acceptable client networks.
 # Empty string means disable PROXY protocol, * means all networks.
