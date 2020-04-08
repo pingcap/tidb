@@ -44,6 +44,9 @@ import (
 
 var planCacheCounter = metrics.PlanCacheCounter.WithLabelValues("prepare")
 
+var planCacheHintMiss = errors.New("Hit plan cache: False")
+var planCacheHintGot = errors.New("Hit plan cache: True")
+
 // ShowDDL is for showing DDL information.
 type ShowDDL struct {
 	baseSchemaProducer
@@ -271,9 +274,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 		// type from "paramMarker" to "Constant".When Point Select queries are executed,
 		// the expression in the where condition will not be evaluated,
 		// so you don't need to consider whether prepared.useCache is enabled.
-		note := errors.New("Hit plan cache: True")
-		sctx.GetSessionVars().StmtCtx.AppendNote(note)
-
+		sctx.GetSessionVars().StmtCtx.AppendNote(planCacheHintGot)
 		plan := prepared.CachedPlan.(Plan)
 		names := prepared.CachedNames.(types.NameSlice)
 		err := e.rebuildRange(plan)
@@ -295,8 +296,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	if prepared.UseCache {
 		cacheKey = NewPSTMTPlanCacheKey(sctx.GetSessionVars(), e.ExecID, prepared.SchemaVersion)
 		if cacheValue, exists := sctx.PreparedPlanCache().Get(cacheKey); exists {
-			note := errors.New("Hit plan cache: True")
-			sctx.GetSessionVars().StmtCtx.AppendNote(note)
+			sctx.GetSessionVars().StmtCtx.AppendNote(planCacheHintGot)
 			if err := e.checkPreparedPriv(ctx, sctx, preparedStmt, is); err != nil {
 				return err
 			}
@@ -345,11 +345,9 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 		preparedStmt.NormalizedPlan, preparedStmt.PlanDigest = NormalizePlan(p)
 		stmtCtx.SetPlanDigest(preparedStmt.NormalizedPlan, preparedStmt.PlanDigest)
 		sctx.PreparedPlanCache().Put(cacheKey, cached)
-		note := errors.New("Hit plan cache: True")
-		sctx.GetSessionVars().StmtCtx.AppendNote(note)
+		sctx.GetSessionVars().StmtCtx.AppendNote(planCacheHintGot)
 	} else {
-		note := errors.New("Hit plan cache: False")
-		sctx.GetSessionVars().StmtCtx.AppendNote(note)
+		sctx.GetSessionVars().StmtCtx.AppendNote(planCacheHintMiss)
 	}
 	return err
 }
