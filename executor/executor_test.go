@@ -2063,7 +2063,6 @@ func (s *testSuiteP2) TestColumnName(c *C) {
 	c.Check(fields[0].Table.Name.L, Equals, "")
 	c.Check(fields[0].TableAsName.L, Equals, "")
 	c.Check(fields[0].DBName.L, Equals, "")
-<<<<<<< HEAD
 	rs.Close()
 
 	rs, err = tk.Exec("select if(1,c,c) from t;")
@@ -2073,7 +2072,7 @@ func (s *testSuiteP2) TestColumnName(c *C) {
 	// It's a compatibility issue. Should be empty instead.
 	c.Assert(fields[0].ColumnAsName.L, Equals, "if(1,c,c)")
 	rs.Close()
-=======
+
 	// Test case for query a column wrapped with parentheses and unary plus.
 	// In this case, the column name should be its original name.
 	rs, err = tk.Exec("select (c), (+c), +(c), +(+(c)), ++c from t")
@@ -2083,7 +2082,6 @@ func (s *testSuiteP2) TestColumnName(c *C) {
 		c.Check(fields[0].Column.Name.L, Equals, "c")
 		c.Check(fields[0].ColumnAsName.L, Equals, "c")
 	}
->>>>>>> 29c17a1... planner/core: correct column name with unary plus sign (#8702)
 }
 
 func (s *testSuiteP2) TestSelectVar(c *C) {

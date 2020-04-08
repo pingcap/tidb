@@ -557,19 +557,12 @@ func (b *planBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 }
 
 // buildProjectionFieldNameFromColumns builds the field name, table name and database name when field expression is a column reference.
-<<<<<<< HEAD
-func (b *planBuilder) buildProjectionFieldNameFromColumns(origField *ast.SelectField, colNameField *ast.ColumnNameExpr, c *expression.Column) (colName, origColName, tblName, origTblName, dbName model.CIStr) {
-	origColName, tblName, dbName = colNameField.Name.Name, colNameField.Name.Table, colNameField.Name.Schema
-	if origField.AsName.L != "" {
-		colName = origField.AsName
-=======
-func (b *PlanBuilder) buildProjectionFieldNameFromColumns(field *ast.SelectField, c *expression.Column) (colName, origColName, tblName, origTblName, dbName model.CIStr) {
+func (b *planBuilder) buildProjectionFieldNameFromColumns(field *ast.SelectField, c *expression.Column) (colName, origColName, tblName, origTblName, dbName model.CIStr) {
 	if astCol, ok := getInnerFromParenthesesAndUnaryPlus(field.Expr).(*ast.ColumnNameExpr); ok {
 		origColName, tblName, dbName = astCol.Name.Name, astCol.Name.Table, astCol.Name.Schema
 	}
 	if field.AsName.L != "" {
 		colName = field.AsName
->>>>>>> 29c17a1... planner/core: correct column name with unary plus sign (#8702)
 	} else {
 		colName = origColName
 	}
@@ -626,13 +619,13 @@ func (b *planBuilder) buildProjectionFieldNameFromExpressions(field *ast.SelectF
 // buildProjectionField builds the field object according to SelectField in projection.
 func (b *planBuilder) buildProjectionField(id, position int, field *ast.SelectField, expr expression.Expression) *expression.Column {
 	var origTblName, tblName, origColName, colName, dbName model.CIStr
-	innerNode := getInnerFromParentheses(field.Expr)
+	innerNode := getInnerFromParenthesesAndUnaryPlus(field.Expr)
 	col, isCol := expr.(*expression.Column)
 	// Correlated column won't affect the final output names. So we can put it in any of the three logic block.
 	// Don't put it into the first block just for simplifying the codes.
 	if colNameField, ok := innerNode.(*ast.ColumnNameExpr); ok && isCol {
 		// Field is a column reference.
-		colName, origColName, tblName, origTblName, dbName = b.buildProjectionFieldNameFromColumns(field, colNameField, col)
+		colName, origColName, tblName, origTblName, dbName = b.buildProjectionFieldNameFromColumns(field, col)
 	} else if field.AsName.L != "" {
 		// Field has alias.
 		colName = field.AsName
