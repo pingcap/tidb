@@ -519,7 +519,7 @@ func (s *testSuite) TestCapturePlanBaseline(c *C) {
 	rows = tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 1)
 	c.Assert(rows[0][0], Equals, "select * from t where a > ?")
-	c.Assert(rows[0][1], Equals, "SELECT /*+ USE_INDEX(@`sel_1` `test`.`t` )*/ * FROM `t` WHERE `a`>10")
+	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` )*/ * FROM `t` WHERE `a`>10")
 }
 
 func (s *testSuite) TestCaptureBaselinesDefaultDB(c *C) {
@@ -608,14 +608,39 @@ func (s *testSuite) TestAddEvolveTasks(c *C) {
 	tk.MustExec("admin flush bindings")
 	rows := tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 2)
-	c.Assert(rows[1][1], Equals, "SELECT /*+ USE_INDEX(@`sel_1` `test`.`t` )*/ * FROM `test`.`t` WHERE `a`>=4 AND `b`>=1 AND `c`=0")
+	c.Assert(rows[1][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` )*/ * FROM `test`.`t` WHERE `a`>=4 AND `b`>=1 AND `c`=0")
 	c.Assert(rows[1][3], Equals, "pending verify")
 	tk.MustExec("admin evolve bindings")
 	rows = tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 2)
-	c.Assert(rows[1][1], Equals, "SELECT /*+ USE_INDEX(@`sel_1` `test`.`t` )*/ * FROM `test`.`t` WHERE `a`>=4 AND `b`>=1 AND `c`=0")
+	c.Assert(rows[1][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` )*/ * FROM `test`.`t` WHERE `a`>=4 AND `b`>=1 AND `c`=0")
 	status := rows[1][3].(string)
 	c.Assert(status == "using" || status == "rejected", IsTrue)
+}
+
+func (s *testSuite) TestRuntimeHintsInEvolveTasks(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@tidb_evolve_plan_baselines=1")
+	tk.MustExec("create table t(a int, b int, c int, index idx_a(a), index idx_b(b), index idx_c(c))")
+
+	// these runtime hints which don't be contained by the original binding should be ignored
+	tk.MustExec("create global binding for select * from t where a >= 1 and b >= 1 and c = 0 using select * from t use index(idx_a) where a >= 1 and b >= 1 and c = 0")
+	tk.MustQuery("select /*+ MAX_EXECUTION_TIME(5000) */* from t where a >= 4 and b >= 1 and c = 0")
+	tk.MustExec("admin flush bindings")
+	rows := tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 2)
+	c.Assert(rows[1][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_c`)*/ * FROM `test`.`t` WHERE `a`>=4 AND `b`>=1 AND `c`=0") // MAX_EXECUTION_TIME is ignored
+
+	s.cleanBindingEnv(tk)
+	tk.MustExec("create global binding for select * from t where a >= 1 and b >= 1 and c = 0 using select /*+ MAX_EXECUTION_TIME(5000) */* from t use index(idx_a) where a >= 1 and b >= 1 and c = 0")
+	tk.MustQuery("select /*+ MAX_EXECUTION_TIME(5000) */* from t where a >= 4 and b >= 1 and c = 0")
+	tk.MustExec("admin flush bindings")
+	rows = tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 2)
+	c.Assert(rows[1][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_c`), max_execution_time(5000)*/ * FROM `test`.`t` WHERE `a`>=4 AND `b`>=1 AND `c`=0")
 }
 
 func (s *testSuite) TestBindingCache(c *C) {
@@ -651,6 +676,53 @@ func (s *testSuite) TestDefaultSessionVars(c *C) {
 		"tidb_capture_plan_baselines off",
 		"tidb_evolve_plan_baselines off",
 		"tidb_use_plan_baselines on"))
+}
+
+func (s *testSuite) TestCaptureBaselinesScope(c *C) {
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk2 := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk1)
+	tk1.MustQuery(`show session variables like "tidb_capture_plan_baselines"`).Check(testkit.Rows(
+		"tidb_capture_plan_baselines off",
+	))
+	tk1.MustQuery(`show global variables like "tidb_capture_plan_baselines"`).Check(testkit.Rows(
+		"tidb_capture_plan_baselines off",
+	))
+	tk1.MustQuery(`select @@session.tidb_capture_plan_baselines`).Check(testkit.Rows(
+		"off",
+	))
+	tk1.MustQuery(`select @@global.tidb_capture_plan_baselines`).Check(testkit.Rows(
+		"off",
+	))
+
+	tk1.MustExec("set @@session.tidb_capture_plan_baselines = on")
+	defer func() {
+		tk1.MustExec(" set @@session.tidb_capture_plan_baselines = off")
+	}()
+	tk1.MustQuery(`show session variables like "tidb_capture_plan_baselines"`).Check(testkit.Rows(
+		"tidb_capture_plan_baselines on",
+	))
+	tk1.MustQuery(`show global variables like "tidb_capture_plan_baselines"`).Check(testkit.Rows(
+		"tidb_capture_plan_baselines off",
+	))
+	tk1.MustQuery(`select @@session.tidb_capture_plan_baselines`).Check(testkit.Rows(
+		"on",
+	))
+	tk1.MustQuery(`select @@global.tidb_capture_plan_baselines`).Check(testkit.Rows(
+		"off",
+	))
+	tk2.MustQuery(`show session variables like "tidb_capture_plan_baselines"`).Check(testkit.Rows(
+		"tidb_capture_plan_baselines on",
+	))
+	tk2.MustQuery(`show global variables like "tidb_capture_plan_baselines"`).Check(testkit.Rows(
+		"tidb_capture_plan_baselines off",
+	))
+	tk2.MustQuery(`select @@session.tidb_capture_plan_baselines`).Check(testkit.Rows(
+		"on",
+	))
+	tk2.MustQuery(`select @@global.tidb_capture_plan_baselines`).Check(testkit.Rows(
+		"off",
+	))
 }
 
 func (s *testSuite) TestDuplicateBindings(c *C) {
@@ -741,6 +813,37 @@ func (s *testSuite) TestDefaultDB(c *C) {
 	tk.MustQuery("show session bindings").Check(testkit.Rows())
 }
 
+func (s *testSuite) TestEvolveInvalidBindings(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, index idx_a(a))")
+	tk.MustExec("create global binding for select * from t where a > 10 using select /*+ USE_INDEX(t) */ * from t where a > 10")
+	// Manufacture a rejected binding by hacking mysql.bind_info.
+	tk.MustExec("insert into mysql.bind_info values('select * from t where a > ?', 'select /*+ USE_INDEX(t,idx_a) */ * from t where a > 10', 'test', 'rejected', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '')")
+	tk.MustQuery("select bind_sql, status from mysql.bind_info").Sort().Check(testkit.Rows(
+		"select /*+ USE_INDEX(t) */ * from t where a > 10 using",
+		"select /*+ USE_INDEX(t,idx_a) */ * from t where a > 10 rejected",
+	))
+	// Reload cache from mysql.bind_info.
+	s.domain.BindHandle().Clear()
+	c.Assert(s.domain.BindHandle().Update(true), IsNil)
+
+	tk.MustExec("alter table t drop index idx_a")
+	tk.MustExec("admin evolve bindings")
+	c.Assert(s.domain.BindHandle().Update(false), IsNil)
+	rows := tk.MustQuery("show global bindings").Sort().Rows()
+	c.Assert(len(rows), Equals, 2)
+	// Make sure this "using" binding is not overrided.
+	c.Assert(rows[0][1], Equals, "select /*+ USE_INDEX(t) */ * from t where a > 10")
+	status := rows[0][3].(string)
+	c.Assert(status == "using", IsTrue)
+	c.Assert(rows[1][1], Equals, "select /*+ USE_INDEX(t,idx_a) */ * from t where a > 10")
+	status = rows[1][3].(string)
+	c.Assert(status == "using" || status == "rejected", IsTrue)
+}
+
 func (s *testSuite) TestOutdatedInfoSchema(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
@@ -792,6 +895,60 @@ func (s *testSuite) TestHintsSetEvolveTask(c *C) {
 	c.Assert(bind.Hint, NotNil)
 }
 
+func (s *testSuite) TestHintsSetID(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, index idx_a(a))")
+	tk.MustExec("create global binding for select * from t where a > 10 using select /*+ use_index(test.t, idx_a) */ * from t where a > 10")
+	bindHandle := s.domain.BindHandle()
+	// Verify the added Binding contains ID with restored query block.
+	sql, hash := parser.NormalizeDigest("select * from t where a > ?")
+	bindData := bindHandle.GetBindRecord(hash, sql, "test")
+	c.Check(bindData, NotNil)
+	c.Check(bindData.OriginalSQL, Equals, "select * from t where a > ?")
+	c.Assert(len(bindData.Bindings), Equals, 1)
+	bind := bindData.Bindings[0]
+	c.Assert(bind.ID, Equals, "use_index(@`sel_1` `test`.`t` `idx_a`)")
+
+	s.cleanBindingEnv(tk)
+	tk.MustExec("create global binding for select * from t where a > 10 using select /*+ use_index(t, idx_a) */ * from t where a > 10")
+	bindData = bindHandle.GetBindRecord(hash, sql, "test")
+	c.Check(bindData, NotNil)
+	c.Check(bindData.OriginalSQL, Equals, "select * from t where a > ?")
+	c.Assert(len(bindData.Bindings), Equals, 1)
+	bind = bindData.Bindings[0]
+	c.Assert(bind.ID, Equals, "use_index(@`sel_1` `test`.`t` `idx_a`)")
+
+	s.cleanBindingEnv(tk)
+	tk.MustExec("create global binding for select * from t where a > 10 using select /*+ use_index(@sel_1 t, idx_a) */ * from t where a > 10")
+	bindData = bindHandle.GetBindRecord(hash, sql, "test")
+	c.Check(bindData, NotNil)
+	c.Check(bindData.OriginalSQL, Equals, "select * from t where a > ?")
+	c.Assert(len(bindData.Bindings), Equals, 1)
+	bind = bindData.Bindings[0]
+	c.Assert(bind.ID, Equals, "use_index(@`sel_1` `test`.`t` `idx_a`)")
+
+	s.cleanBindingEnv(tk)
+	tk.MustExec("create global binding for select * from t where a > 10 using select /*+ use_index(@qb1 t, idx_a) qb_name(qb1) */ * from t where a > 10")
+	bindData = bindHandle.GetBindRecord(hash, sql, "test")
+	c.Check(bindData, NotNil)
+	c.Check(bindData.OriginalSQL, Equals, "select * from t where a > ?")
+	c.Assert(len(bindData.Bindings), Equals, 1)
+	bind = bindData.Bindings[0]
+	c.Assert(bind.ID, Equals, "use_index(@`sel_1` `test`.`t` `idx_a`)")
+
+	s.cleanBindingEnv(tk)
+	tk.MustExec("create global binding for select * from t where a > 10 using select /*+ use_index(T, IDX_A) */ * from t where a > 10")
+	bindData = bindHandle.GetBindRecord(hash, sql, "test")
+	c.Check(bindData, NotNil)
+	c.Check(bindData.OriginalSQL, Equals, "select * from t where a > ?")
+	c.Assert(len(bindData.Bindings), Equals, 1)
+	bind = bindData.Bindings[0]
+	c.Assert(bind.ID, Equals, "use_index(@`sel_1` `test`.`t` `idx_a`)")
+}
+
 func (s *testSuite) TestCapturePlanBaselineIgnoreTiFlash(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
@@ -825,7 +982,7 @@ func (s *testSuite) TestCapturePlanBaselineIgnoreTiFlash(c *C) {
 	rows = tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 1)
 	c.Assert(rows[0][0], Equals, "select * from t")
-	c.Assert(rows[0][1], Equals, "SELECT /*+ USE_INDEX(@`sel_1` `test`.`t` )*/ * FROM `t`")
+	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` )*/ * FROM `t`")
 }
 
 func (s *testSuite) TestNotEvolvePlanForReadStorageHint(c *C) {
@@ -918,7 +1075,7 @@ func (s *testSuite) TestReCreateBindAfterEvolvePlan(c *C) {
 	tk.MustExec("admin flush bindings")
 	rows := tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 2)
-	c.Assert(rows[1][1], Equals, "SELECT /*+ USE_INDEX(@`sel_1` `test`.`t` )*/ * FROM `test`.`t` WHERE `a`>=0 AND `b`>=0")
+	c.Assert(rows[1][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` )*/ * FROM `test`.`t` WHERE `a`>=0 AND `b`>=0")
 	c.Assert(rows[1][3], Equals, "pending verify")
 
 	tk.MustExec("create global binding for select * from t where a >= 1 and b >= 1 using select * from t use index(idx_b) where a >= 1 and b >= 1")
