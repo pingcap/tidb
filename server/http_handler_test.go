@@ -467,8 +467,6 @@ func (ts *HTTPHandlerTestSuite) TestGetTableMVCC(c *C) {
 	err = decoder.Decode(&data2)
 	c.Assert(err, IsNil)
 	c.Assert(data2, DeepEquals, data)
-<<<<<<< HEAD
-=======
 
 	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/mvcc/key/tidb/test/1?decode=true"))
 	c.Assert(err, IsNil)
@@ -492,7 +490,6 @@ func (ts *HTTPHandlerTestSuite) TestGetTableMVCC(c *C) {
 	c.Assert(data4["info"], NotNil)
 	c.Assert(data4["data"], NotNil)
 	c.Assert(data4["decode_error"], IsNil)
->>>>>>> 57c2d76... server: support partitioned table for the /mvcc/* HTTP API (#14197)
 }
 
 func (ts *HTTPHandlerTestSuite) TestGetMVCCNotFound(c *C) {
