@@ -760,7 +760,6 @@ func (s *testClusterTableSuite) TestSelectClusterTable(c *C) {
 		tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY` group by digest").Check(testkit.Rows("1"))
 		tk.MustQuery("select digest, count(*) from `CLUSTER_SLOW_QUERY` group by digest").Check(testkit.Rows("42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772 1"))
 		tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY` where time > now() group by digest").Check(testkit.Rows())
-		tk.MustExec("use performance_schema")
 		re := tk.MustQuery("select * from `CLUSTER_statements_summary`")
 		c.Assert(re, NotNil)
 		c.Assert(len(re.Rows()) > 0, IsTrue)
@@ -876,7 +875,7 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
 	tk.MustQuery("select column_comment from information_schema.columns " +
-		"where table_name='statements_summary' and column_name='STMT_TYPE'",
+		"where table_name='STATEMENTS_SUMMARY' and column_name='STMT_TYPE'",
 	).Check(testkit.Rows("Statement type"))
 
 	tk.MustExec("drop table if exists t")
@@ -1120,8 +1119,8 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 func (s *testTableSuite) TestStmtSummaryHistoryTable(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b varchar(10), key k(a))")
+	tk.MustExec("drop table if exists test_summary")
+	tk.MustExec("create table test_summary(a int, b varchar(10), key k(a))")
 
 	tk.MustExec("set global tidb_enable_stmt_summary = 1")
 	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("1"))
@@ -1137,16 +1136,16 @@ func (s *testTableSuite) TestStmtSummaryHistoryTable(c *C) {
 	tk = testkit.NewTestKitWithInit(c, s.store)
 
 	// Test INSERT
-	tk.MustExec("insert into t values(1, 'a')")
-	tk.MustExec("insert into t    values(2, 'b')")
-	tk.MustExec("insert into t VALUES(3, 'c')")
-	tk.MustExec("/**/insert into t values(4, 'd')")
+	tk.MustExec("insert into test_summary values(1, 'a')")
+	tk.MustExec("insert into test_summary    values(2, 'b')")
+	tk.MustExec("insert into TEST_SUMMARY VALUES(3, 'c')")
+	tk.MustExec("/**/insert into test_summary values(4, 'd')")
 	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, cop_task_num, avg_total_keys,
 		max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions,
 		max_prewrite_regions, avg_affected_rows, query_sample_text, plan
 		from information_schema.statements_summary_history
-		where digest_text like 'insert into t%'`,
-	).Check(testkit.Rows("insert test test.t <nil> 4 0 0 0 0 0 2 2 1 1 1 insert into t values(1, 'a') "))
+		where digest_text like 'insert into test_summary%'`,
+	).Check(testkit.Rows("insert test test.test_summary <nil> 4 0 0 0 0 0 2 2 1 1 1 insert into test_summary values(1, 'a') "))
 
 	tk.MustExec("set global tidb_stmt_summary_history_size = 0")
 	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, cop_task_num, avg_total_keys,
