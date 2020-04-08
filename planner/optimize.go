@@ -136,7 +136,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	// If none baseline aims at selectivity bucket or baseline is invalid. We use the normalized binding instead.
 	if !useBaseline {
 		binding := bindRecord.NormalizedBinding
-		if binding != nil && binding.Status == bindinfo.Using {
+		if binding != nil && binding.Status == bindinfo.Using && !binding.Fixed {
 			metrics.BindUsageCounter.WithLabelValues(scope).Inc()
 			hint.BindHint(stmtNode, binding.Hint)
 			curStmtHints, curWarns := handleStmtHints(binding.Hint.GetFirstTableHints())
