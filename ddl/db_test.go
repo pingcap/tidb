@@ -4555,18 +4555,13 @@ func (s *testDBSuite1) TestAlterTableWithValidation(c *C) {
 	defer s.tk.MustExec("drop table if exists t1")
 
 	s.tk.MustExec("create table t1 (c1 int, c2 int as (c1 + 1));")
+
+	// Test for alter table with validation.
 	s.tk.MustExec("alter table t1 with validation")
 	c.Assert(s.tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
 	s.tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|8200|ALTER TABLE WITH VALIDATION is currently unsupported"))
-}
 
-func (s *testDBSuite2) TestAlterTableWithoutValidation(c *C) {
-	s.tk = testkit.NewTestKit(c, s.store)
-	s.tk.MustExec("use test")
-	s.tk.MustExec("drop table if exists t1")
-	defer s.tk.MustExec("drop table if exists t1")
-
-	s.tk.MustExec("create table t1 (c1 int, c2 int as (c1 + 1));")
+	// Test for alter table without validation.
 	s.tk.MustExec("alter table t1 without validation")
 	c.Assert(s.tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
 	s.tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|8200|ALTER TABLE WITHOUT VALIDATION is currently unsupported"))
