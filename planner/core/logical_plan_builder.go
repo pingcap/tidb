@@ -623,7 +623,7 @@ func (b *planBuilder) buildProjectionField(id, position int, field *ast.SelectFi
 	col, isCol := expr.(*expression.Column)
 	// Correlated column won't affect the final output names. So we can put it in any of the three logic block.
 	// Don't put it into the first block just for simplifying the codes.
-	if colNameField, ok := innerNode.(*ast.ColumnNameExpr); ok && isCol {
+	if _, ok := innerNode.(*ast.ColumnNameExpr); ok && isCol {
 		// Field is a column reference.
 		colName, origColName, tblName, origTblName, dbName = b.buildProjectionFieldNameFromColumns(field, col)
 	} else if field.AsName.L != "" {
