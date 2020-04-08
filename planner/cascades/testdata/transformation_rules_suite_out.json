@@ -2830,5 +2830,64 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestInjectProj",
+    "Cases": [
+      {
+        "SQL": "select * from t order by (a+b) limit 10",
+        "Result": [
+          "Group#0 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
+          "    Projection_6 input:[Group#1], test.t.a, test.t.b, test.t.c, test.t.d, test.t.e, test.t.c_str, test.t.d_str, test.t.e_str, test.t.f, test.t.g, test.t.h, test.t.i_date",
+          "Group#1 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date,Column#13]",
+          "    TopN_8 input:[Group#2], Column#13:asc, offset:0, count:10",
+          "Group#2 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date,Column#13]",
+          "    Projection_7 input:[Group#3], test.t.a, test.t.b, test.t.c, test.t.d, test.t.e, test.t.c_str, test.t.d_str, test.t.e_str, test.t.f, test.t.g, test.t.h, test.t.i_date, plus(test.t.a, test.t.b)->Column#13",
+          "Group#3 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
+          "    Projection_2 input:[Group#4], test.t.a, test.t.b, test.t.c, test.t.d, test.t.e, test.t.c_str, test.t.d_str, test.t.e_str, test.t.f, test.t.g, test.t.h, test.t.i_date",
+          "Group#4 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
+          "    DataSource_1 table:t"
+        ]
+      },
+      {
+        "SQL": "select max(a), min(b), avg(c) from t group by a+b",
+        "Result": [
+          "Group#0 Schema:[Column#13,Column#14,Column#15]",
+          "    Projection_3 input:[Group#1], Column#13, Column#14, Column#15",
+          "Group#1 Schema:[Column#13,Column#14,Column#15]",
+          "    Aggregation_5 input:[Group#2], group by:Column#17, funcs:max(test.t.a), min(test.t.b), avg(Column#16)",
+          "Group#2 Schema:[test.t.a,test.t.b,Column#16,Column#17]",
+          "    Projection_4 input:[Group#3], test.t.a, test.t.b, cast(test.t.c, decimal(65,30) BINARY)->Column#16, plus(test.t.a, test.t.b)->Column#17",
+          "Group#3 Schema:[test.t.a,test.t.b,test.t.c]",
+          "    DataSource_1 table:t"
+        ]
+      },
+      {
+        "SQL": "select max(a), min(b), avg(a / b) from t group by a",
+        "Result": [
+          "Group#0 Schema:[Column#13,Column#14,Column#15]",
+          "    Projection_3 input:[Group#1], Column#13, Column#14, Column#15",
+          "Group#1 Schema:[Column#13,Column#14,Column#15]",
+          "    Aggregation_5 input:[Group#2], group by:test.t.a, funcs:max(test.t.a), min(test.t.b), avg(Column#16)",
+          "Group#2 Schema:[test.t.a,test.t.b,Column#16,test.t.a]",
+          "    Projection_4 input:[Group#3], test.t.a, test.t.b, div(cast(test.t.a, decimal(20,0) BINARY), cast(test.t.b, decimal(20,0) BINARY))->Column#16, test.t.a",
+          "Group#3 Schema:[test.t.a,test.t.b]",
+          "    DataSource_1 table:t"
+        ]
+      },
+      {
+        "SQL": "select max(a), min(b), avg(a / b) from t group by (a+b)",
+        "Result": [
+          "Group#0 Schema:[Column#13,Column#14,Column#15]",
+          "    Projection_3 input:[Group#1], Column#13, Column#14, Column#15",
+          "Group#1 Schema:[Column#13,Column#14,Column#15]",
+          "    Aggregation_5 input:[Group#2], group by:Column#17, funcs:max(test.t.a), min(test.t.b), avg(Column#16)",
+          "Group#2 Schema:[test.t.a,test.t.b,Column#16,Column#17]",
+          "    Projection_4 input:[Group#3], test.t.a, test.t.b, div(cast(test.t.a, decimal(20,0) BINARY), cast(test.t.b, decimal(20,0) BINARY))->Column#16, plus(test.t.a, test.t.b)->Column#17",
+          "Group#3 Schema:[test.t.a,test.t.b]",
+          "    DataSource_1 table:t"
+        ]
+      }
+    ]
   }
 ]
