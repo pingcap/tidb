@@ -155,7 +155,7 @@ func (s *testSuite) TestAttachTo(c *C) {
 	c.Assert(len(oldParent.mu.children), Equals, 0)
 }
 
-func (s *testSuite) TestDeAttach(c *C) {
+func (s *testSuite) TestDetach(c *C) {
 	parent := NewTracker(stringutil.StringerStr("parent"), -1)
 	child := NewTracker(stringutil.StringerStr("child"), -1)
 	child.Consume(100)
@@ -165,7 +165,7 @@ func (s *testSuite) TestDeAttach(c *C) {
 	c.Assert(len(parent.mu.children), Equals, 1)
 	c.Assert(parent.mu.children[0], DeepEquals, child)
 
-	child.DeAttach()
+	child.Detach()
 	c.Assert(child.BytesConsumed(), Equals, int64(100))
 	c.Assert(parent.BytesConsumed(), Equals, int64(0))
 	c.Assert(len(parent.mu.children), Equals, 0)

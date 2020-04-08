@@ -155,9 +155,9 @@ func (a *recordSet) Close() error {
 	pps := types.CloneRow(sessVars.PreparedParams)
 	sessVars.PrevStmt = FormatSQL(a.stmt.OriginText(), pps)
 	a.stmt.logAudit()
-	// DeAttach the disk tracker from GlobalDiskUsageTracker after every execution
-	if a.stmt.Ctx.GetSessionVars().StmtCtx != nil && a.stmt.Ctx.GetSessionVars().StmtCtx.DiskTracker != nil {
-		a.stmt.Ctx.GetSessionVars().StmtCtx.DiskTracker.DeAttach()
+	// Detach the disk tracker from GlobalDiskUsageTracker after every execution
+	if stmtCtx := a.stmt.Ctx.GetSessionVars().StmtCtx; stmtCtx != nil && stmtCtx.DiskTracker != nil {
+		a.stmt.Ctx.GetSessionVars().StmtCtx.DiskTracker.Detach()
 	}
 	return err
 }

@@ -1554,9 +1554,9 @@ func (e *UnionExec) Close() error {
 // Before every execution, we must clear statement context.
 func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars := ctx.GetSessionVars()
-	// DeAttach the disk tracker for the previous stmtctx from GlobalDiskUsageTracker
+	// Detach the disk tracker for the previous stmtctx from GlobalDiskUsageTracker
 	if vars.StmtCtx != nil && vars.StmtCtx.DiskTracker != nil {
-		vars.StmtCtx.DiskTracker.DeAttach()
+		vars.StmtCtx.DiskTracker.Detach()
 	}
 	sc := &stmtctx.StatementContext{
 		TimeZone:    vars.Location(),
