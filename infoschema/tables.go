@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/config"
 	"io/ioutil"
 	"net/http"
 	"sort"
@@ -1101,14 +1102,17 @@ func GetTiDBServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-
 	var servers []ServerInfo
+	var isDefaultVersion bool
+	if len(config.GetGlobalConfig().ServerVersion) == 0 {
+		isDefaultVersion = true
+	}
 	for _, node := range tidbNodes {
 		servers = append(servers, ServerInfo{
 			ServerType:     "tidb",
 			Address:        fmt.Sprintf("%s:%d", node.IP, node.Port),
 			StatusAddr:     fmt.Sprintf("%s:%d", node.IP, node.StatusPort),
-			Version:        FormatVersion(node.Version),
+			Version:        FormatVersion(node.Version, isDefaultVersion),
 			GitHash:        node.GitHash,
 			StartTimestamp: node.StartTimestamp,
 		})
@@ -1118,11 +1122,12 @@ func GetTiDBServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 
 // FormatVersion make TiDBVersion consistent to TiKV and PD.
 // The default TiDBVersion is 5.7.25-TiDB-${TiDBReleaseVersion}.
-func FormatVersion(TiDBVersion string) string {
+func FormatVersion(TiDBVersion string, isDefaultVersion bool) string {
 	var version, nodeVersion string
 
-	// The user hasn't set the config 'ServerVersion',so the TiDBVersion would like "5.7.25-TiDB-TiDBReleaseVersion".
-	if TiDBVersion == fmt.Sprintf("5.7.25-TiDB-%s", mysql.TiDBReleaseVersion) {
+	// The user hasn't set the config 'ServerVersion'.
+	//if TiDBVersion == fmt.Sprintf("5.7.25-TiDB-%s", mysql.TiDBReleaseVersion) {
+	if isDefaultVersion {
 		nodeVersion = TiDBVersion[strings.LastIndex(TiDBVersion, "TiDB-")+len("TiDB-"):]
 		if nodeVersion[0] == 'v' {
 			nodeVersion = nodeVersion[1:]
