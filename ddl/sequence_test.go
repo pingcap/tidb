@@ -685,8 +685,8 @@ func (s *testSequenceSuite) TestSequenceFunction(c *C) {
 	s.tk.MustExec("drop sequence seq")
 
 	// test the sequence name preprocess.
-	s.tk.MustExec("create sequence seq")
 	s.tk.MustExec("drop table if exists t")
+	s.tk.MustExec("create sequence seq")
 	s.tk.MustExec("create table t(a int)")
 	s.tk.MustExec("insert into t values(1),(2)")
 	s.tk.MustQuery("select nextval(seq), t.a from t").Check(testkit.Rows("1 1", "2 2"))
