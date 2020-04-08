@@ -79,7 +79,7 @@ func (*testExpressionSuite) TestConstantPropagation(c *C) {
 		result     string
 	}{
 		{
-			solver: []PropagateConstantSolver{newPropConstSolver(), pgSolver2{}},
+			solver: []PropagateConstantSolver{newPropConstSolver()},
 			conditions: []Expression{
 				newFunction(ast.EQ, newColumn(0), newColumn(1)),
 				newFunction(ast.EQ, newColumn(1), newColumn(2)),
@@ -90,7 +90,7 @@ func (*testExpressionSuite) TestConstantPropagation(c *C) {
 			result: "1, eq(Column#0, 1), eq(Column#1, 1), eq(Column#2, 1), eq(Column#3, 1)",
 		},
 		{
-			solver: []PropagateConstantSolver{newPropConstSolver(), pgSolver2{}},
+			solver: []PropagateConstantSolver{newPropConstSolver()},
 			conditions: []Expression{
 				newFunction(ast.EQ, newColumn(0), newColumn(1)),
 				newFunction(ast.EQ, newColumn(1), newLonglong(1)),
@@ -131,7 +131,7 @@ func (*testExpressionSuite) TestConstantPropagation(c *C) {
 			result: "eq(Column#0, Column#1), gt(2, Column#0), gt(2, Column#1), gt(Column#0, 2), gt(Column#0, 3), gt(Column#1, 2), gt(Column#1, 3), lt(Column#0, 1), lt(Column#1, 1)",
 		},
 		{
-			solver: []PropagateConstantSolver{newPropConstSolver(), pgSolver2{}},
+			solver: []PropagateConstantSolver{newPropConstSolver()},
 			conditions: []Expression{
 				newFunction(ast.EQ, newLonglong(1), newColumn(0)),
 				newLonglong(0),
@@ -153,7 +153,7 @@ func (*testExpressionSuite) TestConstantPropagation(c *C) {
 				newFunction(ast.EQ, newColumn(0), newColumn(1)),
 				newFunction(ast.EQ, newColumn(0), newFunction(ast.BitLength, newColumn(2))),
 			},
-			result: "eq(Column#0, Column#1), eq(Column#0, bit_length(cast(Column#2))), eq(Column#1, bit_length(cast(Column#2)))",
+			result: "eq(Column#0, Column#1), eq(Column#0, bit_length(cast(Column#2, var_string(20)))), eq(Column#1, bit_length(cast(Column#2, var_string(20))))",
 		},
 		{
 			solver: []PropagateConstantSolver{newPropConstSolver()},
@@ -177,7 +177,7 @@ func (*testExpressionSuite) TestConstantPropagation(c *C) {
 				newFunction(ast.EQ, newColumn(0), newColumn(1)),
 				newFunction(ast.LE, newColumn(0), newFunction(ast.Rand)),
 			},
-			result: "eq(Column#0, Column#1), le(cast(Column#0), rand())",
+			result: "eq(Column#0, Column#1), le(cast(Column#0, double BINARY), rand())",
 		},
 	}
 	for _, tt := range tests {
@@ -198,100 +198,6 @@ func (*testExpressionSuite) TestConstantPropagation(c *C) {
 	}
 }
 
-func (*testExpressionSuite) TestConstraintPropagation(c *C) {
-	col1 := newColumnWithType(1, types.NewFieldType(mysql.TypeDate))
-	col2 := newColumnWithType(2, types.NewFieldType(mysql.TypeTimestamp))
-	tests := []struct {
-		solver     constraintSolver
-		conditions []Expression
-		result     string
-	}{
-		// Don't propagate this any more, because it makes the code more complex but not
-		// useful for partition pruning.
-		// {
-		// 	solver: newConstraintSolver(ruleColumnGTConst),
-		// 	conditions: []Expression{
-		// 		newFunction(ast.GT, newColumn(0), newLonglong(5)),
-		// 		newFunction(ast.GT, newColumn(0), newLonglong(7)),
-		// 	},
-		// 	result: "gt(Column#0, 7)",
-		// },
-		{
-			solver: newConstraintSolver(ruleColumnOPConst),
-			conditions: []Expression{
-				newFunction(ast.GT, newColumn(0), newLonglong(5)),
-				newFunction(ast.LT, newColumn(0), newLonglong(5)),
-			},
-			result: "0",
-		},
-		{
-			solver: newConstraintSolver(ruleColumnOPConst),
-			conditions: []Expression{
-				newFunction(ast.GT, newColumn(0), newLonglong(7)),
-				newFunction(ast.LT, newColumn(0), newLonglong(5)),
-			},
-			result: "0",
-		},
-		{
-			solver: newConstraintSolver(ruleColumnOPConst),
-			// col1 > '2018-12-11' and to_days(col1) < 5 => false
-			conditions: []Expression{
-				newFunction(ast.GT, col1, newDate(2018, 12, 11)),
-				newFunction(ast.LT, newFunction(ast.ToDays, col1), newLonglong(5)),
-			},
-			result: "0",
-		},
-		{
-			solver: newConstraintSolver(ruleColumnOPConst),
-			conditions: []Expression{
-				newFunction(ast.LT, newColumn(0), newLonglong(5)),
-				newFunction(ast.GT, newColumn(0), newLonglong(5)),
-			},
-			result: "0",
-		},
-		{
-			solver: newConstraintSolver(ruleColumnOPConst),
-			conditions: []Expression{
-				newFunction(ast.LT, newColumn(0), newLonglong(5)),
-				newFunction(ast.GT, newColumn(0), newLonglong(7)),
-			},
-			result: "0",
-		},
-		{
-			solver: newConstraintSolver(ruleColumnOPConst),
-			// col1 < '2018-12-11' and to_days(col1) > 737999 => false
-			conditions: []Expression{
-				newFunction(ast.LT, col1, newDate(2018, 12, 11)),
-				newFunction(ast.GT, newFunction(ast.ToDays, col1), newLonglong(737999)),
-			},
-			result: "0",
-		},
-		{
-			solver: newConstraintSolver(ruleColumnOPConst),
-			// col2 > unixtimestamp('2008-05-01 00:00:00') and unixtimestamp(col2) < unixtimestamp('2008-04-01 00:00:00') => false
-			conditions: []Expression{
-				newFunction(ast.GT, col2, newTimestamp(2008, 5, 1, 0, 0, 0)),
-				newFunction(ast.LT, newFunction(ast.UnixTimestamp, col2), newLonglong(1206979200)),
-			},
-			result: "0",
-		},
-	}
-	for _, tt := range tests {
-		ctx := mock.NewContext()
-		conds := make([]Expression, 0, len(tt.conditions))
-		for _, cd := range tt.conditions {
-			conds = append(conds, FoldConstant(cd))
-		}
-		newConds := tt.solver.Solve(ctx, conds)
-		var result []string
-		for _, v := range newConds {
-			result = append(result, v.String())
-		}
-		sort.Strings(result)
-		c.Assert(strings.Join(result, ", "), Equals, tt.result, Commentf("different for expr %s", tt.conditions))
-	}
-}
-
 func (*testExpressionSuite) TestConstantFolding(c *C) {
 	tests := []struct {
 		condition Expression
@@ -307,7 +213,7 @@ func (*testExpressionSuite) TestConstantFolding(c *C) {
 		},
 		{
 			condition: newFunction(ast.EQ, newColumn(0), newFunction(ast.Rand)),
-			result:    "eq(cast(Column#0), rand())",
+			result:    "eq(cast(Column#0, double BINARY), rand())",
 		},
 		{
 			condition: newFunction(ast.IsNull, newLonglong(1)),
@@ -549,4 +455,15 @@ func (*testExpressionSuite) TestVectorizedConstant(c *C) {
 			c.Assert(col.GetString(i), Equals, "hello")
 		}
 	}
+}
+
+func (*testExpressionSuite) TestGetTypeThreadSafe(c *C) {
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().PreparedParams = []types.Datum{
+		types.NewIntDatum(1),
+	}
+	con := &Constant{ParamMarker: &ParamMarker{ctx: ctx, order: 0}, RetType: newStringFieldType()}
+	ft1 := con.GetType()
+	ft2 := con.GetType()
+	c.Assert(ft1, Not(Equals), ft2)
 }

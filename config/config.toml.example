@@ -31,15 +31,25 @@ split-table = true
 # The limit of concurrent executed sessions.
 token-limit = 1000
 
-# Set the memory quota for a query in bytes. Default: 32GB
-mem-quota-query = 34359738368
+# The maximum memory available for a single SQL statement. Default: 1GB
+mem-quota-query = 1073741824
 
-# Set to true to enable use of temporary disk for some executors when mem-quota-query is exceeded.
+# Controls whether to enable the temporary storage for some operators when a single SQL statement exceeds the memory quota specified by mem-quota-query.
 oom-use-tmp-storage = true
 
-# What to do when mem-quota-query is exceeded and can not be spilled over to disk any more.
+# Specifies the temporary storage path for some operators when a single SQL statement exceeds the memory quota specified by mem-quota-query.
+# It defaults to a generated directory in `<TMPDIR>/tidb/` if it is unset.
+# It only takes effect when `oom-use-tmp-storage` is `true`.
+# tmp-storage-path = "/tmp/tidb/NDAwMC8xMDA4MA==/tmp-storage"
+
+# Specifies the maximum use of temporary storage (bytes) for all active queries when `oom-use-tmp-storage` is enabled.
+# If the `temp-storage-quota` exceeds the capacity of the temporary storage directory, tidb-server would return an error and exit.
+# The default value of temp-storage-quota is under 0 which means tidb-server wouldn't check the capacity.
+temp-storage-quota = -1
+
+# Specifies what operation TiDB performs when a single SQL statement exceeds the memory quota specified by mem-quota-query and cannot be spilled over to disk.
 # Valid options: ["log", "cancel"]
-oom-action = "log"
+oom-action = "cancel"
 
 # Enable coprocessor streaming.
 enable-streaming = false
@@ -60,6 +70,9 @@ check-mb4-value-in-utf8 = true
 # treat-old-version-utf8-as-utf8mb4 use for upgrade compatibility. Set to true will treat old version table/column UTF8 charset as UTF8MB4.
 treat-old-version-utf8-as-utf8mb4 = true
 
+# max-index-length is used to deal with compatibility issues from v3.0.7 and previous version upgrades. It can only be in [3072, 3072*4].
+max-index-length = 3072
+
 # enable-table-lock is used to control table lock feature. Default is false, indicate the table lock feature is disabled.
 enable-table-lock = false
 
@@ -69,13 +82,9 @@ delay-clean-table-lock = 0
 # Maximum number of the splitting region, which is used by the split region statement.
 split-region-max-num = 1000
 
-# enable the TiDB to fetch configs from PD and update itself during runtime.
-# see https://github.com/pingcap/tidb/pull/13660 for more details.
-enable-dynamic-config = false
-
 # alter-primary-key is used to control alter primary key feature. Default is false, indicate the alter primary key feature is disabled.
-# If it is true, we can add the primary key by "alter table", but we may not be able to drop the primary key.
-# In order to support "drop primary key" operation , this flag must be true and the table does not have the pkIsHandle flag.
+# If it is true, we can add the primary key by "alter table". However, if a table already exists before the switch is turned true and the data type of its primary key column is an integer,
+# the primary key cannot be dropped.
 alter-primary-key = false
 
 # server-version is used to change the version string of TiDB in the following scenarios:
@@ -91,8 +100,8 @@ repair-mode = false
 # In repair mode, repairing table which is not in repair list will get wrong database or wrong table error.
 repair-table-list = []
 
-# The maximum permitted number of simultaneous client connections.
-max-server-connections = 4096
+# The maximum permitted number of simultaneous client connections. When the value is 0, the number of connections is unlimited.
+max-server-connections = 0
 
 # Whether new collations are enabled, as indicated by its name, this configuration entry take effect ONLY when a TiDB cluster bootstraps for the first time.
 new_collations_enabled_on_first_bootstrap = false
@@ -329,12 +338,6 @@ region-cache-ttl = 600
 # default 0 means shutting off store limit.
 store-limit = 0
 
-[txn-local-latches]
-# Enable local latches for transactions. Enable it when
-# there are lots of conflicts between transactions.
-enabled = false
-capacity = 2048000
-
 [binlog]
 # enable to write binlog.
 # NOTE: If binlog is enabled, txn-total-size-limit should be less than 104857600(10M).
@@ -364,6 +367,9 @@ max-retry-count = 256
 # enable statement summary.
 enable = true
 
+# enable statement summary for TiDB internal query, default is false.
+enable-internal-query = false
+
 # max number of statements kept in memory.
 max-stmt-count = 200
 
@@ -381,6 +387,8 @@ history-size = 24
 [experimental]
 # enable column attribute `auto_random` to be defined on the primary key column.
 allow-auto-random = false
+# enable creating expression index.
+allow-expression-index = false
 
 # server level isolation read by engines and labels
 [isolation-read]

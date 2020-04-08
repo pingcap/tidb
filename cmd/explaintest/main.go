@@ -26,7 +26,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-sql-driver/mysql"
+	_ "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/ast"
@@ -369,10 +369,6 @@ func (t *tester) execute(query query) error {
 }
 
 func filterWarning(err error) error {
-	causeErr := errors.Cause(err)
-	if _, ok := causeErr.(mysql.MySQLWarnings); ok {
-		return nil
-	}
 	return err
 }
 
@@ -620,7 +616,7 @@ func main() {
 
 	mdb, err = openDBWithRetry(
 		"mysql",
-		"root@tcp(localhost:4001)/"+dbName+"?strict=true&allowAllFiles=true",
+		"root@tcp(localhost:4001)/"+dbName+"?allowAllFiles=true",
 	)
 	if err != nil {
 		log.Fatal("open DB failed", zap.Error(err))

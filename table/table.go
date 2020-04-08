@@ -22,8 +22,8 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx"
@@ -100,6 +100,8 @@ var (
 	ErrNoPartitionForGivenValue = terror.ClassTable.New(mysql.ErrNoPartitionForGivenValue, mysql.MySQLErrName[mysql.ErrNoPartitionForGivenValue])
 	// ErrLockOrActiveTransaction returns when execute unsupported statement in a lock session or an active transaction.
 	ErrLockOrActiveTransaction = terror.ClassTable.New(mysql.ErrLockOrActiveTransaction, mysql.MySQLErrName[mysql.ErrLockOrActiveTransaction])
+	// ErrSequenceHasRunOut returns when sequence has run out.
+	ErrSequenceHasRunOut = terror.ClassTable.New(mysql.ErrSequenceRunOut, mysql.MySQLErrName[mysql.ErrSequenceRunOut])
 )
 
 // RecordIterFunc is used for low-level record iteration.
@@ -108,12 +110,21 @@ type RecordIterFunc func(h int64, rec []types.Datum, cols []*Column) (more bool,
 // AddRecordOpt contains the options will be used when adding a record.
 type AddRecordOpt struct {
 	CreateIdxOpt
-	IsUpdate bool
+	IsUpdate      bool
+	ReserveAutoID int
 }
 
 // AddRecordOption is defined for the AddRecord() method of the Table interface.
 type AddRecordOption interface {
 	ApplyOn(*AddRecordOpt)
+}
+
+// WithReserveAutoIDHint tells the AddRecord operation to reserve a batch of auto ID in the stmtctx.
+type WithReserveAutoIDHint int
+
+// ApplyOn implements the AddRecordOption interface.
+func (n WithReserveAutoIDHint) ApplyOn(opt *AddRecordOpt) {
+	opt.ReserveAutoID = int(n)
 }
 
 // ApplyOn implements the AddRecordOption interface, so any CreateIdxOptFunc
@@ -189,17 +200,8 @@ type Table interface {
 	// RemoveRecord removes a row in the table.
 	RemoveRecord(ctx sessionctx.Context, h int64, r []types.Datum) error
 
-	// AllocHandle allocates a handle for a new row.
-	AllocHandle(ctx sessionctx.Context) (int64, error)
-
-	// AllocHandleIDs allocates multiple handle for rows.
-	AllocHandleIDs(ctx sessionctx.Context, n uint64) (int64, int64, error)
-
-	// Allocator returns Allocator.
-	Allocator(ctx sessionctx.Context, allocatorType autoid.AllocatorType) autoid.Allocator
-
-	// AllAllocators returns all allocators.
-	AllAllocators(ctx sessionctx.Context) autoid.Allocators
+	// Allocators returns all allocators.
+	Allocators(ctx sessionctx.Context) autoid.Allocators
 
 	// RebaseAutoID rebases the auto_increment ID base.
 	// If allocIDs is true, it will allocate some IDs and save to the cache.
@@ -224,7 +226,7 @@ func AllocAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Conte
 	}
 	increment := sctx.GetSessionVars().AutoIncrementIncrement
 	offset := sctx.GetSessionVars().AutoIncrementOffset
-	_, max, err := t.Allocator(sctx, autoid.RowIDAllocType).Alloc(t.Meta().ID, uint64(1), int64(increment), int64(offset))
+	_, max, err := t.Allocators(sctx).Get(autoid.RowIDAllocType).Alloc(t.Meta().ID, uint64(1), int64(increment), int64(offset))
 	if err != nil {
 		return 0, err
 	}
@@ -240,7 +242,7 @@ func AllocBatchAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.
 	}
 	increment = int64(sctx.GetSessionVars().AutoIncrementIncrement)
 	offset := int64(sctx.GetSessionVars().AutoIncrementOffset)
-	min, max, err := t.Allocator(sctx, autoid.RowIDAllocType).Alloc(t.Meta().ID, uint64(N), increment, offset)
+	min, max, err := t.Allocators(sctx).Get(autoid.RowIDAllocType).Alloc(t.Meta().ID, uint64(N), increment, offset)
 	if err != nil {
 		return min, max, err
 	}
@@ -263,7 +265,7 @@ type PhysicalTable interface {
 type PartitionedTable interface {
 	Table
 	GetPartition(physicalID int64) PhysicalTable
-	GetPartitionByRow(sessionctx.Context, []types.Datum) (Table, error)
+	GetPartitionByRow(sessionctx.Context, []types.Datum) (PhysicalTable, error)
 }
 
 // TableFromMeta builds a table.Table from *model.TableInfo.
@@ -272,14 +274,3 @@ var TableFromMeta func(allocators autoid.Allocators, tblInfo *model.TableInfo) (
 
 // MockTableFromMeta only serves for test.
 var MockTableFromMeta func(tableInfo *model.TableInfo) Table
-
-// Slice is used for table sorting.
-type Slice []Table
-
-func (s Slice) Len() int { return len(s) }
-
-func (s Slice) Less(i, j int) bool {
-	return s[i].Meta().Name.O < s[j].Meta().Name.O
-}
-
-func (s Slice) Swap(i, j int) { s[i], s[j] = s[j], s[i] }

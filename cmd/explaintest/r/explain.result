@@ -27,15 +27,15 @@ create table t(id int primary key, a int, b int);
 set session tidb_hashagg_partial_concurrency = 1;
 set session tidb_hashagg_final_concurrency = 1;
 explain select group_concat(a) from t group by id;
-id	count	task	operator info
-StreamAgg_8	8000.00	root	group by:Column#6, funcs:group_concat(Column#5, ",")->Column#4
-└─Projection_18	10000.00	root	cast(test.t.a)->Column#5, test.t.id
-  └─TableReader_15	10000.00	root	data:TableScan_14
-    └─TableScan_14	10000.00	cop[tikv]	table:t, range:[-inf,+inf], keep order:true, stats:pseudo
+id	estRows	task	access object	operator info
+StreamAgg_8	8000.00	root		group by:Column#6, funcs:group_concat(Column#5, ",")->Column#4
+└─Projection_18	10000.00	root		cast(test.t.a, var_string(20))->Column#5, test.t.id
+  └─TableReader_15	10000.00	root		data:TableFullScan_14
+    └─TableFullScan_14	10000.00	cop[tikv]	table:t	keep order:true, stats:pseudo
 explain select group_concat(a, b) from t group by id;
-id	count	task	operator info
-StreamAgg_8	8000.00	root	group by:Column#7, funcs:group_concat(Column#5, Column#6, ",")->Column#4
-└─Projection_18	10000.00	root	cast(test.t.a)->Column#5, cast(test.t.b)->Column#6, test.t.id
-  └─TableReader_15	10000.00	root	data:TableScan_14
-    └─TableScan_14	10000.00	cop[tikv]	table:t, range:[-inf,+inf], keep order:true, stats:pseudo
+id	estRows	task	access object	operator info
+StreamAgg_8	8000.00	root		group by:Column#7, funcs:group_concat(Column#5, Column#6, ",")->Column#4
+└─Projection_18	10000.00	root		cast(test.t.a, var_string(20))->Column#5, cast(test.t.b, var_string(20))->Column#6, test.t.id
+  └─TableReader_15	10000.00	root		data:TableFullScan_14
+    └─TableFullScan_14	10000.00	cop[tikv]	table:t	keep order:true, stats:pseudo
 drop table t;

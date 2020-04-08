@@ -14,9 +14,9 @@
 package types
 
 import (
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	parser_types "github.com/pingcap/parser/types"
+	mysql "github.com/pingcap/tidb/errno"
 )
 
 // const strings for ErrWrongValue
@@ -74,5 +74,5 @@ var (
 	// ErrInvalidWeekModeFormat is returned when the week mode is wrong.
 	ErrInvalidWeekModeFormat = terror.ClassTypes.New(mysql.ErrInvalidWeekModeFormat, mysql.MySQLErrName[mysql.ErrInvalidWeekModeFormat])
 	// ErrWrongValue is returned when the input value is in wrong format.
-	ErrWrongValue = terror.ClassTypes.New(mysql.ErrWrongValue, mysql.MySQLErrName[mysql.ErrWrongValue])
+	ErrWrongValue = terror.ClassTypes.New(mysql.ErrTruncatedWrongValue, mysql.MySQLErrName[mysql.ErrWrongValue])
 )

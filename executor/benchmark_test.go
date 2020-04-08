@@ -42,8 +42,9 @@ import (
 )
 
 var (
-	_ Executor          = &mockDataSource{}
-	_ core.PhysicalPlan = &mockDataPhysicalPlan{}
+	_          Executor          = &mockDataSource{}
+	_          core.PhysicalPlan = &mockDataPhysicalPlan{}
+	wideString                   = strings.Repeat("x", 5*1024)
 )
 
 type mockDataSourceParameters struct {
@@ -103,13 +104,15 @@ func (mds *mockDataSource) genColDatums(col int) (results []interface{}) {
 		NDV = mds.p.ndvs[col]
 	}
 	results = make([]interface{}, 0, rows)
-	if mds.p.genDataFunc != nil {
-		for i := 0; i < rows; i++ {
-			results = append(results, mds.p.genDataFunc(i, typ))
-		}
-	} else if NDV == 0 {
-		for i := 0; i < rows; i++ {
-			results = append(results, mds.randDatum(typ))
+	if NDV == 0 {
+		if mds.p.genDataFunc == nil {
+			for i := 0; i < rows; i++ {
+				results = append(results, mds.randDatum(typ))
+			}
+		} else {
+			for i := 0; i < rows; i++ {
+				results = append(results, mds.p.genDataFunc(i, typ))
+			}
 		}
 	} else {
 		datumSet := make(map[string]bool, NDV)
@@ -151,8 +154,11 @@ func (mds *mockDataSource) randDatum(typ *types.FieldType) interface{} {
 	switch typ.Tp {
 	case mysql.TypeLong, mysql.TypeLonglong:
 		return int64(rand.Int())
-	case mysql.TypeDouble:
+	case mysql.TypeDouble, mysql.TypeFloat:
 		return rand.Float64()
+	case mysql.TypeNewDecimal:
+		var d types.MyDecimal
+		return d.FromInt(int64(rand.Int()))
 	case mysql.TypeVarString:
 		buff := make([]byte, 10)
 		rand.Read(buff)
@@ -184,9 +190,9 @@ func (mds *mockDataSource) Next(ctx context.Context, req *chunk.Chunk) error {
 func buildMockDataSource(opt mockDataSourceParameters) *mockDataSource {
 	baseExec := newBaseExecutor(opt.ctx, opt.schema, nil)
 	m := &mockDataSource{baseExec, opt, nil, nil, 0}
-	types := retTypes(m)
-	colData := make([][]interface{}, len(types))
-	for i := 0; i < len(types); i++ {
+	rTypes := retTypes(m)
+	colData := make([][]interface{}, len(rTypes))
+	for i := 0; i < len(rTypes); i++ {
 		colData[i] = m.genColDatums(i)
 	}
 
@@ -198,12 +204,14 @@ func buildMockDataSource(opt mockDataSourceParameters) *mockDataSource {
 	for i := 0; i < m.p.rows; i++ {
 		idx := i / m.maxChunkSize
 		retTypes := retTypes(m)
-		for colIdx := 0; colIdx < len(types); colIdx++ {
+		for colIdx := 0; colIdx < len(rTypes); colIdx++ {
 			switch retTypes[colIdx].Tp {
 			case mysql.TypeLong, mysql.TypeLonglong:
 				m.genData[idx].AppendInt64(colIdx, colData[colIdx][i].(int64))
-			case mysql.TypeDouble:
+			case mysql.TypeDouble, mysql.TypeFloat:
 				m.genData[idx].AppendFloat64(colIdx, colData[colIdx][i].(float64))
+			case mysql.TypeNewDecimal:
+				m.genData[idx].AppendMyDecimal(colIdx, colData[colIdx][i].(*types.MyDecimal))
 			case mysql.TypeVarString:
 				m.genData[idx].AppendString(colIdx, colData[colIdx][i].(string))
 			default:
@@ -508,27 +516,25 @@ type windowTestCase struct {
 	dataSourceSorted bool
 	ctx              sessionctx.Context
 	rawDataSmall     string
-}
-
-func (a windowTestCase) columns() []*expression.Column {
-	return []*expression.Column{
-		{Index: 0, RetType: types.NewFieldType(mysql.TypeDouble)},
-		{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)},
-		{Index: 2, RetType: types.NewFieldType(mysql.TypeVarString)},
-		{Index: 3, RetType: types.NewFieldType(mysql.TypeLonglong)},
-	}
+	columns          []*expression.Column // the columns of mock schema
 }
 
 func (a windowTestCase) String() string {
-	return fmt.Sprintf("(func:%v, numFunc:%v, ndv:%v, rows:%v, sorted:%v, concurrency:%v)",
-		a.windowFunc, a.numFunc, a.ndv, a.rows, a.dataSourceSorted, a.concurrency)
+	return fmt.Sprintf("(func:%v, aggColType:%s, numFunc:%v, ndv:%v, rows:%v, sorted:%v, concurrency:%v)",
+		a.windowFunc, a.columns[0].RetType, a.numFunc, a.ndv, a.rows, a.dataSourceSorted, a.concurrency)
 }
 
 func defaultWindowTestCase() *windowTestCase {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
 	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
-	return &windowTestCase{ast.WindowFuncRowNumber, 1, nil, 1000, 10000000, 1, true, ctx, strings.Repeat("x", 16)}
+	return &windowTestCase{ast.WindowFuncRowNumber, 1, nil, 1000, 10000000, 1, true, ctx, strings.Repeat("x", 16),
+		[]*expression.Column{
+			{Index: 0, RetType: types.NewFieldType(mysql.TypeDouble)},
+			{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)},
+			{Index: 2, RetType: types.NewFieldType(mysql.TypeVarString)},
+			{Index: 3, RetType: types.NewFieldType(mysql.TypeLonglong)},
+		}}
 }
 
 func benchmarkWindowExecWithCase(b *testing.B, casTest *windowTestCase) {
@@ -537,29 +543,19 @@ func benchmarkWindowExecWithCase(b *testing.B, casTest *windowTestCase) {
 		b.Fatal(err)
 	}
 
-	cols := casTest.columns()
+	cols := casTest.columns
 	dataSource := buildMockDataSource(mockDataSourceParameters{
 		schema: expression.NewSchema(cols...),
 		ndvs:   []int{0, casTest.ndv, 0, 0},
 		orders: []bool{false, casTest.dataSourceSorted, false, false},
 		rows:   casTest.rows,
 		ctx:    casTest.ctx,
-		genDataFunc: func(row int, typ *types.FieldType) interface{} {
-			switch typ.Tp {
-			case mysql.TypeLong, mysql.TypeLonglong:
-				return int64(row)
-			case mysql.TypeVarString:
-				return casTest.rawDataSmall
-			default:
-				panic("not implement")
-			}
-		},
 	})
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		b.StopTimer() // prepare a new window-executor
-		childCols := casTest.columns()
+		childCols := casTest.columns
 		schema := expression.NewSchema(childCols...)
 		windowExec := buildWindowExecutor(casTest.ctx, casTest.windowFunc, casTest.numFunc, casTest.frame, dataSource, schema, childCols[1:2], casTest.concurrency, casTest.dataSourceSorted)
 		tmpCtx := context.Background()
@@ -674,33 +670,42 @@ func BenchmarkWindowFunctionsWithFrame(b *testing.B) {
 	}
 }
 
-func BenchmarkWindowFunctionsWithSlidingWindow(b *testing.B) {
+func baseBenchmarkWindowFunctionsWithSlidingWindow(b *testing.B, frameType ast.FrameType) {
 	b.ReportAllocs()
-	windowFuncs := []string{
-		ast.AggFuncCount,
+	windowFuncs := []struct {
+		aggFunc     string
+		aggColTypes byte
+	}{
+		{ast.AggFuncSum, mysql.TypeFloat},
+		{ast.AggFuncSum, mysql.TypeNewDecimal},
+		{ast.AggFuncCount, mysql.TypeLong},
+		{ast.AggFuncAvg, mysql.TypeFloat},
+		{ast.AggFuncAvg, mysql.TypeNewDecimal},
 	}
-	rows := []int{1000, 100000}
-	ndvs := []int{10, 1000}
-	frames := []*core.WindowFrame{
-		{Type: ast.Rows, Start: &core.FrameBound{Type: ast.Preceding, Num: 10}, End: &core.FrameBound{Type: ast.Following, Num: 10}},
-		{Type: ast.Rows, Start: &core.FrameBound{Type: ast.Preceding, Num: 100}, End: &core.FrameBound{Type: ast.Following, Num: 100}},
+	row := 100000
+	ndv := 100
+	frame := &core.WindowFrame{
+		Type:  frameType,
+		Start: &core.FrameBound{Type: ast.Preceding, Num: 10},
+		End:   &core.FrameBound{Type: ast.Following, Num: 10},
 	}
-	for _, row := range rows {
-		for _, ndv := range ndvs {
-			for _, frame := range frames {
-				for _, windowFunc := range windowFuncs {
-					cas := defaultWindowTestCase()
-					cas.rows = row
-					cas.ndv = ndv
-					cas.windowFunc = windowFunc
-					cas.frame = frame
-					b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
-						benchmarkWindowExecWithCase(b, cas)
-					})
-				}
-			}
-		}
+	for _, windowFunc := range windowFuncs {
+		cas := defaultWindowTestCase()
+		cas.ctx.GetSessionVars().WindowingUseHighPrecision = false
+		cas.rows = row
+		cas.ndv = ndv
+		cas.windowFunc = windowFunc.aggFunc
+		cas.frame = frame
+		cas.columns[0].RetType.Tp = windowFunc.aggColTypes
+		b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+			benchmarkWindowExecWithCase(b, cas)
+		})
 	}
+}
+
+func BenchmarkWindowFunctionsWithSlidingWindow(b *testing.B) {
+	baseBenchmarkWindowFunctionsWithSlidingWindow(b, ast.Rows)
+	baseBenchmarkWindowFunctionsWithSlidingWindow(b, ast.Ranges)
 }
 
 type hashJoinTestCase struct {
@@ -737,7 +742,7 @@ func defaultHashJoinTestCase(cols []*types.FieldType, joinType core.JoinType, us
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(nil, -1)
 	ctx.GetSessionVars().StmtCtx.DiskTracker = disk.NewTracker(nil, -1)
 	ctx.GetSessionVars().IndexLookupJoinConcurrency = 4
-	tc := &hashJoinTestCase{rows: 100000, concurrency: 4, ctx: ctx, keyIdx: []int{0, 1}, rawData: strings.Repeat("x", 5*1024)}
+	tc := &hashJoinTestCase{rows: 100000, concurrency: 4, ctx: ctx, keyIdx: []int{0, 1}, rawData: wideString}
 	tc.cols = cols
 	tc.useOuterToBuild = useOuterToBuild
 	tc.joinType = joinType
@@ -772,20 +777,24 @@ func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec Executor)
 	for _, keyIdx := range testCase.keyIdx {
 		joinKeys = append(joinKeys, cols0[keyIdx])
 	}
+	probeKeys := make([]*expression.Column, 0, len(testCase.keyIdx))
+	for _, keyIdx := range testCase.keyIdx {
+		probeKeys = append(probeKeys, cols1[keyIdx])
+	}
 	e := &HashJoinExec{
 		baseExecutor:      newBaseExecutor(testCase.ctx, joinSchema, stringutil.StringerStr("HashJoin"), innerExec, outerExec),
 		concurrency:       uint(testCase.concurrency),
 		joinType:          testCase.joinType, // 0 for InnerJoin, 1 for LeftOutersJoin, 2 for RightOuterJoin
 		isOuterJoin:       false,
 		buildKeys:         joinKeys,
-		probeKeys:         joinKeys,
+		probeKeys:         probeKeys,
 		buildSideExec:     innerExec,
 		probeSideExec:     outerExec,
 		buildSideEstCount: float64(testCase.rows),
 		useOuterToBuild:   testCase.useOuterToBuild,
 	}
 
-	childrenUsedSchema := e.markChildrenUsedCols()
+	childrenUsedSchema := markChildrenUsedCols(e.Schema(), e.children[0].Schema(), e.children[1].Schema())
 	defaultValues := make([]types.Datum, e.buildSideExec.Schema().Len())
 	lhsTypes, rhsTypes := retTypes(innerExec), retTypes(outerExec)
 	e.joiners = make([]joiner, e.concurrency)
@@ -837,6 +846,7 @@ func benchmarkHashJoinExecWithCase(b *testing.B, casTest *hashJoinTestCase) {
 		dataSource1.prepareChunks()
 		dataSource2.prepareChunks()
 
+		totalRow := 0
 		b.StartTimer()
 		if err := exec.Open(tmpCtx); err != nil {
 			b.Fatal(err)
@@ -848,14 +858,18 @@ func benchmarkHashJoinExecWithCase(b *testing.B, casTest *hashJoinTestCase) {
 			if chk.NumRows() == 0 {
 				break
 			}
+			totalRow += chk.NumRows()
 		}
 
+		if spilled := exec.rowContainer.alreadySpilled(); spilled != casTest.disk {
+			b.Fatal("wrong usage with disk:", spilled, casTest.disk)
+		}
 		if err := exec.Close(); err != nil {
 			b.Fatal(err)
 		}
 		b.StopTimer()
-		if exec.rowContainer.alreadySpilled() != casTest.disk {
-			b.Fatal("wrong usage with disk")
+		if totalRow == 0 {
+			b.Fatal("totalRow == 0")
 		}
 	}
 }
@@ -916,18 +930,19 @@ func BenchmarkHashJoinExec(b *testing.B) {
 		benchmarkHashJoinExecWithCase(b, cas)
 	})
 
-	cas.keyIdx = []int{0}
-	cas.disk = true
-	cas.rows = 1000
-	b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
-		benchmarkHashJoinExecWithCase(b, cas)
-	})
-
 	// Replace the wide string column with double column
 	cols = []*types.FieldType{
 		types.NewFieldType(mysql.TypeLonglong),
 		types.NewFieldType(mysql.TypeDouble),
 	}
+
+	cas = defaultHashJoinTestCase(cols, 0, false)
+	cas.keyIdx = []int{0}
+	cas.rows = 5
+	b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+		benchmarkHashJoinExecWithCase(b, cas)
+	})
+
 	cas = defaultHashJoinTestCase(cols, 0, false)
 	b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
 		benchmarkHashJoinExecWithCase(b, cas)
@@ -966,18 +981,19 @@ func BenchmarkOuterHashJoinExec(b *testing.B) {
 		benchmarkHashJoinExecWithCase(b, cas)
 	})
 
-	cas.keyIdx = []int{0}
-	cas.disk = true
-	cas.rows = 1000
-	b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
-		benchmarkHashJoinExecWithCase(b, cas)
-	})
-
 	// Replace the wide string column with double column
 	cols = []*types.FieldType{
 		types.NewFieldType(mysql.TypeLonglong),
 		types.NewFieldType(mysql.TypeDouble),
 	}
+
+	cas = defaultHashJoinTestCase(cols, 2, true)
+	cas.keyIdx = []int{0}
+	cas.rows = 5
+	b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+		benchmarkHashJoinExecWithCase(b, cas)
+	})
+
 	cas = defaultHashJoinTestCase(cols, 2, true)
 	b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
 		benchmarkHashJoinExecWithCase(b, cas)
@@ -1104,7 +1120,7 @@ func defaultIndexJoinTestCase() *indexJoinTestCase {
 		outerJoinKeyIdx: []int{0, 1},
 		innerJoinKeyIdx: []int{0, 1},
 		innerIdx:        []int{0, 1},
-		rawData:         strings.Repeat("x", 5*1024),
+		rawData:         wideString,
 	}
 	return tc
 }
@@ -1206,8 +1222,8 @@ func prepare4IndexMergeJoin(tc *indexJoinTestCase, outerDS *mockDataSource, inne
 	compareFuncs := make([]expression.CompareFunc, 0, len(outerJoinKeys))
 	outerCompareFuncs := make([]expression.CompareFunc, 0, len(outerJoinKeys))
 	for i := range outerJoinKeys {
-		compareFuncs = append(compareFuncs, expression.GetCmpFunction(outerJoinKeys[i], innerJoinKeys[i]))
-		outerCompareFuncs = append(outerCompareFuncs, expression.GetCmpFunction(outerJoinKeys[i], outerJoinKeys[i]))
+		compareFuncs = append(compareFuncs, expression.GetCmpFunction(nil, outerJoinKeys[i], innerJoinKeys[i]))
+		outerCompareFuncs = append(outerCompareFuncs, expression.GetCmpFunction(nil, outerJoinKeys[i], outerJoinKeys[i]))
 	}
 	e := &IndexLookUpMergeJoin{
 		baseExecutor: newBaseExecutor(tc.ctx, joinSchema, stringutil.StringerStr("IndexMergeJoin"), outerDS),
@@ -1343,8 +1359,8 @@ func prepare4MergeJoin(tc *mergeJoinTestCase, leftExec, rightExec *mockDataSourc
 	compareFuncs := make([]expression.CompareFunc, 0, len(outerJoinKeys))
 	outerCompareFuncs := make([]expression.CompareFunc, 0, len(outerJoinKeys))
 	for i := range outerJoinKeys {
-		compareFuncs = append(compareFuncs, expression.GetCmpFunction(outerJoinKeys[i], innerJoinKeys[i]))
-		outerCompareFuncs = append(outerCompareFuncs, expression.GetCmpFunction(outerJoinKeys[i], outerJoinKeys[i]))
+		compareFuncs = append(compareFuncs, expression.GetCmpFunction(nil, outerJoinKeys[i], innerJoinKeys[i]))
+		outerCompareFuncs = append(outerCompareFuncs, expression.GetCmpFunction(nil, outerJoinKeys[i], outerJoinKeys[i]))
 	}
 
 	defaultValues := make([]types.Datum, len(innerCols))
@@ -1403,7 +1419,7 @@ func newMergeJoinBenchmark(numOuterRows, numInnerDup, numInnerRedundant int) (tc
 		outerJoinKeyIdx: []int{0, 1},
 		innerJoinKeyIdx: []int{0, 1},
 		innerIdx:        []int{0, 1},
-		rawData:         strings.Repeat("x", 5*1024),
+		rawData:         wideString,
 	}
 	tc = &mergeJoinTestCase{*itc}
 	outerOpt := mockDataSourceParameters{

@@ -28,7 +28,7 @@ import (
 	tracing "github.com/uber/jaeger-client-go/config"
 )
 
-var _ = Suite(&testConfigSuite{})
+var _ = SerialSuites(&testConfigSuite{})
 
 type testConfigSuite struct{}
 
@@ -148,6 +148,7 @@ disable-error-stack = false
 
 func (s *testConfigSuite) TestConfig(c *C) {
 	conf := new(Config)
+	conf.TempStoragePath = tempStorageDirName
 	conf.Binlog.Enable = true
 	conf.Binlog.IgnoreError = true
 	conf.Binlog.Strategy = "hash"
@@ -170,6 +171,7 @@ unrecognized-option-test = true
 	c.Assert(f.Sync(), IsNil)
 
 	c.Assert(conf.Load(configFile), ErrorMatches, "(?:.|\n)*unknown configuration option(?:.|\n)*")
+	c.Assert(conf.MaxServerConnections, Equals, uint32(0))
 
 	f.Truncate(0)
 	f.Seek(0, 0)
@@ -184,6 +186,8 @@ enable-batch-dml = true
 server-version = "test_version"
 repair-mode = true
 max-server-connections = 200
+mem-quota-query = 10000
+max-index-length = 3080
 [performance]
 txn-total-size-limit=2000
 [tikv-client]
@@ -193,12 +197,14 @@ region-cache-ttl=6000
 store-limit=0
 [stmt-summary]
 enable=false
+enable-internal-query=true
 max-stmt-count=1000
 max-sql-length=1024
 refresh-interval=100
 history-size=100
 [experimental]
 allow-auto-random = true
+allow-expression-index = true
 [isolation-read]
 engines = ["tiflash"]
 `)
@@ -227,6 +233,7 @@ engines = ["tiflash"]
 	c.Assert(conf.DelayCleanTableLock, Equals, uint64(5))
 	c.Assert(conf.SplitRegionMaxNum, Equals, uint64(10000))
 	c.Assert(conf.StmtSummary.Enable, Equals, false)
+	c.Assert(conf.StmtSummary.EnableInternalQuery, Equals, true)
 	c.Assert(conf.StmtSummary.MaxStmtCount, Equals, uint(1000))
 	c.Assert(conf.StmtSummary.MaxSQLLength, Equals, uint(1024))
 	c.Assert(conf.StmtSummary.RefreshInterval, Equals, 100)
@@ -234,8 +241,20 @@ engines = ["tiflash"]
 	c.Assert(conf.EnableBatchDML, Equals, true)
 	c.Assert(conf.RepairMode, Equals, true)
 	c.Assert(conf.MaxServerConnections, Equals, uint32(200))
+	c.Assert(conf.MemQuotaQuery, Equals, int64(10000))
+	c.Assert(conf.Experimental.AllowsExpressionIndex, IsTrue)
 	c.Assert(conf.Experimental.AllowAutoRandom, IsTrue)
 	c.Assert(conf.IsolationRead.Engines, DeepEquals, []string{"tiflash"})
+	c.Assert(conf.MaxIndexLength, Equals, 3080)
+
+	_, err = f.WriteString(`
+[log.file]
+log-rotate = true`)
+	c.Assert(err, IsNil)
+	err = conf.Load(configFile)
+	tmp := err.(*ErrConfigValidationFailed)
+	c.Assert(isAllDeprecatedConfigItems(tmp.UndecodedItems), IsTrue)
+
 	c.Assert(f.Close(), IsNil)
 	c.Assert(os.Remove(configFile), IsNil)
 
@@ -383,6 +402,18 @@ func (s *testConfigSuite) TestAllowAutoRandomValid(c *C) {
 	checkValid(true, false, true)
 	checkValid(false, true, true)
 	checkValid(false, false, true)
+}
+
+func (s *testConfigSuite) TestMaxIndexLength(c *C) {
+	conf := NewConfig()
+	checkValid := func(indexLen int, shouldBeValid bool) {
+		conf.MaxIndexLength = indexLen
+		c.Assert(conf.Valid() == nil, Equals, shouldBeValid)
+	}
+	checkValid(DefMaxIndexLength, true)
+	checkValid(DefMaxIndexLength-1, false)
+	checkValid(DefMaxOfMaxIndexLength, true)
+	checkValid(DefMaxOfMaxIndexLength+1, false)
 }
 
 func (s *testConfigSuite) TestParsePath(c *C) {

@@ -40,20 +40,16 @@ import (
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/storeutil"
+	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/timeutil"
 )
 
 var preparedStmtCount int64
-
-// Error instances.
-var (
-	errCantGetValidID = terror.ClassVariable.New(mysql.ErrCantGetValidID, mysql.MySQLErrName[mysql.ErrCantGetValidID])
-	ErrCantSetToNull  = terror.ClassVariable.New(mysql.ErrCantSetToNull, mysql.MySQLErrName[mysql.ErrCantSetToNull])
-	ErrSnapshotTooOld = terror.ClassVariable.New(mysql.ErrSnapshotTooOld, mysql.MySQLErrName[mysql.ErrSnapshotTooOld])
-)
 
 // RetryInfo saves retry information.
 type RetryInfo struct {
@@ -133,7 +129,7 @@ type stmtFuture struct {
 // TransactionContext is used to store variables that has transaction scope.
 type TransactionContext struct {
 	forUpdateTS   uint64
-	stmtFuture    *stmtFuture
+	stmtFuture    oracle.Future
 	DirtyDB       interface{}
 	Binlog        interface{}
 	InfoSchema    interface{}
@@ -149,6 +145,10 @@ type TransactionContext struct {
 	// unchangedRowKeys is used to store the unchanged rows that needs to lock for pessimistic transaction.
 	unchangedRowKeys map[string]struct{}
 
+	// pessimisticLockCache is the cache for pessimistic locked keys,
+	// The value never changes during the transaction.
+	pessimisticLockCache map[string][]byte
+
 	// CreateTime For metrics.
 	CreateTime     time.Time
 	StatementCount int
@@ -156,6 +156,7 @@ type TransactionContext struct {
 	CouldRetry     bool
 	IsPessimistic  bool
 	Isolation      string
+	LockExpire     uint32
 }
 
 // AddUnchangedRowKey adds an unchanged row key in update statement for pessimistic lock.
@@ -182,7 +183,7 @@ func (tc *TransactionContext) UpdateDeltaForTable(physicalTableID int64, delta i
 	}
 	item := tc.TableDeltaMap[physicalTableID]
 	if item.ColSize == nil && colSize != nil {
-		item.ColSize = make(map[int64]int64)
+		item.ColSize = make(map[int64]int64, len(colSize))
 	}
 	item.Delta += delta
 	item.Count += count
@@ -192,6 +193,23 @@ func (tc *TransactionContext) UpdateDeltaForTable(physicalTableID int64, delta i
 	tc.TableDeltaMap[physicalTableID] = item
 }
 
+// GetKeyInPessimisticLockCache gets a key in pessimistic lock cache.
+func (tc *TransactionContext) GetKeyInPessimisticLockCache(key kv.Key) (val []byte, ok bool) {
+	if tc.pessimisticLockCache == nil {
+		return nil, false
+	}
+	val, ok = tc.pessimisticLockCache[string(key)]
+	return
+}
+
+// SetPessimisticLockCache sets a key value pair into pessimistic lock cache.
+func (tc *TransactionContext) SetPessimisticLockCache(key kv.Key, val []byte) {
+	if tc.pessimisticLockCache == nil {
+		tc.pessimisticLockCache = map[string][]byte{}
+	}
+	tc.pessimisticLockCache[string(key)] = val
+}
+
 // Cleanup clears up transaction info that no longer use.
 func (tc *TransactionContext) Cleanup() {
 	// tc.InfoSchema = nil; we cannot do it now, because some operation like handleFieldList depend on this.
@@ -199,6 +217,7 @@ func (tc *TransactionContext) Cleanup() {
 	tc.Binlog = nil
 	tc.History = nil
 	tc.TableDeltaMap = nil
+	tc.pessimisticLockCache = nil
 }
 
 // ClearDelta clears the delta map.
@@ -221,19 +240,14 @@ func (tc *TransactionContext) SetForUpdateTS(forUpdateTS uint64) {
 	}
 }
 
-// SetStmtFuture sets the stmtFuture .
-func (tc *TransactionContext) SetStmtFuture(future oracle.Future, cachedTS uint64) {
-	tc.stmtFuture = &stmtFuture{future: future, cachedTS: cachedTS}
+// SetStmtFutureForRC sets the stmtFuture .
+func (tc *TransactionContext) SetStmtFutureForRC(future oracle.Future) {
+	tc.stmtFuture = future
 }
 
-// GetStmtFuture gets the stmtFuture.
-func (tc *TransactionContext) GetStmtFuture() (oracle.Future, uint64) {
-	if tc.stmtFuture == nil {
-		panic("The statement future is nil, it should not happen." +
-			" The statement future should be set at the beginning of the transaction or" +
-			" at the beginning of each statement in the pessimistic read-committed transaction in PrepareTSFuture.")
-	}
-	return tc.stmtFuture.future, tc.stmtFuture.cachedTS
+// GetStmtFutureForRC gets the stmtFuture.
+func (tc *TransactionContext) GetStmtFutureForRC() oracle.Future {
+	return tc.stmtFuture
 }
 
 // WriteStmtBufs can be used by insert/replace/delete/update statement.
@@ -241,9 +255,6 @@ func (tc *TransactionContext) GetStmtFuture() (oracle.Future, uint64) {
 type WriteStmtBufs struct {
 	// RowValBuf is used by tablecodec.EncodeRow, to reduce runtime.growslice.
 	RowValBuf []byte
-	// BufStore stores temp KVs for a row when executing insert statement.
-	// We could reuse a BufStore for multiple rows of a session to reduce memory allocations.
-	BufStore *kv.BufferStore
 	// AddRowValues use to store temp insert rows value, to reduce memory allocations when importing data.
 	AddRowValues []types.Datum
 
@@ -254,14 +265,13 @@ type WriteStmtBufs struct {
 }
 
 func (ib *WriteStmtBufs) clean() {
-	ib.BufStore = nil
 	ib.RowValBuf = nil
 	ib.AddRowValues = nil
 	ib.IndexValsBuf = nil
 	ib.IndexKeyBuf = nil
 }
 
-// TableSnapshot represents a data snapshot of the table contained in `inspection_schema`.
+// TableSnapshot represents a data snapshot of the table contained in `information_schema`.
 type TableSnapshot struct {
 	Rows [][]types.Datum
 	Err  error
@@ -288,7 +298,7 @@ type SessionVars struct {
 	// UsersLock is a lock for user defined variables.
 	UsersLock sync.RWMutex
 	// Users are user defined variables.
-	Users map[string]string
+	Users map[string]types.Datum
 	// systems variables, don't modify it directly, use GetSystemVar/SetSystemVar method.
 	systems map[string]string
 	// SysWarningCount is the system variable "warning_count", because it is on the hot path, so we extract it from the systems
@@ -373,6 +383,9 @@ type SessionVars struct {
 
 	// AllowAggPushDown can be set to false to forbid aggregation push down.
 	AllowAggPushDown bool
+
+	// AllowDistinctAggPushDown can be set true to allow agg with distinct push down to tikv/tiflash.
+	AllowDistinctAggPushDown bool
 
 	// AllowWriteRowID can be set to false to forbid write data to _tidb_rowid.
 	// This variable is currently not recommended to be turned on.
@@ -547,8 +560,8 @@ type SessionVars struct {
 	// replicaRead is used for reading data from replicas, only follower is supported at this time.
 	replicaRead kv.ReplicaReadType
 
-	// isolationReadEngines is used to isolation read, tidb only read from the stores whose engine type is in the engines.
-	isolationReadEngines map[kv.StoreType]struct{}
+	// IsolationReadEngines is used to isolation read, tidb only read from the stores whose engine type is in the engines.
+	IsolationReadEngines map[kv.StoreType]struct{}
 
 	PlannerSelectBlockAsName []ast.HintTable
 
@@ -573,6 +586,10 @@ type SessionVars struct {
 	// SequenceState cache all sequence's latest value accessed by lastval() builtins. It's a session scoped
 	// variable, and all public methods of SequenceState are currently-safe.
 	SequenceState *SequenceState
+
+	// WindowingUseHighPrecision determines whether to compute window operations without loss of precision.
+	// see https://dev.mysql.com/doc/refman/8.0/en/window-function-optimization.html for more details.
+	WindowingUseHighPrecision bool
 }
 
 // PreparedParams contains the parameters of the current prepared statement when executing it.
@@ -608,7 +625,7 @@ type ConnectionInfo struct {
 // NewSessionVars creates a session vars object.
 func NewSessionVars() *SessionVars {
 	vars := &SessionVars{
-		Users:                       make(map[string]string),
+		Users:                       make(map[string]types.Datum),
 		systems:                     make(map[string]string),
 		PreparedStmts:               make(map[uint32]interface{}),
 		PreparedStmtNameToID:        make(map[string]uint32),
@@ -652,11 +669,12 @@ func NewSessionVars() *SessionVars {
 		AllowRemoveAutoInc:          DefTiDBAllowRemoveAutoInc,
 		UsePlanBaselines:            DefTiDBUsePlanBaselines,
 		EvolvePlanBaselines:         DefTiDBEvolvePlanBaselines,
-		isolationReadEngines:        map[kv.StoreType]struct{}{kv.TiKV: {}, kv.TiFlash: {}, kv.TiDB: {}},
+		IsolationReadEngines:        map[kv.StoreType]struct{}{kv.TiKV: {}, kv.TiFlash: {}, kv.TiDB: {}},
 		LockWaitTimeout:             DefInnodbLockWaitTimeout * 1000,
 		MetricSchemaStep:            DefTiDBMetricSchemaStep,
 		MetricSchemaRangeDuration:   DefTiDBMetricSchemaRangeDuration,
 		SequenceState:               NewSequenceState(),
+		WindowingUseHighPrecision:   true,
 	}
 	vars.KVVars = kv.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -671,7 +689,10 @@ func NewSessionVars() *SessionVars {
 		WindowConcurrency:          DefTiDBWindowConcurrency,
 	}
 	vars.MemQuota = MemQuota{
-		MemQuotaQuery:             config.GetGlobalConfig().MemQuotaQuery,
+		MemQuotaQuery: config.GetGlobalConfig().MemQuotaQuery,
+
+		// The variables below do not take any effect anymore, it's remaining for compatibility.
+		// TODO: remove them in v4.1
 		MemQuotaHashJoin:          DefTiDBMemQuotaHashJoin,
 		MemQuotaMergeJoin:         DefTiDBMemQuotaMergeJoin,
 		MemQuotaSort:              DefTiDBMemQuotaSort,
@@ -719,6 +740,19 @@ func (s *SessionVars) SetAllowInSubqToJoinAndAgg(val bool) {
 	s.allowInSubqToJoinAndAgg = val
 }
 
+// GetEnableCascadesPlanner get EnableCascadesPlanner from sql hints and SessionVars.EnableCascadesPlanner.
+func (s *SessionVars) GetEnableCascadesPlanner() bool {
+	if s.StmtCtx.HasEnableCascadesPlannerHint {
+		return s.StmtCtx.EnableCascadesPlanner
+	}
+	return s.EnableCascadesPlanner
+}
+
+// SetEnableCascadesPlanner set SessionVars.EnableCascadesPlanner.
+func (s *SessionVars) SetEnableCascadesPlanner(val bool) {
+	s.EnableCascadesPlanner = val
+}
+
 // GetEnableIndexMerge get EnableIndexMerge from SessionVars.enableIndexMerge.
 func (s *SessionVars) GetEnableIndexMerge() bool {
 	return s.enableIndexMerge
@@ -754,7 +788,7 @@ func (s *SessionVars) GetSplitRegionTimeout() time.Duration {
 
 // GetIsolationReadEngines gets isolation read engines.
 func (s *SessionVars) GetIsolationReadEngines() map[kv.StoreType]struct{} {
-	return s.isolationReadEngines
+	return s.IsolationReadEngines
 }
 
 // CleanBuffers cleans the temporary bufs
@@ -781,6 +815,16 @@ func (s *SessionVars) GetCharsetInfo() (charset, collation string) {
 	charset = s.systems[CharacterSetConnection]
 	collation = s.systems[CollationConnection]
 	return
+}
+
+// SetUserVar set the value and collation for user defined variable.
+func (s *SessionVars) SetUserVar(varName string, svalue string, collation string) {
+	if len(collation) > 0 {
+		s.Users[varName] = types.NewCollationStringDatum(stringutil.Copy(svalue), collation, collate.DefaultLen)
+	} else {
+		_, collation = s.GetCharsetInfo()
+		s.Users[varName] = types.NewCollationStringDatum(stringutil.Copy(svalue), collation, collate.DefaultLen)
+	}
 }
 
 // SetLastInsertID saves the last insert id to the session context.
@@ -992,10 +1036,14 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case InnodbLockWaitTimeout:
 		lockWaitSec := tidbOptInt64(val, DefInnodbLockWaitTimeout)
 		s.LockWaitTimeout = int64(lockWaitSec * 1000)
+	case WindowingUseHighPrecision:
+		s.WindowingUseHighPrecision = TiDBOptOn(val)
 	case TiDBSkipUTF8Check:
 		s.SkipUTF8Check = TiDBOptOn(val)
 	case TiDBOptAggPushDown:
 		s.AllowAggPushDown = TiDBOptOn(val)
+	case TiDBOptDistinctAggPushDown:
+		s.AllowDistinctAggPushDown = TiDBOptOn(val)
 	case TiDBOptWriteRowID:
 		s.AllowWriteRowID = TiDBOptOn(val)
 	case TiDBOptInSubqToJoinAndAgg:
@@ -1068,18 +1116,25 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.MemQuotaQuery = tidbOptInt64(val, config.GetGlobalConfig().MemQuotaQuery)
 	case TIDBMemQuotaHashJoin:
 		s.MemQuotaHashJoin = tidbOptInt64(val, DefTiDBMemQuotaHashJoin)
+		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TIDBMemQuotaQuery))
 	case TIDBMemQuotaMergeJoin:
 		s.MemQuotaMergeJoin = tidbOptInt64(val, DefTiDBMemQuotaMergeJoin)
+		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TIDBMemQuotaQuery))
 	case TIDBMemQuotaSort:
 		s.MemQuotaSort = tidbOptInt64(val, DefTiDBMemQuotaSort)
+		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TIDBMemQuotaQuery))
 	case TIDBMemQuotaTopn:
 		s.MemQuotaTopn = tidbOptInt64(val, DefTiDBMemQuotaTopn)
+		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TIDBMemQuotaQuery))
 	case TIDBMemQuotaIndexLookupReader:
 		s.MemQuotaIndexLookupReader = tidbOptInt64(val, DefTiDBMemQuotaIndexLookupReader)
+		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TIDBMemQuotaQuery))
 	case TIDBMemQuotaIndexLookupJoin:
 		s.MemQuotaIndexLookupJoin = tidbOptInt64(val, DefTiDBMemQuotaIndexLookupJoin)
+		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TIDBMemQuotaQuery))
 	case TIDBMemQuotaNestedLoopApply:
 		s.MemQuotaNestedLoopApply = tidbOptInt64(val, DefTiDBMemQuotaNestedLoopApply)
+		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TIDBMemQuotaQuery))
 	case TiDBGeneralLog:
 		atomic.StoreUint32(&ProcessGeneralLog, uint32(tidbOptPositiveInt32(val, DefTiDBGeneralLog)))
 	case TiDBPProfSQLCPU:
@@ -1095,7 +1150,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBEnableChunkRPC:
 		s.EnableChunkRPC = TiDBOptOn(val)
 	case TiDBEnableCascadesPlanner:
-		s.EnableCascadesPlanner = TiDBOptOn(val)
+		s.SetEnableCascadesPlanner(TiDBOptOn(val))
 	case TiDBOptimizerSelectivityLevel:
 		s.OptimizerSelectivityLevel = tidbOptPositiveInt32(val, DefTiDBOptimizerSelectivityLevel)
 	case TiDBEnableTablePartition:
@@ -1153,15 +1208,15 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBEvolvePlanBaselines:
 		s.EvolvePlanBaselines = TiDBOptOn(val)
 	case TiDBIsolationReadEngines:
-		s.isolationReadEngines = make(map[kv.StoreType]struct{})
+		s.IsolationReadEngines = make(map[kv.StoreType]struct{})
 		for _, engine := range strings.Split(val, ",") {
 			switch engine {
 			case kv.TiKV.Name():
-				s.isolationReadEngines[kv.TiKV] = struct{}{}
+				s.IsolationReadEngines[kv.TiKV] = struct{}{}
 			case kv.TiFlash.Name():
-				s.isolationReadEngines[kv.TiFlash] = struct{}{}
+				s.IsolationReadEngines[kv.TiFlash] = struct{}{}
 			case kv.TiDB.Name():
-				s.isolationReadEngines[kv.TiDB] = struct{}{}
+				s.IsolationReadEngines[kv.TiDB] = struct{}{}
 			}
 		}
 	case TiDBStoreLimit:
@@ -1170,6 +1225,45 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.MetricSchemaStep = tidbOptInt64(val, DefTiDBMetricSchemaStep)
 	case TiDBMetricSchemaRangeDuration:
 		s.MetricSchemaRangeDuration = tidbOptInt64(val, DefTiDBMetricSchemaRangeDuration)
+	case CollationConnection, CollationDatabase, CollationServer:
+		if _, err := collate.GetCollationByName(val); err != nil {
+			return errors.Trace(err)
+		}
+	case TiDBSlowLogThreshold:
+		conf := config.GetGlobalConfig()
+		if !conf.EnableDynamicConfig {
+			atomic.StoreUint64(&config.GetGlobalConfig().Log.SlowThreshold, uint64(tidbOptInt64(val, logutil.DefaultSlowThreshold)))
+		} else {
+			s.StmtCtx.AppendWarning(errors.Errorf("cannot update %s when enabling dynamic configs", TiDBSlowLogThreshold))
+		}
+	case TiDBRecordPlanInSlowLog:
+		conf := config.GetGlobalConfig()
+		if !conf.EnableDynamicConfig {
+			atomic.StoreUint32(&config.GetGlobalConfig().Log.RecordPlanInSlowLog, uint32(tidbOptInt64(val, logutil.DefaultRecordPlanInSlowLog)))
+		} else {
+			s.StmtCtx.AppendWarning(errors.Errorf("cannot update %s when enabling dynamic configs", TiDBRecordPlanInSlowLog))
+		}
+	case TiDBEnableSlowLog:
+		conf := config.GetGlobalConfig()
+		if !conf.EnableDynamicConfig {
+			config.GetGlobalConfig().Log.EnableSlowLog = TiDBOptOn(val)
+		} else {
+			s.StmtCtx.AppendWarning(errors.Errorf("cannot update %s when enabling dynamic configs", TiDBEnableSlowLog))
+		}
+	case TiDBQueryLogMaxLen:
+		conf := config.GetGlobalConfig()
+		if !conf.EnableDynamicConfig {
+			atomic.StoreUint64(&config.GetGlobalConfig().Log.QueryLogMaxLen, uint64(tidbOptInt64(val, logutil.DefaultQueryLogMaxLen)))
+		} else {
+			s.StmtCtx.AppendWarning(errors.Errorf("cannot update %s when enabling dynamic configs", TiDBQueryLogMaxLen))
+		}
+	case TiDBCheckMb4ValueInUTF8:
+		conf := config.GetGlobalConfig()
+		if !conf.EnableDynamicConfig {
+			config.GetGlobalConfig().CheckMb4ValueInUTF8 = TiDBOptOn(val)
+		} else {
+			s.StmtCtx.AppendWarning(errors.Errorf("cannot update %s when enabling dynamic configs", TiDBCheckMb4ValueInUTF8))
+		}
 	}
 	s.systems[name] = val
 	return nil
@@ -1293,7 +1387,8 @@ type MemQuota struct {
 	// MemQuotaQuery defines the memory quota for a query.
 	MemQuotaQuery int64
 
-	// TODO: remove them below sometime, it should have only one Quota(MemQuotaQuery).
+	// The variables below do not take any effect anymore, it's remaining for compatibility.
+	// TODO: remove them in v4.1
 	// MemQuotaHashJoin defines the memory quota for a hash join executor.
 	MemQuotaHashJoin int64
 	// MemQuotaMergeJoin defines the memory quota for a merge join executor.

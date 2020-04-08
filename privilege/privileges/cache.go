@@ -44,7 +44,7 @@ var (
 	tablePrivMask          = computePrivMask(mysql.AllTablePrivs)
 )
 
-const globalDBVisible = mysql.CreatePriv | mysql.SelectPriv | mysql.InsertPriv | mysql.UpdatePriv | mysql.DeletePriv | mysql.ShowDBPriv | mysql.DropPriv | mysql.AlterPriv | mysql.IndexPriv | mysql.CreateViewPriv | mysql.ShowViewPriv | mysql.GrantPriv
+const globalDBVisible = mysql.CreatePriv | mysql.SelectPriv | mysql.InsertPriv | mysql.UpdatePriv | mysql.DeletePriv | mysql.ShowDBPriv | mysql.DropPriv | mysql.AlterPriv | mysql.IndexPriv | mysql.CreateViewPriv | mysql.ShowViewPriv | mysql.GrantPriv | mysql.TriggerPriv | mysql.ReferencesPriv | mysql.ExecutePriv
 
 func computePrivMask(privs []mysql.PrivilegeType) mysql.PrivilegeType {
 	var mask mysql.PrivilegeType
@@ -1253,11 +1253,10 @@ func (p *MySQLPrivilege) getAllRoles(user, host string) []*auth.RoleIdentity {
 	key := user + "@" + host
 	edgeTable, ok := p.RoleGraph[key]
 	ret := make([]*auth.RoleIdentity, 0, len(edgeTable.roleList))
-	if !ok {
-		return nil
-	}
-	for _, r := range edgeTable.roleList {
-		ret = append(ret, r)
+	if ok {
+		for _, r := range edgeTable.roleList {
+			ret = append(ret, r)
+		}
 	}
 	return ret
 }

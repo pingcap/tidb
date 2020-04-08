@@ -281,7 +281,7 @@ func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int
 		err = resetErrDataTooLong(colName, rowIdx+1, err)
 	} else if types.ErrOverflow.Equal(err) {
 		err = types.ErrWarnDataOutOfRange.GenWithStackByArgs(colName, rowIdx+1)
-	} else if types.ErrTruncated.Equal(err) || types.ErrTruncatedWrongVal.Equal(err) {
+	} else if types.ErrTruncated.Equal(err) || types.ErrTruncatedWrongVal.Equal(err) || types.ErrWrongValue.Equal(err) {
 		valStr, err1 := val.ToString()
 		if err1 != nil {
 			logutil.BgLogger().Warn("truncate value failed", zap.Error(err1))
@@ -326,7 +326,8 @@ func (e *InsertValues) evalRow(ctx context.Context, list []expression.Expression
 		}
 
 		offset := e.insertColumns[i].Offset
-		row[offset], hasValue[offset] = *val1.Copy(), true
+		val1.Copy(&row[offset])
+		hasValue[offset] = true
 		e.evalBuffer.SetDatum(offset, val1)
 	}
 	// Row may lack of generated column, autoIncrement column, empty column here.
@@ -455,7 +456,6 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 }
 
 func (e *InsertValues) doBatchInsert(ctx context.Context) error {
-	sessVars := e.ctx.GetSessionVars()
 	if err := e.ctx.StmtCommit(e.memTracker); err != nil {
 		return err
 	}
@@ -463,11 +463,6 @@ func (e *InsertValues) doBatchInsert(ctx context.Context) error {
 		// We should return a special error for batch insert.
 		return ErrBatchInsertFail.GenWithStack("BatchInsert failed with error: %v", err)
 	}
-	txn, err := e.ctx.Txn(true)
-	if err != nil {
-		return err
-	}
-	sessVars.GetWriteStmtBufs().BufStore = kv.NewBufferStore(txn, kv.TempTxnMemBufCap)
 	return nil
 }
 
@@ -491,26 +486,18 @@ func (e *InsertValues) getRow(ctx context.Context, vals []types.Datum) ([]types.
 	return e.fillRow(ctx, row, hasValue)
 }
 
-func (e *InsertValues) getRowInPlace(ctx context.Context, vals []types.Datum, rowBuf []types.Datum) ([]types.Datum, error) {
-	hasValue := make([]bool, len(e.Table.Cols()))
-	for i, v := range vals {
-		casted, err := table.CastValue(e.ctx, v, e.insertColumns[i].ToInfo())
-		if e.handleErr(nil, &v, 0, err) != nil {
-			return nil, err
-		}
-		offset := e.insertColumns[i].Offset
-		rowBuf[offset] = casted
-		hasValue[offset] = true
-	}
-	return e.fillRow(ctx, rowBuf, hasValue)
-}
-
 // getColDefaultValue gets the column default value.
 func (e *InsertValues) getColDefaultValue(idx int, col *table.Column) (d types.Datum, err error) {
 	if !col.DefaultIsExpr && e.colDefaultVals != nil && e.colDefaultVals[idx].valid {
 		return e.colDefaultVals[idx].val, nil
 	}
-	defaultVal, err := table.GetColDefaultValue(e.ctx, col.ToInfo())
+
+	var defaultVal types.Datum
+	if col.DefaultIsExpr && col.DefaultExpr != nil {
+		defaultVal, err = table.EvalColDefaultExpr(e.ctx, col.ToInfo(), col.DefaultExpr)
+	} else {
+		defaultVal, err = table.GetColDefaultValue(e.ctx, col.ToInfo())
+	}
 	if err != nil {
 		return types.Datum{}, err
 	}
@@ -847,29 +834,49 @@ func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum,
 		return d, nil
 	}
 
-	if !hasValue || d.IsNull() {
-		_, err := e.ctx.Txn(true)
-		if err != nil {
-			return types.Datum{}, errors.Trace(err)
-		}
-		autoRandomID, err := e.allocAutoRandomID(&c.FieldType)
-		if err != nil {
-			return types.Datum{}, err
-		}
-		d.SetAutoID(autoRandomID, c.Flag)
-		retryInfo.AddAutoRandomID(autoRandomID)
-	} else {
-		recordID, err := getAutoRecordID(d, &c.FieldType, true)
+	var err error
+	var recordID int64
+	if !hasValue {
+		d.SetNull()
+	}
+	if !d.IsNull() {
+		recordID, err = getAutoRecordID(d, &c.FieldType, true)
 		if err != nil {
 			return types.Datum{}, err
 		}
+	}
+	// Use the value if it's not null and not 0.
+	if recordID != 0 {
 		err = e.rebaseAutoRandomID(recordID, &c.FieldType)
 		if err != nil {
 			return types.Datum{}, err
 		}
+		e.ctx.GetSessionVars().StmtCtx.InsertID = uint64(recordID)
 		d.SetAutoID(recordID, c.Flag)
 		retryInfo.AddAutoRandomID(recordID)
+		return d, nil
 	}
+
+	// Change NULL to auto id.
+	// Change value 0 to auto id, if NoAutoValueOnZero SQL mode is not set.
+	if d.IsNull() || e.ctx.GetSessionVars().SQLMode&mysql.ModeNoAutoValueOnZero == 0 {
+		_, err := e.ctx.Txn(true)
+		if err != nil {
+			return types.Datum{}, errors.Trace(err)
+		}
+		recordID, err = e.allocAutoRandomID(&c.FieldType)
+		if err != nil {
+			return types.Datum{}, err
+		}
+		// It's compatible with mysql setting the first allocated autoID to lastInsertID.
+		// Cause autoID may be specified by user, judge only the first row is not suitable.
+		if e.lastInsertID == 0 {
+			e.lastInsertID = uint64(recordID)
+		}
+	}
+
+	d.SetAutoID(recordID, c.Flag)
+	retryInfo.AddAutoRandomID(recordID)
 
 	casted, err := table.CastValue(e.ctx, d, c.ToInfo())
 	if err != nil {
@@ -880,7 +887,7 @@ func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum,
 
 // allocAutoRandomID allocates a random id for primary key column. It assumes tableInfo.AutoRandomBits > 0.
 func (e *InsertValues) allocAutoRandomID(fieldType *types.FieldType) (int64, error) {
-	alloc := e.Table.Allocator(e.ctx, autoid.AutoRandomType)
+	alloc := e.Table.Allocators(e.ctx).Get(autoid.AutoRandomType)
 	tableInfo := e.Table.Meta()
 	_, autoRandomID, err := alloc.Alloc(tableInfo.ID, 1, 1, 1)
 	if err != nil {
@@ -897,7 +904,7 @@ func (e *InsertValues) allocAutoRandomID(fieldType *types.FieldType) (int64, err
 }
 
 func (e *InsertValues) rebaseAutoRandomID(recordID int64, fieldType *types.FieldType) error {
-	alloc := e.Table.Allocator(e.ctx, autoid.AutoRandomType)
+	alloc := e.Table.Allocators(e.ctx).Get(autoid.AutoRandomType)
 	tableInfo := e.Table.Meta()
 
 	typeBitsLength := uint64(mysql.DefaultLengthOfMysqlTypes[fieldType.Tp] * 8)
@@ -975,6 +982,10 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 }
 
 func (e *InsertValues) addRecord(ctx context.Context, row []types.Datum) (int64, error) {
+	return e.addRecordWithAutoIDHint(ctx, row, 0)
+}
+
+func (e *InsertValues) addRecordWithAutoIDHint(ctx context.Context, row []types.Datum, reserveAutoIDCount int) (int64, error) {
 	txn, err := e.ctx.Txn(true)
 	if err != nil {
 		return 0, err
@@ -982,7 +993,12 @@ func (e *InsertValues) addRecord(ctx context.Context, row []types.Datum) (int64,
 	if !e.ctx.GetSessionVars().ConstraintCheckInPlace {
 		txn.SetOption(kv.PresumeKeyNotExists, nil)
 	}
-	h, err := e.Table.AddRecord(e.ctx, row, table.WithCtx(ctx))
+	var h int64
+	if reserveAutoIDCount > 0 {
+		h, err = e.Table.AddRecord(e.ctx, row, table.WithCtx(ctx), table.WithReserveAutoIDHint(reserveAutoIDCount))
+	} else {
+		h, err = e.Table.AddRecord(e.ctx, row, table.WithCtx(ctx))
+	}
 	txn.DelOption(kv.PresumeKeyNotExists)
 	if err != nil {
 		return 0, err

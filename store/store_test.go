@@ -434,7 +434,6 @@ func (s *testKVSuite) TestSeekMin(c *C) {
 	it, err := txn.Iter(nil, nil)
 	c.Assert(err, IsNil)
 	for it.Valid() {
-		fmt.Printf("%s, %s\n", it.Key(), it.Value())
 		it.Next()
 	}
 

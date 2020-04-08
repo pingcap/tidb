@@ -139,6 +139,26 @@ func (s *testSuite5) TestShowErrors(c *C) {
 	tk.MustQuery("show errors").Check(testutil.RowsWithSep("|", "Error|1050|Table 'test.show_errors' already exists"))
 }
 
+func (s *testSuite5) TestShowGrantsPrivilege(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create user show_grants")
+	tk.MustExec("show grants for show_grants")
+	tk1 := testkit.NewTestKit(c, s.store)
+	se, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "show_grants", Hostname: "%"}, nil, nil), IsTrue)
+	tk1.Se = se
+	err = tk1.QueryToErr("show grants for root")
+	c.Assert(err.Error(), Equals, executor.ErrDBaccessDenied.GenWithStackByArgs("show_grants", "%", mysql.SystemDB).Error())
+	// Test show grants for user with auth host name `%`.
+	tk2 := testkit.NewTestKit(c, s.store)
+	se2, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	c.Assert(se2.Auth(&auth.UserIdentity{Username: "show_grants", Hostname: "127.0.0.1", AuthUsername: "show_grants", AuthHostname: "%"}, nil, nil), IsTrue)
+	tk2.Se = se2
+	tk2.MustQuery("show grants")
+}
+
 func (s *testSuite5) TestIssue3641(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	_, err := tk.Exec("show tables;")
@@ -156,7 +176,7 @@ func (s *testSuite5) TestIssue10549(c *C) {
 	tk.MustExec("GRANT 'app_developer' TO 'dev';")
 	tk.MustExec("SET DEFAULT ROLE app_developer TO 'dev';")
 
-	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "dev", Hostname: "localhost", AuthUsername: "dev", AuthHostname: "localhost"}, nil, nil), IsTrue)
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "dev", Hostname: "%", AuthUsername: "dev", AuthHostname: "%"}, nil, nil), IsTrue)
 	tk.MustQuery("SHOW DATABASES;").Check(testkit.Rows("INFORMATION_SCHEMA", "newdb"))
 	tk.MustQuery("SHOW GRANTS;").Check(testkit.Rows("GRANT USAGE ON *.* TO 'dev'@'%'", "GRANT ALL PRIVILEGES ON newdb.* TO 'dev'@'%'", "GRANT 'app_developer'@'%' TO 'dev'@'%'"))
 	tk.MustQuery("SHOW GRANTS FOR CURRENT_USER").Check(testkit.Rows("GRANT USAGE ON *.* TO 'dev'@'%'", "GRANT 'app_developer'@'%' TO 'dev'@'%'"))
@@ -269,8 +289,10 @@ func (s *testSuite5) TestShow2(c *C) {
 	tk.MustQuery(`show columns from v`).Check(testutil.RowsWithSep(",", "c,int(11),YES,,<nil>,"))
 	tk.MustQuery(`describe v`).Check(testutil.RowsWithSep(",", "c,int(11),YES,,<nil>,"))
 	tk.MustQuery("show collation where Charset = 'utf8' and Collation = 'utf8_bin'").Check(testutil.RowsWithSep(",", "utf8_bin,utf8,83,Yes,Yes,1"))
-	tk.MustQuery("show tables").Check(testkit.Rows("t", "v"))
-	tk.MustQuery("show full tables").Check(testkit.Rows("t BASE TABLE", "v VIEW"))
+	tk.MustExec(`drop sequence if exists seq`)
+	tk.MustExec(`create sequence seq`)
+	tk.MustQuery("show tables").Check(testkit.Rows("seq", "t", "v"))
+	tk.MustQuery("show full tables").Check(testkit.Rows("seq SEQUENCE", "t BASE TABLE", "v VIEW"))
 	ctx := tk.Se.(sessionctx.Context)
 	is := domain.GetDomain(ctx).InfoSchema()
 	tblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -579,7 +601,7 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 			"  KEY `IDX_RoundId` (`ROUND_ID`),\n"+
 			"  KEY `IDX_UserId_EndTime` (`USER_ID`,`END_TIME`)\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin AUTO_INCREMENT=505488\n"+
-			"PARTITION BY RANGE ( month(`end_time`) ) (\n"+
+			"PARTITION BY RANGE ( MONTH(`end_time`) ) (\n"+
 			"  PARTITION `p1` VALUES LESS THAN (2),\n"+
 			"  PARTITION `p2` VALUES LESS THAN (3),\n"+
 			"  PARTITION `p3` VALUES LESS THAN (4),\n"+
@@ -622,6 +644,37 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 			"  KEY `expr_idx` ((`a` * `b` + 1))\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
+
+	// Fix issue #15175, show create table sequence_name.
+	tk.MustExec("drop sequence if exists seq")
+	tk.MustExec("create sequence seq")
+	tk.MustQuery("show create table seq;").Check(testkit.Rows("seq CREATE SEQUENCE `seq` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 cache 1000 nocycle ENGINE=InnoDB"))
+
+	// Test for issue #15633, 'binary' collation should be ignored in the result of 'show create table'.
+	tk.MustExec(`drop table if exists binary_collate`)
+	tk.MustExec(`create table binary_collate(a varchar(10)) default collate=binary;`)
+	tk.MustQuery(`show create table binary_collate`).Check(testutil.RowsWithSep("|",
+		""+
+			"binary_collate CREATE TABLE `binary_collate` (\n"+
+			"  `a` varbinary(10) DEFAULT NULL\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=binary", // binary collate is ignored
+	))
+	tk.MustExec(`drop table if exists binary_collate`)
+	tk.MustExec(`create table binary_collate(a varchar(10)) default charset=binary collate=binary;`)
+	tk.MustQuery(`show create table binary_collate`).Check(testutil.RowsWithSep("|",
+		""+
+			"binary_collate CREATE TABLE `binary_collate` (\n"+
+			"  `a` varbinary(10) DEFAULT NULL\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=binary", // binary collate is ignored
+	))
+	tk.MustExec(`drop table if exists binary_collate`)
+	tk.MustExec(`create table binary_collate(a varchar(10)) default charset=utf8mb4 collate=utf8mb4_bin;`)
+	tk.MustQuery(`show create table binary_collate`).Check(testutil.RowsWithSep("|",
+		""+
+			"binary_collate CREATE TABLE `binary_collate` (\n"+
+			"  `a` varchar(10) DEFAULT NULL\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin", // non-binary collate is kept.
+	))
 }
 
 func (s *testAutoRandomSuite) TestShowCreateTableAutoRandom(c *C) {
@@ -636,7 +689,7 @@ func (s *testAutoRandomSuite) TestShowCreateTableAutoRandom(c *C) {
 	tk.MustQuery("show create table `auto_random_tbl1`").Check(testutil.RowsWithSep("|",
 		""+
 			"auto_random_tbl1 CREATE TABLE `auto_random_tbl1` (\n"+
-			"  `a` bigint(20) NOT NULL /*T!40000 AUTO_RANDOM(3) */,\n"+
+			"  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(3) */,\n"+
 			"  `b` varchar(255) DEFAULT NULL,\n"+
 			"  PRIMARY KEY (`a`)\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
@@ -647,18 +700,18 @@ func (s *testAutoRandomSuite) TestShowCreateTableAutoRandom(c *C) {
 	tk.MustQuery("show create table auto_random_tbl2").Check(testutil.RowsWithSep("|",
 		""+
 			"auto_random_tbl2 CREATE TABLE `auto_random_tbl2` (\n"+
-			"  `a` bigint(20) NOT NULL /*T!40000 AUTO_RANDOM(5) */,\n"+
+			"  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(5) */,\n"+
 			"  `b` char(1) DEFAULT NULL,\n"+
 			"  PRIMARY KEY (`a`)\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 
 	// Special version comment can be shown in TiDB with new version.
-	tk.MustExec("create table auto_random_tbl3 (a bigint /*T!40000 auto_random */ primary key)")
+	tk.MustExec("create table auto_random_tbl3 (a bigint /*T![auto_rand] auto_random */ primary key)")
 	tk.MustQuery("show create table auto_random_tbl3").Check(testutil.RowsWithSep("|",
 		""+
 			"auto_random_tbl3 CREATE TABLE `auto_random_tbl3` (\n"+
-			"  `a` bigint(20) NOT NULL /*T!40000 AUTO_RANDOM(5) */,\n"+
+			"  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(5) */,\n"+
 			"  PRIMARY KEY (`a`)\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
@@ -698,7 +751,7 @@ func (s *testSuite5) TestShowBuiltin(c *C) {
 	res := tk.MustQuery("show builtins;")
 	c.Assert(res, NotNil)
 	rows := res.Rows()
-	c.Assert(265, Equals, len(rows))
+	c.Assert(268, Equals, len(rows))
 	c.Assert("abs", Equals, rows[0][0].(string))
-	c.Assert("yearweek", Equals, rows[264][0].(string))
+	c.Assert("yearweek", Equals, rows[267][0].(string))
 }

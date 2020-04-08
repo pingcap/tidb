@@ -170,7 +170,7 @@ func (b *Builder) applyDropSchema(schemaID int64) []int64 {
 
 	// Copy the sortedTables that contain the table we are going to drop.
 	tableIDs := make([]int64, 0, len(di.Tables))
-	bucketIdxMap := make(map[int]struct{})
+	bucketIdxMap := make(map[int]struct{}, len(di.Tables))
 	for _, tbl := range di.Tables {
 		bucketIdxMap[tableBucketIdx(tbl.ID)] = struct{}{}
 		// TODO: If the table ID doesn't exist.

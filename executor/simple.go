@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
@@ -62,7 +63,7 @@ type SimpleExec struct {
 	is        infoschema.InfoSchema
 }
 
-func (e *SimpleExec) getSysSession() (sessionctx.Context, error) {
+func (e *baseExecutor) getSysSession() (sessionctx.Context, error) {
 	dom := domain.GetDomain(e.ctx)
 	sysSessionPool := dom.SysSessionPool()
 	ctx, err := sysSessionPool.Get()
@@ -74,7 +75,7 @@ func (e *SimpleExec) getSysSession() (sessionctx.Context, error) {
 	return restrictedCtx, nil
 }
 
-func (e *SimpleExec) releaseSysSession(ctx sessionctx.Context) {
+func (e *baseExecutor) releaseSysSession(ctx sessionctx.Context) {
 	if ctx == nil {
 		return
 	}
@@ -108,6 +109,8 @@ func (e *SimpleExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		err = e.executeUse(x)
 	case *ast.FlushStmt:
 		err = e.executeFlush(x)
+	case *ast.AlterInstanceStmt:
+		err = e.executeAlterInstance(x)
 	case *ast.BeginStmt:
 		err = e.executeBegin(ctx, x)
 	case *ast.CommitStmt:
@@ -248,7 +251,12 @@ func (e *SimpleExec) setDefaultRoleAll(s *ast.SetDefaultRoleStmt) error {
 			return ErrCannotUser.GenWithStackByArgs("SET DEFAULT ROLE", user.String())
 		}
 	}
-	sqlExecutor := e.ctx.(sqlexec.SQLExecutor)
+	restrictedCtx, err := e.getSysSession()
+	if err != nil {
+		return err
+	}
+	defer e.releaseSysSession(restrictedCtx)
+	sqlExecutor := restrictedCtx.(sqlexec.SQLExecutor)
 	if _, err := sqlExecutor.Execute(context.Background(), "begin"); err != nil {
 		return err
 	}
@@ -1094,6 +1102,26 @@ func (e *SimpleExec) executeFlush(s *ast.FlushStmt) error {
 				return err
 			}
 		}
+	}
+	return nil
+}
+
+func (e *SimpleExec) executeAlterInstance(s *ast.AlterInstanceStmt) error {
+	if s.ReloadTLS {
+		logutil.BgLogger().Info("execute reload tls", zap.Bool("NoRollbackOnError", s.NoRollbackOnError))
+		sm := e.ctx.GetSessionManager()
+		tlsCfg, err := util.LoadTLSCertificates(
+			variable.SysVars["ssl_ca"].Value,
+			variable.SysVars["ssl_key"].Value,
+			variable.SysVars["ssl_cert"].Value,
+		)
+		if err != nil {
+			if !s.NoRollbackOnError || config.GetGlobalConfig().Security.RequireSecureTransport {
+				return err
+			}
+			logutil.BgLogger().Warn("reload TLS fail but keep working without TLS due to 'no rollback on error'")
+		}
+		sm.UpdateTLSConfig(tlsCfg)
 	}
 	return nil
 }

@@ -81,11 +81,21 @@ func (la *LogicalApply) deCorColFromEqExpr(expr expression.Expression) expressio
 	return nil
 }
 
+// ExtractCorrelatedCols recursively extracts all of the correlated columns
+// from a plan tree by calling LogicalPlan.ExtractCorrelatedCols.
+func ExtractCorrelatedCols(p LogicalPlan) []*expression.CorrelatedColumn {
+	corCols := p.ExtractCorrelatedCols()
+	for _, child := range p.Children() {
+		corCols = append(corCols, ExtractCorrelatedCols(child)...)
+	}
+	return corCols
+}
+
 // decorrelateSolver tries to convert apply plan to join plan.
 type decorrelateSolver struct{}
 
 func (s *decorrelateSolver) aggDefaultValueMap(agg *LogicalAggregation) map[int]*expression.Constant {
-	defaultValueMap := make(map[int]*expression.Constant)
+	defaultValueMap := make(map[int]*expression.Constant, len(agg.AggFuncs))
 	for i, f := range agg.AggFuncs {
 		switch f.Name {
 		case ast.AggFuncBitOr, ast.AggFuncBitXor, ast.AggFuncCount:

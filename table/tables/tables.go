@@ -23,13 +23,16 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
@@ -38,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-binlog"
 	"github.com/spaolacci/murmur3"
 	"go.uber.org/zap"
@@ -45,8 +49,7 @@ import (
 
 // TableCommon is shared by both Table and partition.
 type TableCommon struct {
-	sequence int64
-	tableID  int64
+	tableID int64
 	// physicalTableID is a unique int64 to identify a physical table.
 	physicalTableID int64
 	Columns         []*table.Column
@@ -58,6 +61,7 @@ type TableCommon struct {
 	indices         []table.Index
 	meta            *model.TableInfo
 	allocs          autoid.Allocators
+	sequence        *sequenceCommon
 
 	// recordPrefix and indexPrefix are generated using physicalTableID.
 	recordPrefix kv.Key
@@ -118,6 +122,14 @@ func TableFromMeta(allocs autoid.Allocators, tblInfo *model.TableInfo) (table.Ta
 			}
 			col.GeneratedExpr = expr
 		}
+		// default value is expr.
+		if col.DefaultIsExpr {
+			expr, err := parseExpression(colInfo.DefaultValue.(string))
+			if err != nil {
+				return nil, err
+			}
+			col.DefaultExpr = expr
+		}
 		columns = append(columns, col)
 	}
 
@@ -147,6 +159,9 @@ func initTableCommon(t *TableCommon, tblInfo *model.TableInfo, physicalTableID i
 	t.writableIndices = t.WritableIndices()
 	t.recordPrefix = tablecodec.GenTableRecordPrefix(physicalTableID)
 	t.indexPrefix = tablecodec.GenTableIndexPrefix(physicalTableID)
+	if tblInfo.IsSequence() {
+		t.sequence = &sequenceCommon{meta: tblInfo.Sequence}
+	}
 }
 
 // initTableIndices initializes the indices of the TableCommon.
@@ -301,11 +316,11 @@ func (t *TableCommon) UpdateRecord(ctx sessionctx.Context, h int64, oldData, new
 		return err
 	}
 
-	// TODO: reuse bs, like AddRecord does.
-	bs := kv.NewBufferStore(txn, kv.DefaultTxnMembufCap)
+	execBuf := kv.NewStagingBufferStore(txn)
+	defer execBuf.Discard()
 
 	// rebuild index
-	err = t.rebuildIndices(ctx, bs, h, touched, oldData, newData)
+	err = t.rebuildIndices(ctx, execBuf, h, touched, oldData, newData)
 	if err != nil {
 		return err
 	}
@@ -349,10 +364,10 @@ func (t *TableCommon) UpdateRecord(ctx sessionctx.Context, h int64, oldData, new
 	if err != nil {
 		return err
 	}
-	if err = bs.Set(key, value); err != nil {
+	if err = execBuf.Set(key, value); err != nil {
 		return err
 	}
-	if err = bs.SaveTo(txn); err != nil {
+	if _, err := execBuf.Flush(); err != nil {
 		return err
 	}
 	ctx.StmtAddDirtyTableOP(table.DirtyTableDeleteRow, t.physicalTableID, h)
@@ -441,22 +456,6 @@ func adjustRowValuesBuf(writeBufs *variable.WriteStmtBufs, rowLen int) {
 	writeBufs.AddRowValues = writeBufs.AddRowValues[:adjustLen]
 }
 
-// getRollbackableMemStore get a rollbackable BufferStore, when we are importing data,
-// Just add the kv to transaction's membuf directly.
-func (t *TableCommon) getRollbackableMemStore(ctx sessionctx.Context) (kv.RetrieverMutator, error) {
-	bs := ctx.GetSessionVars().GetWriteStmtBufs().BufStore
-	if bs == nil {
-		txn, err := ctx.Txn(true)
-		if err != nil {
-			return nil, err
-		}
-		bs = kv.NewBufferStore(txn, kv.DefaultTxnMembufCap)
-	} else {
-		bs.Reset()
-	}
-	return bs, nil
-}
-
 // AddRecord implements table.Table AddRecord interface.
 func (t *TableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID int64, err error) {
 	var opt table.AddRecordOpt
@@ -480,22 +479,21 @@ func (t *TableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 		}
 	}
 	if !hasRecordID {
-		stmtCtx := ctx.GetSessionVars().StmtCtx
-		rows := stmtCtx.RecordRows()
-		if rows > 1 {
-			if stmtCtx.BaseRowID >= stmtCtx.MaxRowID {
-				stmtCtx.BaseRowID, stmtCtx.MaxRowID, err = t.AllocHandleIDs(ctx, rows)
-				if err != nil {
-					return 0, err
-				}
-			}
-			stmtCtx.BaseRowID += 1
-			recordID = stmtCtx.BaseRowID
-		} else {
-			recordID, err = t.AllocHandle(ctx)
+		if opt.ReserveAutoID > 0 {
+			// Reserve a batch of auto ID in the statement context.
+			// The reserved ID could be used in the future within this statement, by the
+			// following AddRecord() operation.
+			// Make the IDs continuous benefit for the performance of TiKV.
+			stmtCtx := ctx.GetSessionVars().StmtCtx
+			stmtCtx.BaseRowID, stmtCtx.MaxRowID, err = allocHandleIDs(ctx, t, uint64(opt.ReserveAutoID))
 			if err != nil {
 				return 0, err
 			}
+		}
+
+		recordID, err = AllocHandle(ctx, t)
+		if err != nil {
+			return 0, err
 		}
 	}
 
@@ -503,13 +501,10 @@ func (t *TableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 	if err != nil {
 		return 0, err
 	}
-
+	execBuf := kv.NewStagingBufferStore(txn)
+	defer execBuf.Discard()
 	sessVars := ctx.GetSessionVars()
 
-	rm, err := t.getRollbackableMemStore(ctx)
-	if err != nil {
-		return 0, err
-	}
 	var createIdxOpts []table.CreateIdxOptFunc
 	if len(opts) > 0 {
 		createIdxOpts = make([]table.CreateIdxOptFunc, 0, len(opts))
@@ -520,7 +515,7 @@ func (t *TableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 		}
 	}
 	// Insert new entries into indices.
-	h, err := t.addIndices(ctx, recordID, r, rm, createIdxOpts)
+	h, err := t.addIndices(ctx, recordID, r, execBuf, createIdxOpts)
 	if err != nil {
 		return h, err
 	}
@@ -564,11 +559,11 @@ func (t *TableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 		return 0, err
 	}
 	value := writeBufs.RowValBuf
-	if err = txn.Set(key, value); err != nil {
+	if err = execBuf.Set(key, value); err != nil {
 		return 0, err
 	}
 
-	if err = rm.(*kv.BufferStore).SaveTo(txn); err != nil {
+	if _, err := execBuf.Flush(); err != nil {
 		return 0, err
 	}
 	ctx.StmtAddDirtyTableOP(table.DirtyTableAddRow, t.physicalTableID, recordID)
@@ -583,6 +578,9 @@ func (t *TableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 		}
 	}
 	sc.AddAffectedRows(1)
+	if sessVars.TxnCtx == nil {
+		return recordID, nil
+	}
 	colSize := make(map[int64]int64, len(r))
 	for id, col := range t.Cols() {
 		size, err := codec.EstimateValueSize(sc, r[id])
@@ -822,6 +820,29 @@ func (t *TableCommon) addDeleteBinlog(ctx sessionctx.Context, r []types.Datum, c
 	return nil
 }
 
+func writeSequenceUpdateValueBinlog(ctx sessionctx.Context, db, sequence string, end int64) error {
+	// 1: when sequenceCommon update the local cache passively.
+	// 2: When sequenceCommon setval to the allocator actively.
+	// Both of this two case means the upper bound the sequence has changed in meta, which need to write the binlog
+	// to the downstream.
+	// Sequence sends `select setval(seq, num)` sql string to downstream via `setDDLBinlog`, which is mocked as a DDL binlog.
+	binlogCli := ctx.GetSessionVars().BinlogClient
+	sqlMode := ctx.GetSessionVars().SQLMode
+	sequenceFullName := stringutil.Escape(db, sqlMode) + "." + stringutil.Escape(sequence, sqlMode)
+	sql := "select setval(" + sequenceFullName + ", " + strconv.FormatInt(end, 10) + ")"
+
+	err := kv.RunInNewTxn(ctx.GetStore(), true, func(txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		mockJobID, err := m.GenGlobalID()
+		if err != nil {
+			return err
+		}
+		binloginfo.SetDDLBinlog(binlogCli, txn, mockJobID, int32(model.StatePublic), sql)
+		return nil
+	})
+	return err
+}
+
 func (t *TableCommon) removeRowData(ctx sessionctx.Context, h int64) error {
 	// Remove row data.
 	txn, err := ctx.Txn(true)
@@ -910,7 +931,7 @@ func (t *TableCommon) IterRecords(ctx sessionctx.Context, startKey kv.Key, cols 
 
 	logutil.BgLogger().Debug("iterate records", zap.ByteString("startKey", startKey), zap.ByteString("key", it.Key()), zap.ByteString("value", it.Value()))
 
-	colMap := make(map[int64]*types.FieldType)
+	colMap := make(map[int64]*types.FieldType, len(cols))
 	for _, col := range cols {
 		colMap[col.ID] = &col.FieldType
 	}
@@ -984,21 +1005,32 @@ func GetColDefaultValue(ctx sessionctx.Context, col *table.Column, defaultVals [
 	return colVal, nil
 }
 
-// AllocHandle implements table.Table AllocHandle interface.
-func (t *TableCommon) AllocHandle(ctx sessionctx.Context) (int64, error) {
-	_, rowID, err := t.AllocHandleIDs(ctx, 1)
+// AllocHandle allocate a new handle.
+// A statement could reserve some ID in the statement context, try those ones first.
+func AllocHandle(ctx sessionctx.Context, t table.Table) (int64, error) {
+	if ctx != nil {
+		if stmtCtx := ctx.GetSessionVars().StmtCtx; stmtCtx != nil {
+			// First try to alloc if the statement has reserved auto ID.
+			if stmtCtx.BaseRowID < stmtCtx.MaxRowID {
+				stmtCtx.BaseRowID += 1
+				return stmtCtx.BaseRowID, nil
+			}
+		}
+	}
+
+	_, rowID, err := allocHandleIDs(ctx, t, 1)
 	return rowID, err
 }
 
-// AllocHandleIDs implements table.Table AllocHandleIDs interface.
-func (t *TableCommon) AllocHandleIDs(ctx sessionctx.Context, n uint64) (int64, int64, error) {
-	base, maxID, err := t.Allocator(ctx, autoid.RowIDAllocType).Alloc(t.tableID, n, 1, 1)
+func allocHandleIDs(ctx sessionctx.Context, t table.Table, n uint64) (int64, int64, error) {
+	meta := t.Meta()
+	base, maxID, err := t.Allocators(ctx).Get(autoid.RowIDAllocType).Alloc(meta.ID, n, 1, 1)
 	if err != nil {
 		return 0, 0, err
 	}
-	if t.meta.ShardRowIDBits > 0 {
+	if meta.ShardRowIDBits > 0 {
 		// Use max record ShardRowIDBits to check overflow.
-		if OverflowShardBits(maxID, t.meta.MaxShardRowIDBits, autoid.RowIDBitLength) {
+		if OverflowShardBits(maxID, meta.MaxShardRowIDBits, autoid.RowIDBitLength) {
 			// If overflow, the rowID may be duplicated. For examples,
 			// t.meta.ShardRowIDBits = 4
 			// rowID = 0010111111111111111111111111111111111111111111111111111111111111
@@ -1010,7 +1042,7 @@ func (t *TableCommon) AllocHandleIDs(ctx sessionctx.Context, n uint64) (int64, i
 		}
 		txnCtx := ctx.GetSessionVars().TxnCtx
 		if txnCtx.Shard == nil {
-			shard := CalcShard(t.meta.ShardRowIDBits, txnCtx.StartTS, autoid.RowIDBitLength)
+			shard := CalcShard(meta.ShardRowIDBits, txnCtx.StartTS, autoid.RowIDBitLength)
 			txnCtx.Shard = &shard
 		}
 		base |= *txnCtx.Shard
@@ -1033,19 +1065,8 @@ func CalcShard(shardRowIDBits uint64, startTS uint64, typeBitsLength uint64) int
 	return (hashVal & (1<<shardRowIDBits - 1)) << (typeBitsLength - shardRowIDBits - 1)
 }
 
-// Allocator implements table.Table Allocator interface.
-func (t *TableCommon) Allocator(ctx sessionctx.Context, allocType autoid.AllocatorType) autoid.Allocator {
-	allAllocs := t.AllAllocators(ctx)
-	for _, a := range allAllocs {
-		if a.GetType() == allocType {
-			return a
-		}
-	}
-	return nil
-}
-
-// AllAllocators implements table.Table AllAllocators interface.
-func (t *TableCommon) AllAllocators(ctx sessionctx.Context) autoid.Allocators {
+// Allocators implements table.Table Allocators interface.
+func (t *TableCommon) Allocators(ctx sessionctx.Context) autoid.Allocators {
 	if ctx == nil || ctx.GetSessionVars().IDAllocator == nil {
 		return t.allocs
 	}
@@ -1071,7 +1092,7 @@ func (t *TableCommon) AllAllocators(ctx sessionctx.Context) autoid.Allocators {
 
 // RebaseAutoID implements table.Table RebaseAutoID interface.
 func (t *TableCommon) RebaseAutoID(ctx sessionctx.Context, newBase int64, isSetStep bool) error {
-	return t.Allocator(ctx, autoid.RowIDAllocType).Rebase(t.tableID, newBase, isSetStep)
+	return t.Allocators(ctx).Get(autoid.RowIDAllocType).Rebase(t.tableID, newBase, isSetStep)
 }
 
 // Seek implements table.Table Seek interface.
@@ -1190,23 +1211,199 @@ func init() {
 	table.MockTableFromMeta = MockTableFromMeta
 }
 
+// sequenceCommon cache the sequence value.
+// `alter sequence` will invalidate the cached range.
+// `setval` will recompute the start position of cached value.
+type sequenceCommon struct {
+	meta *model.SequenceInfo
+	// base < end when increment > 0.
+	// base > end when increment < 0.
+	end  int64
+	base int64
+	// round is used to count the cycle times.
+	round int64
+	mu    sync.RWMutex
+}
+
+// GetSequenceBaseEndRound is used in test.
+func (s *sequenceCommon) GetSequenceBaseEndRound() (int64, int64, int64) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.base, s.end, s.round
+}
+
 // GetSequenceNextVal implements util.SequenceTable GetSequenceNextVal interface.
-func (t *TableCommon) GetSequenceNextVal(dbName, seqName string) (int64, error) {
-	t.sequence++
-	// TODO: implements it with sequence allocation logic.
-	return t.sequence, nil
+// Caching the sequence value in table, we can easily be notified with the cache empty,
+// and write the binlogInfo in table level rather than in allocator.
+func (t *TableCommon) GetSequenceNextVal(ctx interface{}, dbName, seqName string) (nextVal int64, err error) {
+	seq := t.sequence
+	if seq == nil {
+		// TODO: refine the error.
+		return 0, errors.New("sequenceCommon is nil")
+	}
+	seq.mu.Lock()
+	defer seq.mu.Unlock()
+
+	err = func() error {
+		// Check if need to update the cache batch from storage.
+		// Because seq.base is not always the last allocated value (may be set by setval()).
+		// So we should try to seek the next value in cache (not just add increment to seq.base).
+		var (
+			updateCache bool
+			offset      int64
+			ok          bool
+		)
+		if seq.base == seq.end {
+			// There is no cache yet.
+			updateCache = true
+		} else {
+			// Seek the first valid value in cache.
+			offset = seq.getOffset()
+			if seq.meta.Increment > 0 {
+				nextVal, ok = autoid.SeekToFirstSequenceValue(seq.base, seq.meta.Increment, offset, seq.base, seq.end)
+			} else {
+				nextVal, ok = autoid.SeekToFirstSequenceValue(seq.base, seq.meta.Increment, offset, seq.end, seq.base)
+			}
+			if !ok {
+				updateCache = true
+			}
+		}
+		if !updateCache {
+			return nil
+		}
+		// Update batch alloc from kv storage.
+		sequenceAlloc, err1 := getSequenceAllocator(t.allocs)
+		if err1 != nil {
+			return err1
+		}
+		var base, end, round int64
+		base, end, round, err1 = sequenceAlloc.AllocSeqCache(t.tableID)
+		if err1 != nil {
+			return err1
+		}
+		// Only update local cache when alloc succeed.
+		seq.base = base
+		seq.end = end
+		seq.round = round
+		// write sequence binlog to the pumpClient.
+		if ctx.(sessionctx.Context).GetSessionVars().BinlogClient != nil {
+			err = writeSequenceUpdateValueBinlog(ctx.(sessionctx.Context), dbName, seqName, seq.end)
+			if err != nil {
+				return err
+			}
+		}
+		// Seek the first valid value in new cache.
+		// Offset may have changed cause the round is updated.
+		offset = seq.getOffset()
+		if seq.meta.Increment > 0 {
+			nextVal, ok = autoid.SeekToFirstSequenceValue(seq.base, seq.meta.Increment, offset, seq.base, seq.end)
+		} else {
+			nextVal, ok = autoid.SeekToFirstSequenceValue(seq.base, seq.meta.Increment, offset, seq.end, seq.base)
+		}
+		if !ok {
+			return errors.New("can't find the first value in sequence cache")
+		}
+		return nil
+	}()
+	// Sequence alloc in kv store error.
+	if err != nil {
+		if err == autoid.ErrAutoincReadFailed {
+			return 0, table.ErrSequenceHasRunOut.GenWithStackByArgs(dbName, seqName)
+		}
+		return 0, err
+	}
+	seq.base = nextVal
+	return nextVal, nil
 }
 
 // SetSequenceVal implements util.SequenceTable SetSequenceVal interface.
-func (t *TableCommon) SetSequenceVal(newVal int64) (int64, bool, error) {
-	if t.sequence < newVal {
-		t.sequence = newVal
+// The returned bool indicates the newVal is already under the base.
+func (t *TableCommon) SetSequenceVal(ctx interface{}, newVal int64, dbName, seqName string) (int64, bool, error) {
+	seq := t.sequence
+	if seq == nil {
+		// TODO: refine the error.
+		return 0, false, errors.New("sequenceCommon is nil")
 	}
-	// TODO: implement it with sequence rebase logic.
-	return newVal, false, nil
+	seq.mu.Lock()
+	defer seq.mu.Unlock()
+
+	if seq.meta.Increment > 0 {
+		if newVal <= t.sequence.base {
+			return 0, true, nil
+		}
+		if newVal <= t.sequence.end {
+			t.sequence.base = newVal
+			return newVal, false, nil
+		}
+	} else {
+		if newVal >= t.sequence.base {
+			return 0, true, nil
+		}
+		if newVal >= t.sequence.end {
+			t.sequence.base = newVal
+			return newVal, false, nil
+		}
+	}
+
+	// Invalid the current cache.
+	t.sequence.base = t.sequence.end
+
+	// Rebase from kv storage.
+	sequenceAlloc, err := getSequenceAllocator(t.allocs)
+	if err != nil {
+		return 0, false, err
+	}
+	res, alreadySatisfied, err := sequenceAlloc.RebaseSeq(t.tableID, newVal)
+	if err != nil {
+		return 0, false, err
+	}
+	if !alreadySatisfied {
+		// Write sequence binlog to the pumpClient.
+		if ctx.(sessionctx.Context).GetSessionVars().BinlogClient != nil {
+			err = writeSequenceUpdateValueBinlog(ctx.(sessionctx.Context), dbName, seqName, seq.end)
+			if err != nil {
+				return 0, false, err
+			}
+		}
+	}
+	// Record the current end after setval succeed.
+	// Consider the following case.
+	// create sequence seq
+	// setval(seq, 100) setval(seq, 50)
+	// Because no cache (base, end keep 0), so the second setval won't return NULL.
+	t.sequence.base, t.sequence.end = newVal, newVal
+	return res, alreadySatisfied, nil
+}
+
+// getOffset is used in under GetSequenceNextVal & SetSequenceVal, which mu is locked.
+func (s *sequenceCommon) getOffset() int64 {
+	offset := s.meta.Start
+	if s.meta.Cycle && s.round > 0 {
+		if s.meta.Increment > 0 {
+			offset = s.meta.MinValue
+		} else {
+			offset = s.meta.MaxValue
+		}
+	}
+	return offset
 }
 
 // GetSequenceID implements util.SequenceTable GetSequenceID interface.
 func (t *TableCommon) GetSequenceID() int64 {
 	return t.tableID
+}
+
+// GetSequenceCommon is used in test to get sequenceCommon.
+func (t *TableCommon) GetSequenceCommon() *sequenceCommon {
+	return t.sequence
+}
+
+func getSequenceAllocator(allocs autoid.Allocators) (autoid.Allocator, error) {
+	for _, alloc := range allocs {
+		if alloc.GetType() == autoid.SequenceType {
+			return alloc, nil
+		}
+	}
+	// TODO: refine the error.
+	return nil, errors.New("sequence allocator is nil")
 }

@@ -195,28 +195,62 @@ func buildJobDependence(t *meta.Meta, curJob *model.Job) error {
 	return nil
 }
 
-// addDDLJob gets a global job ID and puts the DDL job in the DDL queue.
-func (d *ddl) addDDLJob(ctx sessionctx.Context, job *model.Job) error {
+func (d *ddl) limitDDLJobs() {
+	tasks := make([]*limitJobTask, 0, batchAddingJobs)
+	for {
+		select {
+		case task := <-d.limitJobCh:
+			tasks = tasks[:0]
+			jobLen := len(d.limitJobCh)
+			tasks = append(tasks, task)
+			for i := 0; i < jobLen; i++ {
+				tasks = append(tasks, <-d.limitJobCh)
+			}
+			d.addBatchDDLJobs(tasks)
+		case <-d.quitCh:
+			return
+		}
+	}
+}
+
+// addBatchDDLJobs gets global job IDs and puts the DDL jobs in the DDL queue.
+func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) {
 	startTime := time.Now()
-	job.Version = currentVersion
-	job.Query, _ = ctx.Value(sessionctx.QueryString).(string)
 	err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
-		t := newMetaWithQueueTp(txn, job.Type.String())
-		var err error
-		job.ID, err = t.GenGlobalID()
+		t := meta.NewMeta(txn)
+		ids, err := t.GenGlobalIDs(len(tasks))
 		if err != nil {
 			return errors.Trace(err)
 		}
-		job.StartTS = txn.StartTS()
-		if err = buildJobDependence(t, job); err != nil {
-			return errors.Trace(err)
-		}
-		err = t.EnQueueDDLJob(job)
+		for i, task := range tasks {
+			job := task.job
+			job.Version = currentVersion
+			job.StartTS = txn.StartTS()
+			job.ID = ids[i]
+			if err = buildJobDependence(t, job); err != nil {
+				return errors.Trace(err)
+			}
 
-		return errors.Trace(err)
+			if job.Type == model.ActionAddIndex || job.Type == model.ActionAddPrimaryKey {
+				jobKey := meta.AddIndexJobListKey
+				err = t.EnQueueDDLJob(job, jobKey)
+			} else {
+				err = t.EnQueueDDLJob(job)
+			}
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+		return nil
 	})
-	metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerAddDDLJob, job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
-	return errors.Trace(err)
+	var jobs string
+	for _, task := range tasks {
+		task.err <- err
+		jobs += task.job.String() + "; "
+		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerAddDDLJob, task.job.Type.String(),
+			metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
+	}
+	logutil.BgLogger().Info("[ddl] add DDL jobs", zap.Int("batch count", len(tasks)), zap.String("jobs", jobs))
 }
 
 // getHistoryDDLJob gets a DDL job with job's ID from history queue.
@@ -249,6 +283,7 @@ func (w *worker) handleUpdateJobError(t *meta.Meta, job *model.Job, err error) e
 		// Reduce this txn entry size.
 		job.BinlogInfo.Clean()
 		job.Error = toTError(err)
+		job.ErrorCount++
 		job.SchemaState = model.StateNone
 		job.State = model.JobStateCancelled
 		err = w.finishDDLJob(t, job)
@@ -259,6 +294,11 @@ func (w *worker) handleUpdateJobError(t *meta.Meta, job *model.Job, err error) e
 // updateDDLJob updates the DDL job information.
 // Every time we enter another state except final state, we must call this function.
 func (w *worker) updateDDLJob(t *meta.Meta, job *model.Job, meetErr bool) error {
+	failpoint.Inject("mockErrEntrySizeTooLarge", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(kv.ErrEntryTooLarge)
+		}
+	})
 	updateRawArgs := true
 	// If there is an error when running job and the RawArgs hasn't been decoded by DecodeArgs,
 	// so we shouldn't replace RawArgs with the marshaling Args.
@@ -429,7 +469,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 				}
 			})
 			if job.IsCancelled() {
-				txn.Reset()
+				txn.Discard()
 				err = w.finishDDLJob(t, job)
 				return errors.Trace(err)
 			}
@@ -471,12 +511,26 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 	}
 }
 
+func skipWriteBinlog(job *model.Job) bool {
+	switch job.Type {
+	// ActionUpdateTiFlashReplicaStatus is a TiDB internal DDL,
+	// it's used to update table's TiFlash replica available status.
+	case model.ActionUpdateTiFlashReplicaStatus:
+		return true
+	}
+
+	return false
+}
+
 func writeBinlog(binlogCli *pumpcli.PumpsClient, txn kv.Transaction, job *model.Job) {
 	if job.IsDone() || job.IsRollbackDone() ||
 		// When this column is in the "delete only" and "delete reorg" states, the binlog of "drop column" has not been written yet,
 		// but the column has been removed from the binlog of the write operation.
 		// So we add this binlog to enable downstream components to handle DML correctly in this schema state.
-		(job.Type == model.ActionDropColumn && job.SchemaState == model.StateDeleteOnly) {
+		((job.Type == model.ActionDropColumn || job.Type == model.ActionDropColumns) && job.SchemaState == model.StateDeleteOnly) {
+		if skipWriteBinlog(job) {
+			return
+		}
 		binloginfo.SetDDLBinlog(binlogCli, txn, job.ID, int32(job.SchemaState), job.Query)
 	}
 }
@@ -549,8 +603,12 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		ver, err = onTruncateTablePartition(d, t, job)
 	case model.ActionAddColumn:
 		ver, err = onAddColumn(d, t, job)
+	case model.ActionAddColumns:
+		ver, err = onAddColumns(d, t, job)
 	case model.ActionDropColumn:
 		ver, err = onDropColumn(t, job)
+	case model.ActionDropColumns:
+		ver, err = onDropColumns(t, job)
 	case model.ActionModifyColumn:
 		ver, err = w.onModifyColumn(t, job)
 	case model.ActionSetDefaultValue:

@@ -267,6 +267,15 @@ func (s *testSuite6) TestCreateView(c *C) {
 	tk.MustExec("create view v1_if_exists as (select * from t1)")
 	tk.MustExec("drop view if exists v1_if_exists,v2_if_exists,v3_if_exists")
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1051|Unknown table 'test.v2_if_exists'", "Note|1051|Unknown table 'test.v3_if_exists'"))
+
+	// Test for create nested view.
+	tk.MustExec("create table test_v_nested(a int)")
+	tk.MustExec("create definer='root'@'localhost' view v_nested as select * from test_v_nested")
+	tk.MustExec("create definer='root'@'localhost' view v_nested2 as select * from v_nested")
+	_, err = tk.Exec("create or replace definer='root'@'localhost' view v_nested as select * from v_nested2")
+	c.Assert(terror.ErrorEqual(err, plannercore.ErrNoSuchTable), IsTrue)
+	tk.MustExec("drop table test_v_nested")
+	tk.MustExec("drop view v_nested, v_nested2")
 }
 
 func (s *testSuite6) TestCreateViewWithOverlongColName(c *C) {
@@ -401,6 +410,28 @@ func (s *testSuite6) TestAlterTableAddColumn(c *C) {
 	tk.MustExec("drop view alter_view")
 }
 
+func (s *testSuite6) TestAlterTableAddColumns(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table if not exists alter_test (c1 int)")
+	tk.MustExec("insert into alter_test values(1)")
+	tk.MustExec("alter table alter_test add column c2 timestamp default current_timestamp, add column c8 varchar(50) default 'CURRENT_TIMESTAMP'")
+	tk.MustExec("alter table alter_test add column (c7 timestamp default current_timestamp, c3 varchar(50) default 'CURRENT_TIMESTAMP')")
+	r, err := tk.Exec("select c2 from alter_test")
+	c.Assert(err, IsNil)
+	req := r.NewChunk()
+	err = r.Next(context.Background(), req)
+	c.Assert(err, IsNil)
+	row := req.GetRow(0)
+	c.Assert(row.Len(), Equals, 1)
+	r.Close()
+	tk.MustQuery("select c3 from alter_test").Check(testkit.Rows("CURRENT_TIMESTAMP"))
+	tk.MustExec("create or replace view alter_view as select c1,c2 from alter_test")
+	_, err = tk.Exec("alter table alter_view add column (c4 varchar(50), c5 varchar(50))")
+	c.Assert(err.Error(), Equals, ddl.ErrWrongObject.GenWithStackByArgs("test", "alter_view", "BASE TABLE").Error())
+	tk.MustExec("drop view alter_view")
+}
+
 func (s *testSuite6) TestAddNotNullColumnNoDefault(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -502,8 +533,8 @@ func (s *testSuite6) TestDefaultDBAfterDropCurDB(c *C) {
 	testSQL = `drop database test_db;`
 	tk.MustExec(testSQL)
 	tk.MustQuery(`select database();`).Check(testkit.Rows("<nil>"))
-	tk.MustQuery(`select @@character_set_database;`).Check(testkit.Rows("utf8"))
-	tk.MustQuery(`select @@collation_database;`).Check(testkit.Rows("utf8_unicode_ci"))
+	tk.MustQuery(`select @@character_set_database;`).Check(testkit.Rows(mysql.DefaultCharset))
+	tk.MustQuery(`select @@collation_database;`).Check(testkit.Rows(mysql.DefaultCollationName))
 }
 
 func (s *testSuite6) TestColumnCharsetAndCollate(c *C) {
@@ -784,7 +815,7 @@ func (s *testAutoRandomSuite) TestAutoRandomBitsData(c *C) {
 
 	// Test explicit insert.
 	tk.MustExec("create table t (a tinyint primary key auto_random(2), b int)")
-	for i := 0; i < 100; i++ {
+	for i := 1; i <= 100; i++ {
 		tk.MustExec("insert into t values (?, ?)", i, i)
 	}
 	_, err = tk.Exec("insert into t (b) values (0)")
@@ -813,8 +844,8 @@ func (s *testAutoRandomSuite) TestAutoRandomBitsData(c *C) {
 	tk.MustExec("drop table t")
 
 	tk.MustExec("create table t (a tinyint primary key auto_random(2), b int)")
-	tk.MustExec("insert into t values (0, 2)")
-	tk.MustExec("update t set a = 31 where a = 0")
+	tk.MustExec("insert into t values (1, 2)")
+	tk.MustExec("update t set a = 31 where a = 1")
 	_, err = tk.Exec("insert into t (b) values (0)")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, autoid.ErrAutoRandReadFailed.GenWithStackByArgs().Error())

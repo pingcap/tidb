@@ -91,7 +91,6 @@ func (s *testLogSuite) TestLogging(c *C) {
 	entry, err = s.buf.ReadString('\n')
 	c.Assert(err, IsNil)
 	c.Assert(entry, Matches, logPattern)
-	fmt.Println(entry, logPattern)
 	c.Assert(strings.Contains(entry, "log_test.go"), IsTrue)
 }
 

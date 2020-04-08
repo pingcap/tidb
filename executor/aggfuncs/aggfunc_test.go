@@ -274,13 +274,13 @@ func getDataGenFunc(ft *types.FieldType) func(i int) types.Datum {
 		elems := []string{"a", "b", "c", "d", "e"}
 		return func(i int) types.Datum {
 			e, _ := types.ParseEnumValue(elems, uint64(i+1))
-			return types.NewMysqlEnumDatum(e)
+			return types.NewCollateMysqlEnumDatum(e, ft.Collate)
 		}
 	case mysql.TypeSet:
 		elems := []string{"a", "b", "c", "d", "e"}
 		return func(i int) types.Datum {
 			e, _ := types.ParseSetValue(elems, uint64(i+1))
-			return types.NewMysqlSetDatum(e)
+			return types.NewMysqlSetDatum(e, ft.Collate)
 		}
 	}
 	return nil
@@ -421,4 +421,96 @@ func (s *testSuite) testMultiArgsAggFunc(c *C, p multiArgsAggTest) {
 	result, err = dt.CompareDatum(s.ctx.GetSessionVars().StmtCtx, &p.results[0])
 	c.Assert(err, IsNil)
 	c.Assert(result, Equals, 0)
+}
+
+func (s *testSuite) benchmarkAggFunc(b *testing.B, p aggTest) {
+	srcChk := chunk.NewChunkWithCapacity([]*types.FieldType{p.dataType}, p.numRows)
+	for i := 0; i < p.numRows; i++ {
+		dt := p.dataGen(i)
+		srcChk.AppendDatum(0, &dt)
+	}
+	srcChk.AppendDatum(0, &types.Datum{})
+
+	args := []expression.Expression{&expression.Column{RetType: p.dataType, Index: 0}}
+	if p.funcName == ast.AggFuncGroupConcat {
+		args = append(args, &expression.Constant{Value: types.NewStringDatum(" "), RetType: types.NewFieldType(mysql.TypeString)})
+	}
+	desc, err := aggregation.NewAggFuncDesc(s.ctx, p.funcName, args, false)
+	if err != nil {
+		b.Fatal(err)
+	}
+	finalFunc := aggfuncs.Build(s.ctx, desc, 0)
+	resultChk := chunk.NewChunkWithCapacity([]*types.FieldType{desc.RetTp}, 1)
+	iter := chunk.NewIterator4Chunk(srcChk)
+	input := make([]chunk.Row, 0, iter.Len())
+	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+		input = append(input, row)
+	}
+	b.Run(fmt.Sprintf("%v/%v", p.funcName, p.dataType), func(b *testing.B) {
+		s.baseBenchmarkAggFunc(b, finalFunc, input, resultChk)
+	})
+
+	desc, err = aggregation.NewAggFuncDesc(s.ctx, p.funcName, args, true)
+	if err != nil {
+		b.Fatal(err)
+	}
+	finalFunc = aggfuncs.Build(s.ctx, desc, 0)
+	resultChk.Reset()
+	b.Run(fmt.Sprintf("%v(distinct)/%v", p.funcName, p.dataType), func(b *testing.B) {
+		s.baseBenchmarkAggFunc(b, finalFunc, input, resultChk)
+	})
+}
+
+func (s *testSuite) benchmarkMultiArgsAggFunc(b *testing.B, p multiArgsAggTest) {
+	srcChk := chunk.NewChunkWithCapacity(p.dataTypes, p.numRows)
+	for i := 0; i < p.numRows; i++ {
+		for j := 0; j < len(p.dataGens); j++ {
+			fdt := p.dataGens[j](i)
+			srcChk.AppendDatum(j, &fdt)
+		}
+	}
+	srcChk.AppendDatum(0, &types.Datum{})
+
+	args := make([]expression.Expression, len(p.dataTypes))
+	for k := 0; k < len(p.dataTypes); k++ {
+		args[k] = &expression.Column{RetType: p.dataTypes[k], Index: k}
+	}
+
+	desc, err := aggregation.NewAggFuncDesc(s.ctx, p.funcName, args, false)
+	if err != nil {
+		b.Fatal(err)
+	}
+	finalFunc := aggfuncs.Build(s.ctx, desc, 0)
+	resultChk := chunk.NewChunkWithCapacity([]*types.FieldType{desc.RetTp}, 1)
+	iter := chunk.NewIterator4Chunk(srcChk)
+	input := make([]chunk.Row, 0, iter.Len())
+	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+		input = append(input, row)
+	}
+	b.Run(fmt.Sprintf("%v/%v", p.funcName, p.dataTypes), func(b *testing.B) {
+		s.baseBenchmarkAggFunc(b, finalFunc, input, resultChk)
+	})
+
+	desc, err = aggregation.NewAggFuncDesc(s.ctx, p.funcName, args, true)
+	if err != nil {
+		b.Fatal(err)
+	}
+	finalFunc = aggfuncs.Build(s.ctx, desc, 0)
+	resultChk.Reset()
+	b.Run(fmt.Sprintf("%v(distinct)/%v", p.funcName, p.dataTypes), func(b *testing.B) {
+		s.baseBenchmarkAggFunc(b, finalFunc, input, resultChk)
+	})
+}
+
+func (s *testSuite) baseBenchmarkAggFunc(b *testing.B,
+	finalFunc aggfuncs.AggFunc, input []chunk.Row, output *chunk.Chunk) {
+	finalPr := finalFunc.AllocPartialResult()
+	output.Reset()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		finalFunc.UpdatePartialResult(s.ctx, input, finalPr)
+		b.StopTimer()
+		output.Reset()
+		b.StartTimer()
+	}
 }

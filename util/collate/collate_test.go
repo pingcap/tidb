@@ -39,21 +39,20 @@ type compareTable struct {
 
 type keyTable struct {
 	Str    string
-	PadLen int
 	Expect []byte
 }
 
 func testCompareTable(table []compareTable, collate string, c *C) {
 	for i, t := range table {
 		comment := Commentf("%d %v %v", i, t.Left, t.Right)
-		c.Assert(GetCollator(collate).Compare(t.Left, t.Right, CollatorOption{}), Equals, t.Expect, comment)
+		c.Assert(GetCollator(collate).Compare(t.Left, t.Right), Equals, t.Expect, comment)
 	}
 }
 
 func testKeyTable(table []keyTable, collate string, c *C) {
 	for i, t := range table {
 		comment := Commentf("%d %s", i, t.Str)
-		c.Assert(GetCollator(collate).Key(t.Str, CollatorOption{PadLen: t.PadLen}), DeepEquals, t.Expect, comment)
+		c.Assert(GetCollator(collate).Key(t.Str), DeepEquals, t.Expect, comment)
 	}
 }
 
@@ -70,12 +69,12 @@ func (s *testCollateSuite) TestBinCollator(c *C) {
 		{"a\t", "a", 1},
 	}
 	keyTable := []keyTable{
-		{"a", 1, []byte{0x61}},
-		{"A", 1, []byte{0x41}},
-		{"Foo © bar 𝌆 baz ☃ qux", 30, []byte{0x46, 0x6f, 0x6f, 0x20, 0xc2, 0xa9, 0x20, 0x62, 0x61, 0x72, 0x20, 0xf0,
+		{"a", []byte{0x61}},
+		{"A", []byte{0x41}},
+		{"Foo © bar 𝌆 baz ☃ qux", []byte{0x46, 0x6f, 0x6f, 0x20, 0xc2, 0xa9, 0x20, 0x62, 0x61, 0x72, 0x20, 0xf0,
 			0x9d, 0x8c, 0x86, 0x20, 0x62, 0x61, 0x7a, 0x20, 0xe2, 0x98, 0x83, 0x20, 0x71, 0x75, 0x78}},
-		{"a ", 2, []byte{0x61, 0x20}},
-		{"a", 2, []byte{0x61}},
+		{"a ", []byte{0x61, 0x20}},
+		{"a", []byte{0x61}},
 	}
 	testCompareTable(compareTable, "utf8mb4_bin", c)
 	testKeyTable(keyTable, "utf8mb4_bin", c)
@@ -84,6 +83,7 @@ func (s *testCollateSuite) TestBinCollator(c *C) {
 func (s *testCollateSuite) TestBinPaddingCollator(c *C) {
 	defer testleak.AfterTest(c)()
 	SetNewCollationEnabledForTest(true)
+	defer SetNewCollationEnabledForTest(false)
 	compareTable := []compareTable{
 		{"a", "b", -1},
 		{"a", "A", 1},
@@ -91,15 +91,15 @@ func (s *testCollateSuite) TestBinPaddingCollator(c *C) {
 		{"abc", "ab", 1},
 		{"a", "a ", 0},
 		{"a ", "a  ", 0},
-		{"a\t", "a", -1},
+		{"a\t", "a", 1},
 	}
 	keyTable := []keyTable{
-		{"a", 1, []byte{0x61}},
-		{"A", 1, []byte{0x41}},
-		{"Foo © bar 𝌆 baz ☃ qux", 30, []byte{0x46, 0x6f, 0x6f, 0x20, 0xc2, 0xa9, 0x20, 0x62, 0x61, 0x72,
-			0x20, 0xf0, 0x9d, 0x8c, 0x86, 0x20, 0x62, 0x61, 0x7a, 0x20, 0xe2, 0x98, 0x83, 0x20, 0x71, 0x75, 0x78, 0x20, 0x20, 0x20}},
-		{"a ", 2, []byte{0x61, 0x20}},
-		{"a", 2, []byte{0x61, 0x20}},
+		{"a", []byte{0x61}},
+		{"A", []byte{0x41}},
+		{"Foo © bar 𝌆 baz ☃ qux", []byte{0x46, 0x6f, 0x6f, 0x20, 0xc2, 0xa9, 0x20, 0x62, 0x61,
+			0x72, 0x20, 0xf0, 0x9d, 0x8c, 0x86, 0x20, 0x62, 0x61, 0x7a, 0x20, 0xe2, 0x98, 0x83, 0x20, 0x71, 0x75, 0x78}},
+		{"a ", []byte{0x61}},
+		{"a", []byte{0x61}},
 	}
 	testCompareTable(compareTable, "utf8mb4_bin", c)
 	testKeyTable(keyTable, "utf8mb4_bin", c)
@@ -108,6 +108,7 @@ func (s *testCollateSuite) TestBinPaddingCollator(c *C) {
 func (s *testCollateSuite) TestGeneralCICollator(c *C) {
 	defer testleak.AfterTest(c)()
 	SetNewCollationEnabledForTest(true)
+	defer SetNewCollationEnabledForTest(false)
 	compareTable := []compareTable{
 		{"a", "b", -1},
 		{"a", "A", 0},
@@ -115,34 +116,49 @@ func (s *testCollateSuite) TestGeneralCICollator(c *C) {
 		{"abc", "abc", 0},
 		{"abc", "ab", 1},
 		{"😜", "😃", 0},
+		{"a ", "a  ", 0},
+		{"a\t", "a", 1},
 	}
 	keyTable := []keyTable{
-		{"a", 1, []byte{0x0, 0x41}},
-		{"A", 1, []byte{0x0, 0x41}},
-		{"😃", 1, []byte{0xff, 0xfd}},
-		{"Foo © bar 𝌆 baz ☃ qux", 20, []byte{0x0, 0x46, 0x0, 0x4f, 0x0, 0x4f, 0x0, 0x20, 0x0, 0xa9, 0x0, 0x20, 0x0,
+		{"a", []byte{0x0, 0x41}},
+		{"A", []byte{0x0, 0x41}},
+		{"😃", []byte{0xff, 0xfd}},
+		{"Foo © bar 𝌆 baz ☃ qux", []byte{0x0, 0x46, 0x0, 0x4f, 0x0, 0x4f, 0x0, 0x20, 0x0, 0xa9, 0x0, 0x20, 0x0,
 			0x42, 0x0, 0x41, 0x0, 0x52, 0x0, 0x20, 0xff, 0xfd, 0x0, 0x20, 0x0, 0x42, 0x0, 0x41, 0x0, 0x5a, 0x0, 0x20, 0x26,
 			0x3, 0x0, 0x20, 0x0, 0x51, 0x0, 0x55, 0x0, 0x58}},
-		{string([]byte{0x88, 0xe6}), 2, []byte{0xff, 0xfd, 0xff, 0xfd}},
+		{string([]byte{0x88, 0xe6}), []byte{0xff, 0xfd, 0xff, 0xfd}},
+		{"a ", []byte{0x0, 0x41}},
+		{"a", []byte{0x0, 0x41}},
 	}
 	testCompareTable(compareTable, "utf8mb4_general_ci", c)
 	testKeyTable(keyTable, "utf8mb4_general_ci", c)
 }
 
 func (s *testCollateSuite) TestSetNewCollateEnabled(c *C) {
-	SetNewCollationEnabled(false)
-	c.Assert(NewCollationEnabled(), Equals, false)
-	// It can be set only once.
-	SetNewCollationEnabled(true)
-	c.Assert(NewCollationEnabled(), Equals, false)
+	defer SetNewCollationEnabledForTest(false)
 
 	SetNewCollationEnabledForTest(true)
 	c.Assert(NewCollationEnabled(), Equals, true)
 }
 
+func (s *testCollateSuite) TestRewriteAndRestoreCollationID(c *C) {
+	SetNewCollationEnabledForTest(true)
+	c.Assert(RewriteNewCollationIDIfNeeded(5), Equals, int32(-5))
+	c.Assert(RewriteNewCollationIDIfNeeded(-5), Equals, int32(-5))
+	c.Assert(RestoreCollationIDIfNeeded(-5), Equals, int32(5))
+	c.Assert(RestoreCollationIDIfNeeded(5), Equals, int32(5))
+
+	SetNewCollationEnabledForTest(false)
+	c.Assert(RewriteNewCollationIDIfNeeded(5), Equals, int32(5))
+	c.Assert(RewriteNewCollationIDIfNeeded(-5), Equals, int32(-5))
+	c.Assert(RestoreCollationIDIfNeeded(5), Equals, int32(5))
+	c.Assert(RestoreCollationIDIfNeeded(-5), Equals, int32(-5))
+}
+
 func (s *testCollateSuite) TestGetCollator(c *C) {
 	defer testleak.AfterTest(c)()
 	SetNewCollationEnabledForTest(true)
+	defer SetNewCollationEnabledForTest(false)
 	c.Assert(GetCollator("binary"), FitsTypeOf, &binCollator{})
 	c.Assert(GetCollator("utf8mb4_bin"), FitsTypeOf, &binPaddingCollator{})
 	c.Assert(GetCollator("utf8_bin"), FitsTypeOf, &binPaddingCollator{})

@@ -399,7 +399,7 @@ func (s *testSuite5) TestAdminCleanupIndexMore(c *C) {
 	tk.MustExec("admin check table admin_test")
 }
 
-func (s *testSuite2) TestAdminCheckPartitionTableFailed(c *C) {
+func (s *testSuite3) TestAdminCheckPartitionTableFailed(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists admin_test_p")
@@ -603,7 +603,7 @@ func (s *testSuite5) TestAdminCheckTableFailed(c *C) {
 	tk.MustExec("admin check table admin_test")
 }
 
-func (s *testSuite2) TestAdminCheckTable(c *C) {
+func (s *testSuite8) TestAdminCheckTable(c *C) {
 	// test NULL value.
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

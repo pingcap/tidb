@@ -82,12 +82,12 @@ func (s *testFieldTypeSuite) TestFieldType(c *C) {
 	ft = NewFieldType(mysql.TypeVarchar)
 	ft.Flen = 10
 	ft.Flag |= mysql.BinaryFlag
-	c.Assert(ft.String(), Equals, "varchar(10) BINARY")
+	c.Assert(ft.String(), Equals, "varchar(10) BINARY COLLATE utf8mb4_bin")
 
 	ft = NewFieldType(mysql.TypeString)
 	ft.Charset = charset.CollationBin
 	ft.Flag |= mysql.BinaryFlag
-	c.Assert(ft.String(), Equals, "binary(1)")
+	c.Assert(ft.String(), Equals, "binary(1) COLLATE utf8mb4_bin")
 
 	ft = NewFieldType(mysql.TypeEnum)
 	ft.Elems = []string{"a", "b"}
@@ -198,7 +198,7 @@ func (s *testFieldTypeSuite) TestDefaultTypeForValue(c *C) {
 	}
 	for _, tt := range tests {
 		var ft FieldType
-		DefaultTypeForValue(tt.value, &ft)
+		DefaultTypeForValue(tt.value, &ft, mysql.DefaultCharset, mysql.DefaultCollationName)
 		c.Assert(ft.Tp, Equals, tt.tp, Commentf("%v %v", ft.Tp, tt.tp))
 		c.Assert(ft.Flen, Equals, tt.flen, Commentf("%v %v", ft.Flen, tt.flen))
 		c.Assert(ft.Charset, Equals, tt.charset, Commentf("%v %v", ft.Charset, tt.charset))

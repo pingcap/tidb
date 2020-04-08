@@ -114,26 +114,6 @@ select * from t;
 	c.Assert(err, IsNil)
 	c.Assert(t1Str, Equals, "2019-04-24 19:41:21.716221")
 
-	// test for bufio.Scanner: token too long.
-	slowLog = bytes.NewBufferString(
-		`# Time: 2019-04-28T15:24:04.309074+08:00
-select * from t;
-# Time: 2019-04-24-19:41:21.716221 +0800
-`)
-	originValue := variable.MaxOfMaxAllowedPacket
-	variable.MaxOfMaxAllowedPacket = 65536
-	sql := strings.Repeat("x", int(variable.MaxOfMaxAllowedPacket+1))
-	slowLog.WriteString(sql)
-	reader = bufio.NewReader(slowLog)
-	_, err = parseSlowLog(ctx, reader)
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "single line length exceeds limit: 65536")
-
-	variable.MaxOfMaxAllowedPacket = originValue
-	reader = bufio.NewReader(slowLog)
-	_, err = parseSlowLog(ctx, reader)
-	c.Assert(err, IsNil)
-
 	// Add parse error check.
 	slowLog = bytes.NewBufferString(
 		`# Time: 2019-04-28T15:24:04.309074+08:00
@@ -146,6 +126,33 @@ select * from t;
 	warnings := ctx.GetSessionVars().StmtCtx.GetWarnings()
 	c.Assert(warnings, HasLen, 1)
 	c.Assert(warnings[0].Err.Error(), Equals, "Parse slow log at line 2 failed. Field: `Succ`, error: strconv.ParseBool: parsing \"abc\": invalid syntax")
+}
+
+// It changes variable.MaxOfMaxAllowedPacket, so must be stayed in SerialSuite.
+func (s *testExecSerialSuite) TestParseSlowLogFileSerial(c *C) {
+	loc, err := time.LoadLocation("Asia/Shanghai")
+	c.Assert(err, IsNil)
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().TimeZone = loc
+	// test for bufio.Scanner: token too long.
+	slowLog := bytes.NewBufferString(
+		`# Time: 2019-04-28T15:24:04.309074+08:00
+select * from t;
+# Time: 2019-04-24-19:41:21.716221 +0800
+`)
+	originValue := variable.MaxOfMaxAllowedPacket
+	variable.MaxOfMaxAllowedPacket = 65536
+	sql := strings.Repeat("x", int(variable.MaxOfMaxAllowedPacket+1))
+	slowLog.WriteString(sql)
+	reader := bufio.NewReader(slowLog)
+	_, err = parseSlowLog(ctx, reader)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "single line length exceeds limit: 65536")
+
+	variable.MaxOfMaxAllowedPacket = originValue
+	reader = bufio.NewReader(slowLog)
+	_, err = parseSlowLog(ctx, reader)
+	c.Assert(err, IsNil)
 }
 
 func (s *testExecSuite) TestSlowLogParseTime(c *C) {

@@ -46,33 +46,31 @@ import (
 type slowQueryRetriever struct {
 	table       *model.TableInfo
 	outputCols  []*model.ColumnInfo
-	retrieved   bool
 	initialized bool
 	extractor   *plannercore.SlowQueryExtractor
 	files       []logFile
 	fileIdx     int
 	fileLine    int
 	checker     *slowLogChecker
+
+	parsedSlowLogCh chan parsedSlowLog
 }
 
 func (e *slowQueryRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
-	if e.retrieved {
-		return nil, nil
-	}
 	if !e.initialized {
 		err := e.initialize(sctx)
 		if err != nil {
 			return nil, err
 		}
-	}
-	if len(e.files) == 0 || e.fileIdx >= len(e.files) {
-		e.retrieved = true
-		return nil, nil
+		e.initializeAsyncParsing(ctx, sctx)
 	}
 
-	rows, err := e.dataForSlowLog(sctx)
+	rows, retrieved, err := e.dataForSlowLog(ctx)
 	if err != nil {
 		return nil, err
+	}
+	if retrieved {
+		return nil, nil
 	}
 	if len(e.outputCols) == len(e.table.Columns) {
 		return rows, nil
@@ -118,16 +116,53 @@ func (e *slowQueryRetriever) close() error {
 	return nil
 }
 
-func (e *slowQueryRetriever) dataForSlowLog(ctx sessionctx.Context) ([][]types.Datum, error) {
-	reader := bufio.NewReader(e.files[e.fileIdx].file)
-	rows, err := e.parseSlowLog(ctx, reader, 1024)
+type parsedSlowLog struct {
+	rows [][]types.Datum
+	err  error
+}
+
+func (e *slowQueryRetriever) parseDataForSlowLog(ctx context.Context, sctx sessionctx.Context) {
+	if len(e.files) == 0 {
+		close(e.parsedSlowLogCh)
+		return
+	}
+
+	reader := bufio.NewReader(e.files[0].file)
+	for e.fileIdx < len(e.files) {
+		rows, err := e.parseSlowLog(sctx, reader, 1024)
+		select {
+		case <-ctx.Done():
+			break
+		case e.parsedSlowLogCh <- parsedSlowLog{rows, err}:
+		}
+	}
+	close(e.parsedSlowLogCh)
+}
+
+func (e *slowQueryRetriever) dataForSlowLog(ctx context.Context) ([][]types.Datum, bool, error) {
+	var (
+		slowLog parsedSlowLog
+		ok      bool
+	)
+	select {
+	case slowLog, ok = <-e.parsedSlowLogCh:
+	case <-ctx.Done():
+		return nil, false, ctx.Err()
+	}
+	if !ok {
+		// When e.parsedSlowLogCh is closed, the slow log data is retrieved.
+		return nil, true, nil
+	}
+
+	rows, err := slowLog.rows, slowLog.err
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if e.table.Name.L == strings.ToLower(infoschema.ClusterTableSlowLog) {
-		return infoschema.AppendHostInfoToRows(rows)
+		rows, err := infoschema.AppendHostInfoToRows(rows)
+		return rows, false, err
 	}
-	return rows, nil
+	return rows, false, nil
 }
 
 type slowLogChecker struct {
@@ -168,10 +203,9 @@ func (e *slowQueryRetriever) parseSlowLog(ctx sessionctx.Context, reader *bufio.
 				e.fileIdx++
 				e.fileLine = 0
 				if e.fileIdx >= len(e.files) {
-					e.retrieved = true
 					return rows, nil
 				}
-				reader = bufio.NewReader(e.files[e.fileIdx].file)
+				reader.Reset(e.files[e.fileIdx].file)
 				continue
 			}
 			return rows, err
@@ -264,52 +298,52 @@ func getOneLine(reader *bufio.Reader) ([]byte, error) {
 }
 
 type slowQueryTuple struct {
-	time               time.Time
-	txnStartTs         uint64
-	user               string
-	host               string
-	connID             uint64
-	queryTime          float64
-	parseTime          float64
-	compileTime        float64
-	preWriteTime       float64
-	binlogPrewriteTime float64
-	commitTime         float64
-	getCommitTSTime    float64
-	commitBackoffTime  float64
-	backoffTypes       string
-	resolveLockTime    float64
-	localLatchWaitTime float64
-	writeKeys          uint64
-	writeSize          uint64
-	prewriteRegion     uint64
-	txnRetry           uint64
-	processTime        float64
-	waitTime           float64
-	backOffTime        float64
-	lockKeysTime       float64
-	requestCount       uint64
-	totalKeys          uint64
-	processKeys        uint64
-	db                 string
-	indexIDs           string
-	digest             string
-	statsInfo          string
-	avgProcessTime     float64
-	p90ProcessTime     float64
-	maxProcessTime     float64
-	maxProcessAddress  string
-	avgWaitTime        float64
-	p90WaitTime        float64
-	maxWaitTime        float64
-	maxWaitAddress     string
-	memMax             int64
-	prevStmt           string
-	sql                string
-	isInternal         bool
-	succ               bool
-	plan               string
-	planDigest         string
+	time                   time.Time
+	txnStartTs             uint64
+	user                   string
+	host                   string
+	connID                 uint64
+	queryTime              float64
+	parseTime              float64
+	compileTime            float64
+	preWriteTime           float64
+	waitPrewriteBinlogTime float64
+	commitTime             float64
+	getCommitTSTime        float64
+	commitBackoffTime      float64
+	backoffTypes           string
+	resolveLockTime        float64
+	localLatchWaitTime     float64
+	writeKeys              uint64
+	writeSize              uint64
+	prewriteRegion         uint64
+	txnRetry               uint64
+	processTime            float64
+	waitTime               float64
+	backOffTime            float64
+	lockKeysTime           float64
+	requestCount           uint64
+	totalKeys              uint64
+	processKeys            uint64
+	db                     string
+	indexIDs               string
+	digest                 string
+	statsInfo              string
+	avgProcessTime         float64
+	p90ProcessTime         float64
+	maxProcessTime         float64
+	maxProcessAddress      string
+	avgWaitTime            float64
+	p90WaitTime            float64
+	maxWaitTime            float64
+	maxWaitAddress         string
+	memMax                 int64
+	prevStmt               string
+	sql                    string
+	isInternal             bool
+	succ                   bool
+	plan                   string
+	planDigest             string
 }
 
 func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string, lineNum int, checker *slowLogChecker) (valid bool, err error) {
@@ -349,8 +383,8 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string, 
 		st.compileTime, err = strconv.ParseFloat(value, 64)
 	case execdetails.PreWriteTimeStr:
 		st.preWriteTime, err = strconv.ParseFloat(value, 64)
-	case execdetails.BinlogPrewriteTimeStr:
-		st.binlogPrewriteTime, err = strconv.ParseFloat(value, 64)
+	case execdetails.WaitPrewriteBinlogTimeStr:
+		st.waitPrewriteBinlogTime, err = strconv.ParseFloat(value, 64)
 	case execdetails.CommitTimeStr:
 		st.commitTime, err = strconv.ParseFloat(value, 64)
 	case execdetails.GetCommitTSTimeStr:
@@ -439,7 +473,7 @@ func (st *slowQueryTuple) convertToDatumRow() []types.Datum {
 	record = append(record, types.NewFloat64Datum(st.parseTime))
 	record = append(record, types.NewFloat64Datum(st.compileTime))
 	record = append(record, types.NewFloat64Datum(st.preWriteTime))
-	record = append(record, types.NewFloat64Datum(st.binlogPrewriteTime))
+	record = append(record, types.NewFloat64Datum(st.waitPrewriteBinlogTime))
 	record = append(record, types.NewFloat64Datum(st.commitTime))
 	record = append(record, types.NewFloat64Datum(st.getCommitTSTime))
 	record = append(record, types.NewFloat64Datum(st.commitBackoffTime))
@@ -656,4 +690,9 @@ func (e *slowQueryRetriever) getFileEndTime(file *os.File) (time.Time, error) {
 			return t, errors.Errorf("malform slow query file %v", file.Name())
 		}
 	}
+}
+
+func (e *slowQueryRetriever) initializeAsyncParsing(ctx context.Context, sctx sessionctx.Context) {
+	e.parsedSlowLogCh = make(chan parsedSlowLog, 1)
+	go e.parseDataForSlowLog(ctx, sctx)
 }

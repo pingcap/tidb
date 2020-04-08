@@ -34,9 +34,9 @@ func Build(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal
 	case ast.AggFuncCount:
 		return buildCount(aggFuncDesc, ordinal)
 	case ast.AggFuncSum:
-		return buildSum(aggFuncDesc, ordinal)
+		return buildSum(ctx, aggFuncDesc, ordinal)
 	case ast.AggFuncAvg:
-		return buildAvg(aggFuncDesc, ordinal)
+		return buildAvg(ctx, aggFuncDesc, ordinal)
 	case ast.AggFuncFirstRow:
 		return buildFirstRow(aggFuncDesc, ordinal)
 	case ast.AggFuncMax:
@@ -105,6 +105,25 @@ func buildCount(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	// use countOriginalWithDistinct.
 	if aggFuncDesc.HasDistinct &&
 		(aggFuncDesc.Mode == aggregation.CompleteMode || aggFuncDesc.Mode == aggregation.Partial1Mode) {
+		if len(base.args) == 1 {
+			// optimize with single column
+			// TODO: because Time and JSON does not have `hashcode()` or similar method
+			// so they're in exception for now.
+			// TODO: add hashCode method for all evaluate types (Decimal, Time, Duration, JSON).
+			// https://github.com/pingcap/tidb/issues/15857
+			switch aggFuncDesc.Args[0].GetType().EvalType() {
+			case types.ETInt:
+				return &countOriginalWithDistinct4Int{baseCount{base}}
+			case types.ETReal:
+				return &countOriginalWithDistinct4Real{baseCount{base}}
+			case types.ETDecimal:
+				return &countOriginalWithDistinct4Decimal{baseCount{base}}
+			case types.ETDuration:
+				return &countOriginalWithDistinct4Duration{baseCount{base}}
+			case types.ETString:
+				return &countOriginalWithDistinct4String{baseCount{base}}
+			}
+		}
 		return &countOriginalWithDistinct{baseCount{base}}
 	}
 
@@ -134,7 +153,7 @@ func buildCount(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 }
 
 // buildSum builds the AggFunc implementation for function "SUM".
-func buildSum(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+func buildSum(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	base := baseSumAggFunc{
 		baseAggFunc: baseAggFunc{
 			args:    aggFuncDesc.Args,
@@ -155,13 +174,16 @@ func buildSum(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 			if aggFuncDesc.HasDistinct {
 				return &sum4DistinctFloat64{base}
 			}
-			return &sum4Float64{base}
+			if ctx.GetSessionVars().WindowingUseHighPrecision {
+				return &sum4Float64HighPrecision{baseSum4Float64{base}}
+			}
+			return &sum4Float64{baseSum4Float64{base}}
 		}
 	}
 }
 
 // buildAvg builds the AggFunc implementation for function "AVG".
-func buildAvg(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+func buildAvg(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	base := baseAggFunc{
 		args:    aggFuncDesc.Args,
 		ordinal: ordinal,
@@ -185,7 +207,10 @@ func buildAvg(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 			if aggFuncDesc.HasDistinct {
 				return &avgOriginal4DistinctFloat64{base}
 			}
-			return &avgOriginal4Float64{baseAvgFloat64{base}}
+			if ctx.GetSessionVars().WindowingUseHighPrecision {
+				return &avgOriginal4Float64HighPrecision{baseAvgFloat64{base}}
+			}
+			return &avgOriginal4Float64{avgOriginal4Float64HighPrecision{baseAvgFloat64{base}}}
 		}
 
 	// Build avg functions which consume the partial result of other avg
@@ -280,7 +305,7 @@ func buildMaxMin(aggFuncDesc *aggregation.AggFuncDesc, ordinal int, isMax bool) 
 		case types.ETDecimal:
 			return &maxMin4Decimal{base}
 		case types.ETString:
-			return &maxMin4String{base}
+			return &maxMin4String{baseMaxMinAggFunc: base, retTp: aggFuncDesc.RetTp}
 		case types.ETDatetime, types.ETTimestamp:
 			return &maxMin4Time{base}
 		case types.ETDuration:

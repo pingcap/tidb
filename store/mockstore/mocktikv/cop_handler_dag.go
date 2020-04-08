@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/kv"
@@ -37,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	mockpkg "github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/timeutil"
@@ -205,6 +205,7 @@ func (h *rpcHandler) buildTableScan(ctx *dagContext, executor *tipb.Executor) (*
 			Tp:         col.Tp,
 			Flag:       col.Flag,
 			IsPKHandle: col.GetPkHandle(),
+			Collate:    collate.CollationID2Name(col.Collation),
 		}
 	}
 	defVal := func(i int) ([]byte, error) {
@@ -242,17 +243,17 @@ func (h *rpcHandler) buildIndexScan(ctx *dagContext, executor *tipb.Executor) (*
 	columns := executor.IdxScan.Columns
 	ctx.evalCtx.setColumnInfo(columns)
 	length := len(columns)
-	pkStatus := tablecodec.PrimaryKeyNotExists
+	pkStatus := tablecodec.HandleNotExists
 	// The PKHandle column info has been collected in ctx.
 	if columns[length-1].GetPkHandle() {
 		if mysql.HasUnsignedFlag(uint(columns[length-1].GetFlag())) {
-			pkStatus = tablecodec.PrimaryKeyIsUnsigned
+			pkStatus = tablecodec.HandleIsUnsigned
 		} else {
-			pkStatus = tablecodec.PrimaryKeyIsSigned
+			pkStatus = tablecodec.HandleIsSigned
 		}
 		columns = columns[:length-1]
 	} else if columns[length-1].ColumnId == model.ExtraHandleID {
-		pkStatus = tablecodec.PrimaryKeyIsSigned
+		pkStatus = tablecodec.HandleIsSigned
 		columns = columns[:length-1]
 	}
 	ranges, err := h.extractKVRanges(ctx.keyRanges, executor.IdxScan.Desc)
@@ -264,6 +265,17 @@ func (h *rpcHandler) buildIndexScan(ctx *dagContext, executor *tipb.Executor) (*
 	if startTS == 0 {
 		startTS = ctx.dagReq.GetStartTsFallback()
 	}
+	colInfos := make([]rowcodec.ColInfo, 0, len(columns))
+	for i := range columns {
+		col := columns[i]
+		colInfos = append(colInfos, rowcodec.ColInfo{
+			ID:         col.ColumnId,
+			Tp:         col.Tp,
+			Flag:       col.Flag,
+			IsPKHandle: col.GetPkHandle(),
+			Collate:    collate.CollationID2Name(col.Collation),
+		})
+	}
 	e := &indexScanExec{
 		IndexScan:      executor.IdxScan,
 		kvRanges:       ranges,
@@ -272,8 +284,9 @@ func (h *rpcHandler) buildIndexScan(ctx *dagContext, executor *tipb.Executor) (*
 		isolationLevel: h.isolationLevel,
 		resolvedLocks:  h.resolvedLocks,
 		mvccStore:      h.mvccStore,
-		pkStatus:       pkStatus,
+		hdStatus:       pkStatus,
 		execDetail:     new(execDetail),
+		colInfos:       colInfos,
 	}
 	if ctx.dagReq.CollectRangeCounts != nil && *ctx.dagReq.CollectRangeCounts {
 		e.counts = make([]int64, len(ranges))
@@ -422,7 +435,7 @@ func (e *evalContext) setColumnInfo(cols []*tipb.ColumnInfo) {
 	e.columnInfos = make([]*tipb.ColumnInfo, len(cols))
 	copy(e.columnInfos, cols)
 
-	e.colIDs = make(map[int64]int)
+	e.colIDs = make(map[int64]int, len(e.columnInfos))
 	e.fieldTps = make([]*types.FieldType, 0, len(e.columnInfos))
 	for i, col := range e.columnInfos {
 		ft := fieldTypeFromPBColumn(col)
@@ -614,9 +627,6 @@ func (h *rpcHandler) fillUpData4SelectResponse(selResp *tipb.SelectResponse, dag
 	case tipb.EncodeType_TypeDefault:
 		h.encodeDefault(selResp, rows, dagReq.OutputOffsets)
 	case tipb.EncodeType_TypeChunk:
-		if dagReq.GetChunkMemoryLayout().GetEndian() != distsql.GetSystemEndian() {
-			return errors.Errorf("Mocktikv endian must be the same as TiDB system endian.")
-		}
 		colTypes := h.constructRespSchema(dagCtx)
 		loc := dagCtx.evalCtx.sc.TimeZone
 		err := h.encodeChunk(selResp, rows, colTypes, dagReq.OutputOffsets, loc)
@@ -860,6 +870,6 @@ func fieldTypeFromPBColumn(col *tipb.ColumnInfo) *types.FieldType {
 		Flen:    int(col.GetColumnLen()),
 		Decimal: int(col.GetDecimal()),
 		Elems:   col.Elems,
-		Collate: mysql.Collations[uint8(col.GetCollation())],
+		Collate: mysql.Collations[uint8(collate.RestoreCollationIDIfNeeded(col.GetCollation()))],
 	}
 }

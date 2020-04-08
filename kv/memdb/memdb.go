@@ -1,4 +1,4 @@
-// Copyright 2019 PingCAP, Inc.
+// Copyright 2020 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -17,90 +17,88 @@ import (
 	"bytes"
 	"math"
 	"unsafe"
+
+	"github.com/pingcap/tidb/util/fastrand"
 )
 
 const (
 	maxHeight      = 16
 	nodeHeaderSize = int(unsafe.Sizeof(nodeHeader{}))
+	initBlockSize  = 4 * 1024
 )
 
-// DB is an in-memory key/value database.
-type DB struct {
-	height int
-	head   nodeWithAddr
+// Sandbox is a space to keep pending kvs.
+type Sandbox struct {
+	frozen bool
+	done   bool
+	head   headNode
+	parent *Sandbox
 	arena  *arena
-
+	height int
 	length int
 	size   int
+
+	arenaSnap arenaSnapshot
 }
 
-// New creates a new initialized in-memory key/value DB.
-// The initBlockSize is the size of first block.
-// This DB is append-only, deleting an entry would remove entry node but not
-// reclaim KV buffer.
-func New(initBlockSize int) *DB {
-	return &DB{
-		height: 1,
-		head:   nodeWithAddr{node: new(node)},
-		arena:  newArenaLocator(initBlockSize),
+// NewSandbox create a new Sandbox.
+func NewSandbox() *Sandbox {
+	arena := newArenaLocator()
+	return &Sandbox{
+		height:    1,
+		arena:     arena,
+		arenaSnap: arena.snapshot(),
 	}
 }
 
-// Reset resets the DB to initial empty state.
-// Release all blocks except the initial one.
-func (db *DB) Reset() {
-	db.height = 1
-	db.head.node = new(node)
-	db.length = 0
-	db.size = 0
-	db.arena.reset()
-}
-
-// Get gets the value for the given key. It returns nil if the
-// DB does not contain the key.
-func (db *DB) Get(key []byte) []byte {
-	node, data, match := db.findGreaterEqual(key)
+// Get returns value for key in this sandbox's space.
+func (sb *Sandbox) Get(key []byte) []byte {
+	node, data, match := sb.findGreaterEqual(key)
 	if !match {
 		return nil
 	}
 	return node.getValue(data)
 }
 
-// Put sets the value for the given key.
-// It overwrites any previous value for that key.
-func (db *DB) Put(key []byte, v []byte) bool {
-	arena := db.arena
-	lsHeight := db.height
+// Put inserts kv into this sandbox.
+func (sb *Sandbox) Put(key, value []byte) {
+	if sb.frozen {
+		panic("cannot write to a sandbox when it has forked a new sanbox")
+	}
+
+	head := sb.getHead()
+	arena := sb.arena
+	lsHeight := sb.height
 	var prev [maxHeight + 1]nodeWithAddr
 	var next [maxHeight + 1]nodeWithAddr
-	prev[lsHeight] = db.head
+	prev[lsHeight] = head
 
 	var exists bool
 	for i := lsHeight - 1; i >= 0; i-- {
 		// Use higher level to speed up for current level.
-		prev[i], next[i], exists = db.findSpliceForLevel(db.arena, key, prev[i+1], i)
+		prev[i], next[i], exists = sb.findSpliceForLevel(key, prev[i+1], i)
 	}
 
 	var height int
 	if !exists {
-		height = db.randomHeight()
+		height = sb.randomHeight()
 	} else {
-		height = db.prepareOverwrite(next[:])
+		height = sb.prepareOverwrite(next[:])
 	}
 
-	x, addr := db.newNode(arena, key, v, height)
+	x, addr := arena.newNode(key, value, height)
 	if height > lsHeight {
-		db.height = height
+		sb.height = height
 	}
 
 	// We always insert from the base level and up. After you add a node in base level, we cannot
 	// create a node in the level above because it would have discovered the node in the base level.
 	for i := 0; i < height; i++ {
-		x.nexts[i] = next[i].addr
+		x.setNexts(i, next[i].addr)
 		if prev[i].node == nil {
-			prev[i] = db.head
+			prev[i] = head
 		}
-		prev[i].nexts[i] = addr
+		prev[i].setNexts(i, addr)
 	}
 
 	x.prev = prev[0].addr
@@ -108,26 +106,99 @@ func (db *DB) Put(key []byte, v []byte) bool {
 		next[0].prev = addr
 	}
 
-	db.length++
-	db.size += len(key) + len(v)
-	return true
+	sb.length++
+	sb.size += len(key) + len(value)
+}
+
+// Derive derive a new sandbox to buffer a batch of modifactions.
+func (sb *Sandbox) Derive() *Sandbox {
+	if sb.frozen {
+		panic("cannot start second sandbox")
+	}
+	sb.frozen = true
+	new := &Sandbox{
+		parent:    sb,
+		height:    1,
+		arena:     sb.arena,
+		arenaSnap: sb.arena.snapshot(),
+	}
+	return new
+}
+
+// Flush flushes all kvs into parent sandbox.
+func (sb *Sandbox) Flush() int {
+	if sb.parent == nil || sb.done {
+		return 0
+	}
+	if !sb.parent.frozen {
+		panic("the parent sandbox must be freezed when doing flush")
+	}
+	sb.parent.frozen = false
+	sb.done = true
+	return sb.parent.merge(sb)
+}
+
+// GetParent returns the parent sandbox.
+func (sb *Sandbox) GetParent() *Sandbox {
+	return sb.parent
+}
+
+// Discard discards all kvs in this sandbox.
+// It is safe to discard a flushed sandbox, and it is recommend to
+// call discard using defer to maintain correct state of parent.
+func (sb *Sandbox) Discard() {
+	if sb.done {
+		return
+	}
+
+	if sb.parent != nil {
+		if !sb.parent.frozen {
+			panic("the parent sandbox must be freezed when doing discard")
+		}
+		sb.parent.frozen = false
+		sb.done = true
+	} else if sb.frozen {
+		panic("root sandbox is freezed")
+	}
+
+	sb.head = headNode{}
+	sb.height = 1
+	sb.length = 0
+	sb.size = 0
+	sb.arena.revert(sb.arenaSnap)
+	if sb.parent != nil {
+		// nil out arena to pervent data corruption by accident.
+		sb.arena = nil
+	}
+}
+
+// Len returns the number of entries in the DB.
+func (sb *Sandbox) Len() int {
+	return sb.length
+}
+
+// Size returns sum of keys and values length. Note that deleted
+// key/value will not be accounted for, but it will still consume
+// the buffer, since the buffer is append only.
+func (sb *Sandbox) Size() int {
+	return sb.size
 }
 
 // The pointers in findSpliceForLevel may point to the node which going to be overwrite,
 // prepareOverwrite update them to point to the next node, so we can link new node with the list correctly.
-func (db *DB) prepareOverwrite(next []nodeWithAddr) int {
+func (sb *Sandbox) prepareOverwrite(next []nodeWithAddr) int {
 	old := next[0]
 
 	// Update necessary states.
-	db.size -= int(old.valLen) + int(old.keyLen)
-	db.length--
+	sb.size -= int(old.valLen) + int(old.keyLen)
+	sb.length--
 
 	height := int(old.height)
 	for i := 0; i < height; i++ {
 		if next[i].addr == old.addr {
-			next[i].addr = old.nexts[i]
+			next[i].addr = old.nexts(i)
 			if !next[i].addr.isNull() {
-				data := db.arena.getFrom(next[i].addr)
+				data := sb.arena.getFrom(next[i].addr)
 				next[i].node = (*node)(unsafe.Pointer(&data[0]))
 			}
 		}
@@ -135,56 +206,27 @@ func (db *DB) prepareOverwrite(next []nodeWithAddr) int {
 	return height
 }
 
-// Delete deletes the value for the given key.
-// It returns false if the DB does not contain the key.
-func (db *DB) Delete(key []byte) bool {
-	listHeight := db.height
-	var prev [maxHeight + 1]nodeWithAddr
-	prev[listHeight] = db.head
-
-	var keyNode nodeWithAddr
-	var match bool
-	for i := listHeight - 1; i >= 0; i-- {
-		prev[i], keyNode, match = db.findSpliceForLevel(db.arena, key, prev[i+1], i)
-	}
-	if !match {
-		return false
-	}
-
-	for i := int(keyNode.height) - 1; i >= 0; i-- {
-		prev[i].nexts[i] = keyNode.nexts[i]
-	}
-	nextAddr := keyNode.nexts[0]
-	if !nextAddr.isNull() {
-		nextData := db.arena.getFrom(nextAddr)
-		next := (*node)(unsafe.Pointer(&nextData[0]))
-		next.prev = prev[0].addr
-	}
-
-	db.length--
-	db.size -= int(keyNode.keyLen) + int(keyNode.valLen)
-	return true
+func (sb *Sandbox) getHead() nodeWithAddr {
+	head := (*node)(unsafe.Pointer(&sb.head))
+	return nodeWithAddr{node: head}
 }
 
-// Len returns the number of entries in the DB.
-func (db *DB) Len() int {
-	return db.length
-}
-
-// Size returns sum of keys and values length. Note that deleted
-// key/value will not be accounted for, but it will still consume
-// the buffer, since the buffer is append only.
-func (db *DB) Size() int {
-	return db.size
+func (sb *Sandbox) randomHeight() int {
+	h := 1
+	for h < maxHeight && fastrand.Uint32() < uint32(math.MaxUint32)/4 {
+		h++
+	}
+	return h
 }
 
 // findSpliceForLevel returns (outBefore, outAfter) with outBefore.key < key <= outAfter.key.
 // The input "before" tells us where to start looking.
 // If we found a node with the same key, then we return true.
-func (db *DB) findSpliceForLevel(arena *arena, key []byte, before nodeWithAddr, level int) (nodeWithAddr, nodeWithAddr, bool) {
+func (sb *Sandbox) findSpliceForLevel(key []byte, before nodeWithAddr, level int) (nodeWithAddr, nodeWithAddr, bool) {
+	arena := sb.arena
 	for {
 		// Assume before.key < key.
-		nextAddr := before.nexts[level]
+		nextAddr := before.nexts(level)
 		if nextAddr.isNull() {
 			return before, nodeWithAddr{}, false
 		}
@@ -200,16 +242,17 @@ func (db *DB) findSpliceForLevel(arena *arena, key []byte, before nodeWithAddr, 
 	}
 }
 
-func (db *DB) findGreaterEqual(key []byte) (*node, []byte, bool) {
-	prev := db.head.node
-	level := db.height - 1
+func (sb *Sandbox) findGreaterEqual(key []byte) (*node, []byte, bool) {
+	head := sb.getHead()
+	prev := head.node
+	level := sb.height - 1
+	arena := sb.arena
 
 	for {
 		var nextData []byte
 		var next *node
-		addr := prev.nexts[level]
+		addr := prev.nexts(level)
 		if !addr.isNull() {
-			arena := db.arena
 			nextData = arena.getFrom(addr)
 			next = (*node)(unsafe.Pointer(&nextData[0]))
 
@@ -234,13 +277,15 @@ func (db *DB) findGreaterEqual(key []byte) (*node, []byte, bool) {
 	}
 }
 
-func (db *DB) findLess(key []byte, allowEqual bool) (*node, []byte, bool) {
+func (sb *Sandbox) findLess(key []byte, allowEqual bool) (*node, []byte, bool) {
 	var prevData []byte
-	prev := db.head.node
-	level := db.height - 1
+	head := sb.getHead()
+	prev := head.node
+	level := sb.height - 1
+	arena := sb.arena
 
 	for {
-		next, nextData := db.getNext(prev, level)
+		next, nextData := prev.getNext(arena, level)
 		if next != nil {
 			cmp := bytes.Compare(key, next.getKey(nextData))
 			if cmp > 0 {
@@ -263,7 +308,7 @@ func (db *DB) findLess(key []byte, allowEqual bool) (*node, []byte, bool) {
 	}
 
 	// We are not going to return head.
-	if prev == db.head.node {
+	if prev == head.node {
 		return nil, nil, false
 	}
 	return prev, prevData, false
@@ -271,20 +316,22 @@ func (db *DB) findLess(key []byte, allowEqual bool) (*node, []byte, bool) {
 
 // findLast returns the last element. If head (empty db), we return nil. All the find functions
 // will NEVER return the head nodes.
-func (db *DB) findLast() (*node, []byte) {
+func (sb *Sandbox) findLast() (*node, []byte) {
 	var nodeData []byte
-	node := db.head.node
-	level := db.height - 1
+	head := sb.getHead()
+	node := head.node
+	level := sb.height - 1
+	arena := sb.arena
 
 	for {
-		next, nextData := db.getNext(node, level)
+		next, nextData := node.getNext(arena, level)
 		if next != nil {
 			node = next
 			nodeData = nextData
 			continue
 		}
 		if level == 0 {
-			if node == db.head.node {
+			if node == head.node {
 				return nil, nil
 			}
 			return node, nodeData
@@ -293,29 +340,138 @@ func (db *DB) findLast() (*node, []byte) {
 	}
 }
 
-func (db *DB) newNode(arena *arena, key []byte, v []byte, height int) (*node, arenaAddr) {
-	// The base level is already allocated in the node struct.
-	nodeSize := nodeHeaderSize + height*8 + 8 + len(key) + len(v)
-	addr, data := arena.alloc(nodeSize)
-	node := (*node)(unsafe.Pointer(&data[0]))
-	node.keyLen = uint16(len(key))
-	node.height = uint16(height)
-	node.valLen = uint32(len(v))
-	copy(data[node.nodeLen():], key)
-	copy(data[node.nodeLen()+int(node.keyLen):], v)
-	return node, addr
+func (sb *Sandbox) merge(new *Sandbox) int {
+	var ms mergeState
+	arena := sb.arena
+
+	if sb.head.nexts[0].isNull() {
+		// current skip-list is empty, overwite head node using the new list's head.
+		sb.head = new.head
+		sb.height = new.height
+		sb.length = new.length
+		sb.size = new.size
+		return new.length
+	}
+
+	var (
+		newNode      *node
+		nextNode     *node
+		newNodeAddr  arenaAddr
+		nextNodeAddr arenaAddr
+		newNodeData  []byte
+		nextNodeData []byte
+	)
+
+	head := new.getHead()
+	newNodeAddr = head.nexts(0)
+	newNode, newNodeData = head.getNext(arena, 0)
+
+	for newNode != nil {
+		key := newNode.getKey(newNodeData)
+		recomputeHeight := ms.calculateRecomputeHeight(key, sb)
+
+		nextNodeAddr = newNode.nexts(0)
+		nextNode, nextNodeData = newNode.getNext(arena, 0)
+
+		var exists bool
+		if recomputeHeight > 0 {
+			for i := recomputeHeight - 1; i >= 0; i-- {
+				ms.prev[i], ms.next[i], exists = sb.findSpliceForLevel(key, ms.prev[i+1], i)
+			}
+		}
+
+		height := int(newNode.height)
+		if exists {
+			height = sb.prepareOverwrite(ms.next[:])
+			if height > int(newNode.height) {
+				// The space is not enough, we have to create a new node.
+				k := newNode.getKey(newNodeData)
+				v := newNode.getValue(newNodeData)
+				newNode, newNodeAddr = arena.newNode(k, v, height)
+			}
+		}
+
+		if height > sb.height {
+			sb.height = height
+		}
+
+		for i := 0; i < height; i++ {
+			newNode.setNexts(i, ms.next[i].addr)
+			if ms.prev[i].node == nil {
+				ms.prev[i] = head
+			}
+			ms.prev[i].setNexts(i, newNodeAddr)
+		}
+
+		newNode.prev = ms.prev[0].addr
+		if ms.next[0].node != nil {
+			ms.next[0].prev = newNodeAddr
+		}
+
+		newNode, newNodeAddr, newNodeData = nextNode, nextNodeAddr, nextNodeData
+	}
+
+	sb.length += new.length
+	sb.size += new.size
+	return new.length
 }
 
-// fastRand is a fast thread local random function.
-//go:linkname fastRand runtime.fastrand
-func fastRand() uint32
+type mergeState struct {
+	height int
 
-func (db *DB) randomHeight() int {
-	h := 1
-	for h < maxHeight && fastRand() < uint32(math.MaxUint32)/4 {
-		h++
+	// hitHeight is used to reduce cost of calculateRecomputeHeight.
+	// For random workload, comparing hint keys from bottom up is wasted work.
+	// So we record the hit height of the last operation, only grow recompute height from near that height.
+	hitHeight int
+	prev      [maxHeight + 1]nodeWithAddr
+	next      [maxHeight + 1]nodeWithAddr
+}
+
+func (ms *mergeState) calculateRecomputeHeight(key []byte, sb *Sandbox) int {
+	head := sb.getHead()
+	listHeight := sb.height
+	arena := sb.arena
+
+	if ms.height < listHeight {
+		// Either splice is never used or list height has grown, we recompute all.
+		ms.prev[listHeight] = head
+		ms.next[listHeight] = nodeWithAddr{}
+		ms.height = listHeight
+		ms.hitHeight = ms.height
+		return listHeight
 	}
-	return h
+	recomputeHeight := ms.hitHeight - 2
+	if recomputeHeight < 0 {
+		recomputeHeight = 0
+	}
+	for recomputeHeight < listHeight {
+		prev := ms.prev[recomputeHeight]
+		next := ms.next[recomputeHeight]
+		prevNext := prev.nexts(recomputeHeight)
+		if prevNext != next.addr {
+			recomputeHeight++
+			continue
+		}
+		if prev.addr != head.addr &&
+			!prev.addr.isNull() &&
+			bytes.Compare(key, prev.getKey(arena.getFrom(prev.addr))) <= 0 {
+			// Key is before splice.
+			for prev.addr == ms.prev[recomputeHeight].addr {
+				recomputeHeight++
+			}
+			continue
+		}
+		if !next.addr.isNull() && bytes.Compare(key, next.getKey(arena.getFrom(next.addr))) > 0 {
+			// Key is after splice.
+			for next == ms.next[recomputeHeight] {
+				recomputeHeight++
+			}
+			continue
+		}
+		break
+	}
+	ms.hitHeight = recomputeHeight
+	return recomputeHeight
 }
 
 type nodeHeader struct {
@@ -329,7 +485,19 @@ type node struct {
 
 	// Addr of previous node at base level.
 	prev arenaAddr
-	// Height of the nexts.
+
+	// node is a variable length struct.
+	// The nextsBase is the first element of nexts slice,
+	// it act as the base pointer we do pointer arithmetic in `next` and `setNext`.
+	nextsBase arenaAddr
+}
+
+type headNode struct {
+	nodeHeader
+
+	// Addr of previous node at base level.
+	prev arenaAddr
+
 	nexts [maxHeight]arenaAddr
 }
 
@@ -352,12 +520,24 @@ func (n *node) getValue(buf []byte) []byte {
 	return buf[nodeLenKeyLen : nodeLenKeyLen+int(n.valLen)]
 }
 
-func (db *DB) getNext(n *node, level int) (*node, []byte) {
-	addr := n.nexts[level]
+func (n *node) nexts(level int) arenaAddr {
+	return *n.nextsAddr(level)
+}
+
+func (n *node) setNexts(level int, val arenaAddr) {
+	*n.nextsAddr(level) = val
+}
+
+func (n *node) nextsAddr(idx int) *arenaAddr {
+	offset := uintptr(idx) * unsafe.Sizeof(n.nextsBase)
+	return (*arenaAddr)(unsafe.Pointer(uintptr(unsafe.Pointer(&n.nextsBase)) + offset))
+}
+
+func (n *node) getNext(arena *arena, level int) (*node, []byte) {
+	addr := n.nexts(level)
 	if addr.isNull() {
 		return nil, nil
 	}
-	arena := db.arena
 	data := arena.getFrom(addr)
 	node := (*node)(unsafe.Pointer(&data[0]))
 	return node, data

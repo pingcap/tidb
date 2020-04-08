@@ -48,10 +48,8 @@ const (
 	TypeTopN = "TopN"
 	// TypeLimit is the type of Limit.
 	TypeLimit = "Limit"
-	// TypeHashLeftJoin is the type of left hash join.
-	TypeHashLeftJoin = "HashLeftJoin"
-	// TypeHashRightJoin is the type of right hash join.
-	TypeHashRightJoin = "HashRightJoin"
+	// TypeHashJoin is the type of hash join.
+	TypeHashJoin = "HashJoin"
 	// TypeMergeJoin is the type of merge join.
 	TypeMergeJoin = "MergeJoin"
 	// TypeIndexJoin is the type of index look up join.
@@ -100,6 +98,8 @@ const (
 	TypeBatchPointGet = "Batch_Point_Get"
 	// TypeClusterMemTableReader is the type of TableReader.
 	TypeClusterMemTableReader = "ClusterMemTableReader"
+	// TypeDataSource is the type of DataSource.
+	TypeDataSource = "DataSource"
 )
 
 // plan id.
@@ -120,8 +120,7 @@ const (
 	typeSortID
 	typeTopNID
 	typeLimitID
-	typeHashLeftJoinID
-	typeHashRightJoinID
+	typeHashJoinID
 	typeMergeJoinID
 	typeIndexJoinID
 	typeIndexMergeJoinID
@@ -144,6 +143,7 @@ const (
 	typeShowDDLJobs
 	typeBatchPointGet
 	typeClusterMemTableReader
+	typeDataSourceID
 )
 
 // TypeStringToPhysicalID converts the plan type string to plan id.
@@ -181,10 +181,8 @@ func TypeStringToPhysicalID(tp string) int {
 		return typeTopNID
 	case TypeLimit:
 		return typeLimitID
-	case TypeHashLeftJoin:
-		return typeHashLeftJoinID
-	case TypeHashRightJoin:
-		return typeHashRightJoinID
+	case TypeHashJoin:
+		return typeHashJoinID
 	case TypeMergeJoin:
 		return typeMergeJoinID
 	case TypeIndexJoin:
@@ -229,6 +227,8 @@ func TypeStringToPhysicalID(tp string) int {
 		return typeBatchPointGet
 	case TypeClusterMemTableReader:
 		return typeClusterMemTableReader
+	case TypeDataSource:
+		return typeDataSourceID
 	}
 	// Should never reach here.
 	return 0
@@ -269,10 +269,8 @@ func PhysicalIDToTypeString(id int) string {
 		return TypeTopN
 	case typeLimitID:
 		return TypeLimit
-	case typeHashLeftJoinID:
-		return TypeHashLeftJoin
-	case typeHashRightJoinID:
-		return TypeHashRightJoin
+	case typeHashJoinID:
+		return TypeHashJoin
 	case typeMergeJoinID:
 		return TypeMergeJoin
 	case typeIndexJoinID:

@@ -16,7 +16,6 @@ package executor
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -228,11 +227,11 @@ func (e *DDLExec) executeDropDatabase(s *ast.DropDatabaseStmt) error {
 	sessionVars := e.ctx.GetSessionVars()
 	if err == nil && strings.ToLower(sessionVars.CurrentDB) == dbName.L {
 		sessionVars.CurrentDB = ""
-		err = variable.SetSessionSystemVar(sessionVars, variable.CharsetDatabase, types.NewStringDatum("utf8"))
+		err = variable.SetSessionSystemVar(sessionVars, variable.CharsetDatabase, types.NewStringDatum(mysql.DefaultCharset))
 		if err != nil {
 			return err
 		}
-		err = variable.SetSessionSystemVar(sessionVars, variable.CollationDatabase, types.NewStringDatum("utf8_unicode_ci"))
+		err = variable.SetSessionSystemVar(sessionVars, variable.CollationDatabase, types.NewStringDatum(mysql.DefaultCollationName))
 		if err != nil {
 			return err
 		}
@@ -383,6 +382,12 @@ func (e *DDLExec) executeRecoverTable(s *ast.RecoverTableStmt) error {
 	if err != nil {
 		return err
 	}
+	// Check the table ID was not exists.
+	tbl, ok := dom.InfoSchema().TableByID(tblInfo.ID)
+	if ok {
+		return infoschema.ErrTableExists.GenWithStack("Table '%-.192s' already been recover to '%-.192s', can't be recover repeatedly", s.Table.Name.O, tbl.Meta().Name.O)
+	}
+
 	autoIncID, autoRandID, err := e.getTableAutoIDsFromSnapshot(job)
 	if err != nil {
 		return err
@@ -427,8 +432,8 @@ func (e *DDLExec) getRecoverTableByJobID(s *ast.RecoverTableStmt, t *meta.Meta, 
 	if job == nil {
 		return nil, nil, admin.ErrDDLJobNotFound.GenWithStackByArgs(s.JobID)
 	}
-	if job.Type != model.ActionDropTable {
-		return nil, nil, errors.Errorf("Job %v type is %v, not drop table", job.ID, job.Type)
+	if job.Type != model.ActionDropTable && job.Type != model.ActionTruncateTable {
+		return nil, nil, errors.Errorf("Job %v type is %v, not dropped/truncated table", job.ID, job.Type)
 	}
 
 	// Check GC safe point for getting snapshot infoSchema.
@@ -486,7 +491,7 @@ func (e *DDLExec) getRecoverTableByTableName(tableName *ast.TableName) (*model.J
 		// Check GC safe point for getting snapshot infoSchema.
 		err = gcutil.ValidateSnapshotWithGCSafePoint(job.StartTS, gcSafePoint)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, errors.Errorf("Can't find dropped/truncated table '%s' in GC safe point %s", tableName.Name.O, model.TSConvert2Time(gcSafePoint).String())
 		}
 		// Get the snapshot infoSchema before drop table.
 		snapInfo, err := dom.GetSnapshotInfoSchema(job.StartTS)
@@ -515,7 +520,7 @@ func (e *DDLExec) getRecoverTableByTableName(tableName *ast.TableName) (*model.J
 		}
 	}
 	if tblInfo == nil {
-		return nil, nil, errors.Errorf("Can't find dropped table: %v in ddl history jobs", tableName.Name)
+		return nil, nil, errors.Errorf("Can't find dropped/truncated table: %v in DDL history jobs", tableName.Name)
 	}
 	return job, tblInfo, nil
 }
@@ -530,9 +535,9 @@ func (e *DDLExec) executeFlashbackTable(s *ast.FlashBackTableStmt) error {
 	}
 	// Check the table ID was not exists.
 	is := domain.GetDomain(e.ctx).InfoSchema()
-	_, ok := is.TableByID(tblInfo.ID)
+	tbl, ok := is.TableByID(tblInfo.ID)
 	if ok {
-		return infoschema.ErrTableExists.GenWithStackByArgs("tableID:" + strconv.FormatInt(tblInfo.ID, 10))
+		return infoschema.ErrTableExists.GenWithStack("Table '%-.192s' already been flashback to '%-.192s', can't be flashback repeatedly", s.Table.Name.O, tbl.Meta().Name.O)
 	}
 
 	autoIncID, autoRandID, err := e.getTableAutoIDsFromSnapshot(job)

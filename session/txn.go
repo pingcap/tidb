@@ -23,6 +23,7 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
@@ -48,7 +49,7 @@ type TxnState struct {
 	kv.Transaction
 	txnFuture *txnFuture
 
-	buf          kv.MemBuffer
+	stmtBuf      kv.MemBuffer
 	mutations    map[int64]*binlog.TableMutation
 	dirtyTableOP []dirtyTableOperation
 
@@ -58,13 +59,65 @@ type TxnState struct {
 }
 
 func (st *TxnState) init() {
-	st.buf = kv.NewMemDbBuffer(kv.DefaultTxnMembufCap)
 	st.mutations = make(map[int64]*binlog.TableMutation)
+}
+
+func (st *TxnState) initStmtBuf() {
+	if st.stmtBuf == nil {
+		st.stmtBuf = st.Transaction.NewStagingBuffer()
+	}
+}
+
+func (st *TxnState) stmtBufLen() int {
+	if st.stmtBuf == nil {
+		return 0
+	}
+	return st.stmtBuf.Len()
+}
+
+func (st *TxnState) stmtBufSize() int {
+	if st.stmtBuf == nil {
+		return 0
+	}
+	return st.stmtBuf.Size()
+}
+
+func (st *TxnState) stmtBufGet(ctx context.Context, k kv.Key) ([]byte, error) {
+	if st.stmtBuf == nil {
+		return nil, kv.ErrNotExist
+	}
+	return st.stmtBuf.Get(ctx, k)
 }
 
 // Size implements the MemBuffer interface.
 func (st *TxnState) Size() int {
-	return st.buf.Size()
+	size := st.stmtBufSize()
+	if st.Transaction != nil {
+		size += st.Transaction.Size()
+	}
+	return size
+}
+
+// NewStagingBuffer returns a new child write buffer.
+func (st *TxnState) NewStagingBuffer() kv.MemBuffer {
+	st.initStmtBuf()
+	return st.stmtBuf.NewStagingBuffer()
+}
+
+// Flush flushes all staging kvs into parent buffer.
+func (st *TxnState) Flush() (int, error) {
+	if st.stmtBuf == nil {
+		return 0, nil
+	}
+	return st.stmtBuf.Flush()
+}
+
+// Discard discards all staging kvs.
+func (st *TxnState) Discard() {
+	if st.stmtBuf == nil {
+		return
+	}
+	st.stmtBuf.Discard()
 }
 
 // Valid implements the kv.Transaction interface.
@@ -105,8 +158,8 @@ func (st *TxnState) GoString() string {
 		if len(st.mutations) > 0 {
 			fmt.Fprintf(&s, ", len(mutations)=%d, %#v", len(st.mutations), st.mutations)
 		}
-		if st.buf != nil && st.buf.Len() != 0 {
-			fmt.Fprintf(&s, ", buf.length: %d, buf.size: %d", st.buf.Len(), st.buf.Size())
+		if st.stmtBufLen() != 0 {
+			fmt.Fprintf(&s, ", buf.length: %d, buf.size: %d", st.stmtBufLen(), st.stmtBufSize())
 		}
 	} else {
 		s.WriteString("state=invalid")
@@ -126,7 +179,7 @@ func (st *TxnState) changeInvalidToPending(future *txnFuture) {
 	st.txnFuture = future
 }
 
-func (st *TxnState) changePendingToValid(txnCap int) error {
+func (st *TxnState) changePendingToValid() error {
 	if st.txnFuture == nil {
 		return errors.New("transaction future is not set")
 	}
@@ -139,12 +192,12 @@ func (st *TxnState) changePendingToValid(txnCap int) error {
 		st.Transaction = nil
 		return err
 	}
-	txn.SetCap(txnCap)
 	st.Transaction = txn
 	return nil
 }
 
 func (st *TxnState) changeToInvalid() {
+	st.stmtBuf = nil
 	st.Transaction = nil
 	st.txnFuture = nil
 }
@@ -186,11 +239,11 @@ func ResetMockAutoRandIDRetryCount(failTimes int64) {
 // Commit overrides the Transaction interface.
 func (st *TxnState) Commit(ctx context.Context) error {
 	defer st.reset()
-	if len(st.mutations) != 0 || len(st.dirtyTableOP) != 0 || st.buf.Len() != 0 {
+	if len(st.mutations) != 0 || len(st.dirtyTableOP) != 0 || st.stmtBufLen() != 0 {
 		logutil.BgLogger().Error("the code should never run here",
 			zap.String("TxnState", st.GoString()),
 			zap.Stack("something must be wrong"))
-		return errors.New("invalid transaction")
+		return errors.Trace(kv.ErrInvalidTxn)
 	}
 	if st.doNotCommit != nil {
 		if err1 := st.Transaction.Rollback(); err1 != nil {
@@ -238,7 +291,7 @@ func (st *TxnState) reset() {
 
 // Get overrides the Transaction interface.
 func (st *TxnState) Get(ctx context.Context, k kv.Key) ([]byte, error) {
-	val, err := st.buf.Get(ctx, k)
+	val, err := st.stmtBufGet(ctx, k)
 	if kv.IsErrNotFound(err) {
 		val, err = st.Transaction.Get(ctx, k)
 		if kv.IsErrNotFound(err) {
@@ -259,7 +312,7 @@ func (st *TxnState) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]b
 	bufferValues := make([][]byte, len(keys))
 	shrinkKeys := make([]kv.Key, 0, len(keys))
 	for i, key := range keys {
-		val, err := st.buf.Get(ctx, key)
+		val, err := st.stmtBufGet(ctx, key)
 		if kv.IsErrNotFound(err) {
 			shrinkKeys = append(shrinkKeys, key)
 			continue
@@ -286,21 +339,26 @@ func (st *TxnState) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]b
 
 // Set overrides the Transaction interface.
 func (st *TxnState) Set(k kv.Key, v []byte) error {
-	return st.buf.Set(k, v)
+	st.initStmtBuf()
+	return st.stmtBuf.Set(k, v)
 }
 
 // Delete overrides the Transaction interface.
 func (st *TxnState) Delete(k kv.Key) error {
-	return st.buf.Delete(k)
+	st.initStmtBuf()
+	return st.stmtBuf.Delete(k)
 }
 
 // Iter overrides the Transaction interface.
 func (st *TxnState) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
-	bufferIt, err := st.buf.Iter(k, upperBound)
+	retrieverIt, err := st.Transaction.Iter(k, upperBound)
 	if err != nil {
 		return nil, err
 	}
-	retrieverIt, err := st.Transaction.Iter(k, upperBound)
+	if st.stmtBuf == nil {
+		return retrieverIt, nil
+	}
+	bufferIt, err := st.stmtBuf.Iter(k, upperBound)
 	if err != nil {
 		return nil, err
 	}
@@ -309,11 +367,14 @@ func (st *TxnState) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
 
 // IterReverse overrides the Transaction interface.
 func (st *TxnState) IterReverse(k kv.Key) (kv.Iterator, error) {
-	bufferIt, err := st.buf.IterReverse(k)
+	retrieverIt, err := st.Transaction.IterReverse(k)
 	if err != nil {
 		return nil, err
 	}
-	retrieverIt, err := st.Transaction.IterReverse(k)
+	if st.stmtBuf == nil {
+		return retrieverIt, nil
+	}
+	bufferIt, err := st.stmtBuf.IterReverse(k)
 	if err != nil {
 		return nil, err
 	}
@@ -321,14 +382,9 @@ func (st *TxnState) IterReverse(k kv.Key) (kv.Iterator, error) {
 }
 
 func (st *TxnState) cleanup() {
-	const sz4M = 4 << 20
-	if st.buf.Size() > sz4M {
-		// The memory footprint for the large transaction could be huge here.
-		// Each active session has its own buffer, we should free the buffer to
-		// avoid memory leak.
-		st.buf = kv.NewMemDbBuffer(kv.DefaultTxnMembufCap)
-	} else {
-		st.buf.Reset()
+	if st.stmtBuf != nil {
+		st.stmtBuf.Discard()
+		st.stmtBuf = nil
 	}
 	for key := range st.mutations {
 		delete(st.mutations, key)
@@ -349,8 +405,11 @@ func (st *TxnState) cleanup() {
 
 // KeysNeedToLock returns the keys need to be locked.
 func (st *TxnState) KeysNeedToLock() ([]kv.Key, error) {
-	keys := make([]kv.Key, 0, st.buf.Len())
-	if err := kv.WalkMemBuffer(st.buf, func(k kv.Key, v []byte) error {
+	if st.stmtBufLen() == 0 {
+		return nil, nil
+	}
+	keys := make([]kv.Key, 0, st.stmtBufLen())
+	if err := kv.WalkMemBuffer(st.stmtBuf, func(k kv.Key, v []byte) error {
 		if !keyNeedToLock(k, v) {
 			return nil
 		}
@@ -430,10 +489,11 @@ func (tf *txnFuture) wait() (kv.Transaction, error) {
 	startTS, err := tf.future.Wait()
 	if err == nil {
 		return tf.store.BeginWithStartTS(startTS)
-	} else if _, ok := tf.future.(txnFailFuture); ok {
+	} else if config.GetGlobalConfig().Store == "mocktikv" {
 		return nil, err
 	}
 
+	logutil.BgLogger().Warn("wait tso failed", zap.Error(err))
 	// It would retry get timestamp.
 	return tf.store.Begin()
 }
@@ -483,22 +543,16 @@ func (s *session) StmtCommit(memTracker *memory.Tracker) error {
 	}()
 	st := &s.txn
 	txnSize := st.Transaction.Size()
-	var count int
-	err := kv.WalkMemBuffer(st.buf, func(k kv.Key, v []byte) error {
-		failpoint.Inject("mockStmtCommitError", func(val failpoint.Value) {
-			if val.(bool) {
-				count++
-			}
-		})
 
-		if count > 3 {
-			return errors.New("mock stmt commit error")
-		}
+	if _, err := st.Flush(); err != nil {
+		return err
+	}
 
-		if len(v) == 0 {
-			return st.Transaction.Delete(k)
+	var err error
+	failpoint.Inject("mockStmtCommitError", func(val failpoint.Value) {
+		if val.(bool) && st.stmtBufLen() > 3 {
+			err = errors.New("mock stmt commit error")
 		}
-		return st.Transaction.Set(k, v)
 	})
 	if err != nil {
 		st.doNotCommit = err

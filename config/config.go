@@ -16,12 +16,15 @@ package config
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -30,6 +33,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/sys/storage"
 	tracing "github.com/uber/jaeger-client-go/config"
 	"go.uber.org/zap"
 )
@@ -39,6 +43,14 @@ const (
 	MaxLogFileSize = 4096 // MB
 	// DefTxnTotalSizeLimit is the default value of TxnTxnTotalSizeLimit.
 	DefTxnTotalSizeLimit = 100 * 1024 * 1024
+	// DefMaxIndexLength is the maximum index length(in bytes). This value is consistent with MySQL.
+	DefMaxIndexLength = 3072
+	// DefMaxOfMaxIndexLength is the maximum index length(in bytes) for TiDB v3.0.7 and previous version.
+	DefMaxOfMaxIndexLength = 3072 * 4
+	// DefPort is the default port of TiDB
+	DefPort = 4000
+	// DefStatusPort is the default status port of TiBD
+	DefStatusPort = 10080
 )
 
 // Valid config maps
@@ -51,27 +63,33 @@ var (
 	CheckTableBeforeDrop = false
 	// checkBeforeDropLDFlag is a go build flag.
 	checkBeforeDropLDFlag = "None"
+	// tempStorageDirName is the default temporary storage dir name by base64 encoding a string `port/statusPort`
+	tempStorageDirName = encodeDefTempStorageDir(DefPort, DefStatusPort)
 )
 
 // Config contains configuration options.
 type Config struct {
-	Host             string          `toml:"host" json:"host"`
-	AdvertiseAddress string          `toml:"advertise-address" json:"advertise-address"`
-	Port             uint            `toml:"port" json:"port"`
-	Cors             string          `toml:"cors" json:"cors"`
-	Store            string          `toml:"store" json:"store"`
-	Path             string          `toml:"path" json:"path"`
-	Socket           string          `toml:"socket" json:"socket"`
-	Lease            string          `toml:"lease" json:"lease"`
-	RunDDL           bool            `toml:"run-ddl" json:"run-ddl"`
-	SplitTable       bool            `toml:"split-table" json:"split-table"`
-	TokenLimit       uint            `toml:"token-limit" json:"token-limit"`
-	OOMUseTmpStorage bool            `toml:"oom-use-tmp-storage" json:"oom-use-tmp-storage"`
-	OOMAction        string          `toml:"oom-action" json:"oom-action"`
-	MemQuotaQuery    int64           `toml:"mem-quota-query" json:"mem-quota-query"`
+	Host             string `toml:"host" json:"host"`
+	AdvertiseAddress string `toml:"advertise-address" json:"advertise-address"`
+	Port             uint   `toml:"port" json:"port"`
+	Cors             string `toml:"cors" json:"cors"`
+	Store            string `toml:"store" json:"store"`
+	Path             string `toml:"path" json:"path"`
+	Socket           string `toml:"socket" json:"socket"`
+	Lease            string `toml:"lease" json:"lease"`
+	RunDDL           bool   `toml:"run-ddl" json:"run-ddl"`
+	SplitTable       bool   `toml:"split-table" json:"split-table"`
+	TokenLimit       uint   `toml:"token-limit" json:"token-limit"`
+	OOMUseTmpStorage bool   `toml:"oom-use-tmp-storage" json:"oom-use-tmp-storage"`
+	TempStoragePath  string `toml:"tmp-storage-path" json:"tmp-storage-path"`
+	OOMAction        string `toml:"oom-action" json:"oom-action"`
+	MemQuotaQuery    int64  `toml:"mem-quota-query" json:"mem-quota-query"`
+	// TempStorageQuota describe the temporary storage Quota during query exector when OOMUseTmpStorage is enabled
+	// If the quota exceed the capacity of the TempStoragePath, the tidb-server would exit with fatal error
+	TempStorageQuota int64           `toml:"temp-storage-quota" json:"temp-storage-quota"` // Bytes
 	EnableStreaming  bool            `toml:"enable-streaming" json:"enable-streaming"`
 	EnableBatchDML   bool            `toml:"enable-batch-dml" json:"enable-batch-dml"`
-	TxnLocalLatches  TxnLocalLatches `toml:"txn-local-latches" json:"txn-local-latches"`
+	TxnLocalLatches  TxnLocalLatches `toml:"-" json:"-"`
 	// Set sys variable lower-case-table-names, ref: https://dev.mysql.com/doc/refman/5.7/en/identifier-case-sensitivity.html.
 	// TODO: We actually only support mode 2, which keeps the original case, but the comparison is case-insensitive.
 	LowerCaseTableNames int               `toml:"lower-case-table-names" json:"lower-case-table-names"`
@@ -89,6 +107,7 @@ type Config struct {
 	Plugin              Plugin            `toml:"plugin" json:"plugin"`
 	PessimisticTxn      PessimisticTxn    `toml:"pessimistic-txn" json:"pessimistic-txn"`
 	CheckMb4ValueInUTF8 bool              `toml:"check-mb4-value-in-utf8" json:"check-mb4-value-in-utf8"`
+	MaxIndexLength      int               `toml:"max-index-length" json:"max-index-length"`
 	// AlterPrimaryKey is used to control alter primary key feature.
 	AlterPrimaryKey bool `toml:"alter-primary-key" json:"alter-primary-key"`
 	// TreatOldVersionUTF8AsUTF8MB4 is use to treat old version table/column UTF8 charset as UTF8MB4. This is for compatibility.
@@ -114,6 +133,19 @@ type Config struct {
 	// EnableDynamicConfig enables the TiDB to fetch configs from PD and update itself during runtime.
 	// see https://github.com/pingcap/tidb/pull/13660 for more details.
 	EnableDynamicConfig bool `toml:"enable-dynamic-config" json:"enable-dynamic-config"`
+}
+
+// UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
+// and the `tmp-storage-path` was not specified in the conf.toml or was specified the same as the default value.
+func (c *Config) UpdateTempStoragePath() {
+	if c.TempStoragePath == tempStorageDirName {
+		c.TempStoragePath = encodeDefTempStorageDir(c.Port, c.Status.StatusPort)
+	}
+}
+
+func encodeDefTempStorageDir(port, statusPort uint) string {
+	dirName := base64.URLEncoding.EncodeToString([]byte(fmt.Sprintf("%v/%v", port, statusPort)))
+	return filepath.Join(os.TempDir(), "tidb", dirName, "tmp-storage")
 }
 
 // nullableBool defaults unset bool options to unset instead of false, which enables us to know if the user has set 2
@@ -235,13 +267,15 @@ func (l *Log) getDisableErrorStack() bool {
 
 // Security is the security section of the config.
 type Security struct {
-	SkipGrantTable bool   `toml:"skip-grant-table" json:"skip-grant-table"`
-	SSLCA          string `toml:"ssl-ca" json:"ssl-ca"`
-	SSLCert        string `toml:"ssl-cert" json:"ssl-cert"`
-	SSLKey         string `toml:"ssl-key" json:"ssl-key"`
-	ClusterSSLCA   string `toml:"cluster-ssl-ca" json:"cluster-ssl-ca"`
-	ClusterSSLCert string `toml:"cluster-ssl-cert" json:"cluster-ssl-cert"`
-	ClusterSSLKey  string `toml:"cluster-ssl-key" json:"cluster-ssl-key"`
+	SkipGrantTable         bool     `toml:"skip-grant-table" json:"skip-grant-table"`
+	SSLCA                  string   `toml:"ssl-ca" json:"ssl-ca"`
+	SSLCert                string   `toml:"ssl-cert" json:"ssl-cert"`
+	SSLKey                 string   `toml:"ssl-key" json:"ssl-key"`
+	RequireSecureTransport bool     `toml:"require-secure-transport" json:"require-secure-transport"`
+	ClusterSSLCA           string   `toml:"cluster-ssl-ca" json:"cluster-ssl-ca"`
+	ClusterSSLCert         string   `toml:"cluster-ssl-cert" json:"cluster-ssl-cert"`
+	ClusterSSLKey          string   `toml:"cluster-ssl-key" json:"cluster-ssl-key"`
+	ClusterVerifyCN        []string `toml:"cluster-verify-cn" json:"cluster-verify-cn"`
 }
 
 // The ErrConfigValidationFailed error is used so that external callers can do a type assertion
@@ -274,7 +308,8 @@ func (s *Security) ToTLSConfig() (tlsConfig *tls.Config, err error) {
 			return
 		}
 		tlsConfig = &tls.Config{
-			RootCAs: certPool,
+			RootCAs:   certPool,
+			ClientCAs: certPool,
 		}
 
 		if len(s.ClusterSSLCert) != 0 && len(s.ClusterSSLKey) != 0 {
@@ -337,8 +372,8 @@ type PlanCache struct {
 
 // TxnLocalLatches is the TxnLocalLatches section of the config.
 type TxnLocalLatches struct {
-	Enabled  bool `toml:"enabled" json:"enabled"`
-	Capacity uint `toml:"capacity" json:"capacity"`
+	Enabled  bool `toml:"-" json:"-"`
+	Capacity uint `toml:"-" json:"-"`
 }
 
 // PreparedPlanCache is the PreparedPlanCache section of the config.
@@ -463,6 +498,8 @@ type PessimisticTxn struct {
 type StmtSummary struct {
 	// Enable statement summary or not.
 	Enable bool `toml:"enable" json:"enable"`
+	// Enable summary internal query.
+	EnableInternalQuery bool `toml:"enable-internal-query" json:"enable-internal-query"`
 	// The maximum number of statements kept in memory.
 	MaxStmtCount uint `toml:"max-stmt-count" json:"max-stmt-count"`
 	// The maximum length of displayed normalized SQL and sample SQL.
@@ -484,12 +521,14 @@ type IsolationRead struct {
 type Experimental struct {
 	// Whether enable the syntax like `auto_random(3)` on the primary key column.
 	AllowAutoRandom bool `toml:"allow-auto-random" json:"allow-auto-random"`
+	// Whether enable creating expression index.
+	AllowsExpressionIndex bool `toml:"allow-expression-index" json:"allow-expression-index"`
 }
 
 var defaultConf = Config{
 	Host:                         "0.0.0.0",
 	AdvertiseAddress:             "",
-	Port:                         4000,
+	Port:                         DefPort,
 	Cors:                         "",
 	Store:                        "mocktikv",
 	Path:                         "/tmp/tidb",
@@ -498,11 +537,14 @@ var defaultConf = Config{
 	Lease:                        "45s",
 	TokenLimit:                   1000,
 	OOMUseTmpStorage:             true,
-	OOMAction:                    "log",
-	MemQuotaQuery:                32 << 30,
+	TempStorageQuota:             -1,
+	TempStoragePath:              tempStorageDirName,
+	OOMAction:                    OOMActionCancel,
+	MemQuotaQuery:                1 << 30,
 	EnableStreaming:              false,
 	EnableBatchDML:               false,
 	CheckMb4ValueInUTF8:          true,
+	MaxIndexLength:               3072,
 	AlterPrimaryKey:              false,
 	TreatOldVersionUTF8AsUTF8MB4: true,
 	EnableTableLock:              false,
@@ -510,10 +552,10 @@ var defaultConf = Config{
 	SplitRegionMaxNum:            1000,
 	RepairMode:                   false,
 	RepairTableList:              []string{},
-	MaxServerConnections:         4096,
+	MaxServerConnections:         0,
 	TxnLocalLatches: TxnLocalLatches{
 		Enabled:  false,
-		Capacity: 2048000,
+		Capacity: 0,
 	},
 	LowerCaseTableNames: 2,
 	ServerVersion:       "",
@@ -535,7 +577,7 @@ var defaultConf = Config{
 	Status: Status{
 		ReportStatus:    true,
 		StatusHost:      "0.0.0.0",
-		StatusPort:      10080,
+		StatusPort:      DefStatusPort,
 		MetricsInterval: 15,
 		RecordQPSbyDB:   false,
 	},
@@ -610,23 +652,25 @@ var defaultConf = Config{
 		MaxRetryCount: 256,
 	},
 	StmtSummary: StmtSummary{
-		Enable:          true,
-		MaxStmtCount:    200,
-		MaxSQLLength:    4096,
-		RefreshInterval: 1800,
-		HistorySize:     24,
+		Enable:              true,
+		EnableInternalQuery: false,
+		MaxStmtCount:        200,
+		MaxSQLLength:        4096,
+		RefreshInterval:     1800,
+		HistorySize:         24,
 	},
 	IsolationRead: IsolationRead{
 		Engines: []string{"tikv", "tiflash", "tidb"},
 	},
 	Experimental: Experimental{
-		AllowAutoRandom: false,
+		AllowAutoRandom:       false,
+		AllowsExpressionIndex: false,
 	},
 	EnableDynamicConfig: false,
 }
 
 var (
-	globalConfHandler ConfHandler
+	globalConf atomic.Value
 )
 
 // NewConfig creates a new config instance with default value.
@@ -639,19 +683,20 @@ func NewConfig() *Config {
 // It should store configuration from command line and configuration file.
 // Other parts of the system can read the global configuration use this function.
 func GetGlobalConfig() *Config {
-	return globalConfHandler.GetConfig()
+	return globalConf.Load().(*Config)
 }
 
 // StoreGlobalConfig stores a new config to the globalConf. It mostly uses in the test to avoid some data races.
 func StoreGlobalConfig(config *Config) {
-	if err := globalConfHandler.SetConfig(config); err != nil {
-		logutil.BgLogger().Error("update the global config error", zap.Error(err))
-	}
+	globalConf.Store(config)
 }
 
 var deprecatedConfig = map[string]struct{}{
-	"pessimistic-txn.ttl": {},
-	"log.rotate":          {},
+	"pessimistic-txn.ttl":        {},
+	"log.file.log-rotate":        {},
+	"txn-local-latches":          {},
+	"txn-local-latches.enabled":  {},
+	"txn-local-latches.capacity": {},
 }
 
 func isAllDeprecatedConfigItems(items []string) bool {
@@ -674,15 +719,11 @@ func InitializeConfig(confPath string, configCheck, configStrict bool, reloadFun
 		if err = cfg.Load(confPath); err != nil {
 			// Unused config item error turns to warnings.
 			if tmp, ok := err.(*ErrConfigValidationFailed); ok {
-				if isAllDeprecatedConfigItems(tmp.UndecodedItems) {
-					fmt.Fprintln(os.Stderr, err.Error())
-					err = nil
-				}
 				// This block is to accommodate an interim situation where strict config checking
 				// is not the default behavior of TiDB. The warning message must be deferred until
 				// logging has been set up. After strict config checking is the default behavior,
 				// This should all be removed.
-				if !configCheck && !configStrict {
+				if (!configCheck && !configStrict) || isAllDeprecatedConfigItems(tmp.UndecodedItems) {
 					fmt.Fprintln(os.Stderr, err.Error())
 					err = nil
 				}
@@ -698,9 +739,22 @@ func InitializeConfig(confPath string, configCheck, configStrict bool, reloadFun
 		}
 	}
 	enforceCmdArgs(cfg)
-	globalConfHandler, err = NewConfHandler(cfg, reloadFunc, nil)
-	terror.MustNil(err)
-	globalConfHandler.Start()
+
+	if err := cfg.Valid(); err != nil {
+		if !filepath.IsAbs(confPath) {
+			if tmp, err := filepath.Abs(confPath); err == nil {
+				confPath = tmp
+			}
+		}
+		fmt.Fprintln(os.Stderr, "load config file:", confPath)
+		fmt.Fprintln(os.Stderr, "invalid config", err)
+		os.Exit(1)
+	}
+	if configCheck {
+		fmt.Println("config check successful")
+		os.Exit(0)
+	}
+	StoreGlobalConfig(cfg)
 }
 
 // Load loads config options from a toml file.
@@ -753,6 +807,9 @@ func (c *Config) Valid() error {
 	if c.Store == "mocktikv" && !c.RunDDL {
 		return fmt.Errorf("can't disable DDL on mocktikv")
 	}
+	if c.MaxIndexLength < DefMaxIndexLength || c.MaxIndexLength > DefMaxOfMaxIndexLength {
+		return fmt.Errorf("max-index-length should be [%d, %d]", DefMaxIndexLength, DefMaxOfMaxIndexLength)
+	}
 	if c.Log.File.MaxSize > MaxLogFileSize {
 		return fmt.Errorf("invalid max log file size=%v which is larger than max=%v", c.Log.File.MaxSize, MaxLogFileSize)
 	}
@@ -782,6 +839,9 @@ func (c *Config) Valid() error {
 		return fmt.Errorf("txn-total-size-limit should be less than %d", 10<<30)
 	}
 
+	if c.StmtSummary.MaxStmtCount <= 0 {
+		return fmt.Errorf("max-stmt-count in [stmt-summary] should be greater than 0")
+	}
 	if c.StmtSummary.HistorySize < 0 {
 		return fmt.Errorf("history-size in [stmt-summary] should be greater than or equal to 0")
 	}
@@ -803,7 +863,24 @@ func (c *Config) Valid() error {
 			return fmt.Errorf("type of [isolation-read]engines can't be %v should be one of tidb or tikv or tiflash", engine)
 		}
 	}
-	return nil
+
+	// check capacity and the quota when OOMUseTmpStorage is enabled
+	if c.OOMUseTmpStorage {
+		if c.TempStorageQuota < 0 {
+			// means unlimited, do nothing
+		} else {
+			capacityByte, err := storage.GetTargetDirectoryCapacity(c.TempStoragePath)
+			if err != nil {
+				return err
+			} else if capacityByte > uint64(c.TempStorageQuota) {
+				return fmt.Errorf("value of [temp-storage-quota](%d byte) exceeds the capacity(%d byte) of the [%s] directory", c.TempStorageQuota, capacityByte, c.TempStoragePath)
+			}
+		}
+	}
+
+	// test log level
+	l := zap.NewAtomicLevel()
+	return l.UnmarshalText([]byte(c.Log.Level))
 }
 
 func hasRootPrivilege() bool {
@@ -848,9 +925,7 @@ func (t *OpenTracing) ToTracingConfig() *tracing.Configuration {
 
 func init() {
 	conf := defaultConf
-	cch := new(constantConfHandler)
-	cch.curConf.Store(&conf)
-	globalConfHandler = cch
+	StoreGlobalConfig(&conf)
 	if checkBeforeDropLDFlag == "1" {
 		CheckTableBeforeDrop = true
 	}

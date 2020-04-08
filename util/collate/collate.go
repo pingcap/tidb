@@ -14,17 +14,27 @@
 package collate
 
 import (
-	"strings"
-	"sync"
+	"sort"
+	"sync/atomic"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 var (
-	collatorMap         map[string]Collator
-	collatorIDMap       map[int]Collator
-	newCollationEnabled bool
-	setCollationOnce    sync.Once
+	newCollatorMap      map[string]Collator
+	newCollatorIDMap    map[int]Collator
+	newCollationEnabled int32
+
+	// binCollatorInstance is a singleton used for all collations when newCollationEnabled is false.
+	binCollatorInstance = &binCollator{}
+
+	// ErrUnsupportedCollation is returned when an unsupported collation is specified.
+	ErrUnsupportedCollation = terror.ClassDDL.New(mysql.ErrUnknownCollation, "Unsupported collation when new collation is enabled: '%-.64s'")
 )
 
 // DefaultLen is set for datum if the string datum don't know its length.
@@ -32,149 +42,192 @@ const (
 	DefaultLen = 0
 )
 
-// CollatorOption is the option of collator.
-type CollatorOption struct {
-	PadLen int
-}
-
-// NewCollatorOption creates a new CollatorOption with the specified arguments.
-func NewCollatorOption(padLen int) CollatorOption {
-	return CollatorOption{padLen}
-}
-
 // Collator provides functionality for comparing strings for a given
 // collation order.
 type Collator interface {
 	// Compare returns an integer comparing the two strings. The result will be 0 if a == b, -1 if a < b, and +1 if a > b.
-	Compare(a, b string, opt CollatorOption) int
+	Compare(a, b string) int
 	// Key returns the collate key for str. If the collation is padding, make sure the PadLen >= len(rune[]str) in opt.
-	Key(str string, opt CollatorOption) []byte
+	Key(str string) []byte
+	// Pattern get a collation-aware WildcardPattern.
+	Pattern() WildcardPattern
 }
 
-// SetNewCollationEnabled sets if the new collation are enabled.
-func SetNewCollationEnabled(flag bool) {
-	setCollationOnce.Do(func() {
-		SetNewCollationEnabledForTest(flag)
-	})
+// WildcardPattern is the interface used for wildcard pattern match.
+type WildcardPattern interface {
+	// Compile compiles the patternStr with specified escape character.
+	Compile(patternStr string, escape byte)
+	// DoMatch tries to match the str with compiled pattern, `Compile()` must be called before calling it.
+	DoMatch(str string) bool
+}
+
+// EnableNewCollations enables the new collation.
+func EnableNewCollations() {
+	SetNewCollationEnabledForTest(true)
 }
 
 // SetNewCollationEnabledForTest sets if the new collation are enabled in test.
 // Note: Be careful to use this function, if this functions is used in tests, make sure the tests are serial.
 func SetNewCollationEnabledForTest(flag bool) {
-	newCollationEnabled = flag
-	if newCollationEnabled {
-		collatorMap["utf8mb4_bin"] = &binPaddingCollator{}
-		collatorMap["utf8_bin"] = &binPaddingCollator{}
-		collatorMap["utf8mb4_general_ci"] = &generalCICollator{}
-		collatorMap["utf8_general_ci"] = &generalCICollator{}
-
-		collatorIDMap[46] = &binPaddingCollator{}
-		collatorIDMap[83] = &binPaddingCollator{}
-		collatorIDMap[45] = &generalCICollator{}
-		collatorIDMap[33] = &generalCICollator{}
-	} else {
-		collatorMap["utf8mb4_bin"] = &binCollator{}
-		collatorMap["utf8_bin"] = &binCollator{}
-		collatorMap["utf8mb4_general_ci"] = &binCollator{}
-		collatorMap["utf8_general_ci"] = &binCollator{}
-
-		collatorIDMap[46] = &binCollator{}
-		collatorIDMap[83] = &binCollator{}
-		collatorIDMap[45] = &binCollator{}
-		collatorIDMap[33] = &binCollator{}
+	if flag {
+		atomic.StoreInt32(&newCollationEnabled, 1)
+		return
 	}
+	atomic.StoreInt32(&newCollationEnabled, 0)
 }
 
 // NewCollationEnabled returns if the new collations are enabled.
 func NewCollationEnabled() bool {
-	return newCollationEnabled
+	return atomic.LoadInt32(&newCollationEnabled) == 1
+}
+
+// CompatibleCollate checks whether the two collate are the same.
+func CompatibleCollate(collate1, collate2 string) bool {
+	if (collate1 == "utf8mb4_general_ci" || collate1 == "utf8_general_ci") && (collate2 == "utf8mb4_general_ci" || collate2 == "utf8_general_ci") {
+		return true
+	} else if (collate1 == "utf8mb4_bin" || collate1 == "utf8_bin") && (collate2 == "utf8mb4_bin" || collate2 == "utf8_bin") {
+		return true
+	} else {
+		return collate1 == collate2
+	}
+}
+
+// RewriteNewCollationIDIfNeeded rewrites a collation id if the new collations are enabled.
+// When new collations are enabled, we turn the collation id to negative so that other the
+// components of the cluster(for example, TiKV) is able to aware of it without any change to
+// the protocol definition.
+// When new collations are not enabled, collation id remains the same.
+func RewriteNewCollationIDIfNeeded(id int32) int32 {
+	if atomic.LoadInt32(&newCollationEnabled) == 1 {
+		if id < 0 {
+			logutil.BgLogger().Warn("Unexpected negative collation ID for rewrite.", zap.Int32("ID", id))
+		} else {
+			return -id
+		}
+	}
+	return id
+}
+
+// RestoreCollationIDIfNeeded restores a collation id if the new collations are enabled.
+func RestoreCollationIDIfNeeded(id int32) int32 {
+	if atomic.LoadInt32(&newCollationEnabled) == 1 {
+		if id > 0 {
+			logutil.BgLogger().Warn("Unexpected positive collation ID for restore.", zap.Int32("ID", id))
+		} else {
+			return -id
+		}
+	}
+	return id
 }
 
 // GetCollator get the collator according to collate, it will return the binary collator if the corresponding collator doesn't exist.
 func GetCollator(collate string) Collator {
-	ctor, ok := collatorMap[collate]
-	if !ok {
-		return collatorMap["utf8mb4_bin"]
+	if atomic.LoadInt32(&newCollationEnabled) == 1 {
+		ctor, ok := newCollatorMap[collate]
+		if !ok {
+			logutil.BgLogger().Warn(
+				"Unable to get collator by name, use binCollator instead.",
+				zap.String("name", collate),
+				zap.Stack("stack"))
+			return newCollatorMap["utf8mb4_bin"]
+		}
+		return ctor
 	}
-	return ctor
+	return binCollatorInstance
 }
 
 // GetCollatorByID get the collator according to id, it will return the binary collator if the corresponding collator doesn't exist.
 func GetCollatorByID(id int) Collator {
-	ctor, ok := collatorIDMap[id]
-	if !ok {
-		return collatorMap["utf8mb4_bin"]
+	if atomic.LoadInt32(&newCollationEnabled) == 1 {
+		ctor, ok := newCollatorIDMap[id]
+		if !ok {
+			logutil.BgLogger().Warn(
+				"Unable to get collator by ID, use binCollator instead.",
+				zap.Int("ID", id),
+				zap.Stack("stack"))
+			return newCollatorMap["utf8mb4_bin"]
+		}
+		return ctor
 	}
-	return ctor
-}
-
-type binCollator struct {
-}
-
-// Compare implement Collator interface.
-func (bc *binCollator) Compare(a, b string, opt CollatorOption) int {
-	return strings.Compare(a, b)
-}
-
-// Key implement Collator interface.
-func (bc *binCollator) Key(str string, opt CollatorOption) []byte {
-	return []byte(str)
+	return binCollatorInstance
 }
 
 // CollationID2Name return the collation name by the given id.
-// If the id is not found in the map, we reutrn the default one directly.
+// If the id is not found in the map, the default collation is returned.
 func CollationID2Name(id int32) string {
 	name, ok := mysql.Collations[uint8(id)]
 	if !ok {
+		// TODO(bb7133): fix repeating logs when the following code is uncommented.
+		//logutil.BgLogger().Warn(
+		//	"Unable to get collation name from ID, use default collation instead.",
+		//	zap.Int32("ID", id),
+		//	zap.Stack("stack"))
 		return mysql.DefaultCollationName
 	}
 	return name
 }
 
-type binPaddingCollator struct {
+// GetCollationByName wraps charset.GetCollationByName, it checks the collation.
+func GetCollationByName(name string) (coll *charset.Collation, err error) {
+	if coll, err = charset.GetCollationByName(name); err != nil {
+		return nil, errors.Trace(err)
+	}
+	if atomic.LoadInt32(&newCollationEnabled) == 1 {
+		if _, ok := newCollatorIDMap[coll.ID]; !ok {
+			return nil, ErrUnsupportedCollation.GenWithStackByArgs(name)
+		}
+	}
+	return
 }
 
-func (bpc *binPaddingCollator) Compare(a, b string, opt CollatorOption) int {
-	aLen := len(a)
-	bLen := len(b)
-	noPaddingResult := 0
-	if aLen > bLen {
-		noPaddingResult = strings.Compare(a[:bLen], b)
-		if noPaddingResult != 0 {
-			return noPaddingResult
+// GetSupportedCollations gets information for all collations supported so far.
+func GetSupportedCollations() []*charset.Collation {
+	if atomic.LoadInt32(&newCollationEnabled) == 1 {
+		newSupportedCollations := make([]*charset.Collation, 0, len(newCollatorMap))
+		for name := range newCollatorMap {
+			if coll, err := charset.GetCollationByName(name); err != nil {
+				// Should never happens.
+				terror.Log(err)
+			} else {
+				newSupportedCollations = append(newSupportedCollations, coll)
+			}
 		}
-		return strings.Compare(a[bLen:], strings.Repeat(" ", aLen-bLen))
-	} else if aLen < bLen {
-		noPaddingResult = strings.Compare(a, b[:aLen])
-		if noPaddingResult != 0 {
-			return noPaddingResult
-		}
-		return strings.Compare(strings.Repeat(" ", bLen-aLen), b[aLen:])
+		sort.Slice(newSupportedCollations, func(i int, j int) bool {
+			return newSupportedCollations[i].Name < newSupportedCollations[j].Name
+		})
+		return newSupportedCollations
 	}
-	return strings.Compare(a, b)
+	return charset.GetSupportedCollations()
 }
 
-func (bpc *binPaddingCollator) Key(str string, opt CollatorOption) []byte {
-	if opt.PadLen <= len(str) {
-		return []byte(str)
+func truncateTailingSpace(str string) string {
+	byteLen := len(str)
+	i := byteLen - 1
+	for ; i >= 0; i-- {
+		if str[i] != ' ' {
+			break
+		}
 	}
-	return []byte(str + strings.Repeat(" ", opt.PadLen-len(str)))
+	str = str[:i+1]
+	return str
 }
 
 func init() {
-	collatorMap = make(map[string]Collator)
-	collatorIDMap = make(map[int]Collator)
+	newCollatorMap = make(map[string]Collator)
+	newCollatorIDMap = make(map[int]Collator)
 
-	collatorMap["binary"] = &binCollator{}
-	collatorMap["utf8mb4_bin"] = &binCollator{}
-	collatorMap["utf8_bin"] = &binCollator{}
-	collatorMap["utf8mb4_general_ci"] = &binCollator{}
-	collatorMap["utf8_general_ci"] = &binCollator{}
-
-	// See https://github.com/pingcap/parser/blob/master/charset/charset.go for more information about the IDs.
-	collatorIDMap[63] = &binCollator{}
-	collatorIDMap[46] = &binCollator{}
-	collatorIDMap[83] = &binCollator{}
-	collatorIDMap[45] = &binCollator{}
-	collatorIDMap[33] = &binCollator{}
+	newCollatorMap["binary"] = &binCollator{}
+	newCollatorIDMap[int(mysql.CollationNames["binary"])] = &binCollator{}
+	newCollatorMap["ascii_bin"] = &binPaddingCollator{}
+	newCollatorIDMap[int(mysql.CollationNames["ascii_bin"])] = &binPaddingCollator{}
+	newCollatorMap["latin1_bin"] = &binPaddingCollator{}
+	newCollatorIDMap[int(mysql.CollationNames["latin1_bin"])] = &binPaddingCollator{}
+	newCollatorMap["utf8mb4_bin"] = &binPaddingCollator{}
+	newCollatorIDMap[int(mysql.CollationNames["utf8mb4_bin"])] = &binPaddingCollator{}
+	newCollatorMap["utf8_bin"] = &binPaddingCollator{}
+	newCollatorIDMap[int(mysql.CollationNames["utf8_bin"])] = &binPaddingCollator{}
+	newCollatorMap["utf8mb4_general_ci"] = &generalCICollator{}
+	newCollatorIDMap[int(mysql.CollationNames["utf8mb4_general_ci"])] = &generalCICollator{}
+	newCollatorMap["utf8_general_ci"] = &generalCICollator{}
+	newCollatorIDMap[int(mysql.CollationNames["utf8_general_ci"])] = &generalCICollator{}
 }
