@@ -4695,6 +4695,12 @@ func (s *testRecoverTable) TestRecoverTable(c *C) {
 	tk.MustExec("insert into t_recover values (10)")
 	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1", "7", "8", "9", "10"))
 
+	// Test for recover one table multiple time.
+	tk.MustExec("drop table t_recover")
+	tk.MustExec("flashback table t_recover to t_recover_tmp")
+	_, err = tk.Exec(fmt.Sprintf("recover table t_recover"))
+	c.Assert(infoschema.ErrTableExists.Equal(err), IsTrue)
+
 	gcEnable, err := gcutil.CheckGCEnable(tk.Se)
 	c.Assert(err, IsNil)
 	c.Assert(gcEnable, Equals, false)

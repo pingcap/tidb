@@ -37,8 +37,9 @@ import (
 type (
 	// inspectionResult represents a abnormal diagnosis result
 	inspectionResult struct {
-		tp       string
-		instance string
+		tp            string
+		instance      string
+		statusAddress string
 		// represents the diagnostics item, e.g: `ddl.lease` `raftstore.cpuusage`
 		item string
 		// diagnosis result value base on current cluster status
@@ -106,9 +107,11 @@ var inspectionRules = []inspectionRule{
 
 type inspectionResultRetriever struct {
 	dummyCloser
-	retrieved bool
-	extractor *plannercore.InspectionResultTableExtractor
-	timeRange plannercore.QueryTimeRange
+	retrieved               bool
+	extractor               *plannercore.InspectionResultTableExtractor
+	timeRange               plannercore.QueryTimeRange
+	instanceToStatusAddress map[string]string
+	statusToInstanceAddress map[string]string
 }
 
 func (e *inspectionResultRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
@@ -133,6 +136,24 @@ func (e *inspectionResultRetriever) retrieve(ctx context.Context, sctx sessionct
 			}
 		}
 	})
+
+	if e.instanceToStatusAddress == nil {
+		// Get cluster info.
+		e.instanceToStatusAddress = make(map[string]string)
+		e.statusToInstanceAddress = make(map[string]string)
+		sql := "select instance,status_address from information_schema.cluster_info;"
+		rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+		if err != nil {
+			sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("get cluster info failed: %v", err))
+		}
+		for _, row := range rows {
+			if row.Len() < 2 {
+				continue
+			}
+			e.instanceToStatusAddress[row.GetString(0)] = row.GetString(1)
+			e.statusToInstanceAddress[row.GetString(1)] = row.GetString(0)
+		}
+	}
 
 	rules := inspectionFilter{set: e.extractor.Rules}
 	items := inspectionFilter{set: e.extractor.Items, timeRange: e.timeRange}
@@ -163,11 +184,18 @@ func (e *inspectionResultRetriever) retrieve(ctx context.Context, sctx sessionct
 			return results[i].instance < results[j].instance
 		})
 		for _, result := range results {
+			if len(result.instance) == 0 {
+				result.instance = e.statusToInstanceAddress[result.statusAddress]
+			}
+			if len(result.statusAddress) == 0 {
+				result.statusAddress = e.instanceToStatusAddress[result.instance]
+			}
 			finalRows = append(finalRows, types.MakeDatums(
 				name,
 				result.item,
 				result.tp,
 				result.instance,
+				result.statusAddress,
 				result.actual,
 				result.expected,
 				result.severity,
@@ -579,13 +607,13 @@ func (criticalErrorInspection) inspectError(ctx context.Context, sctx sessionctx
 				result := inspectionResult{
 					tp: rule.tp,
 					// NOTE: all tables which can be inspected here whose first label must be `instance`
-					instance: row.GetString(0),
-					item:     rule.item,
-					actual:   actual,
-					expected: "0",
-					severity: "critical",
-					detail:   detail,
-					degree:   degree,
+					statusAddress: row.GetString(0),
+					item:          rule.item,
+					actual:        actual,
+					expected:      "0",
+					severity:      "critical",
+					detail:        detail,
+					degree:        degree,
 				}
 				results = append(results, result)
 			}
@@ -614,14 +642,14 @@ func (criticalErrorInspection) inspectForServerDown(ctx context.Context, sctx se
 		}
 		detail := fmt.Sprintf("%s %s disconnect with prometheus around time '%s'", row.GetString(0), row.GetString(1), row.GetTime(2))
 		result := inspectionResult{
-			tp:       row.GetString(0),
-			instance: row.GetString(1),
-			item:     item,
-			actual:   "",
-			expected: "",
-			severity: "critical",
-			detail:   detail,
-			degree:   10000 + float64(len(results)),
+			tp:            row.GetString(0),
+			statusAddress: row.GetString(1),
+			item:          item,
+			actual:        "",
+			expected:      "",
+			severity:      "critical",
+			detail:        detail,
+			degree:        10000 + float64(len(results)),
 		}
 		results = append(results, result)
 	}
@@ -748,8 +776,8 @@ func (thresholdCheckInspection) inspectThreshold1(ctx context.Context, sctx sess
 
 		var sql string
 		if len(rule.configKey) > 0 {
-			sql = fmt.Sprintf("select t2.instance, t1.cpu, (t2.value * %[2]f) as threshold, t2.value from "+
-				"(select instance as status_address, max(value) as cpu from metrics_schema.tikv_thread_cpu %[4]s and name like '%[1]s' group by instance) as t1 join "+
+			sql = fmt.Sprintf("select t1.status_address, t1.cpu, (t2.value * %[2]f) as threshold, t2.value from "+
+				"(select status_address, max(sum_value) as cpu from (select instance as status_address, sum(value) as sum_value from metrics_schema.tikv_thread_cpu %[4]s and name like '%[1]s' group by instance, time) as tmp group by tmp.status_address) as t1 join "+
 				"(select instance, value from information_schema.cluster_config where type='tikv' and `key` = '%[3]s') as t2 join "+
 				"(select instance,status_address from information_schema.cluster_info where type='tikv') as t3 "+
 				"on t1.status_address=t3.status_address and t2.instance=t3.instance where t1.cpu > (t2.value * %[2]f)", rule.component, rule.threshold, rule.configKey, condition)
@@ -774,14 +802,14 @@ func (thresholdCheckInspection) inspectThreshold1(ctx context.Context, sctx sess
 			}
 			detail := fmt.Sprintf("the '%s' max cpu-usage of %s tikv is too high", rule.item, row.GetString(0))
 			result := inspectionResult{
-				tp:       "tikv",
-				instance: row.GetString(0),
-				item:     rule.item,
-				actual:   actual,
-				expected: expected,
-				severity: "warning",
-				detail:   detail,
-				degree:   degree,
+				tp:            "tikv",
+				statusAddress: row.GetString(0),
+				item:          rule.item,
+				actual:        actual,
+				expected:      expected,
+				severity:      "warning",
+				detail:        detail,
+				degree:        degree,
 			}
 			results = append(results, result)
 		}
@@ -950,14 +978,14 @@ func (thresholdCheckInspection) inspectThreshold2(ctx context.Context, sctx sess
 				detail = fmt.Sprintf(detail, row.GetString(0))
 			}
 			result := inspectionResult{
-				tp:       rule.tp,
-				instance: row.GetString(0),
-				item:     rule.item,
-				actual:   actual,
-				expected: expected,
-				severity: "warning",
-				detail:   detail,
-				degree:   degree,
+				tp:            rule.tp,
+				statusAddress: row.GetString(0),
+				item:          rule.item,
+				actual:        actual,
+				expected:      expected,
+				severity:      "warning",
+				detail:        detail,
+				degree:        degree,
 			}
 			results = append(results, result)
 		}
