@@ -209,9 +209,6 @@ func EncodeValueDatum(sc *stmtctx.StatementContext, d types.Datum, buffer []byte
 		j := d.GetMysqlJSON()
 		buffer = append(buffer, j.TypeCode)
 		buffer = append(buffer, j.Value...)
-	case types.KindNull:
-	case types.KindMinNotNull:
-	case types.KindMaxValue:
 	default:
 		err = errors.Errorf("unsupport encode type %d", d.Kind())
 	}
