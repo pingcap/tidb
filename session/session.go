@@ -1918,6 +1918,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBWindowConcurrency,
 	variable.TiDBBackoffLockFast,
 	variable.TiDBBackOffWeight,
+	variable.TiDBBackOffKVBusy,
 	variable.TiDBConstraintCheckInPlace,
 	variable.TiDBDDLReorgWorkerCount,
 	variable.TiDBDDLReorgBatchSize,

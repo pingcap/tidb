@@ -21,6 +21,9 @@ type Variables struct {
 	// BackOffWeight specifies the weight of the max back off time duration.
 	BackOffWeight int
 
+	// BackOffKVBusy specifies the weight of the max back off time duration for kv is busy.
+	BackOffKVBusy int
+
 	// Hook is used for test to verify the variable take effect.
 	Hook func(name string, vars *Variables)
 
@@ -34,6 +37,7 @@ func NewVariables(killed *uint32) *Variables {
 	return &Variables{
 		BackoffLockFast: DefBackoffLockFast,
 		BackOffWeight:   DefBackOffWeight,
+		BackOffKVBusy:   DefBackOffKVBusy,
 		Killed:          killed,
 	}
 }
@@ -47,4 +51,5 @@ var DefaultVars = NewVariables(&ignoreKill)
 const (
 	DefBackoffLockFast = 100
 	DefBackOffWeight   = 2
+	DefBackOffKVBusy   = 10
 )

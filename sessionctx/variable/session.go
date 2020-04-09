@@ -1096,6 +1096,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.KVVars.BackoffLockFast = tidbOptPositiveInt32(val, kv.DefBackoffLockFast)
 	case TiDBBackOffWeight:
 		s.KVVars.BackOffWeight = tidbOptPositiveInt32(val, kv.DefBackOffWeight)
+	case TiDBBackOffKVBusy:
+		s.KVVars.BackOffKVBusy = tidbOptPositiveInt32(val, kv.DefBackOffKVBusy)
 	case TiDBConstraintCheckInPlace:
 		s.ConstraintCheckInPlace = TiDBOptOn(val)
 	case TiDBBatchInsert:

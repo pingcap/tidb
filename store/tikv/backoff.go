@@ -234,13 +234,16 @@ var (
 type Backoffer struct {
 	ctx context.Context
 
-	fn         map[backoffType]func(context.Context, int) int
-	maxSleep   int
-	totalSleep int
-	errors     []error
-	types      []fmt.Stringer
-	vars       *kv.Variables
-	noop       bool
+	fn map[backoffType]func(context.Context, int) int
+
+	maxSleep           int
+	maxSleepServerBusy int
+	totalSleep         int
+
+	errors []error
+	types  []fmt.Stringer
+	vars   *kv.Variables
+	noop   bool
 
 	backoffSleepMS map[backoffType]int
 	backoffTimes   map[backoffType]int
@@ -254,9 +257,10 @@ var txnStartKey = txnStartCtxKeyType{}
 // NewBackoffer creates a Backoffer with maximum sleep time(in ms).
 func NewBackoffer(ctx context.Context, maxSleep int) *Backoffer {
 	return &Backoffer{
-		ctx:      ctx,
-		maxSleep: maxSleep,
-		vars:     kv.DefaultVars,
+		ctx:                ctx,
+		maxSleep:           maxSleep,
+		maxSleepServerBusy: maxSleep,
+		vars:               kv.DefaultVars,
 	}
 }
 
@@ -274,6 +278,9 @@ func (b *Backoffer) WithVars(vars *kv.Variables) *Backoffer {
 	// When it is multiplied by BackOffWeight, it should not be greater than MaxInt32.
 	if math.MaxInt32/b.vars.BackOffWeight >= b.maxSleep {
 		b.maxSleep *= b.vars.BackOffWeight
+	}
+	if math.MaxInt32/b.vars.BackOffKVBusy >= b.maxSleepServerBusy {
+		b.maxSleepServerBusy *= b.vars.BackOffKVBusy
 	}
 	return b
 }
@@ -298,8 +305,12 @@ func (b *Backoffer) BackoffWithMaxSleep(typ backoffType, maxSleepMs int, err err
 
 	b.errors = append(b.errors, errors.Errorf("%s at %s", err.Error(), time.Now().Format(time.RFC3339Nano)))
 	b.types = append(b.types, typ)
-	if b.noop || (b.maxSleep > 0 && b.totalSleep >= b.maxSleep) {
-		errMsg := fmt.Sprintf("%s backoffer.maxSleep %dms is exceeded, errors:", typ.String(), b.maxSleep)
+	maxSleep := b.maxSleep
+	if maxSleep > 0 && typ == boServerBusy {
+		maxSleep = b.maxSleepServerBusy
+	}
+	if b.noop || (maxSleep > 0 && b.totalSleep >= maxSleep) {
+		errMsg := fmt.Sprintf("%s backoffer.maxSleep %dms is exceeded, errors:", typ.String(), maxSleep)
 		for i, err := range b.errors {
 			// Print only last 3 errors for non-DEBUG log levels.
 			if log.GetLevel() == zapcore.DebugLevel || i >= len(b.errors)-3 {
@@ -346,7 +357,7 @@ func (b *Backoffer) BackoffWithMaxSleep(typ backoffType, maxSleepMs int, err err
 	logutil.Logger(b.ctx).Debug("retry later",
 		zap.Error(err),
 		zap.Int("totalSleep", b.totalSleep),
-		zap.Int("maxSleep", b.maxSleep),
+		zap.Int("maxSleep", maxSleep),
 		zap.Stringer("type", typ),
 		zap.Reflect("txnStartTS", startTs))
 	return nil
@@ -363,11 +374,12 @@ func (b *Backoffer) String() string {
 // current Backoffer's context.
 func (b *Backoffer) Clone() *Backoffer {
 	return &Backoffer{
-		ctx:        b.ctx,
-		maxSleep:   b.maxSleep,
-		totalSleep: b.totalSleep,
-		errors:     b.errors,
-		vars:       b.vars,
+		ctx:                b.ctx,
+		maxSleep:           b.maxSleep,
+		maxSleepServerBusy: b.maxSleepServerBusy,
+		totalSleep:         b.totalSleep,
+		errors:             b.errors,
+		vars:               b.vars,
 	}
 }
 
@@ -376,10 +388,11 @@ func (b *Backoffer) Clone() *Backoffer {
 func (b *Backoffer) Fork() (*Backoffer, context.CancelFunc) {
 	ctx, cancel := context.WithCancel(b.ctx)
 	return &Backoffer{
-		ctx:        ctx,
-		maxSleep:   b.maxSleep,
-		totalSleep: b.totalSleep,
-		errors:     b.errors,
-		vars:       b.vars,
+		ctx:                ctx,
+		maxSleep:           b.maxSleep,
+		maxSleepServerBusy: b.maxSleepServerBusy,
+		totalSleep:         b.totalSleep,
+		errors:             b.errors,
+		vars:               b.vars,
 	}, cancel
 }

@@ -281,6 +281,10 @@ const (
 	// Only positive integers can be accepted, which means that the maximum back off time can only grow.
 	TiDBBackOffWeight = "tidb_backoff_weight"
 
+	// tidb_backoff_weight is used to control the max back off time for tikv is busy in TiDB.
+	// Only positive integers can be accepted, which means that the maximum back off time can only grow.
+	TiDBBackOffKVBusy = "tidb_backoff_kv_busy"
+
 	// tidb_ddl_reorg_worker_cnt defines the count of ddl reorg workers.
 	TiDBDDLReorgWorkerCount = "tidb_ddl_reorg_worker_cnt"
 
