@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 )
 
 // ProcessInfo is a struct used for show processlist statement.
@@ -65,10 +66,18 @@ func (pi *ProcessInfo) ToRowForShow(full bool) []interface{} {
 	}
 }
 
+func (pi *ProcessInfo) txnStartTs(tz *time.Location) (txnStart string) {
+	if pi.CurTxnStartTS > 0 {
+		physicalTime := oracle.GetTimeFromTS(pi.CurTxnStartTS)
+		txnStart = fmt.Sprintf("%s(%d)", physicalTime.In(tz).Format("01-02 15:04:05.000"), pi.CurTxnStartTS)
+	}
+	return
+}
+
 // ToRow returns []interface{} for the row data of
 // "SELECT * FROM INFORMATION_SCHEMA.PROCESSLIST".
-func (pi *ProcessInfo) ToRow() []interface{} {
-	return append(pi.ToRowForShow(true), pi.StmtCtx.MemTracker.BytesConsumed())
+func (pi *ProcessInfo) ToRow(tz *time.Location) []interface{} {
+	return append(pi.ToRowForShow(true), pi.StmtCtx.MemTracker.BytesConsumed(), pi.txnStartTs(tz))
 }
 
 // SessionManager is an interface for session manage. Show processlist and
