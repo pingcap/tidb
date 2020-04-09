@@ -1255,3 +1255,39 @@ func (s *testPessimisticSuite) TestTxnWithExpiredPessimisticLocks(c *C) {
 	tk.MustExec("update t1 set c2 = c2 + 1")
 	tk.MustExec("rollback")
 }
+
+func (s *testPessimisticSuite) TestKillWaitLockTxn(c *C) {
+	// Test kill command works on waiting pessimistic lock.
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists test_kill")
+	tk.MustExec("create table test_kill (id int primary key, c int)")
+	tk.MustExec("insert test_kill values (1, 1)")
+
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("begin pessimistic")
+
+	tk.MustQuery("select * from test_kill where id = 1 for update")
+	errCh := make(chan error)
+	go func() {
+		var err error
+		defer func() {
+			errCh <- err
+		}()
+		time.Sleep(20 * time.Millisecond)
+		_, err = tk2.Exec("update test_kill set c = c + 1 where id = 1")
+		if err != nil {
+			return
+		}
+	}()
+	time.Sleep(100 * time.Millisecond)
+	sessVars := tk.Se.GetSessionVars()
+	// lock query in tk is killed, the ttl manager will stop
+	succ := atomic.CompareAndSwapUint32(&sessVars.Killed, 0, 1)
+	c.Assert(succ, IsTrue)
+	err := <-errCh
+	c.Assert(err, IsNil)
+	tk.Exec("rollback")
+	tk.MustExec("rollback")
+	tk2.MustExec("rollback")
+}
