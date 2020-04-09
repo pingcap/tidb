@@ -17,7 +17,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/pingcap/tidb/config"
 	"io/ioutil"
 	"net/http"
 	"sort"
@@ -30,6 +29,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -1127,7 +1127,6 @@ func FormatVersion(TiDBVersion string, isDefaultVersion bool) string {
 	var version, nodeVersion string
 
 	// The user hasn't set the config 'ServerVersion'.
-	//if TiDBVersion == fmt.Sprintf("5.7.25-TiDB-%s", mysql.TiDBReleaseVersion) {
 	if isDefaultVersion {
 		nodeVersion = TiDBVersion[strings.LastIndex(TiDBVersion, "TiDB-")+len("TiDB-"):]
 		if nodeVersion[0] == 'v' {
