@@ -432,7 +432,7 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 	}
 	if tblInfo.IsView() {
 		job.State = model.JobStateCancelled
-		return ver, errors.Errorf("truncate view %s is not supported now.", tblInfo.Name.O)
+		return ver, infoschema.ErrTableNotExists.GenWithStackByArgs(job.SchemaName, tblInfo.Name.O)
 	}
 
 	err = t.DropTableOrView(schemaID, tblInfo.ID, true)
