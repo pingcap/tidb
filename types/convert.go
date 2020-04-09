@@ -137,11 +137,6 @@ func ConvertFloatToUint(sc *stmtctx.StatementContext, fval float64, upperBound u
 		}
 		return uint64(int64(val)), overflow(val, tp)
 	}
-//
-//<<<<<<< HEAD
-//	if val > float64(upperBound) {
-//		return upperBound, overflow(val, tp)
-//=======
 	ubf := float64(upperBound)
 	// Because math.MaxUint64 can not be represented precisely in iee754(64bit),
 	// so `float64(math.MaxUint64)` will make a num bigger than math.MaxUint64,
@@ -152,7 +147,6 @@ func ConvertFloatToUint(sc *stmtctx.StatementContext, fval float64, upperBound u
 	}
 	if val > ubf {
 		return uint64(math.MaxInt64), overflow(val, tp)
-//>>>>>>> c01006acb... expression: fix incorrect proto fields and add missing overflow handling for arithmatic functions (#12858)
 	}
 	return uint64(val), nil
 }
