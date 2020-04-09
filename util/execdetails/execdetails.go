@@ -457,6 +457,14 @@ func (e *RuntimeStats) SetRowNum(rowNum int64) {
 	atomic.StoreInt64(&e.rows, rowNum)
 }
 
+// ClearConcurrencyInfo clears the concurrency information.
+// We must call clearConcurrencyInfo first when we need to call SetConcurrencyInfo.
+func (e *RuntimeStats) ClearConcurrencyInfo() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.concurrency = e.concurrency[:0]
+}
+
 // SetConcurrencyInfo sets the concurrency information.
 // When the num <= 0, it means the exector operator is not executed parallel.
 func (e *RuntimeStats) SetConcurrencyInfo(name string, num int) {

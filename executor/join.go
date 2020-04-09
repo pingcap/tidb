@@ -138,6 +138,7 @@ func (e *HashJoinExec) Close() error {
 
 	if e.runtimeStats != nil {
 		concurrency := cap(e.joiners)
+		e.runtimeStats.ClearConcurrencyInfo()
 		e.runtimeStats.SetConcurrencyInfo("Concurrency", concurrency)
 		e.runtimeStats.SetAdditionalInfo(e.rowContainer.stat.String())
 	}

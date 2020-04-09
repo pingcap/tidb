@@ -144,6 +144,7 @@ func (e *ShuffleExec) Close() error {
 	e.executed = false
 
 	if e.runtimeStats != nil {
+		e.runtimeStats.ClearConcurrencyInfo()
 		e.runtimeStats.SetConcurrencyInfo("ShuffleConcurrency", e.concurrency)
 	}
 
