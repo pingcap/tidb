@@ -116,7 +116,7 @@ func (br *BindRecord) GetFirstBinding() *Binding {
 
 // HasUsingBinding checks if there are any using bindings in bind record.
 func (br *BindRecord) HasUsingBinding() bool {
-	return br.NormalizedBinding.Status == Using
+	return br.NormalizedBinding != nil && br.NormalizedBinding.Status == Using
 }
 
 // FindBinding find bindings in BindRecord.
@@ -192,7 +192,8 @@ func merge(lBindRecord, rBindRecord *BindRecord) *BindRecord {
 		return lBindRecord
 	}
 	result := lBindRecord.shallowCopy()
-	if rBindRecord.NormalizedBinding != nil && rBindRecord.NormalizedBinding.UpdateTime.Compare(lBindRecord.NormalizedBinding.UpdateTime) > 0 {
+	if lBindRecord.NormalizedBinding == nil ||
+		(rBindRecord.NormalizedBinding != nil && rBindRecord.NormalizedBinding.UpdateTime.Compare(lBindRecord.NormalizedBinding.UpdateTime) > 0) {
 		result.NormalizedBinding = rBindRecord.NormalizedBinding
 	}
 	for bucketID, rBaseline := range rBindRecord.Baselines {
@@ -206,6 +207,9 @@ func merge(lBindRecord, rBindRecord *BindRecord) *BindRecord {
 
 func (br *BindRecord) remove(del *BindRecord) *BindRecord {
 	// Delete all bindings.
+	if del.NormalizedBinding == nil && len(del.Baselines) == 0 {
+		return &BindRecord{OriginalSQL: br.OriginalSQL, Db: br.Db}
+	}
 	if del.NormalizedBinding != nil && del.NormalizedBinding.isSame(br.NormalizedBinding) {
 		return &BindRecord{OriginalSQL: br.OriginalSQL, Db: br.Db}
 	}
@@ -277,6 +281,7 @@ func (br *BindRecord) metrics() ([]float64, []int) {
 	}
 	// Make the common length counted in the first binding.
 	sizes[statusIndex[br.NormalizedBinding.Status]] = commonLength
+	count[statusIndex[br.NormalizedBinding.Status]] = 1
 	for _, baseline := range br.Baselines {
 		sizes[statusIndex[baseline.Status]] += baseline.size()
 		count[statusIndex[baseline.Status]]++
@@ -286,7 +291,8 @@ func (br *BindRecord) metrics() ([]float64, []int) {
 
 // size calculates the memory size of a bind info.
 func (b *Binding) size() float64 {
-	res := len(b.BindSQL) + len(b.Status) + 2*int(unsafe.Sizeof(b.CreateTime)) + len(b.Charset) + len(b.Collation)
+	res := len(b.BindSQL) + len(b.Status) + 2*int(unsafe.Sizeof(b.CreateTime)) + len(b.Charset) + len(b.Collation) +
+		int(unsafe.Sizeof(b.BindType)) + int(unsafe.Sizeof(b.BucketID)) + int(unsafe.Sizeof(b.Fixed)) + len(b.ID)
 	return float64(res)
 }
 

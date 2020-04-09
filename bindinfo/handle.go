@@ -154,7 +154,7 @@ func (h *BindHandle) Update(fullLoad bool) (err error) {
 		hash, meta, err := h.newBindRecord(row)
 		// Update lastUpdateTime to the newest one.
 		bind := meta.GetFirstBinding()
-		if bind == nil {
+		if bind == nil || bind.Status == deleted {
 			continue
 		}
 		if bind.UpdateTime.Compare(lastUpdateTime) > 0 {
@@ -226,9 +226,12 @@ func (h *BindHandle) CreateBindRecord(sctx sessionctx.Context, record *BindRecor
 	now := types.NewTime(types.FromGoTime(oracle.GetTimeFromTS(txn.StartTS())), mysql.TypeTimestamp, 3)
 
 	if oldRecord != nil {
-		_, err1 = exec.ExecuteInternal(context.TODO(), h.logicalDeleteBindInfoSQL(record.OriginalSQL, record.Db, now, record.NormalizedBinding))
+		_, err1 = exec.ExecuteInternal(context.TODO(), h.logicalDeleteNormalizedBindSQL(oldRecord.OriginalSQL, oldRecord.Db, now, oldRecord.NormalizedBinding))
+		if err1 != nil {
+			return err1
+		}
 		for _, baseline := range oldRecord.Baselines {
-			_, err1 = exec.ExecuteInternal(context.TODO(), h.logicalDeleteBaselineSQL(record.OriginalSQL, record.Db, now, baseline))
+			_, err1 = exec.ExecuteInternal(context.TODO(), h.logicalDeleteBaselineSQL(oldRecord.OriginalSQL, oldRecord.Db, now, baseline))
 			if err1 != nil {
 				return err1
 			}
@@ -372,10 +375,14 @@ func (h *BindHandle) DropBindRecord(originalSQL, db string, binding *Binding) (e
 
 	updateTs := types.NewTime(types.FromGoTime(oracle.GetTimeFromTS(txn.StartTS())), mysql.TypeTimestamp, 3)
 
-	if binding != nil && binding.BindType == NormalizedBind {
-		_, err = exec.ExecuteInternal(context.TODO(), h.logicalDeleteBindInfoSQL(originalSQL, db, updateTs, binding))
+	if binding != nil {
+		if binding.BindType == NormalizedBind {
+			_, err = exec.ExecuteInternal(context.TODO(), h.logicalDeleteBaselineSQL(originalSQL, db, updateTs, binding))
+		} else {
+			_, err = exec.ExecuteInternal(context.TODO(), h.logicalDeleteBaselineSQL(originalSQL, db, updateTs, binding))
+		}
 	} else {
-		_, err = exec.ExecuteInternal(context.TODO(), h.logicalDeleteBaselineSQL(originalSQL, db, updateTs, binding))
+		_, err = exec.ExecuteInternal(context.TODO(), h.logicalDeleteBindInfoSQL(originalSQL, db, updateTs))
 	}
 	return err
 
@@ -588,7 +595,7 @@ func (h *BindHandle) deleteBindInfoSQL(normdOrigSQL, db string, binding *Binding
 }
 
 func (h *BindHandle) insertBindInfoSQL(orignalSQL string, db string, info *Binding) string {
-	return fmt.Sprintf(`REPLACE INTO mysql.bind_info VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)`,
+	return fmt.Sprintf(`INSERT INTO mysql.bind_info VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)`,
 		expression.Quote(orignalSQL),
 		expression.Quote(info.BindSQL),
 		expression.Quote(db),
@@ -614,17 +621,26 @@ func (h *BindHandle) logicalDeleteBaselineSQL(originalSQL, db string, updateTs t
 	}
 	return sql + fmt.Sprintf(` and bind_sql=%s and bind_type=%s and bucket_id=%s`,
 		expression.Quote(binding.BindSQL),
-		expression.Quote(strconv.FormatInt(int64(binding.BindType), 10)),
+		strconv.FormatInt(int64(binding.BindType), 10),
 		expression.Quote(strconv.FormatInt(binding.BucketID, 10)))
 }
 
-
-func (h *BindHandle) logicalDeleteBindInfoSQL(originalSQL, db string, updateTs types.Time, binding *Binding) string {
+func (h *BindHandle) logicalDeleteBindInfoSQL(originalSQL, db string, updateTs types.Time) string {
 	sql := fmt.Sprintf(`UPDATE mysql.bind_info SET status=%s,update_time=%s WHERE original_sql=%s and default_db=%s`,
 		expression.Quote(deleted),
 		expression.Quote(updateTs.String()),
 		expression.Quote(originalSQL),
 		expression.Quote(db))
+	return sql
+}
+
+func (h *BindHandle) logicalDeleteNormalizedBindSQL(originalSQL, db string, updateTs types.Time, binding *Binding) string {
+	sql := fmt.Sprintf(`UPDATE mysql.bind_info SET status=%s,update_time=%s WHERE original_sql=%s and default_db=%s and bind_type=%s`,
+		expression.Quote(deleted),
+		expression.Quote(updateTs.String()),
+		expression.Quote(originalSQL),
+		expression.Quote(db),
+		strconv.FormatInt(int64(binding.BindType), 10))
 	if binding == nil {
 		return sql
 	}

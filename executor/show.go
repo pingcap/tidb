@@ -274,6 +274,9 @@ func (e *ShowExec) fetchShowBind() error {
 			})
 			return nil
 		}
+		if bindData.NormalizedBinding == nil {
+			continue
+		}
 		err := appendBind(bindData.NormalizedBinding)
 		if err != nil {
 			return err

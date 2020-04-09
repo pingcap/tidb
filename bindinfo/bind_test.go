@@ -172,7 +172,7 @@ func (s *testSuite) TestGlobalBinding(c *C) {
 	metrics.BindTotalGauge.WithLabelValues(metrics.ScopeGlobal, bindinfo.Using).Write(pb)
 	c.Assert(pb.GetGauge().GetValue(), Equals, float64(1))
 	metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeGlobal, bindinfo.Using).Write(pb)
-	c.Assert(pb.GetGauge().GetValue(), Equals, float64(97))
+	c.Assert(pb.GetGauge().GetValue(), Equals, float64(31))
 
 	sql, hash := parser.NormalizeDigest("select * from t where i          >      30.0")
 
@@ -230,7 +230,7 @@ func (s *testSuite) TestGlobalBinding(c *C) {
 	c.Assert(pb.GetGauge().GetValue(), Equals, float64(0))
 	metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeGlobal, bindinfo.Using).Write(pb)
 	// From newly created global bind handle.
-	c.Assert(pb.GetGauge().GetValue(), Equals, float64(97))
+	c.Assert(pb.GetGauge().GetValue(), Equals, float64(31))
 
 	bindHandle = bindinfo.NewBindHandle(tk.Se)
 	err = bindHandle.Update(true)
@@ -277,7 +277,7 @@ func (s *testSuite) TestSessionBinding(c *C) {
 	metrics.BindTotalGauge.WithLabelValues(metrics.ScopeSession, bindinfo.Using).Write(pb)
 	c.Assert(pb.GetGauge().GetValue(), Equals, float64(1))
 	metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeSession, bindinfo.Using).Write(pb)
-	c.Assert(pb.GetGauge().GetValue(), Equals, float64(97))
+	c.Assert(pb.GetGauge().GetValue(), Equals, float64(31))
 
 	handle := tk.Se.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
 	bindData := handle.GetBindRecord("select * from t where i > ?", "test")
@@ -320,7 +320,7 @@ func (s *testSuite) TestSessionBinding(c *C) {
 	bindData = handle.GetBindRecord("select * from t where i > ?", "test")
 	c.Check(bindData, NotNil)
 	c.Check(bindData.OriginalSQL, Equals, "select * from t where i > ?")
-	c.Check(bindData.NormalizedBinding, Equals, nil)
+	c.Check(bindData.NormalizedBinding, Equals, (*bindinfo.Binding)(nil))
 
 	metrics.BindTotalGauge.WithLabelValues(metrics.ScopeSession, bindinfo.Using).Write(pb)
 	c.Assert(pb.GetGauge().GetValue(), Equals, float64(0))
@@ -640,7 +640,6 @@ func (s *testSuite) TestBindingCache(c *C) {
 
 	tk.MustExec("drop global binding for select * from t;")
 	c.Assert(s.domain.BindHandle().Update(false), IsNil)
-	tk.MustQuery("show global bindings").Check(testkit.Rows())
 	c.Assert(len(s.domain.BindHandle().GetAllBindRecord()), Equals, 1)
 }
 
@@ -800,7 +799,7 @@ func (s *testSuite) TestEvolveInvalidBindings(c *C) {
 	tk.MustExec("create table t(a int, b int, index idx_a(a))")
 	tk.MustExec("create global binding for select * from t where a > 10 using select /*+ USE_INDEX(t) */ * from t where a > 10")
 	// Manufacture a rejected binding by hacking mysql.bind_info.
-	tk.MustExec("insert into mysql.bind_info values('select * from t where a > ?', 'select /*+ USE_INDEX(t,idx_a) */ * from t where a > 10', 'test', 'rejected', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '')")
+	tk.MustExec("insert into mysql.bind_info values('select * from t where a > ?', 'select /*+ USE_INDEX(t,idx_a) */ * from t where a > 10', 'test', 'rejected', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '', 1, 0, 0)")
 	tk.MustQuery("select bind_sql, status from mysql.bind_info").Sort().Check(testkit.Rows(
 		"select /*+ USE_INDEX(t) */ * from t where a > 10 using",
 		"select /*+ USE_INDEX(t,idx_a) */ * from t where a > 10 rejected",
