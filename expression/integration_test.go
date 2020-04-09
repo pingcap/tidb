@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -4917,4 +4918,39 @@ func (s *testIntegrationSuite) TestValuesForBinaryLiteral(c *C) {
 	c.Assert(err, IsNil)
 	tk.MustQuery("select a=0 from testValuesBinary;").Check(testkit.Rows("1"))
 	tk.MustExec("drop table testValuesBinary;")
+}
+
+func (s *testIntegrationSuite) TestCacheRefineArgs(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	orgCapacity := plannercore.PreparedPlanCacheCapacity
+	orgMemGuardRatio := plannercore.PreparedPlanCacheMemoryGuardRatio
+	orgMaxMemory := plannercore.PreparedPlanCacheMaxMemory
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+		plannercore.PreparedPlanCacheCapacity = orgCapacity
+		plannercore.PreparedPlanCacheMemoryGuardRatio = orgMemGuardRatio
+		plannercore.PreparedPlanCacheMaxMemory = orgMaxMemory
+	}()
+	plannercore.SetPreparedPlanCache(true)
+	plannercore.PreparedPlanCacheCapacity = 100
+	plannercore.PreparedPlanCacheMemoryGuardRatio = 0.1
+	// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
+	// behavior would not be effected by the uncertain memory utilization.
+	plannercore.PreparedPlanCacheMaxMemory.Store(math.MaxUint64)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(col_int int)")
+	tk.MustExec("insert into t values(null)")
+	tk.MustExec("prepare stmt from 'SELECT ((col_int is true) = ?) AS res FROM t'")
+	tk.MustExec("set @p0='0.8'")
+	tk.MustQuery("execute stmt using @p0").Check(testkit.Rows("0"))
+	tk.MustExec("set @p0='0'")
+	tk.MustQuery("execute stmt using @p0").Check(testkit.Rows("1"))
+
+	tk.MustExec("delete from t")
+	tk.MustExec("insert into t values(1)")
+	tk.MustExec("prepare stmt from 'SELECT col_int < ? FROM t'")
+	tk.MustExec("set @p0='-184467440737095516167.1'")
+	tk.MustQuery("execute stmt using @p0").Check(testkit.Rows("0"))
 }
