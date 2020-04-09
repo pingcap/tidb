@@ -610,6 +610,7 @@ var defaultSysVars = []*SysVar{
 	/* TiDB specific variables */
 	{ScopeSession, TiDBSnapshot, ""},
 	{ScopeSession, TiDBOptAggPushDown, BoolToIntStr(DefOptAggPushDown)},
+	{ScopeSession, TiDBOptDistinctAggPushDown, BoolToIntStr(DefOptDistinctAggPushDown)},
 	{ScopeSession, TiDBOptWriteRowID, BoolToIntStr(DefOptWriteRowID)},
 	{ScopeGlobal | ScopeSession, TiDBBuildStatsConcurrency, strconv.Itoa(DefBuildStatsConcurrency)},
 	{ScopeGlobal, TiDBAutoAnalyzeRatio, strconv.FormatFloat(DefAutoAnalyzeRatio, 'f', -1, 64)},
@@ -641,6 +642,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, TiDBDMLBatchSize, strconv.Itoa(DefDMLBatchSize)},
 	{ScopeSession, TiDBCurrentTS, strconv.Itoa(DefCurretTS)},
 	{ScopeGlobal | ScopeSession, TiDBMaxChunkSize, strconv.Itoa(DefMaxChunkSize)},
+	{ScopeGlobal | ScopeSession, TiDBAllowBatchCop, strconv.Itoa(DefTiDBAllowBatchCop)},
 	{ScopeGlobal | ScopeSession, TiDBInitChunkSize, strconv.Itoa(DefInitChunkSize)},
 	{ScopeGlobal | ScopeSession, TiDBEnableCascadesPlanner, "0"},
 	{ScopeGlobal | ScopeSession, TiDBEnableIndexMerge, "0"},

@@ -1733,6 +1733,10 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 			g.err = ErrWrongGroupField.GenWithStackByArgs(g.fields[pos-1].Text())
 			return inNode, false
 		}
+		if _, ok := ret.(*ast.WindowFuncExpr); ok {
+			g.err = ErrWrongGroupField.GenWithStackByArgs(g.fields[pos-1].Text())
+			return inNode, false
+		}
 		return ret, true
 	case *ast.ValuesExpr:
 		if v.Column == nil {
@@ -2689,8 +2693,37 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	if hints := b.TableHints(); hints != nil {
 		for i, hint := range hints.indexMergeHintList {
 			if hint.tblName.L == tblName.L {
-				indexMergeHints = append(indexMergeHints, hint.indexHint)
 				hints.indexMergeHintList[i].matched = true
+				// check whether the index names in IndexMergeHint are valid.
+				invalidIdxNames := make([]string, 0, len(hint.indexHint.IndexNames))
+				for _, idxName := range hint.indexHint.IndexNames {
+					hasIdxName := false
+					for _, path := range possiblePaths {
+						if path.IsTablePath {
+							if idxName.L == "primary" {
+								hasIdxName = true
+								break
+							}
+							continue
+						}
+						if idxName.L == path.Index.Name.L {
+							hasIdxName = true
+							break
+						}
+					}
+					if !hasIdxName {
+						invalidIdxNames = append(invalidIdxNames, idxName.String())
+					}
+				}
+				if len(invalidIdxNames) == 0 {
+					indexMergeHints = append(indexMergeHints, hint.indexHint)
+				} else {
+					// Append warning if there are invalid index names.
+					errMsg := fmt.Sprintf("use_index_merge(%s) is inapplicable, check whether the indexes (%s) "+
+						"exist, or the indexes are conflicted with use_index/ignore_index hints.",
+						hint.indexString(), strings.Join(invalidIdxNames, ", "))
+					b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(errMsg))
+				}
 			}
 		}
 	}
