@@ -11,26 +11,24 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tikvrpc
+// +build windows
+
+package storage
 
 import (
-	"testing"
-
-	. "github.com/pingcap/check"
-	"github.com/pingcap/kvproto/pkg/tikvpb"
+	"syscall"
+	"unsafe"
 )
 
-func TestT(t *testing.T) {
-	TestingT(t)
-}
-
-type testBatchCommand struct{}
-
-var _ = Suite(&testBatchCommand{})
-
-func (s *testBatchCommand) TestBatchResponse(c *C) {
-	resp := &tikvpb.BatchCommandsResponse_Response{}
-	batchResp, err := FromBatchCommandsResponse(resp)
-	c.Assert(batchResp == nil, IsTrue)
-	c.Assert(err != nil, IsTrue)
+// GetTargetDirectoryCapacity get the capacity (bytes) of directory
+func GetTargetDirectoryCapacity(path string) (uint64, error) {
+	h := syscall.MustLoadDLL("kernel32.dll")
+	c := h.MustFindProc("GetDiskFreeSpaceExW")
+	var freeBytes int64
+	_, _, err := c.Call(uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr(path))),
+		uintptr(unsafe.Pointer(&freeBytes)))
+	if err != nil {
+		return 0, err
+	}
+	return uint64(freeBytes), nil
 }

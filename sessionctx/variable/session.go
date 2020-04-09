@@ -391,6 +391,10 @@ type SessionVars struct {
 	// This variable is currently not recommended to be turned on.
 	AllowWriteRowID bool
 
+	// AllowBatchCop means if we should send batch coprocessor to TiFlash. Default value is 1, means to use batch cop in case of aggregation and join.
+	// If value is set to 2 , which means to force to send batch cop for any query. Value is set to 0 means never use batch cop.
+	AllowBatchCop int
+
 	// CorrelationThreshold is the guard to enable row count estimation using column order correlation.
 	CorrelationThreshold float64
 
@@ -716,6 +720,8 @@ func NewSessionVars() *SessionVars {
 		enableStreaming = "0"
 	}
 	terror.Log(vars.SetSystemVar(TiDBEnableStreaming, enableStreaming))
+
+	vars.AllowBatchCop = DefTiDBAllowBatchCop
 
 	var enableChunkRPC string
 	if config.GetGlobalConfig().TiKVClient.EnableChunkRPC {
@@ -1076,6 +1082,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.IndexLookupJoinConcurrency = tidbOptPositiveInt32(val, DefIndexLookupJoinConcurrency)
 	case TiDBIndexJoinBatchSize:
 		s.IndexJoinBatchSize = tidbOptPositiveInt32(val, DefIndexJoinBatchSize)
+	case TiDBAllowBatchCop:
+		s.AllowBatchCop = int(tidbOptInt64(val, DefTiDBAllowBatchCop))
 	case TiDBIndexLookupSize:
 		s.IndexLookupSize = tidbOptPositiveInt32(val, DefIndexLookupSize)
 	case TiDBHashJoinConcurrency:
