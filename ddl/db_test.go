@@ -1894,6 +1894,21 @@ func (s *testDBSuite) TestAlterColumn(c *C) {
 	c.Assert(createSQL, Equals, expected)
 	_, err = s.tk.Exec("alter table mc modify column a bigint auto_increment") // Adds auto_increment should throw error
 	c.Assert(err, NotNil)
+
+	s.tk.MustExec("drop table if exists t")
+	// TODO: fix me, below sql should execute successfully. Currently, the result of calculate key length is wrong.
+	//s.tk.MustExec("create table t1 (a varchar(10),b varchar(100),c tinyint,d varchar(3071),index(a),index(a,b),index (c,d));")
+	s.tk.MustExec("create table t1 (a varchar(10),b varchar(100),c tinyint,d varchar(3068),index(a),index(a,b),index (c,d));")
+	_, err = s.tk.Exec("alter table t1 modify column a varchar(3000);")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:1071]Specified key was too long; max key length is 3072 bytes")
+	// check modify column with rename column.
+	_, err = s.tk.Exec("alter table t1 change column a x varchar(3000);")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:1071]Specified key was too long; max key length is 3072 bytes")
+	_, err = s.tk.Exec("alter table t1 modify column c bigint;")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:1071]Specified key was too long; max key length is 3072 bytes")
 }
 
 func (s *testDBSuite) mustExec(c *C, query string, args ...interface{}) {
