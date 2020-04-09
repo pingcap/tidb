@@ -640,6 +640,7 @@ func (s *testSuite) TestBindingCache(c *C) {
 
 	tk.MustExec("drop global binding for select * from t;")
 	c.Assert(s.domain.BindHandle().Update(false), IsNil)
+	tk.MustQuery("show global bindings").Check(testkit.Rows())
 	c.Assert(len(s.domain.BindHandle().GetAllBindRecord()), Equals, 1)
 }
 

@@ -14,6 +14,7 @@
 package bindinfo
 
 import (
+	"strconv"
 	"time"
 	"unsafe"
 
@@ -85,6 +86,11 @@ func (b *Binding) SinceUpdateTime() (time.Duration, error) {
 	return time.Since(updateTime), nil
 }
 
+// BucketIdSuffix return the suffix of binding's ID for the baseline.
+func (b *Binding) BucketIdSuffix() string {
+	return "$BucketID=" + strconv.FormatInt(b.BucketID, 10)
+}
+
 // cache is a k-v map, key is original sql, value is a slice of BindRecord.
 type cache map[string][]*BindRecord
 
@@ -152,14 +158,19 @@ func (br *BindRecord) prepareHintsForBinding(sctx sessionctx.Context, bind *Bind
 	}
 	bind.Hint = hintsSet
 	bind.ID = hintsStr
+	if bind.BindType == Baseline {
+		bind.ID += bind.BucketIdSuffix()
+	}
 	return nil
 }
 
 // prepareHints builds ID and Hint for BindRecord. If sctx is not nil, we check if
 // the BindSQL is still valid.
-func (br *BindRecord) prepareHints(sctx sessionctx.Context) (err error) {
+func (br *BindRecord) PrepareHints(sctx sessionctx.Context) (err error) {
 	p := parser.New()
-	err = br.prepareHintsForBinding(sctx, br.NormalizedBinding, p)
+	if br.NormalizedBinding != nil {
+		err = br.prepareHintsForBinding(sctx, br.NormalizedBinding, p)
+	}
 	if err != nil {
 		return err
 	}
@@ -181,7 +192,7 @@ func merge(lBindRecord, rBindRecord *BindRecord) *BindRecord {
 		return lBindRecord
 	}
 	result := lBindRecord.shallowCopy()
-	if rBindRecord.NormalizedBinding.UpdateTime.Compare(lBindRecord.NormalizedBinding.UpdateTime) > 0 {
+	if rBindRecord.NormalizedBinding != nil && rBindRecord.NormalizedBinding.UpdateTime.Compare(lBindRecord.NormalizedBinding.UpdateTime) > 0 {
 		result.NormalizedBinding = rBindRecord.NormalizedBinding
 	}
 	for bucketID, rBaseline := range rBindRecord.Baselines {
@@ -209,7 +220,15 @@ func (br *BindRecord) remove(del *BindRecord) *BindRecord {
 }
 
 func (br *BindRecord) removeDeletedBindings() *BindRecord {
-	result := BindRecord{OriginalSQL: br.OriginalSQL, Db: br.Db, NormalizedBinding: br.NormalizedBinding}
+	result := BindRecord{
+		OriginalSQL:       br.OriginalSQL,
+		Db:                br.Db,
+		NormalizedBinding: br.NormalizedBinding,
+		Baselines:         make(map[int64]*Binding),
+	}
+	if result.NormalizedBinding != nil && result.NormalizedBinding.Status == deleted {
+		result.NormalizedBinding = nil
+	}
 	for idx, baseline := range br.Baselines {
 		if baseline.Status != deleted {
 			result.Baselines[idx] = baseline

@@ -67,6 +67,7 @@ func (e *SQLBindExec) dropSQLBind() error {
 			BindSQL:   e.bindSQL,
 			Charset:   e.charset,
 			Collation: e.collation,
+			BindType:  bindinfo.NormalizedBind,
 		}
 	}
 	if !e.isGlobal {

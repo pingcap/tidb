@@ -180,7 +180,7 @@ func (h *BindHandle) Update(fullLoad bool) (err error) {
 // CreateBindRecord creates a BindRecord to the storage and the cache.
 // It replaces all the exists bindings for the same normalized SQL.
 func (h *BindHandle) CreateBindRecord(sctx sessionctx.Context, record *BindRecord) (err error) {
-	err = record.prepareHints(sctx)
+	err = record.PrepareHints(sctx)
 	if err != nil {
 		return err
 	}
@@ -228,7 +228,7 @@ func (h *BindHandle) CreateBindRecord(sctx sessionctx.Context, record *BindRecor
 	if oldRecord != nil {
 		_, err1 = exec.ExecuteInternal(context.TODO(), h.logicalDeleteBindInfoSQL(record.OriginalSQL, record.Db, now, record.NormalizedBinding))
 		for _, baseline := range oldRecord.Baselines {
-			_, err1 = exec.ExecuteInternal(context.TODO(), h.logicalDeleteBindInfoSQL(record.OriginalSQL, record.Db, now, baseline))
+			_, err1 = exec.ExecuteInternal(context.TODO(), h.logicalDeleteBaselineSQL(record.OriginalSQL, record.Db, now, baseline))
 			if err1 != nil {
 				return err1
 			}
@@ -243,7 +243,7 @@ func (h *BindHandle) CreateBindRecord(sctx sessionctx.Context, record *BindRecor
 
 // AddBindRecord adds a BindRecord to the storage and BindRecord to the cache.
 func (h *BindHandle) AddBindRecord(sctx sessionctx.Context, record *BindRecord) (err error) {
-	err = record.prepareHints(sctx)
+	err = record.PrepareHints(sctx)
 	if err != nil {
 		return err
 	}
@@ -334,7 +334,6 @@ func (h *BindHandle) DropBindRecord(originalSQL, db string, binding *Binding) (e
 	h.sctx.Lock()
 	_, err = exec.ExecuteInternal(context.TODO(), "BEGIN")
 	if err != nil {
-		h.sctx.Unlock()
 		return
 	}
 
@@ -492,7 +491,7 @@ func (h *BindHandle) newBindRecord(row chunk.Row) (string, *BindRecord, error) {
 	h.sctx.Lock()
 	defer h.sctx.Unlock()
 	h.sctx.GetSessionVars().CurrentDB = bindRecord.Db
-	err := bindRecord.prepareHints(h.sctx.Context)
+	err := bindRecord.PrepareHints(h.sctx.Context)
 	return hash, bindRecord, err
 }
 

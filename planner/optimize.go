@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/ranger"
-	"strconv"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -90,7 +89,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	bestPlanHint := plannercore.GenHintsFromPhysicalPlan(bestPlan)
 	if bindRecord.NormalizedBinding != nil {
 		orgBinding := bindRecord.NormalizedBinding // the first is the original binding
-		for _, tbHint := range tableHints {  // consider table hints which contained by the original binding
+		for _, tbHint := range tableHints {        // consider table hints which contained by the original binding
 			if orgBinding.Hint.ContainTableHint(tbHint.HintName.String()) {
 				bestPlanHint = append(bestPlanHint, tbHint)
 			}
@@ -101,7 +100,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	// If the best bestPlan is in baselines, just use it.
 	baseline := bindRecord.FindBaseline(bucketID)
 	if baseline != nil && baseline.Status == bindinfo.Using &&
-		baseline.ID == bestPlanHintStr+"$BucketID="+strconv.FormatInt(baseline.BucketID, 10) {
+		baseline.ID == bestPlanHintStr+baseline.BucketIdSuffix() {
 		if sctx.GetSessionVars().UsePlanBaselines {
 			stmtHints, warns = handleStmtHints(baseline.Hint.GetFirstTableHints())
 		}
@@ -160,10 +159,10 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	// 1. If there is already a evolution task, we do not need to handle it again.
 	// 2. If the origin binding contain `read_from_storage` hint, we should ignore the evolve task.
 	// 3. If the best plan contain TiFlash hint, we should ignore the evolve task.
-	if sctx.GetSessionVars().EvolvePlanBaselines && baseline == nil &&
+	if sctx.GetSessionVars().EvolvePlanBaselines &&
 		!originHints.ContainTableHint(plannercore.HintReadFromStorage) &&
 		!bindRecord.GetFirstBinding().Hint.ContainTableHint(plannercore.HintReadFromStorage) {
-		handleEvolveTasks(ctx, sctx, bindRecord, stmtNode, bestPlanHintStr)
+		handleEvolveTasks(ctx, sctx, bindRecord, stmtNode, bestPlanHintStr, bucketID)
 	}
 	// Restore the hint to avoid changing the stmt node.
 	hint.BindHint(stmtNode, originHints)
@@ -382,7 +381,7 @@ func handleInvalidBindRecord(ctx context.Context, sctx sessionctx.Context, level
 	globalHandle.AddDropInvalidBindTask(&bindRecord)
 }
 
-func handleEvolveTasks(ctx context.Context, sctx sessionctx.Context, br *bindinfo.BindRecord, stmtNode ast.StmtNode, planHint string) {
+func handleEvolveTasks(ctx context.Context, sctx sessionctx.Context, br *bindinfo.BindRecord, stmtNode ast.StmtNode, planHint string, bucketID int64) {
 	bindSQL := bindinfo.GenerateBindSQL(ctx, stmtNode, planHint)
 	if bindSQL == "" {
 		return
@@ -393,6 +392,8 @@ func handleEvolveTasks(ctx context.Context, sctx sessionctx.Context, br *bindinf
 		Status:    bindinfo.PendingVerify,
 		Charset:   charset,
 		Collation: collation,
+		BindType:  bindinfo.Baseline,
+		BucketID:  bucketID,
 	}
 	globalHandle := domain.GetDomain(sctx).BindHandle()
 	globalHandle.AddEvolvePlanTask(br.OriginalSQL, br.Db, binding)

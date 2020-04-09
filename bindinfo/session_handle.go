@@ -47,7 +47,7 @@ func (h *SessionHandle) appendBindRecord(hash string, meta *BindRecord) {
 // CreateBindRecord creates a BindRecord to the cache.
 // It replaces all the exists bindings for the same normalized SQL.
 func (h *SessionHandle) CreateBindRecord(sctx sessionctx.Context, record *BindRecord) (err error) {
-	err = record.prepareHints(sctx)
+	err = record.PrepareHints(sctx)
 	if err != nil {
 		return err
 	}
