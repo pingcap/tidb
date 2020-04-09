@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/format"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/opcode"
@@ -90,7 +91,10 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.CreateTableStmt) (*m
 	}
 	if s.Partition.Expr != nil {
 		buf := new(bytes.Buffer)
-		s.Partition.Expr.Format(buf)
+		restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, buf)
+		if err := s.Partition.Expr.Restore(restoreCtx); err != nil {
+			return nil, err
+		}
 		pi.Expr = buf.String()
 	} else if s.Partition.ColumnNames != nil {
 		// TODO: Support multiple columns for 'PARTITION BY RANGE COLUMNS'.
@@ -117,6 +121,10 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.CreateTableStmt) (*m
 }
 
 func buildHashPartitionDefinitions(ctx sessionctx.Context, s *ast.CreateTableStmt, pi *model.PartitionInfo) error {
+	if err := checkAddPartitionTooManyPartitions(pi.Num); err != nil {
+		return err
+	}
+
 	defs := make([]model.PartitionDefinition, pi.Num)
 	for i := 0; i < len(defs); i++ {
 		if len(s.Partition.Definitions) == 0 {
@@ -390,7 +398,7 @@ func checkPartitionColumns(tblInfo *model.TableInfo, expr ast.ExprNode) ([]*mode
 }
 
 // checkPartitionFuncType checks partition function return type.
-func checkPartitionFuncType(ctx sessionctx.Context, s *ast.CreateTableStmt, cols []*table.Column, tblInfo *model.TableInfo) error {
+func checkPartitionFuncType(ctx sessionctx.Context, s *ast.CreateTableStmt, tblInfo *model.TableInfo) error {
 	if s.Partition.Expr == nil {
 		return nil
 	}
@@ -400,7 +408,7 @@ func checkPartitionFuncType(ctx sessionctx.Context, s *ast.CreateTableStmt, cols
 	if s.Partition.Tp == model.PartitionTypeRange || s.Partition.Tp == model.PartitionTypeHash {
 		// if partition by columnExpr, check the column type
 		if _, ok := s.Partition.Expr.(*ast.ColumnNameExpr); ok {
-			for _, col := range cols {
+			for _, col := range tblInfo.Columns {
 				name := strings.Replace(col.Name.String(), ".", "`.`", -1)
 				// Range partitioning key supported types: tinyint, smallint, mediumint, int and bigint.
 				if !validRangePartitionType(col) && fmt.Sprintf("`%s`", name) == exprStr {
@@ -428,12 +436,14 @@ func checkPartitionFuncType(ctx sessionctx.Context, s *ast.CreateTableStmt, cols
 
 // checkCreatePartitionValue checks whether `less than value` is strictly increasing for each partition.
 // Side effect: it may simplify the partition range definition from a constant expression to an integer.
-func checkCreatePartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo, pi *model.PartitionInfo, cols []*table.Column) error {
+func checkCreatePartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo) error {
+	pi := tblInfo.Partition
 	defs := pi.Definitions
 	if len(defs) <= 1 {
 		return nil
 	}
 
+	cols := tblInfo.Columns
 	if strings.EqualFold(defs[len(defs)-1].LessThan[0], partitionMaxValue) {
 		defs = defs[:len(defs)-1]
 	}
@@ -506,7 +516,7 @@ func getRangeValue(ctx sessionctx.Context, tblInfo *model.TableInfo, str string,
 }
 
 // validRangePartitionType checks the type supported by the range partitioning key.
-func validRangePartitionType(col *table.Column) bool {
+func validRangePartitionType(col *model.ColumnInfo) bool {
 	switch col.FieldType.EvalType() {
 	case types.ETInt:
 		return true
@@ -674,9 +684,9 @@ func getPartitionIDs(table *model.TableInfo) []int64 {
 }
 
 // checkRangePartitioningKeysConstraints checks that the range partitioning key is included in the table constraint.
-func checkRangePartitioningKeysConstraints(sctx sessionctx.Context, s *ast.CreateTableStmt, tblInfo *model.TableInfo, constraints []*ast.Constraint) error {
-	// Returns directly if there is no constraint in the partition table.
-	if len(constraints) == 0 {
+func checkRangePartitioningKeysConstraints(sctx sessionctx.Context, s *ast.CreateTableStmt, tblInfo *model.TableInfo) error {
+	// Returns directly if there are no unique keys in the table.
+	if len(tblInfo.Indices) == 0 && !tblInfo.PKIsHandle {
 		return nil
 	}
 
@@ -697,21 +707,28 @@ func checkRangePartitioningKeysConstraints(sctx sessionctx.Context, s *ast.Creat
 	// Checks that the partitioning key is included in the constraint.
 	// Every unique key on the table must use every column in the table's partitioning expression.
 	// See https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations-partitioning-keys-unique-keys.html
-	for _, constraint := range constraints {
-		switch constraint.Tp {
-		case ast.ConstraintPrimaryKey, ast.ConstraintUniq, ast.ConstraintUniqKey, ast.ConstraintUniqIndex:
-			if !checkUniqueKeyIncludePartKey(partCols, constraint.Keys) {
-				if constraint.Tp == ast.ConstraintPrimaryKey {
-					return ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("PRIMARY KEY")
-				}
-				return ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("UNIQUE INDEX")
+	for _, index := range tblInfo.Indices {
+		if index.Unique && !checkUniqueKeyIncludePartKey(partCols, index.Columns) {
+			if index.Primary {
+				return ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("PRIMARY KEY")
 			}
+			return ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("UNIQUE INDEX")
+		}
+	}
+	// when PKIsHandle, tblInfo.Indices will not contain the primary key.
+	if tblInfo.PKIsHandle {
+		indexCols := []*model.IndexColumn{{
+			Name:   tblInfo.GetPkName(),
+			Length: types.UnspecifiedLength,
+		}}
+		if !checkUniqueKeyIncludePartKey(partCols, indexCols) {
+			return ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("PRIMARY KEY")
 		}
 	}
 	return nil
 }
 
-func checkPartitionKeysConstraint(pi *model.PartitionInfo, indexPartSpecifications []*ast.IndexPartSpecification, tblInfo *model.TableInfo, isPK bool) error {
+func checkPartitionKeysConstraint(pi *model.PartitionInfo, indexColumns []*model.IndexColumn, tblInfo *model.TableInfo, isPK bool) error {
 	var (
 		partCols []*model.ColumnInfo
 		err      error
@@ -738,7 +755,7 @@ func checkPartitionKeysConstraint(pi *model.PartitionInfo, indexPartSpecificatio
 	// Every unique key on the table must use every column in the table's partitioning expression.(This
 	// also includes the table's primary key.)
 	// See https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations-partitioning-keys-unique-keys.html
-	if !checkUniqueKeyIncludePartKey(columnInfoSlice(partCols), indexPartSpecifications) {
+	if !checkUniqueKeyIncludePartKey(columnInfoSlice(partCols), indexColumns) {
 		if isPK {
 			return ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("PRIMARY")
 		}
@@ -796,7 +813,7 @@ type stringSlice interface {
 }
 
 // checkUniqueKeyIncludePartKey checks that the partitioning key is included in the constraint.
-func checkUniqueKeyIncludePartKey(partCols stringSlice, idxCols []*ast.IndexPartSpecification) bool {
+func checkUniqueKeyIncludePartKey(partCols stringSlice, idxCols []*model.IndexColumn) bool {
 	for i := 0; i < partCols.Len(); i++ {
 		partCol := partCols.At(i)
 		if !findColumnInIndexCols(partCol, idxCols) {
@@ -829,7 +846,7 @@ func (cns columnNameSlice) At(i int) string {
 }
 
 // isRangePartitionColUnsignedBigint returns true if the partitioning key column type is unsigned bigint type.
-func isRangePartitionColUnsignedBigint(cols []*table.Column, pi *model.PartitionInfo) bool {
+func isRangePartitionColUnsignedBigint(cols []*model.ColumnInfo, pi *model.PartitionInfo) bool {
 	for _, col := range cols {
 		isUnsigned := col.Tp == mysql.TypeLonglong && mysql.HasUnsignedFlag(col.Flag)
 		if isUnsigned && strings.Contains(strings.ToLower(pi.Expr), col.Name.L) {

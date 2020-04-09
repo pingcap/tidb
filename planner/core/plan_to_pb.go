@@ -82,7 +82,7 @@ func (p *PhysicalSelection) ToPB(ctx sessionctx.Context, storeType kv.StoreType)
 	selExec := &tipb.Selection{
 		Conditions: expression.ExpressionsToPBList(sc, p.Conditions, client),
 	}
-	if (storeType == kv.TiFlash) {
+	if storeType == kv.TiFlash {
 		var err error
 		selExec.Child, err = p.children[0].ToPB(ctx, storeType)
 		if err != nil {
@@ -102,7 +102,7 @@ func (p *PhysicalTopN) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*ti
 	for _, item := range p.ByItems {
 		topNExec.OrderBy = append(topNExec.OrderBy, expression.SortByItemToPB(sc, client, item.Expr, item.Desc))
 	}
-	if (storeType == kv.TiFlash) {
+	if storeType == kv.TiFlash {
 		var err error
 		topNExec.Child, err = p.children[0].ToPB(ctx, storeType)
 		if err != nil {
@@ -117,7 +117,7 @@ func (p *PhysicalLimit) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*t
 	limitExec := &tipb.Limit{
 		Limit: p.Count,
 	}
-	if (storeType == kv.TiFlash) {
+	if storeType == kv.TiFlash {
 		var err error
 		limitExec.Child, err = p.children[0].ToPB(ctx, storeType)
 		if err != nil {
@@ -141,7 +141,7 @@ func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context, storeType kv.StoreType)
 		tsExec.NextReadEngine = tipb.EngineType_TiFlash
 		ranges := distsql.TableRangesToKVRanges(tsExec.TableId, p.Ranges, nil)
 		for _, keyRange := range ranges {
-			tsExec.Ranges = append(tsExec.Ranges, tipb.KeyRange{Low:keyRange.StartKey, High:keyRange.EndKey})
+			tsExec.Ranges = append(tsExec.Ranges, tipb.KeyRange{Low: keyRange.StartKey, High: keyRange.EndKey})
 		}
 		logutil.BgLogger().Info("make range for table.")
 	}
@@ -218,13 +218,13 @@ func (p *PhysicalBroadCastJoin) ToPB(ctx sessionctx.Context, storeType kv.StoreT
 		return nil, errors.Trace(err)
 	}
 
-	join := &tipb.Join {
-		JoinType: tipb.JoinType_TypeInnerJoin,
-		JoinExecType: tipb.JoinExecType_TypeHashJoin,
-		InnerIdx: int64(p.InnerChildIdx),
-		LeftJoinKeys: expression.ExpressionsToPBList(sc, leftJoinKeys, client),
+	join := &tipb.Join{
+		JoinType:      tipb.JoinType_TypeInnerJoin,
+		JoinExecType:  tipb.JoinExecType_TypeHashJoin,
+		InnerIdx:      int64(p.InnerChildIdx),
+		LeftJoinKeys:  expression.ExpressionsToPBList(sc, leftJoinKeys, client),
 		RightJoinKeys: expression.ExpressionsToPBList(sc, rightJoinKeys, client),
-		Children: []*tipb.Executor{lChildren, rChildren},
+		Children:      []*tipb.Executor{lChildren, rChildren},
 	}
 
 	return &tipb.Executor{Tp: tipb.ExecType_TypeJoin, Join: join}, nil

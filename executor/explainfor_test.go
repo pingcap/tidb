@@ -119,3 +119,13 @@ func (s *testSuite) TestExplainMetricTable(c *C) {
 	tk.MustQuery("desc select * from information_schema.cluster_log where type in ('high_cpu_1','high_memory_1') and time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13'").Check(testkit.Rows(
 		`MemTableScan_5 10000.00 root table:CLUSTER_LOG start_time:2019-12-23 16:10:13, end_time:2019-12-23 16:30:13, node_types:["high_cpu_1","high_memory_1"]`))
 }
+
+func (s *testSuite) TestInspectionRuleTable(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.inspection_rules where type='inspection'")).Check(testkit.Rows(
+		`MemTableScan_5 10000.00 root table:INSPECTION_RULES node_types:["inspection"]`))
+	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.inspection_rules where type='inspection' or type='summary'")).Check(testkit.Rows(
+		`MemTableScan_5 10000.00 root table:INSPECTION_RULES node_types:["inspection","summary"]`))
+	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.inspection_rules where type='inspection' and type='summary'")).Check(testkit.Rows(
+		`MemTableScan_5 10000.00 root table:INSPECTION_RULES skip_request: true`))
+}

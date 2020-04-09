@@ -81,7 +81,7 @@ func (p *PhysicalTableReader) GetTableScan() *PhysicalTableScan {
 	curPlan := p.tablePlan
 	for {
 		chCnt := len(curPlan.Children())
-		if chCnt == 0{
+		if chCnt == 0 {
 			return curPlan.(*PhysicalTableScan)
 		} else if chCnt == 1 {
 			curPlan = curPlan.Children()[0]

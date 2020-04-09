@@ -1,8 +1,25 @@
+// Copyright 2020 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package tikv
 
 import (
 	"context"
-	"github.com/cznic/mathutil"
+	"io"
+	"sync"
+	"sync/atomic"
+	"time"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -13,30 +30,26 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"go.uber.org/zap"
-	"io"
-	"sync"
-	"sync/atomic"
-	"time"
 )
 
+// batchCopTask comprises of multiple copTask that will send to same store.
 type batchCopTask struct {
-	respChan chan *batchCopResponse
 	storeAddr string
-	cmdType tikvrpc.CmdType
+	cmdType   tikvrpc.CmdType
 
-	regionTaskMap map[uint64]*copTask
 	copTasks []copTaskAndRPCContext
 }
 
 type batchCopResponse struct {
-	pbResp   *coprocessor.BatchResponse
-	detail   *execdetails.ExecDetails
+	pbResp *coprocessor.BatchResponse
+	detail *execdetails.ExecDetails
+
+	// batch Cop Response is yet to return startKey. So batchCop cannot retry partially.
 	startKey kv.Key
 	err      error
 	respSize int64
 	respTime time.Duration
 }
-
 
 // GetData implements the kv.ResultSubset GetData interface.
 func (rs *batchCopResponse) GetData() []byte {
@@ -48,6 +61,8 @@ func (rs *batchCopResponse) GetStartKey() kv.Key {
 	return rs.startKey
 }
 
+// GetExecDetails is unavailable currently, because TiFlash has not collected exec details for batch cop.
+// TODO: Will fix in near future.
 func (rs *batchCopResponse) GetExecDetails() *execdetails.ExecDetails {
 	return &execdetails.ExecDetails{}
 }
@@ -77,102 +92,79 @@ func (rs *batchCopResponse) RespTime() time.Duration {
 	return rs.respTime
 }
 
-
 type copTaskAndRPCContext struct {
 	task *copTask
 	ctx  *RPCContext
 }
 
-func getFlashRPCContextWithRetry(bo *Backoffer, task *copTask, cache *RegionCache) (*RPCContext, error) {
-	for {
-		ctx, err := cache.GetTiFlashRPCContext(bo, task.region)
-		if err != nil {
-			return nil, err
-		}
-		if ctx != nil {
-			return ctx, nil
-		}
-
-		if err = bo.Backoff(BoRegionMiss, errors.New("failed to get flash rpc context")); err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
-}
-
 func buildBatchCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, req *kv.Request) ([]*batchCopTask, error) {
-	if req.StoreType != kv.TiFlash {
-		return nil, errors.New("store type must be tiflash !")
-	}
-
 	start := time.Now()
-	cmdType := tikvrpc.CmdBatchCop
+	const cmdType = tikvrpc.CmdBatchCop
 	rangesLen := ranges.len()
-	var tasks []*copTask
-	appendTask := func(regionWithRangeInfo *KeyLocation, ranges *copRanges) {
-		// TiKV will return gRPC error if the message is too large. So we need to limit the length of the ranges slice
-		// to make sure the message can be sent successfully.
-		rLen := ranges.len()
-		for i := 0; i < rLen; {
-			nextI := mathutil.Min(i+rangesPerTask, rLen)
+	for {
+		var tasks []*copTask
+		appendTask := func(regionWithRangeInfo *KeyLocation, ranges *copRanges) {
 			tasks = append(tasks, &copTask{
-				region: regionWithRangeInfo.Region,
-				ranges: ranges.slice(i, nextI),
-				// Channel buffer is 2 for handling region split.
-				// In a common case, two region split tasks will not be blocked.
-				respChan:  make(chan *copResponse),
+				region:    regionWithRangeInfo.Region,
+				ranges:    ranges,
 				cmdType:   cmdType,
 				storeType: req.StoreType,
 			})
-			i = nextI
 		}
-	}
 
-	err := splitRanges(bo, cache, ranges, appendTask)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	var batchTasks []*batchCopTask
-
-	storeTaskMap := make(map[string]*batchCopTask)
-
-	for _, task := range tasks {
-		rpcCtx, err := getFlashRPCContextWithRetry(bo, task, cache)
+		err := splitRanges(bo, cache, ranges, appendTask)
 		if err != nil {
-			return nil, err
+			return nil, errors.Trace(err)
 		}
-		if batchCop, ok := storeTaskMap[rpcCtx.Addr]; ok {
-			batchCop.copTasks = append(batchCop.copTasks, copTaskAndRPCContext{task: task, ctx: rpcCtx})
-			batchCop.regionTaskMap[task.region.id] = task
-		} else {
-			batchTask := &batchCopTask {
-				respChan : make(chan * batchCopResponse, 2048),
-				storeAddr: rpcCtx.Addr,
-				cmdType : task.cmdType,
-				regionTaskMap: make(map[uint64]*copTask),
-				copTasks : []copTaskAndRPCContext{{task, rpcCtx}} ,
+
+		var batchTasks []*batchCopTask
+
+		storeTaskMap := make(map[string]*batchCopTask)
+		needRetry := false
+		for _, task := range tasks {
+			rpcCtx, err := cache.GetTiFlashRPCContext(bo, task.region)
+			if err != nil {
+				return nil, err
 			}
-			batchTask.regionTaskMap[task.region.id] = task
-			storeTaskMap[rpcCtx.Addr] = batchTask
+			// If the region is not found in cache, it must be out
+			// of date and already be cleaned up. We should retry and generate new tasks.
+			if rpcCtx == nil {
+				needRetry = true
+				break
+			}
+			if batchCop, ok := storeTaskMap[rpcCtx.Addr]; ok {
+				batchCop.copTasks = append(batchCop.copTasks, copTaskAndRPCContext{task: task, ctx: rpcCtx})
+			} else {
+				batchTask := &batchCopTask{
+					storeAddr: rpcCtx.Addr,
+					cmdType:   cmdType,
+					copTasks:  []copTaskAndRPCContext{{task, rpcCtx}},
+				}
+				storeTaskMap[rpcCtx.Addr] = batchTask
+			}
 		}
-	}
+		if needRetry {
+			continue
+		}
+		for _, task := range storeTaskMap {
+			batchTasks = append(batchTasks, task)
+		}
 
-	for _, task := range storeTaskMap {
-		batchTasks = append(batchTasks, task)
+		if elapsed := time.Since(start); elapsed > time.Millisecond*500 {
+			logutil.BgLogger().Warn("buildBatchCopTasks takes too much time",
+				zap.Duration("elapsed", elapsed),
+				zap.Int("range len", rangesLen),
+				zap.Int("task len", len(batchTasks)))
+		}
+		tikvTxnRegionsNumHistogramWithBatchCoprocessor.Observe(float64(len(batchTasks)))
+		return batchTasks, nil
 	}
-
-	if elapsed := time.Since(start); elapsed > time.Millisecond*500 {
-		logutil.BgLogger().Warn("buildCopTasks takes too much time",
-			zap.Duration("elapsed", elapsed),
-			zap.Int("range len", rangesLen),
-			zap.Int("task len", len(tasks)))
-	}
-	tikvTxnRegionsNumHistogramWithCoprocessor.Observe(float64(len(tasks)))
-	return batchTasks, nil
-
 }
 
-func (c *CopClient) SendBatch(ctx context.Context, req *kv.Request, vars *kv.Variables) kv.Response {
+func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *kv.Variables) kv.Response {
+	if req.KeepOrder || req.Desc {
+		return copErrorResponse{errors.New("batch coprocessor cannot prove keep order or desc property")}
+	}
 	ctx = context.WithValue(ctx, txnStartKey, req.StartTs)
 	bo := NewBackoffer(ctx, copBuildTaskMaxBackoff).WithVars(vars)
 	tasks, err := buildBatchCopTasks(bo, c.store.regionCache, &copRanges{mid: req.KeyRanges}, req)
@@ -180,13 +172,11 @@ func (c *CopClient) SendBatch(ctx context.Context, req *kv.Request, vars *kv.Var
 		return copErrorResponse{err}
 	}
 	it := &batchCopIterator{
-		store:           c.store,
-		req:             req,
-		concurrency:     req.Concurrency,
-		finishCh:        make(chan struct{}),
-		vars:            vars,
-		memTracker:      req.MemTracker,
-		replicaReadSeed: c.replicaReadSeed,
+		store:      c.store,
+		req:        req,
+		finishCh:   make(chan struct{}),
+		vars:       vars,
+		memTracker: req.MemTracker,
 		clientHelper: clientHelper{
 			LockResolver:      c.store.lockResolver,
 			RegionCache:       c.store.regionCache,
@@ -195,18 +185,7 @@ func (c *CopClient) SendBatch(ctx context.Context, req *kv.Request, vars *kv.Var
 		},
 	}
 	it.tasks = tasks
-	if it.concurrency > len(tasks) {
-		it.concurrency = len(tasks)
-	}
-	if it.concurrency < 1 {
-		// Make sure that there is at least one worker.
-		it.concurrency = 1
-	}
-	if it.req.KeepOrder {
-		it.sendRate = newRateLimit(2 * it.concurrency)
-	} else {
-		it.respChan = make(chan *batchCopResponse, it.concurrency)
-	}
+	it.respChan = make(chan *batchCopResponse, 2048)
 	go it.run(ctx)
 	return it
 }
@@ -214,19 +193,13 @@ func (c *CopClient) SendBatch(ctx context.Context, req *kv.Request, vars *kv.Var
 type batchCopIterator struct {
 	clientHelper
 
-	store       *tikvStore
-	req         *kv.Request
-	concurrency int
-	finishCh    chan struct{}
+	store    *tikvStore
+	req      *kv.Request
+	finishCh chan struct{}
 
-	// If keepOrder, results are stored in copTask.respChan, read them out one by one.
 	tasks []*batchCopTask
-	curr  int
-	// sendRate controls the sending rate of copIteratorTaskSender, if keepOrder,
-	// to prevent all tasks being done (aka. all of the responses are buffered)
-	sendRate *rateLimit
 
-	// Otherwise, results are stored in respChan.
+	// Batch results are stored in respChan.
 	respChan chan *batchCopResponse
 
 	vars *kv.Variables
@@ -240,10 +213,10 @@ type batchCopIterator struct {
 	// There are two cases we need to close the `finishCh` channel, one is when context is done, the other one is
 	// when the Close is called. we use atomic.CompareAndSwap `closed` to to make sure the channel is not closed twice.
 	closed uint32
-
 }
 
-func (b * batchCopIterator) run(ctx context.Context) {
+func (b *batchCopIterator) run(ctx context.Context) {
+	// We run workers for every batch cop.
 	for _, task := range b.tasks {
 		b.wg.Add(1)
 		bo := NewBackoffer(ctx, copNextMaxBackoff).WithVars(b.vars)
@@ -261,8 +234,6 @@ func (b *batchCopIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 		ok     bool
 		closed bool
 	)
-	// If data order matters, response should be returned in the same order as copTask slice.
-	// Otherwise all responses are returned from a single channel.
 
 	// Get next fetched resp from chan
 	resp, ok, closed = b.recvFromRespCh(ctx)
@@ -296,45 +267,53 @@ func (b *batchCopIterator) recvFromRespCh(ctx context.Context) (resp *batchCopRe
 	return
 }
 
-func (it *batchCopIterator) Close() error {
-	if atomic.CompareAndSwapUint32(&it.closed, 0, 1) {
-		close(it.finishCh)
+// Close releases the resource.
+func (b *batchCopIterator) Close() error {
+	if atomic.CompareAndSwapUint32(&b.closed, 0, 1) {
+		close(b.finishCh)
 	}
-	it.wg.Wait()
+	b.wg.Wait()
 	return nil
 }
-
 
 func (b *batchCopIterator) handleTask(ctx context.Context, bo *Backoffer, task *batchCopTask) {
 	logutil.BgLogger().Debug("handle batch task")
 	tasks := []*batchCopTask{task}
-	idx := 0
-	for idx < len(tasks) {
+	for idx := 0; idx < len(tasks); idx++ {
 		ret, err := b.handleTaskOnce(ctx, bo, task)
 		if err != nil {
-			resp := &batchCopResponse{err : errors.Trace(err)}
+			resp := &batchCopResponse{err: errors.Trace(err)}
 			b.sendToRespCh(resp)
-		} else {
-			tasks = append(tasks, ret...)
+			break
 		}
-		idx ++
+		tasks = append(tasks, ret...)
 	}
-	close(task.respChan)
-	b.wg.Done();
+	b.wg.Done()
 }
 
-func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo * Backoffer, task *batchCopTask)([]*batchCopTask, error){
+// Merge all ranges and request again.
+func (b *batchCopIterator) retryBatchCopTask(ctx context.Context, bo *Backoffer, batchTask *batchCopTask) ([]*batchCopTask, error) {
+	ranges := &copRanges{}
+	for _, taskCtx := range batchTask.copTasks {
+		taskCtx.task.ranges.do(func(ran *kv.KeyRange) {
+			ranges.mid = append(ranges.mid, *ran)
+		})
+	}
+	return buildBatchCopTasks(bo, b.RegionCache, ranges, b.req)
+}
+
+func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *Backoffer, task *batchCopTask) ([]*batchCopTask, error) {
 	logutil.BgLogger().Debug("handle batch task once")
 	sender := NewRegionBatchRequestSender(b.store.regionCache, b.store.client)
 	var regionInfos []*coprocessor.RegionInfo
 	for _, task := range task.copTasks {
 		regionInfos = append(regionInfos, &coprocessor.RegionInfo{
-			RegionId:             task.task.region.id,
-			RegionEpoch:          &metapb.RegionEpoch{
-				ConfVer:              task.task.region.confVer,
-				Version:              task.task.region.ver,
+			RegionId: task.task.region.id,
+			RegionEpoch: &metapb.RegionEpoch{
+				ConfVer: task.task.region.confVer,
+				Version: task.task.region.ver,
 			},
-			Ranges:               task.task.ranges.toPBRanges(),
+			Ranges: task.task.ranges.toPBRanges(),
 		})
 	}
 
@@ -346,7 +325,7 @@ func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo * Backoffer, t
 		Regions:   regionInfos,
 	}
 
-	req := tikvrpc.NewReplicaReadRequest(task.cmdType, &copReq, b.req.ReplicaRead, b.replicaReadSeed, kvrpcpb.Context{
+	req := tikvrpc.NewRequest(task.cmdType, &copReq, kvrpcpb.Context{
 		IsolationLevel: pbIsolationLevel(b.req.IsolationLevel),
 		Priority:       kvPriorityToCommandPri(b.req.Priority),
 		NotFillCache:   b.req.NotFillCache,
@@ -355,23 +334,38 @@ func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo * Backoffer, t
 	})
 	req.StoreTp = kv.TiFlash
 
-	logutil.BgLogger().Debug("send batch to ", zap.String("req info", req.String()), zap.Int("cop task len", len(task.copTasks)))
-	resp, err := sender.sendReqToAddr(bo, task.copTasks, req, ReadTimeoutMedium)
+	logutil.BgLogger().Debug("send batch request to ", zap.String("req info", req.String()), zap.Int("cop task len", len(task.copTasks)))
+	resp, retry, err := sender.sendReqToAddr(bo, task.copTasks, req, ReadTimeoutMedium)
+	// If there are store errors, we should retry for all regions.
+	if retry {
+		return b.retryBatchCopTask(ctx, bo, task)
+	}
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return b.handleStreamedBatchCopResponse(ctx, bo, resp.Resp.(*tikvrpc.BatchCopStreamResponse), task)
+	return nil, b.handleStreamedBatchCopResponse(ctx, bo, resp.Resp.(*tikvrpc.BatchCopStreamResponse), task)
 }
-func (b *batchCopIterator) handleStreamedBatchCopResponse(ctx context.Context, bo *Backoffer, response *tikvrpc.BatchCopStreamResponse, task *batchCopTask) (totalRetTask []*batchCopTask, err error) {
+
+func (b *batchCopIterator) handleStreamedBatchCopResponse(ctx context.Context, bo *Backoffer, response *tikvrpc.BatchCopStreamResponse, task *batchCopTask) (err error) {
+	defer response.Close()
+	resp := response.BatchResponse
+	if resp == nil {
+		// streaming request returns io.EOF, so the first Response is nil.
+		return
+	}
 	for {
-		resp, err := response.Recv()
+		err = b.handleBatchCopResponse(bo, resp, task)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		resp, err = response.Recv()
 		if err != nil {
 			if errors.Cause(err) == io.EOF {
-				return nil, nil
+				return nil
 			}
 
-			if err1 := bo.Backoff(boTiKVRPC, errors.Errorf("recv stream response error: %v, task: %s", err, task)); err1 != nil {
-				return nil, errors.Trace(err)
+			if err1 := bo.Backoff(boTiKVRPC, errors.Errorf("recv stream response error: %v, task store addr: %s", err, task.storeAddr)); err1 != nil {
+				return errors.Trace(err)
 			}
 
 			// No coprocessor.Response for network error, rebuild task based on the last success one.
@@ -380,61 +374,26 @@ func (b *batchCopIterator) handleStreamedBatchCopResponse(ctx context.Context, b
 			} else {
 				logutil.BgLogger().Info("stream unknown error", zap.Error(err))
 			}
-			return nil, errors.Trace(err)
-		}
-
-		remainedTasks, err := b.handleBatchCopResponse(ctx, bo, resp, task)
-		if err != nil || len(remainedTasks) != 0 {
-			return remainedTasks, errors.Trace(err)
+			return errors.Trace(err)
 		}
 	}
 }
 
-func (b *batchCopIterator) handleBatchCopResponse(ctx context.Context, bo *Backoffer, response *coprocessor.BatchResponse, task *batchCopTask) (totalRetTask []*batchCopTask, err error) {
-	for _, status := range response.RegionStatus {
-		id := status.RegionId
-		if status.RegionError != nil {
-
-			if err := bo.Backoff(BoRegionMiss, errors.New(status.RegionError.String())); err != nil {
-				return nil, errors.Trace(err)
-			}
-
-			copTask := task.regionTaskMap[id]
-
-			// We may meet RegionError at the first packet, but not during visiting the stream.
-			retTasks, err := buildBatchCopTasks(bo, b.store.regionCache, copTask.ranges, b.req)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			totalRetTask = append(totalRetTask, retTasks...)
-		}
-		if status.Locked != nil {
-			msBeforeExpired, err1 := b.ResolveLocks(bo, b.req.StartTs, []*Lock{NewLock(status.Locked)})
-			if err1 != nil {
-				return nil, errors.Trace(err1)
-			}
-			if msBeforeExpired > 0 {
-				if err := bo.BackoffWithMaxSleep(boTxnLockFast, int(msBeforeExpired), errors.New(status.Locked.String())); err != nil {
-					return nil, errors.Trace(err)
-				}
-			}
-			totalRetTask = append(totalRetTask, task)
-		}
-	}
+func (b *batchCopIterator) handleBatchCopResponse(bo *Backoffer, response *coprocessor.BatchResponse, task *batchCopTask) (err error) {
 	if otherErr := response.GetOtherError(); otherErr != "" {
-		err := errors.Errorf("other error: %s", otherErr)
+		err = errors.Errorf("other error: %s", otherErr)
 		logutil.BgLogger().Warn("other error",
 			zap.Uint64("txnStartTS", b.req.StartTs),
 			zap.String("storeAddr", task.storeAddr),
 			zap.Error(err))
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
 
 	b.sendToRespCh(&batchCopResponse{
-		pbResp:   response,
+		pbResp: response,
 	})
 
-	return totalRetTask, nil
+	return
 }
 
 func (b *batchCopIterator) sendToRespCh(resp *batchCopResponse) (exit bool) {

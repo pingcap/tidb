@@ -16,8 +16,6 @@ package tikvrpc
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
 	"sync/atomic"
 	"time"
 
@@ -316,7 +314,6 @@ func (req *Request) Cop() *coprocessor.Request {
 
 // BatchCop returns coprocessor request in request.
 func (req *Request) BatchCop() *coprocessor.BatchRequest {
-	logutil.BgLogger().Debug("convert batch cop")
 	return req.req.(*coprocessor.BatchRequest)
 }
 
@@ -506,10 +503,12 @@ type CopStreamResponse struct {
 	Lease                 // Shared by this object and a background goroutine.
 }
 
+// BatchCopStreamResponse comprises the BatchCoprocessorClient , the first result and timeout detector.
 type BatchCopStreamResponse struct {
 	tikvpb.Tikv_BatchCoprocessorClient
-	Timeout               time.Duration
-	Lease                 // Shared by this object and a background goroutine.
+	*coprocessor.BatchResponse
+	Timeout time.Duration
+	Lease   // Shared by this object and a background goroutine.
 }
 
 // SetContext set the Context field for the given req to the specified ctx.
@@ -702,11 +701,6 @@ func GenRegionErrorResp(req *Request, e *errorpb.Error) (*Response, error) {
 				RegionError: e,
 			},
 		}
-	case CmdBatchCop:
-		// todo support batch cop
-		p = &coprocessor.BatchResponse{
-			OtherError:           e.Message,
-		}
 	case CmdMvccGetByKey:
 		p = &kvrpcpb.MvccGetByKeyResponse{
 			RegionError: e,
@@ -824,7 +818,6 @@ func CallRPC(ctx context.Context, client tikvpb.TikvClient, req *Request) (*Resp
 	case CmdBatchCop:
 		var streamClient tikvpb.Tikv_BatchCoprocessorClient
 		streamClient, err = client.BatchCoprocessor(ctx, req.BatchCop())
-		logutil.BgLogger().Info("send batch cop", zap.Error(err))
 		resp.Resp = &BatchCopStreamResponse{
 			Tikv_BatchCoprocessorClient: streamClient,
 		}
@@ -881,6 +874,27 @@ func (resp *CopStreamResponse) Recv() (*coprocessor.Response, error) {
 
 // Close closes the CopStreamResponse object.
 func (resp *CopStreamResponse) Close() {
+	atomic.StoreInt64(&resp.Lease.deadline, 1)
+	// We also call cancel here because CheckStreamTimeoutLoop
+	// is not guaranteed to cancel all items when it exits.
+	if resp.Lease.Cancel != nil {
+		resp.Lease.Cancel()
+	}
+}
+
+// Recv overrides the stream client Recv() function.
+func (resp *BatchCopStreamResponse) Recv() (*coprocessor.BatchResponse, error) {
+	deadline := time.Now().Add(resp.Timeout).UnixNano()
+	atomic.StoreInt64(&resp.Lease.deadline, deadline)
+
+	ret, err := resp.Tikv_BatchCoprocessorClient.Recv()
+
+	atomic.StoreInt64(&resp.Lease.deadline, 0) // Stop the lease check.
+	return ret, errors.Trace(err)
+}
+
+// Close closes the CopStreamResponse object.
+func (resp *BatchCopStreamResponse) Close() {
 	atomic.StoreInt64(&resp.Lease.deadline, 1)
 	// We also call cancel here because CheckStreamTimeoutLoop
 	// is not guaranteed to cancel all items when it exits.

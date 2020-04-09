@@ -157,11 +157,17 @@ type MemBuffer interface {
 	Size() int
 	// Len returns the number of entries in the DB.
 	Len() int
-	// Reset cleanup the MemBuffer
-	Reset()
-	// SetCap sets the MemBuffer capability, to reduce memory allocations.
-	// Please call it before you use the MemBuffer, otherwise it will not works.
-	SetCap(cap int)
+	// NewStagingBuffer returns a new write buffer,
+	// modifications in the returned buffer will not influence this buffer
+	// until you call Flush, or you can use Discard to discard all of them.
+	//
+	// Note: you cannot modify this MemBuffer until the child buffer finished,
+	// otherwise the Set operation will panic.
+	NewStagingBuffer() MemBuffer
+	// Flush flushes all kvs in this buffer to parrent buffer.
+	Flush() (int, error)
+	// Discard discads all kvs in this buffer.
+	Discard()
 }
 
 // Transaction defines the interface for operations inside a Transaction.
@@ -213,6 +219,7 @@ type LockCtx struct {
 	ReturnValues          bool
 	Values                map[string]ReturnedValue
 	ValuesLock            sync.Mutex
+	LockExpired           *uint32
 }
 
 // ReturnedValue pairs the Value and AlreadyLocked flag for PessimisticLock return values result.
@@ -310,8 +317,8 @@ type Request struct {
 	Cacheable bool
 	// SchemaVer is for any schema-ful storage to validate schema correctness if necessary.
 	SchemaVar int64
-	// CopTaskBatch means whether send cop in batch.
-	CopTaskBatch bool
+	// BatchCop indicates whether send batch coprocessor request to tiflash.
+	BatchCop bool
 }
 
 // ResultSubset represents a result subset from a single storage unit.
