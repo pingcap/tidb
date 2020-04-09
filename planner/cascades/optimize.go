@@ -114,6 +114,20 @@ func (opt *Optimizer) FindBestPlan(sctx sessionctx.Context, logical plannercore.
 	return p, cost, err
 }
 
+// LogicalOptimize does the preprocessing and exploration. It is used for unit test.
+func (opt *Optimizer) LogicalOptimize(sctx sessionctx.Context, logical plannercore.LogicalPlan) (*memo.Group, error) {
+	logical, err := opt.onPhasePreprocessing(sctx, logical)
+	if err != nil {
+		return nil, err
+	}
+	rootGroup := memo.Convert2Group(logical)
+	err = opt.onPhaseExploration(sctx, rootGroup)
+	if err != nil {
+		return nil, err
+	}
+	return rootGroup, nil
+}
+
 func (opt *Optimizer) onPhasePreprocessing(sctx sessionctx.Context, plan plannercore.LogicalPlan) (plannercore.LogicalPlan, error) {
 	err := plan.PruneColumns(plan.Schema().Columns)
 	if err != nil {
