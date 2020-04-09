@@ -20,11 +20,7 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
-<<<<<<< HEAD
 	"github.com/pingcap/parser/mysql"
-=======
-	zaplog "github.com/pingcap/log"
->>>>>>> cbf4ddc... *: improve the format of the error log (#12155)
 	"github.com/pingcap/tidb/util/logutil"
 	tracing "github.com/uber/jaeger-client-go/config"
 )
@@ -127,14 +123,8 @@ history-size=100
 	// Make sure the example config is the same as default config.
 	c.Assert(conf, DeepEquals, GetGlobalConfig())
 
-<<<<<<< HEAD
 	// Test for log config.
 	c.Assert(conf.Log.ToLogConfig(), DeepEquals, logutil.NewLogConfig("info", "text", "tidb-slow.log", conf.Log.File, false))
-=======
-	// Test for lof config.
-	c.Assert(conf.Log.ToLogConfig(), DeepEquals, logutil.NewLogConfig("info", "text", "tidb-slow.log", conf.Log.File, false, func(config *zaplog.Config) { config.DisableErrorVerbose = conf.Log.DisableErrorStack }))
->>>>>>> cbf4ddc... *: improve the format of the error log (#12155)
-
 	// Test for tracing config.
 	tracingConf := &tracing.Configuration{
 		Disabled: true,
