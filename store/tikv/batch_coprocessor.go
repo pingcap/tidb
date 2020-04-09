@@ -285,9 +285,8 @@ func (b *batchCopIterator) handleTask(ctx context.Context, bo *Backoffer, task *
 			resp := &batchCopResponse{err: errors.Trace(err)}
 			b.sendToRespCh(resp)
 			break
-		} else {
-			tasks = append(tasks, ret...)
 		}
+		tasks = append(tasks, ret...)
 	}
 	b.wg.Done()
 }
