@@ -86,6 +86,10 @@ func (s *testTableSuite) TestPerfSchemaTables(c *C) {
 func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
+	tk.MustQuery("select column_comment from information_schema.columns " +
+		"where table_name='events_statements_summary_by_digest' and column_name='STMT_TYPE'",
+	).Check(testkit.Rows("Statement type"))
+
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b varchar(10), key k(a))")
 
