@@ -339,6 +339,7 @@ func (c currentLoadInspection) inspect(_ context.Context, sctx sessionctx.Contex
 				row.GetString(0), row.GetString(1), row.GetString(2)),
 		}
 	}
+<<<<<<< HEAD
 	var rules = []struct {
 		item     string
 		sql      string
@@ -363,6 +364,29 @@ func (c currentLoadInspection) inspect(_ context.Context, sctx sessionctx.Contex
 			"< 70",
 			diskResult,
 		},
+=======
+}
+
+func (inspectVirtualMemUsage) getItem() string {
+	return "virtual-memory-usage"
+}
+
+type inspectSwapMemoryUsed struct{}
+
+func (inspectSwapMemoryUsed) genSQL(timeRange plannercore.QueryTimeRange) string {
+	sql := fmt.Sprintf("select instance, max(value) as max_used from metrics_schema.node_memory_swap_used %s group by instance having max_used > 0", timeRange.Condition())
+	return sql
+}
+
+func (i inspectSwapMemoryUsed) genResult(sql string, row chunk.Row) inspectionResult {
+	return inspectionResult{
+		tp:       "node",
+		instance: row.GetString(0),
+		item:     i.getItem(),
+		actual:   fmt.Sprintf("%.1f", row.GetFloat64(1)),
+		expected: "0",
+		severity: "warning",
+>>>>>>> 2a2bf37... executor/inspect: remove redundant code (#16254)
 	}
 
 	var results []inspectionResult
