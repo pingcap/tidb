@@ -45,6 +45,7 @@ import (
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	util2 "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/logutil"
 	utilparser "github.com/pingcap/tidb/util/parser"
 	"github.com/pingcap/tidb/util/ranger"
@@ -91,6 +92,36 @@ type indexHintInfo struct {
 	dbName    model.CIStr
 	tblName   model.CIStr
 	indexHint *ast.IndexHint
+	// Matched indicates whether this index hint
+	// has been successfully applied to a DataSource.
+	// If an indexHintInfo is not matched after building
+	// a Select statement, we will generate a warning for it.
+	matched bool
+}
+
+func (hint *indexHintInfo) hintTypeString() string {
+	switch hint.indexHint.HintType {
+	case ast.HintUse:
+		return "use_index"
+	case ast.HintIgnore:
+		return "ignore_index"
+	case ast.HintForce:
+		return "force_index"
+	}
+	return ""
+}
+
+// indexString formats the indexHint as dbName.tableName[, indexNames].
+func (hint *indexHintInfo) indexString() string {
+	var indexListString string
+	indexList := make([]string, len(hint.indexHint.IndexNames))
+	for i := range hint.indexHint.IndexNames {
+		indexList[i] = hint.indexHint.IndexNames[i].L
+	}
+	if len(indexList) > 0 {
+		indexListString = fmt.Sprintf(", %s", strings.Join(indexList, ", "))
+	}
+	return fmt.Sprintf("%s.%s%s", hint.dbName, hint.tblName, indexListString)
 }
 
 type aggHintInfo struct {
@@ -109,14 +140,14 @@ func (tr *QueryTimeRange) Condition() string {
 	return fmt.Sprintf("where time>='%s' and time<='%s'", tr.From.Format(MetricTableTimeFormat), tr.To.Format(MetricTableTimeFormat))
 }
 
-func tableNames2HintTableInfo(ctx sessionctx.Context, hintTables []ast.HintTable, p *BlockHintProcessor, nodeType nodeType, currentOffset int) []hintTableInfo {
+func tableNames2HintTableInfo(ctx sessionctx.Context, hintTables []ast.HintTable, p *hint.BlockHintProcessor, nodeType hint.NodeType, currentOffset int) []hintTableInfo {
 	if len(hintTables) == 0 {
 		return nil
 	}
 	hintTableInfos := make([]hintTableInfo, len(hintTables))
 	defaultDBName := model.NewCIStr(ctx.GetSessionVars().CurrentDB)
 	for i, hintTable := range hintTables {
-		tableInfo := hintTableInfo{dbName: hintTable.DBName, tblName: hintTable.TableName, selectOffset: p.getHintOffset(hintTable.QBName, nodeType, currentOffset)}
+		tableInfo := hintTableInfo{dbName: hintTable.DBName, tblName: hintTable.TableName, selectOffset: p.GetHintOffset(hintTable.QBName, nodeType, currentOffset)}
 		if tableInfo.dbName.L == "" {
 			tableInfo.dbName = defaultDBName
 		}
@@ -187,6 +218,37 @@ func restore2JoinHint(hintType string, hintTables []hintTableInfo) string {
 		if i < len(hintTables)-1 {
 			buffer.WriteString(", ")
 		}
+	}
+	buffer.WriteString(") */")
+	return buffer.String()
+}
+
+func restore2StorageHint(tiflashTables, tikvTables []hintTableInfo) string {
+	buffer := bytes.NewBufferString("/*+ ")
+	buffer.WriteString(strings.ToUpper(HintReadFromStorage))
+	buffer.WriteString("(")
+	if len(tiflashTables) > 0 {
+		buffer.WriteString("tiflash[")
+		for i, table := range tiflashTables {
+			buffer.WriteString(table.tblName.L)
+			if i < len(tiflashTables)-1 {
+				buffer.WriteString(", ")
+			}
+		}
+		buffer.WriteString("]")
+		if len(tikvTables) > 0 {
+			buffer.WriteString(", ")
+		}
+	}
+	if len(tikvTables) > 0 {
+		buffer.WriteString("tikv[")
+		for i, table := range tikvTables {
+			buffer.WriteString(table.tblName.L)
+			if i < len(tikvTables)-1 {
+				buffer.WriteString(", ")
+			}
+		}
+		buffer.WriteString("]")
 	}
 	buffer.WriteString(") */")
 	return buffer.String()
@@ -282,7 +344,7 @@ type PlanBuilder struct {
 	//   If we meet a subquery, it's clearly that it's a independent problem so we just pop one map out when we finish building the subquery.
 	handleHelper *handleColHelper
 
-	hintProcessor *BlockHintProcessor
+	hintProcessor *hint.BlockHintProcessor
 	// selectOffset is the offsets of current processing select stmts.
 	selectOffset []int
 
@@ -381,7 +443,7 @@ func (b *PlanBuilder) popSelectOffset() {
 }
 
 // NewPlanBuilder creates a new PlanBuilder.
-func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, processor *BlockHintProcessor) *PlanBuilder {
+func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, processor *hint.BlockHintProcessor) *PlanBuilder {
 	if processor == nil {
 		sctx.GetSessionVars().PlannerSelectBlockAsName = nil
 	} else {
@@ -670,13 +732,15 @@ func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tbl ta
 	// Extract comment-style index hint like /*+ INDEX(t, idx1, idx2) */.
 	indexHintsLen := len(indexHints)
 	if hints := b.TableHints(); hints != nil {
-		for _, hint := range hints.indexHintList {
+		for i, hint := range hints.indexHintList {
 			if hint.dbName.L == dbName.L && hint.tblName.L == tblName.L {
 				indexHints = append(indexHints, hint.indexHint)
+				hints.indexHintList[i].matched = true
 			}
 		}
 	}
 
+	_, isolationReadEnginesHasTiKV := b.ctx.GetSessionVars().GetIsolationReadEngines()[kv.TiKV]
 	for i, hint := range indexHints {
 		if hint.HintScope != ast.HintForScan {
 			continue
@@ -684,6 +748,17 @@ func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tbl ta
 
 		hasScanHint = true
 
+		if !isolationReadEnginesHasTiKV {
+			if hint.IndexNames != nil {
+				engineVals, _ := b.ctx.GetSessionVars().GetSystemVar(variable.TiDBIsolationReadEngines)
+				err := errors.New(fmt.Sprintf("TiDB doesn't support index in the isolation read engines(value: '%v')", engineVals))
+				if i < indexHintsLen {
+					return nil, err
+				}
+				b.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			}
+			continue
+		}
 		// It is syntactically valid to omit index_list for USE INDEX, which means “use no indexes”.
 		// Omitting index_list for FORCE INDEX or IGNORE INDEX is a syntax error.
 		// See https://dev.mysql.com/doc/refman/8.0/en/index-hints.html.
@@ -737,10 +812,6 @@ func (b *PlanBuilder) filterPathByIsolationRead(paths []*util.AccessPath, dbName
 	if dbName.L == mysql.SystemDB {
 		return paths, nil
 	}
-	cfgIsolationEngines := set.StringSet{}
-	for _, engine := range config.GetGlobalConfig().IsolationRead.Engines {
-		cfgIsolationEngines.Insert(engine)
-	}
 	isolationReadEngines := b.ctx.GetSessionVars().GetIsolationReadEngines()
 	availableEngine := map[kv.StoreType]struct{}{}
 	var availableEngineStr string
@@ -754,16 +825,13 @@ func (b *PlanBuilder) filterPathByIsolationRead(paths []*util.AccessPath, dbName
 		}
 		if _, ok := isolationReadEngines[paths[i].StoreType]; !ok {
 			paths = append(paths[:i], paths[i+1:]...)
-		} else if _, ok := cfgIsolationEngines[paths[i].StoreType.Name()]; !ok {
-			paths = append(paths[:i], paths[i+1:]...)
 		}
 	}
 	var err error
 	if len(paths) == 0 {
 		engineVals, _ := b.ctx.GetSessionVars().GetSystemVar(variable.TiDBIsolationReadEngines)
-		err = ErrInternal.GenWithStackByArgs(fmt.Sprintf("Can not find access path matching '%v'(value: '%v') "+
-			"and tidb-server config isolation-read(engines: '%v'). Available values are '%v'.",
-			variable.TiDBIsolationReadEngines, engineVals, config.GetGlobalConfig().IsolationRead.Engines, availableEngineStr))
+		err = ErrInternal.GenWithStackByArgs(fmt.Sprintf("Can not find access path matching '%v'(value: '%v'). Available values are '%v'.",
+			variable.TiDBIsolationReadEngines, engineVals, availableEngineStr))
 	}
 	return paths, err
 }
@@ -797,7 +865,7 @@ func (b *PlanBuilder) buildPrepare(x *ast.PrepareStmt) Plan {
 	}
 	if x.SQLVar != nil {
 		if v, ok := b.ctx.GetSessionVars().Users[x.SQLVar.Name]; ok {
-			p.SQLText = v
+			p.SQLText = v.GetString()
 		} else {
 			p.SQLText = "NULL"
 		}
@@ -922,6 +990,8 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (Plan, 
 		return &SQLBindPlan{SQLBindOp: OpCaptureBindings}, nil
 	case ast.AdminEvolveBindings:
 		return &SQLBindPlan{SQLBindOp: OpEvolveBindings}, nil
+	case ast.AdminReloadBindings:
+		return &SQLBindPlan{SQLBindOp: OpReloadBindings}, nil
 	default:
 		return nil, ErrUnsupportedType.GenWithStack("Unsupported ast.AdminStmt(%T) for buildAdmin", as)
 	}
@@ -1295,7 +1365,7 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 			pkCol := tblInfo.GetPkColInfo()
 			for i, id := range physicalIDs {
 				info := analyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, PartitionName: names[i], PhysicalTableID: id, Incremental: as.Incremental}
-				p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{PKInfo: pkCol, analyzeInfo: info})
+				p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{PKInfo: pkCol, analyzeInfo: info, TblInfo: tblInfo})
 			}
 			continue
 		}

@@ -20,6 +20,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
@@ -1013,6 +1014,22 @@ func (s *testSuiteJoin1) TestIssue5278(c *C) {
 	tk.MustQuery("select * from t left join tt on t.a=tt.a left join t ttt on t.a=ttt.a").Check(testkit.Rows("1 1 <nil> <nil> 1 1"))
 }
 
+func (s *testSuiteJoin1) TestIssue15850JoinNullValue(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustQuery("SELECT * FROM (select null) v NATURAL LEFT JOIN (select null) v1;").Check(testkit.Rows("<nil>"))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
+
+	tk.MustExec("drop table if exists t0;")
+	tk.MustExec("drop view if exists v0;")
+	tk.MustExec("CREATE TABLE t0(c0 TEXT);")
+	tk.MustExec("CREATE VIEW v0(c0) AS SELECT NULL;")
+	tk.MustQuery("SELECT /*+ HASH_JOIN(v0) */ * FROM v0 NATURAL LEFT JOIN t0;").Check(testkit.Rows("<nil>"))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
+	tk.MustQuery("SELECT /*+ MERGE_JOIN(v0) */ * FROM v0 NATURAL LEFT JOIN t0;").Check(testkit.Rows("<nil>"))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
+}
+
 func (s *testSuiteJoin1) TestIndexLookupJoin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1186,9 +1203,19 @@ func (s *testSuiteJoin1) TestIndexLookupJoin(c *C) {
 	tk.MustQuery("select /*+ INL_HASH_JOIN(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b").Check(testkit.Rows("64"))
 	tk.MustExec("set @@tidb_index_lookup_join_concurrency=1;")
 	tk.MustQuery("select /*+ INL_HASH_JOIN(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b").Check(testkit.Rows("64"))
+
+	// issue15658
+	tk.MustExec("drop table t1, t2")
+	tk.MustExec("create table t1(id int primary key)")
+	tk.MustExec("create table t2(a int, b int)")
+	tk.MustExec("insert into t1 values(1)")
+	tk.MustExec("insert into t2 values(1,1),(2,1)")
+	tk.MustQuery("select /*+ inl_join(t1)*/ * from t1 join t2 on t2.b=t1.id and t2.a=t1.id;").Check(testkit.Rows("1 1 1"))
+	tk.MustQuery("select /*+ inl_hash_join(t1)*/ * from t1 join t2 on t2.b=t1.id and t2.a=t1.id;").Check(testkit.Rows("1 1 1"))
+	tk.MustQuery("select /*+ inl_merge_join(t1)*/ * from t1 join t2 on t2.b=t1.id and t2.a=t1.id;").Check(testkit.Rows("1 1 1"))
 }
 
-func (s *testSuiteJoin1) TestIndexNestedLoopHashJoin(c *C) {
+func (s *testSuiteJoinSerial) TestIndexNestedLoopHashJoin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_init_chunk_size=2")
@@ -1220,6 +1247,64 @@ func (s *testSuiteJoin1) TestIndexNestedLoopHashJoin(c *C) {
 	for i, row := range rs.Rows() {
 		c.Assert(row[0].(string), Equals, fmt.Sprintf("%d", i))
 	}
+
+	// index hash join with semi join
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/planner/core/MockOnlyEnableIndexHashJoin", "return(true)"), IsNil)
+	tk.MustExec("drop table t")
+	tk.MustExec("CREATE TABLE `t` (	`l_orderkey` int(11) NOT NULL,`l_linenumber` int(11) NOT NULL,`l_partkey` int(11) DEFAULT NULL,`l_suppkey` int(11) DEFAULT NULL,PRIMARY KEY (`l_orderkey`,`l_linenumber`))")
+	tk.MustExec(`insert into t values(0,0,0,0);`)
+	tk.MustExec(`insert into t values(0,1,0,1);`)
+	tk.MustExec(`insert into t values(0,2,0,0);`)
+	tk.MustExec(`insert into t values(1,0,1,0);`)
+	tk.MustExec(`insert into t values(1,1,1,1);`)
+	tk.MustExec(`insert into t values(1,2,1,0);`)
+	tk.MustExec(`insert into t values(2,0,0,0);`)
+	tk.MustExec(`insert into t values(2,1,0,1);`)
+	tk.MustExec(`insert into t values(2,2,0,0);`)
+
+	tk.MustExec("analyze table t")
+
+	// test semi join
+	tk.Se.GetSessionVars().InitChunkSize = 2
+	tk.Se.GetSessionVars().MaxChunkSize = 2
+	tk.MustExec("set @@tidb_index_join_batch_size=2")
+	tk.MustQuery("desc select * from t l1 where exists ( select * from t l2 where l2.l_orderkey = l1.l_orderkey and l2.l_suppkey <> l1.l_suppkey ) order by `l_orderkey`,`l_linenumber`;").Check(testkit.Rows(
+		"Sort_9 7.20 root  test.t.l_orderkey:asc, test.t.l_linenumber:asc",
+		"└─IndexHashJoin_17 7.20 root  semi join, inner:IndexLookUp_15, outer key:test.t.l_orderkey, inner key:test.t.l_orderkey, other cond:ne(test.t.l_suppkey, test.t.l_suppkey)",
+		"  ├─TableReader_20(Build) 9.00 root  data:Selection_19",
+		"  │ └─Selection_19 9.00 cop[tikv]  not(isnull(test.t.l_suppkey))",
+		"  │   └─TableFullScan_18 9.00 cop[tikv] table:l1 keep order:false",
+		"  └─IndexLookUp_15(Probe) 3.00 root  ",
+		"    ├─IndexRangeScan_12(Build) 3.00 cop[tikv] table:l2, index:PRIMARY(l_orderkey, l_linenumber) range: decided by [eq(test.t.l_orderkey, test.t.l_orderkey)], keep order:false",
+		"    └─Selection_14(Probe) 3.00 cop[tikv]  not(isnull(test.t.l_suppkey))",
+		"      └─TableRowIDScan_13 3.00 cop[tikv] table:l2 keep order:false"))
+	tk.MustQuery("select * from t l1 where exists ( select * from t l2 where l2.l_orderkey = l1.l_orderkey and l2.l_suppkey <> l1.l_suppkey )order by `l_orderkey`,`l_linenumber`;").Check(testkit.Rows("0 0 0 0", "0 1 0 1", "0 2 0 0", "1 0 1 0", "1 1 1 1", "1 2 1 0", "2 0 0 0", "2 1 0 1", "2 2 0 0"))
+	tk.MustQuery("desc select count(*) from t l1 where exists ( select * from t l2 where l2.l_orderkey = l1.l_orderkey and l2.l_suppkey <> l1.l_suppkey );").Check(testkit.Rows(
+		"StreamAgg_14 1.00 root  funcs:count(1)->Column#11",
+		"└─IndexHashJoin_29 7.20 root  semi join, inner:IndexLookUp_27, outer key:test.t.l_orderkey, inner key:test.t.l_orderkey, other cond:ne(test.t.l_suppkey, test.t.l_suppkey)",
+		"  ├─TableReader_23(Build) 9.00 root  data:Selection_22",
+		"  │ └─Selection_22 9.00 cop[tikv]  not(isnull(test.t.l_suppkey))",
+		"  │   └─TableFullScan_21 9.00 cop[tikv] table:l1 keep order:false",
+		"  └─IndexLookUp_27(Probe) 3.00 root  ",
+		"    ├─IndexRangeScan_24(Build) 3.00 cop[tikv] table:l2, index:PRIMARY(l_orderkey, l_linenumber) range: decided by [eq(test.t.l_orderkey, test.t.l_orderkey)], keep order:false",
+		"    └─Selection_26(Probe) 3.00 cop[tikv]  not(isnull(test.t.l_suppkey))",
+		"      └─TableRowIDScan_25 3.00 cop[tikv] table:l2 keep order:false"))
+	tk.MustQuery("select count(*) from t l1 where exists ( select * from t l2 where l2.l_orderkey = l1.l_orderkey and l2.l_suppkey <> l1.l_suppkey );").Check(testkit.Rows("9"))
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/planner/core/MockOnlyEnableIndexHashJoin"), IsNil)
+	tk.MustExec("DROP TABLE IF EXISTS t, s")
+}
+
+func (s *testSuiteJoin3) TestIssue15686(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, k;")
+	tk.MustExec("create table k (a int, pk int primary key, index(a));")
+	tk.MustExec("create table t (a int, pk int primary key, index(a));")
+	tk.MustExec("insert into k values(0,8),(0,23),(1,21),(1,33),(1,52),(2,17),(2,34),(2,39),(2,40),(2,66),(2,67),(3,9),(3,25),(3,41),(3,48),(4,4),(4,11),(4,15),(4,26),(4,27),(4,31),(4,35),(4,45),(4,47),(4,49);")
+	tk.MustExec("insert into t values(3,4),(3,5),(3,27),(3,29),(3,57),(3,58),(3,79),(3,84),(3,92),(3,95);")
+	tk.MustQuery("select /*+ inl_join(t) */ count(*) from k left join t on k.a = t.a and k.pk > t.pk;").Check(testkit.Rows("33"))
+	tk.MustQuery("select /*+ inl_hash_join(t) */ count(*) from k left join t on k.a = t.a and k.pk > t.pk;").Check(testkit.Rows("33"))
+	tk.MustQuery("select /*+ inl_merge_join(t) */ count(*) from k left join t on k.a = t.a and k.pk > t.pk;").Check(testkit.Rows("33"))
 }
 
 func (s *testSuiteJoin3) TestIssue13449(c *C) {
@@ -1826,35 +1911,35 @@ func (s *testSuiteJoin1) TestIssue13177(c *C) {
 	tk.MustExec("create table t2(a varchar(20), b int, c int, primary key(a, b))")
 	tk.MustExec("insert into t1 values(\"abcd\", 1, 1), (\"bacd\", 2, 2), (\"cbad\", 3, 3)")
 	tk.MustExec("insert into t2 values(\"bcd\", 1, 1), (\"acd\", 2, 2), (\"bad\", 3, 3)")
-	tk.MustQuery("select /*+ inl_join(t1, t2) */ * from t1 join t2 on substr(t1.a, 2, 4) = t2.a and t1.b = t2.b where t1.c between 1 and 5").Check(testkit.Rows(
+	tk.MustQuery("select /*+ inl_join(t1, t2) */ * from t1 join t2 on substr(t1.a, 2, 4) = t2.a and t1.b = t2.b where t1.c between 1 and 5").Sort().Check(testkit.Rows(
 		"abcd 1 1 bcd 1 1",
 		"bacd 2 2 acd 2 2",
 		"cbad 3 3 bad 3 3",
 	))
-	tk.MustQuery("select /*+ inl_hash_join(t1, t2) */ * from t1 join t2 on substr(t1.a, 2, 4) = t2.a and t1.b = t2.b where t1.c between 1 and 5").Check(testkit.Rows(
+	tk.MustQuery("select /*+ inl_hash_join(t1, t2) */ * from t1 join t2 on substr(t1.a, 2, 4) = t2.a and t1.b = t2.b where t1.c between 1 and 5").Sort().Check(testkit.Rows(
 		"abcd 1 1 bcd 1 1",
 		"bacd 2 2 acd 2 2",
 		"cbad 3 3 bad 3 3",
 	))
-	tk.MustQuery("select /*+ inl_merge_join(t1, t2) */ * from t1 join t2 on substr(t1.a, 2, 4) = t2.a and t1.b = t2.b where t1.c between 1 and 5").Check(testkit.Rows(
+	tk.MustQuery("select /*+ inl_merge_join(t1, t2) */ * from t1 join t2 on substr(t1.a, 2, 4) = t2.a and t1.b = t2.b where t1.c between 1 and 5").Sort().Check(testkit.Rows(
+		"abcd 1 1 bcd 1 1",
 		"bacd 2 2 acd 2 2",
 		"cbad 3 3 bad 3 3",
-		"abcd 1 1 bcd 1 1",
 	))
-	tk.MustQuery("select /*+ inl_join(t1, t2) */ t1.* from t1 join t2 on substr(t1.a, 2, 4) = t2.a and t1.b = t2.b where t1.c between 1 and 5").Check(testkit.Rows(
+	tk.MustQuery("select /*+ inl_join(t1, t2) */ t1.* from t1 join t2 on substr(t1.a, 2, 4) = t2.a and t1.b = t2.b where t1.c between 1 and 5").Sort().Check(testkit.Rows(
 		"abcd 1 1",
 		"bacd 2 2",
 		"cbad 3 3",
 	))
-	tk.MustQuery("select /*+ inl_hash_join(t1, t2) */ t1.* from t1 join t2 on substr(t1.a, 2, 4) = t2.a and t1.b = t2.b where t1.c between 1 and 5").Check(testkit.Rows(
+	tk.MustQuery("select /*+ inl_hash_join(t1, t2) */ t1.* from t1 join t2 on substr(t1.a, 2, 4) = t2.a and t1.b = t2.b where t1.c between 1 and 5").Sort().Check(testkit.Rows(
+		"abcd 1 1",
 		"bacd 2 2",
 		"cbad 3 3",
-		"abcd 1 1",
 	))
-	tk.MustQuery("select /*+ inl_merge_join(t1, t2) */ t1.* from t1 join t2 on substr(t1.a, 2, 4) = t2.a and t1.b = t2.b where t1.c between 1 and 5").Check(testkit.Rows(
+	tk.MustQuery("select /*+ inl_merge_join(t1, t2) */ t1.* from t1 join t2 on substr(t1.a, 2, 4) = t2.a and t1.b = t2.b where t1.c between 1 and 5").Sort().Check(testkit.Rows(
+		"abcd 1 1",
 		"bacd 2 2",
 		"cbad 3 3",
-		"abcd 1 1",
 	))
 }
 

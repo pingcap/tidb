@@ -254,5 +254,143 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestIndexHintWarning",
+    "Cases": [
+      {
+        "SQL": "select /*+ USE_INDEX(t1, j) */ * from t1",
+        "Warnings": [
+          "[planner:1176]Key 'j' doesn't exist in table 't1'"
+        ]
+      },
+      {
+        "SQL": "select /*+ IGNORE_INDEX(t1, j) */ * from t1",
+        "Warnings": [
+          "[planner:1176]Key 'j' doesn't exist in table 't1'"
+        ]
+      },
+      {
+        "SQL": "select /*+ USE_INDEX(t2, a, b, c) */ * from t1",
+        "Warnings": [
+          "[planner:1815]use_index(test.t2, a, b, c) is inapplicable, check whether the table(test.t2) exists"
+        ]
+      },
+      {
+        "SQL": "select /*+ USE_INDEX(t2) */ * from t1",
+        "Warnings": [
+          "[planner:1815]use_index(test.t2) is inapplicable, check whether the table(test.t2) exists"
+        ]
+      },
+      {
+        "SQL": "select /*+ USE_INDEX(t1, a), USE_INDEX(t2, a), USE_INDEX(t3, a) */ * from t1, t2 where t1.a=t2.a",
+        "Warnings": [
+          "[planner:1815]use_index(test.t3, a) is inapplicable, check whether the table(test.t3) exists"
+        ]
+      },
+      {
+        "SQL": "select /*+ USE_INDEX(t3, a), USE_INDEX(t4, b), IGNORE_INDEX(t3, a) */ * from t1, t2 where t1.a=t2.a",
+        "Warnings": [
+          "[planner:1815]use_index(test.t3, a) is inapplicable, check whether the table(test.t3) exists",
+          "[planner:1815]use_index(test.t4, b) is inapplicable, check whether the table(test.t4) exists",
+          "[planner:1815]ignore_index(test.t3, a) is inapplicable, check whether the table(test.t3) exists"
+        ]
+      },
+      {
+        "SQL": "select /*+ USE_INDEX_MERGE(t3, a, b, d) */ * from t1",
+        "Warnings": [
+          "[planner:1815]use_index_merge(test.t3, a, b, d) is inapplicable, check whether the table(test.t3) exists"
+        ]
+      },
+      {
+        "SQL": "select /*+ USE_INDEX_MERGE(t1, a, b, c, d) */ * from t1",
+        "Warnings": [
+          "[planner:1815]use_index_merge(test.t1, a, b, c, d) is inapplicable, check whether the indexes (c, d) exist, or the indexes are conflicted with use_index/ignore_index hints."
+        ]
+      },
+      {
+        "SQL": "select /*+ USE_INDEX_MERGE(t1, a, b), USE_INDEX(t1, a) */ * from t1",
+        "Warnings": [
+          "[planner:1815]use_index_merge(test.t1, a, b) is inapplicable, check whether the indexes (b) exist, or the indexes are conflicted with use_index/ignore_index hints."
+        ]
+      },
+      {
+        "SQL": "select /*+ USE_INDEX_MERGE(t1, a, b), IGNORE_INDEX(t1, a) */ * from t1",
+        "Warnings": [
+          "[planner:1815]use_index_merge(test.t1, a, b) is inapplicable, check whether the indexes (a) exist, or the indexes are conflicted with use_index/ignore_index hints."
+        ]
+      },
+      {
+        "SQL": "select /*+ USE_INDEX_MERGE(t1, primary, a, b, c) */ * from t1",
+        "Warnings": [
+          "[planner:1815]use_index_merge(test.t1, primary, a, b, c) is inapplicable, check whether the indexes (c) exist, or the indexes are conflicted with use_index/ignore_index hints."
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestHintWithoutTableWarning",
+    "Cases": [
+      {
+        "SQL": "select /*+ TIDB_SMJ() */ * from t1, t2 where t1.a=t2.a",
+        "Warnings": [
+          "[planner:1815]Hint TIDB_SMJ() is inapplicable. Please specify the table names in the arguments."
+        ]
+      },
+      {
+        "SQL": "select /*+ MERGE_JOIN() */ * from t1, t2 where t1.a=t2.a",
+        "Warnings": [
+          "[planner:1815]Hint MERGE_JOIN() is inapplicable. Please specify the table names in the arguments."
+        ]
+      },
+      {
+        "SQL": "select /*+ INL_JOIN() */ * from t1, t2 where t1.a=t2.a",
+        "Warnings": [
+          "[planner:1815]Hint INL_JOIN() is inapplicable. Please specify the table names in the arguments."
+        ]
+      },
+      {
+        "SQL": "select /*+ TIDB_INLJ() */ * from t1, t2 where t1.a=t2.a",
+        "Warnings": [
+          "[planner:1815]Hint TIDB_INLJ() is inapplicable. Please specify the table names in the arguments."
+        ]
+      },
+      {
+        "SQL": "select /*+ INL_HASH_JOIN() */ * from t1, t2 where t1.a=t2.a",
+        "Warnings": [
+          "[planner:1815]Hint INL_HASH_JOIN() is inapplicable. Please specify the table names in the arguments."
+        ]
+      },
+      {
+        "SQL": "select /*+ INL_MERGE_JOIN() */ * from t1, t2 where t1.a=t2.a",
+        "Warnings": [
+          "[planner:1815]Hint INL_MERGE_JOIN() is inapplicable. Please specify the table names in the arguments."
+        ]
+      },
+      {
+        "SQL": "select /*+ HASH_JOIN() */ * from t1, t2 where t1.a=t2.a",
+        "Warnings": [
+          "[planner:1815]Hint HASH_JOIN() is inapplicable. Please specify the table names in the arguments."
+        ]
+      },
+      {
+        "SQL": "select /*+ USE_INDEX() */ * from t1, t2 where t1.a=t2.a",
+        "Warnings": [
+          "[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:8064]Optimizer hint syntax error at line 1 column 22 near \") */\" "
+        ]
+      },
+      {
+        "SQL": "select /*+ IGNORE_INDEX() */ * from t1, t2 where t1.a=t2.a",
+        "Warnings": [
+          "[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:8064]Optimizer hint syntax error at line 1 column 25 near \") */\" "
+        ]
+      },
+      {
+        "SQL": "select /*+ USE_INDEX_MERGE() */ * from t1, t2 where t1.a=t2.a",
+        "Warnings": [
+          "[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:8064]Optimizer hint syntax error at line 1 column 28 near \") */\" "
+        ]
+      }
+    ]
   }
 ]

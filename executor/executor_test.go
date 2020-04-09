@@ -90,7 +90,9 @@ func TestT(t *testing.T) {
 	new.Log.SlowThreshold = 30000 // 30s
 	new.Experimental.AllowsExpressionIndex = true
 	config.StoreGlobalConfig(&new)
-
+	tmpDir := config.GetGlobalConfig().TempStoragePath
+	_ = os.RemoveAll(tmpDir) // clean the uncleared temp file during the last run.
+	_ = os.MkdirAll(tmpDir, 0755)
 	testleak.BeforeTest()
 	TestingT(t)
 	testleak.AfterTestT(t)()
@@ -122,6 +124,7 @@ var _ = Suite(&testMemTableReaderSuite{&testClusterTableBase{}})
 var _ = SerialSuites(&testFlushSuite{})
 var _ = SerialSuites(&testAutoRandomSuite{&baseTestSuite{}})
 var _ = SerialSuites(&testClusterTableSuite{})
+var _ = SerialSuites(&testSuite10{&baseTestSuite{}})
 
 type testSuite struct{ *baseTestSuite }
 type testSuiteP1 struct{ *baseTestSuite }
@@ -465,20 +468,19 @@ func (s *testSuiteP2) TestAdminShowDDLJobs(c *C) {
 	jobID, err := strconv.Atoi(row[0].(string))
 	c.Assert(err, IsNil)
 
-	c.Assert(tk.Se.NewTxn(context.Background()), IsNil)
-	txn, err := tk.Se.Txn(true)
-	c.Assert(err, IsNil)
-	t := meta.NewMeta(txn)
-	job, err := t.GetHistoryDDLJob(int64(jobID))
-	c.Assert(err, IsNil)
-	c.Assert(job, NotNil)
-	// Test for compatibility. Old TiDB version doesn't have SchemaName field, and the BinlogInfo maybe nil.
-	// See PR: 11561.
-	job.BinlogInfo = nil
-	job.SchemaName = ""
-	err = t.AddHistoryDDLJob(job, true)
-	c.Assert(err, IsNil)
-	err = tk.Se.CommitTxn(context.Background())
+	err = kv.RunInNewTxn(s.store, true, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		job, err := t.GetHistoryDDLJob(int64(jobID))
+		c.Assert(err, IsNil)
+		c.Assert(job, NotNil)
+		// Test for compatibility. Old TiDB version doesn't have SchemaName field, and the BinlogInfo maybe nil.
+		// See PR: 11561.
+		job.BinlogInfo = nil
+		job.SchemaName = ""
+		err = t.AddHistoryDDLJob(job, true)
+		c.Assert(err, IsNil)
+		return nil
+	})
 	c.Assert(err, IsNil)
 
 	re = tk.MustQuery("admin show ddl jobs 1")
@@ -3602,6 +3604,17 @@ func (s *testSuite3) TestIndexJoinTableDualPanic(c *C) {
 		Check(testkit.Rows("1 a"))
 }
 
+func (s *testSuite3) TestSortLeftJoinWithNullColumnInRightChildPanic(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int)")
+	tk.MustExec("create table t2(a int)")
+	tk.MustExec("insert into t1(a) select 1;")
+	tk.MustQuery("select b.n from t1 left join (select a as a, null as n from t2) b on b.a = t1.a order by t1.a").
+		Check(testkit.Rows("<nil>"))
+}
+
 func (s *testSuiteP1) TestUnionAutoSignedCast(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -4624,7 +4637,7 @@ func (s *testRecoverTable) TestRecoverTable(c *C) {
 	// if GC enable is not exists in mysql.tidb
 	_, err = tk.Exec("recover table t_recover")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:-1]can not get 'tikv_gc_enable'")
+	c.Assert(err.Error(), Equals, "[ddl:-1]current error msg: Cancelled DDL job, original error msg: can not get 'tikv_gc_enable'")
 
 	err = gcutil.EnableGC(tk.Se)
 	c.Assert(err, IsNil)
@@ -4681,6 +4694,12 @@ func (s *testRecoverTable) TestRecoverTable(c *C) {
 	tk.MustExec("recover table t_recover")
 	tk.MustExec("insert into t_recover values (10)")
 	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1", "7", "8", "9", "10"))
+
+	// Test for recover one table multiple time.
+	tk.MustExec("drop table t_recover")
+	tk.MustExec("flashback table t_recover to t_recover_tmp")
+	_, err = tk.Exec(fmt.Sprintf("recover table t_recover"))
+	c.Assert(infoschema.ErrTableExists.Equal(err), IsTrue)
 
 	gcEnable, err := gcutil.CheckGCEnable(tk.Se)
 	c.Assert(err, IsNil)
@@ -5349,4 +5368,25 @@ select 6;`
 		sql = fmt.Sprintf(cas.sql, "cluster_slow_query")
 		tk.MustQuery(sql).Check(testutil.RowsWithSep("|", cas.result...))
 	}
+}
+
+func (s *testSuite1) TestIssue15718(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists tt;")
+	tk.MustExec("create table tt(a decimal(10, 0), b varchar(1), c time);")
+	tk.MustExec("insert into tt values(0, '2', null), (7, null, '1122'), (NULL, 'w', null), (NULL, '2', '3344'), (NULL, NULL, '0'), (7, 'f', '33');")
+	tk.MustQuery("select a and b as d, a or c as e from tt;").Check(testkit.Rows("0 <nil>", "<nil> 1", "0 <nil>", "<nil> 1", "<nil> <nil>", "0 1"))
+}
+
+func (s *testSuite1) TestIssue15767(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists tt;")
+	tk.MustExec("create table t(a int, b char);")
+	tk.MustExec("insert into t values (1,'s'),(2,'b'),(1,'c'),(2,'e'),(1,'a');")
+	tk.MustExec("insert into t select * from t;")
+	tk.MustExec("insert into t select * from t;")
+	tk.MustExec("insert into t select * from t;")
+	tk.MustQuery("select b, count(*) from ( select b from t order by a limit 20 offset 2) as s group by b order by b;").Check(testkit.Rows("a 6", "c 7", "s 7"))
 }
