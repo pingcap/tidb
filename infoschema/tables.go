@@ -1011,7 +1011,6 @@ var tableSequencesCols = []columnInfo{
 	{name: "INCREMENT", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
 	{name: "MAX_VALUE", tp: mysql.TypeLonglong, size: 21},
 	{name: "MIN_VALUE", tp: mysql.TypeLonglong, size: 21},
-	{name: "ORDER", tp: mysql.TypeTiny, flag: mysql.NotNullFlag},
 	{name: "START", tp: mysql.TypeLonglong, size: 21},
 	{name: "COMMENT", tp: mysql.TypeVarchar, size: 64},
 }
