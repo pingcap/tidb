@@ -98,7 +98,7 @@ func getPDConfigClient(ctx sessionctx.Context) (pd.ConfigClient, error) {
 		KeyPath:  conf.Security.ClusterSSLKey,
 	})
 	singletonPDConfigClient = pdCli
-	return singletonPDConfigClient, nil
+	return singletonPDConfigClient, err
 }
 
 var etcdDialTimeout = 5 * time.Second
