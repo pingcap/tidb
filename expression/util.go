@@ -232,7 +232,7 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 		for idx, arg := range v.GetArgs() {
 			changed, newFuncExpr := ColumnSubstituteImpl(arg, schema, newExprs)
 			if collate.NewCollationEnabled() {
-				// Make sure the collation used by the ScalarFunction isn't changed and it's result collation is not weaker than the collation used by the ScalarFunction.
+				// Make sure the collation used by the ScalarFunction isn't changed and its result collation is not weaker than the collation used by the ScalarFunction.
 				if changed {
 					changed = false
 					tmpArgs := make([]Expression, 0, len(v.GetArgs()))
