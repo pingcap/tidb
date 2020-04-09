@@ -2019,11 +2019,6 @@ func resolveAlterTableSpec(ctx sessionctx.Context, specs []*ast.AlterTableSpec) 
 		validSpecs = append(validSpecs, spec)
 	}
 
-	if len(validSpecs) > 1 {
-		// Now we only allow one schema changing at the same time.
-		return nil, errRunMultiSchemaChanges
-	}
-
 	// Verify whether the algorithm is supported.
 	for _, spec := range validSpecs {
 		resolvedAlgorithm, err := ResolveAlterAlgorithm(spec, algorithm)
@@ -2043,6 +2038,16 @@ func resolveAlterTableSpec(ctx sessionctx.Context, specs []*ast.AlterTableSpec) 
 	return validSpecs, nil
 }
 
+func isSameTypeMultiSpecs(specs []*ast.AlterTableSpec) bool {
+	specType := specs[0].Tp
+	for _, spec := range specs {
+		if spec.Tp != specType {
+			return false
+		}
+	}
+	return true
+}
+
 func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.AlterTableSpec) (err error) {
 	validSpecs, err := resolveAlterTableSpec(ctx, specs)
 	if err != nil {
@@ -2054,14 +2059,33 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 		return ErrWrongObject.GenWithStackByArgs(ident.Schema, ident.Name, "BASE TABLE")
 	}
 
+	if len(validSpecs) > 1 {
+		if isSameTypeMultiSpecs(validSpecs) {
+			switch validSpecs[0].Tp {
+			case ast.AlterTableAddColumns:
+				err = d.AddColumns(ctx, ident, validSpecs)
+			case ast.AlterTableDropColumn:
+				err = d.DropColumns(ctx, ident, validSpecs)
+			default:
+				return errRunMultiSchemaChanges
+			}
+			if err != nil {
+				return errors.Trace(err)
+			}
+			return nil
+		}
+		return errRunMultiSchemaChanges
+	}
+
 	for _, spec := range validSpecs {
 		var handledCharsetOrCollate bool
 		switch spec.Tp {
 		case ast.AlterTableAddColumns:
 			if len(spec.NewColumns) != 1 {
-				return errRunMultiSchemaChanges
+				err = d.AddColumns(ctx, ident, []*ast.AlterTableSpec{spec})
+			} else {
+				err = d.AddColumn(ctx, ident, spec)
 			}
-			err = d.AddColumn(ctx, ident, spec)
 		case ast.AlterTableAddPartitions:
 			err = d.AddTablePartitions(ctx, ident, spec)
 		case ast.AlterTableCoalescePartitions:
@@ -2251,36 +2275,28 @@ func checkUnsupportedColumnConstraint(col *ast.ColumnDef, ti ast.Ident) error {
 	return nil
 }
 
-// AddColumn will add a new column to the table.
-func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTableSpec) error {
-	specNewColumn := spec.NewColumns[0]
-
+func checkAndCreateNewColumn(ctx sessionctx.Context, ti ast.Ident, schema *model.DBInfo, spec *ast.AlterTableSpec, t table.Table, specNewColumn *ast.ColumnDef) (*table.Column, error) {
 	err := checkUnsupportedColumnConstraint(specNewColumn, ti)
 	if err != nil {
-		return errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 
 	colName := specNewColumn.Name.Name.O
-	if err = checkColumnAttributes(colName, specNewColumn.Tp); err != nil {
-		return errors.Trace(err)
-	}
-
-	schema, t, err := d.getSchemaAndTableByIdent(ctx, ti)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if err = checkAddColumnTooManyColumns(len(t.Cols()) + 1); err != nil {
-		return errors.Trace(err)
-	}
 	// Check whether added column has existed.
 	col := table.FindCol(t.Cols(), colName)
 	if col != nil {
 		err = infoschema.ErrColumnExists.GenWithStackByArgs(colName)
 		if spec.IfNotExists {
 			ctx.GetSessionVars().StmtCtx.AppendNote(err)
-			return nil
+			return nil, nil
 		}
-		return err
+		return nil, err
+	}
+	if err = checkColumnAttributes(colName, specNewColumn.Tp); err != nil {
+		return nil, errors.Trace(err)
+	}
+	if len(colName) > mysql.MaxColumnNameLength {
+		return nil, ErrTooLongIdent.GenWithStackByArgs(colName)
 	}
 
 	// If new column is a generated column, do validation.
@@ -2289,16 +2305,16 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 	for _, option := range specNewColumn.Options {
 		if option.Tp == ast.ColumnOptionGenerated {
 			if err := checkIllegalFn4GeneratedColumn(specNewColumn.Name.Name.L, option.Expr); err != nil {
-				return errors.Trace(err)
+				return nil, errors.Trace(err)
 			}
 
 			if option.Stored {
-				return errUnsupportedOnGeneratedColumn.GenWithStackByArgs("Adding generated stored column through ALTER TABLE")
+				return nil, errUnsupportedOnGeneratedColumn.GenWithStackByArgs("Adding generated stored column through ALTER TABLE")
 			}
 
 			_, dependColNames := findDependedColumnNames(specNewColumn)
 			if err = checkAutoIncrementRef(specNewColumn.Name.Name.L, dependColNames, t.Meta()); err != nil {
-				return errors.Trace(err)
+				return nil, errors.Trace(err)
 			}
 			duplicateColNames := make(map[string]struct{}, len(dependColNames))
 			for k := range dependColNames {
@@ -2307,17 +2323,13 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 			cols := t.Cols()
 
 			if err = checkDependedColExist(dependColNames, cols); err != nil {
-				return errors.Trace(err)
+				return nil, errors.Trace(err)
 			}
 
 			if err = verifyColumnGenerationSingle(duplicateColNames, cols, spec.Position); err != nil {
-				return errors.Trace(err)
+				return nil, errors.Trace(err)
 			}
 		}
-	}
-
-	if len(colName) > mysql.MaxColumnNameLength {
-		return ErrTooLongIdent.GenWithStackByArgs(colName)
 	}
 
 	// Ignore table constraints now, maybe return error later.
@@ -2325,12 +2337,33 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 	// column's offset later.
 	col, _, err = buildColumnAndConstraint(ctx, len(t.Cols()), specNewColumn, nil, t.Meta().Charset, t.Meta().Collate, schema.Charset, schema.Collate)
 	if err != nil {
-		return errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 
 	col.OriginDefaultValue, err = generateOriginDefaultValue(col.ToInfo())
 	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return col, nil
+}
+
+// AddColumn will add a new column to the table.
+func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTableSpec) error {
+	specNewColumn := spec.NewColumns[0]
+	schema, t, err := d.getSchemaAndTableByIdent(ctx, ti)
+	if err != nil {
 		return errors.Trace(err)
+	}
+	if err = checkAddColumnTooManyColumns(len(t.Cols()) + 1); err != nil {
+		return errors.Trace(err)
+	}
+	col, err := checkAndCreateNewColumn(ctx, ti, schema, spec, t, specNewColumn)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// Added column has existed and if_not_exists flag is true.
+	if col == nil {
+		return nil
 	}
 
 	job := &model.Job{
@@ -2347,6 +2380,80 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 	if infoschema.ErrColumnExists.Equal(err) && spec.IfNotExists {
 		ctx.GetSessionVars().StmtCtx.AppendNote(err)
 		return nil
+	}
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+// AddColumns will add multi new columns to the table.
+func (d *ddl) AddColumns(ctx sessionctx.Context, ti ast.Ident, specs []*ast.AlterTableSpec) error {
+	schema, t, err := d.getSchemaAndTableByIdent(ctx, ti)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// Check all the columns at once.
+	addingColumnNames := make(map[string]bool)
+	dupColumnNames := make(map[string]bool)
+	for _, spec := range specs {
+		for _, specNewColumn := range spec.NewColumns {
+			if !addingColumnNames[specNewColumn.Name.Name.L] {
+				addingColumnNames[specNewColumn.Name.Name.L] = true
+				continue
+			}
+			if !spec.IfNotExists {
+				return errors.Trace(infoschema.ErrColumnExists.GenWithStackByArgs(specNewColumn.Name.Name.O))
+			}
+			dupColumnNames[specNewColumn.Name.Name.L] = true
+		}
+	}
+	columns := make([]*table.Column, 0, len(addingColumnNames))
+	positions := make([]*ast.ColumnPosition, 0, len(addingColumnNames))
+	offsets := make([]int, 0, len(addingColumnNames))
+	ifNotExists := make([]bool, 0, len(addingColumnNames))
+	newColumnsCount := 0
+	// Check the columns one by one.
+	for _, spec := range specs {
+		for _, specNewColumn := range spec.NewColumns {
+			if spec.IfNotExists && dupColumnNames[specNewColumn.Name.Name.L] {
+				err = infoschema.ErrColumnExists.GenWithStackByArgs(specNewColumn.Name.Name.O)
+				ctx.GetSessionVars().StmtCtx.AppendNote(err)
+				continue
+			}
+			col, err := checkAndCreateNewColumn(ctx, ti, schema, spec, t, specNewColumn)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			// Added column has existed and if_not_exists flag is true.
+			if col == nil && spec.IfNotExists {
+				continue
+			}
+			columns = append(columns, col)
+			positions = append(positions, spec.Position)
+			offsets = append(offsets, 0)
+			ifNotExists = append(ifNotExists, spec.IfNotExists)
+			newColumnsCount++
+		}
+	}
+	if newColumnsCount == 0 {
+		return nil
+	}
+	if err = checkAddColumnTooManyColumns(len(t.Cols()) + newColumnsCount); err != nil {
+		return errors.Trace(err)
+	}
+
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    t.Meta().ID,
+		SchemaName: schema.Name.L,
+		Type:       model.ActionAddColumns,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{columns, positions, offsets, ifNotExists},
+	}
+
+	err = d.doDDLJob(ctx, job)
+	if err != nil {
+		return errors.Trace(err)
 	}
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
@@ -2542,26 +2649,14 @@ func (d *ddl) DropColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTa
 		return errors.Trace(err)
 	}
 
-	// Check whether dropped column has existed.
-	colName := spec.OldColumnName.Name
-	col := table.FindCol(t.VisibleCols(), colName.L)
-	if col == nil {
-		err = ErrCantDropFieldOrKey.GenWithStack("column %s doesn't exist", colName)
-		if spec.IfExists {
-			ctx.GetSessionVars().StmtCtx.AppendNote(err)
-			return nil
-		}
+	isDropable, err := checkIsDroppableColumn(ctx, t, spec)
+	if err != nil {
 		return err
 	}
-
-	tblInfo := t.Meta()
-	if err = isDroppableColumn(tblInfo, colName); err != nil {
-		return errors.Trace(err)
+	if !isDropable {
+		return nil
 	}
-	// We don't support dropping column with PK handle covered now.
-	if col.IsPKHandleColumn(tblInfo) {
-		return errUnsupportedPKHandle
-	}
+	colName := spec.OldColumnName.Name
 
 	job := &model.Job{
 		SchemaID:   schema.ID,
@@ -2580,6 +2675,96 @@ func (d *ddl) DropColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTa
 	}
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
+}
+
+// DropColumns will drop multi-columns from the table, now we don't support drop the column with index covered.
+func (d *ddl) DropColumns(ctx sessionctx.Context, ti ast.Ident, specs []*ast.AlterTableSpec) error {
+	schema, t, err := d.getSchemaAndTableByIdent(ctx, ti)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	tblInfo := t.Meta()
+
+	dropingColumnNames := make(map[string]bool)
+	dupColumnNames := make(map[string]bool)
+	for _, spec := range specs {
+		if !dropingColumnNames[spec.OldColumnName.Name.L] {
+			dropingColumnNames[spec.OldColumnName.Name.L] = true
+		} else {
+			if spec.IfExists {
+				dupColumnNames[spec.OldColumnName.Name.L] = true
+				continue
+			}
+			return errors.Trace(ErrCantDropFieldOrKey.GenWithStack("column %s doesn't exist", spec.OldColumnName.Name.O))
+		}
+	}
+
+	ifExists := make([]bool, 0, len(specs))
+	colNames := make([]model.CIStr, 0, len(specs))
+	for _, spec := range specs {
+		if spec.IfExists && dupColumnNames[spec.OldColumnName.Name.L] {
+			err = ErrCantDropFieldOrKey.GenWithStack("column %s doesn't exist", spec.OldColumnName.Name.L)
+			ctx.GetSessionVars().StmtCtx.AppendNote(err)
+			continue
+		}
+		isDropable, err := checkIsDroppableColumn(ctx, t, spec)
+		if err != nil {
+			return err
+		}
+		// Column can't drop and if_exists flag is true.
+		if !isDropable && spec.IfExists {
+			continue
+		}
+		colNames = append(colNames, spec.OldColumnName.Name)
+		ifExists = append(ifExists, spec.IfExists)
+	}
+	if len(colNames) == 0 {
+		return nil
+	}
+	if len(tblInfo.Columns) == len(colNames) {
+		return ErrCantRemoveAllFields.GenWithStack("can't drop all columns in table %s",
+			tblInfo.Name)
+	}
+
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    t.Meta().ID,
+		SchemaName: schema.Name.L,
+		Type:       model.ActionDropColumns,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{colNames, ifExists},
+	}
+
+	err = d.doDDLJob(ctx, job)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+func checkIsDroppableColumn(ctx sessionctx.Context, t table.Table, spec *ast.AlterTableSpec) (isDrapable bool, err error) {
+	tblInfo := t.Meta()
+	// Check whether dropped column has existed.
+	colName := spec.OldColumnName.Name
+	col := table.FindCol(t.VisibleCols(), colName.L)
+	if col == nil {
+		err = ErrCantDropFieldOrKey.GenWithStack("column %s doesn't exist", colName)
+		if spec.IfExists {
+			ctx.GetSessionVars().StmtCtx.AppendNote(err)
+			return false, nil
+		}
+		return false, err
+	}
+
+	if err = isDroppableColumn(tblInfo, colName); err != nil {
+		return false, errors.Trace(err)
+	}
+	// We don't support dropping column with PK handle covered now.
+	if col.IsPKHandleColumn(tblInfo) {
+		return false, errUnsupportedPKHandle
+	}
+	return true, nil
 }
 
 // checkModifyCharsetAndCollation returns error when the charset or collation is not modifiable.
