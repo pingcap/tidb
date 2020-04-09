@@ -24,11 +24,8 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
-<<<<<<< HEAD
-	"github.com/pingcap/parser/mysql"
-=======
 	zaplog "github.com/pingcap/log"
->>>>>>> cbf4ddc... *: improve the format of the error log (#12155)
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/util/logutil"
 	tracing "github.com/uber/jaeger-client-go/config"
 )

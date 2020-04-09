@@ -47,12 +47,11 @@ require (
 	github.com/opentracing/opentracing-go v1.0.2
 	github.com/pingcap/check v0.0.0-20190102082844-67f458068fc8
 	github.com/pingcap/errors v0.11.4
-<<<<<<< HEAD
 	github.com/pingcap/failpoint v0.0.0-20190430075617-bf45ab20bfc4
 	github.com/pingcap/gofail v0.0.0-20181217135706-6a951c1e42c3 // indirect
 	github.com/pingcap/goleveldb v0.0.0-20171020084629-8d44bfdf1030
 	github.com/pingcap/kvproto v0.0.0-20190826051950-fc8799546726
-	github.com/pingcap/log v0.0.0-20190307075452-bd41d9273596
+	github.com/pingcap/log v0.0.0-20190715063458-479153f07ebd
 	github.com/pingcap/parser v0.0.0-20191220111854-63cc130be9fa
 	github.com/pingcap/pd v2.1.12+incompatible
 	github.com/pingcap/tidb-tools v2.1.3-0.20190116051332-34c808eef588+incompatible
@@ -69,33 +68,6 @@ require (
 	github.com/uber/jaeger-lib v1.1.0 // indirect
 	github.com/unrolled/render v0.0.0-20171102162132-65450fb6b2d3 // indirect
 	github.com/xiang90/probing v0.0.0-20160813154853-07dd2e8dfe18 // indirect
-=======
-	github.com/pingcap/failpoint v0.0.0-20190512135322-30cc7431d99c
-	github.com/pingcap/goleveldb v0.0.0-20171020122428-b9ff6c35079e
-	github.com/pingcap/kvproto v0.0.0-20190904075355-9a1bd6a31da2
-	github.com/pingcap/log v0.0.0-20190715063458-479153f07ebd
-	github.com/pingcap/parser v0.0.0-20190912032624-978b8272c04e
-	github.com/pingcap/pd v0.0.0-20190712044914-75a1f9f3062b
-	github.com/pingcap/tidb-tools v2.1.3-0.20190321065848-1e8b48f5c168+incompatible
-	github.com/pingcap/tipb v0.0.0-20190806070524-16909e03435e
-	github.com/prometheus/client_golang v0.9.0
-	github.com/prometheus/client_model v0.0.0-20180712105110-5c3871d89910
-	github.com/prometheus/common v0.0.0-20181020173914-7e9e6cabbd39 // indirect
-	github.com/prometheus/procfs v0.0.0-20181005140218-185b4288413d // indirect
-	github.com/remyoudompheng/bigfft v0.0.0-20190512091148-babf20351dd7 // indirect
-	github.com/shirou/gopsutil v2.18.10+incompatible
-	github.com/shurcooL/httpfs v0.0.0-20171119174359-809beceb2371 // indirect
-	github.com/shurcooL/vfsgen v0.0.0-20181020040650-a97a25d856ca // indirect
-	github.com/sirupsen/logrus v1.2.0
-	github.com/spaolacci/murmur3 v0.0.0-20180118202830-f09979ecbc72
-	github.com/struCoder/pidusage v0.1.2
-	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/twinj/uuid v1.0.0
-	github.com/uber-go/atomic v1.3.2 // indirect
-	github.com/uber/jaeger-client-go v2.15.0+incompatible
-	github.com/uber/jaeger-lib v1.5.0 // indirect
-	github.com/unrolled/render v0.0.0-20180914162206-b9786414de4d // indirect
->>>>>>> cbf4ddc... *: improve the format of the error log (#12155)
 	go.etcd.io/bbolt v1.3.3 // indirect
 	go.uber.org/atomic v1.3.2
 	go.uber.org/zap v1.9.1
