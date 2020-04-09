@@ -756,15 +756,11 @@ func (b *builtinCastRealAsIntSig) evalInt(row chunk.Row) (res int64, isNull bool
 		uintVal, err = types.ConvertFloatToUint(sc, val, types.UnsignedUpperBound[mysql.TypeLonglong], mysql.TypeLonglong)
 		res = int64(uintVal)
 	}
-<<<<<<< HEAD
-	return res, isNull, errors.Trace(err)
-=======
 	err = b.ctx.GetSessionVars().StmtCtx.HandleOverflow(err, err)
 	if err != nil {
 		return res, false, err
 	}
 	return res, isNull, err
->>>>>>> 33b726a... types: fix undefined behavior in numeric types cast (cast 1<<64 to uint64) (#11968)
 }
 
 type builtinCastRealAsDecimalSig struct {
