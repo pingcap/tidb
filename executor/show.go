@@ -21,10 +21,12 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/configpb"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
@@ -32,6 +34,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	pd "github.com/pingcap/pd/v4/client"
 	"github.com/pingcap/tidb-tools/pkg/etcd"
 	"github.com/pingcap/tidb-tools/pkg/utils"
 	"github.com/pingcap/tidb-tools/tidb-binlog/node"
@@ -61,6 +64,42 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
 )
+
+var (
+	// PDConfigClientKey is used when testing
+	PDConfigClientKey       stringutil.StringerStr = "pd_config_client_key"
+	singletonPDConfigClient pd.ConfigClient
+	pdConfigClientMutex     sync.Mutex
+)
+
+func getPDConfigClient(ctx sessionctx.Context) (pd.ConfigClient, error) {
+	if cliI := ctx.Value(PDConfigClientKey); cliI != nil { // mainly for testing
+		return cliI.(pd.ConfigClient), nil
+	}
+
+	conf := config.GetGlobalConfig()
+	if conf.Store != "tikv" {
+		return nil, errors.New("cannot get pd client since the store is not tikv")
+	}
+	pdConfigClientMutex.Lock()
+	defer pdConfigClientMutex.Unlock()
+	if singletonPDConfigClient != nil {
+		return singletonPDConfigClient, nil
+	}
+
+	fullPath := fmt.Sprintf("%s://%s", conf.Store, conf.Path)
+	addresses, _, err := config.ParsePath(fullPath)
+	if err != nil {
+		return nil, err
+	}
+	pdCli, err := pd.NewConfigClient(addresses, pd.SecurityOption{
+		CAPath:   conf.Security.ClusterSSLCA,
+		CertPath: conf.Security.ClusterSSLCert,
+		KeyPath:  conf.Security.ClusterSSLKey,
+	})
+	singletonPDConfigClient = pdCli
+	return singletonPDConfigClient, nil
+}
 
 var etcdDialTimeout = 5 * time.Second
 
@@ -127,6 +166,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowCollation()
 	case ast.ShowColumns:
 		return e.fetchShowColumns(ctx)
+	case ast.ShowConfig:
+		return e.fetchShowClusterConfigs(ctx)
 	case ast.ShowCreateTable:
 		return e.fetchShowCreateTable()
 	case ast.ShowCreateSequence:
@@ -956,6 +997,33 @@ func (e *ShowExec) fetchShowCreateSequence() error {
 	var buf bytes.Buffer
 	ConstructResultOfShowCreateSequence(e.ctx, tableInfo, &buf)
 	e.appendRow([]interface{}{tableInfo.Name.O, buf.String()})
+	return nil
+}
+
+func (e *ShowExec) fetchShowClusterConfigs(ctx context.Context) error {
+	pdCli, err := getPDConfigClient(e.ctx)
+	if err != nil {
+		return err
+	}
+	stat, configs, err := pdCli.GetAll(ctx)
+	if err != nil {
+		return err
+	}
+	if stat.GetCode() != configpb.StatusCode_OK {
+		return errors.Errorf("pd error, errcode=%v, error=%v", stat.GetCode(), stat.GetMessage())
+	}
+	for _, conf := range configs {
+		typ := conf.GetComponent()
+		instance := conf.GetComponentId()
+		confData := conf.GetConfig()
+		items, err := config.DecodeTomlConfig(confData)
+		if err != nil {
+			return err
+		}
+		for _, item := range items {
+			e.appendRow([]interface{}{typ, instance, item.Name, item.Value})
+		}
+	}
 	return nil
 }
 

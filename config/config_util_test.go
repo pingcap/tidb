@@ -119,3 +119,20 @@ func (s *testConfigSuite) TestAtomicWriteConfig(c *C) {
 	c.Assert(dconf.Performance.MaxProcs, Equals, uint(432))
 	c.Assert(dconf.Performance.PseudoEstimateRatio, Equals, 54.3)
 }
+
+func (s *testConfigSuite) TestDecodeConfigItems(c *C) {
+	conf := `host = "0.0.0.0"
+[log]
+level = "info"
+format = "text"`
+	items, err := DecodeTomlConfig(conf)
+	c.Assert(err, IsNil)
+	c.Assert(len(items), Equals, 3)
+	m := make(map[string]string)
+	for _, x := range items {
+		m[x.Name] = x.Value
+	}
+	c.Assert(m["host"], Equals, "0.0.0.0")
+	c.Assert(m["log.level"], Equals, "info")
+	c.Assert(m["log.format"], Equals, "text")
+}
