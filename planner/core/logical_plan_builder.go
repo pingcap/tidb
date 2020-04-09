@@ -1538,7 +1538,7 @@ func (b *planBuilder) checkOnlyFullGroupByWithGroupClause(p LogicalPlan, sel *as
 	gbyExprs := make([]ast.ExprNode, 0, len(sel.Fields.Fields))
 	schema := p.Schema()
 	for _, byItem := range sel.GroupBy.Items {
-		expr := getInnerFromParentheses(byItem.Expr)
+		expr := getInnerFromParenthesesAndUnaryPlus(byItem.Expr)
 		if colExpr, ok := expr.(*ast.ColumnNameExpr); ok {
 			col, err := schema.FindColumn(colExpr.Name)
 			if err != nil || col == nil {
