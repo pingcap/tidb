@@ -901,7 +901,7 @@ func (s *testStateChangeSuite) TestParallelDropColumns(c *C) {
 	sql := "ALTER TABLE t drop COLUMN b, drop COLUMN c;"
 	f := func(c *C, err1, err2 error) {
 		c.Assert(err1, IsNil)
-		c.Assert(err2.Error(), Equals, "[ddl:1091]current error msg: Cancelled DDL job, original error msg: column b doesn't exist")
+		c.Assert(err2.Error(), Equals, "[ddl:1091]column b doesn't exist")
 	}
 	s.testControlParallelExecSQL(c, sql, sql, f)
 }
