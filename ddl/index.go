@@ -456,7 +456,8 @@ func onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 func checkDropIndexOnAutoIncrementColumn(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) error {
 	cols := tblInfo.Columns
 	for _, idxCol := range indexInfo.Columns {
-		if !mysql.HasAutoIncrementFlag(cols[idxCol.Offset].Flag) {
+		flag := cols[idxCol.Offset].Flag
+		if !mysql.HasAutoIncrementFlag(flag) {
 			continue
 		}
 		// check the count of index on auto_increment column.
@@ -468,6 +469,9 @@ func checkDropIndexOnAutoIncrementColumn(tblInfo *model.TableInfo, indexInfo *mo
 					break
 				}
 			}
+		}
+		if tblInfo.PKIsHandle && mysql.HasPriKeyFlag(flag) {
+			count++
 		}
 		if count < 2 {
 			return autoid.ErrWrongAutoKey
