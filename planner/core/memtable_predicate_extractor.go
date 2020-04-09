@@ -864,7 +864,34 @@ func (e *InspectionSummaryTableExtractor) Extract(
 }
 
 func (e *InspectionSummaryTableExtractor) explainInfo(p *PhysicalMemTable) string {
-	return ""
+	if e.SkipInspection {
+		return "skip_inspection: true"
+	}
+
+	r := new(bytes.Buffer)
+	if len(e.Rules) > 0 {
+		r.WriteString(fmt.Sprintf("rules:[%s], ", extractStringFromStringSet(e.Rules)))
+	}
+	if len(e.MetricNames) > 0 {
+		r.WriteString(fmt.Sprintf("metric_names:[%s], ", extractStringFromStringSet(e.MetricNames)))
+	}
+	if len(e.Quantiles) > 0 {
+		r.WriteString("quantiles:[")
+		for i, quantile := range e.Quantiles {
+			if i > 0 {
+				r.WriteByte(',')
+			}
+			r.WriteString(fmt.Sprintf("%f", quantile))
+		}
+		r.WriteString("], ")
+	}
+
+	// remove the last ", " in the message info
+	s := r.String()
+	if len(s) > 2 {
+		return s[:len(s)-2]
+	}
+	return s
 }
 
 // InspectionRuleTableExtractor is used to extract some predicates of `inspection_rules`

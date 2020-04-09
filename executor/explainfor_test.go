@@ -129,3 +129,60 @@ func (s *testSuite) TestInspectionRuleTable(c *C) {
 	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.inspection_rules where type='inspection' and type='summary'")).Check(testkit.Rows(
 		`MemTableScan_5 10000.00 root table:INSPECTION_RULES skip_request: true`))
 }
+
+func (s *testSuite) TestInspectionSummaryTable(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustQuery("desc select * from information_schema.inspection_summary where rule='ddl'").Check(testkit.Rows(
+		`Selection_5 8000.00 root  eq(Column#1, "ddl")`,
+		`└─MemTableScan_6 10000.00 root table:INSPECTION_SUMMARY rules:["ddl"]`,
+	))
+	tk.MustQuery("desc select * from information_schema.inspection_summary where 'ddl'=rule or rule='config'").Check(testkit.Rows(
+		`Selection_5 8000.00 root  or(eq("ddl", Column#1), eq(Column#1, "config"))`,
+		`└─MemTableScan_6 10000.00 root table:INSPECTION_SUMMARY rules:["config","ddl"]`,
+	))
+	tk.MustQuery("desc select * from information_schema.inspection_summary where 'ddl'=rule or rule='config' or rule='slow_query'").Check(testkit.Rows(
+		`Selection_5 8000.00 root  or(eq("ddl", Column#1), or(eq(Column#1, "config"), eq(Column#1, "slow_query")))`,
+		`└─MemTableScan_6 10000.00 root table:INSPECTION_SUMMARY rules:["config","ddl","slow_query"]`,
+	))
+	tk.MustQuery("desc select * from information_schema.inspection_summary where (rule='config' or rule='slow_query') and (metrics_name='metric_name3' or metrics_name='metric_name1')").Check(testkit.Rows(
+		`Selection_5 8000.00 root  or(eq(Column#1, "config"), eq(Column#1, "slow_query")), or(eq(Column#3, "metric_name3"), eq(Column#3, "metric_name1"))`,
+		`└─MemTableScan_6 10000.00 root table:INSPECTION_SUMMARY rules:["config","slow_query"], metric_names:["metric_name1","metric_name3"]`,
+	))
+	tk.MustQuery("desc select * from information_schema.inspection_summary where rule in ('ddl', 'slow_query')").Check(testkit.Rows(
+		`Selection_5 8000.00 root  in(Column#1, "ddl", "slow_query")`,
+		`└─MemTableScan_6 10000.00 root table:INSPECTION_SUMMARY | rules:["ddl","slow_query"]`,
+	))
+	tk.MustQuery("desc select * from information_schema.inspection_summary where rule in ('ddl', 'slow_query') and metrics_name='metric_name1'").Check(testkit.Rows(
+		`Selection_5 8000.00 root  eq(Column#3, "metric_name1"), in(Column#1, "ddl", "slow_query")`,
+		`└─MemTableScan_6 10000.00 root table:INSPECTION_SUMMARY rules:["ddl","slow_query"], metric_names:["metric_name1"]`,
+	))
+	tk.MustQuery("desc select * from information_schema.inspection_summary where rule in ('ddl', 'slow_query') and metrics_name in ('metric_name1', 'metric_name2')").Check(testkit.Rows(
+		`Selection_5 8000.00 root  in(Column#1, "ddl", "slow_query"), in(Column#3, "metric_name1", "metric_name2")`,
+		`└─MemTableScan_6 10000.00 root table:INSPECTION_SUMMARY rules:["ddl","slow_query"], metric_names:["metric_name1","metric_name2"]`,
+	))
+	tk.MustQuery("desc select * from information_schema.inspection_summary where rule='ddl' and metrics_name in ('metric_name1', 'metric_name2')").Check(testkit.Rows(
+		`Selection_5 8000.00 root  eq(Column#1, "ddl"), in(Column#3, "metric_name1", "metric_name2")`,
+		`└─MemTableScan_6 10000.00 root table:INSPECTION_SUMMARY rules:["ddl"], metric_names:["metric_name1","metric_name2"]`,
+	))
+	tk.MustQuery("desc select * from information_schema.inspection_summary where rule='ddl' and metrics_name='metric_NAME3'").Check(testkit.Rows(
+		`Selection_5 8000.00 root  eq(Column#1, "ddl"), eq(Column#3, "metric_NAME3")`,
+		`└─MemTableScan_6 10000.00 root table:INSPECTION_SUMMARY rules:["ddl"], metric_names:["metric_name3"]`,
+	))
+	tk.MustQuery("desc select * from information_schema.inspection_summary where rule='ddl' and rule in ('slow_query', 'ddl')").Check(testkit.Rows(
+		`Selection_5 8000.00 root  eq(Column#1, "ddl"), in(Column#1, "slow_query", "ddl")`,
+		`└─MemTableScan_6 10000.00 root table:INSPECTION_SUMMARY rules:["ddl"]`,
+	))
+	tk.MustQuery("desc select * from information_schema.inspection_summary where rule in ('ddl', 'config') and rule in ('slow_query', 'config')").Check(testkit.Rows(
+		`Selection_5 8000.00 root  in(Column#1, "ddl", "config"), in(Column#1, "slow_query", "config")`,
+		`└─MemTableScan_6 10000.00 root table:INSPECTION_SUMMARY rules:["config"]`,
+	))
+	tk.MustQuery("desc select * from information_schema.inspection_summary where metrics_name in ('metric_name1', 'metric_name4') and metrics_name in ('metric_name5', 'metric_name4') and rule in ('ddl', 'config') and rule in ('slow_query', 'config') and quantile in (0.80, 0.90)").Check(testkit.Rows(
+		`Selection_5 8000.00 root  in(Column#1, "ddl", "config"), in(Column#1, "slow_query", "config"), in(Column#3, "metric_name1", "metric_name4"), in(Column#3, "metric_name5", "metric_name4")`,
+		`└─MemTableScan_6 10000.00 root table:INSPECTION_SUMMARY rules:["config"], metric_names:["metric_name4"], quantiles:[0.800000,0.900000]`,
+	))
+	tk.MustQuery("desc select * from information_schema.inspection_summary where metrics_name in ('metric_name1', 'metric_name4') and metrics_name in ('metric_name5', 'metric_name4') and metrics_name in ('metric_name5', 'metric_name1') and metrics_name in ('metric_name1', 'metric_name3')").Check(testkit.Rows(
+		`Selection_5 8000.00 root  in(Column#3, "metric_name1", "metric_name3"), in(Column#3, "metric_name1", "metric_name4"), in(Column#3, "metric_name5", "metric_name1"), in(Column#3, "metric_name5", "metric_name4")`,
+		`└─MemTableScan_6 10000.00 root table:INSPECTION_SUMMARY skip_inspection: true`,
+	))
+}
