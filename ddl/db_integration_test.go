@@ -357,6 +357,84 @@ func (s *testIntegrationSuite1) TestIssue4432(c *C) {
 	tk.MustExec("drop table tx")
 }
 
+func (s *testIntegrationSuite1) TestIssue5092(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t_issue_5092 (a int)")
+	tk.MustExec("alter table t_issue_5092 add column (b int, c int)")
+	tk.MustExec("alter table t_issue_5092 add column if not exists (b int, c int)")
+	tk.MustExec("alter table t_issue_5092 add column b1 int after b, add column c1 int after c")
+	tk.MustExec("alter table t_issue_5092 add column d int after b, add column e int first, add column f int after c1, add column g int, add column h int first")
+	tk.MustQuery("show create table t_issue_5092").Check(testkit.Rows("t_issue_5092 CREATE TABLE `t_issue_5092` (\n" +
+		"  `h` int(11) DEFAULT NULL,\n" +
+		"  `e` int(11) DEFAULT NULL,\n" +
+		"  `a` int(11) DEFAULT NULL,\n" +
+		"  `b` int(11) DEFAULT NULL,\n" +
+		"  `d` int(11) DEFAULT NULL,\n" +
+		"  `b1` int(11) DEFAULT NULL,\n" +
+		"  `c` int(11) DEFAULT NULL,\n" +
+		"  `c1` int(11) DEFAULT NULL,\n" +
+		"  `f` int(11) DEFAULT NULL,\n" +
+		"  `g` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	// The following two statements are consistent with MariaDB.
+	tk.MustGetErrCode("alter table t_issue_5092 add column if not exists d int, add column d int", errno.ErrDupFieldName)
+	tk.MustExec("alter table t_issue_5092 add column dd int, add column if not exists dd int")
+	tk.MustExec("alter table t_issue_5092 add column if not exists (d int, e int), add column ff text")
+	tk.MustExec("alter table t_issue_5092 add column b2 int after b1, add column c2 int first")
+	tk.MustQuery("show create table t_issue_5092").Check(testkit.Rows("t_issue_5092 CREATE TABLE `t_issue_5092` (\n" +
+		"  `c2` int(11) DEFAULT NULL,\n" +
+		"  `h` int(11) DEFAULT NULL,\n" +
+		"  `e` int(11) DEFAULT NULL,\n" +
+		"  `a` int(11) DEFAULT NULL,\n" +
+		"  `b` int(11) DEFAULT NULL,\n" +
+		"  `d` int(11) DEFAULT NULL,\n" +
+		"  `b1` int(11) DEFAULT NULL,\n" +
+		"  `b2` int(11) DEFAULT NULL,\n" +
+		"  `c` int(11) DEFAULT NULL,\n" +
+		"  `c1` int(11) DEFAULT NULL,\n" +
+		"  `f` int(11) DEFAULT NULL,\n" +
+		"  `g` int(11) DEFAULT NULL,\n" +
+		"  `dd` int(11) DEFAULT NULL,\n" +
+		"  `ff` text DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustExec("drop table t_issue_5092")
+
+	tk.MustExec("create table t_issue_5092 (a int default 1)")
+	tk.MustExec("alter table t_issue_5092 add column (b int default 2, c int default 3)")
+	tk.MustExec("alter table t_issue_5092 add column b1 int default 22 after b, add column c1 int default 33 after c")
+	tk.MustExec("insert into t_issue_5092 value ()")
+	tk.MustQuery("select * from t_issue_5092").Check(testkit.Rows("1 2 22 3 33"))
+	tk.MustExec("alter table t_issue_5092 add column d int default 4 after c1, add column aa int default 0 first")
+	tk.MustQuery("select * from t_issue_5092").Check(testkit.Rows("0 1 2 22 3 33 4"))
+	tk.MustQuery("show create table t_issue_5092").Check(testkit.Rows("t_issue_5092 CREATE TABLE `t_issue_5092` (\n" +
+		"  `aa` int(11) DEFAULT '0',\n" +
+		"  `a` int(11) DEFAULT '1',\n" +
+		"  `b` int(11) DEFAULT '2',\n" +
+		"  `b1` int(11) DEFAULT '22',\n" +
+		"  `c` int(11) DEFAULT '3',\n" +
+		"  `c1` int(11) DEFAULT '33',\n" +
+		"  `d` int(11) DEFAULT '4'\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustExec("drop table t_issue_5092")
+
+	tk.MustExec("create table t_issue_5092 (a int)")
+	tk.MustExec("alter table t_issue_5092 add column (b int, c int)")
+	tk.MustExec("alter table t_issue_5092 drop column b,drop column c")
+	tk.MustGetErrCode("alter table t_issue_5092 drop column c, drop column c", errno.ErrCantDropFieldOrKey)
+	tk.MustExec("alter table t_issue_5092 drop column if exists b,drop column if exists c")
+	tk.MustGetErrCode("alter table t_issue_5092 drop column g, drop column d", errno.ErrCantDropFieldOrKey)
+	tk.MustExec("drop table t_issue_5092")
+
+	tk.MustExec("create table t_issue_5092 (a int)")
+	tk.MustExec("alter table t_issue_5092 add column (b int, c int)")
+	tk.MustGetErrCode("alter table t_issue_5092 drop column if exists a, drop column b, drop column c", errno.ErrCantRemoveAllFields)
+	tk.MustGetErrCode("alter table t_issue_5092 drop column if exists c, drop column c", errno.ErrCantDropFieldOrKey)
+	tk.MustExec("alter table t_issue_5092 drop column c, drop column if exists c")
+	tk.MustExec("drop table t_issue_5092")
+}
+
 func (s *testIntegrationSuite5) TestErrnoErrorCode(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test_db")
@@ -462,12 +540,34 @@ func (s *testIntegrationSuite5) TestErrnoErrorCode(c *C) {
 	sql = "create table test_on_update_2(c int on update current_timestamp);"
 	tk.MustGetErrCode(sql, errno.ErrInvalidOnUpdate)
 
+	// add columns
+	sql = "alter table test_error_code_succ add column c1 int, add column c1 int"
+	tk.MustGetErrCode(sql, errno.ErrDupFieldName)
+	sql = "alter table test_error_code_succ add column (aa int, aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa int)"
+	tk.MustGetErrCode(sql, errno.ErrTooLongIdent)
+	sql = "alter table test_error_code_succ add column `a ` int, add column `b ` int;"
+	tk.MustGetErrCode(sql, errno.ErrWrongColumnName)
+	tk.MustExec("create table test_add_columns_on_update (c1 int, c2 int);")
+	sql = "alter table test_add_columns_on_update add column cc int, add column c3 int on update current_timestamp;"
+	tk.MustGetErrCode(sql, errno.ErrInvalidOnUpdate)
+
 	// drop column
 	sql = "alter table test_error_code_succ drop c_not_exist"
 	tk.MustGetErrCode(sql, errno.ErrCantDropFieldOrKey)
 	tk.MustExec("create table test_drop_column (c1 int );")
 	sql = "alter table test_drop_column drop column c1;"
 	tk.MustGetErrCode(sql, errno.ErrCantRemoveAllFields)
+	// drop columns
+	sql = "alter table test_error_code_succ drop c_not_exist, drop cc_not_exist"
+	tk.MustGetErrCode(sql, errno.ErrCantDropFieldOrKey)
+	tk.MustExec("create table test_drop_columns (c1 int);")
+	tk.MustExec("alter table test_drop_columns add column c2 int first, add column c3 int after c1")
+	sql = "alter table test_drop_columns drop column c1, drop column c2, drop column c3;"
+	tk.MustGetErrCode(sql, errno.ErrCantRemoveAllFields)
+	sql = "alter table test_drop_columns drop column c1, add column c2 int;"
+	tk.MustGetErrCode(sql, errno.ErrUnsupportedDDLOperation)
+	sql = "alter table test_drop_columns drop column c1, drop column c1;"
+	tk.MustGetErrCode(sql, errno.ErrCantDropFieldOrKey)
 	// add index
 	sql = "alter table test_error_code_succ add index idx (c_not_exist)"
 	tk.MustGetErrCode(sql, errno.ErrKeyColumnDoesNotExits)

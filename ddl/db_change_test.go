@@ -528,6 +528,17 @@ func (s *testStateChangeSuite) TestWriteOnlyOnDupUpdate(c *C) {
 	s.runTestInSchemaState(c, model.StateWriteReorganization, true, addColumnSQL, sqls, expectQuery)
 }
 
+func (s *testStateChangeSuite) TestWriteOnlyOnDupUpdateForAddColumns(c *C) {
+	sqls := make([]sqlWithErr, 3)
+	sqls[0] = sqlWithErr{"delete from t", nil}
+	sqls[1] = sqlWithErr{"insert t set c1 = 'c1_dup', c3 = '2018-02-12', c4 = 2 on duplicate key update c1 = values(c1)", nil}
+	sqls[2] = sqlWithErr{"insert t set c1 = 'c1_new', c3 = '2019-02-12', c4 = 2 on duplicate key update c1 = values(c1)", nil}
+	addColumnsSQL := "alter table t add column c5 int not null default 1 after c4, add column c44 int not null default 1"
+	expectQuery := &expectQuery{"select c4, c5, c44 from t", []string{"2 1 1"}}
+	// TODO: This case should always fail in write-only state, but it doesn't. We use write-reorganization state here to keep it running stable. It need a double check.
+	s.runTestInSchemaState(c, model.StateWriteReorganization, true, addColumnsSQL, sqls, expectQuery)
+}
+
 // TestWriteOnly tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
 func (s *testStateChangeSuite) TestWriteOnly(c *C) {
 	sqls := make([]sqlWithErr, 3)
@@ -538,6 +549,16 @@ func (s *testStateChangeSuite) TestWriteOnly(c *C) {
 	s.runTestInSchemaState(c, model.StateWriteOnly, true, addColumnSQL, sqls, nil)
 }
 
+// TestWriteOnlyForAddColumns tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
+func (s *testStateChangeSuite) TestWriteOnlyForAddColumns(c *C) {
+	sqls := make([]sqlWithErr, 3)
+	sqls[0] = sqlWithErr{"delete from t where c1 = 'a'", nil}
+	sqls[1] = sqlWithErr{"update t use index(idx2) set c1 = 'c1_update' where c1 = 'a'", nil}
+	sqls[2] = sqlWithErr{"insert t set c1 = 'c1_insert', c3 = '2018-02-12', c4 = 1", nil}
+	addColumnsSQL := "alter table t add column c5 int not null default 1 first, add column c6 int not null default 1"
+	s.runTestInSchemaState(c, model.StateWriteOnly, true, addColumnsSQL, sqls, nil)
+}
+
 // TestDeletaOnly tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
 func (s *testStateChangeSuite) TestDeleteOnly(c *C) {
 	sqls := make([]sqlWithErr, 1)
@@ -545,6 +566,15 @@ func (s *testStateChangeSuite) TestDeleteOnly(c *C) {
 		errors.Errorf("Can't find column c1")}
 	dropColumnSQL := "alter table t drop column c1"
 	s.runTestInSchemaState(c, model.StateDeleteOnly, true, dropColumnSQL, sqls, nil)
+}
+
+// TestDeleteOnlyForDropColumns tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
+func (s *testStateChangeSuite) TestDeleteOnlyForDropColumns(c *C) {
+	sqls := make([]sqlWithErr, 1)
+	sqls[0] = sqlWithErr{"insert t set c1 = 'c1_insert', c3 = '2018-02-12', c4 = 1",
+		errors.Errorf("Can't find column c1")}
+	dropColumnsSQL := "alter table t drop column c1, drop column c3"
+	s.runTestInSchemaState(c, model.StateDeleteOnly, true, dropColumnsSQL, sqls, nil)
 }
 
 func (s *testStateChangeSuite) TestWriteOnlyForDropColumn(c *C) {
@@ -565,6 +595,26 @@ func (s *testStateChangeSuite) TestWriteOnlyForDropColumn(c *C) {
 	dropColumnSQL := "alter table t drop column c3"
 	query := &expectQuery{sql: "select * from t;", rows: []string{"a N 8"}}
 	s.runTestInSchemaState(c, model.StateWriteOnly, false, dropColumnSQL, sqls, query)
+}
+
+func (s *testStateChangeSuite) TestWriteOnlyForDropColumns(c *C) {
+	_, err := s.se.Execute(context.Background(), "use test_db_state")
+	c.Assert(err, IsNil)
+	_, err = s.se.Execute(context.Background(), `create table t_drop_columns (c1 int, c4 int)`)
+	c.Assert(err, IsNil)
+	_, err = s.se.Execute(context.Background(), "insert into t_drop_columns (c1, c4) values(8, 8)")
+	c.Assert(err, IsNil)
+	defer s.se.Execute(context.Background(), "drop table t_drop_columns")
+
+	sqls := make([]sqlWithErr, 2)
+	sqls[0] = sqlWithErr{"update t set c1='5', c3='2020-03-01';", errors.New("[planner:1054]Unknown column 'c3' in 'field list'")}
+	sqls[1] = sqlWithErr{"update t t1, t_drop_columns t2 set t1.c1='5', t1.c3='2020-03-01', t2.c1='10' where t1.c4=t2.c4",
+		errors.New("[planner:1054]Unknown column 'c3' in 'field list'")}
+	// TODO: Fix the case of sqls[2].
+	// sqls[2] = sqlWithErr{"update t set c1='5' where c3='2017-07-01';", errors.New("[planner:1054]Unknown column 'c3' in 'field list'")}
+	dropColumnsSQL := "alter table t drop column c3, drop column c1"
+	query := &expectQuery{sql: "select * from t;", rows: []string{"N 8"}}
+	s.runTestInSchemaState(c, model.StateWriteOnly, false, dropColumnsSQL, sqls, query)
 }
 
 func (s *testStateChangeSuiteBase) runTestInSchemaState(c *C, state model.SchemaState, isOnJobUpdated bool, alterTableSQL string,
@@ -847,6 +897,24 @@ func (s *testStateChangeSuite) TestParallelDropColumn(c *C) {
 	s.testControlParallelExecSQL(c, sql, sql, f)
 }
 
+func (s *testStateChangeSuite) TestParallelDropColumns(c *C) {
+	sql := "ALTER TABLE t drop COLUMN b, drop COLUMN c;"
+	f := func(c *C, err1, err2 error) {
+		c.Assert(err1, IsNil)
+		c.Assert(err2.Error(), Equals, "[ddl:1091]current error msg: Cancelled DDL job, original error msg: column b doesn't exist")
+	}
+	s.testControlParallelExecSQL(c, sql, sql, f)
+}
+
+func (s *testStateChangeSuite) TestParallelDropIfExistsColumns(c *C) {
+	sql := "ALTER TABLE t drop COLUMN if exists b, drop COLUMN if exists c;"
+	f := func(c *C, err1, err2 error) {
+		c.Assert(err1, IsNil)
+		c.Assert(err2, IsNil)
+	}
+	s.testControlParallelExecSQL(c, sql, sql, f)
+}
+
 func (s *testStateChangeSuite) TestParallelDropIndex(c *C) {
 	sql1 := "alter table t drop index idx1 ;"
 	sql2 := "alter table t drop index idx2 ;"
@@ -1084,6 +1152,9 @@ func (s *testStateChangeSuite) TestDDLIfNotExists(c *C) {
 	// ADD COLUMN
 	s.testParallelExecSQL(c, "alter table test_not_exists add column if not exists b int")
 
+	// ADD COLUMNS
+	s.testParallelExecSQL(c, "alter table test_not_exists add column if not exists (c11 int, d11 int)")
+
 	// ADD INDEX
 	s.testParallelExecSQL(c, "alter table test_not_exists add index if not exists idx_b (b)")
 
@@ -1099,6 +1170,9 @@ func (s *testStateChangeSuite) TestDDLIfExists(c *C) {
 	}()
 	_, err := s.se.Execute(context.Background(), "create table if not exists test_exists (a int key, b int)")
 	c.Assert(err, IsNil)
+
+	// DROP COLUMNS
+	s.testParallelExecSQL(c, "alter table test_exists drop column if exists c, drop column if exists d")
 
 	// DROP COLUMN
 	s.testParallelExecSQL(c, "alter table test_exists drop column if exists b") // only `a` exists now
@@ -1226,6 +1300,18 @@ func (s *testStateChangeSuite) TestParallelAlterSchemaCharsetAndCollate(c *C) {
 func (s *testStateChangeSuite) TestParallelTruncateTableAndAddColumn(c *C) {
 	sql1 := "truncate table t"
 	sql2 := "alter table t add column c3 int"
+	f := func(c *C, err1, err2 error) {
+		c.Assert(err1, IsNil)
+		c.Assert(err2, NotNil)
+		c.Assert(err2.Error(), Equals, "[domain:8028]Information schema is changed during the execution of the statement(for example, table definition may be updated by other DDL ran in parallel). If you see this error often, try increasing `tidb_max_delta_schema_count`. [try again later]")
+	}
+	s.testControlParallelExecSQL(c, sql1, sql2, f)
+}
+
+// TestParallelTruncateTableAndAddColumns tests add columns when truncate table.
+func (s *testStateChangeSuite) TestParallelTruncateTableAndAddColumns(c *C) {
+	sql1 := "truncate table t"
+	sql2 := "alter table t add column c3 int, add column c4 int"
 	f := func(c *C, err1, err2 error) {
 		c.Assert(err1, IsNil)
 		c.Assert(err2, NotNil)
