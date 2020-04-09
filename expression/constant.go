@@ -180,7 +180,7 @@ func (c *Constant) getLazyDatum() (dt types.Datum, isLazy bool, err error) {
 		if p.ctx.GetSessionVars().StmtCtx.InExplainStmt {
 			// Since `ParamMarker` is not nil only in prepare/execute context, the query must be `explain for connection` when coming here.
 			// The PreparedParams may have been reset already, to avoid panic, we just use the pre-evaluated datum for this constant.
-			return
+			return dt, false, nil
 		}
 		dt = p.GetUserVar()
 		isLazy = true
