@@ -1925,7 +1925,7 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 			tbInfo.AutoIncID = int64(op.UintValue)
 		case ast.TableOptionAutoIdCache:
 			if op.UintValue > uint64(math.MaxInt64) {
-				// Todo: refine this error.
+				// TODO: Refine this error.
 				return errors.New("table option auto_id_cache overflows int64")
 			}
 			tbInfo.AutoIdCache = int64(op.UintValue)
@@ -2158,7 +2158,7 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 					err = d.RebaseAutoID(ctx, ident, int64(opt.UintValue))
 				case ast.TableOptionAutoIdCache:
 					if opt.UintValue > uint64(math.MaxInt64) {
-						// Todo: refine this error.
+						// TODO: Refine this error.
 						return errors.New("table option auto_id_cache overflows int64")
 					}
 					err = d.AlterTableAutoIDCache(ctx, ident, int64(opt.UintValue))
