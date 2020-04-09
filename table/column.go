@@ -191,7 +191,9 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo) (
 	}
 
 	if ((col.Tp == mysql.TypeDate && !casted.IsNull() && casted.GetMysqlTime() == types.ZeroDate) || (col.Tp == mysql.TypeDatetime && !casted.IsNull() && casted.GetMysqlTime() == types.ZeroDatetime)) && ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() {
-		return casted, types.ErrWrongValue
+		if err := expression.HandleInvalidTimeError(ctx, types.ErrWrongValue); err != nil {
+			return casted, err
+		}
 	}
 
 	if ctx.GetSessionVars().SkipUTF8Check {
