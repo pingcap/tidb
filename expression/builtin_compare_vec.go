@@ -725,8 +725,8 @@ func (b *builtinLeastTimeSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 	}
 	var argTime types.Time
 
-	var findInvalidTime []bool = make([]bool, n)
-	var invalidValue []string = make([]string, n)
+	var findInvalidTime = make([]bool, n)
+	var invalidValue = make([]string, n)
 
 	for j := 0; j < len(b.args); j++ {
 		if err := b.args[j].VecEvalString(b.ctx, input, result); err != nil {

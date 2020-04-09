@@ -778,7 +778,7 @@ func PeekBytesAsJSON(b []byte) (n int, err error) {
 		err = errors.New("Cant peek from empty bytes")
 		return
 	}
-	switch c := TypeCode(b[0]); c {
+	switch c := b[0]; c {
 	case TypeCodeObject, TypeCodeArray:
 		if len(b) >= valTypeSize+headerSize {
 			size := endian.Uint32(b[valTypeSize+dataSizeOff:])
