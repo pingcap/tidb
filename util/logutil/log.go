@@ -340,12 +340,13 @@ func InitZapLogger(cfg *LogConfig) error {
 			Filename: cfg.SlowQueryFile,
 		}
 		sqCfg := &zaplog.Config{
-			Level:            cfg.Level,
-			Format:           cfg.Format,
-			DisableTimestamp: cfg.DisableTimestamp,
-			File:             sqfCfg,
+			Level:               cfg.Level,
+			Format:              cfg.Format,
+			DisableTimestamp:    cfg.DisableTimestamp,
+			File:                sqfCfg,
+			DisableErrorVerbose: cfg.DisableErrorVerbose,
 		}
-		sqLogger, _, err := zaplog.InitLogger(sqCfg)
+		sqLogger, _, err := zaplog.InitLogger(sqCfg, zap.AddStacktrace(zapcore.FatalLevel))
 		if err != nil {
 			return errors.Trace(err)
 		}

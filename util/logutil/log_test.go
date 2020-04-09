@@ -24,6 +24,7 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	zaplog "github.com/pingcap/log"
 	log "github.com/sirupsen/logrus"
 	"go.uber.org/zap"
@@ -160,7 +161,7 @@ func (s *testLogSuite) TestLoggerKeepOrder(c *C) {
 
 func (s *testLogSuite) TestSlowQueryZapLogger(c *C) {
 	fileName := "slow_query"
-	conf := NewLogConfig("info", DefaultLogFormat, fileName, EmptyFileLogConfig, false)
+	conf := NewLogConfig("info", DefaultLogFormat, fileName, EmptyFileLogConfig, false, func(config *zaplog.Config) { config.DisableErrorVerbose = true })
 	err := InitZapLogger(conf)
 	c.Assert(err, IsNil)
 	defer os.Remove(fileName)
@@ -169,6 +170,7 @@ func (s *testLogSuite) TestSlowQueryZapLogger(c *C) {
 	SlowQueryZapLogger.Info("info message", zap.String("str key", "val"))
 	SlowQueryZapLogger.Warn("warn", zap.Int("int key", 123))
 	SlowQueryZapLogger.Error("error message", zap.Bool("bool key", true))
+	SlowQueryZapLogger.Error("error message", zap.Error(errors.New("unexpect")))
 
 	f, err := os.Open(fileName)
 	c.Assert(err, IsNil)
@@ -182,55 +184,11 @@ func (s *testLogSuite) TestSlowQueryZapLogger(c *C) {
 			break
 		}
 		c.Assert(str, Matches, zapLogPattern)
-	}
-	c.Assert(err, Equals, io.EOF)
-<<<<<<< HEAD
-=======
-
-}
-
-func (s *testLogSuite) TestZapLoggerWithKeys(c *C) {
-	fileCfg := FileLogConfig{zaplog.FileLogConfig{Filename: "zap_log", MaxSize: 4096}}
-	conf := NewLogConfig("info", DefaultLogFormat, "", fileCfg, false)
-	err := InitZapLogger(conf)
-	c.Assert(err, IsNil)
-	connID := uint32(123)
-	ctx := WithConnID(context.Background(), connID)
-	s.testZapLogger(ctx, c, fileCfg.Filename, zapLogWithConnIDPattern)
-	os.Remove(fileCfg.Filename)
-
-	err = InitZapLogger(conf)
-	c.Assert(err, IsNil)
-	key := "ctxKey"
-	val := "ctxValue"
-	ctx1 := WithKeyValue(context.Background(), key, val)
-	s.testZapLogger(ctx1, c, fileCfg.Filename, zapLogWithKeyValPattern)
-	os.Remove(fileCfg.Filename)
-}
-
-func (s *testLogSuite) testZapLogger(ctx context.Context, c *C, fileName, pattern string) {
-	Logger(ctx).Debug("debug msg", zap.String("test with key", "true"))
-	Logger(ctx).Info("info msg", zap.String("test with key", "true"))
-	Logger(ctx).Warn("warn msg", zap.String("test with key", "true"))
-	Logger(ctx).Error("error msg", zap.String("test with key", "true"))
-
-	f, err := os.Open(fileName)
-	c.Assert(err, IsNil)
-	defer f.Close()
-
-	r := bufio.NewReader(f)
-	for {
-		var str string
-		str, err = r.ReadString('\n')
-		if err != nil {
-			break
-		}
-		c.Assert(str, Matches, pattern)
 		c.Assert(strings.Contains(str, "stack"), IsFalse)
 		c.Assert(strings.Contains(str, "errorVerbose"), IsFalse)
 	}
 	c.Assert(err, Equals, io.EOF)
->>>>>>> cbf4ddc... *: improve the format of the error log (#12155)
+
 }
 
 func (s *testLogSuite) TestSetLevel(c *C) {

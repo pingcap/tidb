@@ -28,11 +28,8 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
-<<<<<<< HEAD
-	"github.com/pingcap/parser/mysql"
-=======
 	zaplog "github.com/pingcap/log"
->>>>>>> cbf4ddc... *: improve the format of the error log (#12155)
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/util/logutil"
 	tracing "github.com/uber/jaeger-client-go/config"
 	"go.uber.org/atomic"
@@ -399,7 +396,6 @@ var defaultConf = Config{
 	LowerCaseTableNames: 2,
 	ServerVersion:       "",
 	Log: Log{
-<<<<<<< HEAD
 		Level:               "info",
 		Format:              "text",
 		File:                logutil.NewFileLogConfig(logutil.DefaultLogMaxSize),
@@ -408,16 +404,7 @@ var defaultConf = Config{
 		ExpensiveThreshold:  10000,
 		QueryLogMaxLen:      logutil.DefaultQueryLogMaxLen,
 		RecordPlanInSlowLog: logutil.DefaultRecordPlanInSlowLog,
-=======
-		Level:              "info",
-		Format:             "text",
-		File:               logutil.NewFileLogConfig(true, logutil.DefaultLogMaxSize),
-		SlowQueryFile:      "tidb-slow.log",
-		SlowThreshold:      logutil.DefaultSlowThreshold,
-		ExpensiveThreshold: 10000,
-		DisableErrorStack:  true,
-		QueryLogMaxLen:     logutil.DefaultQueryLogMaxLen,
->>>>>>> cbf4ddc... *: improve the format of the error log (#12155)
+		DisableErrorStack:   true,
 	},
 	Status: Status{
 		ReportStatus:    true,
