@@ -32,12 +32,18 @@ import (
 //    and we want to comment out this part of SQL in binlog.
 func init() {
 	parser.SpecialCommentsController.Register(string(FeatureIDAutoRandom))
+	parser.SpecialCommentsController.Register(string(FeatureIDAutoIDCache))
 }
 
 // SpecialCommentVersionPrefix is the prefix of TiDB executable comments.
 const SpecialCommentVersionPrefix = `/*T!`
 
 // BuildSpecialCommentPrefix returns the prefix of `featureID` special comment.
+// For some special feature in TiDB, we will refine ddl query with special comment,
+// which may be useful when
+// A: the downstream is directly MySQL instance (treat it as comment for compatibility).
+// B: the downstream is lower version TiDB (ignore the unknown feature comment).
+// C: the downstream is same/higher version TiDB (parse the feature syntax out).
 func BuildSpecialCommentPrefix(featureID featureID) string {
 	return fmt.Sprintf("%s[%s]", SpecialCommentVersionPrefix, featureID)
 }
@@ -47,9 +53,12 @@ type featureID string
 const (
 	// FeatureIDAutoRandom is the `auto_random` feature.
 	FeatureIDAutoRandom featureID = "auto_rand"
+	// FeatureIDAutoIDCache is the `auto_id_cache` feature.
+	FeatureIDAutoIDCache featureID = "auto_id_cache"
 )
 
 // FeatureIDPatterns is used to record special comments patterns.
 var FeatureIDPatterns = map[featureID]*regexp.Regexp{
-	FeatureIDAutoRandom: regexp.MustCompile(`(?i)AUTO_RANDOM\s*(\(\s*\d+\s*\))?\s*`),
+	FeatureIDAutoRandom:  regexp.MustCompile(`(?i)AUTO_RANDOM\s*(\(\s*\d+\s*\))?\s*`),
+	FeatureIDAutoIDCache: regexp.MustCompile(`(?i)AUTO_ID_CACHE\s*\d+\s*`),
 }
