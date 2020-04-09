@@ -245,6 +245,8 @@ func (s *testCodecSuite) TestNumberCodec(c *C) {
 		-1 << 47,
 		1<<23 - 1,
 		-1 << 23,
+		1<<33 - 1,
+		-1 << 33,
 		1<<55 - 1,
 		-1 << 55,
 		1,
