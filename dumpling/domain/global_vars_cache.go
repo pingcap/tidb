@@ -37,7 +37,7 @@ type GlobalVariableCache struct {
 	disable bool
 }
 
-const globalVariableCacheExpiry time.Duration = 2 * time.Second
+const globalVariableCacheExpiry = 2 * time.Second
 
 // Update updates the global variable cache.
 func (gvc *GlobalVariableCache) Update(rows []chunk.Row, fields []*ast.ResultField) {

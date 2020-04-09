@@ -570,7 +570,7 @@ func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan *copRes
 	select {
 	case resp, ok = <-respCh:
 		if it.memTracker != nil && resp != nil {
-			it.memTracker.Consume(-int64(resp.MemSize()))
+			it.memTracker.Consume(-resp.MemSize())
 		}
 	case <-it.finishCh:
 		exit = true
@@ -595,7 +595,7 @@ func (sender *copIteratorTaskSender) sendToTaskCh(t *copTask) (exit bool) {
 
 func (worker *copIteratorWorker) sendToRespCh(resp *copResponse, respCh chan<- *copResponse, checkOOM bool) (exit bool) {
 	if worker.memTracker != nil && checkOOM {
-		worker.memTracker.Consume(int64(resp.MemSize()))
+		worker.memTracker.Consume(resp.MemSize())
 	}
 	select {
 	case respCh <- resp:
