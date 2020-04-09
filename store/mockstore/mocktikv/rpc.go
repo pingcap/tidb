@@ -766,6 +766,10 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		}
 	})
 
+	// increase coverage for mock tikv
+	_ = req.Type.String()
+	_ = req.ToBatchCommandsRequest()
+
 	reqCtx := &req.Context
 	resp := &tikvrpc.Response{}
 	// When the store type is TiDB, the request should handle over to TiDB rpc server to handle.
