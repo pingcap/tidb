@@ -15,20 +15,17 @@ package planner
 
 import (
 	"context"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/opcode"
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/statistics"
-	driver "github.com/pingcap/tidb/types/parser_driver"
-	"github.com/pingcap/tidb/util/ranger"
 	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/opcode"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
@@ -37,9 +34,13 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/ranger"
+	"go.uber.org/zap"
 )
 
 // Optimize does optimization and creates a Plan.
@@ -162,7 +163,10 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	if sctx.GetSessionVars().EvolvePlanBaselines &&
 		!originHints.ContainTableHint(plannercore.HintReadFromStorage) &&
 		!bindRecord.GetFirstBinding().Hint.ContainTableHint(plannercore.HintReadFromStorage) {
-		handleEvolveTasks(ctx, sctx, bindRecord, stmtNode, bestPlanHintStr, bucketID)
+		err := handleEvolveTasks(ctx, sctx, bindRecord, stmtNode, bestPlanHintStr, bucketID)
+		if err != nil {
+			logutil.Logger(ctx).Warn("add baseline evolution task error", zap.Error(err))
+		}
 	}
 	// Restore the hint to avoid changing the stmt node.
 	hint.BindHint(stmtNode, originHints)
@@ -381,10 +385,10 @@ func handleInvalidBindRecord(ctx context.Context, sctx sessionctx.Context, level
 	globalHandle.AddDropInvalidBindTask(&bindRecord)
 }
 
-func handleEvolveTasks(ctx context.Context, sctx sessionctx.Context, br *bindinfo.BindRecord, stmtNode ast.StmtNode, planHint string, bucketID int64) {
+func handleEvolveTasks(ctx context.Context, sctx sessionctx.Context, br *bindinfo.BindRecord, stmtNode ast.StmtNode, planHint string, bucketID int64) error {
 	bindSQL := bindinfo.GenerateBindSQL(ctx, stmtNode, planHint)
 	if bindSQL == "" {
-		return
+		return nil
 	}
 	charset, collation := sctx.GetSessionVars().GetCharsetInfo()
 	binding := bindinfo.Binding{
@@ -396,7 +400,7 @@ func handleEvolveTasks(ctx context.Context, sctx sessionctx.Context, br *bindinf
 		BucketID:  bucketID,
 	}
 	globalHandle := domain.GetDomain(sctx).BindHandle()
-	globalHandle.AddEvolvePlanTask(br.OriginalSQL, br.Db, binding)
+	return globalHandle.AddEvolvePlanTask(br.OriginalSQL, br.Db, binding)
 }
 
 // useMaxTS returns true when meets following conditions:
