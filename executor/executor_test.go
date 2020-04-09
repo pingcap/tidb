@@ -4428,3 +4428,15 @@ func (s *testSuite1) TestPartitionHashCode(c *C) {
 	}
 	wg.Wait()
 }
+
+func (s *testSuite1) TestIssue15767(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists tt;")
+	tk.MustExec("create table t(a int, b char);")
+	tk.MustExec("insert into t values (1,'s'),(2,'b'),(1,'c'),(2,'e'),(1,'a');")
+	tk.MustExec("insert into t select * from t;")
+	tk.MustExec("insert into t select * from t;")
+	tk.MustExec("insert into t select * from t;")
+	tk.MustQuery("select b, count(*) from ( select b from t order by a limit 20 offset 2) as s group by b order by b;").Check(testkit.Rows("a 6", "c 7", "s 7"))
+}
