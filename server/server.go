@@ -351,19 +351,18 @@ func (s *Server) Close() {
 func (s *Server) onConn(conn *clientConn) {
 	ctx := logutil.WithConnID(context.Background(), conn.connectionID)
 	if err := conn.handshake(ctx); err != nil {
-		terror.Log(err)
-		if plugin.IsEnable(plugin.Audit) {
+		if plugin.IsEnable(plugin.Audit) && conn.ctx != nil {
 			conn.ctx.GetSessionVars().ConnectionInfo = conn.connectInfo()
+			err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
+				authPlugin := plugin.DeclareAuditManifest(p.Manifest)
+				if authPlugin.OnConnectionEvent != nil {
+					pluginCtx := context.WithValue(context.Background(), plugin.RejectReasonCtxValue{}, err.Error())
+					return authPlugin.OnConnectionEvent(pluginCtx, plugin.Reject, conn.ctx.GetSessionVars().ConnectionInfo)
+				}
+				return nil
+			})
+			terror.Log(err)
 		}
-		err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
-			authPlugin := plugin.DeclareAuditManifest(p.Manifest)
-			if authPlugin.OnConnectionEvent != nil {
-				pluginCtx := context.WithValue(context.Background(), plugin.RejectReasonCtxValue{}, err.Error())
-				return authPlugin.OnConnectionEvent(pluginCtx, plugin.Reject, conn.ctx.GetSessionVars().ConnectionInfo)
-			}
-			return nil
-		})
-		terror.Log(err)
 		// Some keep alive services will send request to TiDB and disconnect immediately.
 		// So we only record metrics.
 		metrics.HandShakeErrorCounter.Inc()
