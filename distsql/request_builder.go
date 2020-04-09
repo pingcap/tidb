@@ -138,6 +138,12 @@ func (builder *RequestBuilder) SetStoreType(storeType kv.StoreType) *RequestBuil
 	return builder
 }
 
+// SetAllowBatchCop sets `BatchCop` property.
+func (builder *RequestBuilder) SetAllowBatchCop(batchCop bool) *RequestBuilder {
+	builder.Request.BatchCop = batchCop
+	return builder
+}
+
 func (builder *RequestBuilder) getIsolationLevel() kv.IsoLevel {
 	switch builder.Tp {
 	case kv.ReqTypeAnalyze:
