@@ -1947,6 +1947,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBEnableNoopFuncs,
 	variable.TiDBEnableIndexMerge,
 	variable.TiDBTxnMode,
+	variable.TiDBAllowBatchCop,
 	variable.TiDBRowFormatVersion,
 	variable.TiDBEnableStmtSummary,
 	variable.TiDBStmtSummaryInternalQuery,
