@@ -151,7 +151,7 @@ func (s *testSuite) TestInspectionSummaryTable(c *C) {
 	))
 	tk.MustQuery("desc select * from information_schema.inspection_summary where rule in ('ddl', 'slow_query')").Check(testkit.Rows(
 		`Selection_5 8000.00 root  in(Column#1, "ddl", "slow_query")`,
-		`└─MemTableScan_6 10000.00 root table:INSPECTION_SUMMARY | rules:["ddl","slow_query"]`,
+		`└─MemTableScan_6 10000.00 root table:INSPECTION_SUMMARY rules:["ddl","slow_query"]`,
 	))
 	tk.MustQuery("desc select * from information_schema.inspection_summary where rule in ('ddl', 'slow_query') and metrics_name='metric_name1'").Check(testkit.Rows(
 		`Selection_5 8000.00 root  eq(Column#3, "metric_name1"), in(Column#1, "ddl", "slow_query")`,
