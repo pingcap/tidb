@@ -598,7 +598,7 @@ func (s *testSuite) TestNilAndDefault(c *C) {
 		c.Assert(err, IsNil)
 		chkRow = chk.GetRow(0)
 		cdt = chkRow.GetDatumRow(fts)
-		for i, _ := range testData {
+		for i := range testData {
 			if i == 0 {
 				continue
 			}
