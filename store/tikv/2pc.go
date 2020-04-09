@@ -991,7 +991,7 @@ func (actionCommit) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch
 		CommitVersion: c.commitTS,
 	}, pb.Context{Priority: c.priority, SyncLog: c.syncLog})
 
-	resp, err := c.sendReq(bo, req, batch)
+	resp, err := c.sendCommitRequestReq(bo, req, batch)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1073,7 +1073,7 @@ func (actionCommit) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch
 	return nil
 }
 
-func (c *twoPhaseCommitter) sendReq(bo *Backoffer, req *tikvrpc.Request, batch batchMutations) (*tikvrpc.Response, error) {
+func (c *twoPhaseCommitter) sendCommitRequestReq(bo *Backoffer, req *tikvrpc.Request, batch batchMutations) (*tikvrpc.Response, error) {
 	failpoint.Inject(knobSwitch, func() {
 		if c.testingKnobs.sendCommitReq != nil {
 			resp, err, skip := c.testingKnobs.sendCommitReq(bo, req, batch)
