@@ -169,10 +169,6 @@ func (s *testSuite) TestInspectionSummaryTable(c *C) {
 		`Selection_5 8000.00 root  eq(Column#1, "ddl"), eq(Column#3, "metric_NAME3")`,
 		`└─MemTableScan_6 10000.00 root table:INSPECTION_SUMMARY rules:["ddl"], metric_names:["metric_name3"]`,
 	))
-	tk.MustQuery("desc select * from information_schema.inspection_summary where rule='ddl' and rule in ('slow_query', 'ddl')").Check(testkit.Rows(
-		`Selection_5 8000.00 root  eq(Column#1, "ddl"), in(Column#1, "slow_query", "ddl")`,
-		`└─MemTableScan_6 10000.00 root table:INSPECTION_SUMMARY rules:["ddl"]`,
-	))
 	tk.MustQuery("desc select * from information_schema.inspection_summary where rule in ('ddl', 'config') and rule in ('slow_query', 'config')").Check(testkit.Rows(
 		`Selection_5 8000.00 root  in(Column#1, "ddl", "config"), in(Column#1, "slow_query", "config")`,
 		`└─MemTableScan_6 10000.00 root table:INSPECTION_SUMMARY rules:["config"]`,
