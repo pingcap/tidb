@@ -4928,6 +4928,7 @@ func (s *testIntegrationSuite) TestIssue15790(c *C) {
 	tk.MustQuery("SELECT * FROM t0 WHERE -10000000000000000000 | t0.c0 UNION SELECT * FROM t0;").Check(testkit.Rows("0"))
 	tk.MustQuery("SELECT * FROM t0 WHERE -10000000000000000000 | t0.c0 UNION all SELECT * FROM t0;").Check(testkit.Rows("0", "0"))
 	tk.MustExec("drop table t0;")
+}
 
 func (s *testIntegrationSuite) TestCacheRefineArgs(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
