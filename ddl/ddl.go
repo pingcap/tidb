@@ -534,11 +534,6 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 		}
 
 		if historyJob.Error != nil {
-			if (historyJob.State == model.JobStateRollbackDone || historyJob.State == model.JobStateCancelled) && !historyJob.Error.Equal(errCancelledDDLJob) {
-				historyJob.Error = historyJob.Error.Class().Synthesize(historyJob.Error.Code(),
-					fmt.Sprintf("current error msg: %s, original error msg: %s",
-						errCancelledDDLJob.ToSQLError().Message, historyJob.Error.ToSQLError().Message))
-			}
 			return errors.Trace(historyJob.Error)
 		}
 		panic("When the state is JobStateRollbackDone or JobStateCancelled, historyJob.Error should never be nil")
