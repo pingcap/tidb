@@ -88,6 +88,8 @@ var (
 
 	// GlobalDiskUsageTracker is the ancestor of all the Executors' disk tracker
 	GlobalDiskUsageTracker *disk.Tracker
+	// GlobalMemoryUsageTracker is the ancestor of all the Executors' memory tracker
+	GlobalMemoryUsageTracker *memory.Tracker
 )
 
 type baseExecutor struct {
@@ -113,21 +115,39 @@ func (a *globalPanicOnExceed) SetLogHook(hook func(uint64)) {}
 func (a *globalPanicOnExceed) Action(t *memory.Tracker) {
 	a.mutex.Lock()
 	defer a.mutex.Unlock()
-	panic(globalPanicStorageExceed)
+	t.Label().String()
+	msg := ""
+	switch t.Label().String() {
+	case globalStorageLabel:
+		msg = globalPanicStorageExceed
+	case globalMemoryLabel:
+		msg = globalPanicMemoryExceed
+	default:
+		msg = "Out of Unknown Resource Quota!"
+	}
+	panic(msg)
 }
 
 // SetFallback sets a fallback action.
 func (a *globalPanicOnExceed) SetFallback(memory.ActionOnExceed) {}
 
 const (
+	// globalStorageLabel represents the label of the GlobalDiskUsageTracker
+	globalStorageLabel string = "GlobalStorageLabel"
+	// globalMemoryLabel represents the label of the GlobalMemoryUsageTracker
+	globalMemoryLabel string = "GlobalMemoryLabel"
 	// globalPanicStorageExceed represents the panic message when out of storage quota.
 	globalPanicStorageExceed string = "Out Of Global Storage Quota!"
+	// globalPanicMemoryExceed represents the panic message when out of memory limit.
+	globalPanicMemoryExceed string = "Out Of Global Memory Limit!"
 )
 
 func init() {
-	GlobalDiskUsageTracker = disk.NewTracker(stringutil.StringerStr("GlobalStorageLabel"), -1)
+	GlobalDiskUsageTracker = disk.NewTracker(stringutil.StringerStr(globalStorageLabel), -1)
 	action := &globalPanicOnExceed{}
 	GlobalDiskUsageTracker.SetActionOnExceed(action)
+	GlobalMemoryUsageTracker = memory.NewTracker(stringutil.StringerStr(globalMemoryLabel), -1)
+	GlobalMemoryUsageTracker.SetActionOnExceed(action)
 }
 
 // base returns the baseExecutor of an executor, don't override this method!
@@ -1554,15 +1574,21 @@ func (e *UnionExec) Close() error {
 // Before every execution, we must clear statement context.
 func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars := ctx.GetSessionVars()
-	// Detach the disk tracker for the previous stmtctx from GlobalDiskUsageTracker
-	if vars.StmtCtx != nil && vars.StmtCtx.DiskTracker != nil {
-		vars.StmtCtx.DiskTracker.Detach()
+	// Detach the Memory and disk tracker for the previous stmtCtx from GlobalMemoryUsageTracker and GlobalDiskUsageTracker
+	if stmtCtx := vars.StmtCtx; stmtCtx != nil {
+		if stmtCtx.DiskTracker != nil {
+			stmtCtx.DiskTracker.Detach()
+		}
+		if stmtCtx.MemTracker != nil {
+			stmtCtx.MemTracker.Detach()
+		}
 	}
 	sc := &stmtctx.StatementContext{
 		TimeZone:    vars.Location(),
 		MemTracker:  memory.NewTracker(stringutil.MemoizeStr(s.Text), vars.MemQuotaQuery),
 		DiskTracker: disk.NewTracker(stringutil.MemoizeStr(s.Text), -1),
 	}
+	sc.MemTracker.AttachTo(GlobalMemoryUsageTracker)
 	if config.GetGlobalConfig().OOMUseTmpStorage && GlobalDiskUsageTracker != nil {
 		sc.DiskTracker.AttachTo(GlobalDiskUsageTracker)
 	}
