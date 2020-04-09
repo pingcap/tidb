@@ -123,19 +123,19 @@ func newHashRowContainer(sCtx sessionctx.Context, estCount int, hCtx *hashContex
 // GetMatchedRowsAndPtrs get matched rows and Ptrs from probeRow. It can be called
 // in multiple goroutines while each goroutine should keep its own
 // h and buf.
-func (c *hashRowContainer) GetMatchedRowsAndPtrs(matched []chunk.Row, matchedPtrs []chunk.RowPtr, probeKey uint64, probeRow chunk.Row, hCtx *hashContext) (err error) {
-	matched = matched[:0]
-	matchedPtrs = matchedPtrs[:0]
+func (c *hashRowContainer) GetMatchedRowsAndPtrs(matched *[]chunk.Row, matchedPtrs *[]chunk.RowPtr, probeKey uint64, probeRow chunk.Row, hCtx *hashContext) (err error) {
+	*matched = (*matched)[:0]
+	*matchedPtrs = (*matchedPtrs)[:0]
 	innerPtrs := c.hashTable.Get(probeKey)
 	lenInnerPtrs := len(innerPtrs)
 	if lenInnerPtrs == 0 {
 		return
 	}
-	if matched == nil || cap(matched) < lenInnerPtrs {
-		matched = make([]chunk.Row, 0, lenInnerPtrs)
+	if matched == nil || cap(*matched) < lenInnerPtrs {
+		*matched = make([]chunk.Row, 0, lenInnerPtrs)
 	}
-	if matchedPtrs == nil || cap(matchedPtrs) < lenInnerPtrs {
-		matchedPtrs = make([]chunk.RowPtr, 0, lenInnerPtrs)
+	if matchedPtrs == nil || cap(*matchedPtrs) < lenInnerPtrs {
+		*matchedPtrs = make([]chunk.RowPtr, 0, lenInnerPtrs)
 	}
 	var matchedRow chunk.Row
 	for _, ptr := range innerPtrs {
@@ -152,8 +152,8 @@ func (c *hashRowContainer) GetMatchedRowsAndPtrs(matched []chunk.Row, matchedPtr
 			c.stat.probeCollision++
 			continue
 		}
-		matched = append(matched, matchedRow)
-		matchedPtrs = append(matchedPtrs, ptr)
+		*matched = append(*matched, matchedRow)
+		*matchedPtrs = append(*matchedPtrs, ptr)
 	}
 	return
 }

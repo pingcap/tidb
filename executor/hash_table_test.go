@@ -181,7 +181,7 @@ func (s *pkgTestSuite) testHashRowContainer(c *C, hashFunc func() hash.Hash64, s
 	probeCtx.hashVals = append(hCtx.hashVals, hashFunc())
 	var matched []chunk.Row
 	var matchedPtrs []chunk.RowPtr
-	err = rowContainer.GetMatchedRowsAndPtrs(matched, matchedPtrs, hCtx.hashVals[1].Sum64(), probeRow, probeCtx)
+	err = rowContainer.GetMatchedRowsAndPtrs(&matched, &matchedPtrs, hCtx.hashVals[1].Sum64(), probeRow, probeCtx)
 	c.Assert(err, IsNil)
 	c.Assert(len(matched), Equals, 2)
 	c.Assert(matched[0].GetDatumRow(colTypes), DeepEquals, chk0.GetRow(1).GetDatumRow(colTypes))
