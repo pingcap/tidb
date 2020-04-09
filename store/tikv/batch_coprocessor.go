@@ -37,8 +37,7 @@ type batchCopTask struct {
 	storeAddr string
 	cmdType   tikvrpc.CmdType
 
-	regionTaskMap map[uint64]*copTask
-	copTasks      []copTaskAndRPCContext
+	copTasks []copTaskAndRPCContext
 }
 
 type batchCopResponse struct {
@@ -135,15 +134,12 @@ func buildBatchCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, re
 			}
 			if batchCop, ok := storeTaskMap[rpcCtx.Addr]; ok {
 				batchCop.copTasks = append(batchCop.copTasks, copTaskAndRPCContext{task: task, ctx: rpcCtx})
-				batchCop.regionTaskMap[task.region.id] = task
 			} else {
 				batchTask := &batchCopTask{
-					storeAddr:     rpcCtx.Addr,
-					cmdType:       cmdType,
-					regionTaskMap: make(map[uint64]*copTask),
-					copTasks:      []copTaskAndRPCContext{{task, rpcCtx}},
+					storeAddr: rpcCtx.Addr,
+					cmdType:   cmdType,
+					copTasks:  []copTaskAndRPCContext{{task, rpcCtx}},
 				}
-				batchTask.regionTaskMap[task.region.id] = task
 				storeTaskMap[rpcCtx.Addr] = batchTask
 			}
 		}
