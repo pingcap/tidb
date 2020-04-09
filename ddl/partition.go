@@ -117,11 +117,19 @@ func buildTablePartitionInfo(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 	return pi, nil
 }
 
+<<<<<<< HEAD
 func buildHashPartitionDefinitions(ctx sessionctx.Context, d *ddl, s *ast.CreateTableStmt, pi *model.PartitionInfo) error {
 	genIDs, err := d.genGlobalIDs(int(pi.Num))
 	if err != nil {
 		return errors.Trace(err)
 	}
+=======
+func buildHashPartitionDefinitions(ctx sessionctx.Context, s *ast.CreateTableStmt, pi *model.PartitionInfo) error {
+	if err := checkAddPartitionTooManyPartitions(pi.Num); err != nil {
+		return err
+	}
+
+>>>>>>> 4a803b1... ddl: fix create hash partition table makes tidb OOM (#16194)
 	defs := make([]model.PartitionDefinition, pi.Num)
 	for i := 0; i < len(defs); i++ {
 		defs[i].ID = genIDs[i]
