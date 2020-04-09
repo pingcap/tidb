@@ -125,10 +125,6 @@ func GetCollator(collate string) Collator {
 	if atomic.LoadInt32(&newCollationEnabled) == 1 {
 		ctor, ok := newCollatorMap[collate]
 		if !ok {
-			logutil.BgLogger().Warn(
-				"Unable to get collator by name, use binCollator instead.",
-				zap.String("name", collate),
-				zap.Stack("stack"))
 			return newCollatorMap["utf8mb4_bin"]
 		}
 		return ctor
@@ -141,10 +137,6 @@ func GetCollatorByID(id int) Collator {
 	if atomic.LoadInt32(&newCollationEnabled) == 1 {
 		ctor, ok := newCollatorIDMap[id]
 		if !ok {
-			logutil.BgLogger().Warn(
-				"Unable to get collator by ID, use binCollator instead.",
-				zap.Int("ID", id),
-				zap.Stack("stack"))
 			return newCollatorMap["utf8mb4_bin"]
 		}
 		return ctor
