@@ -541,6 +541,11 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 			}
 			return errors.Trace(historyJob.Error)
 		}
+		// Only for JobStateCancelled job which is adding columns or drop columns.
+		if historyJob.IsCancelled() && (historyJob.Type == model.ActionAddColumns || historyJob.Type == model.ActionDropColumns) {
+			logutil.BgLogger().Info("[ddl] DDL job is cancelled", zap.Int64("jobID", jobID))
+			return nil
+		}
 		panic("When the state is JobStateRollbackDone or JobStateCancelled, historyJob.Error should never be nil")
 	}
 }
