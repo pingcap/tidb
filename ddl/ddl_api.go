@@ -2695,12 +2695,10 @@ func (d *ddl) DropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 	if indexInfo == nil {
 		return ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
 	}
-
-	cols := t.Cols()
-	for _, idxCol := range indexInfo.Columns {
-		if mysql.HasAutoIncrementFlag(cols[idxCol.Offset].Flag) {
-			return autoid.ErrWrongAutoKey
-		}
+	// Check for drop index on auto_increment column.
+	err = checkDropIndexOnAutoIncrementColumn(t.Meta(), indexInfo)
+	if err != nil {
+		return errors.Trace(err)
 	}
 
 	job := &model.Job{
