@@ -279,6 +279,28 @@ func (s *testSuite) TestMaxConsumed(c *C) {
 	}
 }
 
+func (s *testSuite) TestGlobalTracker(c *C) {
+	r := NewTracker(stringutil.StringerStr("root"), -1)
+	c1 := NewTracker(stringutil.StringerStr("child 1"), -1)
+	c2 := NewTracker(stringutil.StringerStr("child 2"), -1)
+	c1.Consume(100)
+	c2.Consume(200)
+
+	c1.AttachToGlobalTracker(r)
+	c2.AttachToGlobalTracker(r)
+	c.Assert(r.BytesConsumed(), Equals, int64(300))
+	c.Assert(c1.parent, DeepEquals, r)
+	c.Assert(c2.parent, DeepEquals, r)
+	c.Assert(len(r.mu.children), Equals, 0)
+
+	c1.DetachFromGlobalTracker()
+	c2.DetachFromGlobalTracker()
+	c.Assert(r.BytesConsumed(), Equals, int64(0))
+	c.Assert(c1.parent, IsNil)
+	c.Assert(c2.parent, IsNil)
+	c.Assert(len(r.mu.children), Equals, 0)
+}
+
 func BenchmarkConsume(b *testing.B) {
 	tracker := NewTracker(stringutil.StringerStr("root"), -1)
 	b.RunParallel(func(pb *testing.PB) {

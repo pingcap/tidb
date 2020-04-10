@@ -275,3 +275,26 @@ func (t *Tracker) BytesToString(numBytes int64) string {
 
 	return fmt.Sprintf("%v Bytes", numBytes)
 }
+
+// AttachToGlobalTracker attach the tracker to the global tracker
+// AttachToGlobalTracker should be called at the initialization for the session executor's tracker
+// If the tracker already have parent, we would directly return.
+func (t *Tracker) AttachToGlobalTracker(globalTracker *Tracker) {
+	if t.parent != nil {
+		return
+	}
+	t.parent = globalTracker
+	t.parent.Consume(t.BytesConsumed())
+}
+
+// DetachFromGlobalTracker detach itself from its parent
+// Note that only the parent of this tracker is Global Tracker could call this function
+// Otherwise it should use Detach
+func (t *Tracker) DetachFromGlobalTracker() {
+	if t.parent == nil {
+		return
+	}
+	parent := t.parent
+	parent.Consume(-t.BytesConsumed())
+	t.parent = nil
+}
