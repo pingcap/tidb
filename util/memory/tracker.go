@@ -131,8 +131,6 @@ func (t *Tracker) Detach() {
 		return
 	}
 	t.parent.remove(t)
-	t.mu.Lock()
-	defer t.mu.Unlock()
 	t.parent = nil
 }
 
