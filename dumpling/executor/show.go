@@ -903,6 +903,10 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 		}
 	}
 
+	if tableInfo.AutoIdCache != 0 {
+		fmt.Fprintf(buf, " /*T![auto_id_cache] AUTO_ID_CACHE=%d */", tableInfo.AutoIdCache)
+	}
+
 	if tableInfo.ShardRowIDBits > 0 {
 		fmt.Fprintf(buf, "/*!90000 SHARD_ROW_ID_BITS=%d ", tableInfo.ShardRowIDBits)
 		if tableInfo.PreSplitRegions > 0 {
