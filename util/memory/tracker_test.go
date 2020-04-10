@@ -249,11 +249,12 @@ func (s *testSuite) TestReplaceChild(c *C) {
 	c.Assert(c1.parent, Equals, g)
 	c.Assert(len(g.mu.children), Equals, 0)
 
+	// ReplaceChild didn't work as GlobalTracker didn't support ReplaceChild
 	c2.Consume(200)
 	g.ReplaceChild(c1, c2)
-	c.Assert(g.BytesConsumed(), Equals, int64(200))
-	c.Assert(c1.parent, IsNil)
-	c.Assert(c2.parent, DeepEquals, g)
+	c.Assert(g.BytesConsumed(), Equals, int64(100))
+	c.Assert(c1.parent, DeepEquals, g)
+	c.Assert(c2.parent, IsNil)
 	c.Assert(len(g.mu.children), Equals, 0)
 }
 
@@ -306,10 +307,15 @@ func (s *testSuite) TestToString(c *C) {
 	c3.AttachTo(g)
 	c4.AttachTo(g)
 
-	child1.Consume(100)
-	child2.Consume(2 * 1024)
-	child3.Consume(3 * 1024 * 1024)
-	child4.Consume(4 * 1024 * 1024 * 1024)
+	c1.Consume(100)
+	c2.Consume(2 * 1024)
+	c3.Consume(3 * 1024 * 1024)
+	c4.Consume(4 * 1024 * 1024 * 1024)
+	c.Assert(g.String(), Equals, `
+"parent"{
+  "consumed": 4.00293168798089 GB
+}
+`)
 }
 
 func (s *testSuite) TestMaxConsumed(c *C) {

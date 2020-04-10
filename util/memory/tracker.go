@@ -179,7 +179,14 @@ func (t *Tracker) remove(oldChild *Tracker) {
 // ReplaceChild removes the old child specified in "oldChild" and add a new
 // child specified in "newChild". old child's memory consumption will be
 // removed and new child's memory consumption will be added.
+// ReplaceChild removes the old child specified in "oldChild" and add a new
+// child specified in "newChild". old child's memory consumption will be
+// removed and new child's memory consumption will be added.
+// If this tracker is globalTracker, we would directly return as GlobalTracker didn't support ReplaceChild
 func (t *Tracker) ReplaceChild(oldChild, newChild *Tracker) {
+	if t.globalTracker {
+		return
+	}
 	if newChild == nil {
 		t.remove(oldChild)
 		return
@@ -187,20 +194,19 @@ func (t *Tracker) ReplaceChild(oldChild, newChild *Tracker) {
 
 	newConsumed := newChild.BytesConsumed()
 	newChild.parent = t
-	newConsumed -= oldChild.BytesConsumed()
 
-	if !t.globalTracker {
-		t.mu.Lock()
-		for i, child := range t.mu.children {
-			if child != oldChild {
-				continue
-			}
-
-			oldChild.parent = nil
-			t.mu.children[i] = newChild
-			break
+	t.mu.Lock()
+	for i, child := range t.mu.children {
+		if child != oldChild {
+			continue
 		}
+
+		newConsumed -= oldChild.BytesConsumed()
+		oldChild.parent = nil
+		t.mu.children[i] = newChild
+		break
 	}
+	t.mu.Unlock()
 
 	t.Consume(newConsumed)
 }
