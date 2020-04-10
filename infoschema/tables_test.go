@@ -273,14 +273,14 @@ func (s *testTableSuite) TestInfoschemaFieldValue(c *C) {
 	tk.MustQuery("show create table information_schema.PROCESSLIST").Check(
 		testkit.Rows("" +
 			"PROCESSLIST CREATE TABLE `PROCESSLIST` (\n" +
-			"  `ID` bigint(21) unsigned DEFAULT '0',\n" +
+			"  `ID` bigint(21) unsigned NOT NULL DEFAULT '0',\n" +
 			"  `USER` varchar(16) NOT NULL DEFAULT '',\n" +
 			"  `HOST` varchar(64) NOT NULL DEFAULT '',\n" +
 			"  `DB` varchar(64) DEFAULT NULL,\n" +
 			"  `COMMAND` varchar(16) NOT NULL DEFAULT '',\n" +
-			"  `TIME` int(7) unsigned DEFAULT '0',\n" +
+			"  `TIME` int(7) NOT NULL DEFAULT '0',\n" +
 			"  `STATE` varchar(7) DEFAULT NULL,\n" +
-			"  `INFO` binary(512) unsigned DEFAULT NULL,\n" +
+			"  `INFO` binary(512) DEFAULT NULL,\n" +
 			"  `MEM` bigint(21) unsigned DEFAULT NULL,\n" +
 			"  `TxnStart` varchar(64) NOT NULL DEFAULT ''\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
@@ -851,4 +851,22 @@ func (s *testTableSuite) TestSelectHiddenColumn(c *C) {
 	colInfo[1].Hidden = true
 	colInfo[2].Hidden = true
 	tk.MustQuery("select count(*) from INFORMATION_SCHEMA.COLUMNS where table_name = 'hidden'").Check(testkit.Rows("0"))
+}
+
+func (s *testTableSuite) TestFormatVersion(c *C) {
+	// Test for defaultVersions.
+	defaultVersions := []string{"5.7.25-TiDB-None", "5.7.25-TiDB-8.0.18", "5.7.25-TiDB-8.0.18-beta.1", "5.7.25-TiDB-v4.0.0-beta-446-g5268094af"}
+	defaultRes := []string{"None", "8.0.18", "8.0.18-beta.1", "4.0.0-beta"}
+	for i, v := range defaultVersions {
+		version := infoschema.FormatVersion(v, true)
+		c.Assert(version, Equals, defaultRes[i])
+	}
+
+	// Test for versions user set.
+	versions := []string{"8.0.18", "5.7.25-TiDB", "8.0.18-TiDB-4.0.0-beta.1"}
+	res := []string{"8.0.18", "5.7.25-TiDB", "8.0.18-TiDB-4.0.0-beta.1"}
+	for i, v := range versions {
+		version := infoschema.FormatVersion(v, false)
+		c.Assert(version, Equals, res[i])
+	}
 }

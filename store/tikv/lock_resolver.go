@@ -120,7 +120,7 @@ type TxnStatus struct {
 func (s TxnStatus) IsCommitted() bool { return s.ttl == 0 && s.commitTS > 0 }
 
 // CommitTS returns the txn's commitTS. It is valid iff `IsCommitted` is true.
-func (s TxnStatus) CommitTS() uint64 { return uint64(s.commitTS) }
+func (s TxnStatus) CommitTS() uint64 { return s.commitTS }
 
 // By default, locks after 3000ms is considered unusual (the client created the
 // lock might be dead). Other client may cleanup this kind of lock.
@@ -224,7 +224,7 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 			return false, errors.New("TiDB ask TiKV to rollback locks but it doesn't, the protocol maybe wrong")
 		}
 
-		txnInfos[l.TxnID] = uint64(status.commitTS)
+		txnInfos[l.TxnID] = status.commitTS
 	}
 	logutil.BgLogger().Info("BatchResolveLocks: lookup txn status",
 		zap.Duration("cost time", time.Since(startTime)),

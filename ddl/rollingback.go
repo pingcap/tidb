@@ -14,6 +14,8 @@
 package ddl
 
 import (
+	"fmt"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
@@ -126,6 +128,34 @@ func rollingbackAddColumn(t *meta.Meta, job *model.Job) (ver int64, err error) {
 	return ver, errCancelledDDLJob
 }
 
+func rollingbackAddColumns(t *meta.Meta, job *model.Job) (ver int64, err error) {
+	job.State = model.JobStateRollingback
+	tblInfo, columnInfos, _, _, _, _, err := checkAddColumns(t, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	if len(columnInfos) == 0 {
+		job.State = model.JobStateCancelled
+		return ver, errCancelledDDLJob
+	}
+
+	colNames := make([]model.CIStr, len(columnInfos))
+	originalState := columnInfos[0].State
+	for i, columnInfo := range columnInfos {
+		columnInfos[i].State = model.StateDeleteOnly
+		colNames[i] = columnInfo.Name
+	}
+	ifExists := make([]bool, len(columnInfos))
+
+	job.SchemaState = model.StateDeleteOnly
+	job.Args = []interface{}{colNames, ifExists}
+	ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != columnInfos[0].State)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	return ver, errCancelledDDLJob
+}
+
 func rollingbackDropColumn(t *meta.Meta, job *model.Job) (ver int64, err error) {
 	tblInfo, colInfo, err := checkDropColumn(t, job)
 	if err != nil {
@@ -140,6 +170,24 @@ func rollingbackDropColumn(t *meta.Meta, job *model.Job) (ver int64, err error) 
 	}
 	// In the state of drop column `write only -> delete only -> reorganization`,
 	// We can not rollback now, so just continue to drop column.
+	job.State = model.JobStateRunning
+	return ver, nil
+}
+
+func rollingbackDropColumns(t *meta.Meta, job *model.Job) (ver int64, err error) {
+	tblInfo, colInfos, _, err := checkDropColumns(t, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	// StatePublic means when the job is not running yet.
+	if colInfos[0].State == model.StatePublic {
+		job.State = model.JobStateCancelled
+		job.FinishTableJob(model.JobStateRollbackDone, model.StatePublic, ver, tblInfo)
+		return ver, errCancelledDDLJob
+	}
+	// In the state of drop columns `write only -> delete only -> reorganization`,
+	// We can not rollback now, so just continue to drop columns.
 	job.State = model.JobStateRunning
 	return ver, nil
 }
@@ -273,6 +321,8 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 	switch job.Type {
 	case model.ActionAddColumn:
 		ver, err = rollingbackAddColumn(t, job)
+	case model.ActionAddColumns:
+		ver, err = rollingbackAddColumns(t, job)
 	case model.ActionAddIndex:
 		ver, err = rollingbackAddIndex(w, d, t, job, false)
 	case model.ActionAddPrimaryKey:
@@ -281,6 +331,8 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 		ver, err = rollingbackAddTablePartition(t, job)
 	case model.ActionDropColumn:
 		ver, err = rollingbackDropColumn(t, job)
+	case model.ActionDropColumns:
+		ver, err = rollingbackDropColumns(t, job)
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
 		ver, err = rollingbackDropIndex(t, job)
 	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence:
@@ -311,7 +363,13 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 			logutil.Logger(w.logCtx).Info("[ddl] the DDL job is cancelled normally", zap.String("job", job.String()), zap.Error(err))
 		}
 
-		job.Error = toTError(err)
+		if job.Error == nil {
+			job.Error = toTError(err)
+		}
+		if !job.Error.Equal(errCancelledDDLJob) {
+			job.Error = job.Error.Class().Synthesize(job.Error.Code(),
+				fmt.Sprintf("DDL job rollback, error msg: %s", job.Error.ToSQLError().Message))
+		}
 		job.ErrorCount++
 	}
 	return

@@ -129,7 +129,7 @@ func encodeUint(buf []byte, uVal uint64) []byte {
 		binary.LittleEndian.PutUint32(tmp[:], uint32(uVal))
 		buf = append(buf, tmp[:4]...)
 	} else {
-		binary.LittleEndian.PutUint64(tmp[:], uint64(uVal))
+		binary.LittleEndian.PutUint64(tmp[:], uVal)
 		buf = append(buf, tmp[:8]...)
 	}
 	return buf
