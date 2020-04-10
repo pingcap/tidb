@@ -3,6 +3,7 @@ package cascades_test
 import (
 	"context"
 	"flag"
+	"fmt"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/tidb/domain"
@@ -143,13 +144,14 @@ func init() {
 func (s *testTPCHTransformationSuite) TestTPCHQueries(c *C) {
 	var input []string
 	var output []struct {
+		Name string
 		SQL string
 		InitMemo []string
 		Result []string
 	}
 	s.testData.GetTestCases(c, &input, &output)
 	for i, sql := range input {
-		if queryNumber > 0 && queryNumber != i {
+		if queryNumber > 0 && queryNumber != i+1 {
 			continue
 		}
 		println(sql)
@@ -163,6 +165,7 @@ func (s *testTPCHTransformationSuite) TestTPCHQueries(c *C) {
 		group, err := s.optimizer.LogicalOptimize(s.sctx, logic)
 		c.Assert(err, IsNil)
 		s.testData.OnRecord(func() {
+			output[i].Name = fmt.Sprintf("Q%d", i+1)
 			output[i].SQL = sql
 			output[i].InitMemo = initMemo
 			output[i].Result = cascades.ToString(group)
