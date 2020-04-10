@@ -755,6 +755,10 @@ func (b *builtinCastRealAsIntSig) evalInt(row chunk.Row) (res int64, isNull bool
 		uintVal, err = types.ConvertFloatToUint(sc, val, types.IntergerUnsignedUpperBound(mysql.TypeLonglong), mysql.TypeLonglong)
 		res = int64(uintVal)
 	}
+	err = b.ctx.GetSessionVars().StmtCtx.HandleOverflow(err, err)
+	if err != nil {
+		return res, false, err
+	}
 	return res, isNull, err
 }
 
