@@ -1294,7 +1294,6 @@ func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, lastStm
 	if rs != nil {
 		connStatus := atomic.LoadInt32(&cc.status)
 		if connStatus == connStatusShutdown || connStatus == connStatusWaitShutdown {
-			terror.Call(rs.Close)
 			return executor.ErrQueryInterrupted
 		}
 
