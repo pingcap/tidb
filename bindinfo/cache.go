@@ -86,8 +86,8 @@ func (b *Binding) SinceUpdateTime() (time.Duration, error) {
 	return time.Since(updateTime), nil
 }
 
-// BucketIdSuffix return the suffix of binding's ID for the baseline.
-func (b *Binding) BucketIdSuffix() string {
+// BucketIDSuffix returns the suffix of binding's ID for the baseline.
+func (b *Binding) BucketIDSuffix() string {
 	return "$BucketID=" + strconv.FormatInt(b.BucketID, 10)
 }
 
@@ -159,12 +159,12 @@ func (br *BindRecord) prepareHintsForBinding(sctx sessionctx.Context, bind *Bind
 	bind.Hint = hintsSet
 	bind.ID = hintsStr
 	if bind.BindType == Baseline {
-		bind.ID += bind.BucketIdSuffix()
+		bind.ID += bind.BucketIDSuffix()
 	}
 	return nil
 }
 
-// prepareHints builds ID and Hint for BindRecord. If sctx is not nil, we check if
+// PrepareHints builds ID and Hint for BindRecord. If sctx is not nil, we check if
 // the BindSQL is still valid.
 func (br *BindRecord) PrepareHints(sctx sessionctx.Context) (err error) {
 	p := parser.New()

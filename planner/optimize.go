@@ -101,7 +101,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	// If the best bestPlan is in baselines, just use it.
 	baseline := bindRecord.FindBaseline(bucketID)
 	if baseline != nil && baseline.Status == bindinfo.Using &&
-		baseline.ID == bestPlanHintStr+baseline.BucketIdSuffix() {
+		baseline.ID == bestPlanHintStr+baseline.BucketIDSuffix() {
 		if sctx.GetSessionVars().UsePlanBaselines {
 			stmtHints, warns = handleStmtHints(baseline.Hint.GetFirstTableHints())
 		}
