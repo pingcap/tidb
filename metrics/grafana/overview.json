@@ -235,6 +235,13 @@
               "intervalFactor": 2,
               "legendFormat": "Kafka_exporter",
               "refId": "L"
+            },
+            {
+              "expr": "\ncount(probe_success{group=\"tiflash\"} == 1)",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "TiFlash",
+              "refId": "M"
             }
           ],
           "timeFrom": "1s",
@@ -406,6 +413,13 @@
               "intervalFactor": 2,
               "legendFormat": "Kafka_exporter",
               "refId": "L"
+            },
+            {
+              "expr": "\ncount(probe_success{group=\"tiflash\"} == 0)",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "TiFlash",
+              "refId": "M"
             }
           ],
           "timeFrom": "1s",
