@@ -321,7 +321,10 @@ func (s *session) SetCollation(coID int) error {
 	for _, v := range variable.SetNamesVariables {
 		terror.Log(s.sessionVars.SetSystemVar(v, cs))
 	}
-	terror.Log(s.sessionVars.SetSystemVar(variable.CollationConnection, co))
+	err = s.sessionVars.SetSystemVar(variable.CollationConnection, co)
+	if err != nil {
+		logutil.BgLogger().Warn(err.Error())
+	}
 	return nil
 }
 

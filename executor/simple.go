@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
@@ -529,8 +528,14 @@ func (e *SimpleExec) executeUse(s *ast.UseStmt) error {
 	// The server sets this variable whenever the default database changes.
 	// See http://dev.mysql.com/doc/refman/5.7/en/server-system-variables.html#sysvar_character_set_database
 	sessionVars := e.ctx.GetSessionVars()
-	terror.Log(sessionVars.SetSystemVar(variable.CharsetDatabase, dbinfo.Charset))
-	terror.Log(sessionVars.SetSystemVar(variable.CollationDatabase, dbinfo.Collate))
+	err := sessionVars.SetSystemVar(variable.CharsetDatabase, dbinfo.Charset)
+	if err != nil {
+		logutil.BgLogger().Warn(err.Error())
+	}
+	err = sessionVars.SetSystemVar(variable.CollationDatabase, dbinfo.Collate)
+	if err != nil {
+		logutil.BgLogger().Warn(err.Error())
+	}
 	return nil
 }
 
