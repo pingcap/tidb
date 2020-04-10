@@ -987,16 +987,16 @@ func (e *Explain) prepareOperatorInfo(p Plan, taskType, driverSide, indent strin
 		}
 
 		memoryInfo := "N/A"
-		memTracker := e.ctx.GetSessionVars().StmtCtx.MemTracker.SearchTracker(p.ExplainID().String())
-		if memTracker != nil {
-			memoryInfo = memTracker.BytesToString(memTracker.MaxConsumed())
-		}
+		//memTracker := e.ctx.GetSessionVars().StmtCtx.MemTracker.SearchTracker(p.ExplainID().String())
+		//if memTracker != nil {
+		//	memoryInfo = memTracker.BytesToString(memTracker.MaxConsumed())
+		//}
 
 		diskInfo := "N/A"
-		diskTracker := e.ctx.GetSessionVars().StmtCtx.DiskTracker.SearchTracker(p.ExplainID().String())
-		if diskTracker != nil {
-			diskInfo = diskTracker.BytesToString(diskTracker.MaxConsumed())
-		}
+		//diskTracker := e.ctx.GetSessionVars().StmtCtx.DiskTracker.SearchTracker(p.ExplainID().String())
+		//if diskTracker != nil {
+		//	diskInfo = diskTracker.BytesToString(diskTracker.MaxConsumed())
+		//}
 
 		row = []string{id, estRows, actRows, taskType, accessObject, analyzeInfo, operatorInfo, memoryInfo, diskInfo}
 	} else {

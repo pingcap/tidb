@@ -49,13 +49,12 @@ func (s *testSuite) TestSetLabel(c *C) {
 	c.Assert(tracker.BytesConsumed(), Equals, int64(0))
 	c.Assert(tracker.bytesLimit, Equals, int64(-1))
 	c.Assert(tracker.parent, IsNil)
-	c.Assert(len(tracker.mu.children), Equals, 0)
+
 	tracker.SetLabel(stringutil.StringerStr("new label"))
 	c.Assert(tracker.label.String(), Equals, "new label")
 	c.Assert(tracker.BytesConsumed(), Equals, int64(0))
 	c.Assert(tracker.bytesLimit, Equals, int64(-1))
 	c.Assert(tracker.parent, IsNil)
-	c.Assert(len(tracker.mu.children), Equals, 0)
 }
 
 func (s *testSuite) TestConsume(c *C) {
@@ -142,17 +141,12 @@ func (s *testSuite) TestAttachTo(c *C) {
 	c.Assert(child.BytesConsumed(), Equals, int64(100))
 	c.Assert(oldParent.BytesConsumed(), Equals, int64(100))
 	c.Assert(child.parent, DeepEquals, oldParent)
-	c.Assert(len(oldParent.mu.children), Equals, 1)
-	c.Assert(oldParent.mu.children[0], DeepEquals, child)
 
 	child.AttachTo(newParent)
 	c.Assert(child.BytesConsumed(), Equals, int64(100))
 	c.Assert(oldParent.BytesConsumed(), Equals, int64(0))
 	c.Assert(newParent.BytesConsumed(), Equals, int64(100))
 	c.Assert(child.parent, DeepEquals, newParent)
-	c.Assert(len(newParent.mu.children), Equals, 1)
-	c.Assert(newParent.mu.children[0], DeepEquals, child)
-	c.Assert(len(oldParent.mu.children), Equals, 0)
 }
 
 func (s *testSuite) TestDetach(c *C) {
@@ -162,17 +156,14 @@ func (s *testSuite) TestDetach(c *C) {
 	child.AttachTo(parent)
 	c.Assert(child.BytesConsumed(), Equals, int64(100))
 	c.Assert(parent.BytesConsumed(), Equals, int64(100))
-	c.Assert(len(parent.mu.children), Equals, 1)
-	c.Assert(parent.mu.children[0], DeepEquals, child)
 
 	child.Detach()
 	c.Assert(child.BytesConsumed(), Equals, int64(100))
 	c.Assert(parent.BytesConsumed(), Equals, int64(0))
-	c.Assert(len(parent.mu.children), Equals, 0)
 	c.Assert(child.parent, IsNil)
 }
 
-func (s *testSuite) TestReplaceChild(c *C) {
+func (s *testSuite) TestSucceed(c *C) {
 	oldChild := NewTracker(stringutil.StringerStr("old child"), -1)
 	oldChild.Consume(100)
 	newChild := NewTracker(stringutil.StringerStr("new child"), -1)
@@ -182,23 +173,18 @@ func (s *testSuite) TestReplaceChild(c *C) {
 	oldChild.AttachTo(parent)
 	c.Assert(parent.BytesConsumed(), Equals, int64(100))
 
-	parent.ReplaceChild(oldChild, newChild)
+	Succeed(oldChild, newChild)
 	c.Assert(parent.BytesConsumed(), Equals, int64(500))
-	c.Assert(len(parent.mu.children), Equals, 1)
-	c.Assert(parent.mu.children[0], DeepEquals, newChild)
 	c.Assert(newChild.parent, DeepEquals, parent)
 	c.Assert(oldChild.parent, IsNil)
 
-	parent.ReplaceChild(oldChild, nil)
+	Succeed(oldChild, nil)
 	c.Assert(parent.BytesConsumed(), Equals, int64(500))
-	c.Assert(len(parent.mu.children), Equals, 1)
-	c.Assert(parent.mu.children[0], DeepEquals, newChild)
 	c.Assert(newChild.parent, DeepEquals, parent)
 	c.Assert(oldChild.parent, IsNil)
 
-	parent.ReplaceChild(newChild, nil)
+	Succeed(newChild, nil)
 	c.Assert(parent.BytesConsumed(), Equals, int64(0))
-	c.Assert(len(parent.mu.children), Equals, 0)
 	c.Assert(newChild.parent, IsNil)
 	c.Assert(oldChild.parent, IsNil)
 
@@ -209,7 +195,7 @@ func (s *testSuite) TestReplaceChild(c *C) {
 	node3.AttachTo(node2)
 	node3.Consume(100)
 	c.Assert(node1.BytesConsumed(), Equals, int64(100))
-	node2.ReplaceChild(node3, nil)
+	Succeed(node3, nil)
 	c.Assert(node2.BytesConsumed(), Equals, int64(0))
 	c.Assert(node1.BytesConsumed(), Equals, int64(0))
 }

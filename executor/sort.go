@@ -523,7 +523,7 @@ func (e *TopNExec) doCompaction() error {
 		newRowPtrs = append(newRowPtrs, newRowPtr)
 	}
 	newRowChunks.GetMemTracker().SetLabel(rowChunksLabel)
-	e.memTracker.ReplaceChild(e.rowChunks.GetMemTracker(), newRowChunks.GetMemTracker())
+	memory.Succeed(e.rowChunks.GetMemTracker(), newRowChunks.GetMemTracker())
 	e.rowChunks = newRowChunks
 
 	e.memTracker.Consume(int64(-8 * len(e.rowPtrs)))

@@ -38,10 +38,6 @@ import (
 // 1. Only "BytesConsumed()", "Consume()" and "AttachTo()" are thread-safe.
 // 2. Other operations of a Tracker tree is not thread-safe.
 type Tracker struct {
-	mu struct {
-		sync.Mutex
-		children []*Tracker // The children memory trackers
-	}
 	actionMu struct {
 		sync.Mutex
 		actionOnExceed ActionOnExceed
@@ -117,9 +113,6 @@ func (t *Tracker) AttachTo(parent *Tracker) {
 	if t.parent != nil {
 		t.parent.remove(t)
 	}
-	parent.mu.Lock()
-	parent.mu.children = append(parent.mu.children, t)
-	parent.mu.Unlock()
 
 	t.parent = parent
 	t.parent.Consume(t.BytesConsumed())
@@ -131,52 +124,34 @@ func (t *Tracker) Detach() {
 		return
 	}
 	t.parent.remove(t)
-	t.mu.Lock()
-	defer t.mu.Unlock()
 	t.parent = nil
 }
 
 func (t *Tracker) remove(oldChild *Tracker) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	for i, child := range t.mu.children {
-		if child != oldChild {
-			continue
-		}
-
-		t.Consume(-oldChild.BytesConsumed())
-		oldChild.parent = nil
-		t.mu.children = append(t.mu.children[:i], t.mu.children[i+1:]...)
-		break
-	}
+	t.Consume(-oldChild.BytesConsumed())
+	oldChild.parent = nil
 }
 
 // ReplaceChild removes the old child specified in "oldChild" and add a new
 // child specified in "newChild". old child's memory consumption will be
 // removed and new child's memory consumption will be added.
-func (t *Tracker) ReplaceChild(oldChild, newChild *Tracker) {
+func Succeed(oldChild, newChild *Tracker) {
+	if oldChild.parent == nil {
+		return
+	}
+	parent := oldChild.parent
 	if newChild == nil {
-		t.remove(oldChild)
+		parent.remove(oldChild)
 		return
 	}
 
 	newConsumed := newChild.BytesConsumed()
-	newChild.parent = t
+	newChild.parent = parent
 
-	t.mu.Lock()
-	for i, child := range t.mu.children {
-		if child != oldChild {
-			continue
-		}
+	newConsumed -= oldChild.BytesConsumed()
+	oldChild.parent = nil
 
-		newConsumed -= oldChild.BytesConsumed()
-		oldChild.parent = nil
-		t.mu.children[i] = newChild
-		break
-	}
-	t.mu.Unlock()
-
-	t.Consume(newConsumed)
+	parent.Consume(newConsumed)
 }
 
 // Consume is used to consume a memory usage. "bytes" can be a negative value,
@@ -217,21 +192,6 @@ func (t *Tracker) MaxConsumed() int64 {
 	return atomic.LoadInt64(&t.maxConsumed)
 }
 
-// SearchTracker searches the specific tracker under this tracker.
-func (t *Tracker) SearchTracker(label string) *Tracker {
-	if t.label.String() == label {
-		return t
-	}
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	for _, child := range t.mu.children {
-		if result := child.SearchTracker(label); result != nil {
-			return result
-		}
-	}
-	return nil
-}
-
 // String returns the string representation of this Tracker tree.
 func (t *Tracker) String() string {
 	buffer := bytes.NewBufferString("\n")
@@ -246,13 +206,6 @@ func (t *Tracker) toString(indent string, buffer *bytes.Buffer) {
 	}
 	fmt.Fprintf(buffer, "%s  \"consumed\": %s\n", indent, t.BytesToString(t.BytesConsumed()))
 
-	t.mu.Lock()
-	for i := range t.mu.children {
-		if t.mu.children[i] != nil {
-			t.mu.children[i].toString(indent+"  ", buffer)
-		}
-	}
-	t.mu.Unlock()
 	buffer.WriteString(indent + "}\n")
 }
 
