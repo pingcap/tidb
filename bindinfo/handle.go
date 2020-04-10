@@ -635,16 +635,15 @@ func (h *BindHandle) logicalDeleteBindInfoSQL(originalSQL, db string, updateTs t
 }
 
 func (h *BindHandle) logicalDeleteNormalizedBindSQL(originalSQL, db string, updateTs types.Time, binding *Binding) string {
-	sql := fmt.Sprintf(`UPDATE mysql.bind_info SET status=%s,update_time=%s WHERE original_sql=%s and default_db=%s and bind_type=%s`,
+	sql := fmt.Sprintf(`UPDATE mysql.bind_info SET status=%s,update_time=%s WHERE original_sql=%s and default_db=%s`,
 		expression.Quote(deleted),
 		expression.Quote(updateTs.String()),
 		expression.Quote(originalSQL),
-		expression.Quote(db),
-		strconv.FormatInt(int64(binding.BindType), 10))
+		expression.Quote(db))
 	if binding == nil {
 		return sql
 	}
-	return sql + fmt.Sprintf(` and bind_sql=%s`, expression.Quote(binding.BindSQL))
+	return sql + fmt.Sprintf(`and bind_type=%s and bind_sql=%s`, expression.Quote(binding.BindSQL), strconv.FormatInt(int64(binding.BindType), 10))
 }
 
 // CaptureNormalizedBinding is used to automatically capture plan normalized binding.
