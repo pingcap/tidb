@@ -2084,6 +2084,13 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	c.Assert(last, Equals, "bigint")
 	tk.MustExec(`drop table tb5;`)
 
+	tk.MustExec(`create table tb5(a double(64));`)
+	tk.MustExec(`insert into test.tb5 (a) values (18446744073709551616);`)
+	tk.MustExec(`insert into test.tb5 (a) values (184467440737095516160);`)
+	result = tk.MustQuery(`select cast(a as unsigned) from test.tb5;`)
+	result.Check(testkit.Rows("9223372036854775807", "9223372036854775807"))
+	tk.MustExec(`drop table tb5`)
+
 	// test builtinCastIntAsDecimalSig
 	tk.MustExec(`create table tb5(a bigint(64) unsigned, b decimal(64, 10));`)
 	tk.MustExec(`insert into tb5 (a, b) values (9223372036854775808, 9223372036854775808);`)
