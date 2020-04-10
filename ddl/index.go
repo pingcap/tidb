@@ -15,7 +15,6 @@ package ddl
 
 import (
 	"context"
-	"github.com/pingcap/tidb/meta/autoid"
 	"math"
 	"strconv"
 	"sync/atomic"
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
