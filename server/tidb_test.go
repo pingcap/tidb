@@ -161,13 +161,6 @@ func (ts *TidbTestSuite) TestStatusAPI(c *C) {
 }
 
 func (ts *TidbTestSuite) TestStatusPort(c *C) {
-	var err error
-	ts.store, err = mockstore.NewMockTikvStore()
-	session.DisableStats4Test()
-	c.Assert(err, IsNil)
-	ts.domain, err = session.BootstrapSession(ts.store)
-	c.Assert(err, IsNil)
-	ts.tidbdrv = NewTiDBDriver(ts.store)
 	cfg := config.NewConfig()
 	cfg.Port = 4008
 	cfg.Status.ReportStatus = true
