@@ -54,6 +54,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -1264,41 +1265,9 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 		return err
 	}
 
-	var rs ResultSet
 	for i, stmt := range stmts {
-		rs, err = cc.ctx.ExecuteStmt(ctx, stmt)
-		if err != nil {
-			if rs != nil {
-				terror.Call(rs.Close)
-			}
+		if err = cc.handleStmt(ctx, stmt, i == len(stmts)-1); err != nil {
 			break
-		}
-
-		status := cc.ctx.Status()
-		if i != len(stmts)-1 {
-			status |= mysql.ServerMoreResultsExists
-		}
-
-		if rs != nil {
-			connStatus := atomic.LoadInt32(&cc.status)
-			if connStatus == connStatusShutdown || connStatus == connStatusWaitShutdown {
-				terror.Call(rs.Close)
-				err = executor.ErrQueryInterrupted
-				break
-			}
-
-			err = cc.writeResultset(ctx, rs, false, status, 0)
-
-			// Do remember to close it to avoid resource leak!
-			terror.Call(rs.Close)
-
-			if err != nil {
-				break
-			}
-		} else {
-			if err = cc.handleQuerySpecial(ctx, status); err != nil {
-				break
-			}
 		}
 	}
 
@@ -1306,6 +1275,40 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 		metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err)).Inc()
 	}
 	return err
+}
+
+func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, lastStmt bool) error {
+	rs, err := cc.ctx.ExecuteStmt(ctx, stmt)
+	if rs != nil {
+		defer terror.Call(rs.Close)
+	}
+	if err != nil {
+		return err
+	}
+
+	status := cc.ctx.Status()
+	if !lastStmt {
+		status |= mysql.ServerMoreResultsExists
+	}
+
+	if rs != nil {
+		connStatus := atomic.LoadInt32(&cc.status)
+		if connStatus == connStatusShutdown || connStatus == connStatusWaitShutdown {
+			terror.Call(rs.Close)
+			return executor.ErrQueryInterrupted
+		}
+
+		err = cc.writeResultset(ctx, rs, false, status, 0)
+		if err != nil {
+			return err
+		}
+	} else {
+		err = cc.handleQuerySpecial(ctx, status)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (cc *clientConn) handleQuerySpecial(ctx context.Context, status uint16) error {

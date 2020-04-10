@@ -67,8 +67,10 @@ type QueryCtx interface {
 	// CurrentDB returns current DB.
 	CurrentDB() string
 
-	// Execute executes a SQL statement.
+	// ExecuteStmt executes a SQL statement.
 	ExecuteStmt(context.Context, ast.StmtNode) (ResultSet, error)
+
+	// Parse parses a SQL to statement node.
 	Parse(ctx context.Context, sql string) ([]ast.StmtNode, error)
 
 	// SetClientCapability sets client capability flags
