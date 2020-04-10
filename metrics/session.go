@@ -113,8 +113,13 @@ var (
 			Namespace: "tidb",
 			Subsystem: "session",
 			Name:      "statement_pessimistic_retry_count",
+<<<<<<< HEAD
 			Help:      "Bucketed historgram of statement pessimistic retry count",
 			Buckets:   prometheus.ExponentialBuckets(1, 1.5, 14), // 1 ~ 291
+=======
+			Help:      "Bucketed histogram of statement pessimistic retry count",
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 16), // 1 ~ 65536
+>>>>>>> b02b902... metrics: enlarge statement retry count upper limit (#16196)
 		})
 
 	StatementLockKeysCount = prometheus.NewCounter(
