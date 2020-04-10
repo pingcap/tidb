@@ -24,3 +24,6 @@ type Tracker = memory.Tracker
 //	1. "label" is the label used in the usage string.
 //	2. "bytesLimit <= 0" means no limit.
 var NewTracker = memory.NewTracker
+
+// NewGlobalTracker creates a global tracker
+var NewGlobalTracker = memory.NewGlobalTracker

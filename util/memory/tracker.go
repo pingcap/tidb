@@ -52,6 +52,7 @@ type Tracker struct {
 	bytesLimit    int64        // bytesLimit <= 0 means no limit.
 	maxConsumed   int64        // max number of bytes consumed during execution.
 	parent        *Tracker     // The parent memory tracker.
+	globalTracker bool         // indicate whether this tracker is used as global tracker
 }
 
 // NewTracker creates a memory tracker.
@@ -63,6 +64,18 @@ func NewTracker(label fmt.Stringer, bytesLimit int64) *Tracker {
 		bytesLimit: bytesLimit,
 	}
 	t.actionMu.actionOnExceed = &LogOnExceed{}
+	t.globalTracker = false
+	return t
+}
+
+// NewGlobalTracker creates a global tracker
+func NewGlobalTracker(label fmt.Stringer, bytesLimit int64) *Tracker {
+	t := &Tracker{
+		label:      label,
+		bytesLimit: bytesLimit,
+	}
+	t.actionMu.actionOnExceed = &LogOnExceed{}
+	t.globalTracker = true
 	return t
 }
 
@@ -113,13 +126,19 @@ func (t *Tracker) Label() fmt.Stringer {
 // AttachTo attaches this memory tracker as a child to another Tracker. If it
 // already has a parent, this function will remove it from the old parent.
 // Its consumed memory usage is used to update all its ancestors.
+// If the tracker is globalTracker, it would directly return as globalTracker couldn't have parent
 func (t *Tracker) AttachTo(parent *Tracker) {
+	if t.globalTracker {
+		return
+	}
 	if t.parent != nil {
 		t.parent.remove(t)
 	}
-	parent.mu.Lock()
-	parent.mu.children = append(parent.mu.children, t)
-	parent.mu.Unlock()
+	if !parent.globalTracker {
+		parent.mu.Lock()
+		parent.mu.children = append(parent.mu.children, t)
+		parent.mu.Unlock()
+	}
 
 	t.parent = parent
 	t.parent.Consume(t.BytesConsumed())
@@ -131,23 +150,29 @@ func (t *Tracker) Detach() {
 		return
 	}
 	t.parent.remove(t)
-	t.mu.Lock()
-	defer t.mu.Unlock()
 	t.parent = nil
 }
 
+// remove the target child tracker from this tracker
+// If this tracker is a global tracker, it would only release the quota
+// as it wound'nt persis its children
 func (t *Tracker) remove(oldChild *Tracker) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	for i, child := range t.mu.children {
-		if child != oldChild {
-			continue
-		}
+	if !t.globalTracker {
+		t.mu.Lock()
+		defer t.mu.Unlock()
+		for i, child := range t.mu.children {
+			if child != oldChild {
+				continue
+			}
 
+			t.Consume(-oldChild.BytesConsumed())
+			oldChild.parent = nil
+			t.mu.children = append(t.mu.children[:i], t.mu.children[i+1:]...)
+			break
+		}
+	} else {
 		t.Consume(-oldChild.BytesConsumed())
 		oldChild.parent = nil
-		t.mu.children = append(t.mu.children[:i], t.mu.children[i+1:]...)
-		break
 	}
 }
 
@@ -162,19 +187,20 @@ func (t *Tracker) ReplaceChild(oldChild, newChild *Tracker) {
 
 	newConsumed := newChild.BytesConsumed()
 	newChild.parent = t
+	newConsumed -= oldChild.BytesConsumed()
 
-	t.mu.Lock()
-	for i, child := range t.mu.children {
-		if child != oldChild {
-			continue
+	if !t.globalTracker {
+		t.mu.Lock()
+		for i, child := range t.mu.children {
+			if child != oldChild {
+				continue
+			}
+
+			oldChild.parent = nil
+			t.mu.children[i] = newChild
+			break
 		}
-
-		newConsumed -= oldChild.BytesConsumed()
-		oldChild.parent = nil
-		t.mu.children[i] = newChild
-		break
 	}
-	t.mu.Unlock()
 
 	t.Consume(newConsumed)
 }
@@ -222,6 +248,9 @@ func (t *Tracker) SearchTracker(label string) *Tracker {
 	if t.label.String() == label {
 		return t
 	}
+	if t.globalTracker {
+		return nil
+	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	for _, child := range t.mu.children {
@@ -246,13 +275,15 @@ func (t *Tracker) toString(indent string, buffer *bytes.Buffer) {
 	}
 	fmt.Fprintf(buffer, "%s  \"consumed\": %s\n", indent, t.BytesToString(t.BytesConsumed()))
 
-	t.mu.Lock()
-	for i := range t.mu.children {
-		if t.mu.children[i] != nil {
-			t.mu.children[i].toString(indent+"  ", buffer)
+	if !t.globalTracker {
+		t.mu.Lock()
+		for i := range t.mu.children {
+			if t.mu.children[i] != nil {
+				t.mu.children[i].toString(indent+"  ", buffer)
+			}
 		}
+		t.mu.Unlock()
 	}
-	t.mu.Unlock()
 	buffer.WriteString(indent + "}\n")
 }
 

@@ -153,6 +153,19 @@ func (s *testSuite) TestAttachTo(c *C) {
 	c.Assert(len(newParent.mu.children), Equals, 1)
 	c.Assert(newParent.mu.children[0], DeepEquals, child)
 	c.Assert(len(oldParent.mu.children), Equals, 0)
+
+	g := NewGlobalTracker(stringutil.StringerStr("globalRoot"), -1)
+	c1 := NewTracker(stringutil.StringerStr("c1"), -1)
+	c2 := NewTracker(stringutil.StringerStr("c2"), -1)
+
+	c2.Consume(100)
+	c2.AttachTo(c1)
+	c1.AttachTo(g)
+	c.Assert(g.BytesConsumed(), Equals, int64(100))
+	c.Assert(len(c1.mu.children), Equals, 1)
+	c.Assert(len(g.mu.children), Equals, 0)
+	c.Assert(c2.parent, DeepEquals, c1)
+	c.Assert(c1.parent, DeepEquals, g)
 }
 
 func (s *testSuite) TestDetach(c *C) {
@@ -170,6 +183,19 @@ func (s *testSuite) TestDetach(c *C) {
 	c.Assert(parent.BytesConsumed(), Equals, int64(0))
 	c.Assert(len(parent.mu.children), Equals, 0)
 	c.Assert(child.parent, IsNil)
+
+	g := NewGlobalTracker(stringutil.StringerStr("globalRoot"), -1)
+	c1 := NewTracker(stringutil.StringerStr("c1"), -1)
+
+	c1.Consume(100)
+	c1.AttachTo(g)
+	c.Assert(g.BytesConsumed(), Equals, int64(100))
+	c.Assert(c1.parent, Equals, g)
+	c.Assert(len(g.mu.children), Equals, 0)
+
+	c1.Detach()
+	c.Assert(c1.parent, IsNil)
+	c.Assert(g.BytesConsumed(), Equals, int64(0))
 }
 
 func (s *testSuite) TestReplaceChild(c *C) {
@@ -212,6 +238,23 @@ func (s *testSuite) TestReplaceChild(c *C) {
 	node2.ReplaceChild(node3, nil)
 	c.Assert(node2.BytesConsumed(), Equals, int64(0))
 	c.Assert(node1.BytesConsumed(), Equals, int64(0))
+
+	g := NewGlobalTracker(stringutil.StringerStr("globalRoot"), -1)
+	c1 := NewTracker(stringutil.StringerStr("c1"), -1)
+	c2 := NewTracker(stringutil.StringerStr("c2"), -1)
+
+	c1.Consume(100)
+	c1.AttachTo(g)
+	c.Assert(g.BytesConsumed(), Equals, int64(100))
+	c.Assert(c1.parent, Equals, g)
+	c.Assert(len(g.mu.children), Equals, 0)
+
+	c2.Consume(200)
+	g.ReplaceChild(c1, c2)
+	c.Assert(g.BytesConsumed(), Equals, int64(200))
+	c.Assert(c1.parent, IsNil)
+	c.Assert(c2.parent, DeepEquals, g)
+	c.Assert(len(g.mu.children), Equals, 0)
 }
 
 func (s *testSuite) TestToString(c *C) {
@@ -250,6 +293,23 @@ func (s *testSuite) TestToString(c *C) {
   }
 }
 `)
+
+	g := NewGlobalTracker(stringutil.StringerStr("parent"), -1)
+
+	c1 := NewTracker(stringutil.StringerStr("child 1"), 1000)
+	c2 := NewTracker(stringutil.StringerStr("child 2"), -1)
+	c3 := NewTracker(stringutil.StringerStr("child 3"), -1)
+	c4 := NewTracker(stringutil.StringerStr("child 4"), -1)
+
+	c1.AttachTo(g)
+	c2.AttachTo(g)
+	c3.AttachTo(g)
+	c4.AttachTo(g)
+
+	child1.Consume(100)
+	child2.Consume(2 * 1024)
+	child3.Consume(3 * 1024 * 1024)
+	child4.Consume(4 * 1024 * 1024 * 1024)
 }
 
 func (s *testSuite) TestMaxConsumed(c *C) {
