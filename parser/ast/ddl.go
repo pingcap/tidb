@@ -1729,6 +1729,7 @@ const (
 	TableOptionEngine
 	TableOptionCharset
 	TableOptionCollate
+	TableOptionAutoIdCache
 	TableOptionAutoIncrement
 	TableOptionComment
 	TableOptionAvgRowLength
@@ -1835,6 +1836,10 @@ func (n *TableOption) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord(n.StrValue)
 	case TableOptionAutoIncrement:
 		ctx.WriteKeyWord("AUTO_INCREMENT ")
+		ctx.WritePlain("= ")
+		ctx.WritePlainf("%d", n.UintValue)
+	case TableOptionAutoIdCache:
+		ctx.WriteKeyWord("AUTO_ID_CACHE ")
 		ctx.WritePlain("= ")
 		ctx.WritePlainf("%d", n.UintValue)
 	case TableOptionComment:
