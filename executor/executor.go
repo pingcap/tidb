@@ -1564,10 +1564,11 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		DiskTracker: disk.NewTracker(stringutil.MemoizeStr(s.Text), -1),
 	}
 	// we only attach the GlobalDiskUsageTracker only when OOMUseTmpStorage is enabled and TempStorageQuota >= 0
-	if config.GetGlobalConfig().OOMUseTmpStorage && GlobalDiskUsageTracker != nil && config.GetGlobalConfig().TempStorageQuota >= 0 {
+	c := config.GetGlobalConfig()
+	if c.OOMUseTmpStorage && c.TempStorageQuota >= 0 && GlobalDiskUsageTracker != nil {
 		sc.DiskTracker.AttachTo(GlobalDiskUsageTracker)
 	}
-	switch config.GetGlobalConfig().OOMAction {
+	switch c.OOMAction {
 	case config.OOMActionCancel:
 		action := &memory.PanicOnExceed{ConnID: ctx.GetSessionVars().ConnectionID}
 		action.SetLogHook(domain.GetDomain(ctx).ExpensiveQueryHandle().LogOnQueryExceedMemQuota)
