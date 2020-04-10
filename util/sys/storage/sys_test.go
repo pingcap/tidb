@@ -11,26 +11,26 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tikvrpc
+package storage_test
 
 import (
 	"testing"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/kvproto/pkg/tikvpb"
+	"github.com/pingcap/tidb/util/sys/storage"
 )
 
 func TestT(t *testing.T) {
 	TestingT(t)
 }
 
-type testBatchCommand struct{}
-
-var _ = Suite(&testBatchCommand{})
-
-func (s *testBatchCommand) TestBatchResponse(c *C) {
-	resp := &tikvpb.BatchCommandsResponse_Response{}
-	batchResp, err := FromBatchCommandsResponse(resp)
-	c.Assert(batchResp == nil, IsTrue)
-	c.Assert(err != nil, IsTrue)
+func TestGetTargetDirectoryCapacity(t *testing.T) {
+	r, err := storage.GetTargetDirectoryCapacity(".")
+	if err != nil {
+		t.Fatal(t)
+	}
+	if r < 1 {
+		t.Fatalf("couldn't get capacity")
+	}
+	//TODO: check the value of r with `df` in linux
 }

@@ -722,7 +722,7 @@ func decodeKey(ctx sessionctx.Context, s string) string {
 		return s
 	}
 	// Auto decode byte if needed.
-	_, bs, err := codec.DecodeBytes([]byte(key), nil)
+	_, bs, err := codec.DecodeBytes(key, nil)
 	if err == nil {
 		key = bs
 	}

@@ -46,6 +46,7 @@ import (
 )
 
 var tikvTxnRegionsNumHistogramWithCoprocessor = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues("coprocessor")
+var tikvTxnRegionsNumHistogramWithBatchCoprocessor = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues("batch_coprocessor")
 
 // CopClient is coprocessor client.
 type CopClient struct {
@@ -56,6 +57,10 @@ type CopClient struct {
 
 // Send builds the request and gets the coprocessor iterator response.
 func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variables) kv.Response {
+	if req.StoreType == kv.TiFlash && req.BatchCop {
+		logutil.BgLogger().Debug("send batch requests")
+		return c.sendBatch(ctx, req, vars)
+	}
 	ctx = context.WithValue(ctx, txnStartKey, req.StartTs)
 	bo := NewBackoffer(ctx, copBuildTaskMaxBackoff).WithVars(vars)
 	tasks, err := buildCopTasks(bo, c.store.regionCache, &copRanges{mid: req.KeyRanges}, req)
@@ -565,7 +570,7 @@ func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan *copRes
 	select {
 	case resp, ok = <-respCh:
 		if it.memTracker != nil && resp != nil {
-			it.memTracker.Consume(-int64(resp.MemSize()))
+			it.memTracker.Consume(-resp.MemSize())
 		}
 	case <-it.finishCh:
 		exit = true
@@ -590,7 +595,7 @@ func (sender *copIteratorTaskSender) sendToTaskCh(t *copTask) (exit bool) {
 
 func (worker *copIteratorWorker) sendToRespCh(resp *copResponse, respCh chan<- *copResponse, checkOOM bool) (exit bool) {
 	if worker.memTracker != nil && checkOOM {
-		worker.memTracker.Consume(int64(resp.MemSize()))
+		worker.memTracker.Consume(resp.MemSize())
 	}
 	select {
 	case respCh <- resp:
