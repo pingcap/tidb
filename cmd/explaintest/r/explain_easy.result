@@ -530,3 +530,24 @@ TableReader_7	1.00	root	data:Selection_6
 └─Selection_6	1.00	cop	eq(test.t.b, 1000-01-01 00:00:00.000000)
   └─TableScan_5	3.00	cop	table:t, range:[-inf,+inf], keep order:false
 drop table t;
+create table t(a int, b int);
+explain format="dot" select * from t where a < 2;
+dot contents
+
+digraph TableReader_7 {
+subgraph cluster7{
+node [style=filled, color=lightgrey]
+color=black
+label = "root"
+"TableReader_7"
+}
+subgraph cluster6{
+node [style=filled, color=lightgrey]
+color=black
+label = "cop"
+"Selection_6" -> "TableScan_5"
+}
+"TableReader_7" -> "Selection_6"
+}
+
+drop table if exists t;
