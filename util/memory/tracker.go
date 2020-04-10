@@ -134,9 +134,11 @@ func (t *Tracker) AttachTo(parent *Tracker) {
 	if t.parent != nil {
 		t.parent.remove(t)
 	}
-	parent.mu.Lock()
-	parent.mu.children = append(parent.mu.children, t)
-	parent.mu.Unlock()
+	if !parent.globalTracker {
+		parent.mu.Lock()
+		parent.mu.children = append(parent.mu.children, t)
+		parent.mu.Unlock()
+	}
 
 	t.parent = parent
 	t.parent.Consume(t.BytesConsumed())
