@@ -112,16 +112,9 @@ type Server struct {
 	concurrentLimiter *TokenLimiter
 	clients           map[uint32]*clientConn
 	capability        uint32
-<<<<<<< HEAD
+	statusAddr        string
+	statusListener    net.Listener
 	statusServer      *http.Server
-=======
-	dom               *domain.Domain
-
-	statusAddr     string
-	statusListener net.Listener
-	statusServer   *http.Server
-	grpcServer     *grpc.Server
->>>>>>> f8b2d96... server: if status address already in use, return an error (#15177)
 }
 
 // ConnectionCount gets current connection count.

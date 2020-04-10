@@ -74,24 +74,25 @@ func (s *Server) listenStatusHTTPServer() error {
 		s.statusAddr = fmt.Sprintf("%s:%d", s.cfg.Status.StatusHost, defaultStatusPort)
 	}
 
-	logutil.BgLogger().Info("for status and metrics report", zap.String("listening on addr", s.statusAddr))
-	tlsConfig, err := s.cfg.Security.ToTLSConfig()
+	var err error
+	logutil.Logger(context.Background()).Info("for status and metrics report", zap.String("listening on addr", s.statusAddr))
+	s.statusListener, err = net.Listen("tcp", s.statusAddr)
 	if err != nil {
-		logutil.BgLogger().Error("invalid TLS config", zap.Error(err))
+		logutil.Logger(context.Background()).Info("listen failed", zap.Error(err))
 		return errors.Trace(err)
 	}
-	tlsConfig = s.setCNChecker(tlsConfig)
 
-	if tlsConfig != nil {
-		// we need to manage TLS here for cmux to distinguish between HTTP and gRPC.
-		s.statusListener, err = tls.Listen("tcp", s.statusAddr, tlsConfig)
-	} else {
-		s.statusListener, err = net.Listen("tcp", s.statusAddr)
+	if len(s.cfg.Security.ClusterSSLCA) != 0 {
+		tlsConfig, err := s.cfg.Security.ToTLSConfig()
+		if err != nil {
+			logutil.Logger(context.Background()).Error("invalid TLS config", zap.Error(err))
+			return errors.Trace(err)
+		}
+		tlsConfig = s.setCNChecker(tlsConfig)
+		logutil.Logger(context.Background()).Info("HTTP/gRPC status server secure connection is enabled", zap.Bool("CN verification enabled", tlsConfig.VerifyPeerCertificate != nil))
+		s.statusListener = tls.NewListener(s.statusListener, tlsConfig)
 	}
-	if err != nil {
-		logutil.BgLogger().Info("listen failed", zap.Error(err))
-		return errors.Trace(err)
-	}
+
 	return nil
 }
 
@@ -140,19 +141,6 @@ func (s *Server) startHTTPServer() {
 		router.Handle("/mvcc/hex/{hexKey}", mvccTxnHandler{tikvHandlerTool, opMvccGetByHex})
 		router.Handle("/mvcc/index/{db}/{table}/{index}/{handle}", mvccTxnHandler{tikvHandlerTool, opMvccGetByIdx})
 	}
-<<<<<<< HEAD
-	addr := fmt.Sprintf("%s:%d", s.cfg.Status.StatusHost, s.cfg.Status.StatusPort)
-	if s.cfg.Status.StatusPort == 0 {
-		addr = fmt.Sprintf("%s:%d", s.cfg.Status.StatusHost, defaultStatusPort)
-	}
-=======
-
-	// HTTP path for get MVCC info
-	router.Handle("/mvcc/key/{db}/{table}/{handle}", mvccTxnHandler{tikvHandlerTool, opMvccGetByKey})
-	router.Handle("/mvcc/txn/{startTS}/{db}/{table}", mvccTxnHandler{tikvHandlerTool, opMvccGetByTxn})
-	router.Handle("/mvcc/hex/{hexKey}", mvccTxnHandler{tikvHandlerTool, opMvccGetByHex})
-	router.Handle("/mvcc/index/{db}/{table}/{index}/{handle}", mvccTxnHandler{tikvHandlerTool, opMvccGetByIdx})
->>>>>>> f8b2d96... server: if status address already in use, return an error (#15177)
 
 	// HTTP path for web UI.
 	if host, port, err := net.SplitHostPort(s.statusAddr); err == nil {
@@ -290,55 +278,9 @@ func (s *Server) startHTTPServer() {
 			logutil.Logger(context.Background()).Error("write HTTP index page failed", zap.Error(err))
 		}
 	})
-<<<<<<< HEAD
-
-	logutil.Logger(context.Background()).Info("for status and metrics report", zap.String("listening on addr", addr))
-	s.statusServer = &http.Server{Addr: addr, Handler: CorsHandler{handler: serverMux, cfg: s.cfg}}
-
-	ln, err := net.Listen("tcp", addr)
-	if err != nil {
-		logutil.Logger(context.Background()).Info("listen failed", zap.Error(err))
-		return
-	}
-
-	if len(s.cfg.Security.ClusterSSLCA) != 0 {
-		tlsConfig, err := s.cfg.Security.ToTLSConfig()
-		if err != nil {
-			logutil.Logger(context.Background()).Error("invalid TLS config", zap.Error(err))
-			return
-		}
-		tlsConfig = s.setCNChecker(tlsConfig)
-		logutil.Logger(context.Background()).Info("HTTP/gRPC status server secure connection is enabled", zap.Bool("CN verification enabled", tlsConfig.VerifyPeerCertificate != nil))
-		ln = tls.NewListener(ln, tlsConfig)
-	}
-
-	err = s.statusServer.Serve(ln)
-=======
-	s.startStatusServerAndRPCServer(serverMux)
-}
-
-func (s *Server) startStatusServerAndRPCServer(serverMux *http.ServeMux) {
-	m := cmux.New(s.statusListener)
-	// Match connections in order:
-	// First HTTP, and otherwise grpc.
-	httpL := m.Match(cmux.HTTP1Fast())
-	grpcL := m.Match(cmux.Any())
 
 	s.statusServer = &http.Server{Addr: s.statusAddr, Handler: CorsHandler{handler: serverMux, cfg: s.cfg}}
-	s.grpcServer = NewRPCServer(s.cfg, s.dom, s)
-
-	go util.WithRecovery(func() {
-		err := s.grpcServer.Serve(grpcL)
-		logutil.BgLogger().Error("grpc server error", zap.Error(err))
-	}, nil)
-
-	go util.WithRecovery(func() {
-		err := s.statusServer.Serve(httpL)
-		logutil.BgLogger().Error("http server error", zap.Error(err))
-	}, nil)
-
-	err := m.Serve()
->>>>>>> f8b2d96... server: if status address already in use, return an error (#15177)
+	err = s.statusServer.Serve(s.statusListener)
 	if err != nil {
 		logutil.Logger(context.Background()).Info("serve status port failed", zap.Error(err))
 	}
