@@ -631,7 +631,47 @@ func (s *testSuite2) TestShowCreateTable(c *C) {
 	))
 }
 
+<<<<<<< HEAD
 func (s *testSuite2) TestShowEscape(c *C) {
+=======
+// Override testAutoRandomSuite to test auto id cache.
+func (s *testAutoRandomSuite) TestAutoIdCache(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int auto_increment key) auto_id_cache = 10")
+	tk.MustQuery("show create table t").Check(testutil.RowsWithSep("|",
+		""+
+			"t CREATE TABLE `t` (\n"+
+			"  `a` int(11) NOT NULL AUTO_INCREMENT,\n"+
+			"  PRIMARY KEY (`a`)\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_id_cache] AUTO_ID_CACHE=10 */",
+	))
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int auto_increment unique, b int key) auto_id_cache 100")
+	tk.MustQuery("show create table t").Check(testutil.RowsWithSep("|",
+		""+
+			"t CREATE TABLE `t` (\n"+
+			"  `a` int(11) NOT NULL AUTO_INCREMENT,\n"+
+			"  `b` int(11) NOT NULL,\n"+
+			"  PRIMARY KEY (`b`),\n"+
+			"  UNIQUE KEY `a` (`a`)\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_id_cache] AUTO_ID_CACHE=100 */",
+	))
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int key) auto_id_cache 5")
+	tk.MustQuery("show create table t").Check(testutil.RowsWithSep("|",
+		""+
+			"t CREATE TABLE `t` (\n"+
+			"  `a` int(11) NOT NULL,\n"+
+			"  PRIMARY KEY (`a`)\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_id_cache] AUTO_ID_CACHE=5 */",
+	))
+}
+
+func (s *testSuite5) TestShowEscape(c *C) {
+>>>>>>> 1c73dec... ddl: add syntax for setting the cache step of auto id explicitly. (#15409)
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("use test")
