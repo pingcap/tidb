@@ -17,6 +17,7 @@ import (
 	"fmt"
 
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/codec"
 )
 
@@ -24,6 +25,14 @@ import (
 type Item struct {
 	Col  *expression.Column
 	Desc bool
+}
+
+// HashCode creates the hashcode for Item which can be used to identify itself from other Item.
+func (i *Item) HashCode(sc *stmtctx.StatementContext) []byte {
+	hashcode := make([]byte, 0, 10)
+	hashcode = codec.EncodeBool(hashcode, i.Desc)
+	hashcode = append(hashcode, i.Col.HashCode(sc)...)
+	return hashcode
 }
 
 // PhysicalProperty stands for the required physical property by parents.

@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -49,6 +50,7 @@ import (
 	util2 "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	utilhint "github.com/pingcap/tidb/util/hint"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/plancodec"
 )
 
@@ -1176,6 +1178,17 @@ func (by *ByItems) String() string {
 		return fmt.Sprintf("%s true", by.Expr)
 	}
 	return by.Expr.String()
+}
+
+// HashCode creates the hashcode for ByItems which can be used to identify itself from other ByItems.
+// It is generated as Desc+Expr.
+func (by *ByItems) HashCode(sc *stmtctx.StatementContext) []byte {
+	// ByItems is commonly (bool + Column) whose hashcode has the length 10,
+	// so we pre-alloc 11 bytes for ByItems's hashcode.
+	hashcode := make([]byte, 0, 11)
+	hashcode = codec.EncodeBool(hashcode, by.Desc)
+	hashcode = append(hashcode, by.Expr.HashCode(sc)...)
+	return hashcode
 }
 
 // Clone makes a copy of ByItems.

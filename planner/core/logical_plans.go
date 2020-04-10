@@ -15,6 +15,7 @@ package core
 
 import (
 	"math"
+	"reflect"
 
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
@@ -24,9 +25,11 @@ import (
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/zap"
@@ -1057,6 +1060,21 @@ type WindowFrame struct {
 	End   *FrameBound
 }
 
+// HashCode creates the hashcode for WindowFrame which can be used to identify itself from other WindowFrame.
+func (wf *WindowFrame) HashCode(sc *stmtctx.StatementContext) []byte {
+	if wf == nil {
+		return nil
+	}
+
+	startHashCode := wf.Start.hashCode(sc)
+	endHashCode := wf.End.hashCode(sc)
+	hashcode := make([]byte, 0, 4+len(startHashCode)+len(endHashCode))
+	hashcode = codec.EncodeIntAsUint32(hashcode, int(wf.Type))
+	hashcode = append(hashcode, startHashCode...)
+	hashcode = append(hashcode, endHashCode...)
+	return hashcode
+}
+
 // FrameBound is the boundary of a frame.
 type FrameBound struct {
 	Type      ast.BoundType
@@ -1068,6 +1086,31 @@ type FrameBound struct {
 	CalcFuncs []expression.Expression
 	// CmpFuncs is used to decide whether one row is included in the current frame.
 	CmpFuncs []expression.CompareFunc
+}
+
+// HashCode creates the hashcode for FrameBound which can be used to identify itself from other FrameBound.
+func (f *FrameBound) hashCode(sc *stmtctx.StatementContext) []byte {
+	// CalcFuncs are commonly `ScalarFunction`s, whose hashcode usually has a
+	// length larger than 20, so we pre-alloc 25 bytes for each calcFunc's hashcode.
+	// we pre-alloc total bytes size = SizeOf(Type)+SizeOf(UnBounded)+SizeOf(Num)+SizeOf(Encode(CalcFuncs))+SizeOf(CmpFuncs)
+	//								 = 4+1+8+(4+len(CalcFuncs)*(4+Sizeof(CalcFunc.hashcode)))+(SizeOf(len(CmpFuncs))+len(CmpFuncs)*SizeOf(uintptr))
+	//								 = 4+1+8+4+len(CalcFuncs)*29+4+len(CmpFuncs)*8
+	//								 = 21+len(CalcFuncs)*29+len(CmpFuncs)*8
+	hashcode := make([]byte, 0, 21+len(f.CalcFuncs)*29+len(f.CmpFuncs)*8)
+	hashcode = codec.EncodeIntAsUint32(hashcode, int(f.Type))
+	hashcode = codec.EncodeBool(hashcode, f.UnBounded)
+	hashcode = codec.EncodeUint(hashcode, f.Num)
+
+	calcFuncCode := func(i int) []byte { return f.CalcFuncs[i].HashCode(sc) }
+	hashcode = codec.Encode(hashcode, calcFuncCode, len(f.CalcFuncs))
+
+	hashcode = codec.EncodeIntAsUint32(hashcode, len(f.CmpFuncs))
+	for i := range f.CmpFuncs {
+		funcPointer := reflect.ValueOf(&f.CmpFuncs[i]).Elem().Pointer()
+		hashcode = codec.EncodeUintptr(hashcode, funcPointer)
+	}
+
+	return hashcode
 }
 
 // LogicalWindow represents a logical window function plan.

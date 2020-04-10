@@ -19,6 +19,9 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/hack"
 )
 
 // WindowFuncDesc describes a window function signature, only used in planner.
@@ -74,4 +77,20 @@ var noFrameWindowFuncs = map[string]struct{}{
 func NeedFrame(name string) bool {
 	_, ok := noFrameWindowFuncs[strings.ToLower(name)]
 	return !ok
+}
+
+// HashCode creates the hashcode for WindowFuncDesc which can be used to identify itself from other WindowFuncDesc.
+func (f *WindowFuncDesc) HashCode(sc *stmtctx.StatementContext) []byte {
+	// the max length of WindowFuncName ('percent_rank') is 12.
+	// Arg is commonly Column whose hashcode has the length 9,
+	// so we pre-alloc 10 bytes for Arg's hashcode.
+	// we pre-alloc total bytes size = SizeOf(WindowFuncName)+SizeOf(Encode(args))
+	// 								 = 12+SizeOf(len(args))+len(args)*(SizeOf(SizeOf(arg.hashcode))+SizeOf(arg.hashcode))
+	//                  	         = 12+4+len(args)*(4+SizeOf(arg.hashcode))
+	//                  	         = 16+len(args)*14
+	hashcode := make([]byte, 0, 16+len(f.Args)*14)
+	hashcode = codec.EncodeCompactBytes(hashcode, hack.Slice(f.Name))
+	argHashCode := func(i int) []byte { return f.Args[i].HashCode(sc) }
+	hashcode = codec.Encode(hashcode, argHashCode, len(f.Args))
+	return hashcode
 }
