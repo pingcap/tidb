@@ -224,5 +224,12 @@
     "cases": [
       "select t1.a from t t1 where t1.a > 10 and t1.b = (select max(t2.b) from t t2 where t1.a = t2.a)"
     ]
+  },
+  {
+    "name": "TestPushSelDownApply",
+    "cases": [
+      "select t1.b, t1.c from t t1, t t2 where t1.a = t2.b and t1.b in (select t3.b from t t3 where t1.c = t3.c)",
+      "select t1.b, t1.c from t t1, t t2 where t1.a = t2.b and t1.b < (select max(t3.a) from t t3 where t1.c = t3.c)"
+    ]
   }
 ]

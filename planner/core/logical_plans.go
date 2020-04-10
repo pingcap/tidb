@@ -152,6 +152,11 @@ type LogicalJoin struct {
 	EqualCondOutCnt float64
 }
 
+// NumConditions returns the number of all the join conditions.
+func (p *LogicalJoin) NumConditions() int {
+	return len(p.EqualConditions) + len(p.LeftConditions) + len(p.RightConditions) + len(p.OtherConditions)
+}
+
 // Shallow shallow copies a LogicalJoin struct.
 func (p *LogicalJoin) Shallow() *LogicalJoin {
 	join := *p

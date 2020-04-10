@@ -127,7 +127,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		equalCond, leftPushCond, rightPushCond, otherCond = p.extractOnCondition(predicates, true, false)
 		leftCond = leftPushCond
 		// Handle join conditions, only derive right join condition, because left join condition cannot be pushed down
-		_, derivedRightJoinCond := DeriveOtherConditions(p, false, true)
+		_, derivedRightJoinCond := DeriveOtherConditions(p, p.children[0].Schema(), p.children[1].Schema(), false, true)
 		rightCond = append(p.RightConditions, derivedRightJoinCond...)
 		p.RightConditions = nil
 		ret = append(expression.ScalarFuncs2Exprs(equalCond), otherCond...)
@@ -144,7 +144,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		equalCond, leftPushCond, rightPushCond, otherCond = p.extractOnCondition(predicates, false, true)
 		rightCond = rightPushCond
 		// Handle join conditions, only derive left join condition, because right join condition cannot be pushed down
-		derivedLeftJoinCond, _ := DeriveOtherConditions(p, true, false)
+		derivedLeftJoinCond, _ := DeriveOtherConditions(p, p.children[0].Schema(), p.children[1].Schema(), true, false)
 		leftCond = append(p.LeftConditions, derivedLeftJoinCond...)
 		p.LeftConditions = nil
 		ret = append(expression.ScalarFuncs2Exprs(equalCond), otherCond...)
@@ -438,23 +438,27 @@ func (p *LogicalMaxOneRow) PredicatePushDown(predicates []expression.Expression)
 
 // DeriveOtherConditions given a LogicalJoin, check the OtherConditions to see if we can derive more
 // conditions for left/right child pushdown.
-func DeriveOtherConditions(p *LogicalJoin, deriveLeft bool, deriveRight bool) (leftCond []expression.Expression,
+func DeriveOtherConditions(
+	p *LogicalJoin,
+	leftSchema *expression.Schema,
+	rightSchema *expression.Schema,
+	deriveLeft bool,
+	deriveRight bool) (leftCond []expression.Expression,
 	rightCond []expression.Expression) {
-	leftPlan, rightPlan := p.children[0], p.children[1]
 	isOuterSemi := (p.JoinType == LeftOuterSemiJoin) || (p.JoinType == AntiLeftOuterSemiJoin)
 	for _, expr := range p.OtherConditions {
 		if deriveLeft {
-			leftRelaxedCond := expression.DeriveRelaxedFiltersFromDNF(expr, leftPlan.Schema())
+			leftRelaxedCond := expression.DeriveRelaxedFiltersFromDNF(expr, leftSchema)
 			if leftRelaxedCond != nil {
 				leftCond = append(leftCond, leftRelaxedCond)
 			}
-			notNullExpr := deriveNotNullExpr(expr, leftPlan.Schema())
+			notNullExpr := deriveNotNullExpr(expr, leftSchema)
 			if notNullExpr != nil {
 				leftCond = append(leftCond, notNullExpr)
 			}
 		}
 		if deriveRight {
-			rightRelaxedCond := expression.DeriveRelaxedFiltersFromDNF(expr, rightPlan.Schema())
+			rightRelaxedCond := expression.DeriveRelaxedFiltersFromDNF(expr, rightSchema)
 			if rightRelaxedCond != nil {
 				rightCond = append(rightCond, rightRelaxedCond)
 			}
@@ -468,7 +472,7 @@ func DeriveOtherConditions(p *LogicalJoin, deriveLeft bool, deriveRight bool) (l
 			if isOuterSemi {
 				continue
 			}
-			notNullExpr := deriveNotNullExpr(expr, rightPlan.Schema())
+			notNullExpr := deriveNotNullExpr(expr, rightSchema)
 			if notNullExpr != nil {
 				rightCond = append(rightCond, notNullExpr)
 			}

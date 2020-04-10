@@ -2974,5 +2974,60 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestPushSelDownApply",
+    "Cases": [
+      {
+        "SQL": "select t1.b, t1.c from t t1, t t2 where t1.a = t2.b and t1.b in (select t3.b from t t3 where t1.c = t3.c)",
+        "Result": [
+          "Group#0 Schema:[test.t.b,test.t.c]",
+          "    Projection_9 input:[Group#1], test.t.b, test.t.c",
+          "Group#1 Schema:[test.t.a,test.t.b,test.t.c,test.t.b]",
+          "    Apply_11 input:[Group#2,Group#3], semi join, equal:[eq(test.t.b, test.t.b)]",
+          "Group#2 Schema:[test.t.a,test.t.b,test.t.c,test.t.b]",
+          "    Selection_10 input:[Group#4], eq(test.t.a, test.t.b)",
+          "Group#4 Schema:[test.t.a,test.t.b,test.t.c,test.t.b]",
+          "    Join_3 input:[Group#5,Group#6], inner join",
+          "Group#5 Schema:[test.t.a,test.t.b,test.t.c]",
+          "    DataSource_1 table:t1",
+          "Group#6 Schema:[test.t.b]",
+          "    DataSource_2 table:t2",
+          "Group#3 Schema:[test.t.b]",
+          "    Projection_7 input:[Group#7], test.t.b",
+          "Group#7 Schema:[test.t.b,test.t.c]",
+          "    Selection_6 input:[Group#8], eq(test.t.c, test.t.c)",
+          "Group#8 Schema:[test.t.b,test.t.c]",
+          "    DataSource_5 table:t3"
+        ]
+      },
+      {
+        "SQL": "select t1.b, t1.c from t t1, t t2 where t1.a = t2.b and t1.b < (select max(t3.a) from t t3 where t1.c = t3.c)",
+        "Result": [
+          "Group#0 Schema:[test.t.b,test.t.c]",
+          "    Projection_11 input:[Group#1], test.t.b, test.t.c",
+          "Group#1 Schema:[test.t.a,test.t.b,test.t.c,test.t.b,Column#37]",
+          "    Selection_14 input:[Group#2], lt(test.t.b, Column#37)",
+          "Group#2 Schema:[test.t.a,test.t.b,test.t.c,test.t.b,Column#37]",
+          "    Apply_13 input:[Group#3,Group#4], left outer join",
+          "Group#3 Schema:[test.t.a,test.t.b,test.t.c,test.t.b]",
+          "    Selection_12 input:[Group#5], eq(test.t.a, test.t.b)",
+          "Group#5 Schema:[test.t.a,test.t.b,test.t.c,test.t.b]",
+          "    Join_3 input:[Group#6,Group#7], inner join",
+          "Group#6 Schema:[test.t.a,test.t.b,test.t.c]",
+          "    DataSource_1 table:t1",
+          "Group#7 Schema:[test.t.b]",
+          "    DataSource_2 table:t2",
+          "Group#4 Schema:[Column#37]",
+          "    MaxOneRow_9 input:[Group#8]",
+          "Group#8 Schema:[Column#37]",
+          "    Aggregation_7 input:[Group#9], funcs:max(test.t.a)",
+          "Group#9 Schema:[test.t.a,test.t.c]",
+          "    Selection_6 input:[Group#10], eq(test.t.c, test.t.c)",
+          "Group#10 Schema:[test.t.a,test.t.c]",
+          "    DataSource_5 table:t3"
+        ]
+      }
+    ]
   }
 ]
