@@ -110,10 +110,15 @@ func isJobRollbackable(job *model.Job, id int64) error {
 		model.ActionTruncateTable, model.ActionAddForeignKey,
 		model.ActionDropForeignKey, model.ActionRenameTable,
 		model.ActionModifyTableCharsetAndCollate, model.ActionTruncateTablePartition,
+<<<<<<< HEAD
 		model.ActionModifySchemaCharsetAndCollate:
 		if job.SchemaState != model.StateNone {
 			return ErrCannotCancelDDLJob.GenWithStackByArgs(id)
 		}
+=======
+		model.ActionModifySchemaCharsetAndCollate, model.ActionRepairTable, model.ActionModifyTableAutoIdCache:
+		return job.SchemaState == model.StateNone
+>>>>>>> 1c73dec... ddl: add syntax for setting the cache step of auto id explicitly. (#15409)
 	}
 	return nil
 }

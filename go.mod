@@ -45,6 +45,7 @@ require (
 	github.com/onsi/gomega v1.4.1 // indirect
 	github.com/opentracing/basictracer-go v1.0.0
 	github.com/opentracing/opentracing-go v1.0.2
+<<<<<<< HEAD
 	github.com/pingcap/check v0.0.0-20190102082844-67f458068fc8
 	github.com/pingcap/errors v0.11.4
 	github.com/pingcap/failpoint v0.0.0-20190430075617-bf45ab20bfc4
@@ -75,6 +76,41 @@ require (
 	golang.org/x/net v0.0.0-20180906233101-161cd47e91fd
 	golang.org/x/sync v0.0.0-20190911185100-cd5d95a43a6e // indirect
 	golang.org/x/sys v0.0.0-20191010194322-b09406accb47 // indirect
+=======
+	github.com/pingcap/check v0.0.0-20200212061837-5e12011dc712
+	github.com/pingcap/errors v0.11.5-0.20190809092503-95897b64e011
+	github.com/pingcap/failpoint v0.0.0-20200210140405-f8f9fb234798
+	github.com/pingcap/fn v0.0.0-20191016082858-07623b84a47d
+	github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989
+	github.com/pingcap/kvproto v0.0.0-20200409034505-a5af800ca2ef
+	github.com/pingcap/log v0.0.0-20200117041106-d28c14d3b1cd
+	github.com/pingcap/parser v0.0.0-20200410065024-81f3db8e6095
+	github.com/pingcap/pd/v4 v4.0.0-beta.1.0.20200305072537-61d9f9cc35d3
+	github.com/pingcap/sysutil v0.0.0-20200408114249-ed3bd6f7fdb1
+	github.com/pingcap/tidb-tools v4.0.0-beta.1.0.20200306084441-875bd09aa3d5+incompatible
+	github.com/pingcap/tipb v0.0.0-20200212061130-c4d518eb1d60
+	github.com/prometheus/client_golang v1.0.0
+	github.com/prometheus/client_model v0.0.0-20190812154241-14fe0d1b01d4
+	github.com/prometheus/common v0.4.1
+	github.com/shirou/gopsutil v2.19.10+incompatible
+	github.com/shurcooL/httpfs v0.0.0-20171119174359-809beceb2371 // indirect
+	github.com/shurcooL/vfsgen v0.0.0-20181020040650-a97a25d856ca // indirect
+	github.com/sirupsen/logrus v1.2.0
+	github.com/soheilhy/cmux v0.1.4
+	github.com/spaolacci/murmur3 v0.0.0-20180118202830-f09979ecbc72
+	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
+	github.com/uber-go/atomic v1.3.2
+	github.com/uber/jaeger-client-go v2.15.0+incompatible
+	github.com/uber/jaeger-lib v1.5.0 // indirect
+	go.etcd.io/etcd v0.5.0-alpha.5.0.20191023171146-3cf2f69b5738
+	go.uber.org/atomic v1.6.0
+	go.uber.org/automaxprocs v1.2.0
+	go.uber.org/zap v1.14.1
+	golang.org/x/crypto v0.0.0-20191206172530-e9b2fee46413 // indirect
+	golang.org/x/lint v0.0.0-20200302205851-738671d3881b // indirect
+	golang.org/x/net v0.0.0-20200301022130-244492dfa37a
+	golang.org/x/sys v0.0.0-20200113162924-86b910548bc1
+>>>>>>> 1c73dec... ddl: add syntax for setting the cache step of auto id explicitly. (#15409)
 	golang.org/x/text v0.3.2
 	golang.org/x/time v0.0.0-20180412165947-fbb02b2291d2 // indirect
 	golang.org/x/tools v0.0.0-20181105230042-78dc5bac0cac

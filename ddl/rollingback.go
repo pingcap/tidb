@@ -271,7 +271,11 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 		model.ActionModifyColumn, model.ActionAddForeignKey,
 		model.ActionDropForeignKey, model.ActionRenameTable,
 		model.ActionModifyTableCharsetAndCollate, model.ActionTruncateTablePartition,
+<<<<<<< HEAD
 		model.ActionModifySchemaCharsetAndCollate:
+=======
+		model.ActionModifySchemaCharsetAndCollate, model.ActionRepairTable, model.ActionModifyTableAutoIdCache:
+>>>>>>> 1c73dec... ddl: add syntax for setting the cache step of auto id explicitly. (#15409)
 		ver, err = cancelOnlyNotHandledJob(job)
 	case model.ActionDropTable, model.ActionDropSchema:
 		job.State = model.JobStateRollingback

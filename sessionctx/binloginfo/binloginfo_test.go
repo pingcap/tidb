@@ -467,6 +467,26 @@ func (s *testBinlogSuite) TestAddSpecialComment(c *C) {
 			"alter table t shard_row_id_bits=2 ",
 			"alter table t /*!90000 shard_row_id_bits=2 */",
 		},
+		{
+			"create table t1 (id int auto_increment key) auto_id_cache 100;",
+			"create table t1 (id int auto_increment key) /*T![auto_id_cache] auto_id_cache 100 */ ;",
+		},
+		{
+			"create table t1 (id int auto_increment unique) auto_id_cache 10;",
+			"create table t1 (id int auto_increment unique) /*T![auto_id_cache] auto_id_cache 10 */ ;",
+		},
+		{
+			"create table t1 (id int) auto_id_cache = 5;",
+			"create table t1 (id int) /*T![auto_id_cache] auto_id_cache = 5 */ ;",
+		},
+		{
+			"create table t1 (id int) auto_id_cache=5;",
+			"create table t1 (id int) /*T![auto_id_cache] auto_id_cache=5 */ ;",
+		},
+		{
+			"create table t1 (id int) /*T![auto_id_cache] auto_id_cache=5 */ ;",
+			"create table t1 (id int) /*T![auto_id_cache] auto_id_cache=5 */ ;",
+		},
 	}
 	for _, ca := range testCase {
 		re := binloginfo.AddSpecialComment(ca.input)

@@ -684,10 +684,21 @@ func (e *ShowExec) fetchShowCreateTable() error {
 		}
 	}
 
+<<<<<<< HEAD
 	if tb.Meta().ShardRowIDBits > 0 {
 		fmt.Fprintf(&buf, "/*!90000 SHARD_ROW_ID_BITS=%d ", tb.Meta().ShardRowIDBits)
 		if tb.Meta().PreSplitRegions > 0 {
 			fmt.Fprintf(&buf, "PRE_SPLIT_REGIONS=%d ", tb.Meta().PreSplitRegions)
+=======
+	if tableInfo.AutoIdCache != 0 {
+		fmt.Fprintf(buf, " /*T![auto_id_cache] AUTO_ID_CACHE=%d */", tableInfo.AutoIdCache)
+	}
+
+	if tableInfo.ShardRowIDBits > 0 {
+		fmt.Fprintf(buf, "/*!90000 SHARD_ROW_ID_BITS=%d ", tableInfo.ShardRowIDBits)
+		if tableInfo.PreSplitRegions > 0 {
+			fmt.Fprintf(buf, "PRE_SPLIT_REGIONS=%d ", tableInfo.PreSplitRegions)
+>>>>>>> 1c73dec... ddl: add syntax for setting the cache step of auto id explicitly. (#15409)
 		}
 		buf.WriteString("*/")
 	}
