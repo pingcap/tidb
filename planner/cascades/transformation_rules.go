@@ -2759,11 +2759,11 @@ func (r *DecorrelateByWindowFunction) OnTransform(old *memo.ExprIter) (newExprs 
 		}
 		findEqual := false
 		for i, outerCond := range remainedOuterConditions {
-			if innerCond.Equal(sctx, outerCond) {
+			if r.exprSemanticallyEqual(innerCond, outerCond, sctx) {
 				findEqual = true
 				matchedConditions = append(matchedConditions, outerCond)
 				remainedOuterConditions = append(remainedOuterConditions[:i], remainedOuterConditions[i+1:]...)
-				continue
+				break
 			}
 		}
 		if !findEqual {
@@ -3066,4 +3066,22 @@ func (r *DecorrelateByWindowFunction) replaceInnerColumnWithOuterColumn(
 	default:
 		return expr, true
 	}
+}
+
+func (r *DecorrelateByWindowFunction) exprSemanticallyEqual(
+	expr1 expression.Expression, expr2 expression.Expression, sctx sessionctx.Context) bool {
+	if expr1.Equal(sctx, expr2) {
+		return true
+	}
+	// If they are not totally equal, we reverse the EQ's args and check again.
+	// We can enhance the Expression.Equal method or add a new method `Expression.SemanticallyEqual`.
+	// The reason why we must need this method here is:
+	// `a = b` might be changed to `b = a` in LogicalJoin.EqualCondition.
+	scalar1, ok1 := expr1.(*expression.ScalarFunction)
+	scalar2, ok2 := expr2.(*expression.ScalarFunction)
+	if ok1 && ok2 && scalar1.FuncName.L == ast.EQ && scalar2.FuncName.L == ast.EQ {
+		return scalar1.GetArgs()[0].Equal(sctx, scalar2.GetArgs()[1]) &&
+			scalar1.GetArgs()[1].Equal(sctx, scalar2.GetArgs()[0])
+	}
+	return false
 }
