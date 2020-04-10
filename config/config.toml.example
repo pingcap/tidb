@@ -73,8 +73,11 @@ level = "info"
 # Log format, one of json, text, console.
 format = "text"
 
-# Disable automatic timestamp in output
+# Disable automatic timestamp in output.
 disable-timestamp = false
+
+# Disable stack information in error message.
+disable-error-stack = true
 
 # Stores slow query log into separated files.
 slow-query-file = "tidb-slow.log"
