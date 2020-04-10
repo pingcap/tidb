@@ -14,7 +14,6 @@
 package memo
 
 import (
-	"encoding/binary"
 	"reflect"
 
 	"github.com/pingcap/tidb/expression"
@@ -55,15 +54,15 @@ func NewGroupExpr(node plannercore.LogicalPlan) *GroupExpr {
 func (e *GroupExpr) FingerPrint() string {
 	if len(e.selfFingerprint) == 0 {
 		planHash := e.ExprNode.HashCode()
-		buffer := make([]byte, 2, 2+len(e.Children)*8+len(planHash))
-		binary.BigEndian.PutUint16(buffer, uint16(len(e.Children)))
-		for _, child := range e.Children {
-			var buf [8]byte
-			binary.BigEndian.PutUint64(buf[:], uint64(reflect.ValueOf(child).Pointer()))
-			buffer = append(buffer, buf[:]...)
-		}
-		buffer = append(buffer, planHash...)
-		e.selfFingerprint = string(buffer)
+		//buffer := make([]byte, 2, 2+len(e.Children)*8+len(planHash))
+		//binary.BigEndian.PutUint16(buffer, uint16(len(e.Children)))
+		//for _, child := range e.Children {
+		//	var buf [8]byte
+		//	binary.BigEndian.PutUint64(buf[:], uint64(reflect.ValueOf(child).Pointer()))
+		//	buffer = append(buffer, buf[:]...)
+		//}
+		//buffer = append(buffer, planHash...)
+		e.selfFingerprint = string(planHash)
 	}
 	return e.selfFingerprint
 }

@@ -206,7 +206,7 @@ func (opt *Optimizer) findMoreEquiv(g *memo.Group, elem *list.Element, round int
 			if eraseAll {
 				g.DeleteAll()
 				for _, e := range newExprs {
-					g.Insert(e)
+					g.Insert(e, round)
 				}
 				// If we delete all of the other GroupExprs, we can break the search.
 				g.SetExplored(round)
@@ -215,7 +215,7 @@ func (opt *Optimizer) findMoreEquiv(g *memo.Group, elem *list.Element, round int
 
 			eraseCur = eraseCur || eraseOld
 			for _, e := range newExprs {
-				if !g.Insert(e) {
+				if !g.Insert(e, round) {
 					continue
 				}
 				// If the new Group expression is successfully inserted into the

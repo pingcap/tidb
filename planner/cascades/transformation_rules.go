@@ -1197,12 +1197,12 @@ func (r *PushTopNDownOuterJoin) Match(expr *memo.ExprIter) bool {
 	}
 }
 
-func pushTopNDownOuterJoinToChild(topN *plannercore.LogicalTopN, outerGroup *memo.Group) *memo.Group {
+func pushTopNDownOuterJoinToChild(topN *plannercore.LogicalTopN, outerGroup *memo.Group) (*memo.Group, bool) {
 	for _, by := range topN.ByItems {
 		cols := expression.ExtractColumns(by.Expr)
 		for _, col := range cols {
 			if !outerGroup.Prop.Schema.Contains(col) {
-				return outerGroup
+				return nil, false
 			}
 		}
 	}
@@ -1218,7 +1218,7 @@ func pushTopNDownOuterJoinToChild(topN *plannercore.LogicalTopN, outerGroup *mem
 	newTopNGroup := memo.NewGroupExpr(newTopN)
 	newTopNGroup.SetChildren(outerGroup)
 	newChild := memo.NewGroupWithSchema(newTopNGroup, outerGroup.Prop.Schema)
-	return newChild
+	return newChild, true
 }
 
 // OnTransform implements Transformation interface.
@@ -1231,15 +1231,16 @@ func (r *PushTopNDownOuterJoin) OnTransform(old *memo.ExprIter) (newExprs []*mem
 	leftGroup := joinExpr.Children[0]
 	rightGroup := joinExpr.Children[1]
 
+	var ok bool = false
 	switch join.JoinType {
 	case plannercore.LeftOuterJoin, plannercore.LeftOuterSemiJoin, plannercore.AntiLeftOuterSemiJoin:
-		leftGroup = pushTopNDownOuterJoinToChild(topN, leftGroup)
+		leftGroup, ok = pushTopNDownOuterJoinToChild(topN, leftGroup)
 	case plannercore.RightOuterJoin:
-		rightGroup = pushTopNDownOuterJoinToChild(topN, rightGroup)
-	default:
+		rightGroup, ok = pushTopNDownOuterJoinToChild(topN, rightGroup)
+	}
+	if !ok {
 		return nil, false, false, nil
 	}
-
 	newJoinExpr := memo.NewGroupExpr(join)
 	newJoinExpr.SetChildren(leftGroup, rightGroup)
 	newTopNExpr := memo.NewGroupExpr(topN)

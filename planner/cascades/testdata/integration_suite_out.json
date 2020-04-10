@@ -210,10 +210,10 @@
       {
         "SQL": "select max(a+b) from t",
         "Plan": [
-          "StreamAgg_63 1.00 root  funcs:max(Column#4)->Column#3",
-          "└─TableReader_64 1.00 root  data:StreamAgg_66",
-          "  └─StreamAgg_66 1.00 cop[tikv]  funcs:max(plus(test.t.a, test.t.b))->Column#4",
-          "    └─TableFullScan_39 4.00 cop[tikv] table:t pk col:test.t.a, keep order:false"
+          "StreamAgg_43 1.00 root  funcs:max(Column#4)->Column#3",
+          "└─TableReader_44 1.00 root  data:StreamAgg_46",
+          "  └─StreamAgg_46 1.00 cop[tikv]  funcs:max(plus(test.t.a, test.t.b))->Column#4",
+          "    └─TableFullScan_30 4.00 cop[tikv] table:t pk col:test.t.a, keep order:false"
         ],
         "Result": [
           "48"
@@ -273,11 +273,11 @@
       {
         "SQL": "select max(a.a) from t a left join t b on a.a = b.a",
         "Plan": [
-          "StreamAgg_31 1.00 root  funcs:max(test.t.a)->Column#5",
-          "└─Limit_33 1.00 root  offset:0, count:1",
-          "  └─TableReader_38 1.00 root  data:Limit_39",
-          "    └─Limit_39 1.00 cop[tikv]  offset:0, count:1",
-          "      └─TableFullScan_37 1.00 cop[tikv] table:a pk col:test.t.a, keep order:true, desc"
+          "StreamAgg_120 1.00 root  funcs:max(test.t.a)->Column#5",
+          "└─Limit_122 1.00 root  offset:0, count:1",
+          "  └─TableReader_126 1.00 root  data:Limit_127",
+          "    └─Limit_127 1.00 cop[tikv]  offset:0, count:1",
+          "      └─TableFullScan_44 1.00 cop[tikv] table:a pk col:test.t.a, keep order:true, desc"
         ],
         "Result": [
           "4"
@@ -354,11 +354,11 @@
       {
         "SQL": "select max(a) from t",
         "Plan": [
-          "StreamAgg_24 1.00 root  funcs:max(test.t.a)->Column#3",
-          "└─Limit_26 1.00 root  offset:0, count:1",
-          "  └─TableReader_31 1.00 root  data:Limit_32",
-          "    └─Limit_32 1.00 cop[tikv]  offset:0, count:1",
-          "      └─TableFullScan_30 1.00 cop[tikv] table:t pk col:test.t.a, keep order:true, desc"
+          "StreamAgg_23 1.00 root  funcs:max(test.t.a)->Column#3",
+          "└─Limit_25 1.00 root  offset:0, count:1",
+          "  └─TableReader_30 1.00 root  data:Limit_31",
+          "    └─Limit_31 1.00 cop[tikv]  offset:0, count:1",
+          "      └─TableFullScan_29 1.00 cop[tikv] table:t pk col:test.t.a, keep order:true, desc"
         ],
         "Result": [
           "4"

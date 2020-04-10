@@ -172,7 +172,11 @@ func (p *LogicalAggregation) HashCode() []byte {
 	result := make([]byte, 0, 20+len(p.AggFuncs)*29+len(p.GroupByItems)*14)
 	result = codec.EncodeIntAsUint32(result, plancodec.TypeStringToPhysicalID(p.tp))
 	result = codec.EncodeIntAsUint32(result, p.SelectBlockOffset())
-	result = codec.EncodeIntAsUint32(result, int(p.AggFuncs[0].Mode))
+	if len(p.AggFuncs) > 0 {
+		result = codec.EncodeIntAsUint32(result, int(p.AggFuncs[0].Mode))
+	} else {
+		result = codec.EncodeIntAsUint32(result, 0)
+	}
 
 	aggFuncHashCode := func(i int) []byte { return p.AggFuncs[i].HashCode(p.ctx.GetSessionVars().StmtCtx) }
 	result = codec.Encode(result, aggFuncHashCode, len(p.AggFuncs))

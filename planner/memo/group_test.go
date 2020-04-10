@@ -94,22 +94,22 @@ func (s *testMemoSuite) TestGroupDeleteAll(c *C) {
 	c.Assert(g.Insert(NewGroupExpr(plannercore.LogicalProjection{}.Init(s.sctx, 0))), IsTrue)
 	c.Assert(g.Equivalents.Len(), Equals, 3)
 	c.Assert(g.GetFirstElem(OperandProjection), NotNil)
-	c.Assert(g.Exists(expr), IsTrue)
+	c.Assert(g.Exists(expr, 0), IsTrue)
 
 	g.DeleteAll()
 	c.Assert(g.Equivalents.Len(), Equals, 0)
 	c.Assert(g.GetFirstElem(OperandProjection), IsNil)
-	c.Assert(g.Exists(expr), IsFalse)
+	c.Assert(g.Exists(expr, 0), IsFalse)
 }
 
 func (s *testMemoSuite) TestGroupExists(c *C) {
 	p := &plannercore.LogicalLimit{}
 	expr := NewGroupExpr(p)
 	g := NewGroupWithSchema(expr, s.schema)
-	c.Assert(g.Exists(expr), IsTrue)
+	c.Assert(g.Exists(expr, 0), IsTrue)
 
 	g.Delete(expr)
-	c.Assert(g.Exists(expr), IsFalse)
+	c.Assert(g.Exists(expr, 0), IsFalse)
 }
 
 func (s *testMemoSuite) TestGroupFingerPrint(c *C) {

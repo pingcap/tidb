@@ -96,7 +96,7 @@ type Group struct {
 	Equivalents *list.List
 
 	FirstExpr    map[Operand]*list.Element
-	Fingerprints map[string]*list.Element
+	Fingerprints map[string][]*list.Element
 
 	ImplMap map[string]Implementation
 	Prop    *property.LogicalProperty
@@ -121,13 +121,13 @@ func NewGroupWithSchema(e *GroupExpr, s *expression.Schema) *Group {
 	prop := &property.LogicalProperty{Schema: expression.NewSchema(s.Columns...)}
 	g := &Group{
 		Equivalents:  list.New(),
-		Fingerprints: make(map[string]*list.Element),
+		Fingerprints: make(map[string][]*list.Element),
 		FirstExpr:    make(map[Operand]*list.Element),
 		ImplMap:      make(map[string]Implementation),
 		Prop:         prop,
 		EngineType:   EngineTiDB,
 	}
-	g.Insert(e)
+	g.Insert(e, 0)
 	return g
 }
 
@@ -146,8 +146,12 @@ func (g *Group) FingerPrint() string {
 }
 
 // Insert a nonexistent Group expression.
-func (g *Group) Insert(e *GroupExpr) bool {
-	if e == nil || g.Exists(e) {
+func (g *Group) Insert(e *GroupExpr, rounds ...int) bool {
+	round := 0
+	if len(rounds) != 0 {
+		round = rounds[0]
+	}
+	if e == nil || g.Exists(e, round) {
 		return false
 	}
 
@@ -160,7 +164,12 @@ func (g *Group) Insert(e *GroupExpr) bool {
 		newEquiv = g.Equivalents.PushBack(e)
 		g.FirstExpr[operand] = newEquiv
 	}
-	g.Fingerprints[e.FingerPrint()] = newEquiv
+	if equivalents, ok := g.Fingerprints[e.FingerPrint()]; ok {
+		equivalents = append(equivalents, newEquiv)
+		g.Fingerprints[e.FingerPrint()] = equivalents
+	} else {
+		g.Fingerprints[e.FingerPrint()] = []*list.Element{newEquiv}
+	}
 	e.Group = g
 	return true
 }
@@ -168,11 +177,21 @@ func (g *Group) Insert(e *GroupExpr) bool {
 // Delete an existing Group expression.
 func (g *Group) Delete(e *GroupExpr) {
 	fingerprint := e.FingerPrint()
-	equiv, ok := g.Fingerprints[fingerprint]
+	equivalents, ok := g.Fingerprints[fingerprint]
 	if !ok {
 		return // Can not find the target GroupExpr.
 	}
-
+	var equiv *list.Element
+	for i, elem := range equivalents {
+		if elem.Value.(*GroupExpr) == e {
+			equiv = elem
+			equivalents = append(equivalents[:i], equivalents[i+1:]...)
+			break
+		}
+	}
+	if equiv == nil {
+		return
+	}
 	operand := GetOperand(equiv.Value.(*GroupExpr).ExprNode)
 	if g.FirstExpr[operand] == equiv {
 		// The target GroupExpr is the first Element of the same Operand.
@@ -188,22 +207,61 @@ func (g *Group) Delete(e *GroupExpr) {
 	}
 
 	g.Equivalents.Remove(equiv)
-	delete(g.Fingerprints, fingerprint)
+	if len(equivalents) == 0 {
+		delete(g.Fingerprints, fingerprint)
+	} else {
+		g.Fingerprints[fingerprint] = equivalents
+	}
+
 	e.Group = nil
 }
 
 // DeleteAll deletes all of the GroupExprs in the Group.
 func (g *Group) DeleteAll() {
 	g.Equivalents = list.New()
-	g.Fingerprints = make(map[string]*list.Element)
+	g.Fingerprints = make(map[string][]*list.Element)
 	g.FirstExpr = make(map[Operand]*list.Element)
 	g.SelfFingerprint = ""
 }
 
 // Exists checks whether a Group expression existed in a Group.
-func (g *Group) Exists(e *GroupExpr) bool {
-	_, ok := g.Fingerprints[e.FingerPrint()]
-	return ok
+func (g *Group) Exists(e *GroupExpr, round int) bool {
+	equivalents, ok := g.Fingerprints[e.FingerPrint()]
+	if !ok {
+		return false
+	}
+	exists := false
+	if len(e.Children) == 0 {
+		// If the GroupExpr has no child, the plans that have the same hash code
+		// cannot have the child either.
+		return true
+	}
+	for _, equiv := range equivalents {
+		expr := equiv.Value.(*GroupExpr)
+		if len(expr.Children) != len(e.Children) {
+			continue
+		}
+		childrenAreEqual := true
+		for i, chilGroup := range e.Children {
+			if chilGroup.Explored(round) {
+				if chilGroup != expr.Children[i] {
+					childrenAreEqual = false
+					break
+				}
+			} else {
+				childGroupExpr := chilGroup.GetFirstGroupExpr()
+				if !expr.Children[i].Exists(childGroupExpr, round) {
+					childrenAreEqual = false
+					break
+				}
+			}
+		}
+		if childrenAreEqual {
+			exists = true
+			break
+		}
+	}
+	return exists
 }
 
 // GetFirstElem returns the first Group expression which matches the Operand.

@@ -2819,7 +2819,6 @@
           "Group#0 Schema:[test.t.a]",
           "    Apply_6 input:[Group#1,Group#2], semi join",
           "    Join_10 input:[Group#1,Group#3], semi join, equal:[eq(test.t.a, test.t.b)]",
-          "    Join_13 input:[Group#1,Group#3], semi join, equal:[eq(test.t.a, test.t.b)]",
           "Group#1 Schema:[test.t.a]",
           "    DataSource_1 table:t1",
           "Group#2 Schema:[test.t.b]",
