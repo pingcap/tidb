@@ -575,6 +575,10 @@ func (s *testBinlogSuite) TestAddSpecialComment(c *C) {
 			"create table t1 (id int) auto_id_cache=5;",
 			"create table t1 (id int) /*T![auto_id_cache] auto_id_cache=5 */ ;",
 		},
+		{
+			"create table t1 (id int) /*T![auto_id_cache] auto_id_cache=5 */ ;",
+			"create table t1 (id int) /*T![auto_id_cache] auto_id_cache=5 */ ;",
+		},
 	}
 	for _, ca := range testCase {
 		re := binloginfo.AddSpecialComment(ca.input)
