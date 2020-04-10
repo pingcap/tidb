@@ -1564,7 +1564,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		DiskTracker: disk.NewTracker(stringutil.MemoizeStr(s.Text), -1),
 	}
 	c := config.GetGlobalConfig()
-	if c.OOMUseTmpStorage && c.TempStorageQuota >= 0 && GlobalDiskUsageTracker != nil {
+	if c.OOMUseTmpStorage && GlobalDiskUsageTracker != nil {
 		sc.DiskTracker.AttachTo(GlobalDiskUsageTracker)
 	}
 	switch c.OOMAction {
