@@ -9,6 +9,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/planner/cascades"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/planner/memo"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -134,25 +135,6 @@ func (s *testTPCHTransformationSuite) TearDownSuite(c *C) {
 	c.Assert(s.testData.GenerateOutputIfNeeded(), IsNil)
 }
 
-func (s *testTPCHTransformationSuite) testGroupToString(sql string, output struct {
-	SQL    string
-	Result []string
-}, c *C) {
-		stmt, err := s.ParseOneStmt(sql, "", "")
-		c.Assert(err, IsNil)
-		p, _, err := plannercore.BuildLogicalPlan(context.Background(), s.sctx, stmt, s.is)
-		c.Assert(err, IsNil)
-		logic, ok := p.(plannercore.LogicalPlan)
-		c.Assert(ok, IsTrue)
-		group, err := s.optimizer.LogicalOptimize(s.sctx, logic)
-		c.Assert(err, IsNil)
-		s.testData.OnRecord(func() {
-			output.SQL = sql
-			output.Result = cascades.ToString(group)
-		})
-		c.Assert(cascades.ToString(group), DeepEquals, output.Result)
-}
-
 var queryNumber int
 func init() {
 	flag.IntVar(&queryNumber, "tpch-query", 0, "to specify tpch query")
@@ -162,6 +144,7 @@ func (s *testTPCHTransformationSuite) TestTPCHQueries(c *C) {
 	var input []string
 	var output []struct {
 		SQL string
+		InitMemo []string
 		Result []string
 	}
 	s.testData.GetTestCases(c, &input, &output)
@@ -176,10 +159,12 @@ func (s *testTPCHTransformationSuite) TestTPCHQueries(c *C) {
 		c.Assert(err, IsNil)
 		logic, ok := p.(plannercore.LogicalPlan)
 		c.Assert(ok, IsTrue)
+		initMemo := cascades.ToString(memo.Convert2Group(logic))
 		group, err := s.optimizer.LogicalOptimize(s.sctx, logic)
 		c.Assert(err, IsNil)
 		s.testData.OnRecord(func() {
 			output[i].SQL = sql
+			output[i].InitMemo = initMemo
 			output[i].Result = cascades.ToString(group)
 		})
 		c.Assert(cascades.ToString(group), DeepEquals, output[i].Result)

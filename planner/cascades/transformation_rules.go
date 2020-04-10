@@ -14,6 +14,7 @@
 package cascades
 
 import (
+	"github.com/pingcap/tidb/planner/property"
 	"math"
 
 	"github.com/pingcap/parser/ast"
@@ -101,6 +102,7 @@ var TiDBLayerOptimizationBatch = TransformationRuleBatch{
 		NewRuleTransformApplyToJoin(),
 		NewRulePullSelectionUpApply(),
 		NewRulePullAggregationUpApply(),
+		NewRuleDecorrelateByWindowFunction(),
 	},
 	memo.OperandMaxOneRow: {
 		NewRuleEliminateMaxOneRow(),
@@ -2522,4 +2524,430 @@ func (r *PullAggregationUpApply) OnTransform(old *memo.ExprIter) (newExprs []*me
 	newAggExpr := memo.NewGroupExpr(newAgg)
 	newAggExpr.SetChildren(newApplyGroup)
 	return []*memo.GroupExpr{newAggExpr}, true, false, nil
+}
+
+type DecorrelateByWindowFunction struct {
+	baseRule
+}
+
+// NewRuleDecorrelateByWindowFunction creates a new Transformation rule DecorrelateByWindowFunction.
+func NewRuleDecorrelateByWindowFunction() Transformation {
+	rule := &DecorrelateByWindowFunction{}
+	rule.pattern = memo.BuildPattern(
+		memo.OperandApply, memo.EngineTiDBOnly,
+		memo.NewPattern(memo.OperandAny, memo.EngineTiDBOnly),
+		memo.NewPattern(memo.OperandAggregation, memo.EngineTiDBOnly))
+	return rule
+}
+
+func (r *DecorrelateByWindowFunction) Match(expr *memo.ExprIter) bool {
+	applyExpr := expr.GetExpr()
+	apply := applyExpr.ExprNode.(*plannercore.LogicalApply)
+	aggExpr := expr.Children[1].GetExpr()
+	agg := aggExpr.ExprNode.(*plannercore.LogicalAggregation)
+	if apply.JoinType != plannercore.LeftOuterJoin {
+		return false
+	}
+	if len(agg.GroupByItems) != 0 {
+		return false
+	}
+	// TODO: allow multiple agg funcs.
+	if len(agg.AggFuncs) != 1 || !r.allowAggFunc(agg.AggFuncs[0]) {
+		return false
+	}
+	// AggFunc cannot be correlated.
+	for _, arg := range agg.AggFuncs[0].Args {
+		if arg.IsCorrelated() {
+			return false
+		}
+	}
+	return true
+}
+
+func (r *DecorrelateByWindowFunction) allowAggFunc(aggFunc *aggregation.AggFuncDesc) bool {
+	if aggFunc.HasDistinct {
+		return false
+	}
+	switch aggFunc.Name {
+	case ast.AggFuncCount, ast.AggFuncSum, ast.AggFuncAvg, ast.AggFuncMax, ast.AggFuncMin:
+		return true
+	default:
+		return false
+	}
+}
+
+// OnTransform implement Transformation interface.
+func (r *DecorrelateByWindowFunction) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	applyExpr := old.GetExpr()
+	apply := applyExpr.ExprNode.(*plannercore.LogicalApply)
+	aggExpr := old.Children[1].GetExpr()
+	agg := aggExpr.ExprNode.(*plannercore.LogicalAggregation)
+	sctx := apply.SCtx()
+	// step 1. collect the outer and inner plan tree, only support `Selection`, `Join` and `DataSource`.
+	outerPlan := r.collectPlanTree(applyExpr.Children[0])
+	if outerPlan == nil {
+		return nil, false, false, nil
+	}
+	innerPlan := r.collectPlanTree(aggExpr.Children[0])
+	if innerPlan == nil {
+		return nil, false, false,nil
+	}
+
+	// step 2. check if the innerPlan's correlated conditions are all equal conditions.
+	//outerConditions := r.collectConditionsFromJoinAndSelection(outerPlan)
+	innerConditions := r.collectConditionsFromJoinAndSelection(innerPlan)
+	corConds, areEqualConds := r.correlatedConditionsAreEqualCondition(innerConditions)
+	if !areEqualConds || len(corConds) != 1 {
+		// TODO: support multiple corConds.
+		// TODO: support nested subquery.
+		return nil, false, false, nil
+	}
+
+	// step 3. check if the outerPlan is a `super set` of innerPlan.
+	// More specifically:
+	// a. all of the tables in innerPlan must exist in outerPlan
+	// b. all of the conditions in innerConditions must exists in outerConditions(except the correlated condition).
+	//
+	outerTables := make(map[int64]*plannercore.DataSource)
+	innerTables := make(map[int64]*plannercore.DataSource)
+	if !r.collectTables(outerPlan, outerTables) || !r.collectTables(innerPlan, innerTables) {
+		// Currently, we reject the self-join scenario, for example, select * from t as t1, t as t2 *****.
+		// Although `t1` and `t2` may have different meaning, we still reject this kind of join tree.
+		// TODO: support self-join plan tree.
+		return nil, false, false, nil
+	}
+	for tableID, _ := range innerTables {
+		if _, ok := outerTables[tableID]; !ok {
+			// There is a table in innerPlan but not in outerPlan.
+			// So the outerPlan cannot be the super set of innerPlan.
+			return nil, false, false, nil
+		}
+	}
+
+	originOuterConditions := r.collectConditionsFromJoinAndSelection(outerPlan)
+	remainedOuterConditions := make([]expression.Expression, len(originOuterConditions))
+	copy(remainedOuterConditions, originOuterConditions)
+	// Although the conditions are semantically equal, they have different `UniqueID`. So
+	// in order to compare the inner and outer conditions, we replace the `Columns` in the
+	// innerConditions with outerTables' `Columns`.
+	replacedInnerConditions, canReplace := r.cloneInnerExpressionAndReplaceColumns(innerConditions, innerTables, outerTables)
+	if !canReplace {
+		return nil, false, false, nil
+	}
+	var replacedCorCond *expression.ScalarFunction
+	matchedConditions := make([]expression.Expression, 0, len(replacedInnerConditions))
+	for _, innerCond := range replacedInnerConditions {
+		if innerCond.IsCorrelated() {
+			replacedCorCond = innerCond.(*expression.ScalarFunction)
+			continue
+		}
+		findEqual := false
+		for i, outerCond := range remainedOuterConditions {
+			if innerCond.Equal(sctx, outerCond) {
+				findEqual = true
+				matchedConditions = append(matchedConditions, outerCond)
+				remainedOuterConditions = append(remainedOuterConditions[:i], remainedOuterConditions[i+1:]...)
+				continue
+			}
+		}
+		if !findEqual {
+			return nil, false, false, nil
+		}
+	}
+
+	// step 4. the correlated condition must be `self equal condition`.
+	// For example, select a from t t1 where t1.b > (select sum(t2.c) from t t2 where t1.a = t2.a);
+	// We can see the correlated column in the correlated condition is the same column with
+	// the column it compared to.
+	//
+	// To support more scenarios like TPC-H Q2, we also need to support the functional dependency.
+	// For example, select a from t t1 where t1.a = t1.x and t1.b > (select sum(t2.c) from t t2 where t1.x = t2.a).
+	// In the query above, `t1.x` and `t2.a` is not the same column, but we have an outerCondition `t1.a = t1.x`.
+	// So we can say that `t1.x` functional depends on `t1.a`.
+	if replacedCorCond == nil || replacedCorCond.FuncName.L != ast.EQ {
+		// It cannot be here.
+		return nil, false, false, nil
+	}
+	var innerColumnOfCorCond, outerColumnOfCorCond *expression.Column
+	if leftCol, ok := replacedCorCond.GetArgs()[0].(*expression.Column); ok {
+		innerColumnOfCorCond = leftCol
+		outerColumnOfCorCond = &replacedCorCond.GetArgs()[1].(*expression.CorrelatedColumn).Column
+	} else {
+		innerColumnOfCorCond = replacedCorCond.GetArgs()[1].(*expression.Column)
+		outerColumnOfCorCond = &replacedCorCond.GetArgs()[0].(*expression.CorrelatedColumn).Column
+	}
+	// find all columns that equals to outerColumnOfCorCond.(or has functional dependency)
+	equaledOuterColumns := expression.NewSchema(outerColumnOfCorCond)
+	for _, cond := range originOuterConditions {
+		if scalarFunc, ok := cond.(*expression.ScalarFunction); ok {
+			if scalarFunc.FuncName.L == ast.EQ {
+				if leftCol, ok := scalarFunc.GetArgs()[0].(*expression.Column);
+					ok && equaledOuterColumns.Contains(leftCol) {
+					if rightCol, ok := scalarFunc.GetArgs()[1].(*expression.Column); ok {
+						equaledOuterColumns.Append(rightCol)
+					}
+				} else if rightCol, ok := scalarFunc.GetArgs()[1].(*expression.Column);
+					ok && equaledOuterColumns.Contains(rightCol) {
+					if leftCol, ok := scalarFunc.GetArgs()[0].(*expression.Column); ok {
+						equaledOuterColumns.Append(leftCol)
+					}
+				}
+			}
+		}
+	}
+	if !equaledOuterColumns.Contains(innerColumnOfCorCond) {
+		return nil, false, false, nil
+	}
+
+	// step 5. As last, we check if the aggfunc's args could be replaced
+	// by the outer conditions.
+	// For example, select a, b from t1, t2 where t1.a > (select sum(t3.c) from t1 as t3 where t1.b = t3.b)
+	// The outer plan have prune the column `c` in the schema(and DataSource.Columns). So it would be difficult
+	// to get the column `c` in the outer plan.
+	// TODO: actually, this check can be optimized. There is always a way to generate the aggfunc's args
+	// from the outer side.
+	aggFuncArgs := agg.AggFuncs[0].Args
+	newAggFuncArgs := make([]expression.Expression, 0, len(aggFuncArgs))
+	for _, arg := range aggFuncArgs {
+		newArg, canReplace := r.replaceInnerColumnWithOuterColumn(arg, innerTables, outerTables)
+		if !canReplace {
+			return nil, false, false, nil
+		}
+		newAggFuncArgs = append(newAggFuncArgs, newArg)
+	}
+	newWindowFunc, err := aggregation.NewWindowFuncDesc(sctx, agg.AggFuncs[0].Name, newAggFuncArgs)
+	if err != nil {
+		return nil, false, false, nil
+	}
+
+
+	// step 6. If we can reach here, it mains we can make this transformation.
+	// Now we re-construct the memo.
+	// Use a simple way to do so:
+	//   a. Join all of the innerTables
+	//   b. Build a Selection with all of the innerConditions above the innerTables
+	//   c. Build the Window above the innerTable, aggFunc() over (partition by innerColumnOfCorCond)
+	//   d. Join the remained outerTables above the Window
+	//   e. Build a Selection for the remained outer conditions
+	//   f. At last, append a Projection to keep the schema column order
+	var planA plannercore.LogicalPlan
+	for tableID, _ := range innerTables {
+		if planA == nil {
+			planA = outerTables[tableID]
+			continue
+		}
+		join := plannercore.LogicalJoin{
+			JoinType:        plannercore.InnerJoin,
+		}.Init(sctx, apply.SelectBlockOffset())
+		join.SetChildren(planA, outerTables[tableID])
+		join.SetSchema(expression.MergeSchema(planA.Schema(), outerTables[tableID].Schema()))
+		planA = join
+	}
+
+	var planB plannercore.LogicalPlan
+	if len(matchedConditions) == 0 {
+		planB = planA
+	} else {
+		planB = plannercore.LogicalSelection{Conditions:matchedConditions}.Init(sctx, apply.SelectBlockOffset())
+		planB.SetChildren(planA)
+	}
+
+	planC := plannercore.LogicalWindow{
+		WindowFuncDescs: []*aggregation.WindowFuncDesc{newWindowFunc},
+		PartitionBy:     []property.Item{{Col: innerColumnOfCorCond}},
+	}.Init(sctx, apply.SelectBlockOffset())
+	planC.SetChildren(planB)
+	planC.SetSchema(expression.MergeSchema(planB.Schema(), aggExpr.Schema()))
+
+	var planD plannercore.LogicalPlan = planC
+	for tableID, ds := range outerTables {
+		if _, ok := innerTables[tableID]; ok {
+			continue
+		}
+		join := plannercore.LogicalJoin{
+			JoinType:        plannercore.InnerJoin,
+		}.Init(sctx, apply.SelectBlockOffset())
+		join.SetChildren(ds, planD)
+		join.SetSchema(expression.MergeSchema(ds.Schema(), planD.Schema()))
+		planD = join
+	}
+
+	planE := planD
+	if len(remainedOuterConditions) > 0 {
+		sel := plannercore.LogicalSelection{Conditions:remainedOuterConditions}.Init(sctx, agg.SelectBlockOffset())
+		sel.SetChildren(planD)
+		planE = sel
+	}
+
+	outputSchema := applyExpr.Schema().Clone()
+	planF := plannercore.LogicalProjection{
+		Exprs: expression.Column2Exprs(outputSchema.Columns),
+	}.Init(sctx, apply.SelectBlockOffset())
+	planF.SetChildren(planE)
+	planF.SetSchema(outputSchema)
+
+	newGroupExpr := memo.Convert2GroupExpr(planF)
+	return []*memo.GroupExpr{newGroupExpr}, true, false, nil
+}
+
+func (r *DecorrelateByWindowFunction) collectPlanTree(g *memo.Group) plannercore.LogicalPlan {
+	// Only support the plan tree which contains `LogicalSelection`, `LogicalJoin` and `DataSource`.
+	for elem := g.Equivalents.Front(); elem != nil; elem = elem.Next() {
+		expr := elem.Value.(*memo.GroupExpr)
+		switch plan := expr.ExprNode.(type) {
+		case *plannercore.LogicalApply:
+			// Currently, we don't support optimize the nested Apply.
+			// This case is to avoid regard `LogicalApply` as `LogicalJoin`.
+			continue
+		case *plannercore.LogicalSelection:
+			child := r.collectPlanTree(expr.Children[0])
+			if child != nil {
+				plan.SetChildren(child)
+				return plan
+			}
+		case *plannercore.LogicalJoin:
+			// TODO: support outer joins
+			if plan.JoinType != plannercore.InnerJoin {
+				continue
+			}
+			leftChild := r.collectPlanTree(expr.Children[0])
+			if leftChild == nil {
+				continue
+			}
+			rightChild := r.collectPlanTree(expr.Children[1])
+			if rightChild == nil {
+				continue
+			}
+			plan.SetChildren(leftChild, rightChild)
+			return plan
+		case *plannercore.DataSource:
+			return plan
+		}
+	}
+	return nil
+}
+
+func (r *DecorrelateByWindowFunction) collectConditionsFromJoinAndSelection(p plannercore.LogicalPlan) []expression.Expression {
+	result := make([]expression.Expression, 0)
+	switch plan := p.(type) {
+	case *plannercore.LogicalSelection:
+		childConditions := r.collectConditionsFromJoinAndSelection(plan.Children()[0])
+		result = append(result, plan.Conditions...)
+		result = append(result, childConditions...)
+		return result
+	case *plannercore.LogicalJoin:
+		leftChildConditions := r.collectConditionsFromJoinAndSelection(plan.Children()[0])
+		rightChildConditions := r.collectConditionsFromJoinAndSelection(plan.Children()[1])
+		result = append(result, expression.ScalarFuncs2Exprs(plan.EqualConditions)...)
+		result = append(result, plan.LeftConditions...)
+		result = append(result, plan.RightConditions...)
+		result = append(result, plan.OtherConditions...)
+		result = append(result, leftChildConditions...)
+		result = append(result, rightChildConditions...)
+		return result
+	}
+	return nil
+}
+
+func (r *DecorrelateByWindowFunction) correlatedConditionsAreEqualCondition(conds []expression.Expression) (corConds []expression.Expression, ok bool) {
+	for _, cond := range conds {
+		if cond.IsCorrelated() {
+			switch expr := cond.(type) {
+			case *expression.ScalarFunction:
+				if expr.FuncName.L != ast.EQ {
+					return nil, false
+				}
+				// Must be Column = CorrelatedColumn or CorrelatedColumn = Column
+				if _, leftIsCol := expr.GetArgs()[0].(*expression.Column); leftIsCol {
+					if _, rightIsCorCol := expr.GetArgs()[1].(*expression.CorrelatedColumn); rightIsCorCol {
+						corConds = append(corConds, cond)
+						continue
+					}
+				}
+				if _, leftIsCorCol := expr.GetArgs()[0].(*expression.CorrelatedColumn); leftIsCorCol {
+					if _, rightIsCol := expr.GetArgs()[1].(*expression.Column); rightIsCol {
+						corConds = append(corConds, cond)
+						continue
+					}
+				}
+				return nil, false
+			default:
+				return nil, false
+			}
+		}
+	}
+	return corConds, true
+}
+
+func (r *DecorrelateByWindowFunction) collectTables(p plannercore.LogicalPlan, tables map[int64]*plannercore.DataSource) bool {
+	switch plan := p.(type) {
+	case *plannercore.DataSource:
+		tableInfo := plan.GetTableInfo()
+		if _, ok := tables[tableInfo.ID]; ok {
+			return false
+		}
+		tables[tableInfo.ID] = plan
+		return true
+	case *plannercore.LogicalJoin:
+		return r.collectTables(plan.Children()[0], tables) && r.collectTables(plan.Children()[1], tables)
+	case *plannercore.LogicalSelection:
+		return r.collectTables(plan.Children()[0], tables)
+	}
+	return false
+}
+
+func (r *DecorrelateByWindowFunction) cloneInnerExpressionAndReplaceColumns(
+	innerConditions []expression.Expression, innerTables, outerTables map[int64]*plannercore.DataSource) (newExprs []expression.Expression, canReplace bool) {
+	result := make([]expression.Expression, 0, len(innerConditions))
+	for _, cond := range innerConditions {
+		if newCond, ok := r.replaceInnerColumnWithOuterColumn(cond.Clone(), innerTables, outerTables); ok {
+			result = append(result, newCond)
+		} else {
+			return nil, false
+		}
+	}
+	return result, true
+}
+
+func (r *DecorrelateByWindowFunction) replaceInnerColumnWithOuterColumn(
+	expr expression.Expression, innerTables, outerTables map[int64]*plannercore.DataSource) (newExpr expression.Expression, canReplace bool) {
+	switch x := expr.(type) {
+	case *expression.CorrelatedColumn:
+		return expr, true
+	case *expression.Column:
+		// find the table where the column from.
+		var tableID, columnID int64
+		for tid, ds := range innerTables {
+			if idx := ds.Schema().ColumnIndex(x); idx != -1 {
+				tableID = tid
+				columnID = ds.Columns[idx].ID
+				break
+			}
+		}
+		if outerDS, ok := outerTables[tableID]; ok {
+			for idx, colInfo := range outerDS.Columns {
+				if colInfo.ID == columnID {
+					return outerDS.Schema().Columns[idx].Clone(), true
+				}
+			}
+		}
+		return expr, false
+	case *expression.ScalarFunction:
+		oldArgs := x.GetArgs()
+		newArgs := make([]expression.Expression, 0, len(oldArgs))
+		for _, arg := range oldArgs {
+			replacedArg, canReplaced := r.replaceInnerColumnWithOuterColumn(arg, innerTables, outerTables)
+			if !canReplaced {
+				return expr, false
+			}
+			newArgs = append(newArgs, replacedArg)
+		}
+		newFunc, err := expression.NewFunction(x.GetCtx(), x.FuncName.L, x.RetType, newArgs...)
+		if err != nil {
+			return expr, false
+		}
+		return newFunc, true
+	default:
+		return expr, true
+	}
 }

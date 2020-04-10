@@ -516,6 +516,11 @@ type DataSource struct {
 	preferStoreType int
 }
 
+// GetTableInfo returns datasource's tableInfo.
+func (ds *DataSource) GetTableInfo() *model.TableInfo {
+	return ds.tableInfo
+}
+
 // GetAccessPaths returns all of the possibleAccessPaths.
 func (ds *DataSource) GetAccessPaths() []*util.AccessPath {
 	return ds.possibleAccessPaths

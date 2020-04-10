@@ -492,6 +492,33 @@ func (p *PhysicalTopN) ExplainNormalizedInfo() string {
 	return buffer.String()
 }
 
+func (p *LogicalWindow) formatFrameBound(buffer *bytes.Buffer, bound *FrameBound) {
+	if bound.Type == ast.CurrentRow {
+		buffer.WriteString("current row")
+		return
+	}
+	if bound.UnBounded {
+		buffer.WriteString("unbounded")
+	} else if len(bound.CalcFuncs) > 0 {
+		sf := bound.CalcFuncs[0].(*expression.ScalarFunction)
+		switch sf.FuncName.L {
+		case ast.DateAdd, ast.DateSub:
+			// For `interval '2:30' minute_second`.
+			fmt.Fprintf(buffer, "interval %s %s", sf.GetArgs()[1].ExplainInfo(), sf.GetArgs()[2].ExplainInfo())
+		case ast.Plus, ast.Minus:
+			// For `1 preceding` of range frame.
+			fmt.Fprintf(buffer, "%s", sf.GetArgs()[1].ExplainInfo())
+		}
+	} else {
+		fmt.Fprintf(buffer, "%d", bound.Num)
+	}
+	if bound.Type == ast.Preceding {
+		buffer.WriteString(" preceding")
+	} else {
+		buffer.WriteString(" following")
+	}
+}
+
 func (p *PhysicalWindow) formatFrameBound(buffer *bytes.Buffer, bound *FrameBound) {
 	if bound.Type == ast.CurrentRow {
 		buffer.WriteString("current row")
@@ -520,9 +547,60 @@ func (p *PhysicalWindow) formatFrameBound(buffer *bytes.Buffer, bound *FrameBoun
 }
 
 // ExplainInfo implements Plan interface.
+func (p *LogicalWindow) ExplainInfo() string {
+	buffer := bytes.NewBufferString("")
+	formatLogicalWindowFuncDescs(buffer, p.WindowFuncDescs, p.schema)
+	buffer.WriteString(" over(")
+	isFirst := true
+	if len(p.PartitionBy) > 0 {
+		buffer.WriteString("partition by ")
+		for i, item := range p.PartitionBy {
+			fmt.Fprintf(buffer, "%s", item.Col.ExplainInfo())
+			if i+1 < len(p.PartitionBy) {
+				buffer.WriteString(", ")
+			}
+		}
+		isFirst = false
+	}
+	if len(p.OrderBy) > 0 {
+		if !isFirst {
+			buffer.WriteString(" ")
+		}
+		buffer.WriteString("order by ")
+		for i, item := range p.OrderBy {
+			order := "asc"
+			if item.Desc {
+				order = "desc"
+			}
+			fmt.Fprintf(buffer, "%s %s", item.Col.ExplainInfo(), order)
+			if i+1 < len(p.OrderBy) {
+				buffer.WriteString(", ")
+			}
+		}
+		isFirst = false
+	}
+	if p.Frame != nil {
+		if !isFirst {
+			buffer.WriteString(" ")
+		}
+		if p.Frame.Type == ast.Rows {
+			buffer.WriteString("rows")
+		} else {
+			buffer.WriteString("range")
+		}
+		buffer.WriteString(" between ")
+		p.formatFrameBound(buffer, p.Frame.Start)
+		buffer.WriteString(" and ")
+		p.formatFrameBound(buffer, p.Frame.End)
+	}
+	buffer.WriteString(")")
+	return buffer.String()
+}
+
+// ExplainInfo implements Plan interface.
 func (p *PhysicalWindow) ExplainInfo() string {
 	buffer := bytes.NewBufferString("")
-	formatWindowFuncDescs(buffer, p.WindowFuncDescs, p.schema)
+	formatPhysicalWindowFuncDescs(buffer, p.WindowFuncDescs, p.schema)
 	buffer.WriteString(" over(")
 	isFirst := true
 	if len(p.PartitionBy) > 0 {
@@ -577,7 +655,17 @@ func (p *PhysicalShuffle) ExplainInfo() string {
 	return buffer.String()
 }
 
-func formatWindowFuncDescs(buffer *bytes.Buffer, descs []*aggregation.WindowFuncDesc, schema *expression.Schema) *bytes.Buffer {
+func formatLogicalWindowFuncDescs(buffer *bytes.Buffer, descs []*aggregation.WindowFuncDesc, schema *expression.Schema) *bytes.Buffer {
+	for i, desc := range descs {
+		if i != 0 {
+			buffer.WriteString(", ")
+		}
+		fmt.Fprintf(buffer, "%v", desc)
+	}
+	return buffer
+}
+
+func formatPhysicalWindowFuncDescs(buffer *bytes.Buffer, descs []*aggregation.WindowFuncDesc, schema *expression.Schema) *bytes.Buffer {
 	winFuncStartIdx := len(schema.Columns) - len(descs)
 	for i, desc := range descs {
 		if i != 0 {

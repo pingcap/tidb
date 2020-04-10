@@ -254,7 +254,7 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		}
 	case *LogicalWindow:
 		buffer := bytes.NewBufferString("")
-		formatWindowFuncDescs(buffer, x.WindowFuncDescs, x.schema)
+		formatPhysicalWindowFuncDescs(buffer, x.WindowFuncDescs, x.schema)
 		str = fmt.Sprintf("Window(%s)", buffer.String())
 	case *PhysicalWindow:
 		str = fmt.Sprintf("Window(%s)", x.ExplainInfo())
