@@ -137,8 +137,12 @@ func ConvertFloatToUint(sc *stmtctx.StatementContext, fval float64, upperBound u
 		}
 		return uint64(int64(val)), overflow(val, tp)
 	}
-	if val > float64(upperBound) {
-		return upperBound, overflow(val, tp)
+	ubf := float64(upperBound)
+	if val == ubf {
+		return uint64(math.MaxInt64), nil
+	}
+	if val > ubf {
+		return uint64(math.MaxInt64), overflow(val, tp)
 	}
 	return uint64(val), nil
 }
