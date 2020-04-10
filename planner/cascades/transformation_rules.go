@@ -104,6 +104,7 @@ var TiDBLayerOptimizationBatch = TransformationRuleBatch{
 		NewRulePullSelectionUpApply(),
 		NewRulePullAggregationUpApply(),
 		NewRuleDecorrelateByWindowFunction(),
+		NewRulePullProjectionUpApply(),
 	},
 	memo.OperandMaxOneRow: {
 		NewRuleEliminateMaxOneRow(),
@@ -3084,4 +3085,93 @@ func (r *DecorrelateByWindowFunction) exprSemanticallyEqual(
 			scalar1.GetArgs()[1].Equal(sctx, scalar2.GetArgs()[0])
 	}
 	return false
+}
+
+type PullProjectionUpApply struct {
+	baseRule
+}
+
+func NewRulePullProjectionUpApply() Transformation {
+	rule := &PullProjectionUpApply{}
+	rule.pattern = memo.BuildPattern(
+		memo.OperandApply, memo.EngineTiDBOnly,
+		memo.NewPattern(memo.OperandAny, memo.EngineTiDBOnly),
+		memo.NewPattern(memo.OperandProjection, memo.EngineTiDBOnly),
+	)
+	return rule
+}
+
+func (r *PullProjectionUpApply) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	applyExpr := old.GetExpr()
+	apply := applyExpr.ExprNode.(*plannercore.LogicalApply)
+	projExpr := old.Children[1].GetExpr()
+	proj := projExpr.ExprNode.(*plannercore.LogicalProjection)
+	outerGroup := old.Children[0].Group
+	outerSchema := outerGroup.Prop.Schema
+
+	newProjExprs := make([]expression.Expression, len(proj.Exprs))
+	for i, expr := range proj.Exprs {
+		newProjExprs[i] = expr.Clone().Decorrelate(outerSchema)
+	}
+	newApply := r.columnSubstitute(applyExpr, projExpr, newProjExprs)
+	newApplyExpr := memo.NewGroupExpr(newApply)
+	newApplyExpr.SetChildren(outerGroup, projExpr.Children[0])
+	switch apply.JoinType {
+	case plannercore.SemiJoin, plannercore.AntiSemiJoin,
+		plannercore.LeftOuterSemiJoin, plannercore.AntiLeftOuterSemiJoin:
+		// This projection is useless, just remove it.
+		return []*memo.GroupExpr{newApplyExpr}, true, false, nil
+	}
+	// Need to pull up the Projection.
+	newProj := plannercore.LogicalProjection{
+		Exprs: append(expression.Column2Exprs(outerSchema.Clone().Columns), newProjExprs...),
+	}.Init(proj.SCtx(), proj.SelectBlockOffset())
+	newProj.SetSchema(applyExpr.Schema())
+	newApplySchema := expression.MergeSchema(outerSchema, projExpr.Children[0].Prop.Schema)
+	newApplyGroup := memo.NewGroupWithSchema(newApplyExpr, newApplySchema)
+	newProjExpr := memo.NewGroupExpr(newProj)
+	newProjExpr.SetChildren(newApplyGroup)
+	return []*memo.GroupExpr{newProjExpr}, true, false, nil
+}
+
+func (r *PullProjectionUpApply) columnSubstitute(applyExpr *memo.GroupExpr, projExpr *memo.GroupExpr, exprs []expression.Expression) *plannercore.LogicalApply{
+	oldApply := applyExpr.ExprNode.(*plannercore.LogicalApply)
+	newApply := plannercore.LogicalApply{
+		LogicalJoin: *oldApply.LogicalJoin.Shallow(),
+	}.Init(oldApply.SCtx(), oldApply.SelectBlockOffset())
+	newLeftConditions := make([]expression.Expression, len(newApply.LeftConditions))
+	for i, cond := range newApply.LeftConditions {
+		newLeftConditions[i] = expression.ColumnSubstitute(cond, projExpr.Schema(), exprs)
+	}
+	newApply.LeftConditions = newLeftConditions
+	newRightConditions := make([]expression.Expression, len(newApply.RightConditions))
+	for i, cond := range newApply.RightConditions {
+		newRightConditions[i] = expression.ColumnSubstitute(cond, projExpr.Schema(), exprs)
+	}
+	newApply.RightConditions = newRightConditions
+	newOtherConditions := make([]expression.Expression, len(newApply.OtherConditions))
+	for i, cond := range newApply.OtherConditions {
+		newOtherConditions[i] = expression.ColumnSubstitute(cond, projExpr.Schema(), exprs)
+	}
+	newEqualConditions := make([]*expression.ScalarFunction, 0, len(newApply.EqualConditions))
+	for i := len(newApply.EqualConditions) - 1; i >= 0; i-- {
+		newCond := expression.ColumnSubstitute(newApply.EqualConditions[i], projExpr.Schema(), exprs).(*expression.ScalarFunction)
+		if expression.ExprFromSchema(newCond, applyExpr.Children[0].Prop.Schema) {
+			newApply.LeftConditions = append(newApply.LeftConditions, newCond)
+			continue
+		}
+		if expression.ExprFromSchema(newCond, applyExpr.Children[1].Prop.Schema) {
+			newApply.RightConditions = append(newApply.RightConditions, newCond)
+			continue
+		}
+		_, lhsIsCol := newCond.GetArgs()[0].(*expression.Column)
+		_, rhsIsCol := newCond.GetArgs()[1].(*expression.Column)
+		if !(lhsIsCol && rhsIsCol) {
+			newApply.OtherConditions = append(newApply.OtherConditions, newCond)
+			continue
+		}
+		newEqualConditions = append(newEqualConditions, newCond)
+	}
+	newApply.EqualConditions = newEqualConditions
+	return newApply
 }

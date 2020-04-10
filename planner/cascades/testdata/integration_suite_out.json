@@ -1055,16 +1055,15 @@
       {
         "SQL": "select a = (select a from t2 where t1.b = t2.b order by a limit 1) from t1",
         "Plan": [
-          "Projection_19 4.00 root  eq(test.t1.a, test.t2.a)->Column#5",
-          "└─Apply_21 4.00 root  CARTESIAN left outer join",
-          "  ├─TableReader_22(Build) 4.00 root  data:TableFullScan_23",
-          "  │ └─TableFullScan_23 4.00 cop[tikv] table:t1 pk col:test.t1.a, keep order:false",
-          "  └─Projection_24(Probe) 0.00 root  test.t2.a",
-          "    └─Limit_26 0.00 root  offset:0, count:1",
-          "      └─TableReader_34 0.00 root  data:Limit_35",
-          "        └─Limit_35 0.00 cop[tikv]  offset:0, count:1",
-          "          └─Selection_33 0.00 cop[tikv]  eq(test.t1.b, test.t2.b)",
-          "            └─TableFullScan_32 3.00 cop[tikv] table:t2 pk col:test.t2.a, keep order:true"
+          "Projection_23 4.00 root  eq(test.t1.a, test.t2.a)->Column#5",
+          "└─Apply_25 4.00 root  CARTESIAN left outer join",
+          "  ├─TableReader_26(Build) 4.00 root  data:TableFullScan_27",
+          "  │ └─TableFullScan_27 4.00 cop[tikv] table:t1 pk col:test.t1.a, keep order:false",
+          "  └─Limit_29(Probe) 0.00 root  offset:0, count:1",
+          "    └─TableReader_37 0.00 root  data:Limit_38",
+          "      └─Limit_38 0.00 cop[tikv]  offset:0, count:1",
+          "        └─Selection_36 0.00 cop[tikv]  eq(test.t1.b, test.t2.b)",
+          "          └─TableFullScan_35 3.00 cop[tikv] table:t2 pk col:test.t2.a, keep order:true"
         ],
         "Result": [
           "1",
@@ -1529,15 +1528,15 @@
       {
         "SQL": "select t1.a, (select t2.b from t2 where t2.a < t1.a order by t2.b limit 1) from t1 order by t1.a",
         "Plan": [
-          "Apply_22 10000.00 root  CARTESIAN left outer join",
-          "├─TableReader_23(Build) 10000.00 root  data:TableFullScan_24",
-          "│ └─TableFullScan_24 10000.00 cop[tikv] table:t1 pk col:test.t1.a, keep order:true, stats:pseudo",
-          "└─Projection_28(Probe) 1.00 root  test.t2.b",
-          "  └─TopN_29 1.00 root  test.t2.b:asc, offset:0, count:1",
-          "    └─TableReader_31 1.00 root  data:TopN_32",
-          "      └─TopN_32 1.00 cop[tikv]  test.t2.b:asc, offset:0, count:1",
-          "        └─Selection_35 8000.00 cop[tikv]  lt(test.t2.a, test.t1.a)",
-          "          └─TableFullScan_34 10000.00 cop[tikv] table:t2 pk col:test.t2.a, keep order:false, stats:pseudo"
+          "Projection_25 10000.00 root  test.t1.a, test.t2.b",
+          "└─Apply_27 10000.00 root  CARTESIAN left outer join",
+          "  ├─TableReader_28(Build) 10000.00 root  data:TableFullScan_29",
+          "  │ └─TableFullScan_29 10000.00 cop[tikv] table:t1 pk col:test.t1.a, keep order:true, stats:pseudo",
+          "  └─TopN_33(Probe) 1.00 root  test.t2.b:asc, offset:0, count:1",
+          "    └─TableReader_35 1.00 root  data:TopN_36",
+          "      └─TopN_36 1.00 cop[tikv]  test.t2.b:asc, offset:0, count:1",
+          "        └─Selection_39 8000.00 cop[tikv]  lt(test.t2.a, test.t1.a)",
+          "          └─TableFullScan_38 10000.00 cop[tikv] table:t2 pk col:test.t2.a, keep order:false, stats:pseudo"
         ],
         "Result": [
           "1 <nil>",
