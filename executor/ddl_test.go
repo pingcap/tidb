@@ -392,7 +392,7 @@ func (s *testSuite6) TestAlterTableAddColumn(c *C) {
 	tk.MustExec("insert into alter_test values(1)")
 	tk.MustExec("alter table alter_test add column c2 timestamp default current_timestamp")
 	time.Sleep(1 * time.Millisecond)
-	now := time.Now().Add(-time.Duration(1 * time.Millisecond)).Format(types.TimeFormat)
+	now := time.Now().Add(-1 * time.Millisecond).Format(types.TimeFormat)
 	r, err := tk.Exec("select c2 from alter_test")
 	c.Assert(err, IsNil)
 	req := r.NewChunk()
