@@ -331,7 +331,7 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 	// Handle MEMORY_QUOTA
 	if memoryQuotaHintCnt != 0 {
 		if memoryQuotaHintCnt > 1 {
-			warn := errors.New("There are multiple MEMORY_QUOTA hints, only the last one will take effect")
+			warn := errors.Errorf("MEMORY_QUOTA() s defined more than once, only the last definition takes effect: MEMORY_QUOTA(%v)", memoryQuotaHint.HintData.(int64))
 			warns = append(warns, warn)
 		}
 		// Executor use MemoryQuota <= 0 to indicate no memory limit, here use < 0 to handle hint syntax error.
@@ -350,7 +350,7 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 	// Handle USE_TOJA
 	if useToJAHintCnt != 0 {
 		if useToJAHintCnt > 1 {
-			warn := errors.New("There are multiple USE_TOJA hints, only the last one will take effect")
+			warn := errors.Errorf("USE_TOJA() is defined more than once, only the last definition takes effect: USE_TOJA(%v)", useToJAHint.HintData.(bool))
 			warns = append(warns, warn)
 		}
 		stmtHints.HasAllowInSubqToJoinAndAggHint = true
@@ -368,7 +368,7 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 	// Handle NO_INDEX_MERGE
 	if noIndexMergeHintCnt != 0 {
 		if noIndexMergeHintCnt > 1 {
-			warn := errors.New("There are multiple NO_INDEX_MERGE hints, only the last one will take effect")
+			warn := errors.New("NO_INDEX_MERGE() is defined more than once, only the last definition takes effect")
 			warns = append(warns, warn)
 		}
 		stmtHints.NoIndexMergeHint = true
@@ -376,7 +376,7 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 	// Handle READ_CONSISTENT_REPLICA
 	if readReplicaHintCnt != 0 {
 		if readReplicaHintCnt > 1 {
-			warn := errors.New("There are multiple READ_CONSISTENT_REPLICA hints, only the last one will take effect")
+			warn := errors.New("READ_CONSISTENT_REPLICA() is defined more than once, only the last definition takes effect")
 			warns = append(warns, warn)
 		}
 		stmtHints.HasReplicaReadHint = true
@@ -385,7 +385,7 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 	// Handle MAX_EXECUTION_TIME
 	if maxExecutionTimeCnt != 0 {
 		if maxExecutionTimeCnt > 1 {
-			warn := errors.New("There are multiple MAX_EXECUTION_TIME hints, only the last one will take effect")
+			warn := errors.Errorf("MAX_EXECUTION_TIME() is defined more than once, only the last definition takes effect: MAX_EXECUTION_TIME(%v)", maxExecutionTime.HintData.(uint64))
 			warns = append(warns, warn)
 		}
 		stmtHints.HasMaxExecutionTime = true
