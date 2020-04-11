@@ -987,7 +987,7 @@ func (r *ImplIndexJoin) getAllFilterConditions(expr *memo.GroupExpr) []expressio
 	case *plannercore.LogicalSelection:
 		return append(plan.Conditions, r.getAllFilterConditions(expr.Children[0].GetFirstGroupExpr())...)
 	case *plannercore.LogicalTableScan:
-		return plan.AccessConds
+		return plan.AllConds
 	default:
 		return nil
 	}

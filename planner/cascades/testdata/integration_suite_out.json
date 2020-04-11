@@ -1472,9 +1472,9 @@
           "IndexJoin_18 10000.00 root  left outer join, inner:TableReader_17, outer key:test.t1.b, inner key:test.t2.a",
           "├─TableReader_19(Build) 10000.00 root  data:TableFullScan_20",
           "│ └─TableFullScan_20 10000.00 cop[tikv] table:t1 pk col:test.t1.a, keep order:true, stats:pseudo",
-          "└─TableReader_17(Probe) 0.14 root  data:Selection_16",
-          "  └─Selection_16 0.14 cop[tikv]  gt(test.t2.a, 0)",
-          "    └─TableRangeScan_15 0.42 cop[tikv] table:t2 , range: decided by [test.t1.b]keep order:false, stats:pseudo"
+          "└─TableReader_17(Probe) 0.11 root  data:Selection_16",
+          "  └─Selection_16 0.11 cop[tikv]  gt(test.t2.a, 0), gt(test.t2.b, 0)",
+          "    └─TableRangeScan_15 1.00 cop[tikv] table:t2 , range: decided by [test.t1.b]keep order:false, stats:pseudo"
         ],
         "Result": [
           "0 0 <nil> <nil>",
