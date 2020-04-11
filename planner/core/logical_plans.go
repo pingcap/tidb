@@ -564,7 +564,7 @@ type TiKVDoubleGather struct {
 	Source       *DataSource
 	IndexCols    []*expression.Column
 	IndexColLens []int
-	index        *model.IndexInfo
+	Index        *model.IndexInfo
 	HandleCol    *expression.Column
 }
 
@@ -725,7 +725,7 @@ func (ds *DataSource) buildIndexLookupGather(path *util.AccessPath) LogicalPlan 
 		Source:       ds,
 		IndexCols:    path.IdxCols,
 		IndexColLens: path.IdxColLens,
-		index:        path.Index,
+		Index:        path.Index,
 		HandleCol:    ds.getHandleCol(),
 	}.Init(ds.ctx, ds.blockOffset)
 	dg.SetSchema(ds.Schema())

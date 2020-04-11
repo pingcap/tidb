@@ -815,8 +815,8 @@ func (p *LogicalTableScan) ExplainInfo() string {
 	if p.Handle != nil {
 		fmt.Fprintf(buffer, ", pk col:%s", p.Handle.ExplainInfo())
 	}
-	if len(p.AccessConds) > 0 {
-		fmt.Fprintf(buffer, ", cond:%v", p.AccessConds)
+	if len(p.AllConds) > 0 {
+		fmt.Fprintf(buffer, ", cond:%v", p.AllConds)
 	}
 	return buffer.String()
 }
@@ -834,8 +834,8 @@ func (is *LogicalIndexScan) ExplainInfo() string {
 			}
 		}
 	}
-	if len(is.AccessConds) > 0 {
-		fmt.Fprintf(buffer, ", cond:%v", is.AccessConds)
+	if len(is.AllConds) > 0 {
+		fmt.Fprintf(buffer, ", cond:%v", is.AllConds)
 	}
 	return buffer.String()
 }
@@ -855,7 +855,7 @@ const MetricTableTimeFormat = "2006-01-02 15:04:05.999"
 // ExplainInfo implements Plan interface.
 func (dg *TiKVDoubleGather) ExplainInfo() string {
 	buffer := bytes.NewBufferString(dg.Source.ExplainInfo())
-	buffer.WriteString(", index:" + dg.index.Name.String())
+	buffer.WriteString(", index:" + dg.Index.Name.String())
 	return buffer.String()
 }
 

@@ -120,6 +120,7 @@ var TiKVLayerOptimizationBatch = TransformationRuleBatch{
 	},
 	memo.OperandSelection: {
 		NewRulePushSelDownTiKVSingleGather(),
+		NewRulePushSelDownDoubleGather(),
 		NewRulePushSelDownTableScan(),
 		NewRulePushSelDownIndexScan(),
 		NewRuleMergeAdjacentSelection(),
@@ -293,7 +294,73 @@ func (r *PushSelDownTiKVSingleGather) OnTransform(old *memo.ExprIter) (newExprs 
 	return []*memo.GroupExpr{remainedSelExpr}, true, false, nil
 }
 
-// EnumeratePaths converts DataSource to table scan and index scans.
+type PushSelDownDoubleGather struct {
+	baseRule
+}
+
+func NewRulePushSelDownDoubleGather() Transformation {
+	rule := &PushSelDownDoubleGather{}
+	rule.pattern = memo.BuildPattern(
+		memo.OperandSelection, memo.EngineTiDBOnly,
+		memo.NewPattern(memo.OperandTiKVDoubleGather, memo.EngineTiDBOnly),
+	)
+	return rule
+}
+
+func (r *PushSelDownDoubleGather) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	sel := old.GetExpr().ExprNode.(*plannercore.LogicalSelection)
+	gather := old.Children[0].GetExpr().ExprNode.(*plannercore.TiKVDoubleGather)
+	indexGroup := old.Children[0].GetExpr().Children[0]
+	tableGroup := old.Children[0].GetExpr().Children[1]
+	sctx := sel.SCtx()
+	pushed, remained := expression.PushDownExprs(sctx.GetSessionVars().StmtCtx, sel.Conditions, sctx.GetClient(), kv.TiKV)
+	if len(pushed) == 0 {
+		return nil, false, false, nil
+	}
+	// Split the pushed conditions into TablePathConditions and IndexPathConditions.
+	indexConditions := make([]expression.Expression, 0, len(pushed))
+	tableConditions := make([]expression.Expression, 0, len(pushed))
+	for _, cond := range pushed {
+		if expression.ExprFromSchema(cond, indexGroup.Prop.Schema) {
+			indexConditions = append(indexConditions, cond)
+		} else {
+			tableConditions = append(tableConditions, cond)
+		}
+	}
+	newGather := plannercore.TiKVDoubleGather{
+		Source:       gather.Source	,
+		IndexCols:    gather.IndexCols,
+		IndexColLens: gather.IndexColLens,
+		HandleCol:    gather.HandleCol,
+		Index:        gather.Index,
+	}.Init(sctx, gather.SelectBlockOffset())
+	newTableGroup := tableGroup
+	newIndexGroup := indexGroup
+	if len(indexConditions) != 0 {
+		indexSel := plannercore.LogicalSelection{Conditions:indexConditions}.Init(sctx, sel.SelectBlockOffset())
+		indexSelGroupExpr := memo.NewGroupExpr(indexSel)
+		indexSelGroupExpr.SetChildren(indexGroup)
+		newIndexGroup = memo.NewGroupWithSchema(indexSelGroupExpr, indexGroup.Prop.Schema).SetEngineType(indexGroup.EngineType)
+	}
+	if len(tableConditions) != 0 {
+		tableSel := plannercore.LogicalSelection{Conditions:tableConditions}.Init(sctx, sel.SelectBlockOffset())
+		tableSelGroupExpr := memo.NewGroupExpr(tableSel)
+		tableSelGroupExpr.SetChildren(tableGroup)
+		newTableGroup = memo.NewGroupWithSchema(tableSelGroupExpr, tableGroup.Prop.Schema).SetEngineType(tableGroup.EngineType)
+	}
+	newGatherExpr := memo.NewGroupExpr(newGather)
+	newGatherExpr.SetChildren(newIndexGroup, newTableGroup)
+	if len(remained) == 0 {
+		return []*memo.GroupExpr{newGatherExpr}, true, false, nil
+	}
+	remainedSel := plannercore.LogicalSelection{Conditions:remained}.Init(sctx, sel.SelectBlockOffset())
+	newGatherGroup := memo.NewGroupWithSchema(newGatherExpr, old.GetExpr().Schema())
+	newSelExpr := memo.NewGroupExpr(remainedSel)
+	newSelExpr.SetChildren(newGatherGroup)
+	return []*memo.GroupExpr{newSelExpr}, true, false, nil
+}
+
+	// EnumeratePaths converts DataSource to table scan and index scans.
 type EnumeratePaths struct {
 	baseRule
 }
@@ -312,7 +379,9 @@ func (r *EnumeratePaths) OnTransform(old *memo.ExprIter) (newExprs []*memo.Group
 	gathers := ds.Convert2Gathers()
 	for _, gather := range gathers {
 		expr := memo.Convert2GroupExpr(gather)
-		expr.Children[0].SetEngineType(memo.EngineTiKV)
+		for _, child := range expr.Children {
+			child.SetEngineType(memo.EngineTiKV)
+		}
 		newExprs = append(newExprs, expr)
 	}
 	return newExprs, true, false, nil

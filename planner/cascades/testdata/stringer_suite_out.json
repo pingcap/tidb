@@ -10,7 +10,7 @@
           "Group#1 Schema:[test.t.a,test.t.b], UniqueKey:[test.t.a]",
           "    TiKVSingleGather_5 input:[Group#2], table:t",
           "Group#2 Schema:[test.t.a,test.t.b], UniqueKey:[test.t.a]",
-          "    TableScan_7 table:t, pk col:test.t.a"
+          "    TableScan_7 table:t, pk col:test.t.a, cond:[gt(test.t.a, 1) lt(test.t.b, 1)]"
         ]
       },
       {
@@ -69,7 +69,7 @@
           "Group#2 Schema:[test.t.a,test.t.b,test.t.c,test.t.d], UniqueKey:[test.t.a]",
           "    TiKVSingleGather_6 input:[Group#3], table:t",
           "Group#3 Schema:[test.t.a,test.t.b,test.t.c,test.t.d], UniqueKey:[test.t.a]",
-          "    TableScan_11 table:t, pk col:test.t.a"
+          "    TableScan_11 table:t, pk col:test.t.a, cond:[gt(test.t.c, 10)]"
         ]
       },
       {
@@ -82,7 +82,7 @@
           "Group#2 Schema:[test.t.b]",
           "    TiKVSingleGather_6 input:[Group#3], table:t",
           "Group#3 Schema:[test.t.b]",
-          "    TableScan_8 table:t"
+          "    TableScan_8 table:t, cond:[gt(test.t.b, 10)]"
         ]
       },
       {
@@ -107,7 +107,7 @@
           "    TiKVSingleGather_21 input:[Group#11], table:t2, index:c_d_e_str",
           "    TiKVSingleGather_23 input:[Group#12], table:t2, index:e_d_c_str_prefix",
           "Group#6 Schema:[test.t.a], UniqueKey:[test.t.a]",
-          "    TableScan_31 table:t2, pk col:test.t.a",
+          "    TableScan_31 table:t2, pk col:test.t.a, cond:[lt(test.t.a, test.t.b)]",
           "Group#7 Schema:[test.t.a]",
           "    Selection_30 input:[Group#13], lt(test.t.a, test.t.b)",
           "Group#13 Schema:[test.t.a]",
@@ -189,7 +189,7 @@
           "    TiKVSingleGather_16 input:[Group#8], table:t, index:c_d_e_str",
           "    TiKVSingleGather_18 input:[Group#9], table:t, index:e_d_c_str_prefix",
           "Group#3 Schema:[test.t.a], UniqueKey:[test.t.a]",
-          "    TableScan_26 table:t, pk col:test.t.a",
+          "    TableScan_26 table:t, pk col:test.t.a, cond:[gt(test.t.a, 10)]",
           "Group#4 Schema:[test.t.a]",
           "    Selection_25 input:[Group#10], gt(test.t.a, 10)",
           "Group#10 Schema:[test.t.a]",
@@ -228,7 +228,7 @@
           "Group#3 Schema:[test.t.a,test.t.b,test.t.c], UniqueKey:[test.t.a]",
           "    TiKVSingleGather_7 input:[Group#4], table:t",
           "Group#4 Schema:[test.t.a,test.t.b,test.t.c], UniqueKey:[test.t.a]",
-          "    TableScan_12 table:t, pk col:test.t.a"
+          "    TableScan_12 table:t, pk col:test.t.a, cond:[gt(test.t.b, 1)]"
         ]
       },
       {
@@ -286,7 +286,7 @@
           "Group#2 Schema:[test.t.b,test.t.f,test.t.g], UniqueKey:[test.t.f,test.t.f,test.t.g]",
           "    TiKVSingleGather_6 input:[Group#3], table:t",
           "Group#3 Schema:[test.t.b,test.t.f,test.t.g], UniqueKey:[test.t.f,test.t.f,test.t.g]",
-          "    TableScan_17 table:t"
+          "    TableScan_17 table:t, cond:[eq(test.t.b, 2) eq(test.t.f, 1)]"
         ]
       },
       {
@@ -311,7 +311,7 @@
           "Group#8 Schema:[test.t.a,test.t.b], UniqueKey:[test.t.a]",
           "    TiKVSingleGather_13 input:[Group#9], table:t2",
           "Group#9 Schema:[test.t.a,test.t.b], UniqueKey:[test.t.a]",
-          "    TableScan_15 table:t2, pk col:test.t.a"
+          "    TableScan_15 table:t2, pk col:test.t.a, cond:[eq(test.t.b, test.t.b)]"
         ]
       }
     ]
