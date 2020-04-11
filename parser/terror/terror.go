@@ -360,6 +360,6 @@ func Call(fn func() error) {
 // Log logs the error if it is not nil.
 func Log(err error) {
 	if err != nil {
-		log.Error("encountered error", zap.Error(err))
+		log.Error("encountered error", zap.Error(errors.WithStack(err)))
 	}
 }
