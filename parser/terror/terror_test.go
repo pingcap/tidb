@@ -15,6 +15,7 @@ package terror
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"runtime"
 	"strings"
@@ -159,4 +160,9 @@ func (s *testTErrorSuite) TestErrorEqual(c *C) {
 	te4 := ClassKV.New(code2, "abc")
 	c.Assert(ErrorEqual(te1, te3), IsFalse)
 	c.Assert(ErrorEqual(te3, te4), IsFalse)
+}
+
+func (s *testTErrorSuite) TestLog(c *C) {
+	err := fmt.Errorf("xxx")
+	Log(err)
 }
