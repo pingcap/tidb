@@ -64,6 +64,7 @@ func init() {
 		mysql.ErrGCTooEarly:          mysql.ErrGCTooEarly,
 		mysql.ErrTruncatedWrongValue: mysql.ErrTruncatedWrongValue,
 		mysql.ErrQueryInterrupted:    mysql.ErrQueryInterrupted,
+		mysql.ErrDataOutOfRange:      mysql.ErrDataOutOfRange,
 		mysql.ErrLockWaitTimeout:     mysql.ErrLockWaitTimeout,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassTiKV] = tikvMySQLErrCodes
