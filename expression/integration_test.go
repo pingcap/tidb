@@ -4585,3 +4585,13 @@ func (s *testIntegrationSuite) TestCacheRefineArgs(c *C) {
 	tk.MustExec("set @p0='-184467440737095516167.1'")
 	tk.MustQuery("execute stmt using @p0").Check(testkit.Rows("0"))
 }
+
+func (s *testIntegrationSuite) TestIssue15790(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("CREATE TABLE t0(c0 INT);")
+	tk.MustExec("INSERT INTO t0(c0) VALUES (0);")
+	tk.MustQuery("SELECT * FROM t0 WHERE -10000000000000000000 | t0.c0 UNION SELECT * FROM t0;").Check(testkit.Rows("0"))
+	tk.MustQuery("SELECT * FROM t0 WHERE -10000000000000000000 | t0.c0 UNION all SELECT * FROM t0;").Check(testkit.Rows("0", "0"))
+	tk.MustExec("drop table t0;")
+}
