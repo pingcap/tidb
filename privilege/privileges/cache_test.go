@@ -312,3 +312,48 @@ func checkUserRecord(x, y []privileges.UserRecord, c *C) {
 		c.Assert(x[i].Host, Equals, y[i].Host)
 	}
 }
+
+func (s *testCacheSuite) TestDBIsVisible(c *C) {
+	se, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	defer se.Close()
+	mustExec(c, se, "create database visdb")
+	p := privileges.MySQLPrivilege{}
+	err = p.LoadAll(se)
+	c.Assert(err, IsNil)
+
+	mustExec(c, se, `INSERT INTO mysql.user (Host, User, Super_priv) VALUES ("%", "testvisdb", "Y")`)
+	err = p.LoadUserTable(se)
+	c.Assert(err, IsNil)
+	isVisible := p.DBIsVisible("testvisdb", "%", "visdb")
+	c.Assert(isVisible, IsFalse)
+	mustExec(c, se, "TRUNCATE TABLE mysql.user")
+
+	mustExec(c, se, `INSERT INTO mysql.user (Host, User, Select_priv) VALUES ("%", "testvisdb2", "Y")`)
+	err = p.LoadUserTable(se)
+	c.Assert(err, IsNil)
+	isVisible = p.DBIsVisible("testvisdb2", "%", "visdb")
+	c.Assert(isVisible, IsTrue)
+	mustExec(c, se, "TRUNCATE TABLE mysql.user")
+
+	mustExec(c, se, `INSERT INTO mysql.user (Host, User, Create_priv) VALUES ("%", "testvisdb3", "Y")`)
+	err = p.LoadUserTable(se)
+	c.Assert(err, IsNil)
+	isVisible = p.DBIsVisible("testvisdb3", "%", "visdb")
+	c.Assert(isVisible, IsTrue)
+	mustExec(c, se, "TRUNCATE TABLE mysql.user")
+
+	mustExec(c, se, `INSERT INTO mysql.user (Host, User, Insert_priv) VALUES ("%", "testvisdb4", "Y")`)
+	err = p.LoadUserTable(se)
+	c.Assert(err, IsNil)
+	isVisible = p.DBIsVisible("testvisdb4", "%", "visdb")
+	c.Assert(isVisible, IsTrue)
+	mustExec(c, se, "TRUNCATE TABLE mysql.user")
+
+	mustExec(c, se, `INSERT INTO mysql.user (Host, User, Update_priv) VALUES ("%", "testvisdb5", "Y")`)
+	err = p.LoadUserTable(se)
+	c.Assert(err, IsNil)
+	isVisible = p.DBIsVisible("testvisdb5", "%", "visdb")
+	c.Assert(isVisible, IsTrue)
+	mustExec(c, se, "TRUNCATE TABLE mysql.user")
+}
