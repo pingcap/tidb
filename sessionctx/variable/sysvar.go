@@ -499,7 +499,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "table_open_cache", "2000"},
 	{ScopeNone, "log_slave_updates", "OFF"},
 	{ScopeNone, "performance_schema_events_stages_history_long_size", "10000"},
-	{ScopeGlobal | ScopeSession, "autocommit", "ON"},
+	{ScopeGlobal | ScopeSession, "autocommit", "1"},
 	{ScopeSession, "insert_id", ""},
 	{ScopeGlobal | ScopeSession, "default_tmp_storage_engine", "InnoDB"},
 	{ScopeGlobal | ScopeSession, "optimizer_search_depth", "62"},
