@@ -134,10 +134,10 @@ func (c *Constant) EvalInt(ctx sessionctx.Context, _ chunk.Row) (int64, bool, er
 	} else {
 		if c.GetType().Tp == mysql.TypeNull || c.Value.IsNull() {
 			return 0, true, nil
-		} else if c.GetType().Kind() == types.KindBinaryLiteral {
+		} else if c.Value.Kind() == types.KindBinaryLiteral {
 			val, err := c.Value.GetBinaryLiteral().ToInt(ctx.GetSessionVars().StmtCtx)
 			return int64(val), err != nil, err
-		} else if c.GetType().Hybrid() || c.GetType().Kind() == types.KindString {
+		} else if c.GetType().Hybrid() || c.Value.Kind() == types.KindString {
 			val, err := c.Value.ToInt64(ctx.GetSessionVars().StmtCtx)
 			if err != nil {
 				return 0, true, errors.Trace(err)
