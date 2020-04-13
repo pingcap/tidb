@@ -436,7 +436,7 @@ func (b *builtinJSONSearchSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Col
 		}
 		var pathExprs []json.PathExpression
 		if pathBufs != nil {
-			pathExprs := make([]json.PathExpression, 0, len(b.args)-4)
+			pathExprs = make([]json.PathExpression, 0, len(b.args)-4)
 			for j := 0; j < len(b.args)-4; j++ {
 				if pathBufs[j].IsNull(i) {
 					break
