@@ -341,16 +341,38 @@ func (s *testSuite) TestGlobalAndSessionBindingBothExist(c *C) {
 
 	tk.MustExec("create global binding for SELECT * from t1,t2 where t1.id = t2.id using SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id")
 
+	// Test bindingUsage, which indicates how many times the binding is used.
 	metrics.BindUsageCounter.Reset()
 	c.Assert(tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "MergeJoin"), IsTrue)
 	pb := &dto.Metric{}
 	metrics.BindUsageCounter.WithLabelValues(metrics.ScopeGlobal).Write(pb)
 	c.Assert(pb.GetCounter().GetValue(), Equals, float64(1))
+
+	// Test 'tidb_use_plan_baselines'
 	tk.MustExec("set @@tidb_use_plan_baselines = 0")
 	c.Assert(tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "HashJoin"), IsTrue)
-
-	tk.MustExec("drop global binding for SELECT * from t1,t2 where t1.id = t2.id")
 	tk.MustExec("set @@tidb_use_plan_baselines = 1")
+
+	// Test 'drop global binding'
+	c.Assert(tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "MergeJoin"), IsTrue)
+	tk.MustExec("drop global binding for SELECT * from t1,t2 where t1.id = t2.id")
+	c.Assert(tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "HashJoin"), IsTrue)
+
+	// Test the case when global and session binding both exist
+	// PART1 : session binding should totally cover global binding
+	// use merge join as session binding here since the optimizer will choose hash join for this stmt in default
+	tk.MustExec("create global binding for SELECT * from t1,t2 where t1.id = t2.id using SELECT  /*+ TIDB_HJ(t1, t2) */  * from t1,t2 where t1.id = t2.id")
+	c.Assert(tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "HashJoin"), IsTrue)
+	tk.MustExec("create binding for SELECT * from t1,t2 where t1.id = t2.id using SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id")
+	c.Assert(tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "MergeJoin"), IsTrue)
+	tk.MustExec("drop global binding for SELECT * from t1,t2 where t1.id = t2.id")
+	c.Assert(tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "MergeJoin"), IsTrue)
+
+	// PART2 : the dropped session binding should continue to block the effect of global binding
+	tk.MustExec("create global binding for SELECT * from t1,t2 where t1.id = t2.id using SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id")
+	tk.MustExec("drop binding for SELECT * from t1,t2 where t1.id = t2.id")
+	c.Assert(tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "HashJoin"), IsTrue)
+	tk.MustExec("drop global binding for SELECT * from t1,t2 where t1.id = t2.id")
 	c.Assert(tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "HashJoin"), IsTrue)
 }
 
@@ -654,6 +676,53 @@ func (s *testSuite) TestDefaultSessionVars(c *C) {
 		"tidb_capture_plan_baselines off",
 		"tidb_evolve_plan_baselines off",
 		"tidb_use_plan_baselines on"))
+}
+
+func (s *testSuite) TestCaptureBaselinesScope(c *C) {
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk2 := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk1)
+	tk1.MustQuery(`show session variables like "tidb_capture_plan_baselines"`).Check(testkit.Rows(
+		"tidb_capture_plan_baselines off",
+	))
+	tk1.MustQuery(`show global variables like "tidb_capture_plan_baselines"`).Check(testkit.Rows(
+		"tidb_capture_plan_baselines off",
+	))
+	tk1.MustQuery(`select @@session.tidb_capture_plan_baselines`).Check(testkit.Rows(
+		"off",
+	))
+	tk1.MustQuery(`select @@global.tidb_capture_plan_baselines`).Check(testkit.Rows(
+		"off",
+	))
+
+	tk1.MustExec("set @@session.tidb_capture_plan_baselines = on")
+	defer func() {
+		tk1.MustExec(" set @@session.tidb_capture_plan_baselines = off")
+	}()
+	tk1.MustQuery(`show session variables like "tidb_capture_plan_baselines"`).Check(testkit.Rows(
+		"tidb_capture_plan_baselines on",
+	))
+	tk1.MustQuery(`show global variables like "tidb_capture_plan_baselines"`).Check(testkit.Rows(
+		"tidb_capture_plan_baselines off",
+	))
+	tk1.MustQuery(`select @@session.tidb_capture_plan_baselines`).Check(testkit.Rows(
+		"on",
+	))
+	tk1.MustQuery(`select @@global.tidb_capture_plan_baselines`).Check(testkit.Rows(
+		"off",
+	))
+	tk2.MustQuery(`show session variables like "tidb_capture_plan_baselines"`).Check(testkit.Rows(
+		"tidb_capture_plan_baselines on",
+	))
+	tk2.MustQuery(`show global variables like "tidb_capture_plan_baselines"`).Check(testkit.Rows(
+		"tidb_capture_plan_baselines off",
+	))
+	tk2.MustQuery(`select @@session.tidb_capture_plan_baselines`).Check(testkit.Rows(
+		"on",
+	))
+	tk2.MustQuery(`select @@global.tidb_capture_plan_baselines`).Check(testkit.Rows(
+		"off",
+	))
 }
 
 func (s *testSuite) TestDuplicateBindings(c *C) {
