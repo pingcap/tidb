@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"strconv"
 	"strings"
 
@@ -263,6 +264,17 @@ func (e *Execute) checkPreparedPriv(ctx context.Context, sctx sessionctx.Context
 	return err
 }
 
+func (e *Execute) addHitInfo(sctx sessionctx.Context, opt string) error {
+	vars := sctx.GetSessionVars()
+	err := vars.SetSystemVar(variable.TiDBFoundInPlanCache, opt)
+	if opt == "ON" {
+		vars.PlanCacheHits += 1
+	} else {
+		vars.PlanCacheMisses += 1
+	}
+	return err
+}
+
 func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, preparedStmt *CachedPrepareStmt) error {
 	stmtCtx := sctx.GetSessionVars().StmtCtx
 	prepared := preparedStmt.PreparedAst
@@ -281,6 +293,10 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 			metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
 		} else {
 			planCacheCounter.Inc()
+		}
+		err = e.addHitInfo(sctx, "ON")
+		if err != nil {
+			return err
 		}
 		e.names = names
 		e.Plan = plan
@@ -307,12 +323,16 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 				}
 			}
 			if planValid {
+				err := e.addHitInfo(sctx, "ON")
+				if err != nil {
+					return err
+				}
 				if metrics.ResettablePlanCacheCounterFortTest {
 					metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
 				} else {
 					planCacheCounter.Inc()
 				}
-				err := e.rebuildRange(cachedVal.Plan)
+				err = e.rebuildRange(cachedVal.Plan)
 				if err != nil {
 					return err
 				}
@@ -336,10 +356,16 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	isRange := e.isRangePartition(p)
 	_, isTableDual := p.(*PhysicalTableDual)
 	if !isTableDual && prepared.UseCache && !isRange {
+		err = e.addHitInfo(sctx, "ON")
+		if err != nil {
+			return err
+		}
 		cached := NewPSTMTPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan)
 		preparedStmt.NormalizedPlan, preparedStmt.PlanDigest = NormalizePlan(p)
 		stmtCtx.SetPlanDigest(preparedStmt.NormalizedPlan, preparedStmt.PlanDigest)
 		sctx.PreparedPlanCache().Put(cacheKey, cached)
+	} else {
+		err = e.addHitInfo(sctx, "OFF")
 	}
 	return err
 }

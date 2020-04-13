@@ -594,6 +594,13 @@ type SessionVars struct {
 	// WindowingUseHighPrecision determines whether to compute window operations without loss of precision.
 	// see https://dev.mysql.com/doc/refman/8.0/en/window-function-optimization.html for more details.
 	WindowingUseHighPrecision bool
+
+	// PlanInCache indicates whether the last statement was found in plan cache
+	PlanInCache bool
+	// PlanCacheHits indicates how many plan cache hits have happened in this session
+	PlanCacheHits uint64
+	// PlanCacheMisses indicates how many plan cache misses have happened in this session
+	PlanCacheMisses uint64
 }
 
 // PreparedParams contains the parameters of the current prepared statement when executing it.
@@ -679,6 +686,9 @@ func NewSessionVars() *SessionVars {
 		MetricSchemaRangeDuration:   DefTiDBMetricSchemaRangeDuration,
 		SequenceState:               NewSequenceState(),
 		WindowingUseHighPrecision:   true,
+		PlanInCache:                 DefTiDBFoundInPlanCache,
+		PlanCacheHits:               0,
+		PlanCacheMisses:             0,
 	}
 	vars.KVVars = kv.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -1272,6 +1282,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		} else {
 			s.StmtCtx.AppendWarning(errors.Errorf("cannot update %s when enabling dynamic configs", TiDBCheckMb4ValueInUTF8))
 		}
+	case TiDBFoundInPlanCache:
+		s.PlanInCache = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil
