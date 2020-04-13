@@ -17,6 +17,7 @@ import (
 	"math"
 
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -72,44 +73,12 @@ func (builder *RequestBuilder) SetTableHandles(tid int64, handles []int64) *Requ
 	return builder
 }
 
-func hasJoinNode(executor *tipb.Executor) bool {
-	if executor.Tp == tipb.ExecType_TypeJoin {
-		return true
-	}
-	switch executor.Tp {
-	case tipb.ExecType_TypeAggregation, tipb.ExecType_TypeStreamAgg:
-		if executor.Aggregation.Child != nil {
-			return hasJoinNode(executor.Aggregation.Child)
-		}
-		return false
-	case tipb.ExecType_TypeSelection:
-		if executor.Selection.Child != nil {
-			return hasJoinNode(executor.Selection.Child)
-		}
-		return false
-	case tipb.ExecType_TypeLimit:
-		if executor.Limit.Child != nil {
-			return hasJoinNode(executor.Limit.Child)
-		}
-		return false
-	case tipb.ExecType_TypeTopN:
-		if executor.TopN.Child != nil {
-			return hasJoinNode(executor.TopN.Child)
-		}
-		return false
-	default:
-		return false
-	}
-}
 // SetDAGRequest sets the request type to "ReqTypeDAG" and construct request data.
 func (builder *RequestBuilder) SetDAGRequest(dag *tipb.DAGRequest) *RequestBuilder {
 	if builder.err == nil {
 		builder.Request.Tp = kv.ReqTypeDAG
 		builder.Request.Cacheable = true
 		builder.Request.Data, builder.err = dag.Marshal()
-		if hasJoinNode(dag.Executors[0]) {
-			builder.CopTaskBatch = true
-		}
 	}
 
 	return builder
@@ -169,6 +138,12 @@ func (builder *RequestBuilder) SetStoreType(storeType kv.StoreType) *RequestBuil
 	return builder
 }
 
+// SetAllowBatchCop sets `BatchCop` property.
+func (builder *RequestBuilder) SetAllowBatchCop(batchCop bool) *RequestBuilder {
+	builder.Request.BatchCop = batchCop
+	return builder
+}
+
 func (builder *RequestBuilder) getIsolationLevel() kv.IsoLevel {
 	switch builder.Tp {
 	case kv.ReqTypeAnalyze:
@@ -197,7 +172,11 @@ func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *Req
 	builder.Request.NotFillCache = sv.StmtCtx.NotFillCache
 	builder.Request.Priority = builder.getKVPriority(sv)
 	builder.Request.ReplicaRead = sv.GetReplicaRead()
-	builder.Request.SchemaVar = sv.TxnCtx.SchemaVersion
+	if sv.SnapshotInfoschema != nil {
+		builder.Request.SchemaVar = infoschema.GetInfoSchemaBySessionVars(sv).SchemaMetaVersion()
+	} else {
+		builder.Request.SchemaVar = sv.TxnCtx.SchemaVersion
+	}
 	return builder
 }
 

@@ -27,7 +27,9 @@
       "desc select /*+ read_from_storage(tiflash[tt]) */ * from tt where (tt.a > 1 and tt.a < 20) or (tt.a >= 30 and tt.a < 55)",
       "desc select * from ttt order by ttt.a desc",
       "desc select /*+ read_from_storage(tiflash[ttt]) */ * from ttt order by ttt.a desc",
-      "desc select /*+ read_from_storage(tiflash[ttt]) */ * from ttt order by ttt.a"
+      "desc select /*+ read_from_storage(tiflash[ttt]) */ * from ttt order by ttt.a",
+      "desc select /*+ read_from_storage(tikv[t, ttt]) */ * from ttt",
+      "desc select /*+ read_from_storage(tiflash[t, ttt], tikv[tt]) */ * from ttt"
     ]
   },
   {

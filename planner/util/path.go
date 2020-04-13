@@ -18,7 +18,9 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/ranger"
 )
 
@@ -59,13 +61,13 @@ type AccessPath struct {
 }
 
 // SplitCorColAccessCondFromFilters move the necessary filter in the form of index_col = corrlated_col to access conditions.
-func (path *AccessPath) SplitCorColAccessCondFromFilters(eqOrInCount int) (access, remained []expression.Expression) {
+func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx sessionctx.Context, eqOrInCount int) (access, remained []expression.Expression) {
 	access = make([]expression.Expression, len(path.IdxCols)-eqOrInCount)
 	used := make([]bool, len(path.TableFilters))
 	for i := eqOrInCount; i < len(path.IdxCols); i++ {
 		matched := false
 		for j, filter := range path.TableFilters {
-			if used[j] || !isColEqCorColOrConstant(filter, path.IdxCols[i]) {
+			if used[j] || !isColEqCorColOrConstant(ctx, filter, path.IdxCols[i]) {
 				continue
 			}
 			matched = true
@@ -90,12 +92,16 @@ func (path *AccessPath) SplitCorColAccessCondFromFilters(eqOrInCount int) (acces
 
 // isColEqCorColOrConstant checks if the expression is a eq function that one side is constant or correlated column
 // and another is column.
-func isColEqCorColOrConstant(filter expression.Expression, col *expression.Column) bool {
+func isColEqCorColOrConstant(ctx sessionctx.Context, filter expression.Expression, col *expression.Column) bool {
 	f, ok := filter.(*expression.ScalarFunction)
 	if !ok || f.FuncName.L != ast.EQ {
 		return false
 	}
+	_, collation, _ := f.CharsetAndCollation(ctx)
 	if c, ok := f.GetArgs()[0].(*expression.Column); ok {
+		if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(collation, c.RetType.Collate) {
+			return false
+		}
 		if _, ok := f.GetArgs()[1].(*expression.Constant); ok {
 			if col.Equal(nil, c) {
 				return true
@@ -108,6 +114,9 @@ func isColEqCorColOrConstant(filter expression.Expression, col *expression.Colum
 		}
 	}
 	if c, ok := f.GetArgs()[1].(*expression.Column); ok {
+		if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(collation, c.RetType.Collate) {
+			return false
+		}
 		if _, ok := f.GetArgs()[0].(*expression.Constant); ok {
 			if col.Equal(nil, c) {
 				return true

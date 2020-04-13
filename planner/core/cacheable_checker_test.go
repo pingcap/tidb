@@ -89,6 +89,11 @@ func (s *testCacheableSuite) TestCacheable(c *C) {
 	}
 	c.Assert(Cacheable(stmt), IsTrue)
 
+	stmt.(*ast.DeleteStmt).TableHints = append(stmt.(*ast.DeleteStmt).TableHints, &ast.TableOptimizerHint{
+		HintName: model.NewCIStr(HintIgnorePlanCache),
+	})
+	c.Assert(Cacheable(stmt), IsFalse)
+
 	// test UpdateStmt
 	whereExpr = &ast.FuncCallExpr{}
 	stmt = &ast.UpdateStmt{
@@ -135,6 +140,11 @@ func (s *testCacheableSuite) TestCacheable(c *C) {
 		Limit:     limitStmt,
 	}
 	c.Assert(Cacheable(stmt), IsTrue)
+
+	stmt.(*ast.UpdateStmt).TableHints = append(stmt.(*ast.UpdateStmt).TableHints, &ast.TableOptimizerHint{
+		HintName: model.NewCIStr(HintIgnorePlanCache),
+	})
+	c.Assert(Cacheable(stmt), IsFalse)
 
 	// test SelectStmt
 	whereExpr = &ast.FuncCallExpr{}
@@ -191,6 +201,11 @@ func (s *testCacheableSuite) TestCacheable(c *C) {
 		OrderBy: orderByClause,
 	}
 	c.Assert(Cacheable(stmt), IsTrue)
+
+	stmt.(*ast.SelectStmt).TableHints = append(stmt.(*ast.SelectStmt).TableHints, &ast.TableOptimizerHint{
+		HintName: model.NewCIStr(HintIgnorePlanCache),
+	})
+	c.Assert(Cacheable(stmt), IsFalse)
 
 	boundExpr := &ast.FrameBound{Expr: &driver.ParamMarkerExpr{}}
 	c.Assert(Cacheable(boundExpr), IsFalse)

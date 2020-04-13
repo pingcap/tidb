@@ -988,7 +988,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 	case ast.Cast:
 		switch function.Function.PbCode() {
 		case tipb.ScalarFuncSig_CastIntAsDecimal, tipb.ScalarFuncSig_CastRealAsDecimal,
-		tipb.ScalarFuncSig_CastDecimalAsDecimal:
+			tipb.ScalarFuncSig_CastDecimalAsDecimal:
 			return true
 		default:
 			return false
