@@ -46,16 +46,6 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.CreateTableStmt) (*m
 		return nil, nil
 	}
 
-	// force-discard the unsupported types, even when @@tidb_enable_table_partition = 'on'
-	switch s.Partition.Tp {
-	case model.PartitionTypeKey:
-		// can't create a warning for KEY partition, it will fail an integration test :/
-		return nil, nil
-	case model.PartitionTypeList, model.PartitionTypeSystemTime:
-		ctx.GetSessionVars().StmtCtx.AppendWarning(errUnsupportedCreatePartition)
-		return nil, nil
-	}
-
 	var enable bool
 	switch ctx.GetSessionVars().EnableTablePartition {
 	case "on":
@@ -96,19 +86,21 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.CreateTableStmt) (*m
 			return nil, err
 		}
 		pi.Expr = buf.String()
-	} else if s.Partition.ColumnNames != nil {
-		// TODO: Support multiple columns for 'PARTITION BY RANGE COLUMNS'.
-		if len(s.Partition.ColumnNames) != 1 {
-			pi.Enable = false
-			ctx.GetSessionVars().StmtCtx.AppendWarning(ErrUnsupportedPartitionByRangeColumns)
-		}
-		pi.Columns = make([]model.CIStr, 0, len(s.Partition.ColumnNames))
-		for _, cn := range s.Partition.ColumnNames {
-			pi.Columns = append(pi.Columns, cn.Name)
-		}
 	}
 
 	if s.Partition.Tp == model.PartitionTypeRange {
+		if s.Partition.ColumnNames != nil {
+			// TODO: Support multiple columns for 'PARTITION BY RANGE COLUMNS'.
+			if len(s.Partition.ColumnNames) != 1 {
+				pi.Enable = false
+				ctx.GetSessionVars().StmtCtx.AppendWarning(ErrUnsupportedPartitionByRangeColumns)
+			}
+			pi.Columns = make([]model.CIStr, 0, len(s.Partition.ColumnNames))
+			for _, cn := range s.Partition.ColumnNames {
+				pi.Columns = append(pi.Columns, cn.Name)
+			}
+		}
+
 		if err := buildRangePartitionDefinitions(ctx, s, pi); err != nil {
 			return nil, errors.Trace(err)
 		}
