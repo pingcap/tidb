@@ -330,6 +330,9 @@ const (
 	// TiDB internal function.
 	TiDBDecodeKey = "tidb_decode_key"
 
+	// MVCC information fetching function.
+	GetMvccInfo = "get_mvcc_info"
+
 	// Sequence function.
 	NextVal = "nextval"
 	LastVal = "lastval"
