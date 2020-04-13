@@ -728,9 +728,6 @@ func (e *HashJoinExec) buildHashTableForList(buildSideResultCh <-chan *chunk.Chu
 	var err error
 	var selected []bool
 	e.rowContainer = newHashRowContainer(e.ctx, int(e.buildSideEstCount), hCtx)
-	if e.bloomFilter != nil {
-		e.bloomFilter.Init(int(e.buildSideEstCount * 6 / 64))
-	}
 	e.rowContainer.GetMemTracker().AttachTo(e.memTracker)
 	e.rowContainer.GetMemTracker().SetLabel(buildSideResultLabel)
 	e.rowContainer.GetDiskTracker().AttachTo(e.diskTracker)
@@ -766,12 +763,17 @@ func (e *HashJoinExec) buildHashTableForList(buildSideResultCh <-chan *chunk.Chu
 			return err
 		}
 	}
+
+	if e.bloomFilter != nil {
+		e.bloomFilter.Build()
+	}
+
 	return nil
 }
 
 func (e *HashJoinExec) PutChunkToBloom(hctx *hashContext) {
 	for _, hash := range hctx.hashVals {
-		e.bloomFilter.InsertU64(hash.Sum64())
+		e.bloomFilter.LazyInsertU64(hash.Sum64())
 	}
 }
 

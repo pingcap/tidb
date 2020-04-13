@@ -10,6 +10,8 @@ type Filter struct {
 	BitSet   []uint64
 	length   uint64
 	unitSize uint64
+
+	numbers []uint64
 }
 
 // NewFilter returns a filter with a given size
@@ -91,4 +93,15 @@ func ihash(key []byte) uint64 {
 	h := fnv.New64a()
 	_, _ = h.Write(key)
 	return h.Sum64()
+}
+
+func (bf *Filter) LazyInsertU64(key uint64) {
+	bf.numbers = append(bf.numbers, key)
+}
+
+func (bf *Filter) Build() {
+	bf.Init(len(bf.numbers) * 8 / 64)
+	for _, val := range bf.numbers {
+		bf.InsertU64(val)
+	}
 }
