@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
@@ -113,6 +114,30 @@ func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
 	for i := range result.sortedTablesBuckets {
 		sort.Sort(result.sortedTablesBuckets[i])
 	}
+	return result
+}
+
+// MockInfoSchemaWithSchemaVer only serves for test.
+func MockInfoSchemaWithSchemaVer(tbList []*model.TableInfo, schemaVer int64) InfoSchema {
+	result := &infoSchema{}
+	result.schemaMap = make(map[string]*schemaTables)
+	result.sortedTablesBuckets = make([]sortedTables, bucketCount)
+	dbInfo := &model.DBInfo{ID: 0, Name: model.NewCIStr("test"), Tables: tbList}
+	tableNames := &schemaTables{
+		dbInfo: dbInfo,
+		tables: make(map[string]table.Table),
+	}
+	result.schemaMap["test"] = tableNames
+	for _, tb := range tbList {
+		tbl := table.MockTableFromMeta(tb)
+		tableNames.tables[tb.Name.L] = tbl
+		bucketIdx := tableBucketIdx(tb.ID)
+		result.sortedTablesBuckets[bucketIdx] = append(result.sortedTablesBuckets[bucketIdx], tbl)
+	}
+	for i := range result.sortedTablesBuckets {
+		sort.Sort(result.sortedTablesBuckets[i])
+	}
+	result.schemaMetaVersion = schemaVer
 	return result
 }
 
@@ -339,7 +364,12 @@ func HasAutoIncrementColumn(tbInfo *model.TableInfo) (bool, string) {
 // GetInfoSchema gets TxnCtx InfoSchema if snapshot schema is not set,
 // Otherwise, snapshot schema is returned.
 func GetInfoSchema(ctx sessionctx.Context) InfoSchema {
-	sessVar := ctx.GetSessionVars()
+	return GetInfoSchemaBySessionVars(ctx.GetSessionVars())
+}
+
+// GetInfoSchemaBySessionVars gets TxnCtx InfoSchema if snapshot schema is not set,
+// Otherwise, snapshot schema is returned.
+func GetInfoSchemaBySessionVars(sessVar *variable.SessionVars) InfoSchema {
 	var is InfoSchema
 	if snap := sessVar.SnapshotInfoschema; snap != nil {
 		is = snap.(InfoSchema)
