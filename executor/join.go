@@ -139,7 +139,11 @@ func (e *HashJoinExec) Close() error {
 
 	if e.runtimeStats != nil {
 		concurrency := cap(e.joiners)
+<<<<<<< HEAD
 		e.runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", concurrency))
+=======
+		e.runtimeStats.SetConcurrencyInfo("Concurrency", concurrency)
+>>>>>>> e90aac2... executor: add config EnableCollectExecutionInfo (#15493)
 		if e.rowContainer != nil {
 			e.runtimeStats.SetAdditionalInfo(e.rowContainer.stat.String())
 		}

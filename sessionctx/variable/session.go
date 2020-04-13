@@ -1279,9 +1279,19 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
+<<<<<<< HEAD
 		s.SelectLimit = result
 	case TiDBSlowLogMasking:
 		s.EnableSlowLogMasking = TiDBOptOn(val)
+=======
+	case TiDBEnableCollectExecutionInfo:
+		conf := config.GetGlobalConfig()
+		if !conf.EnableDynamicConfig {
+			config.GetGlobalConfig().EnableCollectExecutionInfo = TiDBOptOn(val)
+		} else {
+			s.StmtCtx.AppendWarning(errors.Errorf("cannot update %s when enabling dynamic configs", TiDBEnableCollectExecutionInfo))
+		}
+>>>>>>> e90aac2... executor: add config EnableCollectExecutionInfo (#15493)
 	}
 	s.systems[name] = val
 	return nil
