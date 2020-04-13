@@ -952,6 +952,7 @@ var tableInspectionSummaryCols = []columnInfo{
 	{name: "AVG_VALUE", tp: mysql.TypeDouble, size: 22, decimal: 6},
 	{name: "MIN_VALUE", tp: mysql.TypeDouble, size: 22, decimal: 6},
 	{name: "MAX_VALUE", tp: mysql.TypeDouble, size: 22, decimal: 6},
+	{name: "COMMENT", tp: mysql.TypeVarchar, size: 256},
 }
 
 var tableInspectionRulesCols = []columnInfo{
