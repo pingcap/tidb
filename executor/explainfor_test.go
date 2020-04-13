@@ -217,4 +217,3 @@ func (s *testSuite) TestInspectionSummaryTable(c *C) {
 		`└─MemTableScan_6 10000.00 root table:INSPECTION_SUMMARY skip_inspection: true`,
 	))
 }
-
