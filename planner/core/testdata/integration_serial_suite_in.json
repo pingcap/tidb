@@ -7,6 +7,13 @@
     ]
   },
   {
+    "name": "TestBroadcastJoin",
+    "cases": [
+      "explain select /*+ tidb_bcj(fact_t,d1_t) */ count(*) from fact_t, d1_t where fact_t.d1_k = d1_t.d1_k",
+      "explain select /*+ tidb_bcj(fact_t,d1_t,d2_t,d3_t) */ count(*) from fact_t, d1_t, d2_t, d3_t where fact_t.d1_k = d1_t.d1_k and fact_t.d2_k = d2_t.d2_k and fact_t.d3_k = d3_t.d3_k"
+    ]
+  },
+  {
     "name": "TestReadFromStorageHint",
     "cases": [
       "desc select avg(a) from t",
