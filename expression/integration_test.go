@@ -2196,7 +2196,7 @@ func (s *testIntegrationSuite) TestNoZeroDate(c *C) {
 	tk.MustExec("insert into t values ('0000-00-00', '0000-00-00')")
 	tk.MustQuery("SELECT STR_TO_DATE('00/00/0000', '%m/%d/%Y');").Check(testkit.Rows("0000-00-00"))
 
-	tk.MustExec("set sql_mode='NO_ZERO_DATE'")
+	tk.MustExec("set sql_mode='NO_ZERO_DATE,STRICT_TRANS_TABLES'")
 	tk.MustGetErrMsg("insert into t(a) values ('0000-00-00')", "[table:1366]Incorrect date value: '0000-00-00' for column 'a' at row 1")
 	tk.MustGetErrMsg("insert into t(b) values ('0000-00-00')", "[table:1366]Incorrect datetime value: '0000-00-00' for column 'b' at row 1")
 
