@@ -128,11 +128,12 @@ func NewPSTMTPlanCacheKey(sessionVars *variable.SessionVars, pstmtID uint32, sch
 type PSTMTPlanCacheValue struct {
 	Plan              Plan
 	OutPutNames       []*types.FieldName
+	PlanLastUpdated   string
 	TblInfo2UnionScan map[*model.TableInfo]bool
 }
 
 // NewPSTMTPlanCacheValue creates a SQLCacheValue.
-func NewPSTMTPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*model.TableInfo]bool) *PSTMTPlanCacheValue {
+func NewPSTMTPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*model.TableInfo]bool, buildedTime string) *PSTMTPlanCacheValue {
 	dstMap := make(map[*model.TableInfo]bool)
 	for k, v := range srcMap {
 		dstMap[k] = v
@@ -140,6 +141,7 @@ func NewPSTMTPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*mod
 	return &PSTMTPlanCacheValue{
 		Plan:              plan,
 		OutPutNames:       names,
+		PlanLastUpdated:   buildedTime,
 		TblInfo2UnionScan: dstMap,
 	}
 }

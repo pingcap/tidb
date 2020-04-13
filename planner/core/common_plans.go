@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
@@ -264,7 +265,7 @@ func (e *Execute) checkPreparedPriv(ctx context.Context, sctx sessionctx.Context
 	return err
 }
 
-func (e *Execute) addHitInfo(sctx sessionctx.Context, opt string) error {
+func (e *Execute) addHitInfo(sctx sessionctx.Context, opt string, builded_time string) error {
 	vars := sctx.GetSessionVars()
 	err := vars.SetSystemVar(variable.TiDBFoundInPlanCache, opt)
 	if opt == "ON" {
@@ -272,6 +273,7 @@ func (e *Execute) addHitInfo(sctx sessionctx.Context, opt string) error {
 	} else {
 		vars.PlanCacheMisses += 1
 	}
+	vars.PlanLastUpdated = builded_time
 	return err
 }
 
@@ -294,7 +296,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 		} else {
 			planCacheCounter.Inc()
 		}
-		err = e.addHitInfo(sctx, "ON")
+		err = e.addHitInfo(sctx, "ON", variable.DefTiDBPlanCacheLastUpdated)
 		if err != nil {
 			return err
 		}
@@ -323,16 +325,16 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 				}
 			}
 			if planValid {
-				err := e.addHitInfo(sctx, "ON")
-				if err != nil {
-					return err
-				}
 				if metrics.ResettablePlanCacheCounterFortTest {
 					metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
 				} else {
 					planCacheCounter.Inc()
 				}
-				err = e.rebuildRange(cachedVal.Plan)
+				err := e.rebuildRange(cachedVal.Plan)
+				if err != nil {
+					return err
+				}
+				err = e.addHitInfo(sctx, "ON", cachedVal.PlanLastUpdated)
 				if err != nil {
 					return err
 				}
@@ -356,16 +358,17 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	isRange := e.isRangePartition(p)
 	_, isTableDual := p.(*PhysicalTableDual)
 	if !isTableDual && prepared.UseCache && !isRange {
-		err = e.addHitInfo(sctx, "ON")
+		timestamp_now := time.Now().String()
+		err = e.addHitInfo(sctx, "ON", timestamp_now)
 		if err != nil {
 			return err
 		}
-		cached := NewPSTMTPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan)
+		cached := NewPSTMTPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan, timestamp_now)
 		preparedStmt.NormalizedPlan, preparedStmt.PlanDigest = NormalizePlan(p)
 		stmtCtx.SetPlanDigest(preparedStmt.NormalizedPlan, preparedStmt.PlanDigest)
 		sctx.PreparedPlanCache().Put(cacheKey, cached)
 	} else {
-		err = e.addHitInfo(sctx, "OFF")
+		err = e.addHitInfo(sctx, "OFF", variable.DefTiDBPlanCacheLastUpdated)
 	}
 	return err
 }

@@ -485,6 +485,7 @@ const (
 	DefTiDBMetricSchemaStep            = 60 // 60s
 	DefTiDBMetricSchemaRangeDuration   = 60 // 60s
 	DefTiDBFoundInPlanCache            = false
+	DefTiDBPlanCacheLastUpdated        = "NO CHANGE"
 )
 
 // Process global variables.
