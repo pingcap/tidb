@@ -895,73 +895,9 @@ func (e *ShowExec) fetchShowCreateTable() error {
 		fmt.Fprintf(&buf, " COMMENT='%s'", format.OutputFormat(tb.Meta().Comment))
 	}
 	// add partition info here.
-<<<<<<< HEAD
 	appendPartitionInfo(tb.Meta().Partition, &buf)
-=======
-	appendPartitionInfo(tableInfo.Partition, buf)
-	return nil
-}
 
-// ConstructResultOfShowCreateSequence constructs the result for show create sequence.
-func ConstructResultOfShowCreateSequence(ctx sessionctx.Context, tableInfo *model.TableInfo, buf *bytes.Buffer) {
-	sqlMode := ctx.GetSessionVars().SQLMode
-	fmt.Fprintf(buf, "CREATE SEQUENCE %s ", escape(tableInfo.Name, sqlMode))
-	sequenceInfo := tableInfo.Sequence
-	fmt.Fprintf(buf, "start with %d ", sequenceInfo.Start)
-	fmt.Fprintf(buf, "minvalue %d ", sequenceInfo.MinValue)
-	fmt.Fprintf(buf, "maxvalue %d ", sequenceInfo.MaxValue)
-	fmt.Fprintf(buf, "increment by %d ", sequenceInfo.Increment)
-	if sequenceInfo.Cache {
-		fmt.Fprintf(buf, "cache %d ", sequenceInfo.CacheValue)
-	} else {
-		buf.WriteString("nocache ")
-	}
-	if sequenceInfo.Cycle {
-		buf.WriteString("cycle ")
-	} else {
-		buf.WriteString("nocycle ")
-	}
-	buf.WriteString("ENGINE=InnoDB")
-	if len(sequenceInfo.Comment) > 0 {
-		fmt.Fprintf(buf, " COMMENT='%s'", format.OutputFormat(sequenceInfo.Comment))
-	}
-}
-
-func (e *ShowExec) fetchShowCreateSequence() error {
-	tbl, err := e.getTable()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	tableInfo := tbl.Meta()
-	if !tableInfo.IsSequence() {
-		return ErrWrongObject.GenWithStackByArgs(e.DBName.O, tableInfo.Name.O, "SEQUENCE")
-	}
-	var buf bytes.Buffer
-	ConstructResultOfShowCreateSequence(e.ctx, tableInfo, &buf)
-	e.appendRow([]interface{}{tableInfo.Name.O, buf.String()})
-	return nil
-}
-
-func (e *ShowExec) fetchShowCreateTable() error {
-	tb, err := e.getTable()
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	tableInfo := tb.Meta()
-	allocator := tb.Allocator(e.ctx, autoid.RowIDAllocType)
-	var buf bytes.Buffer
-	// TODO: let the result more like MySQL.
-	if err = ConstructResultOfShowCreateTable(e.ctx, tableInfo, allocator, &buf); err != nil {
-		return err
-	}
-	if tableInfo.IsView() {
-		e.appendRow([]interface{}{tableInfo.Name.O, buf.String(), tableInfo.Charset, tableInfo.Collate})
-		return nil
-	}
->>>>>>> 6d50a47... executor: add quote for partition  name(close #14477) (#14793)
-
-	e.appendRow([]interface{}{tableInfo.Name.O, buf.String()})
+	e.appendRow([]interface{}{tb.Meta().Name.O, buf.String()})
 	return nil
 }
 
