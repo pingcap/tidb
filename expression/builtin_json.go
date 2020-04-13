@@ -1130,7 +1130,7 @@ func (b *builtinJSONSearchSig) evalJSON(row chunk.Row) (res json.BinaryJSON, isN
 		if isNull || len(escapeStr) == 0 {
 			escape = byte('\\')
 		} else if len(escapeStr) == 1 {
-			escape = byte(escapeStr[0])
+			escape = escapeStr[0]
 		} else {
 			return res, true, errIncorrectArgs.GenWithStackByArgs("ESCAPE")
 		}
