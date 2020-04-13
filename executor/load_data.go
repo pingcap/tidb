@@ -17,6 +17,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"bytes"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
