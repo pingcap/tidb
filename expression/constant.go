@@ -125,6 +125,15 @@ func (c *Constant) EvalInt(ctx sessionctx.Context, _ chunk.Row) (int64, bool, er
 		}
 		if dt.IsNull() {
 			return 0, true, nil
+		}
+		val, err := dt.ToInt64(ctx.GetSessionVars().StmtCtx)	
+		if err != nil {	
+			return 0, true, errors.Trace(err)	
+		}	
+		c.Value.SetInt64(val)
+	} else {
+		if c.GetType().Tp == mysql.TypeNull || c.Value.IsNull() {
+			return 0, true, nil
 		} else if dt.Kind() == types.KindBinaryLiteral {
 			val, err := dt.GetBinaryLiteral().ToInt(ctx.GetSessionVars().StmtCtx)
 			return int64(val), err != nil, err
@@ -134,10 +143,6 @@ func (c *Constant) EvalInt(ctx sessionctx.Context, _ chunk.Row) (int64, bool, er
 				return 0, true, errors.Trace(err)
 			}
 			c.Value.SetInt64(val)
-		}
-	} else {
-		if c.GetType().Tp == mysql.TypeNull || c.Value.IsNull() {
-			return 0, true, nil
 		}
 	}
 	if c.GetType().Hybrid() || c.Value.Kind() == types.KindBinaryLiteral || c.Value.Kind() == types.KindString {
