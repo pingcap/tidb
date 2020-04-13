@@ -118,13 +118,12 @@ func buildTablePartitionInfo(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 }
 
 func buildHashPartitionDefinitions(ctx sessionctx.Context, d *ddl, s *ast.CreateTableStmt, pi *model.PartitionInfo) error {
+	if err := checkAddPartitionTooManyPartitions(pi.Num); err != nil {
+		return err
+	}
 	genIDs, err := d.genGlobalIDs(int(pi.Num))
 	if err != nil {
 		return errors.Trace(err)
-	}
-
-	if err := checkAddPartitionTooManyPartitions(pi.Num); err != nil {
-		return err
 	}
 
 	defs := make([]model.PartitionDefinition, pi.Num)

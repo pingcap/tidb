@@ -294,7 +294,7 @@ func (s *testIntegrationSuite7) TestCreateTableWithHashPartition(c *C) {
 	partition by hash( year(hired) ) partitions 4;`)
 
 	// This query makes tidb OOM without partition count check.
-	tk.MustGetErrCode(`CREATE TABLE employees (
+	tk.MustGetErrCode(`CREATE TABLE employees1 (
     id INT NOT NULL,
     fname VARCHAR(30),
     lname VARCHAR(30),
