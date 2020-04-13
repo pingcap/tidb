@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/sys/storage"
 	tracing "github.com/uber/jaeger-client-go/config"
 	"go.uber.org/zap"
 )
@@ -864,20 +863,6 @@ func (c *Config) Valid() error {
 	for _, engine := range c.IsolationRead.Engines {
 		if engine != "tidb" && engine != "tikv" && engine != "tiflash" {
 			return fmt.Errorf("type of [isolation-read]engines can't be %v should be one of tidb or tikv or tiflash", engine)
-		}
-	}
-
-	// check capacity and the quota when OOMUseTmpStorage is enabled
-	if c.OOMUseTmpStorage {
-		if c.TempStorageQuota < 0 {
-			// means unlimited, do nothing
-		} else {
-			capacityByte, err := storage.GetTargetDirectoryCapacity(c.TempStoragePath)
-			if err != nil {
-				return err
-			} else if capacityByte > uint64(c.TempStorageQuota) {
-				return fmt.Errorf("value of [temp-storage-quota](%d byte) exceeds the capacity(%d byte) of the [%s] directory", c.TempStorageQuota, capacityByte, c.TempStoragePath)
-			}
 		}
 	}
 

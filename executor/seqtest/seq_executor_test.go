@@ -566,7 +566,7 @@ func (s *seqTestSuite) TestShow(c *C) {
 			"  `b` int(11) DEFAULT NULL,\n"+
 			"  `c` char(1) DEFAULT NULL,\n"+
 			"  `d` int(11) DEFAULT NULL\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"+"\nPARTITION BY RANGE COLUMNS(a,d,c) (\n  PARTITION `p0` VALUES LESS THAN (5,10,\"ggg\"),\n  PARTITION `p1` VALUES LESS THAN (10,20,\"mmm\"),\n  PARTITION `p2` VALUES LESS THAN (15,30,\"sss\"),\n  PARTITION `p3` VALUES LESS THAN (50,MAXVALUE,MAXVALUE)\n)",
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 
 	// Test hash partition
