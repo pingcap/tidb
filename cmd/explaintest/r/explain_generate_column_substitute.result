@@ -324,3 +324,37 @@ Delete_4	N/A	root		N/A
 └─IndexLookUp_11	10.00	root		
   ├─IndexRangeScan_9(Build)	10.00	cop[tikv]	table:t, index:expr_idx_e(_V$_expr_idx_e_0)	range:[0,0], keep order:false, stats:pseudo
   └─TableRowIDScan_10(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+drop table if exists t;
+create table t(c0 char as (c1), c1 int);
+insert into t(c1) values (0), (1);
+desc select * from t;
+id	estRows	task	access object	operator info
+TableReader_5	10000.00	root		data:TableFullScan_4
+└─TableFullScan_4	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select * from t;
+c0	c1
+0	0
+1	1
+drop table if exists t;
+create table t(c0 int as (c1) unique, c1 int);
+insert into t(c1) values (0), (1);
+desc select * from t;
+id	estRows	task	access object	operator info
+Projection_3	10000.00	root		test.t.c0, test.t.c0
+└─IndexReader_7	10000.00	root		index:IndexFullScan_6
+  └─IndexFullScan_6	10000.00	cop[tikv]	table:t, index:c0(c0)	keep order:false, stats:pseudo
+select * from t;
+c0	c1
+0	0
+1	1
+drop table if exists t;
+create table t(c0 char as (c1) unique, c1 int);
+insert into t(c1) values (0), (1);
+desc select * from t;
+id	estRows	task	access object	operator info
+TableReader_5	10000.00	root		data:TableFullScan_4
+└─TableFullScan_4	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select * from t;
+c0	c1
+0	0
+1	1

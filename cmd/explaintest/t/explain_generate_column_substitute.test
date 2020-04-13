@@ -132,3 +132,22 @@ desc update t set a=2, b = 3 where b+a = 3;
 # test delete
 desc delete from t where a+1 = 3;
 desc delete from t where b+a = 0;
+
+# test different column type
+drop table if exists t;
+create table t(c0 char as (c1), c1 int);
+insert into t(c1) values (0), (1);
+desc select * from t;
+select * from t;
+
+drop table if exists t;
+create table t(c0 int as (c1) unique, c1 int);
+insert into t(c1) values (0), (1);
+desc select * from t;
+select * from t;
+
+drop table if exists t;
+create table t(c0 char as (c1) unique, c1 int);
+insert into t(c1) values (0), (1);
+desc select * from t;
+select * from t;
