@@ -512,6 +512,27 @@ func onRebaseAutoID(store kv.Storage, t *meta.Meta, job *model.Job) (ver int64, 
 	return ver, nil
 }
 
+func onModifyTableAutoIDCache(t *meta.Meta, job *model.Job) (int64, error) {
+	var cache int64
+	if err := job.DecodeArgs(&cache); err != nil {
+		job.State = model.JobStateCancelled
+		return 0, errors.Trace(err)
+	}
+
+	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+
+	tblInfo.AutoIdCache = cache
+	ver, err := updateVersionAndTableInfo(t, job, tblInfo, true)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+	return ver, nil
+}
+
 func (w *worker) onShardRowID(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	var shardRowIDBits uint64
 	err := job.DecodeArgs(&shardRowIDBits)
@@ -679,7 +700,7 @@ func onModifyTableCharsetAndCollate(t *meta.Meta, job *model.Job) (ver int64, _ 
 	}
 
 	// double check.
-	_, err = checkAlterTableCharset(tblInfo, dbInfo, toCharset, toCollate)
+	_, err = checkAlterTableCharset(tblInfo, dbInfo, toCharset, toCollate, needsOverwriteCols)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)

@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
@@ -36,7 +37,7 @@ var (
 	// PreparedPlanCacheCapacity stores the global config "prepared-plan-cache-capacity".
 	PreparedPlanCacheCapacity uint = 100
 	// PreparedPlanCacheMemoryGuardRatio stores the global config "prepared-plan-cache-memory-guard-ratio".
-	PreparedPlanCacheMemoryGuardRatio float64 = 0.1
+	PreparedPlanCacheMemoryGuardRatio = 0.1
 	// PreparedPlanCacheMaxMemory stores the max memory size defined in the global config "performance-max-memory".
 	PreparedPlanCacheMaxMemory atomic2.Uint64 = *atomic2.NewUint64(math.MaxUint64)
 )
@@ -125,15 +126,21 @@ func NewPSTMTPlanCacheKey(sessionVars *variable.SessionVars, pstmtID uint32, sch
 
 // PSTMTPlanCacheValue stores the cached Statement and StmtNode.
 type PSTMTPlanCacheValue struct {
-	Plan        Plan
-	OutPutNames []*types.FieldName
+	Plan              Plan
+	OutPutNames       []*types.FieldName
+	TblInfo2UnionScan map[*model.TableInfo]bool
 }
 
 // NewPSTMTPlanCacheValue creates a SQLCacheValue.
-func NewPSTMTPlanCacheValue(plan Plan, names []*types.FieldName) *PSTMTPlanCacheValue {
+func NewPSTMTPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*model.TableInfo]bool) *PSTMTPlanCacheValue {
+	dstMap := make(map[*model.TableInfo]bool)
+	for k, v := range srcMap {
+		dstMap[k] = v
+	}
 	return &PSTMTPlanCacheValue{
-		Plan:        plan,
-		OutPutNames: names,
+		Plan:              plan,
+		OutPutNames:       names,
+		TblInfo2UnionScan: dstMap,
 	}
 }
 
