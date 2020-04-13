@@ -1047,7 +1047,12 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 	} else {
 		sessionExecuteParseDurationGeneral.Observe(durParse.Seconds())
 	}
-
+	if len(stmtNodes) == 0 {
+		if s.txn.pending() {
+			s.txn.changeToInvalid()
+		}
+		return recordSets, nil
+	}
 	var tempStmtNodes []ast.StmtNode
 	compiler := executor.Compiler{Ctx: s}
 	multiQuery := len(stmtNodes) > 1
