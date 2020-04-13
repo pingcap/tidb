@@ -14,10 +14,10 @@
 package executor
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"strings"
-	"bytes"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
@@ -29,6 +29,10 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
+)
+
+var (
+	null = []byte("NULL")
 )
 
 // LoadDataExec represents a load data executor.
