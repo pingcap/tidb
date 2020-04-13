@@ -139,14 +139,6 @@ func (s *testSuite2) TestShowErrors(c *C) {
 	tk.MustQuery("show errors").Check(testutil.RowsWithSep("|", "Error|1050|Table 'test.show_errors' already exists"))
 }
 
-func (s *testSuite2) TestIssue3641(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	_, err := tk.Exec("show tables;")
-	c.Assert(err.Error(), Equals, plannercore.ErrNoDB.Error())
-	_, err = tk.Exec("show table status;")
-	c.Assert(err.Error(), Equals, plannercore.ErrNoDB.Error())
-}
-
 func (s *testSuite2) TestShowGrantsPrivilege(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create user show_grants")
@@ -165,6 +157,14 @@ func (s *testSuite2) TestShowGrantsPrivilege(c *C) {
 	c.Assert(se2.Auth(&auth.UserIdentity{Username: "show_grants", Hostname: "127.0.0.1", AuthUsername: "show_grants", AuthHostname: "%"}, nil, nil), IsTrue)
 	tk2.Se = se2
 	tk2.MustQuery("show grants")
+}
+
+func (s *testSuite2) TestIssue3641(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	_, err := tk.Exec("show tables;")
+	c.Assert(err.Error(), Equals, plannercore.ErrNoDB.Error())
+	_, err = tk.Exec("show table status;")
+	c.Assert(err.Error(), Equals, plannercore.ErrNoDB.Error())
 }
 
 func (s *testSuite2) TestIssue10549(c *C) {
