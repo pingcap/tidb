@@ -88,6 +88,8 @@ type TableReaderExecutor struct {
 	virtualColumnIndex []int
 	// virtualColumnRetFieldTypes records the RetFieldTypes of virtual columns.
 	virtualColumnRetFieldTypes []*types.FieldType
+	// batchCop indicates whether use super batch coprocessor request, only works for TiFlash engine.
+	batchCop bool
 }
 
 // Open initialzes necessary variables for using this executor.
@@ -201,6 +203,7 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		SetMemTracker(e.memTracker).
 		SetStoreType(e.storeType).
+		SetAllowBatchCop(e.batchCop).
 		Build()
 	if err != nil {
 		return nil, err
