@@ -11929,6 +11929,7 @@
             {
               "expr": "histogram_quantile(0.95, sum(rate(tidb_tikvclient_batch_client_unavailable_seconds_bucket[1m])) by (le, instance))",
               "format": "time_series",
+              "hide": false,
               "intervalFactor": 2,
               "legendFormat": "{{instance}}",
               "refId": "A",
@@ -11983,7 +11984,7 @@
     }
   ],
   "refresh": "30s",
-  "schemaVersion": 18,
+  "schemaVersion": 20,
   "style": "dark",
   "tags": [],
   "templating": {
