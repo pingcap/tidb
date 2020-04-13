@@ -2219,7 +2219,7 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	tk.MustExec("insert into tb5(a) values (0xfffffffffffffffffffffffff);")
 	tk.MustQuery("select * from tb5;").Check(testkit.Rows("9223372036854775807"))
 	tk.MustExec("drop table tb5;")
-	
+
 	tk.MustExec(`create table tb5(a double);`)
 	tk.MustExec(`insert into test.tb5 (a) values (18446744073709551616);`)
 	tk.MustExec(`insert into test.tb5 (a) values (184467440737095516160);`)
