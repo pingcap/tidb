@@ -1272,6 +1272,13 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		} else {
 			s.StmtCtx.AppendWarning(errors.Errorf("cannot update %s when enabling dynamic configs", TiDBCheckMb4ValueInUTF8))
 		}
+	case TiDBEnableCollectExecutionInfo:
+		conf := config.GetGlobalConfig()
+		if !conf.EnableDynamicConfig {
+			config.GetGlobalConfig().EnableCollectExecutionInfo = TiDBOptOn(val)
+		} else {
+			s.StmtCtx.AppendWarning(errors.Errorf("cannot update %s when enabling dynamic configs", TiDBEnableCollectExecutionInfo))
+		}
 	}
 	s.systems[name] = val
 	return nil
