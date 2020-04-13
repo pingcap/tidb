@@ -137,8 +137,8 @@ func (c *Constant) EvalInt(ctx sessionctx.Context, _ chunk.Row) (int64, bool, er
 			if err != nil {
 				return 0, true, errors.Trace(err)
 			}
+			c.Value.SetInt64(val)
 		}
-		c.Value.SetInt64(val)
 	}
 	if c.GetType().Hybrid() || c.Value.Kind() == types.KindBinaryLiteral || c.Value.Kind() == types.KindString {
 		res, err := c.Value.ToInt64(ctx.GetSessionVars().StmtCtx)
