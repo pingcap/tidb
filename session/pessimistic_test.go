@@ -677,8 +677,8 @@ func (s *testPessimisticSuite) TestInnodbLockWaitTimeout(c *C) {
 		tk3.MustExec("begin pessimistic")
 		start := time.Now()
 		_, err := tk3.Exec("select * from tk where c1 = 1 for update")
-		c.Check(time.Since(start), GreaterEqual, time.Duration(1000*time.Millisecond))
-		c.Check(time.Since(start), LessEqual, time.Duration(1100*time.Millisecond)) // unit test diff should not be too big
+		c.Check(time.Since(start), GreaterEqual, 1000*time.Millisecond)
+		c.Check(time.Since(start), LessEqual, 1100*time.Millisecond) // unit test diff should not be too big
 		c.Check(err.Error(), Equals, tikv.ErrLockWaitTimeout.Error())
 		tk3.MustExec("commit")
 	}()
@@ -691,8 +691,8 @@ func (s *testPessimisticSuite) TestInnodbLockWaitTimeout(c *C) {
 		tk5.MustExec("begin pessimistic")
 		start := time.Now()
 		_, err := tk5.Exec("update tk set c2 = c2 - 1 where c1 = 1")
-		c.Check(time.Since(start), GreaterEqual, time.Duration(2000*time.Millisecond))
-		c.Check(time.Since(start), LessEqual, time.Duration(2100*time.Millisecond)) // unit test diff should not be too big
+		c.Check(time.Since(start), GreaterEqual, 2000*time.Millisecond)
+		c.Check(time.Since(start), LessEqual, 2100*time.Millisecond) // unit test diff should not be too big
 		c.Check(err.Error(), Equals, tikv.ErrLockWaitTimeout.Error())
 		tk5.MustExec("rollback")
 	}()
@@ -706,8 +706,8 @@ func (s *testPessimisticSuite) TestInnodbLockWaitTimeout(c *C) {
 
 	start := time.Now()
 	_, err := tk2.Exec("delete from tk where c1 = 2")
-	c.Check(time.Since(start), GreaterEqual, time.Duration(1000*time.Millisecond))
-	c.Check(time.Since(start), LessEqual, time.Duration(1100*time.Millisecond)) // unit test diff should not be too big
+	c.Check(time.Since(start), GreaterEqual, 1000*time.Millisecond)
+	c.Check(time.Since(start), LessEqual, 1100*time.Millisecond) // unit test diff should not be too big
 	c.Check(err.Error(), Equals, tikv.ErrLockWaitTimeout.Error())
 
 	tk4.MustExec("commit")
@@ -724,8 +724,8 @@ func (s *testPessimisticSuite) TestInnodbLockWaitTimeout(c *C) {
 
 	start = time.Now()
 	_, err = tk2.Exec("delete from tk where c1 = 3") // tk2 tries to lock c1 = 3 fail, this delete should be rollback, but previous update should be keeped
-	c.Check(time.Since(start), GreaterEqual, time.Duration(1000*time.Millisecond))
-	c.Check(time.Since(start), LessEqual, time.Duration(1100*time.Millisecond)) // unit test diff should not be too big
+	c.Check(time.Since(start), GreaterEqual, 1000*time.Millisecond)
+	c.Check(time.Since(start), LessEqual, 1100*time.Millisecond) // unit test diff should not be too big
 	c.Check(err.Error(), Equals, tikv.ErrLockWaitTimeout.Error())
 
 	tk2.MustExec("commit")
@@ -796,8 +796,8 @@ func (s *testPessimisticSuite) TestInnodbLockWaitTimeoutWaitStart(c *C) {
 	waitErr := <-done
 	c.Assert(waitErr, NotNil)
 	c.Check(waitErr.Error(), Equals, tikv.ErrLockWaitTimeout.Error())
-	c.Check(duration, GreaterEqual, time.Duration(1000*time.Millisecond))
-	c.Check(duration, LessEqual, time.Duration(1100*time.Millisecond))
+	c.Check(duration, GreaterEqual, 1000*time.Millisecond)
+	c.Check(duration, LessEqual, 1100*time.Millisecond)
 	tk2.MustExec("rollback")
 	tk3.MustExec("commit")
 }
@@ -1254,4 +1254,40 @@ func (s *testPessimisticSuite) TestTxnWithExpiredPessimisticLocks(c *C) {
 	atomic.StoreUint32(&tk.Se.GetSessionVars().TxnCtx.LockExpire, 0)
 	tk.MustExec("update t1 set c2 = c2 + 1")
 	tk.MustExec("rollback")
+}
+
+func (s *testPessimisticSuite) TestKillWaitLockTxn(c *C) {
+	// Test kill command works on waiting pessimistic lock.
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists test_kill")
+	tk.MustExec("create table test_kill (id int primary key, c int)")
+	tk.MustExec("insert test_kill values (1, 1)")
+
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("begin pessimistic")
+
+	tk.MustQuery("select * from test_kill where id = 1 for update")
+	errCh := make(chan error)
+	go func() {
+		var err error
+		defer func() {
+			errCh <- err
+		}()
+		time.Sleep(20 * time.Millisecond)
+		_, err = tk2.Exec("update test_kill set c = c + 1 where id = 1")
+		if err != nil {
+			return
+		}
+	}()
+	time.Sleep(100 * time.Millisecond)
+	sessVars := tk.Se.GetSessionVars()
+	// lock query in tk is killed, the ttl manager will stop
+	succ := atomic.CompareAndSwapUint32(&sessVars.Killed, 0, 1)
+	c.Assert(succ, IsTrue)
+	err := <-errCh
+	c.Assert(err, IsNil)
+	tk.Exec("rollback")
+	tk.MustExec("rollback")
+	tk2.MustExec("rollback")
 }
