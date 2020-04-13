@@ -186,65 +186,6 @@ type session struct {
 	statsCollector *handle.SessionStatsCollector
 	// ddlOwnerChecker is used in `select tidb_is_ddl_owner()` statement;
 	ddlOwnerChecker owner.DDLOwnerChecker
-<<<<<<< HEAD
-=======
-	// lockedTables use to record the table locks hold by the session.
-	lockedTables map[int64]model.TableLockTpInfo
-
-	// client shared coprocessor client per session
-	client kv.Client
-}
-
-// AddTableLock adds table lock to the session lock map.
-func (s *session) AddTableLock(locks []model.TableLockTpInfo) {
-	for _, l := range locks {
-		s.lockedTables[l.TableID] = l
-	}
-}
-
-// ReleaseTableLocks releases table lock in the session lock map.
-func (s *session) ReleaseTableLocks(locks []model.TableLockTpInfo) {
-	for _, l := range locks {
-		delete(s.lockedTables, l.TableID)
-	}
-}
-
-// ReleaseTableLockByTableIDs releases table lock in the session lock map by table ID.
-func (s *session) ReleaseTableLockByTableIDs(tableIDs []int64) {
-	for _, tblID := range tableIDs {
-		delete(s.lockedTables, tblID)
-	}
-}
-
-// CheckTableLocked checks the table lock.
-func (s *session) CheckTableLocked(tblID int64) (bool, model.TableLockType) {
-	lt, ok := s.lockedTables[tblID]
-	if !ok {
-		return false, model.TableLockNone
-	}
-	return true, lt.Tp
-}
-
-// GetAllTableLocks gets all table locks table id and db id hold by the session.
-func (s *session) GetAllTableLocks() []model.TableLockTpInfo {
-	lockTpInfo := make([]model.TableLockTpInfo, 0, len(s.lockedTables))
-	for _, tl := range s.lockedTables {
-		lockTpInfo = append(lockTpInfo, tl)
-	}
-	return lockTpInfo
-}
-
-// HasLockedTables uses to check whether this session locked any tables.
-// If so, the session can only visit the table which locked by self.
-func (s *session) HasLockedTables() bool {
-	b := len(s.lockedTables) > 0
-	return b
-}
-
-// ReleaseAllTableLocks releases all table locks hold by the session.
-func (s *session) ReleaseAllTableLocks() {
-	s.lockedTables = make(map[int64]model.TableLockTpInfo)
->>>>>>> 63b71a3... session: fix incorrect OPS on unretryable session error (#14557)
 }
 
 // DDLOwnerChecker returns s.ddlOwnerChecker.
