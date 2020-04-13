@@ -570,7 +570,9 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 	cc.attrs = resp.Attrs
 
 	err = cc.openSessionAndDoAuth(resp.Auth)
-	logutil.Logger(ctx).Warn("open new session failure", zap.Error(err))
+	if err != nil {
+		logutil.Logger(ctx).Warn("open new session failure", zap.Error(err))
+	}
 	return err
 }
 
@@ -1165,9 +1167,16 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 	err = loadDataInfo.CommitWork(ctx)
 	wg.Wait()
 	if err != nil {
+		if !loadDataInfo.Drained {
+			logutil.Logger(ctx).Info("not drained yet, try reading left data from client connection")
+		}
 		// drain the data from client conn util empty packet received, otherwise the connection will be reset
 		for !loadDataInfo.Drained {
-			logutil.Logger(ctx).Info("not drained yet, try reading left data from client connection")
+			// check kill flag again, let the draining loop could quit if empty packet could not be received
+			if atomic.CompareAndSwapUint32(&loadDataInfo.Ctx.GetSessionVars().Killed, 1, 0) {
+				logutil.Logger(ctx).Warn("receiving kill, stop draining data, connection may be reset")
+				return executor.ErrQueryInterrupted
+			}
 			curData, err1 := cc.readPacket()
 			if err1 != nil {
 				logutil.Logger(ctx).Error("drain reading left data encounter errors", zap.Error(err1))
