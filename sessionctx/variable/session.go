@@ -601,7 +601,7 @@ type SessionVars struct {
 	PlanCacheHits uint64
 	// PlanCacheMisses indicates how many plan cache misses have happened in this session
 	PlanCacheMisses uint64
-	// PlanLastUpdated indicates whether the last hitted plan got changed, if changed it indicates when was the plan changed
+	// PlanLastUpdated indicates whether the last hit plan got changed, if changed it indicates when was the plan changed
 	PlanLastUpdated string
 }
 

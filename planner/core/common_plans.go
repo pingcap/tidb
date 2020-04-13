@@ -265,7 +265,7 @@ func (e *Execute) checkPreparedPriv(ctx context.Context, sctx sessionctx.Context
 	return err
 }
 
-func (e *Execute) addHitInfo(sctx sessionctx.Context, opt string, builded_time string) error {
+func (e *Execute) addHitInfo(sctx sessionctx.Context, opt string, buildedTime string) error {
 	vars := sctx.GetSessionVars()
 	err := vars.SetSystemVar(variable.TiDBFoundInPlanCache, opt)
 	if opt == "ON" {
@@ -273,7 +273,7 @@ func (e *Execute) addHitInfo(sctx sessionctx.Context, opt string, builded_time s
 	} else {
 		vars.PlanCacheMisses += 1
 	}
-	vars.PlanLastUpdated = builded_time
+	vars.PlanLastUpdated = buildedTime
 	return err
 }
 
@@ -358,12 +358,12 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	isRange := e.isRangePartition(p)
 	_, isTableDual := p.(*PhysicalTableDual)
 	if !isTableDual && prepared.UseCache && !isRange {
-		timestamp_now := time.Now().String()
-		err = e.addHitInfo(sctx, "ON", timestamp_now)
+		timestampNow := time.Now().String()
+		err = e.addHitInfo(sctx, "ON", timestampNow)
 		if err != nil {
 			return err
 		}
-		cached := NewPSTMTPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan, timestamp_now)
+		cached := NewPSTMTPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan, timestampNow)
 		preparedStmt.NormalizedPlan, preparedStmt.PlanDigest = NormalizePlan(p)
 		stmtCtx.SetPlanDigest(preparedStmt.NormalizedPlan, preparedStmt.PlanDigest)
 		sctx.PreparedPlanCache().Put(cacheKey, cached)
