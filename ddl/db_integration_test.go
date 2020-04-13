@@ -285,7 +285,6 @@ func (s *testIntegrationSuite) TestChangingCharsetToUtf8(c *C) {
 	tk.MustExec("alter table t modify column a varchar(20) charset latin1")
 	tk.MustQuery("select * from t;").Check(testkit.Rows("t_value"))
 
-<<<<<<< HEAD
 	rs, err := tk.Exec("alter table t modify column a varchar(20) charset utf8")
 	if rs != nil {
 		rs.Close()
@@ -298,16 +297,36 @@ func (s *testIntegrationSuite) TestChangingCharsetToUtf8(c *C) {
 	}
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[ddl:210]unsupported modify charset from latin1 to utf8mb4")
-=======
-	tk.MustGetErrCode("alter table t modify column a varchar(20) charset utf8", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify column a varchar(20) charset utf8mb4", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify column a varchar(20) charset utf8 collate utf8_bin", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t modify column a varchar(20) charset utf8mb4 collate utf8mb4_general_ci", mysql.ErrUnsupportedDDLOperation)
->>>>>>> b75c389... ddl: resolve table charset option from collation option (#13506)
-
-	tk.MustGetErrCode("alter table t modify column a varchar(20) charset utf8mb4 collate utf8bin", mysql.ErrUnknownCollation)
-	tk.MustGetErrCode("alter table t collate LATIN1_GENERAL_CI charset utf8 collate utf8_bin", mysql.ErrConflictingDeclarations)
-	tk.MustGetErrCode("alter table t collate LATIN1_GENERAL_CI collate UTF8MB4_UNICODE_ci collate utf8_bin", mysql.ErrCollationCharsetMismatch)
+	rs, err = tk.Exec("alter table t modify column a varchar(20) charset utf8 collate utf8_bin")
+	if rs != nil {
+		rs.Close()
+	}
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:210]unsupported modify charset from latin1 to utf8")
+	rs, err = tk.Exec("alter table t modify column a varchar(20) charset utf8mb4 collate utf8mb4_general_ci")
+	if rs != nil {
+		rs.Close()
+	}
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:210]unsupported modify charset from latin1 to utf8mb4")
+	rs, err = tk.Exec("alter table t modify column a varchar(20) charset utf8mb4 collate utf8bin")
+	if rs != nil {
+		rs.Close()
+	}
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:1273]Unknown collation: 'utf8bin'")
+	rs, err = tk.Exec("alter table t collate LATIN1_GENERAL_CI charset utf8 collate utf8_bin")
+	if rs != nil {
+		rs.Close()
+	}
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:1302]Conflicting declarations: 'CHARACTER SET latin1' and 'CHARACTER SET utf8'")
+	rs, err = tk.Exec("alter table t collate LATIN1_GENERAL_CI collate UTF8MB4_UNICODE_ci collate utf8_bin")
+	if rs != nil {
+		rs.Close()
+	}
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:1253]COLLATION 'utf8mb4_unicode_ci' is not valid for CHARACTER SET 'latin1'")
 }
 
 func (s *testIntegrationSuite) TestChangingTableCharset(c *C) {

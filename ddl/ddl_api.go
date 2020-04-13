@@ -1146,7 +1146,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 
 	tableCharset, tableCollate, err := getCharsetAndCollateInTableOption(0, s.Options)
 	if err != nil {
-		return nil, err
+		return errors.Trace(err)
 	}
 
 	// The column charset haven't been resolved here.
@@ -1180,15 +1180,9 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 				return errors.Trace(err)
 			}
 
-<<<<<<< HEAD
 			if err = checkCreatePartitionValue(ctx, tbInfo, pi, cols); err != nil {
 				return errors.Trace(err)
 			}
-=======
-	if err = handleTableOptions(s.Options, tbInfo); err != nil {
-		return nil, errors.Trace(err)
-	}
->>>>>>> b75c389... ddl: resolve table charset option from collation option (#13506)
 
 			if err = checkAddPartitionTooManyPartitions(uint64(len(pi.Definitions))); err != nil {
 				return errors.Trace(err)
@@ -1211,6 +1205,9 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 			}
 		}
 		tbInfo.Partition = pi
+	}
+	if err = handleTableOptions(s.Options, tbInfo); err != nil {
+		return errors.Trace(err)
 	}
 
 	tbInfo.State = model.StatePublic
@@ -1392,30 +1389,9 @@ func getCharsetAndCollateInTableOption(startIdx int, options []*ast.TableOption)
 				coll = info.DefaultCollation
 			}
 		case ast.TableOptionCollate:
-<<<<<<< HEAD
-			collates = append(collates, opt.StrValue)
-		}
-	}
-
-	if len(charsets) > 1 {
-		return "", "", ErrConflictingDeclarations.GenWithStackByArgs(charsets[0], charsets[1])
-	}
-	if len(charsets) == 1 {
-		if charsets[0] == "" {
-			return "", "", ErrUnknownCharacterSet.GenWithStackByArgs("")
-		}
-		ca = charsets[0]
-	}
-
-	if len(collates) != 0 {
-		for i := range collates {
-			if collates[i] == "" {
-				return "", "", ErrUnknownCollation.GenWithStackByArgs("")
-=======
 			info, err := charset.GetCollationByName(opt.StrValue)
 			if err != nil {
 				return "", "", err
->>>>>>> b75c389... ddl: resolve table charset option from collation option (#13506)
 			}
 			if len(chs) == 0 {
 				chs = info.CharsetName
