@@ -126,10 +126,10 @@ func (c *Constant) EvalInt(ctx sessionctx.Context, _ chunk.Row) (int64, bool, er
 		if dt.IsNull() {
 			return 0, true, nil
 		}
-		val, err := dt.ToInt64(ctx.GetSessionVars().StmtCtx)	
-		if err != nil {	
-			return 0, true, errors.Trace(err)	
-		}	
+		val, err := dt.ToInt64(ctx.GetSessionVars().StmtCtx)
+		if err != nil {
+			return 0, true, errors.Trace(err)
+		}
 		c.Value.SetInt64(val)
 	} else {
 		if c.GetType().Tp == mysql.TypeNull || c.Value.IsNull() {
