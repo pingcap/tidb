@@ -4209,17 +4209,12 @@ PARTITION p2 VALUES LESS THAN (100)
 desc select * from t where a = 11 and b = 1 or a = 12 and b = 1;
 id	count	task	operator info
 TableReader_8	8000.00	root	data:Selection_7
-<<<<<<< HEAD
-└─Selection_7	8000.00	cop[tikv]	or(and(eq(test.t.a, 11), eq(test.t.b, 1)), and(eq(test.t.a, 12), eq(test.t.b, 1)))
-  └─TableScan_6	10000.00	cop[tikv]	table:t, partition:p2, range:[-inf,+inf], keep order:false, stats:pseudo
-=======
 └─Selection_7	8000.00	cop	or(and(eq(test.t.a, 11), eq(test.t.b, 1)), and(eq(test.t.a, 12), eq(test.t.b, 1)))
-  └─TableScan_6	10000.00	cop	table:t, partition:p2, range:[-inf,+inf], keep order:false, stats:pseudo
+  └─TableScan_6	10000.00	cop[tikv]	table:t, partition:p2, range:[-inf,+inf], keep order:false, stats:pseudo
 drop table if exists t;
 create table t (id int, name varchar(20)) partition by hash(id) partitions 128;
 explain SELECT * FROM t partition (p1) where name = '1';
 id	count	task	operator info
 TableReader_8	10.00	root	data:Selection_7
 └─Selection_7	10.00	cop	eq(test.t.name, "1")
-  └─TableScan_6	10000.00	cop	table:t, partition:p1, range:[-inf,+inf], keep order:false, stats:pseudo
->>>>>>> 07fe918... planner/core: fix partition selection on hash partitioned table (#16070)
+  └─TableScan_6	10000.00	cop[tikv]	table:t, partition:p1, range:[-inf,+inf], keep order:false, stats:pseudo
