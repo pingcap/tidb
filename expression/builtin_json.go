@@ -868,51 +868,55 @@ func (b *builtinJSONArrayAppendSig) evalJSON(row chunk.Row) (res json.BinaryJSON
 
 	for i := 1; i < len(b.args)-1; i += 2 {
 		// If JSON path is NULL, MySQL breaks and returns NULL.
-		s, isNull, err := b.args[i].EvalString(b.ctx, row)
+		s, sNull, err := b.args[i].EvalString(b.ctx, row)
+		if sNull || err != nil {
+			return res, true, err
+		}
+		value, vNull, err := b.args[i+1].EvalJSON(b.ctx, row)
+		if err != nil {
+			return res, true, err
+		}
+		res, isNull, err = b.appendJSONArray(res, s, sNull, value, vNull)
 		if isNull || err != nil {
-			return res, true, err
-		}
-
-		// We should do the following checks to get correct values in res.Extract
-		pathExpr, err := json.ParseJSONPathExpr(s)
-		if err != nil {
-			return res, true, json.ErrInvalidJSONPath.GenWithStackByArgs(s)
-		}
-		if pathExpr.ContainsAnyAsterisk() {
-			return res, true, json.ErrInvalidJSONPathWildcard.GenWithStackByArgs(s)
-		}
-
-		obj, exists := res.Extract([]json.PathExpression{pathExpr})
-		if !exists {
-			// If path not exists, just do nothing and no errors.
-			continue
-		}
-
-		if obj.TypeCode != json.TypeCodeArray {
-			// res.Extract will return a json object instead of an array if there is an object at path pathExpr.
-			// JSON_ARRAY_APPEND({"a": "b"}, "$", {"b": "c"}) => [{"a": "b"}, {"b", "c"}]
-			// We should wrap them to a single array first.
-			obj = json.CreateBinary([]interface{}{obj})
-		}
-
-		value, isnull, err := b.args[i+1].EvalJSON(b.ctx, row)
-		if err != nil {
-			return res, true, err
-		}
-
-		if isnull {
-			value = json.CreateBinary(nil)
-		}
-
-		obj = json.MergeBinary([]json.BinaryJSON{obj, value})
-		res, err = res.Modify([]json.PathExpression{pathExpr}, []json.BinaryJSON{obj}, json.ModifySet)
-		if err != nil {
-			// We checked pathExpr in the same way as res.Modify do.
-			// So err should always be nil, the function should never return here.
-			return res, true, err
+			return res, isNull, err
 		}
 	}
 	return res, false, nil
+}
+
+func (b *builtinJSONArrayAppendSig) appendJSONArray(res json.BinaryJSON, p string, pIsNull bool, v json.BinaryJSON, vIsNull bool) (json.BinaryJSON, bool, error) {
+	if pIsNull {
+		return res, true, nil
+	}
+	// We should do the following checks to get correct values in res.Extract
+	pathExpr, err := json.ParseJSONPathExpr(p)
+	if err != nil {
+		return res, true, json.ErrInvalidJSONPath.GenWithStackByArgs(p)
+	}
+	if pathExpr.ContainsAnyAsterisk() {
+		return res, true, json.ErrInvalidJSONPathWildcard.GenWithStackByArgs(p)
+	}
+
+	obj, exists := res.Extract([]json.PathExpression{pathExpr})
+	if !exists {
+		// If path not exists, just do nothing and no errors.
+		return res, false, nil
+	}
+
+	if obj.TypeCode != json.TypeCodeArray {
+		// res.Extract will return a json object instead of an array if there is an object at path pathExpr.
+		// JSON_ARRAY_APPEND({"a": "b"}, "$", {"b": "c"}) => [{"a": "b"}, {"b", "c"}]
+		// We should wrap them to a single array first.
+		obj = json.CreateBinary([]interface{}{obj})
+	}
+
+	if vIsNull {
+		v = json.CreateBinary(nil)
+	}
+
+	obj = json.MergeBinary([]json.BinaryJSON{obj, v})
+	res, err = res.Modify([]json.PathExpression{pathExpr}, []json.BinaryJSON{obj}, json.ModifySet)
+	return res, false, err
 }
 
 type jsonArrayInsertFunctionClass struct {
