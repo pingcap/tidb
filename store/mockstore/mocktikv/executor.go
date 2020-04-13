@@ -533,6 +533,7 @@ func (e *topNExec) Next(ctx context.Context) (value [][]byte, err error) {
 				return nil, errors.Trace(err)
 			}
 			if !hasMore {
+				sort.Sort(&e.heap.topNSorter)
 				break
 			}
 		}
@@ -541,7 +542,6 @@ func (e *topNExec) Next(ctx context.Context) (value [][]byte, err error) {
 	if e.cursor >= len(e.heap.rows) {
 		return nil, nil
 	}
-	sort.Sort(&e.heap.topNSorter)
 	row := e.heap.rows[e.cursor]
 	e.cursor++
 
