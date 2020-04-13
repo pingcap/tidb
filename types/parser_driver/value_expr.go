@@ -176,7 +176,7 @@ func newValueExpr(value interface{}) ast.ValueExpr {
 		return ve
 	}
 	ve := &ValueExpr{}
-	ve.Datum.SetValue(value, &ve.Type)
+	ve.SetValue(value)
 	types.DefaultTypeForValue(value, &ve.Type)
 	ve.projectionOffset = -1
 	return ve
