@@ -1984,21 +1984,8 @@ func setColumnComment(ctx sessionctx.Context, col *table.Column, option *ast.Col
 	return errors.Trace(err)
 }
 
-<<<<<<< HEAD
 // setDefaultAndComment is only used in getModifiableColumnJob.
 func setDefaultAndComment(ctx sessionctx.Context, col *table.Column, options []*ast.ColumnOption) error {
-	if len(options) == 0 {
-		return nil
-	}
-=======
-// processColumnOptions is only used in getModifiableColumnJob.
-func processColumnOptions(ctx sessionctx.Context, col *table.Column, options []*ast.ColumnOption) error {
-	var sb strings.Builder
-	restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes |
-		format.RestoreSpacesAroundBinaryOperation
-	restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
-
->>>>>>> 2ef6f46... ddl: fix modify bit column (#12008)
 	var hasDefaultValue, setOnUpdateNow bool
 	var err error
 	for _, opt := range options {
