@@ -983,13 +983,13 @@ func (p *MySQLPrivilege) DBIsVisible(user, host, db string) bool {
 
 func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentity) []string {
 	var gs []string
-	var hasGlobalGrant bool = false
+	var hasGlobalGrant = false
 	// Some privileges may granted from role inheritance.
 	// We should find these inheritance relationship.
 	allRoles := p.FindAllRole(roles)
 	// Show global grants.
 	var currentPriv mysql.PrivilegeType
-	var hasGrantOptionPriv bool = false
+	var hasGrantOptionPriv = false
 	var g string
 	for _, record := range p.User {
 		if record.baseRecord.match(user, host) {
@@ -1253,11 +1253,10 @@ func (p *MySQLPrivilege) getAllRoles(user, host string) []*auth.RoleIdentity {
 	key := user + "@" + host
 	edgeTable, ok := p.RoleGraph[key]
 	ret := make([]*auth.RoleIdentity, 0, len(edgeTable.roleList))
-	if !ok {
-		return nil
-	}
-	for _, r := range edgeTable.roleList {
-		ret = append(ret, r)
+	if ok {
+		for _, r := range edgeTable.roleList {
+			ret = append(ret, r)
+		}
 	}
 	return ret
 }

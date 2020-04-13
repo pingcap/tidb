@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	pd "github.com/pingcap/pd/client"
+	pd "github.com/pingcap/pd/v4/client"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/util/logutil"
@@ -308,14 +308,6 @@ type RPCContext struct {
 	Addr    string
 }
 
-// GetStoreID returns StoreID.
-func (c *RPCContext) GetStoreID() uint64 {
-	if c.Store != nil {
-		return c.Store.storeID
-	}
-	return 0
-}
-
 func (c *RPCContext) String() string {
 	return fmt.Sprintf("region ID: %d, meta: %s, peer: %s, addr: %s, idx: %d",
 		c.Region.GetID(), c.Meta, c.Peer, c.Addr, c.PeerIdx)
@@ -466,17 +458,6 @@ func (c *RegionCache) LocateKey(bo *Backoffer, key []byte) (*KeyLocation, error)
 	}, nil
 }
 
-func (c *RegionCache) loadAndInsertRegion(bo *Backoffer, key []byte) (*Region, error) {
-	r, err := c.loadRegion(bo, key, false)
-	if err != nil {
-		return nil, err
-	}
-	c.mu.Lock()
-	c.insertRegionToCache(r)
-	c.mu.Unlock()
-	return r, nil
-}
-
 // LocateEndKey searches for the region and range that the key is located.
 // Unlike LocateKey, start key of a region is exclusive and end key is inclusive.
 func (c *RegionCache) LocateEndKey(bo *Backoffer, key []byte) (*KeyLocation, error) {
@@ -611,6 +592,43 @@ func (c *RegionCache) GroupKeysByRegion(bo *Backoffer, keys [][]byte, filter fun
 		groups[id] = append(groups[id], k)
 	}
 	return groups, first, nil
+}
+
+type groupedMutations struct {
+	region    RegionVerID
+	mutations committerMutations
+}
+
+// GroupSortedMutationsByRegion separates keys into groups by their belonging Regions.
+func (c *RegionCache) GroupSortedMutationsByRegion(bo *Backoffer, m committerMutations) ([]groupedMutations, error) {
+	var (
+		groups  []groupedMutations
+		lastLoc *KeyLocation
+	)
+	lastUpperBound := 0
+	for i := range m.keys {
+		if lastLoc == nil || !lastLoc.Contains(m.keys[i]) {
+			if lastLoc != nil {
+				groups = append(groups, groupedMutations{
+					region:    lastLoc.Region,
+					mutations: m.subRange(lastUpperBound, i),
+				})
+				lastUpperBound = i
+			}
+			var err error
+			lastLoc, err = c.LocateKey(bo, m.keys[i])
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+	}
+	if lastLoc != nil {
+		groups = append(groups, groupedMutations{
+			region:    lastLoc.Region,
+			mutations: m.subRange(lastUpperBound, m.len()),
+		})
+	}
+	return groups, nil
 }
 
 // ListRegionIDsInKeyRange lists ids of regions in [start_key,end_key].
@@ -1109,6 +1127,16 @@ func (r *RegionVerID) GetID() uint64 {
 	return r.id
 }
 
+// GetVer returns the version of the region's epoch
+func (r *RegionVerID) GetVer() uint64 {
+	return r.ver
+}
+
+// GetConfVer returns the conf ver of the region's epoch
+func (r *RegionVerID) GetConfVer() uint64 {
+	return r.confVer
+}
+
 // VerID returns the Region's RegionVerID.
 func (r *Region) VerID() RegionVerID {
 	return RegionVerID{
@@ -1285,15 +1313,7 @@ func (s *Store) initResolve(bo *Backoffer, c *RegionCache) (addr string, err err
 		}
 		addr = store.GetAddress()
 		s.addr = addr
-		s.storeType = kv.TiKV
-		for _, label := range store.Labels {
-			if label.Key == "engine" {
-				if label.Value == kv.TiFlash.Name() {
-					s.storeType = kv.TiFlash
-				}
-				break
-			}
-		}
+		s.storeType = GetStoreTypeByMeta(store)
 	retry:
 		state = s.getResolveState()
 		if state != unresolved {
@@ -1305,6 +1325,20 @@ func (s *Store) initResolve(bo *Backoffer, c *RegionCache) (addr string, err err
 		}
 		return
 	}
+}
+
+// GetStoreTypeByMeta gets store type by store meta pb.
+func GetStoreTypeByMeta(store *metapb.Store) kv.StoreType {
+	tp := kv.TiKV
+	for _, label := range store.Labels {
+		if label.Key == "engine" {
+			if label.Value == kv.TiFlash.Name() {
+				tp = kv.TiFlash
+			}
+			break
+		}
+	}
+	return tp
 }
 
 // reResolve try to resolve addr for store that need check.
@@ -1330,15 +1364,7 @@ func (s *Store) reResolve(c *RegionCache) {
 		return
 	}
 
-	storeType := kv.TiKV
-	for _, label := range store.Labels {
-		if label.Key == "engine" {
-			if label.Value == kv.TiFlash.Name() {
-				storeType = kv.TiFlash
-			}
-			break
-		}
-	}
+	storeType := GetStoreTypeByMeta(store)
 	addr = store.GetAddress()
 	if s.addr != addr {
 		state := resolved

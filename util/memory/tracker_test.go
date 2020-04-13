@@ -21,7 +21,7 @@ import (
 
 	"github.com/cznic/mathutil"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/testleak"
@@ -155,6 +155,23 @@ func (s *testSuite) TestAttachTo(c *C) {
 	c.Assert(len(oldParent.mu.children), Equals, 0)
 }
 
+func (s *testSuite) TestDetach(c *C) {
+	parent := NewTracker(stringutil.StringerStr("parent"), -1)
+	child := NewTracker(stringutil.StringerStr("child"), -1)
+	child.Consume(100)
+	child.AttachTo(parent)
+	c.Assert(child.BytesConsumed(), Equals, int64(100))
+	c.Assert(parent.BytesConsumed(), Equals, int64(100))
+	c.Assert(len(parent.mu.children), Equals, 1)
+	c.Assert(parent.mu.children[0], DeepEquals, child)
+
+	child.Detach()
+	c.Assert(child.BytesConsumed(), Equals, int64(100))
+	c.Assert(parent.BytesConsumed(), Equals, int64(0))
+	c.Assert(len(parent.mu.children), Equals, 0)
+	c.Assert(child.parent, IsNil)
+}
+
 func (s *testSuite) TestReplaceChild(c *C) {
 	oldChild := NewTracker(stringutil.StringerStr("old child"), -1)
 	oldChild.Consume(100)
@@ -274,5 +291,5 @@ func BenchmarkConsume(b *testing.B) {
 }
 
 func (s *testSuite) TestErrorCode(c *C) {
-	c.Assert(int(errMemExceedThreshold.ToSQLError().Code), Equals, mysql.ErrMemExceedThreshold)
+	c.Assert(int(errMemExceedThreshold.ToSQLError().Code), Equals, errno.ErrMemExceedThreshold)
 }

@@ -14,6 +14,8 @@
 package core
 
 import (
+	"bytes"
+	"fmt"
 	"math"
 	"regexp"
 	"sort"
@@ -25,6 +27,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/set"
@@ -48,6 +51,7 @@ import (
 type MemTablePredicateExtractor interface {
 	// Extracts predicates which can be pushed down and returns the remained predicates
 	Extract(sessionctx.Context, *expression.Schema, []*types.FieldName, []expression.Expression) (remained []expression.Expression)
+	explainInfo(p *PhysicalMemTable) string
 }
 
 // extractHelper contains some common utililty functions for all extractor.
@@ -219,6 +223,7 @@ func (helper extractHelper) extractCol(
 // extracts the string pattern column, e.g:
 // SELECT * FROM t WHERE c LIKE '%a%'
 // SELECT * FROM t WHERE c LIKE '%a%' AND c REGEXP '.*xxx.*'
+// SELECT * FROM t WHERE c LIKE '%a%' OR c REGEXP '.*xxx.*'
 func (helper extractHelper) extractLikePatternCol(
 	schema *expression.Schema,
 	names []*types.FieldName,
@@ -244,29 +249,83 @@ func (helper extractHelper) extractLikePatternCol(
 			remained = append(remained, expr)
 			continue
 		}
-		var colName string
-		var datums []types.Datum
 
-		switch fn.FuncName.L {
-		case ast.EQ, ast.Like, ast.Regexp:
-			colName, datums = helper.extractColBinaryOpConsExpr(extractCols, fn)
+		var canBuildPattern bool
+		var pattern string
+		// We use '|' to combine DNF regular expression: .*a.*|.*b.*
+		// e.g:
+		// SELECT * FROM t WHERE c LIKE '%a%' OR c LIKE '%b%'
+		if fn.FuncName.L == ast.LogicOr {
+			canBuildPattern, pattern = helper.extractOrLikePattern(fn, extractColName, extractCols)
+		} else {
+			canBuildPattern, pattern = helper.extractLikePattern(fn, extractColName, extractCols)
 		}
-		if colName == extractColName {
-			switch fn.FuncName.L {
-			case ast.EQ:
-				patterns = append(patterns, "^"+regexp.QuoteMeta(datums[0].GetString())+"$")
-			case ast.Like:
-				patterns = append(patterns, stringutil.CompileLike2Regexp(datums[0].GetString()))
-			case ast.Regexp:
-				patterns = append(patterns, datums[0].GetString())
-			default:
-				remained = append(remained, expr)
-			}
+		if canBuildPattern {
+			patterns = append(patterns, pattern)
 		} else {
 			remained = append(remained, expr)
 		}
 	}
 	return
+}
+
+func (helper extractHelper) extractOrLikePattern(
+	orFunc *expression.ScalarFunction,
+	extractColName string,
+	extractCols map[int64]*types.FieldName,
+) (
+	ok bool,
+	pattern string,
+) {
+	predicates := expression.SplitDNFItems(orFunc)
+	if len(predicates) == 0 {
+		return false, ""
+	}
+
+	patternBuilder := make([]string, 0, len(predicates))
+	for _, predicate := range predicates {
+		fn, ok := predicate.(*expression.ScalarFunction)
+		if !ok {
+			return false, ""
+		}
+
+		ok, partPattern := helper.extractLikePattern(fn, extractColName, extractCols)
+		if !ok {
+			return false, ""
+		}
+		patternBuilder = append(patternBuilder, partPattern)
+	}
+	return true, strings.Join(patternBuilder, "|")
+}
+
+func (helper extractHelper) extractLikePattern(
+	fn *expression.ScalarFunction,
+	extractColName string,
+	extractCols map[int64]*types.FieldName,
+) (
+	ok bool,
+	pattern string,
+) {
+	var colName string
+	var datums []types.Datum
+	switch fn.FuncName.L {
+	case ast.EQ, ast.Like, ast.Regexp:
+		colName, datums = helper.extractColBinaryOpConsExpr(extractCols, fn)
+	}
+	if colName == extractColName {
+		switch fn.FuncName.L {
+		case ast.EQ:
+			return true, "^" + regexp.QuoteMeta(datums[0].GetString()) + "$"
+		case ast.Like:
+			return true, stringutil.CompileLike2Regexp(datums[0].GetString())
+		case ast.Regexp:
+			return true, datums[0].GetString()
+		default:
+			return false, ""
+		}
+	} else {
+		return false, ""
+	}
 }
 
 func (helper extractHelper) findColumn(schema *expression.Schema, names []*types.FieldName, colName string) map[int64]*types.FieldName {
@@ -341,7 +400,7 @@ func (helper extractHelper) extractTimeRange(
 			timeType := types.NewFieldType(mysql.TypeDatetime)
 			timeType.Decimal = 3
 			timeDatum, err := datums[0].ConvertTo(ctx.GetSessionVars().StmtCtx, timeType)
-			if err != nil {
+			if err != nil || timeDatum.Kind() == types.KindNull {
 				remained = append(remained, expr)
 				continue
 			}
@@ -473,6 +532,10 @@ func (e *ClusterTableExtractor) Extract(_ sessionctx.Context,
 	return remained
 }
 
+func (e *ClusterTableExtractor) explainInfo(p *PhysicalMemTable) string {
+	return ""
+}
+
 // ClusterLogTableExtractor is used to extract some predicates of `cluster_config`
 type ClusterLogTableExtractor struct {
 	extractHelper
@@ -540,6 +603,59 @@ func (e *ClusterLogTableExtractor) Extract(
 	remained, patterns := e.extractLikePatternCol(schema, names, remained, "message")
 	e.Patterns = patterns
 	return remained
+}
+
+func (e *ClusterLogTableExtractor) explainInfo(p *PhysicalMemTable) string {
+	if e.SkipRequest {
+		return "skip_request: true"
+	}
+	r := new(bytes.Buffer)
+	st, et := e.GetTimeRange(false)
+	if st > 0 {
+		st := time.Unix(0, st*1e6)
+		r.WriteString(fmt.Sprintf("start_time:%v, ", st.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format(MetricTableTimeFormat)))
+	}
+	if et < math.MaxInt64 {
+		et := time.Unix(0, et*1e6)
+		r.WriteString(fmt.Sprintf("end_time:%v, ", et.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format(MetricTableTimeFormat)))
+	}
+	if len(e.NodeTypes) > 0 {
+		r.WriteString(fmt.Sprintf("node_types:[%s], ", extractStringFromStringSet(e.NodeTypes)))
+	}
+	if len(e.Instances) > 0 {
+		r.WriteString(fmt.Sprintf("instances:[%s], ", extractStringFromStringSet(e.Instances)))
+	}
+	if len(e.LogLevels) > 0 {
+		r.WriteString(fmt.Sprintf("log_levels:[%s], ", extractStringFromStringSet(e.LogLevels)))
+	}
+
+	// remove the last ", " in the message info
+	s := r.String()
+	if len(s) > 2 {
+		return s[:len(s)-2]
+	}
+	return s
+}
+
+// GetTimeRange extract startTime and endTime
+func (e *ClusterLogTableExtractor) GetTimeRange(isFailpointTestModeSkipCheck bool) (int64, int64) {
+	startTime := e.StartTime
+	endTime := e.EndTime
+	if endTime == 0 {
+		endTime = math.MaxInt64
+	}
+	if !isFailpointTestModeSkipCheck {
+		// Just search the recent half an hour logs if the user doesn't specify the start time
+		const defaultSearchLogDuration = 30 * time.Minute / time.Millisecond
+		if startTime == 0 {
+			if endTime == math.MaxInt64 {
+				startTime = time.Now().UnixNano()/int64(time.Millisecond) - int64(defaultSearchLogDuration)
+			} else {
+				startTime = endTime - int64(defaultSearchLogDuration)
+			}
+		}
+	}
+	return startTime, endTime
 }
 
 // MetricTableExtractor is used to extract some predicates of metrics_schema tables.
@@ -618,6 +734,42 @@ func (e *MetricTableExtractor) getTimeRange(start, end int64) (time.Time, time.T
 	return startTime, endTime
 }
 
+func (e *MetricTableExtractor) explainInfo(p *PhysicalMemTable) string {
+	if e.SkipRequest {
+		return "skip_request: true"
+	}
+	promQL := e.GetMetricTablePromQL(p.ctx, p.Table.Name.L)
+	startTime, endTime := e.StartTime, e.EndTime
+	step := time.Second * time.Duration(p.ctx.GetSessionVars().MetricSchemaStep)
+	return fmt.Sprintf("PromQL:%v, start_time:%v, end_time:%v, step:%v",
+		promQL,
+		startTime.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format(MetricTableTimeFormat),
+		endTime.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format(MetricTableTimeFormat),
+		step,
+	)
+}
+
+// GetMetricTablePromQL uses to get the promQL of metric table.
+func (e *MetricTableExtractor) GetMetricTablePromQL(sctx sessionctx.Context, lowerTableName string) string {
+	quantiles := e.Quantiles
+	def, err := infoschema.GetMetricTableDef(lowerTableName)
+	if err != nil {
+		return ""
+	}
+	if len(quantiles) == 0 {
+		quantiles = []float64{def.Quantile}
+	}
+	var buf bytes.Buffer
+	for i, quantile := range quantiles {
+		promQL := def.GenPromQL(sctx, e.LabelConditions, quantile)
+		if i > 0 {
+			buf.WriteByte(',')
+		}
+		buf.WriteString(promQL)
+	}
+	return buf.String()
+}
+
 // MetricSummaryTableExtractor is used to extract some predicates of metrics_schema tables.
 type MetricSummaryTableExtractor struct {
 	extractHelper
@@ -640,6 +792,10 @@ func (e *MetricSummaryTableExtractor) Extract(
 	e.Quantiles = e.parseQuantiles(quantiles)
 	e.MetricsNames = metricsNames
 	return remained
+}
+
+func (e *MetricSummaryTableExtractor) explainInfo(p *PhysicalMemTable) string {
+	return ""
 }
 
 // InspectionResultTableExtractor is used to extract some predicates of `inspection_result`
@@ -669,6 +825,10 @@ func (e *InspectionResultTableExtractor) Extract(
 	e.Rules = rules
 	e.Items = items
 	return remained
+}
+
+func (e *InspectionResultTableExtractor) explainInfo(p *PhysicalMemTable) string {
+	return ""
 }
 
 // InspectionSummaryTableExtractor is used to extract some predicates of `inspection_summary`
@@ -703,6 +863,10 @@ func (e *InspectionSummaryTableExtractor) Extract(
 	return remained
 }
 
+func (e *InspectionSummaryTableExtractor) explainInfo(p *PhysicalMemTable) string {
+	return ""
+}
+
 // InspectionRuleTableExtractor is used to extract some predicates of `inspection_rules`
 type InspectionRuleTableExtractor struct {
 	extractHelper
@@ -723,6 +887,18 @@ func (e *InspectionRuleTableExtractor) Extract(
 	e.SkipRequest = tpSkip
 	e.Types = tps
 	return remained
+}
+
+func (e *InspectionRuleTableExtractor) explainInfo(p *PhysicalMemTable) string {
+	if e.SkipRequest {
+		return "skip_request: true"
+	}
+
+	r := new(bytes.Buffer)
+	if len(e.Types) > 0 {
+		r.WriteString(fmt.Sprintf("node_types:[%s]", extractStringFromStringSet(e.Types)))
+	}
+	return r.String()
 }
 
 // SlowQueryExtractor is used to extract some predicates of `slow_query`
@@ -774,4 +950,8 @@ func (e *SlowQueryExtractor) setTimeRange(start, end int64) {
 	}
 	e.StartTime, e.EndTime = startTime, endTime
 	e.Enable = true
+}
+
+func (e *SlowQueryExtractor) explainInfo(p *PhysicalMemTable) string {
+	return ""
 }

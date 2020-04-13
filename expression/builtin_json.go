@@ -71,6 +71,7 @@ var (
 	_ builtinFunc = &builtinJSONRemoveSig{}
 	_ builtinFunc = &builtinJSONMergeSig{}
 	_ builtinFunc = &builtinJSONContainsSig{}
+	_ builtinFunc = &builtinJSONStorageSizeSig{}
 	_ builtinFunc = &builtinJSONDepthSig{}
 	_ builtinFunc = &builtinJSONSearchSig{}
 	_ builtinFunc = &builtinJSONKeysSig{}
@@ -100,6 +101,7 @@ func (c *jsonTypeFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		return nil, err
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETJson)
+	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	bf.tp.Flen = 51 // Flen of JSON_TYPE is length of UNSIGNED INTEGER.
 	sig := &builtinJSONTypeSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonTypeSig)
@@ -1128,7 +1130,7 @@ func (b *builtinJSONSearchSig) evalJSON(row chunk.Row) (res json.BinaryJSON, isN
 		if isNull || len(escapeStr) == 0 {
 			escape = byte('\\')
 		} else if len(escapeStr) == 1 {
-			escape = byte(escapeStr[0])
+			escape = escapeStr[0]
 		} else {
 			return res, true, errIncorrectArgs.GenWithStackByArgs("ESCAPE")
 		}
@@ -1189,8 +1191,39 @@ type jsonStorageSizeFunctionClass struct {
 	baseFunctionClass
 }
 
+type builtinJSONStorageSizeSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinJSONStorageSizeSig) Clone() builtinFunc {
+	newSig := &builtinJSONStorageSizeSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 func (c *jsonStorageSizeFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "JSON_STORAGE_SIZE")
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETJson)
+	sig := &builtinJSONStorageSizeSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_JsonStorageSizeSig)
+	return sig, nil
+}
+
+func (b *builtinJSONStorageSizeSig) evalInt(row chunk.Row) (res int64, isNull bool, err error) {
+	obj, isNull, err := b.args[0].EvalJSON(b.ctx, row)
+	if isNull || err != nil {
+		return res, isNull, err
+	}
+
+	buf, err := obj.MarshalJSON()
+	if err != nil {
+		return res, isNull, err
+	}
+
+	return int64(len(buf)), false, nil
 }
 
 type jsonDepthFunctionClass struct {

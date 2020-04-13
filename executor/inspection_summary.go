@@ -168,11 +168,11 @@ var inspectionSummaryRules = map[string][]string{
 		"tikv_cop_request_duration",
 		"tikv_cop_request_durations",
 		"tikv_cop_scan_details",
-		"tikv_cop_total_dag_executors",
-		"tikv_cop_total_dag_requests",
-		"tikv_cop_total_kv_cursor_operations",
-		"tikv_cop_total_requests",
-		"tikv_cop_total_response_size",
+		"tikv_cop_dag_executors_ops",
+		"tikv_cop_dag_requests_ops",
+		"tikv_cop_scan_keys_num",
+		"tikv_cop_requests_ops",
+		"tikv_cop_total_response_size_per_seconds",
 		"tikv_cop_total_rocksdb_perf_statistics",
 		"tikv_channel_full",
 		"tikv_engine_avg_get_duration",
@@ -298,7 +298,7 @@ var inspectionSummaryRules = map[string][]string{
 		"tikv_gc_tasks_avg_duration",
 		"tikv_gc_tasks_duration",
 		"tikv_gc_too_busy",
-		"tikv_gc_total_tasks",
+		"tikv_gc_tasks_ops",
 	},
 	"rocksdb": {
 		"tikv_compaction_duration",
@@ -422,7 +422,7 @@ func (e *inspectionSummaryRetriever) retrieve(ctx context.Context, sctx sessionc
 	condition := e.timeRange.Condition()
 	var finalRows [][]types.Datum
 	for rule, tables := range inspectionSummaryRules {
-		if !rules.exist(rule) {
+		if len(rules.set) != 0 && !rules.set.Exist(rule) {
 			continue
 		}
 		for _, name := range tables {
@@ -435,6 +435,7 @@ func (e *inspectionSummaryRetriever) retrieve(ctx context.Context, sctx sessionc
 				continue
 			}
 			cols := def.Labels
+			comment := def.Comment
 			cond := condition
 			if def.Quantile > 0 {
 				cols = append(cols, "quantile")
@@ -493,6 +494,7 @@ func (e *inspectionSummaryRetriever) retrieve(ctx context.Context, sctx sessionc
 					row.GetFloat64(0), // avg
 					row.GetFloat64(1), // min
 					row.GetFloat64(2), // max
+					comment,
 				))
 			}
 		}

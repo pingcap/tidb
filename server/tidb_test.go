@@ -22,9 +22,12 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"fmt"
 	"io/ioutil"
 	"math/big"
+	"net/http"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/go-sql-driver/mysql"
@@ -178,6 +181,27 @@ func (ts *tidbTestSuite) TestStatusAPI(c *C) {
 	ts.runTestStatusAPI(c)
 }
 
+func (ts *tidbTestSuite) TestStatusPort(c *C) {
+	var err error
+	ts.store, err = mockstore.NewMockTikvStore()
+	session.DisableStats4Test()
+	c.Assert(err, IsNil)
+	ts.domain, err = session.BootstrapSession(ts.store)
+	c.Assert(err, IsNil)
+	ts.tidbdrv = NewTiDBDriver(ts.store)
+	cfg := config.NewConfig()
+	cfg.Port = genPort()
+	cfg.Status.ReportStatus = true
+	cfg.Status.StatusPort = ts.statusPort
+	cfg.Performance.TCPKeepAlive = true
+
+	server, err := NewServer(cfg, ts.tidbdrv)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals,
+		fmt.Sprintf("listen tcp 0.0.0.0:%d: bind: address already in use", ts.statusPort))
+	c.Assert(server, IsNil)
+}
+
 func (ts *tidbTestSuite) TestStatusAPIWithTLS(c *C) {
 	caCert, caKey, err := generateCert(0, "TiDB CA 2", nil, nil, "/tmp/ca-key-2.pem", "/tmp/ca-cert-2.pem")
 	c.Assert(err, IsNil)
@@ -215,6 +239,73 @@ func (ts *tidbTestSuite) TestStatusAPIWithTLS(c *C) {
 	server.Close()
 }
 
+func (ts *tidbTestSuite) TestStatusAPIWithTLSCNCheck(c *C) {
+	caPath := filepath.Join(os.TempDir(), "ca-cert-cn.pem")
+	serverKeyPath := filepath.Join(os.TempDir(), "server-key-cn.pem")
+	serverCertPath := filepath.Join(os.TempDir(), "server-cert-cn.pem")
+	client1KeyPath := filepath.Join(os.TempDir(), "client-key-cn-check-a.pem")
+	client1CertPath := filepath.Join(os.TempDir(), "client-cert-cn-check-a.pem")
+	client2KeyPath := filepath.Join(os.TempDir(), "client-key-cn-check-b.pem")
+	client2CertPath := filepath.Join(os.TempDir(), "client-cert-cn-check-b.pem")
+
+	caCert, caKey, err := generateCert(0, "TiDB CA CN CHECK", nil, nil, filepath.Join(os.TempDir(), "ca-key-cn.pem"), caPath)
+	c.Assert(err, IsNil)
+	_, _, err = generateCert(1, "tidb-server-cn-check", caCert, caKey, serverKeyPath, serverCertPath)
+	c.Assert(err, IsNil)
+	_, _, err = generateCert(2, "tidb-client-cn-check-a", caCert, caKey, client1KeyPath, client1CertPath, func(c *x509.Certificate) {
+		c.Subject.CommonName = "tidb-client-1"
+	})
+	c.Assert(err, IsNil)
+	_, _, err = generateCert(3, "tidb-client-cn-check-b", caCert, caKey, client2KeyPath, client2CertPath, func(c *x509.Certificate) {
+		c.Subject.CommonName = "tidb-client-2"
+	})
+	c.Assert(err, IsNil)
+
+	cli := newTestServerClient()
+	cli.statusScheme = "https"
+	cfg := config.NewConfig()
+	cfg.Port = cli.port
+	cfg.Status.StatusPort = cli.statusPort
+	cfg.Security.ClusterSSLCA = caPath
+	cfg.Security.ClusterSSLCert = serverCertPath
+	cfg.Security.ClusterSSLKey = serverKeyPath
+	cfg.Security.ClusterVerifyCN = []string{"tidb-client-2"}
+	server, err := NewServer(cfg, ts.tidbdrv)
+	c.Assert(err, IsNil)
+	go server.Run()
+	time.Sleep(time.Millisecond * 100)
+
+	hc := newTLSHttpClient(c, caPath,
+		client1CertPath,
+		client1KeyPath,
+	)
+	_, err = hc.Get(cli.statusURL("/status"))
+	c.Assert(err, NotNil)
+
+	hc = newTLSHttpClient(c, caPath,
+		client2CertPath,
+		client2KeyPath,
+	)
+	_, err = hc.Get(cli.statusURL("/status"))
+	c.Assert(err, IsNil)
+}
+
+func newTLSHttpClient(c *C, caFile, certFile, keyFile string) *http.Client {
+	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+	c.Assert(err, IsNil)
+	caCert, err := ioutil.ReadFile(caFile)
+	c.Assert(err, IsNil)
+	caCertPool := x509.NewCertPool()
+	caCertPool.AppendCertsFromPEM(caCert)
+	tlsConfig := &tls.Config{
+		Certificates:       []tls.Certificate{cert},
+		RootCAs:            caCertPool,
+		InsecureSkipVerify: true,
+	}
+	tlsConfig.BuildNameToCertificate()
+	return &http.Client{Transport: &http.Transport{TLSClientConfig: tlsConfig}}
+}
+
 func (ts *tidbTestSuite) TestMultiStatements(c *C) {
 	c.Parallel()
 	ts.runTestMultiStatements(c)
@@ -239,7 +330,7 @@ func (ts *tidbTestSuite) TestSocketForwarding(c *C) {
 		config.Net = "unix"
 		config.Addr = "/tmp/tidbtest.sock"
 		config.DBName = "test"
-		config.Strict = true
+		config.Params = map[string]string{"sql_mode": "'STRICT_ALL_TABLES'"}
 	}, "SocketRegression")
 }
 
@@ -264,7 +355,7 @@ func (ts *tidbTestSuite) TestSocket(c *C) {
 		config.Net = "unix"
 		config.Addr = "/tmp/tidbtest.sock"
 		config.DBName = "test"
-		config.Strict = true
+		config.Params = map[string]string{"sql_mode": "STRICT_ALL_TABLES"}
 	}, "SocketRegression")
 
 }
@@ -594,11 +685,11 @@ func (ts *tidbTestSerialSuite) TestErrorNoRollback(c *C) {
 	cfg.Port = cli.port
 	cfg.Status.ReportStatus = false
 
-	// test cannot startup with wrong tls config
 	cfg.Security = config.Security{
-		SSLCA:   "wrong path",
-		SSLCert: "wrong path",
-		SSLKey:  "wrong path",
+		RequireSecureTransport: true,
+		SSLCA:                  "wrong path",
+		SSLCert:                "wrong path",
+		SSLKey:                 "wrong path",
 	}
 	_, err = NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, NotNil)

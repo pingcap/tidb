@@ -219,7 +219,7 @@ func rebaseAutoRandomValue(sctx sessionctx.Context, t table.Table, newData *type
 	}
 	shardBits := tableInfo.AutoRandomBits + 1 // sign bit is reserved.
 	recordID = recordID << shardBits >> shardBits
-	return t.Allocator(sctx, autoid.AutoRandomType).Rebase(tableInfo.ID, recordID, true)
+	return t.Allocators(sctx).Get(autoid.AutoRandomType).Rebase(tableInfo.ID, recordID, true)
 }
 
 // resetErrDataTooLong reset ErrDataTooLong error msg.

@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/timeutil"
 )
 
@@ -139,6 +140,18 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 		return config.GetGlobalConfig().Plugin.Dir, true, nil
 	case PluginLoad:
 		return config.GetGlobalConfig().Plugin.Load, true, nil
+	case TiDBSlowLogThreshold:
+		return strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().Log.SlowThreshold), 10), true, nil
+	case TiDBRecordPlanInSlowLog:
+		return strconv.FormatUint(uint64(atomic.LoadUint32(&config.GetGlobalConfig().Log.RecordPlanInSlowLog)), 10), true, nil
+	case TiDBEnableSlowLog:
+		return BoolToIntStr(config.GetGlobalConfig().Log.EnableSlowLog), true, nil
+	case TiDBQueryLogMaxLen:
+		return strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().Log.QueryLogMaxLen), 10), true, nil
+	case TiDBCheckMb4ValueInUTF8:
+		return BoolToIntStr(config.GetGlobalConfig().CheckMb4ValueInUTF8), true, nil
+	case TiDBCapturePlanBaseline:
+		return CapturePlanBaseline.GetVal(), true, nil
 	}
 	sVal, ok := s.GetSystemVar(key)
 	if ok {
@@ -391,11 +404,19 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 			return "1", nil
 		}
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
-	case TiDBSkipUTF8Check, TiDBOptAggPushDown,
+	case WindowingUseHighPrecision:
+		if strings.EqualFold(value, "OFF") || value == "0" {
+			return "OFF", nil
+		} else if strings.EqualFold(value, "ON") || value == "1" {
+			return "ON", nil
+		}
+		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+	case TiDBSkipUTF8Check, TiDBOptAggPushDown, TiDBOptDistinctAggPushDown,
 		TiDBOptInSubqToJoinAndAgg, TiDBEnableFastAnalyze,
 		TiDBBatchInsert, TiDBDisableTxnAutoRetry, TiDBEnableStreaming, TiDBEnableChunkRPC,
 		TiDBBatchDelete, TiDBBatchCommit, TiDBEnableCascadesPlanner, TiDBEnableWindowFunction, TiDBPProfSQLCPU,
 		TiDBLowResolutionTSO, TiDBEnableIndexMerge, TiDBEnableNoopFuncs,
+		TiDBCheckMb4ValueInUTF8, TiDBEnableSlowLog, TiDBRecordPlanInSlowLog,
 		TiDBScatterRegion, TiDBGeneralLog, TiDBConstraintCheckInPlace, TiDBEnableVectorizedExpression:
 		fallthrough
 	case GeneralLog, AvoidTemporalUpgrade, BigTables, CheckProxyUsers, LogBin,
@@ -495,6 +516,15 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 			return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 		}
 		return value, nil
+	case TiDBAllowBatchCop:
+		v, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
+		}
+		if v < 0 || v > 2 {
+			return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+		}
+		return value, nil
 	case TiDBOptCPUFactor,
 		TiDBOptCopCPUFactor,
 		TiDBOptNetworkFactor,
@@ -522,6 +552,8 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		TIDBMemQuotaIndexLookupJoin,
 		TIDBMemQuotaNestedLoopApply,
 		TiDBRetryLimit,
+		TiDBSlowLogThreshold,
+		TiDBQueryLogMaxLen,
 		TiDBEvolvePlanTaskMaxTime:
 		_, err := strconv.ParseInt(value, 10, 64)
 		if err != nil {
@@ -643,7 +675,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 			return "", nil
 		}
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
-	case TiDBEnableStmtSummary:
+	case TiDBEnableStmtSummary, TiDBStmtSummaryInternalQuery:
 		switch {
 		case strings.EqualFold(value, "ON") || value == "1":
 			return "1", nil
@@ -657,12 +689,22 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		if value == "" {
 			return "", nil
 		}
-		return checkUInt64SystemVar(name, value, 1, math.MaxUint32, vars)
+		return checkUInt64SystemVar(name, value, 1, math.MaxInt32, vars)
 	case TiDBStmtSummaryHistorySize:
 		if value == "" {
 			return "", nil
 		}
 		return checkUInt64SystemVar(name, value, 0, math.MaxUint8, vars)
+	case TiDBStmtSummaryMaxStmtCount:
+		if value == "" {
+			return "", nil
+		}
+		return checkInt64SystemVar(name, value, 1, math.MaxInt16, vars)
+	case TiDBStmtSummaryMaxSQLLength:
+		if value == "" {
+			return "", nil
+		}
+		return checkInt64SystemVar(name, value, 0, math.MaxInt32, vars)
 	case TiDBIsolationReadEngines:
 		engines := strings.Split(value, ",")
 		var formatVal string
@@ -692,6 +734,10 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 			return value, errors.Errorf("%v(%d) cannot be smaller than %v or larger than %v", name, v, 10, 60*60*60)
 		}
 		return value, nil
+	case CollationConnection, CollationDatabase, CollationServer:
+		if _, err := collate.GetCollationByName(value); err != nil {
+			return value, errors.Trace(err)
+		}
 	}
 	return value, nil
 }

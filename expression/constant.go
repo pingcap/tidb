@@ -68,7 +68,6 @@ type Constant struct {
 type ParamMarker struct {
 	ctx   sessionctx.Context
 	order int
-	tp    types.FieldType
 }
 
 // GetUserVar returns the corresponding user variable presented in the `EXECUTE` statement or `COM_EXECUTE` command.
@@ -107,14 +106,13 @@ func (c *Constant) Clone() Expression {
 	return c
 }
 
-var unspecifiedTp = types.NewFieldType(mysql.TypeUnspecified)
-
 // GetType implements Expression interface.
 func (c *Constant) GetType() *types.FieldType {
-	if c.ParamMarker != nil {
-		tp := &c.ParamMarker.tp
-		*tp = *unspecifiedTp
-		dt := c.ParamMarker.GetUserVar()
+	if p := c.ParamMarker; p != nil && !p.ctx.GetSessionVars().StmtCtx.InExplainStmt {
+		// GetType() may be called in multi-threaded context, e.g, in building inner executors of IndexJoin,
+		// so it should avoid data race. We achieve this by returning different FieldType pointer for each call.
+		tp := types.NewFieldType(mysql.TypeUnspecified)
+		dt := p.GetUserVar()
 		types.DefaultParamTypeForValue(dt.GetValue(), tp)
 		return tp
 	}
@@ -178,8 +176,13 @@ func (c *Constant) VecEvalJSON(ctx sessionctx.Context, input *chunk.Chunk, resul
 }
 
 func (c *Constant) getLazyDatum() (dt types.Datum, isLazy bool, err error) {
-	if c.ParamMarker != nil {
-		dt = c.ParamMarker.GetUserVar()
+	if p := c.ParamMarker; p != nil {
+		if p.ctx.GetSessionVars().StmtCtx.InExplainStmt {
+			// Since `ParamMarker` is not nil only in prepare/execute context, the query must be `explain for connection` when coming here.
+			// The PreparedParams may have been reset already, to avoid panic, we just use the pre-evaluated datum for this constant.
+			return dt, false, nil
+		}
+		dt = p.GetUserVar()
 		isLazy = true
 		return
 	} else if c.DeferredExpr != nil {

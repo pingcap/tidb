@@ -19,7 +19,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/stringutil"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -45,43 +45,54 @@ func (c *likeFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	argTp := []types.EvalType{types.ETString, types.ETString, types.ETInt}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, argTp...)
 	bf.tp.Flen = 1
-	sig := &builtinLikeSig{bf}
+	sig := &builtinLikeSig{bf, nil, false}
 	sig.setPbCode(tipb.ScalarFuncSig_LikeSig)
 	return sig, nil
 }
 
 type builtinLikeSig struct {
 	baseBuiltinFunc
+	// pattern and isMemorizedPattern is not serialized with builtinLikeSig, treat them as a cache to accelerate
+	// the evaluation of builtinLikeSig.
+	pattern            collate.WildcardPattern
+	isMemorizedPattern bool
 }
 
 func (b *builtinLikeSig) Clone() builtinFunc {
 	newSig := &builtinLikeSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.pattern = b.pattern
+	newSig.isMemorizedPattern = b.isMemorizedPattern
 	return newSig
 }
 
 // evalInt evals a builtinLikeSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-comparison-functions.html#operator_like
-// NOTE: Currently tikv's like function is case sensitive, so we keep its behavior here.
 func (b *builtinLikeSig) evalInt(row chunk.Row) (int64, bool, error) {
 	valStr, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
 
-	// TODO: We don't need to compile pattern if it has been compiled or it is static.
 	patternStr, isNull, err := b.args[1].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
-	val, isNull, err := b.args[2].EvalInt(b.ctx, row)
+	escape, isNull, err := b.args[2].EvalInt(b.ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
-	escape := byte(val)
-	patChars, patTypes := stringutil.CompilePattern(patternStr, escape)
-	match := stringutil.DoMatch(valStr, patChars, patTypes)
-	return boolToInt64(match), false, nil
+	if b.pattern == nil {
+		b.pattern = b.collator().Pattern()
+		if b.args[1].ConstItem(b.ctx.GetSessionVars().StmtCtx) && b.args[2].ConstItem(b.ctx.GetSessionVars().StmtCtx) {
+			b.pattern.Compile(patternStr, byte(escape))
+			b.isMemorizedPattern = true
+		}
+	}
+	if !b.isMemorizedPattern {
+		b.pattern.Compile(patternStr, byte(escape))
+	}
+	return boolToInt64(b.pattern.DoMatch(valStr)), false, nil
 }
 
 type regexpFunctionClass struct {

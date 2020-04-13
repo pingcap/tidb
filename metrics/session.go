@@ -106,16 +106,17 @@ var (
 			Namespace: "tidb",
 			Subsystem: "session",
 			Name:      "statement_pessimistic_retry_count",
-			Help:      "Bucketed historgram of statement pessimistic retry count",
-			Buckets:   prometheus.ExponentialBuckets(1, 1.5, 14), // 1 ~ 291
+			Help:      "Bucketed histogram of statement pessimistic retry count",
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 16), // 1 ~ 65536
 		})
 
-	StatementLockKeysCount = prometheus.NewCounter(
-		prometheus.CounterOpts{
+	StatementLockKeysCount = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "session",
 			Name:      "statement_lock_keys_count",
 			Help:      "Keys locking for a single statement",
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 21), // 1 ~ 2097152
 		})
 )
 

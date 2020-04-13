@@ -137,6 +137,15 @@ func (s *testSuite5) TestSetVar(c *C) {
 	c.Assert(charset, Equals, "utf8")
 	c.Assert(collation, Equals, "utf8_bin")
 
+	expectErrMsg := "[ddl:1273]Unknown collation: 'non_exist_collation'"
+	tk.MustGetErrMsg("set names utf8 collate non_exist_collation", expectErrMsg)
+	tk.MustGetErrMsg("set @@session.collation_server='non_exist_collation'", expectErrMsg)
+	tk.MustGetErrMsg("set @@session.collation_database='non_exist_collation'", expectErrMsg)
+	tk.MustGetErrMsg("set @@session.collation_connection='non_exist_collation'", expectErrMsg)
+	tk.MustGetErrMsg("set @@global.collation_server='non_exist_collation'", expectErrMsg)
+	tk.MustGetErrMsg("set @@global.collation_database='non_exist_collation'", expectErrMsg)
+	tk.MustGetErrMsg("set @@global.collation_connection='non_exist_collation'", expectErrMsg)
+
 	tk.MustExec("set character_set_results = NULL")
 	tk.MustQuery("select @@character_set_results").Check(testkit.Rows(""))
 
@@ -548,9 +557,6 @@ func (s *testSuite5) TestValidateSetVar(c *C) {
 	_, err = tk.Exec("set @@tidb_batch_delete=3;")
 	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))
 
-	_, err = tk.Exec("set @@tidb_mem_quota_mergejoin='tidb';")
-	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))
-
 	tk.MustExec("set @@group_concat_max_len=1")
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect group_concat_max_len value: '1'"))
 	result := tk.MustQuery("select @@group_concat_max_len;")
@@ -919,4 +925,56 @@ func (s *testSuite5) TestEnableNoopFunctionsVar(c *C) {
 	tk.MustQuery(`select @@tidb_enable_noop_functions;`).Check(testkit.Rows("1"))
 	tk.MustExec(`set tidb_enable_noop_functions=0;`)
 	tk.MustQuery(`select @@tidb_enable_noop_functions;`).Check(testkit.Rows("0"))
+}
+
+type testSuite10 struct {
+	*baseTestSuite
+}
+
+func (s *testSuite10) TestSetConflictConfigItems(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	c.Assert(config.GetGlobalConfig().EnableDynamicConfig, IsFalse)
+	tk.MustExec("set tidb_slow_log_threshold=123")
+	tk.MustQuery("select @@tidb_slow_log_threshold").Check(testkit.Rows("123"))
+	tk.MustExec("set tidb_query_log_max_len=123")
+	tk.MustQuery("select @@tidb_query_log_max_len").Check(testkit.Rows("123"))
+	tk.MustExec("set tidb_record_plan_in_slow_log=1")
+	tk.MustQuery("select @@tidb_record_plan_in_slow_log").Check(testkit.Rows("1"))
+	tk.MustExec("set tidb_check_mb4_value_in_utf8=1")
+	tk.MustQuery("select @@tidb_check_mb4_value_in_utf8").Check(testkit.Rows("1"))
+	tk.MustExec("set tidb_enable_slow_log=1")
+	tk.MustQuery("select @@tidb_enable_slow_log").Check(testkit.Rows("1"))
+
+	config.GetGlobalConfig().EnableDynamicConfig = true
+	tk.MustExec("set tidb_slow_log_threshold=222")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 cannot update tidb_slow_log_threshold when enabling dynamic configs"))
+	tk.MustQuery("select @@tidb_slow_log_threshold").Check(testkit.Rows("123"))
+
+	tk.MustExec("set tidb_query_log_max_len=222")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 cannot update tidb_query_log_max_len when enabling dynamic configs"))
+	tk.MustQuery("select @@tidb_query_log_max_len").Check(testkit.Rows("123"))
+
+	tk.MustExec("set tidb_record_plan_in_slow_log=0")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 cannot update tidb_record_plan_in_slow_log when enabling dynamic configs"))
+	tk.MustQuery("select @@tidb_record_plan_in_slow_log").Check(testkit.Rows("1"))
+
+	tk.MustExec("set tidb_check_mb4_value_in_utf8=0")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 cannot update tidb_check_mb4_value_in_utf8 when enabling dynamic configs"))
+	tk.MustQuery("select @@tidb_check_mb4_value_in_utf8").Check(testkit.Rows("1"))
+
+	tk.MustExec("set tidb_enable_slow_log=0")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 cannot update tidb_enable_slow_log when enabling dynamic configs"))
+	tk.MustQuery("select @@tidb_enable_slow_log").Check(testkit.Rows("1"))
+
+	config.GetGlobalConfig().EnableDynamicConfig = false
+	tk.MustExec("set tidb_slow_log_threshold=222")
+	tk.MustQuery("select @@tidb_slow_log_threshold").Check(testkit.Rows("222"))
+	tk.MustExec("set tidb_query_log_max_len=222")
+	tk.MustQuery("select @@tidb_query_log_max_len").Check(testkit.Rows("222"))
+	tk.MustExec("set tidb_record_plan_in_slow_log=0")
+	tk.MustQuery("select @@tidb_record_plan_in_slow_log").Check(testkit.Rows("0"))
+	tk.MustExec("set tidb_check_mb4_value_in_utf8=0")
+	tk.MustQuery("select @@tidb_check_mb4_value_in_utf8").Check(testkit.Rows("0"))
+	tk.MustExec("set tidb_enable_slow_log=0")
+	tk.MustQuery("select @@tidb_enable_slow_log").Check(testkit.Rows("0"))
 }

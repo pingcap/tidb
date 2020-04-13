@@ -323,6 +323,23 @@ func (g *selectStringGener) gen() interface{} {
 	return g.candidates[g.randGen.Intn(len(g.candidates))]
 }
 
+// selectRealGener select one real number randomly from the candidates array
+type selectRealGener struct {
+	candidates []float64
+	randGen    *defaultRandGen
+}
+
+func newSelectRealGener(candidates []float64) *selectRealGener {
+	return &selectRealGener{candidates, newDefaultRandGen()}
+}
+
+func (g *selectRealGener) gen() interface{} {
+	if len(g.candidates) == 0 {
+		return nil
+	}
+	return g.candidates[g.randGen.Intn(len(g.candidates))]
+}
+
 type constJSONGener struct {
 	jsonStr string
 }
@@ -915,6 +932,23 @@ func (g *formatGener) gen() interface{} {
 	default:
 		return nil
 	}
+}
+
+type nullWrappedGener struct {
+	nullRation float64
+	inner      dataGenerator
+	randGen    *defaultRandGen
+}
+
+func newNullWrappedGener(nullRation float64, inner dataGenerator) *nullWrappedGener {
+	return &nullWrappedGener{nullRation, inner, newDefaultRandGen()}
+}
+
+func (g *nullWrappedGener) gen() interface{} {
+	if g.randGen.Float64() < g.nullRation {
+		return nil
+	}
+	return g.inner.gen()
 }
 
 type vecExprBenchCase struct {
@@ -1717,7 +1751,7 @@ func genVecEvalBool(numCols int, colTypes, eTypes []types.EvalType) (CNFExprs, *
 
 func generateRandomSel() []int {
 	randGen := newDefaultRandGen()
-	randGen.Seed(int64(time.Now().UnixNano()))
+	randGen.Seed(time.Now().UnixNano())
 	var sel []int
 	count := 0
 	// Use constant 256 to make it faster to generate randomly arranged sel slices

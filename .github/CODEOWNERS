@@ -1,5 +1,23 @@
-/expression @pingcap/co-expression
+/distsql @pingcap/co-exec
+/executor @pingcap/co-exec
+/expression @pingcap/co-exec
+/types @pingcap/co-exec
+/util/chunk @pingcap/co-exec
+/util/disk @pingcap/co-exec
+/util/execdetails @pingcap/co-exec
+/util/expensivequery @pingcap/co-exec
+/util/filesort @pingcap/co-exec
+/util/memory @pingcap/co-exec
+/util/sqlexec @pingcap/co-exec
+
 /planner @pingcap/co-planner
 /statistics @pingcap/co-planner
-/util/ranger  @pingcap/co-planner
+/util/ranger @pingcap/co-planner
+/util/plancodec @pingcap/co-planner
 /bindinfo @pingcap/co-planner
+
+/ddl @pingcap/co-ddl
+/domain @pingcap/co-ddl
+/infoschema @pingcap/co-ddl
+/meta @pingcap/co-ddl
+/owner @pingcap/co-ddl

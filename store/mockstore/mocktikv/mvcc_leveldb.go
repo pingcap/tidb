@@ -15,7 +15,6 @@ package mocktikv
 
 import (
 	"bytes"
-	"fmt"
 	"math"
 	"sync"
 
@@ -472,6 +471,7 @@ type lockCtx struct {
 	forUpdateTS uint64
 	primary     []byte
 	ttl         uint64
+	minCommitTs uint64
 
 	returnValues bool
 	values       [][]byte
@@ -488,6 +488,7 @@ func (mvcc *MVCCLevelDB) PessimisticLock(req *kvrpcpb.PessimisticLockRequest) *k
 		forUpdateTS:  req.ForUpdateTs,
 		primary:      req.PrimaryLock,
 		ttl:          req.LockTtl,
+		minCommitTs:  req.MinCommitTs,
 		returnValues: req.ReturnValues,
 	}
 	lockWaitTime := req.WaitTimeout
@@ -558,15 +559,11 @@ func (mvcc *MVCCLevelDB) pessimisticLockMutation(batch *leveldb.Batch, mutation 
 
 	// For pessimisticLockMutation, check the correspond rollback record, there may be rollbackLock
 	// operation between startTS and forUpdateTS
-	err = checkConflictValue(iter, mutation, forUpdateTS, startTS)
+	val, err := checkConflictValue(iter, mutation, forUpdateTS, startTS, true)
 	if err != nil {
 		return err
 	}
 	if lctx.returnValues {
-		val, err := mvcc.getValue(mutation.Key, forUpdateTS, kvrpcpb.IsolationLevel_SI, nil)
-		if err != nil {
-			return err
-		}
 		lctx.values = append(lctx.values, val)
 	}
 
@@ -576,6 +573,7 @@ func (mvcc *MVCCLevelDB) pessimisticLockMutation(batch *leveldb.Batch, mutation 
 		op:          kvrpcpb.Op_PessimisticLock,
 		ttl:         lctx.ttl,
 		forUpdateTS: forUpdateTS,
+		minCommitTS: lctx.minCommitTs,
 	}
 	writeKey := mvccEncode(mutation.Key, lockVer)
 	writeValue, err := lock.MarshalBinary()
@@ -653,7 +651,8 @@ func (mvcc *MVCCLevelDB) Prewrite(req *kvrpcpb.PrewriteRequest) []error {
 		// If the operation is Insert, check if key is exists at first.
 		var err error
 		// no need to check insert values for pessimistic transaction.
-		if m.GetOp() == kvrpcpb.Op_Insert && forUpdateTS == 0 {
+		op := m.GetOp()
+		if (op == kvrpcpb.Op_Insert || op == kvrpcpb.Op_CheckNotExists) && forUpdateTS == 0 {
 			v, err := mvcc.getValue(m.Key, startTS, kvrpcpb.IsolationLevel_SI, req.Context.ResolvedLocks)
 			if err != nil {
 				errs = append(errs, err)
@@ -668,6 +667,9 @@ func (mvcc *MVCCLevelDB) Prewrite(req *kvrpcpb.PrewriteRequest) []error {
 				anyError = true
 				continue
 			}
+		}
+		if op == kvrpcpb.Op_CheckNotExists {
+			continue
 		}
 		isPessimisticLock := len(req.IsPessimisticLock) > 0 && req.IsPessimisticLock[i]
 		err = prewriteMutation(mvcc.db, batch, m, startTS, primary, ttl, txnSize, isPessimisticLock, minCommitTS)
@@ -686,18 +688,21 @@ func (mvcc *MVCCLevelDB) Prewrite(req *kvrpcpb.PrewriteRequest) []error {
 	return errs
 }
 
-func checkConflictValue(iter *Iterator, m *kvrpcpb.Mutation, forUpdateTS uint64, startTS uint64) error {
+func checkConflictValue(iter *Iterator, m *kvrpcpb.Mutation, forUpdateTS uint64, startTS uint64, getVal bool) ([]byte, error) {
 	dec := &valueDecoder{
 		expectKey: m.Key,
 	}
 	ok, err := dec.Decode(iter)
 	if err != nil {
-		return errors.Trace(err)
+		return nil, errors.Trace(err)
+	}
+	if !ok {
+		return nil, nil
 	}
 
-	// Note that it's a write conflict here, even if the value is a rollback one.
-	if dec.value.commitTS >= forUpdateTS {
-		return &ErrConflict{
+	// Note that it's a write conflict here, even if the value is a rollback one, or a op_lock record
+	if dec.value.commitTS > forUpdateTS {
+		return nil, &ErrConflict{
 			StartTS:          forUpdateTS,
 			ConflictTS:       dec.value.startTS,
 			ConflictCommitTS: dec.value.commitTS,
@@ -705,48 +710,59 @@ func checkConflictValue(iter *Iterator, m *kvrpcpb.Mutation, forUpdateTS uint64,
 		}
 	}
 
-	if m.Assertion == kvrpcpb.Assertion_NotExist {
-		for ok {
+	needGetVal := getVal
+	needCheckAssertion := m.Assertion == kvrpcpb.Assertion_NotExist
+	needCheckRollback := true
+	var retVal []byte
+	// do the check or get operations within one iteration to make CI faster
+	for ok {
+		if needCheckRollback {
 			if dec.value.valueType == typeRollback {
-				ok, err = dec.Decode(iter)
-				if err != nil {
-					return errors.Trace(err)
+				if dec.value.commitTS == startTS {
+					logutil.BgLogger().Warn("rollback value found",
+						zap.Uint64("txnID", startTS),
+						zap.Int32("rollbacked.valueType", int32(dec.value.valueType)),
+						zap.Uint64("rollbacked.startTS", dec.value.startTS),
+						zap.Uint64("rollbacked.commitTS", dec.value.commitTS))
+					return nil, &ErrAlreadyRollbacked{
+						startTS: startTS,
+						key:     m.Key,
+					}
 				}
-			} else if dec.value.valueType == typeDelete {
-				break
-			} else {
+			}
+			if dec.value.commitTS < startTS {
+				needCheckRollback = false
+			}
+		}
+		if needCheckAssertion {
+			if dec.value.valueType == typePut || dec.value.valueType == typeLock {
 				if m.Op == kvrpcpb.Op_PessimisticLock {
-					return &ErrKeyAlreadyExist{
+					return nil, &ErrKeyAlreadyExist{
 						Key: m.Key,
 					}
 				}
-				break
+			} else if dec.value.valueType == typeDelete {
+				needCheckAssertion = false
 			}
 		}
-	}
-	if startTS > 0 {
-		// Check if rollback write record(startTS, startTS, typeRollback) exists on key
-		info, ok, err1 := getTxnCommitInfo(iter, m.Key, startTS)
-		if err1 != nil {
-			err = errors.Trace(err1)
-			return err
-		}
-		if ok && info.commitTS == startTS {
-			logutil.BgLogger().Warn("rollback value found",
-				zap.Uint64("txnID", startTS),
-				zap.Int32("rollbacked.valueType", int32(info.valueType)),
-				zap.Uint64("rollbacked.startTS", info.startTS),
-				zap.Uint64("rollbacked.commitTS", info.commitTS))
-			if info.valueType == typeRollback {
-				return &ErrAlreadyRollbacked{
-					startTS: startTS,
-					key:     m.Key,
-				}
+		if needGetVal {
+			if dec.value.valueType == typeDelete || dec.value.valueType == typePut {
+				retVal = dec.value.value
+				needGetVal = false
 			}
-			panic(fmt.Sprintf("invalid value type %v not rollback", info.valueType))
+		}
+		if !needCheckAssertion && !needGetVal && !needCheckRollback {
+			break
+		}
+		ok, err = dec.Decode(iter)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
 	}
-	return nil
+	if getVal {
+		return retVal, nil
+	}
+	return nil, nil
 }
 
 func prewriteMutation(db *leveldb.DB, batch *leveldb.Batch,
@@ -784,11 +800,15 @@ func prewriteMutation(db *leveldb.DB, batch *leveldb.Batch,
 			// Maybe ttlManager has already set the lock TTL, don't decrease it.
 			ttl = dec.lock.ttl
 		}
+		if minCommitTS < dec.lock.minCommitTS {
+			// The minCommitTS has been pushed forward.
+			minCommitTS = dec.lock.minCommitTS
+		}
 	} else {
 		if isPessimisticLock {
 			return ErrAbort("pessimistic lock not found")
 		}
-		err = checkConflictValue(iter, mutation, startTS, startTS)
+		_, err = checkConflictValue(iter, mutation, startTS, startTS, false)
 		if err != nil {
 			return err
 		}

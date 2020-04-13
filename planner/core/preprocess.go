@@ -70,6 +70,9 @@ const (
 	parentIsJoin
 	// inRepairTable is set when visiting a repair table statement.
 	inRepairTable
+	// inSequenceFunction is set when visiting a sequence function.
+	// This flag indicates the tableName in these function should be checked as sequence object.
+	inSequenceFunction
 )
 
 // preprocessor is an ast.Visitor that preprocess
@@ -94,6 +97,7 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	case *ast.CreateViewStmt:
 		p.flag |= inCreateOrDropTable
 		p.checkCreateViewGrammar(node)
+		p.checkCreateViewWithSelectGrammar(node)
 	case *ast.DropTableStmt:
 		p.flag |= inCreateOrDropTable
 		p.checkDropTableGrammar(node)
@@ -146,6 +150,10 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	case *ast.DropSequenceStmt:
 		p.flag |= inCreateOrDropTable
 		p.checkDropSequenceGrammar(node)
+	case *ast.FuncCallExpr:
+		if node.FnName.L == ast.NextVal || node.FnName.L == ast.LastVal || node.FnName.L == ast.SetVal {
+			p.flag |= inSequenceFunction
+		}
 	default:
 		p.flag &= ^parentIsJoin
 	}
@@ -228,8 +236,12 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 		// no need sleep when retry transaction and avoid unexpect sleep caused by retry.
 		if p.flag&inTxnRetry > 0 && x.FnName.L == ast.Sleep {
 			if len(x.Args) == 1 {
-				x.Args[0] = ast.NewValueExpr(0)
+				x.Args[0] = ast.NewValueExpr(0, "", "")
 			}
+		}
+
+		if x.FnName.L == ast.NextVal || x.FnName.L == ast.LastVal || x.FnName.L == ast.SetVal {
+			p.flag &= ^inSequenceFunction
 		}
 	case *ast.RepairTableStmt:
 		p.flag &= ^inRepairTable
@@ -455,6 +467,31 @@ func (p *preprocessor) checkCreateViewGrammar(stmt *ast.CreateViewStmt) {
 		if isIncorrectName(col.String()) {
 			p.err = ddl.ErrWrongColumnName.GenWithStackByArgs(col)
 			return
+		}
+	}
+}
+
+func (p *preprocessor) checkCreateViewWithSelect(stmt *ast.SelectStmt) {
+	if stmt.SelectIntoOpt != nil {
+		p.err = ddl.ErrViewSelectClause.GenWithStackByArgs("INFO")
+		return
+	}
+	if stmt.LockTp != ast.SelectLockNone {
+		stmt.LockTp = ast.SelectLockNone
+		return
+	}
+}
+
+func (p *preprocessor) checkCreateViewWithSelectGrammar(stmt *ast.CreateViewStmt) {
+	switch stmt := stmt.Select.(type) {
+	case *ast.SelectStmt:
+		p.checkCreateViewWithSelect(stmt)
+	case *ast.UnionStmt:
+		for _, selectStmt := range stmt.SelectList.Selects {
+			p.checkCreateViewWithSelect(selectStmt)
+			if p.err != nil {
+				return
+			}
 		}
 	}
 }
@@ -809,8 +846,16 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 		p.err = err
 		return
 	}
-	tn.TableInfo = table.Meta()
+	tableInfo := table.Meta()
 	dbInfo, _ := p.is.SchemaByName(tn.Schema)
+	// tableName should be checked as sequence object.
+	if p.flag&inSequenceFunction > 0 {
+		if !tableInfo.IsSequence() {
+			p.err = infoschema.ErrWrongObject.GenWithStackByArgs(dbInfo.Name.O, tableInfo.Name.O, "SEQUENCE")
+			return
+		}
+	}
+	tn.TableInfo = tableInfo
 	tn.DBInfo = dbInfo
 }
 

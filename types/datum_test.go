@@ -64,7 +64,7 @@ func testDatumToBool(c *C, in interface{}, res int) {
 }
 
 func (ts *testDatumSuite) TestToBool(c *C) {
-	testDatumToBool(c, int(0), 0)
+	testDatumToBool(c, 0, 0)
 	testDatumToBool(c, int64(0), 0)
 	testDatumToBool(c, uint64(0), 0)
 	testDatumToBool(c, float32(0.1), 0)
@@ -146,7 +146,7 @@ func testDatumToInt64(c *C, val interface{}, expect int64) {
 
 func (ts *testTypeConvertSuite) TestToInt64(c *C) {
 	testDatumToInt64(c, "0", int64(0))
-	testDatumToInt64(c, int(0), int64(0))
+	testDatumToInt64(c, 0, int64(0))
 	testDatumToInt64(c, int64(0), int64(0))
 	testDatumToInt64(c, uint64(0), int64(0))
 	testDatumToInt64(c, float32(3.1), int64(3))
@@ -360,7 +360,7 @@ func (ts *testDatumSuite) TestCloneDatum(c *C) {
 	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = true
 	for _, tt := range tests {
-		tt1 := CloneDatum(tt)
+		tt1 := *tt.Clone()
 		res, err := tt.CompareDatum(sc, &tt1)
 		c.Assert(err, IsNil)
 		c.Assert(res, Equals, 0)
