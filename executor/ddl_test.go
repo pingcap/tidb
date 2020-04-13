@@ -349,11 +349,6 @@ func (s *testSuite6) TestCreateDropDatabase(c *C) {
 		"charset_test|CREATE DATABASE `charset_test` /*!40100 DEFAULT CHARACTER SET utf8 COLLATE utf8_general_ci */",
 	))
 	tk.MustExec("drop database charset_test;")
-	tk.MustExec("create database charset_test collate utf8_general_ci;")
-	tk.MustQuery("show create database charset_test;").Check(testutil.RowsWithSep("|",
-		"charset_test|CREATE DATABASE `charset_test` /*!40100 DEFAULT CHARACTER SET utf8 COLLATE utf8_general_ci */",
-	))
-	tk.MustExec("drop database charset_test;")
 	tk.MustExec("create database charset_test charset utf8 collate utf8_general_ci;")
 	tk.MustQuery("show create database charset_test;").Check(testutil.RowsWithSep("|",
 		"charset_test|CREATE DATABASE `charset_test` /*!40100 DEFAULT CHARACTER SET utf8 COLLATE utf8_general_ci */",
