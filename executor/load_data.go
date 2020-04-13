@@ -14,10 +14,10 @@
 package executor
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"strings"
-	"bytes"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
