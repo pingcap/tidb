@@ -480,7 +480,6 @@ type inspectSwapMemoryUsed struct{}
 
 func (inspectSwapMemoryUsed) genSQL(timeRange plannercore.QueryTimeRange) string {
 	sql := fmt.Sprintf("select instance, max(value) as max_used from metrics_schema.node_memory_swap_used %s group by instance having max_used > 0", timeRange.Condition())
-	fmt.Println(sql)
 	return sql
 }
 
