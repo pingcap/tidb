@@ -59,7 +59,7 @@ import (
 const expressionIndexPrefix = "_V$"
 
 type charsetCollate struct {
-	chs string
+	chs  string
 	coll string
 }
 
@@ -67,7 +67,7 @@ func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetIn
 	dbInfo := &model.DBInfo{Name: schema}
 	if charsetInfo != nil {
 		chs, coll, err := ResolveCharsetCollation(charsetCollate{charsetInfo.Chs, charsetInfo.Col})
-		if err != nil{
+		if err != nil {
 			return errors.Trace(err)
 		}
 		dbInfo.Charset = chs
@@ -284,7 +284,7 @@ func buildColumnsAndConstraints(
 	constraints []*ast.Constraint,
 	tblCharset string,
 	tblCollate string,
-	) ([]*table.Column, []*ast.Constraint, error) {
+) ([]*table.Column, []*ast.Constraint, error) {
 	colMap := map[string]*table.Column{}
 	// outPriKeyConstraint is the primary key constraint out of column definition. such as: create table t1 (id int , age int, primary key(id));
 	var outPriKeyConstraint *ast.Constraint
@@ -313,9 +313,9 @@ func buildColumnsAndConstraints(
 }
 
 // ResolveCharsetCollation will resolve the charset and collate by the order of parameters:
-//   If any given charsetCollate is not empty, the resolved charset and collate will be returned.
-//   If all charsetCollates are empty, the default charset and collate will be returned.
-func ResolveCharsetCollation(charsetCollates... charsetCollate) (string, string, error) {
+// * If any given charsetCollate is not empty, the resolved charset and collate will be returned.
+// * If all charsetCollates are empty, the default charset and collate will be returned.
+func ResolveCharsetCollation(charsetCollates ...charsetCollate) (string, string, error) {
 	for _, v := range charsetCollates {
 		if v.coll != "" {
 			collation, err := collate.GetCollationByName(v.coll)
@@ -374,7 +374,9 @@ func setCharsetCollationFlenDecimal(tp *types.FieldType, colCharset, colCollate 
 	return nil
 }
 
-// outPriKeyConstraint is the primary key constraint out of column definition. such as: create table t1 (id int , age int, primary key(id));
+// buildColumnAndConstraint builds table.Column and ast.Constraint from the parameters.
+// outPriKeyConstraint is the primary key constraint out of column definition. For example:
+// `create table t1 (id int , age int, primary key(id));`
 func buildColumnAndConstraint(
 	ctx sessionctx.Context,
 	offset int,
@@ -382,7 +384,7 @@ func buildColumnAndConstraint(
 	outPriKeyConstraint *ast.Constraint,
 	tblCharset string,
 	tblCollate string,
-	) (*table.Column, []*ast.Constraint, error) {
+) (*table.Column, []*ast.Constraint, error) {
 	// specifiedCollate refers to the last collate specified in colDef.Options.
 	chs, coll, err := getCharsetAndCollateInColumnDef(colDef)
 	if err != nil {
@@ -391,7 +393,7 @@ func buildColumnAndConstraint(
 	chs, coll, err = ResolveCharsetCollation(
 		charsetCollate{chs, coll},
 		charsetCollate{tblCharset, tblCollate},
-		)
+	)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -1389,7 +1391,7 @@ func buildTableInfoWithStmt(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCh
 	tableCharset, tableCollate, err = ResolveCharsetCollation(
 		charsetCollate{tableCharset, tableCollate},
 		charsetCollate{dbCharset, dbCollate},
-		)
+	)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1925,7 +1927,8 @@ func isIgnorableSpec(tp ast.AlterTableType) bool {
 	return tp == ast.AlterTableLock || tp == ast.AlterTableAlgorithm
 }
 
-// getCharsetAndCollateInColumnDef will .
+// getCharsetAndCollateInColumnDef will iterate collate in the options, validate it by checking the charset
+// of column definition. If there's no collate in the option, the default collate of column's charset will be used.
 func getCharsetAndCollateInColumnDef(def *ast.ColumnDef) (chs, coll string, err error) {
 	chs = def.Tp.Charset
 	coll = def.Tp.Collate
@@ -1935,8 +1938,7 @@ func getCharsetAndCollateInColumnDef(def *ast.ColumnDef) (chs, coll string, err 
 		}
 	}
 	for _, opt := range def.Options {
-		switch opt.Tp {
-		case ast.ColumnOptionCollate:
+		if opt.Tp == ast.ColumnOptionCollate {
 			info, err := collate.GetCollationByName(opt.StrValue)
 			if err != nil {
 				return "", "", errors.Trace(err)
@@ -2340,7 +2342,10 @@ func checkAndCreateNewColumn(ctx sessionctx.Context, ti ast.Ident, schema *model
 	tableCharset, tableCollate, err := ResolveCharsetCollation(
 		charsetCollate{t.Meta().Charset, t.Meta().Collate},
 		charsetCollate{schema.Charset, schema.Collate},
-		)
+	)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	// Ignore table constraints now, they will be checked later.
 	// We use length(t.Cols()) as the default offset firstly, we will change the column's offset later.
 	col, _, err = buildColumnAndConstraint(
@@ -2350,7 +2355,7 @@ func checkAndCreateNewColumn(ctx sessionctx.Context, ti ast.Ident, schema *model
 		nil,
 		tableCharset,
 		tableCollate,
-		)
+	)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -3588,7 +3593,7 @@ func checkAlterTableCharset(tblInfo *model.TableInfo, dbInfo *model.DBInfo, toCh
 	origCharset, origCollate, err = ResolveCharsetCollation(
 		charsetCollate{origCharset, origCollate},
 		charsetCollate{dbInfo.Charset, dbInfo.Collate},
-		)
+	)
 
 	if err = checkModifyCharsetAndCollation(toCharset, toCollate, origCharset, origCollate, false); err != nil {
 		return doNothing, err
