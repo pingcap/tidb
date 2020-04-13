@@ -45,6 +45,9 @@ const (
 	// tidb_opt_agg_push_down is used to enable/disable the optimizer rule of aggregation push down.
 	TiDBOptAggPushDown = "tidb_opt_agg_push_down"
 
+	// tidb_opt_distinct_agg_push_down is used to decide whether agg with distinct should be pushed to tikv/tiflash.
+	TiDBOptDistinctAggPushDown = "tidb_opt_distinct_agg_push_down"
+
 	// tidb_opt_write_row_id is used to enable/disable the operations of insert、replace and update to _tidb_rowid.
 	TiDBOptWriteRowID = "tidb_opt_write_row_id"
 
@@ -240,6 +243,11 @@ const (
 	// TiDBMaxChunkSize is used to control the max chunk size during query execution.
 	TiDBMaxChunkSize = "tidb_max_chunk_size"
 
+	// TiDBAllowBatchCop means if we should send batch coprocessor to TiFlash. It can be set to 0, 1 and 2.
+	// 0 means never use batch cop, 1 means use batch cop in case of aggregation and join, 2, means to force to send batch cop for any query.
+	// The default value is 0
+	TiDBAllowBatchCop = "tidb_allow_batch_cop"
+
 	// TiDBInitChunkSize is used to control the init chunk size during query execution.
 	TiDBInitChunkSize = "tidb_init_chunk_size"
 
@@ -380,6 +388,9 @@ const (
 
 	// TiDBMetricSchemaRangeDuration indicates the range duration when query metric schema.
 	TiDBMetricSchemaRangeDuration = "tidb_metric_query_range_duration"
+
+	// TiDBEnableCollectExecutionInfo indicates that whether execution info is collected.
+	TiDBEnableCollectExecutionInfo = "tidb_enable_collect_execution_info"
 )
 
 // Default TiDB system variable values.
@@ -400,6 +411,7 @@ const (
 	DefChecksumTableConcurrency        = 4
 	DefSkipUTF8Check                   = false
 	DefOptAggPushDown                  = false
+	DefOptDistinctAggPushDown          = false
 	DefOptWriteRowID                   = false
 	DefOptCorrelationThreshold         = 0.9
 	DefOptCorrelationExpFactor         = 1
@@ -438,6 +450,7 @@ const (
 	DefTiDBHashJoinConcurrency         = 5
 	DefTiDBProjectionConcurrency       = 4
 	DefTiDBOptimizerSelectivityLevel   = 0
+	DefTiDBAllowBatchCop               = 0
 	DefTiDBTxnMode                     = ""
 	DefTiDBRowFormatV1                 = 1
 	DefTiDBRowFormatV2                 = 2
@@ -471,6 +484,7 @@ const (
 	DefTiDBStoreLimit                  = 0
 	DefTiDBMetricSchemaStep            = 60 // 60s
 	DefTiDBMetricSchemaRangeDuration   = 60 // 60s
+	DefTidbEnableCollectExecutionInfo  = false
 )
 
 // Process global variables.

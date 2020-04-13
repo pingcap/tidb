@@ -214,7 +214,7 @@ func (s *testIntegrationSuite3) TestCreateTableWithPartition(c *C) {
 			  partition p0 values less than (to_seconds('2004-01-01')),
 			  partition p1 values less than (to_seconds('2005-01-01')));`)
 	tk.MustQuery("show create table t26").Check(
-		testkit.Rows("t26 CREATE TABLE `t26` (\n  `a` date DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\nPARTITION BY RANGE ( to_seconds(`a`) ) (\n  PARTITION `p0` VALUES LESS THAN (63240134400),\n  PARTITION `p1` VALUES LESS THAN (63271756800)\n)"))
+		testkit.Rows("t26 CREATE TABLE `t26` (\n  `a` date DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\nPARTITION BY RANGE ( TO_SECONDS(`a`) ) (\n  PARTITION `p0` VALUES LESS THAN (63240134400),\n  PARTITION `p1` VALUES LESS THAN (63271756800)\n)"))
 	tk.MustExec(`create table t27 (a bigint unsigned not null)
 		  partition by range(a) (
 		  partition p0 values less than (10),
@@ -291,6 +291,17 @@ func (s *testIntegrationSuite2) TestCreateTableWithHashPartition(c *C) {
 		store_id int
 	)
 	partition by hash( year(hired) ) partitions 4;`)
+
+	// This query makes tidb OOM without partition count check.
+	tk.MustGetErrCode(`CREATE TABLE employees (
+    id INT NOT NULL,
+    fname VARCHAR(30),
+    lname VARCHAR(30),
+    hired DATE NOT NULL DEFAULT '1970-01-01',
+    separated DATE NOT NULL DEFAULT '9999-12-31',
+    job_code INT,
+    store_id INT
+) PARTITION BY HASH(store_id) PARTITIONS 102400000000;`, tmysql.ErrTooManyPartitions)
 }
 
 func (s *testIntegrationSuite1) TestCreateTableWithRangeColumnPartition(c *C) {
@@ -416,6 +427,9 @@ func (s *testIntegrationSuite3) TestCreateTableWithKeyPartition(c *C) {
 		s1 char(32) primary key
 	)
 	partition by key(s1) partitions 10;`)
+
+	tk.MustExec(`drop table if exists tm2`)
+	tk.MustExec(`create table tm2 (a char(5), unique key(a(5))) partition by key() partitions 5;`)
 }
 
 func (s *testIntegrationSuite5) TestAlterTableAddPartition(c *C) {
@@ -444,7 +458,7 @@ func (s *testIntegrationSuite5) TestAlterTableAddPartition(c *C) {
 	part := tbl.Meta().Partition
 	c.Assert(part.Type, Equals, model.PartitionTypeRange)
 
-	c.Assert(part.Expr, Equals, "year(`hired`)")
+	c.Assert(part.Expr, Equals, "YEAR(`hired`)")
 	c.Assert(part.Definitions, HasLen, 5)
 	c.Assert(part.Definitions[0].LessThan[0], Equals, "1991")
 	c.Assert(part.Definitions[0].Name, Equals, model.NewCIStr("p1"))

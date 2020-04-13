@@ -38,9 +38,14 @@ mem-quota-query = 1073741824
 oom-use-tmp-storage = true
 
 # Specifies the temporary storage path for some operators when a single SQL statement exceeds the memory quota specified by mem-quota-query.
-# It defaults to `<TMPDIR>/tidb/tmp-storage` if it is unset.
+# It defaults to a generated directory in `<TMPDIR>/tidb/` if it is unset.
 # It only takes effect when `oom-use-tmp-storage` is `true`.
-# tmp-storage-path = "/tmp/tidb/tmp-storage"
+# tmp-storage-path = "/tmp/tidb/NDAwMC8xMDA4MA==/tmp-storage"
+
+# Specifies the maximum use of temporary storage (bytes) for all active queries when `oom-use-tmp-storage` is enabled.
+# If the `temp-storage-quota` exceeds the capacity of the temporary storage directory, tidb-server would return an error and exit.
+# The default value of temp-storage-quota is under 0 which means tidb-server wouldn't check the capacity.
+temp-storage-quota = -1
 
 # Specifies what operation TiDB performs when a single SQL statement exceeds the memory quota specified by mem-quota-query and cannot be spilled over to disk.
 # Valid options: ["log", "cancel"]

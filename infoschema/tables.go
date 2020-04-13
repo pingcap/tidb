@@ -29,16 +29,15 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
-	binaryJson "github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/pdapi"
@@ -98,8 +97,9 @@ const (
 	// TableTiDBIndexes is the string constant of infoschema table
 	TableTiDBIndexes = "TIDB_INDEXES"
 	// TableTiDBHotRegions is the string constant of infoschema table
-	TableTiDBHotRegions  = "TIDB_HOT_REGIONS"
-	tableTiKVStoreStatus = "TIKV_STORE_STATUS"
+	TableTiDBHotRegions = "TIDB_HOT_REGIONS"
+	// TableTiKVStoreStatus is the string constant of infoschema table
+	TableTiKVStoreStatus = "TIKV_STORE_STATUS"
 	// TableAnalyzeStatus is the string constant of Analyze Status
 	TableAnalyzeStatus = "ANALYZE_STATUS"
 	// TableTiKVRegionStatus is the string constant of infoschema table
@@ -179,7 +179,7 @@ var tableIDMap = map[string]int64{
 	TableTiDBIndexes:                        autoid.InformationSchemaDBID + 34,
 	TableSlowQuery:                          autoid.InformationSchemaDBID + 35,
 	TableTiDBHotRegions:                     autoid.InformationSchemaDBID + 36,
-	tableTiKVStoreStatus:                    autoid.InformationSchemaDBID + 37,
+	TableTiKVStoreStatus:                    autoid.InformationSchemaDBID + 37,
 	TableAnalyzeStatus:                      autoid.InformationSchemaDBID + 38,
 	TableTiKVRegionStatus:                   autoid.InformationSchemaDBID + 39,
 	TableTiKVRegionPeers:                    autoid.InformationSchemaDBID + 40,
@@ -215,11 +215,9 @@ type columnInfo struct {
 func buildColumnInfo(col columnInfo) *model.ColumnInfo {
 	mCharset := charset.CharsetBin
 	mCollation := charset.CharsetBin
-	mFlag := mysql.UnsignedFlag
 	if col.tp == mysql.TypeVarchar || col.tp == mysql.TypeBlob {
 		mCharset = charset.CharsetUTF8MB4
 		mCollation = charset.CollationUTF8MB4
-		mFlag = col.flag
 	}
 	fieldType := types.FieldType{
 		Charset: mCharset,
@@ -227,7 +225,7 @@ func buildColumnInfo(col columnInfo) *model.ColumnInfo {
 		Tp:      col.tp,
 		Flen:    col.size,
 		Decimal: col.decimal,
-		Flag:    mFlag,
+		Flag:    col.flag,
 	}
 	return &model.ColumnInfo{
 		Name:         model.NewCIStr(col.name),
@@ -668,7 +666,7 @@ var tableCollationCharacterSetApplicabilityCols = []columnInfo{
 }
 
 var tableProcesslistCols = []columnInfo{
-	{name: "ID", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag, deflt: 0},
+	{name: "ID", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag | mysql.UnsignedFlag, deflt: 0},
 	{name: "USER", tp: mysql.TypeVarchar, size: 16, flag: mysql.NotNullFlag, deflt: ""},
 	{name: "HOST", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag, deflt: ""},
 	{name: "DB", tp: mysql.TypeVarchar, size: 64},
@@ -676,7 +674,7 @@ var tableProcesslistCols = []columnInfo{
 	{name: "TIME", tp: mysql.TypeLong, size: 7, flag: mysql.NotNullFlag, deflt: 0},
 	{name: "STATE", tp: mysql.TypeVarchar, size: 7},
 	{name: "INFO", tp: mysql.TypeString, size: 512},
-	{name: "MEM", tp: mysql.TypeLonglong, size: 21},
+	{name: "MEM", tp: mysql.TypeLonglong, size: 21, flag: mysql.UnsignedFlag},
 	{name: "TxnStart", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag, deflt: ""},
 }
 
@@ -756,7 +754,8 @@ var TableTiDBHotRegionsCols = []columnInfo{
 	{name: "FLOW_BYTES", tp: mysql.TypeLonglong, size: 21},
 }
 
-var tableTiKVStoreStatusCols = []columnInfo{
+// TableTiKVStoreStatusCols is TiDB kv store status columns.
+var TableTiKVStoreStatusCols = []columnInfo{
 	{name: "STORE_ID", tp: mysql.TypeLonglong, size: 21},
 	{name: "ADDRESS", tp: mysql.TypeVarchar, size: 64},
 	{name: "STORE_STATE", tp: mysql.TypeLonglong, size: 21},
@@ -937,6 +936,7 @@ var tableInspectionResultCols = []columnInfo{
 	{name: "ITEM", tp: mysql.TypeVarchar, size: 64},
 	{name: "TYPE", tp: mysql.TypeVarchar, size: 64},
 	{name: "INSTANCE", tp: mysql.TypeVarchar, size: 64},
+	{name: "STATUS_ADDRESS", tp: mysql.TypeVarchar, size: 64},
 	{name: "VALUE", tp: mysql.TypeVarchar, size: 64},
 	{name: "REFERENCE", tp: mysql.TypeVarchar, size: 64},
 	{name: "SEVERITY", tp: mysql.TypeVarchar, size: 64},
@@ -952,6 +952,7 @@ var tableInspectionSummaryCols = []columnInfo{
 	{name: "AVG_VALUE", tp: mysql.TypeDouble, size: 22, decimal: 6},
 	{name: "MIN_VALUE", tp: mysql.TypeDouble, size: 22, decimal: 6},
 	{name: "MAX_VALUE", tp: mysql.TypeDouble, size: 22, decimal: 6},
+	{name: "COMMENT", tp: mysql.TypeVarchar, size: 256},
 }
 
 var tableInspectionRulesCols = []columnInfo{
@@ -1015,58 +1016,8 @@ var tableSequencesCols = []columnInfo{
 	{name: "INCREMENT", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
 	{name: "MAX_VALUE", tp: mysql.TypeLonglong, size: 21},
 	{name: "MIN_VALUE", tp: mysql.TypeLonglong, size: 21},
-	{name: "ORDER", tp: mysql.TypeTiny, flag: mysql.NotNullFlag},
 	{name: "START", tp: mysql.TypeLonglong, size: 21},
 	{name: "COMMENT", tp: mysql.TypeVarchar, size: 64},
-}
-
-func dataForTiKVStoreStatus(ctx sessionctx.Context) (records [][]types.Datum, err error) {
-	tikvStore, ok := ctx.GetStore().(tikv.Storage)
-	if !ok {
-		return nil, errors.New("Information about TiKV store status can be gotten only when the storage is TiKV")
-	}
-	tikvHelper := &helper.Helper{
-		Store:       tikvStore,
-		RegionCache: tikvStore.GetRegionCache(),
-	}
-	storesStat, err := tikvHelper.GetStoresStat()
-	if err != nil {
-		return nil, err
-	}
-	for _, storeStat := range storesStat.Stores {
-		row := make([]types.Datum, len(tableTiKVStoreStatusCols))
-		row[0].SetInt64(storeStat.Store.ID)
-		row[1].SetString(storeStat.Store.Address, mysql.DefaultCollationName)
-		row[2].SetInt64(storeStat.Store.State)
-		row[3].SetString(storeStat.Store.StateName, mysql.DefaultCollationName)
-		data, err := json.Marshal(storeStat.Store.Labels)
-		if err != nil {
-			return nil, err
-		}
-		bj := binaryJson.BinaryJSON{}
-		if err = bj.UnmarshalJSON(data); err != nil {
-			return nil, err
-		}
-		row[4].SetMysqlJSON(bj)
-		row[5].SetString(storeStat.Store.Version, mysql.DefaultCollationName)
-		row[6].SetString(storeStat.Status.Capacity, mysql.DefaultCollationName)
-		row[7].SetString(storeStat.Status.Available, mysql.DefaultCollationName)
-		row[8].SetInt64(storeStat.Status.LeaderCount)
-		row[9].SetFloat64(storeStat.Status.LeaderWeight)
-		row[10].SetFloat64(storeStat.Status.LeaderScore)
-		row[11].SetInt64(storeStat.Status.LeaderSize)
-		row[12].SetInt64(storeStat.Status.RegionCount)
-		row[13].SetFloat64(storeStat.Status.RegionWeight)
-		row[14].SetFloat64(storeStat.Status.RegionScore)
-		row[15].SetInt64(storeStat.Status.RegionSize)
-		startTs := types.NewTime(types.FromGoTime(storeStat.Status.StartTs), mysql.TypeDatetime, types.DefaultFsp)
-		row[16].SetMysqlTime(startTs)
-		lastHeartbeatTs := types.NewTime(types.FromGoTime(storeStat.Status.LastHeartbeatTs), mysql.TypeDatetime, types.DefaultFsp)
-		row[17].SetMysqlTime(lastHeartbeatTs)
-		row[18].SetString(storeStat.Status.Uptime, mysql.DefaultCollationName)
-		records = append(records, row)
-	}
-	return records, nil
 }
 
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
@@ -1153,19 +1104,46 @@ func GetTiDBServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-
 	var servers []ServerInfo
+	var isDefaultVersion bool
+	if len(config.GetGlobalConfig().ServerVersion) == 0 {
+		isDefaultVersion = true
+	}
 	for _, node := range tidbNodes {
 		servers = append(servers, ServerInfo{
 			ServerType:     "tidb",
 			Address:        fmt.Sprintf("%s:%d", node.IP, node.Port),
 			StatusAddr:     fmt.Sprintf("%s:%d", node.IP, node.StatusPort),
-			Version:        node.Version,
+			Version:        FormatVersion(node.Version, isDefaultVersion),
 			GitHash:        node.GitHash,
 			StartTimestamp: node.StartTimestamp,
 		})
 	}
 	return servers, nil
+}
+
+// FormatVersion make TiDBVersion consistent to TiKV and PD.
+// The default TiDBVersion is 5.7.25-TiDB-${TiDBReleaseVersion}.
+func FormatVersion(TiDBVersion string, isDefaultVersion bool) string {
+	var version, nodeVersion string
+
+	// The user hasn't set the config 'ServerVersion'.
+	if isDefaultVersion {
+		nodeVersion = TiDBVersion[strings.LastIndex(TiDBVersion, "TiDB-")+len("TiDB-"):]
+		if nodeVersion[0] == 'v' {
+			nodeVersion = nodeVersion[1:]
+		}
+		nodeVersions := strings.Split(nodeVersion, "-")
+		if len(nodeVersions) == 1 {
+			version = nodeVersions[0]
+		} else if len(nodeVersions) >= 2 {
+			version = fmt.Sprintf("%s-%s", nodeVersions[0], nodeVersions[1])
+		}
+	} else { // The user has already set the config 'ServerVersion',it would be a complex scene, so just use the 'ServerVersion' as version.
+		version = TiDBVersion
+	}
+
+	return version
 }
 
 // GetPDServerInfo returns all PD nodes information of cluster
@@ -1238,24 +1216,24 @@ func GetTiKVServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	if !ok {
 		return nil, errors.Errorf("%T is not an TiKV store instance", store)
 	}
-	tikvHelper := &helper.Helper{
-		Store:       tikvStore,
-		RegionCache: tikvStore.GetRegionCache(),
+	pdClient := tikvStore.GetRegionCache().PDClient()
+	if pdClient == nil {
+		return nil, errors.New("pd unavailable")
 	}
-
-	storesStat, err := tikvHelper.GetStoresStat()
+	stores, err := pdClient.GetAllStores(context.Background())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	var servers []ServerInfo
-	for _, storeStat := range storesStat.Stores {
+	for _, store := range stores {
+		tp := tikv.GetStoreTypeByMeta(store).Name()
 		servers = append(servers, ServerInfo{
-			ServerType:     "tikv",
-			Address:        storeStat.Store.Address,
-			StatusAddr:     storeStat.Store.StatusAddress,
-			Version:        storeStat.Store.Version,
-			GitHash:        storeStat.Store.GitHash,
-			StartTimestamp: storeStat.Store.StartTimestamp,
+			ServerType:     tp,
+			Address:        store.Address,
+			StatusAddr:     store.StatusAddress,
+			Version:        store.Version,
+			GitHash:        store.GitHash,
+			StartTimestamp: store.StartTimestamp,
 		})
 	}
 	return servers, nil
@@ -1297,7 +1275,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableTiDBIndexes:                        tableTiDBIndexesCols,
 	TableSlowQuery:                          slowQueryCols,
 	TableTiDBHotRegions:                     TableTiDBHotRegionsCols,
-	tableTiKVStoreStatus:                    tableTiKVStoreStatusCols,
+	TableTiKVStoreStatus:                    TableTiKVStoreStatusCols,
 	TableAnalyzeStatus:                      tableAnalyzeStatusCols,
 	TableTiKVRegionStatus:                   TableTiKVRegionStatusCols,
 	TableTiKVRegionPeers:                    TableTiKVRegionPeersCols,
@@ -1372,8 +1350,6 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 	case tableSessionStatus:
 	case tableOptimizerTrace:
 	case tableTableSpaces:
-	case tableTiKVStoreStatus:
-		fullRows, err = dataForTiKVStoreStatus(ctx)
 	}
 	if err != nil {
 		return nil, err

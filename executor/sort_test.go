@@ -53,4 +53,8 @@ func (s *testSuite) TestSortInDisk(c *C) {
 		c.Assert(result.Rows()[i][1].(string), Equals, fmt.Sprint(i))
 		c.Assert(result.Rows()[i][2].(string), Equals, fmt.Sprint(i))
 	}
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.MemTracker.BytesConsumed(), Equals, int64(0))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.MemTracker.MaxConsumed(), Greater, int64(0))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.DiskTracker.BytesConsumed(), Equals, int64(0))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.DiskTracker.MaxConsumed(), Greater, int64(0))
 }

@@ -224,4 +224,12 @@ var (
 			Name:      "ttl_lifetime_reach_total",
 			Help:      "Counter of ttlManager live too long.",
 		})
+
+	TiKVNoAvailableConnectionCounter = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "tikvclient",
+			Name:      "batch_client_no_available_connection_total",
+			Help:      "Counter of no available batch client.",
+		})
 )
