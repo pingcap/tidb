@@ -302,8 +302,6 @@ func (s *testSuite) TestJoinCast(c *C) {
 	result = tk.MustQuery("select * from t a , t1 b where (a.c1, a.c2) = (b.c1, b.c2);")
 	result.Check(testkit.Rows("1 2 1 2"))
 
-<<<<<<< HEAD
-=======
 	/* Enable & fix this test after https://github.com/pingcap/tidb/issues/11895 is fixed.
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("drop table if exists t1;")
@@ -372,7 +370,6 @@ func (s *testSuite) TestJoinCast(c *C) {
 	result = tk.MustQuery("select * from t, t1, t2 where t.c1 = t2.c1 and t1.c1 = t2.c1;")
 	result.Check(testkit.Rows("9 9 a,d"))
 
->>>>>>> 51a1323... expression/types: check when insert binary literal (#9829)
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t(c1 int)")
