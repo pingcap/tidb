@@ -131,7 +131,7 @@ func newFixedLenColumn(elemLen, cap int) *column {
 	return &column{
 		elemBuf:    make([]byte, elemLen),
 		data:       make([]byte, 0, cap*elemLen),
-		nullBitmap: make([]byte, 0, cap>>3),
+		nullBitmap: make([]byte, 0, (cap+7)>>3),
 	}
 }
 
@@ -147,7 +147,7 @@ func newVarLenColumn(cap int, old *column) *column {
 	return &column{
 		offsets:    make([]int64, 1, cap+1),
 		data:       make([]byte, 0, cap*estimatedElemLen),
-		nullBitmap: make([]byte, 0, cap>>3),
+		nullBitmap: make([]byte, 0, (cap+7)>>3),
 	}
 }
 
