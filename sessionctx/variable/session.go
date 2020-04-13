@@ -1041,7 +1041,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.MaxExecutionTime = uint64(timeoutMS)
 	case InnodbLockWaitTimeout:
 		lockWaitSec := tidbOptInt64(val, DefInnodbLockWaitTimeout)
-		s.LockWaitTimeout = int64(lockWaitSec * 1000)
+		s.LockWaitTimeout = lockWaitSec * 1000
 	case WindowingUseHighPrecision:
 		s.WindowingUseHighPrecision = TiDBOptOn(val)
 	case TiDBSkipUTF8Check:
