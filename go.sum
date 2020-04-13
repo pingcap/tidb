@@ -1,4 +1,8 @@
 cloud.google.com/go v0.26.0/go.mod h1:aQUYkXzVsufM+DwF1aE+0xfcU+56JwCaLick0ClmMTw=
+github.com/AilinKid/parser v0.0.0-20200411041537-a30201647f0e h1:/ODt9tt1yZo1Fv+0GswJrZ9AwgLbJGMGhvGSaqo6F64=
+github.com/AilinKid/parser v0.0.0-20200411041537-a30201647f0e/go.mod h1:DATcvDXNjaLSyDly2lwqImcFNhCebc4zbM0R7lo9KGI=
+github.com/AilinKid/parser v0.0.0-20200413022839-fcd60769948a h1:srlmIz/VtXfPPnxSI/c+7F7DfLPn+UKqCMuU2v6ezH8=
+github.com/AilinKid/parser v0.0.0-20200413022839-fcd60769948a/go.mod h1:DATcvDXNjaLSyDly2lwqImcFNhCebc4zbM0R7lo9KGI=
 github.com/BurntSushi/toml v0.3.1 h1:WXkYYl6Yr3qBf1K79EBnL4mak0OimBfB0XUf9Vl28OQ=
 github.com/BurntSushi/toml v0.3.1/go.mod h1:xHWCNGjB5oqiDr8zfno3MHue2Ht5sIBksp03qcyfWMU=
 github.com/KyleBanks/depth v1.2.1/go.mod h1:jzSb9d0L43HxTQfT+oSA1EEp2q+ne2uh6XgeJcm8brE=
