@@ -468,3 +468,21 @@ func (s *testSelectivitySuite) TestColumnIndexNullEstimation(c *C) {
 		"  └─TableScan_5 5.00 cop table:t, range:[-inf,+inf], keep order:false",
 	))
 }
+
+func (s *testSelectivitySuite) TestSelectivityGreedyAlgo(c *C) {
+	nodes := statistics.MockExprSetSlice(3)
+	nodes[0] = statistics.MockExprSet(1, 3, 2)
+	nodes[1] = statistics.MockExprSet(2, 5, 2)
+	nodes[2] = statistics.MockExprSet(3, 9, 2)
+
+	// Sets should not overlap on mask, so only nodes[0] is chosen.
+	usedSets := statistics.GetUsableSetsByGreedy(nodes)
+	c.Assert(len(usedSets), Equals, 1)
+	c.Assert(usedSets[0].ID, Equals, int64(1))
+
+	nodes[0], nodes[1] = nodes[1], nodes[0]
+	// Sets chosen should be stable, so the returned node is still the one with ID 1.
+	usedSets = statistics.GetUsableSetsByGreedy(nodes)
+	c.Assert(len(usedSets), Equals, 1)
+	c.Assert(usedSets[0].ID, Equals, int64(1))
+}
