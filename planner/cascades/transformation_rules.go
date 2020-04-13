@@ -109,6 +109,10 @@ var TiDBLayerOptimizationBatch = TransformationRuleBatch{
 	memo.OperandMaxOneRow: {
 		NewRuleEliminateMaxOneRow(),
 	},
+	memo.OperandJoin: {
+		NewRulePullWindowUpJoin(true),
+		NewRulePullWindowUpJoin(false),
+	},
 }
 
 // TiKVLayerOptimizationBatch does the optimization related to TiKV layer.
@@ -3245,3 +3249,113 @@ func (r *PullProjectionUpApply) columnSubstitute(applyExpr *memo.GroupExpr, proj
 	newApply.EqualConditions = newEqualConditions
 	return newApply
 }
+
+type PullWindowUpJoin struct {
+	baseRule
+	leftWindow bool
+}
+
+func NewRulePullWindowUpJoin(leftWindow bool) Transformation {
+	rule := &PullWindowUpJoin{leftWindow: leftWindow}
+	if leftWindow {
+		rule.pattern = memo.BuildPattern(
+			memo.OperandJoin, memo.EngineTiDBOnly,
+			memo.NewPattern(memo.OperandWindow, memo.EngineTiDBOnly),
+			memo.NewPattern(memo.OperandAny, memo.EngineTiDBOnly),
+		)
+	} else {
+		rule.pattern = memo.BuildPattern(
+			memo.OperandJoin, memo.EngineTiDBOnly,
+			memo.NewPattern(memo.OperandAny, memo.EngineTiDBOnly),
+			memo.NewPattern(memo.OperandWindow, memo.EngineTiDBOnly),
+		)
+	}
+	return rule
+}
+
+func (r *PullWindowUpJoin) Match(expr *memo.ExprIter) bool {
+	windowIdx := 0
+	if !r.leftWindow {
+		windowIdx = 1
+	}
+
+	joinExpr := expr.GetExpr()
+	join := joinExpr.ExprNode.(*plannercore.LogicalJoin)
+	windowExpr := expr.Children[windowIdx].GetExpr()
+	window := windowExpr.ExprNode.(*plannercore.LogicalWindow)
+	joinChildGroup := expr.Children[1-windowIdx].Group
+
+	if join.JoinType != plannercore.InnerJoin {
+		return false
+	}
+	// Join only contains one euqal condition.
+	// TODO: Loosen this condition.
+	if len(join.OtherConditions) > 0 ||
+		len(join.LeftConditions) > 0 ||
+		len(join.RightConditions) > 0 ||
+		len(join.EqualConditions) != 1 {
+		return false
+	}
+
+	if window.Frame != nil || len(window.OrderBy) != 0 || len(window.PartitionBy) != 1 {
+		return false
+	}
+
+	windowSideJoinKey, isCol := join.EqualConditions[0].GetArgs()[windowIdx].(*expression.Column)
+	if !isCol {
+		return false
+	}
+	anotherSideJoinKey, isCol := join.EqualConditions[0].GetArgs()[1-windowIdx].(*expression.Column)
+	if !isCol {
+		return false
+	}
+	// WindowSideJoinKey must be the partition by key.
+	if !window.PartitionBy[0].Col.Equal(nil, windowSideJoinKey) {
+		return false
+	}
+	// AnotherSideJoinKey must be a unique key.
+	joinChildGroup.BuildKeyInfo()
+	if !joinChildGroup.Prop.Schema.IsUniqueKey(anotherSideJoinKey) {
+		return false
+	}
+	return true
+}
+
+func (r *PullWindowUpJoin) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	windowIdx := 0
+	if !r.leftWindow {
+		windowIdx = 1
+	}
+
+	joinExpr := old.GetExpr()
+	join := joinExpr.ExprNode.(*plannercore.LogicalJoin)
+	windowExpr := old.Children[windowIdx].GetExpr()
+	window := windowExpr.ExprNode.(*plannercore.LogicalWindow)
+	joinChildGroup := old.Children[1-windowIdx].Group
+
+	newWindow := plannercore.LogicalWindow{
+		WindowFuncDescs: window.WindowFuncDescs,
+		PartitionBy:     window.PartitionBy,
+		OrderBy:         window.OrderBy,
+		Frame:           window.Frame,
+	}.Init(window.SCtx(), window.SelectBlockOffset())
+
+	newJoin := join.Shallow()
+	newJoinExpr := memo.NewGroupExpr(newJoin)
+
+	var newJoinGroup *memo.Group
+	if windowIdx == 0 {
+		newJoinSchema := expression.MergeSchema(windowExpr.Children[0].Prop.Schema, joinChildGroup.Prop.Schema)
+		newJoinGroup = memo.NewGroupWithSchema(newJoinExpr, newJoinSchema)
+		newJoinExpr.SetChildren(windowExpr.Children[0], joinChildGroup)
+	} else {
+		newJoinSchema := expression.MergeSchema(joinChildGroup.Prop.Schema, windowExpr.Children[0].Prop.Schema)
+		newJoinGroup = memo.NewGroupWithSchema(newJoinExpr, newJoinSchema)
+		newJoinExpr.SetChildren(joinChildGroup, windowExpr.Children[0])
+	}
+	newWindowExpr := memo.NewGroupExpr(newWindow)
+	newWindowExpr.SetChildren(newJoinGroup)
+
+	return []*memo.GroupExpr{newWindowExpr}, true, false, nil
+}
+
