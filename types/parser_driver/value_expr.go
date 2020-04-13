@@ -173,7 +173,8 @@ func newValueExpr(value interface{}, charset string, collate string) ast.ValueEx
 		return ve
 	}
 	ve := &ValueExpr{}
-	ve.SetValue(value)
+	ve.Type = types.FieldType{Charset: charset, Collate: collate}
+	ve.Datum.SetValue(value, &ve.Type)
 	types.DefaultTypeForValue(value, &ve.Type, charset, collate)
 	ve.projectionOffset = -1
 	return ve
