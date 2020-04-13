@@ -689,8 +689,8 @@ func NewSessionVars() *SessionVars {
 		SequenceState:               NewSequenceState(),
 		WindowingUseHighPrecision:   true,
 		PlanInCache:                 DefTiDBFoundInPlanCache,
-		PlanCacheHits:               0,
-		PlanCacheMisses:             0,
+		PlanCacheHits:               DefTiDBPlanCacheHitCount,
+		PlanCacheMisses:             DefTiDBPlanCacheMissCount,
 		PlanLastUpdated:             DefTiDBPlanCacheLastUpdated,
 	}
 	vars.KVVars = kv.NewVariables(&vars.Killed)
@@ -1287,6 +1287,12 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		}
 	case TiDBFoundInPlanCache:
 		s.PlanInCache = TiDBOptOn(val)
+	case TiDBPlanCacheHitCount:
+		s.PlanCacheHits = uint64(tidbOptInt64(val, DefTiDBPlanCacheHitCount))
+	case TiDBPlanCacheMissCount:
+		s.PlanCacheMisses = uint64(tidbOptInt64(val, DefTiDBPlanCacheMissCount))
+	case TiDBPlanCacheLastUpdated:
+		s.PlanLastUpdated = val
 	}
 	s.systems[name] = val
 	return nil

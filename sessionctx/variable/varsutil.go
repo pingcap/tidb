@@ -154,6 +154,12 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 		return CapturePlanBaseline.GetVal(), true, nil
 	case TiDBFoundInPlanCache:
 		return BoolToIntStr(s.PlanInCache), true, nil
+	case TiDBPlanCacheHitCount:
+		return string(s.PlanCacheHits), true, nil
+	case TiDBPlanCacheMissCount:
+		return string(s.PlanCacheMisses), true, nil
+	case TiDBPlanCacheLastUpdated:
+		return s.PlanLastUpdated, true, nil
 	}
 	sVal, ok := s.GetSystemVar(key)
 	if ok {
@@ -420,7 +426,8 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		TiDBLowResolutionTSO, TiDBEnableIndexMerge, TiDBEnableNoopFuncs,
 		TiDBCheckMb4ValueInUTF8, TiDBEnableSlowLog, TiDBRecordPlanInSlowLog,
 		TiDBScatterRegion, TiDBGeneralLog, TiDBConstraintCheckInPlace,
-		TiDBEnableVectorizedExpression, TiDBFoundInPlanCache:
+		TiDBEnableVectorizedExpression, TiDBFoundInPlanCache, TiDBPlanCacheHitCount,
+		TiDBPlanCacheMissCount, TiDBPlanCacheLastUpdated:
 		fallthrough
 	case GeneralLog, AvoidTemporalUpgrade, BigTables, CheckProxyUsers, LogBin,
 		CoreFile, EndMakersInJSON, SQLLogBin, OfflineMode, PseudoSlaveMode, LowPriorityUpdates,
