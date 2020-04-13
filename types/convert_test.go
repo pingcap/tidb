@@ -635,12 +635,9 @@ func (s *testTypeConvertSuite) TestConvert(c *C) {
 	unsignedAccept(c, mysql.TypeLonglong, -1, "18446744073709551615")
 	unsignedAccept(c, mysql.TypeLonglong, 0, "0")
 	unsignedAccept(c, mysql.TypeLonglong, uint64(math.MaxUint64), strvalue(uint64(math.MaxUint64)))
-	unsignedDeny(c, mysql.TypeLonglong, math.MaxUint64*1.1, strvalue(uint64(math.MaxUint64)))
-<<<<<<< HEAD
-=======
+
 	unsignedAccept(c, mysql.TypeLonglong, NewBinaryLiteralFromUint(0, -1), "0")
 	unsignedAccept(c, mysql.TypeLonglong, NewBinaryLiteralFromUint(math.MaxUint64, -1), strvalue(uint64(math.MaxUint64)))
->>>>>>> 51a1323... expression/types: check when insert binary literal (#9829)
 
 	// integer from string
 	signedAccept(c, mysql.TypeLong, "	  234  ", "234")
