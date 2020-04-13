@@ -55,6 +55,14 @@ type CopClient struct {
 	replicaReadSeed uint32
 }
 
+func (c *CopClient) GetBatchCopTaskNumber() (ret int32) {
+	ret = c.store.regionCache.storeMu.flashStoreNumber
+	if ret <= 0 {
+		ret = 1
+	}
+	return ret
+}
+
 // Send builds the request and gets the coprocessor iterator response.
 func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variables) kv.Response {
 	if req.StoreType == kv.TiFlash && req.BatchCop {

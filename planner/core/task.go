@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/plancodec"
@@ -533,9 +534,45 @@ func (p *PhysicalHashJoin) attach2Task(tasks ...task) task {
 	return task
 }
 
+// GetCost computes cost of broadcast join operator itself.
+func (p *PhysicalBroadCastJoin) GetCost(lCnt, rCnt float64) float64 {
+	buildCnt := lCnt
+	if p.InnerChildIdx == 1 {
+		buildCnt = rCnt
+	}
+	sessVars := p.ctx.GetSessionVars()
+	// Cost of building hash table.
+	cpuCost := buildCnt * sessVars.CopCPUFactor
+	memoryCost := buildCnt * sessVars.MemoryFactor
+	// Number of matched row pairs regarding the equal join conditions.
+	helper := &fullJoinRowCountHelper{
+		cartesian:     false,
+		leftProfile:   p.children[0].statsInfo(),
+		rightProfile:  p.children[1].statsInfo(),
+		leftJoinKeys:  p.LeftJoinKeys,
+		rightJoinKeys: p.RightJoinKeys,
+		leftSchema:    p.children[0].Schema(),
+		rightSchema:   p.children[1].Schema(),
+	}
+	numPairs := helper.estimate()
+	probeCost := numPairs * sessVars.CopCPUFactor
+	// should divided by the cop concurrency, which is decide by TiFlash, but TiDB
+	// can not get the information from TiFlash, so just use `sessVars.HashJoinConcurrency`
+	// as a workaround
+	probeCost /= float64(sessVars.HashJoinConcurrency)
+	cpuCost += probeCost
+
+	// todo since TiFlash join is significant faster than TiDB join, maybe
+	//  need to add a variable like 'tiflash_accelerate_factor', and divide
+	//  the final cost by that factor
+	return cpuCost + memoryCost
+}
+
 func (p *PhysicalBroadCastJoin) attach2Task(tasks ...task) task {
 	lTask, lok := tasks[0].(*copTask)
 	rTask, rok := tasks[1].(*copTask)
+	lGlobalRead := p.childrenReqProps[0].TaskTp == property.CopTiFlashGlobalReadTaskType
+	rGlobalRead := p.childrenReqProps[1].TaskTp == property.CopTiFlashGlobalReadTaskType
 	if !lok || !rok || (lTask.getStoreType() != kv.TiFlash && rTask.getStoreType() != kv.TiFlash) {
 		return invalidTask
 	}
@@ -547,11 +584,30 @@ func (p *PhysicalBroadCastJoin) attach2Task(tasks ...task) task {
 	if !rTask.indexPlanFinished {
 		rTask.finishIndexPlan()
 	}
-	task := &copTask{
-		tblColHists:       rTask.tblColHists,
+
+	lCost := lTask.cost()
+	rCost := rTask.cost()
+	if !(lGlobalRead && rGlobalRead) {
+		// the cost model for top level broadcast join is
+		// globalReadSideCost * copTaskNumber + localReadSideCost + broadcast operator cost
+		// because for broadcast join, the global side is executed in every copTask.
+		copTaskNumber := int32(1)
+		copClient, ok := p.ctx.GetClient().(*tikv.CopClient)
+		if ok {
+			copTaskNumber = copClient.GetBatchCopTaskNumber()
+		}
+		if lGlobalRead {
+			lCost = lCost * float64(copTaskNumber)
+		} else {
+			rCost = rCost * float64(copTaskNumber)
+		}
+	}
+
+	task := & copTask {
+		tblColHists: rTask.tblColHists,
 		indexPlanFinished: true,
-		tablePlan:         p,
-		cst:               lTask.cost() + rTask.cost(),
+		tablePlan: p,
+		cst:  lCost + rCost + p.GetCost(lTask.count(), rTask.count()),
 	}
 	logutil.BgLogger().Info("bc join cost", zap.Float64("bc cost", task.cst))
 	return task
@@ -708,6 +764,11 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 	// is Min(DistSQLScanConcurrency, numRegionsInvolvedInScan), since we cannot infer
 	// the number of regions involved, we simply use DistSQLScanConcurrency.
 	copIterWorkers := float64(t.plan().SCtx().GetSessionVars().DistSQLScanConcurrency)
+	if t.tablePlan != nil && t.tablePlan.TP() == plancodec.TypeBroadcastJoin {
+		if copClient, ok := ctx.GetClient().(*tikv.CopClient); ok {
+			copIterWorkers = math.Min(float64(copClient.GetBatchCopTaskNumber()), copIterWorkers)
+		}
+	}
 	t.finishIndexPlan()
 	// Network cost of transferring rows of table scan to TiDB.
 	if t.tablePlan != nil {
