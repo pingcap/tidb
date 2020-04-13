@@ -632,14 +632,10 @@ func (w *fieldWriter) GetField() (bool, field) {
 			}
 		} else if ch == '\\' {
 			// TODO: escape only support '\'
-			w.OutputBuf = append(w.OutputBuf, ch)
 			flag, ch = w.getChar()
 			if flag {
-				if ch == w.enclosedChar {
-					w.OutputBuf = append(w.OutputBuf, ch)
-				} else {
-					w.putback()
-				}
+				w.OutputBuf = append(w.OutputBuf, '\\')
+				w.OutputBuf = append(w.OutputBuf, ch)
 			}
 		} else {
 			w.OutputBuf = append(w.OutputBuf, ch)
