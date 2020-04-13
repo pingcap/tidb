@@ -976,3 +976,7 @@ PARTITION BY RANGE COLUMNS(a) (
 );
 
 desc select * from t where a = 11 and b = 1 or a = 12 and b = 1;
+
+drop table if exists t;
+create table t (id int, name varchar(20)) partition by hash(id) partitions 128;
+explain SELECT * FROM t partition (p1) where name = '1';
