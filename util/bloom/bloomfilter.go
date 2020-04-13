@@ -28,7 +28,7 @@ func NewFilter(length int) (*Filter, error) {
 
 // Init reset the length
 func (bf *Filter) Init(length int) {
-	if length == 0 {
+	if length <= 1000 {
 		length = 1000
 	}
 	bitset := make([]uint64, length)

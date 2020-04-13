@@ -126,9 +126,17 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 				exec.Selection.Bloom = append(exec.Selection.Bloom, &tipb.BloomFilter{BitSet: e.bloomFilters[i].BitSet, ColIdx: e.joinKeyIdx[i]})
 			}
 		} else {
-			// TODO: (Shenghui) Something wrong.
-			// exec.Selection = &tipb.Selection{Bloom: bl}
-			//		e.dagPB.Executors = append(e.dagPB.Executors, &tipb.Executor{Selection: &tipb.Selection{Bloom: bl}})
+			selExec := &tipb.Selection{}
+			exec := &tipb.Executor{Tp: tipb.ExecType_TypeSelection, Selection: selExec}
+			e.bloomFilters = e.bloomFilters[0:100]
+			e.joinKeyIdx = e.joinKeyIdx[0:100]
+			for i := range e.bloomFilters {
+				if e.bloomFilters[i] == nil {
+					break
+				}
+				exec.Selection.Bloom = append(exec.Selection.Bloom, &tipb.BloomFilter{BitSet: e.bloomFilters[i].BitSet, ColIdx: e.joinKeyIdx[i]})
+			}
+			e.dagPB.Executors = append(e.dagPB.Executors, exec)
 		}
 	}
 	if e.runtimeStats != nil {
