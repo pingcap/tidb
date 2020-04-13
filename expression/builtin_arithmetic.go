@@ -50,7 +50,10 @@ var (
 	_ builtinFunc = &builtinArithmeticMultiplyIntSig{}
 	_ builtinFunc = &builtinArithmeticIntDivideIntSig{}
 	_ builtinFunc = &builtinArithmeticIntDivideDecimalSig{}
-	_ builtinFunc = &builtinArithmeticModIntSig{}
+	_ builtinFunc = &builtinArithmeticModIntUnsignedUnsignedSig{}
+	_ builtinFunc = &builtinArithmeticModIntUnsignedSignedSig{}
+	_ builtinFunc = &builtinArithmeticModIntSignedUnsignedSig{}
+	_ builtinFunc = &builtinArithmeticModIntSignedSignedSig{}
 	_ builtinFunc = &builtinArithmeticModRealSig{}
 	_ builtinFunc = &builtinArithmeticModDecimalSig{}
 )
@@ -861,9 +864,28 @@ func (c *arithmeticModFunctionClass) getFunction(ctx sessionctx.Context, args []
 		if mysql.HasUnsignedFlag(lhsTp.Flag) {
 			bf.tp.Flag |= mysql.UnsignedFlag
 		}
-		sig := &builtinArithmeticModIntSig{bf}
-		sig.setPbCode(tipb.ScalarFuncSig_ModInt)
-		return sig, nil
+
+		isLHSUnsigned := mysql.HasUnsignedFlag(args[0].GetType().Flag)
+		isRHSUnsigned := mysql.HasUnsignedFlag(args[1].GetType().Flag)
+
+		switch {
+		case isLHSUnsigned && isRHSUnsigned:
+			sig := &builtinArithmeticModIntUnsignedUnsignedSig{bf}
+			sig.setPbCode(tipb.ScalarFuncSig_ModIntUnsignedUnsigned)
+			return sig, nil
+		case isLHSUnsigned && !isRHSUnsigned:
+			sig := &builtinArithmeticModIntUnsignedSignedSig{bf}
+			sig.setPbCode(tipb.ScalarFuncSig_ModIntUnsignedSigned)
+			return sig, nil
+		case !isLHSUnsigned && isRHSUnsigned:
+			sig := &builtinArithmeticModIntSignedUnsignedSig{bf}
+			sig.setPbCode(tipb.ScalarFuncSig_ModIntSignedUnsigned)
+			return sig, nil
+		default:
+			sig := &builtinArithmeticModIntSignedSignedSig{bf}
+			sig.setPbCode(tipb.ScalarFuncSig_ModIntSignedSigned)
+			return sig, nil
+		}
 	}
 }
 
@@ -922,17 +944,47 @@ func (s *builtinArithmeticModDecimalSig) evalDecimal(row chunk.Row) (*types.MyDe
 	return c, err != nil, err
 }
 
-type builtinArithmeticModIntSig struct {
+type builtinArithmeticModIntUnsignedUnsignedSig struct {
 	baseBuiltinFunc
 }
 
-func (s *builtinArithmeticModIntSig) Clone() builtinFunc {
-	newSig := &builtinArithmeticModIntSig{}
+func (s *builtinArithmeticModIntUnsignedUnsignedSig) Clone() builtinFunc {
+	newSig := &builtinArithmeticModIntUnsignedUnsignedSig{}
 	newSig.cloneFrom(&s.baseBuiltinFunc)
 	return newSig
 }
 
-func (s *builtinArithmeticModIntSig) evalInt(row chunk.Row) (val int64, isNull bool, err error) {
+func (s *builtinArithmeticModIntUnsignedUnsignedSig) evalInt(row chunk.Row) (val int64, isNull bool, err error) {
+	b, isNull, err := s.args[1].EvalInt(s.ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, err
+	}
+
+	if b == 0 {
+		return 0, true, handleDivisionByZeroError(s.ctx)
+	}
+
+	a, isNull, err := s.args[0].EvalInt(s.ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, err
+	}
+
+	ret := int64(uint64(a) % uint64(b))
+
+	return ret, false, nil
+}
+
+type builtinArithmeticModIntUnsignedSignedSig struct {
+	baseBuiltinFunc
+}
+
+func (s *builtinArithmeticModIntUnsignedSignedSig) Clone() builtinFunc {
+	newSig := &builtinArithmeticModIntUnsignedSignedSig{}
+	newSig.cloneFrom(&s.baseBuiltinFunc)
+	return newSig
+}
+
+func (s *builtinArithmeticModIntUnsignedSignedSig) evalInt(row chunk.Row) (val int64, isNull bool, err error) {
 	b, isNull, err := s.args[1].EvalInt(s.ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
@@ -948,27 +1000,77 @@ func (s *builtinArithmeticModIntSig) evalInt(row chunk.Row) (val int64, isNull b
 	}
 
 	var ret int64
-	isLHSUnsigned := mysql.HasUnsignedFlag(s.args[0].GetType().Flag)
-	isRHSUnsigned := mysql.HasUnsignedFlag(s.args[1].GetType().Flag)
-
-	switch {
-	case isLHSUnsigned && isRHSUnsigned:
+	if b < 0 {
+		ret = int64(uint64(a) % uint64(-b))
+	} else {
 		ret = int64(uint64(a) % uint64(b))
-	case isLHSUnsigned && !isRHSUnsigned:
-		if b < 0 {
-			ret = int64(uint64(a) % uint64(-b))
-		} else {
-			ret = int64(uint64(a) % uint64(b))
-		}
-	case !isLHSUnsigned && isRHSUnsigned:
-		if a < 0 {
-			ret = -int64(uint64(-a) % uint64(b))
-		} else {
-			ret = int64(uint64(a) % uint64(b))
-		}
-	case !isLHSUnsigned && !isRHSUnsigned:
-		ret = a % b
 	}
+
+	return ret, false, nil
+}
+
+type builtinArithmeticModIntSignedUnsignedSig struct {
+	baseBuiltinFunc
+}
+
+func (s *builtinArithmeticModIntSignedUnsignedSig) Clone() builtinFunc {
+	newSig := &builtinArithmeticModIntSignedUnsignedSig{}
+	newSig.cloneFrom(&s.baseBuiltinFunc)
+	return newSig
+}
+
+func (s *builtinArithmeticModIntSignedUnsignedSig) evalInt(row chunk.Row) (val int64, isNull bool, err error) {
+	b, isNull, err := s.args[1].EvalInt(s.ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, err
+	}
+
+	if b == 0 {
+		return 0, true, handleDivisionByZeroError(s.ctx)
+	}
+
+	a, isNull, err := s.args[0].EvalInt(s.ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, err
+	}
+
+	var ret int64
+	if a < 0 {
+		ret = -int64(uint64(-a) % uint64(b))
+	} else {
+		ret = int64(uint64(a) % uint64(b))
+	}
+
+	return ret, false, nil
+}
+
+type builtinArithmeticModIntSignedSignedSig struct {
+	baseBuiltinFunc
+}
+
+func (s *builtinArithmeticModIntSignedSignedSig) Clone() builtinFunc {
+	newSig := &builtinArithmeticModIntSignedSignedSig{}
+	newSig.cloneFrom(&s.baseBuiltinFunc)
+	return newSig
+}
+
+func (s *builtinArithmeticModIntSignedSignedSig) evalInt(row chunk.Row) (val int64, isNull bool, err error) {
+	b, isNull, err := s.args[1].EvalInt(s.ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, err
+	}
+
+	if b == 0 {
+		return 0, true, handleDivisionByZeroError(s.ctx)
+	}
+
+	a, isNull, err := s.args[0].EvalInt(s.ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, err
+	}
+
+	var ret int64
+	ret = a % b
 
 	return ret, false, nil
 }
