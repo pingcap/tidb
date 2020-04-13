@@ -708,15 +708,8 @@ func (cc *clientConn) Run(ctx context.Context) {
 				metrics.CriticalErrorCounter.Add(1)
 				logutil.Logger(ctx).Fatal("critical error, stop the server", zap.Error(err))
 			}
-<<<<<<< HEAD
-			logutil.Logger(ctx).Warn("dispatch error",
-=======
-			var txnMode string
-			if cc.ctx != nil {
-				txnMode = cc.ctx.GetSessionVars().GetReadableTxnMode()
-			}
-			logutil.Logger(ctx).Error("command dispatched failed",
->>>>>>> 837b178... log: change `dispatch error` log level (#16228)
+
+			logutil.Logger(ctx).Error("dispatch error",
 				zap.String("connInfo", cc.String()),
 				zap.String("command", mysql.Command2Str[data[0]]),
 				zap.String("status", cc.SessionStatusToString()),
