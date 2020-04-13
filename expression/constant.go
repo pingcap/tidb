@@ -113,7 +113,6 @@ func (c *Constant) Eval(_ chunk.Row) (types.Datum, error) {
 
 // EvalInt returns int representation of Constant.
 func (c *Constant) EvalInt(ctx sessionctx.Context, _ chunk.Row) (int64, bool, error) {
-<<<<<<< HEAD
 	if c.DeferredExpr != nil {
 		dt, err := c.DeferredExpr.Eval(chunk.Row{})
 		if err != nil {
@@ -135,23 +134,7 @@ func (c *Constant) EvalInt(ctx sessionctx.Context, _ chunk.Row) (int64, bool, er
 	if c.GetType().Hybrid() || c.Value.Kind() == types.KindBinaryLiteral || c.Value.Kind() == types.KindString {
 		res, err := c.Value.ToInt64(ctx.GetSessionVars().StmtCtx)
 		return res, err != nil, err
-=======
-	dt, lazy, err := c.getLazyDatum()
-	if err != nil {
-		return 0, false, err
-	}
-	if !lazy {
-		dt = c.Value
-	}
-	if c.GetType().Tp == mysql.TypeNull || dt.IsNull() {
-		return 0, true, nil
-	} else if dt.Kind() == types.KindBinaryLiteral {
-		val, err := dt.GetBinaryLiteral().ToInt(ctx.GetSessionVars().StmtCtx)
-		return int64(val), err != nil, err
-	} else if c.GetType().Hybrid() || dt.Kind() == types.KindString {
-		res, err := dt.ToInt64(ctx.GetSessionVars().StmtCtx)
-		return res, false, err
->>>>>>> 51a1323... expression/types: check when insert binary literal (#9829)
+
 	}
 	return c.Value.GetInt64(), false, nil
 }
@@ -174,7 +157,15 @@ func (c *Constant) EvalReal(ctx sessionctx.Context, _ chunk.Row) (float64, bool,
 	} else {
 		if c.GetType().Tp == mysql.TypeNull || c.Value.IsNull() {
 			return 0, true, nil
-		}
+		} else if c.Value.Kind() == types.KindBinaryLiteral {
+			val, err := c.Value.GetBinaryLiteral().ToInt(ctx.GetSessionVars().StmtCtx)
+			return int64(val), err != nil, err
+		} else if c.GetType().Hybrid() || c.Value.Kind() == types.KindString {
+			val, err := c.Value.ToInt64(ctx.GetSessionVars().StmtCtx)
+			if err != nil {
+				return 0, true, errors.Trace(err)
+			}
+		c.Value.SetInt64(val)
 	}
 	if c.GetType().Hybrid() || c.Value.Kind() == types.KindBinaryLiteral || c.Value.Kind() == types.KindString {
 		res, err := c.Value.ToFloat64(ctx.GetSessionVars().StmtCtx)
