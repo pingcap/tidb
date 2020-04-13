@@ -123,7 +123,7 @@ var (
 		charset.CollationBin:     6,
 	}
 
-	// CollationStrictness indicates the strictness of comparison of the collation. The partial order in a weak collation also holds in a strict collation.
+	// CollationStrictness indicates the strictness of comparison of the collation. The unequal order in a weak collation also holds in a strict collation.
 	// For example, if a < b in a weak collation(e.g. general_ci), then there must be a < b in a strict collation(e.g. _bin).
 	CollationStrictness = map[string]int{
 		"utf8_general_ci":        0,
