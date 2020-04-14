@@ -544,7 +544,10 @@
       "select /*+ STREAM_AGG() */ count(distinct c) from t;", // can not push down because c is not in group by
       "select /*+ HASH_AGG() */ count(distinct c) from t;", // can push down
       "select count(distinct c) from t group by c;",
-      "select count(distinct c) from t;" // should not use streamAgg because c is not in group by
+      "select count(distinct c) from t;", // should not use streamAgg because c is not in group by
+
+      "select sum(distinct b) from pt;",
+      "select count(distinct a) from (select * from ta union all select * from tb) t;"
     ]
   },
   {
@@ -557,7 +560,17 @@
       "select /*+ STREAM_AGG(), AGG_TO_COP() */ count(distinct c) from t group by c;",
       "select /*+ STREAM_AGG(), AGG_TO_COP() */ count(distinct c) from t;",
       "select /*+ HASH_AGG(), AGG_TO_COP() */ count(distinct c) from t;",
-      "select /*+ AGG_TO_COP() */ count(distinct c) from t group by c;"
+      "select /*+ AGG_TO_COP() */ count(distinct c) from t group by c;",
+
+      "select sum(distinct b) from pt;",
+      "select count(distinct a) from (select * from ta union all select * from tb) t;"
+    ]
+  },
+  {
+    "name": "TestPushdownDistinctEnableAggPushDownDisable",
+    "cases": [
+      "select sum(distinct b) from pt;",
+      "select count(distinct a) from (select * from ta union all select * from tb) t;"
     ]
   },
   {

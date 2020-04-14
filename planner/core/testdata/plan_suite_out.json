@@ -1538,6 +1538,44 @@
         "Result": [
           "2"
         ]
+      },
+      {
+        "SQL": "select sum(distinct b) from pt;",
+        "Plan": [
+          "HashAgg_11 1.00 root  funcs:sum(distinct Column#5)->Column#4",
+          "└─Union_12 2.00 root  ",
+          "  ├─HashAgg_16 1.00 root  funcs:sum(distinct Column#6)->Column#5",
+          "  │ └─Projection_23 1.00 root  cast(test.pt.b, decimal(65,0) BINARY)->Column#6",
+          "  │   └─TableReader_17 1.00 root  data:HashAgg_13",
+          "  │     └─HashAgg_13 1.00 cop[tikv]  group by:test.pt.b, ",
+          "  │       └─TableFullScan_15 10000.00 cop[tikv] table:pt, partition:p0 keep order:false, stats:pseudo",
+          "  └─HashAgg_21 1.00 root  funcs:sum(distinct Column#7)->Column#5",
+          "    └─Projection_24 1.00 root  cast(test.pt.b, decimal(65,0) BINARY)->Column#7",
+          "      └─TableReader_22 1.00 root  data:HashAgg_18",
+          "        └─HashAgg_18 1.00 cop[tikv]  group by:test.pt.b, ",
+          "          └─TableFullScan_20 10000.00 cop[tikv] table:pt, partition:p1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "<nil>"
+        ]
+      },
+      {
+        "SQL": "select count(distinct a) from (select * from ta union all select * from tb) t;",
+        "Plan": [
+          "HashAgg_14 1.00 root  funcs:count(distinct Column#7)->Column#6",
+          "└─Union_15 2.00 root  ",
+          "  ├─HashAgg_19 1.00 root  funcs:count(distinct test.ta.a)->Column#7",
+          "  │ └─TableReader_20 1.00 root  data:HashAgg_16",
+          "  │   └─HashAgg_16 1.00 cop[tikv]  group by:test.ta.a, ",
+          "  │     └─TableFullScan_18 10000.00 cop[tikv] table:ta keep order:false, stats:pseudo",
+          "  └─HashAgg_24 1.00 root  funcs:count(distinct test.tb.a)->Column#7",
+          "    └─TableReader_25 1.00 root  data:HashAgg_21",
+          "      └─HashAgg_21 1.00 cop[tikv]  group by:test.tb.a, ",
+          "        └─TableFullScan_23 10000.00 cop[tikv] table:tb keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1"
+        ]
       }
     ]
   },
@@ -1628,6 +1666,74 @@
         "Result": [
           "0",
           "1",
+          "1"
+        ]
+      },
+      {
+        "SQL": "select sum(distinct b) from pt;",
+        "Plan": [
+          "HashAgg_11 1.00 root  funcs:sum(distinct Column#5)->Column#4",
+          "└─Union_12 2.00 root  ",
+          "  ├─StreamAgg_14 1.00 root  funcs:sum(distinct Column#6)->Column#5",
+          "  │ └─Projection_25 10000.00 root  cast(test.pt.b, decimal(65,0) BINARY)->Column#6",
+          "  │   └─TableReader_18 10000.00 root  data:TableFullScan_17",
+          "  │     └─TableFullScan_17 10000.00 cop[tikv] table:pt, partition:p0 keep order:false, stats:pseudo",
+          "  └─StreamAgg_20 1.00 root  funcs:sum(distinct Column#7)->Column#5",
+          "    └─Projection_26 10000.00 root  cast(test.pt.b, decimal(65,0) BINARY)->Column#7",
+          "      └─TableReader_24 10000.00 root  data:TableFullScan_23",
+          "        └─TableFullScan_23 10000.00 cop[tikv] table:pt, partition:p1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "<nil>"
+        ]
+      },
+      {
+        "SQL": "select count(distinct a) from (select * from ta union all select * from tb) t;",
+        "Plan": [
+          "HashAgg_14 1.00 root  funcs:count(distinct Column#7)->Column#6",
+          "└─Union_15 2.00 root  ",
+          "  ├─StreamAgg_17 1.00 root  funcs:count(distinct test.ta.a)->Column#7",
+          "  │ └─TableReader_21 10000.00 root  data:TableFullScan_20",
+          "  │   └─TableFullScan_20 10000.00 cop[tikv] table:ta keep order:false, stats:pseudo",
+          "  └─StreamAgg_23 1.00 root  funcs:count(distinct test.tb.a)->Column#7",
+          "    └─TableReader_27 10000.00 root  data:TableFullScan_26",
+          "      └─TableFullScan_26 10000.00 cop[tikv] table:tb keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestPushdownDistinctEnableAggPushDownDisable",
+    "Cases": [
+      {
+        "SQL": "select sum(distinct b) from pt;",
+        "Plan": [
+          "StreamAgg_9 1.00 root  funcs:sum(distinct Column#5)->Column#4",
+          "└─Projection_20 20000.00 root  cast(test.pt.b, decimal(65,0) BINARY)->Column#5",
+          "  └─Union_15 20000.00 root  ",
+          "    ├─TableReader_17 10000.00 root  data:TableFullScan_16",
+          "    │ └─TableFullScan_16 10000.00 cop[tikv] table:pt, partition:p0 keep order:false, stats:pseudo",
+          "    └─TableReader_19 10000.00 root  data:TableFullScan_18",
+          "      └─TableFullScan_18 10000.00 cop[tikv] table:pt, partition:p1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "<nil>"
+        ]
+      },
+      {
+        "SQL": "select count(distinct a) from (select * from ta union all select * from tb) t;",
+        "Plan": [
+          "StreamAgg_12 1.00 root  funcs:count(distinct Column#5)->Column#6",
+          "└─Union_20 20000.00 root  ",
+          "  ├─TableReader_23 10000.00 root  data:TableFullScan_22",
+          "  │ └─TableFullScan_22 10000.00 cop[tikv] table:ta keep order:false, stats:pseudo",
+          "  └─TableReader_26 10000.00 root  data:TableFullScan_25",
+          "    └─TableFullScan_25 10000.00 cop[tikv] table:tb keep order:false, stats:pseudo"
+        ],
+        "Result": [
           "1"
         ]
       }
