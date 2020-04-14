@@ -280,7 +280,7 @@ func (s *testSuite) TestMaxConsumed(c *C) {
 }
 
 func (s *testSuite) TestGlobalTracker(c *C) {
-	r := NewTracker(stringutil.StringerStr("root"), -1)
+	r := NewGlobalTracker(stringutil.StringerStr("root"), -1)
 	c1 := NewTracker(stringutil.StringerStr("child 1"), -1)
 	c2 := NewTracker(stringutil.StringerStr("child 2"), -1)
 	c1.Consume(100)
