@@ -933,7 +933,6 @@ type testSuite10 struct {
 
 func (s *testSuite10) TestSetConflictConfigItems(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	c.Assert(config.GetGlobalConfig().EnableDynamicConfig, IsFalse)
 	tk.MustExec("set tidb_slow_log_threshold=123")
 	tk.MustQuery("select @@tidb_slow_log_threshold").Check(testkit.Rows("123"))
 	tk.MustExec("set tidb_query_log_max_len=123")
@@ -945,7 +944,6 @@ func (s *testSuite10) TestSetConflictConfigItems(c *C) {
 	tk.MustExec("set tidb_enable_slow_log=1")
 	tk.MustQuery("select @@tidb_enable_slow_log").Check(testkit.Rows("1"))
 
-	config.GetGlobalConfig().EnableDynamicConfig = true
 	tk.MustExec("set tidb_slow_log_threshold=222")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 cannot update tidb_slow_log_threshold when enabling dynamic configs"))
 	tk.MustQuery("select @@tidb_slow_log_threshold").Check(testkit.Rows("123"))
@@ -966,7 +964,6 @@ func (s *testSuite10) TestSetConflictConfigItems(c *C) {
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 cannot update tidb_enable_slow_log when enabling dynamic configs"))
 	tk.MustQuery("select @@tidb_enable_slow_log").Check(testkit.Rows("1"))
 
-	config.GetGlobalConfig().EnableDynamicConfig = false
 	tk.MustExec("set tidb_slow_log_threshold=222")
 	tk.MustQuery("select @@tidb_slow_log_threshold").Check(testkit.Rows("222"))
 	tk.MustExec("set tidb_query_log_max_len=222")
