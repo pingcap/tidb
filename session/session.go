@@ -1214,11 +1214,8 @@ func (s *session) CommonExec(ctx context.Context,
 	startTime := time.Now()
 	logQuery(st.OriginText(), s.sessionVars)
 	recordSet, err := runStmt(ctx, s, st)
-	if err != nil {
-		return nil, err
-	}
 	sessionExecuteRunDurationGeneral.Observe(time.Since(startTime).Seconds())
-	return recordSet, nil
+	return recordSet, err
 }
 
 // CachedPlanExec short path currently ONLY for cached "point select plan" execution
