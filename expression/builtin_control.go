@@ -143,14 +143,22 @@ func (c *caseWhenFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	for i := 1; i < l; i += 2 {
 		fieldTps = append(fieldTps, args[i].GetType())
 		decimal = mathutil.Max(decimal, args[i].GetType().Decimal)
-		flen = mathutil.Max(flen, args[i].GetType().Flen)
+		if args[i].GetType().Flen == -1 {
+			flen = -1
+		} else if flen != -1 {
+			flen = mathutil.Max(flen, args[i].GetType().Flen)
+		}
 		isBinaryStr = isBinaryStr || types.IsBinaryStr(args[i].GetType())
 		isBinaryFlag = isBinaryFlag || !types.IsNonBinaryStr(args[i].GetType())
 	}
 	if l%2 == 1 {
 		fieldTps = append(fieldTps, args[l-1].GetType())
 		decimal = mathutil.Max(decimal, args[l-1].GetType().Decimal)
-		flen = mathutil.Max(flen, args[l-1].GetType().Flen)
+		if args[l-1].GetType().Flen == -1 {
+			flen = -1
+		} else if flen != -1 {
+			flen = mathutil.Max(flen, args[l-1].GetType().Flen)
+		}
 		isBinaryStr = isBinaryStr || types.IsBinaryStr(args[l-1].GetType())
 		isBinaryFlag = isBinaryFlag || !types.IsNonBinaryStr(args[l-1].GetType())
 	}
