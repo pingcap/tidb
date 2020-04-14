@@ -708,7 +708,8 @@ func (cc *clientConn) Run(ctx context.Context) {
 				metrics.CriticalErrorCounter.Add(1)
 				logutil.Logger(ctx).Fatal("critical error, stop the server", zap.Error(err))
 			}
-			logutil.Logger(ctx).Warn("dispatch error",
+
+			logutil.Logger(ctx).Error("dispatch error",
 				zap.String("connInfo", cc.String()),
 				zap.String("command", mysql.Command2Str[data[0]]),
 				zap.String("status", cc.SessionStatusToString()),
@@ -1039,7 +1040,13 @@ func (cc *clientConn) writeError(e error) error {
 	if te, ok = originErr.(*terror.Error); ok {
 		m = te.ToSQLError()
 	} else {
-		m = mysql.NewErrf(mysql.ErrUnknown, "%s", e.Error())
+		e := errors.Cause(originErr)
+		switch y := e.(type) {
+		case *terror.Error:
+			m = y.ToSQLError()
+		default:
+			m = mysql.NewErrf(mysql.ErrUnknown, "%s", e.Error())
+		}
 	}
 
 	cc.lastCode = m.Code
