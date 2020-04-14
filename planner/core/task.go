@@ -1066,7 +1066,10 @@ func BuildFinalModeAggregation(
 
 					if !partialIsCop {
 						// if partial agg is not cop, we must append fisrtrow function & schema
-						firstRow, _ := aggregation.NewAggFuncDesc(sctx, ast.AggFuncFirstRow, []expression.Expression{gbyCol}, false)
+						firstRow, err := aggregation.NewAggFuncDesc(sctx, ast.AggFuncFirstRow, []expression.Expression{gbyCol}, false)
+						if err != nil {
+							panic("NewAggFuncDesc FirstRow meets error" + err.Error())
+						}
 						partial.AggFuncs = append(partial.AggFuncs, firstRow)
 						newCol, _ := gbyCol.Clone().(*expression.Column)
 						newCol.RetType = firstRow.RetTp
