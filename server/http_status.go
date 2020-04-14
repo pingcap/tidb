@@ -68,6 +68,33 @@ func sleepWithCtx(ctx context.Context, d time.Duration) {
 	}
 }
 
+func (s *Server) listenStatusHTTPServer() error {
+	s.statusAddr = fmt.Sprintf("%s:%d", s.cfg.Status.StatusHost, s.cfg.Status.StatusPort)
+	if s.cfg.Status.StatusPort == 0 {
+		s.statusAddr = fmt.Sprintf("%s:%d", s.cfg.Status.StatusHost, defaultStatusPort)
+	}
+
+	var err error
+	logutil.Logger(context.Background()).Info("for status and metrics report", zap.String("listening on addr", s.statusAddr))
+	s.statusListener, err = net.Listen("tcp", s.statusAddr)
+	if err != nil {
+		logutil.Logger(context.Background()).Info("listen failed", zap.Error(err))
+		return errors.Trace(err)
+	}
+
+	if len(s.cfg.Security.ClusterSSLCA) != 0 {
+		tlsConfig, err := s.cfg.Security.ToTLSConfig()
+		if err != nil {
+			logutil.Logger(context.Background()).Error("invalid TLS config", zap.Error(err))
+			return errors.Trace(err)
+		}
+		tlsConfig = s.setCNChecker(tlsConfig)
+		logutil.Logger(context.Background()).Info("HTTP/gRPC status server secure connection is enabled", zap.Bool("CN verification enabled", tlsConfig.VerifyPeerCertificate != nil))
+		s.statusListener = tls.NewListener(s.statusListener, tlsConfig)
+	}
+	return nil
+}
+
 func (s *Server) startHTTPServer() {
 	router := mux.NewRouter()
 
@@ -111,13 +138,9 @@ func (s *Server) startHTTPServer() {
 		router.Handle("/mvcc/hex/{hexKey}", mvccTxnHandler{tikvHandlerTool, opMvccGetByHex})
 		router.Handle("/mvcc/index/{db}/{table}/{index}/{handle}", mvccTxnHandler{tikvHandlerTool, opMvccGetByIdx})
 	}
-	addr := fmt.Sprintf("%s:%d", s.cfg.Status.StatusHost, s.cfg.Status.StatusPort)
-	if s.cfg.Status.StatusPort == 0 {
-		addr = fmt.Sprintf("%s:%d", s.cfg.Status.StatusHost, defaultStatusPort)
-	}
 
 	// HTTP path for web UI.
-	if host, port, err := net.SplitHostPort(addr); err == nil {
+	if host, port, err := net.SplitHostPort(s.statusAddr); err == nil {
 		if host == "" {
 			host = "localhost"
 		}
@@ -253,27 +276,8 @@ func (s *Server) startHTTPServer() {
 		}
 	})
 
-	logutil.Logger(context.Background()).Info("for status and metrics report", zap.String("listening on addr", addr))
-	s.statusServer = &http.Server{Addr: addr, Handler: CorsHandler{handler: serverMux, cfg: s.cfg}}
-
-	ln, err := net.Listen("tcp", addr)
-	if err != nil {
-		logutil.Logger(context.Background()).Info("listen failed", zap.Error(err))
-		return
-	}
-
-	if len(s.cfg.Security.ClusterSSLCA) != 0 {
-		tlsConfig, err := s.cfg.Security.ToTLSConfig()
-		if err != nil {
-			logutil.Logger(context.Background()).Error("invalid TLS config", zap.Error(err))
-			return
-		}
-		tlsConfig = s.setCNChecker(tlsConfig)
-		logutil.Logger(context.Background()).Info("HTTP/gRPC status server secure connection is enabled", zap.Bool("CN verification enabled", tlsConfig.VerifyPeerCertificate != nil))
-		ln = tls.NewListener(ln, tlsConfig)
-	}
-
-	err = s.statusServer.Serve(ln)
+	s.statusServer = &http.Server{Addr: s.statusAddr, Handler: CorsHandler{handler: serverMux, cfg: s.cfg}}
+	err = s.statusServer.Serve(s.statusListener)
 	if err != nil {
 		logutil.Logger(context.Background()).Info("serve status port failed", zap.Error(err))
 	}

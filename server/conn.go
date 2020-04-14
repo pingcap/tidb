@@ -1040,7 +1040,13 @@ func (cc *clientConn) writeError(e error) error {
 	if te, ok = originErr.(*terror.Error); ok {
 		m = te.ToSQLError()
 	} else {
-		m = mysql.NewErrf(mysql.ErrUnknown, "%s", e.Error())
+		e := errors.Cause(originErr)
+		switch y := e.(type) {
+		case *terror.Error:
+			m = y.ToSQLError()
+		default:
+			m = mysql.NewErrf(mysql.ErrUnknown, "%s", e.Error())
+		}
 	}
 
 	cc.lastCode = m.Code
