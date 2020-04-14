@@ -123,6 +123,16 @@ func (s *testSuite) TestExplainMetricTable(c *C) {
 		`MemTableScan_5 10000.00 root table:CLUSTER_LOG start_time:2019-12-23 16:10:13, end_time:2019-12-23 16:30:13, node_types:["high_cpu_1","high_memory_1"]`))
 }
 
+func (s *testSuite) TestInspectionResultTable(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustQuery("desc select * from information_schema.inspection_result where rule in ('ddl', 'config')").Check(testkit.Rows(
+		`MemTableScan_5 10000.00 root table:INSPECTION_RESULT rules:["config","ddl"],items:[]`))
+	tk.MustQuery("desc select * from information_schema.inspection_result where item in ('ddl.lease', 'raftstore.threadpool')").Check(testkit.Rows(
+		`MemTableScan_5 10000.00 root table:INSPECTION_RESULT rules:[],items:["ddl.lease","raftstore.threadpool"]`))
+	tk.MustQuery("desc select * from information_schema.inspection_result where item in ('ddl.lease', 'raftstore.threadpool') and rule in ('ddl', 'config')").Check(testkit.Rows(
+		`MemTableScan_5 10000.00 root table:INSPECTION_RESULT rules:["config","ddl"],items:["ddl.lease","raftstore.threadpool"]`))
+}
+
 func (s *testSuite) TestInspectionRuleTable(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.inspection_rules where type='inspection'")).Check(testkit.Rows(

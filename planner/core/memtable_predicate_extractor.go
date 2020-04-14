@@ -828,7 +828,13 @@ func (e *InspectionResultTableExtractor) Extract(
 }
 
 func (e *InspectionResultTableExtractor) explainInfo(p *PhysicalMemTable) string {
-	return ""
+	if e.SkipInspection {
+		return "skip_inspection: true"
+	}
+	s := make([]string, 0, 2)
+	s = append(s, fmt.Sprintf("rules:[%s]", extractStringFromStringSet(e.Rules)))
+	s = append(s, fmt.Sprintf("items:[%s]", extractStringFromStringSet(e.Items)))
+	return strings.Join(s, ",")
 }
 
 // InspectionSummaryTableExtractor is used to extract some predicates of `inspection_summary`
