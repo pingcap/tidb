@@ -407,7 +407,7 @@ type baseBuiltinIsTrueOrFalseFunc struct {
 
 // metadata returns the metadata of cast functions
 func (b *baseBuiltinIsTrueOrFalseFunc) metadata() proto.Message {
-	args := &tipb.KeepNullMetadata{
+	args := &tipb.IsTrueOrFalseMetadata{
 		KeepNull: b.keepNull,
 	}
 	return args

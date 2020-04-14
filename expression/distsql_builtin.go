@@ -456,17 +456,17 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 	case tipb.ScalarFuncSig_BitNegSig:
 		f = &builtinBitNegSig{base}
 	case tipb.ScalarFuncSig_IntIsTrue:
-		f = &builtinIntIsTrueSig{newBaseBuiltinIsTrueOrFalseFunc(base, message.(*tipb.KeepNullMetadata).KeepNull)}
+		f = &builtinIntIsTrueSig{newBaseBuiltinIsTrueOrFalseFunc(base, message.(*tipb.IsTrueOrFalseMetadata).KeepNull)}
 	case tipb.ScalarFuncSig_RealIsTrue:
-		f = &builtinRealIsTrueSig{newBaseBuiltinIsTrueOrFalseFunc(base, message.(*tipb.KeepNullMetadata).KeepNull)}
+		f = &builtinRealIsTrueSig{newBaseBuiltinIsTrueOrFalseFunc(base, message.(*tipb.IsTrueOrFalseMetadata).KeepNull)}
 	case tipb.ScalarFuncSig_DecimalIsTrue:
-		f = &builtinDecimalIsTrueSig{newBaseBuiltinIsTrueOrFalseFunc(base, message.(*tipb.KeepNullMetadata).KeepNull)}
+		f = &builtinDecimalIsTrueSig{newBaseBuiltinIsTrueOrFalseFunc(base, message.(*tipb.IsTrueOrFalseMetadata).KeepNull)}
 	case tipb.ScalarFuncSig_IntIsFalse:
-		f = &builtinIntIsFalseSig{newBaseBuiltinIsTrueOrFalseFunc(base, message.(*tipb.KeepNullMetadata).KeepNull)}
+		f = &builtinIntIsFalseSig{newBaseBuiltinIsTrueOrFalseFunc(base, message.(*tipb.IsTrueOrFalseMetadata).KeepNull)}
 	case tipb.ScalarFuncSig_RealIsFalse:
-		f = &builtinRealIsFalseSig{newBaseBuiltinIsTrueOrFalseFunc(base, message.(*tipb.KeepNullMetadata).KeepNull)}
+		f = &builtinRealIsFalseSig{newBaseBuiltinIsTrueOrFalseFunc(base, message.(*tipb.IsTrueOrFalseMetadata).KeepNull)}
 	case tipb.ScalarFuncSig_DecimalIsFalse:
-		f = &builtinDecimalIsFalseSig{newBaseBuiltinIsTrueOrFalseFunc(base, message.(*tipb.KeepNullMetadata).KeepNull)}
+		f = &builtinDecimalIsFalseSig{newBaseBuiltinIsTrueOrFalseFunc(base, message.(*tipb.IsTrueOrFalseMetadata).KeepNull)}
 	case tipb.ScalarFuncSig_LeftShift:
 		f = &builtinLeftShiftSig{base}
 	case tipb.ScalarFuncSig_RightShift:
