@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/sirupsen/logrus"
 )
 
 // UpdateExec represents a new update executor.
@@ -135,7 +134,6 @@ func (e *UpdateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 	fields := retTypes(e.children[0])
-	logrus.Warning("len(fields)", len(fields))
 	colsInfo := make([]*table.Column, len(fields))
 	for _, content := range e.tblColPosInfos {
 		tbl := e.tblID2table[content.TblID]
@@ -154,14 +152,12 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 	}
 	memUsageOfChk := int64(0)
 	totalNumRows := 0
-	logrus.Warning(e.children[0].Schema().Columns)
 	for {
 		e.memTracker.Consume(-memUsageOfChk)
 		err := Next(ctx, e.children[0], chk)
 		if err != nil {
 			return 0, err
 		}
-		logrus.Warning("chk.NumCols()", chk.NumCols(), " chk.numrows ", chk.NumRows())
 
 		if chk.NumRows() == 0 {
 			break
@@ -169,7 +165,6 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 		memUsageOfChk = chk.MemoryUsage()
 		e.memTracker.Consume(memUsageOfChk)
 		for rowIdx := 0; rowIdx < chk.NumRows(); rowIdx++ {
-			logrus.Warning("rowIdx", rowIdx)
 			chunkRow := chk.GetRow(rowIdx)
 			datumRow := chunkRow.GetDatumRow(fields)
 			newRow, err1 := composeFunc(globalRowIdx, datumRow, colsInfo)
