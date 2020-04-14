@@ -302,6 +302,21 @@ func (s *testSuite) TestInsert(c *C) {
 	tk.MustExec("drop view v")
 }
 
+func (s *testSuite) TestIssue16253(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, t1")
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("insert into t values(1)")
+	tk.MustExec("create table t1(a int)")
+	tk.MustExec("insert into t1 values(1)")
+	tk.MustExec("CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW v_16253 as select * from t1")
+	tk.MustExec("update t,v_16253 set t.a = 2 where t.a = v_16253.a")
+	_, err := tk.Exec("update t,v_16253 set v_16253.a = 2 where t.a=v_16253.a")
+	c.Assert(err.Error(), Equals, "")
+	tk.MustExec("drop view v_16253")
+}
+
 func (s *testSuiteP2) TestMultiBatch(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

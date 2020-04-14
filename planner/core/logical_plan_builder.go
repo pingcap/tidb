@@ -45,7 +45,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
-	driver "github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/types/parser_driver"
 	util2 "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	utilhint "github.com/pingcap/tidb/util/hint"
@@ -3012,6 +3012,7 @@ func (b *PlanBuilder) buildProjUponView(ctx context.Context, dbName model.CIStr,
 		projSchema.Append(&expression.Column{
 			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
 			RetType:  cols[i].GetType(),
+			OrigName: origColName.L,
 		})
 		projExprs = append(projExprs, cols[i])
 	}
@@ -3199,6 +3200,70 @@ func buildColumns2Handle(
 	return cols2Handles, nil
 }
 
+// Add project to freeze the order of output columns and prune useless output tables which will not be updated.
+func (b *PlanBuilder) buildProj4UpdateSelectPlan(ctx context.Context, update *ast.UpdateStmt, tblList []*ast.TableName, p Plan, oldSchemaLen int) (*LogicalProjection, error) {
+	proj := LogicalProjection{Exprs: expression.Column2Exprs(p.Schema().Columns[:oldSchemaLen])}.Init(b.ctx, b.getSelectOffset())
+	proj.SetSchema(expression.NewSchema(make([]*expression.Column, oldSchemaLen)...))
+	proj.names = make(types.NameSlice, len(p.OutputNames()))
+	copy(proj.names, p.OutputNames())
+	copy(proj.schema.Columns, p.Schema().Columns[:oldSchemaLen])
+
+	if len(tblList) == 1 {
+		return proj, nil
+	}
+	tblName2DBName := make(map[string]string, len(tblList))
+	tblIsView := make(map[string]bool, len(tblList))
+	for _, tbl := range tblList {
+		dbName := tbl.Schema.L
+		if dbName == "" {
+			dbName = b.ctx.GetSessionVars().CurrentDB
+		}
+		tblName2DBName[tbl.Name.L] = dbName
+		if tbl.TableInfo.IsView() {
+			tblIsView[dbName+"."+tbl.Name.L] = true
+		}
+	}
+	tblNeedToUpdate := make(map[string]bool, len(tblList))
+	for _, list := range update.List {
+		col := list.Column
+		if dbName, ok := tblName2DBName[col.Table.L]; ok {
+			if col.Schema.L == "" || col.Schema.L == dbName {
+				tblNeedToUpdate[dbName+"."+col.Table.L] = true
+			}
+		}
+	}
+	for i := 0; i < len(proj.names); {
+		outputName := proj.names[i]
+		if _, ok := tblNeedToUpdate[outputName.DBName.L+"."+outputName.TblName.L]; !ok {
+			proj.names = append(proj.names[:i], proj.names[i+1:]...)
+			proj.schema.Columns = append(proj.schema.Columns[:i], proj.schema.Columns[i+1:]...)
+			proj.Exprs = append(proj.Exprs[:i], proj.Exprs[i+1:]...)
+		} else {
+			i++
+		}
+	}
+	for _, name := range proj.OutputNames() {
+		if _, ok := tblIsView[name.DBName.L+name.TblName.L]; ok {
+			return nil, errors.Errorf("update view %s is not supported now.", name.TblName.O)
+		}
+	}
+	unusedTableIDs := make([]int64, 0, len(tblList)-len(tblNeedToUpdate))
+	for _, tbl := range tblList {
+		dbName := tbl.Schema.L
+		if dbName == "" {
+			dbName = b.ctx.GetSessionVars().CurrentDB
+		}
+		if _, ok := tblNeedToUpdate[dbName+"."+tbl.Name.L]; !ok {
+			unusedTableIDs = append(unusedTableIDs, tbl.TableInfo.ID)
+		}
+	}
+	for _, id := range unusedTableIDs {
+		delete(b.handleHelper.tailMap(), id)
+	}
+
+	return proj, nil
+}
+
 func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (Plan, error) {
 	b.pushSelectOffset(0)
 	b.pushTableHints(update.TableHints, utilhint.TypeUpdate, 0)
@@ -3233,12 +3298,8 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 		if dbName == "" {
 			dbName = b.ctx.GetSessionVars().CurrentDB
 		}
-		if t.TableInfo.IsView() {
-			return nil, errors.Errorf("update view %s is not supported now.", t.Name.O)
-		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName, t.Name.L, "", nil)
 	}
-
 	oldSchemaLen := p.Schema().Len()
 	if update.Where != nil {
 		p, err = b.buildSelection(ctx, p, update.Where, nil)
@@ -3265,17 +3326,16 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 		}
 	}
 
-	// Add project to freeze the order of output columns.
-	proj := LogicalProjection{Exprs: expression.Column2Exprs(p.Schema().Columns[:oldSchemaLen])}.Init(b.ctx, b.getSelectOffset())
-	proj.SetSchema(expression.NewSchema(make([]*expression.Column, oldSchemaLen)...))
-	proj.names = make(types.NameSlice, len(p.OutputNames()))
-	copy(proj.names, p.OutputNames())
-	copy(proj.schema.Columns, p.Schema().Columns[:oldSchemaLen])
+	var updateTableList []*ast.TableName
+	updateTableList = extractTableList(update.TableRefs.TableRefs, updateTableList, true)
+
+	proj, err := b.buildProj4UpdateSelectPlan(ctx, update, updateTableList, p, oldSchemaLen)
+	if err != nil {
+		return nil, err
+	}
 	proj.SetChildren(p)
 	p = proj
 
-	var updateTableList []*ast.TableName
-	updateTableList = extractTableList(update.TableRefs.TableRefs, updateTableList, true)
 	orderedList, np, allAssignmentsAreConstant, err := b.buildUpdateLists(ctx, updateTableList, update.List, p)
 	if err != nil {
 		return nil, err
