@@ -223,10 +223,6 @@ func (c *Context) StmtAddDirtyTableOP(op int, tid int64, handle int64) {
 func (c *Context) PrepareTxnFuture(ctx context.Context) {
 }
 
-// Close implements the sessionctx.Context interface.
-func (c *Context) Close() {
-}
-
 // NewContext creates a new mocked sessionctx.Context.
 func NewContext() *Context {
 	ctx, cancel := context.WithCancel(context.Background())
