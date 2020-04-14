@@ -4886,6 +4886,22 @@ func (s *testParserSuite) TestStartTransaction(c *C) {
 	s.RunTest(c, cases)
 }
 
+func (s *testParserSuite) TestSignedInt64OutOfRange(c *C) {
+	p := parser.New()
+	cases := []string{
+		"recover table by job 18446744073709551612",
+		"recover table t 18446744073709551612",
+		"admin check index t idx (0, 18446744073709551612)",
+		"create user abc@def with max_queries_per_hour 18446744073709551612",
+	}
+
+	for _, s := range cases {
+		_, err := p.ParseOneStmt(s, "", "")
+		c.Assert(err, NotNil)
+		c.Assert(strings.Contains(err.Error(), "out of range"), IsTrue)
+	}
+}
+
 // CleanNodeText set the text of node and all child node empty.
 // For test only.
 func CleanNodeText(node ast.Node) {
