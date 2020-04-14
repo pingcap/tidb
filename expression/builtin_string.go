@@ -273,17 +273,26 @@ func (c *concatFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	if bf.tp.Flen >= mysql.MaxBlobWidth {
 		bf.tp.Flen = mysql.MaxBlobWidth
 	}
-	sig := &builtinConcatSig{bf}
+
+	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
+	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
+	if err != nil {
+		return nil, err
+	}
+
+	sig := &builtinConcatSig{bf, maxAllowedPacket}
 	return sig, nil
 }
 
 type builtinConcatSig struct {
 	baseBuiltinFunc
+	maxAllowedPacket uint64
 }
 
 func (b *builtinConcatSig) Clone() builtinFunc {
 	newSig := &builtinConcatSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.maxAllowedPacket = b.maxAllowedPacket
 	return newSig
 }
 
@@ -295,6 +304,10 @@ func (b *builtinConcatSig) evalString(row chunk.Row) (d string, isNull bool, err
 		d, isNull, err = a.EvalString(b.ctx, row)
 		if isNull || err != nil {
 			return d, isNull, errors.Trace(err)
+		}
+		if uint64(len(s)+len(d)) > b.maxAllowedPacket {
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("concat", b.maxAllowedPacket))
+			return "", true, nil
 		}
 		s = append(s, []byte(d)...)
 	}
@@ -338,17 +351,25 @@ func (c *concatWSFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		bf.tp.Flen = mysql.MaxBlobWidth
 	}
 
-	sig := &builtinConcatWSSig{bf}
+	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
+	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
+	if err != nil {
+		return nil, err
+	}
+
+	sig := &builtinConcatWSSig{bf, maxAllowedPacket}
 	return sig, nil
 }
 
 type builtinConcatWSSig struct {
 	baseBuiltinFunc
+	maxAllowedPacket uint64
 }
 
 func (b *builtinConcatWSSig) Clone() builtinFunc {
 	newSig := &builtinConcatWSSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.maxAllowedPacket = b.maxAllowedPacket
 	return newSig
 }
 
@@ -358,25 +379,35 @@ func (b *builtinConcatWSSig) evalString(row chunk.Row) (string, bool, error) {
 	args := b.getArgs()
 	strs := make([]string, 0, len(args))
 	var sep string
-	for i, arg := range args {
-		val, isNull, err := arg.EvalString(b.ctx, row)
+	var targetLength int
+
+	N := len(args)
+	if N > 0 {
+		val, isNull, err := args[0].EvalString(b.ctx, row)
+		if err != nil || isNull {
+			// If the separator is NULL, the result is NULL.
+			return val, isNull, err
+		}
+		sep = val
+	}
+	for i := 1; i < N; i++ {
+		val, isNull, err := args[i].EvalString(b.ctx, row)
 		if err != nil {
 			return val, isNull, errors.Trace(err)
 		}
-
 		if isNull {
-			// If the separator is NULL, the result is NULL.
-			if i == 0 {
-				return val, isNull, nil
-			}
 			// CONCAT_WS() does not skip empty strings. However,
 			// it does skip any NULL values after the separator argument.
 			continue
 		}
 
-		if i == 0 {
-			sep = val
-			continue
+		targetLength += len(val)
+		if i > 1 {
+			targetLength += len(sep)
+		}
+		if uint64(targetLength) > b.maxAllowedPacket {
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("concat_ws", b.maxAllowedPacket))
+			return "", true, nil
 		}
 		strs = append(strs, val)
 	}

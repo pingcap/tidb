@@ -231,6 +231,9 @@ func NewContext() *Context {
 	sctx.sessionVars.MaxChunkSize = 2
 	sctx.sessionVars.StmtCtx.TimeZone = time.UTC
 	sctx.sessionVars.GlobalVarsAccessor = variable.NewMockGlobalAccessor()
+	if err := sctx.GetSessionVars().SetSystemVar(variable.MaxAllowedPacket, "67108864"); err != nil {
+		panic(err)
+	}
 	return sctx
 }
 
