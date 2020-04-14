@@ -268,6 +268,8 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 		f = &builtinArithmeticMinusRealSig{base}
 	case tipb.ScalarFuncSig_MultiplyInt:
 		f = &builtinArithmeticMultiplyIntSig{base}
+	case tipb.ScalarFuncSig_MultiplyIntUnsigned:
+		f = &builtinArithmeticMultiplyIntUnsignedSig{base}
 	case tipb.ScalarFuncSig_MultiplyDecimal:
 		f = &builtinArithmeticMultiplyDecimalSig{base}
 	case tipb.ScalarFuncSig_MultiplyReal:
@@ -320,8 +322,12 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 	case tipb.ScalarFuncSig_BitNegSig:
 		f = &builtinBitNegSig{base}
 
-	case tipb.ScalarFuncSig_UnaryNot:
-		f = &builtinUnaryNotSig{base}
+	case tipb.ScalarFuncSig_UnaryNotReal:
+		f = &builtinUnaryNotRealSig{base}
+	case tipb.ScalarFuncSig_UnaryNotDecimal:
+		f = &builtinUnaryNotDecimalSig{base}
+	case tipb.ScalarFuncSig_UnaryNotInt:
+		f = &builtinUnaryNotIntSig{base}
 	case tipb.ScalarFuncSig_UnaryMinusInt:
 		f = &builtinUnaryMinusIntSig{base}
 	case tipb.ScalarFuncSig_UnaryMinusReal:
@@ -382,6 +388,12 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 		f = &builtinRealIsTrueSig{base, false}
 	case tipb.ScalarFuncSig_DecimalIsTrue:
 		f = &builtinDecimalIsTrueSig{base, false}
+	case tipb.ScalarFuncSig_ModInt:
+		f = &builtinArithmeticModIntSig{base}
+	case tipb.ScalarFuncSig_ModReal:
+		f = &builtinArithmeticModRealSig{base}
+	case tipb.ScalarFuncSig_ModDecimal:
+		f = &builtinArithmeticModDecimalSig{base}
 
 	case tipb.ScalarFuncSig_IfNullReal:
 		f = &builtinIfNullRealSig{base}
@@ -461,6 +473,7 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 		e = errFunctionNotExists.GenWithStackByArgs("FUNCTION", sigCode)
 		return nil, errors.Trace(e)
 	}
+	f.setPbCode(sigCode)
 	return f, nil
 }
 

@@ -214,6 +214,10 @@ func (col *Column) EvalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, 
 		if val.IsNull() {
 			return 0, true, nil
 		}
+		if val.Kind() == types.KindMysqlBit {
+			val, err := val.GetBinaryLiteral().ToInt(ctx.GetSessionVars().StmtCtx)
+			return int64(val), err != nil, err
+		}
 		res, err := val.ToInt64(ctx.GetSessionVars().StmtCtx)
 		return res, err != nil, errors.Trace(err)
 	}
