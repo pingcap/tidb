@@ -173,6 +173,14 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms ~ 1000s
 			Help:      "batch client unavailable",
 		})
+	TiKVBatchClientWaitEstablish = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "tikvclient",
+			Name:      "batch_client_wait_connection_establish",
+			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms ~ 1000s
+			Help:      "batch client wait new connection establish",
+		})
 
 	TiKVRangeTaskStats = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
@@ -223,5 +231,13 @@ var (
 			Subsystem: "tikvclient",
 			Name:      "ttl_lifetime_reach_total",
 			Help:      "Counter of ttlManager live too long.",
+		})
+
+	TiKVNoAvailableConnectionCounter = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "tikvclient",
+			Name:      "batch_client_no_available_connection_total",
+			Help:      "Counter of no available batch client.",
 		})
 )
