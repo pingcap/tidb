@@ -58,15 +58,10 @@ import (
 
 const expressionIndexPrefix = "_V$"
 
-type charsetCollate struct {
-	chs  string
-	coll string
-}
-
 func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt) error {
 	dbInfo := &model.DBInfo{Name: schema}
 	if charsetInfo != nil {
-		chs, coll, err := ResolveCharsetCollation(charsetCollate{charsetInfo.Chs, charsetInfo.Col})
+		chs, coll, err := ResolveCharsetCollation(ast.CharsetOpt{Chs: charsetInfo.Chs, Col: charsetInfo.Col})
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -313,26 +308,26 @@ func buildColumnsAndConstraints(
 }
 
 // ResolveCharsetCollation will resolve the charset and collate by the order of parameters:
-// * If any given charsetCollate is not empty, the resolved charset and collate will be returned.
-// * If all charsetCollates are empty, the default charset and collate will be returned.
-func ResolveCharsetCollation(charsetCollates ...charsetCollate) (string, string, error) {
-	for _, v := range charsetCollates {
-		if v.coll != "" {
-			collation, err := collate.GetCollationByName(v.coll)
+// * If any given ast.CharsetOpt is not empty, the resolved charset and collate will be returned.
+// * If all ast.CharsetOpts are empty, the default charset and collate will be returned.
+func ResolveCharsetCollation(charsetOpts ...ast.CharsetOpt) (string, string, error) {
+	for _, v := range charsetOpts {
+		if v.Col != "" {
+			collation, err := collate.GetCollationByName(v.Col)
 			if err != nil {
 				return "", "", errors.Trace(err)
 			}
-			if v.chs != "" && collation.CharsetName != v.chs {
-				return "", "", charset.ErrCollationCharsetMismatch.GenWithStackByArgs(v.coll, v.chs)
+			if v.Chs != "" && collation.CharsetName != v.Chs {
+				return "", "", charset.ErrCollationCharsetMismatch.GenWithStackByArgs(v.Col, v.Chs)
 			}
-			return collation.CharsetName, v.coll, nil
+			return collation.CharsetName, v.Col, nil
 		}
-		if v.chs != "" {
-			coll, err := charset.GetDefaultCollation(v.chs)
+		if v.Chs != "" {
+			coll, err := charset.GetDefaultCollation(v.Chs)
 			if err != nil {
 				return "", "", errors.Trace(err)
 			}
-			return v.chs, coll, err
+			return v.Chs, coll, err
 		}
 	}
 	chs, coll := charset.GetDefaultCharsetAndCollate()
@@ -391,8 +386,8 @@ func buildColumnAndConstraint(
 		return nil, nil, errors.Trace(err)
 	}
 	chs, coll, err = ResolveCharsetCollation(
-		charsetCollate{chs, coll},
-		charsetCollate{tblCharset, tblCollate},
+		ast.CharsetOpt{Chs: chs, Col: coll},
+		ast.CharsetOpt{Chs: tblCharset, Col: tblCollate},
 	)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
@@ -1389,8 +1384,8 @@ func buildTableInfoWithStmt(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCh
 		return nil, errors.Trace(err)
 	}
 	tableCharset, tableCollate, err = ResolveCharsetCollation(
-		charsetCollate{tableCharset, tableCollate},
-		charsetCollate{dbCharset, dbCollate},
+		ast.CharsetOpt{Chs: tableCharset, Col: tableCollate},
+		ast.CharsetOpt{Chs: dbCharset, Col: dbCollate},
 	)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -2340,8 +2335,8 @@ func checkAndCreateNewColumn(ctx sessionctx.Context, ti ast.Ident, schema *model
 	}
 
 	tableCharset, tableCollate, err := ResolveCharsetCollation(
-		charsetCollate{t.Meta().Charset, t.Meta().Collate},
-		charsetCollate{schema.Charset, schema.Collate},
+		ast.CharsetOpt{Chs: t.Meta().Charset, Col: t.Meta().Collate},
+		ast.CharsetOpt{Chs: schema.Charset, Col: schema.Collate},
 	)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -3075,9 +3070,9 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 			return nil, errors.Trace(err)
 		}
 		chs, coll, err = ResolveCharsetCollation(
-			charsetCollate{chs, coll},
-			charsetCollate{t.Meta().Charset, t.Meta().Collate},
-			charsetCollate{schema.Charset, schema.Collate},
+			ast.CharsetOpt{Chs: chs, Col: coll},
+			ast.CharsetOpt{Chs: t.Meta().Charset, Col: t.Meta().Collate},
+			ast.CharsetOpt{Chs: schema.Charset, Col: schema.Collate},
 		)
 	}
 
@@ -3591,8 +3586,8 @@ func checkAlterTableCharset(tblInfo *model.TableInfo, dbInfo *model.DBInfo, toCh
 	// The table charset may be "", if the table is create in old TiDB version, such as v2.0.8.
 	// This DDL will update the table charset to default charset.
 	origCharset, origCollate, err = ResolveCharsetCollation(
-		charsetCollate{origCharset, origCollate},
-		charsetCollate{dbInfo.Charset, dbInfo.Collate},
+		ast.CharsetOpt{Chs: origCharset, Col: origCollate},
+		ast.CharsetOpt{Chs: dbInfo.Charset, Col: dbInfo.Collate},
 	)
 
 	if err = checkModifyCharsetAndCollation(toCharset, toCollate, origCharset, origCollate, false); err != nil {
