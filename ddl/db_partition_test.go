@@ -291,6 +291,17 @@ func (s *testIntegrationSuite2) TestCreateTableWithHashPartition(c *C) {
 		store_id int
 	)
 	partition by hash( year(hired) ) partitions 4;`)
+
+	// This query makes tidb OOM without partition count check.
+	tk.MustGetErrCode(`CREATE TABLE employees (
+    id INT NOT NULL,
+    fname VARCHAR(30),
+    lname VARCHAR(30),
+    hired DATE NOT NULL DEFAULT '1970-01-01',
+    separated DATE NOT NULL DEFAULT '9999-12-31',
+    job_code INT,
+    store_id INT
+) PARTITION BY HASH(store_id) PARTITIONS 102400000000;`, tmysql.ErrTooManyPartitions)
 }
 
 func (s *testIntegrationSuite1) TestCreateTableWithRangeColumnPartition(c *C) {
@@ -416,6 +427,9 @@ func (s *testIntegrationSuite3) TestCreateTableWithKeyPartition(c *C) {
 		s1 char(32) primary key
 	)
 	partition by key(s1) partitions 10;`)
+
+	tk.MustExec(`drop table if exists tm2`)
+	tk.MustExec(`create table tm2 (a char(5), unique key(a(5))) partition by key() partitions 5;`)
 }
 
 func (s *testIntegrationSuite5) TestAlterTableAddPartition(c *C) {

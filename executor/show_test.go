@@ -649,6 +649,32 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 	tk.MustExec("drop sequence if exists seq")
 	tk.MustExec("create sequence seq")
 	tk.MustQuery("show create table seq;").Check(testkit.Rows("seq CREATE SEQUENCE `seq` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 cache 1000 nocycle ENGINE=InnoDB"))
+
+	// Test for issue #15633, 'binary' collation should be ignored in the result of 'show create table'.
+	tk.MustExec(`drop table if exists binary_collate`)
+	tk.MustExec(`create table binary_collate(a varchar(10)) default collate=binary;`)
+	tk.MustQuery(`show create table binary_collate`).Check(testutil.RowsWithSep("|",
+		""+
+			"binary_collate CREATE TABLE `binary_collate` (\n"+
+			"  `a` varbinary(10) DEFAULT NULL\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=binary", // binary collate is ignored
+	))
+	tk.MustExec(`drop table if exists binary_collate`)
+	tk.MustExec(`create table binary_collate(a varchar(10)) default charset=binary collate=binary;`)
+	tk.MustQuery(`show create table binary_collate`).Check(testutil.RowsWithSep("|",
+		""+
+			"binary_collate CREATE TABLE `binary_collate` (\n"+
+			"  `a` varbinary(10) DEFAULT NULL\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=binary", // binary collate is ignored
+	))
+	tk.MustExec(`drop table if exists binary_collate`)
+	tk.MustExec(`create table binary_collate(a varchar(10)) default charset=utf8mb4 collate=utf8mb4_bin;`)
+	tk.MustQuery(`show create table binary_collate`).Check(testutil.RowsWithSep("|",
+		""+
+			"binary_collate CREATE TABLE `binary_collate` (\n"+
+			"  `a` varchar(10) DEFAULT NULL\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin", // non-binary collate is kept.
+	))
 }
 
 func (s *testAutoRandomSuite) TestShowCreateTableAutoRandom(c *C) {
@@ -688,6 +714,42 @@ func (s *testAutoRandomSuite) TestShowCreateTableAutoRandom(c *C) {
 			"  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(5) */,\n"+
 			"  PRIMARY KEY (`a`)\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+}
+
+// Override testAutoRandomSuite to test auto id cache.
+func (s *testAutoRandomSuite) TestAutoIdCache(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int auto_increment key) auto_id_cache = 10")
+	tk.MustQuery("show create table t").Check(testutil.RowsWithSep("|",
+		""+
+			"t CREATE TABLE `t` (\n"+
+			"  `a` int(11) NOT NULL AUTO_INCREMENT,\n"+
+			"  PRIMARY KEY (`a`)\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_id_cache] AUTO_ID_CACHE=10 */",
+	))
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int auto_increment unique, b int key) auto_id_cache 100")
+	tk.MustQuery("show create table t").Check(testutil.RowsWithSep("|",
+		""+
+			"t CREATE TABLE `t` (\n"+
+			"  `a` int(11) NOT NULL AUTO_INCREMENT,\n"+
+			"  `b` int(11) NOT NULL,\n"+
+			"  PRIMARY KEY (`b`),\n"+
+			"  UNIQUE KEY `a` (`a`)\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_id_cache] AUTO_ID_CACHE=100 */",
+	))
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int key) auto_id_cache 5")
+	tk.MustQuery("show create table t").Check(testutil.RowsWithSep("|",
+		""+
+			"t CREATE TABLE `t` (\n"+
+			"  `a` int(11) NOT NULL,\n"+
+			"  PRIMARY KEY (`a`)\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_id_cache] AUTO_ID_CACHE=5 */",
 	))
 }
 

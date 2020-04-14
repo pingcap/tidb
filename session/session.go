@@ -1306,8 +1306,12 @@ func (s *session) CommonExec(ctx context.Context,
 	if err != nil {
 		return nil, err
 	}
+	sessionExecuteCompileDurationGeneral.Observe(time.Since(s.sessionVars.StartTime).Seconds())
+	startTime := time.Now()
 	logQuery(st.OriginText(), s.sessionVars)
-	return runStmt(ctx, s, st)
+	recordSet, err := runStmt(ctx, s, st)
+	sessionExecuteRunDurationGeneral.Observe(time.Since(startTime).Seconds())
+	return recordSet, err
 }
 
 // CachedPlanExec short path currently ONLY for cached "point select plan" execution
@@ -1335,7 +1339,11 @@ func (s *session) CachedPlanExec(ctx context.Context,
 		OutputNames: execPlan.OutputNames(),
 		PsStmt:      prepareStmt,
 	}
-	s.GetSessionVars().DurationCompile = time.Since(s.sessionVars.StartTime)
+	compileDuration := time.Since(s.sessionVars.StartTime)
+	sessionExecuteCompileDurationGeneral.Observe(compileDuration.Seconds())
+	s.GetSessionVars().DurationCompile = compileDuration
+
+	startTime := time.Now()
 	stmt.Text = prepared.Stmt.Text()
 	stmtCtx.OriginalSQL = stmt.Text
 	stmtCtx.InitSQLDigest(prepareStmt.NormalizedSQL, prepareStmt.SQLDigest)
@@ -1356,6 +1364,7 @@ func (s *session) CachedPlanExec(ctx context.Context,
 		prepared.CachedPlan = nil
 		return nil, errors.Errorf("invalid cached plan type")
 	}
+	sessionExecuteRunDurationGeneral.Observe(time.Since(startTime).Seconds())
 	return resultSet, err
 }
 
@@ -2043,6 +2052,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBEnableNoopFuncs,
 	variable.TiDBEnableIndexMerge,
 	variable.TiDBTxnMode,
+	variable.TiDBAllowBatchCop,
 	variable.TiDBRowFormatVersion,
 	variable.TiDBEnableStmtSummary,
 	variable.TiDBStmtSummaryInternalQuery,
