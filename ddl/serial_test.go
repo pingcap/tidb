@@ -478,8 +478,8 @@ func (s *testSerialSuite) TestRecoverTableByJobID(c *C) {
 	// Otherwise emulator GC will delete table record as soon as possible after execute drop table ddl.
 	ddl.EmulatorGCDisable()
 	gcTimeFormat := "20060102-15:04:05 -0700 MST"
-	timeBeforeDrop := time.Now().Add(0 - time.Duration(48*60*60*time.Second)).Format(gcTimeFormat)
-	timeAfterDrop := time.Now().Add(time.Duration(48 * 60 * 60 * time.Second)).Format(gcTimeFormat)
+	timeBeforeDrop := time.Now().Add(0 - 48*60*60*time.Second).Format(gcTimeFormat)
+	timeAfterDrop := time.Now().Add(48 * 60 * 60 * time.Second).Format(gcTimeFormat)
 	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
 			       ON DUPLICATE KEY
 			       UPDATE variable_value = '%[1]s'`
@@ -514,7 +514,7 @@ func (s *testSerialSuite) TestRecoverTableByJobID(c *C) {
 	// if GC enable is not exists in mysql.tidb
 	_, err = tk.Exec(fmt.Sprintf("recover table by job %d", jobID))
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:-1]current error msg: Cancelled DDL job, original error msg: can not get 'tikv_gc_enable'")
+	c.Assert(err.Error(), Equals, "[ddl:-1]can not get 'tikv_gc_enable'")
 
 	err = gcutil.EnableGC(tk.Se)
 	c.Assert(err, IsNil)
@@ -595,7 +595,7 @@ func (s *testSerialSuite) TestRecoverTableByJobIDFail(c *C) {
 	// Otherwise emulator GC will delete table record as soon as possible after execute drop table ddl.
 	ddl.EmulatorGCDisable()
 	gcTimeFormat := "20060102-15:04:05 -0700 MST"
-	timeBeforeDrop := time.Now().Add(0 - time.Duration(48*60*60*time.Second)).Format(gcTimeFormat)
+	timeBeforeDrop := time.Now().Add(0 - 48*60*60*time.Second).Format(gcTimeFormat)
 	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
 			       ON DUPLICATE KEY
 			       UPDATE variable_value = '%[1]s'`
@@ -664,7 +664,7 @@ func (s *testSerialSuite) TestRecoverTableByTableNameFail(c *C) {
 	// Otherwise emulator GC will delete table record as soon as possible after execute drop table ddl.
 	ddl.EmulatorGCDisable()
 	gcTimeFormat := "20060102-15:04:05 -0700 MST"
-	timeBeforeDrop := time.Now().Add(0 - time.Duration(48*60*60*time.Second)).Format(gcTimeFormat)
+	timeBeforeDrop := time.Now().Add(0 - 48*60*60*time.Second).Format(gcTimeFormat)
 	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
 			       ON DUPLICATE KEY
 			       UPDATE variable_value = '%[1]s'`
@@ -723,7 +723,7 @@ func (s *testSerialSuite) TestCancelJobByErrorCountLimit(c *C) {
 
 	_, err = tk.Exec("create table t (a int)")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:-1]current error msg: Cancelled DDL job, original error msg: mock do job error")
+	c.Assert(err.Error(), Equals, "[ddl:-1]DDL job rollback, error msg: mock do job error")
 }
 
 func (s *testSerialSuite) TestCanceledJobTakeTime(c *C) {
