@@ -216,11 +216,9 @@
       {
         "SQL": "explain select /*+ USE_INDEX_MERGE(t, a, b, c) */ * from t where 1 or t.a = 1 or t.b = 2",
         "Plan": [
-          "IndexMerge_9 10000.00 root  ",
-          "├─IndexFullScan_5(Build) 10000.00 cop[tikv] table:t, index:a(a) keep order:false, stats:pseudo",
-          "├─IndexRangeScan_6(Build) 1.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false, stats:pseudo",
-          "├─IndexRangeScan_7(Build) 1.00 cop[tikv] table:t, index:b(b) range:[2,2], keep order:false, stats:pseudo",
-          "└─TableRowIDScan_8(Probe) 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "TableReader_7 8000.00 root  data:Selection_6",
+          "└─Selection_6 8000.00 cop[tikv]  or(or(1, eq(test.t.a, 1)), eq(test.t.b, 2))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       }
     ]
