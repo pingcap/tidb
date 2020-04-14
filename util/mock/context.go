@@ -215,6 +215,10 @@ func (c *Context) StmtGetMutation(tableID int64) *binlog.TableMutation {
 func (c *Context) StmtAddDirtyTableOP(op int, tid int64, handle int64, row []types.Datum) {
 }
 
+// PrepareTxnFuture implements the sessionctx.Context interface.
+func (c *Context) PrepareTxnFuture(ctx context.Context) {
+}
+
 // NewContext creates a new mocked sessionctx.Context.
 func NewContext() *Context {
 	ctx, cancel := context.WithCancel(context.Background())
