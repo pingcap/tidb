@@ -2165,24 +2165,7 @@ func (s *testSuite4) TestLoadDataEscape(c *C) {
 		{nil, []byte("6\t\\r\\t\\n\\0\\Z\\b\n"), []string{"6|" + string([]byte{'\r', '\t', '\n', 0, 26, '\b'})}, nil, trivialMsg},
 		{nil, []byte("7\trtn0ZbN\n"), []string{"7|" + string([]byte{'r', 't', 'n', '0', 'Z', 'b', 'N'})}, nil, trivialMsg},
 		{nil, []byte("8\trtn0Zb\\N\n"), []string{"8|" + string([]byte{'r', 't', 'n', '0', 'Z', 'b', 'N'})}, nil, trivialMsg},
-	}
-	deleteSQL := "delete from load_data_test"
-	selectSQL := "select * from load_data_test;"
-	checkCases(tests, ld, c, tk, ctx, selectSQL, deleteSQL)
-}
-
-func (s *testSuite4) TestLoadDataEscaped(c *C) {
-	trivialMsg := "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test; drop table if exists load_data_test;")
-	tk.MustExec(`create table load_data_test (id int PRIMARY KEY AUTO_INCREMENT, c2 varchar(255));`)
-	ctx := tk.Se.(sessionctx.Context)
-	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataInfo)
-	c.Assert(ok, IsTrue)
-	defer ctx.SetValue(executor.LoadDataVarKey, nil)
-	c.Assert(ld, NotNil)
-	tests := []testCase{
-		{[]byte("1"), []byte("tab\\	tab\n"), []string{"1|tab	tab"}, nil, trivialMsg},
+		{nil, []byte("9\ttab\\	tab\n"), []string{"9|tab	tab"}, nil, trivialMsg},
 	}
 	deleteSQL := "delete from load_data_test"
 	selectSQL := "select * from load_data_test;"
