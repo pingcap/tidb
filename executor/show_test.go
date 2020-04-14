@@ -19,7 +19,6 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/kvproto/pkg/configpb"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -791,66 +790,4 @@ func (s *testSuite5) TestShowBuiltin(c *C) {
 	c.Assert(268, Equals, len(rows))
 	c.Assert("abs", Equals, rows[0][0].(string))
 	c.Assert("yearweek", Equals, rows[267][0].(string))
-}
-
-type mockConfigClient struct {
-	confItems []*configpb.LocalConfig
-}
-
-func (c *mockConfigClient) GetClusterID(ctx context.Context) uint64 { return 0 }
-func (c *mockConfigClient) Create(ctx context.Context, v *configpb.Version, component, componentID, config string) (*configpb.Status, *configpb.Version, string, error) {
-	return nil, nil, "", nil
-}
-func (c *mockConfigClient) Get(ctx context.Context, v *configpb.Version, component, componentID string) (*configpb.Status, *configpb.Version, string, error) {
-	return nil, nil, "", nil
-}
-func (c *mockConfigClient) Update(ctx context.Context, v *configpb.Version, kind *configpb.ConfigKind, entries []*configpb.ConfigEntry) (*configpb.Status, *configpb.Version, error) {
-	return nil, nil, nil
-}
-func (c *mockConfigClient) Delete(ctx context.Context, v *configpb.Version, kind *configpb.ConfigKind) (*configpb.Status, error) {
-	return nil, nil
-}
-func (c *mockConfigClient) Close() {}
-
-func (c *mockConfigClient) GetAll(ctx context.Context) (*configpb.Status, []*configpb.LocalConfig, error) {
-	return &configpb.Status{Code: configpb.StatusCode_OK}, c.confItems, nil
-}
-
-type testClusterConfig struct {
-	*baseTestSuite
-}
-
-func (s *testClusterConfig) TestClusterConfig(c *C) {
-	pdCli := new(mockConfigClient)
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.Se.SetValue(executor.PDConfigClientKey, pdCli)
-	c.Assert(len(tk.MustQuery("show config").Rows()), Equals, 0)
-
-	conf := `
-[log]
-level='info'
-foamat='text'`
-	pdCli.confItems = append(pdCli.confItems, &configpb.LocalConfig{
-		Component:   "tikv",
-		ComponentId: "127.0.0.1",
-		Config:      conf,
-	})
-	pdCli.confItems = append(pdCli.confItems, &configpb.LocalConfig{
-		Component:   "pd",
-		ComponentId: "127.0.0.2",
-		Config:      conf,
-	})
-
-	tk.MustQuery("show config").Sort().Check(
-		testkit.Rows("pd 127.0.0.2 log.foamat text",
-			"pd 127.0.0.2 log.level info",
-			"tikv 127.0.0.1 log.foamat text",
-			"tikv 127.0.0.1 log.level info"))
-	tk.MustQuery("show config where type='pd'").Sort().Check(
-		testkit.Rows("pd 127.0.0.2 log.foamat text",
-			"pd 127.0.0.2 log.level info"))
-	tk.MustQuery("show config where name='log.level'").Sort().Check(
-		testkit.Rows("pd 127.0.0.2 log.level info",
-			"tikv 127.0.0.1 log.level info"))
 }
