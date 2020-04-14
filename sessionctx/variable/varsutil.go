@@ -160,6 +160,8 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 		return string(s.PlanCacheMisses), true, nil
 	case TiDBPlanCacheLastUpdated:
 		return s.PlanLastUpdated, true, nil
+	case TiDBEnableCollectExecutionInfo:
+		return BoolToIntStr(config.GetGlobalConfig().EnableCollectExecutionInfo), true, nil
 	}
 	sVal, ok := s.GetSystemVar(key)
 	if ok {
@@ -427,7 +429,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		TiDBCheckMb4ValueInUTF8, TiDBEnableSlowLog, TiDBRecordPlanInSlowLog,
 		TiDBScatterRegion, TiDBGeneralLog, TiDBConstraintCheckInPlace,
 		TiDBEnableVectorizedExpression, TiDBFoundInPlanCache, TiDBPlanCacheHitCount,
-		TiDBPlanCacheMissCount, TiDBPlanCacheLastUpdated:
+		TiDBPlanCacheMissCount, TiDBPlanCacheLastUpdated, TiDBEnableCollectExecutionInfo:
 		fallthrough
 	case GeneralLog, AvoidTemporalUpgrade, BigTables, CheckProxyUsers, LogBin,
 		CoreFile, EndMakersInJSON, SQLLogBin, OfflineMode, PseudoSlaveMode, LowPriorityUpdates,

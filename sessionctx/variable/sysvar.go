@@ -722,6 +722,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, TiDBPlanCacheHitCount, strconv.Itoa(DefTiDBPlanCacheHitCount)},
 	{ScopeSession, TiDBPlanCacheMissCount, strconv.Itoa(DefTiDBPlanCacheMissCount)},
 	{ScopeSession, TiDBPlanCacheLastUpdated, DefTiDBPlanCacheLastUpdated},
+	{ScopeSession, TiDBEnableCollectExecutionInfo, BoolToIntStr(logutil.DefaultTiDBEnableSlowLog)},
 }
 
 // SynonymsSysVariables is synonyms of system variables.

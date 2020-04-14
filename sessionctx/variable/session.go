@@ -1293,6 +1293,13 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.PlanCacheMisses = uint64(tidbOptInt64(val, DefTiDBPlanCacheMissCount))
 	case TiDBPlanCacheLastUpdated:
 		s.PlanLastUpdated = val
+	case TiDBEnableCollectExecutionInfo:
+		conf := config.GetGlobalConfig()
+		if !conf.EnableDynamicConfig {
+			config.GetGlobalConfig().EnableCollectExecutionInfo = TiDBOptOn(val)
+		} else {
+			s.StmtCtx.AppendWarning(errors.Errorf("cannot update %s when enabling dynamic configs", TiDBEnableCollectExecutionInfo))
+		}
 	}
 	s.systems[name] = val
 	return nil

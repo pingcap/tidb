@@ -400,6 +400,9 @@ const (
 
 	// TiDBMetricSchemaRangeDuration indicates the range duration when query metric schema.
 	TiDBMetricSchemaRangeDuration = "tidb_metric_query_range_duration"
+
+	// TiDBEnableCollectExecutionInfo indicates that whether execution info is collected.
+	TiDBEnableCollectExecutionInfo = "tidb_enable_collect_execution_info"
 )
 
 // Default TiDB system variable values.
@@ -497,6 +500,7 @@ const (
 	DefTiDBPlanCacheLastUpdated        = "NO CHANGE"
 	DefTiDBPlanCacheHitCount           = 0
 	DefTiDBPlanCacheMissCount          = 0
+	DefTidbEnableCollectExecutionInfo  = false
 )
 
 // Process global variables.
