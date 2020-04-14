@@ -580,38 +580,6 @@ func (p *PhysicalMergeJoin) attach2Task(tasks ...task) task {
 	}
 }
 
-// splitCopAvg2CountAndSum splits the cop avg function to count and sum.
-// Now it's only used for TableReader.
-func splitCopAvg2CountAndSum(p PhysicalPlan) {
-	var baseAgg *basePhysicalAgg
-	if agg, ok := p.(*PhysicalStreamAgg); ok {
-		baseAgg = &agg.basePhysicalAgg
-	}
-	if agg, ok := p.(*PhysicalHashAgg); ok {
-		baseAgg = &agg.basePhysicalAgg
-	}
-	if baseAgg == nil {
-		return
-	}
-
-	schemaCursor := len(baseAgg.Schema().Columns) - len(baseAgg.GroupByItems)
-	for i := len(baseAgg.AggFuncs) - 1; i >= 0; i-- {
-		f := baseAgg.AggFuncs[i]
-		schemaCursor--
-		if f.Name == ast.AggFuncAvg {
-			schemaCursor--
-			sumAgg := *f
-			sumAgg.Name = ast.AggFuncSum
-			sumAgg.RetTp = baseAgg.Schema().Columns[schemaCursor+1].RetType
-			cntAgg := *f
-			cntAgg.Name = ast.AggFuncCount
-			cntAgg.RetTp = baseAgg.Schema().Columns[schemaCursor].RetType
-			cntAgg.RetTp.Flag = f.RetTp.Flag
-			baseAgg.AggFuncs = append(baseAgg.AggFuncs[:i], append([]*aggregation.AggFuncDesc{&cntAgg, &sumAgg}, baseAgg.AggFuncs[i+1:]...)...)
-		}
-	}
-}
-
 func buildIndexLookUpTask(ctx sessionctx.Context, t *copTask) *rootTask {
 	newTask := &rootTask{cst: t.cst}
 	sessVars := ctx.GetSessionVars()
@@ -697,7 +665,6 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 		newTask.p = p
 	} else {
 		tp := t.tablePlan
-		splitCopAvg2CountAndSum(tp)
 		for len(tp.Children()) > 0 {
 			tp = tp.Children()[0]
 		}
@@ -1025,7 +992,7 @@ type AggInfo struct {
 // BuildFinalModeAggregation splits either LogicalAggregation or PhysicalAggregation to finalAgg and partial1Agg,
 // returns the body of finalAgg and the schema of partialAgg.
 func BuildFinalModeAggregation(
-	sctx sessionctx.Context, original *AggInfo) (partial, final *AggInfo, funcMap map[*aggregation.AggFuncDesc]*aggregation.AggFuncDesc) {
+	sctx sessionctx.Context, original *AggInfo, partialIsCop bool) (partial, final *AggInfo, funcMap map[*aggregation.AggFuncDesc]*aggregation.AggFuncDesc) {
 
 	funcMap = make(map[*aggregation.AggFuncDesc]*aggregation.AggFuncDesc, len(original.AggFuncs))
 	partial = &AggInfo{
@@ -1096,10 +1063,17 @@ func BuildFinalModeAggregation(
 					}
 					partialGbySchema.Append(gbyCol)
 					args = append(args, gbyCol)
+
+					if !partialIsCop {
+						// if partial agg is not cop, we must append fisrtrow function & schema
+						firstRow, _ := aggregation.NewAggFuncDesc(sctx, ast.AggFuncFirstRow, []expression.Expression{gbyCol}, false)
+						partial.AggFuncs = append(partial.AggFuncs, firstRow)
+						newCol, _ := gbyCol.Clone().(*expression.Column)
+						newCol.RetType = firstRow.RetTp
+						partial.Schema.Append(newCol)
+					}
 				}
 			}
-			// Just use groupBy items in Schema of partialAgg as arguments,
-			// no need to spawn FirstRow function.
 
 			finalAggFunc.HasDistinct = true
 			finalAggFunc.Mode = aggregation.CompleteMode
@@ -1122,7 +1096,18 @@ func BuildFinalModeAggregation(
 				args = append(args, partial.Schema.Columns[partialCursor])
 				partialCursor++
 			}
-			partial.AggFuncs = append(partial.AggFuncs, aggFunc)
+			if aggFunc.Name == ast.AggFuncAvg {
+				cntAgg := *aggFunc
+				cntAgg.Name = ast.AggFuncCount
+				cntAgg.RetTp = partial.Schema.Columns[partialCursor-2].GetType()
+				cntAgg.RetTp.Flag = aggFunc.RetTp.Flag
+				sumAgg := *aggFunc
+				sumAgg.Name = ast.AggFuncSum
+				sumAgg.RetTp = partial.Schema.Columns[partialCursor-1].GetType()
+				partial.AggFuncs = append(partial.AggFuncs, &cntAgg, &sumAgg)
+			} else {
+				partial.AggFuncs = append(partial.AggFuncs, aggFunc)
+			}
 
 			finalAggFunc.Mode = aggregation.FinalMode
 			funcMap[aggFunc] = finalAggFunc
@@ -1145,7 +1130,7 @@ func (p *basePhysicalAgg) newPartialAggregate(copTaskType kv.StoreType) (partial
 		AggFuncs:     p.AggFuncs,
 		GroupByItems: p.GroupByItems,
 		Schema:       p.Schema().Clone(),
-	})
+	}, true)
 	if p.tp == plancodec.TypeStreamAgg && len(partialPref.GroupByItems) != len(finalPref.GroupByItems) {
 		return nil, p.self
 	}

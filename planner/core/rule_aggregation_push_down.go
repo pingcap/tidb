@@ -275,6 +275,27 @@ func (a *aggregationPushDownSolver) makeNewAgg(ctx sessionctx.Context, aggFuncs 
 	return agg, nil
 }
 
+func (a *aggregationPushDownSolver) splitPartialAgg(agg *LogicalAggregation) (pushedAgg *LogicalAggregation) {
+	partial, final, _ := BuildFinalModeAggregation(agg.ctx, &AggInfo{
+		AggFuncs:     agg.AggFuncs,
+		GroupByItems: agg.GroupByItems,
+		Schema:       agg.schema,
+	}, false)
+	agg.SetSchema(final.Schema)
+	agg.AggFuncs = final.AggFuncs
+	agg.GroupByItems = final.GroupByItems
+	agg.collectGroupByColumns()
+
+	pushedAgg = LogicalAggregation{
+		AggFuncs:     partial.AggFuncs,
+		GroupByItems: partial.GroupByItems,
+		aggHints:     agg.aggHints,
+	}.Init(agg.ctx, agg.blockOffset)
+	pushedAgg.SetSchema(partial.Schema)
+	pushedAgg.collectGroupByColumns()
+	return
+}
+
 // pushAggCrossUnion will try to push the agg down to the union. If the new aggregation's group-by columns doesn't contain unique key.
 // We will return the new aggregation. Otherwise we will transform the aggregation to projection.
 func (a *aggregationPushDownSolver) pushAggCrossUnion(agg *LogicalAggregation, unionSchema *expression.Schema, unionChild LogicalPlan) LogicalPlan {
@@ -385,6 +406,7 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan) (_ LogicalPlan, e
 				if err != nil {
 					return nil, err
 				}
+				// pushedAgg := a.splitPartialAgg(agg)
 				newChildren := make([]LogicalPlan, 0, len(union.children))
 				for _, child := range union.children {
 					newChild := a.pushAggCrossUnion(pushedAgg, union.Schema(), child)
