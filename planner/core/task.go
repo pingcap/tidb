@@ -1063,18 +1063,6 @@ func BuildFinalModeAggregation(
 					}
 					partialGbySchema.Append(gbyCol)
 					args = append(args, gbyCol)
-
-					if !partialIsCop {
-						// if partial agg is not cop, we must append fisrtrow function & schema
-						firstRow, err := aggregation.NewAggFuncDesc(sctx, ast.AggFuncFirstRow, []expression.Expression{gbyCol}, false)
-						if err != nil {
-							panic("NewAggFuncDesc FirstRow meets error" + err.Error())
-						}
-						partial.AggFuncs = append(partial.AggFuncs, firstRow)
-						newCol, _ := gbyCol.Clone().(*expression.Column)
-						newCol.RetType = firstRow.RetTp
-						partial.Schema.Append(newCol)
-					}
 				}
 			}
 
@@ -1119,6 +1107,19 @@ func BuildFinalModeAggregation(
 		finalAggFunc.Args = args
 		finalAggFunc.RetTp = aggFunc.RetTp
 		final.AggFuncs[i] = finalAggFunc
+	}
+	if !partialIsCop {
+		for _, gbyCol := range partialGbySchema.Columns {
+			// if partial agg is not cop, we must append fisrtrow function & schema
+			firstRow, err := aggregation.NewAggFuncDesc(sctx, ast.AggFuncFirstRow, []expression.Expression{gbyCol}, false)
+			if err != nil {
+				panic("NewAggFuncDesc FirstRow meets error: " + err.Error())
+			}
+			partial.AggFuncs = append(partial.AggFuncs, firstRow)
+			newCol, _ := gbyCol.Clone().(*expression.Column)
+			newCol.RetType = firstRow.RetTp
+			partial.Schema.Append(newCol)
+		}
 	}
 	partial.Schema.Append(partialGbySchema.Columns...)
 	return
