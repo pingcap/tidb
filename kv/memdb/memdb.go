@@ -24,78 +24,8 @@ import (
 const (
 	maxHeight      = 16
 	nodeHeaderSize = int(unsafe.Sizeof(nodeHeader{}))
+	initBlockSize  = 4 * 1024
 )
-
-// DB is an in-memory key/value database.
-// TODO: use Sandbox directly and remove DB in later PR.
-type DB struct {
-	root Sandbox
-}
-
-// New creates a new initialized in-memory key/value DB.
-// The initBlockSize is the size of first block.
-// This DB is append-only, deleting an entry would remove entry node but not
-// reclaim KV buffer.
-func New(initBlockSize int) *DB {
-	arena := newArenaLocator(initBlockSize)
-	db := &DB{
-		root: Sandbox{
-			height:    1,
-			arena:     arena,
-			arenaSnap: arena.snapshot(),
-		},
-	}
-	return db
-}
-
-// Derive starts a new write sanbox.
-func (db *DB) Derive() *Sandbox {
-	return db.root.Derive()
-}
-
-// GetRootSandbox returns the root storage sandbox for DB.
-func (db *DB) GetRootSandbox() *Sandbox {
-	return &db.root
-}
-
-// Get returns value for key.
-func (db *DB) Get(key []byte) []byte {
-	return db.root.Get(key)
-}
-
-// Put insert key value into root storage.
-func (db *DB) Put(key, value []byte) {
-	db.root.Put(key, value)
-}
-
-// NewIterator returns a new Iterator for root storage.
-func (db *DB) NewIterator() Iterator {
-	return db.root.NewIterator()
-}
-
-// Len returns the number of entries in the DB.
-func (db *DB) Len() int {
-	return db.root.Len()
-}
-
-// Size returns sum of keys and values length. Note that deleted
-// key/value will not be accounted for, but it will still consume
-// the buffer, since the buffer is append only.
-func (db *DB) Size() int {
-	return db.root.Size()
-}
-
-// Reset resets the DB to initial empty state.
-// Release all blocks except the initial one.
-func (db *DB) Reset() {
-	arena := db.root.arena
-	arena.reset()
-	db.root = Sandbox{
-		height:    1,
-		arena:     arena,
-		arenaSnap: arena.snapshot(),
-	}
-}
 
 // Sandbox is a space to keep pending kvs.
 type Sandbox struct {
@@ -112,10 +42,8 @@ type Sandbox struct {
 }
 
 // NewSandbox create a new Sandbox.
-// TODO: remove initBlockSize after adopt sandbox,
-// because we don't have to create small size sandbox for temporal use.
-func NewSandbox(initBlockSize int) *Sandbox {
-	arena := newArenaLocator(initBlockSize)
+func NewSandbox() *Sandbox {
+	arena := newArenaLocator()
 	return &Sandbox{
 		height:    1,
 		arena:     arena,
@@ -234,7 +162,14 @@ func (sb *Sandbox) Discard() {
 	}
 
 	sb.head = headNode{}
+	sb.height = 1
+	sb.length = 0
+	sb.size = 0
 	sb.arena.revert(sb.arenaSnap)
+	if sb.parent != nil {
+		// nil out arena to pervent data corruption by accident.
+		sb.arena = nil
+	}
 }
 
 // Len returns the number of entries in the DB.

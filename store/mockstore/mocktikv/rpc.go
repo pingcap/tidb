@@ -252,7 +252,7 @@ func (h *rpcHandler) checkRequest(ctx *kvrpcpb.Context, size int) *errorpb.Error
 }
 
 func (h *rpcHandler) checkKeyInRegion(key []byte) bool {
-	return regionContains(h.startKey, h.endKey, []byte(NewMvccKey(key)))
+	return regionContains(h.startKey, h.endKey, NewMvccKey(key))
 }
 
 func (h *rpcHandler) handleKvGet(req *kvrpcpb.GetRequest) *kvrpcpb.GetResponse {
@@ -765,6 +765,10 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 			failpoint.Return(tikvrpc.GenRegionErrorResp(req, &errorpb.Error{ServerIsBusy: &errorpb.ServerIsBusy{}}))
 		}
 	})
+
+	// increase coverage for mock tikv
+	_ = req.Type.String()
+	_ = req.ToBatchCommandsRequest()
 
 	reqCtx := &req.Context
 	resp := &tikvrpc.Response{}
