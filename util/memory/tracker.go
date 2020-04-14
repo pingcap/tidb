@@ -295,8 +295,11 @@ func (t *Tracker) BytesToString(numBytes int64) string {
 // AttachToGlobalTracker attach the tracker to the global tracker
 // AttachToGlobalTracker should be called at the initialization for the session executor's tracker
 func (t *Tracker) AttachToGlobalTracker(globalTracker *Tracker) {
-	if globalTracker == nil || !globalTracker.isGlobal {
+	if globalTracker == nil {
 		return
+	}
+	if !globalTracker.isGlobal {
+		panic("Attach to a non-GlobalTracker")
 	}
 	if t.parent != nil {
 		if t.parent.isGlobal {

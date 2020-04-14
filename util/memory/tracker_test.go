@@ -300,13 +300,12 @@ func (s *testSuite) TestGlobalTracker(c *C) {
 	c.Assert(c2.parent, IsNil)
 	c.Assert(len(r.mu.children), Equals, 0)
 
+	defer func() {
+		v := recover()
+		c.Assert(v, Equals, "Attach to a non-GlobalTracker")
+	}()
 	commonTracker := NewTracker(stringutil.StringerStr("common"), -1)
 	c1.AttachToGlobalTracker(commonTracker)
-	c2.AttachToGlobalTracker(commonTracker)
-	c.Assert(c1.parent, IsNil)
-	c.Assert(c2.parent, IsNil)
-	c.Assert(commonTracker.BytesConsumed(), Equals, int64(0))
-	c.Assert(len(commonTracker.mu.children), Equals, 0)
 
 	c1.AttachTo(commonTracker)
 	c.Assert(commonTracker.BytesConsumed(), Equals, int64(100))
