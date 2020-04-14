@@ -294,3 +294,29 @@ func (s *testIntegrationSuite) TestTopNByConstFunc(c *C) {
 		"a",
 	))
 }
+
+func (s *testIntegrationSuite) TestIssue15546(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, pt, vt")
+	tk.MustExec("create table t(a1 int, b1 int)")
+	tk.MustExec("insert into t values(1, 1)")
+	tk.MustExec("create table pt(a2 int primary key, b2 int) partition by range(a2) (" +
+		"PARTITION `p0` VALUES LESS THAN (10), PARTITION `p1` VALUES LESS THAN (20), PARTITION `p2` VALUES LESS THAN (30))")
+	tk.MustExec("insert into pt values(1, 1), (11, 11), (21, 21)")
+	tk.MustExec("create definer='root'@'localhost' view vt(a1, b1) as select a1, b1 from t")
+	tk.MustQuery("select * from pt, vt where a1 = a2").Check(testkit.Rows("1 1 1 1"))
+}
+
+func (s *testIntegrationSuite) TestIssue15813(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t0, t1")
+	tk.MustExec("create table t0(c0 int primary key)")
+	tk.MustExec("create table t1(c0 int primary key)")
+	tk.MustExec("CREATE INDEX i0 ON t0(c0)")
+	tk.MustExec("CREATE INDEX i0 ON t1(c0)")
+	tk.MustQuery("select /*+ MERGE_JOIN(t0, t1) */ * from t0, t1 where t0.c0 = t1.c0").Check(testkit.Rows())
+}

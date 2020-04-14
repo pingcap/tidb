@@ -234,6 +234,13 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 		span1.LogKV("sql", s.OriginText())
 		defer span1.Finish()
 	}
+	sctx.SetValue(sessionctx.QueryString, s.OriginText())
+	if _, ok := s.(*executor.ExecStmt).StmtNode.(ast.DDLNode); ok {
+		sctx.SetValue(sessionctx.LastExecuteDDL, true)
+	} else {
+		sctx.ClearValue(sessionctx.LastExecuteDDL)
+	}
+
 	se := sctx.(*session)
 	sessVars := se.GetSessionVars()
 	// Save origTxnCtx here to avoid it reset in the transaction retry.
@@ -354,6 +361,36 @@ func IsQuery(sql string) bool {
 	}
 
 	return false
+}
+
+// ResultSetToStringSlice changes the RecordSet to [][]string.
+func ResultSetToStringSlice(ctx context.Context, s Session, rs sqlexec.RecordSet) ([][]string, error) {
+	rows, err := GetRows4Test(ctx, s, rs)
+	if err != nil {
+		return nil, err
+	}
+	err = rs.Close()
+	if err != nil {
+		return nil, err
+	}
+	sRows := make([][]string, len(rows))
+	for i := range rows {
+		row := rows[i]
+		iRow := make([]string, row.Len())
+		for j := 0; j < row.Len(); j++ {
+			if row.IsNull(j) {
+				iRow[j] = "<nil>"
+			} else {
+				d := row.GetDatum(j, &rs.Fields()[j].Column.FieldType)
+				iRow[j], err = d.ToString()
+				if err != nil {
+					return nil, err
+				}
+			}
+		}
+		sRows[i] = iRow
+	}
+	return sRows, nil
 }
 
 // Session errors.

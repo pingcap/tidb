@@ -93,15 +93,19 @@
         ]
       },
       {
-        "SQL": "explain select * from t1 where t1.a > 7 and t1.a < 3",
+        "SQL": "explain select * from t4 where d = '2019-10-07 10:40:00' and a = 1",
         "Result": [
-          "TableDual_6 0.00 root rows:0"
+          "IndexLookUp_8 1.00 root ",
+          "├─IndexScan_6 1.00 cop table:t4, partition:p9, index:d, a, range:[2019-10-07 10:40:00 1,2019-10-07 10:40:00 1], keep order:false, stats:pseudo",
+          "└─TableScan_7 1.00 cop table:t4, partition:p9, keep order:false, stats:pseudo"
         ]
       },
       {
-        "SQL": "explain select * from t1 where t1.a between 7 and 3",
+        "SQL": "explain select * from t5 where d = '2019-10-07'",
         "Result": [
-          "TableDual_6 0.00 root rows:0"
+          "IndexLookUp_11 10.00 root ",
+          "├─IndexScan_9 10.00 cop table:t5, partition:p0, index:d, a, range:[2019-10-07,2019-10-07], keep order:false, stats:pseudo",
+          "└─TableScan_10 10.00 cop table:t5, partition:p0, keep order:false, stats:pseudo"
         ]
       }
     ]
