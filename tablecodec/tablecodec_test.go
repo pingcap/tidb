@@ -374,9 +374,9 @@ func (s *testTableCodecSuite) TestPrefix(c *C) {
 	const tableID int64 = 66
 	key := EncodeTablePrefix(tableID)
 	tTableID := DecodeTableID(key)
-	c.Assert(tTableID, Equals, int64(tableID))
+	c.Assert(tTableID, Equals, tableID)
 
-	c.Assert([]byte(TablePrefix()), BytesEquals, tablePrefix)
+	c.Assert(TablePrefix(), BytesEquals, tablePrefix)
 
 	tablePrefix1 := GenTablePrefix(tableID)
 	c.Assert([]byte(tablePrefix1), BytesEquals, []byte(key))
@@ -467,15 +467,15 @@ func (s *testTableCodecSuite) TestCutPrefix(c *C) {
 func (s *testTableCodecSuite) TestRange(c *C) {
 	s1, e1 := GetTableHandleKeyRange(22)
 	s2, e2 := GetTableHandleKeyRange(23)
-	c.Assert([]byte(s1), Less, []byte(e1))
-	c.Assert([]byte(e1), Less, []byte(s2))
-	c.Assert([]byte(s2), Less, []byte(e2))
+	c.Assert(s1, Less, e1)
+	c.Assert(e1, Less, s2)
+	c.Assert(s2, Less, e2)
 
 	s1, e1 = GetTableIndexKeyRange(42, 666)
 	s2, e2 = GetTableIndexKeyRange(42, 667)
-	c.Assert([]byte(s1), Less, []byte(e1))
-	c.Assert([]byte(e1), Less, []byte(s2))
-	c.Assert([]byte(s2), Less, []byte(e2))
+	c.Assert(s1, Less, e1)
+	c.Assert(e1, Less, s2)
+	c.Assert(s2, Less, e2)
 }
 
 func (s *testTableCodecSuite) TestDecodeAutoIDMeta(c *C) {
