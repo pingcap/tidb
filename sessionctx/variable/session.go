@@ -597,10 +597,6 @@ type SessionVars struct {
 
 	// PlanInCache indicates whether the last statement was found in plan cache
 	PlanInCache bool
-	// PlanCacheHits indicates how many plan cache hits have happened in this session
-	PlanCacheHits uint64
-	// PlanCacheMisses indicates how many plan cache misses have happened in this session
-	PlanCacheMisses uint64
 }
 
 // PreparedParams contains the parameters of the current prepared statement when executing it.
@@ -687,8 +683,6 @@ func NewSessionVars() *SessionVars {
 		SequenceState:               NewSequenceState(),
 		WindowingUseHighPrecision:   true,
 		PlanInCache:                 DefTiDBFoundInPlanCache,
-		PlanCacheHits:               0,
-		PlanCacheMisses:             0,
 	}
 	vars.KVVars = kv.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{

@@ -267,11 +267,6 @@ func (e *Execute) checkPreparedPriv(ctx context.Context, sctx sessionctx.Context
 func (e *Execute) addHitInfo(sctx sessionctx.Context, opt string) error {
 	vars := sctx.GetSessionVars()
 	err := vars.SetSystemVar(variable.TiDBFoundInPlanCache, opt)
-	if opt == "ON" {
-		vars.PlanCacheHits += 1
-	} else {
-		vars.PlanCacheMisses += 1
-	}
 	return err
 }
 
@@ -294,7 +289,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 		} else {
 			planCacheCounter.Inc()
 		}
-		err = e.addHitInfo(sctx, "ON")
+		err = e.addHitInfo(sctx, "1")
 		if err != nil {
 			return err
 		}
@@ -323,7 +318,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 				}
 			}
 			if planValid {
-				err := e.addHitInfo(sctx, "ON")
+				err := e.addHitInfo(sctx, "1")
 				if err != nil {
 					return err
 				}
@@ -356,7 +351,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	isRange := e.isRangePartition(p)
 	_, isTableDual := p.(*PhysicalTableDual)
 	if !isTableDual && prepared.UseCache && !isRange {
-		err = e.addHitInfo(sctx, "ON")
+		err = e.addHitInfo(sctx, "1")
 		if err != nil {
 			return err
 		}
@@ -365,7 +360,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 		stmtCtx.SetPlanDigest(preparedStmt.NormalizedPlan, preparedStmt.PlanDigest)
 		sctx.PreparedPlanCache().Put(cacheKey, cached)
 	} else {
-		err = e.addHitInfo(sctx, "OFF")
+		err = e.addHitInfo(sctx, "0")
 	}
 	return err
 }
