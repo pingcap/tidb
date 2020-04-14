@@ -1021,15 +1021,19 @@ func (b *builtinJSONArrayAppendSig) vecEvalJSON(input *chunk.Chunk, result *chun
 		res := jsonBufs.GetJSON(i)
 		isNull := false
 		for j := 0; j < m; j++ {
-			s, sNull := "", pathBufs[j].IsNull(i)
-			if !sNull {
-				s = pathBufs[j].GetString(i)
+			if pathBufs[j].IsNull(i) {
+				isNull = true
+				break
 			}
+			s := pathBufs[j].GetString(i)
 			v, vNull := json.BinaryJSON{}, valBufs[j].IsNull(i)
 			if !vNull {
 				v = valBufs[j].GetJSON(i)
 			}
-			res, isNull, err = b.appendJSONArray(res, s, sNull, v, vNull)
+			if vNull {
+				v = json.CreateBinary(nil)
+			}
+			res, isNull, err = b.appendJSONArray(res, s, v)
 			if err != nil {
 				return err
 			}

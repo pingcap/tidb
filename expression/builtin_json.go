@@ -876,7 +876,10 @@ func (b *builtinJSONArrayAppendSig) evalJSON(row chunk.Row) (res json.BinaryJSON
 		if err != nil {
 			return res, true, err
 		}
-		res, isNull, err = b.appendJSONArray(res, s, sNull, value, vNull)
+		if vNull {
+			value = json.CreateBinary(nil)
+		}
+		res, isNull, err = b.appendJSONArray(res, s, value)
 		if isNull || err != nil {
 			return res, isNull, err
 		}
@@ -884,10 +887,7 @@ func (b *builtinJSONArrayAppendSig) evalJSON(row chunk.Row) (res json.BinaryJSON
 	return res, false, nil
 }
 
-func (b *builtinJSONArrayAppendSig) appendJSONArray(res json.BinaryJSON, p string, pIsNull bool, v json.BinaryJSON, vIsNull bool) (json.BinaryJSON, bool, error) {
-	if pIsNull {
-		return res, true, nil
-	}
+func (b *builtinJSONArrayAppendSig) appendJSONArray(res json.BinaryJSON, p string, v json.BinaryJSON) (json.BinaryJSON, bool, error) {
 	// We should do the following checks to get correct values in res.Extract
 	pathExpr, err := json.ParseJSONPathExpr(p)
 	if err != nil {
@@ -908,10 +908,6 @@ func (b *builtinJSONArrayAppendSig) appendJSONArray(res json.BinaryJSON, p strin
 		// JSON_ARRAY_APPEND({"a": "b"}, "$", {"b": "c"}) => [{"a": "b"}, {"b", "c"}]
 		// We should wrap them to a single array first.
 		obj = json.CreateBinary([]interface{}{obj})
-	}
-
-	if vIsNull {
-		v = json.CreateBinary(nil)
 	}
 
 	obj = json.MergeBinary([]json.BinaryJSON{obj, v})
