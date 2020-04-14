@@ -16,13 +16,14 @@ package core
 import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/types/parser_driver"
 )
 
 // Cacheable checks whether the input ast is cacheable.
 // Handle "ignore_plan_cache()" hint
 // If there are multiple hints, only one will take effect
-func Cacheable(node ast.Node) bool {
+func Cacheable(node ast.Node, is infoschema.InfoSchema) bool {
 	switch node.(type) {
 	case *ast.SelectStmt:
 		for _, hints := range (node.(*ast.SelectStmt)).TableHints {
@@ -48,6 +49,7 @@ func Cacheable(node ast.Node) bool {
 	}
 	checker := cacheableChecker{
 		cacheable: true,
+		schema:    is,
 	}
 	node.Accept(&checker)
 	return checker.cacheable
@@ -60,6 +62,7 @@ func Cacheable(node ast.Node) bool {
 // NOTE: we can add more rules in the future.
 type cacheableChecker struct {
 	cacheable bool
+	schema    infoschema.InfoSchema
 }
 
 // Enter implements Visitor interface.
@@ -105,8 +108,21 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 			checker.cacheable = false
 			return in, true
 		}
+	case *ast.TableName:
+		if checker.isPartitionTable(node) {
+			checker.cacheable = false
+			return in, true
+		}
 	}
 	return in, false
+}
+
+func (checker *cacheableChecker) isPartitionTable(tn *ast.TableName) bool {
+	tb, _ := checker.schema.TableByName(tn.Schema, tn.Name)
+	if tb.Meta().Partition != nil {
+		return true
+	}
+	return false
 }
 
 // Leave implements Visitor interface.

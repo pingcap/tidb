@@ -1,0 +1,4 @@
+[prepared-plan-cache]
+enabled = true
+capacity = 100
+memory-guard-ratio = 0.1
