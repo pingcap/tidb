@@ -125,7 +125,7 @@ const (
 )
 
 func init() {
-	GlobalDiskUsageTracker = disk.NewTracker(stringutil.StringerStr("GlobalStorageLabel"), -1)
+	GlobalDiskUsageTracker = disk.NewGlobalTrcaker(stringutil.StringerStr("GlobalStorageLabel"), -1)
 	action := &globalPanicOnExceed{}
 	GlobalDiskUsageTracker.SetActionOnExceed(action)
 }
