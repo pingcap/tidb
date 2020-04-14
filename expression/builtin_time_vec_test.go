@@ -15,6 +15,7 @@ package expression
 
 import (
 	"math"
+	"math/rand"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -69,6 +70,21 @@ type dateTimeUnitStrGener struct {
 
 func newDateTimeUnitStrGener() *dateTimeUnitStrGener {
 	return &dateTimeUnitStrGener{newDefaultRandGen()}
+}
+
+// tzStrGener is used to generate strings which are timezones
+type tzStrGener struct{}
+
+func (g *tzStrGener) gen() interface{} {
+	tzs := []string{
+		"GMT",
+		"MET",
+		"+00:00",
+		"+10:00",
+	}
+
+	n := rand.Int() % len(tzs)
+	return tzs[n]
 }
 
 func (g *dateTimeUnitStrGener) gen() interface{} {
@@ -421,6 +437,10 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString, types.ETDuration},
 			constants: []*Constant{{Value: types.NewStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 		},
+	},
+	ast.ConvertTz: {
+		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETDatetime, types.ETString, types.ETString},
+			geners: []dataGenerator{nil, &tzStrGener{}, &tzStrGener{}}},
 	},
 }
 
