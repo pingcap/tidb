@@ -18,6 +18,8 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 // Cacheable checks whether the input ast is cacheable.
@@ -118,7 +120,11 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 }
 
 func (checker *cacheableChecker) isPartitionTable(tn *ast.TableName) bool {
-	tb, _ := checker.schema.TableByName(tn.Schema, tn.Name)
+	tb, err := checker.schema.TableByName(tn.Schema, tn.Name)
+	if err != nil {
+		return false
+		logutil.BgLogger().Error("Error occur in checking cacheable", zap.Error(err))
+	}
 	if tb.Meta().Partition != nil {
 		return true
 	}
