@@ -320,6 +320,30 @@
         "Warnings": [
           "[planner:1815]use_index_merge(test.t3, a, b, d) is inapplicable, check whether the table(test.t3) exists"
         ]
+      },
+      {
+        "SQL": "select /*+ USE_INDEX_MERGE(t1, a, b, c, d) */ * from t1",
+        "Warnings": [
+          "[planner:1815]use_index_merge(test.t1, a, b, c, d) is inapplicable, check whether the indexes (c, d) exist, or the indexes are conflicted with use_index/ignore_index hints."
+        ]
+      },
+      {
+        "SQL": "select /*+ USE_INDEX_MERGE(t1, a, b), USE_INDEX(t1, a) */ * from t1",
+        "Warnings": [
+          "[planner:1815]use_index_merge(test.t1, a, b) is inapplicable, check whether the indexes (b) exist, or the indexes are conflicted with use_index/ignore_index hints."
+        ]
+      },
+      {
+        "SQL": "select /*+ USE_INDEX_MERGE(t1, a, b), IGNORE_INDEX(t1, a) */ * from t1",
+        "Warnings": [
+          "[planner:1815]use_index_merge(test.t1, a, b) is inapplicable, check whether the indexes (a) exist, or the indexes are conflicted with use_index/ignore_index hints."
+        ]
+      },
+      {
+        "SQL": "select /*+ USE_INDEX_MERGE(t1, primary, a, b, c) */ * from t1",
+        "Warnings": [
+          "[planner:1815]use_index_merge(test.t1, primary, a, b, c) is inapplicable, check whether the indexes (c) exist, or the indexes are conflicted with use_index/ignore_index hints."
+        ]
       }
     ]
   },

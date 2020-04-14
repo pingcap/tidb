@@ -51,7 +51,7 @@ func (s *testEvaluatorSuite) TestBitCount(c *C) {
 		{float64(-1.1), int64(64)},
 		{float64(-3.1), int64(63)},
 		{uint64(math.MaxUint64), int64(64)},
-		{string("xxx"), int64(0)},
+		{"xxx", int64(0)},
 		{nil, nil},
 	}
 	for _, test := range bitCountCases {
@@ -83,10 +83,10 @@ func (s *testEvaluatorSuite) TestInFunc(c *C) {
 	time2 := types.NewTime(types.FromGoTime(time.Date(2017, 1, 2, 1, 1, 1, 1, time.UTC)), mysql.TypeDatetime, 6)
 	time3 := types.NewTime(types.FromGoTime(time.Date(2017, 1, 3, 1, 1, 1, 1, time.UTC)), mysql.TypeDatetime, 6)
 	time4 := types.NewTime(types.FromGoTime(time.Date(2017, 1, 4, 1, 1, 1, 1, time.UTC)), mysql.TypeDatetime, 6)
-	duration1 := types.Duration{Duration: time.Duration(12*time.Hour + 1*time.Minute + 1*time.Second)}
-	duration2 := types.Duration{Duration: time.Duration(12*time.Hour + 1*time.Minute)}
-	duration3 := types.Duration{Duration: time.Duration(12*time.Hour + 1*time.Second)}
-	duration4 := types.Duration{Duration: time.Duration(12 * time.Hour)}
+	duration1 := types.Duration{Duration: 12*time.Hour + 1*time.Minute + 1*time.Second}
+	duration2 := types.Duration{Duration: 12*time.Hour + 1*time.Minute}
+	duration3 := types.Duration{Duration: 12*time.Hour + 1*time.Second}
+	duration4 := types.Duration{Duration: 12 * time.Hour}
 	json1 := json.CreateBinary("123")
 	json2 := json.CreateBinary("123.1")
 	json3 := json.CreateBinary("123.2")
