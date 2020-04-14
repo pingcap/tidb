@@ -34,7 +34,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/rowDecoder"
+	decoder "github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 )
@@ -104,13 +104,13 @@ func IsJobRollbackable(job *model.Job) bool {
 			job.SchemaState == model.StateDeleteOnly {
 			return false
 		}
-	case model.ActionDropColumn, model.ActionModifyColumn,
+	case model.ActionDropColumn, model.ActionDropColumns, model.ActionModifyColumn,
 		model.ActionDropTablePartition, model.ActionAddTablePartition,
 		model.ActionRebaseAutoID, model.ActionShardRowID,
 		model.ActionTruncateTable, model.ActionAddForeignKey,
 		model.ActionDropForeignKey, model.ActionRenameTable,
 		model.ActionModifyTableCharsetAndCollate, model.ActionTruncateTablePartition,
-		model.ActionModifySchemaCharsetAndCollate, model.ActionRepairTable:
+		model.ActionModifySchemaCharsetAndCollate, model.ActionRepairTable, model.ActionModifyTableAutoIdCache:
 		return job.SchemaState == model.StateNone
 	}
 	return true

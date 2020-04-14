@@ -890,7 +890,15 @@ func (e *InspectionRuleTableExtractor) Extract(
 }
 
 func (e *InspectionRuleTableExtractor) explainInfo(p *PhysicalMemTable) string {
-	return ""
+	if e.SkipRequest {
+		return "skip_request: true"
+	}
+
+	r := new(bytes.Buffer)
+	if len(e.Types) > 0 {
+		r.WriteString(fmt.Sprintf("node_types:[%s]", extractStringFromStringSet(e.Types)))
+	}
+	return r.String()
 }
 
 // SlowQueryExtractor is used to extract some predicates of `slow_query`

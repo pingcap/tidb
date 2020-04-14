@@ -46,16 +46,6 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.CreateTableStmt) (*m
 		return nil, nil
 	}
 
-	// force-discard the unsupported types, even when @@tidb_enable_table_partition = 'on'
-	switch s.Partition.Tp {
-	case model.PartitionTypeKey:
-		// can't create a warning for KEY partition, it will fail an integration test :/
-		return nil, nil
-	case model.PartitionTypeList, model.PartitionTypeSystemTime:
-		ctx.GetSessionVars().StmtCtx.AppendWarning(errUnsupportedCreatePartition)
-		return nil, nil
-	}
-
 	var enable bool
 	switch ctx.GetSessionVars().EnableTablePartition {
 	case "on":
@@ -82,6 +72,7 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.CreateTableStmt) (*m
 	}
 	if !enable {
 		ctx.GetSessionVars().StmtCtx.AppendWarning(errTablePartitionDisabled)
+		return nil, nil
 	}
 
 	pi := &model.PartitionInfo{
@@ -121,6 +112,10 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.CreateTableStmt) (*m
 }
 
 func buildHashPartitionDefinitions(ctx sessionctx.Context, s *ast.CreateTableStmt, pi *model.PartitionInfo) error {
+	if err := checkAddPartitionTooManyPartitions(pi.Num); err != nil {
+		return err
+	}
+
 	defs := make([]model.PartitionDefinition, pi.Num)
 	for i := 0; i < len(defs); i++ {
 		if len(s.Partition.Definitions) == 0 {
@@ -679,8 +674,8 @@ func getPartitionIDs(table *model.TableInfo) []int64 {
 	return physicalTableIDs
 }
 
-// checkRangePartitioningKeysConstraints checks that the range partitioning key is included in the table constraint.
-func checkRangePartitioningKeysConstraints(sctx sessionctx.Context, s *ast.CreateTableStmt, tblInfo *model.TableInfo) error {
+// checkPartitioningKeysConstraints checks that the range partitioning key is included in the table constraint.
+func checkPartitioningKeysConstraints(sctx sessionctx.Context, s *ast.CreateTableStmt, tblInfo *model.TableInfo) error {
 	// Returns directly if there are no unique keys in the table.
 	if len(tblInfo.Indices) == 0 && !tblInfo.PKIsHandle {
 		return nil
@@ -698,6 +693,9 @@ func checkRangePartitioningKeysConstraints(sctx sessionctx.Context, s *ast.Creat
 		partCols = columnInfoSlice(partColumns)
 	} else if len(s.Partition.ColumnNames) > 0 {
 		partCols = columnNameSlice(s.Partition.ColumnNames)
+	} else {
+		// TODO: Check keys constraints for list, key partition type and so on.
+		return nil
 	}
 
 	// Checks that the partitioning key is included in the constraint.
