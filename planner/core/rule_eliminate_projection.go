@@ -78,10 +78,6 @@ func ResolveExprAndReplace(origin expression.Expression, replace map[string]*exp
 }
 
 func doPhysicalProjectionElimination(p PhysicalPlan) PhysicalPlan {
-	for i, child := range p.Children() {
-		p.Children()[i] = doPhysicalProjectionElimination(child)
-	}
-
 	proj, isProj := p.(*PhysicalProjection)
 	if !isProj || !canProjectionBeEliminatedStrict(proj) {
 		return p
@@ -93,13 +89,14 @@ func doPhysicalProjectionElimination(p PhysicalPlan) PhysicalPlan {
 // eliminatePhysicalProjection should be called after physical optimization to
 // eliminate the redundant projection left after logical projection elimination.
 func eliminatePhysicalProjection(p PhysicalPlan) PhysicalPlan {
+	for i, child := range p.Children() {
+		p.Children()[i] = eliminatePhysicalProjection(child)
+	}
 	oldSchema := p.Schema()
 	newRoot := doPhysicalProjectionElimination(p)
 	newCols := newRoot.Schema().Columns
 	for i, oldCol := range oldSchema.Columns {
 		oldCol.Index = newCols[i].Index
-		oldCol.ID = newCols[i].ID
-		oldCol.UniqueID = newCols[i].UniqueID
 		oldCol.VirtualExpr = newCols[i].VirtualExpr
 		newRoot.Schema().Columns[i] = oldCol
 	}
