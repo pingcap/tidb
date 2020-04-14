@@ -775,6 +775,16 @@ func (s *testStateChangeSuite) TestParallelDropColumn(c *C) {
 	s.testControlParallelExecSQL(c, sql, sql, f)
 }
 
+func (s *testStateChangeSuite) TestParallelDropIndex(c *C) {
+	sql1 := "alter table t drop index idx1 ;"
+	sql2 := "alter table t drop index idx2 ;"
+	f := func(c *C, err1, err2 error) {
+		c.Assert(err1, IsNil)
+		c.Assert(err2.Error(), Equals, "[autoid:1075]Incorrect table definition; there can be only one auto column and it must be defined as a key")
+	}
+	s.testControlParallelExecSQL(c, sql1, sql2, f)
+}
+
 func (s *testStateChangeSuite) TestParallelCreateAndRename(c *C) {
 	sql1 := "create table t_exists(c int);"
 	sql2 := "alter table t rename to t_exists;"
@@ -791,7 +801,7 @@ type checkRet func(c *C, err1, err2 error)
 func (s *testStateChangeSuite) testControlParallelExecSQL(c *C, sql1, sql2 string, f checkRet) {
 	_, err := s.se.Execute(context.Background(), "use test_db_state")
 	c.Assert(err, IsNil)
-	_, err = s.se.Execute(context.Background(), "create table t(a int, b int, c int)")
+	_, err = s.se.Execute(context.Background(), "create table t(a int, b int, c int, d int auto_increment,e int, index idx1(d), index idx2(d,e))")
 	c.Assert(err, IsNil)
 	defer s.se.Execute(context.Background(), "drop table t")
 
