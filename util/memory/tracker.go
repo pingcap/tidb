@@ -33,6 +33,9 @@ import (
 // 1. tracker.SetLabel() / tracker.SetActionOnExceed() / tracker.AttachTo()
 // 2. tracker.Consume() / tracker.ReplaceChild() / tracker.BytesConsumed()
 //
+// If the Tracker is the Global Tracker, like executor.GlobalDiskUsageTracker,
+// we wouldn't maintain its children in order to avoiding mutex contention
+//
 // NOTE: We only protect concurrent access to "bytesConsumed" and "children",
 // that is to say:
 // 1. Only "BytesConsumed()", "Consume()" and "AttachTo()" are thread-safe.
@@ -40,7 +43,7 @@ import (
 type Tracker struct {
 	mu struct {
 		sync.Mutex
-		children []*Tracker // The children memory trackers
+		children []*Tracker // The children memory trackers.
 	}
 	actionMu struct {
 		sync.Mutex
@@ -278,10 +281,9 @@ func (t *Tracker) BytesToString(numBytes int64) string {
 
 // AttachToGlobalTracker attach the tracker to the global tracker
 // AttachToGlobalTracker should be called at the initialization for the session executor's tracker
-// If the tracker already have parent, we would directly return.
 func (t *Tracker) AttachToGlobalTracker(globalTracker *Tracker) {
 	if t.parent != nil {
-		return
+		t.parent.remove(t)
 	}
 	t.parent = globalTracker
 	t.parent.Consume(t.BytesConsumed())
