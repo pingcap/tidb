@@ -4508,6 +4508,18 @@ func (s *testIntegrationSuite) TestFuncCaseWithLeftJoin(c *C) {
 	tk.MustQuery("select t1.id from kankan1 t1 left join kankan2 t2 on t1.id = t2.id where (case  when t1.name='b' then 'case2' when t1.name='a' then 'case1' else NULL end) = 'case1' order by t1.id").Check(testkit.Rows("1", "2"))
 }
 
+func (s *testIntegrationSuite) TestIssue11594(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t1;`)
+	tk.MustExec("CREATE TABLE t1 (v bigint(20) UNSIGNED NOT NULL);")
+	tk.MustExec("INSERT INTO t1 VALUES (1), (2);")
+	tk.MustQuery("SELECT SUM(IF(v > 1, v, -v)) FROM t1;").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT sum(IFNULL(cast(null+rand() as unsigned), -v)) FROM t1;").Check(testkit.Rows("-3"))
+	tk.MustQuery("SELECT sum(COALESCE(cast(null+rand() as unsigned), -v)) FROM t1;").Check(testkit.Rows("-3"))
+	tk.MustQuery("SELECT sum(COALESCE(cast(null+rand() as unsigned), v)) FROM t1;").Check(testkit.Rows("3"))
+}
+
 func (s *testIntegrationSuite) TestIssue11309And11319(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
