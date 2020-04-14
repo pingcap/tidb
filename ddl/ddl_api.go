@@ -1337,7 +1337,7 @@ func checkTableInfoValidWithStmt(ctx sessionctx.Context, tbInfo *model.TableInfo
 			}
 		}
 
-		if err = checkRangePartitioningKeysConstraints(ctx, s, tbInfo); err != nil {
+		if err = checkPartitioningKeysConstraints(ctx, s, tbInfo); err != nil {
 			return errors.Trace(err)
 		}
 	}

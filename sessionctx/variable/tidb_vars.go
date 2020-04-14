@@ -172,6 +172,15 @@ const (
 
 	// TiDBFoundInPlanCache indicates whether the last statement was found in plan cache
 	TiDBFoundInPlanCache = "last_statement_found_in_plan_cache"
+
+	// TiDBPlanCacheHitCount indicates how many plan cache hits have happened in this session
+	TiDBPlanCacheHitCount = "plan_cache_hit_count"
+
+	// TiDBPlanCacheMissCount indicates how many plan cache misses have happened in this session
+	TiDBPlanCacheMissCount = "plan_cache_miss_count"
+
+	// TiDBPlanCacheLastUpdated indicates whether the last hit plan got changed, if changed it indicates when was the plan changed
+	TiDBPlanCacheLastUpdated = "plan_cache_last_updated_info"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -391,6 +400,9 @@ const (
 
 	// TiDBMetricSchemaRangeDuration indicates the range duration when query metric schema.
 	TiDBMetricSchemaRangeDuration = "tidb_metric_query_range_duration"
+
+	// TiDBEnableCollectExecutionInfo indicates that whether execution info is collected.
+	TiDBEnableCollectExecutionInfo = "tidb_enable_collect_execution_info"
 )
 
 // Default TiDB system variable values.
@@ -485,6 +497,10 @@ const (
 	DefTiDBMetricSchemaStep            = 60 // 60s
 	DefTiDBMetricSchemaRangeDuration   = 60 // 60s
 	DefTiDBFoundInPlanCache            = false
+	DefTiDBPlanCacheLastUpdated        = "NO CHANGE"
+	DefTiDBPlanCacheHitCount           = 0
+	DefTiDBPlanCacheMissCount          = 0
+	DefTidbEnableCollectExecutionInfo  = false
 )
 
 // Process global variables.
