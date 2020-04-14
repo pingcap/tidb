@@ -1157,6 +1157,7 @@ import (
 	OptCharset                             "Optional Character setting"
 	OptCollate                             "Optional Collate setting"
 	IgnoreLines                            "Ignore num(int) lines"
+	Int64Num                               "a number that can be safely converted to int64"
 	NUM                                    "A number"
 	NumList                                "Some numbers"
 	LengthNum                              "Field length num(uint64)"
@@ -2072,7 +2073,7 @@ TableToTable:
  *
  *******************************************************************/
 RecoverTableStmt:
-	"RECOVER" "TABLE" "BY" "JOB" NUM
+	"RECOVER" "TABLE" "BY" "JOB" Int64Num
 	{
 		$$ = &ast.RecoverTableStmt{
 			JobID: $5.(int64),
@@ -2084,7 +2085,7 @@ RecoverTableStmt:
 			Table: $3.(*ast.TableName),
 		}
 	}
-|	"RECOVER" "TABLE" TableName NUM
+|	"RECOVER" "TABLE" TableName Int64Num
 	{
 		$$ = &ast.RecoverTableStmt{
 			Table:  $3.(*ast.TableName),
@@ -2147,7 +2148,7 @@ SplitRegionStmt:
 	}
 
 SplitOption:
-	"BETWEEN" RowValue "AND" RowValue "REGIONS" NUM
+	"BETWEEN" RowValue "AND" RowValue "REGIONS" Int64Num
 	{
 		$$ = &ast.SplitOption{
 			Lower: $2.([]ast.ExprNode),
@@ -4280,6 +4281,17 @@ LengthNum:
 	NUM
 	{
 		$$ = getUint64FromNUM($1)
+	}
+
+Int64Num:
+	NUM
+	{
+		v, rangeErrMsg := getInt64FromNUM($1)
+		if len(rangeErrMsg) != 0 {
+			yylex.AppendError(yylex.Errorf(rangeErrMsg))
+			return 1
+		}
+		$$ = v
 	}
 
 NUM:
@@ -8378,7 +8390,7 @@ AdminStmt:
 		}
 		$$ = stmt
 	}
-|	"ADMIN" "SHOW" "DDL" "JOBS" NUM WhereClauseOptional
+|	"ADMIN" "SHOW" "DDL" "JOBS" Int64Num WhereClauseOptional
 	{
 		stmt := &ast.AdminStmt{
 			Tp:        ast.AdminShowDDLJobs,
@@ -8572,17 +8584,17 @@ HandleRangeList:
 	}
 
 HandleRange:
-	'(' NUM ',' NUM ')'
+	'(' Int64Num ',' Int64Num ')'
 	{
 		$$ = ast.HandleRange{Begin: $2.(int64), End: $4.(int64)}
 	}
 
 NumList:
-	NUM
+	Int64Num
 	{
 		$$ = []int64{$1.(int64)}
 	}
-|	NumList ',' NUM
+|	NumList ',' Int64Num
 	{
 		$$ = append($1.([]int64), $3.(int64))
 	}
@@ -8801,7 +8813,7 @@ ShowProfileArgsOpt:
 	{
 		$$ = nil
 	}
-|	"FOR" "QUERY" NUM
+|	"FOR" "QUERY" Int64Num
 	{
 		v := $3.(int64)
 		$$ = &v
@@ -10435,28 +10447,28 @@ ConnectionOptionList:
 	}
 
 ConnectionOption:
-	"MAX_QUERIES_PER_HOUR" NUM
+	"MAX_QUERIES_PER_HOUR" Int64Num
 	{
 		$$ = &ast.ResourceOption{
 			Type:  ast.MaxQueriesPerHour,
 			Count: $2.(int64),
 		}
 	}
-|	"MAX_UPDATES_PER_HOUR" NUM
+|	"MAX_UPDATES_PER_HOUR" Int64Num
 	{
 		$$ = &ast.ResourceOption{
 			Type:  ast.MaxUpdatesPerHour,
 			Count: $2.(int64),
 		}
 	}
-|	"MAX_CONNECTIONS_PER_HOUR" NUM
+|	"MAX_CONNECTIONS_PER_HOUR" Int64Num
 	{
 		$$ = &ast.ResourceOption{
 			Type:  ast.MaxConnectionsPerHour,
 			Count: $2.(int64),
 		}
 	}
-|	"MAX_USER_CONNECTIONS" NUM
+|	"MAX_USER_CONNECTIONS" Int64Num
 	{
 		$$ = &ast.ResourceOption{
 			Type:  ast.MaxUserConnections,
@@ -10584,7 +10596,7 @@ PasswordOrLockOption:
 			Type: ast.PasswordExpire,
 		}
 	}
-|	PasswordExpire "INTERVAL" NUM "DAY"
+|	PasswordExpire "INTERVAL" Int64Num "DAY"
 	{
 		$$ = &ast.PasswordOrLockOption{
 			Type:  ast.PasswordExpireInterval,
@@ -11478,15 +11490,15 @@ SequenceOption:
 	}
 
 SignedNum:
-	NUM
+	Int64Num
 	{
 		$$ = $1.(int64)
 	}
-|	'+' NUM
+|	'+' Int64Num
 	{
 		$$ = $2.(int64)
 	}
-|	'-' NUM
+|	'-' Int64Num
 	{
 		$$ = -$2.(int64)
 	}
