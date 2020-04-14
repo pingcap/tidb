@@ -85,25 +85,8 @@ type Context interface {
 	StmtAddDirtyTableOP(op int, physicalID int64, handle int64)
 	// DDLOwnerChecker returns owner.DDLOwnerChecker.
 	DDLOwnerChecker() owner.DDLOwnerChecker
-<<<<<<< HEAD
-=======
-	// AddTableLock adds table lock to the session lock map.
-	AddTableLock([]model.TableLockTpInfo)
-	// ReleaseTableLocks releases table locks in the session lock map.
-	ReleaseTableLocks(locks []model.TableLockTpInfo)
-	// ReleaseTableLockByTableID releases table locks in the session lock map by table ID.
-	ReleaseTableLockByTableIDs(tableIDs []int64)
-	// CheckTableLocked checks the table lock.
-	CheckTableLocked(tblID int64) (bool, model.TableLockType)
-	// GetAllTableLocks gets all table locks table id and db id hold by the session.
-	GetAllTableLocks() []model.TableLockTpInfo
-	// ReleaseAllTableLocks releases all table locks hold by the session.
-	ReleaseAllTableLocks()
-	// HasLockedTables uses to check whether this session locked any tables.
-	HasLockedTables() bool
 	// PrepareTxnFuture uses to prepare txn by future.
 	PrepareTxnFuture(ctx context.Context)
->>>>>>> dffe293... *: not send tso request when point get with max tso (#11981)
 }
 
 type basicCtxType int
