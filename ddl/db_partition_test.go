@@ -260,6 +260,19 @@ func (s *testIntegrationSuite3) TestCreateTableWithPartition(c *C) {
 		PARTITION p2 VALUES LESS THAN (2000),
 		PARTITION p3 VALUES LESS THAN (2005)
 	);`, tmysql.ErrBadField)
+
+	// Fix a timezone dependent check bug introduced in https://github.com/pingcap/tidb/pull/10655
+	tk.MustExec(`create table t34 (dt timestamp(3)) partition by range (floor(unix_timestamp(dt))) (
+		partition p0 values less than (unix_timestamp('2020-04-04 00:00:00')),
+		partition p1 values less than (unix_timestamp('2020-04-05 00:00:00')));`)
+
+	tk.MustGetErrCode(`create table t34 (dt timestamp(3)) partition by range (unix_timestamp(date(dt))) (
+		partition p0 values less than (unix_timestamp('2020-04-04 00:00:00')),
+		partition p1 values less than (unix_timestamp('2020-04-05 00:00:00')));`, tmysql.ErrWrongExprInPartitionFunc)
+
+	tk.MustGetErrCode(`create table t34 (dt datetime) partition by range (unix_timestamp(dt)) (
+		partition p0 values less than (unix_timestamp('2020-04-04 00:00:00')),
+		partition p1 values less than (unix_timestamp('2020-04-05 00:00:00')));`, tmysql.ErrWrongExprInPartitionFunc)
 }
 
 func (s *testIntegrationSuite2) TestCreateTableWithHashPartition(c *C) {
