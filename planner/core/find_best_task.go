@@ -546,7 +546,6 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 		var partialCost, rowCount float64
 		if partPath.IsTablePath {
 			scan, partialCost, rowCount = ds.convertToPartialTableScan(prop, partPath)
-			cop.tablePlan = scan
 		} else {
 			scan, partialCost, rowCount = ds.convertToPartialIndexScan(prop, partPath)
 		}
