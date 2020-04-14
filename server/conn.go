@@ -1372,11 +1372,6 @@ func (cc *clientConn) handleFieldList(sql string) (err error) {
 func (cc *clientConn) writeResultset(ctx context.Context, rs ResultSet, binary bool, serverStatus uint16, fetchSize int) (runErr error) {
 	defer func() {
 		// close ResultSet when cursor doesn't exist
-		// TODO: Clean up this code. CursorExistsFlag is never set in handleQuery, it used by handleStmtFetch.
-		// handleQuery and handleStmtFetch share the writeResultset and make the code ugly here.
-		if !mysql.HasCursorExistsFlag(serverStatus) {
-			terror.Call(rs.Close)
-		}
 		r := recover()
 		if r == nil {
 			return

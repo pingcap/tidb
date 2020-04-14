@@ -204,6 +204,7 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 		// explicitly flush columnInfo to client.
 		return cc.flush()
 	}
+	defer terror.Call(rs.Close)
 	err = cc.writeResultset(ctx, rs, true, 0, 0)
 	if err != nil {
 		return errors.Annotate(err, cc.preparedStmt2String(stmtID))
