@@ -632,6 +632,8 @@ func (w *fieldWriter) GetField() (bool, field) {
 			}
 		} else if ch == '\\' {
 			// TODO: escape only support '\'
+			// When the escaped character is interpreted as if
+			// it was not escaped, backslash is ignored.
 			flag, ch = w.getChar()
 			if flag {
 				w.OutputBuf = append(w.OutputBuf, '\\')
