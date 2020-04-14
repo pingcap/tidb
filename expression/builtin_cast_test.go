@@ -270,7 +270,7 @@ func (s *testEvaluatorSuite) TestCastXXX(c *C) {
 var (
 	year, month, day     = time.Now().In(time.UTC).Date()
 	curDateInt           = int64(year*10000 + int(month)*100 + day)
-	curTimeInt           = int64(curDateInt*1000000 + 125959)
+	curTimeInt           = curDateInt*1000000 + 125959
 	curTimeWithFspReal   = float64(curTimeInt) + 0.555
 	curTimeString        = fmt.Sprintf("%4d-%02d-%02d 12:59:59", year, int(month), day)
 	curTimeWithFspString = fmt.Sprintf("%4d-%02d-%02d 12:59:59.555000", year, int(month), day)
@@ -281,12 +281,12 @@ var (
 	// timeWithFspDatum indicates datetime "curYear-curMonth-curDay 12:59:59.555000".
 	timeWithFspDatum = types.NewDatum(tmWithFsp)
 	duration         = types.Duration{
-		Duration: time.Duration(12*time.Hour + 59*time.Minute + 59*time.Second),
+		Duration: 12*time.Hour + 59*time.Minute + 59*time.Second,
 		Fsp:      types.DefaultFsp}
 	// durationDatum indicates duration "12:59:59".
 	durationDatum   = types.NewDatum(duration)
 	durationWithFsp = types.Duration{
-		Duration: time.Duration(12*time.Hour + 59*time.Minute + 59*time.Second + 555*time.Millisecond),
+		Duration: 12*time.Hour + 59*time.Minute + 59*time.Second + 555*time.Millisecond,
 		Fsp:      3}
 	// durationWithFspDatum indicates duration "12:59:59.555"
 	durationWithFspDatum = types.NewDatum(durationWithFsp)
@@ -1187,7 +1187,7 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsTypesClasses(c *C) {
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeDatetime), Index: 0},
 			chunk.MutRowFromDatums([]types.Datum{timeWithFspDatum}),
-			int64(curDateInt*1000000 + 130000), curTimeWithFspReal, types.NewDecFromFloatForTest(curTimeWithFspReal), curTimeWithFspString,
+			curDateInt*1000000 + 130000, curTimeWithFspReal, types.NewDecFromFloatForTest(curTimeWithFspReal), curTimeWithFspString,
 		},
 		{
 			durationColumn0,

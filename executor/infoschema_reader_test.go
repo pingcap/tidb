@@ -700,7 +700,7 @@ func (s *testInfoschemaClusterTableSuite) TestTiDBClusterInfo(c *C) {
 	tidbStatusAddr := fmt.Sprintf(":%d", config.GetGlobalConfig().Status.StatusPort)
 	row := func(cols ...string) string { return strings.Join(cols, " ") }
 	tk.MustQuery("select type, instance, status_address, version, git_hash from information_schema.cluster_info").Check(testkit.Rows(
-		row("tidb", ":4000", tidbStatusAddr, "5.7.25-TiDB-None", "None"),
+		row("tidb", ":4000", tidbStatusAddr, "None", "None"),
 		row("pd", mockAddr, mockAddr, "4.0.0-alpha", "mock-pd-githash"),
 		row("tikv", "store1", "", "", ""),
 	))
@@ -752,10 +752,10 @@ func (s *testInfoschemaClusterTableSuite) TestTiDBClusterInfo(c *C) {
 func (s *testInfoschemaTableSuite) TestSequences(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("CREATE SEQUENCE test.seq maxvalue 10000000")
-	tk.MustQuery("SELECT * FROM information_schema.sequences WHERE sequence_schema='test' AND sequence_name='seq'").Check(testkit.Rows("def test seq 1 1000 0 1 10000000 1 0 1 "))
+	tk.MustQuery("SELECT * FROM information_schema.sequences WHERE sequence_schema='test' AND sequence_name='seq'").Check(testkit.Rows("def test seq 1 1000 0 1 10000000 1 1 "))
 	tk.MustExec("DROP SEQUENCE test.seq")
 	tk.MustExec("CREATE SEQUENCE test.seq start = -1 minvalue -1 maxvalue 10 increment 1 cache 10")
-	tk.MustQuery("SELECT * FROM information_schema.sequences WHERE sequence_schema='test' AND sequence_name='seq'").Check(testkit.Rows("def test seq 1 10 0 1 10 -1 0 -1 "))
+	tk.MustQuery("SELECT * FROM information_schema.sequences WHERE sequence_schema='test' AND sequence_name='seq'").Check(testkit.Rows("def test seq 1 10 0 1 10 -1 -1 "))
 	tk.MustExec("CREATE SEQUENCE test.seq2 start = -9 minvalue -10 maxvalue 10 increment -1 cache 15")
-	tk.MustQuery("SELECT * FROM information_schema.sequences WHERE sequence_schema='test' AND sequence_name='seq2'").Check(testkit.Rows("def test seq2 1 15 0 -1 10 -10 0 -9 "))
+	tk.MustQuery("SELECT * FROM information_schema.sequences WHERE sequence_schema='test' AND sequence_name='seq2'").Check(testkit.Rows("def test seq2 1 15 0 -1 10 -10 -9 "))
 }
