@@ -319,6 +319,14 @@ func (s *testSuite) TestGlobalTracker(c *C) {
 	c.Assert(r.BytesConsumed(), Equals, int64(100))
 	c.Assert(c1.parent, DeepEquals, r)
 	c.Assert(len(r.mu.children), Equals, 0)
+
+	defer func() {
+		v := recover()
+		c.Assert(v, Equals, "Detach from a non-GlobalTracker")
+	}()
+	c2.AttachTo(commonTracker)
+	c2.DetachFromGlobalTracker()
+
 }
 
 func BenchmarkConsume(b *testing.B) {

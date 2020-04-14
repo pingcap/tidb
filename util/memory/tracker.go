@@ -313,8 +313,11 @@ func (t *Tracker) AttachToGlobalTracker(globalTracker *Tracker) {
 // Note that only the parent of this tracker is Global Tracker could call this function
 // Otherwise it should use Detach
 func (t *Tracker) DetachFromGlobalTracker() {
-	if t.parent == nil || !t.parent.isGlobal {
+	if t.parent == nil {
 		return
+	}
+	if !t.parent.isGlobal {
+		panic("Detach from a non-GlobalTracker")
 	}
 	parent := t.parent
 	parent.Consume(-t.BytesConsumed())
