@@ -273,10 +273,10 @@ func getUint64FromNUM(num interface{}) uint64 {
 	return 0
 }
 
-func getInt64FromNUM(num interface{}) int64 {
+func getInt64FromNUM(num interface{}) (val int64, errMsg string) {
 	switch v := num.(type) {
 	case int64:
-		return v
+		return v, ""
 	}
-	return -1
+	return -1, fmt.Sprintf("%d is out of range [–9223372036854775808,9223372036854775807]", num)
 }
