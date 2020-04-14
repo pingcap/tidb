@@ -18,7 +18,6 @@ import (
 	"context"
 	gjson "encoding/json"
 	"fmt"
-	"github.com/pingcap/tidb/util/set"
 	"sort"
 	"strconv"
 	"strings"
@@ -59,6 +58,7 @@ import (
 	"github.com/pingcap/tidb/util/format"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/hint"
+	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
 )
