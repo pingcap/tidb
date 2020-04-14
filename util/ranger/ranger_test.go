@@ -619,6 +619,13 @@ create table t(
 			filterConds: "[eq(test.t.f, B)]",
 			resultStr:   "[[\"a\",\"a\"]]",
 		},
+		{
+			indexPos:    4,
+			exprStr:     "f like '@%' collate utf8mb4_bin",
+			accessConds: "[]",
+			filterConds: "[like(test.t.f, @%, 92)]",
+			resultStr:   "[[NULL,+inf]]",
+		},
 	}
 
 	collate.SetNewCollationEnabledForTest(true)

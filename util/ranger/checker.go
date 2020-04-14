@@ -98,6 +98,10 @@ func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction
 }
 
 func (c *conditionChecker) checkLikeFunc(scalar *expression.ScalarFunction) bool {
+	_, collation, _ := scalar.CharsetAndCollation(scalar.GetCtx())
+	if !collate.CompatibleCollate(scalar.GetArgs()[0].GetType().Collate, collation) {
+		return false
+	}
 	if !c.checkColumn(scalar.GetArgs()[0]) {
 		return false
 	}
