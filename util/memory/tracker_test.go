@@ -299,6 +299,26 @@ func (s *testSuite) TestGlobalTracker(c *C) {
 	c.Assert(c1.parent, IsNil)
 	c.Assert(c2.parent, IsNil)
 	c.Assert(len(r.mu.children), Equals, 0)
+
+	commonTracker := NewTracker(stringutil.StringerStr("common"), -1)
+	c1.AttachToGlobalTracker(commonTracker)
+	c2.AttachToGlobalTracker(commonTracker)
+	c.Assert(c1.parent, IsNil)
+	c.Assert(c2.parent, IsNil)
+	c.Assert(commonTracker.BytesConsumed(), Equals, int64(0))
+	c.Assert(len(commonTracker.mu.children), Equals, 0)
+
+	c1.AttachTo(commonTracker)
+	c.Assert(commonTracker.BytesConsumed(), Equals, int64(100))
+	c.Assert(len(commonTracker.mu.children), Equals, 1)
+	c.Assert(c1.parent, DeepEquals, commonTracker)
+
+	c1.AttachToGlobalTracker(r)
+	c.Assert(commonTracker.BytesConsumed(), Equals, int64(0))
+	c.Assert(len(commonTracker.mu.children), Equals, 0)
+	c.Assert(r.BytesConsumed(), Equals, int64(100))
+	c.Assert(c1.parent, DeepEquals, r)
+	c.Assert(len(r.mu.children), Equals, 0)
 }
 
 func BenchmarkConsume(b *testing.B) {
