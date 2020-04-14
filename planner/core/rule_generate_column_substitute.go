@@ -17,6 +17,7 @@ import (
 	"context"
 
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
@@ -44,6 +45,35 @@ func (gc *gcSubstituter) optimize(ctx context.Context, lp LogicalPlan) (LogicalP
 	return gc.substitute(ctx, lp, exprToColumn), nil
 }
 
+// Classification rules should be the same as server.dumpTextRow.
+func getStoreType(colType *types.FieldType) byte {
+	switch colType.Tp {
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
+		return 1
+	case mysql.TypeFloat:
+		return 2
+	case mysql.TypeDouble:
+		return 3
+	case mysql.TypeNewDecimal:
+		return 4
+	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
+		return 5
+	case mysql.TypeDuration:
+		return 6
+	case mysql.TypeEnum:
+		return 7
+	case mysql.TypeSet:
+		return 8
+	case mysql.TypeJSON:
+		return 9
+	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBit,
+		mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob:
+		return 10
+	}
+	// TODO: add error handle.
+	return 0
+}
+
 // collectGenerateColumn collect the generate column and save them to a map from their expressions to themselves.
 // For the sake of simplicity, we don't collect the stored generate column because we can't get their expressions directly.
 // TODO: support stored generate column.
@@ -62,7 +92,7 @@ func collectGenerateColumn(lp LogicalPlan, exprToColumn ExprColumnMap) {
 			if colInfo.IsGenerated() && !colInfo.GeneratedStored {
 				s := ds.schema.Columns
 				col := expression.ColInfo2Col(s, colInfo)
-				if col != nil && col.GetType().Equal(col.VirtualExpr.GetType()) {
+				if col != nil && getStoreType(col.GetType()) == getStoreType(col.VirtualExpr.GetType()) {
 					exprToColumn[col.VirtualExpr] = col
 				}
 			}

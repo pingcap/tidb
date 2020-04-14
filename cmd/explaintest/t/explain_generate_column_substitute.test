@@ -151,3 +151,27 @@ create table t(c0 char as (c1) unique, c1 int);
 insert into t(c1) values (0), (1);
 desc select * from t;
 select * from t;
+
+drop table if exists t;
+create table t(c0 int, c1 int as (c0+1) unique);
+insert into t(c0) values (1),(2);
+explain select c0+1 from t;
+select c0+1 from t;
+
+drop table if exists t;
+create table t(c0 int, c1 int as (c0) unique);
+insert into t(c0) values (1),(2);
+explain select c1 from t where c1 = 2;
+select c1 from t where c1 = 2;
+
+drop table if exists t;
+create table t(c0 double, c1 float as (c0+1) unique);
+insert into t(c0) values (1.1),(2.2);
+explain select c0+1 from t;
+select c0+1 from t;
+
+drop table if exists t;
+create table t(c0 float, c1 float as (c0+1) unique);
+insert into t(c0) values (1.1),(2.2);
+explain select c0+1 from t;
+select c0+1 from t;
