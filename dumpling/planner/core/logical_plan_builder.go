@@ -2130,6 +2130,8 @@ func (b *PlanBuilder) resolveGbyExprs(ctx context.Context, p LogicalPlan, gby *a
 	}
 	for _, item := range gby.Items {
 		resolver.inExpr = false
+		resolver.exprDepth = 0
+		resolver.isParam = false
 		retExpr, _ := item.Expr.Accept(resolver)
 		if resolver.err != nil {
 			return nil, nil, errors.Trace(resolver.err)
