@@ -198,9 +198,10 @@ func (s *testEvaluatorSuite) TestEvalExpr(c *C) {
 		colExpr := &Column{Index: 0, RetType: ft}
 		input := chunk.New([]*types.FieldType{ft}, 1024, 1024)
 		fillColumnWithGener(eTypes[i], input, 0, nil)
-		colBuf := chunk.NewColumn(ft, 1025)
-		colBuf2 := chunk.NewColumn(ft, 1025)
+		colBuf := chunk.NewColumn(ft, 1024)
+		colBuf2 := chunk.NewColumn(ft, 1024)
 		var err error
+		c.Assert(colExpr.Vectorized(), IsTrue)
 		ctx.GetSessionVars().EnableVectorizedExpression = false
 		err = EvalExpr(ctx, colExpr, input, colBuf)
 		if err != nil {

@@ -489,8 +489,7 @@ func EvalExpr(ctx sessionctx.Context, expr Expression, input *chunk.Chunk, resul
 			err = errors.New(fmt.Sprintf("invalid eval type %v", expr.GetType().EvalType()))
 		}
 	} else {
-		ind := 0
-		n := input.NumRows()
+		ind, n := 0, input.NumRows()
 		iter := chunk.NewIterator4Chunk(input)
 		switch evalType {
 		case types.ETInt:
