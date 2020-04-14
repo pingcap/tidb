@@ -162,10 +162,6 @@ func (ts *testTypeConvertSuite) TestToInt64(c *C) {
 	v, err := Convert(3.1415926, ft)
 	c.Assert(err, IsNil)
 	testDatumToInt64(c, v, int64(3))
-
-	binLit, err := ParseHexStr("0x9999999999999999999999999999999999999999999")
-	c.Assert(err, IsNil)
-	testDatumToInt64(c, binLit, -1)
 }
 
 func (ts *testTypeConvertSuite) TestToFloat32(c *C) {
