@@ -17,13 +17,6 @@ import (
 	"context"
 )
 
-var (
-	// DefaultTxnMembufCap is the default transaction membuf capability.
-	DefaultTxnMembufCap = 4 * 1024
-	// TempTxnMemBufCap is the capability of temporary membuf.
-	TempTxnMemBufCap = 64
-)
-
 // BufferStore wraps a Retriever for read and a MemBuffer for buffered write.
 // Common usage pattern:
 //	bs := NewBufferStore(r) // use BufferStore to wrap a Retriever
@@ -37,24 +30,19 @@ type BufferStore struct {
 }
 
 // NewBufferStore creates a BufferStore using r for read.
-func NewBufferStore(r Retriever, cap int) *BufferStore {
-	if cap <= 0 {
-		cap = DefaultTxnMembufCap
-	}
+func NewBufferStore(r Retriever) *BufferStore {
 	return &BufferStore{
 		r:         r,
-		MemBuffer: NewMemDbBuffer(cap),
+		MemBuffer: NewMemDbBuffer(),
 	}
 }
 
-// Reset resets s.MemBuffer.
-func (s *BufferStore) Reset() {
-	s.MemBuffer.Reset()
-}
-
-// SetCap sets the MemBuffer capability.
-func (s *BufferStore) SetCap(cap int) {
-	s.MemBuffer.SetCap(cap)
+// NewStagingBufferStore returns a BufferStore with buffer derived from the buffer.
+func NewStagingBufferStore(buf MemBuffer) *BufferStore {
+	return &BufferStore{
+		r:         buf,
+		MemBuffer: buf.NewStagingBuffer(),
+	}
 }
 
 // Get implements the Retriever interface.
@@ -101,15 +89,4 @@ func (s *BufferStore) IterReverse(k Key) (Iterator, error) {
 // WalkBuffer iterates all buffered kv pairs.
 func (s *BufferStore) WalkBuffer(f func(k Key, v []byte) error) error {
 	return WalkMemBuffer(s.MemBuffer, f)
-}
-
-// SaveTo saves all buffered kv pairs into a Mutator.
-func (s *BufferStore) SaveTo(m Mutator) error {
-	err := s.WalkBuffer(func(k Key, v []byte) error {
-		if len(v) == 0 {
-			return m.Delete(k)
-		}
-		return m.Set(k, v)
-	})
-	return err
 }
