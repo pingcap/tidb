@@ -164,16 +164,3 @@ func checkIterator(c *C, iter Iterator, keys [][]byte, values [][]byte) {
 	}
 	c.Assert(iter.Valid(), IsFalse)
 }
-
-func (s *testUnionStoreSuite) TestBasic(c *C) {
-	iter := invalidIterator{}
-	c.Assert(iter.Valid(), IsFalse)
-	c.Assert(iter.Next(), IsNil)
-	c.Assert(iter.Key(), IsNil)
-	c.Assert(iter.Value(), IsNil)
-
-	s.us.SetOption(1, 1)
-	c.Assert(s.us.GetOption(1), Equals, 1)
-	s.us.DelOption(1)
-	c.Assert(s.us.GetOption(1), IsNil)
-}

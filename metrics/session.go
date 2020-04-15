@@ -107,7 +107,7 @@ var (
 			Subsystem: "session",
 			Name:      "statement_pessimistic_retry_count",
 			Help:      "Bucketed histogram of statement pessimistic retry count",
-			Buckets:   prometheus.ExponentialBuckets(1, 1.5, 14), // 1 ~ 291
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 16), // 1 ~ 65536
 		})
 
 	StatementLockKeysCount = prometheus.NewHistogram(
