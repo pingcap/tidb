@@ -707,4 +707,35 @@ func (s *testPlanSerialSuite) TestPlanCacheHitInfo(c *C) {
 	tk.MustQuery(`show session variables like "last_statement_found_in_plan_cache"`).Check(testkit.Rows(
 		"last_statement_found_in_plan_cache 1",
 	))
+
+
+func (s *testPrepareSuite) TestPrepareForGroupByMultiItems(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, c int , index idx(a));")
+	tk.MustExec("insert into t values(1,2, -1), (1,2, 1), (1,2, -1), (4,4,3);")
+	tk.MustExec("set @a=1")
+	tk.MustExec("set @b=3")
+	tk.MustExec(`set sql_mode=""`)
+	tk.MustExec(`prepare stmt from "select a, sum(b), c from t group by ?, ? order by ?, ?"`)
+	tk.MustQuery("select a, sum(b), c from t group by 1,3 order by 1,3;").Check(testkit.Rows("1 4 -1", "1 2 1", "4 4 3"))
+	tk.MustQuery(`execute stmt using @a, @b, @a, @b`).Check(testkit.Rows("1 4 -1", "1 2 1", "4 4 3"))
+
+	tk.MustExec("set @c=10")
+	err = tk.ExecToErr("execute stmt using @a, @c, @a, @c")
+	c.Assert(err.Error(), Equals, "Unknown column '10' in 'group statement'")
+
+	tk.MustExec("set @v1=1.0")
+	tk.MustExec("set @v2=3.0")
+	tk.MustExec(`prepare stmt2 from "select sum(b) from t group by ?, ?"`)
+	tk.MustQuery(`execute stmt2 using @v1, @v2`).Check(testkit.Rows("10"))
 }
