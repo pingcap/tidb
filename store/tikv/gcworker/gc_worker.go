@@ -1222,61 +1222,60 @@ func (w *GCWorker) removeLockObservers(ctx context.Context, safePoint uint64, st
 
 // physicalScanAndResolveLocks performs physical scan lock and resolves these locks. Returns successful stores
 func (w *GCWorker) physicalScanAndResolveLocks(ctx context.Context, safePoint uint64, stores map[uint64]*metapb.Store) (map[uint64]interface{}, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	// Cancel all spawned goroutines for lock scanning and resolving.
+	defer cancel()
+
 	scanner := newMergeLockScanner(safePoint, w.store.GetTiKVClient(), stores)
 	err := scanner.Start(ctx)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	innerCtx, cancel := context.WithCancel(ctx)
-	wg := &sync.WaitGroup{}
-	defer func() {
-		cancel()
-		wg.Wait()
-	}()
-
 	taskCh := make(chan []*tikv.Lock, len(stores))
 	errCh := make(chan error, len(stores))
 
+	wg := &sync.WaitGroup{}
 	for range stores {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for {
 				select {
-				case <-innerCtx.Done():
-					return
 				case locks, ok := <-taskCh:
 					if !ok {
-						// Closed
+						// All locks have been resolved.
 						return
 					}
-					err := w.resolveLocksAcrossRegions(innerCtx, locks)
+					err := w.resolveLocksAcrossRegions(ctx, locks)
 					if err != nil {
-						logutil.Logger(innerCtx).Error("resolve locks failed", zap.Error(err))
+						logutil.Logger(ctx).Error("resolve locks failed", zap.Error(err))
 						errCh <- err
 					}
+				case <-ctx.Done():
+					return
 				}
 			}
 		}()
 	}
 
 	for {
-		select {
-		case err := <-errCh:
-			return nil, errors.Trace(err)
-		default:
-		}
-
 		locks := scanner.NextBatch(128)
 		if len(locks) == 0 {
 			break
 		}
 
-		taskCh <- locks
+		select {
+		case taskCh <- locks:
+		case err := <-errCh:
+			return nil, errors.Trace(err)
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
 	}
 
 	close(taskCh)
+	// Wait for all locks resolved.
 	wg.Wait()
 
 	select {
@@ -1858,7 +1857,11 @@ func (s *mergeLockScanner) Start(ctx context.Context) error {
 					zap.Uint64("safePoint", s.safePoint),
 					zap.Any("store", store1),
 					zap.Error(err))
-				ch <- scanLockResult{Err: err}
+
+				select {
+				case ch <- scanLockResult{Err: err}:
+				case <-ctx.Done():
+				}
 			}
 		}()
 		receivers = append(receivers, &receiver{Ch: ch, StoreID: storeID})
@@ -1895,7 +1898,7 @@ func (s *mergeLockScanner) NextBatch(batchSize int) []*tikv.Lock {
 	for len(result) < batchSize {
 		lock := s.Next()
 		if lock == nil {
-			return result
+			break
 		}
 		result = append(result, lock)
 	}
@@ -1947,7 +1950,11 @@ func (s *mergeLockScanner) physicalScanLocksForStore(ctx context.Context, safePo
 		nextKey = append(nextKey, 0)
 
 		for _, lockInfo := range resp.Locks {
-			lockCh <- scanLockResult{Lock: tikv.NewLock(lockInfo)}
+			select {
+			case lockCh <- scanLockResult{Lock: tikv.NewLock(lockInfo)}:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
 		}
 
 		if len(resp.Locks) < int(s.scanLockLimit) {
