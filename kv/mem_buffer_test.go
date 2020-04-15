@@ -231,38 +231,6 @@ func (s *testKVSuite) TestBufferLimit(c *C) {
 	c.Assert(err, NotNil)
 }
 
-<<<<<<< HEAD
-=======
-func (s *testKVSuite) TestBufferBatchGetter(c *C) {
-	snap := &mockSnapshot{store: NewMemDbBuffer()}
-	ka := []byte("a")
-	kb := []byte("b")
-	kc := []byte("c")
-	kd := []byte("d")
-	snap.store.Set(ka, ka)
-	snap.store.Set(kb, kb)
-	snap.store.Set(kc, kc)
-	snap.store.Set(kd, kd)
-
-	// middle value is the same as snap
-	middle := NewMemDbBuffer()
-	middle.Set(ka, []byte("a1"))
-	middle.Set(kc, []byte("c1"))
-
-	buffer := NewMemDbBuffer()
-	buffer.Set(ka, []byte("a2"))
-	buffer.Delete(kb)
-
-	batchGetter := NewBufferBatchGetter(buffer, middle, snap)
-	result, err := batchGetter.BatchGet(context.Background(), []Key{ka, kb, kc, kd})
-	c.Assert(err, IsNil)
-	c.Assert(len(result), Equals, 3)
-	c.Assert(string(result[string(ka)]), Equals, "a2")
-	c.Assert(string(result[string(kc)]), Equals, "c1")
-	c.Assert(string(result[string(kd)]), Equals, "d")
-}
-
->>>>>>> c81e903... *: use the revertable sandbox to buffer mutations (#15931)
 var opCnt = 100000
 
 func BenchmarkMemDbBufferSequential(b *testing.B) {
