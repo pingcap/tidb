@@ -840,7 +840,7 @@ partition p2 values less than (unix_timestamp('2020-04-15 00:00:00')))`)
 	tk.MustExec("insert into floor_unix_timestamp values ('2020-04-12 01:02:03.456')")
 	tk.MustExec("insert into floor_unix_timestamp values ('2020-04-14 00:00:42')")
 	tk.MustQuery("select count(*) from floor_unix_timestamp where '2020-04-05 00:00:00.001' = ts").Check(testkit.Rows("1"))
-	tk.MustQuery("select * from floor_unix_timestamp where ts > '2020-04-05 00:00:00'").Check(testkit.Rows("2020-04-05 00:00:00.001", "2020-04-12 01:02:03.456", "2020-04-14 00:00:42.000"))
+	tk.MustQuery("select * from floor_unix_timestamp where ts > '2020-04-05 00:00:00' order by ts").Check(testkit.Rows("2020-04-05 00:00:00.001", "2020-04-12 01:02:03.456", "2020-04-14 00:00:42.000"))
 	tk.MustQuery("select count(*) from floor_unix_timestamp where ts <= '2020-04-05 23:00:00'").Check(testkit.Rows("4"))
 	tk.MustQuery("select * from floor_unix_timestamp partition(p1, p2) where ts > '2020-04-14 00:00:00'").Check(testkit.Rows("2020-04-14 00:00:42.000"))
 }
