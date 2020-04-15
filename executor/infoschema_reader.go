@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/stmtsummary"
 )
 
 type memtableRetriever struct {
@@ -120,6 +121,16 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataForServersInfo()
 		case infoschema.TableTiFlashReplica:
 			e.dataForTableTiFlashReplica(sctx, dbs)
+<<<<<<< HEAD
+=======
+		case infoschema.TableTiKVStoreStatus:
+			err = e.dataForTiKVStoreStatus(sctx)
+		case infoschema.TableStatementsSummary,
+			infoschema.TableStatementsSummaryHistory,
+			infoschema.ClusterTableStatementsSummary,
+			infoschema.ClusterTableStatementsSummaryHistory:
+			err = e.setDataForStatementsSummary(sctx, e.table.Name.O)
+>>>>>>> b1d11a7... *: rename statement summary tables (#16188)
 		}
 		if err != nil {
 			return nil, err
@@ -1477,4 +1488,30 @@ func (e *memtableRetriever) dataForTableTiFlashReplica(ctx sessionctx.Context, s
 	}
 	e.rows = rows
 	return
+}
+
+func (e *memtableRetriever) setDataForStatementsSummary(ctx sessionctx.Context, tableName string) error {
+	user := ctx.GetSessionVars().User
+	isSuper := false
+	if pm := privilege.GetPrivilegeManager(ctx); pm != nil {
+		isSuper = pm.RequestVerificationWithUser("", "", "", mysql.SuperPriv, user)
+	}
+	switch tableName {
+	case infoschema.TableStatementsSummary,
+		infoschema.ClusterTableStatementsSummary:
+		e.rows = stmtsummary.StmtSummaryByDigestMap.ToCurrentDatum(user, isSuper)
+	case infoschema.TableStatementsSummaryHistory,
+		infoschema.ClusterTableStatementsSummaryHistory:
+		e.rows = stmtsummary.StmtSummaryByDigestMap.ToHistoryDatum(user, isSuper)
+	}
+	switch tableName {
+	case infoschema.ClusterTableStatementsSummary,
+		infoschema.ClusterTableStatementsSummaryHistory:
+		rows, err := infoschema.AppendHostInfoToRows(e.rows)
+		if err != nil {
+			return err
+		}
+		e.rows = rows
+	}
+	return nil
 }
