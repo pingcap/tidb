@@ -12,7 +12,13 @@
       // use TablePath when the hint only contains table.
       "select /*+ USE_INDEX(t) */ f from t where f > 10",
       // there will be a warning instead of error when index not exist
-      "select /*+ USE_INDEX(t, no_such_index) */ * from t"
+      "select /*+ USE_INDEX(t, no_such_index) */ * from t",
+      "select /*+ IGNORE_INDEX(t, no_such_index) */ * from t",
+      // use both use_index and ignore_index, same as index hints in sql.
+      "select /*+ USE_INDEX(t, c_d_e), IGNORE_INDEX(t, f) */ c from t order by c",
+      "select /*+ USE_INDEX(t, f), IGNORE_INDEX(t, f) */ c from t order by c",
+      "select /*+ USE_INDEX(t, c_d_e), IGNORE_INDEX(t, c_d_e) */ c from t order by c",
+      "select /*+ USE_INDEX(t, c_d_e, f), IGNORE_INDEX(t, c_d_e) */ c from t order by c"
     ]
   },
   {
