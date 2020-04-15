@@ -4930,7 +4930,54 @@ func (s *testIntegrationSuite) TestIssue10181(c *C) {
 
 func (s *testIntegrationSuite) TestExprPushdownBlacklist(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustQuery(`select * from mysql.expr_pushdown_blacklist`).Check(testkit.Rows())
+	tk.MustQuery(`select * from mysql.expr_pushdown_blacklist`).Check(testkit.Rows(
+		"date_add tiflash DST(daylight saving time) does not work in TiFlash date_add",
+		"cast tiflash some corner cases(like overflow) handling is different in TiFlash and TiDB"))
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int , b date)")
+
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	c.Assert(exists, IsTrue)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	tk.MustExec("insert into mysql.expr_pushdown_blacklist " +
+		"values('<', 'tikv,tiflash,tidb', 'for test'),('date_format', 'tikv', 'for test')")
+	tk.MustExec("admin reload expr_pushdown_blacklist")
+
+	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
+
+	// < should not be pushed, cast only pushed to tikv, date_format only pushed to tiflash
+	tk.MustQuery("explain select * from test.t where b > date'1988-01-01' and b < date'1994-01-01' " +
+		"and cast(a as decimal(10,2)) > 10.10 and date_format(b,'%m') = '11'").Check(testkit.Rows(
+		"Selection_5 2133.33 root  lt(test.t.b, 1994-01-01)",
+		"└─Selection_9 2666.67 root  gt(cast(test.t.a), 10.10)",
+		"  └─TableReader_8 2666.67 root  data:Selection_7",
+		"    └─Selection_7 2666.67 cop[tiflash]  eq(date_format(test.t.b, \"%m\"), \"11\"), gt(test.t.b, 1988-01-01)",
+		"      └─TableFullScan_6 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"))
+
+	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tikv'")
+	tk.MustQuery("explain select * from test.t where b > date'1988-01-01' and b < date'1994-01-01' " +
+		"and cast(a as decimal(10,2)) > 10.10 and date_format(b,'%m') = '11'").Check(testkit.Rows(
+		"Selection_5 2133.33 root  lt(test.t.b, 1994-01-01)",
+		"└─Selection_9 2666.67 root  eq(date_format(test.t.b, \"%m\"), \"11\")",
+		"  └─TableReader_8 2666.67 root  data:Selection_7",
+		"    └─Selection_7 2666.67 cop[tikv]  gt(cast(test.t.a), 10.10), gt(test.t.b, 1988-01-01)",
+		"      └─TableFullScan_6 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+	tk.MustExec("delete from mysql.expr_pushdown_blacklist where name = '<' and store_type = 'tikv,tiflash,tidb' and reason = 'for test'")
+	tk.MustExec("delete from mysql.expr_pushdown_blacklist where name = 'date_format' and store_type = 'tikv' and reason = 'for test'")
+	tk.MustExec("admin reload expr_pushdown_blacklist")
 }
 
 func (s *testIntegrationSuite) TestOptRuleBlacklist(c *C) {
@@ -5546,7 +5593,7 @@ func (s *testIntegrationSuite) TestCacheConstEval(c *C) {
 	tk.MustExec("create table t(col_double double)")
 	tk.MustExec("insert into t values (1)")
 	tk.Se.GetSessionVars().EnableVectorizedExpression = false
-	tk.MustExec("insert into mysql.expr_pushdown_blacklist values('cast')")
+	tk.MustExec("insert into mysql.expr_pushdown_blacklist values('cast', 'tikv,tiflash,tidb', 'for test')")
 	tk.MustExec("admin reload expr_pushdown_blacklist")
 	tk.MustExec("prepare stmt from 'SELECT * FROM (SELECT col_double AS c0 FROM t) t WHERE (ABS((REPEAT(?, ?) OR 5617780767323292672)) < LN(EXP(c0)) + (? ^ ?))'")
 	tk.MustExec("set @a1 = 'JuvkBX7ykVux20zQlkwDK2DFelgn7'")
@@ -5557,7 +5604,7 @@ func (s *testIntegrationSuite) TestCacheConstEval(c *C) {
 	// incompatible with MySQL actually, update the result after fixing it.
 	tk.MustQuery("execute stmt using @a1, @a2, @a3, @a4").Check(testkit.Rows("1"))
 	tk.Se.GetSessionVars().EnableVectorizedExpression = true
-	tk.MustExec("delete from mysql.expr_pushdown_blacklist")
+	tk.MustExec("delete from mysql.expr_pushdown_blacklist where name = 'cast' and store_type = 'tikv,tiflash,tidb' and reason = 'for test'")
 	tk.MustExec("admin reload expr_pushdown_blacklist")
 }
 

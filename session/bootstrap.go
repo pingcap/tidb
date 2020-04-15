@@ -274,7 +274,9 @@ const (
 
 	// CreateExprPushdownBlacklist stores the expressions which are not allowed to be pushed down.
 	CreateExprPushdownBlacklist = `CREATE TABLE IF NOT EXISTS mysql.expr_pushdown_blacklist (
-		name char(100) NOT NULL
+		name char(100) NOT NULL,
+		store_type char(100) NOT NULL DEFAULT 'tikv,tiflash,tidb',
+		reason varchar(200)
 	);`
 
 	// CreateOptRuleBlacklist stores the list of disabled optimizing operations.
@@ -373,6 +375,8 @@ const (
 	// see https://github.com/pingcap/tidb/pull/14574 for more details.
 	version40 = 40
 	version41 = 41
+	// version42 add storeType and reason column in expr_pushdown_blacklist
+	version42 = 42
 )
 
 func checkBootstrapped(s Session) (bool, error) {
@@ -595,6 +599,10 @@ func upgrade(s Session) {
 
 	if ver < version41 {
 		upgradeToVer41(s)
+	}
+
+	if ver < version42 {
+		upgradeToVer42(s)
 	}
 
 	updateBootstrapVer(s)
@@ -970,6 +978,19 @@ func upgradeToVer41(s Session) {
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `password` TEXT as (`authentication_string`)", infoschema.ErrColumnExists)
 }
 
+// writeDefaultExprPushDownBlacklist writes default expr pushdown blacklist into mysql.expr_pushdown_blacklist
+func writeDefaultExprPushDownBlacklist(s Session) {
+	mustExecute(s, "INSERT HIGH_PRIORITY INTO mysql.expr_pushdown_blacklist VALUES"+
+		"('date_add','tiflash', 'DST(daylight saving time) does not work in TiFlash date_add'),"+
+		"('cast','tiflash', 'some corner cases(like overflow) handling is different in TiFlash and TiDB')")
+}
+
+func upgradeToVer42(s Session) {
+	doReentrantDDL(s, "ALTER TABLE mysql.expr_pushdown_blacklist ADD COLUMN `store_type` char(100) NOT NULL DEFAULT 'tikv,tiflash,tidb'", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.expr_pushdown_blacklist ADD COLUMN `reason` varchar(200)", infoschema.ErrColumnExists)
+	writeDefaultExprPushDownBlacklist(s)
+}
+
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
 func updateBootstrapVer(s Session) {
 	// Update bootstrap version.
@@ -1076,6 +1097,8 @@ func doDMLWorks(s Session) {
 	writeSystemTZ(s)
 
 	writeNewCollationParameter(s, config.GetGlobalConfig().NewCollationsEnabledOnFirstBootstrap)
+
+	writeDefaultExprPushDownBlacklist(s)
 
 	_, err := s.Execute(context.Background(), "COMMIT")
 	if err != nil {
