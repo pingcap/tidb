@@ -29,29 +29,6 @@
     ]
   },
   {
-    "name": "TestReadFromStorageHint",
-    "cases": [
-      "desc select avg(a) from t",
-      "desc select /*+ read_from_storage(tiflash[t]) */ avg(a) from t",
-      "desc select /*+ read_from_storage(tiflash[t]) */ sum(a) from t",
-      "desc select /*+ read_from_storage(tiflash[t]) */ sum(a+1) from t",
-      "desc select /*+ read_from_storage(tiflash[t]) */ sum(isnull(a)) from t",
-      "desc select * from tt where (tt.a > 1 and tt.a < 20) or (tt.a >= 30 and tt.a < 55)",
-      "desc select /*+ read_from_storage(tiflash[tt]) */ * from tt where (tt.a > 1 and tt.a < 20) or (tt.a >= 30 and tt.a < 55)",
-      "desc select * from ttt order by ttt.a desc",
-      "desc select /*+ read_from_storage(tiflash[ttt]) */ * from ttt order by ttt.a desc",
-      "desc select /*+ read_from_storage(tiflash[ttt]) */ * from ttt order by ttt.a"
-    ]
-  },
-  {
-    "name": "TestReadFromStorageHintAndIsolationRead",
-    "cases": [
-      "desc select /*+ read_from_storage(tikv[t], tiflash[t]) */ avg(a) from t",
-      "desc select /*+ read_from_storage(tikv[t]) */ avg(a) from t",
-      "desc select /*+ read_from_storage(tiflash[t]) */ avg(a) from t"
-    ]
-  },
-  {
     "name": "TestIndexHintWarning",
     "cases": [
       "select /*+ USE_INDEX(t1, j) */ * from t1",
