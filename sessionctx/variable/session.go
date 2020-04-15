@@ -1041,7 +1041,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.MaxExecutionTime = uint64(timeoutMS)
 	case InnodbLockWaitTimeout:
 		lockWaitSec := tidbOptInt64(val, DefInnodbLockWaitTimeout)
-		s.LockWaitTimeout = int64(lockWaitSec * 1000)
+		s.LockWaitTimeout = lockWaitSec * 1000
 	case WindowingUseHighPrecision:
 		s.WindowingUseHighPrecision = TiDBOptOn(val)
 	case TiDBSkipUTF8Check:
@@ -1238,40 +1238,17 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 			return errors.Trace(err)
 		}
 	case TiDBSlowLogThreshold:
-		conf := config.GetGlobalConfig()
-		if !conf.EnableDynamicConfig {
-			atomic.StoreUint64(&config.GetGlobalConfig().Log.SlowThreshold, uint64(tidbOptInt64(val, logutil.DefaultSlowThreshold)))
-		} else {
-			s.StmtCtx.AppendWarning(errors.Errorf("cannot update %s when enabling dynamic configs", TiDBSlowLogThreshold))
-		}
+		atomic.StoreUint64(&config.GetGlobalConfig().Log.SlowThreshold, uint64(tidbOptInt64(val, logutil.DefaultSlowThreshold)))
 	case TiDBRecordPlanInSlowLog:
-		conf := config.GetGlobalConfig()
-		if !conf.EnableDynamicConfig {
-			atomic.StoreUint32(&config.GetGlobalConfig().Log.RecordPlanInSlowLog, uint32(tidbOptInt64(val, logutil.DefaultRecordPlanInSlowLog)))
-		} else {
-			s.StmtCtx.AppendWarning(errors.Errorf("cannot update %s when enabling dynamic configs", TiDBRecordPlanInSlowLog))
-		}
+		atomic.StoreUint32(&config.GetGlobalConfig().Log.RecordPlanInSlowLog, uint32(tidbOptInt64(val, logutil.DefaultRecordPlanInSlowLog)))
 	case TiDBEnableSlowLog:
-		conf := config.GetGlobalConfig()
-		if !conf.EnableDynamicConfig {
-			config.GetGlobalConfig().Log.EnableSlowLog = TiDBOptOn(val)
-		} else {
-			s.StmtCtx.AppendWarning(errors.Errorf("cannot update %s when enabling dynamic configs", TiDBEnableSlowLog))
-		}
+		config.GetGlobalConfig().Log.EnableSlowLog = TiDBOptOn(val)
 	case TiDBQueryLogMaxLen:
-		conf := config.GetGlobalConfig()
-		if !conf.EnableDynamicConfig {
-			atomic.StoreUint64(&config.GetGlobalConfig().Log.QueryLogMaxLen, uint64(tidbOptInt64(val, logutil.DefaultQueryLogMaxLen)))
-		} else {
-			s.StmtCtx.AppendWarning(errors.Errorf("cannot update %s when enabling dynamic configs", TiDBQueryLogMaxLen))
-		}
+		atomic.StoreUint64(&config.GetGlobalConfig().Log.QueryLogMaxLen, uint64(tidbOptInt64(val, logutil.DefaultQueryLogMaxLen)))
 	case TiDBCheckMb4ValueInUTF8:
-		conf := config.GetGlobalConfig()
-		if !conf.EnableDynamicConfig {
-			config.GetGlobalConfig().CheckMb4ValueInUTF8 = TiDBOptOn(val)
-		} else {
-			s.StmtCtx.AppendWarning(errors.Errorf("cannot update %s when enabling dynamic configs", TiDBCheckMb4ValueInUTF8))
-		}
+		config.GetGlobalConfig().CheckMb4ValueInUTF8 = TiDBOptOn(val)
+	case TiDBEnableCollectExecutionInfo:
+		config.GetGlobalConfig().EnableCollectExecutionInfo = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil
