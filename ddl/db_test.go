@@ -2160,21 +2160,42 @@ func (s *testDBSuite) TestCreateTable(c *C) {
 
 	s.tk.MustExec("drop table t")
 
-	_, err = s.tk.Exec("CREATE TABLE `t` (`a` int) DEFAULT CHARSET=abcdefg")
-	c.Assert(err, NotNil)
+	s.testErrorCode(c, "CREATE TABLE `t` (`a` int) DEFAULT CHARSET=abcdefg", mysql.ErrUnknownCharacterSet)
 
-	_, err = s.tk.Exec("CREATE TABLE `collateTest` (`a` int, `b` varchar(10)) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_slovak_ci")
-	c.Assert(err, IsNil)
-	result := s.tk.MustQuery("show create table collateTest")
-	got := result.Rows()[0][1]
-	c.Assert(got, Equals, "CREATE TABLE `collateTest` (\n  `a` int(11) DEFAULT NULL,\n  `b` varchar(10) COLLATE utf8_slovak_ci DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_slovak_ci")
+	s.tk.MustExec("CREATE TABLE `collateTest` (`a` int, `b` varchar(10)) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_slovak_ci")
+	expects := "CREATE TABLE `collateTest` (\n  `a` int(11) DEFAULT NULL,\n  `b` varchar(10) COLLATE utf8_slovak_ci DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_slovak_ci"
+	s.tk.MustQuery("show create table collateTest").Check(testkit.Rows(expects))
+
+	s.testErrorCode(c, "CREATE TABLE `collateTest2` (`a` int) CHARSET utf8 COLLATE utf8mb4_unicode_ci", mysql.ErrCollationCharsetMismatch)
+	s.testErrorCode(c, "CREATE TABLE `collateTest3` (`a` int) COLLATE utf8mb4_unicode_ci CHARSET utf8", mysql.ErrConflictingDeclarations)
+
+	s.tk.MustExec("CREATE TABLE `collateTest4` (`a` int) COLLATE utf8_uniCOde_ci")
+	expects = "CREATE TABLE `collateTest4` (\n  `a` int(11) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci"
+	s.tk.MustQuery("show create table collateTest4").Check(testkit.Rows(expects))
 
 	s.tk.MustExec("create database test2 default charset utf8 collate utf8_general_ci")
 	s.tk.MustExec("use test2")
 	s.tk.MustExec("create table dbCollateTest (a varchar(10))")
-	result = s.tk.MustQuery("show create table dbCollateTest")
-	got = result.Rows()[0][1]
+
+	result := s.tk.MustQuery("show create table dbCollateTest")
+	got := result.Rows()[0][1]
 	c.Assert(got, Equals, "CREATE TABLE `dbCollateTest` (\n  `a` varchar(10) COLLATE utf8_general_ci DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci")
+
+	// test for enum column
+	s.tk.MustExec("use test")
+	failSQL := "create table t_enum (a enum('e','e'));"
+	s.tk.Exec(failSQL, tmysql.ErrDuplicatedValueInType)
+	failSQL = "create table t_enum (a enum('e','E'));"
+	s.testErrorCode(c, failSQL, tmysql.ErrDuplicatedValueInType)
+	failSQL = "create table t_enum (a enum('abc','Abc'));"
+	s.testErrorCode(c, failSQL, tmysql.ErrDuplicatedValueInType)
+	// test for set column
+	failSQL = "create table t_enum (a set('e','e'));"
+	s.testErrorCode(c, failSQL, tmysql.ErrDuplicatedValueInType)
+	failSQL = "create table t_enum (a set('e','E'));"
+	s.testErrorCode(c, failSQL, tmysql.ErrDuplicatedValueInType)
+	failSQL = "create table t_enum (a set('abc','Abc'));"
+	s.testErrorCode(c, failSQL, tmysql.ErrDuplicatedValueInType)
 }
 
 func (s *testDBSuite) TestTableForeignKey(c *C) {
@@ -2413,7 +2434,7 @@ func (s *testDBSuite) TestCreateTableWithPartition(c *C) {
 			  partition p1 values less than (to_seconds('2005-01-01')));`)
 	s.tk.MustQuery("show create table t26").Check(
 		testkit.Rows("t26 CREATE TABLE `t26` (\n  `a` date DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\nPARTITION BY RANGE ( to_seconds(`a`) ) (\n  PARTITION p0 VALUES LESS THAN (63240134400),\n  PARTITION p1 VALUES LESS THAN (63271756800)\n)"))
-	s.tk.MustExec(`create table t27 (a bigint unsigned not null) 	
+	s.tk.MustExec(`create table t27 (a bigint unsigned not null)
 		  partition by range(a) (
 		  partition p0 values less than (10),
 		  partition p1 values less than (100),
@@ -2421,7 +2442,7 @@ func (s *testDBSuite) TestCreateTableWithPartition(c *C) {
 		  partition p3 values less than (18446744073709551000),
 		  partition p4 values less than (18446744073709551614)
 		);`)
-	s.tk.MustExec(`create table t28 (a bigint unsigned not null) 	
+	s.tk.MustExec(`create table t28 (a bigint unsigned not null)
 		  partition by range(a) (
 		  partition p0 values less than (10),
 		  partition p1 values less than (100),
@@ -3799,7 +3820,7 @@ func (s *testDBSuite) TestTruncatePartitionAndDropTable(c *C) {
 	s.tk.MustExec("drop table if exists t5;")
 	s.tk.MustExec("set @@session.tidb_enable_table_partition=1;")
 	s.tk.MustExec(`create table t5(
-		id int, name varchar(50), 
+		id int, name varchar(50),
 		purchased date
 	)
 	partition by range( year(purchased) ) (
