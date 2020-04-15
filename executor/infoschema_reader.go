@@ -17,8 +17,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/url"
 	"sort"
 	"strings"
 	"sync"
@@ -40,12 +38,10 @@ import (
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	binaryJson "github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/set"
@@ -1442,6 +1438,8 @@ type tableStorageStatsRetriever struct {
 	initialTables []*initialTable
 	curTable      int
 	pdAddress     string
+	helper        *helper.Helper
+	stats         helper.PdRegionStats
 }
 
 func (e *tableStorageStatsRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
@@ -1531,26 +1529,14 @@ func (e *tableStorageStatsRetriever) initialize(sctx sessionctx.Context) error {
 	if !ok {
 		return errors.New("Information about TiKV region status can be gotten only when the storage is TiKV")
 	}
-	etcd, ok := tikvStore.(tikv.EtcdBackend)
-	if !ok {
-		return errors.New("not implemented")
-	}
-	pdAddrs := etcd.EtcdAddrs()
-	if len(pdAddrs) == 0 {
+	e.helper = helper.NewHelper(tikvStore)
+	pdAddrs, err := e.helper.GetPDAddr()
+	if err != nil {
 		return errors.New("pd unavailable")
 	}
 	e.pdAddress = pdAddrs[0]
 	e.initialized = true
 	return nil
-}
-
-// PdRegionStats is the json response from PD.
-type PdRegionStats struct {
-	Count          int            `json:"count"`
-	EmptyCount     int            `json:"empty_count"`
-	StorageSize    int64          `json:"storage_size"`
-	StorageKeys    int64          `json:"storage_keys"`
-	StorePeerCount map[uint64]int `json:"store_peer_count"`
 }
 
 func (e *tableStorageStatsRetriever) setDataForTableStorageStats(ctx sessionctx.Context) ([][]types.Datum, error) {
@@ -1560,28 +1546,12 @@ func (e *tableStorageStatsRetriever) setDataForTableStorageStats(ctx sessionctx.
 	for i := e.curTable; e.curTable < len(e.initialTables) && count < 1024; i++ {
 		table := (e.initialTables)[e.curTable]
 		tableID := table.tb.ID
-		// Include table and index data, because their range located in tableID_i tableID_r
-		startKey := tablecodec.EncodeTablePrefix(tableID)
-		endKey := tablecodec.EncodeTablePrefix(tableID + 1)
-		startKey = codec.EncodeBytes([]byte{}, startKey)
-		endKey = codec.EncodeBytes([]byte{}, endKey)
-
-		statURL := fmt.Sprintf("http://%s/pd/api/v1/stats/region?start_key=%s&end_key=%s",
-			e.pdAddress,
-			url.QueryEscape(string(startKey)),
-			url.QueryEscape(string(endKey)))
-
-		resp, err := http.Get(statURL)
+		err := e.helper.GetPdRegionStats(tableID, &e.stats)
 		if err != nil {
 			return nil, err
 		}
-		var stats PdRegionStats
-		dec := json.NewDecoder(resp.Body)
-		if err := dec.Decode(&stats); err != nil {
-			return nil, err
-		}
 		peerCount := 0
-		for _, v := range stats.StorePeerCount {
+		for _, v := range e.stats.StorePeerCount {
 			peerCount = v
 			break
 		}
@@ -1590,10 +1560,10 @@ func (e *tableStorageStatsRetriever) setDataForTableStorageStats(ctx sessionctx.
 			table.tb.Name.O,   // TABLE_NAME
 			tableID,           // TABLE_ID
 			peerCount,         // TABLE_PEER_COUNT
-			stats.Count,       // TABLE_REGION_COUNT
-			stats.EmptyCount,  // TABLE_EMPTY_REGION_COUNT
-			stats.StorageSize, // TABLE_SIZE
-			stats.StorageKeys, // TABLE_KEYS
+			e.stats.Count,       // TABLE_REGION_COUNT
+			e.stats.EmptyCount,  // TABLE_EMPTY_REGION_COUNT
+			e.stats.StorageSize, // TABLE_SIZE
+			e.stats.StorageKeys, // TABLE_KEYS
 		)
 		rows = append(rows, record)
 		count++
