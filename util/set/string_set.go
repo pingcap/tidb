@@ -31,3 +31,8 @@ func (s StringSet) Exist(val string) bool {
 func (s StringSet) Insert(val string) {
 	s[val] = struct{}{}
 }
+
+// Count returns the number in Set s.
+func (s StringSet) Count() int {
+	return len(s)
+}
