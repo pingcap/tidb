@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"strconv"
 	"strings"
 
@@ -32,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
@@ -264,9 +264,9 @@ func (e *Execute) checkPreparedPriv(ctx context.Context, sctx sessionctx.Context
 	return err
 }
 
-func (e *Execute) addHitInfo(sctx sessionctx.Context, opt string) error {
+func (e *Execute) setFoundInPlanCache(sctx sessionctx.Context, opt bool) error {
 	vars := sctx.GetSessionVars()
-	err := vars.SetSystemVar(variable.TiDBFoundInPlanCache, opt)
+	err := vars.SetSystemVar(variable.TiDBFoundInPlanCache, variable.BoolToIntStr(opt))
 	return err
 }
 
@@ -289,7 +289,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 		} else {
 			planCacheCounter.Inc()
 		}
-		err = e.addHitInfo(sctx, "1")
+		err = e.setFoundInPlanCache(sctx, true)
 		if err != nil {
 			return err
 		}
@@ -318,7 +318,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 				}
 			}
 			if planValid {
-				err := e.addHitInfo(sctx, "1")
+				err := e.setFoundInPlanCache(sctx, true)
 				if err != nil {
 					return err
 				}
@@ -351,7 +351,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	isRange := e.isRangePartition(p)
 	_, isTableDual := p.(*PhysicalTableDual)
 	if !isTableDual && prepared.UseCache && !isRange {
-		err = e.addHitInfo(sctx, "1")
+		err = e.setFoundInPlanCache(sctx, true)
 		if err != nil {
 			return err
 		}
@@ -360,7 +360,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 		stmtCtx.SetPlanDigest(preparedStmt.NormalizedPlan, preparedStmt.PlanDigest)
 		sctx.PreparedPlanCache().Put(cacheKey, cached)
 	} else {
-		err = e.addHitInfo(sctx, "0")
+		err = e.setFoundInPlanCache(sctx, false)
 	}
 	return err
 }
