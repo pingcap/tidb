@@ -32,6 +32,11 @@ var (
 	_ AggFunc = (*countOriginal4Duration)(nil)
 	_ AggFunc = (*countOriginal4JSON)(nil)
 	_ AggFunc = (*countOriginal4String)(nil)
+	_ AggFunc = (*countOriginalWithDistinct4Int)(nil)
+	_ AggFunc = (*countOriginalWithDistinct4Real)(nil)
+	_ AggFunc = (*countOriginalWithDistinct4Decimal)(nil)
+	_ AggFunc = (*countOriginalWithDistinct4Duration)(nil)
+	_ AggFunc = (*countOriginalWithDistinct4String)(nil)
 	_ AggFunc = (*countOriginalWithDistinct)(nil)
 
 	// All the AggFunc implementations for "FIRSTROW" are listed here.
