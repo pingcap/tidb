@@ -29,7 +29,7 @@ type testUnionStoreSuite struct {
 }
 
 func (s *testUnionStoreSuite) SetUpTest(c *C) {
-	s.store = NewMemDbBuffer(DefaultTxnMembufCap)
+	s.store = NewMemDbBuffer()
 	s.us = NewUnionStore(&mockSnapshot{s.store})
 }
 

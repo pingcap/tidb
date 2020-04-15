@@ -26,7 +26,7 @@ import (
 
 // memDbBuffer implements the MemBuffer interface.
 type memDbBuffer struct {
-	db              *memdb.DB
+	sandbox         *memdb.Sandbox
 	entrySizeLimit  int
 	bufferLenLimit  uint64
 	bufferSizeLimit uint64
@@ -40,9 +40,9 @@ type memDbIter struct {
 }
 
 // NewMemDbBuffer creates a new memDbBuffer.
-func NewMemDbBuffer(initBlockSize int) MemBuffer {
+func NewMemDbBuffer() MemBuffer {
 	return &memDbBuffer{
-		db:              memdb.New(initBlockSize),
+		sandbox:         memdb.NewSandbox(),
 		entrySizeLimit:  TxnEntrySizeLimit,
 		bufferSizeLimit: atomic.LoadUint64(&TxnTotalSizeLimit),
 	}
@@ -51,7 +51,7 @@ func NewMemDbBuffer(initBlockSize int) MemBuffer {
 // Iter creates an Iterator.
 func (m *memDbBuffer) Iter(k Key, upperBound Key) (Iterator, error) {
 	i := &memDbIter{
-		iter:    m.db.NewIterator(),
+		iter:    m.sandbox.NewIterator(),
 		start:   k,
 		end:     upperBound,
 		reverse: false,
@@ -65,13 +65,9 @@ func (m *memDbBuffer) Iter(k Key, upperBound Key) (Iterator, error) {
 	return i, nil
 }
 
-func (m *memDbBuffer) SetCap(cap int) {
-
-}
-
 func (m *memDbBuffer) IterReverse(k Key) (Iterator, error) {
 	i := &memDbIter{
-		iter:    m.db.NewIterator(),
+		iter:    m.sandbox.NewIterator(),
 		end:     k,
 		reverse: true,
 	}
@@ -85,7 +81,7 @@ func (m *memDbBuffer) IterReverse(k Key) (Iterator, error) {
 
 // Get returns the value associated with key.
 func (m *memDbBuffer) Get(ctx context.Context, k Key) ([]byte, error) {
-	v := m.db.Get(k)
+	v := m.sandbox.Get(k)
 	if v == nil {
 		return nil, ErrNotExist
 	}
@@ -101,7 +97,7 @@ func (m *memDbBuffer) Set(k Key, v []byte) error {
 		return ErrEntryTooLarge.GenWithStackByArgs(m.entrySizeLimit, len(k)+len(v))
 	}
 
-	m.db.Put(k, v)
+	m.sandbox.Put(k, v)
 	if m.Size() > int(m.bufferSizeLimit) {
 		return ErrTxnTooLarge.GenWithStackByArgs(m.Size())
 	}
@@ -110,7 +106,7 @@ func (m *memDbBuffer) Set(k Key, v []byte) error {
 
 // Delete removes the entry from buffer with provided key.
 func (m *memDbBuffer) Delete(k Key) error {
-	m.db.Put(k, nil)
+	m.sandbox.Put(k, nil)
 	if m.Size() > int(m.bufferSizeLimit) {
 		return ErrTxnTooLarge.GenWithStackByArgs(m.Size())
 	}
@@ -119,17 +115,30 @@ func (m *memDbBuffer) Delete(k Key) error {
 
 // Size returns sum of keys and values length.
 func (m *memDbBuffer) Size() int {
-	return m.db.Size()
+	return m.sandbox.Size()
 }
 
 // Len returns the number of entries in the DB.
 func (m *memDbBuffer) Len() int {
-	return m.db.Len()
+	return m.sandbox.Len()
 }
 
-// Reset cleanup the MemBuffer.
-func (m *memDbBuffer) Reset() {
-	m.db.Reset()
+func (m *memDbBuffer) NewStagingBuffer() MemBuffer {
+	return &memDbBuffer{
+		sandbox:         m.sandbox.Derive(),
+		entrySizeLimit:  TxnEntrySizeLimit,
+		bufferSizeLimit: m.bufferSizeLimit - uint64(m.sandbox.Size()),
+	}
+}
+
+func (m *memDbBuffer) Flush() (int, error) {
+	// There is no need to check size limit,
+	// because the size limit is maintain when derive this buffer.
+	return m.sandbox.Flush(), nil
+}
+
+func (m *memDbBuffer) Discard() {
+	m.sandbox.Discard()
 }
 
 // Next implements the Iterator Next.

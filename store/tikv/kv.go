@@ -25,7 +25,7 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/pd/v4/client"
+	pd "github.com/pingcap/pd/v4/client"
 	"github.com/pingcap/tidb/v4/config"
 	"github.com/pingcap/tidb/v4/kv"
 	"github.com/pingcap/tidb/v4/metrics"

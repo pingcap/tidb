@@ -189,6 +189,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 		SetKeepOrder(false).
 		SetStreaming(e.partialStreamings[workID]).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
+		SetMemTracker(e.memTracker).
 		Build()
 	if err != nil {
 		return err
@@ -415,9 +416,11 @@ func (e *IndexMergeReaderExecutor) buildFinalTableReader(ctx context.Context, ha
 		dagPB:        e.tableRequest,
 		startTS:      e.startTS,
 		streaming:    e.tableStreaming,
+		columns:      e.columns,
 		feedback:     statistics.NewQueryFeedback(0, nil, 0, false),
 		plans:        e.tblPlans,
 	}
+	tableReaderExec.buildVirtualColumnInfo()
 	tableReader, err := e.dataReaderBuilder.buildTableReaderFromHandles(ctx, tableReaderExec, handles)
 	if err != nil {
 		logutil.Logger(ctx).Error("build table reader from handles failed", zap.Error(err))
