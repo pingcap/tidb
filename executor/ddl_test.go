@@ -264,7 +264,20 @@ func (s *testSuite3) TestCreateView(c *C) {
 	tk.MustExec("drop view v_nested, v_nested2")
 }
 
+<<<<<<< HEAD
 func (s *testSuite3) TestCreateViewWithOverlongColName(c *C) {
+=======
+func (s *testSuite6) TestIssue16250(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table if not exists t(a int)")
+	tk.MustExec("create view view_issue16250 as select * from t")
+	_, err := tk.Exec("truncate table view_issue16250")
+	c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.view_issue16250' doesn't exist")
+}
+
+func (s *testSuite6) TestCreateViewWithOverlongColName(c *C) {
+>>>>>>> 0ec8d33... ddl, executor: forbid truncate view (#16251)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int)")
