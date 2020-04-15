@@ -380,8 +380,7 @@ func pushNotAcrossArgs(ctx sessionctx.Context, exprs []Expression, not bool) ([]
 	newExprs := make([]Expression, 0, len(exprs))
 	flag := false
 	for _, expr := range exprs {
-		newExpr, changed :=
-			pushNotAcrossExpr(ctx, expr, not)
+		newExpr, changed := pushNotAcrossExpr(ctx, expr, not)
 		flag = changed || flag
 		newExprs = append(newExprs, newExpr)
 	}
