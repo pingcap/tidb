@@ -373,7 +373,13 @@ func makePartitionByFnCol(sctx sessionctx.Context, columns []*expression.Column,
 	case *expression.ScalarFunction:
 		if _, ok := monotoneIncFuncs[raw.FuncName.L]; ok {
 			fn = raw
-			col = fn.GetArgs()[0].(*expression.Column)
+			args := fn.GetArgs()
+			if len(args) > 0 {
+				arg0 := args[0]
+				if c, ok1 := arg0.(*expression.Column); ok1 {
+					col = c
+				}
+			}
 		}
 	case *expression.Column:
 		col = raw

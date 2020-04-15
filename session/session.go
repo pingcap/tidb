@@ -240,10 +240,6 @@ func (s *session) DDLOwnerChecker() owner.DDLOwnerChecker {
 	return s.ddlOwnerChecker
 }
 
-func (s *session) getMembufCap() int {
-	return kv.DefaultTxnMembufCap
-}
-
 func (s *session) cleanRetryInfo() {
 	if s.sessionVars.RetryInfo.Retrying {
 		return
@@ -1107,9 +1103,12 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 	stmtNodes, warns, err := s.ParseSQL(ctx, sql, charsetInfo, collation)
 	if err != nil {
 		s.rollbackOnError(ctx)
-		logutil.Logger(ctx).Warn("parse SQL failed",
-			zap.Error(err),
-			zap.String("SQL", sql))
+
+		// Only print log message when this SQL is from the user.
+		// Mute the warning for internal SQLs.
+		if !s.sessionVars.InRestrictedSQL {
+			logutil.Logger(ctx).Warn("parse SQL failed", zap.Error(err), zap.String("SQL", sql))
+		}
 		return nil, util.SyntaxError(err)
 	}
 	durParse := time.Since(parseStartTime)
@@ -1135,9 +1134,12 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		stmt, err := compiler.Compile(ctx, stmtNode)
 		if err != nil {
 			s.rollbackOnError(ctx)
-			logutil.Logger(ctx).Warn("compile SQL failed",
-				zap.Error(err),
-				zap.String("SQL", sql))
+
+			// Only print log message when this SQL is from the user.
+			// Mute the warning for internal SQLs.
+			if !s.sessionVars.InRestrictedSQL {
+				logutil.Logger(ctx).Warn("compile SQL failed", zap.Error(err), zap.String("SQL", sql))
+			}
 			return nil, err
 		}
 		durCompile := time.Since(s.sessionVars.StartTime)
@@ -1342,8 +1344,7 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 		// Transaction is lazy initialized.
 		// PrepareTxnCtx is called to get a tso future, makes s.txn a pending txn,
 		// If Txn() is called later, wait for the future to get a valid txn.
-		txnCap := s.getMembufCap()
-		if err := s.txn.changePendingToValid(txnCap); err != nil {
+		if err := s.txn.changePendingToValid(); err != nil {
 			logutil.BgLogger().Error("active transaction fail",
 				zap.Error(err))
 			s.txn.cleanup()
@@ -1419,7 +1420,6 @@ func (s *session) NewTxn(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	txn.SetCap(s.getMembufCap())
 	txn.SetVars(s.sessionVars.KVVars)
 	if s.GetSessionVars().GetReplicaRead().IsFollowerRead() {
 		txn.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
@@ -2084,7 +2084,6 @@ func (s *session) InitTxnWithStartTS(startTS uint64) error {
 		return err
 	}
 	s.txn.changeInvalidToValid(txn)
-	s.txn.SetCap(s.getMembufCap())
 	err = s.loadCommonGlobalVariablesIfNeeded()
 	if err != nil {
 		return err

@@ -468,20 +468,19 @@ func (s *testSuiteP2) TestAdminShowDDLJobs(c *C) {
 	jobID, err := strconv.Atoi(row[0].(string))
 	c.Assert(err, IsNil)
 
-	c.Assert(tk.Se.NewTxn(context.Background()), IsNil)
-	txn, err := tk.Se.Txn(true)
-	c.Assert(err, IsNil)
-	t := meta.NewMeta(txn)
-	job, err := t.GetHistoryDDLJob(int64(jobID))
-	c.Assert(err, IsNil)
-	c.Assert(job, NotNil)
-	// Test for compatibility. Old TiDB version doesn't have SchemaName field, and the BinlogInfo maybe nil.
-	// See PR: 11561.
-	job.BinlogInfo = nil
-	job.SchemaName = ""
-	err = t.AddHistoryDDLJob(job, true)
-	c.Assert(err, IsNil)
-	err = tk.Se.CommitTxn(context.Background())
+	err = kv.RunInNewTxn(s.store, true, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		job, err := t.GetHistoryDDLJob(int64(jobID))
+		c.Assert(err, IsNil)
+		c.Assert(job, NotNil)
+		// Test for compatibility. Old TiDB version doesn't have SchemaName field, and the BinlogInfo maybe nil.
+		// See PR: 11561.
+		job.BinlogInfo = nil
+		job.SchemaName = ""
+		err = t.AddHistoryDDLJob(job, true)
+		c.Assert(err, IsNil)
+		return nil
+	})
 	c.Assert(err, IsNil)
 
 	re = tk.MustQuery("admin show ddl jobs 1")
@@ -4832,8 +4831,10 @@ func (s *testSuiteP2) TestPointGetPreparedPlan(c *C) {
 
 	pspk1Id, _, _, err := tk1.Se.PrepareStmt("select * from t where a = ?")
 	c.Assert(err, IsNil)
+	tk1.Se.GetSessionVars().PreparedStmts[pspk1Id].(*plannercore.CachedPrepareStmt).PreparedAst.UseCache = false
 	pspk2Id, _, _, err := tk1.Se.PrepareStmt("select * from t where ? = a ")
 	c.Assert(err, IsNil)
+	tk1.Se.GetSessionVars().PreparedStmts[pspk2Id].(*plannercore.CachedPrepareStmt).PreparedAst.UseCache = false
 
 	ctx := context.Background()
 	// first time plan generated
@@ -4873,6 +4874,7 @@ func (s *testSuiteP2) TestPointGetPreparedPlan(c *C) {
 	// unique index
 	psuk1Id, _, _, err := tk1.Se.PrepareStmt("select * from t where b = ? ")
 	c.Assert(err, IsNil)
+	tk1.Se.GetSessionVars().PreparedStmts[psuk1Id].(*plannercore.CachedPrepareStmt).PreparedAst.UseCache = false
 
 	rs, err = tk1.Se.ExecutePreparedStmt(ctx, psuk1Id, []types.Datum{types.NewDatum(1)})
 	c.Assert(err, IsNil)
@@ -4986,6 +4988,7 @@ func (s *testSuiteP2) TestPointGetPreparedPlanWithCommitMode(c *C) {
 
 	pspk1Id, _, _, err := tk1.Se.PrepareStmt("select * from t where a = ?")
 	c.Assert(err, IsNil)
+	tk1.Se.GetSessionVars().PreparedStmts[pspk1Id].(*plannercore.CachedPrepareStmt).PreparedAst.UseCache = false
 
 	ctx := context.Background()
 	// first time plan generated
@@ -5049,9 +5052,11 @@ func (s *testSuiteP2) TestPointUpdatePreparedPlan(c *C) {
 
 	updateID1, pc, _, err := tk1.Se.PrepareStmt(`update t set c = c + 1 where a = ?`)
 	c.Assert(err, IsNil)
+	tk1.Se.GetSessionVars().PreparedStmts[updateID1].(*plannercore.CachedPrepareStmt).PreparedAst.UseCache = false
 	c.Assert(pc, Equals, 1)
 	updateID2, pc, _, err := tk1.Se.PrepareStmt(`update t set c = c + 2 where ? = a`)
 	c.Assert(err, IsNil)
+	tk1.Se.GetSessionVars().PreparedStmts[updateID2].(*plannercore.CachedPrepareStmt).PreparedAst.UseCache = false
 	c.Assert(pc, Equals, 1)
 
 	ctx := context.Background()
@@ -5086,6 +5091,7 @@ func (s *testSuiteP2) TestPointUpdatePreparedPlan(c *C) {
 	// unique index
 	updUkID1, _, _, err := tk1.Se.PrepareStmt(`update t set c = c + 10 where b = ?`)
 	c.Assert(err, IsNil)
+	tk1.Se.GetSessionVars().PreparedStmts[updUkID1].(*plannercore.CachedPrepareStmt).PreparedAst.UseCache = false
 	rs, err = tk1.Se.ExecutePreparedStmt(ctx, updUkID1, []types.Datum{types.NewDatum(3)})
 	c.Assert(rs, IsNil)
 	c.Assert(err, IsNil)
@@ -5150,6 +5156,7 @@ func (s *testSuiteP2) TestPointUpdatePreparedPlanWithCommitMode(c *C) {
 
 	ctx := context.Background()
 	updateID1, _, _, err := tk1.Se.PrepareStmt(`update t set c = c + 1 where a = ?`)
+	tk1.Se.GetSessionVars().PreparedStmts[updateID1].(*plannercore.CachedPrepareStmt).PreparedAst.UseCache = false
 	c.Assert(err, IsNil)
 
 	// first time plan generated
