@@ -15,6 +15,8 @@ package statistics
 
 import (
 	"math"
+	"math/bits"
+	"sort"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
@@ -51,6 +53,27 @@ const (
 	PkType
 	ColType
 )
+
+func compareType(l, r int) int {
+	if l == r {
+		return 0
+	}
+	if l == ColType {
+		return -1
+	}
+	if l == PkType {
+		return 1
+	}
+	if r == ColType {
+		return 1
+	}
+	return -1
+}
+
+// MockStatsNode is only used for test.
+func MockStatsNode(id int64, m int64, num int) *StatsNode {
+	return &StatsNode{ID: id, mask: m, numCols: num}
+}
 
 const unknownColumnID = math.MinInt64
 
@@ -238,7 +261,7 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 			})
 		}
 	}
-	usedSets := getUsableSetsByGreedy(nodes)
+	usedSets := GetUsableSetsByGreedy(nodes)
 	// Initialize the mask with the full set.
 	mask := (int64(1) << uint(len(remainedExprs))) - 1
 	for _, set := range usedSets {
@@ -293,8 +316,14 @@ func getMaskAndRanges(ctx sessionctx.Context, exprs []expression.Expression, ran
 	return mask, ranges, false, nil
 }
 
-// getUsableSetsByGreedy will select the indices and pk used for calculate selectivity by greedy algorithm.
-func getUsableSetsByGreedy(nodes []*StatsNode) (newBlocks []*StatsNode) {
+// GetUsableSetsByGreedy will select the indices and pk used for calculate selectivity by greedy algorithm.
+func GetUsableSetsByGreedy(nodes []*StatsNode) (newBlocks []*StatsNode) {
+	sort.Slice(nodes, func(i int, j int) bool {
+		if r := compareType(nodes[i].Tp, nodes[j].Tp); r != 0 {
+			return r < 0
+		}
+		return nodes[i].ID < nodes[j].ID
+	})
 	marked := make([]bool, len(nodes))
 	mask := int64(math.MaxInt64)
 	for {
@@ -305,9 +334,14 @@ func getUsableSetsByGreedy(nodes []*StatsNode) (newBlocks []*StatsNode) {
 				continue
 			}
 			curMask := set.mask & mask
-			bits := popCount(curMask)
+			if curMask != set.mask {
+				marked[i] = true
+				continue
+			}
+			bits := bits.OnesCount64(uint64(curMask))
 			// This set cannot cover any thing, just skip it.
 			if bits == 0 {
+				marked[i] = true
 				continue
 			}
 			// We greedy select the stats info based on:
@@ -329,15 +363,4 @@ func getUsableSetsByGreedy(nodes []*StatsNode) (newBlocks []*StatsNode) {
 		marked[bestID] = true
 	}
 	return
-}
-
-// popCount is the digit sum of the binary representation of the number x.
-func popCount(x int64) int {
-	ret := 0
-	// x -= x & -x, remove the lowest bit of the x.
-	// e.g. result will be 2 if x is 3.
-	for ; x > 0; x -= x & -x {
-		ret++
-	}
-	return ret
 }
