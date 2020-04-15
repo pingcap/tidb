@@ -1432,7 +1432,6 @@ func (e *memtableRetriever) setDataFromSequences(ctx sessionctx.Context, schemas
 				table.Sequence.Increment,  // INCREMENT
 				table.Sequence.MaxValue,   // MAXVALUE
 				table.Sequence.MinValue,   // MINVALUE
-				table.Sequence.Order,      // ORDER
 				table.Sequence.Start,      // START
 				table.Sequence.Comment,    // COMMENT
 			)

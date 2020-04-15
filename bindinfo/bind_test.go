@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
@@ -341,16 +342,38 @@ func (s *testSuite) TestGlobalAndSessionBindingBothExist(c *C) {
 
 	tk.MustExec("create global binding for SELECT * from t1,t2 where t1.id = t2.id using SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id")
 
+	// Test bindingUsage, which indicates how many times the binding is used.
 	metrics.BindUsageCounter.Reset()
 	c.Assert(tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "MergeJoin"), IsTrue)
 	pb := &dto.Metric{}
 	metrics.BindUsageCounter.WithLabelValues(metrics.ScopeGlobal).Write(pb)
 	c.Assert(pb.GetCounter().GetValue(), Equals, float64(1))
+
+	// Test 'tidb_use_plan_baselines'
 	tk.MustExec("set @@tidb_use_plan_baselines = 0")
 	c.Assert(tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "HashJoin"), IsTrue)
-
-	tk.MustExec("drop global binding for SELECT * from t1,t2 where t1.id = t2.id")
 	tk.MustExec("set @@tidb_use_plan_baselines = 1")
+
+	// Test 'drop global binding'
+	c.Assert(tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "MergeJoin"), IsTrue)
+	tk.MustExec("drop global binding for SELECT * from t1,t2 where t1.id = t2.id")
+	c.Assert(tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "HashJoin"), IsTrue)
+
+	// Test the case when global and session binding both exist
+	// PART1 : session binding should totally cover global binding
+	// use merge join as session binding here since the optimizer will choose hash join for this stmt in default
+	tk.MustExec("create global binding for SELECT * from t1,t2 where t1.id = t2.id using SELECT  /*+ TIDB_HJ(t1, t2) */  * from t1,t2 where t1.id = t2.id")
+	c.Assert(tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "HashJoin"), IsTrue)
+	tk.MustExec("create binding for SELECT * from t1,t2 where t1.id = t2.id using SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id")
+	c.Assert(tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "MergeJoin"), IsTrue)
+	tk.MustExec("drop global binding for SELECT * from t1,t2 where t1.id = t2.id")
+	c.Assert(tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "MergeJoin"), IsTrue)
+
+	// PART2 : the dropped session binding should continue to block the effect of global binding
+	tk.MustExec("create global binding for SELECT * from t1,t2 where t1.id = t2.id using SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id")
+	tk.MustExec("drop binding for SELECT * from t1,t2 where t1.id = t2.id")
+	c.Assert(tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "HashJoin"), IsTrue)
+	tk.MustExec("drop global binding for SELECT * from t1,t2 where t1.id = t2.id")
 	c.Assert(tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "HashJoin"), IsTrue)
 }
 
@@ -497,7 +520,7 @@ func (s *testSuite) TestCapturePlanBaseline(c *C) {
 	rows = tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 1)
 	c.Assert(rows[0][0], Equals, "select * from t where a > ?")
-	c.Assert(rows[0][1], Equals, "SELECT /*+ USE_INDEX(@`sel_1` `test`.`t` )*/ * FROM `t` WHERE `a`>10")
+	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` )*/ * FROM `t` WHERE `a`>10")
 }
 
 func (s *testSuite) TestCaptureBaselinesDefaultDB(c *C) {
@@ -586,12 +609,12 @@ func (s *testSuite) TestAddEvolveTasks(c *C) {
 	tk.MustExec("admin flush bindings")
 	rows := tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 2)
-	c.Assert(rows[1][1], Equals, "SELECT /*+ USE_INDEX(@`sel_1` `test`.`t` )*/ * FROM `test`.`t` WHERE `a`>=4 AND `b`>=1 AND `c`=0")
+	c.Assert(rows[1][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` )*/ * FROM `test`.`t` WHERE `a`>=4 AND `b`>=1 AND `c`=0")
 	c.Assert(rows[1][3], Equals, "pending verify")
 	tk.MustExec("admin evolve bindings")
 	rows = tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 2)
-	c.Assert(rows[1][1], Equals, "SELECT /*+ USE_INDEX(@`sel_1` `test`.`t` )*/ * FROM `test`.`t` WHERE `a`>=4 AND `b`>=1 AND `c`=0")
+	c.Assert(rows[1][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` )*/ * FROM `test`.`t` WHERE `a`>=4 AND `b`>=1 AND `c`=0")
 	status := rows[1][3].(string)
 	c.Assert(status == "using" || status == "rejected", IsTrue)
 }
@@ -610,7 +633,7 @@ func (s *testSuite) TestRuntimeHintsInEvolveTasks(c *C) {
 	tk.MustExec("admin flush bindings")
 	rows := tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 2)
-	c.Assert(rows[1][1], Equals, "SELECT /*+ USE_INDEX(@`sel_1` `test`.`t` `idx_c`)*/ * FROM `test`.`t` WHERE `a`>=4 AND `b`>=1 AND `c`=0") // MAX_EXECUTION_TIME is ignored
+	c.Assert(rows[1][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_c`)*/ * FROM `test`.`t` WHERE `a`>=4 AND `b`>=1 AND `c`=0") // MAX_EXECUTION_TIME is ignored
 
 	s.cleanBindingEnv(tk)
 	tk.MustExec("create global binding for select * from t where a >= 1 and b >= 1 and c = 0 using select /*+ MAX_EXECUTION_TIME(5000) */* from t use index(idx_a) where a >= 1 and b >= 1 and c = 0")
@@ -618,7 +641,7 @@ func (s *testSuite) TestRuntimeHintsInEvolveTasks(c *C) {
 	tk.MustExec("admin flush bindings")
 	rows = tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 2)
-	c.Assert(rows[1][1], Equals, "SELECT /*+ USE_INDEX(@`sel_1` `test`.`t` `idx_c`), MAX_EXECUTION_TIME(5000)*/ * FROM `test`.`t` WHERE `a`>=4 AND `b`>=1 AND `c`=0")
+	c.Assert(rows[1][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_c`), max_execution_time(5000)*/ * FROM `test`.`t` WHERE `a`>=4 AND `b`>=1 AND `c`=0")
 }
 
 func (s *testSuite) TestBindingCache(c *C) {
@@ -654,6 +677,53 @@ func (s *testSuite) TestDefaultSessionVars(c *C) {
 		"tidb_capture_plan_baselines off",
 		"tidb_evolve_plan_baselines off",
 		"tidb_use_plan_baselines on"))
+}
+
+func (s *testSuite) TestCaptureBaselinesScope(c *C) {
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk2 := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk1)
+	tk1.MustQuery(`show session variables like "tidb_capture_plan_baselines"`).Check(testkit.Rows(
+		"tidb_capture_plan_baselines off",
+	))
+	tk1.MustQuery(`show global variables like "tidb_capture_plan_baselines"`).Check(testkit.Rows(
+		"tidb_capture_plan_baselines off",
+	))
+	tk1.MustQuery(`select @@session.tidb_capture_plan_baselines`).Check(testkit.Rows(
+		"off",
+	))
+	tk1.MustQuery(`select @@global.tidb_capture_plan_baselines`).Check(testkit.Rows(
+		"off",
+	))
+
+	tk1.MustExec("set @@session.tidb_capture_plan_baselines = on")
+	defer func() {
+		tk1.MustExec(" set @@session.tidb_capture_plan_baselines = off")
+	}()
+	tk1.MustQuery(`show session variables like "tidb_capture_plan_baselines"`).Check(testkit.Rows(
+		"tidb_capture_plan_baselines on",
+	))
+	tk1.MustQuery(`show global variables like "tidb_capture_plan_baselines"`).Check(testkit.Rows(
+		"tidb_capture_plan_baselines off",
+	))
+	tk1.MustQuery(`select @@session.tidb_capture_plan_baselines`).Check(testkit.Rows(
+		"on",
+	))
+	tk1.MustQuery(`select @@global.tidb_capture_plan_baselines`).Check(testkit.Rows(
+		"off",
+	))
+	tk2.MustQuery(`show session variables like "tidb_capture_plan_baselines"`).Check(testkit.Rows(
+		"tidb_capture_plan_baselines on",
+	))
+	tk2.MustQuery(`show global variables like "tidb_capture_plan_baselines"`).Check(testkit.Rows(
+		"tidb_capture_plan_baselines off",
+	))
+	tk2.MustQuery(`select @@session.tidb_capture_plan_baselines`).Check(testkit.Rows(
+		"on",
+	))
+	tk2.MustQuery(`select @@global.tidb_capture_plan_baselines`).Check(testkit.Rows(
+		"off",
+	))
 }
 
 func (s *testSuite) TestDuplicateBindings(c *C) {
@@ -826,6 +896,71 @@ func (s *testSuite) TestHintsSetEvolveTask(c *C) {
 	c.Assert(bind.Hint, NotNil)
 }
 
+func (s *testSuite) TestHintsSetID(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, index idx_a(a))")
+	tk.MustExec("create global binding for select * from t where a > 10 using select /*+ use_index(test.t, idx_a) */ * from t where a > 10")
+	bindHandle := s.domain.BindHandle()
+	// Verify the added Binding contains ID with restored query block.
+	sql, hash := parser.NormalizeDigest("select * from t where a > ?")
+	bindData := bindHandle.GetBindRecord(hash, sql, "test")
+	c.Check(bindData, NotNil)
+	c.Check(bindData.OriginalSQL, Equals, "select * from t where a > ?")
+	c.Assert(len(bindData.Bindings), Equals, 1)
+	bind := bindData.Bindings[0]
+	c.Assert(bind.ID, Equals, "use_index(@`sel_1` `test`.`t` `idx_a`)")
+
+	s.cleanBindingEnv(tk)
+	tk.MustExec("create global binding for select * from t where a > 10 using select /*+ use_index(t, idx_a) */ * from t where a > 10")
+	bindData = bindHandle.GetBindRecord(hash, sql, "test")
+	c.Check(bindData, NotNil)
+	c.Check(bindData.OriginalSQL, Equals, "select * from t where a > ?")
+	c.Assert(len(bindData.Bindings), Equals, 1)
+	bind = bindData.Bindings[0]
+	c.Assert(bind.ID, Equals, "use_index(@`sel_1` `test`.`t` `idx_a`)")
+
+	s.cleanBindingEnv(tk)
+	tk.MustExec("create global binding for select * from t where a > 10 using select /*+ use_index(@sel_1 t, idx_a) */ * from t where a > 10")
+	bindData = bindHandle.GetBindRecord(hash, sql, "test")
+	c.Check(bindData, NotNil)
+	c.Check(bindData.OriginalSQL, Equals, "select * from t where a > ?")
+	c.Assert(len(bindData.Bindings), Equals, 1)
+	bind = bindData.Bindings[0]
+	c.Assert(bind.ID, Equals, "use_index(@`sel_1` `test`.`t` `idx_a`)")
+
+	s.cleanBindingEnv(tk)
+	tk.MustExec("create global binding for select * from t where a > 10 using select /*+ use_index(@qb1 t, idx_a) qb_name(qb1) */ * from t where a > 10")
+	bindData = bindHandle.GetBindRecord(hash, sql, "test")
+	c.Check(bindData, NotNil)
+	c.Check(bindData.OriginalSQL, Equals, "select * from t where a > ?")
+	c.Assert(len(bindData.Bindings), Equals, 1)
+	bind = bindData.Bindings[0]
+	c.Assert(bind.ID, Equals, "use_index(@`sel_1` `test`.`t` `idx_a`)")
+
+	s.cleanBindingEnv(tk)
+	tk.MustExec("create global binding for select * from t where a > 10 using select /*+ use_index(T, IDX_A) */ * from t where a > 10")
+	bindData = bindHandle.GetBindRecord(hash, sql, "test")
+	c.Check(bindData, NotNil)
+	c.Check(bindData.OriginalSQL, Equals, "select * from t where a > ?")
+	c.Assert(len(bindData.Bindings), Equals, 1)
+	bind = bindData.Bindings[0]
+	c.Assert(bind.ID, Equals, "use_index(@`sel_1` `test`.`t` `idx_a`)")
+
+	s.cleanBindingEnv(tk)
+	err := tk.ExecToErr("create global binding for select * from t using select /*+ non_exist_hint() */ * from t")
+	c.Assert(terror.ErrorEqual(err, parser.ErrWarnOptimizerHintParseError), IsTrue)
+	tk.MustExec("create global binding for select * from t where a > 10 using select * from t where a > 10")
+	bindData = bindHandle.GetBindRecord(hash, sql, "test")
+	c.Check(bindData, NotNil)
+	c.Check(bindData.OriginalSQL, Equals, "select * from t where a > ?")
+	c.Assert(len(bindData.Bindings), Equals, 1)
+	bind = bindData.Bindings[0]
+	c.Assert(bind.ID, Equals, "")
+}
+
 func (s *testSuite) TestCapturePlanBaselineIgnoreTiFlash(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
@@ -859,7 +994,7 @@ func (s *testSuite) TestCapturePlanBaselineIgnoreTiFlash(c *C) {
 	rows = tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 1)
 	c.Assert(rows[0][0], Equals, "select * from t")
-	c.Assert(rows[0][1], Equals, "SELECT /*+ USE_INDEX(@`sel_1` `test`.`t` )*/ * FROM `t`")
+	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` )*/ * FROM `t`")
 }
 
 func (s *testSuite) TestNotEvolvePlanForReadStorageHint(c *C) {
@@ -952,7 +1087,7 @@ func (s *testSuite) TestReCreateBindAfterEvolvePlan(c *C) {
 	tk.MustExec("admin flush bindings")
 	rows := tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 2)
-	c.Assert(rows[1][1], Equals, "SELECT /*+ USE_INDEX(@`sel_1` `test`.`t` )*/ * FROM `test`.`t` WHERE `a`>=0 AND `b`>=0")
+	c.Assert(rows[1][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` )*/ * FROM `test`.`t` WHERE `a`>=0 AND `b`>=0")
 	c.Assert(rows[1][3], Equals, "pending verify")
 
 	tk.MustExec("create global binding for select * from t where a >= 1 and b >= 1 using select * from t use index(idx_b) where a >= 1 and b >= 1")

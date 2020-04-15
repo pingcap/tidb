@@ -174,67 +174,74 @@
               "refId": "C"
             },
             {
+              "expr": "\ncount(probe_success{group=\"tiflash\"} == 1)",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "TiFlash",
+              "refId": "D"
+            },
+            {
               "expr": "\ncount(probe_success{group=\"pump\"} == 1)",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "Pump",
-              "refId": "D"
+              "refId": "E"
             },
             {
               "expr": "\ncount(probe_success{group=\"drainer\"} == 1)",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "Drainer",
-              "refId": "E"
+              "refId": "F"
             },
             {
               "expr": "\ncount(probe_success{group=\"kafka\"} == 1)",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "Kafka",
-              "refId": "F"
+              "refId": "G"
             },
             {
               "expr": "\ncount(probe_success{group=\"zookeeper\"} == 1)",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "Zookeeper",
-              "refId": "G"
+              "refId": "H"
             },
             {
               "expr": "\ncount(probe_success{group=\"node_exporter\"} == 1)",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "Node_exporter",
-              "refId": "H"
+              "refId": "I"
             },
             {
               "expr": "\ncount(probe_success{group=\"blackbox_exporter\"} == 1)",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "Blackbox_exporter",
-              "refId": "I"
+              "refId": "J"
             },
             {
               "expr": "\ncount(probe_success{group=\"grafana\"} == 1)",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "Grafana",
-              "refId": "J"
+              "refId": "K"
             },
             {
               "expr": "\ncount(probe_success{job=\"blackbox_exporter_http\"} == 1)",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "Pushgateway",
-              "refId": "K"
+              "refId": "L"
             },
             {
               "expr": "\ncount(probe_success{group=\"kafka_exporter\"} == 1)",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "Kafka_exporter",
-              "refId": "L"
+              "refId": "M"
             }
           ],
           "timeFrom": "1s",
@@ -345,67 +352,74 @@
               "refId": "C"
             },
             {
+              "expr": "\ncount(probe_success{group=\"tiflash\"} == 0)",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "TiFlash",
+              "refId": "D"
+            },
+            {
               "expr": "\ncount(probe_success{group=\"pump\"} == 0)",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "Pump",
-              "refId": "D"
+              "refId": "E"
             },
             {
               "expr": "\ncount(probe_success{group=\"drainer\"} == 0)",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "Drainer",
-              "refId": "E"
+              "refId": "F"
             },
             {
               "expr": "\ncount(probe_success{group=\"kafka\"} == 0)",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "Kafka",
-              "refId": "F"
+              "refId": "G"
             },
             {
               "expr": "\ncount(probe_success{group=\"zookeeper\"} == 0)",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "Zookeeper",
-              "refId": "G"
+              "refId": "H"
             },
             {
               "expr": "\ncount(probe_success{group=\"node_exporter\"} == 0)",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "Node_exporter",
-              "refId": "H"
+              "refId": "I"
             },
             {
               "expr": "\ncount(probe_success{group=\"blackbox_exporter\"} == 0)",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "Blackbox_exporter",
-              "refId": "I"
+              "refId": "J"
             },
             {
               "expr": "\ncount(probe_success{group=\"grafana\"} == 0)",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "Grafana",
-              "refId": "J"
+              "refId": "K"
             },
             {
               "expr": "\ncount(probe_success{job=\"blackbox_exporter_http\"} == 0)",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "Pushgateway",
-              "refId": "K"
+              "refId": "L"
             },
             {
               "expr": "\ncount(probe_success{group=\"kafka_exporter\"} == 0)",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "Kafka_exporter",
-              "refId": "L"
+              "refId": "M"
             }
           ],
           "timeFrom": "1s",
