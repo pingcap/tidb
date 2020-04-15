@@ -721,6 +721,7 @@ func (h *Helper) GetStoresStat() (*StoresStat, error) {
 	return &storesStat, nil
 }
 
+// GetPDAddr return the PD Address.
 func (h *Helper) GetPDAddr() ([]string, error) {
 	var pdAddrs []string
 	etcd, ok := h.Store.(tikv.EtcdBackend)
@@ -744,6 +745,7 @@ type PdRegionStats struct {
 	StorePeerCount   map[uint64]int `json:"store_peer_count"`
 }
 
+// GetPdRegionStats get the RegionStats by tableID.
 func (h *Helper) GetPdRegionStats(tableID int64, stats *PdRegionStats) error {
 	pdAddrs, err := h.GetPDAddr()
 	if err != nil {
@@ -762,17 +764,18 @@ func (h *Helper) GetPdRegionStats(tableID int64, stats *PdRegionStats) error {
 		url.QueryEscape(string(endKey)))
 
 	resp, err := util.InternalHTTPClient().Get(statURL)
+	if err != nil {
+		return err
+	}
+
 	defer func() {
-		if err := resp.Body.Close(); err != nil {
+		if err = resp.Body.Close(); err != nil {
 			log.Error(err)
 		}
 	}()
 
-	if err != nil {
-		return err
-	}
 	dec := json.NewDecoder(resp.Body)
-	if err := dec.Decode(stats); err != nil {
+	if err = dec.Decode(stats); err != nil {
 		return err
 	}
 
