@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
-	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -1110,6 +1109,7 @@ func (b *builtinJSONSearchSig) evalJSON(row chunk.Row) (res json.BinaryJSON, isN
 	if isNull || err != nil {
 		return res, isNull, err
 	}
+	containType = strings.ToLower(containType)
 	if containType != json.ContainsPathAll && containType != json.ContainsPathOne {
 		return res, true, errors.AddStack(json.ErrInvalidJSONContainsPathType)
 	}
@@ -1135,21 +1135,6 @@ func (b *builtinJSONSearchSig) evalJSON(row chunk.Row) (res json.BinaryJSON, isN
 			return res, true, errIncorrectArgs.GenWithStackByArgs("ESCAPE")
 		}
 	}
-	patChars, patTypes := stringutil.CompilePattern(searchStr, escape)
-
-	// result
-	result := make([]interface{}, 0)
-
-	// walk json_doc
-	walkFn := func(fullpath json.PathExpression, bj json.BinaryJSON) (stop bool, err error) {
-		if bj.TypeCode == json.TypeCodeString && stringutil.DoMatch(string(bj.GetString()), patChars, patTypes) {
-			result = append(result, fullpath.String())
-			if containType == json.ContainsPathOne {
-				return true, nil
-			}
-		}
-		return false, nil
-	}
 	if len(b.args) >= 5 { // path...
 		pathExprs := make([]json.PathExpression, 0, len(b.args)-4)
 		for i := 4; i < len(b.args); i++ {
@@ -1165,26 +1150,9 @@ func (b *builtinJSONSearchSig) evalJSON(row chunk.Row) (res json.BinaryJSON, isN
 			}
 			pathExprs = append(pathExprs, pathExpr)
 		}
-		err = obj.Walk(walkFn, pathExprs...)
-		if err != nil {
-			return res, true, err
-		}
-	} else {
-		err = obj.Walk(walkFn)
-		if err != nil {
-			return res, true, err
-		}
+		return obj.Search(containType, searchStr, escape, pathExprs)
 	}
-
-	// return
-	switch len(result) {
-	case 0:
-		return res, true, nil
-	case 1:
-		return json.CreateBinary(result[0]), false, nil
-	default:
-		return json.CreateBinary(result), false, nil
-	}
+	return obj.Search(containType, searchStr, escape, nil)
 }
 
 type jsonStorageSizeFunctionClass struct {
