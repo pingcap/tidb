@@ -43,7 +43,7 @@ func prepareDumpingDatabases(conf *Config, db *sql.DB) ([]string, error) {
 }
 
 func listAllTables(db *sql.DB, databaseNames []string) (DatabaseTables, error) {
-	log.Zap().Debug("list all the tables")
+	log.Debug("list all the tables")
 	dbTables := DatabaseTables{}
 	for _, dbName := range databaseNames {
 		tables, err := ListAllTables(db, dbName)
@@ -56,7 +56,7 @@ func listAllTables(db *sql.DB, databaseNames []string) (DatabaseTables, error) {
 }
 
 func listAllViews(db *sql.DB, databaseNames []string) (DatabaseTables, error) {
-	log.Zap().Debug("list all the views")
+	log.Debug("list all the views")
 	dbTables := DatabaseTables{}
 	for _, dbName := range databaseNames {
 		views, err := ListAllViews(db, dbName)

@@ -72,7 +72,7 @@ func (b *writerPipe) Error() error {
 }
 
 func WriteMeta(meta MetaIR, w io.StringWriter) error {
-	log.Zap().Debug("start dumping meta data", zap.String("target", meta.TargetName()))
+	log.Debug("start dumping meta data", zap.String("target", meta.TargetName()))
 
 	specCmtIter := meta.SpecialComments()
 	for specCmtIter.HasNext() {
@@ -85,7 +85,7 @@ func WriteMeta(meta MetaIR, w io.StringWriter) error {
 		return err
 	}
 
-	log.Zap().Debug("finish dumping meta data", zap.String("target", meta.TargetName()))
+	log.Debug("finish dumping meta data", zap.String("target", meta.TargetName()))
 	return nil
 }
 
@@ -144,7 +144,7 @@ func WriteInsert(tblIR TableDataIR, w io.Writer) error {
 		fileRowIter = fileRowIter.NextSQLRowIter()
 		for fileRowIter.HasNext() {
 			if err = fileRowIter.Decode(row); err != nil {
-				log.Zap().Error("scanning from sql.Row failed", zap.Error(err))
+				log.Error("scanning from sql.Row failed", zap.Error(err))
 				return err
 			}
 
@@ -171,7 +171,7 @@ func WriteInsert(tblIR TableDataIR, w io.Writer) error {
 			}
 		}
 	}
-	log.Zap().Debug("dumping table",
+	log.Debug("dumping table",
 		zap.String("table", tblIR.TableName()),
 		zap.Int("record counts", counter))
 	if bf.Len() > 0 {
@@ -190,7 +190,7 @@ func write(writer io.StringWriter, str string) error {
 		if outputLength >= 200 {
 			outputLength = 200
 		}
-		log.Zap().Error("writing failed",
+		log.Error("writing failed",
 			zap.String("string", str[:outputLength]),
 			zap.Error(err))
 	}
@@ -205,7 +205,7 @@ func writeBytes(writer io.Writer, p []byte) error {
 		if outputLength >= 200 {
 			outputLength = 200
 		}
-		log.Zap().Error("writing failed",
+		log.Error("writing failed",
 			zap.ByteString("string", p[:outputLength]),
 			zap.Error(err))
 	}
@@ -215,12 +215,12 @@ func writeBytes(writer io.Writer, p []byte) error {
 func buildFileWriter(path string) (io.StringWriter, func(), error) {
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
 	if err != nil {
-		log.Zap().Error("open file failed",
+		log.Error("open file failed",
 			zap.String("path", path),
 			zap.Error(err))
 		return nil, nil, err
 	}
-	log.Zap().Debug("opened file", zap.String("path", path))
+	log.Debug("opened file", zap.String("path", path))
 	buf := bufio.NewWriter(file)
 	tearDownRoutine := func() {
 		_ = buf.Flush()
@@ -228,7 +228,7 @@ func buildFileWriter(path string) (io.StringWriter, func(), error) {
 		if err == nil {
 			return
 		}
-		log.Zap().Error("close file failed",
+		log.Error("close file failed",
 			zap.String("path", path),
 			zap.Error(err))
 	}
@@ -242,11 +242,11 @@ func buildInterceptFileWriter(path string) (io.Writer, func()) {
 		f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
 		file = f
 		if err != nil {
-			log.Zap().Error("open file failed",
+			log.Error("open file failed",
 				zap.String("path", path),
 				zap.Error(err))
 		}
-		log.Zap().Debug("opened file", zap.String("path", path))
+		log.Debug("opened file", zap.String("path", path))
 		fileWriter.Writer = file
 		return err
 	}
@@ -256,12 +256,12 @@ func buildInterceptFileWriter(path string) (io.Writer, func()) {
 		if file == nil {
 			return
 		}
-		log.Zap().Debug("tear down lazy file writer...")
+		log.Debug("tear down lazy file writer...")
 		err := file.Close()
 		if err == nil {
 			return
 		}
-		log.Zap().Error("close file failed", zap.String("path", path))
+		log.Error("close file failed", zap.String("path", path))
 	}
 	return fileWriter, tearDownRoutine
 }

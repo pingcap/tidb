@@ -233,7 +233,7 @@ func splitTableDataIntoChunks(
 	}
 	if field == "" {
 		// skip split chunk logic if not found proper field
-		log.Zap().Debug("skip concurrent dump due to no proper field", zap.String("field", field))
+		log.Debug("skip concurrent dump due to no proper field", zap.String("field", field))
 		linear <- struct{}{}
 		return
 	}
@@ -243,20 +243,20 @@ func splitTableDataIntoChunks(
 	if conf.Where != "" {
 		query = fmt.Sprintf("%s WHERE %s", query, conf.Where)
 	}
-	log.Zap().Debug("split chunks", zap.String("query", query))
+	log.Debug("split chunks", zap.String("query", query))
 
 	var smin sql.NullString
 	var smax sql.NullString
 	row := db.QueryRow(query)
 	err = row.Scan(&smin, &smax)
 	if err != nil {
-		log.Zap().Error("split chunks - get max min failed", zap.String("query", query), zap.Error(err))
+		log.Error("split chunks - get max min failed", zap.String("query", query), zap.Error(err))
 		errCh <- withStack(err)
 		return
 	}
 	if !smax.Valid || !smin.Valid {
 		// found no data
-		log.Zap().Warn("no data to dump", zap.String("schema", dbName), zap.String("table", tableName))
+		log.Warn("no data to dump", zap.String("schema", dbName), zap.String("table", tableName))
 		close(tableDataIRCh)
 		return
 	}
@@ -275,7 +275,7 @@ func splitTableDataIntoChunks(
 	count := estimateCount(dbName, tableName, db, field, conf)
 	if count < conf.Rows {
 		// skip chunk logic if estimates are low
-		log.Zap().Debug("skip concurrent dump due to estimate count < rows",
+		log.Debug("skip concurrent dump due to estimate count < rows",
 			zap.Uint64("estimate count", count),
 			zap.Uint64("conf.rows", conf.Rows),
 		)

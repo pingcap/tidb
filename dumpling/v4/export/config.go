@@ -85,7 +85,7 @@ var versionRegex = regexp.MustCompile(`^\d+\.\d+\.\d+([0-9A-Za-z-]+(\.[0-9A-Za-z
 var tidbVersionRegex = regexp.MustCompile(`v\d+\.\d+\.\d+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?`)
 
 func ParseServerInfo(src string) ServerInfo {
-	log.Zap().Debug("parse server info", zap.String("server info string", src))
+	log.Debug("parse server info", zap.String("server info string", src))
 	lowerCase := strings.ToLower(src)
 	serverInfo := ServerInfo{}
 	if strings.Contains(lowerCase, "tidb") {
@@ -98,7 +98,7 @@ func ParseServerInfo(src string) ServerInfo {
 		serverInfo.ServerType = ServerTypeUnknown
 	}
 
-	log.Zap().Info("detect server type",
+	log.Info("detect server type",
 		zap.String("type", serverInfo.ServerType.String()))
 
 	var versionStr string
@@ -111,12 +111,12 @@ func ParseServerInfo(src string) ServerInfo {
 	var err error
 	serverInfo.ServerVersion, err = semver.NewVersion(versionStr)
 	if err != nil {
-		log.Zap().Warn("fail to parse version",
+		log.Warn("fail to parse version",
 			zap.String("version", versionStr))
 		return serverInfo
 	}
 
-	log.Zap().Info("detect server version",
+	log.Info("detect server version",
 		zap.String("version", serverInfo.ServerVersion.String()))
 	return serverInfo
 }

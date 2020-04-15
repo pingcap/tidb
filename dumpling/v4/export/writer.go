@@ -39,7 +39,7 @@ func (f *SimpleWriter) WriteTableMeta(ctx context.Context, db, table, createSQL 
 }
 
 func (f *SimpleWriter) WriteTableData(ctx context.Context, ir TableDataIR) error {
-	log.Zap().Debug("start dumping table...", zap.String("table", ir.TableName()))
+	log.Debug("start dumping table...", zap.String("table", ir.TableName()))
 
 	chunkIndex := ir.ChunkIndex()
 	fileName := fmt.Sprintf("%s.%s.%d.sql", ir.DatabaseName(), ir.TableName(), ir.ChunkIndex())
@@ -73,7 +73,7 @@ func (f *SimpleWriter) WriteTableData(ctx context.Context, ir TableDataIR) error
 		chunkIndex += 1
 		fileName = fmt.Sprintf("%s.%s.%d.sql", ir.DatabaseName(), ir.TableName(), chunkIndex)
 	}
-	log.Zap().Debug("dumping table successfully",
+	log.Debug("dumping table successfully",
 		zap.String("table", ir.TableName()))
 	return nil
 }
