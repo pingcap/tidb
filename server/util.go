@@ -42,7 +42,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -199,16 +198,7 @@ func dumpBinaryTime(dur time.Duration) (data []byte) {
 	return
 }
 
-func dumpBinaryDateTime(data []byte, t types.Time, loc *time.Location) ([]byte, error) {
-	if t.Type == mysql.TypeTimestamp && loc != nil {
-		// TODO: Consider time_zone variable.
-		t1, err := t.Time.GoTime(time.Local)
-		if err != nil {
-			return nil, errors.Errorf("FATAL: convert timestamp %v go time return error!", t.Time)
-		}
-		t.Time = types.FromGoTime(t1.In(loc))
-	}
-
+func dumpBinaryDateTime(data []byte, t types.Time) []byte {
 	year, mon, day := t.Time.Year(), t.Time.Month(), t.Time.Day()
 	switch t.Type {
 	case mysql.TypeTimestamp, mysql.TypeDatetime:
@@ -221,7 +211,7 @@ func dumpBinaryDateTime(data []byte, t types.Time, loc *time.Location) ([]byte, 
 		data = dumpUint16(data, uint16(year)) //year
 		data = append(data, byte(mon), byte(day))
 	}
-	return data, nil
+	return data
 }
 
 func dumpBinaryRow(buffer []byte, columns []*ColumnInfo, row chunk.Row) ([]byte, error) {
@@ -257,11 +247,7 @@ func dumpBinaryRow(buffer []byte, columns []*ColumnInfo, row chunk.Row) ([]byte,
 			mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob:
 			buffer = dumpLengthEncodedString(buffer, row.GetBytes(i))
 		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
-			var err error
-			buffer, err = dumpBinaryDateTime(buffer, row.GetTime(i), nil)
-			if err != nil {
-				return buffer, errors.Trace(err)
-			}
+			buffer = dumpBinaryDateTime(buffer, row.GetTime(i))
 		case mysql.TypeDuration:
 			buffer = append(buffer, dumpBinaryTime(row.GetDuration(i, 0).Duration)...)
 		case mysql.TypeEnum:
