@@ -2286,7 +2286,7 @@ func (s *testDBSuite5) TestRepairTable(c *C) {
 	_, err = s.tk.Exec("admin repair table otHer_tAblE2 CREATE TABLE otHeR_tAbLe (a int, b varchar(2));")
 	c.Assert(err, IsNil)
 	repairTable := testGetTableByName(c, s.s, "test", "otHeR_tAbLe")
-	c.Assert(repairTable.Meta().Name.O, Equals, "otHeR_tAbLe")
+	c.Assert(repairTable.Meta().Na/mergeme.O, Equals, "otHeR_tAbLe")
 
 	// Test memory and system database is not for repair.
 	domainutil.RepairInfo.SetRepairMode(true)
@@ -3292,15 +3292,10 @@ func (s *testDBSuite5) TestModifyColumnRollBack(c *C) {
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
 	done := make(chan error, 1)
 	go backgroundExec(s.store, "alter table t1 change c2 c2 bigint not null;", done)
-LOOP:
-	for {
-		select {
-		case err := <-done:
-			c.Assert(err, NotNil)
-			c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
-			break LOOP
-		}
-	}
+
+	err := <-done:
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
 	s.mustExec(c, "insert into t1(c2) values (null);")
 
 	t := s.testGetTable(c, "t1")
