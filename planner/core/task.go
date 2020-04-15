@@ -990,7 +990,8 @@ type AggInfo struct {
 }
 
 // BuildFinalModeAggregation splits either LogicalAggregation or PhysicalAggregation to finalAgg and partial1Agg,
-// returns the body of finalAgg and the schema of partialAgg.
+// returns the information of partial and final agg.
+// partialIsCop means whether partial agg is a cop task.
 func BuildFinalModeAggregation(
 	sctx sessionctx.Context, original *AggInfo, partialIsCop bool) (partial, final *AggInfo, funcMap map[*aggregation.AggFuncDesc]*aggregation.AggFuncDesc) {
 
@@ -1063,7 +1064,11 @@ func BuildFinalModeAggregation(
 					}
 					partialGbySchema.Append(gbyCol)
 					if !partialIsCop {
-						// if partial agg is not cop, we must append fisrtrow function & schema
+						// if partial is a cop task, firstrow function is redundant since group by items are outputted
+						// by group by schema, and final functions use group by schema as their arguments.
+						// if partial agg is not cop, we must append firstrow function & schema, to output the group by
+						// items.
+						// maybe we can unify them sometime.
 						firstRow, err := aggregation.NewAggFuncDesc(sctx, ast.AggFuncFirstRow, []expression.Expression{gbyCol}, false)
 						if err != nil {
 							panic("NewAggFuncDesc FirstRow meets error: " + err.Error())
