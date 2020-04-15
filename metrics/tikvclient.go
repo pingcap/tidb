@@ -23,7 +23,7 @@ var (
 			Subsystem: "tikvclient",
 			Name:      "txn_cmd_duration_seconds",
 			Help:      "Bucketed histogram of processing time of txn cmds.",
-			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 20), // 0.5ms ~ 524s
+			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 20), // 0.5ms ~ 262s
 		}, []string{LblType})
 
 	TiKVBackoffHistogram = prometheus.NewHistogramVec(
@@ -32,7 +32,7 @@ var (
 			Subsystem: "tikvclient",
 			Name:      "backoff_seconds",
 			Help:      "total backoff seconds of a single backoffer.",
-			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 20), // 0.5ms ~ 524s
+			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 20), // 0.5ms ~ 262s
 		}, []string{LblType})
 
 	TiKVSendReqHistogram = prometheus.NewHistogramVec(
@@ -41,7 +41,7 @@ var (
 			Subsystem: "tikvclient",
 			Name:      "request_seconds",
 			Help:      "Bucketed histogram of sending request duration.",
-			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 20), // 0.5ms ~ 524s
+			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 20), // 0.5ms ~ 262s
 		}, []string{LblType, LblStore})
 
 	TiKVCoprocessorHistogram = prometheus.NewHistogram(
@@ -50,7 +50,7 @@ var (
 			Subsystem: "tikvclient",
 			Name:      "cop_duration_seconds",
 			Help:      "Run duration of a single coprocessor task, includes backoff time.",
-			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 20), // 0.5ms ~ 524s
+			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 20), // 0.5ms ~ 262s
 		})
 
 	TiKVLockResolverCounter = prometheus.NewCounterVec(
@@ -75,7 +75,7 @@ var (
 			Subsystem: "tikvclient",
 			Name:      "txn_write_kv_num",
 			Help:      "Count of kv pairs to write in a transaction.",
-			Buckets:   prometheus.ExponentialBuckets(1, 2, 21), // 1 ~ 2097152
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 21), // 1 ~ 1048576
 		})
 
 	TiKVTxnWriteSizeHistogram = prometheus.NewHistogram(
@@ -84,7 +84,7 @@ var (
 			Subsystem: "tikvclient",
 			Name:      "txn_write_size_bytes",
 			Help:      "Size of kv pairs to write in a transaction.",
-			Buckets:   prometheus.ExponentialBuckets(1, 2, 30), // 1Byte ~ 1GB
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 30), // 1Byte ~ 500MB
 		})
 
 	TiKVRawkvCmdHistogram = prometheus.NewHistogramVec(
@@ -93,7 +93,7 @@ var (
 			Subsystem: "tikvclient",
 			Name:      "rawkv_cmd_seconds",
 			Help:      "Bucketed histogram of processing time of rawkv cmds.",
-			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 20), // 0.5ms ~ 524s
+			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 20), // 0.5ms ~ 262s
 		}, []string{LblType})
 
 	TiKVRawkvSizeHistogram = prometheus.NewHistogramVec(
@@ -102,7 +102,7 @@ var (
 			Subsystem: "tikvclient",
 			Name:      "rawkv_kv_size_bytes",
 			Help:      "Size of key/value to put, in bytes.",
-			Buckets:   prometheus.ExponentialBuckets(1, 2, 23), // 1Byte ~ 8MB
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 24), // 1Byte ~ 8MB
 		}, []string{LblType})
 
 	TiKVTxnRegionsNumHistogram = prometheus.NewHistogramVec(
@@ -144,7 +144,7 @@ var (
 			Subsystem: "tikvclient",
 			Name:      "local_latch_wait_seconds",
 			Help:      "Wait time of a get local latch.",
-			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 20), // 0.5ms ~ 524s
+			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 20), // 0.5ms ~ 262s
 		})
 
 	// TiKVPendingBatchRequests indicates the number of requests pending in the batch channel.
@@ -161,7 +161,7 @@ var (
 			Namespace: "tidb",
 			Subsystem: "tikvclient",
 			Name:      "batch_wait_duration",
-			Buckets:   prometheus.ExponentialBuckets(1, 2, 30), // 1ns ~ 1s
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 34), // 1ns ~ 8s
 			Help:      "batch wait duration",
 		})
 
@@ -170,9 +170,20 @@ var (
 			Namespace: "tidb",
 			Subsystem: "tikvclient",
 			Name:      "batch_client_unavailable_seconds",
-			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms ~ 1000s
+			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms ~ 524s
 			Help:      "batch client unavailable",
 		})
+<<<<<<< HEAD
+=======
+	TiKVBatchClientWaitEstablish = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "tikvclient",
+			Name:      "batch_client_wait_connection_establish",
+			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms ~ 524s
+			Help:      "batch client wait new connection establish",
+		})
+>>>>>>> 2c8afe6... metrics: adjust metrics and its comments (#16429)
 
 	TiKVRangeTaskStats = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
@@ -187,16 +198,15 @@ var (
 			Namespace: "tidb",
 			Subsystem: "tikvclient",
 			Name:      "range_task_push_duration",
-			// 1ms ~ 1000s
-			Buckets: prometheus.ExponentialBuckets(0.001, 2, 20),
-			Help:    "duration to push sub tasks to range task workers",
+			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms ~ 524s
+			Help:      "duration to push sub tasks to range task workers",
 		}, []string{LblType})
 	TiKVTokenWaitDuration = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "tikvclient",
 			Name:      "batch_executor_token_wait_duration",
-			Buckets:   prometheus.ExponentialBuckets(1, 2, 30), // 1ns ~ 1s
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 34), // 1ns ~ 8s
 			Help:      "tidb txn token wait duration to process batches",
 		})
 
@@ -206,14 +216,14 @@ var (
 			Subsystem: "tikvclient",
 			Name:      "txn_heart_beat",
 			Help:      "Bucketed histogram of the txn_heartbeat request duration.",
-			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 18), // 1ms ~ 292s
+			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms ~ 524s
 		}, []string{LblType})
 	TiKVPessimisticLockKeysDuration = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "tikvclient",
 			Name:      "pessimistic_lock_keys_duration",
-			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 24), // 1ms ~ 16777s
+			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 24), // 1ms ~ 8389s
 			Help:      "tidb txn pessimistic lock keys duration",
 		})
 
