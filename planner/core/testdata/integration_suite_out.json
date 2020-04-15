@@ -1,9 +1,5 @@
 [
   {
-    "Name": "TestPushLimitDownIndexLookUpReader",
-    "Cases": null
-  },
-  {
     "Name": "TestIsFromUnixtimeNullRejective",
     "Cases": [
       {

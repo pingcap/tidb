@@ -11,7 +11,7 @@
         ]
       },
       {
-        "SQL": "explain select * from t where cast(t.a as decimal(30,10)) + 3 = 5.1",
+        "SQL": "explain select * from t where cast(t.a as decimal(40,10)) + 3 = 5.1",
         "Plan": [
           "Selection_5 8000.00 root eq(plus(cast(test.t.a), 3), 5.1)",
           "└─TableReader_7 10000.00 root data:TableScan_6",
@@ -178,6 +178,64 @@
         "Warn": [
           "[planner:1815]No available path for table test.t with the store type tiflash of the hint /*+ read_from_storage */, please check the status of the table replica and variable value of tidb_isolation_read_engines(map[0:{}])"
         ]
+      }
+    ]
+  },
+  {
+    "Name": "TestIsolationReadTiFlashNotChoosePointGet",
+    "Cases": [
+      {
+        "SQL": "explain select * from t where t.a = 1",
+        "Result": [
+          "TableReader_6 1.00 root data:TableScan_5",
+          "└─TableScan_5 1.00 cop[tiflash] table:t, range:[1,1], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select * from t where t.a in (1, 2)",
+        "Result": [
+          "TableReader_6 2.00 root data:TableScan_5",
+          "└─TableScan_5 2.00 cop[tiflash] table:t, range:[1,1], [2,2], keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestIsolationReadTiFlashUseIndexHint",
+    "Cases": [
+      {
+        "SQL": "explain select * from t",
+        "Plan": [
+          "TableReader_5 10000.00 root data:TableScan_4",
+          "└─TableScan_4 10000.00 cop[tiflash] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain select * from t use index();",
+        "Plan": [
+          "TableReader_5 10000.00 root data:TableScan_4",
+          "└─TableScan_4 10000.00 cop[tiflash] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain select /*+ use_index(t, idx)*/ * from t",
+        "Plan": [
+          "TableReader_5 10000.00 root data:TableScan_4",
+          "└─TableScan_4 10000.00 cop[tiflash] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ],
+        "Warn": [
+          "TiDB doesn't support index in the isolation read engines(value: 'tiflash')"
+        ]
+      },
+      {
+        "SQL": "explain select /*+ use_index(t)*/ * from t",
+        "Plan": [
+          "TableReader_5 10000.00 root data:TableScan_4",
+          "└─TableScan_4 10000.00 cop[tiflash] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
       }
     ]
   }

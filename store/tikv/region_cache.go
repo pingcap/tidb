@@ -114,6 +114,25 @@ func (r *RegionStore) follower(seed uint32) int32 {
 	return r.workTiKVIdx
 }
 
+// return next leader or follower store's index
+func (r *RegionStore) peer(seed uint32) int32 {
+	candidates := make([]int32, 0, len(r.stores))
+	for i := 0; i < len(r.stores); i++ {
+		if r.stores[i].storeType != kv.TiKV {
+			continue
+		}
+		if r.storeFails[i] != atomic.LoadUint32(&r.stores[i].fail) {
+			continue
+		}
+		candidates = append(candidates, int32(i))
+	}
+
+	if len(candidates) == 0 {
+		return r.workTiKVIdx
+	}
+	return candidates[int32(seed)%int32(len(candidates))]
+}
+
 // init initializes region after constructed.
 func (r *Region) init(c *RegionCache) {
 	// region store pull used store from global store map
@@ -305,6 +324,8 @@ func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRe
 	switch replicaRead {
 	case kv.ReplicaReadFollower:
 		store, peer, storeIdx = cachedRegion.FollowerStorePeer(regionStore, followerStoreSeed)
+	case kv.ReplicaReadMixed:
+		store, peer, storeIdx = cachedRegion.AnyStorePeer(regionStore, followerStoreSeed)
 	default:
 		store, peer, storeIdx = cachedRegion.WorkStorePeer(regionStore)
 	}
@@ -736,7 +757,7 @@ func (c *RegionCache) loadRegion(bo *Backoffer, key []byte, isEndKey bool) (*Reg
 		if len(meta.Peers) == 0 {
 			return nil, errors.New("receive Region with no peer")
 		}
-		if isEndKey && !searchPrev && bytes.Compare(meta.StartKey, key) == 0 && len(meta.StartKey) != 0 {
+		if isEndKey && !searchPrev && bytes.Equal(meta.StartKey, key) && len(meta.StartKey) != 0 {
 			searchPrev = true
 			continue
 		}
@@ -957,6 +978,11 @@ func (r *Region) WorkStorePeer(rs *RegionStore) (store *Store, peer *metapb.Peer
 // FollowerStorePeer returns a follower store with follower peer.
 func (r *Region) FollowerStorePeer(rs *RegionStore, followerStoreSeed uint32) (*Store, *metapb.Peer, int) {
 	return r.getStorePeer(rs, rs.follower(followerStoreSeed))
+}
+
+// AnyStorePeer returns a leader or follower store with the associated peer.
+func (r *Region) AnyStorePeer(rs *RegionStore, followerStoreSeed uint32) (*Store, *metapb.Peer, int) {
+	return r.getStorePeer(rs, rs.peer(followerStoreSeed))
 }
 
 // RegionVerID is a unique ID that can identify a Region at a specific version.
