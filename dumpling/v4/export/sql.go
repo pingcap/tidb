@@ -443,14 +443,14 @@ func detectEstimateRows(db *sql.DB, query string, dbType string, fieldIndex int,
 	row := db.QueryRow(query)
 	err := row.Scan(addr...)
 	if err != nil {
-		log.Zap().Warn("can't get estimate count from db",
+		log.Warn("can't get estimate count from db",
 			zap.String("db", dbType),
 			zap.String("query", query), zap.Error(err))
 		return 0
 	}
 	estRows, err := strconv.ParseFloat(oneRow[fieldIndex].String, 64)
 	if err != nil {
-		log.Zap().Warn("can't get parse rows from db",
+		log.Warn("can't get parse rows from db",
 			zap.String("db", dbType),
 			zap.String("query", query), zap.Error(err))
 		return 0

@@ -32,7 +32,7 @@ func startHTTPServer(lis net.Listener) {
 	}
 	err := httpServer.Serve(lis)
 	if err != nil && !isErrNetClosing(err) && err != http.ErrServerClosed {
-		log.Zap().Error("http server return with error", zap.Error(err))
+		log.Error("http server return with error", zap.Error(err))
 	}
 }
 
