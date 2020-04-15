@@ -5501,12 +5501,12 @@ func (b *builtinConvertTzSig) evalTime(row chunk.Row) (types.Time, bool, error) 
 	}
 
 	fromTzStr, isNull, err := b.args[1].EvalString(b.ctx, row)
-	if isNull || err != nil || fromTzStr == "" {
+	if isNull || err != nil {
 		return types.ZeroTime, true, nil
 	}
 
 	toTzStr, isNull, err := b.args[2].EvalString(b.ctx, row)
-	if isNull || err != nil || toTzStr == "" {
+	if isNull || err != nil {
 		return types.ZeroTime, true, nil
 	}
 
@@ -5514,6 +5514,9 @@ func (b *builtinConvertTzSig) evalTime(row chunk.Row) (types.Time, bool, error) 
 }
 
 func (b *builtinConvertTzSig) convertTz(dt types.Time, fromTzStr, toTzStr string) (types.Time, bool, error) {
+	if fromTzStr == "" || toTzStr == "" {
+		return types.ZeroTime, true, nil
+	}
 	fromTzMatched := b.timezoneRegex.MatchString(fromTzStr)
 	toTzMatched := b.timezoneRegex.MatchString(toTzStr)
 

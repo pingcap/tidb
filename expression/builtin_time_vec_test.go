@@ -77,6 +77,7 @@ type tzStrGener struct{}
 
 func (g *tzStrGener) gen() interface{} {
 	tzs := []string{
+		"",
 		"GMT",
 		"MET",
 		"+00:00",
