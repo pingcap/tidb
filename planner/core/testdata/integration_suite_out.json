@@ -203,6 +203,23 @@
           "├─IndexRangeScan_6(Build) 1.00 cop[tikv] table:t, index:b(b) range:[2,2], keep order:false, stats:pseudo",
           "└─TableRowIDScan_7(Probe) 2.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
+      },
+      {
+        "SQL": "explain select /*+ USE_INDEX_MERGE(t, primary) */ * from t where 1 or t.c",
+        "Plan": [
+          "IndexMerge_8 10000.00 root  ",
+          "├─TableFullScan_5(Build) 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+          "├─TableRangeScan_6(Build) 6666.67 cop[tikv] table:t range:[-inf,0), (0,+inf], keep order:false, stats:pseudo",
+          "└─TableRowIDScan_7(Probe) 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select /*+ USE_INDEX_MERGE(t, a, b, c) */ * from t where 1 or t.a = 1 or t.b = 2",
+        "Plan": [
+          "TableReader_7 8000.00 root  data:Selection_6",
+          "└─Selection_6 8000.00 cop[tikv]  or(or(1, eq(test.t.a, 1)), eq(test.t.b, 2))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
       }
     ]
   },
@@ -300,6 +317,30 @@
         "SQL": "select /*+ USE_INDEX_MERGE(t3, a, b, d) */ * from t1",
         "Warnings": [
           "[planner:1815]use_index_merge(test.t3, a, b, d) is inapplicable, check whether the table(test.t3) exists"
+        ]
+      },
+      {
+        "SQL": "select /*+ USE_INDEX_MERGE(t1, a, b, c, d) */ * from t1",
+        "Warnings": [
+          "[planner:1815]use_index_merge(test.t1, a, b, c, d) is inapplicable, check whether the indexes (c, d) exist, or the indexes are conflicted with use_index/ignore_index hints."
+        ]
+      },
+      {
+        "SQL": "select /*+ USE_INDEX_MERGE(t1, a, b), USE_INDEX(t1, a) */ * from t1",
+        "Warnings": [
+          "[planner:1815]use_index_merge(test.t1, a, b) is inapplicable, check whether the indexes (b) exist, or the indexes are conflicted with use_index/ignore_index hints."
+        ]
+      },
+      {
+        "SQL": "select /*+ USE_INDEX_MERGE(t1, a, b), IGNORE_INDEX(t1, a) */ * from t1",
+        "Warnings": [
+          "[planner:1815]use_index_merge(test.t1, a, b) is inapplicable, check whether the indexes (a) exist, or the indexes are conflicted with use_index/ignore_index hints."
+        ]
+      },
+      {
+        "SQL": "select /*+ USE_INDEX_MERGE(t1, primary, a, b, c) */ * from t1",
+        "Warnings": [
+          "[planner:1815]use_index_merge(test.t1, primary, a, b, c) is inapplicable, check whether the indexes (c) exist, or the indexes are conflicted with use_index/ignore_index hints."
         ]
       }
     ]

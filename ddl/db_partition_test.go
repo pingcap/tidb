@@ -260,6 +260,19 @@ func (s *testIntegrationSuite3) TestCreateTableWithPartition(c *C) {
 		PARTITION p2 VALUES LESS THAN (2000),
 		PARTITION p3 VALUES LESS THAN (2005)
 	);`, tmysql.ErrBadField)
+
+	// Fix a timezone dependent check bug introduced in https://github.com/pingcap/tidb/pull/10655
+	tk.MustExec(`create table t34 (dt timestamp(3)) partition by range (floor(unix_timestamp(dt))) (
+		partition p0 values less than (unix_timestamp('2020-04-04 00:00:00')),
+		partition p1 values less than (unix_timestamp('2020-04-05 00:00:00')));`)
+
+	tk.MustGetErrCode(`create table t34 (dt timestamp(3)) partition by range (unix_timestamp(date(dt))) (
+		partition p0 values less than (unix_timestamp('2020-04-04 00:00:00')),
+		partition p1 values less than (unix_timestamp('2020-04-05 00:00:00')));`, tmysql.ErrWrongExprInPartitionFunc)
+
+	tk.MustGetErrCode(`create table t34 (dt datetime) partition by range (unix_timestamp(dt)) (
+		partition p0 values less than (unix_timestamp('2020-04-04 00:00:00')),
+		partition p1 values less than (unix_timestamp('2020-04-05 00:00:00')));`, tmysql.ErrWrongExprInPartitionFunc)
 }
 
 func (s *testIntegrationSuite2) TestCreateTableWithHashPartition(c *C) {
@@ -291,6 +304,17 @@ func (s *testIntegrationSuite2) TestCreateTableWithHashPartition(c *C) {
 		store_id int
 	)
 	partition by hash( year(hired) ) partitions 4;`)
+
+	// This query makes tidb OOM without partition count check.
+	tk.MustGetErrCode(`CREATE TABLE employees (
+    id INT NOT NULL,
+    fname VARCHAR(30),
+    lname VARCHAR(30),
+    hired DATE NOT NULL DEFAULT '1970-01-01',
+    separated DATE NOT NULL DEFAULT '9999-12-31',
+    job_code INT,
+    store_id INT
+) PARTITION BY HASH(store_id) PARTITIONS 102400000000;`, tmysql.ErrTooManyPartitions)
 }
 
 func (s *testIntegrationSuite1) TestCreateTableWithRangeColumnPartition(c *C) {
@@ -416,6 +440,9 @@ func (s *testIntegrationSuite3) TestCreateTableWithKeyPartition(c *C) {
 		s1 char(32) primary key
 	)
 	partition by key(s1) partitions 10;`)
+
+	tk.MustExec(`drop table if exists tm2`)
+	tk.MustExec(`create table tm2 (a char(5), unique key(a(5))) partition by key() partitions 5;`)
 }
 
 func (s *testIntegrationSuite5) TestAlterTableAddPartition(c *C) {

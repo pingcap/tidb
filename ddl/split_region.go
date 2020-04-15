@@ -73,7 +73,7 @@ func splitPreSplitedTable(store kv.SplittableStore, tbInfo *model.TableInfo, sca
 	step := int64(1 << (tbInfo.ShardRowIDBits - tbInfo.PreSplitRegions))
 	max := int64(1 << tbInfo.ShardRowIDBits)
 	splitTableKeys := make([][]byte, 0, 1<<(tbInfo.PreSplitRegions))
-	for p := int64(step); p < max; p += step {
+	for p := step; p < max; p += step {
 		recordID := p << (64 - tbInfo.ShardRowIDBits - 1)
 		recordPrefix := tablecodec.GenTableRecordPrefix(tbInfo.ID)
 		key := tablecodec.EncodeRecordKey(recordPrefix, recordID)
