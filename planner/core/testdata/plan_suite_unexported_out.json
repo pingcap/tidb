@@ -45,7 +45,7 @@
       "Dual->Projection",
       "Join{DataScan(t1)->DataScan(t2)}->Projection",
       "Join{DataScan(t1)->DataScan(t2)}->Projection",
-      "LeftHashJoin{LeftHashJoin{TableReader(Table(t))->IndexLookUp(Index(t.c_d_e)[[666,666]], Table(t))}(test.t.a,test.t.b)->IndexReader(Index(t.c_d_e)[[42,42]])}(test.t.b,test.t.a)->Sel([or(Column#25, Column#38)])->Projection->Delete",
+      "LeftHashJoin{LeftHashJoin{TableReader(Table(t))->IndexLookUp(Index(t.c_d_e)[[666,666]], Table(t))}(test.t.a,test.t.b)->IndexReader(Index(t.c_d_e)[[42,42]])}(test.t.b,test.t.a)->Sel([or(istrue(Column#25), istrue(Column#38))])->Projection->Delete",
       "LeftHashJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])->HashAgg}(test.t.b,test.t.c)->Projection->Update"
     ]
   },
@@ -71,7 +71,7 @@
       "Join{DataScan(ta)->Join{DataScan(tb)->DataScan(tc)}(test.t.b,test.t.b)}(test.t.a,test.t.a)->Projection",
       "Join{Join{DataScan(ta)->DataScan(tb)}(test.t.a,test.t.a)->Join{DataScan(tc)->DataScan(td)}(test.t.b,test.t.b)}(test.t.c,test.t.c)->Projection",
       "Join{DataScan(ta)->Join{DataScan(tb)->DataScan(tc)}(test.t.b,test.t.b)}(test.t.a,test.t.a)(test.t.c,test.t.c)->Sel([or(gt(test.t.d, 0), gt(test.t.d, 0))])->Projection",
-      "Join{DataScan(ta)->DataScan(tb)}(test.t.d,test.t.d)->Sel([or(ifnull(test.t.d, 1), isnull(test.t.d))])->Projection",
+      "Join{DataScan(ta)->DataScan(tb)}(test.t.d,test.t.d)->Sel([or(istrue(ifnull(test.t.d, 1)), isnull(test.t.d))])->Projection",
       "UnionAll{DataScan(t)->Projection->Projection->DataScan(t)->Projection->Projection->DataScan(t)->Projection->Projection}->Projection",
       "Apply{DataScan(k)->DataScan(t)->Aggr(count(1))->Projection->MaxOneRow}->Projection",
       "Join{DataScan(t)->DataScan(x)}->Projection",

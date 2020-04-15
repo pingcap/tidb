@@ -559,7 +559,7 @@ HashJoin_7	8320.83	root		left outer join, equal:[eq(test.t.nb, test.t.nb)], left
 ├─TableReader_13(Build)	10000.00	root		data:TableFullScan_12
 │ └─TableFullScan_12	10000.00	cop[tikv]	table:tb	keep order:false, stats:pseudo
 └─TableReader_11(Probe)	6656.67	root		data:Selection_10
-  └─Selection_10	6656.67	cop[tikv]		or(test.t.nb, isnull(test.t.nb))
+  └─Selection_10	6656.67	cop[tikv]		or(istrue(test.t.nb), isnull(test.t.nb))
     └─TableFullScan_9	10000.00	cop[tikv]	table:ta	keep order:false, stats:pseudo
 explain select * from t ta right outer join t tb on ta.nb = tb.nb and ta.a > 1 where ifnull(tb.nb, 1) or tb.nb is null;
 id	estRows	task	access object	operator info
@@ -568,7 +568,7 @@ HashJoin_7	6656.67	root		right outer join, equal:[eq(test.t.nb, test.t.nb)]
 │ └─Selection_10	3333.33	cop[tikv]		gt(test.t.a, 1)
 │   └─TableFullScan_9	10000.00	cop[tikv]	table:ta	keep order:false, stats:pseudo
 └─TableReader_14(Probe)	6656.67	root		data:Selection_13
-  └─Selection_13	6656.67	cop[tikv]		or(test.t.nb, isnull(test.t.nb))
+  └─Selection_13	6656.67	cop[tikv]		or(istrue(test.t.nb), isnull(test.t.nb))
     └─TableFullScan_12	10000.00	cop[tikv]	table:tb	keep order:false, stats:pseudo
 explain select * from t ta inner join t tb on ta.nb = tb.nb and ta.a > 1 where ifnull(tb.nb, 1) or tb.nb is null;
 id	estRows	task	access object	operator info
@@ -577,7 +577,7 @@ HashJoin_9	4166.67	root		inner join, equal:[eq(test.t.nb, test.t.nb)]
 │ └─Selection_11	3333.33	cop[tikv]		gt(test.t.a, 1)
 │   └─TableFullScan_10	10000.00	cop[tikv]	table:ta	keep order:false, stats:pseudo
 └─TableReader_15(Probe)	6656.67	root		data:Selection_14
-  └─Selection_14	6656.67	cop[tikv]		or(test.t.nb, isnull(test.t.nb))
+  └─Selection_14	6656.67	cop[tikv]		or(istrue(test.t.nb), isnull(test.t.nb))
     └─TableFullScan_13	10000.00	cop[tikv]	table:tb	keep order:false, stats:pseudo
 explain select ifnull(t.nc, 1) in (select count(*) from t s , t t1 where s.a = t.a and s.a = t1.a) from t;
 id	estRows	task	access object	operator info
@@ -597,7 +597,7 @@ Projection_12	10000.00	root		Column#14
           └─TableFullScan_22	10000.00	cop[tikv]	table:s	keep order:false, stats:pseudo
 explain select * from t ta left outer join t tb on ta.nb = tb.nb and ta.a > 1 where ifnull(tb.a, 1) or tb.a is null;
 id	estRows	task	access object	operator info
-Selection_7	10000.00	root		or(ifnull(test.t.a, 1), isnull(test.t.a))
+Selection_7	10000.00	root		or(istrue(ifnull(test.t.a, 1)), isnull(test.t.a))
 └─HashJoin_8	12500.00	root		left outer join, equal:[eq(test.t.nb, test.t.nb)], left cond:[gt(test.t.a, 1)]
   ├─TableReader_13(Build)	10000.00	root		data:TableFullScan_12
   │ └─TableFullScan_12	10000.00	cop[tikv]	table:tb	keep order:false, stats:pseudo
@@ -610,7 +610,7 @@ HashJoin_7	8000.00	root		right outer join, equal:[eq(test.t.nb, test.t.nb)]
 │ └─Selection_10	3333.33	cop[tikv]		gt(test.t.a, 1)
 │   └─TableFullScan_9	10000.00	cop[tikv]	table:ta	keep order:false, stats:pseudo
 └─TableReader_14(Probe)	8000.00	root		data:Selection_13
-  └─Selection_13	8000.00	cop[tikv]		or(ifnull(test.t.a, 1), isnull(test.t.a))
+  └─Selection_13	8000.00	cop[tikv]		or(istrue(ifnull(test.t.a, 1)), isnull(test.t.a))
     └─TableFullScan_12	10000.00	cop[tikv]	table:tb	keep order:false, stats:pseudo
 explain select ifnull(t.a, 1) in (select count(*) from t s , t t1 where s.a = t.a and s.a = t1.a) from t;
 id	estRows	task	access object	operator info

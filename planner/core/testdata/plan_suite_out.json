@@ -927,7 +927,7 @@
       },
       {
         "SQL": "select a from t where not a",
-        "Best": "IndexReader(Index(t.f)[[NULL,+inf]]->Sel([not(test.t.a)]))"
+        "Best": "PointGet(Handle(t.a)0)"
       },
       {
         "SQL": "select a from t where c in (1)",
@@ -1213,12 +1213,12 @@
       },
       {
         "SQL": "select /*+ HASH_AGG() */ t1.a from t t1 where t1.a < any(select t2.b from t t2)",
-        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]]->Sel([if(isnull(test.t.a), <nil>, 1)]))->TableReader(Table(t)->HashAgg)->HashAgg->Sel([ne(Column#27, 0)])}",
+        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]]->Sel([istrue(if(isnull(test.t.a), <nil>, 1))]))->TableReader(Table(t)->HashAgg)->HashAgg->Sel([ne(Column#27, 0)])}",
         "Warning": ""
       },
       {
         "SQL": "select /*+ hash_agg() */ t1.a from t t1 where t1.a != any(select t2.b from t t2)",
-        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]]->Sel([if(isnull(test.t.a), <nil>, 1)]))->TableReader(Table(t))->Projection->HashAgg->Sel([ne(Column#28, 0)])}",
+        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]]->Sel([istrue(if(isnull(test.t.a), <nil>, 1))]))->TableReader(Table(t))->Projection->HashAgg->Sel([ne(Column#28, 0)])}",
         "Warning": ""
       },
       {
