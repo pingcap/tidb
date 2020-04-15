@@ -440,7 +440,8 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(err, IsNil)
 	val, err = GetSessionSystemVar(v, TiDBFoundInPlanCache)
 	c.Assert(err, IsNil)
-	c.Assert(val, Equals, "1")
+	c.Assert(val, Equals, "0")
+	c.Assert(v.systems[TiDBFoundInPlanCache], Equals, "1")
 }
 
 func (s *testVarsutilSuite) TestSetOverflowBehave(c *C) {
