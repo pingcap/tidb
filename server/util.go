@@ -201,8 +201,8 @@ func dumpBinaryTime(dur time.Duration) (data []byte) {
 }
 
 func dumpBinaryDateTime(data []byte, t types.Time) []byte {
-		year, mon, day := t.Time.Year(), t.Time.Month(), t.Time.Day()
-		switch t.Type {
+	year, mon, day := t.Time.Year(), t.Time.Month(), t.Time.Day()
+	switch t.Type {
 	case mysql.TypeTimestamp, mysql.TypeDatetime:
 		data = append(data, 11)
 		data = dumpUint16(data, uint16(year))
