@@ -85,6 +85,8 @@ type Context interface {
 	StmtAddDirtyTableOP(op int, physicalID int64, handle int64)
 	// DDLOwnerChecker returns owner.DDLOwnerChecker.
 	DDLOwnerChecker() owner.DDLOwnerChecker
+	// PrepareTxnFuture uses to prepare txn by future.
+	PrepareTxnFuture(ctx context.Context)
 }
 
 type basicCtxType int
