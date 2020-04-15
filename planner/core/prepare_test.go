@@ -707,7 +707,7 @@ func (s *testPlanSerialSuite) TestPlanCacheHitInfo(c *C) {
 	tk.MustQuery(`show session variables like "last_statement_found_in_plan_cache"`).Check(testkit.Rows(
 		"last_statement_found_in_plan_cache 1",
 	))
-
+}
 
 func (s *testPrepareSuite) TestPrepareForGroupByMultiItems(c *C) {
 	defer testleak.AfterTest(c)()
