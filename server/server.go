@@ -112,6 +112,8 @@ type Server struct {
 	concurrentLimiter *TokenLimiter
 	clients           map[uint32]*clientConn
 	capability        uint32
+	statusAddr        string
+	statusListener    net.Listener
 	statusServer      *http.Server
 }
 
@@ -247,6 +249,9 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		s.listener = pplistener
 	}
 
+	if s.cfg.Status.ReportStatus && err == nil {
+		err = s.listenStatusHTTPServer()
+	}
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -346,19 +351,18 @@ func (s *Server) Close() {
 func (s *Server) onConn(conn *clientConn) {
 	ctx := logutil.WithConnID(context.Background(), conn.connectionID)
 	if err := conn.handshake(ctx); err != nil {
-		terror.Log(err)
-		if plugin.IsEnable(plugin.Audit) {
+		if plugin.IsEnable(plugin.Audit) && conn.ctx != nil {
 			conn.ctx.GetSessionVars().ConnectionInfo = conn.connectInfo()
+			err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
+				authPlugin := plugin.DeclareAuditManifest(p.Manifest)
+				if authPlugin.OnConnectionEvent != nil {
+					pluginCtx := context.WithValue(context.Background(), plugin.RejectReasonCtxValue{}, err.Error())
+					return authPlugin.OnConnectionEvent(pluginCtx, plugin.Reject, conn.ctx.GetSessionVars().ConnectionInfo)
+				}
+				return nil
+			})
+			terror.Log(err)
 		}
-		err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
-			authPlugin := plugin.DeclareAuditManifest(p.Manifest)
-			if authPlugin.OnConnectionEvent != nil {
-				pluginCtx := context.WithValue(context.Background(), plugin.RejectReasonCtxValue{}, err.Error())
-				return authPlugin.OnConnectionEvent(pluginCtx, plugin.Reject, conn.ctx.GetSessionVars().ConnectionInfo)
-			}
-			return nil
-		})
-		terror.Log(err)
 		// Some keep alive services will send request to TiDB and disconnect immediately.
 		// So we only record metrics.
 		metrics.HandShakeErrorCounter.Inc()
@@ -444,6 +448,7 @@ func (cc *clientConn) connectInfo() *variable.ConnectionInfo {
 // ShowProcessList implements the SessionManager interface.
 func (s *Server) ShowProcessList() map[uint64]*util.ProcessInfo {
 	s.rwlock.RLock()
+	defer s.rwlock.RUnlock()
 	rs := make(map[uint64]*util.ProcessInfo, len(s.clients))
 	for _, client := range s.clients {
 		if atomic.LoadInt32(&client.status) == connStatusWaitShutdown {
@@ -453,7 +458,6 @@ func (s *Server) ShowProcessList() map[uint64]*util.ProcessInfo {
 			rs[pi.ID] = pi
 		}
 	}
-	s.rwlock.RUnlock()
 	return rs
 }
 

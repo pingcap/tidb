@@ -124,7 +124,7 @@ type Session interface {
 	Close()
 	Auth(user *auth.UserIdentity, auth []byte, salt []byte) bool
 	ShowProcess() *util.ProcessInfo
-	// PrePareTxnCtx is exported for test.
+	// PrepareTxnCtx is exported for test.
 	PrepareTxnCtx(context.Context)
 	// FieldList returns fields list of a table.
 	FieldList(tableName string) (fields []*ast.ResultField, err error)
@@ -661,7 +661,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 				zap.String("label", label),
 				zap.Stringer("session", s),
 				zap.Error(err))
-			metrics.SessionRetryErrorCounter.WithLabelValues(label, metrics.LblUnretryable)
+			metrics.SessionRetryErrorCounter.WithLabelValues(label, metrics.LblUnretryable).Inc()
 			return err
 		}
 		retryCnt++
@@ -669,7 +669,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 			logutil.Logger(ctx).Warn("sql",
 				zap.String("label", label),
 				zap.Uint("retry reached max count", retryCnt))
-			metrics.SessionRetryErrorCounter.WithLabelValues(label, metrics.LblReachMax)
+			metrics.SessionRetryErrorCounter.WithLabelValues(label, metrics.LblReachMax).Inc()
 			return err
 		}
 		logutil.Logger(ctx).Warn("sql",
@@ -1182,6 +1182,7 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	// NewPrepareExec may need startTS to build the executor, for example prepare statement has subquery in int.
 	// So we have to call PrepareTxnCtx here.
 	s.PrepareTxnCtx(ctx)
+	s.PrepareTxnFuture(ctx)
 	prepareExec := executor.NewPrepareExec(s, executor.GetInfoSchema(s), sql)
 	err = prepareExec.Next(ctx, nil)
 	if err != nil {
@@ -1377,8 +1378,6 @@ func (s *session) Auth(user *auth.UserIdentity, authentication []byte, salt []by
 		s.sessionVars.ActiveRoles = pm.GetDefaultRoles(user.AuthUsername, user.AuthHostname)
 		return true
 	} else if user.Hostname == variable.DefHostname {
-		logutil.Logger(context.Background()).Error("user connection verification failed",
-			zap.Stringer("user", user))
 		return false
 	}
 
@@ -1396,9 +1395,6 @@ func (s *session) Auth(user *auth.UserIdentity, authentication []byte, salt []by
 			return true
 		}
 	}
-
-	logutil.Logger(context.Background()).Error("user connection verification failed",
-		zap.Stringer("user", user))
 	return false
 }
 
@@ -1810,8 +1806,6 @@ func (s *session) PrepareTxnCtx(ctx context.Context) {
 		return
 	}
 
-	txnFuture := s.getTxnFuture(ctx)
-	s.txn.changeInvalidToPending(txnFuture)
 	is := domain.GetDomain(s).InfoSchema()
 	s.sessionVars.TxnCtx = &variable.TransactionContext{
 		InfoSchema:    is,
@@ -1826,6 +1820,16 @@ func (s *session) PrepareTxnCtx(ctx context.Context) {
 			}
 		}
 	}
+}
+
+// PrepareTxnFuture uses to try to get txn future.
+func (s *session) PrepareTxnFuture(ctx context.Context) {
+	if s.txn.validOrPending() {
+		return
+	}
+
+	txnFuture := s.getTxnFuture(ctx)
+	s.txn.changeInvalidToPending(txnFuture)
 }
 
 // RefreshTxnCtx implements context.RefreshTxnCtx interface.

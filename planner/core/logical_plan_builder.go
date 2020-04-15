@@ -1754,7 +1754,7 @@ func (b *PlanBuilder) checkOnlyFullGroupByWithGroupClause(p LogicalPlan, sel *as
 		if field.Auxiliary {
 			continue
 		}
-		checkExprInGroupBy(p, field.Expr, offset, ErrExprInSelect, gbyCols, gbyExprs, notInGbyCols)
+		checkExprInGroupBy(p, getInnerFromParenthesesAndUnaryPlus(field.Expr), offset, ErrExprInSelect, gbyCols, gbyExprs, notInGbyCols)
 	}
 
 	if sel.OrderBy != nil {
@@ -2681,7 +2681,64 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 		return nil, err
 	}
 	err = updt.ResolveIndices()
+	if err != nil {
+		return nil, err
+	}
+
+	err = b.checkUpdateList(updt)
 	return updt, err
+}
+
+// GetUpdateColumns gets the columns of updated lists.
+func GetUpdateColumns(ctx sessionctx.Context, orderedList []*expression.Assignment, schemaLen int) ([]bool, error) {
+	assignFlag := make([]bool, schemaLen)
+	for _, v := range orderedList {
+		if !ctx.GetSessionVars().AllowWriteRowID && v.Col.ID == model.ExtraHandleID {
+			return nil, errors.Errorf("insert, update and replace statements for _tidb_rowid are not supported.")
+		}
+		idx := v.Col.Index
+		assignFlag[idx] = true
+	}
+	return assignFlag, nil
+}
+
+func getTableOffset(schema *expression.Schema, handleCol *expression.Column) (int, error) {
+	for i, col := range schema.Columns {
+		if col.DBName.L == handleCol.DBName.L && col.TblName.L == handleCol.TblName.L {
+			return i, nil
+		}
+	}
+	return -1, errors.Errorf("Couldn't get column information when do update")
+}
+
+func (b *PlanBuilder) checkUpdateList(updt *Update) error {
+	tblID2table := make(map[int64]table.Table)
+	for id := range updt.SelectPlan.Schema().TblID2Handle {
+		tblID2table[id], _ = b.is.TableByID(id)
+	}
+
+	assignFlags, err := GetUpdateColumns(b.ctx, updt.OrderedList, updt.SelectPlan.Schema().Len())
+	if err != nil {
+		return err
+	}
+	schema := updt.SelectPlan.Schema()
+	for id, cols := range schema.TblID2Handle {
+		tbl := tblID2table[id]
+		for _, col := range cols {
+			offset, err := getTableOffset(schema, col)
+			if err != nil {
+				return err
+			}
+			end := offset + len(tbl.WritableCols())
+			flags := assignFlags[offset:end]
+			for i, col := range tbl.WritableCols() {
+				if flags[i] && col.State != model.StatePublic {
+					return ErrUnknownColumn.GenWithStackByArgs(col.Name, clauseMsg[fieldList])
+				}
+			}
+		}
+	}
+	return nil
 }
 
 func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.TableName, list []*ast.Assignment, p LogicalPlan) ([]*expression.Assignment, LogicalPlan, error) {
@@ -3503,14 +3560,14 @@ func mergeWindowSpec(spec, ref *ast.WindowSpec) error {
 	if ref.Frame != nil {
 		return ErrWindowNoInherentFrame.GenWithStackByArgs(ref.Name.O)
 	}
+	if spec.PartitionBy != nil {
+		return errors.Trace(ErrWindowNoChildPartitioning)
+	}
 	if ref.OrderBy != nil {
 		if spec.OrderBy != nil {
 			return ErrWindowNoRedefineOrderBy.GenWithStackByArgs(getWindowName(spec.Name.O), ref.Name.O)
 		}
 		spec.OrderBy = ref.OrderBy
-	}
-	if spec.PartitionBy != nil {
-		return errors.Trace(ErrWindowNoChildPartitioning)
 	}
 	spec.PartitionBy = ref.PartitionBy
 	spec.Ref = model.NewCIStr("")

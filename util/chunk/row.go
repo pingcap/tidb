@@ -218,6 +218,19 @@ func (r Row) GetDatum(colIdx int, tp *types.FieldType) types.Datum {
 	return d
 }
 
+// GetRaw returns the underlying raw bytes with the colIdx.
+func (r Row) GetRaw(colIdx int) []byte {
+	var data []byte
+	c := r.c.columns[colIdx]
+	if c.isFixed() {
+		elemLen := len(c.elemBuf)
+		data = c.data[r.idx*elemLen : r.idx*elemLen+elemLen]
+	} else {
+		data = c.data[c.offsets[r.idx]:c.offsets[r.idx+1]]
+	}
+	return data
+}
+
 // IsNull returns if the datum in the chunk.Row is null.
 func (r Row) IsNull(colIdx int) bool {
 	return r.c.columns[colIdx].isNull(r.idx)

@@ -375,25 +375,20 @@ func (a *ExecStmt) handlePessimisticSelectForUpdate(ctx context.Context, e Execu
 }
 
 func (a *ExecStmt) runPessimisticSelectForUpdate(ctx context.Context, e Executor) (sqlexec.RecordSet, error) {
-	rs := &recordSet{
-		executor: e,
-		stmt:     a,
-	}
 	defer func() {
-		terror.Log(rs.Close())
+		terror.Log(e.Close())
 	}()
-
 	var rows []chunk.Row
 	var err error
-	fields := rs.Fields()
-	req := rs.NewChunk()
+	req := newFirstChunk(e)
 	for {
-		err = rs.Next(ctx, req)
+		err = Next(ctx, e, req)
 		if err != nil {
 			// Handle 'write conflict' error.
 			break
 		}
 		if req.NumRows() == 0 {
+			fields := schema2ResultFields(e.Schema(), a.Ctx.GetSessionVars().CurrentDB)
 			return &chunkRowRecordSet{rows: rows, fields: fields, e: e}, nil
 		}
 		iter := chunk.NewIterator4Chunk(req)
@@ -523,12 +518,16 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (E
 			zap.Binary("lockKey", deadlock.LockKey),
 			zap.Uint64("deadlockKeyHash", deadlock.DeadlockKeyHash))
 	} else if terror.ErrorEqual(kv.ErrWriteConflict, err) {
-		conflictCommitTS := extractConflictCommitTS(err.Error())
+		errStr := err.Error()
+		conflictCommitTS := extractConflictCommitTS(errStr)
+		if conflictCommitTS == 0 {
+			logutil.Logger(ctx).Warn("failed to extract conflictCommitTS from a conflict error")
+		}
 		forUpdateTS := txnCtx.GetForUpdateTS()
 		logutil.Logger(ctx).Info("pessimistic write conflict, retry statement",
 			zap.Uint64("txn", txnCtx.StartTS),
 			zap.Uint64("forUpdateTS", forUpdateTS),
-			zap.Uint64("conflictCommitTS", conflictCommitTS))
+			zap.String("err", errStr))
 		if conflictCommitTS > forUpdateTS {
 			newForUpdateTS = conflictCommitTS
 		}
@@ -860,7 +859,7 @@ func (a *ExecStmt) SummaryStmt() {
 // IsPointGetWithPKOrUniqueKeyByAutoCommit returns true when meets following conditions:
 //  1. ctx is auto commit tagged
 //  2. txn is not valid
-//  2. plan is point get by pk, or point get by unique index (no double read)
+//  3. plan is point get by pk, or point get by unique index (no double read)
 func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p plannercore.Plan) (bool, error) {
 	// check auto commit
 	if !ctx.GetSessionVars().IsAutocommit() {
