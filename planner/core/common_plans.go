@@ -682,22 +682,25 @@ func (e *Explain) prepareOperatorInfo(p PhysicalPlan, taskType string, indent st
 
 func (e *Explain) prepareDotInfo(p PhysicalPlan) {
 	buffer := bytes.NewBufferString("")
-	buffer.WriteString(fmt.Sprintf("\ndigraph %s {\n", p.ExplainID()))
+	fmt.Fprintf(buffer, "\ndigraph %s {\n", p.ExplainID())
 	e.prepareTaskDot(p, "root", buffer)
-	buffer.WriteString(fmt.Sprintln("}"))
+	buffer.WriteString("}\n")
 
 	e.Rows = append(e.Rows, []string{buffer.String()})
 }
 
 func (e *Explain) prepareTaskDot(p PhysicalPlan, taskTp string, buffer *bytes.Buffer) {
-	buffer.WriteString(fmt.Sprintf("subgraph cluster%v{\n", p.ID()))
+	fmt.Fprintf(buffer, "subgraph cluster%v{\n", p.ID())
 	buffer.WriteString("node [style=filled, color=lightgrey]\n")
 	buffer.WriteString("color=black\n")
-	buffer.WriteString(fmt.Sprintf("label = \"%s\"\n", taskTp))
+	fmt.Fprintf(buffer, "label = \"%s\"\n", taskTp)
 
 	if len(p.Children()) == 0 {
-		buffer.WriteString(fmt.Sprintf("\"%s\"\n}\n", p.ExplainID()))
-		return
+		if taskTp == "cop" {
+			fmt.Fprintf(buffer, "\"%s\"\n}\n", p.ExplainID())
+			return
+		}
+		fmt.Fprintf(buffer, "\"%s\"\n", p.ExplainID())
 	}
 
 	var copTasks []PhysicalPlan
@@ -719,7 +722,7 @@ func (e *Explain) prepareTaskDot(p PhysicalPlan, taskTp string, buffer *bytes.Bu
 			copTasks = append(copTasks, copPlan.indexPlan)
 		}
 		for _, child := range curPlan.Children() {
-			buffer.WriteString(fmt.Sprintf("\"%s\" -> \"%s\"\n", curPlan.ExplainID(), child.ExplainID()))
+			fmt.Fprintf(buffer, "\"%s\" -> \"%s\"\n", curPlan.ExplainID(), child.ExplainID())
 			planQueue = append(planQueue, child)
 		}
 	}
