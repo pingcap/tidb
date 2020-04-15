@@ -22,6 +22,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"fmt"
 	"io/ioutil"
 	"math/big"
 	"net/http"
@@ -178,6 +179,27 @@ func (ts *tidbTestSuite) TestResultFieldTableIsNull(c *C) {
 func (ts *tidbTestSuite) TestStatusAPI(c *C) {
 	c.Parallel()
 	ts.runTestStatusAPI(c)
+}
+
+func (ts *tidbTestSuite) TestStatusPort(c *C) {
+	var err error
+	ts.store, err = mockstore.NewMockTikvStore()
+	session.DisableStats4Test()
+	c.Assert(err, IsNil)
+	ts.domain, err = session.BootstrapSession(ts.store)
+	c.Assert(err, IsNil)
+	ts.tidbdrv = NewTiDBDriver(ts.store)
+	cfg := config.NewConfig()
+	cfg.Port = genPort()
+	cfg.Status.ReportStatus = true
+	cfg.Status.StatusPort = ts.statusPort
+	cfg.Performance.TCPKeepAlive = true
+
+	server, err := NewServer(cfg, ts.tidbdrv)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals,
+		fmt.Sprintf("listen tcp 0.0.0.0:%d: bind: address already in use", ts.statusPort))
+	c.Assert(server, IsNil)
 }
 
 func (ts *tidbTestSuite) TestStatusAPIWithTLS(c *C) {
@@ -663,11 +685,11 @@ func (ts *tidbTestSerialSuite) TestErrorNoRollback(c *C) {
 	cfg.Port = cli.port
 	cfg.Status.ReportStatus = false
 
-	// test cannot startup with wrong tls config
 	cfg.Security = config.Security{
-		SSLCA:   "wrong path",
-		SSLCert: "wrong path",
-		SSLKey:  "wrong path",
+		RequireSecureTransport: true,
+		SSLCA:                  "wrong path",
+		SSLCert:                "wrong path",
+		SSLKey:                 "wrong path",
 	}
 	_, err = NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, NotNil)
@@ -707,7 +729,7 @@ func (ts *tidbTestSuite) TestCreateTableFlen(c *C) {
 	// issue #4540
 	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
 	c.Assert(err, IsNil)
-	_, err = qctx.Execute(context.Background(), "use test;")
+	_, err = Execute(context.Background(), qctx, "use test;")
 	c.Assert(err, IsNil)
 
 	ctx := context.Background()
@@ -740,44 +762,55 @@ func (ts *tidbTestSuite) TestCreateTableFlen(c *C) {
 		"`z` decimal(20, 4)," +
 		"PRIMARY KEY (`a`)" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"
-	_, err = qctx.Execute(ctx, testSQL)
+	_, err = Execute(ctx, qctx, testSQL)
 	c.Assert(err, IsNil)
-	rs, err := qctx.Execute(ctx, "show create table t1")
+	rs, err := Execute(ctx, qctx, "show create table t1")
 	c.Assert(err, IsNil)
-	req := rs[0].NewChunk()
-	err = rs[0].Next(ctx, req)
+	req := rs.NewChunk()
+	err = rs.Next(ctx, req)
 	c.Assert(err, IsNil)
-	cols := rs[0].Columns()
+	cols := rs.Columns()
 	c.Assert(err, IsNil)
 	c.Assert(len(cols), Equals, 2)
 	c.Assert(int(cols[0].ColumnLength), Equals, 5*tmysql.MaxBytesOfCharacter)
 	c.Assert(int(cols[1].ColumnLength), Equals, len(req.GetRow(0).GetString(1))*tmysql.MaxBytesOfCharacter)
 
 	// for issue#5246
-	rs, err = qctx.Execute(ctx, "select y, z from t1")
+	rs, err = Execute(ctx, qctx, "select y, z from t1")
 	c.Assert(err, IsNil)
-	cols = rs[0].Columns()
+	cols = rs.Columns()
 	c.Assert(len(cols), Equals, 2)
 	c.Assert(int(cols[0].ColumnLength), Equals, 21)
 	c.Assert(int(cols[1].ColumnLength), Equals, 22)
 }
 
+func Execute(ctx context.Context, qc QueryCtx, sql string) (ResultSet, error) {
+	stmts, err := qc.Parse(ctx, sql)
+	if err != nil {
+		return nil, err
+	}
+	if len(stmts) != 1 {
+		panic("wrong input for Execute: " + sql)
+	}
+	return qc.ExecuteStmt(ctx, stmts[0])
+}
+
 func (ts *tidbTestSuite) TestShowTablesFlen(c *C) {
 	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
 	c.Assert(err, IsNil)
-	_, err = qctx.Execute(context.Background(), "use test;")
+	ctx := context.Background()
+	_, err = Execute(ctx, qctx, "use test;")
 	c.Assert(err, IsNil)
 
-	ctx := context.Background()
 	testSQL := "create table abcdefghijklmnopqrstuvwxyz (i int)"
-	_, err = qctx.Execute(ctx, testSQL)
+	_, err = Execute(ctx, qctx, testSQL)
 	c.Assert(err, IsNil)
-	rs, err := qctx.Execute(ctx, "show tables")
+	rs, err := Execute(ctx, qctx, "show tables")
 	c.Assert(err, IsNil)
-	req := rs[0].NewChunk()
-	err = rs[0].Next(ctx, req)
+	req := rs.NewChunk()
+	err = rs.Next(ctx, req)
 	c.Assert(err, IsNil)
-	cols := rs[0].Columns()
+	cols := rs.Columns()
 	c.Assert(err, IsNil)
 	c.Assert(len(cols), Equals, 1)
 	c.Assert(int(cols[0].ColumnLength), Equals, 26*tmysql.MaxBytesOfCharacter)
@@ -793,7 +826,7 @@ func checkColNames(c *C, columns []*ColumnInfo, names ...string) {
 func (ts *tidbTestSuite) TestFieldList(c *C) {
 	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
 	c.Assert(err, IsNil)
-	_, err = qctx.Execute(context.Background(), "use test;")
+	_, err = Execute(context.Background(), qctx, "use test;")
 	c.Assert(err, IsNil)
 
 	ctx := context.Background()
@@ -818,7 +851,7 @@ func (ts *tidbTestSuite) TestFieldList(c *C) {
 		c_json JSON,
 		c_year year
 	)`
-	_, err = qctx.Execute(ctx, testSQL)
+	_, err = Execute(ctx, qctx, testSQL)
 	c.Assert(err, IsNil)
 	colInfos, err := qctx.FieldList("t")
 	c.Assert(err, IsNil)
@@ -856,15 +889,15 @@ func (ts *tidbTestSuite) TestFieldList(c *C) {
 	tooLongColumnAsName := "COALESCE(0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0)"
 	columnAsName := tooLongColumnAsName[:tmysql.MaxAliasIdentifierLen]
 
-	rs, err := qctx.Execute(ctx, "select "+tooLongColumnAsName)
+	rs, err := Execute(ctx, qctx, "select "+tooLongColumnAsName)
 	c.Assert(err, IsNil)
-	cols := rs[0].Columns()
+	cols := rs.Columns()
 	c.Assert(cols[0].OrgName, Equals, tooLongColumnAsName)
 	c.Assert(cols[0].Name, Equals, columnAsName)
 
-	rs, err = qctx.Execute(ctx, "select c_bit as '"+tooLongColumnAsName+"' from t")
+	rs, err = Execute(ctx, qctx, "select c_bit as '"+tooLongColumnAsName+"' from t")
 	c.Assert(err, IsNil)
-	cols = rs[0].Columns()
+	cols = rs.Columns()
 	c.Assert(cols[0].OrgName, Equals, "c_bit")
 	c.Assert(cols[0].Name, Equals, columnAsName)
 }
@@ -880,9 +913,9 @@ func (ts *tidbTestSuite) TestNullFlag(c *C) {
 	c.Assert(err, IsNil)
 
 	ctx := context.Background()
-	rs, err := qctx.Execute(ctx, "select 1")
+	rs, err := Execute(ctx, qctx, "select 1")
 	c.Assert(err, IsNil)
-	cols := rs[0].Columns()
+	cols := rs.Columns()
 	c.Assert(len(cols), Equals, 1)
 	expectFlag := uint16(tmysql.NotNullFlag | tmysql.BinaryFlag)
 	c.Assert(dumpFlag(cols[0].Type, cols[0].Flag), Equals, expectFlag)

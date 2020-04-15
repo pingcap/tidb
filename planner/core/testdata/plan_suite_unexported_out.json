@@ -169,7 +169,7 @@
         "Err": false
       },
       {
-        "Best": "Apply{UnionAll{UnionAll{Dual->Projection->Dual->Projection}->Aggr(firstrow(Column#4))->Projection->Dual->Projection}->Dual->Projection->MaxOneRow}->Sort->Projection",
+        "Best": "Join{UnionAll{UnionAll{Dual->Projection->Dual->Projection}->Aggr(firstrow(Column#4))->Projection->Dual->Projection}->Dual}->Sort->Projection",
         "Err": false
       }
     ]
@@ -243,7 +243,8 @@
       "[planner:3586]Window 'w': frame start or end is negative, NULL or of non-integral type",
       "[planner:3586]Window 'w': frame start or end is negative, NULL or of non-integral type",
       "[planner:3586]Window 'w': frame start or end is negative, NULL or of non-integral type",
-      "TableReader(Table(t))->Sort->Window(row_number()->Column#14 over(partition by test.t.b))->Projection"
+      "TableReader(Table(t))->Sort->Window(row_number()->Column#14 over(partition by test.t.b))->Projection",
+      "[planner:1235]This version of TiDB doesn't yet support 'group_concat as window function'"
     ]
   },
   {

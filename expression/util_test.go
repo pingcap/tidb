@@ -102,7 +102,7 @@ func (s *testUtilSuite) TestClone(c *check.C) {
 		&builtinTiDBVersionSig{}, &builtinRowCountSig{}, &builtinJSONTypeSig{}, &builtinJSONQuoteSig{}, &builtinJSONUnquoteSig{},
 		&builtinJSONArraySig{}, &builtinJSONArrayAppendSig{}, &builtinJSONObjectSig{}, &builtinJSONExtractSig{}, &builtinJSONSetSig{},
 		&builtinJSONInsertSig{}, &builtinJSONReplaceSig{}, &builtinJSONRemoveSig{}, &builtinJSONMergeSig{}, &builtinJSONContainsSig{},
-		&builtinJSONDepthSig{}, &builtinJSONSearchSig{}, &builtinJSONKeysSig{}, &builtinJSONKeys2ArgsSig{}, &builtinJSONLengthSig{},
+		&builtinJSONStorageSizeSig{}, &builtinJSONDepthSig{}, &builtinJSONSearchSig{}, &builtinJSONKeysSig{}, &builtinJSONKeys2ArgsSig{}, &builtinJSONLengthSig{},
 		&builtinLikeSig{}, &builtinRegexpSig{}, &builtinRegexpUTF8Sig{}, &builtinAbsRealSig{}, &builtinAbsIntSig{},
 		&builtinAbsUIntSig{}, &builtinAbsDecSig{}, &builtinRoundRealSig{}, &builtinRoundIntSig{}, &builtinRoundDecSig{},
 		&builtinRoundWithFracRealSig{}, &builtinRoundWithFracIntSig{}, &builtinRoundWithFracDecSig{}, &builtinCeilRealSig{}, &builtinCeilIntToDecSig{},
@@ -295,6 +295,35 @@ func (s *testUtilSuite) TestPushDownNot(c *check.C) {
 	ret := PushDownNot(ctx, notFunc)
 	c.Assert(ret.Equal(ctx, orFunc2), check.IsTrue)
 	c.Assert(notFunc.Equal(ctx, notFuncCopy), check.IsTrue)
+
+	// issue 15725
+	// (not not a) should be optimized to (a is true)
+	notFunc = newFunction(ast.UnaryNot, col)
+	notFunc = newFunction(ast.UnaryNot, notFunc)
+	ret = PushDownNot(ctx, notFunc)
+	c.Assert(ret.Equal(ctx, newFunction(ast.IsTruth, col)), check.IsTrue)
+
+	// (not not (a+1)) should be optimized to (a+1 is true)
+	plusFunc := newFunction(ast.Plus, col, One)
+	notFunc = newFunction(ast.UnaryNot, plusFunc)
+	notFunc = newFunction(ast.UnaryNot, notFunc)
+	ret = PushDownNot(ctx, notFunc)
+	c.Assert(ret.Equal(ctx, newFunction(ast.IsTruth, plusFunc)), check.IsTrue)
+
+	// (not not not a) should be optimized to (not (a is true))
+	notFunc = newFunction(ast.UnaryNot, col)
+	notFunc = newFunction(ast.UnaryNot, notFunc)
+	notFunc = newFunction(ast.UnaryNot, notFunc)
+	ret = PushDownNot(ctx, notFunc)
+	c.Assert(ret.Equal(ctx, newFunction(ast.UnaryNot, newFunction(ast.IsTruth, col))), check.IsTrue)
+
+	// (not not not not a) should be optimized to (a is true)
+	notFunc = newFunction(ast.UnaryNot, col)
+	notFunc = newFunction(ast.UnaryNot, notFunc)
+	notFunc = newFunction(ast.UnaryNot, notFunc)
+	notFunc = newFunction(ast.UnaryNot, notFunc)
+	ret = PushDownNot(ctx, notFunc)
+	c.Assert(ret.Equal(ctx, newFunction(ast.IsTruth, col)), check.IsTrue)
 }
 
 func (s *testUtilSuite) TestFilter(c *check.C) {
@@ -341,7 +370,7 @@ func (s *testUtilSuite) TestHashGroupKey(c *check.C) {
 			bufs[j] = bufs[j][:0]
 		}
 		var err error
-		err = VecEval(ctx, colExpr, input, colBuf)
+		err = EvalExpr(ctx, colExpr, input, colBuf)
 		if err != nil {
 			c.Fatal(err)
 		}
@@ -461,7 +490,7 @@ func (m *MockExpr) MarshalJSON() ([]byte, error)            { return nil, nil }
 func (m *MockExpr) Eval(row chunk.Row) (types.Datum, error) { return types.NewDatum(m.i), m.err }
 func (m *MockExpr) EvalInt(ctx sessionctx.Context, row chunk.Row) (val int64, isNull bool, err error) {
 	if x, ok := m.i.(int64); ok {
-		return int64(x), false, m.err
+		return x, false, m.err
 	}
 	return 0, m.i == nil, m.err
 }
@@ -473,7 +502,7 @@ func (m *MockExpr) EvalReal(ctx sessionctx.Context, row chunk.Row) (val float64,
 }
 func (m *MockExpr) EvalString(ctx sessionctx.Context, row chunk.Row) (val string, isNull bool, err error) {
 	if x, ok := m.i.(string); ok {
-		return string(x), false, m.err
+		return x, false, m.err
 	}
 	return "", m.i == nil, m.err
 }

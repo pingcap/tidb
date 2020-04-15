@@ -143,6 +143,7 @@ type StatementContext struct {
 	PessimisticLockWaited int32
 	LockKeysDuration      time.Duration
 	LockKeysCount         int32
+	TblInfo2UnionScan     map[*model.TableInfo]bool
 }
 
 // StmtHints are SessionVars related sql hints.
@@ -153,12 +154,15 @@ type StmtHints struct {
 	ReplicaRead             byte
 	AllowInSubqToJoinAndAgg bool
 	NoIndexMergeHint        bool
+	// EnableCascadesPlanner is use cascades planner for a single query only.
+	EnableCascadesPlanner bool
 
 	// Hint flags
 	HasAllowInSubqToJoinAndAggHint bool
 	HasMemQuotaHint                bool
 	HasReplicaReadHint             bool
 	HasMaxExecutionTime            bool
+	HasEnableCascadesPlannerHint   bool
 }
 
 // GetNowTsCached getter for nowTs, if not set get now time and cache it
@@ -183,6 +187,13 @@ func (sc *StatementContext) SQLDigest() (normalized, sqlDigest string) {
 		sc.digestMemo.normalized, sc.digestMemo.digest = parser.NormalizeDigest(sc.OriginalSQL)
 	})
 	return sc.digestMemo.normalized, sc.digestMemo.digest
+}
+
+// InitSQLDigest sets the normalized and digest for sql.
+func (sc *StatementContext) InitSQLDigest(normalized, digest string) {
+	sc.digestMemo.Do(func() {
+		sc.digestMemo.normalized, sc.digestMemo.digest = normalized, digest
+	})
 }
 
 // GetPlanDigest gets the normalized plan and plan digest.

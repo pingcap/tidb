@@ -281,7 +281,7 @@ func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int
 		err = resetErrDataTooLong(colName, rowIdx+1, err)
 	} else if types.ErrOverflow.Equal(err) {
 		err = types.ErrWarnDataOutOfRange.GenWithStackByArgs(colName, rowIdx+1)
-	} else if types.ErrTruncated.Equal(err) || types.ErrTruncatedWrongVal.Equal(err) {
+	} else if types.ErrTruncated.Equal(err) || types.ErrTruncatedWrongVal.Equal(err) || types.ErrWrongValue.Equal(err) {
 		valStr, err1 := val.ToString()
 		if err1 != nil {
 			logutil.BgLogger().Warn("truncate value failed", zap.Error(err1))
@@ -456,7 +456,6 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 }
 
 func (e *InsertValues) doBatchInsert(ctx context.Context) error {
-	sessVars := e.ctx.GetSessionVars()
 	if err := e.ctx.StmtCommit(e.memTracker); err != nil {
 		return err
 	}
@@ -464,11 +463,6 @@ func (e *InsertValues) doBatchInsert(ctx context.Context) error {
 		// We should return a special error for batch insert.
 		return ErrBatchInsertFail.GenWithStack("BatchInsert failed with error: %v", err)
 	}
-	txn, err := e.ctx.Txn(true)
-	if err != nil {
-		return err
-	}
-	sessVars.GetWriteStmtBufs().BufStore = kv.NewBufferStore(txn, kv.TempTxnMemBufCap)
 	return nil
 }
 
@@ -492,26 +486,18 @@ func (e *InsertValues) getRow(ctx context.Context, vals []types.Datum) ([]types.
 	return e.fillRow(ctx, row, hasValue)
 }
 
-func (e *InsertValues) getRowInPlace(ctx context.Context, vals []types.Datum, rowBuf []types.Datum) ([]types.Datum, error) {
-	hasValue := make([]bool, len(e.Table.Cols()))
-	for i, v := range vals {
-		casted, err := table.CastValue(e.ctx, v, e.insertColumns[i].ToInfo())
-		if e.handleErr(nil, &v, 0, err) != nil {
-			return nil, err
-		}
-		offset := e.insertColumns[i].Offset
-		rowBuf[offset] = casted
-		hasValue[offset] = true
-	}
-	return e.fillRow(ctx, rowBuf, hasValue)
-}
-
 // getColDefaultValue gets the column default value.
 func (e *InsertValues) getColDefaultValue(idx int, col *table.Column) (d types.Datum, err error) {
 	if !col.DefaultIsExpr && e.colDefaultVals != nil && e.colDefaultVals[idx].valid {
 		return e.colDefaultVals[idx].val, nil
 	}
-	defaultVal, err := table.GetColDefaultValue(e.ctx, col.ToInfo())
+
+	var defaultVal types.Datum
+	if col.DefaultIsExpr && col.DefaultExpr != nil {
+		defaultVal, err = table.EvalColDefaultExpr(e.ctx, col.ToInfo(), col.DefaultExpr)
+	} else {
+		defaultVal, err = table.GetColDefaultValue(e.ctx, col.ToInfo())
+	}
 	if err != nil {
 		return types.Datum{}, err
 	}
@@ -999,6 +985,10 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 }
 
 func (e *InsertValues) addRecord(ctx context.Context, row []types.Datum) (int64, error) {
+	return e.addRecordWithAutoIDHint(ctx, row, 0)
+}
+
+func (e *InsertValues) addRecordWithAutoIDHint(ctx context.Context, row []types.Datum, reserveAutoIDCount int) (int64, error) {
 	txn, err := e.ctx.Txn(true)
 	if err != nil {
 		return 0, err
@@ -1006,7 +996,12 @@ func (e *InsertValues) addRecord(ctx context.Context, row []types.Datum) (int64,
 	if !e.ctx.GetSessionVars().ConstraintCheckInPlace {
 		txn.SetOption(kv.PresumeKeyNotExists, nil)
 	}
-	h, err := e.Table.AddRecord(e.ctx, row, table.WithCtx(ctx))
+	var h int64
+	if reserveAutoIDCount > 0 {
+		h, err = e.Table.AddRecord(e.ctx, row, table.WithCtx(ctx), table.WithReserveAutoIDHint(reserveAutoIDCount))
+	} else {
+		h, err = e.Table.AddRecord(e.ctx, row, table.WithCtx(ctx))
+	}
 	txn.DelOption(kv.PresumeKeyNotExists)
 	if err != nil {
 		return 0, err

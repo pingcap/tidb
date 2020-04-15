@@ -268,7 +268,7 @@ func (s *testSuite) TestInsert(c *C) {
 	tk.MustExec("insert into t value(20070219173709.055870), (20070219173709.055), (20070219173709.055870123)")
 	tk.MustQuery("select * from t").Check(testkit.Rows("17:37:09.055870", "17:37:09.055000", "17:37:09.055870"))
 	_, err = tk.Exec("insert into t value(-20070219173709.055870)")
-	c.Assert(err.Error(), Equals, "[types:1525]Incorrect time value: '-20070219173709.055870'")
+	c.Assert(err.Error(), Equals, "[table:1366]Incorrect time value: '-20070219173709.055870' for column 'a' at row 1")
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("set @@sql_mode=''")
@@ -1945,7 +1945,7 @@ func (s *testSuite8) TestLoadDataMissingColumn(c *C) {
 	c.Assert(ld, NotNil)
 
 	deleteSQL := "delete from load_data_missing"
-	selectSQL := "select * from load_data_missing;"
+	selectSQL := "select id, hour(t), minute(t) from load_data_missing;"
 	_, reachLimit, err := ld.InsertData(context.Background(), nil, nil)
 	c.Assert(err, IsNil)
 	c.Assert(reachLimit, IsFalse)
@@ -1953,17 +1953,20 @@ func (s *testSuite8) TestLoadDataMissingColumn(c *C) {
 	r.Check(nil)
 
 	curTime := types.CurrentTime(mysql.TypeTimestamp)
-	timeStr := curTime.String()
+	timeHour := curTime.Hour()
+	timeMinute := curTime.Minute()
 	tests := []testCase{
-		{nil, []byte("12\n"), []string{fmt.Sprintf("12|%v", timeStr)}, nil, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"},
+		{nil, []byte("12\n"), []string{fmt.Sprintf("12|%v|%v", timeHour, timeMinute)}, nil, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"},
 	}
 	checkCases(tests, ld, c, tk, ctx, selectSQL, deleteSQL)
 
 	tk.MustExec("alter table load_data_missing add column t2 timestamp null")
 	curTime = types.CurrentTime(mysql.TypeTimestamp)
-	timeStr = curTime.String()
+	timeHour = curTime.Hour()
+	timeMinute = curTime.Minute()
+	selectSQL = "select id, hour(t), minute(t), t2 from load_data_missing;"
 	tests = []testCase{
-		{nil, []byte("12\n"), []string{fmt.Sprintf("12|%v|<nil>", timeStr)}, nil, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"},
+		{nil, []byte("12\n"), []string{fmt.Sprintf("12|%v|%v|<nil>", timeHour, timeMinute)}, nil, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"},
 	}
 	checkCases(tests, ld, c, tk, ctx, selectSQL, deleteSQL)
 

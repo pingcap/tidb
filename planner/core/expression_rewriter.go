@@ -34,6 +34,7 @@ import (
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/stringutil"
 )
 
@@ -49,7 +50,7 @@ func evalAstExpr(sctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error
 	if sctx.GetSessionVars().TxnCtx.InfoSchema != nil {
 		is = sctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema)
 	}
-	b := NewPlanBuilder(sctx, is, &BlockHintProcessor{})
+	b := NewPlanBuilder(sctx, is, &hint.BlockHintProcessor{})
 	fakePlan := LogicalTableDual{}.Init(sctx, 0)
 	newExpr, _, err := b.rewrite(context.TODO(), expr, fakePlan, nil, true)
 	if err != nil {
@@ -796,11 +797,18 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, v *ast.Patte
 		er.err = err
 		return v, true
 	}
+
+	// If the leftKey and the rightKey have different collations, don't convert the sub-query to an inner-join
+	// since when converting we will add a distinct-agg upon the right child and this distinct-agg doesn't have the right collation.
+	// To keep it simple, we forbid this converting if they have different collations.
+	lt, rt := lexpr.GetType(), rexpr.GetType()
+	collFlag := collate.CompatibleCollate(lt.Collate, rt.Collate)
+
 	// If it's not the form of `not in (SUBQUERY)`,
 	// and has no correlated column from the current level plan(if the correlated column is from upper level,
 	// we can treat it as constant, because the upper LogicalApply cannot be eliminated since current node is a join node),
 	// and don't need to append a scalar value, we can rewrite it to inner join.
-	if er.sctx.GetSessionVars().GetAllowInSubqToJoinAndAgg() && !v.Not && !asScalar && len(extractCorColumnsBySchema(np, er.p.Schema())) == 0 {
+	if er.sctx.GetSessionVars().GetAllowInSubqToJoinAndAgg() && !v.Not && !asScalar && len(extractCorColumnsBySchema(np, er.p.Schema())) == 0 && collFlag {
 		// We need to try to eliminate the agg and the projection produced by this operation.
 		er.b.optFlag |= flagEliminateAgg
 		er.b.optFlag |= flagEliminateProjection
@@ -992,8 +1000,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		if collate.NewCollationEnabled() {
 			var collInfo *charset.Collation
 			// TODO(bb7133): use charset.ValidCharsetAndCollation when its bug is fixed.
-			if collInfo, er.err = charset.GetCollationByName(v.Collate); er.err != nil {
-				er.err = charset.ErrUnknownCollation.GenWithStackByArgs(v.Collate)
+			if collInfo, er.err = collate.GetCollationByName(v.Collate); er.err != nil {
 				break
 			}
 			chs := arg.GetType().Charset

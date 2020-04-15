@@ -223,6 +223,7 @@ func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, erro
 		ttlManager: ttlManager{
 			ch: make(chan struct{}),
 		},
+		isPessimistic: txn.IsPessimistic(),
 	}, nil
 }
 
@@ -401,7 +402,7 @@ func txnLockTTL(startTime time.Time, txnSize int) uint64 {
 	// Increase lockTTL for large transactions.
 	// The formula is `ttl = ttlFactor * sqrt(sizeInMiB)`.
 	// When writeSize is less than 256KB, the base ttl is defaultTTL (3s);
-	// When writeSize is 1MiB, 100MiB, or 400MiB, ttl is 6s, 60s, 120s correspondingly;
+	// When writeSize is 1MiB, 4MiB, or 10MiB, ttl is 6s, 12s, 20s correspondingly;
 	lockTTL := defaultLockTTL
 	if txnSize >= txnCommitBatchSize {
 		sizeMiB := float64(txnSize) / bytesPerMiB
@@ -409,8 +410,8 @@ func txnLockTTL(startTime time.Time, txnSize int) uint64 {
 		if lockTTL < defaultLockTTL {
 			lockTTL = defaultLockTTL
 		}
-		if lockTTL > maxLockTTL {
-			lockTTL = maxLockTTL
+		if lockTTL > ManagedLockTTL {
+			lockTTL = ManagedLockTTL
 		}
 	}
 
@@ -464,6 +465,31 @@ func (c *twoPhaseCommitter) doActionOnMutations(bo *Backoffer, action twoPhaseCo
 	_, actionIsCommit := action.(actionCommit)
 	_, actionIsCleanup := action.(actionCleanup)
 	_, actionIsPessimiticLock := action.(actionPessimisticLock)
+
+	failpoint.Inject("skipKeyReturnOK", func(val failpoint.Value) {
+		valStr, ok := val.(string)
+		if ok && c.connID > 0 {
+			if firstIsPrimary && actionIsPessimiticLock {
+				logutil.Logger(bo.ctx).Warn("pessimisticLock failpoint", zap.String("valStr", valStr))
+				switch valStr {
+				case "pessimisticLockSkipPrimary":
+					err = c.doActionOnBatches(bo, action, batches)
+					failpoint.Return(err)
+				case "pessimisticLockSkipSecondary":
+					err = c.doActionOnBatches(bo, action, batches[:1])
+					failpoint.Return(err)
+				}
+			}
+		}
+	})
+	failpoint.Inject("pessimisticRollbackDoNth", func() {
+		_, actionIsPessimisticRollback := action.(actionPessimisticRollback)
+		if actionIsPessimisticRollback && c.connID > 0 {
+			logutil.Logger(bo.ctx).Warn("pessimisticRollbackDoNth failpoint")
+			failpoint.Return(nil)
+		}
+	})
+
 	if firstIsPrimary && (actionIsCommit || actionIsCleanup || actionIsPessimiticLock) {
 		// primary should be committed/cleanup/pessimistically locked first
 		err = c.doActionOnBatches(bo, action, batches[:1])
@@ -516,8 +542,8 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 	// If the rate limit is too high, tikv will report service is busy.
 	// If the rate limit is too low, we can't full utilize the tikv's throughput.
 	// TODO: Find a self-adaptive way to control the rate limit here.
-	if rateLim > 32 {
-		rateLim = 32
+	if rateLim > 16 {
+		rateLim = 16
 	}
 	batchExecutor := newBatchExecutor(rateLim, c, action, bo)
 	err := batchExecutor.process(batches)
@@ -602,7 +628,7 @@ func (actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, bat
 		keyErrs := prewriteResp.GetErrors()
 		if len(keyErrs) == 0 {
 			if bytes.Equal(c.primary(), batch.mutations.keys[0]) {
-				// After writing the primary key, if the size of the transaction is large than 4M,
+				// After writing the primary key, if the size of the transaction is large than 32M,
 				// start the ttlManager. The ttlManager will be closed in tikvTxn.Commit().
 				if c.txnSize > 32*1024*1024 {
 					c.run(c, nil)
@@ -627,14 +653,13 @@ func (actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, bat
 			if err1 != nil {
 				return errors.Trace(err1)
 			}
-			logutil.BgLogger().Debug("prewrite encounters lock",
+			logutil.BgLogger().Info("prewrite encounters lock",
 				zap.Uint64("conn", c.connID),
 				zap.Stringer("lock", lock))
 			locks = append(locks, lock)
 		}
 		start := time.Now()
-		// Set callerStartTS to 0 so as not to update minCommitTS.
-		msBeforeExpired, _, err := c.store.lockResolver.ResolveLocks(bo, 0, locks)
+		msBeforeExpired, err := c.store.lockResolver.resolveLocksForWrite(bo, c.startTS, locks)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -657,17 +682,17 @@ const (
 )
 
 type ttlManager struct {
-	state  ttlManagerState
-	ch     chan struct{}
-	killed *uint32
+	state   ttlManagerState
+	ch      chan struct{}
+	lockCtx *kv.LockCtx
 }
 
-func (tm *ttlManager) run(c *twoPhaseCommitter, killed *uint32) {
+func (tm *ttlManager) run(c *twoPhaseCommitter, lockCtx *kv.LockCtx) {
 	// Run only once.
 	if !atomic.CompareAndSwapUint32((*uint32)(&tm.state), uint32(stateUninitialized), uint32(stateRunning)) {
 		return
 	}
-	tm.killed = killed
+	tm.lockCtx = lockCtx
 	go tm.keepAlive(c)
 }
 
@@ -688,7 +713,7 @@ func (tm *ttlManager) keepAlive(c *twoPhaseCommitter) {
 			return
 		case <-ticker.C:
 			// If kill signal is received, the ttlManager should exit.
-			if tm.killed != nil && atomic.LoadUint32(tm.killed) != 0 {
+			if tm.lockCtx != nil && tm.lockCtx.Killed != nil && atomic.LoadUint32(tm.lockCtx.Killed) != 0 {
 				return
 			}
 			bo := NewBackoffer(context.Background(), pessimisticLockMaxBackoff).WithVars(c.txn.vars)
@@ -711,6 +736,11 @@ func (tm *ttlManager) keepAlive(c *twoPhaseCommitter) {
 				logutil.Logger(bo.ctx).Info("ttlManager live up to its lifetime",
 					zap.Uint64("txnStartTS", c.startTS))
 				metrics.TiKVTTLLifeTimeReachCounter.Inc()
+				// the pessimistic locks may expire if the ttl manager has timed out, set `LockExpired` flag
+				// so that this transaction could only commit or rollback with no more statement executions
+				if c.isPessimistic && tm.lockCtx != nil && tm.lockCtx.LockExpired != nil {
+					atomic.StoreUint32(tm.lockCtx.LockExpired, 1)
+				}
 				return
 			}
 
@@ -755,6 +785,7 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 		IsFirstLock:  c.isFirstLock,
 		WaitTimeout:  action.LockWaitTime,
 		ReturnValues: action.ReturnValues,
+		MinCommitTs:  c.forUpdateTS + 1,
 	}, pb.Context{Priority: c.priority, SyncLog: c.syncLog})
 	lockWaitStartTime := action.WaitStartTime
 	for {
@@ -796,7 +827,7 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 			if action.ReturnValues {
 				action.ValuesLock.Lock()
 				for i, mutation := range mutations {
-					action.Values[string(mutation.Key)] = lockResp.Values[i]
+					action.Values[string(mutation.Key)] = kv.ReturnedValue{Value: lockResp.Values[i]}
 				}
 				action.ValuesLock.Unlock()
 			}
@@ -1199,6 +1230,10 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 		return err
 	}
 
+	if c.connID > 0 {
+		failpoint.Inject("beforeCommit", func() {})
+	}
+
 	start = time.Now()
 	commitBo := NewBackoffer(ctx, CommitMaxBackoff).WithVars(c.txn.vars)
 	err = c.commitMutations(commitBo, c.mutations)
@@ -1373,7 +1408,7 @@ func (c *twoPhaseCommitter) appendBatchMutationsBySize(b []batchMutations, regio
 func newBatchExecutor(rateLimit int, committer *twoPhaseCommitter,
 	action twoPhaseCommitAction, backoffer *Backoffer) *batchExecutor {
 	return &batchExecutor{rateLimit, nil, committer,
-		action, backoffer, time.Duration(1 * time.Millisecond)}
+		action, backoffer, 1 * time.Millisecond}
 }
 
 // initUtils do initialize batchExecutor related policies like rateLimit util

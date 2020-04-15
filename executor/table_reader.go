@@ -88,6 +88,8 @@ type TableReaderExecutor struct {
 	virtualColumnIndex []int
 	// virtualColumnRetFieldTypes records the RetFieldTypes of virtual columns.
 	virtualColumnRetFieldTypes []*types.FieldType
+	// batchCop indicates whether use super batch coprocessor request, only works for TiFlash engine.
+	batchCop bool
 }
 
 // Open initialzes necessary variables for using this executor.
@@ -166,24 +168,9 @@ func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 		return err
 	}
 
-	virCols := chunk.NewChunkWithCapacity(e.virtualColumnRetFieldTypes, req.Capacity())
-	iter := chunk.NewIterator4Chunk(req)
-
-	for i, idx := range e.virtualColumnIndex {
-		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-			datum, err := e.schema.Columns[idx].EvalVirtualColumn(row)
-			if err != nil {
-				return err
-			}
-			// Because the expression might return different type from
-			// the generated column, we should wrap a CAST on the result.
-			castDatum, err := table.CastValue(e.ctx, datum, e.columns[idx])
-			if err != nil {
-				return err
-			}
-			virCols.AppendDatum(i, &castDatum)
-		}
-		req.SetCol(idx, virCols.Column(i))
+	err := FillVirtualColumnValue(e.virtualColumnRetFieldTypes, e.virtualColumnIndex, e.schema, e.columns, e.ctx, req)
+	if err != nil {
+		return nil
 	}
 
 	return nil
@@ -216,6 +203,7 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		SetMemTracker(e.memTracker).
 		SetStoreType(e.storeType).
+		SetAllowBatchCop(e.batchCop).
 		Build()
 	if err != nil {
 		return nil, err

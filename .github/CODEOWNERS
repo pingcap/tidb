@@ -15,3 +15,9 @@
 /util/ranger @pingcap/co-planner
 /util/plancodec @pingcap/co-planner
 /bindinfo @pingcap/co-planner
+
+/ddl @pingcap/co-ddl
+/domain @pingcap/co-ddl
+/infoschema @pingcap/co-ddl
+/meta @pingcap/co-ddl
+/owner @pingcap/co-ddl
