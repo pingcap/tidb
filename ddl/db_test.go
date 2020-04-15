@@ -1850,6 +1850,17 @@ func (s *testDBSuite4) TestChangeColumn(c *C) {
 	s.tk.MustExec("drop table t3")
 }
 
+func (s *testDBSuite7) TestSelectInViewFromAnotherDB(c *C) {
+	_, _ = s.s.Execute(context.Background(), "create database test_db2")
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use " + s.schemaName)
+	s.tk.MustExec("create table t(a int)")
+	s.tk.MustExec("use test_db2")
+	s.tk.MustExec("create sql security invoker view v as select * from " + s.schemaName + ".t")
+	s.tk.MustExec("use " + s.schemaName)
+	s.tk.MustExec("select test_db2.v.a from test_db2.v")
+}
+
 func (s *testDBSuite) mustExec(c *C, query string, args ...interface{}) {
 	s.tk.MustExec(query, args...)
 }
