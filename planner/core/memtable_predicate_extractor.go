@@ -425,14 +425,14 @@ func (helper extractHelper) extractTimeRange(
 					endTime = mathutil.MinInt64(endTime, timestamp)
 				}
 			case ast.GT:
-				startTime = mathutil.MaxInt64(startTime, timestamp+int64(time.Microsecond))
+				startTime = mathutil.MaxInt64(startTime, timestamp+int64(time.Millisecond))
 			case ast.GE:
 				startTime = mathutil.MaxInt64(startTime, timestamp)
 			case ast.LT:
 				if endTime == 0 {
-					endTime = timestamp - 1
+					endTime = timestamp - int64(time.Millisecond)
 				} else {
-					endTime = mathutil.MinInt64(endTime, timestamp-int64(time.Microsecond))
+					endTime = mathutil.MinInt64(endTime, timestamp-int64(time.Millisecond))
 				}
 			case ast.LE:
 				if endTime == 0 {
@@ -589,9 +589,9 @@ func (e *ClusterLogTableExtractor) Extract(
 	}
 
 	remained, startTime, endTime := e.extractTimeRange(ctx, schema, names, remained, "time", time.Local)
-	// The time unit for search log is microsecond.
-	startTime = startTime / int64(time.Microsecond)
-	endTime = endTime / int64(time.Microsecond)
+	// The time unit for search log is millisecond.
+	startTime = startTime / int64(time.Millisecond)
+	endTime = endTime / int64(time.Millisecond)
 	if endTime == 0 {
 		endTime = math.MaxInt64
 	}
