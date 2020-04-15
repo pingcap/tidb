@@ -2476,10 +2476,24 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 
 	var result LogicalPlan = ds
 
+<<<<<<< HEAD
 	needUS := false
 	if pi := tableInfo.GetPartitionInfo(); pi == nil {
 		if b.ctx.HasDirtyContent(tableInfo.ID) {
 			needUS = true
+=======
+	for i, colExpr := range ds.Schema().Columns {
+		var expr expression.Expression
+		if i < len(columns) {
+			if columns[i].IsGenerated() && !columns[i].GeneratedStored {
+				var err error
+				expr, _, err = b.rewrite(ctx, columns[i].GeneratedExpr, ds, nil, true)
+				if err != nil {
+					return nil, err
+				}
+				colExpr.VirtualExpr = expr.Clone()
+			}
+>>>>>>> 7e71069... planner: fix generated column causes a server crash (#16376)
 		}
 	} else {
 		// Currently, we'll add a UnionScan on every partition even though only one partition's data is changed.
