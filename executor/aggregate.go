@@ -448,7 +448,7 @@ func getGroupKey(ctx sessionctx.Context, input *chunk.Chunk, groupKey [][]byte, 
 			return nil, err
 		}
 
-		if err := expression.VecEval(ctx, item, input, buf); err != nil {
+		if err := expression.EvalExpr(ctx, item, input, buf); err != nil {
 			expression.PutColumn(buf)
 			return nil, err
 		}
@@ -1106,7 +1106,7 @@ func (e *vecGroupChecker) evalGroupItemsAndResolveGroups(item expression.Express
 		return err
 	}
 	defer e.releaseBuffer(col)
-	err = expression.VecEval(e.ctx, item, chk, col)
+	err = expression.EvalExpr(e.ctx, item, chk, col)
 	if err != nil {
 		return err
 	}
