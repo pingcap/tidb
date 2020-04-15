@@ -1108,9 +1108,13 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 // The `keepNull` controls what the istrue function will return when `arg` is null:
 // 1. keepNull is true and arg is null, the istrue function returns null.
 // 2. keepNull is false and arg is null, the istrue function returns 0.
+// The `wrapForInt` indicates whether we need to wrapIsTrue for non-logical Expression with int type.
 // TODO: remove this function. ScalarFunction should be newed in one place.
-func wrapWithIsTrue(ctx sessionctx.Context, keepNull bool, arg Expression) (Expression, error) {
+func wrapWithIsTrue(ctx sessionctx.Context, keepNull bool, arg Expression, wrapForInt bool) (Expression, error) {
 	if arg.GetType().EvalType() == types.ETInt {
+		if !wrapForInt {
+			return arg, nil
+		}
 		if child, ok := arg.(*ScalarFunction); ok {
 			if _, isLogicalOp := logicalOps[child.FuncName.L]; isLogicalOp {
 				return arg, nil

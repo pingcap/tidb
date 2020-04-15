@@ -524,6 +524,7 @@ func (s *extractorSuite) TestClusterLogTableExtractor(c *C) {
 			sql:       "select * from information_schema.cluster_log where (message regexp '.*pd.*' or message regexp '.*tidb.*' or message like '%tikv%')",
 			nodeTypes: set.NewStringSet(),
 			instances: set.NewStringSet(),
+			patterns:  []string{".*pd.*|.*tidb.*|.*tikv.*"},
 		},
 		{
 			sql:       "select * from information_schema.cluster_log where (level = 'debug' or level = 'ERROR')",

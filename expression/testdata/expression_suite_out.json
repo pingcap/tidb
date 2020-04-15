@@ -267,7 +267,7 @@
         "SQL": "explain select * from t1 where t1.b > 1 or t1.b in (select b from t2)",
         "Result": [
           "Projection_7 8000.00 root  test.t1.id, test.t1.a, test.t1.b",
-          "└─Selection_8 8000.00 root  or(gt(test.t1.b, 1), istrue(Column#7))",
+          "└─Selection_8 8000.00 root  or(gt(test.t1.b, 1), Column#7)",
           "  └─HashJoin_9 10000.00 root  CARTESIAN left outer semi join, other cond:eq(test.t1.b, test.t2.b)",
           "    ├─TableReader_13(Build) 10000.00 root  data:TableFullScan_12",
           "    │ └─TableFullScan_12 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",

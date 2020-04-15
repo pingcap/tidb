@@ -395,7 +395,7 @@ func pushNotAcrossExpr(ctx sessionctx.Context, expr Expression, not bool) (_ Exp
 	if f, ok := expr.(*ScalarFunction); ok {
 		switch f.FuncName.L {
 		case ast.UnaryNot:
-			child, err := wrapWithIsTrue(ctx, true, f.GetArgs()[0])
+			child, err := wrapWithIsTrue(ctx, true, f.GetArgs()[0], true)
 			if err != nil {
 				return expr, false
 			}
