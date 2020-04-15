@@ -557,10 +557,12 @@ func (b *planBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 }
 
 // buildProjectionFieldNameFromColumns builds the field name, table name and database name when field expression is a column reference.
-func (b *planBuilder) buildProjectionFieldNameFromColumns(origField *ast.SelectField, colNameField *ast.ColumnNameExpr, c *expression.Column) (colName, origColName, tblName, origTblName, dbName model.CIStr) {
-	origColName, tblName, dbName = colNameField.Name.Name, colNameField.Name.Table, colNameField.Name.Schema
-	if origField.AsName.L != "" {
-		colName = origField.AsName
+func (b *planBuilder) buildProjectionFieldNameFromColumns(field *ast.SelectField, c *expression.Column) (colName, origColName, tblName, origTblName, dbName model.CIStr) {
+	if astCol, ok := getInnerFromParenthesesAndUnaryPlus(field.Expr).(*ast.ColumnNameExpr); ok {
+		origColName, tblName, dbName = astCol.Name.Name, astCol.Name.Table, astCol.Name.Schema
+	}
+	if field.AsName.L != "" {
+		colName = field.AsName
 	} else {
 		colName = origColName
 	}
@@ -580,7 +582,7 @@ func (b *planBuilder) buildProjectionFieldNameFromExpressions(field *ast.SelectF
 		return agg.Args[0].(*ast.ColumnNameExpr).Name.Name
 	}
 
-	innerExpr := getInnerFromParentheses(field.Expr)
+	innerExpr := getInnerFromParenthesesAndUnaryPlus(field.Expr)
 	valueExpr, isValueExpr := innerExpr.(*driver.ValueExpr)
 
 	// Non-literal: Output as inputed, except that comments need to be removed.
@@ -617,13 +619,13 @@ func (b *planBuilder) buildProjectionFieldNameFromExpressions(field *ast.SelectF
 // buildProjectionField builds the field object according to SelectField in projection.
 func (b *planBuilder) buildProjectionField(id, position int, field *ast.SelectField, expr expression.Expression) *expression.Column {
 	var origTblName, tblName, origColName, colName, dbName model.CIStr
-	innerNode := getInnerFromParentheses(field.Expr)
+	innerNode := getInnerFromParenthesesAndUnaryPlus(field.Expr)
 	col, isCol := expr.(*expression.Column)
 	// Correlated column won't affect the final output names. So we can put it in any of the three logic block.
 	// Don't put it into the first block just for simplifying the codes.
-	if colNameField, ok := innerNode.(*ast.ColumnNameExpr); ok && isCol {
+	if _, ok := innerNode.(*ast.ColumnNameExpr); ok && isCol {
 		// Field is a column reference.
-		colName, origColName, tblName, origTblName, dbName = b.buildProjectionFieldNameFromColumns(field, colNameField, col)
+		colName, origColName, tblName, origTblName, dbName = b.buildProjectionFieldNameFromColumns(field, col)
 	} else if field.AsName.L != "" {
 		// Field has alias.
 		colName = field.AsName
@@ -1536,14 +1538,15 @@ func (b *planBuilder) checkOnlyFullGroupByWithGroupClause(p LogicalPlan, sel *as
 	gbyExprs := make([]ast.ExprNode, 0, len(sel.Fields.Fields))
 	schema := p.Schema()
 	for _, byItem := range sel.GroupBy.Items {
-		if colExpr, ok := byItem.Expr.(*ast.ColumnNameExpr); ok {
+		expr := getInnerFromParenthesesAndUnaryPlus(byItem.Expr)
+		if colExpr, ok := expr.(*ast.ColumnNameExpr); ok {
 			col, err := schema.FindColumn(colExpr.Name)
 			if err != nil || col == nil {
 				continue
 			}
 			gbyCols[col] = struct{}{}
 		} else {
-			gbyExprs = append(gbyExprs, byItem.Expr)
+			gbyExprs = append(gbyExprs, expr)
 		}
 	}
 
@@ -2576,9 +2579,12 @@ func appendVisitInfo(vi []visitInfo, priv mysql.PrivilegeType, db, tbl, col stri
 	})
 }
 
-func getInnerFromParentheses(expr ast.ExprNode) ast.ExprNode {
+func getInnerFromParenthesesAndUnaryPlus(expr ast.ExprNode) ast.ExprNode {
 	if pexpr, ok := expr.(*ast.ParenthesesExpr); ok {
-		return getInnerFromParentheses(pexpr.Expr)
+		return getInnerFromParenthesesAndUnaryPlus(pexpr.Expr)
+	}
+	if uexpr, ok := expr.(*ast.UnaryOperationExpr); ok && uexpr.Op == opcode.Plus {
+		return getInnerFromParenthesesAndUnaryPlus(uexpr.V)
 	}
 	return expr
 }
