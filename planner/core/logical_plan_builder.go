@@ -2126,6 +2126,8 @@ func (b *PlanBuilder) resolveGbyExprs(ctx context.Context, p LogicalPlan, gby *a
 	}
 	for _, item := range gby.Items {
 		resolver.inExpr = false
+		resolver.exprDepth = 0
+		resolver.isParam = false
 		retExpr, _ := item.Expr.Accept(resolver)
 		if resolver.err != nil {
 			return nil, nil, errors.Trace(resolver.err)
@@ -2818,7 +2820,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 				if err != nil {
 					return nil, err
 				}
-				colExpr.VirtualExpr = expr
+				colExpr.VirtualExpr = expr.Clone()
 			}
 		}
 	}
