@@ -14,6 +14,7 @@
 package core
 
 import (
+	"bytes"
 	"encoding/binary"
 
 	"github.com/pingcap/tidb/util/codec"
@@ -128,7 +129,22 @@ func (p *LogicalJoin) HashCode() []byte {
 	result = codec.EncodeIntAsUint32(result, p.SelectBlockOffset())
 	result = codec.EncodeIntAsUint32(result, int(p.JoinType))
 
-	eqCondHashCode := func(i int) []byte { return p.EqualConditions[i].HashCode(p.ctx.GetSessionVars().StmtCtx) }
+	eqCondHashCode := func(i int) []byte {
+		ctx := p.ctx.GetSessionVars().StmtCtx
+		leftHashCode := p.EqualConditions[i].GetArgs()[0].HashCode(ctx)
+		rightHashCode := p.EqualConditions[i].GetArgs()[1].HashCode(ctx)
+		buffer := make([]byte, 0, len(leftHashCode) + len(rightHashCode))
+		if bytes.Compare(leftHashCode, rightHashCode) > 0 {
+			buffer = append(buffer, leftHashCode...)
+			buffer = append(buffer, rightHashCode...)
+			return buffer
+		} else {
+			buffer = append(buffer, rightHashCode...)
+			buffer = append(buffer, leftHashCode...)
+			return buffer
+		}
+		//return p.EqualConditions[i].HashCode(p.ctx.GetSessionVars().StmtCtx)
+	}
 	result = codec.EncodeAndSort(result, eqCondHashCode, len(p.EqualConditions))
 
 	lHashCode := func(i int) []byte { return p.LeftConditions[i].HashCode(p.ctx.GetSessionVars().StmtCtx) }
@@ -274,25 +290,25 @@ func (p *LogicalMemTable) HashCode() []byte {
 }
 
 // HashCode implements LogicalPlan interface.
-func (p *DataSource) HashCode() []byte {
-	// PlanType + SelectOffset + tableInfo.ID + Encode(allConds)
-	// allConds are commonly `ScalarFunction`s, whose hashcode usually has a
-	// length larger than 20, so we pre-alloc 25 bytes for each expr's hashcode.
-	// we pre-alloc total bytes size = SizeOf(PlanType)+SizeOf(SelectOffset)+SizeOf(tableInfo.ID)+SizeOf(Encode(allConds))
-	//								 = 4+4+8+(4+len(allConds)*(4+Sizeof(condition.hashcode)))
-	//								 = 20+len(allConds)*29
-	if p == nil {
-		return nil
-	}
-
-	result := make([]byte, 0, 20+len(p.allConds)*29)
-	result = codec.EncodeIntAsUint32(result, plancodec.TypeStringToPhysicalID(p.tp))
-	result = codec.EncodeIntAsUint32(result, p.SelectBlockOffset())
-	result = codec.EncodeInt(result, p.tableInfo.ID)
-	condHashCode := func(i int) []byte { return p.allConds[i].HashCode(p.ctx.GetSessionVars().StmtCtx) }
-	result = codec.EncodeAndSort(result, condHashCode, len(p.allConds))
-	return result
-}
+//func (p *DataSource) HashCode() []byte {
+//	// PlanType + SelectOffset + tableInfo.ID + Encode(allConds)
+//	// allConds are commonly `ScalarFunction`s, whose hashcode usually has a
+//	// length larger than 20, so we pre-alloc 25 bytes for each expr's hashcode.
+//	// we pre-alloc total bytes size = SizeOf(PlanType)+SizeOf(SelectOffset)+SizeOf(tableInfo.ID)+SizeOf(Encode(allConds))
+//	//								 = 4+4+8+(4+len(allConds)*(4+Sizeof(condition.hashcode)))
+//	//								 = 20+len(allConds)*29
+//	if p == nil {
+//		return nil
+//	}
+//
+//	result := make([]byte, 0, 20+len(p.allConds)*29)
+//	result = codec.EncodeIntAsUint32(result, plancodec.TypeStringToPhysicalID(p.tp))
+//	result = codec.EncodeIntAsUint32(result, p.SelectBlockOffset())
+//	result = codec.EncodeInt(result, p.tableInfo.ID)
+//	condHashCode := func(i int) []byte { return p.allConds[i].HashCode(p.ctx.GetSessionVars().StmtCtx) }
+//	result = codec.EncodeAndSort(result, condHashCode, len(p.allConds))
+//	return result
+//}
 
 // HashCode implements LogicalPlan interface.
 func (p *TiKVSingleGather) HashCode() []byte {

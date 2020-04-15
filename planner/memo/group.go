@@ -16,6 +16,7 @@ package memo
 import (
 	"container/list"
 	"fmt"
+	"sync/atomic"
 
 	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -93,6 +94,8 @@ func (m *ExploreMark) Explored(round int) bool {
 // Group is short for expression Group, which is used to store all the
 // logically equivalent expressions. It's a set of GroupExpr.
 type Group struct {
+	ID int32
+
 	Equivalents *list.List
 
 	FirstExpr    map[Operand]*list.Element
@@ -116,10 +119,14 @@ type Group struct {
 	hasBuiltKeyInfo bool
 }
 
+var GroupIDAllocator int32
+
 // NewGroupWithSchema creates a new Group with given schema.
 func NewGroupWithSchema(e *GroupExpr, s *expression.Schema) *Group {
 	prop := &property.LogicalProperty{Schema: expression.NewSchema(s.Columns...)}
+	newID := atomic.AddInt32(&GroupIDAllocator, 1)
 	g := &Group{
+		ID:           newID,
 		Equivalents:  list.New(),
 		Fingerprints: make(map[string][]*list.Element),
 		FirstExpr:    make(map[Operand]*list.Element),
@@ -127,7 +134,7 @@ func NewGroupWithSchema(e *GroupExpr, s *expression.Schema) *Group {
 		Prop:         prop,
 		EngineType:   EngineTiDB,
 	}
-	g.Insert(e, 0)
+	g.Insert(e)
 	return g
 }
 
@@ -146,12 +153,8 @@ func (g *Group) FingerPrint() string {
 }
 
 // Insert a nonexistent Group expression.
-func (g *Group) Insert(e *GroupExpr, rounds ...int) bool {
-	round := 0
-	if len(rounds) != 0 {
-		round = rounds[0]
-	}
-	if e == nil || g.Exists(e, round) {
+func (g *Group) Insert(e *GroupExpr) bool {
+	if e == nil || g.Exists(e) {
 		return false
 	}
 
@@ -225,7 +228,7 @@ func (g *Group) DeleteAll() {
 }
 
 // Exists checks whether a Group expression existed in a Group.
-func (g *Group) Exists(e *GroupExpr, round int) bool {
+func (g *Group) Exists(e *GroupExpr) bool {
 	equivalents, ok := g.Fingerprints[e.FingerPrint()]
 	if !ok {
 		return false
@@ -242,18 +245,10 @@ func (g *Group) Exists(e *GroupExpr, round int) bool {
 			continue
 		}
 		childrenAreEqual := true
-		for i, chilGroup := range e.Children {
-			if chilGroup.Explored(round) {
-				if chilGroup != expr.Children[i] {
-					childrenAreEqual = false
-					break
-				}
-			} else {
-				childGroupExpr := chilGroup.GetFirstGroupExpr()
-				if !expr.Children[i].Exists(childGroupExpr, round) {
-					childrenAreEqual = false
-					break
-				}
+		for i, childGroup := range e.Children {
+			if !childGroup.EqualTo(expr.Children[i]) {
+				childrenAreEqual = false
+				break
 			}
 		}
 		if childrenAreEqual {
@@ -262,6 +257,19 @@ func (g *Group) Exists(e *GroupExpr, round int) bool {
 		}
 	}
 	return exists
+}
+
+func (g *Group) EqualTo(x *Group) bool {
+	if g == x {
+		return true
+	}
+	for iter := g.Equivalents.Front(); iter != nil; iter = iter.Next() {
+		expr := iter.Value.(*GroupExpr)
+		if x.Exists(expr) {
+			return true
+		}
+	}
+	return false
 }
 
 // GetFirstElem returns the first Group expression which matches the Operand.

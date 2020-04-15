@@ -3359,3 +3359,102 @@ func (r *PullWindowUpJoin) OnTransform(old *memo.ExprIter) (newExprs []*memo.Gro
 	return []*memo.GroupExpr{newWindowExpr}, true, false, nil
 }
 
+type JoinCommutation struct {
+	baseRule
+}
+
+func NewRuleJoinCommutation() Transformation {
+	rule := &JoinCommutation{}
+	rule.pattern = memo.NewPattern(memo.OperandJoin, memo.EngineTiDBOnly)
+	return rule
+}
+
+func (r *JoinCommutation) Match(expr *memo.ExprIter) bool {
+	join := expr.GetExpr().ExprNode.(*plannercore.LogicalJoin)
+	return join.JoinType == plannercore.InnerJoin // && join.SCtx().GetSessionVars().StmtCtx.NumJoins < 5
+}
+
+func (r *JoinCommutation) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	join := old.GetExpr().ExprNode.(*plannercore.LogicalJoin)
+
+	newJoin := join.Shallow()
+	// Swap the join conditions.
+	newJoin.LeftConditions, newJoin.RightConditions = join.RightConditions, join.LeftConditions
+	newEQConditions := make([]*expression.ScalarFunction, len(newJoin.EqualConditions))
+	for i, expr := range join.EqualConditions {
+		newExpr, err := expression.NewFunction(join.SCtx(), expr.FuncName.L, expr.RetType, expr.GetArgs()[1], expr.GetArgs()[0])
+		if err != nil {
+			return nil, false, false, nil
+		}
+		newEQConditions[i] = newExpr.(*expression.ScalarFunction)
+	}
+	newJoin.EqualConditions = newEQConditions
+	newJoinExpr := memo.NewGroupExpr(newJoin)
+	// Swap the children.
+	newJoinExpr.SetChildren(old.GetExpr().Children[1], old.GetExpr().Children[0])
+	return []*memo.GroupExpr{newJoinExpr}, false, false, nil
+}
+
+type JoinAssociation struct {
+	baseRule
+}
+
+func NewRuleJoinAssociation() Transformation {
+	rule := &JoinAssociation{}
+	rule.pattern = memo.BuildPattern(
+		memo.OperandJoin, memo.EngineTiDBOnly,
+		memo.NewPattern(memo.OperandJoin, memo.EngineTiDBOnly),
+		memo.NewPattern(memo.OperandAny, memo.EngineTiDBOnly),
+	)
+	return rule
+}
+
+func (r *JoinAssociation) Match(expr *memo.ExprIter) bool {
+	topJoin := expr.GetExpr().ExprNode.(*plannercore.LogicalJoin)
+	bottomJoin := expr.Children[0].GetExpr().ExprNode.(*plannercore.LogicalJoin)
+	return topJoin.JoinType == plannercore.InnerJoin && bottomJoin.JoinType == plannercore.InnerJoin
+}
+
+func (r *JoinAssociation) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	//        topJoin                         newTopJoin
+	//        /      \                        /        \
+	//   bottomJoin  GroupC      =>       GroupA   newBottomJoin
+	//     /     \                                  /       \
+	//  GroupA GroupB                             GroupB    GroupC
+ 	topJoin := old.GetExpr().ExprNode.(*plannercore.LogicalJoin)
+	bottomJoin := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalJoin)
+	groupA := old.Children[0].GetExpr().Children[0]
+	groupB := old.Children[0].GetExpr().Children[1]
+	groupC := old.GetExpr().Children[1]
+
+	// collect all of the conditions and re-assign them.
+	conditions := make([]expression.Expression, 0, topJoin.NumConditions() + bottomJoin.NumConditions())
+	conditions = append(conditions, topJoin.GetAllConditions()...)
+	conditions = append(conditions, bottomJoin.GetAllConditions()...)
+
+	newTopJoin := plannercore.LogicalJoin{
+		JoinType: plannercore.InnerJoin,
+	}.Init(topJoin.SCtx(), topJoin.SelectBlockOffset())
+
+	newBottomJoin := plannercore.LogicalJoin{
+		JoinType: plannercore.InnerJoin,
+	}.Init(topJoin.SCtx(), topJoin.SelectBlockOffset())
+
+	newBottomJoinSchema := expression.MergeSchema(groupB.Prop.Schema, groupC.Prop.Schema)
+	// For newTopJoin.
+	topEQCond, topLeftCond, topRightCond, topOtherCond := newTopJoin.ExtractOnCondition(conditions, groupA.Prop.Schema, newBottomJoinSchema, false, false)
+	newTopJoin.AppendJoinConds(topEQCond, topLeftCond, nil, topOtherCond)
+	// For newBottomJoin.
+	bottomEQCond, bottomLeftCond, bottomRightCond, bottomOtherCond := newBottomJoin.ExtractOnCondition(topRightCond, groupB.Prop.Schema, groupC.Prop.Schema, false, false)
+	newBottomJoin.AppendJoinConds(bottomEQCond, bottomLeftCond, bottomRightCond, bottomOtherCond)
+
+	newBottomJoinExpr := memo.NewGroupExpr(newBottomJoin)
+	newBottomJoinExpr.SetChildren(groupB, groupC)
+	newBottomJoinGroup := memo.NewGroupWithSchema(newBottomJoinExpr, newBottomJoinSchema)
+
+	newTopJoinExpr := memo.NewGroupExpr(newTopJoin)
+	newTopJoinExpr.SetChildren(groupA, newBottomJoinGroup)
+	return []*memo.GroupExpr{newTopJoinExpr}, false, false, nil
+}
+
+

@@ -160,6 +160,16 @@ func (p *LogicalJoin) NumConditions() int {
 	return len(p.EqualConditions) + len(p.LeftConditions) + len(p.RightConditions) + len(p.OtherConditions)
 }
 
+// GetAllConditions returns all of the conditions inside the join.
+func (p *LogicalJoin) GetAllConditions() []expression.Expression {
+	conds := make([]expression.Expression, 0, p.NumConditions())
+	conds = append(conds, p.LeftConditions...)
+	conds = append(conds, p.RightConditions...)
+	conds = append(conds, p.OtherConditions...)
+	conds = append(conds, expression.ScalarFuncs2Exprs(p.EqualConditions)...)
+	return conds
+}
+
 // Shallow shallow copies a LogicalJoin struct.
 func (p *LogicalJoin) Shallow() *LogicalJoin {
 	join := *p

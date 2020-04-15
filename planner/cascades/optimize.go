@@ -206,7 +206,7 @@ func (opt *Optimizer) findMoreEquiv(g *memo.Group, elem *list.Element, round int
 			if eraseAll {
 				g.DeleteAll()
 				for _, e := range newExprs {
-					g.Insert(e, round)
+					g.Insert(e)
 				}
 				// If we delete all of the other GroupExprs, we can break the search.
 				g.SetExplored(round)
@@ -215,7 +215,7 @@ func (opt *Optimizer) findMoreEquiv(g *memo.Group, elem *list.Element, round int
 
 			eraseCur = eraseCur || eraseOld
 			for _, e := range newExprs {
-				if !g.Insert(e, round) {
+				if !g.Insert(e) {
 					continue
 				}
 				// If the new Group expression is successfully inserted into the
@@ -406,4 +406,15 @@ func preparePossibleProperties(g *memo.Group, propertyMap map[*memo.Group][][]*e
 	}
 	propertyMap[g] = resultProps
 	return resultProps
+}
+
+func collectJoinNumber(plan plannercore.LogicalPlan) int {
+	childJoinNum := 0
+	for _, child := range plan.Children() {
+		childJoinNum += collectJoinNumber(child)
+	}
+	if _, ok := plan.(*plannercore.LogicalJoin); ok {
+		childJoinNum += 1
+	}
+	return childJoinNum
 }
