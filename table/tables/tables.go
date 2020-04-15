@@ -122,6 +122,14 @@ func TableFromMeta(allocs autoid.Allocators, tblInfo *model.TableInfo) (table.Ta
 			}
 			col.GeneratedExpr = expr
 		}
+		// default value is expr.
+		if col.DefaultIsExpr {
+			expr, err := parseExpression(colInfo.DefaultValue.(string))
+			if err != nil {
+				return nil, err
+			}
+			col.DefaultExpr = expr
+		}
 		columns = append(columns, col)
 	}
 
@@ -308,11 +316,11 @@ func (t *TableCommon) UpdateRecord(ctx sessionctx.Context, h int64, oldData, new
 		return err
 	}
 
-	// TODO: reuse bs, like AddRecord does.
-	bs := kv.NewBufferStore(txn, kv.DefaultTxnMembufCap)
+	execBuf := kv.NewStagingBufferStore(txn)
+	defer execBuf.Discard()
 
 	// rebuild index
-	err = t.rebuildIndices(ctx, bs, h, touched, oldData, newData)
+	err = t.rebuildIndices(ctx, execBuf, h, touched, oldData, newData)
 	if err != nil {
 		return err
 	}
@@ -356,10 +364,10 @@ func (t *TableCommon) UpdateRecord(ctx sessionctx.Context, h int64, oldData, new
 	if err != nil {
 		return err
 	}
-	if err = bs.Set(key, value); err != nil {
+	if err = execBuf.Set(key, value); err != nil {
 		return err
 	}
-	if err = bs.SaveTo(txn); err != nil {
+	if _, err := execBuf.Flush(); err != nil {
 		return err
 	}
 	ctx.StmtAddDirtyTableOP(table.DirtyTableDeleteRow, t.physicalTableID, h)
@@ -448,22 +456,6 @@ func adjustRowValuesBuf(writeBufs *variable.WriteStmtBufs, rowLen int) {
 	writeBufs.AddRowValues = writeBufs.AddRowValues[:adjustLen]
 }
 
-// getRollbackableMemStore get a rollbackable BufferStore, when we are importing data,
-// Just add the kv to transaction's membuf directly.
-func (t *TableCommon) getRollbackableMemStore(ctx sessionctx.Context) (kv.RetrieverMutator, error) {
-	bs := ctx.GetSessionVars().GetWriteStmtBufs().BufStore
-	if bs == nil {
-		txn, err := ctx.Txn(true)
-		if err != nil {
-			return nil, err
-		}
-		bs = kv.NewBufferStore(txn, kv.DefaultTxnMembufCap)
-	} else {
-		bs.Reset()
-	}
-	return bs, nil
-}
-
 // AddRecord implements table.Table AddRecord interface.
 func (t *TableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID int64, err error) {
 	var opt table.AddRecordOpt
@@ -509,13 +501,10 @@ func (t *TableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 	if err != nil {
 		return 0, err
 	}
-
+	execBuf := kv.NewStagingBufferStore(txn)
+	defer execBuf.Discard()
 	sessVars := ctx.GetSessionVars()
 
-	rm, err := t.getRollbackableMemStore(ctx)
-	if err != nil {
-		return 0, err
-	}
 	var createIdxOpts []table.CreateIdxOptFunc
 	if len(opts) > 0 {
 		createIdxOpts = make([]table.CreateIdxOptFunc, 0, len(opts))
@@ -526,7 +515,7 @@ func (t *TableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 		}
 	}
 	// Insert new entries into indices.
-	h, err := t.addIndices(ctx, recordID, r, rm, createIdxOpts)
+	h, err := t.addIndices(ctx, recordID, r, execBuf, createIdxOpts)
 	if err != nil {
 		return h, err
 	}
@@ -570,11 +559,11 @@ func (t *TableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 		return 0, err
 	}
 	value := writeBufs.RowValBuf
-	if err = txn.Set(key, value); err != nil {
+	if err = execBuf.Set(key, value); err != nil {
 		return 0, err
 	}
 
-	if err = rm.(*kv.BufferStore).SaveTo(txn); err != nil {
+	if _, err := execBuf.Flush(); err != nil {
 		return 0, err
 	}
 	ctx.StmtAddDirtyTableOP(table.DirtyTableAddRow, t.physicalTableID, recordID)
@@ -1287,10 +1276,15 @@ func (t *TableCommon) GetSequenceNextVal(ctx interface{}, dbName, seqName string
 		if err1 != nil {
 			return err1
 		}
-		seq.base, seq.end, seq.round, err1 = sequenceAlloc.AllocSeqCache(t.tableID)
+		var base, end, round int64
+		base, end, round, err1 = sequenceAlloc.AllocSeqCache(t.tableID)
 		if err1 != nil {
 			return err1
 		}
+		// Only update local cache when alloc succeed.
+		seq.base = base
+		seq.end = end
+		seq.round = round
 		// write sequence binlog to the pumpClient.
 		if ctx.(sessionctx.Context).GetSessionVars().BinlogClient != nil {
 			err = writeSequenceUpdateValueBinlog(ctx.(sessionctx.Context), dbName, seqName, seq.end)
@@ -1359,18 +1353,26 @@ func (t *TableCommon) SetSequenceVal(ctx interface{}, newVal int64, dbName, seqN
 	if err != nil {
 		return 0, false, err
 	}
-	err = sequenceAlloc.Rebase(t.tableID, newVal, false)
+	res, alreadySatisfied, err := sequenceAlloc.RebaseSeq(t.tableID, newVal)
 	if err != nil {
 		return 0, false, err
 	}
-	// write sequence binlog to the pumpClient.
-	if ctx.(sessionctx.Context).GetSessionVars().BinlogClient != nil {
-		err = writeSequenceUpdateValueBinlog(ctx.(sessionctx.Context), dbName, seqName, seq.end)
-		if err != nil {
-			return 0, false, err
+	if !alreadySatisfied {
+		// Write sequence binlog to the pumpClient.
+		if ctx.(sessionctx.Context).GetSessionVars().BinlogClient != nil {
+			err = writeSequenceUpdateValueBinlog(ctx.(sessionctx.Context), dbName, seqName, seq.end)
+			if err != nil {
+				return 0, false, err
+			}
 		}
 	}
-	return newVal, false, nil
+	// Record the current end after setval succeed.
+	// Consider the following case.
+	// create sequence seq
+	// setval(seq, 100) setval(seq, 50)
+	// Because no cache (base, end keep 0), so the second setval won't return NULL.
+	t.sequence.base, t.sequence.end = newVal, newVal
+	return res, alreadySatisfied, nil
 }
 
 // getOffset is used in under GetSequenceNextVal & SetSequenceVal, which mu is locked.

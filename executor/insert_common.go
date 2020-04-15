@@ -456,7 +456,6 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 }
 
 func (e *InsertValues) doBatchInsert(ctx context.Context) error {
-	sessVars := e.ctx.GetSessionVars()
 	if err := e.ctx.StmtCommit(e.memTracker); err != nil {
 		return err
 	}
@@ -464,11 +463,6 @@ func (e *InsertValues) doBatchInsert(ctx context.Context) error {
 		// We should return a special error for batch insert.
 		return ErrBatchInsertFail.GenWithStack("BatchInsert failed with error: %v", err)
 	}
-	txn, err := e.ctx.Txn(true)
-	if err != nil {
-		return err
-	}
-	sessVars.GetWriteStmtBufs().BufStore = kv.NewBufferStore(txn, kv.TempTxnMemBufCap)
 	return nil
 }
 
@@ -497,7 +491,13 @@ func (e *InsertValues) getColDefaultValue(idx int, col *table.Column) (d types.D
 	if !col.DefaultIsExpr && e.colDefaultVals != nil && e.colDefaultVals[idx].valid {
 		return e.colDefaultVals[idx].val, nil
 	}
-	defaultVal, err := table.GetColDefaultValue(e.ctx, col.ToInfo())
+
+	var defaultVal types.Datum
+	if col.DefaultIsExpr && col.DefaultExpr != nil {
+		defaultVal, err = table.EvalColDefaultExpr(e.ctx, col.ToInfo(), col.DefaultExpr)
+	} else {
+		defaultVal, err = table.GetColDefaultValue(e.ctx, col.ToInfo())
+	}
 	if err != nil {
 		return types.Datum{}, err
 	}
@@ -904,6 +904,9 @@ func (e *InsertValues) allocAutoRandomID(fieldType *types.FieldType) (int64, err
 }
 
 func (e *InsertValues) rebaseAutoRandomID(recordID int64, fieldType *types.FieldType) error {
+	if recordID < 0 {
+		return nil
+	}
 	alloc := e.Table.Allocators(e.ctx).Get(autoid.AutoRandomType)
 	tableInfo := e.Table.Meta()
 

@@ -19,12 +19,14 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
 
+	"github.com/danjacques/gofslock/fslock"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
@@ -36,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -59,6 +62,7 @@ import (
 	"github.com/pingcap/tidb/util/signal"
 	"github.com/pingcap/tidb/util/storeutil"
 	"github.com/pingcap/tidb/util/sys/linux"
+	storageSys "github.com/pingcap/tidb/util/sys/storage"
 	"github.com/pingcap/tidb/util/systimemon"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
@@ -146,10 +150,11 @@ var (
 )
 
 var (
-	storage  kv.Storage
-	dom      *domain.Domain
-	svr      *server.Server
-	graceful bool
+	storage     kv.Storage
+	dom         *domain.Domain
+	svr         *server.Server
+	tempDirLock fslock.Handle
+	graceful    bool
 )
 
 func main() {
@@ -161,6 +166,11 @@ func main() {
 	registerStores()
 	registerMetrics()
 	config.InitializeConfig(*configPath, *configCheck, *configStrict, reloadConfig, overrideConfig)
+	if config.GetGlobalConfig().OOMUseTmpStorage {
+		config.GetGlobalConfig().UpdateTempStoragePath()
+		initializeTempDir()
+		checkTempStorageQuota()
+	}
 	setGlobalVars()
 	setCPUAffinity()
 	setupLog()
@@ -185,6 +195,57 @@ func syncLog() {
 	if err := log.Sync(); err != nil {
 		fmt.Fprintln(os.Stderr, "sync log err:", err)
 		os.Exit(1)
+	}
+}
+
+func initializeTempDir() {
+	tempDir := config.GetGlobalConfig().TempStoragePath
+	lockFile := "_dir.lock"
+	_, err := os.Stat(tempDir)
+	if err != nil && !os.IsExist(err) {
+		err = os.MkdirAll(tempDir, 0755)
+		terror.MustNil(err)
+	}
+	tempDirLock, err = fslock.Lock(filepath.Join(tempDir, lockFile))
+	if err != nil {
+		switch err {
+		case fslock.ErrLockHeld:
+			fmt.Fprintf(os.Stderr, "The current temporary storage dir(%s) has been occupied by another instance, "+
+				"check tmp-storage-path config and make sure they are different.", tempDir)
+		default:
+			fmt.Fprintf(os.Stderr, "Failed to acquire exclusive lock on the temporary storage dir(%s). Error detail: {%s}", tempDir, err)
+		}
+		os.Exit(1)
+	}
+
+	subDirs, err := ioutil.ReadDir(tempDir)
+	terror.MustNil(err)
+
+	for _, subDir := range subDirs {
+		// Do not remove the lock file.
+		if subDir.Name() == lockFile {
+			continue
+		}
+		err = os.RemoveAll(filepath.Join(tempDir, subDir.Name()))
+		if err != nil {
+			log.Warn("Remove temporary file error",
+				zap.String("tempStorageSubDir", filepath.Join(tempDir, subDir.Name())), zap.Error(err))
+		}
+	}
+}
+
+func checkTempStorageQuota() {
+	// check capacity and the quota when OOMUseTmpStorage is enabled
+	c := config.GetGlobalConfig()
+	if c.TempStorageQuota < 0 {
+		// means unlimited, do nothing
+	} else {
+		capacityByte, err := storageSys.GetTargetDirectoryCapacity(c.TempStoragePath)
+		if err != nil {
+			log.Fatal(err.Error())
+		} else if capacityByte < uint64(c.TempStorageQuota) {
+			log.Fatal(fmt.Sprintf("value of [tmp-storage-quota](%d byte) exceeds the capacity(%d byte) of the [%s] directory", c.TempStorageQuota, capacityByte, c.TempStoragePath))
+		}
 	}
 }
 
@@ -528,6 +589,7 @@ func setGlobalVars() {
 	tikv.RegionCacheTTLSec = int64(cfg.TiKVClient.RegionCacheTTL)
 	domainutil.RepairInfo.SetRepairMode(cfg.RepairMode)
 	domainutil.RepairInfo.SetRepairTableList(cfg.RepairTableList)
+	executor.GlobalDiskUsageTracker.SetBytesLimit(config.GetGlobalConfig().TempStorageQuota)
 }
 
 func setupLog() {
@@ -630,6 +692,10 @@ func cleanup() {
 	}
 	plugin.Shutdown(context.Background())
 	closeDomainAndStorage()
+	if tempDirLock != nil {
+		err := tempDirLock.Unlock()
+		terror.Log(errors.Trace(err))
+	}
 }
 
 func stringToList(repairString string) []string {

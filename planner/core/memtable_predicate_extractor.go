@@ -400,7 +400,7 @@ func (helper extractHelper) extractTimeRange(
 			timeType := types.NewFieldType(mysql.TypeDatetime)
 			timeType.Decimal = 3
 			timeDatum, err := datums[0].ConvertTo(ctx.GetSessionVars().StmtCtx, timeType)
-			if err != nil {
+			if err != nil || timeDatum.Kind() == types.KindNull {
 				remained = append(remained, expr)
 				continue
 			}
@@ -606,7 +606,56 @@ func (e *ClusterLogTableExtractor) Extract(
 }
 
 func (e *ClusterLogTableExtractor) explainInfo(p *PhysicalMemTable) string {
-	return ""
+	if e.SkipRequest {
+		return "skip_request: true"
+	}
+	r := new(bytes.Buffer)
+	st, et := e.GetTimeRange(false)
+	if st > 0 {
+		st := time.Unix(0, st*1e6)
+		r.WriteString(fmt.Sprintf("start_time:%v, ", st.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format(MetricTableTimeFormat)))
+	}
+	if et < math.MaxInt64 {
+		et := time.Unix(0, et*1e6)
+		r.WriteString(fmt.Sprintf("end_time:%v, ", et.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format(MetricTableTimeFormat)))
+	}
+	if len(e.NodeTypes) > 0 {
+		r.WriteString(fmt.Sprintf("node_types:[%s], ", extractStringFromStringSet(e.NodeTypes)))
+	}
+	if len(e.Instances) > 0 {
+		r.WriteString(fmt.Sprintf("instances:[%s], ", extractStringFromStringSet(e.Instances)))
+	}
+	if len(e.LogLevels) > 0 {
+		r.WriteString(fmt.Sprintf("log_levels:[%s], ", extractStringFromStringSet(e.LogLevels)))
+	}
+
+	// remove the last ", " in the message info
+	s := r.String()
+	if len(s) > 2 {
+		return s[:len(s)-2]
+	}
+	return s
+}
+
+// GetTimeRange extract startTime and endTime
+func (e *ClusterLogTableExtractor) GetTimeRange(isFailpointTestModeSkipCheck bool) (int64, int64) {
+	startTime := e.StartTime
+	endTime := e.EndTime
+	if endTime == 0 {
+		endTime = math.MaxInt64
+	}
+	if !isFailpointTestModeSkipCheck {
+		// Just search the recent half an hour logs if the user doesn't specify the start time
+		const defaultSearchLogDuration = 30 * time.Minute / time.Millisecond
+		if startTime == 0 {
+			if endTime == math.MaxInt64 {
+				startTime = time.Now().UnixNano()/int64(time.Millisecond) - int64(defaultSearchLogDuration)
+			} else {
+				startTime = endTime - int64(defaultSearchLogDuration)
+			}
+		}
+	}
+	return startTime, endTime
 }
 
 // MetricTableExtractor is used to extract some predicates of metrics_schema tables.
@@ -841,7 +890,15 @@ func (e *InspectionRuleTableExtractor) Extract(
 }
 
 func (e *InspectionRuleTableExtractor) explainInfo(p *PhysicalMemTable) string {
-	return ""
+	if e.SkipRequest {
+		return "skip_request: true"
+	}
+
+	r := new(bytes.Buffer)
+	if len(e.Types) > 0 {
+		r.WriteString(fmt.Sprintf("node_types:[%s]", extractStringFromStringSet(e.Types)))
+	}
+	return r.String()
 }
 
 // SlowQueryExtractor is used to extract some predicates of `slow_query`

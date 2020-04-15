@@ -155,6 +155,10 @@ func (a *recordSet) Close() error {
 	pps := types.CloneRow(sessVars.PreparedParams)
 	sessVars.PrevStmt = FormatSQL(a.stmt.OriginText(), pps)
 	a.stmt.logAudit()
+	// Detach the disk tracker from GlobalDiskUsageTracker after every execution
+	if stmtCtx := a.stmt.Ctx.GetSessionVars().StmtCtx; stmtCtx != nil && stmtCtx.DiskTracker != nil {
+		stmtCtx.DiskTracker.DetachFromGlobalTracker()
+	}
 	return err
 }
 
@@ -455,25 +459,20 @@ func (a *ExecStmt) handlePessimisticSelectForUpdate(ctx context.Context, e Execu
 }
 
 func (a *ExecStmt) runPessimisticSelectForUpdate(ctx context.Context, e Executor) (sqlexec.RecordSet, error) {
-	rs := &recordSet{
-		executor: e,
-		stmt:     a,
-	}
 	defer func() {
-		terror.Log(rs.Close())
+		terror.Log(e.Close())
 	}()
-
 	var rows []chunk.Row
 	var err error
-	fields := rs.Fields()
-	req := rs.NewChunk()
+	req := newFirstChunk(e)
 	for {
-		err = rs.Next(ctx, req)
+		err = Next(ctx, e, req)
 		if err != nil {
 			// Handle 'write conflict' error.
 			break
 		}
 		if req.NumRows() == 0 {
+			fields := colNames2ResultFields(e.Schema(), a.OutputNames, a.Ctx.GetSessionVars().CurrentDB)
 			return &chunkRowRecordSet{rows: rows, fields: fields, e: e}, nil
 		}
 		iter := chunk.NewIterator4Chunk(req)
@@ -874,11 +873,11 @@ func getPlanDigest(sctx sessionctx.Context, p plannercore.Plan) (normalized, pla
 	return
 }
 
-// SummaryStmt collects statements for performance_schema.events_statements_summary_by_digest
+// SummaryStmt collects statements for information_schema.statements_summary
 func (a *ExecStmt) SummaryStmt() {
 	sessVars := a.Ctx.GetSessionVars()
 	// Internal SQLs must also be recorded to keep the consistency of `PrevStmt` and `PrevStmtDigest`.
-	if !stmtsummary.StmtSummaryByDigestMap.Enabled() {
+	if !stmtsummary.StmtSummaryByDigestMap.Enabled() || (sessVars.InRestrictedSQL && !stmtsummary.StmtSummaryByDigestMap.EnabledInternal()) {
 		sessVars.SetPrevStmtDigest("")
 		return
 	}
@@ -942,5 +941,6 @@ func (a *ExecStmt) SummaryStmt() {
 		ExecDetail:     &execDetail,
 		MemMax:         memMax,
 		StartTime:      sessVars.StartTime,
+		IsInternal:     sessVars.InRestrictedSQL,
 	})
 }

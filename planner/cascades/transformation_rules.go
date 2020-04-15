@@ -391,9 +391,19 @@ func NewRulePushAggDownGather() Transformation {
 
 // Match implements Transformation interface.
 func (r *PushAggDownGather) Match(expr *memo.ExprIter) bool {
+	if expr.GetExpr().HasAppliedRule(r) {
+		return false
+	}
 	agg := expr.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
 	for _, aggFunc := range agg.AggFuncs {
 		if aggFunc.Mode != aggregation.CompleteMode {
+			return false
+		}
+	}
+	if agg.HasDistinct() {
+		// TODO: remove this logic after the cost estimation of distinct pushdown is implemented.
+		// If AllowDistinctAggPushDown is set to true, we should not consider RootTask.
+		if !agg.SCtx().GetSessionVars().AllowDistinctAggPushDown {
 			return false
 		}
 	}
@@ -414,47 +424,44 @@ func (r *PushAggDownGather) OnTransform(old *memo.ExprIter) (newExprs []*memo.Gr
 	childGroup := old.Children[0].GetExpr().Children[0]
 	// The old Aggregation should stay unchanged for other transformation.
 	// So we build a new LogicalAggregation for the partialAgg.
-	partialAggFuncs := make([]*aggregation.AggFuncDesc, len(agg.AggFuncs))
-	for i, aggFunc := range agg.AggFuncs {
-		newAggFunc := &aggregation.AggFuncDesc{
-			HasDistinct: false,
-			Mode:        aggregation.Partial1Mode,
-		}
-		newAggFunc.Name = aggFunc.Name
-		newAggFunc.RetTp = aggFunc.RetTp
-		// The args will be changed below, so that we have to build a new slice for it.
-		newArgs := make([]expression.Expression, len(aggFunc.Args))
-		copy(newArgs, aggFunc.Args)
-		newAggFunc.Args = newArgs
-		partialAggFuncs[i] = newAggFunc
+	aggFuncs := make([]*aggregation.AggFuncDesc, len(agg.AggFuncs))
+	for i := range agg.AggFuncs {
+		aggFuncs[i] = agg.AggFuncs[i].Clone()
 	}
-	partialGbyItems := make([]expression.Expression, len(agg.GroupByItems))
-	copy(partialGbyItems, agg.GroupByItems)
+	gbyItems := make([]expression.Expression, len(agg.GroupByItems))
+	copy(gbyItems, agg.GroupByItems)
+
+	partialPref, finalPref, funcMap := plannercore.BuildFinalModeAggregation(agg.SCtx(),
+		&plannercore.AggInfo{
+			AggFuncs:     aggFuncs,
+			GroupByItems: gbyItems,
+			Schema:       aggSchema,
+		}, true)
+	// Remove unnecessary FirstRow.
+	partialPref.AggFuncs =
+		plannercore.RemoveUnnecessaryFirstRow(agg.SCtx(), finalPref.AggFuncs, finalPref.GroupByItems, partialPref.AggFuncs, partialPref.GroupByItems, partialPref.Schema, funcMap)
+
 	partialAgg := plannercore.LogicalAggregation{
-		AggFuncs:     partialAggFuncs,
-		GroupByItems: partialGbyItems,
+		AggFuncs:     partialPref.AggFuncs,
+		GroupByItems: partialPref.GroupByItems,
 	}.Init(agg.SCtx(), agg.SelectBlockOffset())
 	partialAgg.CopyAggHints(agg)
 
-	finalAggFuncs, finalGbyItems, partialSchema :=
-		plannercore.BuildFinalModeAggregation(partialAgg.SCtx(), partialAgg.AggFuncs, partialAgg.GroupByItems, aggSchema)
-	// Remove unnecessary FirstRow.
-	partialAgg.AggFuncs =
-		plannercore.RemoveUnnecessaryFirstRow(partialAgg.SCtx(), finalAggFuncs, finalGbyItems, partialAgg.AggFuncs, partialAgg.GroupByItems, partialSchema)
 	finalAgg := plannercore.LogicalAggregation{
-		AggFuncs:     finalAggFuncs,
-		GroupByItems: finalGbyItems,
+		AggFuncs:     finalPref.AggFuncs,
+		GroupByItems: finalPref.GroupByItems,
 	}.Init(agg.SCtx(), agg.SelectBlockOffset())
 	finalAgg.CopyAggHints(agg)
 
 	partialAggExpr := memo.NewGroupExpr(partialAgg)
 	partialAggExpr.SetChildren(childGroup)
-	partialAggGroup := memo.NewGroupWithSchema(partialAggExpr, partialSchema).SetEngineType(childGroup.EngineType)
+	partialAggGroup := memo.NewGroupWithSchema(partialAggExpr, partialPref.Schema).SetEngineType(childGroup.EngineType)
 	gatherExpr := memo.NewGroupExpr(gather)
 	gatherExpr.SetChildren(partialAggGroup)
-	gatherGroup := memo.NewGroupWithSchema(gatherExpr, partialSchema)
+	gatherGroup := memo.NewGroupWithSchema(gatherExpr, partialPref.Schema)
 	finalAggExpr := memo.NewGroupExpr(finalAgg)
 	finalAggExpr.SetChildren(gatherGroup)
+	finalAggExpr.AddAppliedRule(r)
 	// We don't erase the old complete mode Aggregation because
 	// this transformation would not always be better.
 	return []*memo.GroupExpr{finalAggExpr}, false, false, nil

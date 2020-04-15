@@ -27,21 +27,26 @@ import (
 	"unsafe"
 
 	"github.com/cznic/mathutil"
+	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
 
 var tikvTxnRegionsNumHistogramWithCoprocessor = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues("coprocessor")
+var tikvTxnRegionsNumHistogramWithBatchCoprocessor = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues("batch_coprocessor")
 
 // CopClient is coprocessor client.
 type CopClient struct {
@@ -52,6 +57,10 @@ type CopClient struct {
 
 // Send builds the request and gets the coprocessor iterator response.
 func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variables) kv.Response {
+	if req.StoreType == kv.TiFlash && req.BatchCop {
+		logutil.BgLogger().Debug("send batch requests")
+		return c.sendBatch(ctx, req, vars)
+	}
 	ctx = context.WithValue(ctx, txnStartKey, req.StartTs)
 	bo := NewBackoffer(ctx, copBuildTaskMaxBackoff).WithVars(vars)
 	tasks, err := buildCopTasks(bo, c.store.regionCache, &copRanges{mid: req.KeyRanges}, req)
@@ -561,7 +570,7 @@ func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan *copRes
 	select {
 	case resp, ok = <-respCh:
 		if it.memTracker != nil && resp != nil {
-			it.memTracker.Consume(-int64(resp.MemSize()))
+			it.memTracker.Consume(-resp.MemSize())
 		}
 	case <-it.finishCh:
 		exit = true
@@ -586,7 +595,7 @@ func (sender *copIteratorTaskSender) sendToTaskCh(t *copTask) (exit bool) {
 
 func (worker *copIteratorWorker) sendToRespCh(resp *copResponse, respCh chan<- *copResponse, checkOOM bool) (exit bool) {
 	if worker.memTracker != nil && checkOOM {
-		worker.memTracker.Consume(int64(resp.MemSize()))
+		worker.memTracker.Consume(resp.MemSize())
 	}
 	select {
 	case respCh <- resp:
@@ -724,6 +733,10 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	startTime := time.Now()
 	resp, rpcCtx, storeAddr, err := worker.SendReqCtx(bo, req, task.region, ReadTimeoutMedium, task.storeType, task.storeAddr)
 	if err != nil {
+		if task.storeType == kv.TiDB {
+			err = worker.handleTiDBSendReqErr(err, task, ch)
+			return nil, err
+		}
 		return nil, errors.Trace(err)
 	}
 	// Set task.storeAddr field so its task.String() method have the store address information.
@@ -1003,6 +1016,35 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 	}
 	worker.sendToRespCh(resp, ch, true)
 	return nil, nil
+}
+
+func (worker *copIteratorWorker) handleTiDBSendReqErr(err error, task *copTask, ch chan<- *copResponse) error {
+	errCode := errno.ErrUnknown
+	errMsg := err.Error()
+	if terror.ErrorEqual(err, ErrTiKVServerTimeout) {
+		errCode = errno.ErrTiKVServerTimeout
+		errMsg = "TiDB server timeout, address is " + task.storeAddr
+	}
+	selResp := tipb.SelectResponse{
+		Warnings: []*tipb.Error{
+			{
+				Code: int32(errCode),
+				Msg:  errMsg,
+			},
+		},
+	}
+	data, err := proto.Marshal(&selResp)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	resp := &copResponse{
+		pbResp: &coprocessor.Response{
+			Data: data,
+		},
+		detail: &execdetails.ExecDetails{},
+	}
+	worker.sendToRespCh(resp, ch, true)
+	return nil
 }
 
 func (worker *copIteratorWorker) buildCopTasksFromRemain(bo *Backoffer, lastRange *coprocessor.KeyRange, task *copTask) ([]*copTask, error) {

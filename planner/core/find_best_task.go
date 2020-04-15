@@ -485,15 +485,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err
 					break
 				}
 			}
-			// TODO: we ignore generate column now, because there are some errors happened when point get on generate columns
-			hasGenerateCol := false
-			for _, colInfo := range ds.Columns {
-				if colInfo.IsGenerated() {
-					hasGenerateCol = true
-					break
-				}
-			}
-			if allRangeIsPoint && !hasGenerateCol {
+			if allRangeIsPoint {
 				var pointGetTask task
 				if len(path.Ranges) == 1 {
 					pointGetTask = ds.convertToPointGet(prop, candidate)
@@ -549,27 +541,22 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 		indexPlanFinished: true,
 		tblColHists:       ds.TblColHists,
 	}
-	allCovered := true
 	for _, partPath := range path.PartialIndexPaths {
 		var scan PhysicalPlan
 		var partialCost, rowCount float64
-		var tempCovered bool
 		if partPath.IsTablePath {
-			scan, partialCost, rowCount, tempCovered = ds.convertToPartialTableScan(prop, partPath)
+			scan, partialCost, rowCount = ds.convertToPartialTableScan(prop, partPath)
 		} else {
-			scan, partialCost, rowCount, tempCovered = ds.convertToPartialIndexScan(prop, partPath)
+			scan, partialCost, rowCount = ds.convertToPartialIndexScan(prop, partPath)
 		}
 		scans = append(scans, scan)
 		totalCost += partialCost
 		totalRowCount += rowCount
-		allCovered = allCovered && tempCovered
 	}
 
-	if !allCovered || len(path.TableFilters) > 0 {
-		ts, partialCost := ds.buildIndexMergeTableScan(prop, path.TableFilters, totalRowCount)
-		totalCost += partialCost
-		cop.tablePlan = ts
-	}
+	ts, partialCost := ds.buildIndexMergeTableScan(prop, path.TableFilters, totalRowCount)
+	totalCost += partialCost
+	cop.tablePlan = ts
 	cop.idxMergePartPlans = scans
 	cop.cst = totalCost
 	task = finishCopTask(ds.ctx, cop)
@@ -579,8 +566,7 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 func (ds *DataSource) convertToPartialIndexScan(prop *property.PhysicalProperty, path *util.AccessPath) (
 	indexPlan PhysicalPlan,
 	partialCost float64,
-	rowCount float64,
-	isCovered bool) {
+	rowCount float64) {
 	idx := path.Index
 	is, partialCost, rowCount := ds.getOriginalPhysicalIndexScan(prop, path, false, false)
 	rowSize := is.indexScanRowSize(idx, ds, false)
@@ -602,18 +588,17 @@ func (ds *DataSource) convertToPartialIndexScan(prop *property.PhysicalProperty,
 		indexPlan := PhysicalSelection{Conditions: indexConds}.Init(is.ctx, stats, ds.blockOffset)
 		indexPlan.SetChildren(is)
 		partialCost += rowCount * rowSize * sessVars.NetworkFactor
-		return indexPlan, partialCost, rowCount, false
+		return indexPlan, partialCost, rowCount
 	}
 	partialCost += rowCount * rowSize * sessVars.NetworkFactor
 	indexPlan = is
-	return indexPlan, partialCost, rowCount, false
+	return indexPlan, partialCost, rowCount
 }
 
 func (ds *DataSource) convertToPartialTableScan(prop *property.PhysicalProperty, path *util.AccessPath) (
 	tablePlan PhysicalPlan,
 	partialCost float64,
-	rowCount float64,
-	isCovered bool) {
+	rowCount float64) {
 	ts, partialCost, rowCount := ds.getOriginalPhysicalTableScan(prop, path, false)
 	rowSize := ds.TblColHists.GetAvgRowSize(ds.ctx, ds.TblCols, false, false)
 	sessVars := ds.ctx.GetSessionVars()
@@ -627,11 +612,11 @@ func (ds *DataSource) convertToPartialTableScan(prop *property.PhysicalProperty,
 		tablePlan.SetChildren(ts)
 		partialCost += rowCount * sessVars.CopCPUFactor
 		partialCost += selectivity * rowCount * rowSize * sessVars.NetworkFactor
-		return tablePlan, partialCost, rowCount, true
+		return tablePlan, partialCost, rowCount
 	}
 	partialCost += rowCount * rowSize * sessVars.NetworkFactor
 	tablePlan = ts
-	return tablePlan, partialCost, rowCount, true
+	return tablePlan, partialCost, rowCount
 }
 
 func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, tableFilters []expression.Expression, totalRowCount float64) (PhysicalPlan, float64) {
@@ -741,7 +726,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 			physicalTableID: ds.physicalTableID,
 		}.Init(ds.ctx, is.blockOffset)
 		ts.SetSchema(ds.schema.Clone())
-		ts.ExpandVirtualColumn()
+		ts.Columns = ExpandVirtualColumn(ts.Columns, ts.schema, ts.Table.Columns)
 		cop.tablePlan = ts
 	}
 	cop.cst = cost
@@ -1128,6 +1113,7 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 		TblInfo:      ds.TableInfo(),
 		outputNames:  ds.OutputNames(),
 		LockWaitTime: ds.ctx.GetSessionVars().LockWaitTimeout,
+		Columns:      ds.Columns,
 	}.Init(ds.ctx, ds.stats.ScaleByExpectCnt(1.0), ds.blockOffset)
 	var partitionInfo *model.PartitionDefinition
 	if ds.isPartition {
@@ -1198,6 +1184,7 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 		ctx:       ds.ctx,
 		TblInfo:   ds.TableInfo(),
 		KeepOrder: !prop.IsEmpty(),
+		Columns:   ds.Columns,
 	}.Init(ds.ctx, ds.stats.ScaleByExpectCnt(float64(len(candidate.path.Ranges))), ds.schema.Clone(), ds.names, ds.blockOffset)
 	if batchPointGetPlan.KeepOrder {
 		batchPointGetPlan.Desc = prop.Items[0].Desc

@@ -19,6 +19,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -596,6 +597,27 @@ func (s *testSuite) TestRequestBuilder7(c *C) {
 		ReplicaRead:    kv.ReplicaReadFollower,
 	}
 
+	c.Assert(actual, DeepEquals, expect)
+}
+
+func (s *testSuite) TestRequestBuilder8(c *C) {
+	sv := variable.NewSessionVars()
+	sv.SnapshotInfoschema = infoschema.MockInfoSchemaWithSchemaVer(nil, 10000)
+	actual, err := (&RequestBuilder{}).
+		SetFromSessionVars(sv).
+		Build()
+	c.Assert(err, IsNil)
+	expect := &kv.Request{
+		Tp:             0,
+		StartTs:        0x0,
+		Data:           []uint8(nil),
+		Concurrency:    15,
+		IsolationLevel: 0,
+		Priority:       0,
+		MemTracker:     (*memory.Tracker)(nil),
+		ReplicaRead:    0x1,
+		SchemaVar:      10000,
+	}
 	c.Assert(actual, DeepEquals, expect)
 }
 

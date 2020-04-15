@@ -46,6 +46,7 @@ import (
 	"github.com/soheilhy/cmux"
 	"github.com/tiancaiamao/appdash/traceapp"
 	"go.uber.org/zap"
+	"google.golang.org/grpc/channelz/service"
 	static "sourcegraph.com/sourcegraph/appdash-data"
 )
 
@@ -257,8 +258,8 @@ func (s *Server) startHTTPServer() {
 	serverMux.HandleFunc("/debug/sub-optimal-plan", fetcher.zipInfoForSQL)
 
 	failpoint.Inject("integrateFailpoint", func() {
-		serverMux.HandleFunc("/failpoints/", func(w http.ResponseWriter, r *http.Request) {
-			r.URL.Path = strings.TrimPrefix(r.URL.Path, "/failpoints")
+		serverMux.HandleFunc("/fail/", func(w http.ResponseWriter, r *http.Request) {
+			r.URL.Path = strings.TrimPrefix(r.URL.Path, "/fail")
 			new(failpoint.HttpHandler).ServeHTTP(w, r)
 		})
 	})
@@ -305,6 +306,7 @@ func (s *Server) startStatusServerAndRPCServer(serverMux *http.ServeMux) {
 
 	s.statusServer = &http.Server{Addr: s.statusAddr, Handler: CorsHandler{handler: serverMux, cfg: s.cfg}}
 	s.grpcServer = NewRPCServer(s.cfg, s.dom, s)
+	service.RegisterChannelzServiceToServer(s.grpcServer)
 
 	go util.WithRecovery(func() {
 		err := s.grpcServer.Serve(grpcL)

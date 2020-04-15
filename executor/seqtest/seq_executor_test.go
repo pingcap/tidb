@@ -55,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
@@ -179,6 +180,7 @@ func (s stats) Stats(vars *variable.SessionVars) (map[string]interface{}, error)
 }
 
 func (s *seqTestSuite) TestShow(c *C) {
+	config.GetGlobalConfig().Experimental.AllowsExpressionIndex = true
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -564,7 +566,7 @@ func (s *seqTestSuite) TestShow(c *C) {
 			"  `b` int(11) DEFAULT NULL,\n"+
 			"  `c` char(1) DEFAULT NULL,\n"+
 			"  `d` int(11) DEFAULT NULL\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"+"\nPARTITION BY RANGE COLUMNS(a,d,c) (\n  PARTITION `p0` VALUES LESS THAN (5,10,\"ggg\"),\n  PARTITION `p1` VALUES LESS THAN (10,20,\"mmm\"),\n  PARTITION `p2` VALUES LESS THAN (15,30,\"sss\"),\n  PARTITION `p3` VALUES LESS THAN (50,MAXVALUE,MAXVALUE)\n)",
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 
 	// Test hash partition
@@ -1193,6 +1195,44 @@ func (s *seqTestSuite1) TestCoprocessorPriority(c *C) {
 	cli.mu.Unlock()
 }
 
+func (s *seqTestSuite) TestShowForNewCollations(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	tk := testkit.NewTestKit(c, s.store)
+	expectRows := testkit.Rows(
+		"ascii_bin ascii 65 Yes Yes 1",
+		"binary binary 63 Yes Yes 1",
+		"latin1_bin latin1 47 Yes Yes 1",
+		"utf8_bin utf8 83 Yes Yes 1",
+		"utf8_general_ci utf8 33  Yes 1",
+		"utf8mb4_bin utf8mb4 46 Yes Yes 1",
+		"utf8mb4_general_ci utf8mb4 45  Yes 1",
+	)
+	tk.MustQuery("show collation").Check(expectRows)
+	tk.MustQuery("select * from information_schema.COLLATIONS").Check(expectRows)
+}
+
+func (s *seqTestSuite) TestForbidUnsupportedCollations(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	tk := testkit.NewTestKit(c, s.store)
+	mustGetUnsupportedCollation := func(sql string, coll string) {
+		tk.MustGetErrMsg(sql, fmt.Sprintf("[ddl:1273]Unsupported collation when new collation is enabled: '%s'", coll))
+	}
+
+	mustGetUnsupportedCollation("select 'a' collate utf8_unicode_ci", "utf8_unicode_ci")
+	mustGetUnsupportedCollation("select cast('a' as char) collate utf8_unicode_ci", "utf8_unicode_ci")
+	mustGetUnsupportedCollation("set names utf8 collate utf8_unicode_ci", "utf8_unicode_ci")
+	mustGetUnsupportedCollation("set session collation_server = 'utf8_unicode_ci'", "utf8_unicode_ci")
+	mustGetUnsupportedCollation("set session collation_database = 'utf8_unicode_ci'", "utf8_unicode_ci")
+	mustGetUnsupportedCollation("set session collation_connection = 'utf8_unicode_ci'", "utf8_unicode_ci")
+	mustGetUnsupportedCollation("set global collation_server = 'utf8_unicode_ci'", "utf8_unicode_ci")
+	mustGetUnsupportedCollation("set global collation_database = 'utf8_unicode_ci'", "utf8_unicode_ci")
+	mustGetUnsupportedCollation("set global collation_connection = 'utf8_unicode_ci'", "utf8_unicode_ci")
+}
+
 func (s *seqTestSuite) TestAutoIncIDInRetry(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t;")
@@ -1276,7 +1316,7 @@ func (s *seqTestSuite) TestAutoRandRecoverTable(c *C) {
 	// Otherwise emulator GC will delete table record as soon as possible after execute drop table ddl.
 	ddl.EmulatorGCDisable()
 	gcTimeFormat := "20060102-15:04:05 -0700 MST"
-	timeBeforeDrop := time.Now().Add(0 - time.Duration(48*60*60*time.Second)).Format(gcTimeFormat)
+	timeBeforeDrop := time.Now().Add(0 - 48*60*60*time.Second).Format(gcTimeFormat)
 	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
 			       ON DUPLICATE KEY
 			       UPDATE variable_value = '%[1]s'`

@@ -713,25 +713,40 @@ func (s *testExecSuite) TestMergeJoinRequiredRows(c *C) {
 
 func genTestChunk4VecGroupChecker(chkRows []int, sameNum int) (expr []expression.Expression, inputs []*chunk.Chunk) {
 	chkNum := len(chkRows)
+	numRows := 0
 	inputs = make([]*chunk.Chunk, chkNum)
 	fts := make([]*types.FieldType, 1)
 	fts[0] = types.NewFieldType(mysql.TypeLonglong)
 	for i := 0; i < chkNum; i++ {
 		inputs[i] = chunk.New(fts, chkRows[i], chkRows[i])
+		numRows += chkRows[i]
+	}
+	var numGroups int
+	if numRows%sameNum == 0 {
+		numGroups = numRows / sameNum
+	} else {
+		numGroups = numRows/sameNum + 1
 	}
 
+	rand.Seed(time.Now().Unix())
+	nullPos := rand.Intn(numGroups)
 	cnt := 0
-	val := 0
+	val := rand.Int63()
 	for i := 0; i < chkNum; i++ {
 		col := inputs[i].Column(0)
 		col.ResizeInt64(chkRows[i], false)
 		i64s := col.Int64s()
 		for j := 0; j < chkRows[i]; j++ {
 			if cnt == sameNum {
-				val++
+				val = rand.Int63()
 				cnt = 0
+				nullPos--
 			}
-			i64s[j] = int64(val)
+			if nullPos == 0 {
+				col.SetNull(j, true)
+			} else {
+				i64s[j] = val
+			}
 			cnt++
 		}
 	}
@@ -774,6 +789,18 @@ func (s *testExecSuite) TestVecGroupChecker(c *C) {
 			expectedGroups: 2,
 			expectedFlag:   []bool{false, false},
 			sameNum:        1,
+		},
+		{
+			chunkRows:      []int{2, 2},
+			expectedGroups: 2,
+			expectedFlag:   []bool{false, false},
+			sameNum:        2,
+		},
+		{
+			chunkRows:      []int{2, 2},
+			expectedGroups: 1,
+			expectedFlag:   []bool{false, true},
+			sameNum:        4,
 		},
 	}
 
@@ -826,6 +853,10 @@ type mockPlan struct {
 
 func (mp *mockPlan) GetExecutor() Executor {
 	return mp.exec
+}
+
+func (mp *mockPlan) Schema() *expression.Schema {
+	return mp.exec.Schema()
 }
 
 func (s *testExecSuite) TestVecGroupCheckerDATARACE(c *C) {
