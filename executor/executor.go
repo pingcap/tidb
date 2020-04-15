@@ -1563,6 +1563,12 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			sc.NotFillCache = !opts.SQLCache
 		}
 		sc.CastStrToIntStrict = true
+	case *ast.UnionStmt:
+		sc.InSelectStmt = true
+		sc.OverflowAsWarning = true
+		sc.TruncateAsWarning = true
+		sc.IgnoreZeroInDate = true
+		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
 	case *ast.ShowStmt:
 		sc.IgnoreTruncate = true
 		sc.IgnoreZeroInDate = true

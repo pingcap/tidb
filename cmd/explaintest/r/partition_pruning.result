@@ -1068,34 +1068,28 @@ IndexReader_8	10.00	root	index:Selection_7
   └─IndexScan_6	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b >= CAST('2009-04-03' AS DATETIME);
 id	count	task	operator info
-Union_10	13333.33	root	
-├─IndexReader_13	3333.33	root	index:Selection_12
-│ └─Selection_12	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00)
-│   └─IndexScan_11	10000.00	cop[tikv]	table:t1, partition:p20090401, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_16	3333.33	root	index:Selection_15
-│ └─Selection_15	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00)
-│   └─IndexScan_14	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_19	3333.33	root	index:Selection_18
-│ └─Selection_18	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00)
-│   └─IndexScan_17	10000.00	cop[tikv]	table:t1, partition:p20090404, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-└─IndexReader_22	3333.33	root	index:Selection_21
-  └─Selection_21	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00)
-    └─IndexScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+Union_9	10000.00	root	
+├─IndexReader_12	3333.33	root	index:Selection_11
+│ └─Selection_11	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00)
+│   └─IndexScan_10	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+├─IndexReader_15	3333.33	root	index:Selection_14
+│ └─Selection_14	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00)
+│   └─IndexScan_13	10000.00	cop[tikv]	table:t1, partition:p20090404, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+└─IndexReader_18	3333.33	root	index:Selection_17
+  └─Selection_17	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00)
+    └─IndexScan_16	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b > CAST('2009-04-03' AS DATETIME);
 id	count	task	operator info
-Union_10	13333.33	root	
-├─IndexReader_13	3333.33	root	index:Selection_12
-│ └─Selection_12	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00)
-│   └─IndexScan_11	10000.00	cop[tikv]	table:t1, partition:p20090401, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_16	3333.33	root	index:Selection_15
-│ └─Selection_15	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00)
-│   └─IndexScan_14	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_19	3333.33	root	index:Selection_18
-│ └─Selection_18	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00)
-│   └─IndexScan_17	10000.00	cop[tikv]	table:t1, partition:p20090404, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-└─IndexReader_22	3333.33	root	index:Selection_21
-  └─Selection_21	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00)
-    └─IndexScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+Union_9	10000.00	root	
+├─IndexReader_12	3333.33	root	index:Selection_11
+│ └─Selection_11	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00)
+│   └─IndexScan_10	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+├─IndexReader_15	3333.33	root	index:Selection_14
+│ └─Selection_14	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00)
+│   └─IndexScan_13	10000.00	cop[tikv]	table:t1, partition:p20090404, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+└─IndexReader_18	3333.33	root	index:Selection_17
+  └─Selection_17	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00)
+    └─IndexScan_16	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b < CAST('2009-04-02 23:59:59' AS DATETIME);
 id	count	task	operator info
@@ -1125,41 +1119,35 @@ IndexReader_8	10.00	root	index:Selection_7
 EXPLAIN SELECT * FROM t1
 WHERE b >= CAST('2009-04-02 23:59:59' AS DATETIME);
 id	count	task	operator info
-Union_11	16666.67	root	
-├─IndexReader_14	3333.33	root	index:Selection_13
-│ └─Selection_13	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59)
-│   └─IndexScan_12	10000.00	cop[tikv]	table:t1, partition:p20090401, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_17	3333.33	root	index:Selection_16
-│ └─Selection_16	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59)
-│   └─IndexScan_15	10000.00	cop[tikv]	table:t1, partition:p20090402, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_20	3333.33	root	index:Selection_19
-│ └─Selection_19	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59)
-│   └─IndexScan_18	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_23	3333.33	root	index:Selection_22
-│ └─Selection_22	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59)
-│   └─IndexScan_21	10000.00	cop[tikv]	table:t1, partition:p20090404, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-└─IndexReader_26	3333.33	root	index:Selection_25
-  └─Selection_25	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59)
-    └─IndexScan_24	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+Union_10	13333.33	root	
+├─IndexReader_13	3333.33	root	index:Selection_12
+│ └─Selection_12	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59)
+│   └─IndexScan_11	10000.00	cop[tikv]	table:t1, partition:p20090402, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+├─IndexReader_16	3333.33	root	index:Selection_15
+│ └─Selection_15	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59)
+│   └─IndexScan_14	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+├─IndexReader_19	3333.33	root	index:Selection_18
+│ └─Selection_18	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59)
+│   └─IndexScan_17	10000.00	cop[tikv]	table:t1, partition:p20090404, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+└─IndexReader_22	3333.33	root	index:Selection_21
+  └─Selection_21	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59)
+    └─IndexScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b > CAST('2009-04-02 23:59:59' AS DATETIME);
 id	count	task	operator info
-Union_11	16666.67	root	
-├─IndexReader_14	3333.33	root	index:Selection_13
-│ └─Selection_13	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59)
-│   └─IndexScan_12	10000.00	cop[tikv]	table:t1, partition:p20090401, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_17	3333.33	root	index:Selection_16
-│ └─Selection_16	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59)
-│   └─IndexScan_15	10000.00	cop[tikv]	table:t1, partition:p20090402, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_20	3333.33	root	index:Selection_19
-│ └─Selection_19	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59)
-│   └─IndexScan_18	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_23	3333.33	root	index:Selection_22
-│ └─Selection_22	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59)
-│   └─IndexScan_21	10000.00	cop[tikv]	table:t1, partition:p20090404, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-└─IndexReader_26	3333.33	root	index:Selection_25
-  └─Selection_25	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59)
-    └─IndexScan_24	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+Union_10	13333.33	root	
+├─IndexReader_13	3333.33	root	index:Selection_12
+│ └─Selection_12	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59)
+│   └─IndexScan_11	10000.00	cop[tikv]	table:t1, partition:p20090402, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+├─IndexReader_16	3333.33	root	index:Selection_15
+│ └─Selection_15	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59)
+│   └─IndexScan_14	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+├─IndexReader_19	3333.33	root	index:Selection_18
+│ └─Selection_18	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59)
+│   └─IndexScan_17	10000.00	cop[tikv]	table:t1, partition:p20090404, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+└─IndexReader_22	3333.33	root	index:Selection_21
+  └─Selection_21	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59)
+    └─IndexScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b < CAST('2009-04-03' AS DATE);
 id	count	task	operator info
 Union_9	9970.00	root	
@@ -1191,34 +1179,28 @@ IndexReader_8	10.00	root	index:Selection_7
   └─IndexScan_6	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b >= CAST('2009-04-03' AS DATE);
 id	count	task	operator info
-Union_10	13333.33	root	
-├─IndexReader_13	3333.33	root	index:Selection_12
-│ └─Selection_12	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03)
-│   └─IndexScan_11	10000.00	cop[tikv]	table:t1, partition:p20090401, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_16	3333.33	root	index:Selection_15
-│ └─Selection_15	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03)
-│   └─IndexScan_14	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_19	3333.33	root	index:Selection_18
-│ └─Selection_18	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03)
-│   └─IndexScan_17	10000.00	cop[tikv]	table:t1, partition:p20090404, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-└─IndexReader_22	3333.33	root	index:Selection_21
-  └─Selection_21	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03)
-    └─IndexScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+Union_9	10000.00	root	
+├─IndexReader_12	3333.33	root	index:Selection_11
+│ └─Selection_11	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03)
+│   └─IndexScan_10	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+├─IndexReader_15	3333.33	root	index:Selection_14
+│ └─Selection_14	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03)
+│   └─IndexScan_13	10000.00	cop[tikv]	table:t1, partition:p20090404, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+└─IndexReader_18	3333.33	root	index:Selection_17
+  └─Selection_17	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03)
+    └─IndexScan_16	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b > CAST('2009-04-03' AS DATE);
 id	count	task	operator info
-Union_10	13333.33	root	
-├─IndexReader_13	3333.33	root	index:Selection_12
-│ └─Selection_12	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03)
-│   └─IndexScan_11	10000.00	cop[tikv]	table:t1, partition:p20090401, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_16	3333.33	root	index:Selection_15
-│ └─Selection_15	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03)
-│   └─IndexScan_14	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_19	3333.33	root	index:Selection_18
-│ └─Selection_18	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03)
-│   └─IndexScan_17	10000.00	cop[tikv]	table:t1, partition:p20090404, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-└─IndexReader_22	3333.33	root	index:Selection_21
-  └─Selection_21	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03)
-    └─IndexScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+Union_9	10000.00	root	
+├─IndexReader_12	3333.33	root	index:Selection_11
+│ └─Selection_11	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03)
+│   └─IndexScan_10	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+├─IndexReader_15	3333.33	root	index:Selection_14
+│ └─Selection_14	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03)
+│   └─IndexScan_13	10000.00	cop[tikv]	table:t1, partition:p20090404, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+└─IndexReader_18	3333.33	root	index:Selection_17
+  └─Selection_17	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03)
+    └─IndexScan_16	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b < '2009-04-03 00:00:00';
 id	count	task	operator info
 Union_9	9970.00	root	
@@ -1250,34 +1232,28 @@ IndexReader_8	10.00	root	index:Selection_7
   └─IndexScan_6	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b >= '2009-04-03 00:00:00';
 id	count	task	operator info
-Union_10	13333.33	root	
-├─IndexReader_13	3333.33	root	index:Selection_12
-│ └─Selection_12	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00.000000)
-│   └─IndexScan_11	10000.00	cop[tikv]	table:t1, partition:p20090401, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_16	3333.33	root	index:Selection_15
-│ └─Selection_15	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00.000000)
-│   └─IndexScan_14	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_19	3333.33	root	index:Selection_18
-│ └─Selection_18	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00.000000)
-│   └─IndexScan_17	10000.00	cop[tikv]	table:t1, partition:p20090404, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-└─IndexReader_22	3333.33	root	index:Selection_21
-  └─Selection_21	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00.000000)
-    └─IndexScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+Union_9	10000.00	root	
+├─IndexReader_12	3333.33	root	index:Selection_11
+│ └─Selection_11	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00.000000)
+│   └─IndexScan_10	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+├─IndexReader_15	3333.33	root	index:Selection_14
+│ └─Selection_14	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00.000000)
+│   └─IndexScan_13	10000.00	cop[tikv]	table:t1, partition:p20090404, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+└─IndexReader_18	3333.33	root	index:Selection_17
+  └─Selection_17	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00.000000)
+    └─IndexScan_16	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b > '2009-04-03 00:00:00';
 id	count	task	operator info
-Union_10	13333.33	root	
-├─IndexReader_13	3333.33	root	index:Selection_12
-│ └─Selection_12	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00.000000)
-│   └─IndexScan_11	10000.00	cop[tikv]	table:t1, partition:p20090401, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_16	3333.33	root	index:Selection_15
-│ └─Selection_15	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00.000000)
-│   └─IndexScan_14	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_19	3333.33	root	index:Selection_18
-│ └─Selection_18	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00.000000)
-│   └─IndexScan_17	10000.00	cop[tikv]	table:t1, partition:p20090404, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-└─IndexReader_22	3333.33	root	index:Selection_21
-  └─Selection_21	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00.000000)
-    └─IndexScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+Union_9	10000.00	root	
+├─IndexReader_12	3333.33	root	index:Selection_11
+│ └─Selection_11	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00.000000)
+│   └─IndexScan_10	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+├─IndexReader_15	3333.33	root	index:Selection_14
+│ └─Selection_14	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00.000000)
+│   └─IndexScan_13	10000.00	cop[tikv]	table:t1, partition:p20090404, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+└─IndexReader_18	3333.33	root	index:Selection_17
+  └─Selection_17	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00.000000)
+    └─IndexScan_16	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b < '2009-04-02 23:59:59';
 id	count	task	operator info
 Union_8	6646.67	root	
@@ -1303,40 +1279,34 @@ IndexReader_8	10.00	root	index:Selection_7
   └─IndexScan_6	10000.00	cop[tikv]	table:t1, partition:p20090402, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b >= '2009-04-02 23:59:59';
 id	count	task	operator info
-Union_11	16666.67	root	
-├─IndexReader_14	3333.33	root	index:Selection_13
-│ └─Selection_13	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59.000000)
-│   └─IndexScan_12	10000.00	cop[tikv]	table:t1, partition:p20090401, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_17	3333.33	root	index:Selection_16
-│ └─Selection_16	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59.000000)
-│   └─IndexScan_15	10000.00	cop[tikv]	table:t1, partition:p20090402, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_20	3333.33	root	index:Selection_19
-│ └─Selection_19	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59.000000)
-│   └─IndexScan_18	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_23	3333.33	root	index:Selection_22
-│ └─Selection_22	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59.000000)
-│   └─IndexScan_21	10000.00	cop[tikv]	table:t1, partition:p20090404, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-└─IndexReader_26	3333.33	root	index:Selection_25
-  └─Selection_25	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59.000000)
-    └─IndexScan_24	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+Union_10	13333.33	root	
+├─IndexReader_13	3333.33	root	index:Selection_12
+│ └─Selection_12	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59.000000)
+│   └─IndexScan_11	10000.00	cop[tikv]	table:t1, partition:p20090402, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+├─IndexReader_16	3333.33	root	index:Selection_15
+│ └─Selection_15	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59.000000)
+│   └─IndexScan_14	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+├─IndexReader_19	3333.33	root	index:Selection_18
+│ └─Selection_18	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59.000000)
+│   └─IndexScan_17	10000.00	cop[tikv]	table:t1, partition:p20090404, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+└─IndexReader_22	3333.33	root	index:Selection_21
+  └─Selection_21	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59.000000)
+    └─IndexScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b > '2009-04-02 23:59:59';
 id	count	task	operator info
-Union_11	16666.67	root	
-├─IndexReader_14	3333.33	root	index:Selection_13
-│ └─Selection_13	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59.000000)
-│   └─IndexScan_12	10000.00	cop[tikv]	table:t1, partition:p20090401, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_17	3333.33	root	index:Selection_16
-│ └─Selection_16	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59.000000)
-│   └─IndexScan_15	10000.00	cop[tikv]	table:t1, partition:p20090402, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_20	3333.33	root	index:Selection_19
-│ └─Selection_19	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59.000000)
-│   └─IndexScan_18	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_23	3333.33	root	index:Selection_22
-│ └─Selection_22	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59.000000)
-│   └─IndexScan_21	10000.00	cop[tikv]	table:t1, partition:p20090404, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-└─IndexReader_26	3333.33	root	index:Selection_25
-  └─Selection_25	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59.000000)
-    └─IndexScan_24	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+Union_10	13333.33	root	
+├─IndexReader_13	3333.33	root	index:Selection_12
+│ └─Selection_12	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59.000000)
+│   └─IndexScan_11	10000.00	cop[tikv]	table:t1, partition:p20090402, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+├─IndexReader_16	3333.33	root	index:Selection_15
+│ └─Selection_15	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59.000000)
+│   └─IndexScan_14	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+├─IndexReader_19	3333.33	root	index:Selection_18
+│ └─Selection_18	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59.000000)
+│   └─IndexScan_17	10000.00	cop[tikv]	table:t1, partition:p20090404, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+└─IndexReader_22	3333.33	root	index:Selection_21
+  └─Selection_21	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59.000000)
+    └─IndexScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b < '2009-04-03';
 id	count	task	operator info
 Union_9	9970.00	root	
@@ -1368,34 +1338,28 @@ IndexReader_8	10.00	root	index:Selection_7
   └─IndexScan_6	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b >= '2009-04-03';
 id	count	task	operator info
-Union_10	13333.33	root	
-├─IndexReader_13	3333.33	root	index:Selection_12
-│ └─Selection_12	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00.000000)
-│   └─IndexScan_11	10000.00	cop[tikv]	table:t1, partition:p20090401, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_16	3333.33	root	index:Selection_15
-│ └─Selection_15	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00.000000)
-│   └─IndexScan_14	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_19	3333.33	root	index:Selection_18
-│ └─Selection_18	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00.000000)
-│   └─IndexScan_17	10000.00	cop[tikv]	table:t1, partition:p20090404, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-└─IndexReader_22	3333.33	root	index:Selection_21
-  └─Selection_21	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00.000000)
-    └─IndexScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+Union_9	10000.00	root	
+├─IndexReader_12	3333.33	root	index:Selection_11
+│ └─Selection_11	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00.000000)
+│   └─IndexScan_10	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+├─IndexReader_15	3333.33	root	index:Selection_14
+│ └─Selection_14	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00.000000)
+│   └─IndexScan_13	10000.00	cop[tikv]	table:t1, partition:p20090404, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+└─IndexReader_18	3333.33	root	index:Selection_17
+  └─Selection_17	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00.000000)
+    └─IndexScan_16	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b > '2009-04-03';
 id	count	task	operator info
-Union_10	13333.33	root	
-├─IndexReader_13	3333.33	root	index:Selection_12
-│ └─Selection_12	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00.000000)
-│   └─IndexScan_11	10000.00	cop[tikv]	table:t1, partition:p20090401, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_16	3333.33	root	index:Selection_15
-│ └─Selection_15	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00.000000)
-│   └─IndexScan_14	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_19	3333.33	root	index:Selection_18
-│ └─Selection_18	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00.000000)
-│   └─IndexScan_17	10000.00	cop[tikv]	table:t1, partition:p20090404, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-└─IndexReader_22	3333.33	root	index:Selection_21
-  └─Selection_21	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00.000000)
-    └─IndexScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+Union_9	10000.00	root	
+├─IndexReader_12	3333.33	root	index:Selection_11
+│ └─Selection_11	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00.000000)
+│   └─IndexScan_10	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+├─IndexReader_15	3333.33	root	index:Selection_14
+│ └─Selection_14	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00.000000)
+│   └─IndexScan_13	10000.00	cop[tikv]	table:t1, partition:p20090404, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+└─IndexReader_18	3333.33	root	index:Selection_17
+  └─Selection_17	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00.000000)
+    └─IndexScan_16	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b < CAST('2009-04-03 00:00:01' AS DATETIME);
 id	count	task	operator info
@@ -1431,35 +1395,29 @@ IndexReader_8	10.00	root	index:Selection_7
 EXPLAIN SELECT * FROM t1
 WHERE b >= CAST('2009-04-03 00:00:01' AS DATETIME);
 id	count	task	operator info
-Union_10	13333.33	root	
-├─IndexReader_13	3333.33	root	index:Selection_12
-│ └─Selection_12	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:01)
-│   └─IndexScan_11	10000.00	cop[tikv]	table:t1, partition:p20090401, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_16	3333.33	root	index:Selection_15
-│ └─Selection_15	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:01)
-│   └─IndexScan_14	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_19	3333.33	root	index:Selection_18
-│ └─Selection_18	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:01)
-│   └─IndexScan_17	10000.00	cop[tikv]	table:t1, partition:p20090404, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-└─IndexReader_22	3333.33	root	index:Selection_21
-  └─Selection_21	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:01)
-    └─IndexScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+Union_9	10000.00	root	
+├─IndexReader_12	3333.33	root	index:Selection_11
+│ └─Selection_11	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:01)
+│   └─IndexScan_10	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+├─IndexReader_15	3333.33	root	index:Selection_14
+│ └─Selection_14	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:01)
+│   └─IndexScan_13	10000.00	cop[tikv]	table:t1, partition:p20090404, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+└─IndexReader_18	3333.33	root	index:Selection_17
+  └─Selection_17	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:01)
+    └─IndexScan_16	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b > CAST('2009-04-03 00:00:01' AS DATETIME);
 id	count	task	operator info
-Union_10	13333.33	root	
-├─IndexReader_13	3333.33	root	index:Selection_12
-│ └─Selection_12	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:01)
-│   └─IndexScan_11	10000.00	cop[tikv]	table:t1, partition:p20090401, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_16	3333.33	root	index:Selection_15
-│ └─Selection_15	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:01)
-│   └─IndexScan_14	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_19	3333.33	root	index:Selection_18
-│ └─Selection_18	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:01)
-│   └─IndexScan_17	10000.00	cop[tikv]	table:t1, partition:p20090404, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-└─IndexReader_22	3333.33	root	index:Selection_21
-  └─Selection_21	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:01)
-    └─IndexScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+Union_9	10000.00	root	
+├─IndexReader_12	3333.33	root	index:Selection_11
+│ └─Selection_11	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:01)
+│   └─IndexScan_10	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+├─IndexReader_15	3333.33	root	index:Selection_14
+│ └─Selection_14	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:01)
+│   └─IndexScan_13	10000.00	cop[tikv]	table:t1, partition:p20090404, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+└─IndexReader_18	3333.33	root	index:Selection_17
+  └─Selection_17	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:01)
+    └─IndexScan_16	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b < CAST('2009-04-02 23:59:58' AS DATETIME);
 id	count	task	operator info
@@ -1489,41 +1447,35 @@ IndexReader_8	10.00	root	index:Selection_7
 EXPLAIN SELECT * FROM t1
 WHERE b >= CAST('2009-04-02 23:59:58' AS DATETIME);
 id	count	task	operator info
-Union_11	16666.67	root	
-├─IndexReader_14	3333.33	root	index:Selection_13
-│ └─Selection_13	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:58)
-│   └─IndexScan_12	10000.00	cop[tikv]	table:t1, partition:p20090401, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_17	3333.33	root	index:Selection_16
-│ └─Selection_16	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:58)
-│   └─IndexScan_15	10000.00	cop[tikv]	table:t1, partition:p20090402, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_20	3333.33	root	index:Selection_19
-│ └─Selection_19	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:58)
-│   └─IndexScan_18	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_23	3333.33	root	index:Selection_22
-│ └─Selection_22	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:58)
-│   └─IndexScan_21	10000.00	cop[tikv]	table:t1, partition:p20090404, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-└─IndexReader_26	3333.33	root	index:Selection_25
-  └─Selection_25	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:58)
-    └─IndexScan_24	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+Union_10	13333.33	root	
+├─IndexReader_13	3333.33	root	index:Selection_12
+│ └─Selection_12	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:58)
+│   └─IndexScan_11	10000.00	cop[tikv]	table:t1, partition:p20090402, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+├─IndexReader_16	3333.33	root	index:Selection_15
+│ └─Selection_15	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:58)
+│   └─IndexScan_14	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+├─IndexReader_19	3333.33	root	index:Selection_18
+│ └─Selection_18	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:58)
+│   └─IndexScan_17	10000.00	cop[tikv]	table:t1, partition:p20090404, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+└─IndexReader_22	3333.33	root	index:Selection_21
+  └─Selection_21	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:58)
+    └─IndexScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b > CAST('2009-04-02 23:59:58' AS DATETIME);
 id	count	task	operator info
-Union_11	16666.67	root	
-├─IndexReader_14	3333.33	root	index:Selection_13
-│ └─Selection_13	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:58)
-│   └─IndexScan_12	10000.00	cop[tikv]	table:t1, partition:p20090401, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_17	3333.33	root	index:Selection_16
-│ └─Selection_16	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:58)
-│   └─IndexScan_15	10000.00	cop[tikv]	table:t1, partition:p20090402, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_20	3333.33	root	index:Selection_19
-│ └─Selection_19	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:58)
-│   └─IndexScan_18	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_23	3333.33	root	index:Selection_22
-│ └─Selection_22	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:58)
-│   └─IndexScan_21	10000.00	cop[tikv]	table:t1, partition:p20090404, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-└─IndexReader_26	3333.33	root	index:Selection_25
-  └─Selection_25	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:58)
-    └─IndexScan_24	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+Union_10	13333.33	root	
+├─IndexReader_13	3333.33	root	index:Selection_12
+│ └─Selection_12	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:58)
+│   └─IndexScan_11	10000.00	cop[tikv]	table:t1, partition:p20090402, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+├─IndexReader_16	3333.33	root	index:Selection_15
+│ └─Selection_15	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:58)
+│   └─IndexScan_14	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+├─IndexReader_19	3333.33	root	index:Selection_18
+│ └─Selection_18	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:58)
+│   └─IndexScan_17	10000.00	cop[tikv]	table:t1, partition:p20090404, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+└─IndexReader_22	3333.33	root	index:Selection_21
+  └─Selection_21	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:58)
+    └─IndexScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
 DROP TABLE t1;
 # Test with DATE column NOT NULL
 CREATE TABLE t1 (
@@ -1571,34 +1523,28 @@ IndexReader_8	10.00	root	index:Selection_7
   └─IndexScan_6	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b >= CAST('2009-04-03' AS DATETIME);
 id	count	task	operator info
-Union_10	13333.33	root	
-├─IndexReader_13	3333.33	root	index:Selection_12
-│ └─Selection_12	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00)
-│   └─IndexScan_11	10000.00	cop[tikv]	table:t1, partition:p20090401, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_16	3333.33	root	index:Selection_15
-│ └─Selection_15	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00)
-│   └─IndexScan_14	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_19	3333.33	root	index:Selection_18
-│ └─Selection_18	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00)
-│   └─IndexScan_17	10000.00	cop[tikv]	table:t1, partition:p20090404, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-└─IndexReader_22	3333.33	root	index:Selection_21
-  └─Selection_21	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00)
-    └─IndexScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+Union_9	10000.00	root	
+├─IndexReader_12	3333.33	root	index:Selection_11
+│ └─Selection_11	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00)
+│   └─IndexScan_10	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+├─IndexReader_15	3333.33	root	index:Selection_14
+│ └─Selection_14	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00)
+│   └─IndexScan_13	10000.00	cop[tikv]	table:t1, partition:p20090404, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+└─IndexReader_18	3333.33	root	index:Selection_17
+  └─Selection_17	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00)
+    └─IndexScan_16	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b > CAST('2009-04-03' AS DATETIME);
 id	count	task	operator info
-Union_10	13333.33	root	
-├─IndexReader_13	3333.33	root	index:Selection_12
-│ └─Selection_12	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00)
-│   └─IndexScan_11	10000.00	cop[tikv]	table:t1, partition:p20090401, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_16	3333.33	root	index:Selection_15
-│ └─Selection_15	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00)
-│   └─IndexScan_14	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_19	3333.33	root	index:Selection_18
-│ └─Selection_18	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00)
-│   └─IndexScan_17	10000.00	cop[tikv]	table:t1, partition:p20090404, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-└─IndexReader_22	3333.33	root	index:Selection_21
-  └─Selection_21	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00)
-    └─IndexScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+Union_9	10000.00	root	
+├─IndexReader_12	3333.33	root	index:Selection_11
+│ └─Selection_11	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00)
+│   └─IndexScan_10	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+├─IndexReader_15	3333.33	root	index:Selection_14
+│ └─Selection_14	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00)
+│   └─IndexScan_13	10000.00	cop[tikv]	table:t1, partition:p20090404, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+└─IndexReader_18	3333.33	root	index:Selection_17
+  └─Selection_17	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00)
+    └─IndexScan_16	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b < CAST('2009-04-02 23:59:59' AS DATETIME);
 id	count	task	operator info
@@ -1628,41 +1574,35 @@ IndexReader_8	0.00	root	index:Selection_7
 EXPLAIN SELECT * FROM t1
 WHERE b >= CAST('2009-04-02 23:59:59' AS DATETIME);
 id	count	task	operator info
-Union_11	16666.67	root	
-├─IndexReader_14	3333.33	root	index:Selection_13
-│ └─Selection_13	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59)
-│   └─IndexScan_12	10000.00	cop[tikv]	table:t1, partition:p20090401, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_17	3333.33	root	index:Selection_16
-│ └─Selection_16	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59)
-│   └─IndexScan_15	10000.00	cop[tikv]	table:t1, partition:p20090402, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_20	3333.33	root	index:Selection_19
-│ └─Selection_19	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59)
-│   └─IndexScan_18	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_23	3333.33	root	index:Selection_22
-│ └─Selection_22	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59)
-│   └─IndexScan_21	10000.00	cop[tikv]	table:t1, partition:p20090404, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-└─IndexReader_26	3333.33	root	index:Selection_25
-  └─Selection_25	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59)
-    └─IndexScan_24	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+Union_10	13333.33	root	
+├─IndexReader_13	3333.33	root	index:Selection_12
+│ └─Selection_12	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59)
+│   └─IndexScan_11	10000.00	cop[tikv]	table:t1, partition:p20090402, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+├─IndexReader_16	3333.33	root	index:Selection_15
+│ └─Selection_15	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59)
+│   └─IndexScan_14	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+├─IndexReader_19	3333.33	root	index:Selection_18
+│ └─Selection_18	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59)
+│   └─IndexScan_17	10000.00	cop[tikv]	table:t1, partition:p20090404, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+└─IndexReader_22	3333.33	root	index:Selection_21
+  └─Selection_21	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59)
+    └─IndexScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b > CAST('2009-04-02 23:59:59' AS DATETIME);
 id	count	task	operator info
-Union_11	16666.67	root	
-├─IndexReader_14	3333.33	root	index:Selection_13
-│ └─Selection_13	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59)
-│   └─IndexScan_12	10000.00	cop[tikv]	table:t1, partition:p20090401, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_17	3333.33	root	index:Selection_16
-│ └─Selection_16	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59)
-│   └─IndexScan_15	10000.00	cop[tikv]	table:t1, partition:p20090402, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_20	3333.33	root	index:Selection_19
-│ └─Selection_19	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59)
-│   └─IndexScan_18	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_23	3333.33	root	index:Selection_22
-│ └─Selection_22	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59)
-│   └─IndexScan_21	10000.00	cop[tikv]	table:t1, partition:p20090404, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-└─IndexReader_26	3333.33	root	index:Selection_25
-  └─Selection_25	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59)
-    └─IndexScan_24	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+Union_10	13333.33	root	
+├─IndexReader_13	3333.33	root	index:Selection_12
+│ └─Selection_12	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59)
+│   └─IndexScan_11	10000.00	cop[tikv]	table:t1, partition:p20090402, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+├─IndexReader_16	3333.33	root	index:Selection_15
+│ └─Selection_15	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59)
+│   └─IndexScan_14	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+├─IndexReader_19	3333.33	root	index:Selection_18
+│ └─Selection_18	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59)
+│   └─IndexScan_17	10000.00	cop[tikv]	table:t1, partition:p20090404, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+└─IndexReader_22	3333.33	root	index:Selection_21
+  └─Selection_21	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59)
+    └─IndexScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b < CAST('2009-04-03' AS DATE);
 id	count	task	operator info
 Union_9	9970.00	root	
@@ -1694,34 +1634,28 @@ IndexReader_8	10.00	root	index:Selection_7
   └─IndexScan_6	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b >= CAST('2009-04-03' AS DATE);
 id	count	task	operator info
-Union_10	13333.33	root	
-├─IndexReader_13	3333.33	root	index:Selection_12
-│ └─Selection_12	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03)
-│   └─IndexScan_11	10000.00	cop[tikv]	table:t1, partition:p20090401, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_16	3333.33	root	index:Selection_15
-│ └─Selection_15	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03)
-│   └─IndexScan_14	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_19	3333.33	root	index:Selection_18
-│ └─Selection_18	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03)
-│   └─IndexScan_17	10000.00	cop[tikv]	table:t1, partition:p20090404, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-└─IndexReader_22	3333.33	root	index:Selection_21
-  └─Selection_21	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03)
-    └─IndexScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+Union_9	10000.00	root	
+├─IndexReader_12	3333.33	root	index:Selection_11
+│ └─Selection_11	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03)
+│   └─IndexScan_10	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+├─IndexReader_15	3333.33	root	index:Selection_14
+│ └─Selection_14	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03)
+│   └─IndexScan_13	10000.00	cop[tikv]	table:t1, partition:p20090404, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+└─IndexReader_18	3333.33	root	index:Selection_17
+  └─Selection_17	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03)
+    └─IndexScan_16	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b > CAST('2009-04-03' AS DATE);
 id	count	task	operator info
-Union_10	13333.33	root	
-├─IndexReader_13	3333.33	root	index:Selection_12
-│ └─Selection_12	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03)
-│   └─IndexScan_11	10000.00	cop[tikv]	table:t1, partition:p20090401, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_16	3333.33	root	index:Selection_15
-│ └─Selection_15	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03)
-│   └─IndexScan_14	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_19	3333.33	root	index:Selection_18
-│ └─Selection_18	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03)
-│   └─IndexScan_17	10000.00	cop[tikv]	table:t1, partition:p20090404, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-└─IndexReader_22	3333.33	root	index:Selection_21
-  └─Selection_21	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03)
-    └─IndexScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+Union_9	10000.00	root	
+├─IndexReader_12	3333.33	root	index:Selection_11
+│ └─Selection_11	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03)
+│   └─IndexScan_10	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+├─IndexReader_15	3333.33	root	index:Selection_14
+│ └─Selection_14	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03)
+│   └─IndexScan_13	10000.00	cop[tikv]	table:t1, partition:p20090404, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+└─IndexReader_18	3333.33	root	index:Selection_17
+  └─Selection_17	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03)
+    └─IndexScan_16	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b < '2009-04-03 00:00:00';
 id	count	task	operator info
 Union_9	9970.00	root	
@@ -1753,34 +1687,28 @@ IndexReader_8	10.00	root	index:Selection_7
   └─IndexScan_6	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b >= '2009-04-03 00:00:00';
 id	count	task	operator info
-Union_10	13333.33	root	
-├─IndexReader_13	3333.33	root	index:Selection_12
-│ └─Selection_12	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00.000000)
-│   └─IndexScan_11	10000.00	cop[tikv]	table:t1, partition:p20090401, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_16	3333.33	root	index:Selection_15
-│ └─Selection_15	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00.000000)
-│   └─IndexScan_14	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_19	3333.33	root	index:Selection_18
-│ └─Selection_18	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00.000000)
-│   └─IndexScan_17	10000.00	cop[tikv]	table:t1, partition:p20090404, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-└─IndexReader_22	3333.33	root	index:Selection_21
-  └─Selection_21	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00.000000)
-    └─IndexScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+Union_9	10000.00	root	
+├─IndexReader_12	3333.33	root	index:Selection_11
+│ └─Selection_11	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00.000000)
+│   └─IndexScan_10	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+├─IndexReader_15	3333.33	root	index:Selection_14
+│ └─Selection_14	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00.000000)
+│   └─IndexScan_13	10000.00	cop[tikv]	table:t1, partition:p20090404, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+└─IndexReader_18	3333.33	root	index:Selection_17
+  └─Selection_17	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00.000000)
+    └─IndexScan_16	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b > '2009-04-03 00:00:00';
 id	count	task	operator info
-Union_10	13333.33	root	
-├─IndexReader_13	3333.33	root	index:Selection_12
-│ └─Selection_12	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00.000000)
-│   └─IndexScan_11	10000.00	cop[tikv]	table:t1, partition:p20090401, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_16	3333.33	root	index:Selection_15
-│ └─Selection_15	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00.000000)
-│   └─IndexScan_14	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_19	3333.33	root	index:Selection_18
-│ └─Selection_18	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00.000000)
-│   └─IndexScan_17	10000.00	cop[tikv]	table:t1, partition:p20090404, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-└─IndexReader_22	3333.33	root	index:Selection_21
-  └─Selection_21	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00.000000)
-    └─IndexScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+Union_9	10000.00	root	
+├─IndexReader_12	3333.33	root	index:Selection_11
+│ └─Selection_11	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00.000000)
+│   └─IndexScan_10	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+├─IndexReader_15	3333.33	root	index:Selection_14
+│ └─Selection_14	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00.000000)
+│   └─IndexScan_13	10000.00	cop[tikv]	table:t1, partition:p20090404, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+└─IndexReader_18	3333.33	root	index:Selection_17
+  └─Selection_17	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00.000000)
+    └─IndexScan_16	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b < '2009-04-02 23:59:59';
 id	count	task	operator info
 Union_8	6646.67	root	
@@ -1806,40 +1734,34 @@ IndexReader_8	0.00	root	index:Selection_7
   └─IndexScan_6	10000.00	cop[tikv]	table:t1, partition:p20090402, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b >= '2009-04-02 23:59:59';
 id	count	task	operator info
-Union_11	16666.67	root	
-├─IndexReader_14	3333.33	root	index:Selection_13
-│ └─Selection_13	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59.000000)
-│   └─IndexScan_12	10000.00	cop[tikv]	table:t1, partition:p20090401, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_17	3333.33	root	index:Selection_16
-│ └─Selection_16	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59.000000)
-│   └─IndexScan_15	10000.00	cop[tikv]	table:t1, partition:p20090402, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_20	3333.33	root	index:Selection_19
-│ └─Selection_19	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59.000000)
-│   └─IndexScan_18	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_23	3333.33	root	index:Selection_22
-│ └─Selection_22	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59.000000)
-│   └─IndexScan_21	10000.00	cop[tikv]	table:t1, partition:p20090404, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-└─IndexReader_26	3333.33	root	index:Selection_25
-  └─Selection_25	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59.000000)
-    └─IndexScan_24	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+Union_10	13333.33	root	
+├─IndexReader_13	3333.33	root	index:Selection_12
+│ └─Selection_12	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59.000000)
+│   └─IndexScan_11	10000.00	cop[tikv]	table:t1, partition:p20090402, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+├─IndexReader_16	3333.33	root	index:Selection_15
+│ └─Selection_15	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59.000000)
+│   └─IndexScan_14	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+├─IndexReader_19	3333.33	root	index:Selection_18
+│ └─Selection_18	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59.000000)
+│   └─IndexScan_17	10000.00	cop[tikv]	table:t1, partition:p20090404, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+└─IndexReader_22	3333.33	root	index:Selection_21
+  └─Selection_21	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59.000000)
+    └─IndexScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b > '2009-04-02 23:59:59';
 id	count	task	operator info
-Union_11	16666.67	root	
-├─IndexReader_14	3333.33	root	index:Selection_13
-│ └─Selection_13	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59.000000)
-│   └─IndexScan_12	10000.00	cop[tikv]	table:t1, partition:p20090401, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_17	3333.33	root	index:Selection_16
-│ └─Selection_16	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59.000000)
-│   └─IndexScan_15	10000.00	cop[tikv]	table:t1, partition:p20090402, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_20	3333.33	root	index:Selection_19
-│ └─Selection_19	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59.000000)
-│   └─IndexScan_18	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_23	3333.33	root	index:Selection_22
-│ └─Selection_22	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59.000000)
-│   └─IndexScan_21	10000.00	cop[tikv]	table:t1, partition:p20090404, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-└─IndexReader_26	3333.33	root	index:Selection_25
-  └─Selection_25	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59.000000)
-    └─IndexScan_24	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+Union_10	13333.33	root	
+├─IndexReader_13	3333.33	root	index:Selection_12
+│ └─Selection_12	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59.000000)
+│   └─IndexScan_11	10000.00	cop[tikv]	table:t1, partition:p20090402, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+├─IndexReader_16	3333.33	root	index:Selection_15
+│ └─Selection_15	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59.000000)
+│   └─IndexScan_14	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+├─IndexReader_19	3333.33	root	index:Selection_18
+│ └─Selection_18	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59.000000)
+│   └─IndexScan_17	10000.00	cop[tikv]	table:t1, partition:p20090404, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+└─IndexReader_22	3333.33	root	index:Selection_21
+  └─Selection_21	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59.000000)
+    └─IndexScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b < '2009-04-03';
 id	count	task	operator info
 Union_9	9970.00	root	
@@ -1871,34 +1793,28 @@ IndexReader_8	10.00	root	index:Selection_7
   └─IndexScan_6	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b >= '2009-04-03';
 id	count	task	operator info
-Union_10	13333.33	root	
-├─IndexReader_13	3333.33	root	index:Selection_12
-│ └─Selection_12	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00.000000)
-│   └─IndexScan_11	10000.00	cop[tikv]	table:t1, partition:p20090401, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_16	3333.33	root	index:Selection_15
-│ └─Selection_15	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00.000000)
-│   └─IndexScan_14	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_19	3333.33	root	index:Selection_18
-│ └─Selection_18	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00.000000)
-│   └─IndexScan_17	10000.00	cop[tikv]	table:t1, partition:p20090404, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-└─IndexReader_22	3333.33	root	index:Selection_21
-  └─Selection_21	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00.000000)
-    └─IndexScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+Union_9	10000.00	root	
+├─IndexReader_12	3333.33	root	index:Selection_11
+│ └─Selection_11	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00.000000)
+│   └─IndexScan_10	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+├─IndexReader_15	3333.33	root	index:Selection_14
+│ └─Selection_14	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00.000000)
+│   └─IndexScan_13	10000.00	cop[tikv]	table:t1, partition:p20090404, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+└─IndexReader_18	3333.33	root	index:Selection_17
+  └─Selection_17	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00.000000)
+    └─IndexScan_16	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b > '2009-04-03';
 id	count	task	operator info
-Union_10	13333.33	root	
-├─IndexReader_13	3333.33	root	index:Selection_12
-│ └─Selection_12	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00.000000)
-│   └─IndexScan_11	10000.00	cop[tikv]	table:t1, partition:p20090401, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_16	3333.33	root	index:Selection_15
-│ └─Selection_15	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00.000000)
-│   └─IndexScan_14	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_19	3333.33	root	index:Selection_18
-│ └─Selection_18	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00.000000)
-│   └─IndexScan_17	10000.00	cop[tikv]	table:t1, partition:p20090404, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-└─IndexReader_22	3333.33	root	index:Selection_21
-  └─Selection_21	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00.000000)
-    └─IndexScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+Union_9	10000.00	root	
+├─IndexReader_12	3333.33	root	index:Selection_11
+│ └─Selection_11	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00.000000)
+│   └─IndexScan_10	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+├─IndexReader_15	3333.33	root	index:Selection_14
+│ └─Selection_14	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00.000000)
+│   └─IndexScan_13	10000.00	cop[tikv]	table:t1, partition:p20090404, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+└─IndexReader_18	3333.33	root	index:Selection_17
+  └─Selection_17	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00.000000)
+    └─IndexScan_16	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b < CAST('2009-04-03 00:00:01' AS DATETIME);
 id	count	task	operator info
@@ -1934,35 +1850,29 @@ IndexReader_8	0.00	root	index:Selection_7
 EXPLAIN SELECT * FROM t1
 WHERE b >= CAST('2009-04-03 00:00:01' AS DATETIME);
 id	count	task	operator info
-Union_10	13333.33	root	
-├─IndexReader_13	3333.33	root	index:Selection_12
-│ └─Selection_12	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:01)
-│   └─IndexScan_11	10000.00	cop[tikv]	table:t1, partition:p20090401, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_16	3333.33	root	index:Selection_15
-│ └─Selection_15	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:01)
-│   └─IndexScan_14	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_19	3333.33	root	index:Selection_18
-│ └─Selection_18	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:01)
-│   └─IndexScan_17	10000.00	cop[tikv]	table:t1, partition:p20090404, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-└─IndexReader_22	3333.33	root	index:Selection_21
-  └─Selection_21	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:01)
-    └─IndexScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+Union_9	10000.00	root	
+├─IndexReader_12	3333.33	root	index:Selection_11
+│ └─Selection_11	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:01)
+│   └─IndexScan_10	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+├─IndexReader_15	3333.33	root	index:Selection_14
+│ └─Selection_14	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:01)
+│   └─IndexScan_13	10000.00	cop[tikv]	table:t1, partition:p20090404, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+└─IndexReader_18	3333.33	root	index:Selection_17
+  └─Selection_17	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:01)
+    └─IndexScan_16	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b > CAST('2009-04-03 00:00:01' AS DATETIME);
 id	count	task	operator info
-Union_10	13333.33	root	
-├─IndexReader_13	3333.33	root	index:Selection_12
-│ └─Selection_12	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:01)
-│   └─IndexScan_11	10000.00	cop[tikv]	table:t1, partition:p20090401, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_16	3333.33	root	index:Selection_15
-│ └─Selection_15	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:01)
-│   └─IndexScan_14	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_19	3333.33	root	index:Selection_18
-│ └─Selection_18	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:01)
-│   └─IndexScan_17	10000.00	cop[tikv]	table:t1, partition:p20090404, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-└─IndexReader_22	3333.33	root	index:Selection_21
-  └─Selection_21	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:01)
-    └─IndexScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+Union_9	10000.00	root	
+├─IndexReader_12	3333.33	root	index:Selection_11
+│ └─Selection_11	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:01)
+│   └─IndexScan_10	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+├─IndexReader_15	3333.33	root	index:Selection_14
+│ └─Selection_14	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:01)
+│   └─IndexScan_13	10000.00	cop[tikv]	table:t1, partition:p20090404, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+└─IndexReader_18	3333.33	root	index:Selection_17
+  └─Selection_17	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:01)
+    └─IndexScan_16	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b < CAST('2009-04-02 23:59:58' AS DATETIME);
 id	count	task	operator info
@@ -1992,41 +1902,35 @@ IndexReader_8	0.00	root	index:Selection_7
 EXPLAIN SELECT * FROM t1
 WHERE b >= CAST('2009-04-02 23:59:58' AS DATETIME);
 id	count	task	operator info
-Union_11	16666.67	root	
-├─IndexReader_14	3333.33	root	index:Selection_13
-│ └─Selection_13	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:58)
-│   └─IndexScan_12	10000.00	cop[tikv]	table:t1, partition:p20090401, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_17	3333.33	root	index:Selection_16
-│ └─Selection_16	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:58)
-│   └─IndexScan_15	10000.00	cop[tikv]	table:t1, partition:p20090402, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_20	3333.33	root	index:Selection_19
-│ └─Selection_19	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:58)
-│   └─IndexScan_18	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_23	3333.33	root	index:Selection_22
-│ └─Selection_22	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:58)
-│   └─IndexScan_21	10000.00	cop[tikv]	table:t1, partition:p20090404, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-└─IndexReader_26	3333.33	root	index:Selection_25
-  └─Selection_25	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:58)
-    └─IndexScan_24	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+Union_10	13333.33	root	
+├─IndexReader_13	3333.33	root	index:Selection_12
+│ └─Selection_12	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:58)
+│   └─IndexScan_11	10000.00	cop[tikv]	table:t1, partition:p20090402, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+├─IndexReader_16	3333.33	root	index:Selection_15
+│ └─Selection_15	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:58)
+│   └─IndexScan_14	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+├─IndexReader_19	3333.33	root	index:Selection_18
+│ └─Selection_18	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:58)
+│   └─IndexScan_17	10000.00	cop[tikv]	table:t1, partition:p20090404, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+└─IndexReader_22	3333.33	root	index:Selection_21
+  └─Selection_21	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:58)
+    └─IndexScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b > CAST('2009-04-02 23:59:58' AS DATETIME);
 id	count	task	operator info
-Union_11	16666.67	root	
-├─IndexReader_14	3333.33	root	index:Selection_13
-│ └─Selection_13	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:58)
-│   └─IndexScan_12	10000.00	cop[tikv]	table:t1, partition:p20090401, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_17	3333.33	root	index:Selection_16
-│ └─Selection_16	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:58)
-│   └─IndexScan_15	10000.00	cop[tikv]	table:t1, partition:p20090402, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_20	3333.33	root	index:Selection_19
-│ └─Selection_19	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:58)
-│   └─IndexScan_18	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-├─IndexReader_23	3333.33	root	index:Selection_22
-│ └─Selection_22	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:58)
-│   └─IndexScan_21	10000.00	cop[tikv]	table:t1, partition:p20090404, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
-└─IndexReader_26	3333.33	root	index:Selection_25
-  └─Selection_25	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:58)
-    └─IndexScan_24	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+Union_10	13333.33	root	
+├─IndexReader_13	3333.33	root	index:Selection_12
+│ └─Selection_12	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:58)
+│   └─IndexScan_11	10000.00	cop[tikv]	table:t1, partition:p20090402, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+├─IndexReader_16	3333.33	root	index:Selection_15
+│ └─Selection_15	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:58)
+│   └─IndexScan_14	10000.00	cop[tikv]	table:t1, partition:p20090403, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+├─IndexReader_19	3333.33	root	index:Selection_18
+│ └─Selection_18	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:58)
+│   └─IndexScan_17	10000.00	cop[tikv]	table:t1, partition:p20090404, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+└─IndexReader_22	3333.33	root	index:Selection_21
+  └─Selection_21	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:58)
+    └─IndexScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
 DROP TABLE t1;
 # Test with DATETIME column NULL
 CREATE TABLE t1 (
@@ -2073,34 +1977,28 @@ TableReader_8	10.00	root	data:Selection_7
   └─TableScan_6	10000.00	cop[tikv]	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b >= CAST('2009-04-03' AS DATETIME);
 id	count	task	operator info
-Union_10	13333.33	root	
-├─TableReader_13	3333.33	root	data:Selection_12
-│ └─Selection_12	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00)
-│   └─TableScan_11	10000.00	cop[tikv]	table:t1, partition:p20090401, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_16	3333.33	root	data:Selection_15
-│ └─Selection_15	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00)
-│   └─TableScan_14	10000.00	cop[tikv]	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_19	3333.33	root	data:Selection_18
-│ └─Selection_18	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00)
-│   └─TableScan_17	10000.00	cop[tikv]	table:t1, partition:p20090404, range:[-inf,+inf], keep order:false, stats:pseudo
-└─TableReader_22	3333.33	root	data:Selection_21
-  └─Selection_21	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00)
-    └─TableScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, range:[-inf,+inf], keep order:false, stats:pseudo
+Union_9	10000.00	root	
+├─TableReader_12	3333.33	root	data:Selection_11
+│ └─Selection_11	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00)
+│   └─TableScan_10	10000.00	cop[tikv]	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
+├─TableReader_15	3333.33	root	data:Selection_14
+│ └─Selection_14	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00)
+│   └─TableScan_13	10000.00	cop[tikv]	table:t1, partition:p20090404, range:[-inf,+inf], keep order:false, stats:pseudo
+└─TableReader_18	3333.33	root	data:Selection_17
+  └─Selection_17	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00)
+    └─TableScan_16	10000.00	cop[tikv]	table:t1, partition:p20090405, range:[-inf,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b > CAST('2009-04-03' AS DATETIME);
 id	count	task	operator info
-Union_10	13333.33	root	
-├─TableReader_13	3333.33	root	data:Selection_12
-│ └─Selection_12	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00)
-│   └─TableScan_11	10000.00	cop[tikv]	table:t1, partition:p20090401, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_16	3333.33	root	data:Selection_15
-│ └─Selection_15	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00)
-│   └─TableScan_14	10000.00	cop[tikv]	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_19	3333.33	root	data:Selection_18
-│ └─Selection_18	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00)
-│   └─TableScan_17	10000.00	cop[tikv]	table:t1, partition:p20090404, range:[-inf,+inf], keep order:false, stats:pseudo
-└─TableReader_22	3333.33	root	data:Selection_21
-  └─Selection_21	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00)
-    └─TableScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, range:[-inf,+inf], keep order:false, stats:pseudo
+Union_9	10000.00	root	
+├─TableReader_12	3333.33	root	data:Selection_11
+│ └─Selection_11	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00)
+│   └─TableScan_10	10000.00	cop[tikv]	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
+├─TableReader_15	3333.33	root	data:Selection_14
+│ └─Selection_14	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00)
+│   └─TableScan_13	10000.00	cop[tikv]	table:t1, partition:p20090404, range:[-inf,+inf], keep order:false, stats:pseudo
+└─TableReader_18	3333.33	root	data:Selection_17
+  └─Selection_17	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00)
+    └─TableScan_16	10000.00	cop[tikv]	table:t1, partition:p20090405, range:[-inf,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b < CAST('2009-04-02 23:59:59' AS DATETIME);
 id	count	task	operator info
@@ -2130,41 +2028,35 @@ TableReader_8	10.00	root	data:Selection_7
 EXPLAIN SELECT * FROM t1
 WHERE b >= CAST('2009-04-02 23:59:59' AS DATETIME);
 id	count	task	operator info
-Union_11	16666.67	root	
-├─TableReader_14	3333.33	root	data:Selection_13
-│ └─Selection_13	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59)
-│   └─TableScan_12	10000.00	cop[tikv]	table:t1, partition:p20090401, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_17	3333.33	root	data:Selection_16
-│ └─Selection_16	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59)
-│   └─TableScan_15	10000.00	cop[tikv]	table:t1, partition:p20090402, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_20	3333.33	root	data:Selection_19
-│ └─Selection_19	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59)
-│   └─TableScan_18	10000.00	cop[tikv]	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_23	3333.33	root	data:Selection_22
-│ └─Selection_22	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59)
-│   └─TableScan_21	10000.00	cop[tikv]	table:t1, partition:p20090404, range:[-inf,+inf], keep order:false, stats:pseudo
-└─TableReader_26	3333.33	root	data:Selection_25
-  └─Selection_25	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59)
-    └─TableScan_24	10000.00	cop[tikv]	table:t1, partition:p20090405, range:[-inf,+inf], keep order:false, stats:pseudo
+Union_10	13333.33	root	
+├─TableReader_13	3333.33	root	data:Selection_12
+│ └─Selection_12	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59)
+│   └─TableScan_11	10000.00	cop[tikv]	table:t1, partition:p20090402, range:[-inf,+inf], keep order:false, stats:pseudo
+├─TableReader_16	3333.33	root	data:Selection_15
+│ └─Selection_15	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59)
+│   └─TableScan_14	10000.00	cop[tikv]	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
+├─TableReader_19	3333.33	root	data:Selection_18
+│ └─Selection_18	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59)
+│   └─TableScan_17	10000.00	cop[tikv]	table:t1, partition:p20090404, range:[-inf,+inf], keep order:false, stats:pseudo
+└─TableReader_22	3333.33	root	data:Selection_21
+  └─Selection_21	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59)
+    └─TableScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, range:[-inf,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b > CAST('2009-04-02 23:59:59' AS DATETIME);
 id	count	task	operator info
-Union_11	16666.67	root	
-├─TableReader_14	3333.33	root	data:Selection_13
-│ └─Selection_13	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59)
-│   └─TableScan_12	10000.00	cop[tikv]	table:t1, partition:p20090401, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_17	3333.33	root	data:Selection_16
-│ └─Selection_16	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59)
-│   └─TableScan_15	10000.00	cop[tikv]	table:t1, partition:p20090402, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_20	3333.33	root	data:Selection_19
-│ └─Selection_19	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59)
-│   └─TableScan_18	10000.00	cop[tikv]	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_23	3333.33	root	data:Selection_22
-│ └─Selection_22	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59)
-│   └─TableScan_21	10000.00	cop[tikv]	table:t1, partition:p20090404, range:[-inf,+inf], keep order:false, stats:pseudo
-└─TableReader_26	3333.33	root	data:Selection_25
-  └─Selection_25	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59)
-    └─TableScan_24	10000.00	cop[tikv]	table:t1, partition:p20090405, range:[-inf,+inf], keep order:false, stats:pseudo
+Union_10	13333.33	root	
+├─TableReader_13	3333.33	root	data:Selection_12
+│ └─Selection_12	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59)
+│   └─TableScan_11	10000.00	cop[tikv]	table:t1, partition:p20090402, range:[-inf,+inf], keep order:false, stats:pseudo
+├─TableReader_16	3333.33	root	data:Selection_15
+│ └─Selection_15	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59)
+│   └─TableScan_14	10000.00	cop[tikv]	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
+├─TableReader_19	3333.33	root	data:Selection_18
+│ └─Selection_18	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59)
+│   └─TableScan_17	10000.00	cop[tikv]	table:t1, partition:p20090404, range:[-inf,+inf], keep order:false, stats:pseudo
+└─TableReader_22	3333.33	root	data:Selection_21
+  └─Selection_21	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59)
+    └─TableScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, range:[-inf,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b < CAST('2009-04-03' AS DATE);
 id	count	task	operator info
 Union_9	9970.00	root	
@@ -2196,34 +2088,28 @@ TableReader_8	10.00	root	data:Selection_7
   └─TableScan_6	10000.00	cop[tikv]	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b >= CAST('2009-04-03' AS DATE);
 id	count	task	operator info
-Union_10	13333.33	root	
-├─TableReader_13	3333.33	root	data:Selection_12
-│ └─Selection_12	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03)
-│   └─TableScan_11	10000.00	cop[tikv]	table:t1, partition:p20090401, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_16	3333.33	root	data:Selection_15
-│ └─Selection_15	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03)
-│   └─TableScan_14	10000.00	cop[tikv]	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_19	3333.33	root	data:Selection_18
-│ └─Selection_18	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03)
-│   └─TableScan_17	10000.00	cop[tikv]	table:t1, partition:p20090404, range:[-inf,+inf], keep order:false, stats:pseudo
-└─TableReader_22	3333.33	root	data:Selection_21
-  └─Selection_21	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03)
-    └─TableScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, range:[-inf,+inf], keep order:false, stats:pseudo
+Union_9	10000.00	root	
+├─TableReader_12	3333.33	root	data:Selection_11
+│ └─Selection_11	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03)
+│   └─TableScan_10	10000.00	cop[tikv]	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
+├─TableReader_15	3333.33	root	data:Selection_14
+│ └─Selection_14	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03)
+│   └─TableScan_13	10000.00	cop[tikv]	table:t1, partition:p20090404, range:[-inf,+inf], keep order:false, stats:pseudo
+└─TableReader_18	3333.33	root	data:Selection_17
+  └─Selection_17	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03)
+    └─TableScan_16	10000.00	cop[tikv]	table:t1, partition:p20090405, range:[-inf,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b > CAST('2009-04-03' AS DATE);
 id	count	task	operator info
-Union_10	13333.33	root	
-├─TableReader_13	3333.33	root	data:Selection_12
-│ └─Selection_12	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03)
-│   └─TableScan_11	10000.00	cop[tikv]	table:t1, partition:p20090401, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_16	3333.33	root	data:Selection_15
-│ └─Selection_15	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03)
-│   └─TableScan_14	10000.00	cop[tikv]	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_19	3333.33	root	data:Selection_18
-│ └─Selection_18	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03)
-│   └─TableScan_17	10000.00	cop[tikv]	table:t1, partition:p20090404, range:[-inf,+inf], keep order:false, stats:pseudo
-└─TableReader_22	3333.33	root	data:Selection_21
-  └─Selection_21	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03)
-    └─TableScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, range:[-inf,+inf], keep order:false, stats:pseudo
+Union_9	10000.00	root	
+├─TableReader_12	3333.33	root	data:Selection_11
+│ └─Selection_11	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03)
+│   └─TableScan_10	10000.00	cop[tikv]	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
+├─TableReader_15	3333.33	root	data:Selection_14
+│ └─Selection_14	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03)
+│   └─TableScan_13	10000.00	cop[tikv]	table:t1, partition:p20090404, range:[-inf,+inf], keep order:false, stats:pseudo
+└─TableReader_18	3333.33	root	data:Selection_17
+  └─Selection_17	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03)
+    └─TableScan_16	10000.00	cop[tikv]	table:t1, partition:p20090405, range:[-inf,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b < '2009-04-03 00:00:00';
 id	count	task	operator info
 Union_9	9970.00	root	
@@ -2255,34 +2141,28 @@ TableReader_8	10.00	root	data:Selection_7
   └─TableScan_6	10000.00	cop[tikv]	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b >= '2009-04-03 00:00:00';
 id	count	task	operator info
-Union_10	13333.33	root	
-├─TableReader_13	3333.33	root	data:Selection_12
-│ └─Selection_12	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00.000000)
-│   └─TableScan_11	10000.00	cop[tikv]	table:t1, partition:p20090401, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_16	3333.33	root	data:Selection_15
-│ └─Selection_15	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00.000000)
-│   └─TableScan_14	10000.00	cop[tikv]	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_19	3333.33	root	data:Selection_18
-│ └─Selection_18	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00.000000)
-│   └─TableScan_17	10000.00	cop[tikv]	table:t1, partition:p20090404, range:[-inf,+inf], keep order:false, stats:pseudo
-└─TableReader_22	3333.33	root	data:Selection_21
-  └─Selection_21	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00.000000)
-    └─TableScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, range:[-inf,+inf], keep order:false, stats:pseudo
+Union_9	10000.00	root	
+├─TableReader_12	3333.33	root	data:Selection_11
+│ └─Selection_11	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00.000000)
+│   └─TableScan_10	10000.00	cop[tikv]	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
+├─TableReader_15	3333.33	root	data:Selection_14
+│ └─Selection_14	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00.000000)
+│   └─TableScan_13	10000.00	cop[tikv]	table:t1, partition:p20090404, range:[-inf,+inf], keep order:false, stats:pseudo
+└─TableReader_18	3333.33	root	data:Selection_17
+  └─Selection_17	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00.000000)
+    └─TableScan_16	10000.00	cop[tikv]	table:t1, partition:p20090405, range:[-inf,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b > '2009-04-03 00:00:00';
 id	count	task	operator info
-Union_10	13333.33	root	
-├─TableReader_13	3333.33	root	data:Selection_12
-│ └─Selection_12	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00.000000)
-│   └─TableScan_11	10000.00	cop[tikv]	table:t1, partition:p20090401, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_16	3333.33	root	data:Selection_15
-│ └─Selection_15	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00.000000)
-│   └─TableScan_14	10000.00	cop[tikv]	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_19	3333.33	root	data:Selection_18
-│ └─Selection_18	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00.000000)
-│   └─TableScan_17	10000.00	cop[tikv]	table:t1, partition:p20090404, range:[-inf,+inf], keep order:false, stats:pseudo
-└─TableReader_22	3333.33	root	data:Selection_21
-  └─Selection_21	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00.000000)
-    └─TableScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, range:[-inf,+inf], keep order:false, stats:pseudo
+Union_9	10000.00	root	
+├─TableReader_12	3333.33	root	data:Selection_11
+│ └─Selection_11	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00.000000)
+│   └─TableScan_10	10000.00	cop[tikv]	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
+├─TableReader_15	3333.33	root	data:Selection_14
+│ └─Selection_14	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00.000000)
+│   └─TableScan_13	10000.00	cop[tikv]	table:t1, partition:p20090404, range:[-inf,+inf], keep order:false, stats:pseudo
+└─TableReader_18	3333.33	root	data:Selection_17
+  └─Selection_17	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00.000000)
+    └─TableScan_16	10000.00	cop[tikv]	table:t1, partition:p20090405, range:[-inf,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b < '2009-04-02 23:59:59';
 id	count	task	operator info
 Union_8	6646.67	root	
@@ -2308,40 +2188,34 @@ TableReader_8	10.00	root	data:Selection_7
   └─TableScan_6	10000.00	cop[tikv]	table:t1, partition:p20090402, range:[-inf,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b >= '2009-04-02 23:59:59';
 id	count	task	operator info
-Union_11	16666.67	root	
-├─TableReader_14	3333.33	root	data:Selection_13
-│ └─Selection_13	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59.000000)
-│   └─TableScan_12	10000.00	cop[tikv]	table:t1, partition:p20090401, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_17	3333.33	root	data:Selection_16
-│ └─Selection_16	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59.000000)
-│   └─TableScan_15	10000.00	cop[tikv]	table:t1, partition:p20090402, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_20	3333.33	root	data:Selection_19
-│ └─Selection_19	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59.000000)
-│   └─TableScan_18	10000.00	cop[tikv]	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_23	3333.33	root	data:Selection_22
-│ └─Selection_22	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59.000000)
-│   └─TableScan_21	10000.00	cop[tikv]	table:t1, partition:p20090404, range:[-inf,+inf], keep order:false, stats:pseudo
-└─TableReader_26	3333.33	root	data:Selection_25
-  └─Selection_25	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59.000000)
-    └─TableScan_24	10000.00	cop[tikv]	table:t1, partition:p20090405, range:[-inf,+inf], keep order:false, stats:pseudo
+Union_10	13333.33	root	
+├─TableReader_13	3333.33	root	data:Selection_12
+│ └─Selection_12	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59.000000)
+│   └─TableScan_11	10000.00	cop[tikv]	table:t1, partition:p20090402, range:[-inf,+inf], keep order:false, stats:pseudo
+├─TableReader_16	3333.33	root	data:Selection_15
+│ └─Selection_15	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59.000000)
+│   └─TableScan_14	10000.00	cop[tikv]	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
+├─TableReader_19	3333.33	root	data:Selection_18
+│ └─Selection_18	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59.000000)
+│   └─TableScan_17	10000.00	cop[tikv]	table:t1, partition:p20090404, range:[-inf,+inf], keep order:false, stats:pseudo
+└─TableReader_22	3333.33	root	data:Selection_21
+  └─Selection_21	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59.000000)
+    └─TableScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, range:[-inf,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b > '2009-04-02 23:59:59';
 id	count	task	operator info
-Union_11	16666.67	root	
-├─TableReader_14	3333.33	root	data:Selection_13
-│ └─Selection_13	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59.000000)
-│   └─TableScan_12	10000.00	cop[tikv]	table:t1, partition:p20090401, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_17	3333.33	root	data:Selection_16
-│ └─Selection_16	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59.000000)
-│   └─TableScan_15	10000.00	cop[tikv]	table:t1, partition:p20090402, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_20	3333.33	root	data:Selection_19
-│ └─Selection_19	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59.000000)
-│   └─TableScan_18	10000.00	cop[tikv]	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_23	3333.33	root	data:Selection_22
-│ └─Selection_22	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59.000000)
-│   └─TableScan_21	10000.00	cop[tikv]	table:t1, partition:p20090404, range:[-inf,+inf], keep order:false, stats:pseudo
-└─TableReader_26	3333.33	root	data:Selection_25
-  └─Selection_25	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59.000000)
-    └─TableScan_24	10000.00	cop[tikv]	table:t1, partition:p20090405, range:[-inf,+inf], keep order:false, stats:pseudo
+Union_10	13333.33	root	
+├─TableReader_13	3333.33	root	data:Selection_12
+│ └─Selection_12	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59.000000)
+│   └─TableScan_11	10000.00	cop[tikv]	table:t1, partition:p20090402, range:[-inf,+inf], keep order:false, stats:pseudo
+├─TableReader_16	3333.33	root	data:Selection_15
+│ └─Selection_15	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59.000000)
+│   └─TableScan_14	10000.00	cop[tikv]	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
+├─TableReader_19	3333.33	root	data:Selection_18
+│ └─Selection_18	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59.000000)
+│   └─TableScan_17	10000.00	cop[tikv]	table:t1, partition:p20090404, range:[-inf,+inf], keep order:false, stats:pseudo
+└─TableReader_22	3333.33	root	data:Selection_21
+  └─Selection_21	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59.000000)
+    └─TableScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, range:[-inf,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b < '2009-04-03';
 id	count	task	operator info
 Union_9	9970.00	root	
@@ -2373,34 +2247,28 @@ TableReader_8	10.00	root	data:Selection_7
   └─TableScan_6	10000.00	cop[tikv]	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b >= '2009-04-03';
 id	count	task	operator info
-Union_10	13333.33	root	
-├─TableReader_13	3333.33	root	data:Selection_12
-│ └─Selection_12	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00.000000)
-│   └─TableScan_11	10000.00	cop[tikv]	table:t1, partition:p20090401, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_16	3333.33	root	data:Selection_15
-│ └─Selection_15	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00.000000)
-│   └─TableScan_14	10000.00	cop[tikv]	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_19	3333.33	root	data:Selection_18
-│ └─Selection_18	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00.000000)
-│   └─TableScan_17	10000.00	cop[tikv]	table:t1, partition:p20090404, range:[-inf,+inf], keep order:false, stats:pseudo
-└─TableReader_22	3333.33	root	data:Selection_21
-  └─Selection_21	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00.000000)
-    └─TableScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, range:[-inf,+inf], keep order:false, stats:pseudo
+Union_9	10000.00	root	
+├─TableReader_12	3333.33	root	data:Selection_11
+│ └─Selection_11	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00.000000)
+│   └─TableScan_10	10000.00	cop[tikv]	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
+├─TableReader_15	3333.33	root	data:Selection_14
+│ └─Selection_14	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00.000000)
+│   └─TableScan_13	10000.00	cop[tikv]	table:t1, partition:p20090404, range:[-inf,+inf], keep order:false, stats:pseudo
+└─TableReader_18	3333.33	root	data:Selection_17
+  └─Selection_17	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00.000000)
+    └─TableScan_16	10000.00	cop[tikv]	table:t1, partition:p20090405, range:[-inf,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b > '2009-04-03';
 id	count	task	operator info
-Union_10	13333.33	root	
-├─TableReader_13	3333.33	root	data:Selection_12
-│ └─Selection_12	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00.000000)
-│   └─TableScan_11	10000.00	cop[tikv]	table:t1, partition:p20090401, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_16	3333.33	root	data:Selection_15
-│ └─Selection_15	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00.000000)
-│   └─TableScan_14	10000.00	cop[tikv]	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_19	3333.33	root	data:Selection_18
-│ └─Selection_18	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00.000000)
-│   └─TableScan_17	10000.00	cop[tikv]	table:t1, partition:p20090404, range:[-inf,+inf], keep order:false, stats:pseudo
-└─TableReader_22	3333.33	root	data:Selection_21
-  └─Selection_21	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00.000000)
-    └─TableScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, range:[-inf,+inf], keep order:false, stats:pseudo
+Union_9	10000.00	root	
+├─TableReader_12	3333.33	root	data:Selection_11
+│ └─Selection_11	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00.000000)
+│   └─TableScan_10	10000.00	cop[tikv]	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
+├─TableReader_15	3333.33	root	data:Selection_14
+│ └─Selection_14	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00.000000)
+│   └─TableScan_13	10000.00	cop[tikv]	table:t1, partition:p20090404, range:[-inf,+inf], keep order:false, stats:pseudo
+└─TableReader_18	3333.33	root	data:Selection_17
+  └─Selection_17	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00.000000)
+    └─TableScan_16	10000.00	cop[tikv]	table:t1, partition:p20090405, range:[-inf,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b < CAST('2009-04-03 00:00:01' AS DATETIME);
 id	count	task	operator info
@@ -2436,35 +2304,29 @@ TableReader_8	10.00	root	data:Selection_7
 EXPLAIN SELECT * FROM t1
 WHERE b >= CAST('2009-04-03 00:00:01' AS DATETIME);
 id	count	task	operator info
-Union_10	13333.33	root	
-├─TableReader_13	3333.33	root	data:Selection_12
-│ └─Selection_12	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:01)
-│   └─TableScan_11	10000.00	cop[tikv]	table:t1, partition:p20090401, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_16	3333.33	root	data:Selection_15
-│ └─Selection_15	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:01)
-│   └─TableScan_14	10000.00	cop[tikv]	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_19	3333.33	root	data:Selection_18
-│ └─Selection_18	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:01)
-│   └─TableScan_17	10000.00	cop[tikv]	table:t1, partition:p20090404, range:[-inf,+inf], keep order:false, stats:pseudo
-└─TableReader_22	3333.33	root	data:Selection_21
-  └─Selection_21	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:01)
-    └─TableScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, range:[-inf,+inf], keep order:false, stats:pseudo
+Union_9	10000.00	root	
+├─TableReader_12	3333.33	root	data:Selection_11
+│ └─Selection_11	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:01)
+│   └─TableScan_10	10000.00	cop[tikv]	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
+├─TableReader_15	3333.33	root	data:Selection_14
+│ └─Selection_14	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:01)
+│   └─TableScan_13	10000.00	cop[tikv]	table:t1, partition:p20090404, range:[-inf,+inf], keep order:false, stats:pseudo
+└─TableReader_18	3333.33	root	data:Selection_17
+  └─Selection_17	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:01)
+    └─TableScan_16	10000.00	cop[tikv]	table:t1, partition:p20090405, range:[-inf,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b > CAST('2009-04-03 00:00:01' AS DATETIME);
 id	count	task	operator info
-Union_10	13333.33	root	
-├─TableReader_13	3333.33	root	data:Selection_12
-│ └─Selection_12	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:01)
-│   └─TableScan_11	10000.00	cop[tikv]	table:t1, partition:p20090401, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_16	3333.33	root	data:Selection_15
-│ └─Selection_15	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:01)
-│   └─TableScan_14	10000.00	cop[tikv]	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_19	3333.33	root	data:Selection_18
-│ └─Selection_18	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:01)
-│   └─TableScan_17	10000.00	cop[tikv]	table:t1, partition:p20090404, range:[-inf,+inf], keep order:false, stats:pseudo
-└─TableReader_22	3333.33	root	data:Selection_21
-  └─Selection_21	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:01)
-    └─TableScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, range:[-inf,+inf], keep order:false, stats:pseudo
+Union_9	10000.00	root	
+├─TableReader_12	3333.33	root	data:Selection_11
+│ └─Selection_11	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:01)
+│   └─TableScan_10	10000.00	cop[tikv]	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
+├─TableReader_15	3333.33	root	data:Selection_14
+│ └─Selection_14	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:01)
+│   └─TableScan_13	10000.00	cop[tikv]	table:t1, partition:p20090404, range:[-inf,+inf], keep order:false, stats:pseudo
+└─TableReader_18	3333.33	root	data:Selection_17
+  └─Selection_17	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:01)
+    └─TableScan_16	10000.00	cop[tikv]	table:t1, partition:p20090405, range:[-inf,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b < CAST('2009-04-02 23:59:58' AS DATETIME);
 id	count	task	operator info
@@ -2494,41 +2356,35 @@ TableReader_8	10.00	root	data:Selection_7
 EXPLAIN SELECT * FROM t1
 WHERE b >= CAST('2009-04-02 23:59:58' AS DATETIME);
 id	count	task	operator info
-Union_11	16666.67	root	
-├─TableReader_14	3333.33	root	data:Selection_13
-│ └─Selection_13	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:58)
-│   └─TableScan_12	10000.00	cop[tikv]	table:t1, partition:p20090401, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_17	3333.33	root	data:Selection_16
-│ └─Selection_16	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:58)
-│   └─TableScan_15	10000.00	cop[tikv]	table:t1, partition:p20090402, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_20	3333.33	root	data:Selection_19
-│ └─Selection_19	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:58)
-│   └─TableScan_18	10000.00	cop[tikv]	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_23	3333.33	root	data:Selection_22
-│ └─Selection_22	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:58)
-│   └─TableScan_21	10000.00	cop[tikv]	table:t1, partition:p20090404, range:[-inf,+inf], keep order:false, stats:pseudo
-└─TableReader_26	3333.33	root	data:Selection_25
-  └─Selection_25	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:58)
-    └─TableScan_24	10000.00	cop[tikv]	table:t1, partition:p20090405, range:[-inf,+inf], keep order:false, stats:pseudo
+Union_10	13333.33	root	
+├─TableReader_13	3333.33	root	data:Selection_12
+│ └─Selection_12	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:58)
+│   └─TableScan_11	10000.00	cop[tikv]	table:t1, partition:p20090402, range:[-inf,+inf], keep order:false, stats:pseudo
+├─TableReader_16	3333.33	root	data:Selection_15
+│ └─Selection_15	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:58)
+│   └─TableScan_14	10000.00	cop[tikv]	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
+├─TableReader_19	3333.33	root	data:Selection_18
+│ └─Selection_18	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:58)
+│   └─TableScan_17	10000.00	cop[tikv]	table:t1, partition:p20090404, range:[-inf,+inf], keep order:false, stats:pseudo
+└─TableReader_22	3333.33	root	data:Selection_21
+  └─Selection_21	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:58)
+    └─TableScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, range:[-inf,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b > CAST('2009-04-02 23:59:58' AS DATETIME);
 id	count	task	operator info
-Union_11	16666.67	root	
-├─TableReader_14	3333.33	root	data:Selection_13
-│ └─Selection_13	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:58)
-│   └─TableScan_12	10000.00	cop[tikv]	table:t1, partition:p20090401, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_17	3333.33	root	data:Selection_16
-│ └─Selection_16	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:58)
-│   └─TableScan_15	10000.00	cop[tikv]	table:t1, partition:p20090402, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_20	3333.33	root	data:Selection_19
-│ └─Selection_19	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:58)
-│   └─TableScan_18	10000.00	cop[tikv]	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_23	3333.33	root	data:Selection_22
-│ └─Selection_22	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:58)
-│   └─TableScan_21	10000.00	cop[tikv]	table:t1, partition:p20090404, range:[-inf,+inf], keep order:false, stats:pseudo
-└─TableReader_26	3333.33	root	data:Selection_25
-  └─Selection_25	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:58)
-    └─TableScan_24	10000.00	cop[tikv]	table:t1, partition:p20090405, range:[-inf,+inf], keep order:false, stats:pseudo
+Union_10	13333.33	root	
+├─TableReader_13	3333.33	root	data:Selection_12
+│ └─Selection_12	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:58)
+│   └─TableScan_11	10000.00	cop[tikv]	table:t1, partition:p20090402, range:[-inf,+inf], keep order:false, stats:pseudo
+├─TableReader_16	3333.33	root	data:Selection_15
+│ └─Selection_15	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:58)
+│   └─TableScan_14	10000.00	cop[tikv]	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
+├─TableReader_19	3333.33	root	data:Selection_18
+│ └─Selection_18	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:58)
+│   └─TableScan_17	10000.00	cop[tikv]	table:t1, partition:p20090404, range:[-inf,+inf], keep order:false, stats:pseudo
+└─TableReader_22	3333.33	root	data:Selection_21
+  └─Selection_21	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:58)
+    └─TableScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, range:[-inf,+inf], keep order:false, stats:pseudo
 DROP TABLE t1;
 # Test with DATE column NULL
 CREATE TABLE t1 (
@@ -2575,34 +2431,28 @@ TableReader_8	10.00	root	data:Selection_7
   └─TableScan_6	10000.00	cop[tikv]	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b >= CAST('2009-04-03' AS DATETIME);
 id	count	task	operator info
-Union_10	13333.33	root	
-├─TableReader_13	3333.33	root	data:Selection_12
-│ └─Selection_12	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00)
-│   └─TableScan_11	10000.00	cop[tikv]	table:t1, partition:p20090401, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_16	3333.33	root	data:Selection_15
-│ └─Selection_15	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00)
-│   └─TableScan_14	10000.00	cop[tikv]	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_19	3333.33	root	data:Selection_18
-│ └─Selection_18	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00)
-│   └─TableScan_17	10000.00	cop[tikv]	table:t1, partition:p20090404, range:[-inf,+inf], keep order:false, stats:pseudo
-└─TableReader_22	3333.33	root	data:Selection_21
-  └─Selection_21	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00)
-    └─TableScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, range:[-inf,+inf], keep order:false, stats:pseudo
+Union_9	10000.00	root	
+├─TableReader_12	3333.33	root	data:Selection_11
+│ └─Selection_11	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00)
+│   └─TableScan_10	10000.00	cop[tikv]	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
+├─TableReader_15	3333.33	root	data:Selection_14
+│ └─Selection_14	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00)
+│   └─TableScan_13	10000.00	cop[tikv]	table:t1, partition:p20090404, range:[-inf,+inf], keep order:false, stats:pseudo
+└─TableReader_18	3333.33	root	data:Selection_17
+  └─Selection_17	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00)
+    └─TableScan_16	10000.00	cop[tikv]	table:t1, partition:p20090405, range:[-inf,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b > CAST('2009-04-03' AS DATETIME);
 id	count	task	operator info
-Union_10	13333.33	root	
-├─TableReader_13	3333.33	root	data:Selection_12
-│ └─Selection_12	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00)
-│   └─TableScan_11	10000.00	cop[tikv]	table:t1, partition:p20090401, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_16	3333.33	root	data:Selection_15
-│ └─Selection_15	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00)
-│   └─TableScan_14	10000.00	cop[tikv]	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_19	3333.33	root	data:Selection_18
-│ └─Selection_18	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00)
-│   └─TableScan_17	10000.00	cop[tikv]	table:t1, partition:p20090404, range:[-inf,+inf], keep order:false, stats:pseudo
-└─TableReader_22	3333.33	root	data:Selection_21
-  └─Selection_21	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00)
-    └─TableScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, range:[-inf,+inf], keep order:false, stats:pseudo
+Union_9	10000.00	root	
+├─TableReader_12	3333.33	root	data:Selection_11
+│ └─Selection_11	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00)
+│   └─TableScan_10	10000.00	cop[tikv]	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
+├─TableReader_15	3333.33	root	data:Selection_14
+│ └─Selection_14	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00)
+│   └─TableScan_13	10000.00	cop[tikv]	table:t1, partition:p20090404, range:[-inf,+inf], keep order:false, stats:pseudo
+└─TableReader_18	3333.33	root	data:Selection_17
+  └─Selection_17	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00)
+    └─TableScan_16	10000.00	cop[tikv]	table:t1, partition:p20090405, range:[-inf,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b < CAST('2009-04-02 23:59:59' AS DATETIME);
 id	count	task	operator info
@@ -2632,41 +2482,35 @@ TableReader_8	0.00	root	data:Selection_7
 EXPLAIN SELECT * FROM t1
 WHERE b >= CAST('2009-04-02 23:59:59' AS DATETIME);
 id	count	task	operator info
-Union_11	16666.67	root	
-├─TableReader_14	3333.33	root	data:Selection_13
-│ └─Selection_13	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59)
-│   └─TableScan_12	10000.00	cop[tikv]	table:t1, partition:p20090401, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_17	3333.33	root	data:Selection_16
-│ └─Selection_16	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59)
-│   └─TableScan_15	10000.00	cop[tikv]	table:t1, partition:p20090402, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_20	3333.33	root	data:Selection_19
-│ └─Selection_19	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59)
-│   └─TableScan_18	10000.00	cop[tikv]	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_23	3333.33	root	data:Selection_22
-│ └─Selection_22	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59)
-│   └─TableScan_21	10000.00	cop[tikv]	table:t1, partition:p20090404, range:[-inf,+inf], keep order:false, stats:pseudo
-└─TableReader_26	3333.33	root	data:Selection_25
-  └─Selection_25	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59)
-    └─TableScan_24	10000.00	cop[tikv]	table:t1, partition:p20090405, range:[-inf,+inf], keep order:false, stats:pseudo
+Union_10	13333.33	root	
+├─TableReader_13	3333.33	root	data:Selection_12
+│ └─Selection_12	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59)
+│   └─TableScan_11	10000.00	cop[tikv]	table:t1, partition:p20090402, range:[-inf,+inf], keep order:false, stats:pseudo
+├─TableReader_16	3333.33	root	data:Selection_15
+│ └─Selection_15	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59)
+│   └─TableScan_14	10000.00	cop[tikv]	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
+├─TableReader_19	3333.33	root	data:Selection_18
+│ └─Selection_18	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59)
+│   └─TableScan_17	10000.00	cop[tikv]	table:t1, partition:p20090404, range:[-inf,+inf], keep order:false, stats:pseudo
+└─TableReader_22	3333.33	root	data:Selection_21
+  └─Selection_21	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59)
+    └─TableScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, range:[-inf,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b > CAST('2009-04-02 23:59:59' AS DATETIME);
 id	count	task	operator info
-Union_11	16666.67	root	
-├─TableReader_14	3333.33	root	data:Selection_13
-│ └─Selection_13	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59)
-│   └─TableScan_12	10000.00	cop[tikv]	table:t1, partition:p20090401, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_17	3333.33	root	data:Selection_16
-│ └─Selection_16	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59)
-│   └─TableScan_15	10000.00	cop[tikv]	table:t1, partition:p20090402, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_20	3333.33	root	data:Selection_19
-│ └─Selection_19	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59)
-│   └─TableScan_18	10000.00	cop[tikv]	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_23	3333.33	root	data:Selection_22
-│ └─Selection_22	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59)
-│   └─TableScan_21	10000.00	cop[tikv]	table:t1, partition:p20090404, range:[-inf,+inf], keep order:false, stats:pseudo
-└─TableReader_26	3333.33	root	data:Selection_25
-  └─Selection_25	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59)
-    └─TableScan_24	10000.00	cop[tikv]	table:t1, partition:p20090405, range:[-inf,+inf], keep order:false, stats:pseudo
+Union_10	13333.33	root	
+├─TableReader_13	3333.33	root	data:Selection_12
+│ └─Selection_12	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59)
+│   └─TableScan_11	10000.00	cop[tikv]	table:t1, partition:p20090402, range:[-inf,+inf], keep order:false, stats:pseudo
+├─TableReader_16	3333.33	root	data:Selection_15
+│ └─Selection_15	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59)
+│   └─TableScan_14	10000.00	cop[tikv]	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
+├─TableReader_19	3333.33	root	data:Selection_18
+│ └─Selection_18	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59)
+│   └─TableScan_17	10000.00	cop[tikv]	table:t1, partition:p20090404, range:[-inf,+inf], keep order:false, stats:pseudo
+└─TableReader_22	3333.33	root	data:Selection_21
+  └─Selection_21	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59)
+    └─TableScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, range:[-inf,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b < CAST('2009-04-03' AS DATE);
 id	count	task	operator info
 Union_9	9970.00	root	
@@ -2698,34 +2542,28 @@ TableReader_8	10.00	root	data:Selection_7
   └─TableScan_6	10000.00	cop[tikv]	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b >= CAST('2009-04-03' AS DATE);
 id	count	task	operator info
-Union_10	13333.33	root	
-├─TableReader_13	3333.33	root	data:Selection_12
-│ └─Selection_12	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03)
-│   └─TableScan_11	10000.00	cop[tikv]	table:t1, partition:p20090401, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_16	3333.33	root	data:Selection_15
-│ └─Selection_15	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03)
-│   └─TableScan_14	10000.00	cop[tikv]	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_19	3333.33	root	data:Selection_18
-│ └─Selection_18	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03)
-│   └─TableScan_17	10000.00	cop[tikv]	table:t1, partition:p20090404, range:[-inf,+inf], keep order:false, stats:pseudo
-└─TableReader_22	3333.33	root	data:Selection_21
-  └─Selection_21	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03)
-    └─TableScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, range:[-inf,+inf], keep order:false, stats:pseudo
+Union_9	10000.00	root	
+├─TableReader_12	3333.33	root	data:Selection_11
+│ └─Selection_11	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03)
+│   └─TableScan_10	10000.00	cop[tikv]	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
+├─TableReader_15	3333.33	root	data:Selection_14
+│ └─Selection_14	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03)
+│   └─TableScan_13	10000.00	cop[tikv]	table:t1, partition:p20090404, range:[-inf,+inf], keep order:false, stats:pseudo
+└─TableReader_18	3333.33	root	data:Selection_17
+  └─Selection_17	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03)
+    └─TableScan_16	10000.00	cop[tikv]	table:t1, partition:p20090405, range:[-inf,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b > CAST('2009-04-03' AS DATE);
 id	count	task	operator info
-Union_10	13333.33	root	
-├─TableReader_13	3333.33	root	data:Selection_12
-│ └─Selection_12	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03)
-│   └─TableScan_11	10000.00	cop[tikv]	table:t1, partition:p20090401, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_16	3333.33	root	data:Selection_15
-│ └─Selection_15	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03)
-│   └─TableScan_14	10000.00	cop[tikv]	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_19	3333.33	root	data:Selection_18
-│ └─Selection_18	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03)
-│   └─TableScan_17	10000.00	cop[tikv]	table:t1, partition:p20090404, range:[-inf,+inf], keep order:false, stats:pseudo
-└─TableReader_22	3333.33	root	data:Selection_21
-  └─Selection_21	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03)
-    └─TableScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, range:[-inf,+inf], keep order:false, stats:pseudo
+Union_9	10000.00	root	
+├─TableReader_12	3333.33	root	data:Selection_11
+│ └─Selection_11	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03)
+│   └─TableScan_10	10000.00	cop[tikv]	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
+├─TableReader_15	3333.33	root	data:Selection_14
+│ └─Selection_14	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03)
+│   └─TableScan_13	10000.00	cop[tikv]	table:t1, partition:p20090404, range:[-inf,+inf], keep order:false, stats:pseudo
+└─TableReader_18	3333.33	root	data:Selection_17
+  └─Selection_17	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03)
+    └─TableScan_16	10000.00	cop[tikv]	table:t1, partition:p20090405, range:[-inf,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b < '2009-04-03 00:00:00';
 id	count	task	operator info
 Union_9	9970.00	root	
@@ -2757,34 +2595,28 @@ TableReader_8	10.00	root	data:Selection_7
   └─TableScan_6	10000.00	cop[tikv]	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b >= '2009-04-03 00:00:00';
 id	count	task	operator info
-Union_10	13333.33	root	
-├─TableReader_13	3333.33	root	data:Selection_12
-│ └─Selection_12	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00.000000)
-│   └─TableScan_11	10000.00	cop[tikv]	table:t1, partition:p20090401, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_16	3333.33	root	data:Selection_15
-│ └─Selection_15	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00.000000)
-│   └─TableScan_14	10000.00	cop[tikv]	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_19	3333.33	root	data:Selection_18
-│ └─Selection_18	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00.000000)
-│   └─TableScan_17	10000.00	cop[tikv]	table:t1, partition:p20090404, range:[-inf,+inf], keep order:false, stats:pseudo
-└─TableReader_22	3333.33	root	data:Selection_21
-  └─Selection_21	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00.000000)
-    └─TableScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, range:[-inf,+inf], keep order:false, stats:pseudo
+Union_9	10000.00	root	
+├─TableReader_12	3333.33	root	data:Selection_11
+│ └─Selection_11	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00.000000)
+│   └─TableScan_10	10000.00	cop[tikv]	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
+├─TableReader_15	3333.33	root	data:Selection_14
+│ └─Selection_14	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00.000000)
+│   └─TableScan_13	10000.00	cop[tikv]	table:t1, partition:p20090404, range:[-inf,+inf], keep order:false, stats:pseudo
+└─TableReader_18	3333.33	root	data:Selection_17
+  └─Selection_17	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00.000000)
+    └─TableScan_16	10000.00	cop[tikv]	table:t1, partition:p20090405, range:[-inf,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b > '2009-04-03 00:00:00';
 id	count	task	operator info
-Union_10	13333.33	root	
-├─TableReader_13	3333.33	root	data:Selection_12
-│ └─Selection_12	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00.000000)
-│   └─TableScan_11	10000.00	cop[tikv]	table:t1, partition:p20090401, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_16	3333.33	root	data:Selection_15
-│ └─Selection_15	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00.000000)
-│   └─TableScan_14	10000.00	cop[tikv]	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_19	3333.33	root	data:Selection_18
-│ └─Selection_18	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00.000000)
-│   └─TableScan_17	10000.00	cop[tikv]	table:t1, partition:p20090404, range:[-inf,+inf], keep order:false, stats:pseudo
-└─TableReader_22	3333.33	root	data:Selection_21
-  └─Selection_21	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00.000000)
-    └─TableScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, range:[-inf,+inf], keep order:false, stats:pseudo
+Union_9	10000.00	root	
+├─TableReader_12	3333.33	root	data:Selection_11
+│ └─Selection_11	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00.000000)
+│   └─TableScan_10	10000.00	cop[tikv]	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
+├─TableReader_15	3333.33	root	data:Selection_14
+│ └─Selection_14	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00.000000)
+│   └─TableScan_13	10000.00	cop[tikv]	table:t1, partition:p20090404, range:[-inf,+inf], keep order:false, stats:pseudo
+└─TableReader_18	3333.33	root	data:Selection_17
+  └─Selection_17	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00.000000)
+    └─TableScan_16	10000.00	cop[tikv]	table:t1, partition:p20090405, range:[-inf,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b < '2009-04-02 23:59:59';
 id	count	task	operator info
 Union_8	6646.67	root	
@@ -2810,40 +2642,34 @@ TableReader_8	0.00	root	data:Selection_7
   └─TableScan_6	10000.00	cop[tikv]	table:t1, partition:p20090402, range:[-inf,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b >= '2009-04-02 23:59:59';
 id	count	task	operator info
-Union_11	16666.67	root	
-├─TableReader_14	3333.33	root	data:Selection_13
-│ └─Selection_13	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59.000000)
-│   └─TableScan_12	10000.00	cop[tikv]	table:t1, partition:p20090401, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_17	3333.33	root	data:Selection_16
-│ └─Selection_16	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59.000000)
-│   └─TableScan_15	10000.00	cop[tikv]	table:t1, partition:p20090402, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_20	3333.33	root	data:Selection_19
-│ └─Selection_19	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59.000000)
-│   └─TableScan_18	10000.00	cop[tikv]	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_23	3333.33	root	data:Selection_22
-│ └─Selection_22	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59.000000)
-│   └─TableScan_21	10000.00	cop[tikv]	table:t1, partition:p20090404, range:[-inf,+inf], keep order:false, stats:pseudo
-└─TableReader_26	3333.33	root	data:Selection_25
-  └─Selection_25	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59.000000)
-    └─TableScan_24	10000.00	cop[tikv]	table:t1, partition:p20090405, range:[-inf,+inf], keep order:false, stats:pseudo
+Union_10	13333.33	root	
+├─TableReader_13	3333.33	root	data:Selection_12
+│ └─Selection_12	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59.000000)
+│   └─TableScan_11	10000.00	cop[tikv]	table:t1, partition:p20090402, range:[-inf,+inf], keep order:false, stats:pseudo
+├─TableReader_16	3333.33	root	data:Selection_15
+│ └─Selection_15	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59.000000)
+│   └─TableScan_14	10000.00	cop[tikv]	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
+├─TableReader_19	3333.33	root	data:Selection_18
+│ └─Selection_18	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59.000000)
+│   └─TableScan_17	10000.00	cop[tikv]	table:t1, partition:p20090404, range:[-inf,+inf], keep order:false, stats:pseudo
+└─TableReader_22	3333.33	root	data:Selection_21
+  └─Selection_21	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:59.000000)
+    └─TableScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, range:[-inf,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b > '2009-04-02 23:59:59';
 id	count	task	operator info
-Union_11	16666.67	root	
-├─TableReader_14	3333.33	root	data:Selection_13
-│ └─Selection_13	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59.000000)
-│   └─TableScan_12	10000.00	cop[tikv]	table:t1, partition:p20090401, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_17	3333.33	root	data:Selection_16
-│ └─Selection_16	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59.000000)
-│   └─TableScan_15	10000.00	cop[tikv]	table:t1, partition:p20090402, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_20	3333.33	root	data:Selection_19
-│ └─Selection_19	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59.000000)
-│   └─TableScan_18	10000.00	cop[tikv]	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_23	3333.33	root	data:Selection_22
-│ └─Selection_22	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59.000000)
-│   └─TableScan_21	10000.00	cop[tikv]	table:t1, partition:p20090404, range:[-inf,+inf], keep order:false, stats:pseudo
-└─TableReader_26	3333.33	root	data:Selection_25
-  └─Selection_25	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59.000000)
-    └─TableScan_24	10000.00	cop[tikv]	table:t1, partition:p20090405, range:[-inf,+inf], keep order:false, stats:pseudo
+Union_10	13333.33	root	
+├─TableReader_13	3333.33	root	data:Selection_12
+│ └─Selection_12	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59.000000)
+│   └─TableScan_11	10000.00	cop[tikv]	table:t1, partition:p20090402, range:[-inf,+inf], keep order:false, stats:pseudo
+├─TableReader_16	3333.33	root	data:Selection_15
+│ └─Selection_15	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59.000000)
+│   └─TableScan_14	10000.00	cop[tikv]	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
+├─TableReader_19	3333.33	root	data:Selection_18
+│ └─Selection_18	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59.000000)
+│   └─TableScan_17	10000.00	cop[tikv]	table:t1, partition:p20090404, range:[-inf,+inf], keep order:false, stats:pseudo
+└─TableReader_22	3333.33	root	data:Selection_21
+  └─Selection_21	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:59.000000)
+    └─TableScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, range:[-inf,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b < '2009-04-03';
 id	count	task	operator info
 Union_9	9970.00	root	
@@ -2875,34 +2701,28 @@ TableReader_8	10.00	root	data:Selection_7
   └─TableScan_6	10000.00	cop[tikv]	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b >= '2009-04-03';
 id	count	task	operator info
-Union_10	13333.33	root	
-├─TableReader_13	3333.33	root	data:Selection_12
-│ └─Selection_12	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00.000000)
-│   └─TableScan_11	10000.00	cop[tikv]	table:t1, partition:p20090401, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_16	3333.33	root	data:Selection_15
-│ └─Selection_15	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00.000000)
-│   └─TableScan_14	10000.00	cop[tikv]	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_19	3333.33	root	data:Selection_18
-│ └─Selection_18	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00.000000)
-│   └─TableScan_17	10000.00	cop[tikv]	table:t1, partition:p20090404, range:[-inf,+inf], keep order:false, stats:pseudo
-└─TableReader_22	3333.33	root	data:Selection_21
-  └─Selection_21	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00.000000)
-    └─TableScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, range:[-inf,+inf], keep order:false, stats:pseudo
+Union_9	10000.00	root	
+├─TableReader_12	3333.33	root	data:Selection_11
+│ └─Selection_11	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00.000000)
+│   └─TableScan_10	10000.00	cop[tikv]	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
+├─TableReader_15	3333.33	root	data:Selection_14
+│ └─Selection_14	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00.000000)
+│   └─TableScan_13	10000.00	cop[tikv]	table:t1, partition:p20090404, range:[-inf,+inf], keep order:false, stats:pseudo
+└─TableReader_18	3333.33	root	data:Selection_17
+  └─Selection_17	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:00.000000)
+    └─TableScan_16	10000.00	cop[tikv]	table:t1, partition:p20090405, range:[-inf,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b > '2009-04-03';
 id	count	task	operator info
-Union_10	13333.33	root	
-├─TableReader_13	3333.33	root	data:Selection_12
-│ └─Selection_12	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00.000000)
-│   └─TableScan_11	10000.00	cop[tikv]	table:t1, partition:p20090401, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_16	3333.33	root	data:Selection_15
-│ └─Selection_15	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00.000000)
-│   └─TableScan_14	10000.00	cop[tikv]	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_19	3333.33	root	data:Selection_18
-│ └─Selection_18	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00.000000)
-│   └─TableScan_17	10000.00	cop[tikv]	table:t1, partition:p20090404, range:[-inf,+inf], keep order:false, stats:pseudo
-└─TableReader_22	3333.33	root	data:Selection_21
-  └─Selection_21	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00.000000)
-    └─TableScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, range:[-inf,+inf], keep order:false, stats:pseudo
+Union_9	10000.00	root	
+├─TableReader_12	3333.33	root	data:Selection_11
+│ └─Selection_11	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00.000000)
+│   └─TableScan_10	10000.00	cop[tikv]	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
+├─TableReader_15	3333.33	root	data:Selection_14
+│ └─Selection_14	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00.000000)
+│   └─TableScan_13	10000.00	cop[tikv]	table:t1, partition:p20090404, range:[-inf,+inf], keep order:false, stats:pseudo
+└─TableReader_18	3333.33	root	data:Selection_17
+  └─Selection_17	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:00.000000)
+    └─TableScan_16	10000.00	cop[tikv]	table:t1, partition:p20090405, range:[-inf,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b < CAST('2009-04-03 00:00:01' AS DATETIME);
 id	count	task	operator info
@@ -2938,35 +2758,29 @@ TableReader_8	0.00	root	data:Selection_7
 EXPLAIN SELECT * FROM t1
 WHERE b >= CAST('2009-04-03 00:00:01' AS DATETIME);
 id	count	task	operator info
-Union_10	13333.33	root	
-├─TableReader_13	3333.33	root	data:Selection_12
-│ └─Selection_12	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:01)
-│   └─TableScan_11	10000.00	cop[tikv]	table:t1, partition:p20090401, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_16	3333.33	root	data:Selection_15
-│ └─Selection_15	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:01)
-│   └─TableScan_14	10000.00	cop[tikv]	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_19	3333.33	root	data:Selection_18
-│ └─Selection_18	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:01)
-│   └─TableScan_17	10000.00	cop[tikv]	table:t1, partition:p20090404, range:[-inf,+inf], keep order:false, stats:pseudo
-└─TableReader_22	3333.33	root	data:Selection_21
-  └─Selection_21	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:01)
-    └─TableScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, range:[-inf,+inf], keep order:false, stats:pseudo
+Union_9	10000.00	root	
+├─TableReader_12	3333.33	root	data:Selection_11
+│ └─Selection_11	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:01)
+│   └─TableScan_10	10000.00	cop[tikv]	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
+├─TableReader_15	3333.33	root	data:Selection_14
+│ └─Selection_14	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:01)
+│   └─TableScan_13	10000.00	cop[tikv]	table:t1, partition:p20090404, range:[-inf,+inf], keep order:false, stats:pseudo
+└─TableReader_18	3333.33	root	data:Selection_17
+  └─Selection_17	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-03 00:00:01)
+    └─TableScan_16	10000.00	cop[tikv]	table:t1, partition:p20090405, range:[-inf,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b > CAST('2009-04-03 00:00:01' AS DATETIME);
 id	count	task	operator info
-Union_10	13333.33	root	
-├─TableReader_13	3333.33	root	data:Selection_12
-│ └─Selection_12	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:01)
-│   └─TableScan_11	10000.00	cop[tikv]	table:t1, partition:p20090401, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_16	3333.33	root	data:Selection_15
-│ └─Selection_15	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:01)
-│   └─TableScan_14	10000.00	cop[tikv]	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_19	3333.33	root	data:Selection_18
-│ └─Selection_18	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:01)
-│   └─TableScan_17	10000.00	cop[tikv]	table:t1, partition:p20090404, range:[-inf,+inf], keep order:false, stats:pseudo
-└─TableReader_22	3333.33	root	data:Selection_21
-  └─Selection_21	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:01)
-    └─TableScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, range:[-inf,+inf], keep order:false, stats:pseudo
+Union_9	10000.00	root	
+├─TableReader_12	3333.33	root	data:Selection_11
+│ └─Selection_11	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:01)
+│   └─TableScan_10	10000.00	cop[tikv]	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
+├─TableReader_15	3333.33	root	data:Selection_14
+│ └─Selection_14	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:01)
+│   └─TableScan_13	10000.00	cop[tikv]	table:t1, partition:p20090404, range:[-inf,+inf], keep order:false, stats:pseudo
+└─TableReader_18	3333.33	root	data:Selection_17
+  └─Selection_17	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-03 00:00:01)
+    └─TableScan_16	10000.00	cop[tikv]	table:t1, partition:p20090405, range:[-inf,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b < CAST('2009-04-02 23:59:58' AS DATETIME);
 id	count	task	operator info
@@ -2996,41 +2810,35 @@ TableReader_8	0.00	root	data:Selection_7
 EXPLAIN SELECT * FROM t1
 WHERE b >= CAST('2009-04-02 23:59:58' AS DATETIME);
 id	count	task	operator info
-Union_11	16666.67	root	
-├─TableReader_14	3333.33	root	data:Selection_13
-│ └─Selection_13	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:58)
-│   └─TableScan_12	10000.00	cop[tikv]	table:t1, partition:p20090401, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_17	3333.33	root	data:Selection_16
-│ └─Selection_16	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:58)
-│   └─TableScan_15	10000.00	cop[tikv]	table:t1, partition:p20090402, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_20	3333.33	root	data:Selection_19
-│ └─Selection_19	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:58)
-│   └─TableScan_18	10000.00	cop[tikv]	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_23	3333.33	root	data:Selection_22
-│ └─Selection_22	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:58)
-│   └─TableScan_21	10000.00	cop[tikv]	table:t1, partition:p20090404, range:[-inf,+inf], keep order:false, stats:pseudo
-└─TableReader_26	3333.33	root	data:Selection_25
-  └─Selection_25	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:58)
-    └─TableScan_24	10000.00	cop[tikv]	table:t1, partition:p20090405, range:[-inf,+inf], keep order:false, stats:pseudo
+Union_10	13333.33	root	
+├─TableReader_13	3333.33	root	data:Selection_12
+│ └─Selection_12	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:58)
+│   └─TableScan_11	10000.00	cop[tikv]	table:t1, partition:p20090402, range:[-inf,+inf], keep order:false, stats:pseudo
+├─TableReader_16	3333.33	root	data:Selection_15
+│ └─Selection_15	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:58)
+│   └─TableScan_14	10000.00	cop[tikv]	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
+├─TableReader_19	3333.33	root	data:Selection_18
+│ └─Selection_18	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:58)
+│   └─TableScan_17	10000.00	cop[tikv]	table:t1, partition:p20090404, range:[-inf,+inf], keep order:false, stats:pseudo
+└─TableReader_22	3333.33	root	data:Selection_21
+  └─Selection_21	3333.33	cop[tikv]	ge(test.t1.b, 2009-04-02 23:59:58)
+    └─TableScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, range:[-inf,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b > CAST('2009-04-02 23:59:58' AS DATETIME);
 id	count	task	operator info
-Union_11	16666.67	root	
-├─TableReader_14	3333.33	root	data:Selection_13
-│ └─Selection_13	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:58)
-│   └─TableScan_12	10000.00	cop[tikv]	table:t1, partition:p20090401, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_17	3333.33	root	data:Selection_16
-│ └─Selection_16	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:58)
-│   └─TableScan_15	10000.00	cop[tikv]	table:t1, partition:p20090402, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_20	3333.33	root	data:Selection_19
-│ └─Selection_19	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:58)
-│   └─TableScan_18	10000.00	cop[tikv]	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_23	3333.33	root	data:Selection_22
-│ └─Selection_22	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:58)
-│   └─TableScan_21	10000.00	cop[tikv]	table:t1, partition:p20090404, range:[-inf,+inf], keep order:false, stats:pseudo
-└─TableReader_26	3333.33	root	data:Selection_25
-  └─Selection_25	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:58)
-    └─TableScan_24	10000.00	cop[tikv]	table:t1, partition:p20090405, range:[-inf,+inf], keep order:false, stats:pseudo
+Union_10	13333.33	root	
+├─TableReader_13	3333.33	root	data:Selection_12
+│ └─Selection_12	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:58)
+│   └─TableScan_11	10000.00	cop[tikv]	table:t1, partition:p20090402, range:[-inf,+inf], keep order:false, stats:pseudo
+├─TableReader_16	3333.33	root	data:Selection_15
+│ └─Selection_15	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:58)
+│   └─TableScan_14	10000.00	cop[tikv]	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
+├─TableReader_19	3333.33	root	data:Selection_18
+│ └─Selection_18	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:58)
+│   └─TableScan_17	10000.00	cop[tikv]	table:t1, partition:p20090404, range:[-inf,+inf], keep order:false, stats:pseudo
+└─TableReader_22	3333.33	root	data:Selection_21
+  └─Selection_21	3333.33	cop[tikv]	gt(test.t1.b, 2009-04-02 23:59:58)
+    └─TableScan_20	10000.00	cop[tikv]	table:t1, partition:p20090405, range:[-inf,+inf], keep order:false, stats:pseudo
 DROP TABLE t1;
 # For better code coverage of the patch
 CREATE TABLE t1 (
@@ -3085,20 +2893,40 @@ partition p1 values less than (20)
 insert into t3 values (5),(15);
 explain select * from t3 where a=11;
 id	count	task	operator info
-TableReader_8	10.00	root	data:Selection_7
-└─Selection_7	10.00	cop[tikv]	eq(test.t3.a, 11)
-  └─TableScan_6	10000.00	cop[tikv]	table:t3, partition:p1, range:[-inf,+inf], keep order:false, stats:pseudo
+Union_8	20.00	root	
+├─TableReader_11	10.00	root	data:Selection_10
+│ └─Selection_10	10.00	cop[tikv]	eq(test.t3.a, 11)
+│   └─TableScan_9	10000.00	cop[tikv]	table:t3, partition:p0, range:[-inf,+inf], keep order:false, stats:pseudo
+└─TableReader_14	10.00	root	data:Selection_13
+  └─Selection_13	10.00	cop[tikv]	eq(test.t3.a, 11)
+    └─TableScan_12	10000.00	cop[tikv]	table:t3, partition:p1, range:[-inf,+inf], keep order:false, stats:pseudo
 explain select * from t3 where a=10;
 id	count	task	operator info
-TableReader_8	10.00	root	data:Selection_7
-└─Selection_7	10.00	cop[tikv]	eq(test.t3.a, 10)
-  └─TableScan_6	10000.00	cop[tikv]	table:t3, partition:p1, range:[-inf,+inf], keep order:false, stats:pseudo
+Union_8	20.00	root	
+├─TableReader_11	10.00	root	data:Selection_10
+│ └─Selection_10	10.00	cop[tikv]	eq(test.t3.a, 10)
+│   └─TableScan_9	10000.00	cop[tikv]	table:t3, partition:p0, range:[-inf,+inf], keep order:false, stats:pseudo
+└─TableReader_14	10.00	root	data:Selection_13
+  └─Selection_13	10.00	cop[tikv]	eq(test.t3.a, 10)
+    └─TableScan_12	10000.00	cop[tikv]	table:t3, partition:p1, range:[-inf,+inf], keep order:false, stats:pseudo
 explain select * from t3 where a=20;
 id	count	task	operator info
-TableDual_6	0.00	root	rows:0
+Union_8	20.00	root	
+├─TableReader_11	10.00	root	data:Selection_10
+│ └─Selection_10	10.00	cop[tikv]	eq(test.t3.a, 20)
+│   └─TableScan_9	10000.00	cop[tikv]	table:t3, partition:p0, range:[-inf,+inf], keep order:false, stats:pseudo
+└─TableReader_14	10.00	root	data:Selection_13
+  └─Selection_13	10.00	cop[tikv]	eq(test.t3.a, 20)
+    └─TableScan_12	10000.00	cop[tikv]	table:t3, partition:p1, range:[-inf,+inf], keep order:false, stats:pseudo
 explain select * from t3 where a=30;
 id	count	task	operator info
-TableDual_6	0.00	root	rows:0
+Union_8	20.00	root	
+├─TableReader_11	10.00	root	data:Selection_10
+│ └─Selection_10	10.00	cop[tikv]	eq(test.t3.a, 30)
+│   └─TableScan_9	10000.00	cop[tikv]	table:t3, partition:p0, range:[-inf,+inf], keep order:false, stats:pseudo
+└─TableReader_14	10.00	root	data:Selection_13
+  └─Selection_13	10.00	cop[tikv]	eq(test.t3.a, 30)
+    └─TableScan_12	10000.00	cop[tikv]	table:t3, partition:p1, range:[-inf,+inf], keep order:false, stats:pseudo
 create table t7 (a int not null) partition by RANGE(a) (
 partition p10 values less than (10),
 partition p30 values less than (30),
@@ -3654,7 +3482,9 @@ Union_10	1000.00	root
     └─TableScan_20	10000.00	cop[tikv]	table:t2, partition:p4, range:[-inf,+inf], keep order:false, stats:pseudo
 explain select * from t2 where a < 801 and a > 800;
 id	count	task	operator info
-TableDual_6	0.00	root	rows:0
+TableReader_8	0.00	root	data:Selection_7
+└─Selection_7	0.00	cop[tikv]	gt(test.t2.a, 800), lt(test.t2.a, 801)
+  └─TableScan_6	10000.00	cop[tikv]	table:t2, partition:p4, range:[-inf,+inf], keep order:false, stats:pseudo
 explain select * from t2 where a > 600;
 id	count	task	operator info
 Union_8	6666.67	root	
@@ -4037,9 +3867,16 @@ TableReader_8	10.00	root	data:Selection_7
   └─TableScan_6	10000.00	cop[tikv]	table:t1, partition:p0, range:[-inf,+inf], keep order:false, stats:pseudo
 explain select * from t2 where a=0;
 id	count	task	operator info
-TableReader_8	10.00	root	data:Selection_7
-└─Selection_7	10.00	cop[tikv]	eq(test.t2.a, 0)
-  └─TableScan_6	10000.00	cop[tikv]	table:t2, partition:p0, range:[-inf,+inf], keep order:false, stats:pseudo
+Union_9	30.00	root	
+├─TableReader_12	10.00	root	data:Selection_11
+│ └─Selection_11	10.00	cop[tikv]	eq(test.t2.a, 0)
+│   └─TableScan_10	10000.00	cop[tikv]	table:t2, partition:p0, range:[-inf,+inf], keep order:false, stats:pseudo
+├─TableReader_15	10.00	root	data:Selection_14
+│ └─Selection_14	10.00	cop[tikv]	eq(test.t2.a, 0)
+│   └─TableScan_13	10000.00	cop[tikv]	table:t2, partition:p1, range:[-inf,+inf], keep order:false, stats:pseudo
+└─TableReader_18	10.00	root	data:Selection_17
+  └─Selection_17	10.00	cop[tikv]	eq(test.t2.a, 0)
+    └─TableScan_16	10000.00	cop[tikv]	table:t2, partition:p2, range:[-inf,+inf], keep order:false, stats:pseudo
 explain select * from t1 where a=0xFE;
 id	count	task	operator info
 TableReader_8	10.00	root	data:Selection_7
@@ -4047,9 +3884,16 @@ TableReader_8	10.00	root	data:Selection_7
   └─TableScan_6	10000.00	cop[tikv]	table:t1, partition:p2, range:[-inf,+inf], keep order:false, stats:pseudo
 explain select * from t2 where a=0xFE;
 id	count	task	operator info
-TableReader_8	10.00	root	data:Selection_7
-└─Selection_7	10.00	cop[tikv]	eq(test.t2.a, 254)
-  └─TableScan_6	10000.00	cop[tikv]	table:t2, partition:p2, range:[-inf,+inf], keep order:false, stats:pseudo
+Union_9	30.00	root	
+├─TableReader_12	10.00	root	data:Selection_11
+│ └─Selection_11	10.00	cop[tikv]	eq(test.t2.a, 254)
+│   └─TableScan_10	10000.00	cop[tikv]	table:t2, partition:p0, range:[-inf,+inf], keep order:false, stats:pseudo
+├─TableReader_15	10.00	root	data:Selection_14
+│ └─Selection_14	10.00	cop[tikv]	eq(test.t2.a, 254)
+│   └─TableScan_13	10000.00	cop[tikv]	table:t2, partition:p1, range:[-inf,+inf], keep order:false, stats:pseudo
+└─TableReader_18	10.00	root	data:Selection_17
+  └─Selection_17	10.00	cop[tikv]	eq(test.t2.a, 254)
+    └─TableScan_16	10000.00	cop[tikv]	table:t2, partition:p2, range:[-inf,+inf], keep order:false, stats:pseudo
 explain select * from t1 where a > 0xFE AND a <= 0xFF;
 id	count	task	operator info
 TableDual_6	0.00	root	rows:0
