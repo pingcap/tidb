@@ -278,6 +278,15 @@ func (s *testSuite6) TestCreateView(c *C) {
 	tk.MustExec("drop view v_nested, v_nested2")
 }
 
+func (s *testSuite6) TestIssue16250(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table if not exists t(a int)")
+	tk.MustExec("create view view_issue16250 as select * from t")
+	_, err := tk.Exec("truncate table view_issue16250")
+	c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.view_issue16250' doesn't exist")
+}
+
 func (s *testSuite6) TestCreateViewWithOverlongColName(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -392,7 +401,7 @@ func (s *testSuite6) TestAlterTableAddColumn(c *C) {
 	tk.MustExec("insert into alter_test values(1)")
 	tk.MustExec("alter table alter_test add column c2 timestamp default current_timestamp")
 	time.Sleep(1 * time.Millisecond)
-	now := time.Now().Add(-time.Duration(1 * time.Millisecond)).Format(types.TimeFormat)
+	now := time.Now().Add(-1 * time.Millisecond).Format(types.TimeFormat)
 	r, err := tk.Exec("select c2 from alter_test")
 	c.Assert(err, IsNil)
 	req := r.NewChunk()
