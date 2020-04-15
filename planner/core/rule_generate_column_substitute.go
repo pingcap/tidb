@@ -55,7 +55,7 @@ func getSubstitutableType(colType *types.FieldType) int {
 }
 
 func checkSubstitutability(c1, c2 *types.FieldType) bool {
-	if getSubstitutableType(c1) == getSubstitutableType(c2) && c1.Decimal == c2.Decimal {
+	if getSubstitutableType(c1) == getSubstitutableType(c2) && c1.Decimal == c2.Decimal && c1.Collate == c2.Collate {
 		return true
 	}
 	return false

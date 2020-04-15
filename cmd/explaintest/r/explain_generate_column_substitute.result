@@ -455,3 +455,22 @@ TableReader_5	10000.00	root		data:TableFullScan_4
 select * from t;
 c0	c1
 3.142	3.14
+drop table t;
+create table t(c0 char(10), c1 binary(10) as (c0) unique);
+select hex(c0) from (select c0 from t use index()) tt;
+hex(c0)
+drop table t;
+create table t(c0 char(10), c1 binary(10) as (c0) unique);
+select c0 from t use index();
+c0
+desc select c0 from t use index();
+id	estRows	task	access object	operator info
+TableReader_5	10000.00	root		data:TableFullScan_4
+└─TableFullScan_4	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select hex(c0) from (select c0 from t use index()) tt;
+hex(c0)
+desc select hex(c0) from (select c0 from t use index()) tt;
+id	estRows	task	access object	operator info
+Projection_4	10000.00	root		hex(test.t.c0)->Column#4
+└─TableReader_6	10000.00	root		data:TableFullScan_5
+  └─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
