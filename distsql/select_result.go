@@ -110,6 +110,30 @@ func (r *selectResult) fetch(ctx context.Context) {
 	for {
 		var result resultWithErr
 		resultSubset, err := r.resp.Next(ctx)
+<<<<<<< HEAD
+=======
+		duration := time.Since(startTime)
+		r.fetchDuration += duration
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if r.selectResp != nil {
+			r.memConsume(-int64(r.selectRespSize))
+		}
+		if resultSubset == nil {
+			r.selectResp = nil
+			if !r.durationReported {
+				// final round of fetch
+				// TODO: Add a label to distinguish between success or failure.
+				// https://github.com/pingcap/tidb/issues/11397
+				metrics.DistSQLQueryHistogram.WithLabelValues(r.label, r.sqlType).Observe(r.fetchDuration.Seconds())
+				r.durationReported = true
+			}
+			return nil
+		}
+		r.selectResp = new(tipb.SelectResponse)
+		err = r.selectResp.Unmarshal(resultSubset.GetData())
+>>>>>>> 2c8afe6... metrics: adjust metrics and its comments (#16429)
 		if err != nil {
 			result.err = err
 		} else if resultSubset == nil {

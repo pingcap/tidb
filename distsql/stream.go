@@ -72,7 +72,7 @@ func (r *streamResult) readDataFromResponse(ctx context.Context, resp kv.Respons
 	resultSubset, err := resp.Next(ctx)
 	// TODO: Add a label to distinguish between success or failure.
 	// https://github.com/pingcap/tidb/issues/11397
-	metrics.DistSQLQueryHistgram.WithLabelValues(r.label, r.sqlType).Observe(time.Since(startTime).Seconds())
+	metrics.DistSQLQueryHistogram.WithLabelValues(r.label, r.sqlType).Observe(time.Since(startTime).Seconds())
 	if err != nil {
 		return false, err
 	}
