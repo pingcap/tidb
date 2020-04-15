@@ -73,14 +73,11 @@ func (s *testUtilSuite) TestDumpBinaryTime(c *C) {
 	d = dumpBinaryDateTime(nil, t)
 	c.Assert(d, DeepEquals, []byte{4, 0, 0, 0, 0})
 
-<<<<<<< HEAD
-=======
 	t, err = types.ParseDate(nil, "0000-00-00")
 	c.Assert(err, IsNil)
 	d = dumpBinaryDateTime(nil, t)
 	c.Assert(d, DeepEquals, []byte{4, 0, 0, 0, 0})
 
->>>>>>> efa179c... server: fix potential timezone related bugs caused by `time.Local` (#14572)
 	myDuration, err := types.ParseDuration(nil, "0000-00-00 00:00:00.0000000", 6)
 	c.Assert(err, IsNil)
 	d = dumpBinaryTime(myDuration.Duration)
