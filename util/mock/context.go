@@ -215,6 +215,10 @@ func (c *Context) StmtGetMutation(tableID int64) *binlog.TableMutation {
 func (c *Context) StmtAddDirtyTableOP(op int, tid int64, handle int64, row []types.Datum) {
 }
 
+// PrepareTxnFuture implements the sessionctx.Context interface.
+func (c *Context) PrepareTxnFuture(ctx context.Context) {
+}
+
 // NewContext creates a new mocked sessionctx.Context.
 func NewContext() *Context {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -227,6 +231,9 @@ func NewContext() *Context {
 	sctx.sessionVars.MaxChunkSize = 2
 	sctx.sessionVars.StmtCtx.TimeZone = time.UTC
 	sctx.sessionVars.GlobalVarsAccessor = variable.NewMockGlobalAccessor()
+	if err := sctx.GetSessionVars().SetSystemVar(variable.MaxAllowedPacket, "67108864"); err != nil {
+		panic(err)
+	}
 	return sctx
 }
 

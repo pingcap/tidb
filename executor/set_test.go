@@ -333,9 +333,25 @@ func (s *testSuite5) TestValidateSetVar(c *C) {
 	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))
 
 	tk.MustExec("set @@tidb_batch_delete='On';")
+	tk.MustQuery("select @@tidb_batch_delete;").Check(testkit.Rows("1"))
 	tk.MustExec("set @@tidb_batch_delete='oFf';")
+	tk.MustQuery("select @@tidb_batch_delete;").Check(testkit.Rows("0"))
 	tk.MustExec("set @@tidb_batch_delete=1;")
+	tk.MustQuery("select @@tidb_batch_delete;").Check(testkit.Rows("1"))
 	tk.MustExec("set @@tidb_batch_delete=0;")
+	tk.MustQuery("select @@tidb_batch_delete;").Check(testkit.Rows("0"))
+
+	tk.MustExec("set @@tidb_opt_agg_push_down=off;")
+	tk.MustQuery("select @@tidb_opt_agg_push_down;").Check(testkit.Rows("0"))
+
+	tk.MustExec("set @@tidb_constraint_check_in_place=on;")
+	tk.MustQuery("select @@tidb_constraint_check_in_place;").Check(testkit.Rows("1"))
+
+	tk.MustExec("set @@tidb_general_log=0;")
+	tk.MustQuery("select @@tidb_general_log;").Check(testkit.Rows("0"))
+
+	tk.MustExec("set @@tidb_enable_streaming=1;")
+	tk.MustQuery("select @@tidb_enable_streaming;").Check(testkit.Rows("1"))
 
 	_, err = tk.Exec("set @@tidb_batch_delete=3;")
 	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))

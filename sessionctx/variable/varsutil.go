@@ -327,20 +327,17 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 	case WarningCount, ErrorCount:
 		return value, ErrReadOnly.GenWithStackByArgs(name)
 
-	case GeneralLog, TiDBGeneralLog, AvoidTemporalUpgrade, BigTables, CheckProxyUsers, LogBin, CoreFile, EndMakersInJSON, SQLLogBin, OfflineMode,
-		PseudoSlaveMode, LowPriorityUpdates, SkipNameResolve, ForeignKeyChecks, SQLSafeUpdates, TiDBConstraintCheckInPlace:
+	case AutocommitVar, TiDBGeneralLog, TiDBSkipUTF8Check, TiDBOptAggPushDown,
+		TiDBOptInSubqUnFolding, TiDBEnableTablePartition,
+		TiDBBatchInsert, TiDBDisableTxnAutoRetry, TiDBEnableStreaming,
+		TiDBBatchDelete, TiDBCheckMb4ValueInUTF8, TiDBScatterRegion, TiDBConstraintCheckInPlace:
+		fallthrough
+	case GeneralLog, AvoidTemporalUpgrade, BigTables, CheckProxyUsers, LogBin, CoreFile, EndMakersInJSON, SQLLogBin, OfflineMode,
+		PseudoSlaveMode, LowPriorityUpdates, SkipNameResolve, ForeignKeyChecks, SQLSafeUpdates:
 		if strings.EqualFold(value, "ON") || value == "1" {
 			return "1", nil
 		} else if strings.EqualFold(value, "OFF") || value == "0" {
 			return "0", nil
-		}
-		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
-	case AutocommitVar, TiDBSkipUTF8Check, TiDBOptAggPushDown,
-		TiDBOptInSubqUnFolding, TiDBEnableTablePartition,
-		TiDBBatchInsert, TiDBDisableTxnAutoRetry, TiDBEnableStreaming,
-		TiDBBatchDelete, TiDBCheckMb4ValueInUTF8, TiDBScatterRegion:
-		if strings.EqualFold(value, "ON") || value == "1" || strings.EqualFold(value, "OFF") || value == "0" {
-			return value, nil
 		}
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 	case TiDBDDLReorgBatchSize:

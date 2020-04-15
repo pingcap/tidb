@@ -426,14 +426,14 @@ func (s *testSessionSuite) TestGlobalVarAccessor(c *C) {
 	result.Check(testkit.Rows("sql_select_limit 100000000000"))
 
 	result = tk.MustQuery("select @@global.autocommit;")
-	result.Check(testkit.Rows("ON"))
+	result.Check(testkit.Rows("1"))
 	result = tk.MustQuery("select @@autocommit;")
-	result.Check(testkit.Rows("ON"))
+	result.Check(testkit.Rows("1"))
 	tk.MustExec("set @@global.autocommit = 0;")
 	result = tk.MustQuery("select @@global.autocommit;")
 	result.Check(testkit.Rows("0"))
 	result = tk.MustQuery("select @@autocommit;")
-	result.Check(testkit.Rows("ON"))
+	result.Check(testkit.Rows("1"))
 	tk.MustExec("set @@global.autocommit=1")
 
 	_, err = tk.Exec("set global time_zone = 'timezone'")
