@@ -54,6 +54,13 @@ func getSubstitutableType(colType *types.FieldType) int {
 	return int(colType.Tp)
 }
 
+func checkSubstitutability(c1, c2 *types.FieldType) bool {
+	if getSubstitutableType(c1) == getSubstitutableType(c2) && c1.Decimal == c2.Decimal {
+		return true
+	}
+	return false
+}
+
 // collectGenerateColumn collect the generate column and save them to a map from their expressions to themselves.
 // For the sake of simplicity, we don't collect the stored generate column because we can't get their expressions directly.
 // TODO: support stored generate column.
@@ -72,7 +79,7 @@ func collectGenerateColumn(lp LogicalPlan, exprToColumn ExprColumnMap) {
 			if colInfo.IsGenerated() && !colInfo.GeneratedStored {
 				s := ds.schema.Columns
 				col := expression.ColInfo2Col(s, colInfo)
-				if col != nil && getSubstitutableType(col.GetType()) == getSubstitutableType(col.VirtualExpr.GetType()) {
+				if col != nil && checkSubstitutability(col.GetType(), col.VirtualExpr.GetType()) {
 					exprToColumn[col.VirtualExpr] = col
 				}
 			}
