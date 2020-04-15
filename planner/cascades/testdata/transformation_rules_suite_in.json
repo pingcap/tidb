@@ -238,5 +238,14 @@
       "select t1.a, t2.b, t3.c, t4.d from t t1, t t2, t t3, t t4",
       "select t1.a, t2.b, t3.c, t4.d from t t1, t t2, t t3, t t4 where t1.a = t2.b and t1.c = t3.d and t3.e = t4.f"
     ]
+  },
+  {
+    "name": "TestJoin2MultiJoin",
+    "cases": [
+      "select t1.a, t2.b, t3.c, t4.d from t t1, t t2, t t3, t t4",
+      "select t1.a, t2.b, t3.c, t4.d from t t1, t t2, t t3, t t4 where t1.a = t2.b and t1.c = t3.d and t3.e = t4.f",
+      "select t1.a, t2.b from (select t1.a as a from t t1, t t2 where t1.c = t2.d) t1, (select t3.b as b from t t3, t t4 where t3.e = t4.f) t2 where t1.a = t2.b",
+      "select t1.a, t2.a, t3.c from t t1, t t2, t t3, (select t1.a as a, sum(t1.b) from t t1, t t2, t t3 where t1.a = t2.a and t2.a = t3.a) t4 where t1.b= t2.b and t1.c = t3.c and t1.a = t4.a"
+    ]
   }
 ]

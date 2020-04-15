@@ -538,3 +538,29 @@ func (s *testTransformationRuleSuite) TestSimpleJoinReorder(c *C) {
 	s.testData.GetTestCases(c, &input, &output)
 	testGroupToString(input, output, s, c)
 }
+
+func (s *testTransformationRuleSuite) TestJoin2MultiJoin(c *C) {
+	s.optimizer.ResetTransformationRules(map[memo.Operand][]Transformation{
+		memo.OperandProjection: {
+			NewRuleEliminateProjection(),
+		},
+		memo.OperandSelection: {
+			NewRulePushSelDownSort(),
+			NewRulePushSelDownProjection(),
+			NewRulePushSelDownAggregation(),
+			NewRulePushSelDownJoin(),
+			NewRulePushSelDownUnionAll(),
+			NewRulePushSelDownWindow(),
+			NewRuleMergeAdjacentSelection(),
+			NewRulePushSelDownApply(),
+		},
+	}, PrepareJoinReorderBatch)
+	defer s.optimizer.ResetTransformationRules(DefaultRuleBatches...)
+	var input []string
+	var output []struct {
+		SQL    string
+		Result []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	testGroupToString(input, output, s, c)
+}

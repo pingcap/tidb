@@ -33,6 +33,12 @@ func (p LogicalJoin) Init(ctx sessionctx.Context, offset int) *LogicalJoin {
 	return &p
 }
 
+// Init initializes LogicalMultiJoin.
+func (p LogicalMultiJoin) Init(ctx sessionctx.Context, offset int) *LogicalMultiJoin {
+	p.baseLogicalPlan = newBaseLogicalPlan(ctx, "MultiJoin", &p, offset)
+	return &p
+}
+
 // Init initializes DataSource.
 func (ds DataSource) Init(ctx sessionctx.Context, offset int) *DataSource {
 	ds.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeDataSource, &ds, offset)

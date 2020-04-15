@@ -676,6 +676,13 @@ func formatPhysicalWindowFuncDescs(buffer *bytes.Buffer, descs []*aggregation.Wi
 	return buffer
 }
 
+func (p *LogicalMultiJoin) ExplainInfo() string {
+	if len(p.Conditions) != 0 {
+		return fmt.Sprintf("conds: %s", expression.SortedExplainExpressionList(p.Conditions))
+	}
+	return ""
+}
+
 // ExplainInfo implements Plan interface.
 func (p *LogicalJoin) ExplainInfo() string {
 	buffer := bytes.NewBufferString(p.JoinType.String())

@@ -69,6 +69,8 @@ const (
 	OperandShow
 	// OperandWindow is the operand for window function.
 	OperandWindow
+	// OperandMultiJoin is the operand for LogicalMultiJoin.
+	OperandMultiJoin
 	// OperandUnsupported is the operand for unsupported operators.
 	OperandUnsupported
 )
@@ -76,6 +78,8 @@ const (
 // GetOperand maps logical plan operator to Operand.
 func GetOperand(p plannercore.LogicalPlan) Operand {
 	switch p.(type) {
+	case *plannercore.LogicalMultiJoin:
+		return OperandMultiJoin
 	case *plannercore.LogicalApply:
 		return OperandApply
 	case *plannercore.LogicalJoin:

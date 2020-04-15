@@ -140,6 +140,17 @@ var TiKVLayerOptimizationBatch = TransformationRuleBatch{
 	},
 }
 
+// PrepareJoinReorderBatch merge adjacent InnerJoins into one
+// LogicalMultiJoin for the reorder later.
+var PrepareJoinReorderBatch = TransformationRuleBatch{
+	memo.OperandJoin: {
+		NewRuleTransformJoinToMultiJoin(),
+		NewRuleMergeJoinOneSideMultiJoin(true),
+		NewRuleMergeJoinOneSideMultiJoin(false),
+		NewRuleMergeJoinTwoSidesMultiJoin(),
+	},
+}
+
 // PostTransformationBatch does the transformation which is related to
 // the constraints of the execution engine of TiDB.
 // For example, TopN/Sort only support `order by` columns in TiDB layer,
@@ -3457,4 +3468,135 @@ func (r *JoinAssociation) OnTransform(old *memo.ExprIter) (newExprs []*memo.Grou
 	return []*memo.GroupExpr{newTopJoinExpr}, false, false, nil
 }
 
+type TransformJoinToMultiJoin struct {
+	baseRule
+}
 
+func NewRuleTransformJoinToMultiJoin() Transformation {
+	rule := &TransformJoinToMultiJoin{}
+	rule.pattern = memo.BuildPattern(memo.OperandJoin, memo.EngineTiDBOnly)
+	return rule
+}
+
+func (r *TransformJoinToMultiJoin) Match(expr *memo.ExprIter) bool {
+	join := expr.GetExpr().ExprNode.(*plannercore.LogicalJoin)
+	if join.JoinType != plannercore.InnerJoin {
+		return false
+	}
+	// It's children groups cannot contain MultiJoin.
+	if expr.GetExpr().Children[0].GetFirstElem(memo.OperandMultiJoin) != nil ||
+		expr.GetExpr().Children[1].GetFirstElem(memo.OperandMultiJoin) != nil {
+		return false
+	}
+	return true
+}
+
+func (r *TransformJoinToMultiJoin) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	join := old.GetExpr().ExprNode.(*plannercore.LogicalJoin)
+	multiJoin := plannercore.LogicalMultiJoin{
+		Conditions:  join.GetAllConditions(),
+	}.Init(join.SCtx(), join.SelectBlockOffset())
+	newGroupExpr := memo.NewGroupExpr(multiJoin)
+	newGroupExpr.SetChildren(old.GetExpr().Children...)
+	return []*memo.GroupExpr{newGroupExpr}, true, false, nil
+}
+
+type MergeJoinOneSideMultiJoin struct {
+	baseRule
+	multiJoinIdx int
+}
+
+func NewRuleMergeJoinOneSideMultiJoin(leftMultiJoin bool) Transformation {
+	rule := &MergeJoinOneSideMultiJoin{}
+	if leftMultiJoin {
+		rule.pattern = memo.BuildPattern(memo.OperandJoin, memo.EngineTiDBOnly,
+			memo.NewPattern(memo.OperandMultiJoin, memo.EngineTiDBOnly),
+			memo.NewPattern(memo.OperandAny, memo.EngineTiDBOnly),
+		)
+		rule.multiJoinIdx = 0
+	} else {
+		rule.pattern = memo.BuildPattern(memo.OperandJoin, memo.EngineTiDBOnly,
+			memo.NewPattern(memo.OperandAny, memo.EngineTiDBOnly),
+			memo.NewPattern(memo.OperandMultiJoin, memo.EngineTiDBOnly),
+		)
+		rule.multiJoinIdx = 1
+	}
+	return rule
+}
+
+func (r *MergeJoinOneSideMultiJoin) Match(expr *memo.ExprIter) bool {
+	join := expr.GetExpr().ExprNode.(*plannercore.LogicalJoin)
+	if join.JoinType != plannercore.InnerJoin {
+		return false
+	}
+	// Only one side contains MultiJoin.
+	// Otherwise the rule MergeJoinTwoSidesMultiJoin will handle it.
+	if expr.GetExpr().Children[1-r.multiJoinIdx].GetFirstElem(memo.OperandMultiJoin) != nil {
+		return false
+	}
+	return true
+}
+
+func (r *MergeJoinOneSideMultiJoin) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	join := old.GetExpr().ExprNode.(*plannercore.LogicalJoin)
+	oldMultiJoinExpr := old.Children[r.multiJoinIdx].GetExpr()
+	multiJoin := oldMultiJoinExpr.ExprNode.(*plannercore.LogicalMultiJoin)
+
+	newConditions := make([]expression.Expression, 0, len(multiJoin.Conditions) + join.NumConditions())
+	newConditions = append(newConditions, multiJoin.Conditions...)
+	newConditions = append(newConditions, join.GetAllConditions()...)
+
+	newMultiJoin := plannercore.LogicalMultiJoin{
+		Conditions: newConditions,
+	}.Init(join.SCtx(), join.SelectBlockOffset())
+
+	newMultiJoinExpr := memo.NewGroupExpr(newMultiJoin)
+	newChildren := make([]*memo.Group, 0, len(oldMultiJoinExpr.Children) + 1)
+	newChildren = append(newChildren, oldMultiJoinExpr.Children...)
+	newChildren = append(newChildren, old.GetExpr().Children[1-r.multiJoinIdx])
+	newMultiJoinExpr.SetChildren(newChildren...)
+	return []*memo.GroupExpr{newMultiJoinExpr}, true, false, nil
+}
+
+type MergeJoinTwoSidesMultiJoin struct {
+	baseRule
+}
+
+func NewRuleMergeJoinTwoSidesMultiJoin() Transformation {
+	rule := &MergeJoinTwoSidesMultiJoin{}
+	rule.pattern = memo.BuildPattern(memo.OperandJoin, memo.EngineTiDBOnly,
+		memo.NewPattern(memo.OperandMultiJoin, memo.EngineTiDBOnly),
+		memo.NewPattern(memo.OperandMultiJoin, memo.EngineTiDBOnly),
+	)
+	return rule
+}
+
+func (r *MergeJoinTwoSidesMultiJoin) Match(expr *memo.ExprIter) bool {
+	join := expr.GetExpr().ExprNode.(*plannercore.LogicalJoin)
+	if join.JoinType != plannercore.InnerJoin {
+		return false
+	}
+	return true
+}
+
+func (r *MergeJoinTwoSidesMultiJoin) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	join := old.GetExpr().ExprNode.(*plannercore.LogicalJoin)
+	leftMultiJoin := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalMultiJoin)
+	rightMultiJoin := old.Children[1].GetExpr().ExprNode.(*plannercore.LogicalMultiJoin)
+
+	newConditions := make([]expression.Expression, 0, len(rightMultiJoin.Conditions) + len(leftMultiJoin.Conditions) + join.NumConditions())
+	newConditions = append(newConditions, leftMultiJoin.Conditions...)
+	newConditions = append(newConditions, rightMultiJoin.Conditions...)
+	newConditions = append(newConditions, join.GetAllConditions()...)
+
+	newMultiJoin := plannercore.LogicalMultiJoin{
+		Conditions: newConditions,
+	}.Init(join.SCtx(), join.SelectBlockOffset())
+
+	newMultiJoinExpr := memo.NewGroupExpr(newMultiJoin)
+	newChildren := make([]*memo.Group, 0, len(old.Children[0].GetExpr().Children) + len(old.Children[1].GetExpr().Children))
+	newChildren = append(newChildren, old.Children[0].GetExpr().Children...)
+	newChildren = append(newChildren, old.Children[1].GetExpr().Children...)
+	newMultiJoinExpr.SetChildren(newChildren...)
+	return []*memo.GroupExpr{newMultiJoinExpr}, true, false, nil
+}

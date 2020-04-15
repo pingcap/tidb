@@ -274,6 +274,16 @@ func (p *LogicalJoin) ExtractJoinKeys(childIdx int) *expression.Schema {
 	return expression.NewSchema(joinKeys...)
 }
 
+// LogicalMultiJoin represents several adjacent LogicalJoins.
+// We merge these LogicalJoins as one LogicalPlan for reordering.
+type LogicalMultiJoin struct {
+	logicalSchemaProducer
+
+	// Because LogicalMultiJoin currently only contains InnerJoins,
+	// we can just simply collect all of the conditions.
+	Conditions []expression.Expression
+}
+
 // LogicalProjection represents a select fields plan.
 type LogicalProjection struct {
 	logicalSchemaProducer
