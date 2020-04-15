@@ -170,7 +170,7 @@
         "Plan": [
           "StreamAgg_20 1.00 root  funcs:avg(Column#7, Column#8)->Column#4",
           "└─IndexReader_21 1.00 root  index:StreamAgg_8",
-          "  └─StreamAgg_8 1.00 cop[tikv]  funcs:avg(test.t.a)->Column#7",
+          "  └─StreamAgg_8 1.00 cop[tikv]  funcs:count(test.t.a)->Column#7, funcs:sum(test.t.a)->Column#8",
           "    └─IndexFullScan_19 10000.00 cop[tikv] table:t, index:ia(a) keep order:false, stats:pseudo"
         ],
         "Warn": [
@@ -182,7 +182,7 @@
         "Plan": [
           "StreamAgg_20 1.00 root  funcs:avg(Column#7, Column#8)->Column#4",
           "└─IndexReader_21 1.00 root  index:StreamAgg_8",
-          "  └─StreamAgg_8 1.00 cop[tikv]  funcs:avg(test.t.a)->Column#7",
+          "  └─StreamAgg_8 1.00 cop[tikv]  funcs:count(test.t.a)->Column#7, funcs:sum(test.t.a)->Column#8",
           "    └─IndexFullScan_19 10000.00 cop[tikv] table:t, index:ia(a) keep order:false, stats:pseudo"
         ],
         "Warn": null
@@ -192,7 +192,7 @@
         "Plan": [
           "StreamAgg_20 1.00 root  funcs:avg(Column#7, Column#8)->Column#4",
           "└─IndexReader_21 1.00 root  index:StreamAgg_8",
-          "  └─StreamAgg_8 1.00 cop[tikv]  funcs:avg(test.t.a)->Column#7",
+          "  └─StreamAgg_8 1.00 cop[tikv]  funcs:count(test.t.a)->Column#7, funcs:sum(test.t.a)->Column#8",
           "    └─IndexFullScan_19 10000.00 cop[tikv] table:t, index:ia(a) keep order:false, stats:pseudo"
         ],
         "Warn": [
