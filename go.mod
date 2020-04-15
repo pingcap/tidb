@@ -36,11 +36,11 @@ require (
 	github.com/pingcap/failpoint v0.0.0-20200210140405-f8f9fb234798
 	github.com/pingcap/fn v0.0.0-20191016082858-07623b84a47d
 	github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989
-	github.com/pingcap/kvproto v0.0.0-20200330093347-98f910b71904
+	github.com/pingcap/kvproto v0.0.0-20200409034505-a5af800ca2ef
 	github.com/pingcap/log v0.0.0-20200117041106-d28c14d3b1cd
-	github.com/pingcap/parser v0.0.0-20200331080149-8dce7a46a199
+	github.com/pingcap/parser v0.0.0-20200410065024-81f3db8e6095
 	github.com/pingcap/pd/v4 v4.0.0-beta.1.0.20200305072537-61d9f9cc35d3
-	github.com/pingcap/sysutil v0.0.0-20200309085538-962fd285f3bb
+	github.com/pingcap/sysutil v0.0.0-20200408114249-ed3bd6f7fdb1
 	github.com/pingcap/tidb-tools v4.0.0-beta.1.0.20200306084441-875bd09aa3d5+incompatible
 	github.com/pingcap/tipb v0.0.0-20200212061130-c4d518eb1d60
 	github.com/prometheus/client_golang v1.0.0

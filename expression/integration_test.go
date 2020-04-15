@@ -5972,6 +5972,16 @@ func (s *testIntegrationSuite) TestNegativeZeroForHashJoin(c *C) {
 	tk.MustExec("drop table t1;")
 }
 
+func (s *testIntegrationSuite) TestIssue15790(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("CREATE TABLE t0(c0 INT);")
+	tk.MustExec("INSERT INTO t0(c0) VALUES (0);")
+	tk.MustQuery("SELECT * FROM t0 WHERE -10000000000000000000 | t0.c0 UNION SELECT * FROM t0;").Check(testkit.Rows("0"))
+	tk.MustQuery("SELECT * FROM t0 WHERE -10000000000000000000 | t0.c0 UNION all SELECT * FROM t0;").Check(testkit.Rows("0", "0"))
+	tk.MustExec("drop table t0;")
+}
+
 func (s *testIntegrationSuite) TestIssue15990(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
