@@ -14,6 +14,7 @@
 package aggregation
 
 import (
+	"bytes"
 	"fmt"
 	"math"
 	"strconv"
@@ -42,6 +43,23 @@ func NewAggFuncDesc(ctx sessionctx.Context, name string, args []expression.Expre
 		return nil, err
 	}
 	return &AggFuncDesc{baseFuncDesc: b, HasDistinct: hasDistinct}, nil
+}
+
+// String implements the fmt.Stringer interface.
+func (a *AggFuncDesc) String() string {
+	buffer := bytes.NewBufferString(a.Name)
+	buffer.WriteString("(")
+	if a.HasDistinct {
+		buffer.WriteString("distinct ")
+	}
+	for i, arg := range a.Args {
+		buffer.WriteString(arg.String())
+		if i+1 != len(a.Args) {
+			buffer.WriteString(", ")
+		}
+	}
+	buffer.WriteString(")")
+	return buffer.String()
 }
 
 // Equal checks whether two aggregation function signatures are equal.
