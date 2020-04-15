@@ -306,7 +306,7 @@ func detachDNFCondAndBuildRangeForIndex(sctx sessionctx.Context, condition *expr
 		}
 	}
 
-	totalRanges, err := unionRanges(sc, totalRanges)
+	totalRanges, err := UnionRanges(sc, totalRanges)
 	if err != nil {
 		return nil, nil, false, errors.Trace(err)
 	}

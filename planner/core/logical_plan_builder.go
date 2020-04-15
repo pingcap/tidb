@@ -2433,7 +2433,7 @@ func (b *PlanBuilder) buildProjUponView(ctx context.Context, dbName model.CIStr,
 			OrigTblName: col.OrigTblName,
 			ColName:     columnInfo[i].Name,
 			OrigColName: origColName,
-			DBName:      col.DBName,
+			DBName:      dbName,
 			RetType:     col.GetType(),
 		})
 		projExprs = append(projExprs, col)
@@ -3560,14 +3560,14 @@ func mergeWindowSpec(spec, ref *ast.WindowSpec) error {
 	if ref.Frame != nil {
 		return ErrWindowNoInherentFrame.GenWithStackByArgs(ref.Name.O)
 	}
+	if spec.PartitionBy != nil {
+		return errors.Trace(ErrWindowNoChildPartitioning)
+	}
 	if ref.OrderBy != nil {
 		if spec.OrderBy != nil {
 			return ErrWindowNoRedefineOrderBy.GenWithStackByArgs(getWindowName(spec.Name.O), ref.Name.O)
 		}
 		spec.OrderBy = ref.OrderBy
-	}
-	if spec.PartitionBy != nil {
-		return errors.Trace(ErrWindowNoChildPartitioning)
 	}
 	spec.PartitionBy = ref.PartitionBy
 	spec.Ref = model.NewCIStr("")

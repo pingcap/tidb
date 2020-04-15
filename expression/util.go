@@ -756,3 +756,20 @@ func GetUint64FromConstant(expr Expression) (uint64, bool, bool) {
 	}
 	return 0, false, false
 }
+
+// ContainLazyConst checks if the expressions contain a lazy constant.
+func ContainLazyConst(exprs []Expression) bool {
+	for _, expr := range exprs {
+		switch v := expr.(type) {
+		case *Constant:
+			if v.DeferredExpr != nil {
+				return true
+			}
+		case *ScalarFunction:
+			if ContainLazyConst(v.GetArgs()) {
+				return true
+			}
+		}
+	}
+	return false
+}

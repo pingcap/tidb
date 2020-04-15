@@ -11,6 +11,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// +build !codes
+
 package testkit
 
 import (
@@ -269,39 +271,9 @@ func (tk *TestKit) ResultSetToResult(rs sqlexec.RecordSet, comment check.Comment
 	return tk.ResultSetToResultWithCtx(context.Background(), rs, comment)
 }
 
-// ResultSetToStringSlice changes the RecordSet to [][]string.
-func ResultSetToStringSlice(ctx context.Context, s session.Session, rs sqlexec.RecordSet) ([][]string, error) {
-	rows, err := session.GetRows4Test(ctx, s, rs)
-	if err != nil {
-		return nil, err
-	}
-	err = rs.Close()
-	if err != nil {
-		return nil, err
-	}
-	sRows := make([][]string, len(rows))
-	for i := range rows {
-		row := rows[i]
-		iRow := make([]string, row.Len())
-		for j := 0; j < row.Len(); j++ {
-			if row.IsNull(j) {
-				iRow[j] = "<nil>"
-			} else {
-				d := row.GetDatum(j, &rs.Fields()[j].Column.FieldType)
-				iRow[j], err = d.ToString()
-				if err != nil {
-					return nil, err
-				}
-			}
-		}
-		sRows[i] = iRow
-	}
-	return sRows, nil
-}
-
 // ResultSetToResultWithCtx converts sqlexec.RecordSet to testkit.Result.
 func (tk *TestKit) ResultSetToResultWithCtx(ctx context.Context, rs sqlexec.RecordSet, comment check.CommentInterface) *Result {
-	sRows, err := ResultSetToStringSlice(ctx, tk.Se, rs)
+	sRows, err := session.ResultSetToStringSlice(ctx, tk.Se, rs)
 	tk.c.Check(err, check.IsNil, comment)
 	return &Result{rows: sRows, c: tk.c, comment: comment}
 }
