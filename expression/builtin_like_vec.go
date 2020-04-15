@@ -86,6 +86,10 @@ func (b *builtinRegexpSharedSig) isMemorizedRegexpInitialized() bool {
 
 func (b *builtinRegexpSharedSig) initMemoizedRegexp(patterns *chunk.Column, n int) {
 	// Precondition: patterns is generated from a constant expression
+	if n == 0 {
+		// If the input rownum is zero, the Regexp error shouldn't be generated.
+		return
+	}
 	for i := 0; i < n; i++ {
 		if patterns.IsNull(i) {
 			continue
@@ -95,7 +99,7 @@ func (b *builtinRegexpSharedSig) initMemoizedRegexp(patterns *chunk.Column, n in
 		b.memorizedErr = err
 		break
 	}
-	if !b.isMemorizedRegexpInitialized() && n > 0 {
+	if !b.isMemorizedRegexpInitialized() {
 		b.memorizedErr = errors.New("No valid regexp pattern found")
 	}
 	if b.memorizedErr != nil {

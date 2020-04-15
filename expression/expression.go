@@ -469,7 +469,7 @@ func toBool(sc *stmtctx.StatementContext, eType types.EvalType, buf *chunk.Colum
 // the environment variables and whether the expression can be vectorized.
 func EvalExpr(ctx sessionctx.Context, expr Expression, input *chunk.Chunk, result *chunk.Column) (err error) {
 	evalType := expr.GetType().EvalType()
-	if expr.Vectorized() && ctx.GetSessionVars().EnableVectorizedExpression && input.NumRows() > 0 {
+	if expr.Vectorized() && ctx.GetSessionVars().EnableVectorizedExpression {
 		switch evalType {
 		case types.ETInt:
 			err = expr.VecEvalInt(ctx, input, result)
