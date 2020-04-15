@@ -153,7 +153,7 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 	case TiDBCapturePlanBaseline:
 		return CapturePlanBaseline.GetVal(), true, nil
 	case TiDBFoundInPlanCache:
-		return BoolToIntStr(s.PlanInCache), true, nil
+		return BoolToIntStr(s.FoundInPlanCache), true, nil
 	case TiDBEnableCollectExecutionInfo:
 		return BoolToIntStr(config.GetGlobalConfig().EnableCollectExecutionInfo), true, nil
 	}

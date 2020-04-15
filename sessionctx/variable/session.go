@@ -595,8 +595,8 @@ type SessionVars struct {
 	// see https://dev.mysql.com/doc/refman/8.0/en/window-function-optimization.html for more details.
 	WindowingUseHighPrecision bool
 
-	// PlanInCache indicates whether the last statement was found in plan cache
-	PlanInCache bool
+	// FoundInPlanCache indicates whether the last statement was found in plan cache
+	FoundInPlanCache bool
 }
 
 // PreparedParams contains the parameters of the current prepared statement when executing it.
@@ -682,7 +682,7 @@ func NewSessionVars() *SessionVars {
 		MetricSchemaRangeDuration:   DefTiDBMetricSchemaRangeDuration,
 		SequenceState:               NewSequenceState(),
 		WindowingUseHighPrecision:   true,
-		PlanInCache:                 DefTiDBFoundInPlanCache,
+		FoundInPlanCache:            DefTiDBFoundInPlanCache,
 	}
 	vars.KVVars = kv.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -1277,7 +1277,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 			s.StmtCtx.AppendWarning(errors.Errorf("cannot update %s when enabling dynamic configs", TiDBCheckMb4ValueInUTF8))
 		}
 	case TiDBFoundInPlanCache:
-		s.PlanInCache = TiDBOptOn(val)
+		s.FoundInPlanCache = TiDBOptOn(val)
 	case TiDBEnableCollectExecutionInfo:
 		conf := config.GetGlobalConfig()
 		if !conf.EnableDynamicConfig {
