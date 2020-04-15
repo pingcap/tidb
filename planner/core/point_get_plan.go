@@ -923,7 +923,6 @@ func getNameValuePairs(stmtCtx *stmtctx.StatementContext, tbl *model.TableInfo, 
 		if err != nil {
 			return nil, false
 		} else if cmp != 0 {
-			// return nil, true
 			return append(nvPairs, nameValuePair{colName: colName.Name.Name.L, value: dVal, param: param}), true
 		}
 
