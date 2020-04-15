@@ -21,7 +21,7 @@ func Dump(conf *Config) (err error) {
 		if conf.StatusAddr != "" {
 			err1 := startDumplingService(conf.StatusAddr)
 			if err1 != nil {
-				log.Zap().Error("dumpling stops to serving service", zap.Error(err1))
+				log.Error("dumpling stops to serving service", zap.Error(err1))
 			}
 		}
 	}()
@@ -73,7 +73,7 @@ func Dump(conf *Config) (err error) {
 	m.recordStartTime(time.Now())
 	err = m.getGlobalMetaData(pool, conf.ServerInfo.ServerType)
 	if err != nil {
-		log.Zap().Info("get global metadata failed", zap.Error(err))
+		log.Info("get global metadata failed", zap.Error(err))
 	}
 
 	writer, err := NewSimpleWriter(conf)

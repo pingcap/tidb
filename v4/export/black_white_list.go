@@ -65,7 +65,7 @@ func filterDirtySchemaTables(conf *Config) {
 	case ServerTypeTiDB:
 		for dbName := range conf.Tables {
 			if filter.IsSystemSchema(dbName) {
-				log.Zap().Warn("unsupported dump schema in TiDB now", zap.String("schema", dbName))
+				log.Warn("unsupported dump schema in TiDB now", zap.String("schema", dbName))
 				delete(conf.Tables, dbName)
 			}
 		}
@@ -73,7 +73,7 @@ func filterDirtySchemaTables(conf *Config) {
 }
 
 func filterTables(conf *Config) error {
-	log.Zap().Debug("filter tables")
+	log.Debug("filter tables")
 	// filter dirty schema tables because of non-impedance implementation reasons
 	filterDirtySchemaTables(conf)
 	dbTables := DatabaseTables{}
@@ -94,7 +94,7 @@ func filterTables(conf *Config) error {
 	}
 
 	if len(ignoredDBTable) > 0 {
-		log.Zap().Debug("ignore table", zap.String("", ignoredDBTable.Literal()))
+		log.Debug("ignore table", zap.String("", ignoredDBTable.Literal()))
 	}
 
 	conf.Tables = dbTables
