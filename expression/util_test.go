@@ -297,33 +297,33 @@ func (s *testUtilSuite) TestPushDownNot(c *check.C) {
 	c.Assert(notFunc.Equal(ctx, notFuncCopy), check.IsTrue)
 
 	// issue 15725
-	// (not not a) should not be optimized to (a)
+	// (not not a) should be optimized to (a is true)
 	notFunc = newFunction(ast.UnaryNot, col)
 	notFunc = newFunction(ast.UnaryNot, notFunc)
 	ret = PushDownNot(ctx, notFunc)
-	c.Assert(ret.Equal(ctx, col), check.IsFalse)
+	c.Assert(ret.Equal(ctx, newFunction(ast.IsTruth, col)), check.IsTrue)
 
-	// (not not (a+1)) should not be optimized to (a+1)
+	// (not not (a+1)) should be optimized to (a+1 is true)
 	plusFunc := newFunction(ast.Plus, col, One)
 	notFunc = newFunction(ast.UnaryNot, plusFunc)
 	notFunc = newFunction(ast.UnaryNot, notFunc)
 	ret = PushDownNot(ctx, notFunc)
-	c.Assert(ret.Equal(ctx, col), check.IsFalse)
+	c.Assert(ret.Equal(ctx, newFunction(ast.IsTruth, plusFunc)), check.IsTrue)
 
-	// (not not not a) should be optimized to (not a)
+	// (not not not a) should be optimized to (not (a is true))
 	notFunc = newFunction(ast.UnaryNot, col)
 	notFunc = newFunction(ast.UnaryNot, notFunc)
 	notFunc = newFunction(ast.UnaryNot, notFunc)
 	ret = PushDownNot(ctx, notFunc)
-	c.Assert(ret.Equal(ctx, newFunction(ast.UnaryNot, col)), check.IsTrue)
+	c.Assert(ret.Equal(ctx, newFunction(ast.UnaryNot, newFunction(ast.IsTruth, col))), check.IsTrue)
 
-	// (not not not not a) should be optimized to (not not a)
+	// (not not not not a) should be optimized to (a is true)
 	notFunc = newFunction(ast.UnaryNot, col)
 	notFunc = newFunction(ast.UnaryNot, notFunc)
 	notFunc = newFunction(ast.UnaryNot, notFunc)
 	notFunc = newFunction(ast.UnaryNot, notFunc)
 	ret = PushDownNot(ctx, notFunc)
-	c.Assert(ret.Equal(ctx, newFunction(ast.UnaryNot, newFunction(ast.UnaryNot, col))), check.IsTrue)
+	c.Assert(ret.Equal(ctx, newFunction(ast.IsTruth, col)), check.IsTrue)
 }
 
 func (s *testUtilSuite) TestFilter(c *check.C) {

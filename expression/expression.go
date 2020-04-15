@@ -998,7 +998,11 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 // TODO: remove this function. ScalarFunction should be newed in one place.
 func wrapWithIsTrue(ctx sessionctx.Context, keepNull bool, arg Expression) (Expression, error) {
 	if arg.GetType().EvalType() == types.ETInt {
-		return arg, nil
+		if child, ok := arg.(*ScalarFunction); ok {
+			if _, isLogicalOp := logicalOps[child.FuncName.L]; isLogicalOp {
+				return arg, nil
+			}
+		}
 	}
 	fc := &isTrueOrFalseFunctionClass{baseFunctionClass{ast.IsTruth, 1, 1}, opcode.IsTruth, keepNull}
 	f, err := fc.getFunction(ctx, []Expression{arg})

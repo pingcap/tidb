@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	driver "github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -380,7 +380,8 @@ func pushNotAcrossArgs(ctx sessionctx.Context, exprs []Expression, not bool) ([]
 	newExprs := make([]Expression, 0, len(exprs))
 	flag := false
 	for _, expr := range exprs {
-		newExpr, changed := pushNotAcrossExpr(ctx, expr, not)
+		newExpr, changed :=
+			pushNotAcrossExpr(ctx, expr, not)
 		flag = changed || flag
 		newExprs = append(newExprs, newExpr)
 	}
@@ -395,22 +396,16 @@ func pushNotAcrossExpr(ctx sessionctx.Context, expr Expression, not bool) (_ Exp
 	if f, ok := expr.(*ScalarFunction); ok {
 		switch f.FuncName.L {
 		case ast.UnaryNot:
-			var childExpr Expression
-			// UnaryNot only returns 0/1/NULL, thus we should not eliminate the
-			// innermost NOT if the arg is not a logical operator.
-			switch child := f.GetArgs()[0].(type) {
-			case *ScalarFunction:
-				if _, isLogicalOp := logicalOps[child.FuncName.L]; !isLogicalOp {
-					return expr, false
-				}
-				childExpr, changed = pushNotAcrossExpr(f.GetCtx(), f.GetArgs()[0], !not)
-				if !changed && !not {
-					return expr, false
-				}
-				return childExpr, true
-			case *Column:
+			child, err := wrapWithIsTrue(ctx, true, f.GetArgs()[0])
+			if err != nil {
 				return expr, false
 			}
+			var childExpr Expression
+			childExpr, changed = pushNotAcrossExpr(f.GetCtx(), child, !not)
+			if !changed && !not {
+				return expr, false
+			}
+			return childExpr, true
 		case ast.LT, ast.GE, ast.GT, ast.LE, ast.EQ, ast.NE:
 			if not {
 				return NewFunctionInternal(f.GetCtx(), oppositeOp[f.FuncName.L], f.GetType(), f.GetArgs()...), true
