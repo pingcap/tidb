@@ -308,14 +308,6 @@ type RPCContext struct {
 	Addr    string
 }
 
-// GetStoreID returns StoreID.
-func (c *RPCContext) GetStoreID() uint64 {
-	if c.Store != nil {
-		return c.Store.storeID
-	}
-	return 0
-}
-
 func (c *RPCContext) String() string {
 	return fmt.Sprintf("region ID: %d, meta: %s, peer: %s, addr: %s, idx: %d",
 		c.Region.GetID(), c.Meta, c.Peer, c.Addr, c.PeerIdx)
@@ -464,17 +456,6 @@ func (c *RegionCache) LocateKey(bo *Backoffer, key []byte) (*KeyLocation, error)
 		StartKey: r.StartKey(),
 		EndKey:   r.EndKey(),
 	}, nil
-}
-
-func (c *RegionCache) loadAndInsertRegion(bo *Backoffer, key []byte) (*Region, error) {
-	r, err := c.loadRegion(bo, key, false)
-	if err != nil {
-		return nil, err
-	}
-	c.mu.Lock()
-	c.insertRegionToCache(r)
-	c.mu.Unlock()
-	return r, nil
 }
 
 // LocateEndKey searches for the region and range that the key is located.
@@ -1146,6 +1127,16 @@ func (r *RegionVerID) GetID() uint64 {
 	return r.id
 }
 
+// GetVer returns the version of the region's epoch
+func (r *RegionVerID) GetVer() uint64 {
+	return r.ver
+}
+
+// GetConfVer returns the conf ver of the region's epoch
+func (r *RegionVerID) GetConfVer() uint64 {
+	return r.confVer
+}
+
 // VerID returns the Region's RegionVerID.
 func (r *Region) VerID() RegionVerID {
 	return RegionVerID{
@@ -1322,15 +1313,7 @@ func (s *Store) initResolve(bo *Backoffer, c *RegionCache) (addr string, err err
 		}
 		addr = store.GetAddress()
 		s.addr = addr
-		s.storeType = kv.TiKV
-		for _, label := range store.Labels {
-			if label.Key == "engine" {
-				if label.Value == kv.TiFlash.Name() {
-					s.storeType = kv.TiFlash
-				}
-				break
-			}
-		}
+		s.storeType = GetStoreTypeByMeta(store)
 	retry:
 		state = s.getResolveState()
 		if state != unresolved {
@@ -1342,6 +1325,20 @@ func (s *Store) initResolve(bo *Backoffer, c *RegionCache) (addr string, err err
 		}
 		return
 	}
+}
+
+// GetStoreTypeByMeta gets store type by store meta pb.
+func GetStoreTypeByMeta(store *metapb.Store) kv.StoreType {
+	tp := kv.TiKV
+	for _, label := range store.Labels {
+		if label.Key == "engine" {
+			if label.Value == kv.TiFlash.Name() {
+				tp = kv.TiFlash
+			}
+			break
+		}
+	}
+	return tp
 }
 
 // reResolve try to resolve addr for store that need check.
@@ -1367,15 +1364,7 @@ func (s *Store) reResolve(c *RegionCache) {
 		return
 	}
 
-	storeType := kv.TiKV
-	for _, label := range store.Labels {
-		if label.Key == "engine" {
-			if label.Value == kv.TiFlash.Name() {
-				storeType = kv.TiFlash
-			}
-			break
-		}
-	}
+	storeType := GetStoreTypeByMeta(store)
 	addr = store.GetAddress()
 	if s.addr != addr {
 		state := resolved

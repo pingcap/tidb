@@ -134,7 +134,7 @@ const (
 	gcScanLockModeKey      = "tikv_gc_scan_lock_mode"
 	gcScanLockModeLegacy   = "legacy"
 	gcScanLockModePhysical = "physical"
-	gcScanLockModeDefault  = gcScanLockModePhysical
+	gcScanLockModeDefault  = gcScanLockModeLegacy
 
 	gcAutoConcurrencyKey     = "tikv_gc_auto_concurrency"
 	gcDefaultAutoConcurrency = true
@@ -183,7 +183,6 @@ func (w *GCWorker) start(ctx context.Context, wg *sync.WaitGroup) {
 			w.lastFinish = time.Now()
 			if err != nil {
 				logutil.Logger(ctx).Error("[gc worker] runGCJob", zap.Error(err))
-				return
 			}
 		case <-ctx.Done():
 			logutil.Logger(ctx).Info("[gc worker] quit", zap.String("uuid", w.uuid))

@@ -18,7 +18,6 @@ import (
 	"container/list"
 	"fmt"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -26,7 +25,6 @@ import (
 
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -36,9 +34,6 @@ import (
 	"github.com/pingcap/tidb/util/plancodec"
 	"go.uber.org/zap"
 )
-
-// There're many types of statement summary tables in MySQL, but we have
-// only implemented events_statements_summary_by_digest for now.
 
 // stmtSummaryByDigestKey defines key for stmtSummaryByDigestMap.summaryMap.
 type stmtSummaryByDigestKey struct {
@@ -76,31 +71,7 @@ type stmtSummaryByDigestMap struct {
 	beginTimeForCurInterval int64
 
 	// sysVars encapsulates system variables needed to control statement summary.
-	sysVars struct {
-		sync.RWMutex
-		// enabled indicates whether statement summary is enabled in current server.
-		sessionEnabled string
-		// setInSession indicates whether statement summary has been set in any session.
-		globalEnabled string
-		// sessionInternalQueryEnabled indicates whether internal statement summary is enabled in current server.
-		sessionInternalQueryEnabled string
-		// globalInternalQueryEnabled indicates whether internal statement summary has been set in any session.
-		globalInternalQueryEnabled string
-
-		// These variables indicate the refresh interval of summaries.
-		// They must be > 0.
-		sessionRefreshInterval string
-		globalRefreshInterval  string
-		// A cached result. It must be read atomically.
-		refreshInterval int64
-
-		// These variables indicate the max history size of each summary.
-		// They must be > 0.
-		sessionHistorySize string
-		globalHistorySize  string
-		// A cached result. It must be read atomically.
-		historySize int32
-	}
+	sysVars *systemVars
 }
 
 // StmtSummaryByDigestMap is a global map containing all statement summaries.
@@ -224,18 +195,12 @@ type StmtExecInfo struct {
 
 // newStmtSummaryByDigestMap creates an empty stmtSummaryByDigestMap.
 func newStmtSummaryByDigestMap() *stmtSummaryByDigestMap {
-	maxStmtCount := config.GetGlobalConfig().StmtSummary.MaxStmtCount
-	ssMap := &stmtSummaryByDigestMap{
+	sysVars := newSysVars()
+	maxStmtCount := uint(sysVars.getVariable(typeMaxStmtCount))
+	return &stmtSummaryByDigestMap{
 		summaryMap: kvcache.NewSimpleLRUCache(maxStmtCount, 0, 0),
+		sysVars:    sysVars,
 	}
-	// Initialize these configurations by values in the config file.
-	// They may be overwritten by system variables later.
-	if config.GetGlobalConfig().StmtSummary.Enable {
-		ssMap.sysVars.globalEnabled = "1"
-	}
-	ssMap.sysVars.refreshInterval = int64(config.GetGlobalConfig().StmtSummary.RefreshInterval)
-	ssMap.sysVars.historySize = int32(config.GetGlobalConfig().StmtSummary.HistorySize)
-	return ssMap
 }
 
 // AddStatement adds a statement to StmtSummaryByDigestMap.
@@ -383,184 +348,84 @@ func (ssMap *stmtSummaryByDigestMap) GetMoreThanOnceSelect() ([]string, []string
 }
 
 // SetEnabled enables or disables statement summary in global(cluster) or session(server) scope.
-func (ssMap *stmtSummaryByDigestMap) SetEnabled(value string, inSession bool) {
-	value = ssMap.normalizeEnableValue(value)
-
-	ssMap.sysVars.Lock()
-	if inSession {
-		ssMap.sysVars.sessionEnabled = value
-	} else {
-		ssMap.sysVars.globalEnabled = value
+func (ssMap *stmtSummaryByDigestMap) SetEnabled(value string, inSession bool) error {
+	if err := ssMap.sysVars.setVariable(typeEnable, value, inSession); err != nil {
+		return err
 	}
-	sessionEnabled := ssMap.sysVars.sessionEnabled
-	globalEnabled := ssMap.sysVars.globalEnabled
-	ssMap.sysVars.Unlock()
 
 	// Clear all summaries once statement summary is disabled.
-	var needClear bool
-	if ssMap.isSet(sessionEnabled) {
-		needClear = !ssMap.isEnabled(sessionEnabled)
-	} else {
-		needClear = !ssMap.isEnabled(globalEnabled)
-	}
-	if needClear {
+	if ssMap.sysVars.getVariable(typeEnable) == 0 {
 		ssMap.Clear()
 	}
-}
-
-// SetEnabledInternalQuery enables or disables internal statement summary in global(cluster) or session(server) scope.
-func (ssMap *stmtSummaryByDigestMap) SetEnabledInternalQuery(value string, inSession bool) {
-	value = ssMap.normalizeEnableValue(value)
-
-	ssMap.sysVars.Lock()
-	if inSession {
-		ssMap.sysVars.sessionInternalQueryEnabled = value
-	} else {
-		ssMap.sysVars.globalInternalQueryEnabled = value
-	}
-	sessionInternalQueryEnabled := ssMap.sysVars.sessionInternalQueryEnabled
-	globalInternalQueryEnabled := ssMap.sysVars.globalInternalQueryEnabled
-	ssMap.sysVars.Unlock()
-
-	// Clear summaries for internal queries once internal statement summary is disabled.
-	var needClear bool
-	if ssMap.isSet(sessionInternalQueryEnabled) {
-		needClear = !ssMap.isEnabled(sessionInternalQueryEnabled)
-	} else {
-		needClear = !ssMap.isEnabled(globalInternalQueryEnabled)
-	}
-	if needClear {
-		ssMap.clearInternal()
-	}
+	return nil
 }
 
 // Enabled returns whether statement summary is enabled.
 func (ssMap *stmtSummaryByDigestMap) Enabled() bool {
-	ssMap.sysVars.RLock()
-	defer ssMap.sysVars.RUnlock()
+	return ssMap.sysVars.getVariable(typeEnable) > 0
+}
 
-	var enabled bool
-	if ssMap.isSet(ssMap.sysVars.sessionEnabled) {
-		enabled = ssMap.isEnabled(ssMap.sysVars.sessionEnabled)
-	} else {
-		enabled = ssMap.isEnabled(ssMap.sysVars.globalEnabled)
+// SetEnabledInternalQuery enables or disables internal statement summary in global(cluster) or session(server) scope.
+func (ssMap *stmtSummaryByDigestMap) SetEnabledInternalQuery(value string, inSession bool) error {
+	if err := ssMap.sysVars.setVariable(typeEnableInternalQuery, value, inSession); err != nil {
+		return err
 	}
-	return enabled
+
+	// Clear all summaries once statement summary is disabled.
+	if ssMap.sysVars.getVariable(typeEnableInternalQuery) == 0 {
+		ssMap.clearInternal()
+	}
+	return nil
 }
 
 // EnabledInternal returns whether internal statement summary is enabled.
 func (ssMap *stmtSummaryByDigestMap) EnabledInternal() bool {
-	ssMap.sysVars.RLock()
-	defer ssMap.sysVars.RUnlock()
-
-	var enabled bool
-	if ssMap.isSet(ssMap.sysVars.sessionInternalQueryEnabled) {
-		enabled = ssMap.isEnabled(ssMap.sysVars.sessionInternalQueryEnabled)
-	} else {
-		enabled = ssMap.isEnabled(ssMap.sysVars.globalInternalQueryEnabled)
-	}
-	return enabled
-}
-
-// normalizeEnableValue converts 'ON' to '1' and 'OFF' to '0'.
-func (ssMap *stmtSummaryByDigestMap) normalizeEnableValue(value string) string {
-	switch {
-	case strings.EqualFold(value, "ON"):
-		return "1"
-	case strings.EqualFold(value, "OFF"):
-		return "0"
-	default:
-		return value
-	}
-}
-
-// isEnabled converts a string value to bool.
-// 1 indicates true, 0 or '' indicates false.
-func (ssMap *stmtSummaryByDigestMap) isEnabled(value string) bool {
-	return value == "1"
-}
-
-// isSet judges whether the variable is set.
-func (ssMap *stmtSummaryByDigestMap) isSet(value string) bool {
-	return value != ""
+	return ssMap.sysVars.getVariable(typeEnableInternalQuery) > 0
 }
 
 // SetRefreshInterval sets refreshing interval in ssMap.sysVars.
-func (ssMap *stmtSummaryByDigestMap) SetRefreshInterval(value string, inSession bool) {
-	ssMap.sysVars.Lock()
-	if inSession {
-		ssMap.sysVars.sessionRefreshInterval = value
-	} else {
-		ssMap.sysVars.globalRefreshInterval = value
-	}
-	sessionRefreshInterval := ssMap.sysVars.sessionRefreshInterval
-	globalRefreshInterval := ssMap.sysVars.globalRefreshInterval
-	ssMap.sysVars.Unlock()
-
-	// Calculate the cached `refreshInterval`.
-	var interval int
-	var err error
-	if ssMap.isSet(sessionRefreshInterval) {
-		interval, err = strconv.Atoi(sessionRefreshInterval)
-		if err != nil {
-			interval = 0
-		}
-	}
-	if interval <= 0 {
-		interval, err = strconv.Atoi(globalRefreshInterval)
-		if err != nil {
-			interval = 0
-		}
-	}
-	// If session and global variables are both '', use the value in config.
-	if interval <= 0 {
-		interval = config.GetGlobalConfig().StmtSummary.RefreshInterval
-	}
-	atomic.StoreInt64(&ssMap.sysVars.refreshInterval, int64(interval))
+func (ssMap *stmtSummaryByDigestMap) SetRefreshInterval(value string, inSession bool) error {
+	return ssMap.sysVars.setVariable(typeRefreshInterval, value, inSession)
 }
 
 // refreshInterval gets the refresh interval for summaries.
 func (ssMap *stmtSummaryByDigestMap) refreshInterval() int64 {
-	return atomic.LoadInt64(&ssMap.sysVars.refreshInterval)
+	return ssMap.sysVars.getVariable(typeRefreshInterval)
 }
 
 // SetHistorySize sets the history size for all summaries.
-func (ssMap *stmtSummaryByDigestMap) SetHistorySize(value string, inSession bool) {
-	ssMap.sysVars.Lock()
-	if inSession {
-		ssMap.sysVars.sessionHistorySize = value
-	} else {
-		ssMap.sysVars.globalHistorySize = value
-	}
-	sessionHistorySize := ssMap.sysVars.sessionHistorySize
-	globalHistorySize := ssMap.sysVars.globalHistorySize
-	ssMap.sysVars.Unlock()
-
-	// Calculate the cached `historySize`.
-	size := -1
-	var err error
-	if ssMap.isSet(sessionHistorySize) {
-		size, err = strconv.Atoi(sessionHistorySize)
-		if err != nil {
-			size = -1
-		}
-	}
-	if size < 0 {
-		size, err = strconv.Atoi(globalHistorySize)
-		if err != nil {
-			size = -1
-		}
-	}
-	// If session and global variables are both '', use the value in config.
-	if size < 0 {
-		size = config.GetGlobalConfig().StmtSummary.HistorySize
-	}
-	atomic.StoreInt32(&ssMap.sysVars.historySize, int32(size))
+func (ssMap *stmtSummaryByDigestMap) SetHistorySize(value string, inSession bool) error {
+	return ssMap.sysVars.setVariable(typeHistorySize, value, inSession)
 }
 
 // historySize gets the history size for summaries.
 func (ssMap *stmtSummaryByDigestMap) historySize() int {
-	return int(atomic.LoadInt32(&ssMap.sysVars.historySize))
+	return int(ssMap.sysVars.getVariable(typeHistorySize))
+}
+
+// SetHistorySize sets the history size for all summaries.
+func (ssMap *stmtSummaryByDigestMap) SetMaxStmtCount(value string, inSession bool) error {
+	if err := ssMap.sysVars.setVariable(typeMaxStmtCount, value, inSession); err != nil {
+		return err
+	}
+	capacity := ssMap.sysVars.getVariable(typeMaxStmtCount)
+
+	ssMap.Lock()
+	defer ssMap.Unlock()
+	return ssMap.summaryMap.SetCapacity(uint(capacity))
+}
+
+func (ssMap *stmtSummaryByDigestMap) maxStmtCount() int {
+	return int(ssMap.sysVars.getVariable(typeMaxStmtCount))
+}
+
+// SetHistorySize sets the history size for all summaries.
+func (ssMap *stmtSummaryByDigestMap) SetMaxSQLLength(value string, inSession bool) error {
+	return ssMap.sysVars.setVariable(typeMaxSQLLength, value, inSession)
+}
+
+func (ssMap *stmtSummaryByDigestMap) maxSQLLength() int {
+	return int(ssMap.sysVars.getVariable(typeMaxSQLLength))
 }
 
 // newStmtSummaryByDigest creates a stmtSummaryByDigest from StmtExecInfo.
@@ -956,9 +821,9 @@ func (ssElement *stmtSummaryByDigestElement) toDatum(ssbd *stmtSummaryByDigest) 
 
 // Truncate SQL to maxSQLLength.
 func formatSQL(sql string) string {
-	maxSQLLength := config.GetGlobalConfig().StmtSummary.MaxSQLLength
+	maxSQLLength := StmtSummaryByDigestMap.maxSQLLength()
 	length := len(sql)
-	if length > int(maxSQLLength) {
+	if length > maxSQLLength {
 		sql = fmt.Sprintf("%.*s(len:%d)", maxSQLLength, sql, length)
 	}
 	return sql

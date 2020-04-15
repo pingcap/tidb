@@ -105,7 +105,15 @@ func (t *mockTxn) GetSnapshot() Snapshot {
 	return nil
 }
 
-func (t *mockTxn) SetCap(cap int) {
+func (t *mockTxn) NewStagingBuffer() MemBuffer {
+	return nil
+}
+
+func (t *mockTxn) Flush() (int, error) {
+	return 0, nil
+}
+
+func (t *mockTxn) Discard() {
 
 }
 
@@ -117,8 +125,8 @@ func (t *mockTxn) SetVars(vars *Variables) {
 
 }
 
-// NewMockTxn new a mockTxn.
-func NewMockTxn() Transaction {
+// newMockTxn new a mockTxn.
+func newMockTxn() Transaction {
 	return &mockTxn{
 		opts:  make(map[Option]interface{}),
 		valid: true,
@@ -130,7 +138,7 @@ type mockStorage struct {
 }
 
 func (s *mockStorage) Begin() (Transaction, error) {
-	return NewMockTxn(), nil
+	return newMockTxn(), nil
 }
 
 func (*mockTxn) IsPessimistic() bool {
@@ -144,7 +152,7 @@ func (s *mockStorage) BeginWithStartTS(startTS uint64) (Transaction, error) {
 
 func (s *mockStorage) GetSnapshot(ver Version) (Snapshot, error) {
 	return &mockSnapshot{
-		store: NewMemDbBuffer(DefaultTxnMembufCap),
+		store: NewMemDbBuffer(),
 	}, nil
 }
 
@@ -185,14 +193,8 @@ func (s *mockStorage) ShowStatus(ctx context.Context, key string) (interface{}, 
 	return nil, nil
 }
 
-// MockTxn is used for test cases that need more interfaces than Transaction.
-type MockTxn interface {
-	Transaction
-	GetOption(opt Option) interface{}
-}
-
-// NewMockStorage creates a new mockStorage.
-func NewMockStorage() Storage {
+// newMockStorage creates a new mockStorage.
+func newMockStorage() Storage {
 	return &mockStorage{}
 }
 

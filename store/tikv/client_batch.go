@@ -288,6 +288,13 @@ func (c *batchCommandsClient) failPendingRequests(err error) {
 }
 
 func (c *batchCommandsClient) waitConnReady() (err error) {
+	if c.conn.GetState() == connectivity.Ready {
+		return
+	}
+	start := time.Now()
+	defer func() {
+		metrics.TiKVBatchClientWaitEstablish.Observe(time.Since(start).Seconds())
+	}()
 	dialCtx, cancel := context.WithTimeout(context.Background(), dialTimeout)
 	for {
 		s := c.conn.GetState()
@@ -529,6 +536,8 @@ func (a *batchConn) getClientAndSend(entries []*batchCommandsEntry, requests []*
 	}
 	if cli == nil {
 		logutil.BgLogger().Warn("no available connections", zap.String("target", target))
+		metrics.TiKVNoAvailableConnectionCounter.Inc()
+
 		var heartbeatFail bool
 		for _, entry := range entries {
 			// Please ensure the error is handled in region cache correctly.
@@ -655,7 +664,7 @@ func (c *rpcClient) recycleDieConnArray() {
 	var addrs []string
 	c.RLock()
 	for _, conn := range c.conns {
-		if conn.isDie() {
+		if conn.batchConn != nil && conn.isDie() {
 			addrs = append(addrs, conn.target)
 		}
 	}

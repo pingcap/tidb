@@ -273,14 +273,14 @@ func (s *testTableSuite) TestInfoschemaFieldValue(c *C) {
 	tk.MustQuery("show create table information_schema.PROCESSLIST").Check(
 		testkit.Rows("" +
 			"PROCESSLIST CREATE TABLE `PROCESSLIST` (\n" +
-			"  `ID` bigint(21) unsigned DEFAULT '0',\n" +
+			"  `ID` bigint(21) unsigned NOT NULL DEFAULT '0',\n" +
 			"  `USER` varchar(16) NOT NULL DEFAULT '',\n" +
 			"  `HOST` varchar(64) NOT NULL DEFAULT '',\n" +
 			"  `DB` varchar(64) DEFAULT NULL,\n" +
 			"  `COMMAND` varchar(16) NOT NULL DEFAULT '',\n" +
-			"  `TIME` int(7) unsigned DEFAULT '0',\n" +
+			"  `TIME` int(7) NOT NULL DEFAULT '0',\n" +
 			"  `STATE` varchar(7) DEFAULT NULL,\n" +
-			"  `INFO` binary(512) unsigned DEFAULT NULL,\n" +
+			"  `INFO` binary(512) DEFAULT NULL,\n" +
 			"  `MEM` bigint(21) unsigned DEFAULT NULL,\n" +
 			"  `TxnStart` varchar(64) NOT NULL DEFAULT ''\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
@@ -444,18 +444,18 @@ func (s *testTableSuite) TestSomeTables(c *C) {
 	tk.Se.SetSessionManager(sm)
 	tk.MustQuery("select * from information_schema.PROCESSLIST order by ID;").Sort().Check(
 		testkit.Rows(
-			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 1 %s 0 ", "do something"),
-			fmt.Sprintf("2 user-2 localhost test Init DB 9223372036 2 %s 0 ", strings.Repeat("x", 101)),
+			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s 0 ", "in transaction", "do something"),
+			fmt.Sprintf("2 user-2 localhost test Init DB 9223372036 %s %s 0 ", "autocommit", strings.Repeat("x", 101)),
 		))
 	tk.MustQuery("SHOW PROCESSLIST;").Sort().Check(
 		testkit.Rows(
-			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 1 %s", "do something"),
-			fmt.Sprintf("2 user-2 localhost test Init DB 9223372036 2 %s", strings.Repeat("x", 100)),
+			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s", "in transaction", "do something"),
+			fmt.Sprintf("2 user-2 localhost test Init DB 9223372036 %s %s", "autocommit", strings.Repeat("x", 100)),
 		))
 	tk.MustQuery("SHOW FULL PROCESSLIST;").Sort().Check(
 		testkit.Rows(
-			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 1 %s", "do something"),
-			fmt.Sprintf("2 user-2 localhost test Init DB 9223372036 2 %s", strings.Repeat("x", 101)),
+			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s", "in transaction", "do something"),
+			fmt.Sprintf("2 user-2 localhost test Init DB 9223372036 %s %s", "autocommit", strings.Repeat("x", 101)),
 		))
 
 	sm = &mockSessionManager{make(map[uint64]*util.ProcessInfo, 2)}
@@ -482,26 +482,26 @@ func (s *testTableSuite) TestSomeTables(c *C) {
 	tk.Se.GetSessionVars().TimeZone = time.UTC
 	tk.MustQuery("select * from information_schema.PROCESSLIST order by ID;").Check(
 		testkit.Rows(
-			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 1 %s 0 ", "<nil>"),
-			fmt.Sprintf("2 user-2 localhost <nil> Init DB 9223372036 2 %s 0 07-29 03:26:05.158(410090409861578752)", strings.Repeat("x", 101)),
+			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s 0 ", "in transaction", "<nil>"),
+			fmt.Sprintf("2 user-2 localhost <nil> Init DB 9223372036 %s %s 0 07-29 03:26:05.158(410090409861578752)", "autocommit", strings.Repeat("x", 101)),
 		))
 	tk.MustQuery("SHOW PROCESSLIST;").Sort().Check(
 		testkit.Rows(
-			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 1 %s", "<nil>"),
-			fmt.Sprintf("2 user-2 localhost <nil> Init DB 9223372036 2 %s", strings.Repeat("x", 100)),
+			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s", "in transaction", "<nil>"),
+			fmt.Sprintf("2 user-2 localhost <nil> Init DB 9223372036 %s %s", "autocommit", strings.Repeat("x", 100)),
 		))
 	tk.MustQuery("SHOW FULL PROCESSLIST;").Sort().Check(
 		testkit.Rows(
-			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 1 %s", "<nil>"),
-			fmt.Sprintf("2 user-2 localhost <nil> Init DB 9223372036 2 %s", strings.Repeat("x", 101)),
+			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s", "in transaction", "<nil>"),
+			fmt.Sprintf("2 user-2 localhost <nil> Init DB 9223372036 %s %s", "autocommit", strings.Repeat("x", 101)),
 		))
 	tk.MustQuery("select * from information_schema.PROCESSLIST where db is null;").Check(
 		testkit.Rows(
-			fmt.Sprintf("2 user-2 localhost <nil> Init DB 9223372036 2 %s 0 07-29 03:26:05.158(410090409861578752)", strings.Repeat("x", 101)),
+			fmt.Sprintf("2 user-2 localhost <nil> Init DB 9223372036 %s %s 0 07-29 03:26:05.158(410090409861578752)", "autocommit", strings.Repeat("x", 101)),
 		))
 	tk.MustQuery("select * from information_schema.PROCESSLIST where Info is null;").Check(
 		testkit.Rows(
-			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 1 %s 0 ", "<nil>"),
+			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s 0 ", "in transaction", "<nil>"),
 		))
 }
 
@@ -755,27 +755,26 @@ func (s *testClusterTableSuite) TestSelectClusterTable(c *C) {
 		tk.MustExec("set @@global.tidb_enable_stmt_summary=1")
 		tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY`").Check(testkit.Rows("1"))
 		tk.MustQuery("select count(*) from `CLUSTER_PROCESSLIST`").Check(testkit.Rows("1"))
-		tk.MustQuery("select * from `CLUSTER_PROCESSLIST`").Check(testkit.Rows(":10080 1 root 127.0.0.1 <nil> Query 9223372036 0 <nil> 0 "))
+		tk.MustQuery("select * from `CLUSTER_PROCESSLIST`").Check(testkit.Rows(fmt.Sprintf(":10080 1 root 127.0.0.1 <nil> Query 9223372036 %s <nil> 0 ", "")))
 		tk.MustQuery("select query_time, conn_id from `CLUSTER_SLOW_QUERY` order by time limit 1").Check(testkit.Rows("4.895492 6"))
 		tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY` group by digest").Check(testkit.Rows("1"))
 		tk.MustQuery("select digest, count(*) from `CLUSTER_SLOW_QUERY` group by digest").Check(testkit.Rows("42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772 1"))
 		tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY` where time > now() group by digest").Check(testkit.Rows())
-		tk.MustExec("use performance_schema")
-		re := tk.MustQuery("select * from `CLUSTER_events_statements_summary_by_digest`")
+		re := tk.MustQuery("select * from `CLUSTER_statements_summary`")
 		c.Assert(re, NotNil)
 		c.Assert(len(re.Rows()) > 0, IsTrue)
 		// Test for TiDB issue 14915.
-		re = tk.MustQuery("select sum(exec_count*avg_mem) from cluster_events_statements_summary_by_digest_history group by schema_name,digest,digest_text;")
+		re = tk.MustQuery("select sum(exec_count*avg_mem) from cluster_statements_summary_history group by schema_name,digest,digest_text;")
 		c.Assert(re, NotNil)
 		c.Assert(len(re.Rows()) > 0, IsTrue)
-		tk.MustQuery("select * from `CLUSTER_events_statements_summary_by_digest_history`")
+		tk.MustQuery("select * from `CLUSTER_statements_summary_history`")
 		c.Assert(re, NotNil)
 		c.Assert(len(re.Rows()) > 0, IsTrue)
 		tk.MustExec("set @@global.tidb_enable_stmt_summary=0")
-		re = tk.MustQuery("select * from `CLUSTER_events_statements_summary_by_digest`")
+		re = tk.MustQuery("select * from `CLUSTER_statements_summary`")
 		c.Assert(re, NotNil)
 		c.Assert(len(re.Rows()) == 0, IsTrue)
-		tk.MustQuery("select * from `CLUSTER_events_statements_summary_by_digest_history`")
+		tk.MustQuery("select * from `CLUSTER_statements_summary_history`")
 		c.Assert(re, NotNil)
 		c.Assert(len(re.Rows()) == 0, IsTrue)
 	}
@@ -806,7 +805,7 @@ select * from t3;
 	tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY`").Check(testkit.Rows("4"))
 	tk.MustQuery("select count(*) from `SLOW_QUERY`").Check(testkit.Rows("4"))
 	tk.MustQuery("select count(*) from `CLUSTER_PROCESSLIST`").Check(testkit.Rows("1"))
-	tk.MustQuery("select * from `CLUSTER_PROCESSLIST`").Check(testkit.Rows(":10080 1 root 127.0.0.1 <nil> Query 9223372036 0 <nil> 0 "))
+	tk.MustQuery("select * from `CLUSTER_PROCESSLIST`").Check(testkit.Rows(fmt.Sprintf(":10080 1 root 127.0.0.1 <nil> Query 9223372036 %s <nil> 0 ", "")))
 	tk.MustExec("create user user1")
 	tk.MustExec("create user user2")
 	user1 := testkit.NewTestKit(c, s.store)
@@ -851,4 +850,354 @@ func (s *testTableSuite) TestSelectHiddenColumn(c *C) {
 	colInfo[1].Hidden = true
 	colInfo[2].Hidden = true
 	tk.MustQuery("select count(*) from INFORMATION_SCHEMA.COLUMNS where table_name = 'hidden'").Check(testkit.Rows("0"))
+}
+
+func (s *testTableSuite) TestFormatVersion(c *C) {
+	// Test for defaultVersions.
+	defaultVersions := []string{"5.7.25-TiDB-None", "5.7.25-TiDB-8.0.18", "5.7.25-TiDB-8.0.18-beta.1", "5.7.25-TiDB-v4.0.0-beta-446-g5268094af"}
+	defaultRes := []string{"None", "8.0.18", "8.0.18-beta.1", "4.0.0-beta"}
+	for i, v := range defaultVersions {
+		version := infoschema.FormatVersion(v, true)
+		c.Assert(version, Equals, defaultRes[i])
+	}
+
+	// Test for versions user set.
+	versions := []string{"8.0.18", "5.7.25-TiDB", "8.0.18-TiDB-4.0.0-beta.1"}
+	res := []string{"8.0.18", "5.7.25-TiDB", "8.0.18-TiDB-4.0.0-beta.1"}
+	for i, v := range versions {
+		version := infoschema.FormatVersion(v, false)
+		c.Assert(version, Equals, res[i])
+	}
+}
+
+// Test statements_summary.
+func (s *testTableSuite) TestStmtSummaryTable(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustQuery("select column_comment from information_schema.columns " +
+		"where table_name='STATEMENTS_SUMMARY' and column_name='STMT_TYPE'",
+	).Check(testkit.Rows("Statement type"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b varchar(10), key k(a))")
+
+	// Clear all statements.
+	tk.MustExec("set session tidb_enable_stmt_summary = 0")
+	tk.MustExec("set session tidb_enable_stmt_summary = ''")
+
+	tk.MustExec("set global tidb_enable_stmt_summary = 1")
+	defer tk.MustExec("set global tidb_enable_stmt_summary = ''")
+	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("1"))
+
+	// Invalidate the cache manually so that tidb_enable_stmt_summary works immediately.
+	s.dom.GetGlobalVarsCache().Disable()
+	// Disable refreshing summary.
+	tk.MustExec("set global tidb_stmt_summary_refresh_interval = 999999999")
+	tk.MustQuery("select @@global.tidb_stmt_summary_refresh_interval").Check(testkit.Rows("999999999"))
+
+	// Create a new session to test.
+	tk = testkit.NewTestKitWithInit(c, s.store)
+
+	// Test INSERT
+	tk.MustExec("insert into t values(1, 'a')")
+	tk.MustExec("insert into t    values(2, 'b')")
+	tk.MustExec("insert into t VALUES(3, 'c')")
+	tk.MustExec("/**/insert into t values(4, 'd')")
+	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, cop_task_num, avg_total_keys,
+		max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions,
+		max_prewrite_regions, avg_affected_rows, query_sample_text, plan
+		from information_schema.statements_summary
+		where digest_text like 'insert into t%'`,
+	).Check(testkit.Rows("insert test test.t <nil> 4 0 0 0 0 0 2 2 1 1 1 insert into t values(1, 'a') "))
+
+	// Test point get.
+	tk.MustExec("drop table if exists p")
+	tk.MustExec("create table p(a int primary key, b int)")
+	for i := 1; i < 3; i++ {
+		tk.MustQuery("select b from p where a=1")
+		expectedResult := fmt.Sprintf("%d \tPoint_Get_1\troot\t1\ttable:p, handle:1 %s", i, "test.p")
+		// Also make sure that the plan digest is not empty
+		tk.MustQuery(`select exec_count, plan, table_names
+			from information_schema.statements_summary
+			where digest_text like 'select b from p%' and plan_digest != ''`,
+		).Check(testkit.Rows(expectedResult))
+	}
+
+	// Point get another database.
+	tk.MustQuery("select variable_value from mysql.tidb where variable_name = 'system_tz'")
+	tk.MustQuery(`select table_names
+			from information_schema.statements_summary
+			where digest_text like 'select variable_value%' and schema_name='test'`,
+	).Check(testkit.Rows("mysql.tidb"))
+
+	// Test `create database`.
+	tk.MustExec("create database if not exists test")
+	tk.MustQuery(`select table_names
+			from information_schema.statements_summary
+			where digest_text like 'create database%' and schema_name='test'`,
+	).Check(testkit.Rows("<nil>"))
+
+	// Test SELECT.
+	const failpointName = "github.com/pingcap/tidb/planner/core/mockPlanRowCount"
+	c.Assert(failpoint.Enable(failpointName, "return(100)"), IsNil)
+	defer func() { c.Assert(failpoint.Disable(failpointName), IsNil) }()
+	tk.MustQuery("select * from t where a=2")
+	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, cop_task_num, avg_total_keys,
+		max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions,
+		max_prewrite_regions, avg_affected_rows, query_sample_text, plan
+		from information_schema.statements_summary
+		where digest_text like 'select * from t%'`,
+	).Check(testkit.Rows("select test test.t t:k 1 2 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tIndexLookUp_10\troot\t100\t\n" +
+		"\t├─IndexScan_8 \tcop \t100\ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
+		"\t└─TableScan_9 \tcop \t100\ttable:t, keep order:false, stats:pseudo"))
+
+	// select ... order by
+	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, cop_task_num, avg_total_keys,
+		max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions,
+		max_prewrite_regions, avg_affected_rows, query_sample_text, plan
+		from information_schema.statements_summary
+		order by exec_count desc limit 1`,
+	).Check(testkit.Rows("insert test test.t <nil> 4 0 0 0 0 0 2 2 1 1 1 insert into t values(1, 'a') "))
+
+	// Test different plans with same digest.
+	c.Assert(failpoint.Enable(failpointName, "return(1000)"), IsNil)
+	tk.MustQuery("select * from t where a=3")
+	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, cop_task_num, avg_total_keys,
+		max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions,
+		max_prewrite_regions, avg_affected_rows, query_sample_text, plan
+		from information_schema.statements_summary
+		where digest_text like 'select * from t%'`,
+	).Check(testkit.Rows("select test test.t t:k 2 4 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tIndexLookUp_10\troot\t100\t\n" +
+		"\t├─IndexScan_8 \tcop \t100\ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
+		"\t└─TableScan_9 \tcop \t100\ttable:t, keep order:false, stats:pseudo"))
+
+	// Disable it again.
+	tk.MustExec("set global tidb_enable_stmt_summary = false")
+	tk.MustExec("set session tidb_enable_stmt_summary = false")
+	defer tk.MustExec("set global tidb_enable_stmt_summary = ''")
+	defer tk.MustExec("set session tidb_enable_stmt_summary = ''")
+	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("0"))
+
+	// Create a new session to test
+	tk = testkit.NewTestKitWithInit(c, s.store)
+
+	// This statement shouldn't be summarized.
+	tk.MustQuery("select * from t where a=2")
+
+	// The table should be cleared.
+	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, cop_task_num, avg_total_keys,
+		max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions,
+		max_prewrite_regions, avg_affected_rows, query_sample_text, plan
+		from information_schema.statements_summary`,
+	).Check(testkit.Rows())
+
+	// Enable it in session scope.
+	tk.MustExec("set session tidb_enable_stmt_summary = on")
+	// It should work immediately.
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values(1, 'a')")
+	tk.MustExec("commit")
+	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, cop_task_num, avg_total_keys,
+		max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions,
+		max_prewrite_regions, avg_affected_rows, query_sample_text, prev_sample_text, plan
+		from information_schema.statements_summary
+		where digest_text like 'insert into t%'`,
+	).Check(testkit.Rows("insert test test.t <nil> 1 0 0 0 0 0 0 0 0 0 1 insert into t values(1, 'a')  "))
+	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, cop_task_num, avg_total_keys,
+		max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions,
+		max_prewrite_regions, avg_affected_rows, query_sample_text, prev_sample_text, plan
+		from information_schema.statements_summary
+		where digest_text='commit'`,
+	).Check(testkit.Rows("commit test <nil> <nil> 1 0 0 0 0 0 2 2 1 1 0 commit insert into t values(1, 'a') "))
+
+	tk.MustQuery("select * from t where a=2")
+	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, cop_task_num, avg_total_keys,
+		max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions,
+		max_prewrite_regions, avg_affected_rows, query_sample_text, plan
+		from information_schema.statements_summary
+		where digest_text like 'select * from t%'`,
+	).Check(testkit.Rows("select test test.t t:k 1 2 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tIndexLookUp_10\troot\t1000\t\n" +
+		"\t├─IndexScan_8 \tcop \t1000\ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
+		"\t└─TableScan_9 \tcop \t1000\ttable:t, keep order:false, stats:pseudo"))
+
+	// Disable it in global scope.
+	tk.MustExec("set global tidb_enable_stmt_summary = false")
+
+	// Create a new session to test.
+	tk = testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustQuery("select * from t where a=2")
+
+	// Statement summary is still enabled.
+	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, cop_task_num, avg_total_keys,
+		max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions,
+		max_prewrite_regions, avg_affected_rows, query_sample_text, plan
+		from information_schema.statements_summary
+		where digest_text like 'select * from t%'`,
+	).Check(testkit.Rows("select test test.t t:k 2 4 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tIndexLookUp_10\troot\t1000\t\n" +
+		"\t├─IndexScan_8 \tcop \t1000\ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
+		"\t└─TableScan_9 \tcop \t1000\ttable:t, keep order:false, stats:pseudo"))
+
+	// Unset session variable.
+	tk.MustExec("set session tidb_enable_stmt_summary = ''")
+	tk.MustQuery("select * from t where a=2")
+
+	// Statement summary is disabled.
+	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, cop_task_num, avg_total_keys,
+		max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions,
+		max_prewrite_regions, avg_affected_rows, query_sample_text, plan
+		from information_schema.statements_summary`,
+	).Check(testkit.Rows())
+
+	// Create a new session to test
+	tk = testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("set global tidb_enable_stmt_summary = on")
+	tk.MustExec("set global tidb_stmt_summary_history_size = 24")
+
+	// Create a new user to test statements summary table privilege
+	tk.MustExec("create user 'test_user'@'localhost'")
+	tk.MustExec("grant select on *.* to 'test_user'@'localhost'")
+	tk.Se.Auth(&auth.UserIdentity{
+		Username:     "root",
+		Hostname:     "%",
+		AuthUsername: "root",
+		AuthHostname: "%",
+	}, nil, nil)
+	tk.MustExec("select * from t where a=1")
+	result := tk.MustQuery(`select *
+		from information_schema.statements_summary
+		where digest_text like 'select * from t%'`,
+	)
+	// Super user can query all reocrds
+	c.Assert(len(result.Rows()), Equals, 1)
+	result = tk.MustQuery(`select *
+		from information_schema.statements_summary_history
+		where digest_text like 'select * from t%'`,
+	)
+	c.Assert(len(result.Rows()), Equals, 1)
+	tk.Se.Auth(&auth.UserIdentity{
+		Username:     "test_user",
+		Hostname:     "localhost",
+		AuthUsername: "test_user",
+		AuthHostname: "localhost",
+	}, nil, nil)
+	result = tk.MustQuery(`select *
+		from information_schema.statements_summary
+		where digest_text like 'select * from t%'`,
+	)
+	// Ordinary users can not see others' records
+	c.Assert(len(result.Rows()), Equals, 0)
+	result = tk.MustQuery(`select *
+		from information_schema.statements_summary_history
+		where digest_text like 'select * from t%'`,
+	)
+	c.Assert(len(result.Rows()), Equals, 0)
+	tk.MustExec("select * from t where a=1")
+	result = tk.MustQuery(`select *
+		from information_schema.statements_summary
+		where digest_text like 'select * from t%'`,
+	)
+	c.Assert(len(result.Rows()), Equals, 1)
+	tk.MustExec("select * from t where a=1")
+	result = tk.MustQuery(`select *
+		from information_schema.statements_summary_history
+		where digest_text like 'select * from t%'`,
+	)
+	c.Assert(len(result.Rows()), Equals, 1)
+	// use root user to set variables back
+	tk.Se.Auth(&auth.UserIdentity{
+		Username:     "root",
+		Hostname:     "%",
+		AuthUsername: "root",
+		AuthHostname: "%",
+	}, nil, nil)
+	tk.MustExec("set global tidb_enable_stmt_summary = off")
+}
+
+// Test statements_summary_history.
+func (s *testTableSuite) TestStmtSummaryHistoryTable(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("drop table if exists test_summary")
+	tk.MustExec("create table test_summary(a int, b varchar(10), key k(a))")
+
+	tk.MustExec("set global tidb_enable_stmt_summary = 1")
+	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("1"))
+	defer tk.MustExec("set global tidb_enable_stmt_summary = ''")
+
+	// Invalidate the cache manually so that tidb_enable_stmt_summary works immediately.
+	s.dom.GetGlobalVarsCache().Disable()
+	// Disable refreshing summary.
+	tk.MustExec("set global tidb_stmt_summary_refresh_interval = 999999999")
+	tk.MustQuery("select @@global.tidb_stmt_summary_refresh_interval").Check(testkit.Rows("999999999"))
+
+	// Create a new session to test.
+	tk = testkit.NewTestKitWithInit(c, s.store)
+
+	// Test INSERT
+	tk.MustExec("insert into test_summary values(1, 'a')")
+	tk.MustExec("insert into test_summary    values(2, 'b')")
+	tk.MustExec("insert into TEST_SUMMARY VALUES(3, 'c')")
+	tk.MustExec("/**/insert into test_summary values(4, 'd')")
+	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, cop_task_num, avg_total_keys,
+		max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions,
+		max_prewrite_regions, avg_affected_rows, query_sample_text, plan
+		from information_schema.statements_summary_history
+		where digest_text like 'insert into test_summary%'`,
+	).Check(testkit.Rows("insert test test.test_summary <nil> 4 0 0 0 0 0 2 2 1 1 1 insert into test_summary values(1, 'a') "))
+
+	tk.MustExec("set global tidb_stmt_summary_history_size = 0")
+	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, cop_task_num, avg_total_keys,
+		max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions,
+		max_prewrite_regions, avg_affected_rows, query_sample_text, plan
+		from information_schema.statements_summary_history`,
+	).Check(testkit.Rows())
+}
+
+// Test statements_summary_history.
+func (s *testTableSuite) TestStmtSummaryInternalQuery(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b varchar(10), key k(a))")
+
+	// We use the sql binding evolve to check the internal query summary.
+	tk.MustExec("set @@tidb_use_plan_baselines = 1")
+	tk.MustExec("set @@tidb_evolve_plan_baselines = 1")
+	tk.MustExec("create global binding for select * from t where t.a = 1 using select * from t ignore index(k) where t.a = 1")
+	tk.MustExec("set global tidb_enable_stmt_summary = 1")
+	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("1"))
+	defer tk.MustExec("set global tidb_enable_stmt_summary = ''")
+	// Invalidate the cache manually so that tidb_enable_stmt_summary works immediately.
+	s.dom.GetGlobalVarsCache().Disable()
+	// Disable refreshing summary.
+	tk.MustExec("set global tidb_stmt_summary_refresh_interval = 999999999")
+	tk.MustQuery("select @@global.tidb_stmt_summary_refresh_interval").Check(testkit.Rows("999999999"))
+
+	// Test Internal
+
+	// Create a new session to test.
+	tk = testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("select * from t where t.a = 1")
+	tk.MustQuery(`select exec_count, digest_text
+		from information_schema.statements_summary
+		where digest_text like "select original_sql , bind_sql , default_db , status%"`).Check(testkit.Rows())
+
+	// Enable internal query and evolve baseline.
+	tk.MustExec("set global tidb_stmt_summary_internal_query = 1")
+	defer tk.MustExec("set global tidb_stmt_summary_internal_query = false")
+
+	// Create a new session to test.
+	tk = testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("admin flush bindings")
+	tk.MustExec("admin evolve bindings")
+
+	tk.MustQuery(`select exec_count, digest_text
+		from information_schema.statements_summary
+		where digest_text like "select original_sql , bind_sql , default_db , status%"`).Check(testkit.Rows(
+		"1 select original_sql , bind_sql , default_db , status , create_time , update_time , charset , collation from mysql . bind_info" +
+			" where update_time > ? order by update_time"))
 }
