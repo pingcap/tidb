@@ -341,7 +341,7 @@ func (s *testUtilSuite) TestHashGroupKey(c *check.C) {
 			bufs[j] = bufs[j][:0]
 		}
 		var err error
-		err = VecEval(ctx, colExpr, input, colBuf)
+		err = EvalExpr(ctx, colExpr, input, colBuf)
 		if err != nil {
 			c.Fatal(err)
 		}
