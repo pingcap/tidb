@@ -2433,7 +2433,7 @@ func (b *PlanBuilder) buildProjUponView(ctx context.Context, dbName model.CIStr,
 			OrigTblName: col.OrigTblName,
 			ColName:     columnInfo[i].Name,
 			OrigColName: origColName,
-			DBName:      col.DBName,
+			DBName:      dbName,
 			RetType:     col.GetType(),
 		})
 		projExprs = append(projExprs, col)
