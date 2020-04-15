@@ -5349,6 +5349,28 @@ func (s *testIntegrationSuite) TestCastStrToInt(c *C) {
 	}
 }
 
+func (s *testIntegrationSuite) TestIssue16205(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(true)
+	var err error
+	tk.Se, err = session.CreateSession4TestWithOpt(s.store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+
+	tk.MustExec("use test")
+	tk.MustExec("prepare stmt from 'select random_bytes(3)'")
+	rows1 := tk.MustQuery("execute stmt").Rows()
+	c.Assert(len(rows1), Equals, 1)
+	rows2 := tk.MustQuery("execute stmt").Rows()
+	c.Assert(len(rows2), Equals, 1)
+	c.Assert(rows1[0][0].(string), Not(Equals), rows2[0][0].(string))
+}
+
 func (s *testIntegrationSuite) TestValuesForBinaryLiteral(c *C) {
 	// See issue #15310
 	tk := testkit.NewTestKit(c, s.store)
@@ -5902,6 +5924,13 @@ func (s *testIntegrationSerialSuite) TestCollateStringFunction(c *C) {
 	tk.MustQuery("select FIND_IN_SET('a','b,a ,c,d' collate utf8mb4_bin);").Check(testkit.Rows("2"))
 	tk.MustQuery("select FIND_IN_SET('a','b,A,c,d' collate utf8mb4_general_ci);").Check(testkit.Rows("2"))
 	tk.MustQuery("select FIND_IN_SET('a','b,a ,c,d' collate utf8mb4_general_ci);").Check(testkit.Rows("2"))
+
+	tk.MustExec("select concat('a' collate utf8mb4_bin, 'b' collate utf8mb4_bin);")
+	tk.MustGetErrMsg("select concat('a' collate utf8mb4_bin, 'b' collate utf8mb4_general_ci);", "[expression:1267]Illegal mix of collations (utf8mb4_bin,EXPLICIT) and (utf8mb4_general_ci,EXPLICIT) for operation 'concat'")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char)")
+	tk.MustGetErrMsg("select * from t t1 join t t2 on t1.a collate utf8mb4_bin = t2.a collate utf8mb4_general_ci;", "[expression:1267]Illegal mix of collations (utf8mb4_bin,EXPLICIT) and (utf8mb4_general_ci,EXPLICIT) for operation 'eq'")
 }
 
 func (s *testIntegrationSerialSuite) TestCollateLike(c *C) {
