@@ -1925,7 +1925,7 @@ func (b *builtinStrToDateDurationSig) evalDuration(row chunk.Row) (types.Duratio
 	if !succ {
 		return types.Duration{}, true, HandleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, t.String()))
 	}
-	if b.ctx.GetSessionVars().SQLMode.HasNoZeroInDateMode() && (t.Year() == 0 || t.Month() == 0 || t.Day() == 0) {
+	if b.ctx.GetSessionVars().SQLMode.HasNoZeroInDateMode() && t.InvalidZero() && !t.IsZero() {
 		return types.Duration{}, true, HandleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, t.String()))
 	}
 	if b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() && t == types.ZeroDatetime {
