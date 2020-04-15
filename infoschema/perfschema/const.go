@@ -447,10 +447,10 @@ const fieldsInEventsStatementsSummary = "SUMMARY_BEGIN_TIME TIMESTAMP(6) NOT NUL
 	"AVG_AFFECTED_ROWS DOUBLE UNSIGNED NOT NULL COMMENT 'Average number of rows affected'," +
 	"FIRST_SEEN TIMESTAMP(6) NOT NULL COMMENT 'The time these statements are seen for the first time'," +
 	"LAST_SEEN TIMESTAMP(6) NOT NULL COMMENT 'The time these statements are seen for the last time'," +
-	"" +
-	"" +
-	"" +
-	"" +
+	"PLAN_IN_CACHE BOOL NOT NULL COMMENT ''," +
+	"PLAN_CACHE_HITS BIGINT(20) UNSIGNED NOT NULL COMMENT ''," +
+	"PLAN_CACHE_MISSES BIGINT(20) UNSIGNED NOT NULL COMMENT ''," +
+	"PLAN_LAST_UPDATE TIMESTAMP(6) NOT NULL COMMENT ''," +
 	"QUERY_SAMPLE_TEXT LONGTEXT DEFAULT NULL COMMENT 'Sampled original statement'," +
 	"PREV_SAMPLE_TEXT LONGTEXT DEFAULT NULL COMMENT 'The previous statement before commit'," +
 	"PLAN_DIGEST VARCHAR(64) DEFAULT NULL COMMENT 'Digest of its execution plan'," +
