@@ -4931,8 +4931,8 @@ func (s *testIntegrationSuite) TestIssue10181(c *C) {
 func (s *testIntegrationSuite) TestExprPushdownBlacklist(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustQuery(`select * from mysql.expr_pushdown_blacklist`).Check(testkit.Rows(
-		"date_add tiflash DST(daylight saving time) does not work in TiFlash date_add",
-		"cast tiflash some corner cases(like overflow) handling is different in TiFlash and TiDB"))
+		"date_add tiflash DST(daylight saving time) does not take effect in TiFlash date_add",
+		"cast tiflash Behavior of some corner cases(overflow, truncate etc) is different in TiFlash and TiDB"))
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -4958,7 +4958,8 @@ func (s *testIntegrationSuite) TestExprPushdownBlacklist(c *C) {
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
 
-	// < should not be pushed, cast only pushed to tikv, date_format only pushed to tiflash
+	// < not pushed, cast only pushed to TiKV, date_format only pushed to TiFlash,
+	// > pushed to both TiKV and TiFlash
 	tk.MustQuery("explain select * from test.t where b > date'1988-01-01' and b < date'1994-01-01' " +
 		"and cast(a as decimal(10,2)) > 10.10 and date_format(b,'%m') = '11'").Check(testkit.Rows(
 		"Selection_5 2133.33 root  lt(test.t.b, 1994-01-01)",
