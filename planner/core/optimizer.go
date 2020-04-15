@@ -14,6 +14,7 @@
 package core
 
 import (
+	"context"
 	"math"
 
 	"github.com/pingcap/errors"
@@ -63,8 +64,14 @@ type logicalOptRule interface {
 func Optimize(ctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (Plan, error) {
 	fp := tryFastPlan(ctx, node)
 	if fp != nil {
+		if !isPointGetWithoutDoubleRead(ctx, fp) {
+			ctx.PrepareTxnFuture(context.Background())
+		}
 		return fp, nil
 	}
+
+	ctx.PrepareTxnFuture(context.Background())
+
 	ctx.GetSessionVars().PlanID = 0
 	ctx.GetSessionVars().PlanColumnID = 0
 	builder := &planBuilder{
@@ -95,6 +102,18 @@ func Optimize(ctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (
 		return p, errors.Trace(err)
 	}
 	return p, nil
+}
+
+// isPointGetWithoutDoubleRead returns true when meets following conditions:
+//  1. ctx is auto commit tagged.
+//  2. plan is point get by pk.
+func isPointGetWithoutDoubleRead(ctx sessionctx.Context, p Plan) bool {
+	if !ctx.GetSessionVars().IsAutocommit() {
+		return false
+	}
+
+	v, ok := p.(*PointGetPlan)
+	return ok && v.IndexInfo == nil
 }
 
 // BuildLogicalPlan used to build logical plan from ast.Node.
