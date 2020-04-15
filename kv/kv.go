@@ -317,6 +317,8 @@ type Request struct {
 	Cacheable bool
 	// SchemaVer is for any schema-ful storage to validate schema correctness if necessary.
 	SchemaVar int64
+	// BatchCop indicates whether send batch coprocessor request to tiflash.
+	BatchCop bool
 }
 
 // ResultSubset represents a result subset from a single storage unit.

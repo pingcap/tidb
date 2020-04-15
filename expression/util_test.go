@@ -370,7 +370,7 @@ func (s *testUtilSuite) TestHashGroupKey(c *check.C) {
 			bufs[j] = bufs[j][:0]
 		}
 		var err error
-		err = VecEval(ctx, colExpr, input, colBuf)
+		err = EvalExpr(ctx, colExpr, input, colBuf)
 		if err != nil {
 			c.Fatal(err)
 		}
@@ -490,7 +490,7 @@ func (m *MockExpr) MarshalJSON() ([]byte, error)            { return nil, nil }
 func (m *MockExpr) Eval(row chunk.Row) (types.Datum, error) { return types.NewDatum(m.i), m.err }
 func (m *MockExpr) EvalInt(ctx sessionctx.Context, row chunk.Row) (val int64, isNull bool, err error) {
 	if x, ok := m.i.(int64); ok {
-		return int64(x), false, m.err
+		return x, false, m.err
 	}
 	return 0, m.i == nil, m.err
 }
@@ -502,7 +502,7 @@ func (m *MockExpr) EvalReal(ctx sessionctx.Context, row chunk.Row) (val float64,
 }
 func (m *MockExpr) EvalString(ctx sessionctx.Context, row chunk.Row) (val string, isNull bool, err error) {
 	if x, ok := m.i.(string); ok {
-		return string(x), false, m.err
+		return x, false, m.err
 	}
 	return "", m.i == nil, m.err
 }
